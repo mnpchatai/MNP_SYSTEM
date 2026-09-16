@@ -5,7 +5,7 @@
 ## สิ่งที่มีใน Phase 1
 
 - Employee Master, Department, Role และ Permission
-- Login ด้วย Supabase Auth โดยแยกข้อมูลบัญชีออกจากข้อมูลพนักงาน
+- Login ด้วยรหัสพนักงาน โดยใช้ Supabase Auth จัดการรหัสผ่านและ session ฝั่งเซิร์ฟเวอร์
 - Request Center 8 ประเภท: แจ้งซ่อม MT, แจ้งซ่อม IT, ซ่อมรถ, ขอซื้อ/ขอซ่อม, คำร้องฝ่ายบริหาร, IT Access, ลางาน และขออบรม
 - ลำดับอนุมัติ: หัวหน้าแผนก → ผู้อนุมัติของหน่วยงานรับผิดชอบ
 - Approve, Reject, Request More Information, comment และ attachment
@@ -73,24 +73,24 @@ npx supabase db push
 
 ## สร้างผู้ใช้คนแรก
 
-ไฟล์ seed สร้างข้อมูลพนักงานตัวอย่าง แต่ไม่สร้างรหัสผ่าน ให้สร้างผู้ใช้ใน Authentication → Users แล้วผูก Auth UUID กับ employee ที่ต้องการ:
+ไฟล์ seed สร้างข้อมูลพนักงานตัวอย่าง แต่ไม่สร้างรหัสผ่าน ให้สร้างผู้ใช้ใน Authentication → Users แล้วผูก Auth UUID กับ employee ที่ต้องการ ผู้ใช้จะกรอก `employee_no` แทนอีเมลในหน้า Login:
 
 ```sql
 update public.employees
 set auth_user_id = 'AUTH_USER_UUID'
-where email = 'admin@mnp.local';
+where employee_no = 'MNP0001';
 ```
 
 บัญชีตัวอย่าง:
 
-| Email | บทบาท | จุดประสงค์ |
+| รหัสพนักงาน | บทบาท | จุดประสงค์ |
 |---|---|---|
-| `admin@mnp.local` | Admin | ดูทั้งหมดและจัดการระบบ |
-| `approver@mnp.local` | Approver | ทดลองอนุมัติ |
-| `employee@mnp.local` | Employee | ทดลองสร้างคำร้อง |
-| `maintenance@mnp.local` | Operator | ทดลองรับและปิดงาน |
+| `MNP0001` | Admin | ดูทั้งหมดและจัดการระบบ |
+| `MNP0101` | Approver | ทดลองอนุมัติ |
+| `MNP0102` | Employee | ทดลองสร้างคำร้อง |
+| `MNP0201` | Operator | ทดลองรับและปิดงาน |
 
-ใน production ควรเชิญผู้ใช้ผ่าน Admin API/ระบบ provisioning และห้ามเปิด public sign-up หากองค์กรไม่ได้ต้องการ
+ระบบค้นหา Auth user จาก `employees.auth_user_id` เฉพาะบนเซิร์ฟเวอร์ จึงไม่ส่งอีเมลภายในไปยัง browser ใน production ควรสร้างผู้ใช้ผ่าน Admin API/ระบบ provisioning และห้ามเปิด public sign-up หากองค์กรไม่ได้ต้องการ
 
 ## ตั้งค่า LINE OA
 

@@ -34,11 +34,21 @@ export default async function LoginPage({
       <section className="auth-form-wrap">
         <form className="auth-form" action={signInAction}>
           <h2>เข้าสู่ระบบพนักงาน</h2>
-          <p>ใช้บัญชีที่ผู้ดูแลระบบออกให้</p>
+          <p>ใช้รหัสพนักงานและรหัสผ่านที่ผู้ดูแลระบบออกให้</p>
           {error && <div className="form-message error">{error}</div>}
           <div className="field">
-            <label htmlFor="email">อีเมล</label>
-            <input className="input" id="email" name="email" type="email" autoComplete="email" required />
+            <label htmlFor="employee_no">รหัสพนักงาน</label>
+            <input
+              className="input"
+              id="employee_no"
+              name="employee_no"
+              type="text"
+              autoComplete="username"
+              autoCapitalize="characters"
+              maxLength={32}
+              placeholder="เช่น ADMIN001"
+              required
+            />
           </div>
           <div className="field">
             <label htmlFor="password">รหัสผ่าน</label>
@@ -50,4 +60,3 @@ export default async function LoginPage({
     </main>
   );
 }
-
