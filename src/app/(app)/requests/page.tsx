@@ -9,9 +9,10 @@ const filters = [
   ["completed", "เสร็จแล้ว"], ["rejected", "ไม่อนุมัติ"],
 ];
 
-export default async function RequestsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
+export default async function RequestsPage({ searchParams }: { searchParams: Promise<{ status?: string; q?: string }> }) {
   const employee = await getCurrentEmployee();
-  const { status = "all" } = await searchParams;
+  const { status = "all", q = "" } = await searchParams;
+  const normalizedQuery = q.trim().replace(/[,%()]/g, " ").slice(0, 80);
   const supabase = await createClient();
   let query = supabase
     .from("requests")
@@ -19,19 +20,25 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
     .eq("requester_id", employee.id)
     .order("created_at", { ascending: false });
   if (status !== "all") query = query.eq("status", status);
+  if (normalizedQuery) query = query.or(`request_no.ilike.%${normalizedQuery}%,title.ilike.%${normalizedQuery}%`);
   const { data } = await query;
 
   return (
     <>
       <div className="page-heading">
-        <div><div className="eyebrow">Request Center</div><h2>คำร้องของฉัน</h2><p>ค้นหาและติดตามสถานะคำร้องที่คุณสร้าง</p></div>
+        <div><div className="eyebrow">Request Center</div><h2>{normalizedQuery ? `ผลการค้นหา “${normalizedQuery}”` : "คำร้องของฉัน"}</h2><p>ค้นหาและติดตามสถานะคำร้องที่คุณสร้าง</p></div>
         <Link className="btn" href="/requests/new"><Plus size={16} /> สร้างคำร้อง</Link>
       </div>
       <div className="filters">
-        {filters.map(([value, label]) => <Link className={status === value ? "active" : ""} href={value === "all" ? "/requests" : `/requests?status=${value}`} key={value}>{label}</Link>)}
+        {filters.map(([value, label]) => {
+          const params = new URLSearchParams();
+          if (value !== "all") params.set("status", value);
+          if (normalizedQuery) params.set("q", normalizedQuery);
+          const href = params.size ? `/requests?${params.toString()}` : "/requests";
+          return <Link className={status === value ? "active" : ""} href={href} key={value}>{label}</Link>;
+        })}
       </div>
       <section className="card"><RequestTable requests={data ?? []} /></section>
     </>
   );
 }
-

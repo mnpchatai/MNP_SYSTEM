@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { CheckCircle2, FileCheck2, ShieldCheck } from "lucide-react";
 import { signInAction } from "@/app/actions/auth";
 import { SubmitButton } from "@/components/submit-button";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { getCurrentUser } from "@/lib/auth";
 
 export default async function LoginPage({
@@ -14,24 +15,25 @@ export default async function LoginPage({
 
   return (
     <main className="auth-page">
-      <section className="auth-hero">
-        <div className="brand">
+      <section className="auth-aside">
+        <div className="auth-brand">
           <div className="brand-mark">M</div>
-          <div><strong>MNP INTERNAL</strong><span>Paperless Operations</span></div>
+          <div><strong>MNP Workspace</strong><span>INTERNAL OPERATIONS</span></div>
         </div>
-        <div className="auth-copy">
-          <div className="eyebrow" style={{ color: "#71d3ce" }}>WORK SMARTER · MOVE FASTER</div>
-          <h1>งานภายใน<br />ที่เดินหน้า<br />โดยไม่ใช้กระดาษ</h1>
-          <p>สร้างคำร้อง อนุมัติ ติดตามงาน และรับการแจ้งเตือนในที่เดียว พร้อมประวัติที่ตรวจสอบย้อนหลังได้</p>
+        <div className="auth-intro">
+          <div className="eyebrow">Employee workspace</div>
+          <h1>ระบบคำร้องและ<br />การอนุมัติภายใน</h1>
+          <p>พื้นที่ทำงานกลางสำหรับสร้างคำร้อง ติดตามสถานะ และดำเนินการอนุมัติอย่างเป็นขั้นตอน</p>
         </div>
         <div className="auth-points">
           <span><FileCheck2 size={15} /> คำร้องดิจิทัล</span>
-          <span><CheckCircle2 size={15} /> อนุมัติเป็นขั้นตอน</span>
+          <span><CheckCircle2 size={15} /> ตรวจสอบสถานะได้</span>
           <span><ShieldCheck size={15} /> สิทธิ์ตามบทบาท</span>
         </div>
       </section>
 
       <section className="auth-form-wrap">
+        <div className="auth-theme"><ThemeToggle /></div>
         <form className="auth-form" action={signInAction}>
           <h2>เข้าสู่ระบบพนักงาน</h2>
           <p>ใช้รหัสพนักงานและรหัสผ่านที่ผู้ดูแลระบบออกให้</p>

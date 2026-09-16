@@ -1,9 +1,16 @@
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, ClipboardList, Clock3, Plus, Settings2 } from "lucide-react";
+import { ArrowRight, ClipboardList, FileText, Monitor, ShoppingCart, Wrench } from "lucide-react";
 import { RequestTable } from "@/components/request-table";
 import { getCurrentEmployee } from "@/lib/auth";
 import { getPendingApprovals } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
+
+const requestTypeIcons = {
+  MT: Wrench,
+  IT: Monitor,
+  PR: ShoppingCart,
+  AD: FileText,
+} as const;
 
 export default async function DashboardPage() {
   const employee = await getCurrentEmployee();
@@ -18,51 +25,62 @@ export default async function DashboardPage() {
     getPendingApprovals(employee),
   ]);
   const requests = requestsResult.data ?? [];
-  const metrics = [
-    { label: "คำร้องของฉัน", value: requests.length, note: "ทั้งหมด", icon: ClipboardList, color: "#176b87" },
-    { label: "รอฉันอนุมัติ", value: pending.length, note: "ต้องดำเนินการ", icon: Clock3, color: "#c67b20" },
-    { label: "กำลังดำเนินการ", value: requests.filter((r) => ["approved", "in_progress"].includes(r.status)).length, note: "อยู่ระหว่างทำงาน", icon: Settings2, color: "#7655a6" },
-    { label: "เสร็จแล้ว", value: requests.filter((r) => r.status === "completed").length, note: "ปิดงานเรียบร้อย", icon: CheckCircle2, color: "#147a55" },
-  ];
+  const inProgress = requests.filter((request) => ["approved", "in_progress"].includes(request.status)).length;
+  const completed = requests.filter((request) => request.status === "completed").length;
+  const today = new Intl.DateTimeFormat("th-TH", {
+    dateStyle: "full",
+    timeZone: "Asia/Bangkok",
+  }).format(new Date());
 
   return (
     <>
-      <div className="page-heading">
+      <div className="dashboard-heading">
         <div>
-          <div className="eyebrow">Overview</div>
-          <h2>สวัสดี, {employee.first_name}</h2>
-          <p>ติดตามคำร้องและงานที่ต้องดำเนินการจากจุดเดียว</p>
+          <h1>สวัสดีตอนบ่าย, {employee.first_name}</h1>
+          <p>รายการสำคัญและความเคลื่อนไหวที่เกี่ยวข้องกับคุณ</p>
         </div>
-        <Link className="btn" href="/requests/new"><Plus size={16} /> สร้างคำร้อง</Link>
+        <time>{today}</time>
       </div>
 
-      <section className="metrics">
-        {metrics.map(({ label, value, note, icon: Icon, color }) => (
-          <article className="metric" key={label} style={{ "--metric-color": color } as React.CSSProperties}>
-            <div className="metric-head"><span>{label}</span><span className="metric-icon"><Icon size={16} /></span></div>
-            <div className="metric-value">{value}</div><div className="metric-note">{note}</div>
-          </article>
-        ))}
+      <section className="summary-strip" aria-label="สรุปงาน">
+        <Link className="summary-primary" href="/approvals">
+          <span>งานที่ต้องจัดการ</span>
+          <strong>{pending.length}</strong>
+          <small>{pending.length ? "เปิดรายการที่รอการอนุมัติ" : "ไม่มีงานค้างในขณะนี้"}</small>
+        </Link>
+        <div className="summary-cell"><span>คำร้องของฉัน</span><strong>{requests.length}</strong><small>คำร้องทั้งหมดในระบบ</small></div>
+        <div className="summary-cell"><span>กำลังดำเนินการ</span><strong>{inProgress}</strong><small>อยู่ระหว่างรับผิดชอบ</small></div>
+        <div className="summary-cell"><span>เสร็จแล้ว</span><strong>{completed}</strong><small>ปิดงานเรียบร้อย</small></div>
       </section>
 
-      <div className="grid-2">
-        <section className="card">
-          <div className="card-title"><h3>คำร้องล่าสุด</h3><Link href="/requests">ดูทั้งหมด <ArrowRight size={12} /></Link></div>
+      <div className="dashboard-grid">
+        <section className="panel">
+          <div className="panel-heading">
+            <h2>ความเคลื่อนไหวล่าสุด</h2>
+            <Link href="/requests">ดูทั้งหมด <ArrowRight size={13} aria-hidden="true" /></Link>
+          </div>
           <RequestTable requests={requests.slice(0, 6)} />
         </section>
-        <section className="card">
-          <div className="card-title"><h3>สร้างคำร้องด่วน</h3><Link href="/requests/new">ทุกประเภท</Link></div>
-          <div className="quick-grid">
-            {(typesResult.data ?? []).map((type) => (
-              <Link className="quick-item" href={`/requests/new?type=${type.id}`} key={type.id}>
-                <ClipboardList className="quick-icon" size={18} />
-                <strong>{type.name_th}</strong><span>{type.description}</span>
-              </Link>
-            ))}
+
+        <section className="panel">
+          <div className="panel-heading">
+            <h2>สร้างคำร้อง</h2>
+            <Link href="/requests/new">ทุกประเภท <ArrowRight size={13} aria-hidden="true" /></Link>
+          </div>
+          <div className="quick-list">
+            {(typesResult.data ?? []).map((type) => {
+              const Icon = requestTypeIcons[type.code as keyof typeof requestTypeIcons] ?? ClipboardList;
+              return (
+                <Link className="quick-item" href={`/requests/new?type=${type.id}`} key={type.id}>
+                  <span className="quick-icon"><Icon size={16} aria-hidden="true" /></span>
+                  <span className="quick-copy"><strong>{type.name_th}</strong><small>{type.description}</small></span>
+                  <ArrowRight className="quick-arrow" size={14} aria-hidden="true" />
+                </Link>
+              );
+            })}
           </div>
         </section>
       </div>
     </>
   );
 }
-

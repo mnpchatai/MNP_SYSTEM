@@ -11,8 +11,8 @@ export async function getPendingApprovals(employee: {
     .select(`
       *,
       request:requests!inner(
-        id, request_no, title, priority, status, current_step, created_at,
-        request_type:request_types(name_th),
+        id, request_no, title, description, details, priority, status, current_step, created_at, submitted_at,
+        request_type:request_types(name_th,code),
         requester:employees!requests_requester_id_fkey(first_name,last_name)
       )
     `)

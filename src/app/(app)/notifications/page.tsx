@@ -17,8 +17,8 @@ export default async function NotificationsPage() {
       </div>
       <section className="card stack">
         {!data?.length ? <div className="empty">ยังไม่มีการแจ้งเตือน</div> : data.map((item) => (
-          <Link href={item.action_url ?? "#"} key={item.id} style={{ padding: "14px", borderRadius: 11, background: item.read_at ? "transparent" : "#edf8f8", border: "1px solid var(--line)" }}>
-            <strong style={{ display: "block", fontSize: 13 }}>{item.title}</strong>
+          <Link href={item.action_url ?? "#"} key={item.id} className={`notification-item${item.read_at ? "" : " unread"}`}>
+            <strong>{item.title}</strong>
             <span className="muted small">{item.body} · {formatDate(item.created_at, true)}</span>
           </Link>
         ))}
@@ -26,4 +26,3 @@ export default async function NotificationsPage() {
     </>
   );
 }
-
