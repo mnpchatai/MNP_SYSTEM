@@ -190,12 +190,41 @@ create table public.line_webhook_events (
 
 create index employees_auth_user_idx on public.employees(auth_user_id) where auth_user_id is not null;
 create index employees_department_idx on public.employees(department_id) where is_active;
+create index employees_department_fk_idx on public.employees(department_id);
+create index employees_role_idx on public.employees(role_id);
+create index employees_manager_idx on public.employees(manager_id) where manager_id is not null;
+create index role_permissions_permission_idx on public.role_permissions(permission_id);
+create index request_types_department_idx on public.request_types(owning_department_id)
+  where owning_department_id is not null;
+create index request_types_approver_role_idx on public.request_types(final_approver_role_id)
+  where final_approver_role_id is not null;
+create index requests_type_idx on public.requests(request_type_id);
 create index requests_requester_idx on public.requests(requester_id, created_at desc);
+create index requests_department_idx on public.requests(department_id, created_at desc);
 create index requests_status_idx on public.requests(status, updated_at desc);
 create index requests_assignee_idx on public.requests(assignee_id, status) where assignee_id is not null;
+create index requests_last_changed_by_idx on public.requests(last_changed_by)
+  where last_changed_by is not null;
 create index approval_steps_lookup_idx on public.approval_steps(request_id, step_order, status);
+create index approval_steps_employee_idx
+  on public.approval_steps(approver_employee_id, status, request_id)
+  where approver_employee_id is not null;
+create index approval_steps_role_department_idx
+  on public.approval_steps(approver_role_id, approver_department_id, status, request_id)
+  where approver_role_id is not null;
+create index request_comments_request_idx on public.request_comments(request_id, created_at);
+create index request_comments_author_idx on public.request_comments(author_id);
+create index request_attachments_request_idx on public.request_attachments(request_id, created_at);
+create index request_attachments_uploader_idx on public.request_attachments(uploader_id);
+create index request_history_request_idx on public.request_status_history(request_id, created_at);
+create index request_history_changed_by_idx on public.request_status_history(changed_by)
+  where changed_by is not null;
 create index notifications_recipient_idx on public.notifications(recipient_id, read_at, created_at desc);
+create index notifications_request_idx on public.notifications(request_id)
+  where request_id is not null;
 create index audit_logs_entity_idx on public.audit_logs(entity_type, entity_id, created_at desc);
+create index audit_logs_actor_idx on public.audit_logs(actor_id)
+  where actor_id is not null;
 
 -- Authorization helpers live outside the exposed public schema.
 create or replace function private.current_employee_id()
