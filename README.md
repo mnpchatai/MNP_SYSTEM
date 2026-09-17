@@ -156,3 +156,253 @@ pending_approval
 ```
 
 Phase ถัดไปสามารถต่อยอดจาก request ที่อนุมัติแล้วเป็น Work Order, Asset/Machine Master, PM Plan, downtime, spare parts และต้นทุนซ่อมได้โดยไม่ต้องเปลี่ยนแกน identity/workflow นี้
+
+## Roadmap หลัง Phase 1
+
+หลักการของ Roadmap คือทำให้แกน `Identity + Permission + Request + Approval + Notification + Audit` เสถียรก่อน แล้วจึงเพิ่มโมดูลธุรกิจทีละส่วน โดยทุกโมดูลต้องใช้ Employee Master, สิทธิ์, approval engine, attachment, comment, notification และ audit ชุดเดียวกัน ไม่สร้างระบบอนุมัติแยกซ้ำในแต่ละโมดูล
+
+### ลำดับความสำคัญ
+
+| ลำดับ | Phase | เป้าหมายหลัก | เงื่อนไขก่อนเริ่ม |
+|---|---|---|---|
+| P0 | Phase 1.1 — Pilot Hardening | ทำระบบปัจจุบันให้พร้อมรับผู้ใช้จริงหลายคน | Phase 1 flow หลักทำงานครบ |
+| P1 | Phase 2 — Maintenance | เปลี่ยนใบแจ้งซ่อมเป็น Work Order และระบบซ่อมบำรุง | Pilot ผ่าน UAT และ permission เสถียร |
+| P2 | Phase 3 — HR Request | เพิ่มคำร้อง HR บน approval engine เดิม | Approval configuration รองรับหลาย workflow |
+| P3 | Phase 4 — Procurement | ขยาย PR ไปถึง RFQ/เปรียบเทียบราคา/อ้างอิง PO | กำหนดวงเงินและผู้อนุมัติชัดเจน |
+| P4 | Phase 5 — Stock / Material | ใบเบิก รับคืน โอน และ stock movement | Material Master และหน่วยนับพร้อมใช้ |
+| P5 | Phase 6 — Production Tracking | ติดตาม Production Order, Routing, WIP และผลผลิต | Master data การผลิตผ่านการตรวจสอบ |
+| P6 | Phase 7 — QA / NCR / CAR | เชื่อมผลตรวจคุณภาพกับการผลิตและ corrective action | Production มีข้อมูลจริงสม่ำเสมอ |
+| P7 | Phase 8 — Document Control | ควบคุม Revision, Effective Date และเอกสาร ISO | Owner และ approval policy ของเอกสารถูกกำหนดแล้ว |
+
+## Phase 1.1 — Pilot Hardening
+
+Phase นี้ต้องทำก่อนเพิ่มโมดูลใหม่ เพื่อให้ผลทดสอบจากหลายผู้ใช้สะท้อนปัญหาจริงและแก้ได้โดยไม่กระทบข้อมูล production
+
+### งานหลัก
+
+1. **Identity และ Account Lifecycle**
+   - ปิด public sign-up และให้สร้างบัญชีผ่าน Admin/Provisioning flow เท่านั้น
+   - กำหนดขั้นตอนพนักงานเข้าใหม่ ย้ายแผนก เปลี่ยนบทบาท ระงับ และลาออก
+   - บังคับ unique mapping ระหว่าง `auth_user_id`, `employee_no` และ LINE user ID
+   - เพิ่ม password policy, leaked-password protection และ MFA สำหรับ Admin
+2. **Workflow Configuration**
+   - แยก approval rule ออกจากโค้ดเป็น configuration ที่มี version และ effective date
+   - รองรับ approver แบบ Manager, Role + Department, Named User และวงเงินอนุมัติ
+   - คำร้องที่สร้างแล้วต้องอ้างอิง workflow version เดิม แม้มีการแก้กฎในภายหลัง
+3. **Reliability และ Security**
+   - เพิ่ม idempotency key ให้ create/approve/status transition เพื่อป้องกันการกดซ้ำ
+   - ทุก transition ตรวจ current status และสิทธิ์ใน transaction เดียวกัน
+   - เพิ่ม automated test สำหรับ RLS, RPC allow/deny และ workflow transition ที่ผิดลำดับ
+   - ตั้ง backup/restore drill, error monitoring, structured log และ alert สำหรับ Edge Function
+4. **Pilot Operations**
+   - แยก Demo/Test data ออกจากข้อมูลใช้งานจริง
+   - จัดทำ UAT script ตามบทบาท Employee, Approver, Operator และ Admin
+   - เพิ่ม in-app feedback และช่องทางรายงาน incident โดยอ้างอิง request number
+   - เก็บตัวชี้วัด: login success, request completion rate, approval lead time, error rate และจำนวนงานค้าง
+
+### Logic กลางของทุกคำสั่ง
+
+```text
+User action
+   ↓
+ตรวจ session และ employee = active
+   ↓
+ตรวจ permission + data scope
+   ↓
+ตรวจ current state + transition ที่อนุญาต
+   ↓
+ทำ domain transaction
+   ├─ บันทึกข้อมูลหลัก
+   ├─ บันทึก status history
+   ├─ บันทึก audit event
+   └─ สร้าง notification/outbox event
+   ↓
+Commit สำเร็จเพียงครั้งเดียว
+   ↓
+Worker/Edge Function ส่ง LINE หรือ notification แบบ retry ได้
+```
+
+Notification ต้องแยกออกจาก transaction หลักด้วย outbox pattern เพื่อให้คำร้องไม่ล้มเพียงเพราะ LINE API ช้า และต้องมี event key ป้องกันการแจ้งเตือนซ้ำ
+
+### LINE Account และ Rich Menu Workflow
+
+```text
+ผู้ใช้ทั่วไปเพิ่ม LINE OA
+   ↓
+เห็น Default Rich Menu: เว็บไซต์ | ติดต่อเรา
+
+พนักงาน Login Web App
+   ↓
+ตรวจ employee active + ขอ consent เชื่อม LINE
+   ↓
+LINE OAuth callback ตรวจ state/nonce
+   ↓
+ผูก employee ↔ LINE userId แบบ unique
+   ↓
+Link Per-user Employee Rich Menu
+   ↓
+ส่งแจ้งเตือนเฉพาะเหตุการณ์ที่ผู้ใช้มีสิทธิ์เห็น
+
+พนักงาน inactive / ลาออก / ยกเลิกการเชื่อม
+   ↓
+Unlink Per-user Rich Menu + revoke link
+   ↓
+กลับไปใช้ Default Rich Menu
+```
+
+ห้ามถือว่า Web Login เพียงอย่างเดียวสามารถระบุ LINE account ได้ การผูก LINE ต้องเกิดผ่าน OAuth/consent และต้องยกเลิกได้จากทั้งผู้ใช้และ Admin
+
+### เกณฑ์ผ่าน Phase 1.1
+
+- UAT หลักผ่านครบ: สร้างคำร้อง → อนุมัติ → รับงาน → เสร็จสิ้น และ Reject/More Info
+- ผู้ใช้ที่ไม่มีสิทธิ์ไม่สามารถอ่านหรือเปลี่ยนคำร้องผ่าน UI, REST หรือ RPC
+- ไม่มี P0/P1 defect ที่ยังเปิดอยู่ และ failed transaction ไม่ทิ้งข้อมูลครึ่งชุด
+- LINE failure ไม่ทำให้ business transaction ล้ม และระบบ retry โดยไม่ส่งซ้ำ
+- ทดสอบ restore backup ได้จริง และมี runbook เมื่อ login/database/LINE ขัดข้อง
+- Pilot users ยอมรับ workflow และมี owner รับผิดชอบ master data แต่ละชุด
+
+## Phase 2 — Maintenance System
+
+Phase 2 เป็นลำดับถัดไปที่เหมาะสมที่สุด เพราะ Phase 1 มีใบแจ้งซ่อม ผู้อนุมัติ และ Operator แล้ว จึงต่อยอดเป็น Work Order ได้โดยไม่ต้องเปลี่ยนแกนระบบ
+
+### ขอบเขตข้อมูล
+
+- Machine/Asset Master, location, criticality และสถานะทรัพย์สิน
+- Work Order, assignment, SLA, priority และช่างผู้รับผิดชอบ
+- Labor log, downtime, repair cause, corrective action และค่าใช้จ่าย
+- Spare parts usage โดย Phase นี้บันทึกการใช้ก่อน ยังไม่ตัด Stock จนกว่า Phase 5 พร้อม
+- PM Plan, schedule, checklist และประวัติการซ่อมย้อนหลัง
+- Requester confirmation, reopen reason และ closure feedback
+
+### Maintenance Workflow
+
+```text
+แจ้งซ่อม (Request)
+   ↓
+หัวหน้าแผนกอนุมัติ
+   ↓
+หน่วยงานซ่อมบำรุงอนุมัติ/คัดกรอง
+   ↓
+สร้าง Work Order + กำหนด SLA
+   ↓
+มอบหมายช่าง
+   ↓
+ช่างรับงาน
+   ↓
+in_progress
+   ├─ waiting_parts
+   ├─ on_hold (ต้องระบุเหตุผล/เวลานัดใหม่)
+   └─ repair_completed
+          ↓
+ผู้แจ้งตรวจรับ
+   ├─ ยืนยัน → closed
+   └─ ไม่ผ่าน → reopened → in_progress
+```
+
+### Transition Rules
+
+| จาก | ไป | ผู้ดำเนินการ | เงื่อนไขสำคัญ |
+|---|---|---|---|
+| `approved` | `assigned` | Planner/Supervisor | มี Work Order และ assignee |
+| `assigned` | `in_progress` | ช่างที่ได้รับมอบหมาย | บันทึกเวลาเริ่ม |
+| `in_progress` | `waiting_parts` | ช่าง/Supervisor | ระบุอะไหล่และเหตุผล |
+| `in_progress` | `on_hold` | ช่าง/Supervisor | ระบุเหตุผลและ next action date |
+| `in_progress` | `repair_completed` | ช่าง | ระบุอาการ สาเหตุ วิธีแก้ เวลา และผลทดสอบ |
+| `repair_completed` | `closed` | ผู้แจ้ง/Supervisor ตาม policy | ผ่านการตรวจรับ |
+| `repair_completed` | `reopened` | ผู้แจ้ง/Supervisor | ระบุเหตุผลที่ไม่ผ่าน |
+| `reopened` | `in_progress` | ช่างที่ได้รับมอบหมาย | เปิด labor/downtime รอบใหม่ |
+
+ห้ามข้ามสถานะด้วยการ update ตารางโดยตรง ทุก transition ต้องผ่าน domain service/RPC และสร้าง status history เสมอ
+
+### Dashboard และ KPI
+
+- Open, Assigned, In Progress, Waiting Parts, Overdue และ Reopened jobs
+- Mean Time to Acknowledge (MTTA), Mean Time to Repair (MTTR) และ downtime
+- Planned vs Unplanned Maintenance
+- PM compliance และงาน PM เกินกำหนด
+- Repeat failure แยกตาม asset/cause
+- ค่าแรง อะไหล่ และค่าใช้จ่ายต่อเครื่องจักร
+
+### เกณฑ์ผ่าน Phase 2
+
+- Work Order เชื่อมกลับไปยัง request และ asset ได้ทุกใบ
+- SLA/overdue คำนวณจากเวลาที่บันทึกจริงและรองรับ on-hold policy
+- ช่างเห็นเฉพาะงานในขอบเขตที่รับผิดชอบ และ Supervisor มองเห็นภาพรวมของหน่วยงาน
+- ประวัติ asset แสดง request, work order, downtime, parts และ cost ครบ
+- PM schedule สร้างงานได้แบบ idempotent และไม่สร้างซ้ำเมื่อ worker retry
+- Dashboard KPI ตรงกับข้อมูลดิบที่ตรวจสอบย้อนหลังได้
+
+## Phase 3–8 — Workflow ระดับโมดูล
+
+### Phase 3 — HR Request
+
+```text
+Employee → Supervisor → HR Review → Management (ตามประเภท) → HR Complete
+```
+
+เริ่มจากลางาน อบรมภายนอก ขอว่าจ้าง เปลี่ยนตำแหน่ง ลาออก และการประเมิน โดยยังไม่รวม Payroll ข้อมูล HR ต้องมี permission แยกจากคำร้องทั่วไปและกำหนด retention/audit ที่เข้มกว่า
+
+### Phase 4 — Procurement
+
+```text
+PR → Budget/Approval Limit → Procurement Review → RFQ
+   → Price Comparison → Approval → PO Reference → Receiving Status → Complete
+```
+
+หาก PO อยู่ใน I-Prime ให้เก็บ reference และ sync status แทนการสร้าง PO ซ้ำ โดย integration ต้องมี external ID, last sync time และ reconciliation report
+
+### Phase 5 — Stock / Material
+
+```text
+Material Request → Approve → Reserve → Issue
+   ├─ Return
+   ├─ Transfer
+   └─ Adjustment (ต้องอนุมัติ)
+```
+
+ทุก movement ต้องเป็น immutable ledger การแก้ยอดทำผ่าน reversal/adjustment ไม่แก้ transaction เดิม และคำนวณ balance จาก movement ที่ตรวจสอบย้อนกลับได้
+
+### Phase 6 — Production Tracking
+
+```text
+Customer Order → Production Order → Routing
+   → RB/GR/PT/BG/PK → Partial Completion → Finished
+```
+
+เก็บ plan/actual/reject quantity, start/finish, WIP และ delay reason รองรับ partial completion โดยห้ามให้ actual good + reject เกินปริมาณที่รายงานเข้าขั้นตอน
+
+### Phase 7 — QA / NCR / CAR
+
+```text
+Incoming/In-process/Finished Inspection
+   ├─ Pass → ขั้นตอนถัดไป
+   └─ Fail → NCR → Containment → Root Cause → CAR
+                → Effectiveness Check → Close
+```
+
+ผลตรวจต้องอ้างอิง lot/order/asset ที่ตรวจ NCR และ CAR ต้องมี owner, due date, evidence และการตรวจประสิทธิผลก่อนปิด
+
+### Phase 8 — Document Control
+
+```text
+Draft → Review → Approve → Effective
+   ↓ revision ใหม่
+Superseded/Obsolete → เก็บเพื่อ Audit แต่ผู้ใช้ทั่วไปเปิดไม่ได้
+```
+
+ควบคุม Document Code, revision, owner, effective date, distribution และ retention พนักงานเห็นเฉพาะ revision ที่ effective ตามหน่วยงาน/สิทธิ์ ส่วน Document Controller และ Auditor ดูประวัติได้
+
+## กติกาการเริ่ม Phase ใหม่
+
+ก่อนเริ่ม Phase ถัดไปต้องผ่าน Quality Gate ต่อไปนี้:
+
+1. Scope และ process owner ลงนามรับรอง workflow/to-be process
+2. Master data owner และแหล่งข้อมูลหลักถูกระบุชัดเจน
+3. Permission matrix และกรณี segregation of duties ผ่านการทบทวน
+4. Migration, rollback, backup และ reconciliation plan พร้อม
+5. Automated test ครอบคลุม happy path, deny path, retry และ concurrent update
+6. UAT ผ่านด้วยบัญชีจริงอย่างน้อยหนึ่งคนต่อบทบาท
+7. Dashboard/KPI มีนิยามเดียวกับฝ่ายงานและตรวจย้อนกลับถึง transaction ได้
+8. มี runbook, owner หลัง go-live และแผนเก็บ feedback รอบถัดไป
+
+Roadmap นี้เป็นลำดับเชิง dependency ไม่ใช่ข้อบังคับว่าต้องเปิดทุกโมดูล หาก Phase ใดไม่มี process owner หรือ master data พร้อม ให้ชะลอ Phase นั้นและเลือกงานย่อยที่ใช้แกนเดิมได้โดยไม่สร้างข้อมูลซ้ำหรือ workflow คู่ขนาน
