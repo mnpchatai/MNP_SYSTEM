@@ -721,13 +721,16 @@ async function renderNotifications() {
 
 function renderProfile() {
   const employee = state.employee;
+  const isAccountManager = employee.role?.code === "admin";
   const content = `
     <div class="page-heading"><div><div class="eyebrow">My account</div><h1>ข้อมูลส่วนตัว</h1><p>ข้อมูลที่ใช้กำหนดบทบาทและสิทธิ์ในระบบ</p></div></div>
     <section class="card" style="max-width:780px"><div style="display:flex;align-items:center;gap:13px;margin-bottom:20px"><div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div><div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงาน")}</span></div></div><div class="profile-grid"><div class="profile-row"><span>รหัสพนักงาน</span><strong>${escapeHtml(employee.employee_no)}</strong></div><div class="profile-row"><span>ตำแหน่ง</span><strong>${escapeHtml(employee.job_title ?? "—")}</strong></div><div class="profile-row"><span>ตำแหน่งในแผนก</span><strong>${escapeHtml(positionLabels[employee.position_level] ?? "—")}</strong></div><div class="profile-row"><span>หน่วยงาน</span><strong>${escapeHtml(employee.department?.name_th ?? "—")}</strong></div><div class="profile-row"><span>บทบาท</span><strong>${escapeHtml(employee.role?.name_th ?? "—")}</strong></div></div><div class="pilot-note">บัญชีนี้อยู่ในระบบ Pilot Web การอนุมัติและการเปลี่ยนสถานะถูกตรวจสอบสิทธิ์ที่ฐานข้อมูลทุกครั้ง</div></section>
 
     <section class="card" style="max-width:780px">
-      <h2>ขอแก้ไข ID / รหัสผ่าน</h2>
-      <p class="muted small">คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ</p>
+      <h2>${isAccountManager ? "แก้ไข ID / รหัสผ่านของฉัน" : "ขอแก้ไข ID / รหัสผ่าน"}</h2>
+      <p class="muted small">${isAccountManager
+        ? "บัญชีผู้ดูแลระบบเป็นผู้อนุมัติเอง ระบบจึงบันทึกและอนุมัติให้ทันทีในขั้นตอนเดียว พร้อมเก็บประวัติไว้ในคำร้องและ audit log ตามปกติ"
+        : "คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ"}</p>
       <div id="credential-message"></div>
       <form id="credential-form">
         <div class="field"><label for="new-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
@@ -736,7 +739,7 @@ function renderProfile() {
           <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
         </div>
         <div class="field"><label for="credential-reason">เหตุผล (ถ้ามี)</label><textarea class="textarea" id="credential-reason" name="reason" maxlength="1000"></textarea></div>
-        <div class="form-actions"><button class="btn" type="submit">ส่งคำร้องให้ผู้ดูแลอนุมัติ</button></div>
+        <div class="form-actions"><button class="btn" type="submit">${isAccountManager ? "บันทึกการแก้ไขทันที" : "ส่งคำร้องให้ผู้ดูแลอนุมัติ"}</button></div>
       </form>
     </section>`;
   app.innerHTML = shell(content, "profile", "ข้อมูลส่วนตัว");
@@ -754,21 +757,47 @@ async function handleCredentialChangeSubmit(event) {
     message.innerHTML = `<div class="form-message error">รหัสผ่านทั้งสองช่องไม่ตรงกัน</div>`;
     return;
   }
+  const isAccountManager = state.employee.role?.code === "admin";
   setFormBusy(form, true);
   message.innerHTML = "";
-  const { error } = await sb.rpc("app_request_credential_change", {
+  const { data: requestId, error } = await sb.rpc("app_request_credential_change", {
     p_employee_no: String(values.get("employee_no") ?? "").trim().toUpperCase(),
     p_password: password,
     p_reason: String(values.get("reason") ?? ""),
   });
-  setFormBusy(form, false);
   if (error) {
+    setFormBusy(form, false);
     message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
     return;
   }
-  form.reset();
-  message.innerHTML = `<div class="form-message success">ส่งคำร้องแล้ว รอผู้ดูแลระบบอนุมัติ</div>`;
-  showToast("ส่งคำร้องขอแก้ไข ID/รหัสผ่านแล้ว");
+
+  if (!isAccountManager) {
+    setFormBusy(form, false);
+    form.reset();
+    message.innerHTML = `<div class="form-message success">ส่งคำร้องแล้ว รอผู้ดูแลระบบอนุมัติ</div>`;
+    showToast("ส่งคำร้องขอแก้ไข ID/รหัสผ่านแล้ว");
+    return;
+  }
+
+  // ผู้ดูแลระบบเป็นผู้อนุมัติอยู่แล้ว จึงอนุมัติคำร้องของตนเองต่อทันที
+  // ใช้เส้นทางเดียวกับการอนุมัติคำร้องของผู้อื่น สิทธิ์จึงถูกตรวจที่ฐานข้อมูลเหมือนกัน
+  try {
+    const { data: sessionData } = await sb.auth.getSession();
+    await callPilotAuth(
+      { action: "approve_account_request", requestId, roleId: "" },
+      sessionData.session?.access_token,
+    );
+  } catch (approveError) {
+    setFormBusy(form, false);
+    message.innerHTML = `<div class="form-message error">บันทึกคำร้องแล้วแต่ยังเปลี่ยนไม่สำเร็จ: ${escapeHtml(friendlyError(approveError))} · คำร้องยังค้างอยู่ที่หน้าผู้ดูแลระบบและกดอนุมัติซ้ำได้</div>`;
+    return;
+  }
+
+  await loadEmployee();
+  showToast("แก้ไข ID/รหัสผ่านเรียบร้อย");
+  renderProfile();
+  document.querySelector("#credential-message").innerHTML =
+    `<div class="form-message success">แก้ไขเรียบร้อยแล้ว ครั้งถัดไปให้เข้าสู่ระบบด้วย ID และรหัสผ่านใหม่</div>`;
 }
 
 async function renderAdmin(params) {
@@ -817,16 +846,22 @@ async function renderAdmin(params) {
         </div>` : `<p class="muted small">${escapeHtml(item.reviewed_by_name ? `ดำเนินการโดย ${item.reviewed_by_name}` : "ดำเนินการแล้ว")}${item.reviewed_at ? ` · ${formatDate(item.reviewed_at, true)}` : ""}${item.review_note ? ` · ${escapeHtml(item.review_note)}` : ""}</p>`}
     </article>`).join("") || `<div class="empty">ยังไม่มีคำร้องเกี่ยวกับบัญชี</div>`;
 
-  const credentialRows = credentials.map((item) => `
+  const credentialRows = credentials.map((item) => {
+    const isSelf = item.employee_id === state.employee.id;
+    return `
     <tr>
       <td><span class="request-no">${escapeHtml(item.employee_no)}</span></td>
-      <td>${escapeHtml(item.full_name)}</td>
+      <td>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}</td>
       <td>${escapeHtml(item.department_code ?? "—")}</td>
       <td>${escapeHtml(item.role_code ?? "—")}</td>
       <td><code data-password-cell="${escapeHtml(item.employee_id)}">${item.has_password ? "••••••••" : "ยังไม่มีบันทึกไว้"}</code></td>
       <td>${item.updated_at ? formatDate(item.updated_at, true) : "—"}</td>
-      <td>${item.has_password ? `<button class="btn secondary small" data-reveal="${escapeHtml(item.employee_id)}">แสดง</button>` : ""}</td>
-    </tr>`).join("") || `<tr><td colspan="7" class="muted small">ยังไม่มีข้อมูล</td></tr>`;
+      <td>${[
+        item.has_password ? `<button class="btn secondary small" data-reveal="${escapeHtml(item.employee_id)}">แสดง</button>` : "",
+        isSelf ? `<a class="btn secondary small" href="#/profile">แก้ไข</a>` : "",
+      ].filter(Boolean).join(" ")}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" class="muted small">ยังไม่มีข้อมูล</td></tr>`;
 
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Administration</div><h1>ผู้ดูแลระบบ</h1><p>อนุมัติคำร้องเปิดบัญชี กำหนดสิทธิ์ และค้นคืน ID/รหัสผ่านที่ออกให้</p></div></div>
@@ -836,7 +871,7 @@ async function renderAdmin(params) {
     </div>
     ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : `
       <section class="card">
-        <p class="muted small">รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้ผู้ใช้ส่งคำร้องขอแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
+        <p class="muted small">ตารางนี้แสดงพนักงานทุกบัญชีรวมถึงบัญชีผู้ดูแลระบบและบัญชีของคุณเอง รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้เจ้าของบัญชีแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
         <div class="table-wrap"><table>
           <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
           <tbody>${credentialRows}</tbody>
