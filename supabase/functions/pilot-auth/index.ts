@@ -37,8 +37,14 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+const positionLevels = new Set(["department_head", "assistant_head", "staff"]);
+
 function validEmployeeNo(value: unknown): value is string {
   return typeof value === "string" && /^[A-Z0-9][A-Z0-9.-]{2,31}$/.test(value);
+}
+
+function cleanText(value: unknown, max: number) {
+  return String(value ?? "").trim().slice(0, max);
 }
 
 Deno.serve(async (request) => {
@@ -54,17 +60,26 @@ Deno.serve(async (request) => {
     return response(request, { error: "ORIGIN_NOT_ALLOWED" }, 403);
   }
 
-  let body: { action?: string; employeeNo?: string; password?: string; inviteCode?: string };
+  let body: {
+    action?: string;
+    employeeNo?: string;
+    password?: string;
+    inviteCode?: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    departmentId?: string;
+    positionLevel?: string;
+    jobTitle?: string;
+    reason?: string;
+    requestId?: string;
+    roleId?: string;
+  };
   try {
     body = await request.json();
   } catch {
     return response(request, { error: "INVALID_JSON" }, 400);
-  }
-
-  const employeeNo = String(body.employeeNo ?? "").trim().toUpperCase();
-  const password = String(body.password ?? "");
-  if (!validEmployeeNo(employeeNo) || password.length < 8 || password.length > 72) {
-    return response(request, { error: "INVALID_CREDENTIALS" }, 400);
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -80,6 +95,197 @@ Deno.serve(async (request) => {
   const authClient = createClient(supabaseUrl, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+
+  // แผนกและบทบาทสำหรับฟอร์มขอเปิดบัญชี ซึ่งเรียกก่อนมี session จึงอ่านผ่าน service role
+  if (body.action === "directory") {
+    const [departments, roles] = await Promise.all([
+      admin.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
+      admin.from("roles").select("id,code,name_th").order("code"),
+    ]);
+    if (departments.error || roles.error) {
+      return response(request, { error: "DIRECTORY_UNAVAILABLE" }, 500);
+    }
+    return response(request, { departments: departments.data, roles: roles.data });
+  }
+
+  // คำร้องขอเปิดบัญชีใหม่ ส่งได้โดยยังไม่มีบัญชี ระบบเพียงรับเรื่องไว้รอ Admin อนุมัติ
+  if (body.action === "account_request") {
+    const requestedNo = String(body.employeeNo ?? "").trim().toUpperCase();
+    const requestedPassword = String(body.password ?? "");
+    const firstName = cleanText(body.firstName, 100);
+    const lastName = cleanText(body.lastName, 100);
+    const departmentId = cleanText(body.departmentId, 64);
+    const positionLevel = cleanText(body.positionLevel, 32);
+
+    if (!validEmployeeNo(requestedNo)) {
+      return response(request, { error: "INVALID_EMPLOYEE_NO" }, 400);
+    }
+    if (requestedPassword.length < 8 || requestedPassword.length > 72) {
+      return response(request, { error: "INVALID_PASSWORD" }, 400);
+    }
+    if (!firstName || !lastName) {
+      return response(request, { error: "INVALID_NAME" }, 400);
+    }
+    if (!positionLevels.has(positionLevel)) {
+      return response(request, { error: "INVALID_POSITION" }, 400);
+    }
+
+    const { data: department } = await admin
+      .from("departments")
+      .select("id")
+      .eq("id", departmentId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!department) {
+      return response(request, { error: "DEPARTMENT_NOT_FOUND" }, 400);
+    }
+
+    const { data: existing } = await admin
+      .from("employees")
+      .select("id")
+      .eq("employee_no", requestedNo)
+      .maybeSingle();
+    if (existing) {
+      return response(request, { error: "EMPLOYEE_NO_TAKEN" }, 409);
+    }
+
+    const { data: pending } = await admin
+      .from("account_requests")
+      .select("id")
+      .eq("employee_no", requestedNo)
+      .eq("status", "pending")
+      .maybeSingle();
+    if (pending) {
+      return response(request, { error: "REQUEST_ALREADY_PENDING" }, 409);
+    }
+
+    const { data: created, error: insertError } = await admin
+      .from("account_requests")
+      .insert({
+        kind: "new_account",
+        employee_no: requestedNo,
+        first_name: firstName,
+        last_name: lastName,
+        email: cleanText(body.email, 200) || null,
+        phone: cleanText(body.phone, 40) || null,
+        department_id: department.id,
+        position_level: positionLevel,
+        job_title: cleanText(body.jobTitle, 120) || null,
+        desired_password: requestedPassword,
+        reason: cleanText(body.reason, 1000) || null,
+      })
+      .select("id")
+      .single();
+    if (insertError || !created) {
+      return response(request, { error: "REQUEST_CREATE_FAILED" }, 400);
+    }
+
+    const { data: permission } = await admin
+      .from("permissions")
+      .select("id")
+      .eq("code", "accounts.manage")
+      .maybeSingle();
+    const { data: adminRoles } = permission
+      ? await admin.from("role_permissions").select("role_id").eq("permission_id", permission.id)
+      : { data: [] };
+    const roleIds = (adminRoles ?? []).map((row: { role_id: string }) => row.role_id);
+    const { data: admins } = roleIds.length
+      ? await admin.from("employees").select("id").in("role_id", roleIds).eq("is_active", true)
+      : { data: [] };
+    const recipients = (admins ?? []).map((row: { id: string }) => row.id);
+    if (recipients.length) {
+      await admin.from("notifications").insert(recipients.map((recipientId: string) => ({
+        recipient_id: recipientId,
+        title: "มีคำร้องขอเปิดบัญชีใหม่",
+        body: `${requestedNo} · ${firstName} ${lastName}`,
+        action_url: "/admin",
+      })));
+    }
+
+    return response(request, { requestId: created.id });
+  }
+
+  // Admin อนุมัติคำร้อง สิทธิ์ถูกตรวจซ้ำในฐานข้อมูลผ่าน app_apply_account_request
+  if (body.action === "approve_account_request") {
+    const token = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) {
+      return response(request, { error: "AUTH_REQUIRED" }, 401);
+    }
+    const { data: caller, error: callerError } = await admin.auth.getUser(token);
+    if (callerError || !caller.user) {
+      return response(request, { error: "AUTH_REQUIRED" }, 401);
+    }
+
+    const requestId = cleanText(body.requestId, 64);
+    const { data: accountRequest } = await admin
+      .from("account_requests")
+      .select("id,kind,status,employee_id,employee_no,email,desired_password")
+      .eq("id", requestId)
+      .maybeSingle();
+    if (!accountRequest || accountRequest.status !== "pending") {
+      return response(request, { error: "REQUEST_NOT_PENDING" }, 409);
+    }
+    if (!accountRequest.desired_password) {
+      return response(request, { error: "PASSWORD_MISSING" }, 409);
+    }
+
+    const userClient = createClient(supabaseUrl, anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    let createdUserId: string | null = null;
+    if (accountRequest.kind === "new_account") {
+      const email = String(accountRequest.email ?? "").trim() ||
+        `${accountRequest.employee_no.toLowerCase()}@pilot.mnp.local`;
+      const { data: created, error: createError } = await admin.auth.admin.createUser({
+        email,
+        password: accountRequest.desired_password,
+        email_confirm: true,
+        user_metadata: { employee_no: accountRequest.employee_no, pilot: true },
+      });
+      if (createError || !created.user) {
+        return response(request, { error: "ACCOUNT_CREATE_FAILED" }, 400);
+      }
+      createdUserId = created.user.id;
+    } else {
+      const { data: employee } = await admin
+        .from("employees")
+        .select("auth_user_id")
+        .eq("id", accountRequest.employee_id)
+        .maybeSingle();
+      if (!employee?.auth_user_id) {
+        return response(request, { error: "EMPLOYEE_NOT_FOUND" }, 404);
+      }
+      // เปลี่ยนรหัสผ่านก่อน แล้วจึงบันทึกผลลงฐานข้อมูล ถ้าขั้นบันทึกล้มเหลว คำร้องยัง
+      // ค้างอยู่และกดอนุมัติซ้ำได้ ผลลัพธ์สุดท้ายจึงตรงกันเสมอ
+      const { error: updateError } = await admin.auth.admin.updateUserById(employee.auth_user_id, {
+        password: accountRequest.desired_password,
+      });
+      if (updateError) {
+        return response(request, { error: "PASSWORD_UPDATE_FAILED" }, 400);
+      }
+    }
+
+    const { data: employeeId, error: applyError } = await userClient.rpc("app_apply_account_request", {
+      p_request_id: accountRequest.id,
+      p_auth_user_id: createdUserId,
+      p_role_id: cleanText(body.roleId, 64) || null,
+    });
+    if (applyError) {
+      if (createdUserId) await admin.auth.admin.deleteUser(createdUserId);
+      const code = applyError.message?.includes("NOT_AUTHORIZED") ? 403 : 400;
+      return response(request, { error: applyError.message ?? "APPLY_FAILED" }, code);
+    }
+
+    return response(request, { employeeId });
+  }
+
+  const employeeNo = String(body.employeeNo ?? "").trim().toUpperCase();
+  const password = String(body.password ?? "");
+  if (!validEmployeeNo(employeeNo) || password.length < 8 || password.length > 72) {
+    return response(request, { error: "INVALID_CREDENTIALS" }, 400);
+  }
 
   if (body.action === "register") {
     const expectedHash = inviteHashes[employeeNo];

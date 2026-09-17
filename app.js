@@ -9,7 +9,22 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 
 const app = document.querySelector("#app");
 const toastNode = document.querySelector("#toast");
-const state = { session: null, employee: null, unread: 0, authMode: "login" };
+const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests" };
+
+const positionLabels = {
+  department_head: "หัวหน้าแผนก",
+  assistant_head: "ผู้ช่วยหัวหน้าแผนก",
+  staff: "พนักงานทั่วไป",
+};
+const accountRequestKindLabels = {
+  new_account: "ขอเปิดบัญชี",
+  credential_change: "ขอแก้ไข ID/รหัสผ่าน",
+};
+const accountRequestStatusLabels = {
+  pending: "รออนุมัติ",
+  approved: "อนุมัติแล้ว",
+  rejected: "ไม่อนุมัติ",
+};
 
 const statusLabels = {
   draft: "ฉบับร่าง",
@@ -148,29 +163,79 @@ function toggleTheme() {
   localStorage.setItem("mnp-theme", next);
 }
 
-async function callPilotAuth(payload) {
+const pilotAuthMessages = {
+  INVALID_CREDENTIALS: "รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง",
+  INVALID_INVITE: "Invite code ไม่ถูกต้องหรือไม่ตรงกับรหัสพนักงาน",
+  EMPLOYEE_NOT_FOUND: "ไม่พบรหัสพนักงานนี้ในระบบ",
+  ACCOUNT_ALREADY_REGISTERED: "บัญชีนี้ลงทะเบียนแล้ว กรุณาเข้าสู่ระบบ",
+  ACCOUNT_CREATE_FAILED: "สร้างบัญชีไม่สำเร็จ โปรดลองรหัสผ่านอื่น",
+  ACCOUNT_LINK_FAILED: "ไม่สามารถผูกบัญชีกับพนักงานได้",
+  INVALID_EMPLOYEE_NO: "รหัสพนักงานต้องเป็นตัวอักษรภาษาอังกฤษหรือตัวเลข 3–32 ตัว",
+  INVALID_PASSWORD: "รหัสผ่านต้องมี 8–72 ตัวอักษร",
+  INVALID_NAME: "กรุณากรอกชื่อและนามสกุล",
+  INVALID_POSITION: "กรุณาเลือกตำแหน่งในแผนก",
+  DEPARTMENT_NOT_FOUND: "ไม่พบแผนกที่เลือก",
+  EMPLOYEE_NO_TAKEN: "รหัสพนักงานนี้ถูกใช้แล้ว",
+  REQUEST_ALREADY_PENDING: "มีคำร้องของรหัสพนักงานนี้รออนุมัติอยู่แล้ว",
+  REQUEST_CREATE_FAILED: "ส่งคำร้องไม่สำเร็จ กรุณาลองใหม่",
+  REQUEST_NOT_PENDING: "คำร้องนี้ถูกดำเนินการไปแล้ว",
+  PASSWORD_MISSING: "คำร้องนี้ไม่มีรหัสผ่านให้ตั้งค่า กรุณาให้ผู้ใช้ส่งคำร้องใหม่",
+  PASSWORD_UPDATE_FAILED: "เปลี่ยนรหัสผ่านไม่สำเร็จ",
+  NOT_AUTHORIZED: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ",
+  AUTH_REQUIRED: "กรุณาเข้าสู่ระบบใหม่",
+  DIRECTORY_UNAVAILABLE: "โหลดข้อมูลแผนกไม่สำเร็จ",
+};
+
+async function callPilotAuth(payload, accessToken) {
+  const headers = { "Content-Type": "application/json", apikey: SUPABASE_PUBLISHABLE_KEY };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   const response = await fetch(PILOT_AUTH_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_PUBLISHABLE_KEY },
+    headers,
     body: JSON.stringify(payload),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const messages = {
-      INVALID_CREDENTIALS: "รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง",
-      INVALID_INVITE: "Invite code ไม่ถูกต้องหรือไม่ตรงกับรหัสพนักงาน",
-      EMPLOYEE_NOT_FOUND: "ไม่พบรหัสพนักงานสำหรับทดสอบ",
-      ACCOUNT_ALREADY_REGISTERED: "บัญชีนี้ลงทะเบียนแล้ว กรุณาเข้าสู่ระบบ",
-      ACCOUNT_CREATE_FAILED: "สร้างบัญชีไม่สำเร็จ โปรดลองรหัสผ่านอื่น",
-      ACCOUNT_LINK_FAILED: "ไม่สามารถผูกบัญชีกับพนักงานได้",
-    };
-    throw new Error(messages[result.error] ?? "เชื่อมต่อระบบยืนยันตัวตนไม่สำเร็จ");
+    const code = String(result.error ?? "");
+    const known = Object.keys(pilotAuthMessages).find((key) => code.includes(key));
+    throw new Error(known ? pilotAuthMessages[known] : "เชื่อมต่อระบบยืนยันตัวตนไม่สำเร็จ");
   }
   return result;
 }
 
-function renderAuth() {
-  const isRegister = state.authMode === "register";
+async function loadDirectory() {
+  if (state.directory) return state.directory;
+  state.directory = await callPilotAuth({ action: "directory" });
+  return state.directory;
+}
+
+async function renderAuth(message = "") {
+  const isRequest = state.authMode === "request";
+  let directoryError = "";
+  if (isRequest && !state.directory) {
+    try {
+      await loadDirectory();
+    } catch (error) {
+      directoryError = friendlyError(error);
+    }
+  }
+  const departments = state.directory?.departments ?? [];
+
+  const requestFields = `
+    <div class="field-row">
+      <div class="field"><label for="first-name">ชื่อ</label><input class="input" id="first-name" name="first_name" maxlength="100" required></div>
+      <div class="field"><label for="last-name">นามสกุล</label><input class="input" id="last-name" name="last_name" maxlength="100" required></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="department">แผนก</label><select class="input" id="department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
+      <div class="field"><label for="position-level">ตำแหน่งในแผนก</label><select class="input" id="position-level" name="position_level" required><option value="">เลือกตำแหน่ง</option>${Object.entries(positionLabels).map(([value, label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
+    </div>
+    <div class="field"><label for="job-title">ชื่อตำแหน่งงาน (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
+    <div class="field-row">
+      <div class="field"><label for="email">อีเมล (ถ้ามี)</label><input class="input" id="email" name="email" type="email" maxlength="200"></div>
+      <div class="field"><label for="phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="phone" name="phone" maxlength="40"></div>
+    </div>`;
+
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-aside">
@@ -186,18 +251,19 @@ function renderAuth() {
         <div class="theme-button">${themeButton()}</div>
         <div class="auth-card">
           <div class="auth-tabs">
-            <button type="button" data-auth-mode="login" class="${isRegister ? "" : "active"}">เข้าสู่ระบบ</button>
-            <button type="button" data-auth-mode="register" class="${isRegister ? "active" : ""}">เปิดบัญชีทดสอบ</button>
+            <button type="button" data-auth-mode="login" class="${isRequest ? "" : "active"}">เข้าสู่ระบบ</button>
+            <button type="button" data-auth-mode="request" class="${isRequest ? "active" : ""}">ขอเปิดบัญชี</button>
           </div>
-          <h2>${isRegister ? "เปิดบัญชีทดสอบ" : "เข้าสู่ระบบพนักงาน"}</h2>
-          <p>${isRegister ? "ใช้รหัสพนักงานและ invite code ที่ได้รับจากผู้ดูแล" : "ใช้รหัสพนักงานและรหัสผ่านของคุณ"}</p>
-          <div id="auth-message"></div>
+          <h2>${isRequest ? "ขอเปิดบัญชีเข้าใช้งาน" : "เข้าสู่ระบบพนักงาน"}</h2>
+          <p>${isRequest ? "กำหนด ID และรหัสผ่านที่ต้องการ ผู้ดูแลระบบจะเป็นผู้อนุมัติสิทธิ์ก่อนใช้งานได้" : "ใช้รหัสพนักงานและรหัสผ่านของคุณ"}</p>
+          <div id="auth-message">${message}${directoryError ? `<div class="form-message error">${escapeHtml(directoryError)}</div>` : ""}</div>
           <form id="auth-form">
-            <div class="field"><label for="employee-no">รหัสพนักงาน</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
-            ${isRegister ? `<div class="field"><label for="invite-code">Invite code</label><input class="input" id="invite-code" name="invite_code" autocomplete="one-time-code" required><small>ใช้ได้เฉพาะรหัสพนักงานทดลองที่กำหนดไว้</small></div>` : ""}
-            <div class="field"><label for="password">รหัสผ่าน</label><input class="input" id="password" name="password" type="password" autocomplete="${isRegister ? "new-password" : "current-password"}" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
-            ${isRegister ? `<div class="field"><label for="confirm-password">ยืนยันรหัสผ่าน</label><input class="input" id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>` : ""}
-            <button class="btn block" type="submit">${isRegister ? "ลงทะเบียนและเข้าสู่ระบบ" : "เข้าสู่ระบบ"}</button>
+            <div class="field"><label for="employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
+            ${isRequest ? requestFields : ""}
+            <div class="field"><label for="password">รหัสผ่าน</label><input class="input" id="password" name="password" type="password" autocomplete="${isRequest ? "new-password" : "current-password"}" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
+            ${isRequest ? `<div class="field"><label for="confirm-password">ยืนยันรหัสผ่าน</label><input class="input" id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+            <div class="field"><label for="reason">เหตุผล/หมายเหตุถึงผู้ดูแล (ถ้ามี)</label><textarea class="textarea" id="reason" name="reason" maxlength="1000"></textarea></div>` : ""}
+            <button class="btn block" type="submit">${isRequest ? "ส่งคำร้องขอเปิดบัญชี" : "เข้าสู่ระบบ"}</button>
           </form>
           <div class="pilot-note"><strong>ระบบ Pilot</strong><br>ข้อมูลที่กรอกจะถูกบันทึกในฐานข้อมูลทดสอบจริง กรุณาอย่าใช้ข้อมูลลับหรือข้อมูลส่วนบุคคลที่ละเอียดอ่อน</div>
         </div>
@@ -209,7 +275,7 @@ function renderAuth() {
     renderAuth();
   }));
   document.querySelector(".theme-toggle").addEventListener("click", toggleTheme);
-  document.querySelector("#auth-form").addEventListener("submit", handleAuthSubmit);
+  document.querySelector("#auth-form").addEventListener("submit", isRequest ? handleAccountRequestSubmit : handleAuthSubmit);
 }
 
 async function handleAuthSubmit(event) {
@@ -219,20 +285,10 @@ async function handleAuthSubmit(event) {
   const values = new FormData(form);
   const employeeNo = String(values.get("employee_no") ?? "").trim().toUpperCase();
   const password = String(values.get("password") ?? "");
-  const isRegister = state.authMode === "register";
-  if (isRegister && password !== String(values.get("confirm_password") ?? "")) {
-    message.innerHTML = `<div class="form-message error">รหัสผ่านทั้งสองช่องไม่ตรงกัน</div>`;
-    return;
-  }
   setFormBusy(form, true);
   message.innerHTML = "";
   try {
-    const tokens = await callPilotAuth({
-      action: isRegister ? "register" : "login",
-      employeeNo,
-      password,
-      ...(isRegister ? { inviteCode: String(values.get("invite_code") ?? "").trim() } : {}),
-    });
+    const tokens = await callPilotAuth({ action: "login", employeeNo, password });
     const { data, error } = await sb.auth.setSession({ access_token: tokens.access_token, refresh_token: tokens.refresh_token });
     if (error) throw error;
     state.session = data.session;
@@ -246,11 +302,45 @@ async function handleAuthSubmit(event) {
   }
 }
 
+async function handleAccountRequestSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#auth-message");
+  const values = new FormData(form);
+  const password = String(values.get("password") ?? "");
+  if (password !== String(values.get("confirm_password") ?? "")) {
+    message.innerHTML = `<div class="form-message error">รหัสผ่านทั้งสองช่องไม่ตรงกัน</div>`;
+    return;
+  }
+  setFormBusy(form, true);
+  message.innerHTML = "";
+  try {
+    await callPilotAuth({
+      action: "account_request",
+      employeeNo: String(values.get("employee_no") ?? "").trim().toUpperCase(),
+      password,
+      firstName: String(values.get("first_name") ?? ""),
+      lastName: String(values.get("last_name") ?? ""),
+      departmentId: String(values.get("department_id") ?? ""),
+      positionLevel: String(values.get("position_level") ?? ""),
+      jobTitle: String(values.get("job_title") ?? ""),
+      email: String(values.get("email") ?? ""),
+      phone: String(values.get("phone") ?? ""),
+      reason: String(values.get("reason") ?? ""),
+    });
+    state.authMode = "login";
+    await renderAuth(`<div class="form-message success">ส่งคำร้องเรียบร้อยแล้ว ผู้ดูแลระบบจะตรวจสอบและอนุมัติสิทธิ์ เมื่ออนุมัติแล้วจึงเข้าสู่ระบบด้วย ID และรหัสผ่านที่กรอกไว้ได้</div>`);
+  } catch (error) {
+    message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
+    setFormBusy(form, false);
+  }
+}
+
 async function loadEmployee() {
   if (!state.session?.user) return null;
   const { data, error } = await sb
     .from("employees")
-    .select("id,employee_no,first_name,last_name,email,job_title,department_id,role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
+    .select("id,employee_no,first_name,last_name,email,job_title,position_level,department_id,role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
     .eq("auth_user_id", state.session.user.id)
     .eq("is_active", true)
     .maybeSingle();
@@ -289,6 +379,7 @@ function shell(content, active, title) {
           ${navLink("approvals", "รออนุมัติ", "✓", active)}
           ${navLink("notifications", "การแจ้งเตือน", "♧", active)}
           <div class="nav-divider"></div>
+          ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", "⚙", active) : ""}
           ${navLink("profile", "ข้อมูลส่วนตัว", "○", active)}
         </nav>
         <div class="nav-spacer"></div>
@@ -319,7 +410,7 @@ function bindShell() {
     state.session = null;
     state.employee = null;
     location.hash = "";
-    renderAuth();
+    await renderAuth();
   });
 }
 
@@ -602,13 +693,20 @@ async function renderApprovals(params) {
   bindShell();
 }
 
+function notificationHref(item) {
+  if (item.request_id) return `#/request?id=${encodeURIComponent(item.request_id)}`;
+  if (item.action_url === "/admin") return "#/admin";
+  if (item.action_url === "/profile") return "#/profile";
+  return "#/notifications";
+}
+
 async function renderNotifications() {
   loadingShell("notifications", "การแจ้งเตือน");
   const { data, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
   if (error) throw error;
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Notifications</div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
-    <div class="stack">${(data ?? []).map((item) => `<a class="notification-item${item.read_at ? "" : " unread"}" href="${item.request_id ? `#/request?id=${encodeURIComponent(item.request_id)}` : "#/notifications"}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></a>`).join("") || `<div class="empty">ยังไม่มีการแจ้งเตือน</div>`}</div>`;
+    <div class="stack">${(data ?? []).map((item) => `<a class="notification-item${item.read_at ? "" : " unread"}" href="${notificationHref(item)}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></a>`).join("") || `<div class="empty">ยังไม่มีการแจ้งเตือน</div>`}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   document.querySelector("#mark-read")?.addEventListener("click", async (event) => {
@@ -625,9 +723,172 @@ function renderProfile() {
   const employee = state.employee;
   const content = `
     <div class="page-heading"><div><div class="eyebrow">My account</div><h1>ข้อมูลส่วนตัว</h1><p>ข้อมูลที่ใช้กำหนดบทบาทและสิทธิ์ในระบบ</p></div></div>
-    <section class="card" style="max-width:780px"><div style="display:flex;align-items:center;gap:13px;margin-bottom:20px"><div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div><div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงาน")}</span></div></div><div class="profile-grid"><div class="profile-row"><span>รหัสพนักงาน</span><strong>${escapeHtml(employee.employee_no)}</strong></div><div class="profile-row"><span>ตำแหน่ง</span><strong>${escapeHtml(employee.job_title ?? "—")}</strong></div><div class="profile-row"><span>หน่วยงาน</span><strong>${escapeHtml(employee.department?.name_th ?? "—")}</strong></div><div class="profile-row"><span>บทบาท</span><strong>${escapeHtml(employee.role?.name_th ?? "—")}</strong></div></div><div class="pilot-note">บัญชีนี้อยู่ในระบบ Pilot Web การอนุมัติและการเปลี่ยนสถานะถูกตรวจสอบสิทธิ์ที่ฐานข้อมูลทุกครั้ง</div></section>`;
+    <section class="card" style="max-width:780px"><div style="display:flex;align-items:center;gap:13px;margin-bottom:20px"><div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div><div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงาน")}</span></div></div><div class="profile-grid"><div class="profile-row"><span>รหัสพนักงาน</span><strong>${escapeHtml(employee.employee_no)}</strong></div><div class="profile-row"><span>ตำแหน่ง</span><strong>${escapeHtml(employee.job_title ?? "—")}</strong></div><div class="profile-row"><span>ตำแหน่งในแผนก</span><strong>${escapeHtml(positionLabels[employee.position_level] ?? "—")}</strong></div><div class="profile-row"><span>หน่วยงาน</span><strong>${escapeHtml(employee.department?.name_th ?? "—")}</strong></div><div class="profile-row"><span>บทบาท</span><strong>${escapeHtml(employee.role?.name_th ?? "—")}</strong></div></div><div class="pilot-note">บัญชีนี้อยู่ในระบบ Pilot Web การอนุมัติและการเปลี่ยนสถานะถูกตรวจสอบสิทธิ์ที่ฐานข้อมูลทุกครั้ง</div></section>
+
+    <section class="card" style="max-width:780px">
+      <h2>ขอแก้ไข ID / รหัสผ่าน</h2>
+      <p class="muted small">คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ</p>
+      <div id="credential-message"></div>
+      <form id="credential-form">
+        <div class="field"><label for="new-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
+        <div class="field-row">
+          <div class="field"><label for="new-password">รหัสผ่านใหม่</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+          <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+        </div>
+        <div class="field"><label for="credential-reason">เหตุผล (ถ้ามี)</label><textarea class="textarea" id="credential-reason" name="reason" maxlength="1000"></textarea></div>
+        <div class="form-actions"><button class="btn" type="submit">ส่งคำร้องให้ผู้ดูแลอนุมัติ</button></div>
+      </form>
+    </section>`;
   app.innerHTML = shell(content, "profile", "ข้อมูลส่วนตัว");
   bindShell();
+  document.querySelector("#credential-form").addEventListener("submit", handleCredentialChangeSubmit);
+}
+
+async function handleCredentialChangeSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#credential-message");
+  const values = new FormData(form);
+  const password = String(values.get("password") ?? "");
+  if (password !== String(values.get("confirm_password") ?? "")) {
+    message.innerHTML = `<div class="form-message error">รหัสผ่านทั้งสองช่องไม่ตรงกัน</div>`;
+    return;
+  }
+  setFormBusy(form, true);
+  message.innerHTML = "";
+  const { error } = await sb.rpc("app_request_credential_change", {
+    p_employee_no: String(values.get("employee_no") ?? "").trim().toUpperCase(),
+    p_password: password,
+    p_reason: String(values.get("reason") ?? ""),
+  });
+  setFormBusy(form, false);
+  if (error) {
+    message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
+    return;
+  }
+  form.reset();
+  message.innerHTML = `<div class="form-message success">ส่งคำร้องแล้ว รอผู้ดูแลระบบอนุมัติ</div>`;
+  showToast("ส่งคำร้องขอแก้ไข ID/รหัสผ่านแล้ว");
+}
+
+async function renderAdmin(params) {
+  if (state.employee.role?.code !== "admin") return renderNotFound("หน้านี้สำหรับผู้ดูแลระบบเท่านั้น");
+  const tab = params.get("tab") === "credentials" ? "credentials" : "requests";
+  state.adminTab = tab;
+  loadingShell("admin", "ผู้ดูแลระบบ");
+
+  const [requestsResult, credentialsResult, rolesResult] = await Promise.all([
+    sb.rpc("app_list_account_requests", { p_status: null }),
+    sb.rpc("app_list_credentials"),
+    sb.from("roles").select("id,code,name_th").order("code"),
+  ]);
+  if (requestsResult.error) throw requestsResult.error;
+  if (credentialsResult.error) throw credentialsResult.error;
+  if (rolesResult.error) throw rolesResult.error;
+  const requests = requestsResult.data ?? [];
+  const credentials = credentialsResult.data ?? [];
+  const roles = rolesResult.data ?? [];
+  const pendingCount = requests.filter((item) => item.status === "pending").length;
+
+  const statusBadgeClass = { pending: "pending_approval", approved: "approved", rejected: "rejected" };
+  const requestCards = requests.map((item) => `
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <span class="request-no">${escapeHtml(item.employee_no)}</span>
+          <h3>${escapeHtml(item.first_name)} ${escapeHtml(item.last_name)}</h3>
+          <p class="muted small">${escapeHtml(accountRequestKindLabels[item.kind] ?? item.kind)} · ${formatDate(item.created_at, true)}</p>
+        </div>
+        <span class="badge ${statusBadgeClass[item.status] ?? ""}">${escapeHtml(accountRequestStatusLabels[item.status] ?? item.status)}</span>
+      </div>
+      <dl class="definition-grid">
+        <div class="definition"><dt>แผนก</dt><dd>${escapeHtml(item.department_code ?? "—")}</dd></div>
+        <div class="definition"><dt>ตำแหน่งในแผนก</dt><dd>${escapeHtml(positionLabels[item.position_level] ?? "—")}</dd></div>
+        <div class="definition"><dt>ชื่อตำแหน่งงาน</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
+        <div class="definition"><dt>ติดต่อ</dt><dd>${escapeHtml(item.phone ?? item.email ?? "—")}</dd></div>
+      </dl>
+      ${item.reason ? `<p class="description">${escapeHtml(item.reason)}</p>` : ""}
+      ${item.status === "pending" ? `
+        <div class="field" style="margin-top:14px"><label for="role-${escapeHtml(item.id)}">สิทธิ์ที่ให้</label><select class="input" id="role-${escapeHtml(item.id)}" data-role-select="${escapeHtml(item.id)}"><option value="">ใช้ค่าตั้งต้นตามตำแหน่ง</option>${roles.map((role) => `<option value="${escapeHtml(role.id)}">${escapeHtml(role.name_th ?? role.code)}</option>`).join("")}</select></div>
+        <div class="field"><label for="note-${escapeHtml(item.id)}">หมายเหตุเมื่อไม่อนุมัติ</label><input class="input" id="note-${escapeHtml(item.id)}" data-note-input="${escapeHtml(item.id)}" maxlength="1000"></div>
+        <div class="approval-actions">
+          <button class="btn success" data-approve="${escapeHtml(item.id)}">อนุมัติและสร้างสิทธิ์</button>
+          <button class="btn danger" data-reject="${escapeHtml(item.id)}">ไม่อนุมัติ</button>
+        </div>` : `<p class="muted small">${escapeHtml(item.reviewed_by_name ? `ดำเนินการโดย ${item.reviewed_by_name}` : "ดำเนินการแล้ว")}${item.reviewed_at ? ` · ${formatDate(item.reviewed_at, true)}` : ""}${item.review_note ? ` · ${escapeHtml(item.review_note)}` : ""}</p>`}
+    </article>`).join("") || `<div class="empty">ยังไม่มีคำร้องเกี่ยวกับบัญชี</div>`;
+
+  const credentialRows = credentials.map((item) => `
+    <tr>
+      <td><span class="request-no">${escapeHtml(item.employee_no)}</span></td>
+      <td>${escapeHtml(item.full_name)}</td>
+      <td>${escapeHtml(item.department_code ?? "—")}</td>
+      <td>${escapeHtml(item.role_code ?? "—")}</td>
+      <td><code data-password-cell="${escapeHtml(item.employee_id)}">${item.has_password ? "••••••••" : "ยังไม่มีบันทึกไว้"}</code></td>
+      <td>${item.updated_at ? formatDate(item.updated_at, true) : "—"}</td>
+      <td>${item.has_password ? `<button class="btn secondary small" data-reveal="${escapeHtml(item.employee_id)}">แสดง</button>` : ""}</td>
+    </tr>`).join("") || `<tr><td colspan="7" class="muted small">ยังไม่มีข้อมูล</td></tr>`;
+
+  const content = `
+    <div class="page-heading"><div><div class="eyebrow">Administration</div><h1>ผู้ดูแลระบบ</h1><p>อนุมัติคำร้องเปิดบัญชี กำหนดสิทธิ์ และค้นคืน ID/รหัสผ่านที่ออกให้</p></div></div>
+    <div class="filters">
+      <a class="filter${tab === "requests" ? " active" : ""}" href="#/admin?tab=requests">คำร้องบัญชี${pendingCount ? ` (${pendingCount})` : ""}</a>
+      <a class="filter${tab === "credentials" ? " active" : ""}" href="#/admin?tab=credentials">คลัง ID/รหัสผ่าน</a>
+    </div>
+    ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : `
+      <section class="card">
+        <p class="muted small">รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้ผู้ใช้ส่งคำร้องขอแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
+          <tbody>${credentialRows}</tbody>
+        </table></div>
+      </section>`}`;
+
+  app.innerHTML = shell(content, "admin", "ผู้ดูแลระบบ");
+  bindShell();
+
+  document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", async () => {
+    const requestId = button.dataset.approve;
+    const roleId = document.querySelector(`[data-role-select="${requestId}"]`)?.value ?? "";
+    button.disabled = true;
+    try {
+      const { data: sessionData } = await sb.auth.getSession();
+      await callPilotAuth(
+        { action: "approve_account_request", requestId, roleId },
+        sessionData.session?.access_token,
+      );
+      showToast("อนุมัติและสร้างสิทธิ์เรียบร้อย");
+      await renderAdmin(params);
+    } catch (error) {
+      button.disabled = false;
+      showToast(friendlyError(error), "error");
+    }
+  }));
+
+  document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", async () => {
+    const requestId = button.dataset.reject;
+    button.disabled = true;
+    const { error } = await sb.rpc("app_reject_account_request", {
+      p_request_id: requestId,
+      p_note: document.querySelector(`[data-note-input="${requestId}"]`)?.value ?? "",
+    });
+    if (error) {
+      button.disabled = false;
+      return showToast(friendlyError(error), "error");
+    }
+    showToast("บันทึกว่าไม่อนุมัติแล้ว");
+    await renderAdmin(params);
+  }));
+
+  document.querySelectorAll("[data-reveal]").forEach((button) => button.addEventListener("click", async () => {
+    const employeeId = button.dataset.reveal;
+    const cell = document.querySelector(`[data-password-cell="${employeeId}"]`);
+    button.disabled = true;
+    const { data, error } = await sb.rpc("app_reveal_credential", { p_employee_id: employeeId });
+    button.disabled = false;
+    if (error) return showToast(friendlyError(error), "error");
+    cell.textContent = data;
+    button.remove();
+  }));
 }
 
 function renderNotFound(message = "ไม่พบหน้าที่ต้องการ") {
@@ -639,7 +900,7 @@ function renderNotFound(message = "ไม่พบหน้าที่ต้อ
 
 async function renderRoute() {
   if (!state.session) {
-    renderAuth();
+    await renderAuth();
     return;
   }
   if (!state.employee) await loadEmployee();
@@ -652,6 +913,7 @@ async function renderRoute() {
     if (path === "request") return await renderRequestDetail(params);
     if (path === "approvals") return await renderApprovals(params);
     if (path === "notifications") return await renderNotifications();
+    if (path === "admin") return await renderAdmin(params);
     if (path === "profile") return renderProfile();
     return renderNotFound();
   } catch (error) {
