@@ -47,6 +47,44 @@ function cleanText(value: unknown, max: number) {
   return String(value ?? "").trim().slice(0, max);
 }
 
+function bearerToken(request: Request) {
+  return (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+}
+
+// เรียก RPC ในนามผู้ใช้โดยส่งต่อ apikey กับ Bearer token ชุดเดียวกับที่เบราว์เซอร์
+// ใช้เรียก PostgREST สำเร็จอยู่แล้ว จึงไม่ขึ้นกับว่า SUPABASE_ANON_KEY เป็นคีย์รุ่นใด
+// สิทธิ์ทั้งหมดถูกตรวจในฟังก์ชันฐานข้อมูลจาก auth.uid() ของ token นี้
+async function rpcAsUser(
+  supabaseUrl: string,
+  apiKey: string,
+  token: string,
+  fn: string,
+  args: Record<string, unknown>,
+): Promise<{ data: unknown; error: string | null }> {
+  const result = await fetch(`${supabaseUrl}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: apiKey,
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(args),
+  });
+  const text = await result.text();
+  if (!result.ok) {
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      message = String(parsed.message ?? parsed.error ?? text);
+    } catch {
+      // ใช้ข้อความดิบเมื่อ body ไม่ใช่ JSON
+    }
+    console.error(`rpc ${fn} -> ${result.status} ${message}`);
+    return { data: null, error: message || `RPC_FAILED_${result.status}` };
+  }
+  return { data: text ? JSON.parse(text) : null, error: null };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders(request) });
@@ -208,14 +246,11 @@ Deno.serve(async (request) => {
 
   // Admin ตั้งรหัสผ่านให้พนักงานคนใดก็ได้ สิทธิ์ถูกตรวจในฐานข้อมูลทั้งก่อนและหลัง
   if (body.action === "admin_set_password") {
-    const token = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    const token = bearerToken(request);
     if (!token) {
       return response(request, { error: "AUTH_REQUIRED" }, 401);
     }
-    const { data: caller, error: callerError } = await admin.auth.getUser(token);
-    if (callerError || !caller.user) {
-      return response(request, { error: "AUTH_REQUIRED" }, 401);
-    }
+    const apiKey = request.headers.get("apikey") ?? anonKey;
 
     const employeeId = cleanText(body.employeeId, 64);
     const newPassword = String(body.password ?? "");
@@ -223,35 +258,30 @@ Deno.serve(async (request) => {
       return response(request, { error: "INVALID_PASSWORD" }, 400);
     }
 
-    const userClient = createClient(supabaseUrl, anonKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
     // ตรวจสิทธิ์และหาบัญชี auth ของเป้าหมายก่อน จึงค่อยเปลี่ยนรหัสผ่าน
-    const { data: targetAuthUserId, error: targetError } = await userClient.rpc(
-      "app_admin_target_auth_user",
-      { p_employee_id: employeeId },
-    );
-    if (targetError || !targetAuthUserId) {
-      const code = targetError?.message?.includes("NOT_AUTHORIZED") ? 403 : 400;
-      return response(request, { error: targetError?.message ?? "EMPLOYEE_NOT_FOUND" }, code);
+    const target = await rpcAsUser(supabaseUrl, apiKey, token, "app_admin_target_auth_user", {
+      p_employee_id: employeeId,
+    });
+    if (target.error || !target.data) {
+      const code = String(target.error ?? "").includes("NOT_AUTHORIZED") ? 403 : 400;
+      return response(request, { error: target.error ?? "EMPLOYEE_NOT_FOUND" }, code);
     }
 
-    const { error: updateError } = await admin.auth.admin.updateUserById(String(targetAuthUserId), {
+    const { error: updateError } = await admin.auth.admin.updateUserById(String(target.data), {
       password: newPassword,
     });
     if (updateError) {
-      return response(request, { error: "PASSWORD_UPDATE_FAILED" }, 400);
+      console.error(`updateUserById failed: ${updateError.message}`);
+      return response(request, { error: `PASSWORD_UPDATE_FAILED: ${updateError.message}` }, 400);
     }
 
     // บันทึกลงคลังเป็นขั้นสุดท้าย ถ้าล้มเหลวให้กดบันทึกซ้ำได้ ผลลัพธ์เหมือนเดิมเสมอ
-    const { error: recordError } = await userClient.rpc("app_admin_record_password", {
+    const recorded = await rpcAsUser(supabaseUrl, apiKey, token, "app_admin_record_password", {
       p_employee_id: employeeId,
       p_password: newPassword,
     });
-    if (recordError) {
-      return response(request, { error: recordError.message ?? "RECORD_FAILED" }, 400);
+    if (recorded.error) {
+      return response(request, { error: `RECORD_FAILED: ${recorded.error}` }, 400);
     }
 
     return response(request, { employeeId });
@@ -259,14 +289,11 @@ Deno.serve(async (request) => {
 
   // Admin อนุมัติคำร้อง สิทธิ์ถูกตรวจซ้ำในฐานข้อมูลผ่าน app_apply_account_request
   if (body.action === "approve_account_request") {
-    const token = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    const token = bearerToken(request);
     if (!token) {
       return response(request, { error: "AUTH_REQUIRED" }, 401);
     }
-    const { data: caller, error: callerError } = await admin.auth.getUser(token);
-    if (callerError || !caller.user) {
-      return response(request, { error: "AUTH_REQUIRED" }, 401);
-    }
+    const apiKey = request.headers.get("apikey") ?? anonKey;
 
     const requestId = cleanText(body.requestId, 64);
     const { data: accountRequest } = await admin
@@ -281,11 +308,6 @@ Deno.serve(async (request) => {
       return response(request, { error: "PASSWORD_MISSING" }, 409);
     }
 
-    const userClient = createClient(supabaseUrl, anonKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
     let createdUserId: string | null = null;
     if (accountRequest.kind === "new_account") {
       const email = String(accountRequest.email ?? "").trim() ||
@@ -297,7 +319,8 @@ Deno.serve(async (request) => {
         user_metadata: { employee_no: accountRequest.employee_no, pilot: true },
       });
       if (createError || !created.user) {
-        return response(request, { error: "ACCOUNT_CREATE_FAILED" }, 400);
+        console.error(`createUser failed: ${createError?.message}`);
+        return response(request, { error: `ACCOUNT_CREATE_FAILED: ${createError?.message ?? ""}` }, 400);
       }
       createdUserId = created.user.id;
     } else {
@@ -315,22 +338,23 @@ Deno.serve(async (request) => {
         password: accountRequest.desired_password,
       });
       if (updateError) {
-        return response(request, { error: "PASSWORD_UPDATE_FAILED" }, 400);
+        console.error(`updateUserById failed: ${updateError.message}`);
+        return response(request, { error: `PASSWORD_UPDATE_FAILED: ${updateError.message}` }, 400);
       }
     }
 
-    const { data: employeeId, error: applyError } = await userClient.rpc("app_apply_account_request", {
+    const applied = await rpcAsUser(supabaseUrl, apiKey, token, "app_apply_account_request", {
       p_request_id: accountRequest.id,
       p_auth_user_id: createdUserId,
       p_role_id: cleanText(body.roleId, 64) || null,
     });
-    if (applyError) {
+    if (applied.error) {
       if (createdUserId) await admin.auth.admin.deleteUser(createdUserId);
-      const code = applyError.message?.includes("NOT_AUTHORIZED") ? 403 : 400;
-      return response(request, { error: applyError.message ?? "APPLY_FAILED" }, code);
+      const code = applied.error.includes("NOT_AUTHORIZED") ? 403 : 400;
+      return response(request, { error: applied.error }, code);
     }
 
-    return response(request, { employeeId });
+    return response(request, { employeeId: applied.data });
   }
 
   const employeeNo = String(body.employeeNo ?? "").trim().toUpperCase();

@@ -184,6 +184,7 @@ const pilotAuthMessages = {
   NOT_AUTHORIZED: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ",
   AUTH_REQUIRED: "กรุณาเข้าสู่ระบบใหม่",
   DIRECTORY_UNAVAILABLE: "โหลดข้อมูลแผนกไม่สำเร็จ",
+  session_not_found: "เซสชันนี้ถูกยกเลิกเพราะรหัสผ่านถูกเปลี่ยน กรุณาเข้าสู่ระบบใหม่",
 };
 
 async function callPilotAuth(payload, accessToken) {
@@ -334,6 +335,22 @@ async function handleAccountRequestSubmit(event) {
     message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
     setFormBusy(form, false);
   }
+}
+
+// Supabase เพิกถอน session ทั้งหมดของผู้ใช้เมื่อรหัสผ่านถูกเปลี่ยนผ่าน Admin API
+// ถ้าเป็นบัญชีของตัวเอง ต้องออกจากระบบแล้วเข้าใหม่ ไม่เช่นนั้น token เดิมจะใช้กับ
+// บาง API ไม่ได้อีกจนกว่าจะหมดอายุ
+async function forceReLogin(message) {
+  try {
+    await sb.auth.signOut();
+  } catch (error) {
+    console.error(error);
+  }
+  state.session = null;
+  state.employee = null;
+  state.unread = 0;
+  state.authMode = "login";
+  await renderAuth(`<div class="form-message success">${escapeHtml(message)}</div>`);
 }
 
 async function loadEmployee() {
@@ -881,11 +898,8 @@ async function handleCredentialChangeSubmit(event) {
     return;
   }
 
-  await loadEmployee();
   showToast("แก้ไข ID/รหัสผ่านเรียบร้อย");
-  await renderProfile();
-  document.querySelector("#credential-message").innerHTML =
-    `<div class="form-message success">แก้ไขเรียบร้อยแล้ว ครั้งถัดไปให้เข้าสู่ระบบด้วย ID และรหัสผ่านใหม่</div>`;
+  await forceReLogin("แก้ไขเรียบร้อยแล้ว กรุณาเข้าสู่ระบบอีกครั้งด้วย ID และรหัสผ่านใหม่");
 }
 
 async function handleEmployeeEditSubmit(event) {
@@ -936,7 +950,14 @@ async function handleEmployeeEditSubmit(event) {
     }
   }
 
-  if (employeeId === state.employee.id) await loadEmployee();
+  if (employeeId === state.employee.id) {
+    if (newPassword) {
+      showToast("บันทึกการแก้ไขบัญชีเรียบร้อย");
+      await forceReLogin("แก้ไขบัญชีของคุณเรียบร้อยแล้ว กรุณาเข้าสู่ระบบอีกครั้งด้วย ID และรหัสผ่านใหม่");
+      return;
+    }
+    await loadEmployee();
+  }
   showToast("บันทึกการแก้ไขบัญชีเรียบร้อย");
   go("admin?tab=credentials");
   await renderRoute();
