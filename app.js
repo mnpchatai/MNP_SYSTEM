@@ -340,7 +340,7 @@ async function loadEmployee() {
   if (!state.session?.user) return null;
   const { data, error } = await sb
     .from("employees")
-    .select("id,employee_no,first_name,last_name,email,job_title,position_level,department_id,role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
+    .select("id,employee_no,first_name,last_name,email,phone,job_title,position_level,department_id,role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
     .eq("auth_user_id", state.session.user.id)
     .eq("is_active", true)
     .maybeSingle();
@@ -719,12 +719,56 @@ async function renderNotifications() {
   });
 }
 
-function renderProfile() {
+async function renderProfile() {
   const employee = state.employee;
   const isAccountManager = employee.role?.code === "admin";
+  let departments = [];
+  let roles = [];
+  if (isAccountManager) {
+    const [departmentResult, roleResult] = await Promise.all([
+      sb.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
+      sb.from("roles").select("id,code,name_th").order("code"),
+    ]);
+    departments = departmentResult.data ?? [];
+    roles = roleResult.data ?? [];
+  }
+
   const content = `
-    <div class="page-heading"><div><div class="eyebrow">My account</div><h1>ข้อมูลส่วนตัว</h1><p>ข้อมูลที่ใช้กำหนดบทบาทและสิทธิ์ในระบบ</p></div></div>
-    <section class="card" style="max-width:780px"><div style="display:flex;align-items:center;gap:13px;margin-bottom:20px"><div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div><div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงาน")}</span></div></div><div class="profile-grid"><div class="profile-row"><span>รหัสพนักงาน</span><strong>${escapeHtml(employee.employee_no)}</strong></div><div class="profile-row"><span>ตำแหน่ง</span><strong>${escapeHtml(employee.job_title ?? "—")}</strong></div><div class="profile-row"><span>ตำแหน่งในแผนก</span><strong>${escapeHtml(positionLabels[employee.position_level] ?? "—")}</strong></div><div class="profile-row"><span>หน่วยงาน</span><strong>${escapeHtml(employee.department?.name_th ?? "—")}</strong></div><div class="profile-row"><span>บทบาท</span><strong>${escapeHtml(employee.role?.name_th ?? "—")}</strong></div></div><div class="pilot-note">บัญชีนี้อยู่ในระบบ Pilot Web การอนุมัติและการเปลี่ยนสถานะถูกตรวจสอบสิทธิ์ที่ฐานข้อมูลทุกครั้ง</div></section>
+    <div class="page-heading"><div><div class="eyebrow">My account</div><h1>ข้อมูลส่วนตัว</h1><p>แก้ไขข้อมูลของคุณได้จากหน้านี้</p></div></div>
+
+    <section class="card" style="max-width:780px">
+      <div style="display:flex;align-items:center;gap:13px;margin-bottom:20px">
+        <div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div>
+        <div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงาน")}</span></div>
+      </div>
+      <div id="profile-message"></div>
+      <form id="profile-form">
+        <div class="field-row">
+          <div class="field"><label for="profile-first-name">ชื่อ</label><input class="input" id="profile-first-name" name="first_name" maxlength="100" value="${escapeHtml(employee.first_name)}" required></div>
+          <div class="field"><label for="profile-last-name">นามสกุล</label><input class="input" id="profile-last-name" name="last_name" maxlength="100" value="${escapeHtml(employee.last_name)}" required></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="profile-email">อีเมล</label><input class="input" id="profile-email" name="email" type="email" maxlength="200" value="${escapeHtml(employee.email ?? "")}"></div>
+          <div class="field"><label for="profile-phone">เบอร์ติดต่อ</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
+        </div>
+        <div class="field"><label for="profile-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}"></div>
+        <div class="field"><label for="profile-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ด ID / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
+        ${isAccountManager ? `
+        <div class="field-row">
+          <div class="field"><label for="profile-department">หน่วยงาน</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
+          <div class="field"><label for="profile-position">ตำแหน่งในแผนก</label><select class="input" id="profile-position" name="position_level"><option value="">ไม่ระบุ</option>${Object.entries(positionLabels).map(([value, label]) => `<option value="${value}"${value === employee.position_level ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+        </div>
+        <div class="field"><label for="profile-role">บทบาท / สิทธิ์</label><select class="input" id="profile-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select><small>ระบบไม่ยอมให้ถอดสิทธิ์ผู้ดูแลระบบของตนเอง เพื่อไม่ให้ไม่มีใครเข้าไปแก้ไขได้อีก</small></div>
+        ` : `
+        <div class="field-row">
+          <div class="field"><label for="profile-department">หน่วยงาน</label><input class="input" id="profile-department" value="${escapeHtml(employee.department?.name_th ?? "—")}" disabled></div>
+          <div class="field"><label for="profile-position">ตำแหน่งในแผนก</label><input class="input" id="profile-position" value="${escapeHtml(positionLabels[employee.position_level] ?? "—")}" disabled></div>
+        </div>
+        <div class="field"><label for="profile-role">บทบาท / สิทธิ์</label><input class="input" id="profile-role" value="${escapeHtml(employee.role?.name_th ?? "—")}" disabled><small>สามช่องนี้เป็นตัวกำหนดสิทธิ์และเส้นทางอนุมัติ ต้องให้ผู้ดูแลระบบเป็นผู้แก้ให้</small></div>
+        `}
+        <div class="form-actions"><button class="btn" type="submit">บันทึกข้อมูล</button></div>
+      </form>
+    </section>
 
     <section class="card" style="max-width:780px">
       <h2>${isAccountManager ? "แก้ไข ID / รหัสผ่านของฉัน" : "ขอแก้ไข ID / รหัสผ่าน"}</h2>
@@ -744,7 +788,51 @@ function renderProfile() {
     </section>`;
   app.innerHTML = shell(content, "profile", "ข้อมูลส่วนตัว");
   bindShell();
+  document.querySelector("#profile-form").addEventListener("submit", handleProfileSubmit);
   document.querySelector("#credential-form").addEventListener("submit", handleCredentialChangeSubmit);
+}
+
+async function handleProfileSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#profile-message");
+  const values = new FormData(form);
+  const employee = state.employee;
+  const isAccountManager = employee.role?.code === "admin";
+  setFormBusy(form, true);
+  message.innerHTML = "";
+
+  const { error } = isAccountManager
+    ? await sb.rpc("app_admin_update_employee", {
+      p_employee_id: employee.id,
+      p_employee_no: employee.employee_no,
+      p_first_name: String(values.get("first_name") ?? ""),
+      p_last_name: String(values.get("last_name") ?? ""),
+      p_email: String(values.get("email") ?? ""),
+      p_phone: String(values.get("phone") ?? ""),
+      p_job_title: String(values.get("job_title") ?? ""),
+      p_department_id: String(values.get("department_id") ?? "") || null,
+      p_position_level: String(values.get("position_level") ?? "") || null,
+      p_role_id: String(values.get("role_id") ?? "") || null,
+      p_is_active: true,
+    })
+    : await sb.rpc("app_update_own_profile", {
+      p_first_name: String(values.get("first_name") ?? ""),
+      p_last_name: String(values.get("last_name") ?? ""),
+      p_email: String(values.get("email") ?? ""),
+      p_phone: String(values.get("phone") ?? ""),
+      p_job_title: String(values.get("job_title") ?? ""),
+    });
+
+  if (error) {
+    setFormBusy(form, false);
+    message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
+    return;
+  }
+  await loadEmployee();
+  showToast("บันทึกข้อมูลเรียบร้อย");
+  await renderProfile();
+  document.querySelector("#profile-message").innerHTML = `<div class="form-message success">บันทึกข้อมูลเรียบร้อยแล้ว</div>`;
 }
 
 async function handleCredentialChangeSubmit(event) {
@@ -795,9 +883,63 @@ async function handleCredentialChangeSubmit(event) {
 
   await loadEmployee();
   showToast("แก้ไข ID/รหัสผ่านเรียบร้อย");
-  renderProfile();
+  await renderProfile();
   document.querySelector("#credential-message").innerHTML =
     `<div class="form-message success">แก้ไขเรียบร้อยแล้ว ครั้งถัดไปให้เข้าสู่ระบบด้วย ID และรหัสผ่านใหม่</div>`;
+}
+
+async function handleEmployeeEditSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#employee-edit-message");
+  const values = new FormData(form);
+  const employeeId = form.dataset.employeeId;
+  const newPassword = String(values.get("password") ?? "");
+  if (newPassword && (newPassword.length < 8 || newPassword.length > 72)) {
+    message.innerHTML = `<div class="form-message error">รหัสผ่านต้องมี 8–72 ตัวอักษร</div>`;
+    return;
+  }
+  setFormBusy(form, true);
+  message.innerHTML = "";
+
+  const { error } = await sb.rpc("app_admin_update_employee", {
+    p_employee_id: employeeId,
+    p_employee_no: String(values.get("employee_no") ?? "").trim().toUpperCase(),
+    p_first_name: String(values.get("first_name") ?? ""),
+    p_last_name: String(values.get("last_name") ?? ""),
+    p_email: String(values.get("email") ?? ""),
+    p_phone: String(values.get("phone") ?? ""),
+    p_job_title: String(values.get("job_title") ?? ""),
+    p_department_id: String(values.get("department_id") ?? "") || null,
+    p_position_level: String(values.get("position_level") ?? "") || null,
+    p_role_id: String(values.get("role_id") ?? "") || null,
+    p_is_active: String(values.get("is_active") ?? "true") === "true",
+  });
+  if (error) {
+    setFormBusy(form, false);
+    message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
+    return;
+  }
+
+  // รหัสผ่านต้องเปลี่ยนที่ Supabase Auth จึงไปทาง Edge Function ซึ่งตรวจสิทธิ์ซ้ำในฐานข้อมูล
+  if (newPassword) {
+    try {
+      const { data: sessionData } = await sb.auth.getSession();
+      await callPilotAuth(
+        { action: "admin_set_password", employeeId, password: newPassword },
+        sessionData.session?.access_token,
+      );
+    } catch (passwordError) {
+      setFormBusy(form, false);
+      message.innerHTML = `<div class="form-message error">บันทึกข้อมูลแล้วแต่ยังตั้งรหัสผ่านไม่สำเร็จ: ${escapeHtml(friendlyError(passwordError))} · กดบันทึกซ้ำได้</div>`;
+      return;
+    }
+  }
+
+  if (employeeId === state.employee.id) await loadEmployee();
+  showToast("บันทึกการแก้ไขบัญชีเรียบร้อย");
+  go("admin?tab=credentials");
+  await renderRoute();
 }
 
 async function renderAdmin(params) {
@@ -806,17 +948,21 @@ async function renderAdmin(params) {
   state.adminTab = tab;
   loadingShell("admin", "ผู้ดูแลระบบ");
 
-  const [requestsResult, credentialsResult, rolesResult] = await Promise.all([
+  const [requestsResult, credentialsResult, rolesResult, departmentsResult] = await Promise.all([
     sb.rpc("app_list_account_requests", { p_status: null }),
     sb.rpc("app_list_credentials"),
     sb.from("roles").select("id,code,name_th").order("code"),
+    sb.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
   ]);
   if (requestsResult.error) throw requestsResult.error;
   if (credentialsResult.error) throw credentialsResult.error;
   if (rolesResult.error) throw rolesResult.error;
+  if (departmentsResult.error) throw departmentsResult.error;
   const requests = requestsResult.data ?? [];
   const credentials = credentialsResult.data ?? [];
   const roles = rolesResult.data ?? [];
+  const departments = departmentsResult.data ?? [];
+  const editing = credentials.find((item) => item.employee_id === params.get("edit")) ?? null;
   const pendingCount = requests.filter((item) => item.status === "pending").length;
 
   const statusBadgeClass = { pending: "pending_approval", approved: "approved", rejected: "rejected" };
@@ -851,15 +997,15 @@ async function renderAdmin(params) {
     return `
     <tr>
       <td><span class="request-no">${escapeHtml(item.employee_no)}</span></td>
-      <td>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}</td>
+      <td>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}${item.is_active ? "" : ` <span class="badge rejected">ปิดใช้งาน</span>`}</td>
       <td>${escapeHtml(item.department_code ?? "—")}</td>
       <td>${escapeHtml(item.role_code ?? "—")}</td>
       <td><code data-password-cell="${escapeHtml(item.employee_id)}">${item.has_password ? "••••••••" : "ยังไม่มีบันทึกไว้"}</code></td>
       <td>${item.updated_at ? formatDate(item.updated_at, true) : "—"}</td>
       <td>${[
         item.has_password ? `<button class="btn secondary small" data-reveal="${escapeHtml(item.employee_id)}">แสดง</button>` : "",
-        isSelf ? `<a class="btn secondary small" href="#/profile">แก้ไข</a>` : "",
-      ].filter(Boolean).join(" ")}</td>
+        `<a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไข</a>`,
+      ].join(" ")}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="7" class="muted small">ยังไม่มีข้อมูล</td></tr>`;
 
@@ -870,6 +1016,33 @@ async function renderAdmin(params) {
       <a class="filter${tab === "credentials" ? " active" : ""}" href="#/admin?tab=credentials">คลัง ID/รหัสผ่าน</a>
     </div>
     ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : `
+      ${editing ? `
+      <section class="card">
+        <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID บทบาท และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
+        <div id="employee-edit-message"></div>
+        <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}">
+          <div class="field-row">
+            <div class="field"><label for="edit-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
+            <div class="field"><label for="edit-active">สถานะบัญชี</label><select class="input" id="edit-active" name="is_active"><option value="true"${editing.is_active ? " selected" : ""}>ใช้งาน</option><option value="false"${editing.is_active ? "" : " selected"}>ปิดใช้งาน</option></select></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="edit-first-name">ชื่อ</label><input class="input" id="edit-first-name" name="first_name" maxlength="100" value="${escapeHtml(editing.first_name ?? "")}" required></div>
+            <div class="field"><label for="edit-last-name">นามสกุล</label><input class="input" id="edit-last-name" name="last_name" maxlength="100" value="${escapeHtml(editing.last_name ?? "")}" required></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="edit-email">อีเมล</label><input class="input" id="edit-email" name="email" type="email" maxlength="200" value="${escapeHtml(editing.email ?? "")}"></div>
+            <div class="field"><label for="edit-phone">เบอร์ติดต่อ</label><input class="input" id="edit-phone" name="phone" maxlength="40" value="${escapeHtml(editing.phone ?? "")}"></div>
+          </div>
+          <div class="field"><label for="edit-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
+          <div class="field-row">
+            <div class="field"><label for="edit-department">หน่วยงาน</label><select class="input" id="edit-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
+            <div class="field"><label for="edit-position">ตำแหน่งในแผนก</label><select class="input" id="edit-position" name="position_level"><option value="">ไม่ระบุ</option>${Object.entries(positionLabels).map(([value, label]) => `<option value="${value}"${value === editing.position_level ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+          </div>
+          <div class="field"><label for="edit-role">บทบาท / สิทธิ์</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
+          <div class="field"><label for="edit-password">ตั้งรหัสผ่านใหม่ (เว้นว่างไว้หากไม่เปลี่ยน)</label><input class="input" id="edit-password" name="password" type="password" autocomplete="new-password" maxlength="72"><small>ตั้งให้ผู้ใช้ได้ทันทีเมื่อผู้ใช้ลืมรหัสผ่าน และรหัสผ่านใหม่จะถูกบันทึกลงคลังให้อัตโนมัติ</small></div>
+          <div class="form-actions"><button class="btn" type="submit">บันทึกการแก้ไข</button></div>
+        </form>
+      </section>` : ""}
       <section class="card">
         <p class="muted small">ตารางนี้แสดงพนักงานทุกบัญชีรวมถึงบัญชีผู้ดูแลระบบและบัญชีของคุณเอง รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้เจ้าของบัญชีแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
         <div class="table-wrap"><table>
@@ -914,6 +1087,8 @@ async function renderAdmin(params) {
     await renderAdmin(params);
   }));
 
+  document.querySelector("#employee-edit-form")?.addEventListener("submit", handleEmployeeEditSubmit);
+
   document.querySelectorAll("[data-reveal]").forEach((button) => button.addEventListener("click", async () => {
     const employeeId = button.dataset.reveal;
     const cell = document.querySelector(`[data-password-cell="${employeeId}"]`);
@@ -949,7 +1124,7 @@ async function renderRoute() {
     if (path === "approvals") return await renderApprovals(params);
     if (path === "notifications") return await renderNotifications();
     if (path === "admin") return await renderAdmin(params);
-    if (path === "profile") return renderProfile();
+    if (path === "profile") return await renderProfile();
     return renderNotFound();
   } catch (error) {
     console.error(error);

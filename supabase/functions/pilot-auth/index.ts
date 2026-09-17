@@ -75,6 +75,7 @@ Deno.serve(async (request) => {
     reason?: string;
     requestId?: string;
     roleId?: string;
+    employeeId?: string;
   };
   try {
     body = await request.json();
@@ -203,6 +204,57 @@ Deno.serve(async (request) => {
     }
 
     return response(request, { requestId: created.id });
+  }
+
+  // Admin ตั้งรหัสผ่านให้พนักงานคนใดก็ได้ สิทธิ์ถูกตรวจในฐานข้อมูลทั้งก่อนและหลัง
+  if (body.action === "admin_set_password") {
+    const token = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) {
+      return response(request, { error: "AUTH_REQUIRED" }, 401);
+    }
+    const { data: caller, error: callerError } = await admin.auth.getUser(token);
+    if (callerError || !caller.user) {
+      return response(request, { error: "AUTH_REQUIRED" }, 401);
+    }
+
+    const employeeId = cleanText(body.employeeId, 64);
+    const newPassword = String(body.password ?? "");
+    if (newPassword.length < 8 || newPassword.length > 72) {
+      return response(request, { error: "INVALID_PASSWORD" }, 400);
+    }
+
+    const userClient = createClient(supabaseUrl, anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    // ตรวจสิทธิ์และหาบัญชี auth ของเป้าหมายก่อน จึงค่อยเปลี่ยนรหัสผ่าน
+    const { data: targetAuthUserId, error: targetError } = await userClient.rpc(
+      "app_admin_target_auth_user",
+      { p_employee_id: employeeId },
+    );
+    if (targetError || !targetAuthUserId) {
+      const code = targetError?.message?.includes("NOT_AUTHORIZED") ? 403 : 400;
+      return response(request, { error: targetError?.message ?? "EMPLOYEE_NOT_FOUND" }, code);
+    }
+
+    const { error: updateError } = await admin.auth.admin.updateUserById(String(targetAuthUserId), {
+      password: newPassword,
+    });
+    if (updateError) {
+      return response(request, { error: "PASSWORD_UPDATE_FAILED" }, 400);
+    }
+
+    // บันทึกลงคลังเป็นขั้นสุดท้าย ถ้าล้มเหลวให้กดบันทึกซ้ำได้ ผลลัพธ์เหมือนเดิมเสมอ
+    const { error: recordError } = await userClient.rpc("app_admin_record_password", {
+      p_employee_id: employeeId,
+      p_password: newPassword,
+    });
+    if (recordError) {
+      return response(request, { error: recordError.message ?? "RECORD_FAILED" }, 400);
+    }
+
+    return response(request, { employeeId });
   }
 
   // Admin อนุมัติคำร้อง สิทธิ์ถูกตรวจซ้ำในฐานข้อมูลผ่าน app_apply_account_request
