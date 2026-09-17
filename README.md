@@ -2,6 +2,18 @@
 
 ระบบคำร้องและอนุมัติภายในแบบ paperless สำหรับพนักงาน MNP สร้างด้วย Next.js, TypeScript, Supabase Auth/Postgres/Storage และ LINE OA integration
 
+## Pilot Web บน GitHub Pages
+
+หน้าเว็บทดลองใช้งานจริงอยู่ที่ [https://mnpchatai.github.io/MNP_SYSTEM/](https://mnpchatai.github.io/MNP_SYSTEM/) โดยไฟล์ `index.html`, `styles.css` และ `app.js` เป็น static client สำหรับ GitHub Pages และเชื่อมต่อ Supabase Cloud ผ่าน publishable key
+
+- รองรับการเข้าสู่ระบบด้วยรหัสพนักงาน
+- มีบัญชีทดสอบแยกบทบาทผู้ขอ ผู้อนุมัติ และผู้ปฏิบัติงาน
+- การสร้างคำร้อง การอนุมัติ และการเปลี่ยนสถานะเรียก Postgres RPC ที่ตรวจ session/สิทธิ์ฝั่งฐานข้อมูล
+- การลงทะเบียนบัญชีทดสอบเรียก `pilot-auth` Edge Function และต้องใช้ invite code ที่ไม่อยู่ใน repository
+- GitHub Pages ไม่มี server runtime ดังนั้น LINE webhook/OAuth และฟังก์ชันที่ใช้ server secret ยังคงต้องรันบน Supabase Edge Functions หรือ deployment แบบมี server
+
+ไฟล์ Next.js เดิมยังคงเป็นสถาปัตยกรรมเป้าหมายสำหรับ production ที่รองรับ Server Actions และ Route Handlers ครบถ้วน ส่วน Pilot Web ใช้สำหรับทดสอบกระบวนการหลายผู้ใช้ในระยะนี้
+
 ## สิ่งที่มีใน Phase 1
 
 - Employee Master, Department, Role และ Permission

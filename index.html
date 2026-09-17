@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1769e0" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' https://iqlydmkylqyowmvpsete.supabase.co wss://iqlydmkylqyowmvpsete.supabase.co; img-src 'self' data: blob: https://iqlydmkylqyowmvpsete.supabase.co; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    />
+    <title>MNP Workspace — Pilot Web</title>
+    <meta
+      name="description"
+      content="ระบบคำร้องและอนุมัติภายใน MNP สำหรับทดสอบหลายผู้ใช้"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div id="app" aria-live="polite">
+      <main class="boot-screen">
+        <div class="brand-mark">M</div>
+        <p>กำลังเปิด MNP Workspace…</p>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <noscript>กรุณาเปิด JavaScript เพื่อใช้งานระบบ</noscript>
+  </body>
+</html>
