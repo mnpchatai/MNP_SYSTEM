@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentEmployee } from "@/lib/auth";
+import { resolveApprovalTarget } from "@/lib/data";
 import { notifyEmployeeOnLine } from "@/lib/line";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -78,20 +79,30 @@ export async function createRequestAction(formData: FormData) {
 
   const steps: Array<Record<string, unknown>> = [];
   if (type.requires_manager_approval && employee.manager_id) {
-    steps.push({
-      request_id: request.id,
-      step_order: steps.length + 1,
-      step_name: "หัวหน้าแผนก",
-      approver_employee_id: employee.manager_id,
-    });
+    // An inactive manager cannot act, so that step would strand the request.
+    const { data: manager } = await admin
+      .from("employees")
+      .select("id")
+      .eq("id", employee.manager_id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (manager) {
+      steps.push({
+        request_id: request.id,
+        step_order: steps.length + 1,
+        step_name: "หัวหน้าแผนก",
+        approver_employee_id: employee.manager_id,
+      });
+    }
   }
   if (type.final_approver_role_id) {
+    const target = await resolveApprovalTarget(type.final_approver_role_id, type.owning_department_id);
     steps.push({
       request_id: request.id,
       step_order: steps.length + 1,
       step_name: "ผู้อนุมัติหน่วยงานรับผิดชอบ",
-      approver_role_id: type.final_approver_role_id,
-      approver_department_id: type.owning_department_id,
+      approver_role_id: target.roleId,
+      approver_department_id: target.departmentId,
     });
   }
 
