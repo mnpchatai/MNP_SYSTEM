@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentEmployee } from "@/lib/auth";
 import { resolveApprovalTarget } from "@/lib/data";
-import { notifyEmployeeOnLine } from "@/lib/line";
+import { notifyEmployeeByEmail } from "@/lib/notify";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -131,7 +131,7 @@ export async function createRequestAction(formData: FormData) {
         action_url: `/requests/${request.id}`,
       })));
       await Promise.allSettled(recipients.map((recipientId) =>
-        notifyEmployeeOnLine(recipientId, `มีคำร้องรออนุมัติ\n${request.request_no} · ${title}`),
+        notifyEmployeeByEmail(recipientId, `มีคำร้องรออนุมัติ\n${request.request_no} · ${title}`),
       ));
     }
   } else {
@@ -263,7 +263,7 @@ export async function approvalDecisionAction(formData: FormData) {
           action_url: `/requests/${step.request_id}`,
         })));
         await Promise.allSettled(nextRecipients.map((recipientId) =>
-          notifyEmployeeOnLine(recipientId, `มีคำร้องรออนุมัติ\n${approvalRequest.request_no} · ${nextStep.step_name}`),
+          notifyEmployeeByEmail(recipientId, `มีคำร้องรออนุมัติ\n${approvalRequest.request_no} · ${nextStep.step_name}`),
         ));
       }
     } else {
@@ -278,7 +278,7 @@ export async function approvalDecisionAction(formData: FormData) {
 
   if (approvalRequest) {
     const label = decision === "approved" ? "อนุมัติขั้นตอนแล้ว" : decision === "rejected" ? "ไม่อนุมัติ" : "ขอข้อมูลเพิ่ม";
-    await notifyEmployeeOnLine(approvalRequest.requester_id, `${approvalRequest.request_no} · ${label}`);
+    await notifyEmployeeByEmail(approvalRequest.requester_id, `${approvalRequest.request_no} · ${label}`);
   }
 
   revalidatePath("/");
@@ -348,7 +348,7 @@ export async function resubmitRequestAction(formData: FormData) {
       action_url: `/requests/${requestId}`,
     })));
     await Promise.allSettled(recipients.map((recipientId) =>
-      notifyEmployeeOnLine(recipientId, `${request.request_no} · ผู้ขอส่งข้อมูลเพิ่มเติมแล้ว`),
+      notifyEmployeeByEmail(recipientId, `${request.request_no} · ผู้ขอส่งข้อมูลเพิ่มเติมแล้ว`),
     ));
   }
 
@@ -375,7 +375,7 @@ export async function updateRequestStatusAction(formData: FormData) {
     completed_at: nextStatus === "completed" ? new Date().toISOString() : null,
     last_changed_by: employee.id,
   }).eq("id", requestId);
-  await notifyEmployeeOnLine(
+  await notifyEmployeeByEmail(
     request.requester_id,
     `${request.request_no} · ${nextStatus === "completed" ? "ดำเนินการเสร็จแล้ว" : "เริ่มดำเนินการแล้ว"}`,
   );

@@ -69,7 +69,8 @@ Admin เปิดหน้า "ผู้ดูแลระบบ" เลือ�
 - Approve, Reject, Request More Information, comment และ attachment
 - สถานะงาน, ผู้รับผิดชอบ, status history, notification และ audit log
 - Dashboard: คำร้องของฉัน / รอฉันอนุมัติ / กำลังดำเนินการ / เสร็จแล้ว
-- LINE Login สำหรับผูกพนักงาน, per-user Rich Menu, push notification hook และ webhook ที่ตรวจ HMAC signature
+- แจ้งเตือนทางอีเมลเมื่อคำร้องเดินไปแต่ละขั้น (ดู `src/lib/notify.ts`)
+- LINE Login สำหรับผูกพนักงาน, per-user Rich Menu และ webhook ที่ตรวจ HMAC signature (ไม่ได้ใช้ส่งแจ้งเตือนแล้ว)
 - Row Level Security (RLS) และ private Storage bucket สำหรับไฟล์แนบ
 
 ## สถาปัตยกรรม
@@ -149,6 +150,27 @@ where employee_no = 'MNP0001';
 | `MNP0201` | Operator | ทดลองรับและปิดงาน |
 
 ระบบค้นหา Auth user จาก `employees.auth_user_id` เฉพาะบนเซิร์ฟเวอร์ จึงไม่ส่งอีเมลภายในไปยัง browser ใน production ควรสร้างผู้ใช้ผ่าน Admin API/ระบบ provisioning และห้ามเปิด public sign-up หากองค์กรไม่ได้ต้องการ
+
+## แจ้งเตือนทางอีเมล
+
+การแจ้งเตือนเมื่อคำร้องเดินไปแต่ละขั้นส่งทางอีเมลแล้ว ไม่ได้ push เข้า LINE อีกต่อไป ตัวส่งอยู่ที่
+`src/lib/notify.ts` (`notifyEmployeeByEmail`) ซึ่งอ่านอีเมลจาก Employee Master และข้ามบัญชีที่ปิด
+ใช้งานแล้ว สัญญาของฟังก์ชันเหมือนตัวเดิมทุกอย่าง คือไม่โยน error ออกไป และคืน `{ ok, configured }`
+ให้ผู้เรียกตัดสินใจ — อีเมลส่งไม่ออกต้องไม่ทำให้คำร้องล้ม
+
+ช่องทางส่งเลือกจาก environment variable ไม่ผูกกับผู้ให้บริการรายใดในโค้ด
+
+| ตั้งค่า | ผล |
+|---|---|
+| `RESEND_API_KEY` + `NOTIFY_EMAIL_FROM` | ส่งผ่าน Resend API |
+| `NOTIFY_EMAIL_WEBHOOK_URL` | POST `{ to, subject, text }` ไปปลายทางที่กำหนด ใช้ต่อกับ Apps Script ที่ส่งอีเมลอยู่แล้วได้โดยไม่ต้องสมัครผู้ให้บริการใหม่ |
+| ไม่ตั้งอะไรเลย | ไม่ส่ง คืน `configured:false` เงียบๆ ระบบยังทำงานครบ เหมือนตอน LINE ไม่มี token |
+
+หัวเรื่องอีเมลคือบรรทัดแรกของข้อความ ซึ่งเป็นบรรทัดสรุปเรื่องอยู่แล้วในทุกจุดที่เรียก โครงข้อความ
+จึงเหมือนที่เคยส่งเข้า LINE ทุกประการ
+
+โค้ดส่วน LINE Login และ Rich Menu ยังอยู่ครบและยังใช้ผูกบัญชีได้ตามเดิม เพียงแต่ไม่ได้ถูกใช้ส่ง
+แจ้งเตือนแล้ว ถ้าตัดสินใจเลิกใช้ LINE ทั้งหมดค่อยถอดออกทีเดียวพร้อมตาราง `line_accounts`
 
 ## ตั้งค่า LINE OA
 
