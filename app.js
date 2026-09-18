@@ -686,7 +686,7 @@ async function renderNewRequest(params) {
           <div class="field full">
             <label>แผนก</label>
             <input type="hidden" id="repair-department" name="department_id" required>
-            <div class="repair-department-grid" id="repair-department-picker">${departments.map((item) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" aria-pressed="false"><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
+            <div class="repair-department-grid" id="repair-department-picker">${departments.map((item) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
           </div>
           <div class="form-grid">
             <div class="field full"><label for="repair-machine">เครื่องจักร</label><select class="select" id="repair-machine" name="machine_id" required disabled>${machineOptions(null)}</select></div>

@@ -246,6 +246,8 @@ tbody tr:hover { background: var(--shell); }
   gap: 10px;
 }
 .repair-department-card {
+  --department-from: #3b82f6;
+  --department-to: #1d4ed8;
   min-height: 78px;
   padding: 11px 8px;
   display: flex;
@@ -253,18 +255,29 @@ tbody tr:hover { background: var(--shell); }
   align-items: center;
   justify-content: center;
   gap: 4px;
-  color: var(--ink);
-  background: var(--paper);
-  border: 1px solid var(--line);
+  color: #fff;
+  background: linear-gradient(135deg, var(--department-from), var(--department-to));
+  border: 1px solid rgba(255, 255, 255, .24);
   border-radius: 10px;
-  box-shadow: 0 2px 7px rgba(31, 61, 102, .05);
-  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease;
+  box-shadow: 0 7px 16px rgba(31, 61, 102, .18);
+  text-shadow: 0 1px 2px rgba(15, 23, 42, .24);
+  transition: filter .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .repair-department-card strong { font-size: 17px; line-height: 1.15; }
-.repair-department-card span { color: var(--muted); font-size: 11px; line-height: 1.35; text-align: center; }
-.repair-department-card:hover { border-color: var(--primary); box-shadow: 0 6px 16px rgba(23, 105, 224, .13); transform: translateY(-1px); }
-.repair-department-card.active { color: var(--primary); background: var(--primary-soft); border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
-.repair-department-card.active span { color: var(--primary); }
+.repair-department-card span { color: rgba(255, 255, 255, .9); font-size: 11px; line-height: 1.35; text-align: center; }
+.repair-department-card:hover { filter: brightness(1.08) saturate(1.08); box-shadow: 0 10px 22px rgba(31, 61, 102, .25); transform: translateY(-2px); }
+.repair-department-card.active { border-color: #fff; box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--department-from), 0 10px 22px rgba(31, 61, 102, .25); transform: translateY(-1px); }
+.repair-department-card[data-dept-code="RB"] { --department-from: #0369a1; --department-to: #1d4ed8; }
+.repair-department-card[data-dept-code="GR"] { --department-from: #0f766e; --department-to: #115e59; }
+.repair-department-card[data-dept-code="BG"] { --department-from: #7c3aed; --department-to: #5b21b6; }
+.repair-department-card[data-dept-code="PT"] { --department-from: #b45309; --department-to: #c2410c; }
+.repair-department-card[data-dept-code="PK"] { --department-from: #db2777; --department-to: #9d174d; }
+.repair-department-card[data-dept-code="QA"] { --department-from: #0e7490; --department-to: #075985; }
+.repair-department-card[data-dept-code="ST"] { --department-from: #64748b; --department-to: #334155; }
+.repair-department-card[data-dept-code="SR"] { --department-from: #4d7c0f; --department-to: #166534; }
+.repair-department-card[data-dept-code="FT"] { --department-from: #c2410c; --department-to: #9a3412; }
+.repair-department-card[data-dept-code="MT"] { --department-from: #dc2626; --department-to: #991b1b; }
+.repair-department-card[data-dept-code="AD"] { --department-from: #4f46e5; --department-to: #3730a3; }
 .type-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
 .type-card {
   position: relative;
