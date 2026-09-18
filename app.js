@@ -1148,6 +1148,8 @@ async function handleEmployeeEditSubmit(event) {
   const message = document.querySelector("#employee-edit-message");
   const values = new FormData(form);
   const employeeId = form.dataset.employeeId;
+  const previousEmployeeNo = String(form.dataset.employeeNo ?? "").trim().toUpperCase();
+  const newEmployeeNo = String(values.get("employee_no") ?? "").trim().toUpperCase();
   const newPassword = String(values.get("password") ?? "");
   if (newPassword && (newPassword.length < 8 || newPassword.length > 72)) {
     message.innerHTML = `<div class="form-message error">รหัสผ่านต้องมี 8–72 ตัวอักษร</div>`;
@@ -1158,7 +1160,7 @@ async function handleEmployeeEditSubmit(event) {
 
   const { error } = await sb.rpc("app_admin_update_employee", {
     p_employee_id: employeeId,
-    p_employee_no: String(values.get("employee_no") ?? "").trim().toUpperCase(),
+    p_employee_no: newEmployeeNo,
     p_first_name: String(values.get("first_name") ?? ""),
     p_last_name: String(values.get("last_name") ?? ""),
     p_email: String(values.get("email") ?? ""),
@@ -1191,7 +1193,7 @@ async function handleEmployeeEditSubmit(event) {
   }
 
   if (employeeId === state.employee.id) {
-    if (newPassword) {
+    if (newPassword || newEmployeeNo !== previousEmployeeNo) {
       showToast("บันทึกการแก้ไขบัญชีเรียบร้อย");
       await forceReLogin("แก้ไขบัญชีของคุณเรียบร้อยแล้ว กรุณาเข้าสู่ระบบอีกครั้งด้วย ID และรหัสผ่านใหม่");
       return;
@@ -1310,7 +1312,7 @@ async function renderAdmin(params) {
       <section class="card">
         <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID บทบาท และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
         <div id="employee-edit-message"></div>
-        <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}">
+        <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}">
           <div class="field-row">
             <div class="field"><label for="edit-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
             <div class="field"><label for="edit-active">สถานะบัญชี</label><select class="input" id="edit-active" name="is_active"><option value="true"${editing.is_active ? " selected" : ""}>ใช้งาน</option><option value="false"${editing.is_active ? "" : " selected"}>ปิดใช้งาน</option></select></div>
