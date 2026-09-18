@@ -423,7 +423,6 @@ function shell(content, active, title) {
           ${navLink("dashboard", "หน้าหลัก", "⌂", active)}
           ${navLink("requests", employee.role?.code === "operator" ? "งานดำเนินการ" : "คำร้อง", "▤", active)}
           ${navLink("new", "สร้างคำร้อง", "+", active)}
-          ${navLink("repair/new", "แจ้งซ่อม", "⚒", active)}
           ${navLink("approvals", "รออนุมัติ", "✓", active)}
           ${navLink("notifications", "การแจ้งเตือน", "♧", active)}
           <div class="nav-divider"></div>
@@ -443,7 +442,6 @@ function shell(content, active, title) {
           <div class="top-actions">
             ${themeButton()}
             <a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>
-            <a class="btn small secondary" href="#/repair/new">⚒ แจ้งซ่อม</a>
             <a class="btn small" href="#/new">＋ สร้างคำร้อง</a>
           </div>
         </header>
@@ -553,74 +551,58 @@ function dynamicDetailFields(schema, values = {}) {
   }).join("");
 }
 
+const requestTypeThemes = {
+  MT_REPAIR: ["#fb7185", "#be123c"],
+  IT_REPAIR: ["#60a5fa", "#1d4ed8"],
+  VEHICLE_REPAIR: ["#fb923c", "#c2410c"],
+  PURCHASE: ["#34d399", "#047857"],
+  MANAGEMENT: ["#a78bfa", "#5b21b6"],
+  IT_ACCESS: ["#22d3ee", "#0e7490"],
+  HR_LEAVE: ["#f472b6", "#be185d"],
+  HR_TRAINING: ["#fbbf24", "#b45309"],
+};
+const requestTypeLabelOverrides = { MT_REPAIR: "ใบคำร้อง/แจ้งซ่อม MT" };
+
+function requestTypeLabel(type) {
+  return requestTypeLabelOverrides[type.code] ?? type.name_th;
+}
+
+function requestTypeGradient(code) {
+  const [from, to] = requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
+  return `linear-gradient(135deg, ${from}, ${to})`;
+}
+
+function typeCardHtml(type) {
+  return `
+    <button type="button" class="type-card" data-type-id="${escapeHtml(type.id)}" style="background:${requestTypeGradient(type.code)}">
+      <span class="type-card-badge">${escapeHtml(type.prefix ?? "")}</span>
+      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${escapeHtml(type.description ?? "")}</small></span>
+    </button>`;
+}
+
 async function renderNewRequest(params) {
   loadingShell("new", "สร้างคำร้อง");
   const { data: types, error } = await sb
     .from("request_types")
-    .select("id,name_th,description,form_schema")
+    .select("id,code,prefix,name_th,description,form_schema,uses_repair_workflow")
     .eq("is_active", true)
-    .eq("uses_repair_workflow", false)
     .order("sort_order");
   if (error) throw error;
-  const initialType = params.get("type") ?? types?.[0]?.id ?? "";
-  const selected = types?.find((item) => item.id === initialType) ?? types?.[0];
-  const content = `
-    <div class="page-heading"><div><div class="eyebrow">New request</div><h1>สร้างคำร้องใหม่</h1><p>กรอกข้อมูลที่จำเป็น ระบบจะสร้างลำดับอนุมัติให้อัตโนมัติ</p></div></div>
-    <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="request-form">
-      <div class="form-grid">
-        <div class="field full"><label for="request-type">ประเภทคำร้อง</label><select class="select" id="request-type" name="type_id" required>${(types ?? []).map((type) => `<option value="${escapeHtml(type.id)}"${type.id === selected?.id ? " selected" : ""}>${escapeHtml(type.name_th)}</option>`).join("")}</select><small id="type-description">${escapeHtml(selected?.description ?? "")}</small></div>
-        <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
-        <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-        <div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
-        <div></div><div id="detail-fields" class="field full"><div class="form-grid">${dynamicDetailFields(selected?.form_schema)}</div></div>
-      </div>
-      <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งคำร้อง</button></div>
-    </form></section>`;
-  app.innerHTML = shell(content, "new", "สร้างคำร้อง");
-  bindShell();
-  const select = document.querySelector("#request-type");
-  select.addEventListener("change", () => {
-    const type = types.find((item) => item.id === select.value);
-    document.querySelector("#type-description").textContent = type?.description ?? "";
-    document.querySelector("#detail-fields").innerHTML = `<div class="form-grid">${dynamicDetailFields(type?.form_schema)}</div>`;
-  });
-  document.querySelector("#request-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const values = new FormData(form);
-    const details = {};
-    form.querySelectorAll(".detail-field").forEach((input) => { if (input.value.trim()) details[input.name] = input.value.trim(); });
-    setFormBusy(form, true);
-    try {
-      const { data, error: createError } = await sb.rpc("app_create_request", {
-        p_type_id: values.get("type_id"),
-        p_title: String(values.get("title") ?? "").trim(),
-        p_description: String(values.get("description") ?? "").trim(),
-        p_priority: values.get("priority"),
-        p_details: details,
-      });
-      if (createError) throw createError;
-      showToast("สร้างคำร้องสำเร็จ");
-      go(`request?id=${encodeURIComponent(data)}`);
-    } catch (submitError) {
-      document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
-      setFormBusy(form, false);
-    }
-  });
-}
-
-async function renderNewRepairRequest() {
-  loadingShell("repair/new", "แจ้งซ่อม");
-  const [departmentsResult, machinesResult] = await Promise.all([
-    sb.from("departments").select("id,code,name_th").eq("is_active", true).eq("is_repair_site", true).order("code"),
-    sb.from("machines").select("id,code,name,department_id,is_placeholder").eq("is_active", true).order("sort_order"),
-  ]);
-  if (departmentsResult.error) throw departmentsResult.error;
-  if (machinesResult.error) throw machinesResult.error;
-  const departments = departmentsResult.data ?? [];
-  const machines = machinesResult.data ?? [];
   const employee = state.employee;
 
+  let departments = null;
+  let machines = null;
+  async function loadRepairLookups() {
+    if (departments) return;
+    const [departmentsResult, machinesResult] = await Promise.all([
+      sb.from("departments").select("id,code,name_th").eq("is_active", true).eq("is_repair_site", true).order("code"),
+      sb.from("machines").select("id,code,name,department_id,is_placeholder").eq("is_active", true).order("sort_order"),
+    ]);
+    if (departmentsResult.error) throw departmentsResult.error;
+    if (machinesResult.error) throw machinesResult.error;
+    departments = departmentsResult.data ?? [];
+    machines = machinesResult.data ?? [];
+  }
   const machineOptions = (departmentId) => {
     if (!departmentId) return `<option value="">เลือกแผนกก่อน</option>`;
     const options = machines.filter((item) => item.department_id === departmentId);
@@ -628,89 +610,158 @@ async function renderNewRepairRequest() {
     return `<option value="">เลือกเครื่องจักร</option>${options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.is_placeholder ? "" : ` — ${escapeHtml(item.name)}`}</option>`).join("")}`;
   };
 
-  const content = `
-    <div class="page-heading"><div><div class="eyebrow">Repair report</div><h1>แจ้งซ่อมเครื่องจักร/อาคาร</h1><p>เลือกแผนกและเครื่องจักรที่ชำรุด ระบบจะออกเลขที่เอกสารและส่งเข้าสายอนุมัติให้อัตโนมัติ</p></div></div>
-    <section class="card" style="max-width:900px;margin:auto"><div id="repair-message"></div><form id="repair-form">
-      <div class="field full">
-        <label>แผนก</label>
-        <input type="hidden" id="repair-department" name="department_id" required>
-        <div class="filters" id="repair-department-picker">${departments.map((item) => `<button type="button" class="filter" data-dept="${escapeHtml(item.id)}">${escapeHtml(item.code)}</button>`).join("")}</div>
-      </div>
-      <div class="form-grid">
-        <div class="field full"><label for="repair-machine">เครื่องจักร</label><select class="select" id="repair-machine" name="machine_id" required disabled>${machineOptions(null)}</select></div>
-        <div class="field full">
-          <label>ประเภทเอกสาร</label>
-          <input type="hidden" id="repair-doc-type" name="doc_type" value="repair" required>
-          <div class="filters" id="repair-doctype-picker">
-            <button type="button" class="filter active" data-doctype="repair">${escapeHtml(docTypeLabels.repair)}</button>
-            <button type="button" class="filter" data-doctype="request">${escapeHtml(docTypeLabels.request)}</button>
+  const requestedType = params.get("type");
+  let selectedId = requestedType && (types ?? []).some((type) => type.id === requestedType) ? requestedType : "";
+
+  async function paint() {
+    const selected = (types ?? []).find((type) => type.id === selectedId) ?? null;
+    const heading = selected
+      ? `<div class="page-heading"><div><div class="eyebrow">New request</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div><button type="button" class="btn secondary" id="change-type-button">‹ เปลี่ยนประเภท</button></div>`
+      : `<div class="page-heading"><div><div class="eyebrow">New request</div><h1>สร้างคำร้องใหม่</h1><p>เลือกประเภทคำร้องที่ต้องการ ระบบจะสร้างลำดับอนุมัติให้อัตโนมัติ</p></div></div>`;
+
+    let body;
+    if (!selected) {
+      body = `<div class="type-grid">${(types ?? []).map((type) => typeCardHtml(type)).join("")}</div>`;
+    } else if (selected.uses_repair_workflow) {
+      await loadRepairLookups();
+      body = `
+        <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="repair-form">
+          <div class="field full">
+            <label>แผนก</label>
+            <input type="hidden" id="repair-department" name="department_id" required>
+            <div class="filters" id="repair-department-picker">${departments.map((item) => `<button type="button" class="filter" data-dept="${escapeHtml(item.id)}">${escapeHtml(item.code)}</button>`).join("")}</div>
           </div>
-        </div>
-        <div class="field full"><label for="repair-description">อาการ/รายละเอียด</label><textarea class="textarea" id="repair-description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-        <div class="field"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
-        <div class="field"><label for="repair-requester-name">ชื่อผู้แจ้ง</label><input class="input" id="repair-requester-name" name="requester_name" maxlength="120" value="${escapeHtml(`${employee.first_name} ${employee.last_name}`)}"></div>
-        <div class="field full"><label class="checkbox-label"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
-        <div class="field full"><div class="muted small" id="repair-doc-number">เลขที่เอกสาร: เลือกแผนกเพื่อดูเลขที่โดยประมาณ</div></div>
-      </div>
-      <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งใบแจ้งซ่อม</button></div>
-    </form></section>`;
-  app.innerHTML = shell(content, "repair/new", "แจ้งซ่อม");
-  bindShell();
-
-  const departmentInput = document.querySelector("#repair-department");
-  const machineSelect = document.querySelector("#repair-machine");
-  const docTypeInput = document.querySelector("#repair-doc-type");
-  const docNumberNode = document.querySelector("#repair-doc-number");
-
-  document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
-    document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => node.classList.remove("active"));
-    button.classList.add("active");
-    const departmentId = button.dataset.dept;
-    departmentInput.value = departmentId;
-    machineSelect.disabled = false;
-    machineSelect.innerHTML = machineOptions(departmentId);
-    docNumberNode.textContent = "เลขที่เอกสาร: กำลังตรวจสอบ…";
-    try {
-      const { data, error: peekError } = await sb.rpc("app_peek_repair_doc_number", { p_department_id: departmentId });
-      if (peekError) throw peekError;
-      docNumberNode.textContent = `เลขที่เอกสาร (โดยประมาณ): ${data}`;
-    } catch (peekError) {
-      docNumberNode.textContent = "เลขที่เอกสาร: ระบบจะออกให้ตอนส่งใบ";
+          <div class="form-grid">
+            <div class="field full"><label for="repair-machine">เครื่องจักร</label><select class="select" id="repair-machine" name="machine_id" required disabled>${machineOptions(null)}</select></div>
+            <div class="field full">
+              <label>ประเภทเอกสาร</label>
+              <input type="hidden" id="repair-doc-type" name="doc_type" value="repair" required>
+              <div class="filters" id="repair-doctype-picker">
+                <button type="button" class="filter active" data-doctype="repair">${escapeHtml(docTypeLabels.repair)}</button>
+                <button type="button" class="filter" data-doctype="request">${escapeHtml(docTypeLabels.request)}</button>
+              </div>
+            </div>
+            <div class="field full"><label for="repair-description">อาการ/รายละเอียด</label><textarea class="textarea" id="repair-description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+            <div class="field"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
+            <div class="field"><label for="repair-requester-name">ชื่อผู้แจ้ง</label><input class="input" id="repair-requester-name" name="requester_name" maxlength="120" value="${escapeHtml(`${employee.first_name} ${employee.last_name}`)}"></div>
+            <div class="field full"><label class="checkbox-label"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
+            <div class="field full"><div class="muted small" id="repair-doc-number">เลขที่เอกสาร: เลือกแผนกเพื่อดูเลขที่โดยประมาณ</div></div>
+          </div>
+          <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งใบแจ้งซ่อม</button></div>
+        </form></section>`;
+    } else {
+      body = `
+        <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="request-form">
+          <div class="form-grid">
+            <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
+            <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+            <div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
+            <div></div><div class="field full"><div class="form-grid">${dynamicDetailFields(selected.form_schema)}</div></div>
+          </div>
+          <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งคำร้อง</button></div>
+        </form></section>`;
     }
-  }));
 
-  document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((button) => button.addEventListener("click", () => {
-    document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((node) => node.classList.remove("active"));
-    button.classList.add("active");
-    docTypeInput.value = button.dataset.doctype;
-  }));
+    app.innerHTML = shell(`${heading}${body}`, "new", "สร้างคำร้อง");
+    bindShell();
+    bindStep(selected);
+  }
 
-  document.querySelector("#repair-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const message = document.querySelector("#repair-message");
-    message.innerHTML = "";
-    if (!departmentInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกแผนก</div>`; return; }
-    const values = new FormData(form);
-    setFormBusy(form, true);
-    try {
-      const { data, error: createError } = await sb.rpc("app_create_repair_request", {
-        p_department_id: departmentInput.value,
-        p_machine_id: String(values.get("machine_id") ?? ""),
-        p_doc_type: docTypeInput.value,
-        p_description: String(values.get("description") ?? "").trim(),
-        p_is_urgent: form.querySelector("#repair-urgent").checked,
-        p_needed_date: String(values.get("needed_date") ?? "") || null,
-        p_requester_name: String(values.get("requester_name") ?? "").trim() || null,
+  function bindStep(selected) {
+    document.querySelectorAll(".type-card").forEach((card) => card.addEventListener("click", () => {
+      selectedId = card.dataset.typeId;
+      paint();
+    }));
+    document.querySelector("#change-type-button")?.addEventListener("click", () => {
+      selectedId = "";
+      paint();
+    });
+    if (!selected) return;
+
+    if (selected.uses_repair_workflow) {
+      const departmentInput = document.querySelector("#repair-department");
+      const machineSelect = document.querySelector("#repair-machine");
+      const docTypeInput = document.querySelector("#repair-doc-type");
+      const docNumberNode = document.querySelector("#repair-doc-number");
+
+      document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
+        document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => node.classList.remove("active"));
+        button.classList.add("active");
+        const departmentId = button.dataset.dept;
+        departmentInput.value = departmentId;
+        machineSelect.disabled = false;
+        machineSelect.innerHTML = machineOptions(departmentId);
+        docNumberNode.textContent = "เลขที่เอกสาร: กำลังตรวจสอบ…";
+        try {
+          const { data, error: peekError } = await sb.rpc("app_peek_repair_doc_number", { p_department_id: departmentId });
+          if (peekError) throw peekError;
+          docNumberNode.textContent = `เลขที่เอกสาร (โดยประมาณ): ${data}`;
+        } catch (peekError) {
+          docNumberNode.textContent = "เลขที่เอกสาร: ระบบจะออกให้ตอนส่งใบ";
+        }
+      }));
+
+      document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((button) => button.addEventListener("click", () => {
+        document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((node) => node.classList.remove("active"));
+        button.classList.add("active");
+        docTypeInput.value = button.dataset.doctype;
+      }));
+
+      document.querySelector("#repair-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const message = document.querySelector("#request-message");
+        message.innerHTML = "";
+        if (!departmentInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกแผนก</div>`; return; }
+        const values = new FormData(form);
+        setFormBusy(form, true);
+        try {
+          const { data, error: createError } = await sb.rpc("app_create_repair_request", {
+            p_department_id: departmentInput.value,
+            p_machine_id: String(values.get("machine_id") ?? ""),
+            p_doc_type: docTypeInput.value,
+            p_description: String(values.get("description") ?? "").trim(),
+            p_is_urgent: form.querySelector("#repair-urgent").checked,
+            p_needed_date: String(values.get("needed_date") ?? "") || null,
+            p_requester_name: String(values.get("requester_name") ?? "").trim() || null,
+          });
+          if (createError) throw createError;
+          showToast("ส่งใบแจ้งซ่อมสำเร็จ · แนบรูปเพิ่มเติมได้ที่หน้ารายละเอียด");
+          go(`request?id=${encodeURIComponent(data)}`);
+        } catch (submitError) {
+          message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
+          setFormBusy(form, false);
+        }
       });
-      if (createError) throw createError;
-      showToast("ส่งใบแจ้งซ่อมสำเร็จ · แนบรูปเพิ่มเติมได้ที่หน้ารายละเอียด");
-      go(`request?id=${encodeURIComponent(data)}`);
-    } catch (submitError) {
-      message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
-      setFormBusy(form, false);
+      return;
     }
-  });
+
+    document.querySelector("#request-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = new FormData(form);
+      const details = {};
+      form.querySelectorAll(".detail-field").forEach((input) => { if (input.value.trim()) details[input.name] = input.value.trim(); });
+      setFormBusy(form, true);
+      try {
+        const { data, error: createError } = await sb.rpc("app_create_request", {
+          p_type_id: selected.id,
+          p_title: String(values.get("title") ?? "").trim(),
+          p_description: String(values.get("description") ?? "").trim(),
+          p_priority: values.get("priority"),
+          p_details: details,
+        });
+        if (createError) throw createError;
+        showToast("สร้างคำร้องสำเร็จ");
+        go(`request?id=${encodeURIComponent(data)}`);
+      } catch (submitError) {
+        document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
+        setFormBusy(form, false);
+      }
+    });
+  }
+
+  await paint();
 }
 
 // เดิมชื่อ loadDirectory() ซ้ำกับฟังก์ชันโหลดแผนกของหน้าขอเปิดบัญชี (บรรทัดข้างบน) —
@@ -1412,7 +1463,7 @@ async function renderRoute() {
     if (path === "dashboard") return await renderDashboard();
     if (path === "requests") return await renderRequests(params);
     if (path === "new") return await renderNewRequest(params);
-    if (path === "repair/new") return await renderNewRepairRequest();
+    if (path === "repair/new") { go("new"); return; }
     if (path === "request") return await renderRequestDetail(params);
     if (path === "approvals") return await renderApprovals(params);
     if (path === "notifications") return await renderNotifications();
