@@ -41,6 +41,12 @@ const statusLabels = {
 };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
 const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
 const docTypeLabels = { request: "ใบคำร้อง", repair: "ใบแจ้งซ่อม" };
 const executionPlanLabels = {
   immediate: "ดำเนินการได้ทันที",
@@ -153,6 +159,35 @@ function setFormBusy(form, busy) {
   if (button) {
     if (!button.dataset.label) button.dataset.label = button.textContent;
     button.textContent = busy ? "กำลังดำเนินการ…" : button.dataset.label;
+  }
+}
+
+function optionalAttachment(value) {
+  if (!(value instanceof File) || value.size === 0) return null;
+  if (value.size > MAX_ATTACHMENT_SIZE) throw new Error("ไฟล์ต้องมีขนาดไม่เกิน 10 MB");
+  if (!ALLOWED_ATTACHMENT_TYPES.has(value.type)) throw new Error("ชนิดไฟล์ไม่รองรับ");
+  return value;
+}
+
+async function uploadRequestAttachment(requestId, file, uploaderId) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
+  const storagePath = `${requestId}/${crypto.randomUUID()}-${safeName}`;
+  const { error: uploadError } = await sb.storage
+    .from("request-attachments")
+    .upload(storagePath, file, { contentType: file.type, upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { error: metadataError } = await sb.from("request_attachments").insert({
+    request_id: requestId,
+    uploader_id: uploaderId,
+    storage_path: storagePath,
+    file_name: file.name.slice(0, 255),
+    content_type: file.type,
+    size_bytes: file.size,
+  });
+  if (metadataError) {
+    await sb.storage.from("request-attachments").remove([storagePath]);
+    throw metadataError;
   }
 }
 
@@ -647,7 +682,8 @@ async function renderNewRequest(params) {
                 <button type="button" class="filter" data-doctype="request">${escapeHtml(docTypeLabels.request)}</button>
               </div>
             </div>
-            <div class="field full"><label for="repair-description">อาการ/รายละเอียด</label><textarea class="textarea" id="repair-description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+            <div class="field full"><label for="repair-description">รายละเอียด</label><textarea class="textarea" id="repair-description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+            <div class="field full"><label for="repair-attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="repair-attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
             <div class="field"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
             <div class="field"><label for="repair-requester-name">ชื่อผู้แจ้ง</label><input class="input" id="repair-requester-name" name="requester_name" maxlength="120" value="${escapeHtml(`${employee.first_name} ${employee.last_name}`)}"></div>
             <div class="field full"><label class="checkbox-label"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
@@ -661,6 +697,7 @@ async function renderNewRequest(params) {
           <div class="form-grid">
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+            <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
             <div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
             <div></div><div class="field full"><div class="form-grid">${dynamicDetailFields(selected.form_schema)}</div></div>
           </div>
@@ -720,6 +757,13 @@ async function renderNewRequest(params) {
         message.innerHTML = "";
         if (!departmentInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกแผนก</div>`; return; }
         const values = new FormData(form);
+        let attachment;
+        try {
+          attachment = optionalAttachment(values.get("attachment"));
+        } catch (attachmentError) {
+          message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
+          return;
+        }
         setFormBusy(form, true);
         try {
           const { data, error: createError } = await sb.rpc("app_create_repair_request", {
@@ -732,7 +776,16 @@ async function renderNewRequest(params) {
             p_requester_name: String(values.get("requester_name") ?? "").trim() || null,
           });
           if (createError) throw createError;
-          showToast("ส่งใบแจ้งซ่อมสำเร็จ · แนบรูปเพิ่มเติมได้ที่หน้ารายละเอียด");
+          if (attachment) {
+            try {
+              await uploadRequestAttachment(data, attachment, employee.id);
+            } catch {
+              showToast(`สร้างคำร้องแล้ว แต่แนบไฟล์ไม่สำเร็จ · กรุณาแนบใหม่ในหน้ารายละเอียด`, "error");
+              go(`request?id=${encodeURIComponent(data)}`);
+              return;
+            }
+          }
+          showToast(attachment ? "ส่งใบแจ้งซ่อมและแนบไฟล์สำเร็จ" : "ส่งใบแจ้งซ่อมสำเร็จ");
           go(`request?id=${encodeURIComponent(data)}`);
         } catch (submitError) {
           message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
@@ -746,6 +799,13 @@ async function renderNewRequest(params) {
       event.preventDefault();
       const form = event.currentTarget;
       const values = new FormData(form);
+      let attachment;
+      try {
+        attachment = optionalAttachment(values.get("attachment"));
+      } catch (attachmentError) {
+        document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
+        return;
+      }
       const details = {};
       form.querySelectorAll(".detail-field").forEach((input) => { if (input.value.trim()) details[input.name] = input.value.trim(); });
       setFormBusy(form, true);
@@ -758,7 +818,16 @@ async function renderNewRequest(params) {
           p_details: details,
         });
         if (createError) throw createError;
-        showToast("สร้างคำร้องสำเร็จ");
+        if (attachment) {
+          try {
+            await uploadRequestAttachment(data, attachment, employee.id);
+          } catch {
+            showToast("สร้างคำร้องแล้ว แต่แนบไฟล์ไม่สำเร็จ · กรุณาแนบใหม่ในหน้ารายละเอียด", "error");
+            go(`request?id=${encodeURIComponent(data)}`);
+            return;
+          }
+        }
+        showToast(attachment ? "สร้างคำร้องและแนบไฟล์สำเร็จ" : "สร้างคำร้องสำเร็จ");
         go(`request?id=${encodeURIComponent(data)}`);
       } catch (submitError) {
         document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
@@ -965,16 +1034,16 @@ async function renderRequestDetail(params) {
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    const file = form.elements.file.files[0];
-    if (!file || file.size > 10 * 1024 * 1024) return showToast("ไฟล์ต้องมีขนาดไม่เกิน 10 MB", "error");
-    setFormBusy(form, true);
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
-    const path = `${id}/${crypto.randomUUID()}-${safeName}`;
+    let file;
     try {
-      const { error: uploadError } = await sb.storage.from("request-attachments").upload(path, file, { contentType: file.type, upsert: false });
-      if (uploadError) throw uploadError;
-      const { error: metadataError } = await sb.from("request_attachments").insert({ request_id: id, uploader_id: employee.id, storage_path: path, file_name: file.name.slice(0,255), content_type: file.type || "application/octet-stream", size_bytes: file.size });
-      if (metadataError) { await sb.storage.from("request-attachments").remove([path]); throw metadataError; }
+      file = optionalAttachment(form.elements.file.files[0]);
+      if (!file) throw new Error("กรุณาเลือกไฟล์");
+    } catch (error) {
+      return showToast(friendlyError(error), "error");
+    }
+    setFormBusy(form, true);
+    try {
+      await uploadRequestAttachment(id, file, employee.id);
       showToast("อัปโหลดไฟล์แล้ว");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }

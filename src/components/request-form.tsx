@@ -38,7 +38,7 @@ export function RequestForm({ types, initialType, error }: { types: RequestType[
   const fields = selected?.form_schema?.fields ?? [];
 
   return (
-    <form action={createRequestAction}>
+    <form action={createRequestAction} encType="multipart/form-data">
       {error && <div className="form-message error">{error}</div>}
       <div className="form-grid">
         <div className="field full">
@@ -55,6 +55,11 @@ export function RequestForm({ types, initialType, error }: { types: RequestType[
         <div className="field full">
           <label htmlFor="description">รายละเอียด</label>
           <textarea className="textarea" id="description" name="description" minLength={3} maxLength={5000} placeholder="อธิบายปัญหา ความต้องการ หรือเหตุผลประกอบ" required />
+        </div>
+        <div className="field full">
+          <label htmlFor="attachment">ไฟล์แนบ (ถ้ามี)</label>
+          <input className="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx" />
+          <small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small>
         </div>
         <div className="field">
           <label htmlFor="priority">ความสำคัญ</label>

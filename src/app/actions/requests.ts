@@ -36,10 +36,14 @@ export async function createRequestAction(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const priority = String(formData.get("priority") ?? "normal");
+  const attachmentValue = formData.get("attachment");
+  const attachment = attachmentValue instanceof File && attachmentValue.size > 0 ? attachmentValue : null;
 
   if (title.length < 3 || title.length > 200) fail("/requests/new", "กรุณาระบุหัวข้อ 3–200 ตัวอักษร");
   if (description.length < 3 || description.length > 5000) fail("/requests/new", "กรุณาระบุรายละเอียด 3–5,000 ตัวอักษร");
   if (!allowedPriorities.has(priority)) fail("/requests/new", "ระดับความสำคัญไม่ถูกต้อง");
+  if (attachment?.size && attachment.size > 10 * 1024 * 1024) fail("/requests/new", "ไฟล์ต้องมีขนาดไม่เกิน 10 MB");
+  if (attachment && !allowedAttachmentTypes.has(attachment.type)) fail("/requests/new", "ชนิดไฟล์ไม่รองรับ");
 
   const details: Record<string, string> = {};
   for (const key of [
@@ -77,6 +81,33 @@ export async function createRequestAction(formData: FormData) {
     .single();
   if (error || !request) fail("/requests/new", "สร้างคำร้องไม่สำเร็จ กรุณาลองใหม่");
 
+  let attachmentStoragePath: string | null = null;
+  if (attachment) {
+    const safeName = attachment.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
+    attachmentStoragePath = `${request.id}/${crypto.randomUUID()}-${safeName}`;
+    const { error: uploadError } = await admin.storage
+      .from("request-attachments")
+      .upload(attachmentStoragePath, attachment, { contentType: attachment.type, upsert: false });
+    if (uploadError) {
+      await admin.from("requests").delete().eq("id", request.id);
+      fail("/requests/new", "อัปโหลดไฟล์แนบไม่สำเร็จ กรุณาลองใหม่");
+    }
+
+    const { error: metadataError } = await admin.from("request_attachments").insert({
+      request_id: request.id,
+      uploader_id: employee.id,
+      storage_path: attachmentStoragePath,
+      file_name: attachment.name.slice(0, 255),
+      content_type: attachment.type,
+      size_bytes: attachment.size,
+    });
+    if (metadataError) {
+      await admin.storage.from("request-attachments").remove([attachmentStoragePath]);
+      await admin.from("requests").delete().eq("id", request.id);
+      fail("/requests/new", "บันทึกข้อมูลไฟล์แนบไม่สำเร็จ กรุณาลองใหม่");
+    }
+  }
+
   const steps: Array<Record<string, unknown>> = [];
   if (type.requires_manager_approval && employee.manager_id) {
     // An inactive manager cannot act, so that step would strand the request.
@@ -109,6 +140,7 @@ export async function createRequestAction(formData: FormData) {
   if (steps.length) {
     const { error: stepError } = await admin.from("approval_steps").insert(steps);
     if (stepError) {
+      if (attachmentStoragePath) await admin.storage.from("request-attachments").remove([attachmentStoragePath]);
       await admin.from("requests").delete().eq("id", request.id);
       fail("/requests/new", "สร้างลำดับอนุมัติไม่สำเร็จ กรุณาติดต่อผู้ดูแลระบบ");
     }
