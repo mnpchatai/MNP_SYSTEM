@@ -1,10 +1,17 @@
 import { RequestForm } from "@/components/request-form";
 import { createClient } from "@/lib/supabase/server";
 
+const requestModuleCodes = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
+
 export default async function NewRequestPage({ searchParams }: { searchParams: Promise<{ type?: string; error?: string }> }) {
   const params = await searchParams;
   const supabase = await createClient();
-  const { data } = await supabase.from("request_types").select("id,name_th,description,form_schema").eq("is_active", true).order("sort_order");
+  const { data } = await supabase
+    .from("request_types")
+    .select("id,name_th,description,form_schema")
+    .eq("is_active", true)
+    .in("code", requestModuleCodes)
+    .order("sort_order");
 
   return (
     <>

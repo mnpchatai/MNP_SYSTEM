@@ -1,16 +1,17 @@
 import Link from "next/link";
-import { ArrowRight, ClipboardList, FileText, Monitor, ShoppingCart, Wrench } from "lucide-react";
+import { ArrowRight, ClipboardList, FileText, Wrench } from "lucide-react";
 import { RequestTable } from "@/components/request-table";
 import { getCurrentEmployee } from "@/lib/auth";
 import { getPendingApprovals } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
 
 const requestTypeIcons = {
-  MT: Wrench,
-  IT: Monitor,
-  PR: ShoppingCart,
-  AD: FileText,
+  MT_REPAIR: Wrench,
+  MANAGEMENT: FileText,
+  NCR_CAR: ClipboardList,
 } as const;
+
+const requestModuleCodes = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 
 export default async function DashboardPage() {
   const employee = await getCurrentEmployee();
@@ -21,7 +22,12 @@ export default async function DashboardPage() {
       .select("id,request_no,title,status,priority,created_at,request_type:request_types(name_th)")
       .eq("requester_id", employee.id)
       .order("created_at", { ascending: false }),
-    supabase.from("request_types").select("id,code,name_th,description").order("sort_order").limit(4),
+    supabase
+      .from("request_types")
+      .select("id,code,name_th,description")
+      .eq("is_active", true)
+      .in("code", requestModuleCodes)
+      .order("sort_order"),
     getPendingApprovals(employee),
   ]);
   const requests = requestsResult.data ?? [];

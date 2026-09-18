@@ -40,6 +40,7 @@ const statusLabels = {
   pending_verify: "รอผู้แจ้งตรวจสอบ",
 };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
+const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 const docTypeLabels = { request: "ใบคำร้อง", repair: "ใบแจ้งซ่อม" };
 const executionPlanLabels = {
   immediate: "ดำเนินการได้ทันที",
@@ -496,7 +497,7 @@ async function renderDashboard() {
   if (!["admin", "operator"].includes(employee.role?.code)) requestsQuery = requestsQuery.eq("requester_id", employee.id);
   const [requestsResult, typesResult, pending] = await Promise.all([
     requestsQuery,
-    sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).eq("uses_repair_workflow", false).order("sort_order").limit(5),
+    sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
     getPendingApprovals(),
   ]);
   if (requestsResult.error) throw requestsResult.error;
@@ -560,8 +561,12 @@ const requestTypeThemes = {
   IT_ACCESS: ["#22d3ee", "#0e7490"],
   HR_LEAVE: ["#f472b6", "#be185d"],
   HR_TRAINING: ["#fbbf24", "#b45309"],
+  NCR_CAR: ["#facc15", "#a16207"],
 };
-const requestTypeLabelOverrides = { MT_REPAIR: "ใบคำร้อง/แจ้งซ่อม MT" };
+const requestTypeLabelOverrides = {
+  MT_REPAIR: "ใบคำร้อง/แจ้งซ่อม MT",
+  MANAGEMENT: "ใบคำร้องถึงห้องบริหาร",
+};
 
 function requestTypeLabel(type) {
   return requestTypeLabelOverrides[type.code] ?? type.name_th;
@@ -586,6 +591,7 @@ async function renderNewRequest(params) {
     .from("request_types")
     .select("id,code,prefix,name_th,description,form_schema,uses_repair_workflow")
     .eq("is_active", true)
+    .in("code", REQUEST_MODULE_CODES)
     .order("sort_order");
   if (error) throw error;
   const employee = state.employee;
