@@ -6,6 +6,8 @@ const PILOT_AUTH_URL = `${SUPABASE_URL}/functions/v1/pilot-auth`;
 // สำรองข้อมูลใบแจ้งซ่อมไปชีต Maintenance-MT เดิม (แค่บันทึก/รายงาน — Supabase ยังเป็นฐานข้อมูลหลัก
 // และเป็นตัวบังคับสิทธิ์/workflow ทั้งหมด) ดู syncRepairOrderToAppsScript ท้ายไฟล์นี้
 const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwfHj4_rNUfU9ZB4xjOpyJPxQSHucoT1baeJ0AFGaz46olWJ8UXU_pBLnKpCwG6KHprqA/exec";
+// ส่งอีเมลแจ้งเตือนจริงตาม employees.email — ดู triggerNotificationEmails ท้ายไฟล์นี้
+const NOTIFY_EMAIL_URL = `${SUPABASE_URL}/functions/v1/notify-email`;
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 });
@@ -877,6 +879,7 @@ async function renderNewRequest(params) {
             p_requester_name: String(values.get("requester_name") ?? "").trim() || null,
           });
           if (createError) throw createError;
+          triggerNotificationEmails(data);
           if (attachment) {
             try {
               await uploadRequestAttachment(data, attachment, employee.id);
@@ -919,6 +922,7 @@ async function renderNewRequest(params) {
           p_details: details,
         });
         if (createError) throw createError;
+        triggerNotificationEmails(data);
         if (attachment) {
           try {
             await uploadRequestAttachment(data, attachment, employee.id);
@@ -1045,6 +1049,29 @@ function buildAppsScriptOrder(request, steps, verifications, directory) {
   };
 }
 
+/* หลัง action ที่ RPC insert แถวแจ้งเตือนสำเร็จ (สร้างคำร้อง/อนุมัติ/มอบหมายช่าง/ตรวจรับ)
+   เรียก edge function "notify-email" ให้ไปส่งอีเมลจริงตามแถวแจ้งเตือนของคำร้องนี้ที่ยังไม่ได้ส่ง
+   — ไม่คำนวณผู้รับซ้ำฝั่งนี้ RPC เลือกผู้รับที่ถูกต้องไว้ให้แล้วตอน insert (ดู notify-email/index.ts)
+   fire-and-forget เหมือน syncRepairOrderToAppsScript — ส่งอีเมลไม่สำเร็จต้องไม่ทำให้ action หลักพัง */
+async function triggerNotificationEmails(requestId) {
+  if (!requestId) return;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) return;
+    await fetch(NOTIFY_EMAIL_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+      },
+      body: JSON.stringify({ requestId }),
+    });
+  } catch (notifyError) {
+    console.warn("ส่งอีเมลแจ้งเตือนไม่สำเร็จ", notifyError);
+  }
+}
+
 function syncRepairOrderToAppsScript(order) {
   if (!APPS_SCRIPT_SYNC_URL) return;
   // no-cors: อ่านผลลัพธ์กลับไม่ได้ (opaque response) — ยอมรับได้เพราะนี่คือสำเนาสำรอง ไม่ใช่ทางเดิน
@@ -1155,6 +1182,7 @@ async function renderRequestDetail(params) {
     try {
       const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: button.dataset.decision, p_comment: document.querySelector("#decision-comment")?.value ?? "" });
       if (error) throw error;
+      triggerNotificationEmails(id);
       showToast("บันทึกผลการพิจารณาแล้ว");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = false; }); }
@@ -1180,6 +1208,7 @@ async function renderRequestDetail(params) {
         p_work_expected_date: String(values.get("work_expected_date") ?? "") || null,
       });
       if (error) throw error;
+      triggerNotificationEmails(id);
       showToast("มอบหมายงานเรียบร้อย");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
@@ -1219,6 +1248,7 @@ async function renderRequestDetail(params) {
     try {
       const { error } = await sb.rpc("app_verify_repair", { p_request_id: id, p_result: result, p_note: note || null });
       if (error) throw error;
+      triggerNotificationEmails(id);
       showToast(result === "pass" ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = false; }); }
