@@ -246,6 +246,8 @@ button { cursor: pointer; }
 table { width: 100%; border-collapse: collapse; }
 th { padding: 10px 13px; color: var(--quiet); border-bottom: 1px solid var(--line); font-size: 9px; text-align: left; white-space: nowrap; }
 td { padding: 12px 13px; border-bottom: 1px solid var(--soft-line); font-size: 11px; }
+td.center { text-align: center; }
+td.center input[type="checkbox"] { width: 16px; height: 16px; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: var(--shell); }
 .request-no { color: var(--primary); font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
