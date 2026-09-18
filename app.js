@@ -1205,7 +1205,7 @@ async function handleEmployeeEditSubmit(event) {
 
 async function renderAdmin(params) {
   if (state.employee.role?.code !== "admin") return renderNotFound("หน้านี้สำหรับผู้ดูแลระบบเท่านั้น");
-  const tab = params.get("tab") === "credentials" ? "credentials" : "requests";
+  const tab = ["accounts", "credentials"].includes(params.get("tab")) ? params.get("tab") : "requests";
   state.adminTab = tab;
   loadingShell("admin", "ผู้ดูแลระบบ");
 
@@ -1253,6 +1253,32 @@ async function renderAdmin(params) {
         </div>` : `<p class="muted small">${escapeHtml(item.reviewed_by_name ? `ดำเนินการโดย ${item.reviewed_by_name}` : "ดำเนินการแล้ว")}${item.reviewed_at ? ` · ${formatDate(item.reviewed_at, true)}` : ""}${item.review_note ? ` · ${escapeHtml(item.review_note)}` : ""}</p>`}
     </article>`).join("") || `<div class="empty">ยังไม่มีคำร้องเกี่ยวกับบัญชี</div>`;
 
+  // ข้อมูลบัญชี: ข้อมูลเดียวกับ credentials (คลัง ID/รหัสผ่าน) แค่โชว์เป็นรายละเอียดโปรไฟล์
+  // ต่อคนแทนตาราง — ไม่มีคอลัมน์รหัสผ่าน เพราะช่องนั้นยังอยู่ที่แท็บคลัง ID/รหัสผ่านเท่านั้น
+  const accountCards = credentials.map((item) => {
+    const isSelf = item.employee_id === state.employee.id;
+    return `
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <span class="request-no">${escapeHtml(item.employee_no)}</span>
+          <h3>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}</h3>
+          <p class="muted small">${escapeHtml(item.role_code ?? "—")}</p>
+        </div>
+        ${item.is_active ? "" : `<span class="badge rejected">ปิดใช้งาน</span>`}
+      </div>
+      <dl class="definition-grid">
+        <div class="definition"><dt>แผนก</dt><dd>${escapeHtml(item.department_code ?? "—")}</dd></div>
+        <div class="definition"><dt>ตำแหน่งในแผนก</dt><dd>${escapeHtml(positionLabels[item.position_level] ?? "—")}</dd></div>
+        <div class="definition"><dt>ชื่อตำแหน่งงาน</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
+        <div class="definition"><dt>ติดต่อ</dt><dd>${escapeHtml(item.phone ?? item.email ?? "—")}</dd></div>
+        <div class="definition"><dt>สิทธิ์</dt><dd>${escapeHtml(item.role_code ?? "—")}</dd></div>
+        <div class="definition"><dt>อัปเดตล่าสุด</dt><dd>${item.updated_at ? formatDate(item.updated_at, true) : "—"}${item.updated_by_name ? ` · โดย ${escapeHtml(item.updated_by_name)}` : ""}</dd></div>
+      </dl>
+      <div class="approval-actions"><a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไขบัญชี →</a></div>
+    </article>`;
+  }).join("") || `<div class="empty">ยังไม่มีบัญชีในระบบ</div>`;
+
   const credentialRows = credentials.map((item) => {
     const isSelf = item.employee_id === state.employee.id;
     return `
@@ -1274,9 +1300,12 @@ async function renderAdmin(params) {
     <div class="page-heading"><div><div class="eyebrow">Administration</div><h1>ผู้ดูแลระบบ</h1><p>อนุมัติคำร้องเปิดบัญชี กำหนดสิทธิ์ และค้นคืน ID/รหัสผ่านที่ออกให้</p></div></div>
     <div class="filters">
       <a class="filter${tab === "requests" ? " active" : ""}" href="#/admin?tab=requests">คำร้องบัญชี${pendingCount ? ` (${pendingCount})` : ""}</a>
+      <a class="filter${tab === "accounts" ? " active" : ""}" href="#/admin?tab=accounts">ข้อมูลบัญชี</a>
       <a class="filter${tab === "credentials" ? " active" : ""}" href="#/admin?tab=credentials">คลัง ID/รหัสผ่าน</a>
     </div>
-    ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : `
+    ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : ""}
+    ${tab === "accounts" ? `<div class="stack">${accountCards}</div>` : ""}
+    ${tab === "credentials" ? `
       ${editing ? `
       <section class="card">
         <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID บทบาท และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
@@ -1310,7 +1339,7 @@ async function renderAdmin(params) {
           <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
           <tbody>${credentialRows}</tbody>
         </table></div>
-      </section>`}`;
+      </section>` : ""}`;
 
   app.innerHTML = shell(content, "admin", "ผู้ดูแลระบบ");
   bindShell();
