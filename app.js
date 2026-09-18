@@ -35,8 +35,24 @@ const statusLabels = {
   completed: "เสร็จแล้ว",
   rejected: "ไม่อนุมัติ",
   cancelled: "ยกเลิก",
+  pending_assign: "รอมอบหมายช่าง",
+  assigned: "รอดำเนินการ",
+  pending_verify: "รอผู้แจ้งตรวจสอบ",
 };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
+const docTypeLabels = { request: "ใบคำร้อง", repair: "ใบแจ้งซ่อม" };
+const executionPlanLabels = {
+  immediate: "ดำเนินการได้ทันที",
+  need_purchase: "ต้องการสั่งซื้ออุปกรณ์",
+  use_existing: "ใช้อุปกรณ์ที่มีอยู่",
+};
+const inspectorOpinionLabels = {
+  send_repair: "ส่งซ่อม",
+  external: "เรียกช่างภายนอกมาซ่อม",
+  self_repair: "ซ่อมเอง",
+  buy_parts: "ซื้ออุปกรณ์มาทำเอง",
+};
+const verifyResultLabels = { pass: "ผ่าน — ใช้งานได้ปกติ", fail: "ไม่ผ่าน — ต้องซ่อมเพิ่มเติม" };
 const detailFieldLabels = {
   asset_code: "รหัสทรัพย์สิน/เครื่องจักร",
   location: "สถานที่",
@@ -111,6 +127,20 @@ function friendlyError(error) {
     STEP_NOT_CURRENT: "ขั้นตอนนี้ไม่ใช่ขั้นตอนปัจจุบัน",
     INVALID_TRANSITION: "ไม่สามารถเปลี่ยนเป็นสถานะนี้ได้",
     ASSIGNED_TO_ANOTHER_OPERATOR: "รายการนี้มีผู้รับผิดชอบอื่นแล้ว",
+    DEPARTMENT_NOT_REPAIR_SITE: "แผนกนี้ไม่ได้เปิดใช้งานแจ้งซ่อม",
+    MACHINE_NOT_FOUND: "ไม่พบเครื่องจักรนี้ในแผนกที่เลือก",
+    INVALID_DOC_TYPE: "กรุณาเลือกประเภทเอกสาร",
+    REQUEST_NOT_PENDING_ASSIGN: "ใบนี้ไม่ได้อยู่ในขั้นรอมอบหมายช่างแล้ว",
+    TECHNICIAN_NOT_FOUND: "ไม่พบช่างที่เลือกในแผนกซ่อมบำรุง",
+    REQUEST_NOT_ASSIGNED: "ใบนี้ไม่ได้อยู่ในขั้นรอเริ่มงานแล้ว",
+    NOT_ASSIGNED_TECHNICIAN: "คุณไม่ใช่ช่างที่ถูกมอบหมายใบนี้",
+    REQUEST_NOT_IN_PROGRESS: "ใบนี้ไม่ได้อยู่ระหว่างดำเนินการซ่อมแล้ว",
+    INVALID_EXECUTION_PLAN: "กรุณาเลือกการดำเนินงาน",
+    INVALID_INSPECTOR_OPINION: "กรุณาเลือกความเห็นของช่างผู้ตรวจสอบ",
+    INVALID_CAUSE_ANALYSIS: "กรุณาระบุผลวิเคราะห์สาเหตุ 3–5,000 ตัวอักษร",
+    REQUEST_NOT_PENDING_VERIFY: "ใบนี้ไม่ได้อยู่ในขั้นรอตรวจรับแล้ว",
+    INVALID_RESULT: "กรุณาเลือกผลการตรวจรับ",
+    NOTE_REQUIRED: "กรุณาระบุสาเหตุที่ไม่ผ่านการตรวจรับ",
   };
   const key = Object.keys(map).find((item) => message.includes(item));
   return key ? map[key] : message;
@@ -393,6 +423,7 @@ function shell(content, active, title) {
           ${navLink("dashboard", "หน้าหลัก", "⌂", active)}
           ${navLink("requests", employee.role?.code === "operator" ? "งานดำเนินการ" : "คำร้อง", "▤", active)}
           ${navLink("new", "สร้างคำร้อง", "+", active)}
+          ${navLink("repair/new", "แจ้งซ่อม", "⚒", active)}
           ${navLink("approvals", "รออนุมัติ", "✓", active)}
           ${navLink("notifications", "การแจ้งเตือน", "♧", active)}
           <div class="nav-divider"></div>
@@ -412,6 +443,7 @@ function shell(content, active, title) {
           <div class="top-actions">
             ${themeButton()}
             <a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>
+            <a class="btn small secondary" href="#/repair/new">⚒ แจ้งซ่อม</a>
             <a class="btn small" href="#/new">＋ สร้างคำร้อง</a>
           </div>
         </header>
@@ -466,7 +498,7 @@ async function renderDashboard() {
   if (!["admin", "operator"].includes(employee.role?.code)) requestsQuery = requestsQuery.eq("requester_id", employee.id);
   const [requestsResult, typesResult, pending] = await Promise.all([
     requestsQuery,
-    sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).order("sort_order").limit(5),
+    sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).eq("uses_repair_workflow", false).order("sort_order").limit(5),
     getPendingApprovals(),
   ]);
   if (requestsResult.error) throw requestsResult.error;
@@ -503,7 +535,7 @@ async function renderRequests(params) {
   const { data, error } = await query;
   if (error) throw error;
   const title = role === "operator" ? "งานดำเนินการ" : role === "admin" ? "คำร้องทั้งหมด" : "คำร้องของฉัน";
-  const filters = [["all","ทั้งหมด"],["pending_approval","รออนุมัติ"],["approved","อนุมัติแล้ว"],["in_progress","กำลังดำเนินการ"],["completed","เสร็จแล้ว"],["rejected","ไม่อนุมัติ"]];
+  const filters = [["all","ทั้งหมด"],["pending_approval","รออนุมัติ"],["approved","อนุมัติแล้ว"],["pending_assign","รอมอบหมายช่าง"],["assigned","รอดำเนินการ"],["in_progress","กำลังดำเนินการ"],["pending_verify","รอตรวจรับ"],["completed","เสร็จแล้ว"],["rejected","ไม่อนุมัติ"]];
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>${title}</h1><p>ค้นหา ติดตาม และเปิดดูรายละเอียดตามสิทธิ์ของบัญชี</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
     <div class="filters">${filters.map(([value,label]) => `<a class="filter${status === value ? " active" : ""}" href="#/requests${value === "all" ? "" : `?status=${value}`}">${label}</a>`).join("")}</div>
@@ -527,6 +559,7 @@ async function renderNewRequest(params) {
     .from("request_types")
     .select("id,name_th,description,form_schema")
     .eq("is_active", true)
+    .eq("uses_repair_workflow", false)
     .order("sort_order");
   if (error) throw error;
   const initialType = params.get("type") ?? types?.[0]?.id ?? "";
@@ -576,7 +609,115 @@ async function renderNewRequest(params) {
   });
 }
 
-async function loadDirectory() {
+async function renderNewRepairRequest() {
+  loadingShell("repair/new", "แจ้งซ่อม");
+  const [departmentsResult, machinesResult] = await Promise.all([
+    sb.from("departments").select("id,code,name_th").eq("is_active", true).eq("is_repair_site", true).order("code"),
+    sb.from("machines").select("id,code,name,department_id,is_placeholder").eq("is_active", true).order("sort_order"),
+  ]);
+  if (departmentsResult.error) throw departmentsResult.error;
+  if (machinesResult.error) throw machinesResult.error;
+  const departments = departmentsResult.data ?? [];
+  const machines = machinesResult.data ?? [];
+  const employee = state.employee;
+
+  const machineOptions = (departmentId) => {
+    if (!departmentId) return `<option value="">เลือกแผนกก่อน</option>`;
+    const options = machines.filter((item) => item.department_id === departmentId);
+    if (!options.length) return `<option value="">ไม่มีเครื่องจักรในแผนกนี้</option>`;
+    return `<option value="">เลือกเครื่องจักร</option>${options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.is_placeholder ? "" : ` — ${escapeHtml(item.name)}`}</option>`).join("")}`;
+  };
+
+  const content = `
+    <div class="page-heading"><div><div class="eyebrow">Repair report</div><h1>แจ้งซ่อมเครื่องจักร/อาคาร</h1><p>เลือกแผนกและเครื่องจักรที่ชำรุด ระบบจะออกเลขที่เอกสารและส่งเข้าสายอนุมัติให้อัตโนมัติ</p></div></div>
+    <section class="card" style="max-width:900px;margin:auto"><div id="repair-message"></div><form id="repair-form">
+      <div class="field full">
+        <label>แผนก</label>
+        <input type="hidden" id="repair-department" name="department_id" required>
+        <div class="filters" id="repair-department-picker">${departments.map((item) => `<button type="button" class="filter" data-dept="${escapeHtml(item.id)}">${escapeHtml(item.code)}</button>`).join("")}</div>
+      </div>
+      <div class="form-grid">
+        <div class="field full"><label for="repair-machine">เครื่องจักร</label><select class="select" id="repair-machine" name="machine_id" required disabled>${machineOptions(null)}</select></div>
+        <div class="field full">
+          <label>ประเภทเอกสาร</label>
+          <input type="hidden" id="repair-doc-type" name="doc_type" value="repair" required>
+          <div class="filters" id="repair-doctype-picker">
+            <button type="button" class="filter active" data-doctype="repair">${escapeHtml(docTypeLabels.repair)}</button>
+            <button type="button" class="filter" data-doctype="request">${escapeHtml(docTypeLabels.request)}</button>
+          </div>
+        </div>
+        <div class="field full"><label for="repair-description">อาการ/รายละเอียด</label><textarea class="textarea" id="repair-description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+        <div class="field"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
+        <div class="field"><label for="repair-requester-name">ชื่อผู้แจ้ง</label><input class="input" id="repair-requester-name" name="requester_name" maxlength="120" value="${escapeHtml(`${employee.first_name} ${employee.last_name}`)}"></div>
+        <div class="field full"><label class="checkbox-label"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
+        <div class="field full"><div class="muted small" id="repair-doc-number">เลขที่เอกสาร: เลือกแผนกเพื่อดูเลขที่โดยประมาณ</div></div>
+      </div>
+      <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งใบแจ้งซ่อม</button></div>
+    </form></section>`;
+  app.innerHTML = shell(content, "repair/new", "แจ้งซ่อม");
+  bindShell();
+
+  const departmentInput = document.querySelector("#repair-department");
+  const machineSelect = document.querySelector("#repair-machine");
+  const docTypeInput = document.querySelector("#repair-doc-type");
+  const docNumberNode = document.querySelector("#repair-doc-number");
+
+  document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
+    document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => node.classList.remove("active"));
+    button.classList.add("active");
+    const departmentId = button.dataset.dept;
+    departmentInput.value = departmentId;
+    machineSelect.disabled = false;
+    machineSelect.innerHTML = machineOptions(departmentId);
+    docNumberNode.textContent = "เลขที่เอกสาร: กำลังตรวจสอบ…";
+    try {
+      const { data, error: peekError } = await sb.rpc("app_peek_repair_doc_number", { p_department_id: departmentId });
+      if (peekError) throw peekError;
+      docNumberNode.textContent = `เลขที่เอกสาร (โดยประมาณ): ${data}`;
+    } catch (peekError) {
+      docNumberNode.textContent = "เลขที่เอกสาร: ระบบจะออกให้ตอนส่งใบ";
+    }
+  }));
+
+  document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((button) => button.addEventListener("click", () => {
+    document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((node) => node.classList.remove("active"));
+    button.classList.add("active");
+    docTypeInput.value = button.dataset.doctype;
+  }));
+
+  document.querySelector("#repair-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const message = document.querySelector("#repair-message");
+    message.innerHTML = "";
+    if (!departmentInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกแผนก</div>`; return; }
+    const values = new FormData(form);
+    setFormBusy(form, true);
+    try {
+      const { data, error: createError } = await sb.rpc("app_create_repair_request", {
+        p_department_id: departmentInput.value,
+        p_machine_id: String(values.get("machine_id") ?? ""),
+        p_doc_type: docTypeInput.value,
+        p_description: String(values.get("description") ?? "").trim(),
+        p_is_urgent: form.querySelector("#repair-urgent").checked,
+        p_needed_date: String(values.get("needed_date") ?? "") || null,
+        p_requester_name: String(values.get("requester_name") ?? "").trim() || null,
+      });
+      if (createError) throw createError;
+      showToast("ส่งใบแจ้งซ่อมสำเร็จ · แนบรูปเพิ่มเติมได้ที่หน้ารายละเอียด");
+      go(`request?id=${encodeURIComponent(data)}`);
+    } catch (submitError) {
+      message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
+      setFormBusy(form, false);
+    }
+  });
+}
+
+// เดิมชื่อ loadDirectory() ซ้ำกับฟังก์ชันโหลดแผนกของหน้าขอเปิดบัญชี (บรรทัดข้างบน) —
+// function declaration ชื่อซ้ำใน scope เดียวกัน ตัวหลังทับตัวแรกเสมอ ทำให้หน้าขอเปิดบัญชี
+// เรียกฟังก์ชันนี้แทนโดยไม่ตั้งใจและ state.directory ไม่เคยถูกตั้งค่า (ดรอปดาวน์แผนกว่างเปล่า)
+// เปลี่ยนชื่อให้ไม่ชนกันเพื่อแก้บั๊กนี้
+async function loadEmployeeDirectory() {
   const { data, error } = await sb.from("employees").select("id,first_name,last_name,job_title,role_id,department_id").eq("is_active", true);
   if (error) throw error;
   return new Map((data ?? []).map((employee) => [employee.id, employee]));
@@ -591,45 +732,89 @@ async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
-  const [requestResult, stepsResult, commentsResult, attachmentsResult, historyResult, directory] = await Promise.all([
-    sb.from("requests").select("*,request_type:request_types(name_th,code)").eq("id", id).maybeSingle(),
+  const [requestResult, stepsResult, commentsResult, attachmentsResult, historyResult, verificationsResult, directory] = await Promise.all([
+    sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id)").eq("id", id).maybeSingle(),
     sb.from("approval_steps").select("*").eq("request_id", id).order("step_order"),
     sb.from("request_comments").select("*").eq("request_id", id).order("created_at"),
     sb.from("request_attachments").select("*").eq("request_id", id).order("created_at"),
     sb.from("request_status_history").select("*").eq("request_id", id).order("created_at", { ascending: false }),
-    loadDirectory(),
+    sb.from("request_verifications").select("*").eq("request_id", id).order("created_at", { ascending: false }),
+    loadEmployeeDirectory(),
   ]);
   if (requestResult.error) throw requestResult.error;
   if (!requestResult.data) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
-  for (const result of [stepsResult, commentsResult, attachmentsResult, historyResult]) if (result.error) throw result.error;
+  for (const result of [stepsResult, commentsResult, attachmentsResult, historyResult, verificationsResult]) if (result.error) throw result.error;
   const request = requestResult.data;
   const type = relation(request.request_type);
+  const isRepair = Boolean(type?.uses_repair_workflow);
   const steps = stepsResult.data ?? [];
   const comments = commentsResult.data ?? [];
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
+  const verifications = verificationsResult.data ?? [];
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
   const canApprove = currentStep && (employee.role?.code === "admin" || currentStep.approver_employee_id === employee.id || (
     currentStep.approver_role_id === employee.role_id && (!currentStep.approver_department_id || currentStep.approver_department_id === employee.department_id)
   ));
-  const canOperate = ["admin", "operator"].includes(employee.role?.code) && ["approved", "in_progress"].includes(request.status);
+  const canOperate = !isRepair && ["admin", "operator"].includes(employee.role?.code) && ["approved", "in_progress"].includes(request.status);
+  const isAdmin = employee.role?.code === "admin";
+  const technicians = isRepair ? [...directory.entries()].filter(([, person]) => person.department_id === type.owning_department_id) : [];
+  const canAssign = isRepair && request.status === "pending_assign" && (
+    isAdmin || (employee.department_id === type.owning_department_id && ["approver", "operator"].includes(employee.role?.code))
+  );
+  const canStartWork = isRepair && request.status === "assigned" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
+  const canFinishWork = isRepair && request.status === "in_progress" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
+  const canVerify = isRepair && request.status === "pending_verify" && (isAdmin || request.requester_id === employee.id);
   const detailEntries = Object.entries(request.details ?? {});
   const content = `
     <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p></header>
     <div class="detail-grid">
       <div class="stack">
         <section class="card"><div class="card-heading" style="padding:0;min-height:36px"><h2>ข้อมูลคำร้อง</h2>${statusBadge(request.status)}</div><p class="description">${escapeHtml(request.description)}</p>
-          <dl class="definition-grid"><div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div><div class="definition"><dt>ผู้รับผิดชอบ</dt><dd>${escapeHtml(personName(directory, request.assignee_id))}</dd></div>${detailEntries.map(([key,value]) => `<div class="definition"><dt>${escapeHtml(detailFieldLabels[key] ?? key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>
+          <dl class="definition-grid">
+            <div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div>
+            <div class="definition"><dt>ผู้รับผิดชอบ</dt><dd>${escapeHtml(personName(directory, request.assignee_id))}</dd></div>
+            ${isRepair ? `
+            <div class="definition"><dt>ประเภทเอกสาร</dt><dd>${escapeHtml(docTypeLabels[request.doc_type] ?? request.doc_type ?? "—")}</dd></div>
+            <div class="definition"><dt>เครื่องจักร</dt><dd>${escapeHtml(request.machine_code ?? "—")}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${escapeHtml(request.machine_name)}` : ""}</dd></div>
+            <div class="definition"><dt>ผู้แจ้ง</dt><dd>${escapeHtml(request.requester_name ?? "—")}</dd></div>
+            <div class="definition"><dt>ด่วน</dt><dd>${request.is_urgent ? "ด่วน" : "ปกติ"}</dd></div>
+            ${request.needed_date ? `<div class="definition"><dt>วันที่ต้องการใช้งาน</dt><dd>${formatDate(request.needed_date)}</dd></div>` : ""}
+            ${request.assigned_at ? `<div class="definition"><dt>มอบหมายเมื่อ</dt><dd>${formatDate(request.assigned_at, true)} โดย ${escapeHtml(personName(directory, request.assigned_by))}</dd></div>` : ""}
+            ${request.work_expected_date ? `<div class="definition"><dt>กำหนดเสร็จ</dt><dd>${formatDate(request.work_expected_date)}</dd></div>` : ""}
+            ${request.work_started_date ? `<div class="definition"><dt>วันที่เริ่มงาน</dt><dd>${formatDate(request.work_started_date)}</dd></div>` : ""}
+            ${request.execution_plan ? `<div class="definition"><dt>การดำเนินงาน</dt><dd>${escapeHtml(executionPlanLabels[request.execution_plan] ?? request.execution_plan)}</dd></div>` : ""}
+            ${request.inspector_opinion ? `<div class="definition"><dt>ความเห็นผู้ตรวจสอบ</dt><dd>${escapeHtml(inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion)}</dd></div>` : ""}
+            ${request.cause_analysis ? `<div class="definition"><dt>วิเคราะห์สาเหตุ</dt><dd>${escapeHtml(request.cause_analysis)}</dd></div>` : ""}
+            ${request.parts_used ? `<div class="definition"><dt>อะไหล่ที่ใช้</dt><dd>${escapeHtml(request.parts_used)}</dd></div>` : ""}
+            ` : ""}
+            ${detailEntries.map(([key,value]) => `<div class="definition"><dt>${escapeHtml(detailFieldLabels[key] ?? key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+          </dl>
         </section>
         ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button><button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
         ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
+        ${canAssign ? `<section class="card"><h2>มอบหมายช่าง</h2><p class="muted small">เลือกช่างของแผนกซ่อมบำรุงและกำหนดวันที่คาดว่าจะเสร็จ</p><form id="assign-form">
+          <div class="field"><label for="assign-technician">ช่างผู้รับผิดชอบ</label><select class="select" id="assign-technician" name="technician_id" required><option value="">เลือกช่าง</option>${technicians.map(([techId, person]) => `<option value="${escapeHtml(techId)}">${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</option>`).join("") || ""}</select>${!technicians.length ? `<small>ยังไม่มีพนักงานในแผนกซ่อมบำรุง</small>` : ""}</div>
+          <div class="field"><label for="assign-expected-date">กำหนดเสร็จ (ถ้ามี)</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date"></div>
+          <div class="form-actions"><button class="btn" type="submit">มอบหมายงาน</button></div>
+        </form></section>` : ""}
+        ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
+        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์แล้วส่งต่อให้ผู้แจ้งตรวจรับ</p><form id="finish-form">
+          <div class="field"><label for="finish-execution-plan">การดำเนินงาน</label><select class="select" id="finish-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
+          <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required></textarea></div>
+          <div class="field"><label for="finish-opinion">ความเห็นของช่างผู้ตรวจสอบ</label><select class="select" id="finish-opinion" name="inspector_opinion" required><option value="">เลือกความเห็น</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
+          <div class="field"><label for="finish-parts">อะไหล่/วัสดุที่ใช้ (ถ้ามี)</label><textarea class="textarea" id="finish-parts" name="parts_used" maxlength="2000"></textarea></div>
+          <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งตรวจรับ</button></div>
+        </form></section>` : ""}
+        ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
         <section class="card"><h2>ความคิดเห็น</h2>${comments.map((comment) => `<article class="comment"><div class="comment-head"><strong>${escapeHtml(personName(directory, comment.author_id))}</strong><time>${formatDate(comment.created_at, true)}</time></div><div class="comment-body">${escapeHtml(comment.body)}</div></article>`).join("") || `<div class="empty">ยังไม่มีความคิดเห็น</div>`}<form id="comment-form"><div class="field"><label for="comment-body">เพิ่มความคิดเห็น</label><textarea class="textarea" id="comment-body" name="body" maxlength="3000" required></textarea></div><div class="form-actions"><button class="btn small" type="submit">บันทึกความคิดเห็น</button></div></form></section>
       </div>
       <aside class="stack">
         <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
         <section class="card"><h2>ไฟล์แนบ</h2>${attachments.map((file) => `<div class="attachment"><span>${escapeHtml(file.file_name)}<br><small class="muted">${Math.ceil(file.size_bytes / 1024)} KB</small></span><button class="btn secondary small download-button" data-path="${escapeHtml(file.storage_path)}">เปิด</button></div>`).join("") || `<p class="muted small">ยังไม่มีไฟล์แนบ</p>`}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์ (สูงสุด 10 MB)</label><input class="input" id="attachment-file" name="file" type="file" required></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
         <section class="card"><h2>ประวัติสถานะ</h2><div class="timeline">${history.map((item) => `<div class="timeline-item"><strong>${escapeHtml(statusLabels[item.to_status] ?? item.to_status)}</strong><p>${formatDate(item.created_at, true)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</p></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
+        ${isRepair ? `<section class="card"><h2>ประวัติการตรวจรับ</h2><div class="timeline">${verifications.map((item) => `<div class="timeline-item"><strong>${escapeHtml(verifyResultLabels[item.result] ?? item.result)}</strong><p>${escapeHtml(personName(directory, item.verified_by))} · ${formatDate(item.created_at, true)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</p></div>`).join("") || `<div class="muted small">ยังไม่มีการตรวจรับ</div>`}</div></section>` : ""}
       </aside>
     </div>`;
   app.innerHTML = shell(content, "requests", request.request_no);
@@ -653,6 +838,61 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
   });
+  document.querySelector("#assign-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    setFormBusy(form, true);
+    try {
+      const { error } = await sb.rpc("app_assign_repair_technician", {
+        p_request_id: id,
+        p_technician_id: values.get("technician_id"),
+        p_work_expected_date: String(values.get("work_expected_date") ?? "") || null,
+      });
+      if (error) throw error;
+      showToast("มอบหมายงานเรียบร้อย");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
+  });
+  document.querySelector(".start-work-button")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      const { error } = await sb.rpc("app_start_repair_work", { p_request_id: id });
+      if (error) throw error;
+      showToast("เริ่มงานแล้ว");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
+  });
+  document.querySelector("#finish-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    setFormBusy(form, true);
+    try {
+      const { error } = await sb.rpc("app_finish_repair_work", {
+        p_request_id: id,
+        p_execution_plan: values.get("execution_plan"),
+        p_cause_analysis: String(values.get("cause_analysis") ?? "").trim(),
+        p_inspector_opinion: values.get("inspector_opinion"),
+        p_parts_used: String(values.get("parts_used") ?? "").trim() || null,
+      });
+      if (error) throw error;
+      showToast("บันทึกผลการซ่อมแล้ว ส่งให้ผู้แจ้งตรวจรับ");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
+  });
+  document.querySelectorAll(".verify-button").forEach((button) => button.addEventListener("click", async () => {
+    const result = button.dataset.result;
+    const note = document.querySelector("#verify-note")?.value.trim() ?? "";
+    if (result === "fail" && note.length < 3) return showToast("กรุณาระบุสาเหตุที่ไม่ผ่านการตรวจรับ", "error");
+    document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = true; });
+    try {
+      const { error } = await sb.rpc("app_verify_repair", { p_request_id: id, p_result: result, p_note: note || null });
+      if (error) throw error;
+      showToast(result === "pass" ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = false; }); }
+  }));
   document.querySelector("#comment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -1141,6 +1381,7 @@ async function renderRoute() {
     if (path === "dashboard") return await renderDashboard();
     if (path === "requests") return await renderRequests(params);
     if (path === "new") return await renderNewRequest(params);
+    if (path === "repair/new") return await renderNewRepairRequest();
     if (path === "request") return await renderRequestDetail(params);
     if (path === "approvals") return await renderApprovals(params);
     if (path === "notifications") return await renderNotifications();

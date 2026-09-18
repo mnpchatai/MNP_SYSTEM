@@ -231,14 +231,16 @@ tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: var(--shell); }
 .request-no { color: var(--primary); font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
 .badge { padding: 4px 8px; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); background: var(--shell); border-radius: 6px; font-size: 9px; font-weight: 600; white-space: nowrap; }
-.badge.pending_approval, .badge.more_info { color: var(--warning); background: var(--warning-soft); }
-.badge.approved, .badge.in_progress { color: var(--primary); background: var(--primary-soft); }
+.badge.pending_approval, .badge.more_info, .badge.pending_assign, .badge.pending_verify { color: var(--warning); background: var(--warning-soft); }
+.badge.approved, .badge.in_progress, .badge.assigned { color: var(--primary); background: var(--primary-soft); }
 .badge.completed { color: var(--success); background: var(--success-soft); }
 .badge.rejected, .badge.cancelled { color: var(--danger); background: var(--danger-soft); }
 .priority-high, .priority-urgent { color: var(--danger); font-weight: 700; }
 .filters { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 7px; }
-.filter { min-height: 31px; padding: 0 11px; display: inline-flex; align-items: center; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 7px; font-size: 10px; }
+.filter { min-height: 31px; padding: 0 11px; display: inline-flex; align-items: center; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 7px; font-size: 10px; cursor: pointer; }
 .filter.active { color: white; background: var(--primary); border-color: var(--primary); }
+.checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+.checkbox-label input { width: 16px; height: 16px; }
 .empty { padding: 48px 20px; color: var(--muted); text-align: center; }
 
 .request-detail-head { padding-bottom: 20px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
@@ -312,7 +314,7 @@ tbody tr:hover { background: var(--shell); }
   .sidebar .brand, .nav-label, .nav-spacer, .sidebar-user, .nav-divider { display: none; }
   .nav { height: 100%; padding: 0; display: flex; justify-content: space-around; }
   .nav-link { width: 50px; min-height: 52px; margin: 0; }
-  .nav-link:nth-of-type(n+6) { display: none; }
+  .nav-link:nth-of-type(n+7) { display: none; }
   .topbar { height: 58px; padding: 0 14px; }
   .content { padding: 23px 15px 88px; }
   .page-heading { align-items: flex-start; }
