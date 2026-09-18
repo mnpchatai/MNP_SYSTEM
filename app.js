@@ -41,6 +41,19 @@ const statusLabels = {
 };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
 const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
+const REPAIR_DEPARTMENT_OPTIONS = [
+  { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
+  { sourceCode: "GR", displayCode: "GR", name: "แปรรูปราง" },
+  { sourceCode: "BG", displayCode: "BG", name: "เย็บจักร" },
+  { sourceCode: "PT", displayCode: "PT", name: "ขึ้นรูปพลาสติก" },
+  { sourceCode: "PK", displayCode: "PK", name: "ประกอบบรรจุภัณฑ์" },
+  { sourceCode: "QA", displayCode: "QA", name: "ประกันคุณภาพ" },
+  { sourceCode: "ST", displayCode: "ST-WH", name: "คลังสินค้า" },
+  { sourceCode: "SR", displayCode: "SR", name: "คลังยางเส้นยาว" },
+  { sourceCode: "FT", displayCode: "FT", name: "บริหารโรงงาน" },
+  { sourceCode: "MT", displayCode: "MT", name: "ซ่อมบำรุง" },
+  { sourceCode: "AD", displayCode: "AD", name: "ธุรการสำนักงาน" },
+];
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
   "image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain",
@@ -641,7 +654,10 @@ async function renderNewRequest(params) {
     ]);
     if (departmentsResult.error) throw departmentsResult.error;
     if (machinesResult.error) throw machinesResult.error;
-    departments = departmentsResult.data ?? [];
+    const availableDepartments = new Map((departmentsResult.data ?? []).map((item) => [item.code, item]));
+    departments = REPAIR_DEPARTMENT_OPTIONS
+      .map((option) => ({ ...availableDepartments.get(option.sourceCode), ...option }))
+      .filter((item) => item.id);
     machines = machinesResult.data ?? [];
   }
   const machineOptions = (departmentId) => {
@@ -670,7 +686,7 @@ async function renderNewRequest(params) {
           <div class="field full">
             <label>แผนก</label>
             <input type="hidden" id="repair-department" name="department_id" required>
-            <div class="filters" id="repair-department-picker">${departments.map((item) => `<button type="button" class="filter" data-dept="${escapeHtml(item.id)}">${escapeHtml(item.code)}</button>`).join("")}</div>
+            <div class="repair-department-grid" id="repair-department-picker">${departments.map((item) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" aria-pressed="false"><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
           </div>
           <div class="form-grid">
             <div class="field full"><label for="repair-machine">เครื่องจักร</label><select class="select" id="repair-machine" name="machine_id" required disabled>${machineOptions(null)}</select></div>
@@ -728,8 +744,12 @@ async function renderNewRequest(params) {
       const docNumberNode = document.querySelector("#repair-doc-number");
 
       document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
-        document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => node.classList.remove("active"));
+        document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => {
+          node.classList.remove("active");
+          node.setAttribute("aria-pressed", "false");
+        });
         button.classList.add("active");
+        button.setAttribute("aria-pressed", "true");
         const departmentId = button.dataset.dept;
         departmentInput.value = departmentId;
         machineSelect.disabled = false;
