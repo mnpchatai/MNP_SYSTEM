@@ -3,6 +3,9 @@
 const SUPABASE_URL = "https://iqlydmkylqyowmvpsete.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_uWsULpN8jWF8XCp73B8K_A_YkbKJNUD";
 const PILOT_AUTH_URL = `${SUPABASE_URL}/functions/v1/pilot-auth`;
+// สำรองข้อมูลใบแจ้งซ่อมไปชีต Maintenance-MT เดิม (แค่บันทึก/รายงาน — Supabase ยังเป็นฐานข้อมูลหลัก
+// และเป็นตัวบังคับสิทธิ์/workflow ทั้งหมด) ดู syncRepairOrderToAppsScript ท้ายไฟล์นี้
+const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwfHj4_rNUfU9ZB4xjOpyJPxQSHucoT1baeJ0AFGaz46olWJ8UXU_pBLnKpCwG6KHprqA/exec";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 });
@@ -952,12 +955,114 @@ function personName(directory, id) {
   return person ? `${person.first_name} ${person.last_name}` : "—";
 }
 
+/* ---------- สำรองใบแจ้งซ่อมไปชีต Maintenance-MT เดิม ----------
+   Supabase (requests + approval_steps + request_verifications) ยังเป็นแหล่งข้อมูลจริงและเป็น
+   ตัวบังคับสิทธิ์/workflow ทั้งหมดเหมือนเดิมทุกประการ — ฟังก์ชันกลุ่มนี้แค่แปลงสถานะปัจจุบันของ
+   ใบแจ้งซ่อมให้ตรงกับรูปแบบที่ Apps Script เดิม (mirrorKvWrite_ → syncOneOrderRow_) เข้าใจ แล้ว
+   ยิง POST แบบ "ทำสำเร็จก็ดี ไม่สำเร็จก็ไม่บล็อกอะไร" เพื่อให้แท็บ "ใบแจ้งซ่อม" ในชีตเดิมมีข้อมูล
+   ไว้ดู/รายงานคู่ขนานไปด้วย ไม่ใช่ทางเดินของข้อมูลจริง
+
+   ตำแหน่งขั้นอนุมัติ step_order 1/2 → fm/gm เป็นการประมาณตามตำแหน่ง เพราะ Supabase เก็บเป็นลำดับ
+   ขั้นทั่วไป (หัวหน้าแผนกผู้แจ้ง แล้วต่อด้วยผู้อนุมัติหน่วยงานเจ้าของประเภทเอกสาร) ไม่ได้แยก fm/gm
+   ตรงๆ แบบระบบเดิม — ดู app_create_repair_request ในไมเกรชัน repair_workflow_rpcs.sql */
+function mapRepairAppsScriptStatus(request, steps) {
+  if (request.status === "pending_approval") {
+    return request.current_step >= 2 ? "PENDING_GM" : "PENDING_FM";
+  }
+  if (request.status === "more_info") {
+    const moreInfoStep = steps.find((step) => step.status === "more_info");
+    return moreInfoStep && moreInfoStep.step_order >= 2 ? "NEEDS_INFO_GM" : "NEEDS_INFO_FM";
+  }
+  const direct = {
+    pending_assign: "PENDING_ASSIGN",
+    assigned: "ASSIGNED",
+    in_progress: "IN_PROGRESS",
+    pending_verify: "PENDING_VERIFY",
+    completed: "DONE",
+    rejected: "REJECTED",
+  };
+  return direct[request.status] ?? request.status.toUpperCase();
+}
+
+function appsScriptApprovalStage(step, directory) {
+  if (!step) return null;
+  return {
+    status: step.status === "approved" || step.status === "rejected" ? step.status : "",
+    by: step.acted_by ? personName(directory, step.acted_by) : "",
+    at: step.acted_at ?? "",
+    note: step.comment ?? "",
+  };
+}
+
+function buildAppsScriptOrder(request, steps, verifications, directory) {
+  const fmStep = steps.find((step) => step.step_order === 1);
+  const gmStep = steps.find((step) => step.step_order === 2);
+  const [latestVerification, ...olderVerifications] = verifications;
+  const verificationHistory = olderVerifications
+    .filter((item) => item.result === "fail")
+    .map((item) => ({ at: item.created_at, note: item.note ?? "" }));
+
+  return {
+    id: request.id,
+    docNumber: request.request_no,
+    department: relation(request.department)?.code ?? "",
+    machineCode: request.machine_code ?? "",
+    machineName: request.machine_name ?? "",
+    cause: request.description ?? "",
+    neededDate: request.needed_date ?? "",
+    requestedBy: request.requester_name ?? "",
+    createdAt: request.submitted_at,
+    status: mapRepairAppsScriptStatus(request, steps),
+    docType: request.doc_type ?? "",
+    approvals: {
+      fm: appsScriptApprovalStage(fmStep, directory),
+      gm: appsScriptApprovalStage(gmStep, directory),
+    },
+    assignment: request.assignee_id ? {
+      technicians: [personName(directory, request.assignee_id)],
+      startDate: request.work_started_date ?? "",
+      endDate: request.work_expected_date ?? "",
+      assignedBy: request.assigned_by ? personName(directory, request.assigned_by) : "",
+      assignedAt: request.assigned_at ?? "",
+      executionPlan: request.execution_plan ?? "",
+      receivedByName: "",
+    } : null,
+    maintRecord: (request.cause_analysis || request.inspector_opinion || request.parts_used) ? {
+      causeAnalysis: request.cause_analysis ?? "",
+      inspectorOpinion: request.inspector_opinion ?? "",
+      parts: request.parts_used ? [{ name: request.parts_used }] : [],
+    } : null,
+    verification: latestVerification ? {
+      result: latestVerification.result,
+      note: latestVerification.note ?? "",
+      at: latestVerification.created_at,
+    } : null,
+    verificationHistory,
+    // ไม่มีรูปในสำเนานี้ — ไฟล์แนบของใบแจ้งซ่อมอยู่ใน Supabase Storage (private bucket) ไม่ใช่ base64
+    // ใน KV แบบระบบเดิม จึงไม่ผูกลิงก์ "ดูรูป" ให้ (จะเป็นลิงก์ที่ไม่มีรูปจริงถ้าใส่ค่าไป)
+    photoCount: 0,
+    photosSplit: false,
+  };
+}
+
+function syncRepairOrderToAppsScript(order) {
+  if (!APPS_SCRIPT_SYNC_URL) return;
+  // no-cors: อ่านผลลัพธ์กลับไม่ได้ (opaque response) — ยอมรับได้เพราะนี่คือสำเนาสำรอง ไม่ใช่ทางเดิน
+  // ข้อมูลจริง ถ้ายิงไม่สำเร็จ (โควตา/เครือข่าย/ฯลฯ) ก็แค่ log ไว้ ไม่กระทบผู้ใช้งานเลย
+  fetch(APPS_SCRIPT_SYNC_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ batch: [{ key: `order:${order.id}`, value: JSON.stringify(order) }] }),
+  }).catch((syncError) => console.warn("ซิงก์ใบแจ้งซ่อมไปชีตสำรองไม่สำเร็จ", syncError));
+}
+
 async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
   const [requestResult, stepsResult, commentsResult, attachmentsResult, historyResult, verificationsResult, directory] = await Promise.all([
-    sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id)").eq("id", id).maybeSingle(),
+    sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id),department:departments(code)").eq("id", id).maybeSingle(),
     sb.from("approval_steps").select("*").eq("request_id", id).order("step_order"),
     sb.from("request_comments").select("*").eq("request_id", id).order("created_at"),
     sb.from("request_attachments").select("*").eq("request_id", id).order("created_at"),
@@ -976,6 +1081,7 @@ async function renderRequestDetail(params) {
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
   const verifications = verificationsResult.data ?? [];
+  if (isRepair) syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory));
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
   const canApprove = currentStep && (employee.role?.code === "admin" || currentStep.approver_employee_id === employee.id || (
