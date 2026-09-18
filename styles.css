@@ -297,6 +297,42 @@ tbody tr:hover { background: var(--shell); }
 .repair-department-card[data-dept-code="FT"] { --department-from: #c2410c; --department-to: #9a3412; }
 .repair-department-card[data-dept-code="MT"] { --department-from: #dc2626; --department-to: #991b1b; }
 .repair-department-card[data-dept-code="AD"] { --department-from: #4f46e5; --department-to: #3730a3; }
+.machine-combobox { position: relative; }
+.machine-search-input { padding-right: 40px; }
+.machine-search-input::-webkit-search-cancel-button { cursor: pointer; }
+.machine-search-icon { position: absolute; z-index: 1; top: 50%; right: 13px; color: var(--quiet); font-size: 20px; line-height: 1; transform: translateY(-50%); pointer-events: none; }
+.machine-listbox {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: 280px;
+  padding: 5px;
+  overflow-y: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, .2);
+}
+.machine-option {
+  width: 100%;
+  min-height: 45px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+}
+.machine-option:hover, .machine-option[aria-selected="true"] { color: var(--primary); background: var(--primary-soft); }
+.machine-option strong { flex: 0 0 min(190px, 34%); font-size: 11px; }
+.machine-option span { color: var(--muted); font-size: 11px; }
+.machine-option:hover span, .machine-option[aria-selected="true"] span { color: inherit; }
+.machine-empty { padding: 22px 12px; color: var(--muted); text-align: center; font-size: 11px; }
 .type-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
 .type-card {
   position: relative;

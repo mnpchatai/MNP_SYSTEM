@@ -660,12 +660,7 @@ async function renderNewRequest(params) {
       .filter((item) => item.id);
     machines = machinesResult.data ?? [];
   }
-  const machineOptions = (departmentId) => {
-    if (!departmentId) return `<option value="">เลือกแผนกก่อน</option>`;
-    const options = machines.filter((item) => item.department_id === departmentId);
-    if (!options.length) return `<option value="">ไม่มีเครื่องจักรในแผนกนี้</option>`;
-    return `<option value="">เลือกเครื่องจักร</option>${options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.is_placeholder ? "" : ` — ${escapeHtml(item.name)}`}</option>`).join("")}`;
-  };
+  const machineLabel = (machine) => machine.is_placeholder ? machine.code : `${machine.code} — ${machine.name}`;
 
   const requestedType = params.get("type");
   let selectedId = requestedType && (types ?? []).some((type) => type.id === requestedType) ? requestedType : "";
@@ -689,7 +684,16 @@ async function renderNewRequest(params) {
             <div class="repair-department-grid" id="repair-department-picker">${departments.map((item) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
           </div>
           <div class="form-grid">
-            <div class="field full"><label for="repair-machine">เครื่องจักร</label><select class="select" id="repair-machine" name="machine_id" required disabled>${machineOptions(null)}</select></div>
+            <div class="field full">
+              <label for="repair-machine-search">เครื่องจักร</label>
+              <input type="hidden" id="repair-machine" name="machine_id" required>
+              <div class="machine-combobox" id="repair-machine-combobox">
+                <input class="input machine-search-input" id="repair-machine-search" type="search" placeholder="เลือกแผนกก่อน" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="repair-machine-list" aria-expanded="false" disabled>
+                <span class="machine-search-icon" aria-hidden="true">⌕</span>
+                <div class="machine-listbox" id="repair-machine-list" role="listbox" hidden></div>
+              </div>
+              <small>ค้นหาด้วยรหัสหรือชื่อเครื่องจักร แล้วเลือกจากรายการ</small>
+            </div>
             <div class="field full">
               <label>ประเภทเอกสาร</label>
               <input type="hidden" id="repair-doc-type" name="doc_type" value="repair" required>
@@ -739,9 +743,77 @@ async function renderNewRequest(params) {
 
     if (selected.uses_repair_workflow) {
       const departmentInput = document.querySelector("#repair-department");
-      const machineSelect = document.querySelector("#repair-machine");
+      const machineInput = document.querySelector("#repair-machine");
+      const machineCombobox = document.querySelector("#repair-machine-combobox");
+      const machineSearch = document.querySelector("#repair-machine-search");
+      const machineList = document.querySelector("#repair-machine-list");
       const docTypeInput = document.querySelector("#repair-doc-type");
       const docNumberNode = document.querySelector("#repair-doc-number");
+      let selectedDepartmentId = "";
+      let visibleMachines = [];
+      let activeMachineIndex = -1;
+
+      const closeMachineList = () => {
+        machineList.hidden = true;
+        machineSearch.setAttribute("aria-expanded", "false");
+        machineSearch.removeAttribute("aria-activedescendant");
+        activeMachineIndex = -1;
+      };
+
+      const setActiveMachine = (index) => {
+        const options = [...machineList.querySelectorAll(".machine-option")];
+        if (!options.length) return;
+        activeMachineIndex = (index + options.length) % options.length;
+        options.forEach((option, optionIndex) => option.setAttribute("aria-selected", String(optionIndex === activeMachineIndex)));
+        const activeOption = options[activeMachineIndex];
+        machineSearch.setAttribute("aria-activedescendant", activeOption.id);
+        activeOption.scrollIntoView({ block: "nearest" });
+      };
+
+      const chooseMachine = (machine) => {
+        machineInput.value = machine.id;
+        machineSearch.value = machineLabel(machine);
+        closeMachineList();
+      };
+
+      const renderMachineList = (query = "") => {
+        const normalizedQuery = query.trim().toLocaleLowerCase("th-TH");
+        visibleMachines = machines.filter((machine) => machine.department_id === selectedDepartmentId && (
+          !normalizedQuery || `${machine.code} ${machine.name}`.toLocaleLowerCase("th-TH").includes(normalizedQuery)
+        ));
+        activeMachineIndex = -1;
+        machineList.innerHTML = visibleMachines.length
+          ? visibleMachines.map((machine, index) => `<button type="button" class="machine-option" id="repair-machine-option-${index}" role="option" aria-selected="false" data-machine-index="${index}"><strong>${escapeHtml(machine.code)}</strong>${machine.is_placeholder ? "" : `<span>${escapeHtml(machine.name)}</span>`}</button>`).join("")
+          : `<div class="machine-empty">ไม่พบเครื่องจักรที่ค้นหา</div>`;
+        machineList.hidden = false;
+        machineSearch.setAttribute("aria-expanded", "true");
+      };
+
+      machineSearch.addEventListener("focus", () => {
+        if (selectedDepartmentId) renderMachineList(machineInput.value ? "" : machineSearch.value);
+      });
+      machineSearch.addEventListener("input", () => {
+        machineInput.value = "";
+        renderMachineList(machineSearch.value);
+      });
+      machineSearch.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") { closeMachineList(); return; }
+        if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+        event.preventDefault();
+        if (machineList.hidden) renderMachineList(machineInput.value ? "" : machineSearch.value);
+        if (event.key === "ArrowDown") setActiveMachine(activeMachineIndex + 1);
+        if (event.key === "ArrowUp") setActiveMachine(activeMachineIndex - 1);
+        if (event.key === "Enter" && activeMachineIndex >= 0) chooseMachine(visibleMachines[activeMachineIndex]);
+      });
+      machineList.addEventListener("click", (event) => {
+        const option = event.target.closest("[data-machine-index]");
+        if (!option) return;
+        machineSearch.focus();
+        chooseMachine(visibleMachines[Number(option.dataset.machineIndex)]);
+      });
+      machineCombobox.addEventListener("focusout", (event) => {
+        if (!machineCombobox.contains(event.relatedTarget)) closeMachineList();
+      });
 
       document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
         document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => {
@@ -752,8 +824,13 @@ async function renderNewRequest(params) {
         button.setAttribute("aria-pressed", "true");
         const departmentId = button.dataset.dept;
         departmentInput.value = departmentId;
-        machineSelect.disabled = false;
-        machineSelect.innerHTML = machineOptions(departmentId);
+        selectedDepartmentId = departmentId;
+        machineInput.value = "";
+        machineSearch.value = "";
+        machineSearch.disabled = false;
+        machineSearch.placeholder = "ค้นหารหัสหรือชื่อเครื่องจักร";
+        machineSearch.focus();
+        renderMachineList();
         docNumberNode.textContent = "เลขที่เอกสาร: กำลังตรวจสอบ…";
         try {
           const { data, error: peekError } = await sb.rpc("app_peek_repair_doc_number", { p_department_id: departmentId });
@@ -776,6 +853,7 @@ async function renderNewRequest(params) {
         const message = document.querySelector("#request-message");
         message.innerHTML = "";
         if (!departmentInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกแผนก</div>`; return; }
+        if (!machineInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกเครื่องจักรจากรายการ</div>`; machineSearch.focus(); return; }
         const values = new FormData(form);
         let attachment;
         try {
