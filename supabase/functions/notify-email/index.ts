@@ -35,12 +35,31 @@ function bearerToken(request: Request) {
   return (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
 }
 
+// เลือกช่องทางส่งจาก secret ที่ตั้งไว้ — มี RESEND_API_KEY ก็ใช้ Resend ก่อน (ไม่ต้องพึ่ง admin
+// อีเมลของบริษัทเลย) ไม่มีค่อย fallback ไป Gmail SMTP เหมือนเดิม ไม่ตั้งอะไรเลย = ไม่ส่ง
+function resendConfigured() {
+  return Boolean(Deno.env.get("RESEND_API_KEY"));
+}
+
+async function sendViaResend(to: string, subject: string, text: string) {
+  const from = Deno.env.get("NOTIFY_EMAIL_FROM") || "onboarding@resend.dev";
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${Deno.env.get("RESEND_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ from, to: [to], subject, text }),
+  });
+  if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
+}
+
 type MailTransport = ReturnType<typeof nodemailer.createTransport>;
 let cachedTransport: MailTransport | null | undefined;
 
 // สร้าง transporter ครั้งเดียวต่อ instance ของ edge function แล้วใช้ซ้ำ (nodemailer แนะนำแบบนี้
 // เพื่อ reuse การเชื่อมต่อ) คืน null ถ้ายังไม่ได้ตั้งค่า secret — ให้ผู้เรียกตัดสินใจว่าจะรายงานยังไง
-function getTransport(): MailTransport | null {
+function getGmailTransport(): MailTransport | null {
   if (cachedTransport !== undefined) return cachedTransport;
   const user = Deno.env.get("GMAIL_SMTP_USER");
   const pass = Deno.env.get("GMAIL_SMTP_APP_PASSWORD");
@@ -55,6 +74,18 @@ function getTransport(): MailTransport | null {
     auth: { user, pass },
   });
   return cachedTransport;
+}
+
+function emailConfigured() {
+  return resendConfigured() || Boolean(getGmailTransport());
+}
+
+async function sendOne(to: string, subject: string, text: string) {
+  if (resendConfigured()) return sendViaResend(to, subject, text);
+  const mailer = getGmailTransport();
+  if (!mailer) throw new Error("NOT_CONFIGURED");
+  const from = Deno.env.get("NOTIFY_EMAIL_FROM") || Deno.env.get("GMAIL_SMTP_USER");
+  await mailer.sendMail({ from, to, subject, text });
 }
 
 type RecipientRow = { email: string | null; is_active: boolean } | { email: string | null; is_active: boolean }[] | null;
@@ -99,26 +130,24 @@ Deno.serve(async (request) => {
   const rows = (pending ?? []) as PendingNotification[];
   if (!rows.length) return response(request, { ok: true, sent: 0, total: 0 });
 
-  const mailer = getTransport();
-  if (!mailer) {
+  if (!emailConfigured()) {
     return response(request, {
       ok: true,
       sent: 0,
       total: rows.length,
-      note: "ยังไม่ได้ตั้งค่า GMAIL_SMTP_USER/GMAIL_SMTP_APP_PASSWORD ให้ edge function นี้",
+      note: "ยังไม่ได้ตั้งค่า RESEND_API_KEY หรือ GMAIL_SMTP_USER/GMAIL_SMTP_APP_PASSWORD ให้ edge function นี้",
     });
   }
 
-  const from = Deno.env.get("NOTIFY_EMAIL_FROM") || Deno.env.get("GMAIL_SMTP_USER");
   let sent = 0;
   const errors: string[] = [];
   for (const row of rows) {
     const recipient = firstRecipient(row.recipient);
-    // ปั๊มเวลาไว้เสมอแม้ส่งไม่สำเร็จ (บัญชีปิดใช้งาน/ไม่มีอีเมล/SMTP ล้ม) — กันไม่ให้วนส่งซ้ำไม่รู้จบ
-    // ทุกครั้งที่ผู้ใช้เปิดหน้าเดิม เหมือนที่ notify.ts ฝั่ง Next.js ก็ไม่ retry เองเช่นกัน
+    // ปั๊มเวลาไว้เสมอแม้ส่งไม่สำเร็จ (บัญชีปิดใช้งาน/ไม่มีอีเมล/ผู้ให้บริการล้ม) — กันไม่ให้วนส่งซ้ำ
+    // ไม่รู้จบทุกครั้งที่ผู้ใช้เปิดหน้าเดิม เหมือนที่ notify.ts ฝั่ง Next.js ก็ไม่ retry เองเช่นกัน
     try {
       if (recipient?.is_active && recipient.email) {
-        await mailer.sendMail({ from, to: recipient.email, subject: row.title, text: row.body });
+        await sendOne(recipient.email, row.title, row.body);
         sent++;
       }
     } catch (mailError) {
