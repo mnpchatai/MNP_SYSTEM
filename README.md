@@ -181,16 +181,27 @@ Pilot Web (`app.js`) เรียก Postgres RPC ตรงๆ ไม่ผ่�
 จะเรียกฟังก์ชันนี้พร้อม `request_id` ให้ไปหาแถวแจ้งเตือนของคำร้องนั้นที่ `email_sent_at` ยังว่างอยู่
 แล้วส่งอีเมลตาม `employees.email` ของผู้รับที่ RPC เลือกไว้แล้ว (ไม่คำนวณผู้รับซ้ำฝั่งไคลเอนต์)
 
-ส่งผ่าน Gmail SMTP (`smtp.gmail.com:465`) ด้วย `nodemailer` ต้องตั้ง secret ให้ Edge Function นี้:
+เลือกช่องทางส่งจาก secret ที่ตั้งไว้ ไม่ผูกกับผู้ให้บริการรายใดในโค้ด (ลอง Resend ก่อนถ้ามี
+`RESEND_API_KEY` ไม่มีค่อย fallback ไป Gmail SMTP ด้วย `nodemailer`):
+
+| ตั้งค่า | ผล |
+|---|---|
+| `RESEND_API_KEY` (+ `NOTIFY_EMAIL_FROM` ถ้ามี) | ส่งผ่าน Resend API — ไม่ต้องพึ่ง admin อีเมลของบริษัทเลย ใช้เมื่อ admin ปิดการสร้าง Gmail App Password ไว้ |
+| `GMAIL_SMTP_USER` + `GMAIL_SMTP_APP_PASSWORD` | ส่งผ่าน `smtp.gmail.com:465` — ต้องเปิด 2-Step Verification ของบัญชีนั้นก่อนถึงจะสร้าง App Password ได้ที่ myaccount.google.com/apppasswords (คนละอย่างกับรหัสผ่านล็อกอินปกติ) |
+| ไม่ตั้งอะไรเลย | ไม่ส่ง คืน `{ ok:true, sent:0, note:"..." }` เงียบๆ ไม่ throw ให้ผู้ใช้เห็น |
 
 ```bash
+# ทางเลือก A: Resend (แนะนำถ้า admin อีเมลบริษัทปิด App Password ไว้)
+npx supabase secrets set RESEND_API_KEY=re_xxx
+npx supabase secrets set NOTIFY_EMAIL_FROM=you@company.com   # ไม่ตั้งจะใช้ onboarding@resend.dev (sandbox) แทน
+
+# ทางเลือก B: Gmail SMTP
 npx supabase secrets set GMAIL_SMTP_USER=you@company.com
-npx supabase secrets set GMAIL_SMTP_APP_PASSWORD=xxxxxxxxxxxxxxxx   # App Password 16 หลักของ Gmail/Workspace บัญชีนี้ ไม่ใช่รหัสผ่านล็อกอินปกติ
-npx supabase secrets set NOTIFY_EMAIL_FROM=you@company.com          # ถ้าไม่ตั้ง จะใช้ GMAIL_SMTP_USER แทน
+npx supabase secrets set GMAIL_SMTP_APP_PASSWORD=xxxxxxxxxxxxxxxx
+npx supabase secrets set NOTIFY_EMAIL_FROM=you@company.com   # ไม่ตั้งจะใช้ GMAIL_SMTP_USER แทน
+
 npx supabase functions deploy notify-email
 ```
-
-ยังไม่ได้ตั้ง secret สองตัวแรก → ฟังก์ชันคืน `{ ok:true, sent:0, note: "..." }` เงียบๆ ไม่ throw ให้ผู้ใช้เห็น
 
 ## ตั้งค่า LINE OA
 
