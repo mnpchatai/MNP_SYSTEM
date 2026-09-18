@@ -173,6 +173,25 @@ where employee_no = 'MNP0001';
 โค้ดส่วน LINE Login และ Rich Menu ยังอยู่ครบและยังใช้ผูกบัญชีได้ตามเดิม เพียงแต่ไม่ได้ถูกใช้ส่ง
 แจ้งเตือนแล้ว ถ้าตัดสินใจเลิกใช้ LINE ทั้งหมดค่อยถอดออกทีเดียวพร้อมตาราง `line_accounts`
 
+### อีเมลแจ้งเตือนของ Pilot Web (แยกช่องทางจาก `notify.ts` ข้างบน)
+
+Pilot Web (`app.js`) เรียก Postgres RPC ตรงๆ ไม่ผ่าน Server Action ของ Next.js จึงส่งอีเมลด้วย
+`notify.ts` ไม่ได้ — ใช้ Edge Function ใหม่ `supabase/functions/notify-email` แทน โดยหลัง action
+ที่มี insert แถวแจ้งเตือนสำเร็จ (สร้างคำร้อง/สร้างใบแจ้งซ่อม/อนุมัติ/มอบหมายช่าง/ตรวจรับ) ฝั่งไคลเอนต์
+จะเรียกฟังก์ชันนี้พร้อม `request_id` ให้ไปหาแถวแจ้งเตือนของคำร้องนั้นที่ `email_sent_at` ยังว่างอยู่
+แล้วส่งอีเมลตาม `employees.email` ของผู้รับที่ RPC เลือกไว้แล้ว (ไม่คำนวณผู้รับซ้ำฝั่งไคลเอนต์)
+
+ส่งผ่าน Gmail SMTP (`smtp.gmail.com:465`) ด้วย `nodemailer` ต้องตั้ง secret ให้ Edge Function นี้:
+
+```bash
+npx supabase secrets set GMAIL_SMTP_USER=you@company.com
+npx supabase secrets set GMAIL_SMTP_APP_PASSWORD=xxxxxxxxxxxxxxxx   # App Password 16 หลักของ Gmail/Workspace บัญชีนี้ ไม่ใช่รหัสผ่านล็อกอินปกติ
+npx supabase secrets set NOTIFY_EMAIL_FROM=you@company.com          # ถ้าไม่ตั้ง จะใช้ GMAIL_SMTP_USER แทน
+npx supabase functions deploy notify-email
+```
+
+ยังไม่ได้ตั้ง secret สองตัวแรก → ฟังก์ชันคืน `{ ok:true, sent:0, note: "..." }` เงียบๆ ไม่ throw ให้ผู้ใช้เห็น
+
 ## ตั้งค่า LINE OA
 
 สร้าง LINE Login channel และ Messaging API channel ภายใต้ Provider เดียวกัน เพื่อให้ user ID สอดคล้องกัน จากนั้น:
