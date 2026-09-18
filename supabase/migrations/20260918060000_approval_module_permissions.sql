@@ -74,7 +74,7 @@ on conflict do nothing;
 --    ยกเว้นบทบาทที่มี requests.view_all (เช่น admin) ซึ่ง bypass กฎนี้อยู่แล้วในทุกจุดตรวจสิทธิ์
 --    จึงไม่จำเป็นต้องมีแถวสิทธิ์ให้ยุ่งฟรี
 insert into public.approval_module_permissions (employee_id, request_type_id, granted_by)
-select distinct e.id, t.id, null
+select distinct e.id, t.id, null::uuid
 from public.employees e
 join public.role_permissions rp on rp.role_id = e.role_id
 join public.permissions p on p.id = rp.permission_id and p.code = 'approvals.act'
