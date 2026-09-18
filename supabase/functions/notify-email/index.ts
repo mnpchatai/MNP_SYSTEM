@@ -131,6 +131,7 @@ Deno.serve(async (request) => {
   if (!rows.length) return response(request, { ok: true, sent: 0, total: 0 });
 
   if (!emailConfigured()) {
+    console.warn("notify-email: NOT_CONFIGURED", { requestId, pending: rows.length });
     return response(request, {
       ok: true,
       sent: 0,
@@ -139,6 +140,7 @@ Deno.serve(async (request) => {
     });
   }
 
+  const transport = resendConfigured() ? "resend" : "gmail_smtp";
   let sent = 0;
   const errors: string[] = [];
   for (const row of rows) {
@@ -149,13 +151,18 @@ Deno.serve(async (request) => {
       if (recipient?.is_active && recipient.email) {
         await sendOne(recipient.email, row.title, row.body);
         sent++;
+        console.log("notify-email: sent", { requestId, notificationId: row.id, transport, to: recipient.email });
+      } else {
+        console.warn("notify-email: skipped (no active email)", { requestId, notificationId: row.id, recipient });
       }
     } catch (mailError) {
-      errors.push(String(mailError));
+      const message = String(mailError);
+      errors.push(message);
+      console.error("notify-email: send failed", { requestId, notificationId: row.id, transport, to: recipient?.email, error: message });
     } finally {
       await admin.from("notifications").update({ email_sent_at: new Date().toISOString() }).eq("id", row.id);
     }
   }
 
-  return response(request, { ok: true, sent, total: rows.length, errors: errors.slice(0, 5) });
+  return response(request, { ok: true, sent, total: rows.length, transport, errors: errors.slice(0, 5) });
 });
