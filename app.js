@@ -447,7 +447,14 @@ async function loadEmployee() {
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน");
-  state.employee = { ...data, role: relation(data.role), department: relation(data.department) };
+  const { data: modulesData, error: modulesError } = await sb.rpc("app_my_approval_modules");
+  if (modulesError) throw modulesError;
+  state.employee = {
+    ...data,
+    role: relation(data.role),
+    department: relation(data.department),
+    approvalModules: new Set((modulesData ?? []).map((item) => item.code)),
+  };
   return state.employee;
 }
 
@@ -528,14 +535,14 @@ async function getPendingApprovals() {
     .order("created_at", { ascending: true });
   if (error) throw error;
   const employee = state.employee;
-  return (data ?? []).map((item) => ({ ...item, request: relation(item.request) })).filter((step) => {
+  return (data ?? []).map((item) => ({ ...item, request: { ...relation(item.request), request_type: relation(relation(item.request)?.request_type) } })).filter((step) => {
     const request = step.request;
-    if (!request || step.step_order !== request.current_step) return false;
+    if (!request?.id || step.step_order !== request.current_step) return false;
     if (employee.role?.code === "admin") return true;
-    return step.approver_employee_id === employee.id || (
-      step.approver_role_id === employee.role_id &&
-      (!step.approver_department_id || step.approver_department_id === employee.department_id)
-    );
+    if (step.approver_employee_id === employee.id) return true;
+    const roleMatches = step.approver_role_id === employee.role_id &&
+      (!step.approver_department_id || step.approver_department_id === employee.department_id);
+    return roleMatches && Boolean(request.request_type?.code) && employee.approvalModules.has(request.request_type.code);
   });
 }
 
@@ -1112,7 +1119,9 @@ async function renderRequestDetail(params) {
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
   const canApprove = currentStep && (employee.role?.code === "admin" || currentStep.approver_employee_id === employee.id || (
-    currentStep.approver_role_id === employee.role_id && (!currentStep.approver_department_id || currentStep.approver_department_id === employee.department_id)
+    currentStep.approver_role_id === employee.role_id
+    && (!currentStep.approver_department_id || currentStep.approver_department_id === employee.department_id)
+    && Boolean(type?.code) && employee.approvalModules.has(type.code)
   ));
   const canOperate = !isRepair && ["admin", "operator"].includes(employee.role?.code) && ["approved", "in_progress"].includes(request.status);
   const isAdmin = employee.role?.code === "admin";
@@ -1567,24 +1576,27 @@ async function handleEmployeeEditSubmit(event) {
 
 async function renderAdmin(params) {
   if (state.employee.role?.code !== "admin") return renderNotFound("หน้านี้สำหรับผู้ดูแลระบบเท่านั้น");
-  const tab = ["accounts", "credentials"].includes(params.get("tab")) ? params.get("tab") : "requests";
+  const tab = ["accounts", "credentials", "modules"].includes(params.get("tab")) ? params.get("tab") : "requests";
   state.adminTab = tab;
   loadingShell("admin", "ผู้ดูแลระบบ");
 
-  const [requestsResult, credentialsResult, rolesResult, departmentsResult] = await Promise.all([
+  const [requestsResult, credentialsResult, rolesResult, departmentsResult, modulePermissionsResult] = await Promise.all([
     sb.rpc("app_list_account_requests", { p_status: null }),
     sb.rpc("app_list_credentials"),
     sb.from("roles").select("id,code,name_th").order("code"),
     sb.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
+    sb.rpc("app_list_module_permissions"),
   ]);
   if (requestsResult.error) throw requestsResult.error;
   if (credentialsResult.error) throw credentialsResult.error;
   if (rolesResult.error) throw rolesResult.error;
   if (departmentsResult.error) throw departmentsResult.error;
+  if (modulePermissionsResult.error) throw modulePermissionsResult.error;
   const requests = requestsResult.data ?? [];
   const credentials = credentialsResult.data ?? [];
   const roles = rolesResult.data ?? [];
   const departments = departmentsResult.data ?? [];
+  const modulePermissionRows = modulePermissionsResult.data ?? [];
   const editing = credentials.find((item) => item.employee_id === params.get("edit")) ?? null;
   const pendingCount = requests.filter((item) => item.status === "pending").length;
 
@@ -1658,15 +1670,51 @@ async function renderAdmin(params) {
     </tr>`;
   }).join("") || `<tr><td colspan="7" class="muted small">ยังไม่มีข้อมูล</td></tr>`;
 
+  const moduleColumns = [];
+  const moduleEmployeeMap = new Map();
+  for (const row of modulePermissionRows) {
+    if (!moduleColumns.some((col) => col.id === row.request_type_id)) {
+      moduleColumns.push({ id: row.request_type_id, code: row.request_type_code, name: row.request_type_name });
+    }
+    if (!moduleEmployeeMap.has(row.employee_id)) {
+      moduleEmployeeMap.set(row.employee_id, {
+        employee_id: row.employee_id,
+        employee_no: row.employee_no,
+        full_name: row.full_name,
+        department_code: row.department_code,
+        role_code: row.role_code,
+        granted: new Map(),
+      });
+    }
+    moduleEmployeeMap.get(row.employee_id).granted.set(row.request_type_id, row.granted);
+  }
+  const modulePermissionTableRows = [...moduleEmployeeMap.values()].map((person) => `
+    <tr>
+      <td><span class="request-no">${escapeHtml(person.employee_no)}</span></td>
+      <td>${escapeHtml(person.full_name)}</td>
+      <td>${escapeHtml(person.department_code ?? "—")}</td>
+      <td>${escapeHtml(person.role_code ?? "—")}</td>
+      ${moduleColumns.map((col) => `<td class="center"><input type="checkbox" data-module-toggle data-employee="${escapeHtml(person.employee_id)}" data-type="${escapeHtml(col.id)}"${person.granted.get(col.id) ? " checked" : ""}></td>`).join("")}
+    </tr>`).join("") || `<tr><td colspan="${4 + moduleColumns.length}" class="muted small">ยังไม่มีผู้อนุมัติในระบบ</td></tr>`;
+
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Administration</div><h1>ผู้ดูแลระบบ</h1><p>อนุมัติคำร้องเปิดบัญชี กำหนดสิทธิ์ และค้นคืน ID/รหัสผ่านที่ออกให้</p></div></div>
     <div class="filters">
       <a class="filter${tab === "requests" ? " active" : ""}" href="#/admin?tab=requests">คำร้องบัญชี${pendingCount ? ` (${pendingCount})` : ""}</a>
       <a class="filter${tab === "accounts" ? " active" : ""}" href="#/admin?tab=accounts">ข้อมูลบัญชี</a>
       <a class="filter${tab === "credentials" ? " active" : ""}" href="#/admin?tab=credentials">คลัง ID/รหัสผ่าน</a>
+      <a class="filter${tab === "modules" ? " active" : ""}" href="#/admin?tab=modules">สิทธิ์อนุมัติตามโมดูล</a>
     </div>
     ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : ""}
     ${tab === "accounts" ? `<div class="stack">${accountCards}</div>` : ""}
+    ${tab === "modules" ? `
+      <section class="card">
+        <p class="muted small">กำหนดว่าผู้อนุมัติแต่ละคนอนุมัติคำร้องโมดูลใดได้บ้าง ผู้ที่ไม่ได้ติ๊กโมดูลใดจะไม่เห็นและอนุมัติคำร้องโมดูลนั้น แม้จะอยู่แผนกและถือบทบาทผู้อนุมัติเดียวกันก็ตาม (ขั้นตอน "หัวหน้าแผนก" ที่อนุมัติในฐานะผู้บังคับบัญชาโดยตรงไม่ถูกจำกัดด้วยตารางนี้)</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>บทบาท</th>${moduleColumns.map((col) => `<th>${escapeHtml(col.name)}</th>`).join("")}</tr></thead>
+          <tbody>${modulePermissionTableRows}</tbody>
+        </table></div>
+      </section>` : ""}
     ${tab === "credentials" ? `
       ${editing ? `
       <section class="card">
@@ -1705,6 +1753,25 @@ async function renderAdmin(params) {
 
   app.innerHTML = shell(content, "admin", "ผู้ดูแลระบบ");
   bindShell();
+
+  document.querySelectorAll("[data-module-toggle]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
+    const employeeId = checkbox.dataset.employee;
+    const requestTypeId = checkbox.dataset.type;
+    const granted = checkbox.checked;
+    checkbox.disabled = true;
+    const { error } = await sb.rpc("app_set_module_permission", {
+      p_employee_id: employeeId,
+      p_request_type_id: requestTypeId,
+      p_granted: granted,
+    });
+    checkbox.disabled = false;
+    if (error) {
+      checkbox.checked = !granted;
+      return showToast(friendlyError(error), "error");
+    }
+    showToast(granted ? "ให้สิทธิ์อนุมัติโมดูลนี้แล้ว" : "ถอดสิทธิ์อนุมัติโมดูลนี้แล้ว");
+    if (employeeId === state.employee.id) await loadEmployee();
+  }));
 
   document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", async () => {
     const requestId = button.dataset.approve;
