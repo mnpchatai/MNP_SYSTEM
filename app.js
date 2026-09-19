@@ -16,11 +16,13 @@ const app = document.querySelector("#app");
 const toastNode = document.querySelector("#toast");
 const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests" };
 
-const positionLabels = {
-  department_head: "หัวหน้าแผนก",
-  assistant_head: "ผู้ช่วยหัวหน้าแผนก",
-  staff: "พนักงานทั่วไป",
-};
+// "ตำแหน่ง" คือ role_id โดยตรงแล้ว (ไม่มี position_level แยกต่างหากอีกต่อไป) ค่าตำแหน่ง
+// ที่มีอยู่จริงตอนนี้มี 6 อย่าง: ผู้จัดการทั่วไป/ผู้จัดการโรงงาน/ผู้ช่วยผู้จัดการโรงงาน/
+// ผู้จัดการแผนก/พนักงานทั่วไป/ผู้ดูแลระบบ — รายชื่อ/ป้ายกำกับดึงจากตาราง roles เสมอ ที่นี่
+// เก็บแค่ code ที่ใช้เทียบสิทธิ์ฝั่ง UI (สิทธิ์จริงบังคับที่ฐานข้อมูลอยู่แล้วผ่าน RLS/RPC)
+const VIEW_ALL_ROLE_CODES = ["factory_manager", "general_manager"]; // มี requests.view_all เหมือน admin
+const OPERATE_ROLE_CODES = ["assistant_factory_manager", "factory_manager", "general_manager"]; // มี requests.operate
+const DEPARTMENT_APPROVER_ROLE_CODES = ["department_manager", "assistant_factory_manager"]; // มี approvals.act ระดับแผนก
 const accountRequestKindLabels = {
   new_account: "ขอเปิดบัญชี",
   credential_change: "ขอแก้ไข ID/รหัสผ่าน",
@@ -611,6 +613,7 @@ async function renderAuth(message = "") {
     }
   }
   const departments = state.directory?.departments ?? [];
+  const roles = state.directory?.roles ?? [];
 
   const requestFields = `
     <div class="field-row">
@@ -619,7 +622,7 @@ async function renderAuth(message = "") {
     </div>
     <div class="field-row">
       <div class="field"><label for="department">แผนก</label><select class="input" id="department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
-      <div class="field"><label for="position-level">ตำแหน่งในแผนก</label><select class="input" id="position-level" name="position_level" required><option value="">เลือกตำแหน่ง</option>${Object.entries(positionLabels).map(([value, label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
+      <div class="field"><label for="desired-role">ตำแหน่ง</label><select class="input" id="desired-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
     </div>
     <div class="field"><label for="job-title">ชื่อตำแหน่งงาน (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
     <div class="field-row">
@@ -713,7 +716,7 @@ async function handleAccountRequestSubmit(event) {
       firstName: String(values.get("first_name") ?? ""),
       lastName: String(values.get("last_name") ?? ""),
       departmentId: String(values.get("department_id") ?? ""),
-      positionLevel: String(values.get("position_level") ?? ""),
+      roleId: String(values.get("role_id") ?? ""),
       jobTitle: String(values.get("job_title") ?? ""),
       email: String(values.get("email") ?? ""),
       phone: String(values.get("phone") ?? ""),
@@ -747,7 +750,7 @@ async function loadEmployee() {
   if (!state.session?.user) return null;
   const { data, error } = await sb
     .from("employees")
-    .select("id,employee_no,first_name,last_name,email,phone,job_title,position_level,department_id,role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
+    .select("id,employee_no,first_name,last_name,email,phone,job_title,department_id,role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
     .eq("auth_user_id", state.session.user.id)
     .eq("is_active", true)
     .maybeSingle();
@@ -788,7 +791,7 @@ function shell(content, active, title) {
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
           ${navLink("dashboard", "หน้าหลัก", "⌂", active)}
-          ${navLink("requests", employee.role?.code === "operator" ? "งานดำเนินการ" : "คำร้อง", "▤", active)}
+          ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", "▤", active)}
           ${navLink("new", "สร้างคำร้อง", "+", active)}
           ${navLink("approvals", "รออนุมัติ", "✓", active)}
           ${navLink("notifications", "การแจ้งเตือน", "♧", active)}
@@ -799,7 +802,7 @@ function shell(content, active, title) {
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
           <div class="avatar">${escapeHtml(initials(employee))}</div>
-          <div class="user-copy"><strong>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงาน")}</span></div>
+          <div class="user-copy"><strong>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
           <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">↪</button>
         </div>
       </aside>
@@ -844,7 +847,7 @@ async function getPendingApprovals() {
   return (data ?? []).map((item) => ({ ...item, request: { ...relation(item.request), request_type: relation(relation(item.request)?.request_type) } })).filter((step) => {
     const request = step.request;
     if (!request?.id || step.step_order !== request.current_step) return false;
-    if (employee.role?.code === "admin") return true;
+    if (employee.role?.code === "admin" || VIEW_ALL_ROLE_CODES.includes(employee.role?.code)) return true;
     if (step.approver_employee_id === employee.id) return true;
     const roleMatches = step.approver_role_id === employee.role_id &&
       (!step.approver_department_id || step.approver_department_id === employee.department_id);
@@ -860,7 +863,7 @@ async function renderDashboard() {
     .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th)")
     .order("created_at", { ascending: false })
     .limit(20);
-  if (!["admin", "operator"].includes(employee.role?.code)) requestsQuery = requestsQuery.eq("requester_id", employee.id);
+  if (!["admin", ...VIEW_ALL_ROLE_CODES, ...OPERATE_ROLE_CODES].includes(employee.role?.code)) requestsQuery = requestsQuery.eq("requester_id", employee.id);
   const [requestsResult, typesResult, pending] = await Promise.all([
     requestsQuery,
     sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
@@ -895,11 +898,13 @@ async function renderRequests(params) {
     .from("requests")
     .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th)")
     .order("created_at", { ascending: false });
-  if (!["admin", "operator"].includes(role)) query = query.eq("requester_id", state.employee.id);
+  if (!["admin", ...VIEW_ALL_ROLE_CODES, ...OPERATE_ROLE_CODES].includes(role)) query = query.eq("requester_id", state.employee.id);
   if (status !== "all") query = query.eq("status", status);
   const { data, error } = await query;
   if (error) throw error;
-  const title = role === "operator" ? "งานดำเนินการ" : role === "admin" ? "คำร้องทั้งหมด" : "คำร้องของฉัน";
+  const title = OPERATE_ROLE_CODES.includes(role) && !VIEW_ALL_ROLE_CODES.includes(role)
+    ? "งานดำเนินการ"
+    : (role === "admin" || VIEW_ALL_ROLE_CODES.includes(role)) ? "คำร้องทั้งหมด" : "คำร้องของฉัน";
   const filters = [["all","ทั้งหมด"],["pending_approval","รออนุมัติ"],["approved","อนุมัติแล้ว"],["pending_assign","รอมอบหมายช่าง"],["assigned","รอดำเนินการ"],["in_progress","กำลังดำเนินการ"],["pending_verify","รอตรวจรับ"],["completed","เสร็จแล้ว"],["rejected","ไม่อนุมัติ"]];
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>${title}</h1><p>ค้นหา ติดตาม และเปิดดูรายละเอียดตามสิทธิ์ของบัญชี</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
@@ -1441,16 +1446,16 @@ async function renderRequestDetail(params) {
   if (isRepair) syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory));
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
-  const canApprove = currentStep && (employee.role?.code === "admin" || currentStep.approver_employee_id === employee.id || (
+  const isAdmin = employee.role?.code === "admin" || VIEW_ALL_ROLE_CODES.includes(employee.role?.code);
+  const canApprove = currentStep && (isAdmin || currentStep.approver_employee_id === employee.id || (
     currentStep.approver_role_id === employee.role_id
     && (!currentStep.approver_department_id || currentStep.approver_department_id === employee.department_id)
     && Boolean(type?.code) && employee.approvalModules.has(type.code)
   ));
-  const canOperate = !isRepair && ["admin", "operator"].includes(employee.role?.code) && ["approved", "in_progress"].includes(request.status);
-  const isAdmin = employee.role?.code === "admin";
+  const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status);
   const technicians = isRepair ? [...directory.entries()].filter(([, person]) => person.department_id === type.owning_department_id) : [];
   const canAssign = isRepair && request.status === "pending_assign" && (
-    isAdmin || (employee.department_id === type.owning_department_id && ["approver", "operator"].includes(employee.role?.code))
+    isAdmin || (employee.department_id === type.owning_department_id && DEPARTMENT_APPROVER_ROLE_CODES.includes(employee.role?.code))
   );
   const canStartWork = isRepair && request.status === "assigned" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
   const canFinishWork = isRepair && request.status === "in_progress" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
@@ -1690,7 +1695,7 @@ async function renderProfile() {
   if (isAccountManager) {
     const [departmentResult, roleResult] = await Promise.all([
       sb.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
-      sb.from("roles").select("id,code,name_th").order("code"),
+      sb.from("roles").select("id,code,name_th").order("sort_order"),
     ]);
     departments = departmentResult.data ?? [];
     roles = roleResult.data ?? [];
@@ -1702,7 +1707,7 @@ async function renderProfile() {
     <section class="card" style="max-width:780px">
       <div style="display:flex;align-items:center;gap:13px;margin-bottom:20px">
         <div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div>
-        <div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงาน")}</span></div>
+        <div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
       </div>
       <div id="profile-message"></div>
       <form id="profile-form">
@@ -1719,15 +1724,15 @@ async function renderProfile() {
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">หน่วยงาน</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
-          <div class="field"><label for="profile-position">ตำแหน่งในแผนก</label><select class="input" id="profile-position" name="position_level"><option value="">ไม่ระบุ</option>${Object.entries(positionLabels).map(([value, label]) => `<option value="${value}"${value === employee.position_level ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+          <div class="field"><label for="profile-role">ตำแหน่ง</label><select class="input" id="profile-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
         </div>
-        <div class="field"><label for="profile-role">บทบาท / สิทธิ์</label><select class="input" id="profile-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select><small>ระบบไม่ยอมให้ถอดสิทธิ์ผู้ดูแลระบบของตนเอง เพื่อไม่ให้ไม่มีใครเข้าไปแก้ไขได้อีก</small></div>
+        <small>ระบบไม่ยอมให้ถอดสิทธิ์ผู้ดูแลระบบของตนเอง เพื่อไม่ให้ไม่มีใครเข้าไปแก้ไขได้อีก</small>
         ` : `
         <div class="field-row">
           <div class="field"><label for="profile-department">หน่วยงาน</label><input class="input" id="profile-department" value="${escapeHtml(employee.department?.name_th ?? "—")}" disabled></div>
-          <div class="field"><label for="profile-position">ตำแหน่งในแผนก</label><input class="input" id="profile-position" value="${escapeHtml(positionLabels[employee.position_level] ?? "—")}" disabled></div>
+          <div class="field"><label for="profile-role">ตำแหน่ง</label><input class="input" id="profile-role" value="${escapeHtml(employee.role?.name_th ?? "—")}" disabled></div>
         </div>
-        <div class="field"><label for="profile-role">บทบาท / สิทธิ์</label><input class="input" id="profile-role" value="${escapeHtml(employee.role?.name_th ?? "—")}" disabled><small>สามช่องนี้เป็นตัวกำหนดสิทธิ์และเส้นทางอนุมัติ ต้องให้ผู้ดูแลระบบเป็นผู้แก้ให้</small></div>
+        <small>สองช่องนี้เป็นตัวกำหนดสิทธิ์และเส้นทางอนุมัติ ต้องให้ผู้ดูแลระบบเป็นผู้แก้ให้</small>
         `}
         <div class="form-actions"><button class="btn" type="submit">บันทึกข้อมูล</button></div>
       </form>
@@ -1775,7 +1780,6 @@ async function handleProfileSubmit(event) {
       p_phone: String(values.get("phone") ?? ""),
       p_job_title: String(values.get("job_title") ?? ""),
       p_department_id: String(values.get("department_id") ?? "") || null,
-      p_position_level: String(values.get("position_level") ?? "") || null,
       p_role_id: String(values.get("role_id") ?? "") || null,
       p_is_active: true,
     })
@@ -1875,7 +1879,6 @@ async function handleEmployeeEditSubmit(event) {
     p_phone: String(values.get("phone") ?? ""),
     p_job_title: String(values.get("job_title") ?? ""),
     p_department_id: String(values.get("department_id") ?? "") || null,
-    p_position_level: String(values.get("position_level") ?? "") || null,
     p_role_id: String(values.get("role_id") ?? "") || null,
     p_is_active: String(values.get("is_active") ?? "true") === "true",
   });
@@ -1922,7 +1925,7 @@ async function renderAdmin(params) {
   const [requestsResult, credentialsResult, rolesResult, departmentsResult, modulePermissionsResult] = await Promise.all([
     sb.rpc("app_list_account_requests", { p_status: null }),
     sb.rpc("app_list_credentials"),
-    sb.from("roles").select("id,code,name_th").order("code"),
+    sb.from("roles").select("id,code,name_th").order("sort_order"),
     sb.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
     sb.rpc("app_list_module_permissions"),
   ]);
@@ -1952,13 +1955,13 @@ async function renderAdmin(params) {
       </div>
       <dl class="definition-grid">
         <div class="definition"><dt>แผนก</dt><dd>${escapeHtml(item.department_code ?? "—")}</dd></div>
-        <div class="definition"><dt>ตำแหน่งในแผนก</dt><dd>${escapeHtml(positionLabels[item.position_level] ?? "—")}</dd></div>
+        <div class="definition"><dt>ตำแหน่งที่ขอ</dt><dd>${escapeHtml(item.desired_role_name ?? "—")}</dd></div>
         <div class="definition"><dt>ชื่อตำแหน่งงาน</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
         <div class="definition"><dt>ติดต่อ</dt><dd>${escapeHtml(item.phone ?? item.email ?? "—")}</dd></div>
       </dl>
       ${item.reason ? `<p class="description">${escapeHtml(item.reason)}</p>` : ""}
       ${item.status === "pending" ? `
-        <div class="field" style="margin-top:14px"><label for="role-${escapeHtml(item.id)}">สิทธิ์ที่ให้</label><select class="input" id="role-${escapeHtml(item.id)}" data-role-select="${escapeHtml(item.id)}"><option value="">ใช้ค่าตั้งต้นตามตำแหน่ง</option>${roles.map((role) => `<option value="${escapeHtml(role.id)}">${escapeHtml(role.name_th ?? role.code)}</option>`).join("")}</select></div>
+        <div class="field" style="margin-top:14px"><label for="role-${escapeHtml(item.id)}">ตำแหน่งที่ให้</label><select class="input" id="role-${escapeHtml(item.id)}" data-role-select="${escapeHtml(item.id)}"><option value="">ใช้ตำแหน่งที่ขอไว้</option>${roles.map((role) => `<option value="${escapeHtml(role.id)}">${escapeHtml(role.name_th ?? role.code)}</option>`).join("")}</select></div>
         <div class="field"><label for="note-${escapeHtml(item.id)}">หมายเหตุเมื่อไม่อนุมัติ</label><input class="input" id="note-${escapeHtml(item.id)}" data-note-input="${escapeHtml(item.id)}" maxlength="1000"></div>
         <div class="approval-actions">
           <button class="btn success" data-approve="${escapeHtml(item.id)}">อนุมัติและสร้างสิทธิ์</button>
@@ -1982,10 +1985,9 @@ async function renderAdmin(params) {
       </div>
       <dl class="definition-grid">
         <div class="definition"><dt>แผนก</dt><dd>${escapeHtml(item.department_code ?? "—")}</dd></div>
-        <div class="definition"><dt>ตำแหน่งในแผนก</dt><dd>${escapeHtml(positionLabels[item.position_level] ?? "—")}</dd></div>
         <div class="definition"><dt>ชื่อตำแหน่งงาน</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
         <div class="definition"><dt>ติดต่อ</dt><dd>${escapeHtml(item.phone ?? item.email ?? "—")}</dd></div>
-        <div class="definition"><dt>สิทธิ์</dt><dd>${escapeHtml(item.role_code ?? "—")}</dd></div>
+        <div class="definition"><dt>ตำแหน่ง</dt><dd>${escapeHtml(item.role_code ?? "—")}</dd></div>
         <div class="definition"><dt>อัปเดตล่าสุด</dt><dd>${item.updated_at ? formatDate(item.updated_at, true) : "—"}${item.updated_by_name ? ` · โดย ${escapeHtml(item.updated_by_name)}` : ""}</dd></div>
       </dl>
       <div class="approval-actions"><a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไขบัญชี →</a></div>
@@ -2051,14 +2053,14 @@ async function renderAdmin(params) {
       <section class="card">
         <p class="muted small">กำหนดว่าผู้อนุมัติแต่ละคนอนุมัติคำร้องโมดูลใดได้บ้าง ผู้ที่ไม่ได้ติ๊กโมดูลใดจะไม่เห็นและอนุมัติคำร้องโมดูลนั้น แม้จะอยู่แผนกและถือบทบาทผู้อนุมัติเดียวกันก็ตาม (ขั้นตอน "หัวหน้าแผนก" ที่อนุมัติในฐานะผู้บังคับบัญชาโดยตรงไม่ถูกจำกัดด้วยตารางนี้)</p>
         <div class="table-wrap"><table>
-          <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>บทบาท</th>${moduleColumns.map((col) => `<th>${escapeHtml(col.name)}</th>`).join("")}</tr></thead>
+          <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>ตำแหน่ง</th>${moduleColumns.map((col) => `<th>${escapeHtml(col.name)}</th>`).join("")}</tr></thead>
           <tbody>${modulePermissionTableRows}</tbody>
         </table></div>
       </section>` : ""}
     ${tab === "credentials" ? `
       ${editing ? `
       <section class="card">
-        <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID บทบาท และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
+        <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID ตำแหน่ง และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
         <div id="employee-edit-message"></div>
         <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}">
           <div class="field-row">
@@ -2076,9 +2078,8 @@ async function renderAdmin(params) {
           <div class="field"><label for="edit-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
           <div class="field-row">
             <div class="field"><label for="edit-department">หน่วยงาน</label><select class="input" id="edit-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
-            <div class="field"><label for="edit-position">ตำแหน่งในแผนก</label><select class="input" id="edit-position" name="position_level"><option value="">ไม่ระบุ</option>${Object.entries(positionLabels).map(([value, label]) => `<option value="${value}"${value === editing.position_level ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+            <div class="field"><label for="edit-role">ตำแหน่ง</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
           </div>
-          <div class="field"><label for="edit-role">บทบาท / สิทธิ์</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
           <div class="field"><label for="edit-password">ตั้งรหัสผ่านใหม่ (เว้นว่างไว้หากไม่เปลี่ยน)</label><input class="input" id="edit-password" name="password" type="password" autocomplete="new-password" maxlength="72"><small>ตั้งให้ผู้ใช้ได้ทันทีเมื่อผู้ใช้ลืมรหัสผ่าน และรหัสผ่านใหม่จะถูกบันทึกลงคลังให้อัตโนมัติ</small></div>
           <div class="form-actions"><button class="btn" type="submit">บันทึกการแก้ไข</button></div>
         </form>
@@ -2086,7 +2087,7 @@ async function renderAdmin(params) {
       <section class="card">
         <p class="muted small">ตารางนี้แสดงพนักงานทุกบัญชีรวมถึงบัญชีผู้ดูแลระบบและบัญชีของคุณเอง รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้เจ้าของบัญชีแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
         <div class="table-wrap"><table>
-          <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
+          <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>ตำแหน่ง</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
           <tbody>${credentialRows}</tbody>
         </table></div>
       </section>` : ""}`;

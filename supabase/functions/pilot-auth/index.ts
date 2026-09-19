@@ -61,8 +61,6 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-const positionLevels = new Set(["department_head", "assistant_head", "staff"]);
-
 function validEmployeeNo(value: unknown): value is string {
   return typeof value === "string" && /^[A-Z0-9][A-Z0-9.-]{2,31}$/.test(value);
 }
@@ -132,7 +130,6 @@ Deno.serve(async (request) => {
     email?: string;
     phone?: string;
     departmentId?: string;
-    positionLevel?: string;
     jobTitle?: string;
     reason?: string;
     requestId?: string;
@@ -163,7 +160,7 @@ Deno.serve(async (request) => {
   if (body.action === "directory") {
     const [departments, roles] = await Promise.all([
       admin.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
-      admin.from("roles").select("id,code,name_th").order("code"),
+      admin.from("roles").select("id,code,name_th").order("sort_order"),
     ]);
     if (departments.error || roles.error) {
       return response(request, { error: "DIRECTORY_UNAVAILABLE" }, 500);
@@ -178,7 +175,7 @@ Deno.serve(async (request) => {
     const firstName = cleanText(body.firstName, 100);
     const lastName = cleanText(body.lastName, 100);
     const departmentId = cleanText(body.departmentId, 64);
-    const positionLevel = cleanText(body.positionLevel, 32);
+    const desiredRoleId = cleanText(body.roleId, 64);
 
     if (!validEmployeeNo(requestedNo)) {
       return response(request, { error: "INVALID_EMPLOYEE_NO" }, 400);
@@ -189,7 +186,7 @@ Deno.serve(async (request) => {
     if (!firstName || !lastName) {
       return response(request, { error: "INVALID_NAME" }, 400);
     }
-    if (!positionLevels.has(positionLevel)) {
+    if (!desiredRoleId) {
       return response(request, { error: "INVALID_POSITION" }, 400);
     }
 
@@ -201,6 +198,15 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (!department) {
       return response(request, { error: "DEPARTMENT_NOT_FOUND" }, 400);
+    }
+
+    const { data: desiredRole } = await admin
+      .from("roles")
+      .select("id")
+      .eq("id", desiredRoleId)
+      .maybeSingle();
+    if (!desiredRole) {
+      return response(request, { error: "INVALID_POSITION" }, 400);
     }
 
     const { data: existing } = await admin
@@ -232,7 +238,7 @@ Deno.serve(async (request) => {
         email: cleanText(body.email, 200) || null,
         phone: cleanText(body.phone, 40) || null,
         department_id: department.id,
-        position_level: positionLevel,
+        desired_role_id: desiredRoleId,
         job_title: cleanText(body.jobTitle, 120) || null,
         desired_password: requestedPassword,
         reason: cleanText(body.reason, 1000) || null,
