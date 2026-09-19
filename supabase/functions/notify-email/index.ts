@@ -149,26 +149,53 @@ function linkFor(row: PendingNotification) {
 
 // จับคู่อีโมจิ/สีจากคำในหัวเรื่อง ไม่เทียบแบบตรงตัว เพื่อให้แจ้งเตือนชนิดใหม่ที่ RPC เพิ่มภายหลัง
 // ยังได้อีโมจิที่สมเหตุสมผลโดยไม่ต้องกลับมาแก้ที่นี่
-type Accent = { emoji: string; color: string; lead: string };
+// ประโยคนำมี 2 รูป: withModule ใช้เมื่อรู้ว่าเป็นคำร้องโมดูลไหน (เช่น "ใบคำร้อง/แจ้งซ่อม MT
+// รอคุณอนุมัติ") ซึ่งบอกได้ทันทีว่าเรื่องอะไรโดยไม่ต้องเปิดอ่าน ส่วน lead เป็นรูปกลางๆ สำหรับ
+// แจ้งเตือนที่ไม่ผูกกับคำร้อง (เรื่องบัญชีผู้ใช้) หรือกรณีที่ดึงรายละเอียดคำร้องไม่สำเร็จ
+type Accent = { emoji: string; color: string; lead: string; withModule?: (moduleName: string) => string };
 
 function accentFor(title: string): Accent {
   if (title.includes("ไม่ได้รับอนุมัติ") || title.includes("ไม่อนุมัติ") || title.includes("ไม่ผ่าน")) {
-    return { emoji: "❌", color: "#d92d20", lead: "รายการนี้ไม่ผ่านการพิจารณา และต้องการการแก้ไข" };
+    return {
+      emoji: "❌", color: "#d92d20",
+      lead: "รายการนี้ไม่ผ่านการพิจารณา และต้องการการแก้ไข",
+      withModule: (m) => `${m} ไม่ผ่านการพิจารณา และต้องการการแก้ไขจากคุณ`,
+    };
   }
   if (title.includes("ได้รับการอนุมัติ") || title.includes("อนุมัติแล้ว")) {
-    return { emoji: "✅", color: "#12854a", lead: "รายการนี้ได้รับการอนุมัติเรียบร้อยแล้ว" };
+    return {
+      emoji: "✅", color: "#12854a",
+      lead: "รายการนี้ได้รับการอนุมัติเรียบร้อยแล้ว",
+      withModule: (m) => `${m} ได้รับการอนุมัติเรียบร้อยแล้ว`,
+    };
   }
   if (title.includes("รออนุมัติ")) {
-    return { emoji: "📋", color: "#1769e0", lead: "มีรายการรอการพิจารณาจากคุณ" };
+    return {
+      emoji: "📋", color: "#1769e0",
+      lead: "มีรายการรอการพิจารณาจากคุณ",
+      withModule: (m) => `${m} รอคุณอนุมัติ`,
+    };
   }
   if (title.includes("มอบหมาย")) {
-    return { emoji: "🔧", color: "#b54708", lead: "คุณได้รับมอบหมายงานใหม่" };
+    return {
+      emoji: "🔧", color: "#b54708",
+      lead: "คุณได้รับมอบหมายงานใหม่",
+      withModule: (m) => `คุณได้รับมอบหมายงานจาก${m}`,
+    };
   }
   if (title.includes("ตรวจรับ") || title.includes("ตรวจสอบ")) {
-    return { emoji: "🔍", color: "#b54708", lead: "มีงานรอให้คุณตรวจรับ" };
+    return {
+      emoji: "🔍", color: "#b54708",
+      lead: "มีงานรอให้คุณตรวจรับ",
+      withModule: (m) => `${m} รอคุณตรวจรับ`,
+    };
   }
   if (title.includes("สถานะ")) {
-    return { emoji: "🔄", color: "#1769e0", lead: "สถานะของรายการที่คุณเกี่ยวข้องมีการเปลี่ยนแปลง" };
+    return {
+      emoji: "🔄", color: "#1769e0",
+      lead: "สถานะของรายการที่คุณเกี่ยวข้องมีการเปลี่ยนแปลง",
+      withModule: (m) => `${m} ที่คุณเกี่ยวข้องมีการเปลี่ยนแปลงสถานะ`,
+    };
   }
   if (title.includes("รหัสผ่าน") || title.includes("ID")) {
     return { emoji: "🔑", color: "#6941c6", lead: "มีรายการเกี่ยวกับบัญชีผู้ใช้ที่ต้องดำเนินการ" };
@@ -176,7 +203,11 @@ function accentFor(title: string): Accent {
   if (title.includes("บัญชี")) {
     return { emoji: "👤", color: "#6941c6", lead: "มีรายการเกี่ยวกับบัญชีผู้ใช้ที่ต้องดำเนินการ" };
   }
-  return { emoji: "🔔", color: "#1769e0", lead: "มีความเคลื่อนไหวที่เกี่ยวข้องกับคุณ" };
+  return {
+    emoji: "🔔", color: "#1769e0",
+    lead: "มีความเคลื่อนไหวที่เกี่ยวข้องกับคุณ",
+    withModule: (m) => `${m} มีความเคลื่อนไหวที่เกี่ยวข้องกับคุณ`,
+  };
 }
 
 // enum ในฐานข้อมูลเป็นภาษาอังกฤษ ผู้รับอีเมลอ่านไม่รู้เรื่อง แปลที่นี่แทนการไปแก้ RPC ทุกตัว
@@ -303,12 +334,17 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
   const fields = fieldsFor(detail);
   const ref = detail?.request_no ? ` · ${detail.request_no}` : "";
 
+  // ชื่อโมดูลคือคำที่ผู้ใช้จำได้จากหน้าเลือกประเภทคำร้อง (ใบคำร้อง/แจ้งซ่อม MT, NCR/CAR ฯลฯ)
+  // ขึ้นต้นประโยคด้วยคำนี้ ผู้รับจึงรู้ว่าเรื่องอะไรตั้งแต่บรรทัดแรก ไม่ต้องอ่านต่อ
+  const moduleName = relation(detail?.request_type ?? null)?.name_th?.trim() || null;
+  const lead = moduleName && accent.withModule ? accent.withModule(moduleName) : accent.lead;
+
   const subject = `${accent.emoji} ${row.title}${ref}`;
 
   const text = [
     `${accent.emoji} ${row.title}`,
     "",
-    accent.lead,
+    lead,
     body ? `\n${body}` : "",
     fields.length ? "\n" + fields.map((f) => `${f.label}: ${f.value}`).join("\n") : "",
     "",
@@ -334,7 +370,7 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
 <title>${escapeHtml(row.title)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f2f4f7">
-  <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(accent.lead)} ${escapeHtml(body)}</div>
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(lead)}${detail?.title ? ` — ${escapeHtml(detail.title)}` : ""}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f4f7;padding:24px 12px">
     <tr>
       <td align="center">
@@ -349,7 +385,7 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
 
           <tr>
             <td style="padding:26px 28px 6px">
-              <p style="margin:0;font-size:15px;line-height:1.65;color:#344054">${escapeHtml(accent.lead)}</p>
+              <p style="margin:0;font-size:15px;line-height:1.65;color:#344054">${escapeHtml(lead)}</p>
               ${body ? `<p style="margin:14px 0 0;font-size:15px;line-height:1.65;color:#101828;font-weight:600">${escapeHtml(body)}</p>` : ""}
             </td>
           </tr>
