@@ -32,6 +32,30 @@ function response(request: Request, body: Record<string, unknown>, status = 200)
   return new Response(JSON.stringify(body), { status, headers: corsHeaders(request) });
 }
 
+// แจ้ง Edge Function "notify-email" ให้ไล่ส่งอีเมลของแถวแจ้งเตือนที่เพิ่งสร้าง
+//
+// เส้นทางคำร้องเปิดบัญชี/แก้ไข ID เกิดตอนผู้ยื่นยังไม่มี session (หรือกำลังจะถูกบังคับล็อกอินใหม่)
+// ไคลเอนต์จึงยิง notify-email เองไม่ได้เสมอไป ฟังก์ชันนี้ถือ service role key อยู่แล้วจึงเรียกแทนให้
+// แบบ fire-and-forget — ส่งอีเมลไม่ออกต้องไม่ทำให้การอนุมัติ/รับคำร้องล้มเหลว
+async function dispatchNotificationEmails(supabaseUrl: string, serviceRoleKey: string) {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/notify-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
+      body: JSON.stringify({}),
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || result?.configured === false) {
+      console.warn("pilot-auth: notify-email did not send", { status: res.status, result });
+    }
+  } catch (notifyError) {
+    console.error("pilot-auth: notify-email call failed", String(notifyError));
+  }
+}
+
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -241,6 +265,7 @@ Deno.serve(async (request) => {
       })));
     }
 
+    await dispatchNotificationEmails(supabaseUrl, serviceRoleKey);
     return response(request, { requestId: created.id });
   }
 
@@ -354,6 +379,7 @@ Deno.serve(async (request) => {
       return response(request, { error: applied.error }, code);
     }
 
+    await dispatchNotificationEmails(supabaseUrl, serviceRoleKey);
     return response(request, { employeeId: applied.data });
   }
 

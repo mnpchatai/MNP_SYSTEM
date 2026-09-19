@@ -1056,27 +1056,44 @@ function buildAppsScriptOrder(request, steps, verifications, directory) {
   };
 }
 
-/* หลัง action ที่ RPC insert แถวแจ้งเตือนสำเร็จ (สร้างคำร้อง/อนุมัติ/มอบหมายช่าง/ตรวจรับ)
-   เรียก edge function "notify-email" ให้ไปส่งอีเมลจริงตามแถวแจ้งเตือนของคำร้องนี้ที่ยังไม่ได้ส่ง
-   — ไม่คำนวณผู้รับซ้ำฝั่งนี้ RPC เลือกผู้รับที่ถูกต้องไว้ให้แล้วตอน insert (ดู notify-email/index.ts)
-   fire-and-forget เหมือน syncRepairOrderToAppsScript — ส่งอีเมลไม่สำเร็จต้องไม่ทำให้ action หลักพัง */
+/* หลัง action ที่ RPC insert แถวแจ้งเตือนสำเร็จ เรียก edge function "notify-email" ให้ไปไล่ส่งอีเมล
+   ตามแถวที่ยังค้างคิว — ไม่คำนวณผู้รับซ้ำฝั่งนี้ RPC เลือกผู้รับที่ถูกต้องไว้ให้แล้วตอน insert
+
+   ใส่ requestId = เร่งส่งเฉพาะคำร้องนั้น ไม่ใส่ = ไล่ทั้งคิว ซึ่งครอบคลุมแจ้งเตือนที่ไม่ผูกกับคำร้อง
+   (คำร้องเปิดบัญชี/แก้ไข ID ซึ่ง notifications.request_id เป็น NULL) และแถวที่ตกค้างจากรอบก่อน
+
+   fire-and-forget เหมือน syncRepairOrderToAppsScript — ส่งอีเมลไม่สำเร็จต้องไม่ทำให้ action หลักพัง
+   แต่ต่างตรงที่ "อ่านผลกลับมา log ไว้" เพราะเดิมทิ้ง response ทั้งหมด เวลาอีเมลไม่เข้าจึงไม่เหลือ
+   ร่องรอยให้ไล่เลยว่าไม่ได้ตั้งค่า secret, ไม่มีแถวค้าง หรือผู้ให้บริการปฏิเสธ */
 async function triggerNotificationEmails(requestId) {
-  if (!requestId) return;
   try {
-    const { data: { session } } = await sb.auth.getSession();
-    if (!session?.access_token) return;
-    await fetch(NOTIFY_EMAIL_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-      },
-      body: JSON.stringify({ requestId }),
-    });
+    const result = await callNotifyEmail(requestId ? { requestId } : {});
+    if (!result) return null;
+    if (result.configured === false) {
+      console.warn("อีเมลแจ้งเตือนยังไม่ได้ตั้งค่าช่องทางส่ง (RESEND_API_KEY หรือ GMAIL_SMTP_*) มีแถวค้างคิว", result.pending);
+    } else if (result.failed || (result.errors ?? []).length) {
+      console.error("ส่งอีเมลแจ้งเตือนไม่สำเร็จบางส่วน", result);
+    }
+    return result;
   } catch (notifyError) {
-    console.warn("ส่งอีเมลแจ้งเตือนไม่สำเร็จ", notifyError);
+    console.warn("เรียกตัวส่งอีเมลแจ้งเตือนไม่สำเร็จ", notifyError);
+    return null;
   }
+}
+
+async function callNotifyEmail(payload) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session?.access_token) return null;
+  const res = await fetch(NOTIFY_EMAIL_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+    },
+    body: JSON.stringify(payload),
+  });
+  return await res.json().catch(() => null);
 }
 
 function syncRepairOrderToAppsScript(order) {
@@ -1201,6 +1218,7 @@ async function renderRequestDetail(params) {
     try {
       const { error } = await sb.rpc("app_update_request_status", { p_request_id: id, p_status: event.currentTarget.dataset.status });
       if (error) throw error;
+      triggerNotificationEmails(id);
       showToast("อัปเดตสถานะแล้ว");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
@@ -1227,6 +1245,7 @@ async function renderRequestDetail(params) {
     try {
       const { error } = await sb.rpc("app_start_repair_work", { p_request_id: id });
       if (error) throw error;
+      triggerNotificationEmails(id);
       showToast("เริ่มงานแล้ว");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
@@ -1245,6 +1264,7 @@ async function renderRequestDetail(params) {
         p_parts_used: String(values.get("parts_used") ?? "").trim() || null,
       });
       if (error) throw error;
+      triggerNotificationEmails(id);
       showToast("บันทึกผลการซ่อมแล้ว ส่งให้ผู้แจ้งตรวจรับ");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
@@ -1486,6 +1506,8 @@ async function handleCredentialChangeSubmit(event) {
   }
 
   if (!isAccountManager) {
+    // แจ้งเตือนของคำร้องบัญชีไม่มี request_id จึงเรียกแบบไล่ทั้งคิว
+    triggerNotificationEmails();
     setFormBusy(form, false);
     form.reset();
     message.innerHTML = `<div class="form-message success">ส่งคำร้องแล้ว รอผู้ดูแลระบบอนุมัติ</div>`;
@@ -1699,6 +1721,7 @@ async function renderAdmin(params) {
 
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Administration</div><h1>ผู้ดูแลระบบ</h1><p>อนุมัติคำร้องเปิดบัญชี กำหนดสิทธิ์ และค้นคืน ID/รหัสผ่านที่ออกให้</p></div></div>
+    <div id="email-dispatch-status"></div>
     <div class="filters">
       <a class="filter${tab === "requests" ? " active" : ""}" href="#/admin?tab=requests">คำร้องบัญชี${pendingCount ? ` (${pendingCount})` : ""}</a>
       <a class="filter${tab === "accounts" ? " active" : ""}" href="#/admin?tab=accounts">ข้อมูลบัญชี</a>
@@ -1753,6 +1776,7 @@ async function renderAdmin(params) {
 
   app.innerHTML = shell(content, "admin", "ผู้ดูแลระบบ");
   bindShell();
+  renderEmailDispatchStatus();
 
   document.querySelectorAll("[data-module-toggle]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
     const employeeId = checkbox.dataset.employee;
@@ -1802,6 +1826,7 @@ async function renderAdmin(params) {
       button.disabled = false;
       return showToast(friendlyError(error), "error");
     }
+    triggerNotificationEmails();
     showToast("บันทึกว่าไม่อนุมัติแล้ว");
     await renderAdmin(params);
   }));
@@ -1818,6 +1843,37 @@ async function renderAdmin(params) {
     cell.textContent = data;
     button.remove();
   }));
+}
+
+/* เดิมเมื่อยังไม่ได้ตั้ง secret ของ notify-email ระบบจะเงียบสนิท: ผู้ใช้เห็นแถบแจ้งเตือนในเว็บครบ
+   แต่ไม่มีอีเมลออกเลย และไม่มีอะไรบอก Admin ว่าต้องไปตั้งค่า จึงดึงสถานะมาแสดงบนหน้าผู้ดูแลระบบ
+   ไม่ทำให้หน้าโหลดช้าเพราะเรียกหลัง render แล้วค่อยเติมลงไป และพังก็แค่ไม่ขึ้นแถบนี้ */
+async function renderEmailDispatchStatus() {
+  const node = document.querySelector("#email-dispatch-status");
+  if (!node) return;
+  let status;
+  try {
+    status = await callNotifyEmail({ action: "status" });
+  } catch {
+    return;
+  }
+  if (!status || status.error) return;
+  const pending = Number(status.pending ?? 0);
+  if (!status.configured) {
+    node.innerHTML = `<div class="form-message error">อีเมลแจ้งเตือนยังส่งออกไม่ได้ · ยังไม่ได้ตั้งค่าช่องทางส่งให้ Edge Function <code>notify-email</code> (ตั้ง <code>RESEND_API_KEY</code> หรือ <code>GMAIL_SMTP_USER</code> + <code>GMAIL_SMTP_APP_PASSWORD</code> ดูวิธีในไฟล์ README) ขณะนี้มีแจ้งเตือนค้างคิวอยู่ ${pending} รายการ ระบบจะส่งย้อนหลังให้เองทันทีที่ตั้งค่าเสร็จ</div>`;
+    return;
+  }
+  node.innerHTML = pending
+    ? `<div class="form-message">อีเมลแจ้งเตือนพร้อมส่ง (ช่องทาง: ${escapeHtml(String(status.transport))}) · ค้างคิวอยู่ ${pending} รายการ <button class="btn secondary" id="flush-email-queue" type="button">ส่งคิวที่ค้างเดี๋ยวนี้</button></div>`
+    : `<div class="form-message success">อีเมลแจ้งเตือนพร้อมส่ง (ช่องทาง: ${escapeHtml(String(status.transport))}) · ไม่มีรายการค้างคิว</div>`;
+  document.querySelector("#flush-email-queue")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    const result = await triggerNotificationEmails();
+    showToast(result
+      ? `ส่งแล้ว ${result.sent ?? 0} · ข้าม ${result.skipped ?? 0} · ไม่สำเร็จ ${result.failed ?? 0}`
+      : "เรียกตัวส่งอีเมลไม่สำเร็จ", result && !result.failed ? "success" : "error");
+    await renderEmailDispatchStatus();
+  });
 }
 
 function renderNotFound(message = "ไม่พบหน้าที่ต้องการ") {
@@ -1864,6 +1920,9 @@ async function init() {
   if (state.session) {
     try {
       await loadEmployee();
+      // กันกรณีแจ้งเตือนตกค้าง (ปิดเบราว์เซอร์ก่อนยิงสำเร็จ / ตอนนั้นยังไม่ได้ตั้งค่า secret /
+      // แจ้งเตือนที่เกิดตอนผู้รับยังไม่ได้ล็อกอิน) — เปิดแอปครั้งถัดไปคิวจะถูกไล่ส่งให้เอง
+      triggerNotificationEmails();
       if (!location.hash) go("dashboard");
     } catch (employeeError) {
       await sb.auth.signOut();
