@@ -45,6 +45,10 @@ const statusLabels = {
   pending_verify: "รอผู้แจ้งตรวจสอบ",
 };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
+// ใบแจ้งซ่อมเดินผ่านผู้อนุมัติสองระดับตามลำดับ ขั้นที่ 1 ผู้จัดการโรงงาน แล้วขั้นที่ 2 ผู้จัดการทั่วไป
+// (ดูไมเกรชัน repair_approval_factory_general_manager.sql) ป้ายสถานะของใบแจ้งซ่อมจึงบอกด้วยว่า
+// ตอนนี้ค้างอยู่ที่ผู้จัดการคนไหน เหมือนหน้าจอของระบบแจ้งซ่อม MT เดิม
+const repairApproverShortLabels = { 1: "ผจก.โรงงาน", 2: "ผจก.ทั่วไป" };
 const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 const REPAIR_DEPARTMENT_OPTIONS = [
   { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
@@ -503,8 +507,21 @@ function openAttachmentLightbox(id) {
   }
 }
 
-function statusBadge(status) {
-  return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabels[status] ?? status)}</span>`;
+function statusBadge(status, label) {
+  return `<span class="badge ${escapeHtml(status)}">${escapeHtml(label ?? statusLabels[status] ?? status)}</span>`;
+}
+
+function repairStatusLabel(request, steps) {
+  if (request.status === "pending_approval") {
+    const approver = repairApproverShortLabels[request.current_step];
+    return approver ? `รออนุมัติ (${approver})` : statusLabels.pending_approval;
+  }
+  if (request.status === "more_info") {
+    const pendingStep = (steps ?? []).find((step) => step.status === "more_info");
+    const approver = pendingStep ? repairApproverShortLabels[pendingStep.step_order] : null;
+    return approver ? `ต้องการข้อมูลเพิ่มเติม (${approver})` : statusLabels.more_info;
+  }
+  return statusLabels[request.status] ?? request.status;
 }
 
 function requestRows(requests) {
@@ -1267,9 +1284,9 @@ function personName(directory, id) {
    ยิง POST แบบ "ทำสำเร็จก็ดี ไม่สำเร็จก็ไม่บล็อกอะไร" เพื่อให้แท็บ "ใบแจ้งซ่อม" ในชีตเดิมมีข้อมูล
    ไว้ดู/รายงานคู่ขนานไปด้วย ไม่ใช่ทางเดินของข้อมูลจริง
 
-   ตำแหน่งขั้นอนุมัติ step_order 1/2 → fm/gm เป็นการประมาณตามตำแหน่ง เพราะ Supabase เก็บเป็นลำดับ
-   ขั้นทั่วไป (หัวหน้าแผนกผู้แจ้ง แล้วต่อด้วยผู้อนุมัติหน่วยงานเจ้าของประเภทเอกสาร) ไม่ได้แยก fm/gm
-   ตรงๆ แบบระบบเดิม — ดู app_create_repair_request ในไมเกรชัน repair_workflow_rpcs.sql */
+   ตำแหน่งขั้นอนุมัติ step_order 1 = ผู้จัดการโรงงาน (fm) และ 2 = ผู้จัดการทั่วไป (gm) ตรงกับระบบ
+   เดิมแล้ว ไม่ใช่การประมาณอีกต่อไป — ดู app_create_repair_request ในไมเกรชัน
+   repair_approval_factory_general_manager.sql */
 function mapRepairAppsScriptStatus(request, steps) {
   if (request.status === "pending_approval") {
     return request.current_step >= 2 ? "PENDING_GM" : "PENDING_FM";
@@ -1448,7 +1465,7 @@ async function renderRequestDetail(params) {
     <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p></header>
     <div class="detail-grid">
       <div class="stack">
-        <section class="card"><div class="card-heading" style="padding:0;min-height:36px"><h2>ข้อมูลคำร้อง</h2>${statusBadge(request.status)}</div><p class="description">${escapeHtml(request.description)}</p>
+        <section class="card"><div class="card-heading" style="padding:0;min-height:36px"><h2>ข้อมูลคำร้อง</h2>${statusBadge(request.status, isRepair ? repairStatusLabel(request, steps) : null)}</div><p class="description">${escapeHtml(request.description)}</p>
           <dl class="definition-grid">
             <div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div>
             <div class="definition"><dt>ผู้รับผิดชอบ</dt><dd>${escapeHtml(personName(directory, request.assignee_id))}</dd></div>
