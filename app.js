@@ -507,6 +507,18 @@ function statusBadge(status) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabels[status] ?? status)}</span>`;
 }
 
+function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "" } = {}) {
+  const classes = ["request-fact", `request-fact-${tone}`, wide ? "wide" : ""].filter(Boolean).join(" ");
+  const valueClasses = ["request-fact-value", valueClass].filter(Boolean).join(" ");
+  return `<div class="${escapeHtml(classes)}">
+    <span class="request-fact-icon" aria-hidden="true">${escapeHtml(icon)}</span>
+    <div class="request-fact-copy">
+      <span class="request-fact-label">${escapeHtml(label)}</span>
+      <strong class="${escapeHtml(valueClasses)}">${escapeHtml(value ?? "—")}</strong>
+    </div>
+  </div>`;
+}
+
 function requestRows(requests) {
   if (!requests.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
   return `
@@ -1444,30 +1456,41 @@ async function renderRequestDetail(params) {
   const canFinishWork = isRepair && request.status === "in_progress" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
   const canVerify = isRepair && request.status === "pending_verify" && (isAdmin || request.requester_id === employee.id);
   const detailEntries = Object.entries(request.details ?? {});
+  const requestFacts = [
+    requestFact("ความสำคัญ", priorityLabels[request.priority], {
+      icon: "!",
+      tone: ["high", "urgent"].includes(request.priority) ? "danger" : "primary",
+      valueClass: `priority-${request.priority}`,
+    }),
+    requestFact("ผู้รับผิดชอบ", personName(directory, request.assignee_id), { icon: "◎", tone: "success" }),
+    ...(isRepair ? [
+      requestFact("ประเภทเอกสาร", docTypeLabels[request.doc_type] ?? request.doc_type ?? "—", { icon: "▤", tone: "violet" }),
+      requestFact("เครื่องจักร", `${request.machine_code ?? "—"}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${request.machine_name}` : ""}`, { icon: "⚙", tone: "slate" }),
+      requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "◉", tone: "cyan" }),
+      requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "↗", tone: request.is_urgent ? "danger" : "success" }),
+      ...(request.needed_date ? [requestFact("วันที่ต้องการใช้งาน", formatDate(request.needed_date), { icon: "◷", tone: "violet" })] : []),
+      ...(request.assigned_at ? [requestFact("มอบหมายเมื่อ", `${formatDate(request.assigned_at, true)} โดย ${personName(directory, request.assigned_by)}`, { icon: "→", tone: "cyan", wide: true })] : []),
+      ...(request.work_expected_date ? [requestFact("กำหนดเสร็จ", formatDate(request.work_expected_date), { icon: "◷", tone: "warning" })] : []),
+      ...(request.work_started_date ? [requestFact("วันที่เริ่มงาน", formatDate(request.work_started_date), { icon: "▶", tone: "primary" })] : []),
+      ...(request.execution_plan ? [requestFact("การดำเนินงาน", executionPlanLabels[request.execution_plan] ?? request.execution_plan, { icon: "✓", tone: "success" })] : []),
+      ...(request.inspector_opinion ? [requestFact("ความเห็นผู้ตรวจสอบ", inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion, { icon: "◇", tone: "cyan" })] : []),
+      ...(request.cause_analysis ? [requestFact("วิเคราะห์สาเหตุ", request.cause_analysis, { icon: "?", tone: "warning", wide: true })] : []),
+      ...(request.parts_used ? [requestFact("อะไหล่ที่ใช้", request.parts_used, { icon: "⌁", tone: "slate", wide: true })] : []),
+    ] : []),
+    ...detailEntries.map(([key, value]) => requestFact(detailFieldLabels[key] ?? key, value, {
+      icon: "•",
+      tone: "primary",
+      wide: String(value ?? "").length > 36,
+    })),
+  ].join("");
   const content = `
     <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p></header>
     <div class="detail-grid">
       <div class="stack">
-        <section class="card"><div class="card-heading" style="padding:0;min-height:36px"><h2>ข้อมูลคำร้อง</h2>${statusBadge(request.status)}</div><p class="description">${escapeHtml(request.description)}</p>
-          <dl class="definition-grid">
-            <div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div>
-            <div class="definition"><dt>ผู้รับผิดชอบ</dt><dd>${escapeHtml(personName(directory, request.assignee_id))}</dd></div>
-            ${isRepair ? `
-            <div class="definition"><dt>ประเภทเอกสาร</dt><dd>${escapeHtml(docTypeLabels[request.doc_type] ?? request.doc_type ?? "—")}</dd></div>
-            <div class="definition"><dt>เครื่องจักร</dt><dd>${escapeHtml(request.machine_code ?? "—")}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${escapeHtml(request.machine_name)}` : ""}</dd></div>
-            <div class="definition"><dt>ผู้แจ้ง</dt><dd>${escapeHtml(request.requester_name ?? "—")}</dd></div>
-            <div class="definition"><dt>ด่วน</dt><dd>${request.is_urgent ? "ด่วน" : "ปกติ"}</dd></div>
-            ${request.needed_date ? `<div class="definition"><dt>วันที่ต้องการใช้งาน</dt><dd>${formatDate(request.needed_date)}</dd></div>` : ""}
-            ${request.assigned_at ? `<div class="definition"><dt>มอบหมายเมื่อ</dt><dd>${formatDate(request.assigned_at, true)} โดย ${escapeHtml(personName(directory, request.assigned_by))}</dd></div>` : ""}
-            ${request.work_expected_date ? `<div class="definition"><dt>กำหนดเสร็จ</dt><dd>${formatDate(request.work_expected_date)}</dd></div>` : ""}
-            ${request.work_started_date ? `<div class="definition"><dt>วันที่เริ่มงาน</dt><dd>${formatDate(request.work_started_date)}</dd></div>` : ""}
-            ${request.execution_plan ? `<div class="definition"><dt>การดำเนินงาน</dt><dd>${escapeHtml(executionPlanLabels[request.execution_plan] ?? request.execution_plan)}</dd></div>` : ""}
-            ${request.inspector_opinion ? `<div class="definition"><dt>ความเห็นผู้ตรวจสอบ</dt><dd>${escapeHtml(inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion)}</dd></div>` : ""}
-            ${request.cause_analysis ? `<div class="definition"><dt>วิเคราะห์สาเหตุ</dt><dd>${escapeHtml(request.cause_analysis)}</dd></div>` : ""}
-            ${request.parts_used ? `<div class="definition"><dt>อะไหล่ที่ใช้</dt><dd>${escapeHtml(request.parts_used)}</dd></div>` : ""}
-            ` : ""}
-            ${detailEntries.map(([key,value]) => `<div class="definition"><dt>${escapeHtml(detailFieldLabels[key] ?? key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
-          </dl>
+        <section class="card request-overview-card">
+          <div class="request-overview-head"><div class="request-overview-title"><span>รายละเอียดหลัก</span><h2>ข้อมูลคำร้อง</h2></div>${statusBadge(request.status)}</div>
+          <p class="description request-summary">${escapeHtml(request.description)}</p>
+          <div class="request-facts">${requestFacts}</div>
         </section>
         ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button><button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
         ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
