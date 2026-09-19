@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { Download, FileText, MessageSquare, Paperclip } from "lucide-react";
+import { MessageSquare, Paperclip } from "lucide-react";
 import { notFound } from "next/navigation";
 import {
   addCommentAction,
@@ -8,6 +7,7 @@ import {
   updateRequestStatusAction,
   uploadAttachmentAction,
 } from "@/app/actions/requests";
+import { AttachmentGallery, type AttachmentItem } from "@/components/attachment-gallery";
 import { StatusBadge } from "@/components/status-badge";
 import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
@@ -30,8 +30,6 @@ type CommentRow = {
   created_at: string;
   author: { first_name: string; last_name: string } | null;
 };
-
-type AttachmentRow = { id: string; file_name: string };
 
 export default async function RequestDetailPage({
   params,
@@ -176,12 +174,7 @@ export default async function RequestDetailPage({
           <section className="card">
             <div className="card-title"><h3><Paperclip size={16} /> ไฟล์แนบ</h3></div>
             <div className="stack">
-              {(request.request_attachments ?? []).map((file: AttachmentRow) => (
-                <Link className="btn secondary small" href={`/api/attachments/${file.id}`} target="_blank" key={file.id}>
-                  <FileText size={14} /> {file.file_name} <Download size={13} />
-                </Link>
-              ))}
-              {!request.request_attachments?.length && <span className="muted small">ยังไม่มีไฟล์แนบ</span>}
+              <AttachmentGallery attachments={(request.request_attachments ?? []) as AttachmentItem[]} />
               <form action={uploadAttachmentAction} className="stack" encType="multipart/form-data">
                 <input type="hidden" name="request_id" value={request.id} />
                 <input className="input" type="file" name="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx" required />
