@@ -1,6 +1,42 @@
 @font-face {
   font-family: "IBM Plex Sans Thai";
   font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-sans-thai-400-thai.woff2") format("woff2");
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Thai";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-sans-thai-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Thai";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-sans-thai-600-thai.woff2") format("woff2");
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Thai";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-sans-thai-600-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Thai";
+  font-style: normal;
   font-weight: 700;
   font-display: swap;
   src: url("./fonts/ibm-plex-sans-thai-700-thai.woff2") format("woff2");
@@ -86,12 +122,11 @@ body {
   color: var(--ink);
   background: var(--page-gradient);
   background-attachment: fixed;
-  font-family: "Leelawadee UI", "Noto Sans Thai", Tahoma, system-ui, sans-serif;
+  font-family: "IBM Plex Sans Thai", "Leelawadee UI", "Noto Sans Thai", Tahoma, system-ui, sans-serif;
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-h1, h2, h3, .brand strong { font-family: "IBM Plex Sans Thai", "Leelawadee UI", "Noto Sans Thai", Tahoma, system-ui, sans-serif; }
 a { color: inherit; text-decoration: none; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
@@ -141,7 +176,7 @@ button { cursor: pointer; }
 .brand strong { font-size: 16px; line-height: 1.25; }
 .brand span { margin-top: 2px; color: var(--quiet); font-size: 10px; font-weight: 600; letter-spacing: .11em; }
 .auth-copy { max-width: 560px; }
-.eyebrow { color: var(--primary); font-size: 12px; font-weight: 800; letter-spacing: .1em; line-height: 1.4; text-transform: uppercase; }
+.eyebrow { color: var(--primary); font-size: 12px; font-weight: 700; letter-spacing: .1em; line-height: 1.4; text-transform: uppercase; }
 .auth-copy h1 { margin: 10px 0 14px; font-size: clamp(36px, 5vw, 60px); line-height: 1.08; letter-spacing: -.045em; }
 .auth-copy p { max-width: 480px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.75; }
 .auth-points { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -216,7 +251,7 @@ button { cursor: pointer; }
 .sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: var(--sidebar-gradient); border-right: 1px solid var(--line); }
 .sidebar .brand { height: 64px; padding: 0 18px; border-bottom: 1px solid var(--soft-line); }
 .nav { padding: 16px 11px; }
-.nav-label { padding: 0 10px 7px; color: var(--quiet); font-size: 11px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+.nav-label { padding: 0 10px 7px; color: var(--quiet); font-size: 11px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
 .nav-link { min-height: 44px; margin: 2px 0; padding: 0 10px; display: flex; align-items: center; gap: 10px; color: var(--muted); border-radius: 8px; font-size: 14px; }
 .nav-link:hover { color: var(--ink); background: var(--paper); }
 .nav-link.active { color: white; background: var(--primary); font-weight: 600; }
@@ -271,7 +306,7 @@ td.center { text-align: center; }
 td.center input[type="checkbox"] { width: 16px; height: 16px; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: var(--shell); }
-.request-no { color: var(--primary); font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
+.request-no { color: var(--primary); font-weight: 700; }
 .badge { padding: 4px 8px; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); background: var(--shell); border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .badge.pending_approval, .badge.more_info, .badge.pending_assign, .badge.pending_verify { color: var(--warning); background: var(--warning-soft); }
 .badge.approved, .badge.in_progress, .badge.assigned { color: var(--primary); background: var(--primary-soft); }
@@ -398,7 +433,7 @@ tbody tr:hover { background: var(--shell); }
   border: 1px solid rgba(255, 255, 255, .32);
   border-radius: 10px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: .02em;
 }
 .type-card-body { position: relative; z-index: 1; }
@@ -419,14 +454,14 @@ tbody tr:hover { background: var(--shell); }
 .request-overview-card::after { content: ""; position: absolute; top: -92px; right: -74px; width: 210px; height: 210px; background: radial-gradient(circle, color-mix(in srgb, var(--primary) 13%, transparent), transparent 70%); border-radius: 50%; pointer-events: none; }
 .request-overview-head { position: relative; z-index: 1; min-height: 72px; padding: 17px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: linear-gradient(90deg, color-mix(in srgb, var(--primary-soft) 60%, var(--paper)), transparent 75%); border-bottom: 1px solid var(--soft-line); }
 .request-overview-title { padding-left: 12px; display: grid; gap: 2px; border-left: 3px solid var(--primary); }
-.request-overview-title span { color: var(--primary); font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.request-overview-title span { color: var(--primary); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .request-overview-title h2 { margin: 0; font-size: 18px; line-height: 1.3; }
 .request-summary { position: relative; z-index: 1; margin: 18px 20px 0; padding: 13px 15px; color: var(--ink); background: color-mix(in srgb, var(--primary-soft) 50%, var(--paper)); border-left: 3px solid var(--primary); border-radius: 4px 10px 10px 4px; font-size: 14px; line-height: 1.7; }
 .request-facts { position: relative; z-index: 1; padding: 18px 20px 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .request-fact { --fact-accent: var(--primary); min-width: 0; min-height: 78px; padding: 13px; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 11px; align-items: center; background: linear-gradient(135deg, var(--paper), color-mix(in srgb, var(--fact-accent) 5%, var(--paper))); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, var(--line)); border-radius: 12px; box-shadow: 0 4px 12px rgba(31, 61, 102, .05); transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .request-fact:hover { border-color: color-mix(in srgb, var(--fact-accent) 38%, var(--line)); box-shadow: 0 8px 18px rgba(31, 61, 102, .1); transform: translateY(-1px); }
 .request-fact.wide { grid-column: 1 / -1; }
-.request-fact-icon { width: 38px; height: 38px; display: grid; place-items: center; color: var(--fact-accent); background: color-mix(in srgb, var(--fact-accent) 13%, var(--paper)); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, transparent); border-radius: 11px; font-size: 16px; font-weight: 800; line-height: 1; }
+.request-fact-icon { width: 38px; height: 38px; display: grid; place-items: center; color: var(--fact-accent); background: color-mix(in srgb, var(--fact-accent) 13%, var(--paper)); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, transparent); border-radius: 11px; font-size: 16px; font-weight: 700; line-height: 1; }
 .request-fact-copy { min-width: 0; display: grid; gap: 3px; }
 .request-fact-label { color: var(--quiet); font-size: 11px; font-weight: 700; line-height: 1.35; }
 .request-fact-value { overflow-wrap: anywhere; color: var(--ink); font-size: 14px; line-height: 1.45; }
