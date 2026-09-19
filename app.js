@@ -209,6 +209,300 @@ async function uploadRequestAttachment(requestId, file, uploaderId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ตัวอย่างไฟล์แนบ: แสดงรูปทันทีในหน้า (รวมถึงหน้าแรกของ PDF) โดยไม่ต้องกดเปิด
+// ---------------------------------------------------------------------------
+const ATTACHMENT_URL_TTL = 3600;
+const TEXT_PREVIEW_LIMIT = 512 * 1024;
+const attachmentKindLabels = { image: "รูปภาพ", pdf: "PDF", text: "ข้อความ", sheet: "Excel", doc: "Word", other: "ไฟล์แนบ" };
+const attachmentPreviews = new Map();
+const pdfDocuments = new Map();
+let pdfjsPromise = null;
+
+function formatFileSize(bytes) {
+  if (!bytes || bytes <= 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) { value /= 1024; unitIndex += 1; }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unitIndex]}`;
+}
+
+function attachmentKind(file) {
+  const type = String(file.content_type ?? "").toLowerCase();
+  const name = String(file.file_name ?? "").toLowerCase();
+  if (type.startsWith("image/")) return "image";
+  if (type === "application/pdf" || name.endsWith(".pdf")) return "pdf";
+  if (type.startsWith("text/") || name.endsWith(".txt")) return "text";
+  if (type.includes("spreadsheet") || name.endsWith(".xlsx")) return "sheet";
+  if (type.includes("wordprocessing") || name.endsWith(".docx")) return "doc";
+  return "other";
+}
+
+// pdf.js อยู่ใน vendor/ เพราะ CSP เป็น default-src 'self' — worker จาก CDN จะถูกบล็อก
+// อ้างอิงตำแหน่งจาก URL ของ app.js เอง เพื่อให้ถูกต้องไม่ว่า host ไว้ที่ path ไหน
+const APP_SCRIPT_URL = document.currentScript?.src || document.baseURI;
+
+async function loadPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import(new URL("./vendor/pdfjs/pdf.min.mjs", APP_SCRIPT_URL).href).then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdfjs/pdf.worker.min.mjs", APP_SCRIPT_URL).href;
+      return pdfjs;
+    });
+  }
+  return pdfjsPromise;
+}
+
+async function renderPdfPageImage(url, pageNumber, targetWidth) {
+  const pdfjs = await loadPdfjs();
+  let documentPromise = pdfDocuments.get(url);
+  if (!documentPromise) {
+    documentPromise = pdfjs.getDocument({ url, isEvalSupported: false }).promise;
+    pdfDocuments.set(url, documentPromise);
+    documentPromise.catch(() => pdfDocuments.delete(url));
+  }
+  const pdf = await documentPromise;
+  const page = await pdf.getPage(Math.min(Math.max(pageNumber, 1), pdf.numPages));
+  const unscaled = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: Math.min(targetWidth / unscaled.width, 4) });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(viewport.width));
+  canvas.height = Math.max(1, Math.ceil(viewport.height));
+  try {
+    await page.render({ canvas, viewport }).promise;
+    return { dataUrl: canvas.toDataURL("image/jpeg", 0.9), pageCount: pdf.numPages };
+  } finally {
+    page.cleanup();
+  }
+}
+
+function attachmentGalleryHtml(files) {
+  if (!files.length) return `<p class="muted small">ยังไม่มีไฟล์แนบ</p>`;
+  return `<div class="attachment-grid" id="attachment-gallery">${files.map((file) => {
+    const kind = attachmentKind(file);
+    return `<figure class="attachment-tile" data-attachment="${escapeHtml(file.id)}">
+      <button class="attachment-preview" type="button" data-attachment-open="${escapeHtml(file.id)}" aria-label="ดูขนาดใหญ่: ${escapeHtml(file.file_name)}">
+        <span class="attachment-preview-state">กำลังสร้างตัวอย่าง…</span>
+        <span class="attachment-kind">${escapeHtml(attachmentKindLabels[kind])}</span>
+      </button>
+      <figcaption class="attachment-caption">
+        <span class="attachment-name" title="${escapeHtml(file.file_name)}">${escapeHtml(file.file_name)}</span>
+        <span class="attachment-meta"><span>${escapeHtml(formatFileSize(file.size_bytes))}</span><a class="attachment-download" data-attachment-download="${escapeHtml(file.id)}" hidden download>ดาวน์โหลด</a></span>
+      </figcaption>
+    </figure>`;
+  }).join("")}</div>`;
+}
+
+function setTilePreview(tile, node, badgeSuffix = "") {
+  const preview = tile.querySelector(".attachment-preview");
+  preview.querySelector(".attachment-preview-state")?.remove();
+  preview.querySelector(".attachment-preview-media, .attachment-preview-text")?.remove();
+  preview.prepend(node);
+  if (badgeSuffix) {
+    const badge = preview.querySelector(".attachment-kind");
+    if (badge) badge.textContent = `${badge.textContent}${badgeSuffix}`;
+  }
+}
+
+function setTileMessage(tile, message) {
+  const preview = tile.querySelector(".attachment-preview");
+  const state = preview.querySelector(".attachment-preview-state");
+  if (state) state.textContent = message;
+}
+
+function previewImageNode(src, alt) {
+  const image = new Image();
+  image.className = "attachment-preview-media";
+  image.alt = alt;
+  image.loading = "lazy";
+  image.src = src;
+  return image;
+}
+
+async function fillAttachmentTile(file, url) {
+  const tile = document.querySelector(`.attachment-tile[data-attachment="${file.id}"]`);
+  if (!tile) return;
+  const kind = attachmentKind(file);
+  const downloadLink = tile.querySelector("[data-attachment-download]");
+  if (downloadLink) {
+    downloadLink.href = `${url}&download=${encodeURIComponent(file.file_name)}`;
+    downloadLink.hidden = false;
+  }
+  try {
+    if (kind === "image") {
+      setTilePreview(tile, previewImageNode(url, file.file_name));
+      return;
+    }
+    if (kind === "pdf") {
+      const rendered = await renderPdfPageImage(url, 1, 640);
+      setTilePreview(tile, previewImageNode(rendered.dataUrl, `ตัวอย่างหน้าแรกของ ${file.file_name}`), ` · ${rendered.pageCount} หน้า`);
+      attachmentPreviews.get(file.id).pageCount = rendered.pageCount;
+      return;
+    }
+    if (kind === "text" && (file.size_bytes ?? 0) <= TEXT_PREVIEW_LIMIT) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("preview failed");
+      const text = await response.text();
+      const block = document.createElement("pre");
+      block.className = "attachment-preview-text";
+      block.textContent = text.slice(0, 600) || "(ไฟล์ว่าง)";
+      setTilePreview(tile, block);
+      return;
+    }
+    setTileMessage(tile, attachmentKindLabels[kind]);
+  } catch {
+    setTileMessage(tile, "แสดงตัวอย่างไม่ได้ · กดเพื่อเปิดไฟล์");
+  }
+}
+
+async function hydrateAttachmentGallery(files) {
+  if (!files.length || !document.querySelector("#attachment-gallery")) return;
+  attachmentPreviews.clear();
+  const { data, error } = await sb.storage
+    .from("request-attachments")
+    .createSignedUrls(files.map((file) => file.storage_path), ATTACHMENT_URL_TTL);
+  if (error) {
+    document.querySelectorAll(".attachment-tile").forEach((tile) => setTileMessage(tile, "เปิดไฟล์แนบไม่ได้"));
+    return;
+  }
+  const signedByPath = new Map((data ?? []).filter((item) => item.signedUrl).map((item) => [item.path, item.signedUrl]));
+  for (const file of files) {
+    const url = signedByPath.get(file.storage_path);
+    if (!url) {
+      const tile = document.querySelector(`.attachment-tile[data-attachment="${file.id}"]`);
+      if (tile) setTileMessage(tile, "เปิดไฟล์แนบไม่ได้");
+      continue;
+    }
+    attachmentPreviews.set(file.id, { file, url, pageCount: null });
+  }
+  // รูปโหลดขนานกันเองอยู่แล้ว ส่วน PDF เรนเดอร์ทีละไฟล์เพื่อไม่ให้เปิด worker พร้อมกันหลายตัว
+  for (const file of files) {
+    const entry = attachmentPreviews.get(file.id);
+    if (!entry) continue;
+    if (attachmentKind(file) === "image") fillAttachmentTile(file, entry.url);
+  }
+  for (const file of files) {
+    const entry = attachmentPreviews.get(file.id);
+    if (!entry || attachmentKind(file) === "image") continue;
+    await fillAttachmentTile(file, entry.url);
+  }
+}
+
+function openAttachmentLightbox(id) {
+  const entry = attachmentPreviews.get(id);
+  if (!entry) return;
+  const { file, url } = entry;
+  const kind = attachmentKind(file);
+  let page = 1;
+
+  const overlay = document.createElement("div");
+  overlay.className = "attachment-lightbox";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", file.file_name);
+  overlay.innerHTML = `<div class="attachment-lightbox-panel">
+    <header class="attachment-lightbox-bar">
+      <span class="attachment-lightbox-title" title="${escapeHtml(file.file_name)}">${escapeHtml(file.file_name)}</span>
+      <span class="attachment-lightbox-actions">
+        <a class="btn secondary small" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">เปิดแท็บใหม่</a>
+        <a class="btn secondary small" href="${escapeHtml(`${url}&download=${encodeURIComponent(file.file_name)}`)}" download>ดาวน์โหลด</a>
+        <button class="btn secondary small" type="button" data-lightbox-close>ปิด</button>
+      </span>
+    </header>
+    <div class="attachment-lightbox-body"><span class="attachment-preview-state">กำลังเปิด…</span></div>
+    ${kind === "pdf" ? `<footer class="attachment-lightbox-nav">
+      <button class="btn secondary small" type="button" data-lightbox-prev disabled>← ก่อนหน้า</button>
+      <span class="muted small" data-lightbox-page>หน้า 1</span>
+      <button class="btn secondary small" type="button" data-lightbox-next disabled>ถัดไป →</button>
+    </footer>` : ""}
+  </div>`;
+
+  const body = overlay.querySelector(".attachment-lightbox-body");
+  const pageLabel = overlay.querySelector("[data-lightbox-page]");
+  const previousButton = overlay.querySelector("[data-lightbox-prev]");
+  const nextButton = overlay.querySelector("[data-lightbox-next]");
+
+  function showNode(node) {
+    body.replaceChildren(node);
+  }
+
+  function showMessage(message, withDownload = false) {
+    const wrap = document.createElement("div");
+    wrap.className = "attachment-lightbox-fallback";
+    const text = document.createElement("p");
+    text.textContent = message;
+    wrap.append(text);
+    if (withDownload) {
+      const link = document.createElement("a");
+      link.className = "btn small";
+      link.href = `${url}&download=${encodeURIComponent(file.file_name)}`;
+      link.download = file.file_name;
+      link.textContent = "ดาวน์โหลดไฟล์";
+      wrap.append(link);
+    }
+    showNode(wrap);
+  }
+
+  async function showPdfPage() {
+    if (pageLabel) pageLabel.textContent = `หน้า ${page}${entry.pageCount ? ` / ${entry.pageCount}` : ""}`;
+    try {
+      const rendered = await renderPdfPageImage(url, page, Math.min(1600, Math.round(window.innerWidth * 1.5)));
+      entry.pageCount = rendered.pageCount;
+      const image = previewImageNode(rendered.dataUrl, `หน้า ${page} ของ ${file.file_name}`);
+      image.className = "attachment-lightbox-media";
+      showNode(image);
+      if (pageLabel) pageLabel.textContent = `หน้า ${page} / ${rendered.pageCount}`;
+      if (previousButton) previousButton.disabled = page <= 1;
+      if (nextButton) nextButton.disabled = page >= rendered.pageCount;
+    } catch {
+      showMessage("เปิดตัวอย่าง PDF ไม่ได้ กรุณาดาวน์โหลดเพื่อเปิดดู", true);
+    }
+  }
+
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", onKeyDown);
+    document.body.classList.remove("no-scroll");
+  }
+
+  function onKeyDown(event) {
+    if (event.key === "Escape") close();
+    if (kind !== "pdf") return;
+    if (event.key === "ArrowRight" && nextButton && !nextButton.disabled) { page += 1; showPdfPage(); }
+    if (event.key === "ArrowLeft" && previousButton && !previousButton.disabled) { page -= 1; showPdfPage(); }
+  }
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay || event.target.closest("[data-lightbox-close]")) close();
+    if (event.target.closest("[data-lightbox-prev]")) { page = Math.max(1, page - 1); showPdfPage(); }
+    if (event.target.closest("[data-lightbox-next]")) { page += 1; showPdfPage(); }
+  });
+  document.addEventListener("keydown", onKeyDown);
+  document.body.classList.add("no-scroll");
+  document.body.append(overlay);
+
+  if (kind === "image") {
+    const image = previewImageNode(url, file.file_name);
+    image.className = "attachment-lightbox-media";
+    showNode(image);
+  } else if (kind === "pdf") {
+    showPdfPage();
+  } else if (kind === "text" && (file.size_bytes ?? 0) <= TEXT_PREVIEW_LIMIT) {
+    fetch(url)
+      .then((response) => { if (!response.ok) throw new Error("preview failed"); return response.text(); })
+      .then((text) => {
+        const block = document.createElement("pre");
+        block.className = "attachment-preview-text";
+        block.textContent = text || "(ไฟล์ว่าง)";
+        showNode(block);
+      })
+      .catch(() => showMessage("เปิดตัวอย่างไฟล์ไม่ได้ กรุณาดาวน์โหลดเพื่อเปิดดู", true));
+  } else {
+    showMessage(`ไฟล์ ${attachmentKindLabels[kind]} แสดงตัวอย่างในหน้าเว็บไม่ได้ กรุณาดาวน์โหลดเพื่อเปิดดู`, true);
+  }
+}
+
 function statusBadge(status) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabels[status] ?? status)}</span>`;
 }
@@ -1195,7 +1489,7 @@ async function renderRequestDetail(params) {
       </div>
       <aside class="stack">
         <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
-        <section class="card"><h2>ไฟล์แนบ</h2>${attachments.map((file) => `<div class="attachment"><span>${escapeHtml(file.file_name)}<br><small class="muted">${Math.ceil(file.size_bytes / 1024)} KB</small></span><button class="btn secondary small download-button" data-path="${escapeHtml(file.storage_path)}">เปิด</button></div>`).join("") || `<p class="muted small">ยังไม่มีไฟล์แนบ</p>`}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์ (สูงสุด 10 MB)</label><input class="input" id="attachment-file" name="file" type="file" required></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
+        <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์ (สูงสุด 10 MB)</label><input class="input" id="attachment-file" name="file" type="file" required></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
         <section class="card"><h2>ประวัติสถานะ</h2><div class="timeline">${history.map((item) => `<div class="timeline-item"><strong>${escapeHtml(statusLabels[item.to_status] ?? item.to_status)}</strong><p>${formatDate(item.created_at, true)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</p></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
         ${isRepair ? `<section class="card"><h2>ประวัติการตรวจรับ</h2><div class="timeline">${verifications.map((item) => `<div class="timeline-item"><strong>${escapeHtml(verifyResultLabels[item.result] ?? item.result)}</strong><p>${escapeHtml(personName(directory, item.verified_by))} · ${formatDate(item.created_at, true)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</p></div>`).join("") || `<div class="muted small">ยังไม่มีการตรวจรับ</div>`}</div></section>` : ""}
       </aside>
@@ -1311,11 +1605,11 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });
-  document.querySelectorAll(".download-button").forEach((button) => button.addEventListener("click", async () => {
-    const { data, error } = await sb.storage.from("request-attachments").createSignedUrl(button.dataset.path, 60);
-    if (error) return showToast(friendlyError(error), "error");
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-  }));
+  document.querySelector("#attachment-gallery")?.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-attachment-open]");
+    if (trigger) openAttachmentLightbox(trigger.dataset.attachmentOpen);
+  });
+  hydrateAttachmentGallery(attachments).catch((error) => showToast(friendlyError(error), "error"));
 }
 
 async function renderApprovals(params) {
