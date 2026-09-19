@@ -48,7 +48,7 @@ const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สู
 // ใบแจ้งซ่อมเดินผ่านผู้อนุมัติสองระดับตามลำดับ ขั้นที่ 1 ผู้จัดการโรงงาน แล้วขั้นที่ 2 ผู้จัดการทั่วไป
 // (ดูไมเกรชัน repair_approval_factory_general_manager.sql) ป้ายสถานะของใบแจ้งซ่อมจึงบอกด้วยว่า
 // ตอนนี้ค้างอยู่ที่ผู้จัดการคนไหน เหมือนหน้าจอของระบบแจ้งซ่อม MT เดิม
-const repairApproverShortLabels = { 1: "ผจก.โรงงาน", 2: "ผจก.ทั่วไป" };
+const repairApproverShortLabels = { "ผู้จัดการโรงงาน": "ผจก.โรงงาน", "ผู้จัดการทั่วไป": "ผจก.ทั่วไป" };
 const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 const REPAIR_DEPARTMENT_OPTIONS = [
   { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
@@ -511,14 +511,20 @@ function statusBadge(status, label) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(label ?? statusLabels[status] ?? status)}</span>`;
 }
 
+function repairApproverShortLabel(step) {
+  return step ? repairApproverShortLabels[step.step_name] ?? null : null;
+}
+
+// อ่านชื่อขั้นจริงจาก approval_steps แทนการเดาจาก step_order เพื่อให้ใบเก่าที่ยังมีขั้น
+// "หัวหน้าแผนก"/"ผู้อนุมัติหน่วยงานรับผิดชอบ" ไม่ถูกติดป้ายผิดว่าเป็นผู้จัดการ
 function repairStatusLabel(request, steps) {
+  const chain = steps ?? [];
   if (request.status === "pending_approval") {
-    const approver = repairApproverShortLabels[request.current_step];
+    const approver = repairApproverShortLabel(chain.find((step) => step.step_order === request.current_step));
     return approver ? `รออนุมัติ (${approver})` : statusLabels.pending_approval;
   }
   if (request.status === "more_info") {
-    const pendingStep = (steps ?? []).find((step) => step.status === "more_info");
-    const approver = pendingStep ? repairApproverShortLabels[pendingStep.step_order] : null;
+    const approver = repairApproverShortLabel(chain.find((step) => step.status === "more_info"));
     return approver ? `ต้องการข้อมูลเพิ่มเติม (${approver})` : statusLabels.more_info;
   }
   return statusLabels[request.status] ?? request.status;
