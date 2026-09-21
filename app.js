@@ -1535,7 +1535,8 @@ async function renderNewRequest(params) {
 // เรียกฟังก์ชันนี้แทนโดยไม่ตั้งใจและ state.directory ไม่เคยถูกตั้งค่า (ดรอปดาวน์แผนกว่างเปล่า)
 // เปลี่ยนชื่อให้ไม่ชนกันเพื่อแก้บั๊กนี้
 async function loadEmployeeDirectory() {
-  const { data, error } = await sb.from("employees").select("id,first_name,last_name,job_title,role_id,department_id").eq("is_active", true);
+  // เก็บผู้ใช้ที่ปิดใช้งานแล้วไว้ด้วย เพื่อให้ชื่อผู้ดำเนินการในประวัติเก่ายังแสดงได้ครบ
+  const { data, error } = await sb.from("employees").select("id,first_name,last_name,job_title,role_id,department_id,is_active");
   if (error) throw error;
   return new Map((data ?? []).map((employee) => [employee.id, employee]));
 }
@@ -1543,6 +1544,138 @@ async function loadEmployeeDirectory() {
 function personName(directory, id) {
   const person = directory.get(id);
   return person ? `${person.first_name} ${person.last_name}` : "—";
+}
+
+const repairTimelineStatusLabels = {
+  ...statusLabels,
+  pending_approval: "รออนุมัติ",
+  more_info: "ต้องการข้อมูลเพิ่มเติม",
+  in_progress: "กำลังซ่อม",
+  pending_verify: "รอผู้แจ้งตรวจสอบผลการซ่อม",
+  completed: "ซ่อมเรียบร้อย",
+};
+
+function closestTimelineRecord(records, createdAt, predicate = () => true) {
+  const target = Date.parse(createdAt);
+  if (!Number.isFinite(target)) return null;
+  const [closest] = records
+    .filter(predicate)
+    .map((record) => ({ record, distance: Math.abs(Date.parse(record.acted_at ?? record.created_at) - target) }))
+    .filter(({ distance }) => Number.isFinite(distance))
+    .sort((left, right) => left.distance - right.distance);
+  return closest && closest.distance <= 60_000 ? closest.record : null;
+}
+
+function closestCreatedTimelineRecord(records, createdAt, predicate = () => true) {
+  const target = Date.parse(createdAt);
+  if (!Number.isFinite(target)) return null;
+  const [closest] = records
+    .filter(predicate)
+    .map((record) => ({ record, distance: Math.abs(Date.parse(record.created_at) - target) }))
+    .filter(({ distance }) => Number.isFinite(distance))
+    .sort((left, right) => left.distance - right.distance);
+  return closest && closest.distance <= 60_000 ? closest.record : null;
+}
+
+function appendTimelineNote(detail, note) {
+  const cleanNote = String(note ?? "").trim();
+  if (!cleanNote || detail.includes(cleanNote)) return detail;
+  return detail ? `${detail} · ${cleanNote}` : cleanNote;
+}
+
+function buildRequestTimeline(request, history, steps, verifications, directory, isRepair) {
+  const orderedSteps = [...steps].sort((left, right) => left.step_order - right.step_order);
+  const latestRepairResult = [...history]
+    .filter((item) => item.to_status === "pending_verify")
+    .sort((left, right) => right.created_at.localeCompare(left.created_at))[0];
+  const labels = isRepair ? repairTimelineStatusLabels : statusLabels;
+
+  const statusEvents = history.map((item) => {
+    const actorName = personName(directory, item.changed_by);
+    const actor = actorName === "—" ? "" : actorName;
+    const matchingDecision = closestTimelineRecord(orderedSteps, item.created_at, (step) => {
+      if (item.to_status === "more_info") return step.status === "more_info";
+      if (item.to_status === "rejected") return step.status === "rejected";
+      if (["approved", "pending_assign"].includes(item.to_status)) return step.status === "approved";
+      return false;
+    });
+    const matchingVerification = closestTimelineRecord(verifications, item.created_at, (verification) => (
+      (item.to_status === "completed" && verification.result === "pass")
+      || (item.from_status === "pending_verify" && item.to_status === "assigned" && verification.result === "fail")
+    ));
+
+    let stage = matchingDecision?.step_name ?? "";
+    if (item.to_status === "pending_approval") {
+      if (item.from_status === "more_info") {
+        stage = closestCreatedTimelineRecord(orderedSteps, item.created_at)?.step_name ?? "";
+      } else {
+        stage = orderedSteps[0]?.step_name ?? "";
+      }
+    }
+
+    let detail = "";
+    if (!item.from_status) {
+      detail = `${item.note || (isRepair ? "สร้างใบแจ้งซ่อม" : "สร้างและส่งคำร้อง")}${actor ? ` โดย ${actor}` : ""}`;
+    } else if (item.to_status === "more_info") {
+      detail = `${actor || "ผู้อนุมัติ"} ขอข้อมูลเพิ่มเติม${matchingDecision?.comment ? `: ${matchingDecision.comment}` : ""}`;
+    } else if (item.to_status === "rejected") {
+      detail = `${actor || "ผู้อนุมัติ"} ไม่อนุมัติ${stage ? ` ในขั้น ${stage}` : ""}${matchingDecision?.comment ? `: ${matchingDecision.comment}` : ""}`;
+    } else if (item.to_status === "pending_approval" && item.from_status === "more_info") {
+      detail = `${actor || "ผู้แจ้ง"} ส่งข้อมูลเพิ่มเติมเพื่อพิจารณาอีกครั้ง`;
+    } else if (["approved", "pending_assign"].includes(item.to_status)) {
+      detail = `${actor || "ผู้อนุมัติ"} อนุมัติ${stage ? `ขั้น ${stage}` : "คำร้อง"} แล้ว`;
+    } else if (item.to_status === "assigned" && item.from_status === "pending_verify") {
+      detail = `${actor || "ผู้แจ้ง"} ตรวจรับไม่ผ่าน ส่งกลับให้ ${personName(directory, request.assignee_id)} ซ่อมเพิ่มเติม`;
+      if (matchingVerification?.note) detail = appendTimelineNote(detail, matchingVerification.note);
+    } else if (item.to_status === "assigned") {
+      detail = `${actor || "ผู้มอบหมาย"} มอบหมายงานให้ ${personName(directory, request.assignee_id)}`;
+      if (request.work_expected_date) detail += ` (กำหนดเสร็จ ${formatDate(request.work_expected_date)})`;
+    } else if (item.to_status === "in_progress") {
+      detail = `${actor || "ผู้รับผิดชอบ"} ${isRepair ? "เริ่มดำเนินการซ่อม" : "รับงานและเริ่มดำเนินการ"}`;
+    } else if (item.to_status === "pending_verify") {
+      detail = `${actor || "ผู้รับผิดชอบ"} ซ่อมเสร็จสิ้น ส่งให้ผู้แจ้งตรวจสอบการใช้งาน`;
+      if (latestRepairResult?.id === item.id) {
+        if (request.execution_plan) detail += ` · การดำเนินงาน: ${executionPlanLabels[request.execution_plan] ?? request.execution_plan}`;
+        if (request.cause_analysis) detail += ` · วิเคราะห์สาเหตุ: ${request.cause_analysis}`;
+        if (request.inspector_opinion) detail += ` · ความเห็นผู้ตรวจสอบ: ${inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion}`;
+        if (request.parts_used) detail += ` · อะไหล่/วัสดุ: ${request.parts_used}`;
+      }
+    } else if (item.to_status === "completed" && item.from_status === "pending_verify") {
+      detail = `${actor || "ผู้แจ้ง"} ตรวจรับผลการซ่อมแล้ว: ${verifyResultLabels[matchingVerification?.result] ?? "ผ่าน — ใช้งานได้ปกติ"}`;
+      if (matchingVerification?.note) detail = appendTimelineNote(detail, matchingVerification.note);
+    } else if (item.to_status === "completed") {
+      detail = `${actor || "ผู้รับผิดชอบ"} ปิดงานว่าเสร็จแล้ว`;
+    } else {
+      const fromLabel = labels[item.from_status] ?? item.from_status;
+      const toLabel = labels[item.to_status] ?? item.to_status;
+      detail = `${actor || "ผู้ใช้งาน"} เปลี่ยนสถานะจาก ${fromLabel} เป็น ${toLabel}`;
+    }
+
+    return {
+      id: `status-${item.id}`,
+      at: item.created_at,
+      title: `${labels[item.to_status] ?? item.to_status}${stage && ["pending_approval", "more_info", "rejected"].includes(item.to_status) ? ` (${stage})` : ""}`,
+      detail: appendTimelineNote(detail, item.note),
+    };
+  });
+
+  // การอนุมัติขั้นกลางไม่เปลี่ยน requests.status จึงไม่มีแถวใน status history
+  // เติมจาก approval_steps เพื่อให้ลำดับเหตุการณ์ไม่ขาดช่วงก่อนถึงผู้อนุมัติขั้นถัดไป
+  const approvalEvents = orderedSteps.flatMap((step, index) => {
+    const nextStep = orderedSteps[index + 1];
+    if (step.status !== "approved" || !step.acted_at || !nextStep) return [];
+    const actorName = personName(directory, step.acted_by);
+    let detail = `${actorName === "—" ? "ผู้อนุมัติ" : actorName} อนุมัติขั้น ${step.step_name} แล้ว`;
+    if (step.comment) detail += `: ${step.comment}`;
+    return [{
+      id: `approval-${step.id}`,
+      at: step.acted_at,
+      title: `รออนุมัติ (${nextStep.step_name})`,
+      detail,
+    }];
+  });
+
+  return [...statusEvents, ...approvalEvents].sort((left, right) => left.at.localeCompare(right.at));
 }
 
 /* ---------- สำรองใบแจ้งซ่อมไปชีต Maintenance-MT เดิม ----------
@@ -1716,6 +1849,7 @@ async function renderRequestDetail(params) {
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
   const verifications = verificationsResult.data ?? [];
+  const timeline = buildRequestTimeline(request, history, steps, verifications, directory, isRepair);
   const progressSteps = progressResult.data ?? [];
   // ช่างของใบนี้ = รายชื่อในตารางช่าง (ใบเก่าก่อนรองรับหลายคนมีแต่ assignee_id จึงรวมเข้าไปด้วย)
   const assignedTechIds = [...new Set([
@@ -1738,7 +1872,7 @@ async function renderRequestDetail(params) {
       && Boolean(type?.code) && employee.approvalModules.has(type.code)
     ));
   const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status);
-  const technicians = isRepair ? [...directory.entries()].filter(([, person]) => person.department_id === type.owning_department_id) : [];
+  const technicians = isRepair ? [...directory.entries()].filter(([, person]) => person.is_active && person.department_id === type.owning_department_id) : [];
   // สเปก: ผจก.ซ่อมบำรุงแก้รายชื่อช่างได้ทุกสถานะ ยกเว้นใบที่ถูกปฏิเสธ และต้องอนุมัติครบก่อน
   const isOwningDeptManager = employee.role?.code === "department_manager"
     && employee.department_id === type?.owning_department_id;
@@ -1846,8 +1980,7 @@ async function renderRequestDetail(params) {
       <aside class="stack">
         <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
         <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์ (สูงสุด 10 MB)</label><input class="input" id="attachment-file" name="file" type="file" required></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
-        <section class="card"><h2>ประวัติสถานะ</h2><div class="timeline">${history.map((item) => `<div class="timeline-item"><strong>${escapeHtml(statusLabels[item.to_status] ?? item.to_status)}</strong><p>${formatDate(item.created_at, true)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</p></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
-        ${isRepair ? `<section class="card"><h2>ประวัติการตรวจรับ</h2><div class="timeline">${verifications.map((item) => `<div class="timeline-item"><strong>${escapeHtml(verifyResultLabels[item.result] ?? item.result)}</strong><p>${escapeHtml(personName(directory, item.verified_by))} · ${formatDate(item.created_at, true)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</p></div>`).join("") || `<div class="muted small">ยังไม่มีการตรวจรับ</div>`}</div></section>` : ""}
+        <section class="card"><h2>ลำดับเหตุการณ์</h2><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p><time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
       </aside>
     </div>`;
   app.innerHTML = shell(content, "requests", request.request_no);

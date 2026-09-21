@@ -7,6 +7,9 @@ export const statusLabels: Record<string, string> = {
   completed: "เสร็จแล้ว",
   rejected: "ไม่อนุมัติ",
   cancelled: "ยกเลิก",
+  pending_assign: "รอมอบหมายช่าง",
+  assigned: "รอดำเนินการ",
+  pending_verify: "รอผู้แจ้งตรวจสอบ",
 };
 
 export const priorityLabels: Record<string, string> = {

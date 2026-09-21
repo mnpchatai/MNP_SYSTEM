@@ -12,6 +12,12 @@ import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
 import { employeeName, formatDate, priorityLabels, statusLabels } from "@/lib/format";
 import { hasPermission } from "@/lib/data";
+import {
+  buildRequestTimeline,
+  type ApprovalTimelineRow,
+  type StatusTimelineRow,
+  type VerificationTimelineRow,
+} from "@/lib/request-timeline";
 import { createClient } from "@/lib/supabase/server";
 
 const detailLabels: Record<string, string> = {
@@ -38,7 +44,7 @@ export default async function RequestDetailPage({
     .from("requests")
     .select(`
       *,
-      request_type:request_types(name_th, code),
+      request_type:request_types(name_th, code, uses_repair_workflow),
       requester:employees!requests_requester_id_fkey(first_name,last_name,employee_no),
       assignee:employees!requests_assignee_id_fkey(first_name,last_name),
       approval_steps(*,
@@ -46,7 +52,8 @@ export default async function RequestDetailPage({
         acted_by_employee:employees!approval_steps_acted_by_fkey(first_name,last_name)
       ),
       request_attachments(*),
-      request_status_history(*, changed_by_employee:employees!request_status_history_changed_by_fkey(first_name,last_name))
+      request_status_history(*, changed_by_employee:employees!request_status_history_changed_by_fkey(first_name,last_name)),
+      request_verifications(*, verifier:employees!request_verifications_verified_by_fkey(first_name,last_name))
     `)
     .eq("id", id)
     .single();
@@ -60,6 +67,13 @@ export default async function RequestDetailPage({
       (step.approver_role_id === employee.role_id && (!step.approver_department_id || step.approver_department_id === employee.department_id))
     ));
   const details = (request.details ?? {}) as Record<string, string>;
+  const timeline = buildRequestTimeline({
+    request,
+    history: (request.request_status_history ?? []) as StatusTimelineRow[],
+    steps: (request.approval_steps ?? []) as ApprovalTimelineRow[],
+    verifications: (request.request_verifications ?? []) as VerificationTimelineRow[],
+    isRepair: Boolean(request.request_type?.uses_repair_workflow),
+  });
 
   return (
     <>
@@ -180,14 +194,14 @@ export default async function RequestDetailPage({
           </section>
 
           <section className="card">
-            <div className="card-title"><h3>ประวัติสถานะ</h3></div>
+            <div className="card-title"><h3>ลำดับเหตุการณ์</h3></div>
             <div className="timeline">
-              {[...(request.request_status_history ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at)).map((entry) => (
+              {timeline.map((entry) => (
                 <div className="timeline-item" key={entry.id}>
                   <span className="timeline-dot" />
-                  <strong>{statusLabels[entry.to_status]}</strong>
-                  <p>{employeeName(entry.changed_by_employee)} · {formatDate(entry.created_at, true)}</p>
-                  {entry.note && <p>{entry.note}</p>}
+                  <strong>{entry.title}</strong>
+                  <p className="timeline-item-detail">{entry.detail}</p>
+                  <time className="timeline-item-time" dateTime={entry.at}>{formatDate(entry.at, true)}</time>
                 </div>
               ))}
             </div>
