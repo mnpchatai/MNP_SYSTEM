@@ -220,7 +220,7 @@ function friendlyError(error) {
     REQUEST_NOT_PENDING_ASSIGN: "ใบนี้ไม่ได้อยู่ในขั้นรอมอบหมายช่างแล้ว",
     TECHNICIAN_NOT_FOUND: "ไม่พบช่างที่เลือกในแผนกซ่อมบำรุง",
     REQUEST_NOT_ASSIGNED: "ใบนี้ไม่ได้อยู่ในขั้นรอเริ่มงานแล้ว",
-    NOT_ASSIGNED_TECHNICIAN: "คุณไม่ใช่ช่างที่ถูกมอบหมายใบนี้",
+    NOT_ASSIGNED_TECHNICIAN: "คุณไม่ใช่ช่างที่ถูกมอบหมายหรือหัวหน้าแผนกซ่อมบำรุงของใบนี้",
     REQUEST_NOT_IN_PROGRESS: "ใบนี้ไม่ได้อยู่ระหว่างดำเนินการซ่อมแล้ว",
     INVALID_EXECUTION_PLAN: "กรุณาเลือกการดำเนินงาน",
     INVALID_INSPECTOR_OPINION: "กรุณาเลือกแนวทางการซ่อม",
@@ -1755,10 +1755,11 @@ async function renderRequestDetail(params) {
   const canStartWork = isRepair && request.status === "assigned" && assignedTechIds.length > 0 && (
     employee.role?.code === "admin" || isMyRepairJob || isOwningDeptManager
   );
-  // จบงานและตรวจรับ: ผจก.โรงงาน/ผจก.ทั่วไป กดแทนไม่ได้ ต้องตรงกับ app_finish_repair_work /
-  // app_verify_repair ที่ตัด requests.view_all ออกไปแล้ว เหลือช่างในชุด กับผู้แจ้ง ตามลำดับ
+  // จบงาน: ผจก.โรงงาน/ผจก.ทั่วไป กดแทนไม่ได้ (ตัด requests.view_all ออกแล้ว) แต่หัวหน้าแผนก
+  // ซ่อมบำรุงเจ้าของงาน (isOwningDeptManager) กดแทนช่างในชุดได้เหมือนปุ่มเริ่มงาน/หมุดความคืบหน้า
+  // ต้องตรงกับเงื่อนไขฝั่ง app_finish_repair_work — ส่วนตรวจรับยังเหลือแค่ผู้แจ้งเท่านั้น
   const canFinishWork = isRepair && request.status === "in_progress"
-    && (employee.role?.code === "admin" || isMyRepairJob);
+    && (employee.role?.code === "admin" || isMyRepairJob || isOwningDeptManager);
   const canVerify = isRepair && request.status === "pending_verify"
     && (employee.role?.code === "admin" || request.requester_id === employee.id);
   // หมุดความคืบหน้า: ช่างในชุด กับ ผจก.ซ่อมบำรุง เท่านั้นที่กดได้ คนอื่นดูได้อย่างเดียว
@@ -1837,7 +1838,7 @@ async function renderRequestDetail(params) {
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ แล้วส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required></textarea></div>
-          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${partsRowHtml()}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button></div>
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${partsRowHtml()}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file"><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
           <div class="form-actions"><button class="btn success" type="submit">บันทึกและส่งตรวจรับ</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
@@ -1942,6 +1943,23 @@ async function renderRequestDetail(params) {
     if (rows.length > 1) removeButton.closest(".parts-row").remove();
     else removeButton.closest(".parts-row").querySelectorAll("input").forEach((input) => { input.value = ""; });
     renumberPartsRows(container);
+  });
+  document.querySelector("#finish-parts-file-upload")?.addEventListener("click", async () => {
+    const button = document.querySelector("#finish-parts-file-upload");
+    const input = document.querySelector("#finish-parts-file");
+    let file;
+    try {
+      file = optionalAttachment(input?.files[0]);
+      if (!file) throw new Error("กรุณาเลือกไฟล์");
+    } catch (error) {
+      return showToast(friendlyError(error), "error");
+    }
+    button.disabled = true;
+    try {
+      await uploadRequestAttachment(id, file, employee.id);
+      showToast("แนบไฟล์แล้ว");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
   });
   document.querySelector("#finish-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
