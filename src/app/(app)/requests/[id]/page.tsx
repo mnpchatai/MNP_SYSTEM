@@ -100,6 +100,24 @@ export default async function RequestDetailPage({
             </dl>
           </section>
 
+          {request.status === "more_info" && (() => {
+            const moreInfoStep = [...(request.approval_steps ?? [])]
+              .sort((a, b) => b.step_order - a.step_order)
+              .find((step) => step.status === "more_info");
+            const requesterLabel = employeeName(request.requester);
+            const isRequester = request.requester_id === employee.id;
+            return (
+              <section className="card more-info-card">
+                <div className="card-title"><h3>รอข้อมูลเพิ่มเติมจาก {requesterLabel}</h3></div>
+                <p className="muted small">
+                  {moreInfoStep?.acted_by_employee ? employeeName(moreInfoStep.acted_by_employee) : "ผู้อนุมัติ"} ขอข้อมูลเพิ่มเติมในขั้นตอน &quot;{moreInfoStep?.step_name ?? "—"}&quot;
+                  {moreInfoStep?.comment ? ` · ${moreInfoStep.comment}` : ""}
+                </p>
+                {!isRequester && <p className="muted small">มีเพียง {requesterLabel} ผู้ยื่นคำร้องนี้เท่านั้นที่ตอบกลับได้</p>}
+              </section>
+            );
+          })()}
+
           {pendingStep && request.status === "pending_approval" && (
             <section className="card">
               <div className="card-title"><h3>พิจารณาคำร้อง</h3><span className="badge pending_approval">{pendingStep.step_name}</span></div>
