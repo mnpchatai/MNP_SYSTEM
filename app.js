@@ -1425,10 +1425,9 @@ async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
-  const [requestResult, stepsResult, commentsResult, attachmentsResult, historyResult, verificationsResult, directory] = await Promise.all([
+  const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, directory] = await Promise.all([
     sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id),department:departments(code)").eq("id", id).maybeSingle(),
     sb.from("approval_steps").select("*").eq("request_id", id).order("step_order"),
-    sb.from("request_comments").select("*").eq("request_id", id).order("created_at"),
     sb.from("request_attachments").select("*").eq("request_id", id).order("created_at"),
     sb.from("request_status_history").select("*").eq("request_id", id).order("created_at", { ascending: false }),
     sb.from("request_verifications").select("*").eq("request_id", id).order("created_at", { ascending: false }),
@@ -1436,12 +1435,11 @@ async function renderRequestDetail(params) {
   ]);
   if (requestResult.error) throw requestResult.error;
   if (!requestResult.data) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
-  for (const result of [stepsResult, commentsResult, attachmentsResult, historyResult, verificationsResult]) if (result.error) throw result.error;
+  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult]) if (result.error) throw result.error;
   const request = requestResult.data;
   const type = relation(request.request_type);
   const isRepair = Boolean(type?.uses_repair_workflow);
   const steps = stepsResult.data ?? [];
-  const comments = commentsResult.data ?? [];
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
   const verifications = verificationsResult.data ?? [];
@@ -1529,7 +1527,6 @@ async function renderRequestDetail(params) {
           <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งตรวจรับ</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
-        <section class="card"><h2>ความคิดเห็น</h2>${comments.map((comment) => `<article class="comment"><div class="comment-head"><strong>${escapeHtml(personName(directory, comment.author_id))}</strong><time>${formatDate(comment.created_at, true)}</time></div><div class="comment-body">${escapeHtml(comment.body)}</div></article>`).join("") || `<div class="empty">ยังไม่มีความคิดเห็น</div>`}<form id="comment-form"><div class="field"><label for="comment-body">เพิ่มความคิดเห็น</label><textarea class="textarea" id="comment-body" name="body" maxlength="3000" required></textarea></div><div class="form-actions"><button class="btn small" type="submit">บันทึกความคิดเห็น</button></div></form></section>
       </div>
       <aside class="stack">
         <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
@@ -1630,18 +1627,6 @@ async function renderRequestDetail(params) {
       if (error) throw error;
       triggerNotificationEmails(id);
       showToast("ส่งข้อมูลกลับให้พิจารณาอีกครั้งแล้ว");
-      await renderRequestDetail(params);
-    } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
-  });
-  document.querySelector("#comment-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    setFormBusy(form, true);
-    const body = form.elements.body.value.trim();
-    try {
-      const { error } = await sb.from("request_comments").insert({ request_id: id, author_id: employee.id, body });
-      if (error) throw error;
-      showToast("เพิ่มความคิดเห็นแล้ว");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });
