@@ -318,6 +318,8 @@ svg { flex: 0 0 auto; }
   border-radius: 8px;
 }
 .card { padding: 20px; }
+.more-info-card { border-color: var(--warning); background: var(--warning-soft); }
+.more-info-card h3 { color: var(--warning); }
 .panel-heading, .card-title { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading { padding: 0 17px; border-bottom: 1px solid var(--line-soft); }
 .card-title { min-height: auto; margin-bottom: 16px; }
