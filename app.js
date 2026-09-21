@@ -236,6 +236,7 @@ function friendlyError(error) {
     WORK_START_DATE_REQUIRED: "กรุณาระบุวันเริ่มงาน",
     WORK_EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าจะเสร็จ",
     WORK_DATE_RANGE_INVALID: "วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน",
+    REPAIR_USES_OWN_WORKFLOW: "ใบแจ้งซ่อมต้องเดินตามขั้นตอนของช่าง เปลี่ยนสถานะตรงๆ ไม่ได้",
   };
   const key = Object.keys(map).find((item) => message.includes(item));
   return key ? map[key] : message;
@@ -1731,9 +1732,12 @@ async function renderRequestDetail(params) {
   // สเปก: ผจก.ซ่อมบำรุงแก้รายชื่อช่างได้ทุกสถานะ ยกเว้นใบที่ถูกปฏิเสธ และต้องอนุมัติครบก่อน
   const isOwningDeptManager = employee.role?.code === "department_manager"
     && employee.department_id === type?.owning_department_id;
+  // การแจกจ่ายงานเป็นหน้าที่ ผจก.แผนกซ่อมบำรุงคนเดียว — ห้ามใช้ isAdmin ตรงนี้เพราะมันรวม
+  // factory_manager/general_manager ซึ่งไม่ควรเข้ามายุ่งในขั้นตอนของช่าง (ตรงกับ
+  // app_assign_repair_technician ที่ตัด requests.view_all ออกแล้วใน 20260921100000)
   const canAssign = isRepair
     && ["pending_assign", "assigned", "in_progress", "pending_verify", "completed"].includes(request.status)
-    && (isAdmin || isOwningDeptManager);
+    && (employee.role?.code === "admin" || isOwningDeptManager);
   const isMyRepairJob = assignedTechIds.includes(employee.id);
   // เจตนา: จำกัดเฉพาะช่างที่ถูกมอบหมาย + ผู้จัดการแผนกเจ้าของประเภทเอกสาร + admin เท่านั้น
   // ไม่ใช้ isAdmin (ซึ่งรวม factory_manager/general_manager) เพราะสองบทบาทนั้นไม่ได้เกี่ยวข้อง
