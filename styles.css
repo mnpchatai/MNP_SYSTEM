@@ -209,6 +209,15 @@ button { cursor: pointer; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .field.full { grid-column: 1 / -1; }
+.tech-picker { display: grid; gap: 6px; padding: 10px 12px; background: var(--shell); border: 1px solid var(--line); border-radius: 8px; }
+.tech-option { display: flex; align-items: center; gap: 9px; min-height: 32px; font-size: 14px; cursor: pointer; }
+.tech-option input { width: 17px; height: 17px; margin: 0; accent-color: var(--primary); }
+.progress-steps { display: grid; gap: 8px; }
+.progress-step { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; background: var(--shell); border: 1px solid var(--line); border-radius: 8px; }
+.progress-step.done { background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
+.progress-mark { display: grid; place-items: center; width: 24px; height: 24px; color: var(--muted); border-radius: 999px; font-size: 13px; font-weight: 700; }
+.progress-step.done .progress-mark { color: var(--success); }
+.progress-copy { min-width: 0; display: grid; gap: 1px; }
 .parts-rows { display: grid; gap: 10px; margin: 2px 0 10px; }
 .parts-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; padding: 12px; background: var(--shell); border: 1px solid var(--line); border-radius: 8px; }
 .parts-row .parts-row-remove { grid-column: 1 / -1; justify-self: end; }
