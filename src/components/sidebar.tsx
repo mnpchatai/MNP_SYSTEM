@@ -14,11 +14,11 @@ import {
 import { signOutAction } from "@/app/actions/auth";
 
 const workspaceItems = [
-  { href: "/", label: "หน้าหลัก", icon: LayoutDashboard },
-  { href: "/requests", label: "คำร้องของฉัน", icon: ClipboardList },
-  { href: "/requests/new", label: "สร้างคำร้อง", icon: PlusCircle },
-  { href: "/approvals", label: "รอฉันอนุมัติ", icon: CheckSquare },
-  { href: "/notifications", label: "การแจ้งเตือน", icon: Bell },
+  { href: "/", label: "หน้าหลัก", mobileLabel: "หน้าหลัก", icon: LayoutDashboard },
+  { href: "/requests", label: "คำร้องของฉัน", mobileLabel: "คำร้อง", icon: ClipboardList },
+  { href: "/requests/new", label: "สร้างคำร้อง", mobileLabel: "สร้าง", icon: PlusCircle, featured: true },
+  { href: "/approvals", label: "รอฉันอนุมัติ", mobileLabel: "อนุมัติ", icon: CheckSquare },
+  { href: "/notifications", label: "การแจ้งเตือน", mobileLabel: "แจ้งเตือน", icon: Bell },
 ];
 
 function isActivePath(pathname: string, href: string) {
@@ -49,18 +49,31 @@ export function Sidebar({
 
       <nav className="nav" aria-label="เมนูหลัก">
         <div className="nav-section-label">Workspace</div>
-        {workspaceItems.map(({ href, label, icon: Icon }) => (
-          <Link key={href} href={href} className={`nav-link${isActivePath(pathname, href) ? " active" : ""}`}>
-            <Icon size={17} aria-hidden="true" />
-            <span>{label}</span>
+        {workspaceItems.map(({ href, label, mobileLabel, icon: Icon, featured }) => (
+          <Link
+            key={href}
+            href={href}
+            aria-current={isActivePath(pathname, href) ? "page" : undefined}
+            aria-label={label}
+            className={`nav-link${isActivePath(pathname, href) ? " active" : ""}${featured ? " nav-create" : ""}`}
+          >
+            <span className="nav-icon-wrap"><Icon size={17} aria-hidden="true" /></span>
+            <span className="nav-label-full">{label}</span>
+            <span className="nav-mobile-label" aria-hidden="true">{mobileLabel}</span>
           </Link>
         ))}
 
         <div className="nav-divider" />
         <div className="nav-section-label">Account</div>
-        <Link href="/profile" className={`nav-link${pathname.startsWith("/profile") ? " active" : ""}`}>
-          <UserCircle size={17} aria-hidden="true" />
-          <span>ข้อมูลส่วนตัว</span>
+        <Link
+          href="/profile"
+          aria-current={pathname.startsWith("/profile") ? "page" : undefined}
+          aria-label="ข้อมูลส่วนตัว"
+          className={`nav-link${pathname.startsWith("/profile") ? " active" : ""}`}
+        >
+          <span className="nav-icon-wrap"><UserCircle size={17} aria-hidden="true" /></span>
+          <span className="nav-label-full">ข้อมูลส่วนตัว</span>
+          <span className="nav-mobile-label" aria-hidden="true">บัญชี</span>
         </Link>
       </nav>
 

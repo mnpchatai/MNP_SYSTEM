@@ -923,8 +923,24 @@ async function loadUnread() {
   return state.unread;
 }
 
-function navLink(path, label, icon, active) {
-  return `<a class="nav-link${active === path ? " active" : ""}" href="#/${path}"><span class="nav-icon">${icon}</span><span>${label}</span></a>`;
+const NAV_ICONS = {
+  dashboard: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5M9 21v-7h6v7"/></svg>`,
+  requests: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>`,
+  new: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  approvals: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>`,
+  notifications: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>`,
+  admin: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1h-4v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1v-4H3a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.1h4V3a1.7 1.7 0 0 0 1.1 1.6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.37.36.7.6 1 .27.25.62.4 1 .4h.1v4H21a1.7 1.7 0 0 0-1.6.6Z"/></svg>`,
+  profile: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
+};
+
+function navLink(path, label, icon, active, { mobileLabel = label, featured = false, badge = 0 } = {}) {
+  const isActive = active === path;
+  const badgeText = badge > 99 ? "99+" : badge;
+  return `<a class="nav-link${isActive ? " active" : ""}${featured ? " nav-create" : ""}" href="#/${path}" aria-label="${escapeHtml(label)}"${isActive ? ` aria-current="page"` : ""}>
+    <span class="nav-icon-wrap"><span class="nav-icon">${icon}</span>${badge ? `<span class="nav-count" aria-label="${badgeText} รายการใหม่">${badgeText}</span>` : ""}</span>
+    <span class="nav-text">${escapeHtml(label)}</span>
+    <span class="nav-mobile-text" aria-hidden="true">${escapeHtml(mobileLabel)}</span>
+  </a>`;
 }
 
 function shell(content, active, title) {
@@ -935,14 +951,14 @@ function shell(content, active, title) {
         <a class="brand" href="#/dashboard"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
-          ${navLink("dashboard", "หน้าหลัก", "⌂", active)}
-          ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", "▤", active)}
-          ${navLink("new", "สร้างคำร้อง", "+", active)}
-          ${navLink("approvals", "รออนุมัติ", "✓", active)}
-          ${navLink("notifications", "การแจ้งเตือน", "♧", active)}
+          ${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active, { mobileLabel: "หน้าหลัก" })}
+          ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", NAV_ICONS.requests, active, { mobileLabel: OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งาน" : "คำร้อง" })}
+          ${navLink("new", "สร้างคำร้อง", NAV_ICONS.new, active, { mobileLabel: "สร้าง", featured: true })}
+          ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active, { mobileLabel: "อนุมัติ" })}
+          ${navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { mobileLabel: "แจ้งเตือน", badge: state.unread })}
           <div class="nav-divider"></div>
-          ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", "⚙", active) : ""}
-          ${navLink("profile", "ข้อมูลส่วนตัว", "○", active)}
+          ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active, { mobileLabel: "จัดการ" }) : ""}
+          ${navLink("profile", "ข้อมูลส่วนตัว", NAV_ICONS.profile, active, { mobileLabel: "บัญชี" })}
         </nav>
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
