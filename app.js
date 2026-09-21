@@ -933,13 +933,12 @@ const NAV_ICONS = {
   profile: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
 };
 
-function navLink(path, label, icon, active, { mobileLabel = label, featured = false, badge = 0 } = {}) {
+function navLink(path, label, icon, active, { featured = false, badge = 0 } = {}) {
   const isActive = active === path;
   const badgeText = badge > 99 ? "99+" : badge;
   return `<a class="nav-link${isActive ? " active" : ""}${featured ? " nav-create" : ""}" href="#/${path}" aria-label="${escapeHtml(label)}"${isActive ? ` aria-current="page"` : ""}>
     <span class="nav-icon-wrap"><span class="nav-icon">${icon}</span>${badge ? `<span class="nav-count" aria-label="${badgeText} รายการใหม่">${badgeText}</span>` : ""}</span>
     <span class="nav-text">${escapeHtml(label)}</span>
-    <span class="nav-mobile-text" aria-hidden="true">${escapeHtml(mobileLabel)}</span>
   </a>`;
 }
 
@@ -949,16 +948,16 @@ function shell(content, active, title) {
     <div class="app-shell">
       <aside class="sidebar">
         <a class="brand" href="#/dashboard"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
-        <nav class="nav" aria-label="เมนูหลัก">
+        <nav class="nav" aria-label="เมนูหลัก เลื่อนซ้ายขวาได้">
           <div class="nav-label">Workspace</div>
-          ${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active, { mobileLabel: "หน้าหลัก" })}
-          ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", NAV_ICONS.requests, active, { mobileLabel: OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งาน" : "คำร้อง" })}
-          ${navLink("new", "สร้างคำร้อง", NAV_ICONS.new, active, { mobileLabel: "สร้าง", featured: true })}
-          ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active, { mobileLabel: "อนุมัติ" })}
-          ${navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { mobileLabel: "แจ้งเตือน", badge: state.unread })}
+          ${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
+          ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", NAV_ICONS.requests, active)}
+          ${navLink("new", "สร้างคำร้อง", NAV_ICONS.new, active, { featured: true })}
+          ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}
+          ${navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
           <div class="nav-divider"></div>
-          ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active, { mobileLabel: "จัดการ" }) : ""}
-          ${navLink("profile", "ข้อมูลส่วนตัว", NAV_ICONS.profile, active, { mobileLabel: "บัญชี" })}
+          ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
+          ${navLink("profile", "ข้อมูลส่วนตัว", NAV_ICONS.profile, active)}
         </nav>
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
@@ -982,6 +981,9 @@ function shell(content, active, title) {
 }
 
 function bindShell() {
+  requestAnimationFrame(() => {
+    document.querySelector(".nav-link.active")?.scrollIntoView({ block: "nearest", inline: "center" });
+  });
   document.querySelector(".theme-toggle")?.addEventListener("click", toggleTheme);
   document.querySelector(".signout-button")?.addEventListener("click", async () => {
     await sb.auth.signOut();

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import {
   Bell,
   CheckSquare,
@@ -14,11 +15,11 @@ import {
 import { signOutAction } from "@/app/actions/auth";
 
 const workspaceItems = [
-  { href: "/", label: "หน้าหลัก", mobileLabel: "หน้าหลัก", icon: LayoutDashboard },
-  { href: "/requests", label: "คำร้องของฉัน", mobileLabel: "คำร้อง", icon: ClipboardList },
-  { href: "/requests/new", label: "สร้างคำร้อง", mobileLabel: "สร้าง", icon: PlusCircle, featured: true },
-  { href: "/approvals", label: "รอฉันอนุมัติ", mobileLabel: "อนุมัติ", icon: CheckSquare },
-  { href: "/notifications", label: "การแจ้งเตือน", mobileLabel: "แจ้งเตือน", icon: Bell },
+  { href: "/", label: "หน้าหลัก", icon: LayoutDashboard },
+  { href: "/requests", label: "คำร้องของฉัน", icon: ClipboardList },
+  { href: "/requests/new", label: "สร้างคำร้อง", icon: PlusCircle, featured: true },
+  { href: "/approvals", label: "รอฉันอนุมัติ", icon: CheckSquare },
+  { href: "/notifications", label: "การแจ้งเตือน", icon: Bell },
 ];
 
 function isActivePath(pathname: string, href: string) {
@@ -35,7 +36,12 @@ export function Sidebar({
   employee: { first_name: string; last_name: string; job_title: string | null };
 }) {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
   const initials = `${employee.first_name.at(0) ?? ""}${employee.last_name.at(0) ?? ""}`;
+
+  useEffect(() => {
+    navRef.current?.querySelector(".nav-link.active")?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [pathname]);
 
   return (
     <aside className="sidebar">
@@ -47,9 +53,9 @@ export function Sidebar({
         </div>
       </Link>
 
-      <nav className="nav" aria-label="เมนูหลัก">
+      <nav ref={navRef} className="nav" aria-label="เมนูหลัก เลื่อนซ้ายขวาได้">
         <div className="nav-section-label">Workspace</div>
-        {workspaceItems.map(({ href, label, mobileLabel, icon: Icon, featured }) => (
+        {workspaceItems.map(({ href, label, icon: Icon, featured }) => (
           <Link
             key={href}
             href={href}
@@ -59,7 +65,6 @@ export function Sidebar({
           >
             <span className="nav-icon-wrap"><Icon size={17} aria-hidden="true" /></span>
             <span className="nav-label-full">{label}</span>
-            <span className="nav-mobile-label" aria-hidden="true">{mobileLabel}</span>
           </Link>
         ))}
 
@@ -73,7 +78,6 @@ export function Sidebar({
         >
           <span className="nav-icon-wrap"><UserCircle size={17} aria-hidden="true" /></span>
           <span className="nav-label-full">ข้อมูลส่วนตัว</span>
-          <span className="nav-mobile-label" aria-hidden="true">บัญชี</span>
         </Link>
       </nav>
 
