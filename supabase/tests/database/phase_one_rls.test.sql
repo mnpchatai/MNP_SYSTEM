@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(11);
+select plan(16);
 
 select ok(
   (select relrowsecurity from pg_class where oid = 'public.requests'::regclass),
@@ -34,6 +34,14 @@ select ok(
 select ok(
   not has_table_privilege('authenticated', 'public.requests', 'UPDATE'),
   'authenticated users cannot update requests directly'
+);
+select ok(
+  not has_function_privilege('anon', 'public.app_request_status_board(text, text, integer)', 'EXECUTE'),
+  'anonymous users cannot read the request status board'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.app_request_status_board(text, text, integer)', 'EXECUTE'),
+  'authenticated users can read the request status board'
 );
 
 insert into auth.users (id, email, raw_user_meta_data)
@@ -81,6 +89,31 @@ select throws_ok(
   '42501',
   null,
   'employee cannot comment on an inaccessible request'
+);
+
+-- กระดานติดตามสถานะ: พนักงานคนนี้เข้าถึงคำร้อง 'Outsider request' ตาม RLS ไม่ได้
+-- แต่ต้องยังเห็นสถานะของใบนั้นบนกระดาน โดยเปิดดูรายละเอียดเต็มไม่ได้ (can_open = false)
+-- อ้างด้วย id ตรง ๆ เพราะการ select จาก public.requests ตอนนี้ถูก RLS กรองใบนั้นออกไปแล้ว
+select results_eq(
+  $$ select count(*)::bigint from public.app_request_status_board()
+     where id = '60000000-0000-0000-0000-000000000099' $$,
+  array[1::bigint],
+  'status board shows a request the employee cannot otherwise read'
+);
+
+select results_eq(
+  $$ select can_open from public.app_request_status_board()
+     where id = '60000000-0000-0000-0000-000000000099' $$,
+  array[false],
+  'status board marks an inaccessible request as not openable'
+);
+
+select ok(
+  exists (
+    select 1 from public.app_request_status_board() b
+    where not exists (select 1 from public.requests r where r.id = b.id)
+  ),
+  'status board exposes status for requests RLS hides from this employee'
 );
 
 select * from finish();

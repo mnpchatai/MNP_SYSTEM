@@ -46,6 +46,64 @@ const statusLabels = {
   pending_verify: "รอผู้แจ้งตรวจสอบ",
 };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
+
+// ลำดับขั้นของงานสำหรับแถบ "ไปถึงไหนแล้ว" — ใบแจ้งซ่อมเดินตาม workflow ของ MT ส่วนคำร้องทั่วไป
+// ใช้ลำดับสั้นกว่าเพราะไม่มีขั้นมอบหมายช่าง/ตรวจรับ (ดู statusLabels ด้านบนสำหรับป้ายเต็ม)
+const REPAIR_STAGES = [
+  { status: "pending_approval", label: "รออนุมัติ" },
+  { status: "pending_assign", label: "รอมอบหมายช่าง" },
+  { status: "assigned", label: "รอช่างเริ่มงาน" },
+  { status: "in_progress", label: "กำลังซ่อม" },
+  { status: "pending_verify", label: "รอตรวจรับ" },
+  { status: "completed", label: "เสร็จแล้ว" },
+];
+const GENERAL_STAGES = [
+  { status: "pending_approval", label: "รออนุมัติ" },
+  { status: "approved", label: "อนุมัติแล้ว" },
+  { status: "in_progress", label: "กำลังดำเนินการ" },
+  { status: "completed", label: "เสร็จแล้ว" },
+];
+// สถานะที่ออกนอกเส้นทางปกติ — ค้างอยู่ที่ขั้นอนุมัติและยังเดินต่อไม่ได้จนกว่าจะแก้
+const OFF_TRACK_STATUSES = { more_info: "warning", rejected: "danger", cancelled: "danger", draft: "muted" };
+
+/* คำนวณว่าใบนี้เดินมาถึงขั้นไหนจาก "สถานะปัจจุบัน" อย่างเดียว ไม่ได้อ่านจาก
+   request_status_history เพราะสถานะใน requests คือความจริง ณ ปัจจุบันอยู่แล้ว และการตรวจรับ
+   ไม่ผ่านจะย้อนใบกลับไป assigned — แถบจึงต้องถอยตามด้วย ไม่ใช่ค้างที่ขั้นที่เคยผ่านสูงสุด */
+function requestProgress(status, usesRepairWorkflow) {
+  const stages = usesRepairWorkflow ? REPAIR_STAGES : GENERAL_STAGES;
+  const offTrack = OFF_TRACK_STATUSES[status] ?? null;
+  // ขอข้อมูลเพิ่ม/ไม่อนุมัติ/ยกเลิก ล้วนเกิดตอนพิจารณา จึงปักไว้ที่ขั้นอนุมัติ
+  const index = offTrack ? 0 : stages.findIndex((stage) => stage.status === status);
+  return {
+    stages,
+    index,
+    offTrack,
+    // ใบที่จบแล้วนับเป็นผ่านครบทุกขั้น ใบที่ยังเดินอยู่นับเฉพาะขั้นก่อนหน้าว่าผ่านแล้ว
+    done: status === "completed" ? stages.length : Math.max(index, 0),
+    label: offTrack ? statusLabels[status] ?? status : stages[index]?.label ?? statusLabels[status] ?? status,
+  };
+}
+
+function progressTracker(status, usesRepairWorkflow, { waitingOn = null } = {}) {
+  const { stages, index, offTrack, done, label } = requestProgress(status, usesRepairWorkflow);
+  // index < 0 แปลว่าสถานะนี้ไม่อยู่ในลำดับขั้นของงานประเภทนี้ (เช่นใบเก่าที่สร้างก่อนติดธง
+  // uses_repair_workflow) — บอกแค่สถานะไป ไม่เดาเลขขั้นให้ผิด
+  const caption = offTrack || index < 0
+    ? label
+    : `ขั้นที่ ${index + 1} จาก ${stages.length} · ${label}`;
+  const dots = stages.map((stage, position) => {
+    const state = offTrack && position === index ? "blocked"
+      : position < done ? "done"
+      : position === index ? "current"
+      : "todo";
+    return `<span class="progress-dot ${state}" title="${escapeHtml(stage.label)}"></span>`;
+  }).join("");
+  return `<div class="progress-cell">
+    <div class="progress-track" role="img" aria-label="${escapeHtml(caption)}">${dots}</div>
+    <span class="progress-caption${offTrack ? ` ${escapeHtml(offTrack)}` : ""}">${escapeHtml(caption)}</span>
+    ${waitingOn ? `<span class="progress-waiting">รอ: ${escapeHtml(waitingOn)}</span>` : ""}
+  </div>`;
+}
 const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 const REPAIR_DEPARTMENT_OPTIONS = [
   { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
@@ -147,6 +205,7 @@ function friendlyError(error) {
   const map = {
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
+    EMPLOYEE_NOT_FOUND: "บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ",
     INVALID_TITLE: "หัวข้อต้องมี 3–200 ตัวอักษร",
     INVALID_DESCRIPTION: "รายละเอียดต้องมี 3–5,000 ตัวอักษร",
     STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว",
@@ -522,11 +581,11 @@ function requestFact(label, value, { icon = "•", tone = "primary", wide = fals
   </div>`;
 }
 
-function requestRows(requests) {
+function requestRows(requests, { showProgress = false } = {}) {
   if (!requests.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>เลขที่</th><th>เรื่อง</th><th>ประเภท</th><th>ความสำคัญ</th><th>สถานะ</th><th>วันที่</th></tr></thead>
+      <thead><tr><th>เลขที่</th><th>เรื่อง</th><th>ประเภท</th><th>ความสำคัญ</th><th>สถานะ</th>${showProgress ? `<th>ความคืบหน้า</th>` : ""}<th>วันที่</th></tr></thead>
       <tbody>${requests.map((request) => {
         const type = relation(request.request_type);
         return `<tr>
@@ -535,7 +594,36 @@ function requestRows(requests) {
           <td class="muted">${escapeHtml(type?.name_th ?? "—")}</td>
           <td class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</td>
           <td>${statusBadge(request.status)}</td>
+          ${showProgress ? `<td>${progressTracker(request.status, Boolean(type?.uses_repair_workflow))}</td>` : ""}
           <td class="muted">${formatDate(request.created_at)}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>`;
+}
+
+/* กระดานติดตามสถานะที่ "ทุกคน" เห็นได้ — ข้อมูลมาจาก RPC app_request_status_board ซึ่งคืนเฉพาะ
+   ฟิลด์ระดับติดตามสถานะ ไม่มีรายละเอียดอาการ/ไฟล์แนบ/ความเห็นผู้อนุมัติ ใบที่ผู้ใช้ไม่มีสิทธิ์
+   เปิดดูเต็ม (can_open = false) จึงแสดงเป็นข้อความเฉย ๆ ไม่ทำเป็นลิงก์ */
+function statusBoardRows(rows) {
+  if (!rows.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
+  return `
+    <div class="table-wrap"><table class="status-board">
+      <thead><tr><th>เลขที่</th><th>เรื่อง</th><th>ประเภท</th><th>แผนกที่แจ้ง</th><th>ผู้แจ้ง</th><th>ความคืบหน้า</th><th>อัปเดตล่าสุด</th></tr></thead>
+      <tbody>${rows.map((row) => {
+        const href = `#/request?id=${encodeURIComponent(row.id)}`;
+        const subject = row.subject ?? "—";
+        return `<tr>
+          <td>${row.can_open
+            ? `<a class="request-no" href="${href}">${escapeHtml(row.request_no)}</a>`
+            : `<span class="request-no locked" title="คุณไม่มีสิทธิ์เปิดดูรายละเอียดของใบนี้">${escapeHtml(row.request_no)}</span>`}</td>
+          <td>${row.can_open
+            ? `<a href="${href}"><strong>${escapeHtml(subject)}</strong></a>`
+            : `<strong>${escapeHtml(subject)}</strong>`}${row.is_urgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}</td>
+          <td class="muted">${escapeHtml(row.type_name_th ?? "—")}</td>
+          <td class="muted">${escapeHtml(row.department_name ?? row.department_code ?? "—")}</td>
+          <td class="muted">${escapeHtml(row.requester_name ?? "—")}</td>
+          <td>${statusBadge(row.status)}${progressTracker(row.status, Boolean(row.uses_repair_workflow), { waitingOn: row.waiting_on })}</td>
+          <td class="muted">${formatDate(row.last_changed_at ?? row.submitted_at, true)}</td>
         </tr>`;
       }).join("")}</tbody>
     </table></div>`;
@@ -891,13 +979,89 @@ async function renderDashboard() {
   bindShell();
 }
 
+const REQUEST_STATUS_FILTERS = [
+  ["all", "ทั้งหมด"],
+  ["pending_approval", "รออนุมัติ"],
+  ["approved", "อนุมัติแล้ว"],
+  ["pending_assign", "รอมอบหมายช่าง"],
+  ["assigned", "รอดำเนินการ"],
+  ["in_progress", "กำลังดำเนินการ"],
+  ["pending_verify", "รอตรวจรับ"],
+  ["completed", "เสร็จแล้ว"],
+  ["rejected", "ไม่อนุมัติ"],
+];
+
+function requestsViewTabs(view, status, search) {
+  const query = (nextView) => {
+    const parts = [];
+    if (nextView === "board") parts.push("view=board");
+    if (status !== "all") parts.push(`status=${encodeURIComponent(status)}`);
+    if (nextView === "board" && search) parts.push(`q=${encodeURIComponent(search)}`);
+    return parts.length ? `?${parts.join("&")}` : "";
+  };
+  return `<div class="view-tabs" role="tablist">
+    <a class="view-tab${view === "board" ? "" : " active"}" role="tab" aria-selected="${view === "board" ? "false" : "true"}" href="#/requests${query("mine")}">รายการตามสิทธิ์</a>
+    <a class="view-tab${view === "board" ? " active" : ""}" role="tab" aria-selected="${view === "board" ? "true" : "false"}" href="#/requests${query("board")}">ติดตามสถานะทุกใบ</a>
+  </div>`;
+}
+
+function statusFilterBar(view, status, search) {
+  const suffix = (value) => {
+    const parts = [];
+    if (view === "board") parts.push("view=board");
+    if (value !== "all") parts.push(`status=${encodeURIComponent(value)}`);
+    if (view === "board" && search) parts.push(`q=${encodeURIComponent(search)}`);
+    return parts.length ? `?${parts.join("&")}` : "";
+  };
+  return `<div class="filters">${REQUEST_STATUS_FILTERS
+    .map(([value, label]) => `<a class="filter${status === value ? " active" : ""}" href="#/requests${suffix(value)}">${label}</a>`)
+    .join("")}</div>`;
+}
+
+/* กระดานติดตามสถานะ — พนักงานทุกคนเปิดดูได้ว่าแต่ละใบเดินไปถึงขั้นไหนแล้ว สิทธิ์การเปิดดู
+   รายละเอียดเต็มยังเป็นของเดิมทุกประการ (RLS ในหน้า #/request) ที่นี่แค่ทำให้ "สถานะ" โปร่งใส */
+async function renderRequestsBoard(status, search) {
+  const { data, error } = await sb.rpc("app_request_status_board", {
+    p_status: status === "all" ? null : status,
+    p_search: search || null,
+    p_limit: 300,
+  });
+  if (error) throw error;
+  const rows = data ?? [];
+  const openable = rows.filter((row) => row.can_open).length;
+  const content = `
+    <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>ติดตามสถานะทุกใบ</h1><p>ทุกคนในองค์กรเห็นได้ว่าใบแจ้งซ่อมและคำร้องแต่ละใบเดินไปถึงขั้นไหนแล้ว</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
+    ${requestsViewTabs("board", status, search)}
+    ${statusFilterBar("board", status, search)}
+    <form class="board-search" id="board-search-form" role="search">
+      <input class="input" id="board-search-input" name="q" type="search" maxlength="80" placeholder="ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" value="${escapeHtml(search)}">
+      <button class="btn secondary small" type="submit">ค้นหา</button>
+      ${search ? `<a class="btn secondary small" href="#/requests?view=board${status === "all" ? "" : `&status=${encodeURIComponent(status)}`}">ล้าง</a>` : ""}
+    </form>
+    <p class="muted small board-note">แสดง ${rows.length} รายการ · เปิดดูรายละเอียดเต็มได้ ${openable} รายการตามสิทธิ์ของบัญชีนี้ ส่วนใบที่เหลือเห็นได้เฉพาะความคืบหน้า</p>
+    <section class="card flush">${statusBoardRows(rows)}</section>`;
+  app.innerHTML = shell(content, "requests", "ติดตามสถานะทุกใบ");
+  bindShell();
+  document.querySelector("#board-search-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = document.querySelector("#board-search-input")?.value.trim() ?? "";
+    const parts = ["view=board"];
+    if (status !== "all") parts.push(`status=${encodeURIComponent(status)}`);
+    if (value) parts.push(`q=${encodeURIComponent(value)}`);
+    location.hash = `#/requests?${parts.join("&")}`;
+  });
+}
+
 async function renderRequests(params) {
   loadingShell("requests", "รายการคำร้อง");
-  const role = state.employee.role?.code;
   const status = params.get("status") ?? "all";
+  const search = (params.get("q") ?? "").trim();
+  if (params.get("view") === "board") return await renderRequestsBoard(status, search);
+
+  const role = state.employee.role?.code;
   let query = sb
     .from("requests")
-    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th)")
+    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th,uses_repair_workflow)")
     .order("created_at", { ascending: false });
   if (!["admin", ...VIEW_ALL_ROLE_CODES, ...OPERATE_ROLE_CODES].includes(role)) query = query.eq("requester_id", state.employee.id);
   if (status !== "all") query = query.eq("status", status);
@@ -906,11 +1070,11 @@ async function renderRequests(params) {
   const title = OPERATE_ROLE_CODES.includes(role) && !VIEW_ALL_ROLE_CODES.includes(role)
     ? "งานดำเนินการ"
     : (role === "admin" || VIEW_ALL_ROLE_CODES.includes(role)) ? "คำร้องทั้งหมด" : "คำร้องของฉัน";
-  const filters = [["all","ทั้งหมด"],["pending_approval","รออนุมัติ"],["approved","อนุมัติแล้ว"],["pending_assign","รอมอบหมายช่าง"],["assigned","รอดำเนินการ"],["in_progress","กำลังดำเนินการ"],["pending_verify","รอตรวจรับ"],["completed","เสร็จแล้ว"],["rejected","ไม่อนุมัติ"]];
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>${title}</h1><p>ค้นหา ติดตาม และเปิดดูรายละเอียดตามสิทธิ์ของบัญชี</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
-    <div class="filters">${filters.map(([value,label]) => `<a class="filter${status === value ? " active" : ""}" href="#/requests${value === "all" ? "" : `?status=${value}`}">${label}</a>`).join("")}</div>
-    <section class="card flush">${requestRows(data ?? [])}</section>`;
+    ${requestsViewTabs("mine", status, search)}
+    ${statusFilterBar("mine", status, search)}
+    <section class="card flush">${requestRows(data ?? [], { showProgress: true })}</section>`;
   app.innerHTML = shell(content, "requests", title);
   bindShell();
 }
