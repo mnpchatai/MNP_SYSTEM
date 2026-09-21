@@ -225,6 +225,10 @@ button { cursor: pointer; }
 .parts-table th:first-child, .parts-table td.parts-row-no { width: 44px; }
 .parts-table .input { min-height: 38px; padding: 8px 10px; }
 .parts-table .parts-row-actions { width: 1%; white-space: nowrap; }
+.parts-attachment { margin-top: 10px; }
+.parts-attachment small { display: block; margin-bottom: 6px; }
+.parts-attachment-row { display: flex; gap: 8px; align-items: center; }
+.parts-attachment-row .input { flex: 1; min-height: 38px; padding: 8px 10px; }
 .form-message { margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
 .form-message.error { color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
 .form-message.success { color: var(--success); background: var(--success-soft); }
