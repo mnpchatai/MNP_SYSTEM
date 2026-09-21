@@ -569,6 +569,20 @@ function statusBadge(status) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabels[status] ?? status)}</span>`;
 }
 
+// แถวกรอกอะไหล่/วัสดุหนึ่งรายการในฟอร์มบันทึกผลการซ่อม — โครงเดียวกับ maintRecord.parts[] ของ
+// ระบบ Maintanance-MT เดิม (name/qty/unit/price/shop/note) ใช้ซ้ำทั้งตอนสร้างแถวแรกและกด "+ เพิ่มรายการ"
+function partsRowHtml() {
+  return `<div class="parts-row">
+    <input class="input" type="text" maxlength="200" placeholder="ชื่ออะไหล่/วัสดุ" aria-label="ชื่ออะไหล่/วัสดุ" data-part-field="name">
+    <input class="input" type="text" maxlength="50" placeholder="จำนวน" aria-label="จำนวน" data-part-field="qty">
+    <input class="input" type="text" maxlength="50" placeholder="หน่วย" aria-label="หน่วย" data-part-field="unit">
+    <input class="input" type="text" maxlength="50" placeholder="ราคา (บาท)" aria-label="ราคา" data-part-field="price">
+    <input class="input" type="text" maxlength="200" placeholder="ร้าน/ผู้จำหน่าย" aria-label="ร้าน/ผู้จำหน่าย" data-part-field="shop">
+    <input class="input" type="text" maxlength="500" placeholder="หมายเหตุ" aria-label="หมายเหตุ" data-part-field="note">
+    <button type="button" class="btn danger small parts-row-remove">ลบรายการนี้</button>
+  </div>`;
+}
+
 function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "" } = {}) {
   const classes = ["request-fact", `request-fact-${tone}`, wide ? "wide" : ""].filter(Boolean).join(" ");
   const valueClasses = ["request-fact-value", valueClass].filter(Boolean).join(" ");
@@ -1567,7 +1581,11 @@ function buildAppsScriptOrder(request, steps, verifications, directory) {
     maintRecord: (request.cause_analysis || request.inspector_opinion || request.parts_used) ? {
       causeAnalysis: request.cause_analysis ?? "",
       inspectorOpinion: request.inspector_opinion ?? "",
-      parts: request.parts_used ? [{ name: request.parts_used }] : [],
+      // ใบเก่าก่อน parts_used_items (มีแค่ parts_used เป็นข้อความ) ยังต้องอ่านได้ จึงถอยไปช่องเดิม
+      // เมื่อไม่มีรายการโครงสร้าง — ดู 20260921060000_repair_parts_used_items.sql
+      parts: Array.isArray(request.parts_used_items) && request.parts_used_items.length
+        ? request.parts_used_items
+        : (request.parts_used ? [{ name: request.parts_used }] : []),
     } : null,
     verification: latestVerification ? {
       result: latestVerification.result,
@@ -1744,7 +1762,7 @@ async function renderRequestDetail(params) {
           <div class="field"><label for="finish-execution-plan">การดำเนินงาน</label><select class="select" id="finish-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required></textarea></div>
           <div class="field"><label for="finish-opinion">แนวทางการซ่อม</label><select class="select" id="finish-opinion" name="inspector_opinion" required><option value="">เลือกแนวทางการซ่อม</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
-          <div class="field"><label for="finish-parts">อะไหล่/วัสดุที่ใช้ (ถ้ามี)</label><textarea class="textarea" id="finish-parts" name="parts_used" maxlength="2000"></textarea></div>
+          <div class="field"><label>อะไหล่/วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี แต่ละแถว: ชื่อ · จำนวน · หน่วย · ราคา · ร้าน/ผู้จำหน่าย · หมายเหตุ</small><div id="finish-parts-rows" class="parts-rows">${partsRowHtml()}</div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการอะไหล่</button></div>
           <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งตรวจรับ</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
@@ -1807,10 +1825,32 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
   });
+  document.querySelector("#finish-parts-add")?.addEventListener("click", () => {
+    document.querySelector("#finish-parts-rows")?.insertAdjacentHTML("beforeend", partsRowHtml());
+  });
+  document.querySelector("#finish-parts-rows")?.addEventListener("click", (event) => {
+    const removeButton = event.target.closest(".parts-row-remove");
+    if (!removeButton) return;
+    const rows = document.querySelectorAll("#finish-parts-rows .parts-row");
+    // เหลือแถวเดียวไม่ลบทิ้งไปเลย — เคลียร์ค่าแทน ให้ฟอร์มมีอย่างน้อยหนึ่งแถวเสมอ
+    if (rows.length > 1) removeButton.closest(".parts-row").remove();
+    else removeButton.closest(".parts-row").querySelectorAll("input").forEach((input) => { input.value = ""; });
+  });
   document.querySelector("#finish-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    // แถวที่ไม่ได้กรอกชื่ออะไหล่ถือว่าเป็นแถวว่างที่เผื่อไว้ ไม่ส่งไป — RPC ก็กรองซ้ำอีกชั้นเช่นกัน
+    const partsUsedItems = [...document.querySelectorAll("#finish-parts-rows .parts-row")]
+      .map((row) => ({
+        name: row.querySelector('[data-part-field="name"]').value.trim(),
+        qty: row.querySelector('[data-part-field="qty"]').value.trim(),
+        unit: row.querySelector('[data-part-field="unit"]').value.trim(),
+        price: row.querySelector('[data-part-field="price"]').value.trim(),
+        shop: row.querySelector('[data-part-field="shop"]').value.trim(),
+        note: row.querySelector('[data-part-field="note"]').value.trim(),
+      }))
+      .filter((item) => item.name);
     setFormBusy(form, true);
     try {
       const { error } = await sb.rpc("app_finish_repair_work", {
@@ -1818,7 +1858,7 @@ async function renderRequestDetail(params) {
         p_execution_plan: values.get("execution_plan"),
         p_cause_analysis: String(values.get("cause_analysis") ?? "").trim(),
         p_inspector_opinion: values.get("inspector_opinion"),
-        p_parts_used: String(values.get("parts_used") ?? "").trim() || null,
+        p_parts_used_items: partsUsedItems,
       });
       if (error) throw error;
       triggerNotificationEmails(id);
