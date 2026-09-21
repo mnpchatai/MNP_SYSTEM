@@ -951,6 +951,36 @@ async function getPendingApprovals() {
   });
 }
 
+const MY_REPAIR_ACTION_STATUSES = ["pending_assign", "assigned", "in_progress", "pending_verify"];
+const myRepairActionLabels = {
+  pending_assign: "รอมอบหมายช่าง",
+  assigned: "รอเริ่มงาน",
+  in_progress: "รอบันทึกผลซ่อม",
+  pending_verify: "รอตรวจรับ",
+};
+
+// งานซ่อมที่ต้องลงมือทำเอง (มอบหมายช่าง/เริ่มงาน/บันทึกผลซ่อม/ตรวจรับ) ไม่มี approval_steps รองรับ
+// เพราะผ่านขั้นอนุมัติไปแล้ว — getPendingApprovals เดิมนับแต่ approval_steps จึงมองไม่เห็นงานกลุ่มนี้เลย
+// ทำให้ช่างที่ถูกมอบหมายงานแล้ว หรือหัวหน้าแผนกที่ต้องมอบหมายช่าง ไม่เห็นงานของตัวเองใน "งานที่ต้องจัดการ"
+async function getMyRepairActionItems() {
+  const employee = state.employee;
+  const { data, error } = await sb
+    .from("requests")
+    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th,owning_department_id)")
+    .in("status", MY_REPAIR_ACTION_STATUSES)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? [])
+    .map((item) => ({ ...item, request_type: relation(item.request_type) }))
+    .filter((request) => {
+      if (request.status === "pending_assign") {
+        return employee.role?.code === "department_manager" && employee.department_id === request.request_type?.owning_department_id;
+      }
+      if (request.status === "pending_verify") return request.requester_id === employee.id;
+      return request.assignee_id === employee.id; // assigned, in_progress
+    });
+}
+
 async function renderDashboard() {
   loadingShell("dashboard", "หน้าหลัก");
   const employee = state.employee;
@@ -961,20 +991,22 @@ async function renderDashboard() {
     .limit(20);
   // เดิมกรอง requester_id ทิ้งเหมือนหน้าคำร้อง ทำให้การ์ดสรุปและ "ความเคลื่อนไหวล่าสุด"
   // ของหัวหน้าแผนก/ช่างเป็นศูนย์ทั้งหน้า — ปล่อยให้ RLS เป็นตัวตัดสินเหมือนกัน
-  const [requestsResult, typesResult, pending] = await Promise.all([
+  const [requestsResult, typesResult, pending, repairTasks] = await Promise.all([
     requestsQuery,
     sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
     getPendingApprovals(),
+    getMyRepairActionItems(),
   ]);
   if (requestsResult.error) throw requestsResult.error;
   if (typesResult.error) throw typesResult.error;
   const requests = requestsResult.data ?? [];
   const inProgress = requests.filter((item) => ["approved", "in_progress"].includes(item.status)).length;
   const completed = requests.filter((item) => item.status === "completed").length;
+  const actionableCount = pending.length + repairTasks.length;
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Pilot workspace</div><h1>สวัสดี, ${escapeHtml(employee.first_name)}</h1><p>ภาพรวมรายการที่เกี่ยวข้องกับคุณและงานที่ต้องดำเนินการ</p></div><span class="muted small">${formatDate(new Date(), false)}</span></div>
     <section class="summary-grid">
-      <a class="summary" href="#/approvals"><span>งานที่ต้องจัดการ</span><strong>${pending.length}</strong><small>${pending.length ? "เปิดรายการที่รออนุมัติ" : "ไม่มีงานอนุมัติค้าง"}</small></a>
+      <a class="summary" href="#/approvals"><span>งานที่ต้องจัดการ</span><strong>${actionableCount}</strong><small>${actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง"}</small></a>
       <div class="summary"><span>รายการที่มองเห็น</span><strong>${requests.length}</strong><small>ตามสิทธิ์ของบัญชีนี้</small></div>
       <div class="summary"><span>กำลังดำเนินการ</span><strong>${inProgress}</strong><small>อนุมัติแล้วหรือกำลังทำ</small></div>
       <div class="summary"><span>เสร็จแล้ว</span><strong>${completed}</strong><small>ปิดงานเรียบร้อย</small></div>
@@ -1638,7 +1670,14 @@ async function renderRequestDetail(params) {
   const canAssign = isRepair && request.status === "pending_assign" && (
     isAdmin || (employee.department_id === type.owning_department_id && employee.role?.code === "department_manager")
   );
-  const canStartWork = isRepair && request.status === "assigned" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
+  // เจตนา: จำกัดเฉพาะช่างที่ถูกมอบหมาย + ผู้จัดการแผนกเจ้าของประเภทเอกสาร + admin เท่านั้น
+  // ไม่ใช้ isAdmin (ซึ่งรวม factory_manager/general_manager) เพราะสองบทบาทนั้นไม่ได้เกี่ยวข้อง
+  // กับงานซ่อมนี้โดยตรง — ป้องกันคนที่ไม่เกี่ยวข้องกดเริ่มงานแทนช่าง
+  const canStartWork = isRepair && request.status === "assigned" && request.assignee_id && (
+    employee.role?.code === "admin" ||
+    request.assignee_id === employee.id ||
+    (employee.role?.code === "department_manager" && employee.department_id === type.owning_department_id)
+  );
   const canFinishWork = isRepair && request.status === "in_progress" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
   const canVerify = isRepair && request.status === "pending_verify" && (isAdmin || request.requester_id === employee.id);
   const isRequester = request.requester_id === employee.id;
@@ -1839,9 +1878,17 @@ async function renderRequestDetail(params) {
 
 async function renderApprovals(params) {
   loadingShell("approvals", "รออนุมัติ");
-  const steps = await getPendingApprovals();
+  const [steps, repairTasks] = await Promise.all([getPendingApprovals(), getMyRepairActionItems()]);
+  const repairTasksSection = repairTasks.length ? `
+    <section class="card flush repair-task-list">
+      <div class="card-heading"><h2>งานซ่อมที่ต้องดำเนินการ <span class="badge">${repairTasks.length}</span></h2></div>
+      ${repairTasks.map((item) => `<a class="approval-item" href="#/request?id=${encodeURIComponent(item.id)}"><div class="row"><span class="request-no">${escapeHtml(item.request_no)}</span><time>${formatDate(item.created_at)}</time></div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.request_type?.name_th ?? "")} · ${escapeHtml(myRepairActionLabels[item.status] ?? statusLabels[item.status] ?? item.status)}</p></a>`).join("")}
+    </section>` : "";
   if (!steps.length) {
-    app.innerHTML = shell(`<div class="empty"><h2>✓ ไม่มีคำร้องรออนุมัติ</h2><p>รายการใหม่ที่อยู่ในสิทธิ์ของคุณจะแสดงที่หน้านี้</p><a class="btn secondary" href="#/dashboard">กลับหน้าหลัก</a></div>`, "approvals", "รออนุมัติ");
+    app.innerHTML = shell(`
+      <div class="page-heading"><div><div class="eyebrow">Approval Center</div><h1>งานที่ต้องจัดการ</h1><p>รายการที่อยู่ในสิทธิ์ของคุณและรอดำเนินการ</p></div></div>
+      ${repairTasksSection || `<div class="empty"><h2>✓ ไม่มีคำร้องรออนุมัติ</h2><p>รายการใหม่ที่อยู่ในสิทธิ์ของคุณจะแสดงที่หน้านี้</p><a class="btn secondary" href="#/dashboard">กลับหน้าหลัก</a></div>`}
+    `, "approvals", "รออนุมัติ");
     bindShell();
     return;
   }
@@ -1850,6 +1897,7 @@ async function renderApprovals(params) {
   const request = selected.request;
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Approval Center</div><h1>รอฉันอนุมัติ</h1><p>รายการที่เป็นขั้นตอนปัจจุบันและอยู่ในสิทธิ์ของคุณ</p></div></div>
+    ${repairTasksSection}
     <div class="approval-layout">
       <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p></div>${steps.map((step) => `<a class="approval-item${step.id === selected.id ? " active" : ""}" href="#/approvals?request=${encodeURIComponent(step.request.id)}"><div class="row"><span class="request-no">${escapeHtml(step.request.request_no)}</span><time>${formatDate(step.request.created_at)}</time></div><strong>${escapeHtml(step.request.title)}</strong><p>${escapeHtml(relation(step.request.request_type)?.name_th ?? "")} · ${escapeHtml(step.step_name)}</p></a>`).join("")}</section>
       <article class="approval-preview"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h2>${escapeHtml(request.title)}</h2><p class="description">${escapeHtml(request.description)}</p><dl class="definition-grid"><div class="definition"><dt>ประเภท</dt><dd>${escapeHtml(relation(request.request_type)?.name_th ?? "—")}</dd></div><div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div><div class="definition"><dt>ขั้นตอน</dt><dd>${escapeHtml(selected.step_name)}</dd></div><div class="definition"><dt>วันที่ส่ง</dt><dd>${formatDate(request.submitted_at, true)}</dd></div></dl><div class="approval-actions"><a class="btn" href="#/request?id=${encodeURIComponent(request.id)}">เปิดคำร้องและพิจารณา →</a></div></article>
