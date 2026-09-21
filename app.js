@@ -946,9 +946,13 @@ function shell(content, active, title) {
   const employee = state.employee;
   return `
     <div class="app-shell">
-      <aside class="sidebar">
+      <button class="mobile-nav-toggle" type="button" aria-label="เปิดเมนูหลัก" aria-controls="mobile-nav" aria-expanded="false">
+        <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+      <aside class="sidebar" id="mobile-nav">
         <a class="brand" href="#/dashboard"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
-        <nav class="nav" aria-label="เมนูหลัก เลื่อนซ้ายขวาได้">
+        <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
           ${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
           ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", NAV_ICONS.requests, active)}
@@ -966,6 +970,7 @@ function shell(content, active, title) {
           <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">↪</button>
         </div>
       </aside>
+      <button class="nav-backdrop" type="button" tabindex="-1" aria-label="ปิดเมนูหลัก"></button>
       <main class="main">
         <header class="topbar">
           <div class="breadcrumbs">MNP Workspace &nbsp;/&nbsp; <strong>${escapeHtml(title)}</strong></div>
@@ -981,9 +986,20 @@ function shell(content, active, title) {
 }
 
 function bindShell() {
-  requestAnimationFrame(() => {
-    document.querySelector(".nav-link.active")?.scrollIntoView({ block: "nearest", inline: "center" });
-  });
+  const shellNode = document.querySelector(".app-shell");
+  const navToggle = document.querySelector(".mobile-nav-toggle");
+  const navBackdrop = document.querySelector(".nav-backdrop");
+  const setMobileNav = (open) => {
+    shellNode?.classList.toggle("nav-open", open);
+    navToggle?.setAttribute("aria-expanded", String(open));
+    navToggle?.setAttribute("aria-label", open ? "ปิดเมนูหลัก" : "เปิดเมนูหลัก");
+  };
+  navToggle?.addEventListener("click", () => setMobileNav(!shellNode?.classList.contains("nav-open")));
+  navBackdrop?.addEventListener("click", () => setMobileNav(false));
+  document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => setMobileNav(false)));
+  document.onkeydown = (event) => {
+    if (event.key === "Escape") setMobileNav(false);
+  };
   document.querySelector(".theme-toggle")?.addEventListener("click", toggleTheme);
   document.querySelector(".signout-button")?.addEventListener("click", async () => {
     await sb.auth.signOut();
