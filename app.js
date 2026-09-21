@@ -152,6 +152,8 @@ function friendlyError(error) {
     INVALID_DESCRIPTION: "รายละเอียดต้องมี 3–5,000 ตัวอักษร",
     STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว",
     STEP_NOT_CURRENT: "ขั้นตอนนี้ไม่ใช่ขั้นตอนปัจจุบัน",
+    REQUEST_NOT_AWAITING_INFO: "คำร้องนี้ไม่ได้อยู่ในสถานะรอข้อมูลเพิ่มเติมแล้ว",
+    STEP_NOT_FOUND: "ไม่พบขั้นตอนที่ขอข้อมูลเพิ่มเติมไว้",
     INVALID_TRANSITION: "ไม่สามารถเปลี่ยนเป็นสถานะนี้ได้",
     ASSIGNED_TO_ANOTHER_OPERATOR: "รายการนี้มีผู้รับผิดชอบอื่นแล้ว",
     DEPARTMENT_NOT_REPAIR_SITE: "แผนกนี้ไม่ได้เปิดใช้งานแจ้งซ่อม",
@@ -1460,6 +1462,7 @@ async function renderRequestDetail(params) {
   const canStartWork = isRepair && request.status === "assigned" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
   const canFinishWork = isRepair && request.status === "in_progress" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
   const canVerify = isRepair && request.status === "pending_verify" && (isAdmin || request.requester_id === employee.id);
+  const isRequester = request.requester_id === employee.id;
   const detailEntries = Object.entries(request.details ?? {});
   const requestFacts = [
     requestFact("ความสำคัญ", priorityLabels[request.priority], {
@@ -1497,6 +1500,19 @@ async function renderRequestDetail(params) {
           <p class="description request-summary">${escapeHtml(request.description)}</p>
           <div class="request-facts">${requestFacts}</div>
         </section>
+        ${request.status === "more_info" ? (() => {
+          const moreInfoStep = steps.find((step) => step.status === "more_info");
+          const requesterLabel = personName(directory, request.requester_id);
+          const askedByLabel = moreInfoStep?.acted_by ? personName(directory, moreInfoStep.acted_by) : "—";
+          return `<section class="card more-info-card">
+            <h2>รอข้อมูลเพิ่มเติมจาก ${escapeHtml(requesterLabel)}</h2>
+            <p class="muted small">${escapeHtml(askedByLabel)} ขอข้อมูลเพิ่มเติมในขั้นตอน "${escapeHtml(moreInfoStep?.step_name ?? "—")}"${moreInfoStep?.comment ? ` · ${escapeHtml(moreInfoStep.comment)}` : ""}</p>
+            ${isRequester ? `<form id="resubmit-form">
+              <div class="field"><label for="resubmit-comment">ข้อมูลเพิ่มเติม</label><textarea class="textarea" id="resubmit-comment" name="comment" maxlength="1000" placeholder="ระบุข้อมูลที่ขอเพิ่มเติม"></textarea></div>
+              <div class="form-actions"><button class="btn" type="submit">ส่งข้อมูลกลับให้พิจารณาอีกครั้ง</button></div>
+            </form>` : `<p class="muted small">มีเพียง ${escapeHtml(requesterLabel)} ผู้ยื่นคำร้องนี้เท่านั้นที่ตอบกลับได้</p>`}
+          </section>`;
+        })() : ""}
         ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button><button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
         ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${canAssign ? `<section class="card"><h2>มอบหมายช่าง</h2><p class="muted small">เลือกช่างของแผนกซ่อมบำรุงและกำหนดวันที่คาดว่าจะเสร็จ</p><form id="assign-form">
@@ -1604,6 +1620,19 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = false; }); }
   }));
+  document.querySelector("#resubmit-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setFormBusy(form, true);
+    const comment = form.elements.comment.value.trim();
+    try {
+      const { error } = await sb.rpc("app_resubmit_request", { p_request_id: id, p_comment: comment || null });
+      if (error) throw error;
+      triggerNotificationEmails(id);
+      showToast("ส่งข้อมูลกลับให้พิจารณาอีกครั้งแล้ว");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
+  });
   document.querySelector("#comment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
