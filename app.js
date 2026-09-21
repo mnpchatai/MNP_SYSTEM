@@ -581,17 +581,24 @@ function requestFact(label, value, { icon = "•", tone = "primary", wide = fals
   </div>`;
 }
 
-function requestRows(requests, { showProgress = false } = {}) {
+function requesterLabel(request, directory) {
+  const fromDirectory = directory ? personName(directory, request.requester_id) : "—";
+  if (fromDirectory && fromDirectory !== "—") return fromDirectory;
+  return (request.requester_name ?? "").trim() || "—";
+}
+
+function requestRows(requests, { showProgress = false, showRequester = false, directory = null } = {}) {
   if (!requests.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>เลขที่</th><th>เรื่อง</th><th>ประเภท</th><th>ความสำคัญ</th><th>สถานะ</th>${showProgress ? `<th>ความคืบหน้า</th>` : ""}<th>วันที่</th></tr></thead>
+      <thead><tr><th>เลขที่</th><th>เรื่อง</th><th>ประเภท</th>${showRequester ? `<th>ผู้แจ้ง</th>` : ""}<th>ความสำคัญ</th><th>สถานะ</th>${showProgress ? `<th>ความคืบหน้า</th>` : ""}<th>วันที่</th></tr></thead>
       <tbody>${requests.map((request) => {
         const type = relation(request.request_type);
         return `<tr>
           <td><a class="request-no" href="#/request?id=${encodeURIComponent(request.id)}">${escapeHtml(request.request_no)}</a></td>
           <td><a href="#/request?id=${encodeURIComponent(request.id)}"><strong>${escapeHtml(request.title)}</strong></a></td>
           <td class="muted">${escapeHtml(type?.name_th ?? "—")}</td>
+          ${showRequester ? `<td class="muted">${escapeHtml(requesterLabel(request, directory))}</td>` : ""}
           <td class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</td>
           <td>${statusBadge(request.status)}</td>
           ${showProgress ? `<td>${progressTracker(request.status, Boolean(type?.uses_repair_workflow))}</td>` : ""}
@@ -952,7 +959,8 @@ async function renderDashboard() {
     .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th)")
     .order("created_at", { ascending: false })
     .limit(20);
-  if (!["admin", ...VIEW_ALL_ROLE_CODES, ...OPERATE_ROLE_CODES].includes(employee.role?.code)) requestsQuery = requestsQuery.eq("requester_id", employee.id);
+  // เดิมกรอง requester_id ทิ้งเหมือนหน้าคำร้อง ทำให้การ์ดสรุปและ "ความเคลื่อนไหวล่าสุด"
+  // ของหัวหน้าแผนก/ช่างเป็นศูนย์ทั้งหน้า — ปล่อยให้ RLS เป็นตัวตัดสินเหมือนกัน
   const [requestsResult, typesResult, pending] = await Promise.all([
     requestsQuery,
     sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
@@ -1059,22 +1067,32 @@ async function renderRequests(params) {
   if (params.get("view") === "board") return await renderRequestsBoard(status, search);
 
   const role = state.employee.role?.code;
+  const mineOnly = params.get("scope") === "mine";
+  // ไม่กรอง requester_id ทิ้งอีกแล้ว — RLS เป็นตัวตัดสินว่าบัญชีนี้เห็นใบไหนได้ การกรองซ้ำ
+  // ฝั่ง client ทำให้ "ใบที่รออนุมัติจากเราเอง" และ "ใบที่เราเป็นช่างผู้รับผิดชอบ" หายไปจาก
+  // หน้านี้ทั้งหมด (หัวหน้าแผนกซ่อมบำรุงเปิดมาแล้วว่างเปล่าทั้งที่มีใบรออนุมัติค้างอยู่)
   let query = sb
     .from("requests")
-    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th,uses_repair_workflow)")
+    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,requester_name,request_type:request_types(name_th,uses_repair_workflow)")
     .order("created_at", { ascending: false });
-  if (!["admin", ...VIEW_ALL_ROLE_CODES, ...OPERATE_ROLE_CODES].includes(role)) query = query.eq("requester_id", state.employee.id);
+  if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (status !== "all") query = query.eq("status", status);
-  const { data, error } = await query;
+  const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
-  const title = OPERATE_ROLE_CODES.includes(role) && !VIEW_ALL_ROLE_CODES.includes(role)
-    ? "งานดำเนินการ"
-    : (role === "admin" || VIEW_ALL_ROLE_CODES.includes(role)) ? "คำร้องทั้งหมด" : "คำร้องของฉัน";
+  const title = mineOnly
+    ? "คำร้องที่ฉันแจ้ง"
+    : OPERATE_ROLE_CODES.includes(role) && !VIEW_ALL_ROLE_CODES.includes(role)
+      ? "งานดำเนินการ"
+      : (role === "admin" || VIEW_ALL_ROLE_CODES.includes(role)) ? "คำร้องทั้งหมด" : "คำร้องที่เกี่ยวข้องกับฉัน";
   const content = `
-    <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>${title}</h1><p>ค้นหา ติดตาม และเปิดดูรายละเอียดตามสิทธิ์ของบัญชี</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
+    <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>${title}</h1><p>${mineOnly ? "เฉพาะใบที่คุณเป็นผู้แจ้งเอง" : "ใบที่คุณแจ้งเอง รออนุมัติจากคุณ หรือคุณเป็นผู้รับผิดชอบ"}</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
     ${requestsViewTabs("mine", status, search)}
+    <div class="scope-switch">
+      <a class="filter${mineOnly ? "" : " active"}" href="#/requests${status === "all" ? "" : `?status=${encodeURIComponent(status)}`}">ทุกใบที่เกี่ยวข้องกับฉัน</a>
+      <a class="filter${mineOnly ? " active" : ""}" href="#/requests?scope=mine${status === "all" ? "" : `&status=${encodeURIComponent(status)}`}">เฉพาะที่ฉันแจ้ง</a>
+    </div>
     ${statusFilterBar("mine", status, search)}
-    <section class="card flush">${requestRows(data ?? [], { showProgress: true })}</section>`;
+    <section class="card flush">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
   app.innerHTML = shell(content, "requests", title);
   bindShell();
 }
