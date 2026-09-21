@@ -596,16 +596,26 @@ function repairStatusBadge(request, steps) {
 
 // แถวกรอกอะไหล่/วัสดุหนึ่งรายการในฟอร์มบันทึกผลการซ่อม — โครงเดียวกับ maintRecord.parts[] ของ
 // ระบบ Maintanance-MT เดิม (name/qty/unit/price/shop/note) ใช้ซ้ำทั้งตอนสร้างแถวแรกและกด "+ เพิ่มรายการ"
+// เรนเดอร์เป็นแถวตาราง (ลำดับ/รายการ/จำนวน/หน่วย/ราคา/ชื่อร้าน/หมายเหตุ) ให้หน้าตาตรงกับฟอร์มกระดาษเดิม
 function partsRowHtml() {
-  return `<div class="parts-row">
-    <input class="input" type="text" maxlength="200" placeholder="ชื่ออะไหล่/วัสดุ" aria-label="ชื่ออะไหล่/วัสดุ" data-part-field="name">
-    <input class="input" type="text" maxlength="50" placeholder="จำนวน" aria-label="จำนวน" data-part-field="qty">
-    <input class="input" type="text" maxlength="50" placeholder="หน่วย" aria-label="หน่วย" data-part-field="unit">
-    <input class="input" type="text" maxlength="50" placeholder="ราคา (บาท)" aria-label="ราคา" data-part-field="price">
-    <input class="input" type="text" maxlength="200" placeholder="ร้าน/ผู้จำหน่าย" aria-label="ร้าน/ผู้จำหน่าย" data-part-field="shop">
-    <input class="input" type="text" maxlength="500" placeholder="หมายเหตุ" aria-label="หมายเหตุ" data-part-field="note">
-    <button type="button" class="btn danger small parts-row-remove">ลบรายการนี้</button>
-  </div>`;
+  return `<tr class="parts-row">
+    <td class="parts-row-no"></td>
+    <td><input class="input" type="text" maxlength="200" placeholder="รายการอะไหล่/วัสดุที่ใช้" aria-label="รายการ" data-part-field="name"></td>
+    <td><input class="input" type="text" maxlength="50" placeholder="จำนวน" aria-label="จำนวน" data-part-field="qty"></td>
+    <td><input class="input" type="text" maxlength="50" placeholder="หน่วย" aria-label="หน่วย" data-part-field="unit"></td>
+    <td><input class="input" type="text" maxlength="50" placeholder="ราคา" aria-label="ราคา" data-part-field="price"></td>
+    <td><input class="input" type="text" maxlength="200" placeholder="ชื่อร้าน" aria-label="ชื่อร้าน" data-part-field="shop"></td>
+    <td><input class="input" type="text" maxlength="500" placeholder="หมายเหตุ" aria-label="หมายเหตุ" data-part-field="note"></td>
+    <td class="parts-row-actions"><button type="button" class="btn danger small parts-row-remove" aria-label="ลบรายการนี้">ลบ</button></td>
+  </tr>`;
+}
+
+// อัปเดตเลขลำดับหน้าแต่ละแถวใหม่หลังเพิ่ม/ลบแถว ให้ "ลำดับ" เรียงต่อเนื่องเสมอ
+function renumberPartsRows(container) {
+  container?.querySelectorAll(".parts-row").forEach((row, index) => {
+    const cell = row.querySelector(".parts-row-no");
+    if (cell) cell.textContent = String(index + 1);
+  });
 }
 
 function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "" } = {}) {
@@ -1828,7 +1838,7 @@ async function renderRequestDetail(params) {
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ แล้วส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required></textarea></div>
-          <div class="field"><label>อะไหล่/วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี แต่ละแถว: ชื่อ · จำนวน · หน่วย · ราคา · ร้าน/ผู้จำหน่าย · หมายเหตุ</small><div id="finish-parts-rows" class="parts-rows">${partsRowHtml()}</div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการอะไหล่</button></div>
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${partsRowHtml()}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button></div>
           <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งตรวจรับ</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
@@ -1919,16 +1929,21 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
   });
+  renumberPartsRows(document.querySelector("#finish-parts-rows"));
   document.querySelector("#finish-parts-add")?.addEventListener("click", () => {
-    document.querySelector("#finish-parts-rows")?.insertAdjacentHTML("beforeend", partsRowHtml());
+    const container = document.querySelector("#finish-parts-rows");
+    container?.insertAdjacentHTML("beforeend", partsRowHtml());
+    renumberPartsRows(container);
   });
   document.querySelector("#finish-parts-rows")?.addEventListener("click", (event) => {
     const removeButton = event.target.closest(".parts-row-remove");
     if (!removeButton) return;
-    const rows = document.querySelectorAll("#finish-parts-rows .parts-row");
+    const container = document.querySelector("#finish-parts-rows");
+    const rows = container.querySelectorAll(".parts-row");
     // เหลือแถวเดียวไม่ลบทิ้งไปเลย — เคลียร์ค่าแทน ให้ฟอร์มมีอย่างน้อยหนึ่งแถวเสมอ
     if (rows.length > 1) removeButton.closest(".parts-row").remove();
     else removeButton.closest(".parts-row").querySelectorAll("input").forEach((input) => { input.value = ""; });
+    renumberPartsRows(container);
   });
   document.querySelector("#finish-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();

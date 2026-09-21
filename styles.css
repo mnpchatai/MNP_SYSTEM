@@ -218,9 +218,13 @@ button { cursor: pointer; }
 .progress-mark { display: grid; place-items: center; width: 24px; height: 24px; color: var(--muted); border-radius: 999px; font-size: 13px; font-weight: 700; }
 .progress-step.done .progress-mark { color: var(--success); }
 .progress-copy { min-width: 0; display: grid; gap: 1px; }
-.parts-rows { display: grid; gap: 10px; margin: 2px 0 10px; }
-.parts-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; padding: 12px; background: var(--shell); border: 1px solid var(--line); border-radius: 8px; }
-.parts-row .parts-row-remove { grid-column: 1 / -1; justify-self: end; }
+.parts-table-wrap { margin: 2px 0 10px; border: 1px solid var(--line); border-radius: 8px; }
+.parts-table { min-width: 760px; }
+.parts-table th, .parts-table td { padding: 8px 10px; }
+.parts-table td.parts-row-no { color: var(--quiet); font-weight: 700; text-align: center; }
+.parts-table th:first-child, .parts-table td.parts-row-no { width: 44px; }
+.parts-table .input { min-height: 38px; padding: 8px 10px; }
+.parts-table .parts-row-actions { width: 1%; white-space: nowrap; }
 .form-message { margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
 .form-message.error { color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
 .form-message.success { color: var(--success); background: var(--success-soft); }
