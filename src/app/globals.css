@@ -403,10 +403,6 @@ tbody tr:hover { background: var(--surface-hover); }
 .timeline-dot { position: absolute; top: 2px; left: -26px; width: 9px; height: 9px; background: var(--primary); border: 2px solid var(--surface-raised); border-radius: 50%; box-shadow: 0 0 0 1px var(--primary); }
 .timeline-item strong { font-size: 10.5px; font-weight: 500; }
 .timeline-item p { margin: 3px 0 0; color: var(--muted); font-size: 9.5px; }
-.comment { padding: 12px 0; border-bottom: 1px solid var(--line); }
-.comment:last-child { border: 0; }
-.comment-head { margin-bottom: 5px; display: flex; justify-content: space-between; font-size: 10px; }
-.comment-body { color: var(--copy); font-size: 11px; white-space: pre-wrap; }
 .stack { display: grid; gap: 11px; }
 .inline-form { display: flex; gap: 8px; align-items: center; }
 .inline-form .input { flex: 1; }

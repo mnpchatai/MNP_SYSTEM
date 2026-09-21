@@ -182,22 +182,6 @@ export async function createRequestAction(formData: FormData) {
   redirect(`/requests/${request.id}?created=1`);
 }
 
-export async function addCommentAction(formData: FormData) {
-  const employee = await getCurrentEmployee();
-  const requestId = String(formData.get("request_id") ?? "");
-  const body = String(formData.get("body") ?? "").trim();
-  if (!requestId || !body || body.length > 3000) fail(`/requests/${requestId}`, "ข้อความต้องมี 1–3,000 ตัวอักษร");
-
-  const supabase = await createClient();
-  const { error } = await supabase.from("request_comments").insert({
-    request_id: requestId,
-    author_id: employee.id,
-    body,
-  });
-  if (error) fail(`/requests/${requestId}`, "เพิ่มความคิดเห็นไม่สำเร็จ");
-  revalidatePath(`/requests/${requestId}`);
-}
-
 export async function uploadAttachmentAction(formData: FormData) {
   const employee = await getCurrentEmployee();
   const requestId = String(formData.get("request_id") ?? "");
@@ -321,6 +305,7 @@ export async function approvalDecisionAction(formData: FormData) {
 export async function resubmitRequestAction(formData: FormData) {
   const employee = await getCurrentEmployee();
   const requestId = String(formData.get("request_id") ?? "");
+  const comment = String(formData.get("comment") ?? "").trim().slice(0, 1000) || null;
   const admin = createAdminClient();
   const { data: request } = await admin
     .from("requests")
@@ -349,6 +334,9 @@ export async function resubmitRequestAction(formData: FormData) {
   if (!previousStep || !lastStep) throw new Error("Missing approval step");
 
   const nextOrder = lastStep.step_order + 1;
+  const carriedComment = previousStep.comment
+    ? (comment ? `${previousStep.comment} | ตอบกลับ: ${comment}` : previousStep.comment)
+    : (comment ? `ตอบกลับ: ${comment}` : null);
   await admin.from("approval_steps").insert({
     request_id: requestId,
     step_order: nextOrder,
@@ -356,6 +344,7 @@ export async function resubmitRequestAction(formData: FormData) {
     approver_employee_id: previousStep.approver_employee_id,
     approver_role_id: previousStep.approver_role_id,
     approver_department_id: previousStep.approver_department_id,
+    comment: carriedComment,
   });
   await admin.from("requests").update({
     status: "pending_approval",

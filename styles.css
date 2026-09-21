@@ -485,10 +485,6 @@ tbody tr:hover { background: var(--shell); }
 .timeline-item::before { content: ""; position: absolute; top: 4px; left: -26px; width: 9px; height: 9px; background: var(--primary); border: 2px solid var(--paper); border-radius: 50%; box-shadow: 0 0 0 1px var(--primary); }
 .timeline-item strong { font-size: 13px; }
 .timeline-item p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
-.comment { padding: 11px 0; border-bottom: 1px solid var(--soft-line); }
-.comment:last-child { border: 0; }
-.comment-head { margin-bottom: 5px; display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
-.comment-body { white-space: pre-wrap; }
 .attachment-grid { margin-bottom: 14px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
 .attachment-tile { margin: 0; display: flex; flex-direction: column; gap: 5px; }
 .attachment-preview { position: relative; width: 100%; aspect-ratio: 3 / 4; padding: 0; display: grid; place-items: center; overflow: hidden; color: var(--muted); background: var(--shell); border: 1px solid var(--line); border-radius: 8px; cursor: zoom-in; }

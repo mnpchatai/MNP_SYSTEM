@@ -1,7 +1,6 @@
-import { MessageSquare, Paperclip } from "lucide-react";
+import { Paperclip } from "lucide-react";
 import { notFound } from "next/navigation";
 import {
-  addCommentAction,
   approvalDecisionAction,
   resubmitRequestAction,
   updateRequestStatusAction,
@@ -22,13 +21,6 @@ const detailLabels: Record<string, string> = {
   business_reason: "เหตุผลทางธุรกิจ", system_name: "ชื่อระบบ", access_level: "ระดับสิทธิ์",
   leave_type: "ประเภทการลา", start_date: "วันที่เริ่ม", end_date: "วันที่สิ้นสุด",
   course_name: "ชื่อหลักสูตร", provider: "ผู้จัดอบรม",
-};
-
-type CommentRow = {
-  id: string;
-  body: string;
-  created_at: string;
-  author: { first_name: string; last_name: string } | null;
 };
 
 export default async function RequestDetailPage({
@@ -53,7 +45,6 @@ export default async function RequestDetailPage({
         approver:employees!approval_steps_approver_employee_id_fkey(first_name,last_name),
         acted_by_employee:employees!approval_steps_acted_by_fkey(first_name,last_name)
       ),
-      request_comments(*, author:employees!request_comments_author_id_fkey(first_name,last_name)),
       request_attachments(*),
       request_status_history(*, changed_by_employee:employees!request_status_history_changed_by_fkey(first_name,last_name))
     `)
@@ -136,9 +127,10 @@ export default async function RequestDetailPage({
           {request.status === "more_info" && request.requester_id === employee.id && (
             <section className="card">
               <div className="card-title"><h3>ส่งข้อมูลกลับเพื่อพิจารณา</h3></div>
-              <p className="muted small">เพิ่มความคิดเห็นหรือไฟล์แนบด้านล่างให้ครบก่อน แล้วส่งคำร้องกลับไปยังผู้อนุมัติ</p>
+              <p className="muted small">แนบไฟล์ด้านล่างเพิ่มได้ถ้าจำเป็น แล้วระบุข้อมูลที่ขอเพิ่มเติมก่อนส่งคำร้องกลับไปยังผู้อนุมัติ</p>
               <form action={resubmitRequestAction}>
                 <input type="hidden" name="request_id" value={request.id} />
+                <div className="field"><label htmlFor="resubmit-comment">ข้อมูลเพิ่มเติม</label><textarea className="textarea" id="resubmit-comment" name="comment" maxLength={1000} placeholder="ระบุข้อมูลที่ขอเพิ่มเติม" /></div>
                 <SubmitButton pendingLabel="กำลังส่งกลับ...">ส่งให้พิจารณาอีกครั้ง</SubmitButton>
               </form>
             </section>
@@ -157,21 +149,6 @@ export default async function RequestDetailPage({
               </form>
             </section>
           )}
-
-          <section className="card">
-            <div className="card-title"><h3><MessageSquare size={16} /> ความคิดเห็น</h3></div>
-            {(request.request_comments ?? []).sort((a: CommentRow, b: CommentRow) => a.created_at.localeCompare(b.created_at)).map((comment: CommentRow) => (
-              <div className="comment" key={comment.id}>
-                <div className="comment-head"><strong>{employeeName(comment.author)}</strong><span className="muted">{formatDate(comment.created_at, true)}</span></div>
-                <div className="comment-body">{comment.body}</div>
-              </div>
-            ))}
-            <form action={addCommentAction} className="inline-form" style={{ marginTop: 16 }}>
-              <input type="hidden" name="request_id" value={request.id} />
-              <input className="input" name="body" maxLength={3000} placeholder="เพิ่มความคิดเห็นหรือข้อมูลเพิ่มเติม..." required />
-              <SubmitButton className="btn small" pendingLabel="ส่ง...">ส่ง</SubmitButton>
-            </form>
-          </section>
         </div>
 
         <aside className="stack">
