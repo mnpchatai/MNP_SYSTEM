@@ -957,9 +957,11 @@ async function getPendingApprovals() {
   return (data ?? []).map((item) => ({ ...item, request: { ...relation(item.request), request_type: relation(relation(item.request)?.request_type) } })).filter((step) => {
     const request = step.request;
     if (!request?.id || step.step_order !== request.current_step) return false;
-    if (employee.role?.code === "admin" || VIEW_ALL_ROLE_CODES.includes(employee.role?.code)) return true;
-    if (step.approver_employee_id === employee.id) return true;
-    const roleMatches = step.approver_role_id === employee.role_id &&
+    // เฉพาะ admin จริงเท่านั้นที่ข้ามได้ ต้องตรงกับ app_approval_decision เป๊ะ — เดิมรวม
+    // factory_manager/general_manager ด้วย ทำให้เห็นปุ่มอนุมัติของขั้นที่ไม่ใช่ของตัวเอง
+    if (employee.role?.code === "admin") return true;
+    if (step.approver_employee_id && step.approver_employee_id === employee.id) return true;
+    const roleMatches = Boolean(step.approver_role_id) && step.approver_role_id === employee.role_id &&
       (!step.approver_department_id || step.approver_department_id === employee.department_id);
     return roleMatches && Boolean(request.request_type?.code) && employee.approvalModules.has(request.request_type.code);
   });
@@ -1513,9 +1515,9 @@ function personName(directory, id) {
    ยิง POST แบบ "ทำสำเร็จก็ดี ไม่สำเร็จก็ไม่บล็อกอะไร" เพื่อให้แท็บ "ใบแจ้งซ่อม" ในชีตเดิมมีข้อมูล
    ไว้ดู/รายงานคู่ขนานไปด้วย ไม่ใช่ทางเดินของข้อมูลจริง
 
-   ตำแหน่งขั้นอนุมัติ step_order 1/2 → fm/gm เป็นการประมาณตามตำแหน่ง เพราะ Supabase เก็บเป็นลำดับ
-   ขั้นทั่วไป (หัวหน้าแผนกผู้แจ้ง แล้วต่อด้วยผู้อนุมัติหน่วยงานเจ้าของประเภทเอกสาร) ไม่ได้แยก fm/gm
-   ตรงๆ แบบระบบเดิม — ดู app_create_repair_request ในไมเกรชัน repair_workflow_rpcs.sql */
+   ตำแหน่งขั้นอนุมัติ step_order 1/2 → fm/gm ตรงกับระบบเดิมพอดีตั้งแต่ไมเกรชัน
+   20260921080000 เป็นต้นไป: ขั้น 1 คือผู้จัดการโรงงาน ขั้น 2 คือผู้จัดการทั่วไป
+   (ก่อนหน้านั้นเป็นหัวหน้าแผนกผู้แจ้ง → ผจก.แผนกเจ้าของเอกสาร ซึ่งไม่ตรงขั้นตอนจริง) */
 function mapRepairAppsScriptStatus(request, steps) {
   if (request.status === "pending_approval") {
     return request.current_step >= 2 ? "PENDING_GM" : "PENDING_FM";
@@ -1678,11 +1680,17 @@ async function renderRequestDetail(params) {
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
   const isAdmin = employee.role?.code === "admin" || VIEW_ALL_ROLE_CODES.includes(employee.role?.code);
-  const canApprove = currentStep && (isAdmin || currentStep.approver_employee_id === employee.id || (
-    currentStep.approver_role_id === employee.role_id
-    && (!currentStep.approver_department_id || currentStep.approver_department_id === employee.department_id)
-    && Boolean(type?.code) && employee.approvalModules.has(type.code)
-  ));
+  // เงื่อนไขต้องตรงกับ app_approval_decision เป๊ะ: ข้ามได้เฉพาะ role 'admin' จริง ไม่ใช่ทุกคนที่มี
+  // requests.view_all (factory_manager/general_manager ก็มี) ไม่งั้นจะเห็นปุ่มอนุมัติของขั้นที่ไม่ใช่
+  // ของตัวเอง แล้วกดไปโดน NOT_AUTHORIZED จากฐานข้อมูล
+  const canApprove = currentStep && (employee.role?.code === "admin"
+    || (currentStep.approver_employee_id && currentStep.approver_employee_id === employee.id)
+    || (
+      Boolean(currentStep.approver_role_id)
+      && currentStep.approver_role_id === employee.role_id
+      && (!currentStep.approver_department_id || currentStep.approver_department_id === employee.department_id)
+      && Boolean(type?.code) && employee.approvalModules.has(type.code)
+    ));
   const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status);
   const technicians = isRepair ? [...directory.entries()].filter(([, person]) => person.department_id === type.owning_department_id) : [];
   const canAssign = isRepair && request.status === "pending_assign" && (
