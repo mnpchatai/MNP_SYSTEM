@@ -228,6 +228,14 @@ function friendlyError(error) {
     REQUEST_NOT_PENDING_VERIFY: "ใบนี้ไม่ได้อยู่ในขั้นรอตรวจรับแล้ว",
     INVALID_RESULT: "กรุณาเลือกผลการตรวจรับ",
     NOTE_REQUIRED: "กรุณาระบุสาเหตุที่ไม่ผ่านการตรวจรับ",
+    COMMENT_REQUIRED: "กรุณาระบุเหตุผล (จำเป็นสำหรับ \"ไม่อนุมัติ\" และ \"ขอข้อมูลเพิ่ม\")",
+    REQUEST_NOT_ASSIGNABLE: "ใบนี้ยังไม่ผ่านการอนุมัติ หรือถูกปฏิเสธไปแล้ว จึงมอบหมายช่างไม่ได้",
+    RECEIVED_BY_REQUIRED: "กรุณาระบุชื่อผู้จัดการที่รับใบ",
+    EXECUTION_PLAN_REQUIRED: "กรุณาเลือกการดำเนินงาน",
+    INSPECTOR_OPINION_REQUIRED: "กรุณาเลือกความคิดเห็นของช่างผู้ตรวจสอบ",
+    WORK_START_DATE_REQUIRED: "กรุณาระบุวันเริ่มงาน",
+    WORK_EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าจะเสร็จ",
+    WORK_DATE_RANGE_INVALID: "วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน",
   };
   const key = Object.keys(map).find((item) => message.includes(item));
   return key ? map[key] : message;
@@ -567,6 +575,22 @@ function openAttachmentLightbox(id) {
 
 function statusBadge(status) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabels[status] ?? status)}</span>`;
+}
+
+// ระบบเดิมแยกสถานะรออนุมัติ/ขอข้อมูลเพิ่มเป็นของ ผจก.โรงงาน กับ ผจก.ทั่วไป คนละตัว ส่วนที่นี่เก็บเป็น
+// pending_approval/more_info ตัวเดียวแล้วดูขั้นประกอบ — เติมชื่อขั้นต่อท้ายให้อ่านได้เหมือนกัน
+const approverShortNames = { "ผู้จัดการโรงงาน": "ผจก.โรงงาน", "ผู้จัดการทั่วไป": "ผจก.ทั่วไป" };
+
+function repairStatusBadge(request, steps) {
+  const stepName = request.status === "pending_approval"
+    ? steps.find((step) => step.status === "pending" && step.step_order === request.current_step)?.step_name
+    : request.status === "more_info"
+      ? steps.find((step) => step.status === "more_info")?.step_name
+      : null;
+  if (!stepName) return statusBadge(request.status);
+  const short = approverShortNames[stepName] ?? stepName;
+  const label = `${statusLabels[request.status] ?? request.status} (${short})`;
+  return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(label)}</span>`;
 }
 
 // แถวกรอกอะไหล่/วัสดุหนึ่งรายการในฟอร์มบันทึกผลการซ่อม — โครงเดียวกับ maintRecord.parts[] ของ
@@ -982,7 +1006,7 @@ async function getMyRepairActionItems() {
   const employee = state.employee;
   const { data, error } = await sb
     .from("requests")
-    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th,owning_department_id)")
+    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th,owning_department_id),request_technicians(technician_id)")
     .in("status", MY_REPAIR_ACTION_STATUSES)
     .order("created_at", { ascending: true });
   if (error) throw error;
@@ -993,7 +1017,9 @@ async function getMyRepairActionItems() {
         return employee.role?.code === "department_manager" && employee.department_id === request.request_type?.owning_department_id;
       }
       if (request.status === "pending_verify") return request.requester_id === employee.id;
-      return request.assignee_id === employee.id; // assigned, in_progress
+      // assigned, in_progress — ช่างทุกคนในชุดต้องเห็นงานของตัวเอง ไม่ใช่เฉพาะคนแรก
+      return request.assignee_id === employee.id
+        || (request.request_technicians ?? []).some((row) => row.technician_id === employee.id);
     });
 }
 
@@ -1547,7 +1573,7 @@ function appsScriptApprovalStage(step, directory) {
   };
 }
 
-function buildAppsScriptOrder(request, steps, verifications, directory) {
+function buildAppsScriptOrder(request, steps, verifications, directory, technicianIds) {
   const fmStep = steps.find((step) => step.step_order === 1);
   const gmStep = steps.find((step) => step.step_order === 2);
   const [latestVerification, ...olderVerifications] = verifications;
@@ -1572,13 +1598,14 @@ function buildAppsScriptOrder(request, steps, verifications, directory) {
       gm: appsScriptApprovalStage(gmStep, directory),
     },
     assignment: request.assignee_id ? {
-      technicians: [personName(directory, request.assignee_id)],
+      technicians: (technicianIds && technicianIds.length ? technicianIds : [request.assignee_id])
+        .map((techId) => personName(directory, techId)),
       startDate: request.work_started_date ?? "",
       endDate: request.work_expected_date ?? "",
       assignedBy: request.assigned_by ? personName(directory, request.assigned_by) : "",
       assignedAt: request.assigned_at ?? "",
       executionPlan: request.execution_plan ?? "",
-      receivedByName: "",
+      receivedByName: request.received_by_name ?? "",
     } : null,
     maintRecord: (request.cause_analysis || request.inspector_opinion || request.parts_used) ? {
       causeAnalysis: request.cause_analysis ?? "",
@@ -1658,17 +1685,19 @@ async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
-  const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, directory] = await Promise.all([
+  const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, directory] = await Promise.all([
     sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id),department:departments(code)").eq("id", id).maybeSingle(),
     sb.from("approval_steps").select("*").eq("request_id", id).order("step_order"),
     sb.from("request_attachments").select("*").eq("request_id", id).order("created_at"),
     sb.from("request_status_history").select("*").eq("request_id", id).order("created_at", { ascending: false }),
     sb.from("request_verifications").select("*").eq("request_id", id).order("created_at", { ascending: false }),
+    sb.from("request_technicians").select("technician_id").eq("request_id", id),
+    sb.from("request_progress_steps").select("*").eq("request_id", id).order("sort_order"),
     loadEmployeeDirectory(),
   ]);
   if (requestResult.error) throw requestResult.error;
   if (!requestResult.data) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
-  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult]) if (result.error) throw result.error;
+  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult]) if (result.error) throw result.error;
   const request = requestResult.data;
   const type = relation(request.request_type);
   const isRepair = Boolean(type?.uses_repair_workflow);
@@ -1676,7 +1705,13 @@ async function renderRequestDetail(params) {
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
   const verifications = verificationsResult.data ?? [];
-  if (isRepair) syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory));
+  const progressSteps = progressResult.data ?? [];
+  // ช่างของใบนี้ = รายชื่อในตารางช่าง (ใบเก่าก่อนรองรับหลายคนมีแต่ assignee_id จึงรวมเข้าไปด้วย)
+  const assignedTechIds = [...new Set([
+    ...(techniciansResult.data ?? []).map((row) => row.technician_id),
+    ...(request.assignee_id ? [request.assignee_id] : []),
+  ])];
+  if (isRepair) syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory, assignedTechIds));
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
   const isAdmin = employee.role?.code === "admin" || VIEW_ALL_ROLE_CODES.includes(employee.role?.code);
@@ -1693,19 +1728,27 @@ async function renderRequestDetail(params) {
     ));
   const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status);
   const technicians = isRepair ? [...directory.entries()].filter(([, person]) => person.department_id === type.owning_department_id) : [];
-  const canAssign = isRepair && request.status === "pending_assign" && (
-    isAdmin || (employee.department_id === type.owning_department_id && employee.role?.code === "department_manager")
-  );
+  // สเปก: ผจก.ซ่อมบำรุงแก้รายชื่อช่างได้ทุกสถานะ ยกเว้นใบที่ถูกปฏิเสธ และต้องอนุมัติครบก่อน
+  const isOwningDeptManager = employee.role?.code === "department_manager"
+    && employee.department_id === type?.owning_department_id;
+  const canAssign = isRepair
+    && ["pending_assign", "assigned", "in_progress", "pending_verify", "completed"].includes(request.status)
+    && (isAdmin || isOwningDeptManager);
+  const isMyRepairJob = assignedTechIds.includes(employee.id);
   // เจตนา: จำกัดเฉพาะช่างที่ถูกมอบหมาย + ผู้จัดการแผนกเจ้าของประเภทเอกสาร + admin เท่านั้น
   // ไม่ใช้ isAdmin (ซึ่งรวม factory_manager/general_manager) เพราะสองบทบาทนั้นไม่ได้เกี่ยวข้อง
   // กับงานซ่อมนี้โดยตรง — ป้องกันคนที่ไม่เกี่ยวข้องกดเริ่มงานแทนช่าง
-  const canStartWork = isRepair && request.status === "assigned" && request.assignee_id && (
-    employee.role?.code === "admin" ||
-    request.assignee_id === employee.id ||
-    (employee.role?.code === "department_manager" && employee.department_id === type.owning_department_id)
+  const canStartWork = isRepair && request.status === "assigned" && assignedTechIds.length > 0 && (
+    employee.role?.code === "admin" || isMyRepairJob || isOwningDeptManager
   );
-  const canFinishWork = isRepair && request.status === "in_progress" && request.assignee_id && (isAdmin || request.assignee_id === employee.id);
-  const canVerify = isRepair && request.status === "pending_verify" && (isAdmin || request.requester_id === employee.id);
+  // จบงานและตรวจรับ: ผจก.โรงงาน/ผจก.ทั่วไป กดแทนไม่ได้ ต้องตรงกับ app_finish_repair_work /
+  // app_verify_repair ที่ตัด requests.view_all ออกไปแล้ว เหลือช่างในชุด กับผู้แจ้ง ตามลำดับ
+  const canFinishWork = isRepair && request.status === "in_progress"
+    && (employee.role?.code === "admin" || isMyRepairJob);
+  const canVerify = isRepair && request.status === "pending_verify"
+    && (employee.role?.code === "admin" || request.requester_id === employee.id);
+  // หมุดความคืบหน้า: ช่างในชุด กับ ผจก.ซ่อมบำรุง เท่านั้นที่กดได้ คนอื่นดูได้อย่างเดียว
+  const canRecordProgress = employee.role?.code === "admin" || isMyRepairJob || isOwningDeptManager;
   const isRequester = request.requester_id === employee.id;
   const detailEntries = Object.entries(request.details ?? {});
   const requestFacts = [
@@ -1714,9 +1757,14 @@ async function renderRequestDetail(params) {
       tone: ["high", "urgent"].includes(request.priority) ? "danger" : "primary",
       valueClass: `priority-${request.priority}`,
     }),
-    requestFact("ผู้รับผิดชอบ", personName(directory, request.assignee_id), { icon: "◎", tone: "success" }),
+    requestFact(isRepair ? "ช่างผู้รับผิดชอบ" : "ผู้รับผิดชอบ",
+      isRepair
+        ? (assignedTechIds.map((techId) => personName(directory, techId)).join(", ") || "—")
+        : personName(directory, request.assignee_id),
+      { icon: "◎", tone: "success", wide: isRepair && assignedTechIds.length > 1 }),
     ...(isRepair ? [
       requestFact("ประเภทเอกสาร", docTypeLabels[request.doc_type] ?? request.doc_type ?? "—", { icon: "▤", tone: "violet" }),
+      ...(request.received_by_name ? [requestFact("ผู้จัดการที่รับใบ", request.received_by_name, { icon: "✓", tone: "cyan" })] : []),
       requestFact("เครื่องจักร", `${request.machine_code ?? "—"}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${request.machine_name}` : ""}`, { icon: "⚙", tone: "slate" }),
       requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "◉", tone: "cyan" }),
       requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "↗", tone: request.is_urgent ? "danger" : "success" }),
@@ -1740,7 +1788,7 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         <section class="card request-overview-card">
-          <div class="request-overview-head"><div class="request-overview-title"><span>รายละเอียดหลัก</span><h2>ข้อมูลคำร้อง</h2></div>${statusBadge(request.status)}</div>
+          <div class="request-overview-head"><div class="request-overview-title"><span>รายละเอียดหลัก</span><h2>ข้อมูลคำร้อง</h2></div>${isRepair ? repairStatusBadge(request, steps) : statusBadge(request.status)}</div>
           <p class="description request-summary">${escapeHtml(request.description)}</p>
           <div class="request-facts">${requestFacts}</div>
         </section>
@@ -1759,17 +1807,23 @@ async function renderRequestDetail(params) {
         })() : ""}
         ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button><button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
         ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
-        ${canAssign ? `<section class="card"><h2>มอบหมายช่าง</h2><p class="muted small">เลือกช่างของแผนกซ่อมบำรุงและกำหนดวันที่คาดว่าจะเสร็จ</p><form id="assign-form">
-          <div class="field"><label for="assign-technician">ช่างผู้รับผิดชอบ</label><select class="select" id="assign-technician" name="technician_id" required><option value="">เลือกช่าง</option>${technicians.map(([techId, person]) => `<option value="${escapeHtml(techId)}">${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</option>`).join("") || ""}</select>${!technicians.length ? `<small>ยังไม่มีพนักงานในแผนกซ่อมบำรุง</small>` : ""}</div>
-          <div class="field"><label for="assign-start-date">วันเริ่มงาน (ถ้ามี)</label><input class="input" id="assign-start-date" name="work_started_date" type="date"></div>
-          <div class="field"><label for="assign-expected-date">กำหนดเสร็จ (ถ้ามี)</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date"></div>
-          <div class="form-actions"><button class="btn" type="submit">มอบหมายงาน</button></div>
+        ${canAssign ? `<section class="card"><h2>${request.status === "pending_assign" ? "มอบหมายช่าง" : "แก้ไขการมอบหมายช่าง"}</h2><p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง — ติ๊กได้มากกว่าหนึ่งคน" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form">
+          <div class="field"><label>ช่างผู้รับผิดชอบ</label><small>ติ๊กช่างที่รับผิดชอบใบนี้ อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></div>
+          <div class="field"><label for="assign-received-by">ชื่อผู้จัดการที่รับใบ</label><input class="input" id="assign-received-by" name="received_by_name" maxlength="200" value="${escapeHtml(request.received_by_name ?? "")}" required></div>
+          <div class="field"><label for="assign-execution-plan">การดำเนินงาน</label><select class="select" id="assign-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}"${request.execution_plan === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+          <div class="field"><label for="assign-opinion">ความคิดเห็นของช่างผู้ตรวจสอบ</label><select class="select" id="assign-opinion" name="inspector_opinion" required><option value="">เลือกแนวทางการซ่อม</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}"${request.inspector_opinion === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+          <div class="field"><label for="assign-start-date">วันเริ่มงาน</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}" required></div>
+          <div class="field"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}" required></div>
+          <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
         </form></section>` : ""}
+        ${isRepair && progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => `<div class="progress-step${step.done_on ? " done" : ""}">
+          <span class="progress-mark" aria-hidden="true">${step.done_on ? "✓" : "○"}</span>
+          <div class="progress-copy"><strong>${escapeHtml(step.step_label)}</strong><span class="muted small">${step.done_on ? `${formatDate(step.done_on)}${step.recorded_by ? ` · ${escapeHtml(personName(directory, step.recorded_by))}` : ""}` : "ยังไม่บันทึก"}</span></div>
+          ${!step.done_on && canRecordProgress ? `<button type="button" class="btn secondary small progress-button" data-step="${escapeHtml(step.id)}">บันทึกวันนี้</button>` : ""}
+        </div>`).join("")}</div></section>` : ""}
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
-        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์แล้วส่งต่อให้ผู้แจ้งตรวจรับ</p><form id="finish-form">
-          <div class="field"><label for="finish-execution-plan">การดำเนินงาน</label><select class="select" id="finish-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
+        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ แล้วส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required></textarea></div>
-          <div class="field"><label for="finish-opinion">แนวทางการซ่อม</label><select class="select" id="finish-opinion" name="inspector_opinion" required><option value="">เลือกแนวทางการซ่อม</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select></div>
           <div class="field"><label>อะไหล่/วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี แต่ละแถว: ชื่อ · จำนวน · หน่วย · ราคา · ร้าน/ผู้จำหน่าย · หมายเหตุ</small><div id="finish-parts-rows" class="parts-rows">${partsRowHtml()}</div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการอะไหล่</button></div>
           <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งตรวจรับ</button></div>
         </form></section>` : ""}
@@ -1786,9 +1840,17 @@ async function renderRequestDetail(params) {
   bindShell();
 
   document.querySelectorAll(".decision-button").forEach((button) => button.addEventListener("click", async () => {
+    const decision = button.dataset.decision;
+    const comment = document.querySelector("#decision-comment")?.value.trim() ?? "";
+    // สเปก: มีแต่ "อนุมัติ" ที่หมายเหตุเป็นทางเลือก — ดักที่นี่ก่อนยิง RPC เพื่อไม่ให้เสียรอบไปกลับ
+    if (decision !== "approved" && comment.length < 3) {
+      return showToast(decision === "rejected"
+        ? "กรุณาระบุเหตุผลที่ไม่อนุมัติ"
+        : "กรุณาระบุว่าต้องการข้อมูลเพิ่มเติมเรื่องอะไร", "error");
+    }
     document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = true; });
     try {
-      const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: button.dataset.decision, p_comment: document.querySelector("#decision-comment")?.value ?? "" });
+      const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: decision, p_comment: comment });
       if (error) throw error;
       triggerNotificationEmails(id);
       showToast("บันทึกผลการพิจารณาแล้ว");
@@ -1809,20 +1871,40 @@ async function renderRequestDetail(params) {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    const technicianIds = values.getAll("technician_ids").map(String).filter(Boolean);
+    if (!technicianIds.length) return showToast("กรุณาเลือกช่างอย่างน้อย 1 คน", "error");
+    const startDate = String(values.get("work_started_date") ?? "");
+    const expectedDate = String(values.get("work_expected_date") ?? "");
+    if (startDate && expectedDate && expectedDate < startDate) {
+      return showToast("วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน", "error");
+    }
     setFormBusy(form, true);
     try {
       const { error } = await sb.rpc("app_assign_repair_technician", {
         p_request_id: id,
-        p_technician_id: values.get("technician_id"),
-        p_work_started_date: String(values.get("work_started_date") ?? "") || null,
-        p_work_expected_date: String(values.get("work_expected_date") ?? "") || null,
+        p_technician_ids: technicianIds,
+        p_received_by_name: String(values.get("received_by_name") ?? "").trim() || null,
+        p_execution_plan: String(values.get("execution_plan") ?? "") || null,
+        p_inspector_opinion: String(values.get("inspector_opinion") ?? "") || null,
+        p_work_started_date: startDate || null,
+        p_work_expected_date: expectedDate || null,
       });
       if (error) throw error;
       triggerNotificationEmails(id);
-      showToast("มอบหมายงานเรียบร้อย");
+      showToast("บันทึกการมอบหมายเรียบร้อย");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });
+  document.querySelectorAll(".progress-button").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const { error } = await sb.rpc("app_record_progress_step", { p_step_id: button.dataset.step, p_done_on: null });
+      if (error) throw error;
+      triggerNotificationEmails(id);
+      showToast("บันทึกความคืบหน้าแล้ว");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
+  }));
   document.querySelector(".start-work-button")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
     try {
@@ -1863,9 +1945,7 @@ async function renderRequestDetail(params) {
     try {
       const { error } = await sb.rpc("app_finish_repair_work", {
         p_request_id: id,
-        p_execution_plan: values.get("execution_plan"),
         p_cause_analysis: String(values.get("cause_analysis") ?? "").trim(),
-        p_inspector_opinion: values.get("inspector_opinion"),
         p_parts_used_items: partsUsedItems,
       });
       if (error) throw error;
