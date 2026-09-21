@@ -11,6 +11,7 @@
 - การสร้างคำร้อง การอนุมัติ และการเปลี่ยนสถานะเรียก Postgres RPC ที่ตรวจ session/สิทธิ์ฝั่งฐานข้อมูล
 - การลงทะเบียนบัญชีทดสอบเรียก `pilot-auth` Edge Function และต้องใช้ invite code ที่ไม่อยู่ใน repository
 - GitHub Pages ไม่มี server runtime ดังนั้น LINE webhook/OAuth และฟังก์ชันที่ใช้ server secret ยังคงต้องรันบน Supabase Edge Functions หรือ deployment แบบมี server
+- **ทุกครั้งที่แก้ `app.js` หรือ `styles.css` ต้องเลื่อนเลข `?v=` ใน `index.html` ด้วย** ทั้งสองไฟล์ใช้ป้ายรุ่นชุดเดียวกัน (`?v=20260921`) เพราะเปลี่ยนคู่กันเสมอ ถ้าไม่เลื่อน เบราว์เซอร์ที่เคยเปิดเว็บแล้วจะยังใช้ไฟล์เก่าจาก cache ต่อไป แล้วดูเหมือน deploy ไม่ติด — GitHub Pages ไม่มี build step จึงไม่มี content hash ให้อัตโนมัติ ต้องเลื่อนเอง (ใช้วันที่ deploy เป็นเลขรุ่นได้เลย)
 
 ไฟล์ Next.js เดิมยังคงเป็นสถาปัตยกรรมเป้าหมายสำหรับ production ที่รองรับ Server Actions และ Route Handlers ครบถ้วน ส่วน Pilot Web ใช้สำหรับทดสอบกระบวนการหลายผู้ใช้ในระยะนี้
 
