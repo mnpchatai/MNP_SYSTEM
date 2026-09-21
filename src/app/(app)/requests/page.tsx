@@ -16,7 +16,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
   const supabase = await createClient();
   let query = supabase
     .from("requests")
-    .select("id,request_no,title,status,priority,created_at,request_type:request_types(name_th)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,assignee:employees!requests_assignee_id_fkey(first_name,last_name),request_type:request_types(name_th)")
     .eq("requester_id", employee.id)
     .order("created_at", { ascending: false });
   if (status !== "all") query = query.eq("status", status);
@@ -38,7 +38,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
           return <Link className={status === value ? "active" : ""} href={href} key={value}>{label}</Link>;
         })}
       </div>
-      <section className="card"><RequestTable requests={data ?? []} /></section>
+      <section className="request-list-panel"><RequestTable requests={data ?? []} /></section>
     </>
   );
 }

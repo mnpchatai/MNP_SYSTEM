@@ -19,7 +19,7 @@ export default async function DashboardPage() {
   const [requestsResult, typesResult, pending] = await Promise.all([
     supabase
       .from("requests")
-      .select("id,request_no,title,status,priority,created_at,request_type:request_types(name_th)")
+      .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,assignee:employees!requests_assignee_id_fkey(first_name,last_name),request_type:request_types(name_th)")
       .eq("requester_id", employee.id)
       .order("created_at", { ascending: false }),
     supabase

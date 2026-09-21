@@ -636,25 +636,60 @@ function requesterLabel(request, directory) {
   return (request.requester_name ?? "").trim() || "—";
 }
 
+function requestCode(requestNo) {
+  return String(requestNo ?? "REQ").match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? "REQ";
+}
+
+function requestOwnerNames(request, directory) {
+  if (!directory) return [];
+  const ids = [
+    ...(request.request_technicians ?? []).map((row) => row.technician_id),
+    request.assignee_id,
+  ].filter(Boolean);
+  return [...new Set(ids)]
+    .map((id) => personName(directory, id))
+    .filter((name) => name && name !== "—");
+}
+
 function requestRows(requests, { showProgress = false, showRequester = false, directory = null } = {}) {
   if (!requests.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
   return `
-    <div class="table-wrap"><table>
-      <thead><tr><th>เลขที่</th><th>เรื่อง</th><th>ประเภท</th>${showRequester ? `<th>ผู้แจ้ง</th>` : ""}<th>ความสำคัญ</th><th>สถานะ</th>${showProgress ? `<th>ความคืบหน้า</th>` : ""}<th>วันที่</th></tr></thead>
-      <tbody>${requests.map((request) => {
+    <div class="request-timeline">${requests.map((request) => {
         const type = relation(request.request_type);
-        return `<tr>
-          <td><a class="request-no" href="#/request?id=${encodeURIComponent(request.id)}">${escapeHtml(request.request_no)}</a></td>
-          <td><a href="#/request?id=${encodeURIComponent(request.id)}"><strong>${escapeHtml(request.title)}</strong></a></td>
-          <td class="muted">${escapeHtml(type?.name_th ?? "—")}</td>
-          ${showRequester ? `<td class="muted">${escapeHtml(requesterLabel(request, directory))}</td>` : ""}
-          <td class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</td>
-          <td>${statusBadge(request.status)}</td>
-          ${showProgress ? `<td>${progressTracker(request.status, Boolean(type?.uses_repair_workflow))}</td>` : ""}
-          <td class="muted">${formatDate(request.created_at)}</td>
-        </tr>`;
-      }).join("")}</tbody>
-    </table></div>`;
+        const ownerNames = requestOwnerNames(request, directory);
+        const machine = [request.machine_code, request.machine_name].filter(Boolean).join(" · ");
+        const description = (request.description ?? "").trim();
+        const href = `#/request?id=${encodeURIComponent(request.id)}`;
+        return `<article class="request-timeline-card status-${escapeHtml(request.status)}">
+          <header class="request-card-head">
+            <div class="request-card-identity">
+              <a class="request-card-no" href="${href}">${escapeHtml(request.request_no)}</a>
+              <strong class="request-card-code">${escapeHtml(requestCode(request.request_no))}</strong>
+              <span class="request-card-type">${escapeHtml(type?.name_th ?? "คำร้อง")}</span>
+            </div>
+            <div class="request-card-tags">
+              ${ownerNames.length ? `<span class="request-owner-chip" title="ผู้รับผิดชอบ">🧰 ${escapeHtml(ownerNames.join(", "))}</span>` : ""}
+              <span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</span>
+              ${statusBadge(request.status)}
+            </div>
+          </header>
+          <div class="request-card-body">
+            <a class="request-card-title" href="${href}">${escapeHtml(machine || request.title)}</a>
+            ${machine && request.title !== machine ? `<p class="request-card-subtitle">${escapeHtml(request.title)}</p>` : ""}
+            ${description && description !== request.title ? `<p class="request-card-description">${escapeHtml(description)}</p>` : ""}
+            <div class="request-card-meta">
+              ${showRequester ? `<span><b>ผู้แจ้ง:</b> ${escapeHtml(requesterLabel(request, directory))}</span>` : ""}
+              ${request.needed_date ? `<span><b>ต้องการใช้งาน:</b> ${formatDate(request.needed_date)}</span>` : ""}
+              <span><b>แจ้งเมื่อ:</b> ${formatDate(request.created_at, true)}</span>
+              ${request.updated_at && request.updated_at !== request.created_at ? `<span><b>อัปเดต:</b> ${formatDate(request.updated_at, true)}</span>` : ""}
+            </div>
+          </div>
+          <footer class="request-card-footer">
+            ${showProgress ? progressTracker(request.status, Boolean(type?.uses_repair_workflow)) : `<span class="muted small">ติดตามรายละเอียดและประวัติงาน</span>`}
+            <a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>
+          </footer>
+        </article>`;
+      }).join("")}</div>`;
 }
 
 /* กระดานติดตามสถานะที่ "ทุกคน" เห็นได้ — ข้อมูลมาจาก RPC app_request_status_board ซึ่งคืนเฉพาะ
@@ -1073,16 +1108,17 @@ async function renderDashboard() {
   const employee = state.employee;
   let requestsQuery = sb
     .from("requests")
-    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,request_type:request_types(name_th,uses_repair_workflow),request_technicians(technician_id)")
     .order("created_at", { ascending: false })
     .limit(20);
   // เดิมกรอง requester_id ทิ้งเหมือนหน้าคำร้อง ทำให้การ์ดสรุปและ "ความเคลื่อนไหวล่าสุด"
   // ของหัวหน้าแผนก/ช่างเป็นศูนย์ทั้งหน้า — ปล่อยให้ RLS เป็นตัวตัดสินเหมือนกัน
-  const [requestsResult, typesResult, pending, repairTasks] = await Promise.all([
+  const [requestsResult, typesResult, pending, repairTasks, directory] = await Promise.all([
     requestsQuery,
     sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
     getPendingApprovals(),
     getMyRepairActionItems(),
+    loadEmployeeDirectory(),
   ]);
   if (requestsResult.error) throw requestsResult.error;
   if (typesResult.error) throw typesResult.error;
@@ -1099,7 +1135,7 @@ async function renderDashboard() {
       <div class="summary"><span>เสร็จแล้ว</span><strong>${completed}</strong><small>ปิดงานเรียบร้อย</small></div>
     </section>
     <div class="dashboard-grid">
-      <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7))}</section>
+      <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory })}</section>
       <section class="card flush"><div class="card-heading"><h2>สร้างคำร้อง</h2><a href="#/new">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/new?type=${encodeURIComponent(type.id)}"><span class="quick-icon">＋</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
     </div>`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
@@ -1192,7 +1228,7 @@ async function renderRequests(params) {
   // หน้านี้ทั้งหมด (หัวหน้าแผนกซ่อมบำรุงเปิดมาแล้วว่างเปล่าทั้งที่มีใบรออนุมัติค้างอยู่)
   let query = sb
     .from("requests")
-    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,requester_name,request_type:request_types(name_th,uses_repair_workflow)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,uses_repair_workflow),request_technicians(technician_id)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (status !== "all") query = query.eq("status", status);
@@ -1211,7 +1247,7 @@ async function renderRequests(params) {
       <a class="filter${mineOnly ? " active" : ""}" href="#/requests?scope=mine${status === "all" ? "" : `&status=${encodeURIComponent(status)}`}">เฉพาะที่ฉันแจ้ง</a>
     </div>
     ${statusFilterBar("mine", status, search)}
-    <section class="card flush">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
+    <section class="request-list-panel">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
   app.innerHTML = shell(content, "requests", title);
   bindShell();
 }
