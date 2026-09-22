@@ -9,7 +9,7 @@ const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwfHj4_rNU
 // สำรองข้อมูลใบคำร้องถึงฝ่ายบริหาร (PP01-FM08) ไปชีต "ใบคำร้องถึงฝ่ายบริหาร" แยกจากชีตแจ้งซ่อม
 // ด้านบน (คนละสเปรดชีต) — deploy Apps Script ตาม apps-script/management-backup/Code.gs แล้วใส่ URL
 // ของ Web App ที่ได้ตรงนี้ ปล่อยว่างไว้ = ยังไม่ sync (ดู syncManagementOrderToAppsScript ท้ายไฟล์นี้)
-const APPS_SCRIPT_MANAGEMENT_SYNC_URL = "";
+const APPS_SCRIPT_MANAGEMENT_SYNC_URL = "https://script.google.com/macros/s/AKfycbw_FQUWk6tM8l-CvOdPu7zHxJdKj6Dcq7hBZRIiEotNRGs5sstLj7GnHMK5xixjuS5m/exec";
 // ส่งอีเมลแจ้งเตือนจริงตาม employees.email — ดู triggerNotificationEmails ท้ายไฟล์นี้
 const NOTIFY_EMAIL_URL = `${SUPABASE_URL}/functions/v1/notify-email`;
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
