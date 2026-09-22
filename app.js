@@ -6,6 +6,10 @@ const PILOT_AUTH_URL = `${SUPABASE_URL}/functions/v1/pilot-auth`;
 // สำรองข้อมูลใบแจ้งซ่อมไปชีต Maintenance-MT เดิม (แค่บันทึก/รายงาน — Supabase ยังเป็นฐานข้อมูลหลัก
 // และเป็นตัวบังคับสิทธิ์/workflow ทั้งหมด) ดู syncRepairOrderToAppsScript ท้ายไฟล์นี้
 const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwfHj4_rNUfU9ZB4xjOpyJPxQSHucoT1baeJ0AFGaz46olWJ8UXU_pBLnKpCwG6KHprqA/exec";
+// สำรองข้อมูลใบคำร้องถึงฝ่ายบริหาร (PP01-FM08) ไปชีต "ใบคำร้องถึงฝ่ายบริหาร" แยกจากชีตแจ้งซ่อม
+// ด้านบน (คนละสเปรดชีต) — deploy Apps Script ตาม apps-script/management-backup/Code.gs แล้วใส่ URL
+// ของ Web App ที่ได้ตรงนี้ ปล่อยว่างไว้ = ยังไม่ sync (ดู syncManagementOrderToAppsScript ท้ายไฟล์นี้)
+const APPS_SCRIPT_MANAGEMENT_SYNC_URL = "https://script.google.com/macros/s/AKfycbw_FQUWk6tM8l-CvOdPu7zHxJdKj6Dcq7hBZRIiEotNRGs5sstLj7GnHMK5xixjuS5m/exec";
 // ส่งอีเมลแจ้งเตือนจริงตาม employees.email — ดู triggerNotificationEmails ท้ายไฟล์นี้
 const NOTIFY_EMAIL_URL = `${SUPABASE_URL}/functions/v1/notify-email`;
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
@@ -1912,6 +1916,76 @@ function syncRepairOrderToAppsScript(order) {
   }).catch((syncError) => console.warn("ซิงก์ใบแจ้งซ่อมไปชีตสำรองไม่สำเร็จ", syncError));
 }
 
+// สถานะของใบคำร้องถึงฝ่ายบริหารตามฟอร์ม PP01-FM08: มติ 3 ทาง (approved/rejected/acknowledged)
+// เป็น terminal เสมอ ไม่มีขั้นดำเนินงานแบบใบแจ้งซ่อม จึงสั้นกว่า mapRepairAppsScriptStatus มาก
+function mapManagementAppsScriptStatus(request) {
+  if (request.status === "pending_approval") return request.current_step >= 2 ? "PENDING_GM" : "PENDING_FM";
+  const direct = {
+    more_info: "NEEDS_INFO",
+    approved: "APPROVED",
+    in_progress: "IN_PROGRESS",
+    completed: "DONE",
+    rejected: "REJECTED",
+    acknowledged: "ACKNOWLEDGED",
+  };
+  return direct[request.status] ?? request.status.toUpperCase();
+}
+
+// โครงสร้างเดียวกับ buildAppsScriptOrder ของใบแจ้งซ่อม (fm/gm ผูกกับ step_order 1/2 เหมือนกัน
+// เพราะ MANAGEMENT ใช้สายอนุมัติคงที่ ผู้จัดการโรงงาน -> ผู้จัดการทั่วไป แบบเดียวกันแล้ว — ดู
+// 20260922010000_management_request_pp01_fm08.sql) เพื่อให้ผู้ดูแลที่คุ้นชีตใบแจ้งซ่อมอ่านชีตนี้ได้ทันที
+function buildAppsScriptManagementOrder(request, steps, directory, ccDepartmentCodes) {
+  const fmStep = steps.find((step) => step.step_order === 1);
+  const gmStep = steps.find((step) => step.step_order === 2);
+  const details = request.details ?? {};
+  const decidedStep = [fmStep, gmStep].find((step) => step && step.status !== "pending");
+  return {
+    id: request.id,
+    docNumber: request.request_no,
+    department: relation(request.department)?.code ?? "",
+    subject: request.title ?? "",
+    attachmentNote: details.attachment_note ?? "",
+    description: request.description ?? "",
+    requestedBy: personName(directory, request.requester_id),
+    position: directory.get(request.requester_id)?.job_title ?? "",
+    submittedAt: request.submitted_at,
+    status: mapManagementAppsScriptStatus(request),
+    decision: decidedStep ? decidedStep.status : "",
+    comment: decidedStep?.comment ?? "",
+    approvals: {
+      fm: appsScriptApprovalStage(fmStep, directory),
+      gm: appsScriptApprovalStage(gmStep, directory),
+    },
+    ccDepartments: ccDepartmentCodes ?? [],
+    ccOther: details.cc_other_note ?? "",
+  };
+}
+
+function syncManagementOrderToAppsScript(order) {
+  if (!APPS_SCRIPT_MANAGEMENT_SYNC_URL) return;
+  // no-cors: อ่านผลลัพธ์กลับไม่ได้ (opaque response) — ยอมรับได้เพราะนี่คือสำเนาสำรอง ไม่ใช่ทางเดิน
+  // ข้อมูลจริง ถ้ายิงไม่สำเร็จ (โควตา/เครือข่าย/ฯลฯ) ก็แค่ log ไว้ ไม่กระทบผู้ใช้งานเลย
+  fetch(APPS_SCRIPT_MANAGEMENT_SYNC_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ batch: [{ key: `mgmt:${order.id}`, value: JSON.stringify(order) }] }),
+  }).catch((syncError) => console.warn("ซิงก์ใบคำร้องถึงฝ่ายบริหารไปชีตสำรองไม่สำเร็จ", syncError));
+}
+
+// ต้อง resolve รหัสแผนกของ cc_department_ids (uuid[]) เป็นโค้ดแผนกก่อนส่งไปชีตสำรอง — แยกเป็น
+// ฟังก์ชัน async ของตัวเองเพื่อเรียกแบบ fire-and-forget จาก renderRequestDetail ได้โดยไม่บล็อกหน้าจอ
+async function syncManagementOrder(request, steps, directory) {
+  try {
+    const ccIds = request.cc_department_ids ?? [];
+    const ccResult = ccIds.length ? await sb.from("departments").select("code").in("id", ccIds) : { data: [] };
+    const ccDepartmentCodes = (ccResult.data ?? []).map((row) => row.code);
+    syncManagementOrderToAppsScript(buildAppsScriptManagementOrder(request, steps, directory, ccDepartmentCodes));
+  } catch (syncError) {
+    console.warn("เตรียมข้อมูลสำรองใบคำร้องถึงฝ่ายบริหารไม่สำเร็จ", syncError);
+  }
+}
+
 async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
@@ -1944,6 +2018,7 @@ async function renderRequestDetail(params) {
     ...(request.assignee_id ? [request.assignee_id] : []),
   ])];
   if (isRepair) syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory, assignedTechIds));
+  if (type?.code === "MANAGEMENT") syncManagementOrder(request, steps, directory);
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
   const isAdmin = employee.role?.code === "admin" || VIEW_ALL_ROLE_CODES.includes(employee.role?.code);
