@@ -683,7 +683,7 @@ function requestRows(requests, { showProgress = false, showRequester = false, di
           <header class="request-card-head">
             <div class="request-card-identity">
               <a class="request-card-no" href="${href}">${escapeHtml(request.request_no)}</a>
-              <strong class="request-card-code">${escapeHtml(requestCode(request.request_no))}</strong>
+              <strong class="request-card-code" style="background:${requestTypeGradient(type?.code)}">${escapeHtml(requestCode(request.request_no))}</strong>
               <span class="request-card-type">${escapeHtml(type?.name_th ?? "คำร้อง")}</span>
             </div>
             <div class="request-card-tags">
@@ -727,7 +727,7 @@ function statusBoardRows(rows) {
               ${row.can_open
                 ? `<a class="request-card-no" href="${href}">${escapeHtml(row.request_no)}</a>`
                 : `<span class="request-card-no locked" title="คุณไม่มีสิทธิ์เปิดดูรายละเอียดของใบนี้">${escapeHtml(row.request_no)}</span>`}
-              <strong class="request-card-code">${escapeHtml(requestCode(row.request_no))}</strong>
+              <strong class="request-card-code" style="background:${requestTypeGradient(row.type_code)}">${escapeHtml(requestCode(row.request_no))}</strong>
               <span class="request-card-type">${escapeHtml(row.type_name_th ?? "คำร้อง")}</span>
             </div>
             <div class="request-card-tags">
@@ -1144,7 +1144,7 @@ async function renderDashboard() {
   const employee = state.employee;
   let requestsQuery = sb
     .from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,request_type:request_types(name_th,uses_repair_workflow),request_technicians(technician_id)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
     .order("created_at", { ascending: false })
     .limit(20);
   // เดิมกรอง requester_id ทิ้งเหมือนหน้าคำร้อง ทำให้การ์ดสรุปและ "ความเคลื่อนไหวล่าสุด"
@@ -1264,7 +1264,7 @@ async function renderRequests(params) {
   // หน้านี้ทั้งหมด (หัวหน้าแผนกซ่อมบำรุงเปิดมาแล้วว่างเปล่าทั้งที่มีใบรออนุมัติค้างอยู่)
   let query = sb
     .from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,uses_repair_workflow),request_technicians(technician_id)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (status !== "all") query = query.eq("status", status);

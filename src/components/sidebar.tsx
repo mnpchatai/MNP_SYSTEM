@@ -35,7 +35,7 @@ function isActivePath(pathname: string, href: string) {
 export function Sidebar({
   employee,
 }: {
-  employee: { first_name: string; last_name: string; job_title: string | null };
+  employee: { first_name: string; last_name: string; job_title: string | null; photo_url?: string | null };
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -103,7 +103,14 @@ export function Sidebar({
 
         <div className="nav-spacer" />
         <div className="sidebar-user">
-          <div className="sidebar-avatar">{initials}</div>
+          <div className="sidebar-avatar">
+            {employee.photo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element -- external Supabase storage URL, not a static asset
+              <img src={employee.photo_url} alt="" />
+            ) : (
+              initials
+            )}
+          </div>
           <div className="sidebar-user-copy">
             <strong>{employee.first_name} {employee.last_name}</strong>
             <span>{employee.job_title ?? "พนักงาน"}</span>

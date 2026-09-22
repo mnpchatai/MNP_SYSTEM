@@ -445,7 +445,14 @@ tbody tr:hover { background: var(--shell); }
 .request-card-no:hover, .request-card-title:hover { color: var(--primary); }
 .request-card-no.locked { color: var(--quiet); border-color: var(--line); cursor: default; }
 .request-card-no.locked:hover { color: var(--quiet); }
-.request-card-code { font-size: 13px; }
+.request-card-code {
+  padding: 3px 9px;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
 .request-card-type { color: var(--quiet); font-size: 11px; }
 .request-card-tags { justify-content: flex-end; }
 .request-owner-chip, .request-department-chip, .request-priority-chip {
