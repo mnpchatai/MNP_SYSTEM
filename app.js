@@ -111,8 +111,8 @@ function progressTracker(status, usesRepairWorkflow, { waitingOn = null } = {}) 
 }
 const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 const REPAIR_DEPARTMENT_OPTIONS = [
-  { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
-  { sourceCode: "GR", displayCode: "GR", name: "แปรรูปราง" },
+  { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปยาง" },
+  { sourceCode: "GR", displayCode: "GR", name: "แปรรูปยาง" },
   { sourceCode: "BG", displayCode: "BG", name: "เย็บจักร" },
   { sourceCode: "PT", displayCode: "PT", name: "ขึ้นรูปพลาสติก" },
   { sourceCode: "PK", displayCode: "PK", name: "ประกอบบรรจุภัณฑ์" },

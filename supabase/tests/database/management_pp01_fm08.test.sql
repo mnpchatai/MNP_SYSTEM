@@ -33,8 +33,8 @@ select results_eq(
 );
 select results_eq(
   $$ select name_th from public.departments where code = 'FT' $$,
-  array['ธุรการ'],
-  'FT department renamed to ธุรการ per PP01-FM08'
+  array['บริหารโรงงาน'],
+  'FT department named บริหารโรงงาน per the factory org chart'
 );
 select has_column('public', 'requests', 'cc_department_ids', 'requests has cc_department_ids column');
 select col_type_is('public', 'requests', 'cc_department_ids', 'uuid[]', 'cc_department_ids is uuid[]');
