@@ -698,26 +698,43 @@ function requestRows(requests, { showProgress = false, showRequester = false, di
 function statusBoardRows(rows) {
   if (!rows.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
   return `
-    <div class="table-wrap"><table class="status-board">
-      <thead><tr><th>เลขที่</th><th>เรื่อง</th><th>ประเภท</th><th>แผนกที่แจ้ง</th><th>ผู้แจ้ง</th><th>ความคืบหน้า</th><th>อัปเดตล่าสุด</th></tr></thead>
-      <tbody>${rows.map((row) => {
+    <div class="request-timeline status-board-timeline">${rows.map((row) => {
         const href = `#/request?id=${encodeURIComponent(row.id)}`;
         const subject = row.subject ?? "—";
-        return `<tr>
-          <td>${row.can_open
-            ? `<a class="request-no" href="${href}">${escapeHtml(row.request_no)}</a>`
-            : `<span class="request-no locked" title="คุณไม่มีสิทธิ์เปิดดูรายละเอียดของใบนี้">${escapeHtml(row.request_no)}</span>`}</td>
-          <td>${row.can_open
-            ? `<a href="${href}"><strong>${escapeHtml(subject)}</strong></a>`
-            : `<strong>${escapeHtml(subject)}</strong>`}${row.is_urgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}</td>
-          <td class="muted">${escapeHtml(row.type_name_th ?? "—")}</td>
-          <td class="muted">${escapeHtml(row.department_name ?? row.department_code ?? "—")}</td>
-          <td class="muted">${escapeHtml(row.requester_name ?? "—")}</td>
-          <td>${statusBadge(row.status)}${progressTracker(row.status, Boolean(row.uses_repair_workflow), { waitingOn: row.waiting_on })}</td>
-          <td class="muted">${formatDate(row.last_changed_at ?? row.submitted_at, true)}</td>
-        </tr>`;
-      }).join("")}</tbody>
-    </table></div>`;
+        const department = row.department_name ?? row.department_code ?? "—";
+        return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
+          <header class="request-card-head">
+            <div class="request-card-identity">
+              ${row.can_open
+                ? `<a class="request-card-no" href="${href}">${escapeHtml(row.request_no)}</a>`
+                : `<span class="request-card-no locked" title="คุณไม่มีสิทธิ์เปิดดูรายละเอียดของใบนี้">${escapeHtml(row.request_no)}</span>`}
+              <strong class="request-card-code">${escapeHtml(requestCode(row.request_no))}</strong>
+              <span class="request-card-type">${escapeHtml(row.type_name_th ?? "คำร้อง")}</span>
+            </div>
+            <div class="request-card-tags">
+              <span class="request-department-chip" title="แผนกที่แจ้ง">🏢 ${escapeHtml(department)}</span>
+              ${row.is_urgent ? `<span class="request-priority-chip priority-urgent">เร่งด่วน</span>` : ""}
+              ${statusBadge(row.status)}
+            </div>
+          </header>
+          <div class="request-card-body">
+            ${row.can_open
+              ? `<a class="request-card-title" href="${href}">${escapeHtml(subject)}</a>`
+              : `<strong class="request-card-title">${escapeHtml(subject)}</strong>`}
+            <div class="request-card-meta">
+              <span><b>ผู้แจ้ง:</b> ${escapeHtml(row.requester_name ?? "—")}</span>
+              <span><b>แผนก:</b> ${escapeHtml(department)}</span>
+              <span><b>อัปเดตล่าสุด:</b> ${formatDate(row.last_changed_at ?? row.submitted_at, true)}</span>
+            </div>
+          </div>
+          <footer class="request-card-footer">
+            ${progressTracker(row.status, Boolean(row.uses_repair_workflow), { waitingOn: row.waiting_on })}
+            ${row.can_open
+              ? `<a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>`
+              : `<span class="request-locked-note" title="สิทธิ์ของบัญชีนี้ดูได้เฉพาะสถานะและความคืบหน้า">🔒 ดูได้เฉพาะความคืบหน้า</span>`}
+          </footer>
+        </article>`;
+      }).join("")}</div>`;
 }
 
 function themeButton() {
@@ -1202,7 +1219,7 @@ async function renderRequestsBoard(status, search) {
       ${search ? `<a class="btn secondary small" href="#/requests?view=board${status === "all" ? "" : `&status=${encodeURIComponent(status)}`}">ล้าง</a>` : ""}
     </form>
     <p class="muted small board-note">แสดง ${rows.length} รายการ · เปิดดูรายละเอียดเต็มได้ ${openable} รายการตามสิทธิ์ของบัญชีนี้ ส่วนใบที่เหลือเห็นได้เฉพาะความคืบหน้า</p>
-    <section class="card flush">${statusBoardRows(rows)}</section>`;
+    <section class="request-list-panel">${statusBoardRows(rows)}</section>`;
   app.innerHTML = shell(content, "requests", "ติดตามสถานะทุกใบ");
   bindShell();
   document.querySelector("#board-search-form")?.addEventListener("submit", (event) => {
