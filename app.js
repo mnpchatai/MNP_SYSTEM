@@ -684,7 +684,7 @@ function requestRows(requests, { showProgress = false, showRequester = false, di
             <div class="request-card-identity">
               <a class="request-card-no" href="${href}">${escapeHtml(request.request_no)}</a>
               <strong class="request-card-code" style="background:${requestTypeGradient(type?.code)}">${escapeHtml(requestCode(request.request_no))}</strong>
-              <span class="request-card-type">${escapeHtml(type?.name_th ?? "คำร้อง")}</span>
+              <span class="request-card-type" style="color:${requestTypeAccentColor(type?.code)}">${escapeHtml(type?.name_th ?? "คำร้อง")}</span>
             </div>
             <div class="request-card-tags">
               ${ownerNames.length ? `<span class="request-owner-chip" title="ผู้รับผิดชอบ">🧰 ${escapeHtml(ownerNames.join(", "))}</span>` : ""}
@@ -728,7 +728,7 @@ function statusBoardRows(rows) {
                 ? `<a class="request-card-no" href="${href}">${escapeHtml(row.request_no)}</a>`
                 : `<span class="request-card-no locked" title="คุณไม่มีสิทธิ์เปิดดูรายละเอียดของใบนี้">${escapeHtml(row.request_no)}</span>`}
               <strong class="request-card-code" style="background:${requestTypeGradient(row.type_code)}">${escapeHtml(requestCode(row.request_no))}</strong>
-              <span class="request-card-type">${escapeHtml(row.type_name_th ?? "คำร้อง")}</span>
+              <span class="request-card-type" style="color:${requestTypeAccentColor(row.type_code)}">${escapeHtml(row.type_name_th ?? "คำร้อง")}</span>
             </div>
             <div class="request-card-tags">
               <span class="request-department-chip" title="แผนกที่แจ้ง">🏢 ${escapeHtml(department)}</span>
@@ -1335,6 +1335,11 @@ function requestTypeLabel(type) {
 function requestTypeGradient(code) {
   const [from, to] = requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
   return `linear-gradient(135deg, ${from}, ${to})`;
+}
+
+function requestTypeAccentColor(code) {
+  const [, to] = requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
+  return to;
 }
 
 function typeCardHtml(type) {
