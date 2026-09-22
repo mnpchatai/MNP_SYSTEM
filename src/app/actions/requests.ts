@@ -50,6 +50,7 @@ export async function createRequestAction(formData: FormData) {
     "asset_code", "location", "preferred_date", "impact", "vehicle_no", "odometer",
     "estimated_cost", "required_date", "vendor", "business_reason", "system_name",
     "access_level", "leave_type", "start_date", "end_date", "course_name", "provider",
+    "attachment_note", "cc_other_note",
   ]) {
     const value = String(formData.get(key) ?? "").trim();
     if (value) details[key] = value.slice(0, 500);
@@ -64,6 +65,19 @@ export async function createRequestAction(formData: FormData) {
     .single();
   if (!type) fail("/requests/new", "ไม่พบประเภทคำร้องที่เลือก");
 
+  // ส่วนที่ 3 ของฟอร์ม PP01-FM08 "สำเนาถึงแผนก" — checkbox หลายค่าชื่อเดียวกัน
+  const ccDepartmentIds = [...new Set(formData.getAll("cc_department_ids").map((value) => String(value)))];
+  if (ccDepartmentIds.length) {
+    const { data: validDepartments } = await admin
+      .from("departments")
+      .select("id")
+      .eq("is_active", true)
+      .in("id", ccDepartmentIds);
+    if ((validDepartments?.length ?? 0) !== ccDepartmentIds.length) {
+      fail("/requests/new", "แผนกที่เลือกสำเนาถึงไม่ถูกต้อง");
+    }
+  }
+
   const { data: request, error } = await admin
     .from("requests")
     .insert({
@@ -76,6 +90,7 @@ export async function createRequestAction(formData: FormData) {
       priority,
       status: "pending_approval",
       last_changed_by: employee.id,
+      cc_department_ids: ccDepartmentIds,
     })
     .select("id, request_no")
     .single();
@@ -109,32 +124,51 @@ export async function createRequestAction(formData: FormData) {
   }
 
   const steps: Array<Record<string, unknown>> = [];
-  if (type.requires_manager_approval && employee.manager_id) {
-    // An inactive manager cannot act, so that step would strand the request.
-    const { data: manager } = await admin
-      .from("employees")
-      .select("id")
-      .eq("id", employee.manager_id)
-      .eq("is_active", true)
-      .maybeSingle();
-    if (manager) {
+  if (type.uses_factory_general_chain) {
+    // สายอนุมัติคงที่ตามฟอร์มจริง (เช่น PP01-FM08): ผู้จัดการโรงงาน -> ผู้จัดการทั่วไป
+    // ผูกกับ "บทบาท" ไม่ผูกแผนก เหมือนใบแจ้งซ่อม (20260921080000_repair_approval_chain_...)
+    // ข้ามขั้นที่ยังไม่มีคนถือบทบาทนั้น ไม่งั้นใบจะค้างโดยไม่มีใครกดอนุมัติได้เลย
+    const { data: roles } = await admin.from("roles").select("id, code").in("code", ["factory_manager", "general_manager"]);
+    for (const code of ["factory_manager", "general_manager"]) {
+      const role = roles?.find((r) => r.code === code);
+      if (!role) continue;
+      const { data: holder } = await admin.from("employees").select("id").eq("role_id", role.id).eq("is_active", true).limit(1).maybeSingle();
+      if (!holder) continue;
       steps.push({
         request_id: request.id,
         step_order: steps.length + 1,
-        step_name: "หัวหน้าแผนก",
-        approver_employee_id: employee.manager_id,
+        step_name: code === "factory_manager" ? "ผู้จัดการโรงงาน" : "ผู้จัดการทั่วไป",
+        approver_role_id: role.id,
       });
     }
-  }
-  if (type.final_approver_role_id) {
-    const target = await resolveApprovalTarget(type.final_approver_role_id, type.owning_department_id);
-    steps.push({
-      request_id: request.id,
-      step_order: steps.length + 1,
-      step_name: "ผู้อนุมัติหน่วยงานรับผิดชอบ",
-      approver_role_id: target.roleId,
-      approver_department_id: target.departmentId,
-    });
+  } else {
+    if (type.requires_manager_approval && employee.manager_id) {
+      // An inactive manager cannot act, so that step would strand the request.
+      const { data: manager } = await admin
+        .from("employees")
+        .select("id")
+        .eq("id", employee.manager_id)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (manager) {
+        steps.push({
+          request_id: request.id,
+          step_order: steps.length + 1,
+          step_name: "หัวหน้าแผนก",
+          approver_employee_id: employee.manager_id,
+        });
+      }
+    }
+    if (type.final_approver_role_id) {
+      const target = await resolveApprovalTarget(type.final_approver_role_id, type.owning_department_id);
+      steps.push({
+        request_id: request.id,
+        step_order: steps.length + 1,
+        step_name: "ผู้อนุมัติหน่วยงานรับผิดชอบ",
+        approver_role_id: target.roleId,
+        approver_department_id: target.departmentId,
+      });
+    }
   }
 
   if (steps.length) {
@@ -218,7 +252,7 @@ export async function approvalDecisionAction(formData: FormData) {
   const stepId = String(formData.get("step_id") ?? "");
   const decision = String(formData.get("decision") ?? "");
   const comment = String(formData.get("comment") ?? "").trim().slice(0, 1000);
-  if (!new Set(["approved", "rejected", "more_info"]).has(decision)) throw new Error("Invalid decision");
+  if (!new Set(["approved", "rejected", "more_info", "acknowledged"]).has(decision)) throw new Error("Invalid decision");
 
   const admin = createAdminClient();
   const { data: step } = await admin.from("approval_steps").select("*").eq("id", stepId).single();
@@ -244,9 +278,9 @@ export async function approvalDecisionAction(formData: FormData) {
     comment: comment || null,
   }).eq("id", step.id).eq("status", "pending");
 
-  if (decision === "rejected" || decision === "more_info") {
+  if (decision === "rejected" || decision === "more_info" || decision === "acknowledged") {
     await admin.from("requests").update({
-      status: decision === "rejected" ? "rejected" : "more_info",
+      status: decision,
       last_changed_by: employee.id,
     }).eq("id", step.request_id);
   } else {
@@ -293,7 +327,10 @@ export async function approvalDecisionAction(formData: FormData) {
   }
 
   if (approvalRequest) {
-    const label = decision === "approved" ? "อนุมัติขั้นตอนแล้ว" : decision === "rejected" ? "ไม่อนุมัติ" : "ขอข้อมูลเพิ่ม";
+    const label = decision === "approved" ? "อนุมัติขั้นตอนแล้ว"
+      : decision === "rejected" ? "ไม่อนุมัติ"
+      : decision === "acknowledged" ? "รับทราบข้อมูล"
+      : "ขอข้อมูลเพิ่ม";
     await notifyEmployeeByEmail(approvalRequest.requester_id, `${approvalRequest.request_no} · ${label}`);
   }
 

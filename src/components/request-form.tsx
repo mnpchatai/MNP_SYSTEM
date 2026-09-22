@@ -7,10 +7,13 @@ import { SubmitButton } from "@/components/submit-button";
 
 type RequestType = {
   id: string;
+  code?: string;
   name_th: string;
   description: string | null;
   form_schema: { fields?: string[] } | null;
 };
+
+type Department = { id: string; code: string; name_th: string };
 
 const fieldMeta: Record<string, { label: string; type?: string; placeholder?: string }> = {
   asset_code: { label: "รหัสเครื่อง/ทรัพย์สิน", placeholder: "เช่น CV-012" },
@@ -30,9 +33,19 @@ const fieldMeta: Record<string, { label: string; type?: string; placeholder?: st
   end_date: { label: "วันที่สิ้นสุด", type: "date" },
   course_name: { label: "ชื่อหลักสูตร" },
   provider: { label: "ผู้จัดอบรม" },
+  attachment_note: { label: "สิ่งที่แนบมาด้วย", placeholder: "ระบุรายการเอกสาร/ไฟล์ที่แนบ (ถ้ามี)" },
 };
 
-export function RequestForm({ types, initialType, error }: { types: RequestType[]; initialType?: string; error?: string }) {
+// ส่วนที่ 3 ของฟอร์ม PP01-FM08 "สำเนาถึงแผนก" — ตาราง 6 คอลัมน์ 4 แถว เรียงตามฟอร์มต้นฉบับ
+// ช่องสุดท้าย (null) คือ "อื่นๆ" ซึ่งเป็นช่องข้อความอิสระ ไม่ใช่แผนกในระบบ
+const ccDepartmentGrid: (string | null)[][] = [
+  ["PP", "BD", "QA", "RB", "GR", "PK"],
+  ["PT", "BG", "SR", "SE", "ST", "WH"],
+  ["MS", "MT", "FT", "IT", "EX", "SA"],
+  ["PC", "HR", "AD", "AC", "SP", null],
+];
+
+export function RequestForm({ types, departments, initialType, error }: { types: RequestType[]; departments: Department[]; initialType?: string; error?: string }) {
   const [selectedId, setSelectedId] = useState(initialType && types.some((t) => t.id === initialType) ? initialType : types[0]?.id ?? "");
   const selected = useMemo(() => types.find((t) => t.id === selectedId), [selectedId, types]);
   const fields = selected?.form_schema?.fields ?? [];
@@ -78,6 +91,33 @@ export function RequestForm({ types, initialType, error }: { types: RequestType[
           );
         })}
       </div>
+
+      {selected?.code === "MANAGEMENT" && (
+        <div className="field full cc-department-field">
+          <label>สำเนาถึงแผนก</label>
+          <div className="cc-department-grid">
+            {ccDepartmentGrid.flat().map((code, index) => {
+              if (code === null) {
+                return (
+                  <label className="cc-department-other" key="other">
+                    <span>อื่นๆ</span>
+                    <input className="input" name="cc_other_note" placeholder="ระบุ" maxLength={200} />
+                  </label>
+                );
+              }
+              const department = departments.find((d) => d.code === code);
+              if (!department) return <span key={`${code}-${index}`} />;
+              return (
+                <label className="cc-department-option" key={department.id}>
+                  <input type="checkbox" name="cc_department_ids" value={department.id} />
+                  <span>{code}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="form-actions">
         <Link className="btn secondary" href="/requests">ยกเลิก</Link>
         <SubmitButton pendingLabel="กำลังส่งคำร้อง...">ส่งคำร้อง</SubmitButton>
