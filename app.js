@@ -1325,7 +1325,7 @@ const requestTypeThemes = {
 };
 const requestTypeLabelOverrides = {
   MT_REPAIR: "ใบคำร้อง/แจ้งซ่อม MT",
-  MANAGEMENT: "ใบคำร้องถึงห้องบริหาร",
+  MANAGEMENT: "ใบคำร้องถึงฝ่ายบริหาร",
 };
 
 function requestTypeLabel(type) {
