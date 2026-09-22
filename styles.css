@@ -218,6 +218,14 @@ button { cursor: pointer; }
 .progress-mark { display: grid; place-items: center; width: 24px; height: 24px; color: var(--muted); border-radius: 999px; font-size: 13px; font-weight: 700; }
 .progress-step.done .progress-mark { color: var(--success); }
 .progress-copy { min-width: 0; display: grid; gap: 1px; }
+.progress-step-extra { grid-column: 1 / -1; display: grid; gap: 8px; padding-top: 2px; }
+.progress-order-form { display: grid; gap: 8px; }
+.progress-choice { display: grid; gap: 6px; }
+.progress-choice-option { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.progress-choice-option input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.progress-expected-input:disabled { opacity: .55; }
+.progress-reschedule-form { display: flex; gap: 8px; align-items: center; }
+.progress-reschedule-form .input { flex: 1; min-height: 38px; padding: 8px 10px; }
 .parts-table-wrap { margin: 2px 0 10px; border: 1px solid var(--line); border-radius: 8px; }
 .parts-table { min-width: 760px; }
 .parts-table th, .parts-table td { padding: 8px 10px; }
