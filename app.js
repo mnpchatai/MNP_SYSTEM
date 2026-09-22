@@ -241,6 +241,8 @@ function friendlyError(error) {
     WORK_EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าจะเสร็จ",
     WORK_DATE_RANGE_INVALID: "วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน",
     REPAIR_USES_OWN_WORKFLOW: "ใบแจ้งซ่อมต้องเดินตามขั้นตอนของช่าง เปลี่ยนสถานะตรงๆ ไม่ได้",
+    EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าของจะมาส่ง",
+    STEP_ALREADY_DONE: "หมุดนี้บันทึกว่าเสร็จแล้ว เลื่อนวันที่ไม่ได้",
   };
   const key = Object.keys(map).find((item) => message.includes(item));
   return key ? map[key] : message;
@@ -1637,6 +1639,64 @@ function personName(directory, id) {
   return person ? `${person.first_name} ${person.last_name}` : "—";
 }
 
+// หมุด "สั่งซื้ออุปกรณ์เรียบร้อย" ต้องเลือกก่อนว่ารับของทันที หรือระบุวันที่คาดว่าจะมาส่ง (ไปตั้งไว้ที่
+// หมุด "ของมาส่งเรียบร้อย" ที่เป็นคู่กันเสมอ — ดู app_assign_repair_technician) ส่วนหมุด "ของมาส่งเรียบร้อย"
+// เอง ถ้ามีวันที่คาดว่าจะมาส่งรออยู่แล้ว ให้ทั้งกดว่าของมาส่งแล้ว หรือเลื่อนวันที่คาดว่าจะมาส่งใหม่ได้
+// (pg_cron จะยิงอีเมลเตือนถามทุกวัน 16:00 น. ของวันที่คาดว่าจะมาส่งถ้ายังไม่ได้บันทึกว่าของมาส่งแล้ว)
+function progressStepHtml(step, directory, canRecordProgress) {
+  const mark = `<span class="progress-mark" aria-hidden="true">${step.done_on ? "✓" : "○"}</span>`;
+  const title = `<strong>${escapeHtml(step.step_label)}</strong>`;
+
+  if (step.done_on) {
+    return `<div class="progress-step done">${mark}
+      <div class="progress-copy">${title}<span class="muted small">${formatDate(step.done_on)}${step.recorded_by ? ` · ${escapeHtml(personName(directory, step.recorded_by))}` : ""}</span></div>
+    </div>`;
+  }
+
+  const statusText = step.expected_on ? `คาดว่าจะมาส่ง ${formatDate(step.expected_on)}` : "ยังไม่บันทึก";
+
+  if (!canRecordProgress) {
+    return `<div class="progress-step">${mark}
+      <div class="progress-copy">${title}<span class="muted small">${statusText}</span></div>
+    </div>`;
+  }
+
+  if (step.step_key === "purchase_ordered") {
+    return `<div class="progress-step">${mark}
+      <div class="progress-copy">${title}<span class="muted small">ยังไม่บันทึก</span></div>
+      <div class="progress-step-extra">
+        <form class="progress-order-form" data-step="${escapeHtml(step.id)}">
+          <div class="progress-choice">
+            <label class="progress-choice-option"><input type="radio" name="receipt_mode" value="now" checked> รับของทันที (ได้ของพร้อมสั่งซื้อ)</label>
+            <label class="progress-choice-option"><input type="radio" name="receipt_mode" value="later"> ระบุวันที่คาดว่าของจะมาส่ง</label>
+          </div>
+          <input class="input progress-expected-input" type="date" name="expected_on" disabled>
+          <div class="form-actions"><button class="btn warning small" type="submit">บันทึก</button></div>
+        </form>
+      </div>
+    </div>`;
+  }
+
+  if (step.step_key === "purchase_received" && step.expected_on) {
+    return `<div class="progress-step">${mark}
+      <div class="progress-copy">${title}<span class="muted small">${statusText}</span></div>
+      <button type="button" class="btn warning small progress-button" data-step="${escapeHtml(step.id)}">ของมาส่งแล้ว</button>
+      <div class="progress-step-extra">
+        <button type="button" class="btn secondary small progress-reschedule-toggle" data-step="${escapeHtml(step.id)}">ของยังไม่มา เลื่อนวันที่คาดว่าจะมาส่ง</button>
+        <form class="progress-reschedule-form hidden" data-step="${escapeHtml(step.id)}">
+          <input class="input" type="date" name="expected_on" required>
+          <button class="btn small" type="submit">บันทึกวันที่ใหม่</button>
+        </form>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="progress-step">${mark}
+    <div class="progress-copy">${title}<span class="muted small">ยังไม่บันทึก</span></div>
+    <button type="button" class="btn warning small progress-button" data-step="${escapeHtml(step.id)}">บันทึกวันนี้</button>
+  </div>`;
+}
+
 const repairTimelineStatusLabels = {
   ...statusLabels,
   pending_approval: "รออนุมัติ",
@@ -2126,11 +2186,7 @@ async function renderRequestDetail(params) {
           <div class="field"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}" required></div>
           <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
         </form></section>` : ""}
-        ${isRepair && progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => `<div class="progress-step${step.done_on ? " done" : ""}">
-          <span class="progress-mark" aria-hidden="true">${step.done_on ? "✓" : "○"}</span>
-          <div class="progress-copy"><strong>${escapeHtml(step.step_label)}</strong><span class="muted small">${step.done_on ? `${formatDate(step.done_on)}${step.recorded_by ? ` · ${escapeHtml(personName(directory, step.recorded_by))}` : ""}` : "ยังไม่บันทึก"}</span></div>
-          ${!step.done_on && canRecordProgress ? `<button type="button" class="btn warning small progress-button" data-step="${escapeHtml(step.id)}">บันทึกวันนี้</button>` : ""}
-        </div>`).join("")}</div></section>` : ""}
+        ${isRepair && progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => progressStepHtml(step, directory, canRecordProgress)).join("")}</div></section>` : ""}
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
@@ -2212,6 +2268,53 @@ async function renderRequestDetail(params) {
       showToast("บันทึกความคืบหน้าแล้ว");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
+  }));
+  // หมุด "สั่งซื้ออุปกรณ์เรียบร้อย" ต้องเลือกก่อนว่ารับของทันที หรือระบุวันที่คาดว่าจะมาส่ง — สลับ
+  // required/disabled ของช่องวันที่ตามตัวเลือกที่ติ๊กไว้ กันส่งฟอร์มไปครึ่งๆ กลางๆ
+  document.querySelectorAll(".progress-order-form").forEach((form) => {
+    const expectedInput = form.querySelector(".progress-expected-input");
+    form.querySelectorAll('input[name="receipt_mode"]').forEach((radio) => radio.addEventListener("change", () => {
+      const later = form.querySelector('input[name="receipt_mode"]:checked')?.value === "later";
+      expectedInput.disabled = !later;
+      expectedInput.required = later;
+      if (!later) expectedInput.value = "";
+    }));
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const receivedNow = form.querySelector('input[name="receipt_mode"]:checked')?.value !== "later";
+      const expectedOn = expectedInput.value || null;
+      if (!receivedNow && !expectedOn) return showToast("กรุณาระบุวันที่คาดว่าของจะมาส่ง", "error");
+      setFormBusy(form, true);
+      try {
+        const { error } = await sb.rpc("app_record_progress_step", {
+          p_step_id: form.dataset.step,
+          p_done_on: null,
+          p_received_now: receivedNow,
+          p_expected_on: receivedNow ? null : expectedOn,
+        });
+        if (error) throw error;
+        triggerNotificationEmails(id);
+        showToast(receivedNow ? "บันทึกความคืบหน้าแล้ว — รับของครบพร้อมกัน" : "บันทึกความคืบหน้าแล้ว — ตั้งวันที่คาดว่าจะมาส่งไว้แล้ว");
+        await renderRequestDetail(params);
+      } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
+    });
+  });
+  // "ของยังไม่มา" — เปิดฟอร์มเลื่อนวันที่คาดว่าจะมาส่งของหมุด "ของมาส่งเรียบร้อย"
+  document.querySelectorAll(".progress-reschedule-toggle").forEach((button) => button.addEventListener("click", () => {
+    document.querySelector(`.progress-reschedule-form[data-step="${button.dataset.step}"]`)?.classList.toggle("hidden");
+  }));
+  document.querySelectorAll(".progress-reschedule-form").forEach((form) => form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const expectedOn = String(new FormData(form).get("expected_on") ?? "");
+    if (!expectedOn) return showToast("กรุณาระบุวันที่คาดว่าจะมาส่งใหม่", "error");
+    setFormBusy(form, true);
+    try {
+      const { error } = await sb.rpc("app_reschedule_progress_step", { p_step_id: form.dataset.step, p_expected_on: expectedOn });
+      if (error) throw error;
+      triggerNotificationEmails(id);
+      showToast("เลื่อนวันที่คาดว่าจะมาส่งแล้ว");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   }));
   document.querySelector(".start-work-button")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
