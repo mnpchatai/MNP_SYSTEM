@@ -36,16 +36,10 @@ select results_eq(
   array['ธุรการ'],
   'FT department renamed to ธุรการ per PP01-FM08'
 );
-select ok(
-  has_column('public', 'requests', 'cc_department_ids'),
-  'requests has cc_department_ids column'
-);
-select ok(
-  col_type_is('public', 'requests', 'cc_department_ids', 'uuid[]'),
-  'cc_department_ids is uuid[]'
-);
-select ok(
-  has_function('public', 'app_create_request', array['uuid','text','text','text','jsonb','uuid[]']),
+select has_column('public', 'requests', 'cc_department_ids', 'requests has cc_department_ids column');
+select col_type_is('public', 'requests', 'cc_department_ids', 'uuid[]', 'cc_department_ids is uuid[]');
+select has_function(
+  'public', 'app_create_request', array['uuid','text','text','text','jsonb','uuid[]'],
   'app_create_request accepts cc_department_ids'
 );
 
@@ -108,7 +102,8 @@ select results_eq(
 
 select results_eq(
   $$ select d.code from public.departments d
-     where d.id = any((select cc_department_ids from public.requests where title = 'PP01FM08_TEST_ACK'))
+     join public.requests r on d.id = any(r.cc_department_ids)
+     where r.title = 'PP01FM08_TEST_ACK'
      order by d.code $$,
   array['MT','QA'],
   'cc_department_ids stores the selected departments'
