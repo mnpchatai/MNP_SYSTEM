@@ -1,5 +1,7 @@
 import { CheckCircle2, Link2, Unlink } from "lucide-react";
 import { unlinkLineAction } from "@/app/actions/line";
+import { updateOwnPhotoAction } from "@/app/actions/profile";
+import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
 import { formatDate } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
@@ -15,19 +17,41 @@ const lineMessages: Record<string, string> = {
   "profile-error": "ไม่สามารถอ่านโปรไฟล์ LINE ได้",
 };
 
-export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ line?: string }> }) {
+export default async function ProfilePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ line?: string; photo?: string; error?: string }>;
+}) {
   const employee = await getCurrentEmployee();
-  const { line } = await searchParams;
+  const { line, photo, error } = await searchParams;
   const supabase = await createClient();
   const { data: lineAccount } = await supabase.from("line_accounts").select("*").eq("employee_id", employee.id).maybeSingle();
+  const initials = `${employee.first_name.at(0) ?? ""}${employee.last_name.at(0) ?? ""}`;
 
   return (
     <>
       <div className="page-heading"><div><div className="eyebrow">My Profile</div><h2>ข้อมูลส่วนตัว</h2><p>ข้อมูลพนักงาน สิทธิ์ และช่องทางแจ้งเตือน</p></div></div>
       {line && lineMessages[line] && <div className={`form-message ${line === "linked" || line === "unlinked" ? "success" : "error"}`}>{lineMessages[line]}</div>}
+      {photo === "updated" && <div className="form-message success">อัปเดตรูปโปรไฟล์แล้ว</div>}
+      {error && <div className="form-message error">{error}</div>}
       <div className="grid-2">
         <section className="card">
           <div className="card-title"><h3>Employee Master</h3></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+            <div className="sidebar-avatar" style={{ width: 56, height: 56, fontSize: 18 }}>
+              {employee.photo_url ? (
+                // eslint-disable-next-line @next/next/no-img-element -- external Supabase storage URL, not a static asset
+                <img src={employee.photo_url} alt="" />
+              ) : (
+                initials
+              )}
+            </div>
+            <form action={updateOwnPhotoAction} className="stack" encType="multipart/form-data">
+              <input className="input" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required />
+              <SubmitButton className="btn secondary small" pendingLabel="กำลังอัปโหลด...">อัปโหลดรูปโปรไฟล์</SubmitButton>
+              <span className="muted" style={{ fontSize: 10 }}>สูงสุด 3 MB · JPG, PNG, WebP</span>
+            </form>
+          </div>
           <dl className="definition-grid">
             <div className="definition"><dt>ชื่อ-นามสกุล</dt><dd>{employee.first_name} {employee.last_name}</dd></div>
             <div className="definition"><dt>รหัสพนักงาน</dt><dd>{employee.employee_no}</dd></div>
