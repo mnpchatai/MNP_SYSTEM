@@ -1,0 +1,48 @@
+# สำรองข้อมูลใบคำร้องถึงฝ่ายบริหาร (PP01-FM08)
+
+Google Apps Script สำหรับสำรองข้อมูลคำร้องประเภท `MANAGEMENT` (โมดูล "ใบคำร้องถึงฝ่ายบริหาร")
+ไปเก็บไว้ในสเปรดชีต [ใบคำร้องถึงฝ่ายบริหาร](https://docs.google.com/spreadsheets/d/1LFsJZmsPOVAYPi3TFMkLDgRvkk4nV7ThZluNGnLWD_4/edit)
+เป็นแค่สำเนาสำรอง/รายงาน — **Supabase ยังเป็นฐานข้อมูลหลักและเป็นตัวบังคับสิทธิ์/สายอนุมัติทั้งหมด**
+ใช้รูปแบบเดียวกับสคริปต์สำรองใบแจ้งซ่อม (Maintenance-MT) ที่ Pilot Web (`app.js`) เรียกอยู่แล้ว
+
+## Deploy
+
+1. เปิดสเปรดชีตที่ลิงก์ด้านบน > เมนู **Extensions > Apps Script**
+2. ลบโค้ดเริ่มต้นในไฟล์ `Code.gs` ที่ Apps Script สร้างให้ทิ้ง แล้ววางเนื้อหาจาก `Code.gs` ในโฟลเดอร์นี้แทน
+3. **Deploy > New deployment** เลือกประเภท **Web app**
+   - Execute as: **Me**
+   - Who has access: **Anyone**
+4. กด Deploy แล้วคัดลอก URL ของ Web App ที่ได้
+5. เปิด `app.js` ที่ root ของ repo หาตัวแปร `APPS_SCRIPT_MANAGEMENT_SYNC_URL` (อยู่ใกล้กับ
+   `APPS_SCRIPT_SYNC_URL` ของใบแจ้งซ่อม) แล้ววาง URL ที่ได้ลงไป
+6. เลื่อนเลข `?v=` ใน `index.html` ทั้งสองจุด (`styles.css`/`app.js`) ตามธรรมเนียมของ repo แล้ว push
+
+## รูปแบบข้อมูล
+
+Pilot Web ยิง `fetch(url, { method: "POST", mode: "no-cors", body: JSON.stringify({ batch: [...] }) })`
+ทุกครั้งที่มีคนเปิดหน้ารายละเอียดคำร้องประเภทนี้ (ดู `syncManagementOrder`/`syncManagementOrderToAppsScript`
+ใน `app.js`) — เพราะเป็น `no-cors` จึงอ่าน response กลับไม่ได้และแนบ header/token ไม่ได้ (เหมือนสคริปต์
+ใบแจ้งซ่อมเดิมทุกประการ) **ต้องตั้ง Access เป็น "Anyone" และถือ URL นี้เป็นความลับระดับหนึ่ง (เหมือน webhook)**
+
+Body:
+
+```json
+{ "batch": [{ "key": "mgmt:<request-id>", "value": "<JSON string ของ order>" }] }
+```
+
+โครงสร้างของ `order` (หลัง parse ค่า `value`):
+
+| ฟิลด์ | ความหมาย |
+|---|---|
+| `id`, `docNumber` | Supabase request id / request_no |
+| `department` | รหัสแผนกของผู้ยื่น |
+| `subject`, `description`, `attachmentNote` | เรื่อง / รายละเอียด / สิ่งที่แนบมาด้วย |
+| `requestedBy`, `position`, `submittedAt` | ผู้ยื่นคำร้อง / ตำแหน่ง / วันที่ยื่น |
+| `status` | `PENDING_FM` / `PENDING_GM` / `NEEDS_INFO` / `APPROVED` / `IN_PROGRESS` / `DONE` / `REJECTED` / `ACKNOWLEDGED` |
+| `decision` | มติที่ขั้นล่าสุดที่ตัดสินแล้ว: `approved` / `rejected` / `acknowledged` / `""` (ยังไม่มีมติ) |
+| `comment` | บันทึกข้อคิดเห็นฝ่ายบริหารของขั้นที่ตัดสิน |
+| `approvals.fm` / `approvals.gm` | สถานะ/ผู้ลงนาม/วันที่/หมายเหตุ ของฝ่ายบริหารโรงงาน และผู้จัดการทั่วไป |
+| `ccDepartments`, `ccOther` | รหัสแผนกที่สำเนาถึง + ข้อความช่อง "อื่นๆ" |
+
+สคริปต์นี้เก็บลงชีต **"Log"** (สร้างอัตโนมัติถ้ายังไม่มี) 3 คอลัมน์: `key`, `value` (JSON string ดิบ),
+`updatedAt` — upsert ทับแถวเดิมด้วย `key` เดียวกัน ไม่สร้างแถวซ้ำ

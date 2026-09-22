@@ -1,4 +1,5 @@
 import { Paperclip } from "lucide-react";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   approvalDecisionAction,
@@ -26,7 +27,7 @@ const detailLabels: Record<string, string> = {
   estimated_cost: "งบประมาณโดยประมาณ", required_date: "วันที่ต้องการใช้", vendor: "ผู้ขาย",
   business_reason: "เหตุผลทางธุรกิจ", system_name: "ชื่อระบบ", access_level: "ระดับสิทธิ์",
   leave_type: "ประเภทการลา", start_date: "วันที่เริ่ม", end_date: "วันที่สิ้นสุด",
-  course_name: "ชื่อหลักสูตร", provider: "ผู้จัดอบรม",
+  course_name: "ชื่อหลักสูตร", provider: "ผู้จัดอบรม", attachment_note: "สิ่งที่แนบมาด้วย",
 };
 
 export default async function RequestDetailPage({
@@ -59,6 +60,12 @@ export default async function RequestDetailPage({
     .single();
   if (!request) notFound();
 
+  const isManagementRequest = request.request_type?.code === "MANAGEMENT";
+  const ccDepartmentIds: string[] = request.cc_department_ids ?? [];
+  const { data: ccDepartments } = ccDepartmentIds.length
+    ? await supabase.from("departments").select("id,code").in("id", ccDepartmentIds)
+    : { data: [] as { id: string; code: string }[] };
+
   const canOperate = await hasPermission(employee.role_id, "requests.operate");
   const pendingStep = [...(request.approval_steps ?? [])]
     .sort((a, b) => a.step_order - b.step_order)
@@ -86,7 +93,10 @@ export default async function RequestDetailPage({
             <h2>{request.title}</h2>
             <p>{request.request_type?.name_th} · ผู้ขอ {employeeName(request.requester)}</p>
           </div>
-          <StatusBadge status={request.status} />
+          <div className="detail-header-actions">
+            {isManagementRequest && <Link className="btn secondary small" href={`/requests/${request.id}/print`}>พิมพ์ฟอร์ม PP01-FM08</Link>}
+            <StatusBadge status={request.status} />
+          </div>
         </div>
       </section>
 
@@ -101,6 +111,16 @@ export default async function RequestDetailPage({
               {Object.entries(details).map(([key, value]) => (
                 <div className="definition" key={key}><dt>{detailLabels[key] ?? key}</dt><dd>{value}</dd></div>
               ))}
+              {isManagementRequest && (ccDepartments?.length || details.cc_other_note) ? (
+                <div className="definition">
+                  <dt>สำเนาถึงแผนก</dt>
+                  <dd>
+                    {[...(ccDepartments ?? []).map((d) => d.code), details.cc_other_note ? `อื่นๆ: ${details.cc_other_note}` : null]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </dd>
+                </div>
+              ) : null}
               <div className="definition"><dt>ผู้รับผิดชอบ</dt><dd>{employeeName(request.assignee)}</dd></div>
             </dl>
           </section>
@@ -132,6 +152,7 @@ export default async function RequestDetailPage({
                 <div className="form-actions">
                   <button className="btn danger" name="decision" value="rejected">ไม่อนุมัติ</button>
                   <button className="btn warning" name="decision" value="more_info">ขอข้อมูลเพิ่ม</button>
+                  {isManagementRequest && <button className="btn secondary" name="decision" value="acknowledged">รับทราบข้อมูล</button>}
                   <button className="btn success" name="decision" value="approved">อนุมัติ</button>
                 </div>
               </form>
