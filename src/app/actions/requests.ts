@@ -259,7 +259,7 @@ export async function approvalDecisionAction(formData: FormData) {
   if (!step || step.status !== "pending") throw new Error("Approval step is no longer pending");
   const { data: approvalRequest } = await admin
     .from("requests")
-    .select("requester_id,request_no,current_step,status")
+    .select("requester_id,request_no,current_step,status,title,cc_department_ids")
     .eq("id", step.request_id)
     .single();
   if (!approvalRequest || approvalRequest.status !== "pending_approval" || approvalRequest.current_step !== step.step_order) {
@@ -323,6 +323,30 @@ export async function approvalDecisionAction(formData: FormData) {
         current_step: 0,
         last_changed_by: employee.id,
       }).eq("id", step.request_id);
+
+      // อนุมัติผ่านครบทุกขั้นแล้ว — ส่งสำเนาให้พนักงาน active ทุกคนของแผนกที่ถูกติ๊กไว้ตอนสร้าง
+      // คำร้อง (requests.cc_department_ids) ถ้ามี เหมือนกับที่ app_approval_decision ทำฝั่ง Pilot Web
+      const ccDepartmentIds = approvalRequest?.cc_department_ids ?? [];
+      if (ccDepartmentIds.length) {
+        const { data: ccEmployees } = await admin
+          .from("employees")
+          .select("id")
+          .eq("is_active", true)
+          .in("department_id", ccDepartmentIds);
+        const ccRecipients = (ccEmployees ?? []).map((row) => row.id);
+        if (ccRecipients.length) {
+          await admin.from("notifications").insert(ccRecipients.map((recipientId) => ({
+            recipient_id: recipientId,
+            request_id: step.request_id,
+            title: "ได้รับสำเนาคำร้อง",
+            body: `${approvalRequest?.request_no} · ${approvalRequest?.title}`,
+            action_url: `/requests/${step.request_id}`,
+          })));
+          await Promise.allSettled(ccRecipients.map((recipientId) =>
+            notifyEmployeeByEmail(recipientId, `ได้รับสำเนาคำร้อง\n${approvalRequest?.request_no} · ${approvalRequest?.title}`),
+          ));
+        }
+      }
     }
   }
 
