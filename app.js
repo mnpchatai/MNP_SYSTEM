@@ -601,15 +601,15 @@ function repairStatusBadge(request, steps) {
 // แถวกรอกอะไหล่/วัสดุหนึ่งรายการในฟอร์มบันทึกผลการซ่อม — โครงเดียวกับ maintRecord.parts[] ของ
 // ระบบ Maintanance-MT เดิม (name/qty/unit/price/shop/note) ใช้ซ้ำทั้งตอนสร้างแถวแรกและกด "+ เพิ่มรายการ"
 // เรนเดอร์เป็นแถวตาราง (ลำดับ/รายการ/จำนวน/หน่วย/ราคา/ชื่อร้าน/หมายเหตุ) ให้หน้าตาตรงกับฟอร์มกระดาษเดิม
-function partsRowHtml() {
+function partsRowHtml(item = {}) {
   return `<tr class="parts-row">
     <td class="parts-row-no"></td>
-    <td><input class="input" type="text" maxlength="200" placeholder="รายการอะไหล่/วัสดุที่ใช้" aria-label="รายการ" data-part-field="name"></td>
-    <td><input class="input" type="text" maxlength="50" placeholder="จำนวน" aria-label="จำนวน" data-part-field="qty"></td>
-    <td><input class="input" type="text" maxlength="50" placeholder="หน่วย" aria-label="หน่วย" data-part-field="unit"></td>
-    <td><input class="input" type="text" maxlength="50" placeholder="ราคา" aria-label="ราคา" data-part-field="price"></td>
-    <td><input class="input" type="text" maxlength="200" placeholder="ชื่อร้าน" aria-label="ชื่อร้าน" data-part-field="shop"></td>
-    <td><input class="input" type="text" maxlength="500" placeholder="หมายเหตุ" aria-label="หมายเหตุ" data-part-field="note"></td>
+    <td><input class="input" type="text" maxlength="200" placeholder="รายการอะไหล่/วัสดุที่ใช้" aria-label="รายการ" data-part-field="name" value="${escapeHtml(item.name ?? "")}"></td>
+    <td><input class="input" type="text" maxlength="50" placeholder="จำนวน" aria-label="จำนวน" data-part-field="qty" value="${escapeHtml(item.qty ?? "")}"></td>
+    <td><input class="input" type="text" maxlength="50" placeholder="หน่วย" aria-label="หน่วย" data-part-field="unit" value="${escapeHtml(item.unit ?? "")}"></td>
+    <td><input class="input" type="text" maxlength="50" placeholder="ราคา" aria-label="ราคา" data-part-field="price" value="${escapeHtml(item.price ?? "")}"></td>
+    <td><input class="input" type="text" maxlength="200" placeholder="ชื่อร้าน" aria-label="ชื่อร้าน" data-part-field="shop" value="${escapeHtml(item.shop ?? "")}"></td>
+    <td><input class="input" type="text" maxlength="500" placeholder="หมายเหตุ" aria-label="หมายเหตุ" data-part-field="note" value="${escapeHtml(item.note ?? "")}"></td>
     <td class="parts-row-actions"><button type="button" class="btn danger small parts-row-remove" aria-label="ลบรายการนี้">ลบ</button></td>
   </tr>`;
 }
@@ -2132,10 +2132,10 @@ async function renderRequestDetail(params) {
           ${!step.done_on && canRecordProgress ? `<button type="button" class="btn warning small progress-button" data-step="${escapeHtml(step.id)}">บันทึกวันนี้</button>` : ""}
         </div>`).join("")}</div></section>` : ""}
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
-        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ แล้วส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
-          <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required></textarea></div>
-          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${partsRowHtml()}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file"><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
-          <div class="form-actions"><button class="btn success" type="submit">บันทึกและส่งตรวจรับ</button></div>
+        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
+          <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file"><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
+          <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
       </div>
@@ -2256,27 +2256,41 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
   });
+  // แถวที่ไม่ได้กรอกชื่ออะไหล่ถือว่าเป็นแถวว่างที่เผื่อไว้ ไม่ส่งไป — RPC ก็กรองซ้ำอีกชั้นเช่นกัน
+  const collectFinishPartsUsedItems = () => [...document.querySelectorAll("#finish-parts-rows .parts-row")]
+    .map((row) => ({
+      name: row.querySelector('[data-part-field="name"]').value.trim(),
+      qty: row.querySelector('[data-part-field="qty"]').value.trim(),
+      unit: row.querySelector('[data-part-field="unit"]').value.trim(),
+      price: row.querySelector('[data-part-field="price"]').value.trim(),
+      shop: row.querySelector('[data-part-field="shop"]').value.trim(),
+      note: row.querySelector('[data-part-field="note"]').value.trim(),
+    }))
+    .filter((item) => item.name);
+  document.querySelector("#finish-save-button")?.addEventListener("click", async () => {
+    const form = document.querySelector("#finish-form");
+    setFormBusy(form, true);
+    try {
+      const { error } = await sb.rpc("app_save_repair_work_progress", {
+        p_request_id: id,
+        p_cause_analysis: document.querySelector("#finish-cause").value.trim(),
+        p_parts_used_items: collectFinishPartsUsedItems(),
+      });
+      if (error) throw error;
+      showToast("บันทึกข้อมูลแล้ว");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
+  });
   document.querySelector("#finish-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
-    // แถวที่ไม่ได้กรอกชื่ออะไหล่ถือว่าเป็นแถวว่างที่เผื่อไว้ ไม่ส่งไป — RPC ก็กรองซ้ำอีกชั้นเช่นกัน
-    const partsUsedItems = [...document.querySelectorAll("#finish-parts-rows .parts-row")]
-      .map((row) => ({
-        name: row.querySelector('[data-part-field="name"]').value.trim(),
-        qty: row.querySelector('[data-part-field="qty"]').value.trim(),
-        unit: row.querySelector('[data-part-field="unit"]').value.trim(),
-        price: row.querySelector('[data-part-field="price"]').value.trim(),
-        shop: row.querySelector('[data-part-field="shop"]').value.trim(),
-        note: row.querySelector('[data-part-field="note"]').value.trim(),
-      }))
-      .filter((item) => item.name);
     setFormBusy(form, true);
     try {
       const { error } = await sb.rpc("app_finish_repair_work", {
         p_request_id: id,
         p_cause_analysis: String(values.get("cause_analysis") ?? "").trim(),
-        p_parts_used_items: partsUsedItems,
+        p_parts_used_items: collectFinishPartsUsedItems(),
       });
       if (error) throw error;
       triggerNotificationEmails(id);
