@@ -25,6 +25,7 @@ const state = { session: null, employee: null, unread: 0, authMode: "login", dir
 // ผู้จัดการแผนก/พนักงานทั่วไป/ผู้ดูแลระบบ — รายชื่อ/ป้ายกำกับดึงจากตาราง roles เสมอ ที่นี่
 // เก็บแค่ code ที่ใช้เทียบสิทธิ์ฝั่ง UI (สิทธิ์จริงบังคับที่ฐานข้อมูลอยู่แล้วผ่าน RLS/RPC)
 const VIEW_ALL_ROLE_CODES = ["factory_manager", "general_manager"]; // มี requests.view_all เหมือน admin
+const DEPT_MANAGER_ROLE_CODES = ["department_manager", "assistant_department_manager"]; // ผู้ช่วยทำแทนผู้จัดการแผนกได้ (ตรงกับ RPC)
 const OPERATE_ROLE_CODES = ["assistant_factory_manager", "factory_manager", "general_manager"]; // มี requests.operate
 const accountRequestKindLabels = {
   new_account: "ขอเปิดบัญชี",
@@ -1130,7 +1131,7 @@ async function getMyRepairActionItems() {
     .map((item) => ({ ...item, request_type: relation(item.request_type) }))
     .filter((request) => {
       if (request.status === "pending_assign") {
-        return employee.role?.code === "department_manager" && employee.department_id === request.request_type?.owning_department_id;
+        return DEPT_MANAGER_ROLE_CODES.includes(employee.role?.code) && employee.department_id === request.request_type?.owning_department_id;
       }
       if (request.status === "pending_verify") return request.requester_id === employee.id;
       // assigned, in_progress — ช่างทุกคนในชุดต้องเห็นงานของตัวเอง ไม่ใช่เฉพาะคนแรก
@@ -2138,7 +2139,7 @@ async function renderRequestDetail(params) {
   const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status);
   const technicians = isRepair ? [...directory.entries()].filter(([, person]) => person.is_active && person.department_id === type.owning_department_id) : [];
   // สเปก: ผจก.ซ่อมบำรุงแก้รายชื่อช่างได้ทุกสถานะ ยกเว้นใบที่ถูกปฏิเสธ และต้องอนุมัติครบก่อน
-  const isOwningDeptManager = employee.role?.code === "department_manager"
+  const isOwningDeptManager = DEPT_MANAGER_ROLE_CODES.includes(employee.role?.code)
     && employee.department_id === type?.owning_department_id;
   // การแจกจ่ายงานเป็นหน้าที่ ผจก.แผนกซ่อมบำรุงคนเดียว — ห้ามใช้ isAdmin ตรงนี้เพราะมันรวม
   // factory_manager/general_manager ซึ่งไม่ควรเข้ามายุ่งในขั้นตอนของช่าง (ตรงกับ

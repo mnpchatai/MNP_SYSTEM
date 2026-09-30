@@ -2,7 +2,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(4);
+select plan(8);
 
 select results_eq(
   $$ select name_th from public.roles where code = 'assistant_department_manager' $$,
@@ -30,6 +30,28 @@ select is_empty(
        join public.permissions p on p.id = rp.permission_id
      where p.code in ('accounts.manage', 'requests.view_all') $$,
   'has no admin-level or view-all permission'
+);
+
+-- ทำแทนผู้จัดการแผนกได้ในฟังก์ชันที่ตรวจ role code (ต้องไม่เหลือนิยามที่รู้จักแค่ department_manager)
+select unlike(
+  pg_get_functiondef('private.owning_department_managers(uuid)'::regprocedure),
+  '%code = ''department_manager''%',
+  'owning_department_managers no longer matches department_manager alone'
+);
+select like(
+  pg_get_functiondef('private.owning_department_managers(uuid)'::regprocedure),
+  '%assistant_department_manager%',
+  'owning_department_managers includes assistant_department_manager'
+);
+select like(
+  pg_get_functiondef('public.app_start_repair_work(uuid)'::regprocedure),
+  '%assistant_department_manager%',
+  'app_start_repair_work allows assistant_department_manager'
+);
+select like(
+  pg_get_functiondef('private.can_access_request(uuid)'::regprocedure),
+  '%assistant_department_manager%',
+  'can_access_request allows assistant_department_manager'
 );
 
 select * from finish();
