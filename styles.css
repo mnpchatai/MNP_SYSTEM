@@ -830,3 +830,14 @@ body.no-scroll { overflow: hidden; }
   .request-facts { grid-template-columns: 1fr; }
   .request-fact.wide { grid-column: auto; }
 }
+
+/* ช่องรหัสผ่านที่กดแสดง/ซ่อนได้ */
+.password-wrap { position: relative; display: block; }
+.password-wrap .input { padding-right: 46px; }
+.password-toggle {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 44px;
+  display: grid; place-items: center; padding: 0;
+  color: var(--muted); background: transparent; border: 0; border-radius: 0 8px 8px 0; cursor: pointer;
+}
+.password-toggle:hover { color: var(--ink); }
+.password-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }

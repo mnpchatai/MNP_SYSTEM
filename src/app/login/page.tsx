@@ -4,6 +4,7 @@ import { signInAction } from "@/app/actions/auth";
 import { SubmitButton } from "@/components/submit-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { getCurrentUser } from "@/lib/auth";
+import { PasswordInput } from "@/components/password-input";
 
 export default async function LoginPage({
   searchParams,
@@ -54,7 +55,7 @@ export default async function LoginPage({
           </div>
           <div className="field">
             <label htmlFor="password">รหัสผ่าน</label>
-            <input className="input" id="password" name="password" type="password" autoComplete="current-password" required />
+            <PasswordInput id="password" name="password" autoComplete="current-password" required />
           </div>
           <SubmitButton pendingLabel="กำลังเข้าสู่ระบบ...">เข้าสู่ระบบ</SubmitButton>
         </form>
