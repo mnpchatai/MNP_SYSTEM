@@ -1184,29 +1184,34 @@ async function renderDashboard() {
     .limit(20);
   // เดิมกรอง requester_id ทิ้งเหมือนหน้าคำร้อง ทำให้การ์ดสรุปและ "ความเคลื่อนไหวล่าสุด"
   // ของหัวหน้าแผนก/ช่างเป็นศูนย์ทั้งหน้า — ปล่อยให้ RLS เป็นตัวตัดสินเหมือนกัน
-  const [requestsResult, typesResult, pending, repairTasks, directory, myRequestsResult] = await Promise.all([
+  const [requestsResult, typesResult, pending, repairTasks, directory, myRequestsResult, inProgressResult, completedResult] = await Promise.all([
     requestsQuery,
     sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
     getPendingApprovals(),
     getMyRepairActionItems(),
     loadEmployeeDirectory(),
     sb.from("requests").select("id", { count: "exact", head: true }).eq("requester_id", employee.id),
+    // นับจริงจากฐานข้อมูล (ตาม RLS) ไม่ใช่จาก 20 ใบล่าสุด เพื่อให้ตัวเลขตรงกับรายการที่เปิดดูจากการ์ด
+    sb.from("requests").select("id", { count: "exact", head: true }).in("status", ["approved", "in_progress"]),
+    sb.from("requests").select("id", { count: "exact", head: true }).eq("status", "completed"),
   ]);
   if (requestsResult.error) throw requestsResult.error;
   if (typesResult.error) throw typesResult.error;
   if (myRequestsResult.error) throw myRequestsResult.error;
+  if (inProgressResult.error) throw inProgressResult.error;
+  if (completedResult.error) throw completedResult.error;
   const requests = requestsResult.data ?? [];
   const myRequestCount = myRequestsResult.count ?? 0;
-  const inProgress = requests.filter((item) => ["approved", "in_progress"].includes(item.status)).length;
-  const completed = requests.filter((item) => item.status === "completed").length;
+  const inProgress = inProgressResult.count ?? 0;
+  const completed = completedResult.count ?? 0;
   const actionableCount = pending.length + repairTasks.length;
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Pilot workspace</div><h1>สวัสดี, ${escapeHtml(employee.first_name)}</h1><p>ภาพรวมรายการที่เกี่ยวข้องกับคุณและงานที่ต้องดำเนินการ</p></div><span class="muted small">${formatDate(new Date(), false)}</span></div>
     <section class="summary-grid">
       <a class="summary" href="#/approvals"><span>งานที่ต้องจัดการ</span><strong>${actionableCount}</strong><small>${actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง"}</small></a>
       <a class="summary" href="#/requests?scope=mine"><span>รายการคำร้องของฉัน</span><strong>${myRequestCount}</strong><small>เฉพาะที่คุณเป็นผู้แจ้ง</small></a>
-      <div class="summary"><span>กำลังดำเนินการ</span><strong>${inProgress}</strong><small>อนุมัติแล้วหรือกำลังทำ</small></div>
-      <div class="summary"><span>เสร็จแล้ว</span><strong>${completed}</strong><small>ปิดงานเรียบร้อย</small></div>
+      <a class="summary" href="#/requests?status=approved%2Cin_progress"><span>กำลังดำเนินการ</span><strong>${inProgress}</strong><small>อนุมัติแล้วหรือกำลังทำ</small></a>
+      <a class="summary" href="#/requests?status=completed"><span>เสร็จแล้ว</span><strong>${completed}</strong><small>ปิดงานเรียบร้อย</small></a>
     </section>
     <div class="dashboard-grid">
       <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory })}</section>
@@ -1305,7 +1310,12 @@ async function renderRequests(params) {
     .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
-  if (status !== "all") query = query.eq("status", status);
+  // status รับได้หลายค่าคั่นด้วยจุลภาค (การ์ด "กำลังดำเนินการ" ในหน้าหลักนับ approved + in_progress)
+  // กรองเฉพาะค่าที่รู้จัก เพื่อไม่ให้ค่าแปลกปลอมจาก URL ไปถึง query
+  const knownStatuses = REQUEST_STATUS_FILTERS.map(([value]) => value).filter((value) => value !== "all");
+  const statuses = status.split(",").filter((value) => knownStatuses.includes(value));
+  if (status !== "all" && statuses.length === 1) query = query.eq("status", statuses[0]);
+  else if (status !== "all" && statuses.length > 1) query = query.in("status", statuses);
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
   const title = mineOnly
