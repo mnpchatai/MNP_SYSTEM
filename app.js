@@ -1184,16 +1184,19 @@ async function renderDashboard() {
     .limit(20);
   // เดิมกรอง requester_id ทิ้งเหมือนหน้าคำร้อง ทำให้การ์ดสรุปและ "ความเคลื่อนไหวล่าสุด"
   // ของหัวหน้าแผนก/ช่างเป็นศูนย์ทั้งหน้า — ปล่อยให้ RLS เป็นตัวตัดสินเหมือนกัน
-  const [requestsResult, typesResult, pending, repairTasks, directory] = await Promise.all([
+  const [requestsResult, typesResult, pending, repairTasks, directory, myRequestsResult] = await Promise.all([
     requestsQuery,
     sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
     getPendingApprovals(),
     getMyRepairActionItems(),
     loadEmployeeDirectory(),
+    sb.from("requests").select("id", { count: "exact", head: true }).eq("requester_id", employee.id),
   ]);
   if (requestsResult.error) throw requestsResult.error;
   if (typesResult.error) throw typesResult.error;
+  if (myRequestsResult.error) throw myRequestsResult.error;
   const requests = requestsResult.data ?? [];
+  const myRequestCount = myRequestsResult.count ?? 0;
   const inProgress = requests.filter((item) => ["approved", "in_progress"].includes(item.status)).length;
   const completed = requests.filter((item) => item.status === "completed").length;
   const actionableCount = pending.length + repairTasks.length;
@@ -1201,7 +1204,7 @@ async function renderDashboard() {
     <div class="page-heading"><div><div class="eyebrow">Pilot workspace</div><h1>สวัสดี, ${escapeHtml(employee.first_name)}</h1><p>ภาพรวมรายการที่เกี่ยวข้องกับคุณและงานที่ต้องดำเนินการ</p></div><span class="muted small">${formatDate(new Date(), false)}</span></div>
     <section class="summary-grid">
       <a class="summary" href="#/approvals"><span>งานที่ต้องจัดการ</span><strong>${actionableCount}</strong><small>${actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง"}</small></a>
-      <div class="summary"><span>รายการที่มองเห็น</span><strong>${requests.length}</strong><small>ตามสิทธิ์ของบัญชีนี้</small></div>
+      <a class="summary" href="#/requests?scope=mine"><span>รายการคำร้องของฉัน</span><strong>${myRequestCount}</strong><small>เฉพาะที่คุณเป็นผู้แจ้ง</small></a>
       <div class="summary"><span>กำลังดำเนินการ</span><strong>${inProgress}</strong><small>อนุมัติแล้วหรือกำลังทำ</small></div>
       <div class="summary"><span>เสร็จแล้ว</span><strong>${completed}</strong><small>ปิดงานเรียบร้อย</small></div>
     </section>
@@ -1306,7 +1309,7 @@ async function renderRequests(params) {
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
   const title = mineOnly
-    ? "คำร้องที่ฉันแจ้ง"
+    ? "รายการคำร้องของฉัน"
     : OPERATE_ROLE_CODES.includes(role) && !VIEW_ALL_ROLE_CODES.includes(role)
       ? "งานดำเนินการ"
       : (role === "admin" || VIEW_ALL_ROLE_CODES.includes(role)) ? "คำร้องทั้งหมด" : "คำร้องที่เกี่ยวข้องกับฉัน";
