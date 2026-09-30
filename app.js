@@ -815,6 +815,7 @@ const pilotAuthMessages = {
   INVALID_PASSWORD: "รหัสผ่านต้องมี 8–72 ตัวอักษร",
   INVALID_NAME: "กรุณากรอกชื่อและนามสกุล",
   INVALID_POSITION: "กรุณาเลือกตำแหน่งในแผนก",
+  INVALID_EMAIL: "กรุณากรอกอีเมลให้ถูกต้อง",
   DEPARTMENT_NOT_FOUND: "ไม่พบแผนกที่เลือก",
   EMPLOYEE_NO_TAKEN: "รหัสพนักงานนี้ถูกใช้แล้ว",
   REQUEST_ALREADY_PENDING: "มีคำร้องของรหัสพนักงานนี้รออนุมัติอยู่แล้ว",
@@ -876,7 +877,7 @@ async function renderAuth(message = "") {
     </div>
     <div class="field"><label for="job-title">ชื่อตำแหน่งงาน (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
     <div class="field-row">
-      <div class="field"><label for="email">อีเมล (ถ้ามี)</label><input class="input" id="email" name="email" type="email" maxlength="200"></div>
+      <div class="field"><label for="email">อีเมล</label><input class="input" id="email" name="email" type="email" maxlength="200" required autocomplete="email"></div>
       <div class="field"><label for="phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="phone" name="phone" maxlength="40"></div>
     </div>`;
 

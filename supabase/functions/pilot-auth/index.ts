@@ -190,8 +190,11 @@ Deno.serve(async (request) => {
     if (!desiredRoleId) {
       return response(request, { error: "INVALID_POSITION" }, 400);
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanText(body.email, 200))) {
+      return response(request, { error: "INVALID_EMAIL" }, 400);
+    }
 
-    const { data: department } = await admin
+    const { data: department }= await admin
       .from("departments")
       .select("id")
       .eq("id", departmentId)
