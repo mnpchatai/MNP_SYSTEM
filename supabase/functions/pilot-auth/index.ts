@@ -194,7 +194,7 @@ Deno.serve(async (request) => {
       return response(request, { error: "INVALID_EMAIL" }, 400);
     }
 
-    const { data: department }= await admin
+    const { data: department } = await admin
       .from("departments")
       .select("id")
       .eq("id", departmentId)
