@@ -1699,7 +1699,13 @@ async function renderNewRequest(params) {
             return;
           }
         }
-        showToast(attachment ? "สร้างคำร้องและแนบไฟล์สำเร็จ" : "สร้างคำร้องสำเร็จ");
+        // ใบคำร้องถึงฝ่ายบริหารให้เห็นเลขที่เอกสารทันทีหลังสร้าง เป็นจุดชี้บ่งใบนั้นๆ
+        let docNoSuffix = "";
+        if (selected.code === "MANAGEMENT") {
+          const { data: created } = await sb.from("requests").select("request_no").eq("id", data).maybeSingle();
+          if (created?.request_no) docNoSuffix = ` · เลขที่ ${created.request_no}`;
+        }
+        showToast(`${attachment ? "สร้างคำร้องและแนบไฟล์สำเร็จ" : "สร้างคำร้องสำเร็จ"}${docNoSuffix}`);
         go(`request?id=${encodeURIComponent(data)}`);
       } catch (submitError) {
         document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;

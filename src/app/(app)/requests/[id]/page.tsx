@@ -84,7 +84,11 @@ export default async function RequestDetailPage({
 
   return (
     <>
-      {messages.created && <div className="form-message success">สร้างและส่งคำร้องเรียบร้อยแล้ว</div>}
+      {messages.created && (
+        <div className="form-message success">
+          สร้างและส่งคำร้องเรียบร้อยแล้ว{isManagementRequest && <> · เลขที่เอกสาร <strong>{request.request_no}</strong></>}
+        </div>
+      )}
       {messages.error && <div className="form-message error">{messages.error}</div>}
       <section className="detail-header">
         <div className="detail-header-top">
