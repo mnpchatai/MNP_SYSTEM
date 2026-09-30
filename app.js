@@ -826,6 +826,7 @@ const pilotAuthMessages = {
   AUTH_REQUIRED: "กรุณาเข้าสู่ระบบใหม่",
   DIRECTORY_UNAVAILABLE: "โหลดข้อมูลแผนกไม่สำเร็จ",
   session_not_found: "เซสชันนี้ถูกยกเลิกเพราะรหัสผ่านถูกเปลี่ยน กรุณาเข้าสู่ระบบใหม่",
+  INVALID_SETUP_TOKEN: "ลิงก์ตั้งรหัสผ่านไม่ถูกต้อง หมดอายุ หรือถูกใช้ไปแล้ว กรุณาติดต่อผู้ดูแลระบบเพื่อขอตั้งรหัสผ่านใหม่",
 };
 
 async function callPilotAuth(payload, accessToken) {
@@ -3100,14 +3101,84 @@ function renderNotFound(message = "ไม่พบหน้าที่ต้อ
   if (state.employee) bindShell();
 }
 
+/* หน้าตั้งรหัสผ่านใหม่จากลิงก์ในอีเมลยืนยันการอนุมัติสิทธิ์ (#/set-password?token=...)
+   เปิดได้โดยไม่ต้องล็อกอิน โทเค็นเป็นหลักฐานตัวตน ตรวจและใช้ที่ฝั่ง pilot-auth (ใช้ได้ครั้งเดียว/หมดอายุ)
+   สำเร็จแล้วล้างโทเค็นออกจาก URL แล้วพาไปหน้าเข้าสู่ระบบ */
+async function renderSetPassword(params) {
+  const token = String(params.get("token") ?? "").trim();
+  let employeeNo = "";
+  let errorMessage = "";
+  try {
+    if (!token) throw new Error(pilotAuthMessages.INVALID_SETUP_TOKEN);
+    employeeNo = String((await callPilotAuth({ action: "password_setup_info", token })).employeeNo ?? "");
+  } catch (error) {
+    errorMessage = friendlyError(error);
+  }
+
+  app.innerHTML = `
+    <main class="auth-page">
+      <section class="auth-aside">
+        <div class="brand"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
+        <div class="auth-copy">
+          <div class="eyebrow">Account setup</div>
+          <h1>ตั้งรหัสผ่านใหม่<br>สำหรับเข้าใช้งาน</h1>
+          <p>ผู้ดูแลระบบอนุมัติสิทธิ์เข้าใช้งานของคุณแล้ว ตั้งรหัสผ่านใหม่ได้ที่หน้านี้ ลิงก์ใช้ได้ครั้งเดียว</p>
+        </div>
+      </section>
+      <section class="auth-panel">
+        <div class="theme-button">${themeButton()}</div>
+        <div class="auth-card">
+          <h2>ตั้งรหัสผ่านใหม่</h2>
+          <div id="auth-message">${errorMessage ? `<div class="form-message error">${escapeHtml(errorMessage)}</div>` : ""}</div>
+          ${errorMessage ? `<a class="btn secondary block" href="#/dashboard" id="setup-back">กลับไปหน้าเข้าสู่ระบบ</a>` : `
+          <form id="setup-form">
+            <div class="field"><label for="setup-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="setup-employee-no" value="${escapeHtml(employeeNo)}" autocomplete="username" readonly></div>
+            <div class="field"><label for="setup-password">รหัสผ่านใหม่</label><input class="input" id="setup-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
+            <div class="field"><label for="setup-confirm">ยืนยันรหัสผ่านใหม่</label><input class="input" id="setup-confirm" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+            <button class="btn block" type="submit">ตั้งรหัสผ่านและไปหน้าเข้าสู่ระบบ</button>
+          </form>`}
+        </div>
+      </section>
+    </main>`;
+
+  document.querySelector(".theme-toggle")?.addEventListener("click", toggleTheme);
+  document.querySelector("#setup-back")?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    history.replaceState(null, "", location.pathname + location.search);
+    await renderRoute();
+  });
+  document.querySelector("#setup-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const message = document.querySelector("#auth-message");
+    const values = new FormData(form);
+    const password = String(values.get("password") ?? "");
+    if (password !== String(values.get("confirm_password") ?? "")) {
+      message.innerHTML = `<div class="form-message error">รหัสผ่านทั้งสองช่องไม่ตรงกัน</div>`;
+      return;
+    }
+    setFormBusy(form, true);
+    message.innerHTML = "";
+    try {
+      const result = await callPilotAuth({ action: "password_setup_complete", token, password });
+      history.replaceState(null, "", location.pathname + location.search);
+      await forceReLogin(`ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว เข้าสู่ระบบด้วย ID ${result.employeeNo ?? employeeNo} และรหัสผ่านใหม่ได้ทันที`);
+    } catch (error) {
+      message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
+      setFormBusy(form, false);
+    }
+  });
+}
+
 async function renderRoute() {
+  const { path, params } = currentRoute();
+  if (path === "set-password") return await renderSetPassword(params);
   if (!state.session) {
     await renderAuth();
     return;
   }
   if (!state.employee) await loadEmployee();
   await loadUnread();
-  const { path, params } = currentRoute();
   try {
     if (path === "dashboard") return await renderDashboard();
     if (path === "requests") return await renderRequests(params);

@@ -334,19 +334,63 @@ function fieldsFor(detail: RequestDetail | undefined): Field[] {
   return fields;
 }
 
-function buildMessage(row: PendingNotification, detail: RequestDetail | undefined): Message {
+/* ---------- ลิงก์ตั้งรหัสผ่านใหม่ (อีเมลยืนยันการอนุมัติสิทธิ์) ---------- */
+
+// อีเมลยืนยันการอนุมัติสิทธิ์แนบ "ID + ลิงก์ตั้งรหัสผ่านใหม่" ไม่ส่งรหัสผ่านตัวจริงออกทางอีเมลเด็ดขาด
+// โทเค็นสร้างตอนส่งเท่านั้น เก็บในฐานข้อมูลเป็น SHA-256 (ตาราง password_setup_tokens เข้าถึงได้เฉพาะ
+// service role) ใช้ได้ครั้งเดียวและหมดอายุใน SETUP_TOKEN_DAYS วัน ใส่ไว้ใน fragment (#) ของ URL
+// จึงไม่ถูกส่งไปกับ request ที่เซิร์ฟเวอร์/CDN บันทึก log
+const SETUP_TOKEN_DAYS = 7;
+
+function toBase64Url(bytes: Uint8Array) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+type SetupInfo = { employeeNo: string; link: string; days: number };
+
+async function issueSetupLink(admin: Admin, employeeId: string, employeeNo: string): Promise<SetupInfo> {
+  const token = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const expiresAt = new Date(Date.now() + SETUP_TOKEN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  // ลิงก์เก่าที่ยังไม่ได้ใช้ของคนเดียวกันถูกแทนที่ด้วยฉบับล่าสุด (retry/ส่งซ้ำ จึงไม่มีลิงก์ค้างหลายอัน)
+  const { error: cleanError } = await admin
+    .from("password_setup_tokens")
+    .delete()
+    .eq("employee_id", employeeId)
+    .is("used_at", null);
+  if (cleanError) throw new Error(`SETUP_TOKEN_CLEAN_FAILED:${cleanError.message}`);
+
+  const { error } = await admin.from("password_setup_tokens").insert({
+    employee_id: employeeId,
+    token_hash: await sha256Hex(token),
+    expires_at: expiresAt,
+  });
+  if (error) throw new Error(`SETUP_TOKEN_CREATE_FAILED:${error.message}`);
+
+  return { employeeNo, link: `${appBaseUrl()}/#/set-password?token=${token}`, days: SETUP_TOKEN_DAYS };
+}
+
+function buildMessage(row: PendingNotification, detail: RequestDetail | undefined, setup?: SetupInfo): Message {
   const accent = accentFor(row.title);
   const body = localizeStatuses(row.body ?? "");
-  const link = linkFor(row);
-  const fields = fieldsFor(detail);
+  const link = setup ? setup.link : linkFor(row);
+  const fields = setup ? [{ label: "ID เข้าใช้งาน", value: setup.employeeNo }] : fieldsFor(detail);
   const ref = detail?.request_no ? ` · ${detail.request_no}` : "";
 
   // ชื่อโมดูลคือคำที่ผู้ใช้จำได้จากหน้าเลือกประเภทคำร้อง (ใบคำร้อง/แจ้งซ่อม MT, NCR/CAR ฯลฯ)
   // ขึ้นต้นประโยคด้วยคำนี้ ผู้รับจึงรู้ว่าเรื่องอะไรตั้งแต่บรรทัดแรก ไม่ต้องอ่านต่อ
   const moduleName = relation(detail?.request_type ?? null)?.name_th?.trim() || null;
-  const lead = moduleName && accent.withModule ? accent.withModule(moduleName) : accent.lead;
+  const lead = setup
+    ? "ผู้ดูแลระบบอนุมัติสิทธิ์เข้าใช้งานระบบของคุณเรียบร้อยแล้ว"
+    : moduleName && accent.withModule ? accent.withModule(moduleName) : accent.lead;
 
   const subject = `${accent.emoji} ${row.title}${ref}`;
+  const loginLink = appBaseUrl();
 
   const text = [
     `${accent.emoji} ${row.title}`,
@@ -355,8 +399,17 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
     body ? `\n${body}` : "",
     fields.length ? "\n" + fields.map((f) => `${f.label}: ${f.value}`).join("\n") : "",
     "",
-    "เปิดหน้ารายการนี้เพื่อดำเนินการต่อ:",
-    link,
+    ...(setup
+      ? [
+        "ตั้งรหัสผ่านใหม่ (ลิงก์ใช้ได้ครั้งเดียว และหมดอายุใน " + setup.days + " วัน):",
+        link,
+        "",
+        "หากจำรหัสผ่านที่ตั้งไว้ตอนขอเปิดบัญชีได้ สามารถเข้าสู่ระบบด้วย ID ข้างต้นได้ทันทีโดยไม่ต้องตั้งใหม่:",
+        loginLink,
+        "",
+        "เพื่อความปลอดภัย ระบบไม่ส่งรหัสผ่านทางอีเมล และอย่าส่งต่ออีเมลฉบับนี้ให้ผู้อื่น",
+      ]
+      : ["เปิดหน้ารายการนี้เพื่อดำเนินการต่อ:", link]),
     "",
     "— อีเมลฉบับนี้ส่งอัตโนมัติจาก MNP Workspace กรุณาอย่าตอบกลับ",
   ].filter((part) => part !== "").join("\n");
@@ -413,10 +466,11 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
             <td style="padding:22px 28px 6px">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                 <tr><td align="center" style="background:${accent.color};border-radius:9px">
-                  <a href="${escapeHtml(link)}" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none">เปิดหน้ารายการนี้ →</a>
+                  <a href="${escapeHtml(link)}" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none">${setup ? "ตั้งรหัสผ่านใหม่ →" : "เปิดหน้ารายการนี้ →"}</a>
                 </td></tr>
               </table>
-              <p style="margin:12px 0 0;font-size:12px;line-height:1.6;color:#98a2b3">กดปุ่มด้านบนเพื่อเข้าสู่หน้ารายการโดยตรง หากปุ่มใช้ไม่ได้ ให้คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์<br><span style="color:#667085;word-break:break-all">${escapeHtml(link)}</span></p>
+              <p style="margin:12px 0 0;font-size:12px;line-height:1.6;color:#98a2b3">${setup ? `ลิงก์ตั้งรหัสผ่านใช้ได้ครั้งเดียวและหมดอายุใน ${setup.days} วัน หากปุ่มใช้ไม่ได้ ให้คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์` : "กดปุ่มด้านบนเพื่อเข้าสู่หน้ารายการโดยตรง หากปุ่มใช้ไม่ได้ ให้คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์"}<br><span style="color:#667085;word-break:break-all">${escapeHtml(link)}</span></p>
+              ${setup ? `<p style="margin:14px 0 0;font-size:13px;line-height:1.65;color:#344054">หากจำรหัสผ่านที่ตั้งไว้ตอนขอเปิดบัญชีได้ สามารถ <a href="${escapeHtml(loginLink)}" style="color:${accent.color};font-weight:700">เข้าสู่ระบบ</a> ด้วย ID ข้างต้นได้ทันทีโดยไม่ต้องตั้งรหัสผ่านใหม่<br>เพื่อความปลอดภัย ระบบไม่ส่งรหัสผ่านทางอีเมล และโปรดอย่าส่งต่ออีเมลฉบับนี้ให้ผู้อื่น</p>` : ""}
             </td>
           </tr>
 
@@ -441,7 +495,8 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
 
 /* ---------- คิวงาน ---------- */
 
-type RecipientRow = { email: string | null; is_active: boolean } | { email: string | null; is_active: boolean }[] | null;
+type RecipientInfo = { email: string | null; is_active: boolean; employee_no: string | null };
+type RecipientRow = RecipientInfo | RecipientInfo[] | null;
 type PendingNotification = {
   id: string;
   title: string;
@@ -449,6 +504,8 @@ type PendingNotification = {
   request_id: string | null;
   action_url: string | null;
   email_attempts: number;
+  recipient_id: string | null;
+  email_setup_link: boolean;
   recipient: RecipientRow;
 };
 
@@ -466,7 +523,7 @@ async function pendingRows(admin: Admin, requestId: string | null) {
   // ซึ่งไม่มีเมธอดกรองอย่าง eq() ให้ต่อท้ายอีกแล้ว
   const base = admin
     .from("notifications")
-    .select("id, title, body, request_id, action_url, email_attempts, recipient:employees!notifications_recipient_id_fkey(email, is_active)")
+    .select("id, title, body, request_id, action_url, email_attempts, recipient_id, email_setup_link, recipient:employees!notifications_recipient_id_fkey(email, is_active, employee_no)")
     .eq("email_status", "pending")
     .lt("email_attempts", MAX_ATTEMPTS);
   const filtered = requestId ? base.eq("request_id", requestId) : base;
@@ -521,7 +578,12 @@ async function dispatch(admin: Admin, requestId: string | null) {
     }
 
     try {
-      await sendOne(String(recipient!.email), buildMessage(row, row.request_id ? details.get(row.request_id) : undefined));
+      let setup: SetupInfo | undefined;
+      if (row.email_setup_link) {
+        if (!row.recipient_id || !recipient!.employee_no) throw new Error("SETUP_RECIPIENT_INVALID");
+        setup = await issueSetupLink(admin, row.recipient_id, recipient!.employee_no);
+      }
+      await sendOne(String(recipient!.email), buildMessage(row, row.request_id ? details.get(row.request_id) : undefined, setup));
       sent++;
       console.log("notify-email: sent", { requestId, notificationId: row.id, transport, to: recipient!.email });
       await admin.from("notifications").update({

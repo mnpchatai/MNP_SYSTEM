@@ -135,6 +135,7 @@ Deno.serve(async (request) => {
     requestId?: string;
     roleId?: string;
     employeeId?: string;
+    token?: string;
   };
   try {
     body = await request.json();
@@ -387,6 +388,57 @@ Deno.serve(async (request) => {
 
     await dispatchNotificationEmails(supabaseUrl, serviceRoleKey);
     return response(request, { employeeId: applied.data });
+  }
+
+  // ตั้งรหัสผ่านใหม่ด้วยลิงก์ในอีเมลยืนยันการอนุมัติสิทธิ์ — โทเค็นคือหลักฐานตัวตนเพียงอย่างเดียว
+  // (สุ่ม 256 บิต เก็บเป็น SHA-256 ใช้ได้ครั้งเดียว มีวันหมดอายุ) ไม่ต้องล็อกอินก่อน
+  // ข้อความ error ใช้รหัสเดียวกันทุกกรณีที่โทเค็นใช้ไม่ได้ เพื่อไม่บอกว่า "หมดอายุ" หรือ "ไม่เคยมี"
+  if (body.action === "password_setup_info" || body.action === "password_setup_complete") {
+    const rawToken = String(body.token ?? "").trim();
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(rawToken)) {
+      return response(request, { error: "INVALID_SETUP_TOKEN" }, 400);
+    }
+    const tokenHash = await sha256(rawToken);
+
+    if (body.action === "password_setup_info") {
+      const { data, error } = await admin.rpc("app_peek_password_setup_token", { p_token_hash: tokenHash });
+      if (error || !data) return response(request, { error: "INVALID_SETUP_TOKEN" }, 400);
+      return response(request, { employeeNo: String(data) });
+    }
+
+    const newPassword = String(body.password ?? "");
+    if (newPassword.length < 8 || newPassword.length > 72) {
+      return response(request, { error: "INVALID_PASSWORD" }, 400);
+    }
+
+    // ใช้โทเค็นก่อน (atomic) เพื่อกันสองคำขอใช้ลิงก์เดียวกันพร้อมกัน ถ้าเปลี่ยนรหัสไม่สำเร็จจะคืนโทเค็นให้
+    const { data: consumed, error: consumeError } = await admin.rpc("app_consume_password_setup_token", {
+      p_token_hash: tokenHash,
+    });
+    const target = Array.isArray(consumed) ? consumed[0] : consumed;
+    if (consumeError || !target?.auth_user_id) {
+      return response(request, { error: "INVALID_SETUP_TOKEN" }, 400);
+    }
+
+    const { error: updateError } = await admin.auth.admin.updateUserById(String(target.auth_user_id), {
+      password: newPassword,
+    });
+    if (updateError) {
+      console.error(`password setup: updateUserById failed: ${updateError.message}`);
+      await admin.rpc("app_release_password_setup_token", { p_token_hash: tokenHash });
+      return response(request, { error: `PASSWORD_UPDATE_FAILED: ${updateError.message}` }, 400);
+    }
+
+    // คลัง ID/รหัสผ่านต้องตรงกับรหัสผ่านจริงเสมอ (Admin ใช้ตอนผู้ใช้ลืม) ล้มเหลวตรงนี้ต้องไม่ทำให้ผู้ใช้เสียรหัสที่เพิ่งตั้ง
+    const { error: recordError } = await admin.rpc("app_record_self_set_password", {
+      p_employee_id: String(target.employee_id),
+      p_password: newPassword,
+    });
+    if (recordError) {
+      console.error(`password setup: record failed: ${recordError.message}`);
+    }
+
+    return response(request, { employeeNo: String(target.employee_no) });
   }
 
   const employeeNo = String(body.employeeNo ?? "").trim().toUpperCase();
