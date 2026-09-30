@@ -6,7 +6,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(23);
 
 -- 1. สคีมา/ข้อมูลอ้างอิง -------------------------------------------------
 select ok(
@@ -89,6 +89,12 @@ select results_eq(
   $$ select status, current_step from public.requests where title = 'PP01FM08_TEST_ACK' $$,
   $$ values ('pending_approval'::public.request_status, 1) $$,
   'new MANAGEMENT request starts pending_approval at step 1'
+);
+
+select matches(
+  (select request_no from public.requests where title = 'PP01FM08_TEST_ACK'),
+  '^FT [0-9]{3}/[0-9]{2}$',
+  'MANAGEMENT request number uses the FT xxx/yy format'
 );
 
 select results_eq(
