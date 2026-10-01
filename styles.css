@@ -134,6 +134,7 @@ button { cursor: pointer; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .danger-text { color: var(--danger); }
+.required-mark { color: var(--danger); font-weight: 700; }
 .success-text { color: var(--success); }
 
 .boot-screen {

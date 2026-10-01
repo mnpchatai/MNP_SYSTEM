@@ -193,6 +193,10 @@ Deno.serve(async (request) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanText(body.email, 200))) {
       return response(request, { error: "INVALID_EMAIL" }, 400);
     }
+    const phone = cleanText(body.phone, 40);
+    if (!/^[0-9+\-\s]+$/.test(phone) || phone.replace(/\D/g, "").length < 9) {
+      return response(request, { error: "INVALID_PHONE" }, 400);
+    }
 
     const { data: department } = await admin
       .from("departments")
@@ -240,7 +244,7 @@ Deno.serve(async (request) => {
         first_name: firstName,
         last_name: lastName,
         email: cleanText(body.email, 200) || null,
-        phone: cleanText(body.phone, 40) || null,
+        phone,
         department_id: department.id,
         desired_role_id: desiredRoleId,
         job_title: cleanText(body.jobTitle, 120) || null,

@@ -869,6 +869,7 @@ const pilotAuthMessages = {
   INVALID_NAME: "กรุณากรอกชื่อและนามสกุล",
   INVALID_POSITION: "กรุณาเลือกตำแหน่งในแผนก",
   INVALID_EMAIL: "กรุณากรอกอีเมลให้ถูกต้อง",
+  INVALID_PHONE: "กรุณากรอกเบอร์ติดต่อให้ถูกต้อง (อย่างน้อย 9 หลัก)",
   DEPARTMENT_NOT_FOUND: "ไม่พบแผนกที่เลือก",
   EMPLOYEE_NO_TAKEN: "รหัสพนักงานนี้ถูกใช้แล้ว",
   REQUEST_ALREADY_PENDING: "มีคำร้องของรหัสพนักงานนี้รออนุมัติอยู่แล้ว",
@@ -919,19 +920,21 @@ async function renderAuth(message = "") {
   const departments = state.directory?.departments ?? [];
   const roles = state.directory?.roles ?? [];
 
+  // ดอกจันแดงบอกช่องที่ต้องกรอก แสดงเฉพาะฟอร์มขอเปิดบัญชี (ฟอร์มเข้าสู่ระบบมีแค่ 2 ช่องซึ่งต้องกรอกทั้งคู่อยู่แล้ว)
+  const req = isRequest ? ` <span class="required-mark" aria-hidden="true">*</span>` : "";
   const requestFields = `
     <div class="field-row">
-      <div class="field"><label for="first-name">ชื่อ</label><input class="input" id="first-name" name="first_name" maxlength="100" required></div>
-      <div class="field"><label for="last-name">นามสกุล</label><input class="input" id="last-name" name="last_name" maxlength="100" required></div>
+      <div class="field"><label for="first-name">ชื่อ${req}</label><input class="input" id="first-name" name="first_name" maxlength="100" required></div>
+      <div class="field"><label for="last-name">นามสกุล${req}</label><input class="input" id="last-name" name="last_name" maxlength="100" required></div>
     </div>
     <div class="field-row">
-      <div class="field"><label for="department">แผนก</label><select class="input" id="department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
-      <div class="field"><label for="desired-role">ตำแหน่ง</label><select class="input" id="desired-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
+      <div class="field"><label for="department">แผนก${req}</label><select class="input" id="department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
+      <div class="field"><label for="desired-role">ตำแหน่ง${req}</label><select class="input" id="desired-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
     </div>
     <div class="field"><label for="job-title">ชื่อตำแหน่งงาน (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
     <div class="field-row">
-      <div class="field"><label for="email">อีเมล</label><input class="input" id="email" name="email" type="email" maxlength="200" required autocomplete="email"></div>
-      <div class="field"><label for="phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="phone" name="phone" maxlength="40"></div>
+      <div class="field"><label for="email">อีเมล${req}</label><input class="input" id="email" name="email" type="email" maxlength="200" required autocomplete="email"></div>
+      <div class="field"><label for="phone">เบอร์ติดต่อ${req}</label><input class="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" pattern="[0-9+\\- ]{9,40}" title="กรอกเบอร์โทรอย่างน้อย 9 หลัก (ตัวเลข, +, - หรือเว้นวรรค)" placeholder="เช่น 0812345678" required></div>
     </div>`;
 
   app.innerHTML = `
@@ -956,10 +959,10 @@ async function renderAuth(message = "") {
           <p>${isRequest ? "กำหนด ID และรหัสผ่านที่ต้องการ ผู้ดูแลระบบจะเป็นผู้อนุมัติสิทธิ์ก่อนใช้งานได้" : "ใช้รหัสพนักงานและรหัสผ่านของคุณ"}</p>
           <div id="auth-message">${message}${directoryError ? `<div class="form-message error">${escapeHtml(directoryError)}</div>` : ""}</div>
           <form id="auth-form">
-            <div class="field"><label for="employee-no">UserID</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
+            <div class="field"><label for="employee-no">UserID${req}</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
             ${isRequest ? requestFields : ""}
-            <div class="field"><label for="password">รหัสผ่าน</label><input class="input" id="password" name="password" type="password" autocomplete="${isRequest ? "new-password" : "current-password"}" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
-            ${isRequest ? `<div class="field"><label for="confirm-password">ยืนยันรหัสผ่าน</label><input class="input" id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+            <div class="field"><label for="password">รหัสผ่าน${req}</label><input class="input" id="password" name="password" type="password" autocomplete="${isRequest ? "new-password" : "current-password"}" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
+            ${isRequest ? `<div class="field"><label for="confirm-password">ยืนยันรหัสผ่าน${req}</label><input class="input" id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
             <div class="field"><label for="reason">เหตุผล/หมายเหตุถึงผู้ดูแล (ถ้ามี)</label><textarea class="textarea" id="reason" name="reason" maxlength="1000"></textarea></div>` : ""}
             <button class="btn block" type="submit">${isRequest ? "ส่งคำร้องขอเปิดบัญชี" : "เข้าสู่ระบบ"}</button>
           </form>
