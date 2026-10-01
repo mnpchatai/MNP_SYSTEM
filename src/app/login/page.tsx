@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { CheckCircle2, FileCheck2, ShieldCheck } from "lucide-react";
+import { CheckCircle2, FileCheck2, History, Workflow } from "lucide-react";
 import { signInAction } from "@/app/actions/auth";
 import { SubmitButton } from "@/components/submit-button";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -23,13 +23,14 @@ export default async function LoginPage({
         </div>
         <div className="auth-intro">
           <div className="eyebrow">Employee workspace</div>
-          <h1>ระบบคำร้องและ<br />การอนุมัติภายใน</h1>
-          <p>พื้นที่ทำงานกลางสำหรับสร้างคำร้อง ติดตามสถานะ และดำเนินการอนุมัติอย่างเป็นขั้นตอน</p>
+          <h1>ระบบจัดการเอกสาร<br />ภายในองค์กร</h1>
+          <p>สร้าง ส่ง อนุมัติ และติดตามเอกสารงานทุกประเภทในระบบเดียว ตั้งแต่คำร้อง ใบขออนุมัติ จนถึงเอกสารการผลิต ไม่ต้องใช้กระดาษ ไม่ต้องถามว่าถึงไหนแล้ว</p>
         </div>
         <div className="auth-points">
-          <span><FileCheck2 size={15} /> คำร้องดิจิทัล</span>
-          <span><CheckCircle2 size={15} /> ตรวจสอบสถานะได้</span>
-          <span><ShieldCheck size={15} /> สิทธิ์ตามบทบาท</span>
+          <span><FileCheck2 size={15} /> เอกสารดิจิทัล</span>
+          <span><Workflow size={15} /> อนุมัติตามสายงาน</span>
+          <span><CheckCircle2 size={15} /> ติดตามสถานะได้</span>
+          <span><History size={15} /> ค้นย้อนหลังได้</span>
         </div>
       </section>
 

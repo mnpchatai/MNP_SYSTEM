@@ -915,10 +915,10 @@ async function renderAuth(message = "") {
         <div class="brand"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
         <div class="auth-copy">
           <div class="eyebrow">Employee workspace</div>
-          <h1>ระบบคำร้องและ<br>การอนุมัติภายใน</h1>
-          <p>ทดลองกระบวนการสร้างคำร้อง อนุมัติ และดำเนินงานร่วมกันผ่านเว็บ โดยแยกสิทธิ์ตามบทบาทของผู้ใช้</p>
+          <h1>ระบบจัดการเอกสาร<br>ภายในองค์กร</h1>
+          <p>สร้าง ส่ง อนุมัติ และติดตามเอกสารงานทุกประเภทในระบบเดียว ตั้งแต่คำร้อง ใบขออนุมัติ จนถึงเอกสารการผลิต ไม่ต้องใช้กระดาษ ไม่ต้องถามว่าถึงไหนแล้ว</p>
         </div>
-        <div class="auth-points"><span>✓ คำร้องดิจิทัล</span><span>✓ หลายบทบาท</span><span>✓ บันทึกประวัติ</span></div>
+        <div class="auth-points"><span>✓ เอกสารดิจิทัล</span><span>✓ อนุมัติตามสายงาน</span><span>✓ ติดตามสถานะได้</span><span>✓ ค้นย้อนหลังได้</span></div>
       </section>
       <section class="auth-panel">
         <div class="theme-button">${themeButton()}</div>
