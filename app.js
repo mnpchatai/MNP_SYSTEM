@@ -186,6 +186,16 @@ function progressTracker(status, usesRepairWorkflow, { waitingOn = null } = {}) 
   </div>`;
 }
 const REQUEST_MODULE_CODES = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
+// โมดูลที่แยกไฟล์ไว้ใน modules/*.js (โหลดก่อน app.js) ลงทะเบียนตัวเองไว้ที่ window.MNP_REQUEST_MODULES
+// โมดูลจะโผล่ในหน้าสร้างคำร้องเมื่อ enabled และ request_types ในฐานข้อมูลเป็น is_active ด้วย
+const REQUEST_MODULES = window.MNP_REQUEST_MODULES ?? {};
+function requestModule(code) {
+  return REQUEST_MODULES[code] ?? null;
+}
+function activeRequestModuleCodes() {
+  const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled).map((entry) => entry.code);
+  return [...new Set([...REQUEST_MODULE_CODES, ...separateModuleCodes])];
+}
 const REPAIR_DEPARTMENT_OPTIONS = [
   { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
   { sourceCode: "GR", displayCode: "GR", name: "แปรรูปราง" },
@@ -1285,7 +1295,7 @@ async function renderDashboard() {
   // ของหัวหน้าแผนก/ช่างเป็นศูนย์ทั้งหน้า — ปล่อยให้ RLS เป็นตัวตัดสินเหมือนกัน
   const [requestsResult, typesResult, pending, repairTasks, directory, myRequestsResult, inProgressResult, completedResult] = await Promise.all([
     requestsQuery,
-    sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", REQUEST_MODULE_CODES).order("sort_order").limit(5),
+    sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", activeRequestModuleCodes()).order("sort_order").limit(5),
     getPendingApprovals(),
     getMyRepairActionItems(),
     loadEmployeeDirectory(),
@@ -1476,11 +1486,11 @@ const requestTypeLabelOverrides = {
 };
 
 function requestTypeLabel(type) {
-  return requestTypeLabelOverrides[type.code] ?? type.name_th;
+  return requestModule(type.code)?.label ?? requestTypeLabelOverrides[type.code] ?? type.name_th;
 }
 
 function requestTypeGradient(code) {
-  const [from, to] = requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
+  const [from, to] = requestModule(code)?.theme ?? requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
   return `linear-gradient(135deg, ${from}, ${to})`;
 }
 
@@ -1498,7 +1508,7 @@ async function renderNewRequest(params) {
     .from("request_types")
     .select("id,code,prefix,name_th,description,form_schema,uses_repair_workflow")
     .eq("is_active", true)
-    .in("code", REQUEST_MODULE_CODES)
+    .in("code", activeRequestModuleCodes())
     .order("sort_order");
   if (error) throw error;
   const employee = state.employee;
@@ -1580,6 +1590,8 @@ async function renderNewRequest(params) {
     } else {
       const isManagement = selected.code === "MANAGEMENT";
       if (isManagement) await loadCcDepartments();
+      const separateModule = requestModule(selected.code);
+      const detailFieldsHtml = separateModule?.renderFields ? separateModule.renderFields({ escapeHtml }) : dynamicDetailFields(selected.form_schema);
       body = `
         <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="request-form">
           <div class="form-grid">
@@ -1588,7 +1600,7 @@ async function renderNewRequest(params) {
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
             <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
             ${isManagement ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
-            <div></div>`}<div class="field full"><div class="form-grid">${dynamicDetailFields(selected.form_schema)}</div></div>
+            <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
           </div>
           ${isManagement ? ccDepartmentGridHtml(ccDepartments) : ""}
           <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งคำร้อง</button></div>

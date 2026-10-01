@@ -1,8 +1,7 @@
 import { RequestForm } from "@/components/request-form";
 import { getCurrentEmployee } from "@/lib/auth";
+import { activeRequestModuleCodes } from "@/lib/request-modules";
 import { createClient } from "@/lib/supabase/server";
-
-const requestModuleCodes = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 
 export default async function NewRequestPage({ searchParams }: { searchParams: Promise<{ type?: string; error?: string }> }) {
   const params = await searchParams;
@@ -12,7 +11,7 @@ export default async function NewRequestPage({ searchParams }: { searchParams: P
       .from("request_types")
       .select("id,code,name_th,description,form_schema")
       .eq("is_active", true)
-      .in("code", requestModuleCodes)
+      .in("code", activeRequestModuleCodes())
       .order("sort_order"),
     supabase.from("departments").select("id,code,name_th").eq("is_active", true),
   ]);
