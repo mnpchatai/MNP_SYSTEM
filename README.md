@@ -922,3 +922,4 @@ Superseded/Obsolete → เก็บเพื่อ Audit แต่ผู้ใ�
 8. มี runbook, owner หลัง go-live และแผนเก็บ feedback รอบถัดไป
 
 Roadmap นี้เป็นลำดับเชิง dependency ไม่ใช่ข้อบังคับว่าต้องเปิดทุกโมดูล หาก Phase ใดไม่มี process owner หรือ master data พร้อม ให้ชะลอ Phase นั้นและเลือกงานย่อยที่ใช้แกนเดิมได้โดยไม่สร้างข้อมูลซ้ำหรือ workflow คู่ขนาน
+<!-- protection test T1 -->
