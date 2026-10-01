@@ -294,6 +294,8 @@ button { cursor: pointer; }
 .nav-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .nav-count { position: absolute; top: -8px; right: -11px; min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center; color: white; background: var(--danger); border: 2px solid var(--paper); border-radius: 9px; font-size: 8px; font-weight: 700; line-height: 1; }
 .nav-divider { height: 1px; margin: 13px 10px; background: var(--line); }
+.nav-signout { width: 100%; display: none; background: none; border: 0; text-align: left; }
+.nav-signout:hover { color: var(--danger); }
 .nav-spacer { flex: 1; }
 .sidebar-user { padding: 13px; display: grid; grid-template-columns: 34px minmax(0,1fr) 35px; gap: 9px; align-items: center; border-top: 1px solid var(--line); }
 .avatar { width: 34px; height: 34px; display: grid; place-items: center; color: var(--primary); background: var(--primary-soft); border-radius: 50%; font-size: 11px; font-weight: 700; }
@@ -756,6 +758,7 @@ body.no-scroll { overflow: hidden; }
   .nav-link { justify-content: center; }
   .sidebar-user { grid-template-columns: 34px; justify-content: center; }
   .sidebar-user .icon-button { display: none; }
+  .nav-signout { display: flex; }
   .dashboard-grid, .detail-grid { grid-template-columns: 1fr; }
   .approval-layout { grid-template-columns: 300px minmax(0,1fr); }
 }
@@ -791,6 +794,8 @@ body.no-scroll { overflow: hidden; }
   .nav-count { top: -8px; right: -10px; border-color: var(--paper); }
   .nav-create { color: var(--primary); background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 32%, var(--line)); }
   .nav-create.active { color: white; background: var(--primary); border-color: var(--primary); }
+  .nav-signout { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); }
+  .nav-signout:hover { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
   .topbar { z-index: 30; height: 58px; padding: 0 14px 0 60px; }
   .breadcrumbs { min-width: 0; font-size: 0; }
   .breadcrumbs strong { font-size: 13px; }
