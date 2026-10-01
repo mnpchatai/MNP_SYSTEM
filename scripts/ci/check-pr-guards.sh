@@ -26,8 +26,7 @@ while IFS= read -r module_ref; do
 done < <(grep -o 'modules/[^"]*\.js?v=[^"]*' index.html || true)
 while IFS= read -r module_file; do
   [[ -z "$module_file" ]] && continue
-  # ชื่อไฟล์ที่มีช่องว่างอยู่ใน index.html เป็น %20
-  if ! grep -qF "./${module_file// /%20}?v=" index.html; then
+  if ! grep -q "\./$module_file?v=" index.html; then
     fail "$module_file: ยังไม่ได้โหลดใน index.html (ต้องมี <script defer> พร้อม ?v= ก่อน app.js)"
   fi
 done < <(git ls-files modules/ 2>/dev/null | grep '\.js$' || true)
