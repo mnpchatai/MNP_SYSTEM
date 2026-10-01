@@ -164,8 +164,10 @@ const colors = {
   muted: "#475467",
 };
 
-// ชื่อแจ้งเตือนที่ trigger private.log_request_status_change ใส่ให้ผู้ยื่นทุกครั้งที่สถานะเปลี่ยน
-// (body เป็น "<เลขที่> เปลี่ยนเป็น <status>") — ชื่อนี้กลางเกินไป จึงแปลงเป็นหัวข้อตามสถานะใหม่ที่นี่
+// trigger private.log_request_status_change แจ้งผู้ยื่นทุกครั้งที่สถานะเปลี่ยน body เป็น
+// "<เลขที่> เปลี่ยนเป็น <สถานะ>" ตั้งแต่ migration 20261001020000 สถานะเป็นคำไทย (statusLabels) และชื่อเรื่อง
+// เป็นหัวข้อเฉพาะสถานะ (private.status_change_notification_title ซึ่งต้องตรงกับ heading ในตารางข้างล่าง)
+// ส่วนแถวเก่าก่อนหน้านั้นสถานะเป็นรหัสอังกฤษ และชื่อเรื่องเป็นคำกลางข้างล่างนี้ รองรับทั้งสองแบบ
 const STATUS_CHANGED_TITLE = "สถานะคำร้องมีการเปลี่ยนแปลง";
 // private.notify_title เติมคำนำหน้านี้ให้คำร้องเร่งด่วน ต้องคงไว้บนหัวอีเมลเสมอ
 const URGENT_PREFIX = "🚨 [ด่วน] ";
@@ -179,6 +181,7 @@ function decisionChoices(ctx: DocContext) {
 }
 
 // ผู้รับของแจ้งเตือนเปลี่ยนสถานะคือผู้ยื่นคำร้องเสมอ ข้อความจึงพูดกับผู้ยื่น
+// heading ต้องตรงกับ private.status_change_notification_title (เว็บแสดงชื่อนั้น อีเมลแสดงชื่อนี้)
 const statusChangePresentations: Record<string, (ctx: DocContext) => Presentation> = {
   pending_approval: ({ doc }) => ({
     emoji: "📨", color: colors.info,
@@ -248,10 +251,14 @@ const statusChangePresentations: Record<string, (ctx: DocContext) => Presentatio
   }),
 };
 
-/** สถานะใหม่จาก body ของ trigger ("<เลขที่> เปลี่ยนเป็น <status>") — ใช้ค่าตอนเกิดเหตุการณ์ ไม่ใช่สถานะ
- *  ปัจจุบันของคำร้อง เพราะคิวอาจส่งช้ากว่า และคำร้องอาจเปลี่ยนสถานะต่อไปแล้ว */
+/** สถานะใหม่จาก body ของ trigger ("<เลขที่> เปลี่ยนเป็น <รหัสหรือคำไทย>") — ใช้ค่าตอนเกิดเหตุการณ์
+ *  ไม่ใช่สถานะปัจจุบันของคำร้อง เพราะคิวอาจส่งช้ากว่า และคำร้องอาจเปลี่ยนสถานะต่อไปแล้ว
+ *  แจ้งเตือนอื่นใช้ body รูป "<เลขที่> · <เรื่อง>" จึงไม่ตรงรูปนี้ */
 function statusFromBody(body: string | null | undefined) {
-  return /เปลี่ยนเป็น\s+([a-z_]+)\s*$/.exec(body ?? "")?.[1] ?? null;
+  const value = /^\S+ เปลี่ยนเป็น (.+?)\s*$/.exec(body ?? "")?.[1];
+  if (!value) return null;
+  if (Object.hasOwn(statusLabels, value)) return value;
+  return Object.keys(statusLabels).find((code) => statusLabels[code] === value) ?? null;
 }
 
 // แจ้งเตือนชนิดอื่นที่ RPC ส่ง (ดูชื่อใน supabase/migrations) จับจากคำในชื่อเรื่องตามลำดับ
@@ -380,8 +387,9 @@ function presentationFor(
 
   let presentation: Presentation | null = null;
   if (row.request_id) {
-    if (title === STATUS_CHANGED_TITLE) {
-      const status = statusFromBody(row.body) ?? detail?.status ?? null;
+    const changedTo = statusFromBody(row.body);
+    if (changedTo || title === STATUS_CHANGED_TITLE) {
+      const status = changedTo ?? detail?.status ?? null;
       presentation = (status && statusChangePresentations[status]?.(ctx)) || {
         emoji: "🔄", color: colors.info,
         heading: `${ctx.doc} มีการเปลี่ยนแปลงสถานะ`,
