@@ -1,13 +1,13 @@
 -- ทดสอบการเปิดใช้โมดูล "ใบแจ้งซ่อม IT" (IT_REPAIR) ด้วย flow คำร้องทั่วไป
 -- (20261001050000_enable_it_repair_module.sql):
---   1) ข้อมูลอ้างอิงของประเภทคำร้อง
+--   1) ข้อมูลอ้างอิงของประเภทคำร้อง และไม่มีสิทธิ์โมดูลที่ระบบให้อัตโนมัติ (20261001060000)
 --   2) สร้างผ่าน app_create_request -> หัวหน้าแผนกผู้แจ้ง -> ผู้จัดการแผนก IT
 --   3) สิทธิ์อนุมัติ: ห้ามผู้จัดการแผนกอื่น ห้ามผู้จัดการแผนก IT ที่ไม่มีสิทธิ์โมดูล
 --   4) อนุมัติครบสองขั้นจบที่ approved
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(20);
 
 -- 1. ข้อมูลอ้างอิง ---------------------------------------------------------
 select results_eq(
@@ -30,6 +30,14 @@ select is(
   (select form_schema from public.request_types where code = 'IT_REPAIR'),
   '{"fields":["asset_code","location","impact"]}'::jsonb,
   'IT_REPAIR form fields match the module file'
+);
+
+select is(
+  (select count(*)::int from public.approval_module_permissions p
+   join public.request_types t on t.id = p.request_type_id
+   where t.code = 'IT_REPAIR' and p.granted_by is null),
+  0,
+  'no automatic IT_REPAIR module grants remain — approvers are chosen by an admin'
 );
 
 -- 2. ผู้ใช้ทดสอบ: ผู้แจ้ง (พนักงานสาธิต) + หัวหน้าของผู้แจ้ง (ผู้จัดการแผนกสาธิต)
