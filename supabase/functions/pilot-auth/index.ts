@@ -326,15 +326,74 @@ Deno.serve(async (request) => {
     return response(request, { employeeId });
   }
 
-  // Admin อนุมัติคำร้อง สิทธิ์ถูกตรวจซ้ำในฐานข้อมูลผ่าน app_apply_account_request
-  if (body.action === "approve_account_request") {
+  // Admin ลบบัญชี: ฐานข้อมูลตัดสินว่าลบถาวร (ไม่มีประวัติ) หรือเก็บไว้แบบปิดใช้งาน (มีประวัติ)
+  // และตรวจสิทธิ์ accounts.manage เอง จากนั้นจึงลบบัญชีล็อกอินที่ Supabase Auth
+  if (body.action === "admin_delete_account") {
     const token = bearerToken(request);
     if (!token) {
       return response(request, { error: "AUTH_REQUIRED" }, 401);
     }
     const apiKey = request.headers.get("apikey") ?? anonKey;
 
-    const requestId = cleanText(body.requestId, 64);
+    const removed = await rpcAsUser(supabaseUrl, apiKey, token, "app_admin_delete_employee", {
+      p_employee_id: cleanText(body.employeeId, 64),
+    });
+    if (removed.error) {
+      const code = removed.error.includes("NOT_AUTHORIZED") ? 403 : 400;
+      return response(request, { error: removed.error }, code);
+    }
+    const row = (Array.isArray(removed.data) ? removed.data[0] : removed.data) as
+      | { mode?: string; auth_user_id?: string | null }
+      | null;
+    const mode = row?.mode === "archived" ? "archived" : "deleted";
+    let authDeleted = true;
+    if (row?.auth_user_id) {
+      const { error: deleteError } = await admin.auth.admin.deleteUser(row.auth_user_id);
+      if (deleteError) {
+        // แถวพนักงานถูกลบ/ปิดไปแล้ว บัญชีล็อกอินที่เหลือจึงเข้าระบบไม่ได้อยู่ดี แค่แจ้งให้ทราบ
+        console.error(`deleteUser failed: ${deleteError.message}`);
+        authDeleted = false;
+      }
+    }
+    return response(request, { mode, authDeleted });
+  }
+
+  // Admin เพิ่มบัญชีเอง: สร้างคำร้องเปิดบัญชีในนามผู้ดูแล (ตรวจสิทธิ์ในฐานข้อมูล) แล้วอนุมัติต่อทันที
+  // ด้วยขั้นตอนเดียวกับการอนุมัติคำร้องปกติด้านล่าง
+  let approveRequestId = cleanText(body.requestId, 64);
+  if (body.action === "admin_create_account") {
+    const token = bearerToken(request);
+    if (!token) {
+      return response(request, { error: "AUTH_REQUIRED" }, 401);
+    }
+    const apiKey = request.headers.get("apikey") ?? anonKey;
+    const createdRequest = await rpcAsUser(supabaseUrl, apiKey, token, "app_admin_create_account_request", {
+      p_employee_no: String(body.employeeNo ?? ""),
+      p_password: String(body.password ?? ""),
+      p_first_name: cleanText(body.firstName, 100),
+      p_last_name: cleanText(body.lastName, 100),
+      p_email: cleanText(body.email, 200),
+      p_phone: cleanText(body.phone, 40),
+      p_job_title: cleanText(body.jobTitle, 120),
+      p_department_id: cleanText(body.departmentId, 64) || null,
+      p_role_id: cleanText(body.roleId, 64) || null,
+    });
+    if (createdRequest.error || !createdRequest.data) {
+      const message = createdRequest.error ?? "REQUEST_CREATE_FAILED";
+      return response(request, { error: message }, message.includes("NOT_AUTHORIZED") ? 403 : 400);
+    }
+    approveRequestId = String(createdRequest.data);
+  }
+
+  // Admin อนุมัติคำร้อง สิทธิ์ถูกตรวจซ้ำในฐานข้อมูลผ่าน app_apply_account_request
+  if (body.action === "approve_account_request" || body.action === "admin_create_account") {
+    const token = bearerToken(request);
+    if (!token) {
+      return response(request, { error: "AUTH_REQUIRED" }, 401);
+    }
+    const apiKey = request.headers.get("apikey") ?? anonKey;
+
+    const requestId = approveRequestId;
     const { data: accountRequest } = await admin
       .from("account_requests")
       .select("id,kind,status,employee_id,employee_no,email,desired_password")

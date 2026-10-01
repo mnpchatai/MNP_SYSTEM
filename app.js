@@ -881,6 +881,8 @@ const pilotAuthMessages = {
   AUTH_REQUIRED: "กรุณาเข้าสู่ระบบใหม่",
   DIRECTORY_UNAVAILABLE: "โหลดข้อมูลแผนกไม่สำเร็จ",
   session_not_found: "เซสชันนี้ถูกยกเลิกเพราะรหัสผ่านถูกเปลี่ยน กรุณาเข้าสู่ระบบใหม่",
+  EMAIL_TAKEN: "อีเมลนี้ถูกใช้กับบัญชีอื่นแล้ว",
+  CANNOT_DELETE_SELF: "ลบบัญชีของตัวเองไม่ได้",
   INVALID_SETUP_TOKEN: "ลิงก์ตั้งรหัสผ่านไม่ถูกต้อง หมดอายุ หรือถูกใช้ไปแล้ว กรุณาติดต่อผู้ดูแลระบบเพื่อขอตั้งรหัสผ่านใหม่",
 };
 
@@ -2903,6 +2905,43 @@ async function handleEmployeeEditSubmit(event) {
   await renderRoute();
 }
 
+async function handleEmployeeAddSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#employee-add-message");
+  const values = new FormData(form);
+  const password = String(values.get("password") ?? "");
+  if (password !== String(values.get("confirm_password") ?? "")) {
+    message.innerHTML = `<div class="form-message error">รหัสผ่านทั้งสองช่องไม่ตรงกัน</div>`;
+    return;
+  }
+  setFormBusy(form, true);
+  message.innerHTML = "";
+  const employeeNo = String(values.get("employee_no") ?? "").trim().toUpperCase();
+  try {
+    const { data: sessionData } = await sb.auth.getSession();
+    await callPilotAuth({
+      action: "admin_create_account",
+      employeeNo,
+      password,
+      firstName: String(values.get("first_name") ?? ""),
+      lastName: String(values.get("last_name") ?? ""),
+      email: String(values.get("email") ?? ""),
+      phone: String(values.get("phone") ?? ""),
+      jobTitle: String(values.get("job_title") ?? ""),
+      departmentId: String(values.get("department_id") ?? ""),
+      roleId: String(values.get("role_id") ?? ""),
+    }, sessionData.session?.access_token);
+  } catch (error) {
+    setFormBusy(form, false);
+    message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
+    return;
+  }
+  showToast(`สร้างบัญชี ${employeeNo} เรียบร้อย`);
+  go("admin?tab=credentials");
+  await renderRoute();
+}
+
 async function renderAdmin(params) {
   if (state.employee.role?.code !== "admin") return renderNotFound("หน้านี้สำหรับผู้ดูแลระบบเท่านั้น");
   const tab = ["accounts", "credentials", "modules"].includes(params.get("tab")) ? params.get("tab") : "requests";
@@ -2927,6 +2966,8 @@ async function renderAdmin(params) {
   const departments = departmentsResult.data ?? [];
   const modulePermissionRows = modulePermissionsResult.data ?? [];
   const editing = credentials.find((item) => item.employee_id === params.get("edit")) ?? null;
+  const adding = !editing && params.get("add") === "1";
+  const req = ` <span class="required-mark" aria-hidden="true">*</span>`;
   const pendingCount = requests.filter((item) => item.status === "pending").length;
 
   const statusBadgeClass = { pending: "pending_approval", approved: "approved", rejected: "rejected" };
@@ -2994,6 +3035,7 @@ async function renderAdmin(params) {
       <td>${[
         item.has_password ? `<button class="btn secondary small" data-reveal="${escapeHtml(item.employee_id)}">แสดง</button>` : "",
         `<a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไข</a>`,
+        isSelf ? "" : `<button class="btn danger small" type="button" data-delete-employee="${escapeHtml(item.employee_id)}" data-employee-label="${escapeHtml(`${item.employee_no} · ${item.full_name}`)}">ลบ</button>`,
       ].join(" ")}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="7" class="muted small">ยังไม่มีข้อมูล</td></tr>`;
@@ -3045,6 +3087,32 @@ async function renderAdmin(params) {
         </table></div>
       </section>` : ""}
     ${tab === "credentials" ? `
+      ${adding ? `
+      <section class="card">
+        <div class="card-head"><div><h2>เพิ่มบัญชีใหม่</h2><p class="muted small">บัญชีใช้งานได้ทันทีโดยไม่ต้องผ่านคำร้อง ระบบส่งอีเมลแจ้ง ID พร้อมลิงก์ตั้งรหัสผ่านใหม่ให้เจ้าของบัญชี</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
+        <div id="employee-add-message"></div>
+        <form id="employee-add-form">
+          <div class="field"><label for="add-employee-no">UserID${req}</label><input class="input" id="add-employee-no" name="employee_no" maxlength="32" placeholder="เช่น MNP0102" autocomplete="off" required></div>
+          <div class="field-row">
+            <div class="field"><label for="add-first-name">ชื่อ${req}</label><input class="input" id="add-first-name" name="first_name" maxlength="100" required></div>
+            <div class="field"><label for="add-last-name">นามสกุล${req}</label><input class="input" id="add-last-name" name="last_name" maxlength="100" required></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="add-email">อีเมล${req}</label><input class="input" id="add-email" name="email" type="email" maxlength="200" autocomplete="off" required></div>
+            <div class="field"><label for="add-phone">เบอร์ติดต่อ${req}</label><input class="input" id="add-phone" name="phone" type="tel" inputmode="tel" maxlength="40" pattern="[0-9+\\- ]{9,40}" title="กรอกเบอร์โทรอย่างน้อย 9 หลัก (ตัวเลข, +, - หรือเว้นวรรค)" placeholder="เช่น 0812345678" required></div>
+          </div>
+          <div class="field"><label for="add-job-title">ชื่อตำแหน่งงาน (ถ้ามี)</label><input class="input" id="add-job-title" name="job_title" maxlength="120"></div>
+          <div class="field-row">
+            <div class="field"><label for="add-department">แผนก${req}</label><select class="input" id="add-department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
+            <div class="field"><label for="add-role">ตำแหน่ง${req}</label><select class="input" id="add-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="add-password">รหัสผ่าน${req}</label><input class="input" id="add-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
+            <div class="field"><label for="add-confirm-password">ยืนยันรหัสผ่าน${req}</label><input class="input" id="add-confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+          </div>
+          <div class="form-actions"><button class="btn" type="submit">สร้างบัญชี</button></div>
+        </form>
+      </section>` : ""}
       ${editing ? `
       <section class="card">
         <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID ตำแหน่ง และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
@@ -3072,6 +3140,7 @@ async function renderAdmin(params) {
         </form>
       </section>` : ""}
       <section class="card">
+        <div class="card-head"><div><h2>บัญชีทั้งหมด</h2></div>${adding ? "" : `<a class="btn small" href="#/admin?tab=credentials&add=1">＋ เพิ่มบัญชี</a>`}</div>
         <p class="muted small">ตารางนี้แสดงพนักงานทุกบัญชีรวมถึงบัญชีผู้ดูแลระบบและบัญชีของคุณเอง รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้เจ้าของบัญชีแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
         <div class="table-wrap"><table>
           <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>ตำแหน่ง</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
@@ -3137,6 +3206,26 @@ async function renderAdmin(params) {
   }));
 
   document.querySelector("#employee-edit-form")?.addEventListener("submit", handleEmployeeEditSubmit);
+  document.querySelector("#employee-add-form")?.addEventListener("submit", handleEmployeeAddSubmit);
+
+  document.querySelectorAll("[data-delete-employee]").forEach((button) => button.addEventListener("click", async () => {
+    const employeeId = button.dataset.deleteEmployee;
+    const label = button.dataset.employeeLabel ?? "";
+    if (!confirm(`ลบบัญชี ${label} ?\n\nถ้าบัญชีนี้ยังไม่เคยมีเอกสารหรือประวัติในระบบ จะถูกลบถาวร\nถ้ามีประวัติแล้ว ระบบจะปิดใช้งานและซ่อนบัญชีแทน เพื่อให้เอกสารเก่ายังแสดงชื่อได้\nทั้งสองกรณีเจ้าของบัญชีจะเข้าสู่ระบบไม่ได้อีก`)) return;
+    button.disabled = true;
+    try {
+      const { data: sessionData } = await sb.auth.getSession();
+      const result = await callPilotAuth({ action: "admin_delete_account", employeeId }, sessionData.session?.access_token);
+      const done = result.mode === "archived"
+        ? `ปิดใช้งานและซ่อนบัญชี ${label} แล้ว (มีประวัติในระบบ จึงเก็บข้อมูลไว้ให้เอกสารเก่า)`
+        : `ลบบัญชี ${label} ถาวรแล้ว`;
+      showToast(result.authDeleted === false ? `${done} · แต่ลบบัญชีล็อกอินไม่สำเร็จ (เข้าระบบไม่ได้อยู่แล้ว)` : done);
+      await renderAdmin(params);
+    } catch (error) {
+      button.disabled = false;
+      showToast(friendlyError(error), "error");
+    }
+  }));
 
   document.querySelectorAll("[data-reveal]").forEach((button) => button.addEventListener("click", async () => {
     const employeeId = button.dataset.reveal;
