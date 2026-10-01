@@ -1484,6 +1484,7 @@ async function renderNewRequest(params) {
       body = `
         <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="request-form">
           <div class="form-grid">
+            ${isManagement ? `<div class="field full"><div class="muted small" id="management-doc-number">เลขที่เอกสาร: กำลังตรวจสอบ…</div></div>` : ""}
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
             <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
@@ -1662,6 +1663,17 @@ async function renderNewRequest(params) {
         }
       });
       return;
+    }
+
+    // ใบคำร้องถึงฝ่ายบริหาร: โชว์เลขที่เอกสารถัดไปทันทีที่เลือกประเภท จะได้รู้ว่าออกถึงเลขที่เท่าไหร่แล้ว
+    const managementDocNumberNode = document.querySelector("#management-doc-number");
+    if (managementDocNumberNode) {
+      sb.rpc("app_peek_management_doc_number").then(({ data, error: peekError }) => {
+        if (peekError || !data) throw peekError ?? new Error("EMPTY");
+        managementDocNumberNode.textContent = `เลขที่เอกสาร (โดยประมาณ): ${data}`;
+      }).catch(() => {
+        managementDocNumberNode.textContent = "เลขที่เอกสาร: ระบบจะออกให้ตอนส่งใบ";
+      });
     }
 
     document.querySelector("#request-form").addEventListener("submit", async (event) => {
