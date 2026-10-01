@@ -65,6 +65,7 @@ Use Server Components by default. Add Client Components only where browser state
 - Reuse existing utilities and components. If two modules need the same domain rule, extract one tested shared implementation rather than copy/paste.
 - Keep changes focused. Avoid unrelated refactors, formatting churn, dependency upgrades, or generated files unless the task requires them.
 - Preserve accessibility, responsive layouts, Thai text behavior, and existing business terminology when editing the UI.
+- Dropdowns, comboboxes, and other popups must be selectable by touch on iPhone (Safari/WebKit), where a tapped button never receives focus. Never close a popup from `blur`/`focusout`/`onBlur`; close it only on a pointer down or a focus move outside its container. In the static pilot, mark the popup with `data-popup` inside the same parent as its trigger and reuse the shared `closePopup` rule in `app.js` instead of writing new closing logic.
 
 ## Required verification
 
