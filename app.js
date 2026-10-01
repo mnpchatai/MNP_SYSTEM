@@ -3449,3 +3449,4 @@ async function init() {
 }
 
 init();
+// protection test T2
