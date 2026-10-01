@@ -49,6 +49,24 @@ function enhancePasswordInputs(root) {
 
 new MutationObserver(() => enhancePasswordInputs(document.body)).observe(document.body, { childList: true, subtree: true });
 enhancePasswordInputs(document.body);
+
+// รายการเลือกแบบเด้ง (dropdown/popup) ทุกตัวในระบบ: ใส่ data-popup แล้ววางไว้ในกรอบเดียวกับช่องที่เปิดมัน
+// กฎชุดเดียวนี้จะปิดให้เองเมื่อแตะ/คลิก หรือย้าย focus ไปนอกกรอบ — ห้ามปิดด้วย blur/focusout เด็ดขาด
+// เพราะ iPhone (Safari/WebKit) ไม่ย้าย focus ไปที่ปุ่มที่ถูกแตะ รายการจะถูกซ่อนก่อน click ทำงาน จึงเลือกไม่ได้
+function closePopup(popup) {
+  popup.hidden = true;
+  const owner = popup.parentElement.querySelector("[aria-expanded]");
+  owner?.setAttribute("aria-expanded", "false");
+  owner?.removeAttribute("aria-activedescendant");
+}
+function closePopupsOutside(event) {
+  document.querySelectorAll("[data-popup]:not([hidden])").forEach((popup) => {
+    if (!popup.parentElement.contains(event.target)) closePopup(popup);
+  });
+}
+document.addEventListener("pointerdown", closePopupsOutside);
+document.addEventListener("focusin", closePopupsOutside);
+
 const toastNode = document.querySelector("#toast");
 const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests" };
 
@@ -1468,7 +1486,7 @@ async function renderNewRequest(params) {
               <div class="machine-combobox" id="repair-machine-combobox">
                 <input class="input machine-search-input" id="repair-machine-search" type="search" placeholder="เลือกแผนกก่อน" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="repair-machine-list" aria-expanded="false" disabled>
                 <span class="machine-search-icon" aria-hidden="true">⌕</span>
-                <div class="machine-listbox" id="repair-machine-list" role="listbox" hidden></div>
+                <div class="machine-listbox" id="repair-machine-list" role="listbox" data-popup hidden></div>
               </div>
               <small>ค้นหาด้วยรหัสหรือชื่อเครื่องจักร แล้วเลือกจากรายการ</small>
             </div>
@@ -1525,20 +1543,12 @@ async function renderNewRequest(params) {
     if (selected.uses_repair_workflow) {
       const departmentInput = document.querySelector("#repair-department");
       const machineInput = document.querySelector("#repair-machine");
-      const machineCombobox = document.querySelector("#repair-machine-combobox");
       const machineSearch = document.querySelector("#repair-machine-search");
       const machineList = document.querySelector("#repair-machine-list");
       const docTypeInput = document.querySelector("#repair-doc-type");
       let selectedDepartmentId = "";
       let visibleMachines = [];
       let activeMachineIndex = -1;
-
-      const closeMachineList = () => {
-        machineList.hidden = true;
-        machineSearch.setAttribute("aria-expanded", "false");
-        machineSearch.removeAttribute("aria-activedescendant");
-        activeMachineIndex = -1;
-      };
 
       const setActiveMachine = (index) => {
         const options = [...machineList.querySelectorAll(".machine-option")];
@@ -1553,7 +1563,7 @@ async function renderNewRequest(params) {
       const chooseMachine = (machine) => {
         machineInput.value = machine.id;
         machineSearch.value = machineLabel(machine);
-        closeMachineList();
+        closePopup(machineList);
       };
 
       const renderMachineList = (query = "") => {
@@ -1577,7 +1587,7 @@ async function renderNewRequest(params) {
         renderMachineList(machineSearch.value);
       });
       machineSearch.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") { closeMachineList(); return; }
+        if (event.key === "Escape") { closePopup(machineList); return; }
         if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
         event.preventDefault();
         if (machineList.hidden) renderMachineList(machineInput.value ? "" : machineSearch.value);
@@ -1585,14 +1595,13 @@ async function renderNewRequest(params) {
         if (event.key === "ArrowUp") setActiveMachine(activeMachineIndex - 1);
         if (event.key === "Enter" && activeMachineIndex >= 0) chooseMachine(visibleMachines[activeMachineIndex]);
       });
+      // กดค้างบนรายการไม่ให้ช่องค้นหาเสีย focus — คีย์บอร์ดมือถือไม่หุบแล้วเด้งกลับตอนเลือก
+      machineList.addEventListener("mousedown", (event) => event.preventDefault());
       machineList.addEventListener("click", (event) => {
         const option = event.target.closest("[data-machine-index]");
         if (!option) return;
         machineSearch.focus();
         chooseMachine(visibleMachines[Number(option.dataset.machineIndex)]);
-      });
-      machineCombobox.addEventListener("focusout", (event) => {
-        if (!machineCombobox.contains(event.relatedTarget)) closeMachineList();
       });
 
       document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
