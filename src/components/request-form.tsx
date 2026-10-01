@@ -65,9 +65,6 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
           <div className="doc-number-box">
             <span className="doc-number-label">เลขที่เอกสาร</span>
             <strong className="doc-number-value">{(selected && docNumbers?.[selected.id]) || "—"}</strong>
-            <small className="doc-number-note">
-              {selected && docNumbers?.[selected.id] ? "โดยประมาณ · เลขจริงออกตอนส่งใบ" : "ระบบจะออกเลขให้ตอนส่งใบ"}
-            </small>
           </div>
         </div>
         <div className="field full">
