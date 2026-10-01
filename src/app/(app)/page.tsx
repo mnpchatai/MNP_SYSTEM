@@ -3,6 +3,7 @@ import { ArrowRight, ClipboardList, FileText, Wrench } from "lucide-react";
 import { RequestTable } from "@/components/request-table";
 import { getCurrentEmployee } from "@/lib/auth";
 import { getPendingApprovals } from "@/lib/data";
+import { activeRequestModuleCodes } from "@/lib/request-modules";
 import { createClient } from "@/lib/supabase/server";
 
 const requestTypeIcons = {
@@ -10,8 +11,6 @@ const requestTypeIcons = {
   MANAGEMENT: FileText,
   NCR_CAR: ClipboardList,
 } as const;
-
-const requestModuleCodes = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 
 export default async function DashboardPage() {
   const employee = await getCurrentEmployee();
@@ -26,7 +25,7 @@ export default async function DashboardPage() {
       .from("request_types")
       .select("id,code,name_th,description")
       .eq("is_active", true)
-      .in("code", requestModuleCodes)
+      .in("code", activeRequestModuleCodes())
       .order("sort_order"),
     getPendingApprovals(employee),
   ]);

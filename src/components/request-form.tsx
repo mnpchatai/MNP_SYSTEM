@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { createRequestAction } from "@/app/actions/requests";
 import { SubmitButton } from "@/components/submit-button";
+import { getRequestModule } from "@/lib/request-modules";
 
 type RequestType = {
   id: string;
@@ -48,7 +49,7 @@ const ccDepartmentGrid: (string | null)[][] = [
 export function RequestForm({ types, departments, docNumbers, initialType, error }: { types: RequestType[]; departments: Department[]; docNumbers?: Record<string, string>; initialType?: string; error?: string }) {
   const [selectedId, setSelectedId] = useState(initialType && types.some((t) => t.id === initialType) ? initialType : types[0]?.id ?? "");
   const selected = useMemo(() => types.find((t) => t.id === selectedId), [selectedId, types]);
-  const fields = selected?.form_schema?.fields ?? [];
+  const fields = getRequestModule(selected?.code)?.detailFields ?? selected?.form_schema?.fields ?? [];
 
   return (
     <form action={createRequestAction} encType="multipart/form-data">
@@ -57,7 +58,7 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
         <div className="field full">
           <label htmlFor="request_type_id">ประเภทคำร้อง</label>
           <select className="select" id="request_type_id" name="request_type_id" value={selectedId} onChange={(e) => setSelectedId(e.target.value)} required>
-            {types.map((type) => <option value={type.id} key={type.id}>{type.name_th}</option>)}
+            {types.map((type) => <option value={type.id} key={type.id}>{getRequestModule(type.code)?.label ?? type.name_th}</option>)}
           </select>
           <small>{selected?.description}</small>
         </div>

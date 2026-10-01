@@ -12,18 +12,30 @@ fail() {
   failed=1
 }
 
-# 1) app.js และ styles.css ใน index.html ต้องใช้ ?v= ชุดเดียวกัน
+# 1) ไฟล์ของ Pilot Web ใน index.html (app.js, styles.css, modules/*.js) ต้องใช้ ?v= ชุดเดียวกัน
 js_version="$(grep -o 'app\.js?v=[^"]*' index.html | head -n1 | cut -d= -f2)"
 css_version="$(grep -o 'styles\.css?v=[^"]*' index.html | head -n1 | cut -d= -f2)"
 if [[ -z "$js_version" || "$js_version" != "$css_version" ]]; then
   fail "index.html: ?v= ของ app.js ($js_version) และ styles.css ($css_version) ต้องตรงกัน"
 fi
+while IFS= read -r module_ref; do
+  [[ -z "$module_ref" ]] && continue
+  if [[ "${module_ref##*\?v=}" != "$js_version" ]]; then
+    fail "index.html: ?v= ของ ${module_ref%%\?*} ต้องตรงกับ app.js ($js_version)"
+  fi
+done < <(grep -o 'modules/[^"]*\.js?v=[^"]*' index.html || true)
+while IFS= read -r module_file; do
+  [[ -z "$module_file" ]] && continue
+  if ! grep -q "\./$module_file?v=" index.html; then
+    fail "$module_file: ยังไม่ได้โหลดใน index.html (ต้องมี <script defer> พร้อม ?v= ก่อน app.js)"
+  fi
+done < <(git ls-files modules/ 2>/dev/null | grep '\.js$' || true)
 
-# 2) แก้ app.js หรือ styles.css แล้วต้องเลื่อน ?v= ให้ต่างจาก base
-if ! git diff --quiet "$merge_base" HEAD -- app.js styles.css; then
+# 2) แก้ app.js, styles.css หรือ modules/ แล้วต้องเลื่อน ?v= ให้ต่างจาก base
+if ! git diff --quiet "$merge_base" HEAD -- app.js styles.css modules; then
   base_version="$(git show "$base_ref:index.html" | grep -o 'app\.js?v=[^"]*' | head -n1 | cut -d= -f2)"
   if [[ "$js_version" == "$base_version" ]]; then
-    fail "แก้ app.js/styles.css แต่ยังไม่ได้เลื่อน ?v= ใน index.html (ยังเป็น $base_version เท่ากับ $base_ref)"
+    fail "แก้ app.js/styles.css/modules แต่ยังไม่ได้เลื่อน ?v= ใน index.html (ยังเป็น $base_version เท่ากับ $base_ref)"
   fi
 fi
 
