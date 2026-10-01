@@ -67,6 +67,31 @@ function closePopupsOutside(event) {
 document.addEventListener("pointerdown", closePopupsOutside);
 document.addEventListener("focusin", closePopupsOutside);
 
+// แท็บที่เปิดค้างไว้ก่อน deploy จะรันโค้ดเก่าไปเรื่อยๆ จนกว่าจะรีเฟรช — ทุกครั้งที่กลับมาที่แท็บหรือเปลี่ยนหน้า
+// (เว้นช่วงอย่างน้อย 1 นาที) อ่าน ?v= ของ app.js จาก index.html ล่าสุดแบบไม่ใช้ cache ถ้าไม่ตรงกับที่รันอยู่
+// ให้ขึ้นปุ่มให้ผู้ใช้กดโหลดเอง ไม่รีโหลดอัตโนมัติ เพื่อไม่ให้ข้อมูลที่กรอกค้างไว้หาย
+const APP_VERSION = new URL(document.querySelector('script[src*="app.js"]').src).searchParams.get("v");
+let lastVersionCheck = Date.now();
+async function checkForNewVersion() {
+  if (document.hidden || Date.now() - lastVersionCheck < 60 * 1000 || document.querySelector(".update-banner")) return;
+  lastVersionCheck = Date.now();
+  try {
+    const html = await (await fetch("./index.html", { cache: "no-store" })).text();
+    const latest = html.match(/app\.js\?v=([\w-]+)/)?.[1];
+    if (!latest || !APP_VERSION || latest === APP_VERSION) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "update-banner";
+    button.textContent = "มีระบบเวอร์ชันใหม่ · แตะเพื่อโหลด";
+    button.addEventListener("click", () => location.reload());
+    document.body.append(button);
+  } catch {
+    // ออฟไลน์/เครือข่ายสะดุด — รอเช็กรอบถัดไป
+  }
+}
+document.addEventListener("visibilitychange", checkForNewVersion);
+window.addEventListener("hashchange", checkForNewVersion);
+
 const toastNode = document.querySelector("#toast");
 const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests" };
 
