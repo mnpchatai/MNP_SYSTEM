@@ -147,74 +147,253 @@ function linkFor(row: PendingNotification) {
   return `${base}/#/notifications`;
 }
 
-// จับคู่อีโมจิ/สีจากคำในหัวเรื่อง ไม่เทียบแบบตรงตัว เพื่อให้แจ้งเตือนชนิดใหม่ที่ RPC เพิ่มภายหลัง
-// ยังได้อีโมจิที่สมเหตุสมผลโดยไม่ต้องกลับมาแก้ที่นี่
-// ประโยคนำมี 2 รูป: withModule ใช้เมื่อรู้ว่าเป็นคำร้องโมดูลไหน (เช่น "ใบคำร้อง/แจ้งซ่อม MT
-// รอคุณอนุมัติ") ซึ่งบอกได้ทันทีว่าเรื่องอะไรโดยไม่ต้องเปิดอ่าน ส่วน lead เป็นรูปกลางๆ สำหรับ
-// แจ้งเตือนที่ไม่ผูกกับคำร้อง (เรื่องบัญชีผู้ใช้) หรือกรณีที่ดึงรายละเอียดคำร้องไม่สำเร็จ
-type Accent = { emoji: string; color: string; lead: string; withModule?: (moduleName: string) => string };
+// หัวอีเมลต้องบอกให้ชัดว่า "เกิดอะไรขึ้นกับเอกสารไหน" และ "ผู้รับต้องทำอะไรต่อ" ไม่ใช่คำกลางๆ
+// อย่าง "สถานะคำร้องมีการเปลี่ยนแปลง" ที่ผู้รับต้องเปิดอ่านเองว่าเปลี่ยนเป็นอะไร
+//   heading = หัวอีเมลและหัวเรื่อง, lead = ประโยคอธิบาย, next = สิ่งที่ผู้รับต้องทำต่อ (null = ไม่แสดงกล่อง)
+// doc คือชื่อเอกสารที่ผู้ใช้จำได้จากหน้าเลือกประเภทคำร้อง (ใบคำร้อง/แจ้งซ่อม MT, NCR/CAR ฯลฯ)
+// ถ้าดึงรายละเอียดคำร้องไม่สำเร็จจะใช้คำกลางว่า "คำร้อง"
+type Presentation = { emoji: string; color: string; heading: string; lead: string; next: string | null };
+type DocContext = { doc: string; typeCode: string | null };
 
-function accentFor(title: string): Accent {
+const colors = {
+  info: "#1769e0",
+  success: "#12854a",
+  danger: "#d92d20",
+  warning: "#b54708",
+  account: "#6941c6",
+  muted: "#475467",
+};
+
+// ชื่อแจ้งเตือนที่ trigger private.log_request_status_change ใส่ให้ผู้ยื่นทุกครั้งที่สถานะเปลี่ยน
+// (body เป็น "<เลขที่> เปลี่ยนเป็น <status>") — ชื่อนี้กลางเกินไป จึงแปลงเป็นหัวข้อตามสถานะใหม่ที่นี่
+const STATUS_CHANGED_TITLE = "สถานะคำร้องมีการเปลี่ยนแปลง";
+// private.notify_title เติมคำนำหน้านี้ให้คำร้องเร่งด่วน ต้องคงไว้บนหัวอีเมลเสมอ
+const URGENT_PREFIX = "🚨 [ด่วน] ";
+
+const NO_ACTION_TRACK = "ไม่ต้องดำเนินการเพิ่ม ติดตามความคืบหน้าได้จากหน้ารายการ";
+
+function decisionChoices(ctx: DocContext) {
+  return ctx.typeCode === "MANAGEMENT"
+    ? "\"อนุมัติ\" \"ขอข้อมูลเพิ่ม\" \"รับทราบข้อมูล\" หรือ \"ไม่อนุมัติ\""
+    : "\"อนุมัติ\" \"ขอข้อมูลเพิ่ม\" หรือ \"ไม่อนุมัติ\"";
+}
+
+// ผู้รับของแจ้งเตือนเปลี่ยนสถานะคือผู้ยื่นคำร้องเสมอ ข้อความจึงพูดกับผู้ยื่น
+const statusChangePresentations: Record<string, (ctx: DocContext) => Presentation> = {
+  pending_approval: ({ doc }) => ({
+    emoji: "📨", color: colors.info,
+    heading: `${doc} ส่งถึงผู้อนุมัติแล้ว`,
+    lead: `${doc} ของคุณอยู่ระหว่างรอผู้อนุมัติพิจารณา`,
+    next: "ไม่ต้องดำเนินการเพิ่ม ระบบจะแจ้งอีกครั้งเมื่อมีผลการพิจารณา",
+  }),
+  approved: ({ doc }) => ({
+    emoji: "✅", color: colors.success,
+    heading: `${doc} อนุมัติแล้ว`,
+    lead: `${doc} ของคุณได้รับการอนุมัติเรียบร้อยแล้ว`,
+    next: NO_ACTION_TRACK,
+  }),
+  more_info: ({ doc }) => ({
+    emoji: "📝", color: colors.warning,
+    heading: `${doc} ขอข้อมูลเพิ่มเติม`,
+    lead: `ผู้อนุมัติขอข้อมูลเพิ่มเติมก่อนพิจารณา${doc} ของคุณต่อ`,
+    next: "เปิดคำร้องเพื่ออ่านสิ่งที่ผู้อนุมัติขอ เพิ่ม/แก้ไขข้อมูล แล้วกด \"ส่งข้อมูลกลับให้พิจารณาอีกครั้ง\" — คำร้องจะหยุดรอจนกว่าคุณจะส่งข้อมูล",
+  }),
+  rejected: ({ doc }) => ({
+    emoji: "❌", color: colors.danger,
+    heading: `${doc} ไม่อนุมัติ`,
+    lead: `${doc} ของคุณไม่ผ่านการอนุมัติ`,
+    next: "เปิดคำร้องเพื่อดูเหตุผลจากผู้อนุมัติ หากยังต้องการดำเนินการ ให้ยื่นคำร้องใหม่โดยแก้ไขตามเหตุผลนั้น",
+  }),
+  acknowledged: ({ doc }) => ({
+    emoji: "📘", color: colors.info,
+    heading: `${doc} ฝ่ายบริหารรับทราบข้อมูลแล้ว`,
+    lead: `ฝ่ายบริหารรับทราบข้อมูลใน${doc} ของคุณแล้ว โดยไม่มีการดำเนินการต่อ`,
+    next: "ไม่ต้องดำเนินการเพิ่ม",
+  }),
+  pending_assign: ({ doc }) => ({
+    emoji: "✅", color: colors.success,
+    heading: `${doc} อนุมัติแล้ว รอมอบหมายช่าง`,
+    lead: `${doc} ของคุณได้รับการอนุมัติครบแล้ว และรอหัวหน้าหน่วยงานมอบหมายช่าง`,
+    next: NO_ACTION_TRACK,
+  }),
+  assigned: ({ doc }) => ({
+    emoji: "🔧", color: colors.info,
+    heading: `${doc} มอบหมายผู้รับผิดชอบแล้ว`,
+    lead: `${doc} ของคุณมีผู้รับผิดชอบดำเนินงานแล้ว`,
+    next: "ไม่ต้องดำเนินการเพิ่ม เมื่องานเสร็จระบบจะแจ้งให้คุณตรวจรับ",
+  }),
+  in_progress: ({ doc }) => ({
+    emoji: "🔄", color: colors.info,
+    heading: `${doc} อยู่ระหว่างดำเนินการ`,
+    lead: `ผู้รับผิดชอบกำลังดำเนินงานตาม${doc} ของคุณ`,
+    next: NO_ACTION_TRACK,
+  }),
+  pending_verify: ({ doc }) => ({
+    emoji: "🔍", color: colors.warning,
+    heading: `${doc} ดำเนินการเสร็จแล้ว รอคุณตรวจรับ`,
+    lead: `งานตาม${doc} ของคุณเสร็จแล้ว และรอคุณตรวจรับ`,
+    next: "เปิดรายการ ลองใช้งานจริง แล้วกด \"ผ่าน (ใช้งานได้ปกติ)\" หรือ \"ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)\"",
+  }),
+  completed: ({ doc }) => ({
+    emoji: "🏁", color: colors.success,
+    heading: `${doc} เสร็จสิ้นแล้ว`,
+    lead: `${doc} ของคุณดำเนินการเสร็จสิ้นและปิดงานแล้ว`,
+    next: "ไม่ต้องดำเนินการเพิ่ม",
+  }),
+  cancelled: ({ doc }) => ({
+    emoji: "⛔", color: colors.muted,
+    heading: `${doc} ถูกยกเลิก`,
+    lead: `${doc} ของคุณถูกยกเลิกแล้ว`,
+    next: "ไม่ต้องดำเนินการเพิ่ม หากยังต้องการดำเนินการ ให้ยื่นคำร้องใหม่",
+  }),
+};
+
+/** สถานะใหม่จาก body ของ trigger ("<เลขที่> เปลี่ยนเป็น <status>") — ใช้ค่าตอนเกิดเหตุการณ์ ไม่ใช่สถานะ
+ *  ปัจจุบันของคำร้อง เพราะคิวอาจส่งช้ากว่า และคำร้องอาจเปลี่ยนสถานะต่อไปแล้ว */
+function statusFromBody(body: string | null | undefined) {
+  return /เปลี่ยนเป็น\s+([a-z_]+)\s*$/.exec(body ?? "")?.[1] ?? null;
+}
+
+// แจ้งเตือนชนิดอื่นที่ RPC ส่ง (ดูชื่อใน supabase/migrations) จับจากคำในชื่อเรื่องตามลำดับ
+// ลำดับมีผล: กฎที่เฉพาะเจาะจงกว่าต้องมาก่อน เช่น "ตรวจรับไม่ผ่าน" ก่อน "ตรวจรับผ่าน" ก่อน "รอตรวจรับ"
+// และ "มอบหมายช่างให้...ของคุณ" (ถึงผู้แจ้ง) ก่อน "ได้รับมอบหมายงาน" (ถึงช่าง)
+type TitleRule = { match: (title: string) => boolean; present: (ctx: DocContext) => Presentation };
+
+const requestTitleRules: TitleRule[] = [
+  {
+    match: (t) => t.includes("รออนุมัติ"),
+    present: (ctx) => ({
+      emoji: "📋", color: colors.info,
+      heading: `มี${ctx.doc} ส่งถึงท่าน รอท่านพิจารณาอนุมัติ`,
+      lead: `มี${ctx.doc} รอการพิจารณาจากท่าน`,
+      next: `เปิดคำร้องเพื่อพิจารณา แล้วเลือก ${decisionChoices(ctx)}`,
+    }),
+  },
+  {
+    match: (t) => t.includes("ส่งข้อมูลเพิ่มเติมแล้ว"),
+    present: (ctx) => ({
+      emoji: "📋", color: colors.info,
+      heading: `${ctx.doc} ส่งข้อมูลเพิ่มเติมถึงท่านแล้ว`,
+      lead: `ผู้ยื่นส่งข้อมูลเพิ่มเติมตามที่ขอแล้ว ${ctx.doc} กลับมารอการพิจารณาจากท่าน`,
+      next: `เปิดคำร้องเพื่อตรวจข้อมูลที่ส่งมา แล้วเลือก ${decisionChoices(ctx)}`,
+    }),
+  },
+  {
+    match: (t) => t.includes("มอบหมายช่างให้"),
+    present: ({ doc }) => ({
+      emoji: "🔧", color: colors.info,
+      heading: `${doc} มอบหมายช่างแล้ว`,
+      lead: `${doc} ของคุณได้รับการมอบหมายช่างผู้รับผิดชอบแล้ว`,
+      next: "ไม่ต้องดำเนินการเพิ่ม เมื่อซ่อมเสร็จระบบจะแจ้งให้คุณตรวจรับ",
+    }),
+  },
+  {
+    match: (t) => t.includes("รอมอบหมาย"),
+    present: ({ doc }) => ({
+      emoji: "🧑‍🔧", color: colors.warning,
+      heading: `${doc} อนุมัติครบแล้ว รอท่านมอบหมายช่าง`,
+      lead: `${doc} ผ่านการอนุมัติครบทุกขั้นแล้ว และรอท่านมอบหมายช่าง`,
+      next: "เปิดรายการ เลือกช่างผู้รับผิดชอบ แล้วกด \"มอบหมายงาน\"",
+    }),
+  },
+  {
+    match: (t) => t.includes("ได้รับมอบหมายงาน"),
+    present: ({ doc }) => ({
+      emoji: "🔧", color: colors.warning,
+      heading: `ท่านได้รับมอบหมายงาน: ${doc}`,
+      lead: `ท่านได้รับมอบหมายให้ดำเนินงานตาม${doc}`,
+      next: "เปิดรายการเพื่อดูรายละเอียดงาน เริ่มดำเนินการ และบันทึกความคืบหน้าในระบบจนงานเสร็จ",
+    }),
+  },
+  {
+    match: (t) => t.includes("ตรวจรับไม่ผ่าน"),
+    present: ({ doc }) => ({
+      emoji: "❌", color: colors.danger,
+      heading: `${doc} ตรวจรับไม่ผ่าน ต้องซ่อมเพิ่มเติม`,
+      lead: `ผู้แจ้งตรวจรับงานตาม${doc} แล้วไม่ผ่าน`,
+      next: "เปิดรายการเพื่ออ่านหมายเหตุจากผู้ตรวจรับ แล้วดำเนินการซ่อมเพิ่มเติม",
+    }),
+  },
+  {
+    match: (t) => t.includes("ตรวจรับผ่าน") || t.includes("ปิดงาน"),
+    present: ({ doc }) => ({
+      emoji: "🏁", color: colors.success,
+      heading: `${doc} ตรวจรับผ่าน ปิดงานแล้ว`,
+      lead: `ผู้แจ้งตรวจรับงานตาม${doc} ผ่านแล้ว และปิดงานเรียบร้อย`,
+      next: "ไม่ต้องดำเนินการเพิ่ม",
+    }),
+  },
+  {
+    match: (t) => t.includes("รอตรวจรับ"),
+    present: ({ doc }) => ({
+      emoji: "🔍", color: colors.warning,
+      heading: `${doc} ซ่อมเสร็จแล้ว รอตรวจรับ`,
+      lead: `งานตาม${doc} ซ่อมเสร็จแล้ว และรอผู้แจ้งตรวจรับ`,
+      next: "ผู้แจ้ง: เปิดรายการ ลองใช้งานจริง แล้วกด \"ผ่าน (ใช้งานได้ปกติ)\" หรือ \"ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)\"",
+    }),
+  },
+  {
+    match: (t) => t.includes("สำเนา"),
+    present: ({ doc }) => ({
+      emoji: "📄", color: colors.info,
+      heading: `มี${doc} ส่งถึงท่าน (สำเนาเพื่อทราบ)`,
+      lead: `${doc} นี้ผ่านการอนุมัติครบแล้ว และส่งสำเนาถึงแผนกของท่านเพื่อทราบ`,
+      next: "ไม่ต้องดำเนินการ เปิดอ่านรายละเอียดได้จากหน้ารายการ",
+    }),
+  },
+  {
+    match: (t) => t.includes("ของที่สั่งซื้อมาส่งหรือยัง") || t.includes("เลื่อนวันที่คาดว่าของจะมาส่ง"),
+    present: ({ doc }) => ({
+      emoji: "📦", color: colors.warning,
+      heading: `${doc} ถึงวันที่คาดว่าของจะมาส่งแล้ว`,
+      lead: `${doc} ถึงวันที่คาดว่าของที่สั่งซื้อจะมาส่งแล้ว`,
+      next: "เช็คของแล้วกดบันทึกในหน้ารายการ ถ้ายังไม่มาให้เลื่อนวันที่คาดว่าจะมาส่งใหม่",
+    }),
+  },
+];
+
+// แจ้งเตือนที่ไม่ผูกกับคำร้อง (เรื่องบัญชีผู้ใช้) หรือชื่อเรื่องที่ไม่ตรงกฎข้างบน คงหัวข้อเดิมไว้
+// และเลือกแค่อีโมจิ/สีจากคำในชื่อ เพื่อให้แจ้งเตือนชนิดใหม่ที่ RPC เพิ่มภายหลังยังแสดงผลสมเหตุสมผล
+function genericPresentation(title: string, doc: string | null): Presentation {
+  const base = (emoji: string, color: string, lead: string) => ({ emoji, color, heading: title, lead, next: null });
   if (title.includes("ไม่ได้รับอนุมัติ") || title.includes("ไม่อนุมัติ") || title.includes("ไม่ผ่าน")) {
-    return {
-      emoji: "❌", color: "#d92d20",
-      lead: "รายการนี้ไม่ผ่านการพิจารณา และต้องการการแก้ไข",
-      withModule: (m) => `${m} ไม่ผ่านการพิจารณา และต้องการการแก้ไขจากคุณ`,
-    };
+    return base("❌", colors.danger, doc ? `${doc} ไม่ผ่านการพิจารณา` : "รายการนี้ไม่ผ่านการพิจารณา");
   }
   if (title.includes("ได้รับการอนุมัติ") || title.includes("อนุมัติแล้ว")) {
-    return {
-      emoji: "✅", color: "#12854a",
-      lead: "รายการนี้ได้รับการอนุมัติเรียบร้อยแล้ว",
-      withModule: (m) => `${m} ได้รับการอนุมัติเรียบร้อยแล้ว`,
-    };
+    return base("✅", colors.success, doc ? `${doc} ได้รับการอนุมัติเรียบร้อยแล้ว` : "รายการนี้ได้รับการอนุมัติเรียบร้อยแล้ว");
   }
-  if (title.includes("รออนุมัติ")) {
-    return {
-      emoji: "📋", color: "#1769e0",
-      lead: "มีรายการรอการพิจารณาจากคุณ",
-      withModule: (m) => `${m} รอคุณอนุมัติ`,
-    };
+  if (title.includes("รหัสผ่าน") || title.includes("ID") || title.includes("บัญชี")) {
+    return base(title.includes("บัญชี") ? "👤" : "🔑", colors.account, "มีรายการเกี่ยวกับบัญชีผู้ใช้ที่ต้องดำเนินการ");
   }
-  if (title.includes("มอบหมาย")) {
-    return {
-      emoji: "🔧", color: "#b54708",
-      lead: "คุณได้รับมอบหมายงานใหม่",
-      withModule: (m) => `คุณได้รับมอบหมายงานจาก${m}`,
-    };
+  return base("🔔", colors.info, doc ? `${doc} มีความเคลื่อนไหวที่เกี่ยวข้องกับคุณ` : "มีความเคลื่อนไหวที่เกี่ยวข้องกับคุณ");
+}
+
+function presentationFor(
+  row: Pick<PendingNotification, "title" | "body" | "request_id">,
+  detail: RequestDetail | undefined,
+): Presentation {
+  const urgent = row.title.startsWith(URGENT_PREFIX);
+  const title = urgent ? row.title.slice(URGENT_PREFIX.length) : row.title;
+  const type = relation(detail?.request_type ?? null);
+  const moduleName = type?.name_th?.trim() || null;
+  const ctx: DocContext = { doc: moduleName ?? "คำร้อง", typeCode: type?.code ?? null };
+
+  let presentation: Presentation | null = null;
+  if (row.request_id) {
+    if (title === STATUS_CHANGED_TITLE) {
+      const status = statusFromBody(row.body) ?? detail?.status ?? null;
+      presentation = (status && statusChangePresentations[status]?.(ctx)) || {
+        emoji: "🔄", color: colors.info,
+        heading: `${ctx.doc} มีการเปลี่ยนแปลงสถานะ`,
+        lead: `${ctx.doc} ที่คุณเกี่ยวข้องมีการเปลี่ยนแปลงสถานะ`,
+        next: "เปิดหน้ารายการเพื่อดูสถานะล่าสุด",
+      };
+    } else {
+      presentation = requestTitleRules.find((rule) => rule.match(title))?.present(ctx) ?? null;
+    }
   }
-  if (title.includes("ของที่สั่งซื้อมาส่งหรือยัง") || title.includes("เลื่อนวันที่คาดว่าของจะมาส่ง")) {
-    return {
-      emoji: "📦", color: "#b54708",
-      lead: "ถึงวันที่คาดว่าของจะมาส่งแล้ว เช็คของแล้วกดบันทึกในหน้ารายการ ถ้ายังไม่มาให้เลื่อนวันที่คาดว่าจะมาส่งใหม่",
-      withModule: (m) => `${m} ถึงวันที่คาดว่าของจะมาส่งแล้ว เช็คของแล้วกดบันทึกในหน้ารายการ`,
-    };
-  }
-  if (title.includes("ตรวจรับ") || title.includes("ตรวจสอบ")) {
-    return {
-      emoji: "🔍", color: "#b54708",
-      lead: "มีงานรอให้คุณตรวจรับ",
-      withModule: (m) => `${m} รอคุณตรวจรับ`,
-    };
-  }
-  if (title.includes("สถานะ")) {
-    return {
-      emoji: "🔄", color: "#1769e0",
-      lead: "สถานะของรายการที่คุณเกี่ยวข้องมีการเปลี่ยนแปลง",
-      withModule: (m) => `${m} ที่คุณเกี่ยวข้องมีการเปลี่ยนแปลงสถานะ`,
-    };
-  }
-  if (title.includes("รหัสผ่าน") || title.includes("ID")) {
-    return { emoji: "🔑", color: "#6941c6", lead: "มีรายการเกี่ยวกับบัญชีผู้ใช้ที่ต้องดำเนินการ" };
-  }
-  if (title.includes("บัญชี")) {
-    return { emoji: "👤", color: "#6941c6", lead: "มีรายการเกี่ยวกับบัญชีผู้ใช้ที่ต้องดำเนินการ" };
-  }
-  return {
-    emoji: "🔔", color: "#1769e0",
-    lead: "มีความเคลื่อนไหวที่เกี่ยวข้องกับคุณ",
-    withModule: (m) => `${m} มีความเคลื่อนไหวที่เกี่ยวข้องกับคุณ`,
-  };
+  presentation ??= genericPresentation(title, moduleName);
+  return urgent ? { ...presentation, heading: URGENT_PREFIX + presentation.heading } : presentation;
 }
 
 // enum ในฐานข้อมูลเป็นภาษาอังกฤษ ผู้รับอีเมลอ่านไม่รู้เรื่อง แปลที่นี่แทนการไปแก้ RPC ทุกตัว
@@ -231,6 +410,7 @@ const statusLabels: Record<string, string> = {
   pending_assign: "รอมอบหมายช่าง",
   assigned: "รอดำเนินการ",
   pending_verify: "รอผู้แจ้งตรวจสอบ",
+  acknowledged: "รับทราบข้อมูล",
 };
 const priorityLabels: Record<string, string> = {
   low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน",
@@ -239,7 +419,7 @@ const priorityLabels: Record<string, string> = {
 /** แทนรหัสสถานะอังกฤษที่ RPC ใส่ไว้ใน body ด้วยคำไทย เช่น "เปลี่ยนเป็น approved" */
 function localizeStatuses(text: string) {
   return text.replace(
-    /\b(draft|pending_approval|approved|in_progress|more_info|completed|rejected|cancelled|pending_assign|assigned|pending_verify)\b/g,
+    /\b(draft|pending_approval|approved|in_progress|more_info|completed|rejected|cancelled|pending_assign|assigned|pending_verify|acknowledged)\b/g,
     (code) => statusLabels[code] ?? code,
   );
 }
@@ -278,7 +458,7 @@ type RequestDetail = {
   needed_date: string | null;
   created_at: string | null;
   requester_name: string | null;
-  request_type: { name_th: string | null } | { name_th: string | null }[] | null;
+  request_type: { name_th: string | null; code: string | null } | { name_th: string | null; code: string | null }[] | null;
   department: { code: string | null } | { code: string | null }[] | null;
   requester: { first_name: string | null; last_name: string | null } | { first_name: string | null; last_name: string | null }[] | null;
 };
@@ -292,7 +472,7 @@ async function fetchRequestDetails(admin: Admin, ids: string[]) {
     .from("requests")
     .select(
       "id, request_no, title, status, priority, is_urgent, machine_code, machine_name, needed_date, created_at, requester_name," +
-      " request_type:request_types(name_th)," +
+      " request_type:request_types(name_th, code)," +
       " department:departments(code)," +
       " requester:employees!requests_requester_id_fkey(first_name, last_name)",
     )
@@ -376,27 +556,25 @@ async function issueSetupLink(admin: Admin, employeeId: string, employeeNo: stri
 }
 
 function buildMessage(row: PendingNotification, detail: RequestDetail | undefined, setup?: SetupInfo): Message {
-  const accent = accentFor(row.title);
+  const accent = presentationFor(row, detail);
   const body = localizeStatuses(row.body ?? "");
   const link = setup ? setup.link : linkFor(row);
   const fields = setup ? [{ label: "ID เข้าใช้งาน", value: setup.employeeNo }] : fieldsFor(detail);
   const ref = detail?.request_no ? ` · ${detail.request_no}` : "";
 
-  // ชื่อโมดูลคือคำที่ผู้ใช้จำได้จากหน้าเลือกประเภทคำร้อง (ใบคำร้อง/แจ้งซ่อม MT, NCR/CAR ฯลฯ)
-  // ขึ้นต้นประโยคด้วยคำนี้ ผู้รับจึงรู้ว่าเรื่องอะไรตั้งแต่บรรทัดแรก ไม่ต้องอ่านต่อ
-  const moduleName = relation(detail?.request_type ?? null)?.name_th?.trim() || null;
-  const lead = setup
-    ? "ผู้ดูแลระบบอนุมัติสิทธิ์เข้าใช้งานระบบของคุณเรียบร้อยแล้ว"
-    : moduleName && accent.withModule ? accent.withModule(moduleName) : accent.lead;
+  const lead = setup ? "ผู้ดูแลระบบอนุมัติสิทธิ์เข้าใช้งานระบบของคุณเรียบร้อยแล้ว" : accent.lead;
+  const next = setup ? null : accent.next;
+  const heading = accent.heading;
 
-  const subject = `${accent.emoji} ${row.title}${ref}`;
+  const subject = `${accent.emoji} ${heading}${ref}`;
   const loginLink = appBaseUrl();
 
   const text = [
-    `${accent.emoji} ${row.title}`,
+    `${accent.emoji} ${heading}`,
     "",
     lead,
     body ? `\n${body}` : "",
+    next ? `\nสิ่งที่ต้องทำต่อ: ${next}` : "",
     fields.length ? "\n" + fields.map((f) => `${f.label}: ${f.value}`).join("\n") : "",
     "",
     ...(setup
@@ -427,7 +605,7 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>${escapeHtml(row.title)}</title>
+<title>${escapeHtml(heading)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f2f4f7">
   <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(lead)}${detail?.title ? ` — ${escapeHtml(detail.title)}` : ""}</div>
@@ -439,7 +617,7 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
           <tr>
             <td style="background:${accent.color};padding:22px 28px">
               <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.75)">MNP Workspace</div>
-              <div style="font-size:21px;font-weight:700;color:#ffffff;padding-top:6px;line-height:1.35">${accent.emoji} ${escapeHtml(row.title)}</div>
+              <div style="font-size:21px;font-weight:700;color:#ffffff;padding-top:6px;line-height:1.35">${accent.emoji} ${escapeHtml(heading)}</div>
             </td>
           </tr>
 
@@ -449,6 +627,18 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
               ${body ? `<p style="margin:14px 0 0;font-size:15px;line-height:1.65;color:#101828;font-weight:600">${escapeHtml(body)}</p>` : ""}
             </td>
           </tr>
+
+          ${next ? `
+          <tr>
+            <td style="padding:16px 28px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-left:4px solid ${accent.color};background:#f9fafb;border-radius:8px">
+                <tr><td style="padding:12px 16px">
+                  <div style="font-size:12px;font-weight:700;letter-spacing:.04em;color:${accent.color}">สิ่งที่ต้องทำต่อ</div>
+                  <div style="padding-top:4px;font-size:14px;line-height:1.65;color:#101828">${escapeHtml(next)}</div>
+                </td></tr>
+              </table>
+            </td>
+          </tr>` : ""}
 
           ${fields.length ? `
           <tr>
