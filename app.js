@@ -1043,6 +1043,7 @@ async function handleAccountRequestSubmit(event) {
 // ถ้าเป็นบัญชีของตัวเอง ต้องออกจากระบบแล้วเข้าใหม่ ไม่เช่นนั้น token เดิมจะใช้กับ
 // บาง API ไม่ได้อีกจนกว่าจะหมดอายุ
 async function forceReLogin(message) {
+  state.session = null;
   try {
     await sb.auth.signOut();
   } catch (error) {
@@ -1055,6 +1056,34 @@ async function forceReLogin(message) {
   await renderAuth(`<div class="form-message success">${escapeHtml(message)}</div>`);
 }
 
+// ล็อกอินครั้งเดียวแล้วอยู่ในระบบตลอด: ออกจากระบบให้เองเฉพาะเมื่อบัญชีใช้ต่อไม่ได้จริง
+// (ถูกลบ/ปิดใช้งาน หรือ session ถูกยกเลิกฝั่งเซิร์ฟเวอร์) — เน็ตหลุด/เซิร์ฟเวอร์ตอบช้าตอนเปิดแอป
+// ต้องไม่ทำให้หลุดจากระบบ เพราะ signOut() จะลบ refresh token ทิ้งและบังคับให้ล็อกอินใหม่
+function isAccountGoneError(error) {
+  const code = String(error?.code ?? "");
+  if (["EMPLOYEE_NOT_LINKED", "PGRST301", "PGRST303", "refresh_token_not_found", "session_not_found", "user_not_found"].includes(code)) return true;
+  if (error?.status === 401) return true;
+  return /JWT|refresh token not found|session_not_found|user_not_found/i.test(String(error?.message ?? ""));
+}
+
+async function signOutLocally(message) {
+  state.session = null;
+  try {
+    await sb.auth.signOut({ scope: "local" });
+  } catch (error) {
+    console.error(error);
+  }
+  state.employee = null;
+  state.unread = 0;
+  if (message) showToast(message, "error");
+}
+
+function renderConnectionError(error) {
+  console.error(error);
+  app.innerHTML = `<main class="boot-screen"><div class="brand-mark">M</div><h2>เชื่อมต่อระบบไม่ได้</h2><p>ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง คุณยังอยู่ในระบบ ไม่ต้องเข้าสู่ระบบใหม่</p><button class="btn" id="reconnect-button" type="button">ลองอีกครั้ง</button></main>`;
+  document.querySelector("#reconnect-button")?.addEventListener("click", startApp);
+}
+
 async function loadEmployee() {
   if (!state.session?.user) return null;
   const { data, error } = await sb
@@ -1064,7 +1093,7 @@ async function loadEmployee() {
     .eq("is_active", true)
     .maybeSingle();
   if (error) throw error;
-  if (!data) throw new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน");
+  if (!data) throw Object.assign(new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน"), { code: "EMPLOYEE_NOT_LINKED" });
   const { data: modulesData, error: modulesError } = await sb.rpc("app_my_approval_modules");
   if (modulesError) throw modulesError;
   state.employee = {
@@ -1173,12 +1202,12 @@ function bindShell() {
   // ปุ่มออกจากระบบมี 2 จุด: ท้ายแถบข้าง (จอกว้าง) และในเมนูหลัก (จอแคบ/มือถือ ซึ่งซ่อนแถบผู้ใช้)
   document.querySelectorAll(".signout-button").forEach((button) => button.addEventListener("click", async () => {
     setMobileNav(false);
+    state.session = null;
     try {
       await sb.auth.signOut();
     } catch (error) {
       console.error(error);
     }
-    state.session = null;
     state.employee = null;
     state.unread = 0;
     location.hash = "";
@@ -3353,7 +3382,15 @@ async function renderRoute() {
     await renderAuth();
     return;
   }
-  if (!state.employee) await loadEmployee();
+  if (!state.employee) {
+    try {
+      await loadEmployee();
+    } catch (error) {
+      if (!isAccountGoneError(error)) return renderConnectionError(error);
+      await signOutLocally(friendlyError(error));
+      return await renderAuth();
+    }
+  }
   await loadUnread();
   try {
     if (path === "dashboard") return await renderDashboard();
@@ -3375,10 +3412,11 @@ async function renderRoute() {
   }
 }
 
-async function init() {
-  applyTheme();
-  window.addEventListener("hashchange", renderRoute);
+async function startApp() {
   const { data, error } = await sb.auth.getSession();
+  // ต่ออายุ session ไม่สำเร็จเพราะเน็ต: session ยังเก็บอยู่ในเครื่อง อย่าพาไปหน้าล็อกอิน
+  // (refresh token ใช้ไม่ได้จริง Supabase ลบ session ให้เองและคืน session = null → ไปหน้าล็อกอินตามปกติ)
+  if (error?.name === "AuthRetryableFetchError") return renderConnectionError(error);
   if (error) console.error(error);
   state.session = data.session;
   if (state.session) {
@@ -3389,12 +3427,25 @@ async function init() {
       triggerNotificationEmails();
       if (!location.hash) go("dashboard");
     } catch (employeeError) {
-      await sb.auth.signOut();
-      state.session = null;
-      showToast(friendlyError(employeeError), "error");
+      if (!isAccountGoneError(employeeError)) return renderConnectionError(employeeError);
+      await signOutLocally(friendlyError(employeeError));
     }
   }
   await renderRoute();
+}
+
+async function init() {
+  applyTheme();
+  window.addEventListener("hashchange", renderRoute);
+  // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
+  sb.auth.onAuthStateChange((event) => {
+    if (event !== "SIGNED_OUT" || !state.session) return;
+    state.session = null;
+    state.employee = null;
+    state.unread = 0;
+    setTimeout(() => renderAuth(), 0);
+  });
+  await startApp();
 }
 
 init();
