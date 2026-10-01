@@ -6,7 +6,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(23);
+select plan(26);
 
 -- 1. สคีมา/ข้อมูลอ้างอิง -------------------------------------------------
 select ok(
@@ -73,6 +73,29 @@ select set_config(
   true
 );
 
+-- เลขที่เอกสารที่โชว์ล่วงหน้า (peek) ต้องเป็นรูปแบบ FT xxx/yy และตรงกับเลขที่ใบแรกออกจริง
+create temp table peeked_management_no as
+  select public.app_peek_management_doc_number() as no;
+grant select on peeked_management_no to authenticated;
+
+select matches(
+  (select no from peeked_management_no),
+  '^FT [0-9]{3}/[0-9]{2}$',
+  'peeked MANAGEMENT document number uses the FT xxx/yy format'
+);
+
+select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_peek_management_doc_number() $$,
+  'AUTH_REQUIRED',
+  'peeking the MANAGEMENT document number requires a signed-in user'
+);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"71000000-0000-0000-0000-000000000001","role":"authenticated"}',
+  true
+);
+
 select lives_ok(
   $$ select public.app_create_request(
        (select id from public.request_types where code = 'MANAGEMENT'),
@@ -95,6 +118,12 @@ select matches(
   (select request_no from public.requests where title = 'PP01FM08_TEST_ACK'),
   '^FT [0-9]{3}/[0-9]{2}$',
   'MANAGEMENT request number uses the FT xxx/yy format'
+);
+
+select is(
+  (select request_no from public.requests where title = 'PP01FM08_TEST_ACK'),
+  (select no from peeked_management_no),
+  'peeked document number equals the number assigned to the next MANAGEMENT request'
 );
 
 select results_eq(
