@@ -6,7 +6,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(29);
 
 -- 1. สคีมา/ข้อมูลอ้างอิง -------------------------------------------------
 select ok(
@@ -75,7 +75,7 @@ select set_config(
 
 -- เลขที่เอกสารที่โชว์ล่วงหน้า (peek) ต้องเป็นรูปแบบ FT xxx/yy และตรงกับเลขที่ใบแรกออกจริง
 create temp table peeked_management_no as
-  select public.app_peek_management_doc_number() as no;
+  select public.app_peek_request_number((select id from public.request_types where code = 'MANAGEMENT')) as no;
 grant select on peeked_management_no to authenticated;
 
 select matches(
@@ -86,7 +86,7 @@ select matches(
 
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok(
-  $$ select public.app_peek_management_doc_number() $$,
+  $$ select public.app_peek_request_number((select id from public.request_types where code = 'MANAGEMENT')) $$,
   'AUTH_REQUIRED',
   'peeking the MANAGEMENT document number requires a signed-in user'
 );
@@ -94,6 +94,23 @@ select set_config(
   'request.jwt.claims',
   '{"sub":"71000000-0000-0000-0000-000000000001","role":"authenticated"}',
   true
+);
+
+-- โมดูลอื่นโชว์เลขล่วงหน้าด้วยรูปแบบ <prefix>-YYYY-NNNNNN; ใบแจ้งซ่อมและประเภทที่ไม่มีอยู่ต้องถูกปฏิเสธ
+select matches(
+  public.app_peek_request_number((select id from public.request_types where code = 'NCR_CAR')),
+  '^NC-[0-9]{4}-[0-9]{6}$',
+  'peeked number for a non-management module uses the prefix-YYYY-NNNNNN format'
+);
+select throws_ok(
+  $$ select public.app_peek_request_number((select id from public.request_types where code = 'MT_REPAIR')) $$,
+  'REQUEST_TYPE_NOT_SUPPORTED',
+  'repair-workflow types keep using the per-department repair peek'
+);
+select throws_ok(
+  $$ select public.app_peek_request_number('00000000-0000-0000-0000-00000000dead') $$,
+  'REQUEST_TYPE_NOT_FOUND',
+  'peeking an unknown request type is rejected'
 );
 
 select lives_ok(

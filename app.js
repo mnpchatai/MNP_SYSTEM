@@ -692,6 +692,18 @@ function requestCode(requestNo) {
   return String(requestNo ?? "REQ").match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? "REQ";
 }
 
+// กรอบแสดงเลขที่เอกสารถัดไปบนฟอร์มสร้างคำร้องทุกโมดูล (เลขจริงถูกจองตอนส่งใบ จึงเป็นค่าโดยประมาณ)
+function docNumberBoxHtml(id, hint) {
+  return `<div class="doc-number-box" id="${id}"><span class="doc-number-label">เลขที่เอกสาร</span><strong class="doc-number-value">—</strong><small class="doc-number-note">${escapeHtml(hint)}</small></div>`;
+}
+
+function setDocNumberBox(id, value, note) {
+  const box = document.querySelector(`#${id}`);
+  if (!box) return;
+  box.querySelector(".doc-number-value").textContent = value || "—";
+  box.querySelector(".doc-number-note").textContent = note;
+}
+
 function requestOwnerNames(request, directory) {
   if (!directory) return [];
   const ids = [
@@ -1474,7 +1486,7 @@ async function renderNewRequest(params) {
             <div class="field"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
             <div class="field"><label for="repair-requester-name">ชื่อผู้แจ้ง</label><input class="input" id="repair-requester-name" name="requester_name" maxlength="120" value="${escapeHtml(`${employee.first_name} ${employee.last_name}`)}"></div>
             <div class="field full"><label class="checkbox-label"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
-            <div class="field full"><div class="muted small" id="repair-doc-number">เลขที่เอกสาร: เลือกแผนกเพื่อดูเลขที่โดยประมาณ</div></div>
+            <div class="field full">${docNumberBoxHtml("repair-doc-number", "เลือกแผนกเพื่อดูเลขที่เอกสาร")}</div>
           </div>
           <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งใบแจ้งซ่อม</button></div>
         </form></section>`;
@@ -1484,7 +1496,7 @@ async function renderNewRequest(params) {
       body = `
         <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="request-form">
           <div class="form-grid">
-            ${isManagement ? `<div class="field full"><div class="muted small" id="management-doc-number">เลขที่เอกสาร: กำลังตรวจสอบ…</div></div>` : ""}
+            <div class="field full">${docNumberBoxHtml("request-doc-number", "กำลังตรวจสอบ")}</div>
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
             <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
@@ -1519,7 +1531,6 @@ async function renderNewRequest(params) {
       const machineSearch = document.querySelector("#repair-machine-search");
       const machineList = document.querySelector("#repair-machine-list");
       const docTypeInput = document.querySelector("#repair-doc-type");
-      const docNumberNode = document.querySelector("#repair-doc-number");
       let selectedDepartmentId = "";
       let visibleMachines = [];
       let activeMachineIndex = -1;
@@ -1602,13 +1613,13 @@ async function renderNewRequest(params) {
         machineSearch.placeholder = "ค้นหารหัสหรือชื่อเครื่องจักร";
         machineSearch.focus();
         renderMachineList();
-        docNumberNode.textContent = "เลขที่เอกสาร: กำลังตรวจสอบ…";
+        setDocNumberBox("repair-doc-number", "…", "กำลังตรวจสอบ");
         try {
           const { data, error: peekError } = await sb.rpc("app_peek_repair_doc_number", { p_department_id: departmentId });
           if (peekError) throw peekError;
-          docNumberNode.textContent = `เลขที่เอกสาร (โดยประมาณ): ${data}`;
-        } catch (peekError) {
-          docNumberNode.textContent = "เลขที่เอกสาร: ระบบจะออกให้ตอนส่งใบ";
+          setDocNumberBox("repair-doc-number", data, "โดยประมาณ · เลขจริงออกตอนส่งใบ");
+        } catch {
+          setDocNumberBox("repair-doc-number", "—", "ระบบจะออกเลขให้ตอนส่งใบ");
         }
       }));
 
@@ -1665,16 +1676,13 @@ async function renderNewRequest(params) {
       return;
     }
 
-    // ใบคำร้องถึงฝ่ายบริหาร: โชว์เลขที่เอกสารถัดไปทันทีที่เลือกประเภท จะได้รู้ว่าออกถึงเลขที่เท่าไหร่แล้ว
-    const managementDocNumberNode = document.querySelector("#management-doc-number");
-    if (managementDocNumberNode) {
-      sb.rpc("app_peek_management_doc_number").then(({ data, error: peekError }) => {
-        if (peekError || !data) throw peekError ?? new Error("EMPTY");
-        managementDocNumberNode.textContent = `เลขที่เอกสาร (โดยประมาณ): ${data}`;
-      }).catch(() => {
-        managementDocNumberNode.textContent = "เลขที่เอกสาร: ระบบจะออกให้ตอนส่งใบ";
-      });
-    }
+    // ทุกโมดูล: โชว์เลขที่เอกสารถัดไปทันทีที่เลือกประเภท จะได้รู้ว่าออกถึงเลขที่เท่าไหร่แล้ว
+    sb.rpc("app_peek_request_number", { p_request_type_id: selected.id }).then(({ data, error: peekError }) => {
+      if (peekError || !data) throw peekError ?? new Error("EMPTY");
+      setDocNumberBox("request-doc-number", data, "โดยประมาณ · เลขจริงออกตอนส่งใบ");
+    }).catch(() => {
+      setDocNumberBox("request-doc-number", "—", "ระบบจะออกเลขให้ตอนส่งใบ");
+    });
 
     document.querySelector("#request-form").addEventListener("submit", async (event) => {
       event.preventDefault();

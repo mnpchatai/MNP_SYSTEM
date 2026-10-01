@@ -45,7 +45,7 @@ const ccDepartmentGrid: (string | null)[][] = [
   ["PC", "HR", "AD", "AC", "SP", null],
 ];
 
-export function RequestForm({ types, departments, managementDocNumber, initialType, error }: { types: RequestType[]; departments: Department[]; managementDocNumber?: string | null; initialType?: string; error?: string }) {
+export function RequestForm({ types, departments, docNumbers, initialType, error }: { types: RequestType[]; departments: Department[]; docNumbers?: Record<string, string>; initialType?: string; error?: string }) {
   const [selectedId, setSelectedId] = useState(initialType && types.some((t) => t.id === initialType) ? initialType : types[0]?.id ?? "");
   const selected = useMemo(() => types.find((t) => t.id === selectedId), [selectedId, types]);
   const fields = selected?.form_schema?.fields ?? [];
@@ -61,13 +61,15 @@ export function RequestForm({ types, departments, managementDocNumber, initialTy
           </select>
           <small>{selected?.description}</small>
         </div>
-        {selected?.code === "MANAGEMENT" && (
-          <div className="field full">
-            <div className="muted small">
-              {managementDocNumber ? <>เลขที่เอกสาร (โดยประมาณ): <strong>{managementDocNumber}</strong></> : "เลขที่เอกสาร: ระบบจะออกให้ตอนส่งใบ"}
-            </div>
+        <div className="field full">
+          <div className="doc-number-box">
+            <span className="doc-number-label">เลขที่เอกสาร</span>
+            <strong className="doc-number-value">{(selected && docNumbers?.[selected.id]) || "—"}</strong>
+            <small className="doc-number-note">
+              {selected && docNumbers?.[selected.id] ? "โดยประมาณ · เลขจริงออกตอนส่งใบ" : "ระบบจะออกเลขให้ตอนส่งใบ"}
+            </small>
           </div>
-        )}
+        </div>
         <div className="field full">
           <label htmlFor="title">หัวข้อ</label>
           <input className="input" id="title" name="title" minLength={3} maxLength={200} placeholder="สรุปสิ่งที่ต้องการให้กระชับ" required />
