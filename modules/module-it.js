@@ -12,7 +12,7 @@
 //   ให้เพิ่ม RPC/สถานะใน migration ใหม่ + test ใน supabase/tests/database/ แล้วค่อยเพิ่ม hook
 //   ของ flow ที่นี่ จากนั้นเปิดทั้ง enabled และ is_active พร้อมกัน
 //
-// คู่กับฝั่ง Next.js: src/lib/request-modules/it-repair.ts — แก้ที่หนึ่งให้แก้อีกที่ให้ตรงกัน
+// คู่กับฝั่ง Next.js: src/lib/request-modules/module-it.ts — แก้ที่หนึ่งให้แก้อีกที่ให้ตรงกัน
 (function registerItRepairModule() {
   const IT_REPAIR_FIELDS = [
     { name: "asset_code", label: "รหัสอุปกรณ์/ทรัพย์สิน IT", placeholder: "เช่น NB-0123" },

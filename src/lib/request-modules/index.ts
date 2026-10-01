@@ -1,4 +1,4 @@
-import { itRepairModule } from "./it-repair";
+import { itRepairModule } from "./module-it";
 import type { RequestModule } from "./types";
 
 export type { RequestModule } from "./types";
