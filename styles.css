@@ -240,6 +240,12 @@ button { cursor: pointer; }
 .form-message { margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
 .form-message.error { color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
 .form-message.success { color: var(--success); background: var(--success-soft); }
+
+/* กรอบแสดงเลขที่เอกสารถัดไปบนฟอร์มสร้างคำร้อง */
+.doc-number-box { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 12px 16px; border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--line)); border-radius: 12px; background: var(--primary-soft); }
+.doc-number-label { font-size: 13px; color: var(--muted); }
+.doc-number-value { font-size: 22px; font-weight: 700; line-height: 1.2; color: var(--primary); letter-spacing: .02em; }
+.doc-number-note { margin-left: auto; font-size: 12px; color: var(--quiet); }
 .form-actions { padding-top: 6px; display: flex; justify-content: flex-end; gap: 8px; }
 
 .btn {

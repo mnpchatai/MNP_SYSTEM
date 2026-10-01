@@ -1,4 +1,5 @@
 import { RequestForm } from "@/components/request-form";
+import { getCurrentEmployee } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 const requestModuleCodes = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
@@ -16,15 +17,23 @@ export default async function NewRequestPage({ searchParams }: { searchParams: P
     supabase.from("departments").select("id,code,name_th").eq("is_active", true),
   ]);
 
-  // เลขที่เอกสารถัดไปของใบคำร้องถึงฝ่ายบริหาร (อ่านอย่างเดียว) — ถ้าอ่านไม่ได้ฟอร์มยังใช้งานได้ตามปกติ
-  const { data: managementDocNumber } = await supabase.rpc("app_peek_management_doc_number");
+  // เลขที่เอกสารถัดไปของแต่ละโมดูล (อ่านอย่างเดียว) — ใบแจ้งซ่อมออกเลขตามแผนกของผู้แจ้ง
+  // ถ้าอ่านไม่ได้ฟอร์มยังใช้งานได้ตามปกติ
+  const employee = await getCurrentEmployee();
+  const docNumbers: Record<string, string> = {};
+  await Promise.all((data ?? []).map(async (type) => {
+    const { data: docNumber } = type.code === "MT_REPAIR"
+      ? await supabase.rpc("app_peek_repair_doc_number", { p_department_id: employee.department_id })
+      : await supabase.rpc("app_peek_request_number", { p_request_type_id: type.id });
+    if (typeof docNumber === "string") docNumbers[type.id] = docNumber;
+  }));
 
   return (
     <>
       <div className="page-heading form-card">
         <div><div className="eyebrow">New Request</div><h2>สร้างคำร้องใหม่</h2><p>เลือกประเภทและให้ข้อมูลที่จำเป็น ระบบจะส่งตามลำดับอนุมัติอัตโนมัติ</p></div>
       </div>
-      <section className="card form-card"><RequestForm types={data ?? []} departments={departments ?? []} managementDocNumber={typeof managementDocNumber === "string" ? managementDocNumber : null} initialType={params.type} error={params.error} /></section>
+      <section className="card form-card"><RequestForm types={data ?? []} departments={departments ?? []} docNumbers={docNumbers} initialType={params.type} error={params.error} /></section>
     </>
   );
 }
