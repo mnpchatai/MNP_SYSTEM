@@ -1090,6 +1090,7 @@ const NAV_ICONS = {
   notifications: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>`,
   admin: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1h-4v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1v-4H3a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.1h4V3a1.7 1.7 0 0 0 1.1 1.6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.37.36.7.6 1 .27.25.62.4 1 .4h.1v4H21a1.7 1.7 0 0 0-1.6.6Z"/></svg>`,
   profile: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
+  signout: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>`,
 };
 
 function navLink(path, label, icon, active, { featured = false, badge = 0 } = {}) {
@@ -1121,6 +1122,10 @@ function shell(content, active, title) {
           <div class="nav-divider"></div>
           ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
           ${navLink("profile", "ข้อมูลส่วนตัว", NAV_ICONS.profile, active)}
+          <button class="nav-link nav-signout signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">
+            <span class="nav-icon-wrap"><span class="nav-icon">${NAV_ICONS.signout}</span></span>
+            <span class="nav-text">ออกจากระบบ</span>
+          </button>
         </nav>
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
@@ -1160,13 +1165,20 @@ function bindShell() {
     if (event.key === "Escape") setMobileNav(false);
   };
   document.querySelector(".theme-toggle")?.addEventListener("click", toggleTheme);
-  document.querySelector(".signout-button")?.addEventListener("click", async () => {
-    await sb.auth.signOut();
+  // ปุ่มออกจากระบบมี 2 จุด: ท้ายแถบข้าง (จอกว้าง) และในเมนูหลัก (จอแคบ/มือถือ ซึ่งซ่อนแถบผู้ใช้)
+  document.querySelectorAll(".signout-button").forEach((button) => button.addEventListener("click", async () => {
+    setMobileNav(false);
+    try {
+      await sb.auth.signOut();
+    } catch (error) {
+      console.error(error);
+    }
     state.session = null;
     state.employee = null;
+    state.unread = 0;
     location.hash = "";
     await renderAuth();
-  });
+  }));
 }
 
 function loadingShell(active, title) {
