@@ -33,22 +33,22 @@ select is_empty(
 );
 
 -- ทำแทนผู้จัดการแผนกได้ในฟังก์ชันที่ตรวจ role code (ต้องไม่เหลือนิยามที่รู้จักแค่ department_manager)
-select unlike(
+select unalike(
   pg_get_functiondef('private.owning_department_managers(uuid)'::regprocedure),
   '%code = ''department_manager''%',
   'owning_department_managers no longer matches department_manager alone'
 );
-select like(
+select alike(
   pg_get_functiondef('private.owning_department_managers(uuid)'::regprocedure),
   '%assistant_department_manager%',
   'owning_department_managers includes assistant_department_manager'
 );
-select like(
+select alike(
   pg_get_functiondef('public.app_start_repair_work(uuid)'::regprocedure),
   '%assistant_department_manager%',
   'app_start_repair_work allows assistant_department_manager'
 );
-select like(
+select alike(
   pg_get_functiondef('private.can_access_request(uuid)'::regprocedure),
   '%assistant_department_manager%',
   'can_access_request allows assistant_department_manager'
