@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, ClipboardList, FileText, Wrench } from "lucide-react";
+import { ArrowRight, ClipboardList, FileText, MonitorCog, Wrench } from "lucide-react";
 import { RequestTable } from "@/components/request-table";
 import { getCurrentEmployee } from "@/lib/auth";
 import { getPendingApprovals } from "@/lib/data";
@@ -10,6 +10,7 @@ const requestTypeIcons = {
   MT_REPAIR: Wrench,
   MANAGEMENT: FileText,
   NCR_CAR: ClipboardList,
+  IT_REPAIR: MonitorCog,
 } as const;
 
 export default async function DashboardPage() {
