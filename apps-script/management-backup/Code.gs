@@ -14,9 +14,9 @@
  *   1. เปิดสเปรดชีตนี้ > Extensions > Apps Script
  *   2. ลบโค้ดเดิมในไฟล์ Code.gs ทิ้ง แล้ววางไฟล์นี้แทน
  *   3. Deploy > Manage deployments > แก้ไข deployment เดิม (ไอคอนดินสอ) > Version: New version > Deploy
- *      (ใช้ deployment เดิม ไม่ต้องสร้างใหม่ — URL ใน app.js จะยังใช้ได้เหมือนเดิม)
+ *      (ใช้ deployment เดิม ไม่ต้องสร้างใหม่ — URL ใน modules/module-mg.js จะยังใช้ได้เหมือนเดิม)
  *   4. ถ้าเพิ่ง deploy ครั้งแรก ให้เลือกประเภท "Web app", Execute as: Me, Who has access: Anyone
- *      แล้วคัดลอก URL ไปใส่ในตัวแปร APPS_SCRIPT_MANAGEMENT_SYNC_URL ใน app.js
+ *      แล้วคัดลอก URL ไปใส่ในตัวแปร APPS_SCRIPT_MANAGEMENT_SYNC_URL ใน modules/module-mg.js
  *
  * หมายเหตุความปลอดภัย: ต้องตั้ง Access เป็น "Anyone" เพราะ Pilot Web ยิง fetch แบบ mode:"no-cors"
  * (อ่าน response กลับไม่ได้ และแนบ header/token ไม่ได้) เหมือนกับสคริปต์ใบแจ้งซ่อมเดิมทุกประการ —
@@ -103,7 +103,7 @@ function getStructuredSheet_() {
   return sheet;
 }
 
-// value คือ JSON string ของ order (ดู buildAppsScriptManagementOrder ใน app.js) — แกะฟิลด์มาลง
+// value คือ JSON string ของ order (ดู buildAppsScriptManagementOrder ใน modules/module-mg.js) — แกะฟิลด์มาลง
 // คอลัมน์ที่มีชื่อ แล้ว upsert ทับแถวเดิมด้วย "เลขที่เอกสาร" (docNumber/request_no คงที่ ไม่ซ้ำ
 // ตลอดอายุคำร้อง จึงใช้เป็น key ที่มองเห็นได้แทน uuid แบบเดียวกับชีตใบแจ้งซ่อม)
 function upsertStructuredRow_(sheet, rawValue) {

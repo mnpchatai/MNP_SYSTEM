@@ -37,19 +37,11 @@ const fieldMeta: Record<string, { label: string; type?: string; placeholder?: st
   attachment_note: { label: "สิ่งที่แนบมาด้วย", placeholder: "ระบุรายการเอกสาร/ไฟล์ที่แนบ (ถ้ามี)" },
 };
 
-// ส่วนที่ 3 ของฟอร์ม PP01-FM08 "สำเนาถึงแผนก" — ตาราง 6 คอลัมน์ 4 แถว เรียงตามฟอร์มต้นฉบับ
-// ช่องสุดท้าย (null) คือ "อื่นๆ" ซึ่งเป็นช่องข้อความอิสระ ไม่ใช่แผนกในระบบ
-const ccDepartmentGrid: (string | null)[][] = [
-  ["PP", "BD", "QA", "RB", "GR", "PK"],
-  ["PT", "BG", "SR", "SE", "ST", "WH"],
-  ["MS", "MT", "FT", "IT", "EX", "SA"],
-  ["PC", "HR", "AD", "AC", "SP", null],
-];
-
 export function RequestForm({ types, departments, docNumbers, initialType, error }: { types: RequestType[]; departments: Department[]; docNumbers?: Record<string, string>; initialType?: string; error?: string }) {
   const [selectedId, setSelectedId] = useState(initialType && types.some((t) => t.id === initialType) ? initialType : types[0]?.id ?? "");
   const selected = useMemo(() => types.find((t) => t.id === selectedId), [selectedId, types]);
-  const fields = getRequestModule(selected?.code)?.detailFields ?? selected?.form_schema?.fields ?? [];
+  const requestModule = getRequestModule(selected?.code);
+  const fields = requestModule?.detailFields ?? selected?.form_schema?.fields ?? [];
 
   return (
     <form action={createRequestAction} encType="multipart/form-data">
@@ -81,8 +73,8 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
           <input className="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx" />
           <small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small>
         </div>
-        {/* ใบคำร้องถึงฝ่ายบริหารไม่มีช่องความสำคัญ — server action ใช้ค่า normal เมื่อไม่ได้ส่งมา */}
-        {selected?.code !== "MANAGEMENT" && (
+        {/* บางโมดูล (เช่น ใบคำร้องถึงฝ่ายบริหาร) ไม่มีช่องความสำคัญ — server action ใช้ค่า normal เมื่อไม่ได้ส่งมา */}
+        {!requestModule?.hidePriority && (
           <div className="field">
             <label htmlFor="priority">ความสำคัญ</label>
             <select className="select" id="priority" name="priority" defaultValue="normal">
@@ -102,11 +94,11 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
         })}
       </div>
 
-      {selected?.code === "MANAGEMENT" && (
+      {requestModule?.ccDepartmentGrid && (
         <div className="field full cc-department-field">
           <label>สำเนาถึงแผนก</label>
           <div className="cc-department-grid">
-            {ccDepartmentGrid.flat().map((code, index) => {
+            {requestModule.ccDepartmentGrid.flat().map((code, index) => {
               if (code === null) {
                 return (
                   <label className="cc-department-other" key="other">

@@ -13,6 +13,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
 import { employeeName, formatDate, priorityLabels, statusLabels } from "@/lib/format";
 import { hasPermission } from "@/lib/data";
+import { getRequestModule } from "@/lib/request-modules";
 import {
   buildRequestTimeline,
   type ApprovalTimelineRow,
@@ -60,7 +61,7 @@ export default async function RequestDetailPage({
     .single();
   if (!request) notFound();
 
-  const isManagementRequest = request.request_type?.code === "MANAGEMENT";
+  const requestModule = getRequestModule(request.request_type?.code);
   const ccDepartmentIds: string[] = request.cc_department_ids ?? [];
   const { data: ccDepartments } = ccDepartmentIds.length
     ? await supabase.from("departments").select("id,code").in("id", ccDepartmentIds)
@@ -86,7 +87,7 @@ export default async function RequestDetailPage({
     <>
       {messages.created && (
         <div className="form-message success">
-          สร้างและส่งคำร้องเรียบร้อยแล้ว{isManagementRequest && <> · เลขที่เอกสาร <strong>{request.request_no}</strong></>}
+          สร้างและส่งคำร้องเรียบร้อยแล้ว{requestModule?.showDocNumberOnCreate && <> · เลขที่เอกสาร <strong>{request.request_no}</strong></>}
         </div>
       )}
       {messages.error && <div className="form-message error">{messages.error}</div>}
@@ -98,7 +99,7 @@ export default async function RequestDetailPage({
             <p>{request.request_type?.name_th} · ผู้ขอ {employeeName(request.requester)}</p>
           </div>
           <div className="detail-header-actions">
-            {isManagementRequest && <Link className="btn secondary small" href={`/requests/${request.id}/print`}>พิมพ์ฟอร์ม PP01-FM08</Link>}
+            {requestModule?.printFormLabel && <Link className="btn secondary small" href={`/requests/${request.id}/print`}>{requestModule.printFormLabel}</Link>}
             <StatusBadge status={request.status} />
           </div>
         </div>
@@ -115,7 +116,7 @@ export default async function RequestDetailPage({
               {Object.entries(details).map(([key, value]) => (
                 <div className="definition" key={key}><dt>{detailLabels[key] ?? key}</dt><dd>{value}</dd></div>
               ))}
-              {isManagementRequest && (ccDepartments?.length || details.cc_other_note) ? (
+              {requestModule?.ccDepartmentGrid && (ccDepartments?.length || details.cc_other_note) ? (
                 <div className="definition">
                   <dt>สำเนาถึงแผนก</dt>
                   <dd>
@@ -156,7 +157,7 @@ export default async function RequestDetailPage({
                 <div className="form-actions">
                   <button className="btn danger" name="decision" value="rejected">ไม่อนุมัติ</button>
                   <button className="btn warning" name="decision" value="more_info">ขอข้อมูลเพิ่ม</button>
-                  {isManagementRequest && <button className="btn secondary" name="decision" value="acknowledged">รับทราบข้อมูล</button>}
+                  {requestModule?.extraDecisions?.map((item) => <button className="btn secondary" name="decision" value={item.decision} key={item.decision}>{item.label}</button>)}
                   <button className="btn success" name="decision" value="approved">อนุมัติ</button>
                 </div>
               </form>

@@ -6,10 +6,6 @@ const PILOT_AUTH_URL = `${SUPABASE_URL}/functions/v1/pilot-auth`;
 // สำรองข้อมูลใบแจ้งซ่อมไปชีต Maintenance-MT เดิม (แค่บันทึก/รายงาน — Supabase ยังเป็นฐานข้อมูลหลัก
 // และเป็นตัวบังคับสิทธิ์/workflow ทั้งหมด) ดู syncRepairOrderToAppsScript ท้ายไฟล์นี้
 const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwfHj4_rNUfU9ZB4xjOpyJPxQSHucoT1baeJ0AFGaz46olWJ8UXU_pBLnKpCwG6KHprqA/exec";
-// สำรองข้อมูลใบคำร้องถึงฝ่ายบริหาร (PP01-FM08) ไปชีต "ใบคำร้องถึงฝ่ายบริหาร" แยกจากชีตแจ้งซ่อม
-// ด้านบน (คนละสเปรดชีต) — deploy Apps Script ตาม apps-script/management-backup/Code.gs แล้วใส่ URL
-// ของ Web App ที่ได้ตรงนี้ ปล่อยว่างไว้ = ยังไม่ sync (ดู syncManagementOrderToAppsScript ท้ายไฟล์นี้)
-const APPS_SCRIPT_MANAGEMENT_SYNC_URL = "https://script.google.com/macros/s/AKfycbw_FQUWk6tM8l-CvOdPu7zHxJdKj6Dcq7hBZRIiEotNRGs5sstLj7GnHMK5xixjuS5m/exec";
 // ส่งอีเมลแจ้งเตือนจริงตาม employees.email — ดู triggerNotificationEmails ท้ายไฟล์นี้
 const NOTIFY_EMAIL_URL = `${SUPABASE_URL}/functions/v1/notify-email`;
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
@@ -249,15 +245,6 @@ const detailFieldLabels = {
   attachment_note: "สิ่งที่แนบมาด้วย",
   cc_other_note: "อื่นๆ (ระบุ)",
 };
-
-// ส่วนที่ 3 ของฟอร์ม PP01-FM08 "สำเนาถึงแผนก" — ตาราง 6 คอลัมน์ 4 แถว เรียงตามฟอร์มต้นฉบับ
-// ช่องสุดท้าย (null) คือ "อื่นๆ" ซึ่งเป็นช่องข้อความอิสระ ไม่ใช่แผนกในระบบ (ดู request-form.tsx)
-const CC_DEPARTMENT_GRID = [
-  ["PP", "BD", "QA", "RB", "GR", "PK"],
-  ["PT", "BG", "SR", "SE", "ST", "WH"],
-  ["MS", "MT", "FT", "IT", "EX", "SA"],
-  ["PC", "HR", "AD", "AC", "SP", null],
-];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -1454,27 +1441,11 @@ function dynamicDetailFields(schema, values = {}) {
   }).join("");
 }
 
-// ส่วนที่ 3 ของฟอร์ม PP01-FM08 "สำเนาถึงแผนก" — ccDepartments คือ Map<code, {id,code}> จาก
-// loadCcDepartments เช็คบ็อกซ์ผูก name="cc_department_ids" (เก็บ id ของแผนก) ช่อง "อื่นๆ" ใช้
-// class detail-field เดียวกับ dynamicDetailFields จึงถูกเก็บลง details.cc_other_note อัตโนมัติ
-function ccDepartmentGridHtml(ccDepartments) {
-  const cells = CC_DEPARTMENT_GRID.flat().map((code) => {
-    if (code === null) {
-      return `<label class="cc-department-other"><span>อื่นๆ</span><input class="input detail-field" name="cc_other_note" placeholder="ระบุ" maxlength="200"></label>`;
-    }
-    const department = ccDepartments.get(code);
-    if (!department) return "<span></span>";
-    return `<label class="cc-department-option"><input type="checkbox" class="cc-department-checkbox" name="cc_department_ids" value="${escapeHtml(department.id)}"><span>${escapeHtml(code)}</span></label>`;
-  }).join("");
-  return `<div class="field full cc-department-field"><label>สำเนาถึงแผนก</label><div class="cc-department-grid">${cells}</div></div>`;
-}
-
 const requestTypeThemes = {
   MT_REPAIR: ["#fb7185", "#be123c"],
   IT_REPAIR: ["#60a5fa", "#1d4ed8"],
   VEHICLE_REPAIR: ["#fb923c", "#c2410c"],
   PURCHASE: ["#34d399", "#047857"],
-  MANAGEMENT: ["#a78bfa", "#5b21b6"],
   IT_ACCESS: ["#22d3ee", "#0e7490"],
   HR_LEAVE: ["#f472b6", "#be185d"],
   HR_TRAINING: ["#fbbf24", "#b45309"],
@@ -1482,7 +1453,6 @@ const requestTypeThemes = {
 };
 const requestTypeLabelOverrides = {
   MT_REPAIR: "ใบคำร้อง/แจ้งซ่อม MT",
-  MANAGEMENT: "ใบคำร้องถึงฝ่ายบริหาร",
 };
 
 function requestTypeLabel(type) {
@@ -1515,12 +1485,12 @@ async function renderNewRequest(params) {
 
   let departments = null;
   let machines = null;
-  let ccDepartments = null;
-  async function loadCcDepartments() {
-    if (ccDepartments) return;
-    const { data, error: ccError } = await sb.from("departments").select("id,code").eq("is_active", true);
-    if (ccError) throw ccError;
-    ccDepartments = new Map((data ?? []).map((item) => [item.code, item]));
+  // ข้อมูลที่โมดูลแยกไฟล์โหลดไว้ใช้วาดฟอร์ม (prepareForm) — โหลดครั้งเดียวต่อการเปิดหน้านี้
+  const moduleFormContexts = new Map();
+  async function loadModuleFormContext(separateModule) {
+    if (!separateModule?.prepareForm) return null;
+    if (!moduleFormContexts.has(separateModule.code)) moduleFormContexts.set(separateModule.code, await separateModule.prepareForm({ sb }));
+    return moduleFormContexts.get(separateModule.code);
   }
   async function loadRepairLookups() {
     if (departments) return;
@@ -1588,9 +1558,8 @@ async function renderNewRequest(params) {
           <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งใบแจ้งซ่อม</button></div>
         </form></section>`;
     } else {
-      const isManagement = selected.code === "MANAGEMENT";
-      if (isManagement) await loadCcDepartments();
       const separateModule = requestModule(selected.code);
+      const formContext = await loadModuleFormContext(separateModule);
       const detailFieldsHtml = separateModule?.renderFields ? separateModule.renderFields({ escapeHtml }) : dynamicDetailFields(selected.form_schema);
       body = `
         <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="request-form">
@@ -1599,10 +1568,10 @@ async function renderNewRequest(params) {
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
             <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
-            ${isManagement ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
+            ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
             <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
           </div>
-          ${isManagement ? ccDepartmentGridHtml(ccDepartments) : ""}
+          ${separateModule?.renderFormSections ? separateModule.renderFormSections(formContext, { escapeHtml }) : ""}
           <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งคำร้อง</button></div>
         </form></section>`;
     }
@@ -1809,12 +1778,9 @@ async function renderNewRequest(params) {
             return;
           }
         }
-        // ใบคำร้องถึงฝ่ายบริหารให้เห็นเลขที่เอกสารทันทีหลังสร้าง เป็นจุดชี้บ่งใบนั้นๆ
-        let docNoSuffix = "";
-        if (selected.code === "MANAGEMENT") {
-          const { data: created } = await sb.from("requests").select("request_no").eq("id", data).maybeSingle();
-          if (created?.request_no) docNoSuffix = ` · เลขที่ ${created.request_no}`;
-        }
+        // โมดูลแยกไฟล์เติมข้อความต่อท้ายได้ (เช่น ใบคำร้องถึงฝ่ายบริหารแสดงเลขที่เอกสาร)
+        const separateModule = requestModule(selected.code);
+        const docNoSuffix = separateModule?.afterCreate ? await separateModule.afterCreate({ sb, requestId: data }) : "";
         showToast(`${attachment ? "สร้างคำร้องและแนบไฟล์สำเร็จ" : "สร้างคำร้องสำเร็จ"}${docNoSuffix}`);
         go(`request?id=${encodeURIComponent(data)}`);
       } catch (submitError) {
@@ -2180,63 +2146,6 @@ function syncRepairOrderToAppsScript(order) {
   }).catch((syncError) => console.warn("ซิงก์ใบแจ้งซ่อมไปชีตสำรองไม่สำเร็จ", syncError));
 }
 
-// สถานะของใบคำร้องถึงฝ่ายบริหารตามฟอร์ม PP01-FM08: มติ 3 ทาง (approved/rejected/acknowledged)
-// เป็น terminal เสมอ ไม่มีขั้นดำเนินงานแบบใบแจ้งซ่อม จึงสั้นกว่า mapRepairAppsScriptStatus มาก
-function mapManagementAppsScriptStatus(request) {
-  if (request.status === "pending_approval") return request.current_step >= 2 ? "PENDING_GM" : "PENDING_FM";
-  const direct = {
-    more_info: "NEEDS_INFO",
-    approved: "APPROVED",
-    in_progress: "IN_PROGRESS",
-    completed: "DONE",
-    rejected: "REJECTED",
-    acknowledged: "ACKNOWLEDGED",
-  };
-  return direct[request.status] ?? request.status.toUpperCase();
-}
-
-// โครงสร้างเดียวกับ buildAppsScriptOrder ของใบแจ้งซ่อม (fm/gm ผูกกับ step_order 1/2 เหมือนกัน
-// เพราะ MANAGEMENT ใช้สายอนุมัติคงที่ ผู้จัดการโรงงาน -> ผู้จัดการทั่วไป แบบเดียวกันแล้ว — ดู
-// 20260922010000_management_request_pp01_fm08.sql) เพื่อให้ผู้ดูแลที่คุ้นชีตใบแจ้งซ่อมอ่านชีตนี้ได้ทันที
-function buildAppsScriptManagementOrder(request, steps, directory, ccDepartmentCodes) {
-  const fmStep = steps.find((step) => step.step_order === 1);
-  const gmStep = steps.find((step) => step.step_order === 2);
-  const details = request.details ?? {};
-  const decidedStep = [fmStep, gmStep].find((step) => step && step.status !== "pending");
-  return {
-    id: request.id,
-    docNumber: request.request_no,
-    department: relation(request.department)?.code ?? "",
-    subject: request.title ?? "",
-    attachmentNote: details.attachment_note ?? "",
-    description: request.description ?? "",
-    requestedBy: personName(directory, request.requester_id),
-    position: directory.get(request.requester_id)?.job_title ?? "",
-    submittedAt: request.submitted_at,
-    status: mapManagementAppsScriptStatus(request),
-    decision: decidedStep ? decidedStep.status : "",
-    comment: decidedStep?.comment ?? "",
-    approvals: {
-      fm: appsScriptApprovalStage(fmStep, directory),
-      gm: appsScriptApprovalStage(gmStep, directory),
-    },
-    ccDepartments: ccDepartmentCodes ?? [],
-    ccOther: details.cc_other_note ?? "",
-  };
-}
-
-function syncManagementOrderToAppsScript(order) {
-  if (!APPS_SCRIPT_MANAGEMENT_SYNC_URL) return;
-  // no-cors: อ่านผลลัพธ์กลับไม่ได้ (opaque response) — ยอมรับได้เพราะนี่คือสำเนาสำรอง ไม่ใช่ทางเดิน
-  // ข้อมูลจริง ถ้ายิงไม่สำเร็จ (โควตา/เครือข่าย/ฯลฯ) ก็แค่ log ไว้ ไม่กระทบผู้ใช้งานเลย
-  fetch(APPS_SCRIPT_MANAGEMENT_SYNC_URL, {
-    method: "POST",
-    mode: "no-cors",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ batch: [{ key: `mgmt:${order.id}`, value: JSON.stringify(order) }] }),
-  }).catch((syncError) => console.warn("ซิงก์ใบคำร้องถึงฝ่ายบริหารไปชีตสำรองไม่สำเร็จ", syncError));
-}
-
 async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
@@ -2269,22 +2178,10 @@ async function renderRequestDetail(params) {
     ...(request.assignee_id ? [request.assignee_id] : []),
   ])];
   if (isRepair) syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory, assignedTechIds));
-  const isManagement = type?.code === "MANAGEMENT";
-  let ccDepartmentCodes = [];
-  if (isManagement) {
-    // อย่าให้การเตรียมข้อมูลสำรอง (แค่บันทึก/รายงาน) พังหน้ารายละเอียดจริง — ผิดพลาดแค่ log ไว้
-    try {
-      const ccIds = request.cc_department_ids ?? [];
-      if (ccIds.length) {
-        const { data: ccData, error: ccError } = await sb.from("departments").select("code").in("id", ccIds);
-        if (ccError) throw ccError;
-        ccDepartmentCodes = (ccData ?? []).map((row) => row.code);
-      }
-      syncManagementOrderToAppsScript(buildAppsScriptManagementOrder(request, steps, directory, ccDepartmentCodes));
-    } catch (ccError) {
-      console.warn("เตรียมข้อมูลสำเนาถึงแผนก/สำรองใบคำร้องถึงฝ่ายบริหารไม่สำเร็จ", ccError);
-    }
-  }
+  const separateModule = requestModule(type?.code);
+  const moduleDetail = separateModule?.loadDetail
+    ? await separateModule.loadDetail({ sb, request, steps, directory, helpers: { relation, personName, appsScriptApprovalStage } })
+    : null;
   const employee = state.employee;
   const currentStep = steps.find((step) => step.status === "pending" && step.step_order === request.current_step);
   const isAdmin = employee.role?.code === "admin" || VIEW_ALL_ROLE_CODES.includes(employee.role?.code);
@@ -2359,9 +2256,7 @@ async function renderRequestDetail(params) {
       tone: "primary",
       wide: String(value ?? "").length > 36,
     })),
-    ...(isManagement && ccDepartmentCodes.length
-      ? [requestFact("สำเนาถึงแผนก", ccDepartmentCodes.join(", "), { icon: "▤", tone: "violet", wide: true })]
-      : []),
+    ...(moduleDetail?.facts ?? []).map((fact) => requestFact(fact.label, fact.value, fact.options)),
   ].join("");
   const content = `
     <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p></header>
@@ -2385,7 +2280,7 @@ async function renderRequestDetail(params) {
             </form>` : `<p class="muted small">มีเพียง ${escapeHtml(requesterLabel)} ผู้ยื่นคำร้องนี้เท่านั้นที่ตอบกลับได้</p>`}
           </section>`;
         })() : ""}
-        ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button>${type?.code === "MANAGEMENT" ? `<button class="btn secondary decision-button" data-decision="acknowledged">รับทราบข้อมูล</button>` : ""}<button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
+        ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button>${(separateModule?.extraDecisions ?? []).map((item) => `<button class="btn secondary decision-button" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("")}<button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
         ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${canAssign ? `<section class="card"><h2>${request.status === "pending_assign" ? "มอบหมายช่าง" : "แก้ไขการมอบหมายช่าง"}</h2><p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง — ติ๊กได้มากกว่าหนึ่งคน" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form">
           <div class="field"><label>ช่างผู้รับผิดชอบ</label><small>ติ๊กช่างที่รับผิดชอบใบนี้ อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></div>

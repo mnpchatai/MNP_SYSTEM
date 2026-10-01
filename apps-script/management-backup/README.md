@@ -15,15 +15,14 @@ Google Apps Script สำหรับสำรองข้อมูลคำร�
    - Execute as: **Me**
    - Who has access: **Anyone**
 4. กด Deploy แล้วคัดลอก URL ของ Web App ที่ได้
-5. เปิด `app.js` ที่ root ของ repo หาตัวแปร `APPS_SCRIPT_MANAGEMENT_SYNC_URL` (อยู่ใกล้กับ
-   `APPS_SCRIPT_SYNC_URL` ของใบแจ้งซ่อม) แล้ววาง URL ที่ได้ลงไป
-6. เลื่อนเลข `?v=` ใน `index.html` ทั้งสองจุด (`styles.css`/`app.js`) ตามธรรมเนียมของ repo แล้ว push
+5. เปิด `modules/module-mg.js` หาตัวแปร `APPS_SCRIPT_MANAGEMENT_SYNC_URL` แล้ววาง URL ที่ได้ลงไป
+6. เลื่อนเลข `?v=` ใน `index.html` ทุกจุด (`styles.css`/`app.js`/`modules/*.js`) ตามธรรมเนียมของ repo แล้ว push
 
 ### อัปเดตโค้ดเดิม (เช่นตอนที่เพิ่มชีตสรุปแบบมีคอลัมน์)
 
 1. เปิดสเปรดชีต > **Extensions > Apps Script** > วางเนื้อหา `Code.gs` ใหม่ทับของเดิมทั้งไฟล์
 2. **Deploy > Manage deployments** > กดไอคอนดินสอ (แก้ไข) ที่ deployment เดิม > **Version: New version** > **Deploy**
-   — ใช้ deployment เดิม **ไม่ต้องสร้างใหม่** เพื่อให้ URL เดิมใน `app.js` ยังใช้ได้ ไม่ต้องแก้อะไรที่ฝั่งเว็บ
+   — ใช้ deployment เดิม **ไม่ต้องสร้างใหม่** เพื่อให้ URL เดิมใน `modules/module-mg.js` ยังใช้ได้ ไม่ต้องแก้อะไรที่ฝั่งเว็บ
 3. ทดสอบด้วยการเปิดหน้ารายละเอียดคำร้อง MANAGEMENT จริงในเว็บ แล้วเช็คว่าชีต **"ใบคำร้องถึงฝ่ายบริหาร"**
    มีแถวใหม่/อัปเดต — **ห้ามเชื่อผลจากการกด Run ในตัวแก้ไข Apps Script โดยตรง** เพราะตอนนั้น `e` (event
    ของ HTTP request) เป็น `undefined` โค้ดจะเข้า `catch` แล้วจบแบบ "Execution completed" ทันทีโดยไม่ได้
@@ -32,8 +31,8 @@ Google Apps Script สำหรับสำรองข้อมูลคำร�
 ## รูปแบบข้อมูล
 
 Pilot Web ยิง `fetch(url, { method: "POST", mode: "no-cors", body: JSON.stringify({ batch: [...] }) })`
-ทุกครั้งที่มีคนเปิดหน้ารายละเอียดคำร้องประเภทนี้ (ดู `syncManagementOrder`/`syncManagementOrderToAppsScript`
-ใน `app.js`) — เพราะเป็น `no-cors` จึงอ่าน response กลับไม่ได้และแนบ header/token ไม่ได้ (เหมือนสคริปต์
+ทุกครั้งที่มีคนเปิดหน้ารายละเอียดคำร้องประเภทนี้ (ดู `syncManagementOrderToAppsScript`
+ใน `modules/module-mg.js`) — เพราะเป็น `no-cors` จึงอ่าน response กลับไม่ได้และแนบ header/token ไม่ได้ (เหมือนสคริปต์
 ใบแจ้งซ่อมเดิมทุกประการ) **ต้องตั้ง Access เป็น "Anyone" และถือ URL นี้เป็นความลับระดับหนึ่ง (เหมือน webhook)**
 
 Body:
