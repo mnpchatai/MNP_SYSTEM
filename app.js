@@ -931,7 +931,7 @@ async function renderAuth(message = "") {
           <p>${isRequest ? "กำหนด ID และรหัสผ่านที่ต้องการ ผู้ดูแลระบบจะเป็นผู้อนุมัติสิทธิ์ก่อนใช้งานได้" : "ใช้รหัสพนักงานและรหัสผ่านของคุณ"}</p>
           <div id="auth-message">${message}${directoryError ? `<div class="form-message error">${escapeHtml(directoryError)}</div>` : ""}</div>
           <form id="auth-form">
-            <div class="field"><label for="employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
+            <div class="field"><label for="employee-no">UserID</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
             ${isRequest ? requestFields : ""}
             <div class="field"><label for="password">รหัสผ่าน</label><input class="input" id="password" name="password" type="password" autocomplete="${isRequest ? "new-password" : "current-password"}" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
             ${isRequest ? `<div class="field"><label for="confirm-password">ยืนยันรหัสผ่าน</label><input class="input" id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
@@ -2667,7 +2667,7 @@ async function renderProfile() {
           <div class="field"><label for="profile-phone">เบอร์ติดต่อ</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
         </div>
         <div class="field"><label for="profile-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}"></div>
-        <div class="field"><label for="profile-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ด ID / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
+        <div class="field"><label for="profile-employee-no">UserID</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ด ID / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">หน่วยงาน</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
@@ -2692,7 +2692,7 @@ async function renderProfile() {
         : "คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ"}</p>
       <div id="credential-message"></div>
       <form id="credential-form">
-        <div class="field"><label for="new-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
+        <div class="field"><label for="new-employee-no">UserID</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
         <div class="field-row">
           <div class="field"><label for="new-password">รหัสผ่านใหม่</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
           <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
@@ -3011,7 +3011,7 @@ async function renderAdmin(params) {
         <div id="employee-edit-message"></div>
         <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}">
           <div class="field-row">
-            <div class="field"><label for="edit-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
+            <div class="field"><label for="edit-employee-no">UserID</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
             <div class="field"><label for="edit-active">สถานะบัญชี</label><select class="input" id="edit-active" name="is_active"><option value="true"${editing.is_active ? " selected" : ""}>ใช้งาน</option><option value="false"${editing.is_active ? "" : " selected"}>ปิดใช้งาน</option></select></div>
           </div>
           <div class="field-row">
@@ -3179,7 +3179,7 @@ async function renderSetPassword(params) {
           <div id="auth-message">${errorMessage ? `<div class="form-message error">${escapeHtml(errorMessage)}</div>` : ""}</div>
           ${errorMessage ? `<a class="btn secondary block" href="#/dashboard" id="setup-back">กลับไปหน้าเข้าสู่ระบบ</a>` : `
           <form id="setup-form">
-            <div class="field"><label for="setup-employee-no">รหัสพนักงาน (ID เข้าใช้งาน)</label><input class="input" id="setup-employee-no" value="${escapeHtml(employeeNo)}" autocomplete="username" readonly></div>
+            <div class="field"><label for="setup-employee-no">UserID</label><input class="input" id="setup-employee-no" value="${escapeHtml(employeeNo)}" autocomplete="username" readonly></div>
             <div class="field"><label for="setup-password">รหัสผ่านใหม่</label><input class="input" id="setup-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
             <div class="field"><label for="setup-confirm">ยืนยันรหัสผ่านใหม่</label><input class="input" id="setup-confirm" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
             <button class="btn block" type="submit">ตั้งรหัสผ่านและไปหน้าเข้าสู่ระบบ</button>

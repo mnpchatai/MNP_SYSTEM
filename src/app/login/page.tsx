@@ -40,7 +40,7 @@ export default async function LoginPage({
           <p>ใช้รหัสพนักงานและรหัสผ่านที่ผู้ดูแลระบบออกให้</p>
           {error && <div className="form-message error">{error}</div>}
           <div className="field">
-            <label htmlFor="employee_no">รหัสพนักงาน</label>
+            <label htmlFor="employee_no">UserID</label>
             <input
               className="input"
               id="employee_no"
