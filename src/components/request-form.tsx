@@ -80,12 +80,15 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
           <input className="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx" />
           <small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small>
         </div>
-        <div className="field">
-          <label htmlFor="priority">ความสำคัญ</label>
-          <select className="select" id="priority" name="priority" defaultValue="normal">
-            <option value="low">ต่ำ</option><option value="normal">ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option>
-          </select>
-        </div>
+        {/* ใบคำร้องถึงฝ่ายบริหารไม่มีช่องความสำคัญ — server action ใช้ค่า normal เมื่อไม่ได้ส่งมา */}
+        {selected?.code !== "MANAGEMENT" && (
+          <div className="field">
+            <label htmlFor="priority">ความสำคัญ</label>
+            <select className="select" id="priority" name="priority" defaultValue="normal">
+              <option value="low">ต่ำ</option><option value="normal">ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option>
+            </select>
+          </div>
+        )}
         {fields.map((name) => {
           const meta = fieldMeta[name];
           if (!meta) return null;

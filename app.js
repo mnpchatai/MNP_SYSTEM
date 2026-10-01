@@ -1516,8 +1516,8 @@ async function renderNewRequest(params) {
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
             <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
-            <div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
-            <div></div><div class="field full"><div class="form-grid">${dynamicDetailFields(selected.form_schema)}</div></div>
+            ${isManagement ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
+            <div></div>`}<div class="field full"><div class="form-grid">${dynamicDetailFields(selected.form_schema)}</div></div>
           </div>
           ${isManagement ? ccDepartmentGridHtml(ccDepartments) : ""}
           <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งคำร้อง</button></div>
@@ -1711,7 +1711,7 @@ async function renderNewRequest(params) {
           p_type_id: selected.id,
           p_title: String(values.get("title") ?? "").trim(),
           p_description: String(values.get("description") ?? "").trim(),
-          p_priority: values.get("priority"),
+          p_priority: values.get("priority") ?? "normal", // ใบคำร้องถึงฝ่ายบริหารไม่มีช่องนี้ ใช้ค่าปกติ
           p_details: details,
           p_cc_department_ids: ccDepartmentIds,
         });
