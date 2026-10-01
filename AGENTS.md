@@ -83,6 +83,8 @@ For database, RLS, grant, RPC, or migration changes, also start/verify the local
 npm run db:test
 ```
 
+Never push directly to `main`; work on your own branch and open a pull request so CI (`.github/workflows/ci.yml`) runs. Other agents or sessions may have pull requests open at the same time, so before merging, bring the latest `main` into your branch and run `scripts/ci/check-pr-guards.sh origin/main`. If you change a database function in a migration, start from its latest definition on `main`, since another merged migration may have replaced it.
+
 Add or update the smallest relevant automated tests for changed behavior. If a required check cannot run, report the exact reason and do not claim it passed.
 
 Before the final commit:

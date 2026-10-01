@@ -641,6 +641,48 @@ npm run db:test
 
 `db:test` ต้องมี local Supabase stack ที่กำลังทำงาน และทดสอบทั้ง RLS/grants รวมถึงกรณี allow/deny ของคำร้อง
 
+### CI บน GitHub Actions
+
+`.github/workflows/ci.yml` รันทุก PR ที่เข้า `main` ทุก push เข้า `main` และสั่งรันเองได้จากแท็บ Actions มี 3 job:
+
+| Job | ตรวจอะไร |
+| --- | --- |
+| `Typecheck, lint, build` | `npm run typecheck`, `npm run lint`, `npm run build` (build ไม่ต้องใช้ env จริง ไม่มี secret ใน CI) |
+| `Database tests` | เปิด Supabase stack local **ภายใน runner** แล้วรัน `npm run db:test` ไม่แตะ Supabase Cloud |
+| `PR guards` (เฉพาะ PR) | `scripts/ci/check-pr-guards.sh` ตรวจสิ่งที่ git merge ตรวจไม่ได้ ดูหัวข้อถัดไป |
+
+`PR guards` มีไว้กันปัญหาตอนหลาย PR (หลาย AI/session) เปิดพร้อมกัน:
+
+1. `?v=` ของ `app.js` และ `styles.css` ใน `index.html` ต้องตรงกัน
+2. ถ้า PR แก้ `app.js` หรือ `styles.css` เลข `?v=` ต้องต่างจาก `main` ณ ตอนนั้น ถ้า PR อื่น merge ก่อนแล้วเลขชนกัน ให้เลื่อนเลขใหม่ตอน update branch
+3. ห้ามแก้ ลบ หรือเปลี่ยนชื่อ migration ที่อยู่บน `main` แล้ว
+4. migration ใหม่ต้องมี timestamp ใหม่กว่า migration ล่าสุดบน `main` ถ้า PR อื่นที่มี migration ใหม่กว่า merge ไปก่อน ให้เปลี่ยนชื่อไฟล์ของ PR นี้ก่อน merge
+
+รันในเครื่องได้ด้วย `scripts/ci/check-pr-guards.sh origin/main` (ให้ `git fetch origin main` ก่อน)
+
+สิ่งที่ CI **ตรวจไม่ได้**: ถ้าสอง PR สร้าง migration ที่ `create or replace` ฟังก์ชันเดียวกัน ไฟล์ที่ apply ทีหลังจะเขียนทับฟังก์ชันทั้งก้อนโดยไม่มี conflict ผู้ที่ merge ทีหลังต้องเปิดดูว่าฟังก์ชันถูกแก้ใน `main` ไปแล้วหรือยัง และเขียน migration ใหม่จากเวอร์ชันล่าสุดเสมอ
+
+### เปิด branch protection ให้ `main`
+
+ทำครั้งเดียวโดยเจ้าของ repository **หลังจาก CI รันสำเร็จอย่างน้อย 1 รอบแล้ว** (ชื่อ check จะขึ้นให้เลือกเฉพาะ check ที่เคยรันแล้ว)
+
+1. เปิด GitHub → repository `MNP_SYSTEM` → **Settings** → **Rules** → **Rulesets** → **New ruleset** → **New branch ruleset**
+2. **Ruleset name**: `protect-main`, **Enforcement status**: `Active`
+3. **Target branches** → **Add target** → **Include default branch** (`main`)
+4. เปิดกฎต่อไปนี้:
+   - **Restrict deletions**
+   - **Block force pushes**
+   - **Require a pull request before merging** โดยตั้ง **Required approvals** เป็น `0` ถ้ามีคนดูแลคนเดียว (บังคับว่าต้องผ่าน PR แต่ไม่ต้องรอคนอื่น approve) หรือ `1` ถ้ามีผู้ review
+   - **Require status checks to pass** → ติ๊ก **Require branches to be up to date before merging** → **Add checks** แล้วเลือก `Typecheck, lint, build`, `Database tests` และ `PR guards`
+5. **Bypass list**: เว้นว่างไว้ ถ้าใส่ตัวเองไว้ จะ push เข้า `main` ตรงได้ในกรณีฉุกเฉิน แต่ AI session ที่ใช้สิทธิ์บัญชีเดียวกันก็จะ bypass ได้ด้วย
+6. กด **Create**
+
+หลังเปิดแล้ว:
+
+- push เข้า `main` ตรง ๆ จะถูกปฏิเสธ ทุก AI/session ต้องทำงานบน branch ของตัวเองแล้วเปิด PR
+- เมื่อ PR หนึ่ง merge แล้ว PR อื่นที่เปิดค้างจะขึ้นว่า out of date ต้องกด **Update branch** (หรือ merge `main` เข้า branch) และรอ CI ผ่านอีกรอบก่อน merge ได้ ข้อนี้ทำให้ผลรวมของสอง PR ถูกทดสอบก่อนเข้า `main` เสมอ
+- GitHub Pages ยัง deploy จาก `main` เหมือนเดิม
+
 ## ลำดับสถานะ
 
 คำร้องทั่วไป
