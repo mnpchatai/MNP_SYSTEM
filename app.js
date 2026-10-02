@@ -329,9 +329,17 @@ function setFormBusy(form, busy) {
 function optionalAttachment(value) {
   if (!(value instanceof File) || value.size === 0) return null;
   if (value.size > MAX_ATTACHMENT_SIZE) throw new Error("ไฟล์ต้องมีขนาดไม่เกิน 10 MB");
-  if (!ALLOWED_ATTACHMENT_TYPES.has(value.type)) throw new Error("ชนิดไฟล์ไม่รองรับ");
+  if (!ALLOWED_ATTACHMENT_TYPES.has(value.type)) {
+    // บอกชนิดที่ตรวจเจอด้วย ผู้ใช้จะได้รู้ว่าไฟล์ไหนไม่ผ่านและต้องแปลงเป็นอะไร
+    const detected = (/\.([A-Za-z0-9]+)$/.exec(value.name)?.[1] ?? value.type) || "ไม่ทราบชนิด";
+    throw new Error(`ชนิดไฟล์ไม่รองรับ (${detected.toUpperCase()}) · แนบได้เฉพาะรูปภาพ, PDF, TXT, DOCX, XLSX`);
+  }
   return value;
 }
+
+// รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 4 MB) ถูกแปลงเป็น JPEG ในเบราว์เซอร์
+// ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
+window.MNP_ATTACHMENT_IMAGE?.bindFileInputs({ notify: showToast });
 
 async function uploadRequestAttachment(requestId, file, uploaderId) {
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
@@ -1456,7 +1464,7 @@ async function renderNewRequest(params) {
             <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-            <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small></div>
+            <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX</small></div>
             ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
             <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
           </div>
@@ -1843,7 +1851,7 @@ async function renderRequestDetail(params) {
       </div>
       <aside class="stack">
         <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
-        <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์ (สูงสุด 10 MB)</label><input class="input" id="attachment-file" name="file" type="file" required></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
+        <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์ (สูงสุด 10 MB)</label><input class="input" id="attachment-file" name="file" type="file" accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
         <section class="card"><h2>ลำดับเหตุการณ์</h2><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p><time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
       </aside>
     </div>`;

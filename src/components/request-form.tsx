@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { createRequestAction } from "@/app/actions/requests";
+import { AttachmentInput } from "@/components/attachment-input";
 import { SubmitButton } from "@/components/submit-button";
 import { getRequestModule } from "@/lib/request-modules";
 
@@ -70,8 +71,8 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
         </div>
         <div className="field full">
           <label htmlFor="attachment">ไฟล์แนบ (ถ้ามี)</label>
-          <input className="input" id="attachment" name="attachment" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx" />
-          <small>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</small>
+          <AttachmentInput id="attachment" name="attachment" />
+          <small>สูงสุด 10 MB · รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX</small>
         </div>
         {/* บางโมดูล (เช่น ใบคำร้องถึงฝ่ายบริหาร) ไม่มีช่องความสำคัญ — server action ใช้ค่า normal เมื่อไม่ได้ส่งมา */}
         {!requestModule?.hidePriority && (

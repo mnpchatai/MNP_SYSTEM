@@ -195,6 +195,8 @@ button { cursor: pointer; }
 .field { display: grid; gap: 7px; margin-bottom: 15px; }
 .field label { font-size: 14px; font-weight: 700; line-height: 1.4; }
 .field small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.attachment-status { display: block; }
+.field .attachment-status.error { color: var(--danger); }
 .input, .select, .textarea {
   width: 100%;
   min-height: 44px;
