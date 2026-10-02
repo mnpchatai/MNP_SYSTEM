@@ -18,6 +18,10 @@
 //
 // SAFE_BYTES ตั้งที่ 4 MB ไม่ใช่ 10 MB เพราะ Next.js บน Vercel รับ body ของ Server Action ได้ราว 4.5 MB
 //
+// แนบได้หลายไฟล์พร้อมกัน: ช่องที่มี `multiple` เตรียมทุกไฟล์ทีละไฟล์ (ทีละไฟล์เพื่อไม่ให้เบราว์เซอร์มือถือถอดรหัสหลายรูปพร้อมกันจนหน่วยความจำหมด)
+// แล้วตรวจจำนวน (MAX_BATCH_FILES) และ "ขนาดรวมหลังเตรียมแล้ว" (MAX_BATCH_BYTES = 20 MB) ซึ่งเป็นขนาดที่อัปโหลดจริง
+// ขีดจำกัดรวมนี้เป็นการตรวจฝั่งเบราว์เซอร์ ส่วนขีดจำกัดจริงต่อไฟล์ (10 MB, ชนิดไฟล์) ยังอยู่ที่ server action / RPC / bucket เหมือนเดิม
+//
 // Pilot Web: โหลดไฟล์นี้ก่อน app.js (ดู index.html) แล้ว app.js เรียก bindFileInputs() หนเดียว
 // Next.js: คอมโพเนนต์ src/components/attachment-input.tsx เรียก normalizeAttachment() โดยส่งตัวโหลด
 // libheif-js ของตัวเองเข้ามา — ไลบรารีนี้คัดลอกไว้ที่ vendor/libheif/ สำหรับ Pilot (ดู README ในโฟลเดอร์นั้น)
@@ -27,6 +31,8 @@
   else root.MNP_ATTACHMENT_IMAGE = api;
 })(typeof self !== "undefined" ? self : globalThis, function attachmentImageFactory(root) {
   const SAFE_BYTES = 4 * 1024 * 1024;
+  const MAX_BATCH_FILES = 10;
+  const MAX_BATCH_BYTES = 20 * 1024 * 1024;
   const MAX_EDGE = 2560;
   const HEIC_TIMEOUT_MS = 60000; // โหลดไลบรารี/ถอดรหัสบนเครื่องช้าอาจใช้เวลาหลายวินาที ตั้งไว้เผื่อ
   const CANONICAL_TYPES = { jpeg: "image/jpeg", png: "image/png", webp: "image/webp" };
@@ -52,7 +58,12 @@
     preparing: "กำลังเตรียมรูป กรุณารอสักครู่",
     convertFailed: "แปลงรูปไม่สำเร็จ กรุณาบันทึกหรือถ่ายรูปเป็น JPG แล้วแนบใหม่",
     tooLarge: "รูปมีขนาดใหญ่เกินไป กรุณาลดขนาดรูปแล้วแนบใหม่",
+    tooManyFiles: `แนบได้ครั้งละไม่เกิน ${MAX_BATCH_FILES} ไฟล์ กรุณาเลือกใหม่`,
+    batchTooLarge: `ขนาดไฟล์รวมกันเกิน ${MAX_BATCH_BYTES / 1048576} MB กรุณาลดจำนวนไฟล์แล้วเลือกใหม่`,
   };
+  // ข้อความใต้ช่องแนบไฟล์ทุกหน้า — ตัวเลข 10 MB ต่อไฟล์ตรงกับ check constraint ของ request_attachments, bucket และ server action
+  const HINT = `แนบได้หลายไฟล์พร้อมกัน (ไม่เกิน ${MAX_BATCH_FILES} ไฟล์ รวมกันไม่เกิน ${MAX_BATCH_BYTES / 1048576} MB · ไฟล์ละไม่เกิน 10 MB) · ` +
+    "รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX";
 
   // ---- ฟังก์ชันล้วน (ไม่แตะเบราว์เซอร์ ทดสอบได้ใน Node: scripts/tests/attachment-image.test.mjs) ----
 
@@ -124,6 +135,22 @@
     const wanted = CANONICAL_EXTENSIONS[kind];
     const current = KIND_BY_EXTENSION[extensionOf(name)];
     return current === kind ? String(name) : `${baseName(name)}.${wanted}`;
+  }
+
+  // ตรวจจำนวนและขนาดรวมของไฟล์ชุดเดียวกัน (ส่งไฟล์ที่เตรียมแล้วมา เพราะเป็นขนาดที่ถูกอัปโหลดจริง) คืนข้อความ error หรือ null
+  function checkBatch(files) {
+    const list = Array.from(files ?? []);
+    if (list.length > MAX_BATCH_FILES) return MESSAGES.tooManyFiles;
+    const total = list.reduce((sum, file) => sum + (file?.size ?? 0), 0);
+    return total > MAX_BATCH_BYTES ? MESSAGES.batchTooLarge : null;
+  }
+
+  // ข้อความสรุปใต้ช่องแนบไฟล์หลายไฟล์: จำนวน ขนาดรวมเทียบเพดาน และจำนวนไฟล์ที่ระบบปรับให้
+  function describeBatch(prepared, originals) {
+    const total = prepared.reduce((sum, file) => sum + file.size, 0);
+    const adjusted = prepared.filter((file, index) => file !== originals[index]).length;
+    const summary = `เลือก ${prepared.length} ไฟล์ · รวม ${(total / 1048576).toFixed(1)} จาก ${MAX_BATCH_BYTES / 1048576} MB`;
+    return adjusted ? `${summary} · เตรียมรูปให้ระบบรับได้แล้ว ${adjusted} ไฟล์` : summary;
   }
 
   // ---- ส่วนที่ต้องใช้เบราว์เซอร์ ----
@@ -267,6 +294,29 @@
     return convertToJpeg(file, kind, options);
   }
 
+  // เตรียมหลายไฟล์ทีละไฟล์ คืนอาร์เรย์ตามลำดับเดิม (ไฟล์ที่ไม่ต้องแก้คืนอ็อบเจ็กต์เดิม) ถ้ามีไฟล์ใดแปลงไม่ได้ หรือจำนวน/ขนาดรวมเกิน
+  // จะโยน Error ข้อความไทยโดยไม่คืนไฟล์บางส่วน (ผู้เรียกล้างการเลือกทั้งชุด กันส่งไฟล์ไม่ครบโดยไม่รู้ตัว)
+  // options.onProgress(done, total) ถูกเรียกก่อนเริ่มแต่ละไฟล์ ให้ผู้เรียกแสดงความคืบหน้า
+  async function normalizeAttachments(files, options = {}) {
+    const list = Array.from(files ?? []);
+    // นับก่อนแปลง: เลือกรูปมาเป็นร้อยใบจะได้ไม่เสียเวลาถอดรหัสทีละใบจนเครื่องค้าง
+    if (list.length > MAX_BATCH_FILES) throw new Error(MESSAGES.tooManyFiles);
+    const prepared = [];
+    for (const [index, file] of list.entries()) {
+      if (options.onProgress) options.onProgress(index + 1, list.length);
+      try {
+        prepared.push(await normalizeAttachment(file, options));
+      } catch (error) {
+        const message = error instanceof Error && error.message ? error.message : MESSAGES.convertFailed;
+        // หลายไฟล์ต้องบอกว่าไฟล์ไหนมีปัญหา ไม่งั้นผู้ใช้ต้องเดาเอง
+        throw new Error(list.length > 1 ? `${file?.name || "ไฟล์ที่เลือก"}: ${message}` : message);
+      }
+    }
+    const batchError = checkBatch(prepared);
+    if (batchError) throw new Error(batchError);
+    return prepared;
+  }
+
   // ---- Pilot Web: ดักทุก <input type="file"> ทั้งหน้าด้วย listener เดียว ----
 
   function showStatus(input, state, text) {
@@ -290,11 +340,11 @@
     const latest = new WeakMap();
     document.addEventListener("change", async (event) => {
       const input = event.target;
-      if (!(input instanceof HTMLInputElement) || input.type !== "file" || input.multiple) return;
-      const original = input.files && input.files[0];
+      if (!(input instanceof HTMLInputElement) || input.type !== "file") return;
+      const originals = Array.from(input.files ?? []);
       const sequence = (latest.get(input) ?? 0) + 1;
       latest.set(input, sequence);
-      if (!original) {
+      if (!originals.length) {
         input.setCustomValidity("");
         showStatus(input, "idle", "");
         return;
@@ -302,17 +352,24 @@
       // กันกดส่งฟอร์มระหว่างแปลง: ช่องที่ setCustomValidity ค้างอยู่ทำให้ฟอร์มส่งไม่ได้ (เบราว์เซอร์เตือนเอง)
       input.setCustomValidity(MESSAGES.preparing);
       showStatus(input, "busy", MESSAGES.preparing);
+      const onProgress = (done, total) => {
+        if (total > 1 && latest.get(input) === sequence) showStatus(input, "busy", `${MESSAGES.preparing} (${done}/${total})`);
+      };
       try {
-        const prepared = await normalizeAttachment(original, options);
+        // ช่องไฟล์เดียวทำงานเหมือนเดิมทุกอย่าง (ไม่ตรวจขนาดรวม) ช่อง multiple เตรียมทั้งชุดและตรวจจำนวน/ขนาดรวม
+        const prepared = input.multiple
+          ? await normalizeAttachments(originals, { ...options, onProgress })
+          : [await normalizeAttachment(originals[0], options)];
         if (latest.get(input) !== sequence) return;
-        if (prepared === original) {
-          showStatus(input, "idle", "");
-        } else {
+        const changed = prepared.some((file, index) => file !== originals[index]);
+        if (changed) {
           const transfer = new DataTransfer();
-          transfer.items.add(prepared);
+          prepared.forEach((file) => transfer.items.add(file));
           input.files = transfer.files;
-          showStatus(input, "done", `เตรียมรูปเป็น JPG แล้ว (${(prepared.size / 1048576).toFixed(1)} MB)`);
         }
+        if (input.multiple) showStatus(input, "done", describeBatch(prepared, originals));
+        else if (changed) showStatus(input, "done", `เตรียมรูปเป็น JPG แล้ว (${(prepared[0].size / 1048576).toFixed(1)} MB)`);
+        else showStatus(input, "idle", "");
       } catch (error) {
         if (latest.get(input) !== sequence) return;
         input.value = "";
@@ -326,8 +383,9 @@
   }
 
   return {
-    SAFE_BYTES, MAX_EDGE, MESSAGES,
+    SAFE_BYTES, MAX_EDGE, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
-    normalizeAttachment, bindFileInputs,
+    checkBatch, describeBatch,
+    normalizeAttachment, normalizeAttachments, bindFileInputs,
   };
 });

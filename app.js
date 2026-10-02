@@ -355,9 +355,47 @@ function optionalAttachment(value) {
   return value;
 }
 
+// แนบได้หลายไฟล์พร้อมกัน: ตรวจทีละไฟล์ด้วย optionalAttachment แล้วตรวจจำนวนและขนาดรวมของทั้งชุด (รวมไม่เกิน 20 MB)
+// รับ FileList หรืออาร์เรย์ของไฟล์ คืนอาร์เรย์ไฟล์ที่เลือกจริง (ไม่มี = อาร์เรย์ว่าง) โยน Error ข้อความไทยถ้าไม่ผ่าน
+function optionalAttachments(fileList) {
+  const list = Array.from(fileList ?? []);
+  const files = list.map((file) => {
+    try {
+      return optionalAttachment(file);
+    } catch (error) {
+      // เลือกหลายไฟล์ต้องบอกว่าไฟล์ไหนไม่ผ่าน
+      throw list.length > 1 ? new Error(`${file.name}: ${error.message}`) : error;
+    }
+  }).filter(Boolean);
+  const batchError = window.MNP_ATTACHMENT_IMAGE?.checkBatch(files);
+  if (batchError) throw new Error(batchError);
+  return files;
+}
+
+// ข้อความใต้ช่องแนบไฟล์ทุกหน้า ใช้ชุดเดียวกับฝั่ง Next.js (modules/attachment-image.js)
+const ATTACHMENT_HINT = window.MNP_ATTACHMENT_IMAGE?.HINT ?? "";
+
 // รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 4 MB) ถูกแปลงเป็น JPEG ในเบราว์เซอร์
 // ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
 window.MNP_ATTACHMENT_IMAGE?.bindFileInputs({ notify: showToast });
+
+// อัปโหลดทีละไฟล์ ไฟล์ไหนไม่ผ่านไม่ทำให้ไฟล์ที่เหลือหยุด (แต่ละไฟล์ล้างของตัวเองเมื่อพลาด) คืนรายชื่อไฟล์ที่ไม่สำเร็จให้ผู้เรียกแจ้งผู้ใช้
+async function uploadAttachmentBatch(files, uploadOne) {
+  const failed = [];
+  for (const file of files) {
+    try {
+      await uploadOne(file);
+    } catch (error) {
+      failed.push({ name: file.name, error });
+    }
+  }
+  return { total: files.length, failed };
+}
+
+function attachmentBatchFailureText({ total, failed }) {
+  const names = failed.map((item) => item.name).join(", ");
+  return `แนบไฟล์ไม่สำเร็จ ${failed.length} จาก ${total} ไฟล์ (${names}) · ${friendlyError(failed[0].error)}`;
+}
 
 async function uploadRequestAttachment(requestId, file, uploaderId) {
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
@@ -1484,7 +1522,7 @@ async function renderNewRequest(params) {
             <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
             <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-            <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX</small></div>
+            <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
             ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
             <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
           </div>
@@ -1527,9 +1565,9 @@ async function renderNewRequest(params) {
       event.preventDefault();
       const form = event.currentTarget;
       const values = new FormData(form);
-      let attachment;
+      let attachments;
       try {
-        attachment = optionalAttachment(values.get("attachment"));
+        attachments = optionalAttachments(values.getAll("attachment"));
       } catch (attachmentError) {
         document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
         return;
@@ -1549,11 +1587,10 @@ async function renderNewRequest(params) {
         });
         if (createError) throw createError;
         triggerNotificationEmails(data);
-        if (attachment) {
-          try {
-            await uploadRequestAttachment(data, attachment, employee.id);
-          } catch {
-            showToast("สร้างคำร้องแล้ว แต่แนบไฟล์ไม่สำเร็จ · กรุณาแนบใหม่ในหน้ารายละเอียด", "error");
+        if (attachments.length) {
+          const uploaded = await uploadAttachmentBatch(attachments, (file) => uploadRequestAttachment(data, file, employee.id));
+          if (uploaded.failed.length) {
+            showToast(`สร้างคำร้องแล้ว แต่${attachmentBatchFailureText(uploaded)} · กรุณาแนบใหม่ในหน้ารายละเอียด`, "error");
             go(`request?id=${encodeURIComponent(data)}`);
             return;
           }
@@ -1561,7 +1598,8 @@ async function renderNewRequest(params) {
         // โมดูลแยกไฟล์เติมข้อความต่อท้ายได้ (เช่น ใบคำร้องถึงฝ่ายบริหารแสดงเลขที่เอกสาร)
         const separateModule = requestModule(selected.code);
         const docNoSuffix = separateModule?.afterCreate ? await separateModule.afterCreate({ sb, requestId: data }) : "";
-        showToast(`${attachment ? "สร้างคำร้องและแนบไฟล์สำเร็จ" : "สร้างคำร้องสำเร็จ"}${docNoSuffix}`);
+        const attachedNote = attachments.length > 1 ? ` ${attachments.length} ไฟล์` : "";
+        showToast(`${attachments.length ? `สร้างคำร้องและแนบไฟล์${attachedNote}สำเร็จ` : "สร้างคำร้องสำเร็จ"}${docNoSuffix}`);
         go(`request?id=${encodeURIComponent(data)}`);
       } catch (submitError) {
         document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
@@ -1871,7 +1909,7 @@ async function renderRequestDetail(params) {
       </div>
       <aside class="stack">
         <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
-        <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์ (สูงสุด 10 MB)</label><input class="input" id="attachment-file" name="file" type="file" accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
+        <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
         <section class="card"><h2>ลำดับเหตุการณ์</h2><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p><time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
       </aside>
     </div>`;
@@ -1924,17 +1962,23 @@ async function renderRequestDetail(params) {
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    let file;
+    let files;
     try {
-      file = optionalAttachment(form.elements.file.files[0]);
-      if (!file) throw new Error("กรุณาเลือกไฟล์");
+      files = optionalAttachments(form.elements.file.files);
+      if (!files.length) throw new Error("กรุณาเลือกไฟล์");
     } catch (error) {
       return showToast(friendlyError(error), "error");
     }
     setFormBusy(form, true);
     try {
-      await uploadRequestAttachment(id, file, employee.id);
-      showToast("อัปโหลดไฟล์แล้ว");
+      const uploaded = await uploadAttachmentBatch(files, (file) => uploadRequestAttachment(id, file, employee.id));
+      if (uploaded.failed.length === files.length) {
+        // ไม่มีไฟล์ไหนขึ้นเลย อยู่หน้าเดิมให้เลือกไฟล์ใหม่ได้ทันที
+        showToast(attachmentBatchFailureText(uploaded), "error");
+        setFormBusy(form, false);
+        return;
+      }
+      showToast(uploaded.failed.length ? attachmentBatchFailureText(uploaded) : `อัปโหลดไฟล์แล้ว${files.length > 1 ? ` ${files.length} ไฟล์` : ""}`, uploaded.failed.length ? "error" : "success");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });

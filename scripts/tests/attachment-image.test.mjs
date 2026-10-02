@@ -5,7 +5,10 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const attachmentImage = createRequire(import.meta.url)("../../modules/attachment-image.js");
-const { sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension, SAFE_BYTES } = attachmentImage;
+const {
+  sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension, SAFE_BYTES,
+  checkBatch, describeBatch, normalizeAttachments, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
+} = attachmentImage;
 
 function bytes(...parts) {
   const out = [];
@@ -94,4 +97,76 @@ test("jpegName and withExtension keep the base name and fix the extension", () =
   assert.equal(withExtension("image", "jpeg"), "image.jpg");
   assert.equal(withExtension("photo.JPEG", "jpeg"), "photo.JPEG");
   assert.equal(withExtension("photo.dat", "png"), "photo.png");
+});
+
+// ---- แนบหลายไฟล์พร้อมกัน (ขนาดรวมไม่เกิน 20 MB) ----
+// ใช้ไฟล์ PDF จำลองเพราะไม่ใช่ภาพ จึงผ่านตัวเตรียมรูปโดยไม่ต้องใช้เบราว์เซอร์ (ไฟล์ภาพที่ต้องแปลงต้องทดสอบในเบราว์เซอร์)
+
+const pdfFile = (name, size) => new File([new Uint8Array(size)], name, { type: "application/pdf" });
+const MB = 1024 * 1024;
+
+test("the combined limit is 20 MB and the hint tells users about it", () => {
+  assert.equal(MAX_BATCH_BYTES, 20 * MB);
+  assert.match(HINT, /20 MB/);
+  assert.match(MESSAGES.batchTooLarge, /20 MB/);
+});
+
+test("checkBatch accepts a total up to exactly 20 MB and rejects anything above", () => {
+  assert.equal(checkBatch([]), null);
+  assert.equal(checkBatch([{ size: 10 * MB }, { size: 10 * MB }]), null);
+  assert.equal(checkBatch([{ size: 10 * MB }, { size: 10 * MB + 1 }]), MESSAGES.batchTooLarge);
+  assert.equal(checkBatch(undefined), null);
+});
+
+test("checkBatch limits the number of files", () => {
+  const files = (count) => Array.from({ length: count }, () => ({ size: 1 }));
+  assert.equal(checkBatch(files(MAX_BATCH_FILES)), null);
+  assert.equal(checkBatch(files(MAX_BATCH_FILES + 1)), MESSAGES.tooManyFiles);
+});
+
+test("normalizeAttachments keeps order and returns untouched files as the same objects", async () => {
+  const files = [pdfFile("a.pdf", 5 * MB), pdfFile("b.pdf", 5 * MB), pdfFile("c.pdf", 5 * MB)];
+  const progress = [];
+  const prepared = await normalizeAttachments(files, { onProgress: (done, total) => progress.push([done, total]) });
+  assert.equal(prepared.length, 3);
+  prepared.forEach((file, index) => assert.equal(file, files[index]));
+  assert.deepEqual(progress, [[1, 3], [2, 3], [3, 3]]);
+});
+
+test("normalizeAttachments rejects a combined size over 20 MB", async () => {
+  const files = [pdfFile("a.pdf", 8 * MB), pdfFile("b.pdf", 8 * MB), pdfFile("c.pdf", 8 * MB)];
+  await assert.rejects(normalizeAttachments(files), { message: MESSAGES.batchTooLarge });
+});
+
+test("normalizeAttachments rejects too many files before preparing any of them", async () => {
+  const files = Array.from({ length: MAX_BATCH_FILES + 1 }, (_, index) => pdfFile(`f${index}.pdf`, 10));
+  let started = 0;
+  await assert.rejects(normalizeAttachments(files, { onProgress: () => { started += 1; } }), { message: MESSAGES.tooManyFiles });
+  assert.equal(started, 0);
+});
+
+test("normalizeAttachments names the file that cannot be prepared and returns nothing partial", async () => {
+  // HEIC ที่ไม่มีตัวถอดรหัส (ใน Node ไม่มี canvas/libheif) แปลงไม่ได้ — ต้องบอกชื่อไฟล์ ไม่ใช่แค่ข้อความรวม
+  const heic = new File([Uint8Array.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63])], "IMG_0002.HEIC", { type: "" });
+  const files = [pdfFile("a.pdf", 10), heic];
+  await assert.rejects(
+    normalizeAttachments(files, { loadHeicDecoder: () => Promise.reject(new Error("no decoder")) }),
+    { message: `IMG_0002.HEIC: ${MESSAGES.convertFailed}` },
+  );
+});
+
+test("normalizeAttachments does not prefix the file name when only one file is given", async () => {
+  const heic = new File([Uint8Array.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63])], "IMG_0002.HEIC", { type: "" });
+  await assert.rejects(
+    normalizeAttachments([heic], { loadHeicDecoder: () => Promise.reject(new Error("no decoder")) }),
+    { message: MESSAGES.convertFailed },
+  );
+});
+
+test("describeBatch summarises count, total size against the limit and adjusted files", () => {
+  const a = pdfFile("a.pdf", 3 * MB);
+  const b = pdfFile("b.pdf", 5 * MB);
+  assert.equal(describeBatch([a, b], [a, b]), "เลือก 2 ไฟล์ · รวม 8.0 จาก 20 MB");
+  const converted = new File([new Uint8Array(1 * MB)], "b.jpg", { type: "image/jpeg" });
+  assert.equal(describeBatch([a, converted], [a, b]), "เลือก 2 ไฟล์ · รวม 4.0 จาก 20 MB · เตรียมรูปให้ระบบรับได้แล้ว 1 ไฟล์");
 });
