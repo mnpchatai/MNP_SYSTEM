@@ -310,7 +310,7 @@
               </div>
             </div>
             <div class="field full"><label for="repair-description">รายละเอียด</label><textarea class="textarea" id="repair-description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-            <div class="field full"><label for="repair-attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="repair-attachment" name="attachment" type="file" accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>สูงสุด 10 MB · รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX</small></div>
+            <div class="field full"><label for="repair-attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="repair-attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
             <div class="field"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
             <div class="field"><label for="repair-requester-name">ชื่อผู้แจ้ง</label><input class="input" id="repair-requester-name" name="requester_name" maxlength="120" value="${escapeHtml(`${employee.first_name} ${employee.last_name}`)}"></div>
             <div class="field full"><label class="checkbox-label"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
@@ -423,9 +423,9 @@
         if (!departmentInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกแผนก</div>`; return; }
         if (!machineInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกเครื่องจักรจากรายการ</div>`; machineSearch.focus(); return; }
         const values = new FormData(form);
-        let attachment;
+        let attachments;
         try {
-          attachment = optionalAttachment(values.get("attachment"));
+          attachments = optionalAttachments(values.getAll("attachment"));
         } catch (attachmentError) {
           message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
           return;
@@ -443,16 +443,15 @@
           });
           if (createError) throw createError;
           triggerNotificationEmails(data);
-          if (attachment) {
-            try {
-              await uploadRequestAttachment(data, attachment, employee.id);
-            } catch {
-              showToast(`สร้างคำร้องแล้ว แต่แนบไฟล์ไม่สำเร็จ · กรุณาแนบใหม่ในหน้ารายละเอียด`, "error");
+          if (attachments.length) {
+            const uploaded = await uploadAttachmentBatch(attachments, (file) => uploadRequestAttachment(data, file, employee.id));
+            if (uploaded.failed.length) {
+              showToast(`สร้างคำร้องแล้ว แต่${attachmentBatchFailureText(uploaded)} · กรุณาแนบใหม่ในหน้ารายละเอียด`, "error");
               go(`request?id=${encodeURIComponent(data)}`);
               return;
             }
           }
-          showToast(attachment ? "ส่งใบแจ้งซ่อมและแนบไฟล์สำเร็จ" : "ส่งใบแจ้งซ่อมสำเร็จ");
+          showToast(attachments.length ? `ส่งใบแจ้งซ่อมและแนบไฟล์${attachments.length > 1 ? ` ${attachments.length} ไฟล์` : ""}สำเร็จ` : "ส่งใบแจ้งซ่อมสำเร็จ");
           go(`request?id=${encodeURIComponent(data)}`);
         } catch (submitError) {
           message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
@@ -496,7 +495,7 @@
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
-          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file"><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
@@ -618,17 +617,22 @@
       document.querySelector("#finish-parts-file-upload")?.addEventListener("click", async () => {
         const button = document.querySelector("#finish-parts-file-upload");
         const input = document.querySelector("#finish-parts-file");
-        let file;
+        let files;
         try {
-          file = optionalAttachment(input?.files[0]);
-          if (!file) throw new Error("กรุณาเลือกไฟล์");
+          files = optionalAttachments(input?.files);
+          if (!files.length) throw new Error("กรุณาเลือกไฟล์");
         } catch (error) {
           return showToast(friendlyError(error), "error");
         }
         button.disabled = true;
         try {
-          await uploadRequestAttachment(id, file, employee.id);
-          showToast("แนบไฟล์แล้ว");
+          const uploaded = await uploadAttachmentBatch(files, (file) => uploadRequestAttachment(id, file, employee.id));
+          if (uploaded.failed.length === files.length) {
+            showToast(attachmentBatchFailureText(uploaded), "error");
+            button.disabled = false;
+            return;
+          }
+          showToast(uploaded.failed.length ? attachmentBatchFailureText(uploaded) : `แนบไฟล์แล้ว${files.length > 1 ? ` ${files.length} ไฟล์` : ""}`, uploaded.failed.length ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
       });

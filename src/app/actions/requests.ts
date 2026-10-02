@@ -19,6 +19,10 @@ function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
 
+// ไฟล์แนบอัปโหลดทีละไฟล์ (หนึ่งคำสั่งต่อหนึ่งไฟล์) จาก client — Server Action บน Vercel รับ body ได้ราว 4.5 MB
+// ส่งหลายไฟล์รวมกันในคำขอเดียวไม่ได้ ผู้เรียกจึงวนส่งทีละไฟล์แล้วดูผลของแต่ละไฟล์จากค่าที่คืนนี้
+export type AttachmentUploadResult = { ok: true } | { ok: false; error: string };
+
 async function employeeHasPermission(roleId: string, permissionCode: string) {
   const admin = createAdminClient();
   const { data } = await admin
@@ -36,14 +40,10 @@ export async function createRequestAction(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const priority = String(formData.get("priority") ?? "normal");
-  const attachmentValue = formData.get("attachment");
-  const attachment = attachmentValue instanceof File && attachmentValue.size > 0 ? attachmentValue : null;
 
   if (title.length < 3 || title.length > 200) fail("/requests/new", "กรุณาระบุหัวข้อ 3–200 ตัวอักษร");
   if (description.length < 3 || description.length > 5000) fail("/requests/new", "กรุณาระบุรายละเอียด 3–5,000 ตัวอักษร");
   if (!allowedPriorities.has(priority)) fail("/requests/new", "ระดับความสำคัญไม่ถูกต้อง");
-  if (attachment?.size && attachment.size > 10 * 1024 * 1024) fail("/requests/new", "ไฟล์ต้องมีขนาดไม่เกิน 10 MB");
-  if (attachment && !allowedAttachmentTypes.has(attachment.type)) fail("/requests/new", "ชนิดไฟล์ไม่รองรับ");
 
   const details: Record<string, string> = {};
   for (const key of [
@@ -96,33 +96,6 @@ export async function createRequestAction(formData: FormData) {
     .single();
   if (error || !request) fail("/requests/new", "สร้างคำร้องไม่สำเร็จ กรุณาลองใหม่");
 
-  let attachmentStoragePath: string | null = null;
-  if (attachment) {
-    const safeName = attachment.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
-    attachmentStoragePath = `${request.id}/${crypto.randomUUID()}-${safeName}`;
-    const { error: uploadError } = await admin.storage
-      .from("request-attachments")
-      .upload(attachmentStoragePath, attachment, { contentType: attachment.type, upsert: false });
-    if (uploadError) {
-      await admin.from("requests").delete().eq("id", request.id);
-      fail("/requests/new", "อัปโหลดไฟล์แนบไม่สำเร็จ กรุณาลองใหม่");
-    }
-
-    const { error: metadataError } = await admin.from("request_attachments").insert({
-      request_id: request.id,
-      uploader_id: employee.id,
-      storage_path: attachmentStoragePath,
-      file_name: attachment.name.slice(0, 255),
-      content_type: attachment.type,
-      size_bytes: attachment.size,
-    });
-    if (metadataError) {
-      await admin.storage.from("request-attachments").remove([attachmentStoragePath]);
-      await admin.from("requests").delete().eq("id", request.id);
-      fail("/requests/new", "บันทึกข้อมูลไฟล์แนบไม่สำเร็จ กรุณาลองใหม่");
-    }
-  }
-
   const steps: Array<Record<string, unknown>> = [];
   if (type.uses_factory_general_chain) {
     // สายอนุมัติคงที่ตามฟอร์มจริง (เช่น PP01-FM08): ผู้จัดการโรงงาน -> ผู้จัดการทั่วไป
@@ -174,7 +147,6 @@ export async function createRequestAction(formData: FormData) {
   if (steps.length) {
     const { error: stepError } = await admin.from("approval_steps").insert(steps);
     if (stepError) {
-      if (attachmentStoragePath) await admin.storage.from("request-attachments").remove([attachmentStoragePath]);
       await admin.from("requests").delete().eq("id", request.id);
       fail("/requests/new", "สร้างลำดับอนุมัติไม่สำเร็จ กรุณาติดต่อผู้ดูแลระบบ");
     }
@@ -213,16 +185,17 @@ export async function createRequestAction(formData: FormData) {
   });
   revalidatePath("/");
   revalidatePath("/requests");
-  redirect(`/requests/${request.id}?created=1`);
+  // ไม่ redirect ที่นี่: ไฟล์แนบ (ถ้ามี) ยังต้องอัปโหลดต่อทีละไฟล์จาก client ด้วย uploadAttachmentAction แล้วค่อยพาไปหน้าคำร้อง
+  return { requestId: request.id };
 }
 
-export async function uploadAttachmentAction(formData: FormData) {
+export async function uploadAttachmentAction(formData: FormData): Promise<AttachmentUploadResult> {
   const employee = await getCurrentEmployee();
   const requestId = String(formData.get("request_id") ?? "");
   const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) fail(`/requests/${requestId}`, "กรุณาเลือกไฟล์");
-  if (file.size > 10 * 1024 * 1024) fail(`/requests/${requestId}`, "ไฟล์ต้องมีขนาดไม่เกิน 10 MB");
-  if (!allowedAttachmentTypes.has(file.type)) fail(`/requests/${requestId}`, "ชนิดไฟล์ไม่รองรับ");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "กรุณาเลือกไฟล์" };
+  if (file.size > 10 * 1024 * 1024) return { ok: false, error: "ไฟล์ต้องมีขนาดไม่เกิน 10 MB" };
+  if (!allowedAttachmentTypes.has(file.type)) return { ok: false, error: "ชนิดไฟล์ไม่รองรับ" };
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
   const storagePath = `${requestId}/${crypto.randomUUID()}-${safeName}`;
@@ -230,7 +203,7 @@ export async function uploadAttachmentAction(formData: FormData) {
   const { error: uploadError } = await supabase.storage
     .from("request-attachments")
     .upload(storagePath, file, { contentType: file.type, upsert: false });
-  if (uploadError) fail(`/requests/${requestId}`, "อัปโหลดไฟล์ไม่สำเร็จ");
+  if (uploadError) return { ok: false, error: "อัปโหลดไฟล์ไม่สำเร็จ" };
 
   const { error: metadataError } = await supabase.from("request_attachments").insert({
     request_id: requestId,
@@ -242,9 +215,10 @@ export async function uploadAttachmentAction(formData: FormData) {
   });
   if (metadataError) {
     await supabase.storage.from("request-attachments").remove([storagePath]);
-    fail(`/requests/${requestId}`, "บันทึกข้อมูลไฟล์ไม่สำเร็จ");
+    return { ok: false, error: "บันทึกข้อมูลไฟล์ไม่สำเร็จ" };
   }
   revalidatePath(`/requests/${requestId}`);
+  return { ok: true };
 }
 
 export async function approvalDecisionAction(formData: FormData) {

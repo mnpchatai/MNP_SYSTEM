@@ -72,10 +72,10 @@
   const addDays = (iso, days) => { const date = new Date(`${iso}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
   const ATTACHMENT_SECTION_BY_STATUS = { awaiting_disposition: "report", awaiting_response: "response" };
   const ATTACHMENT_ACCEPT = "image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx";
-  const ATTACHMENT_HINT = "รูปภาพ (รวม HEIC จากมือถือ) PDF TXT DOCX XLSX ไม่เกิน 10 MB";
-  const evidenceFieldHtml = (id, label) => `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="evidence" type="file" accept="${ATTACHMENT_ACCEPT}"><small>${ATTACHMENT_HINT}</small></div>`;
-  // อ่านไฟล์จากฟอร์มและตรวจขนาด/ชนิดก่อนเรียก RPC (optionalAttachment ของ app.js โยน error เป็นข้อความไทย)
-  const evidenceOf = (form) => (form.elements.evidence ? optionalAttachment(form.elements.evidence.files[0]) : null);
+  // ข้อความใต้ช่อง (ATTACHMENT_HINT) มาจาก app.js ชุดเดียวกับทุกหน้า
+  const evidenceFieldHtml = (id, label) => `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="evidence" type="file" multiple accept="${ATTACHMENT_ACCEPT}"><small>${ATTACHMENT_HINT}</small></div>`;
+  // อ่านไฟล์ทั้งหมดจากฟอร์มและตรวจขนาด/ชนิด/ขนาดรวมก่อนเรียก RPC (optionalAttachments ของ app.js โยน error เป็นข้อความไทย)
+  const evidencesOf = (form) => (form.elements.evidence ? optionalAttachments(form.elements.evidence.files) : []);
 
   async function uploadNcrAttachment(ncrId, file, section) {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
@@ -175,9 +175,9 @@
           p_qty_sampled: optionalNumber(form, "qty_sampled"),
           p_qty_returned: optionalNumber(form, "qty_returned"),
       };
-      let evidence;
+      let evidences;
       try {
-        evidence = evidenceOf(form);
+        evidences = evidencesOf(form);
       } catch (error) {
         showFormError(form, error);
         return;
@@ -187,12 +187,9 @@
         const { data, error } = await sb.rpc("app_ncr_issue", args);
         if (error) throw error;
         let message = `ออก NCR เลขที่ ${data.ncr_no} แล้ว`;
-        if (evidence) {
-          try {
-            await uploadNcrAttachment(data.id, evidence, "report");
-          } catch (uploadError) {
-            message += ` แต่แนบไฟล์ไม่สำเร็จ (${friendlyError(uploadError)}) แนบใหม่ได้ในหน้า NCR`;
-          }
+        if (evidences.length) {
+          const uploaded = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(data.id, file, "report"));
+          if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ในหน้า NCR`;
         }
         showToast(message);
         location.hash = `#/ncr?id=${encodeURIComponent(data.id)}`;
@@ -478,10 +475,14 @@
       }),
       followup: (form) => sb.rpc("app_ncr_followup", { p_ncr_id: ncr.id, p_result: checkedValues(form, "result")[0] ?? "", p_note: optionalText(form, "note") }),
       signoff: () => sb.rpc("app_ncr_signoff", { p_ncr_id: ncr.id }),
-      attach: async (form, evidence) => {
-        if (!evidence) return { error: new Error("กรุณาเลือกไฟล์") };
-        await uploadNcrAttachment(ncr.id, evidence, ATTACHMENT_SECTION_BY_STATUS[ncr.status] ?? "followup");
-        return { error: null };
+      attach: async (form, evidences) => {
+        if (!evidences.length) return { error: new Error("กรุณาเลือกไฟล์") };
+        const section = ATTACHMENT_SECTION_BY_STATUS[ncr.status] ?? "followup";
+        const uploaded = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(ncr.id, file, section));
+        // ไม่มีไฟล์ไหนขึ้นเลย = ข้อผิดพลาด (อยู่หน้าเดิมให้เลือกใหม่) ขึ้นบางไฟล์ = โหลดหน้าใหม่ให้เห็นไฟล์ที่ขึ้นแล้ว พร้อมแจ้งไฟล์ที่พลาด
+        if (uploaded.failed.length === evidences.length) return { error: new Error(attachmentBatchFailureText(uploaded)) };
+        if (uploaded.failed.length) return { error: null, message: attachmentBatchFailureText(uploaded), failed: true };
+        return { error: null, message: `แนบไฟล์แล้ว${evidences.length > 1 ? ` ${evidences.length} ไฟล์` : ""}` };
       },
       cancel: (form) => sb.rpc("app_ncr_cancel", { p_ncr_id: ncr.id, p_reason: optionalText(form, "reason") ?? "" }),
       add_loss: (form) => sb.rpc("app_ncr_add_loss", {
@@ -499,29 +500,26 @@
       event.preventDefault();
       const action = form.dataset.action;
       if (action === "cancel" && !window.confirm(`ยืนยันยกเลิก ${ncr.ncr_no}?`)) return;
-      let evidence;
+      let evidences;
       try {
-        evidence = evidenceOf(form);
+        evidences = evidencesOf(form);
       } catch (error) {
         showFormError(form, error);
         return;
       }
       // เรียก RPC (ซึ่งอ่านค่าจากฟอร์มทันที) ก่อน setFormBusy — ช่องที่ถูก disable จะไม่อยู่ใน FormData
-      const pending = calls[action](form, evidence);
+      const pending = calls[action](form, evidences);
       setFormBusy(form, true);
       try {
-        const { error } = await pending;
+        const { error, message: doneMessage, failed } = await pending;
         if (error) throw error;
-        let message = doneMessages[action];
+        let message = doneMessage ?? doneMessages[action];
         // ไฟล์ที่แนบมากับคำตอบอัปโหลดหลังบันทึกคำตอบสำเร็จ ถ้าอัปโหลดไม่ผ่าน คำตอบยังอยู่และแนบใหม่ได้
-        if (action === "respond" && evidence) {
-          try {
-            await uploadNcrAttachment(ncr.id, evidence, "response");
-          } catch (uploadError) {
-            message += ` แต่แนบไฟล์ไม่สำเร็จ (${friendlyError(uploadError)}) แนบใหม่ได้ที่ส่วนไฟล์หลักฐาน`;
-          }
+        if (action === "respond" && evidences.length) {
+          const uploaded = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(ncr.id, file, "response"));
+          if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ที่ส่วนไฟล์หลักฐาน`;
         }
-        showToast(message);
+        showToast(message, failed ? "error" : "success");
         await renderDetail(ncr.id);
       } catch (error) {
         setFormBusy(form, false);

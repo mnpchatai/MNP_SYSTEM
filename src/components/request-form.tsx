@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { createRequestAction } from "@/app/actions/requests";
 import { AttachmentInput } from "@/components/attachment-input";
 import { SubmitButton } from "@/components/submit-button";
+import { describeUploadFailures, selectedFiles, uploadAttachments } from "@/lib/attachment-upload";
 import { getRequestModule } from "@/lib/request-modules";
 
 type RequestType = {
@@ -43,9 +45,24 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
   const selected = useMemo(() => types.find((t) => t.id === selectedId), [selectedId, types]);
   const requestModule = getRequestModule(selected?.code);
   const fields = requestModule?.detailFields ?? selected?.form_schema?.fields ?? [];
+  const router = useRouter();
+
+  // สร้างคำร้องก่อน แล้วอัปโหลดไฟล์แนบทีละไฟล์ (Server Action บน Vercel รับ body ได้ราว 4.5 MB ส่งไฟล์รวมไปกับฟอร์มไม่ได้)
+  // ถ้าตรวจฟอร์มไม่ผ่าน createRequestAction จะ redirect กลับมาพร้อม ?error= (promise reject ด้วย redirect จึงไม่เดินต่อ)
+  // ถ้าไฟล์ใดแนบไม่สำเร็จ คำร้องยังอยู่ — พาไปหน้าคำร้องพร้อมข้อความ ให้แนบใหม่ได้ที่นั่น
+  async function submit(formData: FormData) {
+    const files = selectedFiles(formData, "attachment");
+    formData.delete("attachment");
+    const { requestId } = await createRequestAction(formData);
+    const failures = files.length ? await uploadAttachments(requestId, files) : [];
+    const query = failures.length
+      ? `?created=1&error=${encodeURIComponent(`${describeUploadFailures(files.length, failures)} · แนบใหม่ได้ในหน้านี้`)}`
+      : "?created=1";
+    router.push(`/requests/${requestId}${query}`);
+  }
 
   return (
-    <form action={createRequestAction} encType="multipart/form-data">
+    <form action={submit}>
       {error && <div className="form-message error">{error}</div>}
       <div className="form-grid">
         <div className="field full">
@@ -71,8 +88,7 @@ export function RequestForm({ types, departments, docNumbers, initialType, error
         </div>
         <div className="field full">
           <label htmlFor="attachment">ไฟล์แนบ (ถ้ามี)</label>
-          <AttachmentInput id="attachment" name="attachment" />
-          <small>สูงสุด 10 MB · รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX</small>
+          <AttachmentInput id="attachment" name="attachment" multiple />
         </div>
         {/* บางโมดูล (เช่น ใบคำร้องถึงฝ่ายบริหาร) ไม่มีช่องความสำคัญ — server action ใช้ค่า normal เมื่อไม่ได้ส่งมา */}
         {!requestModule?.hidePriority && (
