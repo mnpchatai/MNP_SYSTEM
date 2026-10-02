@@ -42,7 +42,7 @@
     INVALID_SOURCE: "กรุณาเลือกแหล่งที่พบ",
     INVALID_DEFECT_TYPE: "กรุณาเลือกประเภทข้อบกพร่อง",
     INVALID_DISPOSITION: "กรุณาเลือกวิธีจัดการอย่างน้อย 1 ข้อ",
-    INVALID_RESPONSIBILITIES: "แผนกที่รับผิดชอบไม่ถูกต้อง: ห้ามซ้ำ และสัดส่วนรวมต้องเท่ากับ 100%",
+    INVALID_RESPONSIBILITIES: "กรุณาเลือกแผนกที่รับผิดชอบอย่างน้อย 1 แผนก (ไม่เกิน 10 แผนก)",
     INVALID_CAUSES: "กรุณาเลือกสาเหตุ (4M) อย่างน้อย 1 ข้อ",
     INVALID_ROOT_CAUSE: "กรุณาระบุสาเหตุของปัญหา",
     INVALID_CORRECTION: "กรุณาระบุแนวทางการแก้ไขปัญหา",
@@ -234,14 +234,6 @@
     return roleCode(employee) === "general_manager";
   }
 
-  function responsibilityRowHtml(departments, selectedId = "", share = "") {
-    return `<div class="ncr-resp-row">
-      <select class="select" name="resp_department" aria-label="แผนก"><option value="">— แผนก —</option>${departments.map((department) => `<option value="${escapeHtml(department.id)}"${department.id === selectedId ? " selected" : ""}>${escapeHtml(department.code)} · ${escapeHtml(department.name_th)}</option>`).join("")}</select>
-      <input class="input" name="resp_share" type="number" min="1" max="100" step="any" inputmode="decimal" aria-label="สัดส่วน %" value="${escapeHtml(share)}"><span>%</span>
-      <button class="btn secondary small" type="button" data-remove-resp>ลบ</button>
-    </div>`;
-  }
-
   function actionForms(ncr, employee, departments) {
     const forms = [];
     const myDeptResponsible = (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
@@ -249,9 +241,9 @@
       forms.push(`<form class="ncr-action" data-action="dispose"><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 2 — ความเห็นผู้บริหารโรงงาน</h3>
         <fieldset class="field ncr-fieldset"><legend>วิธีจัดการ *</legend>${checksHtml("dispositions", DISPOSITIONS)}</fieldset>
-        <div class="field"><label>แผนกที่รับผิดชอบ * <small>(สัดส่วนรวม 100% ใช้แบ่งความสูญเสียใน dashboard)</small></label>
-          <div class="ncr-resp-list">${responsibilityRowHtml(departments, "", "100")}</div>
-          <div><button class="btn secondary small" type="button" data-add-resp>＋ เพิ่มแผนก</button></div></div>
+        <fieldset class="field ncr-fieldset"><legend>แผนกที่รับผิดชอบ * <small class="muted">(เลือกได้หลายแผนก ระบบแบ่งสัดส่วนเท่ากันให้)</small></legend>
+          <div class="ncr-checks">${departments.map((department) => `<label class="ncr-check"><input type="checkbox" name="department_ids" value="${escapeHtml(department.id)}"><span>${escapeHtml(department.code)} · ${escapeHtml(department.name_th)}</span></label>`).join("")}</div>
+        </fieldset>
         <div class="field"><label for="ncr-dispose-note">หมายเหตุ</label><input class="input" id="ncr-dispose-note" name="note" maxlength="1000"></div>
         <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน 7 วัน)</button></div></form>`);
     }
@@ -366,7 +358,7 @@
     }
     const forms = actionForms(ncr, employee, departments);
     const waiting = waitingText(ncr);
-    const responsibilities = (ncr.ncr_responsibilities ?? []).map((item) => `${escapeHtml(relation(item.department)?.code ?? "")} ${Math.round(Number(item.share) * 100)}%`).join(" · ");
+    const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
     const content = `
@@ -408,16 +400,10 @@
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     app.innerHTML = shell(content, "ncr", ncr.ncr_no);
     bindShell();
-    bindDetail(ncr, departments);
+    bindDetail(ncr);
   }
 
-  function bindDetail(ncr, departments) {
-    const respList = document.querySelector(".ncr-resp-list");
-    document.querySelector("[data-add-resp]")?.addEventListener("click", () => respList?.insertAdjacentHTML("beforeend", responsibilityRowHtml(departments)));
-    respList?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-remove-resp]");
-      if (button && respList.children.length > 1) button.closest(".ncr-resp-row").remove();
-    });
+  function bindDetail(ncr) {
     const lossType = document.querySelector("#ncr-loss-type");
     lossType?.addEventListener("change", () => {
       document.querySelector("#ncr-loss-unit").value = LABOR_LOSS_TYPES.includes(lossType.value) ? "ชม." : ncr.unit;
@@ -427,9 +413,7 @@
       dispose: (form) => sb.rpc("app_ncr_dispose", {
         p_ncr_id: ncr.id,
         p_dispositions: checkedValues(form, "dispositions"),
-        p_responsibilities: [...form.querySelectorAll(".ncr-resp-row")]
-          .map((row) => ({ department_id: row.querySelector("select").value, share: Number(row.querySelector("input").value) / 100 }))
-          .filter((row) => row.department_id),
+        p_department_ids: checkedValues(form, "department_ids"),
         p_note: optionalText(form, "note"),
       }),
       respond: (form) => sb.rpc("app_ncr_respond", {

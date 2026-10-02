@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(76);
+select plan(78);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -200,40 +200,32 @@ select throws_ok(
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_dispose(current_setting('test.ncr_a')::uuid,
-       array['sort'], jsonb_build_array(jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 1))) $$,
+       array['sort'], array[(select id from public.departments where code = 'RB')]) $$,
   'NOT_AUTHORIZED',
   'a department manager cannot make the factory decision'
 );
 
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select throws_ok(
-  $$ select public.app_ncr_dispose(current_setting('test.ncr_a')::uuid,
-       array['sort'], jsonb_build_array(
-         jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 0.7),
-         jsonb_build_object('department_id', (select id from public.departments where code = 'GR'), 'share', 0.2))) $$,
+  $$ select public.app_ncr_dispose(current_setting('test.ncr_a')::uuid, array['sort'], array[]::uuid[]) $$,
   'INVALID_RESPONSIBILITIES',
-  'responsibility shares must add up to 100%'
+  'at least one responsible department is required'
 );
 select throws_ok(
   $$ select public.app_ncr_dispose(current_setting('test.ncr_a')::uuid,
-       array['sort'], jsonb_build_array(
-         jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 0.5),
-         jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 0.5))) $$,
+       array['sort'], array[(select id from public.departments where code = 'RB'), (select id from public.departments where code = 'RB')]) $$,
   'INVALID_RESPONSIBILITIES',
   'a department cannot be listed twice'
 );
 select throws_ok(
   $$ select public.app_ncr_dispose(current_setting('test.ncr_a')::uuid,
-       array['burn'], jsonb_build_array(jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 1))) $$,
+       array['burn'], array[(select id from public.departments where code = 'RB')]) $$,
   'INVALID_DISPOSITION',
   'disposition must come from the form options'
 );
 select lives_ok(
   $$ select public.app_ncr_dispose(current_setting('test.ncr_a')::uuid,
-       array['sort', 'repair'], jsonb_build_array(
-         jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 0.7),
-         jsonb_build_object('department_id', (select id from public.departments where code = 'GR'), 'share', 0.3)),
-       'คัดแยกและซ่อม') $$,
+       array['sort', 'repair'], array[(select id from public.departments where code = 'RB'), (select id from public.departments where code = 'GR')], 'คัดแยกและซ่อม') $$,
   'the factory manager decides the disposition and responsible departments'
 );
 select results_eq(
@@ -245,12 +237,24 @@ select results_eq(
 select results_eq(
   $$ select d.code, r.share from public.ncr_responsibilities r join public.departments d on d.id = r.department_id
      join public.ncr_reports n on n.id = r.ncr_id where n.product_name = 'NCRTEST_A' order by d.code $$,
-  $$ values ('GR'::text, 0.3000::numeric), ('RB'::text, 0.7000::numeric) $$,
-  'responsibility shares are stored per department'
+  $$ values ('GR'::text, 0.5000::numeric), ('RB'::text, 0.5000::numeric) $$,
+  'two responsible departments split the share equally'
+);
+select lives_ok(
+  $$ select public.app_ncr_dispose(current_setting('test.ncr_b')::uuid, array['scrap'],
+       array[(select id from public.departments where code = 'RB'), (select id from public.departments where code = 'GR'),
+             (select id from public.departments where code = 'PK')]) $$,
+  'the factory manager can assign three departments'
+);
+select results_eq(
+  $$ select array_agg(share order by share), sum(share) from public.ncr_responsibilities
+     where ncr_id = current_setting('test.ncr_b')::uuid $$,
+  $$ values (array[0.3333, 0.3333, 0.3334]::numeric[], 1.0000::numeric) $$,
+  'three departments split the share equally and the shares add up to exactly 1'
 );
 select throws_ok(
   $$ select public.app_ncr_dispose(current_setting('test.ncr_a')::uuid,
-       array['scrap'], jsonb_build_array(jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 1))) $$,
+       array['scrap'], array[(select id from public.departments where code = 'RB')]) $$,
   'INVALID_TRANSITION',
   'the decision cannot be made twice'
 );
@@ -461,7 +465,7 @@ select results_eq(
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_dispose(current_setting('test.ncr_b')::uuid, array['sort'],
-       jsonb_build_array(jsonb_build_object('department_id', (select id from public.departments where code = 'RB'), 'share', 1))) $$,
+       array[(select id from public.departments where code = 'RB')]) $$,
   'INVALID_TRANSITION',
   'a cancelled NCR cannot continue'
 );

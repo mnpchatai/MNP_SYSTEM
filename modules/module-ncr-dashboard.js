@@ -3,7 +3,7 @@
 //
 // - อ่านผ่าน RLS เดียวกับทะเบียน NCR ทุกคนจึงเห็นตัวเลขเฉพาะ NCR ที่ตัวเองมีสิทธิ์เห็น (QA และผู้บริหารเห็นทั้งหมด)
 // - ไม่นับ NCR ที่ยกเลิก และไม่นับรายการความสูญเสียที่ถูกยกเลิก
-// - กรองแผนก = นับเฉพาะ NCR ที่แผนกนั้นรับผิดชอบ และถ่วงจำนวน/มูลค่าตามสัดส่วนความรับผิดชอบ (แทนการนับ 0.5 ในชีตเดิม)
+// - กรองแผนก = นับเฉพาะ NCR ที่แผนกนั้นรับผิดชอบ และถ่วงจำนวน/มูลค่าตามสัดส่วนที่แบ่งเท่ากันระหว่างแผนก (แทนการนับ 0.5 ในชีตเดิม)
 // - ตัวกรองอยู่ใน URL (#/ncr-dashboard?year=…) แชร์ลิงก์มุมมองเดียวกันได้ กดแท่งกราฟเพื่อกรองต่อ
 //
 // โหลดหลัง modules/module-ncr.js (ใช้ป้ายกำกับจาก NCR_CAR.shared) และก่อน app.js — helper ของ app.js
@@ -293,7 +293,7 @@
       <div class="ncr-dash-card-head"><div><h2>${escapeHtml(title)}</h2>${sub ? `<p>${escapeHtml(sub)}</p>` : ""}</div>${id ? tableToggle(id) : ""}</div>${body}</section>`;
 
     const content = `
-      <div class="page-heading"><div><div class="eyebrow">NCR · QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>${escapeHtml(period)}${scope ? ` · ${escapeHtml(scope)}` : ""} · ไม่นับใบที่ยกเลิก${filters.dept ? " · ถ่วงตามสัดส่วนความรับผิดชอบ" : ""}</p></div>
+      <div class="page-heading"><div><div class="eyebrow">NCR · QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>${escapeHtml(period)}${scope ? ` · ${escapeHtml(scope)}` : ""} · ไม่นับใบที่ยกเลิก${filters.dept ? " · ใบที่มีหลายแผนกนับแบ่งเท่ากัน" : ""}</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">ทะเบียน NCR</a></div></div>
       ${filterBar(filters, reports)}
       <div class="ncr-dash-kpis">
@@ -308,7 +308,7 @@
       <div class="ncr-dash-grid">
         ${card("ncr-dash-t-month", filters.metric === "value" ? "มูลค่าความสูญเสียรายเดือน" : "จำนวน NCR รายเดือน", "แยกใบที่ปิดแล้วกับที่ยังแก้ไขอยู่ ชี้หรือแตะแท่งเพื่อดู % แก้ไขแล้วของเดือนนั้น", monthChart(data, filters, fmt), true)}
         ${card("ncr-dash-t-defect", "Pareto ประเภทข้อบกพร่อง", "กดแท่งเพื่อกรองทั้งหน้าตามประเภทนั้น", barList({ id: "ncr-dash-t-defect", rows: data.byDefect, fmt, filters, filterKey: "defect", pareto: true, showClosed: true }))}
-        ${card("ncr-dash-t-dept", "แผนกที่รับผิดชอบ", "ถ่วงตามสัดส่วนที่ผู้จัดการโรงงานกำหนด · ตัวเลขเล็ก = % ที่แก้ไขแล้ว", barList({ id: "ncr-dash-t-dept", rows: data.byDept, fmt, filters, filterKey: "dept", showClosed: true }))}
+        ${card("ncr-dash-t-dept", "แผนกที่รับผิดชอบ", "ใบที่มีหลายแผนกแบ่งเท่ากัน (2 แผนก = แผนกละ 0.5 ใบ) · ตัวเลขเล็ก = % ที่แก้ไขแล้ว", barList({ id: "ncr-dash-t-dept", rows: data.byDept, fmt, filters, filterKey: "dept", showClosed: true }))}
         ${card("ncr-dash-t-loss", "ความสูญเสียแยกประเภท", "มูลค่าจากรายการความสูญเสียที่บันทึก (บาท) ไม่ขึ้นกับตัวเลือก \"วัดเป็น\"", barList({ id: "ncr-dash-t-loss", rows: data.byLossType, fmt: fmtBaht, filters, emptyText: "ยังไม่มีการบันทึกความสูญเสียในช่วงนี้" }))}
         ${card("ncr-dash-t-cause", "สาเหตุ 4M+E", "ใบที่มีหลายสาเหตุแบ่งค่าเท่ากัน · \"ยังไม่ได้วิเคราะห์\" คือใบที่แผนกยังไม่ตอบ", barList({ id: "ncr-dash-t-cause", rows: data.byCause, fmt, filters }))}
         ${card("ncr-dash-t-source", "แหล่งที่พบ", "พบในโรงงาน (In-Coming/Process/FG) เทียบลูกค้าตีคืน · กดเพื่อกรอง", barList({ id: "ncr-dash-t-source", rows: data.bySource, fmt, filters, filterKey: "source", showClosed: true }))}

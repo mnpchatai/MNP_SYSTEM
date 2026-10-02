@@ -8,6 +8,7 @@
 -- ขั้นตอน (ทุกขั้นทำผ่าน RPC ด้านล่างเท่านั้น ตาราง ncr_* ไม่มี grant เขียนให้ authenticated):
 --   app_ncr_issue      ส่วนที่ 1  พนักงานทุกคน                         -> awaiting_disposition
 --   app_ncr_dispose    ส่วนที่ 2  ผู้จัดการโรงงาน (factory_manager)       -> awaiting_response (ตอบภายใน 7 วัน)
+--                      แผนกที่รับผิดชอบหลายแผนกแบ่งสัดส่วนเท่ากัน (ระบบคำนวณเอง)
 --   app_ncr_respond    ส่วนที่ 3  ผจก./ผู้ช่วย ผจก. ของแผนกที่รับผิดชอบ     -> awaiting_followup
 --   app_ncr_followup   ส่วนที่ 4  พนักงานแผนก QA: close -> awaiting_signoff / return -> awaiting_response
 --   app_ncr_signoff    ลงนามตามลำดับ ผจก.แผนก QA -> ผจก.โรงงาน -> ผจก.ทั่วไป -> closed
@@ -115,7 +116,7 @@ create index ncr_reports_status_idx on public.ncr_reports(status, issue_date des
 create index ncr_reports_issue_date_idx on public.ncr_reports(issue_date desc);
 create index ncr_reports_reporter_idx on public.ncr_reports(reporter_id);
 
--- แผนกที่รับผิดชอบ + สัดส่วน (แทนการนับ 0.5/0.25 ด้วยมือในชีตสรุปเดิม) รวมต้องเท่ากับ 1
+-- แผนกที่รับผิดชอบ + สัดส่วนที่ app_ncr_dispose แบ่งเท่ากันให้ (แทนการนับ 0.5/0.25 ด้วยมือในชีตสรุปเดิม) รวมเท่ากับ 1
 create table public.ncr_responsibilities (
   ncr_id uuid not null references public.ncr_reports(id) on delete cascade,
   department_id uuid not null references public.departments(id),
@@ -460,12 +461,13 @@ begin
 end;
 $$;
 
--- ส่วนที่ 2: ผู้จัดการโรงงานเลือกวิธีจัดการ + แผนกที่รับผิดชอบพร้อมสัดส่วน
--- p_responsibilities = [{"department_id": "...", "share": 0.7}, ...] รวม share = 1
+-- ส่วนที่ 2: ผู้จัดการโรงงานเลือกวิธีจัดการ + แผนกที่รับผิดชอบ (1–10 แผนก ไม่ซ้ำ)
+-- สัดส่วนความรับผิดชอบแบ่งเท่ากันเสมอ (2 แผนก = 0.5, 3 แผนก = 0.3333/0.3333/0.3334) เหมือนวิธีนับในชีตสรุปเดิม
+-- ฐานข้อมูลคำนวณเอง ไม่รับตัวเลขสัดส่วนจาก client แผนกสุดท้ายรับเศษให้รวมได้ 1 พอดี
 create or replace function public.app_ncr_dispose(
   p_ncr_id uuid,
   p_dispositions text[],
-  p_responsibilities jsonb,
+  p_department_ids uuid[],
   p_note text default null
 )
 returns uuid
@@ -476,12 +478,8 @@ as $$
 declare
   v_employee public.employees%rowtype;
   v_ncr public.ncr_reports%rowtype;
-  v_item jsonb;
-  v_department_id uuid;
+  v_count integer;
   v_share numeric;
-  v_total numeric := 0;
-  v_count integer := 0;
-  v_departments uuid[] := '{}';
 begin
   v_employee := private.ncr_current_employee();
   if private.employee_role_code(v_employee.id) <> 'factory_manager' then
@@ -503,36 +501,20 @@ begin
   if char_length(coalesce(p_note, '')) > 1000 then
     raise exception 'INVALID_NOTE';
   end if;
-  if jsonb_typeof(coalesce(p_responsibilities, 'null'::jsonb)) <> 'array'
-     or jsonb_array_length(p_responsibilities) = 0
-     or jsonb_array_length(p_responsibilities) > 10 then
+
+  v_count := coalesce(cardinality(p_department_ids), 0);
+  if v_count = 0 or v_count > 10
+     or array_position(p_department_ids, null) is not null
+     or (select count(distinct x) from unnest(p_department_ids) x) <> v_count
+     or (select count(*) from public.departments d where d.id = any(p_department_ids) and d.is_active) <> v_count then
     raise exception 'INVALID_RESPONSIBILITIES';
   end if;
 
-  for v_item in select * from jsonb_array_elements(p_responsibilities)
-  loop
-    begin
-      v_department_id := (v_item->>'department_id')::uuid;
-      v_share := (v_item->>'share')::numeric;
-    exception when others then
-      raise exception 'INVALID_RESPONSIBILITIES';
-    end;
-    if v_department_id is null or v_share is null or v_share <= 0 or v_share > 1
-       or v_department_id = any(v_departments)
-       or not exists (select 1 from public.departments d where d.id = v_department_id and d.is_active) then
-      raise exception 'INVALID_RESPONSIBILITIES';
-    end if;
-    v_departments := v_departments || v_department_id;
-    v_total := v_total + round(v_share, 4);
-    v_count := v_count + 1;
-  end loop;
-  if abs(v_total - 1) > 0.0005 then
-    raise exception 'INVALID_RESPONSIBILITIES';
-  end if;
-
+  v_share := round(1::numeric / v_count, 4);
   insert into public.ncr_responsibilities (ncr_id, department_id, share)
-  select v_ncr.id, (x->>'department_id')::uuid, round((x->>'share')::numeric, 4)
-  from jsonb_array_elements(p_responsibilities) x;
+  select v_ncr.id, x.department_id,
+         case when x.position = v_count then 1 - v_share * (v_count - 1) else v_share end
+  from unnest(p_department_ids) with ordinality as x(department_id, position);
 
   update public.ncr_reports
   set status = 'awaiting_response',
@@ -856,7 +838,7 @@ end;
 $$;
 
 revoke all on function public.app_ncr_issue(text, numeric, numeric, text, text, text, text, text, text, text, text, text, numeric, numeric) from public, anon;
-revoke all on function public.app_ncr_dispose(uuid, text[], jsonb, text) from public, anon;
+revoke all on function public.app_ncr_dispose(uuid, text[], uuid[], text) from public, anon;
 revoke all on function public.app_ncr_respond(uuid, text[], text, text, date, text, date) from public, anon;
 revoke all on function public.app_ncr_followup(uuid, text, text) from public, anon;
 revoke all on function public.app_ncr_signoff(uuid) from public, anon;
@@ -864,7 +846,7 @@ revoke all on function public.app_ncr_cancel(uuid, text) from public, anon;
 revoke all on function public.app_ncr_add_loss(uuid, text, numeric, text, numeric, text) from public, anon;
 revoke all on function public.app_ncr_void_loss(uuid, text) from public, anon;
 grant execute on function public.app_ncr_issue(text, numeric, numeric, text, text, text, text, text, text, text, text, text, numeric, numeric) to authenticated;
-grant execute on function public.app_ncr_dispose(uuid, text[], jsonb, text) to authenticated;
+grant execute on function public.app_ncr_dispose(uuid, text[], uuid[], text) to authenticated;
 grant execute on function public.app_ncr_respond(uuid, text[], text, text, date, text, date) to authenticated;
 grant execute on function public.app_ncr_followup(uuid, text, text) to authenticated;
 grant execute on function public.app_ncr_signoff(uuid) to authenticated;

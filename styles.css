@@ -873,8 +873,6 @@ body.no-scroll { overflow: hidden; }
 .ncr-check { min-height: 40px; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; font-size: 14px; cursor: pointer; }
 .ncr-check input { width: 18px; height: 18px; margin: 0; }
 .ncr-check:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
-.ncr-resp-list { display: grid; gap: 8px; }
-.ncr-resp-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto auto; align-items: center; gap: 8px; }
 tr.ncr-voided td { color: var(--quiet); text-decoration: line-through; }
 tr.ncr-voided td .muted { text-decoration: none; }
 
