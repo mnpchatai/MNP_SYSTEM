@@ -8,6 +8,7 @@ import {
   uploadAttachmentAction,
 } from "@/app/actions/requests";
 import { AttachmentGallery, type AttachmentItem } from "@/components/attachment-gallery";
+import { AttachmentInput } from "@/components/attachment-input";
 import { StatusBadge } from "@/components/status-badge";
 import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
@@ -212,10 +213,10 @@ export default async function RequestDetailPage({
               <AttachmentGallery attachments={(request.request_attachments ?? []) as AttachmentItem[]} />
               <form action={uploadAttachmentAction} className="stack" encType="multipart/form-data">
                 <input type="hidden" name="request_id" value={request.id} />
-                <input className="input" type="file" name="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.docx,.xlsx" required />
+                <AttachmentInput name="file" required />
                 <SubmitButton className="btn secondary small" pendingLabel="กำลังอัปโหลด...">อัปโหลดไฟล์</SubmitButton>
               </form>
-              <span className="muted" style={{ fontSize: 10 }}>สูงสุด 10 MB · JPG, PNG, WebP, PDF, TXT, DOCX, XLSX</span>
+              <span className="muted" style={{ fontSize: 10 }}>สูงสุด 10 MB · รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX</span>
             </div>
           </section>
 

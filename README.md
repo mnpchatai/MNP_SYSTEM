@@ -616,6 +616,33 @@ Webhook ตรวจ `x-line-signature` กับ raw body ด้วย HMAC-SHA
 
 ตัวแปรทั้งหมดอยู่ใน [.env.example](.env.example) และไม่มี credential จริงใน repository
 
+## รูปแนบจากโทรศัพท์ทุกรุ่น
+
+ฟอร์มแนบไฟล์รับรูปจากโทรศัพท์ได้ทุกรุ่นโดยผู้ใช้ไม่ต้องแปลงเอง ระบบเตรียมรูปในเบราว์เซอร์ทันทีที่เลือกไฟล์
+(`modules/attachment-image.js` ใช้ร่วมกันทั้ง Pilot Web และ Next.js ผ่าน `src/components/attachment-input.tsx`):
+
+| ไฟล์ที่ผู้ใช้เลือก | สิ่งที่ระบบทำ |
+|---|---|
+| JPEG / PNG / WebP ไม่เกิน 4 MB | ใช้ไฟล์เดิม ไม่บีบซ้ำ (ภาพหน้าจอไม่เบลอ) |
+| รูปใหญ่เกิน 4 MB (กล้องความละเอียดสูง) | ย่อด้านยาวไม่เกิน 2560 px แปลงเป็น JPEG |
+| HEIC / HEIF (iPhone), AVIF, GIF, BMP, TIFF | แปลงเป็น JPEG (GIF ใช้เฟรมแรก) |
+| ไฟล์ที่เบราว์เซอร์ไม่ระบุชนิด หรือไม่มีนามสกุล (เช่นรูปที่เซฟจาก LINE) | ดูชนิดจากเนื้อไฟล์จริง (magic bytes) แล้วจัดการตามแถวบน |
+| PDF / TXT / DOCX / XLSX | ผ่านไปตามเดิม ใช้การตรวจชนิดเดิมของแต่ละหน้า |
+
+- **ความปลอดภัยไม่เปลี่ยน:** server action และ bucket `request-attachments` ยังจำกัดชนิด (JPEG/PNG/WebP/PDF/TXT/DOCX/XLSX)
+  และขนาด 10 MB เท่าเดิม ตัวเตรียมรูปแค่แปลงไฟล์ให้ผ่านเกณฑ์ ไม่ต้องแก้ฐานข้อมูลหรือเปิดชนิดไฟล์เพิ่ม
+- **ขีดย่อ 4 MB** (ไม่ใช่ 10 MB) เพราะ Server Action ของ Next.js บน Vercel รับ body ได้ราว 4.5 MB
+- **HEIC:** Safari/iOS ถอดรหัสเองได้ จึงไม่โหลดอะไรเพิ่ม เบราว์เซอร์อื่นโหลด `libheif-js` เฉพาะตอนเจอรูป HEIC
+  Pilot Web ใช้ build JavaScript ล้วนที่ `vendor/libheif/` (ไม่ต้องผ่อน CSP) ส่วน Next.js ใช้ `libheif-js/wasm-bundle`
+  (เร็วกว่า และ Next.js ไม่มี CSP ที่ห้าม WebAssembly) รายละเอียดสัญญาอนุญาต LGPL-3.0 ดู `vendor/libheif/README.md`
+- ระหว่างแปลงช่องแนบไฟล์ขึ้น "กำลังเตรียมรูป" และกดส่งฟอร์มไม่ได้ (`setCustomValidity`) ถ้าแปลงไม่สำเร็จจะล้างช่องและแจ้งข้อความ
+  ให้บันทึกเป็น JPG แล้วแนบใหม่ มีเวลาจำกัด 60 วินาทีกันหน้าจอค้าง
+- ช่อง "แนบไฟล์ใบเสร็จรายการอะไหล่" ในฟอร์มจบงานของ Pilot Web (ไม่ได้อยู่ในฟอร์มที่ส่งผ่าน `submit`) ก็ถูกแปลงด้วย
+  แต่กดปุ่ม "แนบไฟล์" ก่อนแปลงเสร็จจะอัปโหลดไฟล์เดิม ให้รอข้อความ "เตรียมรูปเป็น JPG แล้ว" ก่อน
+
+ข้อจำกัด: รูป TIFF บนเบราว์เซอร์ที่ไม่ใช่ Safari และไฟล์รูปที่เสีย แปลงไม่ได้ (ระบบแจ้งให้บันทึกเป็น JPG)
+ถ้าปรับ `modules/attachment-image.js` ต้องเลื่อน `?v=` ใน `index.html` ตามกฎของ Pilot Web ด้วย
+
 ## Database และความปลอดภัย
 
 - ทุกตารางใน exposed `public` schema เปิด RLS
@@ -636,11 +663,13 @@ Webhook ตรวจ `x-line-signature` กับ raw body ด้วย HMAC-SHA
 ```bash
 npm run typecheck
 npm run lint
+npm run test:unit
 npm run build
 npm run db:test
 ```
 
 `db:test` ต้องมี local Supabase stack ที่กำลังทำงาน และทดสอบทั้ง RLS/grants รวมถึงกรณี allow/deny ของคำร้อง
+`test:unit` ทดสอบตรรกะล้วนของตัวเตรียมรูปแนบ (`modules/attachment-image.js`) ด้วย `node:test` ไม่ต้องมี dependency เพิ่ม
 
 ### CI บน GitHub Actions
 
