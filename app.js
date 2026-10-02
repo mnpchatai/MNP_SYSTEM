@@ -185,6 +185,21 @@ const REQUEST_MODULES = window.MNP_REQUEST_MODULES ?? {};
 function requestModule(code) {
   return REQUEST_MODULES[code] ?? null;
 }
+// หน้าเฉพาะของโมดูลแยกไฟล์ (เช่น #/ncr ของ module-ncr.js) — โมดูลประกาศ pages: { <path>: async (params) => … }
+// และ nav: [{ path, label, icon }] เพื่อให้มีลิงก์ในเมนูหลัก
+function requestModulePage(path) {
+  for (const entry of Object.values(REQUEST_MODULES)) {
+    if (entry.enabled && typeof entry.pages?.[path] === "function") return entry.pages[path];
+  }
+  return null;
+}
+function requestModuleNavLinks(active) {
+  return Object.values(REQUEST_MODULES)
+    .filter((entry) => entry.enabled)
+    .flatMap((entry) => entry.nav ?? [])
+    .map((item) => navLink(item.path, item.label, item.icon, active))
+    .join("");
+}
 function activeRequestModuleCodes() {
   const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled).map((entry) => entry.code);
   return [...new Set([...REQUEST_MODULE_CODES, ...separateModuleCodes])];
@@ -274,7 +289,10 @@ function showToast(message, type = "success") {
 
 function friendlyError(error) {
   const message = String(error?.message ?? error ?? "เกิดข้อผิดพลาด");
+  // ข้อความของโมดูลแยกไฟล์มาก่อน เพราะรหัสของโมดูลอาจยาวกว่าและมีรหัสกลางซ้อนอยู่ข้างใน
+  const moduleMessages = Object.assign({}, ...Object.values(REQUEST_MODULES).map((entry) => entry.errorMessages ?? {}));
   const map = {
+    ...moduleMessages,
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
     EMPLOYEE_NOT_FOUND: "บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ",
@@ -1100,6 +1118,7 @@ function shell(content, active, title) {
           ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", NAV_ICONS.requests, active)}
           ${navLink("new", "สร้างคำร้อง", NAV_ICONS.new, active, { featured: true })}
           ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}
+          ${requestModuleNavLinks(active)}
           ${navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
           <div class="nav-divider"></div>
           ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
@@ -1959,6 +1978,7 @@ function notificationHref(item) {
   if (item.request_id) return `#/request?id=${encodeURIComponent(item.request_id)}`;
   if (item.action_url === "/admin") return "#/admin";
   if (item.action_url === "/profile") return "#/profile";
+  if (item.action_url?.startsWith("/ncr/")) return `#/ncr?id=${encodeURIComponent(item.action_url.slice(5))}`;
   return "#/notifications";
 }
 
@@ -2678,6 +2698,8 @@ async function renderRoute() {
     if (path === "notifications") return await renderNotifications();
     if (path === "admin") return await renderAdmin(params);
     if (path === "profile") return await renderProfile();
+    const modulePage = requestModulePage(path);
+    if (modulePage) return await modulePage(params);
     return renderNotFound();
   } catch (error) {
     console.error(error);

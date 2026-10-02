@@ -144,6 +144,7 @@ function linkFor(row: PendingNotification) {
   if (row.request_id) return `${base}/#/request?id=${encodeURIComponent(row.request_id)}`;
   if (row.action_url === "/admin") return `${base}/#/admin`;
   if (row.action_url === "/profile") return `${base}/#/profile`;
+  if (row.action_url?.startsWith("/ncr/")) return `${base}/#/ncr?id=${encodeURIComponent(row.action_url.slice(5))}`;
   return `${base}/#/notifications`;
 }
 

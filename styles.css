@@ -855,3 +855,25 @@ body.no-scroll { overflow: hidden; }
 }
 .password-toggle:hover { color: var(--ink); }
 .password-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+/* NCR (modules/module-ncr.js) */
+.ncr-card { margin-bottom: 16px; }
+.ncr-card > h2 { margin-bottom: 12px; }
+.ncr-card .definition dd { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ncr-card .definition:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.ncr-text { margin: 12px 0 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ncr-heading-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.ncr-actions { border-color: var(--primary); }
+.ncr-action + .ncr-action { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--soft-line); }
+.ncr-action h3 { margin: 0 0 12px; }
+.ncr-waiting { margin: 0 0 16px; }
+.ncr-fieldset { margin: 0 0 15px; padding: 0; border: 0; min-width: 0; }
+.ncr-fieldset legend { margin-bottom: 7px; padding: 0; font-size: 14px; font-weight: 700; }
+.ncr-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.ncr-check { min-height: 40px; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; font-size: 14px; cursor: pointer; }
+.ncr-check input { width: 18px; height: 18px; margin: 0; }
+.ncr-check:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.ncr-resp-list { display: grid; gap: 8px; }
+.ncr-resp-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto auto; align-items: center; gap: 8px; }
+tr.ncr-voided td { color: var(--quiet); text-decoration: line-through; }
+tr.ncr-voided td .muted { text-decoration: none; }
