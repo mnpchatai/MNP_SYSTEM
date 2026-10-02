@@ -1,5 +1,6 @@
 import { managementModule } from "./module-mg";
 import { itRepairModule } from "./module-it";
+import { ncrCarModule } from "./module-ncr";
 import type { RequestModule } from "./types";
 
 export type { RequestModule } from "./types";
@@ -8,7 +9,7 @@ export type { RequestModule } from "./types";
 const sharedRequestModuleCodes = ["MT_REPAIR", "MANAGEMENT", "NCR_CAR"];
 
 // โมดูลที่แยกไฟล์ไว้ใน src/lib/request-modules/
-const separateRequestModules: readonly RequestModule[] = [managementModule, itRepairModule];
+const separateRequestModules: readonly RequestModule[] = [managementModule, ncrCarModule, itRepairModule];
 
 export function getRequestModule(code: string | null | undefined): RequestModule | null {
   return separateRequestModules.find((requestModule) => requestModule.code === code) ?? null;

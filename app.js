@@ -1391,7 +1391,6 @@ const requestTypeThemes = {
   IT_ACCESS: ["#22d3ee", "#0e7490"],
   HR_LEAVE: ["#f472b6", "#be185d"],
   HR_TRAINING: ["#fbbf24", "#b45309"],
-  NCR_CAR: ["#facc15", "#a16207"],
 };
 const requestTypeLabelOverrides = {
 };
