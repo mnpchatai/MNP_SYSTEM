@@ -508,6 +508,9 @@
       bindIssueForm();
     },
 
+    // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
+    shared: { STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht },
+
     pages: {
       async ncr(params) {
         if (params.get("id")) return await renderDetail(params.get("id"));
