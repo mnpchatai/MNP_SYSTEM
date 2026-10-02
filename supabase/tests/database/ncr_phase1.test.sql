@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(78);
+select plan(91);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -140,6 +140,11 @@ select results_eq(
              '73000000-0000-0000-0000-000000000101'::uuid, true) $$,
   'a new NCR waits for the factory manager and records the reporter and Bangkok date'
 );
+select is(
+  (select response_due - issue_date from public.ncr_reports where product_name = 'NCRTEST_A'),
+  5,
+  'the response due date is set to 5 days after the issue date when the NCR is issued'
+);
 select matches(
   (select ncr_no from public.ncr_reports where product_name = 'NCRTEST_A'),
   '^QA[0-9]{3}/[0-9]{2}$',
@@ -229,10 +234,10 @@ select lives_ok(
   'the factory manager decides the disposition and responsible departments'
 );
 select results_eq(
-  $$ select status, response_due = (now() at time zone 'Asia/Bangkok')::date + 7, disposed_by
+  $$ select status, response_due = issue_date + 5, disposed_by
      from public.ncr_reports where product_name = 'NCRTEST_A' $$,
   $$ values ('awaiting_response'::text, true, '73000000-0000-0000-0000-000000000102'::uuid) $$,
-  'after the decision the departments have 7 days to respond'
+  'the response is due 5 days after the NCR was issued'
 );
 select results_eq(
   $$ select d.code, r.share from public.ncr_responsibilities r join public.departments d on d.id = r.department_id
@@ -266,39 +271,39 @@ select is((select count(*)::int from public.ncr_reports where product_name = 'NC
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000005","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_respond(current_setting('test.ncr_a')::uuid,
-       array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', current_date, 'ติดตั้งตัวควบคุม', current_date) $$,
+       array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', 'ติดตั้งตัวควบคุม') $$,
   'NOT_AUTHORIZED',
   'a manager of an unrelated department cannot respond'
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_respond(current_setting('test.ncr_a')::uuid,
-       array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', current_date, 'ติดตั้งตัวควบคุม', current_date) $$,
+       array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', 'ติดตั้งตัวควบคุม') $$,
   'NOT_AUTHORIZED',
   'staff of the responsible department cannot respond for the manager'
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000004","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_respond(current_setting('test.ncr_a')::uuid,
-       array[]::text[], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', current_date, 'ติดตั้งตัวควบคุม', current_date) $$,
+       array[]::text[], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', 'ติดตั้งตัวควบคุม') $$,
   'INVALID_CAUSES',
   'at least one 4M cause is required'
 );
-select throws_ok(
-  $$ select public.app_ncr_respond(current_setting('test.ncr_a')::uuid,
-       array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', current_date - 365, 'ติดตั้งตัวควบคุม', current_date) $$,
-  'INVALID_DUE_DATE',
-  'due dates cannot be before the NCR date'
-);
 select lives_ok(
   $$ select public.app_ncr_respond(current_setting('test.ncr_a')::uuid,
-       array['machine', 'method'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', current_date + 3, 'ติดตั้งตัวควบคุมอุณหภูมิ', current_date + 14) $$,
+       array['machine', 'method'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', 'ติดตั้งตัวควบคุมอุณหภูมิ') $$,
   'an assistant manager of a responsible department can respond'
 );
 select is(
   (select status from public.ncr_reports where product_name = 'NCRTEST_A'),
   'awaiting_followup',
   'after the response the NCR waits for QA follow-up'
+);
+select results_eq(
+  $$ select correction_due - issue_date, prevention_due - correction_due
+     from public.ncr_reports where product_name = 'NCRTEST_A' $$,
+  $$ values (5, 7) $$,
+  'correction is due on the response due date and prevention 7 days after it'
 );
 
 -- 7. ส่วนที่ 4 ติดตาม (ส่งกลับ แล้วตอบใหม่ แล้วปิด) -------------------------------------
@@ -328,10 +333,15 @@ select is(
   'awaiting_response',
   'a returned NCR waits for the department again'
 );
+select is(
+  (select response_due from public.ncr_reports where product_name = 'NCRTEST_A'),
+  (now() at time zone 'Asia/Bangkok')::date + 5,
+  'a returned NCR must be answered again within 5 days of being returned'
+);
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select lives_ok(
   $$ select public.app_ncr_respond(current_setting('test.ncr_a')::uuid,
-       array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', current_date + 3, 'ติดตั้งตัวควบคุม ผู้รับผิดชอบ: ช่าง RB', current_date + 14) $$,
+       array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', 'ติดตั้งตัวควบคุม ผู้รับผิดชอบ: ช่าง RB') $$,
   'the other responsible manager can respond again'
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000006","role":"authenticated"}', true);
@@ -397,6 +407,61 @@ select is(
   'voided loss lines are kept for the audit trail'
 );
 
+-- 8.1 ไฟล์หลักฐาน ---------------------------------------------------------------
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000006","role":"authenticated"}', true);
+select lives_ok(
+  $$ insert into storage.objects (bucket_id, name, owner_id, metadata)
+     values ('ncr-attachments', current_setting('test.ncr_a') || '/qa-evidence.pdf', '73000000-0000-0000-0000-000000000006',
+             '{"size": 2048, "mimetype": "application/pdf"}'::jsonb) $$,
+  'QA can upload an evidence file into the NCR folder'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_attachment(current_setting('test.ncr_a')::uuid, 'other', current_setting('test.ncr_a') || '/qa-evidence.pdf', 'หลักฐาน.pdf') $$,
+  'INVALID_ATTACHMENT',
+  'attachment section must be report, response or followup'
+);
+select lives_ok(
+  $$ select public.app_ncr_add_attachment(current_setting('test.ncr_a')::uuid, 'followup', current_setting('test.ncr_a') || '/qa-evidence.pdf', 'หลักฐาน.pdf') $$,
+  'QA records the uploaded file against the NCR'
+);
+select results_eq(
+  $$ select section, file_name, content_type, size_bytes, uploader_id from public.ncr_attachments where ncr_id = current_setting('test.ncr_a')::uuid $$,
+  $$ values ('followup'::text, 'หลักฐาน.pdf'::text, 'application/pdf'::text, 2048::bigint, '73000000-0000-0000-0000-000000000106'::uuid) $$,
+  'size and file type come from storage, not from the client'
+);
+-- storage ห้ามลบด้วย SQL ตรง (ต้องผ่าน Storage API) จึงตรวจว่ามี policy จำกัดการลบไว้เฉพาะไฟล์ที่ยังไม่ถูกบันทึก
+select ok(
+  exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
+          and policyname = 'ncr_files_delete_unregistered' and cmd = 'DELETE' and qual like '%ncr_attachments%'),
+  'storage only lets the uploader delete their own file that was never registered as evidence'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_add_attachment(current_setting('test.ncr_a')::uuid, 'response', current_setting('test.ncr_a') || '/qa-evidence.pdf', 'ของคนอื่น.pdf') $$,
+  'ATTACHMENT_NOT_UPLOADED',
+  'a user cannot register a file someone else uploaded'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000010","role":"authenticated"}', true);
+select throws_ok(
+  $$ insert into storage.objects (bucket_id, name, owner_id, metadata)
+     values ('ncr-attachments', current_setting('test.ncr_a') || '/pk.pdf', '73000000-0000-0000-0000-000000000010', '{"size": 10}'::jsonb) $$,
+  '42501',
+  null,
+  'an employee without access to the NCR cannot upload into its folder'
+);
+select throws_ok(
+  $$ insert into storage.objects (bucket_id, name, owner_id, metadata)
+     values ('ncr-attachments', 'not-a-uuid/pk.pdf', '73000000-0000-0000-0000-000000000010', '{"size": 10}'::jsonb) $$,
+  '42501',
+  null,
+  'a file outside an NCR folder is rejected'
+);
+select is(
+  (select count(*)::int from public.ncr_attachments) + (select count(*)::int from storage.objects where bucket_id = 'ncr-attachments'),
+  0,
+  'an employee without access to the NCR sees neither its attachment records nor its files'
+);
+
 -- 9. ลงนามตามลำดับ -----------------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000008","role":"authenticated"}', true);
 select throws_ok(
@@ -437,6 +502,18 @@ select throws_ok(
   'losses cannot be added after the NCR is closed'
 );
 select throws_ok(
+  $$ insert into storage.objects (bucket_id, name, owner_id, metadata)
+     values ('ncr-attachments', current_setting('test.ncr_a') || '/late.pdf', '73000000-0000-0000-0000-000000000006', '{"size": 10}'::jsonb) $$,
+  '42501',
+  null,
+  'files cannot be uploaded after the NCR is closed'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_attachment(current_setting('test.ncr_a')::uuid, 'followup', current_setting('test.ncr_a') || '/qa-evidence.pdf', 'ซ้ำ.pdf') $$,
+  'NCR_LOCKED',
+  'attachments cannot be registered after the NCR is closed'
+);
+select throws_ok(
   $$ select public.app_ncr_cancel(current_setting('test.ncr_b')::uuid, 'เปิดซ้ำกับใบอื่น') $$,
   'NOT_AUTHORIZED',
   'QA staff cannot cancel an NCR'
@@ -475,7 +552,7 @@ select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-0000000
 select results_eq(
   $$ select action from public.ncr_status_history where ncr_id = current_setting('test.ncr_a')::uuid order by id $$,
   $$ values ('issue'::text), ('dispose'), ('respond'), ('followup_return'), ('respond'), ('followup_close'),
-            ('signoff_qa'), ('signoff_factory'), ('signoff_gm') $$,
+            ('attachment'), ('signoff_qa'), ('signoff_factory'), ('signoff_gm') $$,
   'every step is recorded in the status history, readable by the reporter'
 );
 

@@ -949,3 +949,5 @@ a.ncr-dash-row { cursor: pointer; }
   .ncr-dash-col-value { visibility: hidden; }
   .ncr-dash-row { grid-template-columns: minmax(70px, 36%) minmax(0, 1fr) auto; gap: 8px; }
 }
+.ncr-due-note { margin: 0 0 15px; padding: 10px 12px; color: var(--ink); background: var(--primary-soft); border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.ncr-attach-form { margin-top: 14px; }

@@ -528,11 +528,12 @@ async function fillAttachmentTile(file, url) {
   }
 }
 
-async function hydrateAttachmentGallery(files) {
+// bucket: ไฟล์แนบคำร้องใช้ request-attachments ส่วน NCR ใช้ ncr-attachments (modules/module-ncr.js)
+async function hydrateAttachmentGallery(files, bucket = "request-attachments") {
   if (!files.length || !document.querySelector("#attachment-gallery")) return;
   attachmentPreviews.clear();
   const { data, error } = await sb.storage
-    .from("request-attachments")
+    .from(bucket)
     .createSignedUrls(files.map((file) => file.storage_path), ATTACHMENT_URL_TTL);
   if (error) {
     document.querySelectorAll(".attachment-tile").forEach((tile) => setTileMessage(tile, "เปิดไฟล์แนบไม่ได้"));

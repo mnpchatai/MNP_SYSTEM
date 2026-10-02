@@ -7,17 +7,21 @@
 --
 -- ขั้นตอน (ทุกขั้นทำผ่าน RPC ด้านล่างเท่านั้น ตาราง ncr_* ไม่มี grant เขียนให้ authenticated):
 --   app_ncr_issue      ส่วนที่ 1  พนักงานทุกคน                         -> awaiting_disposition
---   app_ncr_dispose    ส่วนที่ 2  ผู้จัดการโรงงาน (factory_manager)       -> awaiting_response (ตอบภายใน 7 วัน)
+--                      กำหนดตอบ (response_due) = วันออกใบ + 5 วัน ตั้งให้ตั้งแต่ออกใบ
+--   app_ncr_dispose    ส่วนที่ 2  ผู้จัดการโรงงาน (factory_manager)       -> awaiting_response
 --                      แผนกที่รับผิดชอบหลายแผนกแบ่งสัดส่วนเท่ากัน (ระบบคำนวณเอง)
 --   app_ncr_respond    ส่วนที่ 3  ผจก./ผู้ช่วย ผจก. ของแผนกที่รับผิดชอบ     -> awaiting_followup
+--                      กำหนดเสร็จอัตโนมัติ: แก้ไข = response_due, ป้องกัน = response_due + 7 วัน
 --   app_ncr_followup   ส่วนที่ 4  พนักงานแผนก QA: close -> awaiting_signoff / return -> awaiting_response
+--                      (ส่งกลับ = ให้ตอบใหม่ภายใน 5 วันนับจากวันที่ส่งกลับ)
 --   app_ncr_signoff    ลงนามตามลำดับ ผจก.แผนก QA -> ผจก.โรงงาน -> ผจก.ทั่วไป -> closed
 --   app_ncr_cancel     ผจก.แผนก QA ยกเลิกได้ก่อนปิด (คงเลขที่ไว้ ไม่นำกลับมาใช้)
 --   app_ncr_add_loss / app_ncr_void_loss  บันทึก/ยกเลิกรายการความสูญเสีย (ไม่ลบจริง เก็บไว้ตรวจสอบ)
+--   app_ncr_add_attachment  บันทึกไฟล์หลักฐานที่อัปโหลดไว้ใน bucket ncr-attachments (private)
 -- "ออก CAR" ในส่วนที่ 4 รอ Phase 2 (ตาราง CAR ยังไม่มี)
 --
--- Rollback (ยังไม่มีข้อมูลจริง): drop function public.app_ncr_* ทั้ง 8 ตัวและ private.*ncr* แล้ว
---   drop table public.ncr_losses, public.ncr_status_history, public.ncr_responsibilities,
+-- Rollback (ยังไม่มีข้อมูลจริง): drop function public.app_ncr_* ทั้ง 9 ตัวและ private.*ncr* แล้ว
+--   ลบไฟล์และ bucket ncr-attachments, drop table public.ncr_attachments, public.ncr_losses, public.ncr_status_history, public.ncr_responsibilities,
 --   public.ncr_reports, public.ncr_defect_types; delete from public.document_counters where department_code = 'NCR';
 -- ถ้ามีข้อมูลจริงแล้ว ให้ export ตาราง ncr_* เก็บไว้ก่อน drop
 
@@ -380,6 +384,90 @@ using (private.can_access_ncr(ncr_id));
 create policy ncr_status_history_read on public.ncr_status_history for select to authenticated
 using (private.can_access_ncr(ncr_id));
 
+-- 5.1 ไฟล์หลักฐาน: เก็บใน bucket ncr-attachments (private, 10 MB, ชนิดไฟล์เดียวกับไฟล์แนบคำร้อง)
+--     path = <ncr_id>/<uuid>-<ชื่อไฟล์> สิทธิ์อ่านไฟล์ = สิทธิ์อ่าน NCR, อัปโหลดได้เฉพาะใบที่ยังไม่ปิด/ยกเลิก
+--     ไม่มีการลบ (เป็นหลักฐาน) ข้อมูลไฟล์บันทึกผ่าน app_ncr_add_attachment เท่านั้น
+create table public.ncr_attachments (
+  id uuid primary key default gen_random_uuid(),
+  ncr_id uuid not null references public.ncr_reports(id) on delete cascade,
+  section text not null check (section in ('report', 'response', 'followup')),
+  uploader_id uuid not null references public.employees(id),
+  storage_path text not null unique,
+  file_name text not null check (char_length(file_name) between 1 and 255),
+  content_type text not null,
+  size_bytes bigint not null check (size_bytes > 0 and size_bytes <= 10485760),
+  created_at timestamptz not null default now()
+);
+create index ncr_attachments_ncr_idx on public.ncr_attachments(ncr_id, created_at);
+create trigger ncr_attachments_audit after insert or update or delete on public.ncr_attachments
+for each row execute function private.audit_row_change();
+
+alter table public.ncr_attachments enable row level security;
+revoke all on public.ncr_attachments from anon, authenticated;
+grant select on public.ncr_attachments to authenticated;
+create policy ncr_attachments_read on public.ncr_attachments for select to authenticated
+using (private.can_access_ncr(ncr_id));
+
+create or replace function private.can_upload_ncr_attachment(p_ncr_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select private.can_access_ncr(p_ncr_id)
+    and exists (select 1 from public.ncr_reports n where n.id = p_ncr_id and n.status not in ('closed', 'cancelled'))
+$$;
+revoke all on function private.can_upload_ncr_attachment(uuid) from public, anon;
+grant execute on function private.can_upload_ncr_attachment(uuid) to authenticated;
+
+-- โฟลเดอร์แรกต้องเป็น uuid ก่อนถึงการ cast ไม่อย่างนั้นชื่อไฟล์ผิดรูปจะทำให้ policy error แทนที่จะปฏิเสธ
+create or replace function private.ncr_folder_id(p_object_name text)
+returns uuid
+language sql
+immutable
+set search_path = ''
+as $$
+  select case when (storage.foldername(p_object_name))[1] ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+              then ((storage.foldername(p_object_name))[1])::uuid end
+$$;
+revoke all on function private.ncr_folder_id(text) from public, anon;
+grant execute on function private.ncr_folder_id(text) to authenticated;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'ncr-attachments',
+  'ncr-attachments',
+  false,
+  10485760,
+  array['image/jpeg','image/png','image/webp','application/pdf','text/plain',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+create policy ncr_files_read on storage.objects for select to authenticated
+using (
+  bucket_id = 'ncr-attachments'
+  and private.can_access_ncr(private.ncr_folder_id(name))
+);
+create policy ncr_files_upload on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'ncr-attachments'
+  and owner_id = (select auth.uid())::text
+  and private.can_upload_ncr_attachment(private.ncr_folder_id(name))
+);
+-- ลบได้เฉพาะไฟล์ของตัวเองที่ยังไม่ถูกบันทึกเป็นหลักฐาน (ใช้เก็บกวาดเมื่ออัปโหลดแล้วบันทึกไม่สำเร็จ)
+create policy ncr_files_delete_unregistered on storage.objects for delete to authenticated
+using (
+  bucket_id = 'ncr-attachments'
+  and owner_id = (select auth.uid())::text
+  and not exists (select 1 from public.ncr_attachments a where a.storage_path = name)
+);
+
 -- 6. RPC ---------------------------------------------------------------------
 
 -- ส่วนที่ 1: ออก NCR (ออกเลขที่ในขั้นนี้เท่านั้น ไม่มีร่างที่จองเลข)
@@ -439,11 +527,11 @@ begin
 
   v_no := private.next_ncr_doc_number();
   insert into public.ncr_reports (
-    ncr_no, reporter_id, reporter_department_id, issue_date,
+    ncr_no, reporter_id, reporter_department_id, issue_date, response_due,
     product_code, product_name, customer_name, customer_code, po_no, lot_no,
     qty_total, qty_sampled, qty_defect, qty_returned, unit, source, defect_type_id, description
   ) values (
-    v_no, v_employee.id, v_employee.department_id, private.bangkok_today(),
+    v_no, v_employee.id, v_employee.department_id, private.bangkok_today(), private.bangkok_today() + 5,
     nullif(left(trim(coalesce(p_product_code, '')), 100), ''),
     trim(p_product_name),
     nullif(left(trim(coalesce(p_customer_name, '')), 200), ''),
@@ -521,25 +609,23 @@ begin
       dispositions = (select array_agg(distinct d) from unnest(p_dispositions) d),
       disposition_note = nullif(trim(coalesce(p_note, '')), ''),
       disposed_by = v_employee.id,
-      disposed_at = now(),
-      response_due = private.bangkok_today() + 7
+      disposed_at = now()
   where id = v_ncr.id;
 
   perform private.ncr_log(v_ncr.id, v_ncr.status, 'awaiting_response', 'dispose', p_note, v_employee.id);
-  perform private.ncr_notify(v_ncr.id, 'responsible_managers', 'NCR รอแผนกตอบภายใน 7 วัน', v_employee.id);
+  perform private.ncr_notify(v_ncr.id, 'responsible_managers', 'NCR รอแผนกตอบภายใน 5 วันนับจากวันออกใบ', v_employee.id);
   return v_ncr.id;
 end;
 $$;
 
 -- ส่วนที่ 3: ผจก./ผู้ช่วย ผจก. ของแผนกที่รับผิดชอบตอบสาเหตุ แนวทางแก้ไข และป้องกัน
+-- กำหนดเสร็จไม่รับจาก client: แก้ไข = กำหนดตอบ (วันออกใบ + 5), ป้องกัน = กำหนดตอบ + 7 วัน
 create or replace function public.app_ncr_respond(
   p_ncr_id uuid,
   p_causes text[],
   p_root_cause text,
   p_correction text,
-  p_correction_due date,
-  p_prevention text,
-  p_prevention_due date
+  p_prevention text
 )
 returns uuid
 language plpgsql
@@ -580,19 +666,15 @@ begin
   if char_length(trim(coalesce(p_prevention, ''))) not between 5 and 5000 then
     raise exception 'INVALID_PREVENTION';
   end if;
-  if p_correction_due is null or p_prevention_due is null
-     or p_correction_due < v_ncr.issue_date or p_prevention_due < v_ncr.issue_date then
-    raise exception 'INVALID_DUE_DATE';
-  end if;
 
   update public.ncr_reports
   set status = 'awaiting_followup',
       causes = (select array_agg(distinct c) from unnest(p_causes) c),
       root_cause = trim(p_root_cause),
       correction = trim(p_correction),
-      correction_due = p_correction_due,
+      correction_due = v_ncr.response_due,
       prevention = trim(p_prevention),
-      prevention_due = p_prevention_due,
+      prevention_due = v_ncr.response_due + 7,
       responded_by = v_employee.id,
       responded_at = now()
   where id = v_ncr.id;
@@ -647,7 +729,7 @@ begin
       followup_note = nullif(trim(coalesce(p_note, '')), ''),
       followed_up_by = v_employee.id,
       followed_up_at = now(),
-      response_due = case when p_result = 'return' then private.bangkok_today() + 7 else response_due end
+      response_due = case when p_result = 'return' then private.bangkok_today() + 5 else response_due end
   where id = v_ncr.id;
 
   perform private.ncr_log(v_ncr.id, v_ncr.status, v_next, 'followup_' || p_result, p_note, v_employee.id);
@@ -839,7 +921,7 @@ $$;
 
 revoke all on function public.app_ncr_issue(text, numeric, numeric, text, text, text, text, text, text, text, text, text, numeric, numeric) from public, anon;
 revoke all on function public.app_ncr_dispose(uuid, text[], uuid[], text) from public, anon;
-revoke all on function public.app_ncr_respond(uuid, text[], text, text, date, text, date) from public, anon;
+revoke all on function public.app_ncr_respond(uuid, text[], text, text, text) from public, anon;
 revoke all on function public.app_ncr_followup(uuid, text, text) from public, anon;
 revoke all on function public.app_ncr_signoff(uuid) from public, anon;
 revoke all on function public.app_ncr_cancel(uuid, text) from public, anon;
@@ -847,9 +929,69 @@ revoke all on function public.app_ncr_add_loss(uuid, text, numeric, text, numeri
 revoke all on function public.app_ncr_void_loss(uuid, text) from public, anon;
 grant execute on function public.app_ncr_issue(text, numeric, numeric, text, text, text, text, text, text, text, text, text, numeric, numeric) to authenticated;
 grant execute on function public.app_ncr_dispose(uuid, text[], uuid[], text) to authenticated;
-grant execute on function public.app_ncr_respond(uuid, text[], text, text, date, text, date) to authenticated;
+grant execute on function public.app_ncr_respond(uuid, text[], text, text, text) to authenticated;
 grant execute on function public.app_ncr_followup(uuid, text, text) to authenticated;
 grant execute on function public.app_ncr_signoff(uuid) to authenticated;
 grant execute on function public.app_ncr_cancel(uuid, text) to authenticated;
 grant execute on function public.app_ncr_add_loss(uuid, text, numeric, text, numeric, text) to authenticated;
 grant execute on function public.app_ncr_void_loss(uuid, text) to authenticated;
+
+-- บันทึกข้อมูลไฟล์หลักฐานหลังอัปโหลดเข้า storage แล้ว — ขนาดและชนิดไฟล์อ่านจาก storage.objects
+-- ไม่เชื่อค่าจาก client และต้องเป็นไฟล์ที่ผู้เรียกอัปโหลดเองในโฟลเดอร์ของ NCR นั้น
+create or replace function public.app_ncr_add_attachment(
+  p_ncr_id uuid,
+  p_section text,
+  p_storage_path text,
+  p_file_name text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_employee public.employees%rowtype;
+  v_status text;
+  v_object storage.objects%rowtype;
+  v_size bigint;
+  v_id uuid;
+begin
+  v_employee := private.ncr_current_employee();
+  if p_section is null or p_section not in ('report', 'response', 'followup') then
+    raise exception 'INVALID_ATTACHMENT';
+  end if;
+  if char_length(trim(coalesce(p_file_name, ''))) not between 1 and 255
+     or p_storage_path is null or p_storage_path not like p_ncr_id::text || '/%' then
+    raise exception 'INVALID_ATTACHMENT';
+  end if;
+
+  select status into v_status from public.ncr_reports where id = p_ncr_id for update;
+  if v_status is null or not private.can_access_ncr(p_ncr_id) then
+    raise exception 'NCR_NOT_FOUND';
+  end if;
+  if v_status in ('closed', 'cancelled') then
+    raise exception 'NCR_LOCKED';
+  end if;
+
+  select * into v_object
+  from storage.objects
+  where bucket_id = 'ncr-attachments' and name = p_storage_path and owner_id = auth.uid()::text;
+  if v_object.id is null then
+    raise exception 'ATTACHMENT_NOT_UPLOADED';
+  end if;
+  v_size := coalesce((v_object.metadata->>'size')::bigint, 0);
+  if v_size <= 0 or v_size > 10485760 then
+    raise exception 'INVALID_ATTACHMENT';
+  end if;
+
+  insert into public.ncr_attachments (ncr_id, section, uploader_id, storage_path, file_name, content_type, size_bytes)
+  values (p_ncr_id, p_section, v_employee.id, p_storage_path, left(trim(p_file_name), 255),
+          coalesce(nullif(v_object.metadata->>'mimetype', ''), 'application/octet-stream'), v_size)
+  returning id into v_id;
+  perform private.ncr_log(p_ncr_id, v_status, v_status, 'attachment', left(trim(p_file_name), 255), v_employee.id);
+  return v_id;
+end;
+$$;
+
+revoke all on function public.app_ncr_add_attachment(uuid, text, text, text) from public, anon;
+grant execute on function public.app_ncr_add_attachment(uuid, text, text, text) to authenticated;

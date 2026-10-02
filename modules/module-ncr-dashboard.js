@@ -302,7 +302,7 @@
         ${kpi("ปริมาณของเสีย", unitText ? `<span class="ncr-dash-kpi-compact">${unitText}</span>` : "—", `%NG จากการสุ่มตรวจ ${fmtPercent(data.ngRate)}`)}
         ${kpi("แก้ไขปัญหาแล้ว", fmtPercent(resolution), `ปิดแล้ว ${fmtNumber(data.closed, 2)} จาก ${fmtNumber(data.total, 2)} ใบ`,
           `<span class="ncr-dash-meter" role="img" aria-label="แก้ไขแล้ว ${fmtPercent(resolution)}"><span style="width:${(resolution ?? 0) * 100}%"></span></span>`)}
-        ${kpi("ตอบทันกำหนด 7 วัน", fmtPercent(onTimeRate), `${data.onTime} จาก ${data.responded} ใบที่ตอบแล้ว`)}
+        ${kpi("ตอบทันกำหนด 5 วัน", fmtPercent(onTimeRate), `${data.onTime} จาก ${data.responded} ใบที่ตอบแล้ว`)}
         ${kpi("เกินกำหนดตอบ", `<span class="${data.overdue ? "ncr-dash-alert" : ""}">${data.overdue}</span>`, data.medianDays === null ? "ยังไม่มีใบที่ปิด" : `ใช้เวลาปิดกลาง ${data.medianDays} วัน`)}
       </div>
       <div class="ncr-dash-grid">

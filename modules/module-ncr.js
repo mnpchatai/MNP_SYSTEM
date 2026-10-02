@@ -55,6 +55,8 @@
     INVALID_LOSS: "จำนวนต้องมากกว่า 0 และราคาต่อหน่วยต้องไม่ติดลบ",
     LOSS_NOT_FOUND: "ไม่พบรายการความสูญเสียนี้",
     LOSS_ALREADY_VOIDED: "รายการนี้ถูกยกเลิกไปแล้ว",
+    INVALID_ATTACHMENT: "ไฟล์แนบไม่ถูกต้อง กรุณาเลือกไฟล์ใหม่",
+    ATTACHMENT_NOT_UPLOADED: "อัปโหลดไฟล์ไม่สำเร็จ กรุณาลองใหม่",
   };
 
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg>`;
@@ -64,7 +66,28 @@
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
   const todayBangkok = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
-  const isOverdue = (ncr) => ncr.status === "awaiting_response" && Boolean(ncr.response_due) && ncr.response_due < todayBangkok();
+  // กำหนดตอบนับจากวันออกใบ (+5 วัน) จึงเกินกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
+  const RESPONSE_PENDING_STATUSES = ["awaiting_disposition", "awaiting_response"];
+  const isOverdue = (ncr) => RESPONSE_PENDING_STATUSES.includes(ncr.status) && Boolean(ncr.response_due) && ncr.response_due < todayBangkok();
+  const addDays = (iso, days) => { const date = new Date(`${iso}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
+  const ATTACHMENT_SECTION_BY_STATUS = { awaiting_disposition: "report", awaiting_response: "response" };
+  const ATTACHMENT_ACCEPT = "image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx";
+  const ATTACHMENT_HINT = "รูปภาพ (รวม HEIC จากมือถือ) PDF TXT DOCX XLSX ไม่เกิน 10 MB";
+  const evidenceFieldHtml = (id, label) => `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="evidence" type="file" accept="${ATTACHMENT_ACCEPT}"><small>${ATTACHMENT_HINT}</small></div>`;
+  // อ่านไฟล์จากฟอร์มและตรวจขนาด/ชนิดก่อนเรียก RPC (optionalAttachment ของ app.js โยน error เป็นข้อความไทย)
+  const evidenceOf = (form) => (form.elements.evidence ? optionalAttachment(form.elements.evidence.files[0]) : null);
+
+  async function uploadNcrAttachment(ncrId, file, section) {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
+    const storagePath = `${ncrId}/${crypto.randomUUID()}-${safeName}`;
+    const { error: uploadError } = await sb.storage.from("ncr-attachments").upload(storagePath, file, { contentType: file.type, upsert: false });
+    if (uploadError) throw uploadError;
+    const { error } = await sb.rpc("app_ncr_add_attachment", { p_ncr_id: ncrId, p_section: section, p_storage_path: storagePath, p_file_name: file.name.slice(0, 255) });
+    if (error) {
+      await sb.storage.from("ncr-attachments").remove([storagePath]);
+      throw error;
+    }
+  }
   const formatQty = (value) => (value === null || value === undefined ? "—" : Number(value).toLocaleString("th-TH", { maximumFractionDigits: 3 }));
   const formatBaht = (value) => `${Number(value || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿`;
   const optionalText = (form, name) => {
@@ -126,6 +149,7 @@
           <fieldset class="field full ncr-fieldset"><legend>แหล่งที่พบ *</legend>${radiosHtml("source", SOURCES)}</fieldset>
           <div class="field full"><label for="ncr-description">รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง) *</label><textarea class="textarea" id="ncr-description" name="description" minlength="10" maxlength="5000" required></textarea></div>
         </div>
+        ${evidenceFieldHtml("ncr-issue-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปชิ้นงาน ผลวัด")}
         <div class="form-actions"><a class="btn secondary" href="#/ncr">ยกเลิก</a><button class="btn" type="submit">ออก NCR</button></div>
       </form></section>`;
   }
@@ -151,11 +175,26 @@
           p_qty_sampled: optionalNumber(form, "qty_sampled"),
           p_qty_returned: optionalNumber(form, "qty_returned"),
       };
+      let evidence;
+      try {
+        evidence = evidenceOf(form);
+      } catch (error) {
+        showFormError(form, error);
+        return;
+      }
       setFormBusy(form, true);
       try {
         const { data, error } = await sb.rpc("app_ncr_issue", args);
         if (error) throw error;
-        showToast(`ออก NCR เลขที่ ${data.ncr_no} แล้ว`);
+        let message = `ออก NCR เลขที่ ${data.ncr_no} แล้ว`;
+        if (evidence) {
+          try {
+            await uploadNcrAttachment(data.id, evidence, "report");
+          } catch (uploadError) {
+            message += ` แต่แนบไฟล์ไม่สำเร็จ (${friendlyError(uploadError)}) แนบใหม่ได้ในหน้า NCR`;
+          }
+        }
+        showToast(message);
         location.hash = `#/ncr?id=${encodeURIComponent(data.id)}`;
       } catch (error) {
         setFormBusy(form, false);
@@ -176,7 +215,7 @@
       .order("ncr_no", { ascending: false })
       .limit(300);
     if (filter === "open") query = query.in("status", OPEN_STATUSES);
-    else if (filter === "overdue") query = query.eq("status", "awaiting_response").lt("response_due", todayBangkok());
+    else if (filter === "overdue") query = query.in("status", RESPONSE_PENDING_STATUSES).lt("response_due", todayBangkok());
     else if (filter !== "all") query = query.eq("status", filter);
     const { data, error } = await query;
     if (error) throw error;
@@ -254,10 +293,11 @@
         <div class="field"><label for="ncr-root-cause">สาเหตุของปัญหา *</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000">${escapeHtml(ncr.root_cause ?? "")}</textarea></div>
         <div class="form-grid">
           <div class="field full"><label for="ncr-correction">แนวทางการแก้ไขปัญหา *</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea></div>
-          <div class="field"><label for="ncr-correction-due">กำหนดเสร็จ (แก้ไข) *</label><input class="input" id="ncr-correction-due" name="correction_due" type="date" value="${escapeHtml(ncr.correction_due ?? "")}"></div><div></div>
+
           <div class="field full"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ *</label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
-          <div class="field"><label for="ncr-prevention-due">กำหนดเสร็จ (ป้องกัน) *</label><input class="input" id="ncr-prevention-due" name="prevention_due" type="date" value="${escapeHtml(ncr.prevention_due ?? "")}"></div>
         </div>
+        <p class="ncr-due-note">กำหนดเสร็จตั้งให้อัตโนมัติ · แก้ไขปัญหา <strong>${formatDate(ncr.response_due)}</strong> (กำหนดตอบ 5 วันหลังออกใบ) · ป้องกันไม่ให้เกิดซ้ำ <strong>${ncr.response_due ? formatDate(addDays(ncr.response_due, 7)) : "—"}</strong> (ต่อจากนั้นอีก 7 วัน)</p>
+        ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ")}
         <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div></form>`);
     }
     if (ncr.status === "awaiting_followup" && isQa(employee)) {
@@ -283,7 +323,7 @@
   }
 
   function waitingText(ncr) {
-    if (ncr.status === "awaiting_disposition") return "ผู้จัดการฝ่ายโรงงานพิจารณา";
+    if (ncr.status === "awaiting_disposition") return `ผู้จัดการฝ่ายโรงงานพิจารณา (แผนกต้องตอบภายใน ${formatDate(ncr.response_due)})`;
     if (ncr.status === "awaiting_response") return `ผู้จัดการแผนก ${(ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).join(" / ")} ตอบภายใน ${formatDate(ncr.response_due)}`;
     if (ncr.status === "awaiting_followup") return "แผนก QA ติดตามผล";
     if (ncr.status === "awaiting_signoff") return `${nextSigner(ncr).label} ลงนาม`;
@@ -329,21 +369,24 @@
   const HISTORY_LABELS = {
     issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผจก.แผนก QA ลงนาม", signoff_factory: "ผจก.โรงงานลงนาม",
-    signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", cancel: "ยกเลิก NCR",
+    signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
   };
 
   async function renderDetail(id) {
     loadingShell("ncr", "NCR");
     const employee = state.employee;
-    const [ncrResult, lossResult, historyResult, directory] = await Promise.all([
+    const [ncrResult, lossResult, historyResult, attachmentResult, directory] = await Promise.all([
       sb.from("ncr_reports").select("*,defect_type:ncr_defect_types(name_th),reporter_department:departments!ncr_reports_reporter_department_id_fkey(code),ncr_responsibilities(share,department_id,department:departments(code,name_th))").eq("id", id).maybeSingle(),
       sb.from("ncr_losses").select("*").eq("ncr_id", id).order("recorded_at"),
       sb.from("ncr_status_history").select("*").eq("ncr_id", id).order("id"),
+      sb.from("ncr_attachments").select("*").eq("ncr_id", id).order("created_at"),
       loadEmployeeDirectory(),
     ]);
     if (ncrResult.error) throw ncrResult.error;
     if (lossResult.error) throw lossResult.error;
     if (historyResult.error) throw historyResult.error;
+    if (attachmentResult.error) throw attachmentResult.error;
+    const attachments = attachmentResult.data ?? [];
     const ncr = ncrResult.data;
     if (!ncr) {
       app.innerHTML = shell(`<div class="empty"><h2>ไม่พบ NCR</h2><p>${escapeHtml(ERROR_MESSAGES.NCR_NOT_FOUND)}</p><a class="btn secondary" href="#/ncr">กลับไปทะเบียน NCR</a></div>`, "ncr", "NCR");
@@ -396,11 +439,21 @@
         ${definition("ผู้จัดการทั่วไป", signoff(ncr.signoff_gm_by, ncr.signoff_gm_at))}
         ${definition("วันที่ปิด", formatDate(ncr.closed_at))}
       </dl></section>
+      <section class="card ncr-card"><h2>ไฟล์หลักฐาน</h2>
+        <p class="muted small">ทุกคนที่เห็นใบนี้แนบไฟล์เพิ่มได้จนกว่าจะปิดใบ ไฟล์ที่แนบแล้วลบไม่ได้เพราะเป็นหลักฐาน · ผู้แนบและเวลาดูได้ในประวัติเอกสาร</p>
+        ${attachmentGalleryHtml(attachments)}
+        ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
+      </section>
       ${lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee))}
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     app.innerHTML = shell(content, "ncr", ncr.ncr_no);
     bindShell();
     bindDetail(ncr);
+    document.querySelector("#attachment-gallery")?.addEventListener("click", (event) => {
+      const trigger = event.target.closest("[data-attachment-open]");
+      if (trigger) openAttachmentLightbox(trigger.dataset.attachmentOpen);
+    });
+    hydrateAttachmentGallery(attachments, "ncr-attachments").catch((error) => showToast(friendlyError(error), "error"));
   }
 
   function bindDetail(ncr) {
@@ -421,12 +474,15 @@
         p_causes: checkedValues(form, "causes"),
         p_root_cause: optionalText(form, "root_cause") ?? "",
         p_correction: optionalText(form, "correction") ?? "",
-        p_correction_due: optionalText(form, "correction_due"),
         p_prevention: optionalText(form, "prevention") ?? "",
-        p_prevention_due: optionalText(form, "prevention_due"),
       }),
       followup: (form) => sb.rpc("app_ncr_followup", { p_ncr_id: ncr.id, p_result: checkedValues(form, "result")[0] ?? "", p_note: optionalText(form, "note") }),
       signoff: () => sb.rpc("app_ncr_signoff", { p_ncr_id: ncr.id }),
+      attach: async (form, evidence) => {
+        if (!evidence) return { error: new Error("กรุณาเลือกไฟล์") };
+        await uploadNcrAttachment(ncr.id, evidence, ATTACHMENT_SECTION_BY_STATUS[ncr.status] ?? "followup");
+        return { error: null };
+      },
       cancel: (form) => sb.rpc("app_ncr_cancel", { p_ncr_id: ncr.id, p_reason: optionalText(form, "reason") ?? "" }),
       add_loss: (form) => sb.rpc("app_ncr_add_loss", {
         p_ncr_id: ncr.id,
@@ -437,19 +493,35 @@
         p_note: optionalText(form, "note"),
       }),
     };
-    const doneMessages = { dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
+    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
 
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const action = form.dataset.action;
       if (action === "cancel" && !window.confirm(`ยืนยันยกเลิก ${ncr.ncr_no}?`)) return;
+      let evidence;
+      try {
+        evidence = evidenceOf(form);
+      } catch (error) {
+        showFormError(form, error);
+        return;
+      }
       // เรียก RPC (ซึ่งอ่านค่าจากฟอร์มทันที) ก่อน setFormBusy — ช่องที่ถูก disable จะไม่อยู่ใน FormData
-      const pending = calls[action](form);
+      const pending = calls[action](form, evidence);
       setFormBusy(form, true);
       try {
         const { error } = await pending;
         if (error) throw error;
-        showToast(doneMessages[action]);
+        let message = doneMessages[action];
+        // ไฟล์ที่แนบมากับคำตอบอัปโหลดหลังบันทึกคำตอบสำเร็จ ถ้าอัปโหลดไม่ผ่าน คำตอบยังอยู่และแนบใหม่ได้
+        if (action === "respond" && evidence) {
+          try {
+            await uploadNcrAttachment(ncr.id, evidence, "response");
+          } catch (uploadError) {
+            message += ` แต่แนบไฟล์ไม่สำเร็จ (${friendlyError(uploadError)}) แนบใหม่ได้ที่ส่วนไฟล์หลักฐาน`;
+          }
+        }
+        showToast(message);
         await renderDetail(ncr.id);
       } catch (error) {
         setFormBusy(form, false);
