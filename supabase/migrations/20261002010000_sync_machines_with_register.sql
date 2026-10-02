@@ -12,10 +12,11 @@
 --    ฐานข้อมูลที่รัน migration 20260917101500 บน DB เปล่าได้ครบทั้งคู่ แต่ฐานข้อมูลจริงบน Supabase Cloud ขาดแถวที่สองของแต่ละคู่
 --    (BG มี 19 จาก 20, PK มี 34 จาก 35) เพราะประวัติ migration ของ Cloud ไม่มีรายการ import นี้ ข้อมูลถูกโหลดเข้าไปด้วยวิธีอื่น
 --    และตารางไม่ได้ตั้ง unique(code) ไว้เพราะยอมรับรหัสซ้ำในข้อมูลจริงตั้งแต่ต้น
---    ใส่แถวที่ขาดกลับด้วย sort_order เดิมของแถวนั้น (336, 359) ซึ่งว่างอยู่ ส่วน DB เปล่าไม่ถูกเพิ่มซ้ำ
+--    ใส่แถวที่ขาดกลับโดยใช้ sort_order เดียวกับแถวคู่ที่มีอยู่ (ชื่อและรหัสเหมือนกัน ลำดับในรายการจึงอยู่ติดกัน)
+--    ส่วน DB เปล่าไม่ถูกเพิ่มซ้ำ
 --
 -- ไม่แตะแถวอื่นเลย รวมถึงแถวที่ผู้ดูแลแก้เองในฐานข้อมูล: ส่วนที่ 1 สลับเฉพาะแถวที่ค่ายังเป็นค่าที่สลับอยู่เป๊ะ
--- ส่วนที่ 2 เพิ่มเฉพาะเมื่อยังมีน้อยกว่า 2 แถว จึงรันซ้ำได้โดยไม่เพิ่มแถวหรือสลับกลับไปกลับมา
+-- ส่วนที่ 2 เพิ่มเฉพาะเมื่อมีอยู่ 1 แถวพอดี จึงรันซ้ำได้โดยไม่เพิ่มแถวหรือสลับกลับไปกลับมา
 --
 -- เรื่องที่ยังต้องให้เจ้าของทะเบียนตัดสินใจ (ไม่แก้ในนี้เพราะเดารหัสแทนไม่ได้)
 --   - BG "จักรอุตสาหกรรม-เข็มคู่" ช่องรหัสใน Excel เป็นชื่อเครื่อง (รหัสไปอยู่ช่องเกรด) จึงยังเป็นรหัสนั้นอยู่
@@ -39,18 +40,19 @@ where d.id = m.department_id
     ('เครื่องรัดกล่อง', 'F-PK 2-1')
   );
 
--- 2. BG/PK: ใส่แถวรหัสซ้ำที่ migration เดิมข้ามไป
+-- 2. BG/PK: ใส่แถวรหัสซ้ำที่ฐานข้อมูลจริงขาดไป
 insert into public.machines (code, name, department_id, is_placeholder, sort_order)
-select v.code, v.name, d.id, false, v.sort_order
+select v.code, v.name, d.id, false, twin.sort_order
 from (values
-  ('P-SK 1-2', 'เครื่องรีดสตื๊กเกอร์ความร้อน-ลูกกลิ้ง', 'PK', 336),
-  ('S-SM 3-4', 'จักรอุตสาหกรรม-ธรรมดาเข็มเดี่ยว', 'BG', 359)
-) as v(code, name, department_code, sort_order)
+  ('P-SK 1-2', 'เครื่องรีดสตื๊กเกอร์ความร้อน-ลูกกลิ้ง', 'PK'),
+  ('S-SM 3-4', 'จักรอุตสาหกรรม-ธรรมดาเข็มเดี่ยว', 'BG')
+) as v(code, name, department_code)
 join public.departments d on d.code = v.department_code
-where (
-  select count(*)
+cross join lateral (
+  select count(*) as n, min(existing.sort_order) as sort_order
   from public.machines existing
   where existing.department_id = d.id
     and existing.code = v.code
     and existing.name = v.name
-) < 2;
+) twin
+where twin.n = 1;
