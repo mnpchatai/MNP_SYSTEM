@@ -26,8 +26,7 @@ function loadDocument(url: string) {
 
 export type PdfPageImage = { dataUrl: string; pageCount: number; width: number; height: number };
 
-export async function renderPdfPage(url: string, pageNumber: number, targetWidth: number): Promise<PdfPageImage> {
-  const document_ = await loadDocument(url);
+async function renderPage(document_: PDFDocumentProxy, pageNumber: number, targetWidth: number): Promise<PdfPageImage> {
   const safePage = Math.min(Math.max(pageNumber, 1), document_.numPages);
   const page = await document_.getPage(safePage);
   const unscaled = page.getViewport({ scale: 1 });
@@ -45,5 +44,21 @@ export async function renderPdfPage(url: string, pageNumber: number, targetWidth
     };
   } finally {
     page.cleanup();
+  }
+}
+
+export async function renderPdfPage(url: string, pageNumber: number, targetWidth: number): Promise<PdfPageImage> {
+  return renderPage(await loadDocument(url), pageNumber, targetWidth);
+}
+
+/** First page of a PDF the user just picked (before upload). Parsed from memory and released right after,
+ *  so nothing is cached and no network request is made. */
+export async function renderPdfFile(file: File, targetWidth: number): Promise<PdfPageImage> {
+  const pdfjs = await loadPdfjs();
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+  try {
+    return await renderPage(pdf, 1, targetWidth);
+  } finally {
+    await pdf.destroy();
   }
 }

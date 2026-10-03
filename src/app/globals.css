@@ -567,6 +567,10 @@ tbody tr:hover { background: var(--surface-hover); }
 .attachment-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--quiet); font-size: 9px; }
 .attachment-download { display: inline-flex; align-items: center; color: var(--muted); }
 .attachment-download:hover { color: var(--primary); }
+/* ตัวอย่างไฟล์ที่เลือกก่อนอัปโหลด (components/attachment-selection-preview.tsx): กระเบื้องเดียวกับแกลเลอรี เล็กกว่าและกดไม่ได้ */
+.attachment-selection { margin-top: 8px; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.attachment-selection .attachment-preview { cursor: default; }
+.attachment-selection .attachment-preview:hover { border-color: var(--line); box-shadow: none; }
 .spin { animation: attachment-spin 0.9s linear infinite; }
 
 @keyframes attachment-spin { to { transform: rotate(360deg); } }

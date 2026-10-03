@@ -45,7 +45,15 @@ export function normalizeAttachments(files: Iterable<File> | ArrayLike<File>, op
 export function checkBatch(files: Iterable<{ size: number }> | ArrayLike<{ size: number }>): string | null;
 /** ข้อความสรุปใต้ช่องแนบหลายไฟล์ (จำนวน ขนาดรวม และจำนวนไฟล์ที่ระบบปรับให้) */
 export function describeBatch(prepared: File[], originals: File[]): string;
-export function bindFileInputs(options?: NormalizeOptions & { notify?: (message: string, type?: string) => void }): void;
+export function bindFileInputs(
+  options?: NormalizeOptions & {
+    notify?: (message: string, type?: string) => void;
+    /** เรียกหลังเตรียมไฟล์เสร็จด้วยไฟล์ที่จะส่งจริง ([] เมื่อล้าง/เลือกใหม่/ผิดพลาด) ใช้แสดงตัวอย่างก่อนอัปโหลด */
+    onSelection?: (input: HTMLInputElement, files: File[]) => void;
+  },
+): void;
+/** ภาพย่อ (data URL JPEG) ของไฟล์รูปสำหรับแสดงตัวอย่างก่อนอัปโหลด ทำทีละไฟล์ผ่านคิว คืน null ถ้าถอดรหัสไม่ได้ */
+export function createThumbnail(file: File, maxEdge?: number): Promise<string | null>;
 
 export function sniffImageType(bytes: Uint8Array): string | null;
 export function detectImageKind(file: { name?: string; type?: string }, headBytes?: Uint8Array): string | null;

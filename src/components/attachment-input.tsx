@@ -9,12 +9,14 @@ import {
   normalizeAttachments,
   type HeicDecoder,
 } from "../../modules/attachment-image.js";
+import { AttachmentSelectionPreview } from "@/components/attachment-selection-preview";
 
 // ช่องแนบไฟล์ที่เตรียมรูปจากโทรศัพท์ให้เข้าเกณฑ์ก่อนส่ง (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่)
 // ใช้ตัวเตรียมรูปไฟล์เดียวกับ Pilot Web คือ modules/attachment-image.js — แก้ที่หนึ่งให้แก้อีกที่ให้ตรงกัน
 // ส่วนการตรวจชนิด/ขนาดไฟล์จริงยังอยู่ที่ server action และ bucket เหมือนเดิม ที่นี่แค่แปลงไฟล์ให้ผ่านการตรวจ
 // ช่อง multiple เตรียมทุกไฟล์ทีละไฟล์ แล้วตรวจจำนวนและขนาดรวม (ไม่เกิน 20 MB) ก่อนปล่อยให้ส่งฟอร์ม
 // ไฟล์ที่เตรียมแล้วเขียนกลับลง input.files ฟอร์มจึงอ่านได้ด้วย FormData เหมือนช่องไฟล์ทั่วไป
+// เตรียมเสร็จแล้วแสดงตัวอย่างไฟล์ที่จะส่งใต้ช่อง (attachment-selection-preview.tsx) ล้างเมื่อเลือกใหม่/ผิดพลาด/ฟอร์มถูกรีเซ็ต
 
 type Status = { kind: "busy" | "done" | "error"; text: string } | null;
 
@@ -41,6 +43,7 @@ export function AttachmentInput({
   accept?: string;
 }) {
   const [status, setStatus] = useState<Status>(null);
+  const [selected, setSelected] = useState<File[]>([]);
   const latest = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -53,6 +56,7 @@ export function AttachmentInput({
       latest.current += 1; // ผลของการเตรียมไฟล์ที่ค้างอยู่ถูกทิ้ง
       input.setCustomValidity("");
       setStatus(null);
+      setSelected([]);
     };
     form.addEventListener("reset", clear);
     return () => form.removeEventListener("reset", clear);
@@ -62,6 +66,7 @@ export function AttachmentInput({
     const input = event.currentTarget;
     const originals = Array.from(input.files ?? []);
     const sequence = ++latest.current;
+    setSelected([]); // เลือกใหม่หรือยกเลิก: ล้างตัวอย่างเดิมทันที
     if (!originals.length) {
       input.setCustomValidity("");
       setStatus(null);
@@ -95,6 +100,7 @@ export function AttachmentInput({
       } else {
         setStatus(null);
       }
+      setSelected(prepared);
     } catch (error) {
       if (sequence !== latest.current) return;
       input.value = "";
@@ -122,6 +128,7 @@ export function AttachmentInput({
           {status.text}
         </small>
       )}
+      <AttachmentSelectionPreview files={selected} />
       {multiple && <small className="muted">{HINT}</small>}
     </>
   );
