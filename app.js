@@ -1489,6 +1489,25 @@ async function renderRequestsBoard(params, types) {
   });
 }
 
+function knownRequestStatuses(params) {
+  return window.MNP_REQUEST_CENTER.statusList(params, REQUEST_STATUS_FILTERS.map(([value]) => value));
+}
+
+// RLS decides which rows this account can read; the filters only narrow the list.
+async function requestListPanel(params, typeId) {
+  const mineOnly = params.get("scope") === "mine";
+  let query = sb.from("requests")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
+    .order("created_at", { ascending: false });
+  if (mineOnly) query = query.eq("requester_id", state.employee.id);
+  if (typeId) query = query.eq("request_type_id", typeId);
+  const statuses = knownRequestStatuses(params);
+  if (statuses.length) query = query.in("status", statuses);
+  const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
+  if (error) throw error;
+  return `<section class="request-list-panel">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
+}
+
 async function renderRequests(params) {
   if (params.get("mode") === "create") return await renderNewRequest(params);
   loadingShell("requests", "คำร้อง");
@@ -1499,7 +1518,8 @@ async function renderRequests(params) {
   const types = typesData ?? [];
   const storageKey = `mnp-request-type:${state.employee.id}`;
   try {
-    if (!params.size) params.set("type", localStorage.getItem(storageKey) || "all");
+    // URLSearchParams.size is missing before Safari 17 / Chrome 113.
+    if (!window.MNP_REQUEST_CENTER.hasParams(params)) params.set("type", localStorage.getItem(storageKey) || "all");
     if (params.has("type") && params.get("type") !== "all" && !types.some((type) => type.id === params.get("type"))) params.set("type", "all");
     if (params.has("type")) localStorage.setItem(storageKey, params.get("type"));
   } catch { /* Storage may be disabled; URL filters still work. */ }
@@ -1511,7 +1531,13 @@ async function renderRequests(params) {
   // The overview is a module chooser; fetch rows only after entering a module.
   if (!selected) {
     const counts = await requestTypeCounts(types, mineOnly);
-    app.innerHTML = shell(`${requestCenterHeader(types, params, counts)}<p class="muted small">จำนวนบนการ์ดคือรายการที่ยังไม่จบ${mineOnly ? "เฉพาะที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู"} · เลือกโมดูลเพื่อแสดงรายการคำร้อง</p>`, "requests", "คำร้อง");
+    // Status links from the dashboard summary cards span every type, so list them here
+    // with the same filter instead of dropping it.
+    const statuses = knownRequestStatuses(params);
+    const statusList = statuses.length
+      ? `<div class="request-type-heading"><h2>คำร้องทุกประเภท · ${escapeHtml(statuses.map((value) => REQUEST_STATUS_FILTERS.find(([known]) => known === value)[1]).join(", "))}</h2><a href="${escapeHtml(requestCenterUrl(params, { status: null }))}">ล้างตัวกรอง</a></div>${await requestListPanel(params, null)}`
+      : "";
+    app.innerHTML = shell(`${requestCenterHeader(types, params, counts)}<p class="muted small">จำนวนบนการ์ดคือรายการที่ยังไม่จบ${mineOnly ? "เฉพาะที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู"} · เลือกโมดูลเพื่อแสดงรายการคำร้อง</p>${statusList}`, "requests", "คำร้อง");
     bindShell();
     bindModuleZoom(params);
     return;
@@ -1523,16 +1549,7 @@ async function renderRequests(params) {
     <a class="filter${mineOnly ? " active" : ""}" href="${escapeHtml(requestCenterUrl(params, { scope: "mine" }))}">เฉพาะที่ฉันแจ้ง</a></nav>`;
   let list = "";
   if (selected.code !== "NCR_CAR") {
-    let query = sb.from("requests")
-      .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
-      .order("created_at", { ascending: false });
-    if (mineOnly) query = query.eq("requester_id", state.employee.id);
-    query = query.eq("request_type_id", selected.id);
-    const statuses = (params.get("status") ?? "all").split(",").filter((value) => value !== "all" && REQUEST_STATUS_FILTERS.some(([known]) => known === value));
-    if (statuses.length) query = query.in("status", statuses);
-    const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
-    if (error) throw error;
-    list = `${statusFilterBar(params)}<section class="request-list-panel">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
+    list = `${statusFilterBar(params)}${await requestListPanel(params, selected.id)}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {

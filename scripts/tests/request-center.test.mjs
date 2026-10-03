@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 
-const { url, pendingStatuses, createUrl } = createRequire(import.meta.url)("../../modules/request-center.js");
+const { url, hasParams, statusList, pendingStatuses, createUrl } = createRequire(import.meta.url)("../../modules/request-center.js");
 const params = (value) => new URLSearchParams(value);
 
 test("changing status preserves selected type, ownership, search and board scope", () => {
@@ -42,4 +42,23 @@ test("pending counters respect management terminal decisions and NCR's separate 
   assert.ok(pendingStatuses("MT_REPAIR").includes("pending_verify"));
   assert.ok(pendingStatuses("NCR_CAR").includes("awaiting_signoff"));
   assert.ok(!pendingStatuses("NCR_CAR").includes("closed"));
+});
+test("links keep their filters on browsers without URLSearchParams.size", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(URLSearchParams.prototype, "size");
+  Object.defineProperty(URLSearchParams.prototype, "size", { configurable: true, get: () => undefined });
+  try {
+    assert.equal(url(params("type=all"), { type: "it" }), "#/requests?type=it");
+    assert.equal(createUrl(params("type=mt")), "#/requests?type=mt&mode=create&createType=mt");
+    assert.equal(hasParams(params("status=completed")), true);
+    assert.equal(hasParams(params("")), false);
+  } finally {
+    if (descriptor) Object.defineProperty(URLSearchParams.prototype, "size", descriptor);
+  }
+});
+test("dashboard status links keep only known statuses", () => {
+  const known = ["all", "approved", "in_progress", "completed"];
+  assert.deepEqual(statusList(params("status=approved,in_progress"), known), ["approved", "in_progress"]);
+  assert.deepEqual(statusList(params("status=completed,bogus"), known), ["completed"]);
+  assert.deepEqual(statusList(params("status=all"), known), []);
+  assert.deepEqual(statusList(params(""), known), []);
 });
