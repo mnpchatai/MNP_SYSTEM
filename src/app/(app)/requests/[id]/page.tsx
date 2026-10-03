@@ -12,7 +12,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
 import { employeeName, formatDate, priorityLabels, statusLabels } from "@/lib/format";
-import { hasPermission } from "@/lib/data";
+import { actingRoleId, hasPermission } from "@/lib/data";
 import { getRequestModule } from "@/lib/request-modules";
 import {
   buildRequestTimeline,
@@ -72,7 +72,7 @@ export default async function RequestDetailPage({
     .sort((a, b) => a.step_order - b.step_order)
     .find((step) => step.status === "pending" && step.step_order === request.current_step && (
       step.approver_employee_id === employee.id ||
-      (step.approver_role_id === employee.role_id && (!step.approver_department_id || step.approver_department_id === employee.department_id))
+      (step.approver_role_id === actingRoleId(employee) && (!step.approver_department_id || step.approver_department_id === employee.department_id))
     ));
   const details = (request.details ?? {}) as Record<string, string>;
   const timeline = buildRequestTimeline({

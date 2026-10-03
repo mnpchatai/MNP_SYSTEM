@@ -94,6 +94,12 @@ const state = { session: null, employee: null, unread: 0, authMode: "login", dir
 // เก็บแค่ code ที่ใช้เทียบสิทธิ์ฝั่ง UI (สิทธิ์จริงบังคับที่ฐานข้อมูลอยู่แล้วผ่าน RLS/RPC)
 const VIEW_ALL_ROLE_CODES = ["factory_manager", "general_manager"]; // มี requests.view_all เหมือน admin
 const DEPT_MANAGER_ROLE_CODES = ["department_manager", "assistant_department_manager"]; // ผู้ช่วยทำแทนผู้จัดการแผนกได้ (ตรงกับ RPC)
+
+// บทบาทที่ใช้รับงานอนุมัติ/แจ้งเตือน: admin เลือกทำหน้าที่บทบาทอื่นได้ (employees.acting_role_id)
+// ต้องตรงกับ coalesce(acting_role_id, role_id) ใน 20261003010000_admin_acting_role.sql
+function actingRoleId(employee) {
+  return employee?.acting_role_id || employee?.role_id;
+}
 const OPERATE_ROLE_CODES = ["assistant_factory_manager", "factory_manager", "general_manager"]; // มี requests.operate
 const accountRequestKindLabels = {
   new_account: "ขอเปิดบัญชี",
@@ -295,6 +301,7 @@ function friendlyError(error) {
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
     EMPLOYEE_NOT_FOUND: "บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ",
+    INVALID_ROLE: "บทบาทที่เลือกไม่ถูกต้อง กรุณาเลือกใหม่",
     INVALID_TITLE: "หัวข้อต้องมี 3–200 ตัวอักษร",
     INVALID_DESCRIPTION: "รายละเอียดต้องมี 3–5,000 ตัวอักษร",
     STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว",
@@ -1120,7 +1127,7 @@ async function loadEmployee() {
   if (!state.session?.user) return null;
   const { data, error } = await sb
     .from("employees")
-    .select("id,employee_no,first_name,last_name,email,phone,job_title,department_id,role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
+    .select("id,employee_no,first_name,last_name,email,phone,job_title,department_id,role_id,acting_role_id,manager_id,role:roles(code,name_th),department:departments(code,name_th)")
     .eq("auth_user_id", state.session.user.id)
     .eq("is_active", true)
     .maybeSingle();
@@ -1266,9 +1273,10 @@ async function getPendingApprovals() {
     if (!request?.id || step.step_order !== request.current_step) return false;
     // เฉพาะ admin จริงเท่านั้นที่ข้ามได้ ต้องตรงกับ app_approval_decision เป๊ะ — เดิมรวม
     // factory_manager/general_manager ด้วย ทำให้เห็นปุ่มอนุมัติของขั้นที่ไม่ใช่ของตัวเอง
-    if (employee.role?.code === "admin") return true;
+    // admin ที่เลือก "บทบาทที่ทำหน้าที่" ไว้ เห็นเฉพาะขั้นของบทบาทนั้น (ยังเปิดใบอื่นอนุมัติได้ตามสิทธิ์ admin)
+    if (employee.role?.code === "admin" && !employee.acting_role_id) return true;
     if (step.approver_employee_id && step.approver_employee_id === employee.id) return true;
-    const roleMatches = Boolean(step.approver_role_id) && step.approver_role_id === employee.role_id &&
+    const roleMatches = Boolean(step.approver_role_id) && step.approver_role_id === actingRoleId(employee) &&
       (!step.approver_department_id || step.approver_department_id === employee.department_id);
     return roleMatches && Boolean(request.request_type?.code) && employee.approvalModules.has(request.request_type.code);
   });
@@ -2123,6 +2131,16 @@ async function renderProfile() {
         <div class="form-actions"><button class="btn" type="submit">บันทึกข้อมูล</button></div>
       </form>
     </section>
+    ${isAccountManager ? `
+    <section class="card" style="max-width:780px">
+      <h2>บทบาทหลักในการทำงาน</h2>
+      <p class="muted small">เลือกบทบาทที่คุณทำงานจริง ระบบจะส่งแจ้งเตือนและแสดงรายการ "รออนุมัติ" เฉพาะของบทบาทนั้น และนับคุณเป็นผู้อนุมัติในสายอนุมัติของบทบาทนั้น (เช่น ผู้จัดการทั่วไป) สิทธิ์ผู้ดูแลระบบยังใช้ได้ครบ แต่จะไม่ได้รับแจ้งเตือนคำร้องเปิดบัญชี/แก้ไข ID ซึ่งยังดูได้ที่หน้าผู้ดูแลระบบ</p>
+      <div id="acting-role-message"></div>
+      <form id="acting-role-form">
+        <div class="field"><label for="acting-role">ทำงานในฐานะ</label><select class="input" id="acting-role" name="acting_role_id"><option value="">ผู้ดูแลระบบ (รับแจ้งเตือนและเห็นรายการรออนุมัติทั้งหมด)</option>${roles.filter((item) => item.code !== "admin").map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.acting_role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
+        <div class="form-actions"><button class="btn" type="submit">บันทึกบทบาทหลัก</button></div>
+      </form>
+    </section>` : ""}
 
     <section class="card" style="max-width:780px">
       <h2>${isAccountManager ? "แก้ไข ID / รหัสผ่านของฉัน" : "ขอแก้ไข ID / รหัสผ่าน"}</h2>
@@ -2143,6 +2161,7 @@ async function renderProfile() {
   app.innerHTML = shell(content, "profile", "ข้อมูลส่วนตัว");
   bindShell();
   document.querySelector("#profile-form").addEventListener("submit", handleProfileSubmit);
+  document.querySelector("#acting-role-form")?.addEventListener("submit", handleActingRoleSubmit);
   document.querySelector("#credential-form").addEventListener("submit", handleCredentialChangeSubmit);
 }
 
@@ -2186,6 +2205,26 @@ async function handleProfileSubmit(event) {
   showToast("บันทึกข้อมูลเรียบร้อย");
   await renderProfile();
   document.querySelector("#profile-message").innerHTML = `<div class="form-message success">บันทึกข้อมูลเรียบร้อยแล้ว</div>`;
+}
+
+async function handleActingRoleSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#acting-role-message");
+  const roleId = String(new FormData(form).get("acting_role_id") ?? "");
+  setFormBusy(form, true);
+  message.innerHTML = "";
+
+  const { error } = await sb.rpc("app_set_my_acting_role", { p_role_id: roleId || null });
+  if (error) {
+    setFormBusy(form, false);
+    message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
+    return;
+  }
+  await loadEmployee();
+  showToast("บันทึกบทบาทหลักเรียบร้อย");
+  await renderProfile();
+  document.querySelector("#acting-role-message").innerHTML = `<div class="form-message success">บันทึกบทบาทหลักแล้ว แจ้งเตือนใหม่จะส่งตามบทบาทนี้</div>`;
 }
 
 async function handleCredentialChangeSubmit(event) {

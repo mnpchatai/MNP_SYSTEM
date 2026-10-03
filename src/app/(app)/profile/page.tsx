@@ -1,6 +1,6 @@
 import { CheckCircle2, Link2, Unlink } from "lucide-react";
 import { unlinkLineAction } from "@/app/actions/line";
-import { updateOwnPhotoAction } from "@/app/actions/profile";
+import { setActingRoleAction, updateOwnPhotoAction } from "@/app/actions/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
 import { formatDate } from "@/lib/format";
@@ -20,12 +20,16 @@ const lineMessages: Record<string, string> = {
 export default async function ProfilePage({
   searchParams,
 }: {
-  searchParams: Promise<{ line?: string; photo?: string; error?: string }>;
+  searchParams: Promise<{ line?: string; photo?: string; role?: string; error?: string }>;
 }) {
   const employee = await getCurrentEmployee();
-  const { line, photo, error } = await searchParams;
+  const { line, photo, role, error } = await searchParams;
   const supabase = await createClient();
   const { data: lineAccount } = await supabase.from("line_accounts").select("*").eq("employee_id", employee.id).maybeSingle();
+  const isAdmin = employee.role?.code === "admin";
+  const { data: roles } = isAdmin
+    ? await supabase.from("roles").select("id, code, name_th").neq("code", "admin").order("sort_order")
+    : { data: [] as { id: string; code: string; name_th: string | null }[] };
   const initials = `${employee.first_name.at(0) ?? ""}${employee.last_name.at(0) ?? ""}`;
 
   return (
@@ -33,6 +37,7 @@ export default async function ProfilePage({
       <div className="page-heading"><div><div className="eyebrow">My Profile</div><h2>ข้อมูลส่วนตัว</h2><p>ข้อมูลพนักงาน สิทธิ์ และช่องทางแจ้งเตือน</p></div></div>
       {line && lineMessages[line] && <div className={`form-message ${line === "linked" || line === "unlinked" ? "success" : "error"}`}>{lineMessages[line]}</div>}
       {photo === "updated" && <div className="form-message success">อัปเดตรูปโปรไฟล์แล้ว</div>}
+      {role === "updated" && <div className="form-message success">บันทึกบทบาทหลักแล้ว แจ้งเตือนใหม่จะส่งตามบทบาทนี้</div>}
       {error && <div className="form-message error">{error}</div>}
       <div className="grid-2">
         <section className="card">
@@ -77,6 +82,22 @@ export default async function ProfilePage({
             </div>
           )}
         </section>
+        {isAdmin && (
+          <section className="card">
+            <div className="card-title"><h3>บทบาทหลักในการทำงาน</h3></div>
+            <form action={setActingRoleAction} className="stack">
+              <p className="muted small">เลือกบทบาทที่คุณทำงานจริง ระบบจะส่งแจ้งเตือนและแสดงรายการรออนุมัติเฉพาะของบทบาทนั้น และนับคุณเป็นผู้อนุมัติในสายอนุมัติของบทบาทนั้น สิทธิ์ผู้ดูแลระบบยังใช้ได้ครบ แต่จะไม่ได้รับแจ้งเตือนคำร้องเปิดบัญชี/แก้ไข ID</p>
+              <div className="field">
+                <label htmlFor="acting_role_id">ทำงานในฐานะ</label>
+                <select className="select" id="acting_role_id" name="acting_role_id" defaultValue={employee.acting_role_id ?? ""}>
+                  <option value="">ผู้ดูแลระบบ (รับแจ้งเตือนทั้งหมดของผู้ดูแลระบบ)</option>
+                  {(roles ?? []).map((item) => <option key={item.id} value={item.id}>{item.name_th ?? item.code}</option>)}
+                </select>
+              </div>
+              <SubmitButton className="btn" pendingLabel="กำลังบันทึก...">บันทึกบทบาทหลัก</SubmitButton>
+            </form>
+          </section>
+        )}
       </div>
     </>
   );
