@@ -1189,8 +1189,7 @@ function shell(content, active, title) {
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
           ${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
-          ${navLink("requests", OPERATE_ROLE_CODES.includes(employee.role?.code) ? "งานดำเนินการ" : "คำร้อง", NAV_ICONS.requests, active)}
-          ${navLink("new", "สร้างคำร้อง", NAV_ICONS.new, active, { featured: true })}
+          ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active)}
           ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}
           ${requestModuleNavLinks(active)}
           ${navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
@@ -1216,7 +1215,6 @@ function shell(content, active, title) {
           <div class="top-actions">
             ${themeButton()}
             <a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>
-            <a class="btn small" href="#/new">＋ สร้างคำร้อง</a>
           </div>
         </header>
         <div class="content">${content}</div>
@@ -1356,7 +1354,7 @@ async function renderDashboard() {
     </section>
     <div class="dashboard-grid">
       <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory })}</section>
-      <section class="card flush"><div class="card-heading"><h2>สร้างคำร้อง</h2><a href="#/new">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/new?type=${encodeURIComponent(type.id)}"><span class="quick-icon">＋</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
+      <section class="card flush"><div class="card-heading"><h2>คำร้องแยกตามประเภท</h2><a href="#/requests?type=all">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/requests?type=${encodeURIComponent(type.id)}"><span class="quick-icon">▤</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
     </div>`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
   bindShell();
@@ -1374,107 +1372,177 @@ const REQUEST_STATUS_FILTERS = [
   ["rejected", "ไม่อนุมัติ"],
 ];
 
-function requestsViewTabs(view, status, search) {
-  const query = (nextView) => {
-    const parts = [];
-    if (nextView === "board") parts.push("view=board");
-    if (status !== "all") parts.push(`status=${encodeURIComponent(status)}`);
-    if (nextView === "board" && search) parts.push(`q=${encodeURIComponent(search)}`);
-    return parts.length ? `?${parts.join("&")}` : "";
-  };
-  return `<div class="view-tabs" role="tablist">
-    <a class="view-tab${view === "board" ? "" : " active"}" role="tab" aria-selected="${view === "board" ? "false" : "true"}" href="#/requests${query("mine")}">รายการตามสิทธิ์</a>
-    <a class="view-tab${view === "board" ? " active" : ""}" role="tab" aria-selected="${view === "board" ? "true" : "false"}" href="#/requests${query("board")}">ติดตามสถานะทุกใบ</a>
-  </div>`;
+const requestCenterUrl = window.MNP_REQUEST_CENTER.url;
+
+let pendingModuleZoom = null;
+function moduleZoomKey(params) {
+  return params.get("mode") === "create" ? `create:${params.get("createType")}` : `list:${params.get("type")}`;
 }
 
-function statusFilterBar(view, status, search) {
-  const suffix = (value) => {
-    const parts = [];
-    if (view === "board") parts.push("view=board");
-    if (value !== "all") parts.push(`status=${encodeURIComponent(value)}`);
-    if (view === "board" && search) parts.push(`q=${encodeURIComponent(search)}`);
-    return parts.length ? `?${parts.join("&")}` : "";
-  };
-  return `<div class="filters">${REQUEST_STATUS_FILTERS
-    .map(([value, label]) => `<a class="filter${status === value ? " active" : ""}" href="#/requests${suffix(value)}">${label}</a>`)
-    .join("")}</div>`;
+function queueModuleZoom(hash) {
+  pendingModuleZoom = moduleZoomKey(new URLSearchParams(hash.split("?")[1]));
 }
 
-/* กระดานติดตามสถานะ — พนักงานทุกคนเปิดดูได้ว่าแต่ละใบเดินไปถึงขั้นไหนแล้ว สิทธิ์การเปิดดู
-   รายละเอียดเต็มยังเป็นของเดิมทุกประการ (RLS ในหน้า #/request) ที่นี่แค่ทำให้ "สถานะ" โปร่งใส */
-async function renderRequestsBoard(status, search) {
+function playModuleZoom(params) {
+  if (pendingModuleZoom !== moduleZoomKey(params)) return;
+  pendingModuleZoom = null;
+  const content = document.querySelector(".content");
+  const createEntry = content?.querySelector(".request-create-entry");
+  const revealCreate = () => createEntry?.classList.remove("module-create-pending");
+  if (!content?.animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    revealCreate();
+    return;
+  }
+  // Animate only the workspace content; navigation stays still and remains usable.
+  content.getAnimations().forEach((animation) => animation.cancel());
+  const animation = content.animate([
+    { opacity: 0.45, transform: "translateY(8px) scale(0.96)", transformOrigin: "50% 0" },
+    { opacity: 1, transform: "translateY(0) scale(1)", transformOrigin: "50% 0" },
+  ], { duration: 320, easing: "cubic-bezier(0.2, 0.75, 0.25, 1)" });
+  // Reveal the module's create action after entering, including cancelled animations.
+  animation.finished.then(revealCreate, revealCreate);
+}
+
+function bindModuleZoom(params) {
+  document.querySelectorAll(".request-type-card").forEach((card) => card.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    queueModuleZoom(card.hash);
+    // Clicking the active module does not trigger hashchange; replay the zoom directly.
+    if (card.hash === location.hash) playModuleZoom(params);
+  }));
+  playModuleZoom(params);
+}
+
+function requestsViewTabs(params) {
+  const board = params.get("view") === "board";
+  return `<nav class="view-tabs" aria-label="ขอบเขตการดูคำร้อง">
+    <a class="view-tab${board ? "" : " active"}" ${board ? "" : 'aria-current="page"'} href="${escapeHtml(requestCenterUrl(params, { view: null }))}">รายการตามสิทธิ์</a>
+    <a class="view-tab${board ? " active" : ""}" ${board ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { view: "board" }))}">ติดตามสถานะทุกใบ</a>
+  </nav>`;
+}
+
+function statusFilterBar(params) {
+  const status = params.get("status") ?? "all";
+  return `<nav class="filters" aria-label="สถานะคำร้อง">${REQUEST_STATUS_FILTERS
+    .map(([value, label]) => `<a class="filter${status === value ? " active" : ""}" href="${escapeHtml(requestCenterUrl(params, { status: value }))}">${label}</a>`).join("")}</nav>`;
+}
+
+async function requestTypeCounts(types, mineOnly) {
+  return new Map(await Promise.all(types.map(async (type) => {
+    const ncr = type.code === "NCR_CAR";
+    let query = sb.from(ncr ? "ncr_reports" : "requests").select("id", { count: "exact", head: true })
+      .in("status", window.MNP_REQUEST_CENTER.pendingStatuses(type.code));
+    if (!ncr) query = query.eq("request_type_id", type.id);
+    if (mineOnly) query = query.eq(ncr ? "reporter_id" : "requester_id", state.employee.id);
+    const { count, error } = await query;
+    if (error) throw error;
+    return [type.id, count ?? 0];
+  })));
+}
+
+function requestCenterHeader(types, params, counts) {
+  const selected = types.find((type) => type.id === params.get("type"));
+  if (selected) {
+    const createLabel = { MT_REPAIR: "สร้างคำร้อง / แจ้งซ่อม MT", MANAGEMENT: "สร้างคำร้องถึงฝ่ายบริหาร", NCR_CAR: "ออก NCR", IT_REPAIR: "สร้างใบแจ้งซ่อม IT" }[selected.code] ?? `สร้าง${requestTypeLabel(selected)}`;
+    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}">‹ กลับไปเลือกโมดูล</a>
+      <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
+        <div class="request-module-title"><span class="type-card-badge">${escapeHtml(selected.prefix ?? "")}</span><div><div class="eyebrow">คำร้อง</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
+        <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}"><a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}">＋ ${escapeHtml(createLabel)}</a></div>
+      </div>`;
+  }
+  return `<div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
+    <div class="request-type-heading"><h2>เลือกโมดูล</h2></div>
+    <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" style="background:${requestTypeGradient(type.code)}">
+      <span class="request-type-top"><span class="type-card-badge">${escapeHtml(type.prefix ?? "")}</span><span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} รอดำเนินการ` : "ดูสถานะ"}</span></span>
+      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${selected?.id === type.id ? "กำลังแสดงประเภทนี้" : "ดูรายการและสถานะ →"}</small></span>
+    </a>`).join("")}</nav>`;
+}
+
+async function renderRequestsBoard(params, types) {
+  const status = params.get("status") ?? "all";
+  const search = (params.get("q") ?? "").trim();
+  const selected = types.find((type) => type.id === params.get("type"));
   const { data, error } = await sb.rpc("app_request_status_board", {
-    p_status: status === "all" ? null : status,
+    p_status: status === "all" || status.includes(",") ? null : status,
     p_search: search || null,
-    p_limit: 300,
+    p_limit: 500,
   });
   if (error) throw error;
-  const rows = data ?? [];
+  const rows = (data ?? []).filter((row) => (!selected || row.type_code === selected.code)
+    && (status === "all" || status.split(",").includes(row.status)));
   const openable = rows.filter((row) => row.can_open).length;
-  const content = `
-    <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>ติดตามสถานะทุกใบ</h1><p>ทุกคนในองค์กรเห็นได้ว่าใบแจ้งซ่อมและคำร้องแต่ละใบเดินไปถึงขั้นไหนแล้ว</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
-    ${requestsViewTabs("board", status, search)}
-    ${statusFilterBar("board", status, search)}
+  const content = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
+    ${statusFilterBar(params)}
     <form class="board-search" id="board-search-form" role="search">
-      <input class="input" id="board-search-input" name="q" type="search" maxlength="80" placeholder="ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" value="${escapeHtml(search)}">
+      <input class="input" id="board-search-input" aria-label="ค้นหาคำร้อง" name="q" type="search" maxlength="80" placeholder="ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" value="${escapeHtml(search)}">
       <button class="btn secondary small" type="submit">ค้นหา</button>
-      ${search ? `<a class="btn secondary small" href="#/requests?view=board${status === "all" ? "" : `&status=${encodeURIComponent(status)}`}">ล้าง</a>` : ""}
+      ${search ? `<a class="btn secondary small" href="${escapeHtml(requestCenterUrl(params, { q: null }))}">ล้าง</a>` : ""}
     </form>
-    <p class="muted small board-note">แสดง ${rows.length} รายการ · เปิดดูรายละเอียดเต็มได้ ${openable} รายการตามสิทธิ์ของบัญชีนี้ ส่วนใบที่เหลือเห็นได้เฉพาะความคืบหน้า</p>
+    <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows)}</section>`;
-  app.innerHTML = shell(content, "requests", "ติดตามสถานะทุกใบ");
+  app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
+  bindModuleZoom(params);
   document.querySelector("#board-search-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const value = document.querySelector("#board-search-input")?.value.trim() ?? "";
-    const parts = ["view=board"];
-    if (status !== "all") parts.push(`status=${encodeURIComponent(status)}`);
-    if (value) parts.push(`q=${encodeURIComponent(value)}`);
-    location.hash = `#/requests?${parts.join("&")}`;
+    location.hash = requestCenterUrl(params, { q: document.querySelector("#board-search-input")?.value.trim() ?? "" });
   });
 }
 
 async function renderRequests(params) {
-  loadingShell("requests", "รายการคำร้อง");
-  const status = params.get("status") ?? "all";
-  const search = (params.get("q") ?? "").trim();
-  if (params.get("view") === "board") return await renderRequestsBoard(status, search);
-
-  const role = state.employee.role?.code;
+  if (params.get("mode") === "create") return await renderNewRequest(params);
+  loadingShell("requests", "คำร้อง");
+  params = new URLSearchParams(params);
+  const { data: typesData, error: typesError } = await sb.from("request_types")
+    .select("id,code,prefix,name_th,description").eq("is_active", true).in("code", activeRequestModuleCodes()).order("sort_order");
+  if (typesError) throw typesError;
+  const types = typesData ?? [];
+  const storageKey = `mnp-request-type:${state.employee.id}`;
+  try {
+    if (!params.size) params.set("type", localStorage.getItem(storageKey) || "all");
+    if (params.has("type") && params.get("type") !== "all" && !types.some((type) => type.id === params.get("type"))) params.set("type", "all");
+    if (params.has("type")) localStorage.setItem(storageKey, params.get("type"));
+  } catch { /* Storage may be disabled; URL filters still work. */ }
+  const selected = types.find((type) => type.id === params.get("type"));
+  // NCR has its own workflow and RLS-protected register, not status-board rows.
+  if (selected?.code === "NCR_CAR") params.delete("view");
+  history.replaceState(null, "", requestCenterUrl(params));
   const mineOnly = params.get("scope") === "mine";
-  // ไม่กรอง requester_id ทิ้งอีกแล้ว — RLS เป็นตัวตัดสินว่าบัญชีนี้เห็นใบไหนได้ การกรองซ้ำ
-  // ฝั่ง client ทำให้ "ใบที่รออนุมัติจากเราเอง" และ "ใบที่เราเป็นช่างผู้รับผิดชอบ" หายไปจาก
-  // หน้านี้ทั้งหมด (หัวหน้าแผนกซ่อมบำรุงเปิดมาแล้วว่างเปล่าทั้งที่มีใบรออนุมัติค้างอยู่)
-  let query = sb
-    .from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
-    .order("created_at", { ascending: false });
-  if (mineOnly) query = query.eq("requester_id", state.employee.id);
-  // status รับได้หลายค่าคั่นด้วยจุลภาค (การ์ด "กำลังดำเนินการ" ในหน้าหลักนับ approved + in_progress)
-  // กรองเฉพาะค่าที่รู้จัก เพื่อไม่ให้ค่าแปลกปลอมจาก URL ไปถึง query
-  const knownStatuses = REQUEST_STATUS_FILTERS.map(([value]) => value).filter((value) => value !== "all");
-  const statuses = status.split(",").filter((value) => knownStatuses.includes(value));
-  if (status !== "all" && statuses.length === 1) query = query.eq("status", statuses[0]);
-  else if (status !== "all" && statuses.length > 1) query = query.in("status", statuses);
-  const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
-  if (error) throw error;
-  const title = mineOnly
-    ? "รายการคำร้องของฉัน"
-    : OPERATE_ROLE_CODES.includes(role) && !VIEW_ALL_ROLE_CODES.includes(role)
-      ? "งานดำเนินการ"
-      : (role === "admin" || VIEW_ALL_ROLE_CODES.includes(role)) ? "คำร้องทั้งหมด" : "คำร้องที่เกี่ยวข้องกับฉัน";
-  const content = `
-    <div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>${title}</h1><p>${mineOnly ? "เฉพาะใบที่คุณเป็นผู้แจ้งเอง" : "ใบที่คุณแจ้งเอง รออนุมัติจากคุณ หรือคุณเป็นผู้รับผิดชอบ"}</p></div><a class="btn" href="#/new">＋ สร้างคำร้อง</a></div>
-    ${requestsViewTabs("mine", status, search)}
-    <div class="scope-switch">
-      <a class="filter${mineOnly ? "" : " active"}" href="#/requests${status === "all" ? "" : `?status=${encodeURIComponent(status)}`}">ทุกใบที่เกี่ยวข้องกับฉัน</a>
-      <a class="filter${mineOnly ? " active" : ""}" href="#/requests?scope=mine${status === "all" ? "" : `&status=${encodeURIComponent(status)}`}">เฉพาะที่ฉันแจ้ง</a>
-    </div>
-    ${statusFilterBar("mine", status, search)}
-    <section class="request-list-panel">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
-  app.innerHTML = shell(content, "requests", title);
+  // The overview is a module chooser; fetch rows only after entering a module.
+  if (!selected) {
+    const counts = await requestTypeCounts(types, mineOnly);
+    app.innerHTML = shell(`${requestCenterHeader(types, params, counts)}<p class="muted small">จำนวนบนการ์ดคือรายการที่ยังไม่จบ${mineOnly ? "เฉพาะที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู"} · เลือกโมดูลเพื่อแสดงรายการคำร้อง</p>`, "requests", "คำร้อง");
+    bindShell();
+    bindModuleZoom(params);
+    return;
+  }
+  if (params.get("view") === "board") return await renderRequestsBoard(params, types);
+  const counts = await requestTypeCounts([selected], mineOnly);
+  const scope = `<nav class="scope-switch" aria-label="ผู้เกี่ยวข้องกับคำร้อง">
+    <a class="filter${mineOnly ? "" : " active"}" href="${escapeHtml(requestCenterUrl(params, { scope: null }))}">ทุกใบที่ฉันมีสิทธิ์ดู</a>
+    <a class="filter${mineOnly ? " active" : ""}" href="${escapeHtml(requestCenterUrl(params, { scope: "mine" }))}">เฉพาะที่ฉันแจ้ง</a></nav>`;
+  let list = "";
+  if (selected.code !== "NCR_CAR") {
+    let query = sb.from("requests")
+      .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
+      .order("created_at", { ascending: false });
+    if (mineOnly) query = query.eq("requester_id", state.employee.id);
+    query = query.eq("request_type_id", selected.id);
+    const statuses = (params.get("status") ?? "all").split(",").filter((value) => value !== "all" && REQUEST_STATUS_FILTERS.some(([known]) => known === value));
+    if (statuses.length) query = query.in("status", statuses);
+    const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
+    if (error) throw error;
+    list = `${statusFilterBar(params)}<section class="request-list-panel">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
+  }
+  const ncrModule = requestModule("NCR_CAR");
+  if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
+    list += await ncrModule.renderCenterList(params);
+  }
+  const content = `${requestCenterHeader(types, params, counts)}${selected.code === "NCR_CAR" ? "" : requestsViewTabs(params)}${scope}
+    <p class="muted small">สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ</p>${list}`;
+  app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
+  bindModuleZoom(params);
 }
 
 function dynamicDetailFields(schema, values = {}) {
@@ -1510,12 +1578,12 @@ function typeCardHtml(type) {
   return `
     <button type="button" class="type-card" data-type-id="${escapeHtml(type.id)}" style="background:${requestTypeGradient(type.code)}">
       <span class="type-card-badge">${escapeHtml(type.prefix ?? "")}</span>
-      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${escapeHtml(type.description ?? "")}</small></span>
+      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${escapeHtml(type.description ?? "")}</small><span class="type-card-action">สร้างคำร้องประเภทนี้ →</span></span>
     </button>`;
 }
 
 async function renderNewRequest(params) {
-  loadingShell("new", "สร้างคำร้อง");
+  loadingShell("requests", "คำร้อง / สร้างคำร้อง");
   const { data: types, error } = await sb
     .from("request_types")
     .select("id,code,prefix,name_th,description,form_schema,uses_repair_workflow")
@@ -1532,14 +1600,14 @@ async function renderNewRequest(params) {
     if (!moduleFormContexts.has(separateModule.code)) moduleFormContexts.set(separateModule.code, await separateModule.prepareForm({ sb }));
     return moduleFormContexts.get(separateModule.code);
   }
-  const requestedType = params.get("type");
-  let selectedId = requestedType && (types ?? []).some((type) => type.id === requestedType) ? requestedType : "";
+  const requestedType = params.get("createType");
+  const selectedId = requestedType && (types ?? []).some((type) => type.id === requestedType) ? requestedType : "";
 
   async function paint() {
     const selected = (types ?? []).find((type) => type.id === selectedId) ?? null;
     const heading = selected
-      ? `<div class="page-heading"><div><div class="eyebrow">New request</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div><button type="button" class="btn secondary" id="change-type-button">‹ เปลี่ยนประเภท</button></div>`
-      : `<div class="page-heading"><div><div class="eyebrow">New request</div><h1>สร้างคำร้องใหม่</h1><p>เลือกประเภทคำร้องที่ต้องการ ระบบจะสร้างลำดับอนุมัติให้อัตโนมัติ</p></div></div>`;
+      ? `<div class="page-heading"><div><div class="eyebrow">สร้างคำร้อง · กรอกรายละเอียด</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div>`
+      : `<div class="page-heading"><div><div class="eyebrow">ขั้นตอนที่ 1 · สร้างคำร้อง</div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1><p>เลือกประเภทด้านล่างเพื่อเปิดแบบฟอร์ม แล้วกรอกรายละเอียดก่อนส่งคำร้อง</p></div></div>`;
 
     let body;
     if (!selected) {
@@ -1567,20 +1635,19 @@ async function renderNewRequest(params) {
         </form></section>`;
     }
 
-    app.innerHTML = shell(`${heading}${body}`, "new", "สร้างคำร้อง");
+    app.innerHTML = shell(`<a class="request-back-link" href="${escapeHtml(requestCenterUrl(params))}">‹ กลับรายการคำร้อง</a>${heading}${body}`, "requests", "คำร้อง / สร้างคำร้อง");
+    document.querySelectorAll('.form-actions a[href="#/requests"], .form-actions a[href="#/ncr"]').forEach((link) => { link.href = requestCenterUrl(params); });
     bindShell();
     bindStep(selected);
+    playModuleZoom(params);
   }
 
   function bindStep(selected) {
     document.querySelectorAll(".type-card").forEach((card) => card.addEventListener("click", () => {
-      selectedId = card.dataset.typeId;
-      paint();
+      const target = requestCenterUrl(params, { mode: "create", type: card.dataset.typeId, createType: card.dataset.typeId, status: null, ncrStatus: null });
+      queueModuleZoom(target);
+      location.hash = target;
     }));
-    document.querySelector("#change-type-button")?.addEventListener("click", () => {
-      selectedId = "";
-      paint();
-    });
     if (!selected) return;
 
     const createFormModule = requestModule(selected.code);
@@ -2784,6 +2851,7 @@ async function renderSetPassword(params) {
 
 async function renderRoute() {
   const { path, params } = currentRoute();
+  if (path !== "requests" || pendingModuleZoom !== moduleZoomKey(params)) pendingModuleZoom = null;
   if (path === "set-password") return await renderSetPassword(params);
   if (!state.session) {
     await renderAuth();
@@ -2802,8 +2870,15 @@ async function renderRoute() {
   try {
     if (path === "dashboard") return await renderDashboard();
     if (path === "requests") return await renderRequests(params);
-    if (path === "new") return await renderNewRequest(params);
-    if (path === "repair/new") { go("new"); return; }
+    if (path === "new" || path === "repair/new" || (path === "ncr" && params.get("new"))) {
+      if (path === "ncr") {
+        const { data, error } = await sb.from("request_types").select("id").eq("code", "NCR_CAR").eq("is_active", true).maybeSingle();
+        if (error) throw error;
+        if (data) params.set("type", data.id);
+      }
+      history.replaceState(null, "", requestCenterUrl(params, { mode: "create", createType: params.get("type") }));
+      return await renderNewRequest(new URLSearchParams(location.hash.split("?")[1]));
+    }
     if (path === "request") return await renderRequestDetail(params);
     if (path === "approvals") return await renderApprovals(params);
     if (path === "notifications") return await renderNotifications();
