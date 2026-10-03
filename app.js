@@ -1067,9 +1067,31 @@ async function forceReLogin(message) {
 // ต้องไม่ทำให้หลุดจากระบบ เพราะ signOut() จะลบ refresh token ทิ้งและบังคับให้ล็อกอินใหม่
 function isAccountGoneError(error) {
   const code = String(error?.code ?? "");
-  if (["EMPLOYEE_NOT_LINKED", "PGRST301", "PGRST303", "refresh_token_not_found", "session_not_found", "user_not_found"].includes(code)) return true;
+  if (["EMPLOYEE_NOT_LINKED", "AUTH_REQUIRED", "PGRST301", "PGRST303", "refresh_token_not_found", "session_not_found", "user_not_found"].includes(code)) return true;
   if (error?.status === 401) return true;
   return /JWT|refresh token not found|session_not_found|user_not_found/i.test(String(error?.message ?? ""));
+}
+
+// access token หมดอายุ/ถูกปฏิเสธ (มือถือพักเครื่องนาน นาฬิกาเครื่องคลาด) ยังไม่ได้แปลว่าบัญชีใช้ไม่ได้
+// ต้องลองต่ออายุด้วย refresh token ก่อน แล้วออกจากระบบเฉพาะเมื่อ Supabase ปฏิเสธ refresh token จริง
+function isRejectedTokenError(error) {
+  const code = String(error?.code ?? "");
+  if (["PGRST301", "PGRST303"].includes(code) || error?.status === 401) return true;
+  return /JWT/i.test(String(error?.message ?? ""));
+}
+
+async function loadEmployeeKeepingSession() {
+  try {
+    return await loadEmployee();
+  } catch (error) {
+    if (!isRejectedTokenError(error)) throw error;
+    const { data, error: refreshError } = await sb.auth.refreshSession();
+    // เน็ตหลุดระหว่างต่ออายุ: session ยังอยู่ในเครื่อง ให้ขึ้นหน้าเชื่อมต่อไม่ได้แทนการออกจากระบบ
+    if (refreshError?.name === "AuthRetryableFetchError") throw refreshError;
+    if (refreshError || !data.session) throw Object.assign(new Error("AUTH_REQUIRED"), { code: "AUTH_REQUIRED" });
+    state.session = data.session;
+    return await loadEmployee();
+  }
 }
 
 async function signOutLocally(message) {
@@ -2726,7 +2748,7 @@ async function renderRoute() {
   }
   if (!state.employee) {
     try {
-      await loadEmployee();
+      await loadEmployeeKeepingSession();
     } catch (error) {
       if (!isAccountGoneError(error)) return renderConnectionError(error);
       await signOutLocally(friendlyError(error));
@@ -2765,7 +2787,7 @@ async function startApp() {
   state.session = data.session;
   if (state.session) {
     try {
-      await loadEmployee();
+      await loadEmployeeKeepingSession();
       // กันกรณีแจ้งเตือนตกค้าง (ปิดเบราว์เซอร์ก่อนยิงสำเร็จ / ตอนนั้นยังไม่ได้ตั้งค่า secret /
       // แจ้งเตือนที่เกิดตอนผู้รับยังไม่ได้ล็อกอิน) — เปิดแอปครั้งถัดไปคิวจะถูกไล่ส่งให้เอง
       triggerNotificationEmails();
