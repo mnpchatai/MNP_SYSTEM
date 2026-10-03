@@ -1,6 +1,6 @@
 // Shared navigation for the Pilot request center. Filters never grant data access.
 (function () {
-  const FILTER_KEYS = ["type", "scope", "status", "view", "q", "ncrStatus"];
+  const FILTER_KEYS = ["type", "scope", "status", "view", "q", "ncrStatus", "list"];
   function url(params, changes = {}) {
     const next = new URLSearchParams();
     for (const key of FILTER_KEYS) {
