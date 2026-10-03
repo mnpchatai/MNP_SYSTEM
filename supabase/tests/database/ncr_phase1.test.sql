@@ -574,8 +574,9 @@ select throws_ok(
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select results_eq(
   $$ select action from public.ncr_status_history where ncr_id = current_setting('test.ncr_a')::uuid order by id $$,
+  -- attachment สองแถว: ไฟล์หลักฐานปกติ + ไฟล์ 20 MB ที่ลงทะเบียนในหัวข้อ 8.1 (app_ncr_add_attachment บันทึกประวัติทุกครั้ง)
   $$ values ('issue'::text), ('dispose'), ('respond'), ('followup_return'), ('respond'), ('followup_close'),
-            ('attachment'), ('signoff_qa'), ('signoff_factory'), ('signoff_gm') $$,
+            ('attachment'), ('attachment'), ('signoff_qa'), ('signoff_factory'), ('signoff_gm') $$,
   'every step is recorded in the status history, readable by the reporter'
 );
 
