@@ -62,3 +62,7 @@ test("dashboard status links keep only known statuses", () => {
   assert.deepEqual(statusList(params("status=all"), known), []);
   assert.deepEqual(statusList(params(""), known), []);
 });
+test("the my-requests list flag survives navigation and clears when choosing a module", () => {
+  assert.equal(url(params("scope=mine&list=1")), "#/requests?scope=mine&list=1");
+  assert.equal(url(params("type=all&scope=mine&list=1"), { type: "mt", status: null, ncrStatus: null, list: null }), "#/requests?type=mt&scope=mine");
+});
