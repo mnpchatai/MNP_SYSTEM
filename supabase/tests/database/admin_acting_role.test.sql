@@ -1,17 +1,18 @@
 -- ทดสอบ "บทบาทที่ทำหน้าที่" (employees.acting_role_id) ของบัญชี admin:
 --   1) สคีมาและข้อบังคับ (มีค่าได้เฉพาะ admin, ห้ามชี้ไปที่ admin, ล้างเองเมื่อออกจาก admin)
---   2) สิทธิ์ตั้งค่า: เฉพาะ admin ตั้งของตัวเองผ่าน RPC แก้คอลัมน์ตรงไม่ได้
+--   2) สิทธิ์ตั้งค่า: เฉพาะผู้มี accounts.manage ตั้งให้บัญชี admin ผ่าน RPC แก้คอลัมน์ตรงไม่ได้
 --   3) สายอนุมัติ ผจก.โรงงาน -> ผจก.ทั่วไป นับ admin ที่เลือกทำหน้าที่ ผจก.ทั่วไป เป็นผู้ถือบทบาท
 --   4) แจ้งเตือนขั้นอนุมัติถึง admin ที่เลือกบทบาทนั้น และไม่ถึง admin ที่ไม่ได้เลือก
 --   5) admin ที่เลือกบทบาทอื่นไม่ได้รับแจ้งเตือนเฉพาะผู้ดูแลระบบ (คำร้องแก้ไข ID/รหัสผ่าน)
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(23);
 
 -- 1. สคีมา -------------------------------------------------------------------
 select has_column('public', 'employees', 'acting_role_id', 'employees has acting_role_id');
-select has_function('public', 'app_set_my_acting_role', array['uuid'], 'app_set_my_acting_role exists');
+select has_function('public', 'app_admin_set_acting_role', array['uuid','uuid'], 'app_admin_set_acting_role exists');
+select hasnt_function('public', 'app_set_my_acting_role', array['uuid'], 'the self-service app_set_my_acting_role is gone');
 
 -- 2. เตรียมผู้ใช้: ผู้ยื่นคำร้อง (พนักงานสาธิต), ผจก.โรงงาน, admin ที่จะทำหน้าที่ ผจก.ทั่วไป,
 --    และ admin สาธิตเดิมที่ไม่ได้เลือกบทบาท ข้อมูลสาธิตไม่มี ผจก.ทั่วไป ตัวจริงเลย ---------
@@ -61,9 +62,9 @@ set local role authenticated;
 -- 3. สิทธิ์ตั้งค่า ---------------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"72000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select throws_ok(
-  $$ select public.app_set_my_acting_role('20000000-0000-0000-0000-000000000006') $$,
+  $$ select public.app_admin_set_acting_role('72000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006') $$,
   'NOT_AUTHORIZED',
-  'a non-admin cannot choose an acting role'
+  'an account without accounts.manage cannot set an acting role'
 );
 select throws_ok(
   $$ update public.employees set acting_role_id = '20000000-0000-0000-0000-000000000006'
@@ -91,23 +92,28 @@ set local role authenticated;
 
 select set_config('request.jwt.claims', '{"sub":"72000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok(
-  $$ select public.app_set_my_acting_role('20000000-0000-0000-0000-000000000004') $$,
+  $$ select public.app_admin_set_acting_role('72000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000004') $$,
   'INVALID_ROLE',
   'an admin cannot pick the admin role itself as the acting role'
 );
 select throws_ok(
-  $$ select public.app_set_my_acting_role('00000000-0000-0000-0000-00000000dead') $$,
+  $$ select public.app_admin_set_acting_role('72000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-00000000dead') $$,
   'INVALID_ROLE',
   'an unknown role is rejected'
 );
+select throws_ok(
+  $$ select public.app_admin_set_acting_role('50000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000006') $$,
+  'TARGET_NOT_ADMIN',
+  'an acting role can only be set on an admin account'
+);
 select lives_ok(
-  $$ select public.app_set_my_acting_role('20000000-0000-0000-0000-000000000006') $$,
-  'an admin chooses to act as general manager'
+  $$ select public.app_admin_set_acting_role('72000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006') $$,
+  'an admin sets an admin account to act as general manager from the admin page'
 );
 select is(
   (select acting_role_id from public.employees where id = '72000000-0000-0000-0000-000000000005'),
   '20000000-0000-0000-0000-000000000006'::uuid,
-  'the acting role is stored on the admin''s own row'
+  'the acting role is stored on the target admin row'
 );
 
 -- 4. สายอนุมัติ + แจ้งเตือน ----------------------------------------------------------
