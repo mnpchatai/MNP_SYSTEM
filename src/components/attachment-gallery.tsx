@@ -15,9 +15,9 @@ export type AttachmentItem = {
   size_bytes: number | null;
 };
 
-type AttachmentKind = "image" | "pdf" | "text" | "sheet" | "doc" | "other";
+export type AttachmentKind = "image" | "pdf" | "text" | "sheet" | "doc" | "other";
 
-const kindLabels: Record<AttachmentKind, string> = {
+export const kindLabels: Record<AttachmentKind, string> = {
   image: "รูปภาพ", pdf: "PDF", text: "ข้อความ", sheet: "Excel", doc: "Word", other: "ไฟล์แนบ",
 };
 
@@ -25,7 +25,7 @@ function attachmentUrl(id: string, download = false) {
   return `/api/attachments/${id}${download ? "?download=1" : ""}`;
 }
 
-function attachmentKind(file: AttachmentItem): AttachmentKind {
+export function attachmentKind(file: Pick<AttachmentItem, "file_name" | "content_type">): AttachmentKind {
   const type = (file.content_type ?? "").toLowerCase();
   const name = file.file_name.toLowerCase();
   if (type.startsWith("image/")) return "image";
@@ -36,13 +36,13 @@ function attachmentKind(file: AttachmentItem): AttachmentKind {
   return "other";
 }
 
-function KindIcon({ kind, size = 22 }: { kind: AttachmentKind; size?: number }) {
+export function KindIcon({ kind, size = 22 }: { kind: AttachmentKind; size?: number }) {
   if (kind === "sheet") return <FileSpreadsheet size={size} aria-hidden="true" />;
   if (kind === "doc") return <FileType2 size={size} aria-hidden="true" />;
   return <FileText size={size} aria-hidden="true" />;
 }
 
-function PreviewPending() {
+export function PreviewPending() {
   return <span className="attachment-preview-state"><Loader2 className="spin" size={16} aria-hidden="true" /> กำลังสร้างตัวอย่าง…</span>;
 }
 

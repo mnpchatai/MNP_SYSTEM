@@ -378,7 +378,11 @@ const ATTACHMENT_HINT = window.MNP_ATTACHMENT_IMAGE?.HINT ?? "";
 
 // รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 4 MB) ถูกแปลงเป็น JPEG ในเบราว์เซอร์
 // ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
-window.MNP_ATTACHMENT_IMAGE?.bindFileInputs({ notify: showToast });
+// onSelection แสดงตัวอย่างไฟล์ที่เลือกก่อนอัปโหลด (modules/attachment-preview.js ใช้ loadPdfjs ของไฟล์นี้ร่วมกับแกลเลอรี)
+window.MNP_ATTACHMENT_IMAGE?.bindFileInputs({
+  notify: showToast,
+  onSelection: (input, files) => window.MNP_ATTACHMENT_PREVIEW?.renderSelection(input, files, { loadPdfjs }),
+});
 
 // อัปโหลดทีละไฟล์ ไฟล์ไหนไม่ผ่านไม่ทำให้ไฟล์ที่เหลือหยุด (แต่ละไฟล์ล้างของตัวเองเมื่อพลาด) คืนรายชื่อไฟล์ที่ไม่สำเร็จให้ผู้เรียกแจ้งผู้ใช้
 async function uploadAttachmentBatch(files, uploadOne) {

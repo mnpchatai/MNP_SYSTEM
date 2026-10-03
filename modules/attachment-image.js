@@ -226,6 +226,35 @@
     return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
   }
 
+  // ภาพย่อ (data URL ของ JPEG) สำหรับแสดงตัวอย่างก่อนอัปโหลด คืน null ถ้าถอดรหัสไม่ได้
+  // ทำทีละไฟล์ผ่านคิว: รูปจากโทรศัพท์ถอดรหัสแล้วกินหน่วยความจำหลายสิบ MB ต่อใบ ถอดหลายใบพร้อมกันเครื่องอาจค้าง
+  let thumbnailQueue = Promise.resolve();
+
+  async function buildThumbnail(file, maxEdge) {
+    const image = await decodeImage(file);
+    if (!image) return null;
+    try {
+      const { width, height } = fitWithin(image.width, image.height, maxEdge);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image.source, 0, 0, width, height);
+      return canvas.toDataURL("image/jpeg", 0.8);
+    } finally {
+      image.close();
+    }
+  }
+
+  function createThumbnail(file, maxEdge = 360) {
+    const job = thumbnailQueue.then(() => buildThumbnail(file, maxEdge));
+    thumbnailQueue = job.catch(() => {});
+    return job;
+  }
+
   async function encodeWithinLimit(image, options) {
     const maxEdge = options.maxEdge ?? MAX_EDGE;
     const attempts = [[maxEdge, 0.85], [maxEdge, 0.7], [1920, 0.7], [1280, 0.6]];
@@ -340,6 +369,8 @@
     if (typeof document === "undefined" || root.__mnpAttachmentImageBound) return;
     root.__mnpAttachmentImageBound = true;
     const notify = options.notify ?? (() => {});
+    // onSelection(input, files): ไฟล์ที่เตรียมแล้วและจะถูกส่งจริง ([] = ไม่มีไฟล์/เลือกใหม่/ผิดพลาด) ใช้แสดงตัวอย่างก่อนอัปโหลด
+    const onSelection = options.onSelection ?? (() => {});
     const latest = new WeakMap();
     document.addEventListener("change", async (event) => {
       const input = event.target;
@@ -347,6 +378,7 @@
       const originals = Array.from(input.files ?? []);
       const sequence = (latest.get(input) ?? 0) + 1;
       latest.set(input, sequence);
+      onSelection(input, []); // เลือกใหม่หรือยกเลิก: ล้างตัวอย่างเดิมทันที ไม่ให้ค้างคนละชุดกับไฟล์ที่จะส่ง
       if (!originals.length) {
         input.setCustomValidity("");
         showStatus(input, "idle", "");
@@ -373,6 +405,7 @@
         if (input.multiple) showStatus(input, "done", describeBatch(prepared, originals));
         else if (changed) showStatus(input, "done", `เตรียมรูปเป็น JPG แล้ว (${(prepared[0].size / 1048576).toFixed(1)} MB)`);
         else showStatus(input, "idle", "");
+        onSelection(input, prepared);
       } catch (error) {
         if (latest.get(input) !== sequence) return;
         input.value = "";
@@ -388,7 +421,7 @@
   return {
     SAFE_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
-    checkBatch, describeBatch,
+    checkBatch, describeBatch, createThumbnail,
     normalizeAttachment, normalizeAttachments, bindFileInputs,
   };
 });
