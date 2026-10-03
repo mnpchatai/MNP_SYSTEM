@@ -26,6 +26,22 @@ export async function findActiveRoleHolders(roleId: string, departmentId?: strin
     .map((row: { id: string }) => row.id);
 }
 
+/**
+ * Active admins. They are notified instead when an approval step has nobody who can act
+ * on it, because app_approval_decision lets the admin role approve any step.
+ * Mirrors private.notify_approval_step in
+ * 20261003030000_never_skip_factory_general_approval_steps.sql — keep both in sync.
+ */
+export async function findActiveAdmins() {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("employees")
+    .select("id, roles!inner(code)")
+    .eq("is_active", true)
+    .eq("roles.code", "admin");
+  return (data ?? []).map((row: { id: string }) => row.id);
+}
+
 export async function getPendingApprovals(employee: RoleHolder & {
   id: string;
   department_id: string;

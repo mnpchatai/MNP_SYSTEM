@@ -134,7 +134,8 @@ export function buildRequestTimeline({
 
     let stage = matchingDecision?.step_name ?? "";
     if (entry.to_status === "pending_approval") {
-      stage = entry.from_status === "more_info"
+      // กลับมารออนุมัติภายหลัง (ส่งข้อมูลเพิ่ม หรือถูกย้อนกลับเพราะขาดขั้น) ใช้ขั้นที่สร้างใกล้เวลานั้น
+      stage = entry.from_status
         ? closestBy(orderedSteps, entry.created_at, (step) => step.created_at, () => true)?.step_name ?? ""
         : orderedSteps[0]?.step_name ?? "";
     }
@@ -148,6 +149,8 @@ export function buildRequestTimeline({
       detail = `${actor || "ผู้อนุมัติ"} ไม่อนุมัติ${stage ? ` ในขั้น ${stage}` : ""}${matchingDecision?.comment ? `: ${matchingDecision.comment}` : ""}`;
     } else if (entry.to_status === "pending_approval" && entry.from_status === "more_info") {
       detail = `${actor || "ผู้แจ้ง"} ส่งข้อมูลเพิ่มเติมเพื่อพิจารณาอีกครั้ง`;
+    } else if (entry.to_status === "pending_approval" && entry.from_status === "pending_assign") {
+      detail = `${actor || "ระบบ"} ย้อนกลับไปรออนุมัติ${stage ? `ขั้น ${stage}` : ""}`;
     } else if (["approved", "pending_assign"].includes(entry.to_status)) {
       detail = `${actor || "ผู้อนุมัติ"} อนุมัติ${stage ? `ขั้น ${stage}` : "คำร้อง"} แล้ว`;
     } else if (entry.to_status === "assigned" && entry.from_status === "pending_verify") {
