@@ -1347,14 +1347,14 @@ async function renderDashboard() {
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Pilot workspace</div><h1>สวัสดี, ${escapeHtml(employee.first_name)}</h1><p>ภาพรวมรายการที่เกี่ยวข้องกับคุณและงานที่ต้องดำเนินการ</p></div><span class="muted small">${formatDate(new Date(), false)}</span></div>
     <section class="summary-grid">
-      <a class="summary" href="#/approvals"><span>งานที่ต้องจัดการ</span><strong>${actionableCount}</strong><small>${actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง"}</small></a>
-      <button class="summary summary-toggle" id="my-requests-toggle" type="button" aria-expanded="false" aria-controls="my-requests-panel"><span>รายการคำร้องของฉัน</span><strong>${myRequestCount}</strong><small>เฉพาะที่คุณเป็นผู้แจ้ง</small></button>
-      <a class="summary" href="#/requests?status=approved%2Cin_progress"><span>กำลังดำเนินการ</span><strong>${inProgress}</strong><small>อนุมัติแล้วหรือกำลังทำ</small></a>
-      <a class="summary" href="#/requests?status=completed"><span>เสร็จแล้ว</span><strong>${completed}</strong><small>ปิดงานเรียบร้อย</small></a>
+      ${dashboardListToggle("actions", actionableCount, actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง")}
+      ${dashboardListToggle("mine", myRequestCount, "เฉพาะที่คุณเป็นผู้แจ้ง")}
+      ${dashboardListToggle("in_progress", inProgress, "อนุมัติแล้วหรือกำลังทำ")}
+      ${dashboardListToggle("completed", completed, "ปิดงานเรียบร้อย")}
     </section>
-    <section class="card flush my-requests-panel" id="my-requests-panel" aria-labelledby="my-requests-heading" hidden>
-      <div class="card-heading"><h2 id="my-requests-heading">รายการคำร้องของฉัน</h2><span class="muted small">ทุกประเภทและทุกสถานะที่คุณเป็นผู้แจ้ง</span></div>
-      <div id="my-requests-body"><div class="empty">กำลังโหลดข้อมูล…</div></div>
+    <section class="card flush dashboard-list-panel" id="dashboard-list-panel" aria-labelledby="dashboard-list-heading" hidden>
+      <div class="card-heading"><h2 id="dashboard-list-heading"></h2><span class="muted small" id="dashboard-list-note"></span></div>
+      <div id="dashboard-list-body"></div>
     </section>
     <div class="dashboard-grid">
       <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory })}</section>
@@ -1362,31 +1362,62 @@ async function renderDashboard() {
     </div>`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
   bindShell();
-  bindMyRequestsToggle();
+  bindDashboardLists({ pending, repairTasks });
 }
 
-// The "my requests" summary card opens the user's request cards on the dashboard itself
-// instead of leaving for the request center; rows load once, on first open.
-function bindMyRequestsToggle() {
-  const toggle = document.querySelector("#my-requests-toggle");
-  const panel = document.querySelector("#my-requests-panel");
-  const body = document.querySelector("#my-requests-body");
-  if (!toggle || !panel || !body) return;
-  let loaded = false;
-  toggle.addEventListener("click", async () => {
-    const open = toggle.getAttribute("aria-expanded") !== "true";
-    toggle.setAttribute("aria-expanded", String(open));
-    panel.hidden = !open;
-    if (!open || loaded) return;
-    loaded = true;
+// Each dashboard summary card opens its list in one panel under the cards instead of leaving
+// the dashboard. Request lists reuse requestListPanel (RLS decides rows); filters match the counts.
+const DASHBOARD_LISTS = {
+  actions: { label: "งานที่ต้องจัดการ", note: "รออนุมัติและงานซ่อมที่ต้องดำเนินการ" },
+  mine: { label: "รายการคำร้องของฉัน", note: "ทุกประเภทและทุกสถานะที่คุณเป็นผู้แจ้ง", filter: { scope: "mine" } },
+  in_progress: { label: "กำลังดำเนินการ", note: "อนุมัติแล้วหรือกำลังทำ ตามสิทธิ์ของคุณ", filter: { status: "approved,in_progress" } },
+  completed: { label: "เสร็จแล้ว", note: "ปิดงานเรียบร้อย ตามสิทธิ์ของคุณ", filter: { status: "completed" } },
+};
+
+function dashboardListToggle(key, count, hint) {
+  return `<button class="summary summary-toggle" type="button" data-list="${key}" aria-expanded="false" aria-controls="dashboard-list-panel"><span>${DASHBOARD_LISTS[key].label}</span><strong>${count}</strong><small>${hint}</small></button>`;
+}
+
+function dashboardActionItems(pending, repairTasks) {
+  if (!pending.length && !repairTasks.length) return `<div class="empty">ไม่มีงานค้าง</div>`;
+  const group = (title, items) => items.length ? `<h3 class="dashboard-list-group">${title} <span class="badge">${items.length}</span></h3>${items.join("")}` : "";
+  return group("รออนุมัติ", pending.map((step) => approvalStepItemHtml(step, `#/request?id=${encodeURIComponent(step.request.id)}`)))
+    + group("งานซ่อมที่ต้องดำเนินการ", repairTasks.map(repairTaskItemHtml));
+}
+
+function bindDashboardLists({ pending, repairTasks }) {
+  const panel = document.querySelector("#dashboard-list-panel");
+  const heading = document.querySelector("#dashboard-list-heading");
+  const note = document.querySelector("#dashboard-list-note");
+  const body = document.querySelector("#dashboard-list-body");
+  const toggles = [...document.querySelectorAll(".summary-toggle[data-list]")];
+  if (!panel || !heading || !note || !body) return;
+  // One load per list for this render; a failed load is dropped so the next open retries.
+  const loads = new Map();
+  let active = null;
+  const load = (key) => {
+    const { filter } = DASHBOARD_LISTS[key];
+    return filter ? requestListPanel(new URLSearchParams(filter), null) : Promise.resolve(dashboardActionItems(pending, repairTasks));
+  };
+  toggles.forEach((toggle) => toggle.addEventListener("click", async () => {
+    const key = toggle.dataset.list;
+    active = active === key ? null : key;
+    toggles.forEach((item) => item.setAttribute("aria-expanded", String(item.dataset.list === active)));
+    panel.hidden = !active;
+    if (!active) return;
+    heading.textContent = DASHBOARD_LISTS[key].label;
+    note.textContent = DASHBOARD_LISTS[key].note;
+    body.innerHTML = `<div class="empty">กำลังโหลดข้อมูล…</div>`;
+    if (!loads.has(key)) loads.set(key, load(key));
     try {
-      body.innerHTML = await requestListPanel(new URLSearchParams({ scope: "mine" }), null);
+      const html = await loads.get(key);
+      if (active === key) body.innerHTML = html;
     } catch (error) {
-      loaded = false;
+      loads.delete(key);
       console.error(error);
-      body.innerHTML = `<div class="empty">${escapeHtml(friendlyError(error))}</div>`;
+      if (active === key) body.innerHTML = `<div class="empty">${escapeHtml(friendlyError(error))}</div>`;
     }
-  });
+  }));
 }
 
 const REQUEST_STATUS_FILTERS = [
@@ -2145,13 +2176,25 @@ async function renderRequestDetail(params) {
   hydrateAttachmentGallery(attachments).catch((error) => showToast(friendlyError(error), "error"));
 }
 
+function approvalItemHtml({ href, requestNo, date, title, detail, active = false }) {
+  return `<a class="approval-item${active ? " active" : ""}" href="${href}"><div class="row"><span class="request-no">${escapeHtml(requestNo)}</span><time>${formatDate(date)}</time></div><strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p></a>`;
+}
+
+function approvalStepItemHtml(step, href, active = false) {
+  return approvalItemHtml({ href, requestNo: step.request.request_no, date: step.request.created_at, title: step.request.title, detail: `${relation(step.request.request_type)?.name_th ?? ""} · ${step.step_name}`, active });
+}
+
+function repairTaskItemHtml(item) {
+  return approvalItemHtml({ href: `#/request?id=${encodeURIComponent(item.id)}`, requestNo: item.request_no, date: item.created_at, title: item.title, detail: `${item.request_type?.name_th ?? ""} · ${myRepairActionLabels[item.status] ?? statusLabels[item.status] ?? item.status}` });
+}
+
 async function renderApprovals(params) {
   loadingShell("approvals", "รออนุมัติ");
   const [steps, repairTasks] = await Promise.all([getPendingApprovals(), getMyRepairActionItems()]);
   const repairTasksSection = repairTasks.length ? `
     <section class="card flush repair-task-list">
       <div class="card-heading"><h2>งานซ่อมที่ต้องดำเนินการ <span class="badge">${repairTasks.length}</span></h2></div>
-      ${repairTasks.map((item) => `<a class="approval-item" href="#/request?id=${encodeURIComponent(item.id)}"><div class="row"><span class="request-no">${escapeHtml(item.request_no)}</span><time>${formatDate(item.created_at)}</time></div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.request_type?.name_th ?? "")} · ${escapeHtml(myRepairActionLabels[item.status] ?? statusLabels[item.status] ?? item.status)}</p></a>`).join("")}
+      ${repairTasks.map(repairTaskItemHtml).join("")}
     </section>` : "";
   if (!steps.length) {
     app.innerHTML = shell(`
@@ -2168,7 +2211,7 @@ async function renderApprovals(params) {
     <div class="page-heading"><div><div class="eyebrow">Approval Center</div><h1>รอฉันอนุมัติ</h1><p>รายการที่เป็นขั้นตอนปัจจุบันและอยู่ในสิทธิ์ของคุณ</p></div></div>
     ${repairTasksSection}
     <div class="approval-layout">
-      <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p></div>${steps.map((step) => `<a class="approval-item${step.id === selected.id ? " active" : ""}" href="#/approvals?request=${encodeURIComponent(step.request.id)}"><div class="row"><span class="request-no">${escapeHtml(step.request.request_no)}</span><time>${formatDate(step.request.created_at)}</time></div><strong>${escapeHtml(step.request.title)}</strong><p>${escapeHtml(relation(step.request.request_type)?.name_th ?? "")} · ${escapeHtml(step.step_name)}</p></a>`).join("")}</section>
+      <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p></div>${steps.map((step) => approvalStepItemHtml(step, `#/approvals?request=${encodeURIComponent(step.request.id)}`, step.id === selected.id)).join("")}</section>
       <article class="approval-preview"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h2>${escapeHtml(request.title)}</h2><p class="description">${escapeHtml(request.description)}</p><dl class="definition-grid"><div class="definition"><dt>ประเภท</dt><dd>${escapeHtml(relation(request.request_type)?.name_th ?? "—")}</dd></div><div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div><div class="definition"><dt>ขั้นตอน</dt><dd>${escapeHtml(selected.step_name)}</dd></div><div class="definition"><dt>วันที่ส่ง</dt><dd>${formatDate(request.submitted_at, true)}</dd></div></dl><div class="approval-actions"><a class="btn" href="#/request?id=${encodeURIComponent(request.id)}">เปิดคำร้องและพิจารณา →</a></div></article>
     </div>`;
   app.innerHTML = shell(content, "approvals", "รออนุมัติ");

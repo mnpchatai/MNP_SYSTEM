@@ -324,8 +324,11 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .summary-toggle[aria-expanded="true"] { background: var(--primary-soft); box-shadow: inset 0 -3px 0 var(--primary); }
 .summary-toggle[aria-expanded="true"] span { color: var(--primary); }
 .summary-toggle:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
-.my-requests-panel { margin-bottom: 20px; }
-.my-requests-panel .card-heading { flex-wrap: wrap; row-gap: 2px; padding-top: 10px; padding-bottom: 10px; }
+.summary-toggle:first-child[aria-expanded="true"] { box-shadow: inset 0 -4px 0 rgba(255,255,255,.8); }
+.summary-toggle:first-child:focus-visible { outline-color: white; }
+.dashboard-list-panel { margin-bottom: 20px; }
+.dashboard-list-panel .card-heading { flex-wrap: wrap; row-gap: 2px; padding-top: 10px; padding-bottom: 10px; }
+.dashboard-list-panel .dashboard-list-group { margin: 0; padding: 12px 18px 8px; color: var(--muted); font-size: 12px; font-weight: 700; border-bottom: 1px solid var(--soft-line); }
 .summary:first-child { color: white; background: var(--primary); border: 0; }
 .summary span, .summary small { display: block; }
 .summary span { color: var(--muted); font-size: 12px; font-weight: 600; }
