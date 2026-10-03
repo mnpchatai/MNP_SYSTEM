@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentEmployee } from "@/lib/auth";
-import { resolveApprovalTarget } from "@/lib/data";
+import { actingRoleId, findActiveRoleHolders, resolveApprovalTarget } from "@/lib/data";
 import { notifyEmployeeByEmail } from "@/lib/notify";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -106,8 +106,9 @@ export async function createRequestAction(formData: FormData) {
     for (const code of ["factory_manager", "general_manager"]) {
       const role = roles?.find((r) => r.code === code);
       if (!role) continue;
-      const { data: holder } = await admin.from("employees").select("id").eq("role_id", role.id).eq("is_active", true).limit(1).maybeSingle();
-      if (!holder) continue;
+      // admin ที่เลือกทำหน้าที่บทบาทนี้ (acting_role_id) นับเป็นผู้ถือบทบาทด้วย
+      const holders = await findActiveRoleHolders(role.id);
+      if (!holders.length) continue;
       steps.push({
         request_id: request.id,
         step_order: steps.length + 1,
@@ -156,10 +157,7 @@ export async function createRequestAction(formData: FormData) {
     let recipients: string[] = [];
     if (first.approver_employee_id) recipients = [String(first.approver_employee_id)];
     else if (first.approver_role_id) {
-      let query = admin.from("employees").select("id").eq("role_id", first.approver_role_id).eq("is_active", true);
-      if (first.approver_department_id) query = query.eq("department_id", first.approver_department_id);
-      const { data } = await query;
-      recipients = (data ?? []).map((row) => row.id);
+      recipients = await findActiveRoleHolders(String(first.approver_role_id), first.approver_department_id ? String(first.approver_department_id) : null);
     }
     if (recipients.length) {
       await admin.from("notifications").insert(recipients.map((recipientId) => ({
@@ -241,9 +239,11 @@ export async function approvalDecisionAction(formData: FormData) {
     throw new Error("This is not the current approval step");
   }
 
-  const roleEligible = step.approver_role_id === employee.role_id &&
+  // admin ที่เลือกทำหน้าที่บทบาทอื่นอนุมัติขั้นของบทบาทนั้นได้ (ฐานข้อมูลให้ admin อนุมัติได้ทุกขั้นอยู่แล้ว)
+  const workingRoleId = actingRoleId(employee);
+  const roleEligible = step.approver_role_id === workingRoleId &&
     (!step.approver_department_id || step.approver_department_id === employee.department_id) &&
-    await employeeHasPermission(employee.role_id, "approvals.act");
+    await employeeHasPermission(workingRoleId, "approvals.act");
   if (step.approver_employee_id !== employee.id && !roleEligible) throw new Error("Not authorized to approve this step");
 
   await admin.from("approval_steps").update({
@@ -274,10 +274,7 @@ export async function approvalDecisionAction(formData: FormData) {
       let nextRecipients: string[] = [];
       if (nextStep.approver_employee_id) nextRecipients = [nextStep.approver_employee_id];
       else if (nextStep.approver_role_id) {
-        let query = admin.from("employees").select("id").eq("role_id", nextStep.approver_role_id).eq("is_active", true);
-        if (nextStep.approver_department_id) query = query.eq("department_id", nextStep.approver_department_id);
-        const { data } = await query;
-        nextRecipients = (data ?? []).map((row) => row.id);
+        nextRecipients = await findActiveRoleHolders(nextStep.approver_role_id, nextStep.approver_department_id);
       }
       if (nextRecipients.length) {
         await admin.from("notifications").insert(nextRecipients.map((recipientId) => ({
@@ -391,10 +388,7 @@ export async function resubmitRequestAction(formData: FormData) {
   let recipients: string[] = [];
   if (previousStep.approver_employee_id) recipients = [previousStep.approver_employee_id];
   else if (previousStep.approver_role_id) {
-    let query = admin.from("employees").select("id").eq("role_id", previousStep.approver_role_id).eq("is_active", true);
-    if (previousStep.approver_department_id) query = query.eq("department_id", previousStep.approver_department_id);
-    const { data } = await query;
-    recipients = (data ?? []).map((row) => row.id);
+    recipients = await findActiveRoleHolders(previousStep.approver_role_id, previousStep.approver_department_id);
   }
   if (recipients.length) {
     await admin.from("notifications").insert(recipients.map((recipientId) => ({

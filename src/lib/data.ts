@@ -1,8 +1,33 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function getPendingApprovals(employee: {
+type RoleHolder = { role_id: string; acting_role_id?: string | null };
+
+/**
+ * The role an employee works as for approvals and notifications. An admin may pick
+ * another role (employees.acting_role_id) to receive only that role's work.
+ * Mirrors coalesce(acting_role_id, role_id) in 20261003010000_admin_acting_role.sql.
+ */
+export function actingRoleId(employee: RoleHolder) {
+  return employee.acting_role_id ?? employee.role_id;
+}
+
+/** Active employees who work as `roleId` (optionally inside one department). */
+export async function findActiveRoleHolders(roleId: string, departmentId?: string | null) {
+  const admin = createAdminClient();
+  let query = admin
+    .from("employees")
+    .select("id, role_id, acting_role_id")
+    .or(`role_id.eq.${roleId},acting_role_id.eq.${roleId}`)
+    .eq("is_active", true);
+  if (departmentId) query = query.eq("department_id", departmentId);
+  const { data } = await query;
+  return (data ?? [])
+    .filter((row: RoleHolder) => actingRoleId(row) === roleId)
+    .map((row: { id: string }) => row.id);
+}
+
+export async function getPendingApprovals(employee: RoleHolder & {
   id: string;
-  role_id: string;
   department_id: string;
 }) {
   const admin = createAdminClient();
@@ -23,7 +48,7 @@ export async function getPendingApprovals(employee: {
   return (data ?? []).filter((step) =>
     step.step_order === step.request.current_step && (
       step.approver_employee_id === employee.id ||
-      (step.approver_role_id === employee.role_id &&
+      (step.approver_role_id === actingRoleId(employee) &&
         (!step.approver_department_id || step.approver_department_id === employee.department_id))
     ),
   );

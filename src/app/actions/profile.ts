@@ -50,3 +50,18 @@ export async function updateOwnPhotoAction(formData: FormData) {
   revalidatePath("/", "layout");
   redirect("/profile?photo=updated");
 }
+
+/** admin เลือก "บทบาทหลักในการทำงาน" ของตัวเอง — ฐานข้อมูลตรวจว่าเป็น admin และบทบาทถูกต้อง */
+export async function setActingRoleAction(formData: FormData) {
+  await getCurrentEmployee();
+  const raw = formData.get("acting_role_id");
+  const roleId = typeof raw === "string" && raw.trim() ? raw.trim() : null;
+  if (roleId && !/^[0-9a-f-]{36}$/i.test(roleId)) fail("บทบาทที่เลือกไม่ถูกต้อง");
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("app_set_my_acting_role", { p_role_id: roleId });
+  if (error) fail(error.message.includes("NOT_AUTHORIZED") ? "เฉพาะผู้ดูแลระบบเท่านั้นที่เลือกบทบาทหลักได้" : "บันทึกบทบาทหลักไม่สำเร็จ");
+
+  revalidatePath("/", "layout");
+  redirect("/profile?role=updated");
+}

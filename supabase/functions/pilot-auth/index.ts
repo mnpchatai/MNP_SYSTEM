@@ -266,10 +266,21 @@ Deno.serve(async (request) => {
       ? await admin.from("role_permissions").select("role_id").eq("permission_id", permission.id)
       : { data: [] };
     const roleIds = (adminRoles ?? []).map((row: { role_id: string }) => row.role_id);
+    // admin ที่เลือก "บทบาทที่ทำหน้าที่" (employees.acting_role_id) รับแจ้งเตือนตามบทบาทนั้น
+    // ไม่ใช่ตาม role จริง — ต้องตรงกับ coalesce(acting_role_id, role_id) ใน
+    // 20261003010000_admin_acting_role.sql
+    const roleList = roleIds.join(",");
     const { data: admins } = roleIds.length
-      ? await admin.from("employees").select("id").in("role_id", roleIds).eq("is_active", true)
+      ? await admin
+        .from("employees")
+        .select("id, role_id, acting_role_id")
+        .or(`role_id.in.(${roleList}),acting_role_id.in.(${roleList})`)
+        .eq("is_active", true)
       : { data: [] };
-    const recipients = (admins ?? []).map((row: { id: string }) => row.id);
+    const recipients = (admins ?? [])
+      .filter((row: { role_id: string; acting_role_id: string | null }) =>
+        roleIds.includes(row.acting_role_id ?? row.role_id))
+      .map((row: { id: string }) => row.id);
     if (recipients.length) {
       await admin.from("notifications").insert(recipients.map((recipientId: string) => ({
         recipient_id: recipientId,
