@@ -319,7 +319,13 @@ button { cursor: pointer; }
 .page-heading p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
 
 .summary-grid { margin-bottom: 20px; display: grid; grid-template-columns: 1.25fr repeat(3, 1fr); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.summary { min-height: 126px; padding: 20px; background: var(--paper); border-left: 1px solid var(--line); }
+.summary { min-height: 126px; padding: 20px; background: var(--paper); border: 0; border-left: 1px solid var(--line); }
+button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; justify-content: flex-start; color: inherit; text-align: left; border-radius: 0; -webkit-appearance: none; appearance: none; }
+.summary-toggle[aria-expanded="true"] { background: var(--primary-soft); box-shadow: inset 0 -3px 0 var(--primary); }
+.summary-toggle[aria-expanded="true"] span { color: var(--primary); }
+.summary-toggle:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.my-requests-panel { margin-bottom: 20px; }
+.my-requests-panel .card-heading { flex-wrap: wrap; row-gap: 2px; padding-top: 10px; padding-bottom: 10px; }
 .summary:first-child { color: white; background: var(--primary); border: 0; }
 .summary span, .summary small { display: block; }
 .summary span { color: var(--muted); font-size: 12px; font-weight: 600; }
