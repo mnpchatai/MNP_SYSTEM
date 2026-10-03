@@ -302,6 +302,7 @@ function friendlyError(error) {
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
     EMPLOYEE_NOT_FOUND: "บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ",
     INVALID_ROLE: "บทบาทที่เลือกไม่ถูกต้อง กรุณาเลือกใหม่",
+    TARGET_NOT_ADMIN: "บทบาทหลักในการทำงานตั้งได้เฉพาะบัญชีที่มีตำแหน่งผู้ดูแลระบบ",
     INVALID_TITLE: "หัวข้อต้องมี 3–200 ตัวอักษร",
     INVALID_DESCRIPTION: "รายละเอียดต้องมี 3–5,000 ตัวอักษร",
     STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว",
@@ -2131,16 +2132,6 @@ async function renderProfile() {
         <div class="form-actions"><button class="btn" type="submit">บันทึกข้อมูล</button></div>
       </form>
     </section>
-    ${isAccountManager ? `
-    <section class="card" style="max-width:780px">
-      <h2>บทบาทหลักในการทำงาน</h2>
-      <p class="muted small">เลือกบทบาทที่คุณทำงานจริง ระบบจะส่งแจ้งเตือนและแสดงรายการ "รออนุมัติ" เฉพาะของบทบาทนั้น และนับคุณเป็นผู้อนุมัติในสายอนุมัติของบทบาทนั้น (เช่น ผู้จัดการทั่วไป) สิทธิ์ผู้ดูแลระบบยังใช้ได้ครบ แต่จะไม่ได้รับแจ้งเตือนคำร้องเปิดบัญชี/แก้ไข ID ซึ่งยังดูได้ที่หน้าผู้ดูแลระบบ</p>
-      <div id="acting-role-message"></div>
-      <form id="acting-role-form">
-        <div class="field"><label for="acting-role">ทำงานในฐานะ</label><select class="input" id="acting-role" name="acting_role_id"><option value="">ผู้ดูแลระบบ (รับแจ้งเตือนและเห็นรายการรออนุมัติทั้งหมด)</option>${roles.filter((item) => item.code !== "admin").map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.acting_role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
-        <div class="form-actions"><button class="btn" type="submit">บันทึกบทบาทหลัก</button></div>
-      </form>
-    </section>` : ""}
 
     <section class="card" style="max-width:780px">
       <h2>${isAccountManager ? "แก้ไข ID / รหัสผ่านของฉัน" : "ขอแก้ไข ID / รหัสผ่าน"}</h2>
@@ -2161,7 +2152,6 @@ async function renderProfile() {
   app.innerHTML = shell(content, "profile", "ข้อมูลส่วนตัว");
   bindShell();
   document.querySelector("#profile-form").addEventListener("submit", handleProfileSubmit);
-  document.querySelector("#acting-role-form")?.addEventListener("submit", handleActingRoleSubmit);
   document.querySelector("#credential-form").addEventListener("submit", handleCredentialChangeSubmit);
 }
 
@@ -2205,26 +2195,6 @@ async function handleProfileSubmit(event) {
   showToast("บันทึกข้อมูลเรียบร้อย");
   await renderProfile();
   document.querySelector("#profile-message").innerHTML = `<div class="form-message success">บันทึกข้อมูลเรียบร้อยแล้ว</div>`;
-}
-
-async function handleActingRoleSubmit(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const message = document.querySelector("#acting-role-message");
-  const roleId = String(new FormData(form).get("acting_role_id") ?? "");
-  setFormBusy(form, true);
-  message.innerHTML = "";
-
-  const { error } = await sb.rpc("app_set_my_acting_role", { p_role_id: roleId || null });
-  if (error) {
-    setFormBusy(form, false);
-    message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
-    return;
-  }
-  await loadEmployee();
-  showToast("บันทึกบทบาทหลักเรียบร้อย");
-  await renderProfile();
-  document.querySelector("#acting-role-message").innerHTML = `<div class="form-message success">บันทึกบทบาทหลักแล้ว แจ้งเตือนใหม่จะส่งตามบทบาทนี้</div>`;
 }
 
 async function handleCredentialChangeSubmit(event) {
@@ -2313,6 +2283,21 @@ async function handleEmployeeEditSubmit(event) {
     return;
   }
 
+  // บทบาทหลักในการทำงาน: ส่งเฉพาะเมื่อยังเป็นตำแหน่งผู้ดูแลระบบและค่าเปลี่ยนจริง กัน audit log รก
+  const actingRoleId = String(values.get("acting_role_id") ?? "");
+  const isAdminRole = String(values.get("role_id") ?? "") === form.dataset.adminRoleId;
+  if (isAdminRole && actingRoleId !== String(form.dataset.actingRoleId ?? "")) {
+    const { error: actingError } = await sb.rpc("app_admin_set_acting_role", {
+      p_employee_id: employeeId,
+      p_role_id: actingRoleId || null,
+    });
+    if (actingError) {
+      setFormBusy(form, false);
+      message.innerHTML = `<div class="form-message error">บันทึกข้อมูลแล้วแต่ยังตั้งบทบาทหลักไม่สำเร็จ: ${escapeHtml(friendlyError(actingError))} · กดบันทึกซ้ำได้</div>`;
+      return;
+    }
+  }
+
   // รหัสผ่านต้องเปลี่ยนที่ Supabase Auth จึงไปทาง Edge Function ซึ่งตรวจสิทธิ์ซ้ำในฐานข้อมูล
   if (newPassword) {
     try {
@@ -2384,23 +2369,29 @@ async function renderAdmin(params) {
   state.adminTab = tab;
   loadingShell("admin", "ผู้ดูแลระบบ");
 
-  const [requestsResult, credentialsResult, rolesResult, departmentsResult, modulePermissionsResult] = await Promise.all([
+  const [requestsResult, credentialsResult, rolesResult, departmentsResult, modulePermissionsResult, actingRolesResult] = await Promise.all([
     sb.rpc("app_list_account_requests", { p_status: null }),
     sb.rpc("app_list_credentials"),
     sb.from("roles").select("id,code,name_th").order("sort_order"),
     sb.from("departments").select("id,code,name_th").eq("is_active", true).order("code"),
     sb.rpc("app_list_module_permissions"),
+    sb.from("employees").select("id,acting_role_id").not("acting_role_id", "is", null),
   ]);
   if (requestsResult.error) throw requestsResult.error;
   if (credentialsResult.error) throw credentialsResult.error;
   if (rolesResult.error) throw rolesResult.error;
   if (departmentsResult.error) throw departmentsResult.error;
   if (modulePermissionsResult.error) throw modulePermissionsResult.error;
+  if (actingRolesResult.error) throw actingRolesResult.error;
   const requests = requestsResult.data ?? [];
   const credentials = credentialsResult.data ?? [];
   const roles = rolesResult.data ?? [];
   const departments = departmentsResult.data ?? [];
   const modulePermissionRows = modulePermissionsResult.data ?? [];
+  // บทบาทหลักในการทำงานของบัญชี admin (employees.acting_role_id) ตั้งได้ในฟอร์มแก้ไขบัญชีด้านล่าง
+  const actingRoleByEmployee = new Map((actingRolesResult.data ?? []).map((row) => [row.id, row.acting_role_id]));
+  const roleNameById = new Map(roles.map((role) => [role.id, role.name_th ?? role.code]));
+  const adminRoleId = roles.find((role) => role.code === "admin")?.id ?? "";
   const editing = credentials.find((item) => item.employee_id === params.get("edit")) ?? null;
   const adding = !editing && params.get("add") === "1";
   const req = ` <span class="required-mark" aria-hidden="true">*</span>`;
@@ -2465,7 +2456,7 @@ async function renderAdmin(params) {
       <td><span class="request-no">${escapeHtml(item.employee_no)}</span></td>
       <td>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}${item.is_active ? "" : ` <span class="badge rejected">ปิดใช้งาน</span>`}</td>
       <td>${escapeHtml(item.department_code ?? "—")}</td>
-      <td>${escapeHtml(item.role_code ?? "—")}</td>
+      <td>${escapeHtml(item.role_code ?? "—")}${actingRoleByEmployee.has(item.employee_id) ? `<br><small class="muted">ทำงานในฐานะ ${escapeHtml(roleNameById.get(actingRoleByEmployee.get(item.employee_id)) ?? "—")}</small>` : ""}</td>
       <td><code data-password-cell="${escapeHtml(item.employee_id)}">${item.has_password ? "••••••••" : "ยังไม่มีบันทึกไว้"}</code></td>
       <td>${item.updated_at ? formatDate(item.updated_at, true) : "—"}</td>
       <td>${[
@@ -2553,7 +2544,7 @@ async function renderAdmin(params) {
       <section class="card">
         <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID ตำแหน่ง และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
         <div id="employee-edit-message"></div>
-        <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}">
+        <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}" data-acting-role-id="${escapeHtml(actingRoleByEmployee.get(editing.employee_id) ?? "")}" data-admin-role-id="${escapeHtml(adminRoleId)}">
           <div class="field-row">
             <div class="field"><label for="edit-employee-no">UserID</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
             <div class="field"><label for="edit-active">สถานะบัญชี</label><select class="input" id="edit-active" name="is_active"><option value="true"${editing.is_active ? " selected" : ""}>ใช้งาน</option><option value="false"${editing.is_active ? "" : " selected"}>ปิดใช้งาน</option></select></div>
@@ -2571,6 +2562,7 @@ async function renderAdmin(params) {
             <div class="field"><label for="edit-department">หน่วยงาน</label><select class="input" id="edit-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
             <div class="field"><label for="edit-role">ตำแหน่ง</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
           </div>
+          <div class="field"><label for="edit-acting-role">บทบาทหลักในการทำงาน (เฉพาะตำแหน่งผู้ดูแลระบบ)</label><select class="input" id="edit-acting-role" name="acting_role_id"${editing.role_id === adminRoleId ? "" : " disabled"}><option value="">ผู้ดูแลระบบ (รับแจ้งเตือนและเห็นรายการรออนุมัติทั้งหมด)</option>${roles.filter((item) => item.code !== "admin").map((item) => `<option value="${escapeHtml(item.id)}"${item.id === actingRoleByEmployee.get(editing.employee_id) ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select><small>สำหรับผู้ดูแลระบบที่ทำงานจริงในตำแหน่งอื่นด้วย (เช่น ผู้จัดการทั่วไป) ระบบจะส่งแจ้งเตือนและแสดงรายการรออนุมัติเฉพาะของบทบาทนั้น และนับบัญชีนี้เป็นผู้อนุมัติในสายอนุมัติของบทบาทนั้น สิทธิ์ผู้ดูแลระบบอื่นยังใช้ได้ครบ แต่จะไม่ได้รับแจ้งเตือนคำร้องเปิดบัญชี/แก้ไข ID</small></div>
           <div class="field"><label for="edit-password">ตั้งรหัสผ่านใหม่ (เว้นว่างไว้หากไม่เปลี่ยน)</label><input class="input" id="edit-password" name="password" type="password" autocomplete="new-password" maxlength="72"><small>ตั้งให้ผู้ใช้ได้ทันทีเมื่อผู้ใช้ลืมรหัสผ่าน และรหัสผ่านใหม่จะถูกบันทึกลงคลังให้อัตโนมัติ</small></div>
           <div class="form-actions"><button class="btn" type="submit">บันทึกการแก้ไข</button></div>
         </form>
@@ -2642,6 +2634,14 @@ async function renderAdmin(params) {
   }));
 
   document.querySelector("#employee-edit-form")?.addEventListener("submit", handleEmployeeEditSubmit);
+  // บทบาทหลักมีความหมายเฉพาะตำแหน่งผู้ดูแลระบบ (ฐานข้อมูลล้างค่าทิ้งเมื่อไม่ใช่ admin)
+  document.querySelector("#edit-role")?.addEventListener("change", (event) => {
+    const actingRole = document.querySelector("#edit-acting-role");
+    const adminRole = document.querySelector("#employee-edit-form")?.dataset.adminRoleId;
+    if (!actingRole) return;
+    actingRole.disabled = event.currentTarget.value !== adminRole;
+    if (actingRole.disabled) actingRole.value = "";
+  });
   document.querySelector("#employee-add-form")?.addEventListener("submit", handleEmployeeAddSubmit);
 
   document.querySelectorAll("[data-delete-employee]").forEach((button) => button.addEventListener("click", async () => {
