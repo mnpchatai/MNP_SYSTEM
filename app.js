@@ -204,7 +204,6 @@ function activeRequestModuleCodes() {
   const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled).map((entry) => entry.code);
   return [...new Set([...REQUEST_MODULE_CODES, ...separateModuleCodes])];
 }
-const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
   "image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -346,7 +345,9 @@ function setFormBusy(form, busy) {
 
 function optionalAttachment(value) {
   if (!(value instanceof File) || value.size === 0) return null;
-  if (value.size > MAX_ATTACHMENT_SIZE) throw new Error("ไฟล์ต้องมีขนาดไม่เกิน 10 MB");
+  // เพดานต่อไฟล์อยู่ที่ modules/attachment-image.js ที่เดียว (ฐานข้อมูลและ bucket ตรวจซ้ำอีกชั้น)
+  const maxBytes = window.MNP_ATTACHMENT_IMAGE?.MAX_FILE_BYTES;
+  if (maxBytes && value.size > maxBytes) throw new Error(`ไฟล์ต้องมีขนาดไม่เกิน ${maxBytes / 1048576} MB`);
   if (!ALLOWED_ATTACHMENT_TYPES.has(value.type)) {
     // บอกชนิดที่ตรวจเจอด้วย ผู้ใช้จะได้รู้ว่าไฟล์ไหนไม่ผ่านและต้องแปลงเป็นอะไร
     const detected = (/\.([A-Za-z0-9]+)$/.exec(value.name)?.[1] ?? value.type) || "ไม่ทราบชนิด";

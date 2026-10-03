@@ -7,7 +7,7 @@ import test from "node:test";
 const attachmentImage = createRequire(import.meta.url)("../../modules/attachment-image.js");
 const {
   sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension, SAFE_BYTES,
-  checkBatch, describeBatch, normalizeAttachments, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
+  checkBatch, describeBatch, normalizeAttachments, MAX_BATCH_FILES, MAX_BATCH_BYTES, MAX_FILE_BYTES, MESSAGES, HINT,
 } = attachmentImage;
 
 function bytes(...parts) {
@@ -109,6 +109,15 @@ test("the combined limit is 20 MB and the hint tells users about it", () => {
   assert.equal(MAX_BATCH_BYTES, 20 * MB);
   assert.match(HINT, /20 MB/);
   assert.match(MESSAGES.batchTooLarge, /20 MB/);
+});
+
+test("a single file may use the full 20 MB (the per-file limit equals the combined limit)", async () => {
+  assert.equal(MAX_FILE_BYTES, 20 * MB);
+  assert.equal(MAX_FILE_BYTES, MAX_BATCH_BYTES);
+  assert.doesNotMatch(HINT, /10 MB/); // ข้อความเดิม "ไฟล์ละไม่เกิน 10 MB" ต้องไม่หลงเหลือ
+  const exactly = pdfFile("big.pdf", 20 * MB);
+  assert.deepEqual(await normalizeAttachments([exactly]), [exactly]);
+  await assert.rejects(normalizeAttachments([pdfFile("too-big.pdf", 20 * MB + 1)]), { message: MESSAGES.batchTooLarge });
 });
 
 test("checkBatch accepts a total up to exactly 20 MB and rejects anything above", () => {

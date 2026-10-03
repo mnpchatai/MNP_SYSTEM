@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(91);
+select plan(95);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -428,6 +428,29 @@ select results_eq(
   $$ select section, file_name, content_type, size_bytes, uploader_id from public.ncr_attachments where ncr_id = current_setting('test.ncr_a')::uuid $$,
   $$ values ('followup'::text, 'หลักฐาน.pdf'::text, 'application/pdf'::text, 2048::bigint, '73000000-0000-0000-0000-000000000106'::uuid) $$,
   'size and file type come from storage, not from the client'
+);
+-- เพดานไฟล์หลักฐาน 20 MB (20261003000000): 15 MB และ 20 MB พอดีผ่าน, เกิน 20 MB ถูกปฏิเสธ
+-- ใส่ต่อจากการตรวจ results_eq ข้างบน (ที่นับว่ามีไฟล์เดียว) จึงไม่กระทบ และไม่กระทบการตรวจ "ไม่เห็นไฟล์" ด้านล่าง
+select lives_ok(
+  $$ insert into storage.objects (bucket_id, name, owner_id, metadata)
+     values ('ncr-attachments', current_setting('test.ncr_a') || '/exactly-20mb.pdf', '73000000-0000-0000-0000-000000000006',
+             '{"size": 20971520, "mimetype": "application/pdf"}'::jsonb) $$,
+  'QA can upload a 20 MB evidence file'
+);
+select lives_ok(
+  $$ select public.app_ncr_add_attachment(current_setting('test.ncr_a')::uuid, 'followup', current_setting('test.ncr_a') || '/exactly-20mb.pdf', 'exactly-20mb.pdf') $$,
+  'a 20 MB evidence file (above the old 10 MB limit) can be recorded'
+);
+select lives_ok(
+  $$ insert into storage.objects (bucket_id, name, owner_id, metadata)
+     values ('ncr-attachments', current_setting('test.ncr_a') || '/over-20mb.pdf', '73000000-0000-0000-0000-000000000006',
+             '{"size": 20971521, "mimetype": "application/pdf"}'::jsonb) $$,
+  'storage metadata above 20 MB can exist (the bucket limit is enforced by the Storage API, not by SQL)'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_attachment(current_setting('test.ncr_a')::uuid, 'followup', current_setting('test.ncr_a') || '/over-20mb.pdf', 'over-20mb.pdf') $$,
+  'INVALID_ATTACHMENT',
+  'an evidence file above 20 MB cannot be recorded'
 );
 -- storage ห้ามลบด้วย SQL ตรง (ต้องผ่าน Storage API) จึงตรวจว่ามี policy จำกัดการลบไว้เฉพาะไฟล์ที่ยังไม่ถูกบันทึก
 select ok(

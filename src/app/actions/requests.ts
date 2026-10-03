@@ -7,6 +7,7 @@ import { resolveApprovalTarget } from "@/lib/data";
 import { notifyEmployeeByEmail } from "@/lib/notify";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { MAX_FILE_BYTES } from "../../../modules/attachment-image.js";
 
 const allowedPriorities = new Set(["low", "normal", "high", "urgent"]);
 const allowedAttachmentTypes = new Set([
@@ -194,7 +195,7 @@ export async function uploadAttachmentAction(formData: FormData): Promise<Attach
   const requestId = String(formData.get("request_id") ?? "");
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "กรุณาเลือกไฟล์" };
-  if (file.size > 10 * 1024 * 1024) return { ok: false, error: "ไฟล์ต้องมีขนาดไม่เกิน 10 MB" };
+  if (file.size > MAX_FILE_BYTES) return { ok: false, error: `ไฟล์ต้องมีขนาดไม่เกิน ${MAX_FILE_BYTES / 1048576} MB` };
   if (!allowedAttachmentTypes.has(file.type)) return { ok: false, error: "ชนิดไฟล์ไม่รองรับ" };
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
