@@ -1348,7 +1348,7 @@ async function renderDashboard() {
     <div class="page-heading"><div><div class="eyebrow">Pilot workspace</div><h1>สวัสดี, ${escapeHtml(employee.first_name)}</h1><p>ภาพรวมรายการที่เกี่ยวข้องกับคุณและงานที่ต้องดำเนินการ</p></div><span class="muted small">${formatDate(new Date(), false)}</span></div>
     <section class="summary-grid">
       <a class="summary" href="#/approvals"><span>งานที่ต้องจัดการ</span><strong>${actionableCount}</strong><small>${actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง"}</small></a>
-      <a class="summary" href="#/requests?scope=mine"><span>รายการคำร้องของฉัน</span><strong>${myRequestCount}</strong><small>เฉพาะที่คุณเป็นผู้แจ้ง</small></a>
+      <a class="summary" href="#/requests?scope=mine&amp;list=1"><span>รายการคำร้องของฉัน</span><strong>${myRequestCount}</strong><small>เฉพาะที่คุณเป็นผู้แจ้ง</small></a>
       <a class="summary" href="#/requests?status=approved%2Cin_progress"><span>กำลังดำเนินการ</span><strong>${inProgress}</strong><small>อนุมัติแล้วหรือกำลังทำ</small></a>
       <a class="summary" href="#/requests?status=completed"><span>เสร็จแล้ว</span><strong>${completed}</strong><small>ปิดงานเรียบร้อย</small></a>
     </section>
@@ -1444,7 +1444,7 @@ function requestCenterHeader(types, params, counts) {
   const selected = types.find((type) => type.id === params.get("type"));
   if (selected) {
     const createLabel = { MT_REPAIR: "สร้างคำร้อง / แจ้งซ่อม MT", MANAGEMENT: "สร้างคำร้องถึงฝ่ายบริหาร", NCR_CAR: "ออก NCR", IT_REPAIR: "สร้างใบแจ้งซ่อม IT" }[selected.code] ?? `สร้าง${requestTypeLabel(selected)}`;
-    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
+    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null, list: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
         <div class="request-module-title"><span class="type-card-badge">${escapeHtml(selected.prefix ?? "")}</span><div><div class="eyebrow">คำร้อง</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}"><a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}">＋ ${escapeHtml(createLabel)}</a></div>
@@ -1452,7 +1452,7 @@ function requestCenterHeader(types, params, counts) {
   }
   return `<div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
     <div class="request-type-heading"><h2>เลือกโมดูล</h2></div>
-    <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" style="background:${requestTypeGradient(type.code)}">
+    <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null, list: null }))}" style="background:${requestTypeGradient(type.code)}">
       <span class="request-type-top"><span class="type-card-badge">${escapeHtml(type.prefix ?? "")}</span><span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} รอดำเนินการ` : "ดูสถานะ"}</span></span>
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${selected?.id === type.id ? "กำลังแสดงประเภทนี้" : "ดูรายการและสถานะ →"}</small></span>
     </a>`).join("")}</nav>`;
@@ -1530,9 +1530,16 @@ async function renderRequests(params) {
   const mineOnly = params.get("scope") === "mine";
   // The overview is a module chooser; fetch rows only after entering a module.
   if (!selected) {
+    // The dashboard "my requests" card counts every request the user filed, so show exactly
+    // those request cards (all types and statuses) without the module chooser.
+    if (mineOnly && params.get("list")) {
+      app.innerHTML = shell(`<div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>รายการคำร้องของฉัน</h1><p>คำร้องทุกประเภทและทุกสถานะที่คุณเป็นผู้แจ้ง</p></div></div>${await requestListPanel(params, null)}`, "requests", "คำร้อง");
+      bindShell();
+      return;
+    }
     const counts = await requestTypeCounts(types, mineOnly);
     // Dashboard status cards count every type, so list the matching rows here instead of
-    // dropping their filter. "My requests" (scope=mine) shows only the module cards.
+    // dropping their filter.
     const statuses = knownRequestStatuses(params);
     const filterLabels = [
       ...statuses.map((value) => REQUEST_STATUS_FILTERS.find(([known]) => known === value)[1]),
@@ -1665,7 +1672,7 @@ async function renderNewRequest(params) {
 
   function bindStep(selected) {
     document.querySelectorAll(".type-card").forEach((card) => card.addEventListener("click", () => {
-      const target = requestCenterUrl(params, { mode: "create", type: card.dataset.typeId, createType: card.dataset.typeId, status: null, ncrStatus: null });
+      const target = requestCenterUrl(params, { mode: "create", type: card.dataset.typeId, createType: card.dataset.typeId, status: null, ncrStatus: null, list: null });
       queueModuleZoom(target);
       location.hash = target;
     }));
