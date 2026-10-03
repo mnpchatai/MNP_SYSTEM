@@ -1,6 +1,6 @@
 "use client";
 
-import { ImageOff } from "lucide-react";
+import { ImageOff, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createThumbnail } from "../../modules/attachment-image.js";
 import { attachmentKind, KindIcon, kindLabels, PreviewPending } from "@/components/attachment-gallery";
@@ -30,7 +30,9 @@ async function loadPreview(file: File, kind: "image" | "pdf" | "text"): Promise<
   return { text: (await file.slice(0, textReadBytes).text()).slice(0, textExcerptChars) };
 }
 
-function SelectedTile({ file }: { file: File }) {
+export type SelectedFile = { id: number; file: File };
+
+function SelectedTile({ file, onRemove }: { file: File; onRemove: () => void }) {
   const kind = attachmentKind({ file_name: file.name, content_type: file.type });
   // ผลที่โหลดเสร็จเก็บคู่กับไฟล์ที่เป็นเจ้าของ เปลี่ยนไฟล์แล้วจึงนับเป็น "ยังไม่เสร็จ" โดยไม่ต้องรีเซ็ต state ใน effect
   const [loaded, setLoaded] = useState<{ file: File; result: Loaded } | null>(null);
@@ -74,6 +76,16 @@ function SelectedTile({ file }: { file: File }) {
           {kindLabels[kind]}
           {result?.pageCount ? ` · ${result.pageCount} หน้า` : ""}
         </span>
+        {/* type="button" สำคัญ: ปุ่มอยู่ในฟอร์ม ถ้าไม่กำหนดจะกดแล้วส่งฟอร์ม */}
+        <button
+          className="attachment-remove"
+          type="button"
+          onClick={onRemove}
+          title="ลบไฟล์นี้"
+          aria-label={`ลบ ${file.name} ออกจากรายการแนบ`}
+        >
+          <X size={15} aria-hidden="true" />
+        </button>
       </div>
       <figcaption className="attachment-caption">
         <span className="attachment-name" title={file.name}>{file.name}</span>
@@ -83,12 +95,13 @@ function SelectedTile({ file }: { file: File }) {
   );
 }
 
-export function AttachmentSelectionPreview({ files }: { files: File[] }) {
-  if (!files.length) return null;
+// ใช้ id คงที่เป็น key (ไม่ใช่ลำดับ) เพื่อให้กระเบื้องที่เหลือหลังลบไม่ถูกสร้างใหม่ — ไม่งั้นต้องถอดรหัสรูป/เรนเดอร์ PDF ซ้ำ
+export function AttachmentSelectionPreview({ items, onRemove }: { items: SelectedFile[]; onRemove: (id: number) => void }) {
+  if (!items.length) return null;
   return (
     <div className="attachment-grid attachment-selection" aria-label="ตัวอย่างไฟล์ที่เลือก">
-      {files.map((file, index) => (
-        <SelectedTile file={file} key={`${index}:${file.name}:${file.size}:${file.lastModified}`} />
+      {items.map((item) => (
+        <SelectedTile file={item.file} key={item.id} onRemove={() => onRemove(item.id)} />
       ))}
     </div>
   );

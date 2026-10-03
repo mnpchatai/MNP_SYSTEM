@@ -68,7 +68,13 @@
     state.textContent = asynchronous ? MESSAGES.pending : KIND_LABELS[kind];
     const badge = element("span", "attachment-kind");
     badge.textContent = KIND_LABELS[kind];
-    preview.append(state, badge);
+    // type="button" สำคัญ: ปุ่มอยู่ในฟอร์ม ถ้าไม่กำหนดจะกดแล้วส่งฟอร์ม
+    const remove = element("button", "attachment-remove");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.title = "ลบไฟล์นี้";
+    remove.setAttribute("aria-label", `ลบ ${file.name} ออกจากรายการแนบ`);
+    preview.append(state, badge, remove);
     const caption = element("figcaption", "attachment-caption");
     const name = element("span", "attachment-name");
     name.textContent = file.name;
@@ -77,7 +83,7 @@
     meta.textContent = formatSize(file.size);
     caption.append(name, meta);
     tile.append(preview, caption);
-    return { file, kind, tile, preview, state, badge };
+    return { file, kind, tile, preview, state, badge, remove, removed: false };
   }
 
   function show(entry, node, badgeSuffix = "") {
@@ -163,9 +169,22 @@
     container.replaceChildren();
     states.set(input, { container, token });
     const entries = files.map(buildTile);
-    entries.forEach((entry) => container.append(entry.tile));
+    entries.forEach((entry) => {
+      container.append(entry.tile);
+      entry.remove.addEventListener("click", () => {
+        // ลำดับของกระเบื้องตรงกับลำดับใน input.files เสมอ (สร้างจากชุดเดียวกัน และลบพร้อมกันทั้งสองที่)
+        const index = Array.prototype.indexOf.call(container.children, entry.tile);
+        if (index < 0) return;
+        entry.removed = true;
+        root.MNP_ATTACHMENT_IMAGE?.removeSelectedFile(input, index);
+        entry.tile.remove();
+        if (!container.children.length) container.remove();
+        input.focus({ preventScroll: true });
+      });
+    });
     for (const entry of entries) {
       if (states.get(input)?.token !== token) return; // เลือกใหม่แล้ว ทิ้งงานชุดเก่า
+      if (entry.removed) continue; // ผู้ใช้ลบไฟล์นี้ก่อนถึงคิว ไม่ต้องเสียเวลาถอดรหัส
       try {
         await fill(entry, options);
       } catch {

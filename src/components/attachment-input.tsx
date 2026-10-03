@@ -9,7 +9,7 @@ import {
   normalizeAttachments,
   type HeicDecoder,
 } from "../../modules/attachment-image.js";
-import { AttachmentSelectionPreview } from "@/components/attachment-selection-preview";
+import { AttachmentSelectionPreview, type SelectedFile } from "@/components/attachment-selection-preview";
 
 // ช่องแนบไฟล์ที่เตรียมรูปจากโทรศัพท์ให้เข้าเกณฑ์ก่อนส่ง (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่)
 // ใช้ตัวเตรียมรูปไฟล์เดียวกับ Pilot Web คือ modules/attachment-image.js — แก้ที่หนึ่งให้แก้อีกที่ให้ตรงกัน
@@ -43,8 +43,9 @@ export function AttachmentInput({
   accept?: string;
 }) {
   const [status, setStatus] = useState<Status>(null);
-  const [selected, setSelected] = useState<File[]>([]);
+  const [selected, setSelected] = useState<SelectedFile[]>([]);
   const latest = useRef(0);
+  const nextId = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ฟอร์มถูกรีเซ็ต (React รีเซ็ตฟอร์มให้เองหลัง action สำเร็จ) ไฟล์ที่เลือกหายไปแล้ว สถานะเดิมต้องหายตาม
@@ -100,7 +101,7 @@ export function AttachmentInput({
       } else {
         setStatus(null);
       }
-      setSelected(prepared);
+      setSelected(prepared.map((file) => ({ id: nextId.current++, file })));
     } catch (error) {
       if (sequence !== latest.current) return;
       input.value = "";
@@ -108,6 +109,22 @@ export function AttachmentInput({
     } finally {
       if (sequence === latest.current) input.setCustomValidity("");
     }
+  }
+
+  // ลบไฟล์หนึ่งไฟล์ออกจากชุดที่จะส่ง: เขียนชุดที่เหลือกลับลง input.files (ไฟล์ที่ลบจึงไม่ถูกส่งจริง ไม่ใช่แค่หายจากหน้าจอ)
+  // ชุดที่เหลือเป็นส่วนย่อยของชุดที่ผ่านการตรวจแล้ว จึงผ่านเพดานจำนวน/ขนาดรวมเสมอ
+  function removeSelected(id: number) {
+    const input = inputRef.current;
+    const remaining = selected.filter((item) => item.id !== id);
+    if (!input || remaining.length === selected.length) return;
+    const transfer = new DataTransfer();
+    remaining.forEach((item) => transfer.items.add(item.file));
+    input.files = transfer.files;
+    input.setCustomValidity("");
+    setSelected(remaining);
+    const files = remaining.map((item) => item.file);
+    setStatus(multiple && files.length ? { kind: "done", text: describeBatch(files, files) } : null);
+    input.focus({ preventScroll: true });
   }
 
   return (
@@ -128,7 +145,7 @@ export function AttachmentInput({
           {status.text}
         </small>
       )}
-      <AttachmentSelectionPreview files={selected} />
+      <AttachmentSelectionPreview items={selected} onRemove={removeSelected} />
       {multiple && <small className="muted">{HINT}</small>}
     </>
   );
