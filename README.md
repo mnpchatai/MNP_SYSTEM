@@ -344,8 +344,10 @@ Rev.00 (14-11-24) ที่ใช้งานจริง มี 3 จุดต�
 
 - **สายอนุมัติคงที่**: ฝ่ายบริหารโรงงาน (`factory_manager`) → ผู้จัดการทั่วไป (`general_manager`)
   ผูกกับบทบาทไม่ผูกแผนก (`request_types.uses_factory_general_chain = true`) เหมือนใบแจ้งซ่อม
-  ข้ามขั้นที่ยังไม่มีคนถือบทบาทนั้น ใช้ได้ทั้งจาก Server Action ของเว็บ (`createRequestAction`)
-  และ RPC ของ Pilot Web (`app_create_request`)
+  สร้างครบทั้งสองขั้นเสมอ ไม่ข้ามขั้นที่ยังไม่มีคนถือบทบาท — ขั้นที่ไม่มีผู้ถือจะแจ้ง admin ทุกคนแทน
+  ("มีคำร้องรออนุมัติ (ขั้นนี้ยังไม่มีผู้อนุมัติ)") และ admin อนุมัติแทนได้จาก Pilot Web
+  (`20261003030000_never_skip_factory_general_approval_steps.sql`) ใช้ได้ทั้งจาก Server Action
+  ของเว็บ (`createRequestAction`) และ RPC ของ Pilot Web (`app_create_request`)
 - **มติ 3 ทาง**: อนุมัติ (`approved`) / ไม่อนุมัติ (`rejected`) / **รับทราบข้อมูลที่แจ้ง**
   (`acknowledged` — ค่าสถานะใหม่ทั้งใน `approval_status` และ `request_status`) ปิดคำร้องทันที
   โดยไม่ไปขั้นอนุมัติถัดไป ปุ่ม "รับทราบข้อมูล" แสดงเฉพาะคำร้องประเภทนี้

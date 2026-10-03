@@ -74,7 +74,8 @@ select throws_ok(
   'acting_role_id cannot be written directly through the Data API'
 );
 
--- ก่อนเลือกบทบาท: ไม่มีใครถือ ผจก.ทั่วไป สายอนุมัติจึงเหลือขั้นเดียว (พฤติกรรมเดิม)
+-- ก่อนเลือกบทบาท: ไม่มีใครถือ ผจก.ทั่วไป แต่สายอนุมัติยังต้องมีครบสองขั้น
+-- (ไม่ข้ามขั้นแบบเงียบๆ อีกต่อไป ดู 20261003030000_never_skip_factory_general_approval_steps.sql)
 select lives_ok(
   $$ select public.app_create_request(
        (select id from public.request_types where code = 'MANAGEMENT'),
@@ -85,8 +86,8 @@ reset role;
 select results_eq(
   $$ select s.step_name from public.approval_steps s join public.requests r on r.id = s.request_id
      where r.title = 'ACTING_BEFORE' order by s.step_order $$,
-  array['ผู้จัดการโรงงาน'],
-  'without a general manager the chain skips the general manager step'
+  array['ผู้จัดการโรงงาน', 'ผู้จัดการทั่วไป'],
+  'without a general manager the chain still keeps the general manager step'
 );
 set local role authenticated;
 

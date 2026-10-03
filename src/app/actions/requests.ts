@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentEmployee } from "@/lib/auth";
-import { actingRoleId, findActiveRoleHolders, resolveApprovalTarget } from "@/lib/data";
+import { actingRoleId, findActiveAdmins, findActiveRoleHolders, resolveApprovalTarget } from "@/lib/data";
 import { notifyEmployeeByEmail } from "@/lib/notify";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -15,6 +15,22 @@ const allowedAttachmentTypes = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
+
+// ขั้นอนุมัติที่ไม่มีผู้ถือบทบาท: แจ้ง admin แทน (ข้อความเดียวกับ private.notify_approval_step)
+async function notifyAdminsOfUnstaffedStep(requestId: string, body: string, stepName: string) {
+  const admins = await findActiveAdmins();
+  if (!admins.length) return;
+  const title = "มีคำร้องรออนุมัติ (ขั้นนี้ยังไม่มีผู้อนุมัติ)";
+  const fullBody = `${body} · ขั้น ${stepName} ยังไม่มีผู้ถือบทบาทนี้ ผู้ดูแลระบบอนุมัติแทนได้`;
+  await createAdminClient().from("notifications").insert(admins.map((recipientId) => ({
+    recipient_id: recipientId,
+    request_id: requestId,
+    title,
+    body: fullBody,
+    action_url: `/requests/${requestId}`,
+  })));
+  await Promise.allSettled(admins.map((recipientId) => notifyEmployeeByEmail(recipientId, `${title}\n${fullBody}`)));
+}
 
 function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -101,14 +117,12 @@ export async function createRequestAction(formData: FormData) {
   if (type.uses_factory_general_chain) {
     // สายอนุมัติคงที่ตามฟอร์มจริง (เช่น PP01-FM08): ผู้จัดการโรงงาน -> ผู้จัดการทั่วไป
     // ผูกกับ "บทบาท" ไม่ผูกแผนก เหมือนใบแจ้งซ่อม (20260921080000_repair_approval_chain_...)
-    // ข้ามขั้นที่ยังไม่มีคนถือบทบาทนั้น ไม่งั้นใบจะค้างโดยไม่มีใครกดอนุมัติได้เลย
+    // สร้างครบทั้งสองขั้นเสมอ ไม่ข้ามขั้นที่ยังไม่มีคนถือบทบาท — ขั้นที่ไม่มีผู้ถือจะแจ้ง admin แทน
+    // (20261003030000_never_skip_factory_general_approval_steps.sql)
     const { data: roles } = await admin.from("roles").select("id, code").in("code", ["factory_manager", "general_manager"]);
     for (const code of ["factory_manager", "general_manager"]) {
       const role = roles?.find((r) => r.code === code);
       if (!role) continue;
-      // admin ที่เลือกทำหน้าที่บทบาทนี้ (acting_role_id) นับเป็นผู้ถือบทบาทด้วย
-      const holders = await findActiveRoleHolders(role.id);
-      if (!holders.length) continue;
       steps.push({
         request_id: request.id,
         step_order: steps.length + 1,
@@ -170,6 +184,8 @@ export async function createRequestAction(formData: FormData) {
       await Promise.allSettled(recipients.map((recipientId) =>
         notifyEmployeeByEmail(recipientId, `มีคำร้องรออนุมัติ\n${request.request_no} · ${title}`),
       ));
+    } else {
+      await notifyAdminsOfUnstaffedStep(request.id, `${request.request_no} · ${title}`, String(first.step_name));
     }
   } else {
     await admin.from("requests").update({ status: "approved", current_step: 0 }).eq("id", request.id);
@@ -287,6 +303,8 @@ export async function approvalDecisionAction(formData: FormData) {
         await Promise.allSettled(nextRecipients.map((recipientId) =>
           notifyEmployeeByEmail(recipientId, `มีคำร้องรออนุมัติ\n${approvalRequest.request_no} · ${nextStep.step_name}`),
         ));
+      } else {
+        await notifyAdminsOfUnstaffedStep(step.request_id, `${approvalRequest.request_no} · ${nextStep.step_name}`, nextStep.step_name);
       }
     } else {
       await admin.from("requests").update({
