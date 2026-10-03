@@ -203,14 +203,16 @@
   // ---- ทะเบียน NCR (QA02-FM02) ----
   const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
 
-  async function renderList(params) {
-    loadingShell("ncr", "ทะเบียน NCR");
-    const filter = LIST_FILTERS.some(([value]) => value === params.get("status")) ? params.get("status") : "open";
+  async function renderList(params, embedded = false) {
+    if (!embedded) loadingShell("ncr", "ทะเบียน NCR");
+    const statusParam = embedded ? "ncrStatus" : "status";
+    const filter = LIST_FILTERS.some(([value]) => value === params.get(statusParam)) ? params.get(statusParam) : "open";
     let query = sb.from("ncr_reports")
       .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department:departments(code))")
       .order("issue_date", { ascending: false })
       .order("ncr_no", { ascending: false })
       .limit(300);
+    if (embedded && params.get("scope") === "mine") query = query.eq("reporter_id", state.employee.id);
     if (filter === "open") query = query.in("status", OPEN_STATUSES);
     else if (filter === "overdue") query = query.in("status", RESPONSE_PENDING_STATUSES).lt("response_due", todayBangkok());
     else if (filter !== "all") query = query.eq("status", filter);
@@ -235,10 +237,12 @@
           <td>${lossByNcr.has(row.id) ? formatBaht(lossByNcr.get(row.id)) : "—"}</td>
           <td>${statusBadgeHtml(row)}</td></tr>`).join("")}</tbody>
       </table></div>` : `<div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div>`;
+    const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     const content = `
-      <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h1>ทะเบียน NCR</h1><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div><a class="btn" href="#/ncr?new=1">＋ ออก NCR</a></div>
-      <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="#/ncr${value === "open" ? "" : `?status=${value}`}">${label}</a>`).join("")}</div>
+      <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div>
+      <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="${escapeHtml(filterUrl(value))}">${label}</a>`).join("")}</div>
       <section class="card flush">${body}</section>`;
+    if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");
     bindShell();
   }
@@ -561,6 +565,8 @@
     bindCreateForm() {
       bindIssueForm();
     },
+
+    renderCenterList: (params) => renderList(params, true),
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
     shared: { STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht },
