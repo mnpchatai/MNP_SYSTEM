@@ -52,6 +52,8 @@ export function bindFileInputs(
     onSelection?: (input: HTMLInputElement, files: File[]) => void;
   },
 ): void;
+/** ลบไฟล์ลำดับที่ index ออกจาก input.files (ใช้กับปุ่ม × ในตัวอย่าง) พร้อมปรับข้อความสรุป คืนไฟล์ที่เหลือ */
+export function removeSelectedFile(input: HTMLInputElement, index: number): File[];
 /** ภาพย่อ (data URL JPEG) ของไฟล์รูปสำหรับแสดงตัวอย่างก่อนอัปโหลด ทำทีละไฟล์ผ่านคิว คืน null ถ้าถอดรหัสไม่ได้ */
 export function createThumbnail(file: File, maxEdge?: number): Promise<string | null>;
 

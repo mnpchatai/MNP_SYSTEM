@@ -571,6 +571,11 @@ tbody tr:hover { background: var(--surface-hover); }
 .attachment-selection { margin-top: 8px; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
 .attachment-selection .attachment-preview { cursor: default; }
 .attachment-selection .attachment-preview:hover { border-color: var(--line); box-shadow: none; }
+/* ป้ายชนิดไฟล์ไม่ให้ชนปุ่มลบในกระเบื้องแคบ (จอมือถือ): ตัดด้วย … ก่อนถึงปุ่ม */
+.attachment-selection .attachment-kind { max-width: calc(100% - 46px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-remove { position: absolute; top: 4px; right: 4px; width: 30px; height: 30px; padding: 0; display: grid; place-items: center; color: #ffffff; font-size: 19px; line-height: 1; cursor: pointer; background: rgba(15, 23, 42, 0.68); border: 0; border-radius: 50%; }
+.attachment-remove:hover { background: rgba(185, 28, 28, 0.92); }
+.attachment-remove:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .spin { animation: attachment-spin 0.9s linear infinite; }
 
 @keyframes attachment-spin { to { transform: rotate(360deg); } }

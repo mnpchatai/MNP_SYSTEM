@@ -365,6 +365,23 @@
     node.hidden = !text;
   }
 
+  // ลบไฟล์หนึ่งไฟล์ (ตามลำดับใน input.files) ออกจากชุดที่เลือก — ใช้กับปุ่ม × ในตัวอย่าง (modules/attachment-preview.js)
+  // เขียนชุดที่เหลือกลับลง input.files (ไฟล์ที่ผู้ใช้ลบจึงไม่ถูกส่งจริง ไม่ใช่แค่หายจากหน้าจอ) และปรับข้อความสรุปใต้ช่อง
+  // คืนไฟล์ที่เหลือ ไม่เรียก onSelection: ตัวอย่างลบกระเบื้องของไฟล์นั้นเอง ไม่ต้องวาดทั้งชุดใหม่ (ไม่ถอดรหัสรูปซ้ำ)
+  // ชุดที่เหลือเป็นส่วนย่อยของชุดที่ผ่านการตรวจแล้ว จึงผ่านเพดานจำนวน/ขนาดรวมเสมอ
+  function removeSelectedFile(input, index) {
+    const files = Array.from(input.files ?? []);
+    if (!Number.isInteger(index) || index < 0 || index >= files.length) return files;
+    files.splice(index, 1);
+    const transfer = new DataTransfer();
+    files.forEach((file) => transfer.items.add(file));
+    input.files = transfer.files;
+    input.setCustomValidity("");
+    if (files.length && input.multiple) showStatus(input, "done", describeBatch(files, files));
+    else showStatus(input, "idle", "");
+    return files;
+  }
+
   function bindFileInputs(options = {}) {
     if (typeof document === "undefined" || root.__mnpAttachmentImageBound) return;
     root.__mnpAttachmentImageBound = true;
@@ -422,6 +439,6 @@
     SAFE_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
     checkBatch, describeBatch, createThumbnail,
-    normalizeAttachment, normalizeAttachments, bindFileInputs,
+    normalizeAttachment, normalizeAttachments, bindFileInputs, removeSelectedFile,
   };
 });
