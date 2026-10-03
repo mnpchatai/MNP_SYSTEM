@@ -22,6 +22,8 @@ export type NormalizeOptions = {
 
 export const SAFE_BYTES: number;
 export const MAX_EDGE: number;
+/** ขนาดสูงสุดต่อไฟล์ (20 MB) — ต้องตรงกับ check constraint / bucket ในฐานข้อมูล */
+export const MAX_FILE_BYTES: number;
 /** จำนวนไฟล์สูงสุดต่อการแนบหนึ่งครั้ง */
 export const MAX_BATCH_FILES: number;
 /** ขนาดรวมสูงสุดของไฟล์ที่เตรียมแล้วต่อการแนบหนึ่งครั้ง (20 MB) */

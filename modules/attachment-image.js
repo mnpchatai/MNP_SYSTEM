@@ -16,11 +16,13 @@
 //   ใช้ build แบบ JavaScript ล้วน (ไม่มี eval/WebAssembly/worker) จึงใช้ได้ภายใต้ CSP เดิมของ index.html โดยไม่ต้องผ่อน
 // - ไฟล์ที่ไม่ใช่ภาพ (PDF, DOCX ฯลฯ) ผ่านไปตามเดิม ให้การตรวจชนิดเดิมของแต่ละหน้าจัดการต่อ
 //
-// SAFE_BYTES ตั้งที่ 4 MB ไม่ใช่ 10 MB เพราะ Next.js บน Vercel รับ body ของ Server Action ได้ราว 4.5 MB
+// SAFE_BYTES (ขีดย่อรูป) ตั้งที่ 4 MB ไม่ใช่เพดานไฟล์ 20 MB เพราะ Next.js บน Vercel รับ body ของ Server Action ได้ราว 4.5 MB
 //
 // แนบได้หลายไฟล์พร้อมกัน: ช่องที่มี `multiple` เตรียมทุกไฟล์ทีละไฟล์ (ทีละไฟล์เพื่อไม่ให้เบราว์เซอร์มือถือถอดรหัสหลายรูปพร้อมกันจนหน่วยความจำหมด)
 // แล้วตรวจจำนวน (MAX_BATCH_FILES) และ "ขนาดรวมหลังเตรียมแล้ว" (MAX_BATCH_BYTES = 20 MB) ซึ่งเป็นขนาดที่อัปโหลดจริง
-// ขีดจำกัดรวมนี้เป็นการตรวจฝั่งเบราว์เซอร์ ส่วนขีดจำกัดจริงต่อไฟล์ (10 MB, ชนิดไฟล์) ยังอยู่ที่ server action / RPC / bucket เหมือนเดิม
+// ขีดจำกัดรวมนี้เป็นการตรวจฝั่งเบราว์เซอร์ ส่วนขีดจำกัดจริงต่อไฟล์ (MAX_FILE_BYTES = 20 MB, ชนิดไฟล์) บังคับที่
+// check constraint ของตาราง, bucket, RPC และ server action — ตัวเลขนี้ต้องตรงกับ migration 20261003000000 ทุกครั้งที่เปลี่ยน
+// MAX_FILE_BYTES เท่ากับ MAX_BATCH_BYTES โดยตั้งใจ: ไฟล์เดียวใช้เพดาน 20 MB เต็มได้ (ภาพถูกบีบให้ไม่เกิน SAFE_BYTES อยู่แล้ว)
 //
 // Pilot Web: โหลดไฟล์นี้ก่อน app.js (ดู index.html) แล้ว app.js เรียก bindFileInputs() หนเดียว
 // Next.js: คอมโพเนนต์ src/components/attachment-input.tsx เรียก normalizeAttachment() โดยส่งตัวโหลด
@@ -31,8 +33,9 @@
   else root.MNP_ATTACHMENT_IMAGE = api;
 })(typeof self !== "undefined" ? self : globalThis, function attachmentImageFactory(root) {
   const SAFE_BYTES = 4 * 1024 * 1024;
+  const MAX_FILE_BYTES = 20 * 1024 * 1024;
   const MAX_BATCH_FILES = 10;
-  const MAX_BATCH_BYTES = 20 * 1024 * 1024;
+  const MAX_BATCH_BYTES = MAX_FILE_BYTES;
   const MAX_EDGE = 2560;
   const HEIC_TIMEOUT_MS = 60000; // โหลดไลบรารี/ถอดรหัสบนเครื่องช้าอาจใช้เวลาหลายวินาที ตั้งไว้เผื่อ
   const CANONICAL_TYPES = { jpeg: "image/jpeg", png: "image/png", webp: "image/webp" };
@@ -61,8 +64,8 @@
     tooManyFiles: `แนบได้ครั้งละไม่เกิน ${MAX_BATCH_FILES} ไฟล์ กรุณาเลือกใหม่`,
     batchTooLarge: `ขนาดไฟล์รวมกันเกิน ${MAX_BATCH_BYTES / 1048576} MB กรุณาลดจำนวนไฟล์แล้วเลือกใหม่`,
   };
-  // ข้อความใต้ช่องแนบไฟล์ทุกหน้า — ตัวเลข 10 MB ต่อไฟล์ตรงกับ check constraint ของ request_attachments, bucket และ server action
-  const HINT = `แนบได้หลายไฟล์พร้อมกัน (ไม่เกิน ${MAX_BATCH_FILES} ไฟล์ รวมกันไม่เกิน ${MAX_BATCH_BYTES / 1048576} MB · ไฟล์ละไม่เกิน 10 MB) · ` +
+  // ข้อความใต้ช่องแนบไฟล์ทุกหน้า
+  const HINT = `แนบได้หลายไฟล์พร้อมกัน (ไม่เกิน ${MAX_BATCH_FILES} ไฟล์ ขนาดรวมไม่เกิน ${MAX_BATCH_BYTES / 1048576} MB) · ` +
     "รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX";
 
   // ---- ฟังก์ชันล้วน (ไม่แตะเบราว์เซอร์ ทดสอบได้ใน Node: scripts/tests/attachment-image.test.mjs) ----
@@ -383,7 +386,7 @@
   }
 
   return {
-    SAFE_BYTES, MAX_EDGE, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
+    SAFE_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
     checkBatch, describeBatch,
     normalizeAttachment, normalizeAttachments, bindFileInputs,

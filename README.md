@@ -369,7 +369,7 @@ NCR มี workflow ของตัวเองในตาราง `ncr_*` (�
 - **ใครเห็น**: ผู้รายงาน, พนักงานแผนก QA, พนักงานแผนกที่รับผิดชอบ, ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และ admin
   (`private.can_access_ncr` ใน RLS) ทุกตารางอ่านอย่างเดียว เขียนผ่าน RPC เท่านั้น
 - **ไฟล์หลักฐาน**: แนบได้ตอนออก NCR ตอนตอบส่วนที่ 3 และในส่วน "ไฟล์หลักฐาน" ของใบ จนกว่าจะปิดหรือยกเลิก
-  เก็บใน bucket `ncr-attachments` (private, 10 MB, ชนิดเดียวกับไฟล์แนบคำร้อง เปิดด้วย signed URL) ใครเห็นใบ NCR ได้ก็เห็นไฟล์ได้
+  เก็บใน bucket `ncr-attachments` (private, 20 MB ต่อไฟล์, ชนิดเดียวกับไฟล์แนบคำร้อง เปิดด้วย signed URL) ใครเห็นใบ NCR ได้ก็เห็นไฟล์ได้
   ข้อมูลไฟล์บันทึกผ่าน `app_ncr_add_attachment` ซึ่งอ่านขนาด/ชนิดจาก storage เอง ไฟล์ที่บันทึกแล้วลบไม่ได้ (เป็นหลักฐาน)
   ลบได้เฉพาะไฟล์ของตัวเองที่อัปโหลดแล้วบันทึกไม่สำเร็จ
 - **เกินกำหนดตอบ**: นับจากวันออกใบ + 5 วัน จึงขึ้นเกินกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
@@ -669,8 +669,8 @@ Webhook ตรวจ `x-line-signature` กับ raw body ด้วย HMAC-SHA
 | PDF / TXT / DOCX / XLSX | ผ่านไปตามเดิม ใช้การตรวจชนิดเดิมของแต่ละหน้า |
 
 - **ความปลอดภัยไม่เปลี่ยน:** server action และ bucket `request-attachments` ยังจำกัดชนิด (JPEG/PNG/WebP/PDF/TXT/DOCX/XLSX)
-  และขนาด 10 MB เท่าเดิม ตัวเตรียมรูปแค่แปลงไฟล์ให้ผ่านเกณฑ์ ไม่ต้องแก้ฐานข้อมูลหรือเปิดชนิดไฟล์เพิ่ม
-- **ขีดย่อ 4 MB** (ไม่ใช่ 10 MB) เพราะ Server Action ของ Next.js บน Vercel รับ body ได้ราว 4.5 MB
+  และขนาด 20 MB ต่อไฟล์ (เดิม 10 MB — ดู "แนบหลายไฟล์พร้อมกัน" ข้างล่าง) ตัวเตรียมรูปแค่แปลงไฟล์ให้ผ่านเกณฑ์ ไม่เปิดชนิดไฟล์เพิ่ม
+- **ขีดย่อรูป 4 MB** (ไม่ใช่เพดานไฟล์ 20 MB) เพราะ Server Action ของ Next.js บน Vercel รับ body ได้ราว 4.5 MB
 - **HEIC:** Safari/iOS ถอดรหัสเองได้ จึงไม่โหลดอะไรเพิ่ม เบราว์เซอร์อื่นโหลด `libheif-js` เฉพาะตอนเจอรูป HEIC
   Pilot Web ใช้ build JavaScript ล้วนที่ `vendor/libheif/` (ไม่ต้องผ่อน CSP) ส่วน Next.js ใช้ `libheif-js/wasm-bundle`
   (เร็วกว่า และ Next.js ไม่มี CSP ที่ห้าม WebAssembly) รายละเอียดสัญญาอนุญาต LGPL-3.0 ดู `vendor/libheif/README.md`
@@ -685,12 +685,21 @@ Webhook ตรวจ `x-line-signature` กับ raw body ด้วย HMAC-SHA
 
 | กติกา | ค่า | ตรวจที่ไหน |
 |---|---|---|
-| ขนาดรวมต่อการแนบหนึ่งครั้ง | **ไม่เกิน 20 MB** วัดจากไฟล์ที่เตรียมแล้ว (หลังบีบรูปเป็น JPEG) ซึ่งเป็นขนาดที่อัปโหลดจริง | เบราว์เซอร์ (`checkBatch` ใน `modules/attachment-image.js`) |
+| ขนาดรวมต่อการแนบหนึ่งครั้ง | **ไม่เกิน 20 MB** (ไฟล์เดียวใช้ได้เต็ม 20 MB) วัดจากไฟล์ที่เตรียมแล้ว (หลังบีบรูปเป็น JPEG) ซึ่งเป็นขนาดที่อัปโหลดจริง | เบราว์เซอร์ (`checkBatch` ใน `modules/attachment-image.js`) |
 | จำนวนไฟล์ต่อการแนบหนึ่งครั้ง | ไม่เกิน 10 ไฟล์ (นับก่อนแปลง กันเลือกรูปเป็นร้อยจนเครื่องค้าง) | เบราว์เซอร์ |
-| ขนาดต่อไฟล์ / ชนิดไฟล์ | ไม่เกิน 10 MB, ชนิดเดิม — **ไม่เปลี่ยน** | server action / RPC / bucket / check constraint เหมือนเดิม |
+| ขนาดต่อไฟล์ | **ไม่เกิน 20 MB** (เดิม 10 MB) | check constraint ของ `request_attachments` / `ncr_attachments`, bucket ทั้งสองใบ, `app_ncr_add_attachment`, server action — migration `20261003000000` |
+| ชนิดไฟล์ | JPEG/PNG/WebP/PDF/TXT/DOCX/XLSX — ไม่เปลี่ยน | server action / bucket |
 
-- ขีด 20 MB และ 10 ไฟล์เป็นการตรวจฝั่งเบราว์เซอร์ (UX) ไม่ใช่ขอบเขตความปลอดภัย — ขอบเขตจริงที่บังคับที่ฐานข้อมูลและ bucket ยังเป็นต่อไฟล์ จึงไม่ต้องมี migration
-  ถ้าจะเปลี่ยนเพดานให้แก้ `MAX_BATCH_BYTES` / `MAX_BATCH_FILES` ที่ `modules/attachment-image.js` (ข้อความใต้ช่อง `HINT` อ้างค่าเดียวกัน) ที่เดียว
+- ขีดรวม 20 MB และ 10 ไฟล์เป็นการตรวจฝั่งเบราว์เซอร์ (UX) ส่วนเพดานต่อไฟล์ 20 MB บังคับจริงที่ฐานข้อมูลและ bucket
+  ตัวเลขฝั่งเบราว์เซอร์/server action อยู่ที่ `MAX_FILE_BYTES` / `MAX_BATCH_BYTES` / `MAX_BATCH_FILES` ใน `modules/attachment-image.js` ที่เดียว
+  (ข้อความใต้ช่อง `HINT` และข้อความ error อ้างค่าเดียวกัน) **ถ้าเปลี่ยนเพดานต้องเขียน migration ใหม่ให้ตรงกันด้วย** — ตัวอย่างดู `20261003000000_raise_attachment_size_limit_to_20mb.sql`
+  (เพราะเคยยกแค่ฝั่งเบราว์เซอร์แล้วฐานข้อมูลยังเป็น 10 MB อยู่)
+- **ลำดับ deploy เมื่อยกเพดาน:** `npx supabase db push` ก่อน (หรือพร้อม) การ deploy Pilot Web ไม่งั้นไฟล์ 10–20 MB ผ่านการตรวจฝั่งเบราว์เซอร์แต่ถูก Storage ปฏิเสธ
+  และตรวจ "Global file size limit" ของ Storage ในโปรเจกต์ Cloud (Dashboard → Storage → Settings) ให้ไม่ต่ำกว่า 20 MB เพราะ bucket ตั้งเกินค่ารวมไม่ได้
+  (`supabase/config.toml` ตั้ง `20MiB` ให้เฉพาะ local/CI)
+- **ข้อจำกัดของ Next.js บน Vercel:** body ของ Server Action ถูกจำกัดราว 4.5 MB ก่อนถึงแอป รูปถูกบีบให้ไม่เกิน 4 MB จึงผ่าน
+  แต่ไฟล์ที่ไม่ใช่รูป (PDF/DOCX/XLSX) ที่ใหญ่กว่านั้นอัปโหลดผ่าน Next.js บน Vercel ไม่ได้ (Pilot Web อัปโหลดตรงเข้า Storage จึงไม่ติด)
+  ถ้าต้องรองรับถึง 20 MB บน Next.js ต้องเปลี่ยนเป็น signed upload URL ตรงเข้า Storage
 - ตัวเตรียมไฟล์ทำทีละไฟล์ (ไม่ถอดรหัสหลายรูปพร้อมกัน เพราะมือถือหน่วยความจำไม่พอ) แสดงความคืบหน้า "(2/5)" ถ้าไฟล์ใดแปลงไม่ได้จะล้างการเลือกทั้งชุดและแจ้งชื่อไฟล์นั้น
   ไม่ปล่อยให้ส่งไฟล์ไม่ครบโดยไม่รู้ตัว ช่องไฟล์เดียว (ไม่มี `multiple`) ทำงานเหมือนเดิมทุกอย่าง
 - **Pilot Web** อัปโหลดทีละไฟล์จากเบราว์เซอร์ตรงไป Supabase Storage; **Next.js** เรียก `uploadAttachmentAction` ทีละไฟล์ (`src/lib/attachment-upload.ts`)
@@ -711,7 +720,7 @@ Webhook ตรวจ `x-line-signature` กับ raw body ด้วย HMAC-SHA
 - พนักงานทุกคนเห็น **สถานะ** ของทุกใบได้ผ่าน RPC `app_request_status_board` เท่านั้น ซึ่งคืนเฉพาะข้อมูลระดับติดตามสถานะ ไม่ใช่รายละเอียดคำร้อง
 - Client ไม่มีสิทธิ์เขียน request/approval โดยตรง; ทุก transition ทำผ่าน Server Action ที่ตรวจผู้ใช้ บทบาท และสถานะก่อนใช้ server-only key
 - Authorization ใช้ข้อมูล role/permission ในฐานข้อมูล ไม่ใช้ user-editable metadata ใน JWT
-- Attachment bucket เป็น private และจำกัด 10 MB / MIME type
+- Attachment bucket เป็น private และจำกัด 20 MB ต่อไฟล์ / MIME type
 - LINE webhook ต้องผ่าน signature validation
 - Audit trigger ครอบคลุม employee, request, approval และ LINE link
 
