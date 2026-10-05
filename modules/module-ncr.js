@@ -122,13 +122,16 @@
   };
   const checkedValues = (form, name) => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
 
-  // withSigner = ในทะเบียน NCR: ใต้ป้าย "รอลงนามปิด" บอกว่าถึงลำดับใครและลงนามไปแล้วกี่ขั้น (ต้องมี signoff_qa_at/signoff_factory_at ในข้อมูลที่ส่งมา)
-  function statusBadgeHtml(ncr, withSigner = false) {
+  // withWaiting = ในทะเบียน NCR: ใต้ป้ายสถานะที่ยังไม่ปิดบอกว่าตอนนี้ใครเป็นผู้รับผิดชอบ (สถานะ "รอลงนามปิด" บอกด้วยว่าลงนามไปแล้วกี่ขั้น
+  // ต้องมี signoff_qa_at/signoff_factory_at และ ncr_responsibilities(department) ในข้อมูลที่ส่งมา)
+  function statusBadgeHtml(ncr, withWaiting = false) {
     const badge = `<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`;
     const flagged = isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
-    if (!withSigner || ncr.status !== "awaiting_signoff") return flagged;
+    const waiting = withWaiting ? waitingOn(ncr) : null;
+    if (!waiting) return flagged;
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
-    return `${flagged}<div class="muted small ncr-signer-wait">รอ ${escapeHtml(nextSigner(ncr).label)} ลงนาม · ลงนามแล้ว ${signed}/3</div>`;
+    const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
+    return `${flagged}<div class="muted small ncr-signer-wait">ผู้รับผิดชอบ: ${escapeHtml(waiting.party)}${progress}</div>`;
   }
 
   function checksHtml(name, options, selected = []) {
@@ -353,12 +356,23 @@
     return forms;
   }
 
+  // ใครต้องทำอะไรในสถานะปัจจุบัน — ใช้ทั้งในหน้ารายละเอียด (waitingText) และทะเบียน NCR (statusBadgeHtml)
+  function waitingOn(ncr) {
+    const departments = (ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" / ");
+    if (ncr.status === "awaiting_disposition") return { party: "ผู้จัดการฝ่ายโรงงาน", action: "พิจารณา" };
+    if (ncr.status === "awaiting_response") return { party: departments ? `ผู้จัดการแผนก ${departments}` : "ผู้จัดการแผนกที่รับผิดชอบ", action: "ตอบ" };
+    if (ncr.status === "awaiting_followup") return { party: "แผนก QA", action: "ติดตามผล" };
+    if (ncr.status === "awaiting_signoff") return { party: nextSigner(ncr).label, action: "ลงนาม" };
+    return null;
+  }
+
   function waitingText(ncr) {
-    if (ncr.status === "awaiting_disposition") return `ผู้จัดการฝ่ายโรงงานพิจารณา (แผนกต้องตอบภายใน ${formatDate(ncr.response_due)})`;
-    if (ncr.status === "awaiting_response") return `ผู้จัดการแผนก ${(ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).join(" / ")} ตอบภายใน ${formatDate(ncr.response_due)}`;
-    if (ncr.status === "awaiting_followup") return "แผนก QA ติดตามผล";
-    if (ncr.status === "awaiting_signoff") return `${nextSigner(ncr).label} ลงนาม`;
-    return "";
+    const waiting = waitingOn(ncr);
+    if (!waiting) return "";
+    const due = formatDate(ncr.response_due);
+    if (ncr.status === "awaiting_disposition") return `${waiting.party}${waiting.action} (แผนกต้องตอบภายใน ${due})`;
+    if (ncr.status === "awaiting_response") return `${waiting.party} ${waiting.action}ภายใน ${due}`;
+    return `${waiting.party} ${waiting.action}`;
   }
 
   function canEditLosses(ncr, employee) {
