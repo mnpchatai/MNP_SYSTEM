@@ -145,6 +145,7 @@ function linkFor(row: PendingNotification) {
   if (row.action_url === "/admin") return `${base}/#/admin`;
   if (row.action_url === "/profile") return `${base}/#/profile`;
   if (row.action_url?.startsWith("/ncr/")) return `${base}/#/ncr?id=${encodeURIComponent(row.action_url.slice(5))}`;
+  if (row.action_url === "/") return `${base}/#/dashboard`;
   return `${base}/#/notifications`;
 }
 
@@ -356,6 +357,16 @@ const requestTitleRules: TitleRule[] = [
       heading: `${doc} ถึงวันที่คาดว่าของจะมาส่งแล้ว`,
       lead: `${doc} ถึงวันที่คาดว่าของที่สั่งซื้อจะมาส่งแล้ว`,
       next: "เช็คของแล้วกดบันทึกในหน้ารายการ ถ้ายังไม่มาให้เลื่อนวันที่คาดว่าจะมาส่งใหม่",
+    }),
+  },
+  {
+    // app_reschedule_repair_expected_date แจ้งผู้แจ้ง + ผจก.เจ้าของงาน body มีวันที่เดิมและวันที่ใหม่
+    match: (t) => t.includes("เลื่อนกำหนดเสร็จ"),
+    present: ({ doc }) => ({
+      emoji: "📅", color: colors.warning,
+      heading: `${doc} เลื่อนกำหนดเสร็จ`,
+      lead: `ผู้รับผิดชอบแก้ไขวันที่คาดว่าจะเสร็จของ${doc}`,
+      next: NO_ACTION_TRACK,
     }),
   },
 ];
@@ -692,6 +703,182 @@ function buildMessage(row: PendingNotification, detail: RequestDetail | undefine
   return { subject, text, html };
 }
 
+/* ---------- อีเมลสรุปงานค้าง (เตือนซ้ำ 08:30/13:30 และสำเนาถึงหัวหน้า 10:30/15:30) ---------- */
+
+// รายการงานที่ private.send_pending_work_reminders / send_pending_work_escalations เก็บไว้ใน notifications.digest
+// สำเนาถึงหัวหน้าไม่มี title โดยตั้งใจ (หัวหน้าอาจไม่มีสิทธิ์อ่านเอกสารนั้น) แต่มีชื่อพนักงานที่ถือลูกอยู่
+type DigestItem = {
+  item_type: "request" | "ncr";
+  item_id: string;
+  doc_no: string | null;
+  doc_label: string | null;
+  title?: string | null;
+  status: string | null;
+  action: string;
+  waiting_since: string | null;
+  due_date: string | null;
+  is_urgent: boolean | null;
+  holder_name?: string | null;
+};
+
+function isDigestItem(value: unknown): value is DigestItem {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  return (item.item_type === "request" || item.item_type === "ncr")
+    && typeof item.item_id === "string"
+    && typeof item.action === "string";
+}
+
+function digestItems(row: PendingNotification): DigestItem[] | null {
+  if (row.kind !== "reminder" && row.kind !== "escalation") return null;
+  return Array.isArray(row.digest) ? row.digest.filter(isDigestItem) : null;
+}
+
+function itemLink(item: DigestItem) {
+  const base = appBaseUrl();
+  return item.item_type === "ncr"
+    ? `${base}/#/ncr?id=${encodeURIComponent(item.item_id)}`
+    : `${base}/#/request?id=${encodeURIComponent(item.item_id)}`;
+}
+
+/** ระยะเวลาที่ค้างนับจากตอนที่งานมาถึงมือ — อ่านง่ายกว่าวันเวลาเต็ม */
+function waitingFor(since: string | null) {
+  if (!since) return null;
+  const hours = Math.floor((Date.now() - new Date(since).getTime()) / 3_600_000);
+  if (!Number.isFinite(hours) || hours < 1) return "ไม่ถึง 1 ชั่วโมง";
+  return hours < 24 ? `${hours} ชั่วโมง` : `${Math.floor(hours / 24)} วัน`;
+}
+
+function dueLabel(item: DigestItem) {
+  const date = formatDate(item.due_date);
+  if (!date) return null;
+  return item.status === "awaiting_response" ? `กำหนดตอบ ${date}` : `กำหนดเสร็จ ${date}`;
+}
+
+function buildDigestMessage(row: PendingNotification, items: DigestItem[]): Message {
+  const escalation = row.kind === "escalation";
+  const urgent = row.title.startsWith(URGENT_PREFIX) || items.some((item) => item.is_urgent);
+  const color = escalation ? colors.danger : colors.warning;
+  const emoji = escalation ? "👥" : "⏰";
+  const heading = `${urgent ? URGENT_PREFIX : ""}${escalation ? `สำเนาถึงหัวหน้า: งานค้างของทีม ${items.length} รายการ` : `งานค้างรอคุณดำเนินการ ${items.length} รายการ`}`;
+  const lead = escalation
+    ? "พนักงานในทีมของท่านยังไม่ได้ดำเนินการงานต่อไปนี้ หลังจากระบบแจ้งเตือนซ้ำไปแล้วเกิน 2 ชั่วโมง"
+    : "รายการต่อไปนี้รอให้คุณดำเนินการในระบบ ระบบจะเตือนซ้ำเวลา 08:30 และ 13:30 น. จนกว่าจะดำเนินการ";
+  const next = escalation
+    ? "ติดตามให้พนักงานดำเนินการในระบบ อีเมลนี้ไม่แสดงชื่อเรื่องของเอกสารเพื่อรักษาสิทธิ์การเข้าถึง"
+    : "กดเลขที่เอกสารเพื่อเปิดและดำเนินการ เมื่อดำเนินการแล้วรายการจะหายจากการเตือนรอบถัดไปเอง";
+  const subject = `${emoji} ${heading}`;
+  const dashboard = `${appBaseUrl()}/#/dashboard`;
+
+  const lineFor = (item: DigestItem) => [
+    escalation && item.holder_name ? `${item.holder_name}:` : null,
+    `${item.is_urgent ? "[ด่วน] " : ""}${item.doc_no ?? "—"} (${item.doc_label ?? "เอกสาร"})`,
+    !escalation && item.title ? `"${item.title}"` : null,
+    `— ${item.action}`,
+    dueLabel(item) ? `· ${dueLabel(item)}` : null,
+    waitingFor(item.waiting_since) ? `· ค้าง ${waitingFor(item.waiting_since)}` : null,
+    `\n  ${itemLink(item)}`,
+  ].filter(Boolean).join(" ");
+
+  const text = [
+    `${emoji} ${heading}`,
+    "",
+    lead,
+    "",
+    ...items.map((item, index) => `${index + 1}. ${lineFor(item)}`),
+    "",
+    `สิ่งที่ต้องทำต่อ: ${next}`,
+    "",
+    "เปิดหน้าหลักของระบบ:",
+    dashboard,
+    "",
+    "— อีเมลฉบับนี้ส่งอัตโนมัติจาก MNP Workspace กรุณาอย่าตอบกลับ",
+  ].join("\n");
+
+  const rows = items.map((item, index) => {
+    const due = dueLabel(item);
+    const waiting = waitingFor(item.waiting_since);
+    return `
+              <tr>
+                <td style="padding:12px 14px;${index ? "border-top:1px solid #eaecf0;" : ""}vertical-align:top">
+                  ${escalation && item.holder_name ? `<div style="font-size:12px;font-weight:700;color:#475467;padding-bottom:3px">${escapeHtml(item.holder_name)}</div>` : ""}
+                  <a href="${escapeHtml(itemLink(item))}" style="font-size:15px;font-weight:700;color:${color};text-decoration:none">${item.is_urgent ? "🚨 " : ""}${escapeHtml(item.doc_no ?? "—")}</a>
+                  <span style="font-size:12px;color:#667085"> · ${escapeHtml(item.doc_label ?? "เอกสาร")}</span>
+                  ${!escalation && item.title ? `<div style="font-size:13px;color:#344054;padding-top:3px">${escapeHtml(item.title)}</div>` : ""}
+                  <div style="font-size:14px;color:#101828;font-weight:600;padding-top:5px">${escapeHtml(item.action)}</div>
+                  <div style="font-size:12px;color:#667085;padding-top:3px">${[due ? `<span style="color:${colors.danger};font-weight:600">${escapeHtml(due)}</span>` : "", waiting ? `ค้าง ${escapeHtml(waiting)}` : ""].filter(Boolean).join(" · ")}</div>
+                </td>
+              </tr>`;
+  }).join("");
+
+  const html = `<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>${escapeHtml(heading)}</title>
+</head>
+<body style="margin:0;padding:0;background:#f2f4f7">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(lead)}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f4f7;padding:24px 12px">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(16,24,40,.1);font-family:'Segoe UI',Tahoma,Arial,sans-serif">
+          <tr>
+            <td style="background:${color};padding:22px 28px">
+              <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.75)">MNP Workspace</div>
+              <div style="font-size:21px;font-weight:700;color:#ffffff;padding-top:6px;line-height:1.35">${emoji} ${escapeHtml(heading)}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 28px 4px">
+              <p style="margin:0;font-size:15px;line-height:1.65;color:#344054">${escapeHtml(lead)}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:14px 28px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #eaecf0;border-radius:10px;border-collapse:separate">${rows}
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 28px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-left:4px solid ${color};background:#f9fafb;border-radius:8px">
+                <tr><td style="padding:12px 16px">
+                  <div style="font-size:12px;font-weight:700;letter-spacing:.04em;color:${color}">สิ่งที่ต้องทำต่อ</div>
+                  <div style="padding-top:4px;font-size:14px;line-height:1.65;color:#101828">${escapeHtml(next)}</div>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 28px 6px">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr><td align="center" style="background:${color};border-radius:9px">
+                  <a href="${escapeHtml(dashboard)}" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none">เปิดระบบ →</a>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 28px 26px">
+              <div style="border-top:1px solid #eaecf0;padding-top:14px;font-size:12px;line-height:1.6;color:#98a2b3">
+                อีเมลฉบับนี้ส่งอัตโนมัติจากระบบคำร้อง MNP Workspace กรุณาอย่าตอบกลับ<br>
+                ระบบเตือนวันจันทร์-เสาร์ ยกเว้นวันหยุดของบริษัท
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return { subject, text, html };
+}
+
 /* ---------- คิวงาน ---------- */
 
 type RecipientInfo = { email: string | null; is_active: boolean; employee_no: string | null };
@@ -705,6 +892,8 @@ type PendingNotification = {
   email_attempts: number;
   recipient_id: string | null;
   email_setup_link: boolean;
+  kind: string | null;
+  digest: unknown;
   recipient: RecipientRow;
 };
 
@@ -717,16 +906,26 @@ function firstRecipient(recipient: RecipientRow) {
 // deno-lint-ignore no-explicit-any
 type Admin = SupabaseClient<any>;
 
+const BASE_COLUMNS = "id, title, body, request_id, action_url, email_attempts, recipient_id, email_setup_link";
+const RECIPIENT_COLUMNS = "recipient:employees!notifications_recipient_id_fkey(email, is_active, employee_no)";
+
 async function pendingRows(admin: Admin, requestId: string | null) {
   // ตัวกรองทั้งหมดต้องต่อให้ครบก่อน order/limit เพราะ postgrest-js คืน transform builder หลัง order()
   // ซึ่งไม่มีเมธอดกรองอย่าง eq() ให้ต่อท้ายอีกแล้ว
-  const base = admin
-    .from("notifications")
-    .select("id, title, body, request_id, action_url, email_attempts, recipient_id, email_setup_link, recipient:employees!notifications_recipient_id_fkey(email, is_active, employee_no)")
-    .eq("email_status", "pending")
-    .lt("email_attempts", MAX_ATTEMPTS);
-  const filtered = requestId ? base.eq("request_id", requestId) : base;
-  return await filtered.order("created_at", { ascending: true }).limit(BATCH_LIMIT);
+  const query = (columns: string) => {
+    const base = admin
+      .from("notifications")
+      .select(columns)
+      .eq("email_status", "pending")
+      .lt("email_attempts", MAX_ATTEMPTS);
+    const filtered = requestId ? base.eq("request_id", requestId) : base;
+    return filtered.order("created_at", { ascending: true }).limit(BATCH_LIMIT);
+  };
+  const result = await query(`${BASE_COLUMNS}, kind, digest, ${RECIPIENT_COLUMNS}`);
+  // ฟังก์ชันนี้ถูก deploy ก่อน migration 20261005010000 (ยังไม่มีคอลัมน์ kind/digest) → ส่งแบบเดิมต่อไป
+  // ไม่ให้คิวอีเมลทั้งคิวหยุด
+  if (result.error?.code === "42703") return await query(`${BASE_COLUMNS}, ${RECIPIENT_COLUMNS}`);
+  return result;
 }
 
 async function dispatch(admin: Admin, requestId: string | null) {
@@ -782,7 +981,11 @@ async function dispatch(admin: Admin, requestId: string | null) {
         if (!row.recipient_id || !recipient!.employee_no) throw new Error("SETUP_RECIPIENT_INVALID");
         setup = await issueSetupLink(admin, row.recipient_id, recipient!.employee_no);
       }
-      await sendOne(String(recipient!.email), buildMessage(row, row.request_id ? details.get(row.request_id) : undefined, setup));
+      const items = digestItems(row);
+      const message = items
+        ? buildDigestMessage(row, items)
+        : buildMessage(row, row.request_id ? details.get(row.request_id) : undefined, setup);
+      await sendOne(String(recipient!.email), message);
       sent++;
       console.log("notify-email: sent", { requestId, notificationId: row.id, transport, to: recipient!.email });
       await admin.from("notifications").update({
