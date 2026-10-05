@@ -263,8 +263,9 @@
   }
 
   // ---- รายละเอียด + ฟอร์มของแต่ละขั้น ----
-  function definition(label, value) {
-    return `<div class="definition"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
+  // full = กินเต็มแถว (ข้อความยาวอย่างรายละเอียดปัญหา/หมายเหตุ)
+  function definition(label, value, full = false) {
+    return `<div class="definition${full ? " full" : ""}"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
   }
 
   function nextSigner(ncr) {
@@ -426,7 +427,8 @@
         ${definition("แหล่งที่พบ · ข้อบกพร่อง", `${escapeHtml(SOURCES[ncr.source] ?? ncr.source)} · ${escapeHtml(relation(ncr.defect_type)?.name_th ?? "—")}`)}
         ${definition("จำนวน", `ทั้งหมด ${formatQty(ncr.qty_total)} · สุ่ม ${formatQty(ncr.qty_sampled)} · พบปัญหา ${formatQty(ncr.qty_defect)} · ส่งคืน ${formatQty(ncr.qty_returned)} ${escapeHtml(ncr.unit)}`)}
         ${definition("%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`)}
-      </dl><p class="ncr-text">${escapeHtml(ncr.description)}</p></section>
+        ${definition("รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)", escapeHtml(ncr.description || "—"), true)}
+      </dl></section>
 `;
     const part2 = `
       <section class="card ncr-card"><h2>ส่วนที่ 2 ฝ่ายบริหารโรงงานพิจารณา</h2><dl class="definition-grid">
@@ -434,7 +436,8 @@
         ${definition("แผนกที่รับผิดชอบ", responsibilities || "—")}
         ${definition("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—")}
         ${definition("กำหนดตอบ", formatDate(ncr.response_due))}
-      </dl>${ncr.disposition_note ? `<p class="ncr-text">${escapeHtml(ncr.disposition_note)}</p>` : ""}</section>
+        ${ncr.disposition_note ? definition("หมายเหตุ", escapeHtml(ncr.disposition_note), true) : ""}
+      </dl></section>
 `;
     const part3 = `
       <section class="card ncr-card"><h2>ส่วนที่ 3 ผู้รับเรื่องดำเนินการ</h2><dl class="definition-grid">
