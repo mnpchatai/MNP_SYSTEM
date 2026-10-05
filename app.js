@@ -1167,10 +1167,10 @@ const NAV_ICONS = {
   signout: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>`,
 };
 
-function navLink(path, label, icon, active, { featured = false, badge = 0 } = {}) {
+function navLink(path, label, icon, active, { featured = false, badge = 0, href = `#/${path}` } = {}) {
   const isActive = active === path;
   const badgeText = badge > 99 ? "99+" : badge;
-  return `<a class="nav-link${isActive ? " active" : ""}${featured ? " nav-create" : ""}" href="#/${path}" aria-label="${escapeHtml(label)}"${isActive ? ` aria-current="page"` : ""}>
+  return `<a class="nav-link${isActive ? " active" : ""}${featured ? " nav-create" : ""}" href="${escapeHtml(href)}" aria-label="${escapeHtml(label)}"${isActive ? ` aria-current="page"` : ""}>
     <span class="nav-icon-wrap"><span class="nav-icon">${icon}</span>${badge ? `<span class="nav-count" aria-label="${badgeText} รายการใหม่">${badgeText}</span>` : ""}</span>
     <span class="nav-text">${escapeHtml(label)}</span>
   </a>`;
@@ -1189,7 +1189,7 @@ function shell(content, active, title) {
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
           ${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
-          ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active)}
+          ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active, { href: window.MNP_REQUEST_CENTER.overviewUrl() })}
           ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}
           ${requestModuleNavLinks(active)}
           ${navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
@@ -1234,6 +1234,13 @@ function bindShell() {
   navToggle?.addEventListener("click", () => setMobileNav(!shellNode?.classList.contains("nav-open")));
   navBackdrop?.addEventListener("click", () => setMobileNav(false));
   document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => setMobileNav(false)));
+  // เมนูด้านข้างพาไปหน้าหลักของเมนูนั้นเสมอ — กดเมนูของหน้าที่เปิดอยู่ (ลิงก์เดิมจึงไม่เกิด hashchange)
+  // ให้วาดหน้าใหม่เอง เพื่อปิดแผง/ตารางที่เปิดค้างไว้ และเริ่มจากบนสุดของหน้า
+  document.querySelectorAll('.sidebar a[href^="#/"]').forEach((link) => link.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    window.scrollTo(0, 0);
+    if (link.hash === location.hash) renderRoute();
+  }));
   document.onkeydown = (event) => {
     if (event.key === "Escape") setMobileNav(false);
   };

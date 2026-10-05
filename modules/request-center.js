@@ -27,11 +27,16 @@
     const common = ["pending_approval", "more_info"];
     return code === "MANAGEMENT" ? common : [...common, "approved", "pending_assign", "assigned", "in_progress", "pending_verify"];
   }
+  // The main menu always opens the module overview: an explicit type=all skips the module
+  // remembered for bare #/requests links, and survives the page's own URL rewrite unchanged.
+  function overviewUrl() {
+    return url(new URLSearchParams(), { type: "all" });
+  }
   function createUrl(params) {
     const type = params.get("type");
     return type && type !== "all" ? url(params, { mode: "create", createType: type }) : null;
   }
-  const api = { url, hasParams, statusList, pendingStatuses, createUrl };
+  const api = { url, hasParams, statusList, pendingStatuses, createUrl, overviewUrl };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_REQUEST_CENTER = api;
 })();

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 
-const { url, hasParams, statusList, pendingStatuses, createUrl } = createRequire(import.meta.url)("../../modules/request-center.js");
+const { url, hasParams, statusList, pendingStatuses, createUrl, overviewUrl } = createRequire(import.meta.url)("../../modules/request-center.js");
 const params = (value) => new URLSearchParams(value);
 
 test("changing status preserves selected type, ownership, search and board scope", () => {
@@ -65,4 +65,9 @@ test("dashboard status links keep only known statuses", () => {
 test("a stale my-requests list flag is dropped from request center links", () => {
   assert.equal(url(params("scope=mine&list=1")), "#/requests?scope=mine");
   assert.equal(url(params("type=all&scope=mine&list=1"), { type: "mt", status: null, ncrStatus: null }), "#/requests?type=mt&scope=mine");
+});
+test("the main menu opens the module overview instead of the remembered module", () => {
+  assert.equal(overviewUrl(), "#/requests?type=all");
+  // The page rewrites its URL with url(); the menu link must still match so a repeat click re-renders it.
+  assert.equal(url(params(overviewUrl().split("?")[1])), overviewUrl());
 });
