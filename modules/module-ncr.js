@@ -411,10 +411,12 @@
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
-    const content = `
+    const heading = `
       <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr)}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
-      ${forms.length ? `<section class="card ncr-card ncr-actions"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>` : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
+      ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
+`;
+    const part1 = `
       <section class="card ncr-card"><h2>ส่วนที่ 1 ผู้รายงาน/ผู้ตรวจสอบ</h2><dl class="definition-grid">
         ${definition("วันที่ออก", formatDate(ncr.issue_date))}
         ${definition("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`)}
@@ -425,12 +427,16 @@
         ${definition("จำนวน", `ทั้งหมด ${formatQty(ncr.qty_total)} · สุ่ม ${formatQty(ncr.qty_sampled)} · พบปัญหา ${formatQty(ncr.qty_defect)} · ส่งคืน ${formatQty(ncr.qty_returned)} ${escapeHtml(ncr.unit)}`)}
         ${definition("%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`)}
       </dl><p class="ncr-text">${escapeHtml(ncr.description)}</p></section>
+`;
+    const part2 = `
       <section class="card ncr-card"><h2>ส่วนที่ 2 ฝ่ายบริหารโรงงานพิจารณา</h2><dl class="definition-grid">
         ${definition("ความเห็น", escapeHtml((ncr.dispositions ?? []).map((value) => DISPOSITIONS[value] ?? value).join(", ") || "—"))}
         ${definition("แผนกที่รับผิดชอบ", responsibilities || "—")}
         ${definition("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—")}
         ${definition("กำหนดตอบ", formatDate(ncr.response_due))}
       </dl>${ncr.disposition_note ? `<p class="ncr-text">${escapeHtml(ncr.disposition_note)}</p>` : ""}</section>
+`;
+    const part3 = `
       <section class="card ncr-card"><h2>ส่วนที่ 3 ผู้รับเรื่องดำเนินการ</h2><dl class="definition-grid">
         ${definition("เกิดจาก", escapeHtml((ncr.causes ?? []).map((value) => CAUSES[value] ?? value).join(", ") || "—"))}
         ${definition("ผู้ตอบ", ncr.responded_at ? `${escapeHtml(personName(directory, ncr.responded_by))} · ${formatDate(ncr.responded_at)}` : "—")}
@@ -438,6 +444,8 @@
         ${definition("แนวทางแก้ไข · กำหนดเสร็จ", `${escapeHtml(ncr.correction ?? "—")} · ${formatDate(ncr.correction_due)}`)}
         ${definition("แนวทางป้องกัน · กำหนดเสร็จ", `${escapeHtml(ncr.prevention ?? "—")} · ${formatDate(ncr.prevention_due)}`)}
       </dl></section>
+`;
+    const part4 = `
       <section class="card ncr-card"><h2>ส่วนที่ 4 การตรวจติดตาม</h2><dl class="definition-grid">
         ${definition("ผู้ติดตาม", ncr.followed_up_at ? `${escapeHtml(personName(directory, ncr.followed_up_by))} · ${formatDate(ncr.followed_up_at)}` : "—")}
         ${definition("บันทึก", escapeHtml(ncr.followup_note ?? "—"))}
@@ -446,13 +454,26 @@
         ${definition("ผู้จัดการทั่วไป", signoff(ncr.signoff_gm_by, ncr.signoff_gm_at))}
         ${definition("วันที่ปิด", formatDate(ncr.closed_at))}
       </dl></section>
+`;
+    const filesSection = `
       <section class="card ncr-card"><h2>ไฟล์หลักฐาน</h2>
         <p class="muted small">ทุกคนที่เห็นใบนี้แนบไฟล์เพิ่มได้จนกว่าจะปิดใบ ไฟล์ที่แนบแล้วลบไม่ได้เพราะเป็นหลักฐาน · ผู้แนบและเวลาดูได้ในประวัติเอกสาร</p>
         ${attachmentGalleryHtml(attachments)}
         ${OPEN_STATUSES.includes(ncr.status) && !state.employee?.isSandbox ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
-      ${lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee))}
+`;
+    const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
+    const historySection = `
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
+    // ผู้ดำเนินการต้องได้อ่านข้อมูลของขั้นก่อนหน้า + ไฟล์หลักฐานก่อนถึงฟอร์ม: ฟอร์มจึงอยู่หลังส่วนที่ขั้นนั้นต้องอ่าน
+    // (ส่วนที่ 3 ถึงขั้นติดตามผล ส่วนที่ 4 ถึงขั้นลงนาม) ส่วนที่เหลือตามหลังฟอร์ม; ไม่มีฟอร์มให้ทำ = เรียงตามเลขส่วนเหมือนเดิม
+    const parts = [part1, part2, part3, part4];
+    const actionsSection = `<section class="card ncr-card ncr-actions"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
+    const readFirst = { awaiting_disposition: 1, awaiting_response: 2, awaiting_followup: 3, awaiting_signoff: 4 }[ncr.status] ?? parts.length;
+    const body = forms.length
+      ? [...parts.slice(0, readFirst), filesSection, actionsSection, ...parts.slice(readFirst), lossesSection, historySection]
+      : [...parts, filesSection, lossesSection, historySection];
+    const content = heading + body.join("");
     app.innerHTML = shell(content, "ncr", ncr.ncr_no);
     bindShell();
     bindDetail(ncr);
