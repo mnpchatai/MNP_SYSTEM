@@ -336,6 +336,12 @@ function friendlyError(error) {
     REPAIR_USES_OWN_WORKFLOW: "ใบแจ้งซ่อมต้องเดินตามขั้นตอนของช่าง เปลี่ยนสถานะตรงๆ ไม่ได้",
     EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าของจะมาส่ง",
     STEP_ALREADY_DONE: "หมุดนี้บันทึกว่าเสร็จแล้ว เลื่อนวันที่ไม่ได้",
+    EXPECTED_DATE_IN_PAST: "วันที่คาดว่าจะเสร็จใหม่ต้องเป็นวันนี้หรือหลังจากนี้",
+    EXPECTED_DATE_UNCHANGED: "วันที่ที่เลือกตรงกับกำหนดเสร็จเดิม",
+    REQUEST_NOT_RESCHEDULABLE: "แก้วันที่คาดว่าจะเสร็จได้เฉพาะใบแจ้งซ่อมที่รอช่างเริ่มงานหรือกำลังซ่อม",
+    NOTE_TOO_LONG: "หมายเหตุต้องไม่เกิน 500 ตัวอักษร",
+    HOLIDAY_DATE_REQUIRED: "กรุณาเลือกวันที่หยุด",
+    HOLIDAY_NAME_REQUIRED: "กรุณาระบุชื่อวันหยุด 1–100 ตัวอักษร",
     INVALID_CC_DEPARTMENTS: "แผนกที่เลือกสำเนาถึงไม่ถูกต้อง",
   };
   const key = Object.keys(map).find((item) => message.includes(item));
@@ -1855,7 +1861,7 @@ function appendTimelineNote(detail, note) {
   return detail ? `${detail} · ${cleanNote}` : cleanNote;
 }
 
-function buildRequestTimeline(request, history, steps, verifications, directory, isRepair) {
+function buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChanges = []) {
   const orderedSteps = [...steps].sort((left, right) => left.step_order - right.step_order);
   const latestRepairResult = [...history]
     .filter((item) => item.to_status === "pending_verify")
@@ -1950,7 +1956,19 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     }];
   });
 
-  return [...statusEvents, ...approvalEvents].sort((left, right) => left.at.localeCompare(right.at));
+  // การแก้วันที่คาดว่าจะเสร็จ (ปุ่มแก้วันที่ หรือแก้ไขการมอบหมาย) ไม่ใช่การเปลี่ยนสถานะ เก็บแยกไว้
+  const dateChangeEvents = dateChanges.map((change) => {
+    const actorName = personName(directory, change.changed_by);
+    const detail = `${actorName === "—" ? "ผู้รับผิดชอบ" : actorName} แก้ไขจากกำหนดเสร็จเดิม ${change.old_date ? formatDate(change.old_date) : "(ยังไม่ได้กำหนด)"} เป็นวันที่ ${change.new_date ? formatDate(change.new_date) : "—"}`;
+    return {
+      id: `expected-date-${change.id}`,
+      at: change.created_at,
+      title: "แก้ไขกำหนดเสร็จ",
+      detail: appendTimelineNote(detail, change.note),
+    };
+  });
+
+  return [...statusEvents, ...approvalEvents, ...dateChangeEvents].sort((left, right) => left.at.localeCompare(right.at));
 }
 
 function appsScriptApprovalStage(step, directory) {
@@ -2007,7 +2025,7 @@ async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
-  const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, directory] = await Promise.all([
+  const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult, directory] = await Promise.all([
     sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id),department:departments(code)").eq("id", id).maybeSingle(),
     sb.from("approval_steps").select("*").eq("request_id", id).order("step_order"),
     sb.from("request_attachments").select("*").eq("request_id", id).order("created_at"),
@@ -2015,11 +2033,12 @@ async function renderRequestDetail(params) {
     sb.from("request_verifications").select("*").eq("request_id", id).order("created_at", { ascending: false }),
     sb.from("request_technicians").select("technician_id").eq("request_id", id),
     sb.from("request_progress_steps").select("*").eq("request_id", id).order("sort_order"),
+    sb.from("request_expected_date_changes").select("*").eq("request_id", id).order("created_at"),
     loadEmployeeDirectory(),
   ]);
   if (requestResult.error) throw requestResult.error;
   if (!requestResult.data) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
-  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult]) if (result.error) throw result.error;
+  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult]) if (result.error) throw result.error;
   const request = requestResult.data;
   const type = relation(request.request_type);
   const isRepair = Boolean(type?.uses_repair_workflow);
@@ -2027,7 +2046,7 @@ async function renderRequestDetail(params) {
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
   const verifications = verificationsResult.data ?? [];
-  const timeline = buildRequestTimeline(request, history, steps, verifications, directory, isRepair);
+  const timeline = buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChangesResult.data ?? []);
   const progressSteps = progressResult.data ?? [];
   // ช่างของใบนี้ = รายชื่อในตารางช่าง (ใบเก่าก่อนรองรับหลายคนมีแต่ assignee_id จึงรวมเข้าไปด้วย)
   const assignedTechIds = [...new Set([
@@ -2230,6 +2249,8 @@ function notificationHref(item) {
   if (item.action_url === "/admin") return "#/admin";
   if (item.action_url === "/profile") return "#/profile";
   if (item.action_url?.startsWith("/ncr/")) return `#/ncr?id=${encodeURIComponent(item.action_url.slice(5))}`;
+  // อีเมลสรุปงานค้าง (kind reminder/escalation) พาไปหน้าหลักที่มีการ์ด "งานที่ต้องจัดการ"
+  if (item.action_url === "/") return "#/dashboard";
   return "#/notifications";
 }
 
@@ -2533,9 +2554,66 @@ async function handleEmployeeAddSubmit(event) {
   await renderRoute();
 }
 
+function bangkokToday() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
+}
+
+function holidaysSectionHtml(holidays) {
+  const today = bangkokToday();
+  const rows = holidays.map((holiday) => `<tr${holiday.holiday_date < today ? ' class="muted"' : ""}>
+      <td>${formatDate(holiday.holiday_date)}</td>
+      <td>${escapeHtml(holiday.name_th)}</td>
+      <td class="center"><button class="btn secondary small" type="button" data-holiday-delete="${escapeHtml(holiday.holiday_date)}">ลบ</button></td>
+    </tr>`).join("") || `<tr><td colspan="3" class="muted small">ยังไม่มีวันหยุดที่บันทึกไว้ในปีนี้</td></tr>`;
+  return `<section class="card">
+    <h2>วันหยุดบริษัท</h2>
+    <p class="muted small">ระบบไม่ส่งอีเมลเตือนงานค้าง (08:30 และ 13:30 น.) และสำเนาถึงหัวหน้า (10:30 และ 15:30 น.) ในวันที่บันทึกไว้ที่นี่ วันอาทิตย์ข้ามให้อยู่แล้ว ไม่ต้องบันทึก บันทึกวันเดิมซ้ำจะเป็นการแก้ชื่อวันหยุด</p>
+    <form id="holiday-form" class="field-row">
+      <div class="field"><label for="holiday-date">วันที่</label><input class="input" id="holiday-date" name="holiday_date" type="date" required></div>
+      <div class="field"><label for="holiday-name">ชื่อวันหยุด</label><input class="input" id="holiday-name" name="name_th" maxlength="100" placeholder="เช่น วันปิยมหาราช" required></div>
+      <div class="form-actions"><button class="btn" type="submit">บันทึกวันหยุด</button></div>
+    </form>
+    <div class="table-wrap"><table>
+      <thead><tr><th>วันที่</th><th>ชื่อวันหยุด</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function bindHolidayForms(params) {
+  document.querySelector("#holiday-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    setFormBusy(form, true);
+    const { error } = await sb.rpc("app_admin_set_holiday", {
+      p_date: String(values.get("holiday_date") ?? "") || null,
+      p_name: String(values.get("name_th") ?? "").trim(),
+    });
+    if (error) {
+      setFormBusy(form, false);
+      return showToast(friendlyError(error), "error");
+    }
+    showToast("บันทึกวันหยุดแล้ว");
+    await renderAdmin(params);
+  });
+  document.querySelectorAll("[data-holiday-delete]").forEach((button) => button.addEventListener("click", async () => {
+    const date = button.dataset.holidayDelete;
+    if (!confirm(`ลบวันหยุด ${formatDate(date)} ?\n\nวันนั้นระบบจะกลับมาส่งอีเมลเตือนงานค้างตามปกติ`)) return;
+    button.disabled = true;
+    const { error } = await sb.rpc("app_admin_delete_holiday", { p_date: date });
+    if (error) {
+      button.disabled = false;
+      return showToast(friendlyError(error), "error");
+    }
+    showToast("ลบวันหยุดแล้ว");
+    await renderAdmin(params);
+  }));
+}
+
 async function renderAdmin(params) {
   if (state.employee.role?.code !== "admin") return renderNotFound("หน้านี้สำหรับผู้ดูแลระบบเท่านั้น");
-  const tab = ["accounts", "credentials", "modules"].includes(params.get("tab")) ? params.get("tab") : "requests";
+  const tab = ["accounts", "credentials", "modules", "holidays"].includes(params.get("tab")) ? params.get("tab") : "requests";
   state.adminTab = tab;
   loadingShell("admin", "ผู้ดูแลระบบ");
 
@@ -2553,6 +2631,14 @@ async function renderAdmin(params) {
   if (departmentsResult.error) throw departmentsResult.error;
   if (modulePermissionsResult.error) throw modulePermissionsResult.error;
   if (actingRolesResult.error) throw actingRolesResult.error;
+  // วันหยุดบริษัท (ไม่ส่งอีเมลเตือนงานค้างในวันเหล่านี้) โหลดเฉพาะตอนเปิดแท็บนี้
+  let holidays = [];
+  if (tab === "holidays") {
+    const { data, error } = await sb.from("company_holidays").select("holiday_date,name_th")
+      .gte("holiday_date", `${bangkokToday().slice(0, 4)}-01-01`).order("holiday_date");
+    if (error) throw error;
+    holidays = data ?? [];
+  }
   const requests = requestsResult.data ?? [];
   const credentials = credentialsResult.data ?? [];
   const roles = rolesResult.data ?? [];
@@ -2672,8 +2758,10 @@ async function renderAdmin(params) {
       <a class="filter${tab === "accounts" ? " active" : ""}" href="#/admin?tab=accounts">ข้อมูลบัญชี</a>
       <a class="filter${tab === "credentials" ? " active" : ""}" href="#/admin?tab=credentials">คลัง ID/รหัสผ่าน</a>
       <a class="filter${tab === "modules" ? " active" : ""}" href="#/admin?tab=modules">สิทธิ์อนุมัติตามโมดูล</a>
+      <a class="filter${tab === "holidays" ? " active" : ""}" href="#/admin?tab=holidays">วันหยุดบริษัท</a>
     </div>
     ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : ""}
+    ${tab === "holidays" ? holidaysSectionHtml(holidays) : ""}
     ${tab === "accounts" ? `<div class="stack">${accountCards}</div>` : ""}
     ${tab === "modules" ? `
       <section class="card">
@@ -2749,6 +2837,7 @@ async function renderAdmin(params) {
   app.innerHTML = shell(content, "admin", "ผู้ดูแลระบบ");
   bindShell();
   renderEmailDispatchStatus();
+  bindHolidayForms(params);
 
   document.querySelectorAll("[data-module-toggle]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
     const employeeId = checkbox.dataset.employee;

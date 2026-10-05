@@ -259,6 +259,30 @@
     return { technicians, isOwningDeptManager, canAssign, isMyRepairJob, canStartWork, canFinishWork, canVerify, canRecordProgress };
   }
 
+  // กำหนดเสร็จ: ช่างในชุด/ผจก.เจ้าของงานแก้วันที่คาดว่าจะเสร็จได้ระหว่างรอเริ่มงานหรือกำลังซ่อม
+  // เลยกำหนดแล้ว (หลังวันกำหนดเสร็จ) ระบบเตือนช่างทุกรอบ 08:30/13:30 จนกว่าจะจบงานหรือแก้วันที่ใหม่
+  // ทุกการแก้วันที่ถูกบันทึกเป็นประวัติ "แก้ไขจากกำหนดเสร็จเดิม ... เป็นวันที่ ..." ในลำดับเหตุการณ์
+  function expectedDateSectionHtml(request, canReschedule) {
+    if (!canReschedule || !["assigned", "in_progress"].includes(request.status)) return "";
+    const today = bangkokToday();
+    const overdue = Boolean(request.work_expected_date) && request.work_expected_date < today;
+    const current = request.work_expected_date ? formatDate(request.work_expected_date) : "ยังไม่ได้กำหนด";
+    const form = `<form id="expected-date-form"${overdue ? "" : ' class="hidden"'}>
+        <div class="field"><label for="expected-date-input">วันที่คาดว่าจะเสร็จใหม่</label><input class="input" id="expected-date-input" name="expected_date" type="date" min="${escapeHtml(today)}" required></div>
+        <div class="field"><label for="expected-date-note">เหตุผล (ถ้ามี)</label><input class="input" id="expected-date-note" name="note" maxlength="500" placeholder="เช่น รออะไหล่"></div>
+        <div class="form-actions"><button class="btn" type="submit">บันทึกวันที่ใหม่</button></div>
+      </form>`;
+    if (overdue) {
+      return `<section class="card expected-date-overdue"><h2>เลยกำหนดเสร็จแล้ว</h2>
+        <p class="muted small">กำหนดเสร็จเดิม ${escapeHtml(current)} · ${request.status === "in_progress" ? "บันทึกผลซ่อมและจบงาน" : "เริ่มงาน"} หรือแก้ไขวันที่คาดว่าจะเสร็จใหม่ ระบบจะเตือนทางอีเมลทุก 08:30 และ 13:30 น. จนกว่าจะดำเนินการ</p>
+        ${form}</section>`;
+    }
+    return `<section class="card"><h2>กำหนดเสร็จ ${escapeHtml(current)}</h2>
+      <p class="muted small">ถ้าคาดว่าจะเสร็จไม่ทัน แก้วันที่ได้ ระบบบันทึกประวัติการแก้ไขและแจ้งผู้แจ้งให้ทราบ</p>
+      <button type="button" class="btn secondary small" id="expected-date-toggle">แก้ไขวันที่คาดว่าจะเสร็จ</button>
+      ${form}</section>`;
+  }
+
   const modules = (window.MNP_REQUEST_MODULES ??= {});
   modules.MT_REPAIR = {
     code: "MT_REPAIR",
@@ -492,6 +516,7 @@
           <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
         </form></section>` : ""}
         ${progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => progressStepHtml(step, directory, canRecordProgress)).join("")}</div></section>` : ""}
+        ${expectedDateSectionHtml(request, canRecordProgress)}
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
@@ -588,6 +613,29 @@
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       }));
+      document.querySelector("#expected-date-toggle")?.addEventListener("click", () => {
+        document.querySelector("#expected-date-form")?.classList.toggle("hidden");
+      });
+      document.querySelector("#expected-date-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const values = new FormData(form);
+        const expectedDate = String(values.get("expected_date") ?? "");
+        if (!expectedDate) return showToast("กรุณาระบุวันที่คาดว่าจะเสร็จใหม่", "error");
+        const note = String(values.get("note") ?? "").trim();
+        setFormBusy(form, true);
+        try {
+          const { error } = await sb.rpc("app_reschedule_repair_expected_date", {
+            p_request_id: id,
+            p_expected_date: expectedDate,
+            p_note: note || null,
+          });
+          if (error) throw error;
+          triggerNotificationEmails(id);
+          showToast("แก้ไขวันที่คาดว่าจะเสร็จแล้ว");
+          await renderRequestDetail(params);
+        } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
+      });
       document.querySelector(".start-work-button")?.addEventListener("click", async (event) => {
         event.currentTarget.disabled = true;
         try {
