@@ -242,7 +242,10 @@
       </table></div>` : `<div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div>`;
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     const content = `
-      <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div>
+      <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : (state.employee?.isSandbox
+        // โหมดทดสอบซ่อนหน้าคำร้อง (ปุ่ม "ออก NCR" ปกติอยู่ที่นั่น) จึงต้องมีทางเข้าฟอร์มออกใบจากทะเบียนโดยตรง
+        ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1">＋ ออก NCR</a>'
+        : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>')}</div>
       <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="${escapeHtml(filterUrl(value))}">${label}</a>`).join("")}</div>
       <section class="card flush">${body}</section>`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
