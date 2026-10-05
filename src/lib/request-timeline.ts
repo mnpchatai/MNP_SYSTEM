@@ -44,6 +44,8 @@ export type RequestTimelineEvent = {
   at: string;
   title: string;
   detail: string;
+  /** ข้อความที่ผู้ทำรายการพิมพ์เอง (เหตุผล ความเห็น คำตอบกลับ) แสดงแยกใต้รายละเอียด */
+  message?: string;
 };
 
 const repairStatusLabels: Record<string, string> = {
@@ -118,6 +120,7 @@ export function buildRequestTimeline({
       (step) => {
         if (entry.to_status === "more_info") return step.status === "more_info";
         if (entry.to_status === "rejected") return step.status === "rejected";
+        if (entry.to_status === "acknowledged") return step.status === "acknowledged";
         if (["approved", "pending_assign"].includes(entry.to_status)) return step.status === "approved";
         return false;
       },
@@ -140,22 +143,34 @@ export function buildRequestTimeline({
         : orderedSteps[0]?.step_name ?? "";
     }
 
+    // note ของแถวประวัติ = ข้อความที่ผู้ตัดสินใจ/ผู้ตอบกลับพิมพ์ไว้ในรอบนั้น (บันทึกตอนเปลี่ยนสถานะ
+    // จึงไม่หายเมื่อ approval_steps.comment ถูกเขียนทับในรอบถัดไป) แถวเก่าที่ไม่มี note ใช้ comment
+    // ของขั้นที่ตัดสินใจใกล้เวลานั้นแทน
+    const note = entry.note?.trim() ?? "";
     let detail = "";
+    let message = "";
     if (!entry.from_status) {
       detail = `${entry.note || (isRepair ? "สร้างใบแจ้งซ่อม" : "สร้างและส่งคำร้อง")}${actor ? ` โดย ${actor}` : ""}`;
     } else if (entry.to_status === "more_info") {
-      detail = `${actor || "ผู้อนุมัติ"} ขอข้อมูลเพิ่มเติม${matchingDecision?.comment ? `: ${matchingDecision.comment}` : ""}`;
+      detail = `${actor || "ผู้อนุมัติ"} ขอข้อมูลเพิ่มเติม`;
+      message = note || matchingDecision?.comment || "";
     } else if (entry.to_status === "rejected") {
-      detail = `${actor || "ผู้อนุมัติ"} ไม่อนุมัติ${stage ? ` ในขั้น ${stage}` : ""}${matchingDecision?.comment ? `: ${matchingDecision.comment}` : ""}`;
+      detail = `${actor || "ผู้อนุมัติ"} ไม่อนุมัติ${stage ? ` ในขั้น ${stage}` : ""}`;
+      message = note || matchingDecision?.comment || "";
+    } else if (entry.to_status === "acknowledged") {
+      detail = `${actor || "ผู้อนุมัติ"} รับทราบข้อมูล${stage ? ` ในขั้น ${stage}` : ""}`;
+      message = note || matchingDecision?.comment || "";
     } else if (entry.to_status === "pending_approval" && entry.from_status === "more_info") {
       detail = `${actor || "ผู้แจ้ง"} ส่งข้อมูลเพิ่มเติมเพื่อพิจารณาอีกครั้ง`;
+      message = note;
     } else if (entry.to_status === "pending_approval" && entry.from_status === "pending_assign") {
       detail = `${actor || "ระบบ"} ย้อนกลับไปรออนุมัติ${stage ? `ขั้น ${stage}` : ""}`;
     } else if (["approved", "pending_assign"].includes(entry.to_status)) {
       detail = `${actor || "ผู้อนุมัติ"} อนุมัติ${stage ? `ขั้น ${stage}` : "คำร้อง"} แล้ว`;
+      message = note || matchingDecision?.comment || "";
     } else if (entry.to_status === "assigned" && entry.from_status === "pending_verify") {
       detail = `${actor || "ผู้แจ้ง"} ตรวจรับไม่ผ่าน ส่งกลับให้ ${employeeName(request.assignee)} ซ่อมเพิ่มเติม`;
-      detail = appendNote(detail, matchingVerification?.note);
+      message = matchingVerification?.note?.trim() ?? "";
     } else if (entry.to_status === "assigned") {
       detail = `${actor || "ผู้มอบหมาย"} มอบหมายงานให้ ${employeeName(request.assignee)}`;
       if (request.work_expected_date) detail += ` (กำหนดเสร็จ ${formatDate(request.work_expected_date)})`;
@@ -171,7 +186,7 @@ export function buildRequestTimeline({
       }
     } else if (entry.to_status === "completed" && entry.from_status === "pending_verify") {
       detail = `${actor || employeeName(matchingVerification?.verifier ?? null)} ตรวจรับผลการซ่อมแล้ว: ${verificationLabels[matchingVerification?.result ?? ""] ?? "ผ่าน — ใช้งานได้ปกติ"}`;
-      detail = appendNote(detail, matchingVerification?.note);
+      message = matchingVerification?.note?.trim() ?? "";
     } else if (entry.to_status === "completed") {
       detail = `${actor || "ผู้รับผิดชอบ"} ปิดงานว่าเสร็จแล้ว`;
     } else {
@@ -182,7 +197,8 @@ export function buildRequestTimeline({
       id: `status-${entry.id}`,
       at: entry.created_at,
       title: `${labels[entry.to_status] ?? entry.to_status}${stage && ["pending_approval", "more_info", "rejected"].includes(entry.to_status) ? ` (${stage})` : ""}`,
-      detail: appendNote(detail, entry.note),
+      detail: message && message === note ? detail : appendNote(detail, note),
+      ...(message ? { message } : {}),
     };
   });
 
@@ -190,9 +206,15 @@ export function buildRequestTimeline({
     const nextStep = orderedSteps[index + 1];
     if (step.status !== "approved" || !step.acted_at || !nextStep) return [];
     const actorName = employeeName(step.acted_by_employee);
-    let detail = `${actorName === "—" ? "ผู้อนุมัติ" : actorName} อนุมัติขั้น ${step.step_name} แล้ว`;
-    if (step.comment) detail += `: ${step.comment}`;
-    return [{ id: `approval-${step.id}`, at: step.acted_at, title: `รออนุมัติ (${nextStep.step_name})`, detail }];
+    const detail = `${actorName === "—" ? "ผู้อนุมัติ" : actorName} อนุมัติขั้น ${step.step_name} แล้ว`;
+    const message = step.comment?.trim();
+    return [{
+      id: `approval-${step.id}`,
+      at: step.acted_at,
+      title: `รออนุมัติ (${nextStep.step_name})`,
+      detail,
+      ...(message ? { message } : {}),
+    }];
   });
 
   return [...statusEvents, ...approvalEvents].sort((left, right) => left.at.localeCompare(right.at));

@@ -32,6 +32,26 @@ async function notifyAdminsOfUnstaffedStep(requestId: string, body: string, step
   await Promise.allSettled(admins.map((recipientId) => notifyEmployeeByEmail(recipientId, `${title}\n${fullBody}`)));
 }
 
+// trigger requests_status_history สร้างแถวประวัติตอนเปลี่ยนสถานะโดยไม่รู้ข้อความของผู้ทำรายการ
+// (ฝั่ง Pilot Web RPC ฝากข้อความไว้ใน transaction เดียวกัน ดู 20261005020000_status_history_person_notes.sql)
+// Server Action อัปเดตผ่าน Data API หลายคำสั่ง จึงเติม note ให้แถวล่าสุดที่การเปลี่ยนสถานะนี้เพิ่งสร้าง
+// เพื่อให้ "ลำดับเหตุการณ์" เห็นข้อความของแต่ละรอบเหมือนกัน
+async function recordStatusHistoryNote(requestId: string, toStatus: string, changedBy: string, note: string | null) {
+  if (!note) return;
+  const admin = createAdminClient();
+  const { data: row } = await admin
+    .from("request_status_history")
+    .select("id")
+    .eq("request_id", requestId)
+    .eq("to_status", toStatus)
+    .eq("changed_by", changedBy)
+    .is("note", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (row) await admin.from("request_status_history").update({ note }).eq("id", row.id);
+}
+
 function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
@@ -274,6 +294,7 @@ export async function approvalDecisionAction(formData: FormData) {
       status: decision,
       last_changed_by: employee.id,
     }).eq("id", step.request_id);
+    await recordStatusHistoryNote(step.request_id, decision, employee.id, comment || null);
   } else {
     const { data: nextStep } = await admin
       .from("approval_steps")
@@ -313,6 +334,7 @@ export async function approvalDecisionAction(formData: FormData) {
         current_step: 0,
         last_changed_by: employee.id,
       }).eq("id", step.request_id);
+      await recordStatusHistoryNote(step.request_id, "approved", employee.id, comment || null);
 
       // อนุมัติผ่านครบทุกขั้นแล้ว — ส่งสำเนาให้พนักงาน active ทุกคนของแผนกที่ถูกติ๊กไว้ตอนสร้าง
       // คำร้อง (requests.cc_department_ids) ถ้ามี เหมือนกับที่ app_approval_decision ทำฝั่ง Pilot Web
@@ -402,6 +424,7 @@ export async function resubmitRequestAction(formData: FormData) {
     current_step: nextOrder,
     last_changed_by: employee.id,
   }).eq("id", requestId);
+  await recordStatusHistoryNote(requestId, "pending_approval", employee.id, comment);
 
   let recipients: string[] = [];
   if (previousStep.approver_employee_id) recipients = [previousStep.approver_employee_id];
