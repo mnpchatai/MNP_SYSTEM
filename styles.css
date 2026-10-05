@@ -1027,3 +1027,4 @@ a.ncr-dash-row { cursor: pointer; }
 }
 .ncr-due-note { margin: 0 0 15px; padding: 10px 12px; color: var(--ink); background: var(--primary-soft); border-radius: 8px; font-size: 13px; line-height: 1.6; }
 .ncr-attach-form { margin-top: 14px; }
+.ncr-action [hidden] { display: none !important; }

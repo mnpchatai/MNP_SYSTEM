@@ -14,7 +14,7 @@
     "db:start": "supabase start",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
-    "test:unit": "node --test scripts/tests/attachment-image.test.mjs scripts/tests/attachment-preview.test.mjs scripts/tests/request-center.test.mjs scripts/tests/request-timeline.test.mjs"
+    "test:unit": "node --test scripts/tests/attachment-image.test.mjs scripts/tests/attachment-preview.test.mjs scripts/tests/request-center.test.mjs scripts/tests/request-timeline.test.mjs scripts/tests/ncr-costs.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
