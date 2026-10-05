@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(95);
+select plan(98);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -378,6 +378,16 @@ select throws_ok(
   'INVALID_LOSS',
   'loss quantity must be positive'
 );
+select throws_ok(
+  $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'other', 1, 'รายการ', 500) $$,
+  'INVALID_LOSS_NOTE',
+  'an "other" loss without a note is rejected'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'other', 1, 'รายการ', 500, '   ลบ  ') $$,
+  'INVALID_LOSS_NOTE',
+  'an "other" loss needs a meaningful note, not whitespace padding'
+);
 select lives_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 24, 'ท่อน', 18.5, 'ทิ้ง') $$,
   'QA records a scrap loss'
@@ -405,6 +415,10 @@ select is(
   (select count(*)::int from public.ncr_losses where ncr_id = current_setting('test.ncr_a')::uuid),
   2,
   'voided loss lines are kept for the audit trail'
+);
+select lives_ok(
+  $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'other', 1, 'รายการ', 500, 'ค่าตรวจสอบโดยหน่วยงานภายนอก') $$,
+  'an "other" loss with a note is accepted'
 );
 
 -- 8.1 ไฟล์หลักฐาน ---------------------------------------------------------------
