@@ -23,7 +23,7 @@
     return (params.get("status") ?? "all").split(",").filter((value) => value !== "all" && known.includes(value));
   }
   function pendingStatuses(code) {
-    if (code === "NCR_CAR") return ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff"];
+    if (code === "NCR_CAR") return ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
     const common = ["pending_approval", "more_info"];
     return code === "MANAGEMENT" ? common : [...common, "approved", "pending_assign", "assigned", "in_progress", "pending_verify"];
   }
