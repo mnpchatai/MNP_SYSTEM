@@ -928,6 +928,7 @@ body.no-scroll { overflow: hidden; }
 .ncr-card > h2 { margin-bottom: 12px; }
 .ncr-card .definition dd { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ncr-card .definition:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.ncr-card .definition.full { grid-column: 1 / -1; }
 .ncr-text { margin: 12px 0 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ncr-heading-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .ncr-actions { border-color: var(--primary); }
