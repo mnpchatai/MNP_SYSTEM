@@ -122,16 +122,19 @@
   };
   const checkedValues = (form, name) => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
 
-  // withWaiting = ในทะเบียน NCR: ใต้ป้ายสถานะที่ยังไม่ปิดบอกว่าตอนนี้ใครเป็นผู้รับผิดชอบ (สถานะ "รอลงนามปิด" บอกด้วยว่าลงนามไปแล้วกี่ขั้น
-  // ต้องมี signoff_qa_at/signoff_factory_at และ ncr_responsibilities(department) ในข้อมูลที่ส่งมา)
-  function statusBadgeHtml(ncr, withWaiting = false, staff = []) {
+  function statusBadgeHtml(ncr) {
     const badge = `<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`;
-    const flagged = isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
-    const waiting = withWaiting ? waitingOn(ncr, staff) : null;
-    if (!waiting) return flagged;
+    return isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
+  }
+
+  // ในทะเบียน NCR: บอกว่าตอนนี้ใครเป็นผู้รับผิดชอบ (สถานะ "รอลงนามปิด" บอกด้วยว่าลงนามไปแล้วกี่ขั้น)
+  // ต้องมี signoff_qa_at/signoff_factory_at และ ncr_responsibilities(department_id, department) ในข้อมูลที่ส่งมา
+  function waitingLineHtml(ncr, staff = []) {
+    const waiting = waitingOn(ncr, staff);
+    if (!waiting) return "";
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
     const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
-    return `${flagged}<div class="muted small ncr-signer-wait">ผู้รับผิดชอบ: ${escapeHtml(waiting.party)}${progress}</div>`;
+    return `<span class="muted small ncr-signer-wait">ผู้รับผิดชอบ: ${escapeHtml(waiting.party)}${progress}</span>`;
   }
 
   function checksHtml(name, options, selected = []) {
@@ -256,18 +259,36 @@
     }
     // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
     const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
-    const body = rows.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>เลขที่</th><th>วันที่</th><th>สินค้า / ลูกค้า</th><th>ข้อบกพร่อง</th><th>พบปัญหา</th><th>แผนกรับผิดชอบ</th><th>ความสูญเสีย</th><th>สถานะ</th></tr></thead>
-        <tbody>${rows.map((row) => `<tr>
-          <td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${escapeHtml(row.ncr_no)}</a></td>
-          <td>${formatDate(row.issue_date)}</td>
-          <td>${escapeHtml(row.product_name)}${row.customer_name ? `<div class="muted small">${escapeHtml(row.customer_name)}</div>` : ""}</td>
-          <td>${escapeHtml(relation(row.defect_type)?.name_th ?? "—")}</td>
-          <td>${formatQty(row.qty_defect)} ${escapeHtml(row.unit)}</td>
-          <td>${escapeHtml((row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ") || "—")}</td>
-          <td>${lossByNcr.has(row.id) ? formatBaht(lossByNcr.get(row.id)) : "—"}</td>
-          <td>${statusBadgeHtml(row, true, staff)}</td></tr>`).join("")}</tbody>
-      </table></div>` : `<div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div>`;
+    // การ์ดต่อ NCR หนึ่งใบ (รูปแบบเดียวกับรายการคำร้อง): เลขที่/สถานะ → สินค้า/ลูกค้า + รายละเอียดสำคัญ → ผู้รับผิดชอบ + ลิงก์
+    const card = (row) => {
+      const href = `#/ncr?id=${encodeURIComponent(row.id)}`;
+      const departments = (row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ");
+      const loss = lossByNcr.has(row.id) ? formatBaht(lossByNcr.get(row.id)) : null;
+      return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
+        <header class="request-card-head">
+          <div class="request-card-identity"><a class="request-card-no" href="${href}">${escapeHtml(row.ncr_no)}</a></div>
+          <div class="request-card-tags">${statusBadgeHtml(row)}</div>
+        </header>
+        <div class="request-card-body">
+          <a class="request-card-title" href="${href}">${escapeHtml(row.product_name)}</a>
+          ${row.customer_name ? `<p class="request-card-subtitle">${escapeHtml(row.customer_name)}</p>` : ""}
+          <div class="request-card-meta">
+            <span><b>ข้อบกพร่อง:</b> ${escapeHtml(relation(row.defect_type)?.name_th ?? "—")}</span>
+            <span><b>พบปัญหา:</b> ${formatQty(row.qty_defect)} ${escapeHtml(row.unit)}</span>
+            <span><b>แผนกรับผิดชอบ:</b> ${escapeHtml(departments || "—")}</span>
+            <span><b>วันที่ออก:</b> ${formatDate(row.issue_date)}</span>
+            <span><b>ความสูญเสีย:</b> ${loss ?? "—"}</span>
+          </div>
+        </div>
+        <footer class="request-card-footer">
+          <div class="ncr-card-waiting">${waitingLineHtml(row, staff)}</div>
+          <a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>
+        </footer>
+      </article>`;
+    };
+    const body = rows.length
+      ? `<section class="request-list-panel"><div class="request-timeline">${rows.map(card).join("")}</div></section>`
+      : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     const content = `
       <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : (state.employee?.isSandbox
@@ -275,7 +296,7 @@
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1">＋ ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>')}</div>
       <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="${escapeHtml(filterUrl(value))}">${label}</a>`).join("")}</div>
-      <section class="card flush">${body}</section>`;
+      ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");
     bindShell();
