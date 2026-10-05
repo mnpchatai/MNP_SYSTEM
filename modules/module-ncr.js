@@ -127,14 +127,25 @@
     return isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
   }
 
-  // ในทะเบียน NCR: บอกว่าตอนนี้ใครเป็นผู้รับผิดชอบ (สถานะ "รอลงนามปิด" บอกด้วยว่าลงนามไปแล้วกี่ขั้น)
-  // ต้องมี signoff_qa_at/signoff_factory_at และ ncr_responsibilities(department_id, department) ในข้อมูลที่ส่งมา
-  function waitingLineHtml(ncr, staff = []) {
+  // ในทะเบียน NCR: ป้ายพื้นสีใต้สถานะ บอกว่าใครเป็นผู้รับผิดชอบ — ที่ยังไม่ปิด = ผู้รับผิดชอบตอนนี้ (รอลงนามบอกด้วยว่าลงนามไปแล้วกี่ขั้น),
+  // ปิดแล้ว = ผู้จัดการทั่วไปที่ลงนามปิด, ยกเลิก = ผู้ที่ยกเลิก (ต้องมี signoff_*_at/by, cancelled_at/by และ ncr_responsibilities
+  // ในข้อมูลที่ส่งมา; staff = loadNcrStaff(), directory = loadEmployeeDirectory() ซึ่งรวมคนที่ปิดบัญชีแล้ว)
+  function ownerChipHtml(ncr, staff = [], directory = new Map()) {
+    // ไม่รู้ชื่อ (เช่น อ่านรายชื่อไม่ได้) ก็บอกเฉพาะวันที่ ไม่เขียนว่า "โดย" ลอย ๆ
+    const done = (verb, by, at) => {
+      const name = directory.has(by) ? personName(directory, by) : "";
+      const date = at ? formatDate(at) : "";
+      if (!name && !date) return "";
+      return name ? `${verb}โดย ${[name, date].filter(Boolean).join(" · ")}` : `${verb}เมื่อ ${date}`;
+    };
+    const finished = ncr.status === "closed" ? { tone: "is-closed", text: done("ปิด", ncr.signoff_gm_by, ncr.signoff_gm_at) }
+      : ncr.status === "cancelled" ? { tone: "is-cancelled", text: done("ยกเลิก", ncr.cancelled_by, ncr.cancelled_at) } : null;
+    if (finished) return finished.text ? `<span class="ncr-owner-chip ${finished.tone}">${escapeHtml(finished.text)}</span>` : "";
     const waiting = waitingOn(ncr, staff);
     if (!waiting) return "";
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
     const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
-    return `<span class="muted small ncr-signer-wait">ผู้รับผิดชอบ: ${escapeHtml(waiting.party)}${progress}</span>`;
+    return `<span class="ncr-owner-chip is-open"><b>ผู้รับผิดชอบ</b> ${escapeHtml(`${waiting.party}${progress}`)}</span>`;
   }
 
   function checksHtml(name, options, selected = []) {
@@ -240,7 +251,7 @@
     const statusParam = embedded ? "ncrStatus" : "status";
     const filter = LIST_FILTERS.some(([value]) => value === params.get(statusParam)) ? params.get(statusParam) : "open";
     let query = sb.from("ncr_reports")
-      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,department:departments(code))")
+      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,department:departments(code))")
       .order("issue_date", { ascending: false })
       .order("ncr_no", { ascending: false })
       .limit(300);
@@ -259,6 +270,8 @@
     }
     // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
     const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
+    // ผู้ปิด/ผู้ยกเลิกอาจเป็นคนที่ปิดบัญชีไปแล้ว จึงใช้รายชื่อที่รวมคนที่ไม่ใช้งานแล้ว
+    const directory = rows.some((row) => !OPEN_STATUSES.includes(row.status)) ? await loadEmployeeDirectory().catch(() => new Map()) : new Map();
     // การ์ดต่อ NCR หนึ่งใบ (รูปแบบเดียวกับรายการคำร้อง): เลขที่/สถานะ → สินค้า/ลูกค้า + รายละเอียดสำคัญ → ผู้รับผิดชอบ + ลิงก์
     const card = (row) => {
       const href = `#/ncr?id=${encodeURIComponent(row.id)}`;
@@ -267,7 +280,7 @@
       return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
         <header class="request-card-head">
           <div class="request-card-identity"><a class="request-card-no" href="${href}">${escapeHtml(row.ncr_no)}</a></div>
-          <div class="request-card-tags">${statusBadgeHtml(row)}</div>
+          <div class="ncr-card-status"><div class="request-card-tags">${statusBadgeHtml(row)}</div>${ownerChipHtml(row, staff, directory)}</div>
         </header>
         <div class="request-card-body">
           <a class="request-card-title" href="${href}">${escapeHtml(row.product_name)}</a>
@@ -280,8 +293,7 @@
             <span><b>ความสูญเสีย:</b> ${loss ?? "—"}</span>
           </div>
         </div>
-        <footer class="request-card-footer">
-          <div class="ncr-card-waiting">${waitingLineHtml(row, staff)}</div>
+        <footer class="request-card-footer ncr-card-footer">
           <a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>
         </footer>
       </article>`;
