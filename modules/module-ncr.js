@@ -131,16 +131,30 @@
   };
   const checkedValues = (form, name) => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
 
-  // withWaiting = ในทะเบียน NCR: ใต้ป้ายสถานะที่ยังไม่ปิดบอกว่าตอนนี้ใครเป็นผู้รับผิดชอบ (สถานะ "รอลงนามปิด" บอกด้วยว่าลงนามไปแล้วกี่ขั้น
-  // ต้องมี signoff_qa_at/signoff_factory_at และ ncr_responsibilities(department) ในข้อมูลที่ส่งมา)
-  function statusBadgeHtml(ncr, withWaiting = false) {
+  function statusBadgeHtml(ncr) {
     const badge = `<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`;
-    const flagged = isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
-    const waiting = withWaiting ? waitingOn(ncr) : null;
-    if (!waiting) return flagged;
+    return isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
+  }
+
+  // ในทะเบียน NCR: ป้ายพื้นสีใต้สถานะ บอกว่าใครเป็นผู้รับผิดชอบ — ที่ยังไม่ปิด = ผู้รับผิดชอบตอนนี้ (รอลงนามบอกด้วยว่าลงนามไปแล้วกี่ขั้น),
+  // ปิดแล้ว = ผู้จัดการทั่วไปที่ลงนามปิด, ยกเลิก = ผู้ที่ยกเลิก (ต้องมี signoff_*_at/by, cancelled_at/by และ ncr_responsibilities
+  // ในข้อมูลที่ส่งมา; staff = loadNcrStaff(), directory = loadEmployeeDirectory() ซึ่งรวมคนที่ปิดบัญชีแล้ว)
+  function ownerChipHtml(ncr, staff = [], directory = new Map()) {
+    // ไม่รู้ชื่อ (เช่น อ่านรายชื่อไม่ได้) ก็บอกเฉพาะวันที่ ไม่เขียนว่า "โดย" ลอย ๆ
+    const done = (verb, by, at) => {
+      const name = directory.has(by) ? personName(directory, by) : "";
+      const date = at ? formatDate(at) : "";
+      if (!name && !date) return "";
+      return name ? `${verb}โดย ${[name, date].filter(Boolean).join(" · ")}` : `${verb}เมื่อ ${date}`;
+    };
+    const finished = ncr.status === "closed" ? { tone: "is-closed", text: done("ปิด", ncr.signoff_gm_by, ncr.signoff_gm_at) }
+      : ncr.status === "cancelled" ? { tone: "is-cancelled", text: done("ยกเลิก", ncr.cancelled_by, ncr.cancelled_at) } : null;
+    if (finished) return finished.text ? `<span class="ncr-owner-chip ${finished.tone}">${escapeHtml(finished.text)}</span>` : "";
+    const waiting = waitingOn(ncr, staff);
+    if (!waiting) return "";
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
     const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
-    return `${flagged}<div class="muted small ncr-signer-wait">ผู้รับผิดชอบ: ${escapeHtml(waiting.party)}${progress}</div>`;
+    return `<span class="ncr-owner-chip is-open"><b>ผู้รับผิดชอบ</b> ${escapeHtml(`${waiting.party}${progress}`)}</span>`;
   }
 
   function checksHtml(name, options, selected = []) {
@@ -246,7 +260,7 @@
     const statusParam = embedded ? "ncrStatus" : "status";
     const filter = LIST_FILTERS.some(([value]) => value === params.get(statusParam)) ? params.get(statusParam) : "open";
     let query = sb.from("ncr_reports")
-      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department:departments(code))")
+      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,department:departments(code))")
       .order("issue_date", { ascending: false })
       .order("ncr_no", { ascending: false })
       .limit(300);
@@ -266,18 +280,41 @@
         lossByNcr.get(loss.ncr_id).push(loss);
       }
     }
-    const body = rows.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>เลขที่</th><th>วันที่</th><th>สินค้า / ลูกค้า</th><th>ข้อบกพร่อง</th><th>พบปัญหา</th><th>แผนกรับผิดชอบ</th><th>ความสูญเสีย</th><th>สถานะ</th></tr></thead>
-        <tbody>${rows.map((row) => `<tr>
-          <td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${escapeHtml(row.ncr_no)}</a></td>
-          <td>${formatDate(row.issue_date)}</td>
-          <td>${escapeHtml(row.product_name)}${row.customer_name ? `<div class="muted small">${escapeHtml(row.customer_name)}</div>` : ""}</td>
-          <td>${escapeHtml(relation(row.defect_type)?.name_th ?? "—")}</td>
-          <td>${formatQty(row.qty_defect)} ${escapeHtml(row.unit)}</td>
-          <td>${escapeHtml((row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ") || "—")}</td>
-          <td>${lossByNcr.has(row.id) ? (state.employee?.isSandbox ? `${formatBaht(window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id)).net)}<div class="muted small">สุทธิยืนยัน · รอยืนยัน ${window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id)).pending} รายการ</div>` : formatBaht(lossByNcr.get(row.id).reduce((s,l) => s + Number(l.amount),0))) : "—"}</td>
-          <td>${statusBadgeHtml(row, true)}</td></tr>`).join("")}</tbody>
-      </table></div>` : `<div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div>`;
+    // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
+    const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
+    // ผู้ปิด/ผู้ยกเลิกอาจเป็นคนที่ปิดบัญชีไปแล้ว จึงใช้รายชื่อที่รวมคนที่ไม่ใช้งานแล้ว
+    const directory = rows.some((row) => !OPEN_STATUSES.includes(row.status)) ? await loadEmployeeDirectory().catch(() => new Map()) : new Map();
+    // การ์ดต่อ NCR หนึ่งใบ (รูปแบบเดียวกับรายการคำร้อง): เลขที่/สถานะ → สินค้า/ลูกค้า + รายละเอียดสำคัญ → ผู้รับผิดชอบ + ลิงก์
+    const card = (row) => {
+      const href = `#/ncr?id=${encodeURIComponent(row.id)}`;
+      const departments = (row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ");
+      const entries = lossByNcr.get(row.id);
+      const summary = entries && state.employee?.isSandbox ? window.MNP_NCR_COSTS.summarize(entries) : null;
+      const loss = entries ? formatBaht(summary ? summary.net : entries.reduce((sum,entry) => sum + Number(entry.amount),0)) : null;
+      return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
+        <header class="request-card-head">
+          <div class="request-card-identity"><a class="request-card-no" href="${href}">${escapeHtml(row.ncr_no)}</a></div>
+          <div class="ncr-card-status"><div class="request-card-tags">${statusBadgeHtml(row)}</div>${ownerChipHtml(row, staff, directory)}</div>
+        </header>
+        <div class="request-card-body">
+          <a class="request-card-title" href="${href}">${escapeHtml(row.product_name)}</a>
+          ${row.customer_name ? `<p class="request-card-subtitle">${escapeHtml(row.customer_name)}</p>` : ""}
+          <div class="request-card-meta">
+            <span><b>ข้อบกพร่อง:</b> ${escapeHtml(relation(row.defect_type)?.name_th ?? "—")}</span>
+            <span><b>พบปัญหา:</b> ${formatQty(row.qty_defect)} ${escapeHtml(row.unit)}</span>
+            <span><b>แผนกรับผิดชอบ:</b> ${escapeHtml(departments || "—")}</span>
+            <span><b>วันที่ออก:</b> ${formatDate(row.issue_date)}</span>
+            <span><b>ความสูญเสีย:</b> ${loss ?? "—"}${summary ? ` · สุทธิยืนยัน · รอยืนยัน ${summary.pending} รายการ` : ""}</span>
+          </div>
+        </div>
+        <footer class="request-card-footer ncr-card-footer">
+          <a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>
+        </footer>
+      </article>`;
+    };
+    const body = rows.length
+      ? `<section class="request-list-panel"><div class="request-timeline">${rows.map(card).join("")}</div></section>`
+      : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     const content = `
       <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : (state.employee?.isSandbox
@@ -285,7 +322,7 @@
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1">＋ ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>')}</div>
       <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="${escapeHtml(filterUrl(value))}">${label}</a>`).join("")}</div>
-      <section class="card flush">${body}</section>`;
+      ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");
     bindShell();
@@ -368,21 +405,53 @@
     return forms;
   }
 
+  // พนักงานที่ใช้ระบุชื่อผู้รับผิดชอบ — เฉพาะที่ยังใช้งานอยู่ (RLS ซ่อนคนที่ปิดบัญชีแล้วอยู่แล้ว) พร้อมบทบาทและแผนก
+  async function loadNcrStaff() {
+    const { data, error } = await sb.from("employees")
+      .select("id,first_name,last_name,department_id,role:roles(code),department:departments(code)")
+      .eq("is_active", true);
+    if (error) throw error;
+    return data ?? [];
+  }
+
+  const MAX_NAMES = 3;
+  const staffNames = (list) => {
+    const names = list.map((person) => `${person.first_name} ${person.last_name}`).sort((a, b) => a.localeCompare(b, "th"));
+    return names.length > MAX_NAMES ? `${names.slice(0, MAX_NAMES).join(", ")} และอีก ${names.length - MAX_NAMES} คน` : names.join(", ");
+  };
+  const withNames = (label, list) => (list.length ? `${label} (${staffNames(list)})` : label);
+
   // ใครต้องทำอะไรในสถานะปัจจุบัน — ใช้ทั้งในหน้ารายละเอียด (waitingText) และทะเบียน NCR (statusBadgeHtml)
-  function waitingOn(ncr) {
-    const departments = (ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" / ");
-    if (ncr.status === "awaiting_disposition") return { party: "ผู้จัดการฝ่ายโรงงาน", action: "พิจารณา" };
-    if (ncr.status === "awaiting_response") return { party: departments ? `ผู้จัดการแผนก ${departments}` : "ผู้จัดการแผนกที่รับผิดชอบ", action: "ตอบ" };
-    if (ncr.status === "awaiting_followup") return { party: "แผนก QA", action: "ติดตามผล" };
-    if (ncr.status === "awaiting_signoff") return { party: nextSigner(ncr).label, action: "ลงนาม" };
+  // ผู้รับผิดชอบตรงกับผู้ที่ฐานข้อมูลส่งแจ้งเตือน/อนุญาตให้ทำขั้นนั้น (private.ncr_audience และ RPC ของแต่ละขั้น)
+  // staff = ผลของ loadNcrStaff() ถ้าไม่ส่งมา (หรือหาคนไม่เจอ) จะแสดงเฉพาะตำแหน่ง/แผนก
+  function waitingOn(ncr, staff = []) {
+    const hasRole = (person, codes) => codes.includes(relation(person.role)?.code);
+    const managersOf = (departmentId) => staff.filter((person) => person.department_id === departmentId && hasRole(person, DEPT_MANAGER_ROLE_CODES));
+    const qaStaff = staff.filter((person) => relation(person.department)?.code === "QA");
+    if (ncr.status === "awaiting_disposition") {
+      return { party: withNames("ผู้จัดการฝ่ายโรงงาน", staff.filter((person) => hasRole(person, ["factory_manager"]))), action: "พิจารณา" };
+    }
+    if (ncr.status === "awaiting_response") {
+      const parts = (ncr.ncr_responsibilities ?? [])
+        .map((item) => ({ code: relation(item.department)?.code, id: item.department_id }))
+        .filter((item) => item.code)
+        .map((item) => withNames(item.code, managersOf(item.id)));
+      return { party: parts.length ? `ผู้จัดการแผนก ${parts.join(" / ")}` : "ผู้จัดการแผนกที่รับผิดชอบ", action: "ตอบ" };
+    }
+    if (ncr.status === "awaiting_followup") return { party: withNames("แผนก QA", qaStaff), action: "ติดตามผล" };
+    if (ncr.status === "awaiting_signoff") {
+      const signer = nextSigner(ncr);
+      const holders = { qa: qaStaff.filter((person) => hasRole(person, DEPT_MANAGER_ROLE_CODES)), factory: staff.filter((person) => hasRole(person, ["factory_manager"])), gm: staff.filter((person) => hasRole(person, ["general_manager"])) }[signer.key];
+      return { party: withNames(signer.label, holders), action: "ลงนาม" };
+    }
     return null;
   }
 
-  function waitingText(ncr) {
-    const waiting = waitingOn(ncr);
+  function waitingText(ncr, staff = []) {
+    const waiting = waitingOn(ncr, staff);
     if (!waiting) return "";
     const due = formatDate(ncr.response_due);
-    if (ncr.status === "awaiting_disposition") return `${waiting.party}${waiting.action} (แผนกต้องตอบภายใน ${due})`;
+    if (ncr.status === "awaiting_disposition") return `${waiting.party} ${waiting.action} (แผนกต้องตอบภายใน ${due})`;
     if (ncr.status === "awaiting_response") return `${waiting.party} ${waiting.action}ภายใน ${due}`;
     return `${waiting.party} ${waiting.action}`;
   }
@@ -433,13 +502,14 @@
   async function renderDetail(id) {
     loadingShell("ncr", "NCR");
     const employee = state.employee;
-    const [ncrResult, lossResult, historyResult, attachmentResult, directory, outcomeResult] = await Promise.all([
+    const [ncrResult, lossResult, historyResult, attachmentResult, directory, outcomeResult, staff] = await Promise.all([
       sb.from("ncr_reports").select("*,defect_type:ncr_defect_types(name_th),reporter_department:departments!ncr_reports_reporter_department_id_fkey(code),ncr_responsibilities(share,department_id,department:departments(code,name_th))").eq("id", id).maybeSingle(),
       sb.from("ncr_losses").select("*").eq("ncr_id", id).order("recorded_at"),
       sb.from("ncr_status_history").select("*").eq("ncr_id", id).order("id"),
       sb.from("ncr_attachments").select("*").eq("ncr_id", id).order("created_at"),
       loadEmployeeDirectory(),
       state.employee?.isSandbox ? sb.from("ncr_outcomes").select("*").eq("ncr_id", id).maybeSingle() : Promise.resolve({data:null,error:null}),
+      loadNcrStaff().catch(() => []),
     ]);
     if (ncrResult.error) throw ncrResult.error;
     if (lossResult.error) throw lossResult.error;
@@ -461,7 +531,7 @@
       departments = data ?? [];
     }
     const forms = actionForms(ncr, employee, departments);
-    const waiting = waitingText(ncr);
+    const waiting = waitingText(ncr, staff);
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
