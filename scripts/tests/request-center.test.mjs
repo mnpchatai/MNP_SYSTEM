@@ -41,6 +41,7 @@ test("pending counters respect management terminal decisions and NCR's separate 
   assert.ok(pendingStatuses("IT_REPAIR").includes("approved"));
   assert.ok(pendingStatuses("MT_REPAIR").includes("pending_verify"));
   assert.ok(pendingStatuses("NCR_CAR").includes("awaiting_signoff"));
+  assert.ok(pendingStatuses("NCR_CAR").includes("awaiting_info"));
   assert.ok(!pendingStatuses("NCR_CAR").includes("closed"));
 });
 test("links keep their filters on browsers without URLSearchParams.size", () => {

@@ -19,10 +19,11 @@
     awaiting_response: "รอแผนกตอบ",
     awaiting_followup: "รอ QA ติดตามผล",
     awaiting_signoff: "รอลงนามปิด",
+    awaiting_info: "รอข้อมูลเพิ่มเติม",
     closed: "ปิดแล้ว",
     cancelled: "ยกเลิก",
   };
-  const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff"];
+  const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
   const SOURCES = { incoming: "In-Coming", in_process: "In-Process", final_fg: "Final FG", customer_reject: "Reject from Customer", other: "Other" };
   const UNITS = ["ชุด", "ชิ้น", "เซต", "ม้วน", "เส้น", "กก.", "ท่อน", "เมตร", "ลูก", "ใบ", "รายการ"];
   const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่นๆ" };
@@ -71,6 +72,8 @@
     // friendlyError เลือกรหัสแรกที่พบในข้อความ จึงต้องวาง INVALID_LOSS_NOTE ไว้ก่อน INVALID_LOSS
     INVALID_LOSS_NOTE: `ประเภท "อื่นๆ" ต้องระบุหมายเหตุอธิบายว่าเป็นค่าอะไร (อย่างน้อย ${OTHER_LOSS_NOTE_MIN} ตัวอักษร)`,
     INVALID_LOSS: "จำนวนต้องมากกว่า 0 ราคาต่อหน่วยต้องไม่ติดลบ และต้องระบุหน่วย",
+    INVALID_INFO_REQUEST: "กรุณาระบุข้อมูลที่ต้องการเพิ่มเติม (5–2,000 ตัวอักษร)",
+    INVALID_INFO_ANSWER: "กรุณาระบุข้อมูลที่ตอบ (5–5,000 ตัวอักษร)",
     INVALID_LOSS_BATCH: "ต้องมีรายการความสูญเสียอย่างน้อย 1 และไม่เกิน 30 รายการ",
     LOSS_NOT_FOUND: "ไม่พบรายการความสูญเสียนี้",
     LOSS_ALREADY_VOIDED: "รายการนี้ถูกยกเลิกไปแล้ว",
@@ -329,6 +332,8 @@
     return `<div class="definition${full ? " full" : ""}"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
   }
 
+  const STEP_LABELS = { qa: "ผู้จัดการแผนก QA", factory: "ผู้จัดการฝ่ายโรงงาน", gm: "ผู้จัดการทั่วไป" };
+
   function nextSigner(ncr) {
     if (!ncr.signoff_qa_at) return { key: "qa", label: "ผู้จัดการแผนก QA" };
     if (!ncr.signoff_factory_at) return { key: "factory", label: "ผู้จัดการฝ่ายโรงงาน" };
@@ -342,7 +347,7 @@
     return roleCode(employee) === "general_manager";
   }
 
-  function actionForms(ncr, employee, departments) {
+  function actionForms(ncr, employee, departments, openInfoRequest = null) {
     const forms = [];
     const myDeptResponsible = (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
     if (ncr.status === "awaiting_disposition" && roleCode(employee) === "factory_manager") {
@@ -381,6 +386,19 @@
       forms.push(`<form class="ncr-action" data-action="signoff"><div class="ncr-form-message"></div>
         <h3>ลงนามปิด NCR ในฐานะ${escapeHtml(nextSigner(ncr).label)}</h3>
         <div class="form-actions"><button class="btn" type="submit">ลงนาม</button></div></form>`);
+      forms.push(`<form class="ncr-action" data-action="request_info"><div class="ncr-form-message"></div>
+        <h3>ขอข้อมูลเพิ่มเติมก่อนลงนาม</h3>
+        <p class="muted small">ข้อความจะถึงผู้จัดการแผนกที่รับผิดชอบ เมื่อตอบแล้วใบจะกลับมารอลงนามที่ลำดับของคุณ (ลายเซ็นที่ลงไปแล้วยังอยู่)</p>
+        <div class="field"><label for="ncr-info-request">ข้อมูลที่ต้องการ *</label><textarea class="textarea" id="ncr-info-request" name="note" maxlength="2000"></textarea></div>
+        <div class="form-actions"><button class="btn secondary" type="submit">ขอข้อมูลเพิ่มเติม</button></div></form>`);
+    }
+    if (ncr.status === "awaiting_info" && isDeptManager(employee) && myDeptResponsible) {
+      forms.push(`<form class="ncr-action" data-action="answer_info"><div class="ncr-form-message"></div>
+        <h3>ให้ข้อมูลเพิ่มเติม</h3>
+        ${openInfoRequest ? `<p class="muted small">${escapeHtml(STEP_LABELS[openInfoRequest.step] ?? "ผู้ลงนาม")} ขอ: <strong>${escapeHtml(openInfoRequest.request_note)}</strong></p>` : ""}
+        <div class="field"><label for="ncr-info-answer">ข้อมูลที่ตอบ *</label><textarea class="textarea" id="ncr-info-answer" name="note" maxlength="5000"></textarea></div>
+        ${evidenceFieldHtml("ncr-info-evidence", "แนบหลักฐาน (ถ้ามี) เช่น เอกสาร รูปภาพ ผลตรวจ")}
+        <div class="form-actions"><button class="btn" type="submit">ส่งข้อมูล</button></div></form>`);
     }
     if (OPEN_STATUSES.includes(ncr.status) && isQaManager(employee)) {
       forms.push(`<form class="ncr-action" data-action="cancel"><div class="ncr-form-message"></div>
@@ -417,12 +435,12 @@
     if (ncr.status === "awaiting_disposition") {
       return { party: withNames("ผู้จัดการฝ่ายโรงงาน", staff.filter((person) => hasRole(person, ["factory_manager"]))), action: "พิจารณา" };
     }
-    if (ncr.status === "awaiting_response") {
+    if (ncr.status === "awaiting_response" || ncr.status === "awaiting_info") {
       const parts = (ncr.ncr_responsibilities ?? [])
         .map((item) => ({ code: relation(item.department)?.code, id: item.department_id }))
         .filter((item) => item.code)
         .map((item) => withNames(item.code, managersOf(item.id)));
-      return { party: parts.length ? `ผู้จัดการแผนก ${parts.join(" / ")}` : "ผู้จัดการแผนกที่รับผิดชอบ", action: "ตอบ" };
+      return { party: parts.length ? `ผู้จัดการแผนก ${parts.join(" / ")}` : "ผู้จัดการแผนกที่รับผิดชอบ", action: ncr.status === "awaiting_info" ? "ให้ข้อมูลเพิ่มเติม" : "ตอบ" };
     }
     if (ncr.status === "awaiting_followup") return { party: withNames("แผนก QA", qaStaff), action: "ติดตามผล" };
     if (ncr.status === "awaiting_signoff") {
@@ -480,19 +498,21 @@
   const HISTORY_LABELS = {
     issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผจก.แผนก QA ลงนาม", signoff_factory: "ผจก.โรงงานลงนาม",
-    signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
+    signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
   };
 
   async function renderDetail(id) {
     loadingShell("ncr", "NCR");
     const employee = state.employee;
-    const [ncrResult, lossResult, historyResult, attachmentResult, directory, staff] = await Promise.all([
+    const [ncrResult, lossResult, historyResult, attachmentResult, directory, staff, infoResult] = await Promise.all([
       sb.from("ncr_reports").select("*,defect_type:ncr_defect_types(name_th),reporter_department:departments!ncr_reports_reporter_department_id_fkey(code),ncr_responsibilities(share,department_id,department:departments(code,name_th))").eq("id", id).maybeSingle(),
       sb.from("ncr_losses").select("*").eq("ncr_id", id).order("recorded_at"),
       sb.from("ncr_status_history").select("*").eq("ncr_id", id).order("id"),
       sb.from("ncr_attachments").select("*").eq("ncr_id", id).order("created_at"),
       loadEmployeeDirectory(),
       loadNcrStaff().catch(() => []),
+      // ถ้าฐานข้อมูลยังไม่มีตารางนี้ (ยังไม่ได้ push migration) ก็แสดงใบตามปกติ ไม่ให้หน้าทั้งหน้าพัง
+      sb.from("ncr_info_requests").select("*").eq("ncr_id", id).order("requested_at").then((result) => (result.error ? { data: [] } : result)),
     ]);
     if (ncrResult.error) throw ncrResult.error;
     if (lossResult.error) throw lossResult.error;
@@ -511,7 +531,8 @@
       if (error) throw error;
       departments = data ?? [];
     }
-    const forms = actionForms(ncr, employee, departments);
+    const infoRequests = infoResult.data ?? [];
+    const forms = actionForms(ncr, employee, departments, infoRequests.find((request) => !request.answered_at) ?? null);
     const waiting = waitingText(ncr, staff);
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
@@ -562,6 +583,17 @@
         ${definition("วันที่ปิด", formatDate(ncr.closed_at))}
       </dl></section>
 `;
+    // คำขอข้อมูลเพิ่มเติมจากผู้ลงนามและคำตอบของแผนก — อ่านได้ทุกคนที่เห็นใบนี้ (คำขอที่ยังไม่ตอบขึ้นก่อน)
+    const infoSection = infoRequests.length ? `
+      <section class="card ncr-card"><h2>ขอข้อมูลเพิ่มเติมก่อนลงนาม</h2>
+        ${infoRequests.map((request) => `<div class="definition-grid ncr-info-request">
+          ${definition(`${STEP_LABELS[request.step] ?? "ผู้ลงนาม"} ขอ · ${formatDate(request.requested_at)}`, `${escapeHtml(request.request_note)}<div class="muted small">โดย ${escapeHtml(personName(directory, request.requested_by))}</div>`, true)}
+          ${request.answered_at
+            ? definition(`ตอบแล้ว · ${formatDate(request.answered_at)}`, `${escapeHtml(request.answer_note)}<div class="muted small">โดย ${escapeHtml(personName(directory, request.answered_by))}</div>`, true)
+            : definition("ยังไม่มีคำตอบ", `รอ ${escapeHtml(waiting || "แผนกที่รับผิดชอบ")}`, true)}
+        </div>`).join("")}
+      </section>
+` : "";
     const filesSection = `
       <section class="card ncr-card"><h2>ไฟล์หลักฐาน</h2>
         <p class="muted small">ทุกคนที่เห็นใบนี้แนบไฟล์เพิ่มได้จนกว่าจะปิดใบ ไฟล์ที่แนบแล้วลบไม่ได้เพราะเป็นหลักฐาน · ผู้แนบและเวลาดูได้ในประวัติเอกสาร</p>
@@ -574,9 +606,9 @@
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     // ผู้ดำเนินการต้องได้อ่านข้อมูลของขั้นก่อนหน้า + ไฟล์หลักฐานก่อนถึงฟอร์ม: ฟอร์มจึงอยู่หลังส่วนที่ขั้นนั้นต้องอ่าน
     // (ส่วนที่ 3 ถึงขั้นติดตามผล ส่วนที่ 4 ถึงขั้นลงนาม) ส่วนที่เหลือตามหลังฟอร์ม; ไม่มีฟอร์มให้ทำ = เรียงตามเลขส่วนเหมือนเดิม
-    const parts = [part1, part2, part3, part4];
+    const parts = infoSection ? [part1, part2, part3, part4, infoSection] : [part1, part2, part3, part4];
     const actionsSection = `<section class="card ncr-card ncr-actions"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
-    const readFirst = { awaiting_disposition: 1, awaiting_response: 2, awaiting_followup: 3, awaiting_signoff: 4 }[ncr.status] ?? parts.length;
+    const readFirst = { awaiting_disposition: 1, awaiting_response: 2, awaiting_followup: 3, awaiting_signoff: 4, awaiting_info: parts.length }[ncr.status] ?? parts.length;
     const body = forms.length
       ? [...parts.slice(0, readFirst), filesSection, actionsSection, ...parts.slice(readFirst), lossesSection, historySection]
       : [...parts, filesSection, lossesSection, historySection];
@@ -744,6 +776,8 @@
       }),
       followup: (form) => sb.rpc("app_ncr_followup", { p_ncr_id: ncr.id, p_result: checkedValues(form, "result")[0] ?? "", p_note: optionalText(form, "note") }),
       signoff: () => sb.rpc("app_ncr_signoff", { p_ncr_id: ncr.id }),
+      request_info: (form) => sb.rpc("app_ncr_request_info", { p_ncr_id: ncr.id, p_note: optionalText(form, "note") ?? "" }),
+      answer_info: (form) => sb.rpc("app_ncr_answer_info", { p_ncr_id: ncr.id, p_note: optionalText(form, "note") ?? "" }),
       attach: async (form, evidences) => {
         if (!evidences.length) return { error: new Error("กรุณาเลือกไฟล์") };
         const section = ATTACHMENT_SECTION_BY_STATUS[ncr.status] ?? "followup";
@@ -766,7 +800,7 @@
         });
       },
     };
-    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
+    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
 
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -787,7 +821,7 @@
         if (error) throw error;
         let message = doneMessage ?? doneMessages[action];
         // ไฟล์ที่แนบมากับคำตอบอัปโหลดหลังบันทึกคำตอบสำเร็จ ถ้าอัปโหลดไม่ผ่าน คำตอบยังอยู่และแนบใหม่ได้
-        if (action === "respond" && evidences.length) {
+        if ((action === "respond" || action === "answer_info") && evidences.length) {
           const uploaded = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(ncr.id, file, "response"));
           if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ที่ส่วนไฟล์หลักฐาน`;
         }
