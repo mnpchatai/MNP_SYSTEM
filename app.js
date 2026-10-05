@@ -86,7 +86,7 @@ document.addEventListener("visibilitychange", checkForNewVersion);
 window.addEventListener("hashchange", checkForNewVersion);
 
 const toastNode = document.querySelector("#toast");
-const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests" };
+const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests", sandbox: null };
 
 // "ตำแหน่ง" คือ role_id โดยตรงแล้ว (ไม่มี position_level แยกต่างหากอีกต่อไป) ค่าตำแหน่ง
 // ที่มีอยู่จริงตอนนี้มี 6 อย่าง: ผู้จัดการทั่วไป/ผู้จัดการโรงงาน/ผู้ช่วยผู้จัดการโรงงาน/
@@ -199,9 +199,19 @@ function requestModulePage(path) {
   }
   return null;
 }
+// โมดูลที่ฐานข้อมูลรองรับโหมดทดสอบแล้วประกาศ sandbox: true (ตอนนี้มีเฉพาะ NCR)
+// โมดูลอื่นถูกซ่อน และฐานข้อมูลปฏิเสธการเขียนของโมดูลที่ยังไม่รองรับ (SANDBOX_MODULE_UNSUPPORTED)
+const isSandboxMode = () => Boolean(state.employee?.isSandbox);
+const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;
+function sandboxRouteAllowed(path, params) {
+  if (path === "new" || path === "repair/new") return false;
+  if (path === "requests") return params.get("mode") === "create";
+  const entry = Object.values(REQUEST_MODULES).find((item) => item.enabled && typeof item.pages?.[path] === "function");
+  return Boolean(entry?.sandbox);
+}
 function requestModuleNavLinks(active) {
   return Object.values(REQUEST_MODULES)
-    .filter((entry) => entry.enabled)
+    .filter((entry) => entry.enabled && sandboxSupports(entry))
     .flatMap((entry) => entry.nav ?? [])
     .map((item) => navLink(item.path, item.label, item.icon, active))
     .join("");
@@ -300,6 +310,11 @@ function friendlyError(error) {
     ...moduleMessages,
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
+    SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
+    SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR ตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
+    SANDBOX_ATTACHMENT_UNSUPPORTED: "โหมดทดสอบยังไม่รองรับการแนบไฟล์",
+    SANDBOX_NOT_ACTIVE: "ต้องเข้าโหมดทดสอบก่อนจึงจะล้างข้อมูลทดสอบได้",
+    PERSONA_NOT_FOUND: "ไม่พบบัญชีทดสอบที่เลือก",
     EMPLOYEE_NOT_FOUND: "บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ",
     INVALID_ROLE: "บทบาทที่เลือกไม่ถูกต้อง กรุณาเลือกใหม่",
     TARGET_NOT_ADMIN: "บทบาทหลักในการทำงานตั้งได้เฉพาะบัญชีที่มีตำแหน่งผู้ดูแลระบบ",
@@ -1148,7 +1163,31 @@ async function loadEmployee() {
     department: relation(data.department),
     approvalModules: new Set((modulesData ?? []).map((item) => item.code)),
   };
+  await applySandboxOverlay();
   return state.employee;
+}
+
+// โหมดทดสอบของ admin: ฐานข้อมูลให้ NCR ทำงานตามบัญชีทดสอบ (persona) ที่ admin เลือก
+// หน้าเว็บจึงต้องใช้ persona เป็น "ผู้ใช้ปัจจุบัน" ด้วย ปุ่มและสิทธิ์ที่แสดงจะตรงกับที่ฐานข้อมูลยอมรับ
+// ผู้ใช้ทั่วไปไม่ถูกเรียก RPC นี้ และถ้าฐานข้อมูลยังไม่มีฟังก์ชัน (ยังไม่ได้ db push) admin ยังใช้งานตามปกติ
+async function applySandboxOverlay() {
+  state.sandbox = null;
+  if (state.employee?.role?.code !== "admin") return;
+  const { data, error } = await sb.rpc("app_sandbox_status");
+  if (error) {
+    console.warn("sandbox status unavailable", error);
+    return;
+  }
+  state.sandbox = data;
+  if (!data?.active || !data.persona) return;
+  state.employee = {
+    ...data.persona,
+    phone: null,
+    acting_role_id: null,
+    manager_id: null,
+    approvalModules: new Set(),
+    isSandbox: true,
+  };
 }
 
 async function loadUnread() {
@@ -1194,11 +1233,11 @@ function shell(content, active, title) {
         <a class="brand" href="#/dashboard"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
-          ${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
+          ${isSandboxMode() ? "" : `${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
           ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active, { href: window.MNP_REQUEST_CENTER.overviewUrl() })}
-          ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}
+          ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}`}
           ${requestModuleNavLinks(active)}
-          ${navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
+          ${isSandboxMode() ? "" : navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
           <div class="nav-divider"></div>
           ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
           ${navLink("profile", "ข้อมูลส่วนตัว", NAV_ICONS.profile, active)}
@@ -1220,15 +1259,89 @@ function shell(content, active, title) {
           <div class="breadcrumbs">MNP Workspace &nbsp;/&nbsp; <strong>${escapeHtml(title)}</strong></div>
           <div class="top-actions">
             ${themeButton()}
-            <a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>
+            ${isSandboxMode() ? "" : `<a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>`}
           </div>
         </header>
-        <div class="content">${content}</div>
+        <div class="content">${sandboxBannerHtml()}${content}</div>
       </main>
     </div>`;
 }
 
+// แถบโหมดทดสอบ: แสดงทุกหน้าเมื่อ admin อยู่ในโหมดทดสอบ สลับบัญชีทดสอบ/ล้างข้อมูล/ออกได้จากที่นี่
+function sandboxBannerHtml() {
+  if (!isSandboxMode()) return "";
+  const personas = state.sandbox?.personas ?? [];
+  const current = state.employee.id;
+  return `<div class="sandbox-banner" role="status">
+    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ใช้ได้เฉพาะ NCR · ไม่รองรับการแนบไฟล์</span></div>
+    <div class="sandbox-banner-actions">
+      <label for="sandbox-persona">ทำหน้าที่เป็น</label>
+      <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
+      <button class="btn secondary small" type="button" id="sandbox-purge">ล้างข้อมูลทดสอบ</button>
+      <button class="btn small" type="button" id="sandbox-exit">ออกจากโหมดทดสอบ</button>
+    </div>
+  </div>`;
+}
+
+async function afterSandboxChange(route) {
+  await loadEmployee();
+  state.directory = null;
+  if (route && location.hash !== `#/${route}`) {
+    go(route);
+    return;
+  }
+  await renderRoute();
+}
+
+async function enterSandbox(personaId, route) {
+  const { error } = await sb.rpc("app_sandbox_enter", { p_persona_id: personaId });
+  if (error) throw error;
+  await afterSandboxChange(route);
+}
+
+async function exitSandbox() {
+  const { error } = await sb.rpc("app_sandbox_exit");
+  if (error) throw error;
+  await afterSandboxChange("admin?tab=sandbox");
+}
+
+function bindSandboxBanner() {
+  document.querySelector("#sandbox-persona")?.addEventListener("change", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      await enterSandbox(event.currentTarget.value);
+    } catch (error) {
+      showToast(friendlyError(error), "error");
+      await renderRoute();
+    }
+  });
+  document.querySelector("#sandbox-exit")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      await exitSandbox();
+    } catch (error) {
+      event.currentTarget.disabled = false;
+      showToast(friendlyError(error), "error");
+    }
+  });
+  document.querySelector("#sandbox-purge")?.addEventListener("click", async (event) => {
+    if (!confirm("ล้างใบ NCR ทดสอบทั้งหมดและเริ่มนับเลข TEST- ใหม่ ?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
+    event.currentTarget.disabled = true;
+    try {
+      const { data, error } = await sb.rpc("app_sandbox_purge_ncr");
+      if (error) throw error;
+      showToast(`ล้างข้อมูลทดสอบแล้ว ${data?.deleted ?? 0} ใบ`);
+      if (location.hash === "#/ncr") await renderRoute();
+      else go("ncr");
+    } catch (error) {
+      event.currentTarget.disabled = false;
+      showToast(friendlyError(error), "error");
+    }
+  });
+}
+
 function bindShell() {
+  bindSandboxBanner();
   const shellNode = document.querySelector(".app-shell");
   const navToggle = document.querySelector(".mobile-nav-toggle");
   const navBackdrop = document.querySelector(".nav-backdrop");
@@ -1678,13 +1791,14 @@ function typeCardHtml(type) {
 
 async function renderNewRequest(params) {
   loadingShell("requests", "คำร้อง / สร้างคำร้อง");
-  const { data: types, error } = await sb
+  const { data: allTypes, error } = await sb
     .from("request_types")
     .select("id,code,prefix,name_th,description,form_schema,uses_repair_workflow")
     .eq("is_active", true)
     .in("code", activeRequestModuleCodes())
     .order("sort_order");
   if (error) throw error;
+  const types = isSandboxMode() ? (allTypes ?? []).filter((type) => requestModule(type.code)?.sandbox === true) : allTypes;
   const employee = state.employee;
 
   // ข้อมูลที่โมดูลแยกไฟล์โหลดไว้ใช้วาดฟอร์ม (prepareForm) — โหลดครั้งเดียวต่อการเปิดหน้านี้
@@ -1816,7 +1930,12 @@ async function loadEmployeeDirectory() {
   // เก็บผู้ใช้ที่ปิดใช้งานแล้วไว้ด้วย เพื่อให้ชื่อผู้ดำเนินการในประวัติเก่ายังแสดงได้ครบ
   const { data, error } = await sb.from("employees").select("id,first_name,last_name,job_title,role_id,department_id,is_active");
   if (error) throw error;
-  return new Map((data ?? []).map((employee) => [employee.id, employee]));
+  const directory = new Map((data ?? []).map((employee) => [employee.id, employee]));
+  // บัญชีทดสอบ inactive จึงถูก RLS ซ่อน: เติมจากรายการที่ฐานข้อมูลส่งให้ admin เพื่อให้ชื่อผู้ดำเนินการในใบทดสอบแสดงครบ
+  for (const persona of state.sandbox?.personas ?? []) {
+    if (!directory.has(persona.id)) directory.set(persona.id, { ...persona, is_active: false });
+  }
+  return directory;
 }
 
 function personName(directory, id) {
@@ -2571,6 +2690,46 @@ function bangkokToday() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
 }
 
+// แท็บ "ทดสอบระบบ" (เฉพาะ admin): เลือกบัญชีทดสอบแล้วเข้าโหมดทดสอบเพื่อใช้ NCR ด้วยข้อมูลที่แยกจากของจริง
+function sandboxSectionHtml() {
+  const status = state.sandbox;
+  if (!status) {
+    return `<section class="card"><h2>ทดสอบระบบ</h2><p class="muted small">ยังใช้โหมดทดสอบไม่ได้ เพราะฐานข้อมูลยังไม่ได้อัปเดตเป็นรุ่นที่รองรับ (ต้อง <code>supabase db push</code> migration <code>20261005030000_admin_sandbox_mode</code> ก่อน)</p></section>`;
+  }
+  const rows = (status.personas ?? []).map((persona) => `<tr>
+      <td><span class="request-no">${escapeHtml(persona.employee_no)}</span></td>
+      <td>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)}</td>
+      <td>${escapeHtml(persona.department?.code ?? "—")}</td>
+      <td>${escapeHtml(persona.role?.name_th ?? persona.role?.code ?? "—")}</td>
+      <td class="center"><button class="btn small" type="button" data-sandbox-enter="${escapeHtml(persona.id)}">เข้าโหมดทดสอบ</button></td>
+    </tr>`).join("") || `<tr><td colspan="5" class="muted small">ยังไม่มีบัญชีทดสอบ</td></tr>`;
+  return `<section class="card">
+    <h2>ทดสอบระบบ (เฉพาะผู้ดูแลระบบ)</h2>
+    <p class="muted small">เลือกบัญชีทดสอบแล้วใช้งาน NCR ตามบทบาทนั้นได้ทุกขั้น (ออกใบ → พิจารณา → ตอบ → ติดตาม → ลงนาม → ยกเลิก → ความสูญเสีย) สลับบทบาทได้จากแถบสีเหลืองด้านบนของทุกหน้า</p>
+    <ul class="muted small">
+      <li>ข้อมูลทดสอบแยกจากของจริงที่ฐานข้อมูล: เลขที่ขึ้นต้น <code>TEST-QA…</code> ไม่กินเลข QAxxx/yy จริง ผู้ใช้จริงมองไม่เห็นใบทดสอบ และไม่มีแจ้งเตือนหรืออีเมลถึงใครเลย</li>
+      <li>ระหว่างอยู่ในโหมดทดสอบ โมดูลอื่นเขียนข้อมูลไม่ได้ ต้องออกจากโหมดทดสอบก่อนทำงานจริง</li>
+      <li>ยังไม่รองรับการแนบไฟล์ในโหมดทดสอบ · บันทึกการเข้า/ออก/ล้างข้อมูลอยู่ใน audit log</li>
+    </ul>
+    <div class="table-wrap"><table>
+      <thead><tr><th>รหัส</th><th>บัญชีทดสอบ</th><th>แผนก</th><th>ตำแหน่ง</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function bindSandboxPanel() {
+  document.querySelectorAll("[data-sandbox-enter]").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await enterSandbox(button.dataset.sandboxEnter, "ncr");
+    } catch (error) {
+      button.disabled = false;
+      showToast(friendlyError(error), "error");
+    }
+  }));
+}
+
 function holidaysSectionHtml(holidays) {
   const today = bangkokToday();
   const rows = holidays.map((holiday) => `<tr${holiday.holiday_date < today ? ' class="muted"' : ""}>
@@ -2626,7 +2785,7 @@ function bindHolidayForms(params) {
 
 async function renderAdmin(params) {
   if (state.employee.role?.code !== "admin") return renderNotFound("หน้านี้สำหรับผู้ดูแลระบบเท่านั้น");
-  const tab = ["accounts", "credentials", "modules", "holidays"].includes(params.get("tab")) ? params.get("tab") : "requests";
+  const tab = ["accounts", "credentials", "modules", "holidays", "sandbox"].includes(params.get("tab")) ? params.get("tab") : "requests";
   state.adminTab = tab;
   loadingShell("admin", "ผู้ดูแลระบบ");
 
@@ -2651,6 +2810,11 @@ async function renderAdmin(params) {
       .gte("holiday_date", `${bangkokToday().slice(0, 4)}-01-01`).order("holiday_date");
     if (error) throw error;
     holidays = data ?? [];
+  }
+  // โหมดทดสอบ: อ่านสถานะล่าสุดเฉพาะตอนเปิดแท็บนี้ (ใช้ผลที่โหลดตอนเข้าสู่ระบบไม่ได้เพราะอาจเปลี่ยนไปแล้ว)
+  if (tab === "sandbox") {
+    const { data, error } = await sb.rpc("app_sandbox_status");
+    state.sandbox = error ? null : data;
   }
   const requests = requestsResult.data ?? [];
   const credentials = credentialsResult.data ?? [];
@@ -2772,9 +2936,11 @@ async function renderAdmin(params) {
       <a class="filter${tab === "credentials" ? " active" : ""}" href="#/admin?tab=credentials">คลัง ID/รหัสผ่าน</a>
       <a class="filter${tab === "modules" ? " active" : ""}" href="#/admin?tab=modules">สิทธิ์อนุมัติตามโมดูล</a>
       <a class="filter${tab === "holidays" ? " active" : ""}" href="#/admin?tab=holidays">วันหยุดบริษัท</a>
+      <a class="filter${tab === "sandbox" ? " active" : ""}" href="#/admin?tab=sandbox">ทดสอบระบบ</a>
     </div>
     ${tab === "requests" ? `<div class="stack">${requestCards}</div>` : ""}
     ${tab === "holidays" ? holidaysSectionHtml(holidays) : ""}
+    ${tab === "sandbox" ? sandboxSectionHtml() : ""}
     ${tab === "accounts" ? `<div class="stack">${accountCards}</div>` : ""}
     ${tab === "modules" ? `
       <section class="card">
@@ -2851,6 +3017,7 @@ async function renderAdmin(params) {
   bindShell();
   renderEmailDispatchStatus();
   bindHolidayForms(params);
+  bindSandboxPanel();
 
   document.querySelectorAll("[data-module-toggle]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
     const employeeId = checkbox.dataset.employee;
@@ -3070,6 +3237,10 @@ async function renderRoute() {
       await signOutLocally(friendlyError(error));
       return await renderAuth();
     }
+  }
+  if (isSandboxMode() && !sandboxRouteAllowed(path, params)) {
+    go("ncr");
+    return;
   }
   await loadUnread();
   try {

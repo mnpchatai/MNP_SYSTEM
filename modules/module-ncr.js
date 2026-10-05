@@ -73,7 +73,10 @@
   const ATTACHMENT_SECTION_BY_STATUS = { awaiting_disposition: "report", awaiting_response: "response" };
   const ATTACHMENT_ACCEPT = "image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx";
   // ข้อความใต้ช่อง (ATTACHMENT_HINT) มาจาก app.js ชุดเดียวกับทุกหน้า
-  const evidenceFieldHtml = (id, label) => `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="evidence" type="file" multiple accept="${ATTACHMENT_ACCEPT}"><small>${ATTACHMENT_HINT}</small></div>`;
+  // โหมดทดสอบของ admin ไม่รองรับไฟล์แนบ (ลบไฟล์ใน Storage ด้วย SQL ไม่ได้ จึงไม่ปล่อยให้เกิดไฟล์ค้าง) ฐานข้อมูลปฏิเสธอยู่แล้ว
+  const evidenceFieldHtml = (id, label) => (state.employee?.isSandbox
+    ? `<div class="field"><span class="muted small">${label} — โหมดทดสอบยังไม่รองรับการแนบไฟล์</span></div>`
+    : `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="evidence" type="file" multiple accept="${ATTACHMENT_ACCEPT}"><small>${ATTACHMENT_HINT}</small></div>`);
   // อ่านไฟล์ทั้งหมดจากฟอร์มและตรวจขนาด/ชนิด/ขนาดรวมก่อนเรียก RPC (optionalAttachments ของ app.js โยน error เป็นข้อความไทย)
   const evidencesOf = (form) => (form.elements.evidence ? optionalAttachments(form.elements.evidence.files) : []);
 
@@ -443,7 +446,7 @@
       <section class="card ncr-card"><h2>ไฟล์หลักฐาน</h2>
         <p class="muted small">ทุกคนที่เห็นใบนี้แนบไฟล์เพิ่มได้จนกว่าจะปิดใบ ไฟล์ที่แนบแล้วลบไม่ได้เพราะเป็นหลักฐาน · ผู้แนบและเวลาดูได้ในประวัติเอกสาร</p>
         ${attachmentGalleryHtml(attachments)}
-        ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
+        ${OPEN_STATUSES.includes(ncr.status) && !state.employee?.isSandbox ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
       ${lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee))}
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
@@ -550,6 +553,8 @@
   modules.NCR_CAR = {
     code: "NCR_CAR",
     enabled: true,
+    // ฐานข้อมูลรองรับโหมดทดสอบของ admin แล้ว (migration 20261005030000) — โมดูลอื่นที่ยังไม่รองรับต้องไม่ใส่ค่านี้
+    sandbox: true,
     // ไม่ระบุ label — ใช้ชื่อจาก request_types.name_th ("NCR/CAR") เหมือนเดิม
     theme: ["#facc15", "#a16207"],
     errorMessages: ERROR_MESSAGES,
