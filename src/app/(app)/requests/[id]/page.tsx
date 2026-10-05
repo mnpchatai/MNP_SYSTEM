@@ -222,6 +222,7 @@ export default async function RequestDetailPage({
                   <span className="timeline-dot" />
                   <strong>{entry.title}</strong>
                   <p className="timeline-item-detail">{entry.detail}</p>
+                  {entry.message && <p className="timeline-item-message">{entry.message}</p>}
                   <time className="timeline-item-time" dateTime={entry.at}>{formatDate(entry.at, true)}</time>
                 </div>
               ))}

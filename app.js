@@ -1874,6 +1874,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     const matchingDecision = closestTimelineRecord(orderedSteps, item.created_at, (step) => {
       if (item.to_status === "more_info") return step.status === "more_info";
       if (item.to_status === "rejected") return step.status === "rejected";
+      if (item.to_status === "acknowledged") return step.status === "acknowledged";
       if (["approved", "pending_assign"].includes(item.to_status)) return step.status === "approved";
       return false;
     });
@@ -1892,22 +1893,34 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
       }
     }
 
+    // note ของแถวประวัติ = ข้อความที่ผู้ตัดสินใจ/ผู้ตอบกลับพิมพ์ไว้ในรอบนั้น (บันทึกตอนเปลี่ยนสถานะ
+    // จึงไม่หายเมื่อ approval_steps.comment ถูกเขียนทับในรอบถัดไป) แถวเก่าที่ไม่มี note ใช้ comment
+    // ของขั้นที่ตัดสินใจใกล้เวลานั้นแทน — ตรรกะเดียวกับ src/lib/request-timeline.ts
+    const note = String(item.note ?? "").trim();
     let detail = "";
+    let message = "";
     if (!item.from_status) {
       detail = `${item.note || (isRepair ? "สร้างใบแจ้งซ่อม" : "สร้างและส่งคำร้อง")}${actor ? ` โดย ${actor}` : ""}`;
     } else if (item.to_status === "more_info") {
-      detail = `${actor || "ผู้อนุมัติ"} ขอข้อมูลเพิ่มเติม${matchingDecision?.comment ? `: ${matchingDecision.comment}` : ""}`;
+      detail = `${actor || "ผู้อนุมัติ"} ขอข้อมูลเพิ่มเติม`;
+      message = note || matchingDecision?.comment || "";
     } else if (item.to_status === "rejected") {
-      detail = `${actor || "ผู้อนุมัติ"} ไม่อนุมัติ${stage ? ` ในขั้น ${stage}` : ""}${matchingDecision?.comment ? `: ${matchingDecision.comment}` : ""}`;
+      detail = `${actor || "ผู้อนุมัติ"} ไม่อนุมัติ${stage ? ` ในขั้น ${stage}` : ""}`;
+      message = note || matchingDecision?.comment || "";
+    } else if (item.to_status === "acknowledged") {
+      detail = `${actor || "ผู้อนุมัติ"} รับทราบข้อมูล${stage ? ` ในขั้น ${stage}` : ""}`;
+      message = note || matchingDecision?.comment || "";
     } else if (item.to_status === "pending_approval" && item.from_status === "more_info") {
       detail = `${actor || "ผู้แจ้ง"} ส่งข้อมูลเพิ่มเติมเพื่อพิจารณาอีกครั้ง`;
+      message = note;
     } else if (item.to_status === "pending_approval" && item.from_status === "pending_assign") {
       detail = `${actor || "ระบบ"} ย้อนกลับไปรออนุมัติ${stage ? `ขั้น ${stage}` : ""}`;
     } else if (["approved", "pending_assign"].includes(item.to_status)) {
       detail = `${actor || "ผู้อนุมัติ"} อนุมัติ${stage ? `ขั้น ${stage}` : "คำร้อง"} แล้ว`;
+      message = note || matchingDecision?.comment || "";
     } else if (item.to_status === "assigned" && item.from_status === "pending_verify") {
       detail = `${actor || "ผู้แจ้ง"} ตรวจรับไม่ผ่าน ส่งกลับให้ ${personName(directory, request.assignee_id)} ซ่อมเพิ่มเติม`;
-      if (matchingVerification?.note) detail = appendTimelineNote(detail, matchingVerification.note);
+      message = String(matchingVerification?.note ?? "").trim();
     } else if (item.to_status === "assigned") {
       detail = `${actor || "ผู้มอบหมาย"} มอบหมายงานให้ ${personName(directory, request.assignee_id)}`;
       if (request.work_expected_date) detail += ` (กำหนดเสร็จ ${formatDate(request.work_expected_date)})`;
@@ -1923,7 +1936,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
       }
     } else if (item.to_status === "completed" && item.from_status === "pending_verify") {
       detail = `${actor || "ผู้แจ้ง"} ตรวจรับผลการซ่อมแล้ว: ${verifyResultLabels[matchingVerification?.result] ?? "ผ่าน — ใช้งานได้ปกติ"}`;
-      if (matchingVerification?.note) detail = appendTimelineNote(detail, matchingVerification.note);
+      message = String(matchingVerification?.note ?? "").trim();
     } else if (item.to_status === "completed") {
       detail = `${actor || "ผู้รับผิดชอบ"} ปิดงานว่าเสร็จแล้ว`;
     } else {
@@ -1936,7 +1949,8 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
       id: `status-${item.id}`,
       at: item.created_at,
       title: `${labels[item.to_status] ?? item.to_status}${stage && ["pending_approval", "more_info", "rejected"].includes(item.to_status) ? ` (${stage})` : ""}`,
-      detail: appendTimelineNote(detail, item.note),
+      detail: message && message === note ? detail : appendTimelineNote(detail, note),
+      message,
     };
   });
 
@@ -1946,13 +1960,12 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     const nextStep = orderedSteps[index + 1];
     if (step.status !== "approved" || !step.acted_at || !nextStep) return [];
     const actorName = personName(directory, step.acted_by);
-    let detail = `${actorName === "—" ? "ผู้อนุมัติ" : actorName} อนุมัติขั้น ${step.step_name} แล้ว`;
-    if (step.comment) detail += `: ${step.comment}`;
     return [{
       id: `approval-${step.id}`,
       at: step.acted_at,
       title: `รออนุมัติ (${nextStep.step_name})`,
-      detail,
+      detail: `${actorName === "—" ? "ผู้อนุมัติ" : actorName} อนุมัติขั้น ${step.step_name} แล้ว`,
+      message: String(step.comment ?? "").trim(),
     }];
   });
 
@@ -2123,7 +2136,7 @@ async function renderRequestDetail(params) {
       <aside class="stack">
         <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
         <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
-        <section class="card"><h2>ลำดับเหตุการณ์</h2><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p><time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
+        <section class="card"><h2>ลำดับเหตุการณ์</h2><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
       </aside>
     </div>`;
   app.innerHTML = shell(content, "requests", request.request_no);
