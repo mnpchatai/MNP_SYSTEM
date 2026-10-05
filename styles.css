@@ -926,6 +926,9 @@ body.no-scroll { overflow: hidden; }
 /* NCR (modules/module-ncr.js) */
 .ncr-card { margin-bottom: 16px; }
 .ncr-card > h2 { margin-bottom: 12px; }
+/* ทุกช่องข้อมูลในแต่ละส่วนเป็นการ์ดย่อยของตัวเอง (แทนตารางเส้นแบ่ง) */
+.ncr-card .definition-grid { gap: 10px; background: none; border: 0; border-radius: 0; overflow: visible; }
+.ncr-card .definition { border: 1px solid var(--line); border-radius: 8px; }
 .ncr-card .definition dd { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ncr-card .definition:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .ncr-card .definition.full { grid-column: 1 / -1; }
