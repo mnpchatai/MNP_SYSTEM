@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(98);
+select plan(115);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -37,6 +37,15 @@ select ok(
 select ok(
   not has_function_privilege('authenticated', 'private.next_ncr_doc_number()', 'execute'),
   'authenticated cannot call the NCR number generator directly'
+);
+select ok(
+  not has_function_privilege('anon', 'public.app_ncr_add_losses(uuid, jsonb)', 'execute')
+    and has_function_privilege('authenticated', 'public.app_ncr_add_losses(uuid, jsonb)', 'execute'),
+  'only signed-in users can execute the batch loss RPC'
+);
+select ok(
+  not has_function_privilege('authenticated', 'private.ncr_insert_loss(uuid, uuid, text, numeric, text, numeric, text)', 'execute'),
+  'authenticated cannot call the loss insert helper directly'
 );
 select is(
   (select last_number from public.document_counters where department_code = 'NCR' and year_key = '26'),
@@ -420,6 +429,97 @@ select lives_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'other', 1, 'รายการ', 500, 'ค่าตรวจสอบโดยหน่วยงานภายนอก') $$,
   'an "other" loss with a note is accepted'
 );
+select lives_ok(
+  $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'material', 12.5, 'กก.', 80, 'วัตถุดิบเสียสภาพ') $$,
+  'a raw-material loss can be recorded'
+);
+
+-- 8.0 บันทึกหลายรายการในครั้งเดียว (app_ncr_add_losses) ----------------------------------------
+select set_config('test.loss_before', (select count(*)::text from public.ncr_losses where ncr_id = current_setting('test.ncr_a')::uuid), true);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(gen_random_uuid(), '[{"loss_type":"scrap","quantity":1,"unit":"ชิ้น","unit_cost":1}]'::jsonb) $$,
+  'NCR_NOT_FOUND',
+  'a batch for an unknown NCR is rejected'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid, '{"loss_type":"scrap"}'::jsonb) $$,
+  'INVALID_LOSS_BATCH',
+  'a batch must be a JSON array'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid, '[]'::jsonb) $$,
+  'INVALID_LOSS_BATCH',
+  'an empty batch is rejected'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid,
+       (select jsonb_agg('{"loss_type":"scrap","quantity":1,"unit":"ชิ้น","unit_cost":1}'::jsonb) from generate_series(1, 31))) $$,
+  'INVALID_LOSS_BATCH',
+  'a batch is limited to 30 lines'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid,
+       '[{"loss_type":"scrap","quantity":1,"unit":"ชิ้น","unit_cost":1},{"loss_type":"fire","quantity":1,"unit":"ชิ้น","unit_cost":1}]'::jsonb) $$,
+  'INVALID_LOSS_TYPE',
+  'an unknown loss type in any line rejects the batch'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid,
+       '[{"loss_type":"other","quantity":1,"unit":"รายการ","unit_cost":10,"note":" ab "}]'::jsonb) $$,
+  'INVALID_LOSS_NOTE',
+  'an "other" line in a batch still needs a note'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid,
+       '[{"loss_type":"scrap","quantity":"5","unit":"ชิ้น","unit_cost":1}]'::jsonb) $$,
+  'INVALID_LOSS',
+  'line fields must have the right JSON types'
+);
+create function pg_temp.batch_failure_detail() returns text language plpgsql as $f$
+begin
+  perform public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid,
+    '[{"loss_type":"scrap","quantity":1,"unit":"ชิ้น","unit_cost":1},{"loss_type":"scrap","quantity":0,"unit":"ชิ้น","unit_cost":1}]'::jsonb);
+  return 'no error';
+exception when others then
+  declare v_detail text;
+  begin
+    get stacked diagnostics v_detail = pg_exception_detail;
+    return v_detail;
+  end;
+end;
+$f$;
+select is(pg_temp.batch_failure_detail(), 'line=2', 'a rejected batch reports which line failed');
+select is(
+  (select count(*)::text from public.ncr_losses where ncr_id = current_setting('test.ncr_a')::uuid),
+  current_setting('test.loss_before'),
+  'a rejected batch records nothing (all or nothing)'
+);
+select lives_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid,
+       '[{"loss_type":"scrap","quantity":10,"unit":"ท่อน","unit_cost":18.5,"note":"ทิ้ง"},
+         {"loss_type":"material","quantity":2,"unit":"กก.","unit_cost":80},
+         {"loss_type":"reproduce","quantity":10,"unit":"ท่อน","unit_cost":12,"note":null}]'::jsonb) $$,
+  'a valid batch of three lines is recorded'
+);
+select is(
+  (select count(*)::text from public.ncr_losses where ncr_id = current_setting('test.ncr_a')::uuid),
+  (current_setting('test.loss_before')::int + 3)::text,
+  'the three lines were all added'
+);
+select is(
+  (select sum(amount) from public.ncr_losses
+   where ncr_id = current_setting('test.ncr_a')::uuid and recorded_at = (select max(recorded_at) from public.ncr_losses where ncr_id = current_setting('test.ncr_a')::uuid)
+     and loss_type in ('scrap', 'material', 'reproduce') and quantity in (10, 2)),
+  465.00::numeric,
+  'batch line amounts are quantity x unit cost'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000010","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid, '[{"loss_type":"scrap","quantity":1,"unit":"ชิ้น","unit_cost":1}]'::jsonb) $$,
+  'NOT_AUTHORIZED',
+  'an unrelated employee cannot record a batch'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 
 -- 8.1 ไฟล์หลักฐาน ---------------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000006","role":"authenticated"}', true);
@@ -537,6 +637,11 @@ select throws_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 1, 'ท่อน', 18) $$,
   'NCR_LOCKED',
   'losses cannot be added after the NCR is closed'
+);
+select throws_ok(
+  $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid, '[{"loss_type":"scrap","quantity":1,"unit":"ท่อน","unit_cost":18}]'::jsonb) $$,
+  'NCR_LOCKED',
+  'a batch cannot be added after the NCR is closed'
 );
 select throws_ok(
   $$ insert into storage.objects (bucket_id, name, owner_id, metadata)

@@ -27,22 +27,24 @@
   const UNITS = ["ชุด", "ชิ้น", "เซต", "ม้วน", "เส้น", "กก.", "ท่อน", "เมตร", "ลูก", "ใบ", "รายการ"];
   const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่นๆ" };
   const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่นๆ" };
-  const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", rework: "ค่าแรงซ่อม/Rework", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่นๆ" };
+  const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", rework: "ค่าแรงซ่อม/Rework", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่นๆ" };
   // หน่วยของประเภทที่คิดเป็นชั่วโมง — ใช้ดึง "อัตราล่าสุด" มาเป็นค่าเริ่มต้นของราคาต่อหน่วย
   const LABOR_LOSS_TYPES = ["rework", "sort", "downtime"];
   const HOUR_UNIT = "ชม.";
   // คำแนะนำการกรอกของแต่ละประเภท (จำนวน x ราคาต่อหน่วย = มูลค่า) unit = หน่วยเริ่มต้น (ไม่ระบุ = หน่วยของ NCR)
   const LOSS_GUIDE = {
-    scrap: { qty: "ชิ้นที่ทิ้ง", price: "ต้นทุนผลิตสะสมถึงจุดที่เสีย (ไม่ใช่ราคาขาย)", evidence: "ใบแจ้งทิ้ง/ใบเบิก" },
+    scrap: { qty: "ชิ้นที่ทิ้ง", price: "ต้นทุนผลิตสะสมถึงจุดที่เสีย (ไม่ใช่ราคาขาย) ถ้าลงวัตถุดิบแยกแล้วให้ใช้เฉพาะค่าแปรรูป ไม่รวมวัตถุดิบ", evidence: "ใบแจ้งทิ้ง/ใบเบิก" },
+    material: { qty: "ปริมาณวัตถุดิบที่สูญเสีย (ตามหน่วยของวัตถุดิบ เช่น กก./เมตร)", price: "ราคาวัตถุดิบต่อหน่วย (ราคาซื้อ/ต้นทุนมาตรฐาน)", evidence: "ใบเบิกวัตถุดิบ/ใบสั่งซื้อ", note: "ลงแยกจากของเสีย/ผลิตทดแทนได้ โดยราคาของสองประเภทนั้นต้องไม่รวมวัตถุดิบ เพื่อไม่นับซ้ำ" },
     rework: { unit: HOUR_UNIT, qty: "คน × ชั่วโมงที่ใช้จริง", price: "อัตราค่าแรงต่อ ชม.", evidence: "ใบบันทึกเวลา/ใบสั่งงานซ่อม", note: "ชิ้นที่ซ่อมได้ให้ลงที่นี่เป็นชั่วโมงแรง ไม่ต้องลงเป็นของเสียซ้ำ" },
     sort: { unit: HOUR_UNIT, qty: "คน × ชั่วโมงที่ใช้จริง", price: "อัตราค่าแรงต่อ ชม.", evidence: "ใบบันทึกเวลา" },
-    reproduce: { qty: "ชิ้นที่ผลิตใหม่", price: "ต้นทุนผลิตต่อชิ้น", evidence: "ใบสั่งผลิตใหม่" },
+    reproduce: { qty: "ชิ้นที่ผลิตใหม่", price: "ต้นทุนผลิตต่อชิ้น (ถ้าลงวัตถุดิบแยกแล้วไม่รวมวัตถุดิบ)", evidence: "ใบสั่งผลิตใหม่" },
     logistics: { unit: "เที่ยว", qty: "จำนวนเที่ยว (หรือ กม.)", price: "ค่าขนส่งต่อเที่ยว", evidence: "ใบเสร็จ/ใบแจ้งหนี้ขนส่ง" },
     claim: { unit: "ครั้ง", qty: "1 (หรือจำนวนชิ้นที่ถูกหัก)", price: "ยอดเงินที่ลูกค้าหัก/ใบลดหนี้ ต่อครั้ง (หรือต่อชิ้น)", evidence: "ใบลดหนี้/เอกสารจากลูกค้า" },
     downtime: { unit: HOUR_UNIT, qty: "ชั่วโมงที่เครื่องหยุด", price: "ต้นทุนเครื่องต่อ ชม.", evidence: "บันทึกเครื่องหยุด" },
     other: { qty: "ตามจริง", price: "ตามจริง", evidence: "ต้องเขียนหมายเหตุอธิบายว่าเป็นค่าอะไร", note: "ประเภทนี้ไม่มีสูตรตายตัว จึงบังคับกรอกหมายเหตุ" },
   };
   const OTHER_LOSS_NOTE_MIN = 5;
+  const MAX_LOSS_LINES = 30;
   const STATUS_BADGE_CLASS = { closed: "completed", cancelled: "cancelled" };
 
   const ERROR_MESSAGES = {
@@ -68,7 +70,8 @@
     INVALID_LOSS_TYPE: "กรุณาเลือกประเภทความสูญเสีย",
     // friendlyError เลือกรหัสแรกที่พบในข้อความ จึงต้องวาง INVALID_LOSS_NOTE ไว้ก่อน INVALID_LOSS
     INVALID_LOSS_NOTE: `ประเภท "อื่นๆ" ต้องระบุหมายเหตุอธิบายว่าเป็นค่าอะไร (อย่างน้อย ${OTHER_LOSS_NOTE_MIN} ตัวอักษร)`,
-    INVALID_LOSS: "จำนวนต้องมากกว่า 0 และราคาต่อหน่วยต้องไม่ติดลบ",
+    INVALID_LOSS: "จำนวนต้องมากกว่า 0 ราคาต่อหน่วยต้องไม่ติดลบ และต้องระบุหน่วย",
+    INVALID_LOSS_BATCH: "ต้องมีรายการความสูญเสียอย่างน้อย 1 และไม่เกิน 30 รายการ",
     LOSS_NOT_FOUND: "ไม่พบรายการความสูญเสียนี้",
     LOSS_ALREADY_VOIDED: "รายการนี้ถูกยกเลิกไปแล้ว",
     INVALID_ATTACHMENT: "ไฟล์แนบไม่ถูกต้อง กรุณาเลือกไฟล์ใหม่",
@@ -377,17 +380,15 @@
       <p class="muted small">มูลค่า = จำนวน × ราคาต่อหน่วย ณ วันที่บันทึก · รายการที่ยกเลิกยังเก็บไว้ให้ตรวจสอบย้อนหลัง</p>
       ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หมายเหตุ</th><th>บันทึกโดย</th><th></th></tr></thead>
         <tbody>${rows}<tr><td colspan="3"><strong>รวม</strong></td><td><strong>${formatBaht(total)}</strong></td><td colspan="3"></td></tr></tbody></table></div>` : `<p class="muted small">ยังไม่มีรายการ</p>`}
-      ${editable ? `<form class="ncr-action" data-action="add_loss"><div class="ncr-form-message"></div>
+      ${editable ? `<form class="ncr-action" data-action="add_loss" novalidate><div class="ncr-form-message"></div>
         <h3>เพิ่มรายการความสูญเสีย</h3>
-        <div class="form-grid">
-          <div class="field full"><label for="ncr-loss-type">ประเภท *</label><select class="select" id="ncr-loss-type" name="loss_type" aria-describedby="ncr-loss-hint">${Object.entries(LOSS_TYPES).map(([value, label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select>
-            <p class="muted small" id="ncr-loss-hint" aria-live="polite"></p></div>
-          <div class="field"><label for="ncr-loss-qty">จำนวน *</label><input class="input" id="ncr-loss-qty" name="quantity" type="number" min="0" step="any" inputmode="decimal"></div>
-          <div class="field"><label for="ncr-loss-unit">หน่วย *</label><input class="input" id="ncr-loss-unit" name="unit" maxlength="20" value="${escapeHtml(ncr.unit)}"></div>
-          <div class="field"><label for="ncr-loss-cost">ราคาต่อหน่วย (บาท) *</label><input class="input" id="ncr-loss-cost" name="unit_cost" type="number" min="0" step="0.01" inputmode="decimal"></div>
-          <div class="field full"><label for="ncr-loss-note" id="ncr-loss-note-label">หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
+        <p class="muted small">กรอกได้หลายรายการแล้วกดบันทึกครั้งเดียว หากมีรายการใดไม่ผ่านจะไม่บันทึกเลยสักรายการ · รายการที่เว้นว่างทั้งแถวจะถูกข้าม</p>
+        <div id="ncr-loss-lines"></div>
+        <div class="ncr-loss-footer">
+          <button class="btn secondary small" type="button" id="ncr-loss-add-line">+ เพิ่มรายการ</button>
+          <div class="ncr-loss-total">รวมที่กำลังกรอก <strong id="ncr-loss-total">${formatBaht(0)}</strong></div>
         </div>
-        <div class="form-actions"><button class="btn" type="submit">บันทึก</button></div></form>` : ""}
+        <div class="form-actions"><button class="btn" type="submit">บันทึกทั้งหมด</button></div></form>` : ""}
     </section>`;
   }
 
@@ -524,40 +525,118 @@
     return parts.join(" · ");
   }
 
-  function bindLossForm(ncr) {
-    const typeSelect = document.querySelector("#ncr-loss-type");
-    if (!typeSelect) return;
-    const unitInput = document.querySelector("#ncr-loss-unit");
-    const costInput = document.querySelector("#ncr-loss-cost");
-    const noteInput = document.querySelector("#ncr-loss-note");
-    const noteLabel = document.querySelector("#ncr-loss-note-label");
-    const hint = document.querySelector("#ncr-loss-hint");
-    let rates = {};
-    // ค่าที่ระบบใส่ให้ในช่องราคา — ถ้าผู้ใช้พิมพ์เองแล้ว (ค่าต่างจากนี้) จะไม่ถูกเขียนทับเมื่อสลับประเภท
-    let autoCost = "";
+  let lossLineSeq = 0;
 
-    function applyType() {
-      const type = typeSelect.value;
+  function lossLineHtml(ncr) {
+    const n = ++lossLineSeq;
+    const id = (name) => `ncr-loss-${name}-${n}`;
+    return `<fieldset class="ncr-loss-line" data-loss-line>
+      <legend>รายการที่ <span data-line-no></span></legend>
+      <div class="form-grid">
+        <div class="field full"><label for="${id("type")}">ประเภท *</label><select class="select" id="${id("type")}" data-f="loss_type" aria-describedby="${id("hint")}">${Object.entries(LOSS_TYPES).map(([value, label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select>
+          <p class="muted small" id="${id("hint")}" data-f="hint" aria-live="polite"></p></div>
+        <div class="field"><label for="${id("qty")}">จำนวน *</label><input class="input" id="${id("qty")}" data-f="quantity" type="number" min="0" step="any" inputmode="decimal"></div>
+        <div class="field"><label for="${id("unit")}">หน่วย *</label><input class="input" id="${id("unit")}" data-f="unit" maxlength="20" value="${escapeHtml(ncr.unit)}"></div>
+        <div class="field"><label for="${id("cost")}">ราคาต่อหน่วย (บาท) *</label><input class="input" id="${id("cost")}" data-f="unit_cost" type="number" min="0" step="0.01" inputmode="decimal"></div>
+        <div class="field full"><label for="${id("note")}" data-f="note_label">หมายเหตุ</label><input class="input" id="${id("note")}" data-f="note" maxlength="500"></div>
+      </div>
+      <div class="ncr-loss-line-foot"><span class="muted small">มูลค่า <strong data-f="amount">${formatBaht(0)}</strong></span>
+        <button class="btn secondary small" type="button" data-remove-line>ลบรายการนี้</button></div>
+    </fieldset>`;
+  }
+
+  const lossField = (line, name) => line.querySelector(`[data-f="${name}"]`);
+
+  function bindLossForm(ncr) {
+    const container = document.querySelector("#ncr-loss-lines");
+    if (!container) return;
+    const addButton = document.querySelector("#ncr-loss-add-line");
+    const totalElement = document.querySelector("#ncr-loss-total");
+    let rates = {};
+
+    function applyType(line) {
+      const type = lossField(line, "loss_type").value;
       const rate = rates[type];
-      unitInput.value = LOSS_GUIDE[type]?.unit ?? ncr.unit;
-      if (costInput.value === "" || costInput.value === autoCost) {
-        autoCost = rate ? String(rate.unitCost) : "";
-        costInput.value = autoCost;
+      const costInput = lossField(line, "unit_cost");
+      lossField(line, "unit").value = LOSS_GUIDE[type]?.unit ?? ncr.unit;
+      // ค่าที่ระบบใส่ให้ในช่องราคา — ถ้าผู้ใช้พิมพ์เองแล้ว (ค่าต่างจากนี้) จะไม่ถูกเขียนทับเมื่อสลับประเภท
+      if (costInput.value === "" || costInput.value === (line.dataset.autoCost ?? "")) {
+        line.dataset.autoCost = rate ? String(rate.unitCost) : "";
+        costInput.value = line.dataset.autoCost;
       }
       const noteRequired = type === "other";
-      noteInput.required = noteRequired;
-      noteInput.minLength = noteRequired ? OTHER_LOSS_NOTE_MIN : 0;
-      noteLabel.textContent = noteRequired ? "หมายเหตุ *" : "หมายเหตุ";
-      hint.textContent = lossHintText(type, rate);
+      lossField(line, "note_label").textContent = noteRequired ? "หมายเหตุ *" : "หมายเหตุ";
+      lossField(line, "hint").textContent = lossHintText(type, rate);
     }
 
-    typeSelect.addEventListener("change", applyType);
-    applyType();
+    function refresh() {
+      const lines = [...container.querySelectorAll("[data-loss-line]")];
+      let total = 0;
+      lines.forEach((line, index) => {
+        line.querySelector("[data-line-no]").textContent = String(index + 1);
+        line.querySelector("[data-remove-line]").hidden = lines.length === 1;
+        const amount = Math.round(Number(lossField(line, "quantity").value) * Number(lossField(line, "unit_cost").value) * 100) / 100;
+        const valid = Number.isFinite(amount) && amount > 0;
+        lossField(line, "amount").textContent = valid ? formatBaht(amount) : formatBaht(0);
+        if (valid) total += amount;
+      });
+      totalElement.textContent = formatBaht(total);
+      addButton.disabled = lines.length >= MAX_LOSS_LINES;
+    }
+
+    function addLine() {
+      container.insertAdjacentHTML("beforeend", lossLineHtml(ncr));
+      const line = container.lastElementChild;
+      applyType(line);
+      refresh();
+      return line;
+    }
+
+    container.addEventListener("change", (event) => {
+      if (event.target.matches('[data-f="loss_type"]')) applyType(event.target.closest("[data-loss-line]"));
+      refresh();
+    });
+    container.addEventListener("input", refresh);
+    container.addEventListener("click", (event) => {
+      const remove = event.target.closest("[data-remove-line]");
+      if (!remove) return;
+      remove.closest("[data-loss-line]").remove();
+      refresh();
+    });
+    addButton.addEventListener("click", () => lossField(addLine(), "loss_type").focus());
+
+    addLine();
     // ดึงอัตราล่าสุดเบื้องหลัง ถ้าอ่านไม่ได้ก็ใช้ฟอร์มตามปกติ (เป็นแค่ค่าเริ่มต้นที่ช่วยกรอก)
     fetchLatestHourlyRates().then((latest) => {
       rates = latest;
-      applyType();
+      container.querySelectorAll("[data-loss-line]").forEach(applyType);
+      refresh();
     }).catch(() => {});
+  }
+
+  // อ่านทุกแถวในฟอร์มเป็นรายการส่ง RPC — แถวที่เว้นว่างทั้งแถวถูกข้าม แถวที่กรอกไม่ครบ/ผิดคืนข้อความบอกลำดับแถว
+  // กฎตรวจตรงกับ private.ncr_insert_loss (ฐานข้อมูลตรวจซ้ำเสมอ ฟังก์ชันนี้มีไว้ให้ผู้ใช้เห็นข้อผิดพลาดเร็วขึ้น)
+  function collectLossLines(form) {
+    const lines = [];
+    const lineNumbers = [];
+    let position = 0;
+    for (const line of form.querySelectorAll("[data-loss-line]")) {
+      position += 1;
+      const read = (name) => String(lossField(line, name).value ?? "").trim();
+      const lossType = read("loss_type");
+      const note = read("note");
+      if (read("quantity") === "" && read("unit_cost") === "" && note === "") continue;
+      const quantity = Number(read("quantity").replaceAll(",", ""));
+      const unitCost = Number(read("unit_cost").replaceAll(",", ""));
+      const unit = read("unit");
+      const fail = (code) => ({ error: `รายการที่ ${position}: ${ERROR_MESSAGES[code]}` });
+      if (read("quantity") === "" || read("unit_cost") === "" || !(quantity > 0) || !(unitCost >= 0) || unit.length < 1 || unit.length > 20) return fail("INVALID_LOSS");
+      if (lossType === "other" && note.length < OTHER_LOSS_NOTE_MIN) return fail("INVALID_LOSS_NOTE");
+      lines.push({ loss_type: lossType, quantity, unit, unit_cost: unitCost, note: note === "" ? null : note });
+      lineNumbers.push(position);
+    }
+    if (!lines.length) return { error: "กรุณากรอกรายการความสูญเสียอย่างน้อย 1 รายการ" };
+    return { lines, lineNumbers };
   }
 
   function bindDetail(ncr) {
@@ -590,16 +669,14 @@
       },
       cancel: (form) => sb.rpc("app_ncr_cancel", { p_ncr_id: ncr.id, p_reason: optionalText(form, "reason") ?? "" }),
       add_loss: (form) => {
-        if (optionalText(form, "loss_type") === "other" && (optionalText(form, "note") ?? "").length < OTHER_LOSS_NOTE_MIN) {
-          return Promise.resolve({ error: new Error("INVALID_LOSS_NOTE") });
-        }
-        return sb.rpc("app_ncr_add_loss", {
-        p_ncr_id: ncr.id,
-        p_loss_type: optionalText(form, "loss_type") ?? "",
-        p_quantity: optionalNumber(form, "quantity"),
-        p_unit: optionalText(form, "unit") ?? "",
-        p_unit_cost: optionalNumber(form, "unit_cost"),
-        p_note: optionalText(form, "note"),
+        const parsed = collectLossLines(form);
+        if (parsed.error) return Promise.resolve({ error: new Error(parsed.error) });
+        return sb.rpc("app_ncr_add_losses", { p_ncr_id: ncr.id, p_losses: parsed.lines }).then(({ error }) => {
+          if (!error) return { error: null, message: `บันทึกความสูญเสียแล้ว ${parsed.lines.length} รายการ` };
+          // ฐานข้อมูลบอกลำดับแถวที่ไม่ผ่านใน details ("line=N") แปลงกลับเป็นลำดับแถวบนหน้าจอ
+          const line = Number(/line=(\d+)/.exec(error.details ?? "")?.[1]);
+          const position = parsed.lineNumbers[line - 1];
+          return { error: position ? new Error(`รายการที่ ${position}: ${friendlyError(error)}`) : error };
         });
       },
     };
