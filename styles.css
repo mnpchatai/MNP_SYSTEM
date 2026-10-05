@@ -448,6 +448,11 @@ tbody tr:hover { background: var(--shell); }
 }
 .request-timeline-card.status-completed,
 .request-timeline-card.status-acknowledged { --timeline-accent: var(--success); }
+.request-timeline-card.status-closed { --timeline-accent: var(--success); }
+.request-timeline-card.status-awaiting_disposition,
+.request-timeline-card.status-awaiting_response,
+.request-timeline-card.status-awaiting_followup,
+.request-timeline-card.status-awaiting_signoff { --timeline-accent: var(--warning); }
 .request-timeline-card.status-rejected,
 .request-timeline-card.status-cancelled { --timeline-accent: var(--danger); }
 .request-timeline-card.status-pending_approval,
