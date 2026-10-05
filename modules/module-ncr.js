@@ -244,6 +244,7 @@
           if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ในหน้า NCR`;
         }
         showToast(message);
+        window.MNP_REQUEST_MODULES.NCR_CAR.shared.invalidateDashboard?.();
         location.hash = `#/ncr?id=${encodeURIComponent(data.id)}`;
       } catch (error) {
         setFormBusy(form, false);

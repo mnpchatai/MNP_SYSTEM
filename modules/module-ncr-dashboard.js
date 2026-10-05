@@ -396,7 +396,7 @@
 
   const bangkokDate = (timestamp) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date(timestamp));
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
-  const fmtBaht = (value) => `${fmtNumber(Math.round(value))} ฿`;
+  const fmtBaht = (value) => `${fmtNumber(value, 2)} ฿`;
   const fmtCount = (value) => `${fmtNumber(value, 2)} ใบ`;
   const fmtPercent = (value) => (value === null ? "—" : `${fmtNumber(value * 100, 1)}%`);
   const compactBaht = (value) => (value >= 1000 ? `${fmtNumber(value / 1000, 1)}k` : fmtNumber(value));
