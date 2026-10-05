@@ -122,9 +122,13 @@
   };
   const checkedValues = (form, name) => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
 
-  function statusBadgeHtml(ncr) {
+  // withSigner = ในทะเบียน NCR: ใต้ป้าย "รอลงนามปิด" บอกว่าถึงลำดับใครและลงนามไปแล้วกี่ขั้น (ต้องมี signoff_qa_at/signoff_factory_at ในข้อมูลที่ส่งมา)
+  function statusBadgeHtml(ncr, withSigner = false) {
     const badge = `<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`;
-    return isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
+    const flagged = isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
+    if (!withSigner || ncr.status !== "awaiting_signoff") return flagged;
+    const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
+    return `${flagged}<div class="muted small ncr-signer-wait">รอ ${escapeHtml(nextSigner(ncr).label)} ลงนาม · ลงนามแล้ว ${signed}/3</div>`;
   }
 
   function checksHtml(name, options, selected = []) {
@@ -230,7 +234,7 @@
     const statusParam = embedded ? "ncrStatus" : "status";
     const filter = LIST_FILTERS.some(([value]) => value === params.get(statusParam)) ? params.get(statusParam) : "open";
     let query = sb.from("ncr_reports")
-      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department:departments(code))")
+      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department:departments(code))")
       .order("issue_date", { ascending: false })
       .order("ncr_no", { ascending: false })
       .limit(300);
@@ -257,7 +261,7 @@
           <td>${formatQty(row.qty_defect)} ${escapeHtml(row.unit)}</td>
           <td>${escapeHtml((row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ") || "—")}</td>
           <td>${lossByNcr.has(row.id) ? formatBaht(lossByNcr.get(row.id)) : "—"}</td>
-          <td>${statusBadgeHtml(row)}</td></tr>`).join("")}</tbody>
+          <td>${statusBadgeHtml(row, true)}</td></tr>`).join("")}</tbody>
       </table></div>` : `<div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div>`;
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     const content = `
