@@ -2376,14 +2376,30 @@ async function renderApprovals(params) {
   bindShell();
 }
 
+// คืน null เมื่อแจ้งเตือนนี้ไม่มีหน้าปลายทาง (เช่นประกาศ/คำเชิญที่ไม่มี request_id และ action_url)
+// เพื่อไม่ให้แสดงเป็นลิงก์ที่กดแล้วไม่เกิดอะไรขึ้น
 function notificationHref(item) {
   if (item.request_id) return `#/request?id=${encodeURIComponent(item.request_id)}`;
   if (item.action_url === "/admin") return "#/admin";
   if (item.action_url === "/profile") return "#/profile";
   if (item.action_url?.startsWith("/ncr/")) return `#/ncr?id=${encodeURIComponent(item.action_url.slice(5))}`;
-  // อีเมลสรุปงานค้าง (kind reminder/escalation) พาไปหน้าหลักที่มีการ์ด "งานที่ต้องจัดการ"
-  if (item.action_url === "/") return "#/dashboard";
-  return "#/notifications";
+  // อีเมลสรุปงานค้าง (kind reminder/escalation): มีงานเดียวพาไปที่งานนั้นเลย (เฉพาะ reminder ซึ่งผู้รับคือผู้ถือลูก
+  // และเปิดงานได้แน่นอน — สำเนาถึงหัวหน้าอาจไม่มีสิทธิ์อ่านเอกสาร) ถ้าหลายงานพาไปหน้าหลักที่มีการ์ด "งานที่ต้องจัดการ"
+  if (item.action_url === "/") {
+    const [only, ...rest] = Array.isArray(item.digest) ? item.digest : [];
+    if (item.kind === "reminder" && only && !rest.length && typeof only.item_id === "string") {
+      if (only.item_type === "ncr") return `#/ncr?id=${encodeURIComponent(only.item_id)}`;
+      if (only.item_type === "request") return `#/request?id=${encodeURIComponent(only.item_id)}`;
+    }
+    return "#/dashboard";
+  }
+  return null;
+}
+
+function notificationItemHtml(item) {
+  const href = notificationHref(item);
+  const tag = href ? "a" : "div";
+  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></${tag}>`;
 }
 
 async function renderNotifications() {
@@ -2392,7 +2408,7 @@ async function renderNotifications() {
   if (error) throw error;
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Notifications</div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
-    <div class="stack">${(data ?? []).map((item) => `<a class="notification-item${item.read_at ? "" : " unread"}" href="${notificationHref(item)}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></a>`).join("") || `<div class="empty">ยังไม่มีการแจ้งเตือน</div>`}</div>`;
+    <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || `<div class="empty">ยังไม่มีการแจ้งเตือน</div>`}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   document.querySelector("#mark-read")?.addEventListener("click", async (event) => {
