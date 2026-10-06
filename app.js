@@ -199,7 +199,7 @@ function requestModulePage(path) {
   }
   return null;
 }
-// โมดูลที่ฐานข้อมูลรองรับโหมดทดสอบแล้วประกาศ sandbox: true (ตอนนี้มีเฉพาะ NCR)
+// โมดูลที่รองรับโหมดทดสอบแล้วประกาศ sandbox: true — NCR (ฐานข้อมูลแยกข้อมูลทดสอบแล้ว) และฝ่ายโรงงาน (หน้าทดลอง ไม่อ่าน/เขียนฐานข้อมูล)
 // โมดูลอื่นถูกซ่อน และฐานข้อมูลปฏิเสธการเขียนของโมดูลที่ยังไม่รองรับ (SANDBOX_MODULE_UNSUPPORTED)
 const isSandboxMode = () => Boolean(state.employee?.isSandbox);
 const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;
@@ -1286,7 +1286,7 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ใช้ได้เฉพาะ NCR · ไม่รองรับการแนบไฟล์</span></div>
+    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · บันทึกข้อมูลได้เฉพาะ NCR (ฝ่ายโรงงานเป็นหน้าทดลอง ยังไม่บันทึกข้อมูล) · ไม่รองรับการแนบไฟล์</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
