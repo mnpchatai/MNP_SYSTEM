@@ -5,12 +5,12 @@
 //
 // ขอบเขตตอนนี้: โครงโมดูล หน้าของแต่ละแผนก (#/factory, #/factory?dept=<รหัส>) และเมนู "Item master"
 // แบบต้นไม้ (โฟลเดอร์ > รายการ, modules/factory-item-master.js) ที่เป็นเมนูย่อยในแถบข้าง **ใต้เมนู "ฝ่ายโรงงาน"**
-// เมื่อเลือกฝ่ายโรงงานอยู่ (nav.subnav) กดรายการเปิดหน้า #/factory?item=<key> ซึ่งยังเป็นหน้าว่างรอกำหนดฟอร์ม
+// เมื่อเลือกฝ่ายโรงงานอยู่ (nav.subnav) กดรายการเปิดหน้า #/factory?item=<key> รายการที่มี view (ทะเบียนสินค้า
+// BOM Routing คลัง ใบสั่งผลิต) อ่าน/เขียนตาราง factory_* ผ่าน RPC ของ 20261006050000_factory_item_master.sql
+// (เปิดเฉพาะโหมดทดสอบ แยกข้อมูลด้วย is_test) รายการที่ไม่มี view เป็นหน้าว่างรอกำหนดฟอร์ม
 // สถานะเปิด/ปิดของเมนูย่อยคำนวณจาก URL ทุกครั้งที่วาดหน้า (แถบข้างถูกวาดใหม่ทุกการเปลี่ยนหน้า)
-// ยังไม่มีฟอร์ม/ขั้นตอนงานของแผนกใด และ **ไม่อ่าน/เขียนฐานข้อมูลเลย** จึงไม่มี migration/RPC/RLS ใหม่
-// และไม่กระทบข้อมูลจริง เมื่อกำหนด workflow ของแผนกแล้วให้เพิ่มตารางพร้อมการแยกข้อมูลทดสอบ
-// (ดู private.sandbox_guard_table ใน 20261005030000_admin_sandbox_mode.sql) และเทสต์ใน
-// supabase/tests/database/ ก่อนเปิดการบันทึกข้อมูล
+// หน้าแผนกยังไม่มีฟอร์ม/ขั้นตอนงาน เมื่อกำหนด workflow ของแผนกแล้วให้เพิ่มตารางพร้อมการแยกข้อมูลทดสอบ
+// ตามกติกา 5 ข้อของโหมดทดสอบใน README และเทสต์ใน supabase/tests/database/ ก่อนเปิดการบันทึกข้อมูล
 //
 // เมนูข้างโผล่เฉพาะโหมดทดสอบ (nav.sandboxOnly) และหน้านี้ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // (การซ่อนเมนูอย่างเดียวไม่ใช่การควบคุมสิทธิ์) ไม่มีฝั่ง Next.js เพราะโหมดทดสอบมีเฉพาะ Pilot Web
@@ -18,8 +18,11 @@
 // จอ 761–1040px แถบข้างหุบเหลือแต่ไอคอน เมนูย่อยจึงถูกซ่อนด้วย CSS และแสดงการ์ด Item master ในหน้าแทน
 // (HTML ต้นไม้ชุดเดียวกัน ซ่อน/แสดงด้วย media query ที่ styles.css) ช่วงความกว้างอื่นแสดงเฉพาะเมนูย่อยในแถบข้าง
 //
+// รายการในเมนูที่มี view (เช่น ทะเบียนสินค้า) วาดเนื้อหาโดย modules/module-factory-master.js ผ่าน
+// window.MNP_FACTORY_VIEWS ไฟล์นี้ส่ง frame ให้ (หน้าโหลด + หัวรายการ + การ์ดสำรองสำหรับจอที่แถบข้างหุบ)
+//
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, app, shell, bindShell,
-// renderNotFound, escapeHtml, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
+// loadingShell, renderNotFound, escapeHtml, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerFactoryModule() {
   const PATH = "factory";
   const TITLE = "ฝ่ายโรงงาน";
@@ -69,7 +72,7 @@
         <span class="type-card-body"><strong>${escapeHtml(department.name)}</strong><small>เปิดแผนก →</small></span>
       </a>`).join("");
     return `<div class="page-heading request-module-header" style="background:${gradient(THEME)}">
-        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">โหมดทดสอบ</div><h1>${TITLE}</h1><p>${factory.DEPARTMENTS.length} แผนก · โครงโมดูลสำหรับทดลอง ยังไม่บันทึกข้อมูล</p></div></div>
+        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">โหมดทดสอบ</div><h1>${TITLE}</h1><p>${factory.DEPARTMENTS.length} แผนก · Item master อยู่ในเมนูข้างใต้ "ฝ่ายโรงงาน"</p></div></div>
       </div>
       ${itemMasterCardHtml(null)}
       <div class="request-type-heading"><h2>เลือกแผนก</h2></div>
@@ -90,17 +93,32 @@
       </section>`;
   }
 
-  // หน้าของรายการใน Item master — ยังเป็นหน้าว่าง ไม่มีฟอร์ม/ข้อมูล
-  function entryHtml(selected) {
+  // หน้าของรายการใน Item master: หัวรายการ + เนื้อหาจาก view (ไม่มี view = หน้าว่าง "ยังไม่เปิดใช้งาน")
+  // back: ปุ่มย้อนกลับ (ค่าเริ่มต้นกลับหน้าฝ่ายโรงงาน) actions: ปุ่มด้านขวาของหัว subtitle: ต่อท้ายชื่อในหัว
+  function entryHtml(selected, { body = null, actions = "", back = null, subtitle = null } = {}) {
     const { folder, entry } = selected;
-    return `<a class="request-back-link" href="${escapeHtml(factory.url())}" aria-label="ย้อนกลับไปหน้าฝ่ายโรงงาน">‹ ย้อนกลับ</a>
+    const backLink = back ?? { href: factory.url(), label: "‹ ย้อนกลับ" };
+    return `<a class="request-back-link" href="${escapeHtml(backLink.href)}">${escapeHtml(backLink.label)}</a>
       <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
-        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">${TITLE} · Item master › ${escapeHtml(folder.name)}</div><h1>${escapeHtml(entry.name)}</h1><p>โหมดทดสอบ</p></div></div>
+        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">${TITLE} · Item master › ${escapeHtml(folder.name)}</div><h1>${escapeHtml(entry.name)}</h1><p>${subtitle ? `${escapeHtml(subtitle)} · ` : ""}โหมดทดสอบ</p></div></div>
+        ${actions ? `<div class="request-create-entry">${actions}</div>` : ""}
       </div>
       ${itemMasterCardHtml(selected)}
-      <section class="card">
+      ${body ?? `<section class="card">
         <div class="empty">ยังไม่เปิดใช้งาน<br><small>โมดูลอยู่ในโหมดทดสอบ รอกำหนดฟอร์มและขั้นตอนของรายการนี้</small></div>
-      </section>`;
+      </section>`}`;
+  }
+
+  // frame ที่ส่งให้ view: loading() แสดงหน้ากำลังโหลด paint() วาดหน้าแล้วคืนกรอบเนื้อหาไว้ผูก event
+  function frameFor(selected, title) {
+    return {
+      loading: () => loadingShell(PATH, title),
+      paint(options) {
+        app.innerHTML = shell(entryHtml(selected, options), PATH, options?.subtitle ? `${title} / ${options.subtitle}` : title);
+        bindShell();
+        return document.querySelector(".content");
+      },
+    };
   }
 
   async function renderFactory(params) {
@@ -112,8 +130,10 @@
     let content = overviewHtml();
     let title = TITLE;
     if (selected) {
-      content = entryHtml(selected);
       title = `${TITLE} / ${selected.entry.name}`;
+      const view = window.MNP_FACTORY_VIEWS?.[selected.entry.view];
+      if (view) return await view({ params, selected, frame: frameFor(selected, title) });
+      content = entryHtml(selected);
     } else if (department) {
       content = departmentHtml(department);
       title = `${TITLE} / ${department.code} ${department.name}`;
@@ -126,10 +146,12 @@
   modules.FACTORY = {
     code: "FACTORY",
     enabled: true,
-    // หน้านี้ไม่แตะฐานข้อมูล จึงปลอดภัยที่จะเปิดในโหมดทดสอบ (โมดูลที่เขียนข้อมูลต้องมี guard ที่ฐานข้อมูลก่อน)
+    // ตาราง factory_* ทำครบกติกา 5 ข้อของโหมดทดสอบแล้ว (20261006050000) หน้าแผนกยังไม่แตะฐานข้อมูล
     sandbox: true,
     label: TITLE,
     theme: THEME,
+    // ข้อความแจ้งข้อผิดพลาดของ RPC ฝ่ายโรงงาน (friendlyError ใน app.js รวมของทุกโมดูล)
+    errorMessages: window.MNP_FACTORY_ERRORS ?? {},
     nav: [{ path: PATH, label: TITLE, icon: NAV_ICON, sandboxOnly: true, subnav: itemMasterNavHtml }],
     pages: { [PATH]: renderFactory },
   };

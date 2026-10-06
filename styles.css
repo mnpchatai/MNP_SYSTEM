@@ -1175,3 +1175,51 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
   .nav-sub .factory-master > summary, .nav-sub .factory-folder > summary, .nav-sub .factory-entry { min-height: 44px; }
   .nav-sub .factory-entries li::before { top: 22px; }
 }
+
+/* Item master ฝ่ายโรงงาน (modules/module-factory-master.js ชุด fm-*) — ใช้ token สีทั้งสองธีม */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+th.right, td.right { text-align: right; }
+.fm-summary .summary small a { color: inherit; text-decoration: underline; }
+.fm-summary-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fm-type-RM { color: var(--primary); background: var(--primary-soft); }
+.fm-type-WIP { color: var(--warning); background: var(--warning-soft); }
+.fm-type-FG { color: var(--success); background: var(--success-soft); }
+.fm-status-active { color: var(--success); background: var(--success-soft); }
+.fm-status-inactive { color: var(--danger); background: var(--danger-soft); }
+.fm-notice { margin: 0 0 16px; padding: 10px 14px; color: var(--ink); background: var(--warning-soft); border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent); border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.fm-toolbar { margin: 4px 0 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fm-toolbar .input { flex: 1 1 240px; min-width: 0; }
+.fm-toolbar .select { width: auto; flex: 0 1 160px; }
+.fm-item-link { display: grid; gap: 2px; color: inherit; text-decoration: none; }
+.fm-item-link strong { white-space: nowrap; }
+.fm-item-link span { min-width: 140px; color: var(--muted); font-size: 12px; }
+.fm-item-link:hover strong, .fm-item-link:focus-visible strong { color: var(--primary); text-decoration: underline; }
+.fm-table-footer { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.fm-pagination { display: flex; flex-wrap: wrap; gap: 6px; }
+.fm-actions { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fm-danger-zone { margin-top: 16px; }
+.fm-danger-zone h2 { margin: 0 0 6px; font-size: 15px; }
+.fm-detail-head { margin: 12px 0 6px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.fm-detail-head h2 { margin: 4px 0; }
+.fm-detail h3 { margin: 18px 0 8px; font-size: 15px; }
+.fm-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; }
+.fm-form-error { margin: 0 0 14px; padding: 10px 14px; color: var(--danger); background: var(--danger-soft); border-radius: 8px; font-size: 14px; font-weight: 600; }
+.fm-form-error[hidden] { display: none; }
+.fm-steps { margin: 12px 0 0; padding: 0; display: grid; gap: 10px; list-style: none; }
+.fm-steps li { padding: 12px 14px; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; background: var(--shell); border: 1px solid var(--line); border-radius: 10px; }
+.fm-steps li > div { display: grid; gap: 2px; min-width: 0; }
+.fm-steps small { color: var(--quiet); font-size: 12px; }
+.fm-step-no { width: 40px; height: 40px; display: grid; place-items: center; color: var(--primary); background: var(--primary-soft); border-radius: 999px; font-weight: 700; }
+.fm-step-time { text-align: right; }
+.fm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.fm-order h2 { margin: 6px 0 2px; font-size: 17px; }
+.fm-order-qty { margin: 10px 0 6px; color: var(--muted); }
+.fm-order-qty strong { color: var(--ink); font-size: 24px; }
+.fm-progress { width: 100%; height: 10px; accent-color: var(--primary); }
+@media (max-width: 760px) {
+  .fm-summary, .fm-summary-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fm-summary .summary { min-height: 0; border-top: 1px solid var(--line); }
+  .fm-toolbar .select { flex: 1 1 140px; }
+  .fm-steps li { grid-template-columns: 36px minmax(0, 1fr); }
+  .fm-step-time { grid-column: 2; text-align: left; }
+}

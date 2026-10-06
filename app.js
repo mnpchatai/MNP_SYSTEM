@@ -199,7 +199,7 @@ function requestModulePage(path) {
   }
   return null;
 }
-// โมดูลที่รองรับโหมดทดสอบแล้วประกาศ sandbox: true — NCR (ฐานข้อมูลแยกข้อมูลทดสอบแล้ว) และฝ่ายโรงงาน (หน้าทดลอง ไม่อ่าน/เขียนฐานข้อมูล)
+// โมดูลที่รองรับโหมดทดสอบแล้วประกาศ sandbox: true — NCR และฝ่ายโรงงาน (ตาราง factory_*) ฐานข้อมูลแยกข้อมูลทดสอบแล้วทั้งคู่
 // โมดูลอื่นถูกซ่อน และฐานข้อมูลปฏิเสธการเขียนของโมดูลที่ยังไม่รองรับ (SANDBOX_MODULE_UNSUPPORTED)
 const isSandboxMode = () => Boolean(state.employee?.isSandbox);
 const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;
@@ -326,7 +326,7 @@ function friendlyError(error) {
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
     SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
-    SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR ตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
+    SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR และ Item master ฝ่ายโรงงานตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
     SANDBOX_ATTACHMENT_UNSUPPORTED: "โหมดทดสอบยังไม่รองรับการแนบไฟล์",
     SANDBOX_NOT_ACTIVE: "ต้องเข้าโหมดทดสอบก่อนจึงจะล้างข้อมูลทดสอบได้",
     PERSONA_NOT_FOUND: "ไม่พบบัญชีทดสอบที่เลือก",
@@ -1292,7 +1292,7 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · บันทึกข้อมูลได้เฉพาะ NCR (ฝ่ายโรงงานเป็นหน้าทดลอง ยังไม่บันทึกข้อมูล) · ไม่รองรับการแนบไฟล์</span></div>
+    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · บันทึกข้อมูลได้เฉพาะ NCR และ Item master ฝ่ายโรงงาน · ไม่รองรับการแนบไฟล์</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
