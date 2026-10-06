@@ -1,13 +1,13 @@
 // Shared by the Pilot forms, register and dashboard. Old rows need review; missing is never zero.
 (function registerNcrCosts(root) {
-  const TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบสูญเสีย", rework: "ค่าซ่อม/Rework", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน (ค่าใช้จ่ายส่วนเพิ่ม)", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่น ๆ" };
+  const TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบสูญเสีย", repair: "ค่าซ่อม (Repair)", rework: "ค่า Rework", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน (ค่าใช้จ่ายส่วนเพิ่ม)", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่น ๆ" };
   const STATUSES = { estimated: "ประมาณการ", confirmed: "ยืนยันแล้ว", legacy: "รายการเดิมรอตรวจสอบ" };
   const COMPONENTS = { quantity: "จำนวน × ต้นทุน", labor: "ค่าแรง", material: "วัสดุซ่อม", external: "ค่าจ้างภายนอก", amount: "ยอดตามเอกสาร" };
   const round = (value, digits = 2) => Math.round((Number(value) + Number.EPSILON) * 10 ** digits) / 10 ** digits;
-  const allowedComponents = (type, kind = "loss") => kind === "recovery" ? ["amount"] : type === "rework" ? ["labor", "material", "external"] : type === "sort" ? ["labor", "external"] : ["scrap", "material", "downtime"].includes(type) ? ["quantity"] : ["amount"];
+  const allowedComponents = (type, kind = "loss") => kind === "recovery" ? ["amount"] : ["repair", "rework"].includes(type) ? ["labor", "material", "external"] : type === "sort" ? ["labor", "external"] : ["scrap", "material", "downtime"].includes(type) ? ["quantity"] : ["amount"];
   function fieldSpec(type, component, kind = "loss", unit = "ชิ้น") {
     if (kind === "recovery" || component === "amount" || component === "external") return { quantity: "จำนวนรายการ", rate: "ยอดเงินตามเอกสาร (บาท)", unit: "รายการ", fixedQuantity: true, hint: kind === "recovery" ? "เงินชดเชย/เครดิตผู้ขาย/ขายซาก แยกจากค่าเสียหาย" : type === "reproduce" ? "บันทึกเฉพาะค่าใช้จ่ายส่วนเพิ่มที่ยังไม่ได้ลงในหมวดอื่น" : "บันทึกค่าใช้จ่ายเพิ่มเติมจาก NCR ตามเอกสาร" };
-    if (component === "labor") return { quantity: "ชั่วโมงแรงงานรวม (ทุกคน)", rate: "ค่าแรง (บาท/คน/ชั่วโมง)", unit: "คน-ชม.", hint: "เช่น 2 คน × 3 ชั่วโมง = 6 คน-ชม. แยกเวลาซ่อมกับคัดแยก" };
+    if (component === "labor") return { quantity: "ชั่วโมงแรงงานรวม (ทุกคน)", rate: "ค่าแรง (บาท/คน/ชั่วโมง)", unit: "คน-ชม.", hint: "เช่น 2 คน × 3 ชั่วโมง = 6 คน-ชม. แยกเวลาซ่อม Rework และคัดแยกเป็นคนละรายการ" };
     if (component === "material") return { quantity: "จำนวนวัสดุที่ใช้ซ่อม", rate: "ต้นทุนวัสดุต่อหน่วย (บาท)", unit, hint: "เก็บค่าวัสดุแยกจากค่าแรงซ่อม" };
     if (type === "downtime") return { quantity: "เวลาเครื่องหยุด (ชั่วโมง)", rate: "ต้นทุนเครื่องหยุด (บาท/ชั่วโมง)", unit: "ชม.", hint: "ใช้เฉพาะอัตราต้นทุนที่องค์กรกำหนด หากยังไม่มีอัตราให้เก็บเวลาในผลดำเนินการ" };
     if (type === "material") return { quantity: "จำนวนวัตถุดิบสูญเสีย", rate: "ต้นทุนวัตถุดิบต่อหน่วย (บาท)", unit: "กก.", hint: "ใช้เฉพาะวัตถุดิบสูญเสียที่ยังไม่รวมในต้นทุนชิ้นงานที่ทิ้ง เพื่อไม่ให้นับซ้ำ" };
