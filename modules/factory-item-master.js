@@ -34,7 +34,13 @@
     return null;
   }
 
-  const api = { FOLDERS, findEntry };
+  // ลิงก์ไปหน้าของรายการ — ใส่ item เฉพาะ key ที่รู้จัก ค่าอื่นพากลับหน้ารวมของฝ่ายโรงงาน
+  function url(key) {
+    const found = findEntry(key);
+    return found ? `#/factory?item=${encodeURIComponent(found.entry.key)}` : "#/factory";
+  }
+
+  const api = { FOLDERS, findEntry, url };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_FACTORY_ITEM_MASTER = api;
 })(typeof window !== "undefined" ? window : globalThis);

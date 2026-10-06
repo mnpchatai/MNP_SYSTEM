@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 
-const { FOLDERS, findEntry } = createRequire(import.meta.url)("../../modules/factory-item-master.js");
+const { FOLDERS, findEntry, url } = createRequire(import.meta.url)("../../modules/factory-item-master.js");
 
 test("item master has the six folders from the reference menu, in order", () => {
   assert.deepEqual(
@@ -47,4 +47,13 @@ test("findEntry returns the entry with its folder and never guesses", () => {
   assert.equal(findEntry(null), null);
   assert.equal(findEntry(undefined), null);
   assert.equal(findEntry("<img src=x onerror=alert(1)>"), null);
+});
+
+test("url links known entries only and falls back to the factory overview", () => {
+  assert.equal(url("structure-new"), "#/factory?item=structure-new");
+  assert.equal(url("structure-view"), "#/factory?item=structure-view");
+  assert.equal(url("structure"), "#/factory", "a folder is not a page");
+  assert.equal(url("structure-new&x=1"), "#/factory");
+  assert.equal(url("<script>"), "#/factory");
+  assert.equal(url(), "#/factory");
 });

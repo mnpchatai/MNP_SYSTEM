@@ -211,12 +211,18 @@ function sandboxRouteAllowed(path, params) {
 }
 // เมนูข้างของโมดูลแยกไฟล์: รายการที่ประกาศ sandboxOnly โผล่เฉพาะในโหมดทดสอบ เพราะโหมดทดสอบซ่อนหน้าคำร้อง
 // ซึ่งเป็นทางเข้าปกติของโมดูล (เช่น หน้า NCR) ผู้ใช้ปกติเข้าหน้าของโมดูลจากหน้าคำร้อง ไม่มีเมนูข้างแยก
+// รายการเมนูประกาศ subnav(active) เพื่อวางเมนูย่อยใต้ลิงก์ของตัวเองได้ (คืน HTML หรือสตริงว่างถ้าไม่แสดง)
+// เมนูย่อยต้องใช้ลิงก์ (<a href="#/…">) ที่อยู่ใน .nav-sub เพื่อให้ปิดลิ้นชักบนมือถือและโหลดหน้าใหม่ตามกติกาของ bindShell
 function requestModuleNavLinks(active) {
   return Object.values(REQUEST_MODULES)
     .filter((entry) => entry.enabled && sandboxSupports(entry))
     .flatMap((entry) => entry.nav ?? [])
     .filter((item) => !item.sandboxOnly || isSandboxMode())
-    .map((item) => navLink(item.path, item.label, item.icon, active))
+    .map((item) => {
+      const link = navLink(item.path, item.label, item.icon, active);
+      const sub = item.subnav?.(active) ?? "";
+      return sub ? `<div class="nav-group">${link}${sub}</div>` : link;
+    })
     .join("");
 }
 // หน้าของโมดูลแยกไฟล์ (#/ncr, #/ncr-dashboard) ที่เข้าผ่านหน้าคำร้อง ไฮไลต์เมนู "คำร้อง" นอกโหมดทดสอบ
@@ -1365,7 +1371,7 @@ function bindShell() {
   };
   navToggle?.addEventListener("click", () => setMobileNav(!shellNode?.classList.contains("nav-open")));
   navBackdrop?.addEventListener("click", () => setMobileNav(false));
-  document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => setMobileNav(false)));
+  document.querySelectorAll(".nav-link, .nav-sub a").forEach((link) => link.addEventListener("click", () => setMobileNav(false)));
   // เมนูด้านข้างพาไปหน้าหลักของเมนูนั้นเสมอ — กดเมนูของหน้าที่เปิดอยู่ (ลิงก์เดิมจึงไม่เกิด hashchange)
   // ให้วาดหน้าใหม่เอง เพื่อปิดแผง/ตารางที่เปิดค้างไว้ และเริ่มจากบนสุดของหน้า
   document.querySelectorAll('.sidebar a[href^="#/"]').forEach((link) => link.addEventListener("click", (event) => {
