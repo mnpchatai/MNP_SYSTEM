@@ -15,23 +15,26 @@ select ok(exists(select 1 from pg_trigger where tgrelid='public.ncr_outcomes'::r
 
 insert into auth.users(id,email,raw_user_meta_data) values
  ('74000000-0000-0000-0000-000000000001','cost-admin@test.local','{}'),
- ('74000000-0000-0000-0000-000000000002','cost-other@test.local','{}');
+ ('74000000-0000-0000-0000-000000000002','cost-other@test.local','{}'),
+ ('74000000-0000-0000-0000-000000000003','cost-qa@test.local','{}');
 insert into public.employees(id,employee_no,first_name,last_name,email,department_id,role_id,auth_user_id) values
  ('74000000-0000-0000-0000-000000000101','COST-ADMIN','Cost','Admin','cost-admin@test.local',(select id from public.departments where code='FT'),(select id from public.roles where code='admin'),'74000000-0000-0000-0000-000000000001'),
- ('74000000-0000-0000-0000-000000000102','COST-OTHER','Cost','Other','cost-other@test.local',(select id from public.departments where code='PK'),(select id from public.roles where code='staff'),'74000000-0000-0000-0000-000000000002');
+ ('74000000-0000-0000-0000-000000000102','COST-OTHER','Cost','Other','cost-other@test.local',(select id from public.departments where code='PK'),(select id from public.roles where code='staff'),'74000000-0000-0000-0000-000000000002'),
+ ('74000000-0000-0000-0000-000000000103','COST-QA','Cost','Qa','cost-qa@test.local',(select id from public.departments where code='QA'),(select id from public.roles where code='staff'),'74000000-0000-0000-0000-000000000003');
 select set_config('test.cost_qa',(select id::text from public.employees where employee_no='SBX-QA-STAFF'),true);
 select set_config('test.cost_rb',(select id::text from public.employees where employee_no='SBX-RB-STAFF'),true);
 
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"74000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
 select set_config('test.real_ncr',(public.app_ncr_issue('COSTREAL',1000,100,'ชิ้น','in_process','DIM','Real fixture for scope testing')->>'id'),true);
-select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,''{}''::jsonb)',current_setting('test.real_ncr')),'SANDBOX_ONLY','new costs API is restricted to test mode');
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,''{}''::jsonb)',current_setting('test.real_ncr')),'NOT_AUTHORIZED','a real account that cannot edit costs is still denied on a real report');
 select public.app_sandbox_enter(current_setting('test.cost_qa')::uuid);
 select set_config('test.cost_ncr',(public.app_ncr_issue('COSTTEST',1000,100,'ชิ้น','in_process','DIM','Sandbox fixture for outcome testing')->>'id'),true);
 select set_config('test.entry',jsonb_build_object('loss_type','rework','entry_kind','loss','cost_status','estimated','component','labor','quantity',6,'unit','คน-ชม.','unit_cost',100,'incurred_on',current_date)::text,true);
 select set_config('test.result',jsonb_build_object('result_status','confirmed','result_date',current_date,'qty_sorted',100,'qty_repaired',80,'qty_scrapped',20,'qty_returned',0,'qty_accepted',0,'downtime_hours',2,'evidence_ref','RESULT-01','cost_reviewed',false)::text,true);
 
-select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.entry')),'SANDBOX_ONLY','sandbox cannot record a cost on a real report');
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.entry')),'SANDBOX_SCOPE_MISMATCH','sandbox cannot record a cost on a real report');
+select throws_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.result')),'SANDBOX_SCOPE_MISMATCH','sandbox cannot save an outcome on a real report');
 select set_config('test.cost_id',public.app_ncr_record_loss(current_setting('test.cost_ncr')::uuid,current_setting('test.entry')::jsonb)::text,true);
 select is((select amount from public.ncr_losses where id=current_setting('test.cost_id')::uuid),600.00::numeric,'labor is total person-hours times rate');
 select is((select cost_status from public.ncr_losses where id=current_setting('test.cost_id')::uuid),'estimated','new entry stays estimated until reviewed');
@@ -67,6 +70,16 @@ select public.app_sandbox_exit();
 select is((select count(*) from public.ncr_outcomes where ncr_id=current_setting('test.cost_ncr')::uuid),0::bigint,'real admin outside test mode cannot read test outcomes');
 select set_config('request.jwt.claims','{"sub":"74000000-0000-0000-0000-000000000002","role":"authenticated"}',true);
 select is((select count(*) from public.ncr_outcomes),0::bigint,'ordinary real user cannot read test outcomes');
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.entry')),'NOT_AUTHORIZED','real staff outside QA/managers cannot record costs on a real report');
+select throws_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.result')),'NOT_AUTHORIZED','real staff outside QA/managers cannot save outcomes on a real report');
+select set_config('request.jwt.claims','{"sub":"74000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.entry')),'real QA records a cost on a real report');
+select is((select count(*) from public.ncr_losses where ncr_id=current_setting('test.real_ncr')::uuid and cost_status='estimated' and entry_kind='loss' and amount=600.00),1::bigint,'the real cost is stored on the real report as an estimate');
+select throws_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),(current_setting('test.result')::jsonb || '{"cost_reviewed":true}')::text),'COST_REVIEW_PENDING','real report also needs confirmed costs before the review is complete');
+select lives_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.result')),'real QA saves a final outcome on a real report');
+select is((select count(*) from public.ncr_outcomes where ncr_id=current_setting('test.real_ncr')::uuid),1::bigint,'real QA can read the real outcome');
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr'),current_setting('test.entry')),'SANDBOX_SCOPE_MISMATCH','real QA cannot record a cost on a test report');
+select throws_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr'),current_setting('test.result')),'SANDBOX_SCOPE_MISMATCH','real QA cannot save an outcome on a test report');
 select set_config('request.jwt.claims','{"role":"authenticated"}',true);
 select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr'),current_setting('test.entry')),'AUTH_REQUIRED','new API requires a session');
 reset role;
