@@ -71,6 +71,15 @@
     INVALID_LOSS_TYPE: "กรุณาเลือกประเภทความสูญเสีย",
     // friendlyError เลือกรหัสแรกที่พบในข้อความ จึงต้องวาง INVALID_LOSS_NOTE ไว้ก่อน INVALID_LOSS
     INVALID_LOSS_NOTE: `ประเภท "อื่นๆ" ต้องระบุหมายเหตุอธิบายว่าเป็นค่าอะไร (อย่างน้อย ${OTHER_LOSS_NOTE_MIN} ตัวอักษร)`,
+    SANDBOX_ONLY: "ฟังก์ชันนี้ใช้ได้เฉพาะโหมดทดสอบระบบ",
+    INVALID_LOSS_STATUS: "กรุณาเลือกประมาณการหรือยืนยันยอดจริง",
+    INVALID_LOSS_COMPONENT: "ส่วนประกอบค่าใช้จ่ายไม่ตรงกับประเภท",
+    INVALID_LOSS_DATE: "กรุณาตรวจวันที่เกิดค่าใช้จ่าย ยอดจริงต้องไม่เป็นวันที่ในอนาคต",
+    LOSS_EVIDENCE_REQUIRED: "กรุณาระบุหลักฐานอ้างอิงก่อนยืนยันยอดหรือผลดำเนินการ",
+    INVALID_OUTCOME: "กรุณาตรวจจำนวนผลดำเนินการและวันที่",
+    OUTCOME_EXCEEDS_LOT: "ผลสุดท้ายรวมกันหรือจำนวนคัดแยกต้องไม่เกินจำนวนทั้งหมดในล็อต",
+    COST_REVIEW_PENDING: "ยังมีรายการรอยืนยัน กรุณาตรวจยอดก่อนระบุว่าประเมินครบ",
+    ZERO_COST_REASON_REQUIRED: "กรุณาระบุเหตุผลกรณีไม่มีค่าเสียหาย",
     INVALID_LOSS: "จำนวนต้องมากกว่า 0 ราคาต่อหน่วยต้องไม่ติดลบ และต้องระบุหน่วย",
     INVALID_INFO_REQUEST: "กรุณาระบุข้อมูลที่ต้องการเพิ่มเติม (5–2,000 ตัวอักษร)",
     INVALID_INFO_ANSWER: "กรุณาระบุข้อมูลที่ตอบ (5–5,000 ตัวอักษร)",
@@ -238,6 +247,7 @@
           if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ในหน้า NCR`;
         }
         showToast(message);
+        window.MNP_REQUEST_MODULES.NCR_CAR.shared.invalidateDashboard?.();
         location.hash = `#/ncr?id=${encodeURIComponent(data.id)}`;
       } catch (error) {
         setFormBusy(form, false);
@@ -267,9 +277,12 @@
     const rows = data ?? [];
     const lossByNcr = new Map();
     if (rows.length) {
-      const { data: losses, error: lossError } = await sb.from("ncr_losses").select("ncr_id,amount").is("voided_at", null).in("ncr_id", rows.map((row) => row.id));
+      const { data: losses, error: lossError } = await sb.from("ncr_losses").select("ncr_id,amount,cost_status,entry_kind").is("voided_at", null).in("ncr_id", rows.map((row) => row.id));
       if (lossError) throw lossError;
-      for (const loss of losses ?? []) lossByNcr.set(loss.ncr_id, (lossByNcr.get(loss.ncr_id) ?? 0) + Number(loss.amount));
+      for (const loss of losses ?? []) {
+        if (!lossByNcr.has(loss.ncr_id)) lossByNcr.set(loss.ncr_id, []);
+        lossByNcr.get(loss.ncr_id).push(loss);
+      }
     }
     // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
     const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
@@ -279,7 +292,9 @@
     const card = (row) => {
       const href = `#/ncr?id=${encodeURIComponent(row.id)}`;
       const departments = (row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ");
-      const loss = lossByNcr.has(row.id) ? formatBaht(lossByNcr.get(row.id)) : null;
+      const entries = lossByNcr.get(row.id);
+      const summary = entries && state.employee?.isSandbox ? window.MNP_NCR_COSTS.summarize(entries) : null;
+      const loss = entries ? formatBaht(summary ? summary.net : entries.reduce((sum,entry) => sum + Number(entry.amount),0)) : null;
       return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
         <header class="request-card-head">
           <div class="request-card-identity"><a class="request-card-no" href="${href}">${escapeHtml(row.ncr_no)}</a></div>
@@ -293,7 +308,7 @@
             <span><b>พบปัญหา:</b> ${formatQty(row.qty_defect)} ${escapeHtml(row.unit)}</span>
             <span><b>แผนกรับผิดชอบ:</b> ${escapeHtml(departments || "—")}</span>
             <span><b>วันที่ออก:</b> ${formatDate(row.issue_date)}</span>
-            <span><b>ความสูญเสีย:</b> ${loss ?? "—"}</span>
+            <span><b>ความสูญเสีย:</b> ${loss ?? "—"}${summary ? ` · สุทธิยืนยัน · รอยืนยัน ${summary.pending} รายการ` : ""}</span>
           </div>
         </div>
         <footer class="request-card-footer ncr-card-footer">
@@ -467,6 +482,7 @@
   }
 
   function lossSectionHtml(ncr, losses, directory, editable) {
+    if (state.employee?.isSandbox) return window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, editable, todayBangkok(), formatBaht, formatQty);
     const active = losses.filter((loss) => !loss.voided_at);
     const total = active.reduce((sum, loss) => sum + Number(loss.amount), 0);
     const rows = losses.map((loss) => `<tr class="${loss.voided_at ? "ncr-voided" : ""}">
@@ -499,17 +515,19 @@
     issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผจก.แผนก QA ลงนาม", signoff_factory: "ผจก.โรงงานลงนาม",
     signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
+    loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง",
   };
 
   async function renderDetail(id) {
     loadingShell("ncr", "NCR");
     const employee = state.employee;
-    const [ncrResult, lossResult, historyResult, attachmentResult, directory, staff, infoResult] = await Promise.all([
+    const [ncrResult, lossResult, historyResult, attachmentResult, directory, outcomeResult, staff, infoResult] = await Promise.all([
       sb.from("ncr_reports").select("*,defect_type:ncr_defect_types(name_th),reporter_department:departments!ncr_reports_reporter_department_id_fkey(code),ncr_responsibilities(share,department_id,department:departments(code,name_th))").eq("id", id).maybeSingle(),
       sb.from("ncr_losses").select("*").eq("ncr_id", id).order("recorded_at"),
       sb.from("ncr_status_history").select("*").eq("ncr_id", id).order("id"),
       sb.from("ncr_attachments").select("*").eq("ncr_id", id).order("created_at"),
       loadEmployeeDirectory(),
+      state.employee?.isSandbox ? sb.from("ncr_outcomes").select("*").eq("ncr_id", id).maybeSingle() : Promise.resolve({data:null,error:null}),
       loadNcrStaff().catch(() => []),
       // ถ้าฐานข้อมูลยังไม่มีตารางนี้ (ยังไม่ได้ push migration) ก็แสดงใบตามปกติ ไม่ให้หน้าทั้งหน้าพัง
       sb.from("ncr_info_requests").select("*").eq("ncr_id", id).order("requested_at").then((result) => (result.error ? { data: [] } : result)),
@@ -518,6 +536,7 @@
     if (lossResult.error) throw lossResult.error;
     if (historyResult.error) throw historyResult.error;
     if (attachmentResult.error) throw attachmentResult.error;
+    if (outcomeResult.error) throw outcomeResult.error;
     const attachments = attachmentResult.data ?? [];
     const ncr = ncrResult.data;
     if (!ncr) {
@@ -525,6 +544,7 @@
       bindShell();
       return;
     }
+    ncr.outcome = outcomeResult.data;
     let departments = [];
     if (ncr.status === "awaiting_disposition" && roleCode(employee) === "factory_manager") {
       const { data, error } = await sb.from("departments").select("id,code,name_th").eq("is_active", true).order("code");
@@ -601,7 +621,7 @@
         ${OPEN_STATUSES.includes(ncr.status) && !state.employee?.isSandbox ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
-    const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
+    const lossesSection = (state.employee?.isSandbox ? window.MNP_NCR_LOSS_UI.outcomeHtml(ncr, canEditLosses(ncr, employee), todayBangkok(), formatQty, directory) : "") + lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
     const historySection = `
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     // ผู้ดำเนินการต้องได้อ่านข้อมูลของขั้นก่อนหน้า + ไฟล์หลักฐานก่อนถึงฟอร์ม: ฟอร์มจึงอยู่หลังส่วนที่ขั้นนั้นต้องอ่าน
@@ -615,7 +635,7 @@
     const content = heading + body.join("");
     app.innerHTML = shell(content, "ncr", ncr.ncr_no);
     bindShell();
-    bindDetail(ncr);
+    bindDetail(ncr, lossResult.data ?? []);
     document.querySelector("#attachment-gallery")?.addEventListener("click", (event) => {
       const trigger = event.target.closest("[data-attachment-open]");
       if (trigger) openAttachmentLightbox(trigger.dataset.attachmentOpen);
@@ -757,8 +777,9 @@
     return { lines, lineNumbers };
   }
 
-  function bindDetail(ncr) {
-    bindLossForm(ncr);
+  function bindDetail(ncr, losses) {
+    if (state.employee?.isSandbox) window.MNP_NCR_LOSS_UI.bind({ ...ncr, today: todayBangkok() }, losses, formatBaht);
+    else bindLossForm(ncr);
 
     const calls = {
       dispose: (form) => sb.rpc("app_ncr_dispose", {
@@ -788,7 +809,9 @@
         return { error: null, message: `แนบไฟล์แล้ว${evidences.length > 1 ? ` ${evidences.length} ไฟล์` : ""}` };
       },
       cancel: (form) => sb.rpc("app_ncr_cancel", { p_ncr_id: ncr.id, p_reason: optionalText(form, "reason") ?? "" }),
+      save_outcome: (form) => sb.rpc("app_ncr_save_outcome", { p_ncr_id: ncr.id, p_result: window.MNP_NCR_LOSS_UI.readOutcome(form) }),
       add_loss: (form) => {
+        if (state.employee?.isSandbox) return sb.rpc("app_ncr_record_loss", { p_ncr_id: ncr.id, p_entry: window.MNP_NCR_LOSS_UI.readEntry(form), p_loss_id: optionalText(form,"loss_id") });
         const parsed = collectLossLines(form);
         if (parsed.error) return Promise.resolve({ error: new Error(parsed.error) });
         return sb.rpc("app_ncr_add_losses", { p_ncr_id: ncr.id, p_losses: parsed.lines }).then(({ error }) => {
@@ -800,10 +823,11 @@
         });
       },
     };
-    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
+    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", save_outcome: "บันทึกผลดำเนินการแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
 
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (state.employee?.isSandbox && !form.reportValidity()) return;
       const action = form.dataset.action;
       if (action === "cancel" && !window.confirm(`ยืนยันยกเลิก ${ncr.ncr_no}?`)) return;
       let evidences;
@@ -814,9 +838,9 @@
         return;
       }
       // เรียก RPC (ซึ่งอ่านค่าจากฟอร์มทันที) ก่อน setFormBusy — ช่องที่ถูก disable จะไม่อยู่ใน FormData
-      const pending = calls[action](form, evidences);
-      setFormBusy(form, true);
       try {
+        const pending = calls[action](form, evidences);
+        setFormBusy(form, true);
         const { error, message: doneMessage, failed } = await pending;
         if (error) throw error;
         let message = doneMessage ?? doneMessages[action];
@@ -826,6 +850,7 @@
           if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ที่ส่วนไฟล์หลักฐาน`;
         }
         showToast(message, failed ? "error" : "success");
+        window.MNP_REQUEST_MODULES.NCR_CAR.shared.invalidateDashboard?.();
         await renderDetail(ncr.id);
       } catch (error) {
         setFormBusy(form, false);
@@ -844,6 +869,7 @@
         return;
       }
       showToast("ยกเลิกรายการแล้ว");
+      window.MNP_REQUEST_MODULES.NCR_CAR.shared.invalidateDashboard?.();
       await renderDetail(ncr.id);
     }));
   }
