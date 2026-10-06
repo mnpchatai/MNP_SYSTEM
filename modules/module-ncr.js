@@ -4,8 +4,10 @@
 // ดู supabase/migrations/20261002020000_ncr_phase1.sql:
 //   ส่วนที่ 1 ออก NCR (พนักงานทุกคน) -> ส่วนที่ 2 ผจก.โรงงานพิจารณา -> ส่วนที่ 3 ผจก.แผนกที่รับผิดชอบตอบ
 //   -> ส่วนที่ 4 QA ติดตามผล -> ลงนาม ผจก.QA -> ผจก.โรงงาน -> ผจก.ทั่วไป -> ปิด
-// การ์ด "NCR/CAR" ในหน้าสร้างคำร้องเปิดฟอร์ม NCR นี้แทนฟอร์มคำร้องทั่วไป ส่วนทะเบียน/รายละเอียด
-// อยู่ที่ #/ncr และ #/ncr?id=<uuid> (app.js เรียกผ่าน pages.ncr)
+// การ์ด "NCR/CAR" ในหน้าสร้างคำร้องเปิดฟอร์ม NCR นี้แทนฟอร์มคำร้องทั่วไป ทะเบียน NCR แสดงในหน้า NCR ของศูนย์คำร้อง
+// (renderCenterList) ที่เดียว ลิงก์ #/ncr พาไปที่นั่น (app.js) ยกเว้นโหมดทดสอบที่ไม่มีหน้าคำร้องจึงใช้หน้าทะเบียนของไฟล์นี้
+// รายละเอียดอยู่ที่ #/ncr?id=<uuid> (app.js เรียกผ่าน pages.ncr)
+// ฟอร์มความสูญเสีย/ผลดำเนินการ/ยืนยันยอด (modules/ncr-loss-form.js, ncr-costs.js) ใช้เหมือนกันทั้งโหมดทดสอบและข้อมูลจริง
 //
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — ฟังก์ชันข้างในเรียก helper ของ app.js (sb, state, shell,
 // bindShell, loadingShell, escapeHtml, formatDate, showToast, friendlyError, setFormBusy,
@@ -29,24 +31,7 @@
   const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่นๆ" };
   const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่นๆ" };
   const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", repair: "ค่าซ่อม (Repair)", rework: "ค่า Rework", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่นๆ" };
-  // หน่วยของประเภทที่คิดเป็นชั่วโมง — ใช้ดึง "อัตราล่าสุด" มาเป็นค่าเริ่มต้นของราคาต่อหน่วย
-  const LABOR_LOSS_TYPES = ["repair", "rework", "sort", "downtime"];
-  const HOUR_UNIT = "ชม.";
-  // คำแนะนำการกรอกของแต่ละประเภท (จำนวน x ราคาต่อหน่วย = มูลค่า) unit = หน่วยเริ่มต้น (ไม่ระบุ = หน่วยของ NCR)
-  const LOSS_GUIDE = {
-    scrap: { qty: "ชิ้นที่ทิ้ง", price: "ต้นทุนผลิตสะสมถึงจุดที่เสีย (ไม่ใช่ราคาขาย) ถ้าลงวัตถุดิบแยกแล้วให้ใช้เฉพาะค่าแปรรูป ไม่รวมวัตถุดิบ", evidence: "ใบแจ้งทิ้ง/ใบเบิก" },
-    material: { qty: "ปริมาณวัตถุดิบที่สูญเสีย (ตามหน่วยของวัตถุดิบ เช่น กก./เมตร)", price: "ราคาวัตถุดิบต่อหน่วย (ราคาซื้อ/ต้นทุนมาตรฐาน)", evidence: "ใบเบิกวัตถุดิบ/ใบสั่งซื้อ", note: "ลงแยกจากของเสีย/ผลิตทดแทนได้ โดยราคาของสองประเภทนั้นต้องไม่รวมวัตถุดิบ เพื่อไม่นับซ้ำ" },
-    repair: { unit: HOUR_UNIT, qty: "คน × ชั่วโมงที่ใช้ซ่อมจริง", price: "อัตราค่าแรงต่อ ชม.", evidence: "ใบบันทึกเวลา/ใบสั่งงานซ่อม", note: "ซ่อมแซมชิ้นงานให้ใช้ได้ ลงแยกจาก Rework ชิ้นที่ซ่อมได้ให้ลงที่นี่เป็นชั่วโมงแรง ไม่ต้องลงเป็นของเสียซ้ำ" },
-    rework: { unit: HOUR_UNIT, qty: "คน × ชั่วโมงที่ใช้จริง", price: "อัตราค่าแรงต่อ ชม.", evidence: "ใบบันทึกเวลา/ใบสั่งงาน Rework", note: "ลงแยกจากค่าซ่อม (Repair) เพื่อให้รายงานแยกสองประเภทได้" },
-    sort: { unit: HOUR_UNIT, qty: "คน × ชั่วโมงที่ใช้จริง", price: "อัตราค่าแรงต่อ ชม.", evidence: "ใบบันทึกเวลา" },
-    reproduce: { qty: "ชิ้นที่ผลิตใหม่", price: "ต้นทุนผลิตต่อชิ้น (ถ้าลงวัตถุดิบแยกแล้วไม่รวมวัตถุดิบ)", evidence: "ใบสั่งผลิตใหม่" },
-    logistics: { unit: "เที่ยว", qty: "จำนวนเที่ยว (หรือ กม.)", price: "ค่าขนส่งต่อเที่ยว", evidence: "ใบเสร็จ/ใบแจ้งหนี้ขนส่ง" },
-    claim: { unit: "ครั้ง", qty: "1 (หรือจำนวนชิ้นที่ถูกหัก)", price: "ยอดเงินที่ลูกค้าหัก/ใบลดหนี้ ต่อครั้ง (หรือต่อชิ้น)", evidence: "ใบลดหนี้/เอกสารจากลูกค้า" },
-    downtime: { unit: HOUR_UNIT, qty: "ชั่วโมงที่เครื่องหยุด", price: "ต้นทุนเครื่องต่อ ชม.", evidence: "บันทึกเครื่องหยุด" },
-    other: { qty: "ตามจริง", price: "ตามจริง", evidence: "ต้องเขียนหมายเหตุอธิบายว่าเป็นค่าอะไร", note: "ประเภทนี้ไม่มีสูตรตายตัว จึงบังคับกรอกหมายเหตุ" },
-  };
   const OTHER_LOSS_NOTE_MIN = 5;
-  const MAX_LOSS_LINES = 30;
   const STATUS_BADGE_CLASS = { closed: "completed", cancelled: "cancelled" };
 
   const ERROR_MESSAGES = {
@@ -72,7 +57,6 @@
     INVALID_LOSS_TYPE: "กรุณาเลือกประเภทความสูญเสีย",
     // friendlyError เลือกรหัสแรกที่พบในข้อความ จึงต้องวาง INVALID_LOSS_NOTE ไว้ก่อน INVALID_LOSS
     INVALID_LOSS_NOTE: `ประเภท "อื่นๆ" ต้องระบุหมายเหตุอธิบายว่าเป็นค่าอะไร (อย่างน้อย ${OTHER_LOSS_NOTE_MIN} ตัวอักษร)`,
-    SANDBOX_ONLY: "ฟังก์ชันนี้ใช้ได้เฉพาะโหมดทดสอบระบบ",
     INVALID_LOSS_STATUS: "กรุณาเลือกประมาณการหรือยืนยันยอดจริง",
     INVALID_LOSS_COMPONENT: "ส่วนประกอบค่าใช้จ่ายไม่ตรงกับประเภท",
     INVALID_LOSS_DATE: "กรุณาตรวจวันที่เกิดค่าใช้จ่าย ยอดจริงต้องไม่เป็นวันที่ในอนาคต",
@@ -84,7 +68,6 @@
     INVALID_LOSS: "จำนวนต้องมากกว่า 0 ราคาต่อหน่วยต้องไม่ติดลบ และต้องระบุหน่วย",
     INVALID_INFO_REQUEST: "กรุณาระบุข้อมูลที่ต้องการเพิ่มเติม (5–2,000 ตัวอักษร)",
     INVALID_INFO_ANSWER: "กรุณาระบุข้อมูลที่ตอบ (5–5,000 ตัวอักษร)",
-    INVALID_LOSS_BATCH: "ต้องมีรายการความสูญเสียอย่างน้อย 1 และไม่เกิน 30 รายการ",
     LOSS_NOT_FOUND: "ไม่พบรายการความสูญเสียนี้",
     LOSS_ALREADY_VOIDED: "รายการนี้ถูกยกเลิกไปแล้ว",
     INVALID_ATTACHMENT: "ไฟล์แนบไม่ถูกต้อง กรุณาเลือกไฟล์ใหม่",
@@ -294,8 +277,8 @@
       const href = `#/ncr?id=${encodeURIComponent(row.id)}`;
       const departments = (row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ");
       const entries = lossByNcr.get(row.id);
-      const summary = entries && state.employee?.isSandbox ? window.MNP_NCR_COSTS.summarize(entries) : null;
-      const loss = entries ? formatBaht(summary ? summary.net : entries.reduce((sum,entry) => sum + Number(entry.amount),0)) : null;
+      const summary = entries ? window.MNP_NCR_COSTS.summarize(entries) : null;
+      const loss = summary ? formatBaht(summary.net) : null;
       return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
         <header class="request-card-head">
           <div class="request-card-identity"><a class="request-card-no" href="${href}">${escapeHtml(row.ncr_no)}</a></div>
@@ -321,11 +304,13 @@
       ? `<section class="request-list-panel"><div class="request-timeline">${rows.map(card).join("")}</div></section>`
       : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
+    // หน้าทะเบียนแบบเดี่ยวใช้เฉพาะโหมดทดสอบ (ไม่มีหน้าคำร้อง ซึ่งเป็นที่อยู่ของปุ่ม "ออก NCR" และลิงก์แดชบอร์ดตามปกติ)
+    // จึงต้องมีทางเข้าฟอร์มออกใบและแดชบอร์ดจากทะเบียนโดยตรง
+    const headerLinks = (modules.NCR_CAR.headerLinks ?? []).map((link) => `<a class="btn secondary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join("");
     const content = `
-      <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : (state.employee?.isSandbox
-        // โหมดทดสอบซ่อนหน้าคำร้อง (ปุ่ม "ออก NCR" ปกติอยู่ที่นั่น) จึงต้องมีทางเข้าฟอร์มออกใบจากทะเบียนโดยตรง
+      <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : `<div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1">＋ ออก NCR</a>'
-        : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>')}</div>
+        : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div>`}</div>
       <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="${escapeHtml(filterUrl(value))}">${label}</a>`).join("")}</div>
       ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
@@ -482,35 +467,7 @@
     return isDeptManager(employee) && (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
   }
 
-  function lossSectionHtml(ncr, losses, directory, editable) {
-    if (state.employee?.isSandbox) return window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, editable, todayBangkok(), formatBaht, formatQty);
-    const active = losses.filter((loss) => !loss.voided_at);
-    const total = active.reduce((sum, loss) => sum + Number(loss.amount), 0);
-    const rows = losses.map((loss) => `<tr class="${loss.voided_at ? "ncr-voided" : ""}">
-        <td>${escapeHtml(LOSS_TYPES[loss.loss_type] ?? loss.loss_type)}</td>
-        <td>${formatQty(loss.quantity)} ${escapeHtml(loss.unit)}</td>
-        <td>${formatBaht(loss.unit_cost)}</td>
-        <td>${formatBaht(loss.amount)}</td>
-        <td>${escapeHtml(loss.note ?? "")}${loss.voided_at ? `<div class="muted small">ยกเลิก: ${escapeHtml(loss.void_reason ?? "")} · ${escapeHtml(personName(directory, loss.voided_by))}</div>` : ""}</td>
-        <td>${escapeHtml(personName(directory, loss.recorded_by))}<div class="muted small">${formatDate(loss.recorded_at)}</div></td>
-        <td>${editable && !loss.voided_at ? `<button class="btn secondary small" type="button" data-void-loss="${escapeHtml(loss.id)}">ยกเลิก</button>` : ""}</td>
-      </tr>`).join("");
-    return `<section class="card ncr-card">
-      <h2>ความสูญเสีย (Cost of Poor Quality)</h2>
-      <p class="muted small">มูลค่า = จำนวน × ราคาต่อหน่วย ณ วันที่บันทึก · รายการที่ยกเลิกยังเก็บไว้ให้ตรวจสอบย้อนหลัง</p>
-      ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หมายเหตุ</th><th>บันทึกโดย</th><th></th></tr></thead>
-        <tbody>${rows}<tr><td colspan="3"><strong>รวม</strong></td><td><strong>${formatBaht(total)}</strong></td><td colspan="3"></td></tr></tbody></table></div>` : `<p class="muted small">ยังไม่มีรายการ</p>`}
-      ${editable ? `<form class="ncr-action" data-action="add_loss" novalidate><div class="ncr-form-message"></div>
-        <h3>เพิ่มรายการความสูญเสีย</h3>
-        <p class="muted small">กรอกได้หลายรายการแล้วกดบันทึกครั้งเดียว หากมีรายการใดไม่ผ่านจะไม่บันทึกเลยสักรายการ · รายการที่เว้นว่างทั้งแถวจะถูกข้าม</p>
-        <div id="ncr-loss-lines"></div>
-        <div class="ncr-loss-footer">
-          <button class="btn secondary small" type="button" id="ncr-loss-add-line">+ เพิ่มรายการ</button>
-          <div class="ncr-loss-total">รวมที่กำลังกรอก <strong id="ncr-loss-total">${formatBaht(0)}</strong></div>
-        </div>
-        <div class="form-actions"><button class="btn" type="submit">บันทึกทั้งหมด</button></div></form>` : ""}
-    </section>`;
-  }
+  const lossSectionHtml = (ncr, losses, directory, editable) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, editable, todayBangkok(), formatBaht, formatQty);
 
   const HISTORY_LABELS = {
     issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", followup_close: "QA ปิดประเด็น",
@@ -528,7 +485,7 @@
       sb.from("ncr_status_history").select("*").eq("ncr_id", id).order("id"),
       sb.from("ncr_attachments").select("*").eq("ncr_id", id).order("created_at"),
       loadEmployeeDirectory(),
-      state.employee?.isSandbox ? sb.from("ncr_outcomes").select("*").eq("ncr_id", id).maybeSingle() : Promise.resolve({data:null,error:null}),
+      sb.from("ncr_outcomes").select("*").eq("ncr_id", id).maybeSingle(),
       loadNcrStaff().catch(() => []),
       // ถ้าฐานข้อมูลยังไม่มีตารางนี้ (ยังไม่ได้ push migration) ก็แสดงใบตามปกติ ไม่ให้หน้าทั้งหน้าพัง
       sb.from("ncr_info_requests").select("*").eq("ncr_id", id).order("requested_at").then((result) => (result.error ? { data: [] } : result)),
@@ -622,7 +579,7 @@
         ${OPEN_STATUSES.includes(ncr.status) && !state.employee?.isSandbox ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
-    const lossesSection = (state.employee?.isSandbox ? window.MNP_NCR_LOSS_UI.outcomeHtml(ncr, canEditLosses(ncr, employee), todayBangkok(), formatQty, directory) : "") + lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
+    const lossesSection = window.MNP_NCR_LOSS_UI.outcomeHtml(ncr, canEditLosses(ncr, employee), todayBangkok(), formatQty, directory) + lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
     const historySection = `
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     // ผู้ดำเนินการต้องได้อ่านข้อมูลของขั้นก่อนหน้า + ไฟล์หลักฐานก่อนถึงฟอร์ม: ฟอร์มจึงอยู่หลังส่วนที่ขั้นนั้นต้องอ่าน
@@ -644,143 +601,8 @@
     hydrateAttachmentGallery(attachments, "ncr-attachments").catch((error) => showToast(friendlyError(error), "error"));
   }
 
-  // อัตราต่อชั่วโมงล่าสุดที่เคยบันทึก (ไม่นับรายการที่ยกเลิก) แยกตามประเภท — ใช้เป็นค่าเริ่มต้นให้แก้ได้ ไม่ใช่อัตรามาตรฐานของบริษัท
-  async function fetchLatestHourlyRates() {
-    const { data, error } = await sb.from("ncr_losses").select("loss_type,unit_cost,recorded_at")
-      .in("loss_type", LABOR_LOSS_TYPES).eq("unit", HOUR_UNIT).is("voided_at", null)
-      .order("recorded_at", { ascending: false }).limit(60);
-    if (error) throw error;
-    const rates = {};
-    for (const row of data ?? []) rates[row.loss_type] ??= { unitCost: Number(row.unit_cost), recordedAt: row.recorded_at };
-    return rates;
-  }
-
-  function lossHintText(type, rate) {
-    const guide = LOSS_GUIDE[type];
-    if (!guide) return "";
-    const parts = [`จำนวน = ${guide.qty}`, `ราคาต่อหน่วย = ${guide.price}`, `หลักฐาน: ${guide.evidence}`];
-    if (guide.note) parts.push(guide.note);
-    if (rate) parts.push(`อัตราล่าสุดที่เคยบันทึก ${formatBaht(rate.unitCost)} ต่อ ${HOUR_UNIT} (${formatDate(rate.recordedAt)}) (ใส่ในช่องราคาให้เมื่อช่องยังว่าง แก้ไขได้)`);
-    return parts.join(" · ");
-  }
-
-  let lossLineSeq = 0;
-
-  function lossLineHtml(ncr) {
-    const n = ++lossLineSeq;
-    const id = (name) => `ncr-loss-${name}-${n}`;
-    return `<fieldset class="ncr-loss-line" data-loss-line>
-      <legend>รายการที่ <span data-line-no></span></legend>
-      <div class="form-grid">
-        <div class="field full"><label for="${id("type")}">ประเภท *</label><select class="select" id="${id("type")}" data-f="loss_type" aria-describedby="${id("hint")}">${Object.entries(LOSS_TYPES).map(([value, label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select>
-          <p class="muted small" id="${id("hint")}" data-f="hint" aria-live="polite"></p></div>
-        <div class="field"><label for="${id("qty")}">จำนวน *</label><input class="input" id="${id("qty")}" data-f="quantity" type="number" min="0" step="any" inputmode="decimal"></div>
-        <div class="field"><label for="${id("unit")}">หน่วย *</label><input class="input" id="${id("unit")}" data-f="unit" maxlength="20" value="${escapeHtml(ncr.unit)}"></div>
-        <div class="field"><label for="${id("cost")}">ราคาต่อหน่วย (บาท) *</label><input class="input" id="${id("cost")}" data-f="unit_cost" type="number" min="0" step="0.01" inputmode="decimal"></div>
-        <div class="field full"><label for="${id("note")}" data-f="note_label">หมายเหตุ</label><input class="input" id="${id("note")}" data-f="note" maxlength="500"></div>
-      </div>
-      <div class="ncr-loss-line-foot"><span class="muted small">มูลค่า <strong data-f="amount">${formatBaht(0)}</strong></span>
-        <button class="btn secondary small" type="button" data-remove-line>ลบรายการนี้</button></div>
-    </fieldset>`;
-  }
-
-  const lossField = (line, name) => line.querySelector(`[data-f="${name}"]`);
-
-  function bindLossForm(ncr) {
-    const container = document.querySelector("#ncr-loss-lines");
-    if (!container) return;
-    const addButton = document.querySelector("#ncr-loss-add-line");
-    const totalElement = document.querySelector("#ncr-loss-total");
-    let rates = {};
-
-    function applyType(line) {
-      const type = lossField(line, "loss_type").value;
-      const rate = rates[type];
-      const costInput = lossField(line, "unit_cost");
-      lossField(line, "unit").value = LOSS_GUIDE[type]?.unit ?? ncr.unit;
-      // ค่าที่ระบบใส่ให้ในช่องราคา — ถ้าผู้ใช้พิมพ์เองแล้ว (ค่าต่างจากนี้) จะไม่ถูกเขียนทับเมื่อสลับประเภท
-      if (costInput.value === "" || costInput.value === (line.dataset.autoCost ?? "")) {
-        line.dataset.autoCost = rate ? String(rate.unitCost) : "";
-        costInput.value = line.dataset.autoCost;
-      }
-      const noteRequired = type === "other";
-      lossField(line, "note_label").textContent = noteRequired ? "หมายเหตุ *" : "หมายเหตุ";
-      lossField(line, "hint").textContent = lossHintText(type, rate);
-    }
-
-    function refresh() {
-      const lines = [...container.querySelectorAll("[data-loss-line]")];
-      let total = 0;
-      lines.forEach((line, index) => {
-        line.querySelector("[data-line-no]").textContent = String(index + 1);
-        line.querySelector("[data-remove-line]").hidden = lines.length === 1;
-        const amount = Math.round(Number(lossField(line, "quantity").value) * Number(lossField(line, "unit_cost").value) * 100) / 100;
-        const valid = Number.isFinite(amount) && amount > 0;
-        lossField(line, "amount").textContent = valid ? formatBaht(amount) : formatBaht(0);
-        if (valid) total += amount;
-      });
-      totalElement.textContent = formatBaht(total);
-      addButton.disabled = lines.length >= MAX_LOSS_LINES;
-    }
-
-    function addLine() {
-      container.insertAdjacentHTML("beforeend", lossLineHtml(ncr));
-      const line = container.lastElementChild;
-      applyType(line);
-      refresh();
-      return line;
-    }
-
-    container.addEventListener("change", (event) => {
-      if (event.target.matches('[data-f="loss_type"]')) applyType(event.target.closest("[data-loss-line]"));
-      refresh();
-    });
-    container.addEventListener("input", refresh);
-    container.addEventListener("click", (event) => {
-      const remove = event.target.closest("[data-remove-line]");
-      if (!remove) return;
-      remove.closest("[data-loss-line]").remove();
-      refresh();
-    });
-    addButton.addEventListener("click", () => lossField(addLine(), "loss_type").focus());
-
-    addLine();
-    // ดึงอัตราล่าสุดเบื้องหลัง ถ้าอ่านไม่ได้ก็ใช้ฟอร์มตามปกติ (เป็นแค่ค่าเริ่มต้นที่ช่วยกรอก)
-    fetchLatestHourlyRates().then((latest) => {
-      rates = latest;
-      container.querySelectorAll("[data-loss-line]").forEach(applyType);
-      refresh();
-    }).catch(() => {});
-  }
-
-  // อ่านทุกแถวในฟอร์มเป็นรายการส่ง RPC — แถวที่เว้นว่างทั้งแถวถูกข้าม แถวที่กรอกไม่ครบ/ผิดคืนข้อความบอกลำดับแถว
-  // กฎตรวจตรงกับ private.ncr_insert_loss (ฐานข้อมูลตรวจซ้ำเสมอ ฟังก์ชันนี้มีไว้ให้ผู้ใช้เห็นข้อผิดพลาดเร็วขึ้น)
-  function collectLossLines(form) {
-    const lines = [];
-    const lineNumbers = [];
-    let position = 0;
-    for (const line of form.querySelectorAll("[data-loss-line]")) {
-      position += 1;
-      const read = (name) => String(lossField(line, name).value ?? "").trim();
-      const lossType = read("loss_type");
-      const note = read("note");
-      if (read("quantity") === "" && read("unit_cost") === "" && note === "") continue;
-      const quantity = Number(read("quantity").replaceAll(",", ""));
-      const unitCost = Number(read("unit_cost").replaceAll(",", ""));
-      const unit = read("unit");
-      const fail = (code) => ({ error: `รายการที่ ${position}: ${ERROR_MESSAGES[code]}` });
-      if (read("quantity") === "" || read("unit_cost") === "" || !(quantity > 0) || !(unitCost >= 0) || unit.length < 1 || unit.length > 20) return fail("INVALID_LOSS");
-      if (lossType === "other" && note.length < OTHER_LOSS_NOTE_MIN) return fail("INVALID_LOSS_NOTE");
-      lines.push({ loss_type: lossType, quantity, unit, unit_cost: unitCost, note: note === "" ? null : note });
-      lineNumbers.push(position);
-    }
-    if (!lines.length) return { error: "กรุณากรอกรายการความสูญเสียอย่างน้อย 1 รายการ" };
-    return { lines, lineNumbers };
-  }
-
   function bindDetail(ncr, losses) {
-    if (state.employee?.isSandbox) window.MNP_NCR_LOSS_UI.bind({ ...ncr, today: todayBangkok() }, losses, formatBaht);
-    else bindLossForm(ncr);
+    window.MNP_NCR_LOSS_UI.bind({ ...ncr, today: todayBangkok() }, losses, formatBaht);
 
     const calls = {
       dispose: (form) => sb.rpc("app_ncr_dispose", {
@@ -811,24 +633,13 @@
       },
       cancel: (form) => sb.rpc("app_ncr_cancel", { p_ncr_id: ncr.id, p_reason: optionalText(form, "reason") ?? "" }),
       save_outcome: (form) => sb.rpc("app_ncr_save_outcome", { p_ncr_id: ncr.id, p_result: window.MNP_NCR_LOSS_UI.readOutcome(form) }),
-      add_loss: (form) => {
-        if (state.employee?.isSandbox) return sb.rpc("app_ncr_record_loss", { p_ncr_id: ncr.id, p_entry: window.MNP_NCR_LOSS_UI.readEntry(form), p_loss_id: optionalText(form,"loss_id") });
-        const parsed = collectLossLines(form);
-        if (parsed.error) return Promise.resolve({ error: new Error(parsed.error) });
-        return sb.rpc("app_ncr_add_losses", { p_ncr_id: ncr.id, p_losses: parsed.lines }).then(({ error }) => {
-          if (!error) return { error: null, message: `บันทึกความสูญเสียแล้ว ${parsed.lines.length} รายการ` };
-          // ฐานข้อมูลบอกลำดับแถวที่ไม่ผ่านใน details ("line=N") แปลงกลับเป็นลำดับแถวบนหน้าจอ
-          const line = Number(/line=(\d+)/.exec(error.details ?? "")?.[1]);
-          const position = parsed.lineNumbers[line - 1];
-          return { error: position ? new Error(`รายการที่ ${position}: ${friendlyError(error)}`) : error };
-        });
-      },
+      add_loss: (form) => sb.rpc("app_ncr_record_loss", { p_ncr_id: ncr.id, p_entry: window.MNP_NCR_LOSS_UI.readEntry(form), p_loss_id: optionalText(form, "loss_id") }),
     };
     const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", save_outcome: "บันทึกผลดำเนินการแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
 
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (state.employee?.isSandbox && !form.reportValidity()) return;
+      if (!form.reportValidity()) return;
       const action = form.dataset.action;
       if (action === "cancel" && !window.confirm(`ยืนยันยกเลิก ${ncr.ncr_no}?`)) return;
       let evidences;
@@ -884,7 +695,9 @@
     // ไม่ระบุ label — ใช้ชื่อจาก request_types.name_th ("NCR/CAR") เหมือนเดิม
     theme: ["#facc15", "#a16207"],
     errorMessages: ERROR_MESSAGES,
-    nav: [{ path: "ncr", label: "ทะเบียน NCR", icon: NAV_ICON }],
+    // ผู้ใช้ปกติเข้าหน้า NCR จากหน้าคำร้อง (เลือกโมดูล NCR/CAR) ไม่มีเมนูข้างแยก ส่วนโหมดทดสอบซ่อนหน้าคำร้อง จึงมีเมนูเดียวพาไปหน้า NCR
+    // (ทะเบียน + ปุ่มออก NCR/แดชบอร์ด) — ลิงก์แดชบอร์ด headerLinks ลงทะเบียนโดย modules/module-ncr-dashboard.js
+    nav: [{ path: "ncr", label: "NCR/CAR", icon: NAV_ICON, sandboxOnly: true }],
 
     // การ์ด NCR/CAR ในหน้าสร้างคำร้อง -> ฟอร์ม NCR (QA02-FM01) แทนฟอร์มคำร้องทั่วไป
     async prepareForm() {

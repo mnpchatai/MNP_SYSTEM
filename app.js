@@ -209,12 +209,21 @@ function sandboxRouteAllowed(path, params) {
   const entry = Object.values(REQUEST_MODULES).find((item) => item.enabled && typeof item.pages?.[path] === "function");
   return Boolean(entry?.sandbox);
 }
+// เมนูข้างของโมดูลแยกไฟล์: รายการที่ประกาศ sandboxOnly โผล่เฉพาะในโหมดทดสอบ เพราะโหมดทดสอบซ่อนหน้าคำร้อง
+// ซึ่งเป็นทางเข้าปกติของโมดูล (เช่น หน้า NCR) ผู้ใช้ปกติเข้าหน้าของโมดูลจากหน้าคำร้อง ไม่มีเมนูข้างแยก
 function requestModuleNavLinks(active) {
   return Object.values(REQUEST_MODULES)
     .filter((entry) => entry.enabled && sandboxSupports(entry))
     .flatMap((entry) => entry.nav ?? [])
+    .filter((item) => !item.sandboxOnly || isSandboxMode())
     .map((item) => navLink(item.path, item.label, item.icon, active))
     .join("");
+}
+// หน้าของโมดูลแยกไฟล์ (#/ncr, #/ncr-dashboard) ที่เข้าผ่านหน้าคำร้อง ไฮไลต์เมนู "คำร้อง" นอกโหมดทดสอบ
+function activeNavFor(active) {
+  if (isSandboxMode()) return active;
+  const isModulePage = Object.values(REQUEST_MODULES).some((entry) => entry.enabled && typeof entry.pages?.[active] === "function");
+  return isModulePage ? "requests" : active;
 }
 function activeRequestModuleCodes() {
   const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled).map((entry) => entry.code);
@@ -1226,6 +1235,7 @@ function navLink(path, label, icon, active, { featured = false, badge = 0, href 
 
 function shell(content, active, title) {
   const employee = state.employee;
+  active = activeNavFor(active);
   return `
     <div class="app-shell">
       <button class="mobile-nav-toggle" type="button" aria-label="เปิดเมนูหลัก" aria-controls="mobile-nav" aria-expanded="false">
@@ -1633,10 +1643,13 @@ function requestCenterHeader(types, params, counts) {
   const selected = types.find((type) => type.id === params.get("type"));
   if (selected) {
     const createLabel = { MT_REPAIR: "สร้างคำร้อง / แจ้งซ่อม MT", MANAGEMENT: "สร้างคำร้องถึงฝ่ายบริหาร", NCR_CAR: "ออก NCR", IT_REPAIR: "สร้างใบแจ้งซ่อม IT" }[selected.code] ?? `สร้าง${requestTypeLabel(selected)}`;
+    // ลิงก์เสริมของโมดูล (เช่น แดชบอร์ด NCR) วางข้างปุ่มสร้าง — โมดูลประกาศ headerLinks: [{ href, label, icon }]
+    const headerLinks = (requestModule(selected.code)?.headerLinks ?? [])
+      .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
     return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
         <div class="request-module-title"><span class="type-card-badge">${escapeHtml(selected.prefix ?? "")}</span><div><div class="eyebrow">คำร้อง</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
-        <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}"><a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}">＋ ${escapeHtml(createLabel)}</a></div>
+        <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}">＋ ${escapeHtml(createLabel)}</a></div>
       </div>`;
   }
   return `<div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
@@ -3240,6 +3253,12 @@ async function renderSetPassword(params) {
   });
 }
 
+async function ncrRequestTypeId() {
+  const { data, error } = await sb.from("request_types").select("id").eq("code", "NCR_CAR").eq("is_active", true).maybeSingle();
+  if (error) throw error;
+  return data?.id ?? null;
+}
+
 async function renderRoute() {
   const { path, params } = currentRoute();
   if (path !== "requests" || pendingModuleZoom !== moduleZoomKey(params)) pendingModuleZoom = null;
@@ -3265,11 +3284,19 @@ async function renderRoute() {
   try {
     if (path === "dashboard") return await renderDashboard();
     if (path === "requests") return await renderRequests(params);
+    // ทะเบียน NCR อยู่ในหน้า NCR ของศูนย์คำร้อง (เลือกโมดูล NCR/CAR) ลิงก์ #/ncr เดิมและปุ่มย้อนกลับจึงพาไปที่นั่น
+    // โหมดทดสอบไม่มีหน้าคำร้อง จึงใช้หน้าทะเบียนของโมดูลเอง (modules/module-ncr.js)
+    if (path === "ncr" && !params.get("id") && !params.get("new") && !isSandboxMode()) {
+      const typeId = await ncrRequestTypeId();
+      if (typeId) {
+        history.replaceState(null, "", requestCenterUrl(new URLSearchParams(), { type: typeId, ncrStatus: params.get("status") }));
+        return await renderRequests(new URLSearchParams(location.hash.split("?")[1]));
+      }
+    }
     if (path === "new" || path === "repair/new" || (path === "ncr" && params.get("new"))) {
       if (path === "ncr") {
-        const { data, error } = await sb.from("request_types").select("id").eq("code", "NCR_CAR").eq("is_active", true).maybeSingle();
-        if (error) throw error;
-        if (data) params.set("type", data.id);
+        const typeId = await ncrRequestTypeId();
+        if (typeId) params.set("type", typeId);
       }
       history.replaceState(null, "", requestCenterUrl(params, { mode: "create", createType: params.get("type") }));
       return await renderNewRequest(new URLSearchParams(location.hash.split("?")[1]));
