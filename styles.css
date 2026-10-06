@@ -1113,6 +1113,9 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .nd-trk { height: 16px; display: block; }
 .nd-bar { height: 100%; min-width: 2px; display: block; background: var(--chart-1); border-radius: 0 4px 4px 0; }
 .nd-bar.rest { background: var(--chart-1-soft); }
+.nd-trk.stack { display: flex; gap: 2px; }
+.nd-trk.stack .nd-bar { flex: 0 1 auto; }
+.nd-trk.stack .nd-bar:not(:last-child) { border-radius: 0; }
 .nd-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .nd-val small { display: block; color: var(--muted); font-size: 12px; font-weight: 500; }
 .nd-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: 13px; }

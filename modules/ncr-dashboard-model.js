@@ -65,7 +65,8 @@
     });
   }
 
-  // filters: { year, from, to, dept, defect, source, cause, scope } where scope is "", "open" or "overdue".
+  // filters: { year, from, to, dept, defect, source, cause, loss, scope } where scope is "", "open" or "overdue" and
+  // loss is a cost type key: keeps reports that have at least one confirmed or estimated loss entry of that type.
   function select(rows, filters, options = {}) {
     return rows.filter((row) => {
       if (!options.ignorePeriod && !(row.year === filters.year && row.month >= filters.from && row.month <= filters.to)) return false;
@@ -73,6 +74,7 @@
       if (filters.defect && row.defect?.code !== filters.defect) return false;
       if (filters.source && row.source !== filters.source) return false;
       if (filters.cause && !(filters.cause === NO_CAUSE ? row.causes.length === 0 : row.causes.includes(filters.cause))) return false;
+      if (filters.loss && !row.losses.some((loss) => loss.loss_type === filters.loss && loss.entry_kind !== "recovery" && (loss.cost_status ?? "legacy") !== "legacy")) return false;
       if (filters.scope === "open" && !row.isOpen) return false;
       if (filters.scope === "overdue" && !row.overdue) return false;
       return true;
@@ -142,6 +144,29 @@
     });
   }
 
+  // Loss by cost type. Confirmed and estimated are kept apart; recovery and legacy entries are not part of the bars
+  // (recovery is reported as its own total). Money follows the department share, so confirmed adds up to summarize().gross.
+  function lossesByType(list, filters) {
+    const types = new Map();
+    for (const row of list) {
+      const weight = weightOf(row, filters);
+      const counted = new Set();
+      for (const loss of row.losses) {
+        const status = loss.cost_status ?? "legacy";
+        if (loss.entry_kind === "recovery" || status === "legacy") continue;
+        const entry = types.get(loss.loss_type) ?? { key: loss.loss_type, confirmed: 0, estimated: 0, count: 0 };
+        entry[status === "confirmed" ? "confirmed" : "estimated"] += Number(loss.amount) * weight;
+        if (!counted.has(loss.loss_type)) { counted.add(loss.loss_type); entry.count += 1; }
+        types.set(loss.loss_type, entry);
+      }
+    }
+    const items = [...types.values()].map((entry) => ({ ...entry, confirmed: costs.round(entry.confirmed), estimated: costs.round(entry.estimated) }))
+      .filter((entry) => entry.confirmed + entry.estimated > 0)
+      .sort((a, b) => b.confirmed - a.confirmed || b.estimated - a.estimated);
+    const confirmedTotal = items.reduce((sum, entry) => sum + entry.confirmed, 0);
+    return items.map((entry) => ({ ...entry, share: rate(entry.confirmed, confirmedTotal) }));
+  }
+
   // Whole-report counts per key. Keys may overlap (a report with two causes appears in both rows).
   function countBy(list, keysOf) {
     const counts = new Map();
@@ -193,7 +218,7 @@
     return list.filter((row) => row.isOpen).sort((a, b) => Number(b.overdue) - Number(a.overdue) || b.daysInStatus - a.daysInStatus).slice(0, limit);
   }
 
-  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, pareto, countBy, causeKeys, deptTable, outcomesByUnit, priority };
+  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);
