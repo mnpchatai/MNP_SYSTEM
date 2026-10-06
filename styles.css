@@ -1117,3 +1117,6 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 @media (max-width: 360px) {
   .type-grid.factory-dept-grid { grid-template-columns: 1fr; }
 }
+.factory-item-card { margin-bottom: 26px; }
+.factory-item-card .field { max-width: 520px; margin-bottom: 0; }
+#factory-item-detail:not(:empty) { margin-top: 16px; }
