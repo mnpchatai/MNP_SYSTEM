@@ -1106,3 +1106,14 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .ncr-due-note { margin: 0 0 15px; padding: 10px 12px; color: var(--ink); background: var(--primary-soft); border-radius: 8px; font-size: 13px; line-height: 1.6; }
 .ncr-attach-form { margin-top: 14px; }
 .ncr-action [hidden] { display: none !important; }
+
+/* ฝ่ายโรงงาน (modules/module-factory.js) — ใช้การ์ดโมดูลเดิม (type-card) ปรับเป็น 3 คอลัมน์สำหรับ 6 แผนก */
+.type-grid.factory-dept-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.factory-dept-grid .type-card { min-height: 150px; }
+.type-card-badge svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 900px) {
+  .type-grid.factory-dept-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 360px) {
+  .type-grid.factory-dept-grid { grid-template-columns: 1fr; }
+}
