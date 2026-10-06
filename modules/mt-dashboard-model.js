@@ -12,6 +12,12 @@
 //   Waiting on approvers or on the requester is never "overdue" because the technician cannot act on it.
 // - On-time = completed on or before the latest expected finish date; an open overdue job counts as late.
 // - Stage durations come from request_status_history and only count a stage once it has actually been left.
+// - Rankings (machines, departments) count ใบแจ้งซ่อม only, never ใบคำร้อง, rejected requests or requests without a real
+//   machine code (placeholder machines "ไม่มี"/"สร้างใหม่" are not machines). A machine is identified by reporting
+//   department + machine code, because codes repeat across departments and the code is snapshotted on the request.
+// - Technician "hours" are NOT worked hours (the system records none). They are the clock time a job spent in
+//   in_progress, summed over every round including rework, and each assigned technician gets the job's full time.
+//   Only the current assignee set is known, so a technician removed from a job no longer appears on it.
 //
 // No DOM and no Supabase here: the loader passes plain rows and today's Bangkok date, so Node tests cover it.
 (function registerMtDashboardModel(root) {
@@ -23,8 +29,10 @@
   };
 
   const DAY_MS = 86400000;
+  const HOUR_MS = 3600000;
   const EXCLUDED_STATUSES = ["draft", "cancelled"];
   const TECHNICIAN_STATUSES = ["assigned", "in_progress"];
+  const TECHNICIAN_STAGES = ["start", "repair"];
 
   // Where an open request is waiting, in workflow order. `short` is the badge text, `owner` who must act.
   const STAGES = [
@@ -62,6 +70,21 @@
     return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   };
 
+  const normalizeCode = (code) => String(code ?? "").trim().toLocaleLowerCase("th-TH");
+
+  // Clock hours the job spent in "in_progress" (every round, rework included). A job still being repaired runs to nowMs.
+  function repairHoursOf(history, status, nowMs) {
+    let total = 0;
+    history.forEach((item, index) => {
+      if (item.to_status !== "in_progress") return;
+      const start = Date.parse(item.created_at);
+      const next = history[index + 1];
+      const end = next ? Date.parse(next.created_at) : status === "in_progress" ? nowMs : start;
+      total += Math.max(0, end - start);
+    });
+    return total / HOUR_MS;
+  }
+
   function stageOf(row) {
     switch (row.status) {
       case "pending_approval": return Number(row.current_step) >= 2 ? "approve_gm" : "approve_fm";
@@ -77,9 +100,9 @@
 
   // requests: rows as loaded by the dashboard (see module-mt-dashboard.js):
   //   { id, request_no, status, current_step, is_urgent, doc_type, machine_code, machine_name, requester_name,
-  //     dept (department code), submitted_at, completed_at, work_expected_date,
+  //     dept (department code), machine_is_placeholder, technician_ids, submitted_at, completed_at, work_expected_date,
   //     history: [{ to_status, created_at }], verifications: [{ result }] }
-  function deriveRows(requests, today) {
+  function deriveRows(requests, today, nowMs = Date.now()) {
     const open = pendingStatuses();
     return requests.filter((request) => !EXCLUDED_STATUSES.includes(request.status)).map((request) => {
       const history = [...(request.history ?? [])].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
@@ -95,6 +118,7 @@
       const overdue = TECHNICIAN_STATUSES.includes(status) && Boolean(expected) && today > expected;
       const pastRepair = status === "pending_verify" || isCompleted;
       const verifications = request.verifications ?? [];
+      const code = String(request.machine_code ?? "").trim();
       return {
         ...request,
         history,
@@ -120,6 +144,11 @@
           repair: pastRepair ? gapDays(firstTo("assigned"), lastTo("pending_verify")) : null,
           verify: isCompleted ? gapDays(lastTo("pending_verify"), request.completed_at) : null,
         },
+        // doc_type is null on very old rows; only an explicit ใบคำร้อง is excluded from breakdown rankings.
+        isRepairDoc: request.doc_type !== "request",
+        machineKey: code && !request.machine_is_placeholder ? `${request.dept ?? ""}|${normalizeCode(code)}` : null,
+        technicianIds: [...new Set(request.technician_ids ?? [])],
+        repairHours: repairHoursOf(history, status, nowMs),
         verifyCount: verifications.length,
         verifyFailed: verifications.some((item) => item.result === "fail"),
         hadMoreInfo: history.some((item) => item.to_status === "more_info"),
@@ -127,12 +156,15 @@
     });
   }
 
-  // filters: { year, from, to, dept, doc } select by submit-date period and the shared dimensions.
+  // filters: { year, from, to, dept, doc, machine, tech } select by submit-date period and the shared dimensions.
+  // machine is a row.machineKey, tech an employee id that is currently assigned to the request.
   function select(rows, filters, options = {}) {
     return rows.filter((row) => {
       if (!options.ignorePeriod && !(row.year === filters.year && row.month >= filters.from && row.month <= filters.to)) return false;
       if (filters.dept && row.dept !== filters.dept) return false;
       if (filters.doc && row.doc_type !== filters.doc) return false;
+      if (filters.machine && row.machineKey !== filters.machine) return false;
+      if (filters.tech && !row.technicianIds.includes(filters.tech)) return false;
       return true;
     });
   }
@@ -212,7 +244,95 @@
       .slice(0, limit);
   }
 
-  const api = { STAGES, STAGE_BY_KEY, PHASES, EXCLUDED_STATUSES, bangkokDate, daysBetween, deriveRows, select, backlog, listFor, summarize, stageSummary, phaseSummary, priority };
+  // Requests that count as breakdown reports in the period: ใบแจ้งซ่อม that were not rejected. The machine / tech / doc
+  // filters are cleared so a ranking keeps showing every entry (the chosen one is highlighted by the page); the department
+  // filter is kept unless the department ranking itself is being built.
+  function breakdowns(rows, filters, { ignoreDept = false } = {}) {
+    return select(rows, { ...filters, doc: "", machine: "", tech: "", dept: ignoreDept ? "" : filters.dept })
+      .filter((row) => row.isRepairDoc && !row.isRejected);
+  }
+
+  const byCountThen = (tie) => (a, b) => b.count - a.count || tie(a, b);
+  const sortText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+  function machineRanking(rows, filters, limit = 10) {
+    const list = breakdowns(rows, filters);
+    const groups = new Map();
+    let unspecified = 0;
+    for (const row of [...list].sort((a, b) => sortText(a.submittedOn, b.submittedOn))) {
+      if (!row.machineKey) { unspecified += 1; continue; }
+      let group = groups.get(row.machineKey);
+      if (!group) {
+        group = { key: row.machineKey, code: String(row.machine_code).trim(), name: "", dept: row.dept, count: 0, open: 0, overdue: 0, cycles: [], lastOn: row.submittedOn };
+        groups.set(row.machineKey, group);
+      }
+      group.count += 1;
+      if (row.machine_name) group.name = String(row.machine_name).trim();
+      if (row.isOpen) group.open += 1;
+      if (row.overdue) group.overdue += 1;
+      if (row.cycleDays !== null) group.cycles.push(row.cycleDays);
+      group.lastOn = row.submittedOn;
+    }
+    const total = list.length - unspecified;
+    const all = [...groups.values()]
+      .map(({ cycles, ...group }) => ({ ...group, share: rate(group.count, total), avgCycle: mean(cycles) }))
+      .sort(byCountThen((a, b) => sortText(b.lastOn, a.lastOn) || sortText(a.key, b.key)));
+    const requestDocs = select(rows, { ...filters, doc: "", machine: "", tech: "" }).filter((row) => !row.isRepairDoc && !row.isRejected).length;
+    return { items: all.slice(0, limit), machines: all.length, total, unspecified, requestDocs };
+  }
+
+  function deptRanking(rows, filters) {
+    const list = breakdowns(rows, filters, { ignoreDept: true });
+    const groups = new Map();
+    for (const row of list) {
+      const key = row.dept || "";
+      const group = groups.get(key) ?? { dept: key, count: 0, open: 0, urgent: 0, cycles: [] };
+      group.count += 1;
+      if (row.isOpen) group.open += 1;
+      if (row.isUrgent) group.urgent += 1;
+      if (row.cycleDays !== null) group.cycles.push(row.cycleDays);
+      groups.set(key, group);
+    }
+    const items = [...groups.values()]
+      .map(({ cycles, ...group }) => ({ ...group, share: rate(group.count, list.length), avgCycle: mean(cycles) }))
+      .sort(byCountThen((a, b) => sortText(a.dept, b.dept)));
+    return { items, total: list.length };
+  }
+
+  // Per technician: hours and jobs come from the period (submit date), "holding" and overdue from every open job the
+  // technician owns right now, so an old job never drops out of a technician's load when the period changes.
+  function technicianRanking(rows, filters) {
+    const base = { ...filters, tech: "" };
+    const periodRows = select(rows, base).filter((row) => !row.isRejected && row.technicianIds.length);
+    const holdingRows = backlog(rows, base).filter((row) => row.technicianIds.length && TECHNICIAN_STAGES.includes(row.stage));
+    const groups = new Map();
+    const entry = (id) => {
+      if (!groups.has(id)) groups.set(id, { id, jobs: 0, workedJobs: 0, hours: 0, running: 0, holding: 0, overdue: 0 });
+      return groups.get(id);
+    };
+    for (const row of periodRows) {
+      for (const id of row.technicianIds) {
+        const group = entry(id);
+        group.jobs += 1;
+        group.hours += row.repairHours;
+        if (row.repairHours > 0) group.workedJobs += 1;
+        if (row.status === "in_progress") group.running += 1;
+      }
+    }
+    for (const row of holdingRows) {
+      for (const id of row.technicianIds) {
+        const group = entry(id);
+        group.holding += 1;
+        if (row.overdue) group.overdue += 1;
+      }
+    }
+    const items = [...groups.values()]
+      .map((group) => ({ ...group, avgHours: group.workedJobs ? group.hours / group.workedJobs : null }))
+      .sort((a, b) => b.hours - a.hours || b.holding - a.holding || b.jobs - a.jobs || sortText(a.id, b.id));
+    return { items, jobs: periodRows.length };
+  }
+
+  const api = { STAGES, STAGE_BY_KEY, PHASES, EXCLUDED_STATUSES, bangkokDate, daysBetween, deriveRows, select, backlog, listFor, summarize, stageSummary, phaseSummary, priority, machineRanking, deptRanking, technicianRanking };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_MT_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -1,8 +1,10 @@
-// แดชบอร์ด MT ของ Pilot Web (#/mt-dashboard) — เวอร์ชันทดสอบรอบแรก: งานค้าง/คอขวด/เวลาที่ใช้/คุณภาพ
+// แดชบอร์ด MT ของ Pilot Web (#/mt-dashboard) — เวอร์ชันทดสอบ: งานค้าง/คอขวด/เวลาที่ใช้/คุณภาพ
+// + เครื่องจักรที่เสียบ่อย/แผนกที่แจ้งซ่อมบ่อย/ชั่วโมงงานของช่าง
 // ตัวเลขทุกตัวคำนวณจากรายการใบแจ้งซ่อมชุดเดียวผ่าน modules/mt-dashboard-model.js (นิยามและเทสต์อยู่ที่นั่น)
 // ไฟล์นี้ทำหน้าที่โหลดข้อมูลและวาดหน้าจอเท่านั้น
 //
-// - อ่านผ่าน RLS เดียวกับหน้าคำร้อง (requests, request_status_history, request_verifications) ไม่มี RPC/migration ใหม่
+// - อ่านผ่าน RLS เดียวกับหน้าคำร้อง (requests, request_status_history, request_verifications, request_technicians,
+//   machines, employees) ไม่มี RPC/migration ใหม่
 // - สองฐานที่ไม่ปนกัน: งานค้างนับทุกใบที่ยังไม่จบ (ไม่ขึ้นกับช่วงเวลา) ส่วนตัวเลขอื่นนับตามวันที่แจ้งในช่วงที่เลือก
 // - ตัวกรองอยู่ใน URL แชร์ลิงก์ได้ แตะแถบเพื่อดูตัวเลขในหน้า (ไม่ใช้ป๊อปอัพ) แล้วกดกรองรายการด้านล่างได้
 // - ทางเข้าคือปุ่ม "แดชบอร์ด MT" ข้างปุ่ม "สร้างคำร้อง / แจ้งซ่อม MT" (headerLinks) ไม่มีเมนูข้างแยก
@@ -22,7 +24,7 @@
   const CACHE_MS = 60 * 1000;
   const DOC_LABELS = { repair: "ใบแจ้งซ่อม", request: "ใบคำร้อง" };
   const SCOPE_LABELS = { open: "งานค้างทั้งหมด", overdue: "เลยกำหนดเสร็จ", urgent: "ด่วนที่ยังไม่จบ" };
-  const FILTER_KEYS = ["year", "from", "to", "dept", "doc", "scope", "stage"];
+  const FILTER_KEYS = ["year", "from", "to", "dept", "doc", "scope", "stage", "machine", "tech"];
   let cache = null;
   let selection = null; // { card, key } ของรายการที่แตะดูตัวเลข (อยู่ในหน้า ไม่ใช่ป๊อปอัพ)
   let lastParams = new URLSearchParams();
@@ -32,10 +34,19 @@
 
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
   const fmtCount = (value) => `${fmtNumber(value)} ใบ`;
+  const fmtHours = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} ชม.`);
   const fmtDays = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} วัน`);
   const fmtPercent = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value * 100, 1)}%`);
   const esc = (value) => escapeHtml(String(value));
   const monthName = (month, year) => `${MONTHS[month - 1]} ${Number(year) + 543}`;
+  const techName = (id) => {
+    const person = cache?.directory?.get(id);
+    return person ? `${person.first_name} ${person.last_name}`.trim() : "ช่าง (ไม่พบชื่อ)";
+  };
+  const machineTitle = (rows, key) => {
+    const row = rows.find((item) => item.machineKey === key);
+    return row ? `${String(row.machine_code).trim()} (${row.dept || "—"})` : key;
+  };
 
   async function allRows(makeQuery) {
     const rows = [];
@@ -53,19 +64,25 @@
     const typeResult = await sb.from("request_types").select("id").eq("code", "MT_REPAIR").eq("is_active", true).maybeSingle();
     if (typeResult.error) throw typeResult.error;
     const typeId = typeResult.data?.id ?? null;
-    const requests = typeId
-      ? await allRows(() => sb.from("requests")
-        .select("id,request_no,status,current_step,is_urgent,doc_type,machine_code,machine_name,requester_name,submitted_at,completed_at,work_expected_date,department:departments(code),request_status_history(to_status,created_at),request_verifications(result)")
-        .eq("request_type_id", typeId).order("id"))
-      : [];
+    // รายชื่อพนักงานใช้แสดงชื่อช่างเท่านั้น โหลดไม่ได้ก็ยังดูแดชบอร์ดได้ (ชื่อช่างขึ้นว่าไม่พบชื่อ)
+    const [requests, directory] = await Promise.all([
+      typeId
+        ? allRows(() => sb.from("requests")
+          .select("id,request_no,status,current_step,is_urgent,doc_type,machine_code,machine_name,requester_name,submitted_at,completed_at,work_expected_date,department:departments(code),machine:machines(is_placeholder),request_technicians(technician_id),request_status_history(to_status,created_at),request_verifications(result)")
+          .eq("request_type_id", typeId).order("id"))
+        : [],
+      loadEmployeeDirectory().catch((error) => { console.warn("โหลดรายชื่อพนักงานสำหรับแดชบอร์ด MT ไม่สำเร็จ", error); return new Map(); }),
+    ]);
     const today = bangkokToday();
     const rows = model.deriveRows(requests.map((row) => ({
       ...row,
       dept: relation(row.department)?.code ?? "",
+      machine_is_placeholder: Boolean(relation(row.machine)?.is_placeholder),
+      technician_ids: (row.request_technicians ?? []).map((item) => item.technician_id),
       history: row.request_status_history ?? [],
       verifications: row.request_verifications ?? [],
     })), today);
-    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows };
+    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows, directory };
     return cache;
   }
 
@@ -88,12 +105,16 @@
     };
     const from = month("from", 1);
     const to = Math.max(from, month("to", year === today.slice(0, 4) ? Number(today.slice(5, 7)) : 12));
+    const machineParam = params.get("machine") ?? "";
+    const techParam = params.get("tech") ?? "";
     return {
       years, year, from, to,
       dept: params.get("dept") ?? "",
       doc: DOC_LABELS[params.get("doc")] ? params.get("doc") : "",
       scope: SCOPE_LABELS[params.get("scope")] ? params.get("scope") : "",
       stage: model.STAGE_BY_KEY[params.get("stage")] ? params.get("stage") : "",
+      machine: machineParam && rows.some((row) => row.machineKey === machineParam) ? machineParam : "",
+      tech: techParam && rows.some((row) => row.technicianIds.includes(techParam)) ? techParam : "",
     };
   }
 
@@ -132,9 +153,11 @@
     const chip = (label, key, ariaLabel) => removable.push(`<a class="nd-chip removable" href="${hrefWith(filters, { [key]: "" })}" aria-label="${esc(ariaLabel)}">${esc(label)} <span aria-hidden="true">✕</span></a>`);
     if (filters.dept) chip(`แผนก ${filters.dept}`, "dept", "ยกเลิกตัวกรองแผนก");
     if (filters.doc) chip(DOC_LABELS[filters.doc], "doc", "ยกเลิกตัวกรองประเภทเอกสาร");
+    if (filters.machine) chip(`เครื่อง ${machineTitle(rows, filters.machine)}`, "machine", "ยกเลิกตัวกรองเครื่องจักร");
+    if (filters.tech) chip(`ช่าง ${techName(filters.tech)}`, "tech", "ยกเลิกตัวกรองช่าง");
     if (filters.scope) chip(SCOPE_LABELS[filters.scope], "scope", "ยกเลิกตัวกรองงานค้าง");
     if (filters.stage) chip(model.STAGE_BY_KEY[filters.stage].label, "stage", "ยกเลิกตัวกรองขั้นตอน");
-    if (removable.length) removable.push(`<a class="nd-chip" href="${hrefWith(filters, { dept: "", doc: "", scope: "", stage: "" })}">ล้างทั้งหมด</a>`);
+    if (removable.length) removable.push(`<a class="nd-chip" href="${hrefWith(filters, { dept: "", doc: "", scope: "", stage: "", machine: "", tech: "" })}">ล้างทั้งหมด</a>`);
     return `<div class="nd-chips" role="group" aria-label="ช่วงเวลา (ตามวันที่แจ้ง)">${presets}</div>
       <details class="nd-filterbox" id="nd-filterbox"${filtersOpen ? " open" : ""}><summary>ช่วงเวลาและตัวกรองเพิ่มเติม</summary>
         <form class="nd-filters" id="nd-filters">
@@ -226,6 +249,58 @@
       <p class="nd-hint">ตรวจรับไม่ผ่านแล้วซ่อมใหม่ นับเป็นเวลาซ่อม ส่วนช่วง "อนุมัติ" รวมเวลาที่รอผู้แจ้งตอบข้อมูลเพิ่มด้วย</p>`;
   }
 
+  function machineHtml(ranking, filters) {
+    const { items } = ranking;
+    const max = items.length ? Math.max(...items.map((item) => item.count)) : 0;
+    const rows = items.map((item) => {
+      const inner = `<span class="nd-lab">${esc(item.code)}${item.name ? ` — ${esc(item.name)}` : ""}<br><span class="nd-muted">แผนก ${esc(item.dept || "—")}</span></span><span class="nd-trk"><span class="nd-bar${item.count === max ? "" : " rest"}" style="width:${Math.max((item.count / max) * 100, 0.8)}%"></span></span><span class="nd-val">${esc(fmtNumber(item.count))} ครั้ง<small>ยังไม่จบ ${esc(fmtNumber(item.open))} · ล่าสุด ${esc(formatDate(item.lastOn))}</small></span>`;
+      return selectButton("machine", item.key, inner, `nd-brow${filters.machine === item.key ? " active" : ""}`);
+    }).join("");
+    const notes = [
+      ranking.requestDocs ? `ไม่นับใบคำร้อง ${fmtCount(ranking.requestDocs)}` : "",
+      ranking.unspecified ? `ไม่นับใบที่ไม่ระบุเครื่อง (เลือก "ไม่มี"/"สร้างใหม่") ${fmtCount(ranking.unspecified)}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<div class="nd-head"><h2>เครื่องจักรที่เสียบ่อย</h2><p>จำนวนครั้งที่แจ้งซ่อมต่อเครื่องในช่วงที่เลือก (ใบแจ้งซ่อมที่ไม่ถูกปฏิเสธ) เครื่องเดียวกันนับรวมกันแม้พิมพ์รหัสต่างกันเล็กน้อย แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง</p></div>
+      ${items.length ? `<div class="nd-bars">${rows}</div>
+      <div class="nd-legend"><span><i class="strong"></i>เครื่องที่แจ้งบ่อยสุด</span><span><i class="soft"></i>เครื่องอื่น</span></div>
+      <p class="nd-hint">แสดง ${fmtNumber(items.length)} จาก ${fmtNumber(ranking.machines)} เครื่อง รวม ${fmtCount(ranking.total)}${notes ? ` · ${esc(notes)}` : ""}</p>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมที่ระบุเครื่องจักรในช่วงและตัวกรองนี้${notes ? ` (${esc(notes)})` : ""}</p>`}
+      ${detailBox("machine", "แถบเครื่องจักร", (key) => {
+        const item = items.find((entry) => entry.key === key);
+        return item && { title: `${item.code}${item.name ? ` — ${item.name}` : ""}`, lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: hrefWith(filters, { scope: "", stage: "", machine: filters.machine === key ? "" : key }), linkLabel: filters.machine === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของเครื่องนี้" };
+      })}`;
+  }
+
+  function deptRankHtml(ranking, filters) {
+    const { items, total } = ranking;
+    return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
+      ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>`).join("")}
+      <tr class="nd-total"><td>รวม</td><td class="nd-num">${esc(fmtNumber(total))}</td><td class="nd-num">100%</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.open, 0)))}</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.urgent, 0)))}</td><td class="nd-num"></td></tr></tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
+      ${detailBox("deptrank", "ชื่อแผนก", (key) => {
+        const item = items.find((entry) => entry.dept === key);
+        return item && { title: item.dept ? `แผนก ${item.dept}` : "ไม่ระบุแผนก", lines: [["แจ้งซ่อมในช่วงนี้", fmtCount(item.count)], ["สัดส่วนของใบแจ้งซ่อมทั้งหมด", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["ด่วน", fmtCount(item.urgent)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: item.dept ? hrefWith(filters, { scope: "", stage: "", dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : "ดูเฉพาะแผนกนี้" };
+      })}`;
+  }
+
+  function techHtml(ranking, filters) {
+    const { items } = ranking;
+    const max = items.length ? Math.max(...items.map((item) => item.hours)) : 0;
+    const rows = items.map((item) => {
+      const width = item.hours && max ? Math.max((item.hours / max) * 100, 0.8) : 0;
+      const inner = `<span class="nd-lab">${esc(techName(item.id))}<br><span class="nd-muted">${esc(fmtCount(item.jobs))}ในช่วงนี้${item.holding ? ` · ถืออยู่ ${esc(fmtCount(item.holding))}` : ""}</span></span><span class="nd-trk"><span class="nd-bar${item.hours && item.hours === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtHours(item.hours))}<small>เฉลี่ย ${esc(fmtHours(item.avgHours))}/ใบ</small></span>`;
+      return selectButton("tech", item.id, inner, `nd-brow${filters.tech === item.id ? " active" : ""}`);
+    }).join("");
+    return `<div class="nd-head"><h2>ช่างที่ใช้เวลาซ่อมมากสุด</h2><p>เรียงตามเวลาที่ใบของช่างอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบของใบที่แจ้งในช่วงที่เลือก แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง</p></div>
+      <p class="nd-warn">ตัวเลขนี้ <b>ไม่ใช่ชั่วโมงทำงานจริง</b> เพราะระบบยังไม่มีช่องบันทึกชั่วโมงทำงาน แต่เป็นเวลาตามนาฬิกา (รวมกลางคืนและวันหยุด) ตั้งแต่ช่างกดเริ่มงานจนส่งตรวจรับ ใบที่มีช่างหลายคนนับเต็มเวลาให้ทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ใช้เทียบภาระงานคร่าวๆ ไม่ใช้คิดค่าแรง</p>
+      ${items.length ? `<div class="nd-bars">${rows}</div>
+      <div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span></div>
+      <p class="nd-hint">"ถืออยู่" = ใบที่ช่างต้องทำตอนนี้ (รอเริ่มงานหรือกำลังซ่อม) นับทุกใบไม่ขึ้นกับช่วงเวลา ส่วนเวลาและจำนวนใบนับตามวันที่แจ้ง ไม่นับใบที่ไม่อนุมัติ</p>` : `<p class="nd-empty">ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้</p>`}
+      ${detailBox("tech", "แถบชื่อช่าง", (key) => {
+        const item = items.find((entry) => entry.id === key);
+        return item && { title: techName(item.id), lines: [["ใบที่ได้รับมอบหมายในช่วงนี้", fmtCount(item.jobs)], ["เวลากำลังซ่อมรวม", `${fmtHours(item.hours)} (${fmtDays(item.hours / 24)})`], ["เฉลี่ยต่อใบ (เฉพาะใบที่เริ่มซ่อมแล้ว)", fmtHours(item.avgHours)], ["กำลังซ่อมอยู่ (ในช่วงนี้)", fmtCount(item.running)], ["ถืออยู่ตอนนี้ (ทุกช่วงเวลา)", fmtCount(item.holding)], ["ในนั้นเลยกำหนดเสร็จ", fmtCount(item.overdue)]], href: hrefWith(filters, { scope: "", stage: "", tech: filters.tech === key ? "" : key }), linkLabel: filters.tech === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของช่างคนนี้" };
+      })}`;
+  }
+
   function machineText(row) {
     return [row.machine_code, row.machine_name].filter(Boolean).join(" — ") || "ไม่ระบุเครื่องจักร";
   }
@@ -253,7 +328,9 @@
     <li><b>เลยกำหนดเสร็จ:</b> เฉพาะใบที่อยู่ในมือช่าง (รอเริ่มงาน/กำลังซ่อม) และเลยวันที่คาดว่าจะเสร็จล่าสุด ใบที่รอผู้อนุมัติหรือผู้แจ้งไม่นับ เพราะช่างทำอะไรไม่ได้</li>
     <li><b>ปิดทันกำหนด:</b> ปิดงานภายในวันที่คาดว่าจะเสร็จล่าสุด (ถ้าช่างเลื่อนวัน ใช้วันที่หลังเลื่อน) ใบที่ยังเลยกำหนดอยู่นับว่าไม่ทัน ทัน % = ทัน ÷ (ปิดแล้วที่มีกำหนดเสร็จ + ใบที่ยังเลยกำหนด)</li>
     <li><b>เวลาแจ้ง → ปิดงาน และเวลาแต่ละช่วง:</b> นับเฉพาะใบที่ปิดงานแล้ว (เวลาแต่ละช่วงนับเมื่อช่วงนั้นเดินครบ) จากประวัติสถานะ ใบที่ไม่อนุมัติไม่นับเวลา</li>
-    <li><b>ตรวจรับไม่ผ่าน:</b> ใบที่เคยถูกตรวจรับไม่ผ่านอย่างน้อยหนึ่งครั้ง ÷ ใบที่ถูกตรวจรับแล้วทั้งหมด</li></ol></div></details>`;
+    <li><b>ตรวจรับไม่ผ่าน:</b> ใบที่เคยถูกตรวจรับไม่ผ่านอย่างน้อยหนึ่งครั้ง ÷ ใบที่ถูกตรวจรับแล้วทั้งหมด</li>
+    <li><b>เครื่องจักรที่เสียบ่อย / แผนกที่แจ้งซ่อมบ่อย:</b> นับเฉพาะใบแจ้งซ่อมในช่วงที่เลือก ไม่นับใบคำร้อง ใบที่ไม่อนุมัติ และฉบับร่าง เครื่องจักรแยกด้วย แผนกที่แจ้ง + รหัสเครื่อง (รหัสเดียวกันต่างแผนกถือเป็นคนละเครื่อง) ใบที่เลือก "ไม่มี" หรือ "สร้างใหม่" ไม่นับเป็นเครื่อง</li>
+    <li><b>เวลาซ่อมของช่าง:</b> ไม่ใช่ชั่วโมงทำงานจริง แต่คือเวลาตามนาฬิกาที่ใบอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบ (ตรวจรับไม่ผ่านแล้วซ่อมใหม่ก็นับ) ใบที่ยังซ่อมอยู่นับถึงเวลาที่เปิดหน้านี้ ช่างหลายคนในใบเดียวนับเต็มทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ส่วน "ถืออยู่" นับทุกใบที่ช่างต้องทำตอนนี้ ไม่ขึ้นกับช่วงเวลา</li></ol></div></details>`;
 
   function pageBody() {
     const { rows, today, loadedAt, typeId } = cache;
@@ -265,18 +342,24 @@
     const back = model.summarize(open);
     const stages = model.stageSummary(open);
     const phases = model.phaseSummary(periodList);
+    const machines = model.machineRanking(rows, filters);
+    const depts = model.deptRanking(rows, filters);
+    const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
     return `<div class="page-heading"><div><div class="eyebrow">MT · ใบคำร้อง/แจ้งซ่อม</div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1><p>ไม่นับฉบับร่างและใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ กลับหน้า MT</a></div></div>
       <div class="nd">
-        <p class="nd-warn">กำลังทดลองใช้ รอบนี้มีงานค้าง คอขวด เวลาที่ใช้ และคุณภาพการซ่อม ส่วนเครื่องจักรที่เสียบ่อย แผนก และภาระงานช่างจะเพิ่มในรอบถัดไป หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
+        <p class="nd-warn">กำลังทดลองใช้ มีงานค้าง คอขวด เวลาที่ใช้ คุณภาพการซ่อม เครื่องจักรที่เสียบ่อย แผนกที่แจ้งซ่อมบ่อย และเวลาซ่อมของช่าง หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
         <div class="nd-controls">${controlsHtml(filters, rows, today, period, back)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
         <div class="nd-tiles five">${tilesHtml(filters, period, back)}</div>
         <section class="card nd-card">${stageHtml(stages, filters)}</section>
         <section class="card nd-card">${actHtml(open, today)}</section>
         <section class="card nd-card">${phaseHtml(phases)}</section>
+        <section class="card nd-card">${machineHtml(machines, filters)}</section>
+        <section class="card nd-card">${deptRankHtml(depts, filters)}</section>
+        <section class="card nd-card">${techHtml(techs, filters)}</section>
         <section class="card nd-card">${drillHtml(list, basis)}</section>
         ${definitionsHtml}
         <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น</p>

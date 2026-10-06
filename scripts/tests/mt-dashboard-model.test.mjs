@@ -191,3 +191,118 @@ test("act-now list puts overdue first, then urgent, then the longest wait", () =
   assert.deepEqual(top.map((row) => row.id), ["overdue", "urgent", "old"]);
   assert.equal(model.priority(model.backlog(rows, filters()), 2).length, 2);
 });
+
+// ---- machines, departments, technicians ----
+const NOW = Date.parse("2026-10-06T12:00:00Z");
+const deriveAt = (requests) => model.deriveRows(requests, TODAY, NOW);
+const machine = (id, dept, code, extra = {}) => req({ id, dept, machine_code: code, machine_name: `เครื่อง ${code}`, ...extra });
+const doneIn = (days, extra = {}) => ({ status: "completed", submitted_at: "2026-10-01T00:00:00Z", completed_at: new Date(Date.parse("2026-10-01T00:00:00Z") + days * 86400000).toISOString(), ...extra });
+
+test("repair hours sum every in-progress round, run to now while still being repaired, and are 0 when never started", () => {
+  const rework = [at("assigned", "2026-10-01T00:00:00Z"), at("in_progress", "2026-10-02T00:00:00Z"), at("pending_verify", "2026-10-02T06:00:00Z"), at("assigned", "2026-10-03T00:00:00Z"), at("in_progress", "2026-10-04T00:00:00Z"), at("pending_verify", "2026-10-04T12:00:00Z"), at("completed", "2026-10-05T00:00:00Z")];
+  const rows = byId(deriveAt([
+    req({ id: "rework", status: "completed", completed_at: "2026-10-05T00:00:00Z", history: rework }),
+    req({ id: "running", status: "in_progress", history: [at("in_progress", "2026-10-06T00:00:00Z")] }),
+    req({ id: "waiting", status: "assigned", history: [at("assigned", "2026-10-05T00:00:00Z")] }),
+    req({ id: "no-history", status: "in_progress", history: [] }),
+  ]));
+  assert.equal(rows.rework.repairHours, 18);       // 6h + 12h
+  assert.equal(rows.running.repairHours, 12);      // 00:00 -> now (12:00)
+  assert.equal(rows.waiting.repairHours, 0);
+  assert.equal(rows["no-history"].repairHours, 0);
+});
+
+test("machines are keyed by department + code, and only real breakdown reports are ranked", () => {
+  const rows = deriveAt([
+    machine("a1", "RB", "M1", { ...doneIn(2), machine_name: "เครื่อง 1" }),
+    machine("a2", "RB", "M1", { status: "assigned", submitted_at: "2026-10-04T02:00:00Z", machine_name: "เครื่อง 1 (ใหม่)" }),
+    machine("c1", "RB", " m1 ", { submitted_at: "2026-10-05T02:00:00Z", machine_name: "" }),   // same machine, typed differently
+    machine("b1", "GR", "M1", { submitted_at: "2026-10-02T02:00:00Z" }),                       // same code, other department
+    machine("f1", "RB", "M9", { submitted_at: "2026-10-03T02:00:00Z" }),
+    machine("rej", "RB", "M1", { status: "rejected" }),
+    machine("doc", "RB", "M1", { doc_type: "request" }),
+    machine("old", "RB", "M1", { submitted_at: "2025-12-01T02:00:00Z" }),
+    machine("placeholder", "RB", "ไม่มี", { machine_is_placeholder: true }),
+    machine("nocode", "RB", null),
+    machine("draft", "RB", "M1", { status: "draft" }),
+  ]);
+  const ranking = model.machineRanking(rows, filters());
+  assert.deepEqual(ranking.items.map((item) => item.key), ["RB|m1", "RB|m9", "GR|m1"]);
+  const [top] = ranking.items;
+  assert.equal(top.count, 3); assert.equal(top.open, 2); assert.equal(top.lastOn, "2026-10-05");
+  assert.equal(top.code, "M1"); assert.equal(top.name, "เครื่อง 1 (ใหม่)"); assert.equal(top.avgCycle, 2);
+  assert.equal(top.share, 3 / 5);
+  assert.equal(ranking.total, 5); assert.equal(ranking.machines, 3);
+  assert.equal(ranking.unspecified, 2);            // placeholder machine + no code are reported, never ranked
+  assert.equal(ranking.requestDocs, 1);            // ใบคำร้อง is left out but counted for the page's hint
+  assert.equal(model.machineRanking(rows, filters(), 2).items.length, 2);
+});
+
+test("machine ranking follows period and department but ignores the machine filter so every machine stays visible", () => {
+  const rows = deriveAt([
+    machine("a", "RB", "M1"), machine("b", "RB", "M9"), machine("c", "GR", "M1"),
+    machine("old", "RB", "M7", { submitted_at: "2025-12-01T02:00:00Z" }),
+  ]);
+  assert.deepEqual(model.machineRanking(rows, filters({ dept: "RB" })).items.map((item) => item.key).sort(), ["RB|m1", "RB|m9"]);
+  assert.equal(model.machineRanking(rows, filters({ machine: "GR|m1" })).items.length, 3);
+  assert.equal(model.machineRanking(rows, filters({ year: "2025" })).items.length, 1);
+  assert.equal(model.machineRanking([], filters()).total, 0);
+});
+
+test("department ranking counts breakdown reports per reporting department and keeps all departments when one is filtered", () => {
+  const rows = deriveAt([
+    req({ id: "r1", dept: "RB", ...doneIn(2) }), req({ id: "r2", dept: "RB", ...doneIn(4) }),
+    req({ id: "r3", dept: "RB", status: "assigned", is_urgent: true }),
+    req({ id: "g1", dept: "GR", status: "pending_assign" }),
+    req({ id: "doc", dept: "QA", doc_type: "request" }), req({ id: "rej", dept: "RB", status: "rejected" }),
+  ]);
+  const ranking = model.deptRanking(rows, filters());
+  assert.deepEqual(ranking.items.map((item) => item.dept), ["RB", "GR"]);
+  const [rb, gr] = ranking.items;
+  assert.equal(rb.count, 3); assert.equal(rb.open, 1); assert.equal(rb.urgent, 1); assert.equal(rb.avgCycle, 3); assert.equal(rb.share, 0.75);
+  assert.equal(gr.count, 1); assert.equal(gr.avgCycle, null);
+  assert.equal(ranking.total, 4);
+  assert.deepEqual(model.deptRanking(rows, filters({ dept: "GR" })).items.map((item) => item.dept), ["RB", "GR"]);
+});
+
+test("technician ranking: hours from the period, current load from every open job, full credit to each assignee", () => {
+  const worked = (hours) => [at("in_progress", "2026-10-02T00:00:00Z"), at("pending_verify", new Date(Date.parse("2026-10-02T00:00:00Z") + hours * 3600000).toISOString())];
+  const rows = deriveAt([
+    req({ id: "j1", status: "completed", completed_at: "2026-10-05T00:00:00Z", technician_ids: ["t1", "t2"], history: worked(18) }),
+    req({ id: "j2", status: "in_progress", technician_ids: ["t1"], work_expected_date: "2026-10-05", history: [at("in_progress", "2026-10-06T00:00:00Z")] }),
+    req({ id: "j3", status: "assigned", technician_ids: ["t2"], history: [at("assigned", "2026-10-05T00:00:00Z")] }),
+    req({ id: "j4", status: "rejected", technician_ids: ["t2"], history: worked(50) }),
+    req({ id: "j5", status: "pending_approval", technician_ids: [] }),
+    req({ id: "j6", status: "pending_verify", technician_ids: ["t3"], history: worked(6) }),
+    req({ id: "j7", status: "in_progress", technician_ids: ["t3"], submitted_at: "2025-12-01T00:00:00Z", history: [at("in_progress", "2026-10-05T12:00:00Z")] }),
+  ]);
+  const october = filters({ from: 10, to: 10 });
+  const ranking = model.technicianRanking(rows, october);
+  assert.deepEqual(ranking.items.map((item) => item.id), ["t1", "t2", "t3"]);
+  const [t1, t2, t3] = ranking.items;
+  assert.deepEqual([t1.jobs, t1.hours, t1.workedJobs, t1.avgHours, t1.running, t1.holding, t1.overdue], [2, 30, 2, 15, 1, 1, 1]);
+  assert.deepEqual([t2.jobs, t2.hours, t2.workedJobs, t2.avgHours, t2.running, t2.holding, t2.overdue], [2, 18, 1, 18, 0, 1, 0]);
+  assert.deepEqual([t3.jobs, t3.hours, t3.avgHours, t3.holding], [1, 6, 6, 1]);   // j6 waits on the requester (not held); j7 is an old open job
+  assert.equal(ranking.jobs, 4);
+});
+
+test("technician ranking follows the document filter but ignores the technician filter", () => {
+  const rows = deriveAt([
+    req({ id: "a", doc_type: "repair", technician_ids: ["t1"], history: [at("in_progress", "2026-10-06T06:00:00Z")] }),
+    req({ id: "b", doc_type: "request", technician_ids: ["t1", "t2"], history: [at("in_progress", "2026-10-06T00:00:00Z")] }),
+  ]);
+  const onlyRepair = model.technicianRanking(rows, filters({ doc: "repair" }));
+  assert.deepEqual(onlyRepair.items.map((item) => [item.id, item.jobs, item.hours, item.holding]), [["t1", 1, 6, 1]]);
+  assert.equal(model.technicianRanking(rows, filters({ tech: "t2" })).items.length, 2);
+  assert.equal(model.technicianRanking([], filters()).items.length, 0);
+});
+
+test("machine and technician filters narrow the lists the page shows", () => {
+  const rows = deriveAt([
+    machine("a", "RB", "M1", { technician_ids: ["t1"] }), machine("b", "RB", "M2", { technician_ids: ["t2"] }), machine("c", "GR", "M1", { technician_ids: ["t1", "t2"] }),
+  ]);
+  assert.deepEqual(model.select(rows, filters({ machine: "RB|m1" })).map((row) => row.id), ["a"]);
+  assert.deepEqual(model.select(rows, filters({ tech: "t2" })).map((row) => row.id), ["b", "c"]);
+  assert.deepEqual(model.select(rows, filters({ tech: "t1", machine: "GR|m1" })).map((row) => row.id), ["c"]);
+  assert.deepEqual(model.listFor(rows, filters({ scope: "open", tech: "t1" })).list.map((row) => row.id).sort(), ["a", "c"]);
+});
