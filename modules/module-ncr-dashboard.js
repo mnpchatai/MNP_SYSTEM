@@ -386,7 +386,7 @@
   const ncrModule = window.MNP_REQUEST_MODULES?.NCR_CAR;
   const model = window.MNP_NCR_DASHBOARD;
   if (!ncrModule?.shared || !model) return;
-  const { STATUS_LABELS, SOURCES, CAUSES, todayBangkok, formatQty } = ncrModule.shared;
+  const { STATUS_LABELS, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, formatQty } = ncrModule.shared;
 
   const PATH = "ncr-dashboard";
   const MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
@@ -481,6 +481,7 @@
       defect: params.get("defect") ?? "",
       source: SOURCES[params.get("source")] ? params.get("source") : "",
       cause: CAUSE_LABELS[params.get("cause")] ? params.get("cause") : "",
+      loss: LOSS_TYPES[params.get("loss")] ? params.get("loss") : "",
       scope: ["open", "overdue"].includes(params.get("scope")) ? params.get("scope") : "",
       sort: params.get("sort") === "count" ? "count" : "net",
     };
@@ -489,7 +490,7 @@
   function hrefWith(filters, changes) {
     const next = { ...filters, ...changes };
     const params = new URLSearchParams();
-    for (const key of ["year", "from", "to", "dept", "defect", "source", "cause", "scope", "sort"]) {
+    for (const key of ["year", "from", "to", "dept", "defect", "source", "cause", "loss", "scope", "sort"]) {
       if (next[key] !== "" && next[key] !== undefined && next[key] !== null) params.set(key, next[key]);
     }
     return `#/${PATH}?${params.toString()}`;
@@ -527,11 +528,11 @@
     const defects = [...new Map(rows.filter((row) => row.defect).map((row) => [row.defect.code, row.defect.name_th])).entries()];
     const option = (value, label, selected) => `<option value="${esc(value)}"${String(value) === String(selected) ? " selected" : ""}>${esc(label)}</option>`;
     const monthOptions = (selected) => MONTHS.map((label, index) => option(index + 1, label, selected)).join("");
-    const labelFor = { dept: () => filters.dept, defect: () => rows.find((row) => row.defect?.code === filters.defect)?.defect?.name_th ?? filters.defect, source: () => SOURCES[filters.source], cause: () => CAUSE_LABELS[filters.cause] };
-    const titles = { dept: "แผนก", defect: "ข้อบกพร่อง", source: "แหล่งที่พบ", cause: "สาเหตุ" };
-    const removable = ["dept", "defect", "source", "cause"].filter((key) => filters[key]).map((key) => `<a class="nd-chip removable" href="${hrefWith(filters, { [key]: "" })}" aria-label="ยกเลิกตัวกรอง ${titles[key]} ${esc(labelFor[key]())}">${titles[key]}: ${esc(labelFor[key]())} <span aria-hidden="true">✕</span></a>`);
+    const labelFor = { dept: () => filters.dept, defect: () => rows.find((row) => row.defect?.code === filters.defect)?.defect?.name_th ?? filters.defect, source: () => SOURCES[filters.source], cause: () => CAUSE_LABELS[filters.cause], loss: () => LOSS_TYPES[filters.loss] };
+    const titles = { dept: "แผนก", defect: "ข้อบกพร่อง", source: "แหล่งที่พบ", cause: "สาเหตุ", loss: "ต้นทุน" };
+    const removable = ["dept", "defect", "source", "cause", "loss"].filter((key) => filters[key]).map((key) => `<a class="nd-chip removable" href="${hrefWith(filters, { [key]: "" })}" aria-label="ยกเลิกตัวกรอง ${titles[key]} ${esc(labelFor[key]())}">${titles[key]}: ${esc(labelFor[key]())} <span aria-hidden="true">✕</span></a>`);
     if (filters.scope) removable.push(`<a class="nd-chip removable" href="${hrefWith(filters, { scope: "" })}" aria-label="ยกเลิกตัวกรองสถานะ">${filters.scope === "open" ? "ใบที่ค้างอยู่" : "ใบเกินกำหนดตอบ"} <span aria-hidden="true">✕</span></a>`);
-    if (removable.length) removable.push(`<a class="nd-chip" href="${hrefWith(filters, { dept: "", defect: "", source: "", cause: "", scope: "" })}">ล้างทั้งหมด</a>`);
+    if (removable.length) removable.push(`<a class="nd-chip" href="${hrefWith(filters, { dept: "", defect: "", source: "", cause: "", loss: "", scope: "" })}">ล้างทั้งหมด</a>`);
     return `<div class="nd-chips" role="group" aria-label="ช่วงเวลา (ตามวันที่ออก NCR)">${presets}</div>
       <details class="nd-filterbox" id="nd-filterbox"${filtersOpen ? " open" : ""}><summary>ช่วงเวลาและตัวกรองเพิ่มเติม</summary>
         <form class="nd-filters" id="nd-filters">
@@ -647,6 +648,25 @@
       })}`;
   }
 
+  // ความสูญเสียแยกตามประเภทต้นทุน: ยืนยัน (ทึบ) + ประมาณการ (จาง) ชดเชยและรายการเดิมแสดงแยก ไม่รวมในแท่ง
+  function lossTypeHtml(list, filters, sums) {
+    const items = model.lossesByType(list, filters).map((item) => ({ ...item, label: LOSS_TYPES[item.key] ?? item.key }));
+    const max = items.length ? Math.max(...items.map((item) => item.confirmed + item.estimated)) : 0;
+    const widthOf = (value) => (max ? Math.max((value / max) * 100, 0.8) : 0);
+    const rows = items.map((item) => {
+      const inner = `<span class="nd-lab">${esc(item.label)}</span><span class="nd-trk stack">${item.confirmed > 0 ? `<span class="nd-bar" style="width:${widthOf(item.confirmed)}%"></span>` : ""}${item.estimated > 0 ? `<span class="nd-bar rest" style="width:${widthOf(item.estimated)}%"></span>` : ""}</span><span class="nd-val">${esc(fmtBaht(item.confirmed))}${item.estimated ? `<small>+ ประมาณการ ${esc(fmtBaht(item.estimated))}</small>` : ""}</span>`;
+      return selectButton("loss", item.key, inner, `nd-brow${filters.loss === item.key ? " active" : ""}`);
+    }).join("");
+    const notes = [sums.recovery ? `ชดเชยยืนยัน −${fmtBaht(sums.recovery)} แสดงแยก ไม่หักในแท่ง` : "", sums.legacy ? `รายการเดิมรอตรวจสอบ ${fmtBaht(sums.legacy)} ไม่รวมในแท่ง` : ""].filter(Boolean).join(" · ");
+    return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p>ค่าซ่อม (Repair) กับ Rework แยกคนละแท่ง ยอดยืนยันรวม ${esc(fmtBaht(sums.gross))} ตรงกับ "สูญเสียยืนยัน (ก่อนชดเชย)" ในรายละเอียดของการ์ดสูญเสียสุทธิ แตะแท่งเพื่อดูตัวเลข</p></div>
+      ${items.length ? `<div class="nd-bars">${rows}</div>
+      <div class="nd-legend"><span><i class="strong"></i>ยืนยันแล้ว (ก่อนหักชดเชย)</span><span><i class="soft"></i>ประมาณการรอยืนยัน</span></div>${notes ? `<p class="nd-hint">${esc(notes)}</p>` : ""}` : `<p class="nd-empty">ยังไม่มีการบันทึกความสูญเสียที่ยืนยันหรือประมาณการในช่วงนี้</p>`}
+      ${detailBox("loss", "แท่ง", (key) => {
+        const item = items.find((entry) => entry.key === key);
+        return item && { title: item.label, lines: [["ยืนยันแล้ว (ก่อนหักชดเชย)", fmtBaht(item.confirmed)], ["ประมาณการรอยืนยัน", fmtBaht(item.estimated)], ["จำนวนใบที่มีรายการประเภทนี้", fmtCount(item.count)], ["สัดส่วนของยอดยืนยัน", fmtPercent(item.share)]], href: hrefWith(filters, { loss: filters.loss === key ? "" : key }), linkLabel: filters.loss === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบที่มีต้นทุนประเภทนี้" };
+      })}`;
+  }
+
   function deptHtml(list, filters) {
     const { rows: deptRows, total } = model.deptTable(list, filters);
     return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน แถวรวมตรงกับตัวเลขด้านบน</p></div>
@@ -710,6 +730,7 @@
         <section class="card nd-card">${actHtml(list, today)}</section>
         <section class="card nd-card">${trendHtml(rows, filters, today)}</section>
         <section class="card nd-card">${paretoHtml(list, filters, sums)}</section>
+        <section class="card nd-card">${lossTypeHtml(list, filters, sums)}</section>
         <section class="card nd-card">${deptHtml(list, filters)}</section>
         <div class="nd-two">
           <section class="card nd-card">${breakdownHtml("source", "แหล่งที่พบ", "นับใบเต็มใบ แตะแท่งเพื่อดูตัวเลข", model.countBy(list, (row) => [row.source]), SOURCES, filters, "source", list.length)}</section>

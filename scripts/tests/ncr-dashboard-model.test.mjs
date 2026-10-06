@@ -141,6 +141,33 @@ test("priority lists overdue first, then the longest wait; closed reports are ne
   assert.deepEqual(model.priority(list, 5).map((row) => row.id), ["overdue", "slow", "fresh"]);
 });
 
+test("loss by type keeps repair and rework apart, splits confirmed from estimated, and leaves recovery and legacy out", () => {
+  const typed = (type, amount, status = "confirmed", kind = "loss") => loss(amount, status, kind, { loss_type: type });
+  const { list, f } = run([
+    report({ id: "a", losses: [typed("repair", 1000), typed("rework", 400), typed("repair", 300, "estimated"), typed("claim", 500, "confirmed", "recovery"), { amount: 70, loss_type: "scrap" }] }),
+    report({ id: "b", responsibilities: [{ dept: "RB", share: 0.5 }, { dept: "PK", share: 0.5 }], losses: [typed("repair", 200), typed("rework", 900)] }),
+  ]);
+  const byKey = Object.fromEntries(model.lossesByType(list, f).map((item) => [item.key, item]));
+  assert.deepEqual(Object.keys(byKey).sort(), ["repair", "rework"]);
+  assert.equal(byKey.repair.confirmed, 1200); assert.equal(byKey.repair.estimated, 300); assert.equal(byKey.repair.count, 2);
+  assert.equal(byKey.rework.confirmed, 1300); assert.equal(byKey.rework.estimated, 0);
+  assert.deepEqual(model.lossesByType(list, f).map((item) => item.key), ["rework", "repair"]);
+  const sums = model.summarize(list, f);
+  assert.equal(sums.gross, 2500); assert.equal(sums.estimated, 300);
+  const pk = filters({ dept: "PK" }); const pkList = model.select(model.deriveRows([list[1]], TODAY), pk);
+  assert.equal(model.lossesByType(pkList, pk).find((item) => item.key === "rework").confirmed, 450);
+});
+
+test("loss type filter keeps only reports with a confirmed or estimated entry of that type", () => {
+  const typed = (type, status = "confirmed", kind = "loss") => loss(100, status, kind, { loss_type: type });
+  const rows = model.deriveRows([
+    report({ id: "repair-only", losses: [typed("repair")] }), report({ id: "both", losses: [typed("repair", "estimated"), typed("rework")] }),
+    report({ id: "recovery-only", losses: [typed("repair", "confirmed", "recovery")] }), report({ id: "legacy-only", losses: [{ amount: 5, loss_type: "repair" }] }), report({ id: "none" }),
+  ], TODAY);
+  assert.deepEqual(model.select(rows, filters({ loss: "repair" })).map((row) => row.id), ["repair-only", "both"]);
+  assert.deepEqual(model.select(rows, filters({ loss: "rework" })).map((row) => row.id), ["both"]);
+});
+
 test("every figure is a subset of the same selected list (drill-through consistency)", () => {
   // deterministic pseudo-random fixture across months, departments and statuses
   let seed = 7; const next = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647; };
@@ -154,9 +181,12 @@ test("every figure is a subset of the same selected list (drill-through consiste
     sla_started_on: "2026-09-20", respondedDate: next() < 0.5 ? "2026-09-25" : null,
   }));
   const rows = model.deriveRows(reports, TODAY);
-  for (const change of [{}, { from: 3, to: 6 }, { dept: "RB" }, { source: "incoming" }, { cause: "man" }, { scope: "open" }, { defect: "d1", from: 5, to: 10 }]) {
+  for (const change of [{}, { from: 3, to: 6 }, { dept: "RB" }, { source: "incoming" }, { cause: "man" }, { scope: "open" }, { defect: "d1", from: 5, to: 10 }, { loss: "scrap", dept: "PK" }]) {
     const f = filters(change); const list = model.select(rows, f); const s = model.summarize(list, f);
     assert.equal(s.total, list.length);
+    const byType = model.lossesByType(list, f);
+    assert.ok(Math.abs(byType.reduce((sum, item) => sum + item.confirmed, 0) - s.gross) < 0.011, "loss types add up to confirmed loss");
+    assert.ok(Math.abs(byType.reduce((sum, item) => sum + item.estimated, 0) - s.estimated) < 0.011, "loss types add up to estimates");
     assert.equal(model.countBy(list, (row) => [row.source]).reduce((sum, item) => sum + item.count, 0), s.total);
     assert.equal(model.countBy(list, model.causeKeys).filter((item) => item.key === model.NO_CAUSE).length <= 1, true);
     assert.ok(Math.abs(model.deptTable(list, f).rows.reduce((sum, row) => sum + row.net, 0) - s.net) < 0.011, "department money reconciles to the headline");

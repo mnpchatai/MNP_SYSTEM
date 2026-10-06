@@ -56,6 +56,10 @@ select public.app_ncr_void_loss(current_setting('test.cost_id')::uuid,'incorrect
 select ok(not (select cost_reviewed from public.ncr_outcomes where ncr_id=current_setting('test.cost_ncr')::uuid),'existing void API invalidates cost review too');
 select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb,%L::uuid)',current_setting('test.cost_ncr'),current_setting('test.entry'),current_setting('test.cost_id')),'LOSS_ALREADY_VOIDED','voided entries cannot be revived');
 
+select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr'),(current_setting('test.entry')::jsonb || '{"loss_type":"repair"}')::text),'repair labor is a separate cost type from rework');
+select is((select count(*) from public.ncr_losses where ncr_id=current_setting('test.cost_ncr')::uuid and loss_type='repair' and voided_at is null),1::bigint,'repair cost is stored as its own type');
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr'),(current_setting('test.entry')::jsonb || '{"loss_type":"repair","component":"quantity"}')::text),'INVALID_LOSS_COMPONENT','repair uses the same component rules as rework');
+select lives_ok(format('select public.app_ncr_add_loss(%L::uuid,''repair'',2,''ชม.'',60,''ซ่อม'')',current_setting('test.cost_ncr')),'the older single-entry API also accepts repair');
 select public.app_sandbox_enter(current_setting('test.cost_rb')::uuid);
 select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr'),current_setting('test.entry')),'NOT_AUTHORIZED','test staff cannot edit costs for another department');
 select is((select count(*) from public.ncr_outcomes where ncr_id=current_setting('test.cost_ncr')::uuid),0::bigint,'unrelated persona cannot read the outcome');

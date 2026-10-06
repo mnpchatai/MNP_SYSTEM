@@ -22,6 +22,10 @@ test("confirmation requires evidence and a real calendar date", () => {
 });
 test("rework exposes labor, material and external; flat document totals use quantity one", () => {
   assert.deepEqual(costs.allowedComponents("rework"),["labor","material","external"]);
+  assert.deepEqual(costs.allowedComponents("repair"),["labor","material","external"]);
+  assert.notEqual(costs.TYPES.repair,costs.TYPES.rework);
+  assert.equal(costs.makeEntry(entry({loss_type:"repair",component:"labor",quantity:6,unit:"คน-ชม.",unit_cost:60})).loss_type,"repair");
+  assert.throws(() => costs.makeEntry(entry({loss_type:"repair"})),/INVALID_LOSS_COMPONENT/);
   assert.equal(costs.fieldSpec("rework","labor").unit,"คน-ชม.");
   assert.equal(costs.fieldSpec("downtime","quantity").unit,"ชม.");
   assert.throws(() => costs.makeEntry(entry({loss_type:"rework"})),/INVALID_LOSS_COMPONENT/);
