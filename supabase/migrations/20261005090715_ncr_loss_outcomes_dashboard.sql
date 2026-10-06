@@ -50,7 +50,7 @@ create trigger ncr_outcomes_sandbox_scope before insert or update or delete on p
 create or replace function private.sandbox_unguarded_tables()
 returns text[] language sql immutable set search_path = '' as $$
   select array['ncr_reports','ncr_responsibilities','ncr_losses','ncr_status_history','ncr_attachments',
-    'ncr_defect_types','document_counters','audit_logs','sandbox_sessions','ncr_outcomes']
+    'ncr_defect_types','document_counters','audit_logs','sandbox_sessions','ncr_outcomes','ncr_info_requests']
 $$;
 
 -- Editing/voiding through either the new API or the existing batch API invalidates the review.

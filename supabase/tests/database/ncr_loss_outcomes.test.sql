@@ -16,9 +16,9 @@ select ok(exists(select 1 from pg_trigger where tgrelid='public.ncr_outcomes'::r
 insert into auth.users(id,email,raw_user_meta_data) values
  ('74000000-0000-0000-0000-000000000001','cost-admin@test.local','{}'),
  ('74000000-0000-0000-0000-000000000002','cost-other@test.local','{}');
-insert into public.employees(id,employee_no,first_name,last_name,department_id,role_id,auth_user_id) values
- ('74000000-0000-0000-0000-000000000101','COST-ADMIN','Cost','Admin',(select id from public.departments where code='FT'),(select id from public.roles where code='admin'),'74000000-0000-0000-0000-000000000001'),
- ('74000000-0000-0000-0000-000000000102','COST-OTHER','Cost','Other',(select id from public.departments where code='PK'),(select id from public.roles where code='staff'),'74000000-0000-0000-0000-000000000002');
+insert into public.employees(id,employee_no,first_name,last_name,email,department_id,role_id,auth_user_id) values
+ ('74000000-0000-0000-0000-000000000101','COST-ADMIN','Cost','Admin','cost-admin@test.local',(select id from public.departments where code='FT'),(select id from public.roles where code='admin'),'74000000-0000-0000-0000-000000000001'),
+ ('74000000-0000-0000-0000-000000000102','COST-OTHER','Cost','Other','cost-other@test.local',(select id from public.departments where code='PK'),(select id from public.roles where code='staff'),'74000000-0000-0000-0000-000000000002');
 select set_config('test.cost_qa',(select id::text from public.employees where employee_no='SBX-QA-STAFF'),true);
 select set_config('test.cost_rb',(select id::text from public.employees where employee_no='SBX-RB-STAFF'),true);
 

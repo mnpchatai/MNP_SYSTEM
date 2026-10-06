@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(115);
+select plan(138);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -46,6 +46,16 @@ select ok(
 select ok(
   not has_function_privilege('authenticated', 'private.ncr_insert_loss(uuid, uuid, text, numeric, text, numeric, text)', 'execute'),
   'authenticated cannot call the loss insert helper directly'
+);
+select ok(
+  (select relrowsecurity from pg_class where oid = 'public.ncr_info_requests'::regclass)
+    and not has_table_privilege('anon', 'public.ncr_info_requests', 'select')
+    and not has_table_privilege('authenticated', 'public.ncr_info_requests', 'insert')
+    and not has_function_privilege('anon', 'public.app_ncr_request_info(uuid, text)', 'execute')
+    and not has_function_privilege('anon', 'public.app_ncr_answer_info(uuid, text)', 'execute')
+    and has_function_privilege('authenticated', 'public.app_ncr_request_info(uuid, text)', 'execute')
+    and has_function_privilege('authenticated', 'public.app_ncr_answer_info(uuid, text)', 'execute'),
+  'info requests: RLS on, read-only for signed-in users, RPCs closed to anon'
 );
 select is(
   (select last_number from public.document_counters where department_code = 'NCR' and year_key = '26'),
@@ -612,6 +622,71 @@ select throws_ok(
   'NOT_AUTHORIZED',
   'QA staff cannot sign as the QA manager'
 );
+-- 9.0 ขอข้อมูลเพิ่มเติมที่ลำดับ ผจก.แผนก QA
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอดูผลตรวจซ้ำก่อนลงนาม') $$,
+  'NOT_AUTHORIZED',
+  'only the signer whose turn it is can ask for more information (factory manager at the QA step)'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000007","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอ') $$,
+  'INVALID_INFO_REQUEST',
+  'the request needs a meaningful message'
+);
+select lives_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอดูผลตรวจซ้ำและรูปหลังแก้ไข') $$,
+  'the QA manager asks for more information at the QA step'
+);
+select is(
+  (select status from public.ncr_reports where id = current_setting('test.ncr_a')::uuid),
+  'awaiting_info',
+  'the NCR waits for the information'
+);
+select throws_ok(
+  $$ select public.app_ncr_signoff(current_setting('test.ncr_a')::uuid) $$,
+  'INVALID_TRANSITION',
+  'nobody can sign while information is pending'
+);
+select throws_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอข้อมูลซ้ำอีกครั้ง') $$,
+  'INVALID_TRANSITION',
+  'only one request can be open at a time'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000005","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'ส่งผลตรวจซ้ำและรูปแล้ว') $$,
+  'NOT_AUTHORIZED',
+  'a manager of an unrelated department cannot answer'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'ส่งผลตรวจซ้ำและรูปแล้ว') $$,
+  'NOT_AUTHORIZED',
+  'staff of the responsible department cannot answer (managers only)'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'ok') $$,
+  'INVALID_INFO_ANSWER',
+  'the answer needs a meaningful message'
+);
+select lives_ok(
+  $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'แนบผลตรวจซ้ำและรูปหลังแก้ไขแล้ว') $$,
+  'a manager of the responsible department answers'
+);
+select results_eq(
+  $$ select status, signoff_qa_at is null from public.ncr_reports where id = current_setting('test.ncr_a')::uuid $$,
+  $$ values ('awaiting_signoff'::text, true) $$,
+  'after the answer the NCR is back at the same signing step'
+);
+select throws_ok(
+  $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'ตอบซ้ำอีกครั้งหนึ่ง') $$,
+  'INVALID_TRANSITION',
+  'an answered request cannot be answered again'
+);
+
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000007","role":"authenticated"}', true);
 select is(public.app_ncr_signoff(current_setting('test.ncr_a')::uuid), 'qa', 'the QA manager signs first');
 select throws_ok(
@@ -619,8 +694,58 @@ select throws_ok(
   'NOT_AUTHORIZED',
   'the QA manager cannot sign the factory step'
 );
+-- 9.1 ขอข้อมูลเพิ่มเติมที่ลำดับ ผจก.โรงงาน และ ผจก.ทั่วไป (ตอบโดยผู้ช่วย ผจก. แผนกที่รับผิดชอบอีกแผนก)
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000007","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอข้อมูลทั้งที่ไม่ถึงลำดับ') $$,
+  'NOT_AUTHORIZED',
+  'the QA manager cannot ask at the factory step (the QA signature is already given)'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select lives_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอสรุปค่าเสียหายที่คาดว่าจะเกิดขึ้น') $$,
+  'the factory manager asks for more information at the factory step'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select lives_ok(
+  $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'ค่าเสียหายรวมประมาณ 16,000 บาท') $$,
+  'an assistant manager of another responsible department can answer'
+);
+select results_eq(
+  $$ select status, signoff_qa_at is not null, signoff_factory_at is null from public.ncr_reports where id = current_setting('test.ncr_a')::uuid $$,
+  $$ values ('awaiting_signoff'::text, true, true) $$,
+  'the QA signature is kept and the factory step is still open'
+);
+
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select is(public.app_ncr_signoff(current_setting('test.ncr_a')::uuid), 'factory', 'the factory manager signs second');
+-- 9.2 ลำดับ ผจก.ทั่วไป
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select lives_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอแผนป้องกันฉบับเต็มก่อนปิด') $$,
+  'the general manager asks for more information at the last step'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select lives_ok(
+  $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'แนบแผนป้องกันฉบับเต็มแล้ว') $$,
+  'and the responsible department answers again'
+);
+select results_eq(
+  $$ select step, answered_by is not null from public.ncr_info_requests where ncr_id = current_setting('test.ncr_a')::uuid order by case step when 'qa' then 1 when 'factory' then 2 else 3 end $$,
+  $$ values ('qa'::text, true), ('factory', true), ('gm', true) $$,
+  'every step keeps its own answered request'
+);
+select is(
+  (select count(*)::int from public.ncr_info_requests where ncr_id = current_setting('test.ncr_a')::uuid),
+  3,
+  'a participant of the NCR can read all three requests'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000010","role":"authenticated"}', true);
+select is(
+  (select count(*)::int from public.ncr_info_requests where ncr_id = current_setting('test.ncr_a')::uuid),
+  0,
+  'an employee without access to the NCR cannot read its info requests'
+);
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000008","role":"authenticated"}', true);
 select is(public.app_ncr_signoff(current_setting('test.ncr_a')::uuid), 'gm', 'the general manager signs last');
 select results_eq(
@@ -642,6 +767,11 @@ select throws_ok(
   $$ select public.app_ncr_add_losses(current_setting('test.ncr_a')::uuid, '[{"loss_type":"scrap","quantity":1,"unit":"ท่อน","unit_cost":18}]'::jsonb) $$,
   'NCR_LOCKED',
   'a batch cannot be added after the NCR is closed'
+);
+select throws_ok(
+  $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอข้อมูลหลังปิด NCR แล้ว') $$,
+  'INVALID_TRANSITION',
+  'information cannot be requested after the NCR is closed'
 );
 select throws_ok(
   $$ insert into storage.objects (bucket_id, name, owner_id, metadata)
@@ -695,7 +825,8 @@ select results_eq(
   $$ select action from public.ncr_status_history where ncr_id = current_setting('test.ncr_a')::uuid order by id $$,
   -- attachment สองแถว: ไฟล์หลักฐานปกติ + ไฟล์ 20 MB ที่ลงทะเบียนในหัวข้อ 8.1 (app_ncr_add_attachment บันทึกประวัติทุกครั้ง)
   $$ values ('issue'::text), ('dispose'), ('respond'), ('followup_return'), ('respond'), ('followup_close'),
-            ('attachment'), ('attachment'), ('signoff_qa'), ('signoff_factory'), ('signoff_gm') $$,
+            ('attachment'), ('attachment'), ('request_info'), ('answer_info'), ('signoff_qa'),
+            ('request_info'), ('answer_info'), ('signoff_factory'), ('request_info'), ('answer_info'), ('signoff_gm') $$,
   'every step is recorded in the status history, readable by the reporter'
 );
 
