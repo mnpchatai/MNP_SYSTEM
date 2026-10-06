@@ -3,8 +3,8 @@
 // แผนกในฝ่าย (modules/factory-departments.js): PP วางแผนการผลิต · RB ขึ้นรูปยาง · GR แปรรูปยาง ·
 // PT ขึ้นรูปพลาสติก · BG เย็บจักร · PK ประกอบบรรจุภัณฑ์
 //
-// ขอบเขตตอนนี้: โครงโมดูล หน้าของแต่ละแผนก (#/factory, #/factory?dept=<รหัส>) และ dropdown "Item master"
-// ในหน้ารวม (modules/factory-items.js — รายการตัวอย่างสำหรับทดสอบ ยังไม่มีข้อมูลจริง)
+// ขอบเขตตอนนี้: โครงโมดูล หน้าของแต่ละแผนก (#/factory, #/factory?dept=<รหัส>) และเมนู "Item master"
+// แบบต้นไม้ (โฟลเดอร์ > รายการ) ในหน้ารวม (modules/factory-item-master.js) กดรายการแล้วยังเป็นหน้าว่างรอกำหนดฟอร์ม
 // ยังไม่มีฟอร์ม/ขั้นตอนงานของแผนกใด และ **ไม่อ่าน/เขียนฐานข้อมูลเลย** จึงไม่มี migration/RPC/RLS ใหม่
 // และไม่กระทบข้อมูลจริง เมื่อกำหนด workflow ของแผนกแล้วให้เพิ่มตารางพร้อมการแยกข้อมูลทดสอบ
 // (ดู private.sandbox_guard_table ใน 20261005030000_admin_sandbox_mode.sql) และเทสต์ใน
@@ -22,40 +22,56 @@
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V10l6 4v-4l6 4V5h4v16H3Z"/><path d="M8 21v-3h2v3M14 21v-3h2v3"/></svg>`;
 
   const factory = window.MNP_FACTORY;
-  const itemMaster = window.MNP_FACTORY_ITEMS;
+  const itemMaster = window.MNP_FACTORY_ITEM_MASTER;
   const gradient = ([from, to]) => `linear-gradient(135deg, ${from}, ${to})`;
 
-  // dropdown ใช้ <select> ของเบราว์เซอร์ ไม่ใช่ popup ที่เขียนเอง จึงเลือกด้วยการสัมผัสบน iPhone ได้ตามกติกา
-  // และไม่ต้องมีโค้ดปิด popup (ถ้าวันหน้ารายการมีมากจนต้องค้นหา ให้ทำแบบ combobox ที่ใช้ data-popup/closePopup)
+  const FOLDER_ICON = `<svg class="factory-tree-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5v-12Z"/></svg>`;
+  const DOCUMENT_ICON = `<svg class="factory-tree-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7V3Z"/><path d="M14 3v4h4M9.5 12h5M9.5 15.5h5"/></svg>`;
+
+  // เมนู Item master: <details> ซ้อนกัน (ตัวนอก = dropdown, ตัวใน = โฟลเดอร์) เปิด/ปิดด้วยการแตะได้ทุกอุปกรณ์รวม iPhone
+  // และใช้คีย์บอร์ดได้เองโดยไม่ต้องเขียน ARIA tree เอง รายการแสดงในหน้าเดิม ไม่ใช่ popup ลอย จึงไม่ต้องมีโค้ดปิดตอนแตะนอกกรอบ
+  // (ถ้าวันหน้าเปลี่ยนเป็น popup ลอยหรือ combobox ต้องใช้ data-popup/closePopup ตามกติกา AGENTS.md)
   function itemMasterHtml() {
-    const groups = itemMaster.grouped().map(({ category, items }) => `<optgroup label="${escapeHtml(category.name)}">${items.map((item) => `<option value="${escapeHtml(item.code)}">${escapeHtml(item.code)} · ${escapeHtml(item.name)}</option>`).join("")}</optgroup>`).join("");
+    const folders = itemMaster.FOLDERS.map((folder) => {
+      const entries = folder.entries.length
+        ? folder.entries.map((entry) => `<li><button type="button" class="factory-entry" data-entry="${escapeHtml(entry.key)}">${DOCUMENT_ICON}<span>${escapeHtml(entry.name)}</span></button></li>`).join("")
+        : `<li class="factory-entries-empty">ยังไม่มีรายการในโฟลเดอร์นี้</li>`;
+      return `<li><details class="factory-folder"><summary>${FOLDER_ICON}<span>${escapeHtml(folder.name)}</span></summary><ul class="factory-entries">${entries}</ul></details></li>`;
+    }).join("");
     return `<section class="card factory-item-card">
-        <div class="field">
-          <label for="factory-item">Item master</label>
-          <select class="select" id="factory-item" aria-describedby="factory-item-note"><option value="">— เลือก Item master —</option>${groups}</select>
-          <small id="factory-item-note">รายการตัวอย่างสำหรับทดสอบ ไม่ใช่ข้อมูลจริง</small>
-        </div>
-        <div id="factory-item-detail" aria-live="polite"></div>
+        <details class="factory-master" id="factory-item-master">
+          <summary>Item master</summary>
+          <ul class="factory-tree">${folders}</ul>
+          <div id="factory-item-detail" aria-live="polite"></div>
+        </details>
       </section>`;
   }
 
-  function itemDetailHtml(item) {
-    return `<dl class="definition-grid">
-        <div class="definition"><dt>รหัส</dt><dd>${escapeHtml(item.code)}</dd></div>
-        <div class="definition"><dt>ชื่อรายการ</dt><dd>${escapeHtml(item.name)}</dd></div>
-        <div class="definition"><dt>ประเภท</dt><dd>${escapeHtml(item.categoryName)}</dd></div>
-        <div class="definition"><dt>หน่วย</dt><dd>${escapeHtml(item.unit)}</dd></div>
-      </dl>`;
+  function entryDetailHtml({ folder, entry }) {
+    return `<div class="factory-entry-detail">
+        <div class="eyebrow">Item master › ${escapeHtml(folder.name)}</div>
+        <h3>${escapeHtml(entry.name)}</h3>
+        <p class="muted small">ยังไม่เปิดใช้งาน — โมดูลอยู่ในโหมดทดสอบ รอกำหนดฟอร์มและขั้นตอนของรายการนี้</p>
+      </div>`;
   }
 
-  // เลือกรายการแล้วแสดงรายละเอียดในหน้าเดิม ไม่เปลี่ยน URL และไม่เก็บค่าที่เลือก (ยังไม่มีขั้นตอนงานที่ใช้ค่านี้)
-  // ค่าที่ไม่ตรงรายการ (เช่นถูกแก้ใน DOM) หรือเลือก "— เลือก —" แสดงว่าง ไม่เดาให้
+  // เปิดโฟลเดอร์หนึ่งแล้วปิดโฟลเดอร์อื่น (เหมือนเมนูตัวอย่าง) และกดรายการเพื่อดูหน้าของรายการนั้น
+  // ค่า key ของรายการมาจาก DOM จึงตรวจกับเมนูจริงทุกครั้ง ไม่ตรง = ไม่แสดงอะไร และไม่เอาข้อความจาก DOM ไปใส่ HTML
   function bindItemMaster() {
-    const select = document.querySelector("#factory-item");
+    const root = document.querySelector("#factory-item-master");
     const detail = document.querySelector("#factory-item-detail");
-    select?.addEventListener("change", () => {
-      const item = itemMaster.find(select.value);
-      detail.innerHTML = item ? itemDetailHtml(item) : "";
+    if (!root || !detail) return;
+    root.querySelectorAll("details.factory-folder").forEach((folder) => folder.addEventListener("toggle", () => {
+      if (!folder.open) return;
+      root.querySelectorAll("details.factory-folder[open]").forEach((other) => { if (other !== folder) other.open = false; });
+    }));
+    root.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-entry]");
+      if (!button || !root.contains(button)) return;
+      root.querySelectorAll("[data-entry][aria-current]").forEach((other) => other.removeAttribute("aria-current"));
+      const found = itemMaster.findEntry(button.dataset.entry);
+      detail.innerHTML = found ? entryDetailHtml(found) : "";
+      if (found) button.setAttribute("aria-current", "true");
     });
   }
 
