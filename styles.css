@@ -632,6 +632,22 @@ tbody tr:hover { background: var(--shell); }
 .machine-option span { color: var(--muted); font-size: 13px; }
 .machine-option:hover span, .machine-option[aria-selected="true"] span { color: inherit; }
 .machine-empty { padding: 22px 12px; color: var(--muted); text-align: center; font-size: 13px; }
+.machine-add {
+  width: 100%;
+  min-height: 45px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  color: var(--primary);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 6px 6px;
+  font-weight: 700;
+  text-align: left;
+}
+.machine-add:hover, .machine-add:focus-visible { background: var(--primary-soft); }
+.machine-new { margin-top: 10px; padding: 14px; background: var(--primary-soft); border: 1px solid var(--line); border-radius: 9px; }
+.machine-new[hidden] { display: none; }
 .type-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
 .request-type-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .request-type-heading h2 { margin: 0; font-size: 17px; }
