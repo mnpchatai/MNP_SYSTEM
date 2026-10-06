@@ -32,3 +32,17 @@ test("rework exposes labor, material and external; flat document totals use quan
   assert.throws(() => costs.makeEntry(entry({entry_kind:"recovery",component:"amount",quantity:2})),/INVALID_LOSS/);
   assert.throws(() => costs.makeEntry(entry({loss_type:"other",component:"amount",quantity:1})),/INVALID_LOSS_NOTE/);
 });
+test("labor form: headcount x hours/day becomes คน-ชม. and round-trips through the note tag", () => {
+  assert.equal(costs.fieldSpec("rework","labor").labor,true);
+  assert.equal(costs.laborQuantity("3","8"),24);
+  assert.equal(costs.laborQuantity("2.5","1.5"),3.75);
+  for (const bad of [["",""],["0","8"],["3",""],["-1","8"],["x","8"]]) assert.equal(costs.laborQuantity(...bad),null);
+  const note = costs.withLaborTag("ซ่อมรอบเช้า","3","8");
+  assert.equal(note,"[แรงงาน: 3 คน × 8 ชม./วัน] ซ่อมรอบเช้า");
+  assert.deepEqual(costs.splitLaborTag(note),{headcount:"3",hours:"8",note:"ซ่อมรอบเช้า"});
+  assert.deepEqual(costs.splitLaborTag(costs.withLaborTag("","2","3")),{headcount:"2",hours:"3",note:""});
+  assert.deepEqual(costs.splitLaborTag("รายการเดิม"),{headcount:"",hours:"",note:"รายการเดิม"});
+  assert.throws(() => costs.withLaborTag("","","8"),/INVALID_LOSS/);
+  const saved = costs.makeEntry(entry({loss_type:"rework",component:"labor",quantity:costs.laborQuantity("3","8"),unit:"คน-ชม.",unit_cost:60,note}));
+  assert.equal(saved.quantity,24); assert.equal(saved.note,note);
+});

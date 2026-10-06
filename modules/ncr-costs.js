@@ -7,11 +7,27 @@
   const allowedComponents = (type, kind = "loss") => kind === "recovery" ? ["amount"] : ["repair", "rework"].includes(type) ? ["labor", "material", "external"] : type === "sort" ? ["labor", "external"] : ["scrap", "material", "downtime"].includes(type) ? ["quantity"] : ["amount"];
   function fieldSpec(type, component, kind = "loss", unit = "ชิ้น") {
     if (kind === "recovery" || component === "amount" || component === "external") return { quantity: "จำนวนรายการ", rate: "ยอดเงินตามเอกสาร (บาท)", unit: "รายการ", fixedQuantity: true, hint: kind === "recovery" ? "เงินชดเชย/เครดิตผู้ขาย/ขายซาก แยกจากค่าเสียหาย" : type === "reproduce" ? "บันทึกเฉพาะค่าใช้จ่ายส่วนเพิ่มที่ยังไม่ได้ลงในหมวดอื่น" : "บันทึกค่าใช้จ่ายเพิ่มเติมจาก NCR ตามเอกสาร" };
-    if (component === "labor") return { quantity: "ชั่วโมงแรงงานรวม (ทุกคน)", rate: "ค่าแรง (บาท/คน/ชั่วโมง)", unit: "คน-ชม.", hint: "เช่น 2 คน × 3 ชั่วโมง = 6 คน-ชม. แยกเวลาซ่อม Rework และคัดแยกเป็นคนละรายการ" };
+    if (component === "labor") return { quantity: "รวมชั่วโมงแรงงาน (คน-ชม.)", rate: "ค่าแรง/ชม. (บาท)", unit: "คน-ชม.", labor: true, hint: "จำนวนพนักงาน × ชม.ทำงาน/วัน = คน-ชม. ของวันที่เกิดค่าใช้จ่าย เช่น 2 คน × 3 ชม. = 6 คน-ชม. · หลายวันให้เพิ่มเป็นรายการแยกตามวัน · แยกเวลาซ่อม Rework และคัดแยกเป็นคนละรายการ" };
     if (component === "material") return { quantity: "จำนวนวัสดุที่ใช้ซ่อม", rate: "ต้นทุนวัสดุต่อหน่วย (บาท)", unit, hint: "เก็บค่าวัสดุแยกจากค่าแรงซ่อม" };
     if (type === "downtime") return { quantity: "เวลาเครื่องหยุด (ชั่วโมง)", rate: "ต้นทุนเครื่องหยุด (บาท/ชั่วโมง)", unit: "ชม.", hint: "ใช้เฉพาะอัตราต้นทุนที่องค์กรกำหนด หากยังไม่มีอัตราให้เก็บเวลาในผลดำเนินการ" };
     if (type === "material") return { quantity: "จำนวนวัตถุดิบสูญเสีย", rate: "ต้นทุนวัตถุดิบต่อหน่วย (บาท)", unit: "กก.", hint: "ใช้เฉพาะวัตถุดิบสูญเสียที่ยังไม่รวมในต้นทุนชิ้นงานที่ทิ้ง เพื่อไม่ให้นับซ้ำ" };
     return { quantity: "จำนวนทิ้งจริง", rate: "ต้นทุนต่อหน่วย ณ ขั้นตอนที่ทิ้ง (บาท)", unit, hint: "ใช้จำนวนที่ทิ้งจริง ห้ามนำจำนวนที่พบปัญหามาคิดเป็นของเสียทั้งหมด" };
+  }
+  // Labor is stored as quantity = headcount x hours/day (คน-ชม.); the split is kept as a note prefix so an edit can restore it.
+  const LABOR_TAG = /^\[แรงงาน: (\d+(?:\.\d+)?) คน × (\d+(?:\.\d+)?) ชม\.\/วัน\]\s*/;
+  const positive = (v) => { const n = typeof v === "string" && v.trim() === "" ? NaN : Number(v); return Number.isFinite(n) && n > 0 && n <= 1e9 ? n : null; };
+  function laborQuantity(headcount, hours) {
+    const people = positive(headcount), perDay = positive(hours);
+    return people === null || perDay === null ? null : round(people * perDay, 3);
+  }
+  function withLaborTag(note, headcount, hours) {
+    const people = positive(headcount), perDay = positive(hours);
+    if (people === null || perDay === null) throw new Error("INVALID_LOSS");
+    return `[แรงงาน: ${people} คน × ${perDay} ชม./วัน]${String(note ?? "").trim() ? ` ${String(note).trim()}` : ""}`;
+  }
+  function splitLaborTag(note) {
+    const text = String(note ?? ""), match = LABOR_TAG.exec(text);
+    return match ? { headcount: match[1], hours: match[2], note: text.slice(match[0].length) } : { headcount: "", hours: "", note: text };
   }
   function makeEntry(input) {
     if (!TYPES[input.loss_type] || !["loss", "recovery"].includes(input.entry_kind)) throw new Error("INVALID_LOSS_TYPE");
@@ -44,7 +60,7 @@
     result.net = round(result.confirmed - result.recovery);
     return result;
   }
-  const api = { TYPES, STATUSES, COMPONENTS, round, allowedComponents, fieldSpec, makeEntry, summarize };
+  const api = { TYPES, STATUSES, COMPONENTS, round, allowedComponents, fieldSpec, laborQuantity, withLaborTag, splitLaborTag, makeEntry, summarize };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_COSTS = api;
 })(typeof window !== "undefined" ? window : globalThis);

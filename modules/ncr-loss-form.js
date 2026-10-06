@@ -21,6 +21,8 @@
           <div class="field"><label for="ncr-loss-component">ส่วนประกอบค่าใช้จ่าย *</label><select class="select" id="ncr-loss-component" name="component"></select></div>
           <div class="field"><label for="ncr-loss-status">สถานะยอดเงิน *</label><select class="select" id="ncr-loss-status" name="cost_status">${options({ estimated: costs.STATUSES.estimated, confirmed: costs.STATUSES.confirmed }, "estimated")}</select></div>
           <div class="field"><label for="ncr-loss-date">วันที่เกิดค่าใช้จ่าย *</label><input class="input" id="ncr-loss-date" name="incurred_on" type="date" value="${today}" required></div>
+          <div class="field" data-labor-field hidden><label for="ncr-loss-headcount">จำนวนพนักงาน (คน) *</label><input class="input" id="ncr-loss-headcount" name="labor_headcount" type="number" min="0" max="1000000" step="any" inputmode="decimal" disabled></div>
+          <div class="field" data-labor-field hidden><label for="ncr-loss-hours">ชม.ทำงาน/วัน (ต่อคน) *</label><input class="input" id="ncr-loss-hours" name="labor_hours" type="number" min="0" max="24" step="any" inputmode="decimal" disabled></div>
           ${numberField("ncr-loss-qty", "quantity", "จำนวนทิ้งจริง *")}
           <div class="field"><label for="ncr-loss-unit">หน่วย *</label><input class="input" id="ncr-loss-unit" name="unit" maxlength="20" value="${escapeHtml(ncr.unit)}" required></div>
           ${numberField("ncr-loss-cost", "unit_cost", "ต้นทุนต่อหน่วย (บาท) *", "", "0.01")}
@@ -45,7 +47,13 @@
         <label class="ncr-check field full"><input type="checkbox" name="cost_reviewed"${o?.cost_reviewed ? " checked" : ""}><span>ประเมินค่าเสียหายครบแล้ว (ต้องยืนยันผลและไม่มีรายการรอยืนยัน หากไม่มีค่าเสียหายให้ระบุเหตุผล)</span></label>
         </div><div class="form-actions"><button class="btn" type="submit">บันทึกผลดำเนินการ</button></div></form>` : ""}</section>`;
   }
-  function readEntry(form) { return costs.makeEntry(Object.fromEntries(new FormData(form))); }
+  function readEntry(form) {
+    const data = Object.fromEntries(new FormData(form));
+    if (form.elements.labor_headcount.disabled) return costs.makeEntry(data);
+    const quantity = costs.laborQuantity(data.labor_headcount, data.labor_hours);
+    if (quantity === null) throw new Error("INVALID_LOSS");
+    return costs.makeEntry({ ...data, quantity, unit: "คน-ชม.", note: costs.withLaborTag(data.note, data.labor_headcount, data.labor_hours) });
+  }
   function readOutcome(form) {
     const data = Object.fromEntries(new FormData(form));
     for (const key of ["qty_sorted","qty_repaired","qty_scrapped","qty_returned","qty_accepted","downtime_hours"]) {
@@ -70,13 +78,16 @@
       document.querySelector('label[for="ncr-loss-qty"]').textContent = `${spec.quantity} *`;
       document.querySelector('label[for="ncr-loss-cost"]').textContent = `${spec.rate} *`;
       document.querySelector("#ncr-loss-hint").textContent = spec.hint;
-      form.elements.quantity.readOnly = Boolean(spec.fixedQuantity);
-      if (reset) { form.elements.quantity.value = spec.fixedQuantity ? "1" : ""; form.elements.unit_cost.value = ""; form.elements.unit.value = spec.unit; }
+      form.elements.quantity.readOnly = Boolean(spec.fixedQuantity || spec.labor);
+      form.elements.unit.readOnly = Boolean(spec.labor);
+      document.querySelectorAll("[data-labor-field]").forEach((field) => { field.hidden = !spec.labor; field.querySelector("input").disabled = !spec.labor; field.querySelector("input").required = Boolean(spec.labor); });
+      if (reset) { form.elements.quantity.value = spec.fixedQuantity ? "1" : ""; form.elements.unit_cost.value = ""; form.elements.unit.value = spec.unit; form.elements.labor_headcount.value = ""; form.elements.labor_hours.value = ""; }
       form.elements.evidence_ref.required = form.elements.cost_status.value === "confirmed";
       form.elements.incurred_on.max = form.elements.cost_status.value === "confirmed" ? ncr.today : "";
       preview();
     };
     const preview = () => {
+      if (!form.elements.labor_headcount.disabled) form.elements.quantity.value = costs.laborQuantity(form.elements.labor_headcount.value, form.elements.labor_hours.value) ?? "";
       const q = form.elements.quantity.value, rate = form.elements.unit_cost.value;
       document.querySelector("#ncr-loss-preview").textContent = `มูลค่ารายการ: ${q && rate && Number.isFinite(Number(q)*Number(rate)) ? formatBaht(costs.round(costs.round(q,3)*costs.round(rate))) : "—"}`;
     };
@@ -101,7 +112,9 @@
       form.elements.unit.value = loss.cost_status === "legacy" ? spec.unit : loss.unit;
       form.elements.incurred_on.value = loss.incurred_on;
       form.elements.cost_status.value = loss.cost_status === "confirmed" ? "confirmed" : "estimated";
-      form.elements.evidence_ref.value = loss.evidence_ref ?? ""; form.elements.note.value = loss.note ?? "";
+      const labor = spec.labor ? costs.splitLaborTag(loss.note) : { headcount: "", hours: "", note: loss.note ?? "" };
+      if (spec.labor) { form.elements.labor_headcount.value = labor.headcount; form.elements.labor_hours.value = labor.hours; if (!labor.headcount) form.elements.quantity.value = ""; }
+      form.elements.evidence_ref.value = loss.evidence_ref ?? ""; form.elements.note.value = labor.note;
       document.querySelector("#ncr-loss-heading").textContent = "แก้ไขรายการ / ยืนยันยอดเดิม";
       document.querySelector("#ncr-loss-reset").hidden = false; configure(false);
       form.scrollIntoView({block:"start",behavior:"smooth"});
