@@ -323,7 +323,16 @@
                 <span class="machine-search-icon" aria-hidden="true">⌕</span>
                 <div class="machine-listbox" id="repair-machine-list" role="listbox" data-popup hidden></div>
               </div>
-              <small>ค้นหาด้วยรหัสหรือชื่อเครื่องจักร แล้วเลือกจากรายการ</small>
+              <small>ค้นหาด้วยรหัสหรือชื่อเครื่องจักร แล้วเลือกจากรายการ · ไม่พบรหัสที่ต้องการ กด "เพิ่มรหัสเครื่องจักรใหม่" ท้ายรายการ</small>
+              <div class="machine-new" id="repair-machine-new" hidden>
+                <div class="form-grid">
+                  <div class="field"><label for="repair-machine-new-code">รหัสเครื่องจักรใหม่</label><input class="input" id="repair-machine-new-code" maxlength="40" autocomplete="off" placeholder="เช่น H-HL1-1"></div>
+                  <div class="field"><label for="repair-machine-new-name">ชื่อเครื่องจักร</label><input class="input" id="repair-machine-new-name" maxlength="120" autocomplete="off" placeholder="เช่น รถยกลากพาเลส"></div>
+                </div>
+                <small>บันทึกเข้าทะเบียนเครื่องจักรของแผนกที่เลือก ครั้งต่อไปค้นหารหัสนี้เจอในรายการ ไม่ต้องพิมพ์ซ้ำ</small>
+                <div id="repair-machine-new-message" role="alert"></div>
+                <div class="form-actions"><button type="button" class="btn secondary" id="repair-machine-new-cancel">ยกเลิก</button><button type="button" class="btn" id="repair-machine-new-save">บันทึกเครื่องจักร</button></div>
+              </div>
             </div>
             <div class="field full">
               <label>ประเภทเอกสาร</label>
@@ -349,6 +358,11 @@
       const machineSearch = document.querySelector("#repair-machine-search");
       const machineList = document.querySelector("#repair-machine-list");
       const docTypeInput = document.querySelector("#repair-doc-type");
+      const newMachineBox = document.querySelector("#repair-machine-new");
+      const newMachineCode = document.querySelector("#repair-machine-new-code");
+      const newMachineName = document.querySelector("#repair-machine-new-name");
+      const newMachineMessage = document.querySelector("#repair-machine-new-message");
+      const newMachineSave = document.querySelector("#repair-machine-new-save");
       let selectedDepartmentId = "";
       let visibleMachines = [];
       let activeMachineIndex = -1;
@@ -378,6 +392,8 @@
         machineList.innerHTML = visibleMachines.length
           ? visibleMachines.map((machine, index) => `<button type="button" class="machine-option" id="repair-machine-option-${index}" role="option" aria-selected="false" data-machine-index="${index}"><strong>${escapeHtml(machine.code)}</strong>${machine.is_placeholder ? "" : `<span>${escapeHtml(machine.name)}</span>`}</button>`).join("")
           : `<div class="machine-empty">ไม่พบเครื่องจักรที่ค้นหา</div>`;
+        const typedCode = query.trim();
+        machineList.insertAdjacentHTML("beforeend", `<button type="button" class="machine-add" data-add-machine>＋ เพิ่มรหัสเครื่องจักรใหม่${typedCode ? ` "${escapeHtml(typedCode)}"` : ""}</button>`);
         machineList.hidden = false;
         machineSearch.setAttribute("aria-expanded", "true");
       };
@@ -401,11 +417,67 @@
       // กดค้างบนรายการไม่ให้ช่องค้นหาเสีย focus — คีย์บอร์ดมือถือไม่หุบแล้วเด้งกลับตอนเลือก
       machineList.addEventListener("mousedown", (event) => event.preventDefault());
       machineList.addEventListener("click", (event) => {
+        if (event.target.closest("[data-add-machine]")) { openNewMachineForm(machineInput.value ? "" : machineSearch.value); return; }
         const option = event.target.closest("[data-machine-index]");
         if (!option) return;
         machineSearch.focus();
         chooseMachine(visibleMachines[Number(option.dataset.machineIndex)]);
       });
+
+      // กำหนดรหัสเครื่องจักรเอง: บันทึกเข้า master ผ่าน app_create_machine (ตรวจสิทธิ์/รูปแบบ/รหัสซ้ำที่ฐานข้อมูล)
+      // ฟอร์มนี้อยู่นอกกรอบ data-popup ของรายการเครื่อง จึงไม่ถูกกฎ closePopup ปิดตอนพิมพ์
+      const closeNewMachineForm = () => {
+        newMachineBox.hidden = true;
+        newMachineMessage.innerHTML = "";
+        newMachineCode.value = "";
+        newMachineName.value = "";
+      };
+      const openNewMachineForm = (prefillCode = "") => {
+        closePopup(machineList);
+        machineInput.value = "";
+        newMachineMessage.innerHTML = "";
+        newMachineCode.value = prefillCode.trim();
+        newMachineName.value = "";
+        newMachineBox.hidden = false;
+        (newMachineCode.value ? newMachineName : newMachineCode).focus();
+      };
+      const saveNewMachine = async () => {
+        newMachineMessage.innerHTML = "";
+        const code = newMachineCode.value.trim();
+        const name = newMachineName.value.trim();
+        if (!code) { newMachineMessage.innerHTML = `<div class="form-message error">กรุณาระบุรหัสเครื่องจักร</div>`; newMachineCode.focus(); return; }
+        if (!name) { newMachineMessage.innerHTML = `<div class="form-message error">กรุณาระบุชื่อเครื่องจักร</div>`; newMachineName.focus(); return; }
+        newMachineSave.disabled = true;
+        try {
+          const { data, error: createError } = await sb.rpc("app_create_machine", {
+            p_department_id: selectedDepartmentId,
+            p_code: code,
+            p_name: name,
+          });
+          if (createError) throw createError;
+          const saved = Array.isArray(data) ? data[0] : data;
+          if (!saved?.id) throw new Error("MACHINE_NOT_FOUND");
+          const machine = { id: saved.id, code: saved.code, name: saved.name, department_id: saved.department_id, is_placeholder: false };
+          if (!machines.some((item) => item.id === machine.id)) machines.push(machine);
+          chooseMachine(machine);
+          closeNewMachineForm();
+          showToast(saved.existed
+            ? `รหัส ${machine.code} มีในทะเบียนแล้ว เลือกเครื่องเดิมให้ (${machine.name})`
+            : `บันทึกเครื่องจักร ${machine.code} เข้าทะเบียนแล้ว ครั้งหน้าค้นหาเจอได้เลย`);
+        } catch (saveError) {
+          newMachineMessage.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(saveError))}</div>`;
+        } finally {
+          newMachineSave.disabled = false;
+        }
+      };
+      newMachineSave.addEventListener("click", saveNewMachine);
+      document.querySelector("#repair-machine-new-cancel").addEventListener("click", closeNewMachineForm);
+      [newMachineCode, newMachineName].forEach((input) => input.addEventListener("keydown", (event) => {
+        // Enter ในช่องนี้ต้องบันทึกเครื่อง ไม่ใช่ส่งทั้งใบแจ้งซ่อม
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        saveNewMachine();
+      }));
 
       document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
         document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => {
@@ -419,6 +491,7 @@
         selectedDepartmentId = departmentId;
         machineInput.value = "";
         machineSearch.value = "";
+        closeNewMachineForm();
         machineSearch.disabled = false;
         machineSearch.placeholder = "ค้นหารหัสหรือชื่อเครื่องจักร";
         machineSearch.focus();
