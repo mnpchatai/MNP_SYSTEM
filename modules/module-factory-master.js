@@ -4,9 +4,9 @@
 //   items      ทะเบียนสินค้า: สถิติ ค้นหา/กรอง/เรียง/แบ่งหน้า รายละเอียด (&id=) และแก้ไข (&id=&edit=1)
 //   item-new   ฟอร์มเพิ่ม Item
 //   history    ประวัติการเพิ่ม/แก้ไข Item ล่าสุด
-//   bom        โครงสร้างสินค้า (BOM) อ่านอย่างเดียว พร้อมคำนวณปริมาณตามจำนวนผลิต
-//   bom-pending  สร้าง/แก้ BOM ยังไม่เปิดในรอบนี้
 //   routing / inventory / production  อ่านอย่างเดียว
+//   (โครงสร้างสินค้า BOM: ดู/สร้าง/แก้ฉบับร่าง/อนุมัติ อยู่ที่ modules/module-factory-bom.js ซึ่งใช้ helper ของไฟล์นี้ผ่าน
+//    window.MNP_FACTORY_UI และเพิ่ม view เข้า window.MNP_FACTORY_VIEWS — ต้องโหลดหลังไฟล์นี้ ก่อน module-factory.js)
 // ข้อมูลทั้งหมดมาจาก RPC app_factory_master_data และบันทึกผ่าน app_factory_save_item
 // (supabase/migrations/20261006050000_factory_item_master.sql) ฐานข้อมูลตรวจสิทธิ์/โหมด/ค่าทุกช่องเอง
 // การตรวจในหน้าเว็บเป็นเพียงความสะดวก ตรรกะที่ทดสอบได้อยู่ที่ modules/factory-master-model.js
@@ -43,7 +43,8 @@
   const label = (map, key) => map[key] ?? key ?? "—";
   const typeBadge = (type) => `<span class="badge fm-type fm-type-${escapeHtml(type)}">${escapeHtml(type)} · ${escapeHtml(label(model.ITEM_TYPES, type))}</span>`;
   const statusBadge = (status) => `<span class="badge fm-status fm-status-${status === "active" ? "active" : "inactive"}">${escapeHtml(label(model.STATUSES, status))}</span>`;
-  const docStatus = (status) => `<span class="badge">${escapeHtml(label(model.DOCUMENT_STATUSES, status))}</span>`;
+  // class ตามสถานะ: pending_approval = เหลือง, approved = ฟ้า (ดู .badge.* ใน styles.css) draft/obsolete = สีเทา
+  const docStatus = (status) => `<span class="badge ${escapeHtml(status)}">${escapeHtml(label(model.DOCUMENT_STATUSES, status))}</span>`;
   const notice = (text) => `<p class="fm-notice" role="note">${escapeHtml(text)}</p>`;
   const options = (entries, selected) => entries.map(([value, text]) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(text)}</option>`).join("");
 
@@ -283,51 +284,6 @@
         }).join("")}</tbody></table></div>`;
   }
 
-  // ---------- BOM ----------
-  function bomHtml(data, params) {
-    const boms = data.boms ?? [];
-    if (!boms.length) return emptyData("สูตรการผลิต (BOM)");
-    const bom = boms.find((row) => row.id === params.get("bom")) ?? boms[0];
-    const fromUrl = Number(params.get("qty"));
-    const produce = Number.isFinite(fromUrl) && fromUrl > 0 ? fromUrl : Number(bom.output_qty);
-    const lines = (data.bom_lines ?? []).filter((line) => line.bom_id === bom.id);
-    return `${notice("สูตรตัวอย่างเพื่อสาธิตความสัมพันธ์ของข้อมูล ยังไม่ได้อนุมัติสำหรับผลิตจริง")}
-      <section class="card">
-        <div class="field-row">
-          <div class="field"><label for="fm-bom">เลือกสูตรการผลิต</label><select class="select" id="fm-bom">${options(boms.map((row) => [row.id, `${row.code} · ${row.name} (Rev. ${row.revision})`]), bom.id)}</select></div>
-          <div class="field"><label for="fm-produce">ปริมาณที่ต้องการผลิต (${escapeHtml(bom.unit_code)})</label><input class="input" id="fm-produce" type="number" inputmode="decimal" min="0.001" step="any" value="${escapeHtml(produce)}"></div>
-        </div>
-        <div class="fm-detail-head"><h2>${escapeHtml(bom.name)}</h2><span>Revision ${escapeHtml(bom.revision)} · ${docStatus(bom.status)}</span></div>
-        <p class="muted small">สูตรตั้งต้นต่อ ${qty(bom.output_qty)} ${escapeHtml(bom.unit_code)} · มีผล ${formatDate(bom.effective_date)} · เผื่อสูญเสียเพิ่มจากปริมาณสุทธิ · คำนวณระดับเดียว (ส่วนประกอบที่เป็น WIP ไม่แตกสูตรต่อ)</p>
-        <div class="table-wrap"><table>
-          <thead><tr><th>ส่วนประกอบ</th><th>ปริมาณ / สูตร</th><th>เผื่อสูญเสีย</th><th class="right">ปริมาณรวมที่ต้องใช้</th></tr></thead>
-          <tbody>${lines.map((line) => `<tr>
-            <td><a href="${escapeHtml(menu.url("item-list", { id: line.component_id }))}"><strong>${escapeHtml(line.code)}</strong></a><br><span class="muted small">${escapeHtml(line.name)}</span></td>
-            <td>${qty(line.quantity)} ${escapeHtml(line.unit_code)}</td>
-            <td>${qty(line.scrap_percent)}%</td>
-            <td class="right"><strong data-bom-line="${escapeHtml(line.id)}"></strong> ${escapeHtml(line.unit_code)}</td>
-          </tr>`).join("")}</tbody></table></div>
-      </section>`;
-  }
-
-  function bindBom(root, data, params) {
-    const select = root.querySelector("#fm-bom");
-    const input = root.querySelector("#fm-produce");
-    if (!select || !input) return;
-    const bom = (data.boms ?? []).find((row) => row.id === select.value);
-    const lines = (data.bom_lines ?? []).filter((line) => line.bom_id === bom?.id);
-    const recalc = () => {
-      for (const line of lines) {
-        const cell = root.querySelector(`[data-bom-line="${CSS.escape(line.id)}"]`);
-        const need = model.bomRequirement(line.quantity, line.scrap_percent, input.value, bom.output_qty);
-        if (cell) cell.textContent = need === null ? "—" : qty(need);
-      }
-    };
-    input.addEventListener("input", recalc);
-    select.addEventListener("change", () => { location.hash = menu.url(params.get("item"), { bom: select.value }).slice(1); });
-    recalc();
-  }
-
   // ---------- Routing ----------
   function routingHtml(data, params) {
     const routings = data.routings ?? [];
@@ -432,17 +388,6 @@
       frame.paint({ body: `<section class="card"><p class="muted small">50 รายการล่าสุด · เก็บ snapshot ก่อน/หลังทุกครั้งที่บันทึก</p>
         ${entries.length ? historyTable(entries) : '<div class="empty">ยังไม่มีการเพิ่ม/แก้ไข Item ในโหมดทดสอบ</div>'}</section>` });
     },
-    async bom({ params, frame }) {
-      frame.loading();
-      const data = await loadData();
-      const root = frame.paint({ body: bomHtml(data, params) });
-      bindBom(root, data, params);
-    },
-    async "bom-pending"({ frame }) {
-      frame.paint({ body: `<section class="card"><div class="empty">ยังไม่เปิดให้สร้างหรือแก้ไขโครงสร้างสินค้า (BOM) ในรอบนี้<br>
-        <small>รอบนี้ย้ายเฉพาะการดูสูตร ต้องมีกฎห้ามสูตรวนซ้ำ ตรวจหน่วย และการอนุมัติ Revision ก่อนเปิดให้แก้</small><br>
-        <a class="btn secondary small" href="${escapeHtml(menu.url("structure-view"))}">ไปที่ โครงสร้างสินค้า-ดู</a></div></section>` });
-    },
     async routing({ params, frame }) {
       frame.loading();
       const data = await loadData();
@@ -463,4 +408,5 @@
 
   window.MNP_FACTORY_VIEWS = VIEWS;
   window.MNP_FACTORY_ERRORS = ERROR_MESSAGES;
+  window.MNP_FACTORY_UI = { loadData, qty, label, options, notice, docStatus, typeBadge, emptyData };
 })();

@@ -27,15 +27,15 @@ test("folders without confirmed entries stay empty instead of guessing", () => {
 });
 
 test("every entry view is one the factory pages know how to draw", () => {
-  const known = new Set(["bom", "bom-pending", "items", "item-new", "history", "routing", "inventory", "production"]);
+  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production"]);
   for (const folder of FOLDERS) for (const entry of folder.entries) assert.ok(known.has(entry.view), entry.key);
 });
 
-test("structure folder lists only the entries that could be read from the reference, viewing the BOM", () => {
+test("structure folder holds new, edit, approve and view entries in that order (approve is the one added beyond the reference menu)", () => {
   const structure = FOLDERS.find((folder) => folder.key === "structure");
   assert.deepEqual(
     structure.entries.map((entry) => [entry.name, entry.view]),
-    [["โครงสร้างสินค้า-ใหม่", "bom-pending"], ["โครงสร้างสินค้า-แก้ไข", "bom-pending"], ["โครงสร้างสินค้า-ดู", "bom"]],
+    [["โครงสร้างสินค้า-ใหม่", "bom-new"], ["โครงสร้างสินค้า-แก้ไข", "bom-drafts"], ["โครงสร้างสินค้า-อนุมัติ", "bom-approvals"], ["โครงสร้างสินค้า-ดู", "bom"]],
   );
 });
 
@@ -83,4 +83,10 @@ test("url keeps only known extra parameters and encodes their values", () => {
   assert.equal(url("item-list", { q: "ยาง&x=1", page: 2, admin: "yes", item: "structure-new" }), "#/factory?item=item-list&q=%E0%B8%A2%E0%B8%B2%E0%B8%87%26x%3D1&page=2");
   assert.equal(url("item-list", { id: "", bom: null, routing: undefined }), "#/factory?item=item-list");
   assert.equal(url("nope", { id: "x" }), "#/factory");
+});
+
+test("url keeps the bom and from parameters used by the BOM screens and drops unknown ones", () => {
+  assert.equal(url("structure-new", { bom: "abc" }), "#/factory?item=structure-new&bom=abc");
+  assert.equal(url("structure-new", { from: "def", evil: "x" }), "#/factory?item=structure-new&from=def");
+  assert.equal(url("structure-approve"), "#/factory?item=structure-approve");
 });
