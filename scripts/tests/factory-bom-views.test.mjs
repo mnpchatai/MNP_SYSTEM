@@ -167,16 +167,31 @@ test("the new form lists only parents free of an open revision and offers every 
   assert.doesNotMatch(parentSelect, /value="fg1"/, "FG-1 has a pending revision");
   assert.doesNotMatch(parentSelect, /value="fg2"/, "FG-2 has a draft");
   assert.doesNotMatch(parentSelect, /value="(rm1|rm2|pkg1)"/, "raw materials and packaging cannot own a BOM");
-  const firstLine = body.match(/<tr data-bom-row>[\s\S]*?<\/tr>/)[0];
-  assert.match(firstLine, /<option value="rm1">RM-1 · /, "components include raw materials");
-  assert.match(firstLine, /<option value="pkg1">/);
-  assert.doesNotMatch(firstLine, /value="rm2"/, "inactive items are not offered");
+  assert.doesNotMatch(body, /data-bom-row/, "a new structure starts with no steps: the first step is chosen from the menu");
+  assert.match(body, /data-struct-root/, "the parent product is the top node");
+  assert.match(body, /id="fm-struct-empty"(?![^>]*hidden)/, "the empty hint is visible");
   assert.match(body, /Item ที่มีฉบับร่าง\/รออนุมัติอยู่แล้ว/);
   assert.match(body, /FG-1 · Rev\. B \(รออนุมัติ\)/);
   assert.match(body, /data-intent="draft"/);
   assert.match(body, /data-intent="submit"/);
   assert.match(body, /id="fm-add-line"/);
+  const menu = body.match(/<div class="fm-struct-menu"[\s\S]*?<\/div>\s*<\/div>/)[0];
+  assert.match(menu, /data-popup hidden/, "the type menu follows the shared popup rule and starts closed");
+  for (const type of ["RM", "WIP", "FG", "PKG"]) assert.match(menu, new RegExp(`data-menu-type="${type}"`));
+  assert.match(body, /data-add-after="-1"/, "a button gives touch and keyboard users the same menu");
   assert.match(body, /ระบบกำหนด Revision|หน่วยนับฐานของส่วนประกอบนั้น/);
+});
+
+test("each step is typed and offers only components of that type, in line order", async () => {
+  const { body } = await render("bom-new", "bom=b3");
+  const rows = body.match(/<li class="fm-node" data-bom-row[\s\S]*?<\/li>/g);
+  assert.equal(rows.length, 1, "the inactive component is dropped, one step remains");
+  assert.match(rows[0], /data-type="RM"/);
+  assert.match(rows[0], /ขั้นตอนที่ 1/);
+  assert.match(rows[0], /<option value="rm1" selected>/);
+  assert.doesNotMatch(rows[0], /value="(pkg1|wip1|fg1)"/, "an RM step does not offer other types");
+  const copied = (await render("bom-new", "from=b1", { ...FIXTURE, boms: FIXTURE.boms.filter((bom) => bom.id !== "b2") })).body;
+  assert.match(copied, /data-bom-row data-type="RM"/, "a copied step keeps the type of its component");
 });
 
 test("editing a draft locks the parent, fills the form and skips inactive components", async () => {
