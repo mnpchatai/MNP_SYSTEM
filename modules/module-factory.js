@@ -71,17 +71,20 @@
         <span class="request-type-top"><span class="type-card-badge">${escapeHtml(department.code)}</span></span>
         <span class="type-card-body"><strong>${escapeHtml(department.name)}</strong><small>เปิดแผนก →</small></span>
       </a>`).join("");
-    return `<div class="page-heading request-module-header" style="background:${gradient(THEME)}">
+    return `<div class="factory-page">
+      <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
         <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">โหมดทดสอบ</div><h1>${TITLE}</h1><p>${factory.DEPARTMENTS.length} แผนก · Item master อยู่ในเมนูข้างใต้ "ฝ่ายโรงงาน"</p></div></div>
       </div>
       ${itemMasterCardHtml(null)}
       <div class="request-type-heading"><h2>เลือกแผนก</h2></div>
-      <nav class="type-grid factory-dept-grid" aria-label="แผนกฝ่ายโรงงาน">${cards}</nav>`;
+      <nav class="type-grid factory-dept-grid" aria-label="แผนกฝ่ายโรงงาน">${cards}</nav>
+      </div>`;
   }
 
   function departmentHtml(department) {
     const tabs = factory.DEPARTMENTS.map((item) => `<a class="filter${item.code === department.code ? " active" : ""}" href="${escapeHtml(factory.url(item.code))}"${item.code === department.code ? ` aria-current="page"` : ""}>${escapeHtml(item.code)} ${escapeHtml(item.name)}</a>`).join("");
-    return `<a class="request-back-link" href="${escapeHtml(factory.url())}" aria-label="ย้อนกลับไปเลือกแผนก">‹ ย้อนกลับ</a>
+    return `<div class="factory-page">
+      <a class="request-back-link" href="${escapeHtml(factory.url())}" aria-label="ย้อนกลับไปเลือกแผนก">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" style="background:${gradient(department.theme)}">
         <div class="request-module-title"><span class="type-card-badge">${escapeHtml(department.code)}</span><div><div class="eyebrow">${TITLE} · โหมดทดสอบ</div><h1>${escapeHtml(department.name)}</h1><p>แผนก ${escapeHtml(department.code)}</p></div></div>
       </div>
@@ -90,7 +93,8 @@
       <section class="card">
         <h2>แผนก ${escapeHtml(department.code)} ${escapeHtml(department.name)}</h2>
         <div class="empty">ยังไม่มีแบบฟอร์มหรือขั้นตอนงานของแผนกนี้<br><small>โมดูลอยู่ในโหมดทดสอบ รอกำหนดขั้นตอนงานของแผนกก่อนเปิดให้บันทึกข้อมูล</small></div>
-      </section>`;
+      </section>
+      </div>`;
   }
 
   // หน้าของรายการใน Item master: หัวรายการ + เนื้อหาจาก view (ไม่มี view = หน้าว่าง "ยังไม่เปิดใช้งาน")
@@ -98,7 +102,8 @@
   function entryHtml(selected, { body = null, actions = "", back = null, subtitle = null } = {}) {
     const { folder, entry } = selected;
     const backLink = back ?? { href: factory.url(), label: "‹ ย้อนกลับ" };
-    return `<a class="request-back-link" href="${escapeHtml(backLink.href)}">${escapeHtml(backLink.label)}</a>
+    return `<div class="factory-page">
+      <a class="request-back-link" href="${escapeHtml(backLink.href)}">${escapeHtml(backLink.label)}</a>
       <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
         <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">${TITLE} · Item master › ${escapeHtml(folder.name)}</div><h1>${escapeHtml(entry.name)}</h1><p>${subtitle ? `${escapeHtml(subtitle)} · ` : ""}โหมดทดสอบ</p></div></div>
         ${actions ? `<div class="request-create-entry">${actions}</div>` : ""}
@@ -106,7 +111,8 @@
       ${itemMasterCardHtml(selected)}
       ${body ?? `<section class="card">
         <div class="empty">ยังไม่เปิดใช้งาน<br><small>โมดูลอยู่ในโหมดทดสอบ รอกำหนดฟอร์มและขั้นตอนของรายการนี้</small></div>
-      </section>`}`;
+      </section>`}
+      </div>`;
   }
 
   // frame ที่ส่งให้ view: loading() แสดงหน้ากำลังโหลด paint() วาดหน้าแล้วคืนกรอบเนื้อหาไว้ผูก event
