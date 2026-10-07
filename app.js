@@ -1292,11 +1292,11 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · บันทึกข้อมูลได้เฉพาะ NCR และ Item master ฝ่ายโรงงาน · ไม่รองรับการแนบไฟล์</span></div>
+    <div class="sandbox-banner-copy"><strong><span class="sandbox-pill">TEST</span>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · บันทึกข้อมูลได้เฉพาะ NCR และ Item master ฝ่ายโรงงาน · ไม่รองรับการแนบไฟล์</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
-      <button class="btn secondary small" type="button" id="sandbox-purge">ล้างข้อมูลทดสอบ</button>
+      <button class="btn danger small" type="button" id="sandbox-purge">ล้างข้อมูลทดสอบ</button>
       <button class="btn small" type="button" id="sandbox-exit">ออกจากโหมดทดสอบ</button>
     </div>
   </div>`;
@@ -2729,28 +2729,53 @@ function bangkokToday() {
 }
 
 // แท็บ "ทดสอบระบบ" (เฉพาะ admin): เลือกบัญชีทดสอบแล้วเข้าโหมดทดสอบเพื่อใช้ NCR ด้วยข้อมูลที่แยกจากของจริง
+const SANDBOX_NCR_STEPS = ["ออกใบ", "พิจารณา", "ตอบ", "ติดตาม", "ลงนาม", "ยกเลิก", "ความสูญเสีย"];
+
 function sandboxSectionHtml() {
   const status = state.sandbox;
   if (!status) {
-    return `<section class="card"><h2>ทดสอบระบบ</h2><p class="muted small">ยังใช้โหมดทดสอบไม่ได้ เพราะฐานข้อมูลยังไม่ได้อัปเดตเป็นรุ่นที่รองรับ (ต้อง <code>supabase db push</code> migration <code>20261005030000_admin_sandbox_mode</code> ก่อน)</p></section>`;
+    return `<section class="card sandbox-panel">
+      <div class="sandbox-head"><h2>ทดสอบระบบ</h2></div>
+      <div class="form-message error" role="alert">ยังใช้โหมดทดสอบไม่ได้ เพราะฐานข้อมูลยังไม่ได้อัปเดตเป็นรุ่นที่รองรับ (ต้อง <code>supabase db push</code> migration <code>20261005030000_admin_sandbox_mode</code> ก่อน)</div>
+    </section>`;
   }
-  const rows = (status.personas ?? []).map((persona) => `<tr>
-      <td><span class="request-no">${escapeHtml(persona.employee_no)}</span></td>
-      <td>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)}</td>
-      <td>${escapeHtml(persona.department?.code ?? "—")}</td>
-      <td>${escapeHtml(persona.role?.name_th ?? persona.role?.code ?? "—")}</td>
-      <td class="center"><button class="btn small" type="button" data-sandbox-enter="${escapeHtml(persona.id)}">เข้าโหมดทดสอบ</button></td>
-    </tr>`).join("") || `<tr><td colspan="5" class="muted small">ยังไม่มีบัญชีทดสอบ</td></tr>`;
-  return `<section class="card">
-    <h2>ทดสอบระบบ (เฉพาะผู้ดูแลระบบ)</h2>
-    <p class="muted small">เลือกบัญชีทดสอบแล้วใช้งาน NCR ตามบทบาทนั้นได้ทุกขั้น (ออกใบ → พิจารณา → ตอบ → ติดตาม → ลงนาม → ยกเลิก → ความสูญเสีย) สลับบทบาทได้จากแถบสีเหลืองด้านบนของทุกหน้า</p>
-    <ul class="muted small">
-      <li>ข้อมูลทดสอบแยกจากของจริงที่ฐานข้อมูล: เลขที่ขึ้นต้น <code>TEST-QA…</code> ไม่กินเลข QAxxx/yy จริง ผู้ใช้จริงมองไม่เห็นใบทดสอบ และไม่มีแจ้งเตือนหรืออีเมลถึงใครเลย</li>
-      <li>ระหว่างอยู่ในโหมดทดสอบ โมดูลอื่นเขียนข้อมูลไม่ได้ ต้องออกจากโหมดทดสอบก่อนทำงานจริง</li>
-      <li>ยังไม่รองรับการแนบไฟล์ในโหมดทดสอบ · บันทึกการเข้า/ออก/ล้างข้อมูลอยู่ใน audit log</li>
-    </ul>
-    <div class="table-wrap"><table>
-      <thead><tr><th>รหัส</th><th>บัญชีทดสอบ</th><th>แผนก</th><th>ตำแหน่ง</th><th></th></tr></thead>
+  const rows = (status.personas ?? []).map((persona) => {
+    const name = persona.job_title ?? `${persona.first_name} ${persona.last_name}`;
+    return `<tr>
+      <td class="sandbox-who"><strong>${escapeHtml(name)}</strong><span class="request-no">${escapeHtml(persona.employee_no)}</span></td>
+      <td class="sandbox-dept" data-label="แผนก"><span class="badge">${escapeHtml(persona.department?.code ?? "—")}</span></td>
+      <td class="sandbox-role" data-label="ตำแหน่ง">${escapeHtml(persona.role?.name_th ?? persona.role?.code ?? "—")}</td>
+      <td class="sandbox-act"><button class="btn small" type="button" data-sandbox-enter="${escapeHtml(persona.id)}" aria-label="เข้าโหมดทดสอบในฐานะ ${escapeHtml(name)}">เข้าโหมดทดสอบ</button></td>
+    </tr>`;
+  }).join("") || `<tr class="sandbox-empty"><td colspan="4">ยังไม่มีบัญชีทดสอบ</td></tr>`;
+  return `<section class="card sandbox-panel">
+    <div class="sandbox-head">
+      <h2>ทดสอบระบบ</h2>
+      <span class="badge">เฉพาะผู้ดูแลระบบ</span>
+    </div>
+    <p class="sandbox-lead">เลือกบัญชีทดสอบแล้วใช้งาน NCR ตามบทบาทนั้นได้ทุกขั้น สลับบทบาทได้จากแถบสีเหลืองด้านบนของทุกหน้า</p>
+    <ol class="sandbox-flow" aria-label="ขั้นตอนของ NCR ที่ทดสอบได้">${SANDBOX_NCR_STEPS.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+    <div class="sandbox-notes">
+      <section aria-labelledby="sandbox-safe-title">
+        <h3 id="sandbox-safe-title">สิ่งที่แยกจากของจริง</h3>
+        <ul>
+          <li>เลขที่ขึ้นต้น <code>TEST-QA…</code> ไม่กินเลข QAxxx/yy จริง</li>
+          <li>ผู้ใช้จริงมองไม่เห็นใบทดสอบ</li>
+          <li>ไม่มีแจ้งเตือนหรืออีเมลถึงใครเลย</li>
+        </ul>
+      </section>
+      <section aria-labelledby="sandbox-limit-title">
+        <h3 id="sandbox-limit-title">ข้อจำกัดระหว่างทดสอบ</h3>
+        <ul>
+          <li>โมดูลอื่นเขียนข้อมูลไม่ได้ ต้องออกจากโหมดทดสอบก่อนทำงานจริง</li>
+          <li>ยังไม่รองรับการแนบไฟล์</li>
+          <li>บันทึกการเข้า/ออก/ล้างข้อมูลอยู่ใน audit log</li>
+        </ul>
+      </section>
+    </div>
+    <h3 class="sandbox-list-title">เลือกบัญชีทดสอบ</h3>
+    <div class="table-wrap"><table class="sandbox-table">
+      <thead><tr><th>บัญชีทดสอบ</th><th>แผนก</th><th>ตำแหน่ง</th><th><span class="sr-only">ดำเนินการ</span></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
   </section>`;
