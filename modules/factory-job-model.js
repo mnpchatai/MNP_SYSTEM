@@ -18,7 +18,7 @@
   // class ของ .badge ใน styles.css ที่ใกล้เคียงที่สุด (เตือน = รอเริ่ม, ฟ้า = กำลังผลิต, เขียว = เสร็จ, แดง = ยกเลิก)
   const BADGE_CLASS = Object.freeze({ open: "pending_approval", in_progress: "in_progress", completed: "completed", cancelled: "cancelled" });
   const STEP_STATUSES = Object.freeze({ pending: "รอทำ", done: "เสร็จแล้ว" });
-  const HISTORY_ACTIONS = Object.freeze({ create: "ออกใบงาน", step: "ทำขั้นตอนเสร็จ", complete: "ทำขั้นสุดท้ายเสร็จ รับเข้าคลัง", cancel: "ยกเลิกใบงาน" });
+  const HISTORY_ACTIONS = Object.freeze({ create: "ออกใบงาน", step: "ทำขั้นตอนเสร็จ", complete: "ทำขั้นสุดท้ายเสร็จ รับเข้าคลัง", cancel: "ยกเลิกใบงาน", qc_fail: "ตรวจ QC ไม่ผ่าน (ออก NCR)" });
   const ACTIVE_STATUSES = Object.freeze(["open", "in_progress"]);
 
   const isActive = (job) => ACTIVE_STATUSES.includes(job?.status);
@@ -175,6 +175,45 @@
     return { value: quantity };
   }
 
+  // ---------- ตรวจ QC (20261007070000): ขั้นศูนย์งาน QC ปิดได้ทางบันทึกผลตรวจเท่านั้น ----------
+  const QC_CENTER = "QC";
+  const isQcStep = (step) => step?.work_center_code === QC_CENTER;
+  // ผลตรวจของใบงานหนึ่ง ใหม่สุดก่อน (ข้อมูลเข้ามาใหม่สุดก่อนอยู่แล้ว เรียงซ้ำเผื่อลำดับต่างกัน)
+  const inspectionsOf = (inspections, jobId) => (inspections ?? []).filter((row) => row.job_id === jobId).slice()
+    .sort((a, b) => String(b.inspected_at ?? "").localeCompare(String(a.inspected_at ?? "")) || String(b.id).localeCompare(String(a.id)));
+  // ขั้น QC ที่ถึงคิวและผลตรวจล่าสุดของขั้นนั้นไม่ผ่าน = รอตรวจซ้ำ (คืนผลตรวจนั้น มิฉะนั้น null)
+  function qcHold(job, inspections) {
+    const next = nextStep(job);
+    if (!isQcStep(next)) return null;
+    const latest = inspectionsOf(inspections, job.id).find((row) => row.step_sequence === next.sequence);
+    return latest?.result === "fail" ? latest : null;
+  }
+  // ตรวจฟอร์มบันทึกผลตรวจ QC เพื่อความสะดวก (ฐานข้อมูลตรวจซ้ำทุกค่า) คืน { args } หรือ { error }
+  function qcPayload(values, last) {
+    const result = String(values?.result ?? "");
+    if (!["pass", "fail"].includes(result)) return { error: "กรุณาเลือกผลตรวจ ผ่านหรือไม่ผ่าน" };
+    const checked = toNumber(values.qty_checked);
+    if (checked === null || !Number.isFinite(checked) || Math.round(checked * 10000) / 10000 <= 0 || checked > MAX_QUANTITY) {
+      return { error: `จำนวนที่ตรวจต้องมากกว่า 0 และไม่เกิน ${MAX_QUANTITY.toLocaleString("en-US")}` };
+    }
+    const measurement = String(values.measurement ?? "").trim();
+    if (measurement.length > 1000) return { error: "บันทึกผลวัดยาวได้ไม่เกิน 1,000 ตัวอักษร" };
+    if (result === "pass") {
+      const output = last ? outputQty(values.output_qty) : { value: null };
+      if (output.error) return { error: output.error };
+      return { args: { p_result: "pass", p_qty_checked: checked, p_qty_defect: 0, p_measurement: measurement, p_defect_type_code: null, p_description: "", p_output_qty: output.value } };
+    }
+    const defect = toNumber(values.qty_defect);
+    if (defect === null || !Number.isFinite(defect) || Math.round(defect * 10000) / 10000 <= 0 || defect > checked) {
+      return { error: "จำนวนที่ไม่ผ่านต้องมากกว่า 0 และไม่เกินจำนวนที่ตรวจ" };
+    }
+    const defectType = String(values.defect_type_code ?? "").trim();
+    if (!defectType) return { error: "กรุณาเลือกประเภทข้อบกพร่อง (ใช้ออก NCR)" };
+    const description = String(values.description ?? "").trim();
+    if (description.length < 10 || description.length > 4000) return { error: "กรุณาอธิบายความไม่ผ่านอย่างน้อย 10 ตัวอักษร (ไม่เกิน 4,000) ใช้เป็นรายละเอียดของ NCR" };
+    return { args: { p_result: "fail", p_qty_checked: checked, p_qty_defect: defect, p_measurement: measurement, p_defect_type_code: defectType, p_description: description, p_output_qty: null } };
+  }
+
   // ประวัติของใบเดียว เก่าสุดก่อน (ข้อมูลเข้ามาใหม่สุดก่อน)
   const jobTimeline = (history, jobId) => (history ?? []).filter((entry) => entry.job_id === jobId).slice().reverse();
 
@@ -182,6 +221,7 @@
     PLANNING_DEPARTMENT, MAX_QUANTITY, JOB_STATUSES, BADGE_CLASS, STEP_STATUSES, HISTORY_ACTIONS, ACTIVE_STATUSES,
     isActive, stepsOf, nextStep, isLastPending, canRunStep, jobActions, deptQueue, countByStatus, jobsOf, progress,
     jobRequirements, inJobsQty, jobSuggestions, defaultWarehouse, jobItems, orderableOrders, jobPayload, validateJobPayload, outputQty, jobTimeline,
+    isQcStep, inspectionsOf, qcHold, qcPayload,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_FACTORY_JOB_MODEL = api;

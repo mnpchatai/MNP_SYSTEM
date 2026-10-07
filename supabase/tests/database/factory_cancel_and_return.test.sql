@@ -219,7 +219,7 @@ select is(pg_temp.run(current_setting('test.j2'), 1, 13), 13, 'RB completes the 
 select public.app_sandbox_enter(current_setting('test.p_SR')::uuid);
 select is(pg_temp.run(current_setting('test.j2'), 14, 14), 1, 'SR receives it');
 select public.app_sandbox_enter(current_setting('test.p_QA')::uuid);
-select is(pg_temp.run(current_setting('test.j2'), 15, 15), 1, 'QC inspects it');
+select lives_ok(format($$select public.app_factory_record_qc(%L::uuid, %s, 150, 'pass', 10, 0, '', null, '', null)$$, current_setting('test.j2'), pg_temp.jver(current_setting('test.j2'))), 'QC inspects it');
 select is(pg_temp.job(current_setting('test.j2')) ->> 'status', 'completed', 'the job is completed and its output is in stock');
 select is(pg_temp.stock('WIP-TRY-RBL-001'), 270::numeric, 'ten kilograms of strip were received');
 select public.app_sandbox_enter(current_setting('test.p_PP')::uuid);

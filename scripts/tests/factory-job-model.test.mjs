@@ -39,7 +39,54 @@ test("statuses cover every database status with a Thai label and a badge class",
   assert.deepEqual(Object.keys(model.JOB_STATUSES), ["open", "in_progress", "completed", "cancelled"]);
   assert.deepEqual(Object.keys(model.BADGE_CLASS), Object.keys(model.JOB_STATUSES));
   assert.deepEqual(Object.keys(model.STEP_STATUSES), ["pending", "done"]);
-  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "step", "complete", "cancel"]);
+  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "step", "complete", "cancel", "qc_fail"]);
+});
+
+const qcStep = (sequence, status = "pending") => ({ sequence, name: "QC-01 ตรวจขนาด", work_center_code: "QC", department_code: "QA", status });
+const insp = (id, jobId, sequence, result, at) => ({ id, job_id: jobId, step_sequence: sequence, result, inspected_at: at, qty_checked: 100, qty_defect: result === "fail" ? 8 : 0 });
+
+test("a QC step is the one whose work center is QC", () => {
+  assert.equal(model.isQcStep(qcStep(10)), true);
+  assert.equal(model.isQcStep(step(10, "QA")), false, "the QA department alone does not make a step a QC step");
+  assert.equal(model.isQcStep(step(10, "RB")), false);
+  assert.equal(model.isQcStep(null), false);
+});
+
+test("inspections of one job come newest first and other jobs are left out", () => {
+  const list = [insp("a", "j1", 10, "fail", "2026-10-07T01:00:00Z"), insp("b", "j2", 10, "pass", "2026-10-07T05:00:00Z"), insp("c", "j1", 10, "pass", "2026-10-07T03:00:00Z")];
+  assert.deepEqual(model.inspectionsOf(list, "j1").map((row) => row.id), ["c", "a"]);
+  assert.deepEqual(model.inspectionsOf(null, "j1"), []);
+});
+
+test("a QC step waiting for re-inspection is detected only while its latest result failed", () => {
+  const waiting = job("j1", "in_progress", [step(10, "RB", "done"), qcStep(20)]);
+  assert.equal(model.qcHold(waiting, [insp("a", "j1", 20, "fail", "2026-10-07T01:00:00Z")]).id, "a");
+  assert.equal(model.qcHold(waiting, [insp("a", "j1", 20, "fail", "2026-10-07T01:00:00Z"), insp("b", "j1", 20, "pass", "2026-10-07T02:00:00Z")]), null, "a later pass clears it");
+  assert.equal(model.qcHold(waiting, []), null, "no inspection yet");
+  assert.equal(model.qcHold(waiting, [insp("a", "j1", 10, "fail", "2026-10-07T01:00:00Z")]), null, "a failure of another step does not count");
+  assert.equal(model.qcHold(waiting, [insp("a", "other", 20, "fail", "2026-10-07T01:00:00Z")]), null, "nor does another job's");
+  const notYet = job("j1", "in_progress", [step(10, "RB"), qcStep(20)]);
+  assert.equal(model.qcHold(notYet, [insp("a", "j1", 20, "fail", "2026-10-07T01:00:00Z")]), null, "the QC step is not next yet");
+  assert.equal(model.qcHold(job("j1", "cancelled", [qcStep(20)]), [insp("a", "j1", 20, "fail", "2026-10-07T01:00:00Z")]), null, "a cancelled job is not waiting");
+});
+
+test("the QC form is checked: result, quantities, defect type and description", () => {
+  const pass = { result: "pass", qty_checked: "100", measurement: " ตรวจแล้ว ", output_qty: "95" };
+  assert.deepEqual(JSON.parse(JSON.stringify(model.qcPayload(pass, true))), { args: { p_result: "pass", p_qty_checked: 100, p_qty_defect: 0, p_measurement: "ตรวจแล้ว", p_defect_type_code: null, p_description: "", p_output_qty: 95 } });
+  assert.equal(model.qcPayload({ ...pass, output_qty: "95" }, false).args.p_output_qty, null, "an output quantity only counts on the last step");
+  assert.equal(model.qcPayload({ ...pass, output_qty: "" }, true).args.p_output_qty, null, "blank output means the job quantity");
+  assert.match(model.qcPayload({ ...pass, output_qty: "-1" }, true).error, /จำนวนผลิตจริง/);
+  assert.match(model.qcPayload({ ...pass, result: "" }, true).error, /ผลตรวจ/);
+  assert.match(model.qcPayload({ ...pass, result: "maybe" }, true).error, /ผลตรวจ/);
+  for (const bad of ["", "0", "-5", "abc", "1000000001"]) assert.match(model.qcPayload({ ...pass, qty_checked: bad }, true).error, /จำนวนที่ตรวจ/, bad);
+  assert.match(model.qcPayload({ ...pass, measurement: "ก".repeat(1001) }, true).error, /1,000/);
+  const fail = { result: "fail", qty_checked: "100", qty_defect: "8", defect_type_code: "DIM", description: " ขนาดเกินเกณฑ์ 8 เส้น ", measurement: "" };
+  assert.deepEqual(JSON.parse(JSON.stringify(model.qcPayload(fail, true))), { args: { p_result: "fail", p_qty_checked: 100, p_qty_defect: 8, p_measurement: "", p_defect_type_code: "DIM", p_description: "ขนาดเกินเกณฑ์ 8 เส้น", p_output_qty: null } });
+  for (const bad of ["", "0", "-1", "101", "abc"]) assert.match(model.qcPayload({ ...fail, qty_defect: bad }, true).error, /จำนวนที่ไม่ผ่าน/, bad);
+  assert.match(model.qcPayload({ ...fail, defect_type_code: "" }, true).error, /ประเภทข้อบกพร่อง/);
+  assert.match(model.qcPayload({ ...fail, description: "สั้น" }, true).error, /10 ตัวอักษร/);
+  assert.match(model.qcPayload({ ...fail, description: "ก".repeat(4001) }, true).error, /10 ตัวอักษร/);
+  assert.equal(model.qcPayload({ ...fail, output_qty: "50" }, true).args.p_output_qty, null, "a failing result sends no output quantity");
 });
 
 test("the next step is the first pending one, and only active jobs have one", () => {

@@ -200,11 +200,12 @@ select throws_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 
 select lives_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 14, 140, 'รับเข้าคลัง SR แล้ว', null)$$, current_setting('test.j1')), 'SR receives the long strip');
 select is(pg_temp.stock('WIP-TRY-RBL-001'), 260::numeric, 'still no output before QC finishes');
 select public.app_sandbox_enter(current_setting('test.p_QA')::uuid);
-select throws_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 15, 150, '', 0)$$, current_setting('test.j1')), 'INVALID_JOB_OUTPUT_QTY', 'a zero output is rejected');
-select throws_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 15, 150, '', 'NaN')$$, current_setting('test.j1')), 'INVALID_JOB_OUTPUT_QTY', 'a NaN output is rejected');
-select throws_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 15, 150, '', 1000000001)$$, current_setting('test.j1')), 'INVALID_JOB_OUTPUT_QTY', 'a huge output is rejected');
+select throws_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 15, 150, '', null)$$, current_setting('test.j1')), 'JOB_QC_INSPECTION_REQUIRED', 'the QC step cannot be closed without an inspection record');
+select throws_ok(format($$select public.app_factory_record_qc(%L::uuid, 15, 150, 'pass', 100, 0, '', null, '', 0)$$, current_setting('test.j1')), 'INVALID_JOB_OUTPUT_QTY', 'a zero output is rejected');
+select throws_ok(format($$select public.app_factory_record_qc(%L::uuid, 15, 150, 'pass', 100, 0, '', null, '', 'NaN')$$, current_setting('test.j1')), 'INVALID_JOB_OUTPUT_QTY', 'a NaN output is rejected');
+select throws_ok(format($$select public.app_factory_record_qc(%L::uuid, 15, 150, 'pass', 100, 0, '', null, '', 1000000001)$$, current_setting('test.j1')), 'INVALID_JOB_OUTPUT_QTY', 'a huge output is rejected');
 select is(pg_temp.job(current_setting('test.j1')) ->> 'status', 'in_progress', 'failed attempts leave the job unfinished');
-select lives_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 15, 150, 'ขนาดผ่าน 95 กก.', 95)$$, current_setting('test.j1')), 'QC checks the size and the yield is 95 kg');
+select lives_ok(format($$select public.app_factory_record_qc(%L::uuid, 15, 150, 'pass', 100, 0, 'ขนาดผ่าน 95 กก.', null, '', 95)$$, current_setting('test.j1')), 'QC checks the size and the yield is 95 kg');
 select is(pg_temp.job(current_setting('test.j1')) ->> 'status', 'completed', 'the job is completed');
 select is((pg_temp.job(current_setting('test.j1')) ->> 'output_qty')::numeric, 95::numeric, 'the actual yield is recorded');
 select is(pg_temp.stock('WIP-TRY-RBL-001'), 355::numeric, 'the long strip is received into the stock (260 + 95)');
