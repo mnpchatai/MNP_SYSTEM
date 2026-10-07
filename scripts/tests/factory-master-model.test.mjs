@@ -258,3 +258,98 @@ test("bomTimeline shows one BOM's history oldest first", () => {
 test("history action labels cover every action the database records", () => {
   assert.deepEqual(Object.keys(model.BOM_HISTORY_ACTIONS), ["create", "update", "submit", "withdraw", "approve", "reject", "obsolete"]);
 });
+
+// ---------- ต้นไม้โครงสร้างสินค้า ----------
+// FG (12 ชุด/สูตร) ← ชิ้นงานยาง 12 + กระเป๋า 12 (เผื่อ 1%) · ชิ้นงานยาง (100/สูตร) ← ยางเส้นยาว 5 (เผื่อ 3%) + กาว · ยางเส้นยาว (100/สูตร) ← ยาง 62 (เผื่อ 2%)
+const treeItem = (id, code, type, unit = "PCS") => ({ id, code, name: `ชื่อ ${code}`, item_type: type, unit_code: unit });
+const treeBom = (id, itemId, output, status = "approved", revision = "A") => ({ id, item_id: itemId, code: itemId.toUpperCase(), name: `ชื่อ ${itemId}`, unit_code: "PCS", revision, output_qty: output, status });
+const treeLine = (bomId, no, componentId, quantity, scrap = 0) => ({ id: `${bomId}-${no}`, bom_id: bomId, line_no: no, component_id: componentId, code: componentId.toUpperCase(), name: `ชื่อ ${componentId}`, unit_code: "PCS", quantity, scrap_percent: scrap });
+const treeData = (extra = {}) => ({
+  items: [treeItem("fg", "FG", "FG", "SET"), treeItem("rbp", "RBP", "WIP"), treeItem("bag", "BAG", "WIP"), treeItem("rbl", "RBL", "WIP", "KG"), treeItem("nr", "NR", "RM", "KG"), treeItem("glue", "GLUE", "RM", "KG")],
+  boms: [treeBom("b-fg", "fg", 12), treeBom("b-rbp", "rbp", 100), treeBom("b-rbl", "rbl", 100), treeBom("b-bag", "bag", 100, "draft")],
+  bom_lines: [
+    treeLine("b-fg", 1, "rbp", 12), treeLine("b-fg", 2, "bag", 12, 1),
+    treeLine("b-rbp", 1, "rbl", 5, 3), treeLine("b-rbp", 2, "glue", 0.25),
+    treeLine("b-rbl", 1, "nr", 62, 2),
+    treeLine("b-bag", 1, "nr", 1),
+  ],
+  routings: [{ id: "r-rbl", item_id: "rbl", revision: "A", status: "draft" }, { id: "r-rbl-old", item_id: "rbl", revision: "B", status: "obsolete" }, { id: "r-rbp", item_id: "rbp", revision: "A", status: "draft" }],
+  steps: [
+    { routing_id: "r-rbl", sequence: 20, name: "RB-02", work_center: "แผนก RB", setup_minutes: 0, run_minutes: 30 },
+    { routing_id: "r-rbl", sequence: 10, name: "RB-01", work_center: "แผนก RB", setup_minutes: 10, run_minutes: 25 },
+    { routing_id: "r-rbl-old", sequence: 10, name: "เลิกใช้", work_center: "x", setup_minutes: 0, run_minutes: 0 },
+    { routing_id: "r-rbp", sequence: 10, name: "GR-01", work_center: "แผนก GR", setup_minutes: 5, run_minutes: 40 },
+  ],
+  ...extra,
+});
+const find = (node, code) => (node.code === code ? node : node.children.map((child) => find(child, code)).find(Boolean) ?? null);
+
+test("the tree expands every level of the chosen BOM, with quantities per one unit of the parent", () => {
+  const tree = model.bomTree(treeData(), "b-fg");
+  assert.equal(tree.root.code, "FG");
+  assert.equal(tree.root.per, 1);
+  assert.deepEqual(tree.root.children.map((child) => child.code), ["RBP", "BAG"], "children keep the BOM line order");
+  const rbp = find(tree.root, "RBP");
+  assert.equal(rbp.per, 1, "12 RBP per 12 FG = 1 each");
+  const rbl = find(tree.root, "RBL");
+  assert.equal(rbl.per, 0.05150000, "1 × 5 ÷ 100 × 1.03");
+  assert.equal(rbl.scrap_percent, 3);
+  const nr = find(find(tree.root, "RBL"), "NR");
+  assert.equal(nr.per, Math.round(0.0515 * 62 / 100 * 1.02 * 1e8) / 1e8, "scrap is added at every level");
+  assert.equal(nr.children.length, 0, "a component without a BOM is a leaf");
+  assert.equal(nr.bom, null);
+  assert.equal(tree.nodes, 7, "FG, RBP, RBL, NR, GLUE, BAG and BAG's NR");
+  assert.equal(tree.depth, 3);
+});
+
+test("a component takes its approved BOM, falls back to a draft and says so", () => {
+  const tree = model.bomTree(treeData(), "b-fg");
+  assert.equal(find(tree.root, "RBP").bom.status, "approved");
+  const bag = find(tree.root, "BAG");
+  assert.equal(bag.bom.status, "draft", "no approved BOM → the draft is used");
+  assert.equal(bag.children.length, 1);
+  assert.equal(tree.unapproved, true);
+  assert.equal(model.bomTree(treeData({ boms: treeData().boms.filter((bom) => bom.id !== "b-bag") }), "b-fg").unapproved, false);
+  const both = treeData({ boms: [...treeData().boms, treeBom("b-rbp-b", "rbp", 100, "pending_approval", "B"), treeBom("b-rbp-c", "rbp", 100, "obsolete", "C")] });
+  assert.equal(find(model.bomTree(both, "b-fg").root, "RBP").bom.revision, "A", "approved beats pending and obsolete is ignored");
+  const noApproved = treeData({ boms: [treeBom("b-fg", "fg", 12), treeBom("b-rbp-b", "rbp", 100, "pending_approval", "B"), treeBom("b-rbp-c", "rbp", 100, "obsolete", "C")] });
+  assert.equal(find(model.bomTree(noApproved, "b-fg").root, "RBP").bom.revision, "B");
+});
+
+test("each made item shows the steps of its latest routing in order, and raw materials show none", () => {
+  const tree = model.bomTree(treeData(), "b-fg");
+  assert.deepEqual(find(tree.root, "RBL").steps.map((step) => step.name), ["RB-01", "RB-02"], "sorted by sequence, the obsolete routing is ignored");
+  assert.equal(find(tree.root, "RBL").steps[0].setup_minutes, 10);
+  assert.equal(find(tree.root, "RBP").steps[0].work_center, "แผนก GR");
+  assert.deepEqual(find(tree.root, "FG").steps, [], "no routing, no steps");
+  assert.deepEqual(find(tree.root, "NR").steps, []);
+});
+
+test("the tree can start from any BOM and returns null for an unknown one", () => {
+  assert.equal(model.bomTree(treeData(), "nope"), null);
+  assert.equal(model.bomTree({}, "b-fg"), null);
+  const sub = model.bomTree(treeData(), "b-rbp");
+  assert.equal(sub.root.code, "RBP");
+  assert.equal(find(sub.root, "NR").per, Math.round((5 / 100) * 1.03 * 62 / 100 * 1.02 * 1e8) / 1e8, "quantities are per one unit of the chosen parent");
+  assert.equal(model.bomTree(treeData({ bom_lines: undefined, items: undefined, steps: undefined, routings: undefined }), "b-fg").nodes, 1, "missing data only gives the root");
+});
+
+test("a looping or very deep structure stops instead of expanding forever", () => {
+  const loop = treeData({
+    boms: [treeBom("b-a", "fg", 1), treeBom("b-b", "rbp", 1), treeBom("b-a2", "fg", 1, "draft", "B")],
+    bom_lines: [treeLine("b-a", 1, "rbp", 1), treeLine("b-b", 1, "fg", 1)],
+  });
+  const tree = model.bomTree(loop, "b-a");
+  const again = find(find(tree.root, "RBP"), "FG");
+  assert.equal(again.cycle, true, "the parent met again below itself is marked");
+  assert.deepEqual(again.children, []);
+  const items = Array.from({ length: 20 }, (_, i) => treeItem(`i${i}`, `I${i}`, "WIP"));
+  const chain = {
+    items,
+    boms: items.slice(0, 19).map((item, i) => treeBom(`b${i}`, item.id, 1)),
+    bom_lines: items.slice(0, 19).map((item, i) => treeLine(`b${i}`, 1, `i${i + 1}`, 1)),
+  };
+  const deep = model.bomTree(chain, "b0");
+  assert.equal(deep.depth, model.TREE_MAX_DEPTH, "the depth is capped");
+  assert.equal(find(deep.root, `I${model.TREE_MAX_DEPTH}`).too_deep, true);
+});

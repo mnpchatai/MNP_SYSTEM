@@ -258,8 +258,79 @@
     return (history ?? []).filter((entry) => entry.bom_id === bomId).slice().reverse();
   }
 
+  // ---------- ต้นไม้โครงสร้างสินค้า (แตกสูตรทุกชั้น อ่านอย่างเดียว) ----------
+  // เริ่มจาก BOM ฉบับที่เลือก แล้วแตกส่วนประกอบที่มีสูตรของตัวเองลงไปทุกชั้น (ใช้ฉบับที่อนุมัติแล้วก่อน ถ้าไม่มีใช้ฉบับรออนุมัติ/ร่างและติดป้ายบอก
+  // ฉบับที่เลิกใช้ไม่นับ) ส่วนประกอบที่ไม่มีสูตร (เช่น วัตถุดิบ) เป็นปลายกิ่ง ทุกชิ้นงานที่มี Routing แสดงขั้นตอนของ Routing ที่ใช้อยู่ (ไม่เลิกใช้ Revision สูงสุด)
+  // per = ปริมาณที่ต้องใช้ต่อสินค้าหลัก 1 หน่วยของ BOM ที่เลือก (รวมเผื่อสูญเสียแบบบวกเพิ่มทุกชั้น เหมือนที่ใบงาน/ผลสำรวจคงคลังคำนวณ) หน้าจอคูณด้วยจำนวนที่ต้องการผลิต
+  // กันสูตรวน (ฐานข้อมูลกันอยู่แล้ว) และชั้นลึกเกิน TREE_MAX_DEPTH ไม่ให้แตกต่อ
+  const TREE_MAX_DEPTH = 12;
+  const TREE_BOM_RANK = Object.freeze({ approved: 0, pending_approval: 1, draft: 2 });
+  const round8 = (value) => Math.round(value * 1e8) / 1e8;
+
+  function bomTree(data, bomId) {
+    const root = (data.boms ?? []).find((row) => row.id === bomId);
+    if (!root) return null;
+    const items = new Map((data.items ?? []).map((item) => [item.id, item]));
+    const linesByBom = new Map();
+    for (const line of data.bom_lines ?? []) {
+      if (!linesByBom.has(line.bom_id)) linesByBom.set(line.bom_id, []);
+      linesByBom.get(line.bom_id).push(line);
+    }
+    for (const lines of linesByBom.values()) lines.sort((a, b) => a.line_no - b.line_no);
+    const stepsByRouting = new Map();
+    for (const step of data.steps ?? []) {
+      if (!stepsByRouting.has(step.routing_id)) stepsByRouting.set(step.routing_id, []);
+      stepsByRouting.get(step.routing_id).push(step);
+    }
+    const pickBom = (itemId) => (data.boms ?? [])
+      .filter((bom) => bom.item_id === itemId && bom.id !== root.id && bom.status in TREE_BOM_RANK)
+      .sort((a, b) => TREE_BOM_RANK[a.status] - TREE_BOM_RANK[b.status] || String(b.revision).localeCompare(String(a.revision)))[0] ?? null;
+    const stepsOf = (itemId) => {
+      const routing = (data.routings ?? []).filter((row) => row.item_id === itemId && row.status !== "obsolete")
+        .sort((a, b) => String(b.revision).localeCompare(String(a.revision)))[0];
+      return routing ? (stepsByRouting.get(routing.id) ?? []).slice().sort((a, b) => a.sequence - b.sequence)
+        .map((step) => ({ sequence: step.sequence, name: step.name, work_center: step.work_center ?? "", setup_minutes: Number(step.setup_minutes ?? 0), run_minutes: Number(step.run_minutes ?? 0) })) : [];
+    };
+    const stats = { nodes: 0, depth: 0, unapproved: false };
+
+    function build(info, bom, per, scrap, path, level) {
+      stats.nodes += 1;
+      stats.depth = Math.max(stats.depth, level);
+      const node = {
+        item_id: info.item_id, code: info.code, name: info.name, item_type: info.item_type ?? null, unit_code: info.unit_code ?? "",
+        per, scrap_percent: scrap,
+        bom: bom ? { id: bom.id, revision: bom.revision, status: bom.status, output_qty: Number(bom.output_qty) } : null,
+        steps: bom ? stepsOf(info.item_id) : [], children: [], cycle: false, too_deep: false,
+      };
+      if (bom && bom.status !== "approved") stats.unapproved = true;
+      if (!bom) return node;
+      for (const line of linesByBom.get(bom.id) ?? []) {
+        const component = items.get(line.component_id);
+        const childInfo = { item_id: line.component_id, code: line.code ?? component?.code ?? "?", name: line.name ?? component?.name ?? "", item_type: component?.item_type, unit_code: line.unit_code ?? component?.unit_code };
+        const childPer = round8(per * Number(line.quantity) / Number(bom.output_qty) * (1 + Number(line.scrap_percent) / 100));
+        const childBom = pickBom(line.component_id);
+        if (path.has(line.component_id)) {
+          const loop = build(childInfo, null, childPer, Number(line.scrap_percent), path, level + 1);
+          loop.cycle = true;
+          node.children.push(loop);
+        } else if (childBom && level + 1 >= TREE_MAX_DEPTH) {
+          const deep = build(childInfo, null, childPer, Number(line.scrap_percent), path, level + 1);
+          deep.too_deep = true;
+          node.children.push(deep);
+        } else {
+          node.children.push(build(childInfo, childBom, childPer, Number(line.scrap_percent), new Set([...path, line.component_id]), level + 1));
+        }
+      }
+      return node;
+    }
+
+    const parent = items.get(root.item_id);
+    const tree = build({ item_id: root.item_id, code: root.code ?? parent?.code ?? "?", name: root.name ?? parent?.name ?? "", item_type: parent?.item_type, unit_code: root.unit_code ?? parent?.unit_code }, root, 1, null, new Set([root.item_id]), 0);
+    return { root: tree, nodes: stats.nodes, depth: stats.depth, unapproved: stats.unapproved };
+  }
+
   const api = {
-    EDITABLE_FIELDS, changedFields,
+    EDITABLE_FIELDS, changedFields, bomTree, TREE_MAX_DEPTH,
     ITEM_TYPES, PROCUREMENT, BRANDS, STATUSES, SORTS, PRODUCTION_STATUSES, DOCUMENT_STATUSES, PAGE_SIZE, ITEM_CODE_PATTERN,
     listParams, filterItems, paginate, countByType, lowStockItems, bomRequirement, itemPayload,
     BOM_HISTORY_ACTIONS, BOM_MAX_LINES, BOM_MAX_QUANTITY, OPEN_BOM_STATUSES,
