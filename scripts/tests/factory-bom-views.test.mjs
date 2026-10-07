@@ -10,10 +10,12 @@ const FILES = [
   "modules/factory-master-model.js",
   "modules/factory-production-model.js",
   "modules/factory-material-model.js",
+  "modules/factory-job-model.js",
   "modules/module-factory-master.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
+  "modules/module-factory-job.js",
 ];
 
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");

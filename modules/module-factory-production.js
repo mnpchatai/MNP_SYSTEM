@@ -16,6 +16,7 @@
   const model = window.MNP_FACTORY_PRODUCTION_MODEL;
   const master = window.MNP_FACTORY_MASTER_MODEL;
   const materials = window.MNP_FACTORY_MATERIAL_MODEL;
+  const jobs = window.MNP_FACTORY_JOB_MODEL;
   const menu = window.MNP_FACTORY_ITEM_MASTER;
   const { loadData, options, notice } = window.MNP_FACTORY_UI;
 
@@ -208,6 +209,28 @@
       </section>`;
   }
 
+  // ขั้น 4–8: ใบงานผลิตของใบนี้ และชิ้นงานที่ควรออกใบงานตามผลสำรวจ — แสดงให้ทุกแผนกเห็น ปุ่มออกใบงานอยู่ที่หน้าใบงานผลิต (ฝ่ายวางแผน)
+  function jobSectionHtml(data, order) {
+    if (!["released", "in_progress", "completed"].includes(order.status) || !jobs) return "";
+    const linked = jobs.jobsOf(data.jobs, order.id);
+    const suggestions = order.status === "completed" ? [] : jobs.jobSuggestions(data, order).filter((row) => row.qty > 0);
+    const suggestionRows = suggestions.map((row) => `<tr><td><strong>${escapeHtml(row.code)}</strong> <span class="muted small">${escapeHtml(row.name)}</span></td>
+        <td class="right">${q4(row.qty)} ${escapeHtml(row.unit_code)}</td>
+        <td class="right"><a class="btn secondary small" href="${escapeHtml(menu.url("job-new", { wo: order.id, part: row.item_id, qty: row.qty }))}">ออกใบงาน</a></td></tr>`).join("");
+    const linkedRows = linked.map((job) => `<tr>
+        <td><a href="${escapeHtml(menu.url("job-view", { jb: job.id }))}"><strong>${escapeHtml(job.code)}</strong></a></td>
+        <td>${escapeHtml(job.item_code)}</td><td class="right">${q4(job.qty)} ${escapeHtml(job.unit_code)}</td>
+        <td><span class="badge ${escapeHtml(jobs.BADGE_CLASS[job.status] ?? "")}">${escapeHtml(jobs.JOB_STATUSES[job.status] ?? job.status)}</span></td>
+        <td>${jobs.progress(job).done}/${jobs.progress(job).total} ขั้น</td></tr>`).join("");
+    return `<section class="card po-jobs">
+        <h2>ใบงานผลิต (ขั้น 4–8 สายผลิต)</h2>
+        ${suggestionRows ? `<h3>ชิ้นงานที่ควรออกใบงาน</h3><div class="table-wrap"><table><thead><tr><th>ชิ้นงาน/สินค้า</th><th class="right">จำนวนที่ยังไม่ได้ออกใบงาน</th><th class="right">จัดการ</th></tr></thead><tbody>${suggestionRows}</tbody></table></div>` : ""}
+        ${linkedRows ? `<h3>ใบงานของใบนี้</h3><div class="table-wrap"><table><thead><tr><th>ใบงาน</th><th>ผลิต</th><th class="right">จำนวน</th><th>สถานะ</th><th>ความคืบหน้า</th></tr></thead><tbody>${linkedRows}</tbody></table></div>`
+          : '<p class="muted small">ยังไม่มีใบงานผลิตของใบนี้ — ฝ่ายวางแผนออกใบงานให้สายผลิตตามลำดับ (ชิ้นงานก่อน แล้วค่อยประกอบสินค้าที่ PK)</p>'}
+        ${order.status === "completed" ? "" : `<div class="fm-actions"><a class="btn secondary" href="${escapeHtml(menu.url("job-new", { wo: order.id }))}">ออกใบงานผลิต (ฝ่ายวางแผน)</a></div>`}
+      </section>`;
+  }
+
   function timelineHtml(entries) {
     if (!entries.length) return '<p class="muted small">ยังไม่มีประวัติ (ใบจากชุดทดลองยังไม่เคยเปลี่ยนสถานะผ่านหน้าจอ)</p>';
     return `<div class="table-wrap"><table>
@@ -229,7 +252,9 @@
       case "submitted": return notice("ส่งให้ฝ่ายวางแผนแล้ว รอฝ่ายวางแผนรับใบ (ถอนกลับมาแก้ไขได้จนกว่าจะรับ)");
       case "planning": return notice("ฝ่ายวางแผนรับใบแล้ว กำลังสำรวจคงคลัง จัดทำ/เลือก BOM และ Routing");
       case "planned": return notice("วางแผนแล้ว ผูก BOM และ Routing เรียบร้อย รอออกใบสั่งงานให้ฝ่ายผลิต");
-      case "released": return notice(`ออกใบสั่งงานแล้ว${order.work_order_no ? ` เลขที่ ${order.work_order_no}` : ""} — ขั้นถัดไปคือแผนก ST สั่งวัตถุดิบ (ดูหัวข้อ “สั่งวัตถุดิบ” ด้านล่าง) แล้วสายการผลิต (ยังไม่เปิดในรอบนี้)`);
+      case "released": return notice(`ออกใบสั่งงานแล้ว${order.work_order_no ? ` เลขที่ ${order.work_order_no}` : ""} — ขั้นถัดไปคือแผนก ST สั่งวัตถุดิบ (หัวข้อ “สั่งวัตถุดิบ”) และฝ่ายวางแผนออกใบงานให้สายผลิต (หัวข้อ “ใบงานผลิต”) ด้านล่าง`);
+      case "in_progress": return notice(`กำลังผลิต${order.work_order_no ? ` ใบสั่งงาน ${order.work_order_no}` : ""} — ติดตามที่หัวข้อ “ใบงานผลิต” ด้านล่าง`);
+      case "completed": return notice("ผลิตครบตามจำนวนที่สั่งแล้ว รับสินค้าสำเร็จรูปเข้าคลังแล้ว");
       default: return "";
     }
   }
@@ -407,7 +432,7 @@
         const order = byId(data.production, id);
         if (!order) return frame.paint(gone(back));
         const planning = ["planning", "planned"].includes(order.status) && dept() === model.PLANNING_DEPARTMENT;
-        const root = frame.paint({ back, subtitle: order.code, body: `${actionsHtml(data, order)}${planning ? planFormHtml(data, order) : ""}${detailHtml(data, order)}${materialSectionHtml(data, order)}` });
+        const root = frame.paint({ back, subtitle: order.code, body: `${actionsHtml(data, order)}${planning ? planFormHtml(data, order) : ""}${detailHtml(data, order)}${materialSectionHtml(data, order)}${jobSectionHtml(data, order)}` });
         return bindDetail(root, data, order);
       }
       const root = frame.paint({ actions: newOrderAction(), body: listHtml(data, params) });

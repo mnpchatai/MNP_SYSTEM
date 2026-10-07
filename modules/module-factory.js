@@ -9,8 +9,9 @@
 // BOM Routing คลัง ใบสั่งผลิต) อ่าน/เขียนตาราง factory_* ผ่าน RPC ของ 20261006050000_factory_item_master.sql
 // (เปิดเฉพาะโหมดทดสอบ แยกข้อมูลด้วย is_test) รายการที่ไม่มี view เป็นหน้าว่างรอกำหนดฟอร์ม
 // สถานะเปิด/ปิดของเมนูย่อยคำนวณจาก URL ทุกครั้งที่วาดหน้า (แถบข้างถูกวาดใหม่ทุกการเปลี่ยนหน้า)
-// หน้าแผนกยังไม่มีฟอร์ม/ขั้นตอนงาน เมื่อกำหนด workflow ของแผนกแล้วให้เพิ่มตารางพร้อมการแยกข้อมูลทดสอบ
-// ตามกติกา 5 ข้อของโหมดทดสอบใน README และเทสต์ใน supabase/tests/database/ ก่อนเปิดการบันทึกข้อมูล
+// หน้าแผนก (#/factory?dept=<รหัส>) แสดงคิวใบงานผลิตของแผนกนั้นจาก view "department" ของ modules/module-factory-job.js
+// (ขั้น 4–8 ของ workflow) ถ้าไม่มี view นี้เป็นโครงหน้าว่าง ตารางใหม่ต้องแยกข้อมูลทดสอบตามกติกา 5 ข้อของโหมดทดสอบใน README
+// และมีเทสต์ใน supabase/tests/database/ ก่อนเปิดการบันทึกข้อมูล
 //
 // เมนูข้างโผล่เฉพาะโหมดทดสอบ (nav.sandboxOnly) และหน้านี้ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // (การซ่อนเมนูอย่างเดียวไม่ใช่การควบคุมสิทธิ์) ไม่มีฝั่ง Next.js เพราะโหมดทดสอบมีเฉพาะ Pilot Web
@@ -81,7 +82,8 @@
       </div>`;
   }
 
-  function departmentHtml(department) {
+  // body: เนื้อหาของแผนกจาก view "department" (modules/module-factory-job.js คิวใบงานของแผนก) ไม่มี = โครงหน้าว่าง
+  function departmentHtml(department, body = null) {
     const tabs = factory.DEPARTMENTS.map((item) => `<a class="filter${item.code === department.code ? " active" : ""}" href="${escapeHtml(factory.url(item.code))}"${item.code === department.code ? ` aria-current="page"` : ""}>${escapeHtml(item.code)} ${escapeHtml(item.name)}</a>`).join("");
     return `<div class="factory-page">
       <a class="request-back-link" href="${escapeHtml(factory.url())}" aria-label="ย้อนกลับไปเลือกแผนก">‹ ย้อนกลับ</a>
@@ -90,10 +92,10 @@
       </div>
       ${itemMasterCardHtml(null)}
       <nav class="filters" aria-label="สลับแผนกฝ่ายโรงงาน">${tabs}</nav>
-      <section class="card">
+      ${body ?? `<section class="card">
         <h2>แผนก ${escapeHtml(department.code)} ${escapeHtml(department.name)}</h2>
         <div class="empty">ยังไม่มีแบบฟอร์มหรือขั้นตอนงานของแผนกนี้<br><small>โมดูลอยู่ในโหมดทดสอบ รอกำหนดขั้นตอนงานของแผนกก่อนเปิดให้บันทึกข้อมูล</small></div>
-      </section>
+      </section>`}
       </div>`;
   }
 
@@ -127,6 +129,18 @@
     };
   }
 
+  // frame ของหน้าแผนก: view "department" วาดเนื้อหาในกรอบเดียวกับหน้าแผนก (หัวแผนก แท็บสลับแผนก การ์ด Item master)
+  function departmentFrame(department, title) {
+    return {
+      loading: () => loadingShell(PATH, title),
+      paint(options) {
+        app.innerHTML = shell(departmentHtml(department, options?.body ?? null), PATH, title);
+        bindShell();
+        return document.querySelector(".content");
+      },
+    };
+  }
+
   async function renderFactory(params) {
     // เมนูข้างโผล่เฉพาะโหมดทดสอบ แต่ URL พิมพ์เข้ามาเองได้ — ผู้ใช้นอกโหมดทดสอบต้องไม่เห็นหน้านี้
     if (!state.employee?.isSandbox) return renderNotFound();
@@ -141,8 +155,10 @@
       if (view) return await view({ params, selected, frame: frameFor(selected, title) });
       content = entryHtml(selected);
     } else if (department) {
-      content = departmentHtml(department);
       title = `${TITLE} / ${department.code} ${department.name}`;
+      const view = window.MNP_FACTORY_VIEWS?.department;
+      if (view) return await view({ params, department, frame: departmentFrame(department, title) });
+      content = departmentHtml(department);
     }
     app.innerHTML = shell(content, PATH, title);
     bindShell();
