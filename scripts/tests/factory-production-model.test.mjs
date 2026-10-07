@@ -37,7 +37,7 @@ test("statuses cover every database status and each has a Thai label and a badge
   assert.deepEqual(Object.keys(model.ORDER_STATUSES), ["draft", "submitted", "planning", "planned", "released", "in_progress", "completed", "cancelled"]);
   assert.deepEqual(Object.keys(model.BADGE_CLASS), Object.keys(model.ORDER_STATUSES));
   for (const label of Object.values(model.ORDER_STATUSES)) assert.ok(label.trim().length > 0);
-  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "update", "submit", "withdraw", "receive", "return", "plan", "release"]);
+  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "update", "submit", "withdraw", "receive", "return", "plan", "release", "start", "output", "finish"]);
 });
 
 test("the buttons follow status and department: sales owns draft/submitted, planning owns the rest", () => {

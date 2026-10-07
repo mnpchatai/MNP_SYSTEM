@@ -67,15 +67,21 @@
     return `<section class="card factory-item-card factory-master-page"><details class="factory-master"${selected ? " open" : ""}><summary>Item master</summary>${treeHtml(selected, "page")}</details></section>`;
   }
 
-  function overviewHtml() {
-    const cards = factory.DEPARTMENTS.map((department) => `<a class="type-card" href="${escapeHtml(factory.url(department.code))}" style="background:${gradient(department.theme)}">
+  // body: ภาพรวมการผลิตจาก view "overview" (modules/module-factory-board.js) ไม่มี = เฉพาะการ์ดแผนก
+  // queueCounts: { รหัสแผนก: จำนวนงานที่ถึงคิว } แสดงบนการ์ดแผนก
+  function overviewHtml(body = "", queueCounts = {}) {
+    const cards = factory.DEPARTMENTS.map((department) => {
+      const waiting = Number(queueCounts[department.code] ?? 0);
+      return `<a class="type-card" href="${escapeHtml(factory.url(department.code))}" style="background:${gradient(department.theme)}">
         <span class="request-type-top"><span class="type-card-badge">${escapeHtml(department.code)}</span></span>
-        <span class="type-card-body"><strong>${escapeHtml(department.name)}</strong><small>เปิดแผนก →</small></span>
-      </a>`).join("");
+        <span class="type-card-body"><strong>${escapeHtml(department.name)}</strong><small>${waiting ? `${waiting} งานรอลงมือ · เปิดแผนก →` : "เปิดแผนก →"}</small></span>
+      </a>`;
+    }).join("");
     return `<div class="factory-page">
       <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
         <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">โหมดทดสอบ</div><h1>${TITLE}</h1><p>${factory.DEPARTMENTS.length} แผนก · Item master อยู่ในเมนูข้างใต้ "ฝ่ายโรงงาน"</p></div></div>
       </div>
+      ${body}
       ${itemMasterCardHtml(null)}
       <div class="request-type-heading"><h2>เลือกแผนก</h2></div>
       <nav class="type-grid factory-dept-grid" aria-label="แผนกฝ่ายโรงงาน">${cards}</nav>
@@ -129,6 +135,18 @@
     };
   }
 
+  // frame ของหน้ารวม: view "overview" วาดภาพรวมการผลิตและส่งจำนวนงานบนการ์ดแผนกมาที่ queueCounts
+  function overviewFrame() {
+    return {
+      loading: () => loadingShell(PATH, TITLE),
+      paint(options) {
+        app.innerHTML = shell(overviewHtml(options?.body ?? "", options?.queueCounts ?? {}), PATH, TITLE);
+        bindShell();
+        return document.querySelector(".content");
+      },
+    };
+  }
+
   // frame ของหน้าแผนก: view "department" วาดเนื้อหาในกรอบเดียวกับหน้าแผนก (หัวแผนก แท็บสลับแผนก การ์ด Item master)
   function departmentFrame(department, title) {
     return {
@@ -147,6 +165,8 @@
     // item/dept ที่ไม่รู้จักพากลับหน้ารวม ไม่แสดงหน้าว่างของสิ่งที่ไม่มีอยู่ (รายการมาก่อนแผนกถ้าส่งมาทั้งคู่)
     const selected = itemMaster.findEntry(params.get("item"));
     const department = selected ? null : factory.find(params.get("dept"));
+    // หน้ารวม (ไม่มี item/dept): ภาพรวมการผลิตจาก view "overview" ถ้ามี ไม่เช่นนั้นเป็นการ์ดแผนก
+    if (!selected && !department && window.MNP_FACTORY_VIEWS?.overview) return await window.MNP_FACTORY_VIEWS.overview({ params, frame: overviewFrame() });
     let content = overviewHtml();
     let title = TITLE;
     if (selected) {
