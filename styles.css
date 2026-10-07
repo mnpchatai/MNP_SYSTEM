@@ -1419,3 +1419,15 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .fm-node-fields { grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr); gap: 0 8px; }
   .fm-node-fields .fm-node-component { grid-column: 1 / -1; }
 }
+
+/* ใบงานฝ่ายโรงงาน: เน้นขั้นปัจจุบัน เปิดรายละเอียดรองเมื่อจำเป็น */
+.factory-page .fm-review-details { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.factory-page .fm-review-details:last-child { border-bottom: 0; }
+.factory-page .fm-review-details > summary { min-height: 44px; line-height: 1.6; font-weight: 600; cursor: pointer; }
+.factory-page .fm-review-details[open] > summary { margin-bottom: 12px; }
+.factory-page .fm-current-step { padding: 12px; line-height: 1.7; border-radius: 8px; background: var(--primary-soft); }
+/* Grid/flex display rules otherwise override the browser's default hidden rule. */
+.factory-page .jb-form [hidden] { display: none !important; }
+@media (max-width: 760px) {
+  .factory-page .btn, .factory-page .filter, .factory-page .btn.small { min-height: 44px; }
+}

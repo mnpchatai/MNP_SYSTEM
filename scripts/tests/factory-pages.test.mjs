@@ -89,7 +89,7 @@ test("the overview page draws the production board above the department cards, w
   assert.match(app.innerHTML, /href="#\/factory\?dept=PP"[^>]*>[\s\S]*?1 งานรอลงมือ · เปิดแผนก →/, "planning: the submitted order is waiting");
   assert.match(app.innerHTML, /href="#\/factory\?dept=RB"[^>]*>[\s\S]*?1 งานรอลงมือ · เปิดแผนก →/, "RB: the open job reached the department");
   assert.match(app.innerHTML, /href="#\/factory\?dept=GR"[^>]*>[\s\S]*?<small>เปิดแผนก →<\/small>/, "a department with nothing waiting keeps the plain text");
-  assert.ok(app.innerHTML.includes("Item master"), "the item master card is still there");
+  assert.ok(app.innerHTML.includes("เมนูโรงงาน"), "the factory menu card is still there");
 });
 
 test("a department page shows the queue of that department inside the department frame", async () => {
@@ -128,4 +128,17 @@ test("without the overview view the page keeps working as the plain department c
   assert.match(env.app.innerHTML, /เลือกแผนก/);
   assert.doesNotMatch(env.app.innerHTML, /ใบสั่งผลิตทั้งหมด/);
   assert.match(env.app.innerHTML, /<small>เปิดแผนก →<\/small>/);
+});
+
+test("factory navigation hides empty folders and retains every existing document link", () => {
+  const { context } = load({route: "item=job-view"});
+  const html = context.MNP_REQUEST_MODULES.FACTORY.nav[0].subnav("factory");
+  const folders = context.MNP_FACTORY_ITEM_MASTER.FOLDERS;
+  const populated = folders.filter(folder => folder.entries.length);
+  assert.equal((html.match(/class="factory-folder"/g) ?? []).length, populated.length);
+  for (const folder of folders) {
+    for (const entry of folder.entries) assert.ok(html.includes("item=" + entry.key));
+    if (!folder.entries.length) assert.ok(!html.includes("<span>" + folder.name + "</span>"));
+  }
+  assert.match(html, /<summary>เมนูโรงงาน<\/summary>/);
 });
