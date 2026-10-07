@@ -254,10 +254,14 @@ button { cursor: pointer; }
 .sandbox-banner-actions .input { width: auto; min-width: 200px; max-width: 100%; }
 .sandbox-banner .btn:focus-visible, .sandbox-panel .btn:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .sandbox-banner .btn.danger:hover { color: var(--danger); background: var(--danger-soft); }
+.top-actions .sandbox-pill { padding: 2px 8px; }
 @media (max-width: 640px) {
+  /* คำอธิบายยาวอยู่ในแท็บ "ทดสอบระบบ" ของ admin แล้ว มือถือเหลือเฉพาะสิ่งที่ใช้สลับ/ออก และมีป้าย TEST ค้างที่แถบบน */
+  .sandbox-banner { padding: 10px 12px; gap: 8px; }
+  .sandbox-banner-copy > span { display: none; }
   .sandbox-banner-actions { width: 100%; }
-  .sandbox-banner-actions label { width: 100%; }
-  .sandbox-banner-actions .input { width: 100%; }
+  .sandbox-banner-actions label { flex: none; }
+  .sandbox-banner-actions .input { flex: 1 1 170px; width: auto; min-width: 0; }
   .sandbox-banner-actions .btn { flex: 1 1 140px; min-height: 44px; }
 }
 
@@ -1245,6 +1249,17 @@ th.right, td.right { text-align: right; }
 .fm-actions { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .fm-danger-zone { margin-top: 16px; }
 .fm-danger-zone h2 { margin: 0 0 6px; font-size: 15px; }
+.fm-test-actions { margin: 12px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--soft-line); }
+.fm-test-actions li { padding: 12px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; border-bottom: 1px solid var(--soft-line); }
+.fm-test-actions li:last-child { border-bottom: 0; padding-bottom: 0; }
+.fm-test-actions li > div { min-width: 0; max-width: 72ch; display: grid; gap: 2px; }
+.fm-test-actions strong { font-size: 13px; }
+.fm-test-actions li > div > span { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.fm-test-actions .btn { flex: none; }
+@media (max-width: 640px) {
+  .fm-test-actions li { flex-direction: column; align-items: stretch; }
+  .fm-test-actions .btn { min-height: 44px; white-space: normal; text-align: center; }
+}
 .fm-detail-head { margin: 12px 0 6px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
 .fm-detail-head h2 { margin: 4px 0; }
 .fm-detail h3 { margin: 18px 0 8px; font-size: 15px; }
