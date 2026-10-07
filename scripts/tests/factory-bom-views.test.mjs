@@ -8,8 +8,10 @@ import vm from "node:vm";
 const FILES = [
   "modules/factory-item-master.js",
   "modules/factory-master-model.js",
+  "modules/factory-production-model.js",
   "modules/module-factory-master.js",
   "modules/module-factory-bom.js",
+  "modules/module-factory-production.js",
 ];
 
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");

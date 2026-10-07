@@ -12,6 +12,8 @@
 //   * "-ใหม่" = ฟอร์มสร้างฉบับร่าง (และแก้ฉบับร่างด้วย &bom=<id> / ออก Revision ใหม่จากฉบับที่อนุมัติแล้วด้วย &from=<id>)
 //   * "-แก้ไข" = รายการฉบับร่างที่แก้ได้ (รวมฉบับที่ถูกส่งกลับพร้อมเหตุผล)
 //   * "-อนุมัติ" (เพิ่มใหม่ ไม่อยู่ในภาพเมนูเดิม) = คิวรออนุมัติของผู้ดูแลระบบ
+// ต่อมาเปิดขั้น 1–2 ของ workflow การผลิตในโฟลเดอร์ "ใบสั่งผลิต" (ฝ่ายขายออก/ส่งใบ → ฝ่ายวางแผนรับ/วางแผน/ออกใบสั่งงาน):
+//   * "-ใหม่" = ฟอร์มออกใบ (และแก้ฉบับร่างด้วย &po=<id>)  * "-ฝ่ายวางแผน" (เพิ่มใหม่) = คิวของฝ่ายวางแผน  * "-ดู" = รายการ/รายละเอียด (&po=<id>)
 // view = หน้าจอที่ modules/module-factory-master.js วาดให้รายการนั้น (ไม่มี view = หน้าว่าง "ยังไม่เปิดใช้งาน")
 // เมื่อได้รายการครบให้เพิ่มที่ไฟล์นี้ที่เดียว (key ต้องไม่ซ้ำทั้งเมนู)
 //
@@ -38,11 +40,15 @@
     folder("sales-order", "ใบสั่งขาย"),
     folder("routing", "ขั้นตอนการผลิต", [entry("routing-view", "ขั้นตอนการผลิต-ดู", "routing")]),
     folder("inventory", "คลังสินค้า", [entry("inventory-view", "สินค้าคงคลัง-ดู", "inventory")]),
-    folder("production", "ใบสั่งผลิต", [entry("production-view", "ใบสั่งผลิต-ดู", "production")]),
+    folder("production", "ใบสั่งผลิต", [
+      entry("production-new", "ใบสั่งผลิต-ใหม่", "production-new"),
+      entry("production-planning", "ใบสั่งผลิต-ฝ่ายวางแผน", "production-planning"),
+      entry("production-view", "ใบสั่งผลิต-ดู", "production"),
+    ]),
   ]);
 
   // พารามิเตอร์เพิ่มเติมที่หน้าของรายการใช้ได้ (ตัวกรอง/รายการที่เลือก) — ชื่ออื่นถูกทิ้ง
-  const EXTRA_PARAMS = Object.freeze(["id", "edit", "bom", "from", "routing", "qty", "q", "type", "brand", "status", "sort", "page"]);
+  const EXTRA_PARAMS = Object.freeze(["id", "edit", "bom", "from", "routing", "po", "qty", "q", "type", "brand", "status", "sort", "page"]);
 
   // หารายการจาก key ของรายการ — ไม่พบคืน null ไม่เดาให้ (key มาจาก DOM จึงถือเป็นข้อมูลที่ยังไม่ตรวจ)
   function findEntry(key) {
