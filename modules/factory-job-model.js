@@ -37,8 +37,9 @@
     return Boolean(next && step && next.sequence === step.sequence && dept && step.department_code === dept);
   }
 
-  // ใบงานที่ฝ่ายวางแผนทำได้: ยกเลิกได้เฉพาะที่ยังไม่มีขั้นใดเสร็จ (open)
-  const jobActions = (job, dept) => (dept === PLANNING_DEPARTMENT && job?.status === "open" ? ["cancel"] : []);
+  // ใบงานที่ฝ่ายวางแผนทำได้: ยกเลิกได้ทั้งที่ยังไม่เริ่ม (open) และที่เริ่มแล้วแต่ผลผลิตยังไม่เข้าคลัง (in_progress)
+  // ใบที่เริ่มแล้วคืนวัตถุดิบที่ตัดไปเข้าคลังเดิมในธุรกรรมเดียวกัน (20261007060000) ใบที่เสร็จแล้วยกเลิกไม่ได้
+  const jobActions = (job, dept) => (dept === PLANNING_DEPARTMENT && isActive(job) ? ["cancel"] : []);
 
   // คิวของแผนก: ใบงานที่ขั้นถัดไปเป็นของแผนกนี้ (เก่าสุดก่อน) · งานที่กำลังจะมา = แผนกนี้ยังมีขั้นรอทำแต่ยังไม่ถึงคิว
   function deptQueue(jobs, dept) {

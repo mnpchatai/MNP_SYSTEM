@@ -61,7 +61,7 @@ const FIXTURE = {
     job("j-run", "TEST-JB-26-002", "in_progress", [step(10, "RB-01 ชั่งเคมี", "RB", "done", { note: `ชั่งแล้ว ${XSS}`, completed_by_name: "ทดสอบ พนักงาน RB", completed_at: "2026-10-07T02:00:00Z" }), step(20, "RB-02 ตียาง", "RB"), step(30, "SR-01 รับเข้าคลัง", "SR"), step(40, "QC-01 ตรวจขนาด", "QC")], { started_at: "2026-10-07T02:00:00Z" }),
     job("j-last", "TEST-JB-26-003", "in_progress", [step(10, "RB-01", "RB", "done", { completed_at: "2026-10-07T02:00:00Z" }), step(20, "QC-01 ตรวจขนาด", "QC")], { item_id: "rbl" }),
     job("j-done", "TEST-JB-26-004", "completed", [step(10, "RB-01", "RB", "done", { completed_at: "2026-10-07T02:00:00Z" })], { output_qty: 95, completed_at: "2026-10-07T03:00:00Z" }),
-    job("j-can", "TEST-JB-26-005", "cancelled", RBL_STEPS(), { cancel_note: `ผิดใบ ${XSS}` }),
+    job("j-can", "TEST-JB-26-005", "cancelled", RBL_STEPS(), { cancel_note: `ผิดใบ ${XSS}`, returned: [{ code: "RM-NR", name: "ยาง", unit_code: "KG", quantity: 63.24 }] }),
   ],
   job_history: [
     { id: 2, job_id: "j-can", code: "TEST-JB-26-005", action: "cancel", version: 2, status_after: "cancelled", step_sequence: null, note: `เหตุผล ${XSS}`, changed_by_name: "ทดสอบ พนักงานวางแผน", created_at: "2026-10-07T04:00:00Z" },
@@ -111,7 +111,8 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 const text = (html) => String(html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 test("every error code the job migration can raise has a Thai message that is not hidden by another key", () => {
-  const sql = fs.readFileSync("supabase/migrations/20261007050000_factory_job_workflow.sql", "utf8");
+  const sql = ["20261007050000_factory_job_workflow.sql", "20261007060000_factory_cancel_and_return.sql"]
+    .map((file) => fs.readFileSync(`supabase/migrations/${file}`, "utf8")).join("\n");
   const codes = [...new Set([...sql.matchAll(/raise exception '((?:INVALID_)?JOB_[A-Z_]+)'/g)].map((match) => match[1]))];
   assert.ok(codes.length >= 19, `found ${codes.length} codes`);
   const messages = loadFactory().context.MNP_FACTORY_ERRORS;
@@ -170,8 +171,11 @@ test("only the department that owns the next step gets the form; others are told
   assert.match(rb.body, /<h3>RB-02 ตียาง<\/h3>/);
   assert.doesNotMatch(rb.body, /ขั้นแรก: เมื่อกดเสร็จ|id="jb-output"/, "neither the first nor the last step");
   const pp = await render("job", { query: "jb=j-run", dept: "PP" });
-  assert.doesNotMatch(pp.body, /id="jb-step-form"|id="jb-cancel-form"/, "a running job cannot be cancelled");
+  assert.doesNotMatch(pp.body, /id="jb-step-form"/, "planning does not run production steps");
+  assert.match(pp.body, /id="jb-cancel-form"/, "but planning can cancel a running job");
+  assert.match(text(pp.body), /ระบบคืนวัตถุดิบที่ตัดไปกลับเข้าคลังและล็อตเดิมทั้งหมด/, "and is told the materials are returned");
   assert.match(text(pp.body), /เป็นของแผนก RB/);
+  assert.doesNotMatch(rb.body, /id="jb-cancel-form"/, "the production line cannot cancel");
 });
 
 test("the QC step is run by the QA department and the last step asks for the real output", async () => {
@@ -192,6 +196,7 @@ test("finished and cancelled jobs offer nothing; the notices say what happened t
   const cancelled = await render("job", { query: "jb=j-can", dept: "PP" });
   assert.doesNotMatch(cancelled.body, /id="jb-step-form"|id="jb-cancel-form"/);
   assert.match(cancelled.body, /ยกเลิกแล้ว เหตุผล: “ผิดใบ &lt;script&gt;/);
+  assert.match(text(cancelled.body), /คืนวัตถุดิบเข้าคลังแล้ว: RM-NR 63\.24 KG/, "the notice lists what went back to stock");
   assert.match(cancelled.body, /เหตุผล &lt;script&gt;/, "the history reason is escaped");
   assert.doesNotMatch(cancelled.body, /<script>/);
 });
@@ -317,6 +322,24 @@ test("cancel needs a confirmation and sends the reason; declining sends nothing"
   const declined = await render("job", { query: "jb=j-open", dept: "PP", confirmAnswer: false });
   await declined.controls["#jb-cancel-form"].handlers.submit({ preventDefault() {} });
   assert.ok(!declined.log.calls.some(([name]) => name === "app_factory_cancel_job"));
+});
+
+test("cancelling a started job asks about the return of materials and reports how many lines went back", async () => {
+  const messages = [];
+  const started = await render("job", { query: "jb=j-run", dept: "PP", confirmAnswer: false });
+  await started.controls["#jb-cancel-form"].handlers.submit({ preventDefault() {} });
+  assert.ok(!started.log.calls.some(([name]) => name === "app_factory_cancel_job"), "declining sends nothing");
+  const view = await render("job", {
+    query: "jb=j-run", dept: "PP",
+    rpc: async (name) => ({ data: name === "app_factory_master_data" ? FIXTURE : { id: "j-run", version: 7, code: "TEST-JB-26-002", status: "cancelled", returned_lines: 6 }, error: null }),
+  });
+  await view.controls["#jb-cancel-form"].handlers.submit({ preventDefault() {} });
+  assert.deepEqual(plain(view.log.calls.at(-1)), ["app_factory_cancel_job", { p_id: "j-run", p_version: 6, p_note: "เหตุผลทดสอบ" }]);
+  messages.push(...view.log.toasts.map(([message]) => message));
+  assert.ok(messages.some((message) => /ยกเลิก TEST-JB-26-002 แล้ว คืนวัตถุดิบเข้าคลัง 6 รายการ/.test(message)), messages.join("|"));
+  const open = await render("job", { query: "jb=j-open", dept: "PP" });
+  await open.controls["#jb-cancel-form"].handlers.submit({ preventDefault() {} });
+  assert.ok(open.log.toasts.some(([message]) => message === "ยกเลิก TEST-JB-26-001 แล้ว"), "an untouched job has nothing to return");
 });
 
 test("a stale page is redrawn after a conflict, an ordinary error such as short stock keeps the form usable", async () => {

@@ -37,7 +37,7 @@ test("statuses cover every database status and each has a Thai label and a badge
   assert.deepEqual(Object.keys(model.ORDER_STATUSES), ["draft", "submitted", "planning", "planned", "released", "in_progress", "completed", "cancelled"]);
   assert.deepEqual(Object.keys(model.BADGE_CLASS), Object.keys(model.ORDER_STATUSES));
   for (const label of Object.values(model.ORDER_STATUSES)) assert.ok(label.trim().length > 0);
-  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "update", "submit", "withdraw", "receive", "return", "plan", "release", "start", "output", "finish"]);
+  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "update", "submit", "withdraw", "receive", "return", "plan", "release", "cancel", "start", "output", "finish"]);
 });
 
 test("the buttons follow status and department: sales owns draft/submitted, planning owns the rest", () => {
@@ -46,12 +46,17 @@ test("the buttons follow status and department: sales owns draft/submitted, plan
   assert.deepEqual(actions("submitted", "SA"), ["withdraw"]);
   assert.deepEqual(actions("planning", "SA"), []);
   assert.deepEqual(actions("submitted", "PP"), ["receive", "return"]);
-  assert.deepEqual(actions("planning", "PP"), ["plan", "return"]);
-  assert.deepEqual(actions("planned", "PP"), ["plan", "release"]);
+  assert.deepEqual(actions("planning", "PP"), ["plan", "return", "cancel"]);
+  assert.deepEqual(actions("planned", "PP"), ["plan", "release", "cancel"]);
+  assert.deepEqual(actions("released", "PP"), ["cancel"]);
+  assert.deepEqual(actions("in_progress", "PP"), ["cancel"]);
   assert.deepEqual(actions("draft", "PP"), []);
-  for (const status of ["released", "in_progress", "completed", "cancelled"]) {
-    assert.deepEqual(actions(status, "SA"), [], status);
-    assert.deepEqual(actions(status, "PP"), [], status);
+  assert.deepEqual(actions("submitted", "PP").includes("cancel"), false, "a waiting order is returned, not cancelled");
+  for (const status of ["released", "in_progress", "completed", "cancelled"]) assert.deepEqual(actions(status, "SA"), [], status);
+  for (const status of ["completed", "cancelled"]) assert.deepEqual(actions(status, "PP"), [], status);
+  for (const status of ["released", "in_progress", "planning", "planned"]) {
+    assert.deepEqual(actions(status, "ST"), [], `only planning cancels (${status})`);
+    assert.deepEqual(actions(status, "RB"), [], `only planning cancels (${status})`);
   }
   assert.deepEqual(actions("draft", "RB"), [], "other departments get no buttons");
   assert.deepEqual(actions("draft", null), []);

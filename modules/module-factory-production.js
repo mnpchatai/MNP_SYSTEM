@@ -39,6 +39,10 @@
     PRODUCTION_ORDER_NOT_PLANNING: "วางแผนได้เฉพาะใบที่ฝ่ายวางแผนรับแล้ว และยังไม่ออกใบสั่งงาน",
     PRODUCTION_ORDER_NOT_PLANNED: "ออกใบสั่งงานได้เฉพาะใบที่วางแผนแล้ว",
     PRODUCTION_RETURN_NOTE_REQUIRED: "กรุณาระบุเหตุผลที่ส่งกลับ",
+    PRODUCTION_CANCEL_NOTE_REQUIRED: "กรุณาระบุเหตุผลที่ยกเลิกใบสั่งผลิต",
+    PRODUCTION_ORDER_NOT_CANCELLABLE: "ยกเลิกได้เฉพาะใบที่ฝ่ายวางแผนรับแล้วจนถึงกำลังผลิต (ฉบับร่าง/รอรับให้ฝ่ายขายถอนกลับหรือฝ่ายวางแผนส่งกลับ) ใบที่ผลิตเสร็จหรือยกเลิกไปแล้วยกเลิกไม่ได้",
+    PRODUCTION_ORDER_HAS_JOBS: "ยกเลิกไม่ได้เพราะยังมีใบงานผลิตที่ยังไม่ยกเลิก (ยกเลิกใบงานก่อน ใบงานที่ผลิตเสร็จแล้วมีผลผลิตเข้าคลัง จึงยกเลิกใบสั่งผลิตไม่ได้)",
+    PRODUCTION_ORDER_HAS_MATERIAL_ORDERS: "ยกเลิกไม่ได้เพราะยังมีใบสั่งวัตถุดิบที่ยังไม่รับของหรือยังไม่ยกเลิก (ให้แผนก ST ยกเลิกก่อน)",
     PRODUCTION_SURVEY_REQUIRED: "กรุณาบันทึกผลสำรวจคงคลังก่อนวางแผน",
     PRODUCTION_BOM_INVALID: "BOM ต้องเป็นฉบับที่อนุมัติแล้วของสินค้านี้ (ถ้าถูกเลิกใช้ ให้เลือกฉบับล่าสุดและวางแผนใหม่)",
     PRODUCTION_ROUTING_INVALID: "Routing ต้องเป็นของสินค้านี้และยังไม่เลิกใช้",
@@ -175,12 +179,21 @@
           <div class="fm-actions"><button class="btn danger" type="submit">ส่งกลับฝ่ายขาย</button></div>
         </form>`
       : "";
-    if (!buttons.length && !returnForm && !hint) return "";
+    const cancelForm = actions.includes("cancel")
+      ? `<form class="fm-form po-form" id="po-cancel-form" novalidate>
+          <div class="field full"><label for="po-cancel-note">ยกเลิกใบสั่งผลิตนี้ — เหตุผล *</label>
+            <textarea class="textarea" id="po-cancel-note" name="note" rows="2" maxlength="1000" required></textarea>
+            <small>ยกเลิกได้เมื่อไม่มีใบงานผลิตที่ยังไม่ยกเลิก และไม่มีใบสั่งวัตถุดิบที่ยังไม่รับของหรือยังไม่ยกเลิก (ใบสั่งวัตถุดิบที่รับของแล้วคงยอดคลังไว้) ยกเลิกแล้วแก้กลับไม่ได้</small></div>
+          <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบสั่งผลิต</button></div>
+        </form>`
+      : "";
+    if (!buttons.length && !returnForm && !cancelForm && !hint) return "";
     return `<section class="card fm-decision">
         <h2>ขั้นถัดไป</h2>
         ${hint}
         ${buttons.length ? `<div class="fm-actions">${buttons.join("")}</div>` : ""}
         ${returnForm}
+        ${cancelForm}
       </section>`;
   }
 
@@ -255,6 +268,7 @@
       case "released": return notice(`ออกใบสั่งงานแล้ว${order.work_order_no ? ` เลขที่ ${order.work_order_no}` : ""} — ขั้นถัดไปคือแผนก ST สั่งวัตถุดิบ (หัวข้อ “สั่งวัตถุดิบ”) และฝ่ายวางแผนออกใบงานให้สายผลิต (หัวข้อ “ใบงานผลิต”) ด้านล่าง`);
       case "in_progress": return notice(`กำลังผลิต${order.work_order_no ? ` ใบสั่งงาน ${order.work_order_no}` : ""} — ติดตามที่หัวข้อ “ใบงานผลิต” ด้านล่าง`);
       case "completed": return notice("ผลิตครบตามจำนวนที่สั่งแล้ว รับสินค้าสำเร็จรูปเข้าคลังแล้ว");
+      case "cancelled": return notice(`ยกเลิกแล้ว${order.cancel_note ? ` เหตุผล: “${order.cancel_note}”` : ""}${order.cancelled_by_name ? ` โดย ${order.cancelled_by_name}` : ""}`);
       default: return "";
     }
   }
@@ -280,6 +294,7 @@
           <div class="definition"><dt>ฝ่ายวางแผนรับ</dt><dd>${person(order.received_by_name, order.received_at)}</dd></div>
           <div class="definition"><dt>วางแผนโดย</dt><dd>${person(order.planned_by_name, order.planned_at)}</dd></div>
           <div class="definition"><dt>ออกใบสั่งงานโดย</dt><dd>${person(order.released_by_name, order.released_at)}</dd></div>
+          ${order.status === "cancelled" ? `<div class="definition"><dt>ยกเลิกโดย</dt><dd>${person(order.cancelled_by_name, order.cancelled_at)}</dd></div>` : ""}
         </dl>
         ${order.note ? `<h3>หมายเหตุ</h3><p class="fm-pre">${escapeHtml(order.note)}</p>` : ""}
         ${order.survey_note && !planning ? `<h3>ผลสำรวจคงคลัง</h3><p class="fm-pre">${escapeHtml(order.survey_note)}</p>` : ""}
@@ -301,6 +316,13 @@
       if (!returnForm.reportValidity()) return;
       if (!confirm(`ส่ง ${order.code} กลับให้ฝ่ายขายแก้ไข?`)) return;
       runAction(root, "app_factory_return_production_order", { ...args, p_note: returnForm.querySelector("textarea").value }, `ส่ง ${order.code} กลับฝ่ายขายแล้ว`);
+    });
+    const cancelForm = root.querySelector("#po-cancel-form");
+    cancelForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!cancelForm.reportValidity()) return;
+      if (!confirm(`ยกเลิก ${order.code}? ยกเลิกแล้วแก้กลับไม่ได้`)) return;
+      runAction(root, "app_factory_cancel_production_order", { ...args, p_note: cancelForm.querySelector("textarea").value }, `ยกเลิก ${order.code} แล้ว`);
     });
     const planForm = root.querySelector("#po-plan-form");
     planForm?.addEventListener("submit", (event) => {

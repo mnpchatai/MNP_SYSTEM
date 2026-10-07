@@ -2,7 +2,7 @@
 // (scripts/tests/factory-production-model.test.mjs)
 //
 // ขั้นตอน: ฝ่ายขาย (SA) ออกใบ (draft) → ส่ง (submitted) → ฝ่ายวางแผน (PP) รับ (planning) → สำรวจคงคลัง + เลือก BOM/Routing (planned)
-// → ออกใบสั่งงาน (released) · ส่งกลับฝ่ายขายได้ขณะ submitted/planning · ถอนกลับได้เฉพาะ submitted
+// → ออกใบสั่งงาน (released) · ส่งกลับฝ่ายขายได้ขณะ submitted/planning · ถอนกลับได้เฉพาะ submitted · ยกเลิก (cancelled) โดยฝ่ายวางแผนขณะ planning ถึง in_progress (20261007060000)
 // กติกาตรงกับ RPC ใน supabase/migrations/20261007030000_factory_production_order_workflow.sql ฐานข้อมูลตรวจสิทธิ์/สถานะ/ค่าทุกช่องเอง
 // ที่นี่ใช้เลือกปุ่มและตรวจฟอร์มเพื่อความสะดวกเท่านั้น (ซ่อนปุ่มไม่ใช่การควบคุมสิทธิ์)
 //
@@ -31,12 +31,13 @@
   const HISTORY_ACTIONS = Object.freeze({
     create: "สร้างฉบับร่าง", update: "แก้ไขฉบับร่าง", submit: "ส่งให้ฝ่ายวางแผน", withdraw: "ถอนกลับมาแก้ไข",
     receive: "ฝ่ายวางแผนรับใบ", return: "ส่งกลับฝ่ายขาย", plan: "วางแผน (BOM/Routing)", release: "ออกใบสั่งงาน",
+    cancel: "ยกเลิกใบสั่งผลิต",
     // เกิดจากใบงานผลิต (ขั้น 4–8): ขั้นแรกของใบงานใดๆ เสร็จ · ใบงานสินค้าสำเร็จรูปเสร็จบางส่วน · ผลิตครบจำนวนที่สั่ง
     start: "เริ่มผลิต (ขั้นแรกของใบงานเสร็จ)", output: "รับสินค้าสำเร็จรูปเข้าคลังบางส่วน", finish: "ผลิตครบ รับสินค้าสำเร็จรูปเข้าคลัง",
   });
 
   // ปุ่มที่ทำได้ตามสถานะและแผนกของผู้ใช้ (dept = รหัสแผนกของ persona ที่ทำหน้าที่อยู่)
-  //   SA: draft = แก้/ส่ง · submitted = ถอนกลับ    PP: submitted = รับ/ส่งกลับ · planning = วางแผน/ส่งกลับ · planned = วางแผนใหม่/ออกใบสั่งงาน
+  //   SA: draft = แก้/ส่ง · submitted = ถอนกลับ    PP: submitted = รับ/ส่งกลับ · planning = วางแผน/ส่งกลับ/ยกเลิก · planned = วางแผนใหม่/ออกใบสั่งงาน/ยกเลิก · released, in_progress = ยกเลิก
   function orderActions(order, dept) {
     const status = order?.status;
     if (dept === SALES_DEPARTMENT) {
@@ -46,8 +47,10 @@
     }
     if (dept === PLANNING_DEPARTMENT) {
       if (status === "submitted") return ["receive", "return"];
-      if (status === "planning") return ["plan", "return"];
-      if (status === "planned") return ["plan", "release"];
+      if (status === "planning") return ["plan", "return", "cancel"];
+      if (status === "planned") return ["plan", "release", "cancel"];
+      // ยกเลิกหลังออกใบสั่งงานได้เมื่อไม่เหลือใบงาน/ใบสั่งวัตถุดิบที่ค้างอยู่ (ฐานข้อมูลตรวจเงื่อนไขนี้เอง)
+      if (status === "released" || status === "in_progress") return ["cancel"];
     }
     return [];
   }
