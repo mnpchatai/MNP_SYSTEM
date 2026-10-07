@@ -70,11 +70,16 @@ test("the last pending step is recognised so the output quantity can be asked", 
   assert.equal(model.isLastPending(last, last.steps[0]), false, "a done step is not pending");
 });
 
-test("only planning can cancel, and only a job that has not started", () => {
+test("only planning can cancel, while the job is open or in progress (a finished or cancelled one cannot)", () => {
   assert.deepEqual(model.jobActions({ status: "open" }, "PP"), ["cancel"]);
-  assert.deepEqual(model.jobActions({ status: "in_progress" }, "PP"), []);
+  assert.deepEqual(model.jobActions({ status: "in_progress" }, "PP"), ["cancel"]);
   assert.deepEqual(model.jobActions({ status: "completed" }, "PP"), []);
-  for (const dept of ["RB", "SA", "ST", null]) assert.deepEqual(model.jobActions({ status: "open" }, dept), [], String(dept));
+  assert.deepEqual(model.jobActions({ status: "cancelled" }, "PP"), []);
+  assert.deepEqual(model.jobActions(null, "PP"), []);
+  for (const dept of ["RB", "SA", "ST", null]) {
+    assert.deepEqual(model.jobActions({ status: "open" }, dept), [], String(dept));
+    assert.deepEqual(model.jobActions({ status: "in_progress" }, dept), [], String(dept));
+  }
 });
 
 test("the department queue lists jobs whose next step is theirs, oldest first, and the ones still coming", () => {

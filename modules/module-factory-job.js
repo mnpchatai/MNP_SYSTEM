@@ -31,7 +31,7 @@
     JOB_ROUTING_INVALID: "ชิ้นงาน/สินค้านี้ยังไม่มี Routing (ขั้นตอนการผลิต) ที่ใช้ได้",
     JOB_WAREHOUSE_UNKNOWN: "ไม่พบคลังที่เลือก กรุณาเลือกคลังที่รับผลผลิต",
     JOB_CANCEL_NOTE_REQUIRED: "กรุณาระบุเหตุผลที่ยกเลิก",
-    JOB_NOT_CANCELLABLE: "ยกเลิกได้เฉพาะใบงานที่ยังไม่มีขั้นใดเสร็จ (ใบงานที่เริ่มแล้วตัดวัตถุดิบไปแล้ว)",
+    JOB_NOT_CANCELLABLE: "ยกเลิกได้เฉพาะใบงานที่ยังไม่เสร็จ (ใบงานที่ผลิตเสร็จแล้วผลผลิตเข้าคลังไปแล้ว และใบที่ยกเลิกแล้วยกเลิกซ้ำไม่ได้)",
     JOB_NOT_FOUND: "ไม่พบใบงานนี้ (อาจถูกล้างข้อมูลทดสอบไปแล้ว)",
     JOB_VERSION_CONFLICT: "ใบงานนี้ถูกเปลี่ยนจากหน้าต่างอื่นแล้ว กรุณาตรวจรายการล่าสุดแล้วทำอีกครั้ง",
     JOB_NOT_ACTIVE: "ใบงานนี้จบแล้วหรือถูกยกเลิก ทำขั้นตอนไม่ได้",
@@ -61,9 +61,9 @@
     const controls = root.querySelectorAll("[data-jb-action], .jb-form button");
     controls.forEach((control) => { control.disabled = true; });
     try {
-      const { error } = await sb.rpc(rpc, args);
+      const { data, error } = await sb.rpc(rpc, args);
       if (error) throw error;
-      showToast(successMessage);
+      showToast(typeof successMessage === "function" ? successMessage(data) : successMessage);
       await renderRoute();
     } catch (error) {
       showToast(friendlyError(error), "error");
@@ -181,19 +181,27 @@
     if (model.jobActions(job, role).includes("cancel")) {
       blocks.push(`<form class="fm-form jb-form" id="jb-cancel-form" novalidate>
           <div class="field full"><label for="jb-cancel-note">ยกเลิกใบงานนี้ — เหตุผล *</label>
-            <textarea class="textarea" id="jb-cancel-note" name="note" rows="2" maxlength="1000" required></textarea></div>
+            <textarea class="textarea" id="jb-cancel-note" name="note" rows="2" maxlength="1000" required></textarea>
+            ${job.status === "in_progress" ? "<small>ใบงานนี้เริ่มแล้ว ยกเลิกแล้วระบบคืนวัตถุดิบที่ตัดไปกลับเข้าคลังและล็อตเดิมทั้งหมด ขั้นที่ทำเสร็จแล้วยังอยู่ในประวัติ ยกเลิกแล้วแก้กลับไม่ได้</small>" : ""}</div>
           <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบงาน</button></div>
         </form>`);
     }
     return blocks.length ? `<section class="card fm-decision"><h2>ขั้นถัดไป</h2>${blocks.join("")}</section>` : "";
   }
 
+  // วัตถุดิบที่คืนเข้าคลังตอนยกเลิกใบงานที่เริ่มแล้ว (ใบที่ยกเลิกก่อนเริ่มไม่มีรายการคืน)
+  function returnedText(job) {
+    const rows = job.returned ?? [];
+    if (!rows.length) return "";
+    return ` — คืนวัตถุดิบเข้าคลังแล้ว: ${rows.map((row) => `${row.code} ${q4(row.quantity)} ${row.unit_code}`).join(", ")}`;
+  }
+
   function statusNotice(job) {
     switch (job.status) {
       case "open": return notice("ออกใบงานแล้ว ยังไม่มีขั้นใดเสร็จ — ขั้นแรกเสร็จเมื่อไรระบบจะตัดวัตถุดิบตามสูตร");
-      case "in_progress": return notice("กำลังผลิต วัตถุดิบถูกตัดออกจากคลังแล้ว ยกเลิกใบงานไม่ได้");
+      case "in_progress": return notice("กำลังผลิต วัตถุดิบถูกตัดออกจากคลังแล้ว ถ้ายกเลิกใบงาน (ฝ่ายวางแผน) ระบบจะคืนวัตถุดิบเข้าคลังให้ทั้งหมด");
       case "completed": return notice(`ผลิตเสร็จ รับเข้าคลัง ${job.warehouse_name} แล้ว ${q4(job.output_qty)} ${job.unit_code} — ยอดคงคลังเพิ่มแล้ว ดูที่ “สินค้าคงคลัง-ดู”`);
-      case "cancelled": return notice(`ยกเลิกแล้ว${job.cancel_note ? ` เหตุผล: “${job.cancel_note}”` : ""}`);
+      case "cancelled": return notice(`ยกเลิกแล้ว${job.cancel_note ? ` เหตุผล: “${job.cancel_note}”` : ""}${returnedText(job)}`);
       default: return "";
     }
   }
@@ -258,8 +266,10 @@
     const cancelForm = root.querySelector("#jb-cancel-form");
     cancelForm?.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (!cancelForm.reportValidity() || !confirm(`ยกเลิก ${job.code}?`)) return undefined;
-      return runAction(root, "app_factory_cancel_job", { ...args, p_note: cancelForm.querySelector("textarea").value }, `ยกเลิก ${job.code} แล้ว`);
+      const started = job.status === "in_progress";
+      if (!cancelForm.reportValidity() || !confirm(started ? `ยกเลิก ${job.code}? ระบบจะคืนวัตถุดิบที่ตัดไปกลับเข้าคลัง` : `ยกเลิก ${job.code}?`)) return undefined;
+      return runAction(root, "app_factory_cancel_job", { ...args, p_note: cancelForm.querySelector("textarea").value },
+        (result) => (result?.returned_lines ? `ยกเลิก ${job.code} แล้ว คืนวัตถุดิบเข้าคลัง ${result.returned_lines} รายการ` : `ยกเลิก ${job.code} แล้ว`));
     });
   }
 

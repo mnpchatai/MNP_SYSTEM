@@ -48,6 +48,8 @@ const FIXTURE = {
     order("o-planned", "TEST-MO-26-004", "planned", { bom_id: "b1", routing_id: "r2", bom_revision: "A", routing_revision: "B", survey_note: `ยางพอ ${XSS}`, planned_at: "2026-10-07T04:00:00Z", planned_by_name: "ทดสอบ พนักงานวางแผน" }),
     order("o-rel", "TEST-MO-26-005", "released", { bom_id: "b1", routing_id: "r2", work_order_no: "TEST-WO-26-001", released_at: "2026-10-07T05:00:00Z", released_by_name: "ทดสอบ พนักงานวางแผน" }),
     order("o-nobom", "TEST-MO-26-006", "planning", { item_id: "fg2", item_code: "FG-2", name: "สินค้า 2" }),
+    order("o-run", "TEST-MO-26-007", "in_progress", { bom_id: "b1", routing_id: "r2", work_order_no: "TEST-WO-26-002" }),
+    order("o-can", "TEST-MO-26-008", "cancelled", { bom_id: "b1", routing_id: "r2", work_order_no: "TEST-WO-26-003", cancel_note: `ลูกค้าเลื่อน ${XSS}`, cancelled_by_name: "ทดสอบ พนักงานวางแผน", cancelled_at: "2026-10-07T06:00:00Z" }),
   ],
   production_history: [
     { id: 2, order_id: "o-draft", code: "TEST-MO-26-001", action: "return", version: 3, status_after: "draft", note: `เหตุผล ${XSS}`, changed_by_name: "ทดสอบ พนักงานวางแผน", created_at: "2026-10-07T03:00:00Z" },
@@ -101,10 +103,14 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 const text = (html) => String(html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 test("every error code the workflow migration can raise has a Thai message that is not hidden by another key", () => {
-  const sql = fs.readFileSync("supabase/migrations/20261007030000_factory_production_order_workflow.sql", "utf8");
+  const sql = ["20261007030000_factory_production_order_workflow.sql", "20261007060000_factory_cancel_and_return.sql"]
+    .map((file) => fs.readFileSync(`supabase/migrations/${file}`, "utf8")).join("\n");
   const codes = [...new Set([...sql.matchAll(/raise exception '((?:INVALID_)?PRODUCTION_[A-Z_]+)'/g)].map((match) => match[1]))];
   codes.push("PRODUCTION_SALES_ONLY", "PRODUCTION_PLANNING_ONLY");
-  assert.ok(codes.length >= 17, `found ${codes.length} codes`);
+  assert.ok(codes.length >= 21, `found ${codes.length} codes`);
+  for (const code of ["PRODUCTION_CANCEL_NOTE_REQUIRED", "PRODUCTION_ORDER_NOT_CANCELLABLE", "PRODUCTION_ORDER_HAS_JOBS", "PRODUCTION_ORDER_HAS_MATERIAL_ORDERS"]) {
+    assert.ok(codes.includes(code), `${code} is raised by the cancel migration`);
+  }
   const messages = loadFactory().context.MNP_FACTORY_ERRORS;
   for (const code of new Set(codes)) assert.ok(messages[code], `${code} has no message`);
   const keys = Object.keys(messages);
@@ -183,6 +189,7 @@ test("a planned order offers re-planning and the work order button; a released o
   assert.match(planned.body, /ยางพอ/);
   const released = await render("production", { query: "po=o-rel", dept: "PP" });
   assert.doesNotMatch(released.body, /data-po-action|po-plan-form|po-return-form/);
+  assert.match(released.body, /id="po-cancel-form"/, "planning can cancel a released order (the database checks jobs and material orders)");
   assert.match(released.body, /TEST-WO-26-001/);
   assert.match(released.body, /ออกใบสั่งงานแล้ว เลขที่ TEST-WO-26-001/);
 });
@@ -254,6 +261,41 @@ test("return needs a confirmation and sends the reason; declining sends nothing"
   const declined = await render("production", { query: "po=o-plan", dept: "PP", confirmAnswer: false });
   await declined.controls["#po-return-form"].handlers.submit({ preventDefault() {} });
   assert.ok(!declined.log.calls.some(([name]) => name === "app_factory_return_production_order"));
+});
+
+test("cancel is offered to planning from planning to in progress, needs a confirmation and sends the reason", async () => {
+  for (const id of ["o-plan", "o-planned", "o-rel", "o-run"]) {
+    const view = await render("production", { query: `po=${id}`, dept: "PP" });
+    assert.match(view.body, /id="po-cancel-form"/, id);
+    assert.match(text(view.body), /ยกเลิกแล้วแก้กลับไม่ได้/, `${id} warns that cancelling is final`);
+  }
+  for (const id of ["o-draft", "o-sub", "o-can"]) {
+    const view = await render("production", { query: `po=${id}`, dept: "PP" });
+    assert.doesNotMatch(view.body, /id="po-cancel-form"/, `${id}: nothing to cancel by planning`);
+  }
+  for (const dept of ["SA", "ST", "RB"]) {
+    const view = await render("production", { query: "po=o-rel", dept });
+    assert.doesNotMatch(view.body, /id="po-cancel-form"/, `${dept} cannot cancel`);
+  }
+  const sent = await render("production", { query: "po=o-rel", dept: "PP" });
+  await sent.controls["#po-cancel-form"].handlers.submit({ preventDefault() {} });
+  assert.deepEqual(plain(sent.log.calls.at(-1)), ["app_factory_cancel_production_order", { p_id: "o-rel", p_version: 3, p_note: "เหตุผลทดสอบ" }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(sent.log.toasts.some(([message]) => message === "ยกเลิก TEST-MO-26-005 แล้ว"), JSON.stringify(sent.log.toasts));
+  const declined = await render("production", { query: "po=o-rel", dept: "PP", confirmAnswer: false });
+  await declined.controls["#po-cancel-form"].handlers.submit({ preventDefault() {} });
+  assert.ok(!declined.log.calls.some(([name]) => name === "app_factory_cancel_production_order"), "declining sends nothing");
+});
+
+test("a cancelled order shows the reason, who and when (escaped) and offers no step", async () => {
+  const view = await render("production", { query: "po=o-can", dept: "PP" });
+  assert.match(text(view.body), /ยกเลิกแล้ว เหตุผล: “ลูกค้าเลื่อน &lt;script&gt;alert\(1\)&lt;\/script&gt;” โดย ทดสอบ พนักงานวางแผน/);
+  assert.match(view.body, /<dt>ยกเลิกโดย<\/dt>/);
+  assert.doesNotMatch(view.body, /<script>/);
+  assert.doesNotMatch(view.body, /data-po-action|po-plan-form|po-return-form|po-cancel-form/);
+  assert.doesNotMatch(view.body, /ออกใบงานผลิต \(ฝ่ายวางแผน\)|ออกใบสั่งวัตถุดิบ/, "a cancelled order takes no new jobs or material orders");
+  const live = await render("production", { query: "po=o-rel", dept: "PP" });
+  assert.doesNotMatch(live.body, /<dt>ยกเลิกโดย<\/dt>/, "a live order has no cancel line");
 });
 
 test("saving the plan sends the approved BOM, the chosen routing and the survey text", async () => {

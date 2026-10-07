@@ -293,7 +293,7 @@ select is((pg_temp.po(current_setting('test.wo')) ->> 'completed_qty')::numeric,
 select public.app_sandbox_enter(current_setting('test.p_PP')::uuid);
 select throws_ok(format($$select public.app_factory_create_job(%L::uuid, %L::uuid, 1, 'WIP', '')$$, current_setting('test.wo'), current_setting('test.rbp')), 'JOB_WORK_ORDER_NOT_RELEASED', 'a completed production order accepts no new jobs');
 select throws_ok(format($$select public.app_factory_cancel_job(%L::uuid, 3, '   ')$$, current_setting('test.j6')), 'JOB_CANCEL_NOTE_REQUIRED', 'a reason is required to cancel');
-select throws_ok(format($$select public.app_factory_cancel_job(%L::uuid, 3, 'x')$$, current_setting('test.j6')), 'JOB_NOT_CANCELLABLE', 'a job that has run cannot be cancelled');
+select throws_ok(format($$select public.app_factory_cancel_job(%L::uuid, 3, 'x')$$, current_setting('test.j6')), 'JOB_NOT_CANCELLABLE', 'a completed job cannot be cancelled (its output is already in stock)');
 select public.app_sandbox_enter(current_setting('test.p_SA')::uuid);
 select throws_ok(format($$select public.app_factory_cancel_job(%L::uuid, 1, 'x')$$, current_setting('test.j1')), 'PRODUCTION_PLANNING_ONLY', 'sales cannot cancel a job');
 select public.app_sandbox_enter(current_setting('test.p_PP')::uuid);
