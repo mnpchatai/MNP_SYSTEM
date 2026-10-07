@@ -465,3 +465,19 @@ test("a create error stays on the form with the message", async () => {
   assert.equal(view.controls["#jb-form-error"].hidden, false);
   assert.equal(view.log.hash, "");
 });
+
+test("review: identity and material impact precede the step action; secondary detail is collapsible", async () => {
+  const page = await render("job", { query: "jb=j-open", dept: "RB" });
+  assert.ok(page.body.indexOf('fm-detail-head') < page.body.indexOf('id="jb-step-form"'));
+  assert.ok(page.body.indexOf('วัตถุดิบที่จะตัด') < page.body.indexOf('id="jb-step-form"'));
+  assert.match(page.body, /ขั้นปัจจุบัน:/);
+  assert.match(page.body, /<details class="fm-review-details"><summary>ขั้นตอนการผลิตทั้งหมด/);
+  assert.match(page.body, /<details class="fm-review-details"><summary>ประวัติของใบงานนี้/);
+});
+test("review: cancellation is a secondary action and a QC hold stays visible", async () => {
+  const pp = await render("job", { query: "jb=j-run", dept: "PP" });
+  assert.match(pp.body, /<details class="fm-review-details"><summary>ยกเลิกใบงานนี้/);
+  const qa = await render("job", { query: "jb=j-last", dept: "QA" });
+  assert.match(qa.body, /<details class="fm-review-details" open><summary>ผลตรวจ QC/);
+  assert.ok(qa.body.indexOf('ตรวจ QC ไม่ผ่านล่าสุด') < qa.body.indexOf('id="jb-qc-form"'));
+});

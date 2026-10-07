@@ -218,12 +218,12 @@
       blocks.push(notice(`ขั้นถัดไป “${next.name}” เป็นของแผนก ${next.department_code} — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลืองเป็นพนักงานแผนก ${next.department_code} เพื่อทำขั้นนี้`));
     }
     if (model.jobActions(job, role).includes("cancel")) {
-      blocks.push(`<form class="fm-form jb-form" id="jb-cancel-form" novalidate>
+      blocks.push(`<details class="fm-review-details"><summary>ยกเลิกใบงานนี้</summary><form class="fm-form jb-form" id="jb-cancel-form" novalidate>
           <div class="field full"><label for="jb-cancel-note">ยกเลิกใบงานนี้ — เหตุผล *</label>
             <textarea class="textarea" id="jb-cancel-note" name="note" rows="2" maxlength="1000" required></textarea>
             ${job.status === "in_progress" ? "<small>ใบงานนี้เริ่มแล้ว ยกเลิกแล้วระบบคืนวัตถุดิบที่ตัดไปกลับเข้าคลังและล็อตเดิมทั้งหมด ขั้นที่ทำเสร็จแล้วยังอยู่ในประวัติ ยกเลิกแล้วแก้กลับไม่ได้</small>" : ""}</div>
           <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบงาน</button></div>
-        </form>`);
+        </form></details>`);
     }
     return blocks.length ? `<section class="card fm-decision"><h2>ขั้นถัดไป</h2>${blocks.join("")}</section>` : "";
   }
@@ -288,12 +288,14 @@
         <tbody>${body}</tbody></table></div>`;
   }
 
+  // Read the job identity and stock impact before taking an action.
   function detailHtml(data, job) {
     return `<section class="card fm-detail">
         <div class="fm-detail-head"><div><div class="eyebrow">${escapeHtml(job.code)}</div>
           <h2>${escapeHtml(job.item_code)} · ${escapeHtml(job.item_name)}</h2></div>${statusBadge(job.status)}</div>
         ${statusNotice(job)}
         ${holdNotice(data, job)}
+        ${model.nextStep(job) ? `<p class="fm-current-step"><strong>ขั้นปัจจุบัน: ${escapeHtml(model.nextStep(job).name)}</strong> · แผนก ${escapeHtml(model.nextStep(job).department_code)}</p>` : ""}
         <dl class="definition-grid">
           <div class="definition"><dt>ใบสั่งผลิต</dt><dd><a href="${escapeHtml(poUrl(job.production_order_id))}">${escapeHtml(job.production_code)}</a> · ${escapeHtml(job.order_item_code)}</dd></div>
           <div class="definition"><dt>จำนวนที่ผลิต</dt><dd>${q4(job.qty)} ${escapeHtml(job.unit_code)}</dd></div>
@@ -306,13 +308,16 @@
           <div class="definition"><dt>เสร็จ</dt><dd>${job.completed_at ? formatDate(job.completed_at, true) : "—"}</dd></div>
         </dl>
         ${job.note ? `<h3>หมายเหตุ</h3><p class="fm-pre">${escapeHtml(job.note)}</p>` : ""}
-        ${requirementsHtml(data, job)}
-        <h3>ขั้นตอนการผลิต</h3>
-        ${stepsHtml(job)}
-        ${inspectionsHtml(data, job)}
-        <h3>ประวัติของใบงานนี้</h3>
-        ${timelineHtml(model.jobTimeline(data.job_history, job.id))}
       </section>`;
+  }
+
+  function supportingDetailsHtml(data, job) {
+    const inspections = inspectionsHtml(data, job);
+    return `<section class="card fm-detail">
+      <details class="fm-review-details"><summary>ขั้นตอนการผลิตทั้งหมด · ${model.stepsOf(job).length} ขั้น</summary>${stepsHtml(job)}</details>
+      ${inspections ? `<details class="fm-review-details"${model.qcHold(job, data.job_inspections) ? " open" : ""}><summary>ผลตรวจ QC และ NCR ที่เกี่ยวข้อง</summary>${inspections}</details>` : ""}
+      <details class="fm-review-details"><summary>ประวัติของใบงานนี้</summary>${timelineHtml(model.jobTimeline(data.job_history, job.id))}</details>
+    </section>`;
   }
 
   function bindDetail(root, job) {
@@ -488,7 +493,7 @@
       if (id) {
         const job = byId(data.jobs, id);
         if (!job) return frame.paint(gone(back));
-        const root = frame.paint({ back, subtitle: job.code, body: `${actionsHtml(data, job)}${detailHtml(data, job)}` });
+        const root = frame.paint({ back, subtitle: job.code, body: `${detailHtml(data, job)}${job.status === "open" ? `<section class="card fm-detail">${requirementsHtml(data, job)}</section>` : ""}${actionsHtml(data, job)}${supportingDetailsHtml(data, job)}` });
         return bindDetail(root, job);
       }
       return frame.paint({ actions: newJobAction(), body: listHtml(data, params) });

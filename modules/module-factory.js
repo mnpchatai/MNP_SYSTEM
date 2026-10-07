@@ -45,7 +45,7 @@
   // (ถ้าวันหน้าเปลี่ยนเป็น popup ลอยหรือ combobox ต้องใช้ data-popup/closePopup ตามกติกา AGENTS.md)
   // name= ทำให้เบราว์เซอร์ที่รองรับเปิดได้ทีละโฟลเดอร์ (เบราว์เซอร์เก่าเปิดได้หลายอัน ไม่เสียหาย) แยกชื่อตามที่วางกันไม่ให้ปิดกันข้ามชุด
   function treeHtml(selected, group) {
-    const folders = itemMaster.FOLDERS.map((folder) => {
+    const folders = itemMaster.FOLDERS.filter((folder) => folder.entries.length > 0).map((folder) => {
       const entries = folder.entries.length
         ? folder.entries.map((entry) => `<li><a class="factory-entry" href="${escapeHtml(itemMaster.url(entry.key))}"${selected?.entry.key === entry.key ? ` aria-current="page"` : ""}>${DOCUMENT_ICON}<span>${escapeHtml(entry.name)}</span></a></li>`).join("")
         : `<li class="factory-entries-empty">ยังไม่มีรายการในโฟลเดอร์นี้</li>`;
@@ -59,12 +59,12 @@
   function itemMasterNavHtml(active) {
     if (active !== PATH) return "";
     const selected = selectedEntry();
-    return `<div class="nav-sub"><details class="factory-master"${selected ? " open" : ""}><summary>Item master</summary>${treeHtml(selected, "nav")}</details></div>`;
+    return `<div class="nav-sub"><details class="factory-master"${selected ? " open" : ""}><summary>เมนูโรงงาน</summary>${treeHtml(selected, "nav")}</details></div>`;
   }
 
   // การ์ด Item master ในหน้า — แสดงเฉพาะจอ 761–1040px ที่แถบข้างหุบ (ดู styles.css .factory-master-page)
   function itemMasterCardHtml(selected) {
-    return `<section class="card factory-item-card factory-master-page"><details class="factory-master"${selected ? " open" : ""}><summary>Item master</summary>${treeHtml(selected, "page")}</details></section>`;
+    return `<section class="card factory-item-card factory-master-page"><details class="factory-master"${selected ? " open" : ""}><summary>เมนูโรงงาน</summary>${treeHtml(selected, "page")}</details></section>`;
   }
 
   // body: ภาพรวมการผลิตจาก view "overview" (modules/module-factory-board.js) ไม่มี = เฉพาะการ์ดแผนก
@@ -79,7 +79,7 @@
     }).join("");
     return `<div class="factory-page">
       <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
-        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">โหมดทดสอบ</div><h1>${TITLE}</h1><p>${factory.DEPARTMENTS.length} แผนก · Item master อยู่ในเมนูข้างใต้ "ฝ่ายโรงงาน"</p></div></div>
+        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">โหมดทดสอบ</div><h1>${TITLE}</h1><p>${factory.DEPARTMENTS.length} แผนก · เมนูงานและข้อมูลตั้งต้นอยู่ใต้ "ฝ่ายโรงงาน"</p></div></div>
       </div>
       ${body}
       ${itemMasterCardHtml(null)}
@@ -113,7 +113,7 @@
     return `<div class="factory-page">
       <a class="request-back-link" href="${escapeHtml(backLink.href)}">${escapeHtml(backLink.label)}</a>
       <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
-        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">${TITLE} · Item master › ${escapeHtml(folder.name)}</div><h1>${escapeHtml(entry.name)}</h1><p>${subtitle ? `${escapeHtml(subtitle)} · ` : ""}โหมดทดสอบ</p></div></div>
+        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">${TITLE} · เมนูโรงงาน › ${escapeHtml(folder.name)}</div><h1>${escapeHtml(entry.name)}</h1><p>${subtitle ? `${escapeHtml(subtitle)} · ` : ""}โหมดทดสอบ</p></div></div>
         ${actions ? `<div class="request-create-entry">${actions}</div>` : ""}
       </div>
       ${itemMasterCardHtml(selected)}
