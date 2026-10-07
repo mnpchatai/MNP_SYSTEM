@@ -141,6 +141,44 @@
       </section>`;
   }
 
+  // ---------- ต้นไม้โครงสร้าง (แตกสูตรทุกชั้น อ่านอย่างเดียว) ----------
+  // ตรรกะอยู่ที่ model.bomTree: ปริมาณ per = ต่อสินค้าหลัก 1 หน่วย หน้าจอคูณด้วยจำนวนที่ต้องการผลิต (คำนวณใหม่เมื่อเปลี่ยนจำนวน)
+  const treeQty = (per, produce) => q4(Math.round(per * produce * 1e4) / 1e4);
+  const minutes = (value) => (value > 0 ? `${q4(value)} นาที` : "—");
+
+  function treeNodeHtml(node, produce) {
+    const bomTag = node.bom
+      ? `<span class="muted small">สูตร Rev. ${escapeHtml(node.bom.revision)} · ${docStatus(node.bom.status)}</span>`
+      : "";
+    const flags = [
+      node.scrap_percent ? `<span class="muted small">เผื่อสูญเสีย ${q4(node.scrap_percent)}%</span>` : "",
+      node.cycle ? '<span class="badge rejected">สูตรวน ไม่แตกต่อ</span>' : "",
+      node.too_deep ? '<span class="badge rejected">ลึกเกินกำหนด ไม่แตกต่อ</span>' : "",
+    ].join(" ");
+    const row = `${node.item_type ? typeBadge(node.item_type) : ""} <strong>${escapeHtml(node.code)}</strong> <span class="fm-tree-name">${escapeHtml(node.name)}</span>
+        <span class="fm-tree-qty"><strong data-tree-per="${escapeHtml(node.per)}">${treeQty(node.per, produce)}</strong> ${escapeHtml(node.unit_code)}</span> ${bomTag} ${flags}`;
+    const steps = node.steps.map((step) => `<li class="fm-tree-step"><span class="fm-tree-row"><span aria-hidden="true">⚙</span>
+        <strong>${escapeHtml(step.name)}</strong> <span class="muted small">${escapeHtml(step.work_center || "—")} · ตั้งเครื่อง ${minutes(step.setup_minutes)} · ผลิต ${minutes(step.run_minutes)}</span></span></li>`).join("");
+    const children = node.children.map((child) => treeNodeHtml(child, produce)).join("");
+    if (!steps && !children) return `<li class="fm-tree-node"><div class="fm-tree-row">${row}</div></li>`;
+    return `<li class="fm-tree-node"><details open><summary class="fm-tree-row">${row}</summary>
+        <ul class="fm-tree-list">${steps}${children}</ul></details></li>`;
+  }
+
+  function treeSectionHtml(data, bom, produce) {
+    const tree = model.bomTree(data, bom.id);
+    if (!tree) return "";
+    return `<section class="card fm-tree-card" aria-labelledby="fm-tree-title">
+        <div class="fm-detail-head"><h2 id="fm-tree-title">ต้นไม้โครงสร้าง (แตกสูตรทุกชั้น)</h2>
+          <span class="fm-actions"><button class="btn secondary small" type="button" data-tree-toggle="open">ขยายทั้งหมด</button>
+            <button class="btn secondary small" type="button" data-tree-toggle="close">ย่อทั้งหมด</button></span></div>
+        <p class="muted small">${tree.nodes} รายการ · ลึก ${tree.depth} ชั้น · ปริมาณคำนวณตามจำนวนที่ต้องการผลิตด้านบน (รวมเผื่อสูญเสียทุกชั้น) ·
+          แถวสีแดง ⚙ คือขั้นตอนการผลิตของชิ้นงานนั้นจาก Routing (ดูหน้า “ขั้นตอนการผลิต-ดู”) · ส่วนประกอบที่ไม่มีสูตรเป็นปลายกิ่ง</p>
+        ${tree.unapproved ? notice("ต้นไม้นี้มีสูตรที่ยังไม่อนุมัติ (ร่าง/รออนุมัติ) ปนอยู่ ดูป้ายสถานะข้างแถว") : ""}
+        <ul class="fm-tree" role="tree" aria-label="ต้นไม้โครงสร้างสินค้า">${treeNodeHtml(tree.root, produce)}</ul>
+      </section>`;
+  }
+
   function bomHtml(data, params) {
     const boms = data.boms ?? [];
     const banner = pendingBanner(data);
@@ -179,6 +217,7 @@
             <td class="right"><strong data-bom-line="${escapeHtml(line.id)}"></strong> ${escapeHtml(line.unit_code)}</td>
           </tr>`).join("") : '<tr><td colspan="4" class="muted">ยังไม่มีส่วนประกอบในฉบับร่างนี้</td></tr>'}</tbody></table></div>
       </section>
+      ${treeSectionHtml(data, bom, produce)}
       ${decisionPanelHtml(data, bom)}
       <section class="card fm-detail"><h3>ประวัติของฉบับนี้</h3>${historyTable(timeline)}</section>`;
   }
@@ -196,7 +235,17 @@
         if (cell) cell.textContent = need === null ? "—" : qty(need);
       }
     };
-    input.addEventListener("input", recalc);
+    const recalcTree = () => {
+      const produce = Number(input.value);
+      root.querySelectorAll("[data-tree-per]").forEach((cell) => {
+        cell.textContent = Number.isFinite(produce) && produce > 0 ? treeQty(Number(cell.dataset.treePer), produce) : "—";
+      });
+    };
+    input.addEventListener("input", () => { recalc(); recalcTree(); });
+    root.querySelectorAll("[data-tree-toggle]").forEach((button) => button.addEventListener("click", () => {
+      const open = button.dataset.treeToggle === "open";
+      root.querySelectorAll(".fm-tree details").forEach((details) => { details.open = open; });
+    }));
     select.addEventListener("change", () => { location.hash = menu.url(params.get("item"), { bom: select.value }).slice(1); });
     recalc();
 

@@ -322,3 +322,61 @@ test("the trial migration raises only errors the page already knows how to word"
   const codes = [...new Set([...sql.matchAll(/raise exception '([A-Z_]+)'/g)].map((match) => match[1]))];
   assert.deepEqual(codes, ["SANDBOX_NOT_ACTIVE"]);
 });
+
+// ---------- ต้นไม้โครงสร้าง (หน้า โครงสร้างสินค้า-ดู) ----------
+const TREE_FIXTURE = {
+  items: [
+    item("fg", "FG-9", "ชุดสินค้า <b>9</b>", "FG", "make", "active", "SET"), item("rbp", "RBP-9", "ชิ้นงานยาง", "WIP", "make"),
+    item("rbl", "RBL-9", "ยางเส้นยาว", "WIP", "make", "active", "KG"), item("nr", "NR-9", "ยาง", "RM", "buy", "active", "KG"),
+  ],
+  boms: [
+    { id: "tb-fg", item_id: "fg", code: "FG-9", name: "ชุดสินค้า <b>9</b>", unit_code: "SET", revision: "A", output_qty: 12, status: "approved", effective_date: "2026-10-01", version: 2, note: "" },
+    { id: "tb-rbp", item_id: "rbp", code: "RBP-9", name: "ชิ้นงานยาง", unit_code: "PCS", revision: "A", output_qty: 100, status: "approved", effective_date: "2026-10-01", version: 2, note: "" },
+    { id: "tb-rbl", item_id: "rbl", code: "RBL-9", name: "ยางเส้นยาว", unit_code: "KG", revision: "B", output_qty: 100, status: "draft", effective_date: "2026-10-02", version: 1, note: "" },
+  ],
+  bom_lines: [
+    { id: "t1", bom_id: "tb-fg", line_no: 1, component_id: "rbp", code: "RBP-9", name: "ชิ้นงานยาง", unit_code: "PCS", quantity: 12, scrap_percent: 0 },
+    { id: "t2", bom_id: "tb-rbp", line_no: 1, component_id: "rbl", code: "RBL-9", name: "ยางเส้นยาว", unit_code: "KG", quantity: 5, scrap_percent: 3 },
+    { id: "t3", bom_id: "tb-rbl", line_no: 1, component_id: "nr", code: "NR-9", name: "ยาง <script>alert(1)</script>", unit_code: "KG", quantity: 62, scrap_percent: 2 },
+  ],
+  routings: [{ id: "tr1", item_id: "rbl", revision: "A", status: "draft" }],
+  steps: [{ routing_id: "tr1", sequence: 10, name: "RB-01 ชั่งเคมี <i>x</i>", work_center: "แผนก RB", setup_minutes: 10, run_minutes: 30 }],
+  bom_history: [],
+};
+
+test("the BOM view shows the multi-level tree: nested levels, process steps in red rows, and unapproved BOMs flagged", async () => {
+  const { body } = await render("bom", "bom=tb-fg", TREE_FIXTURE);
+  assert.match(body, /ต้นไม้โครงสร้าง \(แตกสูตรทุกชั้น\)/);
+  assert.match(body, /4 รายการ · ลึก 3 ชั้น/);
+  assert.match(body, /<ul class="fm-tree" role="tree"/);
+  const tree = body.slice(body.indexOf('<ul class="fm-tree"'), body.indexOf("</section>", body.indexOf('<ul class="fm-tree"')));
+  for (const code of ["FG-9", "RBP-9", "RBL-9", "NR-9"]) assert.match(tree, new RegExp(`<strong>${code}</strong>`), code);
+  assert.ok(tree.indexOf("FG-9") < tree.indexOf("RBP-9") && tree.indexOf("RBP-9") < tree.indexOf("RBL-9") && tree.indexOf("RBL-9") < tree.indexOf("NR-9"), "each level sits below its parent");
+  assert.match(tree, /class="fm-tree-step"[\s\S]*RB-01 ชั่งเคมี/, "the process step of the rubber strip is listed");
+  assert.match(tree, /แผนก RB · ตั้งเครื่อง 10 นาที · ผลิต 30 นาที/);
+  assert.match(tree, /สูตร Rev\. B · <span class="badge[^>]*>ฉบับร่าง<\/span>/, "a draft BOM used in the tree is labelled");
+  assert.match(body, /ต้นไม้นี้มีสูตรที่ยังไม่อนุมัติ/);
+  assert.match(tree, /เผื่อสูญเสีย 3%/);
+});
+
+test("tree quantities follow the produce quantity and carry the per-unit factor for live recalculation", async () => {
+  const { body } = await render("bom", "bom=tb-fg", TREE_FIXTURE);
+  assert.match(body, /data-tree-per="0\.0515">0\.618<\/strong> KG/, "12 sets × 0.0515 kg per set");
+  const more = (await render("bom", "bom=tb-fg&qty=24", TREE_FIXTURE)).body;
+  assert.match(more, /data-tree-per="0\.0515">1\.236<\/strong> KG/, "24 sets doubles it");
+  assert.match(body, /data-tree-toggle="open"/);
+  assert.match(body, /data-tree-toggle="close"/);
+});
+
+test("the tree escapes user text and a BOM without components is just the root", async () => {
+  const { body } = await render("bom", "bom=tb-fg", TREE_FIXTURE);
+  assert.doesNotMatch(body, /<script>alert/);
+  assert.match(body, /ยาง &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(body, /ชุดสินค้า &lt;b&gt;9&lt;\/b&gt;/);
+  assert.doesNotMatch(body, /RB-01 ชั่งเคมี <i>/);
+  const alone = (await render("bom", "bom=b3")).body;
+  assert.match(alone, /ต้นไม้โครงสร้าง/);
+  assert.match(alone, /ฉบับร่าง/);
+  const leaf = (await render("bom", "bom=tb-rbp", TREE_FIXTURE)).body;
+  assert.match(leaf, /3 รายการ · ลึก 2 ชั้น/, "any BOM can be the root of its own tree");
+});

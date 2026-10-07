@@ -1324,6 +1324,17 @@ th.right, td.right { text-align: right; }
 .fm-struct-list { margin: 0 0 0 19px; padding: 8px 0 0 19px; display: grid; gap: 8px; list-style: none; border-left: 2px dotted var(--quiet); }
 .fm-struct-list > .fm-node::before { content: ""; position: absolute; top: 22px; left: -19px; width: 19px; border-top: 2px dotted var(--quiet); }
 .fm-struct-empty { margin: 8px 0 0 19px; padding-left: 19px; }
+/* ต้นไม้โครงสร้างสินค้าแบบอ่านอย่างเดียว (โหมดทดสอบ ฝ่ายโรงงาน) — details/summary ของเบราว์เซอร์ แตะได้บน iPhone */
+.fm-tree, .fm-tree-list { margin: 0; padding: 0; list-style: none; }
+.fm-tree-list { margin-left: 12px; padding-left: 14px; border-left: 2px dotted var(--quiet); }
+.fm-tree-node, .fm-tree-step { margin: 0; }
+.fm-tree-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 38px; padding: 4px 6px; border-radius: 6px; }
+summary.fm-tree-row { cursor: pointer; }
+summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(--soft-line); }
+.fm-tree-name { color: var(--muted); font-size: 13px; }
+.fm-tree-qty { margin-left: auto; white-space: nowrap; }
+.fm-tree-step .fm-tree-row { color: var(--danger); background: var(--danger-soft); }
+.fm-tree-step .muted { color: var(--danger); opacity: .8; }
 .fm-node-body { min-width: 0; }
 .fm-node-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 32px; }
 .fm-node-tools { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
