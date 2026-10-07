@@ -27,7 +27,7 @@ test("folders without confirmed entries stay empty instead of guessing", () => {
 });
 
 test("every entry view is one the factory pages know how to draw", () => {
-  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production"]);
+  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning"]);
   for (const folder of FOLDERS) for (const entry of folder.entries) assert.ok(known.has(entry.view), entry.key);
 });
 
@@ -37,6 +37,21 @@ test("structure folder holds new, edit, approve and view entries in that order (
     structure.entries.map((entry) => [entry.name, entry.view]),
     [["โครงสร้างสินค้า-ใหม่", "bom-new"], ["โครงสร้างสินค้า-แก้ไข", "bom-drafts"], ["โครงสร้างสินค้า-อนุมัติ", "bom-approvals"], ["โครงสร้างสินค้า-ดู", "bom"]],
   );
+});
+
+test("production folder holds new, planning queue and view entries (the planning queue is the one added for the workflow)", () => {
+  const production = FOLDERS.find((folder) => folder.key === "production");
+  assert.deepEqual(production.entries.map((entry) => [entry.name, entry.view]), [
+    ["ใบสั่งผลิต-ใหม่", "production-new"],
+    ["ใบสั่งผลิต-ฝ่ายวางแผน", "production-planning"],
+    ["ใบสั่งผลิต-ดู", "production"],
+  ]);
+});
+
+test("url keeps the po parameter used by the production order screens", () => {
+  assert.equal(url("production-view", { po: "abc" }), "#/factory?item=production-view&po=abc");
+  assert.equal(url("production-new", { po: "abc", evil: "x" }), "#/factory?item=production-new&po=abc");
+  assert.equal(url("production-view", { status: "planning" }), "#/factory?item=production-view&status=planning");
 });
 
 test("folder and entry keys are unique across the whole menu and names are not blank", () => {

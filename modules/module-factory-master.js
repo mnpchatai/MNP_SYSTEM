@@ -4,7 +4,8 @@
 //   items      ทะเบียนสินค้า: สถิติ ค้นหา/กรอง/เรียง/แบ่งหน้า รายละเอียด (&id=) และแก้ไข (&id=&edit=1)
 //   item-new   ฟอร์มเพิ่ม Item
 //   history    ประวัติการเพิ่ม/แก้ไข Item ล่าสุด
-//   routing / inventory / production  อ่านอย่างเดียว
+//   routing / inventory  อ่านอย่างเดียว
+//   (ใบสั่งผลิต: ออก/ส่ง/รับ/วางแผน/ออกใบสั่งงาน อยู่ที่ modules/module-factory-production.js)
 //   (โครงสร้างสินค้า BOM: ดู/สร้าง/แก้ฉบับร่าง/อนุมัติ อยู่ที่ modules/module-factory-bom.js ซึ่งใช้ helper ของไฟล์นี้ผ่าน
 //    window.MNP_FACTORY_UI และเพิ่ม view เข้า window.MNP_FACTORY_VIEWS — ต้องโหลดหลังไฟล์นี้ ก่อน module-factory.js)
 // ข้อมูลทั้งหมดมาจาก RPC app_factory_master_data และบันทึกผ่าน app_factory_save_item
@@ -350,28 +351,6 @@
       </section>`;
   }
 
-  // ---------- ใบสั่งผลิต ----------
-  function productionHtml(data) {
-    const orders = data.production ?? [];
-    if (!orders.length) return emptyData("ใบสั่งผลิต");
-    return `${notice("ใบสั่งผลิตสาธิตสำหรับแสดงการเชื่อม BOM และ Routing ยังไม่เปิดการเบิกวัตถุดิบหรือรับผลผลิต")}
-      <div class="fm-cards">${orders.map((order) => {
-        const percent = Math.round((Number(order.completed_qty) / Number(order.planned_qty)) * 100);
-        return `<section class="card fm-order">
-          <div class="fm-detail-head"><strong><code>${escapeHtml(order.code)}</code></strong><span class="badge${order.status === "in_progress" ? " in_progress" : ""}">${escapeHtml(label(model.PRODUCTION_STATUSES, order.status))}</span></div>
-          <h2>${escapeHtml(order.name)}</h2>
-          <p class="muted small">กำหนดเสร็จ ${formatDate(order.due_date)}</p>
-          <p class="fm-order-qty"><strong>${qty(order.completed_qty)}</strong> / ${qty(order.planned_qty)} ${escapeHtml(order.unit_code)}</p>
-          <progress class="fm-progress" value="${escapeHtml(order.completed_qty)}" max="${escapeHtml(order.planned_qty)}" aria-label="ความคืบหน้า ${percent}%"></progress>
-          <p class="fm-detail-head"><span>ความคืบหน้า</span><strong>${percent}%</strong></p>
-          <div class="fm-actions">
-            <a class="btn secondary small" href="${escapeHtml(menu.url("structure-view", { bom: order.bom_id, qty: order.planned_qty }))}">ดูสูตร BOM</a>
-            <a class="btn secondary small" href="${escapeHtml(menu.url("routing-view", { routing: order.routing_id }))}">ดู Routing</a>
-          </div>
-        </section>`;
-      }).join("")}</div>`;
-  }
-
   // ---------- ลงทะเบียน view ----------
   // สร้างตอนวาดหน้า (ไฟล์นี้โหลดก่อน app.js จึงเรียก escapeHtml ตอนโหลดไฟล์ไม่ได้)
   const newItemAction = () => `<a class="btn" href="${escapeHtml(menu.url("item-new"))}">＋ เพิ่ม Item ใหม่</a>`;
@@ -417,11 +396,6 @@
       frame.loading();
       const data = await loadData();
       frame.paint({ body: inventoryHtml(data) });
-    },
-    async production({ frame }) {
-      frame.loading();
-      const data = await loadData();
-      frame.paint({ body: productionHtml(data) });
     },
   };
 

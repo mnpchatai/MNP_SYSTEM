@@ -1218,6 +1218,9 @@ th.right, td.right { text-align: right; }
 .fm-order-qty strong { color: var(--ink); font-size: 24px; }
 .fm-progress { width: 100%; height: 10px; accent-color: var(--primary); }
 .fm-decision h2 { margin: 0 0 6px; font-size: 16px; }
+.fm-short { color: var(--danger); }
+.po-plan h2 { margin: 0 0 6px; font-size: 16px; }
+.po-plan h3 { margin: 14px 0 6px; font-size: 14px; }
 @media (max-width: 760px) {
   .fm-summary, .fm-summary-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fm-summary .summary { min-height: 0; border-top: 1px solid var(--line); }
