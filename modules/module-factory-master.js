@@ -137,11 +137,16 @@
       <section class="card fm-danger-zone">
         <h2>ข้อมูลทดสอบของฝ่ายโรงงาน</h2>
         <p class="muted small">ล้าง Item, BOM, Routing, คลัง และใบสั่งผลิตที่เป็นข้อมูลทดสอบทั้งหมด (ข้อมูลจริงไม่ถูกแตะ) แล้วเติมข้อมูลตัวอย่างใหม่ได้</p>
-        <div class="fm-actions">
-          <button class="btn secondary small" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
-          <button class="btn danger small" type="button" id="fm-purge">ล้างข้อมูลทดสอบฝ่ายโรงงาน</button>
-        </div>
-        <p class="muted small">ชุดทดลอง: สินค้า 5 รายการ พร้อม BOM หลายชั้น Routing ตามแผนก (RB → SR/QC → GR · PT · BG → PK → WH) ใบสั่งผลิต และยอดยกมา เติมซ้ำไม่ได้จนกว่าจะล้างข้อมูลทดสอบ</p>
+        <ul class="fm-test-actions">
+          <li>
+            <div><strong>ชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</strong><span>สินค้า 5 รายการ พร้อม BOM หลายชั้น Routing ตามแผนก (RB → SR/QC → GR · PT · BG → PK → WH) ใบสั่งผลิต และยอดยกมา เติมซ้ำไม่ได้จนกว่าจะล้างข้อมูลทดสอบ</span></div>
+            <button class="btn secondary small" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
+          </li>
+          <li>
+            <div><strong>ล้างข้อมูลทดสอบ</strong><span>Item, BOM, Routing, คลัง, ใบสั่งผลิต และประวัติ ข้อมูลจริงไม่ถูกแตะ</span></div>
+            <button class="btn danger small" type="button" id="fm-purge">ล้างข้อมูลทดสอบฝ่ายโรงงาน</button>
+          </li>
+        </ul>
       </section>`;
   }
 

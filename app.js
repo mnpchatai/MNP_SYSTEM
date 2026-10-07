@@ -1277,6 +1277,7 @@ function shell(content, active, title) {
         <header class="topbar">
           <div class="breadcrumbs">MNP Workspace &nbsp;/&nbsp; <strong>${escapeHtml(title)}</strong></div>
           <div class="top-actions">
+            ${isSandboxMode() ? `<span class="sandbox-pill" title="อยู่ในโหมดทดสอบ ข้อมูลแยกจากระบบจริง">TEST</span>` : ""}
             ${themeButton()}
             ${isSandboxMode() ? "" : `<a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>`}
           </div>
