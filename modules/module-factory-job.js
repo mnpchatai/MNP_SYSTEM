@@ -39,6 +39,13 @@
     JOB_STEP_ALREADY_DONE: "ขั้นตอนนี้ทำเสร็จไปแล้ว",
     JOB_STEP_OUT_OF_ORDER: "ต้องทำขั้นตอนก่อนหน้าให้เสร็จก่อน",
     JOB_STEP_DEPARTMENT_ONLY: "ขั้นตอนนี้เป็นของแผนกอื่น — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลืองเป็นพนักงานของแผนกที่ทำขั้นนี้",
+    INVALID_JOB_QC_RESULT: "กรุณาเลือกผลตรวจ ผ่านหรือไม่ผ่าน",
+    INVALID_JOB_QC_QTY: "จำนวนที่ตรวจต้องมากกว่า 0 และไม่เกิน 1,000,000,000 · ถ้าไม่ผ่านต้องระบุจำนวนที่ไม่ผ่านตั้งแต่ 1 ถึงจำนวนที่ตรวจ (ผลผ่านต้องไม่มีจำนวนที่ไม่ผ่าน)",
+    INVALID_JOB_QC_NOTE: "บันทึกผลวัดยาวได้ไม่เกิน 1,000 ตัวอักษร",
+    JOB_QC_DEFECT_TYPE_INVALID: "กรุณาเลือกประเภทข้อบกพร่อง (ตามระบบ NCR) เพื่อออก NCR",
+    JOB_QC_DESCRIPTION_REQUIRED: "คำอธิบายความไม่ผ่านต้องยาว 10–4,000 ตัวอักษร (ใช้เป็นรายละเอียดของ NCR)",
+    JOB_STEP_NOT_QC: "ขั้นนี้ไม่ใช่ขั้นตรวจ QC ให้ใช้ปุ่ม “ทำขั้นตอนนี้เสร็จ”",
+    JOB_QC_INSPECTION_REQUIRED: "ขั้น QC ต้องบันทึกผลตรวจ (ผ่าน/ไม่ผ่าน) ในฟอร์มตรวจ QC ปิดด้วยปุ่มทำขั้นตอนเสร็จไม่ได้",
     JOB_INSUFFICIENT_STOCK: "วัตถุดิบหรือชิ้นงานที่ใช้ตามสูตรในคลังไม่พอ จึงเริ่มงานไม่ได้ (ยังไม่ได้ตัดอะไร) — ดูตารางวัตถุดิบในใบงาน ผลิตชิ้นงานที่ขาดหรือสั่งวัตถุดิบเพิ่มก่อน",
   };
   Object.assign(window.MNP_FACTORY_ERRORS, ERROR_MESSAGES);
@@ -158,11 +165,43 @@
     return `<div class="table-wrap"><table><thead><tr><th>#</th><th>ขั้นตอน</th><th>ศูนย์งาน</th><th>สถานะ</th><th>ทำโดย</th><th>บันทึก</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
-  function actionsHtml(job) {
+  // ฟอร์มตรวจ QC แทนปุ่ม "ทำขั้นตอนนี้เสร็จ" ที่ขั้นศูนย์งาน QC: ผ่าน = ปิดขั้น · ไม่ผ่าน = ออก NCR และขั้นรอตรวจซ้ำ
+  function qcFormHtml(data, job, next, last) {
+    const types = data.ncr_defect_types ?? [];
+    return `<form class="fm-form jb-form" id="jb-qc-form" novalidate>
+          <h3>${escapeHtml(next.name)} — บันทึกผลตรวจ QC</h3>
+          ${notice("ผ่าน: ปิดขั้นนี้ · ไม่ผ่าน: ระบบออก NCR (แหล่งที่พบ: ระหว่างผลิต) ให้ในครั้งเดียว ขั้นนี้ยังรอ ตรวจซ้ำได้หรือให้ฝ่ายวางแผนยกเลิกใบงาน")}
+          ${last ? notice(`ขั้นสุดท้าย: เมื่อตรวจผ่าน ระบบรับผลผลิตเข้าคลัง ${escapeHtml(job.warehouse_name)} ตามจำนวนผลิตจริง`) : ""}
+          <div class="fm-form-error" id="jb-form-error" role="alert" hidden></div>
+          <fieldset class="field full"><legend>ผลตรวจ *</legend>
+            <label><input type="radio" name="result" value="pass" checked> ผ่าน</label>
+            <label><input type="radio" name="result" value="fail"> ไม่ผ่าน (ออก NCR)</label></fieldset>
+          <div class="field-row">
+            <div class="field"><label for="jb-qc-checked">จำนวนที่ตรวจ (${escapeHtml(job.unit_code)}) *</label>
+              <input class="input" id="jb-qc-checked" name="qty_checked" type="number" inputmode="decimal" min="0.0001" max="${model.MAX_QUANTITY}" step="any" value="${escapeHtml(job.qty)}" required></div>
+            <div class="field full"><label for="jb-qc-measure">บันทึกผลวัด / ผลตรวจ (ไม่บังคับ)</label>
+              <textarea class="textarea" id="jb-qc-measure" name="measurement" rows="2" maxlength="1000"></textarea></div>
+            ${last ? `<div class="field" id="jb-qc-output-field"><label for="jb-output">จำนวนผลิตจริง (${escapeHtml(job.unit_code)})</label><input class="input" id="jb-output" name="output_qty" type="number" inputmode="decimal" min="0.0001" max="${model.MAX_QUANTITY}" step="any" placeholder="${escapeHtml(q4(job.qty))}"><small>เว้นว่าง = ตามจำนวนของใบงาน (ใช้เมื่อผ่านเท่านั้น)</small></div>` : ""}
+          </div>
+          <div class="field-row" id="jb-qc-fail-fields" hidden>
+            <div class="field"><label for="jb-qc-defect">จำนวนที่ไม่ผ่าน (${escapeHtml(job.unit_code)}) *</label>
+              <input class="input" id="jb-qc-defect" name="qty_defect" type="number" inputmode="decimal" min="0.0001" step="any"></div>
+            <div class="field"><label for="jb-qc-type">ประเภทข้อบกพร่อง (NCR) *</label>
+              <select class="select" id="jb-qc-type" name="defect_type_code">${options([["", "— เลือก —"], ...types.map((type) => [type.code, type.name_th])], "")}</select></div>
+            <div class="field full"><label for="jb-qc-desc">อธิบายความไม่ผ่าน * (ใช้เป็นรายละเอียด NCR อย่างน้อย 10 ตัวอักษร)</label>
+              <textarea class="textarea" id="jb-qc-desc" name="description" rows="3" maxlength="4000"></textarea></div>
+          </div>
+          <div class="fm-actions"><button class="btn" type="submit">บันทึกผลตรวจ</button></div>
+        </form>`;
+  }
+
+  function actionsHtml(data, job) {
     const role = dept();
     const next = model.nextStep(job);
     const blocks = [];
-    if (next && model.canRunStep(job, next, role)) {
+    if (next && model.canRunStep(job, next, role) && model.isQcStep(next)) {
+      blocks.push(qcFormHtml(data, job, next, model.isLastPending(job, next)));
+    } else if (next && model.canRunStep(job, next, role)) {
       const last = model.isLastPending(job, next);
       blocks.push(`<form class="fm-form jb-form" id="jb-step-form" novalidate>
           <h3>${escapeHtml(next.name)}</h3>
@@ -220,11 +259,41 @@
         </tr>`).join("")}</tbody></table></div>`;
   }
 
+  const ncrLink = (row) => (row.ncr_id
+    ? `<a href="#/ncr?id=${encodeURIComponent(row.ncr_id)}">${escapeHtml(row.ncr_no)}</a>`
+    : escapeHtml(row.ncr_no ?? "—"));
+
+  // ขั้น QC ที่ผลตรวจล่าสุดไม่ผ่าน: บอกทุกแผนกว่ารอตรวจซ้ำและ NCR ที่ออกแล้ว
+  function holdNotice(data, job) {
+    const hold = model.qcHold(job, data.job_inspections);
+    if (!hold) return "";
+    return `<p class="fm-notice" role="status">ตรวจ QC ไม่ผ่านล่าสุด (${q4(hold.qty_defect)} จาก ${q4(hold.qty_checked)} ${escapeHtml(job.unit_code)}) ออก NCR ${ncrLink(hold)} แล้ว — ขั้น QC รอตรวจซ้ำ หรือฝ่ายวางแผนยกเลิกใบงาน</p>`;
+  }
+
+  function inspectionsHtml(data, job) {
+    const rows = model.inspectionsOf(data.job_inspections, job.id);
+    if (!rows.length) return "";
+    const body = rows.map((row) => `<tr>
+        <td>${formatDate(row.inspected_at, true)}</td>
+        <td>${escapeHtml(row.step_sequence / 10)}</td>
+        <td><span class="badge ${row.result === "pass" ? "completed" : "cancelled"}">${row.result === "pass" ? "ผ่าน" : "ไม่ผ่าน"}</span></td>
+        <td class="right">${q4(row.qty_checked)}</td>
+        <td class="right">${row.result === "fail" ? q4(row.qty_defect) : "—"}</td>
+        <td class="fm-pre">${escapeHtml([row.measurement, row.result === "fail" ? [row.defect_type_name, row.description].filter(Boolean).join(": ") : ""].filter(Boolean).join("\n") || "—")}</td>
+        <td>${row.result === "fail" ? ncrLink(row) : "—"}</td>
+        <td>${escapeHtml(row.inspected_by_name ?? "—")}</td>
+      </tr>`).join("");
+    return `<h3>ผลตรวจ QC</h3><div class="table-wrap"><table>
+        <thead><tr><th>เวลา</th><th>ขั้น</th><th>ผล</th><th class="right">ตรวจ</th><th class="right">ไม่ผ่าน</th><th>บันทึก / สาเหตุ</th><th>NCR</th><th>ผู้ตรวจ</th></tr></thead>
+        <tbody>${body}</tbody></table></div>`;
+  }
+
   function detailHtml(data, job) {
     return `<section class="card fm-detail">
         <div class="fm-detail-head"><div><div class="eyebrow">${escapeHtml(job.code)}</div>
           <h2>${escapeHtml(job.item_code)} · ${escapeHtml(job.item_name)}</h2></div>${statusBadge(job.status)}</div>
         ${statusNotice(job)}
+        ${holdNotice(data, job)}
         <dl class="definition-grid">
           <div class="definition"><dt>ใบสั่งผลิต</dt><dd><a href="${escapeHtml(poUrl(job.production_order_id))}">${escapeHtml(job.production_code)}</a> · ${escapeHtml(job.order_item_code)}</dd></div>
           <div class="definition"><dt>จำนวนที่ผลิต</dt><dd>${q4(job.qty)} ${escapeHtml(job.unit_code)}</dd></div>
@@ -240,6 +309,7 @@
         ${requirementsHtml(data, job)}
         <h3>ขั้นตอนการผลิต</h3>
         ${stepsHtml(job)}
+        ${inspectionsHtml(data, job)}
         <h3>ประวัติของใบงานนี้</h3>
         ${timelineHtml(model.jobTimeline(data.job_history, job.id))}
       </section>`;
@@ -247,6 +317,34 @@
 
   function bindDetail(root, job) {
     const args = { p_id: job.id, p_version: job.version };
+    const qcForm = root.querySelector("#jb-qc-form");
+    if (qcForm) {
+      const failFields = root.querySelector("#jb-qc-fail-fields");
+      const outputField = root.querySelector("#jb-qc-output-field");
+      // ช่องของผลไม่ผ่านแสดงเมื่อเลือก "ไม่ผ่าน" · ช่องจำนวนผลิตจริงใช้เมื่อผ่านเท่านั้น
+      root.querySelectorAll('#jb-qc-form input[name="result"]').forEach((radio) => radio.addEventListener("change", () => {
+        const failing = radio.value === "fail" && radio.checked;
+        if (radio.checked && failFields) failFields.hidden = !failing;
+        if (radio.checked && outputField) outputField.hidden = failing;
+      }));
+      qcForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const errorBox = root.querySelector("#jb-form-error");
+        if (errorBox) errorBox.hidden = true;
+        const form = new FormData(qcForm);
+        const values = Object.fromEntries(["result", "qty_checked", "qty_defect", "measurement", "defect_type_code", "description", "output_qty"].map((key) => [key, form.get(key)]));
+        const next = model.nextStep(job);
+        const parsed = model.qcPayload(values, model.isLastPending(job, next));
+        if (parsed.error) {
+          if (errorBox) { errorBox.textContent = parsed.error; errorBox.hidden = false; }
+          return undefined;
+        }
+        if (parsed.args.p_result === "fail" && !confirm("บันทึกว่าไม่ผ่านและออก NCR ใหม่ใช่หรือไม่?")) return undefined;
+        return runAction(root, "app_factory_record_qc", { ...args, p_sequence: next.sequence, ...parsed.args }, (result) => (parsed.args.p_result === "fail"
+          ? `ตรวจ QC ไม่ผ่าน ออก NCR ${result?.ncr_no ?? ""} แล้ว ขั้นนี้รอตรวจซ้ำ`
+          : model.isLastPending(job, next) ? `${job.code} ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว ยอดคงคลังเพิ่มขึ้น` : `ตรวจ “${next.name}” ผ่านแล้ว`));
+      });
+    }
     const next = model.nextStep(job);
     const stepForm = root.querySelector("#jb-step-form");
     const errorBox = root.querySelector("#jb-form-error");
@@ -390,7 +488,7 @@
       if (id) {
         const job = byId(data.jobs, id);
         if (!job) return frame.paint(gone(back));
-        const root = frame.paint({ back, subtitle: job.code, body: `${actionsHtml(job)}${detailHtml(data, job)}` });
+        const root = frame.paint({ back, subtitle: job.code, body: `${actionsHtml(data, job)}${detailHtml(data, job)}` });
         return bindDetail(root, job);
       }
       return frame.paint({ actions: newJobAction(), body: listHtml(data, params) });

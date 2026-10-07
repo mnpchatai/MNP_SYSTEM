@@ -63,6 +63,11 @@ const FIXTURE = {
     job("j-done", "TEST-JB-26-004", "completed", [step(10, "RB-01", "RB", "done", { completed_at: "2026-10-07T02:00:00Z" })], { output_qty: 95, completed_at: "2026-10-07T03:00:00Z" }),
     job("j-can", "TEST-JB-26-005", "cancelled", RBL_STEPS(), { cancel_note: `ผิดใบ ${XSS}`, returned: [{ code: "RM-NR", name: "ยาง", unit_code: "KG", quantity: 63.24 }] }),
   ],
+  ncr_defect_types: [{ code: "DIM", name_th: "ขนาดไม่ได้สเปค" }, { code: "SURF", name_th: "ผิวไม่สมบูรณ์" }],
+  job_inspections: [
+    { id: "i1", job_id: "j-last", step_sequence: 20, result: "fail", qty_checked: 100, qty_defect: 8, measurement: `วัด 24.1 ${XSS}`, defect_type_code: "DIM", defect_type_name: "ขนาดไม่ได้สเปค",
+      description: `เกินเกณฑ์ ${XSS}`, ncr_id: "ncr-1", ncr_no: "TEST-QA001/26", inspected_at: "2026-10-07T04:00:00Z", inspected_by_name: "ทดสอบ พนักงาน QA" },
+  ],
   job_history: [
     { id: 2, job_id: "j-can", code: "TEST-JB-26-005", action: "cancel", version: 2, status_after: "cancelled", step_sequence: null, note: `เหตุผล ${XSS}`, changed_by_name: "ทดสอบ พนักงานวางแผน", created_at: "2026-10-07T04:00:00Z" },
     { id: 1, job_id: "j-can", code: "TEST-JB-26-005", action: "create", version: 1, status_after: "open", step_sequence: null, note: "", changed_by_name: "ทดสอบ พนักงานวางแผน", created_at: "2026-10-07T01:00:00Z" },
@@ -111,7 +116,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 const text = (html) => String(html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 test("every error code the job migration can raise has a Thai message that is not hidden by another key", () => {
-  const sql = ["20261007050000_factory_job_workflow.sql", "20261007060000_factory_cancel_and_return.sql"]
+  const sql = ["20261007050000_factory_job_workflow.sql", "20261007060000_factory_cancel_and_return.sql", "20261007070000_factory_qc_ncr.sql"]
     .map((file) => fs.readFileSync(`supabase/migrations/${file}`, "utf8")).join("\n");
   const codes = [...new Set([...sql.matchAll(/raise exception '((?:INVALID_)?JOB_[A-Z_]+)'/g)].map((match) => match[1]))];
   assert.ok(codes.length >= 19, `found ${codes.length} codes`);
@@ -178,15 +183,38 @@ test("only the department that owns the next step gets the form; others are told
   assert.doesNotMatch(rb.body, /id="jb-cancel-form"/, "the production line cannot cancel");
 });
 
-test("the QC step is run by the QA department and the last step asks for the real output", async () => {
+test("the QC step is run by the QA department through the inspection form, not the plain step button", async () => {
   const qa = await render("job", { query: "jb=j-last", dept: "QA" });
-  assert.match(qa.body, /id="jb-step-form"/);
-  assert.match(qa.body, /id="jb-output"/);
+  assert.match(qa.body, /id="jb-qc-form"/);
+  assert.doesNotMatch(qa.body, /id="jb-step-form"/, "the plain step form is not offered for a QC step");
+  assert.match(qa.body, /id="jb-output"/, "the last step still asks for the real output");
   assert.match(qa.body, /placeholder="100"/);
   assert.match(qa.body, /ระบบรับผลผลิตเข้าคลัง คลังยางเส้นยาว \(SR\)/);
   assert.match(qa.body, /\(แผนก QA\)/, "the QC work center shows its department");
-  const rb = await render("job", { query: "jb=j-last", dept: "RB" });
-  assert.doesNotMatch(rb.body, /id="jb-step-form"/);
+  assert.match(qa.body, /name="result" value="pass" checked/);
+  assert.match(qa.body, /name="result" value="fail"/);
+  assert.match(qa.body, /<option value="DIM">ขนาดไม่ได้สเปค<\/option>/, "the NCR defect types are offered");
+  assert.match(qa.body, /id="jb-qc-fail-fields" hidden/, "the failure fields stay hidden until the result is a failure");
+  assert.match(qa.body, /name="qty_checked"[^>]*value="100"/, "the checked quantity starts from the job quantity");
+  for (const dept of ["RB", "PP", "SR"]) {
+    const other = await render("job", { query: "jb=j-last", dept });
+    assert.doesNotMatch(other.body, /id="jb-qc-form"|id="jb-step-form"/, dept);
+    assert.match(text(other.body), /เป็นของแผนก QA/, dept);
+  }
+});
+
+test("a failed inspection is shown to everyone: the waiting notice, the table and the NCR link, all escaped", async () => {
+  for (const dept of ["QA", "RB", "PP"]) {
+    const view = await render("job", { query: "jb=j-last", dept });
+    assert.match(text(view.body), /ตรวจ QC ไม่ผ่านล่าสุด \(8 จาก 100 KG\) ออก NCR TEST-QA001\/26 แล้ว — ขั้น QC รอตรวจซ้ำ/, dept);
+    assert.match(view.body, /href="#\/ncr\?id=ncr-1">TEST-QA001\/26<\/a>/, `${dept}: the NCR is one click away`);
+    assert.match(view.body, /<h3>ผลตรวจ QC<\/h3>/);
+    assert.match(view.body, /ขนาดไม่ได้สเปค: เกินเกณฑ์ &lt;script&gt;/);
+    assert.doesNotMatch(view.body, /<script>/);
+  }
+  const clean = await render("job", { query: "jb=j-run", dept: "QA" });
+  assert.doesNotMatch(text(clean.body), /รอตรวจซ้ำ/);
+  assert.doesNotMatch(clean.body, /ผลตรวจ QC/, "a job without inspections has no table");
 });
 
 test("finished and cancelled jobs offer nothing; the notices say what happened to the stock", async () => {
@@ -340,6 +368,44 @@ test("cancelling a started job asks about the return of materials and reports ho
   const open = await render("job", { query: "jb=j-open", dept: "PP" });
   await open.controls["#jb-cancel-form"].handlers.submit({ preventDefault() {} });
   assert.ok(open.log.toasts.some(([message]) => message === "ยกเลิก TEST-JB-26-001 แล้ว"), "an untouched job has nothing to return");
+});
+
+test("the QC form sends a pass, asks before a failure, and keeps a bad entry on the form", async () => {
+  const pass = await render("job", { query: "jb=j-last", dept: "QA" });
+  pass.controls["#jb-qc-form"].__values = { result: "pass", qty_checked: "100", measurement: "ตรวจแล้ว", output_qty: "95" };
+  await pass.controls["#jb-qc-form"].handlers.submit({ preventDefault() {} });
+  assert.deepEqual(plain(pass.log.calls.at(-1)), ["app_factory_record_qc", {
+    p_id: "j-last", p_version: 6, p_sequence: 20, p_result: "pass", p_qty_checked: 100, p_qty_defect: 0, p_measurement: "ตรวจแล้ว",
+    p_defect_type_code: null, p_description: "", p_output_qty: 95,
+  }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(pass.log.toasts.some(([message]) => /TEST-JB-26-003 ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว/.test(message)), JSON.stringify(pass.log.toasts));
+
+  const failing = { result: "fail", qty_checked: "100", qty_defect: "8", measurement: "", defect_type_code: "DIM", description: "ขนาดเกินเกณฑ์ 8 เส้นจาก 100" };
+  const fail = await render("job", {
+    query: "jb=j-last", dept: "QA",
+    rpc: async (name) => ({ data: name === "app_factory_master_data" ? FIXTURE : { id: "j-last", version: 7, ncr_id: "ncr-2", ncr_no: "TEST-QA002/26" }, error: null }),
+  });
+  fail.controls["#jb-qc-form"].__values = failing;
+  await fail.controls["#jb-qc-form"].handlers.submit({ preventDefault() {} });
+  assert.deepEqual(plain(fail.log.calls.at(-1)), ["app_factory_record_qc", {
+    p_id: "j-last", p_version: 6, p_sequence: 20, p_result: "fail", p_qty_checked: 100, p_qty_defect: 8, p_measurement: "",
+    p_defect_type_code: "DIM", p_description: "ขนาดเกินเกณฑ์ 8 เส้นจาก 100", p_output_qty: null,
+  }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(fail.log.toasts.some(([message]) => message === "ตรวจ QC ไม่ผ่าน ออก NCR TEST-QA002/26 แล้ว ขั้นนี้รอตรวจซ้ำ"), JSON.stringify(fail.log.toasts));
+
+  const declined = await render("job", { query: "jb=j-last", dept: "QA", confirmAnswer: false });
+  declined.controls["#jb-qc-form"].__values = failing;
+  await declined.controls["#jb-qc-form"].handlers.submit({ preventDefault() {} });
+  assert.ok(!declined.log.calls.some(([name]) => name === "app_factory_record_qc"), "declining the NCR sends nothing");
+
+  const bad = await render("job", { query: "jb=j-last", dept: "QA" });
+  bad.controls["#jb-qc-form"].__values = { ...failing, description: "สั้น" };
+  await bad.controls["#jb-qc-form"].handlers.submit({ preventDefault() {} });
+  assert.ok(!bad.log.calls.some(([name]) => name === "app_factory_record_qc"), "an invalid entry is not sent");
+  assert.match(bad.controls["#jb-form-error"].textContent, /10 ตัวอักษร/);
+  assert.equal(bad.controls["#jb-form-error"].hidden, false);
 });
 
 test("a stale page is redrawn after a conflict, an ordinary error such as short stock keeps the form usable", async () => {
