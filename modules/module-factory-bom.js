@@ -17,7 +17,7 @@
 (function registerFactoryBomViews() {
   const model = window.MNP_FACTORY_MASTER_MODEL;
   const menu = window.MNP_FACTORY_ITEM_MASTER;
-  const { loadData, qty, label, options, notice, docStatus } = window.MNP_FACTORY_UI;
+  const { loadData, qty, label, options, notice, docStatus, typeBadge } = window.MNP_FACTORY_UI;
 
   // ลำดับสำคัญ: friendlyError ใช้คีย์แรกที่ปรากฏอยู่ในข้อความ จึงต้องวางรหัสที่ยาวกว่าไว้ก่อนรหัสที่เป็นส่วนต้นของมัน
   const ERROR_MESSAGES = {
@@ -230,20 +230,41 @@
 
   const itemOption = (item) => [item.id, `${item.code} · ${item.name} (${item.unit_code})`];
 
+  // ขั้นตอนหนึ่งขั้นของโครงสร้าง: ประเภท (RM/WIP/FG/PKG) กำหนดตอนเลือกจากเมนูคลิกขวา และกรองรายการส่วนประกอบให้ตรงประเภทนั้น
+  // ลำดับบนจอ (บนสุด = ขั้นที่ 1) คือ line_no ที่ส่งเข้า RPC (unnest ... with ordinality จึงเรียงตามที่ส่ง)
   function lineRowHtml(line, index, components) {
     const component = components.find((item) => item.id === line.component_id);
-    return `<tr data-bom-row>
-        <td data-label="#">${index + 1}</td>
-        <td data-label="ส่วนประกอบ"><label class="sr-only" for="fm-line-c-${index}">ส่วนประกอบบรรทัด ${index + 1}</label>
-          <select class="select" id="fm-line-c-${index}" data-field="component_id"><option value="">— เลือกส่วนประกอบ —</option>${options(components.map(itemOption), line.component_id)}</select></td>
-        <td data-label="ปริมาณ"><label class="sr-only" for="fm-line-q-${index}">ปริมาณบรรทัด ${index + 1}</label>
-          <input class="input" id="fm-line-q-${index}" data-field="quantity" type="number" inputmode="decimal" min="0.0001" max="1000000000" step="any" value="${escapeHtml(line.quantity ?? "")}"></td>
-        <td data-label="หน่วย"><span data-unit>${escapeHtml(component?.unit_code ?? "—")}</span></td>
-        <td data-label="เผื่อสูญเสีย (%)"><label class="sr-only" for="fm-line-s-${index}">เผื่อสูญเสียบรรทัด ${index + 1}</label>
-          <input class="input" id="fm-line-s-${index}" data-field="scrap_percent" type="number" inputmode="decimal" min="0" max="99.99" step="any" value="${escapeHtml(line.scrap_percent ?? 0)}"></td>
-        <td data-label=""><button class="btn danger small" type="button" data-remove-line aria-label="ลบบรรทัด ${index + 1}">ลบ</button></td>
-      </tr>`;
+    const type = line.type || component?.item_type || "";
+    const choices = components.filter((item) => !type || item.item_type === type);
+    const typeName = type ? label(model.ITEM_TYPES, type) : "ส่วนประกอบ";
+    return `<li class="fm-node" data-bom-row data-type="${escapeHtml(type)}">
+        <span class="fm-step-no" aria-hidden="true">${index + 1}</span>
+        <div class="fm-node-body">
+          <div class="fm-node-head">
+            <strong>ขั้นตอนที่ ${index + 1}</strong>${type ? typeBadge(type) : ""}
+            <span class="fm-node-tools">
+              <button class="btn secondary small" type="button" data-add-after="${index}" aria-haspopup="menu" aria-label="เพิ่มขั้นตอนต่อจากขั้นตอนที่ ${index + 1}">＋ เพิ่มต่อ</button>
+              <button class="btn danger small" type="button" data-remove-line aria-label="ลบขั้นตอนที่ ${index + 1}">ลบ</button>
+            </span>
+          </div>
+          <div class="fm-node-fields">
+            <div class="field fm-node-component"><label for="fm-line-c-${index}">${escapeHtml(typeName)}</label>
+              <select class="select" id="fm-line-c-${index}" data-field="component_id"><option value="">— เลือก${escapeHtml(typeName)} —</option>${options(choices.map(itemOption), line.component_id)}</select></div>
+            <div class="field"><label for="fm-line-q-${index}">ปริมาณ</label>
+              <input class="input" id="fm-line-q-${index}" data-field="quantity" type="number" inputmode="decimal" min="0.0001" max="1000000000" step="any" value="${escapeHtml(line.quantity ?? "")}"></div>
+            <div class="field"><label>หน่วย</label><span class="fm-node-unit" data-unit>${escapeHtml(component?.unit_code ?? "—")}</span></div>
+            <div class="field"><label for="fm-line-s-${index}">เผื่อสูญเสีย (%)</label>
+              <input class="input" id="fm-line-s-${index}" data-field="scrap_percent" type="number" inputmode="decimal" min="0" max="99.99" step="any" value="${escapeHtml(line.scrap_percent ?? 0)}"></div>
+          </div>
+        </div>
+      </li>`;
   }
+
+  // เมนูเลือกประเภทของขั้นตอนถัดไป (คลิกขวา หรือกดปุ่ม ＋ สำหรับจอสัมผัส/คีย์บอร์ด) — วางในกรอบเดียวกับโครงสร้างตามกฎ data-popup ของ app.js
+  const typeMenuHtml = () => `<div class="fm-struct-menu" id="fm-struct-menu" role="menu" aria-label="เลือกประเภทของขั้นตอนถัดไป" data-popup hidden>
+      <div class="fm-struct-menu-title" id="fm-struct-menu-title"></div>
+      ${Object.entries(model.ITEM_TYPES).map(([type, name]) => `<button class="fm-struct-menu-item" type="button" role="menuitem" data-menu-type="${escapeHtml(type)}"><span class="badge fm-type fm-type-${escapeHtml(type)}">${escapeHtml(type)}</span><span>${escapeHtml(name)}</span></button>`).join("")}
+    </div>`;
 
   function formHtml(data, ctx) {
     const { existing, parentId, lines, copiedFrom } = ctx;
@@ -277,12 +298,22 @@
             <div class="field"><label for="fm-bom-note">หมายเหตุ</label>
               <textarea class="textarea" id="fm-bom-note" name="note" rows="2" maxlength="1000">${escapeHtml(ctx.note)}</textarea></div>
           </div>
-          <h3>ส่วนประกอบ</h3>
-          <div class="table-wrap"><table class="fm-lines">
-            <thead><tr><th>#</th><th>ส่วนประกอบ</th><th>ปริมาณ</th><th>หน่วย</th><th>เผื่อสูญเสีย (%)</th><th><span class="sr-only">ลบ</span></th></tr></thead>
-            <tbody id="fm-bom-lines">${lines.map((line, index) => lineRowHtml(line, index, components)).join("")}</tbody></table></div>
-          <div class="fm-actions"><button class="btn secondary small" type="button" id="fm-add-line">＋ เพิ่มส่วนประกอบ</button></div>
-          <p class="muted small">ปริมาณของแต่ละบรรทัดเป็นหน่วยนับฐานของส่วนประกอบนั้น (ระบบไม่แปลงหน่วยในสูตร) · เผื่อสูญเสียเป็นแบบบวกเพิ่มจากปริมาณสุทธิ · ห้ามเลือกสินค้าหลักเป็นส่วนประกอบ ห้ามซ้ำ และห้ามสูตรวนซ้ำกับสูตรอื่น (ระบบตรวจตอนบันทึก)</p>
+          <h3>โครงสร้างส่วนประกอบ</h3>
+          <p class="muted small">เรียงจากบนลงล่าง ขั้นตอนที่ 1 อยู่บนสุด · <strong>คลิกขวา</strong>ที่สินค้าหลักหรือขั้นตอนใดๆ เพื่อเลือกประเภท (RM / WIP / FG / PKG) ของขั้นตอนถัดไป · บนมือถือหรือคีย์บอร์ดใช้ปุ่ม “＋ เพิ่มต่อ”</p>
+          <div class="fm-struct" id="fm-struct">
+            <div class="fm-node fm-node-root" data-struct-root tabindex="0">
+              <span class="fm-step-no fm-root-mark" aria-hidden="true">★</span>
+              <div class="fm-node-body">
+                <div class="fm-node-head"><strong id="fm-root-title">${parent ? escapeHtml(`${parent.code} · ${parent.name}`) : "เลือกสินค้าหลักด้านบนก่อน"}</strong><span class="muted small">สินค้าหลัก</span>
+                  <span class="fm-node-tools"><button class="btn secondary small" type="button" data-add-after="-1" aria-haspopup="menu">＋ เพิ่มขั้นตอนที่ 1</button></span></div>
+              </div>
+            </div>
+            <ol class="fm-struct-list" id="fm-bom-lines">${lines.map((line, index) => lineRowHtml(line, index, components)).join("")}</ol>
+            <p class="fm-struct-empty muted small" id="fm-struct-empty"${lines.length ? " hidden" : ""}>ยังไม่มีขั้นตอน — คลิกขวาที่สินค้าหลักหรือกดปุ่ม ＋ เพื่อเลือกประเภทของขั้นตอนที่ 1</p>
+            ${typeMenuHtml()}
+          </div>
+          <div class="fm-actions"><button class="btn secondary small" type="button" id="fm-add-line" aria-haspopup="menu">＋ เพิ่มขั้นตอนถัดไป</button></div>
+          <p class="muted small">ปริมาณของแต่ละขั้นตอนเป็นหน่วยนับฐานของส่วนประกอบนั้น (ระบบไม่แปลงหน่วยในสูตร) · เผื่อสูญเสียเป็นแบบบวกเพิ่มจากปริมาณสุทธิ · ห้ามเลือกสินค้าหลักเป็นส่วนประกอบ ห้ามซ้ำ และห้ามสูตรวนซ้ำกับสูตรอื่น (ระบบตรวจตอนบันทึก)</p>
           <div class="fm-actions">
             <button class="btn secondary" type="submit" data-intent="draft">บันทึกฉบับร่าง</button>
             <button class="btn" type="submit" data-intent="submit">บันทึกและส่งขออนุมัติ</button>
@@ -296,6 +327,7 @@
 
   // บรรทัดในฟอร์มตอนนี้ (อ่านจาก DOM) — ใช้ก่อนวาดบรรทัดใหม่และตอนบันทึก
   const readLines = (root) => [...root.querySelectorAll("[data-bom-row]")].map((row) => ({
+    type: row.dataset.type,
     component_id: row.querySelector('[data-field="component_id"]').value,
     quantity: row.querySelector('[data-field="quantity"]').value,
     scrap_percent: row.querySelector('[data-field="scrap_percent"]').value,
@@ -319,6 +351,7 @@
     const syncParent = () => {
       const item = (data.items ?? []).find((row) => row.id === parentId);
       form.querySelector("#fm-bom-output-unit").textContent = item?.unit_code ?? "หน่วยของสินค้าหลัก";
+      form.querySelector("#fm-root-title").textContent = item ? `${item.code} · ${item.name}` : "เลือกสินค้าหลักด้านบนก่อน";
       const approved = parentId ? approvedBomOf(data, parentId) : null;
       form.querySelector("#fm-bom-item-hint").textContent = approved && !editing
         ? `Item นี้มีโครงสร้างที่อนุมัติแล้ว (Rev. ${approved.revision}) การอนุมัติฉบับใหม่จะเลิกใช้ Rev. ${approved.revision}`
@@ -329,6 +362,7 @@
       const components = model.componentChoices(data.items, parentId);
       const safe = lines.map((line) => (line.component_id === parentId ? { ...line, component_id: "" } : line));
       body.innerHTML = safe.map((line, index) => lineRowHtml(line, index, components)).join("");
+      syncEmpty();
     };
 
     parentSelect.addEventListener("change", () => {
@@ -337,11 +371,75 @@
       syncParent();
       redrawLines(lines);
     });
-    form.querySelector("#fm-add-line").addEventListener("click", () => {
+    // เมนูเลือกประเภท: เปิดจากคลิกขวา/ปุ่ม ＋ แล้วแทรกขั้นตอนใหม่ต่อจากขั้นตอนที่เลือก (afterIndex -1 = ขั้นตอนที่ 1)
+    const struct = form.querySelector("#fm-struct");
+    const typeMenu = form.querySelector("#fm-struct-menu");
+    const emptyHint = form.querySelector("#fm-struct-empty");
+    let menuAfter = -1;
+    let menuReturn = null;
+    const menuItems = () => [...typeMenu.querySelectorAll("[data-menu-type]")];
+    const syncEmpty = () => { emptyHint.hidden = body.children.length > 0; };
+    const closeMenu = ({ restoreFocus = false } = {}) => {
+      if (typeMenu.hidden) return;
+      closePopup(typeMenu);
+      if (restoreFocus) menuReturn?.focus();
+    };
+    const openMenu = (afterIndex, x, y, returnTo) => {
+      const count = body.children.length;
+      menuAfter = Math.min(Math.max(afterIndex, -1), count - 1);
+      menuReturn = returnTo ?? null;
+      typeMenu.querySelector("#fm-struct-menu-title").textContent = menuAfter < 0
+        ? "เพิ่มเป็นขั้นตอนที่ 1 (ประเภท)"
+        : `เพิ่มเป็นขั้นตอนที่ ${menuAfter + 2} ต่อจากขั้นตอนที่ ${menuAfter + 1} (ประเภท)`;
+      typeMenu.hidden = false;
+      const box = struct.getBoundingClientRect();
+      const left = Math.max(4, Math.min(x - box.left, box.width - typeMenu.offsetWidth - 4));
+      typeMenu.style.left = `${left}px`;
+      typeMenu.style.top = `${Math.max(0, y - box.top)}px`;
+      menuItems()[0]?.focus();
+    };
+    const openFromElement = (element, afterIndex) => {
+      const rect = element.getBoundingClientRect();
+      openMenu(afterIndex, rect.left, rect.bottom + 4, element);
+    };
+    // data-add-after = ปุ่ม ＋ ของแต่ละขั้นตอน/สินค้าหลัก · #fm-add-line = ต่อท้ายสุด (ใช้แทนคลิกขวาบนจอสัมผัส)
+    struct.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-add-after]");
+      if (button) openFromElement(button, Number(button.dataset.addAfter));
+    });
+    form.querySelector("#fm-add-line").addEventListener("click", (event) => openFromElement(event.currentTarget, body.children.length - 1));
+    struct.addEventListener("contextmenu", (event) => {
+      // ช่องกรอก/รายการเลือกคงเมนูของเบราว์เซอร์ (คัดลอก/วาง) คลิกขวาที่อื่นของโครงสร้างจึงเลือกประเภทได้
+      if (event.target.closest("input, select, textarea, .fm-struct-menu")) return;
+      const node = event.target.closest("[data-bom-row], [data-struct-root]");
+      event.preventDefault();
+      const rows = [...body.children];
+      const afterIndex = node?.hasAttribute("data-struct-root") ? -1 : node ? rows.indexOf(node) : rows.length - 1;
+      // คีย์เมนู (Shift+F10) ส่งพิกัด 0,0 จึงใช้ตำแหน่งของ node แทน
+      if (event.clientX === 0 && event.clientY === 0 && node) return openFromElement(node, afterIndex);
+      openMenu(afterIndex, event.clientX, event.clientY, node?.querySelector("[data-add-after]") ?? null);
+    });
+    // กรอบเดียวกับเมนูจึงไม่ถูกกฎ closePopup ของ app.js ปิดให้ ปิดเองเมื่อแตะ/คลิกนอกเมนูหรือกด Esc/Tab (ไม่ปิดด้วย blur)
+    struct.addEventListener("pointerdown", (event) => { if (!typeMenu.contains(event.target)) closeMenu(); });
+    typeMenu.addEventListener("keydown", (event) => {
+      const items = menuItems();
+      const at = items.indexOf(document.activeElement);
+      if (event.key === "Escape") { event.preventDefault(); closeMenu({ restoreFocus: true }); }
+      else if (event.key === "Tab") closeMenu();
+      else if (event.key === "ArrowDown") { event.preventDefault(); items[(at + 1) % items.length].focus(); }
+      else if (event.key === "ArrowUp") { event.preventDefault(); items[(at - 1 + items.length) % items.length].focus(); }
+      else if (event.key === "Home") { event.preventDefault(); items[0].focus(); }
+      else if (event.key === "End") { event.preventDefault(); items[items.length - 1].focus(); }
+    });
+    typeMenu.addEventListener("click", (event) => {
+      const choice = event.target.closest("[data-menu-type]");
+      if (!choice) return;
       const lines = readLines(root);
-      if (lines.length >= model.BOM_MAX_LINES) return showErrors([`ส่วนประกอบมีได้ไม่เกิน ${model.BOM_MAX_LINES} บรรทัด`]);
-      redrawLines([...lines, { component_id: "", quantity: "", scrap_percent: 0 }]);
-      body.querySelector("[data-bom-row]:last-child select")?.focus();
+      closeMenu();
+      if (lines.length >= model.BOM_MAX_LINES) return showErrors([`ส่วนประกอบมีได้ไม่เกิน ${model.BOM_MAX_LINES} ขั้นตอน`]);
+      lines.splice(menuAfter + 1, 0, { type: choice.dataset.menuType, component_id: "", quantity: "", scrap_percent: 0 });
+      redrawLines(lines);
+      body.children[menuAfter + 1]?.querySelector("select")?.focus();
     });
     body.addEventListener("click", (event) => {
       const button = event.target.closest("[data-remove-line]");
@@ -394,11 +492,12 @@
 
   // ค่าเริ่มต้นของฟอร์ม: แก้ฉบับร่าง (bom) · คัดลอกจากฉบับอื่น (from) · ว่าง
   function formContext(data, params) {
-    const blank = { existing: null, parentId: "", outputQty: 1, effectiveDate: todayIso(), note: "", lines: [{ component_id: "", quantity: "", scrap_percent: 0 }], copiedFrom: null };
+    const blank = { existing: null, parentId: "", outputQty: 1, effectiveDate: todayIso(), note: "", lines: [], copiedFrom: null };
     const toLines = (bomId, items) => {
+      const itemById = new Map((items ?? []).map((item) => [item.id, item]));
       const active = new Set((items ?? []).filter((item) => item.status === "active").map((item) => item.id));
       return linesOf(data, bomId).filter((line) => active.has(line.component_id))
-        .map((line) => ({ component_id: line.component_id, quantity: line.quantity, scrap_percent: line.scrap_percent }));
+        .map((line) => ({ type: itemById.get(line.component_id)?.item_type ?? "", component_id: line.component_id, quantity: line.quantity, scrap_percent: line.scrap_percent }));
     };
     const editId = params.get("bom");
     if (editId) {
@@ -414,7 +513,7 @@
       const open = openBomOf(data, source.item_id);
       if (open) return { blockedBy: open };
       const lines = toLines(source.id, data.items);
-      return { ...blank, parentId: source.item_id, outputQty: source.output_qty, note: "", lines: lines.length ? lines : blank.lines, copiedFrom: source };
+      return { ...blank, parentId: source.item_id, outputQty: source.output_qty, note: "", lines, copiedFrom: source };
     }
     return blank;
   }
