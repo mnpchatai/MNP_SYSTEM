@@ -15,6 +15,7 @@
 (function registerFactoryProductionViews() {
   const model = window.MNP_FACTORY_PRODUCTION_MODEL;
   const master = window.MNP_FACTORY_MASTER_MODEL;
+  const materials = window.MNP_FACTORY_MATERIAL_MODEL;
   const menu = window.MNP_FACTORY_ITEM_MASTER;
   const { loadData, options, notice } = window.MNP_FACTORY_UI;
 
@@ -182,6 +183,31 @@
       </section>`;
   }
 
+  // ขั้น 3 (แผนก ST): วัตถุดิบที่ขาดตามผลสำรวจและใบสั่งวัตถุดิบของใบนี้ — แสดงให้ทุกแผนกเห็น ปุ่มออกใบอยู่ที่หน้าใบสั่งวัตถุดิบ
+  function materialSectionHtml(data, order) {
+    if (!["released", "in_progress"].includes(order.status) || !materials) return "";
+    const needs = materials.materialNeeds(data, order);
+    const linked = materials.ordersOf(data.material_orders, order.id);
+    const needRows = (needs ?? []).map((need) => `<tr>
+        <td><strong>${escapeHtml(need.code)}</strong> <span class="muted small">${escapeHtml(need.name)}</span></td>
+        <td class="right fm-short">${q4(need.net)} ${escapeHtml(need.unit_code)}</td>
+        <td class="right">${q4(need.onOrder)}</td>
+        <td>${need.purchasable ? (need.suggest > 0 ? `<strong>ควรสั่งเพิ่ม ${q4(need.suggest)}</strong>` : "สั่งครบแล้ว") : "ต้องผลิตเอง (ทำ BOM)"}</td>
+      </tr>`).join("");
+    const linkedRows = linked.map((material) => `<tr>
+        <td><a href="${escapeHtml(menu.url("material-view", { mo: material.id }))}"><strong>${escapeHtml(material.code)}</strong></a></td>
+        <td><span class="badge ${escapeHtml(materials.BADGE_CLASS[material.status] ?? "")}">${escapeHtml(materials.MATERIAL_STATUSES[material.status] ?? material.status)}</span></td>
+        <td>${formatDate(material.expected_date)}</td><td class="right">${(material.lines ?? []).length} รายการ</td></tr>`).join("");
+    return `<section class="card po-material">
+        <h2>สั่งวัตถุดิบ (ขั้น 3 แผนก ST)</h2>
+        ${needs === null ? notice("ใบนี้ไม่มี BOM ที่อนุมัติแล้ว จึงคำนวณวัตถุดิบที่ขาดไม่ได้")
+          : needRows ? `<div class="table-wrap"><table><thead><tr><th>วัตถุดิบที่ขาด</th><th class="right">ขาด</th><th class="right">สั่งไว้แล้ว (ยังไม่รับ)</th><th>สถานะ</th></tr></thead><tbody>${needRows}</tbody></table></div>`
+          : '<p class="muted small">วัตถุดิบและชิ้นงานตามสูตรมีเพียงพอ ไม่ต้องสั่งเพิ่ม</p>'}
+        ${linkedRows ? `<h3>ใบสั่งวัตถุดิบของใบนี้</h3><div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>สถานะ</th><th>คาดว่าจะได้รับ</th><th class="right">รายการ</th></tr></thead><tbody>${linkedRows}</tbody></table></div>` : ""}
+        <div class="fm-actions"><a class="btn secondary" href="${escapeHtml(menu.url("material-new", { wo: order.id }))}">ออกใบสั่งวัตถุดิบ (แผนก ST)</a></div>
+      </section>`;
+  }
+
   function timelineHtml(entries) {
     if (!entries.length) return '<p class="muted small">ยังไม่มีประวัติ (ใบจากชุดทดลองยังไม่เคยเปลี่ยนสถานะผ่านหน้าจอ)</p>';
     return `<div class="table-wrap"><table>
@@ -203,7 +229,7 @@
       case "submitted": return notice("ส่งให้ฝ่ายวางแผนแล้ว รอฝ่ายวางแผนรับใบ (ถอนกลับมาแก้ไขได้จนกว่าจะรับ)");
       case "planning": return notice("ฝ่ายวางแผนรับใบแล้ว กำลังสำรวจคงคลัง จัดทำ/เลือก BOM และ Routing");
       case "planned": return notice("วางแผนแล้ว ผูก BOM และ Routing เรียบร้อย รอออกใบสั่งงานให้ฝ่ายผลิต");
-      case "released": return notice(`ออกใบสั่งงานแล้ว${order.work_order_no ? ` เลขที่ ${order.work_order_no}` : ""} — ขั้นถัดไปเป็นงานของแผนก ST (สั่งวัตถุดิบ) และสายการผลิต (ยังไม่เปิดในรอบนี้)`);
+      case "released": return notice(`ออกใบสั่งงานแล้ว${order.work_order_no ? ` เลขที่ ${order.work_order_no}` : ""} — ขั้นถัดไปคือแผนก ST สั่งวัตถุดิบ (ดูหัวข้อ “สั่งวัตถุดิบ” ด้านล่าง) แล้วสายการผลิต (ยังไม่เปิดในรอบนี้)`);
       default: return "";
     }
   }
@@ -381,7 +407,7 @@
         const order = byId(data.production, id);
         if (!order) return frame.paint(gone(back));
         const planning = ["planning", "planned"].includes(order.status) && dept() === model.PLANNING_DEPARTMENT;
-        const root = frame.paint({ back, subtitle: order.code, body: `${actionsHtml(data, order)}${planning ? planFormHtml(data, order) : ""}${detailHtml(data, order)}` });
+        const root = frame.paint({ back, subtitle: order.code, body: `${actionsHtml(data, order)}${planning ? planFormHtml(data, order) : ""}${detailHtml(data, order)}${materialSectionHtml(data, order)}` });
         return bindDetail(root, data, order);
       }
       const root = frame.paint({ actions: newOrderAction(), body: listHtml(data, params) });
