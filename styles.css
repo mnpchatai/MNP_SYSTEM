@@ -1239,3 +1239,87 @@ th.right, td.right { text-align: right; }
   .fm-lines td:nth-child(6) { grid-column: 1 / -1; }
   .fm-lines td:nth-child(6)::before { content: none; }
 }
+
+/* ฝ่ายโรงงานแบบกะทัดรัด (modules/module-factory.js ห่อทุกหน้าด้วย .factory-page)
+   ลดระยะ ขนาดตัวอักษรหัวเรื่อง การ์ด ตาราง และแถบโหมดทดสอบ ให้เห็นเนื้อหาในจอเดียวโดยไม่ต้องเลื่อนบ่อย
+   ใช้ :has เพื่อจำกัดเฉพาะหน้าฝ่ายโรงงาน โมดูลอื่นไม่เปลี่ยน ขนาดตัวอักษรของช่องกรอกไม่แตะ (กัน iOS ซูมเอง) */
+.content:has(.factory-page) { padding: 16px 24px 40px; }
+.content:has(.factory-page) .sandbox-banner { margin-bottom: 10px; padding: 6px 12px; gap: 6px 12px; border-radius: 8px; font-size: 12px; }
+.content:has(.factory-page) .sandbox-banner-copy { flex: 1 1 320px; min-width: 0; gap: 0; }
+.content:has(.factory-page) .sandbox-banner-copy span { font-size: 11px; line-height: 1.4; }
+.content:has(.factory-page) .sandbox-banner-actions { gap: 6px; }
+.content:has(.factory-page) .sandbox-banner-actions .input { min-width: 170px; min-height: 32px; padding: 4px 10px; }
+.content:has(.factory-page) .sandbox-banner .btn { min-height: 32px; }
+.factory-page .request-back-link { min-height: 30px; margin-bottom: 8px; padding: 0 14px 0 10px; font-size: 13px; }
+.factory-page .page-heading { margin-bottom: 12px; }
+.factory-page .request-module-header { padding: 12px 16px; border-radius: 12px; }
+.factory-page .request-module-title { gap: 12px; }
+.factory-page .request-module-title .type-card-badge { flex-basis: 36px; width: 36px; height: 36px; border-radius: 8px; }
+.factory-page .request-module-title .type-card-badge svg { width: 20px; height: 20px; }
+.factory-page .page-heading h1 { margin: 1px 0; font-size: clamp(18px, 2vw, 22px); line-height: 1.3; }
+.factory-page .page-heading p { font-size: 12px; line-height: 1.45; }
+.factory-page .eyebrow { font-size: 11px; line-height: 1.3; }
+.factory-page .card { padding: 14px; }
+.factory-page .card.factory-item-card { padding: 0; }
+.factory-page .card h2, .factory-page .card h3 { font-size: 15px; }
+.factory-page .factory-item-card { margin-bottom: 12px; }
+.factory-page .factory-master > summary { min-height: 38px; font-size: 15px; }
+.factory-page .request-type-heading { margin-bottom: 8px; }
+.factory-page .request-type-heading h2 { font-size: 15px; }
+.factory-page .type-grid { gap: 10px; }
+.factory-page .factory-dept-grid .type-card { min-height: 92px; padding: 12px 14px; gap: 8px; border-radius: 12px; box-shadow: 0 6px 14px rgba(15, 23, 42, .14); }
+.factory-page .factory-dept-grid .type-card:hover { transform: none; }
+.factory-page .factory-dept-grid .type-card-badge { width: 32px; height: 32px; border-radius: 8px; }
+.factory-page .factory-dept-grid .type-card-body strong { font-size: 15px; line-height: 1.3; }
+.factory-page .factory-dept-grid .type-card-body small { margin-top: 2px; line-height: 1.4; }
+.factory-page .filters { margin-bottom: 10px; gap: 6px; }
+.factory-page .filter { min-height: 32px; padding: 0 10px; }
+.factory-page .summary-grid { margin-bottom: 12px; }
+.factory-page .summary { min-height: 0; padding: 10px 14px; }
+.factory-page .summary strong { margin: 4px 0 2px; font-size: 22px; line-height: 1.2; }
+.factory-page .field { gap: 4px; margin-bottom: 10px; }
+.factory-page .field label { font-size: 13px; }
+.factory-page .input, .factory-page .select { min-height: 36px; padding: 6px 10px; }
+.factory-page .textarea { min-height: 76px; padding: 6px 10px; }
+.factory-page .btn { min-height: 32px; padding: 0 12px; }
+.factory-page .btn.small { min-height: 30px; padding: 0 10px; }
+.factory-page th { padding: 7px 10px; }
+.factory-page td { padding: 8px 10px; }
+.factory-page .empty { padding: 28px 16px; }
+.factory-page .definition { padding: 8px 10px; }
+.factory-page .fm-notice { margin-bottom: 10px; padding: 8px 12px; line-height: 1.5; }
+.factory-page .fm-toolbar { margin: 0 0 10px; gap: 6px; }
+.factory-page .fm-table-footer { margin-top: 8px; gap: 8px; }
+.factory-page .fm-actions { margin-top: 8px; gap: 6px; }
+.factory-page .fm-danger-zone { margin-top: 10px; }
+.factory-page .fm-detail-head { margin: 6px 0 4px; }
+.factory-page .fm-detail h3 { margin: 12px 0 6px; }
+.factory-page .fm-form-error { margin-bottom: 10px; padding: 8px 12px; }
+.factory-page .fm-steps { margin-top: 8px; gap: 6px; }
+.factory-page .fm-steps li { padding: 8px 12px; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; }
+.factory-page .fm-step-no { width: 32px; height: 32px; }
+.factory-page .fm-cards { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.factory-page .fm-order h2 { margin: 2px 0; font-size: 15px; }
+.factory-page .fm-order-qty { margin: 6px 0 4px; }
+.factory-page .fm-order-qty strong { font-size: 20px; }
+.factory-page .fm-progress { height: 8px; }
+@media (min-width: 761px) {
+  /* แถบบนและแถบข้างเตี้ยลง เพิ่มพื้นที่เนื้อหาในแนวตั้ง (มือถือคงขนาดแตะเดิม) */
+  .app-shell:has(.factory-page) .topbar, .app-shell:has(.factory-page) .sidebar .brand { height: 52px; }
+  .app-shell:has(.factory-page) .nav { padding-top: 10px; padding-bottom: 10px; }
+  .app-shell:has(.factory-page) .nav-link { min-height: 38px; }
+  .app-shell:has(.factory-page) .nav-sub { margin-bottom: 4px; }
+  .app-shell:has(.factory-page) .nav-sub .factory-master > summary, .app-shell:has(.factory-page) .nav-sub .factory-folder > summary, .app-shell:has(.factory-page) .nav-sub .factory-entry { min-height: 34px; }
+  .app-shell:has(.factory-page) .nav-sub .factory-entries li::before { top: 17px; }
+}
+@media (max-width: 760px) {
+  .content:has(.factory-page) { padding: 12px 12px 48px; }
+  .content:has(.factory-page) .sandbox-banner-copy span { display: none; }
+  .factory-page .request-module-header { padding: 10px 12px; }
+  .factory-page .fm-steps li { grid-template-columns: 32px minmax(0, 1fr); }
+  .factory-page .input, .factory-page .select { min-height: 40px; }
+  .factory-page .btn, .factory-page .filter { min-height: 36px; }
+  .factory-page .btn.small { min-height: 34px; }
+  .factory-page .fm-lines tbody tr { padding: 8px 0; gap: 6px 8px; }
+  .factory-page .fm-lines td { padding: 0; }
+}
