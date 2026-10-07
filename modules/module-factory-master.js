@@ -85,6 +85,7 @@
     if (!items.length) {
       return `<section class="card"><div class="empty">ยังไม่มี Item ในโหมดทดสอบ<br><small>เติมข้อมูลตัวอย่าง 16 รายการ (ข้อมูลสมมติจากแอปที่ส่งมา ไม่ใช่ข้อมูลจริง) หรือเพิ่ม Item เอง</small>
           <div class="fm-actions"><button class="btn" type="button" id="fm-seed">เติมข้อมูลตัวอย่าง</button>
+          <button class="btn secondary" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
           <a class="btn secondary" href="${escapeHtml(menu.url("item-new"))}">＋ เพิ่ม Item ใหม่</a></div></div></section>`;
     }
 
@@ -135,7 +136,11 @@
       <section class="card fm-danger-zone">
         <h2>ข้อมูลทดสอบของฝ่ายโรงงาน</h2>
         <p class="muted small">ล้าง Item, BOM, Routing, คลัง และใบสั่งผลิตที่เป็นข้อมูลทดสอบทั้งหมด (ข้อมูลจริงไม่ถูกแตะ) แล้วเติมข้อมูลตัวอย่างใหม่ได้</p>
-        <button class="btn danger small" type="button" id="fm-purge">ล้างข้อมูลทดสอบฝ่ายโรงงาน</button>
+        <div class="fm-actions">
+          <button class="btn secondary small" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
+          <button class="btn danger small" type="button" id="fm-purge">ล้างข้อมูลทดสอบฝ่ายโรงงาน</button>
+        </div>
+        <p class="muted small">ชุดทดลอง: สินค้า 5 รายการ พร้อม BOM หลายชั้น Routing ตามแผนก (RB → SR/QC → GR · PT · BG → PK → WH) ใบสั่งผลิต และยอดยกมา เติมซ้ำไม่ได้จนกว่าจะล้างข้อมูลทดสอบ</p>
       </section>`;
   }
 
@@ -155,6 +160,20 @@
         const { data, error } = await sb.rpc("app_sandbox_seed_factory");
         if (error) throw error;
         showToast(data?.seeded ? `เติมข้อมูลตัวอย่างแล้ว ${data.items} รายการ` : "มีข้อมูลทดสอบอยู่แล้ว ไม่ได้เติมซ้ำ");
+        await renderRoute();
+      } catch (error) {
+        event.currentTarget.disabled = false;
+        showToast(friendlyError(error), "error");
+      }
+    });
+    root.querySelector("#fm-seed-trial")?.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        const { data, error } = await sb.rpc("app_sandbox_seed_factory_trial");
+        if (error) throw error;
+        showToast(data?.seeded
+          ? `เติมชุดทดลองแล้ว ${data.items} Item · ${data.boms} BOM · ${data.steps} ขั้นตอนการผลิต`
+          : "มีชุดทดลองอยู่แล้ว ไม่ได้เติมซ้ำ");
         await renderRoute();
       } catch (error) {
         event.currentTarget.disabled = false;

@@ -45,7 +45,7 @@ const FIXTURE = {
   ],
 };
 
-function loadFactory(data = FIXTURE) {
+function loadFactory(data = FIXTURE, overrides = {}) {
   const context = vm.createContext({});
   context.window = context;
   Object.assign(context, {
@@ -61,6 +61,7 @@ function loadFactory(data = FIXTURE) {
     Intl,
     location: { hash: "" },
     sb: { rpc: async (name) => ({ data: name === "app_factory_master_data" ? data : null, error: null }) },
+    ...overrides,
   });
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
   return context;
@@ -260,4 +261,58 @@ test("the approval page lists pending BOMs with a review link and the latest dec
 test("the approval page says so when nothing is waiting", async () => {
   const { body } = await render("bom-approvals", "", { ...FIXTURE, boms: FIXTURE.boms.filter((bom) => bom.status !== "pending_approval") });
   assert.match(body, /ไม่มีโครงสร้างสินค้ารออนุมัติ/);
+});
+
+// ---------- ชุดทดลอง 5 สินค้า (20261007020000_factory_trial_five_items.sql) ----------
+test("the item register offers the trial set both when empty and next to existing data", async () => {
+  const empty = (await render("items", "", { ...FIXTURE, items: [], boms: [] })).body;
+  assert.match(empty, /id="fm-seed"/);
+  assert.match(empty, /id="fm-seed-trial"/);
+  const filled = (await render("items")).body;
+  assert.match(filled, /id="fm-seed-trial"/);
+  assert.match(filled, /id="fm-purge"/);
+  assert.doesNotMatch(filled, /id="fm-seed"/, "the sample-data button stays only in the empty state");
+});
+
+// เรียก view รายการ Item แล้วคลิกปุ่ม #fm-seed-trial ด้วยปุ่มจำลอง คืนข้อความ toast และชื่อ RPC ที่ถูกเรียก
+async function clickTrial(rpcResult) {
+  const calls = [];
+  const toasts = [];
+  let renders = 0;
+  const context = loadFactory(FIXTURE, {
+    sb: { rpc: async (name) => { calls.push(name); return name === "app_factory_master_data" ? { data: FIXTURE, error: null } : rpcResult; } },
+    showToast: (message, kind) => toasts.push([message, kind ?? "ok"]),
+    renderRoute: async () => { renders += 1; },
+  });
+  const button = { disabled: false, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  const root = {
+    querySelector: (selector) => (selector === "#fm-seed-trial" ? button : null),
+    querySelectorAll: () => [],
+  };
+  await context.MNP_FACTORY_VIEWS.items({ params: new URLSearchParams(""), frame: { loading: () => {}, paint: () => root } });
+  await button.handlers.click({ currentTarget: button });
+  return { calls, toasts, renders, button };
+}
+
+test("the trial button calls the seed RPC, reports the counts and reloads the page", async () => {
+  const { calls, toasts, renders, button } = await clickTrial({ data: { seeded: true, items: 27, boms: 17, steps: 77 }, error: null });
+  assert.ok(calls.includes("app_sandbox_seed_factory_trial"));
+  assert.deepEqual(toasts, [["เติมชุดทดลองแล้ว 27 Item · 17 BOM · 77 ขั้นตอนการผลิต", "ok"]]);
+  assert.equal(renders, 1);
+  assert.equal(button.disabled, true, "the button stays disabled until the page is reloaded");
+});
+
+test("a repeated trial seed says nothing was added, and a failure re-enables the button with the error", async () => {
+  const repeated = await clickTrial({ data: { seeded: false, items: 27 }, error: null });
+  assert.deepEqual(repeated.toasts, [["มีชุดทดลองอยู่แล้ว ไม่ได้เติมซ้ำ", "ok"]]);
+  const failed = await clickTrial({ data: null, error: { message: "SANDBOX_NOT_ACTIVE" } });
+  assert.deepEqual(failed.toasts, [["SANDBOX_NOT_ACTIVE", "error"]]);
+  assert.equal(failed.button.disabled, false);
+  assert.equal(failed.renders, 0);
+});
+
+test("the trial migration raises only errors the page already knows how to word", () => {
+  const sql = fs.readFileSync("supabase/migrations/20261007020000_factory_trial_five_items.sql", "utf8");
+  const codes = [...new Set([...sql.matchAll(/raise exception '([A-Z_]+)'/g)].map((match) => match[1]))];
+  assert.deepEqual(codes, ["SANDBOX_NOT_ACTIVE"]);
 });
