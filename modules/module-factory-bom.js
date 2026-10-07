@@ -200,7 +200,7 @@
           <div class="field"><label for="fm-produce">ปริมาณที่ต้องการผลิต (${escapeHtml(bom.unit_code)})</label><input class="input" id="fm-produce" type="number" inputmode="decimal" min="0.001" step="any" value="${escapeHtml(produce)}"></div>
         </div>
         <div class="fm-detail-head"><h2>${escapeHtml(bom.name)}</h2><span>Revision ${escapeHtml(bom.revision)} · ${docStatus(bom.status)}${bom.status === "draft" && bom.decision_note ? ' <span class="badge rejected">ถูกส่งกลับ</span>' : ""}</span></div>
-        <p class="muted small">สูตรตั้งต้นต่อ ${q4(bom.output_qty)} ${escapeHtml(bom.unit_code)} · มีผล ${formatDate(bom.effective_date)} · เผื่อสูญเสียเพิ่มจากปริมาณสุทธิ · คำนวณระดับเดียว (ส่วนประกอบที่เป็น WIP ไม่แตกสูตรต่อ)</p>
+        <p class="muted small">สูตรตั้งต้นต่อ ${q4(bom.output_qty)} ${escapeHtml(bom.unit_code)} · มีผล ${formatDate(bom.effective_date)} · เผื่อสูญเสียเพิ่มจากปริมาณสุทธิ · ต้นไม้ด้านล่างแตกสูตรทุกชั้น ส่วนตารางสรุปท้ายหน้าแสดงเฉพาะชั้นแรก (WIP ไม่แตกสูตรต่อ)</p>
         ${bom.note ? `<p class="fm-pre">${escapeHtml(bom.note)}</p>` : ""}
         <dl class="definition-grid">
           <div class="definition"><dt>สร้างโดย</dt><dd>${person(bom.created_by_name, bom.created_at)}</dd></div>
@@ -208,16 +208,21 @@
           ${decided ? `<div class="definition"><dt>ผลการพิจารณา</dt><dd>${person(bom.decided_by_name, bom.decided_at)}${bom.decision_note ? `<br><span class="fm-pre">${escapeHtml(bom.decision_note)}</span>` : ""}</dd></div>` : ""}
         </dl>
         ${bomActionsHtml(data, bom)}
-        <div class="table-wrap"><table>
-          <thead><tr><th>ส่วนประกอบ</th><th>ปริมาณ / สูตร</th><th>เผื่อสูญเสีย</th><th class="right">ปริมาณรวมที่ต้องใช้</th></tr></thead>
-          <tbody>${lines.length ? lines.map((line) => `<tr>
-            <td><a href="${escapeHtml(menu.url("item-list", { id: line.component_id }))}"><strong>${escapeHtml(line.code)}</strong></a><br><span class="muted small">${escapeHtml(line.name)}</span></td>
-            <td>${q4(line.quantity)} ${escapeHtml(line.unit_code)}</td>
-            <td>${q4(line.scrap_percent)}%</td>
-            <td class="right"><strong data-bom-line="${escapeHtml(line.id)}"></strong> ${escapeHtml(line.unit_code)}</td>
-          </tr>`).join("") : '<tr><td colspan="4" class="muted">ยังไม่มีส่วนประกอบในฉบับร่างนี้</td></tr>'}</tbody></table></div>
       </section>
       ${treeSectionHtml(data, bom, produce)}
+      <section class="card fm-detail">
+        <details class="fm-lines"${lines.length ? "" : " open"}>
+          <summary><h3>ตารางสรุปส่วนประกอบระดับเดียว (ชุดเดียวกับชั้นแรกของต้นไม้)</h3></summary>
+          <div class="table-wrap"><table>
+            <thead><tr><th>ส่วนประกอบ</th><th>ปริมาณ / สูตร</th><th>เผื่อสูญเสีย</th><th class="right">ปริมาณรวมที่ต้องใช้</th></tr></thead>
+            <tbody>${lines.length ? lines.map((line) => `<tr>
+              <td><a href="${escapeHtml(menu.url("item-list", { id: line.component_id }))}"><strong>${escapeHtml(line.code)}</strong></a><br><span class="muted small">${escapeHtml(line.name)}</span></td>
+              <td>${q4(line.quantity)} ${escapeHtml(line.unit_code)}</td>
+              <td>${q4(line.scrap_percent)}%</td>
+              <td class="right"><strong data-bom-line="${escapeHtml(line.id)}"></strong> ${escapeHtml(line.unit_code)}</td>
+            </tr>`).join("") : '<tr><td colspan="4" class="muted">ยังไม่มีส่วนประกอบในฉบับร่างนี้</td></tr>'}</tbody></table></div>
+        </details>
+      </section>
       ${decisionPanelHtml(data, bom)}
       <section class="card fm-detail"><h3>ประวัติของฉบับนี้</h3>${historyTable(timeline)}</section>`;
   }

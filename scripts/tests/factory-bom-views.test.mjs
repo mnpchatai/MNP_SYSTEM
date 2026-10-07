@@ -359,6 +359,17 @@ test("the BOM view shows the multi-level tree: nested levels, process steps in r
   assert.match(tree, /เผื่อสูญเสีย 3%/);
 });
 
+test("the tree comes first and the single-level component table is a labelled, collapsed summary of its first level", async () => {
+  const { body } = await render("bom", "bom=tb-fg", TREE_FIXTURE);
+  const tree = body.indexOf('<ul class="fm-tree"');
+  const table = body.indexOf('<details class="fm-lines">');
+  assert.ok(tree > 0 && table > tree, "the tree is shown before the summary table");
+  assert.match(body, /ตารางสรุปส่วนประกอบระดับเดียว \(ชุดเดียวกับชั้นแรกของต้นไม้\)/);
+  assert.match(body, /data-bom-line="t1"/, "the table still carries the live-recalculated requirement cell");
+  const empty = (await render("bom", "bom=b4")).body;
+  assert.match(empty, /<details class="fm-lines" open>/, "a BOM without components shows its empty message instead of hiding it");
+});
+
 test("tree quantities follow the produce quantity and carry the per-unit factor for live recalculation", async () => {
   const { body } = await render("bom", "bom=tb-fg", TREE_FIXTURE);
   assert.match(body, /data-tree-per="0\.0515">0\.618<\/strong> KG/, "12 sets × 0.0515 kg per set");
