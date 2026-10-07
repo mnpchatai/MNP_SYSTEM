@@ -7,7 +7,7 @@ const { FOLDERS, findEntry, url } = createRequire(import.meta.url)("../../module
 test("item master keeps the six reference folders first, then the folders added for the ported app", () => {
   assert.deepEqual(
     FOLDERS.map((folder) => folder.name),
-    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต", "สั่งวัตถุดิบ"],
+    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต", "สั่งวัตถุดิบ", "ใบงานผลิต"],
   );
 });
 
@@ -27,7 +27,7 @@ test("folders without confirmed entries stay empty instead of guessing", () => {
 });
 
 test("every entry view is one the factory pages know how to draw", () => {
-  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material"]);
+  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material", "job-queue", "job-new", "job"]);
   for (const folder of FOLDERS) for (const entry of folder.entries) assert.ok(known.has(entry.view), entry.key);
 });
 
@@ -54,6 +54,21 @@ test("material folder holds the new order form and the list/detail view", () => 
     ["ใบสั่งวัตถุดิบ-ใหม่", "material-new"],
     ["ใบสั่งวัตถุดิบ-ดู", "material"],
   ]);
+});
+
+test("job folder holds the department queue, the new job form and the list/detail view", () => {
+  const job = FOLDERS.find((folder) => folder.key === "job");
+  assert.deepEqual(job.entries.map((entry) => [entry.name, entry.view]), [
+    ["ใบงานผลิต-คิวแผนกของฉัน", "job-queue"],
+    ["ใบงานผลิต-ใหม่", "job-new"],
+    ["ใบงานผลิต-ดู", "job"],
+  ]);
+});
+
+test("url keeps the jb and part parameters used by the job screens", () => {
+  assert.equal(url("job-view", { jb: "abc" }), "#/factory?item=job-view&jb=abc");
+  assert.equal(url("job-new", { wo: "w", part: "p", qty: 12, evil: "x" }), "#/factory?item=job-new&wo=w&part=p&qty=12");
+  assert.equal(url("job-view", { status: "open" }), "#/factory?item=job-view&status=open");
 });
 
 test("url keeps the mo and wo parameters used by the material order screens", () => {
