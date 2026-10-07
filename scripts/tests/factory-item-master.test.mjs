@@ -7,7 +7,7 @@ const { FOLDERS, findEntry, url } = createRequire(import.meta.url)("../../module
 test("item master keeps the six reference folders first, then the folders added for the ported app", () => {
   assert.deepEqual(
     FOLDERS.map((folder) => folder.name),
-    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต"],
+    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต", "สั่งวัตถุดิบ"],
   );
 });
 
@@ -27,7 +27,7 @@ test("folders without confirmed entries stay empty instead of guessing", () => {
 });
 
 test("every entry view is one the factory pages know how to draw", () => {
-  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning"]);
+  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material"]);
   for (const folder of FOLDERS) for (const entry of folder.entries) assert.ok(known.has(entry.view), entry.key);
 });
 
@@ -46,6 +46,20 @@ test("production folder holds new, planning queue and view entries (the planning
     ["ใบสั่งผลิต-ฝ่ายวางแผน", "production-planning"],
     ["ใบสั่งผลิต-ดู", "production"],
   ]);
+});
+
+test("material folder holds the new order form and the list/detail view", () => {
+  const material = FOLDERS.find((folder) => folder.key === "material");
+  assert.deepEqual(material.entries.map((entry) => [entry.name, entry.view]), [
+    ["ใบสั่งวัตถุดิบ-ใหม่", "material-new"],
+    ["ใบสั่งวัตถุดิบ-ดู", "material"],
+  ]);
+});
+
+test("url keeps the mo and wo parameters used by the material order screens", () => {
+  assert.equal(url("material-view", { mo: "abc" }), "#/factory?item=material-view&mo=abc");
+  assert.equal(url("material-new", { wo: "def", evil: "x" }), "#/factory?item=material-new&wo=def");
+  assert.equal(url("material-new", { mo: "abc" }), "#/factory?item=material-new&mo=abc");
 });
 
 test("url keeps the po parameter used by the production order screens", () => {

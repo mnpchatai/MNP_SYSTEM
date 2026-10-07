@@ -37,8 +37,8 @@ select ok(
 );
 select is(
   (select count(*)::int from public.employees where is_test and not is_active and auth_user_id is null),
-  11,
-  'eleven test personas exist (nine for NCR, sales and planning for production orders) and none can log in (inactive, no auth user)'
+  12,
+  'twelve test personas exist (nine for NCR, sales and planning for production orders, stores for materials) and none can log in (inactive, no auth user)'
 );
 select is(
   (select count(*)::int from public.employees where is_test and (is_active or auth_user_id is not null)),
@@ -131,8 +131,8 @@ select is(
 );
 select is(
   (select jsonb_array_length(public.app_sandbox_status()->'personas')),
-  11,
-  'the admin can see the eleven personas'
+  12,
+  'the admin can see the twelve personas'
 );
 select throws_ok(
   $$ select public.app_sandbox_enter('76000000-0000-0000-0000-000000000102') $$,
