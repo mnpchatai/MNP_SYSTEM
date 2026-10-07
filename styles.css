@@ -1380,6 +1380,9 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .fm-tree-qty { margin-left: auto; white-space: nowrap; }
 .fm-tree-step .fm-tree-row { color: var(--danger); background: var(--danger-soft); }
 .fm-tree-step .muted { color: var(--danger); opacity: .8; }
+.fm-lines > summary { cursor: pointer; min-height: 38px; display: flex; align-items: center; }
+.fm-lines > summary h3 { margin: 0; display: inline; }
+.fm-lines[open] > summary { margin-bottom: 8px; }
 .fm-node-body { min-width: 0; }
 .fm-node-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 32px; }
 .fm-node-tools { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
