@@ -132,13 +132,15 @@
     const on = selection?.card === card && selection.key === String(key);
     return `<button type="button" class="${extraClass}${on ? " selected" : ""}" data-sel="${esc(card)}:${esc(key)}" aria-pressed="${on}">${inner}</button>`;
   }
-  function detailBox(card, noun, resolve) {
-    const hint = `<p class="nd-hint">แตะ${noun}เพื่อดูตัวเลขของรายการนั้น แล้วกดกรองรายการด้านล่างได้</p>`;
-    if (selection?.card !== card) return hint;
-    const item = resolve(selection.key);
-    if (!item) return hint;
-    return `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองรายการด้านล่างตามนี้")}</a>` : ""}</div>`;
-  }
+  const detailHint = (noun) => `<p class="nd-hint">แตะ${noun}เพื่อดูตัวเลขของรายการนั้น แล้วกดกรองรายการด้านล่างได้</p>`;
+  const detailHtml = (item) => `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองรายการด้านล่างตามนี้")}</a>` : ""}</div>`;
+  // รายการที่เลือกแสดงรายละเอียดต่อท้ายตัวรายการนั้นเอง ไม่ไปรวมที่ท้ายการ์ด — resolve(key) คืน { title, lines, href, linkLabel } หรือ null
+  const detailUnder = (card, key, resolve) => {
+    const item = selection?.card === card && selection.key === String(key) ? resolve(selection.key) : null;
+    return item ? detailHtml(item) : "";
+  };
+  // คำใบ้ท้ายการ์ด แสดงเฉพาะตอนยังไม่ได้เลือกรายการ
+  const detailHintIfIdle = (card, noun, resolve) => (selection?.card === card && resolve(selection.key) ? "" : detailHint(noun));
 
   // ---- ชิ้นส่วนของหน้า ----
   function controlsHtml(filters, rows, today, periodSums, backSums) {
@@ -207,18 +209,19 @@
     const shown = stages.filter((stage) => stage.key !== "approved" || stage.count > 0);
     const max = Math.max(...shown.map((stage) => stage.count), 0);
     const total = shown.reduce((sum, stage) => sum + stage.count, 0);
+    const resolve = (key) => {
+        const stage = stages.find((entry) => entry.key === key);
+        return stage && { title: stage.label, lines: [["ใบที่ค้างในขั้นนี้", fmtCount(stage.count)], ["ต้องรอใครดำเนินการ", stage.owner], ["ค้างเฉลี่ย", fmtDays(stage.avgDays)], ["ค้างนานสุด", stage.maxDays === null ? "—" : `${fmtNumber(stage.maxDays)} วัน`], ["เลยกำหนดเสร็จ", fmtCount(stage.overdue)], ["ด่วน", fmtCount(stage.urgent)]], href: hrefWith(filters, { scope: "", stage: filters.stage === key ? "" : key }), linkLabel: filters.stage === key ? "ยกเลิกการกรอง" : undefined };
+    };
     const rows = shown.map((stage) => {
       const width = stage.count ? Math.max((stage.count / max) * 100, 0.8) : 0;
       const inner = `<span class="nd-lab">${esc(stage.label)}<br><span class="nd-muted">${esc(stage.owner)}</span></span><span class="nd-trk"><span class="nd-bar${stage.count === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtCount(stage.count))}<small>${stage.count ? `เฉลี่ย ${esc(fmtDays(stage.avgDays))}` : "—"}</small></span>`;
-      return selectButton("stage", stage.key, inner, `nd-brow${filters.stage === stage.key ? " active" : ""}`);
+      return selectButton("stage", stage.key, inner, `nd-brow${filters.stage === stage.key ? " active" : ""}`) + detailUnder("stage", stage.key, resolve);
     }).join("");
     return `<div class="nd-head"><h2>งานค้างอยู่ที่ใคร</h2><p>นับทุกใบที่ยังไม่จบ ไม่ขึ้นกับช่วงเวลา เรียงตามลำดับ workflow แถบเข้มคือขั้นที่ค้างมากสุด ตัวเลขเฉลี่ยคือจำนวนวันที่ใบอยู่ในขั้นนั้นมาแล้ว</p></div>
       ${total ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>ขั้นที่ค้างมากสุด</span><span><i class="soft"></i>ขั้นอื่น</span></div>` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}
-      ${detailBox("stage", "แถบขั้นตอน", (key) => {
-        const stage = stages.find((entry) => entry.key === key);
-        return stage && { title: stage.label, lines: [["ใบที่ค้างในขั้นนี้", fmtCount(stage.count)], ["ต้องรอใครดำเนินการ", stage.owner], ["ค้างเฉลี่ย", fmtDays(stage.avgDays)], ["ค้างนานสุด", stage.maxDays === null ? "—" : `${fmtNumber(stage.maxDays)} วัน`], ["เลยกำหนดเสร็จ", fmtCount(stage.overdue)], ["ด่วน", fmtCount(stage.urgent)]], href: hrefWith(filters, { scope: "", stage: filters.stage === key ? "" : key }), linkLabel: filters.stage === key ? "ยกเลิกการกรอง" : undefined };
-      })}`;
+      ${detailHintIfIdle("stage", "แถบขั้นตอน", resolve)}`;
   }
 
   function actHtml(open, today) {
@@ -252,9 +255,13 @@
   function machineHtml(ranking, filters) {
     const { items } = ranking;
     const max = items.length ? Math.max(...items.map((item) => item.count)) : 0;
+    const resolve = (key) => {
+        const item = items.find((entry) => entry.key === key);
+        return item && { title: `${item.code}${item.name ? ` — ${item.name}` : ""}`, lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: hrefWith(filters, { scope: "", stage: "", machine: filters.machine === key ? "" : key }), linkLabel: filters.machine === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของเครื่องนี้" };
+    };
     const rows = items.map((item) => {
       const inner = `<span class="nd-lab">${esc(item.code)}${item.name ? ` — ${esc(item.name)}` : ""}<br><span class="nd-muted">แผนก ${esc(item.dept || "—")}</span></span><span class="nd-trk"><span class="nd-bar${item.count === max ? "" : " rest"}" style="width:${Math.max((item.count / max) * 100, 0.8)}%"></span></span><span class="nd-val">${esc(fmtNumber(item.count))} ครั้ง<small>ยังไม่จบ ${esc(fmtNumber(item.open))} · ล่าสุด ${esc(formatDate(item.lastOn))}</small></span>`;
-      return selectButton("machine", item.key, inner, `nd-brow${filters.machine === item.key ? " active" : ""}`);
+      return selectButton("machine", item.key, inner, `nd-brow${filters.machine === item.key ? " active" : ""}`) + detailUnder("machine", item.key, resolve);
     }).join("");
     const notes = [
       ranking.requestDocs ? `ไม่นับใบคำร้อง ${fmtCount(ranking.requestDocs)}` : "",
@@ -264,41 +271,41 @@
       ${items.length ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>เครื่องที่แจ้งบ่อยสุด</span><span><i class="soft"></i>เครื่องอื่น</span></div>
       <p class="nd-hint">แสดง ${fmtNumber(items.length)} จาก ${fmtNumber(ranking.machines)} เครื่อง รวม ${fmtCount(ranking.total)}${notes ? ` · ${esc(notes)}` : ""}</p>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมที่ระบุเครื่องจักรในช่วงและตัวกรองนี้${notes ? ` (${esc(notes)})` : ""}</p>`}
-      ${detailBox("machine", "แถบเครื่องจักร", (key) => {
-        const item = items.find((entry) => entry.key === key);
-        return item && { title: `${item.code}${item.name ? ` — ${item.name}` : ""}`, lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: hrefWith(filters, { scope: "", stage: "", machine: filters.machine === key ? "" : key }), linkLabel: filters.machine === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของเครื่องนี้" };
-      })}`;
+      ${detailHintIfIdle("machine", "แถบเครื่องจักร", resolve)}`;
   }
 
   function deptRankHtml(ranking, filters) {
     const { items, total } = ranking;
-    return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
-      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
-      ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>`).join("")}
-      <tr class="nd-total"><td>รวม</td><td class="nd-num">${esc(fmtNumber(total))}</td><td class="nd-num">100%</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.open, 0)))}</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.urgent, 0)))}</td><td class="nd-num"></td></tr></tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
-      ${detailBox("deptrank", "ชื่อแผนก", (key) => {
+    const resolve = (key) => {
         const item = items.find((entry) => entry.dept === key);
         return item && { title: item.dept ? `แผนก ${item.dept}` : "ไม่ระบุแผนก", lines: [["แจ้งซ่อมในช่วงนี้", fmtCount(item.count)], ["สัดส่วนของใบแจ้งซ่อมทั้งหมด", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["ด่วน", fmtCount(item.urgent)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: item.dept ? hrefWith(filters, { scope: "", stage: "", dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : "ดูเฉพาะแผนกนี้" };
-      })}`;
+    };
+    const detailRow = (key) => { const detail = detailUnder("deptrank", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="6">${detail}</td></tr>` : ""; };
+    return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
+      ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>${detailRow(item.dept)}`).join("")}
+      <tr class="nd-total"><td>รวม</td><td class="nd-num">${esc(fmtNumber(total))}</td><td class="nd-num">100%</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.open, 0)))}</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.urgent, 0)))}</td><td class="nd-num"></td></tr></tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
+      ${detailHintIfIdle("deptrank", "ชื่อแผนก", resolve)}`;
   }
 
   function techHtml(ranking, filters) {
     const { items } = ranking;
     const max = items.length ? Math.max(...items.map((item) => item.hours)) : 0;
+    const resolve = (key) => {
+        const item = items.find((entry) => entry.id === key);
+        return item && { title: techName(item.id), lines: [["ใบที่ได้รับมอบหมายในช่วงนี้", fmtCount(item.jobs)], ["เวลากำลังซ่อมรวม", `${fmtHours(item.hours)} (${fmtDays(item.hours / 24)})`], ["เฉลี่ยต่อใบ (เฉพาะใบที่เริ่มซ่อมแล้ว)", fmtHours(item.avgHours)], ["กำลังซ่อมอยู่ (ในช่วงนี้)", fmtCount(item.running)], ["ถืออยู่ตอนนี้ (ทุกช่วงเวลา)", fmtCount(item.holding)], ["ในนั้นเลยกำหนดเสร็จ", fmtCount(item.overdue)]], href: hrefWith(filters, { scope: "", stage: "", tech: filters.tech === key ? "" : key }), linkLabel: filters.tech === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของช่างคนนี้" };
+    };
     const rows = items.map((item) => {
       const width = item.hours && max ? Math.max((item.hours / max) * 100, 0.8) : 0;
       const inner = `<span class="nd-lab">${esc(techName(item.id))}<br><span class="nd-muted">${esc(fmtCount(item.jobs))}ในช่วงนี้${item.holding ? ` · ถืออยู่ ${esc(fmtCount(item.holding))}` : ""}</span></span><span class="nd-trk"><span class="nd-bar${item.hours && item.hours === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtHours(item.hours))}<small>เฉลี่ย ${esc(fmtHours(item.avgHours))}/ใบ</small></span>`;
-      return selectButton("tech", item.id, inner, `nd-brow${filters.tech === item.id ? " active" : ""}`);
+      return selectButton("tech", item.id, inner, `nd-brow${filters.tech === item.id ? " active" : ""}`) + detailUnder("tech", item.id, resolve);
     }).join("");
     return `<div class="nd-head"><h2>ช่างที่ใช้เวลาซ่อมมากสุด</h2><p>เรียงตามเวลาที่ใบของช่างอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบของใบที่แจ้งในช่วงที่เลือก แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง</p></div>
       <p class="nd-warn">ตัวเลขนี้ <b>ไม่ใช่ชั่วโมงทำงานจริง</b> เพราะระบบยังไม่มีช่องบันทึกชั่วโมงทำงาน แต่เป็นเวลาตามนาฬิกา (รวมกลางคืนและวันหยุด) ตั้งแต่ช่างกดเริ่มงานจนส่งตรวจรับ ใบที่มีช่างหลายคนนับเต็มเวลาให้ทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ใช้เทียบภาระงานคร่าวๆ ไม่ใช้คิดค่าแรง</p>
       ${items.length ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span></div>
       <p class="nd-hint">"ถืออยู่" = ใบที่ช่างต้องทำตอนนี้ (รอเริ่มงานหรือกำลังซ่อม) นับทุกใบไม่ขึ้นกับช่วงเวลา ส่วนเวลาและจำนวนใบนับตามวันที่แจ้ง ไม่นับใบที่ไม่อนุมัติ</p>` : `<p class="nd-empty">ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้</p>`}
-      ${detailBox("tech", "แถบชื่อช่าง", (key) => {
-        const item = items.find((entry) => entry.id === key);
-        return item && { title: techName(item.id), lines: [["ใบที่ได้รับมอบหมายในช่วงนี้", fmtCount(item.jobs)], ["เวลากำลังซ่อมรวม", `${fmtHours(item.hours)} (${fmtDays(item.hours / 24)})`], ["เฉลี่ยต่อใบ (เฉพาะใบที่เริ่มซ่อมแล้ว)", fmtHours(item.avgHours)], ["กำลังซ่อมอยู่ (ในช่วงนี้)", fmtCount(item.running)], ["ถืออยู่ตอนนี้ (ทุกช่วงเวลา)", fmtCount(item.holding)], ["ในนั้นเลยกำหนดเสร็จ", fmtCount(item.overdue)]], href: hrefWith(filters, { scope: "", stage: "", tech: filters.tech === key ? "" : key }), linkLabel: filters.tech === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของช่างคนนี้" };
-      })}`;
+      ${detailHintIfIdle("tech", "แถบชื่อช่าง", resolve)}`;
   }
 
   function machineText(row) {
