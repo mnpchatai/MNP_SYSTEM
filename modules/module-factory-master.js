@@ -87,6 +87,7 @@
       return `<section class="card"><div class="empty">ยังไม่มี Item ในโหมดทดสอบ<br><small>เติมข้อมูลตัวอย่าง 16 รายการ (ข้อมูลสมมติจากแอปที่ส่งมา ไม่ใช่ข้อมูลจริง) หรือเพิ่ม Item เอง</small>
           <div class="fm-actions"><button class="btn" type="button" id="fm-seed">เติมข้อมูลตัวอย่าง</button>
           <button class="btn secondary" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
+          <button class="btn secondary" type="button" id="fm-seed-megaform">เติมชุดทดสอบ MEGAFORM (ตาราง Gantt ครบทุกแผนก)</button>
           <a class="btn secondary" href="${escapeHtml(menu.url("item-new"))}">＋ เพิ่ม Item ใหม่</a></div></div></section>`;
     }
 
@@ -143,6 +144,10 @@
             <button class="btn secondary small" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
           </li>
           <li>
+            <div><strong>ชุดทดสอบ MEGAFORM (ใบคำนวณวัตถุดิบ 260702-26031)</strong><span>สินค้า 14 รายการจากใบคำนวณวัตถุดิบ พร้อม BOM ที่อนุมัติแล้ว Routing ใบสั่งผลิต 14 ใบ (ออกใบสั่งงานแล้ว) และใบงานของทุกแผนก RB · GR · PT · BG · PK ที่มีวันที่ตามกำหนดเสร็จของแต่ละแผนก เพื่อดูที่ตารางการผลิต (Gantt) เติมซ้ำไม่ได้จนกว่าจะล้างข้อมูลทดสอบ</span></div>
+            <button class="btn secondary small" type="button" id="fm-seed-megaform">เติมชุดทดสอบ MEGAFORM (ตาราง Gantt ครบทุกแผนก)</button>
+          </li>
+          <li>
             <div><strong>ล้างข้อมูลทดสอบ</strong><span>Item, BOM, Routing, คลัง, ใบสั่งผลิต และประวัติ ข้อมูลจริงไม่ถูกแตะ</span></div>
             <button class="btn danger small" type="button" id="fm-purge">ล้างข้อมูลทดสอบฝ่ายโรงงาน</button>
           </li>
@@ -172,20 +177,25 @@
         showToast(friendlyError(error), "error");
       }
     });
-    root.querySelector("#fm-seed-trial")?.addEventListener("click", async (event) => {
+    // ปุ่มเติมชุดข้อมูลทดสอบ: เรียก RPC หนึ่งครั้ง ปิดปุ่มจนกว่าหน้าจะวาดใหม่ ผิดพลาดเปิดปุ่มคืนพร้อมแจ้งเตือน
+    const bindSeedSet = (selector, rpc, added, repeated) => root.querySelector(selector)?.addEventListener("click", async (event) => {
       event.currentTarget.disabled = true;
       try {
-        const { data, error } = await sb.rpc("app_sandbox_seed_factory_trial");
+        const { data, error } = await sb.rpc(rpc);
         if (error) throw error;
-        showToast(data?.seeded
-          ? `เติมชุดทดลองแล้ว ${data.items} Item · ${data.boms} BOM · ${data.steps} ขั้นตอนการผลิต`
-          : "มีชุดทดลองอยู่แล้ว ไม่ได้เติมซ้ำ");
+        showToast(data?.seeded ? added(data) : repeated);
         await renderRoute();
       } catch (error) {
         event.currentTarget.disabled = false;
         showToast(friendlyError(error), "error");
       }
     });
+    bindSeedSet("#fm-seed-trial", "app_sandbox_seed_factory_trial",
+      (data) => `เติมชุดทดลองแล้ว ${data.items} Item · ${data.boms} BOM · ${data.steps} ขั้นตอนการผลิต`,
+      "มีชุดทดลองอยู่แล้ว ไม่ได้เติมซ้ำ");
+    bindSeedSet("#fm-seed-megaform", "app_sandbox_seed_factory_megaform",
+      (data) => `เติมชุด MEGAFORM แล้ว ${data.items} Item · ${data.boms} BOM · ใบสั่งผลิต ${data.orders} ใบ · ใบงาน ${data.jobs} ใบ`,
+      "มีชุด MEGAFORM อยู่แล้ว ไม่ได้เติมซ้ำ");
     root.querySelector("#fm-purge")?.addEventListener("click", async (event) => {
       if (!confirm("ล้างข้อมูลทดสอบของฝ่ายโรงงานทั้งหมด (Item, BOM, Routing, คลัง, ใบสั่งผลิต และประวัติ)?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
       event.currentTarget.disabled = true;

@@ -280,8 +280,8 @@ test("the item register offers the trial set both when empty and next to existin
   assert.doesNotMatch(filled, /id="fm-seed"/, "the sample-data button stays only in the empty state");
 });
 
-// เรียก view รายการ Item แล้วคลิกปุ่ม #fm-seed-trial ด้วยปุ่มจำลอง คืนข้อความ toast และชื่อ RPC ที่ถูกเรียก
-async function clickTrial(rpcResult) {
+// เรียก view รายการ Item แล้วคลิกปุ่มเติมชุดข้อมูลทดสอบ (ตาม selector) ด้วยปุ่มจำลอง คืนข้อความ toast และชื่อ RPC ที่ถูกเรียก
+async function clickSeed(selector, rpcResult) {
   const calls = [];
   const toasts = [];
   let renders = 0;
@@ -292,13 +292,15 @@ async function clickTrial(rpcResult) {
   });
   const button = { disabled: false, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
   const root = {
-    querySelector: (selector) => (selector === "#fm-seed-trial" ? button : null),
+    querySelector: (wanted) => (wanted === selector ? button : null),
     querySelectorAll: () => [],
   };
   await context.MNP_FACTORY_VIEWS.items({ params: new URLSearchParams(""), frame: { loading: () => {}, paint: () => root } });
   await button.handlers.click({ currentTarget: button });
   return { calls, toasts, renders, button };
 }
+const clickTrial = (rpcResult) => clickSeed("#fm-seed-trial", rpcResult);
+const clickMegaform = (rpcResult) => clickSeed("#fm-seed-megaform", rpcResult);
 
 test("the trial button calls the seed RPC, reports the counts and reloads the page", async () => {
   const { calls, toasts, renders, button } = await clickTrial({ data: { seeded: true, items: 27, boms: 17, steps: 77 }, error: null });
@@ -319,6 +321,39 @@ test("a repeated trial seed says nothing was added, and a failure re-enables the
 
 test("the trial migration raises only errors the page already knows how to word", () => {
   const sql = fs.readFileSync("supabase/migrations/20261007020000_factory_trial_five_items.sql", "utf8");
+  const codes = [...new Set([...sql.matchAll(/raise exception '([A-Z_]+)'/g)].map((match) => match[1]))];
+  assert.deepEqual(codes, ["SANDBOX_NOT_ACTIVE"]);
+});
+
+// ---------- ชุดทดสอบ MEGAFORM (20261008020000_factory_megaform_seed.sql) ----------
+test("the item register offers the MEGAFORM set both when empty and next to existing data", async () => {
+  const empty = (await render("items", "", { ...FIXTURE, items: [], boms: [] })).body;
+  assert.match(empty, /id="fm-seed-megaform"/);
+  const filled = (await render("items")).body;
+  assert.match(filled, /id="fm-seed-megaform"/);
+  assert.match(filled, /ใบสั่งผลิต 14 ใบ/);
+});
+
+test("the MEGAFORM button calls its seed RPC, reports the counts and reloads the page", async () => {
+  const { calls, toasts, renders, button } = await clickMegaform({ data: { seeded: true, items: 355, boms: 229, steps: 1896, orders: 14, jobs: 173 }, error: null });
+  assert.ok(calls.includes("app_sandbox_seed_factory_megaform"));
+  assert.ok(!calls.includes("app_sandbox_seed_factory_trial"), "the other seed set is not touched");
+  assert.deepEqual(toasts, [["เติมชุด MEGAFORM แล้ว 355 Item · 229 BOM · ใบสั่งผลิต 14 ใบ · ใบงาน 173 ใบ", "ok"]]);
+  assert.equal(renders, 1);
+  assert.equal(button.disabled, true, "the button stays disabled until the page is reloaded");
+});
+
+test("a repeated MEGAFORM seed says nothing was added, and a failure re-enables the button with the error", async () => {
+  const repeated = await clickMegaform({ data: { seeded: false, orders: 14 }, error: null });
+  assert.deepEqual(repeated.toasts, [["มีชุด MEGAFORM อยู่แล้ว ไม่ได้เติมซ้ำ", "ok"]]);
+  const failed = await clickMegaform({ data: null, error: { message: "SANDBOX_NOT_ACTIVE" } });
+  assert.deepEqual(failed.toasts, [["SANDBOX_NOT_ACTIVE", "error"]]);
+  assert.equal(failed.button.disabled, false);
+  assert.equal(failed.renders, 0);
+});
+
+test("the MEGAFORM migration raises only errors the page already knows how to word", () => {
+  const sql = fs.readFileSync("supabase/migrations/20261008020000_factory_megaform_seed.sql", "utf8");
   const codes = [...new Set([...sql.matchAll(/raise exception '([A-Z_]+)'/g)].map((match) => match[1]))];
   assert.deepEqual(codes, ["SANDBOX_NOT_ACTIVE"]);
 });
