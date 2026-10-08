@@ -120,7 +120,7 @@
     }).join("");
     if (!jobs.length) {
       return `<section class="card"><div class="empty">ยังไม่มีใบงานผลิตในโหมดทดสอบ<br><small>ฝ่ายวางแผนออกใบงานได้เมื่อใบสั่งผลิตออกใบสั่งงานแล้ว (ขั้น 2.4)</small>
-          <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("job-new"))}">＋ ออกใบงานผลิต</a>
+          <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("job-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบงานผลิต</a>
           <a class="btn secondary" href="${escapeHtml(menu.url("production-view"))}">ไปที่ใบสั่งผลิต</a></div></div></section>`;
     }
     const body = rows.map((job) => `<tr>
@@ -475,7 +475,7 @@
 
   // ---------- ลงทะเบียน view ----------
   const gone = (back, text = ERROR_MESSAGES.JOB_NOT_FOUND) => ({ back, body: `<section class="card"><div class="empty">${escapeHtml(text)}</div></section>` });
-  const newJobAction = () => `<a class="btn" href="${escapeHtml(menu.url("job-new"))}">＋ ออกใบงานผลิต</a>`;
+  const newJobAction = () => `<a class="btn" href="${escapeHtml(menu.url("job-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบงานผลิต</a>`;
 
   const VIEWS = {
     async "job-queue"({ frame }) {

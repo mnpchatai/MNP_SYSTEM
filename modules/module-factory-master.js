@@ -89,7 +89,7 @@
           <div class="fm-actions"><button class="btn" type="button" id="fm-seed">เติมข้อมูลตัวอย่าง</button>
           <button class="btn secondary" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
           <button class="btn secondary" type="button" id="fm-seed-megaform">เติมชุดทดสอบ MEGAFORM (ตาราง Gantt ครบทุกแผนก)</button>
-          <a class="btn secondary" href="${escapeHtml(menu.url("item-new"))}">＋ เพิ่ม Item ใหม่</a></div></div></section>`;
+          <a class="btn secondary" href="${escapeHtml(menu.url("item-new"))}"><span class="plus-icon" aria-hidden="true"></span> เพิ่ม Item ใหม่</a></div></div></section>`;
     }
 
     const tableRows = page.rows.map((item) => {
@@ -372,7 +372,7 @@
 
   // ---------- ลงทะเบียน view ----------
   // สร้างตอนวาดหน้า (ไฟล์นี้โหลดก่อน app.js จึงเรียก escapeHtml ตอนโหลดไฟล์ไม่ได้)
-  const newItemAction = () => `<a class="btn" href="${escapeHtml(menu.url("item-new"))}">＋ เพิ่ม Item ใหม่</a>`;
+  const newItemAction = () => `<a class="btn" href="${escapeHtml(menu.url("item-new"))}"><span class="plus-icon" aria-hidden="true"></span> เพิ่ม Item ใหม่</a>`;
 
   const VIEWS = {
     async items({ params, frame }) {

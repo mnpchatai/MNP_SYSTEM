@@ -10,16 +10,22 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  PlusCircle,
   UserCircle,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { signOutAction } from "@/app/actions/auth";
 
-const workspaceItems = [
+const workspaceItems: Array<{
+  href: string;
+  label: string;
+  icon?: LucideIcon;
+  plus?: boolean;
+  featured?: boolean;
+}> = [
   { href: "/", label: "หน้าหลัก", icon: LayoutDashboard },
   { href: "/requests", label: "คำร้องของฉัน", icon: ClipboardList },
-  { href: "/requests/new", label: "สร้างคำร้อง", icon: PlusCircle, featured: true },
+  { href: "/requests/new", label: "สร้างคำร้อง", plus: true, featured: true },
   { href: "/approvals", label: "รอฉันอนุมัติ", icon: CheckSquare },
   { href: "/notifications", label: "การแจ้งเตือน", icon: Bell },
 ];
@@ -73,7 +79,7 @@ export function Sidebar({
 
         <nav className="nav" aria-label="เมนูหลัก">
           <div className="nav-section-label">Workspace</div>
-          {workspaceItems.map(({ href, label, icon: Icon, featured }) => (
+          {workspaceItems.map(({ href, label, icon: Icon, plus, featured }) => (
             <Link
               key={href}
               href={href}
@@ -82,7 +88,7 @@ export function Sidebar({
               className={`nav-link${isActivePath(pathname, href) ? " active" : ""}${featured ? " nav-create" : ""}`}
               onClick={() => setMobileOpen(false)}
             >
-              <span className="nav-icon-wrap"><Icon size={17} aria-hidden="true" /></span>
+              <span className="nav-icon-wrap">{plus ? <span className="plus-icon" aria-hidden="true" /> : Icon ? <Icon size={17} aria-hidden="true" /> : null}</span>
               <span className="nav-label-full">{label}</span>
             </Link>
           ))}

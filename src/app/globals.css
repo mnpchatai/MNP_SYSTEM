@@ -162,6 +162,10 @@ svg { flex: 0 0 auto; }
   transition: background 0.15s ease, color 0.15s ease;
 }
 .nav-icon-wrap { width: 17px; height: 17px; flex: 0 0 17px; display: grid; place-items: center; }
+.plus-icon { position: relative; width: 18px; height: 18px; flex: none; display: inline-block; vertical-align: -4px; background: #16a34a; border-radius: 50%; box-shadow: 0 0 0 1.5px #fff; }
+.plus-icon::before, .plus-icon::after { content: ""; position: absolute; top: 50%; left: 50%; background: #fff; border-radius: 1px; transform: translate(-50%, -50%); }
+.plus-icon::before { width: 10px; height: 2.4px; }
+.plus-icon::after { width: 2.4px; height: 10px; }
 .nav-link svg { color: var(--nav-icon); }
 .nav-link:hover { color: var(--ink); background: var(--surface-hover); }
 .nav-link.active { color: var(--primary-ink); background: var(--primary); font-weight: 500; }
