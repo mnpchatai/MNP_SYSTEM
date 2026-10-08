@@ -41,7 +41,7 @@
     };
   }
 
-  // ค้นหาในรหัส ชื่อไทย ชื่ออังกฤษ และรายละเอียด (ไม่สนตัวพิมพ์) แล้วเรียงแบบภาษาไทย
+  // ค้นหาในรหัส Item รหัสอะไหล่ ชื่อไทย ชื่ออังกฤษ และรายละเอียด (ไม่สนตัวพิมพ์) แล้วเรียงแบบภาษาไทย
   function filterItems(items, filters) {
     const query = String(filters.q ?? "").trim().toLowerCase();
     const sortKey = filters.sort === "name" ? "name" : "code";
@@ -49,7 +49,7 @@
       .filter((item) => filters.type === "all" || item.item_type === filters.type)
       .filter((item) => filters.brand === "all" || item.brand === filters.brand)
       .filter((item) => filters.status === "all" || item.status === filters.status)
-      .filter((item) => !query || [item.code, item.name, item.name_en, item.specification].join(" ").toLowerCase().includes(query))
+      .filter((item) => !query || [item.code, item.part_code, item.name, item.name_en, item.specification].join(" ").toLowerCase().includes(query))
       .slice()
       .sort((a, b) => String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""), "th") || String(a.code).localeCompare(String(b.code)));
   }
@@ -105,12 +105,14 @@
       p_lot_tracking: existing ? Boolean(existing.lot_tracking) : values.lot_tracking === true || values.lot_tracking === "on",
       p_min_stock: minStock === "" ? null : Number(minStock),
       p_specification: text("specification"),
+      // รหัสอะไหล่ (ไม่บังคับ): ส่งค่าว่างเมื่อผู้ใช้ล้างช่อง ฐานข้อมูลถือว่า "ล้างรหัสอะไหล่" (null = ไม่แตะค่าเดิม ใช้เฉพาะผู้เรียกรุ่นเก่า)
+      p_part_code: text("part_code"),
     };
   }
 
   // ช่องที่ผู้ใช้แก้ได้ (ตรงกับ app_factory_save_item) พร้อมป้ายภาษาไทย ใช้สรุปประวัติการแก้ไข
   const EDITABLE_FIELDS = Object.freeze({
-    code: "รหัส", name: "ชื่อภาษาไทย", name_en: "ชื่อภาษาอังกฤษ", category_code: "หมวดหมู่", brand: "แบรนด์",
+    code: "รหัส Item", part_code: "รหัสอะไหล่", name: "ชื่อภาษาไทย", name_en: "ชื่อภาษาอังกฤษ", category_code: "หมวดหมู่", brand: "แบรนด์",
     procurement: "วิธีจัดหา", status: "สถานะ", min_stock: "สต็อกขั้นต่ำ", specification: "ข้อกำหนด",
   });
 

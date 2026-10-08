@@ -67,7 +67,24 @@ select is((select count(*) from jsonb_array_elements(current_setting('test.data'
 select is((select count(*) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x
            where x ->> 'item_type' in ('WIP', 'FG') and x ->> 'procurement' = 'buy')::integer, 7,
   'seven work-in-process items have no recipe in the sheet, so they are bought and get no job');
-select is((select x ->> 'unit_code' from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'code' = 'MEGA-ST-01'), 'SET', 'a finished good is counted in sets');
+-- รหัส Item = คอลัมน์ B ของไฟล์ · รหัสอะไหล่ = คอลัมน์ X (ชิ้นงานต้องประกอบจากอะไหล่ก่อนจึงได้เป็น Item)
+select is((select string_agg(x ->> 'code', ',' order by x ->> 'code') from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'item_type' = 'FG'),
+  'MEGA-1-07897-P-Y,MEGA-AHL-24-B-Y,MEGA-BBL-06-P-Y,MEGA-CG-01-P-Y,MEGA-DS-01-P-A,MEGA-ENC-3-P-Y,MEGA-EXB-02-P-Y,MEGA-GFA-01-P-Y,MEGA-JBP-06-1-B-Y,MEGA-MAM-03-B-Y,MEGA-PPL-01-12-BN-Y,MEGA-SL-01B-P-Y,MEGA-ST-01-P-Y,MEGA-WG-70B-P-Y',
+  'finished goods take their item code from column B of the sheet (brackets become hyphens)');
+select is((select x ->> 'part_code' from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'code' = 'MEGA-ENC-3-P-Y'), 'SPORTIME-ENC-3',
+  'the item code and the part code of a finished good can differ completely (column B vs column X)');
+select is((select x ->> 'part_code' from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'code' = 'MEGA-PPL-01-12-BN-Y'), 'Mega-PPL-01-12(BN)-Y',
+  'the part code is kept exactly as written in the sheet, brackets included');
+select is((select x ->> 'part_code' from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'code' = 'SE-ST01-100-18-65-OR01'), 'SE-ST01-100-18-65',
+  'a coloured part has its colour in the item code but not in the part code');
+select is((select x ->> 'part_code' from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'code' = 'PT-00320'), 'PT-00320', 'a plastic part keeps its own code as the part code');
+select is((select count(*) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'part_code' is not null)::integer, 296,
+  'every item that has a code in column X carries a part code');
+select is((select count(*) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'part_code' is null and x ->> 'code' !~ '^(CPD|NOCODE)-')::integer, 0,
+  'only the invented rubber recipes and the rows the sheet left without a code have no part code');
+select is((select count(*) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'part_code' = 'SE-AHL24-410-19-30')::integer, 6,
+  'one part code is shared by the six colours of the same part');
+select is((select x ->> 'unit_code' from jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') x where x ->> 'code' = 'MEGA-ST-01-P-Y'), 'SET', 'a finished good is counted in sets');
 select is(jsonb_array_length(current_setting('test.data')::jsonb -> 'boms'), 229, 'one BOM per manufactured item');
 select is((select count(*) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'boms') x where x ->> 'status' = 'approved' and x ->> 'revision' = 'A')::integer, 229,
   'every BOM is an approved revision A, so jobs can be issued');
@@ -76,7 +93,7 @@ select is(jsonb_array_length(current_setting('test.data')::jsonb -> 'routings'),
 select is(jsonb_array_length(current_setting('test.data')::jsonb -> 'steps'), 1896, 'the routings hold 1896 steps');
 
 -- ตัวอย่าง BOM หลายชั้นจากไฟล์: MEGA-ST-01 (ชุดละ 3 ลูกตอปิโด) ใช้ SE → RB → สูตรยาง
-select is(pg_temp.bomqty('MEGA-ST-01', 'SE-ST01-100-18-65-OR01'), 300.0000::numeric, 'MEGA-ST-01 needs 3 torpedo bodies per set, so 300 per 100-set batch');
+select is(pg_temp.bomqty('MEGA-ST-01-P-Y', 'SE-ST01-100-18-65-OR01'), 300.0000::numeric, 'MEGA-ST-01 needs 3 torpedo bodies per set, so 300 per 100-set batch');
 select is(pg_temp.bomqty('SE-ST01-100-18-65-OR01', 'RB-B0006-02-202-18-70-OR01'), 32.2581::numeric, 'one rubber strip yields 31 bodies, so 1/31 of a strip per body (32.2581 per 1000)');
 select is(pg_temp.bomqty('RB-B0006-02-202-18-70-OR01', 'CPD-B0006-02-OR01'), 153.0000::numeric, 'a 1530 g strip needs 153 kg of rubber recipe per 100 strips');
 select is(pg_temp.bomqty('PT-00320', 'D21-016'), 20.0000::numeric, 'a 20 g part needs 20 kg of resin per 1000 parts');
@@ -88,7 +105,7 @@ select is((select count(*) from jsonb_array_elements(current_setting('test.data'
              and x ->> 'customer' = 'MEGAFORM (เมก้าฟอร์ม)')::integer, 14, 'every order is released with a work order number, due 2026-10-16, for MEGAFORM');
 select is((select sum((x ->> 'planned_qty')::numeric) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'production') x), 4711::numeric,
   'the order quantities add up to the quantities in the sheet');
-select is((select (x ->> 'planned_qty')::numeric from jsonb_array_elements(current_setting('test.data')::jsonb -> 'production') x where x ->> 'item_code' = 'MEGA-SL-01B'), 2040::numeric,
+select is((select (x ->> 'planned_qty')::numeric from jsonb_array_elements(current_setting('test.data')::jsonb -> 'production') x where x ->> 'item_code' = 'MEGA-SL-01B-P-Y'), 2040::numeric,
   'MEGA-SL-01B is ordered 2040 sets');
 select is((select count(*) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'production_history') x where x ->> 'action' = 'release')::integer, 14, 'each order has the release step in its history');
 select is((select count(*) from jsonb_array_elements(current_setting('test.data')::jsonb -> 'production_history') x)::integer, 70, 'create, submit, receive, plan and release are recorded per order');
@@ -109,8 +126,8 @@ select is((select count(*) from jsonb_array_elements(current_setting('test.sched
            join jsonb_array_elements(current_setting('test.data')::jsonb -> 'items') i on i ->> 'id' = j ->> 'item_id'
            where i ->> 'procurement' = 'buy')::integer, 0, 'no job is issued for an item the sheet gives no recipe for');
 select is((select sum((x ->> 'qty')::numeric) from jsonb_array_elements(current_setting('test.sched')::jsonb -> 'jobs') x
-           where x ->> 'item_code' = 'MEGA-ST-01' ), 560::numeric, 'the finished good job carries the ordered quantity');
-select is((select jsonb_array_length(x -> 'steps') from jsonb_array_elements(current_setting('test.sched')::jsonb -> 'jobs') x where x ->> 'item_code' = 'MEGA-ST-01'), 6,
+           where x ->> 'item_code' = 'MEGA-ST-01-P-Y' ), 560::numeric, 'the finished good job carries the ordered quantity');
+select is((select jsonb_array_length(x -> 'steps') from jsonb_array_elements(current_setting('test.sched')::jsonb -> 'jobs') x where x ->> 'item_code' = 'MEGA-ST-01-P-Y'), 6,
   'a finished good job runs PK-01..PK-05 then WH-01');
 select is((select jsonb_array_length(x -> 'steps') from jsonb_array_elements(current_setting('test.sched')::jsonb -> 'jobs') x where x ->> 'item_code' = 'RB-B0006-02-202-18-70-OR01' limit 1), 15,
   'a rubber strip job runs RB-01..RB-13, SR-01 and QC-01');
@@ -152,7 +169,7 @@ select is((select string_agg(distinct x ->> 'warehouse', ',' order by x ->> 'war
   'คลังยางเส้นยาว (SR),คลังระหว่างผลิต', 'strips go to SR and parts to work-in-process (the sheet counts no stock of materials)');
 
 -- ใช้งานต่อกับ workflow ตารางเวลาเดิมได้: PP ย้ายแถบของใบที่เติมไว้ ใบเก่าถูกล็อกด้วย schedule_version
-select set_config('test.job', (select x ->> 'id' from jsonb_array_elements(pg_temp.sdata() -> 'jobs') x where x ->> 'item_code' = 'MEGA-ST-01'), true);
+select set_config('test.job', (select x ->> 'id' from jsonb_array_elements(pg_temp.sdata() -> 'jobs') x where x ->> 'item_code' = 'MEGA-ST-01-P-Y'), true);
 select lives_ok(format($$select public.app_factory_schedule_job(%L::uuid, 2, date '2026-10-06', date '2026-10-14', 'ย้ายแถบ')$$, current_setting('test.job')),
   'the planner can move a seeded job');
 select throws_ok(format($$select public.app_factory_schedule_job(%L::uuid, 2, date '2026-10-06', date '2026-10-14', '')$$, current_setting('test.job')),
@@ -180,7 +197,7 @@ select is((select count(*) from public.factory_job_history where is_test and act
 select is((select count(*) from public.factory_job_history where is_test and action = 'schedule')::integer, 174, 'every job has a schedule entry (plus the planner move)');
 select is((select count(*) from public.factory_job_steps where is_test)::integer, 1138, 'the jobs carry their routing steps');
 select is((select count(*) from public.factory_job_steps where is_test and status <> 'pending')::integer, 0, 'no step is done yet');
-select is((select created_by from public.factory_items where code = 'MEGA-ST-01' and is_test), current_setting('test.p_pp')::uuid, 'the persona is recorded as the creator');
+select is((select created_by from public.factory_items where code = 'MEGA-ST-01-P-Y' and is_test), current_setting('test.p_pp')::uuid, 'the persona is recorded as the creator');
 select is((select actor_id from public.audit_logs where action = 'SANDBOX_SEED_FACTORY_MEGAFORM'), '83000000-0000-0000-0000-000000000101'::uuid,
   'the audit log names the real admin behind the persona');
 select is((select metadata ->> 'jobs' from public.audit_logs where action = 'SANDBOX_SEED_FACTORY_MEGAFORM'), '173', 'the audit log records the number of jobs');

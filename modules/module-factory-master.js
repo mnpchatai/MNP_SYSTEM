@@ -34,6 +34,7 @@
     INVALID_ITEM_LOT_TRACKING: "กรุณาระบุการติดตามล็อต",
     INVALID_ITEM_MIN_STOCK: "สต็อกขั้นต่ำต้องเป็นตัวเลขตั้งแต่ 0 ถึง 1,000,000,000",
     INVALID_ITEM_SPECIFICATION: "ข้อกำหนด/รายละเอียดยาวได้ไม่เกิน 3,000 ตัวอักษร",
+    INVALID_ITEM_PART_CODE: "รหัสอะไหล่ยาวได้ไม่เกิน 60 ตัวอักษร และห้ามมีอักขระควบคุม",
     ITEM_CODE_TAKEN: "รหัส Item นี้มีอยู่แล้ว กรุณาใช้รหัสอื่น",
     ITEM_NOT_FOUND: "ไม่พบ Item นี้ (อาจถูกล้างข้อมูลทดสอบไปแล้ว)",
     ITEM_VERSION_CONFLICT: "Item นี้ถูกแก้ไขจากหน้าต่างอื่นแล้ว กรุณาเปิดรายละเอียดใหม่แล้วแก้ไขอีกครั้ง",
@@ -94,7 +95,7 @@
     const tableRows = page.rows.map((item) => {
       const detail = menu.url("item-list", { id: item.id });
       return `<tr>
-        <td><a class="fm-item-link" href="${escapeHtml(detail)}"><strong>${escapeHtml(item.code)}</strong><span>${escapeHtml(item.name)}</span></a></td>
+        <td><a class="fm-item-link" href="${escapeHtml(detail)}"><strong>${escapeHtml(item.code)}</strong><span>${escapeHtml(item.name)}</span>${item.part_code ? `<small class="muted">รหัสอะไหล่ ${escapeHtml(item.part_code)}</small>` : ""}</a></td>
         <td>${typeBadge(item.item_type)}</td>
         <td>${escapeHtml(item.brand)}</td>
         <td>${escapeHtml(item.unit_code)}</td>
@@ -119,7 +120,7 @@
           `<a class="filter${filters.type === key ? " active" : ""}" href="${escapeHtml(link({ type: key }))}"${filters.type === key ? ' aria-current="page"' : ""}>${escapeHtml(text)} (${counts[key] ?? 0})</a>`).join("")}</nav>
         <form class="fm-toolbar" id="fm-filter" role="search">
           <label class="sr-only" for="fm-q">ค้นหา Item</label>
-          <input class="input" id="fm-q" name="q" value="${escapeHtml(filters.q)}" maxlength="100" placeholder="ค้นหารหัส ชื่อสินค้า หรือรายละเอียด…">
+          <input class="input" id="fm-q" name="q" value="${escapeHtml(filters.q)}" maxlength="100" placeholder="ค้นหารหัส Item รหัสอะไหล่ ชื่อสินค้า หรือรายละเอียด…">
           <label class="sr-only" for="fm-brand">แบรนด์</label>
           <select class="select" id="fm-brand" name="brand">${options([["all", "ทุกแบรนด์"], ...model.BRANDS.map((brand) => [brand, brand])], filters.brand)}</select>
           <label class="sr-only" for="fm-status">สถานะ</label>
@@ -226,6 +227,7 @@
           <a class="btn" href="${escapeHtml(menu.url("item-list", { id: item.id, edit: 1 }))}">แก้ไข Item</a></div>
         <p>${typeBadge(item.item_type)} ${statusBadge(item.status)}</p>
         <dl class="definition-grid">
+          <div class="definition"><dt>รหัสอะไหล่</dt><dd>${item.part_code ? escapeHtml(item.part_code) : "—"}</dd></div>
           <div class="definition"><dt>แบรนด์</dt><dd>${escapeHtml(item.brand)}</dd></div>
           <div class="definition"><dt>หมวดหมู่</dt><dd>${escapeHtml(item.category_name)}</dd></div>
           <div class="definition"><dt>คงเหลือ (ทุกคลัง)</dt><dd>${qty(item.stock)} ${escapeHtml(item.unit_code)}</dd></div>
@@ -256,6 +258,8 @@
           <div class="field-row">
             <div class="field"><label for="fm-code">รหัส Item *</label><input class="input" id="fm-code" name="code" required maxlength="40" pattern="${escapeHtml(model.ITEM_CODE_PATTERN)}" autocapitalize="characters" value="${value("code")}" placeholder="เช่น RM-NR-002"><small>ตัวอักษรอังกฤษ ตัวเลข - และ _ (ระบบเปลี่ยนเป็นตัวพิมพ์ใหญ่ให้)</small></div>
             <div class="field"><label for="fm-brand-input">แบรนด์ *</label><select class="select" id="fm-brand-input" name="brand" required>${options(model.BRANDS.map((brand) => [brand, brand]), item?.brand ?? "MNP")}</select></div>
+            <div class="field full"><label for="fm-part-code">รหัสอะไหล่</label><input class="input" id="fm-part-code" name="part_code" maxlength="60" value="${value("part_code")}" placeholder="เช่น SE-ST01-100-18-65 · PT-00320 · D21-016">
+              <small>รหัสอะไหล่ที่ใช้ประกอบเป็น Item นี้ (คอลัมน์ X ของใบคำนวณวัตถุดิบ) ไม่บังคับ ซ้ำกับ Item อื่นได้ เช่น อะไหล่รหัสเดียวกันแต่คนละสี ส่วน “รหัส Item” ด้านบนคือรหัสสินค้าที่เกิดจากการประกอบอะไหล่ (คอลัมน์ B) และต้องไม่ซ้ำ</small></div>
             <div class="field full"><label for="fm-name">ชื่อ Item ภาษาไทย *</label><input class="input" id="fm-name" name="name" required maxlength="160" value="${value("name")}"></div>
             <div class="field full"><label for="fm-name-en">ชื่อภาษาอังกฤษ</label><input class="input" id="fm-name-en" name="name_en" maxlength="160" value="${value("name_en")}"></div>
             <div class="field"><label for="fm-type">ประเภท *</label><select class="select" id="fm-type" name="item_type" required${locked}>${options(Object.entries(model.ITEM_TYPES).map(([key, text]) => [key, `${key} · ${text}`]), item?.item_type ?? "RM")}</select></div>
