@@ -95,7 +95,7 @@
     }).join("");
     if (!orders.length) {
       return `<section class="card"><div class="empty">ยังไม่มีใบสั่งผลิตในโหมดทดสอบ<br><small>ฝ่ายขายออกใบใหม่ได้ที่เมนู “ใบสั่งผลิต-ใหม่” (สลับเป็นพนักงานขาย) หรือเติมชุดทดลองที่ทะเบียนสินค้า</small>
-          <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("production-new"))}">➕ ออกใบสั่งผลิต</a>
+          <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("production-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบสั่งผลิต</a>
           <a class="btn secondary" href="${escapeHtml(menu.url("item-list"))}">ไปที่ทะเบียนสินค้า</a></div></div></section>`;
     }
     const body = rows.map((order) => `<tr>
@@ -441,7 +441,7 @@
   }
 
   // ---------- ลงทะเบียน view ----------
-  const newOrderAction = () => `<a class="btn" href="${escapeHtml(menu.url("production-new"))}">➕ ออกใบสั่งผลิต</a>`;
+  const newOrderAction = () => `<a class="btn" href="${escapeHtml(menu.url("production-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบสั่งผลิต</a>`;
   const gone = (back) => ({ back, body: `<section class="card"><div class="empty">${escapeHtml(ERROR_MESSAGES.PRODUCTION_ORDER_NOT_FOUND)}</div></section>` });
 
   const VIEWS = {

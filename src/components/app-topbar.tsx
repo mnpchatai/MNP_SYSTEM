@@ -42,7 +42,7 @@ export function AppTopbar({ notificationCount }: { notificationCount: number }) 
           <Bell size={16} aria-hidden="true" />
           {notificationCount > 0 ? <span>{notificationCount > 9 ? "9+" : notificationCount}</span> : null}
         </Link>
-        <Link className="btn topbar-create" href="/requests/new"><span className="emoji-icon" aria-hidden="true">➕</span> สร้างคำร้อง</Link>
+        <Link className="btn topbar-create" href="/requests/new"><span className="plus-icon" aria-hidden="true" /> สร้างคำร้อง</Link>
       </div>
     </header>
   );

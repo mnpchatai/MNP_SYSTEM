@@ -1222,7 +1222,7 @@ async function loadUnread() {
 const NAV_ICONS = {
   dashboard: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5M9 21v-7h6v7"/></svg>`,
   requests: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>`,
-  new: `<span aria-hidden="true">➕</span>`,
+  new: `<span class="plus-icon" aria-hidden="true"></span>`,
   approvals: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>`,
   notifications: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>`,
   admin: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1h-4v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1v-4H3a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.1h4V3a1.7 1.7 0 0 0 1.1 1.6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.37.36.7.6 1 .27.25.62.4 1 .4h.1v4H21a1.7 1.7 0 0 0-1.6.6Z"/></svg>`,
@@ -1656,7 +1656,7 @@ function requestCenterHeader(types, params, counts) {
     return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
         <div class="request-module-title"><span class="type-card-badge">${escapeHtml(selected.prefix ?? "")}</span><div><div class="eyebrow">คำร้อง</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
-        <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}">➕ ${escapeHtml(createLabel)}</a></div>
+        <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
       </div>`;
   }
   return `<div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
@@ -3069,7 +3069,7 @@ async function renderAdmin(params) {
         </form>
       </section>` : ""}
       <section class="card">
-        <div class="card-head"><div><h2>บัญชีทั้งหมด</h2></div>${adding ? "" : `<a class="btn small" href="#/admin?tab=credentials&add=1">➕ เพิ่มบัญชี</a>`}</div>
+        <div class="card-head"><div><h2>บัญชีทั้งหมด</h2></div>${adding ? "" : `<a class="btn small" href="#/admin?tab=credentials&add=1"><span class="plus-icon" aria-hidden="true"></span> เพิ่มบัญชี</a>`}</div>
         <p class="muted small">ตารางนี้แสดงพนักงานทุกบัญชีรวมถึงบัญชีผู้ดูแลระบบและบัญชีของคุณเอง รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้เจ้าของบัญชีแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
         <div class="table-wrap"><table>
           <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>ตำแหน่ง</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>

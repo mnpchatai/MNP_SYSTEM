@@ -297,7 +297,7 @@
           <div class="fm-node-head">
             <strong>ขั้นตอนที่ ${index + 1}</strong>${type ? typeBadge(type) : ""}
             <span class="fm-node-tools">
-              <button class="btn secondary small" type="button" data-add-after="${index}" aria-haspopup="menu" aria-label="เพิ่มขั้นตอนต่อจากขั้นตอนที่ ${index + 1}">➕ เพิ่มต่อ</button>
+              <button class="btn secondary small" type="button" data-add-after="${index}" aria-haspopup="menu" aria-label="เพิ่มขั้นตอนต่อจากขั้นตอนที่ ${index + 1}"><span class="plus-icon" aria-hidden="true"></span> เพิ่มต่อ</button>
               <button class="btn danger small" type="button" data-remove-line aria-label="ลบขั้นตอนที่ ${index + 1}">ลบ</button>
             </span>
           </div>
@@ -336,7 +336,7 @@
       ${editing && existing.decision_note ? notice(`ผู้อนุมัติส่งกลับพร้อมเหตุผล: “${existing.decision_note}”`) : ""}
       <section class="card">
         ${emptyParents ? `<div class="empty">ไม่มีสินค้าหลักที่สร้างโครงสร้างใหม่ได้<br><small>ต้องเป็น Item ที่ใช้งานอยู่ ประเภทงานระหว่างผลิตหรือสินค้าสำเร็จรูป วิธีจัดหา “ผลิตเอง” หรือ “ซื้อ / ผลิต” และยังไม่มีฉบับร่าง/รออนุมัติ</small><br>
-          <a class="btn secondary small" href="${escapeHtml(menu.url("item-new"))}">➕ เพิ่ม Item ใหม่</a></div>` : `
+          <a class="btn secondary small" href="${escapeHtml(menu.url("item-new"))}"><span class="plus-icon" aria-hidden="true"></span> เพิ่ม Item ใหม่</a></div>` : `
         <form class="fm-form" id="fm-bom-form" novalidate>
           <p class="muted small">ช่องที่มี * จำเป็นต้องกรอก · บันทึกเป็นฉบับร่างก่อน แล้วส่งให้ผู้ดูแลระบบอนุมัติ ฉบับร่างยังไม่ใช้ผลิตจริง</p>
           <div class="fm-form-error" id="fm-form-error" role="alert" hidden></div>
@@ -353,20 +353,20 @@
               <textarea class="textarea" id="fm-bom-note" name="note" rows="2" maxlength="1000">${escapeHtml(ctx.note)}</textarea></div>
           </div>
           <h3>โครงสร้างส่วนประกอบ</h3>
-          <p class="muted small">เรียงจากบนลงล่าง ขั้นตอนที่ 1 อยู่บนสุด · <strong>คลิกขวา</strong>ที่สินค้าหลักหรือขั้นตอนใดๆ เพื่อเลือกประเภท (RM / WIP / FG / PKG) ของขั้นตอนถัดไป · บนมือถือหรือคีย์บอร์ดใช้ปุ่ม “➕ เพิ่มต่อ”</p>
+          <p class="muted small">เรียงจากบนลงล่าง ขั้นตอนที่ 1 อยู่บนสุด · <strong>คลิกขวา</strong>ที่สินค้าหลักหรือขั้นตอนใดๆ เพื่อเลือกประเภท (RM / WIP / FG / PKG) ของขั้นตอนถัดไป · บนมือถือหรือคีย์บอร์ดใช้ปุ่ม “<span class="plus-icon" aria-hidden="true"></span> เพิ่มต่อ”</p>
           <div class="fm-struct" id="fm-struct">
             <div class="fm-node fm-node-root" data-struct-root tabindex="0">
               <span class="fm-step-no fm-root-mark" aria-hidden="true">★</span>
               <div class="fm-node-body">
                 <div class="fm-node-head"><strong id="fm-root-title">${parent ? escapeHtml(`${parent.code} · ${parent.name}`) : "เลือกสินค้าหลักด้านบนก่อน"}</strong><span class="muted small">สินค้าหลัก</span>
-                  <span class="fm-node-tools"><button class="btn secondary small" type="button" data-add-after="-1" aria-haspopup="menu">➕ เพิ่มขั้นตอนที่ 1</button></span></div>
+                  <span class="fm-node-tools"><button class="btn secondary small" type="button" data-add-after="-1" aria-haspopup="menu"><span class="plus-icon" aria-hidden="true"></span> เพิ่มขั้นตอนที่ 1</button></span></div>
               </div>
             </div>
             <ol class="fm-struct-list" id="fm-bom-lines">${lines.map((line, index) => lineRowHtml(line, index, components)).join("")}</ol>
-            <p class="fm-struct-empty muted small" id="fm-struct-empty"${lines.length ? " hidden" : ""}>ยังไม่มีขั้นตอน — คลิกขวาที่สินค้าหลักหรือกดปุ่ม ➕ เพื่อเลือกประเภทของขั้นตอนที่ 1</p>
+            <p class="fm-struct-empty muted small" id="fm-struct-empty"${lines.length ? " hidden" : ""}>ยังไม่มีขั้นตอน — คลิกขวาที่สินค้าหลักหรือกดปุ่ม <span class="plus-icon" aria-hidden="true"></span> เพื่อเลือกประเภทของขั้นตอนที่ 1</p>
             ${typeMenuHtml()}
           </div>
-          <div class="fm-actions"><button class="btn secondary small" type="button" id="fm-add-line" aria-haspopup="menu">➕ เพิ่มขั้นตอนถัดไป</button></div>
+          <div class="fm-actions"><button class="btn secondary small" type="button" id="fm-add-line" aria-haspopup="menu"><span class="plus-icon" aria-hidden="true"></span> เพิ่มขั้นตอนถัดไป</button></div>
           <p class="muted small">ปริมาณของแต่ละขั้นตอนเป็นหน่วยนับฐานของส่วนประกอบนั้น (ระบบไม่แปลงหน่วยในสูตร) · เผื่อสูญเสียเป็นแบบบวกเพิ่มจากปริมาณสุทธิ · ห้ามเลือกสินค้าหลักเป็นส่วนประกอบ ห้ามซ้ำ และห้ามสูตรวนซ้ำกับสูตรอื่น (ระบบตรวจตอนบันทึก)</p>
           <div class="fm-actions">
             <button class="btn secondary" type="submit" data-intent="draft">บันทึกฉบับร่าง</button>
@@ -575,7 +575,7 @@
   // ---------- รายการฉบับร่าง (โครงสร้างสินค้า-แก้ไข) ----------
   function draftsHtml(data) {
     const drafts = model.draftBoms(data.boms);
-    const create = `<a class="btn" href="${escapeHtml(menu.url("structure-new"))}">➕ สร้างโครงสร้างสินค้าใหม่</a>`;
+    const create = `<a class="btn" href="${escapeHtml(menu.url("structure-new"))}"><span class="plus-icon" aria-hidden="true"></span> สร้างโครงสร้างสินค้าใหม่</a>`;
     if (!drafts.length) {
       return `${pendingBanner(data)}<section class="card"><div class="empty">ไม่มีฉบับร่างที่รอแก้ไข<br><small>ฉบับที่รออนุมัติแก้ไม่ได้ (ถอนกลับมาเป็นฉบับร่างได้ที่หน้าดู) · ฉบับที่อนุมัติแล้วออก Revision ใหม่ได้จากหน้าดู</small>
         <div class="fm-actions">${create}</div></div></section>`;

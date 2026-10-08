@@ -82,7 +82,7 @@
     }).join("");
     if (!orders.length) {
       return `<section class="card"><div class="empty">ยังไม่มีใบสั่งวัตถุดิบในโหมดทดสอบ<br><small>ใบสั่งผลิตต้องออกใบสั่งงานแล้ว (ขั้น 1–2) แผนก ST จึงออกใบสั่งวัตถุดิบได้</small>
-          <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("material-new"))}">➕ ออกใบสั่งวัตถุดิบ</a>
+          <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("material-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบสั่งวัตถุดิบ</a>
           <a class="btn secondary" href="${escapeHtml(menu.url("production-view"))}">ไปที่ใบสั่งผลิต</a></div></div></section>`;
     }
     const body = rows.map((order) => `<tr>
@@ -307,7 +307,7 @@
   }
 
   // ---------- ลงทะเบียน view ----------
-  const newOrderAction = () => `<a class="btn" href="${escapeHtml(menu.url("material-new"))}">➕ ออกใบสั่งวัตถุดิบ</a>`;
+  const newOrderAction = () => `<a class="btn" href="${escapeHtml(menu.url("material-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบสั่งวัตถุดิบ</a>`;
   const gone = (back, text = ERROR_MESSAGES.MATERIAL_ORDER_NOT_FOUND) => ({ back, body: `<section class="card"><div class="empty">${escapeHtml(text)}</div></section>` });
 
   const VIEWS = {

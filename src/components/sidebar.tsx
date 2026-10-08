@@ -20,12 +20,12 @@ const workspaceItems: Array<{
   href: string;
   label: string;
   icon?: LucideIcon;
-  emoji?: string;
+  plus?: boolean;
   featured?: boolean;
 }> = [
   { href: "/", label: "หน้าหลัก", icon: LayoutDashboard },
   { href: "/requests", label: "คำร้องของฉัน", icon: ClipboardList },
-  { href: "/requests/new", label: "สร้างคำร้อง", emoji: "➕", featured: true },
+  { href: "/requests/new", label: "สร้างคำร้อง", plus: true, featured: true },
   { href: "/approvals", label: "รอฉันอนุมัติ", icon: CheckSquare },
   { href: "/notifications", label: "การแจ้งเตือน", icon: Bell },
 ];
@@ -79,7 +79,7 @@ export function Sidebar({
 
         <nav className="nav" aria-label="เมนูหลัก">
           <div className="nav-section-label">Workspace</div>
-          {workspaceItems.map(({ href, label, icon: Icon, emoji, featured }) => (
+          {workspaceItems.map(({ href, label, icon: Icon, plus, featured }) => (
             <Link
               key={href}
               href={href}
@@ -88,7 +88,7 @@ export function Sidebar({
               className={`nav-link${isActivePath(pathname, href) ? " active" : ""}${featured ? " nav-create" : ""}`}
               onClick={() => setMobileOpen(false)}
             >
-              <span className="nav-icon-wrap">{emoji ? <span className="emoji-icon" aria-hidden="true">{emoji}</span> : Icon ? <Icon size={17} aria-hidden="true" /> : null}</span>
+              <span className="nav-icon-wrap">{plus ? <span className="plus-icon" aria-hidden="true" /> : Icon ? <Icon size={17} aria-hidden="true" /> : null}</span>
               <span className="nav-label-full">{label}</span>
             </Link>
           ))}
