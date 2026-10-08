@@ -325,6 +325,39 @@ test("the trial migration raises only errors the page already knows how to word"
   assert.deepEqual(codes, ["SANDBOX_NOT_ACTIVE"]);
 });
 
+// ---------- รหัสอะไหล่ (20261008030000_factory_item_part_code.sql) ----------
+const PART_FIXTURE = { ...FIXTURE, items: [...FIXTURE.items, { ...item("pt1", "MEGA-ST-01-P-Y", "ชุดตอปิโด", "FG", "make", "active", "SET"), part_code: "MEGA-ST-01", category_name: "ของเล่น", stock: 0, min_stock: 0, version: 1 }] };
+
+test("the item register shows the part code under the item code and the search hint mentions it", async () => {
+  const { body } = await render("items", "", PART_FIXTURE);
+  assert.match(body, /<strong>MEGA-ST-01-P-Y<\/strong>[\s\S]*?รหัสอะไหล่ MEGA-ST-01<\/small>/);
+  assert.doesNotMatch(body, /รหัสอะไหล่ <\/small>/, "an item without a part code shows no empty label");
+  assert.match(body, /ค้นหารหัส Item รหัสอะไหล่/);
+});
+
+test("the item form has an optional part code field that keeps its value and is escaped", async () => {
+  const blank = (await render("item-new", "", PART_FIXTURE)).body;
+  assert.match(blank, /<input class="input" id="fm-part-code" name="part_code" maxlength="60" value=""/);
+  assert.doesNotMatch(blank, /id="fm-part-code"[^>]*required/, "the part code is optional");
+  const edit = (await render("items", "id=pt1&edit=1", PART_FIXTURE)).body;
+  assert.match(edit, /id="fm-part-code" name="part_code" maxlength="60" value="MEGA-ST-01"/);
+  const evil = (await render("items", "id=pt1&edit=1", { ...PART_FIXTURE, items: PART_FIXTURE.items.map((row) => (row.id === "pt1" ? { ...row, part_code: '"><script>x</script>' } : row)) })).body;
+  assert.doesNotMatch(evil, /<script>x<\/script>/);
+});
+
+test("the item detail shows the part code, or a dash when there is none", async () => {
+  assert.match((await render("items", "id=pt1", PART_FIXTURE)).body, /<dt>รหัสอะไหล่<\/dt><dd>MEGA-ST-01<\/dd>/);
+  assert.match((await render("items", "id=fg1", PART_FIXTURE)).body, /<dt>รหัสอะไหล่<\/dt><dd>—<\/dd>/);
+});
+
+test("the part code migration raises only errors the page already knows how to word", () => {
+  const sql = fs.readFileSync("supabase/migrations/20261008030000_factory_item_part_code.sql", "utf8");
+  const raised = [...new Set([...sql.matchAll(/raise exception '([A-Z_]+)'/g)].map((match) => match[1]))];
+  const messages = loadFactory().MNP_FACTORY_ERRORS;
+  for (const code of raised) assert.ok(messages[code], `${code} has no message`);
+  assert.ok(raised.includes("INVALID_ITEM_PART_CODE"));
+});
+
 // ---------- ชุดทดสอบ MEGAFORM (20261008020000_factory_megaform_seed.sql) ----------
 test("the item register offers the MEGAFORM set both when empty and next to existing data", async () => {
   const empty = (await render("items", "", { ...FIXTURE, items: [], boms: [] })).body;
@@ -352,10 +385,12 @@ test("a repeated MEGAFORM seed says nothing was added, and a failure re-enables 
   assert.equal(failed.renders, 0);
 });
 
-test("the MEGAFORM migration raises only errors the page already knows how to word", () => {
-  const sql = fs.readFileSync("supabase/migrations/20261008020000_factory_megaform_seed.sql", "utf8");
-  const codes = [...new Set([...sql.matchAll(/raise exception '([A-Z_]+)'/g)].map((match) => match[1]))];
-  assert.deepEqual(codes, ["SANDBOX_NOT_ACTIVE"]);
+test("the MEGAFORM migrations raise only errors the page already knows how to word", () => {
+  for (const file of ["20261008020000_factory_megaform_seed.sql", "20261008040000_factory_megaform_part_codes.sql"]) {
+    const sql = fs.readFileSync(`supabase/migrations/${file}`, "utf8");
+    const codes = [...new Set([...sql.matchAll(/raise exception '([A-Z_]+)'/g)].map((match) => match[1]))];
+    assert.deepEqual(codes, ["SANDBOX_NOT_ACTIVE"], file);
+  }
 });
 
 // ---------- ต้นไม้โครงสร้าง (หน้า โครงสร้างสินค้า-ดู) ----------

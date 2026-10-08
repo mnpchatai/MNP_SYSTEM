@@ -1243,6 +1243,7 @@ th.right, td.right { text-align: right; }
 .fm-item-link { display: grid; gap: 2px; color: inherit; text-decoration: none; }
 .fm-item-link strong { white-space: nowrap; }
 .fm-item-link span { min-width: 140px; color: var(--muted); font-size: 12px; }
+.fm-item-link small { font-size: 11px; }
 .fm-item-link:hover strong, .fm-item-link:focus-visible strong { color: var(--primary); text-decoration: underline; }
 .fm-table-footer { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .fm-pagination { display: flex; flex-wrap: wrap; gap: 6px; }

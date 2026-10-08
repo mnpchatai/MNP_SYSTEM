@@ -30,6 +30,14 @@ test("filterItems searches code, Thai and English names and specification, ignor
   assert.deepEqual(filterItems(items, { ...all, q: "สีน้ำเงิน" }).map((i) => i.id), ["3"]);
 });
 
+test("filterItems also finds an item by its part code", () => {
+  const all = { q: "", type: "all", brand: "all", status: "all", sort: "code" };
+  const withPart = [...items, { id: "6", code: "SE-DEMO-01-OR01", part_code: "SE-DEMO-01", name: "ชิ้นงานสีส้ม", name_en: "", specification: "", item_type: "WIP", brand: "MNP", status: "active", stock: 0, min_stock: 0 }];
+  assert.deepEqual(filterItems(withPart, { ...all, q: "se-demo-01" }).map((i) => i.id), ["6"]);
+  assert.deepEqual(filterItems(withPart, { ...all, q: "DEMO-01" }).map((i) => i.id), ["6"], "part code and item code both match");
+  assert.deepEqual(filterItems(items, { ...all, q: "se-demo-01" }).map((i) => i.id), [], "an item without a part code is not matched by 'undefined'");
+});
+
 test("filterItems combines type, brand and status filters and sorts by code or name", () => {
   const base = { q: "", type: "all", brand: "all", status: "all", sort: "code" };
   assert.deepEqual(filterItems(items, base).map((i) => i.code), ["FG-SAF-001", "PKG-BOX-001", "RM-EVA-001", "RM-EVA-OLD", "RM-NR-001"]);
@@ -75,7 +83,10 @@ test("itemPayload normalises a new item from the form", () => {
   assert.deepEqual(payload, {
     p_id: null, p_version: null, p_code: "RM-NEW-01", p_name: "ยางใหม่", p_name_en: "", p_item_type: "RM", p_category_code: "rubber",
     p_brand: "MNP", p_unit_code: "KG", p_procurement: "buy", p_status: "active", p_lot_tracking: true, p_min_stock: 12.5, p_specification: "spec",
+    p_part_code: "",
   });
+  assert.equal(itemPayload({ code: "x", part_code: "  SE-ST01-100-18-65 " }).p_part_code, "SE-ST01-100-18-65", "the part code is trimmed and kept as typed (not upper-cased)");
+  assert.equal(itemPayload({ code: "x", part_code: "Mega-PPL-01-12(BN)-Y" }).p_part_code, "Mega-PPL-01-12(BN)-Y");
   assert.equal(itemPayload({ min_stock: "" }).p_min_stock, null, "an empty minimum is sent as missing, not zero");
   assert.equal(itemPayload({}).p_lot_tracking, false, "an unticked checkbox is false");
 });
@@ -107,6 +118,8 @@ test("changedFields lists edited fields only, comparing numbers by value", () =>
   const before = { code: "A-01", name: "เดิม", name_en: "", category_code: "rubber", brand: "MNP", procurement: "buy", status: "active", min_stock: "10.000", specification: "", version: 1, updated_at: "t1" };
   assert.deepEqual(changedFields(before, { ...before, min_stock: 10, version: 2, updated_at: "t2" }), [], "version and timestamps are not user edits");
   assert.deepEqual(changedFields(before, { ...before, name: "ใหม่", status: "inactive", min_stock: 25 }), ["name", "status", "min_stock"]);
+  assert.deepEqual(changedFields(before, { ...before, part_code: "SE-1" }), ["part_code"], "adding a part code is an edit");
+  assert.deepEqual(changedFields({ ...before, part_code: null }, { ...before, part_code: "" }), [], "null and empty are the same: no part code");
   assert.deepEqual(changedFields(null, before), [], "a creation has no before snapshot");
   assert.deepEqual(changedFields(before, undefined), []);
 });
