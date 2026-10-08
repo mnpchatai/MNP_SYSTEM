@@ -13,11 +13,13 @@ const FILES = [
   "modules/factory-material-model.js",
   "modules/factory-job-model.js",
   "modules/factory-board-model.js",
+  "modules/factory-gantt-model.js",
   "modules/module-factory-master.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
   "modules/module-factory-job.js",
+  "modules/module-factory-gantt.js",
   "modules/module-factory-board.js",
   "modules/module-factory.js",
 ];

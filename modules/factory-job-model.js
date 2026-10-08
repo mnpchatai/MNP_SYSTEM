@@ -18,7 +18,7 @@
   // class ของ .badge ใน styles.css ที่ใกล้เคียงที่สุด (เตือน = รอเริ่ม, ฟ้า = กำลังผลิต, เขียว = เสร็จ, แดง = ยกเลิก)
   const BADGE_CLASS = Object.freeze({ open: "pending_approval", in_progress: "in_progress", completed: "completed", cancelled: "cancelled" });
   const STEP_STATUSES = Object.freeze({ pending: "รอทำ", done: "เสร็จแล้ว" });
-  const HISTORY_ACTIONS = Object.freeze({ create: "ออกใบงาน", step: "ทำขั้นตอนเสร็จ", complete: "ทำขั้นสุดท้ายเสร็จ รับเข้าคลัง", cancel: "ยกเลิกใบงาน", qc_fail: "ตรวจ QC ไม่ผ่าน (ออก NCR)" });
+  const HISTORY_ACTIONS = Object.freeze({ create: "ออกใบงาน", step: "ทำขั้นตอนเสร็จ", complete: "ทำขั้นสุดท้ายเสร็จ รับเข้าคลัง", cancel: "ยกเลิกใบงาน", qc_fail: "ตรวจ QC ไม่ผ่าน (ออก NCR)", schedule: "กำหนด/เลื่อนตารางเวลา" });
   const ACTIVE_STATUSES = Object.freeze(["open", "in_progress"]);
 
   const isActive = (job) => ACTIVE_STATUSES.includes(job?.status);
