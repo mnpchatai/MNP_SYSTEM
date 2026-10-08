@@ -136,12 +136,21 @@
     const on = selection?.card === card && selection.key === String(key);
     return `<button type="button" class="${extraClass}${on ? " selected" : ""}" data-sel="${esc(card)}:${esc(key)}" aria-pressed="${on}">${inner}</button>`;
   }
+  const detailHint = (noun) => `<p class="nd-hint">แตะ${noun}เพื่อดูตัวเลขของรายการนั้น แล้วกดกรองทั้งหน้าได้</p>`;
+  const detailHtml = (item) => `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองทั้งหน้าตามนี้")}</a>` : ""}</div>`;
+  // รายละเอียดของรายการที่เลือก (ถ้ามี) — resolve(key) คืน { title, lines, href, linkLabel } หรือ null
+  const selectedItem = (card, resolve) => (selection?.card === card ? resolve(selection.key) : null);
+  // รายการที่เลือกแสดงรายละเอียดต่อท้ายตัวรายการนั้นเอง ไม่ไปรวมที่ท้ายการ์ด
+  const detailUnder = (card, key, resolve) => {
+    const item = selection?.card === card && selection.key === String(key) ? resolve(selection.key) : null;
+    return item ? detailHtml(item) : "";
+  };
+  // คำใบ้ท้ายการ์ด แสดงเฉพาะตอนยังไม่ได้เลือกรายการ
+  const detailHintIfIdle = (card, noun, resolve) => (selectedItem(card, resolve) ? "" : detailHint(noun));
+  // กราฟเดือนเป็นแท่งตั้งเรียงข้างกัน ไม่มีที่ใต้แท่งเดียว จึงแสดงรายละเอียดใต้กราฟ
   function detailBox(card, noun, resolve) {
-    const hint = `<p class="nd-hint">แตะ${noun}เพื่อดูตัวเลขของรายการนั้น แล้วกดกรองทั้งหน้าได้</p>`;
-    if (selection?.card !== card) return hint;
-    const item = resolve(selection.key);
-    if (!item) return hint;
-    return `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองทั้งหน้าตามนี้")}</a>` : ""}</div>`;
+    const item = selectedItem(card, resolve);
+    return item ? detailHtml(item) : detailHint(noun);
   }
 
   // ---- ชิ้นส่วนของหน้า ----
@@ -251,12 +260,12 @@
       ${columnChart({ card: "month-money", title: "สูญเสียสุทธิ (บาท)", subtitle: "ยืนยันแล้วเทียบกับประมาณการรอยืนยัน", data, legend: ["ยืนยันแล้ว (สุทธิ)", "ประมาณการ"], pickA: (m) => m.net, pickB: (m) => m.estimated, formatTotal: fmtBaht, formatAxis: fmtShort, lastFilters: filters })}</div>`;
   }
 
-  function barRows({ card, items, valueOf, subOf, filters, filterKey }) {
+  function barRows({ card, items, valueOf, subOf, filters, filterKey, resolve }) {
     const max = items.length ? Math.max(...items.map((item) => valueOf(item).amount)) : 0;
     return `<div class="nd-bars">${items.map((item) => {
       const { amount, text } = valueOf(item);
       const inner = `<span class="nd-lab">${esc(item.label)}</span><span class="nd-trk"><span class="nd-bar${item.vital === false ? " rest" : ""}" style="width:${max ? Math.max((amount / max) * 100, 0.8) : 0}%"></span></span><span class="nd-val">${esc(text)}${subOf?.(item) ? `<small>${esc(subOf(item))}</small>` : ""}</span>`;
-      return selectButton(card, item.key, inner, `nd-brow${filterKey && filters[filterKey] === item.key ? " active" : ""}`);
+      return selectButton(card, item.key, inner, `nd-brow${filterKey && filters[filterKey] === item.key ? " active" : ""}`) + detailUnder(card, item.key, resolve);
     }).join("")}</div>`;
   }
 
@@ -264,14 +273,15 @@
     const items = model.pareto(list, filters, filters.sort);
     const byNet = filters.sort === "net";
     const warn = byNet && sums.assessedRate !== null && sums.assessedRate < 1 ? `<div class="nd-warn">บาทในรายการนี้เป็นค่าขั้นต่ำ ประเมินต้นทุนครบ ${fmtPercent(sums.assessedRate)} ของใบที่ต้องประเมิน ใบที่มีแต่ประมาณการไม่ปรากฏในแท่ง</div>` : "";
+    const resolve = (key) => {
+      const item = items.find((entry) => entry.key === key);
+      return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
+    };
     return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>Pareto ประเภทข้อบกพร่อง แตะแท่งเพื่อดูตัวเลข</p></div>
       <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>${warn}
-      ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
+      ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", resolve, valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
       <div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
-      ${detailBox("pareto", "แท่ง", (key) => {
-        const item = items.find((entry) => entry.key === key);
-        return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
-      })}`;
+      ${detailHintIfIdle("pareto", "แท่ง", resolve)}`;
   }
 
   // ความสูญเสียแยกตามประเภทต้นทุน: ยืนยัน (ทึบ) + ประมาณการ (จาง) ชดเชยและรายการเดิมแสดงแยก ไม่รวมในแท่ง
@@ -279,40 +289,44 @@
     const items = model.lossesByType(list, filters).map((item) => ({ ...item, label: LOSS_TYPES[item.key] ?? item.key }));
     const max = items.length ? Math.max(...items.map((item) => item.confirmed + item.estimated)) : 0;
     const widthOf = (value) => (max ? Math.max((value / max) * 100, 0.8) : 0);
+    const resolve = (key) => {
+      const item = items.find((entry) => entry.key === key);
+      return item && { title: item.label, lines: [["ยืนยันแล้ว (ก่อนหักชดเชย)", fmtBaht(item.confirmed)], ["ประมาณการรอยืนยัน", fmtBaht(item.estimated)], ["จำนวนใบที่มีรายการประเภทนี้", fmtCount(item.count)], ["สัดส่วนของยอดยืนยัน", fmtPercent(item.share)]], href: hrefWith(filters, { loss: filters.loss === key ? "" : key }), linkLabel: filters.loss === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบที่มีต้นทุนประเภทนี้" };
+    };
     const rows = items.map((item) => {
       const inner = `<span class="nd-lab">${esc(item.label)}</span><span class="nd-trk stack">${item.confirmed > 0 ? `<span class="nd-bar" style="width:${widthOf(item.confirmed)}%"></span>` : ""}${item.estimated > 0 ? `<span class="nd-bar rest" style="width:${widthOf(item.estimated)}%"></span>` : ""}</span><span class="nd-val">${esc(fmtBaht(item.confirmed))}${item.estimated ? `<small>+ ประมาณการ ${esc(fmtBaht(item.estimated))}</small>` : ""}</span>`;
-      return selectButton("loss", item.key, inner, `nd-brow${filters.loss === item.key ? " active" : ""}`);
+      return selectButton("loss", item.key, inner, `nd-brow${filters.loss === item.key ? " active" : ""}`) + detailUnder("loss", item.key, resolve);
     }).join("");
     const notes = [sums.recovery ? `ชดเชยยืนยัน −${fmtBaht(sums.recovery)} แสดงแยก ไม่หักในแท่ง` : "", sums.legacy ? `รายการเดิมรอตรวจสอบ ${fmtBaht(sums.legacy)} ไม่รวมในแท่ง` : ""].filter(Boolean).join(" · ");
     return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p>ค่าซ่อม (Repair) กับ Rework แยกคนละแท่ง ยอดยืนยันรวม ${esc(fmtBaht(sums.gross))} ตรงกับ "สูญเสียยืนยัน (ก่อนชดเชย)" ในรายละเอียดของการ์ดสูญเสียสุทธิ แตะแท่งเพื่อดูตัวเลข</p></div>
       ${items.length ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>ยืนยันแล้ว (ก่อนหักชดเชย)</span><span><i class="soft"></i>ประมาณการรอยืนยัน</span></div>${notes ? `<p class="nd-hint">${esc(notes)}</p>` : ""}` : `<p class="nd-empty">ยังไม่มีการบันทึกความสูญเสียที่ยืนยันหรือประมาณการในช่วงนี้</p>`}
-      ${detailBox("loss", "แท่ง", (key) => {
-        const item = items.find((entry) => entry.key === key);
-        return item && { title: item.label, lines: [["ยืนยันแล้ว (ก่อนหักชดเชย)", fmtBaht(item.confirmed)], ["ประมาณการรอยืนยัน", fmtBaht(item.estimated)], ["จำนวนใบที่มีรายการประเภทนี้", fmtCount(item.count)], ["สัดส่วนของยอดยืนยัน", fmtPercent(item.share)]], href: hrefWith(filters, { loss: filters.loss === key ? "" : key }), linkLabel: filters.loss === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบที่มีต้นทุนประเภทนี้" };
-      })}`;
+      ${detailHintIfIdle("loss", "แท่ง", resolve)}`;
   }
 
   function deptHtml(list, filters) {
     const { rows: deptRows, total } = model.deptTable(list, filters);
+    const resolve = (key) => {
+      const row = deptRows.find((entry) => entry.dept === key);
+      return row && { title: key ? `แผนก ${key}` : "ยังไม่กำหนดแผนก", lines: [["ใบที่เกี่ยวข้อง", fmtCount(row.count)], ["ค้างอยู่", fmtCount(row.open)], ["เกินกำหนดตอบ", fmtCount(row.overdue)], ["ตอบทันกำหนด", fmtPercent(row.onTimeRate)], ["สูญเสียสุทธิที่แบ่งตามสัดส่วนแผนก", fmtBaht(row.net)]], href: key ? hrefWith(filters, { dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : undefined };
+    };
+    const detailRow = (key) => { const detail = detailUnder("dept", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="6">${detail}</td></tr>` : ""; };
     return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน แถวรวมตรงกับตัวเลขด้านบน</p></div>
       ${deptRows.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบที่เกี่ยวข้อง</th><th class="nd-num">ค้าง</th><th class="nd-num">เกินกำหนด</th><th class="nd-num">ตอบทัน</th><th class="nd-num">สุทธิ (บาท)</th></tr></thead><tbody>
-      ${deptRows.map((row) => `<tr><td>${selectButton("dept", row.dept, esc(row.dept || "ยังไม่กำหนดแผนก"), "nd-rowbtn")}</td><td class="nd-num">${fmtNumber(row.count)}</td><td class="nd-num">${fmtNumber(row.open)}</td><td class="nd-num">${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>${row.overdue}</span>` : "0"}</td><td class="nd-num">${fmtPercent(row.onTimeRate)}</td><td class="nd-num">${fmtNumber(row.net)}</td></tr>`).join("")}
+      ${deptRows.map((row) => `<tr><td>${selectButton("dept", row.dept, esc(row.dept || "ยังไม่กำหนดแผนก"), "nd-rowbtn")}</td><td class="nd-num">${fmtNumber(row.count)}</td><td class="nd-num">${fmtNumber(row.open)}</td><td class="nd-num">${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>${row.overdue}</span>` : "0"}</td><td class="nd-num">${fmtPercent(row.onTimeRate)}</td><td class="nd-num">${fmtNumber(row.net)}</td></tr>${detailRow(row.dept)}`).join("")}
       <tr class="nd-total"><td>รวม (ไม่ซ้ำ)</td><td class="nd-num">${fmtNumber(total.total)}</td><td class="nd-num">${fmtNumber(total.open)}</td><td class="nd-num">${fmtNumber(total.overdue)}</td><td class="nd-num">${fmtPercent(total.onTimeRate)}</td><td class="nd-num">${fmtNumber(total.net)}</td></tr></tbody></table></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
-      ${detailBox("dept", "ชื่อแผนก", (key) => {
-        const row = deptRows.find((entry) => entry.dept === key);
-        return row && { title: key ? `แผนก ${key}` : "ยังไม่กำหนดแผนก", lines: [["ใบที่เกี่ยวข้อง", fmtCount(row.count)], ["ค้างอยู่", fmtCount(row.open)], ["เกินกำหนดตอบ", fmtCount(row.overdue)], ["ตอบทันกำหนด", fmtPercent(row.onTimeRate)], ["สูญเสียสุทธิที่แบ่งตามสัดส่วนแผนก", fmtBaht(row.net)]], href: key ? hrefWith(filters, { dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : undefined };
-      })}`;
+      ${detailHintIfIdle("dept", "ชื่อแผนก", resolve)}`;
   }
 
   function breakdownHtml(card, title, subtitle, items, labels, filters, filterKey, total) {
     const rows = items.map((item) => ({ ...item, label: labels[item.key] ?? item.key }));
+    const resolve = (key) => {
+      const item = rows.find((entry) => entry.key === key);
+      return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สัดส่วนของใบในช่วงนี้", fmtPercent(total ? item.count / total : null)]], href: hrefWith(filters, { [filterKey]: filters[filterKey] === key ? "" : key }), linkLabel: filters[filterKey] === key ? "ยกเลิกการกรอง" : undefined };
+    };
     return `<div class="nd-head"><h2>${esc(title)}</h2><p>${esc(subtitle)}</p></div>
-      ${rows.length ? barRows({ card, items: rows, filters, filterKey, valueOf: (item) => ({ amount: item.count, text: fmtCount(item.count) }) }) : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
-      ${detailBox(card, "แท่ง", (key) => {
-        const item = rows.find((entry) => entry.key === key);
-        return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สัดส่วนของใบในช่วงนี้", fmtPercent(total ? item.count / total : null)]], href: hrefWith(filters, { [filterKey]: filters[filterKey] === key ? "" : key }), linkLabel: filters[filterKey] === key ? "ยกเลิกการกรอง" : undefined };
-      })}`;
+      ${rows.length ? barRows({ card, items: rows, filters, filterKey, resolve, valueOf: (item) => ({ amount: item.count, text: fmtCount(item.count) }) }) : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
+      ${detailHintIfIdle(card, "แท่ง", resolve)}`;
   }
 
   function outcomesHtml(list) {

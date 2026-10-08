@@ -1104,6 +1104,9 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-warn { padding: 8px 10px; color: var(--muted); background: var(--shell); border-radius: 8px; font-size: 13px; }
 .nd-detail { padding: 10px 12px; display: grid; gap: 6px; justify-items: start; background: var(--shell); border: 1px solid var(--line); border-radius: 10px; }
 .nd-detail ul { width: 100%; }
+.nd-bars > .nd-detail { margin: 0 6px 6px; }
+.nd-detail-row > td { padding: 6px 6px 10px; border-bottom: 1px solid var(--line); }
+.nd-detail-row:hover > td { background: none; }
 .nd-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 th.nd-num { white-space: nowrap; }
 tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
