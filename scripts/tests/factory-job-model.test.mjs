@@ -39,7 +39,7 @@ test("statuses cover every database status with a Thai label and a badge class",
   assert.deepEqual(Object.keys(model.JOB_STATUSES), ["open", "in_progress", "completed", "cancelled"]);
   assert.deepEqual(Object.keys(model.BADGE_CLASS), Object.keys(model.JOB_STATUSES));
   assert.deepEqual(Object.keys(model.STEP_STATUSES), ["pending", "done"]);
-  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "step", "complete", "cancel", "qc_fail"]);
+  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "step", "complete", "cancel", "qc_fail", "schedule"]);
 });
 
 const qcStep = (sequence, status = "pending") => ({ sequence, name: "QC-01 ตรวจขนาด", work_center_code: "QC", department_code: "QA", status });

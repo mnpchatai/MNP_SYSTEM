@@ -7,7 +7,7 @@ const { FOLDERS, findEntry, url } = createRequire(import.meta.url)("../../module
 test("item master keeps the six reference folders first, then the folders added for the ported app", () => {
   assert.deepEqual(
     FOLDERS.map((folder) => folder.name),
-    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต", "สั่งวัตถุดิบ", "ใบงานผลิต"],
+    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต", "สั่งวัตถุดิบ", "ใบงานผลิต", "ตารางการผลิต"],
   );
 });
 
@@ -27,8 +27,17 @@ test("folders without confirmed entries stay empty instead of guessing", () => {
 });
 
 test("every entry view is one the factory pages know how to draw", () => {
-  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material", "job-queue", "job-new", "job"]);
+  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material", "job-queue", "job-new", "job", "gantt", "gantt-calendar"]);
   for (const folder of FOLDERS) for (const entry of folder.entries) assert.ok(known.has(entry.view), entry.key);
+});
+
+test("schedule folder holds the Gantt chart and the work center calendar", () => {
+  const schedule = FOLDERS.find((folder) => folder.key === "schedule");
+  assert.deepEqual(schedule.entries.map((entry) => [entry.key, entry.name, entry.view]), [
+    ["schedule-gantt", "ตารางการผลิต (Gantt)", "gantt"],
+    ["schedule-calendar", "ปฏิทินกะศูนย์งาน", "gantt-calendar"],
+  ]);
+  assert.equal(url("schedule-gantt"), "#/factory?item=schedule-gantt");
 });
 
 test("structure folder holds new, edit, approve and view entries in that order (approve is the one added beyond the reference menu)", () => {
