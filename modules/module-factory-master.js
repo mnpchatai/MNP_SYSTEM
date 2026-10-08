@@ -195,7 +195,7 @@
       (data) => `เติมชุดทดลองแล้ว ${data.items} Item · ${data.boms} BOM · ${data.steps} ขั้นตอนการผลิต`,
       "มีชุดทดลองอยู่แล้ว ไม่ได้เติมซ้ำ");
     bindSeedSet("#fm-seed-megaform", "app_sandbox_seed_factory_megaform",
-      (data) => `เติมชุด MEGAFORM แล้ว ${data.items} Item · ${data.boms} BOM · ใบสั่งผลิต ${data.orders} ใบ · ใบงาน ${data.jobs} ใบ`,
+      (data) => `เติมชุด MEGAFORM แล้ว ${data.items} Item${data.reused_items ? ` (ใช้ Item เดิมที่รหัสซ้ำ ${data.reused_items})` : ""} · ${data.boms} BOM · ใบสั่งผลิต ${data.orders} ใบ · ใบงาน ${data.jobs} ใบ`,
       "มีชุด MEGAFORM อยู่แล้ว ไม่ได้เติมซ้ำ");
     root.querySelector("#fm-purge")?.addEventListener("click", async (event) => {
       if (!confirm("ล้างข้อมูลทดสอบของฝ่ายโรงงานทั้งหมด (Item, BOM, Routing, คลัง, ใบสั่งผลิต และประวัติ)?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
