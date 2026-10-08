@@ -49,7 +49,7 @@
   }
 
   // แถวกรอกอะไหล่/วัสดุหนึ่งรายการในฟอร์มบันทึกผลการซ่อม — โครงเดียวกับ maintRecord.parts[] ของ
-  // ระบบ Maintanance-MT เดิม (name/qty/unit/price/shop/note) ใช้ซ้ำทั้งตอนสร้างแถวแรกและกด "+ เพิ่มรายการ"
+  // ระบบ Maintanance-MT เดิม (name/qty/unit/price/shop/note) ใช้ซ้ำทั้งตอนสร้างแถวแรกและกด "➕ เพิ่มรายการ"
   // เรนเดอร์เป็นแถวตาราง (ลำดับ/รายการ/จำนวน/หน่วย/ราคา/ชื่อร้าน/หมายเหตุ) ให้หน้าตาตรงกับฟอร์มกระดาษเดิม
   function partsRowHtml(item = {}) {
     return `<tr class="parts-row">
@@ -393,7 +393,7 @@
           ? visibleMachines.map((machine, index) => `<button type="button" class="machine-option" id="repair-machine-option-${index}" role="option" aria-selected="false" data-machine-index="${index}"><strong>${escapeHtml(machine.code)}</strong>${machine.is_placeholder ? "" : `<span>${escapeHtml(machine.name)}</span>`}</button>`).join("")
           : `<div class="machine-empty">ไม่พบเครื่องจักรที่ค้นหา</div>`;
         const typedCode = query.trim();
-        machineList.insertAdjacentHTML("beforeend", `<button type="button" class="machine-add" data-add-machine>＋ เพิ่มรหัสเครื่องจักรใหม่${typedCode ? ` "${escapeHtml(typedCode)}"` : ""}</button>`);
+        machineList.insertAdjacentHTML("beforeend", `<button type="button" class="machine-add" data-add-machine>➕ เพิ่มรหัสเครื่องจักรใหม่${typedCode ? ` "${escapeHtml(typedCode)}"` : ""}</button>`);
         machineList.hidden = false;
         machineSearch.setAttribute("aria-expanded", "true");
       };
@@ -593,7 +593,7 @@
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
-          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">+ เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add">➕ เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}

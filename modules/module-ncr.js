@@ -309,7 +309,7 @@
     const headerLinks = (modules.NCR_CAR.headerLinks ?? []).map((link) => `<a class="btn secondary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join("");
     const content = `
       <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : `<div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
-        ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1">＋ ออก NCR</a>'
+        ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1">➕ ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div>`}</div>
       <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="${escapeHtml(filterUrl(value))}">${label}</a>`).join("")}</div>
       ${body}`;

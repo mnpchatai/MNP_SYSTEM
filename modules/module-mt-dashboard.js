@@ -20,7 +20,7 @@
   const PATH = "mt-dashboard";
   const TITLE = "แดชบอร์ด MT";
   const MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-  const ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>`;
+  const ICON = `<span aria-hidden="true">📊</span>`;
   const CACHE_MS = 60 * 1000;
   const DOC_LABELS = { repair: "ใบแจ้งซ่อม", request: "ใบคำร้อง" };
   const SCOPE_LABELS = { open: "งานค้างทั้งหมด", overdue: "เลยกำหนดเสร็จ", urgent: "ด่วนที่ยังไม่จบ" };

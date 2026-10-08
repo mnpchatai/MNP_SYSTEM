@@ -715,6 +715,8 @@ tbody tr:hover { background: var(--shell); }
 .request-create-entry { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-create-entry small { color: var(--muted); font-size: 12px; }
 .request-create-entry .btn svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.request-create-entry .btn span[aria-hidden] { font-size: 15px; line-height: 1; }
+.nav-icon > span[aria-hidden] { font-size: 17px; line-height: 1; }
 .request-module-header { padding: 24px; border-radius: 16px; color: #fff; align-items: center; }
 .request-module-title { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .request-module-title .type-card-badge { flex: 0 0 44px; height: 44px; }
@@ -1376,7 +1378,7 @@ th.right, td.right { text-align: right; }
   .factory-page .btn.small { min-height: 34px; }
 }
 
-/* โครงสร้างส่วนประกอบของ BOM (modules/module-factory-bom.js) — สินค้าหลักอยู่บนสุด ขั้นตอนที่ 1 ถัดลงมา คลิกขวา/ปุ่ม ＋ เลือกประเภทของขั้นตอนถัดไป */
+/* โครงสร้างส่วนประกอบของ BOM (modules/module-factory-bom.js) — สินค้าหลักอยู่บนสุด ขั้นตอนที่ 1 ถัดลงมา คลิกขวา/ปุ่ม ➕ เลือกประเภทของขั้นตอนถัดไป */
 .fm-struct { position: relative; margin: 6px 0 4px; }
 .fm-node { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 10px; padding: 8px 10px; background: var(--shell); border: 1px solid var(--line); border-radius: 10px; }
 .fm-node-root { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); }

@@ -16,7 +16,7 @@
 
   const PATH = "ncr-dashboard";
   const MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-  const ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>`;
+  const ICON = `<span aria-hidden="true">📊</span>`;
   const CACHE_MS = 60 * 1000;
   const CAUSE_LABELS = { ...CAUSES, [model.NO_CAUSE]: "ยังไม่ได้วิเคราะห์" };
   const CHART_HEIGHT = 140;

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, ChevronRight, Plus, Search } from "lucide-react";
+import { Bell, ChevronRight, Search } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const pageLabels: Array<[string, string]> = [
@@ -42,7 +42,7 @@ export function AppTopbar({ notificationCount }: { notificationCount: number }) 
           <Bell size={16} aria-hidden="true" />
           {notificationCount > 0 ? <span>{notificationCount > 9 ? "9+" : notificationCount}</span> : null}
         </Link>
-        <Link className="btn topbar-create" href="/requests/new"><Plus size={15} aria-hidden="true" /> สร้างคำร้อง</Link>
+        <Link className="btn topbar-create" href="/requests/new"><span className="emoji-icon" aria-hidden="true">➕</span> สร้างคำร้อง</Link>
       </div>
     </header>
   );
