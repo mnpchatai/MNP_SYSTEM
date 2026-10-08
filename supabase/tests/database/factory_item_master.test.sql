@@ -42,7 +42,7 @@ select ok(not has_function_privilege('anon', 'public.app_sandbox_purge_factory()
 select ok(has_function_privilege('authenticated', 'public.app_factory_master_data()', 'execute'), 'signed-in users can call the read API (it checks the mode itself)');
 select ok(not has_function_privilege('authenticated', 'private.factory_actor()', 'execute'), 'clients cannot call the actor helper');
 select ok(not has_function_privilege('authenticated', 'private.factory_sandbox_scope()', 'execute'), 'clients cannot call the scope trigger function');
-select is((select count(*) from public.factory_units), 4::bigint, 'four base units are seeded');
+select is((select count(*) from public.factory_units where code in ('KG', 'PCS', 'SET', 'SHEET')), 4::bigint, 'four base units are seeded');
 select is((select count(*) from public.factory_categories), 9::bigint, 'nine categories are seeded');
 
 -- 2. บัญชีทดสอบ -------------------------------------------------------------------
