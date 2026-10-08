@@ -638,6 +638,7 @@ NCR มี workflow ของตัวเองในตาราง `ncr_*` (�
   - **ยังไม่ได้ทำ**: ยังไม่แสดงรหัสอะไหล่ในหน้าโครงสร้างสินค้า (BOM) ตารางการผลิต (Gantt) และใบงาน — ใช้รหัส Item เหมือนเดิม
   - **การตรวจ**: `supabase/tests/database/factory_item_part_code.test.sql` (constraint, สิทธิ์, เพิ่ม/แก้/คงค่า/ล้าง, ค่าไม่ถูกต้อง, รหัสอะไหล่ซ้ำได้แต่รหัส Item ซ้ำไม่ได้, ฟังก์ชันรุ่นเก่า, ประวัติ, การแยกโหมด) · `factory_megaform_seed.test.sql` (รหัส Item จากคอลัมน์ B และรหัสอะไหล่จากคอลัมน์ X) · `scripts/tests/factory-master-model.test.mjs`, `factory-bom-views.test.mjs` (ค้นหา payload ฟอร์ม รายการ รายละเอียด ข้อความผิดพลาด)
   - **Rollback**: ดูหัวไฟล์ migration ทั้งสอง (คืนฟังก์ชันเดิม ลบคอลัมน์ `part_code` หลังคืนฟังก์ชันที่อ้างถึง)
+  - **รหัส Item ซ้ำกับของที่มีอยู่แล้วในโหมดทดสอบ** (`20261008050000_factory_megaform_reuse_items.sql`, Pilot Web รุ่น `20261008d`): ปุ่มเติมชุด MEGAFORM เคยล้มเหลวทั้งชุดด้วย `factory_items_is_test_code_key` เมื่อโหมดทดสอบมี Item จากชุดอื่นรหัสตรงกัน (เช่น `PT-00109-1`, `PT-00110-1`, `C07-017`, `D21-014`) ตอนนี้ใช้ Item เดิมโดยไม่แก้ข้อมูลเดิมและไม่ลงยอดยกมาซ้ำ; Item เดิมที่มี BOM ฉบับร่าง Revision A คงฉบับร่างไว้และเพิ่ม Revision B (อนุมัติแล้ว) ให้ใบงานใช้ ผลลัพธ์มีคีย์ `reused_items` · ตรวจด้วย `supabase/tests/database/factory_megaform_seed_reuse.test.sql` · Rollback: คืนฟังก์ชันของ `20261008040000`
 
 ### การอ่านหน้าใบงานฝ่ายโรงงาน
 
