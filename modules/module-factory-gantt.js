@@ -147,8 +147,9 @@
 
   function chartHtml(data, groups, view) {
     if (!groups.length) {
-      return `<div class="empty">ยังไม่มีใบงานให้แสดง<br><small>ฝ่ายวางแผนออกใบงานที่เมนู “ใบงานผลิต-ใหม่” ก่อน แล้วกำหนดวันเริ่ม-สิ้นสุดที่ตารางด้านล่าง</small>
-        <div class="fm-actions"><a class="btn secondary" href="${escapeHtml(menu.url("job-new"))}">ไปที่ออกใบงาน</a></div></div>`;
+      return `<div class="empty">ยังไม่มีใบงานให้แสดง<br><small>ฝ่ายวางแผนออกใบงานที่เมนู “ใบงานผลิต-ใหม่” ก่อน แล้วกำหนดวันเริ่ม-สิ้นสุดที่ตารางด้านล่าง หรือเติมชุดทดสอบ MEGAFORM ที่ทะเบียนสินค้าเพื่อดูตัวอย่างครบทุกแผนก</small>
+        <div class="fm-actions"><a class="btn secondary" href="${escapeHtml(menu.url("job-new"))}">ไปที่ออกใบงาน</a>
+          <a class="btn secondary" href="${escapeHtml(menu.url("item-list"))}">ไปที่ทะเบียนสินค้า</a></div></div>`;
     }
     const todayOffset = model.diffDays(view.range.from, view.today);
     const rows = groups.map((group) => orderRowHtml(group, view) + group.jobs.map((job) => jobRowHtml(job, group, view)).join("")).join("");

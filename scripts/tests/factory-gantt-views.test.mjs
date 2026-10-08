@@ -189,6 +189,7 @@ test("an empty database shows how to get started instead of an empty chart", asy
   const { body } = await render("gantt", { data: { can_edit: true, work_centers: [], orders: [], jobs: [] } });
   assert.match(body, /ยังไม่มีใบงานให้แสดง/);
   assert.match(body, /href="#\/factory\?item=job-new"/);
+  assert.match(body, /href="#\/factory\?item=item-list"/, "and points at the item register where the MEGAFORM set is loaded");
   assert.doesNotMatch(body, /gantt-bar/);
 });
 
