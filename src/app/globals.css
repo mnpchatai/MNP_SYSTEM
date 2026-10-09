@@ -375,10 +375,12 @@ tbody tr:hover { background: var(--surface-hover); }
 
 /* Timeline cards replace the dense cross-column request table on tracking screens. */
 .request-list-panel { min-width: 0; }
-.request-timeline { padding: 14px 0; display: grid; gap: 12px; }
+.request-timeline { padding: 14px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .request-timeline-card {
   --timeline-accent: var(--primary);
   position: relative;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 16px 18px;
   border: 1px solid var(--line);
   /* The accent strip is painted as a background under a transparent left border, so it sits on the card's outer edge, follows the rounded corners and lines up with the filter controls above the list. */
@@ -395,7 +397,7 @@ tbody tr:hover { background: var(--surface-hover); }
 .request-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .request-card-identity, .request-card-tags, .request-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .request-card-identity { min-width: 0; }
-.request-card-no { padding: 5px 8px; color: var(--ink); background: var(--surface-raised); border: 1px dashed var(--warning); border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; font-weight: 700; }
+.request-card-no { padding: 5px 8px; white-space: nowrap; color: var(--ink); background: var(--surface-raised); border: 1px dashed var(--warning); border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; font-weight: 700; }
 .request-card-no:hover, .request-card-title:hover { color: var(--primary); }
 .request-card-code { font-size: 11px; }
 .request-card-type { color: var(--quiet); font-size: 9.5px; }

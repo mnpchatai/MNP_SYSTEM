@@ -457,11 +457,15 @@ tbody tr:hover { background: var(--shell); }
 .request-timeline {
   padding: 14px 0;
   display: grid;
+  /* คอลัมน์ต้องไม่กว้างเกินกรอบ: ถ้าปล่อย auto การ์ดใบที่มีข้อความยาวไม่มีช่องว่างจะดันทุกใบกว้างตามจนตกขอบจอ */
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 .request-timeline-card {
   --timeline-accent: var(--primary);
   position: relative;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 16px 18px;
   border: 1px solid var(--line);
   /* แถบสีวาดเป็นพื้นหลังใต้ขอบซ้ายโปร่งใส ให้อยู่ขอบนอกสุด โค้งตามมุมการ์ด และตรงแนวเดียวกับปุ่มตัวกรองด้านบน */
@@ -517,6 +521,7 @@ tbody tr:hover { background: var(--shell); }
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
   font-weight: 800;
+  white-space: nowrap;
 }
 .request-card-no:hover, .request-card-title:hover { color: var(--primary); }
 .request-card-no.locked { color: var(--quiet); border-color: var(--line); cursor: default; }
