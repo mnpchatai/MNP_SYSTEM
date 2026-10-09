@@ -8,10 +8,10 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('82000000-0000-0000-0000-000000000003', 'mt-first-factory@mnp.local', '{}'::jsonb);
 update public.employees set auth_user_id = '82000000-0000-0000-0000-000000000001'
 where id = '50000000-0000-0000-0000-000000000003';
-insert into public.employees (id, employee_no, first_name, last_name, department_id, role_id, auth_user_id) values
-  ('82000000-0000-0000-0000-000000000002', 'MT-FIRST-AFM', 'ทดสอบ', 'ผู้ช่วย', '10000000-0000-0000-0000-000000000001',
+insert into public.employees (id, employee_no, first_name, last_name, email, job_title, department_id, role_id, auth_user_id) values
+  ('82000000-0000-0000-0000-000000000002', 'MT-FIRST-AFM', 'ทดสอบ', 'ผู้ช่วย', 'mt-first-assistant@mnp.local', 'ผู้ช่วยผู้จัดการโรงงาน', '10000000-0000-0000-0000-000000000001',
    '20000000-0000-0000-0000-000000000003', '82000000-0000-0000-0000-000000000002'),
-  ('82000000-0000-0000-0000-000000000003', 'MT-FIRST-FM', 'ทดสอบ', 'ผู้จัดการ', '10000000-0000-0000-0000-000000000001',
+  ('82000000-0000-0000-0000-000000000003', 'MT-FIRST-FM', 'ทดสอบ', 'ผู้จัดการ', 'mt-first-factory@mnp.local', 'ผู้จัดการโรงงาน', '10000000-0000-0000-0000-000000000001',
    '20000000-0000-0000-0000-000000000005', '82000000-0000-0000-0000-000000000003');
 insert into public.approval_module_permissions (employee_id, request_type_id)
 select e.id, t.id from public.employees e cross join public.request_types t
