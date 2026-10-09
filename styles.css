@@ -455,45 +455,22 @@ tbody tr:hover { background: var(--shell); }
 /* รายการคำร้องแบบ timeline card — อ่านผู้รับผิดชอบ สถานะ และรายละเอียดสำคัญได้โดยไม่ต้องไล่ข้ามคอลัมน์ */
 .request-list-panel { min-width: 0; }
 .request-timeline {
-  position: relative;
-  padding: 14px 14px 14px 42px;
+  padding: 14px 0;
   display: grid;
   gap: 12px;
-}
-.request-timeline::before {
-  content: "";
-  position: absolute;
-  top: 14px;
-  bottom: 14px;
-  left: 20px;
-  width: 3px;
-  background: var(--line);
-  border-radius: 999px;
 }
 .request-timeline-card {
   --timeline-accent: var(--primary);
   position: relative;
   padding: 16px 18px;
-  overflow: visible;
-  background: var(--paper);
   border: 1px solid var(--line);
-  border-left: 4px solid var(--timeline-accent);
+  /* แถบสีวาดเป็นพื้นหลังใต้ขอบซ้ายโปร่งใส ให้อยู่ขอบนอกสุด โค้งตามมุมการ์ด และตรงแนวเดียวกับปุ่มตัวกรองด้านบน */
+  border-left-color: transparent;
   border-radius: 11px;
+  background: linear-gradient(var(--timeline-accent), var(--timeline-accent)) left / 4px 100% no-repeat border-box, var(--paper) border-box;
   box-shadow: 0 3px 12px rgba(31, 61, 102, .06);
   content-visibility: auto;
   contain-intrinsic-size: 190px;
-}
-.request-timeline-card::before {
-  content: "";
-  position: absolute;
-  top: -7px;
-  left: -30px;
-  width: 14px;
-  height: 14px;
-  background: var(--paper);
-  border: 3px solid var(--timeline-accent);
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px var(--shell);
 }
 .request-timeline-card.status-completed,
 .request-timeline-card.status-acknowledged { --timeline-accent: var(--success); }
@@ -990,10 +967,8 @@ body.no-scroll { overflow: hidden; }
   .approval-layout { display: block; }
   .approval-list { max-height: 360px; overflow: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .approval-preview { padding: 20px; }
-  .request-timeline { padding: 10px 0 10px 26px; gap: 10px; }
-  .request-timeline::before { top: 10px; bottom: 10px; left: 7px; width: 2px; }
+  .request-timeline { padding: 10px 0; gap: 10px; }
   .request-timeline-card { padding: 14px; border-radius: 10px; }
-  .request-timeline-card::before { top: -6px; left: -26px; width: 13px; height: 13px; box-shadow: 0 0 0 3px var(--shell); }
   .request-card-head { display: grid; gap: 9px; }
   .request-card-tags { justify-content: flex-start; }
   .request-owner-chip, .request-department-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
