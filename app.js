@@ -63,15 +63,28 @@ document.addEventListener("focusin", closePopupsOutside);
 // แท็บที่เปิดค้างไว้ก่อน deploy จะรันโค้ดเก่าไปเรื่อยๆ จนกว่าจะรีเฟรช — ทุกครั้งที่กลับมาที่แท็บหรือเปลี่ยนหน้า
 // (เว้นช่วงอย่างน้อย 1 นาที) อ่าน ?v= ของ app.js จาก index.html ล่าสุดแบบไม่ใช้ cache ถ้าไม่ตรงกับที่รันอยู่
 // ให้ขึ้นปุ่มให้ผู้ใช้กดโหลดเอง ไม่รีโหลดอัตโนมัติ เพื่อไม่ให้ข้อมูลที่กรอกค้างไว้หาย
+// ยกเว้นตอนเปิดหน้าครั้งแรก: มือถือมักเปิดจาก index.html ที่ cache ไว้ (หน้าเก่า) ขณะที่ยังไม่มีข้อมูลที่กรอก
+// จึงเช็กทันทีและรีโหลดให้เองหนึ่งครั้งต่อเวอร์ชัน (จำใน sessionStorage กันวนซ้ำ) ถ้ายังไม่ตรงค่อยขึ้นปุ่ม
 const APP_VERSION = new URL(document.querySelector('script[src*="app.js"]').src).searchParams.get("v");
-let lastVersionCheck = Date.now();
-async function checkForNewVersion() {
+const VERSION_RELOAD_KEY = "mnp-version-reload";
+let lastVersionCheck = 0;
+async function checkForNewVersion({ autoReload } = {}) {
   if (document.hidden || Date.now() - lastVersionCheck < 60 * 1000 || document.querySelector(".update-banner")) return;
   lastVersionCheck = Date.now();
   try {
     const html = await (await fetch("./index.html", { cache: "no-store" })).text();
     const latest = html.match(/app\.js\?v=([\w-]+)/)?.[1];
     if (!latest || !APP_VERSION || latest === APP_VERSION) return;
+    if (autoReload) {
+      let alreadyTried = false;
+      try {
+        alreadyTried = sessionStorage.getItem(VERSION_RELOAD_KEY) === latest;
+        sessionStorage.setItem(VERSION_RELOAD_KEY, latest);
+      } catch {
+        alreadyTried = true; // อ่าน/เขียน sessionStorage ไม่ได้ (โหมดส่วนตัว) — ไม่เสี่ยงรีโหลดวน ให้ขึ้นปุ่มแทน
+      }
+      if (!alreadyTried) return location.reload();
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.className = "update-banner";
@@ -82,8 +95,13 @@ async function checkForNewVersion() {
     // ออฟไลน์/เครือข่ายสะดุด — รอเช็กรอบถัดไป
   }
 }
-document.addEventListener("visibilitychange", checkForNewVersion);
-window.addEventListener("hashchange", checkForNewVersion);
+document.addEventListener("visibilitychange", () => checkForNewVersion());
+window.addEventListener("hashchange", () => checkForNewVersion());
+// มือถือกลับมาที่หน้าจาก back/forward cache โดยไม่โหลดใหม่ (event นี้ไม่ใช่ visibilitychange เสมอไป)
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) checkForNewVersion();
+});
+checkForNewVersion({ autoReload: true });
 
 const toastNode = document.querySelector("#toast");
 const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests", sandbox: null };
