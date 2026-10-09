@@ -7,6 +7,7 @@ import {
   updateRequestStatusAction,
 } from "@/app/actions/requests";
 import { AttachmentGallery, type AttachmentItem } from "@/components/attachment-gallery";
+import { ActionFormWithFiles, ExtraFilesField } from "@/components/action-form-with-files";
 import { AttachmentUploadForm } from "@/components/attachment-upload-form";
 import { StatusBadge } from "@/components/status-badge";
 import { SubmitButton } from "@/components/submit-button";
@@ -153,42 +154,47 @@ export default async function RequestDetailPage({
           {pendingStep && request.status === "pending_approval" && (
             <section className="card">
               <div className="card-title"><h3>พิจารณาคำร้อง</h3><span className="badge pending_approval">{pendingStep.step_name}</span></div>
-              <form action={approvalDecisionAction}>
+              <ActionFormWithFiles action={approvalDecisionAction} requestId={request.id}>
                 <input type="hidden" name="step_id" value={pendingStep.id} />
                 <div className="field"><label htmlFor="comment">ความเห็นประกอบ</label><textarea className="textarea" id="comment" name="comment" maxLength={1000} placeholder="ระบุเหตุผล โดยเฉพาะเมื่อไม่อนุมัติหรือขอข้อมูลเพิ่ม" /></div>
+                <ExtraFilesField id="decision-files" />
                 <div className="form-actions">
                   <button className="btn danger" name="decision" value="rejected">ไม่อนุมัติ</button>
                   <button className="btn warning" name="decision" value="more_info">ขอข้อมูลเพิ่ม</button>
                   {requestModule?.extraDecisions?.map((item) => <button className="btn secondary" name="decision" value={item.decision} key={item.decision}>{item.label}</button>)}
                   <button className="btn success" name="decision" value="approved">อนุมัติ</button>
                 </div>
-              </form>
+              </ActionFormWithFiles>
             </section>
           )}
 
           {request.status === "more_info" && request.requester_id === employee.id && (
             <section className="card">
               <div className="card-title"><h3>ส่งข้อมูลกลับเพื่อพิจารณา</h3></div>
-              <p className="muted small">แนบไฟล์ด้านล่างเพิ่มได้ถ้าจำเป็น แล้วระบุข้อมูลที่ขอเพิ่มเติมก่อนส่งคำร้องกลับไปยังผู้อนุมัติ</p>
-              <form action={resubmitRequestAction}>
+              <p className="muted small">ระบุข้อมูลที่ขอเพิ่มเติมและแนบไฟล์ประกอบได้ก่อนส่งคำร้องกลับไปยังผู้อนุมัติ</p>
+              <ActionFormWithFiles action={resubmitRequestAction} requestId={request.id}>
                 <input type="hidden" name="request_id" value={request.id} />
                 <div className="field"><label htmlFor="resubmit-comment">ข้อมูลเพิ่มเติม</label><textarea className="textarea" id="resubmit-comment" name="comment" maxLength={1000} placeholder="ระบุข้อมูลที่ขอเพิ่มเติม" /></div>
+                <ExtraFilesField id="resubmit-files" />
                 <SubmitButton pendingLabel="กำลังส่งกลับ...">ส่งให้พิจารณาอีกครั้ง</SubmitButton>
-              </form>
+              </ActionFormWithFiles>
             </section>
           )}
 
           {canOperate && ["approved", "in_progress"].includes(request.status) && (!request.assignee_id || request.assignee_id === employee.id) && (
             <section className="card">
               <div className="card-title"><h3>ดำเนินงาน</h3></div>
-              <form className="inline-form" action={updateRequestStatusAction}>
+              <ActionFormWithFiles action={updateRequestStatusAction} requestId={request.id}>
                 <input type="hidden" name="request_id" value={request.id} />
-                {request.status === "approved" ? (
-                  <button className="btn" name="status" value="in_progress">รับงานและเริ่มดำเนินการ</button>
-                ) : (
-                  <button className="btn success" name="status" value="completed">ปิดงานว่าเสร็จแล้ว</button>
-                )}
-              </form>
+                <ExtraFilesField id="status-files" />
+                <div className="form-actions">
+                  {request.status === "approved" ? (
+                    <button className="btn" name="status" value="in_progress">รับงานและเริ่มดำเนินการ</button>
+                  ) : (
+                    <button className="btn success" name="status" value="completed">ปิดงานว่าเสร็จแล้ว</button>
+                  )}
+                </div>
+              </ActionFormWithFiles>
             </section>
           )}
         </div>
