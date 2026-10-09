@@ -130,6 +130,7 @@
       paint(options) {
         app.innerHTML = shell(entryHtml(selected, options), PATH, options?.subtitle ? `${title} / ${options.subtitle}` : title);
         bindShell();
+        window.MNP_FACTORY_ATTACHMENTS?.mountAll(); // เติมรายการไฟล์ในส่วน "ไฟล์แนบ" ของเอกสาร (ถ้าหน้านี้มี)
         return document.querySelector(".content");
       },
     };

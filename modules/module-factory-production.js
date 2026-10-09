@@ -60,13 +60,15 @@
 
   // ปุ่มเรียก RPC หนึ่งครั้ง: ปิดปุ่มระหว่างทำ สำเร็จแล้ววาดหน้าใหม่ ผิดพลาดแจ้งเตือนและวาดใหม่เมื่อสถานะในหน้าล้าสมัย
   const STALE_CODES = ["PRODUCTION_ORDER_VERSION_CONFLICT", "PRODUCTION_ORDER_NOT_", "PRODUCTION_ORDER_NOT_FOUND"];
-  async function runAction(root, rpc, args, successMessage) {
+  // files = ไฟล์ที่แนบมากับการกระทำ (ช่องแนบของฟอร์มส่งกลับ/ยกเลิก/วางแผน) อัปโหลดหลังการกระทำสำเร็จ พลาดไม่ย้อนการกระทำ
+  async function runAction(root, rpc, args, successMessage, files = []) {
     const controls = root.querySelectorAll("[data-po-action], .po-form button");
     controls.forEach((control) => { control.disabled = true; });
     try {
       const { error } = await sb.rpc(rpc, args);
       if (error) throw error;
-      showToast(successMessage);
+      const warning = await window.MNP_FACTORY_ATTACHMENTS.upload("production_order", args.p_id, files);
+      showToast(warning || successMessage, warning ? "error" : "success");
       await renderRoute();
     } catch (error) {
       showToast(friendlyError(error), "error");
@@ -154,6 +156,7 @@
               <textarea class="textarea" id="po-survey" name="survey_note" rows="3" maxlength="1000" required>${escapeHtml(surveyText)}</textarea>
               <small>ข้อความตั้งต้นสรุปจากตารางด้านบน แก้ให้ตรงกับที่ตรวจจริงก่อนบันทึก</small></div>
           </div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("po-plan-files")}
           <div class="fm-actions"><button class="btn" type="submit"${blockers.length ? " disabled" : ""}>${order.status === "planned" ? "บันทึกการวางแผนใหม่" : "บันทึกการวางแผน"}</button></div>
         </form>
       </section>`;
@@ -176,6 +179,7 @@
       ? `<form class="fm-form po-form" id="po-return-form" novalidate>
           <div class="field full"><label for="po-return-note">ส่งกลับฝ่ายขายแก้ไข — เหตุผล *</label>
             <textarea class="textarea" id="po-return-note" name="note" rows="2" maxlength="1000" required></textarea></div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("po-return-files")}
           <div class="fm-actions"><button class="btn danger" type="submit">ส่งกลับฝ่ายขาย</button></div>
         </form>`
       : "";
@@ -184,6 +188,7 @@
           <div class="field full"><label for="po-cancel-note">ยกเลิกใบสั่งผลิตนี้ — เหตุผล *</label>
             <textarea class="textarea" id="po-cancel-note" name="note" rows="2" maxlength="1000" required></textarea>
             <small>ยกเลิกได้เมื่อไม่มีใบงานผลิตที่ยังไม่ยกเลิก และไม่มีใบสั่งวัตถุดิบที่ยังไม่รับของหรือยังไม่ยกเลิก (ใบสั่งวัตถุดิบที่รับของแล้วคงยอดคลังไว้) ยกเลิกแล้วแก้กลับไม่ได้</small></div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("po-cancel-files")}
           <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบสั่งผลิต</button></div>
         </form>`
       : "";
@@ -300,7 +305,8 @@
         ${order.survey_note && !planning ? `<h3>ผลสำรวจคงคลัง</h3><p class="fm-pre">${escapeHtml(order.survey_note)}</p>` : ""}
         <h3>ประวัติของใบนี้</h3>
         ${timelineHtml(timeline)}
-      </section>`;
+      </section>
+      ${window.MNP_FACTORY_ATTACHMENTS.panelHtml("production_order", order.id)}`;
   }
 
   function bindDetail(root, data, order) {
@@ -310,29 +316,42 @@
     act("withdraw", "app_factory_withdraw_production_order", "ถอนกลับมาเป็นฉบับร่างแล้ว");
     act("receive", "app_factory_receive_production_order", `รับ ${order.code} แล้ว ต่อไปสำรวจคงคลังและวางแผน`);
     act("release", "app_factory_release_production_order", `ออกใบสั่งงานของ ${order.code} แล้ว`);
+    // ตรวจไฟล์ก่อนยิง RPC: ไฟล์ผิดต้องไม่ทำให้การกระทำสำเร็จไปครึ่งเดียว
+    const filesOf = (form) => {
+      try {
+        return window.MNP_FACTORY_ATTACHMENTS.read(form.elements.extra_files);
+      } catch (error) {
+        showToast(friendlyError(error), "error");
+        return null;
+      }
+    };
     const returnForm = root.querySelector("#po-return-form");
     returnForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       if (!returnForm.reportValidity()) return;
-      if (!confirm(`ส่ง ${order.code} กลับให้ฝ่ายขายแก้ไข?`)) return;
-      runAction(root, "app_factory_return_production_order", { ...args, p_note: returnForm.querySelector("textarea").value }, `ส่ง ${order.code} กลับฝ่ายขายแล้ว`);
+      const files = filesOf(returnForm);
+      if (!files || !confirm(`ส่ง ${order.code} กลับให้ฝ่ายขายแก้ไข?`)) return;
+      runAction(root, "app_factory_return_production_order", { ...args, p_note: returnForm.querySelector("textarea").value }, `ส่ง ${order.code} กลับฝ่ายขายแล้ว`, files);
     });
     const cancelForm = root.querySelector("#po-cancel-form");
     cancelForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       if (!cancelForm.reportValidity()) return;
-      if (!confirm(`ยกเลิก ${order.code}? ยกเลิกแล้วแก้กลับไม่ได้`)) return;
-      runAction(root, "app_factory_cancel_production_order", { ...args, p_note: cancelForm.querySelector("textarea").value }, `ยกเลิก ${order.code} แล้ว`);
+      const files = filesOf(cancelForm);
+      if (!files || !confirm(`ยกเลิก ${order.code}? ยกเลิกแล้วแก้กลับไม่ได้`)) return;
+      runAction(root, "app_factory_cancel_production_order", { ...args, p_note: cancelForm.querySelector("textarea").value }, `ยกเลิก ${order.code} แล้ว`, files);
     });
     const planForm = root.querySelector("#po-plan-form");
     planForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       if (!planForm.reportValidity()) return;
+      const files = filesOf(planForm);
+      if (!files) return;
       const bom = model.approvedBom(data.boms, order.item_id);
       const form = new FormData(planForm);
       runAction(root, "app_factory_plan_production_order", {
         ...args, p_bom_id: bom?.id ?? null, p_routing_id: String(form.get("routing_id") ?? "") || null, p_survey_note: String(form.get("survey_note") ?? ""),
-      }, `บันทึกการวางแผนของ ${order.code} แล้ว`);
+      }, `บันทึกการวางแผนของ ${order.code} แล้ว`, files);
     });
   }
 
@@ -361,6 +380,7 @@
             <div class="field full"><label for="po-customer">ลูกค้า / อ้างอิงใบสั่งขาย</label><input class="input" id="po-customer" name="customer" maxlength="200" value="${value("customer")}"></div>
             <div class="field full"><label for="po-note">หมายเหตุ</label><textarea class="textarea" id="po-note" name="note" rows="3" maxlength="1000">${value("note")}</textarea></div>
           </div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("po-files")}
           <div class="fm-actions">
             <button class="btn secondary" type="submit" data-intent="save">บันทึกฉบับร่าง</button>
             <button class="btn" type="submit" data-intent="send">บันทึกและส่งให้ฝ่ายวางแผน</button>
@@ -379,6 +399,12 @@
       const intent = event.submitter?.dataset?.intent ?? "save";
       const payload = model.orderPayload(Object.fromEntries(new FormData(form).entries()), order);
       const problems = model.validateOrderPayload(payload, data.items, today());
+      let files = [];
+      try {
+        files = window.MNP_FACTORY_ATTACHMENTS.read(form.elements.extra_files);
+      } catch (fileError) {
+        problems.push(friendlyError(fileError));
+      }
       if (problems.length) {
         errorBox.textContent = problems.join(" · ");
         errorBox.hidden = false;
@@ -387,22 +413,24 @@
       }
       setFormBusy(form, true);
       let saved = null;
+      let fileWarning = "";
       try {
         const result = await sb.rpc("app_factory_save_production_order", payload);
         if (result.error) throw result.error;
         saved = result.data;
+        fileWarning = await window.MNP_FACTORY_ATTACHMENTS.upload("production_order", saved.id, files);
         if (intent === "send") {
           const sent = await sb.rpc("app_factory_submit_production_order", { p_id: saved.id, p_version: saved.version });
           if (sent.error) throw sent.error;
-          showToast(`ส่ง ${saved.code} ให้ฝ่ายวางแผนแล้ว`);
+          showToast(fileWarning || `ส่ง ${saved.code} ให้ฝ่ายวางแผนแล้ว`, fileWarning ? "error" : "success");
         } else {
-          showToast(order ? "บันทึกฉบับร่างแล้ว" : `ออกใบสั่งผลิต ${saved.code} (ฉบับร่าง) แล้ว`);
+          showToast(fileWarning || (order ? "บันทึกฉบับร่างแล้ว" : `ออกใบสั่งผลิต ${saved.code} (ฉบับร่าง) แล้ว`), fileWarning ? "error" : "success");
         }
         location.hash = viewUrl(saved.id).slice(1);
       } catch (error) {
         // ฉบับร่างที่บันทึกสำเร็จแต่ส่งไม่สำเร็จยังอยู่ในระบบ: พาไปหน้าใบเพื่อส่งใหม่ ไม่ปล่อยให้กดบันทึกซ้ำจนเกิดใบซ้ำ
         if (saved) {
-          showToast(`บันทึก ${saved.code} เป็นฉบับร่างแล้ว แต่ส่งไม่สำเร็จ: ${friendlyError(error)}`, "error");
+          showToast(`บันทึก ${saved.code} เป็นฉบับร่างแล้ว แต่ส่งไม่สำเร็จ: ${friendlyError(error)}${fileWarning ? ` · ${fileWarning}` : ""}`, "error");
           location.hash = viewUrl(saved.id).slice(1);
           return;
         }

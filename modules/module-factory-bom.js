@@ -69,13 +69,15 @@
 
   // ปุ่มเรียก RPC หนึ่งครั้ง: ปิดปุ่มระหว่างทำ สำเร็จแล้ววาดหน้าใหม่ ผิดพลาดแจ้งเตือนและวาดใหม่เมื่อสถานะในหน้าล้าสมัย
   const STALE_CODES = ["BOM_VERSION_CONFLICT", "BOM_NOT_PENDING", "BOM_NOT_DRAFT", "BOM_NOT_EDITABLE", "BOM_NOT_FOUND"];
-  async function runAction(root, rpc, args, successMessage) {
+  // files = ไฟล์ที่แนบมากับการกระทำ (ช่องแนบของแผงพิจารณา) อัปโหลดหลังการกระทำสำเร็จ พลาดไม่ย้อนการกระทำ
+  async function runAction(root, rpc, args, successMessage, files = []) {
     const buttons = root.querySelectorAll("[data-bom-action], .fm-decision button");
     buttons.forEach((button) => { button.disabled = true; });
     try {
       const { error } = await sb.rpc(rpc, args);
       if (error) throw error;
-      showToast(successMessage);
+      const warning = await window.MNP_FACTORY_ATTACHMENTS.upload("bom", args.p_id, files);
+      showToast(warning || successMessage, warning ? "error" : "success");
       await renderRoute();
     } catch (error) {
       showToast(friendlyError(error), "error");
@@ -134,6 +136,7 @@
         <div class="field"><label for="fm-decision-note">หมายเหตุ / เหตุผล</label>
           <textarea class="textarea" id="fm-decision-note" rows="3" maxlength="1000"></textarea>
           <small>จำเป็นเมื่อไม่อนุมัติ (ผู้ส่งจะเห็นเหตุผลนี้และแก้ไขแล้วส่งใหม่ได้) · ไม่จำเป็นเมื่ออนุมัติ</small></div>
+        ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("fm-decision-files")}
         <div class="fm-actions">
           <button class="btn success" type="button" id="fm-approve">อนุมัติ</button>
           <button class="btn danger" type="button" id="fm-reject">ไม่อนุมัติ (ส่งกลับให้แก้ไข)</button>
@@ -224,6 +227,7 @@
         </details>
       </section>
       ${decisionPanelHtml(data, bom)}
+      ${window.MNP_FACTORY_ATTACHMENTS.panelHtml("bom", bom.id)}
       <section class="card fm-detail"><h3>ประวัติของฉบับนี้</h3>${historyTable(timeline)}</section>`;
   }
 
@@ -263,11 +267,21 @@
       runAction(root, "app_factory_withdraw_bom", args, "ถอนกลับมาเป็นฉบับร่างแล้ว");
     });
     const note = root.querySelector("#fm-decision-note");
+    // ตรวจไฟล์ก่อนยิง RPC: ไฟล์ผิดต้องไม่ทำให้การพิจารณาสำเร็จไปครึ่งเดียว
+    const decisionFiles = () => {
+      try {
+        return window.MNP_FACTORY_ATTACHMENTS.read(root.querySelector("#fm-decision-files"));
+      } catch (error) {
+        showToast(friendlyError(error), "error");
+        return null;
+      }
+    };
     root.querySelector("#fm-approve")?.addEventListener("click", () => {
       const current = approvedBomOf(data, bom.item_id);
       const replaced = current ? `\n\nRev. ${current.revision} ที่ใช้อยู่เดิมจะถูกเลิกใช้` : "";
-      if (!confirm(`อนุมัติ ${bom.code} Rev. ${bom.revision}?${replaced}`)) return;
-      runAction(root, "app_factory_decide_bom", { ...args, p_decision: "approve", p_note: note.value }, `อนุมัติ ${bom.code} Rev. ${bom.revision} แล้ว`);
+      const files = decisionFiles();
+      if (!files || !confirm(`อนุมัติ ${bom.code} Rev. ${bom.revision}?${replaced}`)) return;
+      runAction(root, "app_factory_decide_bom", { ...args, p_decision: "approve", p_note: note.value }, `อนุมัติ ${bom.code} Rev. ${bom.revision} แล้ว`, files);
     });
     root.querySelector("#fm-reject")?.addEventListener("click", () => {
       if (!note.value.trim()) {
@@ -275,7 +289,9 @@
         note.focus();
         return;
       }
-      runAction(root, "app_factory_decide_bom", { ...args, p_decision: "reject", p_note: note.value }, `ส่ง ${bom.code} Rev. ${bom.revision} กลับให้แก้ไขแล้ว`);
+      const files = decisionFiles();
+      if (!files) return;
+      runAction(root, "app_factory_decide_bom", { ...args, p_decision: "reject", p_note: note.value }, `ส่ง ${bom.code} Rev. ${bom.revision} กลับให้แก้ไขแล้ว`, files);
     });
   }
 
@@ -352,6 +368,7 @@
             <div class="field"><label for="fm-bom-note">หมายเหตุ</label>
               <textarea class="textarea" id="fm-bom-note" name="note" rows="2" maxlength="1000">${escapeHtml(ctx.note)}</textarea></div>
           </div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("fm-bom-files")}
           <h3>โครงสร้างส่วนประกอบ</h3>
           <p class="muted small">เรียงจากบนลงล่าง ขั้นตอนที่ 1 อยู่บนสุด · <strong>คลิกขวา</strong>ที่สินค้าหลักหรือขั้นตอนใดๆ เพื่อเลือกประเภท (RM / WIP / FG / PKG) ของขั้นตอนถัดไป · บนมือถือหรือคีย์บอร์ดใช้ปุ่ม “<span class="plus-icon" aria-hidden="true"></span> เพิ่มต่อ”</p>
           <div class="fm-struct" id="fm-struct">
@@ -519,21 +536,28 @@
       const payload = model.bomPayload(values, ctx.existing);
       const problems = model.validateBomPayload(payload, data.items, { requireLines: intent === "submit" });
       if (problems.length) return showErrors(problems);
+      let files;
+      try {
+        files = window.MNP_FACTORY_ATTACHMENTS.read(form.elements.extra_files);
+      } catch (fileError) {
+        return showErrors([friendlyError(fileError)]);
+      }
       setFormBusy(form, true);
       try {
         const { data: saved, error } = await sb.rpc("app_factory_save_bom_draft", payload);
         if (error) throw error;
+        const fileWarning = await window.MNP_FACTORY_ATTACHMENTS.upload("bom", saved.id, files);
         if (intent === "submit") {
           // บันทึกและส่งเป็นสองขั้นที่ฐานข้อมูล (แต่ละขั้นทำงานเต็มธุรกรรมและตรวจ version) ถ้าขั้นส่งไม่สำเร็จ ฉบับร่างที่บันทึกแล้วยังอยู่
           const { error: submitError } = await sb.rpc("app_factory_submit_bom", { p_id: saved.id, p_version: saved.version });
           if (submitError) {
-            showToast(`บันทึกฉบับร่างแล้ว แต่ส่งขออนุมัติไม่สำเร็จ: ${friendlyError(submitError)}`, "error");
+            showToast(`บันทึกฉบับร่างแล้ว แต่ส่งขออนุมัติไม่สำเร็จ: ${friendlyError(submitError)}${fileWarning ? ` · ${fileWarning}` : ""}`, "error");
             location.hash = viewUrl(saved.id).slice(1);
             return;
           }
-          showToast(`ส่ง ${saved.code} Rev. ${saved.revision} ให้ผู้ดูแลระบบอนุมัติแล้ว`);
+          showToast(fileWarning || `ส่ง ${saved.code} Rev. ${saved.revision} ให้ผู้ดูแลระบบอนุมัติแล้ว`, fileWarning ? "error" : "success");
         } else {
-          showToast(`บันทึกฉบับร่าง ${saved.code} Rev. ${saved.revision} แล้ว`);
+          showToast(fileWarning || `บันทึกฉบับร่าง ${saved.code} Rev. ${saved.revision} แล้ว`, fileWarning ? "error" : "success");
         }
         location.hash = viewUrl(saved.id).slice(1);
       } catch (error) {

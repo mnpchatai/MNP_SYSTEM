@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { ATTACHMENT_STUBS } from "./support/factory-attachment-stubs.mjs";
 
 // โหลดหน้าจอตารางการผลิต (script ธรรมดาใน browser) เข้า context จำลอง แล้วเรียก view จริงด้วยข้อมูลจำลอง
 // ตรวจ HTML ที่วาด (กรอบออเดอร์ แถบ คำเตือน ช่องแก้ที่โผล่ตามสิทธิ์) การเรียก RPC จากปุ่ม และข้อความผิดพลาด (ไม่มี DOM จริง)
@@ -14,6 +15,7 @@ const FILES = [
   "modules/factory-job-model.js",
   "modules/factory-gantt-model.js",
   "modules/module-factory-master.js",
+  "modules/factory-attachments.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
@@ -55,6 +57,7 @@ function loadFactory({ data = FIXTURE, rpc } = {}) {
   const context = vm.createContext({});
   context.window = context;
   Object.assign(context, {
+    ...ATTACHMENT_STUBS,
     escapeHtml,
     formatDate: (value, withTime) => `d(${value ?? "—"}${withTime ? " t" : ""})`,
     showToast: (message, kind) => toasts.push([message, kind ?? "ok"]),

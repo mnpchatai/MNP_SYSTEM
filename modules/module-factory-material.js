@@ -51,13 +51,15 @@
 
   // ปุ่มเรียก RPC หนึ่งครั้ง: ปิดปุ่มระหว่างทำ สำเร็จแล้ววาดหน้าใหม่ ผิดพลาดแจ้งเตือนและวาดใหม่เมื่อสถานะในหน้าล้าสมัย
   const STALE_CODES = ["MATERIAL_ORDER_VERSION_CONFLICT", "MATERIAL_ORDER_NOT_", "MATERIAL_ORDER_NOT_FOUND"];
-  async function runAction(root, rpc, args, successMessage) {
+  // files = ไฟล์ที่แนบมากับการกระทำ (ช่องแนบของฟอร์มยกเลิก) อัปโหลดหลังการกระทำสำเร็จ พลาดไม่ย้อนการกระทำ
+  async function runAction(root, rpc, args, successMessage, files = []) {
     const controls = root.querySelectorAll("[data-mo-action], .mo-form button");
     controls.forEach((control) => { control.disabled = true; });
     try {
       const { error } = await sb.rpc(rpc, args);
       if (error) throw error;
-      showToast(successMessage);
+      const warning = await window.MNP_FACTORY_ATTACHMENTS.upload("material_order", args.p_id, files);
+      showToast(warning || successMessage, warning ? "error" : "success");
       await renderRoute();
     } catch (error) {
       showToast(friendlyError(error), "error");
@@ -114,6 +116,7 @@
       ? `<form class="fm-form mo-form" id="mo-cancel-form" novalidate>
           <div class="field full"><label for="mo-cancel-note">ยกเลิกใบนี้ — เหตุผล *</label>
             <textarea class="textarea" id="mo-cancel-note" name="note" rows="2" maxlength="1000" required></textarea></div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("mo-cancel-files")}
           <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบสั่งวัตถุดิบ</button></div>
         </form>` : "";
     if (!buttons.length && !cancelForm && !hint) return "";
@@ -165,7 +168,8 @@
         <div class="table-wrap"><table><thead><tr><th>#</th><th>วัตถุดิบ</th><th class="right">ปริมาณ</th></tr></thead><tbody>${lines}</tbody></table></div>
         <h3>ประวัติของใบนี้</h3>
         ${timelineHtml(model.orderTimeline(data.material_history, order.id))}
-      </section>`;
+      </section>
+      ${window.MNP_FACTORY_ATTACHMENTS.panelHtml("material_order", order.id)}`;
   }
 
   function bindDetail(root, order) {
@@ -177,8 +181,15 @@
     cancelForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       if (!cancelForm.reportValidity()) return;
+      let files;
+      try {
+        files = window.MNP_FACTORY_ATTACHMENTS.read(cancelForm.elements.extra_files);
+      } catch (error) {
+        showToast(friendlyError(error), "error");
+        return;
+      }
       if (!confirm(`ยกเลิก ${order.code}?`)) return;
-      runAction(root, "app_factory_cancel_material_order", { ...args, p_note: cancelForm.querySelector("textarea").value }, `ยกเลิก ${order.code} แล้ว`);
+      runAction(root, "app_factory_cancel_material_order", { ...args, p_note: cancelForm.querySelector("textarea").value }, `ยกเลิก ${order.code} แล้ว`, files);
     });
   }
 
@@ -234,6 +245,7 @@
           <h3>เพิ่มวัตถุดิบอื่น</h3>
           ${extraRows}
           <div class="field full"><label for="mo-note">หมายเหตุ</label><textarea class="textarea" id="mo-note" name="note" rows="2" maxlength="1000">${escapeHtml(order?.note ?? "")}</textarea></div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("mo-files")}
           <div class="fm-actions">
             <button class="btn secondary" type="submit" data-intent="save">บันทึกฉบับร่าง</button>
             <button class="btn" type="submit" data-intent="place">บันทึกและสั่งวัตถุดิบ</button>
@@ -271,6 +283,12 @@
       const values = { ...Object.fromEntries(new FormData(form).entries()), production_order_id: workOrder.id };
       const payload = model.materialPayload(values, order);
       const problems = model.validateMaterialPayload(payload, data.items, data.production, today());
+      let files = [];
+      try {
+        files = window.MNP_FACTORY_ATTACHMENTS.read(form.elements.extra_files);
+      } catch (fileError) {
+        problems.push(friendlyError(fileError));
+      }
       if (problems.length) {
         errorBox.textContent = problems.join(" · ");
         errorBox.hidden = false;
@@ -279,22 +297,24 @@
       }
       setFormBusy(form, true);
       let saved = null;
+      let fileWarning = "";
       try {
         const result = await sb.rpc("app_factory_save_material_order", payload);
         if (result.error) throw result.error;
         saved = result.data;
+        fileWarning = await window.MNP_FACTORY_ATTACHMENTS.upload("material_order", saved.id, files);
         if (intent === "place") {
           const placed = await sb.rpc("app_factory_place_material_order", { p_id: saved.id, p_version: saved.version });
           if (placed.error) throw placed.error;
-          showToast(`สั่งวัตถุดิบตาม ${saved.code} แล้ว`);
+          showToast(fileWarning || `สั่งวัตถุดิบตาม ${saved.code} แล้ว`, fileWarning ? "error" : "success");
         } else {
-          showToast(order ? "บันทึกฉบับร่างแล้ว" : `ออกใบสั่งวัตถุดิบ ${saved.code} (ฉบับร่าง) แล้ว`);
+          showToast(fileWarning || (order ? "บันทึกฉบับร่างแล้ว" : `ออกใบสั่งวัตถุดิบ ${saved.code} (ฉบับร่าง) แล้ว`), fileWarning ? "error" : "success");
         }
         location.hash = viewUrl(saved.id).slice(1);
       } catch (error) {
         // ฉบับร่างที่บันทึกสำเร็จแต่สั่งไม่สำเร็จยังอยู่ในระบบ: พาไปหน้าใบเพื่อสั่งใหม่ ไม่ปล่อยให้กดบันทึกซ้ำจนเกิดใบซ้ำ
         if (saved) {
-          showToast(`บันทึก ${saved.code} เป็นฉบับร่างแล้ว แต่สั่งไม่สำเร็จ: ${friendlyError(error)}`, "error");
+          showToast(`บันทึก ${saved.code} เป็นฉบับร่างแล้ว แต่สั่งไม่สำเร็จ: ${friendlyError(error)}${fileWarning ? ` · ${fileWarning}` : ""}`, "error");
           location.hash = viewUrl(saved.id).slice(1);
           return;
         }
