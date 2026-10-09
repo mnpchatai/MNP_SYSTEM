@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { ATTACHMENT_STUBS } from "./support/factory-attachment-stubs.mjs";
 
 // โหลดไฟล์หน้าจอใบสั่งผลิต (script ธรรมดาใน browser) เข้า context จำลอง แล้วเรียก view จริงด้วยข้อมูลจำลอง
 // ตรวจ HTML ที่วาด ปุ่มที่โผล่ตามสถานะ/แผนก การเรียก RPC และข้อความผิดพลาด (ไม่มี DOM จริง การตรวจเต็มรูปแบบทำกับ app.js ใน browser)
@@ -12,6 +13,7 @@ const FILES = [
   "modules/factory-material-model.js",
   "modules/factory-job-model.js",
   "modules/module-factory-master.js",
+  "modules/factory-attachments.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
@@ -64,6 +66,7 @@ function loadFactory({ data = FIXTURE, dept = "PP", rpc, confirmAnswer = true } 
   const context = vm.createContext({});
   context.window = context;
   Object.assign(context, {
+    ...ATTACHMENT_STUBS,
     escapeHtml,
     formatDate: (value, withTime) => `d(${value ?? "—"}${withTime ? " t" : ""})`,
     showToast: (message, kind) => toasts.push([message, kind ?? "ok"]),
@@ -89,7 +92,7 @@ async function render(view, { query = "", ...options } = {}) {
   const { context, log } = loadFactory(options);
   let painted = null;
   const controls = {};
-  const make = () => ({ disabled: false, hidden: false, textContent: "", handlers: {}, dataset: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, reportValidity: () => true, querySelector() { return { value: "เหตุผลทดสอบ" }; }, scrollIntoView() {} });
+  const make = () => ({ disabled: false, hidden: false, textContent: "", handlers: {}, dataset: {}, elements: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, reportValidity: () => true, querySelector() { return { value: "เหตุผลทดสอบ" }; }, scrollIntoView() {} });
   const root = {
     querySelector: (selector) => (controls[selector] ??= make()),
     querySelectorAll: () => [],
@@ -365,4 +368,15 @@ test("a save error stays on the form with the message", async () => {
   assert.match(view.controls["#po-form-error"].textContent, /เฉพาะแผนกขาย/);
   assert.equal(view.controls["#po-form-error"].hidden, false);
   assert.equal(view.log.hash, "");
+});
+
+test("the production order page lists its files and every action form carries the extra-files field", async () => {
+  const planning = await render("production", { query: "po=o-plan", dept: "PP" });
+  assert.match(planning.body, /data-fm-attachments="production_order" data-entity-id="o-plan"/);
+  assert.match(planning.body, /id="po-plan-files"[^>]*name="extra_files"/);
+  assert.match(planning.body, /id="po-cancel-files"[^>]*name="extra_files"/);
+  const submitted = await render("production", { query: "po=o-sub", dept: "PP" });
+  assert.match(submitted.body, /id="po-return-files"[^>]*name="extra_files"/);
+  const create = await render("production-new", { dept: "SA" });
+  assert.match(create.body, /id="po-files"[^>]*name="extra_files"/);
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { ATTACHMENT_STUBS } from "./support/factory-attachment-stubs.mjs";
 
 // โหลดไฟล์หน้าภาพรวมการผลิต (script ธรรมดาใน browser) เข้า context จำลอง แล้วเรียก view จริงด้วยข้อมูลจำลอง
 // ตรวจ HTML ที่วาด ตัวเลข ลิงก์ และข้อมูลที่ส่งให้การ์ดแผนก (ไม่มี DOM จริง การตรวจเต็มรูปแบบทำกับ app.js ใน browser)
@@ -14,6 +15,7 @@ const FILES = [
   "modules/factory-job-model.js",
   "modules/factory-board-model.js",
   "modules/module-factory-master.js",
+  "modules/factory-attachments.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
@@ -39,6 +41,7 @@ function loadFactory(data = FIXTURE) {
   const context = vm.createContext({});
   context.window = context;
   Object.assign(context, {
+    ...ATTACHMENT_STUBS,
     escapeHtml, formatDate: (value, withTime) => `d(${value ?? "—"}${withTime ? " t" : ""})`, showToast() {}, friendlyError: String, setFormBusy() {}, renderRoute: async () => {}, confirm: () => true,
     CSS: { escape: (value) => value }, URLSearchParams, Intl, Date, state: { employee: { department: { code: "PP" } } }, location: { hash: "" },
     FormData: class {}, sb: { rpc: async () => ({ data, error: null }) },

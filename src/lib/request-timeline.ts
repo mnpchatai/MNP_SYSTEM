@@ -30,6 +30,13 @@ export type VerificationTimelineRow = {
   verifier: TimelinePerson;
 };
 
+export type AttachmentTimelineRow = {
+  id: string;
+  file_name: string;
+  created_at: string;
+  uploader: TimelinePerson;
+};
+
 type TimelineRequest = {
   assignee: TimelinePerson;
   work_expected_date?: string | null;
@@ -91,18 +98,47 @@ function appendNote(detail: string, note?: string | null) {
   return detail ? `${detail} · ${cleanNote}` : cleanNote;
 }
 
+/** ไฟล์ที่คนเดียวกันแนบต่อเนื่องกัน (ห่างกันไม่เกิน 2 นาที เช่น เลือกหลายไฟล์พร้อมกัน หรือแนบหลังกดพิจารณา) รวมเป็นเหตุการณ์เดียว */
+const ATTACHMENT_GROUP_GAP_MS = 120_000;
+
+/** ตรรกะเดียวกับ attachmentTimelineEvents ใน app.js (Pilot Web) */
+export function attachmentTimelineEvents(attachments: AttachmentTimelineRow[]): RequestTimelineEvent[] {
+  const ordered = [...attachments].sort((left, right) => left.created_at.localeCompare(right.created_at));
+  const groups: AttachmentTimelineRow[][] = [];
+  for (const attachment of ordered) {
+    const group = groups[groups.length - 1];
+    const last = group?.[group.length - 1];
+    const sameUploader = last && employeeName(last.uploader) === employeeName(attachment.uploader);
+    const gap = last ? Date.parse(attachment.created_at) - Date.parse(last.created_at) : Number.NaN;
+    if (group && sameUploader && gap <= ATTACHMENT_GROUP_GAP_MS) group.push(attachment);
+    else groups.push([attachment]);
+  }
+  return groups.map((group) => {
+    const uploader = employeeName(group[0].uploader);
+    const names = group.map((attachment) => attachment.file_name).join(", ");
+    return {
+      id: `attachment-${group[0].id}`,
+      at: group[0].created_at,
+      title: "แนบไฟล์",
+      detail: `${uploader === "—" ? "ผู้ใช้งาน" : uploader} แนบไฟล์ ${group.length} ไฟล์: ${names}`,
+    };
+  });
+}
+
 export function buildRequestTimeline({
   request,
   history,
   steps,
   verifications,
   isRepair,
+  attachments = [],
 }: {
   request: TimelineRequest;
   history: StatusTimelineRow[];
   steps: ApprovalTimelineRow[];
   verifications: VerificationTimelineRow[];
   isRepair: boolean;
+  attachments?: AttachmentTimelineRow[];
 }) {
   const orderedSteps = [...steps].sort((left, right) => left.step_order - right.step_order);
   const labels = isRepair ? repairStatusLabels : statusLabels;
@@ -217,5 +253,6 @@ export function buildRequestTimeline({
     }];
   });
 
-  return [...statusEvents, ...approvalEvents].sort((left, right) => left.at.localeCompare(right.at));
+  return [...statusEvents, ...approvalEvents, ...attachmentTimelineEvents(attachments)]
+    .sort((left, right) => left.at.localeCompare(right.at));
 }

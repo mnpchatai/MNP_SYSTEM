@@ -201,6 +201,8 @@
       if (!confirm("ล้างข้อมูลทดสอบของฝ่ายโรงงานทั้งหมด (Item, BOM, Routing, คลัง, ใบสั่งผลิต และประวัติ)?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
       event.currentTarget.disabled = true;
       try {
+        // ไฟล์แนบอยู่ใน Storage ซึ่ง SQL ลบไม่ได้ ลบไฟล์ก่อน ถ้าลบไม่หมดจะไม่ล้างข้อมูลต่อ (ฐานข้อมูลก็ปฏิเสธเองถ้ายังมีไฟล์ค้าง)
+        await window.MNP_FACTORY_ATTACHMENTS?.removeAll();
         const { data, error } = await sb.rpc("app_sandbox_purge_factory");
         if (error) throw error;
         showToast(`ล้างข้อมูลทดสอบแล้ว ${data?.deleted ?? 0} Item`);
@@ -243,7 +245,7 @@
         <div class="fm-actions">${links || '<span class="muted small">ยังไม่มี BOM หรือ Routing สำหรับ Item นี้</span>'}</div>
         <h3>ประวัติของ Item นี้</h3>
         ${history.length ? historyTable(history, false) : '<p class="muted small">ยังไม่มีการเพิ่ม/แก้ไขผ่านหน้าจอ (ข้อมูลตัวอย่างไม่มีประวัติ)</p>'}
-      </section>`;
+      </section>${window.MNP_FACTORY_ATTACHMENTS.panelHtml("item", item.id)}`;
   }
 
   // ---------- ฟอร์มเพิ่ม/แก้ไข ----------
@@ -272,6 +274,7 @@
               ${editing ? "<small>ประเภท หน่วยนับฐาน และการติดตามล็อตถูกล็อกหลังสร้าง เพื่อรักษาความถูกต้องของข้อมูลที่เชื่อมโยง (BOM คลัง ใบสั่งผลิต)</small>" : "<small>ประเภท หน่วยนับฐาน และการติดตามล็อตแก้ไม่ได้หลังบันทึก ให้ตรวจก่อนบันทึก</small>"}</div>
             <div class="field full"><label for="fm-spec">ข้อกำหนด / รายละเอียด</label><textarea class="textarea" id="fm-spec" name="specification" rows="3" maxlength="3000">${value("specification")}</textarea></div>
           </div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("fm-item-files")}
           <div class="fm-actions"><button class="btn" type="submit">${editing ? "บันทึกการแก้ไข" : "บันทึก Item"}</button>
             <a class="btn secondary" href="${escapeHtml(editing ? menu.url("item-list", { id: item.id }) : menu.url("item-list"))}">ยกเลิก</a></div>
         </form>
@@ -289,11 +292,20 @@
       const values = Object.fromEntries(formData.entries());
       values.lot_tracking = formData.get("lot_tracking") === "on";
       const payload = model.itemPayload(values, item);
+      let files;
+      try {
+        files = window.MNP_FACTORY_ATTACHMENTS.read(form.elements.extra_files);
+      } catch (fileError) {
+        errorBox.textContent = friendlyError(fileError);
+        errorBox.hidden = false;
+        return;
+      }
       setFormBusy(form, true);
       try {
         const { data, error } = await sb.rpc("app_factory_save_item", payload);
         if (error) throw error;
-        showToast(item ? "บันทึกการแก้ไขแล้ว" : `เพิ่ม Item ${data.code} แล้ว`);
+        const warning = await window.MNP_FACTORY_ATTACHMENTS.upload("item", data.id, files);
+        showToast(warning || (item ? "บันทึกการแก้ไขแล้ว" : `เพิ่ม Item ${data.code} แล้ว`), warning ? "error" : "success");
         location.hash = menu.url("item-list", { id: data.id }).slice(1);
       } catch (error) {
         // ข้อมูลที่กรอกยังอยู่ในฟอร์ม แก้แล้วกดบันทึกใหม่ได้

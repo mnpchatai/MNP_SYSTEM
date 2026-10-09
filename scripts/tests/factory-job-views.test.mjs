@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { ATTACHMENT_STUBS } from "./support/factory-attachment-stubs.mjs";
 
 // โหลดไฟล์หน้าจอใบงานผลิต (script ธรรมดาใน browser) เข้า context จำลอง แล้วเรียก view จริงด้วยข้อมูลจำลอง
 // ตรวจ HTML ที่วาด ปุ่มที่โผล่ตามสถานะ/แผนก การเรียก RPC และข้อความผิดพลาด (ไม่มี DOM จริง การตรวจเต็มรูปแบบทำกับ app.js ใน browser)
@@ -12,6 +13,7 @@ const FILES = [
   "modules/factory-material-model.js",
   "modules/factory-job-model.js",
   "modules/module-factory-master.js",
+  "modules/factory-attachments.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
@@ -81,6 +83,7 @@ function loadFactory({ data = FIXTURE, dept = "RB", rpc, confirmAnswer = true } 
   const context = vm.createContext({});
   context.window = context;
   Object.assign(context, {
+    ...ATTACHMENT_STUBS,
     escapeHtml,
     formatDate: (value, withTime) => `d(${value ?? "—"}${withTime ? " t" : ""})`,
     showToast: (message, kind) => toasts.push([message, kind ?? "ok"]),
@@ -105,7 +108,7 @@ async function render(view, { query = "", department, ...options } = {}) {
   const { context, log } = loadFactory(options);
   let painted = null;
   const controls = {};
-  const make = () => ({ disabled: false, hidden: false, textContent: "", handlers: {}, dataset: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, reportValidity: () => true, querySelector() { return { value: "เหตุผลทดสอบ" }; }, scrollIntoView() {} });
+  const make = () => ({ disabled: false, hidden: false, textContent: "", handlers: {}, dataset: {}, elements: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, reportValidity: () => true, querySelector() { return { value: "เหตุผลทดสอบ" }; }, scrollIntoView() {} });
   const root = { querySelector: (selector) => (controls[selector] ??= make()), querySelectorAll: () => [] };
   const frame = { loading: () => {}, paint: (opts) => { painted = opts; return root; } };
   await context.MNP_FACTORY_VIEWS[view]({ params: new URLSearchParams(query), frame, department });
@@ -480,4 +483,25 @@ test("review: cancellation is a secondary action and a QC hold stays visible", a
   const qa = await render("job", { query: "jb=j-last", dept: "QA" });
   assert.match(qa.body, /<details class="fm-review-details" open><summary>ผลตรวจ QC/);
   assert.ok(qa.body.indexOf('ตรวจ QC ไม่ผ่านล่าสุด') < qa.body.indexOf('id="jb-qc-form"'));
+});
+
+test("every job form carries the extra-files field, the job page lists its files, and the create form can attach them", async () => {
+  const step = await render("job", { query: "jb=j-run", dept: "RB" });
+  assert.match(step.body, /id="jb-step-files"[^>]*name="extra_files"/);
+  assert.match(step.body, /data-fm-attachments="job" data-entity-id="j-run"/);
+  const qc = await render("job", { query: "jb=j-last", dept: "QA" });
+  assert.match(qc.body, /id="jb-qc-files"[^>]*name="extra_files"/);
+  const cancel = await render("job", { query: "jb=j-open", dept: "PP" });
+  assert.match(cancel.body, /id="jb-cancel-files"[^>]*name="extra_files"/);
+  const create = await render("job-new", { query: "wo=wo-rel", dept: "PP" });
+  assert.match(create.body, /id="jb-files"[^>]*name="extra_files"/);
+});
+
+test("a rejected file stops the action before anything is sent, and accepted files follow the action in the same job", async () => {
+  const bad = await render("job", { query: "jb=j-open", dept: "PP" });
+  bad.controls["#jb-cancel-form"].elements.extra_files = { files: [{ name: "x.exe" }] };
+  bad.context.readExtraFiles = () => { throw new Error("ชนิดไฟล์ไม่รองรับ (EXE)"); };
+  await bad.controls["#jb-cancel-form"].handlers.submit({ preventDefault() {} });
+  assert.ok(!bad.log.calls.some(([name]) => name === "app_factory_cancel_job"), "the cancel was not sent");
+  assert.match(bad.log.toasts.at(-1)[0], /ชนิดไฟล์ไม่รองรับ/);
 });

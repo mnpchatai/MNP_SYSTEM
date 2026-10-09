@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { ATTACHMENT_STUBS } from "./support/factory-attachment-stubs.mjs";
 
 // โหลดไฟล์ของหน้า Item master (ที่เขียนเป็น script ธรรมดาใน browser) เข้า context จำลอง แล้วเรียก view จริงด้วยข้อมูลจำลอง
 // ตรวจเฉพาะ HTML ที่วาดและข้อความผิดพลาด (ไม่มี DOM จริง จึงไม่ตรวจ event) การตรวจเต็มรูปแบบทำกับ app.js จริงใน browser
@@ -12,6 +13,7 @@ const FILES = [
   "modules/factory-material-model.js",
   "modules/factory-job-model.js",
   "modules/module-factory-master.js",
+  "modules/factory-attachments.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
@@ -55,6 +57,7 @@ function loadFactory(data = FIXTURE, overrides = {}) {
   const context = vm.createContext({});
   context.window = context;
   Object.assign(context, {
+    ...ATTACHMENT_STUBS,
     escapeHtml,
     formatDate: (value, withTime) => `d(${value ?? "—"}${withTime ? " t" : ""})`,
     showToast: () => {},
@@ -460,4 +463,19 @@ test("the tree escapes user text and a BOM without components is just the root",
   assert.match(alone, /ฉบับร่าง/);
   const leaf = (await render("bom", "bom=tb-rbp", TREE_FIXTURE)).body;
   assert.match(leaf, /3 รายการ · ลึก 2 ชั้น/, "any BOM can be the root of its own tree");
+});
+
+test("the BOM page lists its files, the decision panel and the form carry the extra-files field", async () => {
+  const pending = await render("bom", "bom=b2");
+  assert.match(pending.body, /data-fm-attachments="bom" data-entity-id="b2"/);
+  assert.match(pending.body, /id="fm-decision-files"[^>]*name="extra_files"/);
+  const form = await render("bom-new");
+  assert.match(form.body, /id="fm-bom-files"[^>]*name="extra_files"/);
+});
+
+test("the item page lists its files and the item form carries the extra-files field", async () => {
+  const detail = await render("items", "id=fg1");
+  assert.match(detail.body, /data-fm-attachments="item" data-entity-id="fg1"/);
+  const form = await render("item-new");
+  assert.match(form.body, /id="fm-item-files"[^>]*name="extra_files"/);
 });
