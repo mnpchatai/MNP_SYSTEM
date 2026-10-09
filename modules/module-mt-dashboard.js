@@ -35,6 +35,8 @@
   let drillAnchor = null; // การ์ดที่ผู้ใช้กดกรองมา — รายการใบแสดงต่อท้ายการ์ดนั้น (ว่าง = ท้ายหน้า)
   let pendingDrill = null; // { params, card } ของลิงก์กรองที่เพิ่งกด รอ hashchange พาเข้า renderDashboard
   let scrollToDrill = false;
+  let drillOrigin = null; // { card, sel } จุดที่กดกรองมา — ยกเลิกการกรองแล้วเลื่อนกลับมาตรงนี้
+  let anchorFix = null; // { selector, top } ตำแหน่งบนจอของจุดต้นทางก่อนวาดหน้าใหม่ — วาดแล้วชดเชยให้อยู่ที่เดิม (การ์ดด้านบนสูง/ต่ำลงตามตัวกรอง)
   let restoreScrollY = null; // ตำแหน่งเลื่อนก่อนกดกรอง — วาดหน้าใหม่แล้วคืนตำแหน่งเดิมก่อน แล้วค่อยเลื่อนนุ่มๆ ไปที่รายการ
 
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
@@ -216,7 +218,7 @@
     const total = shown.reduce((sum, stage) => sum + stage.count, 0);
     const resolve = (key) => {
         const stage = stages.find((entry) => entry.key === key);
-        return stage && { title: stage.label, lines: [["ใบที่ค้างในขั้นนี้", fmtCount(stage.count)], ["ต้องรอใครดำเนินการ", stage.owner], ["ค้างเฉลี่ย", fmtDays(stage.avgDays)], ["ค้างนานสุด", stage.maxDays === null ? "—" : `${fmtNumber(stage.maxDays)} วัน`], ["เลยกำหนดเสร็จ", fmtCount(stage.overdue)], ["ด่วน", fmtCount(stage.urgent)]], href: hrefWith(filters, { scope: "", stage: filters.stage === key ? "" : key }), linkLabel: filters.stage === key ? "ยกเลิกการกรอง" : undefined };
+        return stage && { title: stage.label, lines: [["ใบที่ค้างในขั้นนี้", fmtCount(stage.count)], ["ต้องรอใครดำเนินการ", stage.owner], ["ค้างเฉลี่ย", fmtDays(stage.avgDays)], ["ค้างนานสุด", stage.maxDays === null ? "—" : `${fmtNumber(stage.maxDays)} วัน`], ["เลยกำหนดเสร็จ", fmtCount(stage.overdue)], ["ด่วน", fmtCount(stage.urgent)]], href: filters.stage === key ? null : hrefWith(filters, { scope: "", stage: key }) };
     };
     const rows = shown.map((stage) => {
       const width = stage.count ? Math.max((stage.count / max) * 100, 0.8) : 0;
@@ -262,7 +264,7 @@
     const max = items.length ? Math.max(...items.map((item) => item.count)) : 0;
     const resolve = (key) => {
         const item = items.find((entry) => entry.key === key);
-        return item && { title: `${item.code}${item.name ? ` — ${item.name}` : ""}`, lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: hrefWith(filters, { scope: "", stage: "", machine: filters.machine === key ? "" : key }), linkLabel: filters.machine === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของเครื่องนี้" };
+        return item && { title: `${item.code}${item.name ? ` — ${item.name}` : ""}`, lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: filters.machine === key ? null : hrefWith(filters, { scope: "", stage: "", machine: key }), linkLabel: "ดูเฉพาะใบของเครื่องนี้" };
     };
     const rows = items.map((item) => {
       const inner = `<span class="nd-lab">${esc(item.code)}${item.name ? ` — ${esc(item.name)}` : ""}<br><span class="nd-muted">แผนก ${esc(item.dept || "—")}</span></span><span class="nd-trk"><span class="nd-bar${item.count === max ? "" : " rest"}" style="width:${Math.max((item.count / max) * 100, 0.8)}%"></span></span><span class="nd-val">${esc(fmtNumber(item.count))} ครั้ง<small>ยังไม่จบ ${esc(fmtNumber(item.open))} · ล่าสุด ${esc(formatDate(item.lastOn))}</small></span>`;
@@ -283,7 +285,7 @@
     const { items, total } = ranking;
     const resolve = (key) => {
         const item = items.find((entry) => entry.dept === key);
-        return item && { title: item.dept ? `แผนก ${item.dept}` : "ไม่ระบุแผนก", lines: [["แจ้งซ่อมในช่วงนี้", fmtCount(item.count)], ["สัดส่วนของใบแจ้งซ่อมทั้งหมด", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["ด่วน", fmtCount(item.urgent)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: item.dept ? hrefWith(filters, { scope: "", stage: "", dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : "ดูเฉพาะแผนกนี้" };
+        return item && { title: item.dept ? `แผนก ${item.dept}` : "ไม่ระบุแผนก", lines: [["แจ้งซ่อมในช่วงนี้", fmtCount(item.count)], ["สัดส่วนของใบแจ้งซ่อมทั้งหมด", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["ด่วน", fmtCount(item.urgent)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: item.dept && filters.dept !== key ? hrefWith(filters, { scope: "", stage: "", dept: key }) : null, linkLabel: "ดูเฉพาะแผนกนี้" };
     };
     const detailRow = (key) => { const detail = detailUnder("deptrank", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="6">${detail}</td></tr>` : ""; };
     return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
@@ -298,7 +300,7 @@
     const max = items.length ? Math.max(...items.map((item) => item.hours)) : 0;
     const resolve = (key) => {
         const item = items.find((entry) => entry.id === key);
-        return item && { title: techName(item.id), lines: [["ใบที่ได้รับมอบหมายในช่วงนี้", fmtCount(item.jobs)], ["เวลากำลังซ่อมรวม", `${fmtHours(item.hours)} (${fmtDays(item.hours / 24)})`], ["เฉลี่ยต่อใบ (เฉพาะใบที่เริ่มซ่อมแล้ว)", fmtHours(item.avgHours)], ["กำลังซ่อมอยู่ (ในช่วงนี้)", fmtCount(item.running)], ["ถืออยู่ตอนนี้ (ทุกช่วงเวลา)", fmtCount(item.holding)], ["ในนั้นเลยกำหนดเสร็จ", fmtCount(item.overdue)]], href: hrefWith(filters, { scope: "", stage: "", tech: filters.tech === key ? "" : key }), linkLabel: filters.tech === key ? "ยกเลิกการกรอง" : "ดูเฉพาะใบของช่างคนนี้" };
+        return item && { title: techName(item.id), lines: [["ใบที่ได้รับมอบหมายในช่วงนี้", fmtCount(item.jobs)], ["เวลากำลังซ่อมรวม", `${fmtHours(item.hours)} (${fmtDays(item.hours / 24)})`], ["เฉลี่ยต่อใบ (เฉพาะใบที่เริ่มซ่อมแล้ว)", fmtHours(item.avgHours)], ["กำลังซ่อมอยู่ (ในช่วงนี้)", fmtCount(item.running)], ["ถืออยู่ตอนนี้ (ทุกช่วงเวลา)", fmtCount(item.holding)], ["ในนั้นเลยกำหนดเสร็จ", fmtCount(item.overdue)]], href: filters.tech === key ? null : hrefWith(filters, { scope: "", stage: "", tech: key }), linkLabel: "ดูเฉพาะใบของช่างคนนี้" };
     };
     const rows = items.map((item) => {
       const width = item.hours && max ? Math.max((item.hours / max) * 100, 0.8) : 0;
@@ -317,7 +319,7 @@
     return [row.machine_code, row.machine_name].filter(Boolean).join(" — ") || "ไม่ระบุเครื่องจักร";
   }
 
-  function drillHtml(list, basis) {
+  function drillHtml(list, basis, filters) {
     const sorted = [...list].sort((a, b) => (a.submittedOn < b.submittedOn ? 1 : a.submittedOn > b.submittedOn ? -1 : b.request_no.localeCompare(a.request_no)));
     const shown = sorted.slice(0, drillLimit);
     const heading = basis === "backlog"
@@ -328,7 +330,11 @@
       return row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
     };
     const timeCell = (row) => (row.isCompleted ? fmtDays(row.cycleDays) : row.isOpen ? `ค้าง ${fmtNumber(row.daysInStatus)} วัน` : "—");
-    return `<div class="nd-head"><h2>${heading.title}</h2><p>${heading.note}</p></div>
+    // ปุ่มยกเลิกการกรองอยู่มุมขวาบนของรายการที่กรองแล้ว (ล้างตัวกรองที่กำหนดรายการนี้ทั้งหมด) กดแล้ววนกลับไปจุดที่กดกรองมา
+    const cancel = hasDrillFilter(filters)
+      ? `<a class="btn secondary small nd-cancel" data-cancel href="${hrefWith(filters, { scope: "", stage: "", machine: "", tech: "", dept: "" })}">ยกเลิกการกรอง</a>`
+      : "";
+    return `<div class="nd-head nd-head-row"><div><h2>${heading.title}</h2><p>${heading.note}</p></div>${cancel}</div>
       ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>วันที่แจ้ง</th><th>เครื่องจักร / แผนก</th><th>สถานะ</th><th class="nd-num">เวลา</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}</td><td class="nd-nowrap">${esc(row.submittedOn)}</td><td>${esc(machineText(row))}<br><span class="nd-muted">${esc(row.dept || "—")} · ${esc(DOC_LABELS[row.doc_type] ?? "—")}${row.requester_name ? ` · ${esc(row.requester_name)}` : ""}</span></td><td>${statusCell(row)}</td><td class="nd-num">${timeCell(row)}</td></tr>`).join("")}</tbody></table></div>
       ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มีใบตรงกับตัวกรองนี้</p>`}`;
@@ -372,11 +378,16 @@
         <section class="card nd-card" data-card="machine">${machineHtml(machines, filters)}</section>
         <section class="card nd-card" data-card="deptrank">${deptRankHtml(depts, filters)}</section>
         <section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>
-        <section class="card nd-card" id="nd-drill">${drillHtml(list, basis)}</section>
+        <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters)}</section>
         ${definitionsHtml}
         <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น</p>
       </div>`;
   }
+
+  // เลื่อนแบบนุ่ม เว้นแต่ผู้ใช้ตั้งลดการเคลื่อนไหว
+  const scrollBehavior = () => (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
+
+  const anchorSelector = (origin) => (origin.sel ? `[data-sel="${CSS.escape(origin.sel)}"]` : `[data-card="${CSS.escape(origin.card)}"]`);
 
   function paint() {
     const root = document.getElementById("nd-root");
@@ -389,13 +400,17 @@
     placeDrill(root);
     // วาดใหม่ทั้งก้อน: คืนตำแหน่งเลื่อนเดิมเสมอ หน้าจะได้ไม่กระโดด (ก่อน focus เพราะ focus บังคับ layout)
     window.scrollTo(0, keepY);
+    if (anchorFix) {
+      const el = root.querySelector(anchorFix.selector);
+      if (el) window.scrollBy(0, el.getBoundingClientRect().top - anchorFix.top);
+      anchorFix = null;
+    }
     if (focusKey) (focusKey === "__more" ? root.querySelector("[data-more]") : root.querySelector(`[data-sel="${CSS.escape(focusKey)}"]`))?.focus({ preventScroll: true });
     if (scrollToDrill) {
       scrollToDrill = false;
       // เลื่อนเฉพาะตอนกรองจริงหรือกดจากการ์ด (เปลี่ยนแค่ช่วงเวลาไม่ต้องกระโดดไปที่รายการ) เลื่อนแบบนุ่ม เว้นแต่ผู้ใช้ตั้งลดการเคลื่อนไหว
       if (drillAnchor || hasDrillFilter(lastFilters)) {
-        const smooth = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-        root.querySelector("#nd-drill")?.scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" });
+        root.querySelector("#nd-drill")?.scrollIntoView({ block: "start", behavior: scrollBehavior() });
       }
     }
   }
@@ -426,12 +441,47 @@
       if (event.target.closest("[data-more]")) { drillLimit += 10; paint(); return; }
       // ลิงก์กรอง: จำการ์ดต้นทางไว้ แล้วให้ renderDashboard วางรายการใบต่อท้ายการ์ดนั้น (ลิงก์นอกการ์ดวางใต้แถบตัวกรอง)
       const link = event.target.closest("a[href^='#/" + PATH + "?']");
-      if (link) rememberFilterClick(new URLSearchParams(link.getAttribute("href").split("?")[1]), link.closest("[data-card]")?.dataset.card ?? null);
+      if (!link) return;
+      const params = new URLSearchParams(link.getAttribute("href").split("?")[1]);
+      if (link.hasAttribute("data-cancel")) {
+        rememberFilterClick(params, null, { cancel: true });
+        pullBackThen(root, link.getAttribute("href"), event);
+        return;
+      }
+      const card = link.closest("[data-card]")?.dataset.card ?? null;
+      const sel = card && selection ? `${selection.card}:${selection.key}` : null;
+      const selector = card ? anchorSelector({ card, sel }) : null;
+      const anchorEl = selector ? root.querySelector(selector) : null;
+      rememberFilterClick(params, card, { sel, anchor: anchorEl ? { selector, top: anchorEl.getBoundingClientRect().top } : null });
     });
   }
 
-  function rememberFilterClick(params, card) {
-    pendingDrill = params.get("refresh") ? null : { params, card, scrollY: window.scrollY };
+  // ยกเลิกการกรอง: เลื่อนนุ่มๆ กลับไปจุดที่กดกรองมาก่อน (ตารางยังอยู่ ภาพต่อเนื่อง) แล้วค่อยล้างตัวกรองตอนเลื่อนเสร็จ
+  // ถ้าไม่รู้จุดเดิม (กรองจากชิป/ฟอร์ม/ลิงก์) หรือผู้ใช้ตั้งลดการเคลื่อนไหว ก็ล้างทันที
+  function pullBackThen(root, href, event) {
+    const origin = drillOrigin;
+    const back = origin && ((origin.sel && root.querySelector(`[data-sel="${CSS.escape(origin.sel)}"]`)) || root.querySelector(`[data-card="${CSS.escape(origin.card)}"]`));
+    if (!back || scrollBehavior() !== "smooth") return;
+    event.preventDefault();
+    back.scrollIntoView({ block: origin.sel ? "center" : "start", behavior: "smooth" });
+    let lastY = -1;
+    let stable = 0;
+    const startedAt = performance.now();
+    const wait = () => {
+      stable = Math.round(window.scrollY) === lastY ? stable + 1 : 0;
+      lastY = Math.round(window.scrollY);
+      if (stable >= 6 || performance.now() - startedAt > 1500) {
+        if (pendingDrill) Object.assign(pendingDrill, { scrollY: window.scrollY, anchor: { selector: anchorSelector(origin), top: back.getBoundingClientRect().top } }); // วาดหน้าใหม่แล้วจุดต้นทางต้องอยู่ที่เดิมบนจอ
+        location.hash = href.slice(1);
+        return;
+      }
+      requestAnimationFrame(wait);
+    };
+    requestAnimationFrame(wait);
+  }
+
+  function rememberFilterClick(params, card, extra = {}) {
+    pendingDrill = params.get("refresh") ? null : { params, card, scrollY: window.scrollY, ...extra };
   }
 
   function bindPage(root) {
@@ -454,8 +504,10 @@
     const fromClick = pendingDrill && pendingDrill.params.toString() === params.toString() ? pendingDrill : null;
     pendingDrill = null;
     drillAnchor = fromClick?.card ?? null;
-    scrollToDrill = Boolean(fromClick);
+    drillOrigin = fromClick?.card ? { card: fromClick.card, sel: fromClick.sel ?? null } : null;
+    scrollToDrill = Boolean(fromClick) && !fromClick.cancel;
     restoreScrollY = fromClick ? fromClick.scrollY : null;
+    anchorFix = fromClick?.anchor ?? null;
     const refresh = Boolean(params.get("refresh"));
     const fresh = !cache || cache.employeeId !== state.employee?.id || Date.now() - cache.loadedAt >= CACHE_MS || refresh;
     if (fresh) loadingShell(PATH, TITLE);
