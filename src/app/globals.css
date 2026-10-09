@@ -375,21 +375,20 @@ tbody tr:hover { background: var(--surface-hover); }
 
 /* Timeline cards replace the dense cross-column request table on tracking screens. */
 .request-list-panel { min-width: 0; }
-.request-timeline { position: relative; padding: 14px 14px 14px 42px; display: grid; gap: 12px; }
-.request-timeline::before { content: ""; position: absolute; top: 14px; bottom: 14px; left: 20px; width: 3px; background: var(--line); border-radius: 999px; }
+.request-timeline { padding: 14px 0; display: grid; gap: 12px; }
 .request-timeline-card {
   --timeline-accent: var(--primary);
   position: relative;
   padding: 16px 18px;
-  background: var(--surface-raised);
   border: 1px solid var(--line);
+  /* The accent strip is painted as a background under a transparent left border, so it sits on the card's outer edge, follows the rounded corners and lines up with the filter controls above the list. */
+  border-left-color: transparent;
   border-radius: 9px;
-  /* Keep the outline uniform on all four sides; the accent strip is an inset shadow so it follows the rounded corners instead of a colored border-left that is cut diagonally where it meets the other borders. */
-  box-shadow: inset 4px 0 0 var(--timeline-accent), 0 3px 12px rgba(31, 61, 102, .06);
+  background: linear-gradient(var(--timeline-accent), var(--timeline-accent)) left / 4px 100% no-repeat border-box, var(--surface-raised) border-box;
+  box-shadow: 0 3px 12px rgba(31, 61, 102, .06);
   content-visibility: auto;
   contain-intrinsic-size: 185px;
 }
-.request-timeline-card::before { content: ""; position: absolute; top: -7px; left: -30px; width: 14px; height: 14px; background: var(--surface-raised); border: 3px solid var(--timeline-accent); border-radius: 50%; box-shadow: 0 0 0 3px var(--shell); }
 .request-timeline-card.status-completed, .request-timeline-card.status-acknowledged { --timeline-accent: var(--success); }
 .request-timeline-card.status-rejected, .request-timeline-card.status-cancelled { --timeline-accent: var(--danger); }
 .request-timeline-card.status-pending_approval, .request-timeline-card.status-pending_assign, .request-timeline-card.status-pending_verify, .request-timeline-card.status-more_info { --timeline-accent: var(--warning); }
@@ -666,10 +665,8 @@ tbody tr:hover { background: var(--surface-hover); }
   .auth-points { display: none; }
   .auth-form-wrap { padding: 34px 24px; }
   .definition-grid, .preview-fields { grid-template-columns: 1fr; }
-  .request-timeline { padding: 10px 0 10px 26px; gap: 10px; }
-  .request-timeline::before { top: 10px; bottom: 10px; left: 7px; width: 2px; }
+  .request-timeline { padding: 10px 0; gap: 10px; }
   .request-timeline-card { padding: 14px; }
-  .request-timeline-card::before { top: -6px; left: -26px; width: 13px; height: 13px; }
   .request-card-head { display: grid; gap: 9px; }
   .request-card-tags { justify-content: flex-start; }
   .request-owner-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
