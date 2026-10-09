@@ -227,3 +227,26 @@ test("monthly count by department follows the department filter and ignores the 
   assert.equal(march.count, 1);
   assert.deepEqual(march.depts.map((item) => [item.dept, item.count]), [["RB", 1]]);
 });
+
+test("monthly loss by type reconciles with the headline: confirmed types add up to gross, recovery and estimates stay apart", () => {
+  const { rows, f, list } = run([
+    report({ id: "a", issue_date: "2026-03-02", losses: [loss(1000), loss(500, "confirmed", "loss", { loss_type: "repair" }), loss(400, "confirmed", "recovery"), loss(300, "estimated", "loss", { loss_type: "rework" }), { amount: 70 }] }),
+    report({ id: "b", issue_date: "2026-03-20", losses: [loss(200, "confirmed", "loss", { loss_type: "repair" })] }),
+    report({ id: "c", issue_date: "2026-04-01", losses: [loss(50)] }),
+  ]);
+  const months = model.monthlyByLossType(rows, f, 12);
+  const march = months[2];
+  assert.deepEqual(march.types.map((item) => [item.type, item.confirmed]).sort(), [["repair", 700], ["scrap", 1000]]);
+  assert.equal(march.gross, 1700); assert.equal(march.recovery, 400); assert.equal(march.net, 1300);
+  assert.equal(march.estimated, 300, "the estimated rework is not a confirmed bar");
+  assert.equal(march.types.reduce((sum, item) => sum + item.confirmed, 0), march.gross, "legacy rows are in neither the bars nor the gross");
+  assert.deepEqual(months[0].types, []);
+  assert.equal(months.reduce((sum, item) => sum + item.gross, 0), model.summarize(list, f).gross);
+});
+
+test("monthly loss by type splits money by the department share", () => {
+  const { rows, f } = run([report({ id: "a", issue_date: "2026-03-02", responsibilities: [{ dept: "RB", share: 0.25 }, { dept: "PK", share: 0.75 }], losses: [loss(1000)] })], { dept: "RB" });
+  const march = model.monthlyByLossType(rows, f, 12)[2];
+  assert.deepEqual(march.types, [{ type: "scrap", confirmed: 250 }]);
+  assert.equal(march.net, 250);
+});

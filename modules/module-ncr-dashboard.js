@@ -272,7 +272,6 @@
 
   function trendHtml(rows, filters, today) {
     const lastMonth = filters.year === today.slice(0, 4) ? Number(today.slice(5, 7)) : 12;
-    const data = model.monthly(rows, filters, lastMonth);
     const byDept = model.monthlyByDept(rows, filters, lastMonth);
     const classOf = deptClassOf(rows);
     const shown = [...new Set(byDept.flatMap((month) => month.depts.map((item) => item.dept)))].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a < b ? -1 : a > b ? 1 : 0));
@@ -292,11 +291,24 @@
         ];
       },
     });
+    const money = model.monthlyByLossType(rows, filters, lastMonth);
+    // สีของประเภทต้นทุนคงที่ตามลำดับใน LOSS_TYPES (ใช้ชุดสีเดียวกับแผนก) ประเภทที่ไม่รู้จักใช้สีเทา "อื่น"
+    const typeKeys = Object.keys(LOSS_TYPES);
+    const typeClass = (type) => (typeKeys.indexOf(type) >= 0 && typeKeys.indexOf(type) < DEPT_COLORS ? `dc${typeKeys.indexOf(type) + 1}` : "dco");
+    const typeLabel = (type) => LOSS_TYPES[type] ?? type;
+    const shownTypes = typeKeys.filter((type) => money.some((month) => month.types.some((item) => item.type === type)));
+    const moneyLegend = [...shownTypes.map((type) => ({ label: typeLabel(type), cls: typeClass(type) })), ...(money.some((month) => month.estimated > 0) ? [{ label: "ประมาณการรอยืนยัน", cls: "est" }] : [])];
     const moneyChart = columnChart({
-      card: "month-money", title: "สูญเสียสุทธิ (บาท)", subtitle: "ยืนยันแล้วเทียบกับประมาณการรอยืนยัน", data,
-      legend: [{ label: "ยืนยันแล้ว (สุทธิ)", cls: "strong" }, { label: "ประมาณการ", cls: "soft" }], formatTotal: fmtBaht, formatAxis: fmtShort, lastFilters: filters,
-      segmentsOf: (month) => [{ value: month.net }, { value: month.estimated, cls: "soft" }],
-      detailOf: (month) => [["สูญเสียสุทธิยืนยัน", fmtBaht(month.net)], ["ประมาณการรอยืนยัน", fmtBaht(month.estimated)]],
+      card: "month-money", title: "สูญเสียยืนยัน แยกตามประเภท (บาท)", subtitle: "ยอดยืนยันก่อนหักชดเชย แยกสีตามประเภทต้นทุน ส่วนลายเส้นคือประมาณการรอยืนยัน แตะแท่งเพื่อดูยอดสุทธิหลังหักชดเชย",
+      data: money, legend: moneyLegend, formatTotal: fmtBaht, formatAxis: fmtShort, lastFilters: filters,
+      segmentsOf: (month) => [...[...month.types].sort((a, b) => typeKeys.indexOf(a.type) - typeKeys.indexOf(b.type)).map((item) => ({ value: item.confirmed, cls: typeClass(item.type) })), { value: month.estimated, cls: "est" }],
+      detailOf: (month) => [
+        ["สูญเสียยืนยัน (ก่อนชดเชย)", fmtBaht(month.gross)],
+        ...[...month.types].sort((a, b) => b.confirmed - a.confirmed).map((item) => [typeLabel(item.type), fmtBaht(item.confirmed), typeClass(item.type)]),
+        ...(month.recovery ? [["ชดเชยยืนยัน (เครดิต เงินชดเชย ขายซาก)", `− ${fmtBaht(month.recovery)}`]] : []),
+        ["สูญเสียสุทธิยืนยัน", fmtBaht(month.net)],
+        ["ประมาณการรอยืนยัน", fmtBaht(month.estimated), month.estimated > 0 ? "est" : ""],
+      ],
     });
     return `<div class="nd-head"><h2>แนวโน้มรายเดือน</h2><p>แกนเดือนเดียวกันทั้งสองกราฟ (เดือนที่ออก NCR) เดือนนอกช่วงที่เลือกแสดงจางลง ตัวกรองอื่นยังใช้อยู่</p></div>
       <div class="nd-two">${countChart}
