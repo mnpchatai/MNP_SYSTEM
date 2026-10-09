@@ -113,11 +113,6 @@ const state = { session: null, employee: null, unread: 0, authMode: "login", dir
 const VIEW_ALL_ROLE_CODES = ["factory_manager", "general_manager"]; // มี requests.view_all เหมือน admin
 const DEPT_MANAGER_ROLE_CODES = ["department_manager", "assistant_department_manager"]; // ผู้ช่วยทำแทนผู้จัดการแผนกได้ (ตรงกับ RPC)
 
-// บทบาทที่ใช้รับงานอนุมัติ/แจ้งเตือน: admin เลือกทำหน้าที่บทบาทอื่นได้ (employees.acting_role_id)
-// ต้องตรงกับ coalesce(acting_role_id, role_id) ใน 20261003010000_admin_acting_role.sql
-function actingRoleId(employee) {
-  return employee?.acting_role_id || employee?.role_id;
-}
 const OPERATE_ROLE_CODES = ["assistant_factory_manager", "factory_manager", "general_manager"]; // มี requests.operate
 const accountRequestKindLabels = {
   new_account: "ขอเปิดบัญชี",
@@ -1460,8 +1455,7 @@ async function getPendingApprovals() {
     // admin ที่เลือก "บทบาทที่ทำหน้าที่" ไว้ เห็นเฉพาะขั้นของบทบาทนั้น (ยังเปิดใบอื่นอนุมัติได้ตามสิทธิ์ admin)
     if (employee.role?.code === "admin" && !employee.acting_role_id) return true;
     if (step.approver_employee_id && step.approver_employee_id === employee.id) return true;
-    const roleMatches = Boolean(step.approver_role_id) && step.approver_role_id === actingRoleId(employee) &&
-      (!step.approver_department_id || step.approver_department_id === employee.department_id);
+    const roleMatches = window.MNP_REQUEST_APPROVAL.roleMatches(step, request.request_type?.code, employee);
     return roleMatches && Boolean(request.request_type?.code) && employee.approvalModules.has(request.request_type.code);
   });
 }
@@ -2331,9 +2325,7 @@ async function renderRequestDetail(params) {
   const canApprove = currentStep && (employee.role?.code === "admin"
     || (currentStep.approver_employee_id && currentStep.approver_employee_id === employee.id)
     || (
-      Boolean(currentStep.approver_role_id)
-      && currentStep.approver_role_id === employee.role_id
-      && (!currentStep.approver_department_id || currentStep.approver_department_id === employee.department_id)
+      window.MNP_REQUEST_APPROVAL.roleMatches(currentStep, type?.code, employee)
       && Boolean(type?.code) && employee.approvalModules.has(type.code)
     ));
   const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status);
