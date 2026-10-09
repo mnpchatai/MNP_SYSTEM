@@ -152,6 +152,21 @@
     return months;
   }
 
+  // Month series for the stacked money chart. Same period handling as monthly(). Per month: confirmed loss by cost type
+  // (before recovery, from lossesByType so it reconciles with summarize().gross), plus estimated, recovery and net.
+  // Recovery has no cost type of its own, so net cannot be split by type: it is reported next to the type breakdown.
+  function monthlyByLossType(rows, filters, lastMonth = 12) {
+    const base = select(rows, filters, { ignorePeriod: true }).filter((row) => row.year === filters.year);
+    const months = [];
+    for (let month = 1; month <= lastMonth; month += 1) {
+      const list = base.filter((row) => row.month === month);
+      const sums = summarize(list, filters);
+      const types = lossesByType(list, filters).filter((item) => item.confirmed > 0).map((item) => ({ type: item.key, confirmed: item.confirmed }));
+      months.push({ month, count: list.length, types, gross: sums.gross, recovery: sums.recovery, net: sums.net, estimated: sums.estimated });
+    }
+    return months;
+  }
+
   // Defect-type Pareto. metric is "net" (confirmed net baht) or "count". vital = still inside the first 80%.
   function pareto(list, filters, metric = "net") {
     const groups = new Map();
@@ -246,7 +261,7 @@
     return list.filter((row) => row.isOpen).sort((a, b) => Number(b.overdue) - Number(a.overdue) || b.daysInStatus - a.daysInStatus).slice(0, limit);
   }
 
-  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
+  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);
