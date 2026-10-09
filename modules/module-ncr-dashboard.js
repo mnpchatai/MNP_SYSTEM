@@ -25,6 +25,9 @@
   let lastParams = new URLSearchParams();
   let drillLimit = 10;
   let filtersOpen = false;
+  let drillAnchor = null; // การ์ดที่ผู้ใช้กดกรองมา — รายการ NCR แสดงต่อท้ายการ์ดนั้น (ว่าง = ใต้แถบตัวกรอง/ตัวเลขสรุป)
+  let pendingDrill = null; // { params, card } ของลิงก์/ฟอร์มกรองที่เพิ่งกด รอ hashchange พาเข้า renderDashboard
+  let scrollToDrill = false;
 
   const bangkokDate = (timestamp) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date(timestamp));
   const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
@@ -366,18 +369,18 @@
       <div class="nd">
         <div class="nd-controls">${controlsHtml(filters, rows, today, sums)}</div>
         <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
-        <div class="nd-tiles">${tilesHtml(filters, sums)}</div>
-        <section class="card nd-card">${actHtml(list, today)}</section>
-        <section class="card nd-card">${trendHtml(rows, filters, today)}</section>
-        <section class="card nd-card">${paretoHtml(list, filters, sums)}</section>
-        <section class="card nd-card">${lossTypeHtml(list, filters, sums)}</section>
-        <section class="card nd-card">${deptHtml(list, filters)}</section>
+        <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
+        <section class="card nd-card" data-card="act">${actHtml(list, today)}</section>
+        <section class="card nd-card" data-card="trend">${trendHtml(rows, filters, today)}</section>
+        <section class="card nd-card" data-card="pareto">${paretoHtml(list, filters, sums)}</section>
+        <section class="card nd-card" data-card="losstype">${lossTypeHtml(list, filters, sums)}</section>
+        <section class="card nd-card" data-card="dept">${deptHtml(list, filters)}</section>
         <div class="nd-two">
-          <section class="card nd-card">${breakdownHtml("source", "แหล่งที่พบ", "นับใบเต็มใบ แตะแท่งเพื่อดูตัวเลข", model.countBy(list, (row) => [row.source]), SOURCES, filters, "source", list.length)}</section>
-          <section class="card nd-card">${breakdownHtml("cause", "สาเหตุ 4M+E", "ใบที่มีหลายสาเหตุนับในทุกสาเหตุ (ซ้อนกันได้) จึงไม่รวมกันเป็น 100%", model.countBy(list, model.causeKeys), CAUSE_LABELS, filters, "cause", list.length)}</section>
+          <section class="card nd-card" data-card="source">${breakdownHtml("source", "แหล่งที่พบ", "นับใบเต็มใบ แตะแท่งเพื่อดูตัวเลข", model.countBy(list, (row) => [row.source]), SOURCES, filters, "source", list.length)}</section>
+          <section class="card nd-card" data-card="cause">${breakdownHtml("cause", "สาเหตุ 4M+E", "ใบที่มีหลายสาเหตุนับในทุกสาเหตุ (ซ้อนกันได้) จึงไม่รวมกันเป็น 100%", model.countBy(list, model.causeKeys), CAUSE_LABELS, filters, "cause", list.length)}</section>
         </div>
-        <section class="card nd-card">${outcomesHtml(list)}</section>
-        <section class="card nd-card">${drillHtml(list)}</section>
+        <section class="card nd-card" data-card="outcomes">${outcomesHtml(list)}</section>
+        <section class="card nd-card" id="nd-drill">${drillHtml(list)}</section>
         ${definitionsHtml}
         <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>
       </div>`;
@@ -390,7 +393,24 @@
     root.innerHTML = pageBody();
     bindPage(root);
     if (focusKey) (focusKey === "__more" ? root.querySelector("[data-more]") : root.querySelector(`[data-sel="${CSS.escape(focusKey)}"]`))?.focus({ preventScroll: true });
+    placeDrill(root);
+    if (scrollToDrill) {
+      scrollToDrill = false;
+      // เลื่อนเฉพาะตอนกรองจริงหรือกดจากการ์ด (เปลี่ยนแค่ช่วงเวลาไม่ต้องกระโดดไปที่รายการ)
+      if (drillAnchor || hasDrillFilter(lastFilters)) root.querySelector("#nd-drill")?.scrollIntoView({ block: "start" });
+    }
   }
+
+  // รายการ NCR ที่กรองแล้วไม่อยู่ท้ายหน้า: วางต่อท้ายส่วนที่ผู้ใช้กดกรองมาทันที — การ์ด (data-card) ที่กดลิงก์ หรือใต้แถบตัวกรองถ้ากดจากช่วงเวลา/ชิป/ฟอร์ม
+  // ถ้าเปิดจากลิงก์ที่แชร์ (ไม่รู้ว่ากดจากไหน) วางใต้แถบตัวกรองเมื่อมีตัวกรอง ไม่มีตัวกรองก็ใต้ตัวเลขสรุป
+  function placeDrill(root) {
+    const drill = root.querySelector("#nd-drill");
+    if (!drill) return;
+    const key = drillAnchor ?? (hasDrillFilter(lastFilters) ? "controls" : "tiles");
+    const host = key === "controls" ? root.querySelector(".nd-summary") : root.querySelector(`[data-card="${CSS.escape(key)}"]`);
+    (host?.closest(".nd > *") ?? root.querySelector(".nd-summary"))?.after(drill);
+  }
+  const hasDrillFilter = (filters) => Boolean(filters && (filters.scope || filters.dept || filters.defect || filters.source || filters.cause || filters.loss));
 
   // ผูกครั้งเดียวต่อหน้า (root ถูกสร้างใหม่ทุกครั้งที่เปิดหน้า) ส่วนตัวกรองในฟอร์มผูกใหม่ทุกครั้งที่วาด
   function bindRoot(root) {
@@ -403,8 +423,15 @@
         paint();
         return;
       }
-      if (event.target.closest("[data-more]")) { drillLimit += 10; paint(); }
+      if (event.target.closest("[data-more]")) { drillLimit += 10; paint(); return; }
+      // ลิงก์กรอง: จำการ์ดต้นทางไว้ แล้วให้ renderDashboard วางรายการ NCR ต่อท้ายการ์ดนั้น (ลิงก์นอกการ์ดวางใต้แถบตัวกรอง)
+      const link = event.target.closest("a[href^='#/" + PATH + "?']");
+      if (link) rememberFilterClick(new URLSearchParams(link.getAttribute("href").split("?")[1]), link.closest("[data-card]")?.dataset.card ?? null);
     });
+  }
+
+  function rememberFilterClick(params, card) {
+    pendingDrill = params.get("refresh") ? null : { params, card };
   }
 
   function bindPage(root) {
@@ -412,7 +439,9 @@
       const field = event.target.name;
       if (!field) return;
       filtersOpen = true;
-      location.hash = hrefWith(lastFilters, { [field]: event.target.value }).slice(1);
+      const hash = hrefWith(lastFilters, { [field]: event.target.value }).slice(1);
+      rememberFilterClick(new URLSearchParams(hash.split("?")[1]), null);
+      location.hash = hash;
     });
     root.querySelector("#nd-filterbox")?.addEventListener("toggle", (event) => { filtersOpen = event.target.open; });
   }
@@ -421,6 +450,11 @@
     lastParams = params;
     selection = null;
     drillLimit = 10;
+    // ใช้ตำแหน่งที่จำไว้เมื่อ hashchange นี้มาจากลิงก์/ฟอร์มกรองที่เพิ่งกดเท่านั้น (ลิงก์ที่ hash ไม่เปลี่ยนจะไม่ทำให้เหลือค่าค้างไปหน้าอื่น)
+    const fromClick = pendingDrill && pendingDrill.params.toString() === params.toString() ? pendingDrill : null;
+    pendingDrill = null;
+    drillAnchor = fromClick?.card ?? null;
+    scrollToDrill = Boolean(fromClick);
     const refresh = Boolean(params.get("refresh"));
     const fresh = !cache || cache.employeeId !== state.employee?.id || Date.now() - cache.loadedAt >= CACHE_MS || refresh;
     if (fresh) loadingShell("ncr", "แดชบอร์ด NCR");
