@@ -1068,6 +1068,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-lines li span:first-child, .nd-detail li span:first-child { color: var(--muted); }
 .nd-lines li span:last-child, .nd-detail li span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
 .nd-card { display: grid; gap: 12px; align-content: start; }
+#nd-drill { scroll-margin-top: 80px; }
 .nd-head h2 { margin: 0; font-size: 16px; line-height: 1.3; }
 .nd-head p, .nd-sub p { margin: 2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .nd-sub h3 { margin: 0; font-size: 15px; }

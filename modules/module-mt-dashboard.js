@@ -7,6 +7,7 @@
 //   machines, employees) ไม่มี RPC/migration ใหม่
 // - สองฐานที่ไม่ปนกัน: งานค้างนับทุกใบที่ยังไม่จบ (ไม่ขึ้นกับช่วงเวลา) ส่วนตัวเลขอื่นนับตามวันที่แจ้งในช่วงที่เลือก
 // - ตัวกรองอยู่ใน URL แชร์ลิงก์ได้ แตะแถบเพื่อดูตัวเลขในหน้า (ไม่ใช้ป๊อปอัพ) แล้วกดกรองรายการด้านล่างได้
+//   กดกรองจากการ์ดไหน รายการใบที่กรองแล้วจะแสดงต่อท้ายการ์ดนั้นทันทีและเลื่อนหน้าไปที่รายการ (ไม่ทิ้งไว้ท้ายหน้า)
 // - ทางเข้าคือปุ่ม "แดชบอร์ด MT" ข้างปุ่ม "สร้างคำร้อง / แจ้งซ่อม MT" (headerLinks) ไม่มีเมนูข้างแยก
 //
 // โหลดหลัง modules/module-mt.js และ modules/mt-dashboard-model.js — helper ของ app.js
@@ -31,6 +32,9 @@
   let lastFilters = null;
   let drillLimit = 10;
   let filtersOpen = false;
+  let drillAnchor = null; // การ์ดที่ผู้ใช้กดกรองมา — รายการใบแสดงต่อท้ายการ์ดนั้น (ว่าง = ท้ายหน้า)
+  let pendingDrill = null; // { params, card } ของลิงก์กรองที่เพิ่งกด รอ hashchange พาเข้า renderDashboard
+  let scrollToDrill = false;
 
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
   const fmtCount = (value) => `${fmtNumber(value)} ใบ`;
@@ -354,20 +358,28 @@
     const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
+    const hasDrillFilter = Boolean(filters.scope || filters.stage || filters.machine || filters.tech || filters.dept);
+    const drill = `<section class="card nd-card" id="nd-drill">${drillHtml(list, basis)}</section>`;
+    const sections = [
+      ["tiles", `<div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>`],
+      ["stage", `<section class="card nd-card" data-card="stage">${stageHtml(stages, filters)}</section>`],
+      ["act", `<section class="card nd-card" data-card="act">${actHtml(open, today)}</section>`],
+      ["phase", `<section class="card nd-card" data-card="phase">${phaseHtml(phases)}</section>`],
+      ["machine", `<section class="card nd-card" data-card="machine">${machineHtml(machines, filters)}</section>`],
+      ["deptrank", `<section class="card nd-card" data-card="deptrank">${deptRankHtml(depts, filters)}</section>`],
+      ["tech", `<section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>`],
+    ];
+    // กรองจากการ์ดไหน รายการใบที่กรองแล้วอยู่ต่อท้ายการ์ดนั้นทันที ถ้าไม่ได้กรองจากการ์ด (เปิดจากลิงก์/เลือกในฟอร์ม) อยู่ท้ายหน้าเหมือนเดิม
+    const anchor = hasDrillFilter && sections.some(([key]) => key === drillAnchor) ? drillAnchor : null;
+    const body = sections.map(([key, html]) => (key === anchor ? html + drill : html)).join("\n        ");
     return `<div class="page-heading"><div><div class="eyebrow">MT · ใบคำร้อง/แจ้งซ่อม</div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1><p>ไม่นับฉบับร่างและใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ กลับหน้า MT</a></div></div>
       <div class="nd">
         <p class="nd-warn">กำลังทดลองใช้ มีงานค้าง คอขวด เวลาที่ใช้ คุณภาพการซ่อม เครื่องจักรที่เสียบ่อย แผนกที่แจ้งซ่อมบ่อย และเวลาซ่อมของช่าง หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
         <div class="nd-controls">${controlsHtml(filters, rows, today, period, back)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
-        <div class="nd-tiles five">${tilesHtml(filters, period, back)}</div>
-        <section class="card nd-card">${stageHtml(stages, filters)}</section>
-        <section class="card nd-card">${actHtml(open, today)}</section>
-        <section class="card nd-card">${phaseHtml(phases)}</section>
-        <section class="card nd-card">${machineHtml(machines, filters)}</section>
-        <section class="card nd-card">${deptRankHtml(depts, filters)}</section>
-        <section class="card nd-card">${techHtml(techs, filters)}</section>
-        <section class="card nd-card">${drillHtml(list, basis)}</section>
+        ${body}
+        ${anchor ? "" : drill}
         ${definitionsHtml}
         <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น</p>
       </div>`;
@@ -380,6 +392,11 @@
     root.innerHTML = pageBody();
     bindPage(root);
     if (focusKey) (focusKey === "__more" ? root.querySelector("[data-more]") : root.querySelector(`[data-sel="${CSS.escape(focusKey)}"]`))?.focus({ preventScroll: true });
+    if (scrollToDrill) {
+      scrollToDrill = false;
+      const drill = root.querySelector("#nd-drill");
+      if (drill?.previousElementSibling?.matches("[data-card]")) drill.scrollIntoView({ block: "start" });
+    }
   }
 
   // ผูกครั้งเดียวต่อหน้า (root ถูกสร้างใหม่ทุกครั้งที่เปิดหน้า) ส่วนตัวกรองในฟอร์มผูกใหม่ทุกครั้งที่วาด
@@ -393,7 +410,11 @@
         paint();
         return;
       }
-      if (event.target.closest("[data-more]")) { drillLimit += 10; paint(); }
+      if (event.target.closest("[data-more]")) { drillLimit += 10; paint(); return; }
+      // ลิงก์กรองในการ์ด: จำการ์ดต้นทางไว้ แล้วให้ renderDashboard วางรายการใบต่อท้ายการ์ดนั้น (ลิงก์นอกการ์ด เช่น ชิปยกเลิกตัวกรอง ไม่ย้ายตำแหน่ง)
+      const link = event.target.closest("a[href^='#/" + PATH + "?']");
+      const card = link?.closest("[data-card]")?.dataset.card;
+      pendingDrill = card ? { params: new URLSearchParams(link.getAttribute("href").split("?")[1]), card } : null;
     });
   }
 
@@ -411,6 +432,11 @@
     lastParams = params;
     selection = null;
     drillLimit = 10;
+    // ใช้ตำแหน่งที่จำไว้เมื่อ hashchange นี้มาจากลิงก์กรองที่เพิ่งกดเท่านั้น (ลิงก์ที่ hash ไม่เปลี่ยนจะไม่ทำให้เหลือค่าค้างไปหน้าอื่น)
+    const fromCard = pendingDrill && pendingDrill.params.toString() === params.toString() ? pendingDrill.card : null;
+    pendingDrill = null;
+    drillAnchor = fromCard;
+    scrollToDrill = Boolean(fromCard);
     const refresh = Boolean(params.get("refresh"));
     const fresh = !cache || cache.employeeId !== state.employee?.id || Date.now() - cache.loadedAt >= CACHE_MS || refresh;
     if (fresh) loadingShell(PATH, TITLE);
