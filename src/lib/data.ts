@@ -1,3 +1,4 @@
+import { eligibleRoleIds, roleMatches, type ApprovalRoleStep } from "../../modules/request-approval.js";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type RoleHolder = { role_id: string; acting_role_id?: string | null };
@@ -12,17 +13,22 @@ export function actingRoleId(employee: RoleHolder) {
 }
 
 /** Active employees who work as `roleId` (optionally inside one department). */
-export async function findActiveRoleHolders(roleId: string, departmentId?: string | null) {
+export async function findActiveRoleHolders(roleId: string, departmentId?: string | null, context?: { step: ApprovalRoleStep; requestTypeCode: string; requestTypeId: string }) {
   const admin = createAdminClient();
+  const roleIds = context ? eligibleRoleIds(context.step, context.requestTypeCode) : [roleId];
   let query = admin
     .from("employees")
     .select("id, role_id, acting_role_id")
-    .or(`role_id.eq.${roleId},acting_role_id.eq.${roleId}`)
+    .or(roleIds.flatMap((id) => [`role_id.eq.${id}`, `acting_role_id.eq.${id}`]).join(","))
     .eq("is_active", true);
   if (departmentId) query = query.eq("department_id", departmentId);
   const { data } = await query;
+  const { data: grants } = context
+    ? await admin.from("approval_module_permissions").select("employee_id").eq("request_type_id", context.requestTypeId)
+    : { data: null };
+  const grantedIds = new Set((grants ?? []).map((row) => row.employee_id));
   return (data ?? [])
-    .filter((row: RoleHolder) => actingRoleId(row) === roleId)
+    .filter((row: RoleHolder & { id: string }) => roleIds.includes(actingRoleId(row)) && (!context || grantedIds.has(row.id)))
     .map((row: { id: string }) => row.id);
 }
 
@@ -52,7 +58,7 @@ export async function getPendingApprovals(employee: RoleHolder & {
     .select(`
       *,
       request:requests!inner(
-        id, request_no, title, description, details, priority, status, current_step, created_at, submitted_at,
+        id, request_no, title, description, details, priority, status, current_step, created_at, submitted_at, request_type_id,
         request_type:request_types(name_th,code),
         requester:employees!requests_requester_id_fkey(first_name,last_name)
       )
@@ -61,13 +67,21 @@ export async function getPendingApprovals(employee: RoleHolder & {
     .order("created_at", { ascending: true });
   if (error) return [];
 
+  const { data: grants } = await admin.from("approval_module_permissions").select("request_type_id").eq("employee_id", employee.id);
+  const allowedTypes = new Set((grants ?? []).map((row) => row.request_type_id));
   return (data ?? []).filter((step) =>
     step.step_order === step.request.current_step && (
       step.approver_employee_id === employee.id ||
-      (step.approver_role_id === actingRoleId(employee) &&
-        (!step.approver_department_id || step.approver_department_id === employee.department_id))
+      (roleMatches(step, step.request.request_type?.code, employee) &&
+        (step.request.request_type?.code !== "MT_REPAIR" || allowedTypes.has(step.request.request_type_id)))
     ),
   );
+}
+
+export async function hasApprovalModule(employeeId: string, requestTypeId: string) {
+  const { data } = await createAdminClient().from("approval_module_permissions").select("employee_id")
+    .eq("employee_id", employeeId).eq("request_type_id", requestTypeId).limit(1);
+  return Boolean(data?.length);
 }
 
 export async function hasPermission(roleId: string, permissionCode: string) {

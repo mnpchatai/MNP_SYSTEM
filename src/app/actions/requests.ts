@@ -191,7 +191,14 @@ export async function createRequestAction(formData: FormData) {
     let recipients: string[] = [];
     if (first.approver_employee_id) recipients = [String(first.approver_employee_id)];
     else if (first.approver_role_id) {
-      recipients = await findActiveRoleHolders(String(first.approver_role_id), first.approver_department_id ? String(first.approver_department_id) : null);
+      recipients = await findActiveRoleHolders(
+        String(first.approver_role_id),
+        first.approver_department_id ? String(first.approver_department_id) : null,
+        type.code === "MT_REPAIR" ? {
+          step: { step_order: Number(first.step_order), approver_role_id: String(first.approver_role_id) },
+          requestTypeCode: type.code, requestTypeId: type.id,
+        } : undefined,
+      );
     }
     if (recipients.length) {
       await admin.from("notifications").insert(recipients.map((recipientId) => ({
@@ -268,11 +275,25 @@ export async function approvalDecisionAction(formData: FormData) {
   if (!step || step.status !== "pending") throw new Error("Approval step is no longer pending");
   const { data: approvalRequest } = await admin
     .from("requests")
-    .select("requester_id,request_no,current_step,status,title,cc_department_ids")
+    .select("requester_id,request_no,current_step,status,title,cc_department_ids,request_type_id")
     .eq("id", step.request_id)
     .single();
   if (!approvalRequest || approvalRequest.status !== "pending_approval" || approvalRequest.current_step !== step.step_order) {
     throw new Error("This is not the current approval step");
+  }
+
+  const { data: approvalType } = await admin.from("request_types").select("code").eq("id", approvalRequest.request_type_id).single();
+  if (approvalType?.code === "MT_REPAIR") {
+    // Use the same atomic, session-authorized transition as the Pilot Web.
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("app_approval_decision", {
+      p_step_id: stepId, p_decision: decision, p_comment: comment || null,
+    });
+    if (error) throw new Error("ไม่สามารถอนุมัติขั้นตอนนี้ได้ กรุณาตรวจสอบสิทธิ์และสถานะคำร้อง");
+    revalidatePath("/");
+    revalidatePath("/approvals");
+    revalidatePath(`/requests/${step.request_id}`);
+    return;
   }
 
   // admin ที่เลือกทำหน้าที่บทบาทอื่นอนุมัติขั้นของบทบาทนั้นได้ (ฐานข้อมูลให้ admin อนุมัติได้ทุกขั้นอยู่แล้ว)
@@ -382,11 +403,23 @@ export async function resubmitRequestAction(formData: FormData) {
   const admin = createAdminClient();
   const { data: request } = await admin
     .from("requests")
-    .select("request_no,requester_id,status")
+    .select("request_no,requester_id,status,request_type_id")
     .eq("id", requestId)
     .single();
   if (!request || request.requester_id !== employee.id || request.status !== "more_info") {
     throw new Error("Request cannot be resubmitted");
+  }
+
+  const { data: resubmitType } = await admin.from("request_types").select("code").eq("id", request.request_type_id).single();
+  if (resubmitType?.code === "MT_REPAIR") {
+    // Reset the original step so either first-step approver can review the reply.
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("app_resubmit_request", { p_request_id: requestId, p_comment: comment });
+    if (error) throw new Error("ไม่สามารถส่งข้อมูลเพิ่มเติมได้ กรุณาตรวจสอบสถานะคำร้อง");
+    revalidatePath("/");
+    revalidatePath("/approvals");
+    revalidatePath(`/requests/${requestId}`);
+    return;
   }
 
   const { data: previousStep } = await admin

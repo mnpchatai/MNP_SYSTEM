@@ -13,7 +13,8 @@ import { StatusBadge } from "@/components/status-badge";
 import { SubmitButton } from "@/components/submit-button";
 import { getCurrentEmployee } from "@/lib/auth";
 import { employeeName, formatDate, priorityLabels, statusLabels } from "@/lib/format";
-import { actingRoleId, hasPermission } from "@/lib/data";
+import { roleMatches } from "../../../../../modules/request-approval.js";
+import { actingRoleId, hasApprovalModule, hasPermission } from "@/lib/data";
 import { getRequestModule } from "@/lib/request-modules";
 import {
   buildRequestTimeline,
@@ -70,11 +71,15 @@ export default async function RequestDetailPage({
     : { data: [] as { id: string; code: string }[] };
 
   const canOperate = await hasPermission(employee.role_id, "requests.operate");
+  const canApproveModule = request.request_type?.code !== "MT_REPAIR" ||
+    await hasApprovalModule(employee.id, request.request_type_id);
+  const canAct = request.request_type?.code !== "MT_REPAIR" ||
+    await hasPermission(actingRoleId(employee), "approvals.act");
   const pendingStep = [...(request.approval_steps ?? [])]
     .sort((a, b) => a.step_order - b.step_order)
     .find((step) => step.status === "pending" && step.step_order === request.current_step && (
       step.approver_employee_id === employee.id ||
-      (step.approver_role_id === actingRoleId(employee) && (!step.approver_department_id || step.approver_department_id === employee.department_id))
+      (roleMatches(step, request.request_type?.code, employee) && canApproveModule && canAct)
     ));
   const details = (request.details ?? {}) as Record<string, string>;
   const timeline = buildRequestTimeline({
