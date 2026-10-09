@@ -23,6 +23,11 @@ insert into public.employees(id,employee_no,first_name,last_name,email,departmen
  ('74000000-0000-0000-0000-000000000103','COST-QA','Cost','Qa','cost-qa@test.local',(select id from public.departments where code='QA'),(select id from public.roles where code='staff'),'74000000-0000-0000-0000-000000000003');
 select set_config('test.cost_qa',(select id::text from public.employees where employee_no='SBX-QA-STAFF'),true);
 select set_config('test.cost_rb',(select id::text from public.employees where employee_no='SBX-RB-STAFF'),true);
+select set_config('test.cost_fm',(select id::text from public.employees where employee_no='SBX-FT-FM'),true);
+select set_config('test.cost_afm',(select id::text from public.employees where employee_no='SBX-FT-AFM'),true);
+select set_config('test.cost_gm',(select id::text from public.employees where employee_no='SBX-MGT-GM'),true);
+select set_config('test.cost_rbmgr',(select id::text from public.employees where employee_no='SBX-RB-MGR'),true);
+select set_config('test.cost_pkmgr',(select id::text from public.employees where employee_no='SBX-PK-MGR'),true);
 
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"74000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
@@ -35,6 +40,23 @@ select set_config('test.result',jsonb_build_object('result_status','confirmed','
 
 select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.entry')),'SANDBOX_SCOPE_MISMATCH','sandbox cannot record a cost on a real report');
 select throws_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.real_ncr'),current_setting('test.result')),'SANDBOX_SCOPE_MISMATCH','sandbox cannot save an outcome on a real report');
+select set_config('test.cost_ncr2',(public.app_ncr_issue('COSTROLES',1000,100,'ชิ้น','in_process','DIM','Sandbox fixture for cost editor roles')->>'id'),true);
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'NOT_AUTHORIZED','test mode: QA staff are not cost editors');
+select throws_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.result')),'NOT_AUTHORIZED','test mode: QA staff cannot save outcomes either');
+select public.app_sandbox_enter(current_setting('test.cost_fm')::uuid);
+select public.app_ncr_dispose(current_setting('test.cost_ncr2')::uuid,array['sort'],array[(select id from public.departments where code='RB')]);
+select public.app_sandbox_enter(current_setting('test.cost_pkmgr')::uuid);
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'NOT_AUTHORIZED','test mode: a manager of a department that is not responsible is denied');
+select public.app_sandbox_enter(current_setting('test.cost_rbmgr')::uuid);
+select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the responsible department manager can record a cost');
+select public.app_sandbox_enter(current_setting('test.cost_gm')::uuid);
+select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the general manager can record a cost');
+select public.app_sandbox_enter(current_setting('test.cost_afm')::uuid);
+select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the assistant factory manager can record a cost');
+select public.app_sandbox_enter(current_setting('test.cost_fm')::uuid);
+select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the factory manager can record a cost');
+select lives_ok(format('select public.app_ncr_save_outcome(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.result')),'test mode: the factory manager can save an outcome');
+select is((select count(*) from public.ncr_losses where ncr_id=current_setting('test.cost_ncr2')::uuid),4::bigint,'each permitted role stored one cost');
 select set_config('test.cost_id',public.app_ncr_record_loss(current_setting('test.cost_ncr')::uuid,current_setting('test.entry')::jsonb)::text,true);
 select is((select amount from public.ncr_losses where id=current_setting('test.cost_id')::uuid),600.00::numeric,'labor is total person-hours times rate');
 select is((select cost_status from public.ncr_losses where id=current_setting('test.cost_id')::uuid),'estimated','new entry stays estimated until reviewed');
