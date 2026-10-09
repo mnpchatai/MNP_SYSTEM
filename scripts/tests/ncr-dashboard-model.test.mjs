@@ -199,3 +199,31 @@ test("every figure is a subset of the same selected list (drill-through consiste
   assert.equal(months.reduce((sum, m) => sum + m.count, 0), whole.total);
   assert.ok(Math.abs(months.reduce((sum, m) => sum + m.net, 0) - whole.net) < 0.011);
 });
+
+test("monthly count by department counts whole reports per department and keeps the distinct total", () => {
+  const { rows, f } = run([
+    report({ id: "a", issue_date: "2026-03-02", status: "closed", responsibilities: [{ dept: "RB", share: 1 }] }),
+    report({ id: "b", issue_date: "2026-03-10", responsibilities: [{ dept: "RB", share: 0.5 }, { dept: "PK", share: 0.5 }] }),
+    report({ id: "c", issue_date: "2026-03-20", responsibilities: [{ dept: "PK", share: 1 }] }),
+    report({ id: "d", issue_date: "2026-03-21", responsibilities: [] }),
+    report({ id: "e", issue_date: "2026-04-01", responsibilities: [{ dept: "RB", share: 1 }] }),
+  ]);
+  const months = model.monthlyByDept(rows, f, 12);
+  const march = months[2];
+  assert.equal(march.count, 4, "distinct reports");
+  assert.equal(march.closed, 1); assert.equal(march.open, 3);
+  assert.deepEqual(march.depts.map((item) => [item.dept, item.count, item.closed, item.open]), [["PK", 2, 0, 2], ["RB", 2, 1, 1], ["", 1, 0, 1]], "ordered by code, unassigned last");
+  assert.equal(march.depts.reduce((sum, item) => sum + item.count, 0), 5, "the report owned by two departments is counted in both");
+  assert.equal(months.reduce((sum, item) => sum + item.count, 0), model.select(rows, f).length, "months add up to the year");
+  assert.deepEqual(months[0].depts, [], "a month without reports has no departments");
+});
+
+test("monthly count by department follows the department filter and ignores the period filter", () => {
+  const { rows, f } = run([
+    report({ id: "a", issue_date: "2026-03-10", responsibilities: [{ dept: "RB", share: 0.5 }, { dept: "PK", share: 0.5 }] }),
+    report({ id: "b", issue_date: "2026-03-20", responsibilities: [{ dept: "PK", share: 1 }] }),
+  ], { dept: "RB", from: 6, to: 6 });
+  const march = model.monthlyByDept(rows, f, 12)[2];
+  assert.equal(march.count, 1);
+  assert.deepEqual(march.depts.map((item) => [item.dept, item.count]), [["RB", 1]]);
+});
