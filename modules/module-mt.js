@@ -104,6 +104,7 @@
               <label class="progress-choice-option"><input type="radio" name="receipt_mode" value="later"> ระบุวันที่คาดว่าของจะมาส่ง</label>
             </div>
             <input class="input progress-expected-input" type="date" name="expected_on" disabled>
+            ${extraFilesFieldHtml(`progress-order-files-${escapeHtml(step.id)}`, "แนบหลักฐานการสั่งซื้อ (ถ้ามี)")}
             <div class="form-actions"><button class="btn warning small" type="submit">บันทึก</button></div>
           </form>
         </div>
@@ -118,6 +119,7 @@
           <button type="button" class="btn secondary small progress-reschedule-toggle" data-step="${escapeHtml(step.id)}">ของยังไม่มา เลื่อนวันที่คาดว่าจะมาส่ง</button>
           <form class="progress-reschedule-form hidden" data-step="${escapeHtml(step.id)}">
             <input class="input" type="date" name="expected_on" required>
+            ${extraFilesFieldHtml(`progress-reschedule-files-${escapeHtml(step.id)}`)}
             <button class="btn small" type="submit">บันทึกวันที่ใหม่</button>
           </form>
         </div>
@@ -270,6 +272,7 @@
     const form = `<form id="expected-date-form"${overdue ? "" : ' class="hidden"'}>
         <div class="field"><label for="expected-date-input">วันที่คาดว่าจะเสร็จใหม่</label><input class="input" id="expected-date-input" name="expected_date" type="date" min="${escapeHtml(today)}" required></div>
         <div class="field"><label for="expected-date-note">เหตุผล (ถ้ามี)</label><input class="input" id="expected-date-note" name="note" maxlength="500" placeholder="เช่น รออะไหล่"></div>
+        ${extraFilesFieldHtml("expected-date-files")}
         <div class="form-actions"><button class="btn" type="submit">บันทึกวันที่ใหม่</button></div>
       </form>`;
     if (overdue) {
@@ -586,6 +589,7 @@
           <div class="field"><label for="assign-opinion">ความคิดเห็นของช่างผู้ตรวจสอบ</label><select class="select" id="assign-opinion" name="inspector_opinion" required><option value="">เลือกแนวทางการซ่อม</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}"${request.inspector_opinion === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
           <div class="field"><label for="assign-start-date">วันเริ่มงาน</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}" required></div>
           <div class="field"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}" required></div>
+          ${extraFilesFieldHtml("assign-files")}
           <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
         </form></section>` : ""}
         ${progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => progressStepHtml(step, directory, canRecordProgress)).join("")}</div></section>` : ""}
@@ -594,9 +598,10 @@
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
           <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><input class="input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary small" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
+          ${extraFilesFieldHtml("finish-files")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
-        ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
+        ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
 `,
       };
     },
@@ -613,6 +618,8 @@
         if (startDate && expectedDate && expectedDate < startDate) {
           return showToast("วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน", "error");
         }
+        let files;
+        try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
         try {
           const { error } = await sb.rpc("app_assign_repair_technician", {
@@ -624,8 +631,9 @@
             p_work_expected_date: expectedDate || null,
           });
           if (error) throw error;
+          const warning = await uploadExtraFiles(id, files, employee.id);
           triggerNotificationEmails(id);
-          showToast("บันทึกการมอบหมายเรียบร้อย");
+          showToast(warning || "บันทึกการมอบหมายเรียบร้อย", warning ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
@@ -654,6 +662,8 @@
           const receivedNow = form.querySelector('input[name="receipt_mode"]:checked')?.value !== "later";
           const expectedOn = expectedInput.value || null;
           if (!receivedNow && !expectedOn) return showToast("กรุณาระบุวันที่คาดว่าของจะมาส่ง", "error");
+          let files;
+          try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
           setFormBusy(form, true);
           try {
             const { error } = await sb.rpc("app_record_progress_step", {
@@ -663,8 +673,9 @@
               p_expected_on: receivedNow ? null : expectedOn,
             });
             if (error) throw error;
+            const warning = await uploadExtraFiles(id, files, employee.id);
             triggerNotificationEmails(id);
-            showToast(receivedNow ? "บันทึกความคืบหน้าแล้ว — รับของครบพร้อมกัน" : "บันทึกความคืบหน้าแล้ว — ตั้งวันที่คาดว่าจะมาส่งไว้แล้ว");
+            showToast(warning || (receivedNow ? "บันทึกความคืบหน้าแล้ว — รับของครบพร้อมกัน" : "บันทึกความคืบหน้าแล้ว — ตั้งวันที่คาดว่าจะมาส่งไว้แล้ว"), warning ? "error" : "success");
             await renderRequestDetail(params);
           } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
         });
@@ -677,12 +688,15 @@
         event.preventDefault();
         const expectedOn = String(new FormData(form).get("expected_on") ?? "");
         if (!expectedOn) return showToast("กรุณาระบุวันที่คาดว่าจะมาส่งใหม่", "error");
+        let files;
+        try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
         try {
           const { error } = await sb.rpc("app_reschedule_progress_step", { p_step_id: form.dataset.step, p_expected_on: expectedOn });
           if (error) throw error;
+          const warning = await uploadExtraFiles(id, files, employee.id);
           triggerNotificationEmails(id);
-          showToast("เลื่อนวันที่คาดว่าจะมาส่งแล้ว");
+          showToast(warning || "เลื่อนวันที่คาดว่าจะมาส่งแล้ว", warning ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       }));
@@ -696,6 +710,8 @@
         const expectedDate = String(values.get("expected_date") ?? "");
         if (!expectedDate) return showToast("กรุณาระบุวันที่คาดว่าจะเสร็จใหม่", "error");
         const note = String(values.get("note") ?? "").trim();
+        let files;
+        try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
         try {
           const { error } = await sb.rpc("app_reschedule_repair_expected_date", {
@@ -704,8 +720,9 @@
             p_note: note || null,
           });
           if (error) throw error;
+          const warning = await uploadExtraFiles(id, files, employee.id);
           triggerNotificationEmails(id);
-          showToast("แก้ไขวันที่คาดว่าจะเสร็จแล้ว");
+          showToast(warning || "แก้ไขวันที่คาดว่าจะเสร็จแล้ว", warning ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
@@ -770,6 +787,8 @@
         .filter((item) => item.name);
       document.querySelector("#finish-save-button")?.addEventListener("click", async () => {
         const form = document.querySelector("#finish-form");
+        let files;
+        try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
         try {
           const { error } = await sb.rpc("app_save_repair_work_progress", {
@@ -778,7 +797,8 @@
             p_parts_used_items: collectFinishPartsUsedItems(),
           });
           if (error) throw error;
-          showToast("บันทึกข้อมูลแล้ว");
+          const warning = await uploadExtraFiles(id, files, employee.id);
+          showToast(warning || "บันทึกข้อมูลแล้ว", warning ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
@@ -786,6 +806,8 @@
         event.preventDefault();
         const form = event.currentTarget;
         const values = new FormData(form);
+        let files;
+        try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
         try {
           const { error } = await sb.rpc("app_finish_repair_work", {
@@ -794,8 +816,9 @@
             p_parts_used_items: collectFinishPartsUsedItems(),
           });
           if (error) throw error;
+          const warning = await uploadExtraFiles(id, files, employee.id);
           triggerNotificationEmails(id);
-          showToast("บันทึกผลการซ่อมแล้ว ส่งให้ผู้แจ้งตรวจรับ");
+          showToast(warning || "บันทึกผลการซ่อมแล้ว ส่งให้ผู้แจ้งตรวจรับ", warning ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
@@ -803,12 +826,15 @@
         const result = button.dataset.result;
         const note = document.querySelector("#verify-note")?.value.trim() ?? "";
         if (result === "fail" && note.length < 3) return showToast("กรุณาระบุสาเหตุที่ไม่ผ่านการตรวจรับ", "error");
+        let files;
+        try { files = readExtraFiles(document.querySelector("#verify-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = true; });
         try {
           const { error } = await sb.rpc("app_verify_repair", { p_request_id: id, p_result: result, p_note: note || null });
           if (error) throw error;
+          const warning = await uploadExtraFiles(id, files, employee.id);
           triggerNotificationEmails(id);
-          showToast(result === "pass" ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว");
+          showToast(warning || (result === "pass" ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว"), warning ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = false; }); }
       }));

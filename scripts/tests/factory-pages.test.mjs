@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { ATTACHMENT_STUBS } from "./support/factory-attachment-stubs.mjs";
 
 // โหลด modules/module-factory.js (ตัวจัดหน้า #/factory: หน้ารวม หน้าแผนก หน้ารายการใน Item master) พร้อมโมดูลย่อยทั้งหมดเข้า context จำลอง
 // ที่มีฟังก์ชันของ app.js แบบ stub แล้วเรียกหน้าจริง ตรวจ HTML ที่ใส่ลงในแอป — ครอบคลุมการต่อ view "overview" / "department" / รายการเมนู
@@ -15,6 +16,7 @@ const FILES = [
   "modules/factory-board-model.js",
   "modules/factory-gantt-model.js",
   "modules/module-factory-master.js",
+  "modules/factory-attachments.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
@@ -44,6 +46,7 @@ function load({ sandbox = true, route = "" } = {}) {
   const app = { innerHTML: "" };
   const params = new URLSearchParams(route);
   Object.assign(context, {
+    ...ATTACHMENT_STUBS,
     window: context,
     escapeHtml, formatDate: (value) => String(value ?? "—"), showToast() {}, friendlyError: String, setFormBusy() {}, renderRoute: async () => {}, confirm: () => true,
     CSS: { escape: (value) => value }, URLSearchParams, Intl, Date, location: { hash: "" }, FormData: class {},
@@ -53,7 +56,7 @@ function load({ sandbox = true, route = "" } = {}) {
     loadingShell: (path, title) => { calls.loading.push([path, title]); app.innerHTML = `<loading title="${escapeHtml(title)}"></loading>`; },
     renderNotFound: () => { calls.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => ({ path: "factory", params }),
-    document: { querySelector: () => ({ querySelector: () => null, querySelectorAll: () => [] }) },
+    document: { querySelector: () => ({ querySelector: () => null, querySelectorAll: () => [] }), querySelectorAll: () => [] },
     sb: { rpc: async () => ({ data: DATA, error: null }) },
     MNP_REQUEST_MODULES: {},
   });

@@ -89,3 +89,38 @@ test("intermediate and final approval comments become messages; system notes sta
     ["status-h2", "รสริน เชน อนุมัติขั้น ผู้จัดการทั่วไป แล้ว", "อนุมัติตามเสนอ"],
   ]);
 });
+
+test("files attached together or right after an action show as one event naming the uploader", () => {
+  const events = buildRequestTimeline({
+    request: { assignee: null },
+    history: [],
+    steps: [],
+    verifications: [],
+    isRepair: true,
+    attachments: [
+      { id: "f2", file_name: "quote-2.pdf", created_at: "2026-10-05T02:06:30Z", uploader: requester },
+      { id: "f1", file_name: "quote-1.pdf", created_at: "2026-10-05T02:06:10Z", uploader: requester },
+      { id: "f3", file_name: "photo.jpg", created_at: "2026-10-05T02:06:40Z", uploader: approver },
+      { id: "f4", file_name: "later.pdf", created_at: "2026-10-05T03:30:00Z", uploader: requester },
+    ],
+  });
+  assert.deepEqual(events.map(({ title, detail }) => [title, detail]), [
+    ["แนบไฟล์", "จุฑารัตน์ ท่าฉลาด แนบไฟล์ 2 ไฟล์: quote-1.pdf, quote-2.pdf"],
+    ["แนบไฟล์", "รสริน เชน แนบไฟล์ 1 ไฟล์: photo.jpg"],
+    ["แนบไฟล์", "จุฑารัตน์ ท่าฉลาด แนบไฟล์ 1 ไฟล์: later.pdf"],
+  ]);
+});
+
+test("attachments are optional and keep chronological order with status events", () => {
+  const events = build({ rows: [history("h1", "more_info", "pending_approval", "2026-10-05T02:06:00Z", requester, "แนบใบเสนอราคาแล้ว")] });
+  assert.equal(events.length, 1);
+  const mixed = buildRequestTimeline({
+    request: { assignee: null },
+    history: [history("h1", "more_info", "pending_approval", "2026-10-05T02:06:00Z", requester, "แนบใบเสนอราคาแล้ว")],
+    steps: [],
+    verifications: [],
+    isRepair: true,
+    attachments: [{ id: "f1", file_name: "quote.pdf", created_at: "2026-10-05T02:06:05Z", uploader: requester }],
+  });
+  assert.deepEqual(mixed.map((event) => event.title), ["รออนุมัติ", "แนบไฟล์"]);
+});

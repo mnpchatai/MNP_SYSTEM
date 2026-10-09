@@ -87,6 +87,9 @@
   const isOverdue = (ncr) => RESPONSE_PENDING_STATUSES.includes(ncr.status) && Boolean(ncr.response_due) && ncr.response_due < todayBangkok();
   const addDays = (iso, days) => { const date = new Date(`${iso}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
   const ATTACHMENT_SECTION_BY_STATUS = { awaiting_disposition: "report", awaiting_response: "response" };
+  // ไฟล์ที่แนบมากับการกระทำ (ตอบ ให้ข้อมูล พิจารณา ติดตาม ขอข้อมูล ยกเลิก บันทึกต้นทุน/ผล) ใช้หมวดตามสถานะก่อนกระทำ
+  // ยกเว้นการตอบและการให้ข้อมูลเพิ่มซึ่งเป็นหมวดคำตอบเสมอ (ncr_attachments.section ต้องเป็น report/response/followup)
+  const attachmentSectionFor = (action, status) => (["respond", "answer_info"].includes(action) ? "response" : ATTACHMENT_SECTION_BY_STATUS[status] ?? "followup");
   const ATTACHMENT_ACCEPT = "image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx";
   // ข้อความใต้ช่อง (ATTACHMENT_HINT) มาจาก app.js ชุดเดียวกับทุกหน้า
   // โหมดทดสอบของ admin ไม่รองรับไฟล์แนบ (ลบไฟล์ใน Storage ด้วย SQL ไม่ได้ จึงไม่ปล่อยให้เกิดไฟล์ค้าง) ฐานข้อมูลปฏิเสธอยู่แล้ว
@@ -360,6 +363,7 @@
           <div class="ncr-checks">${departments.map((department) => `<label class="ncr-check"><input type="checkbox" name="department_ids" value="${escapeHtml(department.id)}"><span>${escapeHtml(department.code)} · ${escapeHtml(department.name_th)}</span></label>`).join("")}</div>
         </fieldset>
         <div class="field"><label for="ncr-dispose-note">หมายเหตุ</label><input class="input" id="ncr-dispose-note" name="note" maxlength="1000"></div>
+        ${evidenceFieldHtml("ncr-dispose-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
         <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน 7 วัน)</button></div></form>`);
     }
     if (ncr.status === "awaiting_response" && isDeptManager(employee) && myDeptResponsible) {
@@ -382,6 +386,7 @@
         ${radiosHtml("result", { close: "ปิดประเด็นความไม่สอดคล้อง", return: "ส่งกลับให้แผนกแก้ไขคำตอบ" })}
         <p class="muted small">กรณีปิดประเด็นไม่ได้/เกิดซ้ำต้องออก CAR — ใช้การ์ด NCR/CAR ในหน้าสร้างคำร้องไปก่อนจนกว่า CAR จะย้ายเข้าระบบนี้ (Phase 2)</p>
         <div class="field"><label for="ncr-followup-note">บันทึกการติดตาม (จำเป็นเมื่อส่งกลับ)</label><input class="input" id="ncr-followup-note" name="note" maxlength="2000"></div>
+        ${evidenceFieldHtml("ncr-followup-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
         <div class="form-actions"><button class="btn" type="submit">บันทึกผล</button></div></form>`);
     }
     if (ncr.status === "awaiting_signoff" && canSignNext(ncr, employee)) {
@@ -392,6 +397,7 @@
         <h3>ขอข้อมูลเพิ่มเติมก่อนลงนาม</h3>
         <p class="muted small">ข้อความจะถึงผู้จัดการแผนกที่รับผิดชอบ เมื่อตอบแล้วใบจะกลับมารอลงนามที่ลำดับของคุณ (ลายเซ็นที่ลงไปแล้วยังอยู่)</p>
         <div class="field"><label for="ncr-info-request">ข้อมูลที่ต้องการ *</label><textarea class="textarea" id="ncr-info-request" name="note" maxlength="2000"></textarea></div>
+        ${evidenceFieldHtml("ncr-info-request-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
         <div class="form-actions"><button class="btn secondary" type="submit">ขอข้อมูลเพิ่มเติม</button></div></form>`);
     }
     if (ncr.status === "awaiting_info" && isDeptManager(employee) && myDeptResponsible) {
@@ -406,6 +412,7 @@
       forms.push(`<form class="ncr-action" data-action="cancel"><div class="ncr-form-message"></div>
         <h3>ยกเลิก NCR</h3><p class="muted small">เลขที่ยังอยู่ในทะเบียนพร้อมสถานะ "ยกเลิก" ไม่นำกลับมาใช้ใหม่</p>
         <div class="field"><label for="ncr-cancel-reason">เหตุผล *</label><input class="input" id="ncr-cancel-reason" name="reason" maxlength="1000"></div>
+        ${evidenceFieldHtml("ncr-cancel-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
         <div class="form-actions"><button class="btn danger" type="submit">ยกเลิก NCR</button></div></form>`);
     }
     return forms;
@@ -654,15 +661,27 @@
       }
       // เรียก RPC (ซึ่งอ่านค่าจากฟอร์มทันที) ก่อน setFormBusy — ช่องที่ถูก disable จะไม่อยู่ใน FormData
       try {
+        const section = attachmentSectionFor(action, ncr.status);
+        const attachWithAction = action !== "attach" && evidences.length > 0;
+        // การยกเลิกทำให้ใบถูกล็อก (อัปโหลดหลังยกเลิกไม่ได้) จึงแนบไฟล์ก่อนแล้วค่อยยกเลิก
+        if (attachWithAction && action === "cancel") {
+          setFormBusy(form, true);
+          const first = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(ncr.id, file, section));
+          if (first.failed.length) throw new Error(attachmentBatchFailureText(first));
+        }
         const pending = calls[action](form, evidences);
         setFormBusy(form, true);
-        const { error, message: doneMessage, failed } = await pending;
-        if (error) throw error;
-        let message = doneMessage ?? doneMessages[action];
-        // ไฟล์ที่แนบมากับคำตอบอัปโหลดหลังบันทึกคำตอบสำเร็จ ถ้าอัปโหลดไม่ผ่าน คำตอบยังอยู่และแนบใหม่ได้
-        if ((action === "respond" || action === "answer_info") && evidences.length) {
-          const uploaded = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(ncr.id, file, "response"));
-          if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ที่ส่วนไฟล์หลักฐาน`;
+        const result = await pending;
+        if (result.error) throw result.error;
+        let message = result.message ?? doneMessages[action];
+        let failed = result.failed;
+        // ไฟล์ที่แนบมากับการกระทำอัปโหลดหลังบันทึกสำเร็จ ถ้าอัปโหลดไม่ผ่าน การกระทำยังบันทึกอยู่และแนบใหม่ได้
+        if (attachWithAction && action !== "cancel") {
+          const uploaded = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(ncr.id, file, section));
+          if (uploaded.failed.length) {
+            message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ที่ส่วนไฟล์หลักฐาน`;
+            failed = true;
+          }
         }
         showToast(message, failed ? "error" : "success");
         window.MNP_REQUEST_MODULES.NCR_CAR.shared.invalidateDashboard?.();
@@ -716,7 +735,7 @@
     renderCenterList: (params) => renderList(params, true),
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
-    shared: { STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht },
+    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht },
 
     pages: {
       async ncr(params) {

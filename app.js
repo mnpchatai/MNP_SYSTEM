@@ -489,6 +489,27 @@ async function uploadRequestAttachment(requestId, file, uploaderId) {
   }
 }
 
+// ช่อง "แนบไฟล์เพิ่มเติม" ของฟอร์มตอบกลับ/ความเห็น/กรอกข้อมูลในหน้ารายละเอียดคำร้อง (ใช้ได้ทุกโมดูลที่แสดงผ่านหน้านี้)
+// ลำดับที่ต้องทำเสมอ: readExtraFiles ก่อนยิง RPC (ไฟล์ผิดต้องไม่ทำให้การกระทำสำเร็จไปครึ่งเดียว)
+// แล้ว uploadExtraFiles หลัง RPC สำเร็จ — ไฟล์พลาดไม่ย้อนการกระทำ แต่ต้องบอกผู้ใช้ให้แนบใหม่
+// ไฟล์เข้า request_attachments ของคำร้องเดิม และขึ้นในลำดับเหตุการณ์ (attachmentTimelineEvents)
+function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่มเติม (ถ้ามี)") {
+  return `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>`;
+}
+
+function readExtraFiles(input) {
+  return input ? optionalAttachments(input.files) : [];
+}
+
+// คืนข้อความเตือนเมื่อมีไฟล์ที่แนบไม่สำเร็จ ("" = ไม่มีไฟล์หรือแนบครบ)
+async function uploadExtraFiles(requestId, files, uploaderId) {
+  if (!files.length) return "";
+  const uploaded = await uploadAttachmentBatch(files, (file) => uploadRequestAttachment(requestId, file, uploaderId));
+  return uploaded.failed.length
+    ? `${attachmentBatchFailureText(uploaded)} · บันทึกการดำเนินการแล้ว กรุณาแนบไฟล์ที่ไม่สำเร็จใหม่ที่ส่วน "ไฟล์แนบ"`
+    : "";
+}
+
 // ---------------------------------------------------------------------------
 // ตัวอย่างไฟล์แนบ: แสดงรูปทันทีในหน้า (รวมถึงหน้าแรกของ PDF) โดยไม่ต้องกดเปิด
 // ---------------------------------------------------------------------------
@@ -2021,7 +2042,31 @@ function appendTimelineNote(detail, note) {
   return detail ? `${detail} · ${cleanNote}` : cleanNote;
 }
 
-function buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChanges = []) {
+// ไฟล์ที่คนเดียวกันแนบต่อเนื่องกัน (ห่างกันไม่เกิน 2 นาที เช่น เลือกหลายไฟล์ หรือแนบหลังกดพิจารณา) รวมเป็นเหตุการณ์เดียว
+// ตรรกะเดียวกับ attachmentTimelineEvents ใน src/lib/request-timeline.ts
+const ATTACHMENT_GROUP_GAP_MS = 120000;
+function attachmentTimelineEvents(attachments, directory) {
+  const ordered = [...attachments].sort((left, right) => left.created_at.localeCompare(right.created_at));
+  const groups = [];
+  for (const attachment of ordered) {
+    const group = groups[groups.length - 1];
+    const last = group?.[group.length - 1];
+    if (last && last.uploader_id === attachment.uploader_id && Date.parse(attachment.created_at) - Date.parse(last.created_at) <= ATTACHMENT_GROUP_GAP_MS) group.push(attachment);
+    else groups.push([attachment]);
+  }
+  return groups.map((group) => {
+    const uploader = personName(directory, group[0].uploader_id);
+    return {
+      id: `attachment-${group[0].id}`,
+      at: group[0].created_at,
+      title: "แนบไฟล์",
+      detail: `${uploader === "—" ? "ผู้ใช้งาน" : uploader} แนบไฟล์ ${group.length} ไฟล์: ${group.map((attachment) => attachment.file_name).join(", ")}`,
+      message: "",
+    };
+  });
+}
+
+function buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChanges = [], attachments = []) {
   const orderedSteps = [...steps].sort((left, right) => left.step_order - right.step_order);
   const latestRepairResult = [...history]
     .filter((item) => item.to_status === "pending_verify")
@@ -2141,7 +2186,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     };
   });
 
-  return [...statusEvents, ...approvalEvents, ...dateChangeEvents].sort((left, right) => left.at.localeCompare(right.at));
+  return [...statusEvents, ...approvalEvents, ...dateChangeEvents, ...attachmentTimelineEvents(attachments, directory)].sort((left, right) => left.at.localeCompare(right.at));
 }
 
 function appsScriptApprovalStage(step, directory) {
@@ -2219,7 +2264,7 @@ async function renderRequestDetail(params) {
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
   const verifications = verificationsResult.data ?? [];
-  const timeline = buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChangesResult.data ?? []);
+  const timeline = buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChangesResult.data ?? [], attachments);
   const progressSteps = progressResult.data ?? [];
   // ช่างของใบนี้ = รายชื่อในตารางช่าง (ใบเก่าก่อนรองรับหลายคนมีแต่ assignee_id จึงรวมเข้าไปด้วย)
   const assignedTechIds = [...new Set([
@@ -2285,12 +2330,13 @@ async function renderRequestDetail(params) {
             <p class="muted small">${escapeHtml(askedByLabel)} ขอข้อมูลเพิ่มเติมในขั้นตอน "${escapeHtml(moreInfoStep?.step_name ?? "—")}"${moreInfoStep?.comment ? ` · ${escapeHtml(moreInfoStep.comment)}` : ""}</p>
             ${isRequester ? `<form id="resubmit-form">
               <div class="field"><label for="resubmit-comment">ข้อมูลเพิ่มเติม</label><textarea class="textarea" id="resubmit-comment" name="comment" maxlength="1000" placeholder="ระบุข้อมูลที่ขอเพิ่มเติม"></textarea></div>
+              ${extraFilesFieldHtml("resubmit-files")}
               <div class="form-actions"><button class="btn" type="submit">ส่งข้อมูลกลับให้พิจารณาอีกครั้ง</button></div>
             </form>` : `<p class="muted small">มีเพียง ${escapeHtml(requesterLabel)} ผู้ยื่นคำร้องนี้เท่านั้นที่ตอบกลับได้</p>`}
           </section>`;
         })() : ""}
-        ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div><div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button>${(separateModule?.extraDecisions ?? []).map((item) => `<button class="btn secondary decision-button" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("")}<button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
-        ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
+        ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div>${extraFilesFieldHtml("decision-files")}<div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button>${(separateModule?.extraDecisions ?? []).map((item) => `<button class="btn secondary decision-button" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("")}<button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
+        ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div>${extraFilesFieldHtml("status-files")}</section>` : ""}
         ${detailView?.sectionsHtml ?? ""}
       </div>
       <aside class="stack">
@@ -2312,36 +2358,46 @@ async function renderRequestDetail(params) {
         ? "กรุณาระบุเหตุผลที่ไม่อนุมัติ"
         : "กรุณาระบุว่าต้องการข้อมูลเพิ่มเติมเรื่องอะไร", "error");
     }
+    let files;
+    try { files = readExtraFiles(document.querySelector("#decision-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
     document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = true; });
     try {
       const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: decision, p_comment: comment });
       if (error) throw error;
+      const warning = await uploadExtraFiles(id, files, employee.id);
       triggerNotificationEmails(id);
-      showToast("บันทึกผลการพิจารณาแล้ว");
+      showToast(warning || "บันทึกผลการพิจารณาแล้ว", warning ? "error" : "success");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = false; }); }
   }));
   document.querySelector(".status-button")?.addEventListener("click", async (event) => {
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    let files;
+    try { files = readExtraFiles(document.querySelector("#status-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
+    button.disabled = true;
     try {
-      const { error } = await sb.rpc("app_update_request_status", { p_request_id: id, p_status: event.currentTarget.dataset.status });
+      const { error } = await sb.rpc("app_update_request_status", { p_request_id: id, p_status: button.dataset.status });
       if (error) throw error;
+      const warning = await uploadExtraFiles(id, files, employee.id);
       triggerNotificationEmails(id);
-      showToast("อัปเดตสถานะแล้ว");
+      showToast(warning || "อัปเดตสถานะแล้ว", warning ? "error" : "success");
       await renderRequestDetail(params);
-    } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
+    } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
   });
   separateModule?.bindDetail?.({ id, params, employee });
   document.querySelector("#resubmit-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
+    let files;
+    try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
     setFormBusy(form, true);
     const comment = form.elements.comment.value.trim();
     try {
       const { error } = await sb.rpc("app_resubmit_request", { p_request_id: id, p_comment: comment || null });
       if (error) throw error;
+      const warning = await uploadExtraFiles(id, files, employee.id);
       triggerNotificationEmails(id);
-      showToast("ส่งข้อมูลกลับให้พิจารณาอีกครั้งแล้ว");
+      showToast(warning || "ส่งข้อมูลกลับให้พิจารณาอีกครั้งแล้ว", warning ? "error" : "success");
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });

@@ -2,6 +2,9 @@
   const costs = window.MNP_NCR_COSTS;
   const options = (items, selected) => Object.entries(items).map(([value, label]) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
   const numberField = (id, name, label, value = "", step = "any") => `<div class="field"><label for="${id}">${escapeHtml(label)}</label><input class="input" id="${id}" name="${name}" type="number" min="0" max="1000000000" step="${step}" inputmode="decimal" value="${escapeHtml(String(value))}" required></div>`;
+  // ช่องแนบไฟล์เพิ่มเติมของฟอร์มบันทึกต้นทุน/ผลดำเนินการ ใช้ชุดเดียวกับฟอร์มอื่นของ NCR (โหมดทดสอบแสดงข้อความว่ายังไม่รองรับ)
+  // ไฟล์อัปโหลดหลังบันทึกสำเร็จโดย submit handler กลางใน module-ncr.js
+  const extraFilesField = (id) => (window.MNP_REQUEST_MODULES?.NCR_CAR?.shared?.evidenceFieldHtml?.(id, "แนบไฟล์เพิ่มเติม (ถ้ามี)") ?? "").replace('class="field"', 'class="field full"');
   function render(ncr, losses, directory, editable, today, formatBaht, formatQty) {
     const summary = costs.summarize(losses);
     const rows = losses.map((loss) => `<tr class="${loss.voided_at ? "ncr-voided" : ""}">
@@ -29,6 +32,7 @@
           <div class="field full"><p class="muted small" id="ncr-loss-hint"></p><output id="ncr-loss-preview" aria-live="polite">มูลค่ารายการ: —</output></div>
           <div class="field full"><label for="ncr-loss-ref">หลักฐานอ้างอิง (จำเป็นเมื่อยืนยันยอด)</label><input class="input" id="ncr-loss-ref" name="evidence_ref" maxlength="200" placeholder="เลขที่ใบเสร็จ ใบต้นทุน ใบบันทึกเวลา หรือชื่อไฟล์หลักฐานที่แนบใน NCR"></div>
           <div class="field full"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
+          ${extraFilesField("ncr-loss-files")}
         </div><div class="form-actions"><button class="btn" type="submit">บันทึกรายการ</button><button class="btn secondary" type="button" id="ncr-loss-reset" hidden>ยกเลิกการแก้ไข</button></div></form>` : ""}
     </section>`;
   }
@@ -44,6 +48,7 @@
         ${numberField("ncr-outcome-hours","downtime_hours","เครื่องหยุด/รอ (ชั่วโมง)",o?.downtime_hours ?? 0)}
         <div class="field full"><label for="ncr-outcome-ref">หลักฐานผลดำเนินการ (จำเป็นเมื่อยืนยันผล)</label><input class="input" id="ncr-outcome-ref" name="evidence_ref" maxlength="200" value="${escapeHtml(o?.evidence_ref ?? "")}"></div>
         <div class="field full"><label for="ncr-outcome-note">รายละเอียด / เหตุผลกรณีไม่มีค่าเสียหาย</label><textarea class="textarea" id="ncr-outcome-note" name="note" maxlength="1000">${escapeHtml(o?.note ?? "")}</textarea></div>
+        ${extraFilesField("ncr-outcome-files")}
         <label class="ncr-check field full"><input type="checkbox" name="cost_reviewed"${o?.cost_reviewed ? " checked" : ""}><span>ประเมินค่าเสียหายครบแล้ว (ต้องยืนยันผลและไม่มีรายการรอยืนยัน หากไม่มีค่าเสียหายให้ระบุเหตุผล)</span></label>
         </div><div class="form-actions"><button class="btn" type="submit">บันทึกผลดำเนินการ</button></div></form>` : ""}</section>`;
   }
@@ -61,6 +66,7 @@
       data[key] = Number(data[key]);
       if (!Number.isFinite(data[key]) || data[key] < 0) throw new Error("INVALID_OUTCOME");
     }
+    delete data.evidence; // ไฟล์แนบอัปโหลดแยกโดย module-ncr.js ไม่ส่งเข้า payload ของ RPC
     data.cost_reviewed = form.elements.cost_reviewed.checked;
     if (data.result_status === "confirmed" && !data.evidence_ref.trim()) throw new Error("LOSS_EVIDENCE_REQUIRED");
     return data;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { ATTACHMENT_STUBS } from "./support/factory-attachment-stubs.mjs";
 
 // โหลดไฟล์หน้าจอใบสั่งวัตถุดิบ (script ธรรมดาใน browser) เข้า context จำลอง แล้วเรียก view จริงด้วยข้อมูลจำลอง
 // ตรวจ HTML ที่วาด ปุ่มที่โผล่ตามสถานะ/แผนก การเรียก RPC และข้อความผิดพลาด (ไม่มี DOM จริง การตรวจเต็มรูปแบบทำกับ app.js ใน browser)
@@ -12,6 +13,7 @@ const FILES = [
   "modules/factory-material-model.js",
   "modules/factory-job-model.js",
   "modules/module-factory-master.js",
+  "modules/factory-attachments.js",
   "modules/module-factory-bom.js",
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
@@ -62,6 +64,7 @@ function loadFactory({ data = FIXTURE, dept = "ST", rpc, confirmAnswer = true } 
   const context = vm.createContext({});
   context.window = context;
   Object.assign(context, {
+    ...ATTACHMENT_STUBS,
     escapeHtml,
     formatDate: (value, withTime) => `d(${value ?? "—"}${withTime ? " t" : ""})`,
     showToast: (message, kind) => toasts.push([message, kind ?? "ok"]),
@@ -86,7 +89,7 @@ async function render(view, { query = "", ...options } = {}) {
   const { context, log } = loadFactory(options);
   let painted = null;
   const controls = {};
-  const make = () => ({ disabled: false, hidden: false, textContent: "", handlers: {}, dataset: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, reportValidity: () => true, querySelector() { return { value: "เหตุผลทดสอบ" }; }, scrollIntoView() {} });
+  const make = () => ({ disabled: false, hidden: false, textContent: "", handlers: {}, dataset: {}, elements: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, reportValidity: () => true, querySelector() { return { value: "เหตุผลทดสอบ" }; }, scrollIntoView() {} });
   const root = { querySelector: (selector) => (controls[selector] ??= make()), querySelectorAll: () => [] };
   const frame = { loading: () => {}, paint: (opts) => { painted = opts; return root; } };
   await context.MNP_FACTORY_VIEWS[view]({ params: new URLSearchParams(query), frame });
@@ -314,4 +317,12 @@ test("a save error stays on the form with the message", async () => {
   assert.match(view.controls["#mo-form-error"].textContent, /เฉพาะแผนก ST/);
   assert.equal(view.controls["#mo-form-error"].hidden, false);
   assert.equal(view.log.hash, "");
+});
+
+test("the material order page lists its files and the create and cancel forms carry the extra-files field", async () => {
+  const draft = await render("material", { query: "mo=m-draft", dept: "ST" });
+  assert.match(draft.body, /data-fm-attachments="material_order" data-entity-id="m-draft"/);
+  assert.match(draft.body, /id="mo-cancel-files"[^>]*name="extra_files"/);
+  const edit = await render("material-new", { query: "mo=m-draft", dept: "ST" });
+  assert.match(edit.body, /id="mo-files"[^>]*name="extra_files"/);
 });

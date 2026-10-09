@@ -64,13 +64,15 @@
 
   // ปุ่มเรียก RPC หนึ่งครั้ง: ปิดปุ่มระหว่างทำ สำเร็จแล้ววาดหน้าใหม่ ผิดพลาดแจ้งเตือนและวาดใหม่เมื่อสถานะในหน้าล้าสมัย
   const STALE_CODES = ["JOB_VERSION_CONFLICT", "JOB_NOT_", "JOB_STEP_ALREADY_DONE", "JOB_STEP_OUT_OF_ORDER", "JOB_STEP_NOT_FOUND"];
-  async function runAction(root, rpc, args, successMessage) {
+  // files = ไฟล์ที่แนบมากับการกระทำ (ช่องแนบของฟอร์มตรวจ QC/ทำขั้นตอน/ยกเลิก) อัปโหลดหลังการกระทำสำเร็จ พลาดไม่ย้อนการกระทำ
+  async function runAction(root, rpc, args, successMessage, files = []) {
     const controls = root.querySelectorAll("[data-jb-action], .jb-form button");
     controls.forEach((control) => { control.disabled = true; });
     try {
       const { data, error } = await sb.rpc(rpc, args);
       if (error) throw error;
-      showToast(typeof successMessage === "function" ? successMessage(data) : successMessage);
+      const warning = await window.MNP_FACTORY_ATTACHMENTS.upload("job", args.p_id, files);
+      showToast(warning || (typeof successMessage === "function" ? successMessage(data) : successMessage), warning ? "error" : "success");
       await renderRoute();
     } catch (error) {
       showToast(friendlyError(error), "error");
@@ -191,6 +193,7 @@
             <div class="field full"><label for="jb-qc-desc">อธิบายความไม่ผ่าน * (ใช้เป็นรายละเอียด NCR อย่างน้อย 10 ตัวอักษร)</label>
               <textarea class="textarea" id="jb-qc-desc" name="description" rows="3" maxlength="4000"></textarea></div>
           </div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("jb-qc-files")}
           <div class="fm-actions"><button class="btn" type="submit">บันทึกผลตรวจ</button></div>
         </form>`;
   }
@@ -212,6 +215,7 @@
             <div class="field full"><label for="jb-note">บันทึกขั้นตอน (ไม่บังคับ)</label><textarea class="textarea" id="jb-note" name="note" rows="2" maxlength="1000"></textarea></div>
             ${last ? `<div class="field"><label for="jb-output">จำนวนผลิตจริง (${escapeHtml(job.unit_code)})</label><input class="input" id="jb-output" name="output_qty" type="number" inputmode="decimal" min="0.0001" max="${model.MAX_QUANTITY}" step="any" placeholder="${escapeHtml(q4(job.qty))}"><small>เว้นว่าง = ${escapeHtml(q4(job.qty))} ตามจำนวนของใบงาน</small></div>` : ""}
           </div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("jb-step-files")}
           <div class="fm-actions"><button class="btn" type="submit">ทำขั้นตอนนี้เสร็จ</button></div>
         </form>`);
     } else if (next) {
@@ -222,6 +226,7 @@
           <div class="field full"><label for="jb-cancel-note">ยกเลิกใบงานนี้ — เหตุผล *</label>
             <textarea class="textarea" id="jb-cancel-note" name="note" rows="2" maxlength="1000" required></textarea>
             ${job.status === "in_progress" ? "<small>ใบงานนี้เริ่มแล้ว ยกเลิกแล้วระบบคืนวัตถุดิบที่ตัดไปกลับเข้าคลังและล็อตเดิมทั้งหมด ขั้นที่ทำเสร็จแล้วยังอยู่ในประวัติ ยกเลิกแล้วแก้กลับไม่ได้</small>" : ""}</div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("jb-cancel-files")}
           <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบงาน</button></div>
         </form></details>`);
     }
@@ -322,6 +327,15 @@
 
   function bindDetail(root, job) {
     const args = { p_id: job.id, p_version: job.version };
+    // ตรวจไฟล์ก่อนยิง RPC: ไฟล์ผิดต้องไม่ทำให้การกระทำสำเร็จไปครึ่งเดียว (null = มีไฟล์ไม่ผ่าน แสดงข้อความแล้ว)
+    const filesOf = (form, errorBox) => {
+      try {
+        return window.MNP_FACTORY_ATTACHMENTS.read(form.elements.extra_files);
+      } catch (error) {
+        if (errorBox) { errorBox.textContent = friendlyError(error); errorBox.hidden = false; } else showToast(friendlyError(error), "error");
+        return null;
+      }
+    };
     const qcForm = root.querySelector("#jb-qc-form");
     if (qcForm) {
       const failFields = root.querySelector("#jb-qc-fail-fields");
@@ -336,6 +350,8 @@
         event.preventDefault();
         const errorBox = root.querySelector("#jb-form-error");
         if (errorBox) errorBox.hidden = true;
+        const files = filesOf(qcForm, errorBox);
+        if (!files) return undefined;
         const form = new FormData(qcForm);
         const values = Object.fromEntries(["result", "qty_checked", "qty_defect", "measurement", "defect_type_code", "description", "output_qty"].map((key) => [key, form.get(key)]));
         const next = model.nextStep(job);
@@ -347,7 +363,7 @@
         if (parsed.args.p_result === "fail" && !confirm("บันทึกว่าไม่ผ่านและออก NCR ใหม่ใช่หรือไม่?")) return undefined;
         return runAction(root, "app_factory_record_qc", { ...args, p_sequence: next.sequence, ...parsed.args }, (result) => (parsed.args.p_result === "fail"
           ? `ตรวจ QC ไม่ผ่าน ออก NCR ${result?.ncr_no ?? ""} แล้ว ขั้นนี้รอตรวจซ้ำ`
-          : model.isLastPending(job, next) ? `${job.code} ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว ยอดคงคลังเพิ่มขึ้น` : `ตรวจ “${next.name}” ผ่านแล้ว`));
+          : model.isLastPending(job, next) ? `${job.code} ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว ยอดคงคลังเพิ่มขึ้น` : `ตรวจ “${next.name}” ผ่านแล้ว`), files);
       });
     }
     const next = model.nextStep(job);
@@ -356,6 +372,8 @@
     stepForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       if (errorBox) errorBox.hidden = true;
+      const files = filesOf(stepForm, errorBox);
+      if (!files) return undefined;
       const form = new FormData(stepForm);
       const output = model.outputQty(form.get("output_qty"));
       if (output.error) {
@@ -364,15 +382,17 @@
         return undefined;
       }
       return runAction(root, "app_factory_complete_job_step", { ...args, p_sequence: next.sequence, p_note: String(form.get("note") ?? ""), p_output_qty: output.value },
-        model.isLastPending(job, next) ? `${job.code} ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว ยอดคงคลังเพิ่มขึ้น` : `ทำขั้น “${next.name}” เสร็จแล้ว`);
+        model.isLastPending(job, next) ? `${job.code} ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว ยอดคงคลังเพิ่มขึ้น` : `ทำขั้น “${next.name}” เสร็จแล้ว`, files);
     });
     const cancelForm = root.querySelector("#jb-cancel-form");
     cancelForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       const started = job.status === "in_progress";
-      if (!cancelForm.reportValidity() || !confirm(started ? `ยกเลิก ${job.code}? ระบบจะคืนวัตถุดิบที่ตัดไปกลับเข้าคลัง` : `ยกเลิก ${job.code}?`)) return undefined;
+      if (!cancelForm.reportValidity()) return undefined;
+      const files = filesOf(cancelForm, null);
+      if (!files || !confirm(started ? `ยกเลิก ${job.code}? ระบบจะคืนวัตถุดิบที่ตัดไปกลับเข้าคลัง` : `ยกเลิก ${job.code}?`)) return undefined;
       return runAction(root, "app_factory_cancel_job", { ...args, p_note: cancelForm.querySelector("textarea").value },
-        (result) => (result?.returned_lines ? `ยกเลิก ${job.code} แล้ว คืนวัตถุดิบเข้าคลัง ${result.returned_lines} รายการ` : `ยกเลิก ${job.code} แล้ว`));
+        (result) => (result?.returned_lines ? `ยกเลิก ${job.code} แล้ว คืนวัตถุดิบเข้าคลัง ${result.returned_lines} รายการ` : `ยกเลิก ${job.code} แล้ว`), files);
     });
   }
 
@@ -436,6 +456,7 @@
             <div class="field"><label for="jb-warehouse">คลังที่รับผลผลิต *</label><select class="select" id="jb-warehouse" name="warehouse_code" required>${options((data.warehouses ?? []).map((row) => [row.code, `${row.code} · ${row.name}`]), warehouse)}</select></div>
             <div class="field full"><label for="jb-form-note">หมายเหตุ</label><textarea class="textarea" id="jb-form-note" name="note" rows="2" maxlength="1000"></textarea></div>
           </div>
+          ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("jb-files")}
           ${previewHtml}
           <p class="muted small">ขั้นตอนคัดลอกจาก Routing ของชิ้นงานนั้น (สินค้าของใบสั่งผลิตใช้ Routing ที่ผูกไว้ตอนวางแผน) · เลขที่ใบงานระบบออกให้</p>
           <div class="fm-actions"><button class="btn" type="submit">ออกใบงาน</button>
@@ -452,6 +473,12 @@
       errorBox.hidden = true;
       const payload = model.jobPayload({ ...Object.fromEntries(new FormData(form).entries()), production_order_id: workOrder.id });
       const problems = model.validateJobPayload(payload, data);
+      let files = [];
+      try {
+        files = window.MNP_FACTORY_ATTACHMENTS.read(form.elements.extra_files);
+      } catch (fileError) {
+        problems.push(friendlyError(fileError));
+      }
       if (problems.length) {
         errorBox.textContent = problems.join(" · ");
         errorBox.hidden = false;
@@ -462,7 +489,8 @@
       try {
         const { data: created, error } = await sb.rpc("app_factory_create_job", payload);
         if (error) throw error;
-        showToast(`ออกใบงาน ${created.code} แล้ว`);
+        const fileWarning = await window.MNP_FACTORY_ATTACHMENTS.upload("job", created.id, files);
+        showToast(fileWarning || `ออกใบงาน ${created.code} แล้ว`, fileWarning ? "error" : "success");
         location.hash = viewUrl(created.id).slice(1);
       } catch (error) {
         setFormBusy(form, false);
@@ -493,7 +521,7 @@
       if (id) {
         const job = byId(data.jobs, id);
         if (!job) return frame.paint(gone(back));
-        const root = frame.paint({ back, subtitle: job.code, body: `${detailHtml(data, job)}${job.status === "open" ? `<section class="card fm-detail">${requirementsHtml(data, job)}</section>` : ""}${actionsHtml(data, job)}${supportingDetailsHtml(data, job)}` });
+        const root = frame.paint({ back, subtitle: job.code, body: `${detailHtml(data, job)}${job.status === "open" ? `<section class="card fm-detail">${requirementsHtml(data, job)}</section>` : ""}${actionsHtml(data, job)}${supportingDetailsHtml(data, job)}${window.MNP_FACTORY_ATTACHMENTS.panelHtml("job", job.id)}` });
         return bindDetail(root, job);
       }
       return frame.paint({ actions: newJobAction(), body: listHtml(data, params) });
