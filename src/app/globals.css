@@ -383,9 +383,10 @@ tbody tr:hover { background: var(--surface-hover); }
   padding: 16px 18px;
   background: var(--surface-raised);
   border: 1px solid var(--line);
-  border-left: 4px solid var(--timeline-accent);
+  border-left-color: var(--timeline-accent);
   border-radius: 9px;
-  box-shadow: 0 3px 12px rgba(31, 61, 102, .06);
+  /* The accent strip is an inset shadow so it follows the card's rounded outline instead of tapering at the corners. */
+  box-shadow: inset 3px 0 0 var(--timeline-accent), 0 3px 12px rgba(31, 61, 102, .06);
   content-visibility: auto;
   contain-intrinsic-size: 185px;
 }
