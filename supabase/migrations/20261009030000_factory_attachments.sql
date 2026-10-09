@@ -70,6 +70,21 @@ $$;
 revoke all on function private.factory_attachment_path_ok(text) from public, anon;
 grant execute on function private.factory_attachment_path_ok(text) to authenticated;
 
+-- policy ของ storage.objects ถูกประเมินในฐานะ authenticated กับทุก bucket (รวม ncr-attachments / request-attachments)
+-- จึงต้องเรียกผ่านฟังก์ชันที่ authenticated execute ได้ — เรียก private.sandbox_persona() ตรง ๆ จะทำให้ผู้ใช้ทุกคนอัปโหลด/อ่านไฟล์ของ bucket อื่นไม่ได้
+-- ฟังก์ชันนี้คืนแค่ true/false ว่าผู้เรียกเป็น admin ที่อยู่ในโหมดทดสอบหรือไม่ (ไม่เปิดเผย persona)
+create or replace function private.factory_files_allowed()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select (private.sandbox_persona()).id is not null
+$$;
+revoke all on function private.factory_files_allowed() from public, anon;
+grant execute on function private.factory_files_allowed() to authenticated;
+
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'factory-attachments',
@@ -86,18 +101,18 @@ on conflict (id) do update set
   allowed_mime_types = excluded.allowed_mime_types;
 
 create policy factory_files_read on storage.objects for select to authenticated
-using (bucket_id = 'factory-attachments' and (private.sandbox_persona()).id is not null);
+using (bucket_id = 'factory-attachments' and private.factory_files_allowed());
 create policy factory_files_upload on storage.objects for insert to authenticated
 with check (
   bucket_id = 'factory-attachments'
   and owner_id = (select auth.uid())::text
-  and (private.sandbox_persona()).id is not null
+  and private.factory_files_allowed()
   and private.factory_attachment_path_ok(name)
 );
 -- ลบไฟล์ได้ทุกไฟล์ในโหมดทดสอบ: ข้อมูลทดสอบเป็นของส่วนกลาง admin คนอื่นต้องล้างไฟล์ที่ admin ก่อนหน้าอัปโหลดไว้ได้
 -- (ใช้ตอนล้างข้อมูลทดสอบ และเก็บกวาดไฟล์ที่อัปโหลดแล้วบันทึกข้อมูลไม่สำเร็จ)
 create policy factory_files_delete on storage.objects for delete to authenticated
-using (bucket_id = 'factory-attachments' and (private.sandbox_persona()).id is not null);
+using (bucket_id = 'factory-attachments' and private.factory_files_allowed());
 
 -- 3. RPC -------------------------------------------------------------------------------------
 create or replace function public.app_factory_add_attachment(

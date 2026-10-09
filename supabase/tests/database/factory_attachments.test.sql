@@ -20,6 +20,10 @@ select ok(not has_function_privilege('anon', 'public.app_factory_add_attachment(
 select ok(not has_function_privilege('anon', 'public.app_factory_list_attachments(text,uuid)', 'execute'), 'anon cannot list attachments');
 select ok(not has_function_privilege('anon', 'public.app_factory_attachment_paths()', 'execute'), 'anon cannot list attachment paths');
 select ok(has_function_privilege('authenticated', 'public.app_factory_add_attachment(text,uuid,text,text)', 'execute'), 'signed-in users reach the API (it checks the mode itself)');
+select ok(has_function_privilege('authenticated', 'private.factory_files_allowed()', 'execute')
+  and not has_function_privilege('anon', 'private.factory_files_allowed()', 'execute'),
+  'storage policies call a wrapper that signed-in users may execute (the persona helper itself stays private)');
+select ok(not has_function_privilege('authenticated', 'private.sandbox_persona()', 'execute'), 'the persona helper is still not callable by clients');
 select is((select public from storage.buckets where id = 'factory-attachments'), false, 'the bucket is private');
 select is((select file_size_limit from storage.buckets where id = 'factory-attachments'), 20971520::bigint, 'the bucket limit is 20 MB');
 select is((select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname like 'factory_files_%'), 3::bigint,
