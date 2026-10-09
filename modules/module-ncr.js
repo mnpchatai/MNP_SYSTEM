@@ -79,6 +79,7 @@
   const roleCode = (employee) => employee?.role?.code ?? "";
   const isQa = (employee) => employee?.department?.code === "QA";
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
+  const SANDBOX_COST_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
   const todayBangkok = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
   // กำหนดตอบนับจากวันออกใบ (+5 วัน) จึงเกินกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
@@ -463,7 +464,9 @@
 
   function canEditLosses(ncr, employee) {
     if (!OPEN_STATUSES.includes(ncr.status)) return false;
-    if (isQa(employee) || roleCode(employee) === "factory_manager") return true;
+    // โหมดทดสอบ: ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และหัวหน้าแผนกที่รับผิดชอบเท่านั้น (ตรงกับ private.can_edit_ncr_losses; QA ไม่มีสิทธิ์โดยตำแหน่ง) · ข้อมูลจริงใช้กฎเดิม
+    const sandbox = Boolean(state.employee?.isSandbox);
+    if (sandbox ? SANDBOX_COST_ROLE_CODES.includes(roleCode(employee)) : isQa(employee) || roleCode(employee) === "factory_manager") return true;
     return isDeptManager(employee) && (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
   }
 
