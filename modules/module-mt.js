@@ -290,18 +290,23 @@
     label: "ใบคำร้อง/แจ้งซ่อม MT",
     theme: ["#fb7185", "#be123c"],
 
-    // แผนกที่แจ้งซ่อมได้ + เครื่องจักร — โหลดครั้งเดียวต่อการเปิดหน้าสร้างคำร้อง
-    async prepareForm({ sb }) {
-      const [departmentsResult, machinesResult] = await Promise.all([
-        sb.from("departments").select("id,code,name_th").eq("is_active", true).eq("is_repair_site", true).order("code"),
-        sb.from("machines").select("id,code,name,department_id,is_placeholder").eq("is_active", true).order("sort_order"),
-      ]);
-      if (departmentsResult.error) throw departmentsResult.error;
-      if (machinesResult.error) throw machinesResult.error;
-      const availableDepartments = new Map((departmentsResult.data ?? []).map((item) => [item.code, item]));
-      const departments = REPAIR_DEPARTMENT_OPTIONS
+    // แผนกที่แจ้งซ่อมได้ (เรียงตามลำดับที่ใช้ในฟอร์ม) — ใช้ทั้งฟอร์มสร้างคำร้องและตัวกรองแผนกในหน้ารายการ
+    async loadRepairDepartments(sb) {
+      const { data, error } = await sb.from("departments").select("id,code,name_th").eq("is_active", true).eq("is_repair_site", true).order("code");
+      if (error) throw error;
+      const availableDepartments = new Map((data ?? []).map((item) => [item.code, item]));
+      return REPAIR_DEPARTMENT_OPTIONS
         .map((option) => ({ ...availableDepartments.get(option.sourceCode), ...option }))
         .filter((item) => item.id);
+    },
+
+    // แผนกที่แจ้งซ่อมได้ + เครื่องจักร — โหลดครั้งเดียวต่อการเปิดหน้าสร้างคำร้อง
+    async prepareForm({ sb }) {
+      const [departments, machinesResult] = await Promise.all([
+        this.loadRepairDepartments(sb),
+        sb.from("machines").select("id,code,name,department_id,is_placeholder").eq("is_active", true).order("sort_order"),
+      ]);
+      if (machinesResult.error) throw machinesResult.error;
       return { departments, machines: machinesResult.data ?? [] };
     },
 

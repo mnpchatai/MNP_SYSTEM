@@ -14,6 +14,15 @@ test("changing status preserves selected type, ownership, search and board scope
   assert.equal(query.get("view"), "board");
   assert.equal(query.get("status"), "in_progress");
 });
+test("department filter and request-number search survive status changes but not a module switch", () => {
+  const result = url(params("type=mt&dept=RB&q=2609&status=approved"), { status: "completed" });
+  const query = params(result.split("?")[1]);
+  assert.equal(query.get("dept"), "RB");
+  assert.equal(query.get("q"), "2609");
+  assert.equal(url(params("type=mt&dept=RB&q=2609"), { type: "mg", status: null }), "#/requests?type=mg&q=2609");
+  assert.equal(url(params("type=mt&dept=RB"), { type: "mt" }), "#/requests?type=mt&dept=RB");
+  assert.equal(url(params("type=mt&dept=RB"), { dept: null }), "#/requests?type=mt");
+});
 test("cancel returns to the same list without keeping creation mode or unknown params", () => {
   assert.equal(url(params("type=mt&scope=mine&mode=create&unexpected=secret")), "#/requests?type=mt&scope=mine");
 });
