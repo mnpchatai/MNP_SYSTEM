@@ -28,6 +28,7 @@
   let drillAnchor = null; // การ์ดที่ผู้ใช้กดกรองมา — รายการ NCR แสดงต่อท้ายการ์ดนั้น (ว่าง = ใต้แถบตัวกรอง/ตัวเลขสรุป)
   let pendingDrill = null; // { params, card } ของลิงก์/ฟอร์มกรองที่เพิ่งกด รอ hashchange พาเข้า renderDashboard
   let scrollToDrill = false;
+  let restoreScrollY = null; // ตำแหน่งเลื่อนก่อนกดกรอง — วาดหน้าใหม่แล้วคืนตำแหน่งเดิมก่อน แล้วค่อยเลื่อนนุ่มๆ ไปที่รายการ
 
   const bangkokDate = (timestamp) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date(timestamp));
   const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
@@ -390,23 +391,31 @@
     const root = document.getElementById("nd-root");
     if (!root || !cache) return;
     const focusKey = document.activeElement?.dataset?.sel ?? (document.activeElement?.hasAttribute?.("data-more") ? "__more" : null);
+    const keepY = restoreScrollY ?? window.scrollY;
+    restoreScrollY = null;
     root.innerHTML = pageBody();
     bindPage(root);
-    if (focusKey) (focusKey === "__more" ? root.querySelector("[data-more]") : root.querySelector(`[data-sel="${CSS.escape(focusKey)}"]`))?.focus({ preventScroll: true });
     placeDrill(root);
+    // วาดใหม่ทั้งก้อน: คืนตำแหน่งเลื่อนเดิมเสมอ หน้าจะได้ไม่กระโดด (ก่อน focus เพราะ focus บังคับ layout)
+    window.scrollTo(0, keepY);
+    if (focusKey) (focusKey === "__more" ? root.querySelector("[data-more]") : root.querySelector(`[data-sel="${CSS.escape(focusKey)}"]`))?.focus({ preventScroll: true });
     if (scrollToDrill) {
       scrollToDrill = false;
-      // เลื่อนเฉพาะตอนกรองจริงหรือกดจากการ์ด (เปลี่ยนแค่ช่วงเวลาไม่ต้องกระโดดไปที่รายการ)
-      if (drillAnchor || hasDrillFilter(lastFilters)) root.querySelector("#nd-drill")?.scrollIntoView({ block: "start" });
+      // เลื่อนเฉพาะตอนกรองจริงหรือกดจากการ์ด (เปลี่ยนแค่ช่วงเวลาไม่ต้องกระโดดไปที่รายการ) เลื่อนแบบนุ่ม เว้นแต่ผู้ใช้ตั้งลดการเคลื่อนไหว
+      if (drillAnchor || hasDrillFilter(lastFilters)) {
+        const smooth = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        root.querySelector("#nd-drill")?.scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" });
+      }
     }
   }
 
   // รายการ NCR ที่กรองแล้วไม่อยู่ท้ายหน้า: วางต่อท้ายส่วนที่ผู้ใช้กดกรองมาทันที — การ์ด (data-card) ที่กดลิงก์ หรือใต้แถบตัวกรองถ้ากดจากช่วงเวลา/ชิป/ฟอร์ม
-  // ถ้าเปิดจากลิงก์ที่แชร์ (ไม่รู้ว่ากดจากไหน) วางใต้แถบตัวกรองเมื่อมีตัวกรอง ไม่มีตัวกรองก็ใต้ตัวเลขสรุป
+  // ถ้าเปิดจากลิงก์ที่แชร์ (ไม่รู้ว่ากดจากไหน) วางใต้แถบตัวกรองเมื่อมีตัวกรอง ถ้ายังไม่ได้กรองอะไรอยู่ท้ายหน้าเหมือนเดิม
   function placeDrill(root) {
     const drill = root.querySelector("#nd-drill");
     if (!drill) return;
-    const key = drillAnchor ?? (hasDrillFilter(lastFilters) ? "controls" : "tiles");
+    const key = drillAnchor ?? (hasDrillFilter(lastFilters) ? "controls" : null);
+    if (!key) return; // ยังไม่ได้กรอง: เป็นรายการประกอบตัวเลขทั้งหมด คงไว้ท้ายหน้า ไม่ดันการ์ดอื่นลงไป
     const host = key === "controls" ? root.querySelector(".nd-summary") : root.querySelector(`[data-card="${CSS.escape(key)}"]`);
     (host?.closest(".nd > *") ?? root.querySelector(".nd-summary"))?.after(drill);
   }
@@ -431,7 +440,7 @@
   }
 
   function rememberFilterClick(params, card) {
-    pendingDrill = params.get("refresh") ? null : { params, card };
+    pendingDrill = params.get("refresh") ? null : { params, card, scrollY: window.scrollY };
   }
 
   function bindPage(root) {
@@ -455,6 +464,7 @@
     pendingDrill = null;
     drillAnchor = fromClick?.card ?? null;
     scrollToDrill = Boolean(fromClick);
+    restoreScrollY = fromClick ? fromClick.scrollY : null;
     const refresh = Boolean(params.get("refresh"));
     const fresh = !cache || cache.employeeId !== state.employee?.id || Date.now() - cache.loadedAt >= CACHE_MS || refresh;
     if (fresh) loadingShell("ncr", "แดชบอร์ด NCR");
