@@ -1028,11 +1028,18 @@ tr.ncr-voided td .muted { text-decoration: none; }
   --chart-1: #2a78d6;
   --chart-1-soft: #86b6ef;
   --chart-2: #eb6834;
+  /* สีแผนกในกราฟจำนวน NCR (ซ้อนแท่งตามแผนก) — dc1..dc10 ตามลำดับรหัสแผนก, dco = แผนกอื่นที่เกินชุดสี, dcn = ยังไม่กำหนดแผนก */
+  --dept-1: #2a78d6; --dept-2: #eb6834; --dept-3: #1f9d6b; --dept-4: #8b5cf6; --dept-5: #c28a00;
+  --dept-6: #e0457b; --dept-7: #14a8c4; --dept-8: #8a6d4b; --dept-9: #6b7a99; --dept-10: #9aa81e;
+  --dept-other: #8d96a6; --dept-none: #c3c8d2;
 }
 :root[data-theme="dark"] {
   --chart-1: #3987e5;
   --chart-1-soft: #184f95;
   --chart-2: #d95926;
+  --dept-1: #3987e5; --dept-2: #f0834f; --dept-3: #34b583; --dept-4: #a283f5; --dept-5: #e0b23a;
+  --dept-6: #ec6a97; --dept-7: #35bcd6; --dept-8: #a88a66; --dept-9: #8b99b5; --dept-10: #b4c24a;
+  --dept-other: #7c8696; --dept-none: #5a6270;
 }
 /* แดชบอร์ด NCR (modules/module-ncr-dashboard.js ชุด nd-*) — ใช้ token ของ pilot ทั้งสองธีม */
 .nd { display: grid; gap: 16px; min-width: 0; overflow-anchor: none; } /* วาดหน้าใหม่ทั้งก้อนแล้วคืนตำแหน่งเลื่อนเอง ไม่ให้เบราว์เซอร์เลื่อนชดเชยซ้ำจนหน้ากระโดด */
@@ -1116,6 +1123,10 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .nd-legend i { width: 10px; height: 10px; margin-right: 6px; display: inline-block; vertical-align: -1px; border-radius: 3px; }
 .nd-legend i.strong { background: var(--chart-1); }
 .nd-legend i.soft { background: var(--chart-1-soft); }
+.nd .dc1 { background: var(--dept-1); } .nd .dc2 { background: var(--dept-2); } .nd .dc3 { background: var(--dept-3); } .nd .dc4 { background: var(--dept-4); } .nd .dc5 { background: var(--dept-5); }
+.nd .dc6 { background: var(--dept-6); } .nd .dc7 { background: var(--dept-7); } .nd .dc8 { background: var(--dept-8); } .nd .dc9 { background: var(--dept-9); } .nd .dc10 { background: var(--dept-10); }
+.nd .dco { background: var(--dept-other); } .nd .dcn { background: var(--dept-none); }
+.nd-dot { width: 10px; height: 10px; margin-right: 6px; display: inline-block; vertical-align: -1px; border-radius: 3px; }
 .nd-chart { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; }
 .nd-yax { position: relative; height: 140px; color: var(--muted); font-size: 11px; }
 .nd-yax span { position: absolute; right: 0; transform: translateY(50%); }

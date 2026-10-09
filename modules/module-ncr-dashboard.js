@@ -141,7 +141,7 @@
     return `<button type="button" class="${extraClass}${on ? " selected" : ""}" data-sel="${esc(card)}:${esc(key)}" aria-pressed="${on}">${inner}</button>`;
   }
   const detailHint = (noun) => `<p class="nd-hint">แตะ${noun}เพื่อดูตัวเลขของรายการนั้น แล้วกดกรองทั้งหน้าได้</p>`;
-  const detailHtml = (item) => `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองทั้งหน้าตามนี้")}</a>` : ""}</div>`;
+  const detailHtml = (item) => `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value, swatch]) => `<li><span>${swatch ? `<i class="nd-dot ${swatch}" aria-hidden="true"></i>` : ""}${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองทั้งหน้าตามนี้")}</a>` : ""}</div>`;
   // รายละเอียดของรายการที่เลือก (ถ้ามี) — resolve(key) คืน { title, lines, href, linkLabel } หรือ null
   const selectedItem = (card, resolve) => (selection?.card === card ? resolve(selection.key) : null);
   // รายการที่เลือกแสดงรายละเอียดต่อท้ายตัวรายการนั้นเอง ไม่ไปรวมที่ท้ายการ์ด
@@ -227,41 +227,80 @@
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open" })}">ดูใบค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีใบค้างในช่วงและตัวกรองนี้</p>`}`;
   }
 
-  function columnChart({ card, title, subtitle, data, legend, pickA, pickB, formatTotal, formatAxis, lastFilters: filters }) {
-    const totals = data.map((month) => pickA(month) + pickB(month));
-    const maxValue = niceMax(Math.max(...totals, 0));
+  // กราฟแท่งรายเดือนแบบซ้อน: segmentsOf(month) คืนชิ้นส่วนของแท่ง [{ value, cls }] เรียงจากล่างขึ้นบน
+  // detailOf(month) คืนบรรทัดรายละเอียดใต้กราฟ [[label, value, swatchClass?]] ส่วน ariaOf ใช้เมื่อความสูงแท่งไม่เท่ากับยอดที่อ่านให้ผู้ใช้
+  function columnChart({ card, title, subtitle, data, segmentsOf, legend, formatTotal, formatAxis, detailOf, ariaOf, integerAxis, lastFilters: filters }) {
+    const segments = data.map((month) => segmentsOf(month).filter((segment) => segment.value > 0));
+    const totals = segments.map((list) => list.reduce((sum, segment) => sum + segment.value, 0));
+    const top = niceMax(Math.max(...totals, 0));
+    // แกนจำนวนใบต้องเป็นจำนวนเต็มทุกขีด (ขีดกลางไม่เป็นทศนิยม)
+    const maxValue = integerAxis ? Math.ceil(top / 2) * 2 : top;
     const maxIndex = totals.indexOf(Math.max(...totals));
     const columns = data.map((month, index) => {
-      const a = pickA(month), b = pickB(month), total = a + b;
-      const heightA = a > 0 ? Math.max(2, Math.round((a / maxValue) * CHART_HEIGHT)) : 0;
-      const heightB = b > 0 ? Math.max(2, Math.round((b / maxValue) * CHART_HEIGHT)) : 0;
+      const total = totals[index];
+      const heights = segments[index].map((segment) => Math.max(2, Math.round((segment.value / maxValue) * CHART_HEIGHT)));
+      const stackHeight = heights.reduce((sum, height) => sum + height, 0) + Math.max(0, heights.length - 1) * 2;
       const labelled = total > 0 && (index === maxIndex || index === data.length - 1);
       const out = month.month < filters.from || month.month > filters.to;
-      const inner = `<span class="nd-stack">${heightA ? `<b style="height:${heightA}px"></b>` : ""}${heightB ? `<b class="soft" style="height:${heightB}px"></b>` : ""}${labelled ? `<span class="nd-barval" style="bottom:${heightA + heightB + (heightA && heightB ? 2 : 0) + 3}px">${esc(formatAxis(total))}</span>` : ""}</span><span class="nd-mon">${MONTHS[month.month - 1]}</span>`;
-      return selectButton(card, month.month, inner, `nd-col${out ? " out" : ""}`).replace("<button", `<button aria-label="${esc(`${MONTHS[month.month - 1]} ${formatTotal(total)}`)}"`);
+      const bars = segments[index].map((segment, at) => `<b${segment.cls ? ` class="${segment.cls}"` : ""} style="height:${heights[at]}px"></b>`).join("");
+      const inner = `<span class="nd-stack">${bars}${labelled ? `<span class="nd-barval" style="bottom:${stackHeight + 3}px">${esc(formatAxis(total))}</span>` : ""}</span><span class="nd-mon">${MONTHS[month.month - 1]}</span>`;
+      const label = `${MONTHS[month.month - 1]} ${ariaOf ? ariaOf(month) : formatTotal(total)}`;
+      return selectButton(card, month.month, inner, `nd-col${out ? " out" : ""}`).replace("<button", `<button aria-label="${esc(label)}"`);
     }).join("");
     const ticks = [maxValue, maxValue / 2, 0].map((value) => `<span style="bottom:${(value / maxValue) * CHART_HEIGHT}px">${esc(formatAxis(value))}</span>`).join("");
     const grid = [0, 0.5, 1].map((fraction) => `<i${fraction === 1 ? ' class="base"' : ""} style="top:${(1 - fraction) * CHART_HEIGHT}px"></i>`).join("");
     return `<div class="nd-sub"><h3>${esc(title)}</h3><p>${esc(subtitle)}</p>
       <div class="nd-chart"><div class="nd-yax">${ticks}</div><div class="nd-plot"><div class="nd-grid">${grid}</div><div class="nd-cols">${columns}</div></div></div>
-      <div class="nd-legend"><span><i class="strong"></i>${esc(legend[0])}</span><span><i class="soft"></i>${esc(legend[1])}</span></div>
+      <div class="nd-legend">${legend.map((item) => `<span><i class="${item.cls}"></i>${esc(item.label)}</span>`).join("")}</div>
       ${detailBox(card, "แท่งเดือน", (key) => {
         const month = data.find((item) => String(item.month) === key);
         if (!month) return null;
-        return { title: monthName(month.month, filters.year), lines: card === "month-count"
-          ? [["NCR ที่ออก", fmtCount(month.count)], ["ปิดแล้ว", fmtCount(month.closed)], ["ยังไม่ปิด", fmtCount(month.open)]]
-          : [["สูญเสียสุทธิยืนยัน", fmtBaht(month.net)], ["ประมาณการรอยืนยัน", fmtBaht(month.estimated)]],
+        return { title: monthName(month.month, filters.year), lines: detailOf(month),
         href: hrefWith(filters, { from: month.month, to: month.month }), linkLabel: "ดูเฉพาะเดือนนี้" };
       })}</div>`;
   }
   const niceMax = (value) => { if (value <= 0) return 1; const unit = 10 ** Math.floor(Math.log10(value)); const lead = value / unit; return (lead <= 1 ? 1 : lead <= 2 ? 2 : lead <= 2.5 ? 2.5 : lead <= 5 ? 5 : 10) * unit; };
 
+  // สีของแผนกคงที่ตามลำดับรหัสแผนกของทุกใบที่โหลดมา (ไม่ขึ้นกับตัวกรอง) แผนกเดิมจึงได้สีเดิมทุกเดือนทุกปี
+  // เกินชุดสี (DEPT_COLORS) ใช้สีเทา "แผนกอื่น" ส่วนใบที่ยังไม่กำหนดแผนกใช้สีเทาอ่อน
+  const DEPT_COLORS = 10;
+  function deptClassOf(rows) {
+    const codes = [...new Set(rows.flatMap((row) => row.responsibilities.map((item) => item.dept)))].sort();
+    return (dept) => (dept === "" ? "dcn" : codes.indexOf(dept) < DEPT_COLORS ? `dc${codes.indexOf(dept) + 1}` : "dco");
+  }
+  const deptName = (dept) => (dept === "" ? "ยังไม่กำหนดแผนก" : `แผนก ${dept}`);
+
   function trendHtml(rows, filters, today) {
     const lastMonth = filters.year === today.slice(0, 4) ? Number(today.slice(5, 7)) : 12;
     const data = model.monthly(rows, filters, lastMonth);
+    const byDept = model.monthlyByDept(rows, filters, lastMonth);
+    const classOf = deptClassOf(rows);
+    const shown = [...new Set(byDept.flatMap((month) => month.depts.map((item) => item.dept)))].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a < b ? -1 : a > b ? 1 : 0));
+    const deptLegend = shown.filter((dept) => classOf(dept) !== "dco").map((dept) => ({ label: dept === "" ? "ยังไม่กำหนดแผนก" : dept, cls: classOf(dept) }));
+    if (shown.some((dept) => classOf(dept) === "dco")) deptLegend.push({ label: "แผนกอื่น", cls: "dco" });
+    const countChart = columnChart({
+      card: "month-count", title: "จำนวน NCR", subtitle: "แยกสีตามแผนกที่รับผิดชอบ ใบที่มีหลายแผนกนับในทุกแผนก แท่งจึงอาจสูงกว่าจำนวนใบจริง",
+      data: byDept, legend: deptLegend, formatTotal: fmtCount, formatAxis: (v) => fmtNumber(v), integerAxis: true, lastFilters: filters,
+      segmentsOf: (month) => month.depts.map((item) => ({ value: item.count, cls: classOf(item.dept) })),
+      ariaOf: (month) => `${fmtCount(month.count)} ${month.depts.map((item) => `${deptName(item.dept)} ${fmtCount(item.count)}`).join(" ")}`.trim(),
+      detailOf: (month) => {
+        const deptSum = month.depts.reduce((sum, item) => sum + item.count, 0);
+        return [
+          ["NCR ที่ออก (นับใบไม่ซ้ำ)", fmtCount(month.count)], ["ปิดแล้ว", fmtCount(month.closed)], ["ยังไม่ปิด", fmtCount(month.open)],
+          ...[...month.depts].sort((a, b) => b.count - a.count || (a.dept < b.dept ? -1 : 1)).map((item) => [deptName(item.dept), fmtCount(item.count), classOf(item.dept)]),
+          ...(deptSum !== month.count ? [["รวมตามแผนก (ใบหลายแผนกนับซ้ำ)", fmtCount(deptSum)]] : []),
+        ];
+      },
+    });
+    const moneyChart = columnChart({
+      card: "month-money", title: "สูญเสียสุทธิ (บาท)", subtitle: "ยืนยันแล้วเทียบกับประมาณการรอยืนยัน", data,
+      legend: [{ label: "ยืนยันแล้ว (สุทธิ)", cls: "strong" }, { label: "ประมาณการ", cls: "soft" }], formatTotal: fmtBaht, formatAxis: fmtShort, lastFilters: filters,
+      segmentsOf: (month) => [{ value: month.net }, { value: month.estimated, cls: "soft" }],
+      detailOf: (month) => [["สูญเสียสุทธิยืนยัน", fmtBaht(month.net)], ["ประมาณการรอยืนยัน", fmtBaht(month.estimated)]],
+    });
     return `<div class="nd-head"><h2>แนวโน้มรายเดือน</h2><p>แกนเดือนเดียวกันทั้งสองกราฟ (เดือนที่ออก NCR) เดือนนอกช่วงที่เลือกแสดงจางลง ตัวกรองอื่นยังใช้อยู่</p></div>
-      <div class="nd-two">${columnChart({ card: "month-count", title: "จำนวน NCR", subtitle: "ปิดแล้วเทียบกับยังไม่ปิด ณ วันนี้", data, legend: ["ปิดแล้ว", "ยังไม่ปิด"], pickA: (m) => m.closed, pickB: (m) => m.open, formatTotal: fmtCount, formatAxis: (v) => fmtNumber(v), lastFilters: filters })}
-      ${columnChart({ card: "month-money", title: "สูญเสียสุทธิ (บาท)", subtitle: "ยืนยันแล้วเทียบกับประมาณการรอยืนยัน", data, legend: ["ยืนยันแล้ว (สุทธิ)", "ประมาณการ"], pickA: (m) => m.net, pickB: (m) => m.estimated, formatTotal: fmtBaht, formatAxis: fmtShort, lastFilters: filters })}</div>`;
+      <div class="nd-two">${countChart}
+      ${moneyChart}</div>`;
   }
 
   function barRows({ card, items, valueOf, subOf, filters, filterKey, resolve }) {

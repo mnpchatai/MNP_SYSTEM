@@ -124,6 +124,34 @@
     return months;
   }
 
+  // Month series split by responsible department, for the stacked count chart. Same period handling as monthly().
+  // Counts are whole reports per department (like deptTable): a report owned by two departments appears in both,
+  // so the department counts of a month can add up to more than `count`, which is the number of distinct reports.
+  // A report with no responsibility rows falls into the "" department. A department filter keeps only that department.
+  // Departments inside a month are ordered by code ("" last) so a stack keeps the same order in every month.
+  function monthlyByDept(rows, filters, lastMonth = 12) {
+    const base = select(rows, filters, { ignorePeriod: true }).filter((row) => row.year === filters.year);
+    const order = (a, b) => (a.dept === "" ? 1 : b.dept === "" ? -1 : a.dept < b.dept ? -1 : a.dept > b.dept ? 1 : 0);
+    const months = [];
+    for (let month = 1; month <= lastMonth; month += 1) {
+      const list = base.filter((row) => row.month === month);
+      const depts = new Map();
+      for (const row of list) {
+        const owners = row.responsibilities.length ? row.responsibilities : [{ dept: "" }];
+        for (const owner of new Set(owners.map((item) => item.dept))) {
+          if (filters.dept && owner !== filters.dept) continue;
+          const entry = depts.get(owner) ?? { dept: owner, count: 0, closed: 0, open: 0 };
+          entry.count += 1;
+          if (row.isClosed) entry.closed += 1; else entry.open += 1;
+          depts.set(owner, entry);
+        }
+      }
+      const closed = list.filter((row) => row.isClosed).length;
+      months.push({ month, count: list.length, closed, open: list.length - closed, depts: [...depts.values()].sort(order) });
+    }
+    return months;
+  }
+
   // Defect-type Pareto. metric is "net" (confirmed net baht) or "count". vital = still inside the first 80%.
   function pareto(list, filters, metric = "net") {
     const groups = new Map();
@@ -218,7 +246,7 @@
     return list.filter((row) => row.isOpen).sort((a, b) => Number(b.overdue) - Number(a.overdue) || b.daysInStatus - a.daysInStatus).slice(0, limit);
   }
 
-  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
+  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);
