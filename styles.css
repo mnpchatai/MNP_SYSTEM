@@ -1030,7 +1030,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
   --chart-2: #d95926;
 }
 /* แดชบอร์ด NCR (modules/module-ncr-dashboard.js ชุด nd-*) — ใช้ token ของ pilot ทั้งสองธีม */
-.nd { display: grid; gap: 16px; min-width: 0; }
+.nd { display: grid; gap: 16px; min-width: 0; overflow-anchor: none; } /* วาดหน้าใหม่ทั้งก้อนแล้วคืนตำแหน่งเลื่อนเอง ไม่ให้เบราว์เซอร์เลื่อนชดเชยซ้ำจนหน้ากระโดด */
 .nd-controls, .nd-sub { display: grid; gap: 10px; min-width: 0; }
 .nd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .nd-chip { min-height: 40px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; font-size: 14px; text-decoration: none; }
