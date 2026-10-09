@@ -1672,6 +1672,44 @@ function statusFilterBar(params) {
     .map(([value, label]) => `<a class="filter${status === value ? " active" : ""}" href="${escapeHtml(requestCenterUrl(params, { status: value }))}">${label}</a>`).join("")}</nav>`;
 }
 
+// โมดูลที่ประกาศ loadRepairDepartments (MT) มีตัวกรองแผนกในหน้ารายการ — ค่า dept ใน URL คือรหัสแผนกต้นทาง (เช่น RB, ST)
+// ตัวกรองแค่ย่อรายการ ไม่ให้สิทธิ์เพิ่ม (RLS ยังเป็นตัวตัดสินว่าอ่านใบไหนได้)
+async function loadRequestDepartmentFilter(selected) {
+  const filterModule = selected ? requestModule(selected.code) : null;
+  if (!filterModule?.enabled || typeof filterModule.loadRepairDepartments !== "function") return null;
+  return await filterModule.loadRepairDepartments(sb);
+}
+
+function selectedFilterDepartment(params, departments) {
+  return departments?.find((item) => item.sourceCode === params.get("dept")) ?? null;
+}
+
+function requestSearchForm(params, { departments, placeholder }) {
+  const search = (params.get("q") ?? "").trim();
+  const department = selectedFilterDepartment(params, departments);
+  return `<form class="board-search" id="request-filter-form" role="search">
+      ${departments ? `<select class="select" id="request-filter-department" name="dept" aria-label="กรองตามแผนก">
+        <option value="">ทุกแผนก</option>
+        ${departments.map((item) => `<option value="${escapeHtml(item.sourceCode)}"${department?.sourceCode === item.sourceCode ? " selected" : ""}>${escapeHtml(item.displayCode)} · ${escapeHtml(item.name)}</option>`).join("")}
+      </select>` : ""}
+      <input class="input" id="request-filter-search" aria-label="ค้นหาคำร้อง" name="q" type="search" maxlength="80" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(search)}">
+      <button class="btn secondary small" type="submit">ค้นหา</button>
+      ${search || department ? `<a class="btn secondary small" href="${escapeHtml(requestCenterUrl(params, { q: null, dept: null }))}">ล้าง</a>` : ""}
+    </form>`;
+}
+
+function bindRequestSearchForm(params) {
+  const form = document.querySelector("#request-filter-form");
+  const submit = () => {
+    location.hash = requestCenterUrl(params, {
+      q: form.querySelector("#request-filter-search").value.trim(),
+      dept: form.querySelector("#request-filter-department")?.value ?? null,
+    });
+  };
+  form?.addEventListener("submit", (event) => { event.preventDefault(); submit(); });
+  form?.querySelector("#request-filter-department")?.addEventListener("change", submit);
+}
+
 async function requestTypeCounts(types, mineOnly) {
   return new Map(await Promise.all(types.map(async (type) => {
     const ncr = type.code === "NCR_CAR";
@@ -1716,25 +1754,21 @@ async function renderRequestsBoard(params, types) {
     p_limit: 500,
   });
   if (error) throw error;
+  const departments = await loadRequestDepartmentFilter(selected);
+  const department = selectedFilterDepartment(params, departments);
   const rows = (data ?? []).filter((row) => (!selected || row.type_code === selected.code)
-    && (status === "all" || status.split(",").includes(row.status)));
+    && (status === "all" || status.split(",").includes(row.status))
+    && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
   const content = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
     ${statusFilterBar(params)}
-    <form class="board-search" id="board-search-form" role="search">
-      <input class="input" id="board-search-input" aria-label="ค้นหาคำร้อง" name="q" type="search" maxlength="80" placeholder="ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" value="${escapeHtml(search)}">
-      <button class="btn secondary small" type="submit">ค้นหา</button>
-      ${search ? `<a class="btn secondary small" href="${escapeHtml(requestCenterUrl(params, { q: null }))}">ล้าง</a>` : ""}
-    </form>
+    ${requestSearchForm(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows)}</section>`;
   app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
   bindModuleZoom(params);
-  document.querySelector("#board-search-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    location.hash = requestCenterUrl(params, { q: document.querySelector("#board-search-input")?.value.trim() ?? "" });
-  });
+  bindRequestSearchForm(params);
 }
 
 function knownRequestStatuses(params) {
@@ -1742,13 +1776,16 @@ function knownRequestStatuses(params) {
 }
 
 // RLS decides which rows this account can read; the filters only narrow the list.
-async function requestListPanel(params, typeId) {
+async function requestListPanel(params, typeId, { departmentId = null, search = "" } = {}) {
   const mineOnly = params.get("scope") === "mine";
   let query = sb.from("requests")
     .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (typeId) query = query.eq("request_type_id", typeId);
+  if (departmentId) query = query.eq("department_id", departmentId);
+  // เลขที่ใบเป็นข้อความตายตัว ค้นแบบมีคำนี้อยู่ตรงไหนก็ได้; escape อักขระ wildcard ของ LIKE ไม่ให้ผู้ใช้พิมพ์ % _ แล้วได้ผลเกินคาด
+  if (search) query = query.ilike("request_no", `%${search.replace(/[\\%_]/g, "\\$&")}%`);
   const statuses = knownRequestStatuses(params);
   if (statuses.length) query = query.in("status", statuses);
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
@@ -1801,7 +1838,12 @@ async function renderRequests(params) {
     <a class="filter${mineOnly ? " active" : ""}" href="${escapeHtml(requestCenterUrl(params, { scope: "mine" }))}">เฉพาะที่ฉันแจ้ง</a></nav>`;
   let list = "";
   if (selected.code !== "NCR_CAR") {
-    list = `${statusFilterBar(params)}${await requestListPanel(params, selected.id)}`;
+    const departments = await loadRequestDepartmentFilter(selected);
+    const department = selectedFilterDepartment(params, departments);
+    // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
+    const search = departments ? (params.get("q") ?? "").trim() : "";
+    const filterForm = departments ? requestSearchForm(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม" }) : "";
+    list = `${statusFilterBar(params)}${filterForm}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -1812,6 +1854,7 @@ async function renderRequests(params) {
   app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
   bindModuleZoom(params);
+  bindRequestSearchForm(params);
 }
 
 function dynamicDetailFields(schema, values = {}) {

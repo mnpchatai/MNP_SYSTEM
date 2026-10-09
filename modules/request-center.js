@@ -1,9 +1,12 @@
 // Shared navigation for the Pilot request center. Filters never grant data access.
 (function () {
-  const FILTER_KEYS = ["type", "scope", "status", "view", "q", "ncrStatus"];
+  const FILTER_KEYS = ["type", "scope", "status", "view", "q", "ncrStatus", "dept"];
   function url(params, changes = {}) {
     const next = new URLSearchParams();
+    // The department filter belongs to one module's list; switching module must not carry it over.
+    const typeChanged = Object.prototype.hasOwnProperty.call(changes, "type") && changes.type !== params.get("type");
     for (const key of FILTER_KEYS) {
+      if (key === "dept" && typeChanged && !Object.prototype.hasOwnProperty.call(changes, "dept")) continue;
       const value = Object.prototype.hasOwnProperty.call(changes, key) ? changes[key] : params.get(key);
       if (value && (value !== "all" || key === "type" || key === "ncrStatus")) next.set(key, value);
     }
