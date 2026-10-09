@@ -16,6 +16,7 @@ import { actingRoleId, hasPermission } from "@/lib/data";
 import { getRequestModule } from "@/lib/request-modules";
 import {
   buildRequestTimeline,
+  type AttachmentTimelineRow,
   type ApprovalTimelineRow,
   type StatusTimelineRow,
   type VerificationTimelineRow,
@@ -53,7 +54,7 @@ export default async function RequestDetailPage({
         approver:employees!approval_steps_approver_employee_id_fkey(first_name,last_name),
         acted_by_employee:employees!approval_steps_acted_by_fkey(first_name,last_name)
       ),
-      request_attachments(*),
+      request_attachments(*, uploader:employees!request_attachments_uploader_id_fkey(first_name,last_name)),
       request_status_history(*, changed_by_employee:employees!request_status_history_changed_by_fkey(first_name,last_name)),
       request_verifications(*, verifier:employees!request_verifications_verified_by_fkey(first_name,last_name))
     `)
@@ -81,6 +82,7 @@ export default async function RequestDetailPage({
     steps: (request.approval_steps ?? []) as ApprovalTimelineRow[],
     verifications: (request.request_verifications ?? []) as VerificationTimelineRow[],
     isRepair: Boolean(request.request_type?.uses_repair_workflow),
+    attachments: (request.request_attachments ?? []) as AttachmentTimelineRow[],
   });
 
   return (
