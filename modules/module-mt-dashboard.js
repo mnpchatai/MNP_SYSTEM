@@ -4,7 +4,7 @@
 // ไฟล์นี้ทำหน้าที่โหลดข้อมูลและวาดหน้าจอเท่านั้น
 //
 // - อ่านผ่าน RLS เดียวกับหน้าคำร้อง (requests, request_status_history, request_verifications, request_technicians,
-//   machines, employees) ไม่มี RPC/migration ใหม่
+//   machines, employees) และ RPC อ่านชื่อผู้รับงานตามบทบาทเฉพาะใบที่บัญชีมีสิทธิ์เห็น
 // - สองฐานที่ไม่ปนกัน: งานค้างนับทุกใบที่ยังไม่จบ (ไม่ขึ้นกับช่วงเวลา) ส่วนตัวเลขอื่นนับตามวันที่แจ้งในช่วงที่เลือก
 // - ตัวกรองอยู่ใน URL แชร์ลิงก์ได้ แตะแถบเพื่อดูตัวเลขในหน้า (ไม่ใช้ป๊อปอัพ) แล้วกดกรองรายการด้านล่างได้
 //   รายการใบที่กรองแล้วไม่อยู่ท้ายหน้า: แสดงต่อท้ายส่วนที่กดกรองทันทีและเลื่อนไปที่รายการ (placeDrill)
@@ -50,6 +50,20 @@
     const person = cache?.directory?.get(id);
     return person ? `${person.first_name} ${person.last_name}`.trim() : "ช่าง (ไม่พบชื่อ)";
   };
+  function actionOwner(row) {
+    const role = model.STAGE_BY_KEY[row.stage]?.owner ?? "—";
+    let names = "";
+    if (row.stage === "start" || row.stage === "repair") {
+      names = row.technicianIds.map(techName).join(", ");
+    } else if (row.stage === "more_info" || row.stage === "verify") {
+      const person = cache.directory.get(row.requester_id);
+      names = person ? [person.first_name, person.last_name].filter(Boolean).join(" ") : row.requester_name;
+    } else {
+      names = (cache.roleOwners.get(row.id) ?? []).filter((owner) => owner.status === row.status && owner.current_step === row.current_step)
+        .map((owner) => `${owner.full_name}${owner.is_fallback ? " (รับแทน)" : ""}`).join(", ");
+    }
+    return `${role}: ${names || "ไม่พบชื่อผู้รับผิดชอบ"}`;
+  }
   const machineTitle = (rows, key) => {
     const row = rows.find((item) => item.machineKey === key);
     return row ? `${String(row.machine_code).trim()} (${row.dept || "—"})` : key;
@@ -71,11 +85,11 @@
     const typeResult = await sb.from("request_types").select("id").eq("code", "MT_REPAIR").eq("is_active", true).maybeSingle();
     if (typeResult.error) throw typeResult.error;
     const typeId = typeResult.data?.id ?? null;
-    // รายชื่อพนักงานใช้แสดงชื่อช่างเท่านั้น โหลดไม่ได้ก็ยังดูแดชบอร์ดได้ (ชื่อช่างขึ้นว่าไม่พบชื่อ)
+    // โหลดรายชื่อไม่ได้ก็ยังดูแดชบอร์ดได้ พร้อมข้อความว่าไม่พบชื่อ
     const [requests, directory] = await Promise.all([
       typeId
         ? allRows(() => sb.from("requests")
-          .select("id,request_no,status,current_step,is_urgent,doc_type,machine_code,machine_name,requester_name,submitted_at,completed_at,work_expected_date,department:departments(code),machine:machines(is_placeholder),request_technicians(technician_id),request_status_history(to_status,created_at),request_verifications(result)")
+          .select("id,request_no,status,current_step,is_urgent,doc_type,machine_code,machine_name,requester_id,requester_name,submitted_at,completed_at,work_expected_date,department:departments(code),machine:machines(is_placeholder),request_technicians(technician_id),request_status_history(to_status,created_at),request_verifications(result)")
           .eq("request_type_id", typeId).order("id"))
         : [],
       loadEmployeeDirectory().catch((error) => { console.warn("โหลดรายชื่อพนักงานสำหรับแดชบอร์ด MT ไม่สำเร็จ", error); return new Map(); }),
@@ -89,7 +103,20 @@
       history: row.request_status_history ?? [],
       verifications: row.request_verifications ?? [],
     })), today);
-    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows, directory };
+    const roleOwners = new Map();
+    const roleRequestIds = rows.filter((row) => row.stage === "assign" || row.stage === "approve_fm" || row.stage === "approve_gm").map((row) => row.id);
+    try {
+      for (let offset = 0; offset < roleRequestIds.length; offset += 500) {
+        const owners = await allRows(() => sb.rpc("app_mt_dashboard_role_owners", { p_request_ids: roleRequestIds.slice(offset, offset + 500) }));
+        for (const owner of owners) {
+          if (!roleOwners.has(owner.request_id)) roleOwners.set(owner.request_id, []);
+          roleOwners.get(owner.request_id).push(owner);
+        }
+      }
+    } catch (error) {
+      console.warn("โหลดชื่อผู้รับผิดชอบตามบทบาทสำหรับแดชบอร์ด MT ไม่สำเร็จ", error);
+    }
+    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows, directory, roleOwners };
     return cache;
   }
 
@@ -242,7 +269,7 @@
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่จบ เรียงจากเลยกำหนดเสร็จก่อน แล้วด่วน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
         const stage = model.STAGE_BY_KEY[row.stage];
-        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${row.overdue ? ` <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลย ${fmtNumber(row.daysOverdue)} วัน</span>` : ""}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(stage?.owner ?? "—")}<br><span class="nd-muted">${esc(stage?.short ?? "")}</span></td><td class="nd-num">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
+        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${row.overdue ? ` <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลย ${fmtNumber(row.daysOverdue)} วัน</span>` : ""}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(actionOwner(row))}<br><span class="nd-muted">${esc(stage?.short ?? "")}</span></td><td class="nd-num">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
       }).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open", stage: "" })}">ดูงานค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}`;
   }
