@@ -90,26 +90,11 @@
   // ไฟล์ที่แนบมากับการกระทำ (ตอบ ให้ข้อมูล พิจารณา ติดตาม ขอข้อมูล ยกเลิก บันทึกต้นทุน/ผล) ใช้หมวดตามสถานะก่อนกระทำ
   // ยกเว้นการตอบและการให้ข้อมูลเพิ่มซึ่งเป็นหมวดคำตอบเสมอ (ncr_attachments.section ต้องเป็น report/response/followup)
   const attachmentSectionFor = (action, status) => (["respond", "answer_info"].includes(action) ? "response" : ATTACHMENT_SECTION_BY_STATUS[status] ?? "followup");
-  const ATTACHMENT_ACCEPT = "image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx";
-  // ข้อความใต้ช่อง (ATTACHMENT_HINT) มาจาก app.js ชุดเดียวกับทุกหน้า
-  // โหมดทดสอบของ admin ไม่รองรับไฟล์แนบ (ลบไฟล์ใน Storage ด้วย SQL ไม่ได้ จึงไม่ปล่อยให้เกิดไฟล์ค้าง) ฐานข้อมูลปฏิเสธอยู่แล้ว
-  const evidenceFieldHtml = (id, label) => (state.employee?.isSandbox
-    ? `<div class="field"><span class="muted small">${label} — โหมดทดสอบยังไม่รองรับการแนบไฟล์</span></div>`
-    : `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="evidence" type="file" multiple accept="${ATTACHMENT_ACCEPT}"><small>${ATTACHMENT_HINT}</small></div>`);
+  const evidenceFieldHtml = (id, label) => window.MNP_NCR_ATTACHMENTS.fieldHtml(id, label);
   // อ่านไฟล์ทั้งหมดจากฟอร์มและตรวจขนาด/ชนิด/ขนาดรวมก่อนเรียก RPC (optionalAttachments ของ app.js โยน error เป็นข้อความไทย)
   const evidencesOf = (form) => (form.elements.evidence ? optionalAttachments(form.elements.evidence.files) : []);
 
-  async function uploadNcrAttachment(ncrId, file, section) {
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
-    const storagePath = `${ncrId}/${crypto.randomUUID()}-${safeName}`;
-    const { error: uploadError } = await sb.storage.from("ncr-attachments").upload(storagePath, file, { contentType: file.type, upsert: false });
-    if (uploadError) throw uploadError;
-    const { error } = await sb.rpc("app_ncr_add_attachment", { p_ncr_id: ncrId, p_section: section, p_storage_path: storagePath, p_file_name: file.name.slice(0, 255) });
-    if (error) {
-      await sb.storage.from("ncr-attachments").remove([storagePath]);
-      throw error;
-    }
-  }
+  const uploadNcrAttachment = (ncrId, file, section) => window.MNP_NCR_ATTACHMENTS.uploadOne(ncrId, file, section);
   const formatQty = (value) => (value === null || value === undefined ? "—" : Number(value).toLocaleString("th-TH", { maximumFractionDigits: 3 }));
   const formatBaht = (value) => `${Number(value || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿`;
   const optionalText = (form, name) => {
@@ -586,7 +571,7 @@
       <section class="card ncr-card"><h2>ไฟล์หลักฐาน</h2>
         <p class="muted small">ทุกคนที่เห็นใบนี้แนบไฟล์เพิ่มได้จนกว่าจะปิดใบ ไฟล์ที่แนบแล้วลบไม่ได้เพราะเป็นหลักฐาน · ผู้แนบและเวลาดูได้ในประวัติเอกสาร</p>
         ${attachmentGalleryHtml(attachments)}
-        ${OPEN_STATUSES.includes(ncr.status) && !state.employee?.isSandbox ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
+        ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
     const lossesSection = window.MNP_NCR_LOSS_UI.outcomeHtml(ncr, canEditLosses(ncr, employee), todayBangkok(), formatQty, directory) + lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
@@ -608,7 +593,7 @@
       const trigger = event.target.closest("[data-attachment-open]");
       if (trigger) openAttachmentLightbox(trigger.dataset.attachmentOpen);
     });
-    hydrateAttachmentGallery(attachments, "ncr-attachments").catch((error) => showToast(friendlyError(error), "error"));
+    hydrateAttachmentGallery(attachments, window.MNP_NCR_ATTACHMENTS.bucket(ncr.is_test)).catch((error) => showToast(friendlyError(error), "error"));
   }
 
   function bindDetail(ncr, losses) {

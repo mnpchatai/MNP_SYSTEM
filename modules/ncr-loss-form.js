@@ -2,7 +2,7 @@
   const costs = window.MNP_NCR_COSTS;
   const options = (items, selected) => Object.entries(items).map(([value, label]) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
   const numberField = (id, name, label, value = "", step = "any") => `<div class="field"><label for="${id}">${escapeHtml(label)}</label><input class="input" id="${id}" name="${name}" type="number" min="0" max="1000000000" step="${step}" inputmode="decimal" value="${escapeHtml(String(value))}" required></div>`;
-  // ช่องแนบไฟล์เพิ่มเติมของฟอร์มบันทึกต้นทุน/ผลดำเนินการ ใช้ชุดเดียวกับฟอร์มอื่นของ NCR (โหมดทดสอบแสดงข้อความว่ายังไม่รองรับ)
+  // ช่องแนบไฟล์เพิ่มเติมของฟอร์มบันทึกต้นทุน/ผลดำเนินการ ใช้ชุดเดียวกับฟอร์มอื่นของ NCR (รองรับทั้งข้อมูลจริงและโหมดทดสอบ)
   // ไฟล์อัปโหลดหลังบันทึกสำเร็จโดย submit handler กลางใน module-ncr.js
   const extraFilesField = (id) => (window.MNP_REQUEST_MODULES?.NCR_CAR?.shared?.evidenceFieldHtml?.(id, "แนบไฟล์เพิ่มเติม (ถ้ามี)") ?? "").replace('class="field"', 'class="field full"');
   function render(ncr, losses, directory, editable, today, formatBaht, formatQty) {

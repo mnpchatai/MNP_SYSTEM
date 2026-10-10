@@ -340,6 +340,8 @@ function friendlyError(error) {
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
     SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
     SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR และ Item master ฝ่ายโรงงานตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
+    NCR_FILES_REMAIN: "ลบไฟล์แนบทดสอบไม่หมด กรุณาลองล้างข้อมูลทดสอบอีกครั้ง",
+    NCR_FILES_CLEANUP_ACTIVE: "กำลังล้างไฟล์แนบทดสอบ กรุณารอให้เสร็จแล้วลองใหม่",
     SANDBOX_ATTACHMENT_UNSUPPORTED: "โหมดทดสอบยังไม่รองรับการแนบไฟล์",
     SANDBOX_NOT_ACTIVE: "ต้องเข้าโหมดทดสอบก่อนจึงจะล้างข้อมูลทดสอบได้",
     PERSONA_NOT_FOUND: "ไม่พบบัญชีทดสอบที่เลือก",
@@ -1327,7 +1329,7 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong><span class="sandbox-pill">TEST</span>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · บันทึกข้อมูลได้เฉพาะ NCR และ Item master ฝ่ายโรงงาน · ไม่รองรับการแนบไฟล์</span></div>
+    <div class="sandbox-banner-copy"><strong><span class="sandbox-pill">TEST</span>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR และเอกสารฝ่ายโรงงานได้ พร้อมแนบไฟล์</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
@@ -1379,11 +1381,10 @@ function bindSandboxBanner() {
     }
   });
   document.querySelector("#sandbox-purge")?.addEventListener("click", async (event) => {
-    if (!confirm("ล้างใบ NCR ทดสอบทั้งหมดและเริ่มนับเลข TEST- ใหม่ ?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
+    if (!confirm("ล้างใบ NCR ทดสอบและไฟล์แนบทั้งหมด และเริ่มนับเลข TEST- ใหม่ ?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
     event.currentTarget.disabled = true;
     try {
-      const { data, error } = await sb.rpc("app_sandbox_purge_ncr");
-      if (error) throw error;
+      const data = await window.MNP_NCR_ATTACHMENTS.purge();
       showToast(`ล้างข้อมูลทดสอบแล้ว ${data?.deleted ?? 0} ใบ`);
       if (location.hash === "#/ncr") await renderRoute();
       else go("ncr");
