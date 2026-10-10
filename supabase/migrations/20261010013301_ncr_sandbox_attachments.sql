@@ -185,12 +185,17 @@ grant execute on function public.app_ncr_add_attachment(uuid, text, text, text) 
 -- Enumerate storage.objects as well as registered files, so failed uploads are covered.
 create or replace function public.app_sandbox_begin_ncr_file_cleanup()
 returns text[] language plpgsql security definer set search_path = '' as $$
+declare
+  v_admin public.employees%rowtype;
 begin
-  perform private.sandbox_admin();
+  v_admin := private.sandbox_admin();
   if not private.ncr_test_files_allowed() then raise exception 'SANDBOX_NOT_ACTIVE'; end if;
   update public.sandbox_sessions set ncr_files_cleanup_until = now() + interval '5 minutes'
   where admin_auth_user_id = auth.uid();
   if not found then raise exception 'SANDBOX_NOT_ACTIVE'; end if;
+  insert into public.audit_logs (actor_id, action, entity_type, entity_id, metadata)
+  values (v_admin.id, 'SANDBOX_NCR_FILE_CLEANUP_START', 'sandbox_session', v_admin.id::text,
+    jsonb_build_object('expires_at', now() + interval '5 minutes'));
   return coalesce((select array_agg(name order by name) from storage.objects
     where bucket_id = 'ncr-test-attachments'), '{}'::text[]);
 end;
@@ -200,9 +205,16 @@ grant execute on function public.app_sandbox_begin_ncr_file_cleanup() to authent
 
 create or replace function public.app_sandbox_finish_ncr_file_cleanup()
 returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_admin public.employees%rowtype;
 begin
-  perform private.sandbox_admin();
-  update public.sandbox_sessions set ncr_files_cleanup_until = null where admin_auth_user_id = auth.uid();
+  v_admin := private.sandbox_admin();
+  update public.sandbox_sessions set ncr_files_cleanup_until = null
+  where admin_auth_user_id = auth.uid() and ncr_files_cleanup_until is not null;
+  if found then
+    insert into public.audit_logs (actor_id, action, entity_type, entity_id, metadata)
+    values (v_admin.id, 'SANDBOX_NCR_FILE_CLEANUP_END', 'sandbox_session', v_admin.id::text, '{}'::jsonb);
+  end if;
 end;
 $$;
 revoke all on function public.app_sandbox_finish_ncr_file_cleanup() from public, anon;

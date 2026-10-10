@@ -118,6 +118,12 @@ delete from storage.objects where bucket_id='ncr-test-attachments' and name=curr
 select throws_ok('select public.app_sandbox_purge_ncr()','NCR_FILES_REMAIN','partial removal keeps the reports for retry');
 select public.app_sandbox_finish_ncr_file_cleanup();
 select ok(not private.ncr_test_cleanup_allowed(),'failed cleanup can close temporary access');
+reset role;
+select ok(exists(select 1 from public.audit_logs where actor_id='83000000-0000-0000-0000-000000000101'
+  and action='SANDBOX_NCR_FILE_CLEANUP_START'),'starting cleanup is audited as the real Admin');
+select ok(exists(select 1 from public.audit_logs where actor_id='83000000-0000-0000-0000-000000000101'
+  and action='SANDBOX_NCR_FILE_CLEANUP_END'),'closing failed cleanup is audited');
+set local role authenticated;
 select is((select count(*) from storage.objects where name='83000000-0000-0000-0000-000000000999/orphan.pdf'),0::bigint,'orphan reads are hidden again after cleanup');
 select is(cardinality(public.app_sandbox_begin_ncr_file_cleanup()),3,'retry enumerates remaining files only');
 delete from storage.objects where bucket_id='ncr-test-attachments';
