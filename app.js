@@ -2354,7 +2354,12 @@ async function renderRequestDetail(params) {
       <div class="stack">
         <section class="card request-overview-card">
           <div class="request-overview-head"><div class="request-overview-title"><span>รายละเอียดหลัก</span><h2>ข้อมูลคำร้อง</h2></div>${detailView?.statusBadgeHtml ?? statusBadge(request.status)}</div>
-          <p class="description request-summary">${escapeHtml(request.description)}</p>
+          <section class="request-summary" aria-label="รายละเอียดที่ผู้ขอแจ้ง">
+            <div class="request-summary-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>รายละเอียดที่ผู้ขอแจ้ง</div>
+            ${(request.description ?? "").trim()
+              ? `<p class="request-summary-text">${escapeHtml(request.description)}</p>`
+              : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
+          </section>
           <div class="request-facts">${requestFacts}</div>
         </section>
         ${request.status === "more_info" ? (() => {
