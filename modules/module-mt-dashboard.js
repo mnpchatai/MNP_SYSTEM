@@ -327,7 +327,10 @@
       : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "ใบที่แจ้งในช่วงนี้" แตะเลขที่เพื่อเปิดใบ` };
     const statusCell = (row) => {
       const badge = row.isOpen ? `<span class="badge ${esc(row.status)}">${esc(model.STAGE_BY_KEY[row.stage]?.short ?? row.status)}</span>` : statusBadge(row.status);
-      return row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
+      const status = row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
+      if (row.stage !== "start" && row.stage !== "repair") return status;
+      const names = row.technicianIds.map(techName).join(", ") || "ไม่พบข้อมูลช่างที่รับผิดชอบ";
+      return `${status}<br><span class="nd-muted">ช่างผู้รับผิดชอบ: ${esc(names)}</span>`;
     };
     const timeCell = (row) => (row.isCompleted ? fmtDays(row.cycleDays) : row.isOpen ? `ค้าง ${fmtNumber(row.daysInStatus)} วัน` : "—");
     // ปุ่มยกเลิกการกรองอยู่มุมขวาบนของรายการที่กรองแล้ว (ล้างตัวกรองที่กำหนดรายการนี้ทั้งหมด) กดแล้ววนกลับไปจุดที่กดกรองมา
