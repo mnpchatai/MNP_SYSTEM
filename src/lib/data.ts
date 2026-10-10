@@ -28,7 +28,14 @@ export async function findActiveRoleHolders(roleId: string, departmentId?: strin
     : { data: null };
   const grantedIds = new Set((grants ?? []).map((row) => row.employee_id));
   return (data ?? [])
-    .filter((row: RoleHolder & { id: string }) => roleIds.includes(actingRoleId(row)) && (!context || grantedIds.has(row.id)))
+    .filter((row: RoleHolder & { id: string }) => {
+      // Mirrors private.mt_assistant_admin_receives_notifications. Stable role IDs
+      // come from the initial role seed and 20260919000000_unify_position_and_role.sql.
+      const assistantAdminForMt = context?.requestTypeCode === "MT_REPAIR" && context.step.step_order === 1 &&
+        row.role_id === "20000000-0000-0000-0000-000000000004" &&
+        row.acting_role_id === "20000000-0000-0000-0000-000000000003";
+      return roleIds.includes(actingRoleId(row)) && (!context || grantedIds.has(row.id) || assistantAdminForMt);
+    })
     .map((row: { id: string }) => row.id);
 }
 
