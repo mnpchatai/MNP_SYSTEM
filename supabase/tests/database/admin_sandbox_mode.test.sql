@@ -3,7 +3,7 @@
 --   2) ใครเข้าโหมดทดสอบได้ (admin เท่านั้น) ทั้งกรณีอนุญาตและปฏิเสธ
 --   3) ใช้ NCR ครบทุกขั้นตามบทบาทของ persona: เลขที่ TEST- แยก ไม่มีแจ้งเตือน ไม่ปรากฏในตัวเตือนงานค้าง
 --   4) แยกข้อมูล: ผู้ใช้จริงมองไม่เห็น/แก้ใบทดสอบไม่ได้ และ persona มองไม่เห็น/แก้ใบจริงไม่ได้
---   5) ด่าน fail-closed: โมดูลอื่นเขียนข้อมูลไม่ได้ขณะอยู่ในโหมดทดสอบ, แนบไฟล์ในใบทดสอบไม่ได้
+--   5) ด่าน fail-closed: โมดูลอื่นเขียนข้อมูลไม่ได้ขณะอยู่ในโหมดทดสอบ, ไฟล์แนบทดสอบแยกจากของจริง
 --   6) ล้างข้อมูลทดสอบ และสิทธิ์โหมดทดสอบหายไปเมื่อบัญชีไม่ใช่ admin แล้ว
 begin;
 
@@ -362,17 +362,15 @@ select throws_ok(
   'inside the sandbox another module cannot write real data'
 );
 select ok(
-  not private.can_upload_ncr_attachment(current_setting('test.sbx_ncr_2')::uuid),
-  'attachments cannot be uploaded to a test NCR'
+  private.can_upload_ncr_attachment(current_setting('test.sbx_ncr_2')::uuid),
+  'attachments can be uploaded to an open test NCR'
 );
 reset role;
-select throws_ok(
+select lives_ok(
   $$ insert into public.ncr_attachments (ncr_id, section, uploader_id, storage_path, file_name, content_type, size_bytes)
      values (current_setting('test.sbx_ncr_2')::uuid, 'report', current_setting('test.p_sbx_rb_staff')::uuid,
              current_setting('test.sbx_ncr_2') || '/x.png', 'x.png', 'image/png', 10) $$,
-  'P0001',
-  'SANDBOX_ATTACHMENT_UNSUPPORTED',
-  'the database refuses attachment rows on a test NCR'
+  'attachment rows are allowed on a test NCR in the same mode'
 );
 
 -- 7. ล้างข้อมูลทดสอบ ----------------------------------------------------------------

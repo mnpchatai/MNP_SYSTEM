@@ -57,5 +57,6 @@ jobs:
       # stack local ใน runner เท่านั้น (ไม่แตะ Supabase Cloud) ข้าม service ที่ test ไม่ใช้
       - run: npx supabase start -x studio,imgproxy,mailpit,logflare,vector,edge-runtime,realtime,supavisor,postgres-meta
       - run: npm run db:test
+      - run: npm run test:storage
       - if: always()
         run: npx supabase stop --no-backup
