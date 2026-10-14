@@ -64,6 +64,9 @@ function approvalRpcErrorMessage(message: string) {
   if (message.includes("DECISION_NOT_ALLOWED")) return "มติ \"รับทราบข้อมูล\" ใช้ได้เฉพาะใบคำร้องถึงฝ่ายบริหาร";
   if (message.includes("STEP_NOT_PENDING") || message.includes("STEP_NOT_CURRENT")) return "ขั้นตอนนี้ถูกพิจารณาไปแล้ว กรุณาโหลดหน้าคำร้องใหม่";
   if (message.includes("REQUEST_NOT_AWAITING_INFO")) return "คำร้องนี้ไม่ได้อยู่ในสถานะรอข้อมูลเพิ่มเติมแล้ว";
+  if (message.includes("STEP_HAS_NO_COMMENT")) return "ขั้นนี้ยังไม่มีความเห็นจากผู้อนุมัติให้ตอบกลับ";
+  if (message.includes("REPLY_NOT_SUPPORTED")) return "คำร้องประเภทนี้ยังไม่รองรับการตอบกลับความเห็น";
+  if (message.includes("INVALID_MESSAGE")) return "กรุณาพิมพ์ข้อความตอบกลับ";
   if (message.includes("NOT_AUTHORIZED")) return "คุณไม่มีสิทธิ์ดำเนินการนี้";
   return "บันทึกไม่สำเร็จ กรุณาตรวจสอบสิทธิ์และสถานะคำร้อง แล้วลองใหม่";
 }
@@ -498,6 +501,19 @@ export async function resubmitRequestAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/requests");
+  revalidatePath(`/requests/${requestId}`);
+}
+
+// ผู้ยื่นตอบกลับความเห็นของผู้อนุมัติ (ทุกมติ) — ตรวจสิทธิ์ บันทึก และแจ้งผู้ให้ความเห็นใน RPC เดียวกับ Pilot Web
+export async function replyToStepCommentAction(formData: FormData) {
+  await getCurrentEmployee();
+  const requestId = String(formData.get("request_id") ?? "");
+  const stepId = String(formData.get("step_id") ?? "");
+  const message = String(formData.get("message") ?? "").trim().slice(0, 1000);
+  if (!message) fail(`/requests/${requestId}`, approvalRpcErrorMessage("INVALID_MESSAGE"));
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("app_reply_to_step_comment", { p_step_id: stepId, p_message: message });
+  if (error) fail(`/requests/${requestId}`, approvalRpcErrorMessage(error.message));
   revalidatePath(`/requests/${requestId}`);
 }
 

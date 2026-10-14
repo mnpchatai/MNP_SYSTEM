@@ -21,4 +21,6 @@ export type RequestModule = {
   extraDecisions?: readonly { decision: string; label: string }[];
   // จบที่มติของผู้อนุมัติ ไม่มีขั้น "รับงาน/เสร็จแล้ว" (ฐานข้อมูลบังคับใน app_update_request_status)
   endsAtDecision?: boolean;
+  // ผู้ยื่นตอบกลับความเห็นของผู้อนุมัติได้ทุกมติ (ฐานข้อมูลบังคับใน app_reply_to_step_comment)
+  requesterReplies?: boolean;
 };

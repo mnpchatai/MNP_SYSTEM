@@ -20,4 +20,5 @@ export const managementModule: RequestModule = {
   printFormLabel: "พิมพ์ฟอร์ม PP01-FM08",
   extraDecisions: [{ decision: "acknowledged", label: "รับทราบข้อมูล" }],
   endsAtDecision: true,
+  requesterReplies: true,
 };

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   approvalDecisionAction,
+  replyToStepCommentAction,
   resubmitRequestAction,
   updateRequestStatusAction,
 } from "@/app/actions/requests";
@@ -20,6 +21,7 @@ import {
   buildRequestTimeline,
   type AttachmentTimelineRow,
   type ApprovalTimelineRow,
+  type ReplyTimelineRow,
   type StatusTimelineRow,
   type VerificationTimelineRow,
 } from "@/lib/request-timeline";
@@ -58,7 +60,8 @@ export default async function RequestDetailPage({
       ),
       request_attachments(*, uploader:employees!request_attachments_uploader_id_fkey(first_name,last_name)),
       request_status_history(*, changed_by_employee:employees!request_status_history_changed_by_fkey(first_name,last_name)),
-      request_verifications(*, verifier:employees!request_verifications_verified_by_fkey(first_name,last_name))
+      request_verifications(*, verifier:employees!request_verifications_verified_by_fkey(first_name,last_name)),
+      request_comments(id, approval_step_id, body, created_at, author:employees!request_comments_author_id_fkey(first_name,last_name))
     `)
     .eq("id", id)
     .single();
@@ -88,6 +91,14 @@ export default async function RequestDetailPage({
       (roleMatches(step, request.request_type?.code, employee) && canApproveModule && canAct)
     ));
   const details = (request.details ?? {}) as Record<string, string>;
+  // คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ (ความเห็นที่ไม่ผูกขั้นไม่มีหน้าไหนแสดง)
+  const replies = ((request.request_comments ?? []) as ReplyTimelineRow[])
+    .filter((reply) => reply.approval_step_id)
+    .sort((left, right) => left.created_at.localeCompare(right.created_at));
+  // ตรงกับ app_reply_to_step_comment: ผู้ยื่น, โมดูลที่เปิด requesterReplies, ขั้นที่ตัดสินแล้วและมีความเห็น
+  const canReplyToStep = (step: { status: string; comment: string | null }) =>
+    request.requester_id === employee.id && Boolean(requestModule?.requesterReplies) &&
+    ["approved", "acknowledged", "rejected"].includes(step.status) && Boolean(step.comment?.trim());
   const timeline = buildRequestTimeline({
     request,
     history: (request.request_status_history ?? []) as StatusTimelineRow[],
@@ -95,6 +106,7 @@ export default async function RequestDetailPage({
     verifications: (request.request_verifications ?? []) as VerificationTimelineRow[],
     isRepair: Boolean(request.request_type?.uses_repair_workflow),
     attachments: (request.request_attachments ?? []) as AttachmentTimelineRow[],
+    replies,
   });
 
   return (
@@ -220,6 +232,19 @@ export default async function RequestDetailPage({
                   <strong>{step.step_name}</strong>
                   <p>{employeeName(step.approver)} · {step.status === "pending" ? "รอดำเนินการ" : statusLabels[step.status] ?? step.status}</p>
                   {step.comment && <p>“{step.comment}”</p>}
+                  {replies.filter((reply) => reply.approval_step_id === step.id).map((reply) => (
+                    <p className="step-reply" key={reply.id}>
+                      <strong>ตอบกลับโดย {employeeName(reply.author)}</strong> · {formatDate(reply.created_at, true)}<br />{reply.body}
+                    </p>
+                  ))}
+                  {canReplyToStep(step) && (
+                    <form action={replyToStepCommentAction} className="step-reply-form">
+                      <input type="hidden" name="request_id" value={request.id} />
+                      <input type="hidden" name="step_id" value={step.id} />
+                      <div className="field"><label htmlFor={`step-reply-${step.id}`}>ตอบกลับความเห็นนี้</label><textarea className="textarea" id={`step-reply-${step.id}`} name="message" maxLength={1000} required /></div>
+                      <SubmitButton pendingLabel="กำลังส่ง...">ส่งคำตอบ</SubmitButton>
+                    </form>
+                  )}
                 </div>
               ))}
             </div>

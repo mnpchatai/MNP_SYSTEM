@@ -102,12 +102,15 @@
     theme: ["#a78bfa", "#5b21b6"],
     // ฟอร์ม PP01-FM08 ไม่มีช่องความสำคัญ — ฟังก์ชันส่งคำร้องกลางใช้ค่า normal
     hidePriority: true,
-    // มติที่ 3 ของฟอร์ม PP01-FM08 นอกจากอนุมัติ/ไม่อนุมัติ (app_approval_decision ใน
-    // 20260922010000_management_request_pp01_fm08.sql) — แสดงปุ่มเพิ่มในกล่องพิจารณาคำร้อง
+    // มติที่ 3 ของฟอร์ม PP01-FM08 นอกจากอนุมัติ/ไม่อนุมัติ — แสดงปุ่มเพิ่มในกล่องพิจารณาคำร้อง
+    // ขั้นที่ยังมีขั้นถัดไปรออยู่ (ผจก.โรงงาน) จะส่งต่อขั้นถัดไป ใบปิดเป็นรับทราบข้อมูลเฉพาะมติของขั้นสุดท้าย
     extraDecisions: [{ decision: "acknowledged", label: "รับทราบข้อมูล" }],
     // จบที่มติของฝ่ายบริหาร ไม่มีขั้น "รับงาน/เสร็จแล้ว" แบบคำร้องทั่วไป — ฐานข้อมูลบังคับเหมือนกัน
     // (app_update_request_status ใน 20261014040000_management_request_flow_completion.sql)
     endsAtDecision: true,
+    // ผู้ยื่นตอบกลับความเห็นของผู้อนุมัติได้ทุกมติ (app_reply_to_step_comment ใน
+    // 20261014100000_management_acknowledge_forwards_and_requester_replies.sql)
+    requesterReplies: true,
     // แถบ "ไปถึงไหนแล้ว": รออนุมัติ → มีมติ (อนุมัติ หรือ รับทราบข้อมูล) ส่วนไม่อนุมัติแสดงเป็นสถานะหลุดเส้นทาง
     progressStages: [
       { status: "pending_approval", label: "รออนุมัติ" },
