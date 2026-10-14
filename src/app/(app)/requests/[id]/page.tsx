@@ -60,8 +60,7 @@ export default async function RequestDetailPage({
       ),
       request_attachments(*, uploader:employees!request_attachments_uploader_id_fkey(first_name,last_name)),
       request_status_history(*, changed_by_employee:employees!request_status_history_changed_by_fkey(first_name,last_name)),
-      request_verifications(*, verifier:employees!request_verifications_verified_by_fkey(first_name,last_name)),
-      request_comments(id, approval_step_id, body, created_at, author:employees!request_comments_author_id_fkey(first_name,last_name))
+      request_verifications(*, verifier:employees!request_verifications_verified_by_fkey(first_name,last_name))
     `)
     .eq("id", id)
     .single();
@@ -92,12 +91,18 @@ export default async function RequestDetailPage({
     ));
   const details = (request.details ?? {}) as Record<string, string>;
   // คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ (ความเห็นที่ไม่ผูกขั้นไม่มีหน้าไหนแสดง)
-  const replies = ((request.request_comments ?? []) as ReplyTimelineRow[])
-    .filter((reply) => reply.approval_step_id)
-    .sort((left, right) => left.created_at.localeCompare(right.created_at));
+  // แยก query: ถ้าฐานข้อมูลยังไม่มีคอลัมน์ approval_step_id (ยังไม่ deploy 20261014100000) หน้าคำร้องต้องยังเปิดได้
+  // และซ่อนฟอร์มตอบกลับไว้จนกว่าจะโหลดได้
+  const { data: replyRows, error: repliesError } = await supabase
+    .from("request_comments")
+    .select("id, approval_step_id, body, created_at, author:employees!request_comments_author_id_fkey(first_name,last_name)")
+    .eq("request_id", id)
+    .not("approval_step_id", "is", null)
+    .order("created_at");
+  const replies = repliesError ? [] : ((replyRows ?? []) as unknown as ReplyTimelineRow[]);
   // ตรงกับ app_reply_to_step_comment: ผู้ยื่น, โมดูลที่เปิด requesterReplies, ขั้นที่ตัดสินแล้วและมีความเห็น
   const canReplyToStep = (step: { status: string; comment: string | null }) =>
-    request.requester_id === employee.id && Boolean(requestModule?.requesterReplies) &&
+    !repliesError && request.requester_id === employee.id && Boolean(requestModule?.requesterReplies) &&
     ["approved", "acknowledged", "rejected"].includes(step.status) && Boolean(step.comment?.trim());
   const timeline = buildRequestTimeline({
     request,
