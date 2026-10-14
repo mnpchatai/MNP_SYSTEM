@@ -68,9 +68,10 @@
     });
   }
 
-  // ยังไม่มีข้อมูลทดสอบ: ทุกหน้าชี้ไปที่ปุ่มเติมข้อมูลตัวอย่างในทะเบียนสินค้า
+  // ยังไม่มีข้อมูลทดสอบ: ทุกหน้าชี้ไปที่หน้าจัดการข้อมูลทดสอบ (modules/module-factory-test-data.js) ที่เติมชุดข้อมูลตัวอย่างได้
+  const testDataUrl = () => menu.url("test-data-manage");
   const emptyData = (what) => `<section class="card"><div class="empty">ยังไม่มี${escapeHtml(what)}ในโหมดทดสอบ<br>
-      <a class="btn secondary small" href="${escapeHtml(menu.url("item-list"))}">ไปที่ทะเบียนสินค้าเพื่อเติมข้อมูลตัวอย่าง</a></div></section>`;
+      <a class="btn secondary small" href="${escapeHtml(testDataUrl())}">เติมชุดข้อมูลตัวอย่าง</a></div></section>`;
 
   // ---------- ทะเบียนสินค้า ----------
   function listHtml(data, params) {
@@ -85,10 +86,8 @@
     const types = [["all", "ทั้งหมด"], ...Object.entries(model.ITEM_TYPES)];
 
     if (!items.length) {
-      return `<section class="card"><div class="empty">ยังไม่มี Item ในโหมดทดสอบ<br><small>เติมข้อมูลตัวอย่าง 16 รายการ (ข้อมูลสมมติจากแอปที่ส่งมา ไม่ใช่ข้อมูลจริง) หรือเพิ่ม Item เอง</small>
-          <div class="fm-actions"><button class="btn" type="button" id="fm-seed">เติมข้อมูลตัวอย่าง</button>
-          <button class="btn secondary" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
-          <button class="btn secondary" type="button" id="fm-seed-megaform">เติมชุดทดสอบ MEGAFORM (ตาราง Gantt ครบทุกแผนก)</button>
+      return `<section class="card"><div class="empty">ยังไม่มี Item ในโหมดทดสอบ<br><small>เลือกชุดข้อมูลตัวอย่าง (ข้อมูลสมมติ ไม่ใช่ข้อมูลจริง) ที่หน้าจัดการข้อมูลทดสอบ หรือเพิ่ม Item เอง</small>
+          <div class="fm-actions"><a class="btn" href="${escapeHtml(testDataUrl())}">เติมชุดข้อมูลตัวอย่าง</a>
           <a class="btn secondary" href="${escapeHtml(menu.url("item-new"))}"><span class="plus-icon" aria-hidden="true"></span> เพิ่ม Item ใหม่</a></div></div></section>`;
     }
 
@@ -136,23 +135,9 @@
           : `<div class="empty">ไม่พบ Item ที่ตรงกับการค้นหา<br><a class="btn secondary small" href="${escapeHtml(menu.url("item-list"))}">ล้างตัวกรอง</a></div>`}
         <div class="fm-table-footer"><span class="muted small">แสดง ${page.from}–${page.to} จาก ${page.total} รายการ</span>${pages}</div>
       </section>
-      <section class="card fm-danger-zone">
-        <h2>ข้อมูลทดสอบของฝ่ายโรงงาน</h2>
-        <p class="muted small">ล้าง Item, BOM, Routing, คลัง และใบสั่งผลิตที่เป็นข้อมูลทดสอบทั้งหมด (ข้อมูลจริงไม่ถูกแตะ) แล้วเติมข้อมูลตัวอย่างใหม่ได้</p>
-        <ul class="fm-test-actions">
-          <li>
-            <div><strong>ชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</strong><span>สินค้า 5 รายการ พร้อม BOM หลายชั้น Routing ตามแผนก (RB → SR/QC → GR · PT · BG → PK → WH) ใบสั่งผลิต และยอดยกมา เติมซ้ำไม่ได้จนกว่าจะล้างข้อมูลทดสอบ</span></div>
-            <button class="btn secondary small" type="button" id="fm-seed-trial">เติมชุดทดลอง 5 สินค้า (ตาม workflow การผลิต)</button>
-          </li>
-          <li>
-            <div><strong>ชุดทดสอบ MEGAFORM (ใบคำนวณวัตถุดิบ 260702-26031)</strong><span>สินค้า 14 รายการจากใบคำนวณวัตถุดิบ พร้อม BOM ที่อนุมัติแล้ว Routing ใบสั่งผลิต 14 ใบ (ออกใบสั่งงานแล้ว) และใบงานของทุกแผนก RB · GR · PT · BG · PK ที่มีวันที่ตามกำหนดเสร็จของแต่ละแผนก เพื่อดูที่ตารางการผลิต (Gantt) เติมซ้ำไม่ได้จนกว่าจะล้างข้อมูลทดสอบ</span></div>
-            <button class="btn secondary small" type="button" id="fm-seed-megaform">เติมชุดทดสอบ MEGAFORM (ตาราง Gantt ครบทุกแผนก)</button>
-          </li>
-          <li>
-            <div><strong>ล้างข้อมูลทดสอบ</strong><span>Item, BOM, Routing, คลัง, ใบสั่งผลิต และประวัติ ข้อมูลจริงไม่ถูกแตะ</span></div>
-            <button class="btn danger small" type="button" id="fm-purge">ล้างข้อมูลทดสอบฝ่ายโรงงาน</button>
-          </li>
-        </ul>
+      <section class="card fm-test-data-link">
+        <div><h2>ข้อมูลทดสอบของฝ่ายโรงงาน</h2><p class="muted small">เติมชุดข้อมูลตัวอย่าง ดูจำนวนข้อมูลทดสอบ และล้างแบบตรวจรายการที่จะลบก่อนยืนยัน</p></div>
+        <a class="btn secondary small" href="${escapeHtml(testDataUrl())}">จัดการข้อมูลทดสอบ →</a>
       </section>`;
   }
 
@@ -166,53 +151,6 @@
     });
     // เปลี่ยน dropdown แล้วกรองทันที (ช่องค้นหายังต้องกดค้นหา/Enter)
     root.querySelectorAll("#fm-filter select").forEach((select) => select.addEventListener("change", () => root.querySelector("#fm-filter").requestSubmit()));
-    root.querySelector("#fm-seed")?.addEventListener("click", async (event) => {
-      event.currentTarget.disabled = true;
-      try {
-        const { data, error } = await sb.rpc("app_sandbox_seed_factory");
-        if (error) throw error;
-        showToast(data?.seeded ? `เติมข้อมูลตัวอย่างแล้ว ${data.items} รายการ` : "มีข้อมูลทดสอบอยู่แล้ว ไม่ได้เติมซ้ำ");
-        await renderRoute();
-      } catch (error) {
-        event.currentTarget.disabled = false;
-        showToast(friendlyError(error), "error");
-      }
-    });
-    // ปุ่มเติมชุดข้อมูลทดสอบ: เรียก RPC หนึ่งครั้ง ปิดปุ่มจนกว่าหน้าจะวาดใหม่ ผิดพลาดเปิดปุ่มคืนพร้อมแจ้งเตือน
-    const bindSeedSet = (selector, rpc, added, repeated) => root.querySelector(selector)?.addEventListener("click", async (event) => {
-      event.currentTarget.disabled = true;
-      try {
-        const { data, error } = await sb.rpc(rpc);
-        if (error) throw error;
-        showToast(data?.seeded ? added(data) : repeated);
-        await renderRoute();
-      } catch (error) {
-        event.currentTarget.disabled = false;
-        showToast(friendlyError(error), "error");
-      }
-    });
-    bindSeedSet("#fm-seed-trial", "app_sandbox_seed_factory_trial",
-      (data) => `เติมชุดทดลองแล้ว ${data.items} Item · ${data.boms} BOM · ${data.steps} ขั้นตอนการผลิต`,
-      "มีชุดทดลองอยู่แล้ว ไม่ได้เติมซ้ำ");
-    bindSeedSet("#fm-seed-megaform", "app_sandbox_seed_factory_megaform",
-      (data) => `เติมชุด MEGAFORM แล้ว ${data.items} Item${data.reused_items ? ` (ใช้ Item เดิมที่รหัสซ้ำ ${data.reused_items})` : ""} · ${data.boms} BOM · ใบสั่งผลิต ${data.orders} ใบ · ใบงาน ${data.jobs} ใบ`,
-      "มีชุด MEGAFORM อยู่แล้ว ไม่ได้เติมซ้ำ");
-    root.querySelector("#fm-purge")?.addEventListener("click", async (event) => {
-      if (!confirm("ล้างข้อมูลทดสอบของฝ่ายโรงงานทั้งหมด (Item, BOM, Routing, คลัง, ใบสั่งผลิต และประวัติ)?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
-      event.currentTarget.disabled = true;
-      try {
-        // ไฟล์แนบอยู่ใน Storage ซึ่ง SQL ลบไม่ได้ ลบไฟล์ก่อน ถ้าลบไม่หมดจะไม่ล้างข้อมูลต่อ (ฐานข้อมูลก็ปฏิเสธเองถ้ายังมีไฟล์ค้าง)
-        await window.MNP_FACTORY_ATTACHMENTS?.removeAll();
-        const { data, error } = await sb.rpc("app_sandbox_purge_factory");
-        if (error) throw error;
-        showToast(`ล้างข้อมูลทดสอบแล้ว ${data?.deleted ?? 0} Item`);
-        location.hash = menu.url("item-list").slice(1);
-        await renderRoute();
-      } catch (error) {
-        event.currentTarget.disabled = false;
-        showToast(friendlyError(error), "error");
-      }
-    });
   }
 
   // ---------- รายละเอียด Item ----------
