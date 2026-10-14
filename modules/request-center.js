@@ -28,7 +28,8 @@
   function pendingStatuses(code) {
     if (code === "NCR_CAR") return ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
     const common = ["pending_approval", "more_info"];
-    return code === "MANAGEMENT" ? common : [...common, "approved", "pending_assign", "assigned", "in_progress", "pending_verify"];
+    // ใบคำร้องถึงฝ่ายบริหารจบที่มติ in_progress มีได้เฉพาะใบเก่าที่เคยถูกรับงานไปก่อนปิดขั้นนั้น ยังต้องนับว่าค้าง
+    return code === "MANAGEMENT" ? [...common, "in_progress"] : [...common, "approved", "pending_assign", "assigned", "in_progress", "pending_verify"];
   }
   // The main menu always opens the module overview: an explicit type=all skips the module
   // remembered for bare #/requests links, and survives the page's own URL rewrite unchanged.

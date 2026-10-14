@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getCurrentEmployee } from "@/lib/auth";
 import { actingRoleId, findActiveAdmins, findActiveRoleHolders, resolveApprovalTarget } from "@/lib/data";
 import { notifyEmployeeByEmail } from "@/lib/notify";
+import { allowedApprovalDecisions, getRequestModule, usesDatabaseApprovalWorkflow } from "@/lib/request-modules";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { MAX_FILE_BYTES } from "../../../modules/attachment-image.js";
@@ -54,6 +55,17 @@ async function recordStatusHistoryNote(requestId: string, toStatus: string, chan
 
 function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
+}
+
+// ข้อความที่ผู้ใช้อ่านได้สำหรับข้อผิดพลาดจาก RPC พิจารณา/ส่งข้อมูลกลับ (รหัสเดียวกับ friendlyError ของ Pilot Web)
+// ไม่ส่งข้อความดิบของฐานข้อมูลออกไป
+function approvalRpcErrorMessage(message: string) {
+  if (message.includes("COMMENT_REQUIRED")) return "กรุณาระบุเหตุผล (จำเป็นสำหรับ \"ไม่อนุมัติ\" และ \"ขอข้อมูลเพิ่ม\")";
+  if (message.includes("DECISION_NOT_ALLOWED")) return "มติ \"รับทราบข้อมูล\" ใช้ได้เฉพาะใบคำร้องถึงฝ่ายบริหาร";
+  if (message.includes("STEP_NOT_PENDING") || message.includes("STEP_NOT_CURRENT")) return "ขั้นตอนนี้ถูกพิจารณาไปแล้ว กรุณาโหลดหน้าคำร้องใหม่";
+  if (message.includes("REQUEST_NOT_AWAITING_INFO")) return "คำร้องนี้ไม่ได้อยู่ในสถานะรอข้อมูลเพิ่มเติมแล้ว";
+  if (message.includes("NOT_AUTHORIZED")) return "คุณไม่มีสิทธิ์ดำเนินการนี้";
+  return "บันทึกไม่สำเร็จ กรุณาตรวจสอบสิทธิ์และสถานะคำร้อง แล้วลองใหม่";
 }
 
 // ไฟล์แนบอัปโหลดทีละไฟล์ (หนึ่งคำสั่งต่อหนึ่งไฟล์) จาก client — Server Action บน Vercel รับ body ได้ราว 4.5 MB
@@ -283,13 +295,20 @@ export async function approvalDecisionAction(formData: FormData) {
   }
 
   const { data: approvalType } = await admin.from("request_types").select("code").eq("id", approvalRequest.request_type_id).single();
-  if (approvalType?.code === "MT_REPAIR") {
+  const detailPath = `/requests/${step.request_id}`;
+  // มติที่ประเภทนี้ไม่มี (เช่น "รับทราบข้อมูล" นอกใบคำร้องถึงฝ่ายบริหาร) และเหตุผลที่จำเป็น ตรวจเหมือน Pilot Web
+  // ฐานข้อมูลตรวจซ้ำอีกชั้นในเส้นทาง RPC (app_approval_decision)
+  if (!allowedApprovalDecisions(approvalType?.code).has(decision)) fail(detailPath, approvalRpcErrorMessage("DECISION_NOT_ALLOWED"));
+  if ((decision === "rejected" || decision === "more_info") && comment.length < 3) {
+    fail(detailPath, decision === "rejected" ? "กรุณาระบุเหตุผลที่ไม่อนุมัติ" : "กรุณาระบุว่าต้องการข้อมูลเพิ่มเติมเรื่องอะไร");
+  }
+  if (usesDatabaseApprovalWorkflow(approvalType?.code)) {
     // Use the same atomic, session-authorized transition as the Pilot Web.
     const supabase = await createClient();
     const { error } = await supabase.rpc("app_approval_decision", {
       p_step_id: stepId, p_decision: decision, p_comment: comment || null,
     });
-    if (error) throw new Error("ไม่สามารถอนุมัติขั้นตอนนี้ได้ กรุณาตรวจสอบสิทธิ์และสถานะคำร้อง");
+    if (error) fail(detailPath, approvalRpcErrorMessage(error.message));
     revalidatePath("/");
     revalidatePath("/approvals");
     revalidatePath(`/requests/${step.request_id}`);
@@ -411,11 +430,11 @@ export async function resubmitRequestAction(formData: FormData) {
   }
 
   const { data: resubmitType } = await admin.from("request_types").select("code").eq("id", request.request_type_id).single();
-  if (resubmitType?.code === "MT_REPAIR") {
-    // Reset the original step so either first-step approver can review the reply.
+  if (usesDatabaseApprovalWorkflow(resubmitType?.code)) {
+    // Reset the original step (same step_order) so the print form and Pilot Web see one step per approver.
     const supabase = await createClient();
     const { error } = await supabase.rpc("app_resubmit_request", { p_request_id: requestId, p_comment: comment });
-    if (error) throw new Error("ไม่สามารถส่งข้อมูลเพิ่มเติมได้ กรุณาตรวจสอบสถานะคำร้อง");
+    if (error) fail(`/requests/${requestId}`, approvalRpcErrorMessage(error.message));
     revalidatePath("/");
     revalidatePath("/approvals");
     revalidatePath(`/requests/${requestId}`);
@@ -490,8 +509,13 @@ export async function updateRequestStatusAction(formData: FormData) {
   if (!(await employeeHasPermission(employee.role_id, "requests.operate"))) throw new Error("Not authorized to operate requests");
 
   const admin = createAdminClient();
-  const { data: request } = await admin.from("requests").select("status, assignee_id, requester_id, request_no").eq("id", requestId).single();
+  const { data: request } = await admin.from("requests").select("status, assignee_id, requester_id, request_no, request_type_id").eq("id", requestId).single();
   if (!request || !new Set(["approved", "in_progress"]).has(request.status)) throw new Error("Request is not ready for this transition");
+  const { data: statusType } = await admin.from("request_types").select("code").eq("id", request.request_type_id).single();
+  // ใบคำร้องถึงฝ่ายบริหารจบที่มติ ไม่มีขั้นรับงาน — ตรงกับ app_update_request_status ของ Pilot Web
+  if (getRequestModule(statusType?.code)?.endsAtDecision && nextStatus === "in_progress") {
+    fail(`/requests/${requestId}`, "ใบคำร้องถึงฝ่ายบริหารจบที่มติของฝ่ายบริหาร ไม่มีขั้นรับงาน");
+  }
   if (request.assignee_id && request.assignee_id !== employee.id) throw new Error("Request is assigned to another operator");
 
   await admin.from("requests").update({

@@ -19,4 +19,5 @@ export const managementModule: RequestModule = {
   showDocNumberOnCreate: true,
   printFormLabel: "พิมพ์ฟอร์ม PP01-FM08",
   extraDecisions: [{ decision: "acknowledged", label: "รับทราบข้อมูล" }],
+  endsAtDecision: true,
 };

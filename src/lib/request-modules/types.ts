@@ -19,4 +19,6 @@ export type RequestModule = {
   printFormLabel?: string;
   // มติเพิ่มเติมในกล่องพิจารณาคำร้อง นอกจากอนุมัติ/ไม่อนุมัติ/ขอข้อมูลเพิ่ม
   extraDecisions?: readonly { decision: string; label: string }[];
+  // จบที่มติของผู้อนุมัติ ไม่มีขั้น "รับงาน/เสร็จแล้ว" (ฐานข้อมูลบังคับใน app_update_request_status)
+  endsAtDecision?: boolean;
 };
