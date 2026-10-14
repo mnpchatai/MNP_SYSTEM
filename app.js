@@ -2331,7 +2331,11 @@ async function renderRequestDetail(params) {
   ]);
   if (requestResult.error) throw requestResult.error;
   if (!requestResult.data) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
-  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult, repliesResult]) if (result.error) throw result.error;
+  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult]) if (result.error) throw result.error;
+  // คำตอบเป็นส่วนเสริม: โหลดไม่ได้ (เช่น ฐานข้อมูลยังไม่ได้ deploy 20261014100000) ต้องไม่ทำให้หน้าคำร้องพัง
+  // และซ่อนฟอร์มตอบกลับไว้จนกว่าจะโหลดได้
+  const repliesAvailable = !repliesResult.error;
+  if (repliesResult.error) console.warn("โหลดคำตอบของผู้ยื่นไม่สำเร็จ", repliesResult.error);
   const request = requestResult.data;
   const type = relation(request.request_type);
   const isRepair = Boolean(type?.uses_repair_workflow);
@@ -2373,7 +2377,7 @@ async function renderRequestDetail(params) {
     && !(separateModule?.endsAtDecision && request.status === "approved");
   const isRequester = request.requester_id === employee.id;
   // ผู้ยื่นตอบกลับความเห็นของขั้นที่ตัดสินแล้วได้ทุกมติ (โมดูลที่เปิด requesterReplies) — ตรงกับ app_reply_to_step_comment
-  const canReplyToStep = (step) => isRequester && Boolean(separateModule?.requesterReplies)
+  const canReplyToStep = (step) => repliesAvailable && isRequester && Boolean(separateModule?.requesterReplies)
     && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
   const detailEntries = Object.entries(request.details ?? {});
   const requestFacts = [
