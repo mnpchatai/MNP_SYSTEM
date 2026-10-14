@@ -124,3 +124,27 @@ test("attachments are optional and keep chronological order with status events",
   });
   assert.deepEqual(mixed.map((event) => event.title), ["รออนุมัติ", "แนบไฟล์"]);
 });
+
+test("a forwarded acknowledgement and the requester's reply both appear with their messages", () => {
+  const events = buildRequestTimeline({
+    request: { assignee: null },
+    history: [],
+    steps: [
+      {
+        id: "s1", step_order: 1, step_name: "ผู้จัดการโรงงาน", status: "acknowledged",
+        acted_at: "2026-10-05T01:00:00Z", created_at: "2026-10-03T08:00:00Z", comment: "รับทราบ ส่งต่อ ผจก.ทั่วไป", acted_by_employee: approver,
+      },
+      {
+        id: "s2", step_order: 2, step_name: "ผู้จัดการทั่วไป", status: "pending",
+        acted_at: null, created_at: "2026-10-03T08:00:00Z", comment: null, acted_by_employee: null,
+      },
+    ],
+    verifications: [],
+    isRepair: false,
+    replies: [{ id: "c1", approval_step_id: "s1", body: "ขอบคุณครับ", created_at: "2026-10-05T02:00:00Z", author: requester }],
+  });
+  assert.deepEqual(events.map(({ title, detail, message }) => [title, detail, message]), [
+    ["รออนุมัติ (ผู้จัดการทั่วไป)", "รสริน เชน รับทราบข้อมูลขั้น ผู้จัดการโรงงาน แล้ว", "รับทราบ ส่งต่อ ผจก.ทั่วไป"],
+    ["ตอบกลับความเห็น (ผู้จัดการโรงงาน)", "จุฑารัตน์ ท่าฉลาด ตอบกลับความเห็นของ รสริน เชน", "ขอบคุณครับ"],
+  ]);
+});

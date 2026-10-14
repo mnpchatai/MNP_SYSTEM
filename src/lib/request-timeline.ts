@@ -30,6 +30,15 @@ export type VerificationTimelineRow = {
   verifier: TimelinePerson;
 };
 
+// คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ (request_comments ที่ผูก approval_step_id)
+export type ReplyTimelineRow = {
+  id: string;
+  approval_step_id: string;
+  body: string;
+  created_at: string;
+  author: TimelinePerson;
+};
+
 export type AttachmentTimelineRow = {
   id: string;
   file_name: string;
@@ -132,6 +141,7 @@ export function buildRequestTimeline({
   verifications,
   isRepair,
   attachments = [],
+  replies = [],
 }: {
   request: TimelineRequest;
   history: StatusTimelineRow[];
@@ -139,6 +149,7 @@ export function buildRequestTimeline({
   verifications: VerificationTimelineRow[];
   isRepair: boolean;
   attachments?: AttachmentTimelineRow[];
+  replies?: ReplyTimelineRow[];
 }) {
   const orderedSteps = [...steps].sort((left, right) => left.step_order - right.step_order);
   const labels = isRepair ? repairStatusLabels : statusLabels;
@@ -238,11 +249,14 @@ export function buildRequestTimeline({
     };
   });
 
+  // ขั้นที่อนุมัติ หรือรับทราบข้อมูลแล้วส่งต่อขั้นถัดไป (ไม่เปลี่ยนสถานะใบ จึงไม่มีแถวประวัติสถานะ)
+  // ตรรกะเดียวกับ buildRequestTimeline ใน app.js (Pilot Web)
   const approvalEvents: RequestTimelineEvent[] = orderedSteps.flatMap((step, index) => {
     const nextStep = orderedSteps[index + 1];
-    if (step.status !== "approved" || !step.acted_at || !nextStep) return [];
+    if (!["approved", "acknowledged"].includes(step.status) || !step.acted_at || !nextStep) return [];
     const actorName = employeeName(step.acted_by_employee);
-    const detail = `${actorName === "—" ? "ผู้อนุมัติ" : actorName} อนุมัติขั้น ${step.step_name} แล้ว`;
+    const verb = step.status === "acknowledged" ? "รับทราบข้อมูลขั้น" : "อนุมัติขั้น";
+    const detail = `${actorName === "—" ? "ผู้อนุมัติ" : actorName} ${verb} ${step.step_name} แล้ว`;
     const message = step.comment?.trim();
     return [{
       id: `approval-${step.id}`,
@@ -253,6 +267,19 @@ export function buildRequestTimeline({
     }];
   });
 
-  return [...statusEvents, ...approvalEvents, ...attachmentTimelineEvents(attachments)]
+  const replyEvents: RequestTimelineEvent[] = replies.map((reply) => {
+    const step = orderedSteps.find((item) => item.id === reply.approval_step_id);
+    const authorName = employeeName(reply.author);
+    const approverName = step ? employeeName(step.acted_by_employee) : "—";
+    return {
+      id: `reply-${reply.id}`,
+      at: reply.created_at,
+      title: `ตอบกลับความเห็น${step ? ` (${step.step_name})` : ""}`,
+      detail: `${authorName === "—" ? "ผู้ยื่นคำร้อง" : authorName} ตอบกลับความเห็นของ ${approverName === "—" ? "ผู้อนุมัติ" : approverName}`,
+      ...(reply.body.trim() ? { message: reply.body.trim() } : {}),
+    };
+  });
+
+  return [...statusEvents, ...approvalEvents, ...replyEvents, ...attachmentTimelineEvents(attachments)]
     .sort((left, right) => left.at.localeCompare(right.at));
 }

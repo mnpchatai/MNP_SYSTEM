@@ -386,6 +386,9 @@ function friendlyError(error) {
     REPAIR_USES_OWN_WORKFLOW: "ใบแจ้งซ่อมต้องเดินตามขั้นตอนของช่าง เปลี่ยนสถานะตรงๆ ไม่ได้",
     DECISION_NOT_ALLOWED: "มติ \"รับทราบข้อมูล\" ใช้ได้เฉพาะใบคำร้องถึงฝ่ายบริหาร",
     REQUEST_ENDS_AT_DECISION: "ใบคำร้องถึงฝ่ายบริหารจบที่มติของฝ่ายบริหาร ไม่มีขั้นรับงาน",
+    STEP_HAS_NO_COMMENT: "ขั้นนี้ยังไม่มีความเห็นจากผู้อนุมัติให้ตอบกลับ",
+    REPLY_NOT_SUPPORTED: "คำร้องประเภทนี้ยังไม่รองรับการตอบกลับความเห็น",
+    INVALID_MESSAGE: "กรุณาพิมพ์ข้อความตอบกลับ",
     EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าของจะมาส่ง",
     STEP_ALREADY_DONE: "หมุดนี้บันทึกว่าเสร็จแล้ว เลื่อนวันที่ไม่ได้",
     EXPECTED_DATE_IN_PAST: "วันที่คาดว่าจะเสร็จใหม่ต้องเป็นวันนี้หรือหลังจากนี้",
@@ -2109,7 +2112,7 @@ function attachmentTimelineEvents(attachments, directory) {
   });
 }
 
-function buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChanges = [], attachments = []) {
+function buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChanges = [], attachments = [], replies = []) {
   const orderedSteps = [...steps].sort((left, right) => left.step_order - right.step_order);
   const latestRepairResult = [...history]
     .filter((item) => item.to_status === "pending_verify")
@@ -2203,18 +2206,32 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
   });
 
   // การอนุมัติขั้นกลางไม่เปลี่ยน requests.status จึงไม่มีแถวใน status history
-  // เติมจาก approval_steps เพื่อให้ลำดับเหตุการณ์ไม่ขาดช่วงก่อนถึงผู้อนุมัติขั้นถัดไป
+  // เติมจาก approval_steps เพื่อให้ลำดับเหตุการณ์ไม่ขาดช่วงก่อนถึงผู้อนุมัติขั้นถัดไป (ทั้งอนุมัติและรับทราบข้อมูลที่ส่งต่อ)
   const approvalEvents = orderedSteps.flatMap((step, index) => {
     const nextStep = orderedSteps[index + 1];
-    if (step.status !== "approved" || !step.acted_at || !nextStep) return [];
+    if (!["approved", "acknowledged"].includes(step.status) || !step.acted_at || !nextStep) return [];
     const actorName = personName(directory, step.acted_by);
+    const verb = step.status === "acknowledged" ? "รับทราบข้อมูลขั้น" : "อนุมัติขั้น";
     return [{
       id: `approval-${step.id}`,
       at: step.acted_at,
       title: `รออนุมัติ (${nextStep.step_name})`,
-      detail: `${actorName === "—" ? "ผู้อนุมัติ" : actorName} อนุมัติขั้น ${step.step_name} แล้ว`,
+      detail: `${actorName === "—" ? "ผู้อนุมัติ" : actorName} ${verb} ${step.step_name} แล้ว`,
       message: String(step.comment ?? "").trim(),
     }];
+  });
+
+  // คำตอบของผู้ยื่นต่อความเห็นของผู้อนุมัติ (request_comments.approval_step_id) ไม่เปลี่ยนสถานะ
+  const replyEvents = replies.map((reply) => {
+    const step = orderedSteps.find((item) => item.id === reply.approval_step_id);
+    const authorName = personName(directory, reply.author_id);
+    return {
+      id: `reply-${reply.id}`,
+      at: reply.created_at,
+      title: `ตอบกลับความเห็น${step ? ` (${step.step_name})` : ""}`,
+      detail: `${authorName === "—" ? "ผู้ยื่นคำร้อง" : authorName} ตอบกลับความเห็นของ ${step?.acted_by ? personName(directory, step.acted_by) : "ผู้อนุมัติ"}`,
+      message: String(reply.body ?? "").trim(),
+    };
   });
 
   // การแก้วันที่คาดว่าจะเสร็จ (ปุ่มแก้วันที่ หรือแก้ไขการมอบหมาย) ไม่ใช่การเปลี่ยนสถานะ เก็บแยกไว้
@@ -2229,7 +2246,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     };
   });
 
-  return [...statusEvents, ...approvalEvents, ...dateChangeEvents, ...attachmentTimelineEvents(attachments, directory)].sort((left, right) => left.at.localeCompare(right.at));
+  return [...statusEvents, ...approvalEvents, ...replyEvents, ...dateChangeEvents, ...attachmentTimelineEvents(attachments, directory)].sort((left, right) => left.at.localeCompare(right.at));
 }
 
 function appsScriptApprovalStage(step, directory) {
@@ -2282,11 +2299,24 @@ async function callNotifyEmail(payload) {
   return await res.json().catch(() => null);
 }
 
+// มติที่ผู้ยื่นตอบกลับความเห็นได้ ("ขอข้อมูลเพิ่ม" ใช้การส่งข้อมูลกลับแทน)
+const STEP_REPLY_STATUSES = ["approved", "acknowledged", "rejected"];
+
+function stepRepliesHtml(step, replies, directory, canReply) {
+  const own = replies.filter((reply) => reply.approval_step_id === step.id);
+  const list = own.map((reply) => `<p class="step-reply"><b>ตอบกลับโดย ${escapeHtml(personName(directory, reply.author_id))}</b> · ${formatDate(reply.created_at, true)}<br>${escapeHtml(reply.body)}</p>`).join("");
+  const form = canReply ? `<form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
+      <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ตอบกลับความเห็นนี้</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
+      <button class="btn secondary small" type="submit">ส่งคำตอบ</button>
+    </form>` : "";
+  return list + form;
+}
+
 async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
-  const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult, directory] = await Promise.all([
+  const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult, repliesResult, directory] = await Promise.all([
     sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id),department:departments(code)").eq("id", id).maybeSingle(),
     sb.from("approval_steps").select("*").eq("request_id", id).order("step_order"),
     sb.from("request_attachments").select("*").eq("request_id", id).order("created_at"),
@@ -2295,11 +2325,13 @@ async function renderRequestDetail(params) {
     sb.from("request_technicians").select("technician_id").eq("request_id", id),
     sb.from("request_progress_steps").select("*").eq("request_id", id).order("sort_order"),
     sb.from("request_expected_date_changes").select("*").eq("request_id", id).order("created_at"),
+    // คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ (ความเห็นทั่วไปที่ไม่ผูกขั้นไม่มีหน้าไหนแสดง)
+    sb.from("request_comments").select("id,approval_step_id,author_id,body,created_at").eq("request_id", id).not("approval_step_id", "is", null).order("created_at"),
     loadEmployeeDirectory(),
   ]);
   if (requestResult.error) throw requestResult.error;
   if (!requestResult.data) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
-  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult]) if (result.error) throw result.error;
+  for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult, repliesResult]) if (result.error) throw result.error;
   const request = requestResult.data;
   const type = relation(request.request_type);
   const isRepair = Boolean(type?.uses_repair_workflow);
@@ -2307,7 +2339,8 @@ async function renderRequestDetail(params) {
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
   const verifications = verificationsResult.data ?? [];
-  const timeline = buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChangesResult.data ?? [], attachments);
+  const replies = repliesResult.data ?? [];
+  const timeline = buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChangesResult.data ?? [], attachments, replies);
   const progressSteps = progressResult.data ?? [];
   // ช่างของใบนี้ = รายชื่อในตารางช่าง (ใบเก่าก่อนรองรับหลายคนมีแต่ assignee_id จึงรวมเข้าไปด้วย)
   const assignedTechIds = [...new Set([
@@ -2339,6 +2372,9 @@ async function renderRequestDetail(params) {
   const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status)
     && !(separateModule?.endsAtDecision && request.status === "approved");
   const isRequester = request.requester_id === employee.id;
+  // ผู้ยื่นตอบกลับความเห็นของขั้นที่ตัดสินแล้วได้ทุกมติ (โมดูลที่เปิด requesterReplies) — ตรงกับ app_reply_to_step_comment
+  const canReplyToStep = (step) => isRequester && Boolean(separateModule?.requesterReplies)
+    && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
   const detailEntries = Object.entries(request.details ?? {});
   const requestFacts = [
     requestFact("ความสำคัญ", priorityLabels[request.priority], {
@@ -2389,7 +2425,7 @@ async function renderRequestDetail(params) {
         ${detailView?.sectionsHtml ?? ""}
       </div>
       <aside class="stack">
-        <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p></div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
+        <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p>${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
         <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
         <section class="card"><h2>ลำดับเหตุการณ์</h2><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
       </aside>
@@ -2450,6 +2486,19 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });
+  document.querySelectorAll(".step-reply-form").forEach((form) => form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = form.elements.message.value.trim();
+    if (!message) return showToast("กรุณาพิมพ์ข้อความตอบกลับ", "error");
+    setFormBusy(form, true);
+    try {
+      const { error } = await sb.rpc("app_reply_to_step_comment", { p_step_id: form.dataset.stepId, p_message: message });
+      if (error) throw error;
+      triggerNotificationEmails(id);
+      showToast("ส่งคำตอบถึงผู้อนุมัติแล้ว", "success");
+      await renderRequestDetail(params);
+    } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
+  }));
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;

@@ -392,6 +392,9 @@ tbody tr:hover { background: var(--surface-hover); }
   contain-intrinsic-size: 185px;
 }
 .request-timeline-card.status-completed, .request-timeline-card.status-acknowledged { --timeline-accent: var(--success); }
+/* คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ ใต้ขั้นใน "ลำดับอนุมัติ" */
+.step-reply { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--primary); background: var(--primary-soft); border-radius: 6px; font-size: 0.9em; overflow-wrap: anywhere; }
+.step-reply-form { margin-top: 8px; }
 .request-timeline-card.status-rejected, .request-timeline-card.status-cancelled { --timeline-accent: var(--danger); }
 .request-timeline-card.status-pending_approval, .request-timeline-card.status-pending_assign, .request-timeline-card.status-pending_verify, .request-timeline-card.status-more_info { --timeline-accent: var(--warning); }
 .request-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }

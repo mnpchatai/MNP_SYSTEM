@@ -1,12 +1,13 @@
 -- ทดสอบการจัดโมดูล "ใบคำร้องถึงฝ่ายบริหาร" ให้ตรงกับฟอร์ม PP01-FM08:
 --   1) สคีมา/ข้อมูลอ้างอิง (enum, คอลัมน์ใหม่, flag, แผนก, ลายเซ็นชื่อฟังก์ชัน)
 --   2) สายอนุมัติคงที่ ผู้จัดการโรงงาน -> ผู้จัดการทั่วไป ผ่าน app_create_request
---   3) มติ "รับทราบ" เป็น terminal state ที่ไม่ไปต่อขั้นถัดไป ผ่าน app_approval_decision
+--   3) มติ "รับทราบ" ที่ขั้น ผจก.โรงงาน ส่งต่อ ผจก.ทั่วไป และปิดใบเมื่อเป็นมติของขั้นสุดท้าย
+--      (20261014100000_management_acknowledge_forwards_and_requester_replies.sql)
 --   4) เส้นทางอนุมัติผ่านครบสองขั้นจบที่ approved
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(29);
+select plan(31);
 
 -- 1. สคีมา/ข้อมูลอ้างอิง -------------------------------------------------
 select ok(
@@ -175,7 +176,7 @@ select throws_ok(
   'invalid cc department id is rejected'
 );
 
--- 4. ผจก.โรงงาน กด "รับทราบข้อมูล" — ต้องปิดคำร้องทันทีโดยไม่ไปขั้นถัดไป --------
+-- 4. ผจก.โรงงาน กด "รับทราบข้อมูล" — ส่งต่อ ผจก.ทั่วไป ไม่ปิดใบ ------------------------
 select set_config(
   'request.jwt.claims',
   '{"sub":"71000000-0000-0000-0000-000000000002","role":"authenticated"}',
@@ -195,16 +196,39 @@ select lives_ok(
 
 select results_eq(
   $$ select status, current_step from public.requests where title = 'PP01FM08_TEST_ACK' $$,
-  $$ values ('acknowledged'::public.request_status, 1) $$,
-  'request closes as acknowledged without advancing current_step'
+  $$ values ('pending_approval'::public.request_status, 2) $$,
+  'factory acknowledgement forwards the request to the general manager'
 );
 
 select results_eq(
-  $$ select s.status from public.approval_steps s
+  $$ select s.step_order, s.status from public.approval_steps s
      join public.requests r on r.id = s.request_id
-     where r.title = 'PP01FM08_TEST_ACK' and s.step_order = 2 $$,
-  array['pending'::public.approval_status],
-  'step 2 (general manager) stays pending — acknowledged does not cascade'
+     where r.title = 'PP01FM08_TEST_ACK' order by s.step_order $$,
+  $$ values (1, 'acknowledged'::public.approval_status), (2, 'pending'::public.approval_status) $$,
+  'step 1 keeps the acknowledged decision and step 2 waits for the general manager'
+);
+
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"71000000-0000-0000-0000-000000000003","role":"authenticated"}',
+  true
+);
+
+select lives_ok(
+  $$ select public.app_approval_decision(
+       (select s.id from public.approval_steps s
+        join public.requests r on r.id = s.request_id
+        where r.title = 'PP01FM08_TEST_ACK' and s.step_order = 2),
+       'acknowledged',
+       null
+     ) $$,
+  'general manager records the final มติ รับทราบ'
+);
+
+select results_eq(
+  $$ select status, current_step from public.requests where title = 'PP01FM08_TEST_ACK' $$,
+  $$ values ('acknowledged'::public.request_status, 2) $$,
+  'the final step acknowledgement closes the request as acknowledged'
 );
 
 -- 5. เส้นทางอนุมัติครบสองขั้นของอีกใบหนึ่ง จบที่ approved -----------------------
