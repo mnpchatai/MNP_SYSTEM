@@ -15,7 +15,7 @@ import { getCurrentEmployee } from "@/lib/auth";
 import { employeeName, formatDate, priorityLabels, statusLabels } from "@/lib/format";
 import { roleMatches } from "../../../../../modules/request-approval.js";
 import { actingRoleId, hasApprovalModule, hasPermission } from "@/lib/data";
-import { getRequestModule } from "@/lib/request-modules";
+import { getRequestModule, usesDatabaseApprovalWorkflow } from "@/lib/request-modules";
 import {
   buildRequestTimeline,
   type AttachmentTimelineRow,
@@ -71,13 +71,19 @@ export default async function RequestDetailPage({
     : { data: [] as { id: string; code: string }[] };
 
   const canOperate = await hasPermission(employee.role_id, "requests.operate");
-  const canApproveModule = request.request_type?.code !== "MT_REPAIR" ||
-    await hasApprovalModule(employee.id, request.request_type_id);
-  const canAct = request.request_type?.code !== "MT_REPAIR" ||
-    await hasPermission(actingRoleId(employee), "approvals.act");
+  // ประเภทที่พิจารณาผ่าน RPC ต้องผ่านเงื่อนไขเดียวกับ app_approval_decision จึงจะเห็นกล่องพิจารณา
+  const databaseWorkflow = usesDatabaseApprovalWorkflow(request.request_type?.code);
+  const canApproveModule = !databaseWorkflow || await hasApprovalModule(employee.id, request.request_type_id);
+  const canAct = !databaseWorkflow || await hasPermission(actingRoleId(employee), "approvals.act");
+  // จบที่มติ (เช่น ใบคำร้องถึงฝ่ายบริหาร) ไม่มีขั้นรับงาน ใบเก่าที่รับงานไปแล้วยังปิดงานได้
+  const showOperate = canOperate && ["approved", "in_progress"].includes(request.status) &&
+    !(requestModule?.endsAtDecision && request.status === "approved") &&
+    (!request.assignee_id || request.assignee_id === employee.id);
   const pendingStep = [...(request.approval_steps ?? [])]
     .sort((a, b) => a.step_order - b.step_order)
     .find((step) => step.status === "pending" && step.step_order === request.current_step && (
+      // admin (บทบาทจริง) พิจารณาแทนได้ทุกขั้นตาม app_approval_decision เช่นขั้นที่ยังไม่มีผู้ถือบทบาท
+      (databaseWorkflow && employee.role?.code === "admin") ||
       step.approver_employee_id === employee.id ||
       (roleMatches(step, request.request_type?.code, employee) && canApproveModule && canAct)
     ));
@@ -186,7 +192,7 @@ export default async function RequestDetailPage({
             </section>
           )}
 
-          {canOperate && ["approved", "in_progress"].includes(request.status) && (!request.assignee_id || request.assignee_id === employee.id) && (
+          {showOperate && (
             <section className="card">
               <div className="card-title"><h3>ดำเนินงาน</h3></div>
               <ActionFormWithFiles action={updateRequestStatusAction} requestId={request.id}>

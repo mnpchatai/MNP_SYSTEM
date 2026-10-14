@@ -47,6 +47,8 @@ test("module creation always opens that module's form, preserving the return fil
 test("pending counters respect management terminal decisions and NCR's separate workflow", () => {
   assert.ok(!pendingStatuses("MANAGEMENT").includes("approved"));
   assert.ok(!pendingStatuses("MANAGEMENT").includes("acknowledged"));
+  assert.ok(!pendingStatuses("MANAGEMENT").includes("rejected"));
+  assert.ok(pendingStatuses("MANAGEMENT").includes("in_progress"), "a legacy in-progress management request is still open");
   assert.ok(pendingStatuses("IT_REPAIR").includes("approved"));
   assert.ok(pendingStatuses("MT_REPAIR").includes("pending_verify"));
   assert.ok(pendingStatuses("NCR_CAR").includes("awaiting_signoff"));

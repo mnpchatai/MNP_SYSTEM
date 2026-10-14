@@ -105,6 +105,14 @@
     // มติที่ 3 ของฟอร์ม PP01-FM08 นอกจากอนุมัติ/ไม่อนุมัติ (app_approval_decision ใน
     // 20260922010000_management_request_pp01_fm08.sql) — แสดงปุ่มเพิ่มในกล่องพิจารณาคำร้อง
     extraDecisions: [{ decision: "acknowledged", label: "รับทราบข้อมูล" }],
+    // จบที่มติของฝ่ายบริหาร ไม่มีขั้น "รับงาน/เสร็จแล้ว" แบบคำร้องทั่วไป — ฐานข้อมูลบังคับเหมือนกัน
+    // (app_update_request_status ใน 20261014040000_management_request_flow_completion.sql)
+    endsAtDecision: true,
+    // แถบ "ไปถึงไหนแล้ว": รออนุมัติ → มีมติ (อนุมัติ หรือ รับทราบข้อมูล) ส่วนไม่อนุมัติแสดงเป็นสถานะหลุดเส้นทาง
+    progressStages: [
+      { status: "pending_approval", label: "รออนุมัติ" },
+      { status: "approved", statuses: ["approved", "acknowledged"] },
+    ],
 
     // โหลดข้อมูลที่ฟอร์มต้องใช้ก่อนวาด ผลลัพธ์ถูกส่งกลับมาที่ renderFormSections
     async prepareForm({ sb }) {

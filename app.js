@@ -162,23 +162,25 @@ const OFF_TRACK_STATUSES = { more_info: "warning", rejected: "danger", cancelled
 /* คำนวณว่าใบนี้เดินมาถึงขั้นไหนจาก "สถานะปัจจุบัน" อย่างเดียว ไม่ได้อ่านจาก
    request_status_history เพราะสถานะใน requests คือความจริง ณ ปัจจุบันอยู่แล้ว และการตรวจรับ
    ไม่ผ่านจะย้อนใบกลับไป assigned — แถบจึงต้องถอยตามด้วย ไม่ใช่ค้างที่ขั้นที่เคยผ่านสูงสุด */
-function requestProgress(status, usesRepairWorkflow) {
-  const stages = usesRepairWorkflow ? REPAIR_STAGES : GENERAL_STAGES;
+function requestProgress(status, usesRepairWorkflow, typeCode = null) {
+  // โมดูลที่ลำดับขั้นสั้นกว่าคำร้องทั่วไปประกาศ progressStages เอง (เช่น ใบคำร้องถึงฝ่ายบริหารจบที่มติ)
+  // ขั้นหนึ่งรวมได้หลายสถานะผ่าน statuses และขั้นสุดท้ายนับว่าจบงานแล้ว
+  const stages = requestModule(typeCode)?.progressStages ?? (usesRepairWorkflow ? REPAIR_STAGES : GENERAL_STAGES);
   const offTrack = OFF_TRACK_STATUSES[status] ?? null;
   // ขอข้อมูลเพิ่ม/ไม่อนุมัติ/ยกเลิก ล้วนเกิดตอนพิจารณา จึงปักไว้ที่ขั้นอนุมัติ
-  const index = offTrack ? 0 : stages.findIndex((stage) => stage.status === status);
+  const index = offTrack ? 0 : stages.findIndex((stage) => (stage.statuses ?? [stage.status]).includes(status));
   return {
     stages,
     index,
     offTrack,
     // ใบที่จบแล้วนับเป็นผ่านครบทุกขั้น ใบที่ยังเดินอยู่นับเฉพาะขั้นก่อนหน้าว่าผ่านแล้ว
-    done: status === "completed" ? stages.length : Math.max(index, 0),
+    done: !offTrack && index === stages.length - 1 ? stages.length : Math.max(index, 0),
     label: offTrack ? statusLabels[status] ?? status : stages[index]?.label ?? statusLabels[status] ?? status,
   };
 }
 
-function progressTracker(status, usesRepairWorkflow, { waitingOn = null } = {}) {
-  const { stages, index, offTrack, done, label } = requestProgress(status, usesRepairWorkflow);
+function progressTracker(status, usesRepairWorkflow, { waitingOn = null, typeCode = null } = {}) {
+  const { stages, index, offTrack, done, label } = requestProgress(status, usesRepairWorkflow, typeCode);
   // index < 0 แปลว่าสถานะนี้ไม่อยู่ในลำดับขั้นของงานประเภทนี้ (เช่นใบเก่าที่สร้างก่อนติดธง
   // uses_repair_workflow) — บอกแค่สถานะไป ไม่เดาเลขขั้นให้ผิด
   const caption = offTrack || index < 0
@@ -382,6 +384,8 @@ function friendlyError(error) {
     WORK_EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าจะเสร็จ",
     WORK_DATE_RANGE_INVALID: "วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน",
     REPAIR_USES_OWN_WORKFLOW: "ใบแจ้งซ่อมต้องเดินตามขั้นตอนของช่าง เปลี่ยนสถานะตรงๆ ไม่ได้",
+    DECISION_NOT_ALLOWED: "มติ \"รับทราบข้อมูล\" ใช้ได้เฉพาะใบคำร้องถึงฝ่ายบริหาร",
+    REQUEST_ENDS_AT_DECISION: "ใบคำร้องถึงฝ่ายบริหารจบที่มติของฝ่ายบริหาร ไม่มีขั้นรับงาน",
     EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าของจะมาส่ง",
     STEP_ALREADY_DONE: "หมุดนี้บันทึกว่าเสร็จแล้ว เลื่อนวันที่ไม่ได้",
     EXPECTED_DATE_IN_PAST: "วันที่คาดว่าจะเสร็จใหม่ต้องเป็นวันนี้หรือหลังจากนี้",
@@ -883,7 +887,7 @@ function requestRows(requests, { showProgress = false, showRequester = false, di
             </div>
           </div>
           <footer class="request-card-footer">
-            ${showProgress ? progressTracker(request.status, Boolean(type?.uses_repair_workflow)) : `<span class="muted small">ติดตามรายละเอียดและประวัติงาน</span>`}
+            ${showProgress ? progressTracker(request.status, Boolean(type?.uses_repair_workflow), { typeCode: type?.code }) : `<span class="muted small">ติดตามรายละเอียดและประวัติงาน</span>`}
             <a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>
           </footer>
         </article>`;
@@ -926,7 +930,7 @@ function statusBoardRows(rows) {
             </div>
           </div>
           <footer class="request-card-footer">
-            ${progressTracker(row.status, Boolean(row.uses_repair_workflow), { waitingOn: row.waiting_on })}
+            ${progressTracker(row.status, Boolean(row.uses_repair_workflow), { waitingOn: row.waiting_on, typeCode: row.type_code })}
             ${row.can_open
               ? `<a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>`
               : `<span class="request-locked-note" title="สิทธิ์ของบัญชีนี้ดูได้เฉพาะสถานะและความคืบหน้า">🔒 ดูได้เฉพาะความคืบหน้า</span>`}
@@ -1609,6 +1613,7 @@ const REQUEST_STATUS_FILTERS = [
   ["in_progress", "กำลังดำเนินการ"],
   ["pending_verify", "รอตรวจรับ"],
   ["completed", "เสร็จแล้ว"],
+  ["acknowledged", "รับทราบข้อมูล"],
   ["rejected", "ไม่อนุมัติ"],
 ];
 
@@ -2329,7 +2334,10 @@ async function renderRequestDetail(params) {
       window.MNP_REQUEST_APPROVAL.roleMatches(currentStep, type?.code, employee)
       && Boolean(type?.code) && employee.approvalModules.has(type.code)
     ));
-  const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status);
+  // โมดูลที่จบที่มติ (endsAtDecision เช่น ใบคำร้องถึงฝ่ายบริหาร) ไม่มีขั้นรับงาน ต้องตรงกับ app_update_request_status
+  // ใบเก่าที่เคยถูกรับงานไปแล้ว (in_progress) ยังปิดงานได้ ไม่ค้าง
+  const canOperate = !isRepair && (isAdmin || OPERATE_ROLE_CODES.includes(employee.role?.code)) && ["approved", "in_progress"].includes(request.status)
+    && !(separateModule?.endsAtDecision && request.status === "approved");
   const isRequester = request.requester_id === employee.id;
   const detailEntries = Object.entries(request.details ?? {});
   const requestFacts = [
