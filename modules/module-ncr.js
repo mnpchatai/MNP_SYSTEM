@@ -545,13 +545,24 @@
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
+    // ทดลองหน้าตาการ์ดเฉพาะ sandbox โดยใช้ข้อมูลและลำดับขั้นตอนชุดเดิม
+    const partOpening = (number, title, description) => employee?.isSandbox
+      ? `<section class="card ncr-card ncr-detail-part ncr-detail-part--${number}" aria-labelledby="ncr-part-${number}-title">
+          <header class="ncr-part-heading">
+            <span class="ncr-part-number" aria-hidden="true">0${number}</span>
+            <div class="ncr-part-heading-copy">
+              <h2 id="ncr-part-${number}-title"><span class="ncr-part-eyebrow">ส่วนที่ ${number}</span> ${escapeHtml(title)}</h2>
+              <p>${escapeHtml(description)}</p>
+            </div>
+          </header><dl class="definition-grid">`
+      : `<section class="card ncr-card"><h2>ส่วนที่ ${number} ${escapeHtml(title)}</h2><dl class="definition-grid">`;
     const heading = `
       <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
     const part1 = `
-      <section class="card ncr-card"><h2>ส่วนที่ 1 ผู้รายงาน/ผู้ตรวจสอบ</h2><dl class="definition-grid">
+      ${partOpening(1, "ผู้รายงาน/ผู้ตรวจสอบ", "ข้อมูลสินค้าและรายละเอียดความไม่สอดคล้อง")}
         ${definition("วันที่ออก", formatDate(ncr.issue_date))}
         ${definition("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`)}
         ${definition("รหัส / ชื่อสินค้า", `${escapeHtml(ncr.product_code ?? "—")} · ${escapeHtml(ncr.product_name)}`)}
@@ -564,7 +575,7 @@
       </dl></section>
 `;
     const part2 = `
-      <section class="card ncr-card"><h2>ส่วนที่ 2 ฝ่ายบริหารโรงงานพิจารณา</h2><dl class="definition-grid">
+      ${partOpening(2, "ฝ่ายบริหารโรงงานพิจารณา", "แนวทางจัดการ ผู้รับผิดชอบ และกำหนดตอบ")}
         ${definition("ความเห็น", escapeHtml((ncr.dispositions ?? []).map((value) => DISPOSITIONS[value] ?? value).join(", ") || "—"))}
         ${definition("แผนกที่รับผิดชอบ", responsibilities || "—")}
         ${definition("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—")}
@@ -573,7 +584,7 @@
       </dl></section>
 `;
     const part3 = `
-      <section class="card ncr-card"><h2>ส่วนที่ 3 ผู้รับเรื่องดำเนินการ</h2><dl class="definition-grid">
+      ${partOpening(3, "ผู้รับเรื่องดำเนินการ", "วิเคราะห์สาเหตุ แก้ไข และป้องกันการเกิดซ้ำ")}
         ${definition("เกิดจาก", escapeHtml((ncr.causes ?? []).map((value) => CAUSES[value] ?? value).join(", ") || "—"))}
         ${definition("ผู้ตอบ", ncr.responded_at ? `${escapeHtml(personName(directory, ncr.responded_by))} · ${formatDate(ncr.responded_at)}` : "—")}
         ${definition("สาเหตุของปัญหา", escapeHtml(ncr.root_cause ?? "—"))}
@@ -582,7 +593,7 @@
       </dl></section>
 `;
     const part4 = `
-      <section class="card ncr-card"><h2>ส่วนที่ 4 การตรวจติดตาม</h2><dl class="definition-grid">
+      ${partOpening(4, "การตรวจติดตาม", "ผลการติดตาม การลงนาม และการปิด NCR")}
         ${definition("ผู้ติดตาม", ncr.followed_up_at ? `${escapeHtml(personName(directory, ncr.followed_up_by))} · ${formatDate(ncr.followed_up_at)}` : "—")}
         ${definition("บันทึก", escapeHtml(ncr.followup_note ?? "—"))}
         ${definition("ผู้จัดการแผนก QA", signoff(ncr.signoff_qa_by, ncr.signoff_qa_at))}

@@ -1021,6 +1021,90 @@ body.no-scroll { overflow: hidden; }
 .ncr-card .definition dd { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ncr-card .definition:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .ncr-card .definition.full { grid-column: 1 / -1; }
+/* การ์ดรายละเอียดส่วนที่ 1–4: แสดงเฉพาะโหมดทดสอบ NCR */
+.ncr-detail-part {
+  --ncr-part-accent: #356fc3;
+  --ncr-part-tint: color-mix(in srgb, var(--ncr-part-accent) 7%, var(--paper));
+  position: relative;
+  padding: 0;
+  margin-bottom: 22px;
+  border: 1px solid color-mix(in srgb, var(--ncr-part-accent) 14%, var(--line));
+  border-radius: 20px;
+  background: var(--paper);
+  box-shadow: 0 3px 6px rgba(24, 47, 80, .025), 0 12px 30px -14px rgba(24, 47, 80, .22);
+}
+.ncr-detail-part--2 { --ncr-part-accent: #956525; }
+.ncr-detail-part--3 { --ncr-part-accent: #177c78; }
+.ncr-detail-part--4 { --ncr-part-accent: #7957ae; }
+.ncr-part-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 24px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ncr-part-accent) 10%, var(--paper));
+  border-radius: 19px 19px 0 0;
+  background: linear-gradient(115deg, var(--ncr-part-tint), var(--paper) 85%);
+}
+.ncr-part-number {
+  display: grid;
+  place-items: center;
+  flex: 0 0 52px;
+  height: 56px;
+  border: 1px solid color-mix(in srgb, var(--ncr-part-accent) 20%, var(--paper));
+  border-radius: 16px;
+  background: linear-gradient(145deg, var(--paper), color-mix(in srgb, var(--ncr-part-accent) 13%, var(--paper)));
+  color: var(--ncr-part-accent);
+  font-size: 23px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 1px 0 var(--paper), 0 4px 8px color-mix(in srgb, var(--ncr-part-accent) 10%, transparent);
+}
+.ncr-part-heading-copy { min-width: 0; }
+.ncr-detail-part .ncr-part-heading h2 { font-size: 17px; line-height: 1.55; overflow-wrap: anywhere; }
+.ncr-part-eyebrow { display: block; margin-bottom: 2px; color: var(--ncr-part-accent); font-size: 11px; font-weight: 600; }
+.ncr-part-heading p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.ncr-detail-part .definition-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 20px 24px 24px;
+}
+.ncr-detail-part .definition {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--line) 55%, var(--paper));
+  border-radius: 12px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--shell) 65%, var(--paper)), var(--paper));
+  box-shadow: 0 2px 3px rgba(24, 47, 80, .018);
+}
+.ncr-detail-part .definition dt { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.6; }
+.ncr-detail-part .definition dd { margin-top: 5px; font-size: 14px; font-weight: 500; line-height: 1.75; }
+.ncr-detail-part .definition.full {
+  padding: 16px 18px;
+  border-color: color-mix(in srgb, var(--ncr-part-accent) 16%, var(--paper));
+  border-inline-start: 3px solid color-mix(in srgb, var(--ncr-part-accent) 55%, var(--paper));
+  background: var(--ncr-part-tint);
+  box-shadow: none;
+}
+:root[data-theme="dark"] .ncr-detail-part { --ncr-part-accent: #84b5fa; box-shadow: 0 4px 8px rgba(0, 0, 0, .12), 0 14px 30px -12px rgba(0, 0, 0, .5); }
+:root[data-theme="dark"] .ncr-detail-part--2 { --ncr-part-accent: #e5b66f; }
+:root[data-theme="dark"] .ncr-detail-part--3 { --ncr-part-accent: #6dcec1; }
+:root[data-theme="dark"] .ncr-detail-part--4 { --ncr-part-accent: #bba1ed; }
+@media (max-width: 640px) {
+  .ncr-detail-part { border-radius: 16px; margin-bottom: 18px; }
+  .ncr-part-heading { align-items: flex-start; gap: 12px; padding: 18px 16px; border-radius: 15px 15px 0 0; }
+  .ncr-part-number { flex-basis: 42px; height: 48px; border-radius: 13px; font-size: 20px; }
+  .ncr-detail-part .ncr-part-heading h2 { font-size: 16px; }
+  .ncr-detail-part .definition-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 16px; }
+  .ncr-detail-part .definition { padding: 12px 14px; }
+}
+@media print {
+  .ncr-detail-part, :root[data-theme="dark"] .ncr-detail-part, .ncr-detail-part .definition, .ncr-part-heading, .ncr-part-number { background: white; box-shadow: none; color: black; }
+  .ncr-detail-part .definition.full { background: white; }
+  .ncr-detail-part .definition dt, .ncr-part-eyebrow, .ncr-part-heading p { color: black; }
+  .ncr-part-heading { break-after: avoid; }
+  .ncr-detail-part .definition { break-inside: avoid; }
+}
 .ncr-text { margin: 12px 0 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ncr-heading-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .ncr-actions { border-color: var(--primary); }
