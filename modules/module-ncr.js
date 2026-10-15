@@ -49,7 +49,8 @@
     INVALID_CAUSES: "กรุณาเลือกสาเหตุ (4M) อย่างน้อย 1 ข้อ",
     INVALID_ROOT_CAUSE: "กรุณาระบุสาเหตุของปัญหา",
     INVALID_CORRECTION: "กรุณาระบุแนวทางการแก้ไขปัญหา",
-    INVALID_PREVENTION: "กรุณาระบุแนวทางการป้องกันไม่ให้เกิดซ้ำ",
+    INVALID_PREVENTION: "แนวทางการป้องกันไม่ให้เกิดซ้ำต้องมี 5–5,000 ตัวอักษร",
+    NCR_PREVENTION_REQUIRED: "ยังปิดประเด็นไม่ได้ แผนกที่รับผิดชอบยังไม่ได้ส่งแนวทางการป้องกันไม่ให้เกิดซ้ำ (ส่งกลับได้ตามปกติ)",
     INVALID_DUE_DATE: "กรุณาระบุกำหนดเสร็จ (ต้องไม่ก่อนวันที่ออก NCR)",
     INVALID_FOLLOWUP_RESULT: "กรุณาเลือกผลการติดตาม",
     INVALID_REASON: "กรุณาระบุเหตุผลอย่างน้อย 5 ตัวอักษร",
@@ -89,7 +90,7 @@
   const ATTACHMENT_SECTION_BY_STATUS = { awaiting_disposition: "report", awaiting_response: "response" };
   // ไฟล์ที่แนบมากับการกระทำ (ตอบ ให้ข้อมูล พิจารณา ติดตาม ขอข้อมูล ยกเลิก บันทึกต้นทุน/ผล) ใช้หมวดตามสถานะก่อนกระทำ
   // ยกเว้นการตอบและการให้ข้อมูลเพิ่มซึ่งเป็นหมวดคำตอบเสมอ (ncr_attachments.section ต้องเป็น report/response/followup)
-  const attachmentSectionFor = (action, status) => (["respond", "answer_info"].includes(action) ? "response" : ATTACHMENT_SECTION_BY_STATUS[status] ?? "followup");
+  const attachmentSectionFor = (action, status) => (["respond", "submit_prevention", "answer_info"].includes(action) ? "response" : ATTACHMENT_SECTION_BY_STATUS[status] ?? "followup");
   const evidenceFieldHtml = (id, label) => window.MNP_NCR_ATTACHMENTS.fieldHtml(id, label);
   // อ่านไฟล์ทั้งหมดจากฟอร์มและตรวจขนาด/ชนิด/ขนาดรวมก่อนเรียก RPC (optionalAttachments ของ app.js โยน error เป็นข้อความไทย)
   const evidencesOf = (form) => (form.elements.evidence ? optionalAttachments(form.elements.evidence.files) : []);
@@ -359,15 +360,24 @@
         <div class="form-grid">
           <div class="field full"><label for="ncr-correction">แนวทางการแก้ไขปัญหา *</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea></div>
 
-          <div class="field full"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ *</label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
+          <div class="field full"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ <small class="muted">(ไม่บังคับตอนนี้ ส่งภายหลังได้หลังวิเคราะห์เสร็จ)</small></label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
         </div>
-        <p class="ncr-due-note">กำหนดเสร็จตั้งให้อัตโนมัติ · แก้ไขปัญหา <strong>${formatDate(ncr.response_due)}</strong> (กำหนดตอบ 5 วันหลังออกใบ) · ป้องกันไม่ให้เกิดซ้ำ <strong>${ncr.response_due ? formatDate(addDays(ncr.response_due, 7)) : "—"}</strong> (ต่อจากนั้นอีก 7 วัน)</p>
+        <p class="ncr-due-note">ตอบภายใน 5 วันระบุสาเหตุและแนวทางแก้ไข · กำหนดเสร็จตั้งให้อัตโนมัติ: แก้ไขปัญหา <strong>${formatDate(ncr.response_due)}</strong> (กำหนดตอบ 5 วันหลังออกใบ) · ส่งแนวทางป้องกันไม่ให้เกิดซ้ำ <strong>${ncr.response_due ? formatDate(addDays(ncr.response_due, 7)) : "—"}</strong> (ต่อจากนั้นอีก 7 วัน) · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>
         ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ")}
         <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div></form>`);
+    }
+    if (ncr.status === "awaiting_followup" && isDeptManager(employee) && myDeptResponsible) {
+      forms.push(`<form class="ncr-action" data-action="submit_prevention"><div class="ncr-form-message"></div>
+        <h3>ส่วนที่ 3 — แนวทางการป้องกันไม่ให้เกิดซ้ำ</h3>
+        <p class="muted small">${ncr.prevention ? "ส่งแล้ว แก้ไขได้จนกว่า QA จะปิดประเด็น" : `ส่งภายใน <strong>${formatDate(ncr.prevention_due)}</strong> · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว`}</p>
+        <div class="field"><label for="ncr-prevention-later">แนวทางการป้องกันไม่ให้เกิดซ้ำ *</label><textarea class="textarea" id="ncr-prevention-later" name="prevention" maxlength="5000" required minlength="5">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
+        ${evidenceFieldHtml("ncr-prevention-evidence", "แนบหลักฐาน (ถ้ามี) เช่น WI ที่ปรับ ผลวิเคราะห์")}
+        <div class="form-actions"><button class="btn" type="submit">${ncr.prevention ? "บันทึกการแก้ไขแนวทางป้องกัน" : "ส่งแนวทางป้องกัน"}</button></div></form>`);
     }
     if (ncr.status === "awaiting_followup" && isQa(employee)) {
       forms.push(`<form class="ncr-action" data-action="followup"><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 4 — สรุปผลการติดตาม</h3>
+        ${ncr.prevention ? "" : `<p class="ncr-due-note">แผนกยังไม่ส่งแนวทางป้องกันไม่ให้เกิดซ้ำ (กำหนด ${formatDate(ncr.prevention_due)}) · ติดตามผลการแก้ไขและส่งกลับได้ แต่ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>`}
         ${radiosHtml("result", { close: "ปิดประเด็นความไม่สอดคล้อง", return: "ส่งกลับให้แผนกแก้ไขคำตอบ" })}
         <p class="muted small">กรณีปิดประเด็นไม่ได้/เกิดซ้ำต้องออก CAR — ใช้การ์ด NCR/CAR ในหน้าสร้างคำร้องไปก่อนจนกว่า CAR จะย้ายเข้าระบบนี้ (Phase 2)</p>
         <div class="field"><label for="ncr-followup-note">บันทึกการติดตาม (จำเป็นเมื่อส่งกลับ)</label><input class="input" id="ncr-followup-note" name="note" maxlength="2000"></div>
@@ -451,6 +461,7 @@
     const due = formatDate(ncr.response_due);
     if (ncr.status === "awaiting_disposition") return `${waiting.party} ${waiting.action} (แผนกต้องตอบภายใน ${due})`;
     if (ncr.status === "awaiting_response") return `${waiting.party} ${waiting.action}ภายใน ${due}`;
+    if (ncr.status === "awaiting_followup" && !ncr.prevention) return `${waiting.party} ${waiting.action} · แผนกที่รับผิดชอบส่งแนวทางป้องกันภายใน ${formatDate(ncr.prevention_due)}`;
     return `${waiting.party} ${waiting.action}`;
   }
 
@@ -465,7 +476,7 @@
   const lossSectionHtml = (ncr, losses, directory, editable) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, editable, todayBangkok(), formatBaht, formatQty);
 
   const HISTORY_LABELS = {
-    issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", followup_close: "QA ปิดประเด็น",
+    issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผจก.แผนก QA ลงนาม", signoff_factory: "ผจก.โรงงานลงนาม",
     signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
     loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง",
@@ -543,7 +554,7 @@
         ${definition("ผู้ตอบ", ncr.responded_at ? `${escapeHtml(personName(directory, ncr.responded_by))} · ${formatDate(ncr.responded_at)}` : "—")}
         ${definition("สาเหตุของปัญหา", escapeHtml(ncr.root_cause ?? "—"))}
         ${definition("แนวทางแก้ไข · กำหนดเสร็จ", `${escapeHtml(ncr.correction ?? "—")} · ${formatDate(ncr.correction_due)}`)}
-        ${definition("แนวทางป้องกัน · กำหนดเสร็จ", `${escapeHtml(ncr.prevention ?? "—")} · ${formatDate(ncr.prevention_due)}`)}
+        ${definition("แนวทางป้องกัน · กำหนดเสร็จ", `${escapeHtml(ncr.prevention ?? (ncr.prevention_due ? "ยังไม่ส่ง" : "—"))} · ${formatDate(ncr.prevention_due)}`)}
       </dl></section>
 `;
     const part4 = `
@@ -613,6 +624,7 @@
         p_correction: optionalText(form, "correction") ?? "",
         p_prevention: optionalText(form, "prevention") ?? "",
       }),
+      submit_prevention: (form) => sb.rpc("app_ncr_submit_prevention", { p_ncr_id: ncr.id, p_prevention: optionalText(form, "prevention") ?? "" }),
       followup: (form) => sb.rpc("app_ncr_followup", { p_ncr_id: ncr.id, p_result: checkedValues(form, "result")[0] ?? "", p_note: optionalText(form, "note") }),
       signoff: () => sb.rpc("app_ncr_signoff", { p_ncr_id: ncr.id }),
       request_info: (form) => sb.rpc("app_ncr_request_info", { p_ncr_id: ncr.id, p_note: optionalText(form, "note") ?? "" }),
@@ -630,7 +642,7 @@
       save_outcome: (form) => sb.rpc("app_ncr_save_outcome", { p_ncr_id: ncr.id, p_result: window.MNP_NCR_LOSS_UI.readOutcome(form) }),
       add_loss: (form) => sb.rpc("app_ncr_record_loss", { p_ncr_id: ncr.id, p_entry: window.MNP_NCR_LOSS_UI.readEntry(form), p_loss_id: optionalText(form, "loss_id") }),
     };
-    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", save_outcome: "บันทึกผลดำเนินการแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
+    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", submit_prevention: "ส่งแนวทางป้องกันแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", save_outcome: "บันทึกผลดำเนินการแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
 
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
