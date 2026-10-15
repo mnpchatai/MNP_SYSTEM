@@ -50,6 +50,7 @@
     INVALID_ROOT_CAUSE: "กรุณาระบุสาเหตุของปัญหา",
     INVALID_CORRECTION: "กรุณาระบุแนวทางการแก้ไขปัญหา",
     INVALID_PREVENTION: "แนวทางการป้องกันไม่ให้เกิดซ้ำต้องมี 5–5,000 ตัวอักษร",
+    NCR_PREVENTION_ALREADY_SUBMITTED: "ส่งแนวทางการป้องกันไม่ให้เกิดซ้ำไปแล้ว ถ้าต้องแก้ไข ให้ QA ส่งกลับให้แผนกแก้ไขคำตอบ",
     NCR_PREVENTION_REQUIRED: "ยังปิดประเด็นไม่ได้ แผนกที่รับผิดชอบยังไม่ได้ส่งแนวทางการป้องกันไม่ให้เกิดซ้ำ (ส่งกลับได้ตามปกติ)",
     INVALID_DUE_DATE: "กรุณาระบุกำหนดเสร็จ (ต้องไม่ก่อนวันที่ออก NCR)",
     INVALID_FOLLOWUP_RESULT: "กรุณาเลือกผลการติดตาม",
@@ -366,13 +367,14 @@
         ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ")}
         <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div></form>`);
     }
-    if (ncr.status === "awaiting_followup" && isDeptManager(employee) && myDeptResponsible) {
+    // ส่งได้ครั้งเดียว ถ้าต้องแก้หลังส่งแล้ว QA ส่งกลับให้แผนกแก้ในฟอร์มตอบ NCR (app_ncr_submit_prevention ตรวจซ้ำ)
+    if (ncr.status === "awaiting_followup" && !ncr.prevention && isDeptManager(employee) && myDeptResponsible) {
       forms.push(`<form class="ncr-action" data-action="submit_prevention"><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 3 — แนวทางการป้องกันไม่ให้เกิดซ้ำ</h3>
-        <p class="muted small">${ncr.prevention ? "ส่งแล้ว แก้ไขได้จนกว่า QA จะปิดประเด็น" : `ส่งภายใน <strong>${formatDate(ncr.prevention_due)}</strong> · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว`}</p>
-        <div class="field"><label for="ncr-prevention-later">แนวทางการป้องกันไม่ให้เกิดซ้ำ *</label><textarea class="textarea" id="ncr-prevention-later" name="prevention" maxlength="5000" required minlength="5">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
+        <p class="muted small">ส่งภายใน <strong>${formatDate(ncr.prevention_due)}</strong> · ส่งได้ครั้งเดียว ถ้าต้องแก้ภายหลัง QA จะส่งกลับให้แก้ไขคำตอบ · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>
+        <div class="field"><label for="ncr-prevention-later">แนวทางการป้องกันไม่ให้เกิดซ้ำ *</label><textarea class="textarea" id="ncr-prevention-later" name="prevention" maxlength="5000" required minlength="5"></textarea></div>
         ${evidenceFieldHtml("ncr-prevention-evidence", "แนบหลักฐาน (ถ้ามี) เช่น WI ที่ปรับ ผลวิเคราะห์")}
-        <div class="form-actions"><button class="btn" type="submit">${ncr.prevention ? "บันทึกการแก้ไขแนวทางป้องกัน" : "ส่งแนวทางป้องกัน"}</button></div></form>`);
+        <div class="form-actions"><button class="btn" type="submit">ส่งแนวทางป้องกัน</button></div></form>`);
     }
     if (ncr.status === "awaiting_followup" && isQa(employee)) {
       forms.push(`<form class="ncr-action" data-action="followup"><div class="ncr-form-message"></div>
