@@ -71,7 +71,7 @@ var TEXT_CELLS = {
 // (วัดจากฟอร์มจริง: คอลัมน์ C-P 14 คอลัมน์แสดงได้ราว 59 ตัว เผื่อไว้ ~15%)
 var UNITS_PER_COLUMN = 3.5;
 var LINE_FIELDS = {
-  description: ['E9:AD9', 'E10:AD10', 'C11:AD11', 'C12:AD12', 'C13:AD13', 'C14:AD14'],
+  description: ['E9:AD9', 'B10:AD10', 'B11:AD11', 'B12:AD12', 'B13:AD13', 'B14:AD14', 'B15:AD15'],
   dispositionNote: ['C21:AD21', 'C22:AD22'],
   rootCause: ['G26:AD26', 'D27:AD27', 'C28:AD28'],
   correction: ['C31:P31', 'C32:P32', 'C33:P33', 'C34:P34', 'C35:P35', 'C36:P36'],
@@ -429,8 +429,7 @@ function fillForm_(sheet, record) {
       .setValue(Number(quantity));
   });
 
-  var description = (record.defectType ? 'ประเภทข้อบกพร่อง: ' + record.defectType + '\n' : '') + (record.description || '');
-  writeLines_(sheet, LINE_FIELDS.description, description);
+  writeLines_(sheet, LINE_FIELDS.description, record.description);
   writeLines_(sheet, LINE_FIELDS.dispositionNote, record.dispositionNote);
   writeLines_(sheet, LINE_FIELDS.rootCause, record.rootCause);
   writeLines_(sheet, LINE_FIELDS.correction, record.correction);
