@@ -53,8 +53,8 @@
     if (!force && cache && cache.employeeId === employeeId && Date.now() - cache.loadedAt < CACHE_MS) return cache;
     const [reports, losses, outcomes, history] = await Promise.all([
       allRows(() => sb.from("ncr_reports").select("id,ncr_no,status,issue_date,product_name,customer_name,qty_total,qty_defect,unit,source,causes,response_due,responded_at,closed_at,prevention,prevention_due,defect_type:ncr_defect_types(code,name_th),ncr_responsibilities(share,department:departments(code))").neq("status", "cancelled").order("id")),
-      allRows(() => sb.from("ncr_losses").select("ncr_id,loss_type,amount,cost_status,entry_kind,incurred_on").is("voided_at", null).order("id")),
-      allRows(() => sb.from("ncr_outcomes").select("*").order("ncr_id")),
+      allRows(() => sb.from("ncr_losses").select("ncr_id,loss_type,amount,cost_status,entry_kind,incurred_on,quantity,unit").is("voided_at", null).order("id")),
+      allRows(() => sb.from("ncr_outcomes").select("ncr_id,cost_reviewed").order("ncr_id")),
       allRows(() => sb.from("ncr_status_history").select("ncr_id,to_status,changed_at").order("id")),
     ]);
     const lossesByNcr = new Map();
@@ -392,13 +392,12 @@
       ${detailHintIfIdle(card, "แท่ง", resolve)}`;
   }
 
-  function outcomesHtml(list) {
-    const units = model.outcomesByUnit(list);
-    const unverified = list.filter((row) => row.outcome?.result_status !== "confirmed").length;
-    return `<div class="nd-head"><h2>ผลดำเนินการจริง แยกตามหน่วย</h2><p>ทิ้ง ซ่อมสำเร็จ ส่งคืน นับเฉพาะผลที่ยืนยันแล้ว หน่วยต่างกันไม่รวมกัน ไม่คำนวณอัตราของเสียทั้งโรงงานจากข้อมูล NCR</p></div>
-      ${units.length ? `<div class="table-wrap"><table><thead><tr><th>หน่วย</th><th class="nd-num">NCR</th><th class="nd-num">พบปัญหา</th><th class="nd-num">ยืนยันผลแล้ว</th><th class="nd-num">ทิ้งจริง</th><th class="nd-num">ซ่อมสำเร็จ</th><th class="nd-num">ส่งคืน</th></tr></thead><tbody>
-      ${units.map((unit) => `<tr><td>${esc(unit.unit)}</td><td class="nd-num">${fmtNumber(unit.count)}</td><td class="nd-num">${formatQty(Math.round(unit.defect * 1000) / 1000)}</td><td class="nd-num">${unit.verified}/${unit.count} ใบ</td><td class="nd-num">${unit.verified ? formatQty(unit.scrapped) : "—"}</td><td class="nd-num">${unit.verified ? formatQty(unit.repaired) : "—"}</td><td class="nd-num">${unit.verified ? formatQty(unit.returned) : "—"}</td></tr>`).join("")}</tbody></table></div>
-      <p class="nd-hint">ยังไม่มีผลยืนยัน ${fmtCount(unverified)} ตัวเลขทิ้ง/ซ่อม/ส่งคืนจึงเป็นผลของใบที่ยืนยันแล้วเท่านั้น</p>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}`;
+  function scrapHtml(list) {
+    const units = model.scrapByUnit(list);
+    return `<div class="nd-head"><h2>ของเสียทิ้งจริง แยกตามหน่วย</h2><p>ทิ้งจริงนับจากรายการความสูญเสียประเภทของเสีย/ทิ้งที่ยืนยันยอดแล้ว หน่วยต่างกันไม่รวมกัน ไม่คำนวณอัตราของเสียทั้งโรงงานจากข้อมูล NCR</p></div>
+      ${units.length ? `<div class="table-wrap"><table><thead><tr><th>หน่วย</th><th class="nd-num">NCR</th><th class="nd-num">พบปัญหา</th><th class="nd-num">ทิ้งจริง</th></tr></thead><tbody>
+      ${units.map((unit) => `<tr><td>${esc(unit.unit)}</td><td class="nd-num">${fmtNumber(unit.count)}</td><td class="nd-num">${formatQty(unit.defect)}</td><td class="nd-num">${unit.scrapped ? formatQty(unit.scrapped) : "—"}</td></tr>`).join("")}</tbody></table></div>
+      <p class="nd-hint">ยอดทิ้งที่ยังเป็นประมาณการจะนับเมื่อยืนยันยอดแล้ว</p>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}`;
   }
 
   function drillHtml(list) {
@@ -440,7 +439,7 @@
           <section class="card nd-card" data-card="source">${breakdownHtml("source", "แหล่งที่พบ", "นับใบเต็มใบ แตะแท่งเพื่อดูตัวเลข", model.countBy(list, (row) => [row.source]), SOURCES, filters, "source", list.length)}</section>
           <section class="card nd-card" data-card="cause">${breakdownHtml("cause", "สาเหตุ 4M+E", "ใบที่มีหลายสาเหตุนับในทุกสาเหตุ (ซ้อนกันได้) จึงไม่รวมกันเป็น 100%", model.countBy(list, model.causeKeys), CAUSE_LABELS, filters, "cause", list.length)}</section>
         </div>
-        <section class="card nd-card" data-card="outcomes">${outcomesHtml(list)}</section>
+        <section class="card nd-card" data-card="scrap">${scrapHtml(list)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list)}</section>
         ${definitionsHtml}
         <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>

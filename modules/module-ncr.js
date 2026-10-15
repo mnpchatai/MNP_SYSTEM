@@ -62,9 +62,7 @@
     INVALID_LOSS_STATUS: "กรุณาเลือกประมาณการหรือยืนยันยอดจริง",
     INVALID_LOSS_COMPONENT: "ส่วนประกอบค่าใช้จ่ายไม่ตรงกับประเภท",
     INVALID_LOSS_DATE: "กรุณาตรวจวันที่เกิดค่าใช้จ่าย ยอดจริงต้องไม่เป็นวันที่ในอนาคต",
-    LOSS_EVIDENCE_REQUIRED: "กรุณาระบุหลักฐานอ้างอิงก่อนยืนยันยอดหรือผลดำเนินการ",
-    INVALID_OUTCOME: "กรุณาตรวจจำนวนผลดำเนินการและวันที่",
-    OUTCOME_EXCEEDS_LOT: "ผลสุดท้ายรวมกันหรือจำนวนคัดแยกต้องไม่เกินจำนวนทั้งหมดในล็อต",
+    LOSS_EVIDENCE_REQUIRED: "กรุณาระบุหลักฐานอ้างอิงก่อนยืนยันยอด",
     COST_REVIEW_PENDING: "ยังมีรายการรอยืนยัน กรุณาตรวจยอดก่อนระบุว่าประเมินครบ",
     ZERO_COST_REASON_REQUIRED: "กรุณาระบุเหตุผลกรณีไม่มีค่าเสียหาย",
     INVALID_LOSS: "จำนวนต้องมากกว่า 0 ราคาต่อหน่วยต้องไม่ติดลบ และต้องระบุหน่วย",
@@ -488,7 +486,7 @@
   }
 
   function canEditLosses(ncr, employee) {
-    // ลงยอดย้อนหลังได้หลังปิด NCR แล้ว ล็อกเฉพาะใบที่ยกเลิก (ตรงกับ app_ncr_record_loss / app_ncr_save_outcome / app_ncr_void_loss)
+    // ลงยอดย้อนหลังได้หลังปิด NCR แล้ว ล็อกเฉพาะใบที่ยกเลิก (ตรงกับ app_ncr_record_loss / app_ncr_review_costs / app_ncr_void_loss)
     if (ncr.status === "cancelled") return false;
     // โหมดทดสอบ: ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และหัวหน้าแผนกที่รับผิดชอบเท่านั้น (ตรงกับ private.can_edit_ncr_losses; QA ไม่มีสิทธิ์โดยตำแหน่ง)
     // ข้อมูลจริง: พนักงาน QA, ผจก.โรงงาน, ผู้ช่วย ผจก.โรงงาน และหัวหน้าแผนกที่รับผิดชอบ
@@ -503,7 +501,7 @@
     issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผจก.แผนก QA ลงนาม", signoff_factory: "ผจก.โรงงานลงนาม",
     signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
-    loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง",
+    loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินค่าเสียหาย",
   };
 
   async function renderDetail(id) {
@@ -643,7 +641,7 @@
         ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
-    const lossesSection = window.MNP_NCR_LOSS_UI.outcomeHtml(ncr, canEditLosses(ncr, employee), todayBangkok(), formatQty, directory) + lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
+    const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
     const historySection = `
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     // ผู้ดำเนินการต้องได้อ่านข้อมูลของขั้นก่อนหน้า + ไฟล์หลักฐานก่อนถึงฟอร์ม: ฟอร์มจึงอยู่หลังส่วนที่ขั้นนั้นต้องอ่าน
@@ -704,10 +702,13 @@
         return { error: null, message: `แนบไฟล์แล้ว${evidences.length > 1 ? ` ${evidences.length} ไฟล์` : ""}` };
       },
       cancel: (form) => sb.rpc("app_ncr_cancel", { p_ncr_id: ncr.id, p_reason: optionalText(form, "reason") ?? "" }),
-      save_outcome: (form) => sb.rpc("app_ncr_save_outcome", { p_ncr_id: ncr.id, p_result: window.MNP_NCR_LOSS_UI.readOutcome(form) }),
+      review_costs: (form) => {
+        const review = window.MNP_NCR_LOSS_UI.readReview(form, losses);
+        return sb.rpc("app_ncr_review_costs", { p_ncr_id: ncr.id, p_reviewed: review.reviewed, p_note: review.note });
+      },
       add_loss: (form) => sb.rpc("app_ncr_record_loss", { p_ncr_id: ncr.id, p_entry: window.MNP_NCR_LOSS_UI.readEntry(form), p_loss_id: optionalText(form, "loss_id") }),
     };
-    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", submit_prevention: "ส่งแนวทางป้องกันแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", save_outcome: "บันทึกผลดำเนินการแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
+    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", submit_prevention: "ส่งแนวทางป้องกันแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", review_costs: "บันทึกสรุปการประเมินแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
 
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();

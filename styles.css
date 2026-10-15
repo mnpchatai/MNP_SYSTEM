@@ -1038,6 +1038,10 @@ body.no-scroll { overflow: hidden; }
 .ncr-loss-pending dt { color: var(--muted); }
 .ncr-loss-pending dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 #ncr-loss-form, #ncr-loss-form :is(input, select, textarea, button) { scroll-margin-top: calc(var(--ncr-loss-top) + var(--ncr-loss-clearance)); }
+.ncr-cost-review { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.ncr-cost-review h3 { margin: 0 0 6px; }
+.ncr-legacy-outcome { margin: 8px 0; }
+.ncr-legacy-outcome summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 @media (max-width: 760px) {
   .ncr-loss-card { --ncr-loss-top: 58px; --ncr-loss-clearance: 260px; }
   .ncr-loss-overview { padding: 6px; }
