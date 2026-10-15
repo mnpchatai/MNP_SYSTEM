@@ -1673,3 +1673,27 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .factory-page .fm-review-details > summary::before { content: ""; width: 7px; height: 7px; margin: 0 4px 0 2px; flex: none; border-right: 2px solid var(--quiet); border-bottom: 2px solid var(--quiet); transform: rotate(-45deg); transition: transform .18s ease-out; }
 .factory-page .fm-review-details[open] > summary::before { transform: rotate(45deg); }
 @media (prefers-reduced-motion: reduce) { .factory-page .fm-review-details > summary::before { transition: none; } }
+
+/* dropdown ค้นหาได้ (modules/searchable-select.js) — ทุก <select> ถูกเสริมเป็นช่องค้นหา + รายการเลือก
+   .ss เป็น display: contents ช่องค้นหาจึงรับ layout/ขนาดเดิมของ <select> (คัดลอก class มา) ส่วน <select> จริงซ่อนแบบยังรับ focus ได้
+   line-height: normal ให้สูงเท่า <select> ของเบราว์เซอร์ · ความกว้างตามตัวเลือกที่ยาวที่สุด (size) เหมือน <select> และย่อได้ใน flex (min-width: 0)
+   รายการเป็น position: fixed ตามตำแหน่งช่อง (ไม่ถูกตัดโดยตาราง/การ์ดที่เลื่อนได้) z-index ต่ำกว่า lightbox (90) */
+.ss { display: contents; }
+.ss-native { position: absolute !important; width: 1px !important; height: 1px !important; min-width: 0 !important; min-height: 0 !important; margin: -1px !important; padding: 0 !important; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0 !important; opacity: 0; pointer-events: none; }
+.ss-input { min-width: 0; line-height: normal; padding-right: 34px !important; overflow: hidden; text-overflow: ellipsis; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%2368778e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 12px 8px; }
+.ss-input[aria-expanded="true"] { cursor: text; }
+.ss-input:disabled { cursor: not-allowed; opacity: .6; }
+.ss-input::placeholder { color: var(--quiet); }
+:root[data-theme="dark"] .ss-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%2391a1b8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.ss-list { position: fixed; z-index: 70; padding: 4px; overflow-y: auto; overscroll-behavior: contain; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 36px -8px rgba(15, 23, 42, .28); }
+.ss-list[hidden] { display: none; }
+.ss-option { width: 100%; min-height: 40px; padding: 8px 10px; display: flex; align-items: center; gap: 10px; color: var(--ink); background: none; border: 0; border-radius: 6px; font: inherit; font-size: 14px; line-height: 1.4; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.ss-option.is-active { color: var(--primary); background: var(--primary-soft); }
+.ss-option.is-selected { font-weight: 700; }
+.ss-option.is-selected::after { content: ""; width: 5px; height: 10px; margin: -3px 2px 0 auto; flex: none; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); }
+.ss-option:disabled { color: var(--quiet); cursor: not-allowed; }
+.ss-empty { padding: 12px 10px; color: var(--muted); font-size: 13px; }
+@media (max-width: 760px) {
+  .ss-input { font-size: 16px !important; }
+  .ss-option { min-height: 44px; font-size: 15px; }
+}
