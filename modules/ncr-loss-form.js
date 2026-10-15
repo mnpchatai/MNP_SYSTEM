@@ -13,9 +13,16 @@
       <td>${escapeHtml(loss.evidence_ref ?? "—")}<div class="muted small">${escapeHtml(loss.note ?? "")}</div>${loss.voided_at ? `<div class="muted small">ยกเลิก: ${escapeHtml(loss.void_reason ?? "")} · ${escapeHtml(personName(directory, loss.voided_by))}</div>` : ""}</td>
       <td>${escapeHtml(personName(directory, loss.recorded_by))}<div class="muted small">${formatDate(loss.recorded_at)}</div>${loss.verified_at ? `<div class="muted small">ยืนยัน: ${escapeHtml(personName(directory, loss.verified_by))} · ${formatDate(loss.verified_at)}</div>` : ""}</td>
       <td>${editable && !loss.voided_at ? `<button class="btn secondary small" type="button" data-edit-loss="${escapeHtml(loss.id)}">แก้ไข/ยืนยันยอด</button> <button class="btn secondary small" type="button" data-void-loss="${escapeHtml(loss.id)}">ยกเลิก</button>` : ""}</td></tr>`).join("");
-    return `<section class="card ncr-card"><h2>ความสูญเสีย (Cost of Poor Quality)</h2>
+    return `<section class="card ncr-card ncr-loss-card"><h2>ความสูญเสีย (Cost of Poor Quality)</h2>
       <p class="muted small">หนึ่ง NCR เพิ่มได้หลายรายการ · ยืนยันยอดโดยอ้างอิงหลักฐาน · แก้ประมาณการเดิมเป็นยอดจริงในรายการเดิม</p>
-      <dl class="definition-grid"><div><dt>สูญเสียยืนยันแล้ว</dt><dd>${formatBaht(summary.confirmed)}</dd></div><div><dt>ชดเชยยืนยันแล้ว</dt><dd>${formatBaht(summary.recovery)}</dd></div><div><dt>สุทธิยืนยันแล้ว</dt><dd>${formatBaht(summary.net)}${!ncr.outcome?.cost_reviewed || summary.pending ? ' <span class="muted small">(ประเมินยังไม่ครบ)</span>' : ""}</dd></div><div><dt>ประมาณการรอยืนยัน / ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimated)} / ${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl>
+      <div class="ncr-loss-overview"><dl class="ncr-loss-summary${editable ? " is-editable" : ""}" aria-label="สรุปความสูญเสีย">
+        <div><dt>สูญเสียยืนยันแล้ว</dt><dd>${formatBaht(summary.confirmed)}</dd></div>
+        <div><dt>ชดเชยยืนยันแล้ว</dt><dd>${formatBaht(summary.recovery)}</dd></div>
+        <div class="ncr-loss-net"><dt>สุทธิยืนยันแล้ว</dt><dd>${formatBaht(summary.net)}</dd></div>
+        ${editable ? '<div class="ncr-loss-draft"><dt id="ncr-loss-preview-label">รายการที่กำลังกรอก <span>ยังไม่บันทึก</span></dt><dd><output id="ncr-loss-preview" form="ncr-loss-form" for="ncr-loss-qty ncr-loss-cost ncr-loss-headcount ncr-loss-hours" aria-labelledby="ncr-loss-preview-label" aria-live="polite">—</output></dd></div>' : ""}
+      </dl>
+      <dl class="ncr-loss-pending"><div><dt>ประมาณการรอยืนยัน</dt><dd>${formatBaht(summary.estimated)}</dd></div><div><dt>ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl></div>
+      ${!ncr.outcome?.cost_reviewed || summary.pending ? '<p class="muted small">ประเมินค่าเสียหายยังไม่ครบ</p>' : ""}
       ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>'}
       ${editable ? `<form class="ncr-action" data-action="add_loss" id="ncr-loss-form"><div class="ncr-form-message"></div><h3 id="ncr-loss-heading">เพิ่มรายการความสูญเสีย</h3><input type="hidden" name="loss_id">
         <div class="form-grid">
@@ -29,7 +36,7 @@
           ${numberField("ncr-loss-qty", "quantity", "จำนวนทิ้งจริง *")}
           <div class="field"><label for="ncr-loss-unit">หน่วย *</label><input class="input" id="ncr-loss-unit" name="unit" maxlength="20" value="${escapeHtml(ncr.unit)}" required></div>
           ${numberField("ncr-loss-cost", "unit_cost", "ต้นทุนต่อหน่วย (บาท) *", "", "0.01")}
-          <div class="field full"><p class="muted small" id="ncr-loss-hint"></p><output id="ncr-loss-preview" aria-live="polite">มูลค่ารายการ: —</output></div>
+          <div class="field full"><p class="muted small" id="ncr-loss-hint"></p></div>
           <div class="field full"><label for="ncr-loss-ref">หลักฐานอ้างอิง (จำเป็นเมื่อยืนยันยอด)</label><input class="input" id="ncr-loss-ref" name="evidence_ref" maxlength="200" placeholder="เลขที่ใบเสร็จ ใบต้นทุน ใบบันทึกเวลา หรือชื่อไฟล์หลักฐานที่แนบใน NCR"></div>
           <div class="field full"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
           ${extraFilesField("ncr-loss-files")}
@@ -95,7 +102,7 @@
     const preview = () => {
       if (!form.elements.labor_headcount.disabled) form.elements.quantity.value = costs.laborQuantity(form.elements.labor_headcount.value, form.elements.labor_hours.value) ?? "";
       const q = form.elements.quantity.value, rate = form.elements.unit_cost.value;
-      document.querySelector("#ncr-loss-preview").textContent = `มูลค่ารายการ: ${q && rate && Number.isFinite(Number(q)*Number(rate)) ? formatBaht(costs.round(costs.round(q,3)*costs.round(rate))) : "—"}`;
+      document.querySelector("#ncr-loss-preview").textContent = q && rate && Number.isFinite(Number(q)*Number(rate)) ? formatBaht(costs.round(costs.round(q,3)*costs.round(rate))) : "—";
     };
     components(); configure(true);
     form.addEventListener("change", (event) => {

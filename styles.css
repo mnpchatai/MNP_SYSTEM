@@ -1021,6 +1021,35 @@ body.no-scroll { overflow: hidden; }
 .ncr-card .definition dd { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ncr-card .definition:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .ncr-card .definition.full { grid-column: 1 / -1; }
+/* ยอดที่บันทึกแล้วและรายการที่กำลังกรอกอยู่ในสายตาตลอดฟอร์ม */
+.ncr-loss-card { --ncr-loss-top: 64px; --ncr-loss-clearance: 160px; }
+.ncr-loss-overview { position: sticky; top: var(--ncr-loss-top); z-index: 4; margin: 18px 0 14px; padding: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px -12px color-mix(in srgb, var(--ink) 30%, transparent); }
+.ncr-loss-summary { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ncr-loss-summary.is-editable { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ncr-loss-summary > div { min-width: 0; padding: 10px 12px; border-radius: 9px; }
+.ncr-loss-summary dt { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ncr-loss-summary dd { margin: 5px 0 0; color: var(--ink); font-size: clamp(16px, 1.7vw, 23px); font-weight: 700; line-height: 1.35; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ncr-loss-summary .ncr-loss-net { background: var(--primary-soft); }
+.ncr-loss-net dd { color: var(--primary); }
+.ncr-loss-summary .ncr-loss-draft { background: var(--shell); border: 1px dashed var(--line); }
+.ncr-loss-draft dt span { display: inline-block; margin-left: 4px; color: var(--quiet); font-size: 11px; }
+.ncr-loss-pending { margin: 6px 0 0; padding: 8px 12px 2px; display: flex; flex-wrap: wrap; gap: 4px 20px; border-top: 1px solid var(--soft-line); }
+.ncr-loss-pending > div { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; }
+.ncr-loss-pending dt { color: var(--muted); }
+.ncr-loss-pending dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+#ncr-loss-form, #ncr-loss-form :is(input, select, textarea, button) { scroll-margin-top: calc(var(--ncr-loss-top) + var(--ncr-loss-clearance)); }
+@media (max-width: 760px) {
+  .ncr-loss-card { --ncr-loss-top: 58px; --ncr-loss-clearance: 260px; }
+  .ncr-loss-overview { padding: 6px; }
+  .ncr-loss-summary, .ncr-loss-summary.is-editable { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .ncr-loss-summary > div { padding: 7px 8px; }
+  .ncr-loss-summary dd { margin-top: 2px; font-size: 17px; }
+  .ncr-loss-pending { padding: 6px 8px 2px; gap: 2px 16px; }
+  .ncr-loss-pending > div { font-size: 11px; }
+}
+@media print {
+  .ncr-loss-overview { position: static; box-shadow: none; }
+}
 /* การ์ดรายละเอียดส่วนที่ 1–4: แสดงเฉพาะโหมดทดสอบ NCR */
 .ncr-detail-part {
   --ncr-part-accent: #356fc3;
