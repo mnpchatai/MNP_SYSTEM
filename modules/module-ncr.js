@@ -116,9 +116,12 @@
     return ncr.status === "awaiting_signoff" ? `${label} · ${SIGNER_SHORT_LABELS[nextSigner(ncr).key]}` : label;
   }
 
-  function statusBadgeHtml(ncr) {
-    const badge = `<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(statusLabel(ncr))}</span>`;
-    return isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
+  // lossPending = ผลของ MNP_NCR_COSTS.lossDataPending (ต้องโหลดยอดความสูญเสียและผลดำเนินการของใบนั้นมาก่อน)
+  function statusBadgeHtml(ncr, lossPending = false) {
+    const badges = [`<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(statusLabel(ncr))}</span>`];
+    if (isOverdue(ncr)) badges.push('<span class="badge urgent-flag">เกินกำหนดตอบ</span>');
+    if (lossPending) badges.push('<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย</span>');
+    return badges.join(" ");
   }
 
   // ในทะเบียน NCR: ป้ายพื้นสีใต้สถานะ บอกว่าใครเป็นผู้รับผิดชอบ — ที่ยังไม่ปิด = ผู้รับผิดชอบตอนนี้ (รอลงนามบอกด้วยว่าลงนามไปแล้วกี่ขั้น),
@@ -263,7 +266,7 @@
       const ids = rows.map((row) => row.id);
       const [lossResult, outcomeResult] = await Promise.all([
         sb.from("ncr_losses").select("ncr_id,amount,cost_status,entry_kind").is("voided_at", null).in("ncr_id", ids),
-        filter === "loss" ? sb.from("ncr_outcomes").select("ncr_id,cost_reviewed").in("ncr_id", ids) : Promise.resolve({ data: [], error: null }),
+        sb.from("ncr_outcomes").select("ncr_id,cost_reviewed").in("ncr_id", ids),
       ]);
       if (lossResult.error) throw lossResult.error;
       if (outcomeResult.error) throw outcomeResult.error;
@@ -271,11 +274,10 @@
         if (!lossByNcr.has(loss.ncr_id)) lossByNcr.set(loss.ncr_id, []);
         lossByNcr.get(loss.ncr_id).push(loss);
       }
-      // รอข้อมูลการสูญเสีย: กฎเดียวกับแดชบอร์ด (ncr-costs.js lossDataPending) กรองหลังโหลดยอดและผลดำเนินการของใบที่ได้มา
-      if (filter === "loss") {
-        const outcomes = new Map((outcomeResult.data ?? []).map((item) => [item.ncr_id, item]));
-        rows = rows.filter((row) => window.MNP_NCR_COSTS.lossDataPending(row.status, outcomes.get(row.id), window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id) ?? [])));
-      }
+      // รอข้อมูลการสูญเสีย: กฎเดียวกับแดชบอร์ด (ncr-costs.js lossDataPending) ใช้ทั้งป้ายบนการ์ดและแท็บกรอง
+      const outcomes = new Map((outcomeResult.data ?? []).map((item) => [item.ncr_id, item]));
+      for (const row of rows) row.lossPending = window.MNP_NCR_COSTS.lossDataPending(row.status, outcomes.get(row.id), window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id) ?? []));
+      if (filter === "loss") rows = rows.filter((row) => row.lossPending);
     }
     // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
     const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
@@ -291,7 +293,7 @@
       return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
         <header class="request-card-head">
           <div class="request-card-identity"><a class="request-card-no" href="${href}">${escapeHtml(row.ncr_no)}</a></div>
-          <div class="ncr-card-status"><div class="request-card-tags">${statusBadgeHtml(row)}</div>${ownerChipHtml(row, staff, directory)}</div>
+          <div class="ncr-card-status"><div class="request-card-tags">${statusBadgeHtml(row, row.lossPending)}</div>${ownerChipHtml(row, staff, directory)}</div>
         </header>
         <div class="request-card-body">
           <a class="request-card-title" href="${href}">${escapeHtml(row.product_name)}</a>
@@ -544,7 +546,7 @@
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
     const heading = `
-      <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr)}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
+      <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
