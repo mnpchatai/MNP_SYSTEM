@@ -65,14 +65,17 @@ var UNIT_MARK = '☑ ';
 var TEXT_CELLS = {
   productCode: 'G5', productName: 'G6', customer: 'V5', poNo: 'V6', forwardTo: 'S20',
 };
-// ช่องข้อความหลายบรรทัด: แต่ละบรรทัดเป็นเซลล์ที่ตัวหนังสือล้นไปทางขวาบนเส้นบรรทัดของฟอร์ม
-// maxChars ตั้งเผื่อไว้ ถ้าตัวหนังสือล้นเกินกรอบหรือสั้นเกินไป ให้ปรับตัวเลขนี้
+// ช่องข้อความหลายบรรทัด: แต่ละบรรทัดคือช่วงคอลัมน์บนเส้นบรรทัดของฟอร์ม ข้อความเขียนที่เซลล์แรกของช่วง
+// แล้วล้นไปทางขวา ความยาวต่อบรรทัดคำนวณจากจำนวนคอลัมน์ × UNITS_PER_COLUMN (นับเฉพาะตัวอักษรที่กินที่
+// ไม่นับสระบน/ล่าง วรรณยุกต์) ถ้ายังล้นเส้นขอบให้ลดค่านี้ ถ้าบรรทัดสั้นเกินไปให้เพิ่ม
+// (วัดจากฟอร์มจริง: คอลัมน์ C-P 14 คอลัมน์แสดงได้ราว 59 ตัว เผื่อไว้ ~15%)
+var UNITS_PER_COLUMN = 3.5;
 var LINE_FIELDS = {
-  description: { cells: ['E9', 'E10', 'C11', 'C12', 'C13', 'C14'], maxChars: 200 },
-  dispositionNote: { cells: ['C21', 'C22'], maxChars: 200 },
-  rootCause: { cells: ['G26', 'D27', 'C28'], maxChars: 200 },
-  correction: { cells: ['C31', 'C32', 'C33', 'C34', 'C35', 'C36'], maxChars: 100 },
-  prevention: { cells: ['Q31', 'Q32', 'Q33', 'Q34', 'Q35', 'Q36'], maxChars: 100 },
+  description: ['E9:AD9', 'E10:AD10', 'C11:AD11', 'C12:AD12', 'C13:AD13', 'C14:AD14'],
+  dispositionNote: ['C21:AD21', 'C22:AD22'],
+  rootCause: ['G26:AD26', 'D27:AD27', 'C28:AD28'],
+  correction: ['C31:P31', 'C32:P32', 'C33:P33', 'C34:P34', 'C35:P35', 'C36:P36'],
+  prevention: ['Q31:AD31', 'Q32:AD32', 'Q33:AD33', 'Q34:AD34', 'Q35:AD35', 'Q36:AD36'],
 };
 // ข้อความเดิมของแบบฟอร์ม — ใช้เติมช่องว่าง และคืนค่าตอนล้างฟอร์ม
 var BLANK_DATE = '_______ / _______ / _______';
@@ -445,7 +448,7 @@ function resetForm_(sheet) {
   values_(TEXT_CELLS).forEach(function (a1) { sheet.getRange(a1).setValue(''); });
   values_(QUANTITY_CELLS).forEach(function (a1) { sheet.getRange(a1).setValue('').setNumberFormat('General'); });
   Object.keys(LINE_FIELDS).forEach(function (key) {
-    LINE_FIELDS[key].cells.forEach(function (a1) { sheet.getRange(a1).setValue(''); });
+    LINE_FIELDS[key].forEach(function (line) { sheet.getRange(firstCell_(line)).setValue(''); });
   });
 }
 
@@ -457,45 +460,104 @@ function setCheckboxes_(values, cells, selected) {
   });
 }
 
-function writeLines_(sheet, field, text) {
-  var lines = wrapText_(text, field.maxChars);
-  if (lines.length > field.cells.length) {
-    var last = field.cells.length - 1;
-    lines = lines.slice(0, field.cells.length);
-    lines[last] = cutText_(lines[last], field.maxChars - 1) + '…';
+function writeLines_(sheet, lineRanges, text) {
+  var widths = lineRanges.map(lineWidth_);
+  var lines = wrapText_(text, widths);
+  if (lines.length > lineRanges.length) {
+    var last = lineRanges.length - 1;
+    lines = lines.slice(0, lineRanges.length);
+    lines[last] = cutToWidth_(lines[last], widths[last] - 1) + '…';
   }
-  field.cells.forEach(function (a1, index) {
-    sheet.getRange(a1)
+  lineRanges.forEach(function (line, index) {
+    sheet.getRange(firstCell_(line))
       .setWrapStrategy(SpreadsheetApp.WrapStrategy.OVERFLOW)
       .setHorizontalAlignment('left')
       .setValue(asText_(lines[index] || ''));
   });
 }
 
-// ตัดข้อความเป็นบรรทัดตามขึ้นบรรทัดใหม่เดิม และตามความยาวไม่เกิน maxChars ต่อบรรทัด
-// (ภาษาไทยไม่เว้นวรรคระหว่างคำ จึงตัดที่ช่องว่างถ้ามี ไม่มีก็ตัดตามความยาวโดยไม่แยกสระ/วรรณยุกต์ออกจากพยัญชนะ)
-function wrapText_(text, maxChars) {
+// ความกว้างที่บรรทัดรับได้ (หน่วยตัวอักษร) จากช่วงคอลัมน์ เช่น 'C31:P31' = 14 คอลัมน์
+function lineWidth_(line) {
+  var parts = line.split(':');
+  var first = columnNumber_(parts[0]);
+  var last = columnNumber_(parts[1] || parts[0]);
+  return Math.floor((last - first + 1) * UNITS_PER_COLUMN);
+}
+
+function firstCell_(line) {
+  return line.split(':')[0];
+}
+
+function columnNumber_(a1) {
+  var letters = String(a1).replace(/[^A-Z]/gi, '').toUpperCase();
+  var number = 0;
+  for (var i = 0; i < letters.length; i++) number = number * 26 + letters.charCodeAt(i) - 64;
+  return number;
+}
+
+// สระบน/ล่าง ไม้หันอากาศ และวรรณยุกต์ซ้อนอยู่บนพยัญชนะ ไม่กินความกว้างของบรรทัด
+var THAI_COMBINING = /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/;
+// สระหน้า (เ แ โ ใ ไ) ต้องอยู่บรรทัดเดียวกับพยัญชนะที่ตามมา
+var THAI_LEADING_VOWEL = /[\u0E40-\u0E44]/;
+
+function textWidth_(text) {
+  var width = 0;
+  for (var i = 0; i < text.length; i++) {
+    if (!THAI_COMBINING.test(text.charAt(i))) width++;
+  }
+  return width;
+}
+
+// ตัดข้อความเป็นบรรทัดตามขึ้นบรรทัดใหม่เดิม และตามความกว้างของแต่ละบรรทัด (widths[i]; เกินจำนวนใช้ค่าสุดท้าย)
+// ภาษาไทยไม่เว้นวรรคระหว่างคำ จึงตัดที่ช่องว่างถ้ามีในช่วงท้ายบรรทัด ไม่มีก็ตัดตามความกว้าง
+function wrapText_(text, widths) {
   var lines = [];
+  var widthAt = function (index) { return widths[Math.min(index, widths.length - 1)]; };
   String(text || '').replace(/\r\n?/g, '\n').split('\n').forEach(function (paragraph) {
     var rest = paragraph.trim();
-    if (!rest) return;
-    while (rest.length > maxChars) {
-      var head = cutText_(rest, maxChars);
-      var space = head.lastIndexOf(' ');
-      if (space > maxChars * 0.6) head = head.slice(0, space);
-      lines.push(head);
+    while (rest) {
+      var width = widthAt(lines.length);
+      if (textWidth_(rest) <= width) {
+        lines.push(rest);
+        break;
+      }
+      var head = cutToWidth_(rest, width);
+      var breakAt = lastWordBreak_(rest, head.length);
+      if (breakAt > 0 && textWidth_(rest.slice(0, breakAt)) > width * 0.5) head = rest.slice(0, breakAt);
+      lines.push(head.trim());
       rest = rest.slice(head.length).trim();
     }
-    if (rest) lines.push(rest);
   });
   return lines;
 }
 
-// ตัดสตริงไม่เกิน length โดยไม่ให้สระบน/ล่าง วรรณยุกต์ (ตัวกำกับไทย) หลุดไปขึ้นต้นบรรทัดถัดไป
-function cutText_(text, length) {
-  var end = Math.min(length, text.length);
-  while (end > 1 && end < text.length && /[ัิ-ฺ็-๎]/.test(text.charAt(end))) end--;
-  return text.slice(0, end);
+// ตำแหน่งตัดคำสุดท้ายที่ไม่เกิน limit: ใช้ตัวตัดคำภาษาไทยของ Intl.Segmenter ถ้า runtime มี ไม่มีก็ใช้ช่องว่าง
+var WORD_SEGMENTER = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter('th', { granularity: 'word' }) : null;
+
+function lastWordBreak_(text, limit) {
+  var best = text.lastIndexOf(' ', limit);
+  if (WORD_SEGMENTER) {
+    // ตัดคำทั้งข้อความ ไม่ใช่เฉพาะส่วนที่ตัดมา — ถ้าตัดคำจากข้อความที่ขาดกลางคำ จะได้ขอบคำผิดตรงรอยตัด
+    var iterator = WORD_SEGMENTER.segment(text)[Symbol.iterator]();
+    for (var step = iterator.next(); !step.done && step.value.index <= limit; step = iterator.next()) {
+      if (step.value.index > best) best = step.value.index;
+    }
+  }
+  return best;
+}
+
+// ส่วนต้นของข้อความที่กว้างไม่เกิน maxWidth โดยไม่แยกสระ/วรรณยุกต์ออกจากพยัญชนะ และไม่ทิ้งสระหน้าไว้ท้ายบรรทัด
+function cutToWidth_(text, maxWidth) {
+  var width = 0;
+  var end = 0;
+  while (end < text.length) {
+    var zeroWidth = THAI_COMBINING.test(text.charAt(end));
+    if (!zeroWidth && width + 1 > maxWidth) break;
+    if (!zeroWidth) width++;
+    end++;
+  }
+  while (end > 1 && end < text.length && THAI_LEADING_VOWEL.test(text.charAt(end - 1))) end--;
+  return text.slice(0, Math.max(end, 1));
 }
 
 // ข้อความจากผู้ใช้ที่ขึ้นต้นด้วย = + - @ จะถูกชีตตีความเป็นสูตร — เติม ' ข้างหน้าให้เป็นข้อความล้วน
