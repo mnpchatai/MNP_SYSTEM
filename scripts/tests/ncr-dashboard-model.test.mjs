@@ -120,15 +120,19 @@ test("pareto sorts by the chosen metric, hides empty groups and marks the first 
   assert.equal(model.pareto(list, f, "count").length, 4);
 });
 
-test("units never merge and only confirmed outcomes add to scrapped, repaired and returned", () => {
+test("scrap per unit counts only confirmed scrap loss rows and never merges units", () => {
+  const scrap = (quantity, status = "confirmed", extra = {}) => loss(quantity * 10, status, "loss", { quantity, unit: "ชิ้น", ...extra });
   const { list } = run([
-    report({ id: "a", outcome: { result_status: "confirmed", qty_scrapped: 20, qty_repaired: 70, qty_returned: 0 } }),
-    report({ id: "b", outcome: { result_status: "draft", qty_scrapped: 99, qty_repaired: 0, qty_returned: 0 } }),
-    report({ id: "c", unit: "กก.", qty_defect: 5 }),
+    report({ id: "a", losses: [scrap(20), scrap(5, "estimated"), scrap(3, "confirmed", { loss_type: "claim" }), scrap(4, "confirmed", { entry_kind: "recovery" })] }),
+    report({ id: "b", losses: [scrap(0.1), scrap(0.2)] }),
+    report({ id: "c", unit: "กก.", qty_defect: 5, losses: [scrap(2, "confirmed", { unit: "กก." })] }),
+    report({ id: "d", losses: [scrap(99, "confirmed", { voided_at: "x" })] }),
   ]);
-  const units = model.outcomesByUnit(list);
+  const units = model.scrapByUnit(list);
   const pieces = units.find((item) => item.unit === "ชิ้น");
-  assert.equal(units.length, 2); assert.equal(pieces.verified, 1); assert.equal(pieces.scrapped, 20); assert.equal(pieces.defect, 200);
+  assert.equal(units.length, 2);
+  assert.deepEqual(pieces, { unit: "ชิ้น", count: 3, defect: 300, scrapped: 20.3 });
+  assert.equal(units.find((item) => item.unit === "กก.").scrapped, 2);
 });
 
 test("priority lists overdue first, then the longest wait; closed reports are never listed", () => {

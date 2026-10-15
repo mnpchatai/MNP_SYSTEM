@@ -9,7 +9,7 @@
     if (kind === "recovery" || component === "amount" || component === "external") return { quantity: "จำนวนรายการ", rate: "ยอดเงินตามเอกสาร (บาท)", unit: "รายการ", fixedQuantity: true, hint: kind === "recovery" ? "เงินชดเชย/เครดิตผู้ขาย/ขายซาก แยกจากค่าเสียหาย" : type === "reproduce" ? "บันทึกเฉพาะค่าใช้จ่ายส่วนเพิ่มที่ยังไม่ได้ลงในหมวดอื่น" : "บันทึกค่าใช้จ่ายเพิ่มเติมจาก NCR ตามเอกสาร" };
     if (component === "labor") return { quantity: "รวมชั่วโมงแรงงาน (คน-ชม.)", rate: "ค่าแรง/ชม. (บาท)", unit: "คน-ชม.", labor: true, hint: "จำนวนพนักงาน × ชม.ทำงาน/วัน = คน-ชม. ของวันที่เกิดค่าใช้จ่าย เช่น 2 คน × 3 ชม. = 6 คน-ชม. · หลายวันให้เพิ่มเป็นรายการแยกตามวัน · แยกเวลาซ่อม Rework และคัดแยกเป็นคนละรายการ" };
     if (component === "material") return { quantity: "จำนวนวัสดุที่ใช้ซ่อม", rate: "ต้นทุนวัสดุต่อหน่วย (บาท)", unit, hint: "เก็บค่าวัสดุแยกจากค่าแรงซ่อม" };
-    if (type === "downtime") return { quantity: "เวลาเครื่องหยุด (ชั่วโมง)", rate: "ต้นทุนเครื่องหยุด (บาท/ชั่วโมง)", unit: "ชม.", hint: "ใช้เฉพาะอัตราต้นทุนที่องค์กรกำหนด หากยังไม่มีอัตราให้เก็บเวลาในผลดำเนินการ" };
+    if (type === "downtime") return { quantity: "เวลาเครื่องหยุด (ชั่วโมง)", rate: "ต้นทุนเครื่องหยุด (บาท/ชั่วโมง)", unit: "ชม.", hint: "ใช้เฉพาะอัตราต้นทุนที่องค์กรกำหนด หากยังไม่มีอัตรา ให้ใส่ต้นทุน 0 เพื่อเก็บชั่วโมงเครื่องหยุดไว้" };
     if (type === "material") return { quantity: "จำนวนวัตถุดิบสูญเสีย", rate: "ต้นทุนวัตถุดิบต่อหน่วย (บาท)", unit: "กก.", hint: "ใช้เฉพาะวัตถุดิบสูญเสียที่ยังไม่รวมในต้นทุนชิ้นงานที่ทิ้ง เพื่อไม่ให้นับซ้ำ" };
     return { quantity: "จำนวนทิ้งจริง", rate: "ต้นทุนต่อหน่วย ณ ขั้นตอนที่ทิ้ง (บาท)", unit, hint: "ใช้จำนวนที่ทิ้งจริง ห้ามนำจำนวนที่พบปัญหามาคิดเป็นของเสียทั้งหมด" };
   }
@@ -62,7 +62,7 @@
   }
   // Cost assessment is expected once the factory manager has decided the disposition, including closed reports.
   const ASSESSMENT_STATUSES = ["awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info", "closed"];
-  // "รอข้อมูลการสูญเสีย": needs assessment but the outcome is not marked reviewed, or an estimate/legacy row is still pending.
+  // "รอข้อมูลการสูญเสีย": needs assessment but the cost review (ncr_outcomes.cost_reviewed) is not ticked, or an estimate/legacy row is still pending.
   // summary = summarize(losses of that report).
   const lossDataPending = (status, outcome, summary) => ASSESSMENT_STATUSES.includes(status) && !(outcome?.cost_reviewed === true && summary.pending === 0);
   const api = { TYPES, STATUSES, COMPONENTS, ASSESSMENT_STATUSES, round, allowedComponents, fieldSpec, laborQuantity, withLaborTag, splitLaborTag, makeEntry, summarize, lossDataPending };

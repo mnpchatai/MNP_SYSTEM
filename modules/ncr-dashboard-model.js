@@ -251,22 +251,23 @@
     return { rows, total: summarize(list, filters) };
   }
 
-  // Actual outcomes per unit. Units never merge; only confirmed outcomes add to scrapped/repaired/returned.
-  function outcomesByUnit(list) {
+  // Scrapped quantity per unit, from confirmed "ของเสีย/ทิ้ง" loss rows (the only place scrap is entered).
+  // Units never merge: a report counts under its own unit, a scrap row under the unit it was recorded in.
+  function scrapByUnit(list) {
     const units = new Map();
+    const entry = (unit) => {
+      if (!units.has(unit)) units.set(unit, { unit, count: 0, defect: 0, scrapped: 0 });
+      return units.get(unit);
+    };
     for (const row of list) {
-      const entry = units.get(row.unit) ?? { unit: row.unit, count: 0, defect: 0, verified: 0, scrapped: 0, repaired: 0, returned: 0 };
-      entry.count += 1;
-      entry.defect += Number(row.qty_defect);
-      if (row.outcome?.result_status === "confirmed") {
-        entry.verified += 1;
-        entry.scrapped += Number(row.outcome.qty_scrapped);
-        entry.repaired += Number(row.outcome.qty_repaired);
-        entry.returned += Number(row.outcome.qty_returned);
+      const own = entry(row.unit);
+      own.count += 1;
+      own.defect += Number(row.qty_defect);
+      for (const loss of row.losses) {
+        if (loss.loss_type === "scrap" && loss.entry_kind !== "recovery" && loss.cost_status === "confirmed") entry(loss.unit).scrapped += Number(loss.quantity);
       }
-      units.set(row.unit, entry);
     }
-    return [...units.values()].sort((a, b) => b.count - a.count);
+    return [...units.values()].map((item) => ({ ...item, defect: costs.round(item.defect, 3), scrapped: costs.round(item.scrapped, 3) })).sort((a, b) => b.count - a.count);
   }
 
   // Open reports that need action: late (response or prevention) first, then the longest in their current status.
@@ -275,7 +276,7 @@
     return list.filter((row) => row.isOpen).sort((a, b) => late(b) - late(a) || b.daysInStatus - a.daysInStatus).slice(0, limit);
   }
 
-  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES: costs.ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
+  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES: costs.ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, scrapByUnit, priority };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);

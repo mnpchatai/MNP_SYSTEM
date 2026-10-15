@@ -41,23 +41,27 @@
           <div class="field full"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
           ${extraFilesField("ncr-loss-files")}
         </div><div class="form-actions"><button class="btn" type="submit">บันทึกรายการ</button><button class="btn secondary" type="button" id="ncr-loss-reset" hidden>ยกเลิกการแก้ไข</button></div></form>` : ""}
+      ${reviewHtml(ncr, editable, directory, formatQty)}
     </section>`;
   }
-  function outcomeHtml(ncr, editable, today, formatQty, directory) {
+  // ยืนยันว่าประเมินค่าเสียหายครบ (app_ncr_review_costs) อยู่ท้ายส่วนความสูญเสีย แทนฟอร์ม "ผลดำเนินการจริง" เดิม
+  // จำนวนทิ้งนับจากรายการประเภทของเสีย/ทิ้ง ชั่วโมงเครื่องหยุดลงเป็นรายการประเภทเครื่องหยุด/รอ จึงไม่ต้องกรอกซ้ำที่อื่น
+  // ใบเก่าที่เคยบันทึกจำนวนผลดำเนินการไว้ยังเห็นค่าเดิมแบบอ่านอย่างเดียว
+  const LEGACY_OUTCOME = { qty_sorted: "คัดแยก", qty_repaired: "ซ่อมสำเร็จ", qty_scrapped: "ทิ้ง", qty_returned: "ส่งคืน", qty_accepted: "ยอมรับใช้ได้" };
+  function reviewHtml(ncr, editable, directory, formatQty) {
     const o = ncr.outcome;
-    const quantities = { qty_sorted: "จำนวนที่คัดแยก", qty_repaired: "จำนวนซ่อมสำเร็จ", qty_scrapped: "จำนวนทิ้งจริง", qty_returned: "จำนวนส่งคืนจริง", qty_accepted: "จำนวนยอมรับใช้ได้" };
-    return `<section class="card ncr-card"><h2>ผลดำเนินการจริง</h2><p class="muted small">จำนวนที่พบปัญหาเป็นข้อมูลผลตรวจ · จำนวนซ่อมสำเร็จ ทิ้ง ส่งคืน และยอมรับใช้ได้เป็นผลสุดท้าย ห้ามลงชิ้นเดียวกันซ้ำ · จำนวนคัดแยกเป็นกิจกรรมแยกต่างหาก</p>
-      ${o ? `<p><strong>${o.result_status === "confirmed" ? "ยืนยันผลแล้ว" : "ร่างผลดำเนินการ"}</strong> · ${formatDate(o.result_date)} · ${escapeHtml(personName(directory, o.updated_by))}</p><dl class="definition-grid">${Object.entries(quantities).map(([key,label]) => `<div><dt>${label}</dt><dd>${formatQty(o[key])} ${escapeHtml(ncr.unit)}</dd></div>`).join("")}<div><dt>เครื่องหยุด/รอ</dt><dd>${formatQty(o.downtime_hours)} ชม.</dd></div><div><dt>ตรวจค่าเสียหายครบแล้ว</dt><dd>${o.cost_reviewed ? "ครบแล้ว" : "ยังไม่ครบ"}</dd></div><div><dt>หลักฐาน / หมายเหตุ</dt><dd>${escapeHtml(o.evidence_ref ?? "—")} · ${escapeHtml(o.note ?? "")}</dd></div></dl>` : '<p class="muted">ยังไม่มีผลดำเนินการจริง จึงยังสรุปจำนวนทิ้งหรือซ่อมไม่ได้</p>'}
-      ${editable ? `<form class="ncr-action" data-action="save_outcome"><div class="ncr-form-message"></div><div class="form-grid">
-        <div class="field"><label for="ncr-outcome-status">สถานะผล *</label><select class="select" id="ncr-outcome-status" name="result_status">${options({ draft: "ร่าง", confirmed: "ยืนยันผลแล้ว" }, o?.result_status ?? "draft")}</select></div>
-        <div class="field"><label for="ncr-outcome-date">วันที่ผลดำเนินการ *</label><input class="input" id="ncr-outcome-date" name="result_date" type="date" max="${today}" value="${o?.result_date ?? today}" required></div>
-        ${Object.entries(quantities).map(([key,label]) => numberField(`ncr-${key}`,key,`${label} (${ncr.unit})`,o?.[key] ?? 0)).join("")}
-        ${numberField("ncr-outcome-hours","downtime_hours","เครื่องหยุด/รอ (ชั่วโมง)",o?.downtime_hours ?? 0)}
-        <div class="field full"><label for="ncr-outcome-ref">หลักฐานผลดำเนินการ (จำเป็นเมื่อยืนยันผล)</label><input class="input" id="ncr-outcome-ref" name="evidence_ref" maxlength="200" value="${escapeHtml(o?.evidence_ref ?? "")}"></div>
-        <div class="field full"><label for="ncr-outcome-note">รายละเอียด / เหตุผลกรณีไม่มีค่าเสียหาย</label><textarea class="textarea" id="ncr-outcome-note" name="note" maxlength="1000">${escapeHtml(o?.note ?? "")}</textarea></div>
-        ${extraFilesField("ncr-outcome-files")}
-        <label class="ncr-check field full"><input type="checkbox" name="cost_reviewed"${o?.cost_reviewed ? " checked" : ""}><span>ประเมินค่าเสียหายครบแล้ว (ต้องยืนยันผลและไม่มีรายการรอยืนยัน หากไม่มีค่าเสียหายให้ระบุเหตุผล)</span></label>
-        </div><div class="form-actions"><button class="btn" type="submit">บันทึกผลดำเนินการ</button></div></form>` : ""}</section>`;
+    const legacy = o && (Object.keys(LEGACY_OUTCOME).some((key) => Number(o[key]) > 0) || Number(o.downtime_hours) > 0);
+    const status = o?.cost_reviewed
+      ? `<p><strong>ประเมินครบแล้ว</strong> · ${escapeHtml(personName(directory, o.updated_by))} · ${formatDate(o.updated_at)}</p>`
+      : '<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>';
+    return `<div class="ncr-cost-review"><h3>สรุปการประเมินค่าเสียหาย</h3>${status}
+      ${o?.note && !editable ? `<p class="muted small">${escapeHtml(o.note)}</p>` : ""}
+      ${legacy ? `<details class="ncr-legacy-outcome"><summary>ผลดำเนินการที่บันทึกไว้เดิม (${o.result_status === "confirmed" ? "ยืนยันแล้ว" : "ร่าง"} · ${formatDate(o.result_date)})</summary>
+        <p class="muted small">${Object.entries(LEGACY_OUTCOME).map(([key, label]) => `${label} ${formatQty(o[key])}`).join(" · ")} ${escapeHtml(ncr.unit)} · เครื่องหยุด/รอ ${formatQty(o.downtime_hours)} ชม.${o.evidence_ref ? ` · หลักฐาน ${escapeHtml(o.evidence_ref)}` : ""}</p></details>` : ""}
+      ${editable ? `<form class="ncr-action" data-action="review_costs"><div class="ncr-form-message"></div><div class="form-grid">
+        <label class="ncr-check field full"><input type="checkbox" name="cost_reviewed"${o?.cost_reviewed ? " checked" : ""}><span>ประเมินค่าเสียหายครบแล้ว (ต้องยืนยันยอดทุกรายการก่อน)</span></label>
+        <div class="field full"><label for="ncr-review-note">หมายเหตุ / เหตุผลกรณีไม่มีค่าเสียหาย</label><textarea class="textarea" id="ncr-review-note" name="note" maxlength="1000">${escapeHtml(o?.note ?? "")}</textarea></div>
+        </div><div class="form-actions"><button class="btn secondary" type="submit">บันทึกสรุปการประเมิน</button></div></form>` : ""}</div>`;
   }
   function readEntry(form) {
     const data = Object.fromEntries(new FormData(form));
@@ -66,17 +70,14 @@
     if (quantity === null) throw new Error("INVALID_LOSS");
     return costs.makeEntry({ ...data, quantity, unit: "คน-ชม.", note: costs.withLaborTag(data.note, data.labor_headcount, data.labor_hours) });
   }
-  function readOutcome(form) {
-    const data = Object.fromEntries(new FormData(form));
-    for (const key of ["qty_sorted","qty_repaired","qty_scrapped","qty_returned","qty_accepted","downtime_hours"]) {
-      if (data[key] === undefined || data[key] === "") throw new Error("INVALID_OUTCOME");
-      data[key] = Number(data[key]);
-      if (!Number.isFinite(data[key]) || data[key] < 0) throw new Error("INVALID_OUTCOME");
-    }
-    delete data.evidence; // ไฟล์แนบอัปโหลดแยกโดย module-ncr.js ไม่ส่งเข้า payload ของ RPC
-    data.cost_reviewed = form.elements.cost_reviewed.checked;
-    if (data.result_status === "confirmed" && !data.evidence_ref.trim()) throw new Error("LOSS_EVIDENCE_REQUIRED");
-    return data;
+  // กฎเดียวกับ app_ncr_review_costs ตรวจก่อนส่งเพื่อแจ้งผู้ใช้ทันที (ฐานข้อมูลตรวจซ้ำเสมอ)
+  function readReview(form, losses) {
+    const reviewed = form.elements.cost_reviewed.checked;
+    const note = form.elements.note.value.trim();
+    const summary = costs.summarize(losses);
+    if (reviewed && summary.pending) throw new Error("COST_REVIEW_PENDING");
+    if (reviewed && !summary.count && !note) throw new Error("ZERO_COST_REASON_REQUIRED");
+    return { reviewed, note: note || null };
   }
   function bind(ncr, losses, formatBaht) {
     const form = document.querySelector("#ncr-loss-form");
@@ -139,5 +140,5 @@
       form.querySelector(".ncr-form-message").replaceChildren();
     });
   }
-  window.MNP_NCR_LOSS_UI = { render, outcomeHtml, bind, readEntry, readOutcome };
+  window.MNP_NCR_LOSS_UI = { render, bind, readEntry, readReview };
 })();
