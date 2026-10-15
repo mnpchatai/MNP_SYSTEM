@@ -46,11 +46,13 @@ enhancePasswordInputs(document.body);
 // รายการเลือกแบบเด้ง (dropdown/popup) ทุกตัวในระบบ: ใส่ data-popup แล้ววางไว้ในกรอบเดียวกับช่องที่เปิดมัน
 // กฎชุดเดียวนี้จะปิดให้เองเมื่อแตะ/คลิก หรือย้าย focus ไปนอกกรอบ — ห้ามปิดด้วย blur/focusout เด็ดขาด
 // เพราะ iPhone (Safari/WebKit) ไม่ย้าย focus ไปที่ปุ่มที่ถูกแตะ รายการจะถูกซ่อนก่อน click ทำงาน จึงเลือกไม่ได้
+// ปิดแล้วส่ง event "popup-close" ให้ตัว popup เก็บกวาดเอง (เช่น dropdown ค้นหาได้ใน modules/searchable-select.js คืนข้อความตัวที่เลือก)
 function closePopup(popup) {
   popup.hidden = true;
   const owner = popup.parentElement.querySelector("[aria-expanded]");
   owner?.setAttribute("aria-expanded", "false");
   owner?.removeAttribute("aria-activedescendant");
+  popup.dispatchEvent(new CustomEvent("popup-close"));
 }
 function closePopupsOutside(event) {
   document.querySelectorAll("[data-popup]:not([hidden])").forEach((popup) => {
