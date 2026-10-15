@@ -141,6 +141,28 @@ test("priority lists overdue first, then the longest wait; closed reports are ne
   assert.deepEqual(model.priority(list, 5).map((row) => row.id), ["overdue", "slow", "fresh"]);
 });
 
+test("prevention follows the 5-day response: waiting only during QA follow-up, late after prevention_due, apart from the response SLA", () => {
+  const { rows, f, list } = run([
+    report({ id: "waiting", status: "awaiting_followup", respondedDate: "2026-10-03", prevention: null, prevention_due: "2026-10-13", responsibilities: [{ dept: "RB", share: 1 }] }),
+    report({ id: "late", status: "awaiting_followup", respondedDate: "2026-09-20", prevention: null, prevention_due: "2026-10-05", last_change_on: "2026-09-20", responsibilities: [{ dept: "GR", share: 1 }] }),
+    report({ id: "sent", status: "awaiting_followup", respondedDate: "2026-09-20", prevention: "ทำ PM ทุกเดือน", prevention_due: "2026-10-01" }),
+    report({ id: "returned", status: "awaiting_response", sla_started_on: "2026-10-05", prevention: null, prevention_due: "2026-09-30" }),
+    report({ id: "signoff", status: "awaiting_signoff", prevention: "ทำ PM ทุกเดือน", prevention_due: "2026-09-01", last_change_on: "2026-08-01" }),
+  ]);
+  const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+  assert.deepEqual(["waiting", "late", "sent", "returned", "signoff"].map((id) => [byId[id].preventionPending, byId[id].preventionOverdue]),
+    [[true, false], [true, true], [false, false], [false, false], [false, false]]);
+  // a missing prevention never makes the 5-day response late
+  assert.equal(byId.late.overdue, false);
+  const s = model.summarize(list, f);
+  assert.equal(s.preventionPending, 2); assert.equal(s.preventionOverdue, 1); assert.equal(s.overdue, 0);
+  assert.deepEqual(model.select(rows, filters({ scope: "prevention" })).map((row) => row.id), ["waiting", "late"]);
+  // late prevention ranks with late responses, ahead of a longer wait
+  assert.equal(model.priority(list, 5)[0].id, "late");
+  const table = model.deptTable(list, f).rows;
+  assert.deepEqual(table.filter((row) => row.preventionPending).map((row) => [row.dept, row.preventionPending, row.preventionOverdue]).sort(), [["GR", 1, 1], ["RB", 1, 0]]);
+});
+
 test("loss by type keeps repair and rework apart, splits confirmed from estimated, and leaves recovery and legacy out", () => {
   const typed = (type, amount, status = "confirmed", kind = "loss") => loss(amount, status, kind, { loss_type: type });
   const { list, f } = run([

@@ -7,6 +7,9 @@
 //   groups overlap and must not be summed. Only money is split by the department share.
 // - The 5-day response clock starts when the NCR reaches the responsible department (sla_started_on, taken from
 //   ncr_status_history by the loader), not at the issue date. Reports still awaiting disposition have no clock.
+// - The 5-day response needs only the cause and the correction. The prevention plan follows later, due
+//   prevention_due (response due + 7 days); while it is missing during QA follow-up the report is "waiting for
+//   prevention" and is late after prevention_due. This is tracked apart from the 5-day response SLA.
 // - Headline money is confirmed only. Estimated and legacy amounts are reported separately, never as zero.
 //
 // No DOM and no Supabase here: the loader passes plain rows and today's Bangkok date, so Node tests cover it.
@@ -19,6 +22,7 @@
   const NO_CAUSE = "_none";
   const DISPOSITION_STATUS = "awaiting_disposition";
   const RESPONSE_STATUS = "awaiting_response";
+  const FOLLOWUP_STATUS = "awaiting_followup";
   const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
   // Cost assessment is expected once the factory manager has decided the disposition.
   const ASSESSMENT_STATUSES = ["awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info", "closed"];
@@ -42,6 +46,9 @@
       const overdue = awaitingResponse && Boolean(slaDue) && today > slaDue;
       // A response only counts while it is current: a report sent back to awaiting_response is not "responded".
       const hasResponse = Boolean(report.respondedDate) && clockRuns && !awaitingResponse;
+      // QA can still return the response, but cannot close it until the department sends the prevention plan.
+      const preventionPending = status === FOLLOWUP_STATUS && !report.prevention;
+      const preventionOverdue = preventionPending && Boolean(report.prevention_due) && today > report.prevention_due;
       const needsAssess = ASSESSMENT_STATUSES.includes(status);
       const sinceDate = report.last_change_on ?? report.sla_started_on ?? report.issue_date;
       return {
@@ -56,6 +63,8 @@
         isClosed: status === "closed",
         slaDue,
         overdue,
+        preventionPending,
+        preventionOverdue,
         hasResponse,
         onTime: hasResponse && slaDue ? report.respondedDate <= slaDue : null,
         needsAssess,
@@ -65,7 +74,7 @@
     });
   }
 
-  // filters: { year, from, to, dept, defect, source, cause, loss, scope } where scope is "", "open" or "overdue" and
+  // filters: { year, from, to, dept, defect, source, cause, loss, scope } where scope is "", "open", "overdue" or "prevention" and
   // loss is a cost type key: keeps reports that have at least one confirmed or estimated loss entry of that type.
   function select(rows, filters, options = {}) {
     return rows.filter((row) => {
@@ -77,6 +86,7 @@
       if (filters.loss && !row.losses.some((loss) => loss.loss_type === filters.loss && loss.entry_kind !== "recovery" && (loss.cost_status ?? "legacy") !== "legacy")) return false;
       if (filters.scope === "open" && !row.isOpen) return false;
       if (filters.scope === "overdue" && !row.overdue) return false;
+      if (filters.scope === "prevention" && !row.preventionPending) return false;
       return true;
     });
   }
@@ -86,7 +96,7 @@
 
   function summarize(list, filters) {
     const result = {
-      total: list.length, closed: 0, open: 0, overdue: 0, responded: 0, onTime: 0,
+      total: list.length, closed: 0, open: 0, overdue: 0, preventionPending: 0, preventionOverdue: 0, responded: 0, onTime: 0,
       gross: 0, recovery: 0, net: 0, estimated: 0, estimatedRecovery: 0, legacy: 0, need: 0, assessed: 0,
     };
     for (const row of list) {
@@ -94,6 +104,8 @@
       if (row.isClosed) result.closed += 1;
       if (row.isOpen) result.open += 1;
       if (row.overdue) result.overdue += 1;
+      if (row.preventionPending) result.preventionPending += 1;
+      if (row.preventionOverdue) result.preventionOverdue += 1;
       if (row.hasResponse) { result.responded += 1; if (row.onTime) result.onTime += 1; }
       result.gross += row.fin.confirmed * weight;
       result.recovery += row.fin.recovery * weight;
@@ -233,7 +245,7 @@
     }
     const rows = [...depts.values()].map((entry) => {
       const sums = summarize(entry.list, {});
-      return { dept: entry.dept, count: entry.list.length, open: sums.open, overdue: sums.overdue, onTimeRate: sums.onTimeRate, net: costs.round(entry.net) };
+      return { dept: entry.dept, count: entry.list.length, open: sums.open, overdue: sums.overdue, preventionPending: sums.preventionPending, preventionOverdue: sums.preventionOverdue, onTimeRate: sums.onTimeRate, net: costs.round(entry.net) };
     }).sort((a, b) => b.count - a.count);
     return { rows, total: summarize(list, filters) };
   }
@@ -256,9 +268,10 @@
     return [...units.values()].sort((a, b) => b.count - a.count);
   }
 
-  // Open reports that need action, overdue first and then the longest in their current status.
+  // Open reports that need action: late (response or prevention) first, then the longest in their current status.
   function priority(list, limit = 5) {
-    return list.filter((row) => row.isOpen).sort((a, b) => Number(b.overdue) - Number(a.overdue) || b.daysInStatus - a.daysInStatus).slice(0, limit);
+    const late = (row) => Number(row.overdue || row.preventionOverdue);
+    return list.filter((row) => row.isOpen).sort((a, b) => late(b) - late(a) || b.daysInStatus - a.daysInStatus).slice(0, limit);
   }
 
   const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
