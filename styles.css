@@ -1065,27 +1065,44 @@ body.no-scroll { overflow: hidden; }
 .ncr-part-heading p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .ncr-detail-part .definition-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 24px 40px;
   margin: 0;
-  padding: 20px 24px 24px;
+  padding: 26px 28px 28px;
 }
 .ncr-detail-part .definition {
   min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--line) 55%, var(--paper));
-  border-radius: 12px;
-  background: linear-gradient(120deg, color-mix(in srgb, var(--shell) 65%, var(--paper)), var(--paper));
-  box-shadow: 0 2px 3px rgba(24, 47, 80, .018);
-}
-.ncr-detail-part .definition dt { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.6; }
-.ncr-detail-part .definition dd { margin-top: 5px; font-size: 14px; font-weight: 500; line-height: 1.75; }
-.ncr-detail-part .definition.full {
-  padding: 16px 18px;
-  border-color: color-mix(in srgb, var(--ncr-part-accent) 16%, var(--paper));
-  border-inline-start: 3px solid color-mix(in srgb, var(--ncr-part-accent) 55%, var(--paper));
-  background: var(--ncr-part-tint);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
   box-shadow: none;
 }
+.ncr-detail-part .definition dt { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.6; }
+.ncr-detail-part .definition dd { margin-top: 8px; font-size: 15px; font-weight: 600; line-height: 1.8; }
+.ncr-fact > dt { display: flex; align-items: center; gap: 7px; }
+.ncr-fact-icon { flex: 0 0 16px; width: 16px; height: 16px; color: var(--ncr-part-accent); }
+.ncr-detail-part .ncr-fact--empty dd { color: var(--quiet); font-weight: 400; }
+.ncr-detail-part .definition.full {
+  padding: 18px 20px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--ncr-part-tint);
+}
+.ncr-detail-part .ncr-fact.full dd, .ncr-detail-part .ncr-fact--narrative dd { font-weight: 400; }
+.ncr-detail-part .ncr-fact--narrative {
+  grid-column: 1 / -1;
+  padding-inline-start: 18px;
+  border-inline-start: 2px solid color-mix(in srgb, var(--ncr-part-accent) 26%, var(--paper));
+}
+.ncr-detail-part .ncr-fact--narrative > dt { color: var(--ncr-part-accent); font-weight: 600; }
+.ncr-detail-part .ncr-quantity-summary { background: color-mix(in srgb, var(--shell) 70%, var(--paper)); }
+.ncr-quantity-summary > dt { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ncr-quantity-unit { font-size: 11px; }
+.ncr-detail-part .ncr-quantity-summary > dd { margin-top: 14px; white-space: normal; }
+.ncr-quantity-values { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin: 0; }
+.ncr-quantity-values > div { min-width: 0; }
+.ncr-detail-part .ncr-quantity-values dd { margin-top: 4px; font-size: 26px; line-height: 1.4; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ncr-detail-part .ncr-quantity-defect dt, .ncr-detail-part .ncr-quantity-defect dd { color: var(--danger); }
 :root[data-theme="dark"] .ncr-detail-part { --ncr-part-accent: #84b5fa; box-shadow: 0 4px 8px rgba(0, 0, 0, .12), 0 14px 30px -12px rgba(0, 0, 0, .5); }
 :root[data-theme="dark"] .ncr-detail-part--2 { --ncr-part-accent: #e5b66f; }
 :root[data-theme="dark"] .ncr-detail-part--3 { --ncr-part-accent: #6dcec1; }
@@ -1095,8 +1112,11 @@ body.no-scroll { overflow: hidden; }
   .ncr-part-heading { align-items: flex-start; gap: 12px; padding: 18px 16px; border-radius: 15px 15px 0 0; }
   .ncr-part-number { flex-basis: 42px; height: 48px; border-radius: 13px; font-size: 20px; }
   .ncr-detail-part .ncr-part-heading h2 { font-size: 16px; }
-  .ncr-detail-part .definition-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 16px; }
-  .ncr-detail-part .definition { padding: 12px 14px; }
+  .ncr-detail-part .definition-grid { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 22px 20px; }
+  .ncr-detail-part .definition.full { padding: 16px; }
+  .ncr-detail-part .definition dd { font-size: 14px; }
+  .ncr-quantity-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; }
+  .ncr-detail-part .ncr-quantity-values dd { font-size: 24px; }
 }
 @media print {
   .ncr-detail-part, :root[data-theme="dark"] .ncr-detail-part, .ncr-detail-part .definition, .ncr-part-heading, .ncr-part-number { background: white; box-shadow: none; color: black; }

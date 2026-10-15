@@ -556,6 +556,30 @@
             </div>
           </header><dl class="definition-grid">`
       : `<section class="card ncr-card"><h2>ส่วนที่ ${number} ${escapeHtml(title)}</h2><dl class="definition-grid">`;
+    const partIcons = {
+      calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M16 3v4M8 3v4M3 11h18"/>',
+      person: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
+      product: '<path d="m12 3 9 5v8l-9 5-9-5V8l9-5Zm0 9v9M3 8l9 4 9-4M8 5l9 5"/>',
+      building: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 21v-4h6v4M8 7h1m6 0h1M8 12h1m6 0h1"/>',
+      document: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6M8 12h8M8 16h6"/>',
+      inspect: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6M10 7v6"/>',
+      action: '<path d="m9 11 3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+      shield: '<path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6Zm-4 9 3 3 5-5"/>',
+    };
+    const partField = (label, value, full = false, icon = "document", narrative = false) => {
+      if (!employee?.isSandbox) return definition(label, value, full);
+      return `<div class="definition ncr-fact${full ? " full" : ""}${narrative ? " ncr-fact--narrative" : ""}${value === "—" ? " ncr-fact--empty" : ""}">
+        <dt><svg class="ncr-fact-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${partIcons[icon]}</svg>${escapeHtml(label)}</dt><dd>${value}</dd>
+      </div>`;
+    };
+    const quantities = employee?.isSandbox
+      ? `<div class="definition full ncr-quantity-summary"><dt>จำนวน <span class="ncr-quantity-unit">หน่วย: ${escapeHtml(ncr.unit)}</span></dt>
+          <dd><dl class="ncr-quantity-values">
+            ${[["ทั้งหมด", formatQty(ncr.qty_total)], ["สุ่ม", formatQty(ncr.qty_sampled)], ["พบปัญหา", formatQty(ncr.qty_defect)], ["ส่งคืน", formatQty(ncr.qty_returned)], ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`]].map(([label, value], index) => `<div${index === 2 ? ' class="ncr-quantity-defect"' : ""}><dt>${label}</dt><dd>${value}</dd></div>`).join("")}
+          </dl></dd>
+        </div>`
+      : definition("จำนวน", `ทั้งหมด ${formatQty(ncr.qty_total)} · สุ่ม ${formatQty(ncr.qty_sampled)} · พบปัญหา ${formatQty(ncr.qty_defect)} · ส่งคืน ${formatQty(ncr.qty_returned)} ${escapeHtml(ncr.unit)}`)
+        + "\n        " + definition("%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`);
     const heading = `
       <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
@@ -563,43 +587,42 @@
 `;
     const part1 = `
       ${partOpening(1, "ผู้รายงาน/ผู้ตรวจสอบ", "ข้อมูลสินค้าและรายละเอียดความไม่สอดคล้อง")}
-        ${definition("วันที่ออก", formatDate(ncr.issue_date))}
-        ${definition("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`)}
-        ${definition("รหัส / ชื่อสินค้า", `${escapeHtml(ncr.product_code ?? "—")} · ${escapeHtml(ncr.product_name)}`)}
-        ${definition("ลูกค้า/พ่อค้า", `${escapeHtml(ncr.customer_name ?? "—")}${ncr.customer_code ? ` (${escapeHtml(ncr.customer_code)})` : ""}`)}
-        ${definition("ใบสั่งซื้อ/ใบส่งของ · Lot", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
-        ${definition("แหล่งที่พบ · ข้อบกพร่อง", `${escapeHtml(SOURCES[ncr.source] ?? ncr.source)} · ${escapeHtml(relation(ncr.defect_type)?.name_th ?? "—")}`)}
-        ${definition("จำนวน", `ทั้งหมด ${formatQty(ncr.qty_total)} · สุ่ม ${formatQty(ncr.qty_sampled)} · พบปัญหา ${formatQty(ncr.qty_defect)} · ส่งคืน ${formatQty(ncr.qty_returned)} ${escapeHtml(ncr.unit)}`)}
-        ${definition("%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`)}
-        ${definition("รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)", escapeHtml(ncr.description || "—"), true)}
+        ${partField("วันที่ออก", formatDate(ncr.issue_date), false, "calendar")}
+        ${partField("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`, false, "person")}
+        ${partField("รหัส / ชื่อสินค้า", `${escapeHtml(ncr.product_code ?? "—")} · ${escapeHtml(ncr.product_name)}`, false, "product")}
+        ${partField("ลูกค้า/พ่อค้า", `${escapeHtml(ncr.customer_name ?? "—")}${ncr.customer_code ? ` (${escapeHtml(ncr.customer_code)})` : ""}`, false, "building")}
+        ${partField("ใบสั่งซื้อ/ใบส่งของ · Lot", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
+        ${partField("แหล่งที่พบ · ข้อบกพร่อง", `${escapeHtml(SOURCES[ncr.source] ?? ncr.source)} · ${escapeHtml(relation(ncr.defect_type)?.name_th ?? "—")}`, false, "inspect")}
+        ${quantities}
+        ${partField("รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)", escapeHtml(ncr.description || "—"), true)}
       </dl></section>
 `;
     const part2 = `
       ${partOpening(2, "ฝ่ายบริหารโรงงานพิจารณา", "แนวทางจัดการ ผู้รับผิดชอบ และกำหนดตอบ")}
-        ${definition("ความเห็น", escapeHtml((ncr.dispositions ?? []).map((value) => DISPOSITIONS[value] ?? value).join(", ") || "—"))}
-        ${definition("แผนกที่รับผิดชอบ", responsibilities || "—")}
-        ${definition("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—")}
-        ${definition("กำหนดตอบ", formatDate(ncr.response_due))}
-        ${ncr.disposition_note ? definition("หมายเหตุ", escapeHtml(ncr.disposition_note), true) : ""}
+        ${partField("ความเห็น", escapeHtml((ncr.dispositions ?? []).map((value) => DISPOSITIONS[value] ?? value).join(", ") || "—"), false, "action")}
+        ${partField("แผนกที่รับผิดชอบ", responsibilities || "—", false, "building")}
+        ${partField("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—", false, "person")}
+        ${partField("กำหนดตอบ", formatDate(ncr.response_due), false, "calendar")}
+        ${ncr.disposition_note ? partField("หมายเหตุ", escapeHtml(ncr.disposition_note), true) : ""}
       </dl></section>
 `;
     const part3 = `
       ${partOpening(3, "ผู้รับเรื่องดำเนินการ", "วิเคราะห์สาเหตุ แก้ไข และป้องกันการเกิดซ้ำ")}
-        ${definition("เกิดจาก", escapeHtml((ncr.causes ?? []).map((value) => CAUSES[value] ?? value).join(", ") || "—"))}
-        ${definition("ผู้ตอบ", ncr.responded_at ? `${escapeHtml(personName(directory, ncr.responded_by))} · ${formatDate(ncr.responded_at)}` : "—")}
-        ${definition("สาเหตุของปัญหา", escapeHtml(ncr.root_cause ?? "—"))}
-        ${definition("แนวทางแก้ไข · กำหนดเสร็จ", `${escapeHtml(ncr.correction ?? "—")} · ${formatDate(ncr.correction_due)}`)}
-        ${definition("แนวทางป้องกัน · กำหนดเสร็จ", `${escapeHtml(ncr.prevention ?? (ncr.prevention_due ? "ยังไม่ส่ง" : "—"))} · ${formatDate(ncr.prevention_due)}`)}
+        ${partField("เกิดจาก", escapeHtml((ncr.causes ?? []).map((value) => CAUSES[value] ?? value).join(", ") || "—"), false, "inspect")}
+        ${partField("ผู้ตอบ", ncr.responded_at ? `${escapeHtml(personName(directory, ncr.responded_by))} · ${formatDate(ncr.responded_at)}` : "—", false, "person")}
+        ${partField("สาเหตุของปัญหา", escapeHtml(ncr.root_cause ?? "—"), false, "inspect", true)}
+        ${partField("แนวทางแก้ไข · กำหนดเสร็จ", `${escapeHtml(ncr.correction ?? "—")} · ${formatDate(ncr.correction_due)}`, false, "action", true)}
+        ${partField("แนวทางป้องกัน · กำหนดเสร็จ", `${escapeHtml(ncr.prevention ?? (ncr.prevention_due ? "ยังไม่ส่ง" : "—"))} · ${formatDate(ncr.prevention_due)}`, false, "shield", true)}
       </dl></section>
 `;
     const part4 = `
       ${partOpening(4, "การตรวจติดตาม", "ผลการติดตาม การลงนาม และการปิด NCR")}
-        ${definition("ผู้ติดตาม", ncr.followed_up_at ? `${escapeHtml(personName(directory, ncr.followed_up_by))} · ${formatDate(ncr.followed_up_at)}` : "—")}
-        ${definition("บันทึก", escapeHtml(ncr.followup_note ?? "—"))}
-        ${definition("ผู้จัดการแผนก QA", signoff(ncr.signoff_qa_by, ncr.signoff_qa_at))}
-        ${definition("ผู้จัดการฝ่ายโรงงาน", signoff(ncr.signoff_factory_by, ncr.signoff_factory_at))}
-        ${definition("ผู้จัดการทั่วไป", signoff(ncr.signoff_gm_by, ncr.signoff_gm_at))}
-        ${definition("วันที่ปิด", formatDate(ncr.closed_at))}
+        ${partField("ผู้ติดตาม", ncr.followed_up_at ? `${escapeHtml(personName(directory, ncr.followed_up_by))} · ${formatDate(ncr.followed_up_at)}` : "—", false, "person")}
+        ${partField("บันทึก", escapeHtml(ncr.followup_note ?? "—"))}
+        ${partField("ผู้จัดการแผนก QA", signoff(ncr.signoff_qa_by, ncr.signoff_qa_at), false, "action")}
+        ${partField("ผู้จัดการฝ่ายโรงงาน", signoff(ncr.signoff_factory_by, ncr.signoff_factory_at), false, "action")}
+        ${partField("ผู้จัดการทั่วไป", signoff(ncr.signoff_gm_by, ncr.signoff_gm_at), false, "action")}
+        ${partField("วันที่ปิด", formatDate(ncr.closed_at), false, "calendar")}
       </dl></section>
 `;
     // คำขอข้อมูลเพิ่มเติมจากผู้ลงนามและคำตอบของแผนก — อ่านได้ทุกคนที่เห็นใบนี้ (คำขอที่ยังไม่ตอบขึ้นก่อน)
