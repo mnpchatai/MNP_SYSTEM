@@ -663,6 +663,13 @@
       if (trigger) openAttachmentLightbox(trigger.dataset.attachmentOpen);
     });
     hydrateAttachmentGallery(attachments, window.MNP_NCR_ATTACHMENTS.bucket(ncr.is_test)).catch((error) => showToast(friendlyError(error), "error"));
+    // หน้านี้ถูกวาดใหม่หลังออก NCR และหลังส่งทุกขั้นตอน จึงซิงก์สำเนาไปสเปรดชีต NCR/CAR ตรงนี้ที่เดียว
+    // (modules/ncr-sheet-sync.js) — เป็นแค่สำเนาสำรอง ผิดพลาดต้องไม่ทำให้หน้ารายละเอียดพัง
+    try {
+      window.MNP_NCR_SHEET_SYNC.sync(window.MNP_NCR_SHEET_SYNC.buildRecord(ncr, { directory, statusLabel: statusLabel(ncr) }));
+    } catch (error) {
+      console.warn("เตรียมข้อมูล NCR สำหรับสเปรดชีตไม่สำเร็จ", error);
+    }
   }
 
   function bindDetail(ncr, losses) {
