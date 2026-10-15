@@ -239,7 +239,7 @@
   }
 
   // ---- ทะเบียน NCR (QA02-FM02) ----
-  const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
+  const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["loss", "รอข้อมูลการสูญเสีย"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
 
   async function renderList(params, embedded = false) {
     if (!embedded) loadingShell("ncr", "ทะเบียน NCR");
@@ -253,17 +253,28 @@
     if (embedded && params.get("scope") === "mine") query = query.eq("reporter_id", state.employee.id);
     if (filter === "open") query = query.in("status", OPEN_STATUSES);
     else if (filter === "overdue") query = query.in("status", RESPONSE_PENDING_STATUSES).lt("response_due", todayBangkok());
+    else if (filter === "loss") query = query.in("status", window.MNP_NCR_COSTS.ASSESSMENT_STATUSES);
     else if (filter !== "all") query = query.eq("status", filter);
     const { data, error } = await query;
     if (error) throw error;
-    const rows = data ?? [];
+    let rows = data ?? [];
     const lossByNcr = new Map();
     if (rows.length) {
-      const { data: losses, error: lossError } = await sb.from("ncr_losses").select("ncr_id,amount,cost_status,entry_kind").is("voided_at", null).in("ncr_id", rows.map((row) => row.id));
-      if (lossError) throw lossError;
-      for (const loss of losses ?? []) {
+      const ids = rows.map((row) => row.id);
+      const [lossResult, outcomeResult] = await Promise.all([
+        sb.from("ncr_losses").select("ncr_id,amount,cost_status,entry_kind").is("voided_at", null).in("ncr_id", ids),
+        filter === "loss" ? sb.from("ncr_outcomes").select("ncr_id,cost_reviewed").in("ncr_id", ids) : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (lossResult.error) throw lossResult.error;
+      if (outcomeResult.error) throw outcomeResult.error;
+      for (const loss of lossResult.data ?? []) {
         if (!lossByNcr.has(loss.ncr_id)) lossByNcr.set(loss.ncr_id, []);
         lossByNcr.get(loss.ncr_id).push(loss);
+      }
+      // รอข้อมูลการสูญเสีย: กฎเดียวกับแดชบอร์ด (ncr-costs.js lossDataPending) กรองหลังโหลดยอดและผลดำเนินการของใบที่ได้มา
+      if (filter === "loss") {
+        const outcomes = new Map((outcomeResult.data ?? []).map((item) => [item.ncr_id, item]));
+        rows = rows.filter((row) => window.MNP_NCR_COSTS.lossDataPending(row.status, outcomes.get(row.id), window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id) ?? [])));
       }
     }
     // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
@@ -475,10 +486,12 @@
   }
 
   function canEditLosses(ncr, employee) {
-    if (!OPEN_STATUSES.includes(ncr.status)) return false;
-    // โหมดทดสอบ: ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และหัวหน้าแผนกที่รับผิดชอบเท่านั้น (ตรงกับ private.can_edit_ncr_losses; QA ไม่มีสิทธิ์โดยตำแหน่ง) · ข้อมูลจริงใช้กฎเดิม
+    // ลงยอดย้อนหลังได้หลังปิด NCR แล้ว ล็อกเฉพาะใบที่ยกเลิก (ตรงกับ app_ncr_record_loss / app_ncr_save_outcome / app_ncr_void_loss)
+    if (ncr.status === "cancelled") return false;
+    // โหมดทดสอบ: ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และหัวหน้าแผนกที่รับผิดชอบเท่านั้น (ตรงกับ private.can_edit_ncr_losses; QA ไม่มีสิทธิ์โดยตำแหน่ง)
+    // ข้อมูลจริง: พนักงาน QA, ผจก.โรงงาน, ผู้ช่วย ผจก.โรงงาน และหัวหน้าแผนกที่รับผิดชอบ
     const sandbox = Boolean(state.employee?.isSandbox);
-    if (sandbox ? SANDBOX_COST_ROLE_CODES.includes(roleCode(employee)) : isQa(employee) || roleCode(employee) === "factory_manager") return true;
+    if (sandbox ? SANDBOX_COST_ROLE_CODES.includes(roleCode(employee)) : isQa(employee) || ["factory_manager", "assistant_factory_manager"].includes(roleCode(employee))) return true;
     return isDeptManager(employee) && (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
   }
 
