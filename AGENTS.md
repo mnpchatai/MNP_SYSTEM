@@ -85,6 +85,19 @@ npm run db:test
 
 Never push directly to `main`; work on your own branch and open a pull request so CI (`.github/workflows/ci.yml`) runs. Other agents or sessions may have pull requests open at the same time, so before merging, bring the latest `main` into your branch and run `scripts/ci/check-pr-guards.sh origin/main`. If you change a database function in a migration, start from its latest definition on `main`, since another merged migration may have replaced it.
 
+## Deployment order: database before the Pilot Web
+
+The static Pilot Web (`index.html`, `app.js`, `styles.css`, `modules/`) is published as soon as a change is merged to `main`. Database migrations are not applied by CI or by merging; they reach the production Supabase project only when someone applies them. A merged client that calls a new or changed RPC before its migration is live breaks for real users (for example, PR #166 made the NCR response form leave the prevention field optional while production still required it).
+
+When a pull request contains both a migration and client code that depends on it:
+
+1. Get the user's explicit approval to apply the migration to production. Approval for an earlier migration or pull request does not carry over.
+2. Before applying, confirm that every function the migration replaces is still the definition the migration was written from (for example, compare `md5(pg_get_functiondef(oid))` on production with the same definition on a local stack), so newer work is not overwritten.
+3. Apply exactly the migration file that is on the branch, then verify on production that the new definitions and grants match the tested local stack.
+4. Only then merge the pull request.
+
+If approval to apply the migration is not given, do not merge; report that the pull request is waiting for the migration. If a change must ship in the other order, make the client work with both the old and the new database (backward compatible) and say so in the pull request. Mention the required migration and this order in every such pull request description.
+
 Add or update the smallest relevant automated tests for changed behavior. If a required check cannot run, report the exact reason and do not claim it passed.
 
 Before the final commit:
