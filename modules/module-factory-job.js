@@ -16,7 +16,8 @@
 (function registerFactoryJobViews() {
   const model = window.MNP_FACTORY_JOB_MODEL;
   const menu = window.MNP_FACTORY_ITEM_MASTER;
-  const { loadData, options, notice } = window.MNP_FACTORY_UI;
+  const { loadData, options, notice, listToolbar, bindListToolbar } = window.MNP_FACTORY_UI;
+  const master = window.MNP_FACTORY_MASTER_MODEL;
 
   // ลำดับสำคัญ: friendlyError ใช้คีย์แรกที่ปรากฏอยู่ในข้อความ รหัสใหม่ต้องไม่เป็นส่วนหนึ่งของรหัสอื่นที่ลงทะเบียนไว้ก่อนหน้า (มีเทสต์ตรวจ)
   const ERROR_MESSAGES = {
@@ -108,18 +109,15 @@
 
   // ---------- รายการ ----------
   const STATUS_FILTERS = ["all", ...Object.keys(model.JOB_STATUSES)];
-  const listUrl = (status) => menu.url("job-view", { status: status !== "all" ? status : null });
 
   function listHtml(data, params) {
     const jobs = data.jobs ?? [];
     const wanted = STATUS_FILTERS.includes(params.get("status")) ? params.get("status") : "all";
     const counts = model.countByStatus(jobs);
-    const rows = jobs.filter((job) => wanted === "all" || job.status === wanted);
-    const filters = STATUS_FILTERS.map((status) => {
-      const count = status === "all" ? jobs.length : counts[status];
-      const text = status === "all" ? "ทั้งหมด" : model.JOB_STATUSES[status];
-      return `<a class="filter${wanted === status ? " active" : ""}" href="${escapeHtml(listUrl(status))}"${wanted === status ? ' aria-current="page"' : ""}>${escapeHtml(text)} (${count})</a>`;
-    }).join("");
+    const q = master.normalizeQuery(params.get("q"));
+    const rows = jobs.filter((job) => wanted === "all" || job.status === wanted)
+      .filter((job) => master.matchesQuery([job.code, job.production_code, job.item_code, job.item_name], q));
+    const statuses = STATUS_FILTERS.map((status) => [status, `${status === "all" ? "ทุกสถานะ" : model.JOB_STATUSES[status]} (${status === "all" ? jobs.length : counts[status]})`]);
     if (!jobs.length) {
       return `<section class="card"><div class="empty">ยังไม่มีใบงานผลิตในโหมดทดสอบ<br><small>ฝ่ายวางแผนออกใบงานได้เมื่อใบสั่งผลิตออกใบสั่งงานแล้ว (ขั้น 2.4)</small>
           <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("job-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบงานผลิต</a>
@@ -128,16 +126,16 @@
     const body = rows.map((job) => `<tr>
         <td><a class="fm-item-link" href="${escapeHtml(viewUrl(job.id))}"><strong>${escapeHtml(job.code)}</strong><span>${escapeHtml(job.production_code)}</span></a></td>
         <td><strong>${escapeHtml(job.item_code)}</strong><br><span class="muted small">${escapeHtml(job.item_name)}</span></td>
-        <td class="right">${q4(job.qty)} ${escapeHtml(job.unit_code)}</td>
-        <td>${progressHtml(job)}</td>
+        <td class="right fm-num fm-opt">${q4(job.qty)} ${escapeHtml(job.unit_code)}</td>
+        <td class="fm-opt">${progressHtml(job)}</td>
         <td>${statusBadge(job.status)}</td>
-        <td class="right"><a class="btn secondary small" href="${escapeHtml(viewUrl(job.id))}" aria-label="เปิด ${escapeHtml(job.code)}">เปิด</a></td>
+        <td class="right fm-opt"><a class="btn secondary small" href="${escapeHtml(viewUrl(job.id))}" aria-label="เปิด ${escapeHtml(job.code)}">เปิด</a></td>
       </tr>`).join("");
-    return `<section class="card">
-        <nav class="filters" aria-label="สถานะใบงานผลิต">${filters}</nav>
-        ${rows.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>ใบงาน / ใบสั่งผลิต</th><th>ผลิต</th><th class="right">จำนวน</th><th>ความคืบหน้า</th><th>สถานะ</th><th class="right">จัดการ</th></tr></thead>
-          <tbody>${body}</tbody></table></div>` : '<div class="empty">ไม่มีใบงานในสถานะนี้</div>'}
+    return `<section class="card fm-list">
+        ${listToolbar({ entry: "job-view", q, status: wanted, statuses, placeholder: "เลขที่ใบงาน ใบสั่งผลิต หรือชิ้นงาน", statusLabel: "สถานะใบงานผลิต" })}
+        ${rows.length ? `<div class="table-wrap"><table class="fm-table">
+          <thead><tr><th>ใบงาน / ใบสั่งผลิต</th><th>ผลิต</th><th class="right fm-opt">จำนวน</th><th class="fm-opt">ความคืบหน้า</th><th>สถานะ</th><th class="right fm-opt">จัดการ</th></tr></thead>
+          <tbody>${body}</tbody></table></div>` : `<div class="empty">ไม่พบใบงานที่ตรงกับตัวกรอง<br><a class="btn secondary small" href="${escapeHtml(menu.url("job-view"))}">ล้างตัวกรอง</a></div>`}
       </section>`;
   }
 
@@ -296,8 +294,9 @@
   // Read the job identity and stock impact before taking an action.
   function detailHtml(data, job) {
     return `<section class="card fm-detail">
-        <div class="fm-detail-head"><div><div class="eyebrow">${escapeHtml(job.code)}</div>
-          <h2>${escapeHtml(job.item_code)} · ${escapeHtml(job.item_name)}</h2></div>${statusBadge(job.status)}</div>
+        <div class="fm-detail-head"><div>
+          <h2>${escapeHtml(job.item_code)} · ${escapeHtml(job.item_name)}</h2>
+          <p class="fm-meta">${escapeHtml(job.code)}</p></div>${statusBadge(job.status)}</div>
         ${statusNotice(job)}
         ${holdNotice(data, job)}
         ${model.nextStep(job) ? `<p class="fm-current-step"><strong>ขั้นปัจจุบัน: ${escapeHtml(model.nextStep(job).name)}</strong> · แผนก ${escapeHtml(model.nextStep(job).department_code)}</p>` : ""}
@@ -524,7 +523,9 @@
         const root = frame.paint({ back, subtitle: job.code, body: `${detailHtml(data, job)}${job.status === "open" ? `<section class="card fm-detail">${requirementsHtml(data, job)}</section>` : ""}${actionsHtml(data, job)}${supportingDetailsHtml(data, job)}${window.MNP_FACTORY_ATTACHMENTS.panelHtml("job", job.id)}` });
         return bindDetail(root, job);
       }
-      return frame.paint({ actions: newJobAction(), body: listHtml(data, params) });
+      const root = frame.paint({ actions: newJobAction(), body: listHtml(data, params) });
+      bindListToolbar(root);
+      return root;
     },
     async "job-new"({ params, frame }) {
       frame.loading();

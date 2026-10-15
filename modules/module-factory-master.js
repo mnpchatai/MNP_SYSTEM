@@ -50,6 +50,53 @@
   const notice = (text) => `<p class="fm-notice" role="note">${escapeHtml(text)}</p>`;
   const options = (entries, selected) => entries.map(([value, text]) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(text)}</option>`).join("");
 
+  // ---------- ชิ้นส่วนหน้าจอที่ใช้ร่วมกันทุกหน้าของฝ่ายโรงงาน ----------
+  const SEARCH_ICON = `<svg class="fm-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>`;
+
+  // แถบค้นหา + dropdown กรองสถานะของหน้ารายการ (entry = key ของรายการในเมนูที่จะพากลับมาพร้อม ?q=&status=)
+  // statuses: [[ค่า, ข้อความ]] ตัวแรกคือ "ทั้งหมด" (ไม่ใส่ในลิงก์) — ไม่ส่ง statuses = ช่องค้นหาอย่างเดียว
+  // ทุกค่าที่วาดลงหน้ามาจากค่าที่ตรวจแล้ว (q ผ่าน normalize ส่วน status ต้องอยู่ในรายการ) ผูก event ด้วย bindListToolbar
+  function listToolbar({ entry, q = "", status = "all", statuses = null, placeholder = "ค้นหา…", statusLabel = "สถานะ" }) {
+    const id = `fm-lb-${entry}`;
+    const filtered = Boolean(q) || (statuses && status !== statuses[0][0]);
+    return `<form class="fm-listbar" data-fm-listbar="${escapeHtml(entry)}" role="search">
+        <div class="fm-search">${SEARCH_ICON}<label class="sr-only" for="${id}-q">ค้นหา</label>
+          <input class="input" id="${id}-q" name="q" type="search" enterkeyhint="search" autocomplete="off" maxlength="100" value="${escapeHtml(q)}" placeholder="${escapeHtml(placeholder)}"></div>
+        ${statuses ? `<label class="sr-only" for="${id}-status">${escapeHtml(statusLabel)}</label>
+          <select class="select" id="${id}-status" name="status">${options(statuses, status)}</select>` : ""}
+        <button class="btn" type="submit">ค้นหา</button>
+        ${filtered ? `<a class="btn secondary" href="${escapeHtml(menu.url(entry))}">ล้างตัวกรอง</a>` : ""}
+      </form>`;
+  }
+
+  // ส่งแถบค้นหา: เปลี่ยน URL ของรายการเดิม (หน้าเว็บวาดใหม่จาก URL) · เปลี่ยน dropdown แล้วกรองทันที ช่องค้นหากด Enter/ค้นหา
+  function bindListToolbar(root) {
+    root?.querySelectorAll?.("form[data-fm-listbar]").forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const values = new FormData(form);
+        const q = String(values.get("q") ?? "").trim().slice(0, 100);
+        const status = values.get("status");
+        location.hash = menu.url(form.dataset.fmListbar, { q: q || null, status: status && status !== "all" ? String(status) : null }).slice(1);
+      });
+      form.querySelectorAll("select").forEach((select) => select.addEventListener("change", () => form.requestSubmit()));
+    });
+  }
+
+  // แถบขั้นของเอกสาร (เสร็จแล้ว · ขั้นปัจจุบัน · ยังไม่ถึง) steps: [[ค่า, ข้อความ]] ตามลำดับ workflow
+  // สถานะที่ไม่อยู่ในลำดับ (เช่น ยกเลิก) ไม่วาดแถบ — ป้ายสถานะของเอกสารบอกอยู่แล้ว
+  function stepper(steps, current, label = "ขั้นของเอกสาร") {
+    const index = steps.findIndex(([value]) => value === current);
+    if (index < 0) return "";
+    return `<ol class="fm-stepper" aria-label="${escapeHtml(label)}">${steps.map(([, text], position) => {
+      const state = position < index ? "done" : position === index ? "current" : "todo";
+      return `<li class="is-${state}"${state === "current" ? ' aria-current="step"' : ""}><span>${escapeHtml(text)}</span></li>`;
+    }).join("")}</ol>`;
+  }
+
+  // ส่วนที่พับไว้ (ประวัติ ผู้ดำเนินการ ฟอร์มที่ใช้ไม่บ่อย) — <details> ของเบราว์เซอร์ แตะบน iPhone และใช้คีย์บอร์ดได้โดยไม่ต้องมีโค้ดปิด
+  const fold = (title, body, { open = false, tone = "" } = {}) => `<details class="fm-fold${tone ? ` fm-fold-${tone}` : ""}"${open ? " open" : ""}><summary>${title}</summary><div class="fm-fold-body">${body}</div></details>`;
+
   async function loadData() {
     const { data, error } = await sb.rpc("app_factory_master_data");
     if (error) throw error;
@@ -82,7 +129,6 @@
     const active = items.filter((item) => item.status === "active").length;
     const rows = model.filterItems(items, filters);
     const page = model.paginate(rows, filters.page);
-    const link = (changes) => listUrl({ ...filters, page: 1, ...changes });
     const types = [["all", "ทั้งหมด"], ...Object.entries(model.ITEM_TYPES)];
 
     if (!items.length) {
@@ -96,11 +142,11 @@
       return `<tr>
         <td><a class="fm-item-link" href="${escapeHtml(detail)}"><strong>${escapeHtml(item.code)}</strong><span>${escapeHtml(item.name)}</span>${item.part_code ? `<small class="muted">รหัสอะไหล่ ${escapeHtml(item.part_code)}</small>` : ""}</a></td>
         <td>${typeBadge(item.item_type)}</td>
-        <td>${escapeHtml(item.brand)}</td>
-        <td>${escapeHtml(item.unit_code)}</td>
-        <td>${escapeHtml(label(model.PROCUREMENT, item.procurement))}</td>
+        <td class="fm-opt">${escapeHtml(item.brand)}</td>
+        <td class="fm-opt">${escapeHtml(item.unit_code)}</td>
+        <td class="fm-opt">${escapeHtml(label(model.PROCUREMENT, item.procurement))}</td>
         <td>${statusBadge(item.status)}</td>
-        <td class="right"><a class="btn secondary small" href="${escapeHtml(menu.url("item-list", { id: item.id, edit: 1 }))}" aria-label="แก้ไข ${escapeHtml(item.code)}">แก้ไข</a></td>
+        <td class="right fm-opt"><a class="btn secondary small" href="${escapeHtml(menu.url("item-list", { id: item.id, edit: 1 }))}" aria-label="แก้ไข ${escapeHtml(item.code)}">แก้ไข</a></td>
       </tr>`;
     }).join("");
     const pages = page.pageCount > 1
@@ -108,18 +154,15 @@
           `<a class="filter${number === page.page ? " active" : ""}" href="${escapeHtml(listUrl({ ...filters, page: number }))}"${number === page.page ? ' aria-current="page"' : ""}>${number}</a>`).join("")}</nav>`
       : "";
 
-    return `<div class="summary-grid fm-summary">
-        <div class="summary"><span>Item ทั้งหมด</span><strong>${items.length}</strong><small>รายการในทะเบียน (โหมดทดสอบ)</small></div>
-        <div class="summary"><span>พร้อมใช้งาน</span><strong>${active}</strong><small>จากทั้งหมด ${items.length} รายการ</small></div>
-        <div class="summary"><span>สินค้าสำเร็จรูป</span><strong>${counts.FG}</strong><small>MNP และ SAFSOF</small></div>
-        <div class="summary"><span>ต่ำกว่าสต็อกขั้นต่ำ</span><strong>${low.length}</strong><small><a href="${escapeHtml(menu.url("inventory-view"))}">ตรวจสอบสินค้าคงคลัง →</a></small></div>
-      </div>
-      <section class="card">
-        <nav class="filters" aria-label="ประเภท Item">${types.map(([key, text]) =>
-          `<a class="filter${filters.type === key ? " active" : ""}" href="${escapeHtml(link({ type: key }))}"${filters.type === key ? ' aria-current="page"' : ""}>${escapeHtml(text)} (${counts[key] ?? 0})</a>`).join("")}</nav>
-        <form class="fm-toolbar" id="fm-filter" role="search">
-          <label class="sr-only" for="fm-q">ค้นหา Item</label>
-          <input class="input" id="fm-q" name="q" value="${escapeHtml(filters.q)}" maxlength="100" placeholder="ค้นหารหัส Item รหัสอะไหล่ ชื่อสินค้า หรือรายละเอียด…">
+    const typeOptions = types.map(([key, text]) => [key, `${key === "all" ? "ทุกประเภท" : text} (${counts[key] ?? 0})`]);
+    const filtered = filters.q || filters.brand !== "all" || filters.status !== "all" || filters.type !== "all";
+    return `<section class="card fm-list">
+        <p class="fm-meta">${items.length} รายการ · ใช้งาน ${active}${low.length ? ` · <a href="${escapeHtml(menu.url("inventory-view", { status: "low" }))}">ต่ำกว่าขั้นต่ำ ${low.length}</a>` : ""}</p>
+        <form class="fm-listbar fm-listbar-wide" id="fm-filter" role="search">
+          <div class="fm-search">${SEARCH_ICON}<label class="sr-only" for="fm-q">ค้นหา Item</label>
+            <input class="input" id="fm-q" name="q" type="search" enterkeyhint="search" autocomplete="off" value="${escapeHtml(filters.q)}" maxlength="100" placeholder="รหัส Item รหัสอะไหล่ หรือชื่อสินค้า"></div>
+          <label class="sr-only" for="fm-type">ประเภท Item</label>
+          <select class="select" id="fm-type" name="type">${options(typeOptions, filters.type)}</select>
           <label class="sr-only" for="fm-brand">แบรนด์</label>
           <select class="select" id="fm-brand" name="brand">${options([["all", "ทุกแบรนด์"], ...model.BRANDS.map((brand) => [brand, brand])], filters.brand)}</select>
           <label class="sr-only" for="fm-status">สถานะ</label>
@@ -127,17 +170,13 @@
           <label class="sr-only" for="fm-sort">เรียงลำดับ</label>
           <select class="select" id="fm-sort" name="sort">${options(Object.entries(model.SORTS), filters.sort)}</select>
           <button class="btn" type="submit">ค้นหา</button>
-          ${filters.q || filters.brand !== "all" || filters.status !== "all" || filters.type !== "all" ? `<a class="btn secondary" href="${escapeHtml(menu.url("item-list"))}">ล้างตัวกรอง</a>` : ""}
+          ${filtered ? `<a class="btn secondary" href="${escapeHtml(menu.url("item-list"))}">ล้างตัวกรอง</a>` : ""}
         </form>
-        ${page.total ? `<div class="table-wrap"><table>
-          <thead><tr><th>รหัส / ชื่อ Item</th><th>ประเภท</th><th>แบรนด์</th><th>หน่วยนับ</th><th>การจัดหา</th><th>สถานะ</th><th class="right">จัดการ</th></tr></thead>
+        ${page.total ? `<div class="table-wrap"><table class="fm-table">
+          <thead><tr><th>รหัส / ชื่อ Item</th><th>ประเภท</th><th class="fm-opt">แบรนด์</th><th class="fm-opt">หน่วยนับ</th><th class="fm-opt">การจัดหา</th><th>สถานะ</th><th class="right fm-opt">จัดการ</th></tr></thead>
           <tbody>${tableRows}</tbody></table></div>`
           : `<div class="empty">ไม่พบ Item ที่ตรงกับการค้นหา<br><a class="btn secondary small" href="${escapeHtml(menu.url("item-list"))}">ล้างตัวกรอง</a></div>`}
         <div class="fm-table-footer"><span class="muted small">แสดง ${page.from}–${page.to} จาก ${page.total} รายการ</span>${pages}</div>
-      </section>
-      <section class="card fm-test-data-link">
-        <div><h2>ข้อมูลทดสอบของฝ่ายโรงงาน</h2><p class="muted small">เติมชุดข้อมูลตัวอย่าง ดูจำนวนข้อมูลทดสอบ และล้างแบบตรวจรายการที่จะลบก่อนยืนยัน</p></div>
-        <a class="btn secondary small" href="${escapeHtml(testDataUrl())}">จัดการข้อมูลทดสอบ →</a>
       </section>`;
   }
 
@@ -146,7 +185,7 @@
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       const current = model.listParams(new URLSearchParams(location.hash.split("?")[1] ?? ""));
-      const next = model.listParams(new URLSearchParams({ type: current.type, q: String(form.get("q") ?? ""), brand: String(form.get("brand") ?? ""), status: String(form.get("status") ?? ""), sort: String(form.get("sort") ?? "") }));
+      const next = model.listParams(new URLSearchParams({ type: String(form.get("type") ?? current.type), q: String(form.get("q") ?? ""), brand: String(form.get("brand") ?? ""), status: String(form.get("status") ?? ""), sort: String(form.get("sort") ?? "") }));
       location.hash = listUrl(next).slice(1);
     });
     // เปลี่ยน dropdown แล้วกรองทันที (ช่องค้นหายังต้องกดค้นหา/Enter)
@@ -163,7 +202,7 @@
       ...routings.map((routing) => `<a class="btn secondary small" href="${escapeHtml(menu.url("routing-view", { routing: routing.id }))}">Routing Rev. ${escapeHtml(routing.revision)}</a>`),
     ].join("");
     return `<section class="card fm-detail">
-        <div class="fm-detail-head"><div><div class="eyebrow">${escapeHtml(item.code)}</div><h2>${escapeHtml(item.name)}</h2>${item.name_en ? `<p class="muted">${escapeHtml(item.name_en)}</p>` : ""}</div>
+        <div class="fm-detail-head"><div><h2>${escapeHtml(item.name)}</h2><p class="fm-meta">${escapeHtml(item.code)}${item.name_en ? ` · ${escapeHtml(item.name_en)}` : ""}</p></div>
           <a class="btn" href="${escapeHtml(menu.url("item-list", { id: item.id, edit: 1 }))}">แก้ไข Item</a></div>
         <p>${typeBadge(item.item_type)} ${statusBadge(item.status)}</p>
         <dl class="definition-grid">
@@ -181,8 +220,7 @@
         <p class="fm-pre">${escapeHtml(item.specification || "ไม่มีรายละเอียดเพิ่มเติม")}</p>
         <h3>ข้อมูลที่เชื่อมโยง</h3>
         <div class="fm-actions">${links || '<span class="muted small">ยังไม่มี BOM หรือ Routing สำหรับ Item นี้</span>'}</div>
-        <h3>ประวัติของ Item นี้</h3>
-        ${history.length ? historyTable(history, false) : '<p class="muted small">ยังไม่มีการเพิ่ม/แก้ไขผ่านหน้าจอ (ข้อมูลตัวอย่างไม่มีประวัติ)</p>'}
+        <div class="fm-fold-group">${fold(`ประวัติของ Item นี้ <span class="fm-count">${history.length}</span>`, history.length ? historyTable(history, false) : '<p class="muted small">ยังไม่มีการเพิ่ม/แก้ไขผ่านหน้าจอ (ข้อมูลตัวอย่างไม่มีประวัติ)</p>')}</div>
       </section>${window.MNP_FACTORY_ATTACHMENTS.panelHtml("item", item.id)}`;
   }
 
@@ -297,26 +335,30 @@
   }
 
   // ---------- คลัง ----------
-  function inventoryHtml(data) {
-    const rows = data.inventory ?? [];
+  const STOCK_FILTERS = [["all", "ทุกรายการ"], ["low", "เฉพาะต่ำกว่าขั้นต่ำ"]];
+
+  function inventoryHtml(data, params) {
     if (!(data.items ?? []).length) return emptyData("สินค้าคงคลัง");
     const lowIds = new Set(model.lowStockItems(data.items).map((item) => item.id));
-    return `<div class="summary-grid fm-summary fm-summary-2">
-        <div class="summary"><span>คลังในโหมดทดสอบ</span><strong>${(data.warehouses ?? []).length}</strong><small>${escapeHtml((data.warehouses ?? []).map((warehouse) => warehouse.name).join(" · ") || "ยังไม่มีคลัง")}</small></div>
-        <div class="summary"><span>Item ต่ำกว่าสต็อกขั้นต่ำ</span><strong>${lowIds.size}</strong><small>ประเมินจากยอดรวมทุกคลังต่อ Item</small></div>
-      </div>
-      <section class="card">
-        <h2>คงเหลือตามคลังและล็อต</h2>
-        <p class="muted small">ยอดคงเหลือ = ผลรวมรายการเคลื่อนไหว (ยอดยกมาตัวอย่าง) ยังไม่มีการรับ-จ่าย/ย้ายคลังในรอบนี้</p>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Item</th><th>คลัง</th><th>ล็อต</th><th class="right">คงเหลือ</th><th>สถานะรวม Item</th></tr></thead>
+    const q = model.normalizeQuery(params?.get("q"));
+    const status = STOCK_FILTERS.some(([value]) => value === params?.get("status")) ? params.get("status") : "all";
+    const rows = (data.inventory ?? [])
+      .filter((row) => status === "all" || lowIds.has(row.item_id))
+      .filter((row) => model.matchesQuery([row.code, row.name, row.warehouse, row.lot_number], q));
+    const warehouses = (data.warehouses ?? []).map((warehouse) => warehouse.name).join(" · ");
+    return `<section class="card fm-list">
+        <p class="fm-meta">${(data.warehouses ?? []).length} คลัง${warehouses ? ` (${escapeHtml(warehouses)})` : ""} · Item ต่ำกว่าขั้นต่ำ ${lowIds.size} รายการ (รวมทุกคลังต่อ Item)</p>
+        ${listToolbar({ entry: "inventory-view", q, status, statuses: STOCK_FILTERS, placeholder: "รหัส ชื่อ คลัง หรือเลขล็อต", statusLabel: "สถานะคงเหลือ" })}
+        ${rows.length ? `<div class="table-wrap"><table class="fm-table">
+          <thead><tr><th>Item</th><th class="fm-opt">คลัง</th><th class="fm-opt">ล็อต</th><th class="right">คงเหลือ</th><th>สถานะรวม Item</th></tr></thead>
           <tbody>${rows.map((row) => `<tr>
-            <td><a href="${escapeHtml(menu.url("item-list", { id: row.item_id }))}"><strong>${escapeHtml(row.code)}</strong></a><br><span class="muted small">${escapeHtml(row.name)}</span></td>
-            <td>${escapeHtml(row.warehouse)}</td>
-            <td>${row.lot_number ? `<code>${escapeHtml(row.lot_number)}</code>` : '<span class="muted">ไม่ติดตามล็อต</span>'}</td>
-            <td class="right">${qty(row.quantity)} ${escapeHtml(row.unit_code)}</td>
+            <td><a class="fm-item-link" href="${escapeHtml(menu.url("item-list", { id: row.item_id }))}"><strong>${escapeHtml(row.code)}</strong><span>${escapeHtml(row.name)}</span></a></td>
+            <td class="fm-opt">${escapeHtml(row.warehouse)}</td>
+            <td class="fm-opt">${row.lot_number ? `<code>${escapeHtml(row.lot_number)}</code>` : '<span class="muted">ไม่ติดตามล็อต</span>'}</td>
+            <td class="right fm-num">${qty(row.quantity)} ${escapeHtml(row.unit_code)}</td>
             <td>${lowIds.has(row.item_id) ? '<span class="badge pending_approval">ต่ำกว่าขั้นต่ำ</span>' : '<span class="muted">ปกติ</span>'}</td>
-          </tr>`).join("")}</tbody></table></div>
+          </tr>`).join("")}</tbody></table></div>` : '<div class="empty">ไม่พบรายการคงเหลือที่ตรงกับการค้นหา</div>'}
+        <p class="muted small">ยอดคงเหลือ = ผลรวมรายการเคลื่อนไหวของแต่ละคลังและล็อต</p>
       </section>`;
   }
 
@@ -361,14 +403,14 @@
       const root = frame.paint({ body: routingHtml(data, params) });
       bindRouting(root, params);
     },
-    async inventory({ frame }) {
+    async inventory({ params, frame }) {
       frame.loading();
       const data = await loadData();
-      frame.paint({ body: inventoryHtml(data) });
+      bindListToolbar(frame.paint({ body: inventoryHtml(data, params) }));
     },
   };
 
   window.MNP_FACTORY_VIEWS = VIEWS;
   window.MNP_FACTORY_ERRORS = ERROR_MESSAGES;
-  window.MNP_FACTORY_UI = { loadData, qty, label, options, notice, docStatus, typeBadge, emptyData };
+  window.MNP_FACTORY_UI = { loadData, qty, label, options, notice, docStatus, typeBadge, emptyData, listToolbar, bindListToolbar, stepper, fold, SEARCH_ICON };
 })();

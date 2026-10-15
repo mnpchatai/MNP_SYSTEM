@@ -366,3 +366,14 @@ test("a looping or very deep structure stops instead of expanding forever", () =
   assert.equal(deep.depth, model.TREE_MAX_DEPTH, "the depth is capped");
   assert.equal(find(deep.root, `I${model.TREE_MAX_DEPTH}`).too_deep, true);
 });
+
+test("the shared search matches every word in any field, ignoring case and extra spaces", () => {
+  assert.equal(model.normalizeQuery("  RM   nr\t"), "rm nr");
+  assert.equal(model.normalizeQuery(null), "");
+  assert.equal(model.normalizeQuery("x".repeat(150)).length, 100, "the query is capped at 100 characters");
+  assert.equal(model.matchesQuery(["RM-NR-002", "ยางธรรมชาติ"], ""), true, "an empty query matches every row");
+  assert.equal(model.matchesQuery(["RM-NR-002", "ยางธรรมชาติ"], "nr ยาง"), true, "words may come from different fields");
+  assert.equal(model.matchesQuery(["RM-NR-002", "ยางธรรมชาติ"], "nr กาว"), false, "every word must be found");
+  assert.equal(model.matchesQuery(["RM-NR-002", null, undefined], "002"), true, "missing fields are skipped");
+  assert.equal(filterItems(items, { ...listParams(params("")), q: "  " }).length, items.length);
+});

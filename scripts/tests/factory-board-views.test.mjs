@@ -84,7 +84,7 @@ test("low stock and recent activity are listed with links, and user text is esca
   const { body } = await render();
   assert.match(body, /RM-NR&lt;b&gt;/);
   assert.doesNotMatch(body, /<b>/, "the item code is escaped");
-  assert.match(body, /<td class="right fm-short">1 KG<\/td><td class="right">50<\/td>/);
+  assert.match(body, /<td class="right fm-short" data-label="คงเหลือ">1 KG<\/td><td class="right" data-label="ขั้นต่ำ">50<\/td>/);
   assert.match(body, /ใบสั่งผลิต <a href="#\/factory\?item=production-view&amp;po=wo-rel"><strong>MO-6<\/strong><\/a>/);
   assert.match(body, /ออกใบสั่งงาน/);
   assert.match(body, /ทดสอบ &lt;i&gt;x&lt;\/i&gt;/);

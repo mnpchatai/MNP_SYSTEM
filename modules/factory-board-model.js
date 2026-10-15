@@ -114,7 +114,35 @@
       .slice(0, limit);
   }
 
-  const api = { LINE_DEPARTMENTS, pipeline, queueCounts, attention, stats, stockAlerts, recentActivity };
+  // ค้นหารวมของฝ่ายโรงงาน (#/factory?q=): หน้าในเมนู · Item · ใบสั่งผลิต · ใบสั่งวัตถุดิบ · ใบงานผลิต
+  // ทุกคำในคำค้นต้องพบ (master().matchesQuery) คืนเฉพาะกลุ่มที่มีผล แต่ละกลุ่มไม่เกิน limit แถว total = จำนวนที่พบทั้งหมด
+  // link = { item: key ของรายการในเมนู, params } ให้หน้าเว็บสร้าง URL เอง อ่านอย่างเดียว ไม่ใช่การควบคุมสิทธิ์
+  function search(data, folders, query, limit = 8) {
+    const q = master().normalizeQuery(query);
+    if (!q) return [];
+    const match = (values) => master().matchesQuery(values, q);
+    const group = (key, title, rows) => ({ key, title, total: rows.length, rows: rows.slice(0, limit) });
+    const pages = (folders ?? []).flatMap((folder) => folder.entries.map((entry) => ({ folder, entry })))
+      .filter(({ folder, entry }) => match([entry.name, folder.name]))
+      .map(({ folder, entry }) => ({ title: entry.name, subtitle: folder.name, status: null, link: { item: entry.key, params: {} } }));
+    const items = (data?.items ?? []).filter((row) => match([row.code, row.part_code, row.name, row.name_en]))
+      .map((row) => ({ title: row.code, subtitle: row.name, status: null, link: { item: "item-list", params: { id: row.id } } }));
+    const orders = (data?.production ?? []).filter((row) => match([row.code, row.work_order_no, row.customer, row.item_code, row.name]))
+      .map((row) => ({ title: row.code, subtitle: `${row.item_code} · ${row.name}`, status: { kind: "production", value: row.status }, link: { item: "production-view", params: { po: row.id } } }));
+    const materialOrders = (data?.material_orders ?? []).filter((row) => match([row.code, row.supplier, row.production_code, row.item_code, ...(row.lines ?? []).map((line) => line.code)]))
+      .map((row) => ({ title: row.code, subtitle: `${row.production_code}${row.supplier ? ` · ${row.supplier}` : ""}`, status: { kind: "material", value: row.status }, link: { item: "material-view", params: { mo: row.id } } }));
+    const jobRows = (data?.jobs ?? []).filter((row) => match([row.code, row.production_code, row.item_code, row.item_name]))
+      .map((row) => ({ title: row.code, subtitle: `${row.item_code} · ${row.item_name}`, status: { kind: "job", value: row.status }, link: { item: "job-view", params: { jb: row.id } } }));
+    return [
+      group("pages", "หน้าในเมนูโรงงาน", pages),
+      group("items", "สินค้า (Item)", items),
+      group("production", "ใบสั่งผลิต", orders),
+      group("material", "ใบสั่งวัตถุดิบ", materialOrders),
+      group("jobs", "ใบงานผลิต", jobRows),
+    ].filter((entry) => entry.total > 0);
+  }
+
+  const api = { LINE_DEPARTMENTS, pipeline, queueCounts, attention, stats, stockAlerts, recentActivity, search };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_FACTORY_BOARD_MODEL = api;
 })(typeof window !== "undefined" ? window : globalThis);
