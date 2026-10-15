@@ -6,7 +6,7 @@
 // ใบในโหมดทดสอบ (is_test) ไม่ถูกส่ง เพื่อไม่ให้ข้อมูลทดสอบปนกับทะเบียนจริง
 (function registerNcrSheetSync(root) {
   // URL ของ Web App ที่ได้จากการ deploy apps-script/ncr-backup/Code.gs — ปล่อยว่างไว้ = ยังไม่ sync
-  const SYNC_URL = "";
+  const SYNC_URL = "https://script.google.com/macros/s/AKfycbyotEU60f76DOozsGcWOznQt1CdaxUqSQEE8dl1qXUMdkcMUIIrD82RLM0Ul3xHrZu0/exec";
 
   const one = (value) => (Array.isArray(value) ? value[0] ?? null : value ?? null);
   const text = (value) => (value === null || value === undefined ? "" : String(value));
