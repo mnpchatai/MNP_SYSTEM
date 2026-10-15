@@ -109,8 +109,15 @@
   };
   const checkedValues = (form, name) => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
 
+  // รอลงนามปิด: บอกด้วยว่ารอลำดับไหน (ต้องมี signoff_qa_at และ signoff_factory_at ในข้อมูลที่ส่งมา)
+  const SIGNER_SHORT_LABELS = { qa: "QA", factory: "ผจก.โรงงาน", gm: "ผจก.ทั่วไป" };
+  function statusLabel(ncr) {
+    const label = STATUS_LABELS[ncr.status] ?? ncr.status;
+    return ncr.status === "awaiting_signoff" ? `${label} · ${SIGNER_SHORT_LABELS[nextSigner(ncr).key]}` : label;
+  }
+
   function statusBadgeHtml(ncr) {
-    const badge = `<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`;
+    const badge = `<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(statusLabel(ncr))}</span>`;
     return isOverdue(ncr) ? `${badge} <span class="badge urgent-flag">เกินกำหนดตอบ</span>` : badge;
   }
 
