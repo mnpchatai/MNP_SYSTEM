@@ -3,7 +3,8 @@
 // Apps Script เขียนลงชีต "รายงานNCR" (NCR LOG หนึ่งแถวต่อใบ) และเก็บข้อมูลเต็มไว้ในชีตซ่อน "NCR_DATA"
 // เพื่อให้ชีต "เอกสารNCR" ดึงข้อมูลลงฟอร์ม QA02-FM01 เมื่อพิมพ์เลขที่เอกสารในช่อง X2
 // เป็นแค่สำเนาสำรอง/รายงาน — Supabase ยังเป็นฐานข้อมูลหลักและเป็นตัวบังคับสิทธิ์/ขั้นตอนทั้งหมด
-// ใบในโหมดทดสอบ (is_test) ไม่ถูกส่ง เพื่อไม่ให้ข้อมูลทดสอบปนกับทะเบียนจริง
+// ใบในโหมดทดสอบ (is_test, เลขที่ TEST-…) ส่งไปพร้อม isTest: true — Apps Script เป็นตัวเลือกว่าจะรับหรือไม่
+// (ACCEPT_TEST_REPORTS ใน Code.gs) เพื่อเปิด/ปิดการทดลองกับข้อมูลทดสอบได้จากฝั่งสเปรดชีตโดยไม่ต้องแก้เว็บ
 (function registerNcrSheetSync(root) {
   // URL ของ Web App ที่ได้จากการ deploy apps-script/ncr-backup/Code.gs — ปล่อยว่างไว้ = ยังไม่ sync
   const SYNC_URL = "https://script.google.com/macros/s/AKfycbyotEU60f76DOozsGcWOznQt1CdaxUqSQEE8dl1qXUMdkcMUIIrD82RLM0Ul3xHrZu0/exec";
@@ -93,7 +94,7 @@
     };
   }
 
-  const shouldSync = (record, url = SYNC_URL) => Boolean(url) && Boolean(record?.id) && Boolean(record.ncrNo) && !record.isTest;
+  const shouldSync = (record, url = SYNC_URL) => Boolean(url) && Boolean(record?.id) && Boolean(record.ncrNo);
 
   // fire-and-forget แบบเดียวกับ syncManagementOrderToAppsScript: no-cors อ่านผลกลับไม่ได้และแนบ token ไม่ได้
   // ยิงไม่สำเร็จก็แค่ log ไว้ ไม่กระทบผู้ใช้ — คืน true เมื่อส่งคำขอออกไป

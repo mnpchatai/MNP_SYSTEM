@@ -10,6 +10,9 @@
  * และเมื่อพิมพ์เลขที่เอกสารลงช่อง X2 ของชีต "เอกสารNCR" (onEdit) จะดึงข้อมูลของใบนั้นลงช่องในฟอร์ม
  * (ลบเลขที่ออก = ล้างฟอร์มกลับเป็นแบบฟอร์มเปล่า)
  *
+ * ใบโหมดทดสอบของ admin (เลขที่ TEST-…) รับเฉพาะเมื่อ ACCEPT_TEST_REPORTS = true และติดป้าย [ทดสอบ] ในคอลัมน์สถานะ
+ * เลิกทดลองแล้วให้ตั้งเป็น false (Deploy เวอร์ชันใหม่) และใช้เมนู NCR > ลบข้อมูลทดสอบ (TEST-) ทั้งหมด
+ *
  * วิธี deploy: ดู apps-script/ncr-backup/README.md
  *
  * หมายเหตุความปลอดภัย: ต้องตั้ง Access ของ Web App เป็น "Anyone" เพราะ Pilot Web ยิง fetch แบบ
@@ -17,6 +20,11 @@
  * URL นี้จึงควรถือเป็นความลับระดับหนึ่ง (เหมือน webhook) สคริปต์ตรวจรูปแบบข้อมูลก่อนเขียน และเขียนข้อความ
  * ทุกช่องเป็นข้อความล้วน (กันสูตรที่ขึ้นต้นด้วย = + - @ จากข้อมูลที่ผู้ใช้กรอก)
  */
+
+// รับใบโหมดทดสอบ (TEST-…) ไว้ทดลองระบบก่อนใช้ข้อมูลจริง — เลิกทดลองแล้วตั้งเป็น false
+var ACCEPT_TEST_REPORTS = true;
+var TEST_PREFIX = 'TEST-';
+var TEST_LABEL = '[ทดสอบ] ';
 
 var DATA_SHEET_NAME = 'NCR_DATA';
 var DATA_HEADERS = ['เลขที่ใบ NCR', 'id', 'value', 'updatedAt'];
@@ -129,7 +137,9 @@ function parseRecord_(rawValue) {
   if (!record || typeof record !== 'object') return null;
   if (typeof record.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(record.id)) return null;
   if (typeof record.ncrNo !== 'string' || !record.ncrNo.trim() || record.ncrNo.length > 50) return null;
-  if (record.isTest === true) return null; // ใบโหมดทดสอบไม่ลงทะเบียนจริง
+  // ใบโหมดทดสอบรับเฉพาะตอนเปิดทดลอง และต้องเป็นเลขที่ TEST-… เท่านั้น (เมนูลบข้อมูลทดสอบใช้คำนำหน้านี้)
+  if (record.isTest === true && (!ACCEPT_TEST_REPORTS || !isTestDocNo_(record.ncrNo))) return null;
+  if (record.isTest !== true && isTestDocNo_(record.ncrNo)) return null;
   return record;
 }
 
@@ -156,14 +166,16 @@ function getDataSheet_(ss) {
   return sheet;
 }
 
-// upsert ด้วย id (คอลัมน์ B) — เลขที่ใบ (คอลัมน์ A) ใช้ค้นหาตอนดึงลงฟอร์ม
+// upsert ด้วย id (คอลัมน์ B) หรือเลขที่ใบ (คอลัมน์ A) — เลขที่ใช้ค้นหาตอนดึงลงฟอร์ม จึงต้องมีแถวเดียวต่อเลขที่
+// (ล้างข้อมูลทดสอบในเว็บแล้วเลข TEST-… เริ่มนับใหม่ ใบใหม่ได้ id ใหม่แต่เลขที่ซ้ำของเดิม — ให้ทับแถวเดิม)
 function upsertData_(sheet, record, rawValue) {
   var row = [asText_(record.ncrNo), record.id, asText_(rawValue), new Date()];
+  var wanted = normalizeDocNo_(record.ncrNo);
   var lastRow = sheet.getLastRow();
   if (lastRow > 1) {
-    var ids = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
-    for (var i = 0; i < ids.length; i++) {
-      if (ids[i][0] === record.id) {
+    var keys = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i][1] === record.id || normalizeDocNo_(keys[i][0]) === wanted) {
         sheet.getRange(i + 2, 1, 1, row.length).setValues([row]);
         return;
       }
@@ -192,7 +204,7 @@ function upsertLogRow_(sheet, record) {
     dateCell_(record.correctionDue), // ระบบเก็บ "กำหนดเสร็จ" ของแนวทางแก้ไข ยังไม่มีวันที่แก้เสร็จจริงแยก
     dateCell_(followup.date),
     asText_(responder.name),
-    asText_(record.statusLabel || STATUS_LABELS[record.status] || record.status),
+    asText_((record.isTest === true ? TEST_LABEL : '') + (record.statusLabel || STATUS_LABELS[record.status] || record.status)),
     dateCell_(record.closedAt),
   ]);
 
@@ -238,7 +250,45 @@ function onOpen() {
     .createMenu('NCR')
     .addItem('ดึงข้อมูลตามเลขที่ในช่อง ' + FORM_DOC_NO_CELL, 'loadFormFromMenu')
     .addItem('ล้างข้อมูลในฟอร์ม', 'clearFormFromMenu')
+    .addSeparator()
+    .addItem('ลบข้อมูลทดสอบ (TEST-) ทั้งหมด', 'deleteTestRecordsFromMenu')
     .addToUi();
+}
+
+// ลบทุกแถวที่เลขที่ขึ้นต้นด้วย TEST- ออกจาก NCR_DATA และรายงานNCR (ไม่แตะใบจริง)
+function deleteTestRecordsFromMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var answer = ui.alert('ลบข้อมูลทดสอบ', 'ลบทุกแถวที่เลขที่ขึ้นต้นด้วย ' + TEST_PREFIX + ' ออกจากชีต ' + LOG_SHEET_NAME + ' และ ' + DATA_SHEET_NAME + ' ?', ui.ButtonSet.OK_CANCEL);
+  if (answer !== ui.Button.OK) return;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var removed = deleteTestRows_(ss.getSheetByName(LOG_SHEET_NAME), LOG_FIRST_ROW);
+    deleteTestRows_(ss.getSheetByName(DATA_SHEET_NAME), 2);
+    var form = ss.getSheetByName(FORM_SHEET_NAME);
+    if (form && isTestDocNo_(form.getRange(FORM_DOC_NO_CELL).getDisplayValue())) {
+      form.getRange(FORM_DOC_NO_CELL).setValue('');
+      resetForm_(form);
+    }
+    toast_('ลบข้อมูลทดสอบแล้ว ' + removed + ' ใบ');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ลบจากล่างขึ้นบนเพื่อไม่ให้เลขแถวที่ยังไม่ได้ลบเลื่อน คืนจำนวนแถวที่ลบ
+function deleteTestRows_(sheet, firstRow) {
+  if (!sheet || sheet.getLastRow() < firstRow) return 0;
+  var values = sheet.getRange(firstRow, 1, sheet.getLastRow() - firstRow + 1, 1).getDisplayValues();
+  var removed = 0;
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (isTestDocNo_(values[i][0])) {
+      sheet.deleteRow(firstRow + i);
+      removed++;
+    }
+  }
+  return removed;
 }
 
 function loadFormFromMenu() {
@@ -470,6 +520,10 @@ function formatDate_(iso) {
 function isoFromCell_(value) {
   if (Object.prototype.toString.call(value) !== '[object Date]' || isNaN(value.getTime())) return '';
   return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function isTestDocNo_(value) {
+  return normalizeDocNo_(value).indexOf(TEST_PREFIX) === 0;
 }
 
 function normalizeDocNo_(value) {
