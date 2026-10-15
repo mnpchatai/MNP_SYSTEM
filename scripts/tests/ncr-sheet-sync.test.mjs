@@ -47,12 +47,20 @@ test("a returned follow-up is not marked as closed", () => {
   assert.equal(sheetSync.buildRecord(ncr({ followed_up_at: null }), { directory }).followup.closed, false);
 });
 
-test("sandbox reports and a missing URL are never sent", () => {
+test("nothing is sent without a URL", () => {
   const calls = [];
   const fetchImpl = (url, init) => { calls.push({ url, init }); return Promise.resolve(); };
   assert.equal(sheetSync.sync(sheetSync.buildRecord(ncr(), { directory }), { url: "", fetchImpl }), false);
-  assert.equal(sheetSync.sync(sheetSync.buildRecord(ncr({ is_test: true }), { directory }), { url: "https://x.test", fetchImpl }), false);
   assert.equal(calls.length, 0);
+});
+
+test("sandbox reports are sent flagged as test data so the Apps Script can accept or drop them", () => {
+  const calls = [];
+  const fetchImpl = (url, init) => { calls.push({ url, init }); return Promise.resolve(); };
+  assert.equal(sheetSync.sync(sheetSync.buildRecord(ncr({ is_test: true, ncr_no: "TEST-QA001/69" }), { directory }), { url: "https://x.test", fetchImpl }), true);
+  const record = JSON.parse(JSON.parse(calls[0].init.body).batch[0].value);
+  assert.equal(record.isTest, true);
+  assert.equal(record.ncrNo, "TEST-QA001/69");
 });
 
 test("a real report is posted once as a no-cors batch keyed by the report id", () => {
