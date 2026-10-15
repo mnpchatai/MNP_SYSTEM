@@ -16,6 +16,9 @@
 // เมนูข้างโผล่เฉพาะโหมดทดสอบ (nav.sandboxOnly) และหน้านี้ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // (การซ่อนเมนูอย่างเดียวไม่ใช่การควบคุมสิทธิ์) ไม่มีฝั่ง Next.js เพราะโหมดทดสอบมีเฉพาะ Pilot Web
 //
+// หัวทุกหน้าเป็นหัวกะทัดรัด (headHtml) หน้ารวม/หน้าแผนกมีช่องค้นหารวม → #/factory?q= (view "search" ใน module-factory-board.js)
+// หน้าแผนกสลับแผนกด้วยแท็บบนจอกว้าง และ <select> บนมือถือ
+//
 // จอ 761–1040px แถบข้างหุบเหลือแต่ไอคอน เมนูย่อยจึงถูกซ่อนด้วย CSS และแสดงการ์ด Item master ในหน้าแทน
 // (HTML ต้นไม้ชุดเดียวกัน ซ่อน/แสดงด้วย media query ที่ styles.css) ช่วงความกว้างอื่นแสดงเฉพาะเมนูย่อยในแถบข้าง
 //
@@ -32,7 +35,6 @@
 
   const factory = window.MNP_FACTORY;
   const itemMaster = window.MNP_FACTORY_ITEM_MASTER;
-  const gradient = ([from, to]) => `linear-gradient(135deg, ${from}, ${to})`;
 
   const FOLDER_ICON = `<svg class="factory-tree-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5v-12Z"/></svg>`;
   const DOCUMENT_ICON = `<svg class="factory-tree-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7V3Z"/><path d="M14 3v4h4M9.5 12h5M9.5 15.5h5"/></svg>`;
@@ -67,59 +69,110 @@
     return `<section class="card factory-item-card factory-master-page"><details class="factory-master"${selected ? " open" : ""}><summary>เมนูโรงงาน</summary>${treeHtml(selected, "page")}</details></section>`;
   }
 
-  // body: ภาพรวมการผลิตจาก view "overview" (modules/module-factory-board.js) ไม่มี = เฉพาะการ์ดแผนก
-  // queueCounts: { รหัสแผนก: จำนวนงานที่ถึงคิว } แสดงบนการ์ดแผนก
+  // หัวหน้าแบบกะทัดรัด: ตำแหน่ง (ลิงก์กลับขึ้นไปได้) + ชื่อหน้า + ปุ่มด้านขวา — แทนแถบไล่สีเดิม
+  // คำว่า "โหมดทดสอบ" ไม่ซ้ำในหัว เพราะแถบสีเหลืองและป้าย TEST บนแถบบนบอกอยู่แล้วทุกหน้า
+  // crumbs: [{ href?, label }] ต่อจาก "ฝ่ายโรงงาน" · back: { href, label } ลิงก์ย้อนกลับเฉพาะหน้ารายละเอียด/ฟอร์ม
+  function headHtml({ title, subtitle = "", crumbs = [], actions = "", back = null, badge = "" }) {
+    // หน้ารวมไม่มีตำแหน่ง (ชื่อหน้าคือ "ฝ่ายโรงงาน" อยู่แล้ว) หน้าอื่นเริ่มที่ลิงก์กลับหน้ารวม
+    const trail = crumbs.length && [{ href: factory.url(), label: TITLE }, ...crumbs]
+      .map((crumb) => (crumb.href ? `<a href="${escapeHtml(crumb.href)}">${escapeHtml(crumb.label)}</a>` : `<span>${escapeHtml(crumb.label)}</span>`))
+      .join('<span class="fx-crumb-sep" aria-hidden="true">/</span>');
+    return `${back ? `<a class="fx-back" href="${escapeHtml(back.href)}">${escapeHtml(back.label)}</a>` : ""}
+      <header class="fx-head">
+        <div class="fx-head-main">
+          ${trail ? `<nav class="fx-crumbs" aria-label="ตำแหน่งในฝ่ายโรงงาน">${trail}</nav>` : ""}
+          <div class="fx-title">${badge}<h1>${escapeHtml(title)}</h1></div>
+          ${subtitle ? `<p class="fx-sub">${escapeHtml(subtitle)}</p>` : ""}
+        </div>
+        ${actions ? `<div class="fx-actions">${actions}</div>` : ""}
+      </header>`;
+  }
+
+  // ช่องค้นหารวมของฝ่ายโรงงาน (หน้ารวม หน้าแผนก หน้าผลค้นหา) ส่งแล้วไป #/factory?q= ซึ่งค้นหน้าในเมนู Item และเอกสารทุกชนิด
+  function searchHtml(q = "") {
+    const search = window.MNP_FACTORY_UI?.SEARCH_ICON ?? "";
+    return `<form class="fx-search" role="search" data-fx-search>
+        <div class="fm-search">${search}<label class="sr-only" for="fx-search-q">ค้นหาในฝ่ายโรงงาน</label>
+          <input class="input" id="fx-search-q" name="q" type="search" enterkeyhint="search" autocomplete="off" maxlength="100" value="${escapeHtml(q)}" placeholder="ค้นหาเลขที่ใบ รหัสสินค้า ลูกค้า หรือชื่อเมนู"></div>
+        <button class="btn" type="submit">ค้นหา</button>
+      </form>`;
+  }
+
+  function bindSearch(root) {
+    root?.querySelector?.("[data-fx-search]")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const q = String(new FormData(event.currentTarget).get("q") ?? "").trim().slice(0, 100);
+      location.hash = q ? `/factory?${new URLSearchParams({ q })}` : "/factory";
+    });
+  }
+
+  const deptStyle = (department) => `--dept:${department.theme[0]}`;
+
+  // body: ภาพรวมการผลิตจาก view "overview" (modules/module-factory-board.js) ไม่มี = เฉพาะแผนก
+  // queueCounts: { รหัสแผนก: จำนวนงานที่ถึงคิว } แสดงบนปุ่มแผนก
   function overviewHtml(body = "", queueCounts = {}) {
-    const cards = factory.DEPARTMENTS.map((department) => {
+    const tiles = factory.DEPARTMENTS.map((department) => {
       const waiting = Number(queueCounts[department.code] ?? 0);
-      return `<a class="type-card" href="${escapeHtml(factory.url(department.code))}" style="background:${gradient(department.theme)}">
-        <span class="request-type-top"><span class="type-card-badge">${escapeHtml(department.code)}</span></span>
-        <span class="type-card-body"><strong>${escapeHtml(department.name)}</strong><small>${waiting ? `${waiting} งานรอลงมือ · เปิดแผนก →` : "เปิดแผนก →"}</small></span>
+      return `<a class="fx-dept${waiting ? " has-work" : ""}" href="${escapeHtml(factory.url(department.code))}" style="${deptStyle(department)}">
+        <span class="fx-dept-code">${escapeHtml(department.code)}</span>
+        <span class="fx-dept-copy"><strong>${escapeHtml(department.name)}</strong><small>${waiting ? `${waiting} งานรอลงมือ` : "ไม่มีงานรอ"}</small></span>
       </a>`;
     }).join("");
     return `<div class="factory-page">
-      <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
-        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">โหมดทดสอบ</div><h1>${TITLE}</h1><p>${factory.DEPARTMENTS.length} แผนก · เมนูงานและข้อมูลตั้งต้นอยู่ใต้ "ฝ่ายโรงงาน"</p></div></div>
-      </div>
-      ${body}
+      ${headHtml({ title: TITLE, subtitle: "ภาพรวมการผลิตทุกแผนก" })}
+      ${searchHtml()}
+      <h2 class="fx-section-title">แผนก</h2>
+      <nav class="fx-depts" aria-label="แผนกฝ่ายโรงงาน">${tiles}</nav>
       ${itemMasterCardHtml(null)}
-      <div class="request-type-heading"><h2>เลือกแผนก</h2></div>
-      <nav class="type-grid factory-dept-grid" aria-label="แผนกฝ่ายโรงงาน">${cards}</nav>
+      ${body}
       </div>`;
   }
 
   // body: เนื้อหาของแผนกจาก view "department" (modules/module-factory-job.js คิวใบงานของแผนก) ไม่มี = โครงหน้าว่าง
+  // สลับแผนก: จอกว้างเป็นแท็บ จอมือถือเป็น dropdown (<select> ของเบราว์เซอร์ แตะบน iPhone ได้ ไม่ต้องมีโค้ดปิด popup)
   function departmentHtml(department, body = null) {
     const tabs = factory.DEPARTMENTS.map((item) => `<a class="filter${item.code === department.code ? " active" : ""}" href="${escapeHtml(factory.url(item.code))}"${item.code === department.code ? ` aria-current="page"` : ""}>${escapeHtml(item.code)} ${escapeHtml(item.name)}</a>`).join("");
-    return `<div class="factory-page">
-      <a class="request-back-link" href="${escapeHtml(factory.url())}" aria-label="ย้อนกลับไปเลือกแผนก">‹ ย้อนกลับ</a>
-      <div class="page-heading request-module-header" style="background:${gradient(department.theme)}">
-        <div class="request-module-title"><span class="type-card-badge">${escapeHtml(department.code)}</span><div><div class="eyebrow">${TITLE} · โหมดทดสอบ</div><h1>${escapeHtml(department.name)}</h1><p>แผนก ${escapeHtml(department.code)}</p></div></div>
+    const choices = factory.DEPARTMENTS.map((item) => `<option value="${escapeHtml(item.code)}"${item.code === department.code ? " selected" : ""}>${escapeHtml(item.code)} · ${escapeHtml(item.name)}</option>`).join("");
+    return `<div class="factory-page" style="${deptStyle(department)}">
+      ${headHtml({ title: department.name, subtitle: `แผนก ${department.code}`, crumbs: [{ label: "แผนก" }], badge: `<span class="fx-dept-code">${escapeHtml(department.code)}</span>` })}
+      <div class="fx-dept-switch">
+        <nav class="filters fx-tabs" aria-label="สลับแผนกฝ่ายโรงงาน">${tabs}</nav>
+        <div class="field fx-dept-select"><label for="fx-dept">สลับแผนก</label><select class="select" id="fx-dept" data-fx-dept>${choices}</select></div>
       </div>
       ${itemMasterCardHtml(null)}
-      <nav class="filters" aria-label="สลับแผนกฝ่ายโรงงาน">${tabs}</nav>
       ${body ?? `<section class="card">
         <h2>แผนก ${escapeHtml(department.code)} ${escapeHtml(department.name)}</h2>
-        <div class="empty">ยังไม่มีแบบฟอร์มหรือขั้นตอนงานของแผนกนี้<br><small>โมดูลอยู่ในโหมดทดสอบ รอกำหนดขั้นตอนงานของแผนกก่อนเปิดให้บันทึกข้อมูล</small></div>
+        <div class="empty">ยังไม่มีแบบฟอร์มหรือขั้นตอนงานของแผนกนี้<br><small>รอกำหนดขั้นตอนงานของแผนกก่อนเปิดให้บันทึกข้อมูล</small></div>
       </section>`}
       </div>`;
   }
 
+  function bindDepartment(root) {
+    const select = root?.querySelector?.("[data-fx-dept]");
+    select?.addEventListener("change", () => { location.hash = factory.url(select.value).slice(1); });
+  }
+
   // หน้าของรายการใน Item master: หัวรายการ + เนื้อหาจาก view (ไม่มี view = หน้าว่าง "ยังไม่เปิดใช้งาน")
-  // back: ปุ่มย้อนกลับ (ค่าเริ่มต้นกลับหน้าฝ่ายโรงงาน) actions: ปุ่มด้านขวาของหัว subtitle: ต่อท้ายชื่อในหัว
+  // back: ลิงก์ย้อนกลับของหน้ารายละเอียด/ฟอร์ม (ไม่ส่ง = ใช้ตำแหน่งด้านบนแทน) actions: ปุ่มด้านขวาของหัว
+  // subtitle: เอกสารที่เปิดอยู่ (เช่น เลขที่ใบ) — มีแล้วใช้เป็นชื่อหน้า และชื่อรายการกลายเป็นลิงก์ในตำแหน่ง
   function entryHtml(selected, { body = null, actions = "", back = null, subtitle = null } = {}) {
     const { folder, entry } = selected;
-    const backLink = back ?? { href: factory.url(), label: "‹ ย้อนกลับ" };
+    const crumbs = subtitle ? [{ label: folder.name }, { href: itemMaster.url(entry.key), label: entry.name }] : [{ label: folder.name }];
     return `<div class="factory-page">
-      <a class="request-back-link" href="${escapeHtml(backLink.href)}">${escapeHtml(backLink.label)}</a>
-      <div class="page-heading request-module-header" style="background:${gradient(THEME)}">
-        <div class="request-module-title"><span class="type-card-badge">${NAV_ICON}</span><div><div class="eyebrow">${TITLE} · เมนูโรงงาน › ${escapeHtml(folder.name)}</div><h1>${escapeHtml(entry.name)}</h1><p>${subtitle ? `${escapeHtml(subtitle)} · ` : ""}โหมดทดสอบ</p></div></div>
-        ${actions ? `<div class="request-create-entry">${actions}</div>` : ""}
-      </div>
+      ${headHtml({ title: subtitle || entry.name, crumbs, actions, back })}
       ${itemMasterCardHtml(selected)}
       ${body ?? `<section class="card">
-        <div class="empty">ยังไม่เปิดใช้งาน<br><small>โมดูลอยู่ในโหมดทดสอบ รอกำหนดฟอร์มและขั้นตอนของรายการนี้</small></div>
+        <div class="empty">ยังไม่เปิดใช้งาน<br><small>รอกำหนดฟอร์มและขั้นตอนของรายการนี้</small></div>
       </section>`}
+      </div>`;
+  }
+
+  // หน้าผลค้นหารวม (#/factory?q=) — body จาก view "search" (modules/module-factory-board.js)
+  function searchPageHtml(q, body = "") {
+    return `<div class="factory-page">
+      ${headHtml({ title: "ค้นหา", subtitle: `ผลการค้นหา “${q}”`, crumbs: [{ label: "ค้นหา" }] })}
+      ${searchHtml(q)}
+      ${body}
       </div>`;
   }
 
@@ -136,26 +189,44 @@
     };
   }
 
-  // frame ของหน้ารวม: view "overview" วาดภาพรวมการผลิตและส่งจำนวนงานบนการ์ดแผนกมาที่ queueCounts
+  // frame ของหน้ารวม: view "overview" วาดภาพรวมการผลิตและส่งจำนวนงานบนปุ่มแผนกมาที่ queueCounts
   function overviewFrame() {
     return {
       loading: () => loadingShell(PATH, TITLE),
       paint(options) {
         app.innerHTML = shell(overviewHtml(options?.body ?? "", options?.queueCounts ?? {}), PATH, TITLE);
         bindShell();
-        return document.querySelector(".content");
+        const root = document.querySelector(".content");
+        bindSearch(root);
+        return root;
       },
     };
   }
 
-  // frame ของหน้าแผนก: view "department" วาดเนื้อหาในกรอบเดียวกับหน้าแผนก (หัวแผนก แท็บสลับแผนก การ์ด Item master)
+  // frame ของหน้าแผนก: view "department" วาดเนื้อหาในกรอบเดียวกับหน้าแผนก (หัวแผนก ตัวสลับแผนก การ์ด Item master)
   function departmentFrame(department, title) {
     return {
       loading: () => loadingShell(PATH, title),
       paint(options) {
         app.innerHTML = shell(departmentHtml(department, options?.body ?? null), PATH, title);
         bindShell();
-        return document.querySelector(".content");
+        const root = document.querySelector(".content");
+        bindDepartment(root);
+        return root;
+      },
+    };
+  }
+
+  function searchFrame(q) {
+    const title = `${TITLE} / ค้นหา`;
+    return {
+      loading: () => loadingShell(PATH, title),
+      paint(options) {
+        app.innerHTML = shell(searchPageHtml(q, options?.body ?? ""), PATH, title);
+        bindShell();
+        const root = document.querySelector(".content");
+        bindSearch(root);
+        return root;
       },
     };
   }
@@ -166,7 +237,10 @@
     // item/dept ที่ไม่รู้จักพากลับหน้ารวม ไม่แสดงหน้าว่างของสิ่งที่ไม่มีอยู่ (รายการมาก่อนแผนกถ้าส่งมาทั้งคู่)
     const selected = itemMaster.findEntry(params.get("item"));
     const department = selected ? null : factory.find(params.get("dept"));
-    // หน้ารวม (ไม่มี item/dept): ภาพรวมการผลิตจาก view "overview" ถ้ามี ไม่เช่นนั้นเป็นการ์ดแผนก
+    // ค้นหารวม (ไม่มี item/dept แต่มี q): หน้าในเมนู Item และเอกสารทุกชนิดที่ตรงกับคำค้น
+    const q = String(params.get("q") ?? "").trim().slice(0, 100);
+    if (!selected && !department && q && window.MNP_FACTORY_VIEWS?.search) return await window.MNP_FACTORY_VIEWS.search({ params, q, frame: searchFrame(q) });
+    // หน้ารวม (ไม่มี item/dept): ภาพรวมการผลิตจาก view "overview" ถ้ามี ไม่เช่นนั้นเป็นปุ่มแผนก
     if (!selected && !department && window.MNP_FACTORY_VIEWS?.overview) return await window.MNP_FACTORY_VIEWS.overview({ params, frame: overviewFrame() });
     let content = overviewHtml();
     let title = TITLE;
@@ -183,6 +257,9 @@
     }
     app.innerHTML = shell(content, PATH, title);
     bindShell();
+    const root = document.querySelector(".content");
+    bindSearch(root);
+    bindDepartment(root);
   }
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});

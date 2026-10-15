@@ -27,6 +27,20 @@
 
   const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 
+  // คำค้นจากช่องค้นหา/URL: ตัดช่องว่างหัวท้าย ยุบช่องว่างซ้อน ไม่สนตัวพิมพ์ ยาวไม่เกิน 100 ตัวอักษร
+  function normalizeQuery(value) {
+    return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 100);
+  }
+
+  // ทุกคำในคำค้น (คั่นด้วยช่องว่าง) ต้องอยู่ในข้อความรวมของ values จึงตรง — คำค้นว่าง = ตรงทุกแถว
+  // ใช้ร่วมกันทุกช่องค้นหาของฝ่ายโรงงาน (ทะเบียนสินค้า รายการเอกสาร และค้นหารวม) เพื่อให้ค้นแบบเดียวกันทุกหน้า
+  function matchesQuery(values, query) {
+    const words = normalizeQuery(query).split(" ").filter(Boolean);
+    if (!words.length) return true;
+    const text = (values ?? []).filter((value) => value !== null && value !== undefined).join(" ").toLowerCase();
+    return words.every((word) => text.includes(word));
+  }
+
   // ตัวกรองจาก URL — ค่าที่ไม่รู้จักกลับเป็นค่าเริ่มต้น ไม่ส่งต่อค่าที่ไม่ได้ตรวจ
   function listParams(params) {
     const get = (key) => (params && typeof params.get === "function" ? params.get(key) : null);
@@ -41,15 +55,14 @@
     };
   }
 
-  // ค้นหาในรหัส Item รหัสอะไหล่ ชื่อไทย ชื่ออังกฤษ และรายละเอียด (ไม่สนตัวพิมพ์) แล้วเรียงแบบภาษาไทย
+  // ค้นหาในรหัส Item รหัสอะไหล่ ชื่อไทย ชื่ออังกฤษ และรายละเอียด (ไม่สนตัวพิมพ์ ทุกคำต้องพบ) แล้วเรียงแบบภาษาไทย
   function filterItems(items, filters) {
-    const query = String(filters.q ?? "").trim().toLowerCase();
     const sortKey = filters.sort === "name" ? "name" : "code";
     return (items ?? [])
       .filter((item) => filters.type === "all" || item.item_type === filters.type)
       .filter((item) => filters.brand === "all" || item.brand === filters.brand)
       .filter((item) => filters.status === "all" || item.status === filters.status)
-      .filter((item) => !query || [item.code, item.part_code, item.name, item.name_en, item.specification].join(" ").toLowerCase().includes(query))
+      .filter((item) => matchesQuery([item.code, item.part_code, item.name, item.name_en, item.specification], filters.q))
       .slice()
       .sort((a, b) => String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""), "th") || String(a.code).localeCompare(String(b.code)));
   }
@@ -334,7 +347,7 @@
   const api = {
     EDITABLE_FIELDS, changedFields, bomTree, TREE_MAX_DEPTH,
     ITEM_TYPES, PROCUREMENT, BRANDS, STATUSES, SORTS, PRODUCTION_STATUSES, DOCUMENT_STATUSES, PAGE_SIZE, ITEM_CODE_PATTERN,
-    listParams, filterItems, paginate, countByType, lowStockItems, bomRequirement, itemPayload,
+    normalizeQuery, matchesQuery, listParams, filterItems, paginate, countByType, lowStockItems, bomRequirement, itemPayload,
     BOM_HISTORY_ACTIONS, BOM_MAX_LINES, BOM_MAX_QUANTITY, OPEN_BOM_STATUSES,
     canOwnBom, bomParentChoices, componentChoices, bomPayload, validateBomPayload, bomActions, pendingBoms, draftBoms,
     countBomsByStatus, bomTimeline,

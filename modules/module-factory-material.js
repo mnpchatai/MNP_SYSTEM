@@ -14,7 +14,8 @@
 (function registerFactoryMaterialViews() {
   const model = window.MNP_FACTORY_MATERIAL_MODEL;
   const menu = window.MNP_FACTORY_ITEM_MASTER;
-  const { loadData, options, notice } = window.MNP_FACTORY_UI;
+  const { loadData, options, notice, listToolbar, bindListToolbar, fold } = window.MNP_FACTORY_UI;
+  const master = window.MNP_FACTORY_MASTER_MODEL;
 
   // ลำดับสำคัญ: friendlyError ใช้คีย์แรกที่ปรากฏอยู่ในข้อความ รหัสใหม่ต้องไม่เป็นส่วนหนึ่งของรหัสอื่นที่ลงทะเบียนไว้ก่อนหน้า (มีเทสต์ตรวจ)
   const ERROR_MESSAGES = {
@@ -70,18 +71,15 @@
 
   // ---------- รายการ ----------
   const STATUS_FILTERS = ["all", ...Object.keys(model.MATERIAL_STATUSES)];
-  const listUrl = (status) => menu.url("material-view", { status: status !== "all" ? status : null });
 
   function listHtml(data, params) {
     const orders = data.material_orders ?? [];
     const wanted = STATUS_FILTERS.includes(params.get("status")) ? params.get("status") : "all";
     const counts = model.countByStatus(orders);
-    const rows = orders.filter((order) => wanted === "all" || order.status === wanted);
-    const filters = STATUS_FILTERS.map((status) => {
-      const count = status === "all" ? orders.length : counts[status];
-      const text = status === "all" ? "ทั้งหมด" : model.MATERIAL_STATUSES[status];
-      return `<a class="filter${wanted === status ? " active" : ""}" href="${escapeHtml(listUrl(status))}"${wanted === status ? ' aria-current="page"' : ""}>${escapeHtml(text)} (${count})</a>`;
-    }).join("");
+    const q = master.normalizeQuery(params.get("q"));
+    const rows = orders.filter((order) => wanted === "all" || order.status === wanted)
+      .filter((order) => master.matchesQuery([order.code, order.supplier, order.production_code, order.item_code, ...(order.lines ?? []).map((line) => line.code)], q));
+    const statuses = STATUS_FILTERS.map((status) => [status, `${status === "all" ? "ทุกสถานะ" : model.MATERIAL_STATUSES[status]} (${status === "all" ? orders.length : counts[status]})`]);
     if (!orders.length) {
       return `<section class="card"><div class="empty">ยังไม่มีใบสั่งวัตถุดิบในโหมดทดสอบ<br><small>ใบสั่งผลิตต้องออกใบสั่งงานแล้ว (ขั้น 1–2) แผนก ST จึงออกใบสั่งวัตถุดิบได้</small>
           <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("material-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบสั่งวัตถุดิบ</a>
@@ -90,16 +88,16 @@
     const body = rows.map((order) => `<tr>
         <td><a class="fm-item-link" href="${escapeHtml(viewUrl(order.id))}"><strong>${escapeHtml(order.code)}</strong><span>${escapeHtml(order.supplier || "—")}</span></a></td>
         <td><a href="${escapeHtml(poUrl(order.production_order_id))}">${escapeHtml(order.production_code)}</a><br><span class="muted small">${escapeHtml(order.item_code)}</span></td>
-        <td class="right">${(order.lines ?? []).length} รายการ</td>
-        <td>${formatDate(order.expected_date)}</td>
+        <td class="right fm-num fm-opt">${(order.lines ?? []).length} รายการ</td>
+        <td class="fm-opt">${formatDate(order.expected_date)}</td>
         <td>${statusBadge(order.status)}</td>
-        <td class="right"><a class="btn secondary small" href="${escapeHtml(viewUrl(order.id))}" aria-label="เปิด ${escapeHtml(order.code)}">เปิด</a></td>
+        <td class="right fm-opt"><a class="btn secondary small" href="${escapeHtml(viewUrl(order.id))}" aria-label="เปิด ${escapeHtml(order.code)}">เปิด</a></td>
       </tr>`).join("");
-    return `<section class="card">
-        <nav class="filters" aria-label="สถานะใบสั่งวัตถุดิบ">${filters}</nav>
-        ${rows.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>เลขที่ใบ / ผู้ขาย</th><th>ใบสั่งผลิต</th><th class="right">รายการ</th><th>คาดว่าจะได้รับ</th><th>สถานะ</th><th class="right">จัดการ</th></tr></thead>
-          <tbody>${body}</tbody></table></div>` : '<div class="empty">ไม่มีใบสั่งวัตถุดิบในสถานะนี้</div>'}
+    return `<section class="card fm-list">
+        ${listToolbar({ entry: "material-view", q, status: wanted, statuses, placeholder: "เลขที่ใบ ผู้ขาย ใบสั่งผลิต หรือรหัสวัตถุดิบ", statusLabel: "สถานะใบสั่งวัตถุดิบ" })}
+        ${rows.length ? `<div class="table-wrap"><table class="fm-table">
+          <thead><tr><th>เลขที่ใบ / ผู้ขาย</th><th>ใบสั่งผลิต</th><th class="right fm-opt">รายการ</th><th class="fm-opt">คาดว่าจะได้รับ</th><th>สถานะ</th><th class="right fm-opt">จัดการ</th></tr></thead>
+          <tbody>${body}</tbody></table></div>` : `<div class="empty">ไม่พบใบสั่งวัตถุดิบที่ตรงกับตัวกรอง<br><a class="btn secondary small" href="${escapeHtml(menu.url("material-view"))}">ล้างตัวกรอง</a></div>`}
       </section>`;
   }
 
@@ -113,15 +111,15 @@
     const hint = !actions.length && model.OPEN_STATUSES.includes(order.status)
       ? notice("ใบนี้เป็นงานของแผนก ST — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลืองด้านบนเป็นพนักงาน ST เพื่อสั่ง รับของ หรือยกเลิก") : "";
     const cancelForm = actions.includes("cancel")
-      ? `<form class="fm-form mo-form" id="mo-cancel-form" novalidate>
+      ? fold("ยกเลิกใบสั่งวัตถุดิบ", `<form class="fm-form mo-form" id="mo-cancel-form" novalidate>
           <div class="field full"><label for="mo-cancel-note">ยกเลิกใบนี้ — เหตุผล *</label>
             <textarea class="textarea" id="mo-cancel-note" name="note" rows="2" maxlength="1000" required></textarea></div>
           ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("mo-cancel-files")}
           <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบสั่งวัตถุดิบ</button></div>
-        </form>` : "";
+        </form>`, { tone: "danger" }) : "";
     if (!buttons.length && !cancelForm && !hint) return "";
     return `<section class="card fm-decision"><h2>ขั้นถัดไป</h2>${hint}
-        ${buttons.length ? `<div class="fm-actions">${buttons.join("")}</div>` : ""}${cancelForm}</section>`;
+        ${buttons.length ? `<div class="fm-actions">${buttons.join("")}</div>` : ""}${cancelForm ? `<div class="fm-fold-group">${cancelForm}</div>` : ""}</section>`;
   }
 
   function statusNotice(order) {
@@ -151,23 +149,29 @@
     const lines = (order.lines ?? []).map((line) => `<tr>
         <td>${escapeHtml(line.line_no)}</td><td><strong>${escapeHtml(line.code)}</strong> <span class="muted small">${escapeHtml(line.name)}</span></td>
         <td class="right">${q4(line.quantity)} ${escapeHtml(line.unit_code)}</td></tr>`).join("");
-    return `<section class="card fm-detail">
-        <div class="fm-detail-head"><div><div class="eyebrow">${escapeHtml(order.code)}</div>
-          <h2>สั่งวัตถุดิบสำหรับ <a href="${escapeHtml(poUrl(order.production_order_id))}">${escapeHtml(order.production_code)}</a> · ${escapeHtml(order.item_code)}</h2></div>${statusBadge(order.status)}</div>
-        ${statusNotice(order)}
-        <dl class="definition-grid">
-          <div class="definition"><dt>ผู้ขาย</dt><dd>${escapeHtml(order.supplier || "—")}</dd></div>
-          <div class="definition"><dt>คาดว่าจะได้รับ</dt><dd>${formatDate(order.expected_date)}</dd></div>
+    const timeline = model.orderTimeline(data.material_history, order.id);
+    const people = `<dl class="definition-grid">
           <div class="definition"><dt>ออกใบโดย (แผนก ST)</dt><dd>${person(order.created_by_name, order.created_at)}</dd></div>
           <div class="definition"><dt>สั่งผู้ขาย</dt><dd>${person(order.ordered_by_name, order.ordered_at)}</dd></div>
           <div class="definition"><dt>รับของเข้าคลัง</dt><dd>${person(order.received_by_name, order.received_at)}</dd></div>
           <div class="definition"><dt>ยกเลิก</dt><dd>${person(order.cancelled_by_name, order.cancelled_at)}</dd></div>
+        </dl>`;
+    return `<section class="card fm-detail">
+        <div class="fm-detail-head"><div>
+          <h2>สั่งวัตถุดิบสำหรับ <a href="${escapeHtml(poUrl(order.production_order_id))}">${escapeHtml(order.production_code)}</a> · ${escapeHtml(order.item_code)}</h2>
+          <p class="fm-meta">${escapeHtml(order.code)}</p></div>${statusBadge(order.status)}</div>
+        ${statusNotice(order)}
+        <dl class="definition-grid">
+          <div class="definition"><dt>ผู้ขาย</dt><dd>${escapeHtml(order.supplier || "—")}</dd></div>
+          <div class="definition"><dt>คาดว่าจะได้รับ</dt><dd>${formatDate(order.expected_date)}</dd></div>
         </dl>
         ${order.note ? `<h3>หมายเหตุ</h3><p class="fm-pre">${escapeHtml(order.note)}</p>` : ""}
         <h3>วัตถุดิบที่สั่ง</h3>
-        <div class="table-wrap"><table><thead><tr><th>#</th><th>วัตถุดิบ</th><th class="right">ปริมาณ</th></tr></thead><tbody>${lines}</tbody></table></div>
-        <h3>ประวัติของใบนี้</h3>
-        ${timelineHtml(model.orderTimeline(data.material_history, order.id))}
+        <div class="table-wrap"><table class="fm-table"><thead><tr><th>#</th><th>วัตถุดิบ</th><th class="right">ปริมาณ</th></tr></thead><tbody>${lines}</tbody></table></div>
+        <div class="fm-fold-group">
+          ${fold("ผู้ดำเนินการแต่ละขั้น", people)}
+          ${fold(`ประวัติของใบนี้ <span class="fm-count">${timeline.length}</span>`, timelineHtml(timeline))}
+        </div>
       </section>
       ${window.MNP_FACTORY_ATTACHMENTS.panelHtml("material_order", order.id)}`;
   }
@@ -214,8 +218,8 @@
       ? notice("ขั้นนี้เป็นของแผนก ST — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลืองเป็นพนักงาน ST ก่อนบันทึก (ฐานข้อมูลจะปฏิเสธผู้ใช้แผนกอื่น)") : "";
     const suggestedRows = rows.map((row) => `<tr>
         <td><strong>${escapeHtml(row.code)}</strong> <span class="muted small">${escapeHtml(row.name)}</span></td>
-        <td class="right">${q4(row.net)} ${escapeHtml(row.unit_code)}</td>
-        <td class="right">${q4(row.onOrder)}</td>
+        <td class="right" data-label="ขาด">${q4(row.net)} ${escapeHtml(row.unit_code)}</td>
+        <td class="right" data-label="สั่งไว้แล้ว">${q4(row.onOrder)}</td>
         <td class="right"><label class="sr-only" for="mo-qty-${escapeHtml(row.item_id)}">ปริมาณที่สั่ง ${escapeHtml(row.code)}</label>
           <input class="input" id="mo-qty-${escapeHtml(row.item_id)}" name="qty:${escapeHtml(row.item_id)}" type="number" inputmode="decimal" min="0" max="${model.MAX_QUANTITY}" step="any" value="${row.value > 0 ? escapeHtml(row.value) : ""}"> ${escapeHtml(row.unit_code)}</td>
       </tr>`).join("");
@@ -342,7 +346,9 @@
         const root = frame.paint({ back, subtitle: order.code, body: `${actionsHtml(order)}${detailHtml(data, order)}` });
         return bindDetail(root, order);
       }
-      return frame.paint({ actions: newOrderAction(), body: listHtml(data, params) });
+      const root = frame.paint({ actions: newOrderAction(), body: listHtml(data, params) });
+      bindListToolbar(root);
+      return root;
     },
     async "material-new"({ params, frame }) {
       frame.loading();

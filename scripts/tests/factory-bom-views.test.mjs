@@ -279,7 +279,7 @@ test("the item register links to the test data page instead of carrying its own 
   assert.match(empty, /href="#\/factory\?item=test-data-manage">เติมชุดข้อมูลตัวอย่าง<\/a>/);
   assert.match(empty, /เพิ่ม Item ใหม่/);
   const filled = (await render("items")).body;
-  assert.match(filled, /href="#\/factory\?item=test-data-manage">จัดการข้อมูลทดสอบ →<\/a>/);
+  assert.doesNotMatch(filled, /จัดการข้อมูลทดสอบ →/, "a filled register leaves the test data page to the factory menu");
   for (const body of [empty, filled]) assert.doesNotMatch(body, /id="fm-(seed|seed-trial|seed-megaform|purge)"/);
 });
 
@@ -302,7 +302,7 @@ test("the item register shows the part code under the item code and the search h
   const { body } = await render("items", "", PART_FIXTURE);
   assert.match(body, /<strong>MEGA-ST-01-P-Y<\/strong>[\s\S]*?รหัสอะไหล่ MEGA-ST-01<\/small>/);
   assert.doesNotMatch(body, /รหัสอะไหล่ <\/small>/, "an item without a part code shows no empty label");
-  assert.match(body, /ค้นหารหัส Item รหัสอะไหล่/);
+  assert.match(body, /placeholder="รหัส Item รหัสอะไหล่/);
 });
 
 test("the item form has an optional part code field that keeps its value and is escaped", async () => {

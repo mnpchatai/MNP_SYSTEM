@@ -203,7 +203,7 @@ test("editing a draft starts from its own quantities and does not count them twi
   assert.match(body, /id="mo-form"/);
   assert.match(body, /name="qty:nr"[^>]*value="300"/, "the saved quantity");
   assert.match(body, /name="qty:chem"[^>]*value=""/, "the chemical stays blank: it is fully ordered by another order");
-  assert.match(body, /<td class="right">0<\/td>/, "this draft is not counted as already on order for itself");
+  assert.match(body, /<td class="right" data-label="สั่งไว้แล้ว">0<\/td>/, "this draft is not counted as already on order for itself");
   const sent = await render("material-new", { query: "mo=m-ord", dept: "ST" });
   assert.doesNotMatch(sent.body, /id="mo-form"/);
   assert.match(sent.body, /แก้ไขได้เฉพาะฉบับร่าง/);

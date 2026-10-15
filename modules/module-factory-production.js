@@ -18,7 +18,7 @@
   const materials = window.MNP_FACTORY_MATERIAL_MODEL;
   const jobs = window.MNP_FACTORY_JOB_MODEL;
   const menu = window.MNP_FACTORY_ITEM_MASTER;
-  const { loadData, options, notice } = window.MNP_FACTORY_UI;
+  const { loadData, options, notice, listToolbar, bindListToolbar, stepper, fold } = window.MNP_FACTORY_UI;
 
   // ลำดับสำคัญ: friendlyError ใช้คีย์แรกที่ปรากฏอยู่ในข้อความ รหัสใหม่ต้องไม่เป็นส่วนหนึ่งของรหัสอื่นที่ลงทะเบียนไว้ก่อนหน้า (มีเทสต์ตรวจ)
   const ERROR_MESSAGES = {
@@ -80,21 +80,15 @@
   // ---------- รายการ ----------
   const STATUS_FILTERS = ["all", ...Object.keys(model.ORDER_STATUSES)];
 
-  function listUrl(status) {
-    return menu.url("production-view", { status: status !== "all" ? status : null });
-  }
-
   function listHtml(data, params) {
     const orders = data.production ?? [];
     const wanted = STATUS_FILTERS.includes(params.get("status")) ? params.get("status") : "all";
+    const q = master.normalizeQuery(params.get("q"));
     const counts = model.countByStatus(orders);
     const rows = orders.filter((order) => wanted === "all" || order.status === wanted)
+      .filter((order) => master.matchesQuery([order.code, order.work_order_no, order.customer, order.item_code, order.name], q))
       .slice().sort((a, b) => String(b.code).localeCompare(String(a.code)));
-    const filters = STATUS_FILTERS.map((status) => {
-      const count = status === "all" ? orders.length : counts[status];
-      const text = status === "all" ? "ทั้งหมด" : model.ORDER_STATUSES[status];
-      return `<a class="filter${wanted === status ? " active" : ""}" href="${escapeHtml(listUrl(status))}"${wanted === status ? ' aria-current="page"' : ""}>${escapeHtml(text)} (${count})</a>`;
-    }).join("");
+    const statuses = STATUS_FILTERS.map((status) => [status, `${status === "all" ? "ทุกสถานะ" : model.ORDER_STATUSES[status]} (${status === "all" ? orders.length : counts[status]})`]);
     if (!orders.length) {
       return `<section class="card"><div class="empty">ยังไม่มีใบสั่งผลิตในโหมดทดสอบ<br><small>ฝ่ายขายออกใบใหม่ได้ที่เมนู “ใบสั่งผลิต-ใหม่” (สลับเป็นพนักงานขาย) หรือเติมชุดทดลองที่ทะเบียนสินค้า</small>
           <div class="fm-actions"><a class="btn" href="${escapeHtml(menu.url("production-new"))}"><span class="plus-icon" aria-hidden="true"></span> ออกใบสั่งผลิต</a>
@@ -103,16 +97,16 @@
     const body = rows.map((order) => `<tr>
         <td><a class="fm-item-link" href="${escapeHtml(viewUrl(order.id))}"><strong>${escapeHtml(order.code)}</strong><span>${escapeHtml(order.work_order_no ? `ใบสั่งงาน ${order.work_order_no}` : order.customer || "—")}</span></a></td>
         <td><strong>${escapeHtml(order.item_code)}</strong><br><span class="muted small">${escapeHtml(order.name)}</span></td>
-        <td class="right">${q4(order.planned_qty)} ${escapeHtml(order.unit_code)}</td>
-        <td>${formatDate(order.due_date)}</td>
+        <td class="right fm-num fm-opt">${q4(order.planned_qty)} ${escapeHtml(order.unit_code)}</td>
+        <td class="fm-opt">${formatDate(order.due_date)}</td>
         <td>${statusBadge(order.status)}</td>
-        <td class="right"><a class="btn secondary small" href="${escapeHtml(viewUrl(order.id))}" aria-label="เปิด ${escapeHtml(order.code)}">เปิด</a></td>
+        <td class="right fm-opt"><a class="btn secondary small" href="${escapeHtml(viewUrl(order.id))}" aria-label="เปิด ${escapeHtml(order.code)}">เปิด</a></td>
       </tr>`).join("");
-    return `<section class="card">
-        <nav class="filters" aria-label="สถานะใบสั่งผลิต">${filters}</nav>
-        ${rows.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>เลขที่ใบ</th><th>สินค้า</th><th class="right">จำนวน</th><th>กำหนดเสร็จ</th><th>สถานะ</th><th class="right">จัดการ</th></tr></thead>
-          <tbody>${body}</tbody></table></div>` : '<div class="empty">ไม่มีใบสั่งผลิตในสถานะนี้</div>'}
+    return `<section class="card fm-list">
+        ${listToolbar({ entry: "production-view", q, status: wanted, statuses, placeholder: "เลขที่ใบ ใบสั่งงาน ลูกค้า หรือสินค้า", statusLabel: "สถานะใบสั่งผลิต" })}
+        ${rows.length ? `<div class="table-wrap"><table class="fm-table">
+          <thead><tr><th>เลขที่ใบ</th><th>สินค้า</th><th class="right fm-opt">จำนวน</th><th class="fm-opt">กำหนดเสร็จ</th><th>สถานะ</th><th class="right fm-opt">จัดการ</th></tr></thead>
+          <tbody>${body}</tbody></table></div>` : `<div class="empty">ไม่พบใบสั่งผลิตที่ตรงกับตัวกรอง<br><a class="btn secondary small" href="${escapeHtml(menu.url("production-view"))}">ล้างตัวกรอง</a></div>`}
       </section>`;
   }
 
@@ -121,9 +115,9 @@
     if (!survey) return "";
     const rows = survey.rows.map((row) => `<tr>
         <td>${"— ".repeat(Math.max(0, row.level - 1))}<strong>${escapeHtml(row.code)}</strong> <span class="muted small">${escapeHtml(row.name)}</span></td>
-        <td class="right">${q4(row.gross)} ${escapeHtml(row.unit_code)}</td>
-        <td class="right">${q4(row.onHand)}</td>
-        <td class="right${row.net > 0 && !row.hasBom ? " fm-short" : ""}"><strong>${q4(row.net)}</strong></td>
+        <td class="right" data-label="ต้องการ">${q4(row.gross)} ${escapeHtml(row.unit_code)}</td>
+        <td class="right" data-label="คงเหลือ">${q4(row.onHand)}</td>
+        <td class="right${row.net > 0 && !row.hasBom ? " fm-short" : ""}" data-label="ขาด"><strong>${q4(row.net)}</strong></td>
         <td>${row.hasBom ? "มีสูตร (แตกต่อ)" : row.net > 0 ? "<strong>ต้องจัดหา</strong>" : "พอ"}</td>
       </tr>`).join("");
     return `<div class="table-wrap"><table>
@@ -176,29 +170,28 @@
       ? notice(`ใบนี้รอ${deptName(waiting)} — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลืองด้านบนเป็นผู้ใช้แผนก ${waiting} เพื่อทำขั้นถัดไป`)
       : "";
     const returnForm = actions.includes("return")
-      ? `<form class="fm-form po-form" id="po-return-form" novalidate>
+      ? fold("ส่งกลับฝ่ายขายแก้ไข", `<form class="fm-form po-form" id="po-return-form" novalidate>
           <div class="field full"><label for="po-return-note">ส่งกลับฝ่ายขายแก้ไข — เหตุผล *</label>
             <textarea class="textarea" id="po-return-note" name="note" rows="2" maxlength="1000" required></textarea></div>
           ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("po-return-files")}
           <div class="fm-actions"><button class="btn danger" type="submit">ส่งกลับฝ่ายขาย</button></div>
-        </form>`
+        </form>`, { tone: "danger" })
       : "";
     const cancelForm = actions.includes("cancel")
-      ? `<form class="fm-form po-form" id="po-cancel-form" novalidate>
+      ? fold("ยกเลิกใบสั่งผลิต", `<form class="fm-form po-form" id="po-cancel-form" novalidate>
           <div class="field full"><label for="po-cancel-note">ยกเลิกใบสั่งผลิตนี้ — เหตุผล *</label>
             <textarea class="textarea" id="po-cancel-note" name="note" rows="2" maxlength="1000" required></textarea>
             <small>ยกเลิกได้เมื่อไม่มีใบงานผลิตที่ยังไม่ยกเลิก และไม่มีใบสั่งวัตถุดิบที่ยังไม่รับของหรือยังไม่ยกเลิก (ใบสั่งวัตถุดิบที่รับของแล้วคงยอดคลังไว้) ยกเลิกแล้วแก้กลับไม่ได้</small></div>
           ${window.MNP_FACTORY_ATTACHMENTS.fieldHtml("po-cancel-files")}
           <div class="fm-actions"><button class="btn danger" type="submit">ยกเลิกใบสั่งผลิต</button></div>
-        </form>`
+        </form>`, { tone: "danger" })
       : "";
     if (!buttons.length && !returnForm && !cancelForm && !hint) return "";
     return `<section class="card fm-decision">
         <h2>ขั้นถัดไป</h2>
         ${hint}
         ${buttons.length ? `<div class="fm-actions">${buttons.join("")}</div>` : ""}
-        ${returnForm}
-        ${cancelForm}
+        ${returnForm || cancelForm ? `<div class="fm-fold-group">${returnForm}${cancelForm}</div>` : ""}
       </section>`;
   }
 
@@ -209,8 +202,8 @@
     const linked = materials.ordersOf(data.material_orders, order.id);
     const needRows = (needs ?? []).map((need) => `<tr>
         <td><strong>${escapeHtml(need.code)}</strong> <span class="muted small">${escapeHtml(need.name)}</span></td>
-        <td class="right fm-short">${q4(need.net)} ${escapeHtml(need.unit_code)}</td>
-        <td class="right">${q4(need.onOrder)}</td>
+        <td class="right fm-short" data-label="ขาด">${q4(need.net)} ${escapeHtml(need.unit_code)}</td>
+        <td class="right" data-label="สั่งไว้แล้ว">${q4(need.onOrder)}</td>
         <td>${need.purchasable ? (need.suggest > 0 ? `<strong>ควรสั่งเพิ่ม ${q4(need.suggest)}</strong>` : "สั่งครบแล้ว") : "ต้องผลิตเอง (ทำ BOM)"}</td>
       </tr>`).join("");
     const linkedRows = linked.map((material) => `<tr>
@@ -278,35 +271,42 @@
     }
   }
 
+  // แถบขั้นของใบสั่งผลิต: ข้อความสั้นสำหรับแถบเท่านั้น ป้ายสถานะเต็มยังมาจาก model.ORDER_STATUSES
+  const ORDER_STEPS = [["draft", "ฉบับร่าง"], ["submitted", "ส่งแล้ว"], ["planning", "รับแล้ว"], ["planned", "วางแผนแล้ว"], ["released", "ออกใบสั่งงาน"], ["in_progress", "กำลังผลิต"], ["completed", "เสร็จ"]];
+
   function detailHtml(data, order) {
     const bom = byId(data.boms, order.bom_id);
     const routing = byId(data.routings, order.routing_id);
     const planning = ["planning", "planned"].includes(order.status) && dept() === model.PLANNING_DEPARTMENT;
     const timeline = model.orderTimeline(data.production_history, order.id);
-    return `<section class="card fm-detail">
-        <div class="fm-detail-head"><div><div class="eyebrow">${escapeHtml(order.code)}${order.work_order_no ? ` · ใบสั่งงาน ${escapeHtml(order.work_order_no)}` : ""}</div>
-          <h2>${escapeHtml(order.item_code)} · ${escapeHtml(order.name)}</h2></div>${statusBadge(order.status)}</div>
-        ${statusNotice(order)}
-        <dl class="definition-grid">
-          <div class="definition"><dt>จำนวนที่สั่งผลิต</dt><dd>${q4(order.planned_qty)} ${escapeHtml(order.unit_code)}</dd></div>
-          <div class="definition"><dt>กำหนดเสร็จ</dt><dd>${formatDate(order.due_date)}</dd></div>
-          <div class="definition"><dt>ลูกค้า / อ้างอิง</dt><dd>${escapeHtml(order.customer || "—")}</dd></div>
-          <div class="definition"><dt>BOM</dt><dd>${bom ? `<a href="${escapeHtml(menu.url("structure-view", { bom: bom.id, qty: order.planned_qty }))}">Rev. ${escapeHtml(bom.revision)}</a> · ${escapeHtml(master.DOCUMENT_STATUSES[bom.status] ?? bom.status)}` : "ยังไม่ผูก"}</dd></div>
-          <div class="definition"><dt>Routing</dt><dd>${routing ? `<a href="${escapeHtml(menu.url("routing-view", { routing: routing.id }))}">Rev. ${escapeHtml(routing.revision)}</a>` : "ยังไม่ผูก"}</dd></div>
-          <div class="definition"><dt>ผลิตแล้ว</dt><dd>${q4(order.completed_qty)} / ${q4(order.planned_qty)} ${escapeHtml(order.unit_code)}</dd></div>
+    const people = `<dl class="definition-grid">
           <div class="definition"><dt>ออกใบโดย (ฝ่ายขาย)</dt><dd>${person(order.created_by_name, order.created_at)}</dd></div>
           <div class="definition"><dt>ส่งให้ฝ่ายวางแผน</dt><dd>${person(order.submitted_by_name, order.submitted_at)}</dd></div>
           <div class="definition"><dt>ฝ่ายวางแผนรับ</dt><dd>${person(order.received_by_name, order.received_at)}</dd></div>
           <div class="definition"><dt>วางแผนโดย</dt><dd>${person(order.planned_by_name, order.planned_at)}</dd></div>
           <div class="definition"><dt>ออกใบสั่งงานโดย</dt><dd>${person(order.released_by_name, order.released_at)}</dd></div>
           ${order.status === "cancelled" ? `<div class="definition"><dt>ยกเลิกโดย</dt><dd>${person(order.cancelled_by_name, order.cancelled_at)}</dd></div>` : ""}
+        </dl>`;
+    return `<section class="card fm-detail">
+        <div class="fm-detail-head"><div><h2>${escapeHtml(order.item_code)} · ${escapeHtml(order.name)}</h2>
+          <p class="fm-meta">${escapeHtml(order.code)}${order.work_order_no ? ` · ใบสั่งงาน ${escapeHtml(order.work_order_no)}` : ""}</p></div>${statusBadge(order.status)}</div>
+        ${stepper(ORDER_STEPS, order.status, "ขั้นของใบสั่งผลิต")}
+        ${statusNotice(order)}
+        <dl class="definition-grid">
+          <div class="definition"><dt>จำนวนที่สั่งผลิต</dt><dd>${q4(order.planned_qty)} ${escapeHtml(order.unit_code)}</dd></div>
+          <div class="definition"><dt>ผลิตแล้ว</dt><dd>${q4(order.completed_qty)} / ${q4(order.planned_qty)} ${escapeHtml(order.unit_code)}</dd></div>
+          <div class="definition"><dt>กำหนดเสร็จ</dt><dd>${formatDate(order.due_date)}</dd></div>
+          <div class="definition"><dt>ลูกค้า / อ้างอิง</dt><dd>${escapeHtml(order.customer || "—")}</dd></div>
+          <div class="definition"><dt>BOM</dt><dd>${bom ? `<a href="${escapeHtml(menu.url("structure-view", { bom: bom.id, qty: order.planned_qty }))}">Rev. ${escapeHtml(bom.revision)}</a> · ${escapeHtml(master.DOCUMENT_STATUSES[bom.status] ?? bom.status)}` : "ยังไม่ผูก"}</dd></div>
+          <div class="definition"><dt>Routing</dt><dd>${routing ? `<a href="${escapeHtml(menu.url("routing-view", { routing: routing.id }))}">Rev. ${escapeHtml(routing.revision)}</a>` : "ยังไม่ผูก"}</dd></div>
         </dl>
         ${order.note ? `<h3>หมายเหตุ</h3><p class="fm-pre">${escapeHtml(order.note)}</p>` : ""}
         ${order.survey_note && !planning ? `<h3>ผลสำรวจคงคลัง</h3><p class="fm-pre">${escapeHtml(order.survey_note)}</p>` : ""}
-        <h3>ประวัติของใบนี้</h3>
-        ${timelineHtml(timeline)}
-      </section>
-      ${window.MNP_FACTORY_ATTACHMENTS.panelHtml("production_order", order.id)}`;
+        <div class="fm-fold-group">
+          ${fold("ผู้ดำเนินการแต่ละขั้น", people)}
+          ${fold(`ประวัติของใบนี้ <span class="fm-count">${timeline.length}</span>`, timelineHtml(timeline))}
+        </div>
+      </section>`;
   }
 
   function bindDetail(root, data, order) {
@@ -482,10 +482,11 @@
         const order = byId(data.production, id);
         if (!order) return frame.paint(gone(back));
         const planning = ["planning", "planned"].includes(order.status) && dept() === model.PLANNING_DEPARTMENT;
-        const root = frame.paint({ back, subtitle: order.code, body: `${actionsHtml(data, order)}${planning ? planFormHtml(data, order) : ""}${detailHtml(data, order)}${materialSectionHtml(data, order)}${jobSectionHtml(data, order)}` });
+        const root = frame.paint({ back, subtitle: order.code, body: `${actionsHtml(data, order)}${planning ? planFormHtml(data, order) : ""}${detailHtml(data, order)}${materialSectionHtml(data, order)}${jobSectionHtml(data, order)}${window.MNP_FACTORY_ATTACHMENTS.panelHtml("production_order", order.id)}` });
         return bindDetail(root, data, order);
       }
       const root = frame.paint({ actions: newOrderAction(), body: listHtml(data, params) });
+      bindListToolbar(root);
       return root;
     },
     async "production-new"({ params, frame }) {

@@ -117,3 +117,21 @@ test("line departments follow the workflow order and cannot be changed by caller
   assert.deepEqual(model.LINE_DEPARTMENTS.map((row) => row.code), ["RB", "SR", "QA", "GR", "PT", "BG", "PK", "WH"]);
   assert.throws(() => { "use strict"; model.LINE_DEPARTMENTS.push({ code: "XX" }); }, TypeError);
 });
+
+test("the factory search groups menu pages, items and documents and skips empty groups", () => {
+  const folders = [{ key: "job", name: "ใบงานผลิต", entries: [{ key: "job-view", name: "ใบงานผลิต-ดู" }] }, { key: "item", name: "สินค้า", entries: [{ key: "item-list", name: "ทะเบียนสินค้า" }] }];
+  const data = fixture({
+    production: [order("o1", "MO-9", "released", { customer: "ลูกค้า ก", item_code: "FG-1", name: "ถุงมือ", work_order_no: "WO-9" })],
+    material_orders: [{ id: "m1", code: "MR-1", status: "ordered", supplier: "ผู้ขาย ข", production_code: "MO-9", lines: [{ code: "RM-NR" }] }],
+    jobs: [{ id: "j1", code: "JB-1", status: "open", production_code: "MO-9", item_code: "WIP-PART", item_name: "ชิ้นงาน", steps: [] }],
+  });
+  assert.deepEqual(model.search(data, folders, "   "), [], "an empty query searches nothing");
+  const byOrder = model.search(data, folders, "mo-9");
+  assert.deepEqual(byOrder.map((group) => group.key), ["production", "material", "jobs"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(byOrder[0].rows[0])), { title: "MO-9", subtitle: "FG-1 · ถุงมือ", status: { kind: "production", value: "released" }, link: { item: "production-view", params: { po: "o1" } } });
+  assert.deepEqual(model.search(data, folders, "rm-nr").map((group) => group.key), ["items", "material"], "a material order is found by the code of its lines");
+  assert.deepEqual(model.search(data, folders, "ใบงาน ดู").map((group) => group.key), ["pages"], "menu pages are found by name");
+  const limited = model.search(data, folders, "ชื่อ", 2);
+  assert.equal(limited.find((group) => group.key === "items").total, 5);
+  assert.equal(limited.find((group) => group.key === "items").rows.length, 2, "each group is capped while the total is kept");
+});

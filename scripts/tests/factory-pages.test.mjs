@@ -85,16 +85,35 @@ test("outside test mode the factory page is not found and nothing is loaded", as
   assert.equal(app.innerHTML, "<notfound></notfound>");
 });
 
-test("the overview page draws the production board above the department cards, with the waiting counts on the cards", async () => {
+test("the overview page draws the departments first, then the production board, with the waiting counts on the departments", async () => {
   const { app, calls } = await page("");
   assert.deepEqual(JSON.parse(JSON.stringify(calls.loading)), [["factory", "ฝ่ายโรงงาน"]], "a loading page is shown while the data loads");
   assert.match(app.innerHTML, /^<shell path="factory" title="ฝ่ายโรงงาน">/);
   assert.match(app.innerHTML, /<span>ใบสั่งผลิตทั้งหมด<\/span><strong>1<\/strong>/);
-  assert.ok(app.innerHTML.indexOf("ใบสั่งผลิตทั้งหมด") < app.innerHTML.indexOf("เลือกแผนก"), "the board comes before the department cards");
-  assert.match(app.innerHTML, /href="#\/factory\?dept=PP"[^>]*>[\s\S]*?1 งานรอลงมือ · เปิดแผนก →/, "planning: the submitted order is waiting");
-  assert.match(app.innerHTML, /href="#\/factory\?dept=RB"[^>]*>[\s\S]*?1 งานรอลงมือ · เปิดแผนก →/, "RB: the open job reached the department");
-  assert.match(app.innerHTML, /href="#\/factory\?dept=GR"[^>]*>[\s\S]*?<small>เปิดแผนก →<\/small>/, "a department with nothing waiting keeps the plain text");
+  assert.ok(app.innerHTML.indexOf('aria-label="แผนกฝ่ายโรงงาน"') < app.innerHTML.indexOf("ใบสั่งผลิตทั้งหมด"), "the departments come before the board");
+  assert.match(app.innerHTML, /href="#\/factory\?dept=PP"[^>]*>[\s\S]*?<small>1 งานรอลงมือ<\/small>/, "planning: the submitted order is waiting");
+  assert.match(app.innerHTML, /href="#\/factory\?dept=RB"[^>]*>[\s\S]*?<small>1 งานรอลงมือ<\/small>/, "RB: the open job reached the department");
+  assert.match(app.innerHTML, /href="#\/factory\?dept=GR"[^>]*>[\s\S]*?<small>ไม่มีงานรอ<\/small>/, "a department with nothing waiting says so");
+  assert.match(app.innerHTML, /role="search" data-fx-search/, "the factory search box is on the overview");
+  assert.doesNotMatch(app.innerHTML, /class="eyebrow"/, "the header has no eyebrow label");
   assert.ok(app.innerHTML.includes("เมนูโรงงาน"), "the factory menu card is still there");
+});
+
+test("a search on the overview lists matching menu pages and documents with links", async () => {
+  const { app } = await page("q=mo-1");
+  assert.match(app.innerHTML, /title="ฝ่ายโรงงาน \/ ค้นหา"/);
+  assert.match(app.innerHTML, /ใบสั่งผลิต <span class="fm-count">1<\/span>/);
+  assert.match(app.innerHTML, /href="#\/factory\?item=production-view&amp;po=wo"/);
+  assert.match(app.innerHTML, /ใบงานผลิต <span class="fm-count">1<\/span>/, "the job of the order is found by its order code");
+  assert.match(app.innerHTML, /value="mo-1"/, "the search box keeps the query");
+  const pages = await page("q=ทะเบียน");
+  assert.match(pages.app.innerHTML, /href="#\/factory\?item=item-list"/, "menu pages are found by name");
+  const none = await page("q=zzz");
+  assert.match(none.app.innerHTML, /ไม่พบผลลัพธ์ของ “zzz”/);
+  const evil = await page("q=<script>");
+  assert.doesNotMatch(evil.app.innerHTML, /<script>/, "the query is escaped");
+  const blank = await page("q=%20%20");
+  assert.match(blank.app.innerHTML, /<span>ใบสั่งผลิตทั้งหมด<\/span>/, "a blank query shows the overview");
 });
 
 test("a department page shows the queue of that department inside the department frame", async () => {
@@ -103,6 +122,7 @@ test("a department page shows the queue of that department inside the department
   assert.match(app.innerHTML, /ถึงคิวแผนก RB <span class="muted small">\(1\)<\/span>/);
   assert.match(app.innerHTML, /JB-1/);
   assert.match(app.innerHTML, /aria-label="สลับแผนกฝ่ายโรงงาน"/, "the department tabs are kept");
+  assert.match(app.innerHTML, /<option value="RB" selected>RB · ขึ้นรูปยาง<\/option>/, "phones switch departments from a dropdown");
   assert.doesNotMatch(app.innerHTML, /ยังไม่มีแบบฟอร์มหรือขั้นตอนงานของแผนกนี้/, "the empty placeholder is gone");
   const planning = await page("dept=PP");
   assert.match(planning.app.innerHTML, /งานของฝ่ายวางแผน/);
@@ -130,9 +150,9 @@ test("without the overview view the page keeps working as the plain department c
   const env = load({ route: "" });
   delete env.context.MNP_FACTORY_VIEWS.overview;
   await env.context.MNP_REQUEST_MODULES.FACTORY.pages.factory(env.params);
-  assert.match(env.app.innerHTML, /เลือกแผนก/);
+  assert.match(env.app.innerHTML, /aria-label="แผนกฝ่ายโรงงาน"/);
   assert.doesNotMatch(env.app.innerHTML, /ใบสั่งผลิตทั้งหมด/);
-  assert.match(env.app.innerHTML, /<small>เปิดแผนก →<\/small>/);
+  assert.match(env.app.innerHTML, /<small>ไม่มีงานรอ<\/small>/);
 });
 
 test("factory navigation hides empty folders and retains every existing document link", () => {
