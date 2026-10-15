@@ -272,3 +272,15 @@ test("monthly loss by type splits money by the department share", () => {
   assert.deepEqual(march.types, [{ type: "scrap", confirmed: 250 }]);
   assert.equal(march.net, 250);
 });
+
+test("the loss scope keeps reports waiting for loss data, closed ones included, and matches the assessment tile", () => {
+  const { rows, f, list } = run([
+    report({ id: "closed-open", status: "closed", outcome: { cost_reviewed: false }, losses: [loss(100)] }),
+    report({ id: "closed-done", status: "closed", outcome: { cost_reviewed: true }, losses: [loss(100)] }),
+    report({ id: "estimate", status: "awaiting_signoff", outcome: { cost_reviewed: true }, losses: [loss(50, "estimated")] }),
+    report({ id: "disposition", status: "awaiting_disposition" }),
+  ], { scope: "loss" });
+  assert.deepEqual(list.map((row) => row.id), ["closed-open", "estimate"]);
+  const sums = model.summarize(model.select(rows, { ...f, scope: "" }), f);
+  assert.equal(sums.need - sums.assessed, list.length);
+});

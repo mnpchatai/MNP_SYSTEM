@@ -112,7 +112,7 @@
       source: SOURCES[params.get("source")] ? params.get("source") : "",
       cause: CAUSE_LABELS[params.get("cause")] ? params.get("cause") : "",
       loss: LOSS_TYPES[params.get("loss")] ? params.get("loss") : "",
-      scope: ["open", "overdue", "prevention"].includes(params.get("scope")) ? params.get("scope") : "",
+      scope: ["open", "overdue", "prevention", "loss"].includes(params.get("scope")) ? params.get("scope") : "",
       sort: params.get("sort") === "count" ? "count" : "net",
     };
   }
@@ -170,7 +170,7 @@
     const labelFor = { dept: () => filters.dept, defect: () => rows.find((row) => row.defect?.code === filters.defect)?.defect?.name_th ?? filters.defect, source: () => SOURCES[filters.source], cause: () => CAUSE_LABELS[filters.cause], loss: () => LOSS_TYPES[filters.loss] };
     const titles = { dept: "แผนก", defect: "ข้อบกพร่อง", source: "แหล่งที่พบ", cause: "สาเหตุ", loss: "ต้นทุน" };
     const removable = ["dept", "defect", "source", "cause", "loss"].filter((key) => filters[key]).map((key) => `<a class="nd-chip removable" href="${hrefWith(filters, { [key]: "" })}" aria-label="ยกเลิกตัวกรอง ${titles[key]} ${esc(labelFor[key]())}">${titles[key]}: ${esc(labelFor[key]())} <span aria-hidden="true">✕</span></a>`);
-    if (filters.scope) removable.push(`<a class="nd-chip removable" href="${hrefWith(filters, { scope: "" })}" aria-label="ยกเลิกตัวกรองสถานะ">${{ open: "ใบที่ค้างอยู่", overdue: "ใบเกินกำหนดตอบ", prevention: "ใบรอแนวทางป้องกัน" }[filters.scope]} <span aria-hidden="true">✕</span></a>`);
+    if (filters.scope) removable.push(`<a class="nd-chip removable" href="${hrefWith(filters, { scope: "" })}" aria-label="ยกเลิกตัวกรองสถานะ">${{ open: "ใบที่ค้างอยู่", overdue: "ใบเกินกำหนดตอบ", prevention: "ใบรอแนวทางป้องกัน", loss: "ใบรอข้อมูลการสูญเสีย" }[filters.scope]} <span aria-hidden="true">✕</span></a>`);
     if (removable.length) removable.push(`<a class="nd-chip" href="${hrefWith(filters, { dept: "", defect: "", source: "", cause: "", loss: "", scope: "" })}">ล้างทั้งหมด</a>`);
     return `<div class="nd-chips" role="group" aria-label="ช่วงเวลา (ตามวันที่ออก NCR)">${presets}</div>
       <details class="nd-filterbox" id="nd-filterbox"${filtersOpen ? " open" : ""}><summary>ช่วงเวลาและตัวกรองเพิ่มเติม</summary>
@@ -210,8 +210,8 @@
       <div class="nd-tile"><span class="nd-label">สูญเสียสุทธิ (ยืนยันแล้ว)</span><span class="nd-value">${fmtShort(sums.net)}<small>฿</small></span>
         <span class="nd-note">+ ประมาณการ ${fmtBaht(sums.estimated)} ยังไม่ยืนยัน${sums.legacy ? ` · รายการเดิม ${fmtBaht(sums.legacy)}` : ""}</span>
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(money)}${filters.dept ? `<p class="nd-hint">เมื่อกรองแผนก มูลค่าแบ่งตามสัดส่วนความรับผิดชอบของแผนกนั้น</p>` : ""}</details></div>
-      <div class="nd-tile"><span class="nd-label">ประเมินต้นทุนแล้ว</span><span class="nd-value">${fmtNumber(sums.assessed)}<small>/ ${fmtNumber(sums.need)} ใบ</small></span>
-        <span class="nd-meter" role="img" aria-label="ประเมินแล้ว ${fmtPercent(sums.assessedRate)}"><span style="width:${(sums.assessedRate ?? 0) * 100}%"></span></span><span class="nd-note">${sums.need > sums.assessed ? `รออีก ${fmtCount(sums.need - sums.assessed)}` : "ครบทุกใบที่ต้องประเมิน"}</span>
+      <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "loss" })}"><span class="nd-label">ประเมินต้นทุนแล้ว</span><span class="nd-value">${fmtNumber(sums.assessed)}<small>/ ${fmtNumber(sums.need)} ใบ</small></span></a>
+        <span class="nd-meter" role="img" aria-label="ประเมินแล้ว ${fmtPercent(sums.assessedRate)}"><span style="width:${(sums.assessedRate ?? 0) * 100}%"></span></span>${sums.need > sums.assessed ? `<a class="nd-pill" href="${hrefWith(filters, { scope: "loss" })}">รอข้อมูลการสูญเสีย ${fmtCount(sums.need - sums.assessed)}</a>` : `<span class="nd-note">ครบทุกใบที่ต้องประเมิน</span>`}
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(assess)}<p class="nd-hint">ครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</p></details></div>`;
   }
 

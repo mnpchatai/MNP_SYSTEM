@@ -60,7 +60,12 @@
     result.net = round(result.confirmed - result.recovery);
     return result;
   }
-  const api = { TYPES, STATUSES, COMPONENTS, round, allowedComponents, fieldSpec, laborQuantity, withLaborTag, splitLaborTag, makeEntry, summarize };
+  // Cost assessment is expected once the factory manager has decided the disposition, including closed reports.
+  const ASSESSMENT_STATUSES = ["awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info", "closed"];
+  // "รอข้อมูลการสูญเสีย": needs assessment but the outcome is not marked reviewed, or an estimate/legacy row is still pending.
+  // summary = summarize(losses of that report).
+  const lossDataPending = (status, outcome, summary) => ASSESSMENT_STATUSES.includes(status) && !(outcome?.cost_reviewed === true && summary.pending === 0);
+  const api = { TYPES, STATUSES, COMPONENTS, ASSESSMENT_STATUSES, round, allowedComponents, fieldSpec, laborQuantity, withLaborTag, splitLaborTag, makeEntry, summarize, lossDataPending };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_COSTS = api;
 })(typeof window !== "undefined" ? window : globalThis);

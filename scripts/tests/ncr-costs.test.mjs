@@ -46,3 +46,12 @@ test("labor form: headcount x hours/day becomes คน-ชม. and round-trips t
   const saved = costs.makeEntry(entry({loss_type:"rework",component:"labor",quantity:costs.laborQuantity("3","8"),unit:"คน-ชม.",unit_cost:60,note}));
   assert.equal(saved.quantity,24); assert.equal(saved.note,note);
 });
+test("loss data is pending from the response step, including closed reports, until reviewed with nothing outstanding", () => {
+  const none = costs.summarize([]), estimate = costs.summarize([loss(300, "estimated")]), confirmed = costs.summarize([loss(300)]);
+  assert.equal(costs.lossDataPending("awaiting_disposition", null, none), false);
+  assert.equal(costs.lossDataPending("cancelled", null, none), false);
+  assert.equal(costs.lossDataPending("awaiting_response", null, none), true);
+  assert.equal(costs.lossDataPending("closed", { cost_reviewed: false }, confirmed), true);
+  assert.equal(costs.lossDataPending("closed", { cost_reviewed: true }, estimate), true);
+  assert.equal(costs.lossDataPending("closed", { cost_reviewed: true }, confirmed), false);
+});

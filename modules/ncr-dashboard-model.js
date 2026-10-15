@@ -24,8 +24,6 @@
   const RESPONSE_STATUS = "awaiting_response";
   const FOLLOWUP_STATUS = "awaiting_followup";
   const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
-  // Cost assessment is expected once the factory manager has decided the disposition.
-  const ASSESSMENT_STATUSES = ["awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info", "closed"];
 
   const dayNumber = (iso) => Date.parse(`${iso}T00:00:00Z`) / 86400000;
   const addDays = (iso, days) => new Date((dayNumber(iso) + days) * 86400000).toISOString().slice(0, 10);
@@ -49,7 +47,8 @@
       // QA can still return the response, but cannot close it until the department sends the prevention plan.
       const preventionPending = status === FOLLOWUP_STATUS && !report.prevention;
       const preventionOverdue = preventionPending && Boolean(report.prevention_due) && today > report.prevention_due;
-      const needsAssess = ASSESSMENT_STATUSES.includes(status);
+      const needsAssess = costs.ASSESSMENT_STATUSES.includes(status);
+      const lossPending = costs.lossDataPending(status, report.outcome, fin);
       const sinceDate = report.last_change_on ?? report.sla_started_on ?? report.issue_date;
       return {
         ...report,
@@ -68,13 +67,14 @@
         hasResponse,
         onTime: hasResponse && slaDue ? report.respondedDate <= slaDue : null,
         needsAssess,
-        assessed: needsAssess && report.outcome?.cost_reviewed === true && fin.pending === 0,
+        lossPending,
+        assessed: needsAssess && !lossPending,
         daysInStatus: isOpen ? Math.max(0, daysBetween(sinceDate, today)) : 0,
       };
     });
   }
 
-  // filters: { year, from, to, dept, defect, source, cause, loss, scope } where scope is "", "open", "overdue" or "prevention" and
+  // filters: { year, from, to, dept, defect, source, cause, loss, scope } where scope is "", "open", "overdue", "prevention" or "loss" and
   // loss is a cost type key: keeps reports that have at least one confirmed or estimated loss entry of that type.
   function select(rows, filters, options = {}) {
     return rows.filter((row) => {
@@ -87,6 +87,7 @@
       if (filters.scope === "open" && !row.isOpen) return false;
       if (filters.scope === "overdue" && !row.overdue) return false;
       if (filters.scope === "prevention" && !row.preventionPending) return false;
+      if (filters.scope === "loss" && !row.lossPending) return false;
       return true;
     });
   }
@@ -274,7 +275,7 @@
     return list.filter((row) => row.isOpen).sort((a, b) => late(b) - late(a) || b.daysInStatus - a.daysInStatus).slice(0, limit);
   }
 
-  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
+  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES: costs.ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, outcomesByUnit, priority };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);
