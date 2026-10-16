@@ -142,7 +142,7 @@
         refresh.setAttribute("aria-busy", String(busy));
       },
       paintMeta(feed) {
-        updated.textContent = `อ่านจากชีตล่าสุด ${model.formatUpdatedAt(feed.generatedAt)}`;
+        updated.textContent = `อัปเดต ${model.formatUpdatedTime(feed.generatedAt)}`;
         // แถวที่อ่านไม่ได้ไม่ถูกแสดง บอก admin ให้ไปแก้ในชีต (ที่เหลือยังแสดงตามปกติ)
         problems.hidden = feed.problemCount === 0;
         problems.innerHTML = views.problemsHtml(feed);
@@ -157,7 +157,6 @@
     const bar = bindLiveBar();
     const search = document.querySelector("#lab-search");
     const sort = document.querySelector("#lab-sort");
-    const summaryText = document.querySelector("#lab-summary");
     const body = document.querySelector("#lab-materials");
     const empty = document.querySelector("#lab-empty");
     const count = document.querySelector("#lab-count");
@@ -165,13 +164,13 @@
     const paint = () => {
       const query = search.value.trim();
       const shown = model.sortMaterials(model.filterMaterials(materials, query), sort.value);
-      summaryText.textContent = views.overviewSummaryText(model.summarize(materials));
-      body.innerHTML = views.materialRows(shown, model.todayInBangkok());
+      body.innerHTML = views.materialRows(shown);
       empty.hidden = shown.length > 0;
       empty.textContent = materials.length === 0
         ? "ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report"
         : `ไม่พบวัสดุที่ตรงกับ “${query}”`;
-      count.textContent = query ? `${shown.length} จาก ${materials.length} รายการ` : `${materials.length} รายการ`;
+      // จำนวนวัสดุเห็นได้จากรายการอยู่แล้ว บอกเฉพาะตอนค้นหาว่าเหลือกี่จากกี่
+      count.textContent = query ? `${shown.length} จาก ${materials.length}` : "";
     };
     search.addEventListener("input", paint);
     sort.addEventListener("change", paint);
@@ -199,37 +198,35 @@
   function bindMaterial(material) {
     const bar = bindLiveBar();
     const el = {
-      summary: document.querySelector("#lab-summary"),
       none: document.querySelector("#lab-none"),
       body: document.querySelector("#lab-body"),
       materialSelect: document.querySelector("#lab-material-select"),
+      idField: document.querySelector("#lab-id-field"),
       idSelect: document.querySelector("#lab-id-select"),
       orderSelect: document.querySelector("#lab-order-select"),
-      chartTitle: document.querySelector("#lab-chart-title"),
-      readout: document.querySelector("#lab-readout"),
       plot: document.querySelector("#lab-plot"),
+      tip: document.querySelector("#lab-tip"),
       key: document.querySelector("#lab-chart-key"),
       announce: document.querySelector("#lab-announce"),
-      tableTitle: document.querySelector("#lab-table-title"),
       tableNote: document.querySelector("#lab-table-note"),
       scroll: document.querySelector("#lab-table-scroll"),
       copy: document.querySelector("#lab-copy"),
     };
 
     // ข้อมูลของหน้า: series = ผลทั้งวัสดุตามลำดับในชีต, shown = สิ่งที่กราฟ/ตารางแสดงอยู่ (ทั้งวัสดุ หรือเฉพาะ ID ที่เลือก)
-    const data = { summaries: [], series: null, ids: [], conditions: null, shown: { mode: "sequence", items: [] }, signature: "", plotWidth: 0, plot: null };
-    // ตัวเลือกของผู้ใช้ที่ต้องคงไว้ตอนรีเฟรช: ID, ลำดับตาราง และจุดที่เลือกไว้ (เก็บเป็น id ของแถว ไม่ใช่ตำแหน่ง เพราะตำแหน่งขยับเมื่อมีแถวใหม่)
+    const data = { series: null, ids: [], conditions: null, shown: { mode: "sequence", items: [] }, signature: "", plotWidth: 0, plot: null };
+    // ตัวเลือกของผู้ใช้ที่ต้องคงไว้ตอนรีเฟรช: ID, ลำดับตาราง และจุดที่ปักหมุดไว้ (เก็บเป็น id ของแถว ไม่ใช่ตำแหน่ง เพราะตำแหน่งขยับเมื่อมีแถวใหม่)
     const view = { id: "", order: "newest", pinnedId: null, preview: null };
     let applied = "";
 
     const itemsOf = () => data.shown.items;
 
+    // จุดที่กำลังดู: ชี้อยู่ (preview) ก่อน ถ้าไม่มีใช้ที่ปักหมุดไว้ ถ้าไม่มีทั้งคู่ = ไม่มีอะไรถูกเลือก (ไม่มีป้าย ไม่มีเส้นนำสายตา)
     function resolveFocus() {
       const items = itemsOf();
       if (view.preview !== null && view.preview < items.length) return { index: view.preview, kind: "preview" };
       const pinned = view.pinnedId === null ? -1 : items.findIndex((item) => item.id === view.pinnedId);
-      if (pinned >= 0) return { index: pinned, kind: "pinned" };
-      return { index: items.length - 1, kind: "latest" };
+      return pinned >= 0 ? { index: pinned, kind: "pinned" } : null;
     }
 
     // เลื่อนกล่องตารางให้แถวที่เลือกอยู่กลางกล่องเมื่อแถวนั้นพ้นสายตา (เห็นทั้งชุดทดสอบรอบข้าง) เลื่อนเฉพาะในกล่อง ไม่ดึงทั้งหน้า
@@ -242,42 +239,57 @@
       box.scrollTop += rowRect.top + rowRect.height / 2 - (visibleTop + (boxRect.bottom - visibleTop) / 2);
     }
 
-    // วาดสถานะ "จุดที่ดูอยู่" ใหม่ทั้งหมด: เส้นนำสายตา วงรอบจุด แถวในตาราง และแถบแสดงค่า (ล่าสุด → กำลังชี้ → เลือกไว้)
+    // วางป้ายค่าข้างเส้นนำสายตา (ด้านขวาของเส้น ถ้าไม่พอที่ย้ายไปด้านซ้าย) ที่ส่วนบนของกราฟ
+    function placeTip(index) {
+      const svg = el.plot.querySelector("svg");
+      if (!svg || !data.plot) return;
+      const wrap = el.tip.offsetParent ?? el.plot.parentElement;
+      const wrapRect = wrap.getBoundingClientRect();
+      const svgRect = svg.getBoundingClientRect();
+      const x = svgRect.left - wrapRect.left + data.plot.xAt(index) * (svgRect.width / data.plotWidth);
+      const width = el.tip.offsetWidth;
+      el.tip.style.left = `${Math.max(4, wrapRect.width - x > width + 24 ? x + 12 : x - width - 12)}px`;
+      el.tip.style.top = `${svgRect.top - wrapRect.top + 4}px`;
+    }
+
+    // วาดสถานะ "จุดที่ดูอยู่" ใหม่ทั้งหมด: ป้ายค่า เส้นนำสายตา วงรอบจุด และแถวในตาราง
     function applyFocus({ reveal = false, announce = false } = {}) {
       const items = itemsOf();
-      if (!items.length) {
-        el.readout.innerHTML = "";
-        return;
-      }
-      const { index, kind } = resolveFocus();
-      const item = items[index];
-      const signature = `${index}|${kind}|${item.id}`;
+      const focus = resolveFocus();
+      const item = focus ? items[focus.index] : null;
+      const signature = item ? `${focus.index}|${item.id}` : "none";
       if (signature !== applied || reveal) {
         applied = signature;
-        el.readout.innerHTML = views.readout({ item, group: data.shown.mode === "sequence" ? data.series.groups[item.groupIndex] : null, kind, mode: data.shown.mode });
-        const x = data.plot ? data.plot.xAt(index) : null;
-        el.plot.querySelectorAll(".lab-cross").forEach((line) => {
-          if (x === null) return;
-          line.setAttribute("x1", String(x));
-          line.setAttribute("x2", String(x));
-          line.setAttribute("visibility", "visible");
-        });
         el.plot.querySelectorAll(".lab-pt.is-active").forEach((node) => node.classList.remove("is-active"));
-        el.plot.querySelectorAll(`.lab-pt[data-i="${index}"]`).forEach((node) => node.classList.add("is-active"));
         el.scroll.querySelectorAll("tr.is-active").forEach((row) => row.classList.remove("is-active"));
-        const row = el.scroll.querySelector(`tr[data-seq="${item.seq}"]`);
-        row?.classList.add("is-active");
-        if (reveal && row) revealRow(row);
+        const lines = el.plot.querySelectorAll(".lab-cross");
+        if (!item) {
+          lines.forEach((line) => line.setAttribute("visibility", "hidden"));
+          el.tip.hidden = true;
+        } else {
+          const x = data.plot ? data.plot.xAt(focus.index) : 0;
+          lines.forEach((line) => {
+            line.setAttribute("x1", String(x));
+            line.setAttribute("x2", String(x));
+            line.setAttribute("visibility", "visible");
+          });
+          el.plot.querySelectorAll(`.lab-pt[data-i="${focus.index}"]`).forEach((node) => node.classList.add("is-active"));
+          el.tip.innerHTML = views.tooltip({ item, mode: data.shown.mode });
+          el.tip.hidden = false;
+          placeTip(focus.index);
+          const row = el.scroll.querySelector(`tr[data-seq="${item.seq}"]`);
+          row?.classList.add("is-active");
+          if (reveal && row) revealRow(row);
+        }
       }
-      if (announce) el.announce.textContent = `${data.shown.mode === "id" ? `ครั้งที่ ${item.order}` : `ลำดับ ${item.seq}`} ID ${item.sampleId} MH ${model.formatReading(item.mh)} MV ${model.formatReading(item.mv)}`;
+      if (announce) el.announce.textContent = item ? views.announcement({ item, mode: data.shown.mode }) : "";
     }
 
     function paintChart() {
       const width = Math.floor(el.plot.clientWidth);
       if (!width) return;
       data.plotWidth = width;
-      const items = itemsOf();
-      data.plot = chart.trendChart({ mode: data.shown.mode, items, groups: data.shown.mode === "sequence" ? data.series.groups : [], width, label: material });
+      data.plot = chart.trendChart({ mode: data.shown.mode, items: itemsOf(), groups: data.shown.mode === "sequence" ? data.series.groups : [], width, label: material });
       el.plot.innerHTML = data.plot.html;
       applied = "";
       applyFocus();
@@ -286,15 +298,12 @@
     function paintTable({ resetScroll = false } = {}) {
       const top = el.scroll.scrollTop;
       const uniform = data.conditions.uniform;
-      const activeItem = itemsOf()[resolveFocus().index];
-      const activeSeq = activeItem ? activeItem.seq : null;
+      const focus = resolveFocus();
+      const activeSeq = focus ? itemsOf()[focus.index].seq : null;
       el.scroll.innerHTML = data.shown.mode === "id"
-        ? views.idTable({ rows: data.shown.items, order: view.order, uniform, activeSeq, id: view.id })
+        ? views.idTable({ rows: itemsOf(), order: view.order, uniform, activeSeq, id: view.id })
         : views.resultsTable({ series: data.series, order: view.order, uniform, activeSeq });
       el.scroll.scrollTop = resetScroll ? 0 : top;
-      el.tableNote.textContent = data.shown.mode === "id"
-        ? `Δ = ผลต่างจากครั้งก่อนหน้าของ ID เดียวกัน · ${view.order === "newest" ? "ใหม่สุดก่อน" : "เก่าสุดก่อน"}`
-        : `ชุดเดียวกันใช้ AVG / SD ร่วมกัน · ${view.order === "newest" ? "ใหม่สุดก่อน" : "เก่าสุดก่อน"}`;
     }
 
     function computeShown() {
@@ -303,18 +312,13 @@
         view.id = "";
         data.shown = { mode: "sequence", items: data.series.items };
       }
-      el.chartTitle.textContent = data.shown.mode === "id"
-        ? `ID ${view.id} · ${data.shown.items.length.toLocaleString("th-TH")} ครั้ง ตามลำดับการทดสอบ`
-        : "แนวโน้ม MH / MV ตามลำดับการทดสอบ";
-      el.tableTitle.textContent = data.shown.mode === "id" ? `ผลทดสอบของ ID ${view.id}` : "ผลทดสอบ";
       el.key.innerHTML = views.chartKey(data.shown.mode);
+      el.tableNote.textContent = views.tableNote({ count: itemsOf().length, groupCount: data.shown.mode === "sequence" ? data.series.groups.length : null, conditions: data.conditions });
     }
 
     function paintAll() {
       computeShown();
-      el.summary.textContent = views.materialSummaryText(data.series, data.conditions);
-      el.materialSelect.innerHTML = views.materialOptions(data.summaries, material);
-      el.idSelect.innerHTML = views.idOptions(data.ids, view.id, data.series.items.length);
+      el.idSelect.innerHTML = views.idOptions(data.ids, view.id);
       el.idSelect.value = view.id;
       el.orderSelect.value = view.order;
       paintTable();
@@ -346,7 +350,7 @@
       if (!item) return;
       view.pinnedId = toggle && view.pinnedId === item.id ? null : item.id;
       view.preview = null;
-      applyFocus({ reveal: true, announce: true });
+      applyFocus({ reveal: view.pinnedId !== null, announce: true });
     };
 
     let pressed = false;
@@ -365,7 +369,7 @@
       if (!wasPressed) return;
       const index = indexFromPointer(event);
       if (index < 0) return;
-      pin(index, { toggle: event.pointerType === "mouse" });
+      pin(index, { toggle: true });
     });
     const leave = () => {
       pressed = false;
@@ -376,19 +380,20 @@
     el.plot.addEventListener("keydown", (event) => {
       const items = itemsOf();
       if (!items.length) return;
-      const { index } = resolveFocus();
-      const target = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: items.length - 1 }[event.key];
+      const focus = resolveFocus();
+      const last = items.length - 1;
+      const targets = { ArrowLeft: focus ? focus.index - 1 : last, ArrowRight: focus ? focus.index + 1 : last, Home: 0, End: last };
       if (event.key === "Escape") {
         view.pinnedId = null;
         view.preview = null;
         applyFocus({ announce: true });
-      } else if (target !== undefined) {
-        pin(clamp(target, 0, items.length - 1));
+      } else if (Object.hasOwn(targets, event.key)) {
+        pin(clamp(targets[event.key], 0, last));
       } else return;
       event.preventDefault();
     });
 
-    // ตาราง: ชี้แถว = ดูค่าของครั้งนั้นบนกราฟ คลิก/แตะแถว = ปักหมุด
+    // ตาราง: ชี้แถว = ดูค่าของครั้งนั้นบนกราฟ คลิก/แตะแถว = ปักหมุด (คลิกซ้ำเพื่อปล่อย)
     const indexOfRow = (row) => {
       const seq = Number(row?.dataset.seq);
       return Number.isFinite(seq) ? itemsOf().findIndex((item) => item.seq === seq) : -1;
@@ -400,11 +405,10 @@
     el.scroll.addEventListener("mouseleave", clearPreview);
     el.scroll.addEventListener("click", (event) => {
       const index = indexOfRow(event.target.closest("tr"));
-      if (index >= 0) {
-        view.preview = null;
-        view.pinnedId = view.pinnedId === itemsOf()[index].id ? null : itemsOf()[index].id;
-        applyFocus({ announce: true });
-      }
+      if (index < 0) return;
+      view.preview = null;
+      view.pinnedId = view.pinnedId === itemsOf()[index].id ? null : itemsOf()[index].id;
+      applyFocus({ announce: true });
     });
 
     el.materialSelect.addEventListener("change", () => {
@@ -429,7 +433,7 @@
     el.copy.addEventListener("click", async () => {
       const uniform = data.conditions.uniform;
       const text = data.shown.mode === "id"
-        ? views.idTsv({ rows: data.shown.items, order: view.order, uniform })
+        ? views.idTsv({ rows: itemsOf(), order: view.order, uniform })
         : views.resultsTsv({ series: data.series, order: view.order, uniform });
       let label = "คัดลอกแล้ว";
       try {
@@ -463,20 +467,19 @@
       },
       update(feed) {
         bar.paintMeta(feed);
+        const signature = model.feedSignature(feed.rows);
+        // ชีตไม่เปลี่ยนจากรอบก่อน: ไม่วาดใหม่ (ไม่กระพริบ ไม่เสียจุดที่ผู้ใช้ปักหมุดหรือตำแหน่งเลื่อนในตาราง)
+        if (signature === data.signature) return;
+        data.signature = signature;
+        el.materialSelect.innerHTML = views.materialOptions(model.buildOverview(feed.rows), material);
         const rows = feed.rows.filter((row) => row.material === material);
         el.none.hidden = rows.length > 0;
         el.body.hidden = rows.length === 0;
+        el.idField.hidden = rows.length === 0;
         if (!rows.length) {
-          el.summary.textContent = "";
           data.series = null;
-          data.signature = "";
           return;
         }
-        const signature = model.feedSignature(rows);
-        // ชีตไม่เปลี่ยนจากรอบก่อน: ไม่วาดใหม่ (ไม่กระพริบ ไม่เสียจุดที่ผู้ใช้ชี้อยู่)
-        if (data.series && signature === data.signature) return;
-        data.signature = signature;
-        data.summaries = model.buildMaterialSummaries(feed.rows);
         data.series = model.buildSeries(feed.rows, material);
         data.ids = model.idsFor(data.series.items);
         data.conditions = model.testConditions(data.series.items);
@@ -510,7 +513,7 @@
     if (state.employee?.labAccess !== true) return deniedPage();
     const material = model.readMaterial(params.get("material"));
     return material
-      ? await openPage({ title: `${TITLE} / ${material}`, html: views.materialPage(material, REFRESH_MS / 1000), bind: () => bindMaterial(material) })
+      ? await openPage({ title: TITLE, html: views.materialPage(material, REFRESH_MS / 1000), bind: () => bindMaterial(material) })
       : await openPage({ title: TITLE, html: views.overviewPage(REFRESH_MS / 1000), bind: bindOverview });
   }
 

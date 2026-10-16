@@ -114,11 +114,6 @@ test("materials sort by latest test, name (numeric-aware) or result count, and u
   assert.deepEqual(model.SORT_OPTIONS.map((option) => option.key), ["recent", "name", "count"]);
 });
 
-test("the summary totals the rows and finds the newest test date", () => {
-  assert.deepEqual(model.summarize(materials), { materialCount: 5, resultCount: 339, lastTested: "2026-10-02" });
-  assert.deepEqual(model.summarize([]), { materialCount: 0, resultCount: 0, lastTested: null });
-});
-
 test("dates, times and readings are shown the way the spreadsheet shows them", () => {
   assert.equal(model.formatDate("2026-09-21"), "21/09/2026");
   assert.equal(model.formatDate("2026-10-09"), "09/10/2026");
@@ -294,19 +289,18 @@ test("copied tables are tab separated and cannot be broken by tabs or line break
   assert.equal(model.toTsv([]), "");
 });
 
-test("signed differences, short dates and ages read naturally and never guess", () => {
+test("signed differences and short dates read naturally and never guess", () => {
   assert.equal(model.formatSigned(1.234), "+1.23");
   assert.equal(model.formatSigned(-2.5), "−2.50");
   assert.equal(model.formatSigned(-0.004), "0.00", "rounds to zero without a sign");
   assert.equal(model.formatSigned(null), "—");
   assert.equal(model.formatShortDate("2026-09-21"), "21/09");
   assert.equal(model.formatShortDate("21/09/2026"), "—");
-  assert.equal(model.formatAge("2026-10-16", "2026-10-16"), "วันนี้");
-  assert.equal(model.formatAge("2026-10-15", "2026-10-16"), "เมื่อวาน");
-  assert.equal(model.formatAge("2026-10-13", "2026-10-16"), "3 วันก่อน");
-  assert.equal(model.formatAge("2026-07-01", "2026-10-16"), "3 เดือนก่อน");
-  assert.equal(model.formatAge("2026-10-17", "2026-10-16"), "", "a future date is not turned into an age");
-  assert.equal(model.formatAge(null, "2026-10-16"), "");
-  assert.equal(model.todayInBangkok(new Date("2026-10-15T18:30:00Z")), "2026-10-16", "after 01:00 Bangkok time it is already the next day");
-  assert.match(model.todayInBangkok(), /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("the last-read time is shown as a clock only, because the date is always today", () => {
+  assert.equal(model.formatUpdatedTime("2026-10-16T03:30:05+00:00"), "10:30:05");
+  assert.equal(model.formatUpdatedTime("2026-10-16T18:05:09Z"), "01:05:09");
+  assert.equal(model.formatUpdatedTime(null), "—");
+  assert.equal(model.formatUpdatedTime("not a date"), "—");
 });

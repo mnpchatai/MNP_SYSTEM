@@ -27,7 +27,7 @@
   function layoutFor(width) {
     const total = Math.max(280, Math.floor(Number(width) || 0));
     const compact = total < 560;
-    return { width: total, compact, left: compact ? 38 : 46, right: compact ? 10 : 16, top: 10, plotHeight: compact ? 128 : 156, inset: 6, axisHeight: 26, gapBelow: 8 };
+    return { width: total, compact, left: compact ? 38 : 46, right: compact ? 10 : 16, top: 10, plotHeight: compact ? 116 : 140, inset: 6, axisHeight: 26, gapBelow: 8 };
   }
 
   // ป้ายวันที่บนแกน: วันล่าสุดและวันแรกมีป้ายเสมอ ที่เหลือเลือกวันที่มีแถวมากก่อน (กว้างกว่า อ่านง่ายกว่า) แล้วข้ามป้ายที่ทับกัน
@@ -52,10 +52,10 @@
     return kept.sort((a, b) => a.start - b.start);
   }
 
+  // หัวแผง: ชื่อซีรีส์ + ค่าเฉลี่ย/SD ของทุกครั้งที่ทดสอบ (ช่วงค่าดูได้จากแกน จึงไม่ซ้ำเป็นตัวเลข)
   function panelHead(series, stats) {
-    const range = stats.count ? `${model.formatReading(stats.min)} – ${model.formatReading(stats.max)}` : "—";
     return `<header class="lab-panel-head"><span class="lab-panel-name"><i class="lab-key lab-key-${series.key}" aria-hidden="true"></i>${esc(series.label)}</span>`
-      + `<span class="lab-panel-stats">เฉลี่ย <b>${esc(model.formatReading(stats.mean))}</b> · SD <b>${esc(model.formatReading(stats.sd))}</b> · ช่วง <b>${esc(range)}</b></span></header>`;
+      + `<span class="lab-panel-stats">เฉลี่ย <b>${esc(model.formatReading(stats.mean))}</b> · SD <b>${esc(model.formatReading(stats.sd))}</b></span></header>`;
   }
 
   function dotMarkup(series, radius) {

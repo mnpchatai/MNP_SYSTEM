@@ -66,6 +66,7 @@ Use Server Components by default. Add Client Components only where browser state
 - Keep changes focused. Avoid unrelated refactors, formatting churn, dependency upgrades, or generated files unless the task requires them.
 - Preserve accessibility, responsive layouts, Thai text behavior, and existing business terminology when editing the UI.
 - Dropdowns, comboboxes, and other popups must be selectable by touch on iPhone (Safari/WebKit), where a tapped button never receives focus. Never close a popup from `blur`/`focusout`/`onBlur`; close it only on a pointer down or a focus move outside its container. In the static pilot, mark the popup with `data-popup` inside the same parent as its trigger and reuse the shared `closePopup` rule in `app.js` instead of writing new closing logic.
+- Show each fact once per screen. Before adding a label, count, hint, legend line, summary, or readout, check whether the same information is already visible (page title, selector, table, chart axis, tooltip). If it is, do not add it. Never repeat a name in the heading, the selector, and a breadcrumb; never show a date and a derived age together; never put the same number in a summary line and in the table it summarizes. Explain controls in `title`/`aria-label`, not permanent text. Screen space is a feature: a chart and the table it explains should fit together above the fold, and transient detail (hover values) belongs in a tooltip, not a permanent bar.
 
 ## Required verification
 

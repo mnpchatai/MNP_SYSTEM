@@ -107,14 +107,6 @@
     return [...materials].sort(SORTERS[key] ?? SORTERS.recent);
   }
 
-  function summarize(materials) {
-    return {
-      materialCount: materials.length,
-      resultCount: materials.reduce((sum, item) => sum + item.resultCount, 0),
-      lastTested: materials.reduce((latest, item) => (item.lastTested && item.lastTested > (latest ?? "") ? item.lastTested : latest), null),
-    };
-  }
-
   const EMPTY = "—";
 
   // YYYY-MM-DD → DD/MM/YYYY (ค.ศ. เหมือนที่เห็นในสเปรดชีตต้นทาง) รูปแบบอื่นคืนเป็น —
@@ -376,36 +368,19 @@
     return match ? `${match[2]}/${match[1]}` : EMPTY;
   }
 
-  const todayFormat = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" });
-
-  // วันนี้ตามเวลาไทย เป็น YYYY-MM-DD
-  function todayInBangkok(now = new Date()) {
-    return todayFormat.format(now);
-  }
-
-  const dayNumber = (value) => {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
-    return match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86400000 : null;
-  };
-
-  // อายุของวันที่ทดสอบเทียบกับวันนี้ เช่น "วันนี้" "เมื่อวาน" "3 วันก่อน" วันที่ในอนาคตหรืออ่านไม่ได้ = ว่าง (ไม่เดา)
-  function formatAge(date, today) {
-    const from = dayNumber(date);
-    const to = dayNumber(today);
-    if (from === null || to === null || from > to) return "";
-    const days = to - from;
-    if (days === 0) return "วันนี้";
-    if (days === 1) return "เมื่อวาน";
-    return days <= 60 ? `${days} วันก่อน` : `${Math.floor(days / 30)} เดือนก่อน`;
+  // เวลาที่อ่านชีตล่าสุด เฉพาะเวลา HH:MM:SS (เวลาไทย) — วันที่คือวันนี้เสมอเพราะเป็นการอ่านเมื่อครู่ ไม่ต้องแสดงซ้ำ
+  function formatUpdatedTime(value) {
+    const full = formatUpdatedAt(value);
+    return full === EMPTY ? EMPTY : full.slice(11);
   }
 
   const api = {
     MAX_MATERIAL_LENGTH, SORT_OPTIONS,
     readMaterial, materialUrl, normalizeFeed, buildOverview, resultsFor,
-    filterMaterials, sortMaterials, summarize,
-    formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt,
+    filterMaterials, sortMaterials,
+    formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
     buildSeries, describe, niceScale, dateMarks, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
-    testConditions, feedSignature, toTsv, formatSigned, formatShortDate, todayInBangkok, formatAge,
+    testConditions, feedSignature, toTsv, formatSigned, formatShortDate,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_MOONEY = api;
