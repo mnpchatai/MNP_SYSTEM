@@ -1,4 +1,70 @@
-# ฟีดสดผลทดสอบ Mooney สำหรับ MNP LAB
+# ซิงก์ Google Sheets → Supabase สำหรับ MNP LAB
+
+Google Sheets **Mooney_Test_Report** เป็นแหล่งข้อมูลหลักสำหรับกรอก/แก้ไข หน้าเว็บอ่านข้อมูลสำเนาที่ผ่านการซิงก์จาก Supabase
+จึงไม่ต้องรอ Apps Script อ่านชีตขณะเปิดหน้า การซิงก์ตั้งรอบทุก 1 นาที และเว็บอ่านฐานข้อมูลใหม่ทุก 30 วินาทีเมื่อเปิดแท็บ
+เวลาจริงขึ้นกับ Google/เครือข่าย หน้าแสดง **วันเวลาอ่านชีต** และสถานะเมื่อข้อมูลเก่ากว่า 3 นาที ไม่แสดงว่าเป็นข้อมูลสดเมื่อซิงก์ไม่ได้
+
+```
+Google Sheets → Apps Script Sync.gs (ทุกนาที + script lock)
+              → Edge Function lab-sheet-sync (ตรวจ integration secret)
+              → app_lab_mooney_publish (service_role เท่านั้น, ธุรกรรมเดียว)
+              → ตารางผล + ลำดับในชีต + สรุป + เวลาอ่านล่าสุด
+เบราว์เซอร์   → app_lab_mooney_feed (ตรวจสิทธิ์ LAB ทุกครั้ง)
+              → หน้ารวม: สรุปเท่านั้น / หน้าวัสดุ: แถวของวัสดุที่เลือกเท่านั้น
+```
+
+## ลำดับเปิดใช้งาน (ฐานข้อมูลก่อนเว็บ)
+
+1. ให้ CI ของ PR ผ่าน รวม database tests และขออนุมัติผู้ใช้เพื่อ apply migration **นี้** บน production
+   ยืนยัน project `iqlydmkylqyowmvpsete` (`MNP_SYSTEM`) และตรวจว่าฟังก์ชัน import ยังไม่มี หรือเป็น definition เดิมจาก main
+   เมื่อสำรวจ 16 ต.ค. 2026 ตารางมี 0 แถวและ production ไม่มี `app_lab_mooney_import`; migration ใหม่จึงรวม definition จาก main ไว้แล้ว
+   ห้ามรัน migration เก่าทั้งไฟล์ซ้ำ ห้าม reset ฐานข้อมูลจริง
+2. Apply ไฟล์ `supabase/migrations/20261016044946_lab_supabase_read_model.sql` จาก commit ที่ตรวจแล้ว
+   ไม่มีการแก้ `private.can_access_lab()` หรือกติกาสิทธิ์เดิม ตรวจ grants/schema/function hashes หลัง apply
+3. สร้าง secret แบบสุ่มอย่างน้อย 32 bytes (เช่น hex 64 ตัว) ใน secret manager ห้ามส่งค่ามาในแชตหรือ commit
+   ตั้ง `LAB_SHEET_SYNC_SECRET` ใน Edge Function และ Script Properties ของโปรเจกต์ Apps Script ให้ตรงกัน
+   Edge Function ใช้ `SUPABASE_SERVICE_ROLE_KEY` ที่ระบบเตรียมไว้ ไม่ใส่ service key ใน Apps Script
+4. Deploy โฟลเดอร์ `supabase/functions/lab-sheet-sync/` **พร้อม import ของ `modules/lab-mooney-model.js`**
+   ใช้ CLI จาก root checkout เพื่อให้ bundler resolve ไฟล์ร่วมได้ `supabase/config.toml` กำหนด `verify_jwt = false`
+   เพราะใช้ secret ของ integration แทน user JWT ตัว handler ปฏิเสธทุกคำขอก่อนอ่าน body เมื่อ secret ไม่ตรง
+   เก็บ secret เฉพาะการเชื่อมต่อนี้และจำกัดผู้แก้ไข Apps Script ห้ามเปิด endpoint ที่ยังไม่ตั้ง secret ให้ใช้งาน
+5. ในโปรเจกต์ Apps Script เดิม เพิ่มไฟล์ **Sync.gs** จากโฟลเดอร์นี้ คง **Code.gs** เดิมสำหรับ parser และ rollback
+   ตั้ง `SHEET_ID` หากเป็น standalone script และเขตเวลา Bangkok เช่นเดิม ไม่ต้อง deploy Web App รุ่นใหม่เพื่อเรียก time trigger
+6. รัน `installLabSync` ด้วยบัญชีเจ้าของที่อ่านชีตได้ และอนุญาต Google scopes ที่เกี่ยวข้องกับ Sheets/URL Fetch/triggers
+   ฟังก์ชันจะซิงก์ครั้งแรกให้สำเร็จก่อนติดตั้ง trigger; รันซ้ำไม่เพิ่ม trigger ซ้ำสำหรับบัญชีเดียวกัน
+   ใช้บัญชีเจ้าของหนึ่งบัญชีติดตั้งเท่านั้น (Google ไม่ให้ลบ trigger ของบัญชีอื่น)
+7. ตรวจ Script Properties `LAB_SYNC_LAST_SUCCESS` และไม่มี `LAB_SYNC_LAST_ERROR` ตรวจว่าจำนวนแถว/วัสดุตรงชีต
+   ทดสอบ RPC ด้วย session admin จริงและ staff จริง: admin อ่านได้, staff ถูกปฏิเสธ และ anon ไม่มีสิทธิ์ execute
+   เทียบลำดับแถว ค่า AVG/SD ที่ merge ตัวอย่างอย่างน้อยหนึ่งวัสดุ และเวลาข้อมูลก่อนเปิดเว็บรุ่นใหม่
+8. **Merge PR/เผยแพร่ Pilot assets เป็นขั้นตอนสุดท้ายเท่านั้น** เว็บใหม่ไม่ fallback อ่านชีต หากยังไม่ซิงก์จะแสดง `LAB_SYNC_NOT_READY`
+
+## ความถูกต้องและกรณีผิดพลาด
+
+- เก็บลำดับแถวจากฟีด ไม่เรียงใหม่ตาม timestamp เพื่อให้การจัดชุด/กราฟ/AVG/SD ตรงหน้าเดิม
+- สรุปคำนวณด้วย `modules/lab-mooney-model.js` ชุดเดียวกับหน้าเว็บครั้งเดียวต่อรอบ ไม่ทำสำเนาสูตรใน Apps Script/SQL
+- หน้าเลือกวัสดุรับทุกแถวของวัสดุนั้น (ภายในขีดจำกัด snapshot 20,000 แถว) ไม่มีการตัดเงียบที่ 2,000 แถว
+- ถ้าชีตว่าง/มีแถวอ่านไม่ได้/เกิน 20,000 แถว จะไม่ส่ง snapshot และคงข้อมูลครั้งล่าสุด แก้ชีตแล้วรอรอบถัดไป
+- import ทำการเพิ่ม แก้ไข และลบแถวที่หายไปใน transaction เดียว พร้อม audit และด่านกันลบเกินครึ่งตาม importer เดิม
+  ไม่รับ force-delete จาก HTTP หากพบ `SYNC_REJECTED` ให้ผู้ดูแลตรวจชีตและจำนวนที่จะลบก่อนดำเนินการด้วยสิทธิ์ server
+- จับเวลา **ก่อน** อ่านชีต และปฏิเสธ snapshot ที่เก่ากว่ารอบที่เผยแพร่แล้ว แม้คำขอจะมาถึงสลับกัน
+- รอบที่ข้อมูลไม่เปลี่ยนอัปเดตเวลาความสด แต่ไม่เขียนผลทดสอบ/audit ซ้ำทั้งชุด
+- ปุ่มรีเฟรชหน้าเว็บอ่าน **ฐานข้อมูล**; ถ้าต้องการอ่านชีตทันทีให้เจ้าของรัน `syncLabMooney` ใน editor
+- ตัวซิงก์ไม่ log ข้อมูลชีต/token/response ภายใน และเก็บ error code กลางใน `LAB_SYNC_LAST_ERROR`
+- หากแก้โค้ดสรุปใน model ภายหลัง ให้ redeploy worker จาก commit เดียวกับเว็บก่อนรอบซิงก์ถัดไป
+
+## ตรวจผลความเร็วและ rollback
+
+วัดด้วยอุปกรณ์/เครือข่ายเดียวกัน: เปิด LAB ครั้งแรก, เปิดวัสดุ, กลับหน้ารวม, สลับวัสดุที่เคยเปิด และกด refresh
+ตรวจ Network ว่าหน้ารวมไม่มี raw rows และไม่มีคำขอไป `script.google.com`; หน้าวัสดุต้องระบุ `p_material`
+แยกเวลา RPC, JS/render และเวลาจนเห็นผล ไม่ใช้เวลา unit test เป็นเวลาโหลดจริง และไม่รับประกัน 8 ms
+
+หากต้องย้อนกลับ ให้ revert **Pilot assets ทั้งชุดและ cache version** ไป commit ก่อน PR นี้ (อ่าน Web App เดิม)
+แล้วให้เจ้าของรัน `removeLabSyncTrigger` หากต้องการหยุดซิงก์ เก็บตาราง/metadata/ฟังก์ชันใหม่ไว้เพื่อกู้คืนได้
+ไม่ลบ source sheet หรือข้อมูลสำเนาระหว่าง rollback และไม่แตะ workflow โมดูลอื่น
+
+## เอกสารฟีดเดิมสำหรับ rollback เท่านั้น
+
+ขั้นตอนด้านล่างอธิบาย Web App เดิม (`Code.gs → doPost`) ที่ยังคงไว้รองรับเว็บรุ่นก่อน:
 
 Google Apps Script (Web App) สำหรับสเปรดชีต **Mooney_Test_Report** — ชีตเป็นข้อมูลต้นทางและ **ไม่มีสำเนาที่ไหน**
 ทุกครั้งที่หน้า MNP LAB ใน Pilot Web เปิดหรือรีเฟรช (อัตโนมัติทุก 30 วินาทีขณะแท็บเปิดอยู่) เว็บเรียก Web App นี้

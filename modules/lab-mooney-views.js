@@ -25,7 +25,7 @@
   function liveBar(seconds = 30) {
     const label = `รีเฟรชตอนนี้ (อัตโนมัติทุก ${seconds} วินาที)`;
     return `<div class="lab-live">
-      <span class="lab-live-text" id="lab-updated">กำลังอ่านชีต…</span>
+      <span class="lab-live-text" id="lab-updated">กำลังโหลดข้อมูล…</span>
       <button class="icon-button lab-refresh" type="button" id="lab-refresh" aria-label="${esc(label)}" title="${esc(label)}">${REFRESH_ICON}</button>
       <span class="small lab-status" id="lab-status" role="status"></span>
     </div>`;

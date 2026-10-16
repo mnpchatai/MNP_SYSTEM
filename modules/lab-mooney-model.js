@@ -1,8 +1,8 @@
 // โมเดลข้อมูลผลทดสอบ Mooney ของโมดูล MNP LAB — ข้อมูลล้วน ไม่มี DOM/Supabase เทสต์ที่ scripts/tests/lab-mooney-model.test.mjs
 //
-// ข้อมูลมาจากฟีดสดของ Apps Script (apps-script/lab-mooney/Code.gs → doPost) ซึ่งอ่านชีต Mooney_Test_Report ทุกครั้งที่ถูกเรียก
+// ข้อมูลมาจาก Google Sheets ผ่านตัวซิงก์และ RPC ของ Supabase (ฟีด Apps Script เดิมยังแปลงได้เพื่อ rollback)
 // ผลถูกแปลงผ่าน normalizeFeed ที่นี่ที่เดียว หน้าเว็บ (modules/module-lab.js) จึงรับเฉพาะรูปแบบที่ตรวจแล้ว: ตัวเลขเป็น number|null
-// วันที่เป็นสตริง YYYY-MM-DD (ไม่ผ่าน Date เพื่อไม่ให้เขตเวลาทำให้วันเลื่อน) สรุปรายวัสดุคำนวณจากแถวชุดเดียวกัน ไม่มีสำเนาที่ไหน
+// วันที่เป็นสตริง YYYY-MM-DD (ไม่ผ่าน Date เพื่อไม่ให้เขตเวลาทำให้วันเลื่อน) ตัวซิงก์ใช้โมเดลนี้คำนวณสรุปจากแถวชุดเดียวกัน
 (function (root) {
   const MAX_MATERIAL_LENGTH = 60;
 
@@ -380,6 +380,7 @@
     buildSeries, describe, niceScale, dateMarks, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate,
   };
+  // Shared by the browser and the sync worker; one implementation of grouping/statistics.
+  root.MNP_LAB_MOONEY = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
-  else root.MNP_LAB_MOONEY = api;
 })(typeof window !== "undefined" ? window : globalThis);
