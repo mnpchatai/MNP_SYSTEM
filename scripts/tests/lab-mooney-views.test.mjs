@@ -49,6 +49,9 @@ test("the sequence chart has an MH panel and an MV panel with one point per test
   assert.equal(count(result.html, /class="lab-pt lab-pt-mv"/g), 10);
   assert.equal(count(result.html, /<circle class="lab-dot"/g), 10, "MH is a circle");
   assert.equal(count(result.html, /<rect class="lab-dot"/g), 10, "MV is a rotated square, so the two series also differ by shape");
+  assert.match(result.html, /เฉลี่ย <b>[\d.]+<\/b> · SD <b>[\d.]+<\/b>/);
+  const headers = result.html.match(/<span class="lab-panel-stats">.*?<\/span>/g).join("");
+  assert.doesNotMatch(headers, /ช่วง/, "the range is read from the axis, not repeated as numbers in the panel header");
   noBadNumbers(result.html);
 });
 
@@ -129,35 +132,38 @@ test("sparklines need two readings and mark the latest one", () => {
 
 /* ---------- หน้ารวม ---------- */
 
-test("the overview row shows the latest group with spread, change, trend and age, and links to the material", () => {
+test("the overview row shows the latest group with spread, change and trend, and links to the material", () => {
   const rows = model.normalizeFeed({ rows: [
     row({ sample_id: "111", test_date: "2026-10-14", avg_mh: 80, sd_mh: 1.5, avg_mv: 40, sd_mv: 0.5 }),
     row({ sample_id: "121", test_date: "2026-10-15", avg_mh: 82.5, sd_mh: 1.25, avg_mv: 39, sd_mv: 0.75 }),
   ] }).rows;
-  const html = views.materialRows(model.buildMaterialSummaries(rows), "2026-10-16");
+  const html = views.materialRows(model.buildMaterialSummaries(rows));
   assert.match(html, /href="#\/lab\?material=A1802"/);
   assert.match(html, /data-href="#\/lab\?material=A1802"/);
   assert.match(html, /<strong>82\.50<\/strong><span class="lab-sd">± 1\.25<\/span>/);
   assert.match(html, /Δ \+2\.50/);
   assert.match(html, /Δ −1\.00/);
-  assert.match(html, /15\/10\/2026/);
-  assert.match(html, /เมื่อวาน/);
-  assert.match(html, /2 ผล · 2 ชุด · 2 วัน/);
+  assert.match(html, /2 ผล/);
   assert.equal(count(html, /<svg /g), 2, "one trend line per series");
+});
+
+test("each overview fact appears once: the date is not repeated as an age and counts are not repeated as groups or days", () => {
+  const rows = model.normalizeFeed({ rows: [row({ test_date: "2026-10-15" }), row({ sample_id: "112", test_date: "2026-10-16" })] }).rows;
+  const html = views.materialRows(model.buildMaterialSummaries(rows));
+  assert.equal(count(html, /16\/10\/2026/g), 1);
+  assert.doesNotMatch(html, /เมื่อวาน|วันนี้|วันก่อน|ชุด ·|วัน</);
+  const page = views.overviewPage(30);
+  assert.doesNotMatch(page, /id="lab-summary"/, "no totals line: the list itself shows how many materials there are");
+  assert.equal(count(page, /MH \/ MV = /g), 1, "the how-to-read key appears once");
 });
 
 test("overview rows are safe against hostile names and say so when only a single reading exists", () => {
   const rows = model.normalizeFeed({ rows: [row({ material: XSS, avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null })] }).rows;
-  const html = views.materialRows(model.buildMaterialSummaries(rows), "2026-10-16");
+  const html = views.materialRows(model.buildMaterialSummaries(rows));
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /ค่าเดี่ยว/);
   assert.match(html, /material=%3Cimg/);
-  assert.equal(views.materialRows([], "2026-10-16"), "");
-});
-
-test("the overview summary line counts materials, results and the latest test day", () => {
-  assert.equal(views.overviewSummaryText({ materialCount: 19, resultCount: 1032, lastTested: "2026-10-15" }), "19 วัสดุ · 1,032 ผลทดสอบ · ทดสอบล่าสุด 15/10/2026");
-  assert.match(views.overviewSummaryText({ materialCount: 0, resultCount: 0, lastTested: null }), /ยังไม่มีข้อมูล/);
+  assert.equal(views.materialRows([]), "");
 });
 
 /* ---------- ตารางผล ---------- */
@@ -178,6 +184,14 @@ test("the results table merges AVG/SD once per group and starts at the newest te
   assert.match(oldest.slice(oldest.indexOf('data-seq="1"'), oldest.indexOf('data-seq="2"')), /rowspan="3"/);
 });
 
+test("the table has no running-number column and joins date and time in one cell", () => {
+  const html = views.resultsTable({ series: seriesFixture(), uniform: true });
+  const heads = [...html.matchAll(/<th scope="col"[^>]*>([^<]*(?:<i[^>]*><\/i>)?[^<]*)<\/th>/g)].map((match) => match[1].replace(/<[^>]+>/g, ""));
+  assert.deepEqual(heads, ["ID", "วันที่ · เวลา", "MH", "MV", "AVG MH", "SD MH", "AVG MV", "SD MV"]);
+  assert.match(html, /21\/09\/2026 08:00:00/);
+  assert.doesNotMatch(views.idTable({ rows: model.idSeries(seriesFixture().items, "111"), id: "111" }), /ครั้งที่|>ID</, "the ID and the running number are not repeated in one ID's history");
+});
+
 test("temperature and test-time columns appear only when the conditions differ between rows", () => {
   const series = seriesFixture();
   assert.doesNotMatch(views.resultsTable({ series, uniform: true }), /อุณหภูมิ/);
@@ -186,11 +200,19 @@ test("temperature and test-time columns appear only when the conditions differ b
   assert.equal(views.conditionsText({ uniform: false, temperatures: [100, 145], minutes: [4] }), "");
 });
 
-test("the active row is marked and dates repeated from the row above are dimmed", () => {
+test("the number of tests, groups and the shared conditions are stated once, beside the table title", () => {
+  const series = seriesFixture();
+  const conditions = model.testConditions(series.items);
+  assert.equal(views.tableNote({ count: 1234, groupCount: 52, conditions }), "1,234 ครั้ง · 52 ชุด · 100 °C / 4 นาที");
+  assert.equal(views.tableNote({ count: 4, conditions }), "4 ครั้ง · 100 °C / 4 นาที", "one ID's history has no group count");
+  assert.equal(views.tableNote({ count: 4, groupCount: 2, conditions: { uniform: false, temperatures: [100, 145], minutes: [4] } }), "4 ครั้ง · 2 ชุด");
+});
+
+test("the active row is marked", () => {
   const html = views.resultsTable({ series: seriesFixture(), activeSeq: 4 });
   assert.match(html, /<tr class="lab-result-row[^"]*is-active" data-seq="4"/);
   assert.equal(count(html, /is-active/g), 1);
-  assert.ok(count(html, /is-repeat/g) >= 6);
+  assert.doesNotMatch(views.resultsTable({ series: seriesFixture(), activeSeq: null }), /is-active/);
 });
 
 test("sheet text is escaped everywhere in the tables", () => {
@@ -200,17 +222,18 @@ test("sheet text is escaped everywhere in the tables", () => {
   assert.doesNotMatch(views.idTable({ rows: history, id: XSS }), /<img/);
 });
 
-test("copied results repeat the merged AVG/SD on every row so they paste cleanly into Excel", () => {
+test("copied results repeat the merged AVG/SD on every row and split date and time so they paste cleanly into Excel", () => {
   const series = seriesFixture();
   const lines = views.resultsTsv({ series, order: "oldest", uniform: true }).split("\n");
   assert.equal(lines.length, 11);
-  assert.equal(lines[0], "#\tID\tวันที่\tเวลา\tMH\tMV\tAVG MH\tSD MH\tAVG MV\tSD MV");
-  assert.deepEqual(lines.slice(1, 4).map((line) => line.split("\t")[6]), ["51.00", "51.00", "51.00"]);
+  assert.equal(lines[0], "ID\tวันที่\tเวลา\tMH\tMV\tAVG MH\tSD MH\tAVG MV\tSD MV");
+  assert.deepEqual(lines.slice(1, 4).map((line) => line.split("\t")[5]), ["51.00", "51.00", "51.00"]);
   assert.equal(lines[1].split("\t").length, lines[0].split("\t").length);
-  assert.equal(lines[10].split("\t")[6], "—");
+  assert.deepEqual(lines[1].split("\t").slice(0, 3), ["111", "21/09/2026", "08:00:00"]);
+  assert.equal(lines[10].split("\t")[5], "—");
   const newest = views.resultsTsv({ series, order: "newest", uniform: true }).split("\n");
-  assert.equal(newest[1].split("\t")[0], "10");
-  assert.match(views.resultsTsv({ series, uniform: false }).split("\n")[0], /อุณหภูมิ \(°C\)\tเวลาทดสอบ \(นาที\)/);
+  assert.equal(newest[1].split("\t")[0], "311");
+  assert.match(views.resultsTsv({ series, uniform: false }).split("\n")[0], /เวลา\tอุณหภูมิ \(°C\)\tเวลาทดสอบ \(นาที\)/);
 });
 
 test("one ID's history table shows the change from the previous test", () => {
@@ -223,25 +246,28 @@ test("one ID's history table shows the change from the previous test", () => {
   assert.equal(views.idTsv({ rows: history, order: "oldest", uniform: true }).split("\n")[2].split("\t").slice(-2).join(), "+1.00,−0.50");
 });
 
-/* ---------- แถบแสดงค่า ---------- */
+/* ---------- ป้ายค่าของจุดที่ชี้ ---------- */
 
-test("the readout names the test, its values and its group's stats, and tells latest, preview and pinned apart", () => {
+test("the hover tip names the test and shows only that point's MH and MV (the group stats are on the highlighted table row)", () => {
   const series = seriesFixture();
   const item = series.items[4];
-  const html = views.readout({ item, group: series.groups[item.groupIndex], kind: "pinned" });
-  assert.match(html, /lab-tag-pinned">เลือกไว้</);
-  assert.match(html, /#5 · ID 122/);
-  assert.match(html, /21\/09\/2026 08:01:00/);
-  assert.match(html, /AVG MH ชุดที่ 2/);
-  assert.match(html, /SD 1\.00/);
-  assert.match(views.readout({ item, group: null, kind: "latest" }), /lab-tag-latest">ล่าสุด</);
-  assert.match(views.readout({ item, group: null, kind: "preview" }), /กำลังดู/);
-  assert.equal(views.readout({ item: null }), "");
-  const waiting = series.items[9];
-  assert.doesNotMatch(views.readout({ item: waiting, group: series.groups[waiting.groupIndex] }), /AVG MH/, "no stats block when the sheet has none yet");
-  const id = model.idSeries(series.items, "111")[0];
-  assert.match(views.readout({ item: { ...id, deltaMh: 1.5, deltaMv: -0.25 }, mode: "id" }), /ครั้งที่ 1 ของ ID 111[\s\S]*Δ \+1\.50[\s\S]*Δ −0\.25/);
-  assert.doesNotMatch(views.readout({ item: { ...series.items[0], sampleId: XSS } }), /<img/);
+  const html = views.tooltip({ item });
+  assert.match(html, /21\/09\/2026 08:01:00 · ID 122/);
+  assert.match(html, /MH <b>61\.00<\/b>/);
+  assert.match(html, /MV <b>31\.00<\/b>/);
+  assert.doesNotMatch(html, /AVG|SD|#\d/, "no group stats and no running number");
+  assert.equal(views.tooltip({ item: null }), "");
+  assert.doesNotMatch(views.tooltip({ item: { ...series.items[0], sampleId: XSS } }), /<img/);
+});
+
+test("in one ID's history the tip leaves the ID out (already chosen above) and adds the change since the previous test", () => {
+  const id = model.idSeries(seriesFixture().items.concat(seriesFixture().items), "111")[1];
+  const html = views.tooltip({ item: id, mode: "id" });
+  assert.doesNotMatch(html, /ID 111/);
+  assert.match(html, /Δ \+0\.00|Δ 0\.00/);
+  assert.equal(views.announcement({ item: seriesFixture().items[0] }), "21/09/2026 08:00:00 ID 111 MH 50.00 MV 30.00");
+  assert.doesNotMatch(views.announcement({ item: id, mode: "id" }), /ID 111/);
+  assert.equal(views.announcement({ item: null }), "");
 });
 
 /* ---------- โครงหน้า ---------- */
@@ -258,19 +284,30 @@ test("every element the page script looks up exists in the page it opens", () =>
   }
 });
 
+test("the material page shows the material name once (the picker) and keeps no permanent copies of data the table already has", () => {
+  const page = views.materialPage("A1802", 30);
+  assert.equal(count(page, /A1802/g), 2, "the picker's option and the not-found message that is hidden until needed");
+  assert.doesNotMatch(page, /lab-readout|lab-hint|lab-summary|lab-chart-title/);
+  const visibleText = page.replace(/<[^>]+>/g, " ");
+  assert.equal(count(visibleText, /อัตโนมัติ/g), 0, "the refresh interval lives in the button's title, not as page text");
+  assert.equal(count(page, /อัตโนมัติทุก 30 วินาที/g), 2, "title and aria-label of the one refresh button");
+});
+
 test("the material page title is escaped and the refresh interval comes from the caller", () => {
   const page = views.materialPage(XSS, 45);
   assert.doesNotMatch(page, /<img/);
-  assert.match(page, /ทุก 45 วินาที/);
+  assert.match(page, /อัตโนมัติทุก 45 วินาที/);
 });
 
-test("the material and ID pickers list every option with its count and mark the selection", () => {
+test("the pickers list the open material even when the sheet has none of it, without counts, and mark the selection", () => {
   const rows = model.normalizeFeed({ rows: [row(), row({ sample_id: "112" }), row({ material: "B0005", source_sheet: "B0005" })] }).rows;
-  const options = views.materialOptions(model.buildMaterialSummaries(rows), "B0005");
-  assert.match(options, /value="A1802">A1802 \(2\)/);
-  assert.match(options, /value="B0005" selected>B0005 \(1\)/);
-  const ids = views.idOptions(model.idsFor(model.buildSeries(rows, "A1802").items), "112", 2);
-  assert.match(ids, /value="">ทุก ID \(2\)/);
+  const summaries = model.buildMaterialSummaries(rows);
+  const options = views.materialOptions(summaries, "B0005");
+  assert.match(options, /<option value="A1802">A1802<\/option>/);
+  assert.match(options, /<option value="B0005" selected>B0005<\/option>/);
+  assert.match(views.materialOptions(summaries, "ZZZ"), /<option value="ZZZ" selected>ZZZ<\/option>/);
+  const ids = views.idOptions(model.idsFor(model.buildSeries(rows, "A1802").items), "112");
+  assert.match(ids, /<option value="">ทุก ID<\/option>/, "no total: the table title already says how many tests there are");
   assert.match(ids, /value="112" selected>112 \(1\)/);
 });
 

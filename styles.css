@@ -1837,8 +1837,9 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 }
 
 /* MNP LAB (modules/module-lab.js, lab-mooney-views.js, lab-mooney-chart.js) — ผลทดสอบ Mooney
-   ใช้ <select> ของเบราว์เซอร์ (แตะบน iPhone ได้ ไม่ใช่ popup ลอย จึงไม่ต้องมีโค้ดปิดตอนแตะนอกกรอบ) กราฟเป็น SVG ที่ใช้ตัวแปรสีของหน้านี้
-   สีซีรีส์ผ่านการตรวจด้วย validate_palette (แยกกันได้ทั้งสายตาปกติและตาบอดสี ทั้งโหมดสว่างและมืด) และมีรูปทรงต่างกันกำกับ: MH = วงกลม, MV = สี่เหลี่ยมขนมเปียกปูน */
+   ใช้ <select> ของเบราว์เซอร์ (แตะบน iPhone ได้ ไม่ใช่ popup ลอยที่ต้องปิดเอง จึงไม่ต้องมีโค้ดปิดตอนแตะนอกกรอบ) ป้ายค่าของกราฟเป็นป้ายชั่วคราวที่ไม่รับการแตะ
+   กราฟเป็น SVG ที่ใช้ตัวแปรสีของหน้านี้ สีซีรีส์ผ่านการตรวจด้วย validate_palette (แยกกันได้ทั้งสายตาปกติและตาบอดสี ทั้งโหมดสว่างและมืด)
+   และมีรูปทรงต่างกันกำกับ: MH = วงกลม, MV = สี่เหลี่ยมขนมเปียกปูน */
 .lab-page {
   --lab-mh: #2a78d6;
   --lab-mv: #eb6834;
@@ -1854,24 +1855,43 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   --lab-group: color-mix(in srgb, var(--primary) 12%, var(--paper));
 }
 .lab-page ::selection { background: color-mix(in srgb, var(--primary) 24%, transparent); }
-.lab-back { min-height: 36px; margin-bottom: 6px; display: inline-flex; align-items: center; color: var(--primary); font-size: 13px; font-weight: 600; }
-.lab-back:hover { text-decoration: underline; }
-.lab-back:focus-visible, .lab-name a:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; border-radius: 4px; }
 
-/* หัวหน้า: ชื่อ + สรุปบรรทัดเดียว ทางซ้าย / เวลาอ่านชีตและปุ่มรีเฟรช ทางขวา */
-.lab-head { margin-bottom: 18px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
-.lab-title { min-width: 0; flex: 1 1 320px; }
-.lab-title h1 { margin: 0 0 4px; font-size: clamp(26px, 2.8vw, 32px); line-height: 1.25; letter-spacing: -.02em; overflow-wrap: anywhere; }
-.lab-sub { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; }
-.lab-live { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 12px; }
-.lab-live-text, .lab-live-note { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.lab-live-note::before { content: "· "; }
-.lab-refresh svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* หัวหน้าบรรทัดเดียว: [กลับ] ชื่อวัสดุ (ตัวเลือก) · ID ............ เวลาอัปเดต [รีเฟรช] */
+.lab-head { margin-bottom: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.lab-title { min-width: 0; margin: 0; font-size: clamp(24px, 2.6vw, 30px); line-height: 1.25; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.lab-title-select {
+  max-width: 100%;
+  min-height: 44px;
+  padding: 4px 40px 4px 14px;
+  color: var(--ink);
+  background: var(--paper) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2368778e' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center / 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: inherit;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.lab-title-select:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); }
+.lab-title-select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.lab-title-select option { font-weight: 400; }
+.lab-back { flex: none; }
+.lab-back svg, .lab-refresh svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.lab-back:hover, .lab-refresh:hover { color: var(--ink); background: var(--shell); }
+.lab-back:focus-visible, .lab-refresh:focus-visible, .lab-name a:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: 6px; }
+.lab-id { flex: 0 1 180px; min-width: 120px; }
+.lab-id .select { min-height: 44px; }
+.lab-live { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
+.lab-live-text { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .lab-refresh.is-loading svg { animation: lab-spin .9s linear infinite; }
 @keyframes lab-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .lab-refresh.is-loading svg { animation: none; } }
+@media (pointer: coarse) { .lab-back, .lab-refresh { width: 44px; height: 44px; } }
 .lab-status { color: var(--warning); }
-.lab-warning { margin-bottom: 16px; padding: 12px 16px; color: var(--ink); background: var(--warning-soft); border: 1px solid var(--warning); border-radius: 10px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.lab-warning { margin-bottom: 14px; padding: 12px 16px; color: var(--ink); background: var(--warning-soft); border: 1px solid var(--warning); border-radius: 10px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .lab-warning ul { margin: 6px 0 4px; padding-left: 20px; }
 
 /* สัญลักษณ์ซีรีส์: จุดสีเล็กหน้าชื่อ MH / MV (สีอยู่ที่ตัวสัญลักษณ์ ตัวหนังสือใช้สีข้อความ) */
@@ -1879,33 +1899,12 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-key-mh { background: var(--lab-mh); border-radius: 50%; }
 .lab-key-mv { background: var(--lab-mv); transform: rotate(45deg) scale(.84); }
 
-/* ตัวกรองแถวเดียวเหนือกราฟ */
-.lab-filters { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 10px 14px; }
-.lab-field { min-width: 0; flex: 0 1 200px; display: grid; gap: 4px; }
-.lab-field > span { color: var(--muted); font-size: 12px; font-weight: 600; }
-
-/* การ์ดกราฟ */
-.lab-chart-card { margin-bottom: 16px; padding: 0; overflow: hidden; }
-.lab-card-head { min-height: 52px; padding: 0 18px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 16px; border-bottom: 1px solid var(--soft-line); }
-.lab-card-head h2 { margin: 0; font-size: 16px; line-height: 1.4; }
-.lab-hint { color: var(--quiet); font-size: 12px; }
-.lab-readout { min-height: 76px; padding: 12px 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 32px; background: var(--shell); border-bottom: 1px solid var(--soft-line); }
-.lab-readout-meta { min-width: 168px; display: grid; gap: 3px; font-size: 13px; }
-.lab-readout-meta > span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
-.lab-tag { padding: 1px 9px; justify-self: start; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; font-size: 11px; font-weight: 700; }
-.lab-tag-preview { color: var(--ink); }
-.lab-tag-pinned { color: var(--primary); background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 32%, var(--line)); }
-.lab-readout-values { margin: 0; display: flex; flex-wrap: wrap; gap: 8px 28px; }
-.lab-rv { min-width: 78px; display: grid; gap: 1px; }
-.lab-rv dt { display: flex; align-items: center; color: var(--muted); font-size: 12px; font-weight: 600; }
-.lab-rv dd { margin: 0; display: flex; align-items: baseline; gap: 7px; }
-.lab-rv strong { font-size: 20px; line-height: 1.25; font-variant-numeric: tabular-nums; }
-.lab-rv small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-
-/* กราฟ 2 แผง (MH บน / MV ล่าง) ใช้แกนเวลาร่วมกัน */
-.lab-plot { padding: 4px 18px 2px; outline: 0; touch-action: pan-y; }
+/* การ์ดกราฟ: แผง MH บน / MV ล่าง ใช้แกนเวลาร่วมกัน ไม่มีหัวการ์ดและแถบค่าถาวร (ค่าของจุดที่ชี้อยู่แสดงเป็นป้ายลอย) */
+.lab-chart-card { margin-bottom: 14px; padding: 0; overflow: hidden; }
+.lab-plot-wrap { position: relative; }
+.lab-plot { padding: 0 18px; outline: 0; touch-action: pan-y; }
 .lab-plot:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
-.lab-panel-head { padding-top: 10px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 16px; }
+.lab-panel-head { padding-top: 12px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 16px; }
 .lab-panel-name { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; }
 .lab-panel-stats { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .lab-panel-stats b { color: var(--ink); font-weight: 600; }
@@ -1931,19 +1930,30 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-pt-mv .lab-halo { stroke: var(--lab-mv); }
 .lab-pt.is-active .lab-halo { opacity: 1; }
 .lab-pt.is-active .lab-dot { opacity: 1; }
-.lab-chart-key { margin: 0; padding: 8px 18px 14px; display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 12px; }
+.lab-chart-key { margin: 0; padding: 6px 18px 12px; display: flex; flex-wrap: wrap; gap: 4px 20px; color: var(--muted); font-size: 12px; }
 .lab-key-item { display: inline-flex; align-items: center; gap: 7px; }
 .lab-key-band { width: 14px; height: 10px; background: var(--lab-band); border: 1px solid var(--line); border-radius: 2px; }
 .lab-key-avg { width: 16px; height: 0; border-top: 2px solid var(--muted); border-radius: 2px; }
 .lab-key-mean { width: 16px; height: 0; border-top: 2px dashed var(--muted); }
 
-/* ตารางผลทดสอบ: หัวตารางและคอลัมน์ # / ID ตรึงไว้ ชุดทดสอบรวมเซลล์ AVG/SD ชิดกลุ่ม */
-.lab-results-card { margin-bottom: 16px; }
+/* ป้ายค่าของจุดที่ชี้/ปักหมุด: ลอยข้างเส้นนำสายตา ไม่รับการแตะ ไม่กินที่ในหน้า */
+.lab-tip { position: absolute; z-index: 5; min-width: 150px; padding: 8px 11px; display: grid; gap: 4px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(16, 32, 59, .14); font-size: 12px; line-height: 1.4; white-space: nowrap; pointer-events: none; }
+:root[data-theme="dark"] .lab-tip { box-shadow: 0 6px 18px rgba(0, 0, 0, .5); }
+.lab-tip[hidden] { display: none; }
+.lab-tip-when { color: var(--muted); font-variant-numeric: tabular-nums; }
+.lab-tip-values { display: flex; gap: 16px; }
+.lab-tip-v { display: inline-flex; align-items: baseline; }
+.lab-tip-v .lab-key { margin-right: 5px; align-self: center; }
+.lab-tip-v b { margin-left: 4px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.lab-tip-v small { margin-left: 5px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ตารางผลทดสอบ: หัวตารางและคอลัมน์ ID ตรึงไว้ ชุดทดสอบรวมเซลล์ AVG/SD ชิดกลุ่ม */
+.lab-results-card { margin-bottom: 14px; }
 .lab-results-card .card-heading { padding-top: 8px; padding-bottom: 8px; flex-wrap: wrap; gap: 8px 12px; }
-.lab-results-card .card-heading h2 { white-space: nowrap; }
+.lab-table-head { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.lab-table-head h2 { white-space: nowrap; }
 .lab-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .lab-order .select { width: auto; min-height: 34px; padding: 4px 30px 4px 10px; font-size: 12px; font-weight: 600; }
-.lab-table-note { margin: 0; padding: 8px 18px; color: var(--muted); background: var(--shell); border-bottom: 1px solid var(--soft-line); font-size: 12px; font-variant-numeric: tabular-nums; }
 .lab-table-scroll { max-height: min(64vh, 660px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .lab-table-scroll:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
 .lab-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
@@ -1952,21 +1962,15 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-table thead th { position: sticky; top: 0; z-index: 3; color: var(--muted); background: var(--shell); border-top: 0; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 700; }
 .lab-table thead .lab-th.is-group { background: color-mix(in srgb, var(--primary) 8%, var(--shell)); }
 .lab-table thead .lab-key { margin-right: 6px; }
-.lab-table .sticky { position: sticky; z-index: 1; }
+.lab-table .sticky { position: sticky; left: 0; z-index: 1; min-width: 64px; box-shadow: 1px 0 0 var(--soft-line); }
 .lab-table thead .sticky { z-index: 4; }
-.lab-results .sticky-1 { left: 0; width: 56px; min-width: 56px; text-align: right; }
-.lab-results .sticky-2 { left: 56px; text-align: left; box-shadow: 1px 0 0 var(--soft-line); }
-.lab-results-id .sticky-1 { left: 0; width: auto; min-width: 0; text-align: left; box-shadow: 1px 0 0 var(--soft-line); }
 .lab-results tbody tr:hover { background: transparent; }
 .lab-results tbody td, .lab-results tbody th { color: var(--ink); background: var(--paper); font-weight: 400; text-align: inherit; }
-.lab-results tbody .sticky-1 { text-align: right; color: var(--muted); }
-.lab-results-id tbody .sticky-1 { text-align: left; }
-.lab-results tbody .sticky-2 { font-weight: 600; text-align: left; }
+.lab-results tbody th.sticky { font-weight: 600; text-align: left; }
 .lab-results tbody tr:first-child > * { border-top: 0; }
 .lab-results tr.is-band > td, .lab-results tr.is-band > th { background: var(--lab-band); }
 .lab-results tr.is-start > td, .lab-results tr.is-start > th { border-top-color: var(--line); }
 .lab-results tbody td.val { font-weight: 600; }
-.lab-results tbody td.is-repeat { color: var(--muted); }
 .lab-results tbody td.stat { background: var(--lab-group); border-left: 1px solid var(--soft-line); vertical-align: middle; }
 .lab-results tbody td.stat-avg { font-weight: 700; }
 .lab-results tbody td.stat-sd { color: var(--muted); }
@@ -1980,12 +1984,12 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-search { max-width: 420px; flex: 1 1 240px; }
 .lab-search .input { caret-color: var(--primary); }
 .lab-sort { flex: 0 1 200px; }
-.lab-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.lab-count { font-variant-numeric: tabular-nums; }
+.lab-howto { margin-left: auto; color: var(--quiet); font-size: 12px; }
 .lab-overview { table-layout: auto; }
 .lab-overview thead th { padding: 11px 18px; color: var(--muted); background: var(--shell); font-size: 12px; }
-.lab-overview th:nth-child(1) { width: 30%; }
-.lab-overview th:nth-child(2) { width: 16%; }
-.lab-overview th .lab-key { margin-right: 6px; }
+.lab-overview th:nth-child(1) { width: 28%; }
+.lab-overview th:nth-child(2) { width: 15%; }
 .lab-overview td, .lab-overview tbody th { padding: 12px 18px; vertical-align: middle; border-bottom: 1px solid var(--soft-line); }
 .lab-overview tbody tr:last-child td, .lab-overview tbody tr:last-child th { border-bottom: 0; }
 .lab-material-row { cursor: pointer; }
@@ -1993,8 +1997,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-name a { display: block; color: var(--primary); font-size: 16px; font-weight: 700; line-height: 1.35; }
 .lab-name a:hover { text-decoration: underline; }
 .lab-meta { margin-top: 2px; display: block; color: var(--quiet); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
-.lab-when strong { display: block; font-size: 13px; font-variant-numeric: tabular-nums; }
-.lab-age { display: block; color: var(--muted); font-size: 12px; }
+.lab-when { font-size: 13px; font-variant-numeric: tabular-nums; }
 .lab-metric-main { display: flex; align-items: center; gap: 16px; }
 .lab-metric-text { min-width: 92px; display: grid; gap: 1px; }
 .lab-metric-line { display: flex; align-items: baseline; gap: 7px; white-space: nowrap; }
@@ -2007,26 +2010,17 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-spark-mh circle { fill: var(--lab-mh); }
 .lab-spark-mv polyline { stroke: var(--lab-mv); }
 .lab-spark-mv circle { fill: var(--lab-mv); }
-.lab-foot { margin: 0; padding: 12px 18px; color: var(--quiet); border-top: 1px solid var(--soft-line); font-size: 12px; line-height: 1.6; }
 
 @media (max-width: 760px) {
-  .lab-head { margin-bottom: 14px; }
-  .lab-live { justify-content: flex-start; }
-  .lab-filters { gap: 8px; }
-  .lab-field { flex: 1 1 140px; }
-  .lab-card-head, .lab-readout, .lab-chart-key, .lab-toolbar, .lab-foot, .lab-table-note { padding-left: 14px; padding-right: 14px; }
-  .lab-results-card .card-heading { padding-left: 14px; padding-right: 14px; }
-  .lab-live-note { display: none; }
-  .lab-plot { padding-left: 14px; padding-right: 14px; }
-  .lab-readout { min-height: 0; gap: 8px 22px; }
-  .lab-readout-meta { width: 100%; }
-  .lab-readout-values { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
-  .lab-table th, .lab-table td { padding: 8px 9px; }
-  .lab-results .sticky-1 { width: 40px; min-width: 40px; }
-  .lab-results .sticky-2 { left: 40px; }
-  .lab-hint { display: none; }
+  .lab-head { margin-bottom: 12px; gap: 8px; }
+  /* มือถือ: แถวแรก = ปุ่มกลับ + ชื่อวัสดุเต็มแถว แถวสอง = ตัวเลือก ID + เวลาอัปเดต/รีเฟรช */
+  .lab-head-material .lab-title { flex: 1 1 calc(100% - 56px); }
+  .lab-title-select { width: 100%; }
+  .lab-id { flex: 1 1 140px; }
+  .lab-plot, .lab-toolbar, .lab-chart-key, .lab-results-card .card-heading { padding-left: 14px; padding-right: 14px; }
   .lab-search, .lab-sort { max-width: none; flex-basis: 100%; }
-  .lab-count { margin-left: 0; }
+  .lab-howto { margin-left: 0; flex-basis: 100%; }
+  .lab-table th, .lab-table td { padding: 8px 9px; }
   .lab-table-scroll { max-height: 70vh; }
   /* หน้ารวมบนมือถือ: หนึ่งวัสดุ = หนึ่งการ์ด (ชื่อ/วันที่ทดสอบ แล้วค่า MH กับ MV คู่กัน) */
   .lab-overview thead { display: none; }
@@ -2036,16 +2030,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .lab-overview td, .lab-overview tbody th { padding: 0; display: block; border: 0; }
   .lab-name { grid-column: 1; }
   .lab-when { grid-column: 2; grid-row: 1; text-align: right; }
-  .lab-metric::before { margin-bottom: 4px; display: block; content: attr(data-label) " · ชุดล่าสุด"; color: var(--quiet); font-size: 11px; font-weight: 700; }
-  .lab-when::before { content: none; }
+  .lab-metric::before { margin-bottom: 4px; display: block; content: attr(data-label); color: var(--quiet); font-size: 11px; font-weight: 700; }
   .lab-metric-main { flex-direction: column; align-items: flex-start; gap: 6px; }
   .lab-metric-text { min-width: 0; }
-}
-@media (max-width: 480px) {
-  .lab-sub { font-size: 13px; }
-  .lab-rv { min-width: 70px; }
-  .lab-refresh-text { display: none; }
-  .lab-refresh { width: 36px; padding: 0; }
-  /* มือถือเล็ก: ซ่อนคอลัมน์เวลา ให้เห็น MH/MV โดยไม่ต้องเลื่อนแนวนอน (เวลายังอยู่ในแถบแสดงค่าเมื่อแตะแถว และในข้อมูลที่คัดลอก) */
-  .lab-col-time { display: none; }
 }
