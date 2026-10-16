@@ -316,3 +316,75 @@ test("a standalone script reads the spreadsheet named by the SHEET_ID property",
   assert.equal(app.post({ token: JWT }).ok, true);
   assert.deepEqual(app.calls.sheetById, ["sheet-id-from-properties"]);
 });
+
+/* ---------- Background mirror (Sync.gs), independent of legacy web feed ---------- */
+const syncSource = readFileSync(new URL("../../apps-script/lab-mooney/Sync.gs", import.meta.url), "utf8");
+function makeSync(options = {}) {
+  const app = makeWebApp({ respond: supabaseAnswers(200, '{"ok":true,"applied":true}'), ...options });
+  const properties = new Map([["LAB_SHEET_SYNC_SECRET", "x".repeat(48)]]);
+  const triggers = [];
+  let released = 0;
+  app.ctx.PropertiesService = { getScriptProperties: () => ({
+    getProperty: (key) => properties.get(key) ?? null,
+    setProperty: (key, value) => properties.set(key, value),
+    deleteProperty: (key) => properties.delete(key),
+  }) };
+  app.ctx.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => { released += 1; } }) };
+  app.ctx.ScriptApp = {
+    getProjectTriggers: () => [...triggers],
+    deleteTrigger: (trigger) => triggers.splice(triggers.indexOf(trigger), 1),
+    newTrigger(name) { return { timeBased() { return this; }, everyMinutes(n) { assert.equal(n, 1); return this; },
+      create() { triggers.push({ getHandlerFunction: () => name }); } }; },
+  };
+  vm.runInContext(syncSource, app.ctx);
+  return { ...app, properties, triggers, released: () => released };
+}
+
+test("background sync sends an ordered complete snapshot with a dedicated secret, never a user token", () => {
+  const app = makeSync();
+  assert.equal(app.ctx.syncLabMooney().ok, true);
+  const [call] = app.calls.fetch;
+  assert.equal(call.url, "https://iqlydmkylqyowmvpsete.supabase.co/functions/v1/lab-sheet-sync");
+  assert.equal(call.options.headers["x-lab-sync-secret"], "x".repeat(48));
+  assert.equal(call.options.followRedirects, false);
+  const body = JSON.parse(call.options.payload);
+  assert.equal(body.problem_count, 0);
+  assert.equal(body.rows.length, 3);
+  assert.deepEqual(body.rows.map((row) => row.sample_id), ["111", "112", "113"]);
+  assert.ok(!Object.hasOwn(body, "token"));
+  assert.ok(app.properties.has("LAB_SYNC_LAST_SUCCESS"));
+  assert.equal(app.released(), 1);
+});
+
+test("an empty or partly unreadable sheet never replaces the mirror", () => {
+  const bad = a1802Tab();
+  bad.display[2][2] = "31/02/2026";
+  for (const sheets of [[], [fakeSheet({ name: "A", ...bad })]]) {
+    const app = makeSync({ sheets });
+    assert.throws(() => app.ctx.syncLabMooney(), /LAB_SYNC_INVALID_SNAPSHOT/);
+    assert.equal(app.calls.fetch.length, 0);
+    assert.equal(app.released(), 1);
+  }
+});
+
+test("failed sync keeps success metadata, reports a safe error and releases the lock", () => {
+  const app = makeSync({ respond: supabaseAnswers(502, '{"ok":false,"error":"secret internal detail"}') });
+  app.properties.set("LAB_SYNC_LAST_SUCCESS", "previous success");
+  assert.throws(() => app.ctx.syncLabMooney(), /^Error: LAB_SYNC_FAILED$/);
+  assert.equal(app.properties.get("LAB_SYNC_LAST_SUCCESS"), "previous success");
+  assert.ok(!app.properties.get("LAB_SYNC_LAST_ERROR").includes("secret internal"));
+  assert.equal(app.released(), 1);
+});
+
+test("install is idempotent, keeps unrelated triggers and refuses installation until initial sync succeeds", () => {
+  const app = makeSync();
+  const other = { getHandlerFunction: () => "unrelated" };
+  app.triggers.push(other);
+  app.ctx.installLabSync();
+  app.ctx.installLabSync();
+  assert.equal(app.triggers.length, 2);
+  assert.ok(app.triggers.includes(other));
+  const failed = makeSync({ respond: supabaseAnswers(500, "{}") });
+  assert.throws(() => failed.ctx.installLabSync(), /LAB_SYNC_FAILED/);
+  assert.equal(failed.triggers.length, 0);
+});

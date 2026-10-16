@@ -1,11 +1,9 @@
 // โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ เริ่มที่ผลทดสอบ Mooney
 //
-// ข้อมูลสดจากสเปรดชีต Mooney_Test_Report: ทุกครั้งที่เปิดหน้าและทุก 30 วินาทีที่แท็บเปิดอยู่ เว็บเรียก Web App ของ
-// Apps Script (apps-script/lab-mooney/Code.gs) ซึ่งอ่านชีต ณ ตอนนั้นแล้วตอบกลับ ไม่มีสำเนาในฐานข้อมูลหรือที่อื่น
-// (Google Sheets ส่งข้อมูลมาหาเบราว์เซอร์เองไม่ได้ จึงใช้การอ่านซ้ำถี่ๆ แทน)
+// Google Sheets เป็นข้อมูลต้นทาง; Apps Script ซิงก์เข้า Supabase ทุกนาทีผ่าน lab-sheet-sync
+// หน้าเว็บอ่านเฉพาะสรุป/วัสดุที่เลือกผ่าน RPC ที่ตรวจสิทธิ์ และตรวจข้อมูลใหม่ทุก 30 วินาที
 //
-// สิทธิ์: ตอนนี้เฉพาะ admin — เว็บแนบ access token ของผู้ใช้ไปกับคำขอ Apps Script ถามฐานข้อมูล (RPC app_lab_access →
-// private.can_access_lab) ด้วยโทเค็นนั้นก่อนคืนข้อมูล ภายหลังเพิ่มรายชื่อ ID ที่เข้าได้ที่ฟังก์ชันนั้นจุดเดียว
+// สิทธิ์: RPC app_lab_mooney_feed ตรวจ private.can_access_lab ทุกครั้งก่อนคืนข้อมูล
 // หน้าเว็บแค่ซ่อนเมนู (navAllowed) และไม่วาดหน้าเมื่อ state.employee.labAccess ไม่เป็น true ซึ่งเป็น UX ไม่ใช่ตัวบังคับสิทธิ์
 // ผู้ที่ไม่มีสิทธิ์เห็นหน้า "ไม่พบหน้าที่ต้องการ" เหมือน URL ที่ไม่มีอยู่จริง และไม่มีคำขอไป Apps Script
 //
@@ -24,9 +22,6 @@
 
   const PATH = "lab";
   const TITLE = "MNP LAB";
-  // Web App ที่ deploy จาก apps-script/lab-mooney/Code.gs (Execute as: Me, Who has access: Anyone) — URL นี้ไม่ใช่ความลับ
-  // เพราะ Web App คืนข้อมูลเฉพาะเมื่อมีโทเค็นของผู้มีสิทธิ์ ว่าง = ยังไม่ตั้งค่า
-  const FEED_URL = "https://script.google.com/macros/s/AKfycbyorWZ40Rkt9YCoN4M1YvOTV3vlmLVjRv7rk9gxjGzzFnJApzZ2zHiMnGKE6Vu7zgWO/exec";
   const REFRESH_MS = 30 * 1000;
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4.6 18.2A2 2 0 0 0 6.3 21h11.4a2 2 0 0 0 1.7-2.8L14 9V3"/><path d="M7.5 15h9"/></svg>`;
 
@@ -35,43 +30,46 @@
     return renderNotFound();
   }
 
-  /* ---------- อ่านข้อมูลสดจากชีต ---------- */
+  /* ---------- อ่านจากฐานข้อมูล + แคชเฉพาะบัญชีในหน่วยความจำ ---------- */
+  let cache = new Map();
+  let owner = null;
+  let authBound = false;
+  let pageVersion = 0;
 
-  // คืน feed ที่ผ่าน model.normalizeFeed หรือโยน Error ที่มีรหัส (ข้อความไทยอยู่ที่ errorMessages ด้านล่าง ผ่าน friendlyError)
-  async function loadFeed() {
-    if (!FEED_URL) throw new Error("LAB_FEED_NOT_CONFIGURED");
-    const { data } = await sb.auth.getSession();
-    const token = data?.session?.access_token;
-    if (!token) throw new Error("AUTH_REQUIRED");
-    let response;
-    try {
-      // text/plain = คำขอแบบง่าย ไม่มี preflight (Apps Script ตอบ OPTIONS ไม่ได้) และไม่ใส่ header อื่น โทเค็นอยู่ใน body เท่านั้น
-      // ไม่ใส่ใน URL เพื่อไม่ให้ไปค้างใน log ของเซิร์ฟเวอร์/ประวัติเบราว์เซอร์
-      response = await fetch(FEED_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ token }),
-        cache: "no-store",
+  function clearCache() { cache = new Map(); owner = null; pageVersion += 1; }
+
+  function bindCacheOwner() {
+    if (!authBound) {
+      sb.auth.onAuthStateChange((event) => {
+        if (event === "SIGNED_OUT") { stopAutoRefresh(); clearCache(); }
       });
-    } catch {
-      throw new Error("LAB_FEED_UNREACHABLE");
+      authBound = true;
     }
-    let body = null;
-    try {
-      body = await response.json();
-    } catch {
-      throw new Error("LAB_FEED_UNREADABLE");
-    }
-    if (!body?.ok) throw new Error(body?.error === "NOT_AUTHORIZED" ? "NOT_AUTHORIZED" : `LAB_FEED_${body?.error ?? "FAILED"}`);
-    return model.normalizeFeed(body);
+    if (owner !== state.employee) { clearCache(); owner = state.employee; }
   }
 
-  const isDenied = (error) => String(error?.message ?? "").includes("NOT_AUTHORIZED");
+  async function loadFeed(material) {
+    const employee = state.employee;
+    const { data, error } = await sb.rpc("app_lab_mooney_feed", { p_material: material || null });
+    if (error) throw error;
+    if (state.employee !== employee || employee !== owner) throw new Error("AUTH_REQUIRED");
+    if (!data || !Array.isArray(data.materials) || !Array.isArray(data.rows)) throw new Error("LAB_FEED_UNREADABLE");
+    const feed = { ...model.normalizeFeed(data), materials: data.materials };
+    const key = material || "";
+    cache.delete(key);
+    cache.set(key, feed);
+    // Bound retained material data; never persist it in localStorage or IndexedDB.
+    if (cache.size > 6) cache.delete(cache.keys().next().value);
+    return feed;
+  }
+
+  const isDenied = (error) => /NOT_AUTHORIZED|AUTH_REQUIRED|JWT expired/.test(String(error?.message ?? "")) || error?.code === "PGRST301";
 
   // สิทธิ์ถูกถอนหลังเปิดแอปค้างไว้: ปิดเมนูและแสดงหน้า "ไม่พบ" ข้อผิดพลาดอื่นให้ผู้เรียกจัดการ
   function revoke() {
     stopAutoRefresh();
-    state.employee.labAccess = false;
+    clearCache();
+    if (state.employee) state.employee.labAccess = false;
     return deniedPage();
   }
 
@@ -89,16 +87,16 @@
 
   async function refreshNow() {
     const current = live;
-    if (!current || current.inFlight) return;
+    if (!current || current.inFlight || state.employee !== current.employee) return;
     current.inFlight = true;
     current.setBusy(true);
     current.showStatus("กำลังอัปเดต…");
     try {
-      const feed = await loadFeed();
+      const feed = await loadFeed(current.material);
       if (live !== current) return; // ผู้ใช้ย้ายหน้าไปแล้ว
       current.update(feed);
       current.lastAt = Date.now();
-      current.showStatus(null);
+      current.showStatus(feedStatus(feed));
     } catch (error) {
       if (live !== current) return;
       if (isDenied(error)) return revoke();
@@ -110,18 +108,19 @@
     }
   }
 
-  function startAutoRefresh({ update, showStatus, setBusy, dispose }) {
+  function startAutoRefresh({ update, showStatus, setBusy, dispose }, material) {
     stopAutoRefresh();
-    live = { update, showStatus, setBusy, dispose, inFlight: false, lastAt: Date.now(), timer: null };
+    live = { update, showStatus, setBusy, dispose, material, employee: state.employee, inFlight: false, lastAt: Date.now(), timer: null };
     live.timer = window.setInterval(() => {
       // ออกจากโมดูลแล้ว (เปลี่ยน hash) หยุดเอง; แท็บที่ซ่อนอยู่ไม่ยิงคำขอ
-      if (!location.hash.startsWith("#/lab")) return stopAutoRefresh();
+      if (!location.hash.startsWith("#/lab") || state.employee !== live?.employee) return stopAutoRefresh();
       if (!document.hidden) refreshNow();
     }, REFRESH_MS);
   }
 
   window.addEventListener("hashchange", () => {
-    if (!location.hash.startsWith("#/lab")) stopAutoRefresh();
+    pageVersion += 1;
+    stopAutoRefresh();
   });
   // กลับมาเปิดแท็บนี้ หลังซ่อนไว้นานกว่ารอบรีเฟรช: อ่านใหม่ทันที ไม่รอรอบถัดไป
   document.addEventListener("visibilitychange", () => {
@@ -129,6 +128,11 @@
   });
 
   // ผูกแถบเวลาอ่านล่าสุดกับปุ่มรีเฟรชของหน้า คืนตัวแสดงผลที่ทั้งสองหน้าใช้ร่วมกัน
+  function feedStatus(feed) {
+    return Date.now() - Date.parse(feed.generatedAt) > 3 * 60 * 1000
+      ? "ข้อมูลจากชีตยังไม่อัปเดต — กำลังแสดงชุดที่ซิงก์สำเร็จล่าสุด" : null;
+  }
+
   function bindLiveBar() {
     const updated = document.querySelector("#lab-updated");
     const status = document.querySelector("#lab-status");
@@ -141,7 +145,7 @@
         refresh.setAttribute("aria-busy", String(busy));
       },
       paintMeta(feed) {
-        updated.textContent = `อัปเดต ${model.formatUpdatedTime(feed.generatedAt)}`;
+        updated.textContent = `ข้อมูลชีต ${model.formatUpdatedAt(feed.generatedAt)}`;
       },
     };
   }
@@ -180,7 +184,7 @@
       showStatus: bar.showStatus,
       setBusy: bar.setBusy,
       update(feed) {
-        materials = model.buildMaterialSummaries(feed.rows);
+        materials = feed.materials;
         bar.paintMeta(feed);
         paint();
       },
@@ -463,11 +467,12 @@
       },
       update(feed) {
         bar.paintMeta(feed);
+        // The selector comes from the compact overview, even on a material-only response.
+        el.materialSelect.innerHTML = views.materialOptions(feed.materials, material);
         const signature = model.feedSignature(feed.rows);
         // ชีตไม่เปลี่ยนจากรอบก่อน: ไม่วาดใหม่ (ไม่กระพริบ ไม่เสียจุดที่ผู้ใช้ปักหมุดหรือตำแหน่งเลื่อนในตาราง)
         if (signature === data.signature) return;
         data.signature = signature;
-        el.materialSelect.innerHTML = views.materialOptions(model.buildOverview(feed.rows), material);
         const rows = feed.rows.filter((row) => row.material === material);
         el.none.hidden = rows.length > 0;
         el.body.hidden = rows.length === 0;
@@ -486,31 +491,41 @@
 
   /* ---------- เปิดหน้า ---------- */
 
-  async function openPage({ title, html, bind }) {
+  async function openPage({ title, html, bind, material }) {
     stopAutoRefresh();
-    loadingShell(PATH, title);
-    let feed;
-    try {
-      feed = await loadFeed();
-    } catch (error) {
-      if (isDenied(error)) return revoke();
-      throw error; // renderRoute แสดงหน้า "โหลดข้อมูลไม่สำเร็จ" พร้อมปุ่มลองอีกครั้ง
+    bindCacheOwner();
+    const version = ++pageVersion;
+    let feed = cache.get(material || "");
+    const cached = Boolean(feed);
+    if (!feed) {
+      loadingShell(PATH, title);
+      try {
+        feed = await loadFeed(material);
+      } catch (error) {
+        if (version !== pageVersion) return;
+        if (isDenied(error)) return revoke();
+        throw error;
+      }
     }
+    if (version !== pageVersion) return;
     app.innerHTML = shell(html, PATH, title);
     bindShell();
     const view = bind();
     view.update(feed);
-    startAutoRefresh(view);
+    view.showStatus(feedStatus(feed));
+    startAutoRefresh(view, material);
+    // Cached navigation paints immediately but always rechecks server permissions/data.
+    if (cached) void refreshNow();
   }
 
   async function renderLab(params) {
     stopAutoRefresh();
-    // เมนูถูกซ่อนเมื่อไม่มีสิทธิ์ แต่พิมพ์ URL เองได้ — ไม่ยิงคำขอใดๆ และไม่บอกว่ามีโมดูลนี้ (Apps Script ปฏิเสธซ้ำอีกชั้นถ้าข้ามมาถึงตรงนี้)
+    // เมนูถูกซ่อนเมื่อไม่มีสิทธิ์ แต่พิมพ์ URL เองได้ — RPC เป็นด่านตรวจสิทธิ์จริง
     if (state.employee?.labAccess !== true) return deniedPage();
     const material = model.readMaterial(params.get("material"));
     return material
-      ? await openPage({ title: TITLE, html: views.materialPage(material, REFRESH_MS / 1000), bind: () => bindMaterial(material) })
-      : await openPage({ title: TITLE, html: views.overviewPage(REFRESH_MS / 1000), bind: bindOverview });
+      ? await openPage({ title: TITLE, html: views.materialPage(material, REFRESH_MS / 1000), material, bind: () => bindMaterial(material) })
+      : await openPage({ title: TITLE, html: views.overviewPage(REFRESH_MS / 1000), material: null, bind: bindOverview });
   }
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});
@@ -520,14 +535,8 @@
     standalone: true,
     label: TITLE,
     errorMessages: {
-      LAB_FEED_NOT_CONFIGURED: "ยังไม่ได้ตั้งค่าที่อยู่ข้อมูลของ MNP LAB",
-      LAB_FEED_UNREACHABLE: "เชื่อมต่อชีตไม่ได้ ตรวจอินเทอร์เน็ต หรือตรวจว่า Web App ของ Apps Script deploy แล้วและตั้งเป็น Anyone",
-      LAB_FEED_UNREADABLE: "อ่านคำตอบจากชีตไม่ได้ Web App อาจยังเป็นโค้ดเวอร์ชันเก่า ให้ deploy เวอร์ชันใหม่",
-      LAB_FEED_AUTH_UNAVAILABLE: "ตรวจสิทธิ์กับระบบไม่ได้ชั่วคราว ลองอีกครั้ง",
-      LAB_FEED_BAD_REQUEST: "คำขอข้อมูลไม่ถูกต้อง ลองเข้าสู่ระบบใหม่",
-      LAB_FEED_SERVER_ERROR: "อ่านข้อมูลจากชีตไม่สำเร็จ ลองอีกครั้ง",
-      LAB_FEED_USE_POST: "Web App ตอบเป็นหน้าทดสอบ ให้ deploy โค้ดเวอร์ชันล่าสุด",
-      LAB_FEED_FAILED: "อ่านข้อมูลจากชีตไม่สำเร็จ ลองอีกครั้ง",
+      LAB_SYNC_NOT_READY: "ข้อมูล LAB ยังซิงก์ไม่สำเร็จ กรุณาติดต่อผู้ดูแลระบบ",
+      LAB_FEED_UNREADABLE: "อ่านข้อมูล LAB ไม่สำเร็จ กรุณาลองอีกครั้งหรือติดต่อผู้ดูแลระบบ",
     },
     navAllowed: (employee) => employee?.labAccess === true,
     nav: [{ path: PATH, label: TITLE, icon: NAV_ICON }],
