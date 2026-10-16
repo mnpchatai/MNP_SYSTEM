@@ -128,11 +128,10 @@
     if (live && !document.hidden && Date.now() - live.lastAt >= REFRESH_MS) refreshNow();
   });
 
-  // ผูกแถบเวลาอ่านล่าสุด/ปุ่มรีเฟรช/กล่องเตือนของหน้า คืนตัวแสดงผลที่ทั้งสองหน้าใช้ร่วมกัน
+  // ผูกแถบเวลาอ่านล่าสุดกับปุ่มรีเฟรชของหน้า คืนตัวแสดงผลที่ทั้งสองหน้าใช้ร่วมกัน
   function bindLiveBar() {
     const updated = document.querySelector("#lab-updated");
     const status = document.querySelector("#lab-status");
-    const problems = document.querySelector("#lab-problems");
     const refresh = document.querySelector("#lab-refresh");
     refresh.addEventListener("click", refreshNow);
     return {
@@ -143,9 +142,6 @@
       },
       paintMeta(feed) {
         updated.textContent = `อัปเดต ${model.formatUpdatedTime(feed.generatedAt)}`;
-        // แถวที่อ่านไม่ได้ไม่ถูกแสดง บอก admin ให้ไปแก้ในชีต (ที่เหลือยังแสดงตามปกติ)
-        problems.hidden = feed.problemCount === 0;
-        problems.innerHTML = views.problemsHtml(feed);
       },
     };
   }

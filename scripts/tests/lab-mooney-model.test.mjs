@@ -47,7 +47,7 @@ test("the live feed is normalised: numbers or null, camelCase, rows without mate
       null,
     ],
     problem_count: "2",
-    problems: ["A แถว 2: เวลาไม่ถูกต้อง", 5],
+    problems: ["A แถว 2: เวลาไม่ถูกต้อง"],
     skipped: ["Summary"],
   });
   assert.equal(feed.generatedAt, "2026-10-16T03:30:05+00:00");
@@ -56,10 +56,9 @@ test("the live feed is normalised: numbers or null, camelCase, rows without mate
     id: "A1802|111|2026-09-21|08:29:13", sheet: "A1802", material: "A1802", sampleId: "111", testDate: "2026-09-21", testTime: "08:29:13",
     temperature: 100, testMinutes: 4, mh: 50.79, mv: 31.39, avgMh: null, sdMh: null, avgMv: null, sdMv: null,
   });
-  assert.equal(feed.problemCount, 2);
-  assert.deepEqual(feed.problems, ["A แถว 2: เวลาไม่ถูกต้อง", "5"]);
   assert.deepEqual(feed.skipped, ["Summary"]);
-  assert.deepEqual(model.normalizeFeed(null), { generatedAt: null, rows: [], problemCount: 0, problems: [], skipped: [] });
+  assert.equal("problems" in feed || "problemCount" in feed, false, "the page does not carry or show the sheet's unreadable-row list");
+  assert.deepEqual(model.normalizeFeed(null), { generatedAt: null, rows: [], skipped: [] });
   assert.deepEqual(model.normalizeFeed({ rows: "oops" }).rows, []);
 });
 

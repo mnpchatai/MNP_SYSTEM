@@ -278,9 +278,9 @@ test("every element the page script looks up exists in the page it opens", () =>
   const pages = views.overviewPage(30) + views.materialPage("A1802", 30);
   assert.ok(wanted.size > 15, `found ${wanted.size} selectors`);
   for (const id of wanted) assert.ok(pages.includes(`id="${id}"`), `#${id} is missing from the page markup`);
-  // หน้ารวมและหน้าวัสดุต้องมีแถบเวลา/รีเฟรช/กล่องเตือนชุดเดียวกัน เพราะ bindLiveBar ผูกทั้งสองหน้า
+  // หน้ารวมและหน้าวัสดุต้องมีแถบเวลา/รีเฟรชชุดเดียวกัน เพราะ bindLiveBar ผูกทั้งสองหน้า
   for (const page of [views.overviewPage(30), views.materialPage("A1802", 30)]) {
-    for (const id of ["lab-updated", "lab-refresh", "lab-status", "lab-problems"]) assert.ok(page.includes(`id="${id}"`), `${id} on every page`);
+    for (const id of ["lab-updated", "lab-refresh", "lab-status"]) assert.ok(page.includes(`id="${id}"`), `${id} on every page`);
   }
 });
 
@@ -311,10 +311,9 @@ test("the pickers list the open material even when the sheet has none of it, wit
   assert.match(ids, /value="112" selected>112 \(1\)/);
 });
 
-test("problem rows from the sheet are listed with a count and an overflow line", () => {
-  assert.equal(views.problemsHtml({ problemCount: 0, problems: [] }), "");
-  const html = views.problemsHtml({ problemCount: 30, problems: ["A แถว 2: เวลาไม่ถูกต้อง", XSS] });
-  assert.match(html, /พบ 30 แถว/);
-  assert.match(html, /และอีก 28 แถว/);
-  assert.doesNotMatch(html, /<img/);
+test("there is no warning box listing unreadable sheet rows on either page", () => {
+  for (const page of [views.overviewPage(30), views.materialPage("A1802", 30)]) {
+    assert.doesNotMatch(page, /lab-problems|lab-warning|อ่านไม่ได้/);
+  }
+  assert.equal(views.problemsHtml, undefined);
 });
