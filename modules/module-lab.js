@@ -43,8 +43,9 @@
 
   const headHtml = (columns) => `<tr>${columns.map((column) => `<th scope="col"${column.numeric ? ` class="num"` : ""}>${escapeHtml(column.label)}</th>`).join("")}</tr>`;
 
+  // ผู้ที่ไม่มีสิทธิ์เห็นหน้า "ไม่พบหน้าที่ต้องการ" ข้อความเดียวกับ URL ที่ไม่มีอยู่จริง จึงไม่รู้ว่ามีโมดูลนี้
   function deniedPage() {
-    return renderNotFound("หน้านี้สำหรับผู้ที่ได้รับสิทธิ์ใช้งาน MNP LAB เท่านั้น");
+    return renderNotFound();
   }
 
   // ฐานข้อมูลปฏิเสธ = ไม่มีสิทธิ์จริง (เช่นสิทธิ์ถูกถอนหลังเปิดแอปค้างไว้) ปิดเมนูแล้วบอกผู้ใช้ ข้อผิดพลาดอื่นให้ renderRoute แสดงหน้าลองอีกครั้ง
