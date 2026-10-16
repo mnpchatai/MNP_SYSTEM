@@ -16,7 +16,7 @@ function setup(respond) {
     });
     return elements.get(selector);
   };
-  const window = { addEventListener: (name, fn) => { events[name] = fn; }, setInterval: () => 1, clearInterval() {}, clearTimeout() {} };
+  const window = { addEventListener: (name, fn) => { events[name] = fn; }, setInterval: () => 1, clearInterval() {}, clearTimeout() {}, cancelAnimationFrame() {} };
   const context = vm.createContext({ window, console, URLSearchParams, Map, Set, Date, Intl, location: { hash: "#/lab" },
     document: { hidden: false, addEventListener() {}, querySelector: element },
     state: { employee: { id: "admin", labAccess: true } }, app: { innerHTML: "" },
@@ -29,7 +29,7 @@ function setup(respond) {
     vm.runInContext(readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8"), context);
   }
   return { context, calls, element, events, auth: (event) => authChange(event), denied: () => denied,
-    open: () => window.MNP_REQUEST_MODULES.MNP_LAB.pages.lab(new URLSearchParams()) };
+    open: (params = "") => window.MNP_REQUEST_MODULES.MNP_LAB.pages.lab(new URLSearchParams(params)) };
 }
 const body = (materials = []) => ({ generated_at: new Date().toISOString(), materials, rows: [] });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -86,4 +86,22 @@ test("leaving LAB cancels stale initial renders; no permission means no RPC", as
   denied.context.state.employee.labAccess = false;
   await denied.open();
   assert.equal(denied.calls.length, 0);
+});
+
+test("material navigation scopes its RPC and keeps the full material selector on an empty result", async () => {
+  const app = setup(async () => ({ data: body([{ material: "A", resultCount: 2 }, { material: "B", resultCount: 3 }]), error: null }));
+  await app.open("material=A");
+  assert.equal(app.calls[0].args.p_material, "A");
+  assert.match(app.element("#lab-material-select").innerHTML, /value="A" selected/);
+  assert.match(app.element("#lab-material-select").innerHTML, /value="B"/);
+  assert.equal(app.element("#lab-none").hidden, false);
+  assert.equal(app.element("#lab-body").hidden, true);
+});
+
+test("stale data retains its original date and gives a freshness warning", async () => {
+  const data = { ...body(), generated_at: "2026-01-01T01:02:03Z" };
+  const app = setup(async () => ({ data, error: null }));
+  await app.open();
+  assert.match(app.element("#lab-updated").textContent, /01\/01\/2026/);
+  assert.match(app.element("#lab-status").textContent, /ยังไม่อัปเดต/);
 });
