@@ -1,27 +1,43 @@
 /**
- * ซิงก์ผลทดสอบ Mooney จากสเปรดชีต Mooney_Test_Report ไป MNP Workspace (โมดูล MNP LAB)
+ * ฟีดผลทดสอบ Mooney แบบสด (Web App) สำหรับโมดูล MNP LAB ของ MNP Workspace
  *
- * ชีตนี้ยังเป็นต้นทางของข้อมูล — สคริปต์อ่านทุกแท็บที่มีหัวคอลัมน์ ID/Material/TestDate/Time/Temperature/
- * Test time/MH/MV (แท็บละหนึ่งวัสดุ) แล้วส่งทั้งหมดไป Edge Function lab-sheet-sync ของ Supabase
- * ซึ่งบันทึกลงฐานข้อมูลแบบ "กระจกสะท้อนชีต" (ดู supabase/migrations/20261016020000_mnp_lab_mooney.sql)
- * Pilot Web อ่านจากฐานข้อมูลเท่านั้น และให้เฉพาะผู้ที่ได้รับสิทธิ์ (ตอนนี้ admin) เห็นข้อมูล
+ * ชีต Mooney_Test_Report คือข้อมูลต้นทางและไม่มีสำเนาที่ไหน — ทุกครั้งที่หน้า MNP LAB เปิดหรือรีเฟรช เว็บส่งคำขอมาที่
+ * Web App นี้ สคริปต์อ่านทุกแท็บที่มีหัวคอลัมน์ ID/Material/TestDate/Time/Temperature/Test time/MH/MV (แท็บละหนึ่งวัสดุ)
+ * ณ ตอนนั้นแล้วตอบกลับเป็น JSON
  *
- * ค่าที่ต้องตั้งใน Project Settings > Script properties (ห้ามใส่ในโค้ด/ห้ามคอมมิต):
- *   LAB_SYNC_URL     = URL ของ Edge Function เช่น https://<project>.supabase.co/functions/v1/lab-sheet-sync
- *   LAB_SYNC_SECRET  = ค่าเดียวกับ Edge Function secret LAB_SYNC_SECRET (สุ่มยาว 32 ตัวอักษรขึ้นไป)
+ * สิทธิ์ (ปฏิเสธไว้ก่อนเสมอ — fail-closed):
+ *   เว็บแนบ access token ของผู้ใช้ที่ล็อกอินมาใน body สคริปต์ถาม Supabase (RPC app_lab_access ซึ่งเรียก
+ *   private.can_access_lab ในฐานข้อมูล ตอนนี้ = admin เท่านั้น) ด้วยโทเค็นนั้น คืนข้อมูลเฉพาะเมื่อตอบ true เท่านั้น
+ *   ทุกกรณีอื่น (ไม่มีโทเค็น โทเค็นผิด/หมดอายุ ตอบ false Supabase ล่ม) ไม่มีข้อมูลหลุดออกไป
+ *   ภายหลังเพิ่มรายชื่อ ID ที่เข้าได้ที่ฐานข้อมูลจุดเดียว สคริปต์นี้ไม่ต้องแก้
+ *
+ * สคริปต์ไม่ต้องมี secret: URL และ publishable key ของ Supabase ด้านล่างเป็นค่าสาธารณะ (อยู่ใน app.js ของเว็บอยู่แล้ว)
+ * สคริปต์ไม่บันทึกโทเค็นลง log หรือ cache
+ *
+ * Deploy: Deploy > New deployment > Web app — Execute as: Me, Who has access: Anyone
+ *   (Anyone จำเป็นเพราะเบราว์เซอร์เรียกแบบไม่มีบัญชี Google สิทธิ์จริงตรวจที่ฐานข้อมูลตามข้างบน)
+ *   สคริปต์อ่านชีตด้วยสิทธิ์ของเจ้าของสคริปต์ จึงไม่ต้องแชร์ชีตให้ผู้ใช้เว็บ ตั้งแชร์ชีตเฉพาะคนที่ต้องแก้ไขได้
+ *
+ * ถ้าสคริปต์ไม่ได้ผูกกับชีต (สร้างจาก script.google.com ตรงๆ) ให้ตั้ง Script property SHEET_ID = รหัสสเปรดชีต
  *
  * คอลัมน์ AVG MH / SD MH / AVG MV / SD MV ในชีตเป็นเซลล์ที่ merge หลายแถว (ค่าอยู่ที่เซลล์บนสุดของกลุ่ม)
- * สคริปต์ขยายค่านั้นไปทุกแถวในกลุ่มก่อนส่ง จึงเก็บค่าตามชีตทุกประการ ไม่คำนวณใหม่
+ * สคริปต์ขยายค่านั้นไปทุกแถวในกลุ่มก่อนส่ง จึงตรงกับชีตทุกประการ ไม่คำนวณใหม่
  *
- * ฟังก์ชันที่ลงท้าย _ ไม่ใช้ SpreadsheetApp/UrlFetchApp และมีเทสต์ที่ scripts/tests/lab-mooney-sync.test.mjs
+ * ฟังก์ชันที่ลงท้าย _ ไม่ใช้บริการของ Google (ยกเว้น checkAccess_/openSpreadsheet_) และมีเทสต์ที่
+ * scripts/tests/lab-mooney-feed.test.mjs
  */
+
+// ค่าสาธารณะของโปรเจกต์ Supabase (เหมือน SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY ใน app.js ของเว็บ)
+var SUPABASE_URL_ = 'https://iqlydmkylqyowmvpsete.supabase.co';
+var SUPABASE_PUBLISHABLE_KEY_ = 'sb_publishable_uWsULpN8jWF8XCp73B8K_A_YkbKJNUD';
 
 var HEADERS_ = ['ID', 'Material', 'TestDate', 'Time', 'Temperature', 'Test time', 'MH', 'MV', 'AVG MH', 'SD MH', 'AVG MV', 'SD MV'];
 // คอลัมน์ A–H ต้องตรงหัวคอลัมน์ ส่วน I–L (ค่าเฉลี่ย/SD) ไม่บังคับ — แท็บ "E00030S T" ไม่มี
 var REQUIRED_COLUMNS_ = 8;
 var STAT_COLUMNS_ = 4;
 var MAX_ROWS_ = 20000;
-var MAX_PROBLEMS_SHOWN_ = 10;
+var MAX_PROBLEMS_SHOWN_ = 20;
+var MAX_TOKEN_LENGTH_ = 8192;
 
 /* ---------- แปลงข้อมูล (pure) ---------- */
 
@@ -102,7 +118,7 @@ function expandMerged_(grid, merges) {
   return copy;
 }
 
-// แปลงหนึ่งแท็บเป็นแถวที่ส่งเข้า RPC
+// แปลงหนึ่งแท็บเป็นแถวข้อมูล
 //   display = getDisplayValues() ทั้งตาราง (แถวแรกคือหัวคอลัมน์) — ใช้กับ ID/Material/วันที่/เวลา ให้ตรงกับที่เห็นในชีต
 //   raw     = getValues() ตารางเดียวกัน — ใช้กับค่าตัวเลข
 //   merges  = ช่วง merge ของคอลัมน์ AVG/SD (I–L) พิกัดเทียบกับแถวที่ 1 และคอลัมน์ I
@@ -141,7 +157,7 @@ function rowsFromTab_(tabName, display, raw, merges) {
       if (pair[1] === null || (typeof pair[1] === 'number' && isNaN(pair[1]))) rowProblems.push(pair[0] + ' ไม่ใช่ตัวเลข');
     });
     var statNames = ['AVG MH', 'SD MH', 'AVG MV', 'SD MV'];
-    // ทำให้ครบ 4 ค่าเสมอ (ตารางที่แคบกว่านี้ให้ null) เพื่อไม่ส่ง undefined ไปฐานข้อมูล
+    // ทำให้ครบ 4 ค่าเสมอ (ตารางที่แคบกว่านี้ให้ null) เพื่อไม่ส่ง undefined ออกไป
     var statValues = [0, 1, 2, 3].map(function (position) { return parseNumber_(stats[index][position]); });
     statValues.forEach(function (value, position) {
       if (typeof value === 'number' && isNaN(value)) rowProblems.push(statNames[position] + ' ไม่ใช่ตัวเลข');
@@ -169,7 +185,55 @@ function rowsFromTab_(tabName, display, raw, merges) {
   return { rows: rows, problems: problems };
 }
 
-/* ---------- อ่านชีต + ส่ง ---------- */
+/* ---------- ตรวจสิทธิ์ (fail-closed) ---------- */
+
+// คำขอจากเว็บ: body เป็น JSON { token } token ต้องมีรูปแบบ JWT (3 ส่วน base64url) และไม่ยาวเกินกำหนด
+// รูปแบบที่ไม่ใช่ JWT ถูกปฏิเสธตั้งแต่ตรงนี้ จึงไม่มีทางแทรกอักขระแปลกๆ เข้า header Authorization
+// คืน token หรือ null (null = คำขอไม่ถูกต้อง)
+function parseRequestToken_(contents) {
+  var body;
+  try {
+    body = JSON.parse(String(contents === null || contents === undefined ? '' : contents));
+  } catch (error) {
+    return null;
+  }
+  if (!body || typeof body !== 'object' || typeof body.token !== 'string') return null;
+  var token = body.token.trim();
+  if (!token || token.length > MAX_TOKEN_LENGTH_) return null;
+  return /^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*$/.test(token) ? token : null;
+}
+
+// ผลตอบของ Supabase RPC app_lab_access → 'allowed' | 'denied' | 'unavailable'
+// 'allowed' เฉพาะเมื่อ HTTP 200 และเนื้อหาเป็น JSON true เป๊ะ ทุกกรณีอื่นไม่ได้รับอนุญาต
+//   4xx (โทเค็นผิด/หมดอายุ/ไม่ใช่พนักงาน/ไม่มีฟังก์ชัน) = denied, 5xx หรืออ่านสถานะไม่ได้ = unavailable
+function decideAccess_(status, text) {
+  if (status === 200) {
+    try {
+      return JSON.parse(text) === true ? 'allowed' : 'denied';
+    } catch (error) {
+      return 'denied';
+    }
+  }
+  if (typeof status === 'number' && status >= 400 && status < 500) return 'denied';
+  return 'unavailable';
+}
+
+function checkAccess_(token) {
+  try {
+    var response = UrlFetchApp.fetch(SUPABASE_URL_ + '/rest/v1/rpc/app_lab_access', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { apikey: SUPABASE_PUBLISHABLE_KEY_, Authorization: 'Bearer ' + token },
+      payload: '{}',
+      muteHttpExceptions: true
+    });
+    return decideAccess_(response.getResponseCode(), response.getContentText());
+  } catch (error) {
+    return 'unavailable';
+  }
+}
+
+/* ---------- อ่านชีต ---------- */
 
 function collectRows_(spreadsheet) {
   var rows = [];
@@ -202,103 +266,45 @@ function collectRows_(spreadsheet) {
   return { rows: rows, problems: problems, skipped: skipped };
 }
 
-function getSetting_(key) {
-  return PropertiesService.getScriptProperties().getProperty(key) || '';
+function openSpreadsheet_() {
+  var id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
+  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
 }
 
-var ERROR_MESSAGES_ = {
-  UNAUTHORIZED: 'secret ไม่ตรงกับที่ตั้งไว้ฝั่ง Supabase (LAB_SYNC_SECRET)',
-  NOT_CONFIGURED: 'ฝั่ง Supabase ยังไม่ได้ตั้ง LAB_SYNC_SECRET (ต้องยาว 32 ตัวอักษรขึ้นไป)',
-  LAB_INVALID_ROW: 'ฐานข้อมูลปฏิเสธข้อมูลบางแถว (ค่าผิดช่วง หรือ ID/วันที่/เวลาซ้ำกันในแท็บเดียวกัน)',
-  LAB_INVALID_PAYLOAD: 'รูปแบบข้อมูลที่ส่งไม่ถูกต้อง',
-  LAB_IMPORT_TOO_DESTRUCTIVE: 'การซิงก์ครั้งนี้จะลบข้อมูลที่มีอยู่เกินครึ่ง จึงไม่ทำ — ถ้าตั้งใจ ให้ใช้เมนู "ซิงก์ (ยืนยันลบข้อมูลที่หายไป)"',
-  IMPORT_FAILED: 'ฐานข้อมูลบันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'
-};
+/* ---------- Web App ---------- */
 
-// คืนข้อความสรุป หรือ throw Error ข้อความไทย (ผู้เรียกแสดงเอง) — ไม่ใส่ secret ในข้อความเสมอ
-function syncMooney_(force) {
-  var url = getSetting_('LAB_SYNC_URL');
-  var secret = getSetting_('LAB_SYNC_SECRET');
-  if (!url || !secret) throw new Error('ยังไม่ได้ตั้งค่า LAB_SYNC_URL และ LAB_SYNC_SECRET ใน Project Settings > Script properties');
+function json_(object) {
+  return ContentService.createTextOutput(JSON.stringify(object)).setMimeType(ContentService.MimeType.JSON);
+}
 
-  var collected = collectRows_(SpreadsheetApp.getActiveSpreadsheet());
-  if (collected.problems.length) {
-    var shown = collected.problems.slice(0, MAX_PROBLEMS_SHOWN_).join('\n');
-    var more = collected.problems.length > MAX_PROBLEMS_SHOWN_ ? '\n… และอีก ' + (collected.problems.length - MAX_PROBLEMS_SHOWN_) + ' แถว' : '';
-    throw new Error('ไม่ซิงก์ เพราะพบแถวที่ข้อมูลไม่ถูกต้อง ' + collected.problems.length + ' แถว (แก้ในชีตก่อน):\n' + shown + more);
-  }
-  if (collected.rows.length === 0) throw new Error('ไม่พบข้อมูลผลทดสอบในชีตนี้ จึงไม่ซิงก์');
-  if (collected.rows.length > MAX_ROWS_) throw new Error('ข้อมูลมากกว่า ' + MAX_ROWS_ + ' แถว เกินที่ระบบรับต่อครั้ง');
+// เปิด URL นี้ในเบราว์เซอร์ (GET) ไม่คืนข้อมูลใดๆ — ข้อมูลตอบเฉพาะ POST ที่แนบโทเค็นผู้มีสิทธิ์
+function doGet() {
+  return json_({ ok: false, error: 'USE_POST' });
+}
 
-  var response = UrlFetchApp.fetch(url, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'x-lab-sync-secret': secret },
-    payload: JSON.stringify({ rows: collected.rows, force: force === true }),
-    muteHttpExceptions: true
-  });
-  var status = response.getResponseCode();
-  var body = {};
+// POST body (text/plain เพื่อไม่ให้เบราว์เซอร์ส่ง preflight): {"token":"<Supabase access token>"}
+// ตอบ { ok: true, generated_at, rows, problem_count, problems, skipped } หรือ { ok: false, error }
+// error: BAD_REQUEST | NOT_AUTHORIZED | AUTH_UNAVAILABLE | SERVER_ERROR (ไม่คืนรายละเอียดภายใน)
+function doPost(e) {
   try {
-    body = JSON.parse(response.getContentText());
-  } catch (parseError) {
-    body = {};
-  }
-  if (status !== 200 || !body.ok) {
-    throw new Error('ซิงก์ไม่สำเร็จ (' + status + '): ' + (ERROR_MESSAGES_[body.error] || body.error || 'ไม่ทราบสาเหตุ'));
-  }
-  return 'ซิงก์สำเร็จ ' + body.rows + ' แถว (ใหม่ ' + body.inserted + ' · มีอยู่แล้ว ' + body.updated + ' · ลบที่หายจากชีต ' + body.deleted + ')'
-    + (collected.skipped.length ? '\nข้ามแท็บที่ไม่ใช่ผลทดสอบ: ' + collected.skipped.join(', ') : '');
-}
+    var token = parseRequestToken_(e && e.postData ? e.postData.contents : '');
+    if (!token) return json_({ ok: false, error: 'BAD_REQUEST' });
 
-/* ---------- เมนูและตัวตั้งเวลา ---------- */
+    var decision = checkAccess_(token);
+    if (decision === 'denied') return json_({ ok: false, error: 'NOT_AUTHORIZED' });
+    if (decision !== 'allowed') return json_({ ok: false, error: 'AUTH_UNAVAILABLE' });
 
-function onOpen() {
-  SpreadsheetApp.getUi().createMenu('MNP LAB')
-    .addItem('ซิงก์ไป MNP Workspace', 'syncToWorkspace')
-    .addItem('ซิงก์ (ยืนยันลบข้อมูลที่หายไป)', 'syncToWorkspaceForced')
-    .addSeparator()
-    .addItem('ตั้งซิงก์อัตโนมัติทุกชั่วโมง', 'installHourlyTrigger')
-    .addItem('ยกเลิกซิงก์อัตโนมัติ', 'removeSyncTriggers')
-    .addToUi();
-}
-
-function runInteractive_(force) {
-  var ui = SpreadsheetApp.getUi();
-  try {
-    ui.alert('MNP LAB', syncMooney_(force), ui.ButtonSet.OK);
+    var collected = collectRows_(openSpreadsheet_());
+    if (collected.rows.length > MAX_ROWS_) return json_({ ok: false, error: 'SERVER_ERROR' });
+    return json_({
+      ok: true,
+      generated_at: new Date().toISOString(),
+      rows: collected.rows,
+      problem_count: collected.problems.length,
+      problems: collected.problems.slice(0, MAX_PROBLEMS_SHOWN_),
+      skipped: collected.skipped
+    });
   } catch (error) {
-    ui.alert('MNP LAB', String(error.message || error), ui.ButtonSet.OK);
+    return json_({ ok: false, error: 'SERVER_ERROR' });
   }
-}
-
-function syncToWorkspace() {
-  runInteractive_(false);
-}
-
-function syncToWorkspaceForced() {
-  var ui = SpreadsheetApp.getUi();
-  var answer = ui.alert(
-    'MNP LAB',
-    'ข้อมูลใน MNP Workspace ที่ไม่มีในชีตนี้จะถูกลบ แม้เกินครึ่งของที่มีอยู่ ยืนยันหรือไม่?',
-    ui.ButtonSet.YES_NO
-  );
-  if (answer === ui.Button.YES) runInteractive_(true);
-}
-
-// ตัวที่ trigger เรียก: ไม่มี UI ถ้าพลาดให้ throw เพื่อให้ Apps Script ส่งอีเมลแจ้งความล้มเหลว
-function syncOnSchedule() {
-  Logger.log(syncMooney_(false));
-}
-
-function installHourlyTrigger() {
-  removeSyncTriggers();
-  ScriptApp.newTrigger('syncOnSchedule').timeBased().everyHours(1).create();
-  SpreadsheetApp.getUi().alert('MNP LAB', 'ตั้งซิงก์อัตโนมัติทุกชั่วโมงแล้ว', SpreadsheetApp.getUi().ButtonSet.OK);
-}
-
-function removeSyncTriggers() {
-  ScriptApp.getProjectTriggers().forEach(function (trigger) {
-    if (trigger.getHandlerFunction() === 'syncOnSchedule') ScriptApp.deleteTrigger(trigger);
-  });
 }
