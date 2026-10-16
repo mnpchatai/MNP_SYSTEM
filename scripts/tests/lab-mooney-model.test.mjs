@@ -4,16 +4,20 @@ import test from "node:test";
 
 const model = createRequire(import.meta.url)("../../modules/lab-mooney-model.js");
 
-const overviewFixture = {
-  synced_at: "2026-10-16T03:30:00+00:00",
-  materials: [
-    { material: "A2004", result_count: 154, test_days: 6, first_tested: "2026-09-14", last_tested: "2026-10-02" },
-    { material: "A1802", result_count: 18, test_days: 1, first_tested: "2026-09-21", last_tested: "2026-09-21" },
-    { material: "B0005", result_count: 156, test_days: 9, first_tested: "2026-09-12", last_tested: "2026-10-02" },
-    { material: "B0005N", result_count: 8, test_days: 1, first_tested: "2026-09-21", last_tested: "2026-09-21" },
-    { material: "c13011", result_count: 3, test_days: 1, first_tested: "2026-09-10", last_tested: "2026-09-10" },
-  ],
-};
+// สรุปรายวัสดุในรูปที่ buildOverview คืน (ใช้ทดสอบค้นหา/เรียง/สรุป)
+const materials = [
+  { material: "A2004", resultCount: 154, testDays: 6, firstTested: "2026-09-14", lastTested: "2026-10-02" },
+  { material: "A1802", resultCount: 18, testDays: 1, firstTested: "2026-09-21", lastTested: "2026-09-21" },
+  { material: "B0005", resultCount: 156, testDays: 9, firstTested: "2026-09-12", lastTested: "2026-10-02" },
+  { material: "B0005N", resultCount: 8, testDays: 1, firstTested: "2026-09-21", lastTested: "2026-09-21" },
+  { material: "c13011", resultCount: 3, testDays: 1, firstTested: "2026-09-10", lastTested: "2026-09-10" },
+];
+
+const feedRow = (overrides = {}) => ({
+  source_sheet: "A1802", sample_id: "111", material: "A1802", test_date: "2026-09-21", test_time: "08:29:13",
+  temperature_c: 100, test_minutes: 4, mh: 50.79, mv: 31.39, avg_mh: 50.33, sd_mh: 0.45, avg_mv: 31.52, sd_mv: 0.21,
+  ...overrides,
+});
 
 test("a material in the URL is trimmed, length-limited and optional", () => {
   assert.equal(model.readMaterial("  A1802 "), "A1802");
@@ -32,31 +36,68 @@ test("material links are encoded so names with spaces or symbols stay in one que
   assert.equal(model.materialUrl(""), "#/lab");
 });
 
-test("the overview is normalised to numbers and camelCase, dropping nameless rows", () => {
-  const overview = model.normalizeOverview({
-    synced_at: "2026-10-16T03:30:00+00:00",
-    materials: [{ material: "A1802", result_count: "18", test_days: 1, first_tested: "2026-09-21", last_tested: "2026-09-21" }, { material: "" }, null],
+test("the live feed is normalised: numbers or null, camelCase, rows without material or date dropped", () => {
+  const feed = model.normalizeFeed({
+    ok: true,
+    generated_at: "2026-10-16T03:30:05+00:00",
+    rows: [
+      feedRow({ mv: "31.39", avg_mh: null, sd_mh: undefined, avg_mv: "", sd_mv: null }),
+      feedRow({ material: "  " }),
+      feedRow({ test_date: null }),
+      null,
+    ],
+    problem_count: "2",
+    problems: ["A แถว 2: เวลาไม่ถูกต้อง", 5],
+    skipped: ["Summary"],
   });
-  assert.deepEqual(overview.materials, [{ material: "A1802", resultCount: 18, testDays: 1, firstTested: "2026-09-21", lastTested: "2026-09-21" }]);
-  assert.equal(overview.syncedAt, "2026-10-16T03:30:00+00:00");
-  assert.deepEqual(model.normalizeOverview(null), { syncedAt: null, materials: [] });
-  assert.deepEqual(model.normalizeOverview({ materials: "oops" }).materials, []);
+  assert.equal(feed.generatedAt, "2026-10-16T03:30:05+00:00");
+  assert.equal(feed.rows.length, 1);
+  assert.deepEqual(feed.rows[0], {
+    id: "A1802|111|2026-09-21|08:29:13", material: "A1802", sampleId: "111", testDate: "2026-09-21", testTime: "08:29:13",
+    temperature: 100, testMinutes: 4, mh: 50.79, mv: 31.39, avgMh: null, sdMh: null, avgMv: null, sdMv: null,
+  });
+  assert.equal(feed.problemCount, 2);
+  assert.deepEqual(feed.problems, ["A แถว 2: เวลาไม่ถูกต้อง", "5"]);
+  assert.deepEqual(feed.skipped, ["Summary"]);
+  assert.deepEqual(model.normalizeFeed(null), { generatedAt: null, rows: [], problemCount: 0, problems: [], skipped: [] });
+  assert.deepEqual(model.normalizeFeed({ rows: "oops" }).rows, []);
 });
 
-test("result rows keep blanks as null and never turn them into zero", () => {
-  const [row] = model.normalizeResults([{
-    id: "r1", sample_id: "111", test_date: "2026-09-21", test_time: "08:29:13", temperature_c: 100, test_minutes: 4,
-    mh: 50.79, mv: "31.39", avg_mh: null, sd_mh: null, avg_mv: undefined, sd_mv: "",
-  }]);
-  assert.deepEqual(row, {
-    id: "r1", sampleId: "111", testDate: "2026-09-21", testTime: "08:29:13", temperature: 100, testMinutes: 4,
-    mh: 50.79, mv: 31.39, avgMh: null, sdMh: null, avgMv: null, sdMv: null,
+test("the overview is built from the rows: counts, distinct test days, first and last test date", () => {
+  const { rows } = model.normalizeFeed({ rows: [
+    feedRow({ sample_id: "111", test_date: "2026-09-21" }),
+    feedRow({ sample_id: "112", test_date: "2026-09-21" }),
+    feedRow({ sample_id: "113", test_date: "2026-10-02" }),
+    feedRow({ material: "B0005", source_sheet: "B0005", test_date: "2026-09-12" }),
+  ] });
+  const overview = model.buildOverview(rows);
+  assert.deepEqual(overview.find((item) => item.material === "A1802"), {
+    material: "A1802", resultCount: 3, firstTested: "2026-09-21", lastTested: "2026-10-02", testDays: 2,
   });
-  assert.deepEqual(model.normalizeResults(null), []);
+  assert.deepEqual(overview.find((item) => item.material === "B0005"), {
+    material: "B0005", resultCount: 1, firstTested: "2026-09-12", lastTested: "2026-09-12", testDays: 1,
+  });
+  assert.equal(overview.length, 2);
+  assert.deepEqual(model.buildOverview([]), []);
+});
+
+test("one material's results are newest first (date, then time), ties by ID, and unknown or blank names give nothing", () => {
+  const { rows } = model.normalizeFeed({ rows: [
+    feedRow({ sample_id: "111", test_date: "2026-09-21", test_time: "08:29:13" }),
+    feedRow({ sample_id: "113", test_date: "2026-09-21", test_time: "08:42:31" }),
+    feedRow({ sample_id: "9", test_date: "2026-09-21", test_time: "08:36:01" }),
+    feedRow({ sample_id: "10", test_date: "2026-09-21", test_time: "08:36:01" }),
+    feedRow({ sample_id: "201", test_date: "2026-10-02", test_time: "07:00:00" }),
+    feedRow({ material: "B0005", source_sheet: "B0005", sample_id: "111" }),
+  ] });
+  assert.deepEqual(model.resultsFor(rows, "A1802").map((row) => row.sampleId), ["201", "113", "9", "10", "111"]);
+  assert.deepEqual(model.resultsFor(rows, "  A1802 ").length, 5, "the name is trimmed");
+  assert.equal(model.resultsFor(rows, "NOPE").length, 0);
+  assert.equal(model.resultsFor(rows, "").length, 0);
+  assert.equal(rows.length, 6, "the input is not reordered or consumed");
 });
 
 test("search is case-insensitive and matches anywhere in the material name", () => {
-  const { materials } = model.normalizeOverview(overviewFixture);
   assert.deepEqual(model.filterMaterials(materials, "b000").map((item) => item.material), ["B0005", "B0005N"]);
   assert.deepEqual(model.filterMaterials(materials, "  C130 ").map((item) => item.material), ["c13011"]);
   assert.equal(model.filterMaterials(materials, "").length, materials.length);
@@ -64,7 +105,6 @@ test("search is case-insensitive and matches anywhere in the material name", () 
 });
 
 test("materials sort by latest test, name (numeric-aware) or result count, and unknown keys fall back to latest", () => {
-  const { materials } = model.normalizeOverview(overviewFixture);
   const names = (key) => model.sortMaterials(materials, key).map((item) => item.material);
   assert.deepEqual(names("recent"), ["A2004", "B0005", "A1802", "B0005N", "c13011"]);
   assert.deepEqual(names("name"), ["A1802", "A2004", "B0005", "B0005N", "c13011"]);
@@ -75,7 +115,6 @@ test("materials sort by latest test, name (numeric-aware) or result count, and u
 });
 
 test("the summary totals the rows and finds the newest test date", () => {
-  const { materials } = model.normalizeOverview(overviewFixture);
   assert.deepEqual(model.summarize(materials), { materialCount: 5, resultCount: 339, lastTested: "2026-10-02" });
   assert.deepEqual(model.summarize([]), { materialCount: 0, resultCount: 0, lastTested: null });
 });
@@ -96,9 +135,9 @@ test("dates, times and readings are shown the way the spreadsheet shows them", (
   assert.equal(model.formatPlain(null), "—");
 });
 
-test("the sync time is shown in Bangkok time", () => {
-  assert.equal(model.formatSyncedAt("2026-10-16T03:30:00+00:00"), "16/10/2026 10:30");
-  assert.equal(model.formatSyncedAt("2026-10-16T18:05:00Z"), "17/10/2026 01:05", "crosses midnight into the next Bangkok day");
-  assert.equal(model.formatSyncedAt(null), "—");
-  assert.equal(model.formatSyncedAt("not a date"), "—");
+test("the time the sheet was last read is shown in Bangkok time with seconds", () => {
+  assert.equal(model.formatUpdatedAt("2026-10-16T03:30:05+00:00"), "16/10/2026 10:30:05");
+  assert.equal(model.formatUpdatedAt("2026-10-16T18:05:09Z"), "17/10/2026 01:05:09", "crosses midnight into the next Bangkok day");
+  assert.equal(model.formatUpdatedAt(null), "—");
+  assert.equal(model.formatUpdatedAt("not a date"), "—");
 });

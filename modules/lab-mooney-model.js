@@ -1,8 +1,8 @@
 // โมเดลข้อมูลผลทดสอบ Mooney ของโมดูล MNP LAB — ข้อมูลล้วน ไม่มี DOM/Supabase เทสต์ที่ scripts/tests/lab-mooney-model.test.mjs
 //
-// ผลลัพธ์ของ RPC (app_lab_mooney_overview / app_lab_mooney_results ใน 20261016020000_mnp_lab_mooney.sql) ถูกแปลงผ่าน
-// normalize* ที่นี่ที่เดียว หน้าเว็บ (modules/module-lab.js) จึงรับเฉพาะรูปแบบที่ตรวจแล้ว: ตัวเลขเป็น number|null
-// วันที่เป็นสตริง YYYY-MM-DD (ไม่ผ่าน Date เพื่อไม่ให้เขตเวลาทำให้วันเลื่อน)
+// ข้อมูลมาจากฟีดสดของ Apps Script (apps-script/lab-mooney/Code.gs → doPost) ซึ่งอ่านชีต Mooney_Test_Report ทุกครั้งที่ถูกเรียก
+// ผลถูกแปลงผ่าน normalizeFeed ที่นี่ที่เดียว หน้าเว็บ (modules/module-lab.js) จึงรับเฉพาะรูปแบบที่ตรวจแล้ว: ตัวเลขเป็น number|null
+// วันที่เป็นสตริง YYYY-MM-DD (ไม่ผ่าน Date เพื่อไม่ให้เขตเวลาทำให้วันเลื่อน) สรุปรายวัสดุคำนวณจากแถวชุดเดียวกัน ไม่มีสำเนาที่ไหน
 (function (root) {
   const MAX_MATERIAL_LENGTH = 60;
 
@@ -12,7 +12,7 @@
     return Number.isFinite(parsed) ? parsed : null;
   };
 
-  // วัสดุจาก query string (#/lab?material=…) — ตัดช่องว่าง จำกัดความยาวเท่าฐานข้อมูล ว่าง = ไม่เลือก
+  // วัสดุจาก query string (#/lab?material=…) — ตัดช่องว่าง จำกัดความยาว 60 ตัวอักษร ว่าง = ไม่เลือก
   function readMaterial(value) {
     const text = String(value ?? "").trim();
     return text && text.length <= MAX_MATERIAL_LENGTH ? text : null;
@@ -23,26 +23,14 @@
     return name ? `#/lab?material=${encodeURIComponent(name)}` : "#/lab";
   }
 
-  function normalizeOverview(data) {
-    const list = Array.isArray(data?.materials) ? data.materials : [];
-    return {
-      syncedAt: data?.synced_at ?? null,
-      materials: list
-        .map((item) => ({
-          material: String(item?.material ?? ""),
-          resultCount: number(item?.result_count) ?? 0,
-          testDays: number(item?.test_days) ?? 0,
-          firstTested: item?.first_tested ?? null,
-          lastTested: item?.last_tested ?? null,
-        }))
-        .filter((item) => item.material),
-    };
-  }
+  const text = (value) => String(value ?? "");
 
-  function normalizeResults(data) {
-    return (Array.isArray(data) ? data : []).map((row) => ({
-      id: String(row?.id ?? ""),
-      sampleId: String(row?.sample_id ?? ""),
+  function normalizeRow(row) {
+    return {
+      // ไม่มีรหัสแถวในชีต: ใช้กุญแจเดียวกับที่ระบุแถวในชีต (แท็บ + ID + วันที่ + เวลา)
+      id: [row?.source_sheet, row?.sample_id, row?.test_date, row?.test_time].map(text).join("|"),
+      material: text(row?.material).trim(),
+      sampleId: text(row?.sample_id),
       testDate: row?.test_date ?? null,
       testTime: row?.test_time ?? null,
       temperature: number(row?.temperature_c),
@@ -53,7 +41,44 @@
       sdMh: number(row?.sd_mh),
       avgMv: number(row?.avg_mv),
       sdMv: number(row?.sd_mv),
-    }));
+    };
+  }
+
+  // ฟีดจาก Apps Script: { ok, generated_at, rows, problem_count, problems, skipped } — แถวที่ไม่มีวัสดุหรือวันที่ถูกทิ้ง
+  function normalizeFeed(body) {
+    const strings = (value) => (Array.isArray(value) ? value.map(text) : []);
+    return {
+      generatedAt: body?.generated_at ?? null,
+      rows: (Array.isArray(body?.rows) ? body.rows : []).map(normalizeRow).filter((row) => row.material && row.testDate),
+      problemCount: number(body?.problem_count) ?? 0,
+      problems: strings(body?.problems),
+      skipped: strings(body?.skipped),
+    };
+  }
+
+  // สรุปรายวัสดุจากแถวทั้งหมด (วันที่เป็น ISO เทียบเป็นสตริงได้)
+  function buildOverview(rows) {
+    const byMaterial = new Map();
+    for (const row of rows) {
+      const entry = byMaterial.get(row.material) ?? { material: row.material, resultCount: 0, days: new Set(), firstTested: null, lastTested: null };
+      entry.resultCount += 1;
+      entry.days.add(row.testDate);
+      if (entry.firstTested === null || row.testDate < entry.firstTested) entry.firstTested = row.testDate;
+      if (entry.lastTested === null || row.testDate > entry.lastTested) entry.lastTested = row.testDate;
+      byMaterial.set(row.material, entry);
+    }
+    return [...byMaterial.values()].map(({ days, ...rest }) => ({ ...rest, testDays: days.size }));
+  }
+
+  // ผลทดสอบของวัสดุหนึ่งรายการ ใหม่สุดก่อน (วันที่ แล้วเวลา) เท่ากันเรียงตาม ID
+  function resultsFor(rows, material) {
+    const name = readMaterial(material);
+    if (!name) return [];
+    return rows
+      .filter((row) => row.material === name)
+      .sort((a, b) => String(b.testDate).localeCompare(String(a.testDate))
+        || String(b.testTime ?? "").localeCompare(String(a.testTime ?? ""))
+        || a.sampleId.localeCompare(b.sampleId, "en", { numeric: true }));
   }
 
   // ค้นหาวัสดุแบบไม่สนตัวพิมพ์/ช่องว่างหัวท้าย ค่าว่าง = ทั้งหมด
@@ -112,28 +137,29 @@
     return value === null || value === undefined ? EMPTY : String(Number(value));
   }
 
-  const syncedFormat = new Intl.DateTimeFormat("en-GB", {
+  const updatedFormat = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Bangkok",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
   });
 
-  // เวลาที่ซิงก์ล่าสุด เป็นเวลาไทย "DD/MM/YYYY HH:MM" ไม่มีค่า/อ่านไม่ได้ = —
-  function formatSyncedAt(value) {
+  // เวลาที่อ่านชีตล่าสุด เป็นเวลาไทย "DD/MM/YYYY HH:MM:SS" ไม่มีค่า/อ่านไม่ได้ = —
+  function formatUpdatedAt(value) {
     if (!value) return EMPTY;
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? EMPTY : syncedFormat.format(date).replace(", ", " ");
+    return Number.isNaN(date.getTime()) ? EMPTY : updatedFormat.format(date).replace(", ", " ");
   }
 
   const api = {
     MAX_MATERIAL_LENGTH, SORT_OPTIONS,
-    readMaterial, materialUrl, normalizeOverview, normalizeResults,
+    readMaterial, materialUrl, normalizeFeed, buildOverview, resultsFor,
     filterMaterials, sortMaterials, summarize,
-    formatDate, formatTime, formatReading, formatPlain, formatSyncedAt,
+    formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_MOONEY = api;

@@ -1858,3 +1858,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .lab-stats { grid-template-columns: 1fr; }
   .lab-search, .lab-sort { max-width: none; flex-basis: 100%; }
 }
+.lab-live { margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.lab-status { color: var(--warning); }
+.lab-warning { margin-bottom: 16px; padding: 12px 16px; color: var(--ink); background: var(--warning-soft); border: 1px solid var(--warning); border-radius: 10px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.lab-warning ul { margin: 6px 0 4px; padding-left: 20px; }
