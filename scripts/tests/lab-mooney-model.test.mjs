@@ -103,6 +103,16 @@ test("search is case-insensitive and matches anywhere in the material name", () 
   assert.equal(model.filterMaterials(materials, "zzz").length, 0);
 });
 
+test("search suggestions list names that start with the query first, then the other matches by name, without touching the input", () => {
+  const names = (query, list = materials) => model.suggestMaterials(list, query).map((item) => item.material);
+  assert.deepEqual(names(""), ["A1802", "A2004", "B0005", "B0005N", "c13011"], "no query lists every material by name");
+  assert.deepEqual(names("  B000 "), ["B0005", "B0005N"], "the same matching as the table: trimmed and case-insensitive");
+  assert.deepEqual(names("zzz"), []);
+  const list = [{ material: "XA22" }, { material: "A2203" }, { material: "A22" }, { material: "B9" }];
+  assert.deepEqual(names("a22", list), ["A22", "A2203", "XA22"]);
+  assert.deepEqual(list.map((item) => item.material), ["XA22", "A2203", "A22", "B9"], "the caller's order is kept");
+});
+
 test("materials sort by latest test, name (numeric-aware) or result count, and unknown keys fall back to latest", () => {
   const names = (key) => model.sortMaterials(materials, key).map((item) => item.material);
   assert.deepEqual(names("recent"), ["A2004", "B0005", "A1802", "B0005N", "c13011"]);

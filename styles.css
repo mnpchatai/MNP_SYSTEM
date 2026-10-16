@@ -1837,7 +1837,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 }
 
 /* MNP LAB (modules/module-lab.js, lab-mooney-views.js, lab-mooney-chart.js) — ผลทดสอบ Mooney
-   ใช้ <select> ของเบราว์เซอร์ (แตะบน iPhone ได้ ไม่ใช่ popup ลอยที่ต้องปิดเอง จึงไม่ต้องมีโค้ดปิดตอนแตะนอกกรอบ) ป้ายค่าของกราฟเป็นป้ายชั่วคราวที่ไม่รับการแตะ
+   ตัวเลือกเป็น <select> (เสริมเป็นช่องค้นหา + รายการด้วย searchable-select.js) ส่วนช่องค้นหาหน้ารวมเป็น combobox ที่ใช้ .ss-list กับกฎ data-popup/closePopup ของ app.js ป้ายค่าของกราฟเป็นป้ายชั่วคราวที่ไม่รับการแตะ
    กราฟเป็น SVG ที่ใช้ตัวแปรสีของหน้านี้ สีซีรีส์ผ่านการตรวจด้วย validate_palette (แยกกันได้ทั้งสายตาปกติและตาบอดสี ทั้งโหมดสว่างและมืด)
    และมีรูปทรงต่างกันกำกับ: MH = วงกลม, MV = สี่เหลี่ยมขนมเปียกปูน */
 .lab-page {
@@ -1981,6 +1981,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-toolbar { padding: 12px 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; border-bottom: 1px solid var(--soft-line); }
 .lab-search { max-width: 420px; flex: 1 1 240px; }
 .lab-search .input { caret-color: var(--primary); }
+/* รายการวัสดุใต้ช่องค้นหาใช้หน้าตาเดียวกับ dropdown ค้นหาได้ (.ss-list/.ss-option) วางตำแหน่งด้วย MNP_SEARCHABLE_SELECT.placeList */
 .lab-sort { flex: 0 1 200px; }
 .lab-count { font-variant-numeric: tabular-nums; }
 .lab-howto { margin-left: auto; color: var(--quiet); font-size: 12px; }
@@ -2017,6 +2018,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .lab-id { flex: 1 1 140px; }
   .lab-plot, .lab-toolbar, .lab-chart-key, .lab-results-card .card-heading { padding-left: 14px; padding-right: 14px; }
   .lab-search, .lab-sort { max-width: none; flex-basis: 100%; }
+  .lab-search .input { font-size: 16px; }
   .lab-howto { margin-left: 0; flex-basis: 100%; }
   .lab-table th, .lab-table td { padding: 8px 9px; }
   .lab-table-scroll { max-height: 70vh; }
