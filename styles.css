@@ -1897,12 +1897,29 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-key-mh { background: var(--lab-mh); border-radius: 50%; }
 .lab-key-mv { background: var(--lab-mv); transform: rotate(45deg) scale(.84); }
 
-/* การ์ดกราฟ: แผง MH บน / MV ล่าง ใช้แกนเวลาร่วมกัน ไม่มีหัวการ์ดและแถบค่าถาวร (ค่าของจุดที่ชี้อยู่แสดงเป็นป้ายลอย) */
-.lab-chart-card { margin-bottom: 14px; padding: 0; overflow: hidden; }
+/* การ์ดกราฟ: MH + MV รวมแผงเดียวบนแกนเดียวกัน ไม่มีหัวการ์ดและแถบค่าถาวร (ค่าของจุดที่ชี้อยู่แสดงเป็นป้ายลอย)
+   พื้นดำเสมอทั้งธีมสว่างและมืด: ตั้งตัวแปรสีชุดมืด (ค่าเดียวกับ :root[data-theme="dark"]) ไว้ที่การ์ดนี้ ลูกๆ ทั้งหมด (แกน กริด ป้ายค่า ป้ายลอย จุด)
+   จึงอ่านสีจากตัวแปรเดิมได้เลย; สีซีรีส์ชุดมืดผ่าน validate_palette บนพื้น #08111f (CVD ΔE 26.8, ความต่างสี 31.8, contrast ≥ 3:1) */
+.lab-chart-card {
+  --paper: #08111f;
+  --ink: #f4f7fb;
+  --muted: #b2bfd1;
+  --quiet: #91a1b8;
+  --line: #233149;
+  --soft-line: #17243a;
+  --primary: #3b82f6;
+  --lab-mh: #3987e5;
+  --lab-mv: #d95926;
+  --lab-band: color-mix(in srgb, #ffffff 6%, var(--paper));
+  --lab-grid: color-mix(in srgb, #ffffff 9%, var(--paper));
+  margin-bottom: 14px; padding: 0; overflow: hidden; color: var(--ink); color-scheme: dark;
+}
+.lab-chart-card .lab-tip { background: #101b2d; border-color: #2d3e5c; }
 .lab-plot-wrap { position: relative; }
 .lab-plot { padding: 0 18px; outline: 0; touch-action: pan-y; }
 .lab-plot:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
-.lab-panel-head { padding-top: 12px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 16px; }
+.lab-panel-head { padding-top: 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 28px; }
+.lab-series { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .lab-panel-name { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; }
 .lab-panel-stats { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .lab-panel-stats b { color: var(--ink); font-weight: 600; }

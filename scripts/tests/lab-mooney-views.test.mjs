@@ -39,20 +39,33 @@ const noBadNumbers = (text) => assert.doesNotMatch(text, /NaN|Infinity|undefined
 
 /* ---------- กราฟ ---------- */
 
-test("the sequence chart has an MH panel and an MV panel with one point per test in each", () => {
+test("the sequence chart draws MH and MV together in one plot with one point per test in each", () => {
   const { items, groups } = seriesFixture();
   const result = chart.trendChart({ mode: "sequence", items, groups, width: 900, label: "A1802" });
   assert.equal(result.count, 10);
-  assert.equal(count(result.html, /class="lab-panel lab-panel-/g), 2);
-  assert.equal(count(result.html, /<svg /g), 2);
+  assert.equal(count(result.html, /class="lab-panel"/g), 1, "one panel, not one per series");
+  assert.equal(count(result.html, /<svg /g), 1, "one plot with a single value axis");
+  assert.equal(count(result.html, /class="lab-cross"/g), 1);
+  assert.equal(count(result.html, /class="lab-series"/g), 2, "the header names both series once and doubles as the legend");
   assert.equal(count(result.html, /class="lab-pt lab-pt-mh"/g), 10);
   assert.equal(count(result.html, /class="lab-pt lab-pt-mv"/g), 10);
   assert.equal(count(result.html, /<circle class="lab-dot"/g), 10, "MH is a circle");
   assert.equal(count(result.html, /<rect class="lab-dot"/g), 10, "MV is a rotated square, so the two series also differ by shape");
-  assert.match(result.html, /เฉลี่ย <b>[\d.]+<\/b> · SD <b>[\d.]+<\/b>/);
+  assert.equal(count(result.html, /เฉลี่ย <b>[\d.]+<\/b> · SD <b>[\d.]+<\/b>/g), 2);
   const headers = result.html.match(/<span class="lab-panel-stats">.*?<\/span>/g).join("");
   assert.doesNotMatch(headers, /ช่วง/, "the range is read from the axis, not repeated as numbers in the panel header");
   noBadNumbers(result.html);
+});
+
+test("MH and MV share one value axis that covers both series", () => {
+  const { items, groups } = seriesFixture();
+  const { html } = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
+  const ticks = [...html.matchAll(/<text class="lab-tick" x="[\d.]+" y="[\d.]+" text-anchor="end">([\d.]+)</g)].map((match) => Number(match[1]));
+  assert.ok(ticks.length >= 3, "one set of value ticks");
+  assert.equal(new Set(ticks).size, ticks.length, "no second axis repeating the ticks");
+  assert.ok(Math.min(...ticks) <= 30 && Math.max(...ticks) >= 75, "the axis spans the lowest MV (30) to the highest MH (75)");
+  const y = (series, index) => Number(html.match(new RegExp(`class="lab-pt lab-pt-${series}" data-i="${index}" transform="translate\\([\\d.]+ ([\\d.]+)\\)"`))[1]);
+  assert.ok(y("mv", 0) > y("mh", 0), "MV (30) is drawn below MH (50) on the same scale");
 });
 
 test("test groups with stats get one average mark per series; the group still waiting for stats gets none", () => {
@@ -65,7 +78,7 @@ test("test groups with stats get one average mark per series; the group still wa
 test("background bands alternate by test day and the newest day always keeps its date label", () => {
   const { items, groups } = seriesFixture();
   const { html } = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
-  assert.equal(count(html, /class="lab-band"/g), 2, "two days → one band per panel");
+  assert.equal(count(html, /class="lab-band"/g), 1, "two days → one alternating band");
   assert.match(html, />21\/09</);
   assert.match(html, />22\/09</);
   const crowded = Array.from({ length: 40 }, (_, day) => row({ sample_id: String(100 + day), test_date: `2026-09-${String((day % 28) + 1).padStart(2, "0")}`, avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null }));

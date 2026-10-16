@@ -1,18 +1,18 @@
 // กราฟผลทดสอบ Mooney ของโมดูล MNP LAB — สร้างเป็นข้อความ SVG/HTML ล้วน ไม่มี DOM เทสต์ที่ scripts/tests/lab-mooney-views.test.mjs
 //
-// หน้าวัสดุแสดง MH และ MV เป็น 2 แผงซ้อนกันที่ใช้แกนเวลาร่วมกัน (แต่ละแผงมีสเกลของตัวเอง ไม่ใช่กราฟสองแกนซ้อน) เพื่อให้ค่าที่หลุดของ
-// ตัวหนึ่งไม่บีบอีกตัวจนอ่านไม่ออก สีและรูปทรงต่างกัน (MH = วงกลมสีน้ำเงิน, MV = สี่เหลี่ยมขนมเปียกปูนสีส้ม) จึงแยกได้แม้ไม่เห็นสี
+// หน้าวัสดุแสดง MH และ MV รวมในกราฟเดียว (พื้นดำ) แกนเวลาและแกนค่าเดียวกัน — หน่วยเดียวกันจึงใช้สเกลเดียว ไม่ใช่กราฟสองแกน
+// สีและรูปทรงต่างกัน (MH = วงกลมสีน้ำเงิน, MV = สี่เหลี่ยมขนมเปียกปูนสีส้ม) จึงแยกได้แม้ไม่เห็นสี; หัวกราฟเป็นทั้งคำอธิบายสัญลักษณ์และค่าเฉลี่ย/SD
 //   - โหมด "sequence": ทุกครั้งที่ทดสอบของวัสดุตามลำดับในชีต แถบพื้นหลังสลับ = วันที่ทดสอบ เส้นสั้น = ค่า AVG ของชุดตามชีต
 //   - โหมด "id": ติดตาม ID เดียวข้ามหลายครั้งที่ทดสอบ ลากเส้นต่อจุด เส้นประ = ค่าเฉลี่ย ติดป้ายค่าเฉพาะครั้งล่าสุด ค่าสูงสุดและต่ำสุด
-// สี/ตัวอักษร/เส้นกริดมาจาก CSS (ดู .lab-* ใน styles.css) จึงเปลี่ยนตามธีมสว่าง/มืดโดยไม่ต้องวาดใหม่
+// สี/ตัวอักษร/เส้นกริดมาจาก CSS (ดู .lab-* ใน styles.css) กราฟใช้ชุดสีพื้นดำของตัวเองเสมอทั้งธีมสว่างและมืด
 // จุดทุกจุดมี data-i = ตำแหน่งในรายการที่ส่งเข้ามา ให้ module-lab.js ผูกการชี้/แตะ/คีย์บอร์ดโดยคำนวณจากตำแหน่งแกน X (indexAt)
 (function (root) {
   const model = root.MNP_LAB_MOONEY;
   if (!model) return;
 
   const SERIES = Object.freeze([
-    { key: "mh", label: "MH", shape: "circle", avgKey: "avgMh" },
-    { key: "mv", label: "MV", shape: "diamond", avgKey: "avgMv" },
+    { key: "mh", label: "MH", shape: "circle", avgKey: "avgMh", labelBelow: false },
+    { key: "mv", label: "MV", shape: "diamond", avgKey: "avgMv", labelBelow: true },
   ]);
   const MIN_LABEL_GAP = 6;
   const DATE_LABEL_WIDTH = 34;
@@ -27,7 +27,7 @@
   function layoutFor(width) {
     const total = Math.max(280, Math.floor(Number(width) || 0));
     const compact = total < 560;
-    return { width: total, compact, left: compact ? 38 : 46, right: compact ? 10 : 16, top: 10, plotHeight: compact ? 116 : 140, inset: 6, axisHeight: 26, gapBelow: 8 };
+    return { width: total, compact, left: compact ? 38 : 46, right: compact ? 10 : 16, top: 10, plotHeight: compact ? 190 : 250, inset: 10, axisHeight: 26 };
   }
 
   // ป้ายวันที่บนแกน: วันล่าสุดและวันแรกมีป้ายเสมอ ที่เหลือเลือกวันที่มีแถวมากก่อน (กว้างกว่า อ่านง่ายกว่า) แล้วข้ามป้ายที่ทับกัน
@@ -52,10 +52,10 @@
     return kept.sort((a, b) => a.start - b.start);
   }
 
-  // หัวแผง: ชื่อซีรีส์ + ค่าเฉลี่ย/SD ของทุกครั้งที่ทดสอบ (ช่วงค่าดูได้จากแกน จึงไม่ซ้ำเป็นตัวเลข)
-  function panelHead(series, stats) {
-    return `<header class="lab-panel-head"><span class="lab-panel-name"><i class="lab-key lab-key-${series.key}" aria-hidden="true"></i>${esc(series.label)}</span>`
-      + `<span class="lab-panel-stats">เฉลี่ย <b>${esc(model.formatReading(stats.mean))}</b> · SD <b>${esc(model.formatReading(stats.sd))}</b></span></header>`;
+  // หัวกราฟ: ชื่อซีรีส์ (สัญลักษณ์ + ชื่อ = คำอธิบายสี/รูปทรง) + ค่าเฉลี่ย/SD ของทุกครั้งที่ทดสอบ (ช่วงค่าดูได้จากแกน จึงไม่ซ้ำเป็นตัวเลข)
+  function chartHead(entries) {
+    return `<header class="lab-panel-head">${entries.map(({ series, stats }) => `<span class="lab-series"><span class="lab-panel-name"><i class="lab-key lab-key-${series.key}" aria-hidden="true"></i>${esc(series.label)}</span>`
+      + `<span class="lab-panel-stats">เฉลี่ย <b>${esc(model.formatReading(stats.mean))}</b> · SD <b>${esc(model.formatReading(stats.sd))}</b></span></span>`).join("")}</header>`;
   }
 
   function dotMarkup(series, radius) {
@@ -66,7 +66,7 @@
     return halo + dot;
   }
 
-  // กราฟแนวโน้ม 2 แผง คืน { html, count, xAt(i), indexAt(px) } — px คือตำแหน่งแนวนอนจากขอบซ้ายของ SVG
+  // กราฟแนวโน้ม MH + MV แผงเดียว คืน { html, count, xAt(i), indexAt(px) } — px คือตำแหน่งแนวนอนจากขอบซ้ายของ SVG
   function trendChart({ mode = "sequence", items = [], groups = [], width = 800, label = "" } = {}) {
     const layout = layoutFor(width);
     const count = items.length;
@@ -97,33 +97,35 @@
         .map((candidate) => ({ ...candidate, x: clamp(candidate.x, layout.left, layout.width - layout.right - DATE_LABEL_WIDTH) }));
     const dateLabels = pickDateLabels(candidates, layout);
 
-    const panels = SERIES.map((series, panelIndex) => {
-      const last = panelIndex === SERIES.length - 1;
+    const entries = SERIES.map((series) => {
       const values = items.map((item) => (isNumber(item[series.key]) ? item[series.key] : null));
-      const stats = model.describe(values);
-      const heightTotal = layout.top + layout.plotHeight + (last ? layout.axisHeight : layout.gapBelow);
-      const scale = model.niceScale(stats.min, stats.max, layout.compact ? 3 : 4);
-      const top = layout.top + layout.inset;
-      const bottom = layout.top + layout.plotHeight - layout.inset;
-      const yOf = (value) => bottom - ((value - scale.min) / (scale.max - scale.min)) * (bottom - top);
-      const plotBottom = layout.top + layout.plotHeight;
-      let svg = "";
+      return { series, values, stats: model.describe(values) };
+    });
+    // แกนค่าเดียวร่วมกันทั้งสองซีรีส์ (หน่วยเดียวกัน) ครอบช่วงต่ำสุด–สูงสุดของทั้งคู่
+    const overall = model.describe(entries.flatMap((entry) => entry.values));
+    const scale = model.niceScale(overall.min, overall.max, layout.compact ? 4 : 5);
+    const top = layout.top + layout.inset;
+    const bottom = layout.top + layout.plotHeight - layout.inset;
+    const plotBottom = layout.top + layout.plotHeight;
+    const yOf = (value) => bottom - ((value - scale.min) / (scale.max - scale.min)) * (bottom - top);
+    let svg = "";
 
-      if (sequence) {
-        // แถบพื้นหลังสลับตามวันที่ทดสอบ (วันเว้นวัน) ขอบแถบคือจุดที่เปลี่ยนวัน
-        marks.forEach((mark, index) => {
-          if (index % 2 !== 0) return;
-          const end = marks[index + 1]?.index ?? count;
-          svg += `<rect class="lab-band" x="${n2(xAt(mark.index) - slot / 2)}" y="${layout.top}" width="${n2((end - mark.index) * slot)}" height="${layout.plotHeight}"/>`;
-        });
-      }
-      for (const value of scale.ticks) {
-        svg += `<line class="lab-grid" x1="${layout.left}" x2="${layout.width - layout.right}" y1="${n2(yOf(value))}" y2="${n2(yOf(value))}"/>`
-          + `<text class="lab-tick" x="${layout.left - 8}" y="${n2(yOf(value) + 4)}" text-anchor="end">${esc(tick(value))}</text>`;
-      }
-      svg += `<line class="lab-axis" x1="${layout.left}" x2="${layout.width - layout.right}" y1="${plotBottom}" y2="${plotBottom}"/>`;
-      svg += `<line class="lab-cross" x1="0" x2="0" y1="${layout.top}" y2="${plotBottom}" visibility="hidden"/>`;
+    if (sequence) {
+      // แถบพื้นหลังสลับตามวันที่ทดสอบ (วันเว้นวัน) ขอบแถบคือจุดที่เปลี่ยนวัน
+      marks.forEach((mark, index) => {
+        if (index % 2 !== 0) return;
+        const end = marks[index + 1]?.index ?? count;
+        svg += `<rect class="lab-band" x="${n2(xAt(mark.index) - slot / 2)}" y="${layout.top}" width="${n2((end - mark.index) * slot)}" height="${layout.plotHeight}"/>`;
+      });
+    }
+    for (const value of scale.ticks) {
+      svg += `<line class="lab-grid" x1="${layout.left}" x2="${layout.width - layout.right}" y1="${n2(yOf(value))}" y2="${n2(yOf(value))}"/>`
+        + `<text class="lab-tick" x="${layout.left - 8}" y="${n2(yOf(value) + 4)}" text-anchor="end">${esc(tick(value))}</text>`;
+    }
+    svg += `<line class="lab-axis" x1="${layout.left}" x2="${layout.width - layout.right}" y1="${plotBottom}" y2="${plotBottom}"/>`;
+    svg += `<line class="lab-cross" x1="0" x2="0" y1="${layout.top}" y2="${plotBottom}" visibility="hidden"/>`;
 
+    for (const { series, values, stats } of entries) {
       if (sequence) {
         for (const group of groups) {
           const average = group.hasStats ? group[series.avgKey] : null;
@@ -146,14 +148,19 @@
         flush();
         if (isNumber(stats.mean)) svg += `<line class="lab-mean lab-mean-${series.key}" x1="${layout.left}" x2="${layout.width - layout.right}" y1="${n2(yOf(stats.mean))}" y2="${n2(yOf(stats.mean))}"/>`;
       }
+    }
 
+    for (const { series, values } of entries) {
       values.forEach((value, index) => {
         if (value === null) return;
         svg += `<g class="lab-pt lab-pt-${series.key}" data-i="${index}" transform="translate(${n2(xAt(index))} ${n2(yOf(value))})">${dotMarkup(series, radius)}</g>`;
       });
+    }
 
-      if (!sequence) {
-        // ติดป้ายค่าเฉพาะจุดสำคัญ: ครั้งล่าสุด ค่าสูงสุด ค่าต่ำสุด (ไม่ติดทุกจุด)
+    if (!sequence) {
+      // ติดป้ายค่าเฉพาะจุดสำคัญ: ครั้งล่าสุด ค่าสูงสุด ค่าต่ำสุด (ไม่ติดทุกจุด)
+      // MH ติดป้ายเหนือจุด และ MV ใต้จุด (MV ต่ำกว่า MH) ป้ายของสองซีรีส์ที่อยู่บนแกนเดียวกันจึงไม่ทับกัน ถ้าชนขอบกราฟจะกลับด้าน
+      for (const { series, values, stats } of entries) {
         const picks = new Set();
         values.forEach((value, index) => {
           if (value === null) return;
@@ -167,26 +174,29 @@
         }
         for (const index of picks) {
           const y = yOf(values[index]);
-          const below = y - 10 < layout.top + 8;
+          let below = series.labelBelow;
+          if (below && y + 17 > plotBottom - 2) below = false;
+          if (!below && y - 10 < layout.top + 8) below = true;
           const x = clamp(xAt(index), layout.left + 14, layout.width - layout.right - 14);
           svg += `<text class="lab-val" x="${n2(x)}" y="${n2(below ? y + 17 : y - 9)}" text-anchor="middle">${esc(model.formatReading(values[index]))}</text>`;
         }
       }
+    }
 
-      if (last) {
-        for (const item of dateLabels) {
-          svg += `<text class="lab-tick" x="${n2(item.x)}" y="${plotBottom + 17}" text-anchor="${item.anchor}">${esc(item.text)}</text>`;
-        }
-      }
+    for (const item of dateLabels) {
+      svg += `<text class="lab-tick" x="${n2(item.x)}" y="${plotBottom + 17}" text-anchor="${item.anchor}">${esc(item.text)}</text>`;
+    }
 
-      const summary = stats.count
+    const summary = entries
+      .map(({ series, stats }) => (stats.count
         ? `${series.label} ของ ${label || "วัสดุ"} ${stats.count} ครั้ง เฉลี่ย ${model.formatReading(stats.mean)} ช่วง ${model.formatReading(stats.min)} ถึง ${model.formatReading(stats.max)}`
-        : `${series.label} ไม่มีข้อมูล`;
-      return `<section class="lab-panel lab-panel-${series.key}" data-panel="${series.key}">${panelHead(series, stats)}`
-        + `<svg class="lab-svg" width="${layout.width}" height="${heightTotal}" viewBox="0 0 ${layout.width} ${heightTotal}" role="img" aria-label="${esc(summary)}" focusable="false">${svg}</svg></section>`;
-    });
+        : `${series.label} ไม่มีข้อมูล`))
+      .join(" · ");
+    const heightTotal = plotBottom + layout.axisHeight;
+    const html = `<section class="lab-panel">${chartHead(entries)}`
+      + `<svg class="lab-svg" width="${layout.width}" height="${heightTotal}" viewBox="0 0 ${layout.width} ${heightTotal}" role="img" aria-label="${esc(summary)}" focusable="false">${svg}</svg></section>`;
 
-    return { html: panels.join(""), count, xAt, indexAt };
+    return { html, count, xAt, indexAt };
   }
 
   // กราฟเส้นเล็กในแถวของหน้ารวม: แนวโน้มค่าเฉลี่ยรายชุด ปลายเส้นเป็นจุด (ค่าล่าสุด) ไม่มีแกน ตัวเลขอยู่ข้างๆ เสมอ
