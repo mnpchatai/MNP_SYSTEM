@@ -68,11 +68,88 @@ test("MH and MV share one value axis that covers both series", () => {
   assert.ok(y("mv", 0) > y("mh", 0), "MV (30) is drawn below MH (50) on the same scale");
 });
 
-test("test groups with stats get one average mark per series; the group still waiting for stats gets none", () => {
+test("groups with stats keep the sheet's solid AVG mark and the row still waiting for stats gets a dashed computed one", () => {
   const { items, groups } = seriesFixture();
   const { html } = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
-  assert.equal(count(html, /class="lab-avg lab-avg-mh"/g), 3);
+  assert.equal(count(html, /class="lab-avg lab-avg-mh"/g), 3, "sheet values are drawn as solid marks");
   assert.equal(count(html, /class="lab-avg lab-avg-mv"/g), 3);
+  assert.equal(count(html, /class="lab-avg lab-avg-mh is-calc"/g), 1, "the last row has no AVG in the sheet yet, so it gets a computed mark");
+  assert.equal(count(html, /class="lab-avg lab-avg-mv is-calc"/g), 1);
+  noBadNumbers(html);
+});
+
+/* ---------- ขีด AVG ต้องมีทุกครั้งที่ทดสอบ (เช่น เพิ่มสูตรใหม่ที่ชีตยังไม่มี AVG) ---------- */
+
+const bare = (ids, date, overrides = {}) => ids.map((id, index) => row({
+  sample_id: id, test_date: date, test_time: `09:0${index}:00`, mh: 40 + index, mv: 20 + index,
+  avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null, ...overrides,
+}));
+const seriesOfRows = (rows) => model.buildSeries(model.normalizeFeed({ rows }).rows, "A1802");
+// จำนวนขีดที่ครอบแต่ละครั้งที่ทดสอบ (ต้องเป็น 1 ทุกตำแหน่ง)
+const coverage = (marks, total) => {
+  const hits = Array(total).fill(0);
+  for (const mark of marks) for (let index = mark.start; index < mark.start + mark.count; index += 1) hits[index] += 1;
+  return hits;
+};
+
+test("a new formula with no AVG anywhere still gets an average mark over every test, in sets of three", () => {
+  const { items, groups } = seriesOfRows(bare(["1", "2", "3", "4", "5", "6", "7"], "2026-10-06"));
+  const marks = chart.averageMarks(groups);
+  assert.deepEqual(marks.map((mark) => [mark.start, mark.count]), [[0, 3], [3, 3], [6, 1]]);
+  assert.deepEqual(coverage(marks, items.length), Array(7).fill(1), "every test sits under exactly one mark");
+  assert.ok(marks.every((mark) => mark.mh.computed && mark.mv.computed), "nothing here comes from the sheet");
+  assert.equal(marks[0].mh.value, 41, "the mean of the three readings 40, 41, 42");
+  assert.equal(marks[1].mv.value, 24);
+  const { html } = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
+  assert.equal(count(html, /class="lab-avg lab-avg-mh is-calc"/g), 3);
+  assert.equal(count(html, /class="lab-avg lab-avg-mv is-calc"/g), 3);
+  assert.equal(count(html, /class="lab-avg lab-avg-mh"/g), 0, "no solid mark: there is no sheet value to show");
+  noBadNumbers(html);
+});
+
+test("the provisional set size follows the material's own sets in the sheet", () => {
+  const five = (ids, date, stats) => ids.map((id, index) => row({ sample_id: id, test_date: date, test_time: `08:0${index}:00`, avg_mh: stats[0], sd_mh: 1, avg_mv: stats[1], sd_mv: 1 }));
+  const { items, groups } = seriesOfRows([
+    ...five(["1", "2", "3", "4", "5"], "2026-10-01", [51, 31]),
+    ...five(["6", "7", "8", "9", "10"], "2026-10-01", [61, 36]),
+    ...bare(["11", "12", "13", "14", "15", "16", "17"], "2026-10-02"),
+  ]);
+  const marks = chart.averageMarks(groups);
+  assert.deepEqual(marks.map((mark) => mark.count), [5, 5, 5, 2]);
+  assert.equal(marks[0].mh.computed, false, "a set the sheet already averaged keeps the sheet value");
+  assert.equal(marks[0].mh.value, 51);
+  assert.deepEqual(coverage(marks, items.length), Array(items.length).fill(1));
+});
+
+test("provisional sets never span a test day or a sheet tab", () => {
+  const rows = [
+    ...bare(["1", "2"], "2026-10-05"),
+    ...bare(["3", "4"], "2026-10-06"),
+    ...bare(["5", "6"], "2026-10-06", { source_sheet: "B1802" }),
+  ];
+  const { items, groups } = seriesOfRows(rows);
+  const marks = chart.averageMarks(groups);
+  assert.deepEqual(marks.map((mark) => [mark.start, mark.count]), [[0, 2], [2, 2], [4, 2]]);
+  assert.deepEqual(coverage(marks, items.length), Array(6).fill(1));
+});
+
+test("a set with only some sheet values fills the missing series from its own readings", () => {
+  const rows = [0, 1, 2].map((index) => row({ sample_id: String(index + 1), test_time: `08:0${index}:00`, mh: 50 + index, mv: 30 + index, avg_mh: 51, sd_mh: 1, avg_mv: null, sd_mv: null }));
+  const { groups } = seriesOfRows(rows);
+  const [mark] = chart.averageMarks(groups);
+  assert.deepEqual(mark.mh, { value: 51, computed: false });
+  assert.deepEqual(mark.mv, { value: 31, computed: true });
+});
+
+test("a series with no readings in a set has no mark rather than a made-up value", () => {
+  const { items, groups } = seriesOfRows(bare(["1", "2", "3"], "2026-10-06", { mv: null }));
+  const [mark] = chart.averageMarks(groups);
+  assert.ok(mark.mh);
+  assert.equal(mark.mv, null);
+  const { html } = chart.trendChart({ mode: "sequence", items, groups, width: 600 });
+  assert.equal(count(html, /class="lab-avg lab-avg-mv/g), 0);
+  noBadNumbers(html);
+  assert.deepEqual(chart.averageMarks([]), []);
 });
 
 test("background bands alternate by test day and the newest day always keeps its date label", () => {

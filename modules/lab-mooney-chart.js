@@ -2,7 +2,7 @@
 //
 // หน้าวัสดุแสดง MH และ MV รวมในกราฟเดียว (พื้นดำ) แกนเวลาและแกนค่าเดียวกัน — หน่วยเดียวกันจึงใช้สเกลเดียว ไม่ใช่กราฟสองแกน
 // สีและรูปทรงต่างกัน (MH = วงกลมสีน้ำเงิน, MV = สี่เหลี่ยมขนมเปียกปูนสีส้ม) จึงแยกได้แม้ไม่เห็นสี; หัวกราฟเป็นทั้งคำอธิบายสัญลักษณ์และค่าเฉลี่ย/SD
-//   - โหมด "sequence": ทุกครั้งที่ทดสอบของวัสดุตามลำดับในชีต แถบพื้นหลังสลับ = วันที่ทดสอบ เส้นสั้น = ค่า AVG ของชุดตามชีต
+//   - โหมด "sequence": ทุกครั้งที่ทดสอบของวัสดุตามลำดับในชีต แถบพื้นหลังสลับ = วันที่ทดสอบ เส้นสั้น = ค่า AVG ของชุด (ทุกครั้งที่ทดสอบมีขีดเสมอ: ชุดที่ชีตยังไม่มี AVG ใช้ค่าเฉลี่ยของแถวในชุด วาดเป็นขีดประ)
 //   - โหมด "id": ติดตาม ID เดียวข้ามหลายครั้งที่ทดสอบ ลากเส้นต่อจุด เส้นประ = ค่าเฉลี่ย ติดป้ายค่าเฉพาะครั้งล่าสุด ค่าสูงสุดและต่ำสุด
 // สี/ตัวอักษร/เส้นกริดมาจาก CSS (ดู .lab-* ใน styles.css) กราฟใช้ชุดสีพื้นดำของตัวเองเสมอทั้งธีมสว่างและมืด
 // จุดทุกจุดมี data-i = ตำแหน่งในรายการที่ส่งเข้ามา ให้ module-lab.js ผูกการชี้/แตะ/คีย์บอร์ดโดยคำนวณจากตำแหน่งแกน X (indexAt)
@@ -16,6 +16,8 @@
   ]);
   const MIN_LABEL_GAP = 6;
   const DATE_LABEL_WIDTH = 34;
+  // ขนาดชุดเริ่มต้นเมื่อวัสดุยังไม่มีชุดที่ชีตมี AVG ให้อ้างอิงเลย (ห้องแล็บทดสอบชุดละ 3 ครั้ง)
+  const DEFAULT_SET_SIZE = 3;
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
@@ -66,6 +68,67 @@
     return halo + dot;
   }
 
+  // ขนาดชุดที่พบบ่อยที่สุดของชุดที่ชีตมี AVG/SD (เท่ากัน = ชุดใหญ่กว่า); ยังไม่มีชุดให้อ้างอิง = DEFAULT_SET_SIZE
+  function usualSetSize(groups) {
+    const tally = new Map();
+    for (const group of groups) if (group.hasStats) tally.set(group.count, (tally.get(group.count) ?? 0) + 1);
+    let size = DEFAULT_SET_SIZE;
+    let best = 0;
+    for (const [candidate, times] of tally) {
+      if (times > best || (times === best && candidate > size)) {
+        size = candidate;
+        best = times;
+      }
+    }
+    return size;
+  }
+
+  // ขีด AVG ของกราฟ: ทุกครั้งที่ทดสอบต้องมีขีดใต้จุดเสมอ (ไม่ว่าชีตจะกรอก AVG แล้วหรือไม่)
+  //   - ชุดที่ชีตมี AVG ใช้ค่าตามชีต (computed = false) ซีรีส์ไหนที่ชีตไม่มีค่า ใช้ค่าเฉลี่ยของแถวในชุดแทน
+  //   - แถวที่ชีตยังไม่มี AVG (เช่นเพิ่งเพิ่มสูตรใหม่) รวมเป็นชุดชั่วคราวขนาดเท่าชุดที่พบบ่อยของวัสดุนั้น แถวติดกัน แท็บและวันที่เดียวกัน
+  //     แล้วใช้ค่าเฉลี่ยของแถวในชุดนั้น (computed = true) เมื่อชีตมี AVG ในภายหลัง ขีดจากชีตจะเข้ามาแทนเอง
+  // คืน [{ start, count, mh: { value, computed } | null, mv: { value, computed } | null }] — start คือตำแหน่งแรกของชุดในรายการที่ส่งเข้ามา
+  function averageMarks(groups = []) {
+    const setSize = usualSetSize(groups);
+    const marks = [];
+    const build = (start, items, sheetValues) => {
+      const mark = { start, count: items.length };
+      for (const series of SERIES) {
+        const sheet = sheetValues?.[series.avgKey];
+        if (isNumber(sheet)) {
+          mark[series.key] = { value: sheet, computed: false };
+          continue;
+        }
+        const { mean } = model.describe(items.map((item) => item[series.key]));
+        mark[series.key] = isNumber(mean) ? { value: mean, computed: true } : null;
+      }
+      marks.push(mark);
+    };
+
+    let pending = null;
+    const flush = () => {
+      if (pending) build(pending.start, pending.items, null);
+      pending = null;
+    };
+    for (const group of groups) {
+      if (group.hasStats) {
+        flush();
+        build(group.start, group.items, group);
+        continue;
+      }
+      for (const item of group.items) {
+        const fits = pending && pending.items.length < setSize && pending.sheet === item.sheet && pending.date === item.testDate;
+        if (!fits) {
+          flush();
+          pending = { start: group.start + group.items.indexOf(item), items: [], sheet: item.sheet, date: item.testDate };
+        }
+        pending.items.push(item);
+      }
+    }
+    flush();
+    return marks;
+  }
+
   // กราฟแนวโน้ม MH + MV แผงเดียว คืน { html, count, xAt(i), indexAt(px) } — px คือตำแหน่งแนวนอนจากขอบซ้ายของ SVG
   function trendChart({ mode = "sequence", items = [], groups = [], width = 800, label = "" } = {}) {
     const layout = layoutFor(width);
@@ -88,6 +151,7 @@
 
     const radius = sequence ? clamp(slot * 0.33, 2.2, 4.5) : 5;
     const marks = sequence ? model.dateMarks(items) : null;
+    const averages = sequence ? averageMarks(groups) : [];
 
     // ป้ายวันที่ใต้แกน: โหมดลำดับ = ต้นของแต่ละวัน โหมด ID = วันที่ของแต่ละครั้ง (ข้ามวันที่ซ้ำติดกัน)
     const candidates = sequence
@@ -127,12 +191,12 @@
 
     for (const { series, values, stats } of entries) {
       if (sequence) {
-        for (const group of groups) {
-          const average = group.hasStats ? group[series.avgKey] : null;
-          if (!isNumber(average)) continue;
-          const x1 = Math.max(layout.left, xAt(group.start) - slot * 0.45);
-          const x2 = Math.min(layout.width - layout.right, xAt(group.start + group.count - 1) + slot * 0.45);
-          svg += `<line class="lab-avg lab-avg-${series.key}" x1="${n2(x1)}" x2="${n2(x2)}" y1="${n2(yOf(average))}" y2="${n2(yOf(average))}"/>`;
+        for (const mark of averages) {
+          const average = mark[series.key];
+          if (!average) continue;
+          const x1 = Math.max(layout.left, xAt(mark.start) - slot * 0.45);
+          const x2 = Math.min(layout.width - layout.right, xAt(mark.start + mark.count - 1) + slot * 0.45);
+          svg += `<line class="lab-avg lab-avg-${series.key}${average.computed ? " is-calc" : ""}" x1="${n2(x1)}" x2="${n2(x2)}" y1="${n2(yOf(average.value))}" y2="${n2(yOf(average.value))}"/>`;
         }
       } else {
         // เส้นต่อจุดขาดเมื่อมีครั้งที่ไม่มีค่า และเส้นประแสดงค่าเฉลี่ยของ ID นี้
@@ -214,7 +278,7 @@
       + `<polyline points="${points}"/><circle cx="${n2(x(list.length - 1))}" cy="${n2(y(lastValue))}" r="2.6"/></svg>`;
   }
 
-  const api = { SERIES, layoutFor, trendChart, sparkline };
+  const api = { SERIES, layoutFor, averageMarks, trendChart, sparkline };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_CHART = api;
 })(typeof window !== "undefined" ? window : globalThis);
