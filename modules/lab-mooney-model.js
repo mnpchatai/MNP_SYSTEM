@@ -46,14 +46,12 @@
     };
   }
 
-  // ฟีดจาก Apps Script: { ok, generated_at, rows, problem_count, problems, skipped } — แถวที่ไม่มีวัสดุหรือวันที่ถูกทิ้ง
+  // ฟีดจาก Apps Script: { ok, generated_at, rows, skipped, … } — แถวที่ไม่มีวัสดุหรือวันที่ถูกทิ้ง (แถวที่ชีตอ่านไม่ได้ Apps Script ไม่ส่งมาในรายการ rows)
   function normalizeFeed(body) {
     const strings = (value) => (Array.isArray(value) ? value.map(text) : []);
     return {
       generatedAt: body?.generated_at ?? null,
       rows: (Array.isArray(body?.rows) ? body.rows : []).map(normalizeRow).filter((row) => row.material && row.testDate),
-      problemCount: number(body?.problem_count) ?? 0,
-      problems: strings(body?.problems),
       skipped: strings(body?.skipped),
     };
   }

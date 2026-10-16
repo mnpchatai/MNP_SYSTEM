@@ -31,17 +31,6 @@
     </div>`;
   }
 
-  const warningBox = () => `<div class="lab-warning" id="lab-problems" hidden></div>`;
-
-  // กล่องเตือนแถวในชีตที่อ่านไม่ได้ (แถวเหล่านั้นไม่ถูกแสดง)
-  function problemsHtml(feed) {
-    if (!feed.problemCount) return "";
-    const extra = feed.problemCount - feed.problems.length;
-    return `<strong>พบ ${int(feed.problemCount)} แถวในชีตที่อ่านไม่ได้ (ไม่แสดงในหน้านี้ — แก้ในชีต)</strong>
-      <ul>${feed.problems.map((problem) => `<li>${esc(problem)}</li>`).join("")}</ul>
-      ${extra > 0 ? `<span class="small">และอีก ${int(extra)} แถว</span>` : ""}`;
-  }
-
   /* ---------- หน้ารวม: รายการวัสดุ ---------- */
 
   function overviewPage(seconds) {
@@ -51,7 +40,6 @@
         <h1 class="lab-title">ผลทดสอบ Mooney</h1>
         ${liveBar(seconds)}
       </div>
-      ${warningBox()}
       <section class="card flush lab-overview-card">
         <div class="lab-toolbar">
           <div class="lab-search"><label class="sr-only" for="lab-search">ค้นหาวัสดุ</label><input class="input" id="lab-search" type="search" enterkeyhint="search" autocomplete="off" maxlength="${model.MAX_MATERIAL_LENGTH}" placeholder="ค้นหาวัสดุ เช่น A1802"></div>
@@ -105,7 +93,6 @@
         <label class="lab-id" id="lab-id-field"><span class="sr-only">ID</span><select class="select" id="lab-id-select"><option value="">ทุก ID</option></select></label>
         ${liveBar(seconds)}
       </div>
-      ${warningBox()}
       <section class="card" id="lab-none" hidden><div class="empty">ไม่พบผลทดสอบของวัสดุ “${esc(material)}”</div></section>
       <div id="lab-body">
         <section class="card lab-chart-card" aria-label="กราฟ MH และ MV">
@@ -268,7 +255,7 @@
 
   const api = {
     ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS,
-    liveBar, problemsHtml, overviewPage, materialRows,
+    liveBar, overviewPage, materialRows,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
     resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey,
   };
