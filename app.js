@@ -230,9 +230,11 @@ function sandboxRouteAllowed(path, params) {
 // ซึ่งเป็นทางเข้าปกติของโมดูล (เช่น หน้า NCR) ผู้ใช้ปกติเข้าหน้าของโมดูลจากหน้าคำร้อง ไม่มีเมนูข้างแยก
 // รายการเมนูประกาศ subnav(active) เพื่อวางเมนูย่อยใต้ลิงก์ของตัวเองได้ (คืน HTML หรือสตริงว่างถ้าไม่แสดง)
 // เมนูย่อยต้องใช้ลิงก์ (<a href="#/…">) ที่อยู่ใน .nav-sub เพื่อให้ปิดลิ้นชักบนมือถือและโหลดหน้าใหม่ตามกติกาของ bindShell
+// โมดูลที่จำกัดสิทธิ์ (เช่น MNP LAB) ประกาศ navAllowed(employee) — ซ่อนเมนูเมื่อคืน false
+// การซ่อนเมนูเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล (RPC ของโมดูลปฏิเสธเองด้วย NOT_AUTHORIZED)
 function requestModuleNavLinks(active) {
   return Object.values(REQUEST_MODULES)
-    .filter((entry) => entry.enabled && sandboxSupports(entry))
+    .filter((entry) => entry.enabled && sandboxSupports(entry) && (entry.navAllowed?.(state.employee) ?? true))
     .flatMap((entry) => entry.nav ?? [])
     .filter((item) => !item.sandboxOnly || isSandboxMode())
     .map((item) => {
@@ -243,13 +245,14 @@ function requestModuleNavLinks(active) {
     .join("");
 }
 // หน้าของโมดูลแยกไฟล์ (#/ncr, #/ncr-dashboard) ที่เข้าผ่านหน้าคำร้อง ไฮไลต์เมนู "คำร้อง" นอกโหมดทดสอบ
+// โมดูลที่ประกาศ standalone: true (เช่น MNP LAB) ไม่ใช่โมดูลคำร้อง มีเมนูของตัวเอง จึงไฮไลต์เมนูของตัวเอง
 function activeNavFor(active) {
   if (isSandboxMode()) return active;
-  const isModulePage = Object.values(REQUEST_MODULES).some((entry) => entry.enabled && typeof entry.pages?.[active] === "function");
+  const isModulePage = Object.values(REQUEST_MODULES).some((entry) => entry.enabled && !entry.standalone && typeof entry.pages?.[active] === "function");
   return isModulePage ? "requests" : active;
 }
 function activeRequestModuleCodes() {
-  const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled).map((entry) => entry.code);
+  const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled && !entry.standalone).map((entry) => entry.code);
   return [...new Set([...REQUEST_MODULE_CODES, ...separateModuleCodes])];
 }
 const ALLOWED_ATTACHMENT_TYPES = new Set([
@@ -1218,16 +1221,29 @@ async function loadEmployee() {
     .maybeSingle();
   if (error) throw error;
   if (!data) throw Object.assign(new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน"), { code: "EMPLOYEE_NOT_LINKED" });
-  const { data: modulesData, error: modulesError } = await sb.rpc("app_my_approval_modules");
+  const [{ data: modulesData, error: modulesError }, labAccess] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess()]);
   if (modulesError) throw modulesError;
   state.employee = {
     ...data,
     role: relation(data.role),
     department: relation(data.department),
     approvalModules: new Set((modulesData ?? []).map((item) => item.code)),
+    labAccess,
   };
   await applySandboxOverlay();
   return state.employee;
+}
+
+// สิทธิ์เข้าโมดูล MNP LAB: ฐานข้อมูลเป็นผู้ตัดสิน (app_lab_access → private.can_access_lab) หน้าเว็บใช้แค่เลือกว่าจะแสดงเมนูหรือไม่
+// ไม่ทำให้การล็อกอินล้มเมื่อเรียกไม่ได้ (เช่น ฐานข้อมูลยังไม่ได้ apply migration ของ MNP LAB) — ถือว่าไม่มีสิทธิ์ เมนูก็ไม่โผล่
+// ค่านี้อยู่ใน state.employee จึงหายไปเองเมื่อสลับเป็นบัญชีทดสอบ (persona) ในโหมดทดสอบ
+async function loadLabAccess() {
+  const { data, error } = await sb.rpc("app_lab_access");
+  if (error) {
+    console.warn("lab access unavailable", error);
+    return false;
+  }
+  return data === true;
 }
 
 // โหมดทดสอบของ admin: ฐานข้อมูลให้ NCR ทำงานตามบัญชีทดสอบ (persona) ที่ admin เลือก

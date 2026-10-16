@@ -1835,3 +1835,26 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .ss-input { font-size: 16px !important; }
   .ss-option { min-height: 44px; font-size: 15px; }
 }
+
+/* MNP LAB (modules/module-lab.js) — ผลทดสอบ Mooney ใช้ <select> ของเบราว์เซอร์ (แตะบน iPhone ได้ ไม่ใช่ popup ลอย จึงไม่ต้องมีโค้ดปิดตอนแตะนอกกรอบ) */
+.lab-page { max-width: 1100px; }
+.lab-back { min-height: 36px; margin-bottom: 10px; display: inline-flex; align-items: center; color: var(--primary); font-size: 13px; font-weight: 600; }
+.lab-stats { margin-bottom: 20px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.lab-stat { padding: 16px 18px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
+.lab-stat span, .lab-stat small { display: block; }
+.lab-stat span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.lab-stat strong { margin: 8px 0 4px; display: block; font-size: 26px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.lab-stat small { color: var(--quiet); font-size: 11px; }
+.lab-toolbar { padding: 12px 17px; display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--soft-line); }
+.lab-search { max-width: 420px; flex: 1 1 240px; }
+.lab-sort { flex: 0 1 200px; }
+.lab-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lab-table tbody th { padding: 13px; color: var(--ink); border-bottom: 1px solid var(--soft-line); font-size: 13px; font-weight: 700; text-align: left; white-space: nowrap; }
+.lab-table tbody tr:last-child th { border-bottom: 0; }
+.lab-table td.stat { color: var(--muted); }
+.lab-material a { color: var(--primary); }
+.lab-material a:hover { text-decoration: underline; }
+@media (max-width: 640px) {
+  .lab-stats { grid-template-columns: 1fr; }
+  .lab-search, .lab-sort { max-width: none; flex-basis: 100%; }
+}
