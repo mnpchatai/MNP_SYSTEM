@@ -21,3 +21,8 @@ additional_redirect_urls = ["http://localhost:3000/auth/callback"]
 enabled = true
 file_size_limit = "20MiB"
 
+
+# Apps Script ของชีต Mooney ยิงมาจากเซิร์ฟเวอร์ Google ไม่มี JWT ของผู้ใช้ — ฟังก์ชันตรวจ secret
+# ใน header x-lab-sync-secret เอง (ดู supabase/functions/lab-sheet-sync/index.ts)
+[functions.lab-sheet-sync]
+verify_jwt = false
