@@ -105,6 +105,14 @@
     return [...materials].sort(SORTERS[key] ?? SORTERS.recent);
   }
 
+  // รายการวัสดุที่เด้งใต้ช่องค้นหา: ตรงคำค้นเหมือนตาราง แต่ชื่อที่ขึ้นต้นด้วยคำค้นมาก่อน แล้วเรียงตามชื่อ
+  // (ใช้หาชื่อที่รู้อยู่แล้ว จึงไม่เรียงตามผลล่าสุดแบบตาราง) ไม่แก้ array ที่ส่งเข้ามา
+  function suggestMaterials(materials, query) {
+    const needle = String(query ?? "").trim().toLowerCase();
+    const rank = (item) => (needle && item.material.toLowerCase().startsWith(needle) ? 0 : 1);
+    return [...filterMaterials(materials, needle)].sort((a, b) => rank(a) - rank(b) || byName(a, b));
+  }
+
   const EMPTY = "—";
 
   // YYYY-MM-DD → DD/MM/YYYY (ค.ศ. เหมือนที่เห็นในสเปรดชีตต้นทาง) รูปแบบอื่นคืนเป็น —
@@ -375,7 +383,7 @@
   const api = {
     MAX_MATERIAL_LENGTH, SORT_OPTIONS,
     readMaterial, materialUrl, normalizeFeed, buildOverview, resultsFor,
-    filterMaterials, sortMaterials,
+    filterMaterials, sortMaterials, suggestMaterials,
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
     buildSeries, describe, niceScale, dateMarks, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate,

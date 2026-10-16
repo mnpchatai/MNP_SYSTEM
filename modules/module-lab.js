@@ -13,7 +13,7 @@
 // ไฟล์นี้ดูแลเฉพาะการเชื่อมต่อ: อ่านฟีด สิทธิ์ รีเฟรชอัตโนมัติ และผูกเหตุการณ์ของหน้า ส่วนข้อมูลล้วนอยู่ที่ lab-mooney-model.js
 // กราฟ SVG ที่ lab-mooney-chart.js และ HTML ของหน้า/ตารางที่ lab-mooney-views.js (โหลดก่อนไฟล์นี้ ดู index.html)
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell,
-// renderNotFound) เฉพาะตอนเปิดหน้า ไม่เรียกตอนโหลดไฟล์
+// renderNotFound, closePopup) เฉพาะตอนเปิดหน้า/ตอนผู้ใช้กด ไม่เรียกตอนโหลดไฟล์
 (function registerLabModule() {
   const model = window.MNP_LAB_MOONEY;
   const views = window.MNP_LAB_VIEWS;
@@ -172,7 +172,115 @@
       // จำนวนวัสดุเห็นได้จากรายการอยู่แล้ว บอกเฉพาะตอนค้นหาว่าเหลือกี่จากกี่
       count.textContent = query ? `${shown.length} จาก ${materials.length}` : "";
     };
-    search.addEventListener("input", paint);
+    // ช่องค้นหา = combobox: รายการวัสดุที่ตรงเด้งใต้ช่อง (listbox) เลือกแล้วเข้าหน้าวัสดุ ส่วนตารางยังกรองตามคำค้นเหมือนเดิม
+    // รายการเป็น popup ตามกติกา AGENTS.md: อยู่กรอบเดียวกับช่อง (.lab-search) ปิดด้วยกฎกลาง closePopup ของ app.js เท่านั้น
+    // (แตะ/ย้าย focus ออกนอกกรอบ, Escape, เลือกรายการ) ห้ามปิดจาก blur เพราะ iPhone ไม่ย้าย focus ไปที่ปุ่มที่ถูกแตะ
+    // isOpen ตามสถานะจริงของรายการ โดยฟัง "popup-close" ที่ closePopup ส่งมาทุกครั้งที่ปิด
+    const suggest = document.querySelector("#lab-search-list");
+    let choices = [];
+    let shown = "";
+    let active = -1;
+    let isOpen = false;
+
+    const placeSuggest = () => {
+      if (!search.isConnected) return stopTracking();
+      window.MNP_SEARCHABLE_SELECT?.placeList?.(search, suggest);
+    };
+    const startTracking = () => {
+      window.addEventListener("scroll", placeSuggest, true);
+      window.addEventListener("resize", placeSuggest);
+      window.visualViewport?.addEventListener("resize", placeSuggest);
+    };
+    function stopTracking() {
+      window.removeEventListener("scroll", placeSuggest, true);
+      window.removeEventListener("resize", placeSuggest);
+      window.visualViewport?.removeEventListener("resize", placeSuggest);
+    }
+
+    function setActive(position, scroll = true) {
+      active = position;
+      suggest.querySelectorAll(".ss-option").forEach((node) => {
+        const on = Number(node.dataset.pos) === position;
+        node.classList.toggle("is-active", on);
+        node.setAttribute("aria-selected", String(on));
+      });
+      const node = suggest.querySelector(`.ss-option[data-pos="${position}"]`);
+      if (!node) return search.removeAttribute("aria-activedescendant");
+      search.setAttribute("aria-activedescendant", node.id);
+      if (scroll) node.scrollIntoView({ block: "nearest" });
+    }
+
+    // วาดรายการตามคำค้นตอนนี้ (เปิดถ้ายังปิดอยู่) ไม่มีวัสดุที่ตรง = ปิดรายการ เพราะตารางและตัวนับบอกอยู่แล้วว่าไม่พบ
+    // พิมพ์แล้วไฮไลต์ตัวแรกที่ตรง (กด Enter เข้าได้ทันที) ยังไม่พิมพ์ = ไม่ไฮไลต์ · keepActive = รีเฟรชข้อมูลกลางทาง คงตัวที่ไฮไลต์ไว้และไม่วาดซ้ำถ้ารายการเดิม
+    function showSuggestions({ keepActive = false } = {}) {
+      const previous = isOpen && keepActive ? choices[active]?.material : undefined;
+      choices = model.suggestMaterials(materials, search.value);
+      if (!choices.length) {
+        if (isOpen) closePopup(suggest);
+        return;
+      }
+      const first = search.value.trim() ? 0 : -1;
+      const signature = choices.map((item) => item.material).join("\n");
+      if (isOpen && signature === shown) {
+        if (!keepActive) setActive(first);
+        return;
+      }
+      shown = signature;
+      suggest.innerHTML = views.materialSuggestions(choices);
+      if (!isOpen) {
+        isOpen = true;
+        suggest.hidden = false;
+        search.setAttribute("aria-expanded", "true");
+        startTracking();
+      }
+      placeSuggest();
+      const kept = previous === undefined ? -1 : choices.findIndex((item) => item.material === previous);
+      setActive(kept >= 0 ? kept : first);
+    }
+
+    function openMaterial(position) {
+      const item = choices[position];
+      if (!item) return;
+      closePopup(suggest);
+      location.hash = model.materialUrl(item.material);
+    }
+
+    suggest.addEventListener("popup-close", () => {
+      isOpen = false;
+      shown = "";
+      active = -1;
+      stopTracking();
+    });
+    // กดค้างบนรายการไม่ให้ช่องค้นหาเสีย focus (คีย์บอร์ดมือถือไม่หุบแล้วเด้งกลับตอนเลือก)
+    suggest.addEventListener("mousedown", (event) => event.preventDefault());
+    suggest.addEventListener("click", (event) => {
+      const node = event.target.closest(".ss-option");
+      if (node) openMaterial(Number(node.dataset.pos));
+    });
+    suggest.addEventListener("mousemove", (event) => {
+      const node = event.target.closest(".ss-option");
+      if (node && Number(node.dataset.pos) !== active) setActive(Number(node.dataset.pos), false);
+    });
+    search.addEventListener("click", () => showSuggestions());
+    search.addEventListener("input", () => {
+      paint();
+      showSuggestions();
+    });
+    search.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && isOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        closePopup(suggest);
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (!isOpen) return showSuggestions();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        setActive(active < 0 ? (step > 0 ? 0 : choices.length - 1) : (active + step + choices.length) % choices.length);
+      } else if (event.key === "Enter" && isOpen && active >= 0) {
+        event.preventDefault();
+        openMaterial(active);
+      }
+    });
     sort.addEventListener("change", paint);
     // กดที่ไหนในแถวก็เข้าหน้าวัสดุได้ (ลิงก์ชื่อวัสดุยังเป็นลิงก์จริงสำหรับคีย์บอร์ดและเปิดแท็บใหม่)
     body.addEventListener("click", (event) => {
@@ -187,6 +295,7 @@
         materials = feed.materials;
         bar.paintMeta(feed);
         paint();
+        if (isOpen) showSuggestions({ keepActive: true });
       },
     };
   }

@@ -67,6 +67,24 @@
   const visibleLength = (text) => text.replace(/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/g, "").length;
   const skip = (select) => select.multiple || select.size > 1 || select.hasAttribute("data-native-select") || select.dataset.ssDone === "1";
 
+  // วางรายการ (position: fixed) ใต้ช่อง หรือเหนือช่องเมื่อที่ว่างด้านล่างไม่พอ กว้างอย่างน้อยเท่าช่อง สูงไม่เกินที่ว่างบนจอ
+  // (หักคีย์บอร์ดมือถือด้วย visualViewport) — ใช้ร่วมกับ combobox อื่นที่ใช้ class .ss-list เช่น ช่องค้นหาวัสดุของ MNP LAB
+  // ผู้เรียกต้องเรียกซ้ำเมื่อเลื่อนหน้า/ปรับขนาดจอขณะรายการเปิดอยู่
+  function placeList(anchor, list) {
+    const rect = anchor.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const height = viewport ? viewport.height + viewport.offsetTop : window.innerHeight;
+    const below = height - rect.bottom - 8;
+    const above = rect.top - 8;
+    const openUp = below < 200 && above > below;
+    const room = Math.max(120, Math.min(320, openUp ? above : below));
+    list.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - Math.max(rect.width, 220) - 8))}px`;
+    list.style.width = `${Math.max(rect.width, 220)}px`;
+    list.style.maxHeight = `${room}px`;
+    list.style.top = openUp ? "" : `${rect.bottom + 4}px`;
+    list.style.bottom = openUp ? `${height - rect.top + 4}px` : "";
+  }
+
   function labelText(select) {
     const own = select.getAttribute("aria-label") || select.title;
     if (own) return own;
@@ -129,18 +147,7 @@
 
     function place() {
       if (!input.isConnected) return stopTracking();
-      const rect = input.getBoundingClientRect();
-      const viewport = window.visualViewport;
-      const height = viewport ? viewport.height + viewport.offsetTop : window.innerHeight;
-      const below = height - rect.bottom - 8;
-      const above = rect.top - 8;
-      const openUp = below < 200 && above > below;
-      const room = Math.max(120, Math.min(320, openUp ? above : below));
-      list.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - Math.max(rect.width, 220) - 8))}px`;
-      list.style.width = `${Math.max(rect.width, 220)}px`;
-      list.style.maxHeight = `${room}px`;
-      list.style.top = openUp ? "" : `${rect.bottom + 4}px`;
-      list.style.bottom = openUp ? `${height - rect.top + 4}px` : "";
+      placeList(input, list);
     }
     const startTracking = () => {
       window.addEventListener("scroll", place, true);
@@ -277,6 +284,7 @@
     scope?.querySelectorAll?.("select").forEach(enhance);
   }
 
+  root.MNP_SEARCHABLE_SELECT.placeList = placeList;
   root.MNP_SEARCHABLE_SELECT.enhance = enhance;
   root.MNP_SEARCHABLE_SELECT.enhanceAll = enhanceAll;
   // ทุกหน้าที่วาดใหม่ (app.innerHTML) และแถวที่เพิ่มทีหลัง (เช่น บรรทัดส่วนประกอบของ BOM) ถูกเสริมเองเมื่อเข้ามาใน DOM

@@ -166,6 +166,36 @@ test("overview rows are safe against hostile names and say so when only a single
   assert.equal(views.materialRows([]), "");
 });
 
+test("the overview search is a combobox whose listbox popup sits in the same box as the field, closed at first", () => {
+  const page = views.overviewPage(30);
+  const box = page.match(/<div class="lab-search">[\s\S]*?<\/div><\/div>/)?.[0] ?? "";
+  const input = box.match(/<input[^>]*id="lab-search"[^>]*>/)?.[0] ?? "";
+  assert.match(input, /role="combobox"/);
+  assert.match(input, /aria-autocomplete="list"/);
+  assert.match(input, /aria-controls="lab-search-list"/);
+  assert.match(input, /aria-expanded="false"/);
+  // AGENTS.md: popup อยู่กรอบเดียวกับช่อง (parent เดียวกัน) มี data-popup และเริ่มต้นปิด เพื่อให้กฎกลาง closePopup ของ app.js ดูแลการปิด
+  assert.match(box, /<div class="ss-list" id="lab-search-list" role="listbox"[^>]*data-popup hidden><\/div>/);
+  assert.equal(count(page, /id="lab-search-list"/g), 1);
+});
+
+test("search suggestions are one option per material, addressed by position, and safe against hostile names", () => {
+  const html = views.materialSuggestions([{ material: "A1802" }, { material: XSS }]);
+  assert.equal(count(html, /role="option"/g), 2);
+  assert.match(html, /data-pos="0"[^>]*>A1802<\/button>/);
+  assert.match(html, /data-pos="1"/);
+  assert.doesNotMatch(html, /<img/);
+  assert.doesNotMatch(html, /data-material|href=/, "the page script picks the material from its own list, not from the DOM");
+  assert.equal(count(html, /id="lab-search-o\d+"/g), 2, "every option has the id aria-activedescendant points to");
+  assert.equal(views.materialSuggestions([]), "", "no match = no popup: the table and the counter already say nothing was found");
+});
+
+test("the LAB page script never closes a popup from blur or focusout (AGENTS.md: iPhone does not focus a tapped button)", () => {
+  const source = readFileSync(new URL("../../modules/module-lab.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /["']blur["']|focusout|onblur/i);
+  assert.match(source, /closePopup\(suggest\)/, "closing goes through the shared rule");
+});
+
 /* ---------- ตารางผล ---------- */
 
 test("the results table merges AVG/SD once per group and starts at the newest test", () => {

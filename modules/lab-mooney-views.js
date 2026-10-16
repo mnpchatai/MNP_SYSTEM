@@ -42,7 +42,8 @@
       </div>
       <section class="card flush lab-overview-card">
         <div class="lab-toolbar">
-          <div class="lab-search"><label class="sr-only" for="lab-search">ค้นหาวัสดุ</label><input class="input" id="lab-search" type="search" enterkeyhint="search" autocomplete="off" maxlength="${model.MAX_MATERIAL_LENGTH}" placeholder="ค้นหาวัสดุ เช่น A1802"></div>
+          <div class="lab-search"><label class="sr-only" for="lab-search">ค้นหาวัสดุ</label><input class="input" id="lab-search" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="lab-search-list" enterkeyhint="go" autocomplete="off" maxlength="${model.MAX_MATERIAL_LENGTH}" placeholder="ค้นหาวัสดุ เช่น A1802">
+            <div class="ss-list" id="lab-search-list" role="listbox" aria-label="วัสดุที่ตรงกับคำค้น" data-popup hidden></div></div>
           <div class="lab-sort"><label class="sr-only" for="lab-sort">เรียงตาม</label><select class="select" id="lab-sort">${sortOptions}</select></div>
           <span class="muted small lab-count" id="lab-count" aria-live="polite"></span>
           <span class="lab-howto">MH / MV = ค่าเฉลี่ยชุดล่าสุด ± SD · Δ = เทียบชุดก่อนหน้า · เส้น = แนวโน้มรายชุด</span>
@@ -53,6 +54,13 @@
         <div class="empty" id="lab-empty" hidden></div>
       </section>
     </div>`;
+  }
+
+  // รายการที่เด้งใต้ช่องค้นหา (listbox): ชื่อวัสดุอย่างเดียว เพราะจำนวนผลและวันที่อยู่ในตารางแล้ว
+  // ไม่มีข้อความ "ไม่พบ" ในรายการ — ตารางและตัวนับ "n จาก m" บอกอยู่แล้ว รายการจึงปิดเองเมื่อไม่มีที่ตรง
+  // ตัวเลือกอ้างด้วยลำดับ (data-pos) ให้โค้ดหน้าหยิบวัสดุจากรายการของตัวเอง ไม่อ่านชื่อกลับจาก DOM
+  function materialSuggestions(materials) {
+    return materials.map((item, position) => `<button type="button" tabindex="-1" class="ss-option" id="lab-search-o${position}" role="option" data-pos="${position}" aria-selected="false">${esc(item.material)}</button>`).join("");
   }
 
   function metricCell(label, key, measure, trend) {
@@ -255,7 +263,7 @@
 
   const api = {
     ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS,
-    liveBar, overviewPage, materialRows,
+    liveBar, overviewPage, materialRows, materialSuggestions,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
     resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey,
   };
