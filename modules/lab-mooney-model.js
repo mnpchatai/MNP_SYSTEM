@@ -29,6 +29,8 @@
     return {
       // ไม่มีรหัสแถวในชีต: ใช้กุญแจเดียวกับที่ระบุแถวในชีต (แท็บ + ID + วันที่ + เวลา)
       id: [row?.source_sheet, row?.sample_id, row?.test_date, row?.test_time].map(text).join("|"),
+      // แท็บในชีต: ชุดทดสอบ (แถวที่ merge AVG/SD ร่วมกัน) ไม่ข้ามแท็บ
+      sheet: text(row?.source_sheet),
       material: text(row?.material).trim(),
       sampleId: text(row?.sample_id),
       testDate: row?.test_date ?? null,
@@ -155,11 +157,255 @@
     return Number.isNaN(date.getTime()) ? EMPTY : updatedFormat.format(date).replace(", ", " ");
   }
 
+  /* ---------- ลำดับการทดสอบ ชุดทดสอบ และสถิติ (ใช้วาดกราฟและตารางของหน้าวัสดุ) ---------- */
+
+  const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
+  const statsOf = (row) => [row.avgMh, row.sdMh, row.avgMv, row.sdMv];
+  const hasStats = (row) => statsOf(row).some((value) => value !== null);
+
+  // ชุดทดสอบ = แถวที่ติดกันในแท็บเดียวกันที่ชีต merge AVG/SD เป็นเซลล์เดียว (Apps Script ขยายค่านั้นไปทุกแถวของชุดก่อนส่ง)
+  // ฟีดไม่มีรหัสชุด จึงถือว่าแถวติดกันที่มีค่า AVG/SD ครบชุดเดียวกันทุกตัวคือชุดเดียวกัน ส่วนแถวที่ไม่มี AVG/SD เลยเป็นชุดละหนึ่งแถว
+  function groupItems(items) {
+    const groups = [];
+    for (const item of items) {
+      const last = groups[groups.length - 1];
+      const key = statsOf(item).join("|");
+      if (last && last.hasStats && hasStats(item) && last.sheet === item.sheet && last.key === key) {
+        last.items.push(item);
+        item.groupIndex = last.index;
+        continue;
+      }
+      item.groupIndex = groups.length;
+      groups.push({ index: groups.length, sheet: item.sheet, key, hasStats: hasStats(item), items: [item] });
+    }
+    return groups.map((group) => {
+      const [first] = group.items;
+      const dates = group.items.map((item) => item.testDate).sort();
+      return {
+        index: group.index,
+        sheet: group.sheet,
+        hasStats: group.hasStats,
+        items: group.items,
+        count: group.items.length,
+        start: first.seq - 1,
+        // ค่าตามชีต ไม่คำนวณใหม่
+        avgMh: first.avgMh,
+        sdMh: first.sdMh,
+        avgMv: first.avgMv,
+        sdMv: first.sdMv,
+        firstDate: dates[0],
+        lastDate: dates[dates.length - 1],
+      };
+    });
+  }
+
+  function seriesOf(rows, material) {
+    const items = rows.map((row, index) => ({ ...row, seq: index + 1, groupIndex: 0 }));
+    return { material, items, groups: groupItems(items) };
+  }
+
+  // ผลทดสอบของวัสดุหนึ่งรายการ "ตามลำดับในชีต" (ลำดับการทดสอบ เก่า → ใหม่) พร้อมลำดับที่ (seq เริ่ม 1) และชุดทดสอบ
+  // ต่างจาก resultsFor ตรงที่ไม่เรียงใหม่ตามวันที่ เพราะแถวของชุดเดียวกันต้องอยู่ติดกัน และชีตคือบันทึกลำดับจริงของห้องแล็บ
+  function buildSeries(rows, material) {
+    const name = readMaterial(material);
+    return seriesOf(name ? rows.filter((row) => row.material === name) : [], name);
+  }
+
+  // สถิติของค่าที่เป็นตัวเลข: SD ใช้ n−1 เหมือน STDEV ใน Excel (มีค่าน้อยกว่า 2 ตัว = null)
+  function describe(values) {
+    let count = 0;
+    let sum = 0;
+    let min = null;
+    let max = null;
+    for (const value of values) {
+      if (!isNumber(value)) continue;
+      count += 1;
+      sum += value;
+      if (min === null || value < min) min = value;
+      if (max === null || value > max) max = value;
+    }
+    if (!count) return { count: 0, mean: null, sd: null, min: null, max: null };
+    const mean = sum / count;
+    let squares = 0;
+    for (const value of values) if (isNumber(value)) squares += (value - mean) ** 2;
+    return { count, mean, sd: count > 1 ? Math.sqrt(squares / (count - 1)) : null, min, max };
+  }
+
+  // แกนตัวเลขที่ลงตัว (ขั้น 1/2/5 × 10^n) ครอบช่วง min–max; ช่วงที่เป็นจุดเดียวถูกขยายออกเล็กน้อยให้วาดได้
+  function niceScale(min, max, tickCount = 4) {
+    let low = isNumber(min) ? min : 0;
+    let high = isNumber(max) ? max : low + 1;
+    if (high < low) [low, high] = [high, low];
+    if (high === low) {
+      const pad = Math.abs(low) * 0.05 || 1;
+      low -= pad;
+      high += pad;
+    }
+    const rough = (high - low) / Math.max(1, tickCount);
+    const magnitude = 10 ** Math.floor(Math.log10(rough));
+    const residual = rough / magnitude;
+    const step = (residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10) * magnitude;
+    const start = Math.floor(low / step + 1e-9);
+    const end = Math.ceil(high / step - 1e-9);
+    const clean = (value) => Number(value.toPrecision(12));
+    const ticks = [];
+    for (let index = start; index <= end; index += 1) ticks.push(clean(index * step));
+    return { min: ticks[0], max: ticks[ticks.length - 1], step: clean(step), ticks };
+  }
+
+  // ตำแหน่งที่วันที่เปลี่ยนจากแถวก่อนหน้า (แถวแรกของแต่ละวัน) ใช้ขีดคั่นวันบนแกนเวลา
+  function dateMarks(items) {
+    const marks = [];
+    let previous = null;
+    items.forEach((item, index) => {
+      if (item.testDate !== previous) marks.push({ index, date: item.testDate });
+      previous = item.testDate;
+    });
+    return marks;
+  }
+
+  // ID ที่มีในรายการ (เรียงแบบเลขก่อน) พร้อมจำนวนครั้งที่ทดสอบ
+  function idsFor(items) {
+    const counts = new Map();
+    for (const item of items) counts.set(item.sampleId, (counts.get(item.sampleId) ?? 0) + 1);
+    return [...counts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], "en", { numeric: true }))
+      .map(([id, count]) => ({ id, count }));
+  }
+
+  const difference = (value, previous) => (isNumber(value) && isNumber(previous) ? Number((value - previous).toFixed(6)) : null);
+
+  // ผลทดสอบของ ID เดียวตามลำดับในชีต พร้อมผลต่างจากครั้งก่อนหน้าของ ID เดียวกัน
+  function idSeries(items, id) {
+    const list = items.filter((item) => item.sampleId === id);
+    return list.map((item, index) => ({
+      ...item,
+      order: index + 1,
+      deltaMh: difference(item.mh, list[index - 1]?.mh),
+      deltaMv: difference(item.mv, list[index - 1]?.mv),
+    }));
+  }
+
+  const lastWithValue = (groups, before, key) => {
+    for (let index = before - 1; index >= 0; index -= 1) if (groups[index].hasStats && isNumber(groups[index][key])) return groups[index];
+    return null;
+  };
+
+  // ผลล่าสุดของวัสดุ: ชุดสุดท้ายในชีต (ค่า AVG ± SD ตามชีต) พร้อมผลต่างจากชุดก่อนหน้า
+  // ถ้าชุดสุดท้ายยังไม่มี AVG (เพิ่งกรอก) ใช้ค่าอ่านของแถวสุดท้ายแทน และบอกว่า basis = "reading" ให้หน้าจอระบุว่าเป็นค่าเดี่ยว
+  function latestOf(series) {
+    const item = series.items[series.items.length - 1];
+    if (!item) return null;
+    const group = series.groups[item.groupIndex];
+    const measure = (groupKey, sdKey, readingKey) => {
+      if (group.hasStats && isNumber(group[groupKey])) {
+        const previous = lastWithValue(series.groups, group.index, groupKey);
+        return { basis: "group", value: group[groupKey], sd: group[sdKey], delta: previous ? difference(group[groupKey], previous[groupKey]) : null };
+      }
+      const previous = series.items[series.items.length - 2];
+      return { basis: "reading", value: item[readingKey], sd: null, delta: previous ? difference(item[readingKey], previous[readingKey]) : null };
+    };
+    return { item, group, mh: measure("avgMh", "sdMh", "mh"), mv: measure("avgMv", "sdMv", "mv") };
+  }
+
+  // แนวโน้มค่าเฉลี่ยรายชุด (เก่า → ใหม่) ล่าสุด limit ชุด; วัสดุที่ไม่มี AVG เลยใช้ค่าอ่านรายแถวแทน
+  function trendOf(series, key, limit = 14) {
+    const groupKey = key === "mh" ? "avgMh" : "avgMv";
+    const averages = series.groups.filter((group) => group.hasStats && isNumber(group[groupKey])).map((group) => group[groupKey]);
+    const values = averages.length ? averages : series.items.map((item) => item[key]).filter(isNumber);
+    return values.slice(-limit);
+  }
+
+  // สรุปรายวัสดุสำหรับหน้ารวม: ข้อมูลเดิมของ buildOverview + ผลล่าสุด + แนวโน้ม + จำนวนชุด
+  function buildMaterialSummaries(rows) {
+    const byMaterial = new Map();
+    for (const row of rows) {
+      const list = byMaterial.get(row.material);
+      if (list) list.push(row);
+      else byMaterial.set(row.material, [row]);
+    }
+    return buildOverview(rows).map((entry) => {
+      const series = seriesOf(byMaterial.get(entry.material) ?? [], entry.material);
+      return { ...entry, groupCount: series.groups.length, latest: latestOf(series), trendMh: trendOf(series, "mh"), trendMv: trendOf(series, "mv") };
+    });
+  }
+
+  const distinct = (values) => [...new Set(values.filter(isNumber))].sort((a, b) => a - b);
+
+  // เงื่อนไขทดสอบที่ใช้จริง: ถ้าทุกแถวใช้อุณหภูมิและเวลาเดียวกัน หน้าจอแสดงครั้งเดียวแทนคอลัมน์ซ้ำทุกแถว
+  function testConditions(items) {
+    const temperatures = distinct(items.map((item) => item.temperature));
+    const minutes = distinct(items.map((item) => item.testMinutes));
+    return { temperatures, minutes, uniform: temperatures.length <= 1 && minutes.length <= 1 };
+  }
+
+  // ลายนิ้วมือของข้อมูลที่แสดง ใช้ข้ามการวาดใหม่เมื่อรีเฟรชแล้วชีตไม่เปลี่ยน (FNV-1a 32 บิต พอสำหรับเทียบรอบต่อรอบ)
+  function feedSignature(rows) {
+    let hash = 0x811c9dc5;
+    const feed = (value) => {
+      const part = String(value ?? "");
+      for (let index = 0; index < part.length; index += 1) {
+        hash ^= part.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+      }
+      hash ^= 0x1f;
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    };
+    for (const row of rows) [row.id, row.material, row.mh, row.mv, row.temperature, row.testMinutes, ...statsOf(row)].forEach(feed);
+    return `${rows.length}:${hash.toString(16)}`;
+  }
+
+  // ตารางข้อความคั่นด้วยแท็บ (วางลง Excel ได้) — ช่องที่มีแท็บหรือขึ้นบรรทัดใหม่ถูกแทนด้วยช่องว่าง
+  function toTsv(rows) {
+    return rows.map((cells) => cells.map((cell) => String(cell ?? "").replace(/[\t\r\n]+/g, " ")).join("\t")).join("\n");
+  }
+
+  const MINUS = "−";
+
+  // ผลต่างมีเครื่องหมาย +/− (ติดศูนย์ = 0.00 ไม่ใส่เครื่องหมาย) ไม่มีค่า = —
+  function formatSigned(value) {
+    if (!isNumber(value)) return EMPTY;
+    const fixed = Math.abs(value).toFixed(2);
+    if (Number(fixed) === 0) return "0.00";
+    return `${value < 0 ? MINUS : "+"}${fixed}`;
+  }
+
+  // YYYY-MM-DD → DD/MM (ป้ายบนแกนกราฟ) รูปแบบอื่นคืนเป็น —
+  function formatShortDate(value) {
+    const match = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
+    return match ? `${match[2]}/${match[1]}` : EMPTY;
+  }
+
+  const todayFormat = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" });
+
+  // วันนี้ตามเวลาไทย เป็น YYYY-MM-DD
+  function todayInBangkok(now = new Date()) {
+    return todayFormat.format(now);
+  }
+
+  const dayNumber = (value) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
+    return match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86400000 : null;
+  };
+
+  // อายุของวันที่ทดสอบเทียบกับวันนี้ เช่น "วันนี้" "เมื่อวาน" "3 วันก่อน" วันที่ในอนาคตหรืออ่านไม่ได้ = ว่าง (ไม่เดา)
+  function formatAge(date, today) {
+    const from = dayNumber(date);
+    const to = dayNumber(today);
+    if (from === null || to === null || from > to) return "";
+    const days = to - from;
+    if (days === 0) return "วันนี้";
+    if (days === 1) return "เมื่อวาน";
+    return days <= 60 ? `${days} วันก่อน` : `${Math.floor(days / 30)} เดือนก่อน`;
+  }
+
   const api = {
     MAX_MATERIAL_LENGTH, SORT_OPTIONS,
     readMaterial, materialUrl, normalizeFeed, buildOverview, resultsFor,
     filterMaterials, sortMaterials, summarize,
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt,
+    buildSeries, describe, niceScale, dateMarks, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
+    testConditions, feedSignature, toTsv, formatSigned, formatShortDate, todayInBangkok, formatAge,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_MOONEY = api;
