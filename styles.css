@@ -1932,6 +1932,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-band { fill: var(--lab-band); }
 .lab-cross { stroke: var(--muted); stroke-width: 1; pointer-events: none; }
 .lab-avg { stroke-width: 2; stroke-linecap: round; }
+.lab-avg.is-calc { stroke-dasharray: 4 3; stroke-linecap: butt; }
 .lab-avg-mh, .lab-line-mh, .lab-mean-mh { stroke: var(--lab-mh); }
 .lab-avg-mv, .lab-line-mv, .lab-mean-mv { stroke: var(--lab-mv); }
 .lab-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
