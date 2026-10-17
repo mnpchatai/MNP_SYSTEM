@@ -64,12 +64,14 @@ test("a real NCR shows the four part cards with the quantity summary", async () 
   assert.match(html, /%NG จากการสุ่ม/);
 });
 
-test("the card layout does not depend on test mode or on the report's mode", async () => {
+test("the detail page markup is identical in test mode and real mode, for real and test reports", async () => {
+  const base = await renderFor(employee("emp-fm", "dept-ft", "FT", "factory_manager", false), { is_test: false });
+  for (const part of [1, 2, 3, 4]) assert.match(base, new RegExp(`ncr-detail-part--${part}`), `part ${part} card`);
+  assert.match(base, /ncr-quantity-summary/, "quantity summary");
   for (const isSandbox of [false, true]) {
     for (const isTest of [false, true]) {
       const html = await renderFor(employee("emp-fm", "dept-ft", "FT", "factory_manager", isSandbox), { is_test: isTest });
-      for (const part of [1, 2, 3, 4]) assert.match(html, new RegExp(`ncr-detail-part--${part}`), `sandbox=${isSandbox} test report=${isTest}: part ${part}`);
-      assert.match(html, /ncr-quantity-summary/, `sandbox=${isSandbox} test report=${isTest}: quantity summary`);
+      assert.equal(html, base, `sandbox viewer=${isSandbox}, test report=${isTest}: markup differs from the real-mode page`);
     }
   }
 });
@@ -112,10 +114,14 @@ test("read-only viewers are told who can enter costs; editors are not", async ()
   assert.match(readOnly, /ประเมินค่าเสียหายยังไม่ครบ · ผู้กรอกได้: ผจก\.ทั่วไป, ผจก\.โรงงาน, ผช\.ผจก\.โรงงาน และ ผจก\.\/ผช\.ผจก\.แผนก QA/);
   const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
   assert.doesNotMatch(editor, /ผู้กรอกได้:/);
+  // ใบที่ยกเลิกล็อกทุกคน จึงไม่ชี้ไปหาใคร
+  for (const viewer of [employee("e8", "dept-qa", "QA", "staff"), employee("e1", "dept-ft", "FT", "factory_manager"), employee("e9", "dept-qa", "QA", "department_manager")]) {
+    assert.doesNotMatch(await renderFor(viewer, { status: "cancelled" }), /ผู้กรอกได้:/, "cancelled report: no hint");
+  }
 });
 
-test("the disposition form states the 5-day response window the database sets", async () => {
-  const html = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"), { status: "awaiting_disposition" });
-  assert.match(html, /บันทึกและส่งแผนก \(ตอบภายใน 5 วัน\)/);
-  assert.doesNotMatch(html, /ตอบภายใน 7 วัน/);
+test("the disposition form states the actual due date, which is set when the NCR is issued", async () => {
+  const html = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"), { status: "awaiting_disposition", response_due: "2026-10-06" });
+  assert.match(html, /บันทึกและส่งแผนก \(ตอบภายใน 2026-10-06\)/);
+  assert.doesNotMatch(html, /ตอบภายใน \d+ วัน/, "no fixed number of days in the button");
 });

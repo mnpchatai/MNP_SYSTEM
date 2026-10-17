@@ -369,7 +369,7 @@
         </fieldset>
         <div class="field"><label for="ncr-dispose-note">หมายเหตุ</label><input class="input" id="ncr-dispose-note" name="note" maxlength="1000"></div>
         ${evidenceFieldHtml("ncr-dispose-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
-        <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน 5 วัน)</button></div></form>`);
+        <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน ${formatDate(ncr.response_due)})</button></div></form>`);
     }
     if (ncr.status === "awaiting_response" && isDeptManager(employee) && myDeptResponsible) {
       forms.push(`<form class="ncr-action" data-action="respond"><div class="ncr-form-message"></div>
