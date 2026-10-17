@@ -3,11 +3,11 @@
 --   2) ใบจริง: ผจก.โรงงาน, ผช.ผจก.โรงงาน, ผจก.ทั่วไป, ผจก./ผช.ผจก.แผนกที่รับผิดชอบ กรอกต้นทุนได้
 --      พนักงาน QA, ผจก. QA ที่แผนก QA ไม่ได้รับผิดชอบ, ผจก.แผนกอื่น และผู้รายงานกรอกไม่ได้ (ผจก. QA กรอกได้ถ้า QA รับผิดชอบใบนั้น)
 --   3) พนักงาน QA ยังอ่านใบและรายการที่บันทึกแล้วได้ (RLS ไม่เปลี่ยน)
---   4) ใบทดสอบใช้กฎเดียวกับใบจริง
+--   4) void / batch / API รุ่นเก่า ใช้กฎเดียวกัน, ข้ามโหมดถูกปฏิเสธ (SANDBOX_SCOPE_MISMATCH), ใบทดสอบใช้กฎเดียวกับใบจริงผ่าน RPC จริง
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(30);
 
 -- 1) grants -------------------------------------------------------------------------------
 select ok(
@@ -123,13 +123,87 @@ select is(
   1::bigint,
   'QA staff can still read the loss lines recorded by others'
 );
-reset role;
 
--- 4) ใบทดสอบใช้กฎเดียวกับใบจริง ------------------------------------------------------------------------
-select is((select private.can_edit_ncr_losses(current_setting('test.ncr_test')::uuid, e) from public.employees e where e.id = current_setting('test.sbx_qa')::uuid),
-  false, 'test NCR: QA staff cannot edit losses (same as a real NCR)');
-select is((select private.can_edit_ncr_losses(current_setting('test.ncr_test')::uuid, e) from public.employees e where e.id = current_setting('test.sbx_gm')::uuid),
-  true, 'test NCR: the general manager can edit losses (same as a real NCR)');
+-- 3b) void / batch / API รุ่นเก่า: กฎเดียวกัน (RPC เหล่านี้ไม่ตรวจโหมดเอง ใช้ trigger ncr_losses_sandbox_scope กันข้ามโหมด) -----------
+reset role;
+select set_config('test.loss_real', (select id::text from public.ncr_losses where ncr_id = current_setting('test.ncr_rb')::uuid limit 1), true);
+select set_config('test.batch', '[{"loss_type":"scrap","quantity":1,"unit":"ชิ้น","unit_cost":10,"note":"ทิ้ง"}]', true);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"79500000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select throws_ok(
+  format('select public.app_ncr_void_loss(%L::uuid, %L)', current_setting('test.loss_real'), 'ไม่ควรยกเลิกได้'),
+  'NOT_AUTHORIZED',
+  'QA staff cannot void a loss line on a real NCR'
+);
+select throws_ok(
+  format('select public.app_ncr_add_losses(%L::uuid, %L::jsonb)', current_setting('test.ncr_rb'), current_setting('test.batch')),
+  'NOT_AUTHORIZED',
+  'QA staff cannot add a batch of losses to a real NCR'
+);
+select throws_ok(
+  format('select public.app_ncr_add_loss(%L::uuid, %L, 1, %L, 10, %L)', current_setting('test.ncr_rb'), 'scrap', 'ชิ้น', 'ทิ้ง'),
+  'NOT_AUTHORIZED',
+  'QA staff cannot use the older single-entry API on a real NCR'
+);
+
+-- ข้ามโหมด: ผจก.ทั่วไปจริงกับใบทดสอบ, ผจก.ทั่วไปในโหมดทดสอบกับใบจริง (ชั้นป้องกันคือ trigger บน ncr_losses) -------------------
+select set_config('request.jwt.claims', '{"sub":"79500000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select throws_ok(
+  format('select public.app_ncr_add_loss(%L::uuid, %L, 1, %L, 10, %L)', current_setting('test.ncr_test'), 'scrap', 'ชิ้น', 'ทิ้ง'),
+  'SANDBOX_SCOPE_MISMATCH',
+  'a real general manager cannot add a loss to a test NCR'
+);
+select set_config('request.jwt.claims', '{"sub":"79500000-0000-0000-0000-000000000010","role":"authenticated"}', true);
+select public.app_sandbox_enter(current_setting('test.sbx_gm')::uuid);
+select throws_ok(
+  format('select public.app_ncr_add_loss(%L::uuid, %L, 1, %L, 10, %L)', current_setting('test.ncr_rb'), 'scrap', 'ชิ้น', 'ทิ้ง'),
+  'SANDBOX_SCOPE_MISMATCH',
+  'a test-mode general manager cannot add a loss to a real NCR'
+);
+select throws_ok(
+  format('select public.app_ncr_add_losses(%L::uuid, %L::jsonb)', current_setting('test.ncr_rb'), current_setting('test.batch')),
+  'SANDBOX_SCOPE_MISMATCH',
+  'a test-mode general manager cannot add a batch of losses to a real NCR'
+);
+select throws_ok(
+  format('select public.app_ncr_void_loss(%L::uuid, %L)', current_setting('test.loss_real'), 'ข้ามโหมดไม่ได้'),
+  'SANDBOX_SCOPE_MISMATCH',
+  'a test-mode general manager cannot void a loss line of a real NCR'
+);
+
+-- ใบทดสอบใช้กฎเดียวกับใบจริง (ผ่าน RPC จริง ไม่ใช่แค่ helper) ---------------------------------------------------------------
+select lives_ok(
+  format('select public.app_ncr_add_loss(%L::uuid, %L, 1, %L, 10, %L)', current_setting('test.ncr_test'), 'scrap', 'ชิ้น', 'ทิ้ง'),
+  'test mode: the general manager adds a loss to a test NCR'
+);
+select public.app_sandbox_enter(current_setting('test.sbx_qa')::uuid);
+select throws_ok(
+  format('select public.app_ncr_add_loss(%L::uuid, %L, 1, %L, 10, %L)', current_setting('test.ncr_test'), 'scrap', 'ชิ้น', 'ทิ้ง'),
+  'NOT_AUTHORIZED',
+  'test mode: QA staff cannot add a loss to a test NCR (same as a real NCR)'
+);
+select throws_ok(
+  format('select public.app_ncr_add_losses(%L::uuid, %L::jsonb)', current_setting('test.ncr_test'), current_setting('test.batch')),
+  'NOT_AUTHORIZED',
+  'test mode: QA staff cannot add a batch of losses to a test NCR (same as a real NCR)'
+);
+select public.app_sandbox_exit();
+
+-- ผจก.ทั่วไปจริงทำได้ครบทุกทางเข้าในใบจริง -----------------------------------------------------------------------------------
+select set_config('request.jwt.claims', '{"sub":"79500000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select lives_ok(
+  format('select public.app_ncr_add_losses(%L::uuid, %L::jsonb)', current_setting('test.ncr_rb'), current_setting('test.batch')),
+  'the general manager adds a batch of losses to a real NCR'
+);
+select lives_ok(
+  format('select public.app_ncr_add_loss(%L::uuid, %L, 1, %L, 10, %L)', current_setting('test.ncr_rb'), 'scrap', 'ชิ้น', 'ทิ้ง'),
+  'the general manager uses the older single-entry API on a real NCR'
+);
+select lives_ok(
+  format('select public.app_ncr_void_loss(%L::uuid, %L)', current_setting('test.loss_real'), 'ลงยอดซ้ำ'),
+  'the general manager voids a loss line of a real NCR'
+);
+reset role;
 
 select * from finish();
 rollback;

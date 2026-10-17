@@ -489,6 +489,7 @@ NCR มี workflow ของตัวเองในตาราง `ncr_*` (�
 ฝั่ง Next.js ยังใช้ flow คำร้องทั่วไปไปก่อน (ดู `src/lib/request-modules/module-ncr.ts`)
 หน้ารายละเอียด NCR (`#/ncr?id=…`) ใช้การ์ดส่วนที่ 1–4 แบบเดียวกันทั้ง NCR จริงและโหมดทดสอบ (หมายเลขส่วน ไอคอน และสรุปจำนวนที่เดิมลองเฉพาะโหมดทดสอบ) ข้อมูลและลำดับขั้นตอนไม่เปลี่ยน
 **ลำดับ deploy:** นำ migration `20261017010000_ncr_loss_editors_same_in_all_modes.sql` ขึ้นฐานข้อมูลจริงผ่านกระบวนการที่อนุมัติก่อน แล้วค่อยเผยแพร่ Pilot Web รุ่น `20261017ncrcards1` (ถ้าเผยแพร่ก่อน พนักงาน QA จะยังเห็นฟอร์มต้นทุนแต่ถูกปฏิเสธด้วย `NOT_AUTHORIZED`) Rollback: `create or replace` ฟังก์ชันกลับเป็นนิยามใน `20261015060000`
+**แก้ความเข้าใจผิดในหัวไฟล์ `20261017010000`:** หัวไฟล์ระบุว่าทุก RPC ตรวจโหมดทดสอบ/ของจริง (`SANDBOX_SCOPE_MISMATCH`) เอง แต่จริงๆ ตรวจเองเฉพาะ `app_ncr_record_loss` / `app_ncr_save_outcome` / `app_ncr_review_costs` ส่วน `app_ncr_void_loss` / `app_ncr_add_loss` / `app_ncr_add_losses` พึ่ง trigger `ncr_losses_sandbox_scope` ชั้นเดียว (ไม่แก้ไฟล์ migration ที่ใช้งานแล้ว) กฎนี้มีเทสต์ครอบคลุมใน `ncr_loss_editors_same_in_all_modes.test.sql` ถ้าจะเอา trigger ออกหรือเพิ่ม RPC เขียนความสูญเสียตัวใหม่ ต้องตรวจโหมดใน RPC เอง
 
 | ขั้น | ผู้ทำ | RPC | สถานะถัดไป |
 | --- | --- | --- | --- |

@@ -5,6 +5,8 @@
   // ช่องแนบไฟล์เพิ่มเติมของฟอร์มบันทึกต้นทุน/ผลดำเนินการ ใช้ชุดเดียวกับฟอร์มอื่นของ NCR (รองรับทั้งข้อมูลจริงและโหมดทดสอบ)
   // ไฟล์อัปโหลดหลังบันทึกสำเร็จโดย submit handler กลางใน module-ncr.js
   const extraFilesField = (id) => (window.MNP_REQUEST_MODULES?.NCR_CAR?.shared?.evidenceFieldHtml?.(id, "แนบไฟล์เพิ่มเติม (ถ้ามี)") ?? "").replace('class="field"', 'class="field full"');
+  // ผู้ที่กรอกต้นทุนได้ ตรงกับ private.can_edit_ncr_losses (module-ncr.js canEditLosses) — แสดงให้ผู้ที่อ่านอย่างเดียวรู้ว่าต้องไปตามใคร
+  const EDITORS_TEXT = "ผจก.โรงงาน, ผช.ผจก.โรงงาน, ผจก.ทั่วไป และ ผจก./ผช.ผจก.แผนกที่รับผิดชอบใบนี้";
   function render(ncr, losses, directory, editable, today, formatBaht, formatQty) {
     const summary = costs.summarize(losses);
     const rows = losses.map((loss) => `<tr class="${loss.voided_at ? "ncr-voided" : ""}">
@@ -22,7 +24,7 @@
         ${editable ? '<div class="ncr-loss-draft"><dt id="ncr-loss-preview-label">รายการที่กำลังกรอก <span>ยังไม่บันทึก</span></dt><dd><output id="ncr-loss-preview" form="ncr-loss-form" for="ncr-loss-qty ncr-loss-cost ncr-loss-headcount ncr-loss-hours" aria-labelledby="ncr-loss-preview-label" aria-live="polite">—</output></dd></div>' : ""}
       </dl>
       <dl class="ncr-loss-pending"><div><dt>ประมาณการรอยืนยัน</dt><dd>${formatBaht(summary.estimated)}</dd></div><div><dt>ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl></div>
-      ${!ncr.outcome?.cost_reviewed || summary.pending ? '<p class="muted small">ประเมินค่าเสียหายยังไม่ครบ</p>' : ""}
+      ${!ncr.outcome?.cost_reviewed || summary.pending ? `<p class="muted small">ประเมินค่าเสียหายยังไม่ครบ${editable ? "" : ` · ผู้กรอกได้: ${EDITORS_TEXT}`}</p>` : ""}
       ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>'}
       ${editable ? `<form class="ncr-action" data-action="add_loss" id="ncr-loss-form"><div class="ncr-form-message"></div><h3 id="ncr-loss-heading">เพิ่มรายการความสูญเสีย</h3><input type="hidden" name="loss_id">
         <div class="form-grid">
