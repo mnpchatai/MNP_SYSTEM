@@ -318,6 +318,8 @@
       key: document.querySelector("#lab-chart-key"),
       announce: document.querySelector("#lab-announce"),
       zoom: document.querySelector("#lab-zoom"),
+      monthFrom: document.querySelector("#lab-month-from"),
+      monthTo: document.querySelector("#lab-month-to"),
       tableNote: document.querySelector("#lab-table-note"),
       scroll: document.querySelector("#lab-table-scroll"),
       copy: document.querySelector("#lab-copy"),
@@ -326,7 +328,7 @@
     // ข้อมูลของหน้า: series = ผลทั้งวัสดุตามลำดับในชีต, shown = สิ่งที่กราฟ/ตารางแสดงอยู่ (ทั้งวัสดุ หรือเฉพาะ ID ที่เลือก)
     const data = { series: null, ids: [], conditions: null, shown: { mode: "sequence", items: [] }, signature: "", plotWidth: 0, plot: null };
     // ตัวเลือกของผู้ใช้ที่ต้องคงไว้ตอนรีเฟรช: ID, ลำดับตาราง และจุดที่ปักหมุดไว้ (เก็บเป็น id ของแถว ไม่ใช่ตำแหน่ง เพราะตำแหน่งขยับเมื่อมีแถวใหม่)
-    // zoom = ช่วงที่กราฟโหมดลำดับแสดง: { kind: "latest" | "days30" | "days90" | "all" } คำนวณใหม่ทุกครั้งที่วาด (ตามข้อมูลใหม่/ความกว้างจอ)
+    // zoom = ช่วงที่กราฟโหมดลำดับแสดง: { kind: "latest" | "all" } หรือ { kind: "months", from, to } ("YYYY-MM") คำนวณใหม่ทุกครั้งที่วาด (ตามข้อมูลใหม่/ความกว้างจอ)
     // หรือ { kind: "custom", start, end, follow } เมื่อซูม/เลื่อนมาเอง (ดู chart.rangeFor) เปิดหน้าใหม่เริ่มที่ "latest" เสมอ
     const view = { id: "", order: "newest", pinnedId: null, preview: null, zoom: { kind: "latest" } };
     let applied = "";
@@ -401,6 +403,24 @@
       if (announce) el.announce.textContent = item ? views.announcement({ item, mode: data.shown.mode }) : "";
     }
 
+    // ช่องเดือน "… ถึง …" แสดงเดือนของครั้งแรกและครั้งสุดท้ายที่เห็นอยู่เสมอ (ซูมหรือเลื่อนแล้วค่าตามไปด้วย ไม่มีสถานะแยก) ตัวเลือก = ทุกเดือนที่มีผลทดสอบ
+    // วาดตัวเลือกใหม่เฉพาะเมื่อรายการเดือนเปลี่ยน ไม่วาดทุกครั้งที่เลื่อน (ไม่ปิดตัวเลือกของระบบที่เปิดค้างอยู่)
+    let monthKey = "";
+    function paintMonths(range) {
+      const items = itemsOf();
+      const months = model.monthsOf(items);
+      const first = model.monthOf(items[range.start]?.testDate);
+      const last = model.monthOf(items[range.end - 1]?.testDate);
+      const key = months.join();
+      if (key !== monthKey) {
+        monthKey = key;
+        el.monthFrom.innerHTML = views.monthOptions(months, first);
+        el.monthTo.innerHTML = views.monthOptions(months, last);
+      }
+      el.monthFrom.value = first ?? "";
+      el.monthTo.value = last ?? "";
+    }
+
     // แถบเครื่องมือช่วง/ซูม: โชว์เฉพาะโหมดลำดับ ปุ่มช่วงที่เลือกอยู่กดค้าง (aria-pressed) ปุ่มที่ไปต่อไม่ได้ปิดไว้
     function paintZoomBar() {
       const sequence = data.shown.mode === "sequence" && Boolean(data.plot?.total);
@@ -414,6 +434,7 @@
         button.setAttribute("aria-pressed", String(view.zoom.kind === key));
         if (key === "latest") button.textContent = `ล่าสุด ${chart.defaultCount(data.plotWidth)}`;
       });
+      paintMonths(range);
       const limits = { back: range.start <= 0, forward: range.end >= total, out: width >= total, in: width <= Math.min(chart.MIN_VISIBLE, total) };
       el.zoom.querySelectorAll("[data-step]").forEach((button) => { button.disabled = limits[button.dataset.step]; });
     }
@@ -551,6 +572,20 @@
       if (view.pinnedId !== null) revealIndex(index);
       applyFocus({ reveal: view.pinnedId !== null, announce: true });
     };
+
+    // เลือกเดือน: ตั้งช่วงเป็นทุกครั้งที่ทดสอบของเดือนแรกถึงเดือนสุดท้ายที่เลือก (รวมทั้งสองเดือน) ถ้าเลือกเดือนเริ่มหลังเดือนจบ อีกช่องย้ายตามมาเป็นเดือนเดียวกัน
+    el.zoom.addEventListener("change", (event) => {
+      if (event.target !== el.monthFrom && event.target !== el.monthTo) return;
+      let from = el.monthFrom.value;
+      let to = el.monthTo.value;
+      if (from > to) {
+        if (event.target === el.monthFrom) to = from;
+        else from = to;
+      }
+      view.zoom = { kind: "months", from, to };
+      paintChart();
+      announceRange();
+    });
 
     el.zoom.addEventListener("click", (event) => {
       const button = event.target.closest("button");

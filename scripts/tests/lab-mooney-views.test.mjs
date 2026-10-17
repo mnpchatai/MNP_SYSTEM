@@ -235,7 +235,13 @@ test("the visible range is normalised: at least two bands, at most the whole lis
   assert.deepEqual(chart.normalizeRange({ start: 3, end: 9 }, 0), { start: 0, end: 0 });
 });
 
-test("preset ranges follow the data: latest N by screen width, last 30 or 90 days, everything, or a custom window", () => {
+// n ครั้ง กระจายตามเดือนที่กำหนด (ครั้งละเดือน = perMonth ครั้ง) สำหรับทดสอบช่วงเป็นเดือน
+const monthlyItems = (months, perMonth) => seriesOfRows(months.flatMap((month, monthIndex) => Array.from({ length: perMonth }, (_, index) => row({
+  sample_id: String(2000 + monthIndex * perMonth + index), test_date: `${month}-${String((index % 28) + 1).padStart(2, "0")}`, test_time: "09:00:00",
+  mh: 100 + monthIndex * perMonth + index, mv: 40, avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null,
+})))).items;
+
+test("ranges follow the data: latest N by screen width, everything, whole months, or a custom window", () => {
   const items = longItems(300);
   assert.deepEqual(chart.rangeFor({ kind: "latest" }, items, 900), { start: 180, end: 300 }, "wide screens start from the latest 120");
   assert.deepEqual(chart.rangeFor({ kind: "latest" }, items, 360), { start: 240, end: 300 }, "narrow screens start from the latest 60");
@@ -243,14 +249,39 @@ test("preset ranges follow the data: latest N by screen width, last 30 or 90 day
   assert.equal(chart.defaultCount(360), 60);
   assert.deepEqual(chart.rangeFor({ kind: "all" }, items, 900), { start: 0, end: 300 });
   assert.deepEqual(chart.rangeFor(undefined, items.slice(0, 40), 900), { start: 0, end: 40 }, "fewer tests than the default: all of them");
-  const thirty = chart.rangeFor({ kind: "days30" }, items, 900);
-  const ninety = chart.rangeFor({ kind: "days90" }, items, 900);
-  assert.equal(thirty.end, 300);
-  assert.ok(thirty.end - thirty.start >= chart.MIN_VISIBLE && ninety.end - ninety.start >= thirty.end - thirty.start);
   const fixed = chart.rangeFor({ kind: "custom", start: 40, end: 100, follow: false }, items, 900);
   assert.deepEqual(fixed, { start: 40, end: 100 });
   const following = chart.rangeFor({ kind: "custom", start: 40, end: 100, follow: true }, items.concat(items.slice(0, 10)), 900);
   assert.deepEqual(following, { start: 250, end: 310 }, "a window that touched the newest test keeps its width and moves with new rows");
+});
+
+test("a month range takes every test from the first month to the last month, both included", () => {
+  const items = monthlyItems(["2026-08", "2026-09", "2026-10", "2026-11"], 20);
+  assert.deepEqual(chart.rangeForMonths(items, "2026-09", "2026-10"), { start: 20, end: 60 });
+  assert.deepEqual(chart.rangeForMonths(items, "2026-09", "2026-09"), { start: 20, end: 40 }, "one month");
+  assert.deepEqual(chart.rangeForMonths(items, "2026-08", "2026-11"), { start: 0, end: 80 }, "all months");
+  assert.deepEqual(chart.rangeForMonths(items, "2026-06", "2026-09"), { start: 0, end: 40 }, "a first month with no tests starts at the first test after it");
+  assert.deepEqual(chart.rangeForMonths(items, "2026-10", "2027-03"), { start: 40, end: 80 }, "a last month with no tests ends at the last test before it");
+  assert.equal(chart.rangeForMonths(items, "2026-10", "2026-09"), null, "first month after last month");
+  assert.equal(chart.rangeForMonths(items, "2027-01", "2027-02"), null, "no tests in those months");
+  assert.equal(chart.rangeForMonths([], "2026-09", "2026-10"), null);
+  const thin = monthlyItems(["2026-08", "2026-09", "2026-10"], 3);
+  assert.deepEqual(chart.rangeForMonths(thin, "2026-09", "2026-09"), { start: 0, end: 9 }, "fewer than two bands: widened to what exists");
+  const wide = monthlyItems(["2026-08", "2026-09", "2026-10"], 8);
+  const small = chart.rangeForMonths(wide, "2026-09", "2026-09");
+  assert.equal(small.end - small.start, 12, "a month of 8 tests is widened to two bands (12 tests), so neighbouring months show too");
+  assert.ok(small.start <= 8 && small.end >= 16, "and still contains the whole month");
+});
+
+test("a 'months' zoom is recomputed on every draw, so later tests of the chosen months appear; unknown months fall back to the latest", () => {
+  const items = monthlyItems(["2026-08", "2026-09", "2026-10"], 20);
+  const zoom = { kind: "months", from: "2026-09", to: "2026-10" };
+  assert.deepEqual(chart.rangeFor(zoom, items, 900), { start: 20, end: 60 });
+  const grown = items.concat(monthlyItems(["2026-10"], 5));
+  assert.deepEqual(chart.rangeFor(zoom, grown, 900), { start: 20, end: 65 }, "five more tests in the last chosen month are included");
+  const later = items.concat(monthlyItems(["2026-11"], 5));
+  assert.deepEqual(chart.rangeFor(zoom, later, 900), { start: 20, end: 60 }, "tests of a month after the chosen ones are not");
+  assert.deepEqual(chart.rangeFor({ kind: "months", from: "2030-01", to: "2030-02" }, items, 900), { start: 0, end: 60 }, "months that have no tests fall back to the latest view");
 });
 
 test("zooming keeps the anchored position where it was, panning shifts by whole tests, both stay inside the list", () => {
@@ -360,15 +391,22 @@ test("a set average that straddles the window edge is clipped to it and sets out
 
 test("the chart tools exist on the material page; the announcement states the range and the legend key never claims a band in ID view", () => {
   const html = views.materialPage("A1802", 30);
-  assert.equal(count(html, /data-range="/g), 4, "latest, 30 days, 90 days, all");
+  assert.equal(count(html, /data-range="/g), 2, "latest and all");
+  assert.doesNotMatch(html, /data-range="days/, "no 30/90-day buttons any more");
   assert.equal(count(html, /data-step="/g), 4, "back, forward, zoom out, zoom in");
+  assert.match(html, /id="lab-month-from"[^>]*data-native-select[^>]*aria-label="ตั้งแต่เดือน"/, "system month picker: native select, labelled");
+  assert.match(html, /id="lab-month-to"[^>]*data-native-select[^>]*aria-label="ถึงเดือน"/);
   assert.match(html, /id="lab-zoom"[^>]*hidden/, "hidden until a chart is drawn");
-  assert.doesNotMatch(html, /<select[^>]*id="lab-range/, "flat buttons, not a pop-up list (touch-safe on iPhone)");
   assert.match(html, /aria-label="ซูมออก[^"]*"/);
   const { items } = seriesFixture();
   const text = views.rangeAnnouncement({ items, range: { start: 1, end: 7 } });
   assert.match(text, /^แสดง 21\/09\/2026 ถึง 22\/09\/2026 6 จาก 10 ครั้ง$/);
   assert.equal(views.rangeAnnouncement({ items: [], range: { start: 0, end: 0 } }), "");
+  const options = views.monthOptions(["2026-09", "2026-10", "2026-11"], "2026-10");
+  assert.equal(count(options, /<option /g), 3);
+  assert.match(options, /<option value="2026-10" selected>ต\.ค\. 2026<\/option>/);
+  assert.doesNotMatch(options, /value="2026-09" selected/);
+  assert.equal(views.monthOptions([], null), "");
 });
 
 test("pointer positions map to the nearest test and clamp at both ends", () => {

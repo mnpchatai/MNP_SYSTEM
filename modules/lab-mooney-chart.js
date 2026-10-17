@@ -23,11 +23,10 @@
   const BAND_SIZE = 6;
   const MIN_BAND_PX = 18;
   // ช่วงที่กราฟโหมดลำดับแสดง: เริ่มที่ครั้งล่าสุดจำนวนหนึ่งเพื่อให้จุดอ่านออกเมื่อข้อมูลสะสมเป็นร้อยเป็นพัน (จอแคบแสดงน้อยกว่า)
-  // MIN_VISIBLE = ซูมเข้าได้ไม่เกินสองแถบ; PRESET_DAYS = ช่วงที่เลือกเป็นจำนวนวันล่าสุด
+  // MIN_VISIBLE = ซูมเข้าได้ไม่เกินสองแถบ
   const DEFAULT_VISIBLE = 120;
   const DEFAULT_VISIBLE_COMPACT = 60;
   const MIN_VISIBLE = BAND_SIZE * 2;
-  const PRESET_DAYS = Object.freeze({ days30: 30, days90: 90 });
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
@@ -59,14 +58,31 @@
 
   const sameRange = (a, b) => Boolean(a && b) && a.start === b.start && a.end === b.end;
 
-  // ช่วงจากตัวเลือกของผู้ใช้: "latest" = ล่าสุดตามความกว้างจอ, "days30"/"days90" = จำนวนวันล่าสุด, "all" = ทั้งหมด,
+  // ครั้งที่ทดสอบทั้งหมดของเดือน from ถึงเดือน to ("YYYY-MM" รวมทั้งสองเดือน) ไม่มีครั้งใดในช่วงนั้น = null
+  // ต่ำกว่า MIN_VISIBLE ครั้งถูกขยายเป็นอย่างน้อยสองแถบ (normalizeRange) จึงอาจเห็นเดือนข้างเคียงด้วย
+  function rangeForMonths(items, from, to) {
+    let start = -1;
+    let end = -1;
+    items.forEach((item, index) => {
+      const month = model.monthOf(item.testDate);
+      if (!month) return;
+      if (start < 0 && month >= from) start = index;
+      if (month <= to) end = index + 1;
+    });
+    return start >= 0 && end > start ? normalizeRange({ start, end }, items.length) : null;
+  }
+
+  // ช่วงจากตัวเลือกของผู้ใช้: "latest" = ล่าสุดตามความกว้างจอ, "all" = ทั้งหมด, "months" = เดือน from ถึงเดือน to (เดือนนั้นไม่มีข้อมูลแล้ว = ล่าสุด),
   // "custom" = ช่วงที่ซูม/เลื่อนมาเอง (follow = ติดขอบขวาอยู่ จึงขยับตามเมื่อมีครั้งใหม่เข้ามา)
-  // ตัวเลือกสำเร็จรูปคำนวณใหม่ทุกครั้งที่วาด จึงตามข้อมูลใหม่และความกว้างจอเอง
+  // ตัวเลือกที่ไม่ใช่ custom คำนวณใหม่ทุกครั้งที่วาด จึงตามข้อมูลใหม่และความกว้างจอ (เดือนที่เลือกรับครั้งใหม่ของเดือนนั้นเข้ามาเอง)
   function rangeFor(zoom, items, width) {
     const total = items.length;
     const kind = zoom?.kind ?? "latest";
     if (kind === "all") return normalizeRange({ start: 0, end: total }, total);
-    if (Object.hasOwn(PRESET_DAYS, kind)) return normalizeRange({ start: model.startOfLastDays(items, PRESET_DAYS[kind]), end: total }, total);
+    if (kind === "months") {
+      const range = rangeForMonths(items, zoom.from, zoom.to);
+      if (range) return range;
+    }
     if (kind === "custom") {
       const size = Number(zoom.end) - Number(zoom.start);
       return normalizeRange(zoom.follow ? { start: total - size, end: total } : zoom, total);
@@ -393,7 +409,7 @@
 
   const api = {
     SERIES, BAND_SIZE, MIN_VISIBLE, layoutFor, defaultCount, averageMarks, trendChart, sparkline,
-    normalizeRange, sameRange, rangeFor, zoomRange, panRange, revealRange,
+    normalizeRange, sameRange, rangeFor, rangeForMonths, zoomRange, panRange, revealRange,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_CHART = api;

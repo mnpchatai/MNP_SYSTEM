@@ -1957,6 +1957,9 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-range-btn:first-child { border-left: 0; }
 .lab-range-btn:hover { color: var(--ink); }
 .lab-range-btn[aria-pressed="true"] { color: var(--ink); background: color-mix(in srgb, var(--primary) 26%, transparent); }
+.lab-months { display: inline-flex; align-items: center; gap: 6px; }
+.lab-month-to { color: var(--muted); font-size: 12px; }
+.lab-month.select { width: auto; min-height: 32px; padding: 4px 28px 4px 10px; font-size: 12px; font-weight: 600; }
 .lab-steps { display: inline-flex; gap: 4px; }
 .lab-step { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 .lab-step svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
@@ -2053,7 +2056,11 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .lab-title-select { width: 100%; }
   .lab-id { flex: 1 1 140px; }
   .lab-plot, .lab-toolbar, .lab-chart-foot, .lab-results-card .card-heading { padding-left: 14px; padding-right: 14px; }
+  /* มือถือ: แถวแรก = ล่าสุด/ทั้งหมด + ปุ่มเลื่อน/ซูม แถวสอง = เลือกเดือนเต็มแถว (ตัวอักษร 16px กัน iOS ซูมหน้าเองตอนแตะ) */
   .lab-zoom { width: 100%; justify-content: space-between; }
+  .lab-months { order: 3; flex: 1 1 100%; }
+  .lab-month.select { flex: 1 1 0; min-height: 40px; font-size: 16px; }
+  .lab-month-to { font-size: 14px; }
   .lab-range-btn { min-height: 40px; padding: 0 10px; }
   .lab-step { width: 40px; height: 40px; }
   .lab-search, .lab-sort { max-width: none; flex-basis: 100%; }

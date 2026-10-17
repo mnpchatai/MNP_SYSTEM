@@ -262,17 +262,10 @@
     return marks;
   }
 
-  // ตำแหน่งของครั้งแรกที่อยู่ใน `days` วันล่าสุด นับถึงวันที่ทดสอบล่าสุดของรายการ (รวมวันนั้น) ใช้เลือกช่วง "30 วัน/90 วัน" ของกราฟ
-  // รายการไม่มีวันที่เลย = 0 (ทั้งรายการ)
-  function startOfLastDays(items, days) {
-    let latest = null;
-    for (const item of items) if (item.testDate && (latest === null || item.testDate > latest)) latest = item.testDate;
-    if (latest === null) return 0;
-    const cutoff = new Date(`${latest}T00:00:00Z`);
-    cutoff.setUTCDate(cutoff.getUTCDate() - (Math.max(1, days) - 1));
-    const first = cutoff.toISOString().slice(0, 10);
-    const index = items.findIndex((item) => item.testDate && item.testDate >= first);
-    return index < 0 ? 0 : index;
+  // เดือนของวันที่ทดสอบ "YYYY-MM" (ไม่มีวันที่ = null) และรายการเดือนที่มีในรายการ เรียงเก่า → ใหม่ ใช้ทำตัวเลือก "เดือน … ถึง …" ของกราฟ
+  const monthOf = (testDate) => (typeof testDate === "string" && /^\d{4}-\d{2}/.test(testDate) ? testDate.slice(0, 7) : null);
+  function monthsOf(items) {
+    return [...new Set(items.map((item) => monthOf(item.testDate)).filter(Boolean))].sort();
   }
 
   // ID ที่มีในรายการ (เรียงแบบเลขก่อน) พร้อมจำนวนครั้งที่ทดสอบ
@@ -387,6 +380,13 @@
     return match ? `${match[2]}/${match[1]}` : EMPTY;
   }
 
+  // เดือนแบบย่อ + ปี ค.ศ. เหมือนวันที่ทุกที่ในหน้านี้ ("2026-09" → "ก.ย. 2026") ค่าที่อ่านไม่ได้ = —
+  const MONTH_NAMES = Object.freeze(["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]);
+  function formatMonth(month) {
+    const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(month ?? ""));
+    return match ? `${MONTH_NAMES[Number(match[2]) - 1]} ${match[1]}` : EMPTY;
+  }
+
   // เวลาที่อ่านชีตล่าสุด เฉพาะเวลา HH:MM:SS (เวลาไทย) — วันที่คือวันนี้เสมอเพราะเป็นการอ่านเมื่อครู่ ไม่ต้องแสดงซ้ำ
   function formatUpdatedTime(value) {
     const full = formatUpdatedAt(value);
@@ -398,8 +398,8 @@
     readMaterial, materialUrl, normalizeFeed, buildOverview, resultsFor,
     filterMaterials, sortMaterials, suggestMaterials,
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
-    buildSeries, describe, niceScale, dateMarks, startOfLastDays, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
-    testConditions, feedSignature, toTsv, formatSigned, formatShortDate,
+    buildSeries, describe, niceScale, dateMarks, monthOf, monthsOf, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
+    testConditions, feedSignature, toTsv, formatSigned, formatShortDate, formatMonth,
   };
   // Shared by the browser and the sync worker; one implementation of grouping/statistics.
   root.MNP_LAB_MOONEY = api;
