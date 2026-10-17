@@ -1,14 +1,15 @@
--- ทดสอบ migration 20261017020000_add_indesign_repair_department
+-- ทดสอบ migration 20261017040000_add_indesign_repair_department
 --   - แผนก ID (Indesign) active และเป็นแผนกที่แจ้งซ่อมได้ มีแถวเดียว
 --   - มีตัวเลือก "สร้างใหม่" กับ "ไม่มี" อย่างละหนึ่งแถว และยังไม่มีเครื่องจักรจริง
---   - ตัวนับเลขที่ใบปี 26 เริ่มที่ 0 ดูเลขตัวอย่างได้เป็น ID001/26
+--   - แผนกที่แจ้งซ่อมได้เดิม 12 แผนกยังมีธงและตัวเลือกของตัวเองครบ (เทียบรายชื่อรหัส ไม่เทียบยอดรวม
+--     เพื่อไม่ให้พังเมื่อมี migration อื่นเพิ่มแผนกที่แจ้งซ่อมได้ในภายหลัง)
 --   - ผู้แจ้งสร้างใบแจ้งซ่อมของ ID ได้จนได้เลขที่ ID001/yy และเดินเข้าสายอนุมัติปกติ (ไม่ต้องมี ผจก. ID)
 --   - ใบของแผนกอื่นเลือกเครื่องของ ID ไม่ได้ (ยังกันข้ามแผนก)
---   - แผนกที่แจ้งซ่อมได้เดิมไม่เปลี่ยน และตัวเลือกของแผนกอื่นไม่ถูกแตะ
+--   - ย้อนกลับด้วย is_repair_site = false แล้วเปิดใบ/ดูเลขตัวอย่างของ ID ไม่ได้อีก
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(11);
+select plan(12);
 
 select is(
   (select count(*)::integer from public.departments
@@ -37,25 +38,25 @@ select is(
 );
 
 select is(
-  (select last_number from public.document_counters
-   where department_code = 'ID' and year_key = '26'),
-  0,
-  'the ID 2026 counter starts at 0'
+  (select array_agg(d.code order by d.code) from public.departments d
+   where d.is_repair_site and d.is_active
+     and d.code in ('RB', 'GR', 'BG', 'PT', 'PK', 'QA', 'ST', 'WH', 'SR', 'FT', 'MT', 'AD')),
+  array['AD', 'BG', 'FT', 'GR', 'MT', 'PK', 'PT', 'QA', 'RB', 'SR', 'ST', 'WH'],
+  'the 12 original repair-site departments are still active repair sites'
 );
 
 select is(
-  (select count(*)::integer from public.departments where is_repair_site and code <> 'ID'),
+  (select count(*)::integer from (
+     select d.code
+     from public.departments d
+     join public.machines m on m.department_id = d.id
+     where d.code in ('RB', 'GR', 'BG', 'PT', 'PK', 'QA', 'ST', 'WH', 'SR', 'FT', 'MT', 'AD')
+       and m.is_placeholder and m.code in ('สร้างใหม่', 'ไม่มี')
+     group by d.code
+     having count(*) = 2
+   ) own_placeholders),
   12,
-  'the original 12 repair-site departments are unchanged'
-);
-
-select is(
-  (select count(*)::integer
-   from public.machines m
-   join public.departments d on d.id = m.department_id
-   where d.code <> 'ID' and d.is_repair_site and m.is_placeholder and m.code in ('สร้างใหม่', 'ไม่มี')),
-  24,
-  'every other repair site keeps exactly its own two placeholders'
+  'each original repair site keeps exactly its own two placeholders'
 );
 
 -- ผู้แจ้งสร้างใบแจ้งซ่อมของ ID ได้ เลขที่ใบเดินจาก ID001/yy
@@ -108,6 +109,21 @@ select throws_ok($$ select public.app_create_repair_request(
    where d.code = 'ID' and m.is_placeholder and m.code = 'ไม่มี'),
   'repair', 'INDESIGN_CROSS ใบข้ามแผนกต้องถูกปฏิเสธ') $$,
   'MACHINE_NOT_FOUND', 'a machine of ID cannot be used on another department''s request');
+reset role;
+
+-- ย้อนกลับตามที่เขียนไว้ใน migration: ถอดธงแล้ว ID เปิดใบและดูเลขตัวอย่างไม่ได้อีก
+update public.departments set is_repair_site = false where code = 'ID';
+
+set local role authenticated;
+select set_config('request.jwt.claims','{"sub":"83000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+select throws_ok($$ select public.app_peek_repair_doc_number((select id from public.departments where code = 'ID')) $$,
+  'DEPARTMENT_NOT_REPAIR_SITE', 'after rollback the ID preview number is refused');
+select throws_ok($$ select public.app_create_repair_request(
+  (select id from public.departments where code = 'ID'),
+  (select m.id from public.machines m join public.departments d on d.id = m.department_id
+   where d.code = 'ID' and m.is_placeholder and m.code = 'ไม่มี'),
+  'repair', 'INDESIGN_ROLLED_BACK ใบหลังย้อนกลับต้องถูกปฏิเสธ') $$,
+  'DEPARTMENT_NOT_REPAIR_SITE', 'after rollback ID can no longer open repair requests');
 reset role;
 
 select * from finish();

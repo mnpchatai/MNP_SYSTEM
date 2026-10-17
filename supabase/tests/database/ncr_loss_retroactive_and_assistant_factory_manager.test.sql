@@ -1,11 +1,12 @@
 -- ทดสอบ 20261015060000_ncr_loss_retroactive_and_assistant_factory_manager.sql
+--   0) (หลัง 20261017030000) หัวหน้าแผนกที่รับผิดชอบใบนั้นลงยอดไม่ได้แล้ว ผู้ที่ลงได้คือ ผจก.ทั่วไป ผจก.โรงงาน ผช.ผจก.โรงงาน ผจก./ผช.ผจก. QA
 --   1) ผู้ช่วย ผจก.โรงงานลงยอดใบจริงได้ ผู้ช่วย ผจก.แผนกที่ไม่รับผิดชอบ/พนักงานทั่วไปยังลงไม่ได้
 --   2) ใบที่ปิดแล้วลงยอด/แก้/ยกเลิกรายการ/บันทึกผลดำเนินการย้อนหลังได้ สถานะไม่เปลี่ยนและมีประวัติ
 --   3) ใบที่ยกเลิกยังล็อก และ API รุ่นเก่ายังล็อกใบที่ปิดแล้วเหมือนเดิม
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(17);
 
 insert into auth.users (id, email, raw_user_meta_data) values
   ('79300000-0000-0000-0000-000000000001', 'ncrr-rb-staff@mnp.local', '{}'::jsonb),
@@ -75,11 +76,19 @@ select lives_ok(
   'the assistant factory manager records a confirmed loss after the NCR is closed'
 );
 select set_config('request.jwt.claims', '{"sub":"79300000-0000-0000-0000-000000000005","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_record_loss(current_setting('test.ncr_a')::uuid,
+       '{"loss_type":"scrap","entry_kind":"loss","cost_status":"confirmed","component":"quantity","quantity":2,"unit":"ท่อน","unit_cost":18,"incurred_on":"2026-10-01","evidence_ref":"SC-002"}'::jsonb,
+       current_setting('test.loss_open')::uuid) $$,
+  'NOT_AUTHORIZED',
+  'the manager of the responsible department can no longer confirm a loss, even after the NCR is closed (migration 20261017030000)'
+);
+select set_config('request.jwt.claims', '{"sub":"79300000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select lives_ok(
   $$ select public.app_ncr_record_loss(current_setting('test.ncr_a')::uuid,
        '{"loss_type":"scrap","entry_kind":"loss","cost_status":"confirmed","component":"quantity","quantity":2,"unit":"ท่อน","unit_cost":18,"incurred_on":"2026-10-01","evidence_ref":"SC-002"}'::jsonb,
        current_setting('test.loss_open')::uuid) $$,
-  'the responsible department manager confirms an earlier estimate after the NCR is closed'
+  'the assistant factory manager confirms an earlier estimate after the NCR is closed'
 );
 select set_config('request.jwt.claims', '{"sub":"79300000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select lives_ok(

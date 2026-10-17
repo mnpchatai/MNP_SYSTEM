@@ -369,7 +369,7 @@
         </fieldset>
         <div class="field"><label for="ncr-dispose-note">หมายเหตุ</label><input class="input" id="ncr-dispose-note" name="note" maxlength="1000"></div>
         ${evidenceFieldHtml("ncr-dispose-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
-        <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน 7 วัน)</button></div></form>`);
+        <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน ${formatDate(ncr.response_due)})</button></div></form>`);
     }
     if (ncr.status === "awaiting_response" && isDeptManager(employee) && myDeptResponsible) {
       forms.push(`<form class="ncr-action" data-action="respond"><div class="ncr-form-message"></div>
@@ -488,10 +488,9 @@
   function canEditLosses(ncr, employee) {
     // ลงยอดย้อนหลังได้หลังปิด NCR แล้ว ล็อกเฉพาะใบที่ยกเลิก (ตรงกับ app_ncr_record_loss / app_ncr_review_costs / app_ncr_void_loss)
     if (ncr.status === "cancelled") return false;
-    // ทั้งใบจริงและใบทดสอบ: ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และหัวหน้าแผนกที่รับผิดชอบเท่านั้น (ตรงกับ private.can_edit_ncr_losses;
-    // พนักงาน QA ไม่มีสิทธิ์โดยตำแหน่ง ยกเว้นเป็นหัวหน้าแผนกที่อยู่ในรายการแผนกที่รับผิดชอบใบนั้น)
-    if (LOSS_EDITOR_ROLE_CODES.includes(roleCode(employee))) return true;
-    return isDeptManager(employee) && (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
+    // ทั้งใบจริงและใบทดสอบ: ผจก.ทั่วไป ผจก.โรงงาน ผช.ผจก.โรงงาน และ ผจก./ผช.ผจก.แผนก QA เท่านั้น ไม่ขึ้นกับแผนกที่รับผิดชอบ
+    // (ตรงกับ private.can_edit_ncr_losses, migration 20261017030000)
+    return LOSS_EDITOR_ROLE_CODES.includes(roleCode(employee)) || isQaManager(employee);
   }
 
   const lossSectionHtml = (ncr, losses, directory, editable) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, editable, todayBangkok(), formatBaht, formatQty);
