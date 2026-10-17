@@ -191,10 +191,23 @@ test("a series with no readings in a set has no mark rather than a made-up value
   assert.deepEqual(chart.averageMarks([]), []);
 });
 
-test("background bands alternate by test day and the newest day always keeps its date label", () => {
+test("background bands alternate every 6 points regardless of the test day, and the newest day always keeps its date label", () => {
+  assert.equal(chart.BAND_SIZE, 6);
   const { items, groups } = seriesFixture();
   const { html } = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
-  assert.equal(count(html, /class="lab-band"/g), 1, "two days → one alternating band");
+  assert.equal(count(html, /class="lab-band"/g), 1, "10 points → one shaded band (points 1–6), points 7–10 stay on the plain background");
+  const longRun = Array.from({ length: 40 }, (_, index) => row({ sample_id: String(300 + index), test_date: index < 20 ? "2026-09-21" : "2026-09-22", test_time: `08:${String(index).padStart(2, "0")}:00`, avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null }));
+  const long = seriesFixture(longRun);
+  const chartLong = chart.trendChart({ mode: "sequence", items: long.items, groups: long.groups, width: 900 });
+  const bands = [...chartLong.html.matchAll(/class="lab-band" x="([\d.]+)" y="[\d.]+" width="([\d.]+)"/g)].map((match) => [Number(match[1]), Number(match[2])]);
+  const slot = (chartLong.xAt(1) - chartLong.xAt(0));
+  const total = long.items.length;
+  assert.equal(bands.length, Math.ceil(total / 12), "one shaded band per 12 points (6 shaded + 6 plain)");
+  bands.forEach(([x, width], index) => {
+    const start = index * 12;
+    assert.ok(Math.abs(x - (chartLong.xAt(start) - slot / 2)) < 0.02, `band ${index} starts at point ${start + 1}`);
+    assert.ok(Math.abs(width - Math.min(6, total - start) * slot) < 0.05, `band ${index} spans up to 6 points`);
+  });
   assert.match(html, />21\/09</);
   assert.match(html, />22\/09</);
   const crowded = Array.from({ length: 40 }, (_, day) => row({ sample_id: String(100 + day), test_date: `2026-09-${String((day % 28) + 1).padStart(2, "0")}`, avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null }));
