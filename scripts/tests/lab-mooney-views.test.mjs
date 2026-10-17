@@ -21,7 +21,7 @@ const row = (overrides = {}) => ({
 // 3 ชุด (ชุดละ 3 แถว) กระจายใน 2 วัน + 1 แถวที่ยังไม่มี AVG/SD
 function seriesFixture(extra = []) {
   const make = (ids, date, stats, mh) => ids.map((id, index) => row({
-    sample_id: id, test_date: date, test_time: `08:0${index}:00`, mh: mh + index, mv: 30 + index,
+    sample_id: id, test_date: date, test_time: `08:0${index}:00`, mh: mh + index, mv: stats[2] - 1 + index,
     avg_mh: stats[0], sd_mh: stats[1], avg_mv: stats[2], sd_mv: stats[3],
   }));
   const rows = model.normalizeFeed({ rows: [
@@ -108,7 +108,8 @@ test("a new formula with no AVG anywhere still gets an average mark over every t
 });
 
 test("the provisional set size follows the material's own sets in the sheet", () => {
-  const five = (ids, date, stats) => ids.map((id, index) => row({ sample_id: id, test_date: date, test_time: `08:0${index}:00`, avg_mh: stats[0], sd_mh: 1, avg_mv: stats[1], sd_mv: 1 }));
+  // ค่าที่อ่านได้เฉลี่ยออกมาเท่ากับ AVG ของชีต (ชุดละ 5 แถว: avg−2 … avg+2)
+  const five = (ids, date, stats) => ids.map((id, index) => row({ sample_id: id, test_date: date, test_time: `08:0${index}:00`, mh: stats[0] - 2 + index, mv: stats[1] - 2 + index, avg_mh: stats[0], sd_mh: 1, avg_mv: stats[1], sd_mv: 1 }));
   const { items, groups } = seriesOfRows([
     ...five(["1", "2", "3", "4", "5"], "2026-10-01", [51, 31]),
     ...five(["6", "7", "8", "9", "10"], "2026-10-01", [61, 36]),
@@ -139,6 +140,44 @@ test("a set with only some sheet values fills the missing series from its own re
   const [mark] = chart.averageMarks(groups);
   assert.deepEqual(mark.mh, { value: 51, computed: false });
   assert.deepEqual(mark.mv, { value: 31, computed: true });
+});
+
+// แถวจริงของแท็บ "E00030S B" (อ่านจากฐานข้อมูลจริง 17 ต.ค. 2026): ชีตมี AVG/SD ทุกแถว แต่ค่าไม่ใช่ค่าเฉลี่ยของแถวเหล่านั้น
+// (AVG MH ราว 2.6 ทั้งที่ MH อ่านได้ 25–27, AVG MV = 0 / 4.9) และต่างกันทุกแถว ไม่ merge เป็นชุด — ขีดจากค่านี้ตกนอกกรอบกราฟจนมองไม่เห็น
+const BAD_SHEET_ROWS = [
+  ["111", "16:08:28", 25.36, 23.52, 2.65, 3.33, 0, 0],
+  ["112", "16:20:22", 26.75, 23.42, 2.6, 3.18, 4.92, 5.48],
+  ["113", "16:29:50", 24.98, 23, 2.27, 2.88, 4.68, 5.25],
+  ["121", "16:39:21", 27, 24.29, 2.33, 3.18, 4.7, 5.27],
+  ["122", "16:48:55", 26.33, 23.93, 2.35, 2.97, 4.62, 5.22],
+  ["123", "16:56:59", 25.4, 24.16, 2.12, 2.75, 4.38, 4.95],
+].map(([id, time, mh, mv, avgMh, sdMh, avgMv, sdMv]) => row({
+  source_sheet: "E00030S B", material: "E00030S B", sample_id: id, test_date: "2026-10-06", test_time: time,
+  mh, mv, avg_mh: avgMh, sd_mh: sdMh, avg_mv: avgMv, sd_mv: sdMv,
+}));
+
+test("sheet AVG values that cannot be the average of the set's readings are not drawn; the set gets a computed mark instead", () => {
+  const { items, groups } = model.buildSeries(model.normalizeFeed({ rows: BAD_SHEET_ROWS }).rows, "E00030S B");
+  const marks = chart.averageMarks(groups);
+  assert.deepEqual(marks.map((mark) => [mark.start, mark.count]), [[0, 3], [3, 3]], "rows with unusable stats are grouped as provisional sets of three, not one mark per row");
+  assert.ok(marks.every((mark) => mark.mh.computed && mark.mv.computed));
+  assert.ok(Math.abs(marks[0].mh.value - (25.36 + 26.75 + 24.98) / 3) < 1e-9);
+  assert.ok(Math.abs(marks[1].mv.value - (24.29 + 23.93 + 24.16) / 3) < 1e-9);
+  assert.deepEqual(coverage(marks, items.length), Array(6).fill(1));
+  const { html } = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
+  assert.equal(count(html, /class="lab-avg lab-avg-mh"/g), 0, "no solid mark from the unusable sheet values");
+  const plotted = [...html.matchAll(/class="lab-avg lab-avg-m[hv] is-calc" x1="[\d.]+" x2="[\d.]+" y1="([\d.-]+)"/g)].map((match) => Number(match[1]));
+  assert.equal(plotted.length, 4);
+  assert.ok(plotted.every((y) => y > 0 && y < 400), "every mark lands inside the plot instead of far below it");
+});
+
+test("a set whose sheet AVG fits only one series keeps the set but computes the other series", () => {
+  const rows = [0, 1, 2].map((index) => row({ sample_id: String(index + 1), test_time: `08:0${index}:00`, mh: 50 + index, mv: 30 + index, avg_mh: 51, sd_mh: 1, avg_mv: 0, sd_mv: 0 }));
+  const { groups } = seriesOfRows(rows);
+  const marks = chart.averageMarks(groups);
+  assert.equal(marks.length, 1, "the sheet's merge still defines the set");
+  assert.deepEqual(marks[0].mh, { value: 51, computed: false });
+  assert.deepEqual(marks[0].mv, { value: 31, computed: true });
 });
 
 test("a series with no readings in a set has no mark rather than a made-up value", () => {
@@ -374,7 +413,7 @@ test("the hover tip names the test and shows only that point's MH and MV (the gr
   const html = views.tooltip({ item });
   assert.match(html, /21\/09\/2026 08:01:00 · ID 122/);
   assert.match(html, /MH <b>61\.00<\/b>/);
-  assert.match(html, /MV <b>31\.00<\/b>/);
+  assert.match(html, /MV <b>36\.00<\/b>/);
   assert.doesNotMatch(html, /AVG|SD|#\d/, "no group stats and no running number");
   assert.equal(views.tooltip({ item: null }), "");
   assert.doesNotMatch(views.tooltip({ item: { ...series.items[0], sampleId: XSS } }), /<img/);
