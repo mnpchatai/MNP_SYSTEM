@@ -2,7 +2,7 @@
 //
 // หน้าวัสดุแสดง MH และ MV รวมในกราฟเดียว (พื้นดำ) แกนเวลาและแกนค่าเดียวกัน — หน่วยเดียวกันจึงใช้สเกลเดียว ไม่ใช่กราฟสองแกน
 // สีและรูปทรงต่างกัน (MH = วงกลมสีน้ำเงิน, MV = สี่เหลี่ยมขนมเปียกปูนสีส้ม) จึงแยกได้แม้ไม่เห็นสี; หัวกราฟเป็นทั้งคำอธิบายสัญลักษณ์และค่าเฉลี่ย/SD
-//   - โหมด "sequence": ทุกครั้งที่ทดสอบของวัสดุตามลำดับในชีต แถบพื้นหลังสลับ = วันที่ทดสอบ เส้นสั้น = ค่า AVG ของชุด (ทุกครั้งที่ทดสอบมีขีดเสมอ: ชุดที่ชีตยังไม่มี AVG ใช้ค่าเฉลี่ยของแถวในชุด วาดเป็นขีดประ)
+//   - โหมด "sequence": ทุกครั้งที่ทดสอบของวัสดุตามลำดับในชีต แถบพื้นหลังสลับ = วันที่ทดสอบ เส้นสั้น = ค่า AVG ของชุด (ทุกครั้งที่ทดสอบมีขีดเสมอ: ชุดที่ชีตยังไม่มี AVG หรือมีค่านอกช่วงค่าที่อ่านได้ ใช้ค่าเฉลี่ยของแถวในชุด วาดเป็นขีดประ)
 //   - โหมด "id": ติดตาม ID เดียวข้ามหลายครั้งที่ทดสอบ ลากเส้นต่อจุด เส้นประ = ค่าเฉลี่ย ติดป้ายค่าเฉพาะครั้งล่าสุด ค่าสูงสุดและต่ำสุด
 // สี/ตัวอักษร/เส้นกริดมาจาก CSS (ดู .lab-* ใน styles.css) กราฟใช้ชุดสีพื้นดำของตัวเองเสมอทั้งธีมสว่างและมืด
 // จุดทุกจุดมี data-i = ตำแหน่งในรายการที่ส่งเข้ามา ให้ module-lab.js ผูกการชี้/แตะ/คีย์บอร์ดโดยคำนวณจากตำแหน่งแกน X (indexAt)
@@ -68,10 +68,31 @@
     return halo + dot;
   }
 
-  // ขนาดชุดที่พบบ่อยที่สุดของชุดที่ชีตมี AVG/SD (เท่ากัน = ชุดใหญ่กว่า); ยังไม่มีชุดให้อ้างอิง = DEFAULT_SET_SIZE
-  function usualSetSize(groups) {
+  // ค่า AVG ที่ชีตให้มาใช้ได้เมื่ออยู่ในช่วงต่ำสุด–สูงสุดของค่าที่อ่านได้ของชุดเดียวกัน (ค่าเฉลี่ยของชุดใดๆ ไม่มีทางอยู่นอกช่วงนี้)
+  // ถ้าอยู่นอกช่วง (เช่น สูตรในชีตอ้างช่วงผิดจน AVG MH ได้ 2.6 ทั้งที่อ่านได้ 25) แปลว่าไม่ใช่ AVG ของแถวเหล่านี้ ขีดที่วาดจากค่านั้นจะตกนอกกรอบกราฟ
+  // ค่าที่ชีตแสดง 2 ตำแหน่ง จึงเผื่อคลาดเคลื่อนจากการปัดเศษเล็กน้อย
+  const AVG_TOLERANCE = 0.005;
+  function sheetAverageFits(average, readings) {
+    const { count, min, max } = model.describe(readings);
+    return isNumber(average) && count > 0 && average >= min - AVG_TOLERANCE && average <= max + AVG_TOLERANCE;
+  }
+
+  // ชุดที่ชีตมี AVG ใช้งานได้จริง = มีค่า AVG อย่างน้อยหนึ่งซีรีส์ที่อยู่ในช่วงค่าที่อ่านได้ของชุดนั้น
+  // คืน { mh: ค่า|null, mv: ค่า|null } เฉพาะค่าที่ใช้ได้ หรือ null เมื่อทั้งชุดใช้ไม่ได้ (ไม่มี AVG เลย หรือค่าไม่ตรงกับแถวเหล่านี้)
+  function usableSheetAverages(group) {
+    if (!group.hasStats) return null;
+    const usable = {};
+    for (const series of SERIES) {
+      const average = group[series.avgKey];
+      usable[series.key] = sheetAverageFits(average, group.items.map((item) => item[series.key])) ? average : null;
+    }
+    return SERIES.some((series) => usable[series.key] !== null) ? usable : null;
+  }
+
+  // ขนาดชุดที่พบบ่อยที่สุดของชุดที่ชีตมี AVG ใช้งานได้ (เท่ากัน = ชุดใหญ่กว่า); ยังไม่มีชุดให้อ้างอิง = DEFAULT_SET_SIZE
+  function usualSetSize(sheetSets) {
     const tally = new Map();
-    for (const group of groups) if (group.hasStats) tally.set(group.count, (tally.get(group.count) ?? 0) + 1);
+    for (const { group } of sheetSets) tally.set(group.count, (tally.get(group.count) ?? 0) + 1);
     let size = DEFAULT_SET_SIZE;
     let best = 0;
     for (const [candidate, times] of tally) {
@@ -83,18 +104,19 @@
     return size;
   }
 
-  // ขีด AVG ของกราฟ: ทุกครั้งที่ทดสอบต้องมีขีดใต้จุดเสมอ (ไม่ว่าชีตจะกรอก AVG แล้วหรือไม่)
-  //   - ชุดที่ชีตมี AVG ใช้ค่าตามชีต (computed = false) ซีรีส์ไหนที่ชีตไม่มีค่า ใช้ค่าเฉลี่ยของแถวในชุดแทน
-  //   - แถวที่ชีตยังไม่มี AVG (เช่นเพิ่งเพิ่มสูตรใหม่) รวมเป็นชุดชั่วคราวขนาดเท่าชุดที่พบบ่อยของวัสดุนั้น แถวติดกัน แท็บและวันที่เดียวกัน
-  //     แล้วใช้ค่าเฉลี่ยของแถวในชุดนั้น (computed = true) เมื่อชีตมี AVG ในภายหลัง ขีดจากชีตจะเข้ามาแทนเอง
+  // ขีด AVG ของกราฟ: ทุกครั้งที่ทดสอบต้องมีขีดใต้จุดเสมอ (ไม่ว่าชีตจะกรอก AVG แล้วหรือไม่ หรือกรอกมาผิด)
+  //   - ชุดที่ชีตมี AVG ใช้งานได้ ใช้ค่าตามชีต (computed = false) ซีรีส์ไหนที่ชีตไม่มีค่าหรือค่าใช้ไม่ได้ ใช้ค่าเฉลี่ยของแถวในชุดแทน
+  //   - แถวที่ชีตยังไม่มี AVG (เช่นเพิ่งเพิ่มสูตรใหม่) หรือมีแต่ค่าใช้ไม่ได้ รวมเป็นชุดชั่วคราวขนาดเท่าชุดที่พบบ่อยของวัสดุนั้น
+  //     แถวติดกัน แท็บและวันที่เดียวกัน แล้วใช้ค่าเฉลี่ยของแถวในชุดนั้น (computed = true) เมื่อชีตมี AVG ที่ถูกต้อง ขีดจากชีตจะเข้ามาแทนเอง
   // คืน [{ start, count, mh: { value, computed } | null, mv: { value, computed } | null }] — start คือตำแหน่งแรกของชุดในรายการที่ส่งเข้ามา
   function averageMarks(groups = []) {
-    const setSize = usualSetSize(groups);
+    const classified = groups.map((group) => ({ group, usable: usableSheetAverages(group) }));
+    const setSize = usualSetSize(classified.filter((entry) => entry.usable));
     const marks = [];
-    const build = (start, items, sheetValues) => {
+    const build = (start, items, usable) => {
       const mark = { start, count: items.length };
       for (const series of SERIES) {
-        const sheet = sheetValues?.[series.avgKey];
+        const sheet = usable?.[series.key];
         if (isNumber(sheet)) {
           mark[series.key] = { value: sheet, computed: false };
           continue;
@@ -110,10 +132,10 @@
       if (pending) build(pending.start, pending.items, null);
       pending = null;
     };
-    for (const group of groups) {
-      if (group.hasStats) {
+    for (const { group, usable } of classified) {
+      if (usable) {
         flush();
-        build(group.start, group.items, group);
+        build(group.start, group.items, usable);
         continue;
       }
       for (const item of group.items) {
