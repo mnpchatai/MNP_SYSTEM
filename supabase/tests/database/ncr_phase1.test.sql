@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(138);
+select plan(140);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -388,6 +388,18 @@ select throws_ok(
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000006","role":"authenticated"}', true);
 select throws_ok(
+  $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 24, 'ท่อน', 18) $$,
+  'NOT_AUTHORIZED',
+  'QA staff are not loss editors on a real NCR'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000007","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 24, 'ท่อน', 18) $$,
+  'NOT_AUTHORIZED',
+  'a QA manager is not a loss editor unless QA is a responsible department'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select throws_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'fire', 24, 'ท่อน', 18) $$,
   'INVALID_LOSS_TYPE',
   'loss type must be one of the defined types'
@@ -409,7 +421,7 @@ select throws_ok(
 );
 select lives_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 24, 'ท่อน', 18.5, 'ทิ้ง') $$,
-  'QA records a scrap loss'
+  'the factory manager records a scrap loss'
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select lives_ok(
@@ -757,7 +769,7 @@ select results_eq(
 );
 
 -- 10. ล็อกหลังปิด และการยกเลิก ---------------------------------------------------------
-select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000006","role":"authenticated"}', true);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 1, 'ท่อน', 18) $$,
   'NCR_LOCKED',
@@ -768,6 +780,7 @@ select throws_ok(
   'NCR_LOCKED',
   'a batch cannot be added after the NCR is closed'
 );
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000006","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_request_info(current_setting('test.ncr_a')::uuid, 'ขอข้อมูลหลังปิด NCR แล้ว') $$,
   'INVALID_TRANSITION',

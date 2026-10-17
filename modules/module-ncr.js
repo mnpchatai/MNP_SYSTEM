@@ -79,7 +79,7 @@
   const roleCode = (employee) => employee?.role?.code ?? "";
   const isQa = (employee) => employee?.department?.code === "QA";
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
-  const SANDBOX_COST_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
+  const LOSS_EDITOR_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
   const todayBangkok = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
   // กำหนดตอบนับจากวันออกใบ (+5 วัน) จึงเกินกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
@@ -488,10 +488,9 @@
   function canEditLosses(ncr, employee) {
     // ลงยอดย้อนหลังได้หลังปิด NCR แล้ว ล็อกเฉพาะใบที่ยกเลิก (ตรงกับ app_ncr_record_loss / app_ncr_review_costs / app_ncr_void_loss)
     if (ncr.status === "cancelled") return false;
-    // โหมดทดสอบ: ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และหัวหน้าแผนกที่รับผิดชอบเท่านั้น (ตรงกับ private.can_edit_ncr_losses; QA ไม่มีสิทธิ์โดยตำแหน่ง)
-    // ข้อมูลจริง: พนักงาน QA, ผจก.โรงงาน, ผู้ช่วย ผจก.โรงงาน และหัวหน้าแผนกที่รับผิดชอบ
-    const sandbox = Boolean(state.employee?.isSandbox);
-    if (sandbox ? SANDBOX_COST_ROLE_CODES.includes(roleCode(employee)) : isQa(employee) || ["factory_manager", "assistant_factory_manager"].includes(roleCode(employee))) return true;
+    // ทั้งใบจริงและใบทดสอบ: ผจก.โรงงาน/ผู้ช่วย/ผจก.ทั่วไป และหัวหน้าแผนกที่รับผิดชอบเท่านั้น (ตรงกับ private.can_edit_ncr_losses;
+    // พนักงาน QA ไม่มีสิทธิ์โดยตำแหน่ง ยกเว้นเป็นหัวหน้าแผนกที่อยู่ในรายการแผนกที่รับผิดชอบใบนั้น)
+    if (LOSS_EDITOR_ROLE_CODES.includes(roleCode(employee))) return true;
     return isDeptManager(employee) && (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
   }
 
@@ -543,17 +542,14 @@
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
-    // ทดลองหน้าตาการ์ดเฉพาะ sandbox โดยใช้ข้อมูลและลำดับขั้นตอนชุดเดิม
-    const partOpening = (number, title, description) => employee?.isSandbox
-      ? `<section class="card ncr-card ncr-detail-part ncr-detail-part--${number}" aria-labelledby="ncr-part-${number}-title">
+    const partOpening = (number, title, description) => `<section class="card ncr-card ncr-detail-part ncr-detail-part--${number}" aria-labelledby="ncr-part-${number}-title">
           <header class="ncr-part-heading">
             <span class="ncr-part-number" aria-hidden="true">0${number}</span>
             <div class="ncr-part-heading-copy">
               <h2 id="ncr-part-${number}-title"><span class="ncr-part-eyebrow">ส่วนที่ ${number}</span> ${escapeHtml(title)}</h2>
               <p>${escapeHtml(description)}</p>
             </div>
-          </header><dl class="definition-grid">`
-      : `<section class="card ncr-card"><h2>ส่วนที่ ${number} ${escapeHtml(title)}</h2><dl class="definition-grid">`;
+          </header><dl class="definition-grid">`;
     const partIcons = {
       calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M16 3v4M8 3v4M3 11h18"/>',
       person: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
@@ -564,20 +560,14 @@
       action: '<path d="m9 11 3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
       shield: '<path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6Zm-4 9 3 3 5-5"/>',
     };
-    const partField = (label, value, full = false, icon = "document", narrative = false) => {
-      if (!employee?.isSandbox) return definition(label, value, full);
-      return `<div class="definition ncr-fact${full ? " full" : ""}${narrative ? " ncr-fact--narrative" : ""}${value === "—" ? " ncr-fact--empty" : ""}">
+    const partField = (label, value, full = false, icon = "document", narrative = false) => `<div class="definition ncr-fact${full ? " full" : ""}${narrative ? " ncr-fact--narrative" : ""}${value === "—" ? " ncr-fact--empty" : ""}">
         <dt><svg class="ncr-fact-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${partIcons[icon]}</svg>${escapeHtml(label)}</dt><dd>${value}</dd>
       </div>`;
-    };
-    const quantities = employee?.isSandbox
-      ? `<div class="definition full ncr-quantity-summary"><dt>จำนวน <span class="ncr-quantity-unit">หน่วย: ${escapeHtml(ncr.unit)}</span></dt>
+    const quantities = `<div class="definition full ncr-quantity-summary"><dt>จำนวน <span class="ncr-quantity-unit">หน่วย: ${escapeHtml(ncr.unit)}</span></dt>
           <dd><dl class="ncr-quantity-values">
             ${[["ทั้งหมด", formatQty(ncr.qty_total)], ["สุ่ม", formatQty(ncr.qty_sampled)], ["พบปัญหา", formatQty(ncr.qty_defect)], ["ส่งคืน", formatQty(ncr.qty_returned)], ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`]].map(([label, value], index) => `<div${index === 2 ? ' class="ncr-quantity-defect"' : ""}><dt>${label}</dt><dd>${value}</dd></div>`).join("")}
           </dl></dd>
-        </div>`
-      : definition("จำนวน", `ทั้งหมด ${formatQty(ncr.qty_total)} · สุ่ม ${formatQty(ncr.qty_sampled)} · พบปัญหา ${formatQty(ncr.qty_defect)} · ส่งคืน ${formatQty(ncr.qty_returned)} ${escapeHtml(ncr.unit)}`)
-        + "\n        " + definition("%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`);
+        </div>`;
     const heading = `
       <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
