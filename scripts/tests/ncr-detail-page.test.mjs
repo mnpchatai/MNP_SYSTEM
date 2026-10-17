@@ -75,16 +75,18 @@ test("the card layout does not depend on test mode or on the report's mode", asy
 });
 
 test("who sees the loss form on a real NCR matches private.can_edit_ncr_losses", async () => {
+  // NCR ใบนี้ให้แผนก RB รับผิดชอบ — หัวหน้า RB จึงไม่มีสิทธิ์แล้ว (migration 20261017030000)
   const cases = [
     ["factory manager", employee("e1", "dept-ft", "FT", "factory_manager"), true],
     ["assistant factory manager", employee("e2", "dept-ft", "FT", "assistant_factory_manager"), true],
     ["general manager", employee("e3", "dept-mgt", "MGT", "general_manager"), true],
-    ["manager of the responsible department", employee("e4", "dept-rb", "RB", "department_manager"), true],
-    ["assistant manager of the responsible department", employee("e5", "dept-rb", "RB", "assistant_department_manager"), true],
+    ["QA department manager", employee("e9", "dept-qa", "QA", "department_manager"), true],
+    ["QA assistant department manager", employee("e10", "dept-qa", "QA", "assistant_department_manager"), true],
+    ["manager of the responsible department", employee("e4", "dept-rb", "RB", "department_manager"), false],
+    ["assistant manager of the responsible department", employee("e5", "dept-rb", "RB", "assistant_department_manager"), false],
     ["manager of another department", employee("e6", "dept-pk", "PK", "department_manager"), false],
     ["staff of the responsible department", employee("e7", "dept-rb", "RB", "staff"), false],
     ["QA staff", employee("e8", "dept-qa", "QA", "staff"), false],
-    ["QA manager when QA is not responsible", employee("e9", "dept-qa", "QA", "department_manager"), false],
   ];
   for (const [label, viewer, editable] of cases) {
     const html = await renderFor(viewer);
@@ -92,19 +94,22 @@ test("who sees the loss form on a real NCR matches private.can_edit_ncr_losses",
   }
 });
 
-test("a cancelled NCR locks the loss form for everyone, and QA edits only when QA is responsible", async () => {
+test("a cancelled NCR locks the loss form for everyone, and the responsible department does not change who can edit", async () => {
   const factoryManager = employee("e1", "dept-ft", "FT", "factory_manager");
-  assert.equal((await renderFor(factoryManager, { status: "cancelled" })).includes('id="ncr-loss-form"'), false, "cancelled report: form hidden");
-  const qaResponsible = { ncr_responsibilities: [{ share: 100, department_id: "dept-qa", department: { code: "QA", name_th: "QA" } }] };
   const qaManager = employee("e9", "dept-qa", "QA", "department_manager");
-  const qaStaff = employee("e8", "dept-qa", "QA", "staff");
-  assert.equal((await renderFor(qaManager, qaResponsible)).includes('id="ncr-loss-form"'), true, "QA manager when QA is responsible: form shown");
-  assert.equal((await renderFor(qaStaff, qaResponsible)).includes('id="ncr-loss-form"'), false, "QA staff even when QA is responsible: form hidden");
+  for (const viewer of [factoryManager, qaManager]) {
+    assert.equal((await renderFor(viewer, { status: "cancelled" })).includes('id="ncr-loss-form"'), false, "cancelled report: form hidden");
+  }
+  const qaResponsible = { ncr_responsibilities: [{ share: 100, department_id: "dept-qa", department: { code: "QA", name_th: "QA" } }] };
+  assert.equal((await renderFor(qaManager, qaResponsible)).includes('id="ncr-loss-form"'), true, "QA manager, QA responsible: form shown");
+  assert.equal((await renderFor(qaManager)).includes('id="ncr-loss-form"'), true, "QA manager, QA not responsible: form shown");
+  assert.equal((await renderFor(employee("e8", "dept-qa", "QA", "staff"), qaResponsible)).includes('id="ncr-loss-form"'), false, "QA staff even when QA is responsible: form hidden");
+  assert.equal((await renderFor(employee("e4", "dept-rb", "RB", "department_manager"))).includes('id="ncr-loss-form"'), false, "responsible department manager: form hidden");
 });
 
 test("read-only viewers are told who can enter costs; editors are not", async () => {
   const readOnly = await renderFor(employee("e8", "dept-qa", "QA", "staff"));
-  assert.match(readOnly, /ประเมินค่าเสียหายยังไม่ครบ · ผู้กรอกได้: ผจก\.โรงงาน/);
+  assert.match(readOnly, /ประเมินค่าเสียหายยังไม่ครบ · ผู้กรอกได้: ผจก\.ทั่วไป, ผจก\.โรงงาน, ผช\.ผจก\.โรงงาน และ ผจก\.\/ผช\.ผจก\.แผนก QA/);
   const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
   assert.doesNotMatch(editor, /ผู้กรอกได้:/);
 });

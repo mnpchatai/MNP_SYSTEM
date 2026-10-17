@@ -29,6 +29,7 @@ select set_config('test.cost_fm',(select id::text from public.employees where em
 select set_config('test.cost_afm',(select id::text from public.employees where employee_no='SBX-FT-AFM'),true);
 select set_config('test.cost_gm',(select id::text from public.employees where employee_no='SBX-MGT-GM'),true);
 select set_config('test.cost_rbmgr',(select id::text from public.employees where employee_no='SBX-RB-MGR'),true);
+select set_config('test.cost_qamgr',(select id::text from public.employees where employee_no='SBX-QA-MGR'),true);
 select set_config('test.cost_pkmgr',(select id::text from public.employees where employee_no='SBX-PK-MGR'),true);
 
 set local role authenticated;
@@ -50,7 +51,9 @@ select public.app_ncr_dispose(current_setting('test.cost_ncr2')::uuid,array['sor
 select public.app_sandbox_enter(current_setting('test.cost_pkmgr')::uuid);
 select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'NOT_AUTHORIZED','test mode: a manager of a department that is not responsible is denied');
 select public.app_sandbox_enter(current_setting('test.cost_rbmgr')::uuid);
-select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the responsible department manager can record a cost');
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'NOT_AUTHORIZED','test mode: the responsible department manager can no longer record a cost');
+select public.app_sandbox_enter(current_setting('test.cost_qamgr')::uuid);
+select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the QA manager can record a cost on any report');
 select public.app_sandbox_enter(current_setting('test.cost_gm')::uuid);
 select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the general manager can record a cost');
 select public.app_sandbox_enter(current_setting('test.cost_afm')::uuid);

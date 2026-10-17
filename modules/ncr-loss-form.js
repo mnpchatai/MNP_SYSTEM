@@ -6,7 +6,7 @@
   // ไฟล์อัปโหลดหลังบันทึกสำเร็จโดย submit handler กลางใน module-ncr.js
   const extraFilesField = (id) => (window.MNP_REQUEST_MODULES?.NCR_CAR?.shared?.evidenceFieldHtml?.(id, "แนบไฟล์เพิ่มเติม (ถ้ามี)") ?? "").replace('class="field"', 'class="field full"');
   // ผู้ที่กรอกต้นทุนได้ ตรงกับ private.can_edit_ncr_losses (module-ncr.js canEditLosses) — แสดงให้ผู้ที่อ่านอย่างเดียวรู้ว่าต้องไปตามใคร
-  const EDITORS_TEXT = "ผจก.โรงงาน, ผช.ผจก.โรงงาน, ผจก.ทั่วไป และ ผจก./ผช.ผจก.แผนกที่รับผิดชอบใบนี้";
+  const EDITORS_TEXT = "ผจก.ทั่วไป, ผจก.โรงงาน, ผช.ผจก.โรงงาน และ ผจก./ผช.ผจก.แผนก QA";
   function render(ncr, losses, directory, editable, today, formatBaht, formatQty) {
     const summary = costs.summarize(losses);
     const rows = losses.map((loss) => `<tr class="${loss.voided_at ? "ncr-voided" : ""}">
