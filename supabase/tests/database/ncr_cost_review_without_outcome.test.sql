@@ -1,12 +1,12 @@
 -- ทดสอบ 20261015080000_ncr_cost_review_without_outcome.sql
---   1) สิทธิ์ app_ncr_review_costs: QA/ผจก.โรงงานยืนยันประเมินครบได้ พนักงานแผนก/ผู้ช่วย ผจก.แผนกที่ไม่รับผิดชอบไม่ได้
+--   1) สิทธิ์ app_ncr_review_costs: ผจก.โรงงานยืนยันประเมินครบได้ พนักงาน QA/พนักงานแผนก/ผู้ช่วย ผจก.แผนกที่ไม่รับผิดชอบไม่ได้
 --      anon เรียกไม่ได้ เขียนตาราง ncr_outcomes ตรงไม่ได้ ข้ามโหมดทดสอบไม่ได้ ใบที่ยกเลิกล็อก
 --   2) กฎประเมินครบ: รายการรอยืนยันค้างไม่ได้ ไม่มีค่าเสียหายต้องมีเหตุผล ยกเลิกเครื่องหมายได้ ลงยอดใหม่ยกเลิกเครื่องหมาย
 --   3) ไม่ต้องมีผลดำเนินการ: สร้างแถวร่างจำนวน 0 ใบที่มีผลดำเนินการเดิมคงจำนวน/หลักฐานเดิม และบันทึกประวัติ cost_review
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(23);
+select plan(24);
 
 insert into auth.users (id, email, raw_user_meta_data) values
   ('79400000-0000-0000-0000-000000000001', 'ncrcr-rb-staff@mnp.local', '{}'::jsonb),
@@ -80,9 +80,15 @@ select throws_ok(
   'a sandbox identity cannot mark the cost review of a real report'
 );
 select public.app_sandbox_exit();
+select set_config('request.jwt.claims', '{"sub":"79400000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_review_costs(current_setting('test.ncr_z')::uuid, true, 'ยอมรับใช้ทั้งหมด') $$,
+  'NOT_AUTHORIZED',
+  'QA staff cannot mark the cost review of a real report (same rule as test mode)'
+);
 
 -- 2) กฎประเมินครบ -------------------------------------------------------------------------
-select set_config('request.jwt.claims', '{"sub":"79400000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select set_config('request.jwt.claims', '{"sub":"79400000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_review_costs(current_setting('test.ncr_a')::uuid, true, null) $$,
   'COST_REVIEW_PENDING',
@@ -105,12 +111,12 @@ select throws_ok(
 );
 select lives_ok(
   $$ select public.app_ncr_review_costs(current_setting('test.ncr_z')::uuid, true, 'ยอมรับใช้ทั้งหมด ไม่มีค่าใช้จ่าย') $$,
-  'QA marks a report without costs as reviewed with a reason'
+  'the factory manager marks a report without costs as reviewed with a reason'
 );
 select results_eq(
   $$ select result_status, cost_reviewed, qty_scrapped, evidence_ref, note, updated_by
      from public.ncr_outcomes where ncr_id = current_setting('test.ncr_z')::uuid $$,
-  $$ values ('draft'::text, true, 0::numeric, null::text, 'ยอมรับใช้ทั้งหมด ไม่มีค่าใช้จ่าย'::text, '79400000-0000-0000-0000-000000000103'::uuid) $$,
+  $$ values ('draft'::text, true, 0::numeric, null::text, 'ยอมรับใช้ทั้งหมด ไม่มีค่าใช้จ่าย'::text, '79400000-0000-0000-0000-000000000102'::uuid) $$,
   'the review needs no outcome: a draft row with zero quantities and the reason is kept'
 );
 
