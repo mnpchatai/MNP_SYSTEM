@@ -313,3 +313,20 @@ test("the last-read time is shown as a clock only, because the date is always to
   assert.equal(model.formatUpdatedTime(null), "—");
   assert.equal(model.formatUpdatedTime("not a date"), "—");
 });
+
+test("months are read from the test date, listed oldest first once each, and shown as a short Thai month with the Gregorian year", () => {
+  assert.equal(model.monthOf("2026-09-21"), "2026-09");
+  assert.equal(model.monthOf("2026-12-01"), "2026-12");
+  assert.equal(model.monthOf(null), null);
+  assert.equal(model.monthOf("21/09/2026"), null, "only the sheet's ISO date is read");
+  const items = ["2026-10-02", "2026-09-30", "2026-09-01", "2026-10-31", null, "2027-01-05"].map((testDate) => ({ testDate }));
+  assert.deepEqual(model.monthsOf(items), ["2026-09", "2026-10", "2027-01"], "a month with no tests is not listed");
+  assert.deepEqual(model.monthsOf([]), []);
+  assert.equal(model.formatMonth("2026-09"), "ก.ย. 2026");
+  assert.equal(model.formatMonth("2027-01"), "ม.ค. 2027");
+  assert.equal(model.formatMonth("2026-12"), "ธ.ค. 2026");
+  assert.equal(model.formatMonth("2026-13"), "—");
+  assert.equal(model.formatMonth("2026-00"), "—");
+  assert.equal(model.formatMonth(null), "—");
+  assert.equal(model.formatMonth("21/09/2026"), "—");
+});

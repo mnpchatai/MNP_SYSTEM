@@ -3,7 +3,7 @@
 // module-lab.js เรียกที่นี่เพื่อได้ HTML ของหน้ารวมและหน้าวัสดุ แล้วเป็นผู้ผูกเหตุการณ์ รีเฟรช และจัดการสิทธิ์เอง
 // ข้อความจากชีต (ชื่อวัสดุ ID) ถูก escape ทุกจุดก่อนใส่ใน HTML และ URL ของวัสดุผ่าน model.materialUrl เท่านั้น
 // ค่า AVG/SD ที่ merge ในชีตแสดงตามชีต ไม่คำนวณใหม่ (ค่าสรุปของกราฟ เช่น เฉลี่ยทั้งหมด คำนวณจากทุกครั้งที่ทดสอบและระบุไว้ชัดเจน)
-// ข้อยกเว้นเดียวคือขีด AVG ในกราฟ: ชุดที่ชีตยังไม่มี AVG กราฟเฉลี่ยค่าที่อ่านได้ให้เป็นขีดประ เพื่อให้ทุกครั้งที่ทดสอบมีขีดเสมอ (ตารางยังแสดง — ตามชีต)
+// ข้อยกเว้นเดียวคือขีด AVG ในกราฟ: ชุดที่ชีตยังไม่มี AVG หรือมีค่าที่ไม่ใช่ AVG ของแถวนั้น (อยู่นอกช่วงค่าที่อ่านได้ของชุด) กราฟเฉลี่ยค่าที่อ่านได้ให้เป็นขีดประ เพื่อให้ทุกครั้งที่ทดสอบมีขีดเสมอ (ตารางยังแสดงค่าตามชีต)
 //
 // หลักของหน้านี้: ข้อมูลแต่ละอย่างแสดงที่เดียว — ชื่อวัสดุอยู่ที่ตัวเลือกหัวหน้า (ไม่ซ้ำเป็นหัวข้อ/ตัวเลือก/คำอธิบายอีก), จำนวนครั้งและเงื่อนไขทดสอบอยู่ที่หัวตาราง,
 // ค่าของจุดที่ชี้อยู่แสดงเป็นป้ายลอยชั่วคราวและแถวที่ตรงกันในตาราง (ไม่มีแถบค่าถาวรที่ซ้ำกับตาราง), วันที่แสดงเป็นวันที่ ไม่ซ้ำเป็น "เมื่อวาน"
@@ -92,6 +92,46 @@
     { key: "oldest", label: "เก่าสุดก่อน" },
   ]);
 
+  // เครื่องมือช่วงและซูมของกราฟโหมดลำดับ (module-lab.js ผูกปุ่มและซ่อนเมื่อดูประวัติ ID): ล่าสุด/ทั้งหมด + เลือกเดือน … ถึง … + เลื่อนซ้าย/ขวา + ซูมออก/เข้า
+  // ปุ่มเป็นปุ่มแบน ส่วนเดือนเป็น <select> ของเบราว์เซอร์ (data-native-select: บน iPhone เป็นตัวเลือกของระบบที่แตะง่าย ไม่ใช่รายการลอยของแอป)
+  // ป้ายปุ่ม "ล่าสุด" ใส่จำนวนครั้งตามความกว้างจอตอนวาด (ดู module-lab.js) คำอธิบายท่าทางอยู่ที่ title
+  const STEP_ICONS = Object.freeze({
+    back: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`,
+    forward: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>`,
+    out: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>`,
+    in: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>`,
+  });
+  const RANGE_BUTTONS = Object.freeze([
+    { key: "latest", label: "ล่าสุด", title: "ล่าสุดตามความกว้างจอ" },
+    { key: "all", label: "ทั้งหมด", title: "ทุกครั้งที่ทดสอบ" },
+  ]);
+  const STEP_BUTTONS = Object.freeze([
+    { key: "back", label: "เลื่อนไปช่วงก่อนหน้า" },
+    { key: "forward", label: "เลื่อนไปช่วงถัดไป" },
+    { key: "out", label: "ซูมออก (−)" },
+    { key: "in", label: "ซูมเข้า (+) หรือ Ctrl + ล้อเมาส์ / บีบสองนิ้ว" },
+  ]);
+
+  function zoomBar() {
+    const ranges = RANGE_BUTTONS.map((button) => `<button type="button" class="lab-range-btn" data-range="${button.key}" aria-pressed="false" title="${esc(button.title)}">${esc(button.label)}</button>`).join("");
+    const steps = STEP_BUTTONS.map((button) => `<button type="button" class="lab-step" data-step="${button.key}" aria-label="${esc(button.label)}" title="${esc(button.label)}">${STEP_ICONS[button.key]}</button>`).join("");
+    const months = `<div class="lab-months" role="group" aria-label="ช่วงเดือนที่แสดง"><select class="select lab-month" id="lab-month-from" data-native-select aria-label="ตั้งแต่เดือน"></select><span class="lab-month-to" aria-hidden="true">ถึง</span><select class="select lab-month" id="lab-month-to" data-native-select aria-label="ถึงเดือน"></select></div>`;
+    return `<div class="lab-zoom" id="lab-zoom" role="toolbar" aria-label="ช่วงที่แสดงและการซูมของกราฟ" hidden><div class="lab-ranges" role="group" aria-label="ช่วงที่แสดง">${ranges}</div>${months}<div class="lab-steps">${steps}</div></div>`;
+  }
+
+  // ตัวเลือกเดือนของช่องเดือน (months = "YYYY-MM" เรียงเก่า → ใหม่): ทุกเดือนที่มีผลทดสอบ ไม่ใส่จำนวนครั้ง เพราะแกนกราฟและตารางบอกอยู่แล้ว
+  const monthOptions = (months, selected) => months
+    .map((month) => `<option value="${esc(month)}"${month === selected ? " selected" : ""}>${esc(model.formatMonth(month))}</option>`)
+    .join("");
+
+  // ข้อความสำหรับโปรแกรมอ่านหน้าจอเมื่อช่วงที่แสดงเปลี่ยน (ข้อความล้วน)
+  function rangeAnnouncement({ items, range }) {
+    const first = items[range.start];
+    const last = items[range.end - 1];
+    if (!first || !last) return "";
+    return `แสดง ${model.formatDate(first.testDate)} ถึง ${model.formatDate(last.testDate)} ${int(range.end - range.start)} จาก ${int(items.length)} ครั้ง`;
+  }
+
   // หัวหน้าบรรทัดเดียว: ปุ่มกลับ · ตัวเลือกวัสดุ (เป็นทั้งชื่อหน้าและตัวสลับวัสดุ) · ตัวเลือก ID · เวลาอ่านชีต/รีเฟรช
   function materialPage(material, seconds) {
     const orders = ORDER_OPTIONS.map((option) => `<option value="${esc(option.key)}">${esc(option.label)}</option>`).join("");
@@ -106,10 +146,13 @@
       <div id="lab-body">
         <section class="card lab-chart-card" aria-label="กราฟ MH และ MV">
           <div class="lab-plot-wrap">
-            <div class="lab-plot" id="lab-plot" tabindex="0" role="group" aria-label="กราฟ MH และ MV ใช้ปุ่มลูกศรซ้ายขวาเพื่อเลื่อนดูทีละครั้ง"></div>
+            <div class="lab-plot" id="lab-plot" tabindex="0" role="group" aria-label="กราฟ MH และ MV ใช้ปุ่มลูกศรซ้ายขวาเพื่อเลื่อนดูทีละครั้ง ปุ่มบวกและลบเพื่อซูม"></div>
             <div class="lab-tip" id="lab-tip" hidden></div>
           </div>
-          <p class="lab-chart-key" id="lab-chart-key"></p>
+          <div class="lab-chart-foot">
+            <p class="lab-chart-key" id="lab-chart-key"></p>
+            ${zoomBar()}
+          </div>
           <p class="sr-only" id="lab-announce" role="status" aria-live="polite"></p>
         </section>
         <section class="card flush lab-results-card" aria-labelledby="lab-table-title">
@@ -256,20 +299,21 @@
     return `${whenText(item)}${mode === "id" ? "" : ` ID ${item.sampleId}`} MH ${reading(item.mh)} MV ${reading(item.mv)}`;
   }
 
-  // ขีดทึบ = ค่าตามชีต, ขีดประ = ชุดที่ชีตยังไม่มี AVG กราฟคำนวณจากค่าที่อ่านได้ของชุดนั้นให้ (อธิบายที่ title ไม่เป็นข้อความถาวร)
-  const AVG_KEY_NOTE = "ขีดทึบ = ค่า AVG ตามชีต · ขีดประ = ชุดที่ชีตยังไม่มี AVG กราฟเฉลี่ยค่าที่อ่านได้ของชุดนั้นให้";
+  // ขีดทึบ = ค่าตามชีต, ขีดประ = ชุดที่ชีตยังไม่มี AVG หรือค่าในชีตใช้ไม่ได้ กราฟคำนวณจากค่าที่อ่านได้ของชุดนั้นให้ (อธิบายที่ title ไม่เป็นข้อความถาวร)
+  const AVG_KEY_NOTE = "ขีดทึบ = ค่า AVG ตามชีต · ขีดประ = ชุดที่ชีตยังไม่มี AVG หรือค่า AVG ในชีตไม่ตรงกับค่าที่อ่านได้ (อยู่นอกช่วงต่ำสุด–สูงสุดของชุด) กราฟเฉลี่ยค่าที่อ่านได้ของชุดนั้นให้";
 
   // คำอธิบายสัญลักษณ์ของกราฟบรรทัดเดียวใต้กราฟ (เป็นที่เดียวที่อธิบายแถบและขีด)
-  function chartKey(mode) {
+  // bandSize = ขนาดแถบที่กราฟใช้อยู่จริง (ขยายเป็นทวีคูณของ chart.BAND_SIZE เมื่อแถบแคบเกินไป)
+  function chartKey(mode, bandSize = chart.BAND_SIZE) {
     if (mode === "id") return `<span class="lab-key-item"><i class="lab-key-mean" aria-hidden="true"></i>เส้นประ = ค่าเฉลี่ยของ ID นี้</span><span class="lab-key-item">ป้าย = ล่าสุด สูงสุด ต่ำสุด</span>`;
-    return `<span class="lab-key-item"><i class="lab-key-band" aria-hidden="true"></i>แถบสลับ = วันที่ทดสอบ</span><span class="lab-key-item" title="${esc(AVG_KEY_NOTE)}"><i class="lab-key-avg" aria-hidden="true"></i>ขีดสั้น = ค่า AVG ของชุด</span>`;
+    return `<span class="lab-key-item"><i class="lab-key-band" aria-hidden="true"></i>แถบสลับ = ทุก ${bandSize} จุด</span><span class="lab-key-item" title="${esc(AVG_KEY_NOTE)}"><i class="lab-key-avg" aria-hidden="true"></i>ขีดสั้น = ค่า AVG ของชุด</span>`;
   }
 
   const api = {
     ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS,
     liveBar, overviewPage, materialRows, materialSuggestions,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
-    resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey,
+    resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey, rangeAnnouncement, monthOptions,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_VIEWS = api;
