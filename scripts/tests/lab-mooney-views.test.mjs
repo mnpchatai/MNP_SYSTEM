@@ -216,6 +216,199 @@ test("background bands alternate every 6 points regardless of the test day, and 
   assert.ok(labels.length >= 2 && labels.length <= 8, `date labels are thinned instead of overlapping (${labels.length})`);
 });
 
+// รายการยาวสำหรับทดสอบช่วงที่แสดง: n ครั้ง ค่า MH เพิ่มทีละ 1 เพื่อให้ตรวจแกนค่าของช่วงที่เห็นได้
+const longItems = (n) => seriesOfRows(Array.from({ length: n }, (_, index) => row({
+  sample_id: String(1000 + index), test_date: `2026-10-${String((index % 28) + 1).padStart(2, "0")}`, test_time: "09:00:00",
+  mh: 100 + index, mv: 40 + index / 10, avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null,
+}))).items;
+const bandRects = (html) => [...html.matchAll(/class="lab-band" x="([\d.]+)" y="[\d.]+" width="([\d.]+)"/g)].map((match) => ({ x: Number(match[1]), width: Number(match[2]) }));
+
+test("the visible range is normalised: at least two bands, at most the whole list, never past either end", () => {
+  const total = 200;
+  assert.deepEqual(chart.normalizeRange({ start: 10, end: 60 }, total), { start: 10, end: 60 });
+  assert.deepEqual(chart.normalizeRange({ start: 10, end: 12 }, total), { start: 10, end: 22 }, "narrower than two bands is widened");
+  assert.deepEqual(chart.normalizeRange({ start: 190, end: 400 }, total), { start: 0, end: 200 }, "wider than the list shows the whole list");
+  assert.deepEqual(chart.normalizeRange({ start: -30, end: 20 }, total), { start: 0, end: 50 }, "shifted back inside the list, keeping its width");
+  assert.deepEqual(chart.normalizeRange({ start: 180, end: 230 }, total), { start: 150, end: 200 });
+  assert.deepEqual(chart.normalizeRange({ start: 0, end: 3 }, 5), { start: 0, end: 5 }, "fewer tests than two bands: all of them");
+  assert.deepEqual(chart.normalizeRange({}, 40), { start: 0, end: 40 });
+  assert.deepEqual(chart.normalizeRange({ start: 3, end: 9 }, 0), { start: 0, end: 0 });
+});
+
+// n ครั้ง กระจายตามเดือนที่กำหนด (ครั้งละเดือน = perMonth ครั้ง) สำหรับทดสอบช่วงเป็นเดือน
+const monthlyItems = (months, perMonth) => seriesOfRows(months.flatMap((month, monthIndex) => Array.from({ length: perMonth }, (_, index) => row({
+  sample_id: String(2000 + monthIndex * perMonth + index), test_date: `${month}-${String((index % 28) + 1).padStart(2, "0")}`, test_time: "09:00:00",
+  mh: 100 + monthIndex * perMonth + index, mv: 40, avg_mh: null, sd_mh: null, avg_mv: null, sd_mv: null,
+})))).items;
+
+test("ranges follow the data: latest N by screen width, everything, whole months, or a custom window", () => {
+  const items = longItems(300);
+  assert.deepEqual(chart.rangeFor({ kind: "latest" }, items, 900), { start: 180, end: 300 }, "wide screens start from the latest 120");
+  assert.deepEqual(chart.rangeFor({ kind: "latest" }, items, 360), { start: 240, end: 300 }, "narrow screens start from the latest 60");
+  assert.equal(chart.defaultCount(900), 120);
+  assert.equal(chart.defaultCount(360), 60);
+  assert.deepEqual(chart.rangeFor({ kind: "all" }, items, 900), { start: 0, end: 300 });
+  assert.deepEqual(chart.rangeFor(undefined, items.slice(0, 40), 900), { start: 0, end: 40 }, "fewer tests than the default: all of them");
+  const fixed = chart.rangeFor({ kind: "custom", start: 40, end: 100, follow: false }, items, 900);
+  assert.deepEqual(fixed, { start: 40, end: 100 });
+  const following = chart.rangeFor({ kind: "custom", start: 40, end: 100, follow: true }, items.concat(items.slice(0, 10)), 900);
+  assert.deepEqual(following, { start: 250, end: 310 }, "a window that touched the newest test keeps its width and moves with new rows");
+});
+
+test("a month range takes every test from the first month to the last month, both included", () => {
+  const items = monthlyItems(["2026-08", "2026-09", "2026-10", "2026-11"], 20);
+  assert.deepEqual(chart.rangeForMonths(items, "2026-09", "2026-10"), { start: 20, end: 60 });
+  assert.deepEqual(chart.rangeForMonths(items, "2026-09", "2026-09"), { start: 20, end: 40 }, "one month");
+  assert.deepEqual(chart.rangeForMonths(items, "2026-08", "2026-11"), { start: 0, end: 80 }, "all months");
+  assert.deepEqual(chart.rangeForMonths(items, "2026-06", "2026-09"), { start: 0, end: 40 }, "a first month with no tests starts at the first test after it");
+  assert.deepEqual(chart.rangeForMonths(items, "2026-10", "2027-03"), { start: 40, end: 80 }, "a last month with no tests ends at the last test before it");
+  assert.equal(chart.rangeForMonths(items, "2026-10", "2026-09"), null, "first month after last month");
+  assert.equal(chart.rangeForMonths(items, "2027-01", "2027-02"), null, "no tests in those months");
+  assert.equal(chart.rangeForMonths([], "2026-09", "2026-10"), null);
+  const thin = monthlyItems(["2026-08", "2026-09", "2026-10"], 3);
+  assert.deepEqual(chart.rangeForMonths(thin, "2026-09", "2026-09"), { start: 0, end: 9 }, "fewer than two bands: widened to what exists");
+  const wide = monthlyItems(["2026-08", "2026-09", "2026-10"], 8);
+  const small = chart.rangeForMonths(wide, "2026-09", "2026-09");
+  assert.equal(small.end - small.start, 12, "a month of 8 tests is widened to two bands (12 tests), so neighbouring months show too");
+  assert.ok(small.start <= 8 && small.end >= 16, "and still contains the whole month");
+});
+
+test("a 'months' zoom is recomputed on every draw, so later tests of the chosen months appear; unknown months fall back to the latest", () => {
+  const items = monthlyItems(["2026-08", "2026-09", "2026-10"], 20);
+  const zoom = { kind: "months", from: "2026-09", to: "2026-10" };
+  assert.deepEqual(chart.rangeFor(zoom, items, 900), { start: 20, end: 60 });
+  const grown = items.concat(monthlyItems(["2026-10"], 5));
+  assert.deepEqual(chart.rangeFor(zoom, grown, 900), { start: 20, end: 65 }, "five more tests in the last chosen month are included");
+  const later = items.concat(monthlyItems(["2026-11"], 5));
+  assert.deepEqual(chart.rangeFor(zoom, later, 900), { start: 20, end: 60 }, "tests of a month after the chosen ones are not");
+  assert.deepEqual(chart.rangeFor({ kind: "months", from: "2030-01", to: "2030-02" }, items, 900), { start: 0, end: 60 }, "months that have no tests fall back to the latest view");
+});
+
+test("zooming keeps the anchored position where it was, panning shifts by whole tests, both stay inside the list", () => {
+  const total = 400;
+  const wide = { start: 100, end: 220 };
+  const centre = chart.zoomRange(wide, total, 2, 0.5);
+  assert.deepEqual(centre, { start: 130, end: 190 }, "half the width around the middle");
+  assert.deepEqual(chart.zoomRange(wide, total, 2, 1), { start: 160, end: 220 }, "anchored at the right edge the newest side stays put");
+  assert.deepEqual(chart.zoomRange(wide, total, 2, 0), { start: 100, end: 160 });
+  assert.deepEqual(chart.zoomRange({ start: 130, end: 190 }, total, 0.5, 0.5), wide, "zooming out undoes zooming in");
+  assert.deepEqual(chart.zoomRange({ start: 0, end: 14 }, total, 4, 0.5), { start: 1, end: 13 }, "never narrower than two bands");
+  assert.deepEqual(chart.zoomRange({ start: 0, end: 300 }, total, 0.1, 0.5), { start: 0, end: 400 }, "never wider than the list");
+  assert.deepEqual(chart.zoomRange(wide, total, 2, NaN), { start: 130, end: 190 }, "an unreadable anchor means the middle");
+  assert.deepEqual(chart.panRange(wide, total, 60), { start: 160, end: 280 });
+  assert.deepEqual(chart.panRange(wide, total, -500), { start: 0, end: 120 });
+  assert.deepEqual(chart.panRange(wide, total, 500), { start: 280, end: 400 });
+  assert.deepEqual(chart.panRange(wide, total, 0.4), wide, "a fraction of a test is no move");
+});
+
+test("revealing a test moves the window the least that shows it: one step past an edge slides, far away centres", () => {
+  const total = 400;
+  const window = { start: 100, end: 160 };
+  assert.deepEqual(chart.revealRange(window, total, 130), window, "already visible");
+  assert.deepEqual(chart.revealRange(window, total, 99), { start: 99, end: 159 }, "one before the start");
+  assert.deepEqual(chart.revealRange(window, total, 160), { start: 101, end: 161 }, "one past the end");
+  assert.deepEqual(chart.revealRange(window, total, 300), { start: 271, end: 331 }, "far away: centred (test 300 is the 30th of 60)");
+  assert.deepEqual(chart.revealRange(window, total, 0), { start: 0, end: 60 });
+  assert.deepEqual(chart.revealRange(window, total, 399), { start: 340, end: 400 });
+  assert.deepEqual(chart.revealRange(window, total, -1), window, "an index outside the list changes nothing");
+});
+
+test("a chart drawn for a range plots only that range, but numbers its tests and bands by the whole list", () => {
+  const items = longItems(100);
+  const full = chart.trendChart({ mode: "sequence", items, width: 900 });
+  const part = chart.trendChart({ mode: "sequence", items, width: 900, range: { start: 40, end: 80 } });
+  assert.equal(full.total, 100);
+  assert.equal(part.count, 40);
+  assert.equal(part.total, 100);
+  assert.deepEqual(part.range, { start: 40, end: 80 });
+  const indices = [...part.html.matchAll(/class="lab-pt lab-pt-mh" data-i="(\d+)"/g)].map((match) => Number(match[1]));
+  assert.equal(indices.length, 40);
+  assert.equal(indices[0], 40, "data-i is the position in the whole list");
+  assert.equal(indices[39], 79);
+  assert.equal(part.indexAt(part.xAt(55)), 55, "the centre of a test maps back to itself");
+  assert.equal(part.indexAt(-50), 40);
+  assert.equal(part.indexAt(10000), 79, "pointer positions clamp to the visible range");
+  assert.ok(part.contains(40) && part.contains(79) && !part.contains(39) && !part.contains(80));
+  assert.ok(part.fractionAt(part.xAt(40) - part.slot / 2) < 0.001 && part.fractionAt(1e6) === 1);
+  assert.match(full.html, />149\.50</, "the header mean covers the whole list (MH 100–199)");
+  assert.match(part.html, />159\.50</, "…and only the visible tests when zoomed (MH 140–179)");
+});
+
+test("the alternating bands keep the same phase wherever the window sits, and clip at its edges", () => {
+  const items = longItems(100);
+  const width = 900;
+  const pitch = (range) => {
+    const plot = chart.trendChart({ mode: "sequence", items, width, range });
+    return { plot, bands: bandRects(plot.html) };
+  };
+  const sizes = [[0, 100], [13, 53], [37, 97], [50, 62]];
+  for (const [start, end] of sizes) {
+    const { plot, bands } = pitch({ start, end });
+    const wanted = [];
+    for (let index = start; index < end; index += 1) if (Math.floor(index / 6) % 2 === 0) wanted.push(index);
+    const covered = bands.flatMap((band) => {
+      const first = Math.round((band.x - plot.xAt(start) + plot.slot / 2) / plot.slot) + start;
+      const last = first + Math.round(band.width / plot.slot);
+      return Array.from({ length: last - first }, (_, offset) => first + offset);
+    });
+    assert.deepEqual(covered, wanted, `range ${start}–${end}: shaded tests are exactly those whose position/6 is even`);
+  }
+});
+
+test("bands that would be thinner than 18px grow in whole multiples of 6 so a long history is not a barcode", () => {
+  const items = longItems(1200);
+  const everything = chart.trendChart({ mode: "sequence", items, width: 900, range: { start: 0, end: 1200 } });
+  assert.ok(everything.bandSize > 6 && everything.bandSize % 6 === 0, `band size ${everything.bandSize}`);
+  assert.ok(everything.bandSize * everything.slot >= 18, "wide enough to see");
+  assert.ok((everything.bandSize - 6) * everything.slot < 18, "and no wider than needed");
+  assert.ok(count(everything.html, /class="lab-band"/g) <= 1200 / everything.bandSize / 2 + 1);
+  const recent = chart.trendChart({ mode: "sequence", items, width: 900, range: { start: 1080, end: 1200 } });
+  assert.equal(recent.bandSize, 6, "a readable window keeps the plain 6");
+  assert.equal(views.chartKey("sequence", everything.bandSize).includes(`ทุก ${everything.bandSize} จุด`), true, "the legend states the size in use");
+  assert.match(views.chartKey("sequence"), /ทุก 6 จุด/);
+  assert.doesNotMatch(views.chartKey("id", 36), /แถบสลับ/, "the ID view has no bands");
+});
+
+test("a set average that straddles the window edge is clipped to it and sets outside are not drawn", () => {
+  const rows = Array.from({ length: 30 }, (_, index) => {
+    const set = Math.floor(index / 3);
+    return row({ sample_id: String(500 + index), test_time: `08:${String(index).padStart(2, "0")}:00`, mh: 50 + set, mv: 30 + set, avg_mh: 50 + set, sd_mh: 1, avg_mv: 30 + set, sd_mv: 1 });
+  });
+  const { items, groups } = seriesOfRows(rows);
+  const marksOf = (html) => [...html.matchAll(/class="lab-avg lab-avg-mh(?: is-calc)?" x1="([\d.]+)" x2="([\d.]+)"/g)].map((match) => [Number(match[1]), Number(match[2])]);
+  const all = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
+  assert.equal(marksOf(all.html).length, 10, "ten sets of three");
+  const window = chart.trendChart({ mode: "sequence", items, groups, width: 900, range: { start: 10, end: 25 } });
+  const marks = marksOf(window.html);
+  assert.equal(marks.length, 6, "sets 4–9 touch tests 10–24; sets 1–3 and 10 are left out");
+  const [first] = marks;
+  assert.ok(Math.abs(first[1] - first[0] - 1.9 * window.slot) < 0.02, "the set that starts before the window is drawn over its two visible tests only");
+  const last = marks[marks.length - 1];
+  assert.ok(Math.abs(last[1] - last[0] - 0.9 * window.slot) < 0.02, "the set that ends after the window shows only test 24, so its mark spans that one test");
+  assert.ok(marks.every(([x1, x2]) => x1 >= 46 - 0.01 && x2 <= 900 - 16 + 0.01 && x2 > x1), "inside the plot and not collapsed");
+  noBadNumbers(window.html);
+});
+
+test("the chart tools exist on the material page; the announcement states the range and the legend key never claims a band in ID view", () => {
+  const html = views.materialPage("A1802", 30);
+  assert.equal(count(html, /data-range="/g), 2, "latest and all");
+  assert.doesNotMatch(html, /data-range="days/, "no 30/90-day buttons any more");
+  assert.equal(count(html, /data-step="/g), 4, "back, forward, zoom out, zoom in");
+  assert.match(html, /id="lab-month-from"[^>]*data-native-select[^>]*aria-label="ตั้งแต่เดือน"/, "system month picker: native select, labelled");
+  assert.match(html, /id="lab-month-to"[^>]*data-native-select[^>]*aria-label="ถึงเดือน"/);
+  assert.match(html, /id="lab-zoom"[^>]*hidden/, "hidden until a chart is drawn");
+  assert.match(html, /aria-label="ซูมออก[^"]*"/);
+  const { items } = seriesFixture();
+  const text = views.rangeAnnouncement({ items, range: { start: 1, end: 7 } });
+  assert.match(text, /^แสดง 21\/09\/2026 ถึง 22\/09\/2026 6 จาก 10 ครั้ง$/);
+  assert.equal(views.rangeAnnouncement({ items: [], range: { start: 0, end: 0 } }), "");
+  const options = views.monthOptions(["2026-09", "2026-10", "2026-11"], "2026-10");
+  assert.equal(count(options, /<option /g), 3);
+  assert.match(options, /<option value="2026-10" selected>ต\.ค\. 2026<\/option>/);
+  assert.doesNotMatch(options, /value="2026-09" selected/);
+  assert.equal(views.monthOptions([], null), "");
+});
+
 test("pointer positions map to the nearest test and clamp at both ends", () => {
   const { items, groups } = seriesFixture();
   const result = chart.trendChart({ mode: "sequence", items, groups, width: 900 });
