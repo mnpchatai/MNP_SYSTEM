@@ -59,8 +59,8 @@ select ok(
 );
 select is(
   (select last_number from public.document_counters where department_code = 'NCR' and year_key = '26'),
-  40,
-  'NCR counter for 2026 continues after the paper log (QA001–QA040)'
+  51,
+  'NCR counter for 2026 continues after the paper log (QA001–QA051), so the first real NCR is QA052/26'
 );
 select is(
   (select count(*)::int from public.ncr_defect_types where is_active),
