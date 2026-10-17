@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(140);
+select plan(141);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select ok(
@@ -392,11 +392,17 @@ select throws_ok(
   'NOT_AUTHORIZED',
   'QA staff are not loss editors on a real NCR'
 );
-select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000007","role":"authenticated"}', true);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 24, 'ท่อน', 18) $$,
   'NOT_AUTHORIZED',
-  'a QA manager is not a loss editor unless QA is a responsible department'
+  'the manager of a responsible department is no longer a loss editor (migration 20261017030000)'
+);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000007","role":"authenticated"}', true);
+select throws_ok(
+  $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'fire', 24, 'ท่อน', 18) $$,
+  'INVALID_LOSS_TYPE',
+  'a QA manager passes the loss editor check on any NCR (an invalid type is rejected only after authorization)'
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select throws_ok(
@@ -423,10 +429,10 @@ select lives_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'scrap', 24, 'ท่อน', 18.5, 'ทิ้ง') $$,
   'the factory manager records a scrap loss'
 );
-select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000007","role":"authenticated"}', true);
 select lives_ok(
   $$ select public.app_ncr_add_loss(current_setting('test.ncr_a')::uuid, 'rework', 2.5, 'ชม.', 60, 'ซ่อม') $$,
-  'a responsible department manager records a rework loss'
+  'the QA manager records a rework loss'
 );
 select is(
   (select sum(amount) from public.ncr_losses where ncr_id = current_setting('test.ncr_a')::uuid and voided_at is null),

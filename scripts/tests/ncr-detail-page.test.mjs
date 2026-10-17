@@ -19,12 +19,13 @@ const NCR = {
   ncr_responsibilities: [{ share: 100, department_id: "dept-rb", department: { code: "RB", name_th: "ขึ้นรูปยาง" } }],
 };
 
-async function renderFor(viewer) {
+async function renderFor(viewer, overrides = {}) {
+  const report = { ...NCR, ...overrides };
   const app = { innerHTML: "" };
   const query = (table) => {
     const builder = {
       select: () => builder, eq: () => builder, order: () => builder,
-      maybeSingle: async () => ({ data: table === "ncr_reports" ? NCR : null, error: null }),
+      maybeSingle: async () => ({ data: table === "ncr_reports" ? report : null, error: null }),
       then: (resolve, reject) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
     };
     return builder;
@@ -47,7 +48,7 @@ async function renderFor(viewer) {
   context.window.MNP_NCR_SHEET_SYNC = { sync: noop, buildRecord: () => ({}) };
   vm.createContext(context);
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
-  await context.window.MNP_REQUEST_MODULES.NCR_CAR.pages.ncr(new URLSearchParams({ id: NCR.id }));
+  await context.window.MNP_REQUEST_MODULES.NCR_CAR.pages.ncr(new URLSearchParams({ id: report.id }));
   return app.innerHTML;
 }
 
@@ -63,26 +64,64 @@ test("a real NCR shows the four part cards with the quantity summary", async () 
   assert.match(html, /%NG จากการสุ่ม/);
 });
 
-test("the card layout does not depend on test mode", async () => {
-  const real = await renderFor(employee("emp-fm", "dept-ft", "FT", "factory_manager"));
-  const sandbox = await renderFor(employee("emp-fm", "dept-ft", "FT", "factory_manager", true));
-  assert.equal(real, sandbox);
+test("the detail page markup is identical in test mode and real mode, for real and test reports", async () => {
+  const base = await renderFor(employee("emp-fm", "dept-ft", "FT", "factory_manager", false), { is_test: false });
+  for (const part of [1, 2, 3, 4]) assert.match(base, new RegExp(`ncr-detail-part--${part}`), `part ${part} card`);
+  assert.match(base, /ncr-quantity-summary/, "quantity summary");
+  for (const isSandbox of [false, true]) {
+    for (const isTest of [false, true]) {
+      const html = await renderFor(employee("emp-fm", "dept-ft", "FT", "factory_manager", isSandbox), { is_test: isTest });
+      assert.equal(html, base, `sandbox viewer=${isSandbox}, test report=${isTest}: markup differs from the real-mode page`);
+    }
+  }
 });
 
 test("who sees the loss form on a real NCR matches private.can_edit_ncr_losses", async () => {
+  // NCR ใบนี้ให้แผนก RB รับผิดชอบ — หัวหน้า RB จึงไม่มีสิทธิ์แล้ว (migration 20261017030000)
   const cases = [
     ["factory manager", employee("e1", "dept-ft", "FT", "factory_manager"), true],
     ["assistant factory manager", employee("e2", "dept-ft", "FT", "assistant_factory_manager"), true],
     ["general manager", employee("e3", "dept-mgt", "MGT", "general_manager"), true],
-    ["manager of the responsible department", employee("e4", "dept-rb", "RB", "department_manager"), true],
-    ["assistant manager of the responsible department", employee("e5", "dept-rb", "RB", "assistant_department_manager"), true],
+    ["QA department manager", employee("e9", "dept-qa", "QA", "department_manager"), true],
+    ["QA assistant department manager", employee("e10", "dept-qa", "QA", "assistant_department_manager"), true],
+    ["manager of the responsible department", employee("e4", "dept-rb", "RB", "department_manager"), false],
+    ["assistant manager of the responsible department", employee("e5", "dept-rb", "RB", "assistant_department_manager"), false],
     ["manager of another department", employee("e6", "dept-pk", "PK", "department_manager"), false],
     ["staff of the responsible department", employee("e7", "dept-rb", "RB", "staff"), false],
     ["QA staff", employee("e8", "dept-qa", "QA", "staff"), false],
-    ["QA manager when QA is not responsible", employee("e9", "dept-qa", "QA", "department_manager"), false],
   ];
   for (const [label, viewer, editable] of cases) {
     const html = await renderFor(viewer);
     assert.equal(html.includes('id="ncr-loss-form"'), editable, `${label}: loss form ${editable ? "shown" : "hidden"}`);
   }
+});
+
+test("a cancelled NCR locks the loss form for everyone, and the responsible department does not change who can edit", async () => {
+  const factoryManager = employee("e1", "dept-ft", "FT", "factory_manager");
+  const qaManager = employee("e9", "dept-qa", "QA", "department_manager");
+  for (const viewer of [factoryManager, qaManager]) {
+    assert.equal((await renderFor(viewer, { status: "cancelled" })).includes('id="ncr-loss-form"'), false, "cancelled report: form hidden");
+  }
+  const qaResponsible = { ncr_responsibilities: [{ share: 100, department_id: "dept-qa", department: { code: "QA", name_th: "QA" } }] };
+  assert.equal((await renderFor(qaManager, qaResponsible)).includes('id="ncr-loss-form"'), true, "QA manager, QA responsible: form shown");
+  assert.equal((await renderFor(qaManager)).includes('id="ncr-loss-form"'), true, "QA manager, QA not responsible: form shown");
+  assert.equal((await renderFor(employee("e8", "dept-qa", "QA", "staff"), qaResponsible)).includes('id="ncr-loss-form"'), false, "QA staff even when QA is responsible: form hidden");
+  assert.equal((await renderFor(employee("e4", "dept-rb", "RB", "department_manager"))).includes('id="ncr-loss-form"'), false, "responsible department manager: form hidden");
+});
+
+test("read-only viewers are told who can enter costs; editors are not", async () => {
+  const readOnly = await renderFor(employee("e8", "dept-qa", "QA", "staff"));
+  assert.match(readOnly, /ประเมินค่าเสียหายยังไม่ครบ · ผู้กรอกได้: ผจก\.ทั่วไป, ผจก\.โรงงาน, ผช\.ผจก\.โรงงาน และ ผจก\.\/ผช\.ผจก\.แผนก QA/);
+  const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
+  assert.doesNotMatch(editor, /ผู้กรอกได้:/);
+  // ใบที่ยกเลิกล็อกทุกคน จึงไม่ชี้ไปหาใคร
+  for (const viewer of [employee("e8", "dept-qa", "QA", "staff"), employee("e1", "dept-ft", "FT", "factory_manager"), employee("e9", "dept-qa", "QA", "department_manager")]) {
+    assert.doesNotMatch(await renderFor(viewer, { status: "cancelled" }), /ผู้กรอกได้:/, "cancelled report: no hint");
+  }
+});
+
+test("the disposition form states the actual due date, which is set when the NCR is issued", async () => {
+  const html = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"), { status: "awaiting_disposition", response_due: "2026-10-06" });
+  assert.match(html, /บันทึกและส่งแผนก \(ตอบภายใน 2026-10-06\)/);
+  assert.doesNotMatch(html, /ตอบภายใน \d+ วัน/, "no fixed number of days in the button");
 });

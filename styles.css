@@ -1054,7 +1054,7 @@ body.no-scroll { overflow: hidden; }
 @media print {
   .ncr-loss-overview { position: static; box-shadow: none; }
 }
-/* การ์ดรายละเอียดส่วนที่ 1–4: แสดงเฉพาะโหมดทดสอบ NCR */
+/* การ์ดรายละเอียดส่วนที่ 1–4 ของหน้า NCR (ใช้กับทั้งใบจริงและใบทดสอบ) */
 .ncr-detail-part {
   --ncr-part-accent: #356fc3;
   --ncr-part-tint: color-mix(in srgb, var(--ncr-part-accent) 7%, var(--paper));
