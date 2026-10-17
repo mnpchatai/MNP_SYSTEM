@@ -262,6 +262,19 @@
     return marks;
   }
 
+  // ตำแหน่งของครั้งแรกที่อยู่ใน `days` วันล่าสุด นับถึงวันที่ทดสอบล่าสุดของรายการ (รวมวันนั้น) ใช้เลือกช่วง "30 วัน/90 วัน" ของกราฟ
+  // รายการไม่มีวันที่เลย = 0 (ทั้งรายการ)
+  function startOfLastDays(items, days) {
+    let latest = null;
+    for (const item of items) if (item.testDate && (latest === null || item.testDate > latest)) latest = item.testDate;
+    if (latest === null) return 0;
+    const cutoff = new Date(`${latest}T00:00:00Z`);
+    cutoff.setUTCDate(cutoff.getUTCDate() - (Math.max(1, days) - 1));
+    const first = cutoff.toISOString().slice(0, 10);
+    const index = items.findIndex((item) => item.testDate && item.testDate >= first);
+    return index < 0 ? 0 : index;
+  }
+
   // ID ที่มีในรายการ (เรียงแบบเลขก่อน) พร้อมจำนวนครั้งที่ทดสอบ
   function idsFor(items) {
     const counts = new Map();
@@ -385,7 +398,7 @@
     readMaterial, materialUrl, normalizeFeed, buildOverview, resultsFor,
     filterMaterials, sortMaterials, suggestMaterials,
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
-    buildSeries, describe, niceScale, dateMarks, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
+    buildSeries, describe, niceScale, dateMarks, startOfLastDays, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate,
   };
   // Shared by the browser and the sync worker; one implementation of grouping/statistics.

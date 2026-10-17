@@ -1947,7 +1947,24 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-pt-mv .lab-halo { stroke: var(--lab-mv); }
 .lab-pt.is-active .lab-halo { opacity: 1; }
 .lab-pt.is-active .lab-dot { opacity: 1; }
-.lab-chart-key { margin: 0; padding: 6px 18px 12px; display: flex; flex-wrap: wrap; gap: 4px 20px; color: var(--muted); font-size: 12px; }
+.lab-chart-foot { padding: 6px 18px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.lab-chart-key { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 20px; color: var(--muted); font-size: 12px; }
+/* ช่วงที่แสดง/ซูม: ปุ่มแบน (ไม่มี dropdown ลอย จึงแตะได้บน iPhone) ปุ่มช่วงที่เลือกอยู่เข้มกว่า ปุ่มที่ไปต่อไม่ได้จางและกดไม่ได้ */
+.lab-zoom { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
+.lab-zoom[hidden] { display: none; }
+.lab-ranges { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
+.lab-range-btn { min-height: 32px; padding: 0 11px; color: var(--muted); background: transparent; border: 0; border-left: 1px solid var(--line); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.lab-range-btn:first-child { border-left: 0; }
+.lab-range-btn:hover { color: var(--ink); }
+.lab-range-btn[aria-pressed="true"] { color: var(--ink); background: color-mix(in srgb, var(--primary) 26%, transparent); }
+.lab-steps { display: inline-flex; gap: 4px; }
+.lab-step { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.lab-step svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.lab-step:hover:not(:disabled) { color: var(--ink); }
+.lab-step:disabled { opacity: .35; cursor: default; }
+.lab-range-btn:focus-visible, .lab-step:focus-visible { outline: 3px solid var(--primary); outline-offset: -2px; }
+.lab-plot.is-zoomed { cursor: grab; }
+.lab-plot.is-panning { cursor: grabbing; }
 .lab-key-item { display: inline-flex; align-items: center; gap: 7px; }
 .lab-key-band { width: 14px; height: 10px; background: var(--lab-band); border: 1px solid var(--line); border-radius: 2px; }
 .lab-key-avg { width: 16px; height: 0; border-top: 2px solid var(--muted); border-radius: 2px; }
@@ -2035,7 +2052,10 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .lab-head-material .lab-title { flex: 1 1 calc(100% - 56px); }
   .lab-title-select { width: 100%; }
   .lab-id { flex: 1 1 140px; }
-  .lab-plot, .lab-toolbar, .lab-chart-key, .lab-results-card .card-heading { padding-left: 14px; padding-right: 14px; }
+  .lab-plot, .lab-toolbar, .lab-chart-foot, .lab-results-card .card-heading { padding-left: 14px; padding-right: 14px; }
+  .lab-zoom { width: 100%; justify-content: space-between; }
+  .lab-range-btn { min-height: 40px; padding: 0 10px; }
+  .lab-step { width: 40px; height: 40px; }
   .lab-search, .lab-sort { max-width: none; flex-basis: 100%; }
   .lab-search .input { font-size: 16px; }
   .lab-howto { margin-left: 0; flex-basis: 100%; }

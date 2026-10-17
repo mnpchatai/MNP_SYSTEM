@@ -317,6 +317,7 @@
       tip: document.querySelector("#lab-tip"),
       key: document.querySelector("#lab-chart-key"),
       announce: document.querySelector("#lab-announce"),
+      zoom: document.querySelector("#lab-zoom"),
       tableNote: document.querySelector("#lab-table-note"),
       scroll: document.querySelector("#lab-table-scroll"),
       copy: document.querySelector("#lab-copy"),
@@ -325,7 +326,9 @@
     // ข้อมูลของหน้า: series = ผลทั้งวัสดุตามลำดับในชีต, shown = สิ่งที่กราฟ/ตารางแสดงอยู่ (ทั้งวัสดุ หรือเฉพาะ ID ที่เลือก)
     const data = { series: null, ids: [], conditions: null, shown: { mode: "sequence", items: [] }, signature: "", plotWidth: 0, plot: null };
     // ตัวเลือกของผู้ใช้ที่ต้องคงไว้ตอนรีเฟรช: ID, ลำดับตาราง และจุดที่ปักหมุดไว้ (เก็บเป็น id ของแถว ไม่ใช่ตำแหน่ง เพราะตำแหน่งขยับเมื่อมีแถวใหม่)
-    const view = { id: "", order: "newest", pinnedId: null, preview: null };
+    // zoom = ช่วงที่กราฟโหมดลำดับแสดง: { kind: "latest" | "days30" | "days90" | "all" } คำนวณใหม่ทุกครั้งที่วาด (ตามข้อมูลใหม่/ความกว้างจอ)
+    // หรือ { kind: "custom", start, end, follow } เมื่อซูม/เลื่อนมาเอง (ดู chart.rangeFor) เปิดหน้าใหม่เริ่มที่ "latest" เสมอ
+    const view = { id: "", order: "newest", pinnedId: null, preview: null, zoom: { kind: "latest" } };
     let applied = "";
 
     const itemsOf = () => data.shown.items;
@@ -372,7 +375,9 @@
         el.plot.querySelectorAll(".lab-pt.is-active").forEach((node) => node.classList.remove("is-active"));
         el.scroll.querySelectorAll("tr.is-active").forEach((row) => row.classList.remove("is-active"));
         const lines = el.plot.querySelectorAll(".lab-cross");
-        if (!item) {
+        // ครั้งที่เลือกอยู่นอกช่วงที่กราฟแสดง: ไม่มีป้ายและเส้นนำสายตาบนกราฟ แต่แถวในตารางยังสว่าง
+        const inView = Boolean(item) && (!data.plot || data.plot.contains(focus.index));
+        if (!inView) {
           lines.forEach((line) => line.setAttribute("visibility", "hidden"));
           el.tip.hidden = true;
         } else {
@@ -386,6 +391,8 @@
           el.tip.innerHTML = views.tooltip({ item, mode: data.shown.mode });
           el.tip.hidden = false;
           placeTip(focus.index);
+        }
+        if (item) {
           const row = el.scroll.querySelector(`tr[data-seq="${item.seq}"]`);
           row?.classList.add("is-active");
           if (reveal && row) revealRow(row);
@@ -394,12 +401,33 @@
       if (announce) el.announce.textContent = item ? views.announcement({ item, mode: data.shown.mode }) : "";
     }
 
+    // แถบเครื่องมือช่วง/ซูม: โชว์เฉพาะโหมดลำดับ ปุ่มช่วงที่เลือกอยู่กดค้าง (aria-pressed) ปุ่มที่ไปต่อไม่ได้ปิดไว้
+    function paintZoomBar() {
+      const sequence = data.shown.mode === "sequence" && Boolean(data.plot?.total);
+      el.zoom.hidden = !sequence;
+      el.plot.classList.toggle("is-zoomed", sequence && data.plot.range.end - data.plot.range.start < data.plot.total);
+      if (!sequence) return;
+      const { range, total } = data.plot;
+      const width = range.end - range.start;
+      el.zoom.querySelectorAll("[data-range]").forEach((button) => {
+        const key = button.dataset.range;
+        button.setAttribute("aria-pressed", String(view.zoom.kind === key));
+        if (key === "latest") button.textContent = `ล่าสุด ${chart.defaultCount(data.plotWidth)}`;
+      });
+      const limits = { back: range.start <= 0, forward: range.end >= total, out: width >= total, in: width <= Math.min(chart.MIN_VISIBLE, total) };
+      el.zoom.querySelectorAll("[data-step]").forEach((button) => { button.disabled = limits[button.dataset.step]; });
+    }
+
     function paintChart() {
       const width = Math.floor(el.plot.clientWidth);
       if (!width) return;
       data.plotWidth = width;
-      data.plot = chart.trendChart({ mode: data.shown.mode, items: itemsOf(), groups: data.shown.mode === "sequence" ? data.series.groups : [], width, label: material });
+      const sequence = data.shown.mode === "sequence";
+      const range = sequence ? chart.rangeFor(view.zoom, itemsOf(), width) : null;
+      data.plot = chart.trendChart({ mode: data.shown.mode, items: itemsOf(), groups: sequence ? data.series.groups : [], width, label: material, range });
       el.plot.innerHTML = data.plot.html;
+      el.key.innerHTML = views.chartKey(data.shown.mode, data.plot.bandSize);
+      paintZoomBar();
       applied = "";
       applyFocus();
     }
@@ -421,7 +449,6 @@
         view.id = "";
         data.shown = { mode: "sequence", items: data.series.items };
       }
-      el.key.innerHTML = views.chartKey(data.shown.mode);
       el.tableNote.textContent = views.tableNote({ count: itemsOf().length, groupCount: data.shown.mode === "sequence" ? data.series.groups.length : null, conditions: data.conditions });
     }
 
@@ -436,12 +463,16 @@
 
     /* ----- การโต้ตอบ ----- */
 
-    const indexFromPointer = (event) => {
+    // ตำแหน่งแนวนอนในพิกัดของ SVG (ไม่ใช่พิกเซลหน้าจอ เพราะ SVG ย่อ/ขยายตามกล่อง)
+    const svgX = (clientX) => {
       const svg = el.plot.querySelector("svg");
-      if (!svg || !data.plot) return -1;
+      if (!svg || !data.plot) return null;
       const rect = svg.getBoundingClientRect();
-      if (!rect.width) return -1;
-      return data.plot.indexAt(((event.clientX - rect.left) * data.plotWidth) / rect.width);
+      return rect.width ? ((clientX - rect.left) * data.plotWidth) / rect.width : null;
+    };
+    const indexFromPointer = (event) => {
+      const x = svgX(event.clientX);
+      return x === null ? -1 : data.plot.indexAt(x);
     };
 
     const preview = (index) => {
@@ -454,48 +485,223 @@
       view.preview = null;
       applyFocus();
     };
+
+    /* ----- ช่วงที่แสดง: ซูม เลื่อน ปุ่มช่วง ----- */
+
+    const sequenceMode = () => data.shown.mode === "sequence" && Boolean(data.plot?.total);
+    const rangeNow = () => (sequenceMode() ? data.plot.range : null);
+    const announceRange = () => {
+      const range = rangeNow();
+      if (range) el.announce.textContent = views.rangeAnnouncement({ items: itemsOf(), range });
+    };
+
+    // ตั้งช่วงที่ซูม/เลื่อนมาเอง: ติดขอบขวา (ครั้งล่าสุด) อยู่ = ขยับตามเมื่อมีครั้งใหม่เข้ามา ไม่ติด = อยู่ที่เดิม
+    function setRange(next) {
+      if (!sequenceMode()) return;
+      const total = data.plot.total;
+      const range = chart.normalizeRange(next, total);
+      if (chart.sameRange(range, data.plot.range)) return;
+      view.zoom = { kind: "custom", start: range.start, end: range.end, follow: range.end >= total };
+      paintChart();
+    }
+
+    // การลาก/บีบ/หมุนล้อยิงเหตุการณ์ถี่กว่าเฟรม: รวมเป็นหนึ่งการวาดต่อเฟรม
+    let frameRange = null;
+    let rangeFrame = 0;
+    function scheduleRange(next) {
+      frameRange = next;
+      if (rangeFrame) return;
+      rangeFrame = window.requestAnimationFrame(() => {
+        rangeFrame = 0;
+        const range = frameRange;
+        frameRange = null;
+        if (range) setRange(range);
+      });
+    }
+
+    // จุดตรึงของปุ่ม/แป้นซูม (0 = ขอบซ้าย … 1 = ขอบขวาของช่วง): ครั้งที่ปักหมุดหรือชี้อยู่ ถ้าไม่มีและช่วงติดครั้งล่าสุดอยู่ = ขอบขวา
+    // (ซูมแล้วยังเห็นครั้งล่าสุด) นอกนั้น = กลางกราฟ
+    function focusAnchor() {
+      const range = rangeNow();
+      if (!range) return 0.5;
+      const focus = resolveFocus();
+      if (focus && data.plot.contains(focus.index)) return (focus.index - range.start + 0.5) / (range.end - range.start);
+      return range.end >= data.plot.total ? 1 : 0.5;
+    }
+
+    function zoomBy(factor, anchor = focusAnchor()) {
+      const range = rangeNow();
+      if (range) setRange(chart.zoomRange(range, data.plot.total, factor, anchor));
+    }
+    function panBy(fraction) {
+      const range = rangeNow();
+      if (range) setRange(chart.panRange(range, data.plot.total, Math.max(1, Math.round((range.end - range.start) * Math.abs(fraction))) * Math.sign(fraction)));
+    }
+    // ให้ครั้งที่เลือกอยู่ในช่วงที่เห็น (ปักหมุดจากแป้นพิมพ์หรือคลิกแถวในตาราง)
+    function revealIndex(index) {
+      const range = rangeNow();
+      if (range) setRange(chart.revealRange(range, data.plot.total, index));
+    }
+
     const pin = (index, { toggle = false } = {}) => {
       const item = itemsOf()[index];
       if (!item) return;
       view.pinnedId = toggle && view.pinnedId === item.id ? null : item.id;
       view.preview = null;
+      if (view.pinnedId !== null) revealIndex(index);
       applyFocus({ reveal: view.pinnedId !== null, announce: true });
     };
 
+    el.zoom.addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button || button.disabled) return;
+      if (button.dataset.range) {
+        view.zoom = { kind: button.dataset.range };
+        paintChart();
+      } else if (button.dataset.step === "in") zoomBy(2);
+      else if (button.dataset.step === "out") zoomBy(0.5);
+      else if (button.dataset.step === "back") panBy(-0.5);
+      else if (button.dataset.step === "forward") panBy(0.5);
+      else return;
+      announceRange();
+    });
+
+    // Ctrl + ล้อเมาส์ (และบีบสองนิ้วบนแทร็กแพด ซึ่งเบราว์เซอร์ส่งเป็นล้อพร้อม Ctrl) = ซูมรอบตำแหน่งเมาส์; ล้อธรรมดาให้หน้าเลื่อนตามปกติ
+    // เลื่อนแนวนอน (แทร็กแพดปัดซ้ายขวา หรือ Shift + ล้อ) ขณะซูมอยู่ = เลื่อนช่วง
+    el.plot.addEventListener("wheel", (event) => {
+      const range = rangeNow();
+      if (!range) return;
+      const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.shiftKey ? event.deltaY : 0;
+      if (event.ctrlKey) {
+        event.preventDefault();
+        const x = svgX(event.clientX);
+        scheduleRange(chart.zoomRange(frameRange ?? range, data.plot.total, clamp(Math.exp(-event.deltaY * 0.003), 0.5, 2), x === null ? 0.5 : data.plot.fractionAt(x)));
+      } else if (horizontal && range.end - range.start < data.plot.total) {
+        event.preventDefault();
+        scheduleRange(chart.panRange(frameRange ?? range, data.plot.total, horizontal / data.plot.slot));
+      }
+    }, { passive: false });
+
+    // เมาส์: ชี้ = ดูค่า คลิก = ปักหมุด (คลิกซ้ำเพื่อปล่อย) ลากขณะซูมอยู่ = เลื่อนช่วง (ไม่ปักหมุด)
+    // นิ้วและปากกา: แตะหรือลากนิ้วเดียวเพื่อดูค่า ปล่อยนิ้วแล้วปักหมุดจุดสุดท้าย; สองนิ้ว = บีบซูมและเลื่อนช่วง (ไม่ปักหมุด)
+    const DRAG_PX = 5;
     let pressed = false;
-    // เมาส์: ชี้ = ดูค่า คลิก = ปักหมุด (คลิกซ้ำเพื่อปล่อย) / นิ้วและปากกา: แตะหรือลากเพื่อดูค่า ปล่อยนิ้วแล้วปักหมุดจุดสุดท้าย
+    let drag = null;
+    let gesture = null;
+    const touches = new Map();
+    const endGestures = () => {
+      pressed = false;
+      drag = null;
+      gesture = null;
+      el.plot.classList.remove("is-panning");
+    };
+
+    function startGesture() {
+      const range = rangeNow();
+      const [first, second] = [...touches.values()];
+      const x = svgX((first.x + second.x) / 2);
+      if (!range || x === null) return;
+      pressed = false;
+      drag = null;
+      clearPreview();
+      gesture = { range, distance: Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)), anchor: range.start + data.plot.fractionAt(x) * (range.end - range.start) };
+    }
+    function updateGesture() {
+      if (touches.size < 2) return;
+      const [first, second] = [...touches.values()];
+      const x = svgX((first.x + second.x) / 2);
+      if (x === null) return;
+      const total = data.plot.total;
+      const size = gesture.range.end - gesture.range.start;
+      const scale = Math.hypot(first.x - second.x, first.y - second.y) / gesture.distance;
+      const width = clamp(Math.round(size / (scale || 1)), Math.min(chart.MIN_VISIBLE, total), total);
+      const start = Math.round(gesture.anchor - data.plot.fractionAt(x) * width);
+      scheduleRange(chart.normalizeRange({ start, end: start + width }, total));
+    }
+
     el.plot.addEventListener("pointermove", (event) => {
+      if (touches.has(event.pointerId)) touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (gesture) return updateGesture();
+      if (drag) {
+        const x = svgX(event.clientX);
+        if (x === null || (!drag.moved && Math.abs(event.clientX - drag.clientX) < DRAG_PX)) return;
+        const moved = x - drag.x;
+        if (!drag.moved) {
+          drag.moved = true;
+          el.plot.classList.add("is-panning");
+          clearPreview();
+          el.plot.setPointerCapture?.(event.pointerId);
+        }
+        return scheduleRange(chart.panRange(drag.range, data.plot.total, -moved / data.plot.slot));
+      }
       if (event.pointerType === "mouse" || pressed) preview(indexFromPointer(event));
     });
     el.plot.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (event.pointerType === "touch") {
+        touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (touches.size === 2) return startGesture();
+        if (touches.size > 2) return;
+      }
       pressed = true;
       if (event.pointerType !== "mouse") preview(indexFromPointer(event));
+      else if (data.plot && data.plot.range.end - data.plot.range.start < data.plot.total) {
+        const x = svgX(event.clientX);
+        if (x !== null) drag = { x, clientX: event.clientX, range: data.plot.range, moved: false };
+      }
     });
     el.plot.addEventListener("pointerup", (event) => {
+      touches.delete(event.pointerId);
+      if (gesture) {
+        if (touches.size < 2) gesture = null;
+        pressed = false;
+        return;
+      }
       const wasPressed = pressed;
+      const dragged = drag?.moved === true;
       pressed = false;
-      if (!wasPressed) return;
+      drag = null;
+      el.plot.classList.remove("is-panning");
+      if (!wasPressed || dragged) return;
       const index = indexFromPointer(event);
       if (index < 0) return;
       pin(index, { toggle: true });
     });
     const leave = () => {
-      pressed = false;
+      endGestures();
       clearPreview();
     };
-    el.plot.addEventListener("pointerleave", leave);
-    el.plot.addEventListener("pointercancel", leave);
+    el.plot.addEventListener("pointerleave", (event) => {
+      if (event.pointerType === "touch" || !drag?.moved) leave();
+    });
+    el.plot.addEventListener("pointercancel", (event) => {
+      touches.delete(event.pointerId);
+      leave();
+    });
     el.plot.addEventListener("keydown", (event) => {
       const items = itemsOf();
       if (!items.length) return;
       const focus = resolveFocus();
       const last = items.length - 1;
       const targets = { ArrowLeft: focus ? focus.index - 1 : last, ArrowRight: focus ? focus.index + 1 : last, Home: 0, End: last };
+      const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
       if (event.key === "Escape") {
         view.pinnedId = null;
         view.preview = null;
         applyFocus({ announce: true });
+      } else if (plain && sequenceMode() && (event.key === "+" || event.key === "=")) {
+        zoomBy(2);
+        announceRange();
+      } else if (plain && sequenceMode() && (event.key === "-" || event.key === "_")) {
+        zoomBy(0.5);
+        announceRange();
+      } else if (plain && sequenceMode() && event.key === "0") {
+        view.zoom = { kind: "latest" };
+        paintChart();
+        announceRange();
+      } else if (plain && sequenceMode() && (event.key === "PageUp" || event.key === "PageDown")) {
+        panBy(event.key === "PageUp" ? -0.5 : 0.5);
+        announceRange();
       } else if (Object.hasOwn(targets, event.key)) {
         pin(clamp(targets[event.key], 0, last));
       } else return;
@@ -517,6 +723,7 @@
       if (index < 0) return;
       view.preview = null;
       view.pinnedId = view.pinnedId === itemsOf()[index].id ? null : itemsOf()[index].id;
+      if (view.pinnedId !== null) revealIndex(index);
       applyFocus({ announce: true });
     });
 
@@ -572,6 +779,7 @@
       dispose() {
         observer?.disconnect();
         window.cancelAnimationFrame(frame);
+        window.cancelAnimationFrame(rangeFrame);
         window.clearTimeout(copyTimer);
       },
       update(feed) {

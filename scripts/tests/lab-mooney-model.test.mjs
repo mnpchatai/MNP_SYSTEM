@@ -313,3 +313,14 @@ test("the last-read time is shown as a clock only, because the date is always to
   assert.equal(model.formatUpdatedTime(null), "—");
   assert.equal(model.formatUpdatedTime("not a date"), "—");
 });
+
+test("the 'last N days' chart range starts at the first test within N days of the newest test date, counting that day", () => {
+  const items = ["2026-09-01", "2026-09-10", "2026-09-10", "2026-09-30", "2026-10-01"].map((testDate) => ({ testDate }));
+  assert.equal(model.startOfLastDays(items, 30), 1, "30 days ending 2026-10-01 begin on 2026-09-02");
+  assert.equal(model.startOfLastDays(items, 31), 0, "31 days reach back to 2026-09-01");
+  assert.equal(model.startOfLastDays(items, 2), 3, "the newest day and the day before it");
+  assert.equal(model.startOfLastDays(items, 1), 4, "the newest day only");
+  assert.equal(model.startOfLastDays(items, 0), 4, "a non-positive count still means the newest day");
+  assert.equal(model.startOfLastDays([], 30), 0);
+  assert.equal(model.startOfLastDays([{ testDate: null }], 30), 0, "rows without a date give the whole list");
+});
