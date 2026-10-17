@@ -30,6 +30,7 @@
     { sourceCode: "FT", displayCode: "FT", name: "บริหารโรงงาน" },
     { sourceCode: "MT", displayCode: "MT", name: "ซ่อมบำรุง" },
     { sourceCode: "AD", displayCode: "AD", name: "ธุรการสำนักงาน" },
+    { sourceCode: "ID", displayCode: "ID", name: "Indesign" },
   ];
 
   // ระบบเดิมแยกสถานะรออนุมัติ/ขอข้อมูลเพิ่มเป็นของ ผจก.โรงงาน กับ ผจก.ทั่วไป คนละตัว ส่วนที่นี่เก็บเป็น
