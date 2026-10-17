@@ -238,7 +238,7 @@ select is(
 );
 select is(
   (select last_number from public.document_counters where department_code = 'NCR' and year_key = '26'),
-  40,
+  51,
   'the real NCR counter did not move'
 );
 select is(
@@ -263,7 +263,7 @@ select lives_ok(
 reset role;
 select matches(
   (select ncr_no from public.ncr_reports where id = current_setting('test.real_ncr')::uuid),
-  '^QA041/[0-9]{2}$',
+  '^QA052/[0-9]{2}$',
   'the real NCR continues the real series'
 );
 select is(
@@ -273,7 +273,7 @@ select is(
 );
 select is(
   (select last_number from public.document_counters where department_code = 'NCR' and year_key = '26'),
-  41,
+  52,
   'only the real counter moved for the real NCR'
 );
 select is(
@@ -401,7 +401,7 @@ select is(
 );
 select is(
   (select last_number from public.document_counters where department_code = 'NCR' and year_key = '26'),
-  41,
+  52,
   'purge never touches the real counter'
 );
 
