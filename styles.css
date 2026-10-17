@@ -633,6 +633,7 @@ tbody tr:hover { background: var(--shell); }
 .repair-department-card[data-dept-code="FT"] { --department-from: #c2410c; --department-to: #9a3412; }
 .repair-department-card[data-dept-code="MT"] { --department-from: #dc2626; --department-to: #991b1b; }
 .repair-department-card[data-dept-code="AD"] { --department-from: #4f46e5; --department-to: #3730a3; }
+.repair-department-card[data-dept-code="ID"] { --department-from: #a21caf; --department-to: #86198f; }
 .machine-combobox { position: relative; }
 .machine-search-input { padding-right: 40px; }
 .machine-search-input::-webkit-search-cancel-button { cursor: pointer; }
