@@ -2,7 +2,7 @@
 //
 // หน้าวัสดุแสดง MH และ MV รวมในกราฟเดียว (พื้นดำ) แกนเวลาและแกนค่าเดียวกัน — หน่วยเดียวกันจึงใช้สเกลเดียว ไม่ใช่กราฟสองแกน
 // สีและรูปทรงต่างกัน (MH = วงกลมสีน้ำเงิน, MV = สี่เหลี่ยมขนมเปียกปูนสีส้ม) จึงแยกได้แม้ไม่เห็นสี; หัวกราฟเป็นทั้งคำอธิบายสัญลักษณ์และค่าเฉลี่ย/SD
-//   - โหมด "sequence": ทุกครั้งที่ทดสอบของวัสดุตามลำดับในชีต แถบพื้นหลังสลับ = วันที่ทดสอบ เส้นสั้น = ค่า AVG ของชุด (ทุกครั้งที่ทดสอบมีขีดเสมอ: ชุดที่ชีตยังไม่มี AVG หรือมีค่านอกช่วงค่าที่อ่านได้ ใช้ค่าเฉลี่ยของแถวในชุด วาดเป็นขีดประ)
+//   - โหมด "sequence": ทุกครั้งที่ทดสอบของวัสดุตามลำดับในชีต แถบพื้นหลังสลับทุก 6 จุด (BAND_SIZE) เส้นสั้น = ค่า AVG ของชุด (ทุกครั้งที่ทดสอบมีขีดเสมอ: ชุดที่ชีตยังไม่มี AVG หรือมีค่านอกช่วงค่าที่อ่านได้ ใช้ค่าเฉลี่ยของแถวในชุด วาดเป็นขีดประ)
 //   - โหมด "id": ติดตาม ID เดียวข้ามหลายครั้งที่ทดสอบ ลากเส้นต่อจุด เส้นประ = ค่าเฉลี่ย ติดป้ายค่าเฉพาะครั้งล่าสุด ค่าสูงสุดและต่ำสุด
 // สี/ตัวอักษร/เส้นกริดมาจาก CSS (ดู .lab-* ใน styles.css) กราฟใช้ชุดสีพื้นดำของตัวเองเสมอทั้งธีมสว่างและมืด
 // จุดทุกจุดมี data-i = ตำแหน่งในรายการที่ส่งเข้ามา ให้ module-lab.js ผูกการชี้/แตะ/คีย์บอร์ดโดยคำนวณจากตำแหน่งแกน X (indexAt)
@@ -18,6 +18,8 @@
   const DATE_LABEL_WIDTH = 34;
   // ขนาดชุดเริ่มต้นเมื่อวัสดุยังไม่มีชุดที่ชีตมี AVG ให้อ้างอิงเลย (ห้องแล็บทดสอบชุดละ 3 ครั้ง)
   const DEFAULT_SET_SIZE = 3;
+  // แถบพื้นหลังของโหมดลำดับสลับทุกกี่จุด (6 = 2 ชุดของห้องแล็บ)
+  const BAND_SIZE = 6;
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
@@ -197,12 +199,11 @@
     let svg = "";
 
     if (sequence) {
-      // แถบพื้นหลังสลับตามวันที่ทดสอบ (วันเว้นวัน) ขอบแถบคือจุดที่เปลี่ยนวัน
-      marks.forEach((mark, index) => {
-        if (index % 2 !== 0) return;
-        const end = marks[index + 1]?.index ?? count;
-        svg += `<rect class="lab-band" x="${n2(xAt(mark.index) - slot / 2)}" y="${layout.top}" width="${n2((end - mark.index) * slot)}" height="${layout.plotHeight}"/>`;
-      });
+      // แถบพื้นหลังสลับทุก BAND_SIZE จุด (เทา/พื้น/เทา…) นับจากจุดแรกของกราฟต่อเนื่องข้ามวัน ไม่เริ่มใหม่เมื่อเปลี่ยนวัน
+      for (let start = 0; start < count; start += BAND_SIZE * 2) {
+        const end = Math.min(start + BAND_SIZE, count);
+        svg += `<rect class="lab-band" x="${n2(xAt(start) - slot / 2)}" y="${layout.top}" width="${n2((end - start) * slot)}" height="${layout.plotHeight}"/>`;
+      }
     }
     for (const value of scale.ticks) {
       svg += `<line class="lab-grid" x1="${layout.left}" x2="${layout.width - layout.right}" y1="${n2(yOf(value))}" y2="${n2(yOf(value))}"/>`
@@ -300,7 +301,7 @@
       + `<polyline points="${points}"/><circle cx="${n2(x(list.length - 1))}" cy="${n2(y(lastValue))}" r="2.6"/></svg>`;
   }
 
-  const api = { SERIES, layoutFor, averageMarks, trendChart, sparkline };
+  const api = { SERIES, BAND_SIZE, layoutFor, averageMarks, trendChart, sparkline };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_CHART = api;
 })(typeof window !== "undefined" ? window : globalThis);
