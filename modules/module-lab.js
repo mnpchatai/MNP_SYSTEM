@@ -42,7 +42,14 @@
   let authBound = false;
   let pageVersion = 0;
 
-  function clearCache() { cache = new Map(); owner = null; pageVersion += 1; }
+  // ข้อมูลยางเส้นเป็นข้อมูลที่ผู้ใช้เขียนเอง ต่างจากฟีดที่อ่านอย่างเดียว: การอ่านที่เริ่มก่อนบันทึกแต่ตอบหลังบันทึกต้องไม่ทับสิ่งที่เพิ่งบันทึก
+  //   strandWriteSeq เพิ่มทุกครั้งที่บันทึก/ลบสำเร็จ, strandKnown = รายการล่าสุดต่อวัสดุหลังการเขียนของผู้ใช้ (ใช้แทนผลอ่านที่ซ้อนกับการเขียน)
+  //   strandUnavailable = ฐานข้อมูลยังไม่มีฟังก์ชัน (รอบรีเฟรชไม่ยิงซ้ำ ลองใหม่เมื่อเปิดหน้า)
+  let strandWriteSeq = 0;
+  let strandKnown = new Map();
+  let strandUnavailable = false;
+
+  function clearCache() { cache = new Map(); strandKnown = new Map(); strandUnavailable = false; owner = null; pageVersion += 1; }
 
   function bindCacheOwner() {
     if (!authBound) {
@@ -54,23 +61,41 @@
     if (owner !== state.employee) { clearCache(); owner = state.employee; }
   }
 
-  // ข้อมูลยางเส้นของวัสดุ: ready = อ่านได้, unavailable = ฐานข้อมูลยังไม่มีฟังก์ชันนี้ (ซ่อนการ์ด), error = อ่านไม่สำเร็จชั่วคราว (การ์ดบอก ไม่ล้มทั้งหน้า)
+  // ข้อมูลยางเส้นของวัสดุ: ready = อ่านได้, unavailable = ฐานข้อมูลยังไม่มีฟังก์ชันนี้ (ซ่อนการ์ด),
+  // error = อ่านไม่สำเร็จชั่วคราว (items เป็น null ผู้เรียกคงรายการเดิมไว้ การ์ดบอก ไม่ล้มทั้งหน้า)
   // สิทธิ์ถูกถอนโยน error ต่อให้ผู้เรียกจัดการเหมือนฟีดหลัก
   async function loadStrands(material) {
+    if (strandUnavailable) return { status: "unavailable", items: [] };
+    const writesBefore = strandWriteSeq;
     const { data, error } = await sb.rpc("app_lab_strand_specs", { p_material: material });
     if (error) {
-      if (strandModel.isMissingFunction(error)) return { status: "unavailable", items: [] };
+      if (strandModel.isMissingFunction(error)) {
+        strandUnavailable = true;
+        return { status: "unavailable", items: [] };
+      }
       if (isDenied(error)) throw error;
-      return { status: "error", items: [] };
+      return { status: "error", items: null };
     }
     const items = strandModel.normalizeList(data);
-    return items ? { status: "ready", items } : { status: "error", items: [] };
+    if (!items) return { status: "error", items: null };
+    // มีการบันทึก/ลบเสร็จระหว่างที่อ่านอยู่: ผลที่ได้อาจเก่ากว่าการเขียนนั้น ใช้รายการหลังการเขียนแทน (รอบถัดไปค่อยตรงกับฐานข้อมูล)
+    const known = strandKnown.get(material);
+    return strandWriteSeq !== writesBefore && known ? known : { status: "ready", items };
   }
 
-  // หลังบันทึก/ลบ ให้หน้าที่เปิดซ้ำจากแคชเห็นข้อมูลล่าสุดทันที (ก่อนรอบตรวจสิทธิ์/ข้อมูลเบื้องหลังจะตอบ)
-  function rememberStrands(material, items) {
+  // เก็บรายการล่าสุดของวัสดุไว้ที่แคชของหน้า ให้หน้าที่เปิดซ้ำจากแคชเห็นข้อมูลล่าสุดทันที (ก่อนรอบตรวจสิทธิ์/ข้อมูลเบื้องหลังจะตอบ)
+  function storeStrands(material, strands) {
     const feed = cache.get(material);
-    if (feed?.strands) feed.strands = { status: "ready", items };
+    if (feed) feed.strands = strands;
+  }
+
+  // หลังบันทึก/ลบสำเร็จ (นับเป็นการเขียนหนึ่งครั้ง ดู loadStrands)
+  function rememberStrands(material, items) {
+    const strands = { status: "ready", items };
+    strandWriteSeq += 1;
+    strandKnown.set(material, strands);
+    if (strandKnown.size > 20) strandKnown.delete(strandKnown.keys().next().value);
+    storeStrands(material, strands);
   }
 
   async function loadFeed(material) {
@@ -548,7 +573,7 @@
       el.strandNote.textContent = notice;
       el.strandNote.hidden = !notice;
       el.strandAdd.disabled = failed;
-      el.strandEmpty.textContent = strandViews.emptyText(view.id);
+      el.strandEmpty.textContent = strandViews.emptyText(Boolean(view.id));
       el.strandEmpty.hidden = rows.length > 0 || failed;
       el.strandScroll.hidden = rows.length === 0;
       // ไม่วาดตารางใหม่เมื่อข้อมูลไม่เปลี่ยน (รีเฟรชทุก 30 วินาทีไม่ทำให้ปุ่มแก้ไขที่โฟกัสอยู่หลุด)
@@ -585,7 +610,6 @@
       const choices = record ? [record.sampleId] : strandModel.idsWithoutData(data.ids, strand.items).map((entry) => entry.id);
       if (!choices.length) {
         strand.notice = "ทุก ID ของวัสดุนี้มีข้อมูลแล้ว กดแก้ไขที่แถวของ ID เพื่อเปลี่ยนค่า";
-        strand.painted = "";
         paintStrands();
         return;
       }
@@ -593,7 +617,7 @@
       strand.editing = record;
       const selected = record ? record.sampleId : choices.includes(view.id) ? view.id : "";
       const fill = (node, value) => { node.value = value === null || value === undefined ? "" : String(value); };
-      el.strandTitle.textContent = strandViews.formTitle(record?.sampleId ?? "");
+      el.strandTitle.textContent = strandViews.formTitle(Boolean(record));
       el.strandId.innerHTML = strandViews.idOptions(choices, selected);
       el.strandId.value = selected;
       el.strandId.disabled = Boolean(record);
@@ -614,6 +638,7 @@
 
     // บันทึก/ลบ: action ทำ RPC แล้วอัปเดต strand.items คืนข้อความสำเร็จ · สิทธิ์ถูกถอน = หน้า "ไม่พบ" · ข้อมูลถูกคนอื่นแก้ไปก่อน = ปิดฟอร์มแล้วโหลดค่าล่าสุดมาให้ตรวจ
     async function runStrandAction(action) {
+      const focused = document.activeElement;
       strand.busy = true;
       setFormBusy(el.strandForm, true);
       showStrandError("");
@@ -633,12 +658,30 @@
           closeStrandForm();
           strand.notice = message;
           paintStrands();
-          void refreshNow();
+          void reloadStrands();
         } else showStrandError(message);
       } finally {
         strand.busy = false;
         setFormBusy(el.strandForm, false);
         el.strandId.disabled = Boolean(strand.editing);
+        // ฟอร์มยังเปิดอยู่ (ผิดพลาด): setFormBusy ปิดช่องที่โฟกัสอยู่ชั่วคราว คืนโฟกัสให้ผู้ใช้แก้ต่อได้ทันที
+        if (!el.strandForm.hidden) focused?.focus?.();
+      }
+    }
+
+    // หลังชนกับผู้อื่น: อ่านรายการล่าสุดของวัสดุนี้ทันที (ไม่ผ่าน refreshNow ที่ข้ามเมื่อมีรอบอ่านค้างอยู่ และผลของรอบที่ค้างอาจเก่ากว่าที่ชน)
+    async function reloadStrands() {
+      try {
+        const fresh = await loadStrands(material);
+        if (state.employee !== employee) return;
+        if (fresh.items) {
+          strand.status = fresh.status;
+          strand.items = fresh.items;
+          storeStrands(material, fresh);
+        }
+        paintStrands();
+      } catch (error) {
+        if (state.employee === employee && isDenied(error)) revoke();
       }
     }
 
@@ -1037,9 +1080,11 @@
         // The selector comes from the compact overview, even on a material-only response.
         el.materialSelect.innerHTML = views.materialOptions(feed.materials, material);
         // กำลังบันทึก/ลบอยู่: ไม่เอาข้อมูลที่อ่านก่อนหน้ามาทับรายการที่กำลังจะเปลี่ยน รอบถัดไปค่อยตรงกับฐานข้อมูล
+        // อ่านไม่สำเร็จชั่วคราว (items เป็น null) คงรายการที่เห็นอยู่ไว้เหมือนฟีดหลัก
         if (!strand.busy) {
           strand.status = feed.strands?.status ?? "unavailable";
-          strand.items = feed.strands?.items ?? [];
+          if (feed.strands?.items) strand.items = feed.strands.items;
+          else if (strand.status === "unavailable") strand.items = [];
         }
         const signature = model.feedSignature(feed.rows);
         // ชีตไม่เปลี่ยนจากรอบก่อน: ไม่วาดใหม่ (ไม่กระพริบ ไม่เสียจุดที่ผู้ใช้ปักหมุดหรือตำแหน่งเลื่อนในตาราง)
@@ -1067,6 +1112,7 @@
   async function openPage({ title, html, bind, material }) {
     stopAutoRefresh();
     bindCacheOwner();
+    strandUnavailable = false;
     const version = ++pageVersion;
     let feed = cache.get(material || "");
     const cached = Boolean(feed);

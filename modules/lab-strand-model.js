@@ -25,13 +25,14 @@
     LAB_INVALID_SIZE: "ขนาดต้องเป็นตัวเลขมากกว่า 0 ทศนิยมไม่เกิน 2 ตำแหน่ง (หน่วย มม.)",
     LAB_INVALID_SPEC_RANGE: "สเปกต่ำสุดต้องไม่มากกว่าสเปกสูงสุด",
     LAB_SPEC_EMPTY: "กรุณากรอกข้อมูลอย่างน้อยหนึ่งช่อง",
-    LAB_SPEC_CONFLICT: "ข้อมูลของ ID นี้ถูกเพิ่ม แก้ไข หรือลบโดยผู้อื่นไปแล้ว กำลังโหลดค่าล่าสุด กรุณาตรวจแล้วทำรายการอีกครั้ง",
+    LAB_SPEC_CONFLICT: "ข้อมูลของ ID นี้ถูกเพิ่ม แก้ไข หรือลบโดยผู้อื่นไปแล้ว กรุณาตรวจค่าล่าสุดในตารางแล้วทำรายการอีกครั้ง",
   });
 
   // แถวจาก RPC → รูปแบบที่หน้าเว็บใช้ (ตัวเลขเป็น number|null) แถวที่ไม่มี ID ถูกทิ้ง
+  // ID ใช้ตามที่ฐานข้อมูลส่งมาทุกตัวอักษร (ไม่ trim ซ้ำ) เพื่อให้ตรงกับ ID ของผลทดสอบที่ใช้เทียบและส่งกลับเสมอ
   function normalizeSpec(row) {
-    const sampleId = text(row?.sample_id).trim();
-    if (!sampleId) return null;
+    const sampleId = text(row?.sample_id);
+    if (!sampleId.trim()) return null;
     const version = Number(row?.version);
     return {
       sampleId,
@@ -60,8 +61,8 @@
   const remove = (list, sampleId) => list.filter((item) => item.sampleId !== sampleId);
   const find = (list, sampleId) => list.find((item) => item.sampleId === sampleId) ?? null;
 
-  // ลายนิ้วมือของรายการ ใช้ข้ามการวาดตารางใหม่เมื่อรีเฟรชแล้วข้อมูลไม่เปลี่ยน (version เพิ่มทุกครั้งที่แก้)
-  const signature = (list) => list.map((item) => `${item.sampleId}:${item.version}`).join("|");
+  // ลายนิ้วมือของรายการ ใช้ข้ามการวาดตารางใหม่เมื่อรีเฟรชแล้วข้อมูลไม่เปลี่ยน (version เพิ่มทุกครั้งที่แก้ และ updatedAt กัน ID ที่ถูกลบแล้วเพิ่มใหม่จน version กลับมาเท่าเดิม)
+  const signature = (list) => list.map((item) => `${item.sampleId}:${item.version}:${item.updatedAt ?? ""}`).join("|");
 
   // ID ที่ยังไม่มีข้อมูล (ตัวเลือกของการเพิ่มใหม่) ids = [{ id, count }] จาก lab-mooney-model.idsFor
   const idsWithoutData = (ids, list) => ids.filter((entry) => !find(list, entry.id));
@@ -102,8 +103,9 @@
   // ค่าจากฟอร์ม (ข้อความ) → พารามิเตอร์ของ app_lab_strand_spec_save หรือ { error: <รหัสข้อผิดพลาด> }
   // expectedVersion: null = เพิ่มใหม่ ตัวเลข = แก้ไขข้อมูลที่เห็น version นั้น
   function buildSaveParams({ material, sampleId, orderNo, outer, inner, outerMin, outerMax, innerMin, innerMax, expectedVersion = null }) {
-    const id = text(sampleId).trim();
-    if (!id) return { error: "LAB_INVALID_SAMPLE" };
+    // ID มาจากตัวเลือกที่สร้างจากผลทดสอบ ส่งไปตามที่เป็น (ไม่ trim: JS กับ btrim ของ PostgreSQL ตัดช่องว่างไม่เหมือนกัน) ว่างเปล่าเท่านั้นที่ปฏิเสธ
+    const id = text(sampleId);
+    if (!id.trim()) return { error: "LAB_INVALID_SAMPLE" };
     const order = text(orderNo).trim();
     if (order.length > MAX_ORDER_LENGTH) return { error: "LAB_INVALID_ORDER" };
     const sizes = [outer, inner, outerMin, outerMax, innerMin, innerMax].map(parseSize);

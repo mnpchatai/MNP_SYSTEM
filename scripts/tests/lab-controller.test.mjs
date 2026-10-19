@@ -29,7 +29,11 @@ function setup(respond) {
     } },
     shell: (html) => html, bindShell() {}, loadingShell() {}, renderNotFound() { denied += 1; },
     // helper ของ app.js ที่ฟอร์มข้อมูลยางเส้นเรียกตอนผู้ใช้กด: friendlyError เลียนแบบการหาข้อความจาก errorMessages ของโมดูล
-    setFormBusy() {}, showToast: (message) => { toasts.push(message); },
+    // เหมือน setFormBusy ของ app.js: ปิด/เปิดทุกปุ่มและช่องของฟอร์ม (รวมช่อง ID ที่ล็อกไว้ตอนแก้ไข ซึ่งโค้ดหน้าต้องล็อกกลับเอง)
+    setFormBusy(form, busy) {
+      for (const id of ["id", "order", "outer", "outer-min", "outer-max", "inner", "inner-min", "inner-max", "save", "cancel", "delete"]) element(`#lab-strand-${id}`).disabled = busy;
+    },
+    showToast: (message) => { toasts.push(message); },
     friendlyError(error) {
       const message = String(error?.message ?? error);
       const map = window.MNP_REQUEST_MODULES.MNP_LAB.errorMessages;
@@ -218,8 +222,9 @@ test("editing sends the version that was seen and locks the ID", async () => {
   await app.open("material=A");
   app.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
   assert.equal(app.element("#lab-strand-form").hidden, false);
-  assert.match(app.element("#lab-strand-form-title").textContent, /ID 112/);
+  assert.equal(app.element("#lab-strand-form-title").textContent, "แก้ไขข้อมูล", "the locked ID field says which ID, the title does not repeat it");
   assert.equal(app.element("#lab-strand-id").disabled, true);
+  assert.match(app.element("#lab-strand-id").innerHTML, /value="112" selected/);
   assert.equal(app.element("#lab-strand-order").value, "PO-1");
   assert.equal(app.element("#lab-strand-outer").value, "20.1");
   assert.equal(app.element("#lab-strand-delete").hidden, false);
@@ -243,7 +248,7 @@ test("a conflict closes the form, explains why, and reloads the latest data", as
   await flush();
   assert.equal(app.element("#lab-strand-form").hidden, true);
   assert.match(app.element("#lab-strand-note").textContent, /ผู้อื่น/);
-  assert.ok(app.calls.slice(before).some((call) => call.name === "app_lab_mooney_feed"), "the latest data is reloaded");
+  assert.ok(app.calls.slice(before).some((call) => call.name === "app_lab_strand_specs"), "the latest list is reloaded");
   assert.deepEqual(plain(app.toasts), [], "no success toast on a conflict");
 });
 
@@ -301,7 +306,7 @@ test("choosing an ID filters the strand table, and adding preselects that ID", a
   app.element("#lab-id-select").value = "113";
   app.fire("#lab-id-select", "change");
   assert.equal(app.element("#lab-strand-scroll").hidden, true);
-  assert.match(app.element("#lab-strand-empty").textContent, /ID 113 ยังไม่มีข้อมูล/);
+  assert.equal(app.element("#lab-strand-empty").textContent, "ID นี้ยังไม่มีข้อมูลออเดอร์และขนาด", "the header selector already names the ID");
   app.fire("#lab-strand-add", "click");
   assert.equal(app.element("#lab-strand-id").value, "113", "the ID being viewed is preselected");
 });
@@ -313,4 +318,132 @@ test("when every ID already has data, adding says so instead of opening an empty
   assert.equal(app.element("#lab-strand-form").hidden, true, "no form is opened");
   assert.equal(app.element("#lab-strand-form-title").textContent, "");
   assert.match(app.element("#lab-strand-note").textContent, /ทุก ID/);
+});
+
+/* ---------- ข้อมูลยางเส้น: ซ้อนกับรอบรีเฟรช ความล้มเหลวชั่วคราว แคช และการลองใหม่ ---------- */
+
+// ตอบ RPC ด้วยฟังก์ชันของเทสต์: feed เสมอสำเร็จ, onStrands(n, args) ตอบการอ่านรายการครั้งที่ n (เริ่มที่ 1), save/remove ตามเดิม
+function scriptedApp({ onStrands, save, remove }) {
+  let reads = 0;
+  return setup(async (name, args) => {
+    if (name === "app_lab_mooney_feed") return { data: materialFeed(), error: null };
+    if (name === "app_lab_strand_specs") return onStrands(++reads, args);
+    if (name === "app_lab_strand_spec_save") return save ? save(args) : { data: specRow(args.p_sample_id, { version: (args.p_expected_version ?? 0) + 1 }), error: null };
+    if (name === "app_lab_strand_spec_delete") return remove ? remove(args) : { data: { deleted: true }, error: null };
+    throw new Error(`unexpected rpc ${name}`);
+  });
+}
+const never = () => new Promise(() => {});
+
+test("a poll that read the list before a save and answers after it cannot undo the save", async () => {
+  let release;
+  const app = scriptedApp({ onStrands: (n) => (n === 2 ? new Promise((done) => { release = done; }) : { data: [], error: null }) });
+  await app.open("material=A");
+  app.fire("#lab-refresh", "click");
+  await flush();
+  assert.equal(typeof release, "function", "the poll's read is in flight");
+  app.fire("#lab-strand-add", "click");
+  fill(app, { id: "111", order: "PO-1" });
+  await app.fire("#lab-strand-form", "submit");
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="111"/);
+  release({ data: [], error: null });
+  await flush();
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="111"/, "the stale answer did not remove the saved record");
+  app.fire("#lab-strand-add", "click");
+  assert.doesNotMatch(app.element("#lab-strand-id").innerHTML, /value="111"/, "and the ID is not offered for adding again");
+});
+
+test("a poll that read the list before a delete cannot bring the record back", async () => {
+  let release;
+  const app = scriptedApp({ onStrands: (n) => (n === 2 ? new Promise((done) => { release = done; }) : { data: [specRow("112", { version: 2 })], error: null }) });
+  await app.open("material=A");
+  app.fire("#lab-refresh", "click");
+  await flush();
+  app.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  app.fire("#lab-strand-delete", "click");
+  app.fire("#lab-strand-delete", "click");
+  await flush();
+  assert.doesNotMatch(app.element("#lab-strand-scroll").innerHTML, /112/);
+  release({ data: [specRow("112", { version: 2 })], error: null });
+  await flush();
+  assert.doesNotMatch(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="112"/, "the deleted record stays deleted");
+});
+
+test("a failed poll keeps the list that is on screen, says so, and recovers on the next good read", async () => {
+  let failing = false;
+  const app = scriptedApp({ onStrands: () => (failing ? { data: null, error: { code: "XX000", message: "boom" } } : { data: [specRow("112")], error: null }) });
+  await app.open("material=A");
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="112"/);
+  failing = true;
+  app.fire("#lab-refresh", "click");
+  await flush();
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="112"/, "the known list is not wiped");
+  assert.equal(app.element("#lab-strand-scroll").hidden, false);
+  assert.match(app.element("#lab-strand-note").textContent, /ไม่สำเร็จ/);
+  assert.equal(app.element("#lab-strand-add").disabled, true);
+  failing = false;
+  app.fire("#lab-refresh", "click");
+  await flush();
+  assert.equal(app.element("#lab-strand-add").disabled, false);
+  assert.equal(app.element("#lab-strand-note").hidden, true);
+});
+
+test("after a conflict the latest list is read even though a poll is already in flight", async () => {
+  const app = scriptedApp({
+    onStrands: (n) => (n === 1 ? { data: [specRow("112", { version: 3 })], error: null }
+      : n === 2 ? never()
+        : { data: [specRow("112", { version: 5, order_no: "THEIRS" })], error: null }),
+    save: () => ({ data: null, error: { message: "LAB_SPEC_CONFLICT" } }),
+  });
+  await app.open("material=A");
+  app.fire("#lab-refresh", "click");
+  await flush();
+  app.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  await app.fire("#lab-strand-form", "submit");
+  await flush();
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /THEIRS/, "the other person's version is on screen");
+  assert.match(app.element("#lab-strand-note").textContent, /ผู้อื่น/);
+  assert.doesNotMatch(app.element("#lab-strand-note").textContent, /กำลังโหลด/, "the notice does not promise a load that may never happen");
+});
+
+test("reopening a material from the page cache shows what was just saved before the recheck answers", async () => {
+  const app = scriptedApp({ onStrands: (n) => (n === 1 ? { data: [], error: null } : never()) });
+  await app.open("material=A");
+  app.fire("#lab-strand-add", "click");
+  fill(app, { id: "111", order: "PO-1" });
+  await app.fire("#lab-strand-form", "submit");
+  app.element("#lab-strand-scroll").innerHTML = "";
+  await app.open("material=A");
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="111"/);
+});
+
+test("a database without the RPC is probed once per page open, not on every poll", async () => {
+  const missing = { code: "PGRST202", message: "Could not find the function public.app_lab_strand_specs" };
+  const app = scriptedApp({ onStrands: () => ({ data: null, error: missing }) });
+  const strandCalls = () => app.calls.filter((call) => call.name === "app_lab_strand_specs").length;
+  await app.open("material=A");
+  assert.equal(strandCalls(), 1);
+  app.fire("#lab-refresh", "click");
+  await flush();
+  app.fire("#lab-refresh", "click");
+  await flush();
+  assert.equal(strandCalls(), 1, "polls do not repeat a call that cannot succeed");
+  await app.open("material=A");
+  await flush();
+  assert.equal(strandCalls(), 2, "opening the page again checks once more, so an applied migration is picked up");
+});
+
+test("a failed save keeps the form open with the ID still locked and returns focus to where the user was", async () => {
+  const app = strandApp({ specs: [specRow("112")], save: () => ({ data: null, error: { message: "LAB_INVALID_SIZE" } }) });
+  await app.open("material=A");
+  app.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  let refocused = 0;
+  app.context.document.activeElement = { focus() { refocused += 1; } };
+  fill(app, { outer: "20" });
+  await app.fire("#lab-strand-form", "submit");
+  assert.equal(app.element("#lab-strand-form").hidden, false);
+  assert.equal(app.element("#lab-strand-id").disabled, true, "setFormBusy re-enabled every field; the page locks the ID again");
+  assert.equal(app.element("#lab-strand-order").disabled, false);
+  assert.match(app.element("#lab-strand-error").textContent, /ทศนิยมไม่เกิน 2/);
+  assert.equal(refocused, 1);
 });

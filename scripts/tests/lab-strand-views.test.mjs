@@ -74,9 +74,9 @@ test("idOptions asks to choose when adding and locks the single ID when editing"
   assert.equal(views.idOptions(["111"], "111"), `<option value="111" selected>111</option>`, "editing offers no placeholder");
 });
 
-test("form title and empty text say which ID they are about", () => {
-  assert.equal(views.formTitle(""), "เพิ่มข้อมูลยางเส้น");
-  assert.equal(views.formTitle("111"), "แก้ไขข้อมูลของ ID 111");
-  assert.equal(views.emptyText(""), "ยังไม่มีข้อมูลออเดอร์และขนาดของวัสดุนี้");
-  assert.equal(views.emptyText("111"), "ID 111 ยังไม่มีข้อมูลออเดอร์และขนาด");
+test("form title and empty text do not repeat an ID the screen already shows", () => {
+  assert.equal(views.formTitle(false), "เพิ่มข้อมูลยางเส้น");
+  assert.equal(views.formTitle(true), "แก้ไขข้อมูล", "the locked ID field next to it says which ID");
+  assert.equal(views.emptyText(false), "ยังไม่มีข้อมูลออเดอร์และขนาดของวัสดุนี้");
+  assert.equal(views.emptyText(true), "ID นี้ยังไม่มีข้อมูลออเดอร์และขนาด", "the header selector says which ID");
 });

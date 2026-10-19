@@ -51,7 +51,8 @@
     </section>`;
   }
 
-  const formTitle = (sampleId) => (sampleId ? `แก้ไขข้อมูลของ ID ${sampleId}` : "เพิ่มข้อมูลยางเส้น");
+  // แก้ไข = ไม่ซ้ำเลข ID ที่ช่อง ID ที่ล็อกไว้ในฟอร์มเดียวกันบอกอยู่แล้ว
+  const formTitle = (editing) => (editing ? "แก้ไขข้อมูล" : "เพิ่มข้อมูลยางเส้น");
 
   // ตัวเลือก ID ของฟอร์ม: เพิ่มใหม่ = ID ที่ยังไม่มีข้อมูล (ต้องเลือก) แก้ไข = ID เดียวที่ล็อกไว้
   function idOptions(choices, selected = "") {
@@ -80,8 +81,8 @@
     return `<table class="lab-table lab-strands"><caption class="sr-only">ออเดอร์และขนาดยางเส้นของ ${esc(material)}</caption><thead><tr><th scope="col" class="lab-th sticky">ID</th><th scope="col" class="lab-th">ออเดอร์</th><th scope="col" class="lab-th">วงนอก (มม.)</th><th scope="col" class="lab-th">รูใน (มม.)</th><th scope="col" class="lab-th"><span class="sr-only">แก้ไข</span></th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  // ข้อความเมื่อไม่มีแถวให้แสดง: กำลังดู ID เดียวแล้วยังไม่มีข้อมูลของ ID นั้น / ทั้งวัสดุยังไม่มีข้อมูลเลย
-  const emptyText = (id) => (id ? `ID ${id} ยังไม่มีข้อมูลออเดอร์และขนาด` : "ยังไม่มีข้อมูลออเดอร์และขนาดของวัสดุนี้");
+  // ข้อความเมื่อไม่มีแถวให้แสดง: กำลังดู ID เดียวแล้วยังไม่มีข้อมูลของ ID นั้น (ไม่ซ้ำเลข ID ที่ตัวเลือกหัวหน้าบอกอยู่) / ทั้งวัสดุยังไม่มีข้อมูลเลย
+  const emptyText = (filtered) => (filtered ? "ID นี้ยังไม่มีข้อมูลออเดอร์และขนาด" : "ยังไม่มีข้อมูลออเดอร์และขนาดของวัสดุนี้");
 
   const api = { strandCard, formTitle, idOptions, sizeCell, strandTable, emptyText };
   root.MNP_LAB_STRAND_VIEWS = api;

@@ -16,7 +16,7 @@ test("normalizeSpec maps an RPC row and keeps empty fields as null", () => {
     sampleId: "111", orderNo: "PO-2610-001", outer: 20.1, inner: 3.05, outerMin: 19.5, outerMax: 20.5,
     innerMin: 2.5, innerMax: 3.5, version: 2, updatedAt: "2026-10-19T03:00:00Z",
   });
-  const sparse = strand.normalizeSpec({ sample_id: " 7 ", order_no: null, outer_mm: null, version: "3" });
+  const sparse = strand.normalizeSpec({ sample_id: "7", order_no: null, outer_mm: null, version: "3" });
   assert.equal(sparse.sampleId, "7");
   assert.equal(sparse.orderNo, null);
   assert.equal(sparse.outer, null);
@@ -52,6 +52,11 @@ test("signature changes when a record is added, removed or edited (version bump)
   assert.equal(strand.signature(strand.normalizeList([rpcRow({ sample_id: "1", version: 1 })])), sig);
   assert.notEqual(strand.signature(strand.normalizeList([rpcRow({ sample_id: "1", version: 2 })])), sig);
   assert.notEqual(strand.signature(strand.normalizeList([rpcRow({ sample_id: "1" }), rpcRow({ sample_id: "2" })])), sig);
+  assert.notEqual(
+    strand.signature(strand.normalizeList([rpcRow({ sample_id: "1", version: 1, updated_at: "2026-10-19T01:00:00Z" })])),
+    strand.signature(strand.normalizeList([rpcRow({ sample_id: "1", version: 1, updated_at: "2026-10-19T02:00:00Z" })])),
+    "a record deleted and re-added by someone else can land on the same version; its timestamp still differs",
+  );
   assert.equal(strand.signature([]), "");
 });
 
@@ -139,4 +144,11 @@ test("isMissingFunction recognises a database that has not applied the migration
   assert.equal(strand.isMissingFunction({ message: "Could not find the function public.app_lab_strand_specs(p_material) in the schema cache" }), true);
   assert.equal(strand.isMissingFunction({ message: "NOT_AUTHORIZED" }), false);
   assert.equal(strand.isMissingFunction(null), false);
+});
+
+test("IDs are passed through exactly as stored, so JS and PostgreSQL never disagree about which ID a row belongs to", () => {
+  // JS trim() also strips NBSP and tabs but PostgreSQL btrim() strips only spaces; an ID is therefore never re-trimmed here
+  assert.equal(strand.normalizeSpec({ sample_id: "111\u00a0" }).sampleId, "111\u00a0");
+  assert.equal(strand.buildSaveParams(form({ sampleId: "111\u00a0" })).params.p_sample_id, "111\u00a0");
+  assert.equal(strand.buildSaveParams(form({ sampleId: "\u00a0 " })).error, "LAB_INVALID_SAMPLE", "an ID with nothing in it is still refused");
 });
