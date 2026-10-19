@@ -367,6 +367,50 @@ test("an empty or partly unreadable sheet never replaces the mirror", () => {
   }
 });
 
+test("a refused sheet records which rows to fix (capped), with no secret and nothing sent", () => {
+  const bad = Array.from({ length: 25 }, (_, index) => [String(index + 1), "B0005", "31/02/2026", "10:11:14", "100", "4", "99.04", "52.58", "", "", "", ""]);
+  const display = [HEADER, ...bad];
+  const raw = display.map((row, index) => (index === 0 ? row : [row[0], row[1], "x", "x", 100, 4, 99.04, 52.58, "", "", "", ""]));
+  const app = makeSync({ sheets: [fakeSheet({ name: "B0005", display, raw })] });
+  assert.throws(() => app.ctx.syncLabMooney(), /^Error: LAB_SYNC_INVALID_SNAPSHOT$/);
+  assert.equal(app.calls.fetch.length, 0);
+  assert.match(app.properties.get("LAB_SYNC_LAST_ERROR"), /LAB_SYNC_INVALID_SNAPSHOT$/);
+  const lines = app.properties.get("LAB_SYNC_LAST_PROBLEMS").split("\n");
+  assert.match(lines[0], /25 แถว/);
+  assert.equal(lines.length, 21, "one summary line plus at most 20 rows");
+  assert.match(lines[1], /^B0005 แถว 2: วันที่ไม่ถูกต้อง "31\/02\/2026"/);
+  assert.ok(!app.properties.get("LAB_SYNC_LAST_PROBLEMS").includes("x".repeat(48)));
+});
+
+test("an empty snapshot says why, naming the tabs skipped for their headers", () => {
+  const summary = fakeSheet({ name: "Summary", display: [["Date", "Sheet", "Notes"]], raw: [["Date", "Sheet", "Notes"]] });
+  const app = makeSync({ sheets: [summary] });
+  assert.throws(() => app.ctx.syncLabMooney(), /LAB_SYNC_INVALID_SNAPSHOT/);
+  const text = app.properties.get("LAB_SYNC_LAST_PROBLEMS");
+  assert.match(text, /ไม่พบแถวข้อมูล/);
+  assert.match(text, /Summary/);
+});
+
+test("the recorded reasons stay within the Script Property size limit and cover the row cap", () => {
+  const app = makeSync();
+  const long = Array.from({ length: 20 }, (_, index) => `A แถว ${index + 2}: ${"ก".repeat(2000)}`);
+  assert.ok(app.ctx.describeInvalidSnapshot_({ problems: long, rows: [], skipped: [] }).length <= 8000);
+  assert.match(app.ctx.describeInvalidSnapshot_({ problems: [], rows: { length: 20001 }, skipped: [] }), /20001.*20000/);
+});
+
+test("the recorded rows are cleared as soon as the sheet is readable again", () => {
+  const bad = a1802Tab();
+  bad.display[2][2] = "31/02/2026";
+  const sheets = [fakeSheet({ name: "A", ...bad })];
+  const app = makeSync({ sheets });
+  assert.throws(() => app.ctx.syncLabMooney(), /LAB_SYNC_INVALID_SNAPSHOT/);
+  assert.ok(app.properties.has("LAB_SYNC_LAST_PROBLEMS"));
+  sheets.splice(0, 1, fakeSheet({ name: "A1802", ...a1802Tab() }));
+  assert.equal(app.ctx.syncLabMooney().ok, true);
+  assert.ok(!app.properties.has("LAB_SYNC_LAST_PROBLEMS"));
+  assert.ok(!app.properties.has("LAB_SYNC_LAST_ERROR"));
+});
+
 test("failed sync keeps success metadata, reports a safe error and releases the lock", () => {
   const app = makeSync({ respond: supabaseAnswers(502, '{"ok":false,"error":"secret internal detail"}') });
   app.properties.set("LAB_SYNC_LAST_SUCCESS", "previous success");
