@@ -92,14 +92,17 @@ Dashboard MT (`#/mt-dashboard`): ช่อง “รอใคร” ในตา
   โดยไม่มีคำขอใดไปถึงชีต
 - **บัญชีที่เห็นเฉพาะ MNP LAB** (`MNPLAB001`, `MNPLAB002`): เข้า MNP LAB ได้และ **ไม่มีทางเห็นหรือใช้โมดูลอื่น** — คิดจาก ID ไม่ใช่บทบาท
   (ต่อให้ admin ตั้งบทบาทสูงให้ก็ยังเห็นเฉพาะ LAB) รายชื่ออยู่ที่เดียวคือ `private.lab_only_employee_nos()` (migration
-  `20261019010000_lab_only_accounts.sql`) บัญชีเปิดตามขั้นตอนปกติของหน้า Admin (ID เป็นตัวพิมพ์ใหญ่) ฐานข้อมูลเป็นตัวบังคับ:
+  `20261019005000_lab_only_accounts.sql`) บัญชีเปิดตามขั้นตอนปกติของหน้า Admin (ID เป็นตัวพิมพ์ใหญ่) ฐานข้อมูลเป็นตัวบังคับ:
   RPC ทุกตัวใน `public` ที่ผู้ล็อกอินเรียกได้ถูกเติม `perform private.lab_only_block();` เป็นบรรทัดแรก (ปฏิเสธด้วย `LAB_ONLY_ACCOUNT`)
-  ยกเว้น RPC ของ LAB และข้อมูลส่วนตัวของตนเองใน `private.lab_only_allowed_functions()`; ทุกตารางใน `public` มี policy แบบ restrictive
+  ยกเว้นฟังก์ชันของโมดูล LAB (ชื่อขึ้นต้น `app_lab_`) และข้อมูลส่วนตัวของตนเองใน `private.lab_only_allowed_functions()`; ทุกตารางใน `public` มี policy แบบ restrictive
   `lab_only_no_access` (ยกเว้น `roles`/`departments` ที่ใช้แสดงโปรไฟล์ และ `employees` ที่เห็นได้เฉพาะแถวของตนเอง); ไฟล์ใน Storage ทุก bucket
   ยกเว้น `employee-photos` ถูกปิด หน้าเว็บทำตาม (`modules/lab-only-access.js`): แถบข้างเหลือ MNP LAB / ข้อมูลส่วนตัว / ออกจากระบบ
   ล็อกอินแล้วเข้า `#/lab` ทุกที่อยู่อื่นพากลับ `#/lab` ไม่โหลดการแจ้งเตือนหรือข้อมูลโมดูลอื่น แต่นั่นเป็น UX — ถ้าหน้าเว็บถูกเลี่ยง ฐานข้อมูลยังปฏิเสธ
   - **เพิ่ม/เปลี่ยน ID**: `create or replace private.lab_only_employee_nos()` ใน migration ใหม่ เว็บไม่ต้องแก้
   - **ข้อควรระวัง**: ถ้า admin อนุมัติคำร้องเปลี่ยน ID ของบัญชีเหล่านี้เป็น ID อื่น บัญชีนั้นจะพ้นข้อจำกัด
+  - **ถ้ามี migration เก่ากว่าถูก apply ทับภายหลัง** (`create or replace` ฟังก์ชันที่มีด่านอยู่แล้ว ทำให้ด่านหายเงียบ ๆ บนฐานข้อมูลนั้น — production
+    มีนิยามฟังก์ชันที่เลื่อนจากรีโพอยู่แล้วหลายตัว) ให้รัน `select private.lab_only_guard_functions();` (เติมเฉพาะที่ขาด คืนจำนวนที่เติม รันซ้ำได้ รองรับนิยามแบบ CRLF)
+    แล้วตรวจว่า `select * from private.lab_only_unguarded_functions();` ไม่เหลือแถว
   - **โมดูล ตาราง หรือ RPC ใหม่ในอนาคต**: `supabase/tests/database/lab_only_accounts.test.sql` จะไม่ผ่านใน CI จนกว่าตารางใหม่จะเรียก
     `private.lab_only_guard_table('public.<ตาราง>')` และฟังก์ชันใหม่ (รวมถึงฟังก์ชันเดิมที่ `create or replace`) จะมีบรรทัด
     `perform private.lab_only_block();` ต่อจาก `begin` (ฟังก์ชัน SQL: `select private.lab_only_block();` เป็นประโยคแรก) ให้เริ่มจากนิยามล่าสุดเสมอ
@@ -128,7 +131,7 @@ Dashboard MT (`#/mt-dashboard`): ช่อง “รอใคร” ในตา
   → ตั้ง secret และ deploy `lab-sheet-sync` → เพิ่ม `Sync.gs` ในโปรเจกต์ Apps Script เดิมแล้วรัน `installLabSync`
   → ตรวจซิงก์ครั้งแรกและสิทธิ์บน production → merge เว็บเป็นขั้นตอนสุดท้าย รายละเอียดและ rollback ที่ `apps-script/lab-mooney/README.md`
   migration ใหม่เติม importer จาก main ที่ production ยังไม่มี โดยไม่เปลี่ยนกติกาสิทธิ์เข้า LAB
-  **บัญชี lab-only ต้อง apply `20261019010000_lab_only_accounts.sql` ก่อน merge เว็บ** (ขออนุมัติแยก) และก่อนเปิดบัญชี MNPLAB001/002 ให้ใช้งานจริง:
+  **บัญชี lab-only ต้อง apply `20261019005000_lab_only_accounts.sql` ก่อน merge เว็บ** (ขออนุมัติแยก) และก่อนเปิดบัญชี MNPLAB001/002 ให้ใช้งานจริง:
   migration เติมด่านในฟังก์ชันของ production ตามนิยามปัจจุบัน (ข้อความ notice ระบุจำนวนที่เติม — ฐานข้อมูลจากรีโพคือ 90 ฟังก์ชัน) และถ้าเติมไม่ครบจะล้มทั้งก้อน
   เว็บใหม่ใช้ได้กับฐานข้อมูลเก่า (ไม่มี `app_lab_only` = ไม่มีใครเป็น lab-only) แต่ในช่วงนั้นฐานข้อมูลยังไม่ปิดโมดูลอื่นให้บัญชี lab-only
 - **ยังไม่ครอบคลุม**: โหมดทดสอบ (เมนูถูกซ่อนในโหมดทดสอบ) ฝั่ง Next.js (ไม่มีโมดูลนี้ เหมือนโมดูลฝ่ายโรงงาน; บัญชี lab-only จึงถูกปิดที่ฐานข้อมูลเหมือนกัน

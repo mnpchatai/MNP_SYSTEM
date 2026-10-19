@@ -9,10 +9,13 @@
 --      คิดจาก ID ไม่ใช่บทบาท: ต่อให้ admin ตั้งบทบาทให้บัญชีเหล่านี้สูงแค่ไหนก็ยังเห็นเฉพาะ LAB
 --   2) private.can_access_lab() = admin หรือบัญชี lab-only ที่ยังใช้งานอยู่ (จุดตัดสินเดิมของโมดูล)
 --   3) RPC ฝั่งผู้ใช้ทุกตัวใน public ที่ authenticated เรียกได้ ถูกเติมบรรทัดแรก private.lab_only_block()
---      ซึ่งปฏิเสธด้วย LAB_ONLY_ACCOUNT เมื่อผู้เรียกเป็นบัญชี lab-only ยกเว้นรายการใน
---      private.lab_only_allowed_functions() (RPC ของ LAB และ RPC ข้อมูลส่วนตัวของตนเอง)
---      เติมด้วยการอ่านนิยามปัจจุบันของแต่ละฟังก์ชันตอน apply จึงไม่ทับนิยามที่ migration อื่นเพิ่งแก้
---      และถ้าเติมไม่สำเร็จแม้ตัวเดียว migration จะล้มทั้งก้อน (ไม่ปล่อยช่องโหว่เงียบ ๆ)
+--      ซึ่งปฏิเสธด้วย LAB_ONLY_ACCOUNT เมื่อผู้เรียกเป็นบัญชี lab-only ยกเว้นฟังก์ชันของโมดูล LAB (ชื่อขึ้นต้น app_lab_)
+--      และ RPC ข้อมูลส่วนตัวของตนเองใน private.lab_only_allowed_functions()
+--      เติมด้วย private.lab_only_guard_functions() ที่อ่านนิยามปัจจุบันของแต่ละฟังก์ชันตอนรัน จึงไม่ทับนิยามที่
+--      migration อื่นหรือฐานข้อมูลจริงแก้ไว้ (รองรับนิยามที่ขึ้นบรรทัดแบบ CRLF) และถ้าเติมไม่สำเร็จแม้ตัวเดียว
+--      migration จะล้มทั้งก้อน (ไม่ปล่อยช่องโหว่เงียบ ๆ) ฟังก์ชันนี้รันซ้ำได้: ถ้ามี migration เก่ากว่าถูก apply ทับภายหลัง
+--      (create or replace ทำให้ด่านหาย) ให้รัน  select private.lab_only_guard_functions();  แล้วตรวจว่า
+--      select * from private.lab_only_unguarded_functions();  ไม่เหลือแถว
 --   4) ตารางทุกตารางใน public (ยกเว้น roles/departments ที่เป็นข้อมูลอ้างอิงของแถบข้าง) มี policy แบบ restrictive
 --      lab_only_no_access ห้ามอ่าน/เขียนผ่าน Data API ส่วน employees เห็นได้เฉพาะแถวของตนเอง
 --      และ Storage ทุก bucket ยกเว้น employee-photos (รูปโปรไฟล์ของตนเอง) ถูกปิดด้วย policy เดียวกัน
@@ -20,8 +23,8 @@
 -- โมดูล/ฟังก์ชัน/ตารางใหม่ในอนาคต: supabase/tests/database/lab_only_accounts.test.sql จะไม่ผ่านใน CI
 -- จนกว่าตารางใหม่จะเรียก private.lab_only_guard_table('public.<ตาราง>') และฟังก์ชันใหม่จะมีบรรทัด
 -- perform private.lab_only_block(); ต่อจาก begin (ฟังก์ชัน SQL: select private.lab_only_block(); เป็นประโยคแรก)
--- หรืออยู่ในรายการ private.lab_only_allowed_functions() — และ migration ที่ create or replace ฟังก์ชันเดิม
--- ต้องเริ่มจากนิยามล่าสุดที่มีบรรทัดนี้อยู่แล้ว ไม่เช่นนั้นเทสต์เดียวกันจะไม่ผ่าน
+-- หรือเป็นฟังก์ชันของโมดูล LAB (app_lab_*) หรืออยู่ในรายการ private.lab_only_allowed_functions() — และ migration ที่
+-- create or replace ฟังก์ชันเดิมต้องเริ่มจากนิยามล่าสุดที่มีบรรทัดนี้อยู่แล้ว ไม่เช่นนั้นเทสต์เดียวกันจะไม่ผ่าน
 --
 -- เปลี่ยนรายชื่อ ID: create or replace private.lab_only_employee_nos() ใน migration ใหม่ ข้อควรระวัง:
 -- การเปลี่ยน ID ของบัญชีเหล่านี้ (เช่น ผ่านคำร้องแก้ ID ที่ admin อนุมัติ) จะทำให้พ้นข้อจำกัด lab-only
@@ -130,7 +133,8 @@ revoke all on function public.app_lab_only() from public, anon;
 grant execute on function public.app_lab_only() to authenticated;
 
 -- 3. RPC ที่บัญชี lab-only เรียกได้ ----------------------------------------------------
--- MNP LAB, สิทธิ์ของโมดูลที่แถบข้างเรียกทุกครั้งตอนล็อกอิน (app_my_approval_modules คืนเฉพาะของตนเอง)
+-- ฟังก์ชันของโมดูล LAB (ชื่อขึ้นต้น app_lab_ — ตรวจสิทธิ์เองด้วย private.can_access_lab) เป็นของที่บัญชีนี้ต้องใช้ จึงไม่ถูกบล็อก
+-- นอกจากนั้นเหลือเฉพาะสิทธิ์ของโมดูลที่แถบข้างเรียกทุกครั้งตอนล็อกอิน (app_my_approval_modules คืนเฉพาะของตนเอง)
 -- และข้อมูลส่วนตัวของตนเอง (โปรไฟล์ รูป คำร้องเปลี่ยนรหัสผ่านถึง admin) — ฟังก์ชันอื่นถูกปิดทั้งหมด
 create or replace function private.lab_only_allowed_functions()
 returns text[]
@@ -139,14 +143,49 @@ immutable
 set search_path = ''
 as $$
   select array[
-    'app_lab_access', 'app_lab_only', 'app_lab_mooney_overview', 'app_lab_mooney_results', 'app_lab_mooney_feed',
     'app_my_approval_modules',
     'app_update_own_profile', 'app_update_own_photo', 'app_request_credential_change'
   ]
 $$;
 revoke all on function private.lab_only_allowed_functions() from public, anon, authenticated;
 
-do $$
+create or replace function private.lab_only_function_allowed(p_name text)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select p_name like 'app\_lab\_%' or p_name = any (private.lab_only_allowed_functions())
+$$;
+revoke all on function private.lab_only_function_allowed(text) from public, anon, authenticated;
+
+-- ฟังก์ชันที่ผู้ล็อกอินเรียกได้แต่ยังไม่มีด่าน (ต้องว่างเสมอหลัง migration — เทสต์ตรวจจากฟังก์ชันนี้)
+create or replace function private.lab_only_unguarded_functions()
+returns setof text
+language sql
+stable
+set search_path = ''
+as $$
+  select p.oid::regprocedure::text
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.prokind = 'f'
+    and p.prorettype <> 'trigger'::regtype
+    and has_function_privilege('authenticated', p.oid, 'execute')
+    and not private.lab_only_function_allowed(p.proname)
+    and pg_get_functiondef(p.oid) not like '%private.lab_only_block()%'
+  order by 1
+$$;
+revoke all on function private.lab_only_unguarded_functions() from public, anon, authenticated;
+
+-- เติมด่านให้ทุกฟังก์ชันที่ยังไม่มี คืนจำนวนที่เติม (0 = ครบแล้ว) รันซ้ำได้
+create or replace function private.lab_only_guard_functions()
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
 declare
   v_fn record;
   v_def text;
@@ -155,14 +194,14 @@ declare
 begin
   for v_fn in
     select p.oid, p.oid::regprocedure::text as signature, l.lanname
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-    join pg_language l on l.oid = p.prolang
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    join pg_catalog.pg_language l on l.oid = p.prolang
     where n.nspname = 'public'
       and p.prokind = 'f'
       and p.prorettype <> 'trigger'::regtype
       and has_function_privilege('authenticated', p.oid, 'execute')
-      and p.proname <> all (private.lab_only_allowed_functions())
+      and not private.lab_only_function_allowed(p.proname)
     order by p.proname, p.oid
   loop
     v_def := pg_get_functiondef(v_fn.oid);
@@ -170,11 +209,12 @@ begin
       continue;
     end if;
 
+    -- ฟังก์ชันที่ถูกสร้างจากไฟล์ที่ขึ้นบรรทัดแบบ CRLF ก็ต้องเติมได้ (\r? ก่อนขึ้นบรรทัดใหม่)
     if v_fn.lanname = 'plpgsql' then
       -- ต่อจาก begin ของบล็อกหลัก (บรรทัดแรกที่มีแต่ begin) — ก่อนคำสั่งแรกของฟังก์ชัน
-      v_new := regexp_replace(v_def, E'(\\n[ \\t]*begin[ \\t]*\\n)', E'\\1  perform private.lab_only_block();\n', 'i');
+      v_new := regexp_replace(v_def, E'(\\n[ \\t]*begin[ \\t]*\\r?\\n)', E'\\1  perform private.lab_only_block();\n', 'i');
     elsif v_fn.lanname = 'sql' then
-      v_new := regexp_replace(v_def, E'(AS \\$function\\$\\n)', E'\\1select private.lab_only_block();\n');
+      v_new := regexp_replace(v_def, E'(AS \\$function\\$\\r?\\n)', E'\\1select private.lab_only_block();\n');
     else
       raise exception 'lab-only guard: unsupported language % for %', v_fn.lanname, v_fn.signature;
     end if;
@@ -187,20 +227,17 @@ begin
   end loop;
 
   -- ตรวจซ้ำจากนิยามที่อยู่ในฐานข้อมูลจริง: ต้องไม่เหลือฟังก์ชันที่ไม่มีด่าน
-  if exists (
-    select 1
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public'
-      and p.prokind = 'f'
-      and p.prorettype <> 'trigger'::regtype
-      and has_function_privilege('authenticated', p.oid, 'execute')
-      and p.proname <> all (private.lab_only_allowed_functions())
-      and pg_get_functiondef(p.oid) not like '%private.lab_only_block()%'
-  ) then
+  if exists (select 1 from private.lab_only_unguarded_functions()) then
     raise exception 'lab-only guard: some callable functions are still unguarded';
   end if;
-  raise notice 'lab-only guard added to % functions', v_count;
+  return v_count;
+end;
+$$;
+revoke all on function private.lab_only_guard_functions() from public, anon, authenticated;
+
+do $$
+begin
+  raise notice 'lab-only guard added to % functions', private.lab_only_guard_functions();
 end $$;
 
 -- 4. ตารางและ Storage -----------------------------------------------------------------
@@ -225,7 +262,9 @@ set search_path = ''
 as $$
 begin
   execute format('alter table %s enable row level security', p_table);
-  execute format('drop policy if exists lab_only_no_access on %s', p_table);
+  if exists (select 1 from pg_catalog.pg_policy where polrelid = p_table and polname = 'lab_only_no_access') then
+    execute format('drop policy lab_only_no_access on %s', p_table);
+  end if;
   execute format(
     'create policy lab_only_no_access on %s as restrictive for all to authenticated '
     'using (not (select private.is_lab_only_caller())) '

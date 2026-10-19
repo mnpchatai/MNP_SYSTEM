@@ -1,11 +1,11 @@
--- ทดสอบบัญชีที่เห็นเฉพาะ MNP LAB (20261019010000_lab_only_accounts.sql)
+-- ทดสอบบัญชีที่เห็นเฉพาะ MNP LAB (20261019005000_lab_only_accounts.sql)
 --   1) โครงสร้าง: รายชื่อ ID, ทุก RPC ที่เรียกได้มีด่านหรืออยู่ในรายการอนุญาต, ทุกตารางมี policy ปิด, Storage
 --   2) พฤติกรรม: บัญชี lab-only เข้า LAB ได้ แต่ RPC/ตาราง/ไฟล์ของโมดูลอื่นถูกปฏิเสธ แม้ตั้งบทบาท admin ให้
 --   3) ผู้ใช้อื่น (staff, admin, ID คล้ายกันที่ไม่อยู่ในรายชื่อ) ไม่ได้รับผลกระทบ
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(57);
+select plan(67);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select is(
@@ -13,20 +13,24 @@ select is(
   'the lab-only account list is MNPLAB001 and MNPLAB002'
 );
 select is(
-  (select count(*)::integer from pg_proc p
-   join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public' and p.prokind = 'f' and p.prorettype <> 'trigger'::regtype
-     and has_function_privilege('authenticated', p.oid, 'execute')
-     and p.proname <> all (private.lab_only_allowed_functions())
-     and pg_get_functiondef(p.oid) not like '%private.lab_only_block()%'),
+  (select count(*)::integer from private.lab_only_unguarded_functions()),
   0,
-  'every public function a signed-in user can call has the lab-only guard or is listed in private.lab_only_allowed_functions() — add "perform private.lab_only_block();" after begin when you add or replace one'
+  'every public function a signed-in user can call has the lab-only guard, belongs to the LAB module (app_lab_*) or is listed in private.lab_only_allowed_functions() — add "perform private.lab_only_block();" after begin when you add or replace one, or run select private.lab_only_guard_functions()'
 );
 select is(
   (select count(*)::integer from unnest(private.lab_only_allowed_functions()) as f(name)
    where not exists (select 1 from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = f.name)),
   0,
   'every function named in private.lab_only_allowed_functions() exists (no typo)'
+);
+select ok(
+  private.lab_only_function_allowed('app_lab_strand_specs') and private.lab_only_function_allowed('app_update_own_profile'),
+  'LAB module functions (app_lab_*) and the own-profile functions are open to lab-only accounts'
+);
+select ok(
+  not private.lab_only_function_allowed('app_peek_request_number') and not private.lab_only_function_allowed('app_laboratory_report')
+    and not private.lab_only_function_allowed('app_factory_master_data'),
+  'every other function stays closed (the LAB prefix is app_lab_ exactly, not any name starting with app_lab)'
 );
 select is(
   (select count(*)::integer from pg_class c
@@ -223,7 +227,35 @@ select lives_ok($$ select * from public.app_list_credentials() $$, 'an admin can
 select lives_ok($$ select * from public.app_request_status_board(null, null, 10) $$, 'an admin can still read the organisation status board');
 reset role;
 
--- 7. ผู้ที่ไม่ได้ล็อกอิน ---------------------------------------------------------------
+-- 7. ฟังก์ชันที่ขึ้นบรรทัดแบบ CRLF (production มีบางตัวเป็นแบบนี้) และการรันซ้ำ ------------------
+-- สร้างหลัง migration จึงยังไม่มีด่าน: ต้องถูกจับว่าขาดด่าน เติมได้ทั้งสองภาษา และรันซ้ำแล้วไม่เปลี่ยนอะไร
+create function public.app_zz_crlf_plpgsql() returns text language plpgsql security definer set search_path = ''
+as E'\r\ndeclare\r\n  v_x text := \'ok\';\r\nbegin\r\n  return v_x;\r\nend;\r\n';
+create function public.app_zz_crlf_sql() returns text language sql security definer set search_path = ''
+as E'\r\n  select \'ok\'::text\r\n';
+grant execute on function public.app_zz_crlf_plpgsql(), public.app_zz_crlf_sql() to authenticated;
+
+select ok(
+  array['public.app_zz_crlf_plpgsql()', 'public.app_zz_crlf_sql()'] <@ (select array_agg(f) from private.lab_only_unguarded_functions() f),
+  'new functions without the guard are reported as unguarded'
+);
+select is(private.lab_only_guard_functions(), 2, 'the guard is added to both CRLF functions (plpgsql and sql)');
+select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'nothing is left unguarded afterwards');
+select is(private.lab_only_guard_functions(), 0, 'running it again changes nothing');
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"82000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select throws_ok($$ select public.app_zz_crlf_plpgsql() $$, 'LAB_ONLY_ACCOUNT', 'a guarded CRLF plpgsql function refuses MNPLAB001');
+select throws_ok($$ select public.app_zz_crlf_sql() $$, 'LAB_ONLY_ACCOUNT', 'a guarded CRLF SQL function refuses MNPLAB001');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"82000000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select is(public.app_zz_crlf_plpgsql(), 'ok', 'a guarded CRLF plpgsql function still works for a regular employee');
+select is(public.app_zz_crlf_sql(), 'ok', 'a guarded CRLF SQL function still works for a regular employee');
+reset role;
+
+-- 8. ผู้ที่ไม่ได้ล็อกอิน ---------------------------------------------------------------
 set local role anon;
 select set_config('request.jwt.claims', '{"role":"anon"}', true);
 select throws_ok($$ select public.app_lab_only() $$, '42501', null, 'anon cannot check the lab-only flag');

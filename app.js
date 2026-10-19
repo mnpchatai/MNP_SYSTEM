@@ -221,7 +221,7 @@ function requestModulePage(path) {
 const isSandboxMode = () => Boolean(state.employee?.isSandbox);
 const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;
 // บัญชีที่เห็นเฉพาะ MNP LAB (MNPLAB001/002): หน้าเว็บเหลือเมนูและหน้า LAB กับข้อมูลส่วนตัว (modules/lab-only-access.js)
-// เป็น UX ล้วน — ฐานข้อมูลปฏิเสธบัญชีนี้ในทุก RPC/ตารางของโมดูลอื่นเอง (migration 20261019010000_lab_only_accounts.sql)
+// เป็น UX ล้วน — ฐานข้อมูลปฏิเสธบัญชีนี้ในทุก RPC/ตารางของโมดูลอื่นเอง (migration 20261019005000_lab_only_accounts.sql)
 const isLabOnly = () => window.MNP_LAB_ONLY.isLabOnly(state.employee);
 const homePath = () => (isLabOnly() ? window.MNP_LAB_ONLY.HOME : "dashboard");
 function sandboxRouteAllowed(path, params) {
