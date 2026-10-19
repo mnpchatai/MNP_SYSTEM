@@ -220,6 +220,10 @@ function requestModulePage(path) {
 // โมดูลอื่นถูกซ่อน และฐานข้อมูลปฏิเสธการเขียนของโมดูลที่ยังไม่รองรับ (SANDBOX_MODULE_UNSUPPORTED)
 const isSandboxMode = () => Boolean(state.employee?.isSandbox);
 const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;
+// บัญชีที่เห็นเฉพาะ MNP LAB (MNPLAB001/002): หน้าเว็บเหลือเมนูและหน้า LAB กับข้อมูลส่วนตัว (modules/lab-only-access.js)
+// เป็น UX ล้วน — ฐานข้อมูลปฏิเสธบัญชีนี้ในทุก RPC/ตารางของโมดูลอื่นเอง (migration 20261019010000_lab_only_accounts.sql)
+const isLabOnly = () => window.MNP_LAB_ONLY.isLabOnly(state.employee);
+const homePath = () => (isLabOnly() ? window.MNP_LAB_ONLY.HOME : "dashboard");
 function sandboxRouteAllowed(path, params) {
   if (path === "new" || path === "repair/new") return false;
   if (path === "requests") return params.get("mode") === "create";
@@ -235,6 +239,7 @@ function sandboxRouteAllowed(path, params) {
 function requestModuleNavLinks(active) {
   return Object.values(REQUEST_MODULES)
     .filter((entry) => entry.enabled && sandboxSupports(entry) && (entry.navAllowed?.(state.employee) ?? true))
+    .filter((entry) => !isLabOnly() || window.MNP_LAB_ONLY.moduleAllowed(entry.code))
     .flatMap((entry) => entry.nav ?? [])
     .filter((item) => !item.sandboxOnly || isSandboxMode())
     .map((item) => {
@@ -345,6 +350,7 @@ function friendlyError(error) {
     ...moduleMessages,
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
+    LAB_ONLY_ACCOUNT: "บัญชีนี้ใช้ได้เฉพาะ MNP LAB",
     SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
     SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR และ Item master ฝ่ายโรงงานตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
     NCR_FILES_REMAIN: "ลบไฟล์แนบทดสอบไม่หมด กรุณาลองล้างข้อมูลทดสอบอีกครั้ง",
@@ -1101,7 +1107,7 @@ async function handleAuthSubmit(event) {
     if (error) throw error;
     state.session = data.session;
     await loadEmployee();
-    go("dashboard");
+    go(homePath());
     await renderRoute();
   } catch (error) {
     message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(error))}</div>`;
@@ -1221,7 +1227,7 @@ async function loadEmployee() {
     .maybeSingle();
   if (error) throw error;
   if (!data) throw Object.assign(new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน"), { code: "EMPLOYEE_NOT_LINKED" });
-  const [{ data: modulesData, error: modulesError }, labAccess] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess()]);
+  const [{ data: modulesData, error: modulesError }, labAccess, labOnly] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess(), loadLabOnly()]);
   if (modulesError) throw modulesError;
   state.employee = {
     ...data,
@@ -1229,6 +1235,7 @@ async function loadEmployee() {
     department: relation(data.department),
     approvalModules: new Set((modulesData ?? []).map((item) => item.code)),
     labAccess,
+    labOnly,
   };
   await applySandboxOverlay();
   return state.employee;
@@ -1246,12 +1253,24 @@ async function loadLabAccess() {
   return data === true;
 }
 
+// บัญชีที่เห็นเฉพาะ MNP LAB: ฐานข้อมูลเป็นผู้ตัดสิน (app_lab_only) หน้าเว็บใช้แค่เลือกว่าจะแสดงอะไร
+// ต่างจาก loadLabAccess ตรงที่ผิดพลาดแล้วล้มการโหลดบัญชี (ปล่อยหน้าเมนูเต็มให้บัญชีนี้ไม่ได้) ยกเว้นฐานข้อมูลที่ยังไม่มีฟังก์ชันนี้
+// (ยังไม่ได้ apply migration) ซึ่งยังไม่มีบัญชีไหนถูกจำกัด จึงถือว่าไม่ใช่ lab-only
+async function loadLabOnly() {
+  const { data, error } = await sb.rpc("app_lab_only");
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") return false;
+    throw error;
+  }
+  return data === true;
+}
+
 // โหมดทดสอบของ admin: ฐานข้อมูลให้ NCR ทำงานตามบัญชีทดสอบ (persona) ที่ admin เลือก
 // หน้าเว็บจึงต้องใช้ persona เป็น "ผู้ใช้ปัจจุบัน" ด้วย ปุ่มและสิทธิ์ที่แสดงจะตรงกับที่ฐานข้อมูลยอมรับ
 // ผู้ใช้ทั่วไปไม่ถูกเรียก RPC นี้ และถ้าฐานข้อมูลยังไม่มีฟังก์ชัน (ยังไม่ได้ db push) admin ยังใช้งานตามปกติ
 async function applySandboxOverlay() {
   state.sandbox = null;
-  if (state.employee?.role?.code !== "admin") return;
+  if (state.employee?.role?.code !== "admin" || state.employee.labOnly) return;
   const { data, error } = await sb.rpc("app_sandbox_status");
   if (error) {
     console.warn("sandbox status unavailable", error);
@@ -1270,7 +1289,7 @@ async function applySandboxOverlay() {
 }
 
 async function loadUnread() {
-  if (!state.employee) return 0;
+  if (!state.employee || isLabOnly()) return 0;
   const { count } = await sb
     .from("notifications")
     .select("id", { count: "exact", head: true })
@@ -1310,16 +1329,16 @@ function shell(content, active, title) {
         <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
       </button>
       <aside class="sidebar" id="mobile-nav">
-        <a class="brand" href="#/dashboard"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
+        <a class="brand" href="#/${homePath()}"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
-          ${isSandboxMode() ? "" : `${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
+          ${isSandboxMode() || isLabOnly() ? "" : `${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
           ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active, { href: window.MNP_REQUEST_CENTER.overviewUrl() })}
           ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}`}
           ${requestModuleNavLinks(active)}
-          ${isSandboxMode() ? "" : navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
+          ${isSandboxMode() || isLabOnly() ? "" : navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
           <div class="nav-divider"></div>
-          ${employee.role?.code === "admin" ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
+          ${employee.role?.code === "admin" && !isLabOnly() ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
           ${navLink("profile", "ข้อมูลส่วนตัว", NAV_ICONS.profile, active)}
           <button class="nav-link nav-signout signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">
             <span class="nav-icon-wrap"><span class="nav-icon">${NAV_ICONS.signout}</span></span>
@@ -1340,7 +1359,7 @@ function shell(content, active, title) {
           <div class="top-actions">
             ${isSandboxMode() ? `<span class="sandbox-pill" title="อยู่ในโหมดทดสอบ ข้อมูลแยกจากระบบจริง">TEST</span>` : ""}
             ${themeButton()}
-            ${isSandboxMode() ? "" : `<a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>`}
+            ${isSandboxMode() || isLabOnly() ? "" : `<a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>`}
           </div>
         </header>
         <div class="content">${sandboxBannerHtml()}${content}</div>
@@ -3502,6 +3521,11 @@ async function renderRoute() {
       return await renderAuth();
     }
   }
+  // บัญชี lab-only เปิดได้เฉพาะ MNP LAB กับข้อมูลส่วนตัว ที่อยู่อื่น (รวมที่พิมพ์เอง/ลิงก์เก่า) พากลับ LAB ก่อนเรียกข้อมูลใด ๆ
+  if (isLabOnly() && !window.MNP_LAB_ONLY.routeAllowed(path)) {
+    go(window.MNP_LAB_ONLY.HOME);
+    return;
+  }
   if (isSandboxMode() && !sandboxRouteAllowed(path, params)) {
     go("ncr");
     return;
@@ -3556,8 +3580,8 @@ async function startApp() {
       await loadEmployeeKeepingSession();
       // กันกรณีแจ้งเตือนตกค้าง (ปิดเบราว์เซอร์ก่อนยิงสำเร็จ / ตอนนั้นยังไม่ได้ตั้งค่า secret /
       // แจ้งเตือนที่เกิดตอนผู้รับยังไม่ได้ล็อกอิน) — เปิดแอปครั้งถัดไปคิวจะถูกไล่ส่งให้เอง
-      triggerNotificationEmails();
-      if (!location.hash) go("dashboard");
+      if (!isLabOnly()) triggerNotificationEmails();
+      if (!location.hash) go(homePath());
     } catch (employeeError) {
       if (!isAccountGoneError(employeeError)) return renderConnectionError(employeeError);
       await signOutLocally(friendlyError(employeeError));
