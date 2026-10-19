@@ -1837,7 +1837,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .ss-option { min-height: 44px; font-size: 15px; }
 }
 
-/* MNP LAB (modules/module-lab.js, lab-mooney-views.js, lab-mooney-chart.js) — ผลทดสอบ Mooney
+/* MNP LAB (modules/module-lab.js, lab-mooney-views.js, lab-mooney-chart.js, lab-strand-views.js) — ผลทดสอบ Mooney และข้อมูลยางเส้น
    ตัวเลือกเป็น <select> (เสริมเป็นช่องค้นหา + รายการด้วย searchable-select.js) ส่วนช่องค้นหาหน้ารวมเป็น combobox ที่ใช้ .ss-list กับกฎ data-popup/closePopup ของ app.js ป้ายค่าของกราฟเป็นป้ายชั่วคราวที่ไม่รับการแตะ
    กราฟเป็น SVG ที่ใช้ตัวแปรสีของหน้านี้ สีซีรีส์ผ่านการตรวจด้วย validate_palette (แยกกันได้ทั้งสายตาปกติและตาบอดสี ทั้งโหมดสว่างและมืด)
    และมีรูปทรงต่างกันกำกับ: MH = วงกลม, MV = สี่เหลี่ยมขนมเปียกปูน */
@@ -2016,6 +2016,36 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-results tbody tr.is-active > td.stat { background: color-mix(in srgb, var(--primary) 16%, var(--paper)); }
 .lab-result-row { cursor: pointer; }
 
+/* ออเดอร์และขนาดยางเส้น (lab-strand-views.js): ตารางต่อ ID + ฟอร์มเพิ่ม/แก้ไขในการ์ดเดียวกัน ใช้ตารางและสีของหน้านี้ร่วมกัน */
+.lab-strand-card { margin-bottom: 14px; }
+.lab-strand-card .card-heading { padding-top: 8px; padding-bottom: 8px; flex-wrap: wrap; gap: 8px 12px; }
+.lab-strand-note { margin: 0; padding: 8px 18px; color: var(--warning); background: var(--warning-soft); border-top: 1px solid var(--soft-line); }
+.lab-strand-empty { margin: 0; padding: 14px 18px; border-top: 1px solid var(--soft-line); }
+.lab-strand-scroll { max-height: min(48vh, 480px); border-top: 1px solid var(--soft-line); }
+.lab-strand-form { padding: 14px 18px 4px; border-top: 1px solid var(--soft-line); background: var(--lab-band); }
+/* ปุ่ม .btn ตั้ง display เอง ทำให้ attribute hidden ไม่ซ่อน (ปุ่ม "ลบข้อมูล" ในฟอร์มเพิ่ม) กฎเดียวคลุมทุกส่วนที่ซ่อนได้ในการ์ด เหมือน .ftd-page [hidden] */
+.lab-strand-card [hidden] { display: none; }
+.lab-strand-form-title { margin: 0 0 10px; font-size: 14px; }
+.lab-strand-top { display: grid; grid-template-columns: minmax(140px, 220px) minmax(0, 1fr); gap: 0 14px; }
+.lab-strand-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 14px; }
+.lab-strand-group { min-width: 0; margin: 0 0 12px; padding: 8px 12px 0; border: 1px solid var(--soft-line); border-radius: 8px; background: var(--paper); }
+.lab-strand-group legend { padding: 0 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.lab-strand-sizes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 10px; }
+.lab-strand-sizes .field, .lab-strand-top .field { margin-bottom: 10px; }
+.lab-strand-sizes .input { min-width: 0; font-variant-numeric: tabular-nums; }
+.lab-strand-error { margin: 0 0 10px; color: var(--danger); font-size: 13px; font-weight: 600; }
+.lab-strands tbody td, .lab-strands tbody th { color: var(--ink); background: var(--paper); font-weight: 400; text-align: left; vertical-align: top; }
+.lab-strands tbody th.sticky { font-weight: 600; }
+.lab-strands tbody tr:first-child > * { border-top: 0; }
+.lab-strands tbody tr:hover { background: transparent; }
+.lab-size { min-width: 150px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.lab-size-main { font-weight: 600; }
+.lab-size-limits { display: block; color: var(--muted); font-size: 12px; }
+.lab-size-flag { margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.lab-size-flag.is-ok { color: var(--success); background: var(--success-soft); }
+.lab-size-flag.is-low, .lab-size-flag.is-high { color: var(--danger); background: var(--danger-soft); }
+.lab-strands tbody td.lab-strand-actions { width: 1%; text-align: right; }
+
 /* หน้ารวม: รายการวัสดุพร้อมผลชุดล่าสุด */
 .lab-toolbar { padding: 12px 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; border-bottom: 1px solid var(--soft-line); }
 .lab-search { max-width: 420px; flex: 1 1 240px; }
@@ -2068,6 +2098,23 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .lab-howto { margin-left: 0; flex-basis: 100%; }
   .lab-table th, .lab-table td { padding: 8px 9px; }
   .lab-table-scroll { max-height: 70vh; }
+  .lab-strand-card .card-heading, .lab-strand-note, .lab-strand-empty, .lab-strand-form { padding-left: 14px; padding-right: 14px; }
+  .lab-strand-top { grid-template-columns: 1fr; }
+  .lab-strand-sizes { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 8px; }
+  .lab-strand-sizes .input, .lab-strand-top .input { font-size: 16px; }
+  .lab-strand-scroll { max-height: none; overflow: visible; }
+  /* ตารางข้อมูลยางเส้นบนมือถือ: หนึ่ง ID = หนึ่งการ์ด (ID + ปุ่มแก้ไข / ออเดอร์ / วงนอกกับรูในคู่กัน) ไม่ต้องเลื่อนข้างเพื่อหาปุ่มแก้ไข */
+  .lab-strands { width: 100%; }
+  .lab-strands thead { display: none; }
+  .lab-strands, .lab-strands tbody { display: block; }
+  .lab-strands tbody tr { padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 14px; border-top: 1px solid var(--soft-line); background: var(--paper); }
+  .lab-strands tbody tr:first-child { border-top: 0; }
+  .lab-strands tbody th, .lab-strands tbody td { padding: 0; display: block; border: 0; white-space: normal; }
+  .lab-strands tbody th.sticky { min-width: 0; position: static; grid-column: 1; box-shadow: none; font-size: 16px; }
+  .lab-strands tbody td.lab-strand-actions { width: auto; grid-column: 2; grid-row: 1; }
+  .lab-order-no { grid-column: 1 / -1; }
+  .lab-order-no::before, .lab-size::before { margin-bottom: 2px; display: block; content: attr(data-label); color: var(--quiet); font-size: 11px; font-weight: 700; }
+  .lab-size { min-width: 0; }
   /* หน้ารวมบนมือถือ: หนึ่งวัสดุ = หนึ่งการ์ด (ชื่อ/วันที่ทดสอบ แล้วค่า MH กับ MV คู่กัน) */
   .lab-overview thead { display: none; }
   .lab-overview, .lab-overview tbody { display: block; }

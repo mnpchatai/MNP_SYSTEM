@@ -133,7 +133,8 @@
   }
 
   // หัวหน้าบรรทัดเดียว: ปุ่มกลับ · ตัวเลือกวัสดุ (เป็นทั้งชื่อหน้าและตัวสลับวัสดุ) · ตัวเลือก ID · เวลาอ่านชีต/รีเฟรช
-  function materialPage(material, seconds) {
+  // extraCards = การ์ดเสริมที่ module-lab.js ต่อท้ายตารางผล (ข้อมูลยางเส้น) ไม่ใส่ = ไม่มี
+  function materialPage(material, seconds, extraCards = "") {
     const orders = ORDER_OPTIONS.map((option) => `<option value="${esc(option.key)}">${esc(option.label)}</option>`).join("");
     return `<div class="lab-page">
       <div class="lab-head lab-head-material">
@@ -162,6 +163,7 @@
           </div>
           <div class="lab-table-scroll" id="lab-table-scroll" tabindex="0" role="region" aria-labelledby="lab-table-title"></div>
         </section>
+        ${extraCards}
       </div>
     </div>`;
   }
