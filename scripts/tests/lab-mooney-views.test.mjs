@@ -11,6 +11,9 @@ globalThis.MNP_LAB_MOONEY = model;
 const chart = require("../../modules/lab-mooney-chart.js");
 globalThis.MNP_LAB_CHART = chart;
 const views = require("../../modules/lab-mooney-views.js");
+// การ์ดข้อมูลยางเส้นประกอบเข้าหน้าวัสดุโดย module-lab.js (extraCards) สัญญาของโครงหน้าจึงตรวจรวมกับการ์ดนี้
+globalThis.MNP_LAB_STRAND = require("../../modules/lab-strand-model.js");
+const strandViews = require("../../modules/lab-strand-views.js");
 
 const XSS = `<img src=x onerror=alert(1)>`;
 const row = (overrides = {}) => ({
@@ -640,7 +643,7 @@ test("in one ID's history the tip leaves the ID out (already chosen above) and a
 test("every element the page script looks up exists in the page it opens", () => {
   const source = readFileSync(new URL("../../modules/module-lab.js", import.meta.url), "utf8");
   const wanted = new Set([...source.matchAll(/"#(lab-[a-z-]+)"/g)].map((match) => match[1]));
-  const pages = views.overviewPage(30) + views.materialPage("A1802", 30);
+  const pages = views.overviewPage(30) + views.materialPage("A1802", 30, strandViews.strandCard());
   assert.ok(wanted.size > 15, `found ${wanted.size} selectors`);
   for (const id of wanted) assert.ok(pages.includes(`id="${id}"`), `#${id} is missing from the page markup`);
   // หน้ารวมและหน้าวัสดุต้องมีแถบเวลา/รีเฟรชชุดเดียวกัน เพราะ bindLiveBar ผูกทั้งสองหน้า
@@ -656,6 +659,17 @@ test("the material page shows the material name once (the picker) and keeps no p
   const visibleText = page.replace(/<[^>]+>/g, " ");
   assert.equal(count(visibleText, /อัตโนมัติ/g), 0, "the refresh interval lives in the button's title, not as page text");
   assert.equal(count(page, /อัตโนมัติทุก 30 วินาที/g), 2, "title and aria-label of the one refresh button");
+});
+
+test("extra cards are placed after the results table inside the page body, and are optional", () => {
+  const plain = views.materialPage("A1802", 30);
+  const withExtra = views.materialPage("A1802", 30, '<section id="extra-card"></section>');
+  assert.ok(!plain.includes("extra-card"));
+  const table = withExtra.indexOf('id="lab-table-scroll"');
+  const extra = withExtra.indexOf('id="extra-card"');
+  const bodyEnd = withExtra.lastIndexOf("</div>\n    </div>");
+  assert.ok(table > 0 && extra > table && extra < bodyEnd, "after the results card, still inside #lab-body");
+  assert.equal(plain, withExtra.replace('\n        <section id="extra-card"></section>', "\n        "), "no other markup changes");
 });
 
 test("the material page title is escaped and the refresh interval comes from the caller", () => {

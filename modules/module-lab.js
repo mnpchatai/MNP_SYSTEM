@@ -12,13 +12,19 @@
 //
 // ไฟล์นี้ดูแลเฉพาะการเชื่อมต่อ: อ่านฟีด สิทธิ์ รีเฟรชอัตโนมัติ และผูกเหตุการณ์ของหน้า ส่วนข้อมูลล้วนอยู่ที่ lab-mooney-model.js
 // กราฟ SVG ที่ lab-mooney-chart.js และ HTML ของหน้า/ตารางที่ lab-mooney-views.js (โหลดก่อนไฟล์นี้ ดู index.html)
+//
+// หน้าวัสดุมีการ์ด "ออเดอร์และขนาดยางเส้น" (ออเดอร์ที่ใช้ ขนาดวงนอก/รูใน สเปก ต่อ ID) ที่ผู้ใช้เพิ่ม/แก้/ลบได้ ข้อมูลล้วนที่ lab-strand-model.js
+// และ HTML ที่ lab-strand-views.js การเขียนผ่าน RPC app_lab_strand_spec_save/delete ที่ตรวจสิทธิ์เดียวกับการอ่านที่ฐานข้อมูล
+// ฐานข้อมูลที่ยังไม่มี migration ของส่วนนี้ (ไม่มีฟังก์ชัน app_lab_strand_specs) หน้าวัสดุยังทำงานเหมือนเดิมโดยซ่อนการ์ดนี้
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell,
 // renderNotFound, closePopup) เฉพาะตอนเปิดหน้า/ตอนผู้ใช้กด ไม่เรียกตอนโหลดไฟล์
 (function registerLabModule() {
   const model = window.MNP_LAB_MOONEY;
   const views = window.MNP_LAB_VIEWS;
   const chart = window.MNP_LAB_CHART;
-  if (!model || !views || !chart) return;
+  const strandModel = window.MNP_LAB_STRAND;
+  const strandViews = window.MNP_LAB_STRAND_VIEWS;
+  if (!model || !views || !chart || !strandModel || !strandViews) return;
 
   const PATH = "lab";
   const TITLE = "MNP LAB";
@@ -48,13 +54,35 @@
     if (owner !== state.employee) { clearCache(); owner = state.employee; }
   }
 
+  // ข้อมูลยางเส้นของวัสดุ: ready = อ่านได้, unavailable = ฐานข้อมูลยังไม่มีฟังก์ชันนี้ (ซ่อนการ์ด), error = อ่านไม่สำเร็จชั่วคราว (การ์ดบอก ไม่ล้มทั้งหน้า)
+  // สิทธิ์ถูกถอนโยน error ต่อให้ผู้เรียกจัดการเหมือนฟีดหลัก
+  async function loadStrands(material) {
+    const { data, error } = await sb.rpc("app_lab_strand_specs", { p_material: material });
+    if (error) {
+      if (strandModel.isMissingFunction(error)) return { status: "unavailable", items: [] };
+      if (isDenied(error)) throw error;
+      return { status: "error", items: [] };
+    }
+    const items = strandModel.normalizeList(data);
+    return items ? { status: "ready", items } : { status: "error", items: [] };
+  }
+
+  // หลังบันทึก/ลบ ให้หน้าที่เปิดซ้ำจากแคชเห็นข้อมูลล่าสุดทันที (ก่อนรอบตรวจสิทธิ์/ข้อมูลเบื้องหลังจะตอบ)
+  function rememberStrands(material, items) {
+    const feed = cache.get(material);
+    if (feed?.strands) feed.strands = { status: "ready", items };
+  }
+
   async function loadFeed(material) {
     const employee = state.employee;
-    const { data, error } = await sb.rpc("app_lab_mooney_feed", { p_material: material || null });
+    const [{ data, error }, strands] = await Promise.all([
+      sb.rpc("app_lab_mooney_feed", { p_material: material || null }),
+      material ? loadStrands(material) : null,
+    ]);
     if (error) throw error;
     if (state.employee !== employee || employee !== owner) throw new Error("AUTH_REQUIRED");
     if (!data || !Array.isArray(data.materials) || !Array.isArray(data.rows)) throw new Error("LAB_FEED_UNREADABLE");
-    const feed = { ...model.normalizeFeed(data), materials: data.materials };
+    const feed = { ...model.normalizeFeed(data), materials: data.materials, strands };
     const key = material || "";
     cache.delete(key);
     cache.set(key, feed);
@@ -323,7 +351,26 @@
       tableNote: document.querySelector("#lab-table-note"),
       scroll: document.querySelector("#lab-table-scroll"),
       copy: document.querySelector("#lab-copy"),
+      strandCard: document.querySelector("#lab-strand-card"),
+      strandAdd: document.querySelector("#lab-strand-add"),
+      strandNote: document.querySelector("#lab-strand-note"),
+      strandScroll: document.querySelector("#lab-strand-scroll"),
+      strandEmpty: document.querySelector("#lab-strand-empty"),
+      strandForm: document.querySelector("#lab-strand-form"),
+      strandTitle: document.querySelector("#lab-strand-form-title"),
+      strandId: document.querySelector("#lab-strand-id"),
+      strandOrder: document.querySelector("#lab-strand-order"),
+      strandOuter: document.querySelector("#lab-strand-outer"),
+      strandOuterMin: document.querySelector("#lab-strand-outer-min"),
+      strandOuterMax: document.querySelector("#lab-strand-outer-max"),
+      strandInner: document.querySelector("#lab-strand-inner"),
+      strandInnerMin: document.querySelector("#lab-strand-inner-min"),
+      strandInnerMax: document.querySelector("#lab-strand-inner-max"),
+      strandError: document.querySelector("#lab-strand-error"),
+      strandCancel: document.querySelector("#lab-strand-cancel"),
+      strandDelete: document.querySelector("#lab-strand-delete"),
     };
+    const employee = state.employee;
 
     // ข้อมูลของหน้า: series = ผลทั้งวัสดุตามลำดับในชีต, shown = สิ่งที่กราฟ/ตารางแสดงอยู่ (ทั้งวัสดุ หรือเฉพาะ ID ที่เลือก)
     const data = { series: null, ids: [], conditions: null, shown: { mode: "sequence", items: [] }, signature: "", plotWidth: 0, plot: null };
@@ -481,6 +528,172 @@
       paintTable();
       paintChart();
     }
+
+    /* ----- ออเดอร์และขนาดยางเส้น (ต่อ ID) ----- */
+
+    // status: ready | unavailable | error · editing = ข้อมูลที่กำลังแก้ (null = กำลังเพิ่มใหม่) · painted = ลายนิ้วมือของตารางที่วาดอยู่
+    // ตัวเลือกที่ผู้ใช้เลือก ID ไว้ (view.id) กรองตารางให้เหลือ ID นั้น ไม่เลือก = ทุก ID ของวัสดุ
+    const strand = { status: "unavailable", items: [], editing: null, busy: false, notice: "", painted: "", deleteArmed: false };
+    let deleteTimer = 0;
+
+    const strandRows = () => (view.id ? strand.items.filter((item) => item.sampleId === view.id) : strand.items);
+
+    function paintStrands() {
+      const available = strand.status !== "unavailable" && Boolean(data.series);
+      el.strandCard.hidden = !available;
+      if (!available) return;
+      const failed = strand.status === "error";
+      const rows = strandRows();
+      const notice = failed ? "อ่านข้อมูลออเดอร์และขนาดไม่สำเร็จ จะลองใหม่อัตโนมัติ" : strand.notice;
+      el.strandNote.textContent = notice;
+      el.strandNote.hidden = !notice;
+      el.strandAdd.disabled = failed;
+      el.strandEmpty.textContent = strandViews.emptyText(view.id);
+      el.strandEmpty.hidden = rows.length > 0 || failed;
+      el.strandScroll.hidden = rows.length === 0;
+      // ไม่วาดตารางใหม่เมื่อข้อมูลไม่เปลี่ยน (รีเฟรชทุก 30 วินาทีไม่ทำให้ปุ่มแก้ไขที่โฟกัสอยู่หลุด)
+      const key = `${view.id}|${strandModel.signature(rows)}`;
+      if (key === strand.painted) return;
+      strand.painted = key;
+      el.strandScroll.innerHTML = rows.length ? strandViews.strandTable({ items: rows, material }) : "";
+    }
+
+    function showStrandError(message) {
+      el.strandError.textContent = message;
+      el.strandError.hidden = !message;
+    }
+
+    function resetDeleteButton() {
+      window.clearTimeout(deleteTimer);
+      strand.deleteArmed = false;
+      el.strandDelete.textContent = "ลบข้อมูล";
+    }
+
+    // ปิดฟอร์มแล้วคืนโฟกัสให้ปุ่มเพิ่มข้อมูล (ฟอร์มที่ซ่อนไปพร้อมปุ่มที่กดอยู่ทำให้โฟกัสหายจากหน้า)
+    function closeStrandForm() {
+      resetDeleteButton();
+      strand.editing = null;
+      el.strandForm.hidden = true;
+      showStrandError("");
+      el.strandAdd.focus?.();
+    }
+
+    // ฟอร์มเพิ่ม (sampleId ว่าง) หรือแก้ไขข้อมูลของ ID หนึ่ง: เพิ่ม = เลือกได้เฉพาะ ID ที่ยังไม่มีข้อมูล (ล่วงหน้าเป็น ID ที่กำลังดูอยู่) แก้ = ล็อก ID
+    function openStrandForm(sampleId = "") {
+      const record = sampleId ? strandModel.find(strand.items, sampleId) : null;
+      if (sampleId && !record) return;
+      const choices = record ? [record.sampleId] : strandModel.idsWithoutData(data.ids, strand.items).map((entry) => entry.id);
+      if (!choices.length) {
+        strand.notice = "ทุก ID ของวัสดุนี้มีข้อมูลแล้ว กดแก้ไขที่แถวของ ID เพื่อเปลี่ยนค่า";
+        strand.painted = "";
+        paintStrands();
+        return;
+      }
+      strand.notice = "";
+      strand.editing = record;
+      const selected = record ? record.sampleId : choices.includes(view.id) ? view.id : "";
+      const fill = (node, value) => { node.value = value === null || value === undefined ? "" : String(value); };
+      el.strandTitle.textContent = strandViews.formTitle(record?.sampleId ?? "");
+      el.strandId.innerHTML = strandViews.idOptions(choices, selected);
+      el.strandId.value = selected;
+      el.strandId.disabled = Boolean(record);
+      fill(el.strandOrder, record?.orderNo);
+      fill(el.strandOuter, record?.outer);
+      fill(el.strandOuterMin, record?.outerMin);
+      fill(el.strandOuterMax, record?.outerMax);
+      fill(el.strandInner, record?.inner);
+      fill(el.strandInnerMin, record?.innerMin);
+      fill(el.strandInnerMax, record?.innerMax);
+      resetDeleteButton();
+      el.strandDelete.hidden = !record;
+      showStrandError("");
+      el.strandForm.hidden = false;
+      paintStrands();
+      (record ? el.strandOrder : el.strandId).focus?.();
+    }
+
+    // บันทึก/ลบ: action ทำ RPC แล้วอัปเดต strand.items คืนข้อความสำเร็จ · สิทธิ์ถูกถอน = หน้า "ไม่พบ" · ข้อมูลถูกคนอื่นแก้ไปก่อน = ปิดฟอร์มแล้วโหลดค่าล่าสุดมาให้ตรวจ
+    async function runStrandAction(action) {
+      strand.busy = true;
+      setFormBusy(el.strandForm, true);
+      showStrandError("");
+      try {
+        const done = await action();
+        if (state.employee !== employee) return;
+        rememberStrands(material, strand.items);
+        closeStrandForm();
+        strand.notice = "";
+        paintStrands();
+        showToast(done);
+      } catch (error) {
+        if (state.employee !== employee) return;
+        if (isDenied(error)) return revoke();
+        const message = friendlyError(error);
+        if (/LAB_SPEC_CONFLICT/.test(String(error?.message ?? ""))) {
+          closeStrandForm();
+          strand.notice = message;
+          paintStrands();
+          void refreshNow();
+        } else showStrandError(message);
+      } finally {
+        strand.busy = false;
+        setFormBusy(el.strandForm, false);
+        el.strandId.disabled = Boolean(strand.editing);
+      }
+    }
+
+    // แก้ช่องใดก็ตามแล้วข้อความผิดพลาดเดิมหมดอายุ (ไม่ค้างอยู่ทั้งที่ค่าถูกแก้แล้ว)
+    el.strandForm.addEventListener("input", () => showStrandError(""));
+    el.strandAdd.addEventListener("click", () => openStrandForm());
+    el.strandCancel.addEventListener("click", closeStrandForm);
+    el.strandScroll.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-strand-edit]");
+      if (button) openStrandForm(button.dataset.strandEdit);
+    });
+    el.strandForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (strand.busy) return;
+      const record = strand.editing;
+      const built = strandModel.buildSaveParams({
+        material,
+        sampleId: record ? record.sampleId : el.strandId.value,
+        orderNo: el.strandOrder.value,
+        outer: el.strandOuter.value,
+        inner: el.strandInner.value,
+        outerMin: el.strandOuterMin.value,
+        outerMax: el.strandOuterMax.value,
+        innerMin: el.strandInnerMin.value,
+        innerMax: el.strandInnerMax.value,
+        expectedVersion: record ? record.version : null,
+      });
+      if (built.error) return showStrandError(friendlyError(new Error(built.error)));
+      return runStrandAction(async () => {
+        const { data: saved, error } = await sb.rpc("app_lab_strand_spec_save", built.params);
+        if (error) throw error;
+        const next = strandModel.normalizeSpec(saved);
+        if (!next) throw new Error("LAB_FEED_UNREADABLE");
+        strand.items = strandModel.upsert(strand.items, next);
+        return "บันทึกแล้ว";
+      });
+    });
+    // ลบต้องกดสองครั้ง (ครั้งแรกเปลี่ยนข้อความปุ่ม ไม่กดต่อใน 4 วินาทีก็กลับเป็นเดิม) ไม่ใช้กล่องยืนยันของเบราว์เซอร์
+    el.strandDelete.addEventListener("click", () => {
+      const record = strand.editing;
+      if (!record || strand.busy) return;
+      if (!strand.deleteArmed) {
+        strand.deleteArmed = true;
+        el.strandDelete.textContent = "กดอีกครั้งเพื่อยืนยันการลบ";
+        deleteTimer = window.setTimeout(resetDeleteButton, 4000);
+        return;
+      }
+      resetDeleteButton();
+      void runStrandAction(async () => {
+        const { error } = await sb.rpc("app_lab_strand_spec_delete", { p_material: material, p_sample_id: record.sampleId, p_expected_version: record.version });
+        if (error) throw error;
+        strand.items = strandModel.remove(strand.items, record.sampleId);
+        return "ลบแล้ว";
+      });
+    });
 
     /* ----- การโต้ตอบ ----- */
 
@@ -772,6 +985,7 @@
       computeShown();
       paintTable({ resetScroll: true });
       paintChart();
+      paintStrands();
     });
     el.orderSelect.addEventListener("change", () => {
       view.order = el.orderSelect.value === "oldest" ? "oldest" : "newest";
@@ -816,27 +1030,34 @@
         window.cancelAnimationFrame(frame);
         window.cancelAnimationFrame(rangeFrame);
         window.clearTimeout(copyTimer);
+        window.clearTimeout(deleteTimer);
       },
       update(feed) {
         bar.paintMeta(feed);
         // The selector comes from the compact overview, even on a material-only response.
         el.materialSelect.innerHTML = views.materialOptions(feed.materials, material);
+        // กำลังบันทึก/ลบอยู่: ไม่เอาข้อมูลที่อ่านก่อนหน้ามาทับรายการที่กำลังจะเปลี่ยน รอบถัดไปค่อยตรงกับฐานข้อมูล
+        if (!strand.busy) {
+          strand.status = feed.strands?.status ?? "unavailable";
+          strand.items = feed.strands?.items ?? [];
+        }
         const signature = model.feedSignature(feed.rows);
         // ชีตไม่เปลี่ยนจากรอบก่อน: ไม่วาดใหม่ (ไม่กระพริบ ไม่เสียจุดที่ผู้ใช้ปักหมุดหรือตำแหน่งเลื่อนในตาราง)
-        if (signature === data.signature) return;
-        data.signature = signature;
-        const rows = feed.rows.filter((row) => row.material === material);
-        el.none.hidden = rows.length > 0;
-        el.body.hidden = rows.length === 0;
-        el.idField.hidden = rows.length === 0;
-        if (!rows.length) {
-          data.series = null;
-          return;
+        if (signature !== data.signature) {
+          data.signature = signature;
+          const rows = feed.rows.filter((row) => row.material === material);
+          el.none.hidden = rows.length > 0;
+          el.body.hidden = rows.length === 0;
+          el.idField.hidden = rows.length === 0;
+          if (rows.length) {
+            data.series = model.buildSeries(feed.rows, material);
+            data.ids = model.idsFor(data.series.items);
+            data.conditions = model.testConditions(data.series.items);
+            paintAll();
+          } else data.series = null;
         }
-        data.series = model.buildSeries(feed.rows, material);
-        data.ids = model.idsFor(data.series.items);
-        data.conditions = model.testConditions(data.series.items);
-        paintAll();
+        // ข้อมูลยางเส้นเปลี่ยนได้โดยชีตไม่เปลี่ยน (คนอื่นแก้) จึงวาดทุกรอบ (ข้ามเองเมื่อลายนิ้วมือเดิม)
+        paintStrands();
       },
     };
   }
@@ -876,7 +1097,7 @@
     if (state.employee?.labAccess !== true) return deniedPage();
     const material = model.readMaterial(params.get("material"));
     return material
-      ? await openPage({ title: TITLE, html: views.materialPage(material, REFRESH_MS / 1000), material, bind: () => bindMaterial(material) })
+      ? await openPage({ title: TITLE, html: views.materialPage(material, REFRESH_MS / 1000, strandViews.strandCard()), material, bind: () => bindMaterial(material) })
       : await openPage({ title: TITLE, html: views.overviewPage(REFRESH_MS / 1000), material: null, bind: bindOverview });
   }
 
@@ -889,6 +1110,7 @@
     errorMessages: {
       LAB_SYNC_NOT_READY: "ข้อมูล LAB ยังซิงก์ไม่สำเร็จ กรุณาติดต่อผู้ดูแลระบบ",
       LAB_FEED_UNREADABLE: "อ่านข้อมูล LAB ไม่สำเร็จ กรุณาลองอีกครั้งหรือติดต่อผู้ดูแลระบบ",
+      ...strandModel.ERROR_MESSAGES,
     },
     navAllowed: (employee) => employee?.labAccess === true,
     nav: [{ path: PATH, label: TITLE, icon: NAV_ICON }],
