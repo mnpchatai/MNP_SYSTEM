@@ -131,13 +131,23 @@
     };
   }
 
+  // ข้อมูลที่เห็นอยู่ตรงกับที่ผู้ใช้เพิ่งส่งบันทึกหรือไม่ (params = ผลของ buildSaveParams) ใช้ตอนชนกัน: ถ้าตรงทุกช่อง แปลว่าคำขอก่อนหน้าสำเร็จไปแล้ว
+  // (เช่นเน็ตหลุดหลังบันทึก แล้วกดซ้ำ) ไม่ใช่ผู้อื่นแก้ไป จึงนับเป็นบันทึกสำเร็จ ไม่ใช่การชน
+  function matchesParams(record, params) {
+    if (!record || !params) return false;
+    return record.orderNo === params.p_order_no
+      && record.outer === params.p_outer_mm && record.inner === params.p_inner_mm
+      && record.outerMin === params.p_outer_min_mm && record.outerMax === params.p_outer_max_mm
+      && record.innerMin === params.p_inner_min_mm && record.innerMax === params.p_inner_max_mm;
+  }
+
   // RPC ตอบว่าไม่มีฟังก์ชัน = ฐานข้อมูลยังไม่ได้ apply migration ของส่วนนี้ (PostgREST: PGRST202) หน้าเว็บซ่อนส่วนนี้แทนการขึ้นข้อผิดพลาด
   const isMissingFunction = (error) => error?.code === "PGRST202" || /Could not find the function/i.test(String(error?.message ?? ""));
 
   const api = {
     MAX_ORDER_LENGTH, MAX_SIZE, ERROR_MESSAGES, STATUS_LABELS,
     normalizeSpec, normalizeList, upsert, remove, find, signature, idsWithoutData,
-    specStatus, formatSize, formatLimits, parseSize, buildSaveParams, isMissingFunction,
+    specStatus, formatSize, formatLimits, parseSize, buildSaveParams, matchesParams, isMissingFunction,
   };
   root.MNP_LAB_STRAND = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

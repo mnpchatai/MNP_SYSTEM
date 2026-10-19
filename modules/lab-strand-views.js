@@ -29,7 +29,7 @@
         <h3 class="lab-strand-form-title" id="lab-strand-form-title"></h3>
         <div class="lab-strand-top">
           <div class="field"><label for="lab-strand-id">ID</label><select class="select" id="lab-strand-id" name="sample_id"></select></div>
-          <div class="field"><label for="lab-strand-order">ออเดอร์</label><input class="input" id="lab-strand-order" name="order_no" type="text" maxlength="${strand.MAX_ORDER_LENGTH}" autocomplete="off" placeholder="เลขที่ออเดอร์ที่ใช้ยางเส้นนี้"></div>
+          <div class="field"><label for="lab-strand-order">ออเดอร์</label><input class="input" id="lab-strand-order" name="order_no" type="text" maxlength="${strand.MAX_ORDER_LENGTH}" autocomplete="off" title="เลขที่ออเดอร์ที่ใช้ยางเส้นนี้"></div>
         </div>
         <div class="lab-strand-groups">
           <fieldset class="lab-strand-group"><legend>วงนอก (มม.)</legend><div class="lab-strand-sizes">
@@ -52,6 +52,9 @@
   }
 
   // แก้ไข = ไม่ซ้ำเลข ID ที่ช่อง ID ที่ล็อกไว้ในฟอร์มเดียวกันบอกอยู่แล้ว
+  // ข้อความเมื่อบันทึกข้อมูลของ ID ที่ตารางไม่แสดงอยู่ (ตารางกรองตาม ID ที่เลือกที่หัวหน้า) ไม่ให้ดูเหมือนบันทึกแล้วหายไป
+  const hiddenByFilterNotice = (sampleId) => `บันทึกข้อมูลของ ID ${sampleId} แล้ว ตารางกำลังแสดงเฉพาะ ID ที่เลือกไว้ด้านบน`;
+
   const formTitle = (editing) => (editing ? "แก้ไขข้อมูล" : "เพิ่มข้อมูลยางเส้น");
 
   // ตัวเลือก ID ของฟอร์ม: เพิ่มใหม่ = ID ที่ยังไม่มีข้อมูล (ต้องเลือก) แก้ไข = ID เดียวที่ล็อกไว้
@@ -84,7 +87,7 @@
   // ข้อความเมื่อไม่มีแถวให้แสดง: กำลังดู ID เดียวแล้วยังไม่มีข้อมูลของ ID นั้น (ไม่ซ้ำเลข ID ที่ตัวเลือกหัวหน้าบอกอยู่) / ทั้งวัสดุยังไม่มีข้อมูลเลย
   const emptyText = (filtered) => (filtered ? "ID นี้ยังไม่มีข้อมูลออเดอร์และขนาด" : "ยังไม่มีข้อมูลออเดอร์และขนาดของวัสดุนี้");
 
-  const api = { strandCard, formTitle, idOptions, sizeCell, strandTable, emptyText };
+  const api = { strandCard, formTitle, idOptions, sizeCell, strandTable, emptyText, hiddenByFilterNotice };
   root.MNP_LAB_STRAND_VIEWS = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

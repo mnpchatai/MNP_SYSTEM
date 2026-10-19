@@ -152,3 +152,15 @@ test("IDs are passed through exactly as stored, so JS and PostgreSQL never disag
   assert.equal(strand.buildSaveParams(form({ sampleId: "111\u00a0" })).params.p_sample_id, "111\u00a0");
   assert.equal(strand.buildSaveParams(form({ sampleId: "\u00a0 " })).error, "LAB_INVALID_SAMPLE", "an ID with nothing in it is still refused");
 });
+
+test("matchesParams tells a request that already went through from someone else's different edit", () => {
+  const params = strand.buildSaveParams(form()).params;
+  const same = strand.normalizeSpec(rpcRow({ sample_id: "111", order_no: "PO-2610-001", outer_mm: 20.1, inner_mm: 3.05, version: 9 }));
+  assert.equal(strand.matchesParams(same, params), true, "the version is irrelevant: only the values count");
+  assert.equal(strand.matchesParams({ ...same, outer: 20.2 }, params), false);
+  assert.equal(strand.matchesParams({ ...same, orderNo: "OTHER" }, params), false);
+  assert.equal(strand.matchesParams({ ...same, innerMax: null }, params), false);
+  assert.equal(strand.matchesParams(null, params), false, "a record that is gone does not match a save");
+  const sparse = strand.buildSaveParams(form({ orderNo: "", outer: "", inner: "", outerMin: "", outerMax: "21", innerMin: "", innerMax: "" })).params;
+  assert.equal(strand.matchesParams(strand.normalizeSpec({ sample_id: "111", outer_max_mm: 21, version: 2 }), sparse), true, "empty fields match null on both sides");
+});

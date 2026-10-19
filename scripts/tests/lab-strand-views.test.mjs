@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
@@ -79,4 +80,22 @@ test("form title and empty text do not repeat an ID the screen already shows", (
   assert.equal(views.formTitle(true), "แก้ไขข้อมูล", "the locked ID field next to it says which ID");
   assert.equal(views.emptyText(false), "ยังไม่มีข้อมูลออเดอร์และขนาดของวัสดุนี้");
   assert.equal(views.emptyText(true), "ID นี้ยังไม่มีข้อมูลออเดอร์และขนาด", "the header selector says which ID");
+});
+
+test("parts that are hidden really disappear: .btn sets display, so the stylesheet must override [hidden] inside the card", () => {
+  // regression: the delete button had the hidden attribute but .btn { display: inline-flex } kept it visible in the add form
+  const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.lab-strand-card \[hidden\]\s*\{\s*display:\s*none/);
+  assert.match(css, /^\.btn \{[^}]*display:\s*inline-flex/m, "the premise of the rule above still holds");
+  assert.match(views.strandCard(), /<button[^>]*id="lab-strand-delete"[^>]*\shidden>/);
+});
+
+test("controls are explained by title or label, not by permanent placeholder text", () => {
+  const html = views.strandCard();
+  assert.doesNotMatch(html, /placeholder=/);
+  assert.match(html, /id="lab-strand-order"[^>]*title="[^"]+"/);
+});
+
+test("the notice for a saved ID that the filter hides names that ID", () => {
+  assert.match(views.hiddenByFilterNotice("111"), /ID 111 แล้ว/);
 });

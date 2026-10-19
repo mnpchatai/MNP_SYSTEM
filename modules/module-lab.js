@@ -43,7 +43,9 @@
   let pageVersion = 0;
 
   // ข้อมูลยางเส้นเป็นข้อมูลที่ผู้ใช้เขียนเอง ต่างจากฟีดที่อ่านอย่างเดียว: การอ่านที่เริ่มก่อนบันทึกแต่ตอบหลังบันทึกต้องไม่ทับสิ่งที่เพิ่งบันทึก
-  //   strandWriteSeq เพิ่มทุกครั้งที่บันทึก/ลบสำเร็จ, strandKnown = รายการล่าสุดต่อวัสดุหลังการเขียนของผู้ใช้ (ใช้แทนผลอ่านที่ซ้อนกับการเขียน)
+  //   strandWriteSeq นับการบันทึก/ลบที่สำเร็จ (ทุกวัสดุรวมกัน), strandKnown = วัสดุ → { seq, strands } รายการหลังการเขียนล่าสุดของวัสดุนั้น
+  //   ผลอ่านที่เริ่มตอน strandWriteSeq น้อยกว่า seq ของวัสดุนั้น = เริ่มก่อนการเขียนเสร็จ อาจเก่ากว่า จึงใช้รายการหลังการเขียนแทน (ดู settleStrands)
+  //   ผลอ่านที่เริ่มหลังการเขียนเสร็จเชื่อได้เสมอ แม้ภายหลังมีการเขียนที่วัสดุอื่น
   //   strandUnavailable = ฐานข้อมูลยังไม่มีฟังก์ชัน (รอบรีเฟรชไม่ยิงซ้ำ ลองใหม่เมื่อเปิดหน้า)
   let strandWriteSeq = 0;
   let strandKnown = new Map();
@@ -66,7 +68,7 @@
   // สิทธิ์ถูกถอนโยน error ต่อให้ผู้เรียกจัดการเหมือนฟีดหลัก
   async function loadStrands(material) {
     if (strandUnavailable) return { status: "unavailable", items: [] };
-    const writesBefore = strandWriteSeq;
+    const startedAt = strandWriteSeq;
     const { data, error } = await sb.rpc("app_lab_strand_specs", { p_material: material });
     if (error) {
       if (strandModel.isMissingFunction(error)) {
@@ -77,10 +79,14 @@
       return { status: "error", items: null };
     }
     const items = strandModel.normalizeList(data);
-    if (!items) return { status: "error", items: null };
-    // มีการบันทึก/ลบเสร็จระหว่างที่อ่านอยู่: ผลที่ได้อาจเก่ากว่าการเขียนนั้น ใช้รายการหลังการเขียนแทน (รอบถัดไปค่อยตรงกับฐานข้อมูล)
+    return items ? { status: "ready", items, startedAt } : { status: "error", items: null };
+  }
+
+  // เรียกตอนจะใช้ผลอ่าน (ไม่ใช่ตอนอ่านเสร็จ: ฟีดหลักอาจตอบช้ากว่าและมีการบันทึกเสร็จระหว่างนั้น) ผลที่เริ่มอ่านก่อนการเขียนล่าสุดของวัสดุนี้เสร็จ
+  // อาจเก่ากว่าการเขียนนั้น ใช้รายการหลังการเขียนแทน รอบถัดไปค่อยตรงกับฐานข้อมูล
+  function settleStrands(material, strands) {
     const known = strandKnown.get(material);
-    return strandWriteSeq !== writesBefore && known ? known : { status: "ready", items };
+    return strands.status === "ready" && known && strands.startedAt < known.seq ? known.strands : strands;
   }
 
   // เก็บรายการล่าสุดของวัสดุไว้ที่แคชของหน้า ให้หน้าที่เปิดซ้ำจากแคชเห็นข้อมูลล่าสุดทันที (ก่อนรอบตรวจสิทธิ์/ข้อมูลเบื้องหลังจะตอบ)
@@ -93,21 +99,21 @@
   function rememberStrands(material, items) {
     const strands = { status: "ready", items };
     strandWriteSeq += 1;
-    strandKnown.set(material, strands);
+    strandKnown.set(material, { seq: strandWriteSeq, strands });
     if (strandKnown.size > 20) strandKnown.delete(strandKnown.keys().next().value);
     storeStrands(material, strands);
   }
 
   async function loadFeed(material) {
     const employee = state.employee;
-    const [{ data, error }, strands] = await Promise.all([
+    const [{ data, error }, read] = await Promise.all([
       sb.rpc("app_lab_mooney_feed", { p_material: material || null }),
       material ? loadStrands(material) : null,
     ]);
     if (error) throw error;
     if (state.employee !== employee || employee !== owner) throw new Error("AUTH_REQUIRED");
     if (!data || !Array.isArray(data.materials) || !Array.isArray(data.rows)) throw new Error("LAB_FEED_UNREADABLE");
-    const feed = { ...model.normalizeFeed(data), materials: data.materials, strands };
+    const feed = { ...model.normalizeFeed(data), materials: data.materials, strands: read ? settleStrands(material, read) : null };
     const key = material || "";
     cache.delete(key);
     cache.set(key, feed);
@@ -636,18 +642,20 @@
       (record ? el.strandOrder : el.strandId).focus?.();
     }
 
-    // บันทึก/ลบ: action ทำ RPC แล้วอัปเดต strand.items คืนข้อความสำเร็จ · สิทธิ์ถูกถอน = หน้า "ไม่พบ" · ข้อมูลถูกคนอื่นแก้ไปก่อน = ปิดฟอร์มแล้วโหลดค่าล่าสุดมาให้ตรวจ
-    async function runStrandAction(action) {
+    // บันทึก/ลบ: action ทำ RPC แล้วอัปเดต strand.items (คืนข้อความแจ้งเพิ่มเติมได้ถ้ามี) · done = ข้อความเมื่อสำเร็จ · สิทธิ์ถูกถอน = หน้า "ไม่พบ"
+    // ชนกับผู้อื่น (version ไม่ตรง) = ปิดฟอร์มแล้วอ่านรายการล่าสุด: ถ้าข้อมูลที่อ่านได้ตรงกับที่เพิ่งส่ง (settled) แปลว่าคำขอก่อนหน้าสำเร็จไปแล้ว
+    // เช่นเน็ตหลุดหลังบันทึกแล้วกดซ้ำ นับเป็นสำเร็จ ไม่ใช่ถูกผู้อื่นแก้ ที่เหลือบอกว่าถูกแก้ไปแล้วให้ตรวจค่าล่าสุดในตาราง
+    async function runStrandAction(action, { done, settled }) {
       const focused = document.activeElement;
       strand.busy = true;
       setFormBusy(el.strandForm, true);
       showStrandError("");
       try {
-        const done = await action();
+        const result = await action();
         if (state.employee !== employee) return;
         rememberStrands(material, strand.items);
         closeStrandForm();
-        strand.notice = "";
+        strand.notice = result?.notice ?? "";
         paintStrands();
         showToast(done);
       } catch (error) {
@@ -656,9 +664,12 @@
         const message = friendlyError(error);
         if (/LAB_SPEC_CONFLICT/.test(String(error?.message ?? ""))) {
           closeStrandForm();
-          strand.notice = message;
+          const fresh = await reloadStrands();
+          if (state.employee !== employee) return;
+          const replayed = Boolean(fresh?.items) && settled(fresh.items);
+          strand.notice = replayed ? "" : message;
           paintStrands();
-          void reloadStrands();
+          if (replayed) showToast(done);
         } else showStrandError(message);
       } finally {
         strand.busy = false;
@@ -670,18 +681,18 @@
     }
 
     // หลังชนกับผู้อื่น: อ่านรายการล่าสุดของวัสดุนี้ทันที (ไม่ผ่าน refreshNow ที่ข้ามเมื่อมีรอบอ่านค้างอยู่ และผลของรอบที่ค้างอาจเก่ากว่าที่ชน)
+    // คืนผลที่ใช้ได้ (มี items) หรือ null เมื่ออ่านไม่สำเร็จ/สิทธิ์ถูกถอน
     async function reloadStrands() {
       try {
-        const fresh = await loadStrands(material);
-        if (state.employee !== employee) return;
-        if (fresh.items) {
-          strand.status = fresh.status;
-          strand.items = fresh.items;
-          storeStrands(material, fresh);
-        }
-        paintStrands();
+        const fresh = settleStrands(material, await loadStrands(material));
+        if (state.employee !== employee || !fresh.items) return null;
+        strand.status = fresh.status;
+        strand.items = fresh.items;
+        storeStrands(material, fresh);
+        return fresh;
       } catch (error) {
         if (state.employee === employee && isDenied(error)) revoke();
+        return null;
       }
     }
 
@@ -716,7 +727,11 @@
         const next = strandModel.normalizeSpec(saved);
         if (!next) throw new Error("LAB_FEED_UNREADABLE");
         strand.items = strandModel.upsert(strand.items, next);
-        return "บันทึกแล้ว";
+        // ตารางกรองตาม ID ที่เลือกไว้และไม่แสดง ID ที่เพิ่งบันทึก: บอกให้รู้ว่าบันทึกแล้ว ไม่ให้ดูเหมือนหาย
+        return { notice: view.id && view.id !== next.sampleId ? strandViews.hiddenByFilterNotice(next.sampleId) : "" };
+      }, {
+        done: "บันทึกแล้ว",
+        settled: (items) => strandModel.matchesParams(strandModel.find(items, built.params.p_sample_id), built.params),
       });
     });
     // ลบต้องกดสองครั้ง (ครั้งแรกเปลี่ยนข้อความปุ่ม ไม่กดต่อใน 4 วินาทีก็กลับเป็นเดิม) ไม่ใช้กล่องยืนยันของเบราว์เซอร์
@@ -734,7 +749,9 @@
         const { error } = await sb.rpc("app_lab_strand_spec_delete", { p_material: material, p_sample_id: record.sampleId, p_expected_version: record.version });
         if (error) throw error;
         strand.items = strandModel.remove(strand.items, record.sampleId);
-        return "ลบแล้ว";
+      }, {
+        done: "ลบแล้ว",
+        settled: (items) => !strandModel.find(items, record.sampleId),
       });
     });
 

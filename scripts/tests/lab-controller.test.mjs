@@ -243,6 +243,7 @@ test("a conflict closes the form, explains why, and reloads the latest data", as
   });
   await app.open("material=A");
   app.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  fill(app, { order: "MINE" });
   const before = app.calls.length;
   await app.fire("#lab-strand-form", "submit");
   await flush();
@@ -446,4 +447,145 @@ test("a failed save keeps the form open with the ID still locked and returns foc
   assert.equal(app.element("#lab-strand-order").disabled, false);
   assert.match(app.element("#lab-strand-error").textContent, /ทศนิยมไม่เกิน 2/);
   assert.equal(refocused, 1);
+});
+
+/* ---------- ข้อมูลยางเส้น: ฟีดตอบช้า ข้ามวัสดุ กดบันทึกซ้ำหลังเน็ตหลุด และตัวกรอง ID ---------- */
+
+const bothMaterialsFeed = () => ({
+  ...body([{ material: "A", resultCount: 3 }, { material: "B", resultCount: 3 }]),
+  rows: [...["111", "112", "113"].map(labRow), ...["111", "112", "113"].map((id) => ({ ...labRow(id), material: "B", source_sheet: "B" }))],
+});
+const CONFLICT = { data: null, error: { message: "LAB_SPEC_CONFLICT" } };
+// ค่าเดียวกับ specRow() ทุกช่อง ใช้เติมฟอร์มให้ตรงกับข้อมูลที่ฐานข้อมูลคืนมา
+const SAME_AS_SPEC_ROW = { order: "PO-1", outer: "20.1", outerMin: "19.5", outerMax: "20.5", inner: "3", innerMin: "2.5", innerMax: "3.5" };
+
+test("a feed that answers after a save cannot bring back the strand list that was read before it", async () => {
+  let feedCalls = 0;
+  let releaseFeed;
+  const app = setup(async (name, args) => {
+    if (name === "app_lab_mooney_feed") {
+      feedCalls += 1;
+      return feedCalls === 2 ? new Promise((done) => { releaseFeed = () => done({ data: materialFeed(), error: null }); }) : { data: materialFeed(), error: null };
+    }
+    if (name === "app_lab_strand_specs") return { data: [], error: null };
+    if (name === "app_lab_strand_spec_save") return { data: specRow(args.p_sample_id, { version: 1 }), error: null };
+    throw new Error(`unexpected rpc ${name}`);
+  });
+  await app.open("material=A");
+  app.fire("#lab-refresh", "click");
+  await flush();
+  assert.equal(typeof releaseFeed, "function", "the poll's feed is still in flight; its strand read already came back empty");
+  app.fire("#lab-strand-add", "click");
+  fill(app, { id: "111", order: "PO-1" });
+  await app.fire("#lab-strand-form", "submit");
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="111"/);
+  releaseFeed();
+  await flush();
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="111"/, "the saved record survives the late feed");
+});
+
+test("a save on another material does not make an older read of this material stale", async () => {
+  let releaseA;
+  const app = setup(async (name, args) => {
+    if (name === "app_lab_mooney_feed") return { data: bothMaterialsFeed(), error: null };
+    if (name === "app_lab_strand_specs") {
+      app.strandReads = (app.strandReads ?? 0) + 1;
+      const n = app.strandReads;
+      if (n === 2) return new Promise((done) => { releaseA = done; });
+      if (n >= 4) return never();
+      return { data: [], error: null };
+    }
+    if (name === "app_lab_strand_spec_save") return { data: specRow(args.p_sample_id, { version: 1 }), error: null };
+    throw new Error(`unexpected rpc ${name}`);
+  });
+  await app.open("material=A");
+  app.fire("#lab-strand-add", "click");
+  fill(app, { id: "111", order: "PO-A" });
+  await app.fire("#lab-strand-form", "submit");
+  app.fire("#lab-refresh", "click");
+  await flush();
+  assert.equal(typeof releaseA, "function", "a read of A that started after A's own save is in flight");
+  await app.open("material=B");
+  app.fire("#lab-strand-add", "click");
+  fill(app, { id: "111", order: "PO-B" });
+  await app.fire("#lab-strand-form", "submit");
+  releaseA({ data: [specRow("111", { version: 5, order_no: "THEIRS" })], error: null });
+  await flush();
+  app.element("#lab-strand-scroll").innerHTML = "";
+  await app.open("material=A");
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /THEIRS/, "the fresh read of A is kept; the write on B did not replace it with an older list");
+});
+
+test("saving again after the first save already went through counts as saved, not as someone else's edit", async () => {
+  const app = scriptedApp({
+    onStrands: (n) => (n === 1 ? { data: [], error: null } : { data: [specRow("111")], error: null }),
+    save: () => CONFLICT,
+  });
+  await app.open("material=A");
+  app.fire("#lab-strand-add", "click");
+  fill(app, { id: "111", ...SAME_AS_SPEC_ROW });
+  await app.fire("#lab-strand-form", "submit");
+  await flush();
+  assert.deepEqual(plain(app.toasts), ["บันทึกแล้ว"]);
+  assert.equal(app.element("#lab-strand-note").hidden, true, "no accusation that someone else changed it");
+  assert.match(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="111"/);
+});
+
+test("an edit that already went through is recognised too, but a different value from someone else is not", async () => {
+  const replayed = scriptedApp({
+    onStrands: (n) => (n === 1 ? { data: [specRow("112", { version: 3 })], error: null } : { data: [specRow("112", { version: 4, order_no: "NEW" })], error: null }),
+    save: () => CONFLICT,
+  });
+  await replayed.open("material=A");
+  replayed.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  fill(replayed, { order: "NEW" });
+  await replayed.fire("#lab-strand-form", "submit");
+  await flush();
+  assert.deepEqual(plain(replayed.toasts), ["บันทึกแล้ว"]);
+
+  const theirs = scriptedApp({
+    onStrands: (n) => (n === 1 ? { data: [specRow("112", { version: 3 })], error: null } : { data: [specRow("112", { version: 4, order_no: "THEIRS" })], error: null }),
+    save: () => CONFLICT,
+  });
+  await theirs.open("material=A");
+  theirs.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  fill(theirs, { order: "MINE" });
+  await theirs.fire("#lab-strand-form", "submit");
+  await flush();
+  assert.deepEqual(plain(theirs.toasts), []);
+  assert.match(theirs.element("#lab-strand-note").textContent, /ผู้อื่น/);
+});
+
+test("deleting again after the first delete already went through counts as deleted", async () => {
+  const app = scriptedApp({
+    onStrands: (n) => (n === 1 ? { data: [specRow("112", { version: 4 })], error: null } : { data: [], error: null }),
+    remove: () => CONFLICT,
+  });
+  await app.open("material=A");
+  app.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  app.fire("#lab-strand-delete", "click");
+  app.fire("#lab-strand-delete", "click");
+  await flush();
+  assert.deepEqual(plain(app.toasts), ["ลบแล้ว"]);
+  assert.equal(app.element("#lab-strand-note").hidden, true);
+  assert.doesNotMatch(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="112"/);
+});
+
+test("saving an ID that the ID filter hides says it was saved instead of looking like nothing happened", async () => {
+  const app = strandApp({ specs: [specRow("112")] });
+  await app.open("material=A");
+  app.element("#lab-id-select").value = "112";
+  app.fire("#lab-id-select", "change");
+  app.fire("#lab-strand-add", "click");
+  fill(app, { id: "111", order: "PO-X" });
+  await app.fire("#lab-strand-form", "submit");
+  assert.deepEqual(plain(app.toasts), ["บันทึกแล้ว"]);
+  assert.match(app.element("#lab-strand-note").textContent, /ID 111 แล้ว/);
+  assert.equal(app.element("#lab-strand-note").hidden, false);
+  assert.doesNotMatch(app.element("#lab-strand-scroll").innerHTML, /data-strand-edit="111"/, "the filter still applies");
+  // บันทึก ID ที่กำลังแสดงอยู่ ไม่ต้องมีข้อความนี้
+  app.fire("#lab-strand-scroll", "click", { target: { closest: () => ({ dataset: { strandEdit: "112" } }) } });
+  fill(app, { order: "PO-Y" });
+  await app.fire("#lab-strand-form", "submit");
+  assert.equal(app.element("#lab-strand-note").hidden, true);
 });
