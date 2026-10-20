@@ -2,7 +2,8 @@
 //
 // ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดมี workflow ของตัวเองในตาราง ncr_* (ไม่ใช่ requests)
 // ดู supabase/migrations/20261002020000_ncr_phase1.sql:
-//   ส่วนที่ 1 ออก NCR (พนักงานทุกคน) -> ส่วนที่ 2 ผจก.โรงงานพิจารณา -> ส่วนที่ 3 ผจก.แผนกที่รับผิดชอบตอบ
+//   ส่วนที่ 1 ออก NCR (พนักงานทุกคน) -> ส่วนที่ 2 ผจก.โรงงานพิจารณา (ระบุผู้ตอบของแต่ละแผนกได้ ไม่บังคับ)
+//   -> ส่วนที่ 3 พนักงานหรือหัวหน้าของแผนกที่รับผิดชอบตอบ (ระบุแล้วตอบได้เฉพาะคนนั้น)
 //   -> ส่วนที่ 4 QA ติดตามผล -> ลงนาม ผจก.QA -> ผจก.โรงงาน -> ผจก.ทั่วไป -> ปิด
 // การ์ด "NCR/CAR" ในหน้าสร้างคำร้องเปิดฟอร์ม NCR นี้แทนฟอร์มคำร้องทั่วไป ทะเบียน NCR แสดงในหน้า NCR ของศูนย์คำร้อง
 // (renderCenterList) ที่เดียว ลิงก์ #/ncr พาไปที่นั่น (app.js) ยกเว้นโหมดทดสอบที่ไม่มีหน้าคำร้องจึงใช้หน้าทะเบียนของไฟล์นี้
@@ -46,6 +47,7 @@
     INVALID_DEFECT_TYPE: "กรุณาเลือกประเภทข้อบกพร่อง",
     INVALID_DISPOSITION: "กรุณาเลือกวิธีจัดการอย่างน้อย 1 ข้อ",
     INVALID_RESPONSIBILITIES: "กรุณาเลือกแผนกที่รับผิดชอบอย่างน้อย 1 แผนก (ไม่เกิน 10 แผนก)",
+    INVALID_RESPONDER: "ผู้ตอบที่เลือกไม่ถูกต้อง ต้องเป็นพนักงานหรือหัวหน้าที่ยังใช้งานอยู่ในแผนกนั้น และระบุได้แผนกละ 1 คน",
     INVALID_CAUSES: "กรุณาเลือกสาเหตุ (4M) อย่างน้อย 1 ข้อ",
     INVALID_ROOT_CAUSE: "กรุณาระบุสาเหตุของปัญหา",
     INVALID_CORRECTION: "กรุณาระบุแนวทางการแก้ไขปัญหา",
@@ -81,6 +83,17 @@
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
   const LOSS_EDITOR_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
+  // ผู้ตอบ NCR ได้: พนักงาน/ผจก./ผช.ผจก. ของแผนกที่รับผิดชอบ ถ้า ผจก.โรงงานระบุผู้ตอบของแผนกไว้ ตอบได้เฉพาะคนนั้น
+  // (ตรงกับ private.ncr_can_respond ใน migration 20261020010000 — ใช้ตัดสินว่าจะแสดงฟอร์มเท่านั้น ฐานข้อมูลตัดสินสิทธิ์จริง)
+  const isResponderRole = (employee) => roleCode(employee) === "staff" || isDeptManager(employee);
+  const canRespond = (ncr, employee) => isResponderRole(employee)
+    && (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id && (!item.responder_id || item.responder_id === employee.id));
+  const ROLE_LABELS = { staff: "พนักงาน", department_manager: "ผจก.แผนก", assistant_department_manager: "ผช.ผจก.แผนก" };
+  // ผู้ที่ระบุเป็นผู้ตอบของแผนกหนึ่งได้ (staff = loadNcrStaff()) เรียงตามชื่อ
+  const responderCandidates = (staff, departmentId) => staff
+    .filter((person) => person.department_id === departmentId && isResponderRole(person))
+    .sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`, "th"));
+  const personLabel = (person) => `${person.first_name} ${person.last_name} · ${ROLE_LABELS[roleCode(person)] ?? ""}`.trim();
   const todayBangkok = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
   // กำหนดตอบนับจากวันออกใบ (+5 วัน) จึงเกินกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
   const RESPONSE_PENDING_STATUSES = ["awaiting_disposition", "awaiting_response"];
@@ -247,7 +260,7 @@
     const statusParam = embedded ? "ncrStatus" : "status";
     const filter = LIST_FILTERS.some(([value]) => value === params.get(statusParam)) ? params.get(statusParam) : "open";
     let query = sb.from("ncr_reports")
-      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,department:departments(code))")
+      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,responder_id,department:departments(code))")
       .order("issue_date", { ascending: false })
       .order("ncr_no", { ascending: false })
       .limit(300);
@@ -357,21 +370,39 @@
     return roleCode(employee) === "general_manager";
   }
 
-  function actionForms(ncr, employee, departments, openInfoRequest = null) {
+  // ช่องเลือกผู้ตอบของแผนกหนึ่ง (ไม่บังคับ): ค่าว่าง = ไม่ระบุ ทุกคนที่เข้าเกณฑ์ในแผนกตอบได้
+  // current = id ผู้ที่ระบุอยู่ตอนนี้ — ถ้าไม่อยู่ในรายชื่อที่เลือกได้ (เช่น ปิดบัญชีแล้ว) ยังแสดงเป็นตัวเลือกที่เลือกอยู่
+  function responderSelectHtml(id, candidates, { current = null, directory = new Map(), disabled = false } = {}) {
+    const options = candidates.map((person) => `<option value="${escapeHtml(person.id)}"${person.id === current ? " selected" : ""}>${escapeHtml(personLabel(person))}</option>`);
+    if (current && !candidates.some((person) => person.id === current)) {
+      options.unshift(`<option value="${escapeHtml(current)}" selected>${escapeHtml(personName(directory, current))} (ใช้งานไม่ได้แล้ว)</option>`);
+    }
+    return `<select class="select" id="${escapeHtml(id)}" name="responder"${disabled ? " disabled" : ""}><option value="">ไม่ระบุ — ทุกคนในแผนกตอบได้</option>${options.join("")}</select>`;
+  }
+
+  function actionForms(ncr, employee, departments, openInfoRequest = null, staff = []) {
     const forms = [];
-    const myDeptResponsible = (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id);
+    const respondable = canRespond(ncr, employee);
     if (ncr.status === "awaiting_disposition" && roleCode(employee) === "factory_manager") {
+      // ช่องระบุผู้ตอบของแต่ละแผนกโผล่เมื่อติ๊กแผนกนั้น (bindResponderPicks) แผนกที่ไม่มีพนักงาน/หัวหน้าที่ใช้งานอยู่ไม่มีช่อง
+      const responderPicks = departments.map((department) => {
+        const candidates = responderCandidates(staff, department.id);
+        return candidates.length
+          ? `<div class="field ncr-responder-pick" data-responder-dept="${escapeHtml(department.id)}" hidden><label for="ncr-responder-${escapeHtml(department.id)}">ผู้ตอบของ ${escapeHtml(department.code)}</label>${responderSelectHtml(`ncr-responder-${department.id}`, candidates, { disabled: true })}</div>`
+          : "";
+      }).join("");
       forms.push(`<form class="ncr-action" data-action="dispose"><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 2 — ความเห็นผู้บริหารโรงงาน</h3>
         <fieldset class="field ncr-fieldset"><legend>วิธีจัดการ *</legend>${checksHtml("dispositions", DISPOSITIONS)}</fieldset>
         <fieldset class="field ncr-fieldset"><legend>แผนกที่รับผิดชอบ * <small class="muted">(เลือกได้หลายแผนก ระบบแบ่งสัดส่วนเท่ากันให้)</small></legend>
           <div class="ncr-checks">${departments.map((department) => `<label class="ncr-check"><input type="checkbox" name="department_ids" value="${escapeHtml(department.id)}"><span>${escapeHtml(department.code)} · ${escapeHtml(department.name_th)}</span></label>`).join("")}</div>
         </fieldset>
+        ${responderPicks ? `<div class="ncr-responder-picks">${responderPicks}</div>` : ""}
         <div class="field"><label for="ncr-dispose-note">หมายเหตุ</label><input class="input" id="ncr-dispose-note" name="note" maxlength="1000"></div>
         ${evidenceFieldHtml("ncr-dispose-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
         <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน ${formatDate(ncr.response_due)})</button></div></form>`);
     }
-    if (ncr.status === "awaiting_response" && isDeptManager(employee) && myDeptResponsible) {
+    if (ncr.status === "awaiting_response" && respondable) {
       forms.push(`<form class="ncr-action" data-action="respond"><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 3 — ตอบ NCR</h3>
         <fieldset class="field ncr-fieldset"><legend>เกิดจาก (4M+E) *</legend>${checksHtml("causes", CAUSES, ncr.causes ?? [])}</fieldset>
@@ -386,7 +417,7 @@
         <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div></form>`);
     }
     // ส่งได้ครั้งเดียว ถ้าต้องแก้หลังส่งแล้ว QA ส่งกลับให้แผนกแก้ในฟอร์มตอบ NCR (app_ncr_submit_prevention ตรวจซ้ำ)
-    if (ncr.status === "awaiting_followup" && !ncr.prevention && isDeptManager(employee) && myDeptResponsible) {
+    if (ncr.status === "awaiting_followup" && !ncr.prevention && respondable) {
       forms.push(`<form class="ncr-action" data-action="submit_prevention"><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 3 — แนวทางการป้องกันไม่ให้เกิดซ้ำ</h3>
         <p class="muted small">ส่งภายใน <strong>${formatDate(ncr.prevention_due)}</strong> · ส่งได้ครั้งเดียว ถ้าต้องแก้ภายหลัง QA จะส่งกลับให้แก้ไขคำตอบ · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>
@@ -410,12 +441,12 @@
         <div class="form-actions"><button class="btn" type="submit">ลงนาม</button></div></form>`);
       forms.push(`<form class="ncr-action" data-action="request_info"><div class="ncr-form-message"></div>
         <h3>ขอข้อมูลเพิ่มเติมก่อนลงนาม</h3>
-        <p class="muted small">ข้อความจะถึงผู้จัดการแผนกที่รับผิดชอบ เมื่อตอบแล้วใบจะกลับมารอลงนามที่ลำดับของคุณ (ลายเซ็นที่ลงไปแล้วยังอยู่)</p>
+        <p class="muted small">ข้อความจะถึงผู้ตอบของแผนกที่รับผิดชอบ เมื่อตอบแล้วใบจะกลับมารอลงนามที่ลำดับของคุณ (ลายเซ็นที่ลงไปแล้วยังอยู่)</p>
         <div class="field"><label for="ncr-info-request">ข้อมูลที่ต้องการ *</label><textarea class="textarea" id="ncr-info-request" name="note" maxlength="2000"></textarea></div>
         ${evidenceFieldHtml("ncr-info-request-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
         <div class="form-actions"><button class="btn secondary" type="submit">ขอข้อมูลเพิ่มเติม</button></div></form>`);
     }
-    if (ncr.status === "awaiting_info" && isDeptManager(employee) && myDeptResponsible) {
+    if (ncr.status === "awaiting_info" && respondable) {
       forms.push(`<form class="ncr-action" data-action="answer_info"><div class="ncr-form-message"></div>
         <h3>ให้ข้อมูลเพิ่มเติม</h3>
         ${openInfoRequest ? `<p class="muted small">${escapeHtml(STEP_LABELS[openInfoRequest.step] ?? "ผู้ลงนาม")} ขอ: <strong>${escapeHtml(openInfoRequest.request_note)}</strong></p>` : ""}
@@ -433,8 +464,10 @@
     return forms;
   }
 
-  // พนักงานที่ใช้ระบุชื่อผู้รับผิดชอบ — เฉพาะที่ยังใช้งานอยู่ (RLS ซ่อนคนที่ปิดบัญชีแล้วอยู่แล้ว) พร้อมบทบาทและแผนก
+  // พนักงานที่ใช้ระบุชื่อผู้รับผิดชอบและเลือกเป็นผู้ตอบ — เฉพาะที่ยังใช้งานอยู่ (RLS ซ่อนคนที่ปิดบัญชีแล้วอยู่แล้ว) พร้อมบทบาทและแผนก
   async function loadNcrStaff() {
+    // โหมดทดสอบ: ใบทดสอบมีแต่บัญชีทดสอบ (persona) ซึ่ง RLS ซ่อนจากตาราง employees จึงใช้รายชื่อที่ฐานข้อมูลส่งให้ admin
+    if (state.employee?.isSandbox) return [...(state.sandbox?.personas ?? [])];
     const { data, error } = await sb.from("employees")
       .select("id,first_name,last_name,department_id,role:roles(code),department:departments(code)")
       .eq("is_active", true);
@@ -454,17 +487,22 @@
   // staff = ผลของ loadNcrStaff() ถ้าไม่ส่งมา (หรือหาคนไม่เจอ) จะแสดงเฉพาะตำแหน่ง/แผนก
   function waitingOn(ncr, staff = []) {
     const hasRole = (person, codes) => codes.includes(relation(person.role)?.code);
-    const managersOf = (departmentId) => staff.filter((person) => person.department_id === departmentId && hasRole(person, DEPT_MANAGER_ROLE_CODES));
+    const respondersOf = (departmentId) => staff.filter((person) => person.department_id === departmentId && isResponderRole(person));
     const qaStaff = staff.filter((person) => relation(person.department)?.code === "QA");
     if (ncr.status === "awaiting_disposition") {
       return { party: withNames("ผู้จัดการฝ่ายโรงงาน", staff.filter((person) => hasRole(person, ["factory_manager"]))), action: "พิจารณา" };
     }
     if (ncr.status === "awaiting_response" || ncr.status === "awaiting_info") {
+      // ระบุผู้ตอบแล้ว = คนนั้นคนเดียว (ไม่พบในรายชื่อที่ใช้งานอยู่ก็ยังบอกว่าระบุไว้) ไม่ระบุ = พนักงานและหัวหน้าทั้งแผนก
       const parts = (ncr.ncr_responsibilities ?? [])
-        .map((item) => ({ code: relation(item.department)?.code, id: item.department_id }))
+        .map((item) => ({ code: relation(item.department)?.code, id: item.department_id, responderId: item.responder_id }))
         .filter((item) => item.code)
-        .map((item) => withNames(item.code, managersOf(item.id)));
-      return { party: parts.length ? `ผู้จัดการแผนก ${parts.join(" / ")}` : "ผู้จัดการแผนกที่รับผิดชอบ", action: ncr.status === "awaiting_info" ? "ให้ข้อมูลเพิ่มเติม" : "ตอบ" };
+        .map((item) => {
+          if (!item.responderId) return withNames(item.code, respondersOf(item.id));
+          const named = staff.find((person) => person.id === item.responderId);
+          return named ? `${item.code} (ผู้ตอบที่ระบุ: ${named.first_name} ${named.last_name})` : `${item.code} (ผู้ตอบที่ระบุ)`;
+        });
+      return { party: parts.length ? `แผนก ${parts.join(" / ")}` : "แผนกที่รับผิดชอบ", action: ncr.status === "awaiting_info" ? "ให้ข้อมูลเพิ่มเติม" : "ตอบ" };
     }
     if (ncr.status === "awaiting_followup") return { party: withNames("แผนก QA", qaStaff), action: "ติดตามผล" };
     if (ncr.status === "awaiting_signoff") {
@@ -493,12 +531,27 @@
     return LOSS_EDITOR_ROLE_CODES.includes(roleCode(employee)) || isQaManager(employee);
   }
 
+  // ผจก.โรงงานระบุ/เปลี่ยน/ยกเลิกผู้ตอบของแต่ละแผนกได้ตราบที่แผนกยังมีงานต้องทำ (ตรงกับ app_ncr_assign_responder)
+  // ใช้เมื่อผู้ที่ระบุไว้ลา/ลาออก หรือต้องการเปลี่ยนคน — ไม่เช่นนั้นใบจะค้างเพราะคนอื่นในแผนกตอบแทนไม่ได้
+  const RESPONDER_EDIT_STATUSES = ["awaiting_response", "awaiting_followup", "awaiting_info"];
+  function responderSectionHtml(ncr, employee, staff, directory) {
+    if (roleCode(employee) !== "factory_manager" || !RESPONDER_EDIT_STATUSES.includes(ncr.status)) return "";
+    const rows = (ncr.ncr_responsibilities ?? []).map((item) => {
+      const candidates = responderCandidates(staff, item.department_id);
+      if (!candidates.length && !item.responder_id) return "";
+      return `<form class="ncr-action ncr-responder-form" data-action="assign_responder" data-department-id="${escapeHtml(item.department_id)}"><div class="ncr-form-message"></div>
+        <div class="field"><label for="ncr-assign-${escapeHtml(item.department_id)}">ผู้ตอบของ ${escapeHtml(relation(item.department)?.code ?? "")}</label>${responderSelectHtml(`ncr-assign-${item.department_id}`, candidates, { current: item.responder_id, directory })}</div>
+        <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ</button></div></form>`;
+    }).join("");
+    return rows ? `<section class="card ncr-card"><h2>ผู้ตอบของแผนก</h2>${rows}</section>` : "";
+  }
+
   const lossSectionHtml = (ncr, losses, directory, editable) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, editable, todayBangkok(), formatBaht, formatQty);
 
   const HISTORY_LABELS = {
     issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผจก.แผนก QA ลงนาม", signoff_factory: "ผจก.โรงงานลงนาม",
-    signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
+    signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", assign_responder: "ผจก.โรงงานระบุผู้ตอบ", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
     loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินค่าเสียหาย",
   };
 
@@ -506,7 +559,7 @@
     loadingShell("ncr", "NCR");
     const employee = state.employee;
     const [ncrResult, lossResult, historyResult, attachmentResult, directory, outcomeResult, staff, infoResult] = await Promise.all([
-      sb.from("ncr_reports").select("*,defect_type:ncr_defect_types(name_th),reporter_department:departments!ncr_reports_reporter_department_id_fkey(code),ncr_responsibilities(share,department_id,department:departments(code,name_th))").eq("id", id).maybeSingle(),
+      sb.from("ncr_reports").select("*,defect_type:ncr_defect_types(name_th),reporter_department:departments!ncr_reports_reporter_department_id_fkey(code),ncr_responsibilities(share,department_id,responder_id,department:departments(code,name_th))").eq("id", id).maybeSingle(),
       sb.from("ncr_losses").select("*").eq("ncr_id", id).order("recorded_at"),
       sb.from("ncr_status_history").select("*").eq("ncr_id", id).order("id"),
       sb.from("ncr_attachments").select("*").eq("ncr_id", id).order("created_at"),
@@ -536,9 +589,12 @@
       departments = data ?? [];
     }
     const infoRequests = infoResult.data ?? [];
-    const forms = actionForms(ncr, employee, departments, infoRequests.find((request) => !request.answered_at) ?? null);
+    const forms = actionForms(ncr, employee, departments, infoRequests.find((request) => !request.answered_at) ?? null, staff);
     const waiting = waitingText(ncr, staff);
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
+    // เฉพาะแผนกที่ระบุผู้ตอบไว้ — แผนกที่ไม่ระบุ ทุกคนที่เข้าเกณฑ์ตอบได้ จึงไม่ต้องแสดง
+    const designated = escapeHtml((ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id)
+      .map((item) => `${relation(item.department)?.code ?? ""}: ${personName(directory, item.responder_id)}`).join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
     const partOpening = (number, title, description) => `<section class="card ncr-card ncr-detail-part ncr-detail-part--${number}" aria-labelledby="ncr-part-${number}-title">
@@ -588,6 +644,7 @@
       ${partOpening(2, "ฝ่ายบริหารโรงงานพิจารณา", "แนวทางจัดการ ผู้รับผิดชอบ และกำหนดตอบ")}
         ${partField("ความเห็น", escapeHtml((ncr.dispositions ?? []).map((value) => DISPOSITIONS[value] ?? value).join(", ") || "—"), false, "action")}
         ${partField("แผนกที่รับผิดชอบ", responsibilities || "—", false, "building")}
+        ${designated ? partField("ผู้ตอบที่ระบุ", designated, false, "person") : ""}
         ${partField("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—", false, "person")}
         ${partField("กำหนดตอบ", formatDate(ncr.response_due), false, "calendar")}
         ${ncr.disposition_note ? partField("หมายเหตุ", escapeHtml(ncr.disposition_note), true) : ""}
@@ -638,9 +695,10 @@
     const parts = infoSection ? [part1, part2, part3, part4, infoSection] : [part1, part2, part3, part4];
     const actionsSection = `<section class="card ncr-card ncr-actions"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
     const readFirst = { awaiting_disposition: 1, awaiting_response: 2, awaiting_followup: 3, awaiting_signoff: 4, awaiting_info: parts.length }[ncr.status] ?? parts.length;
+    const responderSection = responderSectionHtml(ncr, employee, staff, directory);
     const body = forms.length
-      ? [...parts.slice(0, readFirst), filesSection, actionsSection, ...parts.slice(readFirst), lossesSection, historySection]
-      : [...parts, filesSection, lossesSection, historySection];
+      ? [...parts.slice(0, readFirst), filesSection, actionsSection, ...parts.slice(readFirst), responderSection, lossesSection, historySection]
+      : [...parts, filesSection, responderSection, lossesSection, historySection];
     const content = heading + body.join("");
     app.innerHTML = shell(content, "ncr", ncr.ncr_no);
     bindShell();
@@ -663,11 +721,23 @@
     window.MNP_NCR_LOSS_UI.bind({ ...ncr, today: todayBangkok() }, losses, formatBaht);
 
     const calls = {
-      dispose: (form) => sb.rpc("app_ncr_dispose", {
+      dispose: (form) => {
+        // ผู้ตอบที่ระบุของแผนกที่ติ๊กไว้ — ส่ง p_responder_ids เฉพาะเมื่อมีการระบุ ใช้กับฐานข้อมูลเดิมได้ถ้าไม่ระบุ
+        const responderIds = checkedValues(form, "department_ids")
+          .map((departmentId) => form.querySelector(`[data-responder-dept="${departmentId}"] select`)?.value ?? "")
+          .filter(Boolean);
+        return sb.rpc("app_ncr_dispose", {
+          p_ncr_id: ncr.id,
+          p_dispositions: checkedValues(form, "dispositions"),
+          p_department_ids: checkedValues(form, "department_ids"),
+          p_note: optionalText(form, "note"),
+          ...(responderIds.length ? { p_responder_ids: responderIds } : {}),
+        });
+      },
+      assign_responder: (form) => sb.rpc("app_ncr_assign_responder", {
         p_ncr_id: ncr.id,
-        p_dispositions: checkedValues(form, "dispositions"),
-        p_department_ids: checkedValues(form, "department_ids"),
-        p_note: optionalText(form, "note"),
+        p_department_id: form.dataset.departmentId,
+        p_responder_id: optionalText(form, "responder"),
       }),
       respond: (form) => sb.rpc("app_ncr_respond", {
         p_ncr_id: ncr.id,
@@ -697,7 +767,19 @@
       },
       add_loss: (form) => sb.rpc("app_ncr_record_loss", { p_ncr_id: ncr.id, p_entry: window.MNP_NCR_LOSS_UI.readEntry(form), p_loss_id: optionalText(form, "loss_id") }),
     };
-    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", respond: "ส่งคำตอบแล้ว", submit_prevention: "ส่งแนวทางป้องกันแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", review_costs: "บันทึกสรุปการประเมินแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
+    const doneMessages = { attach: "แนบไฟล์แล้ว", dispose: "ส่งให้แผนกที่รับผิดชอบแล้ว", assign_responder: "บันทึกผู้ตอบของแผนกแล้ว", respond: "ส่งคำตอบแล้ว", submit_prevention: "ส่งแนวทางป้องกันแล้ว", followup: "บันทึกผลการติดตามแล้ว", signoff: "ลงนามแล้ว", request_info: "ส่งคำขอข้อมูลเพิ่มเติมแล้ว", answer_info: "ส่งข้อมูลเพิ่มเติมแล้ว กลับไปรอลงนาม", review_costs: "บันทึกสรุปการประเมินแล้ว", cancel: "ยกเลิก NCR แล้ว", add_loss: "บันทึกความสูญเสียแล้ว" };
+
+    // ช่องผู้ตอบของแผนกในฟอร์มพิจารณา: โผล่และใช้งานได้เมื่อติ๊กแผนกนั้น (แผนกที่เอาติ๊กออกถูกล้างค่า ไม่ส่งไปกับฟอร์ม)
+    document.querySelectorAll('form[data-action="dispose"]').forEach((form) => {
+      const sync = () => form.querySelectorAll("[data-responder-dept]").forEach((row) => {
+        const checked = Boolean(form.querySelector(`input[name="department_ids"][value="${row.dataset.responderDept}"]:checked`));
+        const select = row.querySelector("select");
+        row.hidden = !checked;
+        select.disabled = !checked;
+        if (!checked) select.value = "";
+      });
+      form.querySelectorAll('input[name="department_ids"]').forEach((box) => box.addEventListener("change", sync));
+    });
 
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
