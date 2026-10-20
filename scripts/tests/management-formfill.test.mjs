@@ -190,7 +190,8 @@ test("an approved request fills the form, including signatures, dates and ticked
   assert.equal(sheet.at("AD5"), "09 / 10 / 2026");
   assert.equal(sheet.at("C7"), "เรื่อง  ขออนุมัติเปิด OT");
   assert.equal(sheet.at("C8"), "สิ่งที่แนบมาด้วย  -");
-  assert.equal(sheet.at("C9"), "รายละเอียด  ทำงานเพิ่ม 4 ชม./วัน");
+  assert.equal(sheet.at("C9"), "รายละเอียด ", "the form's own heading is left as it is");
+  assert.equal(sheet.at("H9"), `${config.FF_CONT}ทำงานเพิ่ม 4 ชม./วัน`, "the text starts at column H, without the heading word");
   assert.equal(sheet.at("B22"), "ผู้ยื่นคำร้อง  สมชาย ใจดี");
   assert.equal(sheet.at("K22"), "แผนก/หน่วยงาน  FT");
   assert.equal(sheet.at("AC22"), "วันที่ยื่น  09 / 10 / 2026");
@@ -246,7 +247,8 @@ test("filling another request after an approved one leaves nothing stale, and an
   fill(sheet, PENDING_ROW);
   assert.equal(sheet.at("C7"), "เรื่อง  ขอซื้อเครื่องพิมพ์");
   assert.equal(sheet.at("C8"), "สิ่งที่แนบมาด้วย  ใบเสนอราคา");
-  assert.equal(sheet.at("C9"), "รายละเอียด  ใบปะหน้า");
+  assert.equal(sheet.at("C9"), "รายละเอียด ");
+  assert.equal(sheet.at("H9"), `${config.FF_CONT}ใบปะหน้า`);
   assert.deepEqual(rowsOf(sheet, "C", 10, 21), Array(12).fill(""), "continuation lines of the previous description are cleared");
   assert.equal(sheet.at("L24"), "☐ อนุมัติ ดำเนินการตามคำร้อง", "no decision yet, so no box is ticked");
   assert.equal(sheet.at("B35"), BLANK_FORM.B35, "an unsigned step keeps the blank signature line");
@@ -259,6 +261,7 @@ test("filling another request after an approved one leaves nothing stale, and an
   }
   assert.deepEqual(rowsOf(sheet, "C", 10, 21), Array(12).fill(""));
   assert.deepEqual(rowsOf(sheet, "B", 26, 33), Array(8).fill(""));
+  assert.ok(!sheet.at("H9"), "the first-line cell is empty again on the blank form");
 });
 
 test("a long description is cut into lines on the form's ruled rows instead of running off the right edge", () => {
@@ -266,19 +269,21 @@ test("a long description is cut into lines on the form's ruled rows instead of r
   const sheet = makeFormSheet(BLANK_FORM);
   const result = fill(sheet, rowWith(APPROVED_ROW, { "รายละเอียด": description }));
   assert.deepEqual(result.truncated, []);
-  const first = sheet.at("C9");
-  assert.ok(first.startsWith("รายละเอียด  "), "the heading stays in front of the first line");
+  assert.equal(sheet.at("C9"), "รายละเอียด ", "the heading cell is not rewritten");
+  const first = sheet.at("H9");
+  assert.ok(first.startsWith(config.FF_CONT), "the first line sits in column H");
+  assert.ok(!stripMark(first).startsWith("รายละเอียด"), "the heading word is not repeated in front of the text");
   const used = rowsOf(sheet, "C", 10, 21).filter(Boolean);
   assert.ok(used.length >= 2 && used.length < 12, `${used.length} continuation lines`);
   for (const line of used) assert.ok(line.startsWith(config.FF_CONT), "continuation lines carry the invisible marker");
 
-  const body = [first.slice("รายละเอียด  ".length), ...used.map(stripMark)];
-  assert.ok(api.ffUnits_(body[0]) <= capacity(FORM_COLS, 16) - api.ffUnits_("รายละเอียด  "), "first line fits next to the heading");
+  const body = [stripMark(first), ...used.map(stripMark)];
+  assert.ok(api.ffUnits_(body[0]) <= capacity(FORM_COLS - 5, 16), "the first line fits from column H to the right edge");
   for (const line of body.slice(1)) assert.ok(api.ffUnits_(line) <= capacity(FORM_COLS, 14), `a line fits the form width: ${api.ffUnits_(line)}`);
   assert.equal(noSpace(body.join("")), noSpace(description), "no text is lost");
   assert.equal(sheet.at("B22"), "ผู้ยื่นคำร้อง  สมชาย ใจดี", "nothing spills into the next section");
   assert.equal(sheet.at("C22"), undefined);
-  assert.equal(sheet.size("C9"), 16);
+  assert.equal(sheet.size("H9"), 16);
   assert.equal(sheet.size("C10"), 14);
 });
 
@@ -298,7 +303,7 @@ test("a very long description shrinks the font before it cuts anything, and warn
   const fits = fill(sheet, rowWith(APPROVED_ROW, { "รายละเอียด": "ก".repeat(1700) }));
   assert.deepEqual(fits.truncated, [], "fits once the font is a few points smaller");
   assert.ok(sheet.size("C10") < 14 && sheet.size("C10") >= config.FF_MIN_FONT, `font ${sheet.size("C10")}`);
-  assert.equal(noSpace([sheet.at("C9").slice("รายละเอียด  ".length), ...rowsOf(sheet, "C", 10, 21).map(stripMark)].join("")), "ก".repeat(1700));
+  assert.equal(noSpace([stripMark(sheet.at("H9")), ...rowsOf(sheet, "C", 10, 21).map(stripMark)].join("")), "ก".repeat(1700));
 
   const cut = fill(sheet, rowWith(APPROVED_ROW, { "รายละเอียด": "ก".repeat(6000) }));
   assert.deepEqual(cut.truncated, ["detail"]);
@@ -306,7 +311,7 @@ test("a very long description shrinks the font before it cuts anything, and warn
   assert.ok(sheet.at("C21").endsWith("…"), "the last line shows that text was cut");
 
   fill(sheet, APPROVED_ROW);
-  assert.equal(sheet.size("C9"), 16, "a later short request goes back to the form's normal font size");
+  assert.equal(sheet.size("H9"), 16, "a later short request goes back to the form's normal font size");
   assert.equal(sheet.size("C10"), 14);
 });
 
@@ -315,7 +320,7 @@ test("lines are never cut where Thai text cannot break", () => {
   fill(sheet, rowWith(APPROVED_ROW, { "รายละเอียด": "เกาะแกะโก๋ไก่ใจ๊ดีเสื้อแม่น้ำ".repeat(70) }));
   const lines = rowsOf(sheet, "C", 10, 21).filter(Boolean).map(stripMark);
   assert.ok(lines.length >= 2);
-  for (const line of [sheet.at("C9"), ...lines.slice(0, -1)]) assert.ok(!/[\u0E40-\u0E44]$/.test(line), `leading vowel left at the end of a line: ${line.slice(-4)}`);
+  for (const line of [stripMark(sheet.at("H9")), ...lines.slice(0, -1)]) assert.ok(!/[\u0E40-\u0E44]$/.test(line), `leading vowel left at the end of a line: ${line.slice(-4)}`);
   for (const line of lines) assert.ok(!/^[\u0E2F\u0E30-\u0E3A\u0E45-\u0E4E]/.test(line), `a line starts with a following vowel or tone mark: ${line.slice(0, 4)}`);
 });
 
@@ -382,6 +387,7 @@ test("a form missing a heading reports it instead of writing somewhere else", ()
   const result = fill(sheet, APPROVED_ROW);
   assert.deepEqual(result.missing, ["detail"]);
   assert.equal(sheet.at("C9"), undefined);
+  assert.equal(sheet.at("H9"), undefined);
   assert.equal(sheet.at("C10"), undefined);
 });
 

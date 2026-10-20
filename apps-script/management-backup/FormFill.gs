@@ -1,6 +1,8 @@
 /**
- * เติมฟอร์ม "ใบคำร้องถึงฝ่ายบริหาร" (ชีต "เอกสาร") อัตโนมัติจากเลขที่เอกสาร — v2.2
+ * เติมฟอร์ม "ใบคำร้องถึงฝ่ายบริหาร" (ชีต "เอกสาร") อัตโนมัติจากเลขที่เอกสาร — v2.3
  *
+ * v2.3: "รายละเอียด" เริ่มเนื้อหาที่คอลัมน์ H ของแถวหัวข้อ (bodyOffset) หัวข้อ "รายละเอียด" คงเป็นข้อความของแบบฟอร์ม
+ *   ไม่ถูกเขียนทับและไม่ซ้ำหน้าเนื้อหา บรรทัดแรกจึงยาวเท่าบรรทัดอื่น ส่วนบรรทัดต่อยังเริ่มที่คอลัมน์ของหัวข้อ
  * v2.2: ข้อความไม่ล้นขอบฟอร์มอีก
  *   - "รายละเอียด" และ "บันทึกข้อคิดเห็น" ตัดเป็นบรรทัดลงตามเส้นของแบบฟอร์ม (ไม่ merge เซลล์ เส้นจึงไม่หาย)
  *     ถ้ายังยาวเกินจำนวนบรรทัด จะย่อตัวอักษรก่อน และตัดท้ายพร้อมแจ้งเตือนเป็นทางสุดท้าย
@@ -58,6 +60,8 @@ var FF_CC_LABEL_TO_CODE = { 'ธุรการ FT': 'FT' };
 //     หรือถึงขอบขวา FF_RIGHT_COL) — size คือขนาดตัวอักษรปกติของช่องนั้นในฟอร์ม
 //   block = ช่องหลายบรรทัด: ตัดข้อความเป็นบรรทัดใส่ทีละแถวตามเส้นของฟอร์ม ตั้งแต่แถวหัวข้อลงมาถึงแถวก่อนหัวข้อ until
 //     (ลบ gap แถว) head = ข้อความหัวข้อหน้าบรรทัดแรก, body(r) = เนื้อหา, size = ขนาดบรรทัดแรก, lineSize = ขนาดบรรทัดต่อ
+//     bodyOffset = (ไม่บังคับ) เริ่มเนื้อหาบรรทัดแรกในเซลล์ที่อยู่ทางขวาของหัวข้อกี่คอลัมน์ (C + 5 = H) หัวข้อคงเดิมไม่ถูกแก้
+//       ถ้าไม่ระบุ จะเขียนต่อท้าย head ในเซลล์หัวข้อเดียวกัน
 //   tick(r) = ช่องที่ติ๊กได้: ติ๊ก checkbox ที่อยู่ทางซ้ายของหัวข้อ (ถ้าไม่มี checkbox ใช้ ☑/☐ ในข้อความแทน)
 var FF_FIELDS = [
   { name: 'issueDate', find: ffEq_('วันที่ออกเอกสาร'), offset: 1,
@@ -66,7 +70,7 @@ var FF_FIELDS = [
     blank: 'เรื่อง ', fill: function (r) { return 'เรื่อง  ' + r['เรื่อง']; } },
   { name: 'attach', find: ffStarts_('สิ่งที่แนบมาด้วย'), fit: true, size: 16,
     blank: 'สิ่งที่แนบมาด้วย ', fill: function (r) { return 'สิ่งที่แนบมาด้วย  ' + (r['สิ่งที่แนบมาด้วย'] || '-'); } },
-  { name: 'detail', find: ffStarts_('รายละเอียด'), block: { until: 'requester', gap: 0 }, size: 16, lineSize: 14,
+  { name: 'detail', find: ffStarts_('รายละเอียด'), block: { until: 'requester', gap: 0 }, size: 16, lineSize: 14, bodyOffset: 5,
     blank: 'รายละเอียด ', head: 'รายละเอียด  ', body: function (r) { return r['รายละเอียด']; } },
   { name: 'requester', find: ffStarts_('ผู้ยื่นคำร้อง'), fit: true, size: 14,
     blank: 'ผู้ยื่นคำร้อง __________________', fill: function (r) { return 'ผู้ยื่นคำร้อง  ' + r['ผู้ยื่นคำร้อง']; } },
@@ -346,32 +350,44 @@ function ffLayout_(head, body, capFirst, capNext) {
   return lines;
 }
 
-// ช่องหลายบรรทัด (รายละเอียด / ความเห็น): แถวหัวข้อ = head + บรรทัดแรก, แถวถัดลงไปตามเส้นของฟอร์ม = บรรทัดต่อ
+// ช่องหลายบรรทัด (รายละเอียด / ความเห็น): แถวหัวข้อ = บรรทัดแรก, แถวถัดลงไปตามเส้นของฟอร์ม = บรรทัดต่อ
+// บรรทัดแรกอยู่ต่อท้าย head ในเซลล์หัวข้อ หรือ (ถ้าระบุ bodyOffset) อยู่ในเซลล์ทางขวาของหัวข้อโดยหัวข้อไม่ถูกแก้
 // ไม่ merge เซลล์ เพราะเส้นบรรทัดของฟอร์มอยู่ที่ขอบล่างของแต่ละแถว merge แล้วเส้นจะหาย
 function ffWriteBlock_(sheet, ctx, f, p, loc, rec, truncated) {
   var until = loc[f.block.until];
   var last = until ? until.row - 1 - (f.block.gap || 0) : p.row;
   var rows = Math.max(1, last - p.row + 1);
-  var px = ffWidthPx_(ctx, p.col, FF_RIGHT_COL);
+  var offset = f.bodyOffset || 0;
+  var head = offset ? '' : f.head;
+  var pxFirst = ffWidthPx_(ctx, p.col + offset, FF_RIGHT_COL);
+  var pxNext = ffWidthPx_(ctx, p.col, FF_RIGHT_COL);
   var sizeFirst = f.size, sizeNext = f.lineSize, lines = [];
   if (rec) {
     for (var drop = 0; ; drop++) {
       sizeFirst = Math.max(FF_MIN_FONT, f.size - drop);
       sizeNext = Math.max(FF_MIN_FONT, f.lineSize - drop);
-      lines = ffLayout_(f.head, f.body(rec), ffCap_(px, sizeFirst), ffCap_(px, sizeNext));
+      lines = ffLayout_(head, f.body(rec), ffCap_(pxFirst, sizeFirst), ffCap_(pxNext, sizeNext));
       if (lines.length <= rows || (sizeFirst <= FF_MIN_FONT && sizeNext <= FF_MIN_FONT)) break;
     }
     if (lines.length > rows) {
       // บรรทัดสุดท้ายที่เหลือ: ถ้ามีบรรทัดเดียวต้องเผื่อที่ให้ head ด้วย
-      var capLast = rows === 1 ? Math.max(1, ffCap_(px, sizeFirst) - ffUnits_(f.head)) : ffCap_(px, sizeNext);
+      var capLast = rows === 1 ? Math.max(1, ffCap_(pxFirst, sizeFirst) - ffUnits_(head)) : ffCap_(pxNext, sizeNext);
       lines = lines.slice(0, rows);
       lines[rows - 1] = ffTrunc_(lines[rows - 1], capLast);
       truncated.push(f.name);
     }
   }
   var label = sheet.getRange(p.row, p.col);
-  label.setFontSize(sizeFirst);
-  label.setValue(rec ? f.head + (lines.length ? lines[0] : '') : f.blank);
+  if (offset) {
+    // หัวข้อคงเป็นข้อความของแบบฟอร์ม เนื้อหาบรรทัดแรกลงเซลล์ถัดไป (ขึ้นต้นด้วย FF_CONT กันถูกเข้าใจว่าเป็นหัวข้อหรือสูตร)
+    label.setValue(f.blank);
+    var first = sheet.getRange(p.row, p.col + offset);
+    first.setFontSize(sizeFirst);
+    first.setValue(rec && lines.length ? FF_CONT + lines[0] : '');
+  } else {
+    label.setFontSize(sizeFirst);
+    label.setValue(rec ? head + (lines.length ? lines[0] : '') : f.blank);
+  }
   if (last > p.row) {
     var rest = [];
     for (var r = 1; r <= last - p.row; r++) rest.push([r < lines.length ? FF_CONT + lines[r] : '']);
