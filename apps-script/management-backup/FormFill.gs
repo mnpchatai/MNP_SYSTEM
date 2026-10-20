@@ -1,6 +1,11 @@
 /**
- * เติมฟอร์ม "ใบคำร้องถึงฝ่ายบริหาร" (ชีต "เอกสาร") อัตโนมัติจากเลขที่เอกสาร — v2.1
+ * เติมฟอร์ม "ใบคำร้องถึงฝ่ายบริหาร" (ชีต "เอกสาร") อัตโนมัติจากเลขที่เอกสาร — v2.2
  *
+ * v2.2: ข้อความไม่ล้นขอบฟอร์มอีก
+ *   - "รายละเอียด" และ "บันทึกข้อคิดเห็น" ตัดเป็นบรรทัดลงตามเส้นของแบบฟอร์ม (ไม่ merge เซลล์ เส้นจึงไม่หาย)
+ *     ถ้ายังยาวเกินจำนวนบรรทัด จะย่อตัวอักษรก่อน และตัดท้ายพร้อมแจ้งเตือนเป็นทางสุดท้าย
+ *   - ช่องบรรทัดเดียว (เรื่อง ฯลฯ) ย่อตัวอักษรให้พอดีช่อง
+ *   - ติ๊กช่องสี่เหลี่ยม (checkbox) จริงของแบบฟอร์ม แทนการพิมพ์ ☑ ลงในข้อความ (ถ้าไม่พบ checkbox จะใช้ ☑/☐ แบบเดิม)
  * v2.1: แก้ช่อง "ธุรการ FT" ในส่วนที่ 3 ไม่เคยถูกติ๊ก (ฟอร์มใช้ป้าย "ธุรการ FT" แต่ชีตข้อมูลเก็บรหัสแผนก "FT")
  *   — ดู FF_CC_LABEL_TO_CODE
  *
@@ -25,6 +30,14 @@ var FF_USE_BUDDHIST_YEAR = false; // true = แสดงปี พ.ศ.
 var FF_CHECKED = '☑ ';
 var FF_UNCHECKED = '☐ ';
 
+// การจัดข้อความให้อยู่ในช่อง (ขนาดจริงของคอลัมน์อ่านจากชีตด้วย getColumnWidth จึงไม่ต้องกรอกความกว้างที่นี่)
+var FF_RIGHT_COL = 37;   // คอลัมน์ขวาสุดของเนื้อฟอร์ม (37 = AK) ข้อความต้องไม่เกินขอบนี้
+var FF_MIN_FONT = 10;    // ย่อตัวอักษรได้เล็กสุดเท่านี้ ถ้ายังไม่พอจะตัดท้ายข้อความและแจ้งเตือน
+var FF_CHAR_EM = 0.42;   // ความกว้างเฉลี่ยของ 1 ตัวอักษร เป็นเท่าของขนาดฟอนต์ (AngsanaUPC ราว 0.35)
+                         // เพิ่มค่านี้ = ตัดบรรทัดเร็วขึ้น/ย่อมากขึ้น ลดค่านี้ถ้าบรรทัดสั้นเกินไป
+var FF_CONT = '\u200B';  // เครื่องหมายไม่แสดงผลหน้าบรรทัดต่อ กัน ffLocate_ เข้าใจว่าข้อความในรายละเอียด/ความเห็น
+                         // ที่ขึ้นต้นด้วยคำว่า "เรื่อง" "ตำแหน่ง" ฯลฯ คือหัวข้อของฟอร์ม
+
 // ค่าในคอลัมน์ "มติ" → ช่องที่จะติ๊ก (เพิ่มคำได้ถ้าระบบใช้คำอื่น)
 var FF_DECISION_MAP = {
   approved: 'approve', approve: 'approve',
@@ -41,31 +54,36 @@ var FF_CC_LABEL_TO_CODE = { 'ธุรการ FT': 'FT' };
 
 // ช่องในฟอร์ม: find = เงื่อนไขหาเซลล์หัวข้อ (ข้อความตัด ☑/☐ แล้ว), offset = เลื่อนไปเซลล์ที่จะเขียน
 //   blank = ข้อความแบบฟอร์มเปล่า, fill(r) = ข้อความเมื่อมีข้อมูล (คืน null = ใช้ blank)
+//   fit + size = ช่องบรรทัดเดียว: ย่อตัวอักษรจาก size ลงมาให้พอดีช่อง (ช่องคือจากหัวข้อนี้ถึงหัวข้อถัดไปในแถวเดียวกัน
+//     หรือถึงขอบขวา FF_RIGHT_COL) — size คือขนาดตัวอักษรปกติของช่องนั้นในฟอร์ม
+//   block = ช่องหลายบรรทัด: ตัดข้อความเป็นบรรทัดใส่ทีละแถวตามเส้นของฟอร์ม ตั้งแต่แถวหัวข้อลงมาถึงแถวก่อนหัวข้อ until
+//     (ลบ gap แถว) head = ข้อความหัวข้อหน้าบรรทัดแรก, body(r) = เนื้อหา, size = ขนาดบรรทัดแรก, lineSize = ขนาดบรรทัดต่อ
+//   tick(r) = ช่องที่ติ๊กได้: ติ๊ก checkbox ที่อยู่ทางซ้ายของหัวข้อ (ถ้าไม่มี checkbox ใช้ ☑/☐ ในข้อความแทน)
 var FF_FIELDS = [
   { name: 'issueDate', find: ffEq_('วันที่ออกเอกสาร'), offset: 1,
     blank: ' _______ / _______ / _______', fill: function (r) { return ffDate_(r['ยื่นเมื่อ']); } },
-  { name: 'subject', find: ffStarts_('เรื่อง'),
+  { name: 'subject', find: ffStarts_('เรื่อง'), fit: true, size: 16,
     blank: 'เรื่อง ', fill: function (r) { return 'เรื่อง  ' + r['เรื่อง']; } },
-  { name: 'attach', find: ffStarts_('สิ่งที่แนบมาด้วย'),
+  { name: 'attach', find: ffStarts_('สิ่งที่แนบมาด้วย'), fit: true, size: 16,
     blank: 'สิ่งที่แนบมาด้วย ', fill: function (r) { return 'สิ่งที่แนบมาด้วย  ' + (r['สิ่งที่แนบมาด้วย'] || '-'); } },
-  { name: 'detail', find: ffStarts_('รายละเอียด'),
-    blank: 'รายละเอียด ', fill: function (r) { return 'รายละเอียด  ' + r['รายละเอียด']; } },
-  { name: 'requester', find: ffStarts_('ผู้ยื่นคำร้อง'),
+  { name: 'detail', find: ffStarts_('รายละเอียด'), block: { until: 'requester', gap: 0 }, size: 16, lineSize: 14,
+    blank: 'รายละเอียด ', head: 'รายละเอียด  ', body: function (r) { return r['รายละเอียด']; } },
+  { name: 'requester', find: ffStarts_('ผู้ยื่นคำร้อง'), fit: true, size: 14,
     blank: 'ผู้ยื่นคำร้อง __________________', fill: function (r) { return 'ผู้ยื่นคำร้อง  ' + r['ผู้ยื่นคำร้อง']; } },
-  { name: 'dept', find: ffStarts_('แผนก/หน่วยงาน'),
+  { name: 'dept', find: ffStarts_('แผนก/หน่วยงาน'), fit: true, size: 14,
     blank: 'แผนก/หน่วยงาน _____________', fill: function (r) { return 'แผนก/หน่วยงาน  ' + r['แผนก']; } },
-  { name: 'position', find: ffStarts_('ตำแหน่ง'),
+  { name: 'position', find: ffStarts_('ตำแหน่ง'), fit: true, size: 14,
     blank: 'ตำแหน่ง ____________________', fill: function (r) { return 'ตำแหน่ง  ' + r['ตำแหน่ง']; } },
-  { name: 'submitDate', find: ffStarts_('วันที่ยื่น'),
+  { name: 'submitDate', find: ffStarts_('วันที่ยื่น'), fit: true, size: 14,
     blank: 'วันที่ยื่น ______ / ______ / ______', fill: function (r) { return 'วันที่ยื่น  ' + ffDate_(r['ยื่นเมื่อ']); } },
-  { name: 'approve', find: ffStarts_('อนุมัติ ดำเนินการ'),
+  { name: 'approve', find: ffStarts_('อนุมัติ ดำเนินการ'), tick: function (r) { return ffDecision_(r) === 'approve'; },
     blank: 'อนุมัติ ดำเนินการตามคำร้อง', fill: function (r) { return ffBox_(ffDecision_(r) === 'approve') + 'อนุมัติ ดำเนินการตามคำร้อง'; } },
-  { name: 'reject', find: ffStarts_('ไม่อนุมัติ'),
+  { name: 'reject', find: ffStarts_('ไม่อนุมัติ'), tick: function (r) { return ffDecision_(r) === 'reject'; },
     blank: 'ไม่อนุมัติคำร้อง', fill: function (r) { return ffBox_(ffDecision_(r) === 'reject') + 'ไม่อนุมัติคำร้อง'; } },
-  { name: 'ack', find: ffStarts_('ได้รับทราบ'),
+  { name: 'ack', find: ffStarts_('ได้รับทราบ'), tick: function (r) { return ffDecision_(r) === 'ack'; },
     blank: 'ได้รับทราบข้อมูลที่แจ้ง', fill: function (r) { return ffBox_(ffDecision_(r) === 'ack') + 'ได้รับทราบข้อมูลที่แจ้ง'; } },
-  { name: 'comment', find: ffStarts_('บันทึกข้อคิดเห็น'),
-    blank: 'บันทึกข้อคิดเห็น ฝ่ายบริหาร ', fill: function (r) { return 'บันทึกข้อคิดเห็น ฝ่ายบริหาร  ' + r['ความเห็น']; } },
+  { name: 'comment', find: ffStarts_('บันทึกข้อคิดเห็น'), block: { until: 'fmSign', gap: 1 }, size: 14, lineSize: 14,
+    blank: 'บันทึกข้อคิดเห็น ฝ่ายบริหาร ', head: 'บันทึกข้อคิดเห็น ฝ่ายบริหาร  ', body: function (r) { return r['ความเห็น']; } },
   { name: 'fmSign', find: ffSign_('ฝ่ายบริหารโรงงาน'),
     blank: 'ลงชื่อ ________________________ ฝ่ายบริหารโรงงาน',
     fill: function (r) { return r['ผจก.โรงงาน อนุมัติโดย'] ? 'ลงชื่อ  ' + r['ผจก.โรงงาน อนุมัติโดย'] + '  ฝ่ายบริหารโรงงาน' : null; } },
@@ -114,10 +132,11 @@ function ffFill_(sheet) {
   var ss = sheet.getParent();
   var docNo = String(sheet.getRange(FF_KEY_CELL).getDisplayValue() || '').trim();
   var rec = docNo ? ffFindRecord_(ss, docNo) : null;
-  var missing = ffWrite_(sheet, rec);
+  var result = ffWrite_(sheet, rec);
   if (docNo) {
     var msg = rec ? 'ดึงข้อมูล ' + docNo + ' แล้ว' : 'ไม่พบเลขที่เอกสาร ' + docNo + ' ในชีต "' + FF_DATA_SHEET + '"';
-    if (missing.length) msg += ' (หาช่องในฟอร์มไม่เจอ: ' + missing.join(', ') + ')';
+    if (result.missing.length) msg += ' (หาช่องในฟอร์มไม่เจอ: ' + result.missing.join(', ') + ')';
+    if (result.truncated.length) msg += ' (ข้อความยาวเกินช่อง จึงตัดท้าย: ' + result.truncated.join(', ') + ')';
     ss.toast(msg, 'ใบคำร้อง', 6);
   }
 }
@@ -161,11 +180,22 @@ function ffWrite_(sheet, rec) {
   var values = sheet.getDataRange().getDisplayValues();
   var loc = ffLocate_(values);
   ffCleanupV1_(sheet, values, loc);
+  // อ่านความกว้างคอลัมน์และกฎช่องติ๊กครั้งเดียวแล้วใช้ซ้ำ — onEdit มีเวลาจำกัด 30 วินาที เรียกทีละเซลล์จะช้าเกินไป
+  var ctx = { widths: ffWidths_(sheet), rules: sheet.getDataRange().getDataValidations() };
 
   var missing = [];
+  var truncated = [];
   FF_FIELDS.forEach(function (f) {
     var p = loc[f.name];
     if (!p) { missing.push(f.name); return; }
+    if (f.block) { ffWriteBlock_(sheet, ctx, f, p, loc, rec, truncated); return; }
+    var cell = sheet.getRange(p.row, p.col);
+    var box = f.tick ? ffCheckbox_(sheet, ctx, p.row, p.col - 1) : null;
+    if (box) {
+      box.setValue(!!(rec && f.tick(rec)));
+      cell.setValue(f.blank);
+      return;
+    }
     var text = f.blank;
     if (rec) {
       var filled = f.fill(rec);
@@ -175,7 +205,17 @@ function ffWrite_(sheet, rec) {
         text = filled;
       }
     }
-    sheet.getRange(p.row, p.col).setValue(text);
+    if (f.fit) {
+      var size = f.size;
+      if (rec) {
+        var fit = ffFitLine_(f.size, text, ffWidthPx_(ctx, p.col, ffSlotEnd_(f, p, loc)));
+        text = fit.text;
+        size = fit.size;
+        if (fit.cut) truncated.push(f.name);
+      }
+      cell.setFontSize(size);
+    }
+    cell.setValue(text);
   });
 
   var cc = rec && rec['สำเนาถึงแผนก']
@@ -183,14 +223,169 @@ function ffWrite_(sheet, rec) {
     : [];
   var ccOther = rec ? String(rec['สำเนาอื่นๆ'] || '') : '';
   loc.cc.forEach(function (p) {
-    var text;
-    if (!rec) text = p.code;
-    else if (p.code === 'อื่นๆ') text = ffBox_(!!ccOther) + 'อื่นๆ' + (ccOther ? ' ' + ccOther : '');
-    else text = ffBox_(cc.indexOf(ffCcCode_(p.code)) >= 0) + p.code;
-    sheet.getRange(p.row, p.col).setValue(text);
+    var isOther = p.code === 'อื่นๆ';
+    var ticked = !!rec && (isOther ? !!ccOther : cc.indexOf(ffCcCode_(p.code)) >= 0);
+    var label = isOther && rec ? 'อื่นๆ' + (ccOther ? ' ' + ccOther : '') : p.code;
+    var cell = sheet.getRange(p.row, p.col);
+    if (isOther) {
+      var fit = rec ? ffFitLine_(13, label, ffWidthPx_(ctx, p.col, FF_RIGHT_COL)) : { text: label, size: 13, cut: false };
+      label = fit.text;
+      cell.setFontSize(fit.size);
+      if (fit.cut) truncated.push('สำเนาอื่นๆ');
+    }
+    var box = ffCheckbox_(sheet, ctx, p.row, p.col - 1);
+    if (box) {
+      box.setValue(ticked);
+      cell.setValue(label);
+    } else {
+      cell.setValue(rec ? ffBox_(ticked) + label : label);
+    }
   });
   if (!loc.cc.length) missing.push('สำเนาถึง');
-  return missing;
+  return { missing: missing, truncated: truncated };
+}
+
+// ---------- จัดข้อความให้อยู่ในช่อง ----------
+
+// สระ/วรรณยุกต์ที่ซ้อนบนตัวอักษร ไม่กินความกว้าง
+var FF_MARKS = '\u0E31\u0E34\u0E35\u0E36\u0E37\u0E38\u0E39\u0E3A\u0E47\u0E48\u0E49\u0E4A\u0E4B\u0E4C\u0E4D\u0E4E';
+// ห้ามขึ้นต้นบรรทัด (สระตาม วรรณยุกต์ ๆ ฯ) / ห้ามค้างท้ายบรรทัด (สระหน้า เ แ โ ใ ไ)
+var FF_NO_START = '\u0E2F\u0E30\u0E31\u0E32\u0E33\u0E34\u0E35\u0E36\u0E37\u0E38\u0E39\u0E3A\u0E45\u0E46\u0E47\u0E48\u0E49\u0E4A\u0E4B\u0E4C\u0E4D\u0E4E';
+var FF_NO_END = '\u0E40\u0E41\u0E42\u0E43\u0E44';
+
+function ffIsMark_(ch) { return FF_MARKS.indexOf(ch) >= 0; }
+
+// ความกว้างโดยประมาณของข้อความ หน่วยเป็น "จำนวนตัวอักษร" (ไม่นับสระ/วรรณยุกต์ที่ซ้อนอยู่บนตัวอักษร)
+function ffUnits_(s) {
+  var n = 0;
+  for (var i = 0; i < s.length; i++) if (!ffIsMark_(s.charAt(i))) n++;
+  return n;
+}
+
+// จำนวนตัวอักษรที่วางได้ในความกว้าง px (พิกเซล) ที่ขนาดตัวอักษร size (pt)
+function ffCap_(px, size) { return Math.max(1, Math.floor(px / (size * 4 / 3 * FF_CHAR_EM))); }
+
+// ความกว้าง (พิกเซล) ของคอลัมน์ 1..FF_RIGHT_COL อ่านจากชีตจริง
+function ffWidths_(sheet) {
+  var widths = [0];
+  for (var c = 1; c <= FF_RIGHT_COL; c++) widths.push(sheet.getColumnWidth(c));
+  return widths;
+}
+
+function ffWidthPx_(ctx, fromCol, toCol) {
+  var px = 0;
+  for (var c = fromCol; c <= toCol; c++) px += ctx.widths[c] || 0;
+  return px;
+}
+
+// ช่องบรรทัดเดียวยาวถึงหัวข้อถัดไปในแถวเดียวกัน หรือถึงขอบขวาของฟอร์ม
+function ffSlotEnd_(f, p, loc) {
+  var end = FF_RIGHT_COL;
+  FF_FIELDS.forEach(function (g) {
+    var q = loc[g.name];
+    if (g !== f && q && q.row === p.row && q.col > p.col && q.col - 1 < end) end = q.col - 1;
+  });
+  return end;
+}
+
+// ตัดท้ายให้ไม่เกิน cap หน่วย แล้วต่อ "…"
+function ffTrunc_(s, cap) {
+  var out = '', u = 0;
+  for (var i = 0; i < s.length; i++) {
+    var w = ffIsMark_(s.charAt(i)) ? 0 : 1;
+    if (u + w > cap - 1) break;
+    out += s.charAt(i);
+    u += w;
+  }
+  return out + '…';
+}
+
+// ย่อขนาดตัวอักษรลงทีละ 1pt จนข้อความบรรทัดเดียวพอดีความกว้าง px; ถ้าถึง FF_MIN_FONT แล้วยังไม่พอ ตัดท้าย (cut = true)
+function ffFitLine_(size, text, px) {
+  while (size > FF_MIN_FONT && ffUnits_(text) > ffCap_(px, size)) size--;
+  var cap = ffCap_(px, size);
+  if (ffUnits_(text) <= cap) return { text: text, size: size, cut: false };
+  return { text: ffTrunc_(text, cap), size: size, cut: true };
+}
+
+// หาจุดตัดบรรทัด: ได้ดัชนีที่ s.slice(0, cut) ไม่เกิน cap หน่วย เลือกตัดหลังช่องว่างถ้ามีในช่วงท้ายบรรทัด
+// ภาษาไทยไม่มีช่องว่างระหว่างคำ จึงตัดที่ตัวอักษรโดยเลี่ยงไม่ให้บรรทัดใหม่ขึ้นต้นด้วยสระตาม/วรรณยุกต์
+// หรือบรรทัดเก่าค้างสระหน้า
+function ffCut_(s, cap) {
+  var u = 0, i = 0;
+  for (; i < s.length; i++) {
+    var w = ffIsMark_(s.charAt(i)) ? 0 : 1;
+    if (u + w > cap) break;
+    u += w;
+  }
+  var space = s.lastIndexOf(' ', i);
+  if (space > 0 && space >= i * 0.6) return space + 1;
+  var cut = i;
+  while (cut > 1 && (FF_NO_START.indexOf(s.charAt(cut)) >= 0 || FF_NO_END.indexOf(s.charAt(cut - 1)) >= 0)) cut--;
+  return Math.max(cut, 1);
+}
+
+// ตัดเนื้อหา body เป็นบรรทัด: บรรทัดแรกต่อจาก head (วางได้ capFirst - ความกว้าง head) บรรทัดต่อไปวางได้ capNext
+// ย่อหน้า (ขึ้นบรรทัดใหม่ในต้นฉบับ) ขึ้นบรรทัดใหม่เสมอ ย่อหน้าว่างถูกข้ามเพื่อประหยัดบรรทัด
+function ffLayout_(head, body, capFirst, capNext) {
+  var lines = [];
+  String(body === null || body === undefined ? '' : body).split(/\r?\n/).forEach(function (para) {
+    var rest = para.replace(/^\s+|\s+$/g, '');
+    while (rest) {
+      var room = lines.length === 0 ? Math.max(1, capFirst - ffUnits_(head)) : capNext;
+      if (ffUnits_(rest) <= room) {
+        lines.push(rest);
+        rest = '';
+      } else {
+        var cut = ffCut_(rest, room);
+        lines.push(rest.slice(0, cut).replace(/\s+$/, ''));
+        rest = rest.slice(cut).replace(/^\s+/, '');
+      }
+    }
+  });
+  return lines;
+}
+
+// ช่องหลายบรรทัด (รายละเอียด / ความเห็น): แถวหัวข้อ = head + บรรทัดแรก, แถวถัดลงไปตามเส้นของฟอร์ม = บรรทัดต่อ
+// ไม่ merge เซลล์ เพราะเส้นบรรทัดของฟอร์มอยู่ที่ขอบล่างของแต่ละแถว merge แล้วเส้นจะหาย
+function ffWriteBlock_(sheet, ctx, f, p, loc, rec, truncated) {
+  var until = loc[f.block.until];
+  var last = until ? until.row - 1 - (f.block.gap || 0) : p.row;
+  var rows = Math.max(1, last - p.row + 1);
+  var px = ffWidthPx_(ctx, p.col, FF_RIGHT_COL);
+  var sizeFirst = f.size, sizeNext = f.lineSize, lines = [];
+  if (rec) {
+    for (var drop = 0; ; drop++) {
+      sizeFirst = Math.max(FF_MIN_FONT, f.size - drop);
+      sizeNext = Math.max(FF_MIN_FONT, f.lineSize - drop);
+      lines = ffLayout_(f.head, f.body(rec), ffCap_(px, sizeFirst), ffCap_(px, sizeNext));
+      if (lines.length <= rows || (sizeFirst <= FF_MIN_FONT && sizeNext <= FF_MIN_FONT)) break;
+    }
+    if (lines.length > rows) {
+      // บรรทัดสุดท้ายที่เหลือ: ถ้ามีบรรทัดเดียวต้องเผื่อที่ให้ head ด้วย
+      var capLast = rows === 1 ? Math.max(1, ffCap_(px, sizeFirst) - ffUnits_(f.head)) : ffCap_(px, sizeNext);
+      lines = lines.slice(0, rows);
+      lines[rows - 1] = ffTrunc_(lines[rows - 1], capLast);
+      truncated.push(f.name);
+    }
+  }
+  var label = sheet.getRange(p.row, p.col);
+  label.setFontSize(sizeFirst);
+  label.setValue(rec ? f.head + (lines.length ? lines[0] : '') : f.blank);
+  if (last > p.row) {
+    var rest = [];
+    for (var r = 1; r <= last - p.row; r++) rest.push([r < lines.length ? FF_CONT + lines[r] : '']);
+    var area = sheet.getRange(p.row + 1, p.col, last - p.row, 1);
+    area.setFontSize(sizeNext);
+    area.setValues(rest);
+  }
+}
+
+// ช่องติ๊ก (checkbox) จริงของฟอร์ม; ไม่ใช่ checkbox = null
+function ffCheckbox_(sheet, ctx, row, col) {
+  if (col < 1) return null;
+  var rule = ctx.rules[row - 1] && ctx.rules[row - 1][col - 1];
+  return rule && rule.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.CHECKBOX ? sheet.getRange(row, col) : null;
 }
 
 // ---------- ล้างข้อความที่ v1 เขียนผิดแถว (ทำงานเฉพาะเซลล์ที่ v1 เคยเขียน และเนื้อหาเป็นของ v1 เท่านั้น) ----------
