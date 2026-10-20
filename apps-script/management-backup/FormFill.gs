@@ -1,5 +1,8 @@
 /**
- * เติมฟอร์ม "ใบคำร้องถึงฝ่ายบริหาร" (ชีต "เอกสาร") อัตโนมัติจากเลขที่เอกสาร — v2
+ * เติมฟอร์ม "ใบคำร้องถึงฝ่ายบริหาร" (ชีต "เอกสาร") อัตโนมัติจากเลขที่เอกสาร — v2.1
+ *
+ * v2.1: แก้ช่อง "ธุรการ FT" ในส่วนที่ 3 ไม่เคยถูกติ๊ก (ฟอร์มใช้ป้าย "ธุรการ FT" แต่ชีตข้อมูลเก็บรหัสแผนก "FT")
+ *   — ดู FF_CC_LABEL_TO_CODE
  *
  * วิธีใช้: พิมพ์เลขที่เอกสาร (เช่น MG-2026-000005) ที่เซลล์ AD3 ของชีต "เอกสาร"
  *   → ค้นแถวที่ตรงกันในชีต "ใบคำร้องถึงฝ่ายบริหาร" แล้วเติมค่าต่อท้ายหัวข้อในฟอร์ม
@@ -32,6 +35,9 @@ var FF_DECISION_MAP = {
 // รหัสแผนกในส่วนที่ 3 (สำเนาถึง)
 var FF_CC_CODES = ['PP', 'BD', 'QA', 'RB', 'GR', 'PK', 'PT', 'BG', 'SR', 'SE', 'ST', 'WH',
                    'MS', 'MT', 'ธุรการ FT', 'IT', 'EX', 'SA', 'PC', 'HR', 'AD', 'AC', 'SP'];
+
+// ป้ายในฟอร์ม → รหัสแผนกที่ระบบเก็บในคอลัมน์ "สำเนาถึงแผนก" (ป้ายที่ไม่อยู่ในรายการนี้ใช้เป็นรหัสตรงตัว)
+var FF_CC_LABEL_TO_CODE = { 'ธุรการ FT': 'FT' };
 
 // ช่องในฟอร์ม: find = เงื่อนไขหาเซลล์หัวข้อ (ข้อความตัด ☑/☐ แล้ว), offset = เลื่อนไปเซลล์ที่จะเขียน
 //   blank = ข้อความแบบฟอร์มเปล่า, fill(r) = ข้อความเมื่อมีข้อมูล (คืน null = ใช้ blank)
@@ -180,7 +186,7 @@ function ffWrite_(sheet, rec) {
     var text;
     if (!rec) text = p.code;
     else if (p.code === 'อื่นๆ') text = ffBox_(!!ccOther) + 'อื่นๆ' + (ccOther ? ' ' + ccOther : '');
-    else text = ffBox_(cc.indexOf(p.code.toUpperCase()) >= 0) + p.code;
+    else text = ffBox_(cc.indexOf(ffCcCode_(p.code)) >= 0) + p.code;
     sheet.getRange(p.row, p.col).setValue(text);
   });
   if (!loc.cc.length) missing.push('สำเนาถึง');
@@ -252,6 +258,7 @@ function ffSign_(suffix) {
   return function (s) { return s.indexOf('ลงชื่อ') === 0 && s.slice(-suffix.length) === suffix; };
 }
 function ffBox_(checked) { return checked ? FF_CHECKED : FF_UNCHECKED; }
+function ffCcCode_(label) { return (FF_CC_LABEL_TO_CODE[label] || label).toUpperCase(); }
 function ffDecision_(r) { return FF_DECISION_MAP[String(r['มติ'] || '').trim().toLowerCase()] || ''; }
 
 // รับได้ทั้ง Date และข้อความ ISO เช่น 2026-09-22T03:52:07.599209+00:00 → 22 / 09 / 2026 (เวลาไทย)

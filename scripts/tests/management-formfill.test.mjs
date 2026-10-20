@@ -212,11 +212,32 @@ test("a form missing a heading reports it instead of writing somewhere else", ()
   assert.equal(sheet.at("C9"), undefined);
 });
 
-// ช่อง "ธุรการ FT" ในฟอร์มใช้ป้ายนั้น แต่ชีตข้อมูลเก็บรหัสแผนกเป็น "FT" (modules/module-mg.js) จึงไม่เคยถูกติ๊ก
-test("a request copied to FT ticks the FT box", { todo: "the form label is 'ธุรการ FT' but the data sheet stores 'FT', so the box is never ticked" }, () => {
+// ฟอร์มใช้ป้าย "ธุรการ FT" แต่ชีตข้อมูลเก็บรหัสแผนกเป็น "FT" (modules/module-mg.js) — เคยทำให้ช่องนี้ไม่ถูกติ๊ก
+test("a request copied to FT ticks the form's 'ธุรการ FT' box, and only then", () => {
   const copiedToFt = [...APPROVED_ROW];
   copiedToFt[15] = "FT, IT";
   const sheet = makeFormSheet(BLANK_FORM);
   api.ffWrite_(sheet, api.ffFindRecord_(makeWorkbook(copiedToFt), "FT 004/26"));
-  assert.equal(sheet.at("O41"), "☑ ธุรการ FT");
+  assert.equal(sheet.at("O41"), "☑ ธุรการ FT", "the label on the form is unchanged");
+  assert.equal(sheet.at("U41"), "☑ IT");
+  assert.equal(sheet.at("C41"), "☐ MS");
+
+  // APPROVED_ROW สำเนาถึง IT, ST เท่านั้น — ช่อง FT ต้องไม่ถูกติ๊กลอยๆ
+  api.ffWrite_(sheet, api.ffFindRecord_(makeWorkbook(APPROVED_ROW), "FT 004/26"));
+  assert.equal(sheet.at("O41"), "☐ ธุรการ FT");
+
+  api.ffWrite_(sheet, null);
+  assert.equal(sheet.at("O41"), "ธุรการ FT", "clearing restores the blank label");
+});
+
+test("every department box on the form maps to a code in the web app's copy-to grid, and vice versa", () => {
+  const moduleSource = readFileSync(new URL("../../modules/module-mg.js", import.meta.url), "utf8");
+  // ผลลัพธ์จาก vm มี prototype คนละ realm — แปลงผ่าน JSON ก่อนเทียบ deepEqual
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const grid = plain(vm.runInNewContext(`(${/const CC_DEPARTMENT_GRID = (\[[\s\S]*?\n  \]);/.exec(moduleSource)[1]})`));
+  const webCodes = grid.flat().filter((code) => code !== null).sort();
+  const { FF_CC_CODES, FF_CC_LABEL_TO_CODE } = plain(vm.runInContext("({ FF_CC_CODES, FF_CC_LABEL_TO_CODE })", context));
+  const formCodes = FF_CC_CODES.map((label) => FF_CC_LABEL_TO_CODE[label] ?? label).sort();
+  assert.equal(webCodes.length, 23, "the grid was parsed");
+  assert.deepEqual(formCodes, webCodes, "a form label that differs from the stored code needs an entry in FF_CC_LABEL_TO_CODE");
 });
