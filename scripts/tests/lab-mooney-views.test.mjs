@@ -690,13 +690,13 @@ test("the Mooney list and the dashboard open with their module's colour banner; 
   assert.match(overview, /request-module-header lab-module-header" style="background:linear-gradient\(135deg, #2563eb, #1e40af\)"/);
   assert.match(overview, /<h1>Mooney test report<\/h1>/);
   // เวลาอ่านชีตกับปุ่มรีเฟรชอยู่ในแถบสีของ Mooney (ด้านขวา) แบบเดียวกับปุ่มบนแถบสีของหน้าคำร้อง
-  assert.match(overview, /<\/div><\/div>\s*<div class="lab-live">[\s\S]*?id="lab-refresh"[\s\S]*?<\/div>\s*<\/div>\s*<section class="card flush lab-overview-card">/);
+  assert.match(overview, /<h1>Mooney test report<\/h1><\/div>\s*<div class="lab-live">[\s\S]*?id="lab-refresh"[\s\S]*?<\/div>\s*<\/div>\s*<section class="card flush lab-overview-card">/);
   assert.equal(count(overview, /<h1/g), 1);
   const dashboard = views.dashboardPage(30);
   assert.match(dashboard, /<h1>แดชบอร์ด<\/h1>/);
   assert.match(dashboard, /<div id="lab-dash-mooney"><\/div>/);
   // เวลาอ่านชีตเป็นของ Mooney_Test_Report: อยู่ในส่วนของ Mooney ไม่อยู่ที่แถบสีของแดชบอร์ด
-  const banner = dashboard.match(/<div class="page-heading request-module-header[\s\S]*?<\/h1>[\s\S]*?<\/div><\/div>\s*<\/div>/)?.[0] ?? "";
+  const banner = dashboard.match(/<div class="page-heading request-module-header[\s\S]*?<\/h1><\/div>\s*<\/div>/)?.[0] ?? "";
   assert.ok(banner, "dashboard banner found");
   assert.doesNotMatch(banner, /lab-updated/);
   assert.match(dashboard, /<div class="lab-dash-head"><h2 class="lab-dash-title" id="lab-dash-mooney-title">Mooney<\/h2><div class="lab-live">/);

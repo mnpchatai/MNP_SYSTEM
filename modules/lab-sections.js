@@ -25,12 +25,12 @@
     mdr: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M6 17c3 0 4-10 8-10h5"/></svg>`,
   });
 
-  // theme: [สีต้น, สีปลาย] — ค่า contrast กับตัวอักษรขาวอยู่ในเทสต์ (scripts/tests/lab-sections.test.mjs)
-  // summary/action ใช้เฉพาะโมดูลที่เปิดใช้งาน: summary = คำอธิบายใต้ชื่อในหัวสี, action = บรรทัดล่างของการ์ด
+  // theme: [สีต้น, สีปลาย] — contrast กับตัวอักษรขาว (รวมสีจางของโมดูลที่ยังไม่เปิด) ตรวจในเทสต์ (scripts/tests/lab-sections.test.mjs)
+  // action = บรรทัดล่างของการ์ดโมดูลที่เปิดใช้งาน
   const SECTIONS = Object.freeze([
-    { key: "dashboard", label: "แดชบอร์ด", theme: ["#4f46e5", "#6d28d9"], summary: "สรุปผลทดสอบล่าสุด", action: "ดูภาพรวม →" },
+    { key: "dashboard", label: "แดชบอร์ด", theme: ["#4f46e5", "#6d28d9"], action: "ดูภาพรวม →" },
     { key: "chemical", label: "เปรียบเทียบเคมี", theme: ["#047857", "#0f766e"] },
-    { key: "mooney", label: "Mooney test report", theme: ["#2563eb", "#1e40af"], summary: "ผลทดสอบ MH/MV ต่อวัสดุ", action: "ดูผลทดสอบ →" },
+    { key: "mooney", label: "Mooney test report", theme: ["#2563eb", "#1e40af"], action: "ดูผลทดสอบ →" },
     { key: "mdr", label: "MDR test report", theme: ["#c2410c", "#b91c1c"] },
   ].map((section) => Object.freeze({ ...section, theme: Object.freeze(section.theme) })));
   const HOME = "home";
@@ -51,14 +51,15 @@
     return section ? `#/lab?module=${encodeURIComponent(section.key)}` : "#/lab";
   }
 
-  // การ์ดของโมดูลที่เปิดใช้งานเป็นลิงก์ ส่วนที่ยังไม่เปิดเป็นการ์ดเฉย ๆ บอกสถานะที่มุมขวาบน (ช่องเดียวกับจำนวนงานในหน้าคำร้อง)
+  // การ์ดของโมดูลที่เปิดใช้งานเป็นลิงก์ ส่วนที่ยังไม่เปิดเป็นการ์ดเฉย ๆ บอกสถานะครั้งเดียวที่มุมขวาบน (ช่องเดียวกับจำนวนงานในหน้าคำร้อง)
+  // ไม่ใส่ aria-disabled เพราะไม่ใช่ตัวควบคุม (ใช้กับ div เฉย ๆ ไม่มีความหมาย) ข้อความ "ยังไม่เปิดใช้งาน" บอกสถานะให้โปรแกรมอ่านหน้าจอแล้ว
   function cardHtml(section, open) {
     const badge = `<span class="type-card-badge">${ICONS[section.key]}</span>`;
     const style = `background:${gradient(section)}`;
     if (!open) {
-      return `<div class="type-card request-type-card lab-module-card is-off" aria-disabled="true" style="${style}">
+      return `<div class="type-card request-type-card lab-module-card is-off" style="${style}">
         <span class="request-type-top">${badge}<span class="request-type-count">ยังไม่เปิดใช้งาน</span></span>
-        <span class="type-card-body"><strong>${esc(section.label)}</strong><small>ยังไม่มีแหล่งข้อมูล</small></span>
+        <span class="type-card-body"><strong>${esc(section.label)}</strong></span>
       </div>`;
     }
     return `<a class="type-card request-type-card lab-module-card" href="${esc(sectionUrl(section.key))}" style="${style}">
@@ -68,23 +69,23 @@
   }
 
   // หน้าแรกของ MNP LAB (#/lab): เลือกโมดูล — ไม่มีข้อมูลผลทดสอบ จึงไม่ต้องเรียกฐานข้อมูล
+  // ชื่อ "MNP LAB" อยู่ที่ breadcrumb และเมนูข้างแล้ว หัวหน้าจึงบอกเฉพาะสิ่งที่ทำในหน้านี้
   function chooserPage(isOpen) {
     return `<div class="lab-page">
-      <div class="page-heading"><div><div class="eyebrow">Laboratory</div><h1>MNP LAB</h1><p>ผลทดสอบของห้องปฏิบัติการ</p></div></div>
-      <div class="request-type-heading"><h2>เลือกโมดูล</h2></div>
+      <div class="request-type-heading"><h1>เลือกโมดูล</h1></div>
       <nav class="type-grid request-type-grid lab-module-grid" aria-label="โมดูล MNP LAB">${SECTIONS.map((section) => cardHtml(section, isOpen(section.key) === true)).join("")}</nav>
     </div>`;
   }
 
   // หัวของหน้าโมดูล: ปุ่มย้อนกลับไปหน้าเลือกโมดูล + แถบสีของโมดูล (ชื่อโมดูลเป็น h1 ที่นี่ที่เดียว)
-  // extra = ส่วนขวาของแถบ เช่น เวลาอ่านชีตกับปุ่มรีเฟรช · open: false = โมดูลที่ยังไม่เปิดใช้งาน (สีจางลง ไม่มีคำอธิบาย)
+  // แถบกะทัดรัด: ไอคอน + ชื่อเท่านั้น ("MNP LAB" อยู่ที่ breadcrumb แล้ว ไม่มีคำอธิบายที่พูดซ้ำชื่อ) เพื่อคืนพื้นที่ให้ตาราง
+  // extra = ส่วนขวาของแถบ เช่น เวลาอ่านชีตกับปุ่มรีเฟรช · open: false = โมดูลที่ยังไม่เปิดใช้งาน (สีจางลง)
   function moduleHead(key, { extra = "", open = true } = {}) {
     const section = find(key);
     if (!section) return "";
-    const summary = open && section.summary ? `<p>${esc(section.summary)}</p>` : "";
     return `<a class="request-back-link" href="#/lab" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header lab-module-header${open ? "" : " is-off"}" style="background:${gradient(section)}">
-        <div class="request-module-title"><span class="type-card-badge">${ICONS[section.key]}</span><div><div class="eyebrow">MNP LAB</div><h1>${esc(section.label)}</h1>${summary}</div></div>
+        <div class="request-module-title"><span class="type-card-badge">${ICONS[section.key]}</span><h1>${esc(section.label)}</h1></div>
         ${extra}
       </div>`;
   }
