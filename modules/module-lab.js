@@ -1,4 +1,7 @@
-// โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ เริ่มที่ผลทดสอบ Mooney
+// โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ มี 4 โมดูล: แดชบอร์ด · เปรียบเทียบเคมี · Mooney test report · MDR test report
+// (รายการ ลำดับ สี และ URL ของโมดูลอยู่ที่ lab-sections.js) #/lab เป็นหน้าเลือกโมดูลแบบการ์ดสีเหมือนหน้าคำร้อง (ไม่เรียกฐานข้อมูล)
+// ตอนนี้มีข้อมูลเฉพาะ Mooney: แดชบอร์ดสรุปจากฟีดเดียวกัน ส่วนเปรียบเทียบเคมีและ MDR ยังไม่มีแหล่งข้อมูล
+// จึงแสดงว่ายังไม่เปิดใช้งานและไม่เรียกข้อมูลใด ๆ
 //
 // Google Sheets เป็นข้อมูลต้นทาง; Apps Script ซิงก์เข้า Supabase ทุกนาทีผ่าน lab-sheet-sync
 // หน้าเว็บอ่านเฉพาะสรุป/วัสดุที่เลือกผ่าน RPC ที่ตรวจสิทธิ์ และตรวจข้อมูลใหม่ทุก 30 วินาที
@@ -18,7 +21,8 @@
   const model = window.MNP_LAB_MOONEY;
   const views = window.MNP_LAB_VIEWS;
   const chart = window.MNP_LAB_CHART;
-  if (!model || !views || !chart) return;
+  const sections = window.MNP_LAB_SECTIONS;
+  if (!model || !views || !chart || !sections) return;
 
   const PATH = "lab";
   const TITLE = "MNP LAB";
@@ -150,6 +154,26 @@
     };
   }
 
+  /* ---------- แดชบอร์ด: สรุปจากฟีดหน้ารวม (คำขอและแคชเดียวกับรายการวัสดุ) ---------- */
+
+  function bindDashboard() {
+    const bar = bindLiveBar();
+    const mooney = document.querySelector("#lab-dash-mooney");
+    let shown = "";
+    return {
+      showStatus: bar.showStatus,
+      setBusy: bar.setBusy,
+      update(feed) {
+        bar.paintMeta(feed);
+        const html = views.dashboardMooney(model.overviewStats(feed.materials));
+        // ตัวเลขไม่เปลี่ยน: ไม่วาดใหม่ (#app เป็น aria-live โปรแกรมอ่านหน้าจอจะได้ไม่อ่านตัวเลขเดิมซ้ำทุกรอบรีเฟรช)
+        if (html === shown) return;
+        shown = html;
+        mooney.innerHTML = html;
+      },
+    };
+  }
+
   /* ---------- หน้ารวม: รายการวัสดุ ---------- */
 
   // คืน { update(feed), showStatus, setBusy } — update วาดเฉพาะส่วนที่เปลี่ยน คงข้อความค้นหาและตัวเลือกเรียงของผู้ใช้ไว้
@@ -167,7 +191,7 @@
       body.innerHTML = views.materialRows(shown);
       empty.hidden = shown.length > 0;
       empty.textContent = materials.length === 0
-        ? "ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report"
+        ? views.NO_RESULTS
         : `ไม่พบวัสดุที่ตรงกับ “${query}”`;
       // จำนวนวัสดุเห็นได้จากรายการอยู่แล้ว บอกเฉพาะตอนค้นหาว่าเหลือกี่จากกี่
       count.textContent = query ? `${shown.length} จาก ${materials.length}` : "";
@@ -866,18 +890,57 @@
     view.update(feed);
     view.showStatus(feedStatus(feed));
     startAutoRefresh(view, material);
+    if (zoomOnPaint) {
+      zoomOnPaint = false;
+      zoomIntoContent();
+    }
     // Cached navigation paints immediately but always rechecks server permissions/data.
     if (cached) void refreshNow();
   }
 
+  // หน้าเลือกโมดูล (#/lab): การ์ดสีของ 4 โมดูล ไม่มีข้อมูลผลทดสอบ จึงไม่เรียกฐานข้อมูล
+  // กดการ์ด = หน้าโมดูลซูมเข้าเมื่อวาดเสร็จ (zoomIntoContent ของ app.js ตัวเดียวกับหน้าคำร้อง)
+  let zoomTo = null;
+  let zoomOnPaint = false;
+  function openChooser() {
+    pageVersion += 1;
+    app.innerHTML = shell(sections.chooserPage((key) => Object.hasOwn(PAGES, key)), PATH, TITLE);
+    bindShell();
+    document.querySelectorAll(".lab-module-card[href]").forEach((card) => card.addEventListener("click", (event) => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      zoomTo = card.hash;
+    }));
+  }
+
+  // โมดูลที่ยังไม่มีแหล่งข้อมูล (เปิดจาก URL ตรง ๆ เท่านั้น การ์ดไม่เป็นลิงก์): หน้าคงที่ ไม่มีคำขอไปฐานข้อมูล และไม่มีรีเฟรชอัตโนมัติ
+  function openNotReady(section) {
+    pageVersion += 1;
+    app.innerHTML = shell(sections.notReadyPage(section), PATH, TITLE);
+    bindShell();
+  }
+
+  // หน้าของโมดูลที่มีข้อมูลแล้ว — ที่เดียวที่ตัดสินว่าโมดูลใดเปิดใช้งาน โมดูลใน lab-sections.js ที่ไม่มีที่นี่แสดงว่ายังไม่เปิดใช้งาน
+  const SECONDS = REFRESH_MS / 1000;
+  const PAGES = {
+    dashboard: () => openPage({ title: TITLE, html: views.dashboardPage(SECONDS), material: null, bind: bindDashboard }),
+    mooney: (params) => {
+      const material = model.readMaterial(params.get("material"));
+      return material
+        ? openPage({ title: TITLE, html: views.materialPage(material, SECONDS), material, bind: () => bindMaterial(material) })
+        : openPage({ title: TITLE, html: views.overviewPage(SECONDS), material: null, bind: bindOverview });
+    },
+  };
+
   async function renderLab(params) {
     stopAutoRefresh();
+    zoomOnPaint = zoomTo !== null && zoomTo === location.hash;
+    zoomTo = null;
     // เมนูถูกซ่อนเมื่อไม่มีสิทธิ์ แต่พิมพ์ URL เองได้ — RPC เป็นด่านตรวจสิทธิ์จริง
     if (state.employee?.labAccess !== true) return deniedPage();
-    const material = model.readMaterial(params.get("material"));
-    return material
-      ? await openPage({ title: TITLE, html: views.materialPage(material, REFRESH_MS / 1000), material, bind: () => bindMaterial(material) })
-      : await openPage({ title: TITLE, html: views.overviewPage(REFRESH_MS / 1000), material: null, bind: bindOverview });
+    const section = sections.readSection(params);
+    if (!section) return deniedPage(); // ?module= ที่ไม่มีจริง = URL ที่ไม่มีอยู่
+    if (section === sections.HOME) return openChooser();
+    return Object.hasOwn(PAGES, section) ? await PAGES[section](params) : openNotReady(section);
   }
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});

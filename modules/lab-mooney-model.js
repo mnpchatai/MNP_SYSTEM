@@ -12,15 +12,16 @@
     return Number.isFinite(parsed) ? parsed : null;
   };
 
-  // วัสดุจาก query string (#/lab?material=…) — ตัดช่องว่าง จำกัดความยาว 60 ตัวอักษร ว่าง = ไม่เลือก
+  // วัสดุจาก query string (#/lab?module=mooney&material=…) — ตัดช่องว่าง จำกัดความยาว 60 ตัวอักษร ว่าง = ไม่เลือก
   function readMaterial(value) {
     const text = String(value ?? "").trim();
     return text && text.length <= MAX_MATERIAL_LENGTH ? text : null;
   }
 
+  // หน้าวัสดุอยู่ในโมดูล Mooney test report ของ MNP LAB (ดู lab-sections.js) ไม่มีวัสดุ = รายการวัสดุของโมดูลนี้
   function materialUrl(material) {
     const name = readMaterial(material);
-    return name ? `#/lab?material=${encodeURIComponent(name)}` : "#/lab";
+    return name ? `#/lab?module=mooney&material=${encodeURIComponent(name)}` : "#/lab?module=mooney";
   }
 
   const text = (value) => String(value ?? "");
@@ -79,6 +80,26 @@
       .sort((a, b) => String(b.testDate).localeCompare(String(a.testDate))
         || String(b.testTime ?? "").localeCompare(String(a.testTime ?? ""))
         || a.sampleId.localeCompare(b.sampleId, "en", { numeric: true }));
+  }
+
+  // ตัวเลขของแดชบอร์ด MNP LAB จากสรุปรายวัสดุในฟีด (ไม่ต้องใช้แถวผลทดสอบ): จำนวนวัสดุ ผลทดสอบรวม
+  // วันที่ทดสอบล่าสุด และจำนวนวัสดุที่ทดสอบในวันนั้น (วันที่เป็น ISO เทียบเป็นสตริงได้)
+  function overviewStats(materials) {
+    const list = Array.isArray(materials) ? materials : [];
+    let resultCount = 0;
+    let lastTested = null;
+    let latestMaterialCount = 0;
+    for (const item of list) {
+      const count = Number(item?.resultCount);
+      if (Number.isFinite(count) && count > 0) resultCount += count;
+      const date = typeof item?.lastTested === "string" && item.lastTested ? item.lastTested : null;
+      if (!date) continue;
+      if (lastTested === null || date > lastTested) {
+        lastTested = date;
+        latestMaterialCount = 1;
+      } else if (date === lastTested) latestMaterialCount += 1;
+    }
+    return { materialCount: list.length, resultCount, lastTested, latestMaterialCount };
   }
 
   // ค้นหาวัสดุแบบไม่สนตัวพิมพ์/ช่องว่างหัวท้าย ค่าว่าง = ทั้งหมด
@@ -395,7 +416,7 @@
 
   const api = {
     MAX_MATERIAL_LENGTH, SORT_OPTIONS,
-    readMaterial, materialUrl, normalizeFeed, buildOverview, resultsFor,
+    readMaterial, materialUrl, normalizeFeed, buildOverview, overviewStats, resultsFor,
     filterMaterials, sortMaterials, suggestMaterials,
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
     buildSeries, describe, niceScale, dateMarks, monthOf, monthsOf, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,

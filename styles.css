@@ -1893,6 +1893,36 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 @media (pointer: coarse) { .lab-back, .lab-refresh { width: 44px; height: 44px; } }
 .lab-status { color: var(--warning); }
 
+/* โมดูลของ MNP LAB (lab-sections.js): หน้าเลือกโมดูลเป็นการ์ดสีไล่ระดับ และหัวของแต่ละโมดูลเป็นแถบสีเดียวกับการ์ด
+   ใช้คอมโพเนนต์เดียวกับหน้าคำร้อง (.type-card, .request-type-grid, .request-module-header, .request-back-link) ที่นี่เพิ่มเฉพาะส่วนที่ LAB ต่าง:
+   โมดูลที่ยังไม่เปิดใช้งานลดความอิ่มสี (saturate คงความสว่าง ตัวอักษรขาวยังผ่าน 4.5:1) ไม่ยกตัวเมื่อชี้ เพราะไม่ใช่ลิงก์
+   และเวลาอ่านชีต/ปุ่มรีเฟรชบนแถบสีใช้ตัวอักษรขาวกับปุ่มพื้นขาว แบบเดียวกับปุ่มบนแถบสีของหน้าคำร้อง */
+.lab-module-card.is-off, .lab-module-header.is-off { filter: saturate(.3); }
+.lab-module-card.is-off { cursor: default; box-shadow: 0 6px 14px rgba(15, 23, 42, .12); }
+.lab-module-card.is-off:hover, .lab-module-card.is-off:active { transform: none; box-shadow: 0 6px 14px rgba(15, 23, 42, .12); }
+:root[data-theme="dark"] .lab-module-card.is-off, :root[data-theme="dark"] .lab-module-header.is-off { filter: saturate(.3) brightness(.96); }
+:root[data-theme="dark"] .lab-module-card.is-off, :root[data-theme="dark"] .lab-module-card.is-off:hover { box-shadow: 0 6px 14px rgba(0, 0, 0, .35); }
+.lab-module-card.is-off .request-type-count { padding: 3px 9px; background: rgba(15, 23, 42, .28); border-radius: 999px; }
+.lab-page .request-type-heading h1 { margin: 0; font-size: 20px; line-height: 1.4; }
+.lab-module-header { margin-bottom: 16px; padding: 16px 20px; }
+.lab-module-header h1 { margin: 0; font-size: clamp(22px, 2.2vw, 26px); }
+.lab-module-header .lab-live-text { color: rgba(255, 255, 255, .94); }
+.lab-module-header .lab-refresh { color: var(--ink); background: var(--paper); border-color: transparent; }
+.lab-module-header .lab-refresh:hover { color: var(--primary); background: var(--paper); }
+/* วงโฟกัสบนแถบสีเป็นสีขาว (สีหลักกลืนกับแถบน้ำเงิน) ขาวเทียบทุกสีของแถบได้ ≥ 4.5:1 */
+.lab-module-header .lab-refresh:focus-visible { outline-color: #fff; }
+.lab-module-header .lab-status:not(:empty) { padding: 3px 10px; color: #fff; background: rgba(15, 23, 42, .32); border-radius: 999px; font-weight: 600; }
+@media (max-width: 900px) {
+  .lab-module-header .lab-live { margin-left: 0; justify-content: flex-start; }
+}
+
+/* แดชบอร์ด: ตัวเลขสรุปต่อโมดูลที่มีข้อมูล (ตอนนี้มีเฉพาะ Mooney) */
+.lab-dash-block + .lab-dash-block { margin-top: 18px; }
+.lab-dash-head { margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.lab-dash-title { margin: 0; font-size: 15px; }
+.lab-dash-grid { margin-bottom: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.lab-dash-grid .summary strong { font-variant-numeric: tabular-nums; }
+
 /* สัญลักษณ์ซีรีส์: จุดสีเล็กหน้าชื่อ MH / MV (สีอยู่ที่ตัวสัญลักษณ์ ตัวหนังสือใช้สีข้อความ) */
 .lab-key { width: 10px; height: 10px; margin-right: 7px; flex: none; display: inline-block; }
 .lab-key-mh { background: var(--lab-mh); border-radius: 50%; }
@@ -2051,6 +2081,12 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 
 @media (max-width: 760px) {
   .lab-head { margin-bottom: 12px; gap: 8px; }
+  /* แดชบอร์ดบนมือถือ: สองช่องแรกคู่กัน ช่องวันที่ทดสอบล่าสุดเต็มแถว */
+  .lab-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lab-dash-grid .summary { min-height: 0; padding: 14px 16px; }
+  .lab-dash-grid .summary:nth-child(2) { border-top: 0; }
+  .lab-dash-grid .summary:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .lab-dash-grid .summary strong { margin: 8px 0 4px; font-size: 24px; }
   /* มือถือ: แถวแรก = ปุ่มกลับ + ชื่อวัสดุเต็มแถว แถวสอง = ตัวเลือก ID + เวลาอัปเดต/รีเฟรช */
   .lab-head-material .lab-title { flex: 1 1 calc(100% - 56px); }
   .lab-title-select { width: 100%; }

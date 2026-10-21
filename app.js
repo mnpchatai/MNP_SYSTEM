@@ -1668,14 +1668,12 @@ function queueModuleZoom(hash) {
   pendingModuleZoom = moduleZoomKey(new URLSearchParams(hash.split("?")[1]));
 }
 
-function playModuleZoom(params) {
-  if (pendingModuleZoom !== moduleZoomKey(params)) return;
-  pendingModuleZoom = null;
+// เอฟเฟกต์ "เข้าโมดูล" หลังกดการ์ดโมดูล ใช้ร่วมกันระหว่างหน้าคำร้องกับ MNP LAB (modules/module-lab.js)
+// onDone ทำงานเมื่อเล่นจบ ถูกยกเลิก หรือไม่ได้เล่น (เบราว์เซอร์ไม่รองรับ / ผู้ใช้ตั้งลดการเคลื่อนไหว)
+function zoomIntoContent(onDone = () => {}) {
   const content = document.querySelector(".content");
-  const createEntry = content?.querySelector(".request-create-entry");
-  const revealCreate = () => createEntry?.classList.remove("module-create-pending");
   if (!content?.animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    revealCreate();
+    onDone();
     return;
   }
   // Animate only the workspace content; navigation stays still and remains usable.
@@ -1684,8 +1682,15 @@ function playModuleZoom(params) {
     { opacity: 0.45, transform: "translateY(8px) scale(0.96)", transformOrigin: "50% 0" },
     { opacity: 1, transform: "translateY(0) scale(1)", transformOrigin: "50% 0" },
   ], { duration: 320, easing: "cubic-bezier(0.2, 0.75, 0.25, 1)" });
+  animation.finished.then(onDone, onDone);
+}
+
+function playModuleZoom(params) {
+  if (pendingModuleZoom !== moduleZoomKey(params)) return;
+  pendingModuleZoom = null;
+  const createEntry = document.querySelector(".content .request-create-entry");
   // Reveal the module's create action after entering, including cancelled animations.
-  animation.finished.then(revealCreate, revealCreate);
+  zoomIntoContent(() => createEntry?.classList.remove("module-create-pending"));
 }
 
 function bindModuleZoom(params) {
