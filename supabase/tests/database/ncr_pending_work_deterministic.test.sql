@@ -4,6 +4,9 @@
 --   1) สิทธิ์ของฟังก์ชันไม่เปลี่ยน
 --   2) ระหว่างยังไม่มีแนวทางป้องกัน: พนักงานและ ผจก. แผนก QA ได้รายการเดียว เป็นรายการส่งแนวทางป้องกันพร้อมวันกำหนด
 --   3) หลังส่งแนวทางป้องกันแล้ว: เหลือรายการติดตามผลการแก้ไขรายการเดียว
+-- หมายเหตุ: assertion แบบ is(count, 1) เป็นแค่ sanity check (distinct on คืนหนึ่งแถวต่อกลุ่มอยู่แล้ว จึงผ่านทั้งนิยามเดิมและใหม่)
+-- ตัวที่ตรวจการแก้จริงคือ results_eq ของ action/due_date ตอนยังไม่มีแนวทางป้องกัน ซึ่งนิยามเดิมคืนแถวใดแถวหนึ่งโดยไม่แน่นอน
+-- จึงยังไม่ได้ยืนยันว่า test นี้ล้มบนนิยามเดิมจริง เพราะยังไม่เคยรันบนนิยามเดิม
 begin;
 
 create extension if not exists pgtap with schema extensions;
@@ -63,7 +66,7 @@ select is(
    where item_type = 'ncr' and item_id = current_setting('test.ncr')::uuid
      and holder_id = '7c100000-0000-0000-0000-000000000103'),
   1,
-  'a QA employee in the responsible department has exactly one pending item for the NCR'
+  'sanity check: a QA employee in the responsible department has one row for the NCR'
 );
 select results_eq(
   $$ select action, due_date from private.pending_work_items(now())
@@ -78,7 +81,7 @@ select is(
    where item_type = 'ncr' and item_id = current_setting('test.ncr')::uuid
      and holder_id = '7c100000-0000-0000-0000-000000000104'),
   1,
-  'the QA manager of the responsible department has exactly one pending item for the NCR'
+  'sanity check: the QA manager of the responsible department has one row for the NCR'
 );
 select results_eq(
   $$ select action, due_date from private.pending_work_items(now())
