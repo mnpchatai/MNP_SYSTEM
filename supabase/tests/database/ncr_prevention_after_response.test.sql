@@ -107,11 +107,12 @@ select throws_ok(
   'NOT_AUTHORIZED',
   'a manager of an unrelated department cannot submit the prevention'
 );
-select set_config('request.jwt.claims', '{"sub":"79100000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+-- พนักงานแผนกที่รับผิดชอบส่งได้ตั้งแต่ 20261020010000 (ดู ncr_responder_designation.test.sql) จึงตรวจกับแผนกที่ไม่รับผิดชอบแทน
+select set_config('request.jwt.claims', '{"sub":"79100000-0000-0000-0000-000000000005","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_submit_prevention(current_setting('test.ncr')::uuid, 'ติดตั้งตัวควบคุมอุณหภูมิ') $$,
   'NOT_AUTHORIZED',
-  'staff of the responsible department cannot submit the prevention'
+  'staff of an unrelated department cannot submit the prevention'
 );
 select set_config('request.jwt.claims', '{"sub":"79100000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok(

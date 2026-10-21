@@ -294,12 +294,13 @@ select throws_ok(
   'NOT_AUTHORIZED',
   'a manager of an unrelated department cannot respond'
 );
-select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+-- พนักงานแผนกที่รับผิดชอบตอบได้ตั้งแต่ 20261020010000 (ดู ncr_responder_designation.test.sql) จึงตรวจกับพนักงานแผนกที่ไม่รับผิดชอบแทน
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000010","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_respond(current_setting('test.ncr_a')::uuid,
        array['machine'], 'อุณหภูมิอบไม่คงที่', 'คัดแยกและซ่อม', 'ติดตั้งตัวควบคุม') $$,
   'NOT_AUTHORIZED',
-  'staff of the responsible department cannot respond for the manager'
+  'staff of an unrelated department cannot respond'
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000004","role":"authenticated"}', true);
 select throws_ok(
@@ -678,11 +679,11 @@ select throws_ok(
   'NOT_AUTHORIZED',
   'a manager of an unrelated department cannot answer'
 );
-select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000010","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_answer_info(current_setting('test.ncr_a')::uuid, 'ส่งผลตรวจซ้ำและรูปแล้ว') $$,
   'NOT_AUTHORIZED',
-  'staff of the responsible department cannot answer (managers only)'
+  'staff of an unrelated department cannot answer'
 );
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok(
