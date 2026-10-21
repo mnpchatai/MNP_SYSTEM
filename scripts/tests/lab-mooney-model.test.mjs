@@ -30,10 +30,23 @@ test("a material in the URL is trimmed, length-limited and optional", () => {
 });
 
 test("material links are encoded so names with spaces or symbols stay in one query value", () => {
-  assert.equal(model.materialUrl("A1802"), "#/lab?material=A1802");
-  assert.equal(model.materialUrl("E00030S T"), "#/lab?material=E00030S%20T");
-  assert.equal(model.materialUrl("a&b=c#d"), "#/lab?material=a%26b%3Dc%23d");
-  assert.equal(model.materialUrl(""), "#/lab");
+  assert.equal(model.materialUrl("A1802"), "#/lab?module=mooney&material=A1802");
+  assert.equal(model.materialUrl("E00030S T"), "#/lab?module=mooney&material=E00030S%20T");
+  assert.equal(model.materialUrl("a&b=c#d"), "#/lab?module=mooney&material=a%26b%3Dc%23d");
+  assert.equal(model.materialUrl(""), "#/lab?module=mooney", "no material = the Mooney material list");
+  assert.equal(new URLSearchParams(model.materialUrl("a&b=c#d").split("?")[1]).get("material"), "a&b=c#d");
+});
+
+test("dashboard numbers come from the per-material summaries: materials, total results, latest test date", () => {
+  const stats = model.overviewStats([
+    { material: "A", resultCount: 12000, lastTested: "2026-10-01" },
+    { material: "B", resultCount: 30, lastTested: "2026-10-18" },
+    { material: "C", resultCount: 5, lastTested: "2026-10-18" },
+    { material: "D", resultCount: "x", lastTested: null },
+  ]);
+  assert.deepEqual(stats, { materialCount: 4, resultCount: 12035, lastTested: "2026-10-18", latestMaterialCount: 2 });
+  assert.deepEqual(model.overviewStats([]), { materialCount: 0, resultCount: 0, lastTested: null, latestMaterialCount: 0 });
+  assert.deepEqual(model.overviewStats(undefined), { materialCount: 0, resultCount: 0, lastTested: null, latestMaterialCount: 0 });
 });
 
 test("the live feed is normalised: numbers or null, camelCase, rows without material or date dropped", () => {

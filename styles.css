@@ -1893,6 +1893,22 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 @media (pointer: coarse) { .lab-back, .lab-refresh { width: 44px; height: 44px; } }
 .lab-status { color: var(--warning); }
 
+/* แถบเลือกโมดูลของ MNP LAB (lab-sections.js): แดชบอร์ด · เปรียบเทียบเคมี · Mooney test report · MDR test report
+   ใช้ปุ่มลิงก์ .filter แบบเดียวกับแท็บของหน้าผู้ดูแลระบบ ตัวที่เปิดอยู่เป็นชื่อหน้า (ไม่มีหัวข้อซ้ำบนหน้า) */
+.lab-head .lab-modules { margin: 0; gap: 6px; }
+.lab-modules .filter { min-height: 40px; padding: 0 14px; font-size: 13px; }
+.lab-modules .filter:hover:not(.active) { color: var(--ink); border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); }
+.lab-modules .filter:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) { .lab-modules .filter { min-height: 44px; } }
+
+/* แดชบอร์ด: ตัวเลขสรุปต่อโมดูลที่มีข้อมูล (ตอนนี้มีเฉพาะ Mooney) */
+.lab-dash-block + .lab-dash-block { margin-top: 18px; }
+.lab-dash-title { margin: 0 0 8px; font-size: 15px; }
+.lab-dash-title a { color: inherit; }
+.lab-dash-title a:hover { color: var(--primary); }
+.lab-dash-grid { margin-bottom: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.lab-dash-grid .summary strong { font-variant-numeric: tabular-nums; }
+
 /* สัญลักษณ์ซีรีส์: จุดสีเล็กหน้าชื่อ MH / MV (สีอยู่ที่ตัวสัญลักษณ์ ตัวหนังสือใช้สีข้อความ) */
 .lab-key { width: 10px; height: 10px; margin-right: 7px; flex: none; display: inline-block; }
 .lab-key-mh { background: var(--lab-mh); border-radius: 50%; }
@@ -2051,6 +2067,15 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 
 @media (max-width: 760px) {
   .lab-head { margin-bottom: 12px; gap: 8px; }
+  /* มือถือ: แถบเลือกโมดูลเป็นตาราง 2 × 2 เต็มแถว (ไม่ตกบรรทัดแบบฟันปลา) แล้วเวลาอัปเดต/รีเฟรชอยู่แถวถัดไป */
+  .lab-head .lab-modules { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lab-modules .filter { justify-content: center; text-align: center; }
+  /* แดชบอร์ดบนมือถือ: สองช่องแรกคู่กัน ช่องวันที่ทดสอบล่าสุดเต็มแถว */
+  .lab-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lab-dash-grid .summary { min-height: 0; padding: 14px 16px; }
+  .lab-dash-grid .summary:nth-child(2) { border-top: 0; }
+  .lab-dash-grid .summary:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .lab-dash-grid .summary strong { margin: 8px 0 4px; font-size: 24px; }
   /* มือถือ: แถวแรก = ปุ่มกลับ + ชื่อวัสดุเต็มแถว แถวสอง = ตัวเลือก ID + เวลาอัปเดต/รีเฟรช */
   .lab-head-material .lab-title { flex: 1 1 calc(100% - 56px); }
   .lab-title-select { width: 100%; }

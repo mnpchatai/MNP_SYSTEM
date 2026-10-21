@@ -8,6 +8,7 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const model = require("../../modules/lab-mooney-model.js");
 globalThis.MNP_LAB_MOONEY = model;
+globalThis.MNP_LAB_SECTIONS = require("../../modules/lab-sections.js");
 const chart = require("../../modules/lab-mooney-chart.js");
 globalThis.MNP_LAB_CHART = chart;
 const views = require("../../modules/lab-mooney-views.js");
@@ -473,8 +474,8 @@ test("the overview row shows the latest group with spread, change and trend, and
     row({ sample_id: "121", test_date: "2026-10-15", avg_mh: 82.5, sd_mh: 1.25, avg_mv: 39, sd_mv: 0.75 }),
   ] }).rows;
   const html = views.materialRows(model.buildMaterialSummaries(rows));
-  assert.match(html, /href="#\/lab\?material=A1802"/);
-  assert.match(html, /data-href="#\/lab\?material=A1802"/);
+  assert.match(html, /href="#\/lab\?module=mooney&amp;material=A1802"/);
+  assert.match(html, /data-href="#\/lab\?module=mooney&amp;material=A1802"/);
   assert.match(html, /<strong>82\.50<\/strong><span class="lab-sd">± 1\.25<\/span>/);
   assert.match(html, /Δ \+2\.50/);
   assert.match(html, /Δ −1\.00/);
@@ -640,11 +641,11 @@ test("in one ID's history the tip leaves the ID out (already chosen above) and a
 test("every element the page script looks up exists in the page it opens", () => {
   const source = readFileSync(new URL("../../modules/module-lab.js", import.meta.url), "utf8");
   const wanted = new Set([...source.matchAll(/"#(lab-[a-z-]+)"/g)].map((match) => match[1]));
-  const pages = views.overviewPage(30) + views.materialPage("A1802", 30);
+  const pages = views.dashboardPage(30) + views.overviewPage(30) + views.materialPage("A1802", 30);
   assert.ok(wanted.size > 15, `found ${wanted.size} selectors`);
   for (const id of wanted) assert.ok(pages.includes(`id="${id}"`), `#${id} is missing from the page markup`);
-  // หน้ารวมและหน้าวัสดุต้องมีแถบเวลา/รีเฟรชชุดเดียวกัน เพราะ bindLiveBar ผูกทั้งสองหน้า
-  for (const page of [views.overviewPage(30), views.materialPage("A1802", 30)]) {
+  // แดชบอร์ด หน้ารวม และหน้าวัสดุต้องมีแถบเวลา/รีเฟรชชุดเดียวกัน เพราะ bindLiveBar ผูกทุกหน้าที่อ่านฟีด
+  for (const page of [views.dashboardPage(30), views.overviewPage(30), views.materialPage("A1802", 30)]) {
     for (const id of ["lab-updated", "lab-refresh", "lab-status"]) assert.ok(page.includes(`id="${id}"`), `${id} on every page`);
   }
 });
@@ -681,4 +682,29 @@ test("there is no warning box listing unreadable sheet rows on either page", () 
     assert.doesNotMatch(page, /lab-problems|lab-warning|อ่านไม่ได้/);
   }
   assert.equal(views.problemsHtml, undefined);
+});
+
+test("the Mooney list and the dashboard open with the MNP LAB module bar as their title; the material page keeps its one-line head", () => {
+  const overview = views.overviewPage(30);
+  assert.match(overview, /<nav class="filters lab-modules"/);
+  assert.match(overview, /<a class="filter active" href="#\/lab\?module=mooney" aria-current="page">Mooney test report<\/a>/);
+  assert.match(overview, /<h1 class="sr-only">Mooney test report<\/h1>/);
+  assert.doesNotMatch(overview, /ผลทดสอบ Mooney<\/h1>/, "no second visible title next to the module bar");
+  const dashboard = views.dashboardPage(30);
+  assert.match(dashboard, /<a class="filter active" href="#\/lab" aria-current="page">แดชบอร์ด<\/a>/);
+  assert.match(dashboard, /<div id="lab-dash-mooney"><\/div>/);
+  const material = views.materialPage("A1802", 30);
+  assert.doesNotMatch(material, /lab-modules/);
+  assert.match(material, /<a class="icon-button lab-back" href="#\/lab\?module=mooney"/, "back goes to the Mooney material list, not the dashboard");
+});
+
+test("the dashboard shows each Mooney number once and says so when the sheet has no results yet", () => {
+  const html = views.dashboardMooney({ materialCount: 1234, resultCount: 56789, lastTested: "2026-10-18", latestMaterialCount: 2 });
+  assert.equal(count(html, /class="summary"/g), 3);
+  assert.match(html, /<span>วัสดุ<\/span><strong>1,234<\/strong>/);
+  assert.match(html, /<span>ผลทดสอบ \(ครั้ง\)<\/span><strong>56,789<\/strong>/);
+  assert.match(html, /<span>ทดสอบล่าสุด<\/span><strong>18\/10\/2026<\/strong><small>2 วัสดุ<\/small>/);
+  assert.equal(count(html, /18\/10\/2026/g), 1);
+  assert.match(views.dashboardMooney({ materialCount: 0, resultCount: 0, lastTested: null, latestMaterialCount: 0 }), /ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report/);
+  assert.match(views.dashboardMooney(undefined), /ยังไม่มีข้อมูลผลทดสอบ/);
 });

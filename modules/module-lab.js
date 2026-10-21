@@ -1,4 +1,6 @@
-// โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ เริ่มที่ผลทดสอบ Mooney
+// โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ มี 4 โมดูล: แดชบอร์ด · เปรียบเทียบเคมี · Mooney test report · MDR test report
+// (รายการ ลำดับ และ URL ของโมดูลอยู่ที่ lab-sections.js) ตอนนี้มีข้อมูลเฉพาะ Mooney: แดชบอร์ดสรุปจากฟีดเดียวกัน
+// ส่วนเปรียบเทียบเคมีและ MDR ยังไม่มีแหล่งข้อมูล จึงแสดงว่ายังไม่เปิดใช้งานและไม่เรียกข้อมูลใด ๆ
 //
 // Google Sheets เป็นข้อมูลต้นทาง; Apps Script ซิงก์เข้า Supabase ทุกนาทีผ่าน lab-sheet-sync
 // หน้าเว็บอ่านเฉพาะสรุป/วัสดุที่เลือกผ่าน RPC ที่ตรวจสิทธิ์ และตรวจข้อมูลใหม่ทุก 30 วินาที
@@ -18,7 +20,8 @@
   const model = window.MNP_LAB_MOONEY;
   const views = window.MNP_LAB_VIEWS;
   const chart = window.MNP_LAB_CHART;
-  if (!model || !views || !chart) return;
+  const sections = window.MNP_LAB_SECTIONS;
+  if (!model || !views || !chart || !sections) return;
 
   const PATH = "lab";
   const TITLE = "MNP LAB";
@@ -146,6 +149,21 @@
       },
       paintMeta(feed) {
         updated.textContent = `ข้อมูลชีต ${model.formatUpdatedAt(feed.generatedAt)}`;
+      },
+    };
+  }
+
+  /* ---------- แดชบอร์ด: สรุปจากฟีดหน้ารวม (คำขอและแคชเดียวกับรายการวัสดุ) ---------- */
+
+  function bindDashboard() {
+    const bar = bindLiveBar();
+    const mooney = document.querySelector("#lab-dash-mooney");
+    return {
+      showStatus: bar.showStatus,
+      setBusy: bar.setBusy,
+      update(feed) {
+        bar.paintMeta(feed);
+        mooney.innerHTML = views.dashboardMooney(model.overviewStats(feed.materials));
       },
     };
   }
@@ -870,14 +888,27 @@
     if (cached) void refreshNow();
   }
 
+  // โมดูลที่ยังไม่มีแหล่งข้อมูล: หน้าคงที่ ไม่มีคำขอไปฐานข้อมูล และไม่มีรีเฟรชอัตโนมัติ
+  function openNotReady(section) {
+    pageVersion += 1;
+    app.innerHTML = shell(sections.notReadyPage(section), PATH, TITLE);
+    bindShell();
+  }
+
   async function renderLab(params) {
     stopAutoRefresh();
     // เมนูถูกซ่อนเมื่อไม่มีสิทธิ์ แต่พิมพ์ URL เองได้ — RPC เป็นด่านตรวจสิทธิ์จริง
     if (state.employee?.labAccess !== true) return deniedPage();
+    const section = sections.readSection(params);
+    if (!section) return deniedPage(); // ?module= ที่ไม่มีจริง = URL ที่ไม่มีอยู่
+    if (!sections.isReady(section)) return openNotReady(section);
+    const seconds = REFRESH_MS / 1000;
+    if (section === "dashboard") return await openPage({ title: TITLE, html: views.dashboardPage(seconds), material: null, bind: bindDashboard });
+    if (section !== "mooney") return deniedPage();
     const material = model.readMaterial(params.get("material"));
     return material
-      ? await openPage({ title: TITLE, html: views.materialPage(material, REFRESH_MS / 1000), material, bind: () => bindMaterial(material) })
-      : await openPage({ title: TITLE, html: views.overviewPage(REFRESH_MS / 1000), material: null, bind: bindOverview });
+      ? await openPage({ title: TITLE, html: views.materialPage(material, seconds), material, bind: () => bindMaterial(material) })
+      : await openPage({ title: TITLE, html: views.overviewPage(seconds), material: null, bind: bindOverview });
   }
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});

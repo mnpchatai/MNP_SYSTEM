@@ -25,7 +25,7 @@ function setup(respond) {
     } },
     shell: (html) => html, bindShell() {}, loadingShell() {}, renderNotFound() { denied += 1; },
   });
-  for (const file of ["lab-mooney-model.js", "lab-mooney-chart.js", "lab-mooney-views.js", "module-lab.js"]) {
+  for (const file of ["lab-mooney-model.js", "lab-mooney-chart.js", "lab-sections.js", "lab-mooney-views.js", "module-lab.js"]) {
     vm.runInContext(readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8"), context);
   }
   return { context, calls, element, events, auth: (event) => authChange(event), denied: () => denied,
@@ -36,7 +36,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test("overview uses one scoped RPC and paints precomputed summaries without raw rows", async () => {
   const app = setup(async () => ({ data: body([{ material: "A", resultCount: 12000, lastTested: "2026-10-01" }]), error: null }));
-  await app.open();
+  await app.open("module=mooney");
   assert.deepEqual(JSON.parse(JSON.stringify(app.calls)), [{ name: "app_lab_mooney_feed", args: { p_material: null } }]);
   assert.match(app.element("#lab-materials").innerHTML, /A/);
   assert.match(app.element("#lab-materials").innerHTML, /12,000/);
@@ -48,9 +48,9 @@ test("cached navigation paints before slow revalidation, then removes access whe
   let count = 0;
   const app = setup(async () => ++count === 1 ? { data: body([{ material: "A", resultCount: 1 }]), error: null }
     : await new Promise((done) => { resolve = done; }));
-  await app.open();
+  await app.open("module=mooney");
   app.context.app.innerHTML = "reset";
-  await app.open();
+  await app.open("module=mooney");
   assert.notEqual(app.context.app.innerHTML, "reset", "cached screen paints without waiting for RPC");
   assert.equal(app.calls.length, 2, "server permissions still rechecked");
   resolve({ error: { message: "NOT_AUTHORIZED" } });
@@ -90,7 +90,7 @@ test("leaving LAB cancels stale initial renders; no permission means no RPC", as
 
 test("material navigation scopes its RPC and keeps the full material selector on an empty result", async () => {
   const app = setup(async () => ({ data: body([{ material: "A", resultCount: 2 }, { material: "B", resultCount: 3 }]), error: null }));
-  await app.open("material=A");
+  await app.open("module=mooney&material=A");
   assert.equal(app.calls[0].args.p_material, "A");
   assert.match(app.element("#lab-material-select").innerHTML, /value="A" selected/);
   assert.match(app.element("#lab-material-select").innerHTML, /value="B"/);
@@ -104,4 +104,41 @@ test("stale data retains its original date and gives a freshness warning", async
   await app.open();
   assert.match(app.element("#lab-updated").textContent, /01\/01\/2026/);
   assert.match(app.element("#lab-status").textContent, /ยังไม่อัปเดต/);
+});
+
+test("the dashboard is the landing page and reads the same compact overview RPC the Mooney list uses", async () => {
+  const app = setup(async () => ({ data: body([{ material: "A", resultCount: 12000, lastTested: "2026-10-01" }, { material: "B", resultCount: 5, lastTested: "2026-10-03" }]), error: null }));
+  await app.open();
+  assert.deepEqual(JSON.parse(JSON.stringify(app.calls)), [{ name: "app_lab_mooney_feed", args: { p_material: null } }]);
+  assert.match(app.context.app.innerHTML, /aria-current="page">แดชบอร์ด/);
+  assert.match(app.element("#lab-dash-mooney").innerHTML, /12,005/);
+  assert.match(app.element("#lab-dash-mooney").innerHTML, /03\/10\/2026/);
+  // แดชบอร์ดกับรายการวัสดุใช้แคชชุดเดียวกัน: เปิดรายการทันที แล้วตรวจสิทธิ์/ข้อมูลใหม่เบื้องหลังหนึ่งครั้ง
+  await app.open("module=mooney");
+  assert.match(app.element("#lab-materials").innerHTML, /A/);
+  assert.equal(app.calls.length, 2);
+});
+
+test("modules without a data source open without any RPC; unknown modules look like a missing page", async () => {
+  const app = setup(() => { throw new Error("must not query"); });
+  for (const key of ["chemical", "mdr"]) {
+    await app.open(`module=${key}`);
+    assert.match(app.context.app.innerHTML, /ยังไม่เปิดใช้งาน/);
+    assert.match(app.context.app.innerHTML, /aria-current="page"/);
+  }
+  assert.equal(app.calls.length, 0);
+  await app.open("module=unknown");
+  assert.equal(app.denied(), 1);
+  assert.equal(app.calls.length, 0);
+  const denied = setup(() => { throw new Error("must not query"); });
+  denied.context.state.employee.labAccess = false;
+  await denied.open("module=mdr");
+  assert.equal(denied.denied(), 1, "no LAB access: even a page without data is not shown");
+});
+
+test("links made before the modules were split (#/lab?material=…) still open the Mooney material page", async () => {
+  const app = setup(async () => ({ data: body([{ material: "A", resultCount: 2 }]), error: null }));
+  await app.open("material=A");
+  assert.equal(app.calls[0].args.p_material, "A");
+  assert.match(app.element("#lab-material-select").innerHTML, /value="A" selected/);
 });
