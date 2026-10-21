@@ -4,6 +4,8 @@
 //     เครื่องหมายคำพูด/วงเล็บที่ไม่ปิด ฯลฯ ล้วนทำให้ไม่ผ่าน)
 //   - description เป็นข้อความที่ไม่ว่าง (ค่าที่ YAML อ่านเป็น null, ตัวเลข, วันที่ ไม่นับ)
 //   - ค่า description แบบ plain ที่มี " #" ถูก YAML ตัดทิ้งเงียบ ๆ (ส่วนหลัง # เป็น comment) จึงเทียบข้อความที่เขียนกับที่ parser อ่านได้
+//     (ทั้งแบบค่าอยู่บรรทัดเดียวกับ key, ขึ้นบรรทัดใหม่เยื้องเข้าไป, ตัดหลายบรรทัด และ key ที่มีเครื่องหมายคำพูดหรือช่องว่างก่อน :)
+//     ค่าที่ขึ้นต้นด้วย # ที่บรรทัด key เป็น comment ของ YAML จึงถูกปฏิเสธโดยตั้งใจ แม้จะมีค่าอยู่บรรทัดถัดไป (แยกจากข้อความที่ถูกตัดไม่ได้)
 // name ต้องตรงชื่อไฟล์ และชื่อไฟล์เป็นตัวพิมพ์เล็ก ตัวเลข และ - เป็น convention ของ repo (เอกสารไม่ได้ระบุว่าทำให้ไฟล์ถูกข้าม)
 // ข้อจำกัด: ใช้ js-yaml เป็นตัวแทน parser ของ Claude Code ซึ่งไม่ทราบว่าใช้ตัวไหน (ผลต่างกันได้ในกรณีแปลก ๆ)
 // ไม่ตรงค่าที่ model/effort ยอมรับ เพราะเอกสารไม่ระบุว่าค่าที่ไม่รู้จักทำให้ไฟล์ถูกข้ามหรือไม่ และ Claude Code อาจเพิ่มค่าใหม่
@@ -20,19 +22,21 @@ const agentsDir = new URL("../../.claude/agents/", import.meta.url);
 // (ค่าที่ขึ้นต้นด้วย & หรือ ! ยังเทียบ เพราะ parser ตัดชื่อ anchor/tag ทิ้งเงียบ ๆ)
 function plainDescriptionRegion(frontmatter) {
   const lines = frontmatter.split(/\r?\n/);
-  const start = lines.findIndex((line) => /^description:/.test(line));
+  const keyLine = /^["']?description["']?\s*:/;
+  const start = lines.findIndex((line) => keyLine.test(line));
   if (start === -1) return null;
-  const first = lines[start].replace(/^description:\s*/, "");
-  if (first === "" || /^["'|>[{]/.test(first)) return null;
-  const parts = [first];
+  const rest = lines[start].replace(keyLine, "").trim();
+  const parts = [rest];
   for (let index = start + 1; index < lines.length && (lines[index].trim() === "" || /^\s/.test(lines[index])); index += 1) {
-    if (lines[index].trim() !== "") parts.push(lines[index].trim());
+    parts.push(lines[index].trim());
   }
-  return parts.join(" ");
+  const written = parts.filter((part) => part !== "");
+  if (written.length === 0 || /^["'|>[{]/.test(written[0])) return null;
+  return written.join(" ");
 }
 
 function frontmatterProblems(text, fileName) {
-  if (text.startsWith("﻿")) return ["file starts with a byte order mark (BOM), so the frontmatter may not be recognized"];
+  if (text.startsWith("\uFEFF")) return ["file starts with a byte order mark (BOM), so the frontmatter may not be recognized"];
   const block = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!block) return ["no frontmatter between two --- lines at the top of the file"];
 
@@ -102,6 +106,18 @@ test("an unquoted ' #' is rejected because YAML would silently drop the rest of 
   assert.match(problemsOf("name: coder\ndescription: Follows rule #1 of AGENTS.md")[0], /lost text/);
   assert.match(problemsOf("name: coder\ndescription: &note Keeps the text but YAML drops the anchor name")[0], /lost text/);
   assert.match(problemsOf("name: coder\ndescription: !!str Same for a tag")[0], /lost text/);
+  for (const frontmatter of [
+    "name: coder\ndescription:\n  Does a thing # and more text",
+    "name: coder\ndescription : Does # more",
+    'name: coder\n"description": x # y',
+    "name: coder\n'description': x # y",
+  ]) {
+    assert.match(problemsOf(frontmatter).join("\n"), /lost text/, frontmatter);
+  }
+  // a "# ..." right after the key is a YAML comment, so the text is dropped; rejected on purpose even when a value follows below
+  assert.match(problemsOf("name: coder\ndescription: # a note\n  Text on the next line").join("\n"), /lost text/);
+  assert.match(problemsOf("name: coder\ndescription: #x\n  y").join("\n"), /lost text/);
+  assert.deepEqual(problemsOf('name: coder\ndescription:\n  "Quoted on the next line # kept"'), []);
   assert.deepEqual(problemsOf('name: coder\ndescription: "Follows rule #1 of AGENTS.md"'), []);
 });
 
@@ -150,7 +166,7 @@ test("name must match the file name and description must be text", () => {
 test("a file without a closed frontmatter block, or with a BOM, is rejected", () => {
   assert.match(frontmatterProblems("name: coder\ndescription: x\n", "coder.md")[0], /no frontmatter/);
   assert.match(frontmatterProblems("---\nname: coder\ndescription: x\n", "coder.md")[0], /no frontmatter/);
-  assert.match(frontmatterProblems(`﻿${agent("name: coder\ndescription: x")}`, "coder.md")[0], /byte order mark/);
+  assert.match(frontmatterProblems(`\uFEFF${agent("name: coder\ndescription: x")}`, "coder.md")[0], /byte order mark/);
 });
 
 test("valid YAML the real files do not use today is still accepted", () => {
