@@ -78,6 +78,8 @@ test("every Database tests step after the scope step follows its result", () => 
   const scopeIndex = steps.findIndex((step) => step.id === "scope");
   assert.ok(scopeIndex > 0, "the db job needs a step with id: scope after checkout");
   assert.equal(steps[0].with?.["fetch-depth"], 0, "merge-base needs full history");
+  // ไม่มี --no-renames: ไฟล์ที่ย้ายออกจาก supabase/ จะรายงานเฉพาะพาธปลายทาง แล้วตัวกรองตอบ false ทั้งที่ไฟล์ต้นทางหายไป
+  assert.match(steps[scopeIndex].run, /git [^\n]*diff --name-only --no-renames /);
 
   const guarded = steps.slice(scopeIndex + 1);
   assert.ok(guarded.length >= 5, "setup-node, npm ci, supabase start, db:test, test:storage and stop");

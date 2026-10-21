@@ -61,7 +61,8 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             merge_base="$(git merge-base "origin/$BASE_REF" HEAD)"
-            changed="$(git -c core.quotepath=off diff --name-only "$merge_base" HEAD)"
+            # --no-renames: ไม่งั้น git พิมพ์เฉพาะพาธปลายทางของไฟล์ที่ย้าย และการย้ายไฟล์ออกจาก supabase/ จะหลุดตัวกรอง
+            changed="$(git -c core.quotepath=off diff --name-only --no-renames "$merge_base" HEAD)"
             run="$(scripts/ci/needs-db-tests.sh <<< "$changed")"
           else
             run=true
