@@ -8,6 +8,17 @@ const model = require("../../modules/lab-mooney-model.js");
 
 const params = (query) => new URLSearchParams(query);
 const count = (text, pattern) => (text.match(pattern) ?? []).length;
+const OPEN = new Set(["dashboard", "mooney"]);
+const isOpen = (key) => OPEN.has(key);
+const visibleText = (html) => html.replace(/<[^>]+>/g, " ");
+
+// WCAG relative luminance และ contrast กับตัวอักษรขาว
+const luminance = (hex) => {
+  const [r, g, b] = hex.match(/\w\w/g).map((part) => parseInt(part, 16) / 255)
+    .map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrastWithWhite = (hex) => 1.05 / (luminance(hex) + 0.05);
 
 test("MNP LAB has exactly four modules in the defined order", () => {
   assert.deepEqual(sections.SECTIONS.map((section) => [section.key, section.label]), [
@@ -16,22 +27,32 @@ test("MNP LAB has exactly four modules in the defined order", () => {
     ["mooney", "Mooney test report"],
     ["mdr", "MDR test report"],
   ]);
-  assert.equal(sections.DEFAULT, "dashboard");
   assert.ok(Object.isFrozen(sections.SECTIONS));
 });
 
-test("the module comes from ?module=, the dashboard is the landing page, and old material links still open Mooney", () => {
-  assert.equal(sections.readSection(params("")), "dashboard");
-  assert.equal(sections.readSection(params("module=")), "dashboard");
+test("every module colour keeps white card text readable (contrast ≥ 4.5:1 at both ends) and each module has its own colour", () => {
+  for (const section of sections.SECTIONS) {
+    assert.equal(section.theme.length, 2);
+    for (const hex of section.theme) {
+      assert.match(hex, /^#[0-9a-f]{6}$/);
+      assert.ok(contrastWithWhite(hex) >= 4.5, `${section.key} ${hex} is ${contrastWithWhite(hex).toFixed(2)}:1`);
+    }
+  }
+  assert.equal(new Set(sections.SECTIONS.map((section) => section.theme[0])).size, sections.SECTIONS.length);
+});
+
+test("#/lab is the module chooser, ?module= opens a module, and old material links still open Mooney", () => {
+  assert.equal(sections.readSection(params("")), sections.HOME);
+  assert.equal(sections.readSection(params("module=")), sections.HOME);
+  assert.equal(sections.readSection(null), sections.HOME);
   for (const key of ["dashboard", "chemical", "mooney", "mdr"]) assert.equal(sections.readSection(params(`module=${key}`)), key);
   assert.equal(sections.readSection(params("material=A1802")), "mooney", "links made before the modules were split");
   assert.equal(sections.readSection(params("module=mdr&material=A1802")), "mdr", "an explicit module wins");
-  for (const key of ["MOONEY", "lab", "x", "constructor", "__proto__"]) assert.equal(sections.readSection(params(`module=${key}`)), null);
-  assert.equal(sections.readSection(null), "dashboard");
+  for (const key of ["MOONEY", "home", "lab", "x", "constructor", "__proto__"]) assert.equal(sections.readSection(params(`module=${key}`)), null);
 });
 
 test("module links stay on the one #/lab route and agree with the Mooney material links", () => {
-  assert.equal(sections.sectionUrl("dashboard"), "#/lab");
+  assert.equal(sections.sectionUrl("dashboard"), "#/lab?module=dashboard");
   assert.equal(sections.sectionUrl("chemical"), "#/lab?module=chemical");
   assert.equal(sections.sectionUrl("mooney"), "#/lab?module=mooney");
   assert.equal(sections.sectionUrl("mdr"), "#/lab?module=mdr");
@@ -40,32 +61,44 @@ test("module links stay on the one #/lab route and agree with the Mooney materia
   assert.equal(sections.readSection(params(model.materialUrl("A1802").split("?")[1])), "mooney");
 });
 
-test("the module bar lists every module once and marks the open one as the current page", () => {
-  const html = sections.navHtml("mooney");
-  assert.match(html, /<nav class="filters lab-modules" aria-label="โมดูล MNP LAB">/);
-  assert.equal(count(html, /<a /g), 4);
-  assert.equal(count(html, /aria-current="page"/g), 1);
-  assert.match(html, /<a class="filter active" href="#\/lab\?module=mooney" aria-current="page">Mooney test report<\/a>/);
-  assert.match(html, /<a class="filter" href="#\/lab">แดชบอร์ด<\/a>/);
-  assert.equal(count(sections.navHtml("unknown"), /aria-current/g), 0);
+test("the chooser shows one gradient card per module; only open modules are links", () => {
+  const page = sections.chooserPage(isOpen);
+  assert.match(page, /<nav class="type-grid request-type-grid lab-module-grid" aria-label="โมดูล MNP LAB">/);
+  assert.equal(count(page, /class="type-card request-type-card lab-module-card/g), 4);
+  for (const section of sections.SECTIONS) {
+    assert.equal(count(visibleText(page), new RegExp(section.label, "g")), 1, `${section.label} once`);
+    assert.ok(page.includes(`background:linear-gradient(135deg, ${section.theme[0]}, ${section.theme[1]})`), `${section.key} wears its colour`);
+  }
+  assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/lab\?module=dashboard"/);
+  assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/lab\?module=mooney"/);
+  assert.doesNotMatch(page, /href="#\/lab\?module=(chemical|mdr)"/, "a module with nothing to open is not a link");
+  assert.equal(count(page, /lab-module-card is-off" aria-disabled="true"/g), 2);
+  assert.equal(count(page, /ยังไม่เปิดใช้งาน/g), 2);
+  assert.equal(count(page, /<svg /g), 4, "each card badge has the module icon");
+  assert.equal(count(sections.chooserPage(() => true), /is-off/g), 0);
+  assert.equal(count(sections.chooserPage(() => "yes"), /is-off/g), 4, "only an explicit true opens a card");
 });
 
-test("the open module is named once: the highlighted bar item, plus a screen-reader-only page heading", () => {
-  const head = sections.headHtml("mdr", `<span id="extra"></span>`);
-  assert.match(head, /<h1 class="sr-only">MDR test report<\/h1>/);
+test("a module page opens with a back link and a banner in the module's colour that names it once", () => {
+  const head = sections.moduleHead("mooney", { extra: `<span id="extra"></span>` });
+  assert.match(head, /<a class="request-back-link" href="#\/lab" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ<\/a>/);
+  assert.match(head, /class="page-heading request-module-header lab-module-header" style="background:linear-gradient\(135deg, #2563eb, #1e40af\)"/);
+  assert.match(head, /<h1>Mooney test report<\/h1><p>ผลทดสอบ MH\/MV ต่อวัสดุ<\/p>/);
   assert.match(head, /<span id="extra"><\/span>/);
-  const visible = head.replace(/<h1 class="sr-only">[^<]*<\/h1>/, "").replace(/<[^>]+>/g, " ");
-  assert.equal(count(visible, /MDR test report/g), 1);
+  assert.equal(count(visibleText(head), /Mooney test report/g), 1);
+  const off = sections.moduleHead("mdr", { open: false });
+  assert.match(off, /lab-module-header is-off/);
+  assert.doesNotMatch(off, /<p>/, "no description for a module that is not set up");
+  assert.equal(sections.moduleHead("unknown"), "");
 });
 
-test("a module without a data source shows a not-set-up page that does not repeat its name", () => {
+test("a module without a data source shows a not-set-up page that names the module only in its banner", () => {
   for (const key of ["chemical", "mdr"]) {
     const page = sections.notReadyPage(key);
-    assert.match(page, /ยังไม่เปิดใช้งาน/);
-    assert.match(page, /aria-current="page">[^<]+<\/a>/);
     const label = sections.SECTIONS.find((section) => section.key === key).label;
-    const visible = page.replace(/<h1 class="sr-only">[^<]*<\/h1>/, "").replace(/<[^>]+>/g, " ");
-    assert.equal(count(visible, new RegExp(label, "g")), 1, `${label} appears only in the module bar`);
+    assert.match(page, /ยังไม่เปิดใช้งาน/);
+    assert.match(page, new RegExp(`<h1>${label}</h1>`));
+    assert.equal(count(visibleText(page), new RegExp(label, "g")), 1);
     assert.doesNotMatch(page, /id="lab-refresh"/, "nothing to refresh: no data is read");
   }
 });

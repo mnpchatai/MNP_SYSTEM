@@ -1893,13 +1893,25 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 @media (pointer: coarse) { .lab-back, .lab-refresh { width: 44px; height: 44px; } }
 .lab-status { color: var(--warning); }
 
-/* แถบเลือกโมดูลของ MNP LAB (lab-sections.js): แดชบอร์ด · เปรียบเทียบเคมี · Mooney test report · MDR test report
-   ใช้ปุ่มลิงก์ .filter แบบเดียวกับแท็บของหน้าผู้ดูแลระบบ ตัวที่เปิดอยู่เป็นชื่อหน้า (ไม่มีหัวข้อซ้ำบนหน้า) */
-.lab-head .lab-modules { margin: 0; gap: 6px; }
-.lab-modules .filter { min-height: 40px; padding: 0 14px; font-size: 13px; }
-.lab-modules .filter:hover:not(.active) { color: var(--ink); border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); }
-.lab-modules .filter:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
-@media (pointer: coarse) { .lab-modules .filter { min-height: 44px; } }
+/* โมดูลของ MNP LAB (lab-sections.js): หน้าเลือกโมดูลเป็นการ์ดสีไล่ระดับ และหัวของแต่ละโมดูลเป็นแถบสีเดียวกับการ์ด
+   ใช้คอมโพเนนต์เดียวกับหน้าคำร้อง (.type-card, .request-type-grid, .request-module-header, .request-back-link) ที่นี่เพิ่มเฉพาะส่วนที่ LAB ต่าง:
+   โมดูลที่ยังไม่เปิดใช้งานลดความอิ่มสี (saturate คงความสว่าง ตัวอักษรขาวยังผ่าน 4.5:1) ไม่ยกตัวเมื่อชี้ เพราะไม่ใช่ลิงก์
+   และเวลาอ่านชีต/ปุ่มรีเฟรชบนแถบสีใช้ตัวอักษรขาวกับปุ่มพื้นขาว แบบเดียวกับปุ่มบนแถบสีของหน้าคำร้อง */
+.lab-module-card.is-off, .lab-module-header.is-off { filter: saturate(.3); }
+.lab-module-card.is-off { cursor: default; box-shadow: 0 6px 14px rgba(15, 23, 42, .12); }
+.lab-module-card.is-off:hover, .lab-module-card.is-off:active { transform: none; box-shadow: 0 6px 14px rgba(15, 23, 42, .12); }
+:root[data-theme="dark"] .lab-module-card.is-off, :root[data-theme="dark"] .lab-module-header.is-off { filter: saturate(.3) brightness(.96); }
+:root[data-theme="dark"] .lab-module-card.is-off, :root[data-theme="dark"] .lab-module-card.is-off:hover { box-shadow: 0 6px 14px rgba(0, 0, 0, .35); }
+.lab-module-card.is-off .request-type-count { padding: 3px 9px; background: rgba(15, 23, 42, .28); border-radius: 999px; }
+.lab-module-card:focus-visible { outline: 3px solid var(--primary); outline-offset: 4px; }
+.lab-module-header { margin-bottom: 16px; }
+.lab-module-header .lab-live-text { color: rgba(255, 255, 255, .94); }
+.lab-module-header .lab-refresh { color: var(--ink); background: var(--paper); border-color: transparent; }
+.lab-module-header .lab-refresh:hover { color: var(--primary); background: var(--paper); }
+.lab-module-header .lab-status:not(:empty) { padding: 3px 10px; color: #fff; background: rgba(15, 23, 42, .32); border-radius: 999px; font-weight: 600; }
+@media (max-width: 900px) {
+  .lab-module-header .lab-live { margin-left: 0; justify-content: flex-start; }
+}
 
 /* แดชบอร์ด: ตัวเลขสรุปต่อโมดูลที่มีข้อมูล (ตอนนี้มีเฉพาะ Mooney) */
 .lab-dash-block + .lab-dash-block { margin-top: 18px; }
@@ -2066,9 +2078,6 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 
 @media (max-width: 760px) {
   .lab-head { margin-bottom: 12px; gap: 8px; }
-  /* มือถือ: แถบเลือกโมดูลเป็นตาราง 2 × 2 เต็มแถว (ไม่ตกบรรทัดแบบฟันปลา) แล้วเวลาอัปเดต/รีเฟรชอยู่แถวถัดไป */
-  .lab-head .lab-modules { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .lab-modules .filter { justify-content: center; text-align: center; }
   /* แดชบอร์ดบนมือถือ: สองช่องแรกคู่กัน ช่องวันที่ทดสอบล่าสุดเต็มแถว */
   .lab-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lab-dash-grid .summary { min-height: 0; padding: 14px 16px; }

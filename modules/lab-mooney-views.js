@@ -1,7 +1,7 @@
 // ส่วนแสดงผลของโมดูล MNP LAB — สร้างเป็นข้อความ HTML ล้วนจากข้อมูลที่ model แปลงแล้ว ไม่มี DOM/Supabase เทสต์ที่ scripts/tests/lab-mooney-views.test.mjs
 //
 // module-lab.js เรียกที่นี่เพื่อได้ HTML ของแดชบอร์ด หน้ารวมและหน้าวัสดุ แล้วเป็นผู้ผูกเหตุการณ์ รีเฟรช และจัดการสิทธิ์เอง
-// หัวของแดชบอร์ดและหน้ารวมเป็นแถบเลือกโมดูลของ MNP LAB (lab-sections.js) ซึ่งเป็นชื่อหน้าด้วย
+// หัวของแดชบอร์ดและหน้ารวมเป็นแถบสีของโมดูล (lab-sections.js moduleHead) ซึ่งเป็นชื่อหน้าด้วย
 // ข้อความจากชีต (ชื่อวัสดุ ID) ถูก escape ทุกจุดก่อนใส่ใน HTML และ URL ของวัสดุผ่าน model.materialUrl เท่านั้น
 // ค่า AVG/SD ที่ merge ในชีตแสดงตามชีต ไม่คำนวณใหม่ (ค่าสรุปของกราฟ เช่น เฉลี่ยทั้งหมด คำนวณจากทุกครั้งที่ทดสอบและระบุไว้ชัดเจน)
 // ข้อยกเว้นเดียวคือขีด AVG ในกราฟ: ชุดที่ชีตยังไม่มี AVG หรือมีค่าที่ไม่ใช่ AVG ของแถวนั้น (อยู่นอกช่วงค่าที่อ่านได้ของชุด) กราฟเฉลี่ยค่าที่อ่านได้ให้เป็นขีดประ เพื่อให้ทุกครั้งที่ทดสอบมีขีดเสมอ (ตารางยังแสดงค่าตามชีต)
@@ -38,11 +38,11 @@
 
   // ตอนนี้มีข้อมูลเฉพาะ Mooney (โมดูลอื่นยังไม่มีแหล่งข้อมูล จึงไม่มีส่วนบนแดชบอร์ด)
   // เวลาอ่านชีตกับปุ่มรีเฟรชอยู่ในส่วนของ Mooney ไม่อยู่ที่หัวหน้า เพราะเป็นของชีต Mooney_Test_Report เท่านั้น
-  // หัวข้อบอกว่าตัวเลขเป็นของการทดสอบใด แต่ไม่เป็นลิงก์ (ทางไปโมดูลอยู่ที่แถบเลือกโมดูลแล้ว)
+  // หัวข้อบอกว่าตัวเลขเป็นของการทดสอบใด แต่ไม่เป็นลิงก์ (ทางไปโมดูลอยู่ที่การ์ดในหน้าเลือกโมดูล)
   // module-lab.js เติมตัวเลขลง #lab-dash-mooney ด้วย dashboardMooney ทุกครั้งที่ได้ฟีดใหม่
   function dashboardPage(seconds) {
     return `<div class="lab-page">
-      ${sections.headHtml("dashboard")}
+      ${sections.moduleHead("dashboard")}
       <section class="lab-dash-block" aria-labelledby="lab-dash-mooney-title">
         <div class="lab-dash-head"><h2 class="lab-dash-title" id="lab-dash-mooney-title">Mooney</h2>${liveBar(seconds)}</div>
         <div id="lab-dash-mooney"></div>
@@ -69,7 +69,7 @@
   function overviewPage(seconds) {
     const sortOptions = model.SORT_OPTIONS.map((option) => `<option value="${esc(option.key)}">${esc(option.label)}</option>`).join("");
     return `<div class="lab-page">
-      ${sections.headHtml("mooney", liveBar(seconds))}
+      ${sections.moduleHead("mooney", { extra: liveBar(seconds) })}
       <section class="card flush lab-overview-card">
         <div class="lab-toolbar">
           <div class="lab-search"><label class="sr-only" for="lab-search">ค้นหาวัสดุ</label><input class="input" id="lab-search" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="lab-search-list" enterkeyhint="go" autocomplete="off" maxlength="${model.MAX_MATERIAL_LENGTH}" placeholder="ค้นหาวัสดุ เช่น A1802">

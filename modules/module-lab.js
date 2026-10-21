@@ -1,6 +1,7 @@
 // โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ มี 4 โมดูล: แดชบอร์ด · เปรียบเทียบเคมี · Mooney test report · MDR test report
-// (รายการ ลำดับ และ URL ของโมดูลอยู่ที่ lab-sections.js) ตอนนี้มีข้อมูลเฉพาะ Mooney: แดชบอร์ดสรุปจากฟีดเดียวกัน
-// ส่วนเปรียบเทียบเคมีและ MDR ยังไม่มีแหล่งข้อมูล จึงแสดงว่ายังไม่เปิดใช้งานและไม่เรียกข้อมูลใด ๆ
+// (รายการ ลำดับ สี และ URL ของโมดูลอยู่ที่ lab-sections.js) #/lab เป็นหน้าเลือกโมดูลแบบการ์ดสีเหมือนหน้าคำร้อง (ไม่เรียกฐานข้อมูล)
+// ตอนนี้มีข้อมูลเฉพาะ Mooney: แดชบอร์ดสรุปจากฟีดเดียวกัน ส่วนเปรียบเทียบเคมีและ MDR ยังไม่มีแหล่งข้อมูล
+// จึงแสดงว่ายังไม่เปิดใช้งานและไม่เรียกข้อมูลใด ๆ
 //
 // Google Sheets เป็นข้อมูลต้นทาง; Apps Script ซิงก์เข้า Supabase ทุกนาทีผ่าน lab-sheet-sync
 // หน้าเว็บอ่านเฉพาะสรุป/วัสดุที่เลือกผ่าน RPC ที่ตรวจสิทธิ์ และตรวจข้อมูลใหม่ทุก 30 วินาที
@@ -889,11 +890,29 @@
     view.update(feed);
     view.showStatus(feedStatus(feed));
     startAutoRefresh(view, material);
+    if (zoomOnPaint) {
+      zoomOnPaint = false;
+      zoomIntoContent();
+    }
     // Cached navigation paints immediately but always rechecks server permissions/data.
     if (cached) void refreshNow();
   }
 
-  // โมดูลที่ยังไม่มีแหล่งข้อมูล: หน้าคงที่ ไม่มีคำขอไปฐานข้อมูล และไม่มีรีเฟรชอัตโนมัติ
+  // หน้าเลือกโมดูล (#/lab): การ์ดสีของ 4 โมดูล ไม่มีข้อมูลผลทดสอบ จึงไม่เรียกฐานข้อมูล
+  // กดการ์ด = หน้าโมดูลซูมเข้าเมื่อวาดเสร็จ (zoomIntoContent ของ app.js ตัวเดียวกับหน้าคำร้อง)
+  let zoomTo = null;
+  let zoomOnPaint = false;
+  function openChooser() {
+    pageVersion += 1;
+    app.innerHTML = shell(sections.chooserPage((key) => Object.hasOwn(PAGES, key)), PATH, TITLE);
+    bindShell();
+    document.querySelectorAll(".lab-module-card[href]").forEach((card) => card.addEventListener("click", (event) => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      zoomTo = card.hash;
+    }));
+  }
+
+  // โมดูลที่ยังไม่มีแหล่งข้อมูล (เปิดจาก URL ตรง ๆ เท่านั้น การ์ดไม่เป็นลิงก์): หน้าคงที่ ไม่มีคำขอไปฐานข้อมูล และไม่มีรีเฟรชอัตโนมัติ
   function openNotReady(section) {
     pageVersion += 1;
     app.innerHTML = shell(sections.notReadyPage(section), PATH, TITLE);
@@ -914,10 +933,13 @@
 
   async function renderLab(params) {
     stopAutoRefresh();
+    zoomOnPaint = zoomTo !== null && zoomTo === location.hash;
+    zoomTo = null;
     // เมนูถูกซ่อนเมื่อไม่มีสิทธิ์ แต่พิมพ์ URL เองได้ — RPC เป็นด่านตรวจสิทธิ์จริง
     if (state.employee?.labAccess !== true) return deniedPage();
     const section = sections.readSection(params);
     if (!section) return deniedPage(); // ?module= ที่ไม่มีจริง = URL ที่ไม่มีอยู่
+    if (section === sections.HOME) return openChooser();
     return Object.hasOwn(PAGES, section) ? await PAGES[section](params) : openNotReady(section);
   }
 

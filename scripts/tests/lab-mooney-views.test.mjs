@@ -684,24 +684,26 @@ test("there is no warning box listing unreadable sheet rows on either page", () 
   assert.equal(views.problemsHtml, undefined);
 });
 
-test("the Mooney list and the dashboard open with the MNP LAB module bar as their title; the material page keeps its one-line head", () => {
+test("the Mooney list and the dashboard open with their module's colour banner; the material page keeps its one-line head", () => {
   const overview = views.overviewPage(30);
-  assert.match(overview, /<nav class="filters lab-modules"/);
-  assert.match(overview, /<a class="filter active" href="#\/lab\?module=mooney" aria-current="page">Mooney test report<\/a>/);
-  assert.match(overview, /<h1 class="sr-only">Mooney test report<\/h1>/);
-  assert.doesNotMatch(overview, /ผลทดสอบ Mooney<\/h1>/, "no second visible title next to the module bar");
+  assert.match(overview, /<a class="request-back-link" href="#\/lab"/);
+  assert.match(overview, /request-module-header lab-module-header" style="background:linear-gradient\(135deg, #2563eb, #1e40af\)"/);
+  assert.match(overview, /<h1>Mooney test report<\/h1>/);
+  // เวลาอ่านชีตกับปุ่มรีเฟรชอยู่ในแถบสีของ Mooney (ด้านขวา) แบบเดียวกับปุ่มบนแถบสีของหน้าคำร้อง
+  assert.match(overview, /<\/div><\/div>\s*<div class="lab-live">[\s\S]*?id="lab-refresh"[\s\S]*?<\/div>\s*<\/div>\s*<section class="card flush lab-overview-card">/);
+  assert.equal(count(overview, /<h1/g), 1);
   const dashboard = views.dashboardPage(30);
-  assert.match(dashboard, /<a class="filter active" href="#\/lab" aria-current="page">แดชบอร์ด<\/a>/);
+  assert.match(dashboard, /<h1>แดชบอร์ด<\/h1>/);
   assert.match(dashboard, /<div id="lab-dash-mooney"><\/div>/);
-  // เวลาอ่านชีตเป็นของ Mooney_Test_Report: อยู่ในส่วนของ Mooney ไม่อยู่ที่หัวหน้าที่ใช้ร่วมทุกโมดูล
-  const head = dashboard.match(/<div class="lab-head">[\s\S]*?<\/nav>\s*<\/div>/)?.[0] ?? "";
-  assert.ok(head, "dashboard head is the module bar only");
-  assert.doesNotMatch(head, /lab-updated/);
+  // เวลาอ่านชีตเป็นของ Mooney_Test_Report: อยู่ในส่วนของ Mooney ไม่อยู่ที่แถบสีของแดชบอร์ด
+  const banner = dashboard.match(/<div class="page-heading request-module-header[\s\S]*?<\/h1>[\s\S]*?<\/div><\/div>\s*<\/div>/)?.[0] ?? "";
+  assert.ok(banner, "dashboard banner found");
+  assert.doesNotMatch(banner, /lab-updated/);
   assert.match(dashboard, /<div class="lab-dash-head"><h2 class="lab-dash-title" id="lab-dash-mooney-title">Mooney<\/h2><div class="lab-live">/);
-  assert.equal(count(dashboard, /href="#\/lab\?module=mooney"/g), 1, "the module bar is the one way to the Mooney module");
+  assert.doesNotMatch(dashboard, /href="#\/lab\?module=mooney"/, "the way to the Mooney module is its card on the chooser");
   const material = views.materialPage("A1802", 30);
-  assert.doesNotMatch(material, /lab-modules/);
-  assert.match(material, /<a class="icon-button lab-back" href="#\/lab\?module=mooney"/, "back goes to the Mooney material list, not the dashboard");
+  assert.doesNotMatch(material, /request-module-header|request-back-link/, "the dense material page keeps its one-line head");
+  assert.match(material, /<a class="icon-button lab-back" href="#\/lab\?module=mooney"/, "back goes to the Mooney material list");
 });
 
 test("the dashboard shows each Mooney number once and says so when the sheet has no results yet", () => {
