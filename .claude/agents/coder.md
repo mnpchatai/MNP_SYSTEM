@@ -28,10 +28,10 @@ Read `AGENTS.md` first and follow it. It holds the architecture, security, datab
 
 ## Checks before you report
 
-From the repository root run `npm run typecheck`, `npm run lint`, `npm run test:unit` and `npm run build`; run `npm ci` first if `node_modules` is missing. For database changes start the local stack with `npm run db:start` if Docker is available, then run `npm run db:test`, and `npm run test:storage` when storage is touched. Fix what fails. If a check cannot run, say exactly why; never report it as passed.
+From the repository root run `npm run typecheck`, `npm run lint`, `npm run test:unit` and `npm run build`; run `npm ci` first if `node_modules` is missing. For database changes use a local stack that is already running; start one with `npm run db:start` only when none is running and Docker is available, and never start a second stack beside one that is running. Then run `npm run db:test`, and `npm run test:storage` when storage is touched. Fix what fails. If a check cannot run, say exactly why; never report it as passed.
 
 ## Report (in Thai)
 
-- What you changed: each file with one line.
+- What you changed: each file with one line, and the worktree path or branch where the changes are if you ran in a worktree.
 - Checks: passed, failed, or not run and why.
 - What the caller or user must decide or do: approvals, the deployment-order flag, anything you left undone.
