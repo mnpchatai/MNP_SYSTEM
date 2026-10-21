@@ -49,14 +49,39 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+        with:
+          fetch-depth: 0
+      # job นี้รายงานผลทุกครั้ง (branch protection อ้างชื่อนี้) แต่ PR ที่ไม่แตะสิ่งที่ db:test / test:storage พึ่งพา
+      # ข้ามขั้นที่ช้าด้านล่าง push เข้า main และสั่งรันเองจากแท็บ Actions รันครบเสมอ
+      # ถ้าตัวกรองล้มเหลว step นี้ล้ม job จึงล้มตาม (ไม่ข้ามเงียบ ๆ)
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            merge_base="$(git merge-base "origin/$BASE_REF" HEAD)"
+            # --no-renames: ไม่งั้น git พิมพ์เฉพาะพาธปลายทางของไฟล์ที่ย้าย และการย้ายไฟล์ออกจาก supabase/ จะหลุดตัวกรอง
+            changed="$(git -c core.quotepath=off diff --name-only --no-renames "$merge_base" HEAD)"
+            run="$(scripts/ci/needs-db-tests.sh <<< "$changed")"
+          else
+            run=true
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "Database tests: $run"
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - if: steps.scope.outputs.run == 'true'
+        run: npm ci
       # stack local ใน runner เท่านั้น (ไม่แตะ Supabase Cloud) ข้าม service ที่ test ไม่ใช้
-      - run: npx supabase start -x studio,imgproxy,mailpit,logflare,vector,edge-runtime,realtime,supavisor,postgres-meta
-      - run: npm run db:test
-      - run: npm run test:storage
-      - if: always()
+      - if: steps.scope.outputs.run == 'true'
+        run: npx supabase start -x studio,imgproxy,mailpit,logflare,vector,edge-runtime,realtime,supavisor,postgres-meta
+      - if: steps.scope.outputs.run == 'true'
+        run: npm run db:test
+      - if: steps.scope.outputs.run == 'true'
+        run: npm run test:storage
+      - if: always() && steps.scope.outputs.run == 'true'
         run: npx supabase stop --no-backup

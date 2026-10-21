@@ -1268,8 +1268,10 @@ npm run db:test
 | Job | ตรวจอะไร |
 | --- | --- |
 | `Typecheck, lint, build` | `npm run typecheck`, `npm run lint`, `npm run build` (build ไม่ต้องใช้ env จริง ไม่มี secret ใน CI) |
-| `Database tests` | เปิด Supabase stack local **ภายใน runner** แล้วรัน `npm run db:test` ไม่แตะ Supabase Cloud |
+| `Database tests` | เปิด Supabase stack local **ภายใน runner** แล้วรัน `npm run db:test` และ `npm run test:storage` ไม่แตะ Supabase Cloud (ข้ามขั้นเหล่านี้ได้ใน PR บางแบบ ดูย่อหน้าถัดไป) |
 | `PR guards` (เฉพาะ PR) | `scripts/ci/check-pr-guards.sh` ตรวจสิ่งที่ git merge ตรวจไม่ได้ ดูหัวข้อถัดไป |
+
+`Database tests` รายงานผลทุกครั้ง (ชื่อ check นี้ใช้ใน branch protection) แต่ใน **PR** ที่ไม่แตะไฟล์ต่อไปนี้เลย จะข้ามขั้นเปิด Supabase stack (~2 นาที) และการทดสอบ ผลของ check จึงเป็นผ่านโดยไม่ได้รันฐานข้อมูลจริง: `supabase/**`, `package.json`, `package-lock.json`, `.nvmrc`, `.github/workflows/ci.yml`, `scripts/ci/needs-db-tests.sh` และ `scripts/tests/ncr-storage.integration.mjs` ตัวตัดสินคือ `scripts/ci/needs-db-tests.sh` (รับรายชื่อไฟล์ที่เปลี่ยนจาก stdin พิมพ์ `true` หรือ `false`) และ `scripts/tests/ci-db-scope.test.mjs` ตรวจทั้งสคริปต์และการเดินสายใน `ci.yml` ถ้าตัวกรองเองล้มเหลว job จะล้ม ไม่ข้ามเงียบ ๆ push เข้า `main` และการสั่งรันเองจากแท็บ Actions รันครบทุกครั้ง ถ้ามีไฟล์ใหม่ที่ `db:test` หรือ `test:storage` เริ่มพึ่งพา ต้องเพิ่มใน `pattern` ของสคริปต์ด้วย
 
 `PR guards` มีไว้กันปัญหาตอนหลาย PR (หลาย AI/session) เปิดพร้อมกัน:
 

@@ -21,7 +21,9 @@ Read `AGENTS.md` first. Its authentication, secrets, database and storage sectio
 
 ## Scope
 
-Audit what the caller names. If no scope is given, cover:
+Audit what the caller names. If no scope is given, audit only the files changed against `origin/main` (`git diff "$(git merge-base origin/main HEAD)"`, plus untracked files), and read the code they call or are called by only as far as you need to judge whether a weakness is exploitable. Do not widen to the rest of the repository; a whole-repository audit happens only when the caller says it wants a full audit.
+
+Areas to cover, limited to the ones the scope touches (all of them for a full audit):
 
 1. Entry points that need no login (Edge Functions, Route Handlers): input validation, abuse (rate limits, enumeration, notification flooding), and what each action returns or stores.
 2. Authorization: server-side checks of session, active employee, role/permission, data scope and state transition; any trust in client-supplied roles or ids.
@@ -43,6 +45,7 @@ Audit what the caller names. If no scope is given, cover:
 
 - Summary: counts by severity and the one or two things to fix first.
 - Each finding: severity, `file_path:line_number`, attacker path, impact, suggested fix, confidence.
+- The scope you audited: the files or areas, and whether it was the diff or a full audit.
 - What you checked and found sound, briefly.
 - What you did not check, and why.
 - No praise and no restatement of the code.
