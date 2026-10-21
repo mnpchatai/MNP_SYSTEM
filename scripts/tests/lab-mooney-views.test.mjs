@@ -693,6 +693,12 @@ test("the Mooney list and the dashboard open with the MNP LAB module bar as thei
   const dashboard = views.dashboardPage(30);
   assert.match(dashboard, /<a class="filter active" href="#\/lab" aria-current="page">แดชบอร์ด<\/a>/);
   assert.match(dashboard, /<div id="lab-dash-mooney"><\/div>/);
+  // เวลาอ่านชีตเป็นของ Mooney_Test_Report: อยู่ในส่วนของ Mooney ไม่อยู่ที่หัวหน้าที่ใช้ร่วมทุกโมดูล
+  const head = dashboard.match(/<div class="lab-head">[\s\S]*?<\/nav>\s*<\/div>/)?.[0] ?? "";
+  assert.ok(head, "dashboard head is the module bar only");
+  assert.doesNotMatch(head, /lab-updated/);
+  assert.match(dashboard, /<div class="lab-dash-head"><h2 class="lab-dash-title" id="lab-dash-mooney-title">Mooney<\/h2><div class="lab-live">/);
+  assert.equal(count(dashboard, /href="#\/lab\?module=mooney"/g), 1, "the module bar is the one way to the Mooney module");
   const material = views.materialPage("A1802", 30);
   assert.doesNotMatch(material, /lab-modules/);
   assert.match(material, /<a class="icon-button lab-back" href="#\/lab\?module=mooney"/, "back goes to the Mooney material list, not the dashboard");

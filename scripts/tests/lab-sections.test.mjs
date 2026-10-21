@@ -20,14 +20,6 @@ test("MNP LAB has exactly four modules in the defined order", () => {
   assert.ok(Object.isFrozen(sections.SECTIONS));
 });
 
-test("only modules with a data source are open; the others say they are not set up yet", () => {
-  assert.equal(sections.isReady("dashboard"), true);
-  assert.equal(sections.isReady("mooney"), true);
-  assert.equal(sections.isReady("chemical"), false);
-  assert.equal(sections.isReady("mdr"), false);
-  assert.equal(sections.isReady("unknown"), false);
-});
-
 test("the module comes from ?module=, the dashboard is the landing page, and old material links still open Mooney", () => {
   assert.equal(sections.readSection(params("")), "dashboard");
   assert.equal(sections.readSection(params("module=")), "dashboard");

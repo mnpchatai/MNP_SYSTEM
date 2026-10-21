@@ -16,7 +16,8 @@ function setup(respond) {
     });
     return elements.get(selector);
   };
-  const window = { addEventListener: (name, fn) => { events[name] = fn; }, setInterval: () => 1, clearInterval() {}, clearTimeout() {}, cancelAnimationFrame() {} };
+  const ticks = [];
+  const window = { addEventListener: (name, fn) => { events[name] = fn; }, setInterval: (fn) => { ticks.push(fn); return ticks.length; }, clearInterval() {}, clearTimeout() {}, cancelAnimationFrame() {} };
   const context = vm.createContext({ window, console, URLSearchParams, Map, Set, Date, Intl, location: { hash: "#/lab" },
     document: { hidden: false, addEventListener() {}, querySelector: element },
     state: { employee: { id: "admin", labAccess: true } }, app: { innerHTML: "" },
@@ -28,7 +29,7 @@ function setup(respond) {
   for (const file of ["lab-mooney-model.js", "lab-mooney-chart.js", "lab-sections.js", "lab-mooney-views.js", "module-lab.js"]) {
     vm.runInContext(readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8"), context);
   }
-  return { context, calls, element, events, auth: (event) => authChange(event), denied: () => denied,
+  return { context, calls, element, events, auth: (event) => authChange(event), denied: () => denied, tick: () => ticks.at(-1)(),
     open: (params = "") => window.MNP_REQUEST_MODULES.MNP_LAB.pages.lab(new URLSearchParams(params)) };
 }
 const body = (materials = []) => ({ generated_at: new Date().toISOString(), materials, rows: [] });
@@ -141,4 +142,25 @@ test("links made before the modules were split (#/lab?material=…) still open t
   await app.open("material=A");
   assert.equal(app.calls[0].args.p_material, "A");
   assert.match(app.element("#lab-material-select").innerHTML, /value="A" selected/);
+});
+
+test("dashboard auto-refresh repaints only when the numbers change and removes the page when access is revoked", async () => {
+  let response = { data: body([{ material: "A", resultCount: 1, lastTested: "2026-10-01" }]), error: null };
+  const app = setup(async () => response);
+  await app.open();
+  const tiles = app.element("#lab-dash-mooney");
+  tiles.innerHTML = "unchanged";
+  app.tick();
+  await flush();
+  assert.equal(tiles.innerHTML, "unchanged", "same numbers: nothing is redrawn inside the aria-live region");
+  response = { data: body([{ material: "A", resultCount: 2, lastTested: "2026-10-02" }]), error: null };
+  app.tick();
+  await flush();
+  assert.match(tiles.innerHTML, /02\/10\/2026/);
+  response = { data: null, error: { message: "NOT_AUTHORIZED" } };
+  app.tick();
+  await flush();
+  assert.equal(app.denied(), 1);
+  assert.equal(app.context.state.employee.labAccess, false);
+  assert.equal(app.calls.length, 4);
 });

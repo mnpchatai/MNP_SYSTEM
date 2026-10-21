@@ -88,13 +88,17 @@
     const list = Array.isArray(materials) ? materials : [];
     let resultCount = 0;
     let lastTested = null;
+    let latestMaterialCount = 0;
     for (const item of list) {
       const count = Number(item?.resultCount);
       if (Number.isFinite(count) && count > 0) resultCount += count;
       const date = typeof item?.lastTested === "string" && item.lastTested ? item.lastTested : null;
-      if (date && (lastTested === null || date > lastTested)) lastTested = date;
+      if (!date) continue;
+      if (lastTested === null || date > lastTested) {
+        lastTested = date;
+        latestMaterialCount = 1;
+      } else if (date === lastTested) latestMaterialCount += 1;
     }
-    const latestMaterialCount = lastTested === null ? 0 : list.filter((item) => item?.lastTested === lastTested).length;
     return { materialCount: list.length, resultCount, lastTested, latestMaterialCount };
   }
 

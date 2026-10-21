@@ -158,12 +158,17 @@
   function bindDashboard() {
     const bar = bindLiveBar();
     const mooney = document.querySelector("#lab-dash-mooney");
+    let shown = "";
     return {
       showStatus: bar.showStatus,
       setBusy: bar.setBusy,
       update(feed) {
         bar.paintMeta(feed);
-        mooney.innerHTML = views.dashboardMooney(model.overviewStats(feed.materials));
+        const html = views.dashboardMooney(model.overviewStats(feed.materials));
+        // ตัวเลขไม่เปลี่ยน: ไม่วาดใหม่ (#app เป็น aria-live โปรแกรมอ่านหน้าจอจะได้ไม่อ่านตัวเลขเดิมซ้ำทุกรอบรีเฟรช)
+        if (html === shown) return;
+        shown = html;
+        mooney.innerHTML = html;
       },
     };
   }
@@ -185,7 +190,7 @@
       body.innerHTML = views.materialRows(shown);
       empty.hidden = shown.length > 0;
       empty.textContent = materials.length === 0
-        ? "ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report"
+        ? views.NO_RESULTS
         : `ไม่พบวัสดุที่ตรงกับ “${query}”`;
       // จำนวนวัสดุเห็นได้จากรายการอยู่แล้ว บอกเฉพาะตอนค้นหาว่าเหลือกี่จากกี่
       count.textContent = query ? `${shown.length} จาก ${materials.length}` : "";
@@ -895,20 +900,25 @@
     bindShell();
   }
 
+  // หน้าของโมดูลที่มีข้อมูลแล้ว — ที่เดียวที่ตัดสินว่าโมดูลใดเปิดใช้งาน โมดูลใน lab-sections.js ที่ไม่มีที่นี่แสดงว่ายังไม่เปิดใช้งาน
+  const SECONDS = REFRESH_MS / 1000;
+  const PAGES = {
+    dashboard: () => openPage({ title: TITLE, html: views.dashboardPage(SECONDS), material: null, bind: bindDashboard }),
+    mooney: (params) => {
+      const material = model.readMaterial(params.get("material"));
+      return material
+        ? openPage({ title: TITLE, html: views.materialPage(material, SECONDS), material, bind: () => bindMaterial(material) })
+        : openPage({ title: TITLE, html: views.overviewPage(SECONDS), material: null, bind: bindOverview });
+    },
+  };
+
   async function renderLab(params) {
     stopAutoRefresh();
     // เมนูถูกซ่อนเมื่อไม่มีสิทธิ์ แต่พิมพ์ URL เองได้ — RPC เป็นด่านตรวจสิทธิ์จริง
     if (state.employee?.labAccess !== true) return deniedPage();
     const section = sections.readSection(params);
     if (!section) return deniedPage(); // ?module= ที่ไม่มีจริง = URL ที่ไม่มีอยู่
-    if (!sections.isReady(section)) return openNotReady(section);
-    const seconds = REFRESH_MS / 1000;
-    if (section === "dashboard") return await openPage({ title: TITLE, html: views.dashboardPage(seconds), material: null, bind: bindDashboard });
-    if (section !== "mooney") return deniedPage();
-    const material = model.readMaterial(params.get("material"));
-    return material
-      ? await openPage({ title: TITLE, html: views.materialPage(material, seconds), material, bind: () => bindMaterial(material) })
-      : await openPage({ title: TITLE, html: views.overviewPage(seconds), material: null, bind: bindOverview });
+    return Object.hasOwn(PAGES, section) ? await PAGES[section](params) : openNotReady(section);
   }
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});

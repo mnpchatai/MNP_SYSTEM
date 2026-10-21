@@ -36,23 +36,27 @@
 
   /* ---------- แดชบอร์ดของ MNP LAB ---------- */
 
-  // ตอนนี้มีข้อมูลเฉพาะ Mooney (โมดูลอื่นยังไม่มีแหล่งข้อมูล จึงไม่มีส่วนบนแดชบอร์ด) เวลาอ่านชีตคือของชีต Mooney_Test_Report
+  // ตอนนี้มีข้อมูลเฉพาะ Mooney (โมดูลอื่นยังไม่มีแหล่งข้อมูล จึงไม่มีส่วนบนแดชบอร์ด)
+  // เวลาอ่านชีตกับปุ่มรีเฟรชอยู่ในส่วนของ Mooney ไม่อยู่ที่หัวหน้า เพราะเป็นของชีต Mooney_Test_Report เท่านั้น
+  // หัวข้อบอกว่าตัวเลขเป็นของการทดสอบใด แต่ไม่เป็นลิงก์ (ทางไปโมดูลอยู่ที่แถบเลือกโมดูลแล้ว)
   // module-lab.js เติมตัวเลขลง #lab-dash-mooney ด้วย dashboardMooney ทุกครั้งที่ได้ฟีดใหม่
   function dashboardPage(seconds) {
     return `<div class="lab-page">
-      ${sections.headHtml("dashboard", liveBar(seconds))}
+      ${sections.headHtml("dashboard")}
       <section class="lab-dash-block" aria-labelledby="lab-dash-mooney-title">
-        <h2 class="lab-dash-title" id="lab-dash-mooney-title"><a href="${esc(model.materialUrl(""))}">Mooney</a></h2>
+        <div class="lab-dash-head"><h2 class="lab-dash-title" id="lab-dash-mooney-title">Mooney</h2>${liveBar(seconds)}</div>
         <div id="lab-dash-mooney"></div>
       </section>
     </div>`;
   }
 
+  const NO_RESULTS = "ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report";
+
   const tile = (label, value, note = "") => `<div class="summary"><span>${esc(label)}</span><strong>${esc(value)}</strong>${note ? `<small>${esc(note)}</small>` : ""}</div>`;
 
   // stats จาก model.overviewStats: จำนวนวัสดุ / ผลทดสอบรวม / วันที่ทดสอบล่าสุดกับจำนวนวัสดุที่ทดสอบวันนั้น
   function dashboardMooney(stats) {
-    if (!stats?.materialCount) return `<div class="card"><div class="empty">ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report</div></div>`;
+    if (!stats?.materialCount) return `<div class="card"><div class="empty">${esc(NO_RESULTS)}</div></div>`;
     return `<div class="summary-grid lab-dash-grid">
         ${tile("วัสดุ", int(stats.materialCount))}
         ${tile("ผลทดสอบ (ครั้ง)", int(stats.resultCount))}
@@ -335,7 +339,7 @@
   }
 
   const api = {
-    ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS,
+    ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS, NO_RESULTS,
     liveBar, dashboardPage, dashboardMooney, overviewPage, materialRows, materialSuggestions,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
     resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey, rangeAnnouncement, monthOptions,

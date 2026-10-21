@@ -7,13 +7,13 @@
 // ลิงก์เดิมก่อนแยกโมดูล (#/lab?material=<วัสดุ>) ยังเปิดหน้าวัสดุของ Mooney ได้
 //
 // แถบเลือกโมดูลเป็นทั้งตัวสลับและชื่อหน้า (โมดูลที่เปิดอยู่ไฮไลต์ และเป็น h1 สำหรับโปรแกรมอ่านหน้าจอ) จึงไม่มีหัวข้อซ้ำบนหน้า
-// โมดูลที่ ready: false ยังไม่มีแหล่งข้อมูล หน้าเว็บแสดงว่ายังไม่เปิดใช้งาน และไม่เรียกข้อมูลใด ๆ
+// โมดูลที่ module-lab.js ยังไม่มีหน้าให้ (PAGES) คือยังไม่มีแหล่งข้อมูล: แสดง notReadyPage และไม่เรียกข้อมูลใด ๆ
 (function (root) {
   const SECTIONS = Object.freeze([
-    Object.freeze({ key: "dashboard", label: "แดชบอร์ด", ready: true }),
-    Object.freeze({ key: "chemical", label: "เปรียบเทียบเคมี", ready: false }),
-    Object.freeze({ key: "mooney", label: "Mooney test report", ready: true }),
-    Object.freeze({ key: "mdr", label: "MDR test report", ready: false }),
+    Object.freeze({ key: "dashboard", label: "แดชบอร์ด" }),
+    Object.freeze({ key: "chemical", label: "เปรียบเทียบเคมี" }),
+    Object.freeze({ key: "mooney", label: "Mooney test report" }),
+    Object.freeze({ key: "mdr", label: "MDR test report" }),
   ]);
   const DEFAULT = "dashboard";
 
@@ -58,7 +58,7 @@
     </div>`;
   }
 
-  const api = { SECTIONS, DEFAULT, readSection, sectionUrl, isReady: (key) => find(key)?.ready === true, navHtml, headHtml, notReadyPage };
+  const api = { SECTIONS, DEFAULT, readSection, sectionUrl, navHtml, headHtml, notReadyPage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_SECTIONS = api;
 })(typeof window !== "undefined" ? window : globalThis);

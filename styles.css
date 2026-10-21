@@ -1903,9 +1903,8 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 
 /* แดชบอร์ด: ตัวเลขสรุปต่อโมดูลที่มีข้อมูล (ตอนนี้มีเฉพาะ Mooney) */
 .lab-dash-block + .lab-dash-block { margin-top: 18px; }
-.lab-dash-title { margin: 0 0 8px; font-size: 15px; }
-.lab-dash-title a { color: inherit; }
-.lab-dash-title a:hover { color: var(--primary); }
+.lab-dash-head { margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.lab-dash-title { margin: 0; font-size: 15px; }
 .lab-dash-grid { margin-bottom: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lab-dash-grid .summary strong { font-variant-numeric: tabular-nums; }
 
