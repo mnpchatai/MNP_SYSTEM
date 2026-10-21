@@ -32,10 +32,12 @@ select ok(
     and has_function_privilege('authenticated', 'public.app_ncr_dispose(uuid, text[], uuid[], text, uuid[])', 'execute'),
   'only signed-in users can execute the responder RPCs'
 );
-select is(
-  to_regprocedure('public.app_ncr_dispose(uuid, text[], uuid[], text)'),
-  null,
-  'the old four-argument app_ncr_dispose is gone, so calls with 3, 4 or 5 arguments stay unambiguous'
+select ok(
+  to_regprocedure('public.app_ncr_dispose(uuid, text[], uuid[], text)') is not null
+    and to_regprocedure('public.app_ncr_dispose(uuid, text[], uuid[], text, uuid[])') is not null
+    and has_function_privilege('authenticated', 'public.app_ncr_dispose(uuid, text[], uuid[], text)', 'execute')
+    and not has_function_privilege('anon', 'public.app_ncr_dispose(uuid, text[], uuid[], text)', 'execute'),
+  'the four-argument app_ncr_dispose stays callable (a wrapper) next to the five-argument one, with the same privileges as before'
 );
 
 -- id ของบัญชีทดสอบ (persona) เก็บไว้ตอนเป็น postgres: RLS ซ่อนแถว inactive จาก client โดยตั้งใจ

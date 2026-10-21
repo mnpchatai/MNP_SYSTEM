@@ -20,8 +20,10 @@
 -- ลำดับ deploy: ต้องนำ migration นี้ขึ้นฐานข้อมูลจริงก่อนเผยแพร่ Pilot Web รุ่นที่เรียก app_ncr_assign_responder
 -- หน้าจอส่ง p_responder_ids ไปกับ app_ncr_dispose เฉพาะเมื่อมีการระบุผู้ตอบ จึงใช้กับฐานข้อมูลเดิมได้ถ้าไม่ระบุ
 --
+-- ไม่มีคำสั่งลบฟังก์ชันเดิม: app_ncr_dispose รุ่น 4 พารามิเตอร์คงอยู่เป็นตัวห่อที่เรียกรุ่น 5 พารามิเตอร์ (ลูกค้ารุ่นเก่าไม่เจอช่วงที่ฟังก์ชันหาย)
+--
 -- Rollback: drop function public.app_ncr_assign_responder(uuid, uuid, uuid);
---   drop function public.app_ncr_dispose(uuid, text[], uuid[], text, uuid[]) แล้วนำนิยาม app_ncr_dispose จาก 20261002020000_ncr_phase1.sql กลับมา
+--   drop function public.app_ncr_dispose(uuid, text[], uuid[], text, uuid[]) แล้ว create or replace รุ่น 4 พารามิเตอร์กลับเป็นนิยามจาก 20261002020000_ncr_phase1.sql
 --   นำนิยาม app_ncr_respond (20261015010000), app_ncr_submit_prevention (20261015020000), app_ncr_answer_info
 --   (20261005060000), private.ncr_audience (20261005030000) กลับมา แล้ว drop function private.ncr_can_respond(uuid, public.employees),
 --   private.ncr_responder_valid(uuid, uuid, boolean) และ alter table public.ncr_responsibilities drop column responder_id
@@ -109,16 +111,14 @@ revoke all on function private.ncr_audience(uuid, text) from public, anon, authe
 
 -- 4. ส่วนที่ 2: ผจก.โรงงานเลือกวิธีจัดการ + แผนกที่รับผิดชอบ (1–10 แผนก ไม่ซ้ำ) และระบุผู้ตอบของแผนกได้ (ไม่บังคับ)
 -- p_responder_ids: รายชื่อผู้ตอบที่ระบุ แผนกละไม่เกิน 1 คน และต้องอยู่ในแผนกที่เลือก (แผนกไหนไม่มีรายชื่อ = ไม่ระบุ)
--- เปลี่ยนจากเดิมเฉพาะพารามิเตอร์ใหม่ที่ท้ายสุด (default null) จึงเรียกแบบเดิม 3–4 พารามิเตอร์ได้เหมือนเดิม
--- (คัดจากนิยามใน 20261002020000_ncr_phase1.sql — ไม่มี migration หลังจากนั้นที่แก้ฟังก์ชันนี้)
-drop function public.app_ncr_dispose(uuid, text[], uuid[], text);
-
+-- รุ่น 5 พารามิเตอร์นี้ไม่มีค่าเริ่มต้นของ p_responder_ids จึงไม่ชนกับรุ่น 4 พารามิเตอร์เดิม (เรียกแบบ 3–4 พารามิเตอร์ยังไปที่รุ่นเดิม)
+-- (คัดจากนิยามใน 20261002020000_ncr_phase1.sql — ไม่มี migration หลังจากนั้นที่แก้ฟังก์ชันนี้ นอกจากด่าน lab-only)
 create or replace function public.app_ncr_dispose(
   p_ncr_id uuid,
   p_dispositions text[],
   p_department_ids uuid[],
-  p_note text default null,
-  p_responder_ids uuid[] default null
+  p_note text,
+  p_responder_ids uuid[]
 )
 returns uuid
 language plpgsql
@@ -206,6 +206,24 @@ end;
 $$;
 revoke all on function public.app_ncr_dispose(uuid, text[], uuid[], text, uuid[]) from public, anon;
 grant execute on function public.app_ncr_dispose(uuid, text[], uuid[], text, uuid[]) to authenticated;
+
+-- รุ่น 4 พารามิเตอร์เดิมคงไว้เป็นตัวห่อ: ไม่ระบุผู้ตอบ (ทุกคนในแผนกตอบได้) สิทธิ์ execute เดิมของฟังก์ชันนี้ไม่เปลี่ยน
+create or replace function public.app_ncr_dispose(
+  p_ncr_id uuid,
+  p_dispositions text[],
+  p_department_ids uuid[],
+  p_note text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.lab_only_block();
+  return public.app_ncr_dispose(p_ncr_id, p_dispositions, p_department_ids, p_note, null::uuid[]);
+end;
+$$;
 
 -- 5. ระบุ/เปลี่ยน/ยกเลิกการระบุผู้ตอบของแผนกหลังพิจารณาแล้ว (ผจก.โรงงานเท่านั้น)
 -- p_responder_id = null คือยกเลิกการระบุ (ทุกคนที่เข้าเกณฑ์ในแผนกตอบได้) ทำได้ตราบที่ใบรอแผนกทำอะไรสักอย่าง
