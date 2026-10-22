@@ -164,7 +164,7 @@
       return `<button type="button" class="lab-tile is-${esc(latest.status)}" data-material="${esc(item.material)}" aria-pressed="false"${hint ? ` title="${esc(hint)}"` : ""}>
         <span class="lab-tile-name"><b>${esc(item.material)}</b>${dayFlag(latest.status)}</span>
         <span class="lab-tile-value">${esc(value)}<small>MV${item.limits && isNumber(latest.dev) ? ` · ${esc(model.formatSigned(latest.dev))} จาก CL` : ""}</small></span>
-        <span class="lab-tile-sub"><span>${int(latest.mills)} โม่ · ${int(latest.count)} ชิ้น</span>${isNumber(latest.spread) ? `<span>โม่ต่างกัน ${esc(reading(latest.spread))}</span>` : ""}${latest.suspect ? `<span class="lab-flag is-out" title="มีค่าอ่านเป็น 0 ไม่นับเข้าค่าเฉลี่ยของวัน ตรวจการกรอกข้อมูลในชีต">ค่า 0 · ${int(latest.suspect)} โม่</span>` : ""}${item.mhJump ? `<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH ${esc(reading(item.mhJump.value))}</span>` : ""}</span>
+        <span class="lab-tile-sub">${latest.status === "data" ? "" : `<span>${int(latest.mills)} โม่ · ${int(latest.count)} ชิ้น</span>`}${isNumber(latest.spread) ? `<span>โม่ต่างกัน ${esc(reading(latest.spread))}</span>` : ""}${latest.suspect ? `<span class="lab-flag is-out" title="มีค่าอ่านเป็น 0 ไม่นับเข้าค่าเฉลี่ยของวัน ตรวจการกรอกข้อมูลในชีต">ค่า 0 · ${int(latest.suspect)} โม่</span>` : ""}${item.mhJump ? `<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH ${esc(reading(item.mhJump.value))}</span>` : ""}</span>
       </button>`;
     }).join("");
     const list = attention.length ? `<ul class="lab-attn">${attention.map(dashAttentionItem).join("")}</ul>` : `<p class="lab-dash-empty">ไม่มีรายการที่ต้องดู</p>`;

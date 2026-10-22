@@ -530,7 +530,7 @@
   }
 
   // ตารางรายโม่: วันละโม่ละหนึ่งแถว เทียบค่าเฉลี่ยของโม่กับมัธยฐานของสูตรเดียวกันในวันนั้น (ใช้มัธยฐานเพราะไม่ถูกดึงโดยโม่ที่ผิดปกติโม่เดียว)
-  // วันที่มีโม่เดียวเทียบระหว่างโม่ไม่ได้ (dMv/dMh = null) · points = จุดที่ห่างมัธยฐานของวัน ≥ MILL_MIN_DIFF ใน MV หรือ MH ([ID, ΔMV, ΔMH])
+  // วันที่มีโม่ที่ค่าอ่านไม่เป็น 0 น้อยกว่า 2 โม่ เทียบระหว่างโม่ไม่ได้ (dMv/dMh = null) · points = จุดที่ห่างมัธยฐานของวัน ≥ MILL_MIN_DIFF ใน MV หรือ MH ([ID, ΔMV, ΔMH])
   // เก็บเฉพาะวันทดสอบล่าสุดของวัสดุ (ตารางเจาะลึกแสดงวันนั้นเท่านั้น สรุปจะได้ไม่บวมเมื่อเก็บ 45 วัน) · suspect = มีค่าอ่านเป็น 0 (น่าจะลืมกรอก)
   // strands / sdMean / sdMax / sdHigh = ความสม่ำเสมอในเส้น: SD ของหัว-กลาง-ท้ายในเส้นเดียวกัน (เส้นที่มีอ่านครบ ≥ 2 ชิ้น) ของโม่นั้นในวันนั้น
   // MILL_DAYS = ช่วงที่ตัวซิงก์เก็บแถวรายโม่ (แดชบอร์ดเลือกดู 14/30/45 วันจากชุดนี้ จึงไม่ต้องมี RPC ใหม่)
@@ -548,13 +548,19 @@
     }
     const rows = [];
     const days = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    const latestDay = days.length ? days[days.length - 1][0] : null;
+    // วันล่าสุดที่เก็บ points: ไม่นับวันที่พิมพ์ล่วงหน้าเกินวันนี้ (เวลาไทย) ซึ่งหน้าเว็บกรองทิ้งอยู่แล้ว
+    const today = todayInBangkok();
+    const latestDay = days.filter(([date]) => date <= today).map(([date]) => date).pop() ?? null;
+    const isZero = (entry) => entry.item.mv === 0 || entry.item.mh === 0;
     for (const [date, readings] of days) {
-      const medMv = median(readings.map((entry) => entry.item.mv));
-      const medMh = median(readings.map((entry) => entry.item.mh));
+      // มัธยฐานของวันและการเทียบระหว่างโม่ ใช้เฉพาะค่าอ่านที่ไม่เป็น 0 (ค่า 0 = น่าจะลืมกรอก ไม่ใช่ค่าจริง)
+      const clean = readings.filter((entry) => !isZero(entry));
+      const medMv = median(clean.map((entry) => entry.item.mv));
+      const medMh = median(clean.map((entry) => entry.item.mh));
       const mills = new Map();
       for (const entry of readings) mills.set(entry.id.mill, [...(mills.get(entry.id.mill) ?? []), entry]);
-      const compared = mills.size >= 2;
+      const cleanMills = new Set(clean.map((entry) => entry.id.mill));
+      const compared = cleanMills.size >= 2 && isNumber(medMv) && isNumber(medMh);
       for (const [mill, entries] of [...mills.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
         const avgMv = describe(entries.map((entry) => entry.item.mv)).mean;
         const avgMh = describe(entries.map((entry) => entry.item.mh)).mean;
@@ -567,7 +573,7 @@
         rows.push({
           date, mill, count: entries.length, mv: round2(avgMv), mh: round2(avgMh),
           dMv: compared ? round2(avgMv - medMv) : null, dMh: compared ? round2(avgMh - medMh) : null, points,
-          suspect: entries.some((entry) => entry.item.mv === 0 || entry.item.mh === 0),
+          suspect: entries.some(isZero),
           strands: strandSds.length,
           sdMean: strandSds.length ? round2(describe(strandSds).mean) : null,
           sdMax: strandSds.length ? round2(Math.max(...strandSds)) : null,

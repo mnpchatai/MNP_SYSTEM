@@ -693,7 +693,7 @@ test("a mill with a zero reading is left out of the day's average, spread, bias 
   const rows = [
     ...healthRows(steady(44), { material: "B0005" }),
     ...millDay({ material: "B0005", date: "2026-10-13", mills: { 1: 40.1, 2: 20, 3: 40.3 }, tweak: zero("2") }),
-    ...millDay({ material: "B0005", date: today, mills: { 1: 40.2, 2: 40.4 }, tweak: (id) => ({ mv: 0, mh: 0 }) }),
+    ...millDay({ material: "B0005", date: today, mills: { 1: 40.2, 2: 40.4 }, tweak: () => ({ mv: 0, mh: 0 }) }),
   ];
   const materials = summaryOf(rows);
   const daily = model.dailyRows(materials[0], today, 14);
@@ -709,6 +709,15 @@ test("a mill with a zero reading is left out of the day's average, spread, bias 
   assert.deepEqual(Object.keys(bias.rows[0].cells), ["1", "3"], "the zero mill is not in the bias map");
   assert.deepEqual(model.strandUniformity(materials, today, 14).rows[0].cells["2"], undefined);
   assert.deepEqual(model.drillRows(materials[0], today, 14).map((row) => [row.mill, row.status]), [["1", "data"], ["2", "data"]], "the drill-down keeps the mill table's data check");
+  // สองโม่ โม่หนึ่งเป็น 0: มัธยฐานของวันมาจากโม่ปกติเท่านั้น โม่ปกติจึงไม่ถูกลากเป็น +15 และไม่มีโม่ให้เทียบ
+  const pair = summaryOf(millDay({ material: "B0005", date: today, mills: { 1: 30, 2: 30 }, tweak: zero("2") }))[0];
+  assert.deepEqual(pair.health.mills.map((row) => [row.mill, row.dMv, row.suspect, row.points.length]), [["1", null, false, 0], ["2", null, true, 0]]);
+  assert.deepEqual(model.millBias([pair], today, 14).rows, [], "nothing to compare, nothing in the bias map");
+  assert.deepEqual(model.dailyRows(pair, today, 14)[0].status, "none");
+  assert.deepEqual(model.drillRows(pair, today, 14).map((row) => [row.mill, row.status]), [["1", "single"], ["2", "data"]]);
+  // สามโม่ โม่หนึ่งเป็น 0 ครึ่งค่า: มัธยฐานยังเป็นของค่าปกติ
+  const three = summaryOf(millDay({ material: "B0005", date: today, mills: { 1: 30, 2: 30.2, 3: 29.8 }, tweak: (id) => (id.startsWith("31") ? { mv: 0, mh: 0 } : {}) }))[0];
+  assert.deepEqual(three.health.mills.map((row) => [row.mill, row.dMv, row.suspect]), [["1", 0, false], ["2", 0.2, false], ["3", -15.1, true]]);
 });
 
 test("mill rows keep their out-of-line points only for the material's latest test day, so a 45-day snapshot stays small", () => {
@@ -718,6 +727,9 @@ test("mill rows keep their out-of-line points only for the material's latest tes
     ["2026-10-01", "1", 0], ["2026-10-01", "2", 0], ["2026-10-01", "3", 0], ["2026-10-14", "1", 0], ["2026-10-14", "2", 0], ["2026-10-14", "3", 6],
   ]);
   assert.equal(mills[2].dMv, 4.9, "the difference from the day's median is still kept for every day");
+  const [yesterday, ahead] = [model.shiftDate(model.todayInBangkok(), -1), model.shiftDate(model.todayInBangkok(), 3)];
+  const future = summaryOf([...millDay({ date: yesterday }), ...millDay({ date: ahead })])[0].health.mills;
+  assert.deepEqual(future.map((row) => [row.date, row.points.length]), [[yesterday, 0], [yesterday, 0], [yesterday, 6], [ahead, 0], [ahead, 0], [ahead, 0]], "a row dated in the future does not steal the latest day");
 });
 
 // สูตรหลักมีประวัติพอตั้งเส้น วันล่าสุดเกิน ±5 · สูตรที่ MH กระโดด · สูตรเส้นชั่วคราวปกติ · สูตรใหม่ไม่มีเส้น

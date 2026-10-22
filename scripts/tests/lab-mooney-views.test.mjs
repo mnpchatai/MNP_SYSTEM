@@ -780,7 +780,7 @@ test("the latest-day strip has one card per formula with its status and sparklin
   const zero = views.todayStrip({ cards: [trendItem({ latest: dayRow({ status: "data", mv: null, dev: null, mills: 0, count: 0, spread: null, suspect: 2 }) })],
     attention: [{ material: "B0005", severity: "out", kind: "dayData", suspect: 2, date: "2026-10-14" }] });
   assert.match(zero, /class="lab-tile is-data" [^>]*>\s*<span class="lab-tile-name"><b>B0005<\/b><span class="lab-flag is-out">ตรวจข้อมูล<\/span><\/span>\s*<span class="lab-tile-value">—<small>MV<\/small><\/span>/, "a day whose readings are all 0 has no average to show");
-  assert.match(zero, /<span class="lab-flag is-out" title="[^"]*">ค่า 0 · 2 โม่<\/span>/);
+  assert.match(zero, /<span class="lab-tile-sub"><span class="lab-flag is-out" title="[^"]*">ค่า 0 · 2 โม่<\/span><\/span>/, "no '0 mills · 0 pieces' beside the zero flag");
   assert.match(zero, /<span class="lab-flag is-out">ตรวจข้อมูล<\/span>\s*<span class="lab-attn-text">ทุกโม่ของวันมีค่าอ่านเป็น 0 \(2 โม่\) จึงตัดสินไม่ได้ \(14\/10\/2026\)<\/span>\s*<span class="lab-attn-hint">ตรวจการกรอกข้อมูลในชีตก่อน/);
   assert.match(views.todayStrip({ cards: [trendItem({ latest: dayRow({ suspect: 1 }) })] }), /โม่ต่างกัน 0\.10<\/span><span class="lab-flag is-out" title="[^"]*">ค่า 0 · 1 โม่<\/span>/, "a zero reading on one mill is flagged beside the day's figures");
   assert.equal(views.dashAttentionHint({ kind: "dayRule", dev: -3.5, spread: 5, mills: 2 }), "ค่าเฉลี่ยของโม่ต่างกันมาก: ดูตารางรายโม่ว่าโม่ไหน แล้วตรวจยางดิบ การชั่ง สภาวะผสมของโม่นั้น · MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
