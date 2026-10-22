@@ -531,7 +531,7 @@
 
   // ตารางรายโม่: วันละโม่ละหนึ่งแถว เทียบค่าเฉลี่ยของโม่กับมัธยฐานของสูตรเดียวกันในวันนั้น (ใช้มัธยฐานเพราะไม่ถูกดึงโดยโม่ที่ผิดปกติโม่เดียว)
   // วันที่มีโม่เดียวเทียบระหว่างโม่ไม่ได้ (dMv/dMh = null) · points = จุดที่ห่างมัธยฐานของวัน ≥ MILL_MIN_DIFF ใน MV หรือ MH ([ID, ΔMV, ΔMH])
-  // ให้หน้าเว็บกรองตามเกณฑ์ที่ผู้ใช้เลือก (≥ MILL_MIN_DIFF) โดยไม่ต้องรับทุกแถว · suspect = มีค่าอ่านเป็น 0 (น่าจะลืมกรอก)
+  // เก็บเฉพาะวันทดสอบล่าสุดของวัสดุ (ตารางเจาะลึกแสดงวันนั้นเท่านั้น สรุปจะได้ไม่บวมเมื่อเก็บ 45 วัน) · suspect = มีค่าอ่านเป็น 0 (น่าจะลืมกรอก)
   // strands / sdMean / sdMax / sdHigh = ความสม่ำเสมอในเส้น: SD ของหัว-กลาง-ท้ายในเส้นเดียวกัน (เส้นที่มีอ่านครบ ≥ 2 ชิ้น) ของโม่นั้นในวันนั้น
   // MILL_DAYS = ช่วงที่ตัวซิงก์เก็บแถวรายโม่ (แดชบอร์ดเลือกดู 14/30/45 วันจากชุดนี้ จึงไม่ต้องมี RPC ใหม่)
   const MILL_DAYS = 45;
@@ -547,7 +547,9 @@
       byDay.set(item.testDate, [...(byDay.get(item.testDate) ?? []), { item, id }]);
     }
     const rows = [];
-    for (const [date, readings] of [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const days = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const latestDay = days.length ? days[days.length - 1][0] : null;
+    for (const [date, readings] of days) {
       const medMv = median(readings.map((entry) => entry.item.mv));
       const medMh = median(readings.map((entry) => entry.item.mh));
       const mills = new Map();
@@ -556,7 +558,7 @@
       for (const [mill, entries] of [...mills.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
         const avgMv = describe(entries.map((entry) => entry.item.mv)).mean;
         const avgMh = describe(entries.map((entry) => entry.item.mh)).mean;
-        const points = compared ? entries
+        const points = compared && date === latestDay ? entries
           .map((entry) => [entry.item.sampleId, round2(entry.item.mv - medMv), round2(entry.item.mh - medMh)])
           .filter(([, dMv, dMh]) => Math.abs(dMv) >= MILL_MIN_DIFF || Math.abs(dMh) >= MILL_MIN_DIFF) : [];
         const byStrand = new Map();
@@ -727,7 +729,6 @@
   //   out  = ค่าเฉลี่ย MV ของโม่ห่างค่ากลางของสูตร (เส้นกลางจากประวัติ) เกิน ±5 MU
   //   warn = ค่าเฉลี่ย MV หรือ MH ของโม่ต่างจากมัธยฐานของวันเกินเกณฑ์ (±2/3/5 MU)
   //   ok   = ปกติ · single = วันนั้นมีโม่เดียว เทียบระหว่างโม่ไม่ได้
-  const MILL_THRESHOLDS = Object.freeze([2, 3, 5]);
   const MILL_STATUS = Object.freeze({ out: 0, data: 1, warn: 2, ok: 3, single: 4 });
   const SUSPECT_DIFF = 10;
 
@@ -769,7 +770,8 @@
   }
 
   // เรื่องของข้อมูลที่ไม่ใช่ของโม่ใดโม่หนึ่ง (แสดงรวมในกล่องพับ): สภาวะทดสอบต่างกัน การทดสอบอื่น ข้อมูลไม่ครบ ชื่อวัสดุ ไม่ได้ทดสอบนาน
-  const NOTICE_KINDS = Object.freeze(["mixed", "otherTest", "missingAvg", "duplicateName", "lowercaseName", "overdue"]);
+  // (ไม่ได้ทดสอบนาน อยู่ในรายการ "ต้องดูก่อน" ของแดชบอร์ด — dashAttention — ไม่ซ้ำที่นี่)
+  const NOTICE_KINDS = Object.freeze(["mixed", "otherTest", "missingAvg", "duplicateName", "lowercaseName"]);
   function dataNotices(materials, today) {
     return attentionItems(materials, today).filter((item) => NOTICE_KINDS.includes(item.kind));
   }
@@ -790,7 +792,8 @@
   const MILL_DIFF_MU = 3;
   const MH_JUMP_MU = 10;
   const MH_MIN_MILLS = 6;
-  const DAY_STATUS = Object.freeze({ out: 0, warn: 1, ok: 2, none: 3 });
+  // data = ทุกโม่ของวันมีค่าอ่านเป็น 0 (น่าจะลืมกรอก) ตัดสินกระบวนการไม่ได้ ให้ตรวจชีตก่อน
+  const DAY_STATUS = Object.freeze({ out: 0, data: 1, warn: 2, ok: 3, none: 4 });
   const LEVEL_RANK = Object.freeze({ ready: 0, provisional: 1 });
 
   const hasLimits = (control) => Boolean(control) && ["ready", "provisional"].includes(control.level) && control.sigma > 0;
@@ -808,7 +811,8 @@
 
   // ค่าเฉลี่ยรายวันของสูตรหนึ่ง (เก่า → ใหม่) ในช่วงที่เลือก จากแถวรายโม่: mv/mh ถ่วงด้วยจำนวนชิ้น · mills = จำนวนโม่ · spread = ค่าเฉลี่ยโม่สูงสุด − ต่ำสุด (โม่เดียว = null)
   // low/high = ค่าเฉลี่ยโม่ต่ำสุด/สูงสุดของวัน (โม่เดียว = null) · dev = ห่างเส้นกลางของสูตร (ไม่มีเส้น = null)
-  // status: out = เกิน ±PRACTICAL_BAND_MU · warn = เกิน 3σ หรือโม่ต่างกันเกิน MILL_DIFF_MU · ok · none = ยังไม่มีเส้นควบคุม
+  // โม่ที่มีค่าอ่านเป็น 0 (suspect) ไม่เข้าค่าเฉลี่ย/ช่วงของวัน (นับไว้ใน suspect) ทุกโม่เป็น 0 = status "data" ตรวจชีตก่อน
+  // status: out = เกิน ±PRACTICAL_BAND_MU · warn = เกิน 3σ หรือโม่ต่างกันเกิน MILL_DIFF_MU · ok · none = ยังไม่มีเส้นควบคุม · data
   function dailyRows(item, today, days) {
     const since = windowSince(today, days);
     const control = item?.health?.mv;
@@ -818,20 +822,23 @@
       if (!inWindow(mill.date, since, today) || !isNumber(mill.mv)) continue;
       byDay.set(mill.date, [...(byDay.get(mill.date) ?? []), mill]);
     }
-    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, mills]) => {
+    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, all]) => {
+      const mills = all.filter((mill) => !mill.suspect);
+      const suspect = all.length - mills.length;
       const mv = weighted(mills, "mv");
       const values = mills.map((mill) => mill.mv);
       const spread = mills.length >= 2 ? round2(Math.max(...values) - Math.min(...values)) : null;
       const dev = limits && isNumber(mv) ? round2(mv - limits.mean) : null;
       const differ = isNumber(spread) && spread > MILL_DIFF_MU;
       let status = differ ? "warn" : "none";
-      if (limits && isNumber(mv)) {
+      if (!mills.length) status = "data";
+      else if (limits && isNumber(mv)) {
         if (Math.abs(mv - limits.mean) > PRACTICAL_BAND_MU) status = "out";
         else if (differ || Math.abs(mv - limits.mean) > 3 * limits.sigma) status = "warn";
         else status = "ok";
       }
       return {
-        date, mv: round2(mv), mh: round2(weighted(mills, "mh")), count: mills.reduce((sum, mill) => sum + (mill.count || 0), 0), mills: mills.length,
+        date, mv: round2(mv), mh: round2(weighted(mills, "mh")), count: mills.reduce((sum, mill) => sum + (mill.count || 0), 0), mills: mills.length, suspect,
         spread, low: mills.length >= 2 ? round2(Math.min(...values)) : null, high: mills.length >= 2 ? round2(Math.max(...values)) : null, dev, status,
       };
     });
@@ -840,7 +847,7 @@
   // MH ของวันล่าสุดห่างจากปกติของสูตร (I-MR ของ MH รายโม่ทั้งช่วงที่เก็บ ≥ MH_MIN_MILLS โม่) เกิน 3σ และเกิน MH_JUMP_MU = เตือน (ไม่มีระดับแดง)
   // คืน { value, mean, high, date } หรือ null — เป็นหมายเหตุประกอบ MV ไม่ใช่เส้นควบคุมของ MH (ซึ่งอยู่ที่กราฟเจาะลึก)
   function mhNote(item) {
-    const mills = (item?.health?.mills ?? []).filter((mill) => isNumber(mill.mh) && mill.count > 0);
+    const mills = (item?.health?.mills ?? []).filter((mill) => isNumber(mill.mh) && mill.count > 0 && !mill.suspect);
     if (mills.length < MH_MIN_MILLS) return null;
     const limits = controlLimits(mills.map((mill) => mill.mh));
     if (!limits) return null;
@@ -880,24 +887,25 @@
     return trend.filter((item) => item.latest.date === date);
   }
 
-  // รายการ "ต้องดูก่อน" ของแดชบอร์ด: สถานะวันล่าสุดของแต่ละสูตร (out/warn) · MH กระโดด · ตรวจเครื่อง · ไม่ได้ทดสอบนาน เรียงจากรุนแรงสุดแล้วตามลำดับของ trend
-  //   { material, severity, kind: "dayOut" | "daySpread" | "dayRule" | "mhJump" | "machine" | "overdue", ... }
+  // รายการ "ต้องดูก่อน" ของแดชบอร์ด: สถานะวันล่าสุดของแต่ละสูตร (out/data/warn) · MH กระโดด · ไม่ได้ทดสอบนาน เรียงจากรุนแรงสุดแล้วตามลำดับของ trend
+  //   { material, severity, kind: "dayOut" | "dayData" | "daySpread" | "dayRule" | "mhJump" | "overdue", ... }
+  // ตรวจเครื่อง (machineItems) อยู่ที่แถบบนสุดของหน้าที่เดียว ไม่ซ้ำในรายการนี้
   function dashAttention(trend, materials, today) {
     const items = [];
     trend.forEach((item, order) => {
       const { latest } = item;
-      const day = { material: item.material, value: latest.mv, dev: latest.dev, spread: latest.spread, mills: latest.mills, date: latest.date, order };
+      const day = { material: item.material, value: latest.mv, dev: latest.dev, spread: latest.spread, mills: latest.mills, suspect: latest.suspect, date: latest.date, order };
       if (latest.status === "out") items.push({ ...day, severity: "out", kind: "dayOut" });
+      else if (latest.status === "data") items.push({ ...day, severity: "out", kind: "dayData" });
       else if (latest.status === "warn" && isNumber(latest.spread) && latest.spread > MILL_DIFF_MU) items.push({ ...day, severity: "warn", kind: "daySpread" });
       else if (latest.status === "warn") items.push({ ...day, severity: "warn", kind: "dayRule" });
       if (item.mhJump) items.push({ material: item.material, severity: "warn", kind: "mhJump", ...item.mhJump, order });
     });
-    const machine = machineItems(materials, today).map((item, index) => ({ ...item, order: trend.length + index }));
-    const overdue = attentionItems(materials, today).filter((item) => item.kind === "overdue").map((item, index) => ({ ...item, order: trend.length + machine.length + index }));
-    return [...items, ...machine, ...overdue].sort((a, b) => SEVERITY[a.severity] - SEVERITY[b.severity] || a.order - b.order);
+    const overdue = attentionItems(materials, today).filter((item) => item.kind === "overdue").map((item, index) => ({ ...item, order: trend.length + index }));
+    return [...items, ...overdue].sort((a, b) => SEVERITY[a.severity] - SEVERITY[b.severity] || a.order - b.order);
   }
 
-  // แผนที่ความร้อน "โม่ไหนลากค่าออก": ΔMV เฉลี่ยของโม่เทียบมัธยฐานของสูตรในวันเดียวกัน สะสมทุกวันในช่วง (เฉพาะวันที่มี ≥ 2 โม่)
+  // แผนที่ความร้อน "โม่ไหนลากค่าออก": ΔMV เฉลี่ยของโม่เทียบมัธยฐานของสูตรในวันเดียวกัน สะสมทุกวันในช่วง (เฉพาะวันที่มี ≥ 2 โม่ · โม่ที่มีค่าอ่าน 0 ถูกข้าม)
   //   { mills: ["1", …], rows: [{ material, days, cells: { "1": { delta, days, detail: [{ date, delta }] } } }], total: { "1": { delta, days } } }
   // rows เรียงตามจำนวนวันที่เทียบได้มากก่อน · total = ทุกสูตรรวมกัน (โม่ที่เอียงทางเดียวในหลายสูตร = เครื่อง/การตั้งโม่ ไม่ใช่สูตร)
   function millBias(materials, today, days) {
@@ -908,7 +916,7 @@
     for (const item of Array.isArray(materials) ? materials : []) {
       const cells = new Map();
       for (const mill of item?.health?.mills ?? []) {
-        if (!inWindow(mill.date, since, today) || !isNumber(mill.dMv)) continue;
+        if (!inWindow(mill.date, since, today) || !isNumber(mill.dMv) || mill.suspect) continue;
         const cell = cells.get(mill.mill) ?? { sum: 0, days: 0, detail: [] };
         cell.sum += mill.dMv;
         cell.days += 1;
@@ -944,7 +952,7 @@
     for (const item of Array.isArray(materials) ? materials : []) {
       const cells = new Map();
       for (const mill of item?.health?.mills ?? []) {
-        if (!inWindow(mill.date, since, today) || !isNumber(mill.sdMean) || !(mill.strands > 0)) continue;
+        if (!inWindow(mill.date, since, today) || !isNumber(mill.sdMean) || !(mill.strands > 0) || mill.suspect) continue;
         const cell = cells.get(mill.mill) ?? { sum: 0, strands: 0, high: 0, max: 0 };
         cell.sum += mill.sdMean * mill.strands;
         cell.strands += mill.strands;
@@ -1033,7 +1041,7 @@
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
     buildSeries, describe, niceScale, dateMarks, monthOf, monthsOf, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate, formatMonth,
-    AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, MILL_DAYS, MILL_MIN_DIFF, MILL_THRESHOLDS, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES, SIGNAL_WINDOW, PRACTICAL_BAND_MU, VISCOSITY_MINUTES, MACHINE_MIN_MATERIALS, MACHINE_DAYS,
+    AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, MILL_DAYS, MILL_MIN_DIFF, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES, SIGNAL_WINDOW, PRACTICAL_BAND_MU, VISCOSITY_MINUTES, MACHINE_MIN_MATERIALS, MACHINE_DAYS,
     STRAND_SD_HIGH, DASH_RANGES, DASH_DEFAULT_DAYS, MILL_DIFF_MU, MH_JUMP_MU, MH_MIN_MILLS,
     sheetAverageFits, controlLimits, ruleSignals, latestSignal, zoneOf, zoneFor, isViscosityTest, machineItems, parseSampleId, millRows, millPattern, millTableRows, dataNotices, materialHealth, daysBetween, todayInBangkok, shiftDate,
     nameIssues, attentionItems, hasHealth, controlMaterials,

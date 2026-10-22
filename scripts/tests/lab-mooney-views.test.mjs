@@ -735,7 +735,7 @@ test("the dashboard body is four sections: latest day, trend per formula, mill h
   assert.equal(count(html, /data-days="/g), 3);
   assert.match(views.dashboardBody(14), /data-days="14" aria-pressed="true"/);
   assert.doesNotMatch(views.dashboardBody(14), /data-days="30" aria-pressed="true"/);
-  assert.equal(count(html, /class="lab-legend-item"/g), 4, "the status key appears once for the whole page");
+  assert.equal(count(html, /class="lab-legend-item"/g), 5, "the status key appears once for the whole page");
   assert.match(html, /id="lab-trends-title" title="[^"]*±5 MU/);
   assert.match(html, /id="lab-bias-title" title="[^"]*มัธยฐานของสูตรเดียวกันในวันนั้น/, "how to read each panel is one hover away, not permanent text");
   assert.match(html, /id="lab-uniform-title" title="[^"]*SD &gt; 1 MU/);
@@ -757,28 +757,32 @@ test("the latest-day strip has one card per formula with its status and sparklin
       { material: "B0005", severity: "out", kind: "dayOut", value: 46.5, dev: 6.5, spread: 0.1, mills: 2, date: "2026-10-14" },
       { material: XSS, severity: "warn", kind: "mhJump", value: 110.3, mean: 80.1, high: true, date: "2026-10-14" },
       { material: "B0006", severity: "warn", kind: "daySpread", spread: 4, mills: 2, date: "2026-10-13" },
-      { material: "", severity: "warn", kind: "machine", date: "2026-10-13", high: true, materials: ["A", "B", "C"] },
       { material: "B0010", severity: "info", kind: "overdue", days: 20 },
     ],
     days: 30,
   });
   assert.ok(!html.includes(XSS));
-  assert.match(html, /^<h3 class="lab-dash-card-title" id="lab-today-title">ทดสอบล่าสุด 14\/10\/2026 <small>2 สูตร<\/small><\/h3>/);
+  assert.match(html, /^<h3 class="lab-dash-card-title" id="lab-today-title">ทดสอบล่าสุด 14\/10\/2026<\/h3>/, "the number of formulas is the number of cards");
   assert.match(html, /<button type="button" class="lab-tile is-out" data-material="B0005" aria-pressed="false" title="ทุกโม่ไปทางเดียวกัน: ตรวจล็อตยางดิบ การบด การชั่ง · MV สูง: [^"]*">/);
   assert.match(html, /<span class="lab-tile-value">46\.50<small>MV · \+6\.50 จาก CL<\/small><\/span>/);
   assert.match(html, /<span>2 โม่ · 12 ชิ้น<\/span><span>โม่ต่างกัน 0\.10<\/span>/);
   assert.match(html, /class="lab-tile is-none" data-material="&lt;img[^"]*" aria-pressed="false">/);
   assert.match(html, /<span class="lab-tile-value">46\.50<small>MV<\/small><\/span>/, "no centre line = no distance from it");
   assert.match(html, /<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH 110\.30<\/span>/);
-  assert.equal(count(html, /class="lab-spark lab-spark-mv"/g), 2);
-  assert.match(html, /<h4>ต้องดูก่อน · 30 วัน<\/h4>/);
+  assert.doesNotMatch(html, /lab-spark/, "the trend is the small chart in section 2, not a second line on the card");
+  assert.match(html, /<h4>ต้องดูก่อน<\/h4>/, "the range is on the range buttons");
   assert.match(html, /<button type="button" class="lab-attn-name" data-material="B0005" aria-pressed="false">B0005<\/button>\s*<span class="lab-flag is-out">เกิน ±5 MU<\/span>\s*<span class="lab-attn-text">MV 46\.50 ห่างจากค่ากลาง \+6\.50 MU \(14\/10\/2026\)<\/span>/);
   assert.match(html, /<span class="lab-flag is-warn">MH เลื่อน<\/span>\s*<span class="lab-attn-text">MH 110\.30 สูงกว่าปกติของสูตร \(80\.10\) มาก \(14\/10\/2026\)<\/span>\s*<span class="lab-attn-hint">MH คือค่าสูงสุดช่วงต้นกราฟ/);
   assert.match(html, /<span class="lab-flag is-warn">โม่ต่างกัน<\/span>\s*<span class="lab-attn-text">ค่าเฉลี่ยของโม่ต่างกัน 4\.00 MU ในวันเดียวกัน \(13\/10\/2026\)<\/span>\s*<span class="lab-attn-hint">ตรวจโม่ที่ต่างในตารางเจาะลึก/);
-  assert.match(html, /<span class="lab-attn-name">เครื่อง Mooney<\/span>\s*<span class="lab-flag is-warn">ตรวจเครื่อง<\/span>\s*<span class="lab-attn-text">13\/10\/2026: MV ของ A, B, C สูงกว่าปกติเกิน 2σ พร้อมกัน/);
   assert.match(html, /<a class="lab-attn-name" href="#\/lab\?module=mooney&amp;material=B0010">B0010<\/a>\s*<span class="lab-flag is-info">ไม่ได้ทดสอบนาน<\/span>\s*<span class="lab-attn-text">ไม่ได้ทดสอบ 20 วัน/, "a formula outside the window links to its page instead of a pick button");
   assert.match(views.todayStrip({ cards: [], days: 14 }), /^<p class="lab-dash-empty">ไม่มีผลทดสอบความหนืดใน 14 วันล่าสุด<\/p>$/);
   assert.match(views.todayStrip({ cards: [trendItem()], attention: [] }), /ไม่มีรายการที่ต้องดู/);
+  const zero = views.todayStrip({ cards: [trendItem({ latest: dayRow({ status: "data", mv: null, dev: null, mills: 0, count: 0, spread: null, suspect: 2 }) })],
+    attention: [{ material: "B0005", severity: "out", kind: "dayData", suspect: 2, date: "2026-10-14" }] });
+  assert.match(zero, /class="lab-tile is-data" [^>]*>\s*<span class="lab-tile-name"><b>B0005<\/b><span class="lab-flag is-out">ตรวจข้อมูล<\/span><\/span>\s*<span class="lab-tile-value">—<small>MV<\/small><\/span>/, "a day whose readings are all 0 has no average to show");
+  assert.match(zero, /<span class="lab-flag is-out" title="[^"]*">ค่า 0 · 2 โม่<\/span>/);
+  assert.match(zero, /<span class="lab-flag is-out">ตรวจข้อมูล<\/span>\s*<span class="lab-attn-text">ทุกโม่ของวันมีค่าอ่านเป็น 0 \(2 โม่\) จึงตัดสินไม่ได้ \(14\/10\/2026\)<\/span>\s*<span class="lab-attn-hint">ตรวจการกรอกข้อมูลในชีตก่อน/);
+  assert.match(views.todayStrip({ cards: [trendItem({ latest: dayRow({ suspect: 1 }) })] }), /โม่ต่างกัน 0\.10<\/span><span class="lab-flag is-out" title="[^"]*">ค่า 0 · 1 โม่<\/span>/, "a zero reading on one mill is flagged beside the day's figures");
   assert.equal(views.dashAttentionHint({ kind: "dayRule", dev: -3.5, spread: 5, mills: 2 }), "ค่าเฉลี่ยของโม่ต่างกันมาก: ดูตารางรายโม่ว่าโม่ไหน แล้วตรวจยางดิบ การชั่ง สภาวะผสมของโม่นั้น · MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
   assert.equal(views.dashAttentionHint({ kind: "dayRule", dev: 2, spread: null, mills: 1 }), "", "one mill, a small shift: nothing to single out");
   noBadNumbers(html);

@@ -92,10 +92,11 @@
     ["ok", "ปกติ"],
     ["warn", `เริ่มเบี่ยง (เกิน 3σ หรือโม่ต่างกันเกิน ${model.MILL_DIFF_MU} MU)`],
     ["out", `เกิน ±${model.PRACTICAL_BAND_MU} MU จากค่ากลาง`],
+    ["data", "ตรวจข้อมูล (ค่าอ่านเป็น 0)"],
     ["none", "ยังไม่มีเส้นควบคุม"],
   ]);
-  const DAY_STATUS_TEXT = Object.freeze({ out: `เกิน ±${model.PRACTICAL_BAND_MU}`, warn: "เริ่มเบี่ยง", ok: "ปกติ", none: "ยังไม่มีเส้น" });
-  const DAY_SEVERITY = Object.freeze({ out: "out", warn: "warn", ok: "ok", none: "none" });
+  const DAY_STATUS_TEXT = Object.freeze({ out: `เกิน ±${model.PRACTICAL_BAND_MU}`, data: "ตรวจข้อมูล", warn: "เริ่มเบี่ยง", ok: "ปกติ", none: "ยังไม่มีเส้น" });
+  const DAY_SEVERITY = Object.freeze({ out: "out", data: "out", warn: "warn", ok: "ok", none: "none" });
   const dayFlag = (status) => `<span class="lab-flag is-${esc(DAY_SEVERITY[status] ?? "none")}">${esc(DAY_STATUS_TEXT[status] ?? DAY_STATUS_TEXT.none)}</span>`;
 
   function dashboardBody(days = model.DASH_DEFAULT_DAYS) {
@@ -153,37 +154,39 @@
   }
 
   // 1 วันทดสอบล่าสุด: การ์ดต่อสูตรที่ทดสอบวันนั้น (model.latestCards) + รายการต้องดูก่อน (model.dashAttention) · ไม่มีผลในช่วง = ประโยคเดียว
+  // แนวโน้มของสูตรอยู่ที่กราฟเล็กในส่วน 2 ช่วงวันอยู่ที่ปุ่มช่วงวัน จำนวนสูตรเห็นจากจำนวนการ์ด จึงไม่ซ้ำที่นี่
   function todayStrip({ cards = [], attention = [], days = model.DASH_DEFAULT_DAYS } = {}) {
     if (!cards.length) return `<p class="lab-dash-empty">ไม่มีผลทดสอบความหนืดใน ${int(days)} วันล่าสุด</p>`;
     const tiles = cards.map((item) => {
       const { latest } = item;
       const hint = dayHint(latest);
-      const spark = chart.sparkline(item.daily.map((row) => row.mv), { key: "mv", width: 120, height: 24 });
+      const value = latest.status === "data" ? "—" : reading(latest.mv);
       return `<button type="button" class="lab-tile is-${esc(latest.status)}" data-material="${esc(item.material)}" aria-pressed="false"${hint ? ` title="${esc(hint)}"` : ""}>
         <span class="lab-tile-name"><b>${esc(item.material)}</b>${dayFlag(latest.status)}</span>
-        <span class="lab-tile-value">${esc(reading(latest.mv))}<small>MV${item.limits ? ` · ${esc(model.formatSigned(latest.dev))} จาก CL` : ""}</small></span>
-        <span class="lab-tile-sub"><span>${int(latest.mills)} โม่ · ${int(latest.count)} ชิ้น</span>${isNumber(latest.spread) ? `<span>โม่ต่างกัน ${esc(reading(latest.spread))}</span>` : ""}${item.mhJump ? `<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH ${esc(reading(item.mhJump.value))}</span>` : ""}</span>
-        ${spark}
+        <span class="lab-tile-value">${esc(value)}<small>MV${item.limits && isNumber(latest.dev) ? ` · ${esc(model.formatSigned(latest.dev))} จาก CL` : ""}</small></span>
+        <span class="lab-tile-sub"><span>${int(latest.mills)} โม่ · ${int(latest.count)} ชิ้น</span>${isNumber(latest.spread) ? `<span>โม่ต่างกัน ${esc(reading(latest.spread))}</span>` : ""}${latest.suspect ? `<span class="lab-flag is-out" title="มีค่าอ่านเป็น 0 ไม่นับเข้าค่าเฉลี่ยของวัน ตรวจการกรอกข้อมูลในชีต">ค่า 0 · ${int(latest.suspect)} โม่</span>` : ""}${item.mhJump ? `<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH ${esc(reading(item.mhJump.value))}</span>` : ""}</span>
       </button>`;
     }).join("");
     const list = attention.length ? `<ul class="lab-attn">${attention.map(dashAttentionItem).join("")}</ul>` : `<p class="lab-dash-empty">ไม่มีรายการที่ต้องดู</p>`;
-    return `<h3 class="lab-dash-card-title" id="lab-today-title">ทดสอบล่าสุด ${esc(model.formatDate(cards[0].latest.date))} <small>${int(cards.length)} สูตร</small></h3>
+    return `<h3 class="lab-dash-card-title" id="lab-today-title">ทดสอบล่าสุด ${esc(model.formatDate(cards[0].latest.date))}</h3>
       <div class="lab-today-grid">
         <div class="lab-tiles">${tiles}</div>
-        <div class="lab-attn-box"><h4>ต้องดูก่อน · ${int(days)} วัน</h4>${list}</div>
+        <div class="lab-attn-box"><h4>ต้องดูก่อน</h4>${list}</div>
       </div>`;
   }
 
   const DASH_FLAG = Object.freeze({
     dayOut: `เกิน ±${model.PRACTICAL_BAND_MU} MU`,
+    dayData: "ตรวจข้อมูล",
     daySpread: "โม่ต่างกัน",
     dayRule: "เกิน 3σ",
     mhJump: "MH เลื่อน",
   });
-  // ข้อความของรายการต้องดูก่อน (ข้อความล้วน) รายการตรวจเครื่อง/ไม่ได้ทดสอบนาน ใช้ข้อความเดิมของ attentionText
+  // ข้อความของรายการต้องดูก่อน (ข้อความล้วน) รายการไม่ได้ทดสอบนาน (และชนิดอื่นที่ส่งมา) ใช้ข้อความเดิมของ attentionText
   function dashAttentionText(item) {
     switch (item.kind) {
       case "dayOut": return `MV ${reading(item.value)} ห่างจากค่ากลาง ${model.formatSigned(item.dev)} MU (${model.formatDate(item.date)})`;
+      case "dayData": return `ทุกโม่ของวันมีค่าอ่านเป็น 0 (${int(item.suspect ?? 0)} โม่) จึงตัดสินไม่ได้ (${model.formatDate(item.date)})`;
       case "daySpread": return `ค่าเฉลี่ยของโม่ต่างกัน ${reading(item.spread)} MU ในวันเดียวกัน (${model.formatDate(item.date)})`;
       case "dayRule": return `MV ${reading(item.value)} ห่างจากค่ากลาง ${model.formatSigned(item.dev)} MU เกิน 3σ (${model.formatDate(item.date)})`;
       case "mhJump": return `MH ${reading(item.value)} ${item.high ? "สูง" : "ต่ำ"}กว่าปกติของสูตร (${reading(item.mean)}) มาก (${model.formatDate(item.date)})`;
@@ -194,6 +197,7 @@
     switch (item.kind) {
       case "dayOut":
       case "dayRule": return dayHint({ status: "out", dev: item.dev, spread: item.spread, mills: item.mills });
+      case "dayData": return "ตรวจการกรอกข้อมูลในชีตก่อน (ช่อง MH/MV ที่เป็น 0)";
       case "daySpread": return "ตรวจโม่ที่ต่างในตารางเจาะลึก: ยางดิบ การชั่ง สภาวะผสมของโม่นั้น";
       case "mhJump": return "MH คือค่าสูงสุดช่วงต้นกราฟ ถ้าเลื่อนทั้งสูตรขณะที่ SD ในเส้นปกติ มักเป็นวัตถุดิบหรือสูตรเปลี่ยน ตรวจล็อตยางดิบและการชั่ง";
       default: return attentionHint(item);

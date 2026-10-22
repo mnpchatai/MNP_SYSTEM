@@ -1972,7 +1972,8 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-dot { width: 9px; height: 9px; display: inline-block; background: var(--quiet); border-radius: 50%; }
 .lab-dot.is-ok { background: var(--success); }
 .lab-dot.is-warn { background: var(--warning); border-radius: 1px; transform: rotate(45deg) scale(.9); }
-.lab-dot.is-out { background: var(--danger); border-radius: 0; }
+.lab-dot.is-out, .lab-dot.is-data { background: var(--danger); border-radius: 0; }
+.lab-dot.is-data { background: transparent; border: 2px solid var(--danger); }
 .lab-flag { padding: 1px 8px; border: 1px solid currentColor; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .lab-flag.is-out { color: var(--danger); background: var(--danger-soft); }
 .lab-flag.is-warn { color: var(--warning); background: var(--warning-soft); }
@@ -1990,7 +1991,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-tile:hover, .lab-trend:hover { border-color: var(--primary); }
 .lab-tile:focus-visible, .lab-trend:focus-visible, .lab-hm-name:focus-visible, .lab-attn-name:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .lab-tile[aria-pressed="true"], .lab-trend[aria-pressed="true"] { background: var(--paper); border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
-.lab-tile.is-out { border-left-color: var(--danger); }
+.lab-tile.is-out, .lab-tile.is-data { border-left-color: var(--danger); }
 .lab-tile.is-warn { border-left-color: var(--warning); }
 .lab-tile.is-ok { border-left-color: var(--success); }
 .lab-tile.is-none { border-left-color: var(--line); }
@@ -1998,15 +1999,12 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-tile-value { font-size: 24px; font-weight: 600; line-height: 1.1; }
 .lab-tile-value small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.3; }
 .lab-tile-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--muted); font-size: 12px; }
-.lab-tile .lab-spark { width: 100%; height: 24px; }
-.lab-spark-mv polyline { stroke: var(--lab-mv); }
-.lab-spark-mv circle { fill: var(--lab-mv); }
 .lab-attn-box { min-width: 0; padding: 10px 12px; background: var(--shell); border: 1px solid var(--line); border-radius: 10px; }
 .lab-attn-box h4 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .lab-attn { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .lab-attn-item { padding: 7px 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; background: var(--paper); border-radius: 8px; font-size: 13px; }
 .lab-attn-name { font-weight: 700; }
-button.lab-attn-name { padding: 0; color: var(--ink); background: none; border: 0; font: inherit; font-weight: 700; text-decoration: underline dotted; cursor: pointer; }
+button.lab-attn-name { margin: -6px -6px; padding: 6px 6px; color: var(--ink); background: none; border: 0; font: inherit; font-weight: 700; text-decoration: underline dotted; cursor: pointer; }
 button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .lab-attn-text { flex: 1 1 160px; min-width: 0; color: var(--muted); }
 .lab-attn-hint { flex: 1 1 100%; min-width: 0; color: var(--quiet); font-size: 12px; }
@@ -2029,6 +2027,7 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .lab-dc-pt.is-ok { fill: var(--success); }
 .lab-dc-pt.is-warn { fill: var(--warning); }
 .lab-dc-pt.is-out { fill: var(--danger); }
+.lab-dc-pt.is-data { fill: var(--paper); stroke: var(--danger); }
 
 /* 3 แผนที่ความร้อน: ช่องสีจากคลาส — แยกขั้ว น้ำเงิน (ต่ำกว่าโม่อื่น) ← เทา → แดง (สูงกว่า) · ลำดับเดียว จางถึงเข้มของสีหลัก (SD) */
 .lab-dash-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
@@ -2037,7 +2036,7 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .lab-hm { width: 100%; border-collapse: separate; border-spacing: 3px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .lab-hm th { padding: 2px 4px; color: var(--muted); font-size: 11.5px; font-weight: 600; text-align: center; white-space: nowrap; }
 .lab-hm th[scope="row"] { padding-right: 6px; color: var(--ink); font-weight: 700; text-align: left; }
-.lab-hm-name { padding: 0; color: inherit; background: none; border: 0; font: inherit; cursor: pointer; }
+.lab-hm-name { margin: -8px -6px; padding: 8px 6px; color: inherit; background: none; border: 0; font: inherit; cursor: pointer; }
 .lab-hm-name:hover { text-decoration: underline; }
 .lab-hm-name[aria-pressed="true"] { color: var(--primary); text-decoration: underline; }
 .lab-hm td { min-width: 42px; padding: 5px 3px; color: var(--ink); border-radius: 6px; text-align: center; line-height: 1.15; }

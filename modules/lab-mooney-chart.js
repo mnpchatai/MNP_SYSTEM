@@ -450,6 +450,7 @@
   // ขีดตั้ง = ช่วงระหว่างค่าเฉลี่ยของโม่ในวันนั้น (low–high) · แถบ = CL ± band ของสูตร (เฉพาะสูตรที่มีเส้นควบคุม) · เส้นกลางเป็นเส้นบาง
   // จุดใช้สีสถานะและรูปทรง (ok/none วงกลม · warn ข้าวหลามตัด · out สี่เหลี่ยม) จึงแยกได้แม้ไม่เห็นสี ค่าของจุดอยู่ใน <title>
   function dailyChart({ daily = [], limits = null, since, today, width = 240, label = "" }) {
+    // วันที่ทุกโม่เป็นค่า 0 (status "data") ไม่มีค่าเฉลี่ยให้วาด จึงไม่เป็นจุดบนกราฟ (การ์ดและรายการต้องดูก่อนบอกแทน)
     const points = daily.filter((row) => isNumber(row.mv) && typeof row.date === "string");
     const span = since && today ? model.daysBetween(since, today) : null;
     if (!points.length || !isNumber(span) || span < 0) return "";
@@ -485,7 +486,7 @@
       + `<text class="lab-tick" x="${n2(box.left + plotWidth)}" y="${n2(axisY + 13)}" text-anchor="end">${esc(model.formatShortDate(today))}</text>`;
     if (points.length > 1) body += `<polyline class="lab-dc-line" points="${points.map((row) => `${n2(x(row.date))},${n2(y(row.mv))}`).join(" ")}"/>`;
     for (const row of points) {
-      const status = ["ok", "warn", "out"].includes(row.status) ? row.status : "none";
+      const status = ["ok", "warn", "out", "data"].includes(row.status) ? row.status : "none";
       const cx = n2(x(row.date));
       const cy = n2(y(row.mv));
       if (isNumber(row.low) && isNumber(row.high)) body += `<line class="lab-dc-spread is-${status}" x1="${cx}" x2="${cx}" y1="${n2(y(row.high))}" y2="${n2(y(row.low))}"/>`;
@@ -495,7 +496,7 @@
         : status === "warn"
           ? `<rect x="${n2(x(row.date) - radius)}" y="${n2(y(row.mv) - radius)}" width="${n2(radius * 2)}" height="${n2(radius * 2)}" transform="rotate(45 ${cx} ${cy})"/>`
           : `<circle cx="${cx}" cy="${cy}" r="${radius}"/>`;
-      const title = `${model.formatDate(row.date)}: MV ${tick(row.mv)}${isNumber(row.dev) ? ` (${model.formatSigned(row.dev)} จาก CL)` : ""} · ${row.mills} โม่ ${row.count} ชิ้น${isNumber(row.spread) ? ` · โม่ต่างกัน ${tick(row.spread)}` : ""}${isNumber(row.mh) ? ` · MH ${tick(row.mh)}` : ""}`;
+      const title = `${model.formatDate(row.date)}: MV ${tick(row.mv)}${isNumber(row.dev) ? ` (${model.formatSigned(row.dev)} จาก CL)` : ""} · ${row.mills} โม่ ${row.count} ชิ้น${isNumber(row.spread) ? ` · โม่ต่างกัน ${tick(row.spread)}` : ""}${isNumber(row.mh) ? ` · MH ${tick(row.mh)}` : ""}${row.suspect ? ` · ค่าอ่าน 0 อีก ${row.suspect} โม่` : ""}`;
       body += `<g class="lab-dc-pt is-${status}" data-date="${esc(row.date)}">${mark}<title>${esc(title)}</title></g>`;
     }
     const height = box.top + box.height + box.bottom;

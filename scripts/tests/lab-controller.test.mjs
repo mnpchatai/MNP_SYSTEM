@@ -225,7 +225,7 @@ test("with health summaries the dashboard shows the latest day, the trends, the 
   assert.match(strip, /^<h3 class="lab-dash-card-title" id="lab-today-title">ทดสอบล่าสุด/);
   assert.match(strip, /<button type="button" class="lab-tile is-warn" data-material="A2004"/, "A2004's mills disagree by 6.6 MU on the latest day");
   assert.match(strip, /<button type="button" class="lab-tile is-ok" data-material="B0005"/);
-  assert.match(strip, /ต้องดูก่อน · 30 วัน/);
+  assert.match(app.element("#lab-trends").innerHTML, new RegExp(`>${model.formatShortDate(model.shiftDate(today, -29))}</text>`), "the trend axis starts 30 days back by default");
   assert.match(app.element("#lab-trends").innerHTML, /^<button type="button" class="lab-trend" data-material="A2004"/, "the formula to look at first comes first");
   assert.match(app.element("#lab-bias").innerHTML, /^<table class="lab-hm">/);
   assert.match(app.element("#lab-uniform").innerHTML, /^<table class="lab-hm">/);
@@ -240,7 +240,7 @@ test("with health summaries the dashboard shows the latest day, the trends, the 
   assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/);
   assert.match(app.element("#lab-drill").innerHTML, /class="lab-flag is-ok">ปกติ</);
   root.listeners.click({ target: { closest: (selector) => (selector === "[data-days]" ? { dataset: { days: "14" } } : null) } });
-  assert.match(app.element("#lab-today").innerHTML, /ต้องดูก่อน · 14 วัน/);
+  assert.match(app.element("#lab-trends").innerHTML, new RegExp(`>${model.formatShortDate(model.shiftDate(today, -13))}</text>`), "the trend axis follows the chosen range");
   assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/, "the user's pick survives a range change");
   // รีเฟรชแล้วข้อมูลเดิม: คงสูตรที่ผู้ใช้เลือกและค่า MH ไว้
   await app.tick();

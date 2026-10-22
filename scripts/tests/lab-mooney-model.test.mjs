@@ -626,6 +626,7 @@ test("the mill table judges each row with the chosen threshold and sorts the wor
   const third = table.find((row) => row.material === "B0005");
   assert.deepEqual(third.pattern, { kind: "mill" }, "all six points moved together");
   assert.equal(model.millTableRows(materials, "2026-10-14", { threshold: 5 }).filter((row) => row.status === "warn").length, 0, "nothing is 5 MU from its day's median");
+  assert.equal(model.MILL_THRESHOLDS, undefined, "the threshold picker is gone with the filter table");
   assert.equal(model.millTableRows(materials, "2026-10-14", { status: "all" }).length, 7);
   assert.deepEqual(model.millTableRows(materials, "2026-10-14", { query: "b0006", status: "all" }).map((row) => row.mill), ["1", "2"]);
   assert.equal(model.millTableRows(materials, "2026-10-14", { days: 2, status: "all" }).length, 5, "7 days and 14 days count back from today");
@@ -677,12 +678,46 @@ test("daily rows weigh every piece, measure the spread between mills and judge t
     ["2026-10-12", 40.2, 2, 12, 0.2, "ok"], ["2026-10-13", 42, 2, 12, 4, "warn"], ["2026-10-14", 46.55, 2, 12, 0.1, "out"],
   ], "ok · the mills disagree by more than 3 MU · more than 5 MU from the centre");
   assert.deepEqual([daily[1].low, daily[1].high], [40, 44]);
+  assert.deepEqual(daily.map((day) => day.suspect), [0, 0, 0]);
   assert.ok(Math.abs(daily[2].dev - (46.55 - summary.health.mv.mean)) < 0.011);
   assert.equal(daily[0].mh, 68.2);
   const alone = model.dailyRows({ health: { mills: [{ date: today, mill: "1", count: 6, mv: 50, mh: 80 }] } }, today, 14)[0];
   assert.deepEqual([alone.status, alone.spread, alone.low, alone.dev], ["none", null, null, null], "no limits and one mill = nothing to judge");
   assert.equal(model.dailyRows(summary, "2026-12-31", 14).length, 0, "the window counts back from today");
   assert.equal(model.dailyRows({ health: { mills: [] } }, today, 14).length, 0);
+});
+
+test("a mill with a zero reading is left out of the day's average, spread, bias and strand SD, and a day of only zeros asks for a data check", () => {
+  const today = "2026-10-14";
+  const zero = (mill) => (id) => (id.startsWith(mill) ? { mv: 0, mh: 0 } : {});
+  const rows = [
+    ...healthRows(steady(44), { material: "B0005" }),
+    ...millDay({ material: "B0005", date: "2026-10-13", mills: { 1: 40.1, 2: 20, 3: 40.3 }, tweak: zero("2") }),
+    ...millDay({ material: "B0005", date: today, mills: { 1: 40.2, 2: 40.4 }, tweak: (id) => ({ mv: 0, mh: 0 }) }),
+  ];
+  const materials = summaryOf(rows);
+  const daily = model.dailyRows(materials[0], today, 14);
+  assert.deepEqual(daily.map((day) => [day.date, day.mv, day.mills, day.suspect, day.spread, day.status]), [
+    ["2026-10-13", 40.2, 2, 1, 0.2, "ok"], [today, null, 0, 2, null, "data"],
+  ], "the zero mill does not drag the day to red; a day of zeros is a data check");
+  const trend = model.trendItems(materials, today, 14);
+  assert.equal(trend[0].severity, 1, "data ranks after out and before warn");
+  assert.equal(trend[0].mhJump, null, "zeros do not fake an MH jump");
+  const [item] = model.dashAttention(trend, materials, today);
+  assert.deepEqual([item.kind, item.severity, item.suspect], ["dayData", "out", 2]);
+  const bias = model.millBias(materials, today, 14);
+  assert.deepEqual(Object.keys(bias.rows[0].cells), ["1", "3"], "the zero mill is not in the bias map");
+  assert.deepEqual(model.strandUniformity(materials, today, 14).rows[0].cells["2"], undefined);
+  assert.deepEqual(model.drillRows(materials[0], today, 14).map((row) => [row.mill, row.status]), [["1", "data"], ["2", "data"]], "the drill-down keeps the mill table's data check");
+});
+
+test("mill rows keep their out-of-line points only for the material's latest test day, so a 45-day snapshot stays small", () => {
+  const rows = [...millDay({ date: "2026-10-01" }), ...millDay({ date: "2026-10-14" })];
+  const mills = summaryOf(rows)[0].health.mills;
+  assert.deepEqual(mills.map((row) => [row.date, row.mill, row.points.length]), [
+    ["2026-10-01", "1", 0], ["2026-10-01", "2", 0], ["2026-10-01", "3", 0], ["2026-10-14", "1", 0], ["2026-10-14", "2", 0], ["2026-10-14", "3", 6],
+  ]);
+  assert.equal(mills[2].dMv, 4.9, "the difference from the day's median is still kept for every day");
 });
 
 // สูตรหลักมีประวัติพอตั้งเส้น วันล่าสุดเกิน ±5 · สูตรที่ MH กระโดด · สูตรเส้นชั่วคราวปกติ · สูตรใหม่ไม่มีเส้น
@@ -703,8 +738,8 @@ test("trend items rank the formula to look at first, flag a jump in MH and feed 
   const materials = summaryOf(dashboardRows(today));
   const trend = model.trendItems(materials, today, 30);
   assert.deepEqual(trend.map((item) => [item.material, item.latest.status, item.severity, item.level, Boolean(item.mhJump)]), [
-    ["B0005", "out", 0, "ready", false], ["B0008", "none", 1, "insufficient", true], ["A2004", "ok", 2, "provisional", false], ["C1301", "none", 3, "insufficient", false],
-  ], "worst day first, then formulas with limits, then the rest");
+    ["B0005", "out", 0, "ready", false], ["B0008", "none", 2, "insufficient", true], ["A2004", "ok", 3, "provisional", false], ["C1301", "none", 4, "insufficient", false],
+  ], "worst day first (out, data check, warning), then formulas with limits, then the rest");
   const jump = trend[1].mhJump;
   assert.deepEqual([jump.value, jump.high, jump.date], [110.3, true, today]);
   assert.ok(jump.mean > 79 && jump.mean < 81);
