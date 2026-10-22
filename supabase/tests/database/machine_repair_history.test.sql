@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(27);
+select plan(30);
 
 select has_function('public', 'app_get_machine_repair_history', array['uuid'], 'public.app_get_machine_repair_history exists');
 
@@ -100,6 +100,38 @@ from public.request_types t where t.code = 'MANAGEMENT';
 insert into public.request_technicians (request_id, technician_id)
 values ('88000000-0000-0000-0000-0000000000a2', '88000000-0000-0000-0000-000000000004');
 
+-- ชุดข้อมูลเพิ่ม: เครื่อง RB-2 (ใบ cancelled/rejected, ช่างมีแค่ assignee_id, อีกเครื่องรหัสเดียวกันคนละ machine_id)
+-- และเครื่อง RB-3 ที่มีใบเกินขีดจำกัด 50 รายการ
+insert into public.machines (id, code, name, department_id, is_placeholder, sort_order) values
+  ('88000000-0000-0000-0000-000000000104', 'HIST-RB-2', 'เครื่องทดสอบ RB-2', (select id from public.departments where code = 'RB'), false, 9004),
+  ('88000000-0000-0000-0000-000000000105', 'HIST-RB-2', 'เครื่องรหัสซ้ำ RB-2', (select id from public.departments where code = 'RB'), false, 9005),
+  ('88000000-0000-0000-0000-000000000106', 'HIST-RB-3', 'เครื่องทดสอบ RB-3', (select id from public.departments where code = 'RB'), false, 9006);
+
+insert into public.requests
+  (id, request_no, request_type_id, requester_id, department_id, title, description, status, doc_type,
+   machine_id, machine_code, machine_name, assignee_id, created_at)
+select v.id::uuid, v.request_no, t.id, v.requester::uuid, d.id, 'ทดสอบประวัติเครื่อง ' || v.request_no, v.description,
+       v.status::public.request_status, 'repair', v.machine_id::uuid, v.machine_code, 'ชื่อเครื่อง', v.assignee::uuid, v.created_at::timestamptz
+from (values
+  ('88000000-0000-0000-0000-0000000000b1', 'HIST-S1', '88000000-0000-0000-0000-000000000001', 'in_progress', '88000000-0000-0000-0000-000000000104', 'HIST-RB-2', null, 'ใบปัจจุบันของเครื่อง RB-2', '2026-10-05 02:00+00'),
+  ('88000000-0000-0000-0000-0000000000b2', 'HIST-S2', '50000000-0000-0000-0000-000000000003', 'cancelled',   '88000000-0000-0000-0000-000000000104', 'HIST-RB-2', '88000000-0000-0000-0000-000000000004', 'ใบที่ยกเลิก ช่างมีแค่ assignee', '2026-09-05 02:00+00'),
+  ('88000000-0000-0000-0000-0000000000b3', 'HIST-S3', '50000000-0000-0000-0000-000000000003', 'rejected',    '88000000-0000-0000-0000-000000000104', 'HIST-RB-2', null, 'ใบที่ไม่อนุมัติ', '2026-08-05 02:00+00'),
+  ('88000000-0000-0000-0000-0000000000b4', 'HIST-S4', '50000000-0000-0000-0000-000000000003', 'completed',   '88000000-0000-0000-0000-000000000105', 'HIST-RB-2', null, 'รหัสเดียวกันแต่คนละเครื่อง ต้องไม่ขึ้น', '2026-07-05 02:00+00'),
+  ('88000000-0000-0000-0000-0000000000c0', 'HIST-L0', '88000000-0000-0000-0000-000000000001', 'in_progress', '88000000-0000-0000-0000-000000000106', 'HIST-RB-3', null, 'ใบปัจจุบันของเครื่อง RB-3', '2026-10-06 02:00+00')
+) as v(id, request_no, requester, status, machine_id, machine_code, assignee, description, created_at)
+join public.departments d on d.code = 'RB'
+cross join (select id from public.request_types where code = 'MT_REPAIR') t;
+
+insert into public.requests
+  (id, request_no, request_type_id, requester_id, department_id, title, description, status, doc_type,
+   machine_id, machine_code, machine_name, created_at)
+select ('88000000-0000-0000-0001-' || lpad(n::text, 12, '0'))::uuid, 'HIST-L' || n, t.id,
+       '50000000-0000-0000-0000-000000000003', d.id, 'ทดสอบขีดจำกัด ' || n, 'ใบเก่าลำดับที่ ' || n, 'completed', 'repair',
+       '88000000-0000-0000-0000-000000000106', 'HIST-RB-3', 'ชื่อเครื่อง', '2026-01-01 02:00+00'::timestamptz + (n || ' hours')::interval
+from generate_series(1, 55) n
+join public.departments d on d.code = 'RB'
+cross join (select id from public.request_types where code = 'MT_REPAIR') t;
+
 -- 1. ไม่ล็อกอิน / ไม่ใช่พนักงาน -----------------------------------------------------------
 set local role anon;
 select throws_ok(
@@ -144,6 +176,22 @@ select throws_ok(
 select throws_ok(
   $$ select * from public.app_get_machine_repair_history('00000000-0000-0000-0000-000000000000') $$,
   'NOT_AUTHORIZED', 'an unknown request id is rejected without saying whether it exists'
+);
+
+select results_eq(
+  $$ select request_id, status from public.app_get_machine_repair_history('88000000-0000-0000-0000-0000000000b1') $$,
+  $$ values ('88000000-0000-0000-0000-0000000000b2'::uuid, 'cancelled'::text), ('88000000-0000-0000-0000-0000000000b3'::uuid, 'rejected'::text) $$,
+  'cancelled and rejected requests are listed, and another machine that merely shares the code is not'
+);
+select is(
+  (select technician_names from public.app_get_machine_repair_history('88000000-0000-0000-0000-0000000000b1') where request_id = '88000000-0000-0000-0000-0000000000b2'),
+  'ช่าง ทดสอบ',
+  'without rows in request_technicians the technician name falls back to the assignee'
+);
+select is(
+  (select count(*)::integer from public.app_get_machine_repair_history('88000000-0000-0000-0000-0000000000c0')),
+  50,
+  'the history is capped at 50 rows'
 );
 
 -- 3. พนักงานแผนกของเครื่อง (ได้ cc) เห็น, แผนกอื่นที่ได้ cc ไม่เห็น, คนที่เปิดใบไม่ได้ถูกปฏิเสธ -------

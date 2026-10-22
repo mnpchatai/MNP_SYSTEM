@@ -278,7 +278,7 @@
         <span class="attachment-lightbox-title" id="machine-history-title">ประวัติการซ่อม · ${escapeHtml(label)}</span>
         <span class="attachment-lightbox-actions"><button class="btn secondary small" type="button" data-history-close>ปิด</button></span>
       </header>
-      <div class="machine-history-body" aria-live="polite"><p class="machine-history-state">กำลังโหลด…</p></div>
+      <div class="machine-history-body"><p class="machine-history-state" role="status">กำลังโหลด…</p></div>
     </div>`;
     const body = overlay.querySelector(".machine-history-body");
 
@@ -309,7 +309,7 @@
       body.innerHTML = history.listHtml(history.normalizeRows(data), { escapeHtml, formatDate, statusBadge, docTypeLabels });
     } catch (error) {
       if (!overlay.isConnected) return;
-      body.innerHTML = `<p class="machine-history-state error">${escapeHtml(history.errorMessage(error, friendlyError))}</p>`;
+      body.innerHTML = `<p class="machine-history-state error" role="status">${escapeHtml(history.errorMessage(error, friendlyError))}</p>`;
     }
   }
 
@@ -631,7 +631,7 @@
           requestFact("เครื่องจักร", `${request.machine_code ?? "—"}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${request.machine_name}` : ""}`, {
             icon: "⚙",
             tone: "slate",
-            ...(window.MNP_MT_MACHINE_HISTORY.hasMachineHistory(request) ? { action: "machine-history", actionLabel: "ดูประวัติการซ่อมของเครื่องนี้" } : {}),
+            ...(window.MNP_MT_MACHINE_HISTORY.hasMachineHistory(request, { employee, owningDepartmentId: type?.owning_department_id }) ? { action: "machine-history", actionLabel: "ดูประวัติการซ่อมของเครื่องนี้" } : {}),
           }),
           requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "◉", tone: "cyan" }),
           requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "↗", tone: request.is_urgent ? "danger" : "success" }),

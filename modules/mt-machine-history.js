@@ -13,12 +13,26 @@
 
   const text = (value) => String(value ?? "").trim();
 
+  // กลุ่มที่เรียกได้ต้องตรงกับ app_get_machine_repair_history: บทบาทระดับบริหาร, ผู้แจ้ง, พนักงานแผนกของใบ/แผนกเจ้าของงานซ่อม
+  // ใช้แค่ตัดสินว่าจะให้กดการ์ดไหม — ฐานข้อมูลตรวจซ้ำทุกครั้ง จึงถึงจะคลาดเคลื่อนก็ไม่เปิดข้อมูลเพิ่ม
+  const ALLOWED_ROLE_CODES = ["admin", "general_manager", "factory_manager", "assistant_factory_manager"];
+
+  function canViewMachineHistory(request, viewer) {
+    const employee = viewer?.employee;
+    if (!employee) return false;
+    if (ALLOWED_ROLE_CODES.includes(employee.role?.code)) return true;
+    if (request.requester_id && request.requester_id === employee.id) return true;
+    return Boolean(employee.department_id) && [request.department_id, viewer.owningDepartmentId].includes(employee.department_id);
+  }
+
   // ใบเก่าที่ไม่มี machine_id ยังเปิดดูได้ถ้ามีรหัสเครื่อง (ฐานข้อมูลจับคู่ด้วยแผนก + รหัส)
-  function hasMachineHistory(request) {
+  // viewer = { employee, owningDepartmentId } ถ้าไม่ส่งมา ตรวจเฉพาะข้อมูลของใบ
+  function hasMachineHistory(request, viewer) {
     if (!request) return false;
     const code = text(request.machine_code).replace(/\s+/g, "");
     if (PLACEHOLDER_CODES.includes(code)) return false;
-    return Boolean(request.machine_id) || code !== "";
+    if (!request.machine_id && code === "") return false;
+    return viewer === undefined || canViewMachineHistory(request, viewer);
   }
 
   function normalizeRows(data) {
@@ -70,13 +84,13 @@
   }
 
   function listHtml(rows, helpers) {
-    if (!rows.length) return `<p class="machine-history-state">ยังไม่มีประวัติการซ่อมอื่นของเครื่องนี้</p>`;
+    if (!rows.length) return `<p class="machine-history-state" role="status">ยังไม่มีประวัติการซ่อมอื่นของเครื่องนี้</p>`;
     return `<ol class="machine-history-list">${rows.map((row) => rowHtml(row, helpers)).join("")}</ol>${
       rows.length >= HISTORY_LIMIT ? `<p class="machine-history-state">แสดง ${HISTORY_LIMIT} รายการล่าสุด</p>` : ""
     }`;
   }
 
-  const api = { PLACEHOLDER_CODES, HISTORY_LIMIT, hasMachineHistory, normalizeRows, errorMessage, listHtml };
+  const api = { PLACEHOLDER_CODES, HISTORY_LIMIT, hasMachineHistory, canViewMachineHistory, normalizeRows, errorMessage, listHtml };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_MT_MACHINE_HISTORY = api;
 })(typeof window !== "undefined" ? window : globalThis);

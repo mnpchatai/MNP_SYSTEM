@@ -829,11 +829,13 @@ function statusBadge(status) {
 function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "", action = "", actionLabel = "" } = {}) {
   const classes = ["request-fact", `request-fact-${tone}`, wide ? "wide" : ""].filter(Boolean).join(" ");
   const valueClasses = ["request-fact-value", valueClass].filter(Boolean).join(" ");
+  // <button> ใส่ได้แค่ phrasing content จึงใช้ span แทน div (สไตล์อยู่ที่ class .request-fact-copy ทั้งคู่)
+  const copyTag = action ? "span" : "div";
   const body = `<span class="request-fact-icon" aria-hidden="true">${escapeHtml(icon)}</span>
-    <div class="request-fact-copy">
+    <${copyTag} class="request-fact-copy">
       <span class="request-fact-label">${escapeHtml(label)}</span>
       <strong class="${escapeHtml(valueClasses)}">${escapeHtml(value ?? "—")}</strong>
-    </div>`;
+    </${copyTag}>`;
   if (action) {
     return `<button type="button" class="${escapeHtml(`${classes} is-action`)}" data-fact-action="${escapeHtml(action)}" aria-haspopup="dialog" title="${escapeHtml(actionLabel)}" aria-label="${escapeHtml(`${label}: ${value ?? "—"} — ${actionLabel}`)}">
     ${body}

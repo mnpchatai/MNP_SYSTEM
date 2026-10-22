@@ -33,6 +33,22 @@ test("the placeholder machines have no history even though they have a machine i
   assert.equal(history.hasMachineHistory({ machine_id: "m", machine_code: "สร้างใหม่ 2" }), true);
 });
 
+test("the card is clickable only for viewers in an allowed group", () => {
+  const request = { machine_id: "m-1", machine_code: "B-SB 1-15", requester_id: "e-req", department_id: "d-rb" };
+  const viewer = (employee, owningDepartmentId = "d-mt") => ({ employee: { id: "e-x", department_id: "d-other", role: { code: "staff" }, ...employee }, owningDepartmentId });
+  for (const code of ["admin", "general_manager", "factory_manager", "assistant_factory_manager"]) {
+    assert.equal(history.hasMachineHistory(request, viewer({ role: { code } })), true, code);
+  }
+  assert.equal(history.hasMachineHistory(request, viewer({ id: "e-req" })), true, "the requester");
+  assert.equal(history.hasMachineHistory(request, viewer({ department_id: "d-rb" })), true, "an employee of the request department");
+  assert.equal(history.hasMachineHistory(request, viewer({ department_id: "d-mt" })), true, "an employee of the repair-owning department");
+  assert.equal(history.hasMachineHistory(request, viewer({ department_id: "d-other" })), false, "an employee of another department");
+  assert.equal(history.hasMachineHistory(request, viewer({ department_id: null, role: { code: "department_manager" } })), false, "no department and no allowed role");
+  assert.equal(history.hasMachineHistory(request, { employee: null, owningDepartmentId: "d-mt" }), false, "no employee");
+  assert.equal(history.hasMachineHistory({ ...request, machine_code: "ไม่มี" }, viewer({ role: { code: "admin" } })), false, "an allowed viewer still has no history for a placeholder machine");
+  assert.equal(history.hasMachineHistory({ ...request, machine_id: null, machine_code: "" }, viewer({ role: { code: "admin" } })), false);
+});
+
 test("rows are normalised, rows without an id are dropped and can_open must be exactly true", () => {
   const rows = history.normalizeRows([
     row({ description: "  อาการ  ", technician_names: null }),
