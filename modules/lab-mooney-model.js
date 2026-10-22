@@ -887,6 +887,39 @@
       || b.daily.length - a.daily.length || byName(a, b));
   }
 
+  // การ์ด "แนวโน้มต่อสูตร": ทุกสูตรในสรุป เรียงตามชื่อ (A→Z) ไม่ตัดสูตรที่ไม่มีผลในช่วงออก
+  //   mode "window"  = มีผลในช่วงที่เลือก (ข้อมูลเดียวกับ trendItems)
+  //   mode "older"   = ไม่มีผลในช่วง ใช้แถวรายโม่ทั้งหมดที่ตัวซิงก์เก็บ (MILL_DAYS วัน) · since = วันแรกของช่วงนั้น
+  //   mode "batches" = ไม่มีแถวรายโม่ (การทดสอบอื่น เช่น scorch หรือทดสอบเก่ากว่า MILL_DAYS วัน) ใช้ค่าเฉลี่ย MV รายชุดล่าสุด (trendMv ไม่มีวันที่)
+  //   otherTest = ไม่มีแถวของการทดสอบความหนืดเลย (ไม่มีเส้นควบคุม และไม่ควรเทียบกับช่วง ±5 MU)
+  function trendCards(materials, today, days, trend = trendItems(materials, today, days)) {
+    const inRange = new Map(trend.map((item) => [item.material, item]));
+    const cards = [];
+    for (const item of Array.isArray(materials) ? materials : []) {
+      if (!item?.material) continue;
+      const base = { lastTested: item.lastTested ?? null, otherTest: item.health?.mv?.level === "otherTest" };
+      const current = inRange.get(item.material);
+      if (current) {
+        cards.push({ ...current, ...base, mode: "window", since: windowSince(today, days) });
+        continue;
+      }
+      const daily = item.health ? dailyRows(item, today, MILL_DAYS) : [];
+      if (daily.length) {
+        const control = item.health.mv;
+        cards.push({
+          ...base, material: item.material, mode: "older", since: windowSince(today, MILL_DAYS), daily, latest: daily[daily.length - 1], mhJump: null,
+          level: control?.level ?? "insufficient", count: control?.count ?? 0, limits: hasLimits(control) ? control : null,
+        });
+        continue;
+      }
+      cards.push({
+        ...base, material: item.material, mode: "batches", batches: (Array.isArray(item.trendMv) ? item.trendMv : []).filter(isNumber),
+        level: item.health?.mv?.level ?? "insufficient", count: item.health?.mv?.count ?? 0, limits: null,
+      });
+    }
+    return cards.sort(byName);
+  }
+
   // การ์ดของวันทดสอบล่าสุด: สูตรที่มีผลในวันล่าสุดของช่วง (เรียงตาม trendItems) · ไม่มี = []
   function latestCards(trend) {
     const date = trend.reduce((max, item) => (item.latest.date > max ? item.latest.date : max), "");
@@ -1051,7 +1084,7 @@
     STRAND_SD_HIGH, DASH_RANGES, DASH_DEFAULT_DAYS, MILL_DIFF_MU, MH_JUMP_MU, MH_MIN_MILLS,
     sheetAverageFits, controlLimits, ruleSignals, latestSignal, zoneOf, zoneFor, isViscosityTest, machineItems, parseSampleId, millRows, millPattern, millTableRows, dataNotices, materialHealth, daysBetween, todayInBangkok, shiftDate,
     nameIssues, attentionItems, hasHealth, controlMaterials,
-    windowSince, dailyRows, mhNote, trendItems, latestCards, dashAttention, millBias, strandUniformity, drillRows,
+    windowSince, dailyRows, mhNote, trendItems, trendCards, latestCards, dashAttention, millBias, strandUniformity, drillRows,
   };
   // Shared by the browser and the sync worker; one implementation of grouping/statistics.
   root.MNP_LAB_MOONEY = api;

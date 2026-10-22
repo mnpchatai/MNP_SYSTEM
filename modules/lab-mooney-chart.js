@@ -409,6 +409,14 @@
   function controlChart({ control, key = "mv", width, label = "" }) {
     const values = (control?.recent ?? []).filter(isNumber);
     if (!values.length || !(control.sigma > 0)) return "";
+    // วันที่ของแต่ละชุด (recentDates ยาวเท่า recent) สำหรับ tooltip · สรุปรุ่นเก่าที่ไม่มีวันที่ = นับย้อนจากชุดล่าสุด
+    const dates = Array.isArray(control.recentDates) && control.recentDates.length === control.recent.length
+      ? control.recentDates.filter((date, index) => isNumber(control.recent[index])) : [];
+    // ระยะจากเส้นกลางเป็นจำนวน σ ทศนิยม 1 ตำแหน่ง เครื่องหมายแบบเดียวกับ model.formatSigned
+    const sigmas = (value) => {
+      const z = Number(((value - control.mean) / control.sigma).toFixed(1));
+      return z === 0 ? "0" : `${z < 0 ? "−" : "+"}${Math.abs(z).toFixed(1)}`;
+    };
     const total = Math.max(280, Math.floor(Number(width) || 0));
     const compact = total < 560;
     const box = { left: compact ? 40 : 48, right: compact ? 40 : 48, top: 12, height: compact ? 150 : 180, bottom: 22 };
@@ -430,7 +438,12 @@
       const mark = zone === "ok"
         ? `<circle cx="${cx}" cy="${cy}" r="${radius}"/>`
         : `<rect x="${n2(x(index) - radius)}" y="${n2(y(value) - radius)}" width="${n2(radius * 2)}" height="${n2(radius * 2)}" transform="rotate(45 ${cx} ${cy})"/>`;
-      return `<g class="lab-cc-pt is-${zone}${last ? " is-last" : ""}">${mark}</g>`;
+      const date = dates[index];
+      const tip = [
+        date ? model.formatDate(date) : `${values.length - 1 - index ? `${values.length - 1 - index} ชุดก่อน` : "ชุดล่าสุด"}`,
+        `${key.toUpperCase()} ${tick(value)} (${model.formatSigned(Number((value - control.mean).toFixed(2)))} จาก CL · ${sigmas(value)}σ)`,
+      ].join("\n");
+      return `<g class="lab-cc-pt is-${zone}${last ? " is-last" : ""}" data-tip="${esc(tip)}">${mark}</g>`;
     }).join("");
     const height = box.top + box.height + box.bottom;
     const axisY = box.top + box.height + 16;
@@ -448,7 +461,7 @@
 
   // กราฟเล็กต่อสูตรของแดชบอร์ด: ค่าเฉลี่ย MV รายวัน (model.dailyRows) บนแกนวันที่ของช่วงที่เลือก (since → today)
   // ขีดตั้ง = ช่วงระหว่างค่าเฉลี่ยของโม่ในวันนั้น (low–high) · แถบ = CL ± band ของสูตร (เฉพาะสูตรที่มีเส้นควบคุม) · เส้นกลางเป็นเส้นบาง
-  // จุดใช้สีสถานะและรูปทรง (ok/none วงกลม · warn ข้าวหลามตัด · out สี่เหลี่ยม) จึงแยกได้แม้ไม่เห็นสี ค่าของจุดอยู่ใน <title>
+  // จุดใช้สีสถานะและรูปทรง (ok/none วงกลม · warn ข้าวหลามตัด · out สี่เหลี่ยม) จึงแยกได้แม้ไม่เห็นสี ค่าของจุดอยู่ใน data-tip (module-lab.js แสดงเป็น tooltip เมื่อชี้/แตะ)
   function dailyChart({ daily = [], limits = null, since, today, width = 240, label = "" }) {
     // วันที่ทุกโม่เป็นค่า 0 (status "data") ไม่มีค่าเฉลี่ยให้วาด จึงไม่เป็นจุดบนกราฟ (การ์ดและรายการต้องดูก่อนบอกแทน)
     const points = daily.filter((row) => isNumber(row.mv) && typeof row.date === "string");
@@ -496,16 +509,51 @@
         : status === "warn"
           ? `<rect x="${n2(x(row.date) - radius)}" y="${n2(y(row.mv) - radius)}" width="${n2(radius * 2)}" height="${n2(radius * 2)}" transform="rotate(45 ${cx} ${cy})"/>`
           : `<circle cx="${cx}" cy="${cy}" r="${radius}"/>`;
-      const title = `${model.formatDate(row.date)}: MV ${tick(row.mv)}${isNumber(row.dev) ? ` (${model.formatSigned(row.dev)} จาก CL)` : ""} · ${row.mills} โม่ ${row.count} ชิ้น${isNumber(row.spread) ? ` · โม่ต่างกัน ${tick(row.spread)}` : ""}${isNumber(row.mh) ? ` · MH ${tick(row.mh)}` : ""}${row.suspect ? ` · ค่าอ่าน 0 อีก ${row.suspect} โม่` : ""}`;
-      body += `<g class="lab-dc-pt is-${status}" data-date="${esc(row.date)}">${mark}<title>${esc(title)}</title></g>`;
+      const tip = [
+        model.formatDate(row.date),
+        `MV ${tick(row.mv)}${isNumber(row.dev) ? ` (${model.formatSigned(row.dev)} จาก CL)` : ""}${isNumber(row.mh) ? ` · MH ${tick(row.mh)}` : ""}`,
+        `${row.mills} โม่ ${row.count} ชิ้น${isNumber(row.spread) ? ` · โม่ต่างกัน ${tick(row.spread)}` : ""}${row.suspect ? ` · ค่าอ่าน 0 อีก ${row.suspect} โม่` : ""}`,
+      ].join("\n");
+      body += `<g class="lab-dc-pt is-${status}" data-date="${esc(row.date)}" data-tip="${esc(tip)}">${mark}</g>`;
     }
     const height = box.top + box.height + box.bottom;
     const summary = `${label ? `${label} ` : ""}MV รายวัน ${points.length} วัน ล่าสุด ${model.formatDate(last.date)} ${tick(last.mv)}${limits ? ` เส้นกลาง ${tick(limits.mean)}` : ""}`;
     return `<svg class="lab-dc" width="${total}" height="${height}" viewBox="0 0 ${total} ${height}" role="img" aria-label="${esc(summary)}">${body}</svg>`;
   }
 
+  // กราฟเล็กของสูตรที่ไม่มีแถวรายโม่ (model.trendCards mode "batches" เช่นการทดสอบอื่น): ค่าเฉลี่ย MV รายชุดล่าสุด เก่า → ใหม่
+  // ไม่มีวันที่ (trendMv) แกน X นับย้อนจากชุดล่าสุด · ไม่มีเส้นควบคุมหรือแถบ ±5 MU · ค่าของจุดอยู่ใน data-tip
+  function batchChart({ values = [], width = 240, label = "" }) {
+    const list = values.filter(isNumber);
+    if (!list.length) return "";
+    const total = Math.max(160, Math.floor(Number(width) || 0));
+    const box = { left: 30, right: 8, top: 10, height: 60, bottom: 18 };
+    const plotWidth = total - box.left - box.right;
+    const low = Math.min(...list);
+    const high = Math.max(...list);
+    const pad = (high - low) * 0.15 || 1;
+    const x = (index) => box.left + (list.length === 1 ? 0.5 : index / (list.length - 1)) * plotWidth;
+    const y = (value) => box.top + (1 - (value - (low - pad)) / (high - low + pad * 2)) * box.height;
+    const axisY = box.top + box.height;
+    const tick1 = (value) => tick(Number(value.toFixed(1)));
+    let body = `<text class="lab-tick" x="${box.left - 5}" y="${n2(y(high) + 4)}" text-anchor="end">${esc(tick1(high))}</text>`
+      + (high === low ? "" : `<text class="lab-tick" x="${box.left - 5}" y="${n2(y(low) + 4)}" text-anchor="end">${esc(tick1(low))}</text>`)
+      + `<line class="lab-grid" x1="${box.left}" x2="${n2(box.left + plotWidth)}" y1="${n2(axisY)}" y2="${n2(axisY)}"/>`
+      + (list.length > 1 ? `<text class="lab-tick" x="${box.left}" y="${n2(axisY + 13)}">${list.length - 1} ชุดก่อน</text>` : "")
+      + `<text class="lab-tick" x="${n2(box.left + plotWidth)}" y="${n2(axisY + 13)}" text-anchor="end">ล่าสุด</text>`;
+    if (list.length > 1) body += `<polyline class="lab-dc-line" points="${list.map((value, index) => `${n2(x(index))},${n2(y(value))}`).join(" ")}"/>`;
+    list.forEach((value, index) => {
+      const ago = list.length - 1 - index;
+      const tip = `${ago ? `${ago} ชุดก่อน` : "ชุดล่าสุด"}\nค่าเฉลี่ย MV ของชุด ${tick(value)}`;
+      body += `<g class="lab-dc-pt is-none" data-tip="${esc(tip)}"><circle cx="${n2(x(index))}" cy="${n2(y(value))}" r="4.5"/></g>`;
+    });
+    const height = box.top + box.height + box.bottom;
+    const summary = `${label ? `${label} ` : ""}ค่าเฉลี่ย MV รายชุด ${list.length} ชุดล่าสุด ชุดล่าสุด ${tick(list[list.length - 1])}`;
+    return `<svg class="lab-dc" width="${total}" height="${height}" viewBox="0 0 ${total} ${height}" role="img" aria-label="${esc(summary)}">${body}</svg>`;
+  }
+
   const api = {
-    SERIES, BAND_SIZE, MIN_VISIBLE, layoutFor, defaultCount, averageMarks, trendChart, sparkline, controlChart, dailyChart,
+    SERIES, BAND_SIZE, MIN_VISIBLE, layoutFor, defaultCount, averageMarks, trendChart, sparkline, controlChart, dailyChart, batchChart,
     normalizeRange, sameRange, rangeFor, rangeForMonths, zoomRange, panRange, revealRange,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

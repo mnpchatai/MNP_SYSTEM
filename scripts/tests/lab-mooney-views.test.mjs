@@ -805,16 +805,37 @@ test("the trend grid draws one small chart per formula on the window's date axis
   assert.match(svg, /<text class="lab-tick" x="30" y="[\d.]+">01\/10<\/text>/);
   assert.match(svg, /text-anchor="end">14\/10<\/text>/);
   assert.equal(count(svg, /<line class="lab-dc-spread is-/g), 2);
-  assert.match(svg, /<g class="lab-dc-pt is-ok" data-date="2026-10-13"><circle cx="216\.46" /, "the 13th sits 12/13 of the way across the plot");
-  assert.match(svg, /<g class="lab-dc-pt is-out" data-date="2026-10-14"><rect [^>]*><title>14\/10\/2026: MV 46\.5 \(\+6\.50 จาก CL\) · 2 โม่ 12 ชิ้น · โม่ต่างกัน 0\.1 · MH 75<\/title><\/g>/);
-  assert.match(chart.dailyChart({ daily: [dayRow({ status: "warn" })], limits: control(), since: "2026-10-01", today: "2026-10-14", width: 240 }), /<g class="lab-dc-pt is-warn" data-date="2026-10-14"><rect [^>]*transform="rotate\(45 232 [\d.]+\)"/, "a warning is a diamond");
+  assert.match(svg, /<g class="lab-dc-pt is-ok" data-date="2026-10-13" data-tip="[^"]*"><circle cx="216\.46" /, "the 13th sits 12/13 of the way across the plot");
+  assert.match(svg, /<g class="lab-dc-pt is-out" data-date="2026-10-14" data-tip="14\/10\/2026\nMV 46\.5 \(\+6\.50 จาก CL\) · MH 75\n2 โม่ 12 ชิ้น · โม่ต่างกัน 0\.1"><rect [^>]*><\/g>/);
+  assert.match(chart.dailyChart({ daily: [dayRow({ status: "warn" })], limits: control(), since: "2026-10-01", today: "2026-10-14", width: 240 }), /<g class="lab-dc-pt is-warn" data-date="2026-10-14" data-tip="[^"]*"><rect [^>]*transform="rotate\(45 232 [\d.]+\)"/, "a warning is a diamond");
   noBadNumbers(svg);
   assert.equal(chart.dailyChart({ daily: [], since: "2026-10-01", today: "2026-10-14", width: 240 }), "");
   assert.equal(chart.dailyChart({ daily: trendItem().daily, since: "2026-10-14", today: "2026-10-01", width: 240 }), "", "a window that ends before it starts draws nothing");
   const one = chart.dailyChart({ daily: [dayRow({ mills: 1, spread: null, low: null, high: null, dev: null, status: "none" })], limits: null, since: "2026-10-14", today: "2026-10-14", width: 100 });
-  assert.match(one, /width="160"[\s\S]*<g class="lab-dc-pt is-none" data-date="2026-10-14"><circle cx="91" /, "a single day on a one-day window sits in the middle of a readable chart");
+  assert.match(one, /width="160"[\s\S]*<g class="lab-dc-pt is-none" data-date="2026-10-14" data-tip="[^"]*"><circle cx="91" /, "a single day on a one-day window sits in the middle of a readable chart");
   assert.doesNotMatch(one, /lab-dc-band|lab-dc-spread|จาก CL/);
   noBadNumbers(one);
+  assert.doesNotMatch(svg, /<title>/, "the values are in a data-tip tooltip, not the slow native title");
+});
+
+test("cards of formulas outside the window show their latest date, and other tests draw their batch averages without limits", () => {
+  const older = views.trendGrid([trendItem({ mode: "older", since: "2026-08-31", lastTested: "2026-10-14" })], { since: "2026-10-01", today: "2026-10-14", width: 240 });
+  assert.match(older, /<button type="button" class="lab-trend is-stale" data-material="B0005"/);
+  assert.match(older, /<span class="lab-trend-flags"><span class="lab-flag is-none" title="ไม่มีผลในช่วงที่เลือก">ล่าสุด 14\/10<\/span><\/span>/);
+  assert.match(older, /<text class="lab-tick" x="30" y="[\d.]+">31\/08<\/text>/, "its axis starts where the stored mill days start");
+  assert.doesNotMatch(older, /เกิน ±5/, "an old day's status is not shown as today's");
+  const batches = views.trendGrid([{ material: XSS, mode: "batches", batches: [20.1, 21.1, 20.5], otherTest: true, lastTested: "2026-10-02", level: "otherTest", count: 0, limits: null }], { since: "2026-10-01", today: "2026-10-14", width: 240 });
+  assert.ok(!batches.includes(XSS));
+  assert.match(batches, /<span class="lab-trend-foot"><span>การทดสอบอื่น · ไม่มีเส้นควบคุม<\/span><span><\/span><\/span>/);
+  assert.match(batches, /ล่าสุด 02\/10/);
+  assert.equal(count(batches, /<g class="lab-dc-pt is-none" data-tip="/g), 3);
+  assert.match(batches, /data-tip="ชุดล่าสุด\nค่าเฉลี่ย MV ของชุด 20\.5"/);
+  assert.match(batches, />2 ชุดก่อน<\/text>/);
+  assert.doesNotMatch(batches, /lab-dc-band|CL /);
+  noBadNumbers(batches);
+  assert.match(views.trendGrid([{ material: "x", mode: "batches", batches: [], lastTested: null, level: "insufficient", count: 0, limits: null }], { width: 240 }), /<span class="lab-trend-empty">ไม่มีค่า MV ให้วาด<\/span>/);
+  assert.equal(chart.batchChart({ values: [] }), "");
+  assert.match(chart.batchChart({ values: [40], width: 100 }), /width="160"[\s\S]*<circle cx="91" /, "one batch sits in the middle");
 });
 
 test("the heatmaps colour by bucket, explain each cell in a title and name the formula as a pick button", () => {
@@ -916,7 +937,7 @@ test("the control chart draws CL, UCL and LCL and marks breaches by shape as wel
   for (const name of ["UCL", "CL", "LCL"]) assert.match(svg, new RegExp(`>${name}</text>`));
   assert.equal(count(svg, /class="lab-cc-pt is-ok/g), 3);
   assert.equal(count(svg, /class="lab-cc-pt is-warn/g), 1);
-  assert.match(svg, /class="lab-cc-pt is-out is-last"><rect /, "the latest batch, beyond ±5 MU, is a red diamond");
+  assert.match(svg, /class="lab-cc-pt is-out is-last" data-tip="[^"]*"><rect /, "the latest batch, beyond ±5 MU, is a red diamond");
   assert.match(svg, />4 ชุดก่อน</);
   assert.match(svg, />ล่าสุด</);
   assert.match(svg, /aria-label="A2004 MV 5 ชุดล่าสุด เส้นกลาง 40 UCL 41\.5 LCL 38\.5 ชุดล่าสุด 46"/);
@@ -927,6 +948,10 @@ test("the control chart draws CL, UCL and LCL and marks breaches by shape as wel
   assert.equal(chart.controlChart({ control: control({ sigma: 0 }), width: 640 }), "");
   assert.equal(chart.controlChart({ control: control({ recent: [] }), width: 640 }), "");
   assert.match(chart.controlChart({ control: control(), width: 100 }), /width="280"/, "narrow boxes still get a readable chart");
+  assert.match(svg, /class="lab-cc-pt is-out is-last" data-tip="ชุดล่าสุด\nMV 46 \(\+6\.00 จาก CL · \+12\.0σ\)">/, "no dates: the tooltip counts back from the latest batch");
+  assert.match(svg, /data-tip="4 ชุดก่อน\nMV 40 \(0\.00 จาก CL · 0σ\)"/);
+  const dated = chart.controlChart({ control: control({ recentDates: ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"] }), width: 640 });
+  assert.match(dated, /data-tip="03\/10\/2026\nMV 39\.9 \(−0\.10 จาก CL · −0\.2σ\)"/, "each point names its batch date and distance from CL");
 });
 
 test("the control plot falls back to a sentence when the chosen value has no limits", () => {
