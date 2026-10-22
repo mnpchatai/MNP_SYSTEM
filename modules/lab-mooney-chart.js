@@ -412,6 +412,9 @@
     // วันที่ของแต่ละชุด (recentDates ยาวเท่า recent) สำหรับ tooltip · สรุปรุ่นเก่าที่ไม่มีวันที่ = นับย้อนจากชุดล่าสุด
     const dates = Array.isArray(control.recentDates) && control.recentDates.length === control.recent.length
       ? control.recentDates.filter((date, index) => isNumber(control.recent[index])) : [];
+    // ID ของแถวในแต่ละชุด (recentIds) บอกว่าจุดนั้นเป็นโม่/เส้นไหน · สรุปรุ่นก่อนไม่มี = ไม่แสดง
+    const sources = Array.isArray(control.recentIds) && control.recentIds.length === control.recent.length
+      ? control.recentIds.filter((ids, index) => isNumber(control.recent[index])).map(model.batchSource) : [];
     // ระยะจากเส้นกลางเป็นจำนวน σ ทศนิยม 1 ตำแหน่ง เครื่องหมายแบบเดียวกับ model.formatSigned
     const sigmas = (value) => {
       const z = Number(((value - control.mean) / control.sigma).toFixed(1));
@@ -440,8 +443,9 @@
         : `<rect x="${n2(x(index) - radius)}" y="${n2(y(value) - radius)}" width="${n2(radius * 2)}" height="${n2(radius * 2)}" transform="rotate(45 ${cx} ${cy})"/>`;
       const date = dates[index];
       const tip = [
-        date ? model.formatDate(date) : `${values.length - 1 - index ? `${values.length - 1 - index} ชุดก่อน` : "ชุดล่าสุด"}`,
+        `${date ? model.formatDate(date) : `${values.length - 1 - index ? `${values.length - 1 - index} ชุดก่อน` : "ชุดล่าสุด"}`}${sources[index] ? ` · ${sources[index]}` : ""}`,
         `${key.toUpperCase()} ${tick(value)} (${model.formatSigned(Number((value - control.mean).toFixed(2)))} จาก CL · ${sigmas(value)}σ)`,
+        "CL = ค่าเฉลี่ยทุกชุดของสูตรนี้ (ทุกโม่ ทุกวัน)",
       ].join("\n");
       return `<g class="lab-cc-pt is-${zone}${last ? " is-last" : ""}" data-tip="${esc(tip)}">${mark}</g>`;
     }).join("");
