@@ -38,8 +38,10 @@
 
   // ตอนนี้มีข้อมูลเฉพาะ Mooney (โมดูลอื่นยังไม่มีแหล่งข้อมูล จึงไม่มีส่วนบนแดชบอร์ด)
   // เวลาอ่านชีตกับปุ่มรีเฟรชอยู่ในส่วนของ Mooney ไม่อยู่ที่หัวหน้า เพราะเป็นของชีต Mooney_Test_Report เท่านั้น
+  // (ข้อความเตือนเมื่อข้อมูลเก่ากว่า 3 นาทีอยู่ที่แถบเดียวกันนี้ = สถานะความสดของข้อมูล ไม่ซ้ำเป็นการ์ดอีก)
   // หัวข้อบอกว่าตัวเลขเป็นของการทดสอบใด แต่ไม่เป็นลิงก์ (ทางไปโมดูลอยู่ที่การ์ดในหน้าเลือกโมดูล)
-  // module-lab.js เติมตัวเลขลง #lab-dash-mooney ด้วย dashboardMooney ทุกครั้งที่ได้ฟีดใหม่
+  // module-lab.js เติมเนื้อหาลง #lab-dash-mooney ทุกครั้งที่ได้ฟีดใหม่: dashboardBody เมื่อสรุปมีข้อมูลสุขภาพ (health)
+  // หรือ dashboardMooney (ตัวเลขชุดเดิม) เมื่อตัวซิงก์ยังเป็นรุ่นก่อน — เว็บรุ่นนี้จึงใช้ได้ก่อนและหลัง redeploy ตัวซิงก์
   function dashboardPage(seconds) {
     return `<div class="lab-page">
       ${sections.moduleHead("dashboard")}
@@ -55,6 +57,7 @@
   const tile = (label, value, note = "") => `<div class="summary"><span>${esc(label)}</span><strong>${esc(value)}</strong>${note ? `<small>${esc(note)}</small>` : ""}</div>`;
 
   // stats จาก model.overviewStats: จำนวนวัสดุ / ผลทดสอบรวม / วันที่ทดสอบล่าสุดกับจำนวนวัสดุที่ทดสอบวันนั้น
+  // ใช้เมื่อสรุปยังไม่มี health (ตัวซิงก์รุ่นก่อน) เท่านั้น
   function dashboardMooney(stats) {
     if (!stats?.materialCount) return `<div class="card"><div class="empty">${esc(NO_RESULTS)}</div></div>`;
     return `<div class="summary-grid lab-dash-grid">
@@ -62,6 +65,204 @@
         ${tile("ผลทดสอบ (ครั้ง)", int(stats.resultCount))}
         ${tile("ทดสอบล่าสุด", model.formatDate(stats.lastTested), stats.lastTested ? `${int(stats.latestMaterialCount)} วัสดุ` : "")}
       </div>`;
+  }
+
+  /* ---------- แดชบอร์ด: ตารางรายโม่หนึ่งตารางพร้อมตัวกรอง (สรุปมี health) ---------- */
+  // โครง: แถบตรวจเครื่อง (เฉพาะเมื่อเข้าเงื่อนไข) · แถบตัวกรอง · ตารางรายโม่ (สูตร × วัน × โม่) · กล่องพับเรื่องข้อมูล · กราฟเส้นควบคุมของสูตรที่เลือก
+  // กดแถวในตาราง = เลือกสูตรให้กราฟด้านล่าง ตัวเลขแต่ละอย่างอยู่ที่เดียว (ผลต่างอยู่ในตาราง ความหมายของเกณฑ์อยู่ที่ title)
+  // แต่ละส่วนมี id ของตัวเอง module-lab.js วาดใหม่เฉพาะส่วนที่เปลี่ยน (ไม่เสียตัวกรอง และไม่ให้โปรแกรมอ่านหน้าจออ่านซ้ำ)
+
+  const CONTROL_NOTE = "เส้นกลาง (CL) = ค่าเฉลี่ยของค่าเฉลี่ยรายชุดทั้งหมดของวัสดุนั้น · UCL/LCL = CL ± 3σ โดย σ คำนวณจากช่วงเคลื่อนที่ของค่าเฉลี่ยรายชุด (แผนภูมิ I-MR) = เตือนล่วงหน้า (เหลือง) "
+    + `· ±${model.PRACTICAL_BAND_MU} MU จากค่ากลาง (เฉพาะ MV) = แดง ตามแนวปฏิบัติทั่วไปในอุตสาหกรรม ไม่ใช่มาตรฐานบังคับ ใช้แทนสเปกจนกว่าจะมีค่าสเปก `
+    + `· เส้นชั่วคราว = ประวัติ ${model.CONTROL_MIN_PROVISIONAL}–${model.CONTROL_MIN_READY - 1} ชุด · ใช้เฉพาะการทดสอบความหนืด ML(1+4)`;
+  // ความหมายของ MV/MH ในโรงงาน (อยู่ที่ title ของปุ่มสลับ ไม่เป็นข้อความถาวร)
+  const MEASURE_NOTE = Object.freeze({
+    mv: "MV = ความหนืด Mooney ที่อ่านตอนจบเทส เทียบ ML(1+4)",
+    mh: "MH = ค่าสูงสุดช่วงต้นกราฟ Mooney (ไม่ใช่ MH ของ cure curve จาก MDR)",
+  });
+
+  const STATUS_OPTIONS = Object.freeze([
+    { key: "attention", label: "เฉพาะที่ต้องดู" },
+    { key: "all", label: "ทุกโม่" },
+    { key: "out", label: `ห่างค่ากลางเกิน ±${model.PRACTICAL_BAND_MU} MU` },
+    { key: "warn", label: "ต่างจากโม่อื่น" },
+    { key: "data", label: "ตรวจข้อมูล" },
+  ]);
+  const DAY_OPTIONS = Object.freeze([7, model.MILL_DAYS]);
+  const TABLE_NOTE = "ผลต่าง = ค่าเฉลี่ยของโม่ลบมัธยฐานของสูตรเดียวกันในวันนั้น · ID = โม่ เส้น ส่วน (เช่น 412 = โม่ 4 เส้น 1 ส่วน 2) · "
+    + `แดง = MV ของโม่ห่างค่ากลางของสูตร (จากประวัติ) เกิน ±${model.PRACTICAL_BAND_MU} MU · เหลือง = MV หรือ MH ต่างจากมัธยฐานของวันเกินเกณฑ์ · `
+    + "ตรวจข้อมูล = มีค่าอ่าน 0 หรือ MV ห่างมัธยฐานของวัน 10 MU ขึ้นไป (น่าจะกรอกผิด)";
+
+  const options = (list, selected) => list.map((option) => `<option value="${esc(option.key)}"${option.key === selected ? " selected" : ""}>${esc(option.label)}</option>`).join("");
+
+  function dashboardBody() {
+    const measures = [{ key: "mv", label: "MV" }, { key: "mh", label: "MH" }]
+      .map((measure, index) => `<button type="button" class="lab-range-btn" data-measure="${measure.key}" aria-pressed="${index === 0}" title="${esc(MEASURE_NOTE[measure.key])}">${KEY_ICON(measure.key)}${measure.label}</button>`).join("");
+    return `<div id="lab-machine"></div>
+      <section class="card flush lab-mill-card" aria-labelledby="lab-mill-title">
+        <div class="lab-mill-filters" role="group" aria-label="ตัวกรองตาราง">
+          <h3 class="sr-only" id="lab-mill-title">ผลต่างระหว่างโม่ในวันเดียวกัน</h3>
+          <label class="lab-filter lab-filter-search"><span class="sr-only">ค้นหาสูตร</span><input class="input" id="lab-mill-query" type="search" autocomplete="off" maxlength="${model.MAX_MATERIAL_LENGTH}" placeholder="ค้นหาสูตร"></label>
+          <label class="lab-filter"><span class="sr-only">สถานะ</span><select class="select" id="lab-mill-status" data-native-select>${options(STATUS_OPTIONS, "attention")}</select></label>
+          <label class="lab-filter"><span class="sr-only">ช่วงวัน</span><select class="select" id="lab-mill-days" data-native-select>${options(DAY_OPTIONS.map((days) => ({ key: String(days), label: `${days} วันล่าสุด` })), String(model.MILL_DAYS))}</select></label>
+          <label class="lab-filter" title="เกณฑ์ผลต่างจากมัธยฐานของวัน"><span class="sr-only">เกณฑ์ผลต่าง</span><select class="select" id="lab-mill-threshold" data-native-select>${options(model.MILL_THRESHOLDS.map((value) => ({ key: String(value), label: `ต่างเกิน ±${value} MU` })), String(model.MILL_MIN_DIFF))}</select></label>
+          <span class="lab-mill-help" title="${esc(TABLE_NOTE)}" aria-label="${esc(TABLE_NOTE)}" tabindex="0">?</span>
+        </div>
+        <div class="table-wrap"><table class="lab-mill-table"><caption class="sr-only">ผลต่างระหว่างโม่ในวันเดียวกัน แถวละหนึ่งโม่ กดแถวเพื่อดูเส้นควบคุมของสูตรนั้น</caption>
+          <thead><tr><th scope="col">สูตร</th><th scope="col">วันที่</th><th scope="col">โม่</th><th scope="col" class="num">${KEY_ICON("mv")}MV</th><th scope="col" class="num">${KEY_ICON("mh")}MH</th><th scope="col">สถานะ</th><th scope="col">จุดที่เกิน (โม่ เส้น ส่วน)</th></tr></thead>
+          <tbody id="lab-mill-rows"></tbody></table></div>
+        <p class="lab-dash-empty lab-mill-empty" id="lab-mill-empty" hidden></p>
+      </section>
+      <div id="lab-notices"></div>
+      <section class="card lab-dash-card lab-control-card" aria-labelledby="lab-control-title">
+        <div class="lab-control-head">
+          <h3 class="lab-dash-card-title" id="lab-control-title" title="${esc(CONTROL_NOTE)}">เส้นควบคุม <span id="lab-control-name"></span></h3>
+          <div class="lab-ranges" role="group" aria-label="ค่าที่แสดง">${measures}</div>
+          <a class="small" id="lab-control-link" href="#/lab?module=mooney">ดูผลทดสอบ →</a>
+        </div>
+        <div class="lab-control-plot" id="lab-control-plot"></div>
+      </section>`;
+  }
+
+  const MILL_STATUS_TEXT = Object.freeze({
+    out: `ห่างค่ากลางเกิน ±${model.PRACTICAL_BAND_MU}`,
+    data: "ตรวจข้อมูล",
+    warn: "ต่างจากโม่อื่น",
+    ok: "ปกติ",
+    single: "โม่เดียวในวันนั้น",
+  });
+  const MILL_SEVERITY = Object.freeze({ out: "out", data: "out", warn: "warn", ok: "ok", single: "info" });
+  const PATTERN_TEXT = Object.freeze({ mill: "ทั้งโม่", spot: "เฉพาะจุด" });
+  const PART_TEXT = Object.freeze({ 1: "หัว", 2: "กลาง", 3: "ท้าย" });
+  const delta = (value) => (isNumber(value) ? model.formatSigned(value) : "—");
+
+  // สาเหตุที่ควรตรวจตามรูปแบบ (อยู่ที่ title ของป้ายสถานะ ไม่เป็นข้อความถาวร) ตามลำดับไล่หาสาเหตุเมื่อ Mooney แกว่ง
+  function millHint(row) {
+    if (row.status === "data") return "ค่าผิดไปจากโม่อื่นมากเกินกว่าความต่างปกติ ตรวจการกรอกข้อมูลในชีตก่อน";
+    const parts = [];
+    if (row.pattern?.kind === "mill") parts.push("ทุกเส้นทุกส่วนเลื่อนพร้อมกัน: ตรวจยางดิบ การบด การชั่ง สภาวะผสมของโม่นี้");
+    if (row.pattern?.kind === "strand") parts.push("เลื่อนเฉพาะเส้นเดียว: ตรวจการผสม/การรีดของเส้นนั้น");
+    if (row.pattern?.kind === "spot") parts.push("เฉพาะบางจุด: ตรวจชิ้นทดสอบและการวัด");
+    const mv = isNumber(row.fromCenter) && row.status === "out" ? row.fromCenter : row.dMv;
+    if (isNumber(mv) && Math.abs(mv) > model.MILL_MIN_DIFF) parts.push(mv > 0 ? "MV สูง: ไหลยาก เสี่ยง scorch ฟองเล็ก/พองไม่เต็ม" : "MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
+    return parts.join(" · ");
+  }
+
+  // แถวของตารางรายโม่ (rows จาก model.millTableRows) แถวที่เลือก (สูตรของกราฟ) มี aria-selected · บนจอแคบแต่ละช่องมีป้ายจาก data-label
+  function millRows(rows, selected, threshold = model.MILL_MIN_DIFF) {
+    return rows.map((row) => {
+      const id = (point) => model.parseSampleId(point[0]);
+      const chips = row.points.map((point) => {
+        const parsed = id(point);
+        const where = parsed ? `โม่ ${parsed.mill} เส้น ${parsed.strand} ส่วน ${parsed.part}${PART_TEXT[parsed.part] ? ` (${PART_TEXT[parsed.part]})` : ""}` : point[0];
+        return `<span class="lab-chip" title="${esc(`${where}: MV ${delta(point[1])} · MH ${delta(point[2])}`)}">${esc(point[0])}</span>`;
+      }).join("");
+      const pattern = row.pattern ? (row.pattern.kind === "strand" ? `เส้น ${row.pattern.strand}` : PATTERN_TEXT[row.pattern.kind]) : "";
+      const status = row.status === "out" && isNumber(row.fromCenter) ? `${MILL_STATUS_TEXT.out} (${model.formatSigned(row.fromCenter)})` : MILL_STATUS_TEXT[row.status];
+      const hint = millHint(row);
+      return `<tr class="lab-mill-row" data-material="${esc(row.material)}" aria-selected="${row.material === selected}" tabindex="0">
+        <th scope="row" data-label="สูตร">${esc(row.material)}</th>
+        <td class="num" data-label="วันที่">${esc(model.formatDate(row.date))}</td>
+        <td class="num" data-label="โม่">${esc(row.mill)}</td>
+        <td class="num" data-label="MV"><b>${esc(model.formatReading(row.mv))}</b> <small class="lab-d${Math.abs(row.dMv ?? 0) > threshold ? " is-far" : ""}">${esc(delta(row.dMv))}</small></td>
+        <td class="num" data-label="MH"><b>${esc(model.formatReading(row.mh))}</b> <small class="lab-d${Math.abs(row.dMh ?? 0) > threshold ? " is-far" : ""}">${esc(delta(row.dMh))}</small></td>
+        <td data-label="สถานะ"><span class="lab-flag is-${MILL_SEVERITY[row.status]}"${hint ? ` title="${esc(hint)}"` : ""}>${esc(status)}</span></td>
+        <td data-label="จุดที่เกิน"><div class="lab-chips">${pattern ? `<small class="lab-pattern">${esc(pattern)}</small>` : ""}${chips}</div></td>
+      </tr>`;
+    }).join("");
+  }
+
+  // แถบตรวจเครื่อง: แสดงเฉพาะเมื่อมีวันที่หลายสูตรเลื่อนทางเดียวกัน (model.machineItems) ไม่มี = ว่าง
+  function machineBanner(items) {
+    if (!items.length) return "";
+    return `<div class="lab-machine" role="note">${items.map((item) => `<p><strong>ตรวจเครื่อง Mooney</strong> ${esc(attentionText(item))} — ${esc(attentionHint(item))}</p>`).join("")}</div>`;
+  }
+
+  // เรื่องของข้อมูลที่ไม่ใช่ของโม่ใด (model.dataNotices) เป็นกล่องพับ ปิดไว้เป็นค่าเริ่มต้นเพื่อไม่แย่งที่ตาราง
+  function noticeBox(items, open = false) {
+    if (!items.length) return "";
+    return `<details class="card lab-notices"${open ? " open" : ""}><summary>ข้อมูลที่ควรตรวจ (${int(items.length)})</summary>${attentionList(items)}</details>`;
+  }
+
+  const SIGNAL_TEXT = Object.freeze({
+    beyond3: "เกิน 3σ",
+    twoOfThree: "2 ใน 3 ชุดเกิน 2σ ข้างเดียวกัน",
+    fourOfFive: "4 ใน 5 ชุดเกิน 1σ ข้างเดียวกัน",
+    eightSameSide: "8 ชุดติดกันอยู่ข้างเดียวของเส้นกลาง",
+  });
+  const FLAG = Object.freeze({
+    outOfBand: `เกิน ±${model.PRACTICAL_BAND_MU} MU`,
+    rule: "เริ่มเบี่ยง",
+    machine: "ตรวจเครื่อง",
+    otherTest: "การทดสอบอื่น",
+    sdHigh: "แกว่งในเส้น",
+    mixed: "สภาวะทดสอบต่างกัน",
+    missingAvg: "ข้อมูลไม่ครบ",
+    duplicateName: "ตรวจชื่อวัสดุ",
+    lowercaseName: "ตรวจชื่อวัสดุ",
+    overdue: "ไม่ได้ทดสอบนาน",
+  });
+
+  const provisionalText = (item) => (item.provisional ? " (เส้นชั่วคราว)" : "");
+  // ชุดที่เข้ากฎ: ชุดล่าสุด หรือ "n ชุดก่อน" (ยังแสดงจนกว่าจะพ้น 12 ชุดล่าสุด เพราะไม่มีการแจ้งเตือนทางอื่น)
+  const batchText = (ago) => (ago ? `ชุดเมื่อ ${int(ago)} ชุดก่อน` : "ชุดล่าสุด");
+
+  // ข้อความรายละเอียดของรายการ "ต้องดูก่อน" (ข้อความล้วน)
+  function attentionText(item) {
+    const rules = () => (item.signals?.length ? `: ${item.signals.map((signal) => SIGNAL_TEXT[signal] ?? signal).join(" · ")}` : "");
+    switch (item.kind) {
+      case "outOfBand": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)} ห่างจากค่ากลาง ${reading(item.center)} ${model.formatSigned(item.value - item.center)} MU${provisionalText(item)}`;
+      case "rule": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)}${rules()}${provisionalText(item)}`;
+      case "sdHigh": return `SD ${item.measure} ชุดล่าสุด ${reading(item.value)} สูงกว่าปกติของวัสดุนี้ (UCL ${reading(item.limit)})${provisionalText(item)}`;
+      case "mixed": return "อุณหภูมิหรือเวลาทดสอบไม่เท่ากันทุกแถว จึงไม่ตั้งเส้นควบคุม";
+      case "otherTest": return `${int(item.count)} แถวไม่ใช่การทดสอบความหนืด ML(1+4) (เวลาทดสอบไม่ใช่ ${model.VISCOSITY_MINUTES.join(" หรือ ")} นาที เช่น scorch) จึงไม่นำมาวิเคราะห์`;
+      case "missingAvg": return `${int(item.count)} แถวยังไม่มี AVG/SD ในชีต`;
+      case "duplicateName": return `ชื่อซ้ำกับ ${item.others.join(", ")} เมื่อไม่สนตัวพิมพ์ ประวัติถูกแยกเป็นสองชื่อ`;
+      case "lowercaseName": return "ชื่อมีตัวพิมพ์เล็ก รหัสวัสดุอาจพิมพ์ผิด";
+      case "overdue": return `ไม่ได้ทดสอบ ${int(item.days)} วัน`;
+      case "machine": return `${model.formatDate(item.date)}: MV ของ ${item.materials.join(", ")} ${item.high ? "สูง" : "ต่ำ"}กว่าปกติเกิน 2σ พร้อมกัน`;
+      default: return "";
+    }
+  }
+
+  // สาเหตุที่ควรตรวจและผลต่อการผลิต (ตามลำดับการไล่หาสาเหตุเมื่อ Mooney แกว่ง ในหนังสือ "การทดสอบสมบัติของยาง" หมวดความแปรปรวน)
+  // ดู SD หัว-กลาง-ท้ายของเส้นก่อน: สูง = ผสมไม่สม่ำเสมอ · นิ่งแต่ต่างล็อต = ยางดิบ/การบด/การชั่ง/สภาวะผสม · หลายวัสดุพร้อมกัน = เครื่อง
+  // ผลต่อยางฟองน้ำบอกเฉพาะ MV (หนังสือให้ไว้เฉพาะความหนืด) ไม่มีข้อมูล = ข้อความว่าง
+  function attentionHint(item) {
+    const parts = [];
+    if (item.kind === "outOfBand" || item.kind === "rule") {
+      if (item.strandStable === true) parts.push("ในเส้นนิ่ง แต่ต่างจากล็อตอื่น: ตรวจยางดิบ การบด การชั่ง สภาวะผสม");
+      if (item.strandStable === false) parts.push("หัว-กลาง-ท้ายต่างกันมาก: ตรวจความสม่ำเสมอของการผสม");
+      if (item.key === "mv") parts.push(item.high ? "MV สูง: ไหลยาก ความร้อนเฉือนสูง เสี่ยง scorch ฟองเล็ก/พองไม่เต็ม" : "MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
+    }
+    if (item.kind === "sdHigh") parts.push("การผสมไม่สม่ำเสมอ ถ้าสูงผิดปกติมากให้ตรวจการกรอกข้อมูลก่อน");
+    if (item.kind === "machine") parts.push("ตรวจเครื่อง (อุณหภูมิ preheat น้ำหนักชิ้น) ด้วยยางอ้างอิงก่อนสรุปว่าเป็นปัญหาการผลิต");
+    return parts.join(" · ");
+  }
+
+  // รายการ "ต้องดูก่อน" จาก model.attentionItems: ชื่อวัสดุ (ลิงก์ไปหน้าวัสดุ) · ป้ายสถานะ (ข้อความ + สี) · รายละเอียด · สาเหตุที่ควรตรวจ
+  // รายการตรวจเครื่องไม่ใช่ของวัสดุใด จึงเป็นชื่อเครื่องที่ไม่ใช่ลิงก์
+  function attentionList(items) {
+    if (!items.length) return `<p class="lab-dash-empty">ไม่มีรายการที่ต้องดู</p>`;
+    return `<ul class="lab-attn">${items.map((item) => {
+      const name = item.kind === "machine"
+        ? `<span class="lab-attn-name">เครื่อง Mooney</span>`
+        : `<a class="lab-attn-name" href="${esc(model.materialUrl(item.material))}">${esc(item.material)}</a>`;
+      const hint = attentionHint(item);
+      return `<li class="lab-attn-item">
+        ${name}
+        <span class="lab-flag is-${esc(item.severity)}">${esc(item.kind === "rule" && item.signals?.includes("beyond3") ? "เกิน 3σ" : FLAG[item.kind] ?? item.kind)}</span>
+        <span class="lab-attn-text">${esc(attentionText(item))}</span>
+        ${hint ? `<span class="lab-attn-hint">${esc(hint)}</span>` : ""}
+      </li>`;
+    }).join("")}</ul>`;
+  }
+
+  // กราฟเส้นควบคุมของวัสดุที่เลือก หรือข้อความเมื่อค่านั้นยังตั้งเส้นไม่ได้ (เช่น MV ตั้งได้แต่ MH ทุกชุดเท่ากัน) ไม่มีวัสดุ = ว่าง
+  function controlPlot({ control, key, width, material }) {
+    if (!material) return "";
+    if (control && ["ready", "provisional"].includes(control.level)) return chart.controlChart({ control, key, width, label: material });
+    return `<p class="lab-dash-empty">${esc(material)} ยังตั้งเส้นควบคุมของ ${esc(key.toUpperCase())} ไม่ได้</p>`;
   }
 
   /* ---------- หน้ารวม: รายการวัสดุ ---------- */
@@ -340,7 +541,7 @@
 
   const api = {
     ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS, NO_RESULTS,
-    liveBar, dashboardPage, dashboardMooney, overviewPage, materialRows, materialSuggestions,
+    liveBar, dashboardPage, dashboardMooney, dashboardBody, attentionText, attentionList, attentionHint, millRows, millHint, machineBanner, noticeBox, controlPlot, overviewPage, materialRows, materialSuggestions,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
     resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey, rangeAnnouncement, monthOptions,
   };

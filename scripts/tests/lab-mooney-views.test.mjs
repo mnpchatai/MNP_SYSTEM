@@ -641,7 +641,8 @@ test("in one ID's history the tip leaves the ID out (already chosen above) and a
 test("every element the page script looks up exists in the page it opens", () => {
   const source = readFileSync(new URL("../../modules/module-lab.js", import.meta.url), "utf8");
   const wanted = new Set([...source.matchAll(/"#(lab-[a-z-]+)"/g)].map((match) => match[1]));
-  const pages = views.dashboardPage(30) + views.overviewPage(30) + views.materialPage("A1802", 30);
+  // dashboardBody ถูกใส่ลงแดชบอร์ดตอนได้สรุปที่มี health จึงนับเป็นส่วนหนึ่งของหน้าแดชบอร์ด
+  const pages = views.dashboardPage(30) + views.dashboardBody() + views.overviewPage(30) + views.materialPage("A1802", 30);
   assert.ok(wanted.size > 15, `found ${wanted.size} selectors`);
   for (const id of wanted) assert.ok(pages.includes(`id="${id}"`), `#${id} is missing from the page markup`);
   // แดชบอร์ด หน้ารวม และหน้าวัสดุต้องมีแถบเวลา/รีเฟรชชุดเดียวกัน เพราะ bindLiveBar ผูกทุกหน้าที่อ่านฟีด
@@ -715,4 +716,118 @@ test("the dashboard shows each Mooney number once and says so when the sheet has
   assert.equal(count(html, /18\/10\/2026/g), 1);
   assert.match(views.dashboardMooney({ materialCount: 0, resultCount: 0, lastTested: null, latestMaterialCount: 0 }), /ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report/);
   assert.match(views.dashboardMooney(undefined), /ยังไม่มีข้อมูลผลทดสอบ/);
+});
+
+/* ---------- แดชบอร์ดติดตามกระบวนการ ---------- */
+
+const control = (overrides = {}) => ({
+  level: "ready", count: 45, mean: 40, sigma: 0.5, ucl: 41.5, lcl: 38.5,
+  band: 5, recent: [40, 40.2, 39.9, 41.2, 46], signal: { ago: 0, value: 46, rules: ["beyond3"], beyondBand: true, sd: 0.2 }, latestSd: 0.2, sdUcl: 0.6, sdHigh: false, ...overrides,
+});
+
+test("the dashboard body is one filtered table plus the control chart, without summary tiles that repeat it", () => {
+  const html = views.dashboardBody();
+  for (const id of ["lab-machine", "lab-mill-query", "lab-mill-status", "lab-mill-days", "lab-mill-threshold", "lab-mill-rows", "lab-mill-empty", "lab-notices", "lab-control-name", "lab-control-link", "lab-control-plot"]) {
+    assert.ok(html.includes(`id="${id}"`), id);
+  }
+  assert.doesNotMatch(html, /class="summary"|lab-activity|lab-zones/);
+  assert.equal(count(html, /<select class="select" id="lab-mill-[a-z]+" data-native-select>/g), 3, "native selects are tappable on iPhone");
+  assert.match(html, /<option value="attention" selected>เฉพาะที่ต้องดู<\/option>/);
+  assert.match(html, /<option value="2" selected>ต่างเกิน ±2 MU<\/option>/);
+  assert.match(html, /<option value="14" selected>14 วันล่าสุด<\/option>/);
+  assert.match(html, /class="lab-mill-help" title="[^"]*ID = โม่ เส้น ส่วน/, "how to read the table is one hover away, not permanent text");
+  assert.match(html, /title="[^"]*ไม่ใช่มาตรฐานบังคับ/);
+  assert.match(html, /data-measure="mh"[^>]*title="MH = ค่าสูงสุดช่วงต้นกราฟ Mooney/);
+});
+
+test("attention items escape sheet text, link to the material, say what is wrong in words and what to check", () => {
+  const html = views.attentionList([
+    { material: XSS, severity: "out", kind: "outOfBand", measure: "MV", key: "mv", value: 46, center: 40, band: 5, high: true, ago: 0, provisional: true, strandStable: true, signals: ["beyond3"] },
+    { material: "B0005", severity: "warn", kind: "rule", measure: "MH", key: "mh", value: 61, center: 60, high: true, ago: 3, strandStable: false, signals: ["twoOfThree", "eightSameSide"] },
+    { material: "B0007", severity: "warn", kind: "rule", measure: "MV", key: "mv", value: 36, center: 40, high: false, ago: 0, strandStable: null, signals: ["beyond3"] },
+    { material: "B0006", severity: "warn", kind: "sdHigh", measure: "MV", value: 0.95, limit: 0.6 },
+    { material: "", severity: "warn", kind: "machine", date: "2026-10-20", high: true, materials: ["A2004", "B0005", "B0006"] },
+    { material: "E00030S B", severity: "info", kind: "otherTest", count: 36 },
+    { material: "c1301", severity: "info", kind: "duplicateName", others: ["C1301"] },
+  ]);
+  assert.ok(!html.includes(XSS));
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /href="#\/lab\?module=mooney&amp;material=B0005"/);
+  assert.match(html, /class="lab-flag is-out">เกิน ±5 MU</);
+  assert.match(html, /MV ชุดล่าสุด 46\.00 ห่างจากค่ากลาง 40\.00 \+6\.00 MU \(เส้นชั่วคราว\)/);
+  assert.match(html, /ในเส้นนิ่ง แต่ต่างจากล็อตอื่น: ตรวจยางดิบ การบด การชั่ง สภาวะผสม · MV สูง: ไหลยาก/);
+  assert.match(html, /MH ชุดเมื่อ 3 ชุดก่อน 61\.00: 2 ใน 3 ชุดเกิน 2σ ข้างเดียวกัน · 8 ชุดติดกันอยู่ข้างเดียวของเส้นกลาง/);
+  assert.match(html, /หัว-กลาง-ท้ายต่างกันมาก: ตรวจความสม่ำเสมอของการผสม<\/span>/, "MH gets the cause but no sponge-rubber effect (the book gives that for viscosity only)");
+  assert.match(html, /class="lab-flag is-warn">เกิน 3σ</, "3 sigma alone is an amber early warning");
+  assert.match(html, /MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่\/ยุบง่าย/);
+  assert.match(html, /SD MV ชุดล่าสุด 0\.95 สูงกว่าปกติของวัสดุนี้ \(UCL 0\.60\)/);
+  assert.match(html, /<span class="lab-attn-name">เครื่อง Mooney<\/span>/, "the machine row is not a material link");
+  assert.match(html, /20\/10\/2026: MV ของ A2004, B0005, B0006 สูงกว่าปกติเกิน 2σ พร้อมกัน/);
+  assert.match(html, /ตรวจเครื่อง \(อุณหภูมิ preheat น้ำหนักชิ้น\) ด้วยยางอ้างอิง/);
+  assert.match(html, /36 แถวไม่ใช่การทดสอบความหนืด ML\(1\+4\)/);
+  assert.match(html, /ชื่อซ้ำกับ C1301/);
+  assert.equal(views.attentionText({ kind: "outOfBand", measure: "MV", value: 34.5, center: 40, ago: 1 }), "MV ชุดเมื่อ 1 ชุดก่อน 34.50 ห่างจากค่ากลาง 40.00 −5.50 MU");
+  assert.equal(views.attentionHint({ kind: "duplicateName" }), "");
+  assert.equal(views.attentionText({ kind: "overdue", days: 21 }), "ไม่ได้ทดสอบ 21 วัน");
+  assert.equal(views.attentionText({ kind: "missingAvg", count: 3 }), "3 แถวยังไม่มี AVG/SD ในชีต");
+  assert.match(views.attentionList([]), /ไม่มีรายการที่ต้องดู/);
+});
+
+test("mill rows say where the difference is, escape sheet text and keep the cause in a title", () => {
+  const rows = [
+    { material: XSS, date: "2026-10-14", mill: "3", mv: 54.6, mh: 82.6, dMv: 4.9, dMh: 13.6, fromCenter: 6.2, status: "out",
+      points: [["311", 4.6, 12.3], ["322", 4.9, 14.7]], pattern: { kind: "mill" } },
+    { material: "B0006", date: "2026-10-19", mill: "2", mv: 47.6, mh: 86.8, dMv: -2.3, dMh: 4.4, fromCenter: -1, status: "warn",
+      points: [["211", -2.3, 9.6]], pattern: { kind: "strand", strand: "1" } },
+    { material: "A2004", date: "2026-10-20", mill: "1", mv: 44.5, mh: 78.1, dMv: 0.1, dMh: -0.2, fromCenter: 0.3, status: "ok", points: [], pattern: null },
+  ];
+  const html = views.millRows(rows, null, 2);
+  assert.ok(!html.includes(XSS));
+  assert.equal(count(html, /class="lab-mill-row"/g), 3);
+  assert.match(html, /data-label="วันที่">14\/10\/2026</);
+  assert.match(html, /<b>54\.60<\/b> <small class="lab-d is-far">\+4\.90<\/small>/);
+  assert.match(html, /<small class="lab-d">\+0\.10<\/small>/);
+  assert.match(html, /class="lab-flag is-out" title="ทุกเส้นทุกส่วนเลื่อนพร้อมกัน: ตรวจยางดิบ การบด การชั่ง สภาวะผสมของโม่นี้ · MV สูง: [^"]*">ห่างค่ากลางเกิน ±5 \(\+6\.20\)</);
+  assert.match(html, /<small class="lab-pattern">ทั้งโม่<\/small><span class="lab-chip" title="โม่ 3 เส้น 1 ส่วน 1 \(หัว\): MV \+4\.60 · MH \+12\.30">311<\/span>/);
+  assert.match(html, /<small class="lab-pattern">เส้น 1<\/small>/);
+  assert.match(html, /class="lab-flag is-warn" title="เลื่อนเฉพาะเส้นเดียว[^"]*MV ต่ำ/);
+  assert.match(html, /class="lab-flag is-ok">ปกติ</, "a normal row has no cause title");
+  assert.doesNotMatch(views.millRows(rows, null, 5), /lab-d is-far">−2\.30/, "the bold mark follows the chosen threshold");
+  assert.match(views.millRows(rows, null, 2), /lab-d is-far">−2\.30/);
+  assert.equal(views.millHint({ status: "data" }), "ค่าผิดไปจากโม่อื่นมากเกินกว่าความต่างปกติ ตรวจการกรอกข้อมูลในชีตก่อน");
+});
+
+test("the machine banner and the data notices appear only when there is something to say", () => {
+  assert.equal(views.machineBanner([]), "");
+  assert.match(views.machineBanner([{ kind: "machine", date: "2026-10-20", high: true, materials: ["A", "B", "C"] }]), /<strong>ตรวจเครื่อง Mooney<\/strong> 20\/10\/2026: MV ของ A, B, C สูงกว่าปกติเกิน 2σ พร้อมกัน — ตรวจเครื่อง/);
+  assert.equal(views.noticeBox([]), "");
+  const box = views.noticeBox([{ material: "c13011", severity: "info", kind: "lowercaseName", others: [] }]);
+  assert.match(box, /^<details class="card lab-notices"><summary>ข้อมูลที่ควรตรวจ \(1\)<\/summary>/, "closed by default");
+  assert.match(views.noticeBox([{ material: "x", severity: "info", kind: "overdue", days: 9 }], true), /<details class="card lab-notices" open>/);
+});
+
+test("the control chart draws CL, UCL and LCL and marks breaches by shape as well as colour", () => {
+  const svg = chart.controlChart({ control: control(), key: "mv", width: 640, label: "A2004" });
+  assert.match(svg, /^<svg class="lab-cc lab-cc-mv" width="640"/);
+  for (const name of ["UCL", "CL", "LCL"]) assert.match(svg, new RegExp(`>${name}</text>`));
+  assert.equal(count(svg, /class="lab-cc-pt is-ok/g), 3);
+  assert.equal(count(svg, /class="lab-cc-pt is-warn/g), 1);
+  assert.match(svg, /class="lab-cc-pt is-out is-last"><rect /, "the latest batch, beyond ±5 MU, is a red diamond");
+  assert.match(svg, />4 ชุดก่อน</);
+  assert.match(svg, />ล่าสุด</);
+  assert.match(svg, /aria-label="A2004 MV 5 ชุดล่าสุด เส้นกลาง 40 UCL 41\.5 LCL 38\.5 ชุดล่าสุด 46"/);
+  assert.match(svg, />\+5<\/text>/);
+  assert.match(svg, />−5<\/text>/);
+  assert.doesNotMatch(chart.controlChart({ control: control({ band: null }), key: "mh", width: 640 }), />\+5</, "MH has no practical band line");
+  assert.doesNotMatch(svg, /NaN|Infinity/);
+  assert.equal(chart.controlChart({ control: control({ sigma: 0 }), width: 640 }), "");
+  assert.equal(chart.controlChart({ control: control({ recent: [] }), width: 640 }), "");
+  assert.match(chart.controlChart({ control: control(), width: 100 }), /width="280"/, "narrow boxes still get a readable chart");
+});
+
+test("the control plot falls back to a sentence when the chosen value has no limits", () => {
+  assert.match(views.controlPlot({ control: control(), key: "mh", width: 600, material: "A2004" }), /^<svg class="lab-cc lab-cc-mh"/);
+  assert.equal(views.controlPlot({ control: { level: "flat", count: 40 }, key: "mh", width: 600, material: XSS }).includes(XSS), false);
+  assert.match(views.controlPlot({ control: { level: "flat", count: 40 }, key: "mh", width: 600, material: "A2004" }), /A2004 ยังตั้งเส้นควบคุมของ MH ไม่ได้/);
+  assert.equal(views.controlPlot({ control: undefined, key: "mv", width: 600, material: null }), "");
 });

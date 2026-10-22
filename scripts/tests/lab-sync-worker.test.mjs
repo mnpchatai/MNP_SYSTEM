@@ -49,6 +49,7 @@ test("publishes exact sheet order and compact summaries using the existing model
     }));
     assert.deepEqual(sent.p_materials, expected);
     assert.ok(!options.body.includes('"items"'), "overview does not duplicate full groups");
+    assert.ok(sent.p_materials.every((item) => item.health && item.health.mv && Array.isArray(item.health.mills)), "dashboard health is computed once per sync");
     return Response.json({ applied: true, rows: 3 });
   });
   assert.equal(calls, 1);
