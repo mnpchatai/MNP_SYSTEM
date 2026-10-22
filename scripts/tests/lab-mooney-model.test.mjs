@@ -343,3 +343,179 @@ test("months are read from the test date, listed oldest first once each, and sho
   assert.equal(model.formatMonth(null), "—");
   assert.equal(model.formatMonth("21/09/2026"), "—");
 });
+
+/* ---------- สุขภาพของกระบวนการ (แดชบอร์ด) ---------- */
+
+// วัสดุหนึ่งรายการ ชุดละ 3 แถว ค่าเฉลี่ย MV ของแต่ละชุดตาม averages (MH = MV + 20) วันละ 2 ชุด เริ่ม 1 ก.ย. 2026
+function healthRows(averages, { material = "A2004", sd = 0.2, start = 1, overrides = () => ({}) } = {}) {
+  const rows = [];
+  averages.forEach((average, batch) => {
+    const date = model.shiftDate("2026-09-01", start - 1 + Math.floor(batch / 2));
+    for (let index = 0; index < 3; index += 1) {
+      rows.push(feedRow({
+        source_sheet: material, material, sample_id: String(100 + index), test_date: date,
+        test_time: `${String(8 + (batch % 2)).padStart(2, "0")}:0${index}:00`,
+        mv: average + (index - 1) * sd, avg_mv: average, sd_mv: sd,
+        mh: average + 20 + (index - 1) * sd, avg_mh: average + 20, sd_mh: sd,
+        ...overrides(batch, index),
+      }));
+    }
+  });
+  return rows;
+}
+const summaryOf = (rows) => model.buildMaterialSummaries(model.normalizeFeed({ rows }).rows);
+// ค่าแกว่งรอบ 40 แบบไม่สุ่ม (ทดสอบซ้ำได้ผลเดิมทุกครั้ง)
+const steady = (count) => Array.from({ length: count }, (_, index) => 40 + Math.sin(index * 1.7) * 0.5);
+
+test("control limits follow the I-MR chart: centre = mean, sigma = average moving range / 1.128", () => {
+  const limits = model.controlLimits([10, 12, 11, 13]);
+  assert.equal(limits.mean, 11.5);
+  assert.ok(Math.abs(limits.sigma - (5 / 3) / 1.128) < 1e-9);
+  assert.ok(Math.abs(limits.ucl - (11.5 + 3 * limits.sigma)) < 1e-9);
+  assert.ok(Math.abs(limits.lcl - (11.5 - 3 * limits.sigma)) < 1e-9);
+  assert.equal(model.controlLimits([5]), null, "one value has no spread");
+  assert.equal(model.controlLimits([5, 5, 5]), null, "identical values give sigma 0, no usable limits");
+  assert.equal(model.controlLimits([5, null, "x"]), null, "non-numbers are ignored");
+});
+
+test("Western Electric rules fire only when the latest batch completes the pattern", () => {
+  const limits = { mean: 0, sigma: 1 };
+  assert.deepEqual(model.ruleSignals([0, 0, 3.5], limits), ["beyond3"]);
+  assert.deepEqual(model.ruleSignals([0, -3.5], limits), ["beyond3"], "the lower side counts too");
+  assert.deepEqual(model.ruleSignals([2.5, 0, 2.5], limits), ["twoOfThree"]);
+  assert.deepEqual(model.ruleSignals([2.5, -2.5, -0.5, 2.5], limits), [], "two of three must be on the same side");
+  assert.deepEqual(model.ruleSignals([2.5, 2.5, 0], limits), [], "a pattern that ended before the latest batch was reported in its own round");
+  assert.deepEqual(model.ruleSignals([1.5, 1.5, 0, 1.5, 1.5], limits), ["fourOfFive"]);
+  assert.deepEqual(model.ruleSignals([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], limits), ["eightSameSide"]);
+  assert.deepEqual(model.ruleSignals([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], limits), [], "seven in a row is not enough");
+  assert.deepEqual(model.ruleSignals([0, 0, 0], limits), []);
+  assert.deepEqual(model.ruleSignals([1, 2], null), [], "no limits, no signals");
+  assert.equal(model.zoneOf(3.01), "out");
+  assert.equal(model.zoneOf(-2.5), "warn");
+  assert.equal(model.zoneOf(2), "ok");
+});
+
+test("a material needs 10 batches for provisional limits and 40 for ready ones", () => {
+  assert.equal(model.CONTROL_MIN_PROVISIONAL, 10);
+  assert.equal(model.CONTROL_MIN_READY, 40);
+  assert.deepEqual(summaryOf(healthRows(steady(9)))[0].health.mv, { level: "insufficient", count: 9 });
+  const provisional = summaryOf(healthRows(steady(10)))[0].health.mv;
+  assert.equal(provisional.level, "provisional");
+  assert.equal(provisional.count, 10);
+  const ready = summaryOf(healthRows(steady(45)))[0].health;
+  assert.equal(ready.mv.level, "ready");
+  assert.equal(ready.mv.recent.length, model.CONTROL_RECENT, "only the latest batches travel to the dashboard");
+  assert.deepEqual(ready.mv.signals, []);
+  assert.equal(ready.mv.sdHigh, false);
+  assert.equal(ready.mh.level, "ready");
+  assert.ok(ready.mh.mean > ready.mv.mean + 19, "MH has its own limits");
+});
+
+test("the latest batch outside 3 sigma, and a wide spread inside the strand, are flagged from the material's own history", () => {
+  const averages = [...steady(44), 46];
+  const health = summaryOf(healthRows(averages, { overrides: (batch, index) => (batch === 44 ? { mv: 46 + (index - 1) * 2, sd_mv: 2 } : {}) }))[0].health;
+  assert.ok(health.mv.signals.includes("beyond3"));
+  assert.equal(health.mv.sdHigh, true, "SD 2.0 against a history of 0.2");
+  assert.equal(health.mv.latestSd, 2);
+});
+
+test("mixed test conditions stop control limits instead of comparing different tests", () => {
+  const rows = healthRows(steady(12), { overrides: (batch) => (batch === 3 ? { temperature_c: 125 } : {}) });
+  const health = summaryOf(rows)[0].health;
+  assert.equal(health.uniform, false);
+  assert.deepEqual(health.mv, { level: "mixed", count: 12 });
+  assert.deepEqual(health.mh, { level: "mixed", count: 12 });
+});
+
+test("batches whose sheet AVG does not belong to their readings are left out of the limits", () => {
+  // ชุดที่ 5 มี AVG MV 4.0 ทั้งที่อ่านได้ราว 40 (สูตรในชีตอ้างช่วงผิด)
+  const health = summaryOf(healthRows(steady(12), { overrides: (batch) => (batch === 5 ? { avg_mv: 4 } : {}) }))[0].health;
+  assert.equal(health.mv.count, 11);
+  assert.ok(health.mv.lcl > 30, "the bad AVG does not widen the limits");
+  assert.equal(health.mh.count, 12, "MH of the same batch is still usable");
+  assert.equal(model.sheetAverageFits(40.004, [40, 40.001]), true, "rounding to 2 places is tolerated");
+  assert.equal(model.sheetAverageFits(4, [40, 41]), false);
+  assert.equal(model.sheetAverageFits(null, [40]), false);
+});
+
+test("health records rows without AVG, the latest test days and the usual gap between test days", () => {
+  const rows = healthRows(steady(8), { overrides: (batch) => (batch >= 6 ? { avg_mv: null, sd_mv: null, avg_mh: null, sd_mh: null } : {}) });
+  const health = summaryOf(rows)[0].health;
+  assert.deepEqual(health.missingAvg, { count: 6, oldest: "2026-09-04" });
+  assert.deepEqual(health.days, [["2026-09-01", 6], ["2026-09-02", 6], ["2026-09-03", 6], ["2026-09-04", 6]]);
+  assert.equal(health.typicalGapDays, 1);
+  const single = summaryOf(healthRows(steady(2)))[0].health;
+  assert.equal(single.typicalGapDays, null, "one or two test days do not show a usual gap yet");
+  const many = summaryOf(healthRows(steady(80)))[0].health;
+  assert.equal(many.days.length, model.ACTIVITY_DAYS);
+  assert.equal(many.days[many.days.length - 1][0], "2026-10-10", "40 test days from 1 Sep");
+});
+
+test("dates in Bangkok time and day arithmetic do not drift with the browser time zone", () => {
+  assert.equal(model.todayInBangkok(new Date("2026-10-21T17:30:00Z")), "2026-10-22", "00:30 in Bangkok is already the next day");
+  assert.equal(model.todayInBangkok(new Date("2026-10-22T16:59:00Z")), "2026-10-22");
+  assert.equal(model.shiftDate("2026-10-01", -1), "2026-09-30");
+  assert.equal(model.shiftDate("2026-03-01", -1), "2026-02-28");
+  assert.equal(model.shiftDate("bad", 1), null);
+  assert.equal(model.daysBetween("2026-09-30", "2026-10-02"), 2);
+  assert.equal(model.daysBetween(null, "2026-10-02"), null);
+});
+
+test("names that differ only by case or spacing, or contain lower case, are reported for checking", () => {
+  const issues = model.nameIssues([{ material: "C1301" }, { material: "c1301" }, { material: "c13011" }, { material: "E00030S B" }, { material: "E00030SB" }, { material: "B0005" }]);
+  assert.deepEqual(issues.get("C1301"), { kind: "duplicate", others: ["c1301"] });
+  assert.deepEqual(issues.get("c1301"), { kind: "duplicate", others: ["C1301"] });
+  assert.deepEqual(issues.get("c13011"), { kind: "lowercase", others: [] });
+  assert.deepEqual(issues.get("E00030S B"), { kind: "duplicate", others: ["E00030SB"] });
+  assert.equal(issues.has("B0005"), false);
+});
+
+test("the attention list ranks out-of-control first and explains each data problem once", () => {
+  const out = summaryOf(healthRows([...steady(44), 46], { material: "A2004" }))[0];
+  const mixed = summaryOf(healthRows(steady(3), { material: "E00030S B", overrides: (batch) => (batch === 1 ? { test_minutes: 8 } : {}) }))[0];
+  const late = summaryOf(healthRows(steady(6), { material: "B0010" }))[0];
+  const pending = summaryOf(healthRows(steady(2), { material: "B0006", overrides: (batch) => (batch === 1 ? { avg_mv: null, sd_mv: null, avg_mh: null, sd_mh: null } : {}) }))[0];
+  const lower = { ...summaryOf(healthRows(steady(1), { material: "c13011" }))[0] };
+  const items = model.attentionItems([late, mixed, out, pending, lower], "2026-10-22");
+  assert.deepEqual(items.slice(0, 2).map((item) => [item.material, item.severity, item.kind, item.measure]), [["A2004", "out", "beyond3", "MV"], ["A2004", "out", "beyond3", "MH"]]);
+  const first = items[0];
+  assert.ok(first.value > first.limit, "an upper breach is compared with UCL");
+  assert.equal(first.provisional, false);
+  const kinds = items.map((item) => `${item.material}:${item.kind}`);
+  assert.ok(kinds.includes("E00030S B:mixed"));
+  assert.ok(kinds.includes("B0006:missingAvg"));
+  assert.ok(kinds.includes("c13011:lowercaseName"));
+  assert.ok(kinds.includes("B0010:overdue"), "tested daily, then nothing for weeks");
+  assert.equal(items.find((item) => item.kind === "overdue" && item.material === "B0010").days, 49, "last tested 3 Sep");
+  assert.ok(!kinds.includes("c13011:overdue"), "one test day = unknown usual gap, not overdue");
+  // แถวที่ยังไม่มี AVG ของวันนี้เป็นงานที่กำลังทำ ไม่ใช่ปัญหา
+  assert.ok(!model.attentionItems([pending], "2026-09-01").some((item) => item.kind === "missingAvg"));
+  assert.deepEqual(model.attentionItems([{ material: "OLD", resultCount: 1 }], "2026-10-22"), [], "summaries without health are skipped");
+  assert.deepEqual(model.attentionItems(undefined, "2026-10-22"), []);
+  assert.equal(model.hasHealth([out]), true);
+  assert.equal(model.hasHealth([{ material: "OLD" }]), false);
+});
+
+test("daily activity adds every material and fills days without tests with zero", () => {
+  const a = { material: "A", health: { days: [["2026-10-20", 3], ["2026-10-22", 6]] } };
+  const b = { material: "B", health: { days: [["2026-10-22", 3], ["2026-09-01", 9]] } };
+  const days = model.activityByDay([a, b, { material: "OLD" }], "2026-10-22", 3);
+  assert.deepEqual(days, [
+    { date: "2026-10-20", count: 3, materials: 1 },
+    { date: "2026-10-21", count: 0, materials: 0 },
+    { date: "2026-10-22", count: 9, materials: 2 },
+  ]);
+  assert.equal(model.activityByDay([], "2026-10-22").length, model.ACTIVITY_DAYS);
+});
+
+test("materials for the control chart: ready first, then provisional, most history first", () => {
+  const ready = summaryOf(healthRows(steady(45), { material: "B0005" }))[0];
+  const readyMore = summaryOf(healthRows(steady(50), { material: "A2004" }))[0];
+  const provisional = summaryOf(healthRows(steady(12), { material: "B0008" }))[0];
+  const none = summaryOf(healthRows(steady(3), { material: "A1802" }))[0];
+  assert.deepEqual(model.controlMaterials([none, provisional, ready, readyMore]).map((item) => item.material), ["A2004", "B0005", "B0008"]);
+  const zones = model.recentZones(readyMore.health.mv);
+  assert.equal(zones.length, 12);
+  assert.ok(zones.every((entry) => entry.zone === "ok"));
+  assert.deepEqual(model.recentZones({ level: "insufficient" }), []);
+});

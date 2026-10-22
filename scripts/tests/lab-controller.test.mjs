@@ -11,8 +11,9 @@ function setup(respond) {
   let denied = 0;
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
-      value: selector === "#lab-sort" ? "recent" : "", textContent: "", innerHTML: "", hidden: false,
-      addEventListener() {}, setAttribute() {}, classList: { toggle() {} },
+      value: selector === "#lab-sort" ? "recent" : "", textContent: "", innerHTML: "", hidden: false, clientWidth: 600, listeners: {},
+      addEventListener(name, fn) { this.listeners[name] = fn; }, setAttribute() {}, classList: { toggle() {} },
+      querySelector: (inner) => element(inner), querySelectorAll: () => [],
     });
     return elements.get(selector);
   };
@@ -197,4 +198,36 @@ test("entering a module from its card zooms the module page in once it is painte
   card.click({ button: 0, ctrlKey: true });
   await app.open("module=dashboard");
   assert.equal(zooms, 1, "ctrl-click opens a new tab; no zoom is queued here");
+});
+
+test("with health summaries the dashboard lists what needs attention and charts the flagged material first", async () => {
+  const model = (await import("node:module")).createRequire(import.meta.url)("../../modules/lab-mooney-model.js");
+  const rows = [];
+  const add = (material, averages) => averages.forEach((average, batch) => {
+    for (let index = 0; index < 3; index += 1) rows.push({
+      source_sheet: material, material, sample_id: String(index), test_date: model.shiftDate("2026-09-01", Math.floor(batch / 2)),
+      test_time: `0${8 + (batch % 2)}:0${index}:00`, temperature_c: 100, test_minutes: 4,
+      mv: average + (index - 1) * 0.2, avg_mv: average, sd_mv: 0.2, mh: average + 20, avg_mh: average + 20, sd_mh: 0.2,
+    });
+  });
+  const steady = (count) => Array.from({ length: count }, (_, index) => 40 + Math.sin(index * 1.7) * 0.5);
+  add("B0005", steady(50));
+  add("A2004", [...steady(44), 46]);
+  const materials = JSON.parse(JSON.stringify(model.buildMaterialSummaries(model.normalizeFeed({ rows }).rows)));
+  const app = setup(async () => ({ data: body(materials), error: null }));
+  await app.open("module=dashboard");
+  const root = app.element("#lab-dash-mooney");
+  assert.match(root.innerHTML, /id="lab-attn"/, "the health layout replaces the number tiles");
+  assert.match(app.element("#lab-attn").innerHTML, /A2004[\s\S]*เกินเส้นควบคุม/);
+  assert.match(app.element("#lab-zones").innerHTML, /data-material="A2004" aria-pressed="true"/, "the out-of-control material is charted first");
+  assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mv"/);
+  assert.equal(app.element("#lab-control-link").href, "#/lab?module=mooney&material=A2004");
+  root.listeners.click({ target: { closest: (selector) => (selector === "[data-measure]" ? { dataset: { measure: "mh" } } : null) } });
+  assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mh"/);
+  root.listeners.change({ target: { id: "lab-control-select", value: "B0005" } });
+  assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/);
+  // รีเฟรชแล้วข้อมูลเดิม: คงตัวเลือกของผู้ใช้ไว้ (B0005, MH)
+  await app.tick();
+  await flush();
+  assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/);
 });

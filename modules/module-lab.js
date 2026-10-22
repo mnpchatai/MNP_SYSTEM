@@ -155,21 +155,110 @@
   }
 
   /* ---------- แดชบอร์ด: สรุปจากฟีดหน้ารวม (คำขอและแคชเดียวกับรายการวัสดุ) ---------- */
+  // สรุปที่มี health (ตัวซิงก์รุ่นใหม่) = แดชบอร์ดติดตามกระบวนการ: ต้องดูก่อน · ปริมาณทดสอบ · เส้นควบคุม
+  // สรุปรุ่นก่อน (ยังไม่ redeploy ตัวซิงก์) = ตัวเลขชุดเดิม จึงเผยแพร่เว็บก่อนหรือหลังตัวซิงก์ก็ได้
+  // ตัวเลือกของผู้ใช้ (ค่า MV/MH และวัสดุของกราฟ) คงไว้ตอนรีเฟรช ทุกส่วนวาดใหม่เฉพาะเมื่อ HTML เปลี่ยน
+  // (#app เป็น aria-live โปรแกรมอ่านหน้าจอจะได้ไม่อ่านเนื้อหาเดิมซ้ำทุกรอบรีเฟรช)
 
   function bindDashboard() {
     const bar = bindLiveBar();
     const mooney = document.querySelector("#lab-dash-mooney");
-    let shown = "";
+    const view = { mode: "", key: "mv", material: null, materials: [], today: "", plotWidth: 0 };
+    const painted = new Map();
+    const paintInto = (selector, html) => {
+      if (painted.get(selector) === html) return;
+      const node = mooney.querySelector(selector);
+      if (!node) return;
+      painted.set(selector, html);
+      node.innerHTML = html;
+    };
+
+    // วัสดุของกราฟ: ที่ผู้ใช้เลือกไว้ (ถ้ายังมีเส้นควบคุม) ไม่เช่นนั้นวัสดุแรกที่ "เกินเส้นควบคุม" แล้วจึงวัสดุที่มีประวัติมากสุด
+    function chooseMaterial(candidates, attention) {
+      const names = candidates.map((item) => item.material);
+      if (view.material && names.includes(view.material)) return view.material;
+      const flagged = attention.find((item) => item.severity === "out" && names.includes(item.material));
+      return flagged?.material ?? names[0] ?? null;
+    }
+
+    function paintControl() {
+      const candidates = model.controlMaterials(view.materials);
+      view.material = chooseMaterial(candidates, model.attentionItems(view.materials, view.today));
+      mooney.querySelectorAll("[data-measure]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.measure === view.key)));
+      paintInto("#lab-zones", views.zoneGrid({ materials: view.materials, key: view.key, selected: view.material }));
+      const select = mooney.querySelector("#lab-control-select");
+      const link = mooney.querySelector("#lab-control-link");
+      const pick = mooney.querySelector(".lab-control-pick");
+      pick.hidden = !view.material;
+      paintInto("#lab-control-select", views.controlOptions(candidates, view.material));
+      if (view.material) {
+        select.value = view.material;
+        link.href = model.materialUrl(view.material);
+      }
+      const plot = mooney.querySelector("#lab-control-plot");
+      view.plotWidth = Math.floor(plot.clientWidth);
+      const item = candidates.find((entry) => entry.material === view.material);
+      paintInto("#lab-control-plot", views.controlPlot({ control: item?.health?.[view.key], key: view.key, width: view.plotWidth, material: view.material }));
+    }
+
+    function paintHealth() {
+      paintInto("#lab-attn", views.attentionList(model.attentionItems(view.materials, view.today)));
+      paintInto("#lab-activity", views.activityChart(model.activityByDay(view.materials, view.today)));
+      paintControl();
+    }
+
+    mooney.addEventListener("click", (event) => {
+      const measure = event.target.closest("[data-measure]");
+      const row = event.target.closest(".lab-zone-name");
+      if (measure) view.key = measure.dataset.measure === "mh" ? "mh" : "mv";
+      else if (row) view.material = row.dataset.material;
+      else return;
+      paintControl();
+    });
+    mooney.addEventListener("change", (event) => {
+      if (event.target.id !== "lab-control-select") return;
+      view.material = event.target.value;
+      paintControl();
+    });
+
+    // กราฟกว้างตามกล่อง: วาดใหม่เมื่อความกว้างเปลี่ยน (หมุนจอ ย่อ/ขยายหน้าต่าง เปิด/ปิดเมนูข้าง)
+    let frame = 0;
+    const observer = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => {
+        const plot = mooney.querySelector("#lab-control-plot");
+        if (view.mode !== "health" || !plot || Math.abs(Math.floor(plot.clientWidth) - view.plotWidth) < 2) return;
+        window.cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(paintControl);
+      })
+      : null;
+    observer?.observe(mooney);
+
     return {
       showStatus: bar.showStatus,
       setBusy: bar.setBusy,
+      dispose() {
+        observer?.disconnect();
+        window.cancelAnimationFrame(frame);
+      },
       update(feed) {
         bar.paintMeta(feed);
-        const html = views.dashboardMooney(model.overviewStats(feed.materials));
-        // ตัวเลขไม่เปลี่ยน: ไม่วาดใหม่ (#app เป็น aria-live โปรแกรมอ่านหน้าจอจะได้ไม่อ่านตัวเลขเดิมซ้ำทุกรอบรีเฟรช)
-        if (html === shown) return;
-        shown = html;
-        mooney.innerHTML = html;
+        const mode = feed.materials.length && model.hasHealth(feed.materials) ? "health" : "legacy";
+        if (mode !== view.mode) {
+          view.mode = mode;
+          painted.clear();
+          mooney.innerHTML = mode === "health" ? views.dashboardBody() : "";
+        }
+        if (mode === "legacy") {
+          const html = views.dashboardMooney(model.overviewStats(feed.materials));
+          if (painted.get("legacy") !== html) {
+            painted.set("legacy", html);
+            mooney.innerHTML = html;
+          }
+          return;
+        }
+        view.materials = feed.materials;
+        view.today = model.todayInBangkok();
+        paintHealth();
       },
     };
   }

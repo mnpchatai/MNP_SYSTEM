@@ -641,7 +641,8 @@ test("in one ID's history the tip leaves the ID out (already chosen above) and a
 test("every element the page script looks up exists in the page it opens", () => {
   const source = readFileSync(new URL("../../modules/module-lab.js", import.meta.url), "utf8");
   const wanted = new Set([...source.matchAll(/"#(lab-[a-z-]+)"/g)].map((match) => match[1]));
-  const pages = views.dashboardPage(30) + views.overviewPage(30) + views.materialPage("A1802", 30);
+  // dashboardBody ถูกใส่ลงแดชบอร์ดตอนได้สรุปที่มี health จึงนับเป็นส่วนหนึ่งของหน้าแดชบอร์ด
+  const pages = views.dashboardPage(30) + views.dashboardBody() + views.overviewPage(30) + views.materialPage("A1802", 30);
   assert.ok(wanted.size > 15, `found ${wanted.size} selectors`);
   for (const id of wanted) assert.ok(pages.includes(`id="${id}"`), `#${id} is missing from the page markup`);
   // แดชบอร์ด หน้ารวม และหน้าวัสดุต้องมีแถบเวลา/รีเฟรชชุดเดียวกัน เพราะ bindLiveBar ผูกทุกหน้าที่อ่านฟีด
@@ -715,4 +716,100 @@ test("the dashboard shows each Mooney number once and says so when the sheet has
   assert.equal(count(html, /18\/10\/2026/g), 1);
   assert.match(views.dashboardMooney({ materialCount: 0, resultCount: 0, lastTested: null, latestMaterialCount: 0 }), /ยังไม่มีข้อมูลผลทดสอบในชีต Mooney_Test_Report/);
   assert.match(views.dashboardMooney(undefined), /ยังไม่มีข้อมูลผลทดสอบ/);
+});
+
+/* ---------- แดชบอร์ดติดตามกระบวนการ ---------- */
+
+const control = (overrides = {}) => ({
+  level: "ready", count: 45, mean: 40, sigma: 0.5, ucl: 41.5, lcl: 38.5,
+  recent: [40, 40.2, 39.9, 41.2, 42], signals: ["beyond3"], latestSd: 0.2, sdUcl: 0.6, sdHigh: false, ...overrides,
+});
+
+test("the dashboard body has the attention list, the activity chart and the control card, without summary tiles that repeat them", () => {
+  const html = views.dashboardBody();
+  for (const id of ["lab-attn", "lab-activity", "lab-zones", "lab-control-select", "lab-control-link", "lab-control-plot"]) assert.ok(html.includes(`id="${id}"`), id);
+  assert.doesNotMatch(html, /class="summary"/);
+  assert.match(html, /data-measure="mv" aria-pressed="true"/);
+  assert.match(html, /data-measure="mh" aria-pressed="false"/);
+  assert.match(html, /<select class="select" id="lab-control-select" data-native-select>/, "a native select is tappable on iPhone");
+  assert.match(html, /title="[^"]*ไม่ใช่ค่าสเปก/, "the limits are explained in a title, not as permanent text");
+});
+
+test("attention items escape sheet text, link to the material and say what is wrong in words, not only colour", () => {
+  const html = views.attentionList([
+    { material: XSS, severity: "out", kind: "beyond3", measure: "MV", value: 42, limit: 41.5, provisional: true },
+    { material: "B0005", severity: "warn", kind: "rule", measure: "MH", value: 61, signals: ["twoOfThree", "eightSameSide"] },
+    { material: "B0006", severity: "warn", kind: "sdHigh", measure: "MV", value: 0.95, limit: 0.6 },
+    { material: "c1301", severity: "info", kind: "duplicateName", others: ["C1301"] },
+  ]);
+  assert.ok(!html.includes(XSS));
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /href="#\/lab\?module=mooney&amp;material=B0005"/);
+  assert.match(html, /class="lab-flag is-out">เกินเส้นควบคุม</);
+  assert.match(html, /MV ชุดล่าสุด 42\.00 เกิน UCL 41\.50 \(เส้นชั่วคราว\)/);
+  assert.match(html, /2 ใน 3 ชุดล่าสุดเกิน 2σ ข้างเดียวกัน · 8 ชุดติดกันอยู่ข้างเดียวของเส้นกลาง/);
+  assert.match(html, /SD MV ชุดล่าสุด 0\.95 สูงกว่าปกติของวัสดุนี้ \(UCL 0\.60\)/);
+  assert.match(html, /ชื่อซ้ำกับ C1301/);
+  assert.equal(views.attentionText({ kind: "beyond3", measure: "MH", value: 30, limit: 31 }), "MH ชุดล่าสุด 30.00 ต่ำกว่า LCL 31.00");
+  assert.equal(views.attentionText({ kind: "overdue", days: 21 }), "ไม่ได้ทดสอบ 21 วัน");
+  assert.equal(views.attentionText({ kind: "missingAvg", count: 3 }), "3 แถวยังไม่มี AVG/SD ในชีต");
+  assert.match(views.attentionList([]), /ไม่มีรายการที่ต้องดู/);
+});
+
+test("the activity chart scales bars to the busiest day and states today's figures once", () => {
+  const html = views.activityChart([
+    { date: "2026-10-20", count: 12, materials: 3 },
+    { date: "2026-10-21", count: 0, materials: 0 },
+    { date: "2026-10-22", count: 6, materials: 2 },
+  ]);
+  assert.equal(count(html, /class="lab-bar[ "]/g), 3);
+  assert.match(html, /style="height:100%"/);
+  assert.match(html, /class="lab-bar is-zero"[^>]*><i style="height:0%">/);
+  assert.match(html, /class="lab-bar is-today" title="22\/10\/2026: 6 ครั้ง · 2 วัสดุ"><i style="height:50%">/);
+  assert.equal(count(html.replace(/<[^>]+>/g, " "), /วันนี้ 6 ครั้ง/g), 1, "visible once; the aria-label repeats it for screen readers only");
+  assert.equal(views.activityChart([]), "");
+});
+
+test("the zone grid has one row per material with limits, the selected one pressed, and counts the rest once", () => {
+  const materials = [
+    { material: "A2004", health: { mv: control({ recent: [40, 41.2, 42] }) } },
+    { material: XSS, health: { mv: control({ level: "provisional", count: 12 }) } },
+    { material: "A1802", health: { mv: { level: "insufficient", count: 3 } } },
+    { material: "E00030S B", health: { mv: { level: "mixed", count: 36 } } },
+  ];
+  const html = views.zoneGrid({ materials, key: "mv", selected: "A2004" });
+  assert.equal(count(html, /class="lab-zone-row"/g), 2);
+  assert.match(html, /data-material="A2004" aria-pressed="true"/);
+  assert.ok(!html.includes(XSS));
+  assert.match(html, /<i class="lab-zone is-ok" title="40\.00 · ปกติ">/);
+  assert.match(html, /<i class="lab-zone is-warn" title="41\.20 · เกิน 2σ">/);
+  assert.match(html, /<i class="lab-zone is-out" title="42\.00 · เกิน 3σ">/);
+  assert.equal(count(html, /lab-zone is-empty/g), 9 + 7, "short histories are padded on the left so the latest batch lines up");
+  assert.match(html, />ชั่วคราว</);
+  assert.match(html, /อีก 2 วัสดุยังไม่มีเส้นควบคุม/);
+  assert.match(views.zoneGrid({ materials: materials.slice(2), key: "mv", selected: null }), /ยังไม่มีวัสดุที่มีประวัติถึง 10 ชุด/);
+});
+
+test("the control chart draws CL, UCL and LCL and marks breaches by shape as well as colour", () => {
+  const svg = chart.controlChart({ control: control(), key: "mv", width: 640, label: "A2004" });
+  assert.match(svg, /^<svg class="lab-cc lab-cc-mv" width="640"/);
+  for (const name of ["UCL", "CL", "LCL"]) assert.match(svg, new RegExp(`>${name}</text>`));
+  assert.equal(count(svg, /class="lab-cc-pt is-ok/g), 3);
+  assert.equal(count(svg, /class="lab-cc-pt is-warn/g), 1);
+  assert.match(svg, /class="lab-cc-pt is-out is-last"><rect /, "the latest batch, beyond 3 sigma, is a diamond");
+  assert.match(svg, />ชุดที่ 41</);
+  assert.match(svg, />ชุดที่ 45</);
+  assert.match(svg, /aria-label="A2004 MV 5 ชุดล่าสุด เส้นกลาง 40 UCL 41\.5 LCL 38\.5 ชุดล่าสุด 42"/);
+  assert.doesNotMatch(svg, /NaN|Infinity/);
+  assert.equal(chart.controlChart({ control: control({ sigma: 0 }), width: 640 }), "");
+  assert.equal(chart.controlChart({ control: control({ recent: [] }), width: 640 }), "");
+  assert.match(chart.controlChart({ control: control(), width: 100 }), /width="280"/, "narrow boxes still get a readable chart");
+});
+
+test("the control plot falls back to a sentence when the chosen value has no limits", () => {
+  assert.match(views.controlPlot({ control: control(), key: "mh", width: 600, material: "A2004" }), /^<svg class="lab-cc lab-cc-mh"/);
+  assert.equal(views.controlPlot({ control: { level: "flat", count: 40 }, key: "mh", width: 600, material: XSS }).includes(XSS), false);
+  assert.match(views.controlPlot({ control: { level: "flat", count: 40 }, key: "mh", width: 600, material: "A2004" }), /A2004 ยังตั้งเส้นควบคุมของ MH ไม่ได้/);
+  assert.equal(views.controlPlot({ control: undefined, key: "mv", width: 600, material: null }), "");
+  assert.match(views.controlOptions([{ material: "A2004" }, { material: "B0005" }], "B0005"), /<option value="B0005" selected>/);
 });

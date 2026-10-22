@@ -38,8 +38,10 @@
 
   // ตอนนี้มีข้อมูลเฉพาะ Mooney (โมดูลอื่นยังไม่มีแหล่งข้อมูล จึงไม่มีส่วนบนแดชบอร์ด)
   // เวลาอ่านชีตกับปุ่มรีเฟรชอยู่ในส่วนของ Mooney ไม่อยู่ที่หัวหน้า เพราะเป็นของชีต Mooney_Test_Report เท่านั้น
+  // (ข้อความเตือนเมื่อข้อมูลเก่ากว่า 3 นาทีอยู่ที่แถบเดียวกันนี้ = สถานะความสดของข้อมูล ไม่ซ้ำเป็นการ์ดอีก)
   // หัวข้อบอกว่าตัวเลขเป็นของการทดสอบใด แต่ไม่เป็นลิงก์ (ทางไปโมดูลอยู่ที่การ์ดในหน้าเลือกโมดูล)
-  // module-lab.js เติมตัวเลขลง #lab-dash-mooney ด้วย dashboardMooney ทุกครั้งที่ได้ฟีดใหม่
+  // module-lab.js เติมเนื้อหาลง #lab-dash-mooney ทุกครั้งที่ได้ฟีดใหม่: dashboardBody เมื่อสรุปมีข้อมูลสุขภาพ (health)
+  // หรือ dashboardMooney (ตัวเลขชุดเดิม) เมื่อตัวซิงก์ยังเป็นรุ่นก่อน — เว็บรุ่นนี้จึงใช้ได้ก่อนและหลัง redeploy ตัวซิงก์
   function dashboardPage(seconds) {
     return `<div class="lab-page">
       ${sections.moduleHead("dashboard")}
@@ -55,6 +57,7 @@
   const tile = (label, value, note = "") => `<div class="summary"><span>${esc(label)}</span><strong>${esc(value)}</strong>${note ? `<small>${esc(note)}</small>` : ""}</div>`;
 
   // stats จาก model.overviewStats: จำนวนวัสดุ / ผลทดสอบรวม / วันที่ทดสอบล่าสุดกับจำนวนวัสดุที่ทดสอบวันนั้น
+  // ใช้เมื่อสรุปยังไม่มี health (ตัวซิงก์รุ่นก่อน) เท่านั้น
   function dashboardMooney(stats) {
     if (!stats?.materialCount) return `<div class="card"><div class="empty">${esc(NO_RESULTS)}</div></div>`;
     return `<div class="summary-grid lab-dash-grid">
@@ -63,6 +66,134 @@
         ${tile("ทดสอบล่าสุด", model.formatDate(stats.lastTested), stats.lastTested ? `${int(stats.latestMaterialCount)} วัสดุ` : "")}
       </div>`;
   }
+
+  /* ---------- แดชบอร์ดแบบติดตามกระบวนการ (สรุปมี health) ---------- */
+  // โครง: [ต้องดูก่อน | ปริมาณทดสอบ 30 วัน] แล้ว [เส้นควบคุม: ตารางสีทุกวัสดุ + กราฟของวัสดุที่เลือก]
+  // แต่ละส่วนมี id ของตัวเอง module-lab.js วาดใหม่เฉพาะส่วนที่เปลี่ยน (ไม่เสียตัวเลือกวัสดุ/ค่า และไม่ให้โปรแกรมอ่านหน้าจออ่านซ้ำ)
+  // ไม่มีการ์ดตัวเลขสรุปที่ซ้ำกับรายการและกราฟ: จำนวนที่ต้องดูคือรายการ, ปริมาณวันนี้คือแท่งสุดท้ายของกราฟ
+
+  const CONTROL_NOTE = "เส้นกลาง (CL) = ค่าเฉลี่ยของค่าเฉลี่ยรายชุดทั้งหมดของวัสดุนั้น · UCL/LCL = CL ± 3σ โดย σ คำนวณจากช่วงเคลื่อนที่ของค่าเฉลี่ยรายชุด (แผนภูมิ I-MR) "
+    + `· เส้นชั่วคราว = ประวัติ ${model.CONTROL_MIN_PROVISIONAL}–${model.CONTROL_MIN_READY - 1} ชุด · เส้นควบคุมไม่ใช่ค่าสเปก บอกเพียงว่าต่างจากปกติของวัสดุนั้น`;
+
+  function dashboardBody() {
+    const measures = [{ key: "mv", label: "MV" }, { key: "mh", label: "MH" }]
+      .map((measure, index) => `<button type="button" class="lab-range-btn" data-measure="${measure.key}" aria-pressed="${index === 0}">${KEY_ICON(measure.key)}${measure.label}</button>`).join("");
+    return `<div class="lab-dash-cols">
+        <section class="card lab-dash-card" aria-labelledby="lab-attn-title">
+          <h3 class="lab-dash-card-title" id="lab-attn-title">ต้องดูก่อน</h3>
+          <div id="lab-attn"></div>
+        </section>
+        <section class="card lab-dash-card" aria-labelledby="lab-activity-title">
+          <h3 class="lab-dash-card-title" id="lab-activity-title">ปริมาณทดสอบ ${model.ACTIVITY_DAYS} วัน</h3>
+          <div id="lab-activity"></div>
+        </section>
+      </div>
+      <section class="card lab-dash-card lab-control-card" aria-labelledby="lab-control-title">
+        <div class="lab-control-head">
+          <h3 class="lab-dash-card-title" id="lab-control-title" title="${esc(CONTROL_NOTE)}">เส้นควบคุมรายชุด</h3>
+          <div class="lab-ranges" role="group" aria-label="ค่าที่แสดง">${measures}</div>
+        </div>
+        <div id="lab-zones"></div>
+        <div class="lab-control-pick">
+          <label class="sr-only" for="lab-control-select">วัสดุของกราฟเส้นควบคุม</label>
+          <select class="select" id="lab-control-select" data-native-select></select>
+          <a class="small" id="lab-control-link" href="#/lab?module=mooney">ดูผลทดสอบ →</a>
+        </div>
+        <div class="lab-control-plot" id="lab-control-plot"></div>
+      </section>`;
+  }
+
+  const SIGNAL_TEXT = Object.freeze({
+    beyond3: "เกิน 3σ",
+    twoOfThree: "2 ใน 3 ชุดล่าสุดเกิน 2σ ข้างเดียวกัน",
+    fourOfFive: "4 ใน 5 ชุดล่าสุดเกิน 1σ ข้างเดียวกัน",
+    eightSameSide: "8 ชุดติดกันอยู่ข้างเดียวของเส้นกลาง",
+  });
+  const FLAG = Object.freeze({
+    beyond3: "เกินเส้นควบคุม",
+    rule: "เริ่มเบี่ยง",
+    sdHigh: "แกว่งในเส้น",
+    mixed: "สภาวะทดสอบต่างกัน",
+    missingAvg: "ข้อมูลไม่ครบ",
+    duplicateName: "ตรวจชื่อวัสดุ",
+    lowercaseName: "ตรวจชื่อวัสดุ",
+    overdue: "ไม่ได้ทดสอบนาน",
+  });
+
+  const provisionalText = (item) => (item.provisional ? " (เส้นชั่วคราว)" : "");
+
+  // ข้อความรายละเอียดของรายการ "ต้องดูก่อน" (ข้อความล้วน)
+  function attentionText(item) {
+    switch (item.kind) {
+      case "beyond3": return `${item.measure} ชุดล่าสุด ${reading(item.value)} ${item.value > item.limit ? "เกิน UCL" : "ต่ำกว่า LCL"} ${reading(item.limit)}${provisionalText(item)}`;
+      case "rule": return `${item.measure} ชุดล่าสุด ${reading(item.value)}: ${item.signals.map((signal) => SIGNAL_TEXT[signal] ?? signal).join(" · ")}${provisionalText(item)}`;
+      case "sdHigh": return `SD ${item.measure} ชุดล่าสุด ${reading(item.value)} สูงกว่าปกติของวัสดุนี้ (UCL ${reading(item.limit)})${provisionalText(item)}`;
+      case "mixed": return "อุณหภูมิหรือเวลาทดสอบไม่เท่ากันทุกแถว จึงไม่ตั้งเส้นควบคุม";
+      case "missingAvg": return `${int(item.count)} แถวยังไม่มี AVG/SD ในชีต`;
+      case "duplicateName": return `ชื่อซ้ำกับ ${item.others.join(", ")} เมื่อไม่สนตัวพิมพ์ ประวัติถูกแยกเป็นสองชื่อ`;
+      case "lowercaseName": return "ชื่อมีตัวพิมพ์เล็ก รหัสวัสดุอาจพิมพ์ผิด";
+      case "overdue": return `ไม่ได้ทดสอบ ${int(item.days)} วัน`;
+      default: return "";
+    }
+  }
+
+  // รายการ "ต้องดูก่อน" จาก model.attentionItems: ชื่อวัสดุ (ลิงก์ไปหน้าวัสดุ) · ป้ายสถานะ (ข้อความ + สี) · รายละเอียด
+  function attentionList(items) {
+    if (!items.length) return `<p class="lab-dash-empty">ไม่มีรายการที่ต้องดู</p>`;
+    return `<ul class="lab-attn">${items.map((item) => `<li class="lab-attn-item">
+        <a class="lab-attn-name" href="${esc(model.materialUrl(item.material))}">${esc(item.material)}</a>
+        <span class="lab-flag is-${esc(item.severity)}">${esc(FLAG[item.kind] ?? item.kind)}</span>
+        <span class="lab-attn-text">${esc(attentionText(item))}</span>
+      </li>`).join("")}</ul>`;
+  }
+
+  // กราฟแท่งปริมาณทดสอบรายวัน (days จาก model.activityByDay เก่า → ใหม่) ค่าของแต่ละวันอยู่ที่ title ของแท่ง
+  // ป้ายท้ายกราฟบอกค่าของวันนี้ (แท่งสุดท้าย) ครั้งเดียว ป้ายใต้แกนบอกวันแรกและวันนี้
+  function activityChart(days) {
+    if (!days.length) return "";
+    const peak = Math.max(1, ...days.map((day) => day.count));
+    const today = days[days.length - 1];
+    const bars = days.map((day, index) => {
+      const title = `${model.formatDate(day.date)}: ${int(day.count)} ครั้ง · ${int(day.materials)} วัสดุ`;
+      const height = day.count ? Math.max(4, Math.round((day.count / peak) * 100)) : 0;
+      return `<span class="lab-bar${index === days.length - 1 ? " is-today" : ""}${day.count ? "" : " is-zero"}" title="${esc(title)}"><i style="height:${height}%"></i></span>`;
+    }).join("");
+    const summary = `วันนี้ ${int(today.count)} ครั้ง · ${int(today.materials)} วัสดุ`;
+    return `<div class="lab-bars" role="img" aria-label="${esc(`จำนวนครั้งทดสอบรายวัน ${days.length} วันล่าสุด สูงสุด ${int(peak)} ครั้งต่อวัน ${summary}`)}">${bars}</div>
+      <div class="lab-bars-axis"><span>${esc(model.formatShortDate(days[0].date))}</span><span class="lab-bars-today">${esc(summary)}</span></div>`;
+  }
+
+  // ตารางสีทุกวัสดุที่ตั้งเส้นควบคุมได้: แถวละวัสดุ ช่องละชุด (12 ชุดล่าสุด เก่า → ใหม่) สีและรูปทรงตามโซน
+  // ชื่อวัสดุเป็นปุ่มเลือกวัสดุให้กราฟด้านล่าง (aria-pressed = ที่เลือกอยู่) วัสดุที่ตั้งเส้นไม่ได้นับรวมไว้บรรทัดเดียวใต้ตาราง
+  const ZONE_TEXT = Object.freeze({ ok: "ปกติ", warn: "เกิน 2σ", out: "เกิน 3σ" });
+  function zoneGrid({ materials, key, selected }) {
+    const usable = materials.filter((item) => ["ready", "provisional"].includes(item.health?.[key]?.level));
+    const rest = materials.length - usable.length;
+    const rows = usable.map((item) => {
+      const control = item.health[key];
+      const zones = model.recentZones(control);
+      const blanks = Math.max(0, 12 - zones.length);
+      const cells = Array.from({ length: blanks }, () => `<i class="lab-zone is-empty"></i>`).join("")
+        + zones.map((entry) => `<i class="lab-zone is-${entry.zone}" title="${esc(`${reading(entry.value)} · ${ZONE_TEXT[entry.zone]}`)}"></i>`).join("");
+      const tag = control.level === "provisional" ? `<small class="lab-zone-tag" title="ประวัติ ${int(control.count)} ชุด ยังไม่ถึง ${model.CONTROL_MIN_READY} ชุด เส้นยังเลื่อนได้มาก">ชั่วคราว</small>` : "";
+      return `<div class="lab-zone-row"><button type="button" class="lab-zone-name" data-material="${esc(item.material)}" aria-pressed="${item.material === selected}">${esc(item.material)}${tag}</button><span class="lab-zone-cells" aria-hidden="true">${cells}</span></div>`;
+    }).join("");
+    const legend = `<p class="lab-zone-legend"><span><i class="lab-zone is-ok"></i>ปกติ</span><span><i class="lab-zone is-warn"></i>เกิน 2σ</span><span><i class="lab-zone is-out"></i>เกิน 3σ</span><span class="muted">ช่อง = ค่าเฉลี่ยรายชุด 12 ชุดล่าสุด เก่า → ใหม่</span></p>`;
+    const restNote = rest ? `<p class="lab-zone-rest muted small">อีก ${int(rest)} วัสดุยังไม่มีเส้นควบคุม (ประวัติไม่ถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด หรือสภาวะทดสอบต่างกัน)</p>` : "";
+    if (!usable.length) return `<p class="lab-dash-empty">ยังไม่มีวัสดุที่มีประวัติถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด</p>`;
+    return `<div class="lab-zone-grid">${rows}</div>${legend}${restNote}`;
+  }
+
+  // กราฟเส้นควบคุมของวัสดุที่เลือก หรือข้อความเมื่อค่านั้นยังตั้งเส้นไม่ได้ (เช่น MV ตั้งได้แต่ MH ทุกชุดเท่ากัน) ไม่มีวัสดุ = ว่าง
+  function controlPlot({ control, key, width, material }) {
+    if (!material) return "";
+    if (control && ["ready", "provisional"].includes(control.level)) return chart.controlChart({ control, key, width, label: material });
+    return `<p class="lab-dash-empty">${esc(material)} ยังตั้งเส้นควบคุมของ ${esc(key.toUpperCase())} ไม่ได้</p>`;
+  }
+
+  // ตัวเลือกวัสดุของกราฟเส้นควบคุม (เรียงตาม model.controlMaterials)
+  const controlOptions = (materials, selected) => materials
+    .map((item) => `<option value="${esc(item.material)}"${item.material === selected ? " selected" : ""}>${esc(item.material)}</option>`).join("");
 
   /* ---------- หน้ารวม: รายการวัสดุ ---------- */
 
@@ -340,7 +471,7 @@
 
   const api = {
     ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS, NO_RESULTS,
-    liveBar, dashboardPage, dashboardMooney, overviewPage, materialRows, materialSuggestions,
+    liveBar, dashboardPage, dashboardMooney, dashboardBody, attentionText, attentionList, activityChart, zoneGrid, controlPlot, controlOptions, overviewPage, materialRows, materialSuggestions,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
     resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey, rangeAnnouncement, monthOptions,
   };
