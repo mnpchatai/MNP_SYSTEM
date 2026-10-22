@@ -1947,54 +1947,145 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-dash-grid { margin-bottom: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lab-dash-grid .summary strong { font-variant-numeric: tabular-nums; }
 
-/* แดชบอร์ด: ตารางรายโม่หนึ่งตาราง (แถบตัวกรองบรรทัดเดียว) + กราฟเส้นควบคุมของสูตรที่เลือก
-   สถานะใช้ทั้งข้อความและสี (ตัวแปรความหมายของธีม danger/warning/success) จอแคบแถวกลายเป็นการ์ด ช่องมีป้ายจาก data-label */
+/* แดชบอร์ด 4 ส่วน (lab-mooney-views.js dashboardBody): แถบช่วงวัน + คำอธิบายสี · การ์ดวันล่าสุด + ต้องดูก่อน · กราฟเล็กต่อสูตร ·
+   แผนที่ความร้อน สูตร × โม่ · เจาะลึก (เส้นควบคุม + ตารางรายโม่) สถานะใช้ทั้งข้อความ รูปทรง และสี (ตัวแปรความหมายของธีม danger/warning/success)
+   จอแคบ: การ์ดและกราฟเล็กเรียงคอลัมน์เดียว แผนที่ความร้อนเลื่อนแนวนอนในกรอบของตัวเอง แถวของตารางรายโม่กลายเป็นการ์ด */
 .lab-dash-card { padding: 16px 18px; }
-.lab-control-card { margin-top: 14px; }
+.lab-dash-two, .lab-control-card { margin-top: 14px; }
 .lab-dash-card-title { margin: 0; font-size: 14px; }
+.lab-dash-card-title small { color: var(--quiet); font-weight: 600; }
 .lab-dash-empty { margin: 0; color: var(--muted); font-size: 13px; }
 
 .lab-machine { margin-bottom: 12px; padding: 10px 14px; color: var(--ink); background: var(--warning-soft); border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent); border-radius: 10px; font-size: 13px; }
 .lab-machine p { margin: 0; }
 .lab-machine p + p { margin-top: 4px; }
 
-.lab-mill-filters { padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-bottom: 1px solid var(--soft-line); }
-.lab-filter .select, .lab-filter .input { width: auto; min-height: 38px; }
-.lab-filter-search { flex: 1 1 160px; min-width: 0; }
-.lab-filter-search .input { width: 100%; }
-.lab-mill-help { width: 26px; height: 26px; display: inline-grid; place-items: center; color: var(--muted); border: 1px solid var(--line); border-radius: 50%; font-size: 13px; font-weight: 700; cursor: help; }
-.lab-mill-help:focus-visible { outline: 3px solid var(--primary); outline-offset: 1px; }
-.lab-mill-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.lab-mill-table th, .lab-mill-table td { padding: 8px 12px; border-bottom: 1px solid var(--soft-line); text-align: left; vertical-align: middle; }
-.lab-mill-table thead th { color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
-.lab-mill-table tbody th { color: var(--ink); font-weight: 700; white-space: nowrap; }
-.lab-mill-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.lab-mill-table tbody tr:last-child > * { border-bottom: 0; }
-.lab-mill-row { cursor: pointer; }
-.lab-mill-row:hover { background: var(--shell); }
-.lab-mill-row[aria-selected="true"] { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
-.lab-mill-row:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
-.lab-d { color: var(--quiet); }
-.lab-d.is-far { color: var(--ink); font-weight: 700; }
+.lab-dash-bar { margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.lab-seg { display: inline-flex; background: var(--paper); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.lab-seg-btn { min-height: 36px; padding: 0 14px; color: var(--muted); background: transparent; border: 0; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.lab-seg-btn + .lab-seg-btn { border-left: 1px solid var(--line); }
+.lab-seg-btn:hover { color: var(--ink); background: var(--shell); }
+.lab-seg-btn[aria-pressed="true"] { color: var(--primary); background: var(--primary-soft); }
+.lab-seg-btn:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.lab-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: 12px; }
+.lab-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.lab-dot { width: 9px; height: 9px; display: inline-block; background: var(--quiet); border-radius: 50%; }
+.lab-dot.is-ok { background: var(--success); }
+.lab-dot.is-warn { background: var(--warning); border-radius: 1px; transform: rotate(45deg) scale(.9); }
+.lab-dot.is-out { background: var(--danger); border-radius: 0; }
 .lab-flag { padding: 1px 8px; border: 1px solid currentColor; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .lab-flag.is-out { color: var(--danger); background: var(--danger-soft); }
 .lab-flag.is-warn { color: var(--warning); background: var(--warning-soft); }
 .lab-flag.is-info { color: var(--primary); background: var(--primary-soft); }
 .lab-flag.is-ok { color: var(--success); border-color: transparent; }
+.lab-flag.is-none { color: var(--quiet); border-color: var(--line); }
+
+/* 1 วันทดสอบล่าสุด: การ์ดต่อสูตร (ขอบซ้ายสีสถานะ) + กล่องต้องดูก่อน */
+.lab-today { margin-bottom: 14px; }
+.lab-today .lab-dash-card-title { margin-bottom: 8px; }
+.lab-today-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 10px; align-items: start; }
+.lab-tiles { min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.lab-tile, .lab-trend { min-width: 0; display: grid; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.lab-tile { padding: 10px 12px; gap: 4px; background: var(--shell); border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; }
+.lab-tile:hover, .lab-trend:hover { border-color: var(--primary); }
+.lab-tile:focus-visible, .lab-trend:focus-visible, .lab-hm-name:focus-visible, .lab-attn-name:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.lab-tile[aria-pressed="true"], .lab-trend[aria-pressed="true"] { background: var(--paper); border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.lab-tile.is-out { border-left-color: var(--danger); }
+.lab-tile.is-warn { border-left-color: var(--warning); }
+.lab-tile.is-ok { border-left-color: var(--success); }
+.lab-tile.is-none { border-left-color: var(--line); }
+.lab-tile-name { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 15px; }
+.lab-tile-value { font-size: 24px; font-weight: 600; line-height: 1.1; }
+.lab-tile-value small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.3; }
+.lab-tile-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--muted); font-size: 12px; }
+.lab-tile .lab-spark { width: 100%; height: 24px; }
+.lab-spark-mv polyline { stroke: var(--lab-mv); }
+.lab-spark-mv circle { fill: var(--lab-mv); }
+.lab-attn-box { min-width: 0; padding: 10px 12px; background: var(--shell); border: 1px solid var(--line); border-radius: 10px; }
+.lab-attn-box h4 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.lab-attn { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.lab-attn-item { padding: 7px 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; background: var(--paper); border-radius: 8px; font-size: 13px; }
+.lab-attn-name { font-weight: 700; }
+button.lab-attn-name { padding: 0; color: var(--ink); background: none; border: 0; font: inherit; font-weight: 700; text-decoration: underline dotted; cursor: pointer; }
+button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
+.lab-attn-text { flex: 1 1 160px; min-width: 0; color: var(--muted); }
+.lab-attn-hint { flex: 1 1 100%; min-width: 0; color: var(--quiet); font-size: 12px; }
+
+/* 2 กราฟเล็กต่อสูตร: กริดช่องอย่างน้อย 215px ช่องว่าง 10px (module-lab.js คำนวณความกว้างกราฟจากตัวเลขชุดเดียวกัน) */
+.lab-trends { margin-top: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; }
+.lab-trend { padding: 8px 10px; gap: 2px; background: var(--paper); border: 1px solid var(--soft-line); border-radius: 10px; }
+.lab-trend-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 14px; }
+.lab-trend-flags { display: inline-flex; gap: 4px; }
+.lab-trend-foot { display: flex; justify-content: space-between; color: var(--quiet); font-size: 11px; font-variant-numeric: tabular-nums; }
+.lab-dc { display: block; max-width: 100%; overflow: visible; }
+.lab-dc-band { fill: color-mix(in srgb, var(--primary) 9%, var(--paper)); }
+.lab-dc-center { stroke: var(--quiet); stroke-width: 1; }
+.lab-dc-line { fill: none; stroke: var(--lab-mv); stroke-width: 1.5; stroke-linejoin: round; opacity: .55; }
+.lab-dc-spread { stroke: var(--quiet); stroke-width: 2; stroke-linecap: round; opacity: .6; }
+.lab-dc-spread.is-ok { stroke: var(--success); }
+.lab-dc-spread.is-warn { stroke: var(--warning); }
+.lab-dc-spread.is-out { stroke: var(--danger); }
+.lab-dc-pt { fill: var(--quiet); stroke: var(--paper); stroke-width: 1.5; }
+.lab-dc-pt.is-ok { fill: var(--success); }
+.lab-dc-pt.is-warn { fill: var(--warning); }
+.lab-dc-pt.is-out { fill: var(--danger); }
+
+/* 3 แผนที่ความร้อน: ช่องสีจากคลาส — แยกขั้ว น้ำเงิน (ต่ำกว่าโม่อื่น) ← เทา → แดง (สูงกว่า) · ลำดับเดียว จางถึงเข้มของสีหลัก (SD) */
+.lab-dash-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.lab-dash-two > .card { margin: 0; min-width: 0; }
+.lab-dash-two .table-wrap { margin-top: 8px; }
+.lab-hm { width: 100%; border-collapse: separate; border-spacing: 3px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.lab-hm th { padding: 2px 4px; color: var(--muted); font-size: 11.5px; font-weight: 600; text-align: center; white-space: nowrap; }
+.lab-hm th[scope="row"] { padding-right: 6px; color: var(--ink); font-weight: 700; text-align: left; }
+.lab-hm-name { padding: 0; color: inherit; background: none; border: 0; font: inherit; cursor: pointer; }
+.lab-hm-name:hover { text-decoration: underline; }
+.lab-hm-name[aria-pressed="true"] { color: var(--primary); text-decoration: underline; }
+.lab-hm td { min-width: 42px; padding: 5px 3px; color: var(--ink); border-radius: 6px; text-align: center; line-height: 1.15; }
+.lab-hm td small { display: block; font-size: 10px; opacity: .72; }
+.lab-hm-empty { color: var(--quiet); background: var(--shell); }
+.lab-hm-total th, .lab-hm-total td { border-top: 2px solid var(--line); }
+.lab-hm-0 { background: var(--shell); }
+.lab-hm-n1 { background: color-mix(in srgb, var(--lab-mh) 22%, var(--paper)); }
+.lab-hm-n2 { background: color-mix(in srgb, var(--lab-mh) 48%, var(--paper)); }
+.lab-hm-n3 { color: #fff; background: color-mix(in srgb, var(--lab-mh) 82%, var(--paper)); }
+.lab-hm-p1 { background: color-mix(in srgb, var(--danger) 22%, var(--paper)); }
+.lab-hm-p2 { background: color-mix(in srgb, var(--danger) 48%, var(--paper)); }
+.lab-hm-p3 { color: #fff; background: color-mix(in srgb, var(--danger) 82%, var(--paper)); }
+.lab-hm-s0 { background: color-mix(in srgb, var(--primary) 6%, var(--paper)); }
+.lab-hm-s1 { background: color-mix(in srgb, var(--primary) 18%, var(--paper)); }
+.lab-hm-s2 { background: color-mix(in srgb, var(--primary) 34%, var(--paper)); }
+.lab-hm-s3 { color: #fff; background: color-mix(in srgb, var(--primary) 58%, var(--paper)); }
+.lab-hm-s4 { color: #fff; background: color-mix(in srgb, var(--primary) 82%, var(--paper)); font-weight: 700; }
+.lab-hm-scale { margin: 6px 0 0; display: flex; align-items: center; gap: 6px; color: var(--quiet); font-size: 11px; }
+.lab-hm-ramp { flex: 0 0 110px; height: 8px; border-radius: 4px; }
+.lab-hm-ramp-d { background: linear-gradient(90deg, color-mix(in srgb, var(--lab-mh) 82%, var(--paper)), var(--shell), color-mix(in srgb, var(--danger) 82%, var(--paper))); }
+.lab-hm-ramp-s { background: linear-gradient(90deg, color-mix(in srgb, var(--primary) 6%, var(--paper)), color-mix(in srgb, var(--primary) 82%, var(--paper))); }
+
+/* 4 เจาะลึก: ตารางรายโม่ของวันล่าสุด (คลาสเดิม .lab-mill-table) */
+.lab-control-note { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+#lab-drill { margin-top: 6px; }
+.lab-drill-caption { padding: 8px 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; text-align: left; }
+.lab-mill-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lab-mill-table th, .lab-mill-table td { padding: 8px 12px; border-bottom: 1px solid var(--soft-line); text-align: left; vertical-align: middle; }
+.lab-mill-table thead th { color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.lab-mill-table tbody th { color: var(--ink); font-weight: 700; white-space: nowrap; }
+.lab-mill-table tbody th small { color: var(--quiet); font-weight: 600; }
+.lab-mill-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lab-mill-table tbody tr:last-child > * { border-bottom: 0; }
+.lab-d { color: var(--quiet); }
+.lab-d.is-far { color: var(--ink); font-weight: 700; }
 .lab-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .lab-pattern { margin-right: 2px; color: var(--muted); font-weight: 700; }
 .lab-chip { padding: 0 6px; background: var(--shell); border-radius: 5px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.lab-mill-empty { padding: 16px; }
 
 .lab-notices { margin-top: 14px; padding: 12px 16px; }
 .lab-notices summary { cursor: pointer; font-size: 13px; font-weight: 700; }
 .lab-notices[open] summary { margin-bottom: 10px; }
-.lab-attn { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
-.lab-attn-item { padding: 7px 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; background: var(--shell); border-radius: 8px; font-size: 13px; }
-.lab-attn-name { font-weight: 700; }
-.lab-attn-text { flex: 1 1 220px; min-width: 0; color: var(--muted); }
-.lab-attn-hint { flex: 1 1 100%; min-width: 0; color: var(--quiet); font-size: 12px; }
+.lab-notices .lab-attn-item { background: var(--shell); }
 
+@media (max-width: 900px) {
+  .lab-today-grid { grid-template-columns: 1fr; }
+}
 .lab-control-head { margin-bottom: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .lab-control-head .lab-ranges { margin-left: auto; }
 .lab-control-head a[hidden] { display: none; }
@@ -2020,8 +2111,6 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
   .lab-mill-row > [data-label]::before { content: attr(data-label); display: block; color: var(--quiet); font-size: 11px; font-weight: 600; }
   .lab-mill-row > [data-label="สถานะ"], .lab-mill-row > [data-label="จุดที่เกิน"] { grid-column: 1 / -1; }
   .lab-mill-row > [data-label="สถานะ"]::before, .lab-mill-row > [data-label="จุดที่เกิน"]::before { display: none; }
-  .lab-filter { flex: 1 1 140px; }
-  .lab-filter .select { width: 100%; min-height: 44px; }
 }
 
 /* สัญลักษณ์ซีรีส์: จุดสีเล็กหน้าชื่อ MH / MV (สีอยู่ที่ตัวสัญลักษณ์ ตัวหนังสือใช้สีข้อความ) */

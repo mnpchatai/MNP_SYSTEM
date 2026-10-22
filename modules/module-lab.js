@@ -155,16 +155,16 @@
   }
 
   /* ---------- แดชบอร์ด: สรุปจากฟีดหน้ารวม (คำขอและแคชเดียวกับรายการวัสดุ) ---------- */
-  // สรุปที่มี health (ตัวซิงก์รุ่นใหม่) = ตารางรายโม่หนึ่งตารางพร้อมตัวกรอง + กราฟเส้นควบคุมของสูตรที่เลือก
+  // สรุปที่มี health (ตัวซิงก์รุ่นใหม่) = แดชบอร์ด 4 ส่วน (วันล่าสุด · กราฟเล็กต่อสูตร · แผนที่ความร้อน · เจาะลึก) จาก views.dashboardBody
   // สรุปรุ่นก่อน (ยังไม่ redeploy ตัวซิงก์) = ตัวเลขชุดเดิม จึงเผยแพร่เว็บก่อนหรือหลังตัวซิงก์ก็ได้
-  // ตัวกรอง ค่า MV/MH และสูตรของกราฟ คงไว้ตอนรีเฟรช ทุกส่วนวาดใหม่เฉพาะเมื่อ HTML เปลี่ยน
-  // (#app เป็น aria-live โปรแกรมอ่านหน้าจอจะได้ไม่อ่านเนื้อหาเดิมซ้ำทุกรอบรีเฟรช)
+  // ช่วงวัน ค่า MV/MH และสูตรที่เลือก คงไว้ตอนรีเฟรช ทุกส่วนวาดใหม่เฉพาะเมื่อ HTML เปลี่ยน
+  // (#app เป็น aria-live โปรแกรมอ่านหน้าจอจะได้ไม่อ่านเนื้อหาเดิมซ้ำทุกรอบรีเฟรช) การเลือกสูตรสลับ aria-pressed บนปุ่มเดิม โฟกัสคีย์บอร์ดไม่หลุด
 
   function bindDashboard() {
     const bar = bindLiveBar();
     const mooney = document.querySelector("#lab-dash-mooney");
-    // picked = ผู้ใช้กดแถวเลือกสูตรเอง (คงไว้) · ไม่ได้เลือก = สูตรของแถวแรกในตาราง (รุนแรงสุด) เปลี่ยนตามข้อมูลใหม่
-    const view = { mode: "", key: "mv", material: null, firstMaterial: null, picked: false, materials: [], today: "", plotWidth: 0 };
+    // picked = ผู้ใช้กดเลือกสูตรเอง (คงไว้) · ไม่ได้เลือก = สูตรแรกของรายการแนวโน้ม (ต้องดูก่อนสุด) เปลี่ยนตามข้อมูลใหม่
+    const view = { mode: "", key: "mv", days: model.DASH_DEFAULT_DAYS, material: null, picked: false, materials: [], trend: [], today: "", plotWidth: 0, trendWidth: 0 };
     const painted = new Map();
     const paintInto = (selector, html) => {
       if (painted.get(selector) === html) return;
@@ -174,85 +174,93 @@
       node.innerHTML = html;
     };
     const field = (id) => mooney.querySelector(id);
-    const filters = () => ({
-      query: field("#lab-mill-query").value,
-      status: field("#lab-mill-status").value || "attention",
-      days: Number(field("#lab-mill-days").value) || model.MILL_DAYS,
-      threshold: Number(field("#lab-mill-threshold").value) || model.MILL_MIN_DIFF,
-    });
+
+    // ความกว้างของกราฟเล็กหนึ่งใบ จากความกว้างของกริด (ต้องตรงกับ .lab-trends / .lab-trend ใน styles.css: ช่องอย่างน้อย 215px ช่องว่าง 10px ขอบ+padding 22px)
+    const TREND_MIN = 215;
+    const TREND_GAP = 10;
+    const TREND_PAD = 22;
+    function trendWidth() {
+      const total = Math.floor(field("#lab-trends")?.clientWidth || 0);
+      if (!total) return 240;
+      const columns = Math.max(1, Math.floor((total + TREND_GAP) / (TREND_MIN + TREND_GAP)));
+      return Math.max(160, Math.floor((total - TREND_GAP * (columns - 1)) / columns) - TREND_PAD);
+    }
+
+    // สูตรที่เลือกบนปุ่มเดิมทุกส่วน (การ์ด กราฟเล็ก ชื่อในแผนที่ความร้อน รายการต้องดูก่อน) ไม่วาดใหม่
+    function paintSelection() {
+      mooney.querySelectorAll("[data-material]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.material === view.material)));
+    }
 
     function paintControl() {
-      const names = view.materials.map((item) => item.material);
-      if (!view.picked || !names.includes(view.material)) view.material = view.firstMaterial ?? null;
+      const item = view.materials.find((entry) => entry.material === view.material) ?? null;
       mooney.querySelectorAll("[data-measure]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.measure === view.key)));
-      // สลับแถวที่เลือกบนแถวเดิม (ไม่วาดตารางใหม่ โฟกัสคีย์บอร์ดไม่หลุด)
-      mooney.querySelectorAll(".lab-mill-row").forEach((row) => row.setAttribute("aria-selected", String(row.dataset.material === view.material)));
       field("#lab-control-name").textContent = view.material ?? "";
+      field("#lab-control-note").textContent = item ? views.controlNote(item.health?.[view.key], view.key) : "";
       const link = field("#lab-control-link");
       link.hidden = !view.material;
       if (view.material) link.href = model.materialUrl(view.material);
       const plot = field("#lab-control-plot");
       view.plotWidth = Math.floor(plot.clientWidth);
-      const item = view.materials.find((entry) => entry.material === view.material);
       paintInto("#lab-control-plot", view.material
         ? views.controlPlot({ control: item?.health?.[view.key], key: view.key, width: view.plotWidth, material: view.material })
-        : `<p class="lab-dash-empty">กดแถวในตารางเพื่อดูเส้นควบคุมของสูตรนั้น</p>`);
+        : `<p class="lab-dash-empty">กดสูตรในส่วนบนเพื่อดูเส้นควบคุมและตารางรายโม่</p>`);
+      paintInto("#lab-drill", views.drillTable(item ? model.drillRows(item, view.today, view.days) : [], item));
     }
 
-    function paintTable() {
-      const current = filters();
-      const rows = model.millTableRows(view.materials, view.today, current);
-      view.firstMaterial = rows[0]?.material ?? model.controlMaterials(view.materials)[0]?.material ?? null;
-      paintInto("#lab-mill-rows", views.millRows(rows, null, current.threshold));
-      const empty = field("#lab-mill-empty");
-      empty.hidden = rows.length > 0;
-      empty.textContent = current.status === "attention"
-        ? `ไม่มีโม่ที่ต้องดูใน ${current.days} วันล่าสุด`
-        : "ไม่มีโม่ที่ตรงกับตัวกรอง";
-      paintControl();
+    function paintTrends() {
+      view.trendWidth = trendWidth();
+      paintInto("#lab-trends", views.trendGrid(view.trend, { since: model.windowSince(view.today, view.days), today: view.today, width: view.trendWidth }));
     }
 
-    function paintHealth() {
+    function paintAll() {
+      view.trend = model.trendItems(view.materials, view.today, view.days);
+      const names = view.trend.map((item) => item.material);
+      if (!view.picked || !names.includes(view.material)) view.material = view.trend[0]?.material ?? null;
       paintInto("#lab-machine", views.machineBanner(model.machineItems(view.materials, view.today)));
+      paintInto("#lab-today", views.todayStrip({ cards: model.latestCards(view.trend), attention: model.dashAttention(view.trend, view.materials, view.today), days: view.days }));
+      paintTrends();
+      paintInto("#lab-bias", views.biasTable(model.millBias(view.materials, view.today, view.days)));
+      paintInto("#lab-uniform", views.uniformTable(model.strandUniformity(view.materials, view.today, view.days)));
       paintInto("#lab-notices", views.noticeBox(model.dataNotices(view.materials, view.today), Boolean(mooney.querySelector(".lab-notices[open]"))));
-      paintTable();
+      paintSelection();
+      paintControl();
     }
 
-    const choose = (row) => {
-      view.material = row.dataset.material;
-      view.picked = true;
-      paintControl();
-    };
     mooney.addEventListener("click", (event) => {
+      const range = event.target.closest("[data-days]");
+      if (range) {
+        view.days = Number(range.dataset.days);
+        mooney.querySelectorAll("[data-days]").forEach((button) => button.setAttribute("aria-pressed", String(Number(button.dataset.days) === view.days)));
+        return paintAll();
+      }
       const measure = event.target.closest("[data-measure]");
       if (measure) {
         view.key = measure.dataset.measure === "mh" ? "mh" : "mv";
         return paintControl();
       }
-      const row = event.target.closest(".lab-mill-row");
-      if (row) choose(row);
-    });
-    mooney.addEventListener("keydown", (event) => {
-      const row = event.target.closest?.(".lab-mill-row");
-      if (!row || (event.key !== "Enter" && event.key !== " ")) return;
-      event.preventDefault();
-      choose(row);
-    });
-    mooney.addEventListener("input", (event) => {
-      if (event.target.id === "lab-mill-query") paintTable();
-    });
-    mooney.addEventListener("change", (event) => {
-      if (["lab-mill-status", "lab-mill-days", "lab-mill-threshold"].includes(event.target.id)) paintTable();
+      const pick = event.target.closest("[data-material]");
+      if (pick) {
+        view.material = pick.dataset.material;
+        view.picked = true;
+        paintSelection();
+        paintControl();
+      }
     });
 
     // กราฟกว้างตามกล่อง: วาดใหม่เมื่อความกว้างเปลี่ยน (หมุนจอ ย่อ/ขยายหน้าต่าง เปิด/ปิดเมนูข้าง)
     let frame = 0;
     const observer = typeof ResizeObserver === "function"
       ? new ResizeObserver(() => {
+        if (view.mode !== "health") return;
         const plot = mooney.querySelector("#lab-control-plot");
-        if (view.mode !== "health" || !plot || Math.abs(Math.floor(plot.clientWidth) - view.plotWidth) < 2) return;
+        const plotChanged = plot && Math.abs(Math.floor(plot.clientWidth) - view.plotWidth) >= 2;
+        if (!plotChanged && Math.abs(trendWidth() - view.trendWidth) < 2) return;
         window.cancelAnimationFrame(frame);
-        frame = window.requestAnimationFrame(paintControl);
+        frame = window.requestAnimationFrame(() => {
+          paintTrends();
+          paintSelection();
+          paintControl();
+        });
       })
       : null;
     observer?.observe(mooney);
@@ -270,7 +278,7 @@
         if (mode !== view.mode) {
           view.mode = mode;
           painted.clear();
-          mooney.innerHTML = mode === "health" ? views.dashboardBody() : "";
+          mooney.innerHTML = mode === "health" ? views.dashboardBody(view.days) : "";
         }
         if (mode === "legacy") {
           const html = views.dashboardMooney(model.overviewStats(feed.materials));
@@ -282,11 +290,10 @@
         }
         view.materials = feed.materials;
         view.today = model.todayInBangkok();
-        paintHealth();
+        paintAll();
       },
     };
   }
-
   /* ---------- หน้ารวม: รายการวัสดุ ---------- */
 
   // คืน { update(feed), showStatus, setBusy } — update วาดเฉพาะส่วนที่เปลี่ยน คงข้อความค้นหาและตัวเลือกเรียงของผู้ใช้ไว้

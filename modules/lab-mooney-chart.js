@@ -446,8 +446,65 @@
       + `</svg>`;
   }
 
+  // กราฟเล็กต่อสูตรของแดชบอร์ด: ค่าเฉลี่ย MV รายวัน (model.dailyRows) บนแกนวันที่ของช่วงที่เลือก (since → today)
+  // ขีดตั้ง = ช่วงระหว่างค่าเฉลี่ยของโม่ในวันนั้น (low–high) · แถบ = CL ± band ของสูตร (เฉพาะสูตรที่มีเส้นควบคุม) · เส้นกลางเป็นเส้นบาง
+  // จุดใช้สีสถานะและรูปทรง (ok/none วงกลม · warn ข้าวหลามตัด · out สี่เหลี่ยม) จึงแยกได้แม้ไม่เห็นสี ค่าของจุดอยู่ใน <title>
+  function dailyChart({ daily = [], limits = null, since, today, width = 240, label = "" }) {
+    const points = daily.filter((row) => isNumber(row.mv) && typeof row.date === "string");
+    const span = since && today ? model.daysBetween(since, today) : null;
+    if (!points.length || !isNumber(span) || span < 0) return "";
+    const total = Math.max(160, Math.floor(Number(width) || 0));
+    const box = { left: 30, right: 8, top: 10, height: 60, bottom: 18 };
+    const plotWidth = total - box.left - box.right;
+    const band = limits ? (isNumber(limits.band) ? limits.band : model.PRACTICAL_BAND_MU) : null;
+    let low = Math.min(...points.map((row) => (isNumber(row.low) ? row.low : row.mv)));
+    let high = Math.max(...points.map((row) => (isNumber(row.high) ? row.high : row.mv)));
+    if (limits) {
+      low = Math.min(low, limits.mean - band);
+      high = Math.max(high, limits.mean + band);
+    }
+    const pad = (high - low) * 0.15 || 1;
+    low -= pad;
+    high += pad;
+    const x = (date) => box.left + (span ? clamp(model.daysBetween(since, date), 0, span) / span : 0.5) * plotWidth;
+    const y = (value) => box.top + (1 - (value - low) / (high - low)) * box.height;
+    const axisY = box.top + box.height;
+    const last = points[points.length - 1];
+    const tick1 = (value) => tick(Number(value.toFixed(1)));
+    let body = "";
+    if (limits) {
+      // ป้าย CL อยู่ฝั่งตรงข้ามกับจุดล่าสุด (จุดอยู่เหนือเส้น = ป้ายใต้เส้น) จะได้ไม่ทับกัน
+      body += `<rect class="lab-dc-band" x="${box.left}" y="${n2(y(limits.mean + band))}" width="${n2(plotWidth)}" height="${n2(y(limits.mean - band) - y(limits.mean + band))}" rx="2"/>`
+        + `<line class="lab-dc-center" x1="${box.left}" x2="${n2(box.left + plotWidth)}" y1="${n2(y(limits.mean))}" y2="${n2(y(limits.mean))}"/>`
+        + `<text class="lab-cc-label" x="${n2(box.left + plotWidth)}" y="${n2(y(limits.mean) + (last.mv >= limits.mean ? 11 : -3))}" text-anchor="end">CL ${esc(tick(limits.mean))}</text>`;
+    }
+    body += `<text class="lab-tick" x="${box.left - 5}" y="${n2(y(high - pad) + 4)}" text-anchor="end">${esc(tick1(high - pad))}</text>`
+      + `<text class="lab-tick" x="${box.left - 5}" y="${n2(y(low + pad) + 4)}" text-anchor="end">${esc(tick1(low + pad))}</text>`
+      + `<line class="lab-grid" x1="${box.left}" x2="${n2(box.left + plotWidth)}" y1="${n2(axisY)}" y2="${n2(axisY)}"/>`
+      + `<text class="lab-tick" x="${box.left}" y="${n2(axisY + 13)}">${esc(model.formatShortDate(since))}</text>`
+      + `<text class="lab-tick" x="${n2(box.left + plotWidth)}" y="${n2(axisY + 13)}" text-anchor="end">${esc(model.formatShortDate(today))}</text>`;
+    if (points.length > 1) body += `<polyline class="lab-dc-line" points="${points.map((row) => `${n2(x(row.date))},${n2(y(row.mv))}`).join(" ")}"/>`;
+    for (const row of points) {
+      const status = ["ok", "warn", "out"].includes(row.status) ? row.status : "none";
+      const cx = n2(x(row.date));
+      const cy = n2(y(row.mv));
+      if (isNumber(row.low) && isNumber(row.high)) body += `<line class="lab-dc-spread is-${status}" x1="${cx}" x2="${cx}" y1="${n2(y(row.high))}" y2="${n2(y(row.low))}"/>`;
+      const radius = 4.5;
+      const mark = status === "out"
+        ? `<rect x="${n2(x(row.date) - radius)}" y="${n2(y(row.mv) - radius)}" width="${n2(radius * 2)}" height="${n2(radius * 2)}"/>`
+        : status === "warn"
+          ? `<rect x="${n2(x(row.date) - radius)}" y="${n2(y(row.mv) - radius)}" width="${n2(radius * 2)}" height="${n2(radius * 2)}" transform="rotate(45 ${cx} ${cy})"/>`
+          : `<circle cx="${cx}" cy="${cy}" r="${radius}"/>`;
+      const title = `${model.formatDate(row.date)}: MV ${tick(row.mv)}${isNumber(row.dev) ? ` (${model.formatSigned(row.dev)} จาก CL)` : ""} · ${row.mills} โม่ ${row.count} ชิ้น${isNumber(row.spread) ? ` · โม่ต่างกัน ${tick(row.spread)}` : ""}${isNumber(row.mh) ? ` · MH ${tick(row.mh)}` : ""}`;
+      body += `<g class="lab-dc-pt is-${status}" data-date="${esc(row.date)}">${mark}<title>${esc(title)}</title></g>`;
+    }
+    const height = box.top + box.height + box.bottom;
+    const summary = `${label ? `${label} ` : ""}MV รายวัน ${points.length} วัน ล่าสุด ${model.formatDate(last.date)} ${tick(last.mv)}${limits ? ` เส้นกลาง ${tick(limits.mean)}` : ""}`;
+    return `<svg class="lab-dc" width="${total}" height="${height}" viewBox="0 0 ${total} ${height}" role="img" aria-label="${esc(summary)}">${body}</svg>`;
+  }
+
   const api = {
-    SERIES, BAND_SIZE, MIN_VISIBLE, layoutFor, defaultCount, averageMarks, trendChart, sparkline, controlChart,
+    SERIES, BAND_SIZE, MIN_VISIBLE, layoutFor, defaultCount, averageMarks, trendChart, sparkline, controlChart, dailyChart,
     normalizeRange, sameRange, rangeFor, rangeForMonths, zoomRange, panRange, revealRange,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

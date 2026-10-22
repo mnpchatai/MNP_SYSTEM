@@ -532,8 +532,11 @@
   // ตารางรายโม่: วันละโม่ละหนึ่งแถว เทียบค่าเฉลี่ยของโม่กับมัธยฐานของสูตรเดียวกันในวันนั้น (ใช้มัธยฐานเพราะไม่ถูกดึงโดยโม่ที่ผิดปกติโม่เดียว)
   // วันที่มีโม่เดียวเทียบระหว่างโม่ไม่ได้ (dMv/dMh = null) · points = จุดที่ห่างมัธยฐานของวัน ≥ MILL_MIN_DIFF ใน MV หรือ MH ([ID, ΔMV, ΔMH])
   // ให้หน้าเว็บกรองตามเกณฑ์ที่ผู้ใช้เลือก (≥ MILL_MIN_DIFF) โดยไม่ต้องรับทุกแถว · suspect = มีค่าอ่านเป็น 0 (น่าจะลืมกรอก)
-  const MILL_DAYS = 14;
+  // strands / sdMean / sdMax / sdHigh = ความสม่ำเสมอในเส้น: SD ของหัว-กลาง-ท้ายในเส้นเดียวกัน (เส้นที่มีอ่านครบ ≥ 2 ชิ้น) ของโม่นั้นในวันนั้น
+  // MILL_DAYS = ช่วงที่ตัวซิงก์เก็บแถวรายโม่ (แดชบอร์ดเลือกดู 14/30/45 วันจากชุดนี้ จึงไม่ต้องมี RPC ใหม่)
+  const MILL_DAYS = 45;
   const MILL_MIN_DIFF = 2;
+  const STRAND_SD_HIGH = 1;
   // ปัด 2 ตำแหน่ง และไม่ให้ได้ −0 (ผลต่างที่ปัดแล้วเป็นศูนย์ต้องแสดงเป็น 0)
   const round2 = (value) => (isNumber(value) ? Number(value.toFixed(2)) + 0 : null);
   function millRows(items, since) {
@@ -556,10 +559,17 @@
         const points = compared ? entries
           .map((entry) => [entry.item.sampleId, round2(entry.item.mv - medMv), round2(entry.item.mh - medMh)])
           .filter(([, dMv, dMh]) => Math.abs(dMv) >= MILL_MIN_DIFF || Math.abs(dMh) >= MILL_MIN_DIFF) : [];
+        const byStrand = new Map();
+        for (const entry of entries) byStrand.set(entry.id.strand, [...(byStrand.get(entry.id.strand) ?? []), entry.item.mv]);
+        const strandSds = [...byStrand.values()].map((values) => describe(values).sd).filter(isNumber);
         rows.push({
           date, mill, count: entries.length, mv: round2(avgMv), mh: round2(avgMh),
           dMv: compared ? round2(avgMv - medMv) : null, dMh: compared ? round2(avgMh - medMh) : null, points,
           suspect: entries.some((entry) => entry.item.mv === 0 || entry.item.mh === 0),
+          strands: strandSds.length,
+          sdMean: strandSds.length ? round2(describe(strandSds).mean) : null,
+          sdMax: strandSds.length ? round2(Math.max(...strandSds)) : null,
+          sdHigh: strandSds.filter((sd) => sd > STRAND_SD_HIGH).length,
         });
       }
     }
@@ -772,6 +782,200 @@
       (rank[a.health.mv.level] ?? 2) - (rank[b.health.mv.level] ?? 2) || (b.health.mv.count ?? 0) - (a.health.mv.count ?? 0) || byName(a, b));
   }
 
+  /* ---------- แดชบอร์ด 4 ส่วน: คำนวณในเบราว์เซอร์จากสรุปรายวัสดุ (health.mills + เส้นควบคุม) และ "วันนี้" ---------- */
+  // ช่วงวันที่เลือกดู (นับย้อนจากวันนี้) ทุกช่วงอ่านจากแถวรายโม่ชุดเดียวที่ตัวซิงก์เก็บ MILL_DAYS วัน
+  const DASH_RANGES = Object.freeze([14, 30, MILL_DAYS]);
+  const DASH_DEFAULT_DAYS = 30;
+  // เหลือง = ค่าเฉลี่ย MV ของโม่ในวันเดียวกันห่างกันเกินเท่านี้ (MU) · MH ของวันล่าสุดห่างปกติของสูตรเกิน 3σ และเกิน MH_JUMP_MU จากประวัติ ≥ MH_MIN_MILLS โม่
+  const MILL_DIFF_MU = 3;
+  const MH_JUMP_MU = 10;
+  const MH_MIN_MILLS = 6;
+  const DAY_STATUS = Object.freeze({ out: 0, warn: 1, ok: 2, none: 3 });
+  const LEVEL_RANK = Object.freeze({ ready: 0, provisional: 1 });
+
+  const hasLimits = (control) => Boolean(control) && ["ready", "provisional"].includes(control.level) && control.sigma > 0;
+  // วันแรกของช่วง days วันที่จบวันนี้ (days ไม่ถูกต้อง = ค่าเริ่มต้น)
+  function windowSince(today, days) {
+    const span = DASH_RANGES.includes(Number(days)) ? Number(days) : DASH_DEFAULT_DAYS;
+    return shiftDate(today, -(span - 1));
+  }
+  const inWindow = (date, since, today) => typeof date === "string" && date >= since && date <= today;
+  const weighted = (rows, key) => {
+    const usable = rows.filter((row) => isNumber(row[key]) && row.count > 0);
+    const total = usable.reduce((sum, row) => sum + row.count, 0);
+    return total ? usable.reduce((sum, row) => sum + row[key] * row.count, 0) / total : null;
+  };
+
+  // ค่าเฉลี่ยรายวันของสูตรหนึ่ง (เก่า → ใหม่) ในช่วงที่เลือก จากแถวรายโม่: mv/mh ถ่วงด้วยจำนวนชิ้น · mills = จำนวนโม่ · spread = ค่าเฉลี่ยโม่สูงสุด − ต่ำสุด (โม่เดียว = null)
+  // low/high = ค่าเฉลี่ยโม่ต่ำสุด/สูงสุดของวัน (โม่เดียว = null) · dev = ห่างเส้นกลางของสูตร (ไม่มีเส้น = null)
+  // status: out = เกิน ±PRACTICAL_BAND_MU · warn = เกิน 3σ หรือโม่ต่างกันเกิน MILL_DIFF_MU · ok · none = ยังไม่มีเส้นควบคุม
+  function dailyRows(item, today, days) {
+    const since = windowSince(today, days);
+    const control = item?.health?.mv;
+    const limits = hasLimits(control) ? control : null;
+    const byDay = new Map();
+    for (const mill of item?.health?.mills ?? []) {
+      if (!inWindow(mill.date, since, today) || !isNumber(mill.mv)) continue;
+      byDay.set(mill.date, [...(byDay.get(mill.date) ?? []), mill]);
+    }
+    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, mills]) => {
+      const mv = weighted(mills, "mv");
+      const values = mills.map((mill) => mill.mv);
+      const spread = mills.length >= 2 ? round2(Math.max(...values) - Math.min(...values)) : null;
+      const dev = limits && isNumber(mv) ? round2(mv - limits.mean) : null;
+      const differ = isNumber(spread) && spread > MILL_DIFF_MU;
+      let status = differ ? "warn" : "none";
+      if (limits && isNumber(mv)) {
+        if (Math.abs(mv - limits.mean) > PRACTICAL_BAND_MU) status = "out";
+        else if (differ || Math.abs(mv - limits.mean) > 3 * limits.sigma) status = "warn";
+        else status = "ok";
+      }
+      return {
+        date, mv: round2(mv), mh: round2(weighted(mills, "mh")), count: mills.reduce((sum, mill) => sum + (mill.count || 0), 0), mills: mills.length,
+        spread, low: mills.length >= 2 ? round2(Math.min(...values)) : null, high: mills.length >= 2 ? round2(Math.max(...values)) : null, dev, status,
+      };
+    });
+  }
+
+  // MH ของวันล่าสุดห่างจากปกติของสูตร (I-MR ของ MH รายโม่ทั้งช่วงที่เก็บ ≥ MH_MIN_MILLS โม่) เกิน 3σ และเกิน MH_JUMP_MU = เตือน (ไม่มีระดับแดง)
+  // คืน { value, mean, high, date } หรือ null — เป็นหมายเหตุประกอบ MV ไม่ใช่เส้นควบคุมของ MH (ซึ่งอยู่ที่กราฟเจาะลึก)
+  function mhNote(item) {
+    const mills = (item?.health?.mills ?? []).filter((mill) => isNumber(mill.mh) && mill.count > 0);
+    if (mills.length < MH_MIN_MILLS) return null;
+    const limits = controlLimits(mills.map((mill) => mill.mh));
+    if (!limits) return null;
+    const date = mills[mills.length - 1].date;
+    const latest = weighted(mills.filter((mill) => mill.date === date), "mh");
+    if (!isNumber(latest)) return null;
+    const jump = latest - limits.mean;
+    if (Math.abs(jump) <= 3 * limits.sigma || Math.abs(jump) <= MH_JUMP_MU) return null;
+    return { value: round2(latest), mean: round2(limits.mean), high: jump > 0, date };
+  }
+
+  // สูตรที่มีผลในช่วงที่เลือก พร้อมค่าเฉลี่ยรายวัน เรียงจากที่ต้องดูก่อน: สถานะวันล่าสุด (MH กระโดด = เตือน) → สูตรที่มีเส้นควบคุมก่อน → จำนวนวันทดสอบมาก → ชื่อ
+  // สูตรที่ไม่มี health (ตัวซิงก์รุ่นก่อน) สภาวะทดสอบต่างกัน หรือเป็นการทดสอบอื่นทั้งหมด ไม่มีแถวรายโม่ จึงไม่อยู่ในรายการ
+  function trendItems(materials, today, days) {
+    const items = [];
+    for (const item of Array.isArray(materials) ? materials : []) {
+      if (!item?.health) continue;
+      const daily = dailyRows(item, today, days);
+      if (!daily.length) continue;
+      const latest = daily[daily.length - 1];
+      const mh = mhNote(item);
+      const control = item.health.mv;
+      items.push({
+        material: item.material, daily, latest, mhJump: mh,
+        severity: Math.min(DAY_STATUS[latest.status], mh ? DAY_STATUS.warn : DAY_STATUS.none),
+        level: control?.level ?? "insufficient", count: control?.count ?? 0, limits: hasLimits(control) ? control : null,
+      });
+    }
+    return items.sort((a, b) => a.severity - b.severity
+      || (LEVEL_RANK[a.level] ?? 2) - (LEVEL_RANK[b.level] ?? 2)
+      || b.daily.length - a.daily.length || byName(a, b));
+  }
+
+  // การ์ดของวันทดสอบล่าสุด: สูตรที่มีผลในวันล่าสุดของช่วง (เรียงตาม trendItems) · ไม่มี = []
+  function latestCards(trend) {
+    const date = trend.reduce((max, item) => (item.latest.date > max ? item.latest.date : max), "");
+    return trend.filter((item) => item.latest.date === date);
+  }
+
+  // รายการ "ต้องดูก่อน" ของแดชบอร์ด: สถานะวันล่าสุดของแต่ละสูตร (out/warn) · MH กระโดด · ตรวจเครื่อง · ไม่ได้ทดสอบนาน เรียงจากรุนแรงสุดแล้วตามลำดับของ trend
+  //   { material, severity, kind: "dayOut" | "daySpread" | "dayRule" | "mhJump" | "machine" | "overdue", ... }
+  function dashAttention(trend, materials, today) {
+    const items = [];
+    trend.forEach((item, order) => {
+      const { latest } = item;
+      const day = { material: item.material, value: latest.mv, dev: latest.dev, spread: latest.spread, mills: latest.mills, date: latest.date, order };
+      if (latest.status === "out") items.push({ ...day, severity: "out", kind: "dayOut" });
+      else if (latest.status === "warn" && isNumber(latest.spread) && latest.spread > MILL_DIFF_MU) items.push({ ...day, severity: "warn", kind: "daySpread" });
+      else if (latest.status === "warn") items.push({ ...day, severity: "warn", kind: "dayRule" });
+      if (item.mhJump) items.push({ material: item.material, severity: "warn", kind: "mhJump", ...item.mhJump, order });
+    });
+    const machine = machineItems(materials, today).map((item, index) => ({ ...item, order: trend.length + index }));
+    const overdue = attentionItems(materials, today).filter((item) => item.kind === "overdue").map((item, index) => ({ ...item, order: trend.length + machine.length + index }));
+    return [...items, ...machine, ...overdue].sort((a, b) => SEVERITY[a.severity] - SEVERITY[b.severity] || a.order - b.order);
+  }
+
+  // แผนที่ความร้อน "โม่ไหนลากค่าออก": ΔMV เฉลี่ยของโม่เทียบมัธยฐานของสูตรในวันเดียวกัน สะสมทุกวันในช่วง (เฉพาะวันที่มี ≥ 2 โม่)
+  //   { mills: ["1", …], rows: [{ material, days, cells: { "1": { delta, days, detail: [{ date, delta }] } } }], total: { "1": { delta, days } } }
+  // rows เรียงตามจำนวนวันที่เทียบได้มากก่อน · total = ทุกสูตรรวมกัน (โม่ที่เอียงทางเดียวในหลายสูตร = เครื่อง/การตั้งโม่ ไม่ใช่สูตร)
+  function millBias(materials, today, days) {
+    const since = windowSince(today, days);
+    const rows = [];
+    const total = new Map();
+    const seen = new Set();
+    for (const item of Array.isArray(materials) ? materials : []) {
+      const cells = new Map();
+      for (const mill of item?.health?.mills ?? []) {
+        if (!inWindow(mill.date, since, today) || !isNumber(mill.dMv)) continue;
+        const cell = cells.get(mill.mill) ?? { sum: 0, days: 0, detail: [] };
+        cell.sum += mill.dMv;
+        cell.days += 1;
+        cell.detail.push({ date: mill.date, delta: mill.dMv });
+        cells.set(mill.mill, cell);
+        const all = total.get(mill.mill) ?? { sum: 0, days: 0 };
+        all.sum += mill.dMv;
+        all.days += 1;
+        total.set(mill.mill, all);
+        seen.add(mill.mill);
+      }
+      if (!cells.size) continue;
+      rows.push({
+        material: item.material,
+        days: [...cells.values()].reduce((sum, cell) => sum + cell.days, 0),
+        cells: Object.fromEntries([...cells].map(([mill, cell]) => [mill, { delta: round2(cell.sum / cell.days), days: cell.days, detail: cell.detail }])),
+      });
+    }
+    rows.sort((a, b) => b.days - a.days || byName(a, b));
+    return {
+      mills: [...seen].sort(),
+      rows,
+      total: Object.fromEntries([...total].map(([mill, cell]) => [mill, { delta: round2(cell.sum / cell.days), days: cell.days }])),
+    };
+  }
+
+  // แผนที่ความร้อน "ความสม่ำเสมอในเส้น": SD หัว-กลาง-ท้ายเฉลี่ยของเส้นจากโม่นั้น (ถ่วงด้วยจำนวนเส้น) · high = จำนวนเส้นที่ SD > STRAND_SD_HIGH · max = SD สูงสุด
+  //   { mills, rows: [{ material, strands, cells: { "1": { sd, strands, high, max } } }] } — แถวรายโม่จากตัวซิงก์รุ่นก่อน (ไม่มี sdMean) ถูกข้าม
+  function strandUniformity(materials, today, days) {
+    const since = windowSince(today, days);
+    const rows = [];
+    const seen = new Set();
+    for (const item of Array.isArray(materials) ? materials : []) {
+      const cells = new Map();
+      for (const mill of item?.health?.mills ?? []) {
+        if (!inWindow(mill.date, since, today) || !isNumber(mill.sdMean) || !(mill.strands > 0)) continue;
+        const cell = cells.get(mill.mill) ?? { sum: 0, strands: 0, high: 0, max: 0 };
+        cell.sum += mill.sdMean * mill.strands;
+        cell.strands += mill.strands;
+        cell.high += mill.sdHigh || 0;
+        cell.max = Math.max(cell.max, isNumber(mill.sdMax) ? mill.sdMax : 0);
+        cells.set(mill.mill, cell);
+        seen.add(mill.mill);
+      }
+      if (!cells.size) continue;
+      rows.push({
+        material: item.material,
+        strands: [...cells.values()].reduce((sum, cell) => sum + cell.strands, 0),
+        cells: Object.fromEntries([...cells].map(([mill, cell]) => [mill, { sd: round2(cell.sum / cell.strands), strands: cell.strands, high: cell.high, max: round2(cell.max) }])),
+      });
+    }
+    rows.sort((a, b) => b.strands - a.strands || byName(a, b));
+    return { mills: [...seen].sort(), rows };
+  }
+
+  // ตารางรายโม่ของส่วนเจาะลึก: ทุกโม่ของสูตรที่เลือกในวันทดสอบล่าสุดของช่วง (กติกาเดียวกับ millTableRows เกณฑ์ ±MILL_DIFF_MU)
+  // โม่ที่ปกติแต่มีเส้นที่ SD หัว-กลาง-ท้ายสูงกว่า STRAND_SD_HIGH ได้สถานะ "sdHigh" (ผสมไม่สม่ำเสมอ) · เรียงตามโม่
+  function drillRows(item, today, days) {
+    if (!item?.health) return [];
+    const rows = millTableRows([item], today, { status: "all", days: DASH_RANGES.includes(Number(days)) ? Number(days) : DASH_DEFAULT_DAYS, threshold: MILL_DIFF_MU })
+      .filter((row) => row.material === item.material);
+    const latest = rows.reduce((max, row) => (row.date > max ? row.date : max), "");
+    return rows.filter((row) => row.date === latest)
+      .map((row) => ({ ...row, status: row.status === "ok" && row.sdHigh > 0 ? "sdHigh" : row.status }))
+      .sort((a, b) => a.mill.localeCompare(b.mill));
+  }
+
   // ลายนิ้วมือของข้อมูลที่แสดง ใช้ข้ามการวาดใหม่เมื่อรีเฟรชแล้วชีตไม่เปลี่ยน (FNV-1a 32 บิต พอสำหรับเทียบรอบต่อรอบ)
   function feedSignature(rows) {
     let hash = 0x811c9dc5;
@@ -830,8 +1034,10 @@
     buildSeries, describe, niceScale, dateMarks, monthOf, monthsOf, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate, formatMonth,
     AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, MILL_DAYS, MILL_MIN_DIFF, MILL_THRESHOLDS, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES, SIGNAL_WINDOW, PRACTICAL_BAND_MU, VISCOSITY_MINUTES, MACHINE_MIN_MATERIALS, MACHINE_DAYS,
+    STRAND_SD_HIGH, DASH_RANGES, DASH_DEFAULT_DAYS, MILL_DIFF_MU, MH_JUMP_MU, MH_MIN_MILLS,
     sheetAverageFits, controlLimits, ruleSignals, latestSignal, zoneOf, zoneFor, isViscosityTest, machineItems, parseSampleId, millRows, millPattern, millTableRows, dataNotices, materialHealth, daysBetween, todayInBangkok, shiftDate,
     nameIssues, attentionItems, hasHealth, controlMaterials,
+    windowSince, dailyRows, mhNote, trendItems, latestCards, dashAttention, millBias, strandUniformity, drillRows,
   };
   // Shared by the browser and the sync worker; one implementation of grouping/statistics.
   root.MNP_LAB_MOONEY = api;
