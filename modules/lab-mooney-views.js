@@ -67,10 +67,10 @@
       </div>`;
   }
 
-  /* ---------- แดชบอร์ดแบบติดตามกระบวนการ (สรุปมี health) ---------- */
-  // โครง: [ต้องดูก่อน | ปริมาณทดสอบ 30 วัน] แล้ว [เส้นควบคุม: ตารางสีทุกวัสดุ + กราฟของวัสดุที่เลือก]
-  // แต่ละส่วนมี id ของตัวเอง module-lab.js วาดใหม่เฉพาะส่วนที่เปลี่ยน (ไม่เสียตัวเลือกวัสดุ/ค่า และไม่ให้โปรแกรมอ่านหน้าจออ่านซ้ำ)
-  // ไม่มีการ์ดตัวเลขสรุปที่ซ้ำกับรายการและกราฟ: จำนวนที่ต้องดูคือรายการ, ปริมาณวันนี้คือแท่งสุดท้ายของกราฟ
+  /* ---------- แดชบอร์ด: ตารางรายโม่หนึ่งตารางพร้อมตัวกรอง (สรุปมี health) ---------- */
+  // โครง: แถบตรวจเครื่อง (เฉพาะเมื่อเข้าเงื่อนไข) · แถบตัวกรอง · ตารางรายโม่ (สูตร × วัน × โม่) · กล่องพับเรื่องข้อมูล · กราฟเส้นควบคุมของสูตรที่เลือก
+  // กดแถวในตาราง = เลือกสูตรให้กราฟด้านล่าง ตัวเลขแต่ละอย่างอยู่ที่เดียว (ผลต่างอยู่ในตาราง ความหมายของเกณฑ์อยู่ที่ title)
+  // แต่ละส่วนมี id ของตัวเอง module-lab.js วาดใหม่เฉพาะส่วนที่เปลี่ยน (ไม่เสียตัวกรอง และไม่ให้โปรแกรมอ่านหน้าจออ่านซ้ำ)
 
   const CONTROL_NOTE = "เส้นกลาง (CL) = ค่าเฉลี่ยของค่าเฉลี่ยรายชุดทั้งหมดของวัสดุนั้น · UCL/LCL = CL ± 3σ โดย σ คำนวณจากช่วงเคลื่อนที่ของค่าเฉลี่ยรายชุด (แผนภูมิ I-MR) = เตือนล่วงหน้า (เหลือง) "
     + `· ±${model.PRACTICAL_BAND_MU} MU จากค่ากลาง (เฉพาะ MV) = แดง ตามแนวปฏิบัติทั่วไปในอุตสาหกรรม ไม่ใช่มาตรฐานบังคับ ใช้แทนสเปกจนกว่าจะมีค่าสเปก `
@@ -81,32 +81,107 @@
     mh: "MH = ค่าสูงสุดช่วงต้นกราฟ Mooney (ไม่ใช่ MH ของ cure curve จาก MDR)",
   });
 
+  const STATUS_OPTIONS = Object.freeze([
+    { key: "attention", label: "เฉพาะที่ต้องดู" },
+    { key: "all", label: "ทุกโม่" },
+    { key: "out", label: `ห่างค่ากลางเกิน ±${model.PRACTICAL_BAND_MU} MU` },
+    { key: "warn", label: "ต่างจากโม่อื่น" },
+    { key: "data", label: "ตรวจข้อมูล" },
+  ]);
+  const DAY_OPTIONS = Object.freeze([7, model.MILL_DAYS]);
+  const TABLE_NOTE = "ผลต่าง = ค่าเฉลี่ยของโม่ลบมัธยฐานของสูตรเดียวกันในวันนั้น · ID = โม่ เส้น ส่วน (เช่น 412 = โม่ 4 เส้น 1 ส่วน 2) · "
+    + `แดง = MV ของโม่ห่างค่ากลางของสูตร (จากประวัติ) เกิน ±${model.PRACTICAL_BAND_MU} MU · เหลือง = MV หรือ MH ต่างจากมัธยฐานของวันเกินเกณฑ์ · `
+    + "ตรวจข้อมูล = มีค่าอ่าน 0 หรือ MV ห่างมัธยฐานของวัน 10 MU ขึ้นไป (น่าจะกรอกผิด)";
+
+  const options = (list, selected) => list.map((option) => `<option value="${esc(option.key)}"${option.key === selected ? " selected" : ""}>${esc(option.label)}</option>`).join("");
+
   function dashboardBody() {
     const measures = [{ key: "mv", label: "MV" }, { key: "mh", label: "MH" }]
       .map((measure, index) => `<button type="button" class="lab-range-btn" data-measure="${measure.key}" aria-pressed="${index === 0}" title="${esc(MEASURE_NOTE[measure.key])}">${KEY_ICON(measure.key)}${measure.label}</button>`).join("");
-    return `<div class="lab-dash-cols">
-        <section class="card lab-dash-card" aria-labelledby="lab-attn-title">
-          <h3 class="lab-dash-card-title" id="lab-attn-title">ต้องดูก่อน</h3>
-          <div id="lab-attn"></div>
-        </section>
-        <section class="card lab-dash-card" aria-labelledby="lab-activity-title">
-          <h3 class="lab-dash-card-title" id="lab-activity-title">ปริมาณทดสอบ ${model.ACTIVITY_DAYS} วัน</h3>
-          <div id="lab-activity"></div>
-        </section>
-      </div>
+    return `<div id="lab-machine"></div>
+      <section class="card flush lab-mill-card" aria-labelledby="lab-mill-title">
+        <div class="lab-mill-filters" role="group" aria-label="ตัวกรองตาราง">
+          <h3 class="sr-only" id="lab-mill-title">ผลต่างระหว่างโม่ในวันเดียวกัน</h3>
+          <label class="lab-filter lab-filter-search"><span class="sr-only">ค้นหาสูตร</span><input class="input" id="lab-mill-query" type="search" autocomplete="off" maxlength="${model.MAX_MATERIAL_LENGTH}" placeholder="ค้นหาสูตร"></label>
+          <label class="lab-filter"><span class="sr-only">สถานะ</span><select class="select" id="lab-mill-status" data-native-select>${options(STATUS_OPTIONS, "attention")}</select></label>
+          <label class="lab-filter"><span class="sr-only">ช่วงวัน</span><select class="select" id="lab-mill-days" data-native-select>${options(DAY_OPTIONS.map((days) => ({ key: String(days), label: `${days} วันล่าสุด` })), String(model.MILL_DAYS))}</select></label>
+          <label class="lab-filter" title="เกณฑ์ผลต่างจากมัธยฐานของวัน"><span class="sr-only">เกณฑ์ผลต่าง</span><select class="select" id="lab-mill-threshold" data-native-select>${options(model.MILL_THRESHOLDS.map((value) => ({ key: String(value), label: `ต่างเกิน ±${value} MU` })), String(model.MILL_MIN_DIFF))}</select></label>
+          <span class="lab-mill-help" title="${esc(TABLE_NOTE)}" aria-label="${esc(TABLE_NOTE)}" tabindex="0">?</span>
+        </div>
+        <div class="table-wrap"><table class="lab-mill-table"><caption class="sr-only">ผลต่างระหว่างโม่ในวันเดียวกัน แถวละหนึ่งโม่ กดแถวเพื่อดูเส้นควบคุมของสูตรนั้น</caption>
+          <thead><tr><th scope="col">สูตร</th><th scope="col">วันที่</th><th scope="col">โม่</th><th scope="col" class="num">${KEY_ICON("mv")}MV</th><th scope="col" class="num">${KEY_ICON("mh")}MH</th><th scope="col">สถานะ</th><th scope="col">จุดที่เกิน (โม่ เส้น ส่วน)</th></tr></thead>
+          <tbody id="lab-mill-rows"></tbody></table></div>
+        <p class="lab-dash-empty lab-mill-empty" id="lab-mill-empty" hidden></p>
+      </section>
+      <div id="lab-notices"></div>
       <section class="card lab-dash-card lab-control-card" aria-labelledby="lab-control-title">
         <div class="lab-control-head">
-          <h3 class="lab-dash-card-title" id="lab-control-title" title="${esc(CONTROL_NOTE)}">เส้นควบคุมรายชุด</h3>
+          <h3 class="lab-dash-card-title" id="lab-control-title" title="${esc(CONTROL_NOTE)}">เส้นควบคุม <span id="lab-control-name"></span></h3>
           <div class="lab-ranges" role="group" aria-label="ค่าที่แสดง">${measures}</div>
-        </div>
-        <div id="lab-zones"></div>
-        <div class="lab-control-pick">
-          <label class="sr-only" for="lab-control-select">วัสดุของกราฟเส้นควบคุม</label>
-          <select class="select" id="lab-control-select" data-native-select></select>
           <a class="small" id="lab-control-link" href="#/lab?module=mooney">ดูผลทดสอบ →</a>
         </div>
         <div class="lab-control-plot" id="lab-control-plot"></div>
       </section>`;
+  }
+
+  const MILL_STATUS_TEXT = Object.freeze({
+    out: `ห่างค่ากลางเกิน ±${model.PRACTICAL_BAND_MU}`,
+    data: "ตรวจข้อมูล",
+    warn: "ต่างจากโม่อื่น",
+    ok: "ปกติ",
+    single: "โม่เดียวในวันนั้น",
+  });
+  const MILL_SEVERITY = Object.freeze({ out: "out", data: "out", warn: "warn", ok: "ok", single: "info" });
+  const PATTERN_TEXT = Object.freeze({ mill: "ทั้งโม่", spot: "เฉพาะจุด" });
+  const PART_TEXT = Object.freeze({ 1: "หัว", 2: "กลาง", 3: "ท้าย" });
+  const delta = (value) => (isNumber(value) ? model.formatSigned(value) : "—");
+
+  // สาเหตุที่ควรตรวจตามรูปแบบ (อยู่ที่ title ของป้ายสถานะ ไม่เป็นข้อความถาวร) ตามลำดับไล่หาสาเหตุเมื่อ Mooney แกว่ง
+  function millHint(row) {
+    if (row.status === "data") return "ค่าผิดไปจากโม่อื่นมากเกินกว่าความต่างปกติ ตรวจการกรอกข้อมูลในชีตก่อน";
+    const parts = [];
+    if (row.pattern?.kind === "mill") parts.push("ทุกเส้นทุกส่วนเลื่อนพร้อมกัน: ตรวจยางดิบ การบด การชั่ง สภาวะผสมของโม่นี้");
+    if (row.pattern?.kind === "strand") parts.push("เลื่อนเฉพาะเส้นเดียว: ตรวจการผสม/การรีดของเส้นนั้น");
+    if (row.pattern?.kind === "spot") parts.push("เฉพาะบางจุด: ตรวจชิ้นทดสอบและการวัด");
+    const mv = isNumber(row.fromCenter) && row.status === "out" ? row.fromCenter : row.dMv;
+    if (isNumber(mv) && Math.abs(mv) > model.MILL_MIN_DIFF) parts.push(mv > 0 ? "MV สูง: ไหลยาก เสี่ยง scorch ฟองเล็ก/พองไม่เต็ม" : "MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
+    return parts.join(" · ");
+  }
+
+  // แถวของตารางรายโม่ (rows จาก model.millTableRows) แถวที่เลือก (สูตรของกราฟ) มี aria-selected · บนจอแคบแต่ละช่องมีป้ายจาก data-label
+  function millRows(rows, selected, threshold = model.MILL_MIN_DIFF) {
+    return rows.map((row) => {
+      const id = (point) => model.parseSampleId(point[0]);
+      const chips = row.points.map((point) => {
+        const parsed = id(point);
+        const where = parsed ? `โม่ ${parsed.mill} เส้น ${parsed.strand} ส่วน ${parsed.part}${PART_TEXT[parsed.part] ? ` (${PART_TEXT[parsed.part]})` : ""}` : point[0];
+        return `<span class="lab-chip" title="${esc(`${where}: MV ${delta(point[1])} · MH ${delta(point[2])}`)}">${esc(point[0])}</span>`;
+      }).join("");
+      const pattern = row.pattern ? (row.pattern.kind === "strand" ? `เส้น ${row.pattern.strand}` : PATTERN_TEXT[row.pattern.kind]) : "";
+      const status = row.status === "out" && isNumber(row.fromCenter) ? `${MILL_STATUS_TEXT.out} (${model.formatSigned(row.fromCenter)})` : MILL_STATUS_TEXT[row.status];
+      const hint = millHint(row);
+      return `<tr class="lab-mill-row" data-material="${esc(row.material)}" aria-selected="${row.material === selected}" tabindex="0">
+        <th scope="row" data-label="สูตร">${esc(row.material)}</th>
+        <td class="num" data-label="วันที่">${esc(model.formatDate(row.date))}</td>
+        <td class="num" data-label="โม่">${esc(row.mill)}</td>
+        <td class="num" data-label="MV"><b>${esc(model.formatReading(row.mv))}</b> <small class="lab-d${Math.abs(row.dMv ?? 0) > threshold ? " is-far" : ""}">${esc(delta(row.dMv))}</small></td>
+        <td class="num" data-label="MH"><b>${esc(model.formatReading(row.mh))}</b> <small class="lab-d${Math.abs(row.dMh ?? 0) > threshold ? " is-far" : ""}">${esc(delta(row.dMh))}</small></td>
+        <td data-label="สถานะ"><span class="lab-flag is-${MILL_SEVERITY[row.status]}"${hint ? ` title="${esc(hint)}"` : ""}>${esc(status)}</span></td>
+        <td data-label="จุดที่เกิน"><div class="lab-chips">${pattern ? `<small class="lab-pattern">${esc(pattern)}</small>` : ""}${chips}</div></td>
+      </tr>`;
+    }).join("");
+  }
+
+  // แถบตรวจเครื่อง: แสดงเฉพาะเมื่อมีวันที่หลายสูตรเลื่อนทางเดียวกัน (model.machineItems) ไม่มี = ว่าง
+  function machineBanner(items) {
+    if (!items.length) return "";
+    return `<div class="lab-machine" role="note">${items.map((item) => `<p><strong>ตรวจเครื่อง Mooney</strong> ${esc(attentionText(item))} — ${esc(attentionHint(item))}</p>`).join("")}</div>`;
+  }
+
+  // เรื่องของข้อมูลที่ไม่ใช่ของโม่ใด (model.dataNotices) เป็นกล่องพับ ปิดไว้เป็นค่าเริ่มต้นเพื่อไม่แย่งที่ตาราง
+  function noticeBox(items, open = false) {
+    if (!items.length) return "";
+    return `<details class="card lab-notices"${open ? " open" : ""}><summary>ข้อมูลที่ควรตรวจ (${int(items.length)})</summary>${attentionList(items)}</details>`;
   }
 
   const SIGNAL_TEXT = Object.freeze({
@@ -183,64 +258,12 @@
     }).join("")}</ul>`;
   }
 
-  // กราฟแท่งปริมาณทดสอบรายวัน (days จาก model.activityByDay เก่า → ใหม่) ค่าของแต่ละวันอยู่ที่ title ของแท่ง
-  // ป้ายท้ายกราฟบอกค่าของวันนี้ (แท่งสุดท้าย) ครั้งเดียว ป้ายใต้แกนบอกวันแรกและวันนี้
-  function activityChart(days) {
-    if (!days.length) return "";
-    const peak = Math.max(1, ...days.map((day) => day.count));
-    const today = days[days.length - 1];
-    const bars = days.map((day, index) => {
-      const title = `${model.formatDate(day.date)}: ${int(day.count)} ครั้ง · ${int(day.materials)} วัสดุ`;
-      const height = day.count ? Math.max(4, Math.round((day.count / peak) * 100)) : 0;
-      return `<span class="lab-bar${index === days.length - 1 ? " is-today" : ""}${day.count ? "" : " is-zero"}" title="${esc(title)}"><i style="height:${height}%"></i></span>`;
-    }).join("");
-    const summary = `วันนี้ ${int(today.count)} ครั้ง · ${int(today.materials)} วัสดุ`;
-    return `<div class="lab-bars" role="img" aria-label="${esc(`จำนวนครั้งทดสอบรายวัน ${days.length} วันล่าสุด สูงสุด ${int(peak)} ครั้งต่อวัน ${summary}`)}">${bars}</div>
-      <div class="lab-bars-axis"><span>${esc(model.formatShortDate(days[0].date))}</span><span class="lab-bars-today">${esc(summary)}</span></div>`;
-  }
-
-  // ตารางสีทุกวัสดุที่ตั้งเส้นควบคุมได้: แถวละวัสดุ ช่องละชุด (12 ชุดล่าสุด เก่า → ใหม่) สีและรูปทรงตามโซน
-  // เรียงวัสดุที่มีชุดเกิน 3σ ก่อน แล้วเกิน 2σ แล้วตามชื่อ (ที่ต้องดูอยู่บนสุด ไม่ต้องเลื่อนหา)
-  // ชื่อวัสดุเป็นปุ่มเลือกวัสดุให้กราฟด้านล่าง (aria-pressed = ที่เลือกอยู่) ชื่อที่โปรแกรมอ่านหน้าจออ่านบอกจำนวนชุดที่เกินในแถวนั้น
-  // (ช่องสีเป็นภาพ aria-hidden) วัสดุที่ตั้งเส้นไม่ได้นับรวมไว้บรรทัดเดียวใต้ตาราง
-  const ZONE_TEXT = Object.freeze({ ok: "ปกติ", warn: "เกิน 2σ", out: `ห่างค่ากลางเกิน ±${model.PRACTICAL_BAND_MU} MU` });
-  const ZONE_RANK = Object.freeze({ out: 0, warn: 1, ok: 2 });
-  function zoneGrid({ materials, key, selected }) {
-    const usable = materials
-      .filter((item) => ["ready", "provisional"].includes(item.health?.[key]?.level))
-      .map((item) => ({ item, zones: model.recentZones(item.health[key]) }))
-      .map((entry) => ({ ...entry, worst: Math.min(2, ...entry.zones.map((zone) => ZONE_RANK[zone.zone])) }))
-      .sort((a, b) => a.worst - b.worst || a.item.material.localeCompare(b.item.material, "en", { numeric: true, sensitivity: "base" }));
-    const rest = materials.length - usable.length;
-    if (!usable.length) return `<p class="lab-dash-empty">ยังไม่มีวัสดุที่มีประวัติถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด</p>`;
-    const rows = usable.map(({ item, zones }) => {
-      const control = item.health[key];
-      const blanks = Math.max(0, model.SIGNAL_WINDOW - zones.length);
-      const cells = Array.from({ length: blanks }, () => `<i class="lab-zone is-empty"></i>`).join("")
-        + zones.map((entry) => `<i class="lab-zone is-${entry.zone}" title="${esc(`${reading(entry.value)} · ${ZONE_TEXT[entry.zone]}`)}"></i>`).join("");
-      const out = zones.filter((entry) => entry.zone === "out").length;
-      const warn = zones.filter((entry) => entry.zone === "warn").length;
-      const spoken = `${item.material}: ${zones.length} ชุดล่าสุด${out ? ` ${ZONE_TEXT.out} ${out} ชุด` : ""}${warn ? ` เกิน 2σ ${warn} ชุด` : ""}${out || warn ? "" : " ปกติทั้งหมด"}${control.level === "provisional" ? " เส้นชั่วคราว" : ""}`;
-      const tag = control.level === "provisional" ? `<small class="lab-zone-tag" title="ประวัติ ${int(control.count)} ชุด ยังไม่ถึง ${model.CONTROL_MIN_READY} ชุด เส้นยังเลื่อนได้มาก" aria-hidden="true">ชั่วคราว</small>` : "";
-      return `<div class="lab-zone-row"><button type="button" class="lab-zone-name" data-material="${esc(item.material)}" aria-pressed="${item.material === selected}" aria-label="${esc(spoken)}">${esc(item.material)}${tag}</button><span class="lab-zone-cells" aria-hidden="true">${cells}</span></div>`;
-    }).join("");
-    // MH ไม่มีช่วงใช้งานจริง จึงไม่มีช่องแดงและไม่ใส่ในคำอธิบายสัญลักษณ์
-    const outLegend = key === "mv" ? `<span><i class="lab-zone is-out"></i>${esc(ZONE_TEXT.out)}</span>` : "";
-    const legend = `<p class="lab-zone-legend" title="ช่อง = ค่าเฉลี่ยรายชุด ${model.SIGNAL_WINDOW} ชุดล่าสุด เก่า → ใหม่"><span><i class="lab-zone is-ok"></i>ปกติ</span><span><i class="lab-zone is-warn"></i>เกิน 2σ</span>${outLegend}</p>`;
-    const restNote = rest ? `<p class="lab-zone-rest muted small">อีก ${int(rest)} วัสดุยังไม่มีเส้นควบคุม (ประวัติไม่ถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด หรือสภาวะทดสอบต่างกัน)</p>` : "";
-    return `<div class="lab-zone-grid">${rows}</div>${legend}${restNote}`;
-  }
-
   // กราฟเส้นควบคุมของวัสดุที่เลือก หรือข้อความเมื่อค่านั้นยังตั้งเส้นไม่ได้ (เช่น MV ตั้งได้แต่ MH ทุกชุดเท่ากัน) ไม่มีวัสดุ = ว่าง
   function controlPlot({ control, key, width, material }) {
     if (!material) return "";
     if (control && ["ready", "provisional"].includes(control.level)) return chart.controlChart({ control, key, width, label: material });
     return `<p class="lab-dash-empty">${esc(material)} ยังตั้งเส้นควบคุมของ ${esc(key.toUpperCase())} ไม่ได้</p>`;
   }
-
-  // ตัวเลือกวัสดุของกราฟเส้นควบคุม (เรียงตาม model.controlMaterials)
-  const controlOptions = (materials, selected) => materials
-    .map((item) => `<option value="${esc(item.material)}"${item.material === selected ? " selected" : ""}>${esc(item.material)}</option>`).join("");
 
   /* ---------- หน้ารวม: รายการวัสดุ ---------- */
 
@@ -518,7 +541,7 @@
 
   const api = {
     ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS, NO_RESULTS,
-    liveBar, dashboardPage, dashboardMooney, dashboardBody, attentionText, attentionList, attentionHint, activityChart, zoneGrid, controlPlot, controlOptions, overviewPage, materialRows, materialSuggestions,
+    liveBar, dashboardPage, dashboardMooney, dashboardBody, attentionText, attentionList, attentionHint, millRows, millHint, machineBanner, noticeBox, controlPlot, overviewPage, materialRows, materialSuggestions,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
     resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey, rangeAnnouncement, monthOptions,
   };

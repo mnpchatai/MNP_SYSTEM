@@ -155,16 +155,16 @@
   }
 
   /* ---------- แดชบอร์ด: สรุปจากฟีดหน้ารวม (คำขอและแคชเดียวกับรายการวัสดุ) ---------- */
-  // สรุปที่มี health (ตัวซิงก์รุ่นใหม่) = แดชบอร์ดติดตามกระบวนการ: ต้องดูก่อน · ปริมาณทดสอบ · เส้นควบคุม
+  // สรุปที่มี health (ตัวซิงก์รุ่นใหม่) = ตารางรายโม่หนึ่งตารางพร้อมตัวกรอง + กราฟเส้นควบคุมของสูตรที่เลือก
   // สรุปรุ่นก่อน (ยังไม่ redeploy ตัวซิงก์) = ตัวเลขชุดเดิม จึงเผยแพร่เว็บก่อนหรือหลังตัวซิงก์ก็ได้
-  // ตัวเลือกของผู้ใช้ (ค่า MV/MH และวัสดุของกราฟ) คงไว้ตอนรีเฟรช ทุกส่วนวาดใหม่เฉพาะเมื่อ HTML เปลี่ยน
+  // ตัวกรอง ค่า MV/MH และสูตรของกราฟ คงไว้ตอนรีเฟรช ทุกส่วนวาดใหม่เฉพาะเมื่อ HTML เปลี่ยน
   // (#app เป็น aria-live โปรแกรมอ่านหน้าจอจะได้ไม่อ่านเนื้อหาเดิมซ้ำทุกรอบรีเฟรช)
 
   function bindDashboard() {
     const bar = bindLiveBar();
     const mooney = document.querySelector("#lab-dash-mooney");
-    // picked = ผู้ใช้เลือกวัสดุเอง (คงไว้) · ไม่ได้เลือก = ระบบเลือกให้ใหม่ทุกรอบ (วัสดุที่เกินเส้นควบคุมล่าสุดขึ้นมาเอง)
-    const view = { mode: "", key: "mv", material: null, picked: false, materials: [], today: "", plotWidth: 0 };
+    // picked = ผู้ใช้กดแถวเลือกสูตรเอง (คงไว้) · ไม่ได้เลือก = สูตรของแถวแรกในตาราง (รุนแรงสุด) เปลี่ยนตามข้อมูลใหม่
+    const view = { mode: "", key: "mv", material: null, firstMaterial: null, picked: false, materials: [], today: "", plotWidth: 0 };
     const painted = new Map();
     const paintInto = (selector, html) => {
       if (painted.get(selector) === html) return;
@@ -173,58 +173,76 @@
       painted.set(selector, html);
       node.innerHTML = html;
     };
-
-    // วัสดุของกราฟ: ที่ผู้ใช้เลือกเอง (ถ้ายังมีเส้นควบคุม) ไม่เช่นนั้นวัสดุแรกที่ "เกินเส้นควบคุม" แล้วจึงวัสดุที่มีประวัติมากสุด
-    function chooseMaterial(candidates, attention) {
-      const names = candidates.map((item) => item.material);
-      if (view.picked && names.includes(view.material)) return view.material;
-      const flagged = attention.find((item) => item.severity === "out" && names.includes(item.material));
-      return flagged?.material ?? names[0] ?? null;
-    }
+    const field = (id) => mooney.querySelector(id);
+    const filters = () => ({
+      query: field("#lab-mill-query").value,
+      status: field("#lab-mill-status").value || "attention",
+      days: Number(field("#lab-mill-days").value) || model.MILL_DAYS,
+      threshold: Number(field("#lab-mill-threshold").value) || model.MILL_MIN_DIFF,
+    });
 
     function paintControl() {
-      const candidates = model.controlMaterials(view.materials);
-      view.material = chooseMaterial(candidates, model.attentionItems(view.materials, view.today));
+      const names = view.materials.map((item) => item.material);
+      if (!view.picked || !names.includes(view.material)) view.material = view.firstMaterial ?? null;
       mooney.querySelectorAll("[data-measure]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.measure === view.key)));
-      // ตารางสีวาดใหม่เมื่อข้อมูล/ค่าเปลี่ยนเท่านั้น การเลือกวัสดุแค่สลับ aria-pressed บนปุ่มเดิม (โฟกัสคีย์บอร์ดไม่หลุด)
-      paintInto("#lab-zones", views.zoneGrid({ materials: view.materials, key: view.key, selected: null }));
-      mooney.querySelectorAll(".lab-zone-name").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.material === view.material)));
-      const select = mooney.querySelector("#lab-control-select");
-      const link = mooney.querySelector("#lab-control-link");
-      const pick = mooney.querySelector(".lab-control-pick");
-      pick.hidden = !view.material;
-      paintInto("#lab-control-select", views.controlOptions(candidates, view.material));
-      if (view.material) {
-        select.value = view.material;
-        link.href = model.materialUrl(view.material);
-      }
-      const plot = mooney.querySelector("#lab-control-plot");
+      // สลับแถวที่เลือกบนแถวเดิม (ไม่วาดตารางใหม่ โฟกัสคีย์บอร์ดไม่หลุด)
+      mooney.querySelectorAll(".lab-mill-row").forEach((row) => row.setAttribute("aria-selected", String(row.dataset.material === view.material)));
+      field("#lab-control-name").textContent = view.material ?? "";
+      const link = field("#lab-control-link");
+      link.hidden = !view.material;
+      if (view.material) link.href = model.materialUrl(view.material);
+      const plot = field("#lab-control-plot");
       view.plotWidth = Math.floor(plot.clientWidth);
-      const item = candidates.find((entry) => entry.material === view.material);
-      paintInto("#lab-control-plot", views.controlPlot({ control: item?.health?.[view.key], key: view.key, width: view.plotWidth, material: view.material }));
+      const item = view.materials.find((entry) => entry.material === view.material);
+      paintInto("#lab-control-plot", view.material
+        ? views.controlPlot({ control: item?.health?.[view.key], key: view.key, width: view.plotWidth, material: view.material })
+        : `<p class="lab-dash-empty">กดแถวในตารางเพื่อดูเส้นควบคุมของสูตรนั้น</p>`);
+    }
+
+    function paintTable() {
+      const current = filters();
+      const rows = model.millTableRows(view.materials, view.today, current);
+      view.firstMaterial = rows[0]?.material ?? model.controlMaterials(view.materials)[0]?.material ?? null;
+      paintInto("#lab-mill-rows", views.millRows(rows, null, current.threshold));
+      const empty = field("#lab-mill-empty");
+      empty.hidden = rows.length > 0;
+      empty.textContent = current.status === "attention"
+        ? `ไม่มีโม่ที่ต้องดูใน ${current.days} วันล่าสุด`
+        : "ไม่มีโม่ที่ตรงกับตัวกรอง";
+      paintControl();
     }
 
     function paintHealth() {
-      paintInto("#lab-attn", views.attentionList(model.attentionItems(view.materials, view.today)));
-      paintInto("#lab-activity", views.activityChart(model.activityByDay(view.materials, view.today)));
-      paintControl();
+      paintInto("#lab-machine", views.machineBanner(model.machineItems(view.materials, view.today)));
+      paintInto("#lab-notices", views.noticeBox(model.dataNotices(view.materials, view.today), Boolean(mooney.querySelector(".lab-notices[open]"))));
+      paintTable();
     }
 
-    mooney.addEventListener("click", (event) => {
-      const measure = event.target.closest("[data-measure]");
-      const row = event.target.closest(".lab-zone-name");
-      if (measure) view.key = measure.dataset.measure === "mh" ? "mh" : "mv";
-      else if (row) {
-        view.material = row.dataset.material;
-        view.picked = true;
-      } else return;
-      paintControl();
-    });
-    mooney.addEventListener("change", (event) => {
-      if (event.target.id !== "lab-control-select") return;
-      view.material = event.target.value;
+    const choose = (row) => {
+      view.material = row.dataset.material;
       view.picked = true;
       paintControl();
+    };
+    mooney.addEventListener("click", (event) => {
+      const measure = event.target.closest("[data-measure]");
+      if (measure) {
+        view.key = measure.dataset.measure === "mh" ? "mh" : "mv";
+        return paintControl();
+      }
+      const row = event.target.closest(".lab-mill-row");
+      if (row) choose(row);
+    });
+    mooney.addEventListener("keydown", (event) => {
+      const row = event.target.closest?.(".lab-mill-row");
+      if (!row || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      choose(row);
+    });
+    mooney.addEventListener("input", (event) => {
+      if (event.target.id === "lab-mill-query") paintTable();
+    });
+    mooney.addEventListener("change", (event) => {
+      if (["lab-mill-status", "lab-mill-days", "lab-mill-threshold"].includes(event.target.id)) paintTable();
     });
 
     // กราฟกว้างตามกล่อง: วาดใหม่เมื่อความกว้างเปลี่ยน (หมุนจอ ย่อ/ขยายหน้าต่าง เปิด/ปิดเมนูข้าง)

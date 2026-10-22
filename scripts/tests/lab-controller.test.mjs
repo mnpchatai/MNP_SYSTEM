@@ -200,33 +200,46 @@ test("entering a module from its card zooms the module page in once it is painte
   assert.equal(zooms, 1, "ctrl-click opens a new tab; no zoom is queued here");
 });
 
-test("with health summaries the dashboard lists what needs attention and charts the flagged material first", async () => {
+test("with health summaries the dashboard is one mill table; the worst row's formula is charted until the user picks one", async () => {
   const model = (await import("node:module")).createRequire(import.meta.url)("../../modules/lab-mooney-model.js");
+  const today = model.todayInBangkok();
   const rows = [];
-  const add = (material, averages) => averages.forEach((average, batch) => {
-    for (let index = 0; index < 3; index += 1) rows.push({
-      source_sheet: material, material, sample_id: String(index), test_date: model.shiftDate("2026-09-01", Math.floor(batch / 2)),
-      test_time: `0${8 + (batch % 2)}:0${index}:00`, temperature_c: 100, test_minutes: 4,
-      mv: average + (index - 1) * 0.2, avg_mv: average, sd_mv: 0.2, mh: average + 20, avg_mh: average + 20, sd_mh: 0.2,
-    });
-  });
-  const steady = (count) => Array.from({ length: count }, (_, index) => 40 + Math.sin(index * 1.7) * 0.5);
-  add("B0005", steady(50));
-  add("A2004", [...steady(44), 46]);
+  // วันละสองโม่ โม่ละสองเส้น เส้นละสามส่วน (ID = โม่ เส้น ส่วน) ค่าเฉลี่ยของโม่ตาม mills
+  const add = (material, date, mills) => Object.entries(mills).forEach(([mill, mv]) => [1, 2].forEach((strand) => [1, 2, 3].forEach((part) => rows.push({
+    source_sheet: material, material, sample_id: `${mill}${strand}${part}`, test_date: date, test_time: `0${mill}:${strand}${part}:00`,
+    temperature_c: 100, test_minutes: 4, mv, avg_mv: mv, sd_mv: 0.2, mh: mv + 30, avg_mh: mv + 30, sd_mh: 0.2,
+  }))));
+  for (let day = 25; day >= 1; day -= 1) {
+    add("A2004", model.shiftDate(today, -day), { 1: 40 + Math.sin(day) * 0.4, 2: 40 + Math.cos(day) * 0.4 });
+    add("B0005", model.shiftDate(today, -day), { 1: 48 + Math.sin(day) * 0.4, 2: 48 + Math.cos(day) * 0.4 });
+  }
+  add("A2004", today, { 1: 40.2, 2: 46.8 });
+  add("B0005", today, { 1: 48.1, 2: 48.2 });
   const materials = JSON.parse(JSON.stringify(model.buildMaterialSummaries(model.normalizeFeed({ rows }).rows)));
   const app = setup(async () => ({ data: body(materials), error: null }));
   await app.open("module=dashboard");
   const root = app.element("#lab-dash-mooney");
-  assert.match(root.innerHTML, /id="lab-attn"/, "the health layout replaces the number tiles");
-  assert.match(app.element("#lab-attn").innerHTML, /A2004[\s\S]*เกิน ±5 MU/);
-  assert.match(app.element("#lab-zones").innerHTML, /data-material="A2004"/);
-  assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mv"[^>]*aria-label="A2004 MV/, "the out-of-control material is charted first");
+  assert.match(root.innerHTML, /id="lab-mill-rows"/, "the health layout replaces the number tiles");
+  assert.doesNotMatch(root.innerHTML, /lab-activity|lab-zones/);
+  const table = app.element("#lab-mill-rows").innerHTML;
+  assert.match(table, /^<tr class="lab-mill-row" data-material="A2004"[\s\S]*?ห่างค่ากลางเกิน ±5/, "the red mill is the first row");
+  assert.equal(app.element("#lab-mill-empty").hidden, true);
+  assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mv"[^>]*aria-label="A2004 MV/);
+  assert.equal(app.element("#lab-control-name").textContent, "A2004");
   assert.equal(app.element("#lab-control-link").href, "#/lab?module=mooney&material=A2004");
   root.listeners.click({ target: { closest: (selector) => (selector === "[data-measure]" ? { dataset: { measure: "mh" } } : null) } });
   assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mh"/);
-  root.listeners.change({ target: { id: "lab-control-select", value: "B0005" } });
+  root.listeners.click({ target: { closest: (selector) => (selector === ".lab-mill-row" ? { dataset: { material: "B0005" } } : null) } });
   assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/);
-  // รีเฟรชแล้วข้อมูลเดิม: คงตัวเลือกของผู้ใช้ไว้ (B0005, MH)
+  // ตัวกรอง: เกณฑ์ ±5 ไม่มีโม่ที่ต่างจากวันเกิน แต่โม่ที่ห่างค่ากลางยังแดง
+  app.element("#lab-mill-threshold").value = "5";
+  root.listeners.change({ target: { id: "lab-mill-threshold" } });
+  assert.match(app.element("#lab-mill-rows").innerHTML, /data-material="A2004"/);
+  app.element("#lab-mill-query").value = "zzz";
+  root.listeners.input({ target: { id: "lab-mill-query" } });
+  assert.equal(app.element("#lab-mill-empty").hidden, false);
+  assert.equal(app.element("#lab-mill-empty").textContent, "ไม่มีโม่ที่ต้องดูใน 14 วันล่าสุด");
+  // รีเฟรชแล้วข้อมูลเดิม: คงสูตรที่ผู้ใช้เลือกและค่า MH ไว้
   await app.tick();
   await flush();
   assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/);
