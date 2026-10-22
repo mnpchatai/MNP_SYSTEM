@@ -948,10 +948,15 @@ test("the control chart draws CL, UCL and LCL and marks breaches by shape as wel
   assert.equal(chart.controlChart({ control: control({ sigma: 0 }), width: 640 }), "");
   assert.equal(chart.controlChart({ control: control({ recent: [] }), width: 640 }), "");
   assert.match(chart.controlChart({ control: control(), width: 100 }), /width="280"/, "narrow boxes still get a readable chart");
-  assert.match(svg, /class="lab-cc-pt is-out is-last" data-tip="ชุดล่าสุด\nMV 46 \(\+6\.00 จาก CL · \+12\.0σ\)">/, "no dates: the tooltip counts back from the latest batch");
-  assert.match(svg, /data-tip="4 ชุดก่อน\nMV 40 \(0\.00 จาก CL · 0σ\)"/);
+  assert.match(svg, /class="lab-cc-pt is-out is-last" data-tip="ชุดล่าสุด\nMV 46 \(\+6\.00 จาก CL · \+12\.0σ\)\nCL = ค่าเฉลี่ยทุกชุดของสูตรนี้ \(ทุกโม่ ทุกวัน\)">/, "no dates: the tooltip counts back from the latest batch");
+  assert.match(svg, /data-tip="4 ชุดก่อน\nMV 40 \(0\.00 จาก CL · 0σ\)\n/);
   const dated = chart.controlChart({ control: control({ recentDates: ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"] }), width: 640 });
-  assert.match(dated, /data-tip="03\/10\/2026\nMV 39\.9 \(−0\.10 จาก CL · −0\.2σ\)"/, "each point names its batch date and distance from CL");
+  assert.match(dated, /data-tip="03\/10\/2026\nMV 39\.9 \(−0\.10 จาก CL · −0\.2σ\)\n/, "each point names its batch date and distance from CL");
+  const sourced = chart.controlChart({ control: control({ recentDates: ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"], recentIds: ["111,112,113", "121,122,123", "211,212,213", "<b>,1", ""] }), width: 640 });
+  assert.match(sourced, /data-tip="03\/10\/2026 · โม่ 2 เส้น 1 \(ID 211–213\)\nMV 39\.9/, "each point names the mill and strand of its batch");
+  assert.match(sourced, /data-tip="04\/10\/2026 · ID &lt;b&gt;, 1\n/, "IDs of another shape are listed as they are, escaped");
+  assert.match(sourced, /data-tip="05\/10\/2026\nMV 46 /, "a batch without IDs shows only its date");
+  assert.match(chart.controlChart({ control: control({ recentIds: ["111"] }), width: 640 }), /data-tip="4 ชุดก่อน\n/, "IDs that do not line up with the values are ignored");
 });
 
 test("the control plot falls back to a sentence when the chosen value has no limits", () => {

@@ -767,6 +767,19 @@ test("trend items rank the formula to look at first, flag a jump in MH and feed 
   assert.equal(model.trendItems(materials, "2026-12-31", 14).length, 0);
 });
 
+test("a batch names its mill and strand from the IDs of its rows, and the control summary keeps them for the latest batches", () => {
+  assert.equal(model.batchSource("111,112,113"), "โม่ 1 เส้น 1 (ID 111–113)");
+  assert.equal(model.batchSource(" 412 "), "โม่ 4 เส้น 1 (ID 412)");
+  assert.equal(model.batchSource("111,121"), "ID 111, 121", "two strands are not one source");
+  assert.equal(model.batchSource("A1,A2"), "ID A1, A2");
+  assert.equal(model.batchSource(""), "");
+  assert.equal(model.batchSource(undefined), "");
+  const rows = healthRows(steady(12));
+  const control = summaryOf(rows)[0].health.mv;
+  assert.equal(control.recentIds.length, control.recent.length);
+  assert.deepEqual(control.recentIds.at(-1), "100,101,102");
+});
+
 test("trend cards list every formula by name: in-range ones as in the trend, older ones from the stored mill days, and other tests from their batch averages", () => {
   const today = "2026-10-14";
   const scorch = (date, time, mv) => [0, 1, 2].map((index) => feedRow({

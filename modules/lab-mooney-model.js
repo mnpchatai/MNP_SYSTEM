@@ -467,10 +467,10 @@
   const controlLevel = (count) => (count >= CONTROL_MIN_READY ? "ready" : count >= CONTROL_MIN_PROVISIONAL ? "provisional" : "insufficient");
 
   // เส้นควบคุมของค่าเฉลี่ยรายชุดหนึ่งค่า (MV หรือ MH) และความแกว่งในเส้น (SD ของหัว-กลาง-ท้ายในชุด) เทียบกับปกติของวัสดุนั้น
-  //   batches = [{ average, sd, date }] ของชุดเดียวกันเรียงตามลำดับในชีต (sd ของชุดอาจเป็น null) · band = ช่วงใช้งานจริง (MU) หรือ null
+  //   batches = [{ average, sd, date, ids }] ของชุดเดียวกันเรียงตามลำดับในชีต (sd ของชุดอาจเป็น null · ids = ID ของแถวในชุด คั่นด้วย ",") · band = ช่วงใช้งานจริง (MU) หรือ null
   //   level: "ready" | "provisional" | "insufficient" (ชุดไม่พอ) | "mixed" (สภาวะทดสอบไม่เท่ากัน เทียบกันตรง ๆ ไม่ได้) | "flat" (ทุกชุดเท่ากัน)
   //          | "otherTest" (ไม่มีแถวของการทดสอบความหนืดเลย)
-  //   recent / recentDates = ค่าเฉลี่ยรายชุดล่าสุดและวันที่ของชุดนั้น (เก่า → ใหม่) สำหรับกราฟ ตารางสี และการตรวจเครื่อง
+  //   recent / recentDates / recentIds = ค่าเฉลี่ยรายชุดล่าสุด วันที่ และ ID ของแถวในชุด (เก่า → ใหม่) สำหรับกราฟ ตารางสี การตรวจเครื่อง และ tooltip (ชุดเดียว = เส้นเดียวของโม่เดียว)
   //   signal = latestSignal + SD ของชุดนั้น (sd) · latestSd = SD ของชุดล่าสุดเอง (ไม่มี = null) · sdHigh = SD นั้นเกิน UCL ของ SD ในประวัติ
   // เส้นถูกปัด 4 ตำแหน่งก่อนใช้ตัดสิน เพื่อให้รายการ "ต้องดูก่อน" ตารางสี และกราฟ ตัดสินจากตัวเลขชุดเดียวกัน
   function measureControl(batches, uniform, band = null) {
@@ -492,6 +492,7 @@
       level, count, ...limits, band,
       recent: values.slice(-CONTROL_RECENT),
       recentDates: pairs.slice(-CONTROL_RECENT).map((pair) => pair.date),
+      recentIds: pairs.slice(-CONTROL_RECENT).map((pair) => (typeof pair.ids === "string" ? pair.ids : "")),
       signal: signal ? { ...signal, sd: isNumber(signalSd) ? round4(signalSd) : null } : null,
       latestSd, sdUcl,
       sdHigh: isNumber(sdUcl) && isNumber(latestSd) && latestSd > sdUcl,
@@ -527,6 +528,19 @@
   function parseSampleId(id) {
     const match = /^(\d)(\d)(\d+)$/.exec(String(id ?? "").trim());
     return match ? { mill: match[1], strand: match[2], part: match[3] } : null;
+  }
+
+  // ที่มาของชุดจาก ID ของแถวในชุด ("111,112,113"): ทุกแถวเป็นโม่และเส้นเดียวกัน = "โม่ 1 เส้น 1 (ID 111–113)"
+  // คนละโม่/เส้น หรือ ID รูปแบบอื่น = "ID …" ตามที่มี · ไม่มี ID (สรุปจากตัวซิงก์รุ่นก่อน) = ""
+  function batchSource(ids) {
+    const list = String(ids ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+    if (!list.length) return "";
+    const parsed = list.map(parseSampleId);
+    const range = list.length > 1 ? `${list[0]}–${list[list.length - 1]}` : list[0];
+    if (parsed.every((id) => id && id.mill === parsed[0].mill && id.strand === parsed[0].strand)) {
+      return `โม่ ${parsed[0].mill} เส้น ${parsed[0].strand} (ID ${range})`;
+    }
+    return `ID ${list.join(", ")}`;
   }
 
   // ตารางรายโม่: วันละโม่ละหนึ่งแถว เทียบค่าเฉลี่ยของโม่กับมัธยฐานของสูตรเดียวกันในวันนั้น (ใช้มัธยฐานเพราะไม่ถูกดึงโดยโม่ที่ผิดปกติโม่เดียว)
@@ -596,7 +610,7 @@
     const pick = (avgKey, sdKey, readingKey, band) => {
       if (!viscosityItems.length) return { level: "otherTest", count: 0 };
       const usable = batches.filter((group) => sheetAverageFits(group[avgKey], group.items.map((item) => item[readingKey])));
-      return measureControl(usable.map((group) => ({ average: group[avgKey], sd: group[sdKey], date: group.lastDate })), conditions.uniform, band);
+      return measureControl(usable.map((group) => ({ average: group[avgKey], sd: group[sdKey], date: group.lastDate, ids: group.items.map((item) => item.sampleId).join(",") })), conditions.uniform, band);
     };
     const missing = series.items.filter((item) => !hasStats(item)).map((item) => item.testDate).sort();
     const dates = [...new Set(series.items.map((item) => item.testDate))].sort();
@@ -1084,7 +1098,7 @@
     STRAND_SD_HIGH, DASH_RANGES, DASH_DEFAULT_DAYS, MILL_DIFF_MU, MH_JUMP_MU, MH_MIN_MILLS,
     sheetAverageFits, controlLimits, ruleSignals, latestSignal, zoneOf, zoneFor, isViscosityTest, machineItems, parseSampleId, millRows, millPattern, millTableRows, dataNotices, materialHealth, daysBetween, todayInBangkok, shiftDate,
     nameIssues, attentionItems, hasHealth, controlMaterials,
-    windowSince, dailyRows, mhNote, trendItems, trendCards, latestCards, dashAttention, millBias, strandUniformity, drillRows,
+    batchSource, windowSince, dailyRows, mhNote, trendItems, trendCards, latestCards, dashAttention, millBias, strandUniformity, drillRows,
   };
   // Shared by the browser and the sync worker; one implementation of grouping/statistics.
   root.MNP_LAB_MOONEY = api;
