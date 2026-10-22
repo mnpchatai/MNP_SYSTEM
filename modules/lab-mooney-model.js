@@ -536,11 +536,11 @@
     const list = String(ids ?? "").split(",").map((id) => id.trim()).filter(Boolean);
     if (!list.length) return "";
     const parsed = list.map(parseSampleId);
-    const range = list.length > 1 ? `${list[0]}–${list[list.length - 1]}` : list[0];
-    if (parsed.every((id) => id && id.mill === parsed[0].mill && id.strand === parsed[0].strand)) {
-      return `โม่ ${parsed[0].mill} เส้น ${parsed[0].strand} (ID ${range})`;
-    }
-    return `ID ${list.join(", ")}`;
+    if (!parsed.every((id) => id && id.mill === parsed[0].mill && id.strand === parsed[0].strand)) return `ID ${list.join(", ")}`;
+    // ช่วง "111–113" เฉพาะเมื่อส่วนเรียงต่อกันทีละ 1 (ครบทุกแถว) · ขาดแถวหรือสลับลำดับ = แสดงทุก ID ตามลำดับในชีต
+    const consecutive = parsed.every((id, index) => Number(id.part) === Number(parsed[0].part) + index);
+    const shown = list.length > 1 && consecutive ? `${list[0]}–${list[list.length - 1]}` : list.join(", ");
+    return `โม่ ${parsed[0].mill} เส้น ${parsed[0].strand} (ID ${shown})`;
   }
 
   // ตารางรายโม่: วันละโม่ละหนึ่งแถว เทียบค่าเฉลี่ยของโม่กับมัธยฐานของสูตรเดียวกันในวันนั้น (ใช้มัธยฐานเพราะไม่ถูกดึงโดยโม่ที่ผิดปกติโม่เดียว)

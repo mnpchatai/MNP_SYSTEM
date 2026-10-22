@@ -771,6 +771,8 @@ test("a batch names its mill and strand from the IDs of its rows, and the contro
   assert.equal(model.batchSource("111,112,113"), "โม่ 1 เส้น 1 (ID 111–113)");
   assert.equal(model.batchSource(" 412 "), "โม่ 4 เส้น 1 (ID 412)");
   assert.equal(model.batchSource("111,121"), "ID 111, 121", "two strands are not one source");
+  assert.equal(model.batchSource("111,113"), "โม่ 1 เส้น 1 (ID 111, 113)", "a missing row is not hidden inside a range");
+  assert.equal(model.batchSource("113,112,111"), "โม่ 1 เส้น 1 (ID 113, 112, 111)");
   assert.equal(model.batchSource("A1,A2"), "ID A1, A2");
   assert.equal(model.batchSource(""), "");
   assert.equal(model.batchSource(undefined), "");
