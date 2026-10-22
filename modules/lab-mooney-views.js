@@ -72,12 +72,18 @@
   // แต่ละส่วนมี id ของตัวเอง module-lab.js วาดใหม่เฉพาะส่วนที่เปลี่ยน (ไม่เสียตัวเลือกวัสดุ/ค่า และไม่ให้โปรแกรมอ่านหน้าจออ่านซ้ำ)
   // ไม่มีการ์ดตัวเลขสรุปที่ซ้ำกับรายการและกราฟ: จำนวนที่ต้องดูคือรายการ, ปริมาณวันนี้คือแท่งสุดท้ายของกราฟ
 
-  const CONTROL_NOTE = "เส้นกลาง (CL) = ค่าเฉลี่ยของค่าเฉลี่ยรายชุดทั้งหมดของวัสดุนั้น · UCL/LCL = CL ± 3σ โดย σ คำนวณจากช่วงเคลื่อนที่ของค่าเฉลี่ยรายชุด (แผนภูมิ I-MR) "
-    + `· เส้นชั่วคราว = ประวัติ ${model.CONTROL_MIN_PROVISIONAL}–${model.CONTROL_MIN_READY - 1} ชุด · เส้นควบคุมไม่ใช่ค่าสเปก บอกเพียงว่าต่างจากปกติของวัสดุนั้น`;
+  const CONTROL_NOTE = "เส้นกลาง (CL) = ค่าเฉลี่ยของค่าเฉลี่ยรายชุดทั้งหมดของวัสดุนั้น · UCL/LCL = CL ± 3σ โดย σ คำนวณจากช่วงเคลื่อนที่ของค่าเฉลี่ยรายชุด (แผนภูมิ I-MR) = เตือนล่วงหน้า (เหลือง) "
+    + `· ±${model.PRACTICAL_BAND_MU} MU จากค่ากลาง (เฉพาะ MV) = แดง ตามแนวปฏิบัติทั่วไปในอุตสาหกรรม ไม่ใช่มาตรฐานบังคับ ใช้แทนสเปกจนกว่าจะมีค่าสเปก `
+    + `· เส้นชั่วคราว = ประวัติ ${model.CONTROL_MIN_PROVISIONAL}–${model.CONTROL_MIN_READY - 1} ชุด · ใช้เฉพาะการทดสอบความหนืด ML(1+4)`;
+  // ความหมายของ MV/MH ในโรงงาน (อยู่ที่ title ของปุ่มสลับ ไม่เป็นข้อความถาวร)
+  const MEASURE_NOTE = Object.freeze({
+    mv: "MV = ความหนืด Mooney ที่อ่านตอนจบเทส เทียบ ML(1+4)",
+    mh: "MH = ค่าสูงสุดช่วงต้นกราฟ Mooney (ไม่ใช่ MH ของ cure curve จาก MDR)",
+  });
 
   function dashboardBody() {
     const measures = [{ key: "mv", label: "MV" }, { key: "mh", label: "MH" }]
-      .map((measure, index) => `<button type="button" class="lab-range-btn" data-measure="${measure.key}" aria-pressed="${index === 0}">${KEY_ICON(measure.key)}${measure.label}</button>`).join("");
+      .map((measure, index) => `<button type="button" class="lab-range-btn" data-measure="${measure.key}" aria-pressed="${index === 0}" title="${esc(MEASURE_NOTE[measure.key])}">${KEY_ICON(measure.key)}${measure.label}</button>`).join("");
     return `<div class="lab-dash-cols">
         <section class="card lab-dash-card" aria-labelledby="lab-attn-title">
           <h3 class="lab-dash-card-title" id="lab-attn-title">ต้องดูก่อน</h3>
@@ -110,8 +116,10 @@
     eightSameSide: "8 ชุดติดกันอยู่ข้างเดียวของเส้นกลาง",
   });
   const FLAG = Object.freeze({
-    beyond3: "เกินเส้นควบคุม",
+    outOfBand: `เกิน ±${model.PRACTICAL_BAND_MU} MU`,
     rule: "เริ่มเบี่ยง",
+    machine: "ตรวจเครื่อง",
+    otherTest: "การทดสอบอื่น",
     sdHigh: "แกว่งในเส้น",
     mixed: "สภาวะทดสอบต่างกัน",
     missingAvg: "ข้อมูลไม่ครบ",
@@ -126,27 +134,53 @@
 
   // ข้อความรายละเอียดของรายการ "ต้องดูก่อน" (ข้อความล้วน)
   function attentionText(item) {
+    const rules = () => (item.signals?.length ? `: ${item.signals.map((signal) => SIGNAL_TEXT[signal] ?? signal).join(" · ")}` : "");
     switch (item.kind) {
-      case "beyond3": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)} ${item.high ? "เกิน UCL" : "ต่ำกว่า LCL"} ${reading(item.limit)}${provisionalText(item)}`;
-      case "rule": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)}: ${item.signals.map((signal) => SIGNAL_TEXT[signal] ?? signal).join(" · ")}${provisionalText(item)}`;
+      case "outOfBand": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)} ห่างจากค่ากลาง ${reading(item.center)} ${model.formatSigned(item.value - item.center)} MU${provisionalText(item)}`;
+      case "rule": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)}${rules()}${provisionalText(item)}`;
       case "sdHigh": return `SD ${item.measure} ชุดล่าสุด ${reading(item.value)} สูงกว่าปกติของวัสดุนี้ (UCL ${reading(item.limit)})${provisionalText(item)}`;
       case "mixed": return "อุณหภูมิหรือเวลาทดสอบไม่เท่ากันทุกแถว จึงไม่ตั้งเส้นควบคุม";
+      case "otherTest": return `${int(item.count)} แถวไม่ใช่การทดสอบความหนืด ML(1+4) (เวลาทดสอบไม่ใช่ ${model.VISCOSITY_MINUTES.join(" หรือ ")} นาที เช่น scorch) จึงไม่นำมาวิเคราะห์`;
       case "missingAvg": return `${int(item.count)} แถวยังไม่มี AVG/SD ในชีต`;
       case "duplicateName": return `ชื่อซ้ำกับ ${item.others.join(", ")} เมื่อไม่สนตัวพิมพ์ ประวัติถูกแยกเป็นสองชื่อ`;
       case "lowercaseName": return "ชื่อมีตัวพิมพ์เล็ก รหัสวัสดุอาจพิมพ์ผิด";
       case "overdue": return `ไม่ได้ทดสอบ ${int(item.days)} วัน`;
+      case "machine": return `${model.formatDate(item.date)}: MV ของ ${item.materials.join(", ")} ${item.high ? "สูง" : "ต่ำ"}กว่าปกติเกิน 2σ พร้อมกัน`;
       default: return "";
     }
   }
 
-  // รายการ "ต้องดูก่อน" จาก model.attentionItems: ชื่อวัสดุ (ลิงก์ไปหน้าวัสดุ) · ป้ายสถานะ (ข้อความ + สี) · รายละเอียด
+  // สาเหตุที่ควรตรวจและผลต่อการผลิต (ตามลำดับการไล่หาสาเหตุเมื่อ Mooney แกว่ง ในหนังสือ "การทดสอบสมบัติของยาง" หมวดความแปรปรวน)
+  // ดู SD หัว-กลาง-ท้ายของเส้นก่อน: สูง = ผสมไม่สม่ำเสมอ · นิ่งแต่ต่างล็อต = ยางดิบ/การบด/การชั่ง/สภาวะผสม · หลายวัสดุพร้อมกัน = เครื่อง
+  // ผลต่อยางฟองน้ำบอกเฉพาะ MV (หนังสือให้ไว้เฉพาะความหนืด) ไม่มีข้อมูล = ข้อความว่าง
+  function attentionHint(item) {
+    const parts = [];
+    if (item.kind === "outOfBand" || item.kind === "rule") {
+      if (item.strandStable === true) parts.push("ในเส้นนิ่ง แต่ต่างจากล็อตอื่น: ตรวจยางดิบ การบด การชั่ง สภาวะผสม");
+      if (item.strandStable === false) parts.push("หัว-กลาง-ท้ายต่างกันมาก: ตรวจความสม่ำเสมอของการผสม");
+      if (item.key === "mv") parts.push(item.high ? "MV สูง: ไหลยาก ความร้อนเฉือนสูง เสี่ยง scorch ฟองเล็ก/พองไม่เต็ม" : "MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
+    }
+    if (item.kind === "sdHigh") parts.push("การผสมไม่สม่ำเสมอ ถ้าสูงผิดปกติมากให้ตรวจการกรอกข้อมูลก่อน");
+    if (item.kind === "machine") parts.push("ตรวจเครื่อง (อุณหภูมิ preheat น้ำหนักชิ้น) ด้วยยางอ้างอิงก่อนสรุปว่าเป็นปัญหาการผลิต");
+    return parts.join(" · ");
+  }
+
+  // รายการ "ต้องดูก่อน" จาก model.attentionItems: ชื่อวัสดุ (ลิงก์ไปหน้าวัสดุ) · ป้ายสถานะ (ข้อความ + สี) · รายละเอียด · สาเหตุที่ควรตรวจ
+  // รายการตรวจเครื่องไม่ใช่ของวัสดุใด จึงเป็นชื่อเครื่องที่ไม่ใช่ลิงก์
   function attentionList(items) {
     if (!items.length) return `<p class="lab-dash-empty">ไม่มีรายการที่ต้องดู</p>`;
-    return `<ul class="lab-attn">${items.map((item) => `<li class="lab-attn-item">
-        <a class="lab-attn-name" href="${esc(model.materialUrl(item.material))}">${esc(item.material)}</a>
-        <span class="lab-flag is-${esc(item.severity)}">${esc(FLAG[item.kind] ?? item.kind)}</span>
+    return `<ul class="lab-attn">${items.map((item) => {
+      const name = item.kind === "machine"
+        ? `<span class="lab-attn-name">เครื่อง Mooney</span>`
+        : `<a class="lab-attn-name" href="${esc(model.materialUrl(item.material))}">${esc(item.material)}</a>`;
+      const hint = attentionHint(item);
+      return `<li class="lab-attn-item">
+        ${name}
+        <span class="lab-flag is-${esc(item.severity)}">${esc(item.kind === "rule" && item.signals?.includes("beyond3") ? "เกิน 3σ" : FLAG[item.kind] ?? item.kind)}</span>
         <span class="lab-attn-text">${esc(attentionText(item))}</span>
-      </li>`).join("")}</ul>`;
+        ${hint ? `<span class="lab-attn-hint">${esc(hint)}</span>` : ""}
+      </li>`;
+    }).join("")}</ul>`;
   }
 
   // กราฟแท่งปริมาณทดสอบรายวัน (days จาก model.activityByDay เก่า → ใหม่) ค่าของแต่ละวันอยู่ที่ title ของแท่ง
@@ -169,7 +203,7 @@
   // เรียงวัสดุที่มีชุดเกิน 3σ ก่อน แล้วเกิน 2σ แล้วตามชื่อ (ที่ต้องดูอยู่บนสุด ไม่ต้องเลื่อนหา)
   // ชื่อวัสดุเป็นปุ่มเลือกวัสดุให้กราฟด้านล่าง (aria-pressed = ที่เลือกอยู่) ชื่อที่โปรแกรมอ่านหน้าจออ่านบอกจำนวนชุดที่เกินในแถวนั้น
   // (ช่องสีเป็นภาพ aria-hidden) วัสดุที่ตั้งเส้นไม่ได้นับรวมไว้บรรทัดเดียวใต้ตาราง
-  const ZONE_TEXT = Object.freeze({ ok: "ปกติ", warn: "เกิน 2σ", out: "เกิน 3σ" });
+  const ZONE_TEXT = Object.freeze({ ok: "ปกติ", warn: "เกิน 2σ", out: `ห่างค่ากลางเกิน ±${model.PRACTICAL_BAND_MU} MU` });
   const ZONE_RANK = Object.freeze({ out: 0, warn: 1, ok: 2 });
   function zoneGrid({ materials, key, selected }) {
     const usable = materials
@@ -186,11 +220,13 @@
         + zones.map((entry) => `<i class="lab-zone is-${entry.zone}" title="${esc(`${reading(entry.value)} · ${ZONE_TEXT[entry.zone]}`)}"></i>`).join("");
       const out = zones.filter((entry) => entry.zone === "out").length;
       const warn = zones.filter((entry) => entry.zone === "warn").length;
-      const spoken = `${item.material}: ${zones.length} ชุดล่าสุด${out ? ` เกิน 3σ ${out} ชุด` : ""}${warn ? ` เกิน 2σ ${warn} ชุด` : ""}${out || warn ? "" : " ปกติทั้งหมด"}${control.level === "provisional" ? " เส้นชั่วคราว" : ""}`;
+      const spoken = `${item.material}: ${zones.length} ชุดล่าสุด${out ? ` ${ZONE_TEXT.out} ${out} ชุด` : ""}${warn ? ` เกิน 2σ ${warn} ชุด` : ""}${out || warn ? "" : " ปกติทั้งหมด"}${control.level === "provisional" ? " เส้นชั่วคราว" : ""}`;
       const tag = control.level === "provisional" ? `<small class="lab-zone-tag" title="ประวัติ ${int(control.count)} ชุด ยังไม่ถึง ${model.CONTROL_MIN_READY} ชุด เส้นยังเลื่อนได้มาก" aria-hidden="true">ชั่วคราว</small>` : "";
       return `<div class="lab-zone-row"><button type="button" class="lab-zone-name" data-material="${esc(item.material)}" aria-pressed="${item.material === selected}" aria-label="${esc(spoken)}">${esc(item.material)}${tag}</button><span class="lab-zone-cells" aria-hidden="true">${cells}</span></div>`;
     }).join("");
-    const legend = `<p class="lab-zone-legend" title="ช่อง = ค่าเฉลี่ยรายชุด ${model.SIGNAL_WINDOW} ชุดล่าสุด เก่า → ใหม่"><span><i class="lab-zone is-ok"></i>ปกติ</span><span><i class="lab-zone is-warn"></i>เกิน 2σ</span><span><i class="lab-zone is-out"></i>เกิน 3σ</span></p>`;
+    // MH ไม่มีช่วงใช้งานจริง จึงไม่มีช่องแดงและไม่ใส่ในคำอธิบายสัญลักษณ์
+    const outLegend = key === "mv" ? `<span><i class="lab-zone is-out"></i>${esc(ZONE_TEXT.out)}</span>` : "";
+    const legend = `<p class="lab-zone-legend" title="ช่อง = ค่าเฉลี่ยรายชุด ${model.SIGNAL_WINDOW} ชุดล่าสุด เก่า → ใหม่"><span><i class="lab-zone is-ok"></i>ปกติ</span><span><i class="lab-zone is-warn"></i>เกิน 2σ</span>${outLegend}</p>`;
     const restNote = rest ? `<p class="lab-zone-rest muted small">อีก ${int(rest)} วัสดุยังไม่มีเส้นควบคุม (ประวัติไม่ถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด หรือสภาวะทดสอบต่างกัน)</p>` : "";
     return `<div class="lab-zone-grid">${rows}</div>${legend}${restNote}`;
   }
@@ -482,7 +518,7 @@
 
   const api = {
     ORDER_OPTIONS, RESULT_COLUMNS, ID_COLUMNS, NO_RESULTS,
-    liveBar, dashboardPage, dashboardMooney, dashboardBody, attentionText, attentionList, activityChart, zoneGrid, controlPlot, controlOptions, overviewPage, materialRows, materialSuggestions,
+    liveBar, dashboardPage, dashboardMooney, dashboardBody, attentionText, attentionList, attentionHint, activityChart, zoneGrid, controlPlot, controlOptions, overviewPage, materialRows, materialSuggestions,
     materialPage, materialOptions, idOptions, conditionsText, tableNote,
     resultsTable, idTable, resultsTsv, idTsv, tooltip, announcement, chartKey, rangeAnnouncement, monthOptions,
   };

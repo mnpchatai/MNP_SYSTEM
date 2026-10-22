@@ -414,7 +414,10 @@ test("a material needs 10 batches for provisional limits and 40 for ready ones",
 test("the latest batch outside 3 sigma, and a wide spread inside the strand, are flagged from the material's own history", () => {
   const averages = [...steady(44), 46];
   const health = summaryOf(healthRows(averages, { overrides: (batch, index) => (batch === 44 ? { mv: 46 + (index - 1) * 2, sd_mv: 2 } : {}) }))[0].health;
-  assert.deepEqual(health.mv.signal, { ago: 0, value: 46, rules: ["beyond3"] });
+  assert.deepEqual(health.mv.signal, { ago: 0, value: 46, rules: ["beyond3"], beyondBand: true, sd: 2 }, "46 is more than 5 MU from a centre of about 40");
+  assert.equal(health.mv.band, model.PRACTICAL_BAND_MU);
+  assert.equal(health.mh.band, null, "MH has no practical band");
+  assert.equal(health.mh.signal.beyondBand, false);
   assert.equal(health.mv.sdHigh, true, "SD 2.0 against a history of 0.2");
   assert.equal(health.mv.latestSd, 2);
 });
@@ -423,10 +426,12 @@ test("a breach stays on the list for the 12 batches the grid shows, even after n
   // ไม่มีการแจ้งเตือนทางอื่น: ชุดที่เกินเส้นแล้วมีชุดปกติตามมาในวันเดียวกันต้องไม่หายจากรายการ
   const values = [...steady(44), 46, 40, 40.1];
   const limits = model.controlLimits(values);
-  assert.deepEqual(model.latestSignal(values, limits), { ago: 2, value: 46, rules: ["beyond3"] });
+  assert.deepEqual(model.latestSignal(values, limits), { ago: 2, value: 46, rules: ["beyond3"], beyondBand: false });
+  assert.deepEqual(model.latestSignal(values, limits, 12, 5), { ago: 2, value: 46, rules: ["beyond3"], beyondBand: true });
   const health = summaryOf(healthRows(values))[0].health;
   const items = model.attentionItems([{ material: "A2004", lastTested: "2026-10-01", health }], "2026-10-01");
-  assert.deepEqual(items.filter((item) => item.kind === "beyond3").map((item) => [item.measure, item.ago, item.high]), [["MV", 2, true], ["MH", 2, true]]);
+  assert.deepEqual(items.filter((item) => item.ago === 2).map((item) => [item.measure, item.kind, item.severity, item.high]), [["MV", "outOfBand", "out", true], ["MH", "rule", "warn", true]],
+    "MV beyond ±5 MU is red; MH beyond 3σ is an amber early warning");
   const later = [...values, ...steady(12)];
   assert.equal(model.latestSignal(later, model.controlLimits(later)), null, "after 12 more batches it has left the grid and the list");
   assert.equal(model.latestSignal(values, null), null);
@@ -492,17 +497,20 @@ test("names that differ only by case or spacing, or contain lower case, are repo
 });
 
 test("the attention list ranks out-of-control first and explains each data problem once", () => {
-  const out = summaryOf(healthRows([...steady(44), 46], { material: "A2004" }))[0];
+  const out = summaryOf(healthRows([...steady(44), 46], { material: "A2004", overrides: (batch) => ({ sd_mv: 0.2 + (batch % 3) * 0.05 }) }))[0];
   const mixed = summaryOf(healthRows(steady(3), { material: "E00030S B", overrides: (batch) => (batch === 1 ? { test_minutes: 8 } : {}) }))[0];
   const late = summaryOf(healthRows(steady(6), { material: "B0010" }))[0];
   const pending = summaryOf(healthRows(steady(2), { material: "B0006", overrides: (batch) => (batch === 1 ? { avg_mv: null, sd_mv: null, avg_mh: null, sd_mh: null } : {}) }))[0];
   const lower = { ...summaryOf(healthRows(steady(1), { material: "c13011" }))[0] };
   const items = model.attentionItems([late, mixed, out, pending, lower], "2026-10-22");
-  assert.deepEqual(items.slice(0, 2).map((item) => [item.material, item.severity, item.kind, item.measure]), [["A2004", "out", "beyond3", "MV"], ["A2004", "out", "beyond3", "MH"]]);
+  assert.deepEqual(items.slice(0, 1).map((item) => [item.material, item.severity, item.kind, item.measure]), [["A2004", "out", "outOfBand", "MV"]]);
   const first = items[0];
-  assert.equal(first.high, true, "an upper breach is compared with UCL");
-  assert.equal(first.limit, out.health.mv.ucl);
+  assert.equal(first.high, true);
+  assert.equal(first.center, out.health.mv.mean);
+  assert.equal(first.band, 5);
   assert.equal(first.ago, 0);
+  assert.equal(first.strandStable, true, "the strand SD matches its history, so the cause is between lots");
+  assert.ok(items.some((item) => item.material === "A2004" && item.kind === "rule" && item.measure === "MH" && item.signals.includes("beyond3")));
   assert.equal(first.provisional, false);
   const kinds = items.map((item) => `${item.material}:${item.kind}`);
   assert.ok(kinds.includes("E00030S B:mixed"));
@@ -541,4 +549,33 @@ test("materials for the control chart: ready first, then provisional, most histo
   assert.equal(zones.length, 12);
   assert.ok(zones.every((entry) => entry.zone === "ok"));
   assert.deepEqual(model.recentZones({ level: "insufficient" }), []);
+});
+
+test("only ML(1+4) viscosity rows are analysed; rows of another test (e.g. scorch at 120-125 °C) are counted and left out", () => {
+  // แบบ E00030S B ในข้อมูลจริง: 120 °C / 5 นาที และ 125 °C / 6 นาที ค่าเฉลี่ยราว 4 ซึ่งไม่ใช่ความหนืด
+  const other = summaryOf(healthRows(steady(12).map((value) => value / 10), { material: "E00030S B", overrides: (batch) => ({ temperature_c: batch % 2 ? 125 : 120, test_minutes: batch % 2 ? 6 : 5 }) }))[0].health;
+  assert.deepEqual(other.mv, { level: "otherTest", count: 0 });
+  assert.equal(other.otherTestRows, 36);
+  assert.equal(other.uniform, true, "no viscosity rows means nothing mixed among them");
+  const items = model.attentionItems([{ material: "E00030S B", lastTested: "2026-09-06", health: other }], "2026-09-06");
+  assert.deepEqual(items.map((item) => item.kind), ["otherTest"]);
+  // วัสดุที่มีทั้งสองแบบ: วิเคราะห์เฉพาะแถว 4 นาที
+  const both = summaryOf(healthRows(steady(14), { overrides: (batch) => (batch >= 12 ? { test_minutes: 6, temperature_c: 125 } : {}) }))[0].health;
+  assert.equal(both.mv.level, "provisional");
+  assert.equal(both.mv.count, 12);
+  assert.equal(both.otherTestRows, 6);
+  assert.equal(model.isViscosityTest({ testMinutes: 8 }), true, "butyl is read at 8 minutes");
+  assert.equal(model.isViscosityTest({ testMinutes: null }), true, "a blank test time is not thrown away");
+  assert.equal(model.isViscosityTest({ testMinutes: 5 }), false);
+});
+
+test("the machine check fires when at least 3 materials shift the same way on the same recent day", () => {
+  const control = (value, date) => ({ level: "ready", mean: 40, sigma: 1, band: 5, recent: [40, 40.5, value], recentDates: ["2026-10-10", "2026-10-15", date] });
+  const materials = ["A", "B", "C"].map((name) => ({ material: name, health: { mv: control(42.5, "2026-10-20") } }));
+  assert.deepEqual(model.machineItems(materials, "2026-10-22"), [{ material: "", severity: "warn", kind: "machine", date: "2026-10-20", high: true, materials: ["A", "B", "C"] }]);
+  assert.deepEqual(model.machineItems(materials.slice(0, 2), "2026-10-22"), [], "two materials are not enough");
+  const mixed = [...materials.slice(0, 2), { material: "C", health: { mv: control(37.5, "2026-10-20") } }];
+  assert.deepEqual(model.machineItems(mixed, "2026-10-22"), [], "opposite directions point to the materials, not the machine");
+  assert.deepEqual(model.machineItems(materials, "2026-11-30"), [], "older than 14 days is out of scope");
+  assert.ok(model.attentionItems(materials.map((item) => ({ ...item, lastTested: "2026-10-20" })), "2026-10-22").some((item) => item.kind === "machine"));
 });

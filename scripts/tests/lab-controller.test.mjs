@@ -218,7 +218,7 @@ test("with health summaries the dashboard lists what needs attention and charts 
   await app.open("module=dashboard");
   const root = app.element("#lab-dash-mooney");
   assert.match(root.innerHTML, /id="lab-attn"/, "the health layout replaces the number tiles");
-  assert.match(app.element("#lab-attn").innerHTML, /A2004[\s\S]*เกินเส้นควบคุม/);
+  assert.match(app.element("#lab-attn").innerHTML, /A2004[\s\S]*เกิน ±5 MU/);
   assert.match(app.element("#lab-zones").innerHTML, /data-material="A2004"/);
   assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mv"[^>]*aria-label="A2004 MV/, "the out-of-control material is charted first");
   assert.equal(app.element("#lab-control-link").href, "#/lab?module=mooney&material=A2004");

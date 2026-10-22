@@ -1959,6 +1959,7 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-attn-item { padding: 7px 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; background: var(--shell); border-radius: 8px; font-size: 13px; }
 .lab-attn-name { font-weight: 700; }
 .lab-attn-text { flex: 1 1 220px; min-width: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lab-attn-hint { flex: 1 1 100%; min-width: 0; color: var(--quiet); font-size: 12px; }
 .lab-flag { padding: 1px 8px; border: 1px solid currentColor; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .lab-flag.is-out { color: var(--danger); background: var(--danger-soft); }
 .lab-flag.is-warn { color: var(--warning); background: var(--warning-soft); }
@@ -2004,7 +2005,8 @@ summary.fm-tree-row:hover, summary.fm-tree-row:focus-visible { background: var(-
 .lab-cc-pt.is-out { fill: var(--danger); }
 .lab-cc-pt.is-last { stroke: var(--paper); stroke-width: 1.5; }
 .lab-cc-center { stroke: var(--muted); stroke-width: 1; }
-.lab-cc-limit { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 5 4; }
+.lab-cc-limit { stroke: var(--warning); stroke-width: 1; stroke-dasharray: 5 4; }
+.lab-cc-band { stroke: var(--danger); stroke-width: 1.2; stroke-dasharray: 2 3; }
 .lab-cc-label { fill: var(--muted); font-size: 11px; font-weight: 700; }
 @media (max-width: 900px) {
   .lab-dash-cols { grid-template-columns: minmax(0, 1fr); }

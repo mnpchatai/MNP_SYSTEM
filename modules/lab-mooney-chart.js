@@ -402,8 +402,8 @@
       + `<polyline points="${points}"/><circle cx="${n2(x(list.length - 1))}" cy="${n2(y(lastValue))}" r="2.6"/></svg>`;
   }
 
-  // กราฟเส้นควบคุม (I chart) ของแดชบอร์ด: ค่าเฉลี่ยรายชุดล่าสุดของวัสดุหนึ่งรายการ เส้นกลาง (CL) และ UCL/LCL = ±3σ
-  // พื้นตามธีมของหน้า (ไม่ใช่พื้นดำแบบหน้าวัสดุ) จุดที่เกิน 2σ/3σ ใช้รูปทรงและสีต่างกัน จึงแยกได้แม้ไม่เห็นสี
+  // กราฟเส้นควบคุม (I chart) ของแดชบอร์ด: ค่าเฉลี่ยรายชุดล่าสุดของวัสดุหนึ่งรายการ เส้นกลาง (CL), UCL/LCL = ±3σ (เหลือง)
+  // และช่วงใช้งานจริง CL ± band (แดง เฉพาะ MV) พื้นตามธีมของหน้า จุดที่เกิน 2σ/ช่วงใช้งานจริงใช้รูปทรงและสีต่างกัน จึงแยกได้แม้ไม่เห็นสี
   // control = health.mv/mh จาก model.materialHealth (recent, mean, sigma, ucl, lcl, count) · key = "mv" | "mh" (สีของซีรีส์)
   // ป้ายแกน X นับย้อนจากชุดล่าสุด ("n ชุดก่อน" … "ล่าสุด") ไม่ใช่วันที่หรือเลขชุดของหน้าวัสดุ เพราะสรุปเก็บเฉพาะค่าเฉลี่ยของชุดที่ AVG ใช้ได้
   function controlChart({ control, key = "mv", width, label = "" }) {
@@ -413,7 +413,8 @@
     const compact = total < 560;
     const box = { left: compact ? 40 : 48, right: compact ? 40 : 48, top: 12, height: compact ? 150 : 180, bottom: 22 };
     const plotWidth = total - box.left - box.right;
-    const scale = model.niceScale(Math.min(control.lcl, ...values), Math.max(control.ucl, ...values), 4);
+    const band = isNumber(control.band) ? control.band : null;
+    const scale = model.niceScale(Math.min(control.lcl, band === null ? Infinity : control.mean - band, ...values), Math.max(control.ucl, band === null ? -Infinity : control.mean + band, ...values), 4);
     const x = (index) => box.left + (values.length === 1 ? plotWidth / 2 : (index / (values.length - 1)) * plotWidth);
     const y = (value) => box.top + (1 - (value - scale.min) / (scale.max - scale.min)) * box.height;
     const grid = scale.ticks.map((value) => `<line class="lab-grid" x1="${box.left}" x2="${n2(box.left + plotWidth)}" y1="${n2(y(value))}" y2="${n2(y(value))}"/>`
@@ -421,7 +422,7 @@
     const limit = (value, name, cls) => `<line class="lab-cc-${cls}" x1="${box.left}" x2="${n2(box.left + plotWidth)}" y1="${n2(y(value))}" y2="${n2(y(value))}"/>`
       + `<text class="lab-cc-label" x="${n2(box.left + plotWidth + 6)}" y="${n2(y(value) + 4)}">${name}</text>`;
     const points = values.map((value, index) => {
-      const zone = model.zoneOf((value - control.mean) / control.sigma);
+      const zone = model.zoneFor(value, control);
       const last = index === values.length - 1;
       const radius = last ? 5 : 3.4;
       const cx = n2(x(index));
@@ -436,6 +437,7 @@
     const summary = `${label ? `${label} ` : ""}${key.toUpperCase()} ${values.length} ชุดล่าสุด เส้นกลาง ${tick(control.mean)} UCL ${tick(control.ucl)} LCL ${tick(control.lcl)} ชุดล่าสุด ${tick(values[values.length - 1])}`;
     return `<svg class="lab-cc lab-cc-${esc(key)}" width="${total}" height="${height}" viewBox="0 0 ${total} ${height}" role="img" aria-label="${esc(summary)}">`
       + grid
+      + (band === null ? "" : limit(control.mean + band, `+${tick(band)}`, "band") + limit(control.mean - band, `−${tick(band)}`, "band"))
       + limit(control.ucl, "UCL", "limit") + limit(control.mean, "CL", "center") + limit(control.lcl, "LCL", "limit")
       + `<polyline class="lab-cc-line" points="${values.map((value, index) => `${n2(x(index))},${n2(y(value))}`).join(" ")}"/>`
       + points

@@ -396,6 +396,18 @@
   const zScore = (value, limits) => (value - limits.mean) / limits.sigma;
   const zoneOf = (z) => (Math.abs(z) > 3 ? "out" : Math.abs(z) > 2 ? "warn" : "ok");
 
+  // ช่วงที่ใช้งานได้จริงของ MV: ค่ากลางของวัสดุ ± 5 MU ตามแนวปฏิบัติทั่วไปในอุตสาหกรรมยาง (ไม่ใช่มาตรฐานบังคับ)
+  // ใช้เป็นระดับ "แดง" แทนสเปกจนกว่าชีตจะมีค่าสเปก ส่วน 3σ/กฎ Western Electric เป็นแค่สัญญาณเตือนล่วงหน้า (เหลือง)
+  // เพราะวัสดุในโรงงานเลื่อนระดับระหว่างล็อต σ จากช่วงเคลื่อนที่จึงแคบกว่าความแปรปรวนจริงหลายเท่า (เกิน 3σ บ่อยโดยไม่มีผลต่อการผลิต)
+  // MH (ค่าสูงสุดช่วงต้นกราฟ) ไม่มีเกณฑ์ใช้งานจริงที่อ้างอิงได้ จึงใช้เฉพาะสัญญาณทางสถิติ
+  const PRACTICAL_BAND_MU = 5;
+  // โซนของค่าเฉลี่ยรายชุดเทียบเส้นของวัสดุ: "out" = ห่างค่ากลางเกินช่วงใช้งานจริง (เฉพาะค่าที่มี band), "warn" = เกิน 2σ, "ok"
+  function zoneFor(value, control) {
+    const distance = value - control.mean;
+    if (isNumber(control.band) && Math.abs(distance) > control.band) return "out";
+    return control.sigma > 0 && Math.abs(distance / control.sigma) > 2 ? "warn" : "ok";
+  }
+
   // เส้นควบคุมแบบ I-MR จากค่าตามลำดับ (เก่า → ใหม่): เส้นกลาง = ค่าเฉลี่ย, σ จากค่าเฉลี่ยช่วงเคลื่อนที่ (ไม่ใช้ SD รวม ซึ่งบวมเมื่อกระบวนการเลื่อน)
   // ค่าน้อยกว่า 2 ตัว หรือทุกค่าเท่ากัน (σ = 0) = ตั้งเส้นไม่ได้ (null)
   function controlLimits(values) {
@@ -433,15 +445,18 @@
 
   // สัญญาณล่าสุดภายใน window ชุดล่าสุด (ชุดเดียวกับที่ตารางสีของแดชบอร์ดแสดง) ไล่จากชุดใหม่ไปเก่า
   // แดชบอร์ดไม่มีการแจ้งเตือนและไม่เก็บประวัติสัญญาณ จึงต้องยังเห็นชุดที่เกินเส้นแม้มีชุดปกติตามมาแล้ว
-  // คืน { ago (0 = ชุดล่าสุด), value, rules } หรือ null เมื่อไม่มีชุดใดในช่วงเข้ากฎ
+  // คืน { ago (0 = ชุดล่าสุด), value, rules, beyondBand } หรือ null เมื่อไม่มีชุดใดในช่วงเข้ากฎหรือเกินช่วงใช้งานจริง
+  // band = ช่วงใช้งานจริง (MU) ของค่านั้น หรือ null เมื่อไม่มี (MH)
   const SIGNAL_WINDOW = 12;
-  function latestSignal(values, limits, window = SIGNAL_WINDOW) {
+  function latestSignal(values, limits, window = SIGNAL_WINDOW, band = null) {
     const list = values.filter(isNumber);
     if (!limits) return null;
     for (let ago = 0; ago < Math.min(window, list.length); ago += 1) {
       const upto = list.slice(0, list.length - ago);
+      const value = upto[upto.length - 1];
       const rules = ruleSignals(upto, limits);
-      if (rules.length) return { ago, value: upto[upto.length - 1], rules };
+      const beyondBand = isNumber(band) && Math.abs(value - limits.mean) > band;
+      if (rules.length || beyondBand) return { ago, value, rules, beyondBand };
     }
     return null;
   }
@@ -450,13 +465,14 @@
   const controlLevel = (count) => (count >= CONTROL_MIN_READY ? "ready" : count >= CONTROL_MIN_PROVISIONAL ? "provisional" : "insufficient");
 
   // เส้นควบคุมของค่าเฉลี่ยรายชุดหนึ่งค่า (MV หรือ MH) และความแกว่งในเส้น (SD ของหัว-กลาง-ท้ายในชุด) เทียบกับปกติของวัสดุนั้น
-  //   averages/sds = ค่าของชุดเดียวกันเรียงคู่กัน (sd ของชุดอาจเป็น null)
+  //   batches = [{ average, sd, date }] ของชุดเดียวกันเรียงตามลำดับในชีต (sd ของชุดอาจเป็น null) · band = ช่วงใช้งานจริง (MU) หรือ null
   //   level: "ready" | "provisional" | "insufficient" (ชุดไม่พอ) | "mixed" (สภาวะทดสอบไม่เท่ากัน เทียบกันตรง ๆ ไม่ได้) | "flat" (ทุกชุดเท่ากัน)
-  //   recent = ค่าเฉลี่ยรายชุดล่าสุด (เก่า → ใหม่) สำหรับวาดกราฟ, signal = latestSignal
-  //   latestSd = SD ของชุดล่าสุดเอง (ไม่มี = null), sdHigh = SD นั้นเกิน UCL ของ SD ในประวัติ
+  //          | "otherTest" (ไม่มีแถวของการทดสอบความหนืดเลย)
+  //   recent / recentDates = ค่าเฉลี่ยรายชุดล่าสุดและวันที่ของชุดนั้น (เก่า → ใหม่) สำหรับกราฟ ตารางสี และการตรวจเครื่อง
+  //   signal = latestSignal + SD ของชุดนั้น (sd) · latestSd = SD ของชุดล่าสุดเอง (ไม่มี = null) · sdHigh = SD นั้นเกิน UCL ของ SD ในประวัติ
   // เส้นถูกปัด 4 ตำแหน่งก่อนใช้ตัดสิน เพื่อให้รายการ "ต้องดูก่อน" ตารางสี และกราฟ ตัดสินจากตัวเลขชุดเดียวกัน
-  function measureControl(averages, sds, uniform) {
-    const pairs = averages.map((average, index) => ({ average, sd: sds[index] })).filter((pair) => isNumber(pair.average));
+  function measureControl(batches, uniform, band = null) {
+    const pairs = batches.filter((pair) => isNumber(pair.average));
     const count = pairs.length;
     if (!uniform) return { level: "mixed", count };
     const level = controlLevel(count);
@@ -468,10 +484,13 @@
     const sdLimits = controlLimits(pairs.map((pair) => pair.sd));
     const latestSd = isNumber(pairs[count - 1].sd) ? round4(pairs[count - 1].sd) : null;
     const sdUcl = sdLimits ? round4(sdLimits.ucl) : null;
+    const signal = latestSignal(values, limits, SIGNAL_WINDOW, band);
+    const signalSd = signal ? pairs[count - 1 - signal.ago].sd : null;
     return {
-      level, count, ...limits,
+      level, count, ...limits, band,
       recent: values.slice(-CONTROL_RECENT),
-      signal: latestSignal(values, limits),
+      recentDates: pairs.slice(-CONTROL_RECENT).map((pair) => pair.date),
+      signal: signal ? { ...signal, sd: isNumber(signalSd) ? round4(signalSd) : null } : null,
       latestSd, sdUcl,
       sdHigh: isNumber(sdUcl) && isNumber(latestSd) && latestSd > sdUcl,
     };
@@ -495,16 +514,25 @@
     return list.length % 2 ? list[middle] : (list[middle - 1] + list[middle]) / 2;
   }
 
-  // สุขภาพของวัสดุหนึ่งรายการ จากผลทั้งวัสดุตามลำดับในชีต (ใช้ชุดที่ชีตมี AVG ใช้งานได้เท่านั้น)
-  //   mv / mh = measureControl, uniform = ทุกแถวใช้อุณหภูมิ/เวลาทดสอบเดียวกัน
-  //   missingAvg = แถวที่ชีตยังไม่มี AVG/SD (จำนวน + วันที่เก่าสุด), days = [วันที่, จำนวนครั้ง] ของวันทดสอบล่าสุด
+  // การทดสอบความหนืด Mooney ตาม ISO 289-1 อ่านค่าที่ 4 นาที — ML(1+4) (ยาง butyl ที่ 8 นาที) แถวที่ใช้เวลาทดสอบอื่น
+  // (เช่น 5–6 นาทีที่ 120–125 °C ของ E00030S B) เป็นการทดสอบอื่น เช่น scorch (ISO 289-2) ค่าที่อ่านไม่ใช่ความหนืด จึงไม่นำมาวิเคราะห์ร่วม
+  // แถวที่ไม่ได้บันทึกเวลาทดสอบถือเป็นการทดสอบความหนืด (ไม่ตัดข้อมูลทิ้งเพราะช่องว่าง)
+  const VISCOSITY_MINUTES = Object.freeze([4, 8]);
+  const isViscosityTest = (item) => item.testMinutes === null || VISCOSITY_MINUTES.includes(item.testMinutes);
+
+  // สุขภาพของวัสดุหนึ่งรายการ จากผลทั้งวัสดุตามลำดับในชีต (ใช้เฉพาะชุดของการทดสอบความหนืดที่ชีตมี AVG ใช้งานได้)
+  //   mv / mh = measureControl (ช่วงใช้งานจริง ±5 MU เฉพาะ MV), uniform = แถวทดสอบความหนืดใช้อุณหภูมิ/เวลาเดียวกัน
+  //   otherTestRows = จำนวนแถวที่เป็นการทดสอบอื่น (ไม่นำมาวิเคราะห์)
+  //   missingAvg = แถวที่ชีตยังไม่มี AVG/SD (จำนวน + วันที่เก่าสุด), days = [วันที่, จำนวนครั้ง] ของวันทดสอบล่าสุด (ทุกการทดสอบ = ปริมาณงาน)
   //   typicalGapDays = ค่ามัธยฐานของระยะห่างระหว่างวันทดสอบ (มีวันทดสอบน้อยกว่า 3 วัน = null ยังไม่รู้ความถี่ปกติ)
   function materialHealth(series) {
-    const conditions = testConditions(series.items);
-    const batches = series.groups.filter((group) => group.hasStats);
-    const pick = (avgKey, sdKey, readingKey) => {
+    const viscosityItems = series.items.filter(isViscosityTest);
+    const conditions = testConditions(viscosityItems);
+    const batches = series.groups.filter((group) => group.hasStats && group.items.every(isViscosityTest));
+    const pick = (avgKey, sdKey, readingKey, band) => {
+      if (!viscosityItems.length) return { level: "otherTest", count: 0 };
       const usable = batches.filter((group) => sheetAverageFits(group[avgKey], group.items.map((item) => item[readingKey])));
-      return measureControl(usable.map((group) => group[avgKey]), usable.map((group) => group[sdKey]), conditions.uniform);
+      return measureControl(usable.map((group) => ({ average: group[avgKey], sd: group[sdKey], date: group.lastDate })), conditions.uniform, band);
     };
     const missing = series.items.filter((item) => !hasStats(item)).map((item) => item.testDate).sort();
     const perDay = new Map();
@@ -513,8 +541,9 @@
     const gaps = dates.slice(1).map((date, index) => daysBetween(dates[index], date));
     return {
       uniform: conditions.uniform,
-      mv: pick("avgMv", "sdMv", "mv"),
-      mh: pick("avgMh", "sdMh", "mh"),
+      otherTestRows: series.items.length - viscosityItems.length,
+      mv: pick("avgMv", "sdMv", "mv", PRACTICAL_BAND_MU),
+      mh: pick("avgMh", "sdMh", "mh", null),
       missingAvg: { count: missing.length, oldest: missing[0] ?? null },
       days: dates.slice(-ACTIVITY_DAYS).map((date) => [date, perDay.get(date)]),
       typicalGapDays: dates.length >= 3 ? median(gaps) : null,
@@ -565,9 +594,10 @@
 
   // รายการ "ต้องดูก่อน" ของแดชบอร์ด เรียงจากรุนแรงสุด (out → warn → info) แล้วตามชื่อวัสดุ
   // แต่ละรายการ: { material, severity, kind, measure?, value?, limit?, signals?, count?, days?, others? }
-  //   out  = ค่าเฉลี่ยชุดหนึ่งใน 12 ชุดล่าสุดเกิน 3σ ของประวัติ (ago = กี่ชุดก่อน, high = เกินด้านบน)
-  //   warn = เข้ากฎ Western Electric ข้ออื่น หรือ SD ในเส้นของชุดล่าสุดสูงกว่าปกติ
-  //   info = สภาวะทดสอบไม่เท่ากัน, ชุดที่ยังไม่มี AVG (ค้างมาก่อนวันนี้), ชื่อวัสดุที่ควรตรวจ, ไม่ได้ทดสอบนาน
+  //   out  = ค่าเฉลี่ย MV ของชุดหนึ่งใน 12 ชุดล่าสุดห่างค่ากลางของวัสดุเกิน ±5 MU (ago = กี่ชุดก่อน, high = ด้านสูง)
+  //   warn = เข้ากฎ Western Electric (รวมเกิน 3σ) · SD ในเส้นของชุดล่าสุดสูงกว่าปกติ · ตรวจเครื่อง (หลายวัสดุเลื่อนทางเดียวกันวันเดียวกัน)
+  //   ทุกรายการสัญญาณมี strandStable (ในเส้นนิ่งหรือไม่) ให้หน้าจอบอกสาเหตุที่ควรตรวจ
+  //   info = สภาวะทดสอบไม่เท่ากัน, แถวที่เป็นการทดสอบอื่น, ชุดที่ยังไม่มี AVG (ค้างมาก่อนวันนี้), ชื่อวัสดุที่ควรตรวจ, ไม่ได้ทดสอบนาน
   // วัสดุที่ไม่มี health (สรุปจากตัวซิงก์รุ่นก่อน) ถูกข้าม — ผู้เรียกตรวจ hasHealth ก่อนแสดง
   function attentionItems(materials, today) {
     const list = Array.isArray(materials) ? materials : [];
@@ -584,13 +614,16 @@
         const signal = control.signal;
         if (signal) {
           const high = signal.value > control.mean;
-          const common = { ...base, measure: measure.label, value: signal.value, ago: signal.ago, high, provisional };
-          if (signal.rules.includes("beyond3")) items.push({ ...common, severity: "out", kind: "beyond3", limit: high ? control.ucl : control.lcl });
-          else items.push({ ...common, severity: "warn", kind: "rule", signals: signal.rules });
+          // ในเส้นนิ่ง = SD ของชุดนั้นไม่เกิน UCL ของ SD ในประวัติ (ไม่รู้ = null) ใช้บอกสาเหตุที่ควรตรวจตามลำดับของหนังสือ
+          const strandStable = isNumber(signal.sd) && isNumber(control.sdUcl) ? signal.sd <= control.sdUcl : null;
+          const common = { ...base, measure: measure.label, key: measure.key, value: signal.value, ago: signal.ago, high, center: control.mean, provisional, strandStable, signals: signal.rules };
+          if (signal.beyondBand) items.push({ ...common, severity: "out", kind: "outOfBand", band: control.band });
+          else items.push({ ...common, severity: "warn", kind: "rule" });
         }
         if (control.sdHigh) items.push({ ...base, severity: "warn", kind: "sdHigh", measure: measure.label, value: control.latestSd, limit: control.sdUcl, provisional });
       }
       if (!health.uniform) items.push({ ...base, severity: "info", kind: "mixed" });
+      if (health.otherTestRows) items.push({ ...base, severity: "info", kind: "otherTest", count: health.otherTestRows });
       if (health.missingAvg?.count && health.missingAvg.oldest && health.missingAvg.oldest < today) {
         items.push({ ...base, severity: "info", kind: "missingAvg", count: health.missingAvg.count });
       }
@@ -601,7 +634,35 @@
         items.push({ ...base, severity: "info", kind: "overdue", days: since });
       }
     }
-    return items.sort((a, b) => SEVERITY[a.severity] - SEVERITY[b.severity] || byName(a, b));
+    return [...items, ...machineItems(list, today)].sort((a, b) => SEVERITY[a.severity] - SEVERITY[b.severity] || byName(a, b));
+  }
+
+  // ตรวจเครื่อง: วันเดียวกัน หลายวัสดุ (อย่างน้อย 3) มีค่าเฉลี่ย MV ของชุดเลื่อนเกิน 2σ ไปทางเดียวกัน = ควรสงสัยเครื่องก่อนกระบวนการ
+  // (อุณหภูมิ preheat น้ำหนักชิ้น) และตรวจด้วยยางอ้างอิง ดูเฉพาะชุดในช่วง 14 วันล่าสุดของวัสดุที่มีเส้นควบคุม
+  // คืนรายการ { material: "", severity: "warn", kind: "machine", date, high, materials } เรียงวันใหม่ก่อน
+  const MACHINE_MIN_MATERIALS = 3;
+  const MACHINE_DAYS = 14;
+  function machineItems(materials, today) {
+    const since = shiftDate(today, -MACHINE_DAYS);
+    const byDay = new Map();
+    for (const item of materials) {
+      const control = item?.health?.mv;
+      if (!control || !["ready", "provisional"].includes(control.level) || !(control.sigma > 0) || !Array.isArray(control.recentDates)) continue;
+      control.recent.forEach((value, index) => {
+        const date = control.recentDates[index];
+        const z = (value - control.mean) / control.sigma;
+        if (!date || !since || date < since || date > today || Math.abs(z) <= 2) return;
+        const key = `${date}|${z > 0 ? "high" : "low"}`;
+        byDay.set(key, new Set([...(byDay.get(key) ?? []), item.material]));
+      });
+    }
+    return [...byDay.entries()]
+      .filter(([, names]) => names.size >= MACHINE_MIN_MATERIALS)
+      .map(([key, names]) => {
+        const [date, side] = key.split("|");
+        return { material: "", severity: "warn", kind: "machine", date, high: side === "high", materials: [...names].sort() };
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
   }
 
   const hasHealth = (materials) => Array.isArray(materials) && materials.some((item) => item?.health);
@@ -637,7 +698,7 @@
   // โซนของค่าเฉลี่ยรายชุดล่าสุด n ชุด (เก่า → ใหม่) ใช้ทำตารางสีภาพรวม: "out" | "warn" | "ok"
   function recentZones(control, count = SIGNAL_WINDOW) {
     if (!control?.recent || !(control.sigma > 0)) return [];
-    return control.recent.slice(-count).map((value) => ({ value, zone: zoneOf(zScore(value, control)) }));
+    return control.recent.slice(-count).map((value) => ({ value, zone: zoneFor(value, control) }));
   }
 
   // ลายนิ้วมือของข้อมูลที่แสดง ใช้ข้ามการวาดใหม่เมื่อรีเฟรชแล้วชีตไม่เปลี่ยน (FNV-1a 32 บิต พอสำหรับเทียบรอบต่อรอบ)
@@ -697,8 +758,8 @@
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
     buildSeries, describe, niceScale, dateMarks, monthOf, monthsOf, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate, formatMonth,
-    AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, ACTIVITY_DAYS, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES, SIGNAL_WINDOW,
-    sheetAverageFits, controlLimits, ruleSignals, latestSignal, zoneOf, materialHealth, daysBetween, todayInBangkok, shiftDate,
+    AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, ACTIVITY_DAYS, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES, SIGNAL_WINDOW, PRACTICAL_BAND_MU, VISCOSITY_MINUTES, MACHINE_MIN_MATERIALS, MACHINE_DAYS,
+    sheetAverageFits, controlLimits, ruleSignals, latestSignal, zoneOf, zoneFor, isViscosityTest, machineItems, materialHealth, daysBetween, todayInBangkok, shiftDate,
     nameIssues, attentionItems, hasHealth, activityByDay, controlMaterials, recentZones,
   };
   // Shared by the browser and the sync worker; one implementation of grouping/statistics.
