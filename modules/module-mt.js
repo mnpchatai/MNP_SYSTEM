@@ -262,6 +262,57 @@
     return { technicians, isOwningDeptManager, canAssign, isMyRepairJob, canStartWork, canFinishWork, canVerify, canRecordProgress };
   }
 
+  // กดการ์ด "เครื่องจักร" → popup ประวัติการซ่อมของเครื่องนั้น โหลดตอนกดเท่านั้น (RPC ตรวจสิทธิ์ที่ฐานข้อมูล)
+  // ปิดได้ด้วยปุ่ม ปิด, Esc, กดนอกกรอบ หรือเมื่อ hash เปลี่ยน (กดลิงก์ไปใบอื่น) และคืน focus ให้การ์ดที่กด
+  async function openMachineHistory(requestId, trigger) {
+    if (document.querySelector(".machine-history")) return;
+    const history = window.MNP_MT_MACHINE_HISTORY;
+    const label = trigger.querySelector(".request-fact-value")?.textContent.trim() ?? "";
+    const overlay = document.createElement("div");
+    overlay.className = "attachment-lightbox machine-history";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "machine-history-title");
+    overlay.innerHTML = `<div class="attachment-lightbox-panel machine-history-panel">
+      <header class="attachment-lightbox-bar">
+        <span class="attachment-lightbox-title" id="machine-history-title">ประวัติการซ่อม · ${escapeHtml(label)}</span>
+        <span class="attachment-lightbox-actions"><button class="btn secondary small" type="button" data-history-close>ปิด</button></span>
+      </header>
+      <div class="machine-history-body" aria-live="polite"><p class="machine-history-state">กำลังโหลด…</p></div>
+    </div>`;
+    const body = overlay.querySelector(".machine-history-body");
+
+    function close() {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("hashchange", close);
+      document.body.classList.remove("no-scroll");
+      if (trigger.isConnected) trigger.focus();
+    }
+    function onKeyDown(event) {
+      if (event.key === "Escape") close();
+    }
+    // กดลิงก์ไปใบอื่นเปลี่ยน hash อยู่แล้ว popup จึงปิดผ่าน hashchange ไม่ต้องปิดในตัวจัดการคลิกที่นี่
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay || event.target.closest("[data-history-close]")) close();
+    });
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("hashchange", close);
+    document.body.classList.add("no-scroll");
+    document.body.append(overlay);
+    overlay.querySelector("[data-history-close]").focus();
+
+    try {
+      const { data, error } = await sb.rpc("app_get_machine_repair_history", { p_request_id: requestId });
+      if (error) throw error;
+      if (!overlay.isConnected) return;
+      body.innerHTML = history.listHtml(history.normalizeRows(data), { escapeHtml, formatDate, statusBadge, docTypeLabels });
+    } catch (error) {
+      if (!overlay.isConnected) return;
+      body.innerHTML = `<p class="machine-history-state error">${escapeHtml(history.errorMessage(error, friendlyError))}</p>`;
+    }
+  }
+
   // กำหนดเสร็จ: ช่างในชุด/ผจก.เจ้าของงานแก้วันที่คาดว่าจะเสร็จได้ระหว่างรอเริ่มงานหรือกำลังซ่อม
   // เลยกำหนดแล้ว (หลังวันกำหนดเสร็จ) ระบบเตือนช่างทุกรอบ 08:30/13:30 จนกว่าจะจบงานหรือแก้วันที่ใหม่
   // ทุกการแก้วันที่ถูกบันทึกเป็นประวัติ "แก้ไขจากกำหนดเสร็จเดิม ... เป็นวันที่ ..." ในลำดับเหตุการณ์
@@ -577,7 +628,11 @@
             { icon: "◎", tone: "success", wide: assignedTechIds.length > 1 }),
           requestFact("ประเภทเอกสาร", docTypeLabels[request.doc_type] ?? request.doc_type ?? "—", { icon: "▤", tone: "violet" }),
           ...(request.received_by_name ? [requestFact("ผู้จัดการที่รับใบ", request.received_by_name, { icon: "✓", tone: "cyan" })] : []),
-          requestFact("เครื่องจักร", `${request.machine_code ?? "—"}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${request.machine_name}` : ""}`, { icon: "⚙", tone: "slate" }),
+          requestFact("เครื่องจักร", `${request.machine_code ?? "—"}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${request.machine_name}` : ""}`, {
+            icon: "⚙",
+            tone: "slate",
+            ...(window.MNP_MT_MACHINE_HISTORY.hasMachineHistory(request) ? { action: "machine-history", actionLabel: "ดูประวัติการซ่อมของเครื่องนี้" } : {}),
+          }),
           requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "◉", tone: "cyan" }),
           requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "↗", tone: request.is_urgent ? "danger" : "success" }),
           ...(request.needed_date ? [requestFact("วันที่ต้องการใช้งาน", formatDate(request.needed_date), { icon: "◷", tone: "violet" })] : []),
@@ -613,6 +668,7 @@
     },
 
     bindDetail({ id, params, employee }) {
+      document.querySelector('[data-fact-action="machine-history"]')?.addEventListener("click", (event) => openMachineHistory(id, event.currentTarget));
       document.querySelector("#assign-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;

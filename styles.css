@@ -831,6 +831,11 @@ tbody tr:hover { background: var(--shell); }
 .request-fact-violet { --fact-accent: #7c3aed; }
 .request-fact-cyan { --fact-accent: #0891b2; }
 .request-fact-slate { --fact-accent: #64748b; }
+/* การ์ดที่กดได้ (requestFact ตัวเลือก action) เป็นปุ่ม: ล้างสไตล์ปุ่ม แล้วใช้หน้าตาการ์ดเดิม + ลูกศรบอกว่ากดต่อได้ */
+button.request-fact { width: 100%; appearance: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.request-fact.is-action { grid-template-columns: 38px minmax(0, 1fr) auto; }
+.request-fact-chevron { color: var(--fact-accent); font-size: 22px; font-weight: 700; line-height: 1; }
+.request-fact.is-action:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 :root[data-theme="dark"] .request-overview-card { background: linear-gradient(145deg, var(--paper), color-mix(in srgb, var(--primary-soft) 34%, var(--paper))); }
 :root[data-theme="dark"] .request-fact { box-shadow: 0 5px 14px rgba(0, 0, 0, .16); }
 .definition-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -881,6 +886,24 @@ body.no-scroll { overflow: hidden; }
 .attachment-lightbox-fallback { padding: 38px 20px; display: grid; gap: 12px; justify-items: center; color: var(--muted); font-size: 13px; text-align: center; }
 .attachment-lightbox-fallback p { margin: 0; }
 .attachment-lightbox-nav { padding: 9px 12px; display: flex; align-items: center; justify-content: center; gap: 12px; border-top: 1px solid var(--line); }
+/* popup ประวัติการซ่อมของเครื่องจักร (modules/module-mt.js openMachineHistory) ใช้กรอบเดียวกับ lightbox ไฟล์แนบ */
+.machine-history-panel { width: min(720px, 100%); }
+.machine-history-body { flex: 1; min-height: 0; padding: 12px; overflow: auto; background: var(--shell); }
+.machine-history-state { margin: 0; padding: 28px 12px; color: var(--muted); font-size: 13px; text-align: center; }
+.machine-history-state.error { color: var(--danger); }
+.machine-history-list { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
+.machine-history-item { padding: 12px 14px; display: grid; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
+.machine-history-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.machine-history-no { color: var(--ink); font-size: 14px; font-weight: 700; }
+a.machine-history-no { color: var(--primary); text-decoration: none; }
+a.machine-history-no:hover { text-decoration: underline; }
+.machine-history-type { color: var(--muted); font-size: 12px; }
+.machine-history-date { margin-left: auto; color: var(--quiet); font-size: 12px; }
+.machine-history-text { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.machine-history-details { margin: 0; display: grid; gap: 4px; }
+.machine-history-details > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; font-size: 13px; }
+.machine-history-details dt { color: var(--quiet); font-weight: 700; }
+.machine-history-details dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; white-space: pre-line; }
 
 .approval-layout { display: grid; grid-template-columns: 350px minmax(0,1fr); min-height: 580px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .approval-list { background: var(--shell); border-right: 1px solid var(--line); }
@@ -970,6 +993,7 @@ body.no-scroll { overflow: hidden; }
   .request-summary-text { padding: 12px 13px 14px 17px; font-size: 15px; }
   .request-facts { padding: 14px 16px 16px; gap: 8px; }
   .request-fact { min-height: 84px; padding: 11px; grid-template-columns: 32px minmax(0, 1fr); gap: 9px; }
+  .request-fact.is-action { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .request-fact-icon { width: 32px; height: 32px; border-radius: 9px; font-size: 14px; }
   .request-fact-label { font-size: 10.5px; }
   .request-fact-value { font-size: 13px; }
