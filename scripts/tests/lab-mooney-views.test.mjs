@@ -796,7 +796,7 @@ test("the trend grid draws one small chart per formula on the window's date axis
   assert.match(html, /<span class="lab-trend-foot"><span>45 ชุด<\/span><span>σ 0\.50<\/span><\/span>/);
   assert.match(html, /เส้นชั่วคราว · 12 ชุด/);
   assert.match(views.trendGrid([trendItem({ limits: null, level: "insufficient", mhJump: { value: 1 } })], { since: "2026-10-01", today: "2026-10-14", width: 240 }), /<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH<\/span>[\s\S]*<span>ยังไม่มีเส้นควบคุม<\/span><span><\/span>/);
-  assert.match(views.trendGrid([], {}), /ไม่มีสูตรที่ทดสอบในช่วงนี้/);
+  assert.match(views.trendGrid([], {}), /ยังไม่มีสูตรที่มีผลทดสอบ/);
   const svg = chart.dailyChart({ daily: trendItem().daily, limits: control(), since: "2026-10-01", today: "2026-10-14", width: 240, label: "B0005" });
   assert.match(svg, /^<svg class="lab-dc" width="240" height="88" viewBox="0 0 240 88" role="img" aria-label="B0005 MV รายวัน 2 วัน ล่าสุด 14\/10\/2026 46\.5 เส้นกลาง 40"/);
   assert.match(svg, /<rect class="lab-dc-band" x="30"/);
@@ -821,7 +821,7 @@ test("the trend grid draws one small chart per formula on the window's date axis
 test("cards of formulas outside the window show their latest date, and other tests draw their batch averages without limits", () => {
   const older = views.trendGrid([trendItem({ mode: "older", since: "2026-08-31", lastTested: "2026-10-14" })], { since: "2026-10-01", today: "2026-10-14", width: 240 });
   assert.match(older, /<button type="button" class="lab-trend is-stale" data-material="B0005"/);
-  assert.match(older, /<span class="lab-trend-flags"><span class="lab-flag is-none" title="ไม่มีผลในช่วงที่เลือก">ล่าสุด 14\/10<\/span><\/span>/);
+  assert.match(older, /<span class="lab-trend-flags"><span class="lab-flag is-none" title="ไม่มีผลในช่วงที่เลือก · ทดสอบล่าสุด 14\/10\/2026">ล่าสุด 14\/10<\/span><\/span>/);
   assert.match(older, /<text class="lab-tick" x="30" y="[\d.]+">31\/08<\/text>/, "its axis starts where the stored mill days start");
   assert.doesNotMatch(older, /เกิน ±5/, "an old day's status is not shown as today's");
   const batches = views.trendGrid([{ material: XSS, mode: "batches", batches: [20.1, 21.1, 20.5], otherTest: true, lastTested: "2026-10-02", level: "otherTest", count: 0, limits: null }], { since: "2026-10-01", today: "2026-10-14", width: 240 });

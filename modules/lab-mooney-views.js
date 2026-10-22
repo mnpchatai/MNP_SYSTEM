@@ -224,7 +224,7 @@
   //   สูตรที่ไม่มีผลในช่วง (mode "older") ป้ายหัว = วันทดสอบล่าสุด กราฟใช้แกนวันที่ของช่วงที่ตัวซิงก์เก็บ
   //   สูตรที่ไม่มีแถวรายโม่ (mode "batches") กราฟ = ค่าเฉลี่ย MV รายชุดล่าสุด (chart.batchChart) ไม่มีเส้นควบคุม
   function trendGrid(trend, { since, today, width } = {}) {
-    if (!trend.length) return `<p class="lab-dash-empty">ไม่มีสูตรที่ทดสอบในช่วงนี้</p>`;
+    if (!trend.length) return `<p class="lab-dash-empty">ยังไม่มีสูตรที่มีผลทดสอบ</p>`;
     return trend.map((item) => {
       const level = item.otherTest ? "การทดสอบอื่น · ไม่มีเส้นควบคุม"
         : item.level === "ready" ? `${int(item.count)} ชุด`
@@ -232,7 +232,7 @@
       const lastDate = item.mode === "older" ? item.latest.date : item.lastTested;
       const flags = item.mode === "window" || !item.mode
         ? `${item.mhJump ? `<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH</span>` : ""}${dayFlag(item.latest.status)}`
-        : lastDate ? `<span class="lab-flag is-none" title="ไม่มีผลในช่วงที่เลือก">ล่าสุด ${esc(model.formatShortDate(lastDate))}</span>` : "";
+        : lastDate ? `<span class="lab-flag is-none" title="ไม่มีผลในช่วงที่เลือก · ทดสอบล่าสุด ${esc(model.formatDate(lastDate))}">ล่าสุด ${esc(model.formatShortDate(lastDate))}</span>` : "";
       const plot = item.mode === "batches"
         ? chart.batchChart({ values: item.batches, width, label: item.material }) || `<span class="lab-trend-empty">ไม่มีค่า MV ให้วาด</span>`
         : chart.dailyChart({ daily: item.daily, limits: item.limits, since: item.since ?? since, today, width, label: item.material });

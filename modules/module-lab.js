@@ -264,6 +264,9 @@
         tipFor = point;
         tip.textContent = point.dataset.tip;
       }
+      // วัดขนาดที่มุมซ้ายบน: ตำแหน่งเดิมชิดขอบขวาทำให้ข้อความตัดบรรทัดและวัดได้แคบ/สูงเกินจริง
+      tip.style.left = "0px";
+      tip.style.top = "0px";
       tip.hidden = false;
       const box = point.getBoundingClientRect();
       const outer = frame.getBoundingClientRect();
