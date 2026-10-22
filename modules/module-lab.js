@@ -163,8 +163,9 @@
   function bindDashboard() {
     const bar = bindLiveBar();
     const mooney = document.querySelector("#lab-dash-mooney");
-    // picked = ผู้ใช้กดเลือกสูตรเอง (คงไว้) · ไม่ได้เลือก = สูตรแรกของรายการแนวโน้ม (ต้องดูก่อนสุด) เปลี่ยนตามข้อมูลใหม่
-    const view = { mode: "", key: "mv", days: model.DASH_DEFAULT_DAYS, material: null, picked: false, materials: [], trend: [], today: "", plotWidth: 0, trendWidth: 0 };
+    // picked = ผู้ใช้กดเลือกสูตรเอง (คงไว้) · ไม่ได้เลือก = สูตรที่ต้องดูก่อนสุด (trend[0]) เปลี่ยนตามข้อมูลใหม่
+    // trend = สูตรที่มีผลในช่วง เรียงจากที่ต้องดูก่อน (การ์ดวันล่าสุด รายการต้องดูก่อน) · cards = กราฟเล็กทุกสูตร เรียงตามชื่อ
+    const view = { mode: "", key: "mv", days: model.DASH_DEFAULT_DAYS, material: null, picked: false, materials: [], trend: [], cards: [], today: "", plotWidth: 0, trendWidth: 0 };
     const painted = new Map();
     const paintInto = (selector, html) => {
       if (painted.get(selector) === html) return;
@@ -209,13 +210,14 @@
 
     function paintTrends() {
       view.trendWidth = trendWidth();
-      paintInto("#lab-trends", views.trendGrid(view.trend, { since: model.windowSince(view.today, view.days), today: view.today, width: view.trendWidth }));
+      paintInto("#lab-trends", views.trendGrid(view.cards, { since: model.windowSince(view.today, view.days), today: view.today, width: view.trendWidth }));
     }
 
     function paintAll() {
       view.trend = model.trendItems(view.materials, view.today, view.days);
-      const names = view.trend.map((item) => item.material);
-      if (!view.picked || !names.includes(view.material)) view.material = view.trend[0]?.material ?? null;
+      view.cards = model.trendCards(view.materials, view.today, view.days, view.trend);
+      const names = view.cards.map((item) => item.material);
+      if (!view.picked || !names.includes(view.material)) view.material = view.trend[0]?.material ?? view.cards[0]?.material ?? null;
       paintInto("#lab-machine", views.machineBanner(model.machineItems(view.materials, view.today)));
       paintInto("#lab-today", views.todayStrip({ cards: model.latestCards(view.trend), attention: model.dashAttention(view.trend, view.materials, view.today), days: view.days }));
       paintTrends();
@@ -247,6 +249,46 @@
       }
     });
 
+    // tooltip ของจุดบนกราฟเล็กและกราฟเจาะลึก: ข้อความจาก data-tip ขึ้นทันทีเมื่อชี้ (เมาส์) หรือแตะ (iPhone) ซ่อนเมื่อชี้ออกหรือแตะที่อื่น
+    // #lab-dash-tip อยู่นอก #lab-dash-mooney (ไม่หายเมื่อวาดใหม่) วางแบบ absolute ใน .lab-dash-block จึงไม่ถูกตัดโดยกล่องที่ overflow: hidden
+    const tip = document.querySelector("#lab-dash-tip");
+    let tipFor = null;
+    const hideTip = () => {
+      tipFor = null;
+      if (tip) tip.hidden = true;
+    };
+    function showTip(point) {
+      const frame = tip?.parentElement;
+      if (!frame) return;
+      if (point !== tipFor) {
+        tipFor = point;
+        tip.textContent = point.dataset.tip;
+      }
+      // วัดขนาดที่มุมซ้ายบน: ตำแหน่งเดิมชิดขอบขวาทำให้ข้อความตัดบรรทัดและวัดได้แคบ/สูงเกินจริง
+      tip.style.left = "0px";
+      tip.style.top = "0px";
+      tip.hidden = false;
+      const box = point.getBoundingClientRect();
+      const outer = frame.getBoundingClientRect();
+      const left = Math.min(Math.max(0, box.left - outer.left + box.width / 2 - tip.offsetWidth / 2), frame.clientWidth - tip.offsetWidth);
+      const above = box.top - outer.top - tip.offsetHeight - 8;
+      tip.style.left = `${Math.round(Math.max(0, left))}px`;
+      tip.style.top = `${Math.round(above >= 0 ? above : box.bottom - outer.top + 8)}px`;
+    }
+    const tipTarget = (target) => (target instanceof Element ? target.closest("[data-tip]") : null);
+    mooney.addEventListener("pointerover", (event) => {
+      const point = tipTarget(event.target);
+      if (point) showTip(point);
+    });
+    mooney.addEventListener("pointerout", (event) => {
+      if (event.pointerType === "mouse" && tipFor && tipTarget(event.relatedTarget) !== tipFor) hideTip();
+    });
+    // แตะ: pointerover ของจุดแสดงแล้ว แตะที่อื่นของหน้า (นอกจุดใดๆ) ซ่อน
+    const onPointerDown = (event) => {
+      if (!tipTarget(event.target)) hideTip();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+
     // กราฟกว้างตามกล่อง: วาดใหม่เมื่อความกว้างเปลี่ยน (หมุนจอ ย่อ/ขยายหน้าต่าง เปิด/ปิดเมนูข้าง)
     let frame = 0;
     const observer = typeof ResizeObserver === "function"
@@ -271,6 +313,8 @@
       dispose() {
         observer?.disconnect();
         window.cancelAnimationFrame(frame);
+        document.removeEventListener?.("pointerdown", onPointerDown);
+        hideTip();
       },
       update(feed) {
         bar.paintMeta(feed);

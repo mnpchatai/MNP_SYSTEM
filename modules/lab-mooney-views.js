@@ -48,6 +48,7 @@
       <section class="lab-dash-block" aria-labelledby="lab-dash-mooney-title">
         <div class="lab-dash-head"><h2 class="lab-dash-title" id="lab-dash-mooney-title">Mooney</h2>${liveBar(seconds)}</div>
         <div id="lab-dash-mooney"></div>
+        <div class="lab-tip lab-dash-tip" id="lab-dash-tip" role="tooltip" hidden></div>
       </section>
     </div>`;
   }
@@ -82,7 +83,7 @@
     mv: "MV = ความหนืด Mooney ที่อ่านตอนจบเทส เทียบ ML(1+4)",
     mh: "MH = ค่าสูงสุดช่วงต้นกราฟ Mooney (ไม่ใช่ MH ของ cure curve จาก MDR)",
   });
-  const TREND_NOTE = `จุด = ค่าเฉลี่ย MV ของวัน (ถ่วงด้วยจำนวนชิ้น) · ขีดตั้ง = ค่าเฉลี่ยโม่ต่ำสุดถึงสูงสุดในวันนั้น · แถบ = เส้นกลางของสูตร ±${model.PRACTICAL_BAND_MU} MU · เรียงจากสูตรที่ต้องดูก่อน · กดเพื่อเจาะลึก`;
+  const TREND_NOTE = `จุด = ค่าเฉลี่ย MV ของวัน (ถ่วงด้วยจำนวนชิ้น) · ขีดตั้ง = ค่าเฉลี่ยโม่ต่ำสุดถึงสูงสุดในวันนั้น · แถบ = เส้นกลางของสูตร ±${model.PRACTICAL_BAND_MU} MU · เรียงตามชื่อสูตร · สูตรที่ไม่มีผลในช่วงแสดงผลล่าสุดที่มี · ชี้/แตะจุดเพื่อดูค่า · กดเพื่อเจาะลึก`;
   const BIAS_NOTE = "ΔMV = ค่าเฉลี่ยของโม่ลบมัธยฐานของสูตรเดียวกันในวันนั้น เฉลี่ยทุกวันในช่วงที่มี ≥ 2 โม่ · ตัวเลขเล็ก = จำนวนวัน · "
     + "แถว “ทุกสูตร” = โม่ที่เอียงทางเดียวในหลายสูตร → ตรวจเครื่อง/การตั้งโม่ ไม่ใช่สูตร · เฉพาะสูตรเดียว → ยางดิบ การชั่ง สภาวะผสมของโม่นั้น";
   const UNIFORM_NOTE = `SD ของ MV หัว-กลาง-ท้ายในเส้นเดียวกัน เฉลี่ยทุกเส้นของโม่นั้นในช่วง · ตัวเลขเล็ก = จำนวนเส้น · ▲ = มีเส้นที่ SD > ${model.STRAND_SD_HIGH} MU `
@@ -219,15 +220,25 @@
       </li>`;
   }
 
-  // 2 กราฟเล็กต่อสูตร (model.trendItems): ปุ่มละสูตร หัว = ชื่อ + ป้ายสถานะ (+ MH) · กราฟ chart.dailyChart · ท้าย = ระดับเส้นควบคุมและ σ
+  // 2 กราฟเล็กต่อสูตร (model.trendCards เรียงตามชื่อ): ปุ่มละสูตร หัว = ชื่อ + ป้ายสถานะ (+ MH) · กราฟ chart.dailyChart · ท้าย = ระดับเส้นควบคุมและ σ
+  //   สูตรที่ไม่มีผลในช่วง (mode "older") ป้ายหัว = วันทดสอบล่าสุด กราฟใช้แกนวันที่ของช่วงที่ตัวซิงก์เก็บ
+  //   สูตรที่ไม่มีแถวรายโม่ (mode "batches") กราฟ = ค่าเฉลี่ย MV รายชุดล่าสุด (chart.batchChart) ไม่มีเส้นควบคุม
   function trendGrid(trend, { since, today, width } = {}) {
-    if (!trend.length) return `<p class="lab-dash-empty">ไม่มีสูตรที่ทดสอบในช่วงนี้</p>`;
+    if (!trend.length) return `<p class="lab-dash-empty">ยังไม่มีสูตรที่มีผลทดสอบ</p>`;
     return trend.map((item) => {
-      const level = item.level === "ready" ? `${int(item.count)} ชุด`
-        : item.level === "provisional" ? `เส้นชั่วคราว · ${int(item.count)} ชุด` : "ยังไม่มีเส้นควบคุม";
-      return `<button type="button" class="lab-trend" data-material="${esc(item.material)}" aria-pressed="false">
-        <span class="lab-trend-head"><b>${esc(item.material)}</b><span class="lab-trend-flags">${item.mhJump ? `<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH</span>` : ""}${dayFlag(item.latest.status)}</span></span>
-        ${chart.dailyChart({ daily: item.daily, limits: item.limits, since, today, width, label: item.material })}
+      const level = item.otherTest ? "การทดสอบอื่น · ไม่มีเส้นควบคุม"
+        : item.level === "ready" ? `${int(item.count)} ชุด`
+          : item.level === "provisional" ? `เส้นชั่วคราว · ${int(item.count)} ชุด` : "ยังไม่มีเส้นควบคุม";
+      const lastDate = item.mode === "older" ? item.latest.date : item.lastTested;
+      const flags = item.mode === "window" || !item.mode
+        ? `${item.mhJump ? `<span class="lab-flag is-warn" title="MH ห่างปกติของสูตรมาก">MH</span>` : ""}${dayFlag(item.latest.status)}`
+        : lastDate ? `<span class="lab-flag is-none" title="ไม่มีผลในช่วงที่เลือก · ทดสอบล่าสุด ${esc(model.formatDate(lastDate))}">ล่าสุด ${esc(model.formatShortDate(lastDate))}</span>` : "";
+      const plot = item.mode === "batches"
+        ? chart.batchChart({ values: item.batches, width, label: item.material }) || `<span class="lab-trend-empty">ไม่มีค่า MV ให้วาด</span>`
+        : chart.dailyChart({ daily: item.daily, limits: item.limits, since: item.since ?? since, today, width, label: item.material });
+      return `<button type="button" class="lab-trend${item.mode && item.mode !== "window" ? " is-stale" : ""}" data-material="${esc(item.material)}" aria-pressed="false">
+        <span class="lab-trend-head"><b>${esc(item.material)}</b><span class="lab-trend-flags">${flags}</span></span>
+        ${plot}
         <span class="lab-trend-foot"><span>${esc(level)}</span><span>${item.limits ? `σ ${esc(reading(item.limits.sigma))}` : ""}</span></span>
       </button>`;
     }).join("");

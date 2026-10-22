@@ -767,6 +767,33 @@ test("trend items rank the formula to look at first, flag a jump in MH and feed 
   assert.equal(model.trendItems(materials, "2026-12-31", 14).length, 0);
 });
 
+test("trend cards list every formula by name: in-range ones as in the trend, older ones from the stored mill days, and other tests from their batch averages", () => {
+  const today = "2026-10-14";
+  const scorch = (date, time, mv) => [0, 1, 2].map((index) => feedRow({
+    source_sheet: "E00030S B", material: "E00030S B", sample_id: String(111 + index), test_date: date, test_time: `${time}:0${index}`,
+    temperature_c: 120, test_minutes: 5, mv: mv + index * 0.1, avg_mv: mv + 0.1, sd_mv: 0.1, mh: 60, avg_mh: 60, sd_mh: 0,
+  }));
+  const materials = summaryOf([
+    ...dashboardRows(today),
+    ...millDay({ material: "A1802", date: "2026-09-20", mills: { 1: 31, 2: 31.4 } }),
+    ...scorch("2026-10-01", "08:00", 20), ...scorch("2026-10-02", "08:00", 21),
+  ]);
+  const trend = model.trendItems(materials, today, 14);
+  assert.deepEqual(trend.map((item) => item.material), ["B0005", "B0008", "A2004", "C1301"], "the attention order is unchanged");
+  const cards = model.trendCards(materials, today, 14, trend);
+  assert.deepEqual(cards.map((card) => [card.material, card.mode]), [
+    ["A1802", "older"], ["A2004", "window"], ["B0005", "window"], ["B0008", "window"], ["C1301", "window"], ["E00030S B", "batches"],
+  ], "every formula, A to Z, none dropped for being outside the window or another test");
+  assert.equal(cards[1].latest, trend[2].latest, "an in-range card is the trend item");
+  assert.equal(cards[1].since, "2026-10-01");
+  assert.deepEqual([cards[0].since, cards[0].latest.date, cards[0].latest.mv, cards[0].lastTested], ["2026-08-31", "2026-09-20", 31.2, "2026-09-20"]);
+  assert.deepEqual([cards[5].otherTest, cards[5].limits, cards[5].batches], [true, null, [20.1, 21.1]]);
+  assert.deepEqual(model.trendCards(materials, today, 14).map((card) => card.material), cards.map((card) => card.material), "the trend is computed when not passed");
+  assert.deepEqual(model.trendCards([{ material: "old", lastTested: "2026-01-02", trendMv: [40, null, 41] }], today, 14),
+    [{ lastTested: "2026-01-02", otherTest: false, material: "old", mode: "batches", batches: [40, 41], level: "insufficient", count: 0, limits: null }], "a summary without health still gets a card");
+  assert.deepEqual(model.trendCards(null, today, 14), []);
+});
+
 test("a day whose mills disagree is a warning with the spread, and a day beyond 3 sigma but inside 5 MU is a rule warning", () => {
   const today = "2026-10-14";
   const rows = [...healthRows(steady(44), { material: "B0005" }), ...millDay({ material: "B0005", date: today, mills: { 1: 40, 2: 44 }, mh: (mv) => mv + 20 })];
