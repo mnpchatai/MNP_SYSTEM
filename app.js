@@ -824,15 +824,26 @@ function statusBadge(status) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabels[status] ?? status)}</span>`;
 }
 
-function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "" } = {}) {
+// action: การ์ดที่กดได้ (เช่น เครื่องจักร → ประวัติการซ่อม) วาดเป็นปุ่ม ให้โมดูลผูก click ด้วย data-fact-action
+// คำอธิบายปุ่มอยู่ใน title/aria-label ตามกติกา "ไม่ใส่ข้อความอธิบายถาวรบนจอ"
+function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "", action = "", actionLabel = "" } = {}) {
   const classes = ["request-fact", `request-fact-${tone}`, wide ? "wide" : ""].filter(Boolean).join(" ");
   const valueClasses = ["request-fact-value", valueClass].filter(Boolean).join(" ");
-  return `<div class="${escapeHtml(classes)}">
-    <span class="request-fact-icon" aria-hidden="true">${escapeHtml(icon)}</span>
-    <div class="request-fact-copy">
+  // <button> ใส่ได้แค่ phrasing content จึงใช้ span แทน div (สไตล์อยู่ที่ class .request-fact-copy ทั้งคู่)
+  const copyTag = action ? "span" : "div";
+  const body = `<span class="request-fact-icon" aria-hidden="true">${escapeHtml(icon)}</span>
+    <${copyTag} class="request-fact-copy">
       <span class="request-fact-label">${escapeHtml(label)}</span>
       <strong class="${escapeHtml(valueClasses)}">${escapeHtml(value ?? "—")}</strong>
-    </div>
+    </${copyTag}>`;
+  if (action) {
+    return `<button type="button" class="${escapeHtml(`${classes} is-action`)}" data-fact-action="${escapeHtml(action)}" aria-haspopup="dialog" title="${escapeHtml(actionLabel)}" aria-label="${escapeHtml(`${label}: ${value ?? "—"} — ${actionLabel}`)}">
+    ${body}
+    <span class="request-fact-chevron" aria-hidden="true">›</span>
+  </button>`;
+  }
+  return `<div class="${escapeHtml(classes)}">
+    ${body}
   </div>`;
 }
 
