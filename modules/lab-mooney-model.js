@@ -409,9 +409,9 @@
     return { mean, sigma, ucl: mean + 3 * sigma, lcl: mean - 3 * sigma };
   }
 
-  // กฎ Western Electric ที่จุดล่าสุด (จุดล่าสุดต้องเป็นส่วนหนึ่งของรูปแบบ สัญญาณของจุดเก่าแจ้งไปแล้วในรอบก่อน):
-  //   beyond3 = จุดล่าสุดเกิน 3σ · twoOfThree = 2 ใน 3 จุดล่าสุดเกิน 2σ ข้างเดียวกัน
-  //   fourOfFive = 4 ใน 5 จุดล่าสุดเกิน 1σ ข้างเดียวกัน · eightSameSide = 8 จุดล่าสุดอยู่ข้างเดียวกันของเส้นกลาง
+  // กฎ Western Electric ที่จุดสุดท้ายของ values (จุดนั้นต้องเป็นส่วนหนึ่งของรูปแบบ จึงรายงานรูปแบบหนึ่งครั้งที่จุดที่ทำให้ครบ):
+  //   beyond3 = จุดเกิน 3σ · twoOfThree = 2 ใน 3 จุดเกิน 2σ ข้างเดียวกัน
+  //   fourOfFive = 4 ใน 5 จุดเกิน 1σ ข้างเดียวกัน · eightSameSide = 8 จุดอยู่ข้างเดียวกันของเส้นกลาง
   const RULES = Object.freeze(["beyond3", "twoOfThree", "fourOfFive", "eightSameSide"]);
   function ruleSignals(values, limits) {
     const list = values.filter(isNumber);
@@ -431,29 +431,49 @@
     return signals;
   }
 
+  // สัญญาณล่าสุดภายใน window ชุดล่าสุด (ชุดเดียวกับที่ตารางสีของแดชบอร์ดแสดง) ไล่จากชุดใหม่ไปเก่า
+  // แดชบอร์ดไม่มีการแจ้งเตือนและไม่เก็บประวัติสัญญาณ จึงต้องยังเห็นชุดที่เกินเส้นแม้มีชุดปกติตามมาแล้ว
+  // คืน { ago (0 = ชุดล่าสุด), value, rules } หรือ null เมื่อไม่มีชุดใดในช่วงเข้ากฎ
+  const SIGNAL_WINDOW = 12;
+  function latestSignal(values, limits, window = SIGNAL_WINDOW) {
+    const list = values.filter(isNumber);
+    if (!limits) return null;
+    for (let ago = 0; ago < Math.min(window, list.length); ago += 1) {
+      const upto = list.slice(0, list.length - ago);
+      const rules = ruleSignals(upto, limits);
+      if (rules.length) return { ago, value: upto[upto.length - 1], rules };
+    }
+    return null;
+  }
+
   // ระดับความพร้อมของเส้นควบคุมจากจำนวนชุด
   const controlLevel = (count) => (count >= CONTROL_MIN_READY ? "ready" : count >= CONTROL_MIN_PROVISIONAL ? "provisional" : "insufficient");
 
   // เส้นควบคุมของค่าเฉลี่ยรายชุดหนึ่งค่า (MV หรือ MH) และความแกว่งในเส้น (SD ของหัว-กลาง-ท้ายในชุด) เทียบกับปกติของวัสดุนั้น
+  //   averages/sds = ค่าของชุดเดียวกันเรียงคู่กัน (sd ของชุดอาจเป็น null)
   //   level: "ready" | "provisional" | "insufficient" (ชุดไม่พอ) | "mixed" (สภาวะทดสอบไม่เท่ากัน เทียบกันตรง ๆ ไม่ได้) | "flat" (ทุกชุดเท่ากัน)
-  //   recent = ค่าเฉลี่ยรายชุดล่าสุด (เก่า → ใหม่) สำหรับวาดกราฟ, signals = กฎที่จุดล่าสุดเข้า, sdHigh = SD ของชุดล่าสุดเกิน UCL ของ SD ในประวัติ
+  //   recent = ค่าเฉลี่ยรายชุดล่าสุด (เก่า → ใหม่) สำหรับวาดกราฟ, signal = latestSignal
+  //   latestSd = SD ของชุดล่าสุดเอง (ไม่มี = null), sdHigh = SD นั้นเกิน UCL ของ SD ในประวัติ
+  // เส้นถูกปัด 4 ตำแหน่งก่อนใช้ตัดสิน เพื่อให้รายการ "ต้องดูก่อน" ตารางสี และกราฟ ตัดสินจากตัวเลขชุดเดียวกัน
   function measureControl(averages, sds, uniform) {
-    const count = averages.filter(isNumber).length;
+    const pairs = averages.map((average, index) => ({ average, sd: sds[index] })).filter((pair) => isNumber(pair.average));
+    const count = pairs.length;
     if (!uniform) return { level: "mixed", count };
     const level = controlLevel(count);
     if (level === "insufficient") return { level, count };
-    const limits = controlLimits(averages);
-    if (!limits) return { level: "flat", count };
-    const sdList = sds.filter(isNumber);
-    const sdLimits = controlLimits(sdList);
-    const latestSd = sdList.length ? sdList[sdList.length - 1] : null;
+    const raw = controlLimits(pairs.map((pair) => pair.average));
+    if (!raw) return { level: "flat", count };
+    const limits = { mean: round4(raw.mean), sigma: round4(raw.sigma), ucl: round4(raw.ucl), lcl: round4(raw.lcl) };
+    const values = pairs.map((pair) => round4(pair.average));
+    const sdLimits = controlLimits(pairs.map((pair) => pair.sd));
+    const latestSd = isNumber(pairs[count - 1].sd) ? round4(pairs[count - 1].sd) : null;
+    const sdUcl = sdLimits ? round4(sdLimits.ucl) : null;
     return {
-      level, count,
-      mean: round4(limits.mean), sigma: round4(limits.sigma), ucl: round4(limits.ucl), lcl: round4(limits.lcl),
-      recent: averages.filter(isNumber).slice(-CONTROL_RECENT).map(round4),
-      signals: ruleSignals(averages, limits),
-      latestSd, sdUcl: sdLimits ? round4(sdLimits.ucl) : null,
-      sdHigh: Boolean(sdLimits) && isNumber(latestSd) && latestSd > sdLimits.ucl,
+      level, count, ...limits,
+      recent: values.slice(-CONTROL_RECENT),
+      signal: latestSignal(values, limits),
+      latestSd, sdUcl,
+      sdHigh: isNumber(sdUcl) && isNumber(latestSd) && latestSd > sdUcl,
     };
   }
 
@@ -545,7 +565,8 @@
 
   // รายการ "ต้องดูก่อน" ของแดชบอร์ด เรียงจากรุนแรงสุด (out → warn → info) แล้วตามชื่อวัสดุ
   // แต่ละรายการ: { material, severity, kind, measure?, value?, limit?, signals?, count?, days?, others? }
-  //   out  = ค่าเฉลี่ยชุดล่าสุดเกิน 3σ ของประวัติ · warn = เข้ากฎ Western Electric ข้ออื่น หรือ SD ในเส้นสูงกว่าปกติ
+  //   out  = ค่าเฉลี่ยชุดหนึ่งใน 12 ชุดล่าสุดเกิน 3σ ของประวัติ (ago = กี่ชุดก่อน, high = เกินด้านบน)
+  //   warn = เข้ากฎ Western Electric ข้ออื่น หรือ SD ในเส้นของชุดล่าสุดสูงกว่าปกติ
   //   info = สภาวะทดสอบไม่เท่ากัน, ชุดที่ยังไม่มี AVG (ค้างมาก่อนวันนี้), ชื่อวัสดุที่ควรตรวจ, ไม่ได้ทดสอบนาน
   // วัสดุที่ไม่มี health (สรุปจากตัวซิงก์รุ่นก่อน) ถูกข้าม — ผู้เรียกตรวจ hasHealth ก่อนแสดง
   function attentionItems(materials, today) {
@@ -558,14 +579,16 @@
       const base = { material: item.material };
       for (const measure of MEASURES) {
         const control = health[measure.key];
-        if (!control?.signals) continue;
-        const value = control.recent[control.recent.length - 1];
-        if (control.signals.includes("beyond3")) {
-          items.push({ ...base, severity: "out", kind: "beyond3", measure: measure.label, value, limit: value > control.mean ? control.ucl : control.lcl, provisional: control.level === "provisional" });
-        } else if (control.signals.length) {
-          items.push({ ...base, severity: "warn", kind: "rule", measure: measure.label, value, signals: control.signals, provisional: control.level === "provisional" });
+        if (!control || !["ready", "provisional"].includes(control.level)) continue;
+        const provisional = control.level === "provisional";
+        const signal = control.signal;
+        if (signal) {
+          const high = signal.value > control.mean;
+          const common = { ...base, measure: measure.label, value: signal.value, ago: signal.ago, high, provisional };
+          if (signal.rules.includes("beyond3")) items.push({ ...common, severity: "out", kind: "beyond3", limit: high ? control.ucl : control.lcl });
+          else items.push({ ...common, severity: "warn", kind: "rule", signals: signal.rules });
         }
-        if (control.sdHigh) items.push({ ...base, severity: "warn", kind: "sdHigh", measure: measure.label, value: control.latestSd, limit: control.sdUcl, provisional: control.level === "provisional" });
+        if (control.sdHigh) items.push({ ...base, severity: "warn", kind: "sdHigh", measure: measure.label, value: control.latestSd, limit: control.sdUcl, provisional });
       }
       if (!health.uniform) items.push({ ...base, severity: "info", kind: "mixed" });
       if (health.missingAvg?.count && health.missingAvg.oldest && health.missingAvg.oldest < today) {
@@ -612,7 +635,7 @@
   }
 
   // โซนของค่าเฉลี่ยรายชุดล่าสุด n ชุด (เก่า → ใหม่) ใช้ทำตารางสีภาพรวม: "out" | "warn" | "ok"
-  function recentZones(control, count = 12) {
+  function recentZones(control, count = SIGNAL_WINDOW) {
     if (!control?.recent || !(control.sigma > 0)) return [];
     return control.recent.slice(-count).map((value) => ({ value, zone: zoneOf(zScore(value, control)) }));
   }
@@ -674,8 +697,8 @@
     formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
     buildSeries, describe, niceScale, dateMarks, monthOf, monthsOf, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate, formatMonth,
-    AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, ACTIVITY_DAYS, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES,
-    sheetAverageFits, controlLimits, ruleSignals, zoneOf, materialHealth, daysBetween, todayInBangkok, shiftDate,
+    AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, ACTIVITY_DAYS, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES, SIGNAL_WINDOW,
+    sheetAverageFits, controlLimits, ruleSignals, latestSignal, zoneOf, materialHealth, daysBetween, todayInBangkok, shiftDate,
     nameIssues, attentionItems, hasHealth, activityByDay, controlMaterials, recentZones,
   };
   // Shared by the browser and the sync worker; one implementation of grouping/statistics.

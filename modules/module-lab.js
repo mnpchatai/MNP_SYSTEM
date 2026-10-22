@@ -163,7 +163,8 @@
   function bindDashboard() {
     const bar = bindLiveBar();
     const mooney = document.querySelector("#lab-dash-mooney");
-    const view = { mode: "", key: "mv", material: null, materials: [], today: "", plotWidth: 0 };
+    // picked = ผู้ใช้เลือกวัสดุเอง (คงไว้) · ไม่ได้เลือก = ระบบเลือกให้ใหม่ทุกรอบ (วัสดุที่เกินเส้นควบคุมล่าสุดขึ้นมาเอง)
+    const view = { mode: "", key: "mv", material: null, picked: false, materials: [], today: "", plotWidth: 0 };
     const painted = new Map();
     const paintInto = (selector, html) => {
       if (painted.get(selector) === html) return;
@@ -173,10 +174,10 @@
       node.innerHTML = html;
     };
 
-    // วัสดุของกราฟ: ที่ผู้ใช้เลือกไว้ (ถ้ายังมีเส้นควบคุม) ไม่เช่นนั้นวัสดุแรกที่ "เกินเส้นควบคุม" แล้วจึงวัสดุที่มีประวัติมากสุด
+    // วัสดุของกราฟ: ที่ผู้ใช้เลือกเอง (ถ้ายังมีเส้นควบคุม) ไม่เช่นนั้นวัสดุแรกที่ "เกินเส้นควบคุม" แล้วจึงวัสดุที่มีประวัติมากสุด
     function chooseMaterial(candidates, attention) {
       const names = candidates.map((item) => item.material);
-      if (view.material && names.includes(view.material)) return view.material;
+      if (view.picked && names.includes(view.material)) return view.material;
       const flagged = attention.find((item) => item.severity === "out" && names.includes(item.material));
       return flagged?.material ?? names[0] ?? null;
     }
@@ -185,7 +186,9 @@
       const candidates = model.controlMaterials(view.materials);
       view.material = chooseMaterial(candidates, model.attentionItems(view.materials, view.today));
       mooney.querySelectorAll("[data-measure]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.measure === view.key)));
-      paintInto("#lab-zones", views.zoneGrid({ materials: view.materials, key: view.key, selected: view.material }));
+      // ตารางสีวาดใหม่เมื่อข้อมูล/ค่าเปลี่ยนเท่านั้น การเลือกวัสดุแค่สลับ aria-pressed บนปุ่มเดิม (โฟกัสคีย์บอร์ดไม่หลุด)
+      paintInto("#lab-zones", views.zoneGrid({ materials: view.materials, key: view.key, selected: null }));
+      mooney.querySelectorAll(".lab-zone-name").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.material === view.material)));
       const select = mooney.querySelector("#lab-control-select");
       const link = mooney.querySelector("#lab-control-link");
       const pick = mooney.querySelector(".lab-control-pick");
@@ -211,13 +214,16 @@
       const measure = event.target.closest("[data-measure]");
       const row = event.target.closest(".lab-zone-name");
       if (measure) view.key = measure.dataset.measure === "mh" ? "mh" : "mv";
-      else if (row) view.material = row.dataset.material;
-      else return;
+      else if (row) {
+        view.material = row.dataset.material;
+        view.picked = true;
+      } else return;
       paintControl();
     });
     mooney.addEventListener("change", (event) => {
       if (event.target.id !== "lab-control-select") return;
       view.material = event.target.value;
+      view.picked = true;
       paintControl();
     });
 

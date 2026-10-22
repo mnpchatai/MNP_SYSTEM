@@ -405,7 +405,7 @@ test("a material needs 10 batches for provisional limits and 40 for ready ones",
   const ready = summaryOf(healthRows(steady(45)))[0].health;
   assert.equal(ready.mv.level, "ready");
   assert.equal(ready.mv.recent.length, model.CONTROL_RECENT, "only the latest batches travel to the dashboard");
-  assert.deepEqual(ready.mv.signals, []);
+  assert.equal(ready.mv.signal, null);
   assert.equal(ready.mv.sdHigh, false);
   assert.equal(ready.mh.level, "ready");
   assert.ok(ready.mh.mean > ready.mv.mean + 19, "MH has its own limits");
@@ -414,9 +414,30 @@ test("a material needs 10 batches for provisional limits and 40 for ready ones",
 test("the latest batch outside 3 sigma, and a wide spread inside the strand, are flagged from the material's own history", () => {
   const averages = [...steady(44), 46];
   const health = summaryOf(healthRows(averages, { overrides: (batch, index) => (batch === 44 ? { mv: 46 + (index - 1) * 2, sd_mv: 2 } : {}) }))[0].health;
-  assert.ok(health.mv.signals.includes("beyond3"));
+  assert.deepEqual(health.mv.signal, { ago: 0, value: 46, rules: ["beyond3"] });
   assert.equal(health.mv.sdHigh, true, "SD 2.0 against a history of 0.2");
   assert.equal(health.mv.latestSd, 2);
+});
+
+test("a breach stays on the list for the 12 batches the grid shows, even after normal batches follow", () => {
+  // ไม่มีการแจ้งเตือนทางอื่น: ชุดที่เกินเส้นแล้วมีชุดปกติตามมาในวันเดียวกันต้องไม่หายจากรายการ
+  const values = [...steady(44), 46, 40, 40.1];
+  const limits = model.controlLimits(values);
+  assert.deepEqual(model.latestSignal(values, limits), { ago: 2, value: 46, rules: ["beyond3"] });
+  const health = summaryOf(healthRows(values))[0].health;
+  const items = model.attentionItems([{ material: "A2004", lastTested: "2026-10-01", health }], "2026-10-01");
+  assert.deepEqual(items.filter((item) => item.kind === "beyond3").map((item) => [item.measure, item.ago, item.high]), [["MV", 2, true], ["MH", 2, true]]);
+  const later = [...values, ...steady(12)];
+  assert.equal(model.latestSignal(later, model.controlLimits(later)), null, "after 12 more batches it has left the grid and the list");
+  assert.equal(model.latestSignal(values, null), null);
+});
+
+test("the strand SD is the latest batch's own, never a borrowed older value", () => {
+  // ชุดล่าสุดมี AVG แต่ไม่มี SD: ต้องไม่เอา SD ของชุดก่อนหน้ามาเรียกว่า "ชุดล่าสุด"
+  const health = summaryOf(healthRows(steady(12), { overrides: (batch) => ({ sd_mv: batch === 11 ? null : 0.2 + (batch % 3) * 0.05 }) }))[0].health;
+  assert.equal(health.mv.latestSd, null);
+  assert.equal(health.mv.sdHigh, false);
+  assert.ok(Number.isFinite(health.mv.sdUcl));
 });
 
 test("mixed test conditions stop control limits instead of comparing different tests", () => {
@@ -479,7 +500,9 @@ test("the attention list ranks out-of-control first and explains each data probl
   const items = model.attentionItems([late, mixed, out, pending, lower], "2026-10-22");
   assert.deepEqual(items.slice(0, 2).map((item) => [item.material, item.severity, item.kind, item.measure]), [["A2004", "out", "beyond3", "MV"], ["A2004", "out", "beyond3", "MH"]]);
   const first = items[0];
-  assert.ok(first.value > first.limit, "an upper breach is compared with UCL");
+  assert.equal(first.high, true, "an upper breach is compared with UCL");
+  assert.equal(first.limit, out.health.mv.ucl);
+  assert.equal(first.ago, 0);
   assert.equal(first.provisional, false);
   const kinds = items.map((item) => `${item.material}:${item.kind}`);
   assert.ok(kinds.includes("E00030S B:mixed"));

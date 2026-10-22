@@ -105,8 +105,8 @@
 
   const SIGNAL_TEXT = Object.freeze({
     beyond3: "เกิน 3σ",
-    twoOfThree: "2 ใน 3 ชุดล่าสุดเกิน 2σ ข้างเดียวกัน",
-    fourOfFive: "4 ใน 5 ชุดล่าสุดเกิน 1σ ข้างเดียวกัน",
+    twoOfThree: "2 ใน 3 ชุดเกิน 2σ ข้างเดียวกัน",
+    fourOfFive: "4 ใน 5 ชุดเกิน 1σ ข้างเดียวกัน",
     eightSameSide: "8 ชุดติดกันอยู่ข้างเดียวของเส้นกลาง",
   });
   const FLAG = Object.freeze({
@@ -121,12 +121,14 @@
   });
 
   const provisionalText = (item) => (item.provisional ? " (เส้นชั่วคราว)" : "");
+  // ชุดที่เข้ากฎ: ชุดล่าสุด หรือ "n ชุดก่อน" (ยังแสดงจนกว่าจะพ้น 12 ชุดล่าสุด เพราะไม่มีการแจ้งเตือนทางอื่น)
+  const batchText = (ago) => (ago ? `ชุดเมื่อ ${int(ago)} ชุดก่อน` : "ชุดล่าสุด");
 
   // ข้อความรายละเอียดของรายการ "ต้องดูก่อน" (ข้อความล้วน)
   function attentionText(item) {
     switch (item.kind) {
-      case "beyond3": return `${item.measure} ชุดล่าสุด ${reading(item.value)} ${item.value > item.limit ? "เกิน UCL" : "ต่ำกว่า LCL"} ${reading(item.limit)}${provisionalText(item)}`;
-      case "rule": return `${item.measure} ชุดล่าสุด ${reading(item.value)}: ${item.signals.map((signal) => SIGNAL_TEXT[signal] ?? signal).join(" · ")}${provisionalText(item)}`;
+      case "beyond3": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)} ${item.high ? "เกิน UCL" : "ต่ำกว่า LCL"} ${reading(item.limit)}${provisionalText(item)}`;
+      case "rule": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)}: ${item.signals.map((signal) => SIGNAL_TEXT[signal] ?? signal).join(" · ")}${provisionalText(item)}`;
       case "sdHigh": return `SD ${item.measure} ชุดล่าสุด ${reading(item.value)} สูงกว่าปกติของวัสดุนี้ (UCL ${reading(item.limit)})${provisionalText(item)}`;
       case "mixed": return "อุณหภูมิหรือเวลาทดสอบไม่เท่ากันทุกแถว จึงไม่ตั้งเส้นควบคุม";
       case "missingAvg": return `${int(item.count)} แถวยังไม่มี AVG/SD ในชีต`;
@@ -164,23 +166,32 @@
   }
 
   // ตารางสีทุกวัสดุที่ตั้งเส้นควบคุมได้: แถวละวัสดุ ช่องละชุด (12 ชุดล่าสุด เก่า → ใหม่) สีและรูปทรงตามโซน
-  // ชื่อวัสดุเป็นปุ่มเลือกวัสดุให้กราฟด้านล่าง (aria-pressed = ที่เลือกอยู่) วัสดุที่ตั้งเส้นไม่ได้นับรวมไว้บรรทัดเดียวใต้ตาราง
+  // เรียงวัสดุที่มีชุดเกิน 3σ ก่อน แล้วเกิน 2σ แล้วตามชื่อ (ที่ต้องดูอยู่บนสุด ไม่ต้องเลื่อนหา)
+  // ชื่อวัสดุเป็นปุ่มเลือกวัสดุให้กราฟด้านล่าง (aria-pressed = ที่เลือกอยู่) ชื่อที่โปรแกรมอ่านหน้าจออ่านบอกจำนวนชุดที่เกินในแถวนั้น
+  // (ช่องสีเป็นภาพ aria-hidden) วัสดุที่ตั้งเส้นไม่ได้นับรวมไว้บรรทัดเดียวใต้ตาราง
   const ZONE_TEXT = Object.freeze({ ok: "ปกติ", warn: "เกิน 2σ", out: "เกิน 3σ" });
+  const ZONE_RANK = Object.freeze({ out: 0, warn: 1, ok: 2 });
   function zoneGrid({ materials, key, selected }) {
-    const usable = materials.filter((item) => ["ready", "provisional"].includes(item.health?.[key]?.level));
+    const usable = materials
+      .filter((item) => ["ready", "provisional"].includes(item.health?.[key]?.level))
+      .map((item) => ({ item, zones: model.recentZones(item.health[key]) }))
+      .map((entry) => ({ ...entry, worst: Math.min(2, ...entry.zones.map((zone) => ZONE_RANK[zone.zone])) }))
+      .sort((a, b) => a.worst - b.worst || a.item.material.localeCompare(b.item.material, "en", { numeric: true, sensitivity: "base" }));
     const rest = materials.length - usable.length;
-    const rows = usable.map((item) => {
+    if (!usable.length) return `<p class="lab-dash-empty">ยังไม่มีวัสดุที่มีประวัติถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด</p>`;
+    const rows = usable.map(({ item, zones }) => {
       const control = item.health[key];
-      const zones = model.recentZones(control);
-      const blanks = Math.max(0, 12 - zones.length);
+      const blanks = Math.max(0, model.SIGNAL_WINDOW - zones.length);
       const cells = Array.from({ length: blanks }, () => `<i class="lab-zone is-empty"></i>`).join("")
         + zones.map((entry) => `<i class="lab-zone is-${entry.zone}" title="${esc(`${reading(entry.value)} · ${ZONE_TEXT[entry.zone]}`)}"></i>`).join("");
-      const tag = control.level === "provisional" ? `<small class="lab-zone-tag" title="ประวัติ ${int(control.count)} ชุด ยังไม่ถึง ${model.CONTROL_MIN_READY} ชุด เส้นยังเลื่อนได้มาก">ชั่วคราว</small>` : "";
-      return `<div class="lab-zone-row"><button type="button" class="lab-zone-name" data-material="${esc(item.material)}" aria-pressed="${item.material === selected}">${esc(item.material)}${tag}</button><span class="lab-zone-cells" aria-hidden="true">${cells}</span></div>`;
+      const out = zones.filter((entry) => entry.zone === "out").length;
+      const warn = zones.filter((entry) => entry.zone === "warn").length;
+      const spoken = `${item.material}: ${zones.length} ชุดล่าสุด${out ? ` เกิน 3σ ${out} ชุด` : ""}${warn ? ` เกิน 2σ ${warn} ชุด` : ""}${out || warn ? "" : " ปกติทั้งหมด"}${control.level === "provisional" ? " เส้นชั่วคราว" : ""}`;
+      const tag = control.level === "provisional" ? `<small class="lab-zone-tag" title="ประวัติ ${int(control.count)} ชุด ยังไม่ถึง ${model.CONTROL_MIN_READY} ชุด เส้นยังเลื่อนได้มาก" aria-hidden="true">ชั่วคราว</small>` : "";
+      return `<div class="lab-zone-row"><button type="button" class="lab-zone-name" data-material="${esc(item.material)}" aria-pressed="${item.material === selected}" aria-label="${esc(spoken)}">${esc(item.material)}${tag}</button><span class="lab-zone-cells" aria-hidden="true">${cells}</span></div>`;
     }).join("");
-    const legend = `<p class="lab-zone-legend"><span><i class="lab-zone is-ok"></i>ปกติ</span><span><i class="lab-zone is-warn"></i>เกิน 2σ</span><span><i class="lab-zone is-out"></i>เกิน 3σ</span><span class="muted">ช่อง = ค่าเฉลี่ยรายชุด 12 ชุดล่าสุด เก่า → ใหม่</span></p>`;
+    const legend = `<p class="lab-zone-legend" title="ช่อง = ค่าเฉลี่ยรายชุด ${model.SIGNAL_WINDOW} ชุดล่าสุด เก่า → ใหม่"><span><i class="lab-zone is-ok"></i>ปกติ</span><span><i class="lab-zone is-warn"></i>เกิน 2σ</span><span><i class="lab-zone is-out"></i>เกิน 3σ</span></p>`;
     const restNote = rest ? `<p class="lab-zone-rest muted small">อีก ${int(rest)} วัสดุยังไม่มีเส้นควบคุม (ประวัติไม่ถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด หรือสภาวะทดสอบต่างกัน)</p>` : "";
-    if (!usable.length) return `<p class="lab-dash-empty">ยังไม่มีวัสดุที่มีประวัติถึง ${model.CONTROL_MIN_PROVISIONAL} ชุด</p>`;
     return `<div class="lab-zone-grid">${rows}</div>${legend}${restNote}`;
   }
 

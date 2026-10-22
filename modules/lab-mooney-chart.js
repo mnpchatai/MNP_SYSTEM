@@ -405,7 +405,7 @@
   // กราฟเส้นควบคุม (I chart) ของแดชบอร์ด: ค่าเฉลี่ยรายชุดล่าสุดของวัสดุหนึ่งรายการ เส้นกลาง (CL) และ UCL/LCL = ±3σ
   // พื้นตามธีมของหน้า (ไม่ใช่พื้นดำแบบหน้าวัสดุ) จุดที่เกิน 2σ/3σ ใช้รูปทรงและสีต่างกัน จึงแยกได้แม้ไม่เห็นสี
   // control = health.mv/mh จาก model.materialHealth (recent, mean, sigma, ucl, lcl, count) · key = "mv" | "mh" (สีของซีรีส์)
-  // ป้ายแกน X เป็นลำดับชุดของทั้งวัสดุ (ชุดแรกที่แสดง … ชุดล่าสุด) ไม่ใช่วันที่ เพราะสรุปเก็บเฉพาะค่าเฉลี่ยรายชุด
+  // ป้ายแกน X นับย้อนจากชุดล่าสุด ("n ชุดก่อน" … "ล่าสุด") ไม่ใช่วันที่หรือเลขชุดของหน้าวัสดุ เพราะสรุปเก็บเฉพาะค่าเฉลี่ยของชุดที่ AVG ใช้ได้
   function controlChart({ control, key = "mv", width, label = "" }) {
     const values = (control?.recent ?? []).filter(isNumber);
     if (!values.length || !(control.sigma > 0)) return "";
@@ -431,7 +431,6 @@
         : `<rect x="${n2(x(index) - radius)}" y="${n2(y(value) - radius)}" width="${n2(radius * 2)}" height="${n2(radius * 2)}" transform="rotate(45 ${cx} ${cy})"/>`;
       return `<g class="lab-cc-pt is-${zone}${last ? " is-last" : ""}">${mark}</g>`;
     }).join("");
-    const first = Math.max(1, (control.count ?? values.length) - values.length + 1);
     const height = box.top + box.height + box.bottom;
     const axisY = box.top + box.height + 16;
     const summary = `${label ? `${label} ` : ""}${key.toUpperCase()} ${values.length} ชุดล่าสุด เส้นกลาง ${tick(control.mean)} UCL ${tick(control.ucl)} LCL ${tick(control.lcl)} ชุดล่าสุด ${tick(values[values.length - 1])}`;
@@ -440,8 +439,8 @@
       + limit(control.ucl, "UCL", "limit") + limit(control.mean, "CL", "center") + limit(control.lcl, "LCL", "limit")
       + `<polyline class="lab-cc-line" points="${values.map((value, index) => `${n2(x(index))},${n2(y(value))}`).join(" ")}"/>`
       + points
-      + `<text class="lab-tick" x="${box.left}" y="${axisY}">ชุดที่ ${first}</text>`
-      + `<text class="lab-tick" x="${n2(box.left + plotWidth)}" y="${axisY}" text-anchor="end">ชุดที่ ${first + values.length - 1}</text>`
+      + (values.length > 1 ? `<text class="lab-tick" x="${box.left}" y="${axisY}">${values.length - 1} ชุดก่อน</text>` : "")
+      + `<text class="lab-tick" x="${n2(box.left + plotWidth)}" y="${axisY}" text-anchor="end">ล่าสุด</text>`
       + `</svg>`;
   }
 
