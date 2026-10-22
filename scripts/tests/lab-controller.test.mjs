@@ -200,7 +200,7 @@ test("entering a module from its card zooms the module page in once it is painte
   assert.equal(zooms, 1, "ctrl-click opens a new tab; no zoom is queued here");
 });
 
-test("with health summaries the dashboard is one mill table; the worst row's formula is charted until the user picks one", async () => {
+test("with health summaries the dashboard shows the latest day, the trends, the heatmaps and the drill-down of the formula to look at first until the user picks one", async () => {
   const model = (await import("node:module")).createRequire(import.meta.url)("../../modules/lab-mooney-model.js");
   const today = model.todayInBangkok();
   const rows = [];
@@ -219,26 +219,29 @@ test("with health summaries the dashboard is one mill table; the worst row's for
   const app = setup(async () => ({ data: body(materials), error: null }));
   await app.open("module=dashboard");
   const root = app.element("#lab-dash-mooney");
-  assert.match(root.innerHTML, /id="lab-mill-rows"/, "the health layout replaces the number tiles");
-  assert.doesNotMatch(root.innerHTML, /lab-activity|lab-zones/);
-  const table = app.element("#lab-mill-rows").innerHTML;
-  assert.match(table, /^<tr class="lab-mill-row" data-material="A2004"[\s\S]*?ห่างค่ากลางเกิน ±5/, "the red mill is the first row");
-  assert.equal(app.element("#lab-mill-empty").hidden, true);
+  assert.match(root.innerHTML, /id="lab-trends"/, "the health layout replaces the number tiles");
+  assert.doesNotMatch(root.innerHTML, /lab-mill-query|lab-activity|lab-zones/);
+  const strip = app.element("#lab-today").innerHTML;
+  assert.match(strip, /^<h3 class="lab-dash-card-title" id="lab-today-title">ทดสอบล่าสุด/);
+  assert.match(strip, /<button type="button" class="lab-tile is-warn" data-material="A2004"/, "A2004's mills disagree by 6.6 MU on the latest day");
+  assert.match(strip, /<button type="button" class="lab-tile is-ok" data-material="B0005"/);
+  assert.match(app.element("#lab-trends").innerHTML, new RegExp(`>${model.formatShortDate(model.shiftDate(today, -29))}</text>`), "the trend axis starts 30 days back by default");
+  assert.match(app.element("#lab-trends").innerHTML, /^<button type="button" class="lab-trend" data-material="A2004"/, "the formula to look at first comes first");
+  assert.match(app.element("#lab-bias").innerHTML, /^<table class="lab-hm">/);
+  assert.match(app.element("#lab-uniform").innerHTML, /^<table class="lab-hm">/);
   assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mv"[^>]*aria-label="A2004 MV/);
   assert.equal(app.element("#lab-control-name").textContent, "A2004");
   assert.equal(app.element("#lab-control-link").href, "#/lab?module=mooney&material=A2004");
+  assert.match(app.element("#lab-control-note").textContent, /^CL 40\.\d\d · σ /);
+  assert.match(app.element("#lab-drill").innerHTML, /class="lab-flag is-out"[^>]*>ห่างค่ากลางเกิน ±5 \(\+6\.\d\d\)</, "mill 2 alone is more than 5 MU from the centre");
   root.listeners.click({ target: { closest: (selector) => (selector === "[data-measure]" ? { dataset: { measure: "mh" } } : null) } });
   assert.match(app.element("#lab-control-plot").innerHTML, /^<svg class="lab-cc lab-cc-mh"/);
-  root.listeners.click({ target: { closest: (selector) => (selector === ".lab-mill-row" ? { dataset: { material: "B0005" } } : null) } });
+  root.listeners.click({ target: { closest: (selector) => (selector === "[data-material]" ? { dataset: { material: "B0005" } } : null) } });
   assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/);
-  // ตัวกรอง: เกณฑ์ ±5 ไม่มีโม่ที่ต่างจากวันเกิน แต่โม่ที่ห่างค่ากลางยังแดง
-  app.element("#lab-mill-threshold").value = "5";
-  root.listeners.change({ target: { id: "lab-mill-threshold" } });
-  assert.match(app.element("#lab-mill-rows").innerHTML, /data-material="A2004"/);
-  app.element("#lab-mill-query").value = "zzz";
-  root.listeners.input({ target: { id: "lab-mill-query" } });
-  assert.equal(app.element("#lab-mill-empty").hidden, false);
-  assert.equal(app.element("#lab-mill-empty").textContent, "ไม่มีโม่ที่ต้องดูใน 14 วันล่าสุด");
+  assert.match(app.element("#lab-drill").innerHTML, /class="lab-flag is-ok">ปกติ</);
+  root.listeners.click({ target: { closest: (selector) => (selector === "[data-days]" ? { dataset: { days: "14" } } : null) } });
+  assert.match(app.element("#lab-trends").innerHTML, new RegExp(`>${model.formatShortDate(model.shiftDate(today, -13))}</text>`), "the trend axis follows the chosen range");
+  assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/, "the user's pick survives a range change");
   // รีเฟรชแล้วข้อมูลเดิม: คงสูตรที่ผู้ใช้เลือกและค่า MH ไว้
   await app.tick();
   await flush();
