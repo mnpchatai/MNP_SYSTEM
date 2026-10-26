@@ -374,15 +374,10 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .nav-icon { width: 21px; height: 21px; display: grid; place-items: center; }
 .nav-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .nav-count { position: absolute; top: -8px; right: -11px; min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center; color: white; background: var(--danger); border: 2px solid var(--paper); border-radius: 9px; font-size: 8px; font-weight: 700; line-height: 1; }
-.bell-icon .bell-body, .bell-icon .bell-clapper { transform-box: view-box; transform-origin: 12px 3px; }
-.bell-icon .bell-waves { opacity: 0; }
-.has-unread .bell-icon .bell-body { animation: bell-ring 3.2s ease-in-out infinite; }
-.has-unread .bell-icon .bell-clapper { animation: bell-clapper 3.2s ease-in-out infinite; }
-.has-unread .bell-icon .bell-waves { animation: bell-waves 3.2s ease-in-out infinite; }
-@keyframes bell-ring { 0%, 40%, 100% { transform: rotate(0); } 5% { transform: rotate(16deg); } 10% { transform: rotate(-14deg); } 15% { transform: rotate(10deg); } 20% { transform: rotate(-7deg); } 25% { transform: rotate(4deg); } 30% { transform: rotate(-2deg); } }
-@keyframes bell-clapper { 0%, 40%, 100% { transform: translateX(0); } 5% { transform: translateX(-1.6px); } 10% { transform: translateX(1.6px); } 15% { transform: translateX(-1.1px); } 20% { transform: translateX(.8px); } 25% { transform: translateX(-.4px); } }
-@keyframes bell-waves { 0%, 35%, 100% { opacity: 0; } 6%, 25% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .has-unread .bell-icon .bell-body, .has-unread .bell-icon .bell-clapper { animation: none; } .has-unread .bell-icon .bell-waves { animation: none; opacity: 1; } }
+.bell-emoji { display: inline-block; font-size: 18px; line-height: 1; transform-origin: 50% 10%; }
+.has-unread .bell-emoji { animation: bell-ring 3.2s ease-in-out infinite; }
+@keyframes bell-ring { 0%, 40%, 100% { transform: rotate(0); } 5% { transform: rotate(18deg); } 10% { transform: rotate(-16deg); } 15% { transform: rotate(12deg); } 20% { transform: rotate(-8deg); } 25% { transform: rotate(4deg); } 30% { transform: rotate(-2deg); } }
+@media (prefers-reduced-motion: reduce) { .has-unread .bell-emoji { animation: none; } }
 .nav-divider { height: 1px; margin: 13px 10px; background: var(--line); }
 .nav-signout { width: 100%; display: none; background: none; border: 0; text-align: left; }
 .nav-signout:hover { color: var(--danger); }
