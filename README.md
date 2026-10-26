@@ -222,7 +222,7 @@ Dashboard MT (`#/mt-dashboard`): ช่อง “รอใคร” ในตา
 
 `wrangler.jsonc` เผยแพร่ Pilot Web ชุดเดียวกันเป็น static assets ที่ `https://mnp-system.<บัญชี>.workers.dev` ได้ origin ของตัวเอง (ไม่ใช้ร่วมกับ repo อื่นใต้ `mnpchatai.github.io`) และตั้ง header ได้ผ่าน `cloudflare/_headers`
 
-- `scripts/build-pilot.mjs` คัดลอกเฉพาะ `index.html`, `app.js`, `styles.css`, `modules/`, `fonts/`, `vendor/` ลง `dist-pilot/` แบบ allowlist โค้ดส่วนอื่นของ repo จึงไม่ถูกเผยแพร่ ถ้า Pilot เริ่มโหลดไฟล์จากโฟลเดอร์ใหม่ ต้องเพิ่มในสคริปต์นี้ด้วย
+- `scripts/build-pilot.mjs` คัดลอกเฉพาะ `index.html`, `app.js`, `styles.css`, `favicon.ico`, `manifest.webmanifest`, `modules/`, `fonts/`, `vendor/`, `icons/` ลง `dist-pilot/` แบบ allowlist โค้ดส่วนอื่นของ repo จึงไม่ถูกเผยแพร่ ถ้า Pilot เริ่มโหลดไฟล์จากโฟลเดอร์ใหม่ ต้องเพิ่มในสคริปต์นี้ด้วย
 - ตั้งค่า Workers Builds: Project name `mnp-system` (ต้องตรงกับ `name`), Build command เว้นว่าง, Deploy command `npx wrangler deploy`, ปิด preview builds
 - ก่อนใช้ URL ใหม่ ตั้ง secret `PILOT_EXTRA_ORIGINS` ของ Supabase Edge Functions เป็น origin นั้น (คั่นด้วย comma ได้หลายค่า รับเฉพาะ `https://host` ไม่มี path หรือพอร์ต — `/` ท้ายตัดให้เอง ค่าที่ผิดรูปแบบถูกข้ามและมีคำเตือนใน log ของฟังก์ชัน) แล้ว deploy `pilot-auth` และ `notify-email` ใหม่ ไม่อย่างนั้นการลงทะเบียนและการส่งอีเมลจากหน้าเว็บนั้นถูกปฏิเสธด้วย CORS
 - ลิงก์ในอีเมลยังชี้ไปตาม `APP_BASE_URL` เปลี่ยนเมื่อย้ายผู้ใช้มาใช้ URL ใหม่แล้วเท่านั้น

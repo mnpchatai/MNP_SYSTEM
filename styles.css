@@ -148,14 +148,14 @@ button { cursor: pointer; }
 .brand-mark {
   width: 34px;
   height: 34px;
-  display: grid;
-  place-items: center;
-  color: white;
-  background: linear-gradient(145deg, #0c8fd5, var(--primary));
-  border-radius: 9px;
-  font-weight: 700;
-  box-shadow: 0 7px 18px rgba(23, 105, 224, 0.23);
+  flex: none;
+  object-fit: contain;
 }
+/* หน้าเข้าสู่ระบบ/ตั้งรหัสผ่าน: โลโก้ขนาดใหญ่เป็นจุดเด่นของหน้า */
+.brand.brand-lg { gap: 20px; }
+.brand-lg .brand-mark { width: 112px; height: 112px; filter: drop-shadow(0 6px 14px rgba(150, 113, 35, 0.18)); }
+.brand.brand-lg strong { font-size: 22px; }
+.brand.brand-lg span { font-size: 11px; }
 
 .auth-page {
   min-height: 100vh;
@@ -953,6 +953,7 @@ a.machine-history-no:hover { text-decoration: underline; }
 
   .auth-page { grid-template-columns: 1fr; }
   .auth-aside { min-height: 235px; padding: 28px; }
+  .brand-lg .brand-mark { width: 72px; height: 72px; }
   .auth-copy h1 { font-size: 34px; }
   .auth-points { display: none; }
   .auth-panel { padding: 34px 22px; }
