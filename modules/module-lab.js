@@ -27,7 +27,7 @@
   const PATH = "lab";
   const TITLE = "MNP LAB";
   const REFRESH_MS = 30 * 1000;
-  const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4.6 18.2A2 2 0 0 0 6.3 21h11.4a2 2 0 0 0 1.7-2.8L14 9V3"/><path d="M7.5 15h9"/></svg>`;
+  const NAV_ICON = `<span class="nav-emoji" aria-hidden="true">🧪</span>`;
 
   // ผู้ที่ไม่มีสิทธิ์เห็นหน้า "ไม่พบหน้าที่ต้องการ" ข้อความเดียวกับ URL ที่ไม่มีอยู่จริง จึงไม่รู้ว่ามีโมดูลนี้
   function deniedPage() {
