@@ -1031,6 +1031,83 @@ async function loadDirectory() {
   return state.directory;
 }
 
+/* ---------- ติดตั้งแอปลงหน้าจอ (ปุ่มในหน้าเข้าสู่ระบบ) ---------- */
+
+// Chrome/Edge ส่ง beforeinstallprompt เมื่อเว็บติดตั้งได้ (ต้องมี manifest + sw.js) เก็บไว้ให้ปุ่มเรียกทีหลัง
+// ส่วน iPhone/iPad ไม่มีทางสั่งติดตั้งจากเว็บ ปุ่มจึงเปิดหน้าต่างสอนขั้นตอนแทน (modules/install-app.js)
+let deferredInstallPrompt = null;
+
+function currentInstallMode() {
+  return window.MNP_INSTALL_APP.installMode({
+    standalone: window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true,
+    hasPrompt: Boolean(deferredInstallPrompt),
+    userAgent: navigator.userAgent,
+    platform: navigator.platform,
+    maxTouchPoints: navigator.maxTouchPoints,
+  });
+}
+
+function refreshInstallButton() {
+  const button = document.querySelector("#install-app");
+  if (button) button.hidden = !currentInstallMode();
+}
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  refreshInstallButton();
+});
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  refreshInstallButton();
+});
+
+function openInstallGuide() {
+  const overlay = document.createElement("div");
+  overlay.className = "install-guide";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "install-guide-title");
+  overlay.innerHTML = `<div class="install-guide-panel">
+    <img class="install-guide-icon" src="./icons/apple-touch-icon.png" alt="">
+    <h2 id="install-guide-title">ติดตั้ง MNP บน iPhone/iPad</h2>
+    <ol>
+      <li>แตะปุ่ม <strong>แชร์ (□↑)</strong> ของ Safari (ถ้าไม่เห็น ให้แตะ <strong>⋯</strong> ก่อน)</li>
+      <li>เลือก <strong>เพิ่มไปยังหน้าจอโฮม</strong></li>
+      <li>แตะ <strong>เพิ่ม</strong> ไอคอน MNP จะอยู่บนหน้าจอโฮม</li>
+    </ol>
+    <button class="btn block" type="button" data-install-guide-close>เข้าใจแล้ว</button>
+  </div>`;
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", onKeyDown);
+  }
+  function onKeyDown(event) {
+    if (event.key === "Escape") close();
+  }
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay || event.target.closest("[data-install-guide-close]")) close();
+  });
+  document.addEventListener("keydown", onKeyDown);
+  document.body.append(overlay);
+  overlay.querySelector("[data-install-guide-close]").focus();
+}
+
+async function handleInstallClick() {
+  if (currentInstallMode() === "ios") return openInstallGuide();
+  if (!deferredInstallPrompt) return;
+  const promptEvent = deferredInstallPrompt;
+  // prompt() เรียกได้ครั้งเดียวต่อ event ผู้ใช้ปิดหน้าต่างไปแล้วต้องรอ beforeinstallprompt รอบใหม่
+  deferredInstallPrompt = null;
+  try {
+    await promptEvent.prompt();
+  } catch (error) {
+    console.warn("เปิดหน้าต่างติดตั้งแอปไม่สำเร็จ", error);
+  } finally {
+    refreshInstallButton();
+  }
+}
+
 async function renderAuth(message = "") {
   const isRequest = state.authMode === "request";
   let directoryError = "";
@@ -1090,6 +1167,7 @@ async function renderAuth(message = "") {
             <div class="field"><label for="reason">เหตุผล/หมายเหตุถึงผู้ดูแล (ถ้ามี)</label><textarea class="textarea" id="reason" name="reason" maxlength="1000"></textarea></div>` : ""}
             <button class="btn block" type="submit">${isRequest ? "ส่งคำร้องขอเปิดบัญชี" : "เข้าสู่ระบบ"}</button>
           </form>
+          <button class="btn secondary block install-app-button" id="install-app" type="button" hidden>ติดตั้งแอปลงหน้าจอ</button>
           <div class="pilot-note"><strong>ระบบ Pilot</strong><br>ข้อมูลที่กรอกจะถูกบันทึกในฐานข้อมูลทดสอบจริง กรุณาอย่าใช้ข้อมูลลับหรือข้อมูลส่วนบุคคลที่ละเอียดอ่อน</div>
         </div>
       </section>
@@ -1101,6 +1179,8 @@ async function renderAuth(message = "") {
   }));
   document.querySelector(".theme-toggle").addEventListener("click", toggleTheme);
   document.querySelector("#auth-form").addEventListener("submit", isRequest ? handleAccountRequestSubmit : handleAuthSubmit);
+  document.querySelector("#install-app").addEventListener("click", handleInstallClick);
+  refreshInstallButton();
 }
 
 async function handleAuthSubmit(event) {
@@ -3608,6 +3688,10 @@ async function startApp() {
 
 async function init() {
   applyTheme();
+  // sw.js ไม่ cache อะไร (ดูหัวไฟล์) ลงทะเบียนพลาดก็ใช้งานเว็บได้ตามปกติ แค่ติดตั้งแบบกดปุ่มไม่ได้
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch((error) => console.warn("ลงทะเบียน service worker ไม่สำเร็จ", error));
+  }
   window.addEventListener("hashchange", renderRoute);
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
   sb.auth.onAuthStateChange((event) => {

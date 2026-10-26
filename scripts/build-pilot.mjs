@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(root, "dist-pilot");
 
-const files = ["index.html", "app.js", "styles.css", "favicon.ico", "manifest.webmanifest"];
+const files = ["index.html", "app.js", "styles.css", "favicon.ico", "manifest.webmanifest", "sw.js"];
 const dirs = ["modules", "fonts", "vendor", "icons"];
 
 rmSync(out, { recursive: true, force: true });
