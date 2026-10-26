@@ -9,6 +9,17 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:8080",
 ]);
 
+// origin ของ Pilot ที่อยู่นอก GitHub Pages (เช่น https://mnp-system.<บัญชี>.workers.dev บน Cloudflare)
+// ตั้งผ่าน secret PILOT_EXTRA_ORIGINS คั่นด้วย comma — รับเฉพาะ origin https ล้วน (ไม่มี path/พอร์ต/wildcard)
+// ค่าที่ไม่ตรงรูปแบบถูกข้ามไป จึงตั้งผิดแล้วไม่เปิดกว้างเกินที่ตั้งใจ
+for (const value of (Deno.env.get("PILOT_EXTRA_ORIGINS") ?? "").split(",")) {
+  // URL ที่คัดลอกจากแถบที่อยู่มักมี / ท้าย ตัดออกหนึ่งตัวก่อนตรวจ
+  const candidate = value.trim().toLowerCase().replace(/\/$/, "");
+  if (!candidate) continue;
+  if (/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(candidate)) allowedOrigins.add(candidate);
+  else console.warn("PILOT_EXTRA_ORIGINS: ข้ามค่าที่ไม่ใช่ origin https", candidate);
+}
+
 // SHA-256 hashes only. The one-time pilot invite codes are shared privately
 // with the test users and are never committed to this repository.
 const inviteHashes: Record<string, string> = {

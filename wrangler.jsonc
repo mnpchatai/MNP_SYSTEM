@@ -1,0 +1,16 @@
+// Pilot Web บน Cloudflare Workers (static assets อย่างเดียว ไม่มี Worker script)
+// มีไฟล์นี้แล้ว Workers Builds จะไม่รัน autoconfig (ซึ่งจะเห็น Next.js ใน package.json แล้วตั้งค่าผิดแอป)
+// name ต้องตรงกับ Project name ใน Cloudflare dashboard ไม่อย่างนั้น build ล้ม
+{
+  "name": "mnp-system",
+  "compatibility_date": "2026-10-13",
+  "build": {
+    "command": "node scripts/build-pilot.mjs"
+  },
+  "assets": {
+    "directory": "./dist-pilot"
+  },
+  "workers_dev": true,
+  // ไม่เปิด URL สาธารณะให้แต่ละ version/branch ที่ยังไม่ผ่านการตรวจ
+  "preview_urls": false
+}
