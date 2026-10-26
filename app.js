@@ -1064,7 +1064,7 @@ async function renderAuth(message = "") {
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-aside">
-        <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-192.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
+        <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-512.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
         <div class="auth-copy">
           <div class="eyebrow">Employee workspace</div>
           <h1>ระบบจัดการเอกสาร<br>ภายในองค์กร</h1>
@@ -3462,7 +3462,7 @@ async function renderSetPassword(params) {
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-aside">
-        <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-192.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
+        <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-512.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
         <div class="auth-copy">
           <div class="eyebrow">Account setup</div>
           <h1>ตั้งรหัสผ่านใหม่<br>สำหรับเข้าใช้งาน</h1>

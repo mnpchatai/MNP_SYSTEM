@@ -152,10 +152,10 @@ button { cursor: pointer; }
   object-fit: contain;
 }
 /* หน้าเข้าสู่ระบบ/ตั้งรหัสผ่าน: โลโก้ขนาดใหญ่เป็นจุดเด่นของหน้า */
-.brand-lg { gap: 20px; }
+.brand.brand-lg { gap: 20px; }
 .brand-lg .brand-mark { width: 112px; height: 112px; filter: drop-shadow(0 6px 14px rgba(150, 113, 35, 0.18)); }
-.brand-lg strong { font-size: 22px; }
-.brand-lg span { font-size: 11px; }
+.brand.brand-lg strong { font-size: 22px; }
+.brand.brand-lg span { font-size: 11px; }
 
 .auth-page {
   min-height: 100vh;
