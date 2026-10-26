@@ -1116,6 +1116,52 @@ migration `20260930030000_notification_email_cron_drain` ตั้งงาน `
 - ยังไม่ได้ตั้งช่องทางส่ง (Resend/Gmail) = แถว pending ไม่ถูกปิด งานจะเรียกทุกนาทีต่อไปแต่ไม่ส่งอะไร
 - หยุดงานได้ด้วย `select cron.unschedule('notification-email-drain');`
 
+### แจ้งเตือนบนเครื่อง (Web Push)
+
+ทุกแถวที่เข้าระฆังใน `public.notifications` (รวมสรุปงานค้าง/เตือนซ้ำ) ถูกส่งเป็น Web Push ไปที่เครื่องที่ผู้ใช้กด
+"เปิดการแจ้งเตือนบนเครื่องนี้" ในหน้าการแจ้งเตือน ข้อความบนหน้าจอล็อกคือหัวเรื่องแจ้งเตือน + เลขที่เอกสาร (ถ้ามี) เท่านั้น
+กดแล้วเปิดหน้าเดียวกับที่กดในระฆัง · ตัวส่งคือ Edge Function `notify-push` (service role เท่านั้น ไม่มี CORS) ที่ `pg_cron` งาน
+`notification-push-drain` เรียกทุกนาที โดยเรียกเฉพาะเมื่อมีแถว `push_status = 'pending'` ที่จองได้
+
+- แถวที่มีอยู่ก่อน migration ถูกตั้งเป็น `skipped` ทั้งหมด จะไม่มี push ย้อนหลัง · แถวที่ผู้รับอ่านแล้วหรือค้างเกิน 24 ชั่วโมงถูกข้าม (`EXPIRED`)
+  แถวใหม่ที่เกิดระหว่างที่ยังตั้ง VAPID/Vault ไม่เสร็จจึงยังส่งได้ ถ้าตั้งเสร็จภายใน 24 ชั่วโมง
+- การจองแถวมีเวลาเช่า 10 นาที (ยาวกว่าเพดานเวลาทำงานของ Edge Function) — ล้มชั่วคราวจึงลองใหม่ได้หลังผ่านไปอย่างน้อย 10 นาที
+- ล้มชั่วคราวลองใหม่ได้รวม 3 ครั้ง (นับตอนจอง) แล้วเป็น `failed` · endpoint ที่ push service ตอบ 404/410 ถูกลบ ·
+  `push_error` เก็บแค่รหัสสั้น ๆ (เช่น `NO_SUBSCRIPTION`, `HTTP_503`) ไม่เก็บ endpoint หรือเนื้อหา
+- รับและส่งเฉพาะ endpoint ของ push service ของเบราว์เซอร์จริง (FCM, Mozilla, Apple, Windows) กันผู้ใช้บันทึก URL อื่นให้เซิร์ฟเวอร์ยิง ·
+  ตรวจสองชั้น: `app_save_push_subscription` (ตอบ `PUSH_ENDPOINT_NOT_ALLOWED`) และ `PUSH_HOST_SUFFIXES` ใน `supabase/functions/notify-push/payload.ts`
+  — รายการต้องตรงกัน เพิ่ม host ใหม่ต้องแก้ทั้งสองที่ (migration ใหม่ + deploy ฟังก์ชัน)
+- โหมดทดสอบของ admin เปิด/ปิดการแจ้งเตือนบนเครื่องไม่ได้ (ตารางมี sandbox guard) แผงจึงแจ้งว่าใช้ไม่ได้ขณะอยู่ในโหมดทดสอบ
+- iPhone/iPad รับ push ได้เฉพาะแอปที่เพิ่มลงหน้าจอโฮมแล้ว (iOS 16.4 ขึ้นไป) · หน้าเว็บซ่อนแผนนี้ทั้งหมดถ้า `PUSH_PUBLIC_KEY` ใน `app.js` ว่าง
+- เครื่องที่ใช้ร่วมกัน: ออกจากระบบแล้วเครื่องนั้นถูกถอดออกจากบัญชี (ลบแถว + ยกเลิกการสมัครในเบราว์เซอร์ ต้องกดเปิดใหม่เมื่อเข้าสู่ระบบอีกครั้ง) ·
+  เปิดแอปตอนยังไม่ได้ล็อกอินก็ยกเลิกการสมัครค้างในเครื่องด้วย · ตอนเปิดแอป ระบบต่ออายุเฉพาะเครื่องที่เป็นของบัญชีนี้อยู่แล้ว (endpoint หมุน/เปลี่ยนกุญแจ)
+  ส่วนเครื่องที่ไม่ใช่ของบัญชีนี้ถูกยกเลิกในเครื่อง **ไม่ย้ายมาให้เอง** — การย้ายเครื่องข้ามบัญชีเกิดได้จากการกดปุ่ม "เปิดการแจ้งเตือนบนเครื่องนี้" เท่านั้น
+
+ตั้งค่า (ไม่มีค่าจริงใน repo):
+
+1. Edge Function secrets: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (`mailto:…` หรือ `https://…`) — สร้างคู่กุญแจด้วย
+   `npx web-push generate-vapid-keys` บนเครื่องของผู้ดูแล (กุญแจส่วนตัวไม่เข้า repo ไม่ส่งผ่านแชต/โค้ด ตั้งเป็น secret เท่านั้น)
+   **`PUSH_PUBLIC_KEY` ใน `app.js` ต้องตรงกับ `VAPID_PUBLIC_KEY` เป๊ะ** (กุญแจสาธารณะไม่ใช่ความลับ ใส่ใน repo ได้) ถ้าไม่ตรงกัน push service จะปฏิเสธทุกการส่ง (403)
+   ถ้าสร้างกุญแจใหม่ ต้องแก้ทั้งสองที่พร้อมกัน (secret + `app.js`) และทุกเครื่องต้องเปิดการแจ้งเตือนใหม่ — แอปรุ่นใหม่ยกเลิกการสมัครเดิมแล้วสมัครใหม่ให้เองเฉพาะเครื่องที่เป็นของบัญชีนั้นอยู่
+   (เครื่องที่ยังไม่ได้เปิดแอปรุ่นใหม่รับ push ไม่ได้จนกว่าจะเปิดแอป)
+   ยังตั้งไม่ครบ = ฟังก์ชันตอบ `configured: false` และไม่แตะคิว
+2. Vault secrets (ชุดเดียวกับของอีเมล แต่ชื่อแยก): `notify_push_function_url` = `https://<project-ref>.supabase.co/functions/v1/notify-push`,
+   `notify_push_service_role_key` = service role key
+   ```sql
+   insert into vault.secrets (name, secret) values
+     ('notify_push_function_url', 'https://iqlydmkylqyowmvpsete.supabase.co/functions/v1/notify-push'),
+     ('notify_push_service_role_key', '<service role key จริง>');
+   ```
+   ยังไม่ตั้ง = cron ไม่เรียกอะไร (ขึ้น notice ใน log)
+3. ลำดับ deploy: migration `20261026010000_web_push_notifications` → **ตั้ง VAPID secrets และ Vault secrets ทันทีต่อจาก migration**
+   (ก่อนหรือพร้อมกับ `supabase functions deploy notify-push`) → merge หน้าเว็บ
+   (หน้าเว็บที่เรียก RPC `app_save_push_subscription` ก่อน migration ขึ้นจะเปิดแจ้งเตือนไม่ได้)
+   หลัง migration ขึ้น แถวใหม่เป็น `pending` ทันที แต่ถูกข้ามเมื่อค้างเกิน 24 ชั่วโมง — ตั้งค่าให้เสร็จภายใน 24 ชั่วโมงเพื่อไม่ให้ push ช่วงนั้นหาย
+   (ผลคือ `skipped` / `EXPIRED` ไม่ใช่ error · ตั้ง Vault ก่อน deploy ฟังก์ชัน cron จะเรียก 404 เป็นช่วงสั้น ๆ ซึ่งไม่เสียอะไร)
+4. ตรวจ: `select jobname, schedule from cron.job where jobname = 'notification-push-drain';` และดูสรุปสถานะ
+   `select push_status, count(*) from public.notifications group by 1;`
+5. ถอยกลับ: ดู Rollback ในหัว migration (`select cron.unschedule('notification-push-drain');` หยุดการส่งได้ทันที)
+
 ### อีเมลเตือนของมาส่งหรือยัง (pg_cron)
 
 หมุด "สั่งซื้ออุปกรณ์เรียบร้อย" ในใบแจ้งซ่อม (ดูหัวข้อ [หมุดความคืบหน้า](#หมุดความคืบหน้า)) ให้เลือก
