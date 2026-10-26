@@ -21,7 +21,7 @@
     return null;
   }
 
-  const api = { installMode };
+  const api = { installMode, isIos };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_INSTALL_APP = api;
 })();

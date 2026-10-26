@@ -5,6 +5,10 @@ const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_uWsULpN8jWF8XCp73B8K_A_YkbKJNUD
 const PILOT_AUTH_URL = `${SUPABASE_URL}/functions/v1/pilot-auth`;
 // ส่งอีเมลแจ้งเตือนจริงตาม employees.email — ดู triggerNotificationEmails ท้ายไฟล์นี้
 const NOTIFY_EMAIL_URL = `${SUPABASE_URL}/functions/v1/notify-email`;
+// กุญแจสาธารณะ VAPID สำหรับแจ้งเตือนบนเครื่อง (Web Push, base64url) คู่กับ VAPID_PRIVATE_KEY ที่เก็บเป็น secret ของ Edge Function notify-push
+// ใส่ได้เฉพาะกุญแจสาธารณะ — ห้ามใส่กุญแจส่วนตัวที่นี่ เว้นว่างไว้ = ซ่อนส่วนแจ้งเตือนบนเครื่องทั้งหมด
+// เปลี่ยนกุญแจ: เครื่องที่เปิดไว้แล้วจะสมัครใหม่เองเมื่อเปิดแอป (ดู ensurePushSubscription)
+const PUSH_PUBLIC_KEY = "BDTZCvimJouHlMRtOtUfsBAoScH75w60WnUw4Uy1HQprE1NQLqZDHUiIi3Hl1-WrlbF91QUGPsZSNp7CXzAqaCs";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 });
@@ -350,6 +354,7 @@ function friendlyError(error) {
     ...moduleMessages,
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
+    INVALID_PUSH_SUBSCRIPTION: "ข้อมูลการแจ้งเตือนของเครื่องนี้ไม่ถูกต้อง ลองเปิดใหม่อีกครั้ง",
     LAB_ONLY_ACCOUNT: "บัญชีนี้ใช้ได้เฉพาะ MNP LAB",
     SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
     SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR และ Item master ฝ่ายโรงงานตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
@@ -1063,9 +1068,14 @@ function syncInstallBannerHeight() {
 }
 window.addEventListener("resize", syncInstallBannerHeight);
 
+// เปิดจากแอปที่ติดตั้งแล้ว (ไอคอนบนหน้าจอ) ไม่ใช่แท็บเบราว์เซอร์
+function isStandaloneApp() {
+  return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+}
+
 function currentInstallMode() {
   return window.MNP_INSTALL_APP.installMode({
-    standalone: window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true,
+    standalone: isStandaloneApp(),
     hasPrompt: Boolean(deferredInstallPrompt),
     userAgent: navigator.userAgent,
     platform: navigator.platform,
@@ -1280,6 +1290,8 @@ async function handleAccountRequestSubmit(event) {
 // ถ้าเป็นบัญชีของตัวเอง ต้องออกจากระบบแล้วเข้าใหม่ ไม่เช่นนั้น token เดิมจะใช้กับ
 // บาง API ไม่ได้อีกจนกว่าจะหมดอายุ
 async function forceReLogin(message) {
+  // session ถูกเพิกถอนแล้ว ลบแถวฝั่งฐานข้อมูลไม่ได้ ยกเลิกเฉพาะการสมัครในเครื่อง
+  await releasePushOnThisDevice({ server: false });
   state.session = null;
   try {
     await sb.auth.signOut();
@@ -1326,6 +1338,7 @@ async function loadEmployeeKeepingSession() {
 }
 
 async function signOutLocally(message) {
+  await releasePushOnThisDevice({ server: false });
   state.session = null;
   try {
     await sb.auth.signOut({ scope: "local" });
@@ -1593,6 +1606,7 @@ function bindShell() {
   // ปุ่มออกจากระบบมี 2 จุด: ท้ายแถบข้าง (จอกว้าง) และในเมนูหลัก (จอแคบ/มือถือ ซึ่งซ่อนแถบผู้ใช้)
   document.querySelectorAll(".signout-button").forEach((button) => button.addEventListener("click", async () => {
     setMobileNav(false);
+    await releasePushBeforeSignOut();
     state.session = null;
     try {
       await sb.auth.signOut();
@@ -2770,15 +2784,173 @@ function notificationItemHtml(item) {
   return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></${tag}>`;
 }
 
+// ---------- แจ้งเตือนบนเครื่อง (Web Push) ----------
+// ผู้ใช้เปิดเองต่อเครื่องจากแผงบนหน้าการแจ้งเตือน เครื่องที่เปิดไว้ถูกบันทึกในฐานข้อมูลผ่าน RPC (ตาราง push_subscriptions
+// ไม่เปิดให้หน้าเว็บอ่านตรง) แล้ว Edge Function notify-push ส่งทุกแถวที่เข้าระฆังไปยังเครื่องเหล่านั้น
+// กติกาตัดสินสถานะของแผงอยู่ใน modules/push-notifications.js (ทดสอบแล้ว) ที่นี่เป็นส่วนที่แตะเบราว์เซอร์/Supabase
+function pushEnvironment() {
+  return {
+    keyConfigured: Boolean(PUSH_PUBLIC_KEY),
+    hasServiceWorker: "serviceWorker" in navigator,
+    hasPushManager: "PushManager" in window,
+    hasNotification: "Notification" in window,
+    ios: window.MNP_INSTALL_APP.isIos({ userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints }),
+    standalone: isStandaloneApp(),
+    permission: "Notification" in window ? Notification.permission : "default",
+  };
+}
+
+async function currentPushSubscription() {
+  const registration = await navigator.serviceWorker.getRegistration();
+  return (await registration?.pushManager.getSubscription()) ?? null;
+}
+
+// สถานะที่แผงต้องแสดง: "on" ต้องมีทั้งการสมัครในเครื่องและแถวในฐานข้อมูลที่เป็นของบัญชีนี้
+async function loadPushState() {
+  const environment = pushEnvironment();
+  const basic = window.MNP_PUSH.pushPanelState(environment);
+  if (basic !== "off" || environment.permission !== "granted") return basic;
+  try {
+    const subscription = await currentPushSubscription();
+    if (subscription) {
+      const { data, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: subscription.endpoint });
+      if (!error && data === true) return window.MNP_PUSH.pushPanelState({ ...environment, subscribed: true });
+    }
+  } catch (error) {
+    console.warn("ตรวจสถานะการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
+  }
+  return basic;
+}
+
+// subscription เดิมผูกกับกุญแจ VAPID ตัวที่ใช้ตอนสมัคร ถ้ากุญแจในแอปเปลี่ยน ต้องยกเลิกแล้วสมัครใหม่ (ทำได้เงียบ ๆ เมื่ออนุญาตแล้ว)
+async function ensurePushSubscription(registration) {
+  const key = window.MNP_PUSH.urlBase64ToUint8Array(PUSH_PUBLIC_KEY);
+  let subscription = await registration.pushManager.getSubscription();
+  if (subscription && !window.MNP_PUSH.sameApplicationServerKey(subscription.options?.applicationServerKey, key)) {
+    await subscription.unsubscribe();
+    subscription = null;
+  }
+  return subscription ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+}
+
+async function savePushSubscription(subscription) {
+  const record = window.MNP_PUSH.subscriptionRecord(subscription.toJSON());
+  if (!record) throw new Error("PUSH_SUBSCRIPTION_INCOMPLETE");
+  const { error } = await sb.rpc("app_save_push_subscription", {
+    p_endpoint: record.endpoint, p_p256dh: record.p256dh, p_auth: record.auth, p_user_agent: navigator.userAgent.slice(0, 300),
+  });
+  if (error) throw error;
+}
+
+// คืน permission ที่ได้ ("granted" = เปิดสำเร็จ) — ต้องเรียกจากการกดปุ่มและขออนุญาตเป็นขั้นแรก เพราะ iOS/Safari
+// ให้ขอสิทธิ์ได้เฉพาะในจังหวะที่ผู้ใช้กดเอง (await อื่นมาก่อนแล้วจะถือว่าไม่ใช่การกด)
+async function enablePush() {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") return permission;
+  const registration = await navigator.serviceWorker.ready;
+  await savePushSubscription(await ensurePushSubscription(registration));
+  return permission;
+}
+
+async function disablePush() {
+  const subscription = await currentPushSubscription();
+  if (!subscription) return;
+  const { error } = await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
+  if (error) throw error;
+  await subscription.unsubscribe();
+}
+
+// เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า): ถ้าอนุญาตไว้และมี subscription อยู่ ให้บันทึกซ้ำ
+// เพราะ endpoint ของเบราว์เซอร์เปลี่ยนได้เอง และเครื่องที่เคยเป็นของอีกบัญชีจะถูกย้ายมาเป็นของบัญชีที่ล็อกอินอยู่
+let pushResyncedFor = null;
+async function resyncPushSubscription() {
+  const environment = pushEnvironment();
+  if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted") return;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    if (!(await registration.pushManager.getSubscription())) return;
+    await savePushSubscription(await ensurePushSubscription(registration));
+  } catch (error) {
+    console.warn("บันทึกการแจ้งเตือนบนเครื่องนี้ซ้ำไม่สำเร็จ", error);
+  }
+}
+
+// ออกจากระบบ: เอาเครื่องนี้ออกจากบัญชีเพื่อไม่ให้แจ้งเตือนของผู้ใช้คนเดิมไปโผล่ให้คนถัดไปที่ใช้เครื่องเดียวกัน
+// server: true ลบแถวในฐานข้อมูลก่อน (ต้องยังมี session) — ทำไม่ได้ก็ยังยกเลิกการสมัครในเครื่อง ส่วนแถวค้างจะถูกลบเองเมื่อ push service ตอบว่าเครื่องนั้นหายไป
+async function releasePushOnThisDevice({ server }) {
+  if (!PUSH_PUBLIC_KEY || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  try {
+    const subscription = await currentPushSubscription();
+    if (!subscription) return;
+    if (server) await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
+    await subscription.unsubscribe();
+  } catch (error) {
+    console.warn("ยกเลิกการแจ้งเตือนบนเครื่องนี้ตอนออกจากระบบไม่สำเร็จ", error);
+  }
+}
+
+// รอไม่เกิน 4 วินาที ไม่ให้เน็ตช้าทำให้ปุ่มออกจากระบบค้าง
+function releasePushBeforeSignOut() {
+  return Promise.race([releasePushOnThisDevice({ server: true }), new Promise((resolve) => setTimeout(resolve, 4000))]);
+}
+
+function pushPanelBodyHtml(pushState, ios) {
+  const notice = {
+    "ios-install": "บน iPhone/iPad เปิดการแจ้งเตือนได้เมื่อเปิดแอปจากไอคอนบนหน้าจอโฮมเท่านั้น (ต้องใช้ iOS 16.4 ขึ้นไป) — เพิ่ม MNP ลงหน้าจอโฮมจาก Safari ก่อน แล้วเปิดหน้านี้จากไอคอนนั้น",
+    "ios-old": "iOS รุ่นนี้ยังไม่รองรับการแจ้งเตือนจากเว็บ (ต้องใช้ iOS 16.4 ขึ้นไป)",
+    unsupported: "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือนบนเครื่อง",
+    denied: ios
+      ? "การแจ้งเตือนของ MNP ถูกปิดไว้ในเครื่อง — เปิดได้ที่ ตั้งค่า › แจ้งเตือน › MNP แล้วกลับมาโหลดหน้านี้ใหม่"
+      : "เบราว์เซอร์บล็อกการแจ้งเตือนของเว็บนี้ไว้ — เปิดอนุญาตได้ที่ไอคอนข้างช่องที่อยู่เว็บ (สิทธิ์ของไซต์) แล้วโหลดหน้านี้ใหม่",
+  }[pushState];
+  const title = `<strong>แจ้งเตือนบนเครื่องนี้${pushState === "on" ? ` <span class="badge">เปิดอยู่</span>` : ""}</strong>`;
+  const text = `<div class="push-panel-text">${title}${notice ? `<span>${notice}</span>` : ""}</div>`;
+  if (pushState === "off") return `${text}<button class="btn" type="button" data-push-enable title="รับแจ้งเตือนที่หน้าจอเครื่องนี้ แม้ไม่ได้เปิดแอป">เปิดการแจ้งเตือนบนเครื่องนี้</button>`;
+  if (pushState === "on") return `${text}<button class="btn secondary" type="button" data-push-disable>ปิดบนเครื่องนี้</button>`;
+  return text;
+}
+
+function pushErrorMessage(error) {
+  // ข้อผิดพลาดจากฐานข้อมูล (มีรหัสเป็นข้อความ) แปลงด้วยตารางกลาง ส่วนข้อผิดพลาดของเบราว์เซอร์/push service ใช้ข้อความรวม
+  return typeof error?.code === "string" ? friendlyError(error) : "เปิดการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ กรุณาลองอีกครั้ง";
+}
+
+async function refreshPushPanel() {
+  const panel = document.querySelector("#push-panel");
+  if (!panel) return;
+  const pushState = await loadPushState();
+  if (!panel.isConnected || pushState === "hidden") return;
+  panel.innerHTML = pushPanelBodyHtml(pushState, pushEnvironment().ios);
+  panel.hidden = false;
+  const run = async (button, busyLabel, action) => {
+    button.disabled = true;
+    button.textContent = busyLabel;
+    try {
+      await action();
+    } catch (error) {
+      console.error(error);
+      showToast(pushErrorMessage(error), "error");
+    }
+    await refreshPushPanel();
+  };
+  panel.querySelector("[data-push-enable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังเปิด…", async () => {
+    // กดแล้วไม่อนุญาต/ปิดหน้าต่างขอสิทธิ์ ไม่ใช่ข้อผิดพลาด แผงจะกลับไปสถานะเดิม (หรือ "ถูกบล็อก" ถ้าเลือกไม่อนุญาต)
+    if ((await enablePush()) === "default") showToast("ยังไม่ได้อนุญาตการแจ้งเตือน", "error");
+  }));
+  panel.querySelector("[data-push-disable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังปิด…", disablePush));
+}
+
 async function renderNotifications() {
   loadingShell("notifications", "การแจ้งเตือน");
   const { data, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
   if (error) throw error;
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Notifications</div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
+    ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
     <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || `<div class="empty">ยังไม่มีการแจ้งเตือน</div>`}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
+  refreshPushPanel();
   document.querySelector("#mark-read")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
     const { error: updateError } = await sb.from("notifications").update({ read_at: new Date().toISOString() }).eq("recipient_id", state.employee.id).is("read_at", null);
@@ -3664,6 +3836,10 @@ async function renderRoute() {
     return;
   }
   refreshInstallBanner();
+  if (pushResyncedFor !== state.employee.id) {
+    pushResyncedFor = state.employee.id;
+    resyncPushSubscription();
+  }
   await loadUnread();
   try {
     if (path === "dashboard") return await renderDashboard();
@@ -3734,6 +3910,7 @@ async function init() {
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
   sb.auth.onAuthStateChange((event) => {
     if (event !== "SIGNED_OUT" || !state.session) return;
+    releasePushOnThisDevice({ server: false });
     state.session = null;
     state.employee = null;
     state.unread = 0;

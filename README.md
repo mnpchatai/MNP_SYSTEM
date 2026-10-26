@@ -1116,6 +1116,40 @@ migration `20260930030000_notification_email_cron_drain` ตั้งงาน `
 - ยังไม่ได้ตั้งช่องทางส่ง (Resend/Gmail) = แถว pending ไม่ถูกปิด งานจะเรียกทุกนาทีต่อไปแต่ไม่ส่งอะไร
 - หยุดงานได้ด้วย `select cron.unschedule('notification-email-drain');`
 
+### แจ้งเตือนบนเครื่อง (Web Push)
+
+ทุกแถวที่เข้าระฆังใน `public.notifications` (รวมสรุปงานค้าง/เตือนซ้ำ) ถูกส่งเป็น Web Push ไปที่เครื่องที่ผู้ใช้กด
+"เปิดการแจ้งเตือนบนเครื่องนี้" ในหน้าการแจ้งเตือน ข้อความบนหน้าจอล็อกคือหัวเรื่องแจ้งเตือน + เลขที่เอกสาร (ถ้ามี) เท่านั้น
+กดแล้วเปิดหน้าเดียวกับที่กดในระฆัง · ตัวส่งคือ Edge Function `notify-push` (service role เท่านั้น ไม่มี CORS) ที่ `pg_cron` งาน
+`notification-push-drain` เรียกทุกนาที โดยเรียกเฉพาะเมื่อมีแถว `push_status = 'pending'` ที่จองได้
+
+- แถวที่มีอยู่ก่อน migration ถูกตั้งเป็น `skipped` ทั้งหมด จะไม่มี push ย้อนหลัง · แถวที่ผู้รับอ่านแล้วหรือค้างเกิน 24 ชั่วโมงถูกข้าม
+- ล้มชั่วคราวลองใหม่ได้รวม 3 ครั้ง (นับตอนจอง) แล้วเป็น `failed` · endpoint ที่ push service ตอบ 404/410 ถูกลบ ·
+  `push_error` เก็บแค่รหัสสั้น ๆ (เช่น `NO_SUBSCRIPTION`, `HTTP_503`) ไม่เก็บ endpoint หรือเนื้อหา
+- `notify-push` ส่งเฉพาะ endpoint ของ push service ของเบราว์เซอร์จริง (FCM, Mozilla, Apple, Windows) กันผู้ใช้บันทึก URL อื่นให้เซิร์ฟเวอร์ยิง ·
+  เพิ่ม host ใหม่ได้ที่ `PUSH_HOST_SUFFIXES` ใน `supabase/functions/notify-push/payload.ts`
+- iPhone/iPad รับ push ได้เฉพาะแอปที่เพิ่มลงหน้าจอโฮมแล้ว (iOS 16.4 ขึ้นไป) · หน้าเว็บซ่อนแผนนี้ทั้งหมดถ้า `PUSH_PUBLIC_KEY` ใน `app.js` ว่าง
+- ออกจากระบบแล้วเครื่องนั้นถูกถอดออกจากบัญชี (ต้องกดเปิดใหม่เมื่อเข้าสู่ระบบอีกครั้ง)
+
+ตั้งค่า (ไม่มีค่าจริงใน repo):
+
+1. Edge Function secrets: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (`mailto:…` หรือ `https://…`) — สร้างคู่กุญแจด้วย
+   `npx web-push generate-vapid-keys` · กุญแจสาธารณะตัวเดียวกันใส่ใน `PUSH_PUBLIC_KEY` ของ `app.js` (กุญแจส่วนตัวห้ามออกจาก secret)
+   ยังตั้งไม่ครบ = ฟังก์ชันตอบ `configured: false` และไม่แตะคิว · เปลี่ยนกุญแจแล้วเครื่องที่เปิดไว้สมัครใหม่เองเมื่อเปิดแอป
+2. Vault secrets (ชุดเดียวกับของอีเมล แต่ชื่อแยก): `notify_push_function_url` = `https://<project-ref>.supabase.co/functions/v1/notify-push`,
+   `notify_push_service_role_key` = service role key
+   ```sql
+   insert into vault.secrets (name, secret) values
+     ('notify_push_function_url', 'https://iqlydmkylqyowmvpsete.supabase.co/functions/v1/notify-push'),
+     ('notify_push_service_role_key', '<service role key จริง>');
+   ```
+   ยังไม่ตั้ง = cron ไม่เรียกอะไร (ขึ้น notice ใน log)
+3. ลำดับ deploy: migration `20261026010000_web_push_notifications` → secrets/Vault → `supabase functions deploy notify-push` → merge หน้าเว็บ
+   (หน้าเว็บที่เรียก RPC `app_save_push_subscription` ก่อน migration ขึ้นจะเปิดแจ้งเตือนไม่ได้)
+4. ตรวจ: `select jobname, schedule from cron.job where jobname = 'notification-push-drain';` และดูสรุปสถานะ
+   `select push_status, count(*) from public.notifications group by 1;`
+5. ถอยกลับ: ดู Rollback ในหัว migration (`select cron.unschedule('notification-push-drain');` หยุดการส่งได้ทันที)
+
 ### อีเมลเตือนของมาส่งหรือยัง (pg_cron)
 
 หมุด "สั่งซื้ออุปกรณ์เรียบร้อย" ในใบแจ้งซ่อม (ดูหัวข้อ [หมุดความคืบหน้า](#หมุดความคืบหน้า)) ให้เลือก

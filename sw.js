@@ -1,7 +1,8 @@
 // Service worker ของ Pilot Web
 //
-// มีไว้เพื่อให้ Chrome/Edge ถือว่าเว็บนี้ติดตั้งได้ (ส่ง beforeinstallprompt ให้ปุ่ม "ติดตั้งแอป") และเป็นที่รับ
-// Web Push ในอนาคต — ตั้งใจไม่ cache ไฟล์ใดเลย หน้าเว็บโหลดจากเซิร์ฟเวอร์ทุกครั้งเหมือนไม่มี service worker
+// มีไว้เพื่อ (1) ให้ Chrome/Edge ถือว่าเว็บนี้ติดตั้งได้ (ส่ง beforeinstallprompt ให้ปุ่ม "ติดตั้งแอป")
+// และ (2) รับ Web Push แสดงแจ้งเตือนบนหน้าจอเครื่อง (push / notificationclick ท้ายไฟล์)
+// ตั้งใจไม่ cache ไฟล์ใดเลย หน้าเว็บโหลดจากเซิร์ฟเวอร์ทุกครั้งเหมือนไม่มี service worker
 // จึงไม่มีไฟล์รุ่นเก่าค้างในเครื่องหลัง deploy (การเปลี่ยนรุ่นยังคุมด้วย ?v= ใน index.html เหมือนเดิม)
 // และไม่มีข้อมูลจาก Supabase ถูกเก็บไว้ในเครื่อง
 // จับเฉพาะการเปิดหน้า (navigate): ออนไลน์ส่งต่อให้เครือข่าย ออฟไลน์แสดงหน้าแจ้งแทนหน้า error ของเบราว์เซอร์
@@ -25,4 +26,46 @@ self.addEventListener("fetch", (event) => {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     })),
   );
+});
+
+// ---------- Web Push ----------
+// payload จาก Edge Function notify-push: { title, url, tag } — title คือหัวเรื่องแจ้งเตือน + เลขที่เอกสาร ไม่มีรายละเอียดอื่น
+// url เป็น hash route สัมพัทธ์ (เช่น "#/request?id=...") แปลงเป็น URL เต็มด้วย scope ของ service worker เสมอ
+// เพราะ Pilot เปิดได้ทั้งจาก /MNP_SYSTEM/ (GitHub Pages) และ / (Cloudflare Workers)
+// ทุก push ต้องจบด้วย showNotification (iOS ยกเลิกการสมัครของเว็บที่รับ push แล้วไม่แสดงอะไร)
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = typeof data.title === "string" && data.title ? data.title : "มีการแจ้งเตือนใหม่";
+  const url = typeof data.url === "string" && data.url.startsWith("#/") ? data.url : "#/notifications";
+  event.waitUntil(self.registration.showNotification(title, {
+    icon: "./icons/icon-192.png",
+    lang: "th",
+    ...(typeof data.tag === "string" && data.tag ? { tag: data.tag } : {}),
+    data: { url },
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url ?? "#/notifications", self.registration.scope).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const open = windows.find((client) => client.url.startsWith(self.registration.scope));
+    if (open) {
+      try {
+        await open.focus();
+        // เปลี่ยนแค่ hash ในหน้าเดิม แอปรับ hashchange แล้วเปิดหน้านั้นเอง ไม่โหลดหน้าใหม่
+        await open.navigate(target);
+        return;
+      } catch {
+        // navigate ใช้ไม่ได้กับหน้าที่ service worker นี้ยังไม่ควบคุม → เปิดหน้าต่างใหม่แทน
+      }
+    }
+    await self.clients.openWindow(target);
+  })());
 });

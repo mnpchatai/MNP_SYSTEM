@@ -206,6 +206,12 @@ button { cursor: pointer; }
 body.has-install-banner .update-banner, body.has-install-banner .toast { bottom: calc(var(--install-banner-h, 80px) + 24px + env(safe-area-inset-bottom)); }
 /* จอแคบ: เว้นท้ายหน้าเท่าความสูงแถบ เนื้อหาสุดท้ายเลื่อนขึ้นมาพ้นแถบได้ (จอกว้างแถบอยู่กลางล่าง ไม่บังฟอร์ม) */
 @media (max-width: 760px) { body.has-install-banner { padding-bottom: calc(var(--install-banner-h, 80px) + 24px + env(safe-area-inset-bottom)); } }
+
+/* แผงเปิด/ปิดแจ้งเตือนบนเครื่องในหน้าการแจ้งเตือน (app.js: refreshPushPanel) */
+.push-panel { margin-bottom: 14px; padding: 14px 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.push-panel[hidden] { display: none; }
+.push-panel-text { min-width: 0; flex: 1 1 260px; display: grid; gap: 2px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+.push-panel-text strong { color: var(--ink); font-size: 14px; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .theme-button { position: absolute; top: 18px; right: 18px; }
 .pilot-note { margin-top: 16px; padding: 12px 13px; color: var(--muted); background: var(--shell); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.65; }
 
