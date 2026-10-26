@@ -1445,7 +1445,7 @@ const NAV_ICONS = {
   requests: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>`,
   new: `<span class="plus-icon" aria-hidden="true"></span>`,
   approvals: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>`,
-  notifications: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>`,
+  notifications: `<svg class="bell-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="bell-body" d="M12 2.5v1.2M6.2 10a5.8 5.8 0 0 1 11.6 0c0 4.6 1.4 6.4 2.4 7.3H3.8c1-.9 2.4-2.7 2.4-7.3Z"/><path class="bell-clapper" d="M10 20.2a2 2 0 0 0 4 0"/><path class="bell-waves" d="M3.2 7.6A9 9 0 0 1 5 4M20.8 7.6A9 9 0 0 0 19 4"/></svg>`,
   admin: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1h-4v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1v-4H3a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.1h4V3a1.7 1.7 0 0 0 1.1 1.6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.37.36.7.6 1 .27.25.62.4 1 .4h.1v4H21a1.7 1.7 0 0 0-1.6.6Z"/></svg>`,
   profile: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
   signout: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>`,
@@ -1455,7 +1455,7 @@ function navLink(path, label, icon, active, { featured = false, badge = 0, href 
   const isActive = active === path;
   const badgeText = badge > 99 ? "99+" : badge;
   return `<a class="nav-link${isActive ? " active" : ""}${featured ? " nav-create" : ""}" href="${escapeHtml(href)}" aria-label="${escapeHtml(label)}"${isActive ? ` aria-current="page"` : ""}>
-    <span class="nav-icon-wrap"><span class="nav-icon">${icon}</span>${badge ? `<span class="nav-count" aria-label="${badgeText} รายการใหม่">${badgeText}</span>` : ""}</span>
+    <span class="nav-icon-wrap${badge ? " has-unread" : ""}"><span class="nav-icon">${icon}</span>${badge ? `<span class="nav-count" aria-label="${badgeText} รายการใหม่">${badgeText}</span>` : ""}</span>
     <span class="nav-text">${escapeHtml(label)}</span>
   </a>`;
 }
