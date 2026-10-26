@@ -1468,6 +1468,7 @@ function shell(content, active, title) {
       <button class="mobile-nav-toggle" type="button" aria-label="เปิดเมนูหลัก" aria-controls="mobile-nav" aria-expanded="false">
         <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        ${state.unread && !isSandboxMode() && !isLabOnly() ? `<span class="nav-toggle-dot" aria-hidden="true"></span>` : ""}
       </button>
       <aside class="sidebar" id="mobile-nav">
         <a class="brand" href="#/${homePath()}"><img class="brand-mark" src="./icons/icon-192.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
@@ -1500,7 +1501,6 @@ function shell(content, active, title) {
           <div class="top-actions">
             ${isSandboxMode() ? `<span class="sandbox-pill" title="อยู่ในโหมดทดสอบ ข้อมูลแยกจากระบบจริง">TEST</span>` : ""}
             ${themeButton()}
-            ${isSandboxMode() || isLabOnly() ? "" : `<a class="icon-button notification-link" href="#/notifications" aria-label="การแจ้งเตือน">♧${state.unread ? `<span class="notification-count">${state.unread}</span>` : ""}</a>`}
           </div>
         </header>
         <div class="content">${sandboxBannerHtml()}${content}</div>
