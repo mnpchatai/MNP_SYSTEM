@@ -167,6 +167,7 @@ svg { flex: 0 0 auto; }
 .plus-icon::before { width: 10px; height: 2.4px; }
 .plus-icon::after { width: 2.4px; height: 10px; }
 .nav-link svg { color: var(--nav-icon); }
+.nav-emoji { display: inline-block; font-size: 16px; line-height: 1; filter: drop-shadow(0 1.5px 1px rgb(0 0 0 / .22)); }
 .nav-link:hover { color: var(--ink); background: var(--surface-hover); }
 .nav-link.active { color: var(--primary-ink); background: var(--primary); font-weight: 500; }
 .nav-link.active svg { color: var(--primary-ink); }
@@ -638,6 +639,7 @@ tbody tr:hover { background: var(--surface-hover); }
   .nav-link { position: relative; width: 100%; min-width: 0; height: 52px; min-height: 52px; margin: 0; padding: 0 12px; flex-direction: row; justify-content: flex-start; gap: 9px; color: var(--nav-text); background: var(--surface-raised); border: 1px solid var(--line); border-radius: 12px; font-size: 13px; font-weight: 500; line-height: 1.2; -webkit-tap-highlight-color: transparent; }
   .nav-icon-wrap { width: 24px; height: 24px; flex-basis: 24px; }
   .nav-link svg { width: 21px; height: 21px; }
+  .nav-emoji { font-size: 19px; }
   .nav-link:hover { color: var(--primary); background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); }
   .nav-link.active { color: var(--primary-ink); background: var(--primary); border-color: var(--primary); font-weight: 600; box-shadow: 0 6px 15px color-mix(in srgb, var(--primary) 26%, transparent); }
   .nav-link.active svg { color: var(--primary-ink); }

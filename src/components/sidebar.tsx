@@ -3,32 +3,26 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import {
-  Bell,
-  CheckSquare,
-  ClipboardList,
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  UserCircle,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { signOutAction } from "@/app/actions/auth";
 
 const workspaceItems: Array<{
   href: string;
   label: string;
-  icon?: LucideIcon;
+  emoji?: string;
   plus?: boolean;
   featured?: boolean;
 }> = [
-  { href: "/", label: "หน้าหลัก", icon: LayoutDashboard },
-  { href: "/requests", label: "คำร้องของฉัน", icon: ClipboardList },
+  { href: "/", label: "หน้าหลัก", emoji: "🏠" },
+  { href: "/requests", label: "คำร้องของฉัน", emoji: "📝" },
   { href: "/requests/new", label: "สร้างคำร้อง", plus: true, featured: true },
-  { href: "/approvals", label: "รอฉันอนุมัติ", icon: CheckSquare },
-  { href: "/notifications", label: "การแจ้งเตือน", icon: Bell },
+  { href: "/approvals", label: "รอฉันอนุมัติ", emoji: "✅" },
+  { href: "/notifications", label: "การแจ้งเตือน", emoji: "🔔" },
 ];
+
+function NavEmoji({ emoji }: { emoji: string }) {
+  return <span className="nav-emoji" aria-hidden="true">{emoji}</span>;
+}
 
 function isActivePath(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -79,7 +73,7 @@ export function Sidebar({
 
         <nav className="nav" aria-label="เมนูหลัก">
           <div className="nav-section-label">Workspace</div>
-          {workspaceItems.map(({ href, label, icon: Icon, plus, featured }) => (
+          {workspaceItems.map(({ href, label, emoji, plus, featured }) => (
             <Link
               key={href}
               href={href}
@@ -88,7 +82,7 @@ export function Sidebar({
               className={`nav-link${isActivePath(pathname, href) ? " active" : ""}${featured ? " nav-create" : ""}`}
               onClick={() => setMobileOpen(false)}
             >
-              <span className="nav-icon-wrap">{plus ? <span className="plus-icon" aria-hidden="true" /> : Icon ? <Icon size={17} aria-hidden="true" /> : null}</span>
+              <span className="nav-icon-wrap">{plus ? <span className="plus-icon" aria-hidden="true" /> : emoji ? <NavEmoji emoji={emoji} /> : null}</span>
               <span className="nav-label-full">{label}</span>
             </Link>
           ))}
@@ -102,7 +96,7 @@ export function Sidebar({
             className={`nav-link${pathname.startsWith("/profile") ? " active" : ""}`}
             onClick={() => setMobileOpen(false)}
           >
-            <span className="nav-icon-wrap"><UserCircle size={17} aria-hidden="true" /></span>
+            <span className="nav-icon-wrap"><NavEmoji emoji="👤" /></span>
             <span className="nav-label-full">ข้อมูลส่วนตัว</span>
           </Link>
         </nav>
@@ -123,7 +117,7 @@ export function Sidebar({
           </div>
           <form action={signOutAction}>
             <button className="signout" type="submit" aria-label="ออกจากระบบ" title="ออกจากระบบ">
-              <LogOut size={15} aria-hidden="true" />
+              <NavEmoji emoji="🚪" />
             </button>
           </form>
         </div>
