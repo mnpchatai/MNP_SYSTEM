@@ -8,6 +8,6 @@ export default defineConfig([
   // supabase/functions/** รันบน Deno ไม่ใช่ Next.js — ตรวจด้วย `deno check` แยกต่างหาก
   // และ tsconfig.json ก็ exclude ไว้อยู่แล้ว จึงให้ ESLint ชุดของ Next ข้ามไปด้วยให้ตรงกัน
   // vendor/** เป็นไฟล์ไลบรารีที่คัดลอกมาแบบ minified (ดู vendor/pdfjs/README.md) ไม่ใช่โค้ดของเรา
-  globalIgnores([".next/**", "node_modules/**", "supabase/functions/**", "vendor/**"]),
+  globalIgnores([".next/**", "node_modules/**", "dist-pilot/**", "supabase/functions/**", "vendor/**"]),
 ]);
 

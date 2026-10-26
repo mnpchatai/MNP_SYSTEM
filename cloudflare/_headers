@@ -1,0 +1,8 @@
+# กฎ header ของ Pilot Web บน Cloudflare Workers (scripts/build-pilot.mjs คัดลอกไปไว้ใน dist-pilot/)
+# Cache: ค่าเริ่มต้นของ Workers static assets คือ max-age=0, must-revalidate อยู่แล้ว ไม่ต้องตั้งเพิ่ม
+# CSP อยู่ใน <meta> ของ index.html ส่วนนี้เพิ่มเฉพาะสิ่งที่ <meta> ทำไม่ได้
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Robots-Tag: noindex
