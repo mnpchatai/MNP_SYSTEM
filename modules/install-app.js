@@ -1,19 +1,23 @@
 // ปุ่ม "ติดตั้งแอป" ในหน้าเข้าสู่ระบบ: ตัดสินว่าเบราว์เซอร์นี้ติดตั้งแบบไหนได้
 //   "prompt" = Chrome/Edge (Android/คอมพิวเตอร์) ส่ง beforeinstallprompt มาแล้ว กดปุ่มแล้วติดตั้งได้ทันที
 //   "ios"    = Safari บน iPhone/iPad: Apple ไม่เปิดให้เว็บสั่งติดตั้ง ปุ่มจึงเปิดหน้าต่างสอนขั้นตอนแทน
-//   null     = ซ่อนปุ่ม (เปิดจากแอปที่ติดตั้งแล้ว หรือเบราว์เซอร์ที่ติดตั้งไม่ได้ เช่น Chrome บน iPhone, LINE)
+//   null     = ซ่อนปุ่ม: เปิดจากแอปที่ติดตั้งแล้ว, เบราว์เซอร์ในแอปอื่น (LINE ฯลฯ) ที่เพิ่มลงหน้าจอไม่ได้
+//              และ Chrome/Firefox/Edge บน iOS ซึ่งเพิ่มได้จากเมนูแชร์ของตัวเองแต่ขั้นตอนต่างจาก Safari
+//              จึงไม่แสดงหน้าต่างสอนที่ทำตามไม่ได้
 (function () {
   const IOS_OTHER_BROWSERS = /CriOS|FxiOS|EdgiOS|OPiOS|GSA\/|Line\/|FBAN|FBAV|Instagram/;
 
   function isIos({ userAgent = "", platform = "", maxTouchPoints = 0 }) {
-    // iPadOS 13 ขึ้นไปแจ้งตัวเป็น Mac จึงดูจากจอสัมผัสร่วมด้วย
-    return /iPhone|iPad|iPod/.test(userAgent) || (platform === "MacIntel" && maxTouchPoints > 1);
+    // iPadOS 13 ขึ้นไปและโหมด "ขอเว็บไซต์เดสก์ท็อป" แจ้ง UA เป็น Mac จึงดู platform และจอสัมผัสร่วมด้วย
+    return /iPhone|iPad|iPod/.test(userAgent) || /iPhone|iPad|iPod/.test(platform) || (platform === "MacIntel" && maxTouchPoints > 1);
   }
 
   function installMode({ standalone = false, hasPrompt = false, userAgent = "", platform = "", maxTouchPoints = 0 } = {}) {
     if (standalone) return null;
     if (hasPrompt) return "prompt";
-    if (isIos({ userAgent, platform, maxTouchPoints }) && /Safari\//.test(userAgent) && !IOS_OTHER_BROWSERS.test(userAgent)) return "ios";
+    // Safari จริงมี "Version/x" เสมอ เบราว์เซอร์ในแอปอื่นส่วนใหญ่ (WKWebView) ไม่มี
+    const safari = /Version\/\d/.test(userAgent) && /Safari\//.test(userAgent) && !IOS_OTHER_BROWSERS.test(userAgent);
+    if (isIos({ userAgent, platform, maxTouchPoints }) && safari) return "ios";
     return null;
   }
 

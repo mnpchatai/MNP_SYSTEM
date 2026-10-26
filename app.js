@@ -1099,8 +1099,13 @@ async function handleInstallClick() {
   const promptEvent = deferredInstallPrompt;
   // prompt() เรียกได้ครั้งเดียวต่อ event ผู้ใช้ปิดหน้าต่างไปแล้วต้องรอ beforeinstallprompt รอบใหม่
   deferredInstallPrompt = null;
-  await promptEvent.prompt();
-  refreshInstallButton();
+  try {
+    await promptEvent.prompt();
+  } catch (error) {
+    console.warn("เปิดหน้าต่างติดตั้งแอปไม่สำเร็จ", error);
+  } finally {
+    refreshInstallButton();
+  }
 }
 
 async function renderAuth(message = "") {
