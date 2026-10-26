@@ -189,13 +189,23 @@ button { cursor: pointer; }
 .auth-tabs { margin-bottom: 22px; padding: 4px; display: grid; grid-template-columns: 1fr 1fr; background: var(--shell); border: 1px solid var(--line); border-radius: 9px; }
 .auth-tabs button { min-height: 40px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; font-size: 14px; }
 .auth-tabs button.active { color: var(--ink); background: var(--paper); box-shadow: 0 2px 8px rgba(31,61,102,.08); font-weight: 600; }
-.install-app-button { margin-top: 10px; }
-.install-app-button[hidden] { display: none; }
-.install-guide { position: fixed; inset: 0; z-index: 90; padding: 20px; display: grid; place-items: center; background: rgba(6, 14, 27, 0.6); }
-.install-guide-panel { width: min(380px, 100%); padding: 24px; text-align: center; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
-.install-guide-icon { width: 72px; height: 72px; border-radius: 16px; }
-.install-guide-panel h2 { margin: 12px 0 8px; font-size: 19px; }
-.install-guide-panel ol { margin: 0 0 18px; padding-left: 22px; text-align: left; color: var(--muted); line-height: 1.8; }
+.install-banner { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 45; max-width: 560px; margin: 0 auto; padding: 12px 12px 12px 14px; display: flex; align-items: center; gap: 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.install-banner-icon { width: 44px; height: 44px; flex: none; border-radius: 10px; }
+.install-banner-text { min-width: 0; flex: 1; display: grid; gap: 2px; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.install-banner-text strong { color: var(--ink); font-size: 14px; }
+.install-banner-text small { font-size: 12px; color: var(--quiet); }
+.install-share-icon { display: inline-block; vertical-align: -3px; color: var(--primary); }
+.install-banner-close { width: 32px; height: 32px; flex: none; display: grid; place-items: center; color: var(--muted); background: transparent; border: 0; border-radius: 8px; font-size: 20px; line-height: 1; }
+.install-banner-close:hover { color: var(--ink); background: var(--shell); }
+.install-banner-close:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+/* ลูกศรชี้ลงหาแถบเครื่องมือของ Safari — app.js ใส่เฉพาะ iPhone (iPad แถบอยู่ด้านบน) */
+.install-banner-arrow { position: absolute; left: 50%; bottom: -10px; width: 18px; height: 18px; margin-left: -9px; background: var(--paper); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(45deg); animation: install-arrow 1.2s ease-in-out infinite; }
+@keyframes install-arrow { 50% { translate: 0 5px; } }
+@media (prefers-reduced-motion: reduce) { .install-banner-arrow { animation: none; } }
+/* แถบอยู่ใต้ปุ่มอัปเดตและ toast (z-index ต่ำกว่า) และยกสองอย่างนั้นขึ้นเหนือแถบ ไม่ให้บังกัน */
+body.has-install-banner .update-banner, body.has-install-banner .toast { bottom: calc(var(--install-banner-h, 80px) + 24px + env(safe-area-inset-bottom)); }
+/* จอแคบ: เว้นท้ายหน้าเท่าความสูงแถบ เนื้อหาสุดท้ายเลื่อนขึ้นมาพ้นแถบได้ (จอกว้างแถบอยู่กลางล่าง ไม่บังฟอร์ม) */
+@media (max-width: 760px) { body.has-install-banner { padding-bottom: calc(var(--install-banner-h, 80px) + 24px + env(safe-area-inset-bottom)); } }
 .theme-button { position: absolute; top: 18px; right: 18px; }
 .pilot-note { margin-top: 16px; padding: 12px 13px; color: var(--muted); background: var(--shell); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.65; }
 
