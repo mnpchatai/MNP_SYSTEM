@@ -403,8 +403,6 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .breadcrumbs { color: var(--muted); font-size: 13px; }
 .breadcrumbs strong { color: var(--ink); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
-.notification-link { position: relative; }
-.notification-count { position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center; color: white; background: var(--danger); border: 2px solid var(--paper); border-radius: 10px; font-size: 8px; }
 .content { max-width: 1420px; margin: 0 auto; padding: 32px 35px 64px; }
 .page-heading { margin-bottom: 23px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .page-heading h1 { margin: 5px 0 5px; font-size: clamp(28px, 3vw, 36px); line-height: 1.25; letter-spacing: -.025em; }
@@ -1000,6 +998,8 @@ a.machine-history-no:hover { text-decoration: underline; }
   .mobile-nav-toggle .close-icon { opacity: 0; transform: rotate(-45deg) scale(.8); }
   .app-shell.nav-open .mobile-nav-toggle .menu-icon { opacity: 0; transform: rotate(45deg) scale(.8); }
   .app-shell.nav-open .mobile-nav-toggle .close-icon { opacity: 1; transform: rotate(0) scale(1); }
+  .nav-toggle-dot { position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; background: var(--danger); border: 2px solid var(--paper); border-radius: 50%; }
+  .app-shell.nav-open .nav-toggle-dot { display: none; }
   .nav-backdrop { position: fixed; z-index: 24; inset: 58px 0 0; width: 100%; height: auto; padding: 0; display: block; visibility: hidden; opacity: 0; background: rgba(7, 17, 31, .34); border: 0; backdrop-filter: blur(2px); pointer-events: none; transition: opacity .18s ease, visibility .18s ease; }
   .app-shell.nav-open .nav-backdrop { visibility: visible; opacity: 1; pointer-events: auto; }
   .sidebar { position: fixed; z-index: 28; top: 66px; right: 12px; bottom: auto; left: 12px; width: auto; height: auto; max-height: calc(100dvh - 78px); padding: 0; overflow: hidden; visibility: hidden; opacity: 0; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 18px 48px rgba(24, 42, 72, .2); transform: translateY(-10px) scale(.985); transform-origin: top center; pointer-events: none; transition: opacity .18s ease, transform .18s ease, visibility .18s ease; }
