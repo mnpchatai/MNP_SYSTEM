@@ -1064,7 +1064,7 @@ async function renderAuth(message = "") {
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-aside">
-        <div class="brand"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
+        <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-192.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
         <div class="auth-copy">
           <div class="eyebrow">Employee workspace</div>
           <h1>ระบบจัดการเอกสาร<br>ภายในองค์กร</h1>
@@ -1224,7 +1224,7 @@ async function signOutLocally(message) {
 
 function renderConnectionError(error) {
   console.error(error);
-  app.innerHTML = `<main class="boot-screen"><div class="brand-mark">M</div><h2>เชื่อมต่อระบบไม่ได้</h2><p>ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง คุณยังอยู่ในระบบ ไม่ต้องเข้าสู่ระบบใหม่</p><button class="btn" id="reconnect-button" type="button">ลองอีกครั้ง</button></main>`;
+  app.innerHTML = `<main class="boot-screen"><img class="brand-mark" src="./icons/icon-192.png" alt=""><h2>เชื่อมต่อระบบไม่ได้</h2><p>ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง คุณยังอยู่ในระบบ ไม่ต้องเข้าสู่ระบบใหม่</p><button class="btn" id="reconnect-button" type="button">ลองอีกครั้ง</button></main>`;
   document.querySelector("#reconnect-button")?.addEventListener("click", startApp);
 }
 
@@ -1340,7 +1340,7 @@ function shell(content, active, title) {
         <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
       </button>
       <aside class="sidebar" id="mobile-nav">
-        <a class="brand" href="#/${homePath()}"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
+        <a class="brand" href="#/${homePath()}"><img class="brand-mark" src="./icons/icon-192.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">Workspace</div>
           ${isSandboxMode() || isLabOnly() ? "" : `${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
@@ -3462,7 +3462,7 @@ async function renderSetPassword(params) {
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-aside">
-        <div class="brand"><div class="brand-mark">M</div><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
+        <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-192.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
         <div class="auth-copy">
           <div class="eyebrow">Account setup</div>
           <h1>ตั้งรหัสผ่านใหม่<br>สำหรับเข้าใช้งาน</h1>
