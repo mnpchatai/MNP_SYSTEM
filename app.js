@@ -1035,18 +1035,33 @@ async function loadDirectory() {
 
 // แถบด้านล่างจอที่ขึ้นเองในหน้าเข้าสู่ระบบและหน้าแรก (modules/install-app.js ตัดสินว่าเครื่องนี้ติดตั้งแบบไหน)
 //   Chrome/Edge: มีปุ่ม "ติดตั้งแอป" เรียก beforeinstallprompt ที่เก็บไว้ (ต้องมี manifest + sw.js)
-//   Safari บน iPhone/iPad: Apple ไม่ให้เว็บสั่งติดตั้ง แถบจึงบอกปุ่มที่ต้องแตะ พร้อมลูกศรชี้ลงหาแถบเครื่องมือ Safari
-// กด "ปิด" แล้วจำไว้ในเครื่อง ไม่ขึ้นอีก (ล้างข้อมูลเว็บไซต์แล้วจะกลับมา)
+//   Safari บน iPhone/iPad: Apple ไม่ให้เว็บสั่งติดตั้ง แถบจึงบอกปุ่มที่ต้องแตะ
+//     iPhone มีลูกศรชี้ลงหาแถบเครื่องมือของ Safari ซึ่งอยู่ด้านล่าง (iPad แถบอยู่ด้านบน จึงไม่มีลูกศร)
+// กด "ปิด" แล้วจำไว้ในเครื่อง ไม่ขึ้นอีก (ล้างข้อมูลเว็บไซต์แล้วจะกลับมา) เก็บไม่ได้ก็ซ่อนไว้จนปิดหน้า
 const INSTALL_DISMISSED_KEY = "mnp-install-dismissed";
 let deferredInstallPrompt = null;
+let installDismissedThisPage = false;
 
 function installDismissed() {
+  if (installDismissedThisPage) return true;
   try {
     return localStorage.getItem(INSTALL_DISMISSED_KEY) === "1";
   } catch {
     return false;
   }
 }
+
+function hideInstallBanner() {
+  document.querySelector("#install-banner")?.remove();
+  document.body.classList.remove("has-install-banner");
+}
+
+// ความสูงจริงของแถบ (ข้อความบน iPhone ตัดหลายบรรทัด) ใช้เว้นท้ายหน้าและยกปุ่มอัปเดต/toast ขึ้นเหนือแถบ
+function syncInstallBannerHeight() {
+  const banner = document.querySelector("#install-banner");
+  if (banner) document.body.style.setProperty("--install-banner-h", `${banner.offsetHeight}px`);
+}
+window.addEventListener("resize", syncInstallBannerHeight);
 
 function currentInstallMode() {
   return window.MNP_INSTALL_APP.installMode({
@@ -1067,18 +1082,17 @@ function installBannerAllowedHere() {
 
 const SHARE_ICON = `<svg class="install-share-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-function refreshInstallBanner() {
+// hideOnly: ใช้ก่อนรู้ว่าหน้าจะถูกพาไปที่อื่นหรือไม่ (ซ่อนได้ แต่ยังไม่แสดง)
+function refreshInstallBanner({ hideOnly = false } = {}) {
   const mode = installBannerAllowedHere() && !installDismissed() ? currentInstallMode() : null;
   let banner = document.querySelector("#install-banner");
-  if (!mode) {
-    banner?.remove();
-    document.body.classList.remove("has-install-banner");
-    return;
-  }
+  if (!mode) return hideInstallBanner();
+  if (hideOnly) return;
   if (banner?.dataset.mode === mode) return;
   banner?.remove();
   banner = document.createElement("aside");
   banner.id = "install-banner";
+  const iphone = /iPhone|iPod/.test(navigator.userAgent) || /iPhone|iPod/.test(navigator.platform);
   banner.className = `install-banner ${mode}`;
   banner.dataset.mode = mode;
   banner.setAttribute("aria-label", "ติดตั้งแอป MNP");
@@ -1086,24 +1100,25 @@ function refreshInstallBanner() {
     <img class="install-banner-icon" src="./icons/apple-touch-icon.png" alt="">
     <div class="install-banner-text">${mode === "prompt"
       ? "<strong>ติดตั้ง MNP บนเครื่องนี้</strong><span>เปิดใช้จากหน้าจอได้ทันทีเหมือนแอป</span>"
-      : `<strong>ติดตั้ง MNP บนหน้าจอโฮม</strong><span>แตะ ${SHARE_ICON} ที่แถบด้านล่าง แล้วเลือก <b>เพิ่มไปยังหน้าจอโฮม</b></span><small>ไม่เห็นปุ่มนี้ ให้แตะ ⋯ ก่อน</small>`}</div>
+      : `<strong>ติดตั้ง MNP บนหน้าจอโฮม</strong><span>แตะ ${SHARE_ICON} ของ Safari แล้วเลือก <b>เพิ่มไปยังหน้าจอโฮม</b></span><small>ไม่เห็นปุ่มนี้ ให้แตะ ⋯ ก่อน</small>`}</div>
     ${mode === "prompt" ? `<button class="btn small" type="button" data-install-now>ติดตั้งแอป</button>` : ""}
     <button class="install-banner-close" type="button" data-install-dismiss aria-label="ปิด ไม่ต้องแนะนำการติดตั้งอีก">×</button>
-    ${mode === "ios" ? `<span class="install-banner-arrow" aria-hidden="true"></span>` : ""}`;
+    ${mode === "ios" && iphone ? `<span class="install-banner-arrow" aria-hidden="true"></span>` : ""}`;
   banner.addEventListener("click", (event) => {
     if (event.target.closest("[data-install-now]")) installNow();
     if (event.target.closest("[data-install-dismiss]")) {
+      installDismissedThisPage = true;
       try {
         localStorage.setItem(INSTALL_DISMISSED_KEY, "1");
       } catch {
-        // เก็บไม่ได้ (โหมดส่วนตัว) ก็ซ่อนเฉพาะรอบนี้
+        // เก็บไม่ได้ (โหมดส่วนตัว) ก็ซ่อนไว้จนกว่าจะเปิดหน้าใหม่
       }
-      banner.remove();
-      document.body.classList.remove("has-install-banner");
+      hideInstallBanner();
     }
   });
   document.body.append(banner);
   document.body.classList.add("has-install-banner");
+  syncInstallBannerHeight();
 }
 
 async function installNow() {
@@ -1323,6 +1338,7 @@ async function signOutLocally(message) {
 }
 
 function renderConnectionError(error) {
+  hideInstallBanner();
   console.error(error);
   app.innerHTML = `<main class="boot-screen"><img class="brand-mark" src="./icons/icon-192.png" alt=""><h2>เชื่อมต่อระบบไม่ได้</h2><p>ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง คุณยังอยู่ในระบบ ไม่ต้องเข้าสู่ระบบใหม่</p><button class="btn" id="reconnect-button" type="button">ลองอีกครั้ง</button></main>`;
   document.querySelector("#reconnect-button")?.addEventListener("click", startApp);
@@ -3622,7 +3638,7 @@ async function ncrRequestTypeId() {
 
 async function renderRoute() {
   const { path, params } = currentRoute();
-  refreshInstallBanner();
+  refreshInstallBanner({ hideOnly: true });
   if (path !== "requests" || pendingModuleZoom !== moduleZoomKey(params)) pendingModuleZoom = null;
   if (path === "set-password") return await renderSetPassword(params);
   if (!state.session) {
@@ -3647,6 +3663,7 @@ async function renderRoute() {
     go("ncr");
     return;
   }
+  refreshInstallBanner();
   await loadUnread();
   try {
     if (path === "dashboard") return await renderDashboard();
