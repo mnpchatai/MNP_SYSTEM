@@ -355,6 +355,7 @@ function friendlyError(error) {
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
     INVALID_PUSH_SUBSCRIPTION: "ข้อมูลการแจ้งเตือนของเครื่องนี้ไม่ถูกต้อง ลองเปิดใหม่อีกครั้ง",
+    PUSH_ENDPOINT_NOT_ALLOWED: "เบราว์เซอร์นี้ใช้บริการแจ้งเตือนที่ระบบยังไม่รองรับ (รองรับ Chrome, Edge, Firefox และ Safari)",
     LAB_ONLY_ACCOUNT: "บัญชีนี้ใช้ได้เฉพาะ MNP LAB",
     SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
     SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR และ Item master ฝ่ายโรงงานตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
@@ -2800,6 +2801,18 @@ function pushEnvironment() {
   };
 }
 
+// รอได้ไม่เกินเวลาที่กำหนด — ใช้กับขั้นที่เบราว์เซอร์อาจค้าง (service worker ยังไม่พร้อม, push service ไม่ตอบ)
+// เพื่อให้ปุ่มที่ผู้ใช้กดไม่ค้างตลอดไป (ไม่ใช้กับหน้าต่างขออนุญาต เพราะผู้ใช้อาจใช้เวลาตัดสินใจ)
+function withTimeout(promise, milliseconds, code) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(code)), milliseconds);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const serviceWorkerReady = () => withTimeout(navigator.serviceWorker.ready, 8000, "SERVICE_WORKER_NOT_READY");
+
 async function currentPushSubscription() {
   const registration = await navigator.serviceWorker.getRegistration();
   return (await registration?.pushManager.getSubscription()) ?? null;
@@ -2808,6 +2821,8 @@ async function currentPushSubscription() {
 // สถานะที่แผงต้องแสดง: "on" ต้องมีทั้งการสมัครในเครื่องและแถวในฐานข้อมูลที่เป็นของบัญชีนี้
 async function loadPushState() {
   const environment = pushEnvironment();
+  // โหมดทดสอบของ admin: ฐานข้อมูลไม่ให้เขียนตารางเครื่องที่รับแจ้งเตือน จึงไม่เสนอปุ่มที่ใช้ไม่ได้
+  if (environment.keyConfigured && isSandboxMode()) return "sandbox";
   const basic = window.MNP_PUSH.pushPanelState(environment);
   if (basic !== "off" || environment.permission !== "granted") return basic;
   try {
@@ -2830,7 +2845,7 @@ async function ensurePushSubscription(registration) {
     await subscription.unsubscribe();
     subscription = null;
   }
-  return subscription ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  return subscription ?? await withTimeout(registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }), 20000, "PUSH_SUBSCRIBE_TIMEOUT");
 }
 
 async function savePushSubscription(subscription) {
@@ -2847,7 +2862,7 @@ async function savePushSubscription(subscription) {
 async function enablePush() {
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return permission;
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await serviceWorkerReady();
   await savePushSubscription(await ensurePushSubscription(registration));
   return permission;
 }
@@ -2860,18 +2875,31 @@ async function disablePush() {
   await subscription.unsubscribe();
 }
 
-// เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า): ถ้าอนุญาตไว้และมี subscription อยู่ ให้บันทึกซ้ำ
-// เพราะ endpoint ของเบราว์เซอร์เปลี่ยนได้เอง และเครื่องที่เคยเป็นของอีกบัญชีจะถูกย้ายมาเป็นของบัญชีที่ล็อกอินอยู่
+// เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า): ต่ออายุเครื่องที่ "เป็นของบัญชีนี้อยู่แล้ว" เท่านั้น
+// (endpoint ของเบราว์เซอร์เปลี่ยนได้เอง หรือกุญแจ VAPID ในแอปเปลี่ยน) ห้ามย้ายเครื่องมาเป็นของบัญชีนี้โดยผู้ใช้ไม่ได้กดเอง —
+// ไม่งั้นคนที่ล็อกอินต่อจากเจ้าของเดิมบนเครื่องเดียวกันจะได้รับแจ้งเตือนของตัวเองโดยไม่รู้ตัว (หรือกลับกัน)
+// การย้ายข้ามบัญชีเกิดได้จากปุ่ม "เปิดการแจ้งเตือนบนเครื่องนี้" เท่านั้น เครื่องที่ไม่ใช่ของบัญชีนี้จึงถูกยกเลิกการสมัครในเครื่อง
 let pushResyncedFor = null;
 async function resyncPushSubscription() {
   const environment = pushEnvironment();
-  if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted") return;
+  if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted" || isSandboxMode()) return;
   try {
-    const registration = await navigator.serviceWorker.ready;
-    if (!(await registration.pushManager.getSubscription())) return;
-    await savePushSubscription(await ensurePushSubscription(registration));
+    const registration = await serviceWorkerReady();
+    const existing = await registration.pushManager.getSubscription();
+    if (!existing) return;
+    const { data: ownedByMe, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: existing.endpoint });
+    // ถามไม่สำเร็จ (เน็ต/ระบบ) = ไม่รู้ว่าเป็นของใคร ปล่อยไว้ก่อน ไม่แตะอะไร
+    if (error) return;
+    if (ownedByMe !== true) {
+      await existing.unsubscribe();
+      return;
+    }
+    const refreshed = await ensurePushSubscription(registration);
+    await savePushSubscription(refreshed);
+    // สมัครใหม่เพราะกุญแจเปลี่ยน: แถวของ endpoint เดิมไม่มีประโยชน์แล้ว
+    if (refreshed.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
   } catch (error) {
-    console.warn("บันทึกการแจ้งเตือนบนเครื่องนี้ซ้ำไม่สำเร็จ", error);
+    console.warn("ต่ออายุการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
   }
 }
 
@@ -2899,12 +2927,14 @@ function pushPanelBodyHtml(pushState, ios) {
     "ios-install": "บน iPhone/iPad เปิดการแจ้งเตือนได้เมื่อเปิดแอปจากไอคอนบนหน้าจอโฮมเท่านั้น (ต้องใช้ iOS 16.4 ขึ้นไป) — เพิ่ม MNP ลงหน้าจอโฮมจาก Safari ก่อน แล้วเปิดหน้านี้จากไอคอนนั้น",
     "ios-old": "iOS รุ่นนี้ยังไม่รองรับการแจ้งเตือนจากเว็บ (ต้องใช้ iOS 16.4 ขึ้นไป)",
     unsupported: "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือนบนเครื่อง",
+    sandbox: "ใช้ไม่ได้ขณะอยู่ในโหมดทดสอบ — ออกจากโหมดทดสอบก่อน",
     denied: ios
       ? "การแจ้งเตือนของ MNP ถูกปิดไว้ในเครื่อง — เปิดได้ที่ ตั้งค่า › แจ้งเตือน › MNP แล้วกลับมาโหลดหน้านี้ใหม่"
       : "เบราว์เซอร์บล็อกการแจ้งเตือนของเว็บนี้ไว้ — เปิดอนุญาตได้ที่ไอคอนข้างช่องที่อยู่เว็บ (สิทธิ์ของไซต์) แล้วโหลดหน้านี้ใหม่",
   }[pushState];
-  const title = `<strong>แจ้งเตือนบนเครื่องนี้${pushState === "on" ? ` <span class="badge">เปิดอยู่</span>` : ""}</strong>`;
-  const text = `<div class="push-panel-text">${title}${notice ? `<span>${notice}</span>` : ""}</div>`;
+  // หัวข้อไม่ซ้ำกับข้อความบนปุ่ม ("เปิดการแจ้งเตือนบนเครื่องนี้" / "ปิดบนเครื่องนี้") สถานะบอกด้วยป้าย
+  const badge = pushState === "on" ? ` <span class="badge">เปิดอยู่</span>` : pushState === "off" ? ` <span class="badge">ปิดอยู่</span>` : "";
+  const text = `<div class="push-panel-text"><strong>แจ้งเตือนบนหน้าจอ${badge}</strong>${notice ? `<span>${notice}</span>` : ""}</div>`;
   if (pushState === "off") return `${text}<button class="btn" type="button" data-push-enable title="รับแจ้งเตือนที่หน้าจอเครื่องนี้ แม้ไม่ได้เปิดแอป">เปิดการแจ้งเตือนบนเครื่องนี้</button>`;
   if (pushState === "on") return `${text}<button class="btn secondary" type="button" data-push-disable>ปิดบนเครื่องนี้</button>`;
   return text;
@@ -2912,6 +2942,8 @@ function pushPanelBodyHtml(pushState, ios) {
 
 function pushErrorMessage(error) {
   // ข้อผิดพลาดจากฐานข้อมูล (มีรหัสเป็นข้อความ) แปลงด้วยตารางกลาง ส่วนข้อผิดพลาดของเบราว์เซอร์/push service ใช้ข้อความรวม
+  if (/SANDBOX_MODULE_UNSUPPORTED/.test(String(error?.message))) return "ตั้งค่าการแจ้งเตือนบนเครื่องไม่ได้ขณะอยู่ในโหมดทดสอบ";
+  if (error?.message === "SERVICE_WORKER_NOT_READY") return "ระบบแจ้งเตือนของเครื่องนี้ยังไม่พร้อม กรุณาโหลดหน้านี้ใหม่แล้วลองอีกครั้ง";
   return typeof error?.code === "string" ? friendlyError(error) : "เปิดการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ กรุณาลองอีกครั้ง";
 }
 
@@ -3885,6 +3917,8 @@ async function startApp() {
   if (error?.name === "AuthRetryableFetchError") return renderConnectionError(error);
   if (error) console.error(error);
   state.session = data.session;
+  // ยังไม่ได้ล็อกอิน: เครื่องนี้ต้องไม่ค้างการสมัครแจ้งเตือนของบัญชีก่อนหน้า (เช่น session หมดอายุแล้วไม่ได้กดออกจากระบบ) ลองยกเลิกในเครื่อง
+  if (!state.session) releasePushOnThisDevice({ server: false });
   if (state.session) {
     try {
       await loadEmployeeKeepingSession();

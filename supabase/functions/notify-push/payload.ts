@@ -45,7 +45,8 @@ export function pushTitle(title: string | null | undefined, requestNo: string | 
 
 // endpoint ต้องมาจาก push service ของเบราว์เซอร์จริงเท่านั้น: ผู้ใช้ที่ล็อกอินแล้วบันทึก endpoint อะไรก็ได้ผ่าน RPC
 // ฟังก์ชันนี้ถูกเซิร์ฟเวอร์ POST ไปหา endpoint ทุกอันจึงต้องกันไม่ให้ใช้เป็นช่อง SSRF ไปยัง host ภายใน/อื่น
-// (ตรวจที่ตัวส่งเพื่อเพิ่ม host ใหม่ได้โดยไม่ต้องทำ migration)
+// ฐานข้อมูลตรวจรายการเดียวกันตอนบันทึก (app_save_push_subscription ใน supabase/migrations/20261026010000_web_push_notifications.sql
+// ซึ่งเข้มกว่าเล็กน้อย: ไม่รับพอร์ต) — เพิ่ม host ใหม่ต้องแก้ทั้งสองที่ให้ตรงกัน (ที่นี่ + migration ใหม่ที่ create or replace ฟังก์ชันนั้น)
 //   FCM (Chrome/Edge/Opera/Brave/Samsung บน Android)  fcm.googleapis.com
 //   Firefox                                           updates.push.services.mozilla.com
 //   Safari/iOS                                        web.push.apple.com

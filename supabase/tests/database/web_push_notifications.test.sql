@@ -9,7 +9,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(60);
+select plan(82);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------------------
 select has_table('public', 'push_subscriptions', 'push_subscriptions exists');
@@ -54,6 +54,10 @@ select is(
   (select schedule from cron.job where jobname = 'notification-push-drain'),
   '* * * * *',
   'the push queue drain runs every minute'
+);
+select ok(
+  exists (select 1 from pg_trigger t where t.tgrelid = 'public.push_subscriptions'::regclass and t.tgname = 'sandbox_guard' and not t.tgisinternal),
+  'push_subscriptions has the sandbox guard trigger'
 );
 select is(
   (select count(*)::integer from pg_indexes
@@ -124,6 +128,39 @@ select throws_ok(
   $$ select public.app_save_push_subscription('https://fcm.googleapis.com/fcm/send/x', repeat('A', 87), repeat('B', 22)) $$,
   '42501', 'LAB_ONLY_ACCOUNT', 'a LAB-only account cannot save a push subscription'
 );
+
+-- 2.5 endpoint ต้องเป็นของ push service จริง (รายการต้องตรงกับ payload.ts) -----------------------
+select set_config('request.jwt.claims', '{"sub":"91000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+select throws_ok(
+  format($$ select public.app_save_push_subscription(%L, repeat('A', 87), repeat('B', 22)) $$, e),
+  '22023', 'PUSH_ENDPOINT_NOT_ALLOWED', 'endpoint is rejected: ' || e
+)
+from unnest(array[
+  'https://evil.example.com/fcm.googleapis.com',
+  'https://fcm.googleapis.com.evil.example.com/x',
+  'https://evilfcm.googleapis.com/x',
+  'https://user:pw@fcm.googleapis.com/x',
+  'https://fcm.googleapis.com:8443/x',
+  'https://fcm.googleapis.com@evil.example.com/x',
+  'https://169.254.169.254/latest/meta-data',
+  'https://localhost/x',
+  'https://127.0.0.1/x'
+]) as e;
+select lives_ok(
+  format($$ select public.app_save_push_subscription(%L, repeat('A', 87), repeat('B', 22)) $$, e),
+  'endpoint is accepted: ' || e
+)
+from unnest(array[
+  'https://fcm.googleapis.com/fcm/send/ok-1',
+  'https://android.googleapis.com/gcm/send/ok-2',
+  'https://updates.push.services.mozilla.com/wpush/v2/ok-3',
+  'https://web.push.apple.com/ok-4',
+  'https://wns2-par02p.notify.windows.com/w/?token=ok-5',
+  'https://FCM.GOOGLEAPIS.COM/fcm/send/ok-6'
+]) as e;
+reset role;
+delete from public.push_subscriptions where employee_id = '91000000-0000-0000-0000-000000000001';
+set local role authenticated;
 
 -- 3. ตรวจรูปแบบข้อมูล -------------------------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"91000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
@@ -266,14 +303,14 @@ reset role;
 -- แถวที่ seed/trigger สร้างไว้ก่อนหน้านี้ไม่เกี่ยวกับการทดสอบ ปิดทิ้งเพื่อให้การจองเห็นเฉพาะแถวของเทสต์นี้
 update public.notifications set push_status = 'skipped';
 
--- n1 ใหม่ / n2 ผู้รับอ่านแล้ว / n3 เก่าเกิน 24 ชม. / n4 ใช้โควตาครบและหมดเวลาเช่า / n5 กำลังเช่าอยู่ / n6 เช่าหมดแล้วลองไปครั้งเดียว / n7 ส่งแล้ว
+-- (เวลาเช่า 10 นาที) n1 ใหม่ / n2 ผู้รับอ่านแล้ว / n3 เก่าเกิน 24 ชม. / n4 ใช้โควตาครบและหมดเวลาเช่า / n5 กำลังเช่าอยู่ / n6 เช่าหมดแล้วลองไปครั้งเดียว / n7 ส่งแล้ว
 insert into public.notifications (id, recipient_id, title, body, created_at, read_at, push_status, push_attempts, push_attempted_at) values
   ('91000000-0000-0000-0000-0000000000f1', '91000000-0000-0000-0000-000000000001', 'n1', 'b', now() - interval '10 minutes', null, default, default, null),
   ('91000000-0000-0000-0000-0000000000f2', '91000000-0000-0000-0000-000000000001', 'n2', 'b', now() - interval '10 minutes', now(), default, default, null),
   ('91000000-0000-0000-0000-0000000000f3', '91000000-0000-0000-0000-000000000001', 'n3', 'b', now() - interval '25 hours', null, default, default, null),
-  ('91000000-0000-0000-0000-0000000000f4', '91000000-0000-0000-0000-000000000001', 'n4', 'b', now() - interval '1 hour', null, 'pending', 3, now() - interval '10 minutes'),
-  ('91000000-0000-0000-0000-0000000000f5', '91000000-0000-0000-0000-000000000001', 'n5', 'b', now() - interval '1 hour', null, 'pending', 1, now() - interval '1 minute'),
-  ('91000000-0000-0000-0000-0000000000f6', '91000000-0000-0000-0000-000000000001', 'n6', 'b', now() - interval '1 hour', null, 'pending', 1, now() - interval '5 minutes'),
+  ('91000000-0000-0000-0000-0000000000f4', '91000000-0000-0000-0000-000000000001', 'n4', 'b', now() - interval '1 hour', null, 'pending', 3, now() - interval '20 minutes'),
+  ('91000000-0000-0000-0000-0000000000f5', '91000000-0000-0000-0000-000000000001', 'n5', 'b', now() - interval '1 hour', null, 'pending', 1, now() - interval '9 minutes'),
+  ('91000000-0000-0000-0000-0000000000f6', '91000000-0000-0000-0000-000000000001', 'n6', 'b', now() - interval '1 hour', null, 'pending', 1, now() - interval '11 minutes'),
   ('91000000-0000-0000-0000-0000000000f7', '91000000-0000-0000-0000-000000000001', 'n7', 'b', now() - interval '1 hour', null, 'sent', 1, now() - interval '5 minutes');
 
 select is(
@@ -356,6 +393,33 @@ select is(
   (select count(*)::integer from public.app_claim_push_notifications(null)),
   1,
   'a null p_limit falls back to the default batch and takes what is left'
+);
+reset role;
+
+-- 6. โหมดทดสอบของ admin: บันทึก/ลบเครื่องไม่ได้ (ด่านกลาง sandbox_guard) อ่านได้ และกลับมาใช้ได้หลังออกจากโหมด -----
+select set_config('test.sbx_persona', (select id::text from public.employees where employee_no = 'SBX-RB-STAFF'), true);
+update public.employees set role_id = '20000000-0000-0000-0000-000000000004' where id = '91000000-0000-0000-0000-000000000001';
+insert into public.push_subscriptions (employee_id, endpoint, p256dh, auth)
+values ('91000000-0000-0000-0000-000000000001', 'https://fcm.googleapis.com/fcm/send/sandbox-1', repeat('A', 87), repeat('B', 22));
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"91000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.sbx_persona')::uuid) $$, 'an admin enters the sandbox');
+select throws_ok(
+  $$ select public.app_save_push_subscription('https://fcm.googleapis.com/fcm/send/sandbox-2', repeat('A', 87), repeat('B', 22)) $$,
+  'P0001', 'SANDBOX_MODULE_UNSUPPORTED', 'saving a push subscription is blocked while in the sandbox'
+);
+select throws_ok(
+  $$ select public.app_delete_push_subscription('https://fcm.googleapis.com/fcm/send/sandbox-1') $$,
+  'P0001', 'SANDBOX_MODULE_UNSUPPORTED', 'deleting a push subscription is blocked while in the sandbox'
+);
+select is(
+  public.app_is_push_subscribed('https://fcm.googleapis.com/fcm/send/sandbox-1'), true,
+  'reading the subscription state still works in the sandbox'
+);
+select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the sandbox');
+select is(
+  public.app_delete_push_subscription('https://fcm.googleapis.com/fcm/send/sandbox-1'), true,
+  'deleting works again after leaving the sandbox'
 );
 reset role;
 

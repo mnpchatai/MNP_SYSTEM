@@ -54,16 +54,22 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const target = new URL(event.notification.data?.url ?? "#/notifications", self.registration.scope).href;
   event.waitUntil((async () => {
-    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    // เฉพาะหน้าต่างที่ service worker นี้ควบคุมอยู่ (ไม่ใส่ includeUncontrolled) เพราะ navigate() ใช้ได้กับหน้าเหล่านั้นเท่านั้น
+    // หน้าที่เปิดค้างไว้ก่อนมี service worker จะได้หน้าต่างใหม่แทนการพยายามพาหน้าเดิมไปแล้วเปิดซ้ำอีกอัน
+    const windows = await self.clients.matchAll({ type: "window" });
     const open = windows.find((client) => client.url.startsWith(self.registration.scope));
     if (open) {
+      // navigate ก่อนแล้วค่อย focus: เปลี่ยนแค่ hash ในหน้าเดิม แอปรับ hashchange แล้วเปิดหน้านั้นเอง ไม่โหลดหน้าใหม่
+      let navigated = null;
       try {
-        await open.focus();
-        // เปลี่ยนแค่ hash ในหน้าเดิม แอปรับ hashchange แล้วเปิดหน้านั้นเอง ไม่โหลดหน้าใหม่
-        await open.navigate(target);
-        return;
+        navigated = await open.navigate(target);
       } catch {
-        // navigate ใช้ไม่ได้กับหน้าที่ service worker นี้ยังไม่ควบคุม → เปิดหน้าต่างใหม่แทน
+        // navigate ใช้ไม่ได้ → เปิดหน้าต่างใหม่แทน (ด้านล่าง)
+      }
+      if (navigated) {
+        // focus ไม่สำเร็จก็ไม่เปิดหน้าต่างซ้ำ เพราะหน้าถูกพาไปที่ปลายทางแล้ว
+        await navigated.focus().catch(() => {});
+        return;
       }
     }
     await self.clients.openWindow(target);

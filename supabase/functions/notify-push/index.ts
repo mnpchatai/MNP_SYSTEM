@@ -18,7 +18,7 @@ import {
 // pg_cron เรียกทุกนาทีผ่าน private.drain_pending_push_notifications() (เฉพาะเมื่อมีแถว pending) ด้วย service role key
 //   1) จองแถวด้วย public.app_claim_push_notifications() — ฐานข้อมูลกันสองรอบจองแถวเดียวกันและนับจำนวนครั้งให้
 //   2) ส่งไปทุกเครื่อง (push_subscriptions) ของผู้รับ: 404/410 ลบเครื่องนั้นทิ้ง, สำเร็จเครื่องใดเครื่องหนึ่ง = sent
-//   3) ล้มชั่วคราว = กลับเป็น pending (ลองใหม่หลังหมดเวลาเช่า 3 นาที) ครบ 3 ครั้งเป็น failed
+//   3) ล้มชั่วคราว = กลับเป็น pending (ลองใหม่หลังหมดเวลาเช่า 10 นาที) ครบ 3 ครั้งเป็น failed
 //
 // สิทธิ์: service role key เท่านั้น (ไม่มีผู้ใช้เรียกเอง จึงไม่มี CORS) ตอบเฉพาะตัวเลขสรุป
 // ไม่คืนเนื้อหาแจ้งเตือน endpoint หรือรายชื่อผู้รับกลับไป และไม่ log ค่าเหล่านั้น
@@ -30,6 +30,8 @@ const MAX_ATTEMPTS = 3;
 const BATCH_LIMIT = 50;
 const ROW_CONCURRENCY = 10;
 const SEND_TIMEOUT_MS = 10_000;
+// เวลาทำงานนานสุดของหนึ่งรอบ ≈ ceil(50 แถว / 10 พร้อมกัน) × (ส่ง 10 วินาที + อัปเดตฐานข้อมูล) ≈ 1–2 นาที ต่ำกว่าเพดาน wall-clock ของ Edge Function (ราว 400 วินาที)
+// มาก และเวลาเช่าของแถวที่จอง (10 นาทีใน app_claim_push_notifications) ยาวกว่าเพดานนั้นอีก จึงไม่มีรอบอื่นจองแถวที่รอบนี้ยังส่งอยู่
 // push ที่ค้างที่ push service เกิน 12 ชั่วโมงไม่มีประโยชน์ ปล่อยให้หมดอายุเอง
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
 
@@ -140,14 +142,21 @@ async function drainQueue(admin: Admin) {
     subscriptionsByEmployee.set(item.employee_id, list);
   }
 
+  // ปิดผลเฉพาะเมื่อแถวยังเป็น "การจองครั้งนี้" (ยัง pending และ push_attempts เท่าตอนจอง) — ถ้าเวลาเช่าหมดระหว่างส่งและรอบอื่นจองไปแล้ว
+  // (push_attempts เพิ่ม) รอบนี้ต้องไม่เขียนทับผลของรอบนั้น
   const settle = async (row: ClaimedRow, status: "sent" | "skipped" | "pending" | "failed", pushError: string | null) => {
-    const { error: updateError } = await admin.from("notifications").update({
+    const { data: updated, error: updateError } = await admin.from("notifications").update({
       push_status: status,
       push_error: pushError,
       push_attempted_at: new Date().toISOString(),
-    }).eq("id", row.id);
-    // ปิดผลไม่สำเร็จ = แถวคงสถานะ pending ที่ถูกเช่าอยู่ จะถูกจองซ้ำหลังหมดเวลาเช่า (อาจส่งซ้ำได้หนึ่งครั้ง ดีกว่าหายไป)
-    if (updateError) console.error("notify-push: settle failed", { notificationId: row.id });
+    }).eq("id", row.id).eq("push_status", "pending").eq("push_attempts", row.push_attempts).select("id");
+    if (updateError) {
+      // ปิดผลไม่สำเร็จ = แถวคงสถานะ pending ที่ถูกเช่าอยู่ จะถูกจองซ้ำหลังหมดเวลาเช่า (อาจส่งซ้ำได้หนึ่งครั้ง ดีกว่าหายไป)
+      console.error("notify-push: settle failed", { notificationId: row.id });
+    } else if (!updated?.length) {
+      console.warn("notify-push: claim lost, result discarded", { notificationId: row.id });
+      return;
+    }
     if (status === "pending") summary.retry++;
     else summary[status]++;
   };
@@ -165,10 +174,9 @@ async function drainQueue(admin: Admin) {
         tag: `n-${row.id}`,
       });
 
-      const results: SendOutcome[] = [];
-      for (const subscription of subscriptions) {
+      // ส่งทุกเครื่องของผู้รับพร้อมกัน (สูงสุด 10 เครื่อง) เพื่อให้เวลาต่อแถวไม่เกินเวลา timeout ของการส่งหนึ่งครั้ง
+      const results: SendOutcome[] = await Promise.all(subscriptions.map(async (subscription) => {
         const result = await sendToSubscription(subscription, payload);
-        results.push(result);
         if (result.outcome === "gone") {
           await admin.from("push_subscriptions").delete().eq("id", subscription.id);
           summary.removedSubscriptions++;
@@ -180,7 +188,8 @@ async function drainQueue(admin: Admin) {
               : { failure_count: subscription.failure_count + 1 },
           ).eq("id", subscription.id);
         }
-      }
+        return result;
+      }));
       const settlement = settleRow(results, row.push_attempts, MAX_ATTEMPTS);
       await settle(row, settlement.status, settlement.error);
     } catch {

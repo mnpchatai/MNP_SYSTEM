@@ -16,7 +16,10 @@
 --   - แถวที่ผู้รับอ่านแล้ว หรือค้างเกิน 24 ชั่วโมง ถูกปิดเป็น skipped (ALREADY_READ / EXPIRED) ตอนจอง
 --     push ที่มาถึงช้าข้ามวันไม่มีประโยชน์ และกันการยิงรวดเดียวเมื่อเปิดใช้ช่องทางนี้หลังจากคิวค้างมานาน
 --   - ลองสูงสุด 3 ครั้ง (นับตอนจอง) ครบแล้วยังไม่สำเร็จ = failed; แถวที่ถูกจองแล้วฟังก์ชันล้มก่อนปิดผล
---     จะถูกจองซ้ำได้หลังหมดเวลาเช่า 3 นาที และถูกปิดเป็น failed (LEASE_EXPIRED) เมื่อใช้โควตาครบ
+--     จะถูกจองซ้ำได้หลังหมดเวลาเช่า 10 นาที และถูกปิดเป็น failed (LEASE_EXPIRED) เมื่อใช้โควตาครบ
+--     เวลาเช่าต้องยาวกว่าเวลาทำงานนานสุดของ Edge Function (เพดาน wall-clock ของ Supabase ราว 400 วินาที) เสมอ
+--     ไม่งั้นรอบถัดไปจะจองแถวที่รอบเดิมยังส่งอยู่แล้วส่งซ้ำ — ถ้าเปลี่ยนค่านี้ ต้องแก้ทั้ง 3 จุดในไฟล์นี้
+--     (app_claim_push_notifications 2 จุด และ drain_pending_push_notifications) ให้ตรงกัน
 --
 -- ต้องตั้งก่อนระบบทำงานจริง (ไม่มีค่าในไฟล์นี้)
 --   Vault secret    notify_push_function_url         = https://<project-ref>.supabase.co/functions/v1/notify-push
@@ -89,6 +92,9 @@ alter table public.push_subscriptions enable row level security;
 revoke all on public.push_subscriptions from public, anon, authenticated;
 grant select, update, delete on public.push_subscriptions to service_role;
 select private.lab_only_guard_table('public.push_subscriptions');
+-- โหมดทดสอบของ admin (20261005030000): ระหว่างอยู่ในโหมดทดสอบห้ามเขียนตารางนี้ (บันทึก/ลบเครื่องที่รับแจ้งเตือนไม่ได้)
+-- Edge Function ใช้ service_role (auth.uid() เป็น null) จึงลบ endpoint ที่หมดอายุได้ตามปกติ
+select private.sandbox_guard_table('public.push_subscriptions');
 
 -- 3. RPC ฝั่งผู้ใช้ ---------------------------------------------------------------------------------
 -- บันทึก/ย้ายเครื่องนี้มาเป็นของผู้เรียก
@@ -124,6 +130,14 @@ begin
   -- (p256dh = จุด P-256 65 ไบต์ ≈ 87 ตัว, auth = 16 ไบต์ ≈ 22 ตัว)
   if length(v_endpoint) > 2048 or v_endpoint !~ '^https://[^[:space:][:cntrl:]]{4,}$' then
     raise exception 'INVALID_PUSH_SUBSCRIPTION' using errcode = '22023';
+  end if;
+  -- endpoint ต้องเป็นของ push service ของเบราว์เซอร์จริงเท่านั้น (ไม่ให้ผู้ใช้บันทึก URL อื่นให้เซิร์ฟเวอร์ยิง)
+  -- รายการ host ต้องตรงกับ PUSH_HOST_SUFFIXES ใน supabase/functions/notify-push/payload.ts — แก้ที่หนึ่งต้องแก้อีกที่
+  -- (ฝั่ง Edge Function ตรวจซ้ำก่อนยิงทุกครั้ง) ที่นี่เข้มกว่าเล็กน้อย: ไม่รับ userinfo และพอร์ตใด ๆ
+  --   FCM  fcm.googleapis.com · android.googleapis.com   Firefox  *.push.services.mozilla.com
+  --   Safari/iOS  *.push.apple.com   Edge/Windows  *.notify.windows.com
+  if v_endpoint !~* '^https://([a-z0-9-]+\.)*(fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|push\.apple\.com|notify\.windows\.com)(/|$)' then
+    raise exception 'PUSH_ENDPOINT_NOT_ALLOWED' using errcode = '22023';
   end if;
   if coalesce(p_p256dh, '') !~ '^[A-Za-z0-9_-]{80,100}$' or coalesce(p_auth, '') !~ '^[A-Za-z0-9_-]{16,32}$' then
     raise exception 'INVALID_PUSH_SUBSCRIPTION' using errcode = '22023';
@@ -245,7 +259,7 @@ begin
       push_error = coalesce(n.push_error, 'LEASE_EXPIRED')
   where n.push_status = 'pending'
     and n.push_attempts >= 3
-    and n.push_attempted_at < now() - interval '3 minutes';
+    and n.push_attempted_at < now() - interval '10 minutes';
 
   return query
   with picked as (
@@ -253,7 +267,7 @@ begin
     from public.notifications c
     where c.push_status = 'pending'
       and c.push_attempts < 3
-      and (c.push_attempted_at is null or c.push_attempted_at < now() - interval '3 minutes')
+      and (c.push_attempted_at is null or c.push_attempted_at < now() - interval '10 minutes')
     order by c.created_at
     limit v_limit
     for update skip locked
@@ -312,7 +326,7 @@ begin
       and n.push_attempts < 3
       and n.read_at is null
       and n.created_at > now() - interval '24 hours'
-      and (n.push_attempted_at is null or n.push_attempted_at < now() - interval '3 minutes')
+      and (n.push_attempted_at is null or n.push_attempted_at < now() - interval '10 minutes')
   ) then
     perform private.dispatch_pending_push_notifications();
   end if;
