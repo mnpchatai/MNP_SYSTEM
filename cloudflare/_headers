@@ -3,6 +3,6 @@
 # CSP อยู่ใน <meta> ของ index.html ส่วนนี้เพิ่มเฉพาะสิ่งที่ <meta> ทำไม่ได้
 /*
   X-Content-Type-Options: nosniff
-  X-Frame-Options: SAMEORIGIN
+  X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   X-Robots-Tag: noindex
