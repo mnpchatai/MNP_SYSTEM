@@ -2540,7 +2540,7 @@ async function renderRequestDetail(params) {
   // โมดูลที่มีส่วนเฉพาะในหน้ารายละเอียด (เช่น ใบแจ้งซ่อม MT) คืนข้อมูล/ส่วนที่ต้องวาดเพิ่ม
   const separateModule = requestModule(type?.code);
   const detailView = separateModule?.detailView
-    ? separateModule.detailView({ request, type, steps, verifications, directory, progressSteps, assignedTechIds, employee })
+    ? separateModule.detailView({ request, type, steps, verifications, history, directory, progressSteps, assignedTechIds, employee })
     : null;
   const moduleDetail = separateModule?.loadDetail
     ? await separateModule.loadDetail({ sb, request, steps, directory, helpers: { relation, personName, appsScriptApprovalStage } })
@@ -2582,7 +2582,7 @@ async function renderRequestDetail(params) {
     ...(moduleDetail?.facts ?? []).map((fact) => requestFact(fact.label, fact.value, fact.options)),
   ].join("");
   const content = `
-    <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p></header>
+    <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p>${detailView?.headerActionsHtml ? `<div class="request-detail-actions">${detailView.headerActionsHtml}</div>` : ""}</header>
     <div class="detail-grid">
       <div class="stack">
         <section class="card request-overview-card">
