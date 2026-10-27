@@ -10,7 +10,7 @@ const source = readFileSync(new URL("../../apps-script/lab-mooney/Code.gs", impo
 const context = vm.createContext({});
 vm.runInContext(source, context);
 const api = vm.runInContext(
-  "({ isMooneyHeader_, parseDisplayDate_, parseDisplayTime_, parseNumber_, expandMerged_, rowsFromTab_, parseRequestToken_, decideAccess_, HEADERS_ })",
+  "({ isMooneyHeader_, parseDisplayDate_, parseDisplayTime_, parseNumber_, expandMerged_, rowsFromTab_, isLotHeader_, parseRequestToken_, decideAccess_, HEADERS_ })",
   context,
 );
 // ผลลัพธ์จาก vm มี prototype คนละ realm — แปลงผ่าน JSON ก่อนเทียบ deepEqual
@@ -102,6 +102,7 @@ test("a tab becomes one row per measurement with the sheet's own AVG/SD on every
   assert.deepEqual(rows[1], {
     source_sheet: "A1802", sample_id: "112", material: "A1802", test_date: "2026-09-21", test_time: "08:36:01",
     temperature_c: 100, test_minutes: 4, mh: 49.95, mv: 31.78, avg_mh: 50.33, sd_mh: 0.45, avg_mv: 31.52, sd_mv: 0.21,
+    lot_number: null,
   });
   assert.deepEqual(rows.map((row) => row.avg_mh), [50.33, 50.33, 50.33]);
 });
@@ -125,6 +126,55 @@ test("a table narrower than 12 columns still yields null AVG/SD instead of undef
   const { rows } = plain(api.rowsFromTab_("X", display, raw, []));
   assert.equal(rows.length, 1);
   assert.deepEqual([rows[0].avg_mh, rows[0].sd_mh, rows[0].avg_mv, rows[0].sd_mv], [null, null, null, null]);
+});
+
+// แท็บที่มีคอลัมน์ M (Lot) — lots คือค่าคอลัมน์ M ของแต่ละแถวข้อมูล
+function lotTab(lotHeader, lots) {
+  const header = [...HEADER, lotHeader];
+  const display = [header, ...lots.map((lot, index) => ["11" + index, "A1802", "21/09/2026", "8:29:13", "100", "4", "50.79", "31.39", "", "", "", "", lot])];
+  const raw = display.map((row, index) => (index === 0 ? row : [row[0], row[1], "x", "x", 100, 4, 50.79, 31.39, "", "", "", "", row[12]]));
+  return { display, raw };
+}
+
+test("a Lot column (M) is read as lot_number: trimmed, blank becomes null", () => {
+  const { display, raw } = lotTab("Lot", ["  L-2610-A ", "", "   "]);
+  const { rows, problems } = plain(api.rowsFromTab_("A1802", display, raw, []));
+  assert.deepEqual(problems, []);
+  assert.deepEqual(rows.map((row) => row.lot_number), ["L-2610-A", null, null]);
+});
+
+test("a Lot of exactly 60 characters is accepted, 61 is a row problem and the row is not emitted", () => {
+  const { display, raw } = lotTab("Lot", ["x".repeat(60), "y".repeat(61), "OK-1"]);
+  const { rows, problems } = plain(api.rowsFromTab_("A1802", display, raw, []));
+  assert.deepEqual(rows.map((row) => row.lot_number), ["x".repeat(60), "OK-1"]);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /^A1802 แถว 3: .*Lot ยาวเกิน 60 ตัวอักษร/);
+});
+
+test("the Lot is measured after trimming, so surrounding spaces do not count toward 60", () => {
+  const { display, raw } = lotTab("Lot", [` ${"x".repeat(60)} `]);
+  const { rows, problems } = plain(api.rowsFromTab_("A1802", display, raw, []));
+  assert.deepEqual(problems, []);
+  assert.equal(rows[0].lot_number, "x".repeat(60));
+});
+
+test("a tab without a Lot header yields lot_number null and ignores column M", () => {
+  const { display, raw, merges } = a1802Tab();
+  const { rows } = plain(api.rowsFromTab_("A1802", display, raw, merges));
+  assert.deepEqual(rows.map((row) => row.lot_number), [null, null, null]);
+  const stray = lotTab("Notes", ["not-a-lot"]);
+  const result = plain(api.rowsFromTab_("A1802", stray.display, stray.raw, []));
+  assert.deepEqual(result.rows.map((row) => row.lot_number), [null], "column M without a Lot header is not sent");
+});
+
+test("Lot header variants are recognised, ignoring case and spacing", () => {
+  for (const variant of ["Lot", " LOT ", "lot no", "Lot  No", "LOT NUMBER", "Lot Number", "ล็อต"]) {
+    assert.equal(api.isLotHeader_(variant), true, variant);
+    const { display, raw } = lotTab(variant, ["L1"]);
+    assert.equal(plain(api.rowsFromTab_("A1802", display, raw, [])).rows[0].lot_number, "L1", variant);
+  }
+  for (const other of ["", "Lots", "Batch", "Lot ID", null, undefined]) assert.equal(api.isLotHeader_(other), false, String(other));
+  assert.equal(api.isMooneyHeader_([...HEADER, "Lot"]), true, "the Lot column does not change the A–H header check");
 });
 
 test("rows with missing or malformed cells are reported with the tab and row number, never sent half-filled", () => {
@@ -183,12 +233,14 @@ test("only an HTTP 200 with a JSON true allows access; everything else is denied
 });
 
 // Web App ทดสอบด้วย stub: นับว่าชีตถูกอ่านกี่ครั้ง และ Supabase ถูกเรียกอย่างไร
-function fakeSheet({ name, display, raw, merges = [], hidden = false }) {
+function fakeSheet({ name, display, raw, merges = [], hidden = false, maxColumns = 26 }) {
   return {
     getName: () => name,
     getLastRow: () => display.length,
     isSheetHidden: () => hidden,
-    getRange: (row, col, numRows, numCols) => ({
+    getMaxColumns: () => maxColumns,
+    getRange: (row, col, numRows = 1, numCols = 1) => ({
+      getDisplayValue: () => String((display[row - 1] ?? [])[col - 1] ?? ""),
       getDisplayValues: () => display.slice(row - 1, row - 1 + numRows).map((cells) => cells.slice(col - 1, col - 1 + numCols)),
       getValues: () => raw.slice(row - 1, row - 1 + numRows).map((cells) => cells.slice(col - 1, col - 1 + numCols)),
       getMergedRanges: () => merges.map((merge) => ({
@@ -296,6 +348,20 @@ test("hidden tabs and tabs that are not Mooney results are left out; the other t
   assert.equal(body.ok, true);
   assert.equal(body.rows.length, 3);
   assert.deepEqual(body.skipped, ["Summary"]);
+});
+
+test("the Web App reads column M when its header is Lot, and only then", () => {
+  const withLot = lotTab("Lot", ["L-2610-A", ""]);
+  const app = makeWebApp({ respond: supabaseAnswers(200, "true"), sheets: [fakeSheet({ name: "A1802", ...withLot, maxColumns: 13 })] });
+  const body = app.post({ token: JWT });
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.rows.map((row) => row.lot_number), ["L-2610-A", null]);
+  // ชีตกว้างแค่ 12 คอลัมน์ (ไม่มี M) ต้องไม่พยายามอ่านคอลัมน์ M
+  const narrow = a1802Tab();
+  const plainApp = makeWebApp({ respond: supabaseAnswers(200, "true"), sheets: [fakeSheet({ name: "A1802", ...narrow, maxColumns: 12 })] });
+  const plainBody = plainApp.post({ token: JWT });
+  assert.equal(plainBody.ok, true);
+  assert.deepEqual(plainBody.rows.map((row) => row.lot_number), [null, null, null]);
 });
 
 test("unreadable rows are reported (capped) while the readable rows are still returned", () => {
