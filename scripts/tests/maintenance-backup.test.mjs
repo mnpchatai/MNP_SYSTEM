@@ -6,7 +6,7 @@ import vm from "node:vm";
 const require = createRequire(import.meta.url);
 const formExport = require("../../modules/mt-form-export.js");
 
-// Code.gs + FormFill.gs อยู่โปรเจกต์ Apps Script เดียวกัน (global scope เดียวกัน) จึงโหลดเข้า vm เดียว
+// Code.gs เป็นไฟล์เดียวครบชุด (ซิงก์ + เติมฟอร์ม) ที่วางทับในโปรเจกต์ของสเปรดชีต
 // ชีตจำลองรองรับเฉพาะ API ที่สคริปต์ใช้ สิ่งที่ยังต้องทดสอบบน Google จริง: เมนู, onEdit trigger, toast, การพิมพ์
 const read = (name) => readFileSync(new URL(`../../apps-script/maintenance-backup/${name}`, import.meta.url), "utf8");
 
@@ -77,7 +77,6 @@ const LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} })
 const ContentService = { createTextOutput: (text) => ({ text, setMimeType() { return this; } }), MimeType: { JSON: "json", TEXT: "text" } };
 const context = vm.createContext({ Utilities, SpreadsheetApp, LockService, ContentService, console });
 vm.runInContext(read("Code.gs"), context);
-vm.runInContext(read("FormFill.gs"), context);
 const gs = vm.runInContext("({ orderRow_, fmtDate_, ffSanitize_, doPost, onEdit, ORDER_HEADERS, FF_BLANK_CELLS })", context);
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
@@ -123,7 +122,7 @@ test("a new order without assignment leaves the later columns empty and text nev
   assert.deepEqual(row.slice(9, 20), ["", "", "", "", "", "", "", "", "", "", ""]);
 });
 
-test("the blank form in FormFill.gs is exactly the web module's blank form", () => {
+test("the blank form in Code.gs is exactly the web module's blank form", () => {
   assert.deepEqual(plain(gs.FF_BLANK_CELLS), formExport.buildMtFormCells({ request: {} }).cells);
 });
 
