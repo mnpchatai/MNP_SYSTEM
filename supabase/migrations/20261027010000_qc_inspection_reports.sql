@@ -12,11 +12,12 @@
 --   2) ใบตรวจ: ผู้ตรวจกรอกค่าที่วัดได้ 1-5 จุดต่อรายการ ฐานข้อมูลคำนวณ min / max / average (ปัด 4 ตำแหน่ง) และตัดสิน
 --      O / N / NA ต่อรายการจากสเปก MIN-MAX เอง (ไม่รับ judge จาก client) ผู้ตรวจยอมรับรายการที่ N ได้เป็น AC
 --      (judge_override = 'AC' ต้องมีหมายเหตุรายข้ออย่างน้อย 5 ตัวอักษร) ผลรวมของใบ: 'ng' ถ้ามี N, 'accept' ถ้าไม่มี N แต่มี AC, 'ok' นอกนั้น
---   3) สายอนุมัติ 3 ขั้น: manager QA -> factory manager -> General Manager (ผู้ตรวจ = คนส่งใบ ห้ามอนุมัติใบตัวเอง)
+--   3) สายอนุมัติ 3 ขั้น: manager QA -> factory manager -> General Manager (ผู้ตรวจ = คนส่งใบ ผู้ตรวจและผู้สร้างใบห้ามอนุมัติใบตัวเอง)
 --      ไม่อนุมัติต้องมีเหตุผล ใบที่ไม่อนุมัติเปิดกลับเป็นฉบับร่างหรือยกเลิกได้
 --   4) "Lot ยางผสม" ของใบเชื่อมกับผล Mooney ใน public.lab_mooney_results ด้วยคอลัมน์ใหม่ lot_number
 --      (app_lab_mooney_import รับ lot_number เพิ่ม) app_qc_report คืนสรุปผล Mooney ต่อ Lot และ app_qc_lots ค้นรายการ Lot
---   5) ออก NCR จากใบที่ผลเป็น 'ng' ด้วย public.app_ncr_issue (แหล่งที่พบ final_fg) ในธุรกรรมเดียวกัน
+--   5) ออก NCR จากใบที่ผลเป็น 'ng' และส่งอนุมัติแล้ว (ไม่ใช่ฉบับร่าง/ถูกไม่อนุมัติ/ยกเลิก) ด้วย public.app_ncr_issue (แหล่งที่พบ final_fg)
+--      ในธุรกรรมเดียวกัน ใบที่ผูก NCR แล้วยกเลิกไม่ได้ และเมื่อ NCR ทดสอบถูกล้าง (ncr_id ว่าง) จะไม่แสดง ncr_no ค้าง
 --
 -- เปิดเฉพาะโหมดทดสอบ (admin ที่ทำหน้าที่เป็น persona) เหมือนโมดูล factory_* ทุกประการ
 --   ทุก RPC ปฏิเสธนอกโหมดทดสอบด้วย QC_TEST_MODE_ONLY (private.qc_actor) เมื่อจะเปิดใช้จริงต้องเปลี่ยน qc_actor ให้คืนพนักงานจริง
@@ -617,7 +618,7 @@ as $$
     'inspector', (select jsonb_build_object('first_name', e.first_name, 'last_name', e.last_name, 'job_title', e.job_title)
                   from public.employees e where e.id = r.inspected_by),
     'result', r.result, 'status', r.status, 'current_step', r.current_step, 'remark', r.remark,
-    'version', r.version, 'ncr_id', r.ncr_id, 'ncr_no', r.ncr_no, 'created_by', r.created_by,
+    'version', r.version, 'ncr_id', r.ncr_id, 'ncr_no', case when r.ncr_id is null then null else r.ncr_no end, 'created_by', r.created_by,
     'created_at', r.created_at, 'updated_at', r.updated_at, 'submitted_at', r.submitted_at,
     'completed_at', r.completed_at,
     'items', coalesce((
@@ -884,7 +885,7 @@ begin
           'inspected_at', r.inspected_at,
           'inspector_name', (select e.first_name || ' ' || e.last_name from public.employees e where e.id = r.inspected_by),
           'result', r.result, 'status', r.status, 'current_step', r.current_step, 'version', r.version,
-          'ncr_no', r.ncr_no, 'created_at', r.created_at) as entry
+          'ncr_no', case when r.ncr_id is null then null else r.ncr_no end, 'created_at', r.created_at) as entry
       from public.qc_inspection_reports r
       where r.is_test
         and (v_status = '' or r.status = v_status)
@@ -1157,7 +1158,7 @@ begin
   where report_id = v_rep.id and step_order = v_rep.current_step and status = 'pending' for update;
   if v_appr.id is null then raise exception 'QC_STEP_NOT_CURRENT'; end if;
   if not private.qc_step_allowed(v_actor, v_appr.step_code) then raise exception 'NOT_AUTHORIZED'; end if;
-  if v_rep.inspected_by = v_actor.id then raise exception 'QC_SELF_APPROVAL'; end if;
+  if v_actor.id in (v_rep.inspected_by, v_rep.created_by) then raise exception 'QC_SELF_APPROVAL'; end if;
   if p_decision = 'reject' and char_length(v_comment) < 5 then raise exception 'QC_REJECT_COMMENT_REQUIRED'; end if;
 
   v_step := v_rep.current_step;
@@ -1242,6 +1243,7 @@ begin
   if v_rep.id is null then raise exception 'QC_NOT_FOUND'; end if;
   if p_version is null or p_version <> v_rep.version then raise exception 'QC_VERSION_CONFLICT'; end if;
   if v_rep.status not in ('draft', 'rejected') then raise exception 'QC_NOT_CANCELLABLE'; end if;
+  if v_rep.ncr_id is not null then raise exception 'QC_NCR_LINKED'; end if;
 
   update public.qc_inspection_reports
   set status = 'cancelled', completed_at = now(), version = v_rep.version + 1, updated_at = now()
@@ -1281,8 +1283,9 @@ begin
   if v_rep.id is null then raise exception 'QC_NOT_FOUND'; end if;
   if p_version is null or p_version <> v_rep.version then raise exception 'QC_VERSION_CONFLICT'; end if;
   if v_rep.ncr_id is not null then raise exception 'QC_NCR_EXISTS'; end if;
-  if v_rep.status = 'cancelled' then raise exception 'QC_NOT_ACTIVE'; end if;
   if v_rep.result is distinct from 'ng' then raise exception 'QC_NOT_NG'; end if;
+  if v_rep.status = 'cancelled' then raise exception 'QC_NOT_ACTIVE'; end if;
+  if v_rep.status in ('draft', 'rejected') then raise exception 'QC_NOT_SUBMITTED'; end if;
 
   -- ตรวจชนิดข้อบกพร่อง จำนวน และหน่วยด้วยกติกาเดิมของ app_ncr_issue
   v_ncr := public.app_ncr_issue(

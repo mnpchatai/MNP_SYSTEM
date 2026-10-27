@@ -288,6 +288,7 @@ select throws_ok($$ select public.app_qc_reports('{"status":"bogus"}') $$, 'QC_I
 select throws_ok($$ select public.app_qc_report(gen_random_uuid()) $$, 'QC_NOT_FOUND', 'an unknown report is rejected');
 
 -- 7. ส่งใบ -------------------------------------------------------------------------
+select throws_ok($$ select public.app_qc_issue_ncr(current_setting('test.r1')::uuid, 2, 'DIM', 100, 5, 'ชิ้น', 'ขนาดไม่ได้สเปคตามใบตรวจ') $$, 'QC_NOT_SUBMITTED', 'a draft cannot issue an NCR before it is submitted');
 select throws_ok($$ select public.app_qc_submit_report(current_setting('test.r1')::uuid, 1) $$, 'QC_VERSION_CONFLICT', 'submit needs the current version');
 select set_config('test.j', public.app_qc_submit_report(current_setting('test.r1')::uuid, 2)::text, true);
 select is(current_setting('test.j')::jsonb ->> 'status', 'pending_qa_manager', 'submitting moves the report to the QA manager');
