@@ -18,6 +18,9 @@
 
   const docTypeLabels = { request: "ใบคำร้อง", repair: "ใบแจ้งซ่อม" };
 
+  // ข้อมูลฟอร์ม MT01-FM05 ของใบที่เปิดอยู่ ตั้งใน detailView และใช้ตอนกดปุ่มดาวน์โหลด Excel ใน bindDetail
+  let formExportPayload = null;
+
   const REPAIR_DEPARTMENT_OPTIONS = [
     { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
     { sourceCode: "GR", displayCode: "GR", name: "แปรรูปราง" },
@@ -617,11 +620,20 @@
       });
     },
 
-    detailView({ request, type, steps, verifications, directory, progressSteps, assignedTechIds, employee }) {
+    detailView({ request, type, steps, verifications, history, directory, progressSteps, assignedTechIds, employee }) {
       syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory, assignedTechIds));
+      // ไฟล์ Excel ใช้ข้อมูลชุดเดียวกับที่ผู้ดูเห็นในหน้านี้ ทุกคนที่เปิดใบได้จึงดาวน์โหลดได้ (ดู modules/mt-form-export.js)
+      const formExport = window.MNP_MT_FORM_EXPORT;
+      const nameOf = (personId) => (directory.has(personId) ? personName(directory, personId) : "");
+      formExportPayload = formExport?.EXPORT_URL
+        ? formExport.buildMtFormCells({ request, steps, verifications, history, technicianNames: assignedTechIds.map(nameOf), nameOf })
+        : null;
       const { technicians, canAssign, canStartWork, canFinishWork, canVerify, canRecordProgress } = detailPermissions({ request, type, directory, assignedTechIds, employee });
       return {
         statusBadgeHtml: repairStatusBadge(request, steps),
+        headerActionsHtml: formExportPayload
+          ? `<button type="button" class="btn secondary small" id="mt-form-export" title="ดาวน์โหลดเป็นแบบฟอร์ม MT01-FM05">ดาวน์โหลด Excel</button>`
+          : "",
         facts: [
           requestFact("ช่างผู้รับผิดชอบ",
             assignedTechIds.map((techId) => personName(directory, techId)).join(", ") || "—",
@@ -668,6 +680,28 @@
     },
 
     bindDetail({ id, params, employee }) {
+      document.querySelector("#mt-form-export")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        const payload = formExportPayload;
+        if (!payload) return;
+        const label = button.textContent;
+        button.disabled = true;
+        button.textContent = "กำลังสร้างไฟล์…";
+        try {
+          const blob = await window.MNP_MT_FORM_EXPORT.requestXlsx(payload);
+          const url = URL.createObjectURL(blob);
+          const link = Object.assign(document.createElement("a"), { href: url, download: payload.fileName });
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (exportError) {
+          showToast(friendlyError(exportError), "error");
+        } finally {
+          button.disabled = false;
+          button.textContent = label;
+        }
+      });
       document.querySelector('[data-fact-action="machine-history"]')?.addEventListener("click", (event) => openMachineHistory(id, event.currentTarget));
       document.querySelector("#assign-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();

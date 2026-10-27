@@ -839,6 +839,7 @@ tbody tr:hover { background: var(--shell); }
 .request-detail-head { padding-bottom: 20px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
 .request-detail-head h1 { margin: 8px 0 7px; font-size: clamp(24px, 3vw, 31px); }
 .request-detail-head p { margin: 0; color: var(--muted); }
+.request-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .detail-grid { display: grid; grid-template-columns: minmax(0,1.55fr) minmax(280px,.8fr); gap: 18px; }
 .stack { display: grid; gap: 14px; }
 .request-overview-card { position: relative; padding: 0; overflow: hidden; background: linear-gradient(145deg, var(--paper) 0%, color-mix(in srgb, var(--primary-soft) 32%, var(--paper)) 100%); }
