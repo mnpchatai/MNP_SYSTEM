@@ -222,8 +222,9 @@ function exportLayout_(record) {
   layout.borders.push([head1, 1, itemLast - head1 + 1, COLS]);
   layout.formats.push([1, 1, itemLast, COLS, '@']);
   if (itemLast >= itemFirst) {
-    // แสดงทศนิยมตามที่กรอก/ที่ฐานข้อมูลคำนวณ (สูงสุด 4 ตำแหน่ง) ไม่ปัดจนค่าที่เกินสเปกดูเหมือนอยู่ในสเปก
-    layout.formats.push([itemFirst, 4, itemLast - itemFirst + 1, 11, '0.####']);
+    // General = แสดงตามค่าจริง (12 เป็น 12, ค่าเฉลี่ย 9.142 เป็น 9.142) ไม่ปัดจนค่าที่เกินสเปกดูเหมือนอยู่ในสเปก
+    // และไม่ทิ้งจุดทศนิยมค้างกับจำนวนเต็มอย่าง '0.####'
+    layout.formats.push([itemFirst, 4, itemLast - itemFirst + 1, 11, 'General']);
     layout.center.push([itemFirst, 15, itemLast - itemFirst + 1, 1], [itemFirst, 1, itemLast - itemFirst + 1, 1]);
   }
   newRow();
