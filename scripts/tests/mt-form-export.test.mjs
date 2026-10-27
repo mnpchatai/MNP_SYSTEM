@@ -147,6 +147,14 @@ test("requestXlsx posts the cells and turns the base64 reply into an xlsx blob",
   await assert.rejects(formExport.requestXlsx({}, async () => ({ ok: true, json: async () => ({ ok: false, error: "BAD_CELLS" }) }), "u"), /ไม่สำเร็จ/);
 });
 
+test("the export web app is its own project, not one of the sheet sync web apps", () => {
+  assert.match(formExport.EXPORT_URL, /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/);
+  for (const file of ["module-mt.js", "module-mg.js", "ncr-sheet-sync.js"]) {
+    const source = readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8");
+    assert.ok(!source.includes(formExport.EXPORT_URL), `EXPORT_URL ซ้ำกับ URL ใน ${file}`);
+  }
+});
+
 /* ---------- Apps Script ---------- */
 
 const gsSource = readFileSync(new URL("../../apps-script/mt-form-export/Code.gs", import.meta.url), "utf8");

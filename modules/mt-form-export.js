@@ -10,7 +10,8 @@
 (function registerMtFormExport(root) {
   // URL ของ Web App (Deploy > Web app) ตั้งหลังติดตั้งตาม apps-script/mt-form-export/README.md
   // ค่าว่าง = ยังไม่ได้ติดตั้ง ปุ่มดาวน์โหลดจะถูกซ่อน
-  const EXPORT_URL = "";
+  // ต้องเป็นโปรเจกต์แยก ห้ามซ้ำกับ URL ซิงก์ของ module-mt.js (เทสต์ตรวจไว้)
+  const EXPORT_URL = "https://script.google.com/macros/s/AKfycbxC8IXpco1pqnV14UseH5uaM9xJKtnyZQOjhe_aNF10KDtNr8GNvtcQttsIKCRTTy8H_A/exec";
 
   const PART_ROWS = [31, 32, 33, 34];
   const BLANK_DATE = "วันที่ _______ / _______ / ______";

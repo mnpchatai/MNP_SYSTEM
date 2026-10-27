@@ -14,6 +14,10 @@ Web App ของ Google Apps Script ที่ทำไฟล์ `.xlsx` ตา�
 
 ## ติดตั้ง (ครั้งแรก)
 
+> ⚠️ **ต้องเป็นโปรเจกต์ใหม่ที่ script.google.com เท่านั้น** ห้ามวางโค้ดนี้ในโปรเจกต์ที่เปิดจากเมนู Extensions ของชีตระบบแจ้งซ่อม
+> เพราะโปรเจกต์นั้นคือ Web App ซิงก์ใบแจ้งซ่อม (URL ใน `modules/module-mt.js`) วางทับแล้วการซิงก์จะหยุดทันที
+> URL ของ export จึงต้องต่างจาก URL ซิงก์เสมอ (`scripts/tests/mt-form-export.test.mjs` ตรวจไว้)
+
 1. เปิด <https://script.google.com> > **New project** ตั้งชื่อเช่น `MT01-FM05 export`
    (ใช้บัญชี Google เดียวกับเจ้าของสเปรดชีตระบบแจ้งซ่อม)
 2. ลบโค้ดเริ่มต้นใน `Code.gs` แล้ววางเนื้อหา `Code.gs` ในโฟลเดอร์นี้ทั้งไฟล์ > Save
@@ -24,7 +28,7 @@ Web App ของ Google Apps Script ที่ทำไฟล์ `.xlsx` ตา�
    - **Who has access: Anyone** — จำเป็น เพราะเบราว์เซอร์เรียกแบบไม่มีบัญชี Google
 5. อนุญาตสิทธิ์ที่ Google ขอ (สเปรดชีต, Drive สำหรับสร้าง/ลบไฟล์ชั่วคราว, ส่งคำขอภายนอกสำหรับ export)
 6. คัดลอก URL ของ Web App (`https://script.google.com/macros/s/.../exec`) ไปใส่ `EXPORT_URL` ใน `modules/mt-form-export.js`
-   (เปิด pull request ตามปกติ) — ระหว่างที่ `EXPORT_URL` ว่าง ปุ่มดาวน์โหลดจะไม่แสดง
+   (เปิด pull request ตามปกติ) — ถ้า `EXPORT_URL` ว่าง ปุ่มดาวน์โหลดจะไม่แสดง
 
 ทดสอบ: เปิด URL `.../exec` ในเบราว์เซอร์ต้องเห็น `{"ok":false,"error":"USE_POST"}`
 แล้วเปิดใบแจ้งซ่อมใน Pilot Web > กด **ดาวน์โหลด Excel** > เปิดไฟล์ตรวจว่าหัวฟอร์ม/โลโก้/เส้นตาราง/ช่องติ๊กครบ
