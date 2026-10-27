@@ -1,20 +1,14 @@
 /**
- * ดาวน์โหลดเอกสารเป็นไฟล์ Excel ตามแบบฟอร์มในชีต "เอกสาร" ของแต่ละสเปรดชีต:
- *   - form "mt" (ค่าเริ่มต้น): ใบแจ้งซ่อม/ใบคำร้อง MT ฟอร์ม MT01-FM05 — Script property TEMPLATE_SHEET_ID
- *       Pilot ส่ง { form: "mt", cells: { "AG4": "BG026/26", "G6": true, ... }, fileName }
- *   - form "mg": ใบคำร้องถึงฝ่ายบริหาร ฟอร์ม PP01-FM08 — Script property TEMPLATE_SHEET_ID_MG
- *       Pilot ส่ง { form: "mg", record: { "เลขที่เอกสาร": ..., "เรื่อง": ..., ... }, fileName }
- *       เติมฟอร์มด้วย ffWrite_ ของ FormFill.gs (apps-script/management-backup/FormFill.gs วางเป็นไฟล์ที่สอง
- *       ในโปรเจกต์นี้) ตัวเดียวกับที่ใช้บนชีตบริหาร หน้าตาไฟล์จึงตรงกัน
+ * ดาวน์โหลดใบแจ้งซ่อม/ใบคำร้อง MT เป็นไฟล์ Excel ตามแบบฟอร์ม MT01-FM05 (ชีต "เอกสาร")
  *
- * เป็นโปรเจกต์ Apps Script แยกจากสคริปต์ของสเปรดชีตทั้งสอง (ไม่แตะ doPost ของสคริปต์เหล่านั้น)
+ * เป็นโปรเจกต์ Apps Script แยกจากสคริปต์สำรองใบแจ้งซ่อมเดิม (ไม่แตะ doPost ของสคริปต์นั้น)
+ * Pilot Web (modules/mt-form-export.js) ส่ง { cells: { "AG4": "BG026/26", "G6": true, ... }, fileName }
  * สคริปต์นี้แค่ "วาด" ไฟล์: คัดลอกชีตฟอร์มไปไฟล์ชั่วคราว → เติมค่า → แปลง checkbox เป็น ☑/☐ → export .xlsx
  * → ลบไฟล์ชั่วคราว → ส่งไฟล์กลับเป็น base64
  *
  * ความปลอดภัย: สคริปต์ไม่อ่านข้อมูลใบใดจากสเปรดชีต ค่าทั้งหมดมาจากหน้าเว็บที่โหลดตามสิทธิ์ (RLS) ของผู้ดูเอง
  * คนที่ได้ URL ไปจึงได้แค่ไฟล์ฟอร์มที่มีค่าที่ตัวเองส่งมา ไม่เห็นข้อมูลของคนอื่น และไฟล์ที่ส่งกลับมีแค่ชีตฟอร์ม
- * (ไม่มีชีต KV/ใบแจ้งซ่อม ฯลฯ ของสเปรดชีตต้นทาง) ฟอร์ม mt เขียนได้เฉพาะเซลล์ในช่วง A1:AJ41
- * ฟอร์ม mg รับเฉพาะคีย์ใน MG_RECORD_KEYS แล้วให้ FormFill วางตามตำแหน่งหัวข้อของฟอร์ม
+ * (ไม่มีชีต KV/ใบแจ้งซ่อม ฯลฯ ของสเปรดชีตต้นทาง) เขียนได้เฉพาะเซลล์ในช่วงฟอร์ม A1:AJ41
  *
  * ติดตั้ง: ดู README.md ในโฟลเดอร์นี้ (ต้องตั้ง Script property TEMPLATE_SHEET_ID, วาง appsscript.json และกด Run authorize)
  */
@@ -25,22 +19,13 @@ var MAX_COL = 36;          // AJ
 var MAX_CELLS = 200;
 var MAX_TEXT = 5000;
 var CHECKED = '☑';
-// คีย์ของ record ฟอร์ม mg = หัวคอลัมน์ชีต "ใบคำร้องถึงฝ่ายบริหาร" ที่ FormFill.gs อ่าน (ต้องตรงกับ
-// MANAGEMENT_RECORD_HEADERS ใน modules/mt-form-export.js — เทสต์ตรวจไว้)
-var MG_RECORD_KEYS = [
-  'เลขที่เอกสาร', 'แผนก', 'เรื่อง', 'รายละเอียด', 'สิ่งที่แนบมาด้วย', 'ผู้ยื่นคำร้อง', 'ตำแหน่ง', 'ยื่นเมื่อ', 'สถานะ',
-  'มติ', 'ความเห็น', 'ผจก.โรงงาน อนุมัติโดย', 'ผจก.โรงงาน เมื่อ', 'ผจก.ทั่วไป อนุมัติโดย', 'ผจก.ทั่วไป เมื่อ',
-  'สำเนาถึงแผนก', 'สำเนาอื่นๆ',
-];
 var UNCHECKED = '☐';
 
 // กด Run ฟังก์ชันนี้ในตัวแก้ไขหนึ่งครั้งหลังวางโค้ด ให้ Google ขออนุญาตสิทธิ์ที่ doPost ใช้ครบทุกตัว
 // (สเปรดชีต, Drive สำหรับไฟล์ชั่วคราว, เรียก URL ภายนอกสำหรับ export) — ไม่สร้างหรือแก้ไฟล์ใด
 function authorize() {
-  ['TEMPLATE_SHEET_ID', 'TEMPLATE_SHEET_ID_MG'].forEach(function (name) {
-    var templateId = PropertiesService.getScriptProperties().getProperty(name);
-    if (templateId) SpreadsheetApp.openById(templateId).getName();
-  });
+  var templateId = PropertiesService.getScriptProperties().getProperty('TEMPLATE_SHEET_ID');
+  if (templateId) SpreadsheetApp.openById(templateId).getName();
   DriveApp.getRootFolder().getName();
   UrlFetchApp.fetch('https://www.google.com/generate_204', { muteHttpExceptions: true });
   console.log('authorize: สิทธิ์ครบแล้ว');
@@ -56,20 +41,17 @@ function doPost(e) {
   var templateId = null;
   try {
     var payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    var isMg = payload.form === 'mg';
-    var cells = isMg ? null : validateCells_(payload.cells);
-    var record = isMg ? validateRecord_(payload.record) : null;
-    if (isMg && typeof ffWrite_ !== 'function') throw new Error('FORMFILL_MISSING');
+    var cells = validateCells_(payload.cells);
     var fileName = safeFileName_(payload.fileName);
 
-    templateId = PropertiesService.getScriptProperties().getProperty(isMg ? 'TEMPLATE_SHEET_ID_MG' : 'TEMPLATE_SHEET_ID');
+    templateId = PropertiesService.getScriptProperties().getProperty('TEMPLATE_SHEET_ID');
     if (!templateId) throw new Error('NOT_CONFIGURED');
     stage = 'OPEN';
     var source = SpreadsheetApp.openById(templateId).getSheetByName(FORM_SHEET);
     if (!source) throw new Error('FORM_SHEET_NOT_FOUND');
 
     stage = 'COPY';
-    var temp = SpreadsheetApp.create((isMg ? 'PP01-FM08' : 'MT01-FM05') + ' export ' + new Date().toISOString());
+    var temp = SpreadsheetApp.create('MT01-FM05 export ' + new Date().toISOString());
     tempId = temp.getId();
     var sheet = source.copyTo(temp);
     sheet.setName(FORM_SHEET);
@@ -78,8 +60,7 @@ function doPost(e) {
     });
 
     stage = 'FILL';
-    if (isMg) fillManagementForm_(sheet, record, templateId);
-    else Object.keys(cells).forEach(function (a1) {
+    Object.keys(cells).forEach(function (a1) {
       var value = cells[a1];
       var range = sheet.getRange(a1);
       if (typeof value === 'boolean') {
@@ -109,51 +90,6 @@ function doPost(e) {
       try { DriveApp.getFileById(tempId).setTrashed(true); } catch (cleanupError) { console.error('cleanup', String(cleanupError)); }
     }
   }
-}
-
-// ฟอร์ม mg: เลขที่เอกสารลงช่องคีย์ของ FormFill (AD3) แล้วให้ ffWrite_ เติมทุกช่องตามหัวข้อของฟอร์ม
-// จากนั้นแปลง checkbox จริงทั้งชีตเป็น ☑/☐ (ใน Excel checkbox ของ Google จะกลายเป็น TRUE/FALSE)
-function fillManagementForm_(sheet, record, templateId) {
-  sheet.getRange(FF_KEY_CELL).setValue(record['เลขที่เอกสาร']);
-  var result = ffWrite_(sheet, record) || {};
-  // หาหัวข้อในฟอร์มไม่เจอ (ฟอร์มถูกแก้ข้อความ) ไฟล์ยังสร้างได้แต่ช่องนั้นว่าง บันทึกไว้ให้เจ้าของเห็น
-  if (result.missing && result.missing.length) {
-    logError_(templateId, 'FILL_MISSING', new Error('หาช่องในฟอร์มไม่เจอ: ' + result.missing.join(', ')));
-  }
-  SpreadsheetApp.flush();
-  var range = sheet.getDataRange();
-  var rules = range.getDataValidations();
-  var values = range.getValues();
-  rules.forEach(function (row, r) {
-    row.forEach(function (rule, c) {
-      if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.CHECKBOX) return;
-      var cell = sheet.getRange(r + 1, c + 1);
-      cell.clearDataValidations();
-      cell.setValue(values[r][c] === true ? CHECKED : UNCHECKED);
-    });
-  });
-}
-
-// ฟอร์ม mg รับเฉพาะคีย์ที่รู้จัก ค่าเป็นข้อความ (ตัดความยาว)
-// - ช่องวันที่รับเฉพาะรูป ISO ที่ ffDate_ แปลงได้ อย่างอื่นเป็นค่าว่าง (ffDate_ คืนข้อความดิบเมื่อแปลงไม่ได้)
-// - ค่าที่ขึ้นต้นด้วย = + - @ ใส่ตัวคั่นที่มองไม่เห็น (\u200B แบบเดียวกับ FF_CONT ของ FormFill) นำหน้า
-//   บรรทัดแรกของรายละเอียดเป็นเซลล์ที่ขึ้นต้นด้วยค่าของผู้ใช้ จึงต้องไม่ให้กลายเป็นสูตร และไม่ให้มี ' โผล่ในไฟล์
-var MG_DATE_KEYS = ['ยื่นเมื่อ', 'ผจก.โรงงาน เมื่อ', 'ผจก.ทั่วไป เมื่อ'];
-function validateRecord_(record) {
-  if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('BAD_RECORD');
-  var clean = {};
-  MG_RECORD_KEYS.forEach(function (key) {
-    var value = record[key];
-    if (value !== undefined && typeof value !== 'string') throw new Error('BAD_RECORD');
-    var text = String(value || '').slice(0, MAX_TEXT);
-    if (MG_DATE_KEYS.indexOf(key) >= 0) {
-      clean[key] = /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})?$/.test(text) ? text : '';
-    } else {
-      clean[key] = (/^[=+\-@]/.test(text) ? '\u200B' : '') + text;
-    }
-  });
-  if (!clean['เลขที่เอกสาร']) throw new Error('BAD_RECORD');
-  return clean;
 }
 
 // รับเฉพาะ A1 ในช่วงฟอร์ม ค่าเป็นข้อความ (ตัดความยาว) หรือ boolean
@@ -186,7 +122,7 @@ function safeFileName_(name) {
 // รหัสที่ไม่รู้จักบอกขั้นที่ล้ม: FAILED_OPEN / FAILED_COPY / FAILED_FILL / FAILED_EXPORT (+ HTTP status ถ้ามี)
 function errorCode_(err, stage) {
   var message = String(err && err.message || '');
-  if (['BAD_CELLS', 'BAD_RECORD', 'FORMFILL_MISSING', 'NOT_CONFIGURED', 'FORM_SHEET_NOT_FOUND'].indexOf(message) >= 0) return message;
+  if (['BAD_CELLS', 'NOT_CONFIGURED', 'FORM_SHEET_NOT_FOUND'].indexOf(message) >= 0) return message;
   var http = /^EXPORT_HTTP_(\d{3})$/.exec(message);
   return 'FAILED_' + (stage || 'UNKNOWN') + (http ? '_' + http[1] : '');
 }

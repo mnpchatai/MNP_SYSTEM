@@ -95,7 +95,7 @@
   }
 
   // ข้อมูลฟอร์ม PP01-FM08 ของใบที่เปิดอยู่ ตั้งใน loadDetail ใช้ตอนกด "ดาวน์โหลด Excel" ใน bindDetail
-  // (Web App เดียวกับใบ MT ดู modules/mt-form-export.js และ apps-script/mt-form-export/)
+  // (Web App ของฟอร์มนี้เอง MG_EXPORT_URL ดู modules/mt-form-export.js และ apps-script/mg-form-export/)
   let formExportPayload = null;
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});
@@ -154,7 +154,7 @@
         syncManagementOrderToAppsScript(order);
         const formExport = window.MNP_MT_FORM_EXPORT;
         // ทุกคนที่เปิดใบได้ดาวน์โหลดได้ ข้อมูลชุดเดียวกับที่ผู้ดูเห็นในหน้านี้
-        if (formExport?.EXPORT_URL) formExportPayload = formExport.buildManagementFormRecord(order);
+        if (formExport?.MG_EXPORT_URL) formExportPayload = formExport.buildManagementFormRecord(order);
       } catch (ccError) {
         console.warn("เตรียมข้อมูลสำเนาถึงแผนก/สำรองใบคำร้องถึงฝ่ายบริหารไม่สำเร็จ", ccError);
       }

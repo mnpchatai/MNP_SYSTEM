@@ -13,6 +13,9 @@
   // ค่าว่าง = ยังไม่ได้ติดตั้ง ปุ่มดาวน์โหลดจะถูกซ่อน
   // ต้องเป็นโปรเจกต์แยก ห้ามซ้ำกับ URL ซิงก์ของ module-mt.js (เทสต์ตรวจไว้)
   const EXPORT_URL = "https://script.google.com/macros/s/AKfycbxC8IXpco1pqnV14UseH5uaM9xJKtnyZQOjhe_aNF10KDtNr8GNvtcQttsIKCRTTy8H_A/exec";
+  // ใบคำร้องถึงฝ่ายบริหาร (PP01-FM08) ใช้ Web App ของตัวเอง แยกโปรเจกต์จาก MT พังก็กระทบทีละฟอร์ม
+  // ตั้งหลังติดตั้งตาม apps-script/mg-form-export/README.md ค่าว่าง = ปุ่มของใบบริหารถูกซ่อน
+  const MG_EXPORT_URL = "";
 
   const PART_ROWS = [31, 32, 33, 34];
   const BLANK_DATE = "วันที่ _______ / _______ / ______";
@@ -175,7 +178,8 @@
   const safeFileName = (docNumber, fallback) => `${text(docNumber).replace(/[^\p{L}\p{N}_-]+/gu, "-") || fallback}.xlsx`;
 
   // ใบคำร้องถึงฝ่ายบริหาร: ส่ง "แถว" รูปแบบเดียวกับชีต "ใบคำร้องถึงฝ่ายบริหาร" (upsertStructuredRow_ ใน
-  // apps-script/management-backup/Code.gs) ให้ Web App เติมฟอร์มด้วย FormFill.gs ตัวเดียวกับที่ใช้บนชีต
+  // apps-script/management-backup/Code.gs) ให้ Web App ของ MG (apps-script/mg-form-export/) เติมฟอร์มด้วย
+  // FormFill.gs ตัวเดียวกับที่ใช้บนชีต
   // หน้าตาไฟล์จึงตรงกับฟอร์มที่เติมบนชีตทุกอย่าง (ตัดบรรทัด ย่อตัวอักษร ติ๊กสำเนาถึงแผนก)
   // order = ผลของ buildAppsScriptManagementOrder ใน modules/module-mg.js
   const MANAGEMENT_RECORD_HEADERS = [
@@ -229,7 +233,9 @@
   }
 
   // ส่งแบบ text/plain (simple request ไม่มี preflight) Apps Script redirect ไป googleusercontent ที่เปิด CORS ให้อ่านผลได้
-  async function requestXlsx(payload, fetchImpl = root.fetch?.bind(root), url = EXPORT_URL) {
+  const exportUrlFor = (payload) => (payload?.form === "mg" ? MG_EXPORT_URL : EXPORT_URL);
+
+  async function requestXlsx(payload, fetchImpl = root.fetch?.bind(root), url = exportUrlFor(payload)) {
     if (!url) throw new Error("ยังไม่ได้ตั้งค่าการดาวน์โหลดเอกสาร");
     let response;
     try {
@@ -251,7 +257,7 @@
   }
 
   const api = {
-    EXPORT_URL, PART_ROWS, MANAGEMENT_RECORD_HEADERS, buildMtFormCells, buildManagementFormRecord, requestXlsx, downloadXlsx,
+    EXPORT_URL, MG_EXPORT_URL, PART_ROWS, MANAGEMENT_RECORD_HEADERS, buildMtFormCells, buildManagementFormRecord, requestXlsx, downloadXlsx,
     downloadButtonHtml, formDate, formTime, workTimes, duration,
   };
   if (typeof module === "object" && module.exports) module.exports = api;

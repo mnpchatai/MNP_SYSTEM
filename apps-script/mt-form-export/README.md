@@ -1,4 +1,4 @@
-# ดาวน์โหลดเอกสารเป็น Excel (MT01-FM05 ใบแจ้งซ่อม MT และ PP01-FM08 ใบคำร้องถึงฝ่ายบริหาร)
+# ดาวน์โหลดใบแจ้งซ่อม MT เป็น Excel (แบบฟอร์ม MT01-FM05)
 
 Web App ของ Google Apps Script ที่ทำไฟล์ `.xlsx` ตามแบบฟอร์มในชีต **"เอกสาร"** ของสเปรดชีตระบบแจ้งซ่อม
 ให้ปุ่ม **"ดาวน์โหลด Excel"** ในหน้ารายละเอียดใบแจ้งซ่อม/ใบคำร้อง MT ของ Pilot Web
@@ -37,25 +37,6 @@ Web App ของ Google Apps Script ที่ทำไฟล์ `.xlsx` ตา�
 แล้วเปิดใบแจ้งซ่อมใน Pilot Web > กด **ดาวน์โหลด Excel** > เปิดไฟล์ตรวจว่าหัวฟอร์ม/โลโก้/เส้นตาราง/ช่องติ๊กครบ
 
 > อย่าเชื่อผลการกด Run `doPost` ในตัวแก้ไข เพราะไม่มี `e` จริง ต้องทดสอบผ่านหน้าเว็บ
-
-## เพิ่มใบคำร้องถึงฝ่ายบริหาร (PP01-FM08)
-
-ใช้ Web App ตัวเดียวกัน (URL เดิม เว็บไม่ต้องเปลี่ยน) โปรเจกต์นี้จึงมี 2 ไฟล์:
-
-| ไฟล์ในโปรเจกต์ export | วางจาก repo |
-|---|---|
-| `Code.gs` | `apps-script/mt-form-export/Code.gs` |
-| `FormFill` (กด + > Script ตั้งชื่อ `FormFill`) | `apps-script/management-backup/FormFill.gs` (ไฟล์เดียวกับที่ใช้บนชีตบริหาร) |
-
-1. วาง `Code.gs` ทับ และสร้างไฟล์ `FormFill` วาง `FormFill.gs` > Save
-2. Project Settings > Script properties > Add: `TEMPLATE_SHEET_ID_MG` = รหัสสเปรดชีต "ใบคำร้องถึงฝ่ายบริหาร"
-3. เลือกฟังก์ชัน `authorize` > Run (ถ้า Google ถามสิทธิ์ให้อนุญาต)
-4. Deploy > Manage deployments > ดินสอ > New version > Deploy
-5. เปิดใบคำร้องถึงฝ่ายบริหารใน Pilot Web > กด **ดาวน์โหลด Excel**
-
-ไฟล์ของ MG เติมด้วย `ffWrite_` ของ FormFill.gs ตัวเดียวกับบนชีต (ตัดบรรทัด ย่อตัวอักษร ติ๊กสำเนาถึงแผนก) แล้วแปลง
-checkbox เป็น ☑/☐ ถ้าแก้ FormFill.gs ใน repo ต้องวางทั้งในโปรเจกต์ของชีตบริหารและโปรเจกต์นี้
-ถ้าขึ้น `(FORMFILL_MISSING)` = ยังไม่ได้เพิ่มไฟล์ `FormFill` ในโปรเจกต์นี้ / `(NOT_CONFIGURED)` = ยังไม่ตั้ง `TEMPLATE_SHEET_ID_MG`
 
 ## อัปเดตโค้ด
 
