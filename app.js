@@ -974,10 +974,14 @@ function themeButton() {
   return `<button class="icon-button theme-toggle" type="button" aria-label="สลับธีม" title="สลับธีม">◐</button>`;
 }
 
-// แอปที่ติดตั้งแบบ standalone บน Desktop/Android ไม่มีปุ่มย้อนกลับของเบราว์เซอร์ (styles.css แสดงปุ่มเฉพาะ display-mode: standalone)
+// แอปที่ติดตั้งแบบ standalone บน Desktop/Android ไม่มีปุ่มย้อนกลับของเบราว์เซอร์
+// เช็ก standalone ตรงๆ ไม่ใช้ isStandaloneApp() เพราะ minimal-ui มีปุ่มย้อนกลับของเบราว์เซอร์อยู่แล้ว (styles.css ก็แสดงเฉพาะ standalone)
+// หน้าหลักไม่แสดง: ย้อนจากหน้าหลักได้แค่ URL ตอนเปิดแอปซึ่งก็คือหน้าหลักเดิม
 function appBackButton() {
+  if (currentRoute().path === homePath()) return "";
   const ios = window.MNP_INSTALL_APP.isIos({ userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints });
-  if (!window.MNP_INSTALL_APP.showAppBack({ standalone: isStandaloneApp(), ios })) return "";
+  const standalone = window.matchMedia("(display-mode: standalone)").matches;
+  if (!window.MNP_INSTALL_APP.showAppBack({ standalone, ios })) return "";
   return `<button class="icon-button app-back" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ">‹</button>`;
 }
 
