@@ -21,7 +21,7 @@
     return null;
   }
 
-  // ปุ่ม ← บน topbar ของแอปที่ติดตั้ง (app.js: appBackButton) เพราะหน้าต่างแบบ standalone ไม่มีปุ่มย้อนกลับของเบราว์เซอร์
+  // ปุ่ม ‹ › บน topbar ของแอปที่ติดตั้ง (app.js: appNavButtons) เพราะหน้าต่างแบบ standalone ไม่มีปุ่มย้อนกลับ/ถัดไปของเบราว์เซอร์
   // iOS ไม่แสดง เพราะสไลด์ขอบจอย้อนกลับได้อยู่แล้ว
   function showAppBack({ standalone = false, ios = false } = {}) {
     return standalone && !ios;
