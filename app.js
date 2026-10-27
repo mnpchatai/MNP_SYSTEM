@@ -976,14 +976,15 @@ function themeButton() {
 
 // แอปที่ติดตั้งแบบ standalone บน Desktop/Android ไม่มีปุ่มย้อนกลับ/ถัดไปของเบราว์เซอร์
 // เช็ก standalone ตรงๆ ไม่ใช้ isStandaloneApp() เพราะ minimal-ui มีปุ่มของเบราว์เซอร์อยู่แล้ว (styles.css ก็แสดงเฉพาะ standalone)
-// ปุ่มย้อนกลับไม่แสดงที่หน้าหลัก: ย้อนจากหน้าหลักได้แค่ URL ตอนเปิดแอปซึ่งก็คือหน้าหลักเดิม
+// ปุ่มย้อนกลับปิดไว้ที่หน้าหลัก (ไม่ซ่อน ปุ่มถัดไปจะได้ไม่เลื่อนตำแหน่ง): ย้อนจากหน้าหลักได้แค่ URL ตอนเปิดแอปซึ่งก็คือหน้าหลักเดิม
 // ปุ่มถัดไปปิดไว้เมื่อไม่มีหน้าถัดไป (Navigation API ของ Chrome/Edge; เบราว์เซอร์ที่ไม่มี API เปิดไว้เสมอ)
 // shell() สร้าง topbar ใหม่ทุกครั้งที่เปลี่ยนหน้า สถานะปุ่มจึงตรงกับหน้าปัจจุบันเสมอ
 function appNavButtons() {
   const ios = window.MNP_INSTALL_APP.isIos({ userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints });
   const standalone = window.matchMedia("(display-mode: standalone)").matches;
   if (!window.MNP_INSTALL_APP.showAppBack({ standalone, ios })) return "";
-  const back = currentRoute().path === homePath() ? "" : `<button class="icon-button app-back" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ">‹</button>`;
+  const atHome = currentRoute().path === homePath();
+  const back = `<button class="icon-button app-back" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ"${atHome ? " disabled" : ""}>‹</button>`;
   const canForward = window.navigation?.canGoForward ?? true;
   const forward = `<button class="icon-button app-forward" type="button" aria-label="ถัดไป" title="ถัดไป"${canForward ? "" : " disabled"}>›</button>`;
   return `<div class="app-nav">${back}${forward}</div>`;
