@@ -621,13 +621,19 @@
     },
 
     detailView({ request, type, steps, verifications, history, directory, progressSteps, assignedTechIds, employee }) {
-      syncRepairOrderToAppsScript(buildAppsScriptOrder(request, steps, verifications, directory, assignedTechIds));
       // ไฟล์ Excel ใช้ข้อมูลชุดเดียวกับที่ผู้ดูเห็นในหน้านี้ ทุกคนที่เปิดใบได้จึงดาวน์โหลดได้ (ดู modules/mt-form-export.js)
+      // ช่องฟอร์มชุดเดียวกันส่งไปกับการซิงก์ด้วย ให้ชีต "เอกสาร" เติมฟอร์มจากเลขที่เอกสารได้ตรงกับไฟล์ที่ดาวน์โหลด
+      // (apps-script/maintenance-backup/Code.gs)
       const formExport = window.MNP_MT_FORM_EXPORT;
       const nameOf = (personId) => (directory.has(personId) ? personName(directory, personId) : "");
-      formExportPayload = formExport?.EXPORT_URL
+      const formCells = formExport
         ? formExport.buildMtFormCells({ request, steps, verifications, history, technicianNames: assignedTechIds.map(nameOf), nameOf })
         : null;
+      formExportPayload = formExport?.EXPORT_URL ? formCells : null;
+      syncRepairOrderToAppsScript({
+        ...buildAppsScriptOrder(request, steps, verifications, directory, assignedTechIds),
+        formCells: formCells?.cells ?? null,
+      });
       const { technicians, canAssign, canStartWork, canFinishWork, canVerify, canRecordProgress } = detailPermissions({ request, type, directory, assignedTechIds, employee });
       return {
         statusBadgeHtml: repairStatusBadge(request, steps),
