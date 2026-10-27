@@ -2355,3 +2355,48 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
   .lab-metric-main { flex-direction: column; align-items: flex-start; gap: 6px; }
   .lab-metric-text { min-width: 0; }
 }
+
+/* ใบตรวจ QC (modules/module-qc.js) — ตารางค่าที่วัด Judge ช่องลงนาม และกล่องเลือก Lot ยางผสม */
+.qc-page { display: grid; gap: 16px; }
+.qc-page .card { margin: 0; }
+.qc-head { margin-bottom: 0; }
+.qc-filter { margin-bottom: 14px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 12px; }
+.qc-filter .field { min-width: 160px; flex: 1 1 160px; }
+.qc-filter-actions, .qc-row-actions, .qc-action-row, .qc-purge-actions { margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 8px; }
+.qc-table th, .qc-table td { padding: 8px 9px; white-space: nowrap; }
+.qc-table th[colspan], .qc-table th.center { text-align: center; }
+.qc-table td.muted { white-space: normal; }
+.qc-entry-table .qc-point { width: 84px; min-width: 84px; padding: 8px; text-align: right; }
+.qc-entry-table .qc-note { min-width: 160px; }
+.qc-point-off { background: var(--shell); }
+.qc-template-table .input { min-width: 90px; }
+.qc-template-table td:nth-child(2) .input { min-width: 180px; }
+.qc-judge { min-width: 34px; padding: 3px 8px; display: inline-block; border-radius: 6px; font-size: 12px; font-weight: 700; text-align: center; }
+.qc-judge-o { color: var(--success); background: var(--success-soft); }
+.qc-judge-n { color: var(--danger); background: var(--danger-soft); }
+.qc-judge-ac { color: var(--warning); background: var(--warning-soft); }
+.qc-judge-na { color: var(--muted); background: var(--shell); }
+.qc-accept { margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.qc-accept[hidden] { display: none; }
+.qc-result { margin: 14px 0 0; font-weight: 700; }
+.qc-pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.qc-sign-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.qc-sign { min-height: 110px; padding: 12px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.qc-sign-role { color: var(--muted); font-size: 12px; font-weight: 700; }
+.qc-sign-no { color: var(--danger); }
+.qc-sign-wait { color: var(--warning); }
+.qc-chips { margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.qc-chip { padding: 4px 6px 4px 12px; display: inline-flex; align-items: center; gap: 6px; color: var(--primary); background: var(--primary-soft); border-radius: 999px; font-size: 13px; font-weight: 700; }
+.qc-chip button { width: 24px; height: 24px; color: inherit; background: none; border: 0; border-radius: 50%; font-size: 16px; line-height: 1; cursor: pointer; }
+.qc-lot-combo { position: relative; display: flex; gap: 8px; max-width: 560px; }
+.qc-lot-combo .input { flex: 1 1 auto; }
+.qc-lot-popup { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0; max-height: 280px; padding: 4px; overflow-y: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 36px -8px rgba(15, 23, 42, .28); }
+.qc-lot-popup[hidden] { display: none; }
+.qc-purge-panel { margin-top: 12px; }
+.qc-purge-notes { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.qc-actions h3 { margin: 0 0 8px; }
+.qc-action-form { margin-top: 10px; }
+@media (max-width: 760px) {
+  .qc-sign-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .qc-filter .input, .qc-lot-combo .input, .qc-entry-table .qc-point { font-size: 16px; }
+}
