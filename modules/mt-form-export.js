@@ -13,9 +13,10 @@
   // ค่าว่าง = ยังไม่ได้ติดตั้ง ปุ่มดาวน์โหลดจะถูกซ่อน
   // ต้องเป็นโปรเจกต์แยก ห้ามซ้ำกับ URL ซิงก์ของ module-mt.js (เทสต์ตรวจไว้)
   const EXPORT_URL = "https://script.google.com/macros/s/AKfycbxC8IXpco1pqnV14UseH5uaM9xJKtnyZQOjhe_aNF10KDtNr8GNvtcQttsIKCRTTy8H_A/exec";
-  // ใบคำร้องถึงฝ่ายบริหาร (PP01-FM08) ใช้ Web App ของตัวเอง แยกโปรเจกต์จาก MT พังก็กระทบทีละฟอร์ม
-  // ตั้งหลังติดตั้งตาม apps-script/mg-form-export/README.md ค่าว่าง = ปุ่มของใบบริหารถูกซ่อน
-  const MG_EXPORT_URL = "";
+  // ใบคำร้องถึงฝ่ายบริหาร (PP01-FM08) แยกจาก MT: ใช้ Web App ของโปรเจกต์สเปรดชีตบริหารเอง (URL เดียวกับซิงก์
+  // ใน module-mg.js) doPost ของ apps-script/management-backup/Code.gs ส่ง form "mg" ไป Export.gs
+  // ค่าว่าง = ปุ่มของใบบริหารถูกซ่อน
+  const MG_EXPORT_URL = "https://script.google.com/macros/s/AKfycbw_FQUWk6tM8l-CvOdPu7zHxJdKj6Dcq7hBZRIiEotNRGs5sstLj7GnHMK5xixjuS5m/exec";
 
   const PART_ROWS = [31, 32, 33, 34];
   const BLANK_DATE = "วันที่ _______ / _______ / ______";
@@ -178,7 +179,7 @@
   const safeFileName = (docNumber, fallback) => `${text(docNumber).replace(/[^\p{L}\p{N}_-]+/gu, "-") || fallback}.xlsx`;
 
   // ใบคำร้องถึงฝ่ายบริหาร: ส่ง "แถว" รูปแบบเดียวกับชีต "ใบคำร้องถึงฝ่ายบริหาร" (upsertStructuredRow_ ใน
-  // apps-script/management-backup/Code.gs) ให้ Web App ของ MG (apps-script/mg-form-export/) เติมฟอร์มด้วย
+  // apps-script/management-backup/Code.gs) ให้ Export.gs ในโปรเจกต์เดียวกันเติมฟอร์มด้วย
   // FormFill.gs ตัวเดียวกับที่ใช้บนชีต
   // หน้าตาไฟล์จึงตรงกับฟอร์มที่เติมบนชีตทุกอย่าง (ตัดบรรทัด ย่อตัวอักษร ติ๊กสำเนาถึงแผนก)
   // order = ผลของ buildAppsScriptManagementOrder ใน modules/module-mg.js

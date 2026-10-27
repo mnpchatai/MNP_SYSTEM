@@ -95,7 +95,7 @@
   }
 
   // ข้อมูลฟอร์ม PP01-FM08 ของใบที่เปิดอยู่ ตั้งใน loadDetail ใช้ตอนกด "ดาวน์โหลด Excel" ใน bindDetail
-  // (Web App ของฟอร์มนี้เอง MG_EXPORT_URL ดู modules/mt-form-export.js และ apps-script/mg-form-export/)
+  // (Web App ของสเปรดชีตบริหารเอง MG_EXPORT_URL ดู modules/mt-form-export.js และ apps-script/management-backup/Export.gs)
   let formExportPayload = null;
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});

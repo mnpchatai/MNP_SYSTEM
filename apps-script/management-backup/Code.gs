@@ -18,6 +18,10 @@
  *   4. ถ้าเพิ่ง deploy ครั้งแรก ให้เลือกประเภท "Web app", Execute as: Me, Who has access: Anyone
  *      แล้วคัดลอก URL ไปใส่ในตัวแปร APPS_SCRIPT_MANAGEMENT_SYNC_URL ใน modules/module-mg.js
  *
+ * โปรเจกต์นี้มี 3 ไฟล์: Code.gs (ไฟล์นี้: ซิงก์ + ทางเข้า Web App), FormFill (พิมพ์เลขที่ที่ AD3) และ Export
+ * (ปุ่ม "ดาวน์โหลด Excel" ในเว็บ) — doPost/doGet มีเฉพาะในไฟล์นี้ ห้ามมีซ้ำในไฟล์อื่น
+ * และใช้ appsscript.json ในโฟลเดอร์นี้ (สิทธิ์สเปรดชีต, เมนู, Drive, เรียก URL ภายนอก)
+ *
  * หมายเหตุความปลอดภัย: ต้องตั้ง Access เป็น "Anyone" เพราะ Pilot Web ยิง fetch แบบ mode:"no-cors"
  * (อ่าน response กลับไม่ได้ และแนบ header/token ไม่ได้) เหมือนกับสคริปต์ใบแจ้งซ่อมเดิมทุกประการ —
  * URL นี้จึงควรถือเป็นความลับระดับหนึ่ง (เหมือน webhook) ไม่ควรเผยแพร่แบบสาธารณะ
@@ -38,6 +42,8 @@ var STRUCTURED_HEADERS = [
 function doPost(e) {
   try {
     var payload = JSON.parse((e.postData && e.postData.contents) || '{}');
+    // ปุ่ม "ดาวน์โหลด Excel" ของใบคำร้องถึงฝ่ายบริหารใช้ Web App เดียวกันนี้ (Export.gs) — คำขอซิงก์ไม่มี form
+    if (payload.form === 'mg') return exportManagementXlsx_(payload);
     var batch = Array.isArray(payload.batch) ? payload.batch : [];
     var sheet = getLogSheet_();
     var structuredSheet = getStructuredSheet_();
