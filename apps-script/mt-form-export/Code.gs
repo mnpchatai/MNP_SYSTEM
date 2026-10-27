@@ -10,7 +10,7 @@
  * คนที่ได้ URL ไปจึงได้แค่ไฟล์ฟอร์มที่มีค่าที่ตัวเองส่งมา ไม่เห็นข้อมูลของคนอื่น และไฟล์ที่ส่งกลับมีแค่ชีตฟอร์ม
  * (ไม่มีชีต KV/ใบแจ้งซ่อม ฯลฯ ของสเปรดชีตต้นทาง) เขียนได้เฉพาะเซลล์ในช่วงฟอร์ม A1:AJ41
  *
- * ติดตั้ง: ดู README.md ในโฟลเดอร์นี้ (ต้องตั้ง Script property TEMPLATE_SHEET_ID)
+ * ติดตั้ง: ดู README.md ในโฟลเดอร์นี้ (ต้องตั้ง Script property TEMPLATE_SHEET_ID, วาง appsscript.json และกด Run authorize)
  */
 
 var FORM_SHEET = 'เอกสาร';
@@ -20,6 +20,16 @@ var MAX_CELLS = 200;
 var MAX_TEXT = 5000;
 var CHECKED = '☑';
 var UNCHECKED = '☐';
+
+// กด Run ฟังก์ชันนี้ในตัวแก้ไขหนึ่งครั้งหลังวางโค้ด ให้ Google ขออนุญาตสิทธิ์ที่ doPost ใช้ครบทุกตัว
+// (สเปรดชีต, Drive สำหรับไฟล์ชั่วคราว, เรียก URL ภายนอกสำหรับ export) — ไม่สร้างหรือแก้ไฟล์ใด
+function authorize() {
+  var templateId = PropertiesService.getScriptProperties().getProperty('TEMPLATE_SHEET_ID');
+  if (templateId) SpreadsheetApp.openById(templateId).getName();
+  DriveApp.getRootFolder().getName();
+  UrlFetchApp.fetch('https://www.google.com/generate_204', { muteHttpExceptions: true });
+  console.log('authorize: สิทธิ์ครบแล้ว');
+}
 
 function doGet() {
   return json_({ ok: false, error: 'USE_POST' });

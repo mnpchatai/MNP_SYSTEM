@@ -26,7 +26,10 @@ Web App ของ Google Apps Script ที่ทำไฟล์ `.xlsx` ตา�
 4. **Deploy > New deployment** > ประเภท **Web app**
    - **Execute as: Me**
    - **Who has access: Anyone** — จำเป็น เพราะเบราว์เซอร์เรียกแบบไม่มีบัญชี Google
-5. อนุญาตสิทธิ์ที่ Google ขอ (สเปรดชีต, Drive สำหรับสร้าง/ลบไฟล์ชั่วคราว, ส่งคำขอภายนอกสำหรับ export)
+5. **สิทธิ์:** Project Settings > ติ๊ก **Show "appsscript.json" manifest file in editor** > เปิดไฟล์ `appsscript.json`
+   > วางเนื้อหา `appsscript.json` ในโฟลเดอร์นี้ทับ > Save > เลือกฟังก์ชัน **`authorize`** > **Run** > อนุญาตทุกสิทธิ์
+   (สเปรดชีต, Drive สำหรับไฟล์ชั่วคราว, เรียก URL ภายนอกสำหรับ export) แล้ว Deploy > Manage deployments > New version ถ้าขาดสิทธิ์ใด จะได้ `FAILED_EXPORT` และชีต
+   "บันทึกข้อผิดพลาด" ขึ้นว่า "ไม่ได้รับอนุญาตให้เรียกใช้ UrlFetchApp.fetch" ให้ทำขั้นนี้ซ้ำแล้ว Deploy New version
 6. คัดลอก URL ของ Web App (`https://script.google.com/macros/s/.../exec`) ไปใส่ `EXPORT_URL` ใน `modules/mt-form-export.js`
    (เปิด pull request ตามปกติ) — ถ้า `EXPORT_URL` ว่าง ปุ่มดาวน์โหลดจะไม่แสดง
 
