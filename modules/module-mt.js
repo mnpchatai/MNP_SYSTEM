@@ -684,7 +684,9 @@
         const button = event.currentTarget;
         const payload = formExportPayload;
         if (!payload) return;
+        const label = button.textContent;
         button.disabled = true;
+        button.textContent = "กำลังสร้างไฟล์…";
         try {
           const blob = await window.MNP_MT_FORM_EXPORT.requestXlsx(payload);
           const url = URL.createObjectURL(blob);
@@ -697,6 +699,7 @@
           showToast(friendlyError(exportError), "error");
         } finally {
           button.disabled = false;
+          button.textContent = label;
         }
       });
       document.querySelector('[data-fact-action="machine-history"]')?.addEventListener("click", (event) => openMachineHistory(id, event.currentTarget));

@@ -94,9 +94,11 @@
   // ข้อมูลเข้า: request (แถว requests พร้อม department), steps (approval_steps), verifications (ใหม่ → เก่า),
   // history (request_status_history), technicianNames (ชื่อช่างตามลำดับ), nameOf(id) คืนชื่อพนักงาน
   function buildMtFormCells({ request, steps = [], verifications = [], history = [], technicianNames = [], nameOf = () => "" }) {
-    const stepAt = (order) => steps.find((step) => step.step_order === order) ?? null;
-    const fm = stepAt(1);
-    const gm = stepAt(2);
+    // จับคู่ด้วยชื่อขั้น ไม่ใช่ step_order: ขั้นที่ไม่มีผู้ถือบทบาทถูกข้ามตอนสร้างใบ (20260921080000)
+    // ใบที่ไม่มีผู้จัดการโรงงานจึงมีผู้จัดการทั่วไปเป็นขั้นที่ 1
+    const stepNamed = (name) => steps.find((step) => step.step_name === name) ?? null;
+    const fm = stepNamed("ผู้จัดการโรงงาน");
+    const gm = stepNamed("ผู้จัดการทั่วไป");
     const decided = (step) => step && ["approved", "rejected", "acknowledged"].includes(step.status);
     const signer = (step) => (decided(step) && step.acted_by ? text(nameOf(step.acted_by)) : "");
     const signLine = (step, role) => {
@@ -104,7 +106,8 @@
       return name ? `ลงชื่อ  ${name}  ${role}` : `ลงชื่อ ________________________ ${role}`;
     };
     const anyRejected = steps.some((step) => step.status === "rejected");
-    const allApproved = Boolean(fm && gm) && [fm, gm].every((step) => step.status === "approved");
+    const activeSteps = steps.filter((step) => step.status !== "skipped");
+    const allApproved = activeSteps.length > 0 && activeSteps.every((step) => step.status === "approved");
     const technicians = technicianNames.map(text).filter(Boolean).join(", ");
     const { startedAt, finishedAt } = workTimes(history);
     const total = startedAt && finishedAt ? duration(startedAt, finishedAt) : null;

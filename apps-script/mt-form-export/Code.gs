@@ -88,7 +88,8 @@ function validateCells_(cells) {
     if (col > MAX_COL || Number(match[2]) > MAX_ROW) throw new Error('BAD_CELLS');
     var value = cells[a1];
     if (typeof value === 'boolean') clean[a1] = value;
-    else if (typeof value === 'string') clean[a1] = value.slice(0, MAX_TEXT);
+    // ' นำหน้าค่าที่ขึ้นต้นด้วย = + - @ ให้ชีตเก็บเป็นข้อความเสมอ ไม่รันเป็นสูตรด้วยสิทธิ์เจ้าของสคริปต์
+    else if (typeof value === 'string') clean[a1] = (/^[=+\-@]/.test(value) ? "'" : '') + value.slice(0, MAX_TEXT);
     else throw new Error('BAD_CELLS');
   });
   return clean;

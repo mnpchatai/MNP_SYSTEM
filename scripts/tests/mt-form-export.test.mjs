@@ -18,8 +18,8 @@ const baseRequest = (extra = {}) => ({
   ...extra,
 });
 const steps = [
-  { step_order: 1, status: "approved", acted_by: "e-fm", acted_at: "2026-10-21T05:00:00Z" },
-  { step_order: 2, status: "approved", acted_by: "e-gm", acted_at: "2026-10-21T06:00:00Z" },
+  { step_order: 1, step_name: "ผู้จัดการโรงงาน", status: "approved", acted_by: "e-fm", acted_at: "2026-10-21T05:00:00Z" },
+  { step_order: 2, step_name: "ผู้จัดการทั่วไป", status: "approved", acted_by: "e-gm", acted_at: "2026-10-21T06:00:00Z" },
 ];
 const history = [
   { to_status: "pending_verify", created_at: "2026-10-22T09:36:00Z" },
@@ -78,7 +78,7 @@ test("a new request clears the template's sample values", () => {
   const { cells } = build({
     received_by_name: null, assigned_at: null, work_expected_date: null, execution_plan: null,
     inspector_opinion: null, cause_analysis: null, parts_used_items: [], parts_used: null,
-  }, { steps: [{ step_order: 1, status: "pending" }], history: [], verifications: [], technicianNames: [] });
+  }, { steps: [{ step_order: 1, step_name: "ผู้จัดการโรงงาน", status: "pending" }], history: [], verifications: [], technicianNames: [] });
   assert.equal(cells.K15, false);
   assert.equal(cells.B19, "ลงชื่อ ________________________ ฝ่ายบริหารโรงงาน");
   assert.equal(cells.B20, "");
@@ -92,13 +92,24 @@ test("a new request clears the template's sample values", () => {
 
 test("a rejected step ticks 'not approved' and a failed verification ticks 'send back'", () => {
   const { cells } = build({}, {
-    steps: [{ step_order: 1, status: "rejected", acted_by: "e-fm", acted_at: "2026-10-21T05:00:00Z" }],
+    steps: [{ step_order: 1, step_name: "ผู้จัดการโรงงาน", status: "rejected", acted_by: "e-fm", acted_at: "2026-10-21T05:00:00Z" }],
     verifications: [{ result: "fail", created_at: "2026-10-22T10:00:00Z" }],
   });
   assert.equal(cells.K15, false);
   assert.equal(cells.U15, true);
   assert.equal(cells.C39, false);
   assert.equal(cells.C40, true);
+});
+
+test("a request without a factory manager puts the general manager in the general manager box", () => {
+  const { cells } = build({}, {
+    steps: [{ step_order: 1, step_name: "ผู้จัดการทั่วไป", status: "approved", acted_by: "e-gm", acted_at: "2026-10-21T06:00:00Z" }],
+  });
+  assert.equal(cells.K15, true);
+  assert.equal(cells.B19, "ลงชื่อ ________________________ ฝ่ายบริหารโรงงาน");
+  assert.equal(cells.T19, "ลงชื่อ  ผจก. ทั่วไป  ผู้จัดการทั่วไป");
+  assert.equal(cells.B20, "");
+  assert.equal(cells.T20, "21/10/69");
 });
 
 test("old requests with only parts_used text and more than four parts still fit the four rows", () => {
@@ -150,6 +161,8 @@ test("the Apps Script accepts only text or ticks inside A1:AJ41", () => {
     assert.throws(() => gs.validateCells_(bad), /BAD_CELLS/, JSON.stringify(bad));
   }
   assert.equal(gs.validateCells_({ B10: "x".repeat(9000) }).B10.length, 5000);
+  assert.equal(gs.validateCells_({ B10: "=IMPORTRANGE(1)" }).B10, "'=IMPORTRANGE(1)");
+  assert.equal(gs.validateCells_({ B10: "+1" }).B10, "'+1");
 });
 
 test("the Apps Script keeps a safe file name and hides raw errors", () => {
