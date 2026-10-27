@@ -195,7 +195,7 @@
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.ok || typeof result.base64 !== "string") {
       // แนบรหัสจาก Apps Script (NOT_CONFIGURED, FORM_SHEET_NOT_FOUND, EXPORT_FAILED ...) ไว้ไล่สาเหตุตาม README
-      const code = typeof result?.error === "string" && /^[A-Z_]{1,40}$/.test(result.error) ? result.error : `HTTP_${response.status}`;
+      const code = typeof result?.error === "string" && /^[A-Z0-9_]{1,40}$/.test(result.error) ? result.error : `HTTP_${response.status}`;
       throw new Error(`สร้างไฟล์ Excel ไม่สำเร็จ (${code}) กรุณาลองใหม่อีกครั้ง`);
     }
     return new Blob([base64ToBytes(result.base64)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });

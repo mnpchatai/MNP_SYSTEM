@@ -10,7 +10,7 @@
  * คนที่ได้ URL ไปจึงได้แค่ไฟล์ฟอร์มที่มีค่าที่ตัวเองส่งมา ไม่เห็นข้อมูลของคนอื่น และไฟล์ที่ส่งกลับมีแค่ชีตฟอร์ม
  * (ไม่มีชีต KV/ใบแจ้งซ่อม ฯลฯ ของสเปรดชีตต้นทาง) เขียนได้เฉพาะเซลล์ในช่วงฟอร์ม A1:AJ41
  *
- * ติดตั้ง: ดู README.md ในโฟลเดอร์นี้ (ต้องตั้ง Script property TEMPLATE_SHEET_ID)
+ * ติดตั้ง: ดู README.md ในโฟลเดอร์นี้ (ต้องตั้ง Script property TEMPLATE_SHEET_ID, วาง appsscript.json และกด Run authorize)
  */
 
 var FORM_SHEET = 'เอกสาร';
@@ -21,22 +21,36 @@ var MAX_TEXT = 5000;
 var CHECKED = '☑';
 var UNCHECKED = '☐';
 
+// กด Run ฟังก์ชันนี้ในตัวแก้ไขหนึ่งครั้งหลังวางโค้ด ให้ Google ขออนุญาตสิทธิ์ที่ doPost ใช้ครบทุกตัว
+// (สเปรดชีต, Drive สำหรับไฟล์ชั่วคราว, เรียก URL ภายนอกสำหรับ export) — ไม่สร้างหรือแก้ไฟล์ใด
+function authorize() {
+  var templateId = PropertiesService.getScriptProperties().getProperty('TEMPLATE_SHEET_ID');
+  if (templateId) SpreadsheetApp.openById(templateId).getName();
+  DriveApp.getRootFolder().getName();
+  UrlFetchApp.fetch('https://www.google.com/generate_204', { muteHttpExceptions: true });
+  console.log('authorize: สิทธิ์ครบแล้ว');
+}
+
 function doGet() {
   return json_({ ok: false, error: 'USE_POST' });
 }
 
 function doPost(e) {
   var tempId = null;
+  var stage = 'INPUT'; // ขั้นที่กำลังทำ ส่งกลับในรหัส error ให้รู้ว่าล้มตรงไหนโดยไม่ต้องเปิด Executions
+  var templateId = null;
   try {
     var payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     var cells = validateCells_(payload.cells);
     var fileName = safeFileName_(payload.fileName);
 
-    var templateId = PropertiesService.getScriptProperties().getProperty('TEMPLATE_SHEET_ID');
+    templateId = PropertiesService.getScriptProperties().getProperty('TEMPLATE_SHEET_ID');
     if (!templateId) throw new Error('NOT_CONFIGURED');
+    stage = 'OPEN';
     var source = SpreadsheetApp.openById(templateId).getSheetByName(FORM_SHEET);
     if (!source) throw new Error('FORM_SHEET_NOT_FOUND');
 
+    stage = 'COPY';
     var temp = SpreadsheetApp.create('MT01-FM05 export ' + new Date().toISOString());
     tempId = temp.getId();
     var sheet = source.copyTo(temp);
@@ -45,6 +59,7 @@ function doPost(e) {
       if (other.getSheetId() !== sheet.getSheetId()) temp.deleteSheet(other);
     });
 
+    stage = 'FILL';
     Object.keys(cells).forEach(function (a1) {
       var value = cells[a1];
       var range = sheet.getRange(a1);
@@ -58,16 +73,18 @@ function doPost(e) {
     });
     SpreadsheetApp.flush();
 
+    stage = 'EXPORT';
     var url = 'https://docs.google.com/spreadsheets/d/' + tempId + '/export?format=xlsx&gid=' + sheet.getSheetId();
     var response = UrlFetchApp.fetch(url, {
       headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
       muteHttpExceptions: true,
     });
-    if (response.getResponseCode() !== 200) throw new Error('EXPORT_FAILED_' + response.getResponseCode());
+    if (response.getResponseCode() !== 200) throw new Error('EXPORT_HTTP_' + response.getResponseCode());
     return json_({ ok: true, fileName: fileName, base64: Utilities.base64Encode(response.getBlob().getBytes()) });
   } catch (err) {
-    console.error('mt-form-export', String(err));
-    return json_({ ok: false, error: errorCode_(err) });
+    console.error('mt-form-export', stage, String(err));
+    logError_(templateId, stage, err);
+    return json_({ ok: false, error: errorCode_(err, stage) });
   } finally {
     if (tempId) {
       try { DriveApp.getFileById(tempId).setTrashed(true); } catch (cleanupError) { console.error('cleanup', String(cleanupError)); }
@@ -101,10 +118,25 @@ function safeFileName_(name) {
   return /\.xlsx$/.test(cleaned) ? cleaned : 'MT01-FM05.xlsx';
 }
 
-// ส่งกลับแค่รหัสที่รู้จัก ไม่ส่งข้อความ error ดิบ (อาจมี ID ของไฟล์/รายละเอียดภายใน)
-function errorCode_(err) {
+// ส่งกลับแค่รหัส ไม่ส่งข้อความ error ดิบ (อาจมี ID ของไฟล์/รายละเอียดภายใน) ข้อความเต็มอยู่ในชีต "บันทึกข้อผิดพลาด"
+// รหัสที่ไม่รู้จักบอกขั้นที่ล้ม: FAILED_OPEN / FAILED_COPY / FAILED_FILL / FAILED_EXPORT (+ HTTP status ถ้ามี)
+function errorCode_(err, stage) {
   var message = String(err && err.message || '');
-  return ['BAD_CELLS', 'NOT_CONFIGURED', 'FORM_SHEET_NOT_FOUND'].indexOf(message) >= 0 ? message : 'EXPORT_FAILED';
+  if (['BAD_CELLS', 'NOT_CONFIGURED', 'FORM_SHEET_NOT_FOUND'].indexOf(message) >= 0) return message;
+  var http = /^EXPORT_HTTP_(\d{3})$/.exec(message);
+  return 'FAILED_' + (stage || 'UNKNOWN') + (http ? '_' + http[1] : '');
+}
+
+// บันทึกข้อความ error เต็มลงชีต "บันทึกข้อผิดพลาด" ของสเปรดชีตต้นแบบ (เจ้าของเปิดดูได้เอง) ถ้าเขียนไม่ได้ก็ข้าม
+function logError_(templateId, stage, err) {
+  if (!templateId) return;
+  try {
+    var ss = SpreadsheetApp.openById(templateId);
+    var sheet = ss.getSheetByName('บันทึกข้อผิดพลาด') || ss.insertSheet('บันทึกข้อผิดพลาด');
+    sheet.appendRow([new Date(), 'mt-form-export:' + stage, String(err && err.message || err).slice(0, 500)]);
+  } catch (logFailure) {
+    console.error('mt-form-export log', String(logFailure));
+  }
 }
 
 function json_(value) {

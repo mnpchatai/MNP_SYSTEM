@@ -145,6 +145,7 @@ test("requestXlsx posts the cells and turns the base64 reply into an xlsx blob",
   await assert.rejects(formExport.requestXlsx({}, fetchImpl, ""), /ยังไม่ได้ตั้งค่า/);
   await assert.rejects(formExport.requestXlsx({}, async () => { throw new TypeError("Failed to fetch"); }, "u"), /เชื่อมต่อ/);
   await assert.rejects(formExport.requestXlsx({}, async () => ({ ok: true, json: async () => ({ ok: false, error: "NOT_CONFIGURED" }) }), "u"), /ไม่สำเร็จ \(NOT_CONFIGURED\)/);
+  await assert.rejects(formExport.requestXlsx({}, async () => ({ ok: true, json: async () => ({ ok: false, error: "FAILED_EXPORT_403" }) }), "u"), /\(FAILED_EXPORT_403\)/);
   await assert.rejects(formExport.requestXlsx({}, async () => ({ ok: true, json: async () => ({ ok: false, error: "<b>x</b>" }) }), "u"), /\(HTTP_undefined\)|\(HTTP_/);
   await assert.rejects(formExport.requestXlsx({}, async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("html"); } }), "u"), /\(HTTP_200\)/);
 });
@@ -180,5 +181,7 @@ test("the Apps Script keeps a safe file name and hides raw errors", () => {
   assert.equal(gs.safeFileName_("BG026-26.xlsx"), "BG026-26.xlsx");
   assert.equal(gs.safeFileName_("../../x"), "MT01-FM05.xlsx");
   assert.equal(gs.errorCode_(new Error("BAD_CELLS")), "BAD_CELLS");
-  assert.equal(gs.errorCode_(new Error("Exception: file 1abc not found")), "EXPORT_FAILED");
+  assert.equal(gs.errorCode_(new Error("Exception: file 1abc not found"), "COPY"), "FAILED_COPY");
+  assert.equal(gs.errorCode_(new Error("EXPORT_HTTP_403"), "EXPORT"), "FAILED_EXPORT_403");
+  assert.equal(gs.errorCode_(new Error("NOT_CONFIGURED"), "INPUT"), "NOT_CONFIGURED");
 });
