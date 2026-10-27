@@ -94,6 +94,10 @@
     }).catch((syncError) => console.warn("ซิงก์ใบคำร้องถึงฝ่ายบริหารไปชีตสำรองไม่สำเร็จ", syncError));
   }
 
+  // ข้อมูลฟอร์ม PP01-FM08 ของใบที่เปิดอยู่ ตั้งใน loadDetail ใช้ตอนกด "ดาวน์โหลด Excel" ใน bindDetail
+  // (Web App ของสเปรดชีตบริหารเอง MG_EXPORT_URL ดู modules/mt-form-export.js และ apps-script/management-backup/Export.gs)
+  let formExportPayload = null;
+
   const modules = (window.MNP_REQUEST_MODULES ??= {});
   modules.MANAGEMENT = {
     code: "MANAGEMENT",
@@ -137,6 +141,7 @@
     // หน้ารายละเอียด: เตรียมข้อมูลสำเนาถึงแผนกและซิงก์สำเนาสำรอง คืนรายการข้อมูลที่จะแสดงเพิ่ม
     async loadDetail({ sb, request, steps, directory, helpers }) {
       let ccDepartmentCodes = [];
+      formExportPayload = null;
       // อย่าให้การเตรียมข้อมูลสำรอง (แค่บันทึก/รายงาน) พังหน้ารายละเอียดจริง — ผิดพลาดแค่ log ไว้
       try {
         const ccIds = request.cc_department_ids ?? [];
@@ -145,15 +150,26 @@
           if (ccError) throw ccError;
           ccDepartmentCodes = (ccData ?? []).map((row) => row.code);
         }
-        syncManagementOrderToAppsScript(buildAppsScriptManagementOrder(request, steps, directory, ccDepartmentCodes, helpers));
+        const order = buildAppsScriptManagementOrder(request, steps, directory, ccDepartmentCodes, helpers);
+        syncManagementOrderToAppsScript(order);
+        const formExport = window.MNP_MT_FORM_EXPORT;
+        // ทุกคนที่เปิดใบได้ดาวน์โหลดได้ ข้อมูลชุดเดียวกับที่ผู้ดูเห็นในหน้านี้
+        if (formExport?.MG_EXPORT_URL) formExportPayload = formExport.buildManagementFormRecord(order);
       } catch (ccError) {
         console.warn("เตรียมข้อมูลสำเนาถึงแผนก/สำรองใบคำร้องถึงฝ่ายบริหารไม่สำเร็จ", ccError);
       }
       return {
+        headerActionsHtml: formExportPayload ? window.MNP_MT_FORM_EXPORT.downloadButtonHtml("PP01-FM08") : "",
         facts: ccDepartmentCodes.length
           ? [{ label: "สำเนาถึงแผนก", value: ccDepartmentCodes.join(", "), options: { icon: "▤", tone: "violet", wide: true } }]
           : [],
       };
+    },
+
+    bindDetail({ helpers }) {
+      document.querySelector("#form-export")?.addEventListener("click", (event) => {
+        if (formExportPayload) window.MNP_MT_FORM_EXPORT.downloadXlsx(event.currentTarget, formExportPayload, helpers);
+      });
     },
   };
 })();

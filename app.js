@@ -2582,7 +2582,7 @@ async function renderRequestDetail(params) {
     ...(moduleDetail?.facts ?? []).map((fact) => requestFact(fact.label, fact.value, fact.options)),
   ].join("");
   const content = `
-    <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p>${detailView?.headerActionsHtml ? `<div class="request-detail-actions">${detailView.headerActionsHtml}</div>` : ""}</header>
+    <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p>${(detailView?.headerActionsHtml || moduleDetail?.headerActionsHtml) ? `<div class="request-detail-actions">${detailView?.headerActionsHtml || moduleDetail.headerActionsHtml}</div>` : ""}</header>
     <div class="detail-grid">
       <div class="stack">
         <section class="card request-overview-card">
@@ -2658,7 +2658,7 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
   });
-  separateModule?.bindDetail?.({ id, params, employee });
+  separateModule?.bindDetail?.({ id, params, employee, helpers: { showToast, friendlyError } });
   document.querySelector("#resubmit-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;

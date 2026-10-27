@@ -185,3 +185,4 @@ test("the Apps Script keeps a safe file name and hides raw errors", () => {
   assert.equal(gs.errorCode_(new Error("EXPORT_HTTP_403"), "EXPORT"), "FAILED_EXPORT_403");
   assert.equal(gs.errorCode_(new Error("NOT_CONFIGURED"), "INPUT"), "NOT_CONFIGURED");
 });
+

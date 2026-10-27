@@ -637,9 +637,7 @@
       const { technicians, canAssign, canStartWork, canFinishWork, canVerify, canRecordProgress } = detailPermissions({ request, type, directory, assignedTechIds, employee });
       return {
         statusBadgeHtml: repairStatusBadge(request, steps),
-        headerActionsHtml: formExportPayload
-          ? `<button type="button" class="btn secondary small" id="mt-form-export" title="ดาวน์โหลดเป็นแบบฟอร์ม MT01-FM05">ดาวน์โหลด Excel</button>`
-          : "",
+        headerActionsHtml: formExportPayload ? window.MNP_MT_FORM_EXPORT.downloadButtonHtml("MT01-FM05") : "",
         facts: [
           requestFact("ช่างผู้รับผิดชอบ",
             assignedTechIds.map((techId) => personName(directory, techId)).join(", ") || "—",
@@ -686,27 +684,8 @@
     },
 
     bindDetail({ id, params, employee }) {
-      document.querySelector("#mt-form-export")?.addEventListener("click", async (event) => {
-        const button = event.currentTarget;
-        const payload = formExportPayload;
-        if (!payload) return;
-        const label = button.textContent;
-        button.disabled = true;
-        button.textContent = "กำลังสร้างไฟล์…";
-        try {
-          const blob = await window.MNP_MT_FORM_EXPORT.requestXlsx(payload);
-          const url = URL.createObjectURL(blob);
-          const link = Object.assign(document.createElement("a"), { href: url, download: payload.fileName });
-          document.body.append(link);
-          link.click();
-          link.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch (exportError) {
-          showToast(friendlyError(exportError), "error");
-        } finally {
-          button.disabled = false;
-          button.textContent = label;
-        }
+      document.querySelector("#form-export")?.addEventListener("click", (event) => {
+        if (formExportPayload) window.MNP_MT_FORM_EXPORT.downloadXlsx(event.currentTarget, formExportPayload, { showToast, friendlyError });
       });
       document.querySelector('[data-fact-action="machine-history"]')?.addEventListener("click", (event) => openMachineHistory(id, event.currentTarget));
       document.querySelector("#assign-form")?.addEventListener("submit", async (event) => {
