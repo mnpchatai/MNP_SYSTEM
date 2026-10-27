@@ -974,6 +974,13 @@ function themeButton() {
   return `<button class="icon-button theme-toggle" type="button" aria-label="สลับธีม" title="สลับธีม">◐</button>`;
 }
 
+// แอปที่ติดตั้งแบบ standalone บน Desktop/Android ไม่มีปุ่มย้อนกลับของเบราว์เซอร์ (styles.css แสดงปุ่มเฉพาะ display-mode: standalone)
+function appBackButton() {
+  const ios = window.MNP_INSTALL_APP.isIos({ userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints });
+  if (!window.MNP_INSTALL_APP.showAppBack({ standalone: isStandaloneApp(), ios })) return "";
+  return `<button class="icon-button app-back" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ">‹</button>`;
+}
+
 function applyTheme() {
   const saved = localStorage.getItem("mnp-theme");
   document.documentElement.dataset.theme = saved === "dark" ? "dark" : "light";
@@ -1499,7 +1506,10 @@ function shell(content, active, title) {
       <button class="nav-backdrop" type="button" tabindex="-1" aria-label="ปิดเมนูหลัก"></button>
       <main class="main">
         <header class="topbar">
-          <div class="breadcrumbs">MNP Workspace &nbsp;/&nbsp; <strong>${escapeHtml(title)}</strong></div>
+          <div class="topbar-start">
+            ${appBackButton()}
+            <div class="breadcrumbs">MNP Workspace &nbsp;/&nbsp; <strong>${escapeHtml(title)}</strong></div>
+          </div>
           <div class="top-actions">
             ${isSandboxMode() ? `<span class="sandbox-pill" title="อยู่ในโหมดทดสอบ ข้อมูลแยกจากระบบจริง">TEST</span>` : ""}
             ${themeButton()}
@@ -1606,6 +1616,7 @@ function bindShell() {
     if (event.key === "Escape") setMobileNav(false);
   };
   document.querySelector(".theme-toggle")?.addEventListener("click", toggleTheme);
+  document.querySelector(".app-back")?.addEventListener("click", () => window.MNP_INSTALL_APP.backOrHome({ win: window, goHome: () => go(homePath()) }));
   // ปุ่มออกจากระบบมี 2 จุด: ท้ายแถบข้าง (จอกว้าง) และในเมนูหลัก (จอแคบ/มือถือ ซึ่งซ่อนแถบผู้ใช้)
   document.querySelectorAll(".signout-button").forEach((button) => button.addEventListener("click", async () => {
     setMobileNav(false);

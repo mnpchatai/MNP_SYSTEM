@@ -401,6 +401,9 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .user-copy span { color: var(--quiet); font-size: 11px; }
 .main { min-width: 0; }
 .topbar { position: sticky; top: 0; z-index: 5; height: 64px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: color-mix(in srgb, var(--paper) 95%, transparent); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
+.topbar-start { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.app-back { display: none; font-size: 22px; line-height: 1; }
+@media (display-mode: standalone) { .app-back { display: grid; } }
 .breadcrumbs { color: var(--muted); font-size: 13px; }
 .breadcrumbs strong { color: var(--ink); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
