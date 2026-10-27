@@ -1,4 +1,5 @@
 // ดาวน์โหลดใบแจ้งซ่อม/ใบคำร้อง MT เป็นไฟล์ Excel ตามแบบฟอร์ม MT01-FM05 (ชีต "เอกสาร" ในสเปรดชีตระบบแจ้งซ่อม)
+// และใบคำร้องถึงฝ่ายบริหารตามแบบฟอร์ม PP01-FM08 (buildManagementFormRecord ท้ายไฟล์)
 //
 // ไฟล์นี้แปลงข้อมูลที่หน้ารายละเอียดโหลดมาแล้ว (ตามสิทธิ์ RLS ของผู้ดู) เป็นรายการ "เซลล์ → ค่า" ของฟอร์ม
 // แล้ว Apps Script (apps-script/mt-form-export/Code.gs) เติมค่าลงสำเนาของฟอร์มและส่งไฟล์ .xlsx กลับมา
@@ -168,8 +169,56 @@
       T40: passedAt ? `วันที่  ${formDate(passedAt)}` : "วันที่ ",
       AB40: "วันที่ ",
     };
-    return { fileName: `${text(request.request_no).replace(/[^\p{L}\p{N}_-]+/gu, "-") || "MT01-FM05"}.xlsx`, cells };
+    return { form: "mt", fileName: safeFileName(request.request_no, "MT01-FM05"), cells };
   }
+
+  const safeFileName = (docNumber, fallback) => `${text(docNumber).replace(/[^\p{L}\p{N}_-]+/gu, "-") || fallback}.xlsx`;
+
+  // ใบคำร้องถึงฝ่ายบริหาร: ส่ง "แถว" รูปแบบเดียวกับชีต "ใบคำร้องถึงฝ่ายบริหาร" (upsertStructuredRow_ ใน
+  // apps-script/management-backup/Code.gs) ให้ Web App เติมฟอร์มด้วย FormFill.gs ตัวเดียวกับที่ใช้บนชีต
+  // หน้าตาไฟล์จึงตรงกับฟอร์มที่เติมบนชีตทุกอย่าง (ตัดบรรทัด ย่อตัวอักษร ติ๊กสำเนาถึงแผนก)
+  // order = ผลของ buildAppsScriptManagementOrder ใน modules/module-mg.js
+  const MANAGEMENT_RECORD_HEADERS = [
+    "เลขที่เอกสาร", "แผนก", "เรื่อง", "รายละเอียด", "สิ่งที่แนบมาด้วย", "ผู้ยื่นคำร้อง", "ตำแหน่ง", "ยื่นเมื่อ", "สถานะ",
+    "มติ", "ความเห็น", "ผจก.โรงงาน อนุมัติโดย", "ผจก.โรงงาน เมื่อ", "ผจก.ทั่วไป อนุมัติโดย", "ผจก.ทั่วไป เมื่อ",
+    "สำเนาถึงแผนก", "สำเนาอื่นๆ",
+  ];
+
+  function buildManagementFormRecord(order) {
+    const fm = order.approvals?.fm ?? {};
+    const gm = order.approvals?.gm ?? {};
+    const values = [
+      order.docNumber, order.department, order.subject, order.description, order.attachmentNote, order.requestedBy,
+      order.position, order.submittedAt, order.status, order.decision, order.comment, fm.by, fm.at, gm.by, gm.at,
+      (Array.isArray(order.ccDepartments) ? order.ccDepartments : []).join(", "), order.ccOther,
+    ];
+    const record = Object.fromEntries(MANAGEMENT_RECORD_HEADERS.map((header, index) => [header, String(values[index] ?? "")]));
+    return { form: "mg", fileName: safeFileName(order.docNumber, "PP01-FM08"), record };
+  }
+
+  // ปุ่มดาวน์โหลดในหน้ารายละเอียด (ใช้ร่วมกันทั้ง MT และ MG) — helpers = { showToast, friendlyError } ของ app.js
+  async function downloadXlsx(button, payload, helpers) {
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "กำลังสร้างไฟล์…";
+    try {
+      const blob = await requestXlsx(payload);
+      const url = URL.createObjectURL(blob);
+      const link = Object.assign(document.createElement("a"), { href: url, download: payload.fileName });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (exportError) {
+      helpers.showToast(helpers.friendlyError(exportError), "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
+  const downloadButtonHtml = (formCode) =>
+    `<button type="button" class="btn secondary small" id="form-export" title="ดาวน์โหลดเป็นแบบฟอร์ม ${formCode}">ดาวน์โหลด Excel</button>`;
 
   // ไฟล์ base64 จาก Apps Script → Blob
   function base64ToBytes(base64) {
@@ -201,7 +250,10 @@
     return new Blob([base64ToBytes(result.base64)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   }
 
-  const api = { EXPORT_URL, PART_ROWS, buildMtFormCells, requestXlsx, formDate, formTime, workTimes, duration };
+  const api = {
+    EXPORT_URL, PART_ROWS, MANAGEMENT_RECORD_HEADERS, buildMtFormCells, buildManagementFormRecord, requestXlsx, downloadXlsx,
+    downloadButtonHtml, formDate, formTime, workTimes, duration,
+  };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.MNP_MT_FORM_EXPORT = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

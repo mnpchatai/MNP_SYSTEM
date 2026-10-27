@@ -185,3 +185,51 @@ test("the Apps Script keeps a safe file name and hides raw errors", () => {
   assert.equal(gs.errorCode_(new Error("EXPORT_HTTP_403"), "EXPORT"), "FAILED_EXPORT_403");
   assert.equal(gs.errorCode_(new Error("NOT_CONFIGURED"), "INPUT"), "NOT_CONFIGURED");
 });
+
+/* ---------- ใบคำร้องถึงฝ่ายบริหาร (PP01-FM08) ---------- */
+
+const mgOrder = {
+  id: "m-1", docNumber: "MG-2026-000005", department: "FT", subject: "ขอซื้อเครื่องพิมพ์", attachmentNote: "ใบเสนอราคา",
+  description: "เครื่องเดิมเสีย", requestedBy: "ฐิติวัชร์ คงรอด", position: "ผู้ช่วยผู้จัดการโรงงาน",
+  submittedAt: "2026-10-20T03:00:00Z", status: "APPROVED", decision: "approved", comment: "=SUM(1)",
+  approvals: { fm: { status: "approved", by: "นพรัตน์ ไชยเวช", at: "2026-10-20T04:00:00Z", note: "" }, gm: null },
+  ccDepartments: ["QA", "FT"], ccOther: "",
+};
+
+test("the management record has the same values as the row the sheet sync writes", () => {
+  const appended = [];
+  const sheet = { getLastRow: () => 1, appendRow: (row) => appended.push(row) };
+  const mgContext = vm.createContext({});
+  vm.runInContext(readFileSync(new URL("../../apps-script/management-backup/Code.gs", import.meta.url), "utf8"), mgContext);
+  vm.runInContext("upsertStructuredRow_", mgContext)(sheet, JSON.stringify(mgOrder));
+  const headers = JSON.parse(JSON.stringify(vm.runInContext("STRUCTURED_HEADERS", mgContext)));
+  const { form, fileName, record } = formExport.buildManagementFormRecord(mgOrder);
+  assert.equal(form, "mg");
+  assert.equal(fileName, "MG-2026-000005.xlsx");
+  assert.deepEqual(formExport.MANAGEMENT_RECORD_HEADERS, headers.slice(0, -1));
+  formExport.MANAGEMENT_RECORD_HEADERS.forEach((header, index) => assert.equal(record[header], String(appended[0][index] ?? ""), header));
+});
+
+test("the export web app takes the same management keys and cleans the record", () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext("MG_RECORD_KEYS", context))), formExport.MANAGEMENT_RECORD_HEADERS);
+  const validateRecord = vm.runInContext("validateRecord_", context);
+  const { record } = formExport.buildManagementFormRecord(mgOrder);
+  const clean = JSON.parse(JSON.stringify(validateRecord({ ...record, extra: "x" })));
+  assert.equal("extra" in clean, false);
+  assert.equal(clean["ความเห็น"], "'=SUM(1)");
+  assert.equal(clean["เรื่อง"], "ขอซื้อเครื่องพิมพ์");
+  for (const bad of [null, [], { "เลขที่เอกสาร": "" }, { "เลขที่เอกสาร": "X", "เรื่อง": 1 }]) {
+    assert.throws(() => validateRecord(bad), /BAD_RECORD/, JSON.stringify(bad));
+  }
+});
+
+test("the export project's two files (Code.gs + FormFill.gs) load together without clashing names", () => {
+  const names = (source) => new Set([...source.matchAll(/^(?:function|var)\s+([A-Za-z0-9_$]+)/gm)].map((m) => m[1]));
+  const formFill = readFileSync(new URL("../../apps-script/management-backup/FormFill.gs", import.meta.url), "utf8");
+  const clash = [...names(gsSource)].filter((name) => names(formFill).has(name));
+  assert.deepEqual(clash, []);
+  const both = vm.createContext({});
+  vm.runInContext(gsSource, both);
+  vm.runInContext(formFill, both);
+  assert.equal(vm.runInContext("typeof ffWrite_ === 'function' && typeof fillManagementForm_ === 'function'", both), true);
+});
