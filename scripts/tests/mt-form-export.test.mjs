@@ -216,11 +216,21 @@ test("the export web app takes the same management keys and cleans the record", 
   const { record } = formExport.buildManagementFormRecord(mgOrder);
   const clean = JSON.parse(JSON.stringify(validateRecord({ ...record, extra: "x" })));
   assert.equal("extra" in clean, false);
-  assert.equal(clean["ความเห็น"], "'=SUM(1)");
+  assert.equal(clean["ความเห็น"], "\u200B=SUM(1)");
+  assert.equal(clean["ยื่นเมื่อ"], "2026-10-20T03:00:00Z");
+  assert.equal(JSON.parse(JSON.stringify(validateRecord({ ...record, "ยื่นเมื่อ": "+IMPORTXML(1)" })))["ยื่นเมื่อ"], "");
+  assert.equal(JSON.parse(JSON.stringify(validateRecord({ ...record, "ผจก.ทั่วไป เมื่อ": "2026-09-22T03:52:07.599209+00:00" })))["ผจก.ทั่วไป เมื่อ"], "2026-09-22T03:52:07.599209+00:00");
   assert.equal(clean["เรื่อง"], "ขอซื้อเครื่องพิมพ์");
   for (const bad of [null, [], { "เลขที่เอกสาร": "" }, { "เลขที่เอกสาร": "X", "เรื่อง": 1 }]) {
     assert.throws(() => validateRecord(bad), /BAD_RECORD/, JSON.stringify(bad));
   }
+});
+
+test("every record key FormFill.gs reads is one the web sends and the web app accepts", () => {
+  const formFill = readFileSync(new URL("../../apps-script/management-backup/FormFill.gs", import.meta.url), "utf8");
+  const read = new Set([...formFill.matchAll(/r\['([^']+)'\]/g)].map((m) => m[1]));
+  assert.ok(read.size >= 10);
+  for (const key of read) assert.ok(formExport.MANAGEMENT_RECORD_HEADERS.includes(key), key);
 });
 
 test("the export project's two files (Code.gs + FormFill.gs) load together without clashing names", () => {

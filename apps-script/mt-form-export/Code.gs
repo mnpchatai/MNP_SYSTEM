@@ -78,7 +78,7 @@ function doPost(e) {
     });
 
     stage = 'FILL';
-    if (isMg) fillManagementForm_(sheet, record);
+    if (isMg) fillManagementForm_(sheet, record, templateId);
     else Object.keys(cells).forEach(function (a1) {
       var value = cells[a1];
       var range = sheet.getRange(a1);
@@ -113,9 +113,13 @@ function doPost(e) {
 
 // ฟอร์ม mg: เลขที่เอกสารลงช่องคีย์ของ FormFill (AD3) แล้วให้ ffWrite_ เติมทุกช่องตามหัวข้อของฟอร์ม
 // จากนั้นแปลง checkbox จริงทั้งชีตเป็น ☑/☐ (ใน Excel checkbox ของ Google จะกลายเป็น TRUE/FALSE)
-function fillManagementForm_(sheet, record) {
+function fillManagementForm_(sheet, record, templateId) {
   sheet.getRange(FF_KEY_CELL).setValue(record['เลขที่เอกสาร']);
-  ffWrite_(sheet, record);
+  var result = ffWrite_(sheet, record) || {};
+  // หาหัวข้อในฟอร์มไม่เจอ (ฟอร์มถูกแก้ข้อความ) ไฟล์ยังสร้างได้แต่ช่องนั้นว่าง บันทึกไว้ให้เจ้าของเห็น
+  if (result.missing && result.missing.length) {
+    logError_(templateId, 'FILL_MISSING', new Error('หาช่องในฟอร์มไม่เจอ: ' + result.missing.join(', ')));
+  }
   SpreadsheetApp.flush();
   var range = sheet.getDataRange();
   var rules = range.getDataValidations();
@@ -130,7 +134,11 @@ function fillManagementForm_(sheet, record) {
   });
 }
 
-// ฟอร์ม mg รับเฉพาะคีย์ที่รู้จัก ค่าเป็นข้อความ (ตัดความยาว) ' นำหน้าค่าที่ขึ้นต้นด้วย = กันกลายเป็นสูตร
+// ฟอร์ม mg รับเฉพาะคีย์ที่รู้จัก ค่าเป็นข้อความ (ตัดความยาว)
+// - ช่องวันที่รับเฉพาะรูป ISO ที่ ffDate_ แปลงได้ อย่างอื่นเป็นค่าว่าง (ffDate_ คืนข้อความดิบเมื่อแปลงไม่ได้)
+// - ค่าที่ขึ้นต้นด้วย = + - @ ใส่ตัวคั่นที่มองไม่เห็น (\u200B แบบเดียวกับ FF_CONT ของ FormFill) นำหน้า
+//   บรรทัดแรกของรายละเอียดเป็นเซลล์ที่ขึ้นต้นด้วยค่าของผู้ใช้ จึงต้องไม่ให้กลายเป็นสูตร และไม่ให้มี ' โผล่ในไฟล์
+var MG_DATE_KEYS = ['ยื่นเมื่อ', 'ผจก.โรงงาน เมื่อ', 'ผจก.ทั่วไป เมื่อ'];
 function validateRecord_(record) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('BAD_RECORD');
   var clean = {};
@@ -138,7 +146,11 @@ function validateRecord_(record) {
     var value = record[key];
     if (value !== undefined && typeof value !== 'string') throw new Error('BAD_RECORD');
     var text = String(value || '').slice(0, MAX_TEXT);
-    clean[key] = (text.charAt(0) === '=' ? "'" : '') + text;
+    if (MG_DATE_KEYS.indexOf(key) >= 0) {
+      clean[key] = /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})?$/.test(text) ? text : '';
+    } else {
+      clean[key] = (/^[=+\-@]/.test(text) ? '\u200B' : '') + text;
+    }
   });
   if (!clean['เลขที่เอกสาร']) throw new Error('BAD_RECORD');
   return clean;
