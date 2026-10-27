@@ -102,12 +102,12 @@ function exportForm_(payload) {
   }
 }
 
-// ข้อความจากหน้าเว็บ: ตัดความยาว และเติม ' นำหน้าค่าที่ขึ้นต้นด้วย = ให้ชีตเก็บเป็นข้อความ ไม่รันเป็นสูตรด้วยสิทธิ์เจ้าของสคริปต์
+// ข้อความจากหน้าเว็บ: ตัดความยาว และเติม ' นำหน้าค่าที่ขึ้นต้นด้วย = + - @ (กฎเดียวกับ asText_) ให้ชีตเก็บเป็นข้อความ ไม่รันเป็นสูตรด้วยสิทธิ์เจ้าของสคริปต์
 function cleanText_(value, max) {
   if (value === null || value === undefined) return '';
   if (typeof value !== 'string' && typeof value !== 'number') throw new Error('BAD_RECORD');
   var text = String(value).slice(0, max || MAX_TEXT);
-  return text.charAt(0) === '=' ? "'" + text : text;
+  return /^[=+\-@]/.test(text) ? "'" + text : text;
 }
 
 function cleanNumber_(value) {
@@ -222,7 +222,8 @@ function exportLayout_(record) {
   layout.borders.push([head1, 1, itemLast - head1 + 1, COLS]);
   layout.formats.push([1, 1, itemLast, COLS, '@']);
   if (itemLast >= itemFirst) {
-    layout.formats.push([itemFirst, 4, itemLast - itemFirst + 1, 11, '0.00']);
+    // แสดงทศนิยมตามที่กรอก/ที่ฐานข้อมูลคำนวณ (สูงสุด 4 ตำแหน่ง) ไม่ปัดจนค่าที่เกินสเปกดูเหมือนอยู่ในสเปก
+    layout.formats.push([itemFirst, 4, itemLast - itemFirst + 1, 11, '0.####']);
     layout.center.push([itemFirst, 15, itemLast - itemFirst + 1, 1], [itemFirst, 1, itemLast - itemFirst + 1, 1]);
   }
   newRow();

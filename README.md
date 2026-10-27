@@ -916,8 +916,8 @@ migration `20261027010000_qc_inspection_reports.sql` เพิ่มฐานข
 - **เลขที่ใบ**: `TEST-QC-<YY>-<NNN>` จากตัวนับ `QC-TEST` (ตัวนับจริงไม่ขยับ)
 - **Lot ยางผสม**: `lab_mooney_results.lot_number` (คอลัมน์ใหม่ `app_lab_mooney_import` รับ `lot_number` เพิ่ม) ใบเก็บ `compound_lots` ได้ถึง 10 Lot `app_qc_report` คืนสรุปผล Mooney ต่อ Lot (`found`, จำนวนครั้งที่ทดสอบ, ค่าเฉลี่ย MH/MV) และ `app_qc_lots` ค้นรายการ Lot
 - **NCR**: ใบที่ผลเป็น `ng` และส่งอนุมัติแล้ว (ไม่ใช่ฉบับร่าง/ถูกไม่อนุมัติ/ยกเลิก) ออก NCR ได้ครั้งเดียวด้วย `app_ncr_issue` ใบที่ผูก NCR แล้วยกเลิกไม่ได้ (แหล่งที่พบ `final_fg`) ในธุรกรรมเดียวกัน เป็นใบทดสอบ `TEST-QA…`
-- **ยังไม่มี**: หน้าเว็บ, รูปแนบ/รูปจุดวัด, MDR, ตัวเตือนงานค้าง/แจ้งเตือน และการเปิดใช้กับข้อมูลจริง (ต้องเปลี่ยน `private.qc_actor` เพิ่มเทสต์บทบาทจริง และตัดสินใจว่า `qc_can_read` จะเปิดผล Mooney ให้ QA/ผู้บริหารกว้างกว่า `private.can_access_lab()` หรือไม่) ชีต Mooney ยังไม่ส่ง `lot_number` (งานถัดไป ต้องตรวจความยาว ≤ 60 ฝั่ง Apps Script ก่อนส่ง ไม่งั้นการซิงก์ทั้งชุดล้ม)
-- **ลำดับ deploy**: migration นี้ต้อง apply ที่ production (โดยได้รับอนุมัติ) ก่อน merge หน้าเว็บของโมดูลนี้ใน PR ถัดไป ตาม “Deployment order” ใน AGENTS.md; ตัวไฟล์เองไม่มีโค้ดฝั่งเว็บที่พึ่งมัน
+- **ยังไม่มี**: รูปแนบ/รูปจุดวัด, MDR, ตัวเตือนงานค้าง/แจ้งเตือน และการเปิดใช้กับข้อมูลจริง (ต้องเปลี่ยน `private.qc_actor` เพิ่มเทสต์บทบาทจริง และตัดสินใจว่า `qc_can_read` จะเปิดผล Mooney ให้ QA/ผู้บริหารกว้างกว่า `private.can_access_lab()` หรือไม่) ชีต Mooney ส่ง `lot_number` ได้เมื่อมีคอลัมน์ `Lot` (M) ดู README ของ `apps-script/lab-mooney/`
+- **ลำดับ deploy**: migration นี้ต้อง apply ที่ production (โดยได้รับอนุมัติ) ก่อน merge หน้าเว็บ `#/qc` ที่อยู่ใน PR เดียวกัน ตาม “Deployment order” ใน AGENTS.md
 - **การตรวจ**: `supabase/tests/database/qc_inspection_reports.test.sql` (อนุญาต/ปฏิเสธตามโหมดและบทบาท, การคำนวณ, สายอนุมัติ, NCR, Lot/Mooney, ล้างข้อมูล)
 
 ### ใบตรวจ QC (QA01-PM11) — Pilot Web (โหมดทดสอบ)

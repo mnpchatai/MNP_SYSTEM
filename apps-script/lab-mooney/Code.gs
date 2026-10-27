@@ -133,12 +133,16 @@ function expandMerged_(grid, merges) {
 //   raw     = getValues() ตารางเดียวกัน — ใช้กับค่าตัวเลข
 //   merges  = ช่วง merge ของคอลัมน์ AVG/SD (I–L) พิกัดเทียบกับแถวที่ 1 และคอลัมน์ I
 //   คอลัมน์ M หัว Lot (ไม่บังคับ): lot_number = ข้อความที่ชีตแสดง ตัดช่องว่างหัวท้าย ว่าง = null ยาวเกิน 60 ตัวอักษร = แถวมีปัญหา
+//   lotMerges = ช่วง merge ของคอลัมน์ M (พิกัดเทียบกับแถวที่ 1 และคอลัมน์ M, col = 0) เซลล์ที่ merge ต่อชุดได้ค่าเดียวกันทุกแถวเหมือน AVG/SD
 //   ไม่มีหัว Lot = lot_number เป็น null ทุกแถว (ไม่อ่านคอลัมน์ M)
 // คืน { rows, problems } — แถวว่างทั้งแถวข้าม ส่วนแถวที่กรอกไม่ครบ/ผิดรูปแบบเข้า problems (ไม่ส่งครึ่งๆ กลางๆ)
-function rowsFromTab_(tabName, display, raw, merges) {
+function rowsFromTab_(tabName, display, raw, merges, lotMerges) {
   var rows = [];
   var problems = [];
   var hasLot = isLotHeader_(display[0] ? display[0][LOT_COLUMN_INDEX_] : '');
+  var lotCells = hasLot
+    ? expandMerged_(display.map(function (row) { return [row[LOT_COLUMN_INDEX_]]; }), lotMerges || [])
+    : null;
   var stats = expandMerged_(
     raw.map(function (row) { return row.slice(REQUIRED_COLUMNS_, REQUIRED_COLUMNS_ + STAT_COLUMNS_); }),
     merges || []
@@ -177,7 +181,7 @@ function rowsFromTab_(tabName, display, raw, merges) {
     });
     var lotNumber = null;
     if (hasLot) {
-      var lotText = String(shown[LOT_COLUMN_INDEX_] === null || shown[LOT_COLUMN_INDEX_] === undefined ? '' : shown[LOT_COLUMN_INDEX_]).trim();
+      var lotText = String(lotCells[index][0] === null || lotCells[index][0] === undefined ? '' : lotCells[index][0]).trim();
       if (lotText.length > MAX_LOT_LENGTH_) rowProblems.push('Lot ยาวเกิน ' + MAX_LOT_LENGTH_ + ' ตัวอักษร');
       else if (lotText !== '') lotNumber = lotText;
     }
@@ -283,7 +287,13 @@ function collectRows_(spreadsheet) {
         numCols: range.getNumColumns()
       };
     });
-    var result = rowsFromTab_(name, display, raw, merges);
+    // ช่วง merge ของคอลัมน์ Lot (M) — ห้องแล็บ merge ต่อชุดเหมือน AVG/SD ได้ แถวล่างของชุดต้องได้ Lot เดียวกัน
+    var lotMerges = columns > LOT_COLUMN_INDEX_
+      ? sheet.getRange(1, LOT_COLUMN_INDEX_ + 1, lastRow, 1).getMergedRanges().map(function (range) {
+          return { row: range.getRow() - 1, col: 0, numRows: range.getNumRows(), numCols: 1 };
+        })
+      : [];
+    var result = rowsFromTab_(name, display, raw, merges, lotMerges);
     rows = rows.concat(result.rows);
     problems = problems.concat(result.problems);
   });

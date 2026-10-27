@@ -184,7 +184,8 @@ test("exportLayout_ draws the QA01-PM11 form", () => {
   assert.deepEqual([0, 4, 8, 12].map((col) => rows[sign + 1][col]), ["สมชาย ใจดี", "สมหญิง", "ผจก โรงงาน", "ผจก ทั่วไป"]);
   assert.equal(rows[sign + 2][12], "วันที่/เวลา : 2026-10-27 12:00");
   assert.deepEqual(layout.judges.map((entry) => entry[1]), ["O", "NA"]);
-  assert.ok(layout.formats.some((entry) => entry[4] === "0.00"), "numbers are shown with two decimals");
+  assert.ok(layout.formats.some((entry) => entry[4] === "0.####"), "numbers keep up to four decimals so an out-of-spec value is not rounded into spec");
+  assert.equal(call("cleanText_", "+1"), "'+1", "plus-prefixed text is kept as text like asText_");
 });
 
 test("the signature boxes show the draft, pending and rejected states", () => {

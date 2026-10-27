@@ -233,7 +233,13 @@ test("only an HTTP 200 with a JSON true allows access; everything else is denied
 });
 
 // Web App ทดสอบด้วย stub: นับว่าชีตถูกอ่านกี่ครั้ง และ Supabase ถูกเรียกอย่างไร
-function fakeSheet({ name, display, raw, merges = [], hidden = false, maxColumns = 26 }) {
+// merges = ช่วง merge ของ AVG/SD (col เทียบกับ I) · lotMerges = ช่วง merge ของคอลัมน์ M ({ row, numRows })
+// getMergedRanges คืนเฉพาะช่วงที่อยู่ในคอลัมน์ที่ขอ เหมือน Google Sheets
+function fakeSheet({ name, display, raw, merges = [], lotMerges = [], hidden = false, maxColumns = 26 }) {
+  const ranges = [
+    ...merges.map((merge) => ({ row: merge.row + 1, column: merge.col + 9, numRows: merge.numRows, numCols: merge.numCols })),
+    ...lotMerges.map((merge) => ({ row: merge.row + 1, column: 13, numRows: merge.numRows, numCols: 1 })),
+  ];
   return {
     getName: () => name,
     getLastRow: () => display.length,
@@ -243,11 +249,11 @@ function fakeSheet({ name, display, raw, merges = [], hidden = false, maxColumns
       getDisplayValue: () => String((display[row - 1] ?? [])[col - 1] ?? ""),
       getDisplayValues: () => display.slice(row - 1, row - 1 + numRows).map((cells) => cells.slice(col - 1, col - 1 + numCols)),
       getValues: () => raw.slice(row - 1, row - 1 + numRows).map((cells) => cells.slice(col - 1, col - 1 + numCols)),
-      getMergedRanges: () => merges.map((merge) => ({
-        getRow: () => merge.row + 1,
-        getColumn: () => merge.col + 9,
-        getNumRows: () => merge.numRows,
-        getNumColumns: () => merge.numCols,
+      getMergedRanges: () => ranges.filter((range) => range.column >= col && range.column < col + numCols).map((range) => ({
+        getRow: () => range.row,
+        getColumn: () => range.column,
+        getNumRows: () => range.numRows,
+        getNumColumns: () => range.numCols,
       })),
     }),
   };
@@ -362,6 +368,17 @@ test("the Web App reads column M when its header is Lot, and only then", () => {
   const plainBody = plainApp.post({ token: JWT });
   assert.equal(plainBody.ok, true);
   assert.deepEqual(plainBody.rows.map((row) => row.lot_number), [null, null, null]);
+});
+
+test("a Lot cell merged across the rows of a group gives every row of the group the same lot_number", () => {
+  // ชีตแสดงค่าของเซลล์ที่ merge เฉพาะแถวบนสุด แถวล่างของชุดต้องได้ Lot เดียวกัน (เหมือน AVG/SD)
+  const merged = lotTab("Lot", ["L-2610-A", "", "", "L-2610-B"]);
+  const direct = plain(api.rowsFromTab_("A1802", merged.display, merged.raw, [], [{ row: 1, col: 0, numRows: 3, numCols: 1 }]));
+  assert.deepEqual(direct.rows.map((row) => row.lot_number), ["L-2610-A", "L-2610-A", "L-2610-A", "L-2610-B"]);
+  const app = makeWebApp({ respond: supabaseAnswers(200, "true"), sheets: [fakeSheet({ name: "A1802", ...merged, maxColumns: 13, lotMerges: [{ row: 1, numRows: 3 }] })] });
+  const body = app.post({ token: JWT });
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.rows.map((row) => row.lot_number), ["L-2610-A", "L-2610-A", "L-2610-A", "L-2610-B"]);
 });
 
 test("unreadable rows are reported (capped) while the readable rows are still returned", () => {

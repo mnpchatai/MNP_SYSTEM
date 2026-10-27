@@ -26,7 +26,9 @@
   const STALE_CODES = ["QC_VERSION_CONFLICT", "QC_NOT_DRAFT", "QC_STEP_NOT_CURRENT", "QC_NOT_REJECTED", "QC_NOT_CANCELLABLE", "QC_NCR_EXISTS", "QC_NCR_LINKED", "QC_NOT_SUBMITTED", "QC_NOT_ACTIVE", "QC_NOT_FOUND"];
   const LOT_SEARCH_DELAY = 250;
 
-  const esc = escapeHtml;
+  // helper ของ app.js (escapeHtml ฯลฯ) ยังไม่ถูกนิยามตอนไฟล์นี้โหลด (index.html โหลดโมดูลก่อน app.js)
+  // จึงต้องอ้างตอนเรียกใช้เท่านั้น ห้ามคัดลอกอ้างอิงตอนโหลด (เทสต์ใน qc-pages.test.mjs โหลดไฟล์โดยไม่มี helper)
+  const esc = (value) => escapeHtml(value);
   const num = (value) => (value === null || value === undefined || value === "" ? "" : String(Number(value)));
   const orDash = (value) => (value === null || value === undefined || value === "" ? "—" : value);
   const fullName = (person) => [person?.first_name, person?.last_name].filter(Boolean).join(" ");
@@ -370,6 +372,7 @@
       if (lots.length >= model.MAX_LOTS) return showToast(`ใส่ Lot ยางผสมได้ไม่เกิน ${model.MAX_LOTS} Lot`, "error");
       lots.push(lot);
       renderChips();
+      clearTimeout(timer);
       input.value = "";
       if (!popup.hidden) closePopup(popup);
       return undefined;
@@ -436,7 +439,11 @@
     let current = choices.find((template) => template.id === requested) ?? null;
     // สเปกในใบเป็นภาพถ่าย ณ วันตรวจ (แก้ในใบได้) ใบที่เปิดแก้ใช้สเปกของใบเอง ส่วนใบใหม่/เปลี่ยน Part ใช้สเปกของแม่แบบ
     let specs = report ? report.items : (current?.items ?? []);
-    const slotsFor = (item) => current?.items?.find((row) => row.item_no === item.item_no)?.points_required ?? model.MAX_POINTS;
+    // จำนวนช่อง point: ตามแม่แบบ แต่ไม่น้อยกว่าจำนวนค่าที่ใบเก็บไว้ (แม่แบบถูกลดจุดทีหลัง ค่าที่วัดแล้วต้องไม่หายเงียบ ๆ)
+    const slotsFor = (item) => {
+      const required = current?.items?.find((row) => row.item_no === item.item_no)?.points_required ?? model.MAX_POINTS;
+      return Math.min(model.MAX_POINTS, Math.max(required, (item.points ?? []).length));
+    };
     const values = new Map((report?.items ?? []).map((item) => [item.item_no, {
       points: item.points ?? [], note: item.note, accept: item.judge === "AC",
     }]));
@@ -578,13 +585,10 @@
       </dl></section>`;
   }
 
+  // หน้านี้เปิดได้เฉพาะโหมดทดสอบ ซึ่ง persona ไม่มีสิทธิ์ MNP LAB และ #/lab ไม่ใช่ route ของโหมดทดสอบ จึงแสดงชื่อวัสดุเป็นข้อความ
   function materialLinks(material) {
     const names = String(material ?? "").split(", ").filter(Boolean);
-    if (!names.length) return "—";
-    // ลิงก์ไปหน้า Mooney เฉพาะผู้ที่มีสิทธิ์ MNP LAB (ตัวบังคับจริงอยู่ที่ฐานข้อมูล)
-    if (state.employee?.labAccess !== true) return esc(names.join(", "));
-    const link = (name) => `<a href="#/lab?module=mooney&amp;material=${encodeURIComponent(name)}">${esc(name)}</a>`;
-    return names.map(link).join(", ");
+    return names.length ? esc(names.join(", ")) : "—";
   }
 
   const reading = (value) => (value === null || value === undefined ? "—" : esc(window.MNP_LAB_MOONEY?.formatReading?.(value) ?? Number(value).toFixed(2)));
@@ -620,9 +624,8 @@
   function signHtml(report) {
     const submitted = report.status !== "draft" && report.status !== "cancelled" && report.inspected_by;
     const box = (role, inner) => `<div class="qc-sign"><span class="qc-sign-role">${esc(role)}</span>${inner}</div>`;
-    const inspector = box("Inspector", submitted
-      ? `<strong>✓ ${esc(report.inspector_name)}</strong><span class="muted small">${esc(formatDate(report.inspected_at, true))}</span>`
-      : "<strong>—</strong>");
+    // ชื่อและวันที่ของผู้ตรวจอยู่ในหัวใบแล้ว (Inspecter By / inspection Date) ช่องนี้บอกแค่ว่าลงนามแล้ว
+    const inspector = box("Inspector", submitted ? "<strong>✓ ลงนามแล้ว</strong>" : "<strong>—</strong>");
     const steps = model.STEPS.map((step) => {
       const approval = (report.approvals ?? []).find((row) => row.step_order === step.order);
       const name = fullName(approval);

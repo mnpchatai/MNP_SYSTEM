@@ -161,7 +161,7 @@ test("the report page shows the form header, items, Mooney rows, signatures and 
   assert.match(html, /<strong>LOT-1<\/strong><\/td><td>MS-01<\/td><td class="right">3<\/td>[\s\S]*?<td class="right">18\.23<\/td><td class="right">62\.50<\/td>/);
   assert.match(html, /<strong>LOT-2<\/strong><\/td><td colspan="5" class="muted">ยังไม่มีผล Mooney ของ Lot นี้ในระบบ<\/td>/);
   assert.doesNotMatch(html, /#\/lab\?module=mooney/, "the Mooney link needs lab access");
-  assert.match(html, /qc-sign-role">Inspector<\/span><strong>✓ สมชาย ใจดี<\/strong>/);
+  assert.match(html, /qc-sign-role">Inspector<\/span><strong>✓ ลงนามแล้ว<\/strong>/);
   assert.match(html, /manager QA<\/span><strong class="qc-sign-wait">รออนุมัติ<\/strong>/);
   assert.match(html, /factory manager<\/span><strong>—<\/strong>/);
   assert.match(html, /General Manager Approved/);
@@ -172,9 +172,19 @@ test("the report page shows the form header, items, Mooney rows, signatures and 
   assert.equal(calls.synced[0].reportNo, "TEST-QC-26-001");
 });
 
-test("the Mooney rows link to the LAB page only for a user with lab access", async () => {
+test("the Mooney rows show the material as text (no LAB link inside the sandbox)", async () => {
   const { app } = await page("view=report&id=r1", { employee: { labAccess: true } });
-  assert.match(app.innerHTML, /href="#\/lab\?module=mooney&amp;material=MS-01">MS-01<\/a>/);
+  assert.doesNotMatch(app.innerHTML, /href="#\/lab/);
+  assert.match(app.innerHTML, /MS-01/);
+});
+
+test("the module files load before app.js without touching its helpers", () => {
+  // index.html โหลด modules/*.js ก่อน app.js: ตอนโหลดต้องไม่อ้าง escapeHtml/formatDate/... (มีแค่ window กับทะเบียนโมดูล)
+  const context = vm.createContext({});
+  // ให้เฉพาะสิ่งที่เบราว์เซอร์มีตอนโหลดสคริปต์ (ไม่มี helper ของ app.js เช่น escapeHtml/formatDate/showToast)
+  Object.assign(context, { window: context, console, URLSearchParams, Intl, Date, MNP_REQUEST_MODULES: {} });
+  for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
+  assert.equal(context.MNP_REQUEST_MODULES.QC?.code, "QC");
 });
 
 test("the download button is hidden until the Apps Script URL is set", async () => {
