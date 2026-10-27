@@ -34,6 +34,7 @@ function fakeSheet(name, rows = []) {
     setValues(values) { values.forEach((line, i) => line.forEach((v, j) => { (data[row - 1 + i] ??= [])[col - 1 + j] = v; })); return this; },
     setValue(value) { (data[row - 1] ??= [])[col - 1] = value; return this; },
     getValue() { return data[row - 1]?.[col - 1] ?? ""; },
+    getValues() { return Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => data[row - 1 + i]?.[col - 1 + j] ?? "")); },
     getDataValidation() { return checkboxes.has(`${row},${col}`) ? { getCriteriaType: () => "CHECKBOX" } : null; },
     createTextFinder(text) {
       return { matchEntireCell() { return this; }, findNext() {
@@ -187,17 +188,57 @@ test("the web app only stores order:<uuid> items whose JSON id matches the key",
   assert.equal(spreadsheet.sheets["ใบแจ้งซ่อม"].data.length, 2);
 });
 
-test("an unknown number or an order synced before formCells existed shows a message and keeps the number", () => {
+test("an unknown number shows a message and keeps the number", () => {
+  freshSpreadsheet();
+  spreadsheet.sheets["เอกสาร"] = fakeSheet("เอกสาร");
+  const form = spreadsheet.sheets["เอกสาร"];
+  form.getRange("AG4").setValue("XX999/26");
+  gs.onEdit({ range: form.getRange("AG4") });
+  assert.equal(form.cell("AG4"), "XX999/26");
+  assert.match(toasts.at(-1), /ไม่พบเลขที่เอกสาร/);
+});
+
+test("an order synced without formCells fills the form from its row in the ใบแจ้งซ่อม sheet", () => {
   freshSpreadsheet();
   spreadsheet.sheets["เอกสาร"] = fakeSheet("เอกสาร");
   const form = spreadsheet.sheets["เอกสาร"];
   gs.doPost({ postData: { contents: JSON.stringify({ batch: [{ key: `order:${order().id}`, value: JSON.stringify(order()) }] }) } });
-  for (const [number, message] of [["XX999/26", /ไม่พบเลขที่เอกสาร/], ["GR062/26", /ยังไม่มีข้อมูลฟอร์ม/]]) {
-    form.getRange("AG4").setValue(number);
-    gs.onEdit({ range: form.getRange("AG4") });
-    assert.equal(form.cell("AG4"), number);
-    assert.match(toasts.at(-1), message);
-  }
+  form.getRange("AG4").setValue("GR062/26");
+  gs.onEdit({ range: form.getRange("AG4") });
+  const expected = {
+    AG4: "GR062/26", G6: "☑", B6: "☐", AB6: "ไม่มี", F7: "03/09/69 07:58", P7: "05/09/69", L8: "ประมวลขาวฉลาด", X8: "GR",
+    B10: "ชักโครกห้องน้ำเสีย", K15: "☑", U15: "☐", B19: "ลงชื่อ  นพรัตน์ ไชยเวช  ฝ่ายบริหารโรงงาน", B20: "03/09/69",
+    T19: "ลงชื่อ  รสริน เชน  ผู้จัดการทั่วไป", T20: "03/09/69", B23: "ลงชื่อ  ยุทธไพศาล", B24: "วันที่  03/09/69",
+    K23: "ช่างชื่อ  ปิยะวัฒน์ ธิขาว", U25: "☑", AB24: "วันที่  07/09/69", B27: "วิเคราะห์สาเหตุ / อาการที่ชำรุด พบว่า  คันโยกชำรุด",
+    AC28: "☑", B31: "1", D31: "ปุ่มคันโยกชักโครก", T31: "1", X31: "ชิ้น", Z31: "118", AC31: "ไทวัสดุ", D32: "",
+    B36: "วันที่  04/09/69", C39: "☑", C40: "☐", T40: "วันที่  22/10/69",
+  };
+  for (const [a1, value] of Object.entries(expected)) assert.equal(form.cell(a1), value, a1);
+});
+
+test("rows written by the old script (legacy approver text, many parts, rejected) still fill the form", () => {
+  const values = gs.ORDER_HEADERS.map(() => "");
+  const set = (header, value) => { values[gs.ORDER_HEADERS.indexOf(header)] = value; };
+  set("เลขที่เอกสาร", "GR063/26");
+  set("ประเภทเอกสาร", "ใบคำร้อง");
+  set("อนุมัติผจก.โรงงาน", "อนุมัติ");
+  set("โดย/เมื่อ (ผจก.โรงงาน)", "ผู้จัดการโรงงาน (อนุมัติ 1) / 03/09/69 13:06");
+  set("อนุมัติผจก.ทั่วไป", "ไม่อนุมัติ");
+  set("โดย/เมื่อ (ผจก.ทั่วไป)", "รสริน เชน / 04/09/69 09:00");
+  set("รายการอะไหล่/วัสดุที่ใช้", ["1. ก / จำนวน 1 ชิ้น", "2. ข", "3. ค", "4. ง", "5. จ"].join("\n"));
+  set("ผลการตรวจสอบของผู้แจ้ง (ล่าสุด)", "ไม่ผ่าน — ต้องซ่อมเพิ่มเติม (22/10/69 08:35) : ยังรั่ว");
+  const cells = plain(vm.runInContext("ffCellsFromRow_", context)(values));
+  assert.equal(cells.B6, true);
+  assert.equal(cells.B19, "ลงชื่อ  ผู้จัดการโรงงาน (อนุมัติ 1)  ฝ่ายบริหารโรงงาน");
+  assert.equal(cells.B20, "03/09/69");
+  assert.equal(cells.K15, false);
+  assert.equal(cells.U15, true);
+  assert.equal(cells.T31, "1");
+  assert.equal(cells.D33, "ค");
+  assert.equal(cells.D34, "และอีก 2 รายการ (ดูในระบบ)");
+  assert.equal(cells.C40, true);
+  assert.equal(cells.T40, "วันที่ ");
+  assert.deepEqual(Object.keys(cells).sort(), Object.keys(gs.FF_BLANK_CELLS).sort());
 });
 
 test("the Pilot sync sends the form cells with each order", () => {

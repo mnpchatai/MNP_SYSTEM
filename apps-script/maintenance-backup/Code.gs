@@ -210,8 +210,8 @@ function json_(value) {
  *   → เมนู "ใบแจ้งซ่อม > ดึงข้อมูลใหม่" เติมซ้ำเมื่อข้อมูลอัปเดต แล้วพิมพ์ด้วย File > Print ได้ตามปกติ
  *
  * ค่าที่เติมคือ formCells ที่ Pilot Web คำนวณด้วย buildMtFormCells (modules/mt-form-export.js) แล้วส่งมากับการซิงก์
- * จึงตรงกับไฟล์ที่กด "ดาวน์โหลด Excel" ในเว็บทุกช่อง ใบที่ซิงก์ก่อนมีระบบนี้ยังไม่มี formCells
- * ให้เปิดใบนั้นในระบบหนึ่งครั้ง (การเปิดหน้ารายละเอียดจะซิงก์ใหม่) แล้วกด "ดึงข้อมูลใหม่"
+ * จึงตรงกับไฟล์ที่กด "ดาวน์โหลด Excel" ในเว็บทุกช่อง ใบที่ยังไม่มี formCells (ซิงก์ก่อนมีระบบนี้) เติมจาก
+ * แถวในชีต "ใบแจ้งซ่อม" แทน ได้ครบทุกช่องยกเว้นเวลาเริ่ม/เสร็จงานจริง
  * ===================================================================== */
 
 var FF_FORM_SHEET = 'เอกสาร';
@@ -347,17 +347,114 @@ function ffFill_(sheet, docNumber) {
   ss.toast('เติมข้อมูล ' + docNumber + ' แล้ว', 'ใบแจ้งซ่อม', 4);
 }
 
-// เลขที่เอกสาร → แถวในชีต "ใบแจ้งซ่อม" → รหัสอ้างอิงระบบ → JSON ใน KV → formCells
+// เลขที่เอกสาร → แถวในชีต "ใบแจ้งซ่อม" → ช่องฟอร์ม
+// ใช้ formCells ที่เว็บส่งมากับการซิงก์ก่อน (ตรงกับไฟล์ดาวน์โหลดทุกช่อง รวมเวลาเริ่ม/เสร็จงาน)
+// ถ้าไม่มี (ใบที่ซิงก์ก่อนมีระบบนี้ หรือเว็บยังไม่อัปเดต) เติมจากข้อความในแถวของชีต "ใบแจ้งซ่อม" แทน
 function ffFindCells_(ss, docNumber) {
   var orders = ss.getSheetByName(ORDER_SHEET);
   var row = orders ? findRow_(orders, 1, docNumber) : 0;
-  if (!row) return { message: 'ไม่พบเลขที่เอกสาร ' + docNumber + ' ในชีต "ใบแจ้งซ่อม" (เปิดใบนั้นในระบบหนึ่งครั้งเพื่อซิงก์)' };
-  var id = String(orders.getRange(row, ID_COL).getValue() || '');
+  if (!row) return { message: 'ไม่พบเลขที่เอกสาร ' + docNumber + ' ในชีต "ใบแจ้งซ่อม"' };
+  var values = orders.getRange(row, 1, 1, ORDER_HEADERS.length).getValues()[0];
+  var id = String(values[ID_COL - 1] || '');
   var kv = ss.getSheetByName(KV_SHEET);
   var kvRow = kv && id ? findRow_(kv, 1, 'order:' + id) : 0;
   var order = kvRow ? ffParse_(kv.getRange(kvRow, 2).getValue()) : null;
-  if (!order || !order.formCells) return { message: 'ใบ ' + docNumber + ' ยังไม่มีข้อมูลฟอร์ม เปิดใบนี้ในระบบหนึ่งครั้งแล้วกด "ดึงข้อมูลใหม่"' };
-  return { cells: ffSanitize_(order.formCells) };
+  if (order && order.formCells) return { cells: ffSanitize_(order.formCells) };
+  return { cells: ffSanitize_(ffCellsFromRow_(values)) };
+}
+
+// แถวของชีต "ใบแจ้งซ่อม" (30 คอลัมน์ตาม ORDER_HEADERS) → ช่องฟอร์ม ใช้ได้ทั้งแถวที่ Code.gs นี้เขียนและแถวเก่าของระบบเดิม
+// ช่องเวลาเริ่ม/เสร็จงานจริงไม่มีในแถว จึงเติมได้แค่วันเริ่มงาน
+function ffCellsFromRow_(values) {
+  var v = {};
+  ORDER_HEADERS.forEach(function (header, i) { v[header] = ffText_(values[i]); });
+  var cells = {};
+  Object.keys(FF_BLANK_CELLS).forEach(function (a1) { cells[a1] = FF_BLANK_CELLS[a1]; });
+  var fm = ffSigner_(v['โดย/เมื่อ (ผจก.โรงงาน)']);
+  var gm = ffSigner_(v['โดย/เมื่อ (ผจก.ทั่วไป)']);
+  var rejected = v['อนุมัติผจก.โรงงาน'] === 'ไม่อนุมัติ' || v['อนุมัติผจก.ทั่วไป'] === 'ไม่อนุมัติ';
+  var dateOf = function (text) { var m = /\d{2}\/\d{2}\/\d{2}/.exec(text || ''); return m ? m[0] : ''; };
+  var technicians = v['ช่างผู้รับผิดชอบ'];
+  var verification = v['ผลการตรวจสอบของผู้แจ้ง (ล่าสุด)'];
+  var passed = verification.indexOf('ผ่าน') === 0;
+
+  cells.AG4 = v['เลขที่เอกสาร'];
+  cells.B6 = v['ประเภทเอกสาร'] === DOC_TYPE_LABELS.request;
+  cells.G6 = v['ประเภทเอกสาร'] === DOC_TYPE_LABELS.repair;
+  cells.AB6 = v['ชื่อเครื่องจักร'];
+  cells.AB7 = v['รหัสเครื่องจักร'];
+  cells.F7 = v['แจ้งเมื่อ'];
+  cells.P7 = v['วันที่ต้องการใช้งาน'];
+  cells.L8 = v['ผู้แจ้ง'];
+  cells.X8 = v['แผนก'];
+  cells.B10 = v['อาการ/สาเหตุ'];
+  cells.K15 = !rejected && v['อนุมัติผจก.ทั่วไป'] === 'อนุมัติ';
+  cells.U15 = rejected;
+  if (v['อนุมัติผจก.โรงงาน'] && fm.name) { cells.B19 = 'ลงชื่อ  ' + fm.name + '  ฝ่ายบริหารโรงงาน'; cells.B20 = fm.date; }
+  if (v['อนุมัติผจก.ทั่วไป'] && gm.name) { cells.T19 = 'ลงชื่อ  ' + gm.name + '  ผู้จัดการทั่วไป'; cells.T20 = gm.date; }
+  if (v['ผู้รับใบแจ้งซ่อม']) cells.B23 = 'ลงชื่อ  ' + v['ผู้รับใบแจ้งซ่อม'];
+  if (dateOf(v['มอบหมายเมื่อ'])) { cells.B24 = 'วันที่  ' + dateOf(v['มอบหมายเมื่อ']); cells.K25 = cells.B24; }
+  if (technicians) cells.K23 = 'ช่างชื่อ  ' + technicians;
+  cells.U23 = v['การดำเนินงาน'] === EXECUTION_PLAN_LABELS.immediate;
+  cells.U24 = v['การดำเนินงาน'] === EXECUTION_PLAN_LABELS.need_purchase;
+  cells.U25 = v['การดำเนินงาน'] === EXECUTION_PLAN_LABELS.use_existing;
+  if (v['วันที่คาดว่าจะเสร็จ']) cells.AB24 = 'วันที่  ' + v['วันที่คาดว่าจะเสร็จ'];
+  if (v['วิเคราะห์สาเหตุ/อาการที่ชำรุด']) cells.B27 = 'วิเคราะห์สาเหตุ / อาการที่ชำรุด พบว่า  ' + v['วิเคราะห์สาเหตุ/อาการที่ชำรุด'];
+  cells.L28 = v['ความคิดเห็นของช่างผู้ตรวจสอบ'] === OPINION_LABELS.send_repair;
+  cells.Q28 = v['ความคิดเห็นของช่างผู้ตรวจสอบ'] === OPINION_LABELS.external;
+  cells.Y28 = v['ความคิดเห็นของช่างผู้ตรวจสอบ'] === OPINION_LABELS.self_repair;
+  cells.AC28 = v['ความคิดเห็นของช่างผู้ตรวจสอบ'] === OPINION_LABELS.buy_parts;
+  ffPartCells_(v['รายการอะไหล่/วัสดุที่ใช้'], cells);
+  if (v['วันที่เริ่มงาน']) cells.B36 = 'วันที่  ' + v['วันที่เริ่มงาน'];
+  cells.C39 = passed;
+  cells.C40 = verification.indexOf('ไม่ผ่าน') === 0;
+  if (passed && dateOf(verification)) cells.T40 = 'วันที่  ' + dateOf(verification);
+  return cells;
+}
+
+// "ชื่อ / 02/10/69 11:38" หรือแบบเดิม "ผู้จัดการโรงงาน (อนุมัติ 1) / 03/09/69 10:06" → ชื่อกับวันที่
+function ffSigner_(text) {
+  var cut = String(text || '').lastIndexOf(' / ');
+  if (cut < 0) return { name: String(text || '').trim(), date: '' };
+  var date = /\d{2}\/\d{2}\/\d{2}/.exec(text.slice(cut + 3));
+  return { name: text.slice(0, cut).trim(), date: date ? date[0] : '' };
+}
+
+// "1. ชื่อ / จำนวน 2 ชิ้น / ราคา 118 บาท / ร้าน ไทวัสดุ / หมายเหตุ" (บรรทัดละรายการ) → ตารางอะไหล่แถว 31–34
+function ffPartCells_(text, cells) {
+  var rows = [31, 32, 33, 34];
+  var parts = String(text || '').split('\n').map(function (line) { return line.trim(); }).filter(Boolean).map(function (line) {
+    var bits = line.replace(/^\d+\.\s*/, '').split(' / ');
+    var part = { name: bits.shift() || '', qty: '', unit: '', price: '', shop: '', note: [] };
+    bits.forEach(function (bit) {
+      var qty = /^จำนวน\s+(\S+)\s*(.*)$/.exec(bit);
+      var price = /^ราคา\s+(.+?)(\s*บาท)?$/.exec(bit);
+      var shop = /^ร้าน\s+(.+)$/.exec(bit);
+      if (qty) { part.qty = qty[1]; part.unit = qty[2]; }
+      else if (price) part.price = price[1];
+      else if (shop) part.shop = shop[1];
+      else part.note.push(bit);
+    });
+    return part;
+  });
+  var shown = parts.length > rows.length ? parts.slice(0, rows.length - 1) : parts;
+  shown.forEach(function (part, i) {
+    var r = rows[i];
+    cells['B' + r] = String(i + 1);
+    cells['D' + r] = part.name;
+    cells['T' + r] = part.qty;
+    cells['X' + r] = part.unit;
+    cells['Z' + r] = part.price;
+    cells['AC' + r] = part.shop;
+    cells['AG' + r] = part.note.join(' / ');
+  });
+  if (shown.length < parts.length) cells.D34 = 'และอีก ' + (parts.length - shown.length) + ' รายการ (ดูในระบบ)';
+}
+
+// ค่าจากชีตอาจเป็น Date (ถ้าชีตแปลงข้อความวันที่ไปแล้ว) หรือตัวเลข → ข้อความรูปแบบเดียวกับแถวอื่น
+function ffText_(value) {
+  if (value instanceof Date) return fmtDate_(value.toISOString(), value.getHours() + value.getMinutes() > 0);
+  return value === null || value === undefined ? '' : String(value).trim();
 }
 
 function ffParse_(text) {
