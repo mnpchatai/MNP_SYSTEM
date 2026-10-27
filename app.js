@@ -974,15 +974,19 @@ function themeButton() {
   return `<button class="icon-button theme-toggle" type="button" aria-label="สลับธีม" title="สลับธีม">◐</button>`;
 }
 
-// แอปที่ติดตั้งแบบ standalone บน Desktop/Android ไม่มีปุ่มย้อนกลับของเบราว์เซอร์
-// เช็ก standalone ตรงๆ ไม่ใช้ isStandaloneApp() เพราะ minimal-ui มีปุ่มย้อนกลับของเบราว์เซอร์อยู่แล้ว (styles.css ก็แสดงเฉพาะ standalone)
-// หน้าหลักไม่แสดง: ย้อนจากหน้าหลักได้แค่ URL ตอนเปิดแอปซึ่งก็คือหน้าหลักเดิม
-function appBackButton() {
-  if (currentRoute().path === homePath()) return "";
+// แอปที่ติดตั้งแบบ standalone บน Desktop/Android ไม่มีปุ่มย้อนกลับ/ถัดไปของเบราว์เซอร์
+// เช็ก standalone ตรงๆ ไม่ใช้ isStandaloneApp() เพราะ minimal-ui มีปุ่มของเบราว์เซอร์อยู่แล้ว (styles.css ก็แสดงเฉพาะ standalone)
+// ปุ่มย้อนกลับไม่แสดงที่หน้าหลัก: ย้อนจากหน้าหลักได้แค่ URL ตอนเปิดแอปซึ่งก็คือหน้าหลักเดิม
+// ปุ่มถัดไปปิดไว้เมื่อไม่มีหน้าถัดไป (Navigation API ของ Chrome/Edge; เบราว์เซอร์ที่ไม่มี API เปิดไว้เสมอ)
+// shell() สร้าง topbar ใหม่ทุกครั้งที่เปลี่ยนหน้า สถานะปุ่มจึงตรงกับหน้าปัจจุบันเสมอ
+function appNavButtons() {
   const ios = window.MNP_INSTALL_APP.isIos({ userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints });
   const standalone = window.matchMedia("(display-mode: standalone)").matches;
   if (!window.MNP_INSTALL_APP.showAppBack({ standalone, ios })) return "";
-  return `<button class="icon-button app-back" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ">‹</button>`;
+  const back = currentRoute().path === homePath() ? "" : `<button class="icon-button app-back" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ">‹</button>`;
+  const canForward = window.navigation?.canGoForward ?? true;
+  const forward = `<button class="icon-button app-forward" type="button" aria-label="ถัดไป" title="ถัดไป"${canForward ? "" : " disabled"}>›</button>`;
+  return `<div class="app-nav">${back}${forward}</div>`;
 }
 
 function applyTheme() {
@@ -1511,7 +1515,7 @@ function shell(content, active, title) {
       <main class="main">
         <header class="topbar">
           <div class="topbar-start">
-            ${appBackButton()}
+            ${appNavButtons()}
             <div class="breadcrumbs">MNP Workspace &nbsp;/&nbsp; <strong>${escapeHtml(title)}</strong></div>
           </div>
           <div class="top-actions">
@@ -1621,6 +1625,7 @@ function bindShell() {
   };
   document.querySelector(".theme-toggle")?.addEventListener("click", toggleTheme);
   document.querySelector(".app-back")?.addEventListener("click", () => window.MNP_INSTALL_APP.backOrHome({ win: window, goHome: () => go(homePath()) }));
+  document.querySelector(".app-forward")?.addEventListener("click", () => history.forward());
   // ปุ่มออกจากระบบมี 2 จุด: ท้ายแถบข้าง (จอกว้าง) และในเมนูหลัก (จอแคบ/มือถือ ซึ่งซ่อนแถบผู้ใช้)
   document.querySelectorAll(".signout-button").forEach((button) => button.addEventListener("click", async () => {
     setMobileNav(false);
