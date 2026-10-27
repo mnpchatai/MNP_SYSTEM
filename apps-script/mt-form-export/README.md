@@ -53,7 +53,9 @@ Web App ของ Google Apps Script ที่ทำไฟล์ `.xlsx` ตา�
 | เชื่อมต่อระบบสร้างเอกสารไม่ได้ … | ไม่มีอินเทอร์เน็ต, URL ผิด, หรือ "Who has access" ไม่ใช่ Anyone |
 | สร้างไฟล์ Excel ไม่สำเร็จ (`NOT_CONFIGURED`) | ยังไม่ตั้ง Script property `TEMPLATE_SHEET_ID` หรือสะกดชื่อผิด |
 | สร้างไฟล์ Excel ไม่สำเร็จ (`FORM_SHEET_NOT_FOUND`) | ชีต "เอกสาร" ถูกเปลี่ยนชื่อ หรือ `TEMPLATE_SHEET_ID` ชี้ผิดไฟล์ |
-| สร้างไฟล์ Excel ไม่สำเร็จ (`EXPORT_FAILED`) | ดูข้อความจริงใน **Executions** ของโปรเจกต์ (เช่น ยังไม่อนุญาตสิทธิ์ Drive/Spreadsheet ให้กด Run `doGet` ในตัวแก้ไขหนึ่งครั้งเพื่ออนุญาต แล้ว Deploy New version) |
+| สร้างไฟล์ Excel ไม่สำเร็จ (`FAILED_OPEN`) | เปิดสเปรดชีตต้นแบบไม่ได้: `TEMPLATE_SHEET_ID` ผิด หรือบัญชีเจ้าของสคริปต์ไม่มีสิทธิ์แก้ไขสเปรดชีตนั้น |
+| สร้างไฟล์ Excel ไม่สำเร็จ (`FAILED_COPY` / `FAILED_FILL`) | สร้าง/คัดลอก/เติมไฟล์ชั่วคราวไม่ได้ ดูข้อความเต็มในชีต "บันทึกข้อผิดพลาด" |
+| สร้างไฟล์ Excel ไม่สำเร็จ (`FAILED_EXPORT_…`) | Google ไม่ยอม export (ตัวเลขท้ายคือ HTTP status) ดูข้อความเต็มในชีต "บันทึกข้อผิดพลาด" |
 | สร้างไฟล์ Excel ไม่สำเร็จ (`HTTP_…`) | Web App ตอบไม่ใช่ JSON เช่นโค้ดเก่าหรือ deploy ผิดโปรเจกต์ |
 
 ## ข้อจำกัด
