@@ -1070,8 +1070,9 @@ function syncInstallBannerHeight() {
 window.addEventListener("resize", syncInstallBannerHeight);
 
 // เปิดจากแอปที่ติดตั้งแล้ว (ไอคอนบนหน้าจอ) ไม่ใช่แท็บเบราว์เซอร์
+// Chrome/Edge บน Desktop เปิดแอปแบบ minimal-ui (display_override ใน manifest) เพื่อให้มีปุ่มย้อนกลับ/โหลดใหม่ จึงนับเป็นแอปด้วย
 function isStandaloneApp() {
-  return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  return window.matchMedia("(display-mode: standalone), (display-mode: minimal-ui)").matches || navigator.standalone === true;
 }
 
 function currentInstallMode() {
