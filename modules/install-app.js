@@ -21,7 +21,26 @@
     return null;
   }
 
-  const api = { installMode, isIos };
+  // ปุ่ม ← บน topbar ของแอปที่ติดตั้ง (app.js: appBackButton) เพราะหน้าต่างแบบ standalone ไม่มีปุ่มย้อนกลับของเบราว์เซอร์
+  // iOS ไม่แสดง เพราะสไลด์ขอบจอย้อนกลับได้อยู่แล้ว
+  function showAppBack({ standalone = false, ios = false } = {}) {
+    return standalone && !ios;
+  }
+
+  // ย้อนกลับหนึ่งหน้า ถ้าไม่มีหน้าก่อนหน้าในแอป (เปิดแอปมาที่หน้านี้ตรงๆ) history.back() ไม่ทำอะไรและไม่เกิด popstate
+  // จึงพาไปหน้าหลักแทนเมื่อรอแล้วไม่มี popstate
+  function backOrHome({ win, goHome, waitMs = 400 }) {
+    let moved = false;
+    const onPop = () => { moved = true; };
+    win.addEventListener("popstate", onPop, { once: true });
+    win.history.back();
+    win.setTimeout(() => {
+      win.removeEventListener("popstate", onPop);
+      if (!moved) goHome();
+    }, waitMs);
+  }
+
+  const api = { installMode, isIos, showAppBack, backOrHome };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_INSTALL_APP = api;
 })();
