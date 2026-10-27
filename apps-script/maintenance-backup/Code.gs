@@ -54,11 +54,10 @@ function doPost(e) {
     var kv = getSheet_(KV_SHEET, KV_HEADERS);
     var orders = getSheet_(ORDER_SHEET, ORDER_HEADERS);
     batch.forEach(function (item) {
-      if (!item || !item.key) return;
-      var key = String(item.key);
-      var value = String(item.value || '');
-      upsertKv_(kv, key, value);
-      if (key.indexOf('order:') === 0) upsertOrderRow_(orders, JSON.parse(value));
+      var order = parseOrderItem_(item);
+      if (!order) return;
+      upsertKv_(kv, String(item.key), String(item.value));
+      upsertOrderRow_(orders, order);
     });
     return json_({ ok: true, count: batch.length });
   } catch (err) {
@@ -67,6 +66,17 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// URL ของ Web App เปิดเป็น Anyone จึงรับเฉพาะ key ใบแจ้งซ่อม order:<uuid> ที่ id ใน JSON ตรงกับ key
+// key อื่นของระบบเดิมใน KV (config, lineWebhooks ฯลฯ) เขียนทับผ่าน URL นี้ไม่ได้ และ JSON เสียไม่ถูกเขียนลงชีต
+function parseOrderItem_(item) {
+  var key = item && String(item.key || '');
+  var match = /^order:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(key || '');
+  if (!match) return null;
+  var order;
+  try { order = JSON.parse(String(item.value || '')); } catch (err) { return null; }
+  return order && typeof order === 'object' && order.id === match[1] ? order : null;
 }
 
 /* ---------- ชีต ---------- */
@@ -167,10 +177,11 @@ function pad2_(n) {
   return (n < 10 ? '0' : '') + n;
 }
 
-// ' นำหน้าค่าที่ขึ้นต้นด้วย = + - @ ให้ชีตเก็บเป็นข้อความ ไม่รันเป็นสูตร
+// ' นำหน้าเฉพาะค่าที่ขึ้นต้นด้วย = ให้ชีตเก็บเป็นข้อความ ไม่รันเป็นสูตร (เซลล์ตั้งเป็นข้อความ '@' อยู่แล้ว)
+// ไม่แตะ "- ..." ที่ใช้เขียนรายการบ่อย กัน ' โผล่หน้าข้อความ
 function safeText_(value) {
   var text = value === null || value === undefined ? '' : String(value);
-  return /^[=+\-@]/.test(text) ? "'" + text : text;
+  return text.charAt(0) === '=' ? "'" + text : text;
 }
 
 function logError_(context, err) {

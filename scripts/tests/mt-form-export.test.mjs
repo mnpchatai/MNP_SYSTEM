@@ -170,7 +170,8 @@ test("the Apps Script accepts only text or ticks inside A1:AJ41", () => {
   }
   assert.equal(gs.validateCells_({ B10: "x".repeat(9000) }).B10.length, 5000);
   assert.equal(gs.validateCells_({ B10: "=IMPORTRANGE(1)" }).B10, "'=IMPORTRANGE(1)");
-  assert.equal(gs.validateCells_({ B10: "+1" }).B10, "'+1");
+  assert.equal(gs.validateCells_({ B10: "- ไฟเสีย" }).B10, "- ไฟเสีย");
+  assert.equal(gs.validateCells_({ B10: "+66 81" }).B10, "+66 81");
 });
 
 test("the Apps Script keeps a safe file name and hides raw errors", () => {

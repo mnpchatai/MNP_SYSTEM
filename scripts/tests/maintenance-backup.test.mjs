@@ -23,6 +23,12 @@ function fakeSheet(name, rows = []) {
   const data = rows.map((row) => [...row]);
   const checkboxes = new Set();
   const range = (row, col, nr = 1, nc = 1) => ({
+    getRow: () => row,
+    getColumn: () => col,
+    getLastRow: () => row + nr - 1,
+    getLastColumn: () => col + nc - 1,
+    getDataValidations: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (
+      checkboxes.has(`${row + i},${col + j}`) ? { getCriteriaType: () => "CHECKBOX" } : null))),
     setNumberFormat() { return this; },
     setFontWeight() { return this; },
     setValues(values) { values.forEach((line, i) => line.forEach((v, j) => { (data[row - 1 + i] ??= [])[col - 1 + j] = v; })); return this; },
@@ -42,8 +48,10 @@ function fakeSheet(name, rows = []) {
     getLastRow: () => data.length,
     getRange(a, b, c, d) {
       if (typeof a === "string") {
-        const [, l, r] = /^([A-Z]+)(\d+)$/.exec(a);
-        return { ...range(Number(r), colOf(l)), getSheet: () => sheet, getA1Notation: () => a };
+        const [, l, r, l2, r2] = /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/.exec(a);
+        const nr = r2 ? Number(r2) - Number(r) + 1 : 1;
+        const nc = l2 ? colOf(l2) - colOf(l) + 1 : 1;
+        return { ...range(Number(r), colOf(l), nr, nc), getSheet: () => sheet, getA1Notation: () => a };
       }
       return range(a, b, c, d);
     },
@@ -108,8 +116,9 @@ test("a synced order becomes one row in the same format as the sheet's existing 
 });
 
 test("a new order without assignment leaves the later columns empty and text never runs as a formula", () => {
-  const row = plain(gs.orderRow_(order({ status: "PENDING_FM", approvals: {}, assignment: null, maintRecord: null, verification: null, cause: "=IMPORTRANGE(1)" })));
+  const row = plain(gs.orderRow_(order({ status: "PENDING_FM", approvals: {}, assignment: null, maintRecord: null, verification: null, cause: "=IMPORTRANGE(1)", machineName: "- ไม่มี" })));
   assert.equal(row[4], "'=IMPORTRANGE(1)");
+  assert.equal(row[3], "- ไม่มี");
   assert.equal(row[8], "รออนุมัติ (ผจก.โรงงาน)");
   assert.deepEqual(row.slice(9, 20), ["", "", "", "", "", "", "", "", "", "", ""]);
 });
@@ -155,6 +164,28 @@ test("sync then typing the document number in AG4 fills the form, and clearing i
   gs.onEdit({ range: form.getRange("AG4") });
   assert.equal(form.cell("P7"), "");
   assert.equal(form.cell("G6"), false);
+
+  // AG4 ในแบบฟอร์มจริงเป็นเซลล์รวม AG4:AJ4 — แก้แล้วได้ช่วงรวมก็ต้องเติม ส่วนแก้เซลล์อื่นไม่ต้องทำอะไร
+  form.getRange("AG4").setValue("GR062/26");
+  gs.onEdit({ range: form.getRange("AG4:AJ4") });
+  assert.equal(form.cell("P7"), "05/09/69");
+  form.getRange("P7").setValue("แก้มือ");
+  gs.onEdit({ range: form.getRange("P7") });
+  assert.equal(form.cell("P7"), "แก้มือ");
+});
+
+test("the web app only stores order:<uuid> items whose JSON id matches the key", () => {
+  freshSpreadsheet();
+  const id = order().id;
+  const post = (batch) => gs.doPost({ postData: { contents: JSON.stringify({ batch }) } });
+  post([
+    { key: "config", value: "x" },
+    { key: `order:${id}`, value: "{not json" },
+    { key: "order:00000000-0000-0000-0000-000000000000", value: JSON.stringify(order()) },
+    { key: `order:${id}`, value: JSON.stringify(order()) },
+  ]);
+  assert.deepEqual(spreadsheet.sheets["KV"].data.slice(1).map((row) => row[0]), [`order:${id}`]);
+  assert.equal(spreadsheet.sheets["ใบแจ้งซ่อม"].data.length, 2);
 });
 
 test("an unknown number or an order synced before formCells existed shows a message and keeps the number", () => {

@@ -13,6 +13,8 @@
 
 var FF_FORM_SHEET = 'เอกสาร';
 var FF_KEY_CELL = 'AG4';
+var FF_MAX_TEXT = 5000;
+var FF_FORM_RANGE = 'A1:AJ41'; // ช่วงของแบบฟอร์ม อ่าน data validation ทีเดียวทั้งช่วงแทนทีละเซลล์
 
 // ฟอร์มเปล่า: ผลของ buildMtFormCells({ request: {} }) — เทสต์ scripts/tests/maintenance-backup.test.mjs ตรวจว่าตรงกัน
 var FF_BLANK_CELLS = {
@@ -96,21 +98,33 @@ function onOpen() {
 }
 
 // simple trigger: ทำงานเมื่อมีคนแก้ AG4 ของชีต "เอกสาร" เท่านั้น
+// AG4 ในแบบฟอร์มเป็นเซลล์รวม AG4:AJ4 จึงเทียบว่าช่วงที่แก้ครอบ AG4 แทนการเทียบชื่อเซลล์ตรงๆ
 function onEdit(e) {
   if (!e || !e.range) return;
   var sheet = e.range.getSheet();
-  if (sheet.getName() !== FF_FORM_SHEET || e.range.getA1Notation() !== FF_KEY_CELL) return;
-  ffFill_(sheet, String(e.range.getValue() || '').trim());
+  if (sheet.getName() !== FF_FORM_SHEET) return;
+  var key = sheet.getRange(FF_KEY_CELL);
+  var covers = e.range.getRow() <= key.getRow() && e.range.getLastRow() >= key.getRow()
+    && e.range.getColumn() <= key.getColumn() && e.range.getLastColumn() >= key.getColumn();
+  if (!covers) return;
+  ffFill_(sheet, String(key.getValue() || '').trim());
 }
 
 function ffRefresh() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(FF_FORM_SHEET);
-  ffFill_(sheet, String(sheet.getRange(FF_KEY_CELL).getValue() || '').trim());
+  var sheet = ffFormSheet_();
+  if (sheet) ffFill_(sheet, String(sheet.getRange(FF_KEY_CELL).getValue() || '').trim());
 }
 
 function ffClear() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(FF_FORM_SHEET);
-  ffApply_(sheet, FF_BLANK_CELLS);
+  var sheet = ffFormSheet_();
+  if (sheet) ffApply_(sheet, FF_BLANK_CELLS);
+}
+
+function ffFormSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(FF_FORM_SHEET);
+  if (!sheet) ss.toast('ไม่พบชีต "' + FF_FORM_SHEET + '"', 'ใบแจ้งซ่อม', 8);
+  return sheet;
 }
 
 function ffFill_(sheet, docNumber) {
@@ -153,17 +167,19 @@ function ffSanitize_(cells) {
   Object.keys(FF_BLANK_CELLS).forEach(function (a1) {
     var blank = FF_BLANK_CELLS[a1];
     var value = cells && Object.prototype.hasOwnProperty.call(cells, a1) ? cells[a1] : blank;
-    clean[a1] = typeof value === typeof blank ? value : blank;
+    clean[a1] = typeof value !== typeof blank ? blank : typeof value === 'string' ? value.slice(0, FF_MAX_TEXT) : value;
   });
   return clean;
 }
 
 function ffApply_(sheet, cells) {
+  // simple trigger มีเวลา 30 วินาที อ่านกฎ checkbox ครั้งเดียวแล้วเขียนอย่างเดียว ไม่สลับอ่าน/เขียนทีละเซลล์
+  var rules = sheet.getRange(FF_FORM_RANGE).getDataValidations();
   Object.keys(cells).forEach(function (a1) {
     var value = cells[a1];
     var range = sheet.getRange(a1);
     if (typeof value === 'boolean') {
-      var rule = range.getDataValidation();
+      var rule = rules[range.getRow() - 1] && rules[range.getRow() - 1][range.getColumn() - 1];
       var isCheckbox = rule && rule.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.CHECKBOX;
       range.setValue(isCheckbox ? value : (value ? '☑' : '☐'));
     } else {
