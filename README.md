@@ -902,6 +902,21 @@ NCR มี workflow ของตัวเองในตาราง `ncr_*` (�
 
 เมนูข้างใช้ชื่อ “เมนูโรงงาน” และแสดงเฉพาะโฟลเดอร์ที่มีรายการ โดยคง URL ของรายการเดิม ปุ่มฝ่ายโรงงานบนมือถือมีความสูงอย่างน้อย 44px และช่อง QC ที่ซ่อนตามผลตรวจไม่แสดงหรือรับโฟกัส การจัดหน้าจอนี้ไม่เปลี่ยนสิทธิ์ ลำดับขั้น หรือกฎการตัด/คืน/รับสต็อก
 
+### ใบตรวจ QC (QA01-PM11) — ฐานข้อมูล (โหมดทดสอบ)
+
+migration `20261027010000_qc_inspection_reports.sql` เพิ่มฐานข้อมูลของใบตรวจชิ้นงานตามฟอร์มกระดาษ QA01-PM11 ของฝ่าย QA เปิดเฉพาะโหมดทดสอบเหมือนโมดูลฝ่ายโรงงาน (RPC ทุกตัวปฏิเสธนอกโหมดทดสอบด้วย `QC_TEST_MODE_ONLY`; ตาราง `is_test` + trigger แยกโหมด, deny-all, lab-only guard, ลงทะเบียนใน `private.sandbox_unguarded_tables()`)
+
+- **ตาราง**: `qc_inspection_templates` (แม่แบบตรวจต่อ Part) · `qc_inspection_template_items` · `qc_inspection_reports` (1 แถว = 1 ใบ) · `qc_inspection_items` (แถว A/B/C/D) · `qc_inspection_approvals` (ช่องลงนาม 3 ขั้น) · `qc_inspection_history` (ประวัติ + snapshot)
+- **RPC** (`app_qc_*`): `access`, `templates`, `save_template`, `reports`, `report`, `save_report`, `submit_report`, `decide_report`, `reopen_report`, `cancel_report`, `issue_ncr`, `lots` และ `app_sandbox_purge_qc` (admin ล้างข้อมูลทดสอบ) ทุกตัวตรวจ version กันบันทึกทับ เขียนประวัติและ `audit_logs`
+- **การคำนวณอยู่ที่ฐานข้อมูล**: กรอกค่าที่วัด 1-5 จุดต่อรายการ ฐานข้อมูลคำนวณ min / max / average แล้วตัดสิน `O` / `N` / `NA` (ไม่มีสเปค) จากสเปก MIN-MAX เอง ผู้ตรวจรับรายการ `N` เป็น `AC` ได้พร้อมหมายเหตุ ≥ 5 ตัวอักษร ผลรวมของใบ: `ng` ถ้ามี N, `accept` ถ้ามีแต่ AC, `ok` นอกนั้น
+- **สายอนุมัติ**: manager QA (ผจก./ผู้ช่วยผจก. แผนก QA) → factory manager → General Manager ผู้ตรวจ = คนส่งใบ อนุมัติ/ไม่อนุมัติใบตัวเองไม่ได้ ไม่อนุมัติต้องมีเหตุผล แล้ว QA เปิดกลับเป็นฉบับร่างหรือยกเลิกได้ QA ทุกบทบาทและ admin แก้ใบได้ QA/ผู้บริหาร/admin อ่านได้
+- **เลขที่ใบ**: `TEST-QC-<YY>-<NNN>` จากตัวนับ `QC-TEST` (ตัวนับจริงไม่ขยับ)
+- **Lot ยางผสม**: `lab_mooney_results.lot_number` (คอลัมน์ใหม่ `app_lab_mooney_import` รับ `lot_number` เพิ่ม) ใบเก็บ `compound_lots` ได้ถึง 10 Lot `app_qc_report` คืนสรุปผล Mooney ต่อ Lot (`found`, จำนวนครั้งที่ทดสอบ, ค่าเฉลี่ย MH/MV) และ `app_qc_lots` ค้นรายการ Lot
+- **NCR**: ใบที่ผลเป็น `ng` ออก NCR ได้ครั้งเดียวด้วย `app_ncr_issue` (แหล่งที่พบ `final_fg`) ในธุรกรรมเดียวกัน เป็นใบทดสอบ `TEST-QA…`
+- **ยังไม่มี**: หน้าเว็บ, รูปแนบ/รูปจุดวัด, MDR, ตัวเตือนงานค้าง/แจ้งเตือน และการเปิดใช้กับข้อมูลจริง (ต้องเปลี่ยน `private.qc_actor` และเพิ่มเทสต์บทบาทจริงก่อน)
+- **ลำดับ deploy**: migration นี้ต้อง apply ที่ production (โดยได้รับอนุมัติ) ก่อน merge หน้าเว็บของโมดูลนี้ใน PR ถัดไป ตาม “Deployment order” ใน AGENTS.md; ตัวไฟล์เองไม่มีโค้ดฝั่งเว็บที่พึ่งมัน
+- **การตรวจ**: `supabase/tests/database/qc_inspection_reports.test.sql` (อนุญาต/ปฏิเสธตามโหมดและบทบาท, การคำนวณ, สายอนุมัติ, NCR, Lot/Mooney, ล้างข้อมูล)
+
 ## สิ่งที่มีใน Phase 1
 
 - Employee Master, Department, Role และ Permission
