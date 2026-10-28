@@ -41,7 +41,15 @@
 
   // ปุ่มที่ persona นี้เห็นสำหรับล็อตหนึ่ง (ซ่อนปุ่มไม่ใช่การควบคุมสิทธิ์)
   function actionsFor(lot, data) {
-    return { expiry: Boolean(data?.can_set_expiry), hold: Boolean(data?.can_hold) && !lot.on_hold, release: Boolean(data?.can_hold) && Boolean(lot.on_hold) };
+    // วันที่ผ่านมาแล้ว และการแก้ล็อตที่หมดอายุแล้ว เป็นของ QA (can_hold) ตาม LOT_EXPIRY_PAST_QA_ONLY ของ RPC
+    const qa = Boolean(data?.can_hold);
+    return { expiry: Boolean(data?.can_set_expiry) && (qa || lot.status !== "expired"), hold: qa && !lot.on_hold, release: qa && Boolean(lot.on_hold) };
+  }
+
+  // วันแรกที่เลือกได้ในช่องวันหมดอายุ: QA ตั้งแต่วันที่รับของ · คนอื่นตั้งแต่วันนี้ (ถ้ารับของหลังวันนี้ ใช้วันที่รับ)
+  function minExpiry(lot, data) {
+    const received = lot.received_date ?? "";
+    return data?.can_hold || !data?.today || received > data.today ? received : data.today;
   }
 
   // ฟอร์มวันหมดอายุ: ค่าว่าง = ล้างวันหมดอายุ -> { args } หรือ { error }
@@ -60,7 +68,7 @@
     return { args: { p_id: lot.id, p_version: lot.version, p_hold: Boolean(hold), p_note: text } };
   }
 
-  const api = { STATUSES, BADGE_CLASS, FILTERS, HISTORY_ACTIONS, NEAR_EXPIRY_DAYS, NOTE_MIN, NOTE_MAX, displayStatus, rows, filterOf, actionsFor, expiryPayload, holdPayload };
+  const api = { STATUSES, BADGE_CLASS, FILTERS, HISTORY_ACTIONS, NEAR_EXPIRY_DAYS, NOTE_MIN, NOTE_MAX, displayStatus, rows, filterOf, actionsFor, minExpiry, expiryPayload, holdPayload };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_FACTORY_LOT_MODEL = api;
 })(typeof window !== "undefined" ? window : globalThis);

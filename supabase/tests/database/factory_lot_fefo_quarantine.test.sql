@@ -157,6 +157,10 @@ select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s,
   'INVALID_LOT_EXPIRY', 'an expiry date before the receipt date is rejected');
 select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-FEFO-B'), pg_temp.lver('LOT-FEFO-B'), (current_setting('test.today')::date - 1)::text),
   'LOT_EXPIRY_PAST_QA_ONLY', 'stores cannot set a past expiry date (it would skip the lot like a hold)');
+select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, null)$$, pg_temp.lid('LOT-FEFO-X'), pg_temp.lver('LOT-FEFO-X')),
+  'LOT_EXPIRY_PAST_QA_ONLY', 'stores cannot clear the date of an expired lot (it would make the lot usable like a release)');
+select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-FEFO-X'), pg_temp.lver('LOT-FEFO-X'), current_setting('test.due')),
+  'LOT_EXPIRY_PAST_QA_ONLY', 'stores cannot extend an expired lot either');
 select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002'), '2101-01-01'),
   'INVALID_LOT_EXPIRY', 'an expiry date after 2100 is rejected');
 select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, null)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002')),

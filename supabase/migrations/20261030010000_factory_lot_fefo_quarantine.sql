@@ -9,7 +9,8 @@
 --     ล็อตใช้ได้ = ไม่ถูกกักกัน และ (ไม่มีวันหมดอายุ หรือวันหมดอายุ ≥ วันนี้ตามเวลาไทย) — ใช้ได้ถึงสิ้นวันหมดอายุ
 --   * ตั้ง/แก้/ล้างวันหมดอายุ: app_factory_set_lot_expiry แผนก ST (รับของเข้าคลัง) หรือ QA (LOT_EXPIRY_STORES_OR_QA_ONLY)
 --     ปี 2000–2100 และไม่ก่อนวันที่รับของ (INVALID_LOT_EXPIRY) ค่าเดิม = LOT_EXPIRY_UNCHANGED
---     วันที่ผ่านมาแล้ว (ล็อตถูกข้ามทันที ผลเหมือนกักกัน) ตั้งได้เฉพาะ QA (LOT_EXPIRY_PAST_QA_ONLY)
+--     วันที่ผ่านมาแล้ว (ล็อตถูกข้ามทันที ผลเหมือนกักกัน) และการแก้/ล้างวันของล็อตที่หมดอายุแล้ว (ล็อตกลับมาใช้ได้)
+--     ทำได้เฉพาะ QA (LOT_EXPIRY_PAST_QA_ONLY)
 --   * กักกัน/ปลดกักกัน: app_factory_set_lot_hold แผนก QA เท่านั้น (LOT_HOLD_QA_ONLY) เหตุผล 10–1,000 ตัวอักษร (LOT_HOLD_NOTE_REQUIRED)
 --     กักกันซ้ำ = LOT_ALREADY_HELD · ปลดล็อตที่ไม่ได้กักกัน = LOT_NOT_HELD
 --   * ทั้งสอง RPC ล็อกแถวและตรวจ version (LOT_STALE) เขียน factory_lot_history และ audit_logs (ผู้กระทำคือ admin ตัวจริงเบื้องหลัง persona)
@@ -212,8 +213,11 @@ begin
   if p_expiry_date is not null and (p_expiry_date not between date '2000-01-01' and date '2100-12-31' or p_expiry_date < v_lot.received_date) then
     raise exception 'INVALID_LOT_EXPIRY';
   end if;
-  -- วันที่ผ่านมาแล้วทำให้ล็อตถูกข้ามทันที (ผลเหมือนกักกัน) จึงเป็นของ QA เท่านั้น ส่วน ST ตั้งได้ตั้งแต่วันนี้
-  if p_expiry_date < private.factory_today() and v_dept <> 'QA' then raise exception 'LOT_EXPIRY_PAST_QA_ONLY'; end if;
+  -- วันที่ผ่านมาแล้วทำให้ล็อตถูกข้ามทันที (ผลเหมือนกักกัน) จึงเป็นของ QA เท่านั้น ทั้งการตั้ง และการแก้/ล้างวันของล็อตที่หมดอายุแล้ว
+  -- (ซึ่งทำให้ล็อตกลับมาใช้ได้ เหมือนปลดกักกัน) ส่วน ST ตั้งได้ตั้งแต่วันนี้บนล็อตที่ยังไม่หมดอายุ
+  if (p_expiry_date < private.factory_today() or v_lot.expiry_date < private.factory_today()) and v_dept <> 'QA' then
+    raise exception 'LOT_EXPIRY_PAST_QA_ONLY';
+  end if;
   if p_expiry_date is not distinct from v_lot.expiry_date then raise exception 'LOT_EXPIRY_UNCHANGED'; end if;
   update public.factory_lots
   set expiry_date = p_expiry_date, version = v_lot.version + 1, updated_by = v_actor.id, updated_at = now()

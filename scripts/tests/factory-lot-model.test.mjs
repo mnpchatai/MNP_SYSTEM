@@ -74,3 +74,12 @@ test("the hold form needs a reason of 10 to 1,000 characters", () => {
   assert.match(model.holdPayload(a, true, "ก".repeat(1001)).error, /10–1,000/);
   assert.match(model.holdPayload(a, true, null).error, /10–1,000/);
 });
+
+test("an expired lot and past dates stay with QA: stores see no form on it and cannot pick a past date", () => {
+  const expired = DATA.lots[3];
+  assert.equal(model.actionsFor(expired, DATA).expiry, false);
+  assert.equal(model.actionsFor(expired, { ...DATA, can_hold: true }).expiry, true);
+  assert.equal(model.minExpiry(DATA.lots[0], DATA), "2026-10-28");
+  assert.equal(model.minExpiry(DATA.lots[0], { ...DATA, can_hold: true }), "2026-10-01");
+  assert.equal(model.minExpiry(lot("future", { received_date: "2026-11-02" }), DATA), "2026-11-02");
+});

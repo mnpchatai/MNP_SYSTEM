@@ -132,7 +132,7 @@ test("stores get the expiry form only, and it sends the date or clears it", asyn
   const forms = [form("expiry", "id-LOT-A", { expiry: "2026-12-31" }), form("expiry", "id-LOT-B", { expiry: "" }), form("expiry", "id-LOT-A", { expiry: "2026-09-01" })];
   const { body, log } = await render({ data, forms });
   assert.match(body, /data-lot-form="expiry" data-lot-id="id-LOT-A"/);
-  assert.match(body, /<input class="input" id="lot-exp-id-LOT-A" name="expiry" type="date" min="2026-10-01" max="2100-12-31" value="2026-11-10">/);
+  assert.match(body, /<input class="input" id="lot-exp-id-LOT-A" name="expiry" type="date" min="2026-10-28" max="2100-12-31" value="2026-11-10">/);
   assert.ok(!body.includes('data-lot-form="hold"') && !body.includes('data-lot-form="release"'));
   await submit(forms[0]);
   await submit(forms[1]);

@@ -1,6 +1,6 @@
 -- ฝ่ายโรงงาน: ใบงานผลิต ขั้น 4–8 ทุกสาย (20261007050000_factory_job_workflow.sql)
 -- ครอบคลุม: โครงสร้างและสิทธิ์ การปฏิเสธนอกโหมดทดสอบ/ผิดแผนก การตรวจค่าทุกช่อง เงื่อนไขใบสั่งงาน/BOM/Routing/คลัง การคัดลอกขั้นตอน
--- ลำดับขั้นและกดซ้ำ version การตัดวัตถุดิบตอนขั้นแรก (FIFO ข้ามล็อต ยอดไม่พอแล้วย้อนทั้งธุรกรรม) การรับผลผลิตตอนขั้นสุดท้าย (ล็อต จำนวนผลิตจริง)
+-- ลำดับขั้นและกดซ้ำ version การตัดวัตถุดิบตอนขั้นแรก (ลำดับล็อต ข้ามล็อต ยอดไม่พอแล้วย้อนทั้งธุรกรรม) การรับผลผลิตตอนขั้นสุดท้าย (ล็อต จำนวนผลิตจริง)
 -- ความคืบหน้าของใบสั่งผลิต (in_progress → completed) ยกเลิก ประวัติ audit การแยกโหมดทดสอบ และการล้างข้อมูล
 -- ทดสอบสายผลิตจริงตั้งแต่ RB→SR→QC (ยางเส้นยาว) GR PT BG PK→WH ของ FG-TRY-001 ในใบสั่งผลิต 12 ชุด
 begin;
@@ -171,7 +171,7 @@ select throws_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 
 select throws_ok($$select public.app_factory_complete_job_step('81000000-0000-0000-0000-00000000c001', 1, 10, '', null)$$, 'JOB_NOT_FOUND', 'test mode cannot touch a real job');
 select is(pg_temp.stock('RM-TRY-NR-001'), 1500::numeric, 'refused attempts consume nothing');
 
--- FIFO: เพิ่มล็อตยางที่เก่ากว่า (ใส่แบบงานระบบ) แล้วตรวจว่าตัดล็อตเก่าก่อน
+-- ลำดับล็อต (ไม่มีวันหมดอายุ FEFO จึงเรียงตามวันที่รับเหมือน FIFO): เพิ่มล็อตยางที่เก่ากว่า (ใส่แบบงานระบบ) แล้วตรวจว่าตัดล็อตเก่าก่อน
 reset role;
 insert into public.factory_lots (id, is_test, item_id, lot_number, received_date)
 values ('81000000-0000-0000-0000-0000000010a1', true, current_setting('test.rbl')::uuid, 'LOT-OLD-STRIP', current_date - 10);
@@ -217,7 +217,7 @@ select throws_ok(format($$select public.app_factory_complete_job_step(%L::uuid, 
 select public.app_sandbox_enter(current_setting('test.p_PP')::uuid);
 select throws_ok(format($$select public.app_factory_cancel_job(%L::uuid, 16, 'ผิด')$$, current_setting('test.j1')), 'JOB_NOT_CANCELLABLE', 'a completed job cannot be cancelled');
 
--- 7. FIFO ล็อต: ตรวจจากรายการตัดยางของใบงานแรก ---------------------------------------------------
+-- 7. ลำดับล็อต (FEFO ตั้งแต่ 20261030010000 ล็อตไม่มีวันหมดอายุ = ตามวันที่รับ): ตรวจจากรายการตัดยางของใบงานแรก ---------------------------------------------------
 reset role;
 select is((select string_agg(l.lot_number || ':' || (-m.quantity)::text, ',' order by l.lot_number)
            from public.factory_inventory_movements m join public.factory_lots l on l.id = m.lot_id

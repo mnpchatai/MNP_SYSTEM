@@ -49,7 +49,7 @@
     if (can.expiry) {
       parts.push(`<form class="lot-form" data-lot-form="expiry" data-lot-id="${id}">
           <label for="lot-exp-${id}">วันหมดอายุ</label>
-          <input class="input" id="lot-exp-${id}" name="expiry" type="date" min="${escapeHtml(lot.received_date ?? "")}" max="2100-12-31" value="${escapeHtml(lot.expiry_date ?? "")}">
+          <input class="input" id="lot-exp-${id}" name="expiry" type="date" min="${escapeHtml(model.minExpiry(lot, data))}" max="2100-12-31" value="${escapeHtml(lot.expiry_date ?? "")}">
           <button class="btn secondary" type="submit" title="เว้นว่างแล้วบันทึก = ล้างวันหมดอายุ">บันทึก</button>
         </form>`);
     }
