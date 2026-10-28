@@ -5,10 +5,11 @@
 --   2) ผ่าน RPC จริง (record / review / void) และบันทึกผู้ทำรายการเป็นบัญชี admin นั้น
 --   3) โหมดทดสอบใช้สิทธิ์ของบัญชีทดสอบ (persona) ไม่ใช่บทบาทหลักของ admin
 --   4) เปลี่ยนบัญชีออกจาก admin แล้วบทบาทหลักหายไปพร้อมสิทธิ์ (trigger employees_normalize_acting_role)
+--   5) แถวพนักงานที่ไม่มีในตารางได้ false ไม่ใช่ null (RPC ใช้ "if not ... then raise" ซึ่ง null จะไม่ raise)
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(17);
 
 insert into auth.users (id, email, raw_user_meta_data) values
   ('79600000-0000-0000-0000-000000000001', 'ncrar-rb-staff@mnp.local', '{}'::jsonb),
@@ -128,6 +129,15 @@ reset role;
 update public.employees set role_id = (select id from public.roles where code = 'staff') where employee_no = 'NCRAR-AFM';
 select is((select private.can_edit_ncr_losses(current_setting('test.ncr_real')::uuid, e) from public.employees e where e.employee_no = 'NCRAR-AFM'),
   false, 'an account moved from admin to staff loses the working role and cannot edit losses');
+
+-- 5) ไม่พบพนักงาน = false (fail-closed) -----------------------------------------------------------------------
+select is(
+  private.can_edit_ncr_losses(current_setting('test.ncr_real')::uuid,
+    jsonb_populate_record(null::public.employees, jsonb_build_object(
+      'id', '79600000-0000-0000-0000-0000000009ff',
+      'department_id', (select id from public.departments where code = 'QA'),
+      'role_id', (select id from public.roles where code = 'general_manager')))),
+  false, 'an employee row that is not in the table is refused with false, never null');
 
 select * from finish();
 rollback;
