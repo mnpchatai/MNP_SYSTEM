@@ -20,6 +20,8 @@
 
   // ข้อมูลฟอร์ม MT01-FM05 ของใบที่เปิดอยู่ ตั้งใน detailView และใช้ตอนกดปุ่มดาวน์โหลด Excel ใน bindDetail
   let formExportPayload = null;
+  // แถว "ใบนี้" ใน popup ประวัติการซ่อมของเครื่อง ตั้งใน detailView และใช้ตอนกดการ์ดเครื่องจักรใน bindDetail
+  let machineHistoryCurrent = null;
 
   const REPAIR_DEPARTMENT_OPTIONS = [
     { sourceCode: "RB", displayCode: "RB", name: "ขึ้นรูปราง" },
@@ -267,7 +269,7 @@
 
   // กดการ์ด "เครื่องจักร" → popup ประวัติการซ่อมของเครื่องนั้น โหลดตอนกดเท่านั้น (RPC ตรวจสิทธิ์ที่ฐานข้อมูล)
   // ปิดได้ด้วยปุ่ม ปิด, Esc, กดนอกกรอบ หรือเมื่อ hash เปลี่ยน (กดลิงก์ไปใบอื่น) และคืน focus ให้การ์ดที่กด
-  async function openMachineHistory(requestId, trigger) {
+  async function openMachineHistory(requestId, trigger, current) {
     if (document.querySelector(".machine-history")) return;
     const history = window.MNP_MT_MACHINE_HISTORY;
     const label = trigger.querySelector(".request-fact-value")?.textContent.trim() ?? "";
@@ -309,7 +311,7 @@
       const { data, error } = await sb.rpc("app_get_machine_repair_history", { p_request_id: requestId });
       if (error) throw error;
       if (!overlay.isConnected) return;
-      body.innerHTML = history.listHtml(history.normalizeRows(data), { escapeHtml, formatDate, statusBadge, docTypeLabels });
+      body.innerHTML = history.listHtml(history.withCurrentRow(history.normalizeRows(data), current), { escapeHtml, formatDate, statusBadge, docTypeLabels });
     } catch (error) {
       if (!overlay.isConnected) return;
       body.innerHTML = `<p class="machine-history-state error" role="status">${escapeHtml(history.errorMessage(error, friendlyError))}</p>`;
@@ -634,6 +636,7 @@
         ...buildAppsScriptOrder(request, steps, verifications, directory, assignedTechIds),
         formCells: formCells?.cells ?? null,
       });
+      machineHistoryCurrent = window.MNP_MT_MACHINE_HISTORY.currentRow(request, assignedTechIds.map(nameOf));
       const { technicians, canAssign, canStartWork, canFinishWork, canVerify, canRecordProgress } = detailPermissions({ request, type, directory, assignedTechIds, employee });
       return {
         statusBadgeHtml: repairStatusBadge(request, steps),
@@ -687,7 +690,7 @@
       document.querySelector("#form-export")?.addEventListener("click", (event) => {
         if (formExportPayload) window.MNP_MT_FORM_EXPORT.downloadXlsx(event.currentTarget, formExportPayload, { showToast, friendlyError });
       });
-      document.querySelector('[data-fact-action="machine-history"]')?.addEventListener("click", (event) => openMachineHistory(id, event.currentTarget));
+      document.querySelector('[data-fact-action="machine-history"]')?.addEventListener("click", (event) => openMachineHistory(id, event.currentTarget, machineHistoryCurrent));
       document.querySelector("#assign-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
