@@ -1408,12 +1408,13 @@ async function loadEmployee() {
     .maybeSingle();
   if (error) throw error;
   if (!data) throw Object.assign(new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน"), { code: "EMPLOYEE_NOT_LINKED" });
-  const [{ data: modulesData, error: modulesError }, labAccess, labOnly] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess(), loadLabOnly()]);
+  const [{ data: modulesData, error: modulesError }, labAccess, labOnly, actingRole] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess(), loadLabOnly(), loadActingRole(data.acting_role_id)]);
   if (modulesError) throw modulesError;
   state.employee = {
     ...data,
     role: relation(data.role),
     department: relation(data.department),
+    actingRole,
     approvalModules: new Set((modulesData ?? []).map((item) => item.code)),
     labAccess,
     labOnly,
@@ -1432,6 +1433,19 @@ async function loadLabAccess() {
     return false;
   }
   return data === true;
+}
+
+// บทบาทหลักในการทำงานของบัญชี admin (employees.acting_role_id) — embed จาก employees ไม่ได้เพราะตั้งใจไม่มี foreign key ไป roles
+// (ดู migration 20261003010000) ใช้แค่เลือกว่าจะแสดงฟอร์มหรือไม่ ฐานข้อมูลตัดสินสิทธิ์จริง เรียกไม่ได้ = ถือว่าไม่มี ไม่ทำให้การล็อกอินล้ม
+// ค่านี้อยู่ใน state.employee จึงหายไปเองเมื่อสลับเป็นบัญชีทดสอบ (persona) ในโหมดทดสอบ
+async function loadActingRole(roleId) {
+  if (!roleId) return null;
+  const { data, error } = await sb.from("roles").select("code,name_th").eq("id", roleId).maybeSingle();
+  if (error) {
+    console.warn("acting role unavailable", error);
+    return null;
+  }
+  return data;
 }
 
 // บัญชีที่เห็นเฉพาะ MNP LAB: ฐานข้อมูลเป็นผู้ตัดสิน (app_lab_only) หน้าเว็บใช้แค่เลือกว่าจะแสดงอะไร
