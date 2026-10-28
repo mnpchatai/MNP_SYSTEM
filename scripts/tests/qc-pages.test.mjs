@@ -262,11 +262,11 @@ test("a database that lacks the migration is explained", async () => {
 test("the new report form starts from the template list with the Lot picker as a data-popup", async () => {
   const { app } = await page("view=new");
   const html = app.innerHTML;
-  assert.match(html, /<option value="t1">P-100<\/option>/);
+  assert.match(html, /<option value="t1">P-100 · ยางรองเครื่อง<\/option>/);
   assert.match(html, /id="qc-r-date" name="inspected_at" type="datetime-local"/);
   assert.match(html, /<div class="qc-lot-combo">[\s\S]*aria-expanded="false"[\s\S]*<div class="qc-lot-popup" id="qc-lot-popup" data-popup[^>]* hidden>/, "the popup sits in the same parent as its input");
   assert.doesNotMatch(html, /onblur|blur/i, "a popup is never closed from blur");
-  assert.match(html, /เลือก Part Number เพื่อแสดงรายการตรวจ/);
+  assert.match(html, /เลือก Part เพื่อแสดงรายการตรวจ/);
   const inactive = await page("view=new", { fixtures: { app_qc_templates: [{ ...TEMPLATE, status: "inactive" }] } });
   assert.doesNotMatch(inactive.app.innerHTML, /<option value="t1">/, "an inactive template cannot start a new report");
   const readOnly = await page("view=new", { access: { read: true, edit: false, steps: [] } });
@@ -277,7 +277,7 @@ test("editing a draft fills the form from the report and refuses a submitted one
   const draft = { ...REPORT, status: "draft", current_step: 0, approvals: [], items: [REPORT.items[0], REPORT.items[1]] };
   const { app } = await page("view=edit&id=r1", { fixtures: { app_qc_report: draft } });
   const html = app.innerHTML;
-  assert.match(html, /<option value="t1" selected>P-100<\/option>/);
+  assert.match(html, /<option value="t1" selected>P-100 · ยางรองเครื่อง<\/option>/);
   assert.match(html, /name="order_no" maxlength="60" value="SO-7"/);
   assert.match(html, /name="inspected_at" type="datetime-local" value="2026-10-27T09:30"/, "Bangkok time");
   assert.match(html, /data-item="A"/);
@@ -304,4 +304,40 @@ test("the template list and form", async () => {
   assert.match(missing.app.innerHTML, /ไม่พบ/);
   const blank = await page("view=template");
   assert.match(blank.app.innerHTML, /สร้างแม่แบบ/);
+});
+
+test("a part without a part number is labelled by its name everywhere and the number is optional", async () => {
+  const noNumber = { ...TEMPLATE, id: "t2", part_number: "", part_name: "ชิ้นงานเดี่ยว" };
+  const created = await page("view=new", { fixtures: { app_qc_templates: [TEMPLATE, noNumber] } });
+  assert.match(created.app.innerHTML, /<option value="t2">ชิ้นงานเดี่ยว<\/option>/, "the option shows the part name alone");
+  assert.match(created.app.innerHTML, /<option value="t1">P-100 · ยางรองเครื่อง<\/option>/);
+  assert.doesNotMatch(created.app.innerHTML, / · ชิ้นงานเดี่ยว/);
+
+  const list = await page("view=templates", { fixtures: { app_qc_templates: [TEMPLATE, noNumber] } });
+  assert.match(list.app.innerHTML, /<td>—<\/td>\s*<td><a class="request-no" href="#\/qc\?view=template&amp;id=t2">ชิ้นงานเดี่ยว<\/a><\/td>/, "the name links to the template when there is no number");
+  assert.match(list.app.innerHTML, /<td><a class="request-no" href="#\/qc\?view=template&amp;id=t1">P-100<\/a><\/td>\s*<td>ยางรองเครื่อง<\/td>/);
+
+  const form = await page("view=template&id=t2", { fixtures: { app_qc_templates: [noNumber] } });
+  assert.match(form.app.innerHTML, /<label for="qc-t-part">Part Number \(ไม่บังคับ\)<\/label><input class="input" id="qc-t-part" name="part_number" maxlength="60" value="">/, "no required attribute on the part number");
+  assert.match(form.app.innerHTML, /<label for="qc-t-name">Part Name \*<\/label><input[^>]* required/, "the part name stays required");
+  assert.match(form.app.innerHTML, /<h1>ชิ้นงานเดี่ยว<\/h1>/);
+  const blank = await page("view=template");
+  assert.doesNotMatch(blank.app.innerHTML, /id="qc-t-part"[^>]* required/);
+
+  const listed = { ...LISTED, part_number: "", part_name: "ชิ้นงานเดี่ยว" };
+  const reports = await page("", { fixtures: { app_qc_reports: { reports: [listed] } } });
+  assert.match(reports.app.innerHTML, /<td><strong>ชิ้นงานเดี่ยว<\/strong><\/td>/, "the part name is the only label");
+  assert.doesNotMatch(reports.app.innerHTML, /<strong><\/strong>/);
+
+  const detail = await page("view=report&id=r1", { fixtures: { app_qc_report: { ...REPORT, part_number: "", part_name: "ชิ้นงานเดี่ยว" } } });
+  assert.match(detail.app.innerHTML, /<dt>Part Number<\/dt><dd>-<\/dd>/);
+  assert.match(detail.app.innerHTML, /<dt>Part Name<\/dt><dd>ชิ้นงานเดี่ยว<\/dd>/);
+  assert.equal(detail.calls.synced[0].partNumber, "", "the sheet copy keeps the number empty; the Apps Script draws the dash");
+
+  const draft = { ...REPORT, status: "draft", current_step: 0, approvals: [], part_number: "", part_name: "ชิ้นงานเดี่ยว", template_id: "t2" };
+  const edit = await page("view=edit&id=r1", { fixtures: { app_qc_report: draft, app_qc_templates: [noNumber] } });
+  assert.match(edit.app.innerHTML, /<option value="t2" selected>ชิ้นงานเดี่ยว<\/option>/);
+  assert.match(edit.app.innerHTML, /name="part_number" value=""/);
+  const orphan = await page("view=edit&id=r1", { fixtures: { app_qc_report: { ...draft, template_id: "gone" }, app_qc_templates: [] } });
+  assert.match(orphan.app.innerHTML, /<option value="" selected>ชิ้นงานเดี่ยว<\/option>/);
 });

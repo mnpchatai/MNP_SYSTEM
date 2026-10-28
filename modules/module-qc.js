@@ -111,7 +111,9 @@
   function reportRows(reports) {
     return reports.map((report) => `<tr>
         <td><a class="request-no" href="${esc(urlFor({ view: "report", id: report.id }))}">${esc(report.report_no)}</a></td>
-        <td><strong>${esc(report.part_number)}</strong><br><span class="muted small">${esc(report.part_name)}</span></td>
+        <td>${report.part_number
+          ? `<strong>${esc(report.part_number)}</strong><br><span class="muted small">${esc(report.part_name)}</span>`
+          : `<strong>${esc(report.part_name)}</strong>`}</td>
         <td>${esc(orDash(report.customer))}</td>
         <td>${esc(orDash(report.order_no))}</td>
         <td>${esc(orDash(lotText(report.compound_lots)))}</td>
@@ -126,7 +128,7 @@
     return `<form class="qc-filter" id="qc-filter" role="search">
         <div class="field"><label for="qc-f-status">สถานะ</label>
           <select class="select" id="qc-f-status" name="status">${STATUS_FILTERS.map(([value, label]) => `<option value="${esc(value)}"${value === filter.status ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
-        <div class="field"><label for="qc-f-part">Part Number</label><input class="input" id="qc-f-part" name="part" maxlength="60" value="${esc(filter.part)}" autocomplete="off"></div>
+        <div class="field"><label for="qc-f-part">Part Number / Part Name</label><input class="input" id="qc-f-part" name="part" maxlength="60" value="${esc(filter.part)}" autocomplete="off"></div>
         <div class="field"><label for="qc-f-lot">Lot ยางผสม</label><input class="input" id="qc-f-lot" name="lot" maxlength="60" value="${esc(filter.lot)}" autocomplete="off"></div>
         <div class="qc-filter-actions"><button class="btn" type="submit">ค้นหา</button><a class="btn secondary" href="${esc(urlFor())}">ล้าง</a></div>
       </form>`;
@@ -208,8 +210,8 @@
   async function templatesView({ access }) {
     const templates = await rpc("app_qc_templates");
     const rows = (templates ?? []).map((template) => `<tr>
-        <td><a class="request-no" href="${esc(urlFor({ view: "template", id: template.id }))}">${esc(template.part_number)}</a></td>
-        <td>${esc(template.part_name)}</td>
+        <td>${template.part_number ? `<a class="request-no" href="${esc(urlFor({ view: "template", id: template.id }))}">${esc(template.part_number)}</a>` : "—"}</td>
+        <td>${template.part_number ? esc(template.part_name) : `<a class="request-no" href="${esc(urlFor({ view: "template", id: template.id }))}">${esc(template.part_name)}</a>`}</td>
         <td>${esc(orDash(template.customer))}</td>
         <td class="right">${esc((template.items ?? []).length)}</td>
         <td><span class="badge ${template.status === "active" ? "completed" : ""}">${template.status === "active" ? "ใช้งาน" : "ปิดใช้งาน"}</span></td>
@@ -256,13 +258,13 @@
     const editable = access.edit;
     const items = template?.items?.length ? template.items : [{ item_no: "A", name: "", instrument: "", unit: "", spec_min: null, spec_std: null, spec_max: null, points_required: 5 }];
     const back = { href: urlFor({ view: "templates" }), label: "‹ กลับรายการแม่แบบ" };
-    const title = template ? template.part_number : "สร้างแม่แบบ";
+    const title = template ? template.part_number || template.part_name : "สร้างแม่แบบ";
     const root = paint(`${TITLE} / แม่แบบตรวจ`, `<div class="qc-page">${headHtml({ title, back })}
       <form class="card" id="qc-form" novalidate>
         ${errorBox()}
         ${editable ? "" : `<p class="muted small">ตำแหน่งที่ทำหน้าที่อยู่ดูแม่แบบได้อย่างเดียว (แก้ไขได้เฉพาะแผนก QA และผู้ดูแลระบบ)</p>`}
         <div class="form-grid">
-          <div class="field"><label for="qc-t-part">Part Number *</label><input class="input" id="qc-t-part" name="part_number" maxlength="60" required value="${esc(template?.part_number)}"${editable ? "" : " disabled"}></div>
+          <div class="field"><label for="qc-t-part">Part Number (ไม่บังคับ)</label><input class="input" id="qc-t-part" name="part_number" maxlength="60" value="${esc(template?.part_number)}"${editable ? "" : " disabled"}></div>
           <div class="field"><label for="qc-t-name">Part Name *</label><input class="input" id="qc-t-name" name="part_name" maxlength="200" required value="${esc(template?.part_name)}"${editable ? "" : " disabled"}></div>
           <div class="field"><label for="qc-t-customer">customer</label><input class="input" id="qc-t-customer" name="customer" maxlength="100" value="${esc(template?.customer)}"${editable ? "" : " disabled"}></div>
           <div class="field"><label for="qc-t-status">สถานะ</label><select class="select" id="qc-t-status" name="status"${editable ? "" : " disabled"}>
@@ -451,16 +453,16 @@
     const sampleLabel = report?.sample_label ?? "2M";
     const entryTableHtml = (label) => `${tableHeadHtml(label, true)}<tbody>${specs.length
       ? specs.map((spec) => entryRowHtml(spec, values.get(spec.item_no), slotsFor(spec))).join("")
-      : `<tr><td colspan="15" class="muted">เลือก Part Number เพื่อแสดงรายการตรวจจากแม่แบบ</td></tr>`}</tbody>`;
-    const orphan = report && !current ? report.part_number : "";
+      : `<tr><td colspan="15" class="muted">เลือก Part เพื่อแสดงรายการตรวจจากแม่แบบ</td></tr>`}</tbody>`;
+    const orphan = report && !current ? model.partLabel(report.part_number, report.part_name) : "";
     const options = [`<option value=""${current ? "" : " selected"}>${esc(orphan || "— เลือก Part —")}</option>`,
-      ...choices.map((template) => `<option value="${esc(template.id)}"${template.id === current?.id ? " selected" : ""}>${esc(template.part_number)}</option>`)].join("");
+      ...choices.map((template) => `<option value="${esc(template.id)}"${template.id === current?.id ? " selected" : ""}>${esc(model.partLabel(template.part_number, template.part_name))}</option>`)].join("");
 
     const root = paint(`${TITLE} / ${report ? `แก้ไข ${report.report_no}` : "สร้างใบตรวจ"}`, `<div class="qc-page">${headHtml({ title: report ? `แก้ไข ${report.report_no}` : "สร้างใบตรวจ", back })}
       <form id="qc-form" novalidate>
         ${errorBox()}
         <section class="card"><div class="form-grid">
-          <div class="field"><label for="qc-r-template">Part Number *</label><select class="select" id="qc-r-template" name="template_id">${options}</select>
+          <div class="field"><label for="qc-r-template">Part / แม่แบบ *</label><select class="select" id="qc-r-template" name="template_id">${options}</select>
             <input type="hidden" name="part_number" value="${esc(report?.part_number ?? current?.part_number)}"></div>
           <div class="field"><label for="qc-r-name">Part Name *</label><input class="input" id="qc-r-name" name="part_name" maxlength="200" required value="${esc(report?.part_name ?? current?.part_name)}"></div>
           <div class="field"><label for="qc-r-customer">customer</label><input class="input" id="qc-r-customer" name="customer" maxlength="100" value="${esc(report?.customer ?? current?.customer)}"></div>
@@ -573,7 +575,7 @@
 
   function infoHtml(report) {
     return `<section class="card"><dl class="definition-grid">
-        ${definition("Part Number", esc(report.part_number))}
+        ${definition("Part Number", esc(model.partNumberText(report.part_number)))}
         ${definition("Part Name", esc(report.part_name))}
         ${definition("customer", esc(orDash(report.customer)))}
         ${definition("Order No.", esc(orDash(report.order_no)))}

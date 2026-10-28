@@ -52,9 +52,9 @@
   // (เทสต์ตรวจไว้) รหัสกลางอย่าง NOT_AUTHORIZED ใช้ข้อความของ app.js และรหัส INVALID_NCR_* ของการออก NCR ใช้ข้อความของ module-ncr.js
   const ERROR_MESSAGES = {
     QC_TEST_MODE_ONLY: "ใบตรวจ QC ใช้ได้เฉพาะในโหมดทดสอบเท่านั้น",
-    QC_INVALID_PAYLOAD: "ข้อมูลไม่ถูกต้อง กรุณาตรวจทุกช่อง (Part Number 1–60, Part Name 1–200, หมายเหตุไม่เกิน 2,000 ตัวอักษร) แล้วลองอีกครั้ง",
+    QC_INVALID_PAYLOAD: "ข้อมูลไม่ถูกต้อง กรุณาตรวจทุกช่อง (Part Number เว้นว่างได้แต่ไม่เกิน 60, Part Name 1–200, หมายเหตุไม่เกิน 2,000 ตัวอักษร) แล้วลองอีกครั้ง",
     QC_INVALID_ITEM: "รายการตรวจไม่ถูกต้อง: ITEM No. เป็น A–Z 1–2 ตัวและห้ามซ้ำ · ชื่อรายการ 1–100 ตัวอักษร · MIN ต้องไม่เกิน MAX · ค่าที่วัดมี 1–5 จุดและเป็นตัวเลข",
-    QC_PART_NUMBER_TAKEN: "มีแม่แบบของ Part Number นี้อยู่แล้ว กรุณาเปิดแม่แบบเดิมเพื่อแก้ไข",
+    QC_PART_NUMBER_TAKEN: "มีแม่แบบของ Part Number นี้อยู่แล้ว กรุณาเปิดแม่แบบเดิมเพื่อแก้ไข (Part Number เว้นว่างได้เมื่อเป็นชิ้นงานเดี่ยวที่ไม่มีเลข Part)",
     QC_NOT_FOUND: "ไม่พบใบตรวจ/แม่แบบนี้ (อาจถูกล้างข้อมูลทดสอบไปแล้ว)",
     QC_VERSION_CONFLICT: "รายการนี้ถูกเปลี่ยนจากหน้าต่างอื่นแล้ว กรุณาตรวจข้อมูลล่าสุดแล้วทำอีกครั้ง",
     QC_INVALID_LOT: "Lot ยางผสมไม่ถูกต้อง: ใส่ได้ไม่เกิน 10 Lot แต่ละ Lot 1–60 ตัวอักษรและห้ามซ้ำ",
@@ -192,7 +192,7 @@
     const form = formValues ?? {};
     const partNumber = trimmed(form.part_number);
     const partName = trimmed(form.part_name);
-    if (partNumber.length < 1 || partNumber.length > 60) return fail("กรุณาเลือก Part Number (1–60 ตัวอักษร)");
+    if (partNumber.length > 60) return fail("Part Number ต้องไม่เกิน 60 ตัวอักษร");
     if (partName.length < 1 || partName.length > 200) return fail("กรุณากรอก Part Name (1–200 ตัวอักษร)");
     const limits = [["customer", "customer", 100], ["order_no", "Order No.", 60], ["code", "Code", 60], ["sample_label", "Sample", 30], ["remark", "REMARK", 2000]];
     for (const [key, label, max] of limits) {
@@ -257,7 +257,7 @@
     const form = formValues ?? {};
     const partNumber = trimmed(form.part_number);
     const partName = trimmed(form.part_name);
-    if (partNumber.length < 1 || partNumber.length > 60) return fail("กรุณากรอก Part Number (1–60 ตัวอักษร)");
+    if (partNumber.length > 60) return fail("Part Number ต้องไม่เกิน 60 ตัวอักษร");
     if (partName.length < 1 || partName.length > 200) return fail("กรุณากรอก Part Name (1–200 ตัวอักษร)");
     if (trimmed(form.customer).length > 100) return fail("customer ต้องไม่เกิน 100 ตัวอักษร");
     if (trimmed(form.drawing_note).length > 500) return fail("คำอธิบายจุดวัดต้องไม่เกิน 500 ตัวอักษร");
@@ -377,6 +377,10 @@
     };
   }
 
+  // Part Number ไม่บังคับ (ชิ้นงานเดี่ยวไม่มีเลข Part): ฟอร์มกระดาษ QA01-PM11 ใส่ "-" ส่วนที่เป็นป้ายชื่อใช้ Part Name อย่างเดียว
+  const partNumberText = (partNumber) => trimmed(partNumber) || "-";
+  const partLabel = (partNumber, partName) => (trimmed(partNumber) ? `${trimmed(partNumber)} · ${text(partName)}` : text(partName));
+
   const safeFileName = (docNumber) => `${text(docNumber).replace(/[^\p{L}\p{N}_-]+/gu, "-") || "QA01-PM11"}.xlsx`;
 
   // payload ที่ส่งให้ Apps Script วาดฟอร์ม QA01-PM11 เป็น .xlsx (ไม่ใช่แผนที่เซลล์ — สคริปต์วาดฟอร์มเองจาก record)
@@ -386,7 +390,7 @@
 
   const api = {
     MAX_POINTS, MAX_LOTS, MAX_ITEMS, STATUS_LABELS, RESULT_LABELS, JUDGE_LABELS, JUDGE_CLASSES, STEPS, HISTORY_LABELS, NCR_UNITS, ERROR_MESSAGES,
-    parseNumber, round4, computeItem, computeResult, bangkokStamp, bangkokInputValue, bangkokInstant,
+    partNumberText, partLabel, parseNumber, round4, computeItem, computeResult, bangkokStamp, bangkokInputValue, bangkokInstant,
     statusBadgeClass: (status) => STATUS_BADGE_CLASS[status] ?? "",
     reportPayload, templatePayload, ncrArgs, buildSheetRecord, buildFormExport, safeFileName,
   };

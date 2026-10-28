@@ -81,7 +81,6 @@ test("reportPayload sends AC only for an N item with a note of 5+ characters", (
 
 test("reportPayload rejects bad input with a Thai message", () => {
   const fails = (change, pattern, items = specs) => assert.match(model.reportPayload(form(change), items).error, pattern);
-  fails({ part_number: "" }, /Part Number/);
   fails({ part_number: "x".repeat(61) }, /Part Number/);
   fails({ part_name: " " }, /Part Name/);
   fails({ remark: "x".repeat(2001) }, /REMARK/);
@@ -100,6 +99,27 @@ test("reportPayload rejects bad input with a Thai message", () => {
   fails({}, /สเปกต้องเป็นตัวเลข/, [{ ...specs[0], spec_max: "abc" }, specs[1]]);
 });
 
+test("the part number is optional but the part name is not", () => {
+  for (const part_number of ["", "   ", undefined, null]) {
+    const { payload, error } = model.reportPayload(form({ part_number }), specs);
+    assert.equal(error, undefined, `report with part_number ${JSON.stringify(part_number)}`);
+    assert.equal(payload.part_number, "", "an empty part number is sent as an empty string");
+  }
+  assert.equal(model.reportPayload(form({ part_number: "x".repeat(60) }), specs).error, undefined, "sixty characters is the limit");
+  assert.match(model.reportPayload(form({ part_number: "", part_name: "" }), specs).error, /Part Name/);
+  const rows = [{ item_no: "A", name: "ความหนา", instrument: "", unit: "", spec_min: "", spec_std: "", spec_max: "", points_required: "" }];
+  const template = model.templatePayload({ part_number: "  ", part_name: "ชิ้นเดี่ยว", items: rows });
+  assert.equal(template.error, undefined);
+  assert.equal(template.payload.part_number, "");
+  assert.match(model.templatePayload({ part_name: "", items: rows }).error, /Part Name/);
+  assert.equal(model.partNumberText(""), "-");
+  assert.equal(model.partNumberText(" P-1 "), "P-1");
+  assert.equal(model.partNumberText(null), "-");
+  assert.equal(model.partLabel("P-1", "ยางรอง"), "P-1 · ยางรอง");
+  assert.equal(model.partLabel("", "ยางรอง"), "ยางรอง", "the part name alone labels a part without a number");
+  assert.equal(model.partLabel(null, "ยางรอง"), "ยางรอง");
+});
+
 test("templatePayload validates the template rows", () => {
   const rows = [
     { item_no: " a ", name: "ความหนา", instrument: "Caliper", unit: "mm", spec_min: "12", spec_std: "13", spec_max: "14", points_required: "" },
@@ -114,7 +134,8 @@ test("templatePayload validates the template rows", () => {
   assert.equal(payload.items[1].spec_min, null);
   assert.equal(model.templatePayload({ id: "t1", version: 2, part_number: "P", part_name: "N", items: rows }).payload.version, 2);
   const bad = (change, pattern) => assert.match(model.templatePayload({ part_number: "P", part_name: "N", items: rows, ...change }).error, pattern);
-  bad({ part_number: "" }, /Part Number/);
+  bad({ part_number: "x".repeat(61) }, /Part Number/);
+  bad({ part_name: " " }, /Part Name/);
   bad({ status: "deleted" }, /สถานะ/);
   bad({ items: [] }, /อย่างน้อย 1 รายการ/);
   bad({ items: [{ ...rows[0], item_no: "1" }] }, /ITEM No/);
@@ -166,6 +187,12 @@ test("buildSheetRecord flattens a report for the spreadsheet copy", () => {
   assert.equal(record.ncrNo, "");
   assert.equal(model.buildSheetRecord({ ...report, report_no: "QC-26-001" }).isTest, false);
   assert.equal(model.buildSheetRecord(report, { nameOf: (person) => `K ${person.first_name}` }).inspector, "K สมชาย");
+});
+
+test("buildSheetRecord leaves an empty part number empty (the Apps Script draws the dash)", () => {
+  assert.equal(model.buildSheetRecord({ ...report, part_number: "" }).partNumber, "");
+  assert.equal(model.buildSheetRecord({ ...report, part_number: null }).partNumber, "");
+  assert.equal(model.buildSheetRecord(report).partNumber, "P-100");
 });
 
 test("buildFormExport asks the Apps Script to draw the QA01-PM11 form", () => {

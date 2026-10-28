@@ -144,7 +144,8 @@ function validateExportRecord_(record) {
   return {
     reportNo: reportNo, isTest: record.isTest === true, status: cleanText_(record.status, 40), statusLabel: cleanText_(record.statusLabel, 60),
     result: cleanText_(record.result, 20), resultLabel: cleanText_(record.resultLabel, 60),
-    partNumber: cleanText_(record.partNumber, 100), partName: cleanText_(record.partName, 300),
+    // Part Number ไม่บังคับ: ว่าง = ชิ้นงานเดี่ยวไม่มีเลข Part ฟอร์มกระดาษใส่ "-" (ใส่หลัง cleanText_ ไม่งั้นถูกเติม ' หน้า - กันสูตร)
+    partNumber: cleanText_(record.partNumber, 100) || '-', partName: cleanText_(record.partName, 300),
     customer: cleanText_(record.customer, 200), orderNo: cleanText_(record.orderNo, 100), code: cleanText_(record.code, 100),
     sampleLabel: cleanText_(record.sampleLabel, 40) || '2M', lots: cleanText_(record.lots, 1000), inspector: cleanText_(record.inspector, 200),
     inspectedAt: cleanText_(record.inspectedAt, 20), approvals: approvals,
@@ -419,6 +420,8 @@ function upsertLogRow_(sheet, record) {
     record.ncrNo,
     record.updatedAt,
   ].map(asText_);
+  // Part Number ไม่บังคับ: ว่าง = "-" (ใส่หลัง asText_ เพราะ asText_ เติม ' หน้า - กันสูตร และช่องนี้เป็นข้อความล้วนอยู่แล้ว)
+  if (!record.partNumber) row[3] = '-';
   var target = findLogRow_(sheet, record.reportNo);
   if (!target) target = Math.max(sheet.getLastRow() + 1, LOG_FIRST_ROW);
   sheet.getRange(target, 1, 1, row.length).setNumberFormat('@').setValues([row]);
