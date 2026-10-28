@@ -35,6 +35,11 @@ var HEADERS_ = ['ID', 'Material', 'TestDate', 'Time', 'Temperature', 'Test time'
 // คอลัมน์ A–H ต้องตรงหัวคอลัมน์ ส่วน I–L (ค่าเฉลี่ย/SD) ไม่บังคับ — แท็บ "E00030S T" ไม่มี
 var REQUIRED_COLUMNS_ = 8;
 var STAT_COLUMNS_ = 4;
+// คอลัมน์ M (ลำดับที่ 12 เริ่มที่ 0) ต่อจาก SD MV เป็นเลข Lot ของคอมพาวด์ — ไม่บังคับ ใส่หัวคอลัมน์ Lot เมื่อต้องการส่ง
+var LOT_COLUMN_INDEX_ = 12;
+// ความยาวสูงสุดตรงกับ check constraint ของ lab_mooney_results.lot_number (1..60) — ยาวกว่านี้ทั้งการนำเข้าจะล้มเหลว จึงปฏิเสธที่ชีตก่อนส่ง
+var MAX_LOT_LENGTH_ = 60;
+var LOT_HEADERS_ = ['lot', 'lot no', 'lot number', 'ล็อต'];
 var MAX_ROWS_ = 20000;
 var MAX_PROBLEMS_SHOWN_ = 20;
 var MAX_TOKEN_LENGTH_ = 8192;
@@ -51,6 +56,11 @@ function isMooneyHeader_(headerRow) {
     if (normalizeHeader_(headerRow[index]) !== normalizeHeader_(HEADERS_[index])) return false;
   }
   return true;
+}
+
+// หัวคอลัมน์ Lot ที่ยอมรับ (ไม่สนตัวพิมพ์/ช่องว่าง) — ใช้กับคอลัมน์ M เท่านั้น
+function isLotHeader_(value) {
+  return LOT_HEADERS_.indexOf(normalizeHeader_(value)) !== -1;
 }
 
 // วันที่ตามที่ชีตแสดง (dd/mm/yyyy ปี ค.ศ.) → 'YYYY-MM-DD' หรือ null ถ้าไม่ใช่วันที่จริง
@@ -122,10 +132,17 @@ function expandMerged_(grid, merges) {
 //   display = getDisplayValues() ทั้งตาราง (แถวแรกคือหัวคอลัมน์) — ใช้กับ ID/Material/วันที่/เวลา ให้ตรงกับที่เห็นในชีต
 //   raw     = getValues() ตารางเดียวกัน — ใช้กับค่าตัวเลข
 //   merges  = ช่วง merge ของคอลัมน์ AVG/SD (I–L) พิกัดเทียบกับแถวที่ 1 และคอลัมน์ I
+//   คอลัมน์ M หัว Lot (ไม่บังคับ): lot_number = ข้อความที่ชีตแสดง ตัดช่องว่างหัวท้าย ว่าง = null ยาวเกิน 60 ตัวอักษร = แถวมีปัญหา
+//   lotMerges = ช่วง merge ของคอลัมน์ M (พิกัดเทียบกับแถวที่ 1 และคอลัมน์ M, col = 0) เซลล์ที่ merge ต่อชุดได้ค่าเดียวกันทุกแถวเหมือน AVG/SD
+//   ไม่มีหัว Lot = lot_number เป็น null ทุกแถว (ไม่อ่านคอลัมน์ M)
 // คืน { rows, problems } — แถวว่างทั้งแถวข้าม ส่วนแถวที่กรอกไม่ครบ/ผิดรูปแบบเข้า problems (ไม่ส่งครึ่งๆ กลางๆ)
-function rowsFromTab_(tabName, display, raw, merges) {
+function rowsFromTab_(tabName, display, raw, merges, lotMerges) {
   var rows = [];
   var problems = [];
+  var hasLot = isLotHeader_(display[0] ? display[0][LOT_COLUMN_INDEX_] : '');
+  var lotCells = hasLot
+    ? expandMerged_(display.map(function (row) { return [row[LOT_COLUMN_INDEX_]]; }), lotMerges || [])
+    : null;
   var stats = expandMerged_(
     raw.map(function (row) { return row.slice(REQUIRED_COLUMNS_, REQUIRED_COLUMNS_ + STAT_COLUMNS_); }),
     merges || []
@@ -162,6 +179,12 @@ function rowsFromTab_(tabName, display, raw, merges) {
     statValues.forEach(function (value, position) {
       if (typeof value === 'number' && isNaN(value)) rowProblems.push(statNames[position] + ' ไม่ใช่ตัวเลข');
     });
+    var lotNumber = null;
+    if (hasLot) {
+      var lotText = String(lotCells[index][0] === null || lotCells[index][0] === undefined ? '' : lotCells[index][0]).trim();
+      if (lotText.length > MAX_LOT_LENGTH_) rowProblems.push('Lot ยาวเกิน ' + MAX_LOT_LENGTH_ + ' ตัวอักษร');
+      else if (lotText !== '') lotNumber = lotText;
+    }
     if (rowProblems.length) {
       problems.push(where + ': ' + rowProblems.join(', '));
       continue;
@@ -179,7 +202,8 @@ function rowsFromTab_(tabName, display, raw, merges) {
       avg_mh: statValues[0],
       sd_mh: statValues[1],
       avg_mv: statValues[2],
-      sd_mv: statValues[3]
+      sd_mv: statValues[3],
+      lot_number: lotNumber
     });
   }
   return { rows: rows, problems: problems };
@@ -248,7 +272,11 @@ function collectRows_(spreadsheet) {
       skipped.push(name);
       return;
     }
+    // อ่านคอลัมน์ M เฉพาะเมื่อชีตมีคอลัมน์นั้นและหัวเป็น Lot (ชีตที่แคบกว่านี้ getRange จะ error)
     var columns = REQUIRED_COLUMNS_ + STAT_COLUMNS_;
+    if (sheet.getMaxColumns() > LOT_COLUMN_INDEX_ && isLotHeader_(sheet.getRange(1, LOT_COLUMN_INDEX_ + 1).getDisplayValue())) {
+      columns = LOT_COLUMN_INDEX_ + 1;
+    }
     var display = sheet.getRange(1, 1, lastRow, columns).getDisplayValues();
     var raw = sheet.getRange(1, 1, lastRow, columns).getValues();
     var merges = sheet.getRange(1, REQUIRED_COLUMNS_ + 1, lastRow, STAT_COLUMNS_).getMergedRanges().map(function (range) {
@@ -259,7 +287,13 @@ function collectRows_(spreadsheet) {
         numCols: range.getNumColumns()
       };
     });
-    var result = rowsFromTab_(name, display, raw, merges);
+    // ช่วง merge ของคอลัมน์ Lot (M) — ห้องแล็บ merge ต่อชุดเหมือน AVG/SD ได้ แถวล่างของชุดต้องได้ Lot เดียวกัน
+    var lotMerges = columns > LOT_COLUMN_INDEX_
+      ? sheet.getRange(1, LOT_COLUMN_INDEX_ + 1, lastRow, 1).getMergedRanges().map(function (range) {
+          return { row: range.getRow() - 1, col: 0, numRows: range.getNumRows(), numCols: 1 };
+        })
+      : [];
+    var result = rowsFromTab_(name, display, raw, merges, lotMerges);
     rows = rows.concat(result.rows);
     problems = problems.concat(result.problems);
   });
