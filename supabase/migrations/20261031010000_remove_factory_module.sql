@@ -129,12 +129,12 @@ drop table
 
 -- 5. bucket ไฟล์แนบ (ว่างแล้วตามข้อ 0) — Storage รุ่นใหม่กันการลบตรงจากตาราง storage
 --    ยกเว้นตั้ง storage.allow_delete_query ในธุรกรรมเดียวกัน (DO block) รุ่นที่ไม่มีด่านนี้ไม่สนใจค่านี้ --------------------
-do $
+do $$
 begin
   perform set_config('storage.allow_delete_query', 'true', true);
   delete from storage.buckets where id = 'factory-attachments';
   perform set_config('storage.allow_delete_query', 'false', true);
-end $;
+end $$;
 
 -- 6. ตัวนับเลขเอกสารของโหมดทดสอบ (เลข TEST-MO/WO/MR/JB-yy-nnn) ----------------------------------
 delete from public.document_counters
