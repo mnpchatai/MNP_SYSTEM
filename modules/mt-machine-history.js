@@ -1,4 +1,5 @@
 // ประวัติการซ่อมของเครื่องจักรในหน้ารายละเอียดใบแจ้งซ่อม: กดการ์ด "เครื่องจักร" แล้วเปิด popup รายการใบทั้งหมดที่ผูกกับเครื่องนั้น
+// รวมใบที่เปิดอยู่ด้วย (ติดป้าย "ใบนี้")
 //
 // ข้อมูลมาจาก RPC app_get_machine_repair_history(p_request_id) ซึ่งตรวจสิทธิ์ที่ฐานข้อมูล (ดู migration
 // 20261022010000_machine_repair_history.sql) ไฟล์นี้เป็นแค่ส่วนคำนวณ/สร้าง HTML ที่ไม่แตะ DOM และ Supabase
@@ -54,6 +55,25 @@
       .filter((row) => row.id);
   }
 
+  // ใบที่เปิดอยู่: RPC ไม่คืนใบนี้ จึงสร้างแถวจากข้อมูลที่หน้ารายละเอียดโหลดไว้แล้ว ใบ draft ไม่นับเป็นประวัติเหมือน RPC
+  function currentRow(request, technicianNames = []) {
+    if (!request?.id || request.status === "draft") return null;
+    const [row] = normalizeRows([{
+      ...request,
+      request_id: request.id,
+      technician_names: technicianNames.filter(Boolean).join(", "),
+    }]);
+    return row ? { ...row, isCurrent: true } : null;
+  }
+
+  // แทรกใบที่เปิดอยู่ตามลำดับเดียวกับ RPC (ใหม่ไปเก่า)
+  function withCurrentRow(rows, current) {
+    if (!current) return rows;
+    const time = (row) => Date.parse(row.createdAt ?? "") || 0;
+    const index = rows.findIndex((row) => time(row) < time(current));
+    return index === -1 ? [...rows, current] : [...rows.slice(0, index), current, ...rows.slice(index)];
+  }
+
   // ฐานข้อมูลที่ยังไม่ได้ apply migration จะไม่มีฟังก์ชันนี้ (PGRST202) — แจ้งตรงๆ แทนข้อความ error ดิบ
   function errorMessage(error, friendlyError) {
     const message = text(error?.message ?? error);
@@ -66,9 +86,10 @@
 
   function rowHtml(row, { escapeHtml, formatDate, statusBadge, docTypeLabels }) {
     // ลิงก์เฉพาะใบที่ผู้ดูเปิดได้ตามสิทธิ์เดิม ไม่งั้นกดแล้วเจอ "ไม่มีสิทธิ์เข้าถึง"
-    const number = row.canOpen
+    // ใบที่เปิดอยู่ไม่ต้องมีลิงก์ (อยู่หน้านี้แล้ว) แต่ติดป้าย "ใบนี้"
+    const number = row.canOpen && !row.isCurrent
       ? `<a class="machine-history-no" href="#/request?id=${encodeURIComponent(row.id)}">${escapeHtml(row.requestNo)}</a>`
-      : `<span class="machine-history-no">${escapeHtml(row.requestNo)}</span>`;
+      : `<span class="machine-history-no">${escapeHtml(row.requestNo)}</span>${row.isCurrent ? `<span class="machine-history-current">ใบนี้</span>` : ""}`;
     const docType = docTypeLabels[row.docType];
     const details = [
       ["ช่าง", row.technicians],
@@ -76,7 +97,7 @@
       ["อะไหล่", row.parts],
       ["เสร็จเมื่อ", row.completedAt ? formatDate(row.completedAt) : ""],
     ].filter(([, value]) => value);
-    return `<li class="machine-history-item">
+    return `<li class="machine-history-item${row.isCurrent ? " current" : ""}"${row.isCurrent ? ' aria-current="page"' : ""}>
       <div class="machine-history-head">${number}${docType ? `<span class="machine-history-type">${escapeHtml(docType)}</span>` : ""}${statusBadge(row.status)}<time class="machine-history-date" datetime="${escapeHtml(row.createdAt ?? "")}">${formatDate(row.createdAt)}</time></div>
       ${row.description ? `<p class="machine-history-text">${escapeHtml(row.description)}</p>` : ""}
       ${details.length ? `<dl class="machine-history-details">${details.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>` : ""}
@@ -85,12 +106,13 @@
 
   function listHtml(rows, helpers) {
     if (!rows.length) return `<p class="machine-history-state" role="status">ยังไม่มีประวัติการซ่อมอื่นของเครื่องนี้</p>`;
+    // ขีดจำกัดนับเฉพาะแถวจาก RPC ไม่นับใบที่เปิดอยู่
     return `<ol class="machine-history-list">${rows.map((row) => rowHtml(row, helpers)).join("")}</ol>${
-      rows.length >= HISTORY_LIMIT ? `<p class="machine-history-state">แสดง ${HISTORY_LIMIT} รายการล่าสุด</p>` : ""
+      rows.filter((row) => !row.isCurrent).length >= HISTORY_LIMIT ?`<p class="machine-history-state">แสดง ${HISTORY_LIMIT} รายการล่าสุด</p>` : ""
     }`;
   }
 
-  const api = { PLACEHOLDER_CODES, HISTORY_LIMIT, hasMachineHistory, canViewMachineHistory, normalizeRows, errorMessage, listHtml };
+  const api = { PLACEHOLDER_CODES, HISTORY_LIMIT, hasMachineHistory, canViewMachineHistory, normalizeRows, currentRow, withCurrentRow, errorMessage, listHtml };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_MT_MACHINE_HISTORY = api;
 })(typeof window !== "undefined" ? window : globalThis);
