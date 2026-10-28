@@ -199,7 +199,8 @@
   async function decodeImage(blob) {
     if (typeof root.createImageBitmap === "function") {
       try {
-        const bitmap = await root.createImageBitmap(blob);
+        // ระบุให้หมุนตาม EXIF ชัดเจน: canvas ตัด EXIF ทิ้ง ถ้าเบราว์เซอร์รุ่นเก่าไม่หมุนให้ รูปที่บีบแล้วจะตะแคงถาวร
+        const bitmap = await root.createImageBitmap(blob, { imageOrientation: "from-image" });
         return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() };
       } catch {
         // ถอดรหัสแบบ bitmap ไม่ได้ ลองผ่าน <img> ต่อ

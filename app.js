@@ -462,7 +462,7 @@ function optionalAttachments(fileList) {
 // ข้อความใต้ช่องแนบไฟล์ทุกหน้า ใช้ชุดเดียวกับฝั่ง Next.js (modules/attachment-image.js)
 const ATTACHMENT_HINT = window.MNP_ATTACHMENT_IMAGE?.HINT ?? "";
 
-// รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 4 MB) ถูกแปลงเป็น JPEG ในเบราว์เซอร์
+// รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 1 MB) ถูกแปลง/บีบเป็น JPEG ในเบราว์เซอร์
 // ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
 // onSelection แสดงตัวอย่างไฟล์ที่เลือกก่อนอัปโหลด (modules/attachment-preview.js ใช้ loadPdfjs ของไฟล์นี้ร่วมกับแกลเลอรี)
 window.MNP_ATTACHMENT_IMAGE?.bindFileInputs({
