@@ -132,6 +132,15 @@ select is(pg_temp.bal('LOT-FEFO-A'), 0::numeric, 'the lot that expires first is 
 select is(pg_temp.bal('LOT-FEFO-B'), 86.76::numeric, 'the rest comes from the next expiry, although it was received earlier');
 select is(pg_temp.bal('LOT-FEFO-X'), 500::numeric, 'the expired lot is skipped although it was received first');
 select is(pg_temp.bal('LOT-TRY-002'), current_setting('test.try2')::numeric, 'the lot without an expiry date is used last');
+-- Item ที่ไม่ติดตามล็อต (กล่องของชุดทดลอง ยอดไม่มี lot_id) ยังตัดได้เหมือนเดิม
+reset role;
+select set_config('test.box', (select id::text from public.factory_items where is_test and code = 'PKG-TRY-BOX-001'), true);
+select lives_ok(format($$select private.factory_issue_stock(%L::uuid, 10, 'FEFO-NOLOT', null, null)$$, current_setting('test.box')),
+  'stock without a lot is still issued');
+select is((select array[count(*)::numeric, sum(quantity)] from public.factory_inventory_movements
+           where item_id = current_setting('test.box')::uuid and kind = 'production_issue' and lot_id is null),
+  array[1, -10]::numeric[], 'it is issued as one movement without a lot');
+set local role authenticated;
 
 -- 7. วันหมดอายุ: ST หรือ QA --------------------------------------------------------------------
 select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002'), current_setting('test.due')),
@@ -142,8 +151,12 @@ select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s,
   'LOT_NOT_FOUND', 'an unknown lot is rejected');
 select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002') + 1, current_setting('test.due')),
   'LOT_STALE', 'a stale version is rejected');
-select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002'), (current_setting('test.today')::date - 1)::text),
+-- วันก่อนวันที่รับของคิดจาก received_date ของล็อตเอง (ชุดทดลองใช้ current_date ของฐานข้อมูล ซึ่งอาจต่างจากวันที่ไทย 1 วัน)
+select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002'),
+    ((pg_temp.lot('LOT-TRY-002') ->> 'received_date')::date - 1)::text),
   'INVALID_LOT_EXPIRY', 'an expiry date before the receipt date is rejected');
+select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-FEFO-B'), pg_temp.lver('LOT-FEFO-B'), (current_setting('test.today')::date - 1)::text),
+  'LOT_EXPIRY_PAST_QA_ONLY', 'stores cannot set a past expiry date (it would skip the lot like a hold)');
 select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, %L::date)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002'), '2101-01-01'),
   'INVALID_LOT_EXPIRY', 'an expiry date after 2100 is rejected');
 select throws_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, null)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002')),
@@ -154,6 +167,8 @@ select is(pg_temp.lot('LOT-TRY-002') ->> 'expiry_date', current_setting('test.du
 select public.app_sandbox_enter(current_setting('test.p_QA')::uuid);
 select lives_ok(format($$select public.app_factory_set_lot_expiry(%L::uuid, %s, null)$$, pg_temp.lid('LOT-TRY-002'), pg_temp.lver('LOT-TRY-002')),
   'QA can clear the expiry date');
+select is(public.app_factory_set_lot_expiry(pg_temp.lid('LOT-FEFO-X'), pg_temp.lver('LOT-FEFO-X'), current_setting('test.today')::date - 2) ->> 'expiry_date',
+  (current_setting('test.today')::date - 2)::text, 'QA can set a past expiry date');
 
 -- 8. กักกัน/ปลด: QA เท่านั้น -----------------------------------------------------------------------
 select set_config('test.acc', 'LOT-TRY-006', true);
@@ -192,11 +207,11 @@ select is(pg_temp.bal('LOT-FEFO-B'), 23.52::numeric, 'and the natural rubber aga
 
 -- 10. ประวัติและ audit ----------------------------------------------------------------------------
 select is((select string_agg(x ->> 'action', ',' order by x ->> 'created_at') from jsonb_array_elements(public.app_factory_lots() -> 'history') x),
-  'expiry,expiry,hold,release', 'the lot history lists every change');
+  'expiry,expiry,expiry,hold,release', 'the lot history lists every change');
 select is((select x ->> 'expiry_after' from jsonb_array_elements(public.app_factory_lots() -> 'history') x where x ->> 'action' = 'expiry' order by x ->> 'created_at' limit 1),
   current_setting('test.due'), 'the history keeps the expiry date that was set');
 reset role;
-select is((select count(*) from public.audit_logs where action in ('FACTORY_LOT_EXPIRY', 'FACTORY_LOT_HOLD', 'FACTORY_LOT_RELEASE'))::integer, 4,
+select is((select count(*) from public.audit_logs where action in ('FACTORY_LOT_EXPIRY', 'FACTORY_LOT_HOLD', 'FACTORY_LOT_RELEASE'))::integer, 5,
   'every lot change is audited');
 select is((select actor_id from public.audit_logs where action = 'FACTORY_LOT_HOLD'), '85000000-0000-0000-0000-000000000101'::uuid,
   'the audit names the real admin behind the persona');
@@ -204,7 +219,12 @@ set local role authenticated;
 
 -- 11. ล้างข้อมูลทดสอบรวมตารางใหม่ ---------------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"85000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select ok((public.app_sandbox_factory_test_data() -> 'counts' ->> 'details')::integer > 0, 'the test data summary counts the details');
+select set_config('test.details', public.app_sandbox_factory_test_data() -> 'counts' ->> 'details', true);
+reset role;
+insert into public.factory_lot_history (lot_id, action, note) select id, 'hold', 'แถวนับจำนวน' from public.factory_lots where lot_number = 'LOT-FEFO-X';
+set local role authenticated;
+select is((public.app_sandbox_factory_test_data() -> 'counts' ->> 'details')::integer, current_setting('test.details')::integer + 1,
+  'the test data summary counts the lot history in the details');
 select ok((public.app_sandbox_purge_factory() ->> 'deleted')::integer > 0, 'the factory purge removes the test data');
 select is(public.app_factory_lots() -> 'lots', '[]'::jsonb, 'no lot remains');
 reset role;

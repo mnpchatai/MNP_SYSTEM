@@ -9,6 +9,7 @@
 --     ล็อตใช้ได้ = ไม่ถูกกักกัน และ (ไม่มีวันหมดอายุ หรือวันหมดอายุ ≥ วันนี้ตามเวลาไทย) — ใช้ได้ถึงสิ้นวันหมดอายุ
 --   * ตั้ง/แก้/ล้างวันหมดอายุ: app_factory_set_lot_expiry แผนก ST (รับของเข้าคลัง) หรือ QA (LOT_EXPIRY_STORES_OR_QA_ONLY)
 --     ปี 2000–2100 และไม่ก่อนวันที่รับของ (INVALID_LOT_EXPIRY) ค่าเดิม = LOT_EXPIRY_UNCHANGED
+--     วันที่ผ่านมาแล้ว (ล็อตถูกข้ามทันที ผลเหมือนกักกัน) ตั้งได้เฉพาะ QA (LOT_EXPIRY_PAST_QA_ONLY)
 --   * กักกัน/ปลดกักกัน: app_factory_set_lot_hold แผนก QA เท่านั้น (LOT_HOLD_QA_ONLY) เหตุผล 10–1,000 ตัวอักษร (LOT_HOLD_NOTE_REQUIRED)
 --     กักกันซ้ำ = LOT_ALREADY_HELD · ปลดล็อตที่ไม่ได้กักกัน = LOT_NOT_HELD
 --   * ทั้งสอง RPC ล็อกแถวและตรวจ version (LOT_STALE) เขียน factory_lot_history และ audit_logs (ผู้กระทำคือ admin ตัวจริงเบื้องหลัง persona)
@@ -199,16 +200,20 @@ as $$
 declare
   v_actor public.employees%rowtype;
   v_lot public.factory_lots%rowtype;
+  v_dept text;
 begin
   perform private.lab_only_block();
   v_actor := private.factory_actor();
-  if not exists (select 1 from public.departments d where d.id = v_actor.department_id and d.code in ('ST', 'QA')) then
+  select d.code into v_dept from public.departments d where d.id = v_actor.department_id;
+  if v_dept is null or v_dept not in ('ST', 'QA') then
     raise exception 'LOT_EXPIRY_STORES_OR_QA_ONLY';
   end if;
   v_lot := private.factory_lot_lock(p_id, p_version);
   if p_expiry_date is not null and (p_expiry_date not between date '2000-01-01' and date '2100-12-31' or p_expiry_date < v_lot.received_date) then
     raise exception 'INVALID_LOT_EXPIRY';
   end if;
+  -- วันที่ผ่านมาแล้วทำให้ล็อตถูกข้ามทันที (ผลเหมือนกักกัน) จึงเป็นของ QA เท่านั้น ส่วน ST ตั้งได้ตั้งแต่วันนี้
+  if p_expiry_date < private.factory_today() and v_dept <> 'QA' then raise exception 'LOT_EXPIRY_PAST_QA_ONLY'; end if;
   if p_expiry_date is not distinct from v_lot.expiry_date then raise exception 'LOT_EXPIRY_UNCHANGED'; end if;
   update public.factory_lots
   set expiry_date = p_expiry_date, version = v_lot.version + 1, updated_by = v_actor.id, updated_at = now()

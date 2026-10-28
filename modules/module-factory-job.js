@@ -268,7 +268,7 @@
       const last = model.isLastPending(job, next);
       blocks.push(`<form class="fm-form jb-form" id="jb-step-form" novalidate>
           <h3>${escapeHtml(next.name)}</h3>
-          ${job.status === "open" ? notice("ขั้นแรก: เมื่อกดเสร็จ ระบบตัดวัตถุดิบตามสูตรออกจากคลัง (หยิบจากล็อตเก่าสุดก่อน)") : ""}
+          ${job.status === "open" ? notice("ขั้นแรก: เมื่อกดเสร็จ ระบบตัดวัตถุดิบตามสูตรออกจากคลัง (หยิบล็อตที่หมดอายุใกล้สุดก่อน ข้ามล็อตที่กักกันหรือหมดอายุ)") : ""}
           ${last ? notice(`ขั้นสุดท้าย: เมื่อกดเสร็จ ระบบรับผลผลิตเข้าคลัง ${escapeHtml(job.warehouse_name)} ตามจำนวนผลิตจริง`) : ""}
           <div class="fm-form-error" id="jb-form-error" role="alert" hidden></div>
           ${readingsFieldsHtml(next)}
