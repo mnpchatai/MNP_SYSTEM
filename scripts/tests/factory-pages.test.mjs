@@ -13,6 +13,7 @@ const FILES = [
   "modules/factory-production-model.js",
   "modules/factory-material-model.js",
   "modules/factory-job-model.js",
+  "modules/factory-rb-flow-model.js",
   "modules/factory-board-model.js",
   "modules/factory-gantt-model.js",
   "modules/module-factory-master.js",
@@ -21,6 +22,7 @@ const FILES = [
   "modules/module-factory-production.js",
   "modules/module-factory-material.js",
   "modules/module-factory-job.js",
+  "modules/module-factory-rb.js",
   "modules/module-factory-gantt.js",
   "modules/module-factory-board.js",
   "modules/module-factory.js",
@@ -117,15 +119,25 @@ test("a search on the overview lists matching menu pages and documents with link
 });
 
 test("a department page shows the queue of that department inside the department frame", async () => {
-  const { app } = await page("dept=RB");
-  assert.match(app.innerHTML, /title="ฝ่ายโรงงาน \/ RB ขึ้นรูปยาง"/);
-  assert.match(app.innerHTML, /ถึงคิวแผนก RB <span class="muted small">\(1\)<\/span>/);
-  assert.match(app.innerHTML, /JB-1/);
+  const { app } = await page("dept=GR");
+  assert.match(app.innerHTML, /title="ฝ่ายโรงงาน \/ GR แปรรูปยาง"/);
+  assert.match(app.innerHTML, /ถึงคิวแผนก GR <span class="muted small">\(0\)<\/span>/);
   assert.match(app.innerHTML, /aria-label="สลับแผนกฝ่ายโรงงาน"/, "the department tabs are kept");
-  assert.match(app.innerHTML, /<option value="RB" selected>RB · ขึ้นรูปยาง<\/option>/, "phones switch departments from a dropdown");
+  assert.match(app.innerHTML, /<option value="GR" selected>GR · แปรรูปยาง<\/option>/, "phones switch departments from a dropdown");
   assert.doesNotMatch(app.innerHTML, /ยังไม่มีแบบฟอร์มหรือขั้นตอนงานของแผนกนี้/, "the empty placeholder is gone");
   const planning = await page("dept=PP");
   assert.match(planning.app.innerHTML, /งานของฝ่ายวางแผน/);
+});
+
+test("the RB page is the RubberFlow station board (view department:RB) inside the same department frame", async () => {
+  const { app } = await page("dept=RB");
+  assert.match(app.innerHTML, /title="ฝ่ายโรงงาน \/ RB ขึ้นรูปยาง"/);
+  assert.match(app.innerHTML, /RubberFlow · สายผลิตยาง 4 สถานี/);
+  assert.match(app.innerHTML, /aria-label="สถานีของสาย RB"/);
+  assert.match(app.innerHTML, /JB-1/, "the open job is on its station");
+  assert.doesNotMatch(app.innerHTML, /ถึงคิวแผนก RB/, "the generic queue is replaced for RB");
+  assert.match(app.innerHTML, /aria-label="สลับแผนกฝ่ายโรงงาน"/, "the department tabs are kept");
+  assert.match(app.innerHTML, /<option value="RB" selected>RB · ขึ้นรูปยาง<\/option>/);
 });
 
 test("an unknown department or item falls back to the overview instead of an empty page", async () => {

@@ -2442,3 +2442,30 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 @media (max-width: 760px) {
   .lot-form .input { font-size: 16px; }
 }
+
+/* RubberFlow — หน้าแผนก RB แบบ 4 สถานี (modules/module-factory-rb.js) ใช้สีแผนกจาก --dept ของ .factory-page */
+.rbf-brand { margin: 0 0 10px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .02em; }
+.rbf-stations { margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; list-style: none; }
+.rbf-station { position: relative; min-height: 64px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 10px; text-decoration: none; transition: border-color .18s ease-out, box-shadow .18s ease-out; }
+.rbf-station:hover { border-color: var(--dept, var(--primary)); }
+.rbf-station:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.rbf-station.is-active { border-color: var(--dept, var(--primary)); box-shadow: inset 0 -4px 0 var(--dept, var(--primary)); }
+.rbf-station-no { width: 26px; height: 26px; flex: none; display: inline-grid; place-items: center; color: #fff; background: var(--dept, var(--primary)); border-radius: 50%; font-size: 12px; font-weight: 800; }
+.rbf-station-copy { min-width: 0; flex: 1; display: grid; gap: 1px; }
+.rbf-station-copy strong { font-size: 13px; line-height: 1.35; }
+.rbf-station-copy small { color: var(--quiet); font-size: 11px; line-height: 1.3; }
+.rbf-station-count { flex: none; min-width: 30px; color: var(--quiet); font-size: 22px; font-weight: 800; line-height: 1; text-align: right; }
+.rbf-station.has-work .rbf-station-count { color: var(--dept, var(--primary)); }
+.rbf-station-held { position: absolute; top: -8px; right: 8px; }
+.rbf-rest { color: var(--muted); font-size: 12px; }
+.rbf-rest.is-resting { color: var(--warning); font-weight: 700; }
+.rbf-open-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.rbf-open-head h2 { margin: 0; }
+.rbf-open .fm-decision { margin: 10px 0 0; box-shadow: none; border-color: var(--soft-line); }
+.factory-page table tbody tr.is-open td { background: var(--primary-soft); }
+@media (max-width: 760px) {
+  .rbf-stations { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rbf-station { min-height: 56px; padding: 8px 10px; }
+  .rbf-station-copy small { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .rbf-station { transition: none; } }

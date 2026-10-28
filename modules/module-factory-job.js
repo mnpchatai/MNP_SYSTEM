@@ -679,5 +679,9 @@
     },
   };
 
+  // ส่วนที่หน้าอื่นใช้ซ้ำ: RubberFlow หน้าแผนก RB (modules/module-factory-rb.js) วาดฟอร์มทำขั้นตอนของใบงานในหน้าสถานี
+  // ด้วย actionsHtml/bindDetail ชุดเดียวกับหน้าใบงาน (ช่องกรอกค่าพารามิเตอร์ ฟอร์มตรวจ QC ฟอร์มตัดสินกักกัน ยกเลิก) จึงมีกติกาเดียว
+  window.MNP_FACTORY_JOB_UI = { actionsHtml, bindDetail, viewUrl, statusBadge };
+
   Object.assign(window.MNP_FACTORY_VIEWS, VIEWS);
 })();

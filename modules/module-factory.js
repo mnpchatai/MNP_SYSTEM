@@ -10,7 +10,8 @@
 // (เปิดเฉพาะโหมดทดสอบ แยกข้อมูลด้วย is_test) รายการที่ไม่มี view เป็นหน้าว่างรอกำหนดฟอร์ม
 // สถานะเปิด/ปิดของเมนูย่อยคำนวณจาก URL ทุกครั้งที่วาดหน้า (แถบข้างถูกวาดใหม่ทุกการเปลี่ยนหน้า)
 // หน้าแผนก (#/factory?dept=<รหัส>) แสดงคิวใบงานผลิตของแผนกนั้นจาก view "department" ของ modules/module-factory-job.js
-// (ขั้น 4–8 ของ workflow) ถ้าไม่มี view นี้เป็นโครงหน้าว่าง ตารางใหม่ต้องแยกข้อมูลทดสอบตามกติกา 5 ข้อของโหมดทดสอบใน README
+// (ขั้น 4–8 ของ workflow) แผนกที่มี view "department:<รหัส>" ใช้หน้าของตัวเองแทน (RB = RubberFlow 4 สถานี modules/module-factory-rb.js)
+// ถ้าไม่มี view ใดเลยเป็นโครงหน้าว่าง ตารางใหม่ต้องแยกข้อมูลทดสอบตามกติกา 5 ข้อของโหมดทดสอบใน README
 // และมีเทสต์ใน supabase/tests/database/ ก่อนเปิดการบันทึกข้อมูล
 //
 // เมนูข้างโผล่เฉพาะโหมดทดสอบ (nav.sandboxOnly) และหน้านี้ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
@@ -251,7 +252,8 @@
       content = entryHtml(selected);
     } else if (department) {
       title = `${TITLE} / ${department.code} ${department.name}`;
-      const view = window.MNP_FACTORY_VIEWS?.department;
+      // แผนกที่มีหน้าของตัวเอง (view "department:<รหัส>" เช่น RB = RubberFlow ใน module-factory-rb.js) มาก่อนคิวทั่วไป
+      const view = window.MNP_FACTORY_VIEWS?.[`department:${department.code}`] ?? window.MNP_FACTORY_VIEWS?.department;
       if (view) return await view({ params, department, frame: departmentFrame(department, title) });
       content = departmentHtml(department);
     }
