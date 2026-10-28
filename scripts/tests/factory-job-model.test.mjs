@@ -50,6 +50,7 @@ test("a reading is compared with a range, a minimum only or a maximum only; blan
   assert.equal(model.inSpec("140", TEMP), true);
   assert.equal(model.inSpec(135, TEMP), true, "the limits are inclusive");
   assert.equal(model.inSpec(145.0001, TEMP), false);
+  assert.equal(model.inSpec("145.00004", TEMP), true, "rounded to 4 decimals like the database");
   assert.equal(model.inSpec("2.62", THICK_MAX), true);
   assert.equal(model.inSpec("3", THICK_MAX), false);
   assert.equal(model.inSpec(-5, { min: 0, max: null }), false);

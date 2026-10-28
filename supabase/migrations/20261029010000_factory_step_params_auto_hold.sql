@@ -93,6 +93,9 @@ begin
                    v_table || '_no_direct_access', v_table);
   end loop;
 end $$;
+-- บัญชี lab-only (20261019005000) ห้ามเข้าถึงตารางใหม่ทุกตาราง
+select private.lab_only_guard_table('public.factory_routing_step_params');
+select private.lab_only_guard_table('public.factory_job_step_readings');
 
 -- สถานะกักกันของใบงาน: แยกจาก status (ใบงานยัง in_progress/completed ตามเดิม แต่ทำขั้นถัดไปไม่ได้จนกว่า QA ปลด)
 alter table public.factory_jobs
@@ -302,6 +305,7 @@ declare
   v_codes text[] := '{}';
   v_admin_id uuid;
 begin
+  perform private.lab_only_block();
   v_actor := private.factory_actor();
   if not exists (select 1 from public.departments d where d.id = v_actor.department_id and d.code = 'PP') then
     raise exception 'PRODUCTION_PLANNING_ONLY';
@@ -370,6 +374,7 @@ declare
   v_reason text;
   v_result jsonb;
 begin
+  perform private.lab_only_block();
   -- ปิดขั้นด้วยเนื้อหาเดิมก่อน (ตรวจโหมด แผนก ลำดับ version Hold และทำงานกับคลัง) ค่าที่ผิดด้านล่างยกเลิกทั้งธุรกรรม
   v_result := private.factory_run_job_step(p_id, p_version, p_sequence, p_note, p_output_qty, false, true);
   v_actor := private.factory_actor();
@@ -435,6 +440,7 @@ declare
   v_ncr_id uuid;
   v_ncr_no text;
 begin
+  perform private.lab_only_block();
   v_actor := private.factory_actor();
   if p_decision is null or p_decision not in ('release', 'ncr') then raise exception 'INVALID_JOB_HOLD_DECISION'; end if;
   if char_length(v_note) not between 10 and 1000 then raise exception 'JOB_HOLD_NOTE_REQUIRED'; end if;
@@ -472,7 +478,7 @@ begin
   update public.factory_jobs
   set hold_ncr_id = v_ncr_id, hold_ncr_no = v_ncr_no, version = v_job.version + 1, updated_by = v_actor.id, updated_at = now()
   where id = v_job.id;
-  return private.factory_job_log(v_job.id, 'hold_ncr', null, 'ออก NCR ' || v_ncr_no || ': ' || v_note, v_actor)
+  return private.factory_job_log(v_job.id, 'hold_ncr', null, left('ออก NCR ' || v_ncr_no || ': ' || v_note, 1000), v_actor)
          || jsonb_build_object('ncr_id', v_ncr_id, 'ncr_no', v_ncr_no);
 end;
 $$;
@@ -491,6 +497,7 @@ as $$
 declare
   v_test boolean;
 begin
+  perform private.lab_only_block();
   perform private.factory_actor();
   v_test := (private.sandbox_persona()).id is not null;
   return jsonb_build_object(
@@ -818,6 +825,7 @@ declare
   v_items integer;
   v_counts jsonb;
 begin
+  perform private.lab_only_block();
   v_admin := private.sandbox_admin();
   if (private.sandbox_persona()).id is null then
     raise exception 'SANDBOX_NOT_ACTIVE';

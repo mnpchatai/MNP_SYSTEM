@@ -23,6 +23,13 @@ select ok('factory_routing_step_params' = any (private.sandbox_unguarded_tables(
 select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'factory_job_history_action_check')) like '%hold_ncr%'
       and pg_get_constraintdef((select oid from pg_constraint where conname = 'factory_job_history_action_check')) like '%schedule%',
   'the job history accepts the hold actions and keeps schedule');
+select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0,
+  'every public function, including the new and redefined ones, keeps the lab-only guard');
+select ok(not exists (
+    select 1 from unnest(array['factory_routing_step_params', 'factory_job_step_readings']) t(tbl)
+    where not exists (select 1 from pg_policy p join pg_class c on c.oid = p.polrelid
+                      where c.relname = t.tbl and p.polname = 'lab_only_no_access' and not p.polpermissive)),
+  'both new tables have the restrictive lab_only_no_access policy');
 select ok(not has_function_privilege('anon', 'public.app_factory_set_step_params(uuid,jsonb)', 'execute')
       and not has_function_privilege('anon', 'public.app_factory_complete_job_step_with_readings(uuid,integer,integer,text,jsonb,numeric)', 'execute')
       and not has_function_privilege('anon', 'public.app_factory_decide_job_hold(uuid,integer,text,text,numeric,text)', 'execute'),

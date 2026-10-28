@@ -223,7 +223,7 @@
   function readingsFieldsHtml(step) {
     const params = model.paramsOf(step);
     if (!params.length) return "";
-    return `<fieldset class="field full jb-readings"><legend>ค่าพารามิเตอร์ของขั้นนี้ * <span class="muted small">(ค่าหลุดสเปก = ใบงานถูกกักกันรอ QA)</span></legend>
+    return `<fieldset class="field full jb-readings" title="ค่าหลุดสเปก = ใบงานถูกกักกันรอ QA"><legend>ค่าพารามิเตอร์ของขั้นนี้ *</legend>
         <div class="field-row">${params.map((param) => `<div class="field">
             <label for="jb-reading-${escapeHtml(param.code)}">${escapeHtml(param.label)}${param.unit ? ` (${escapeHtml(param.unit)})` : ""}</label>
             <input class="input" id="jb-reading-${escapeHtml(param.code)}" name="reading:${escapeHtml(param.code)}" data-reading="${escapeHtml(param.code)}" type="number" inputmode="decimal" step="any" required>
@@ -259,7 +259,7 @@
     if (model.holdActions(job, role).length) {
       blocks.push(holdFormHtml(data, job));
     } else if (model.isHeld(job)) {
-      blocks.push(notice(`ใบงานถูกกักกันรอ QA ตัดสิน — สลับ “ทำหน้าที่เป็น” เป็นพนักงาน QA เพื่อปลดกักกันหรือออก NCR`));
+      blocks.push(notice(`สลับ “ทำหน้าที่เป็น” เป็นพนักงาน QA เพื่อปลดกักกันหรือออก NCR`));
     } else if (next && model.canRunStep(job, next, role) && model.isQcStep(next)) {
       blocks.push(qcFormHtml(data, job, next, model.isLastPending(job, next)));
     } else if (next && model.canRunStep(job, next, role)) {
@@ -405,7 +405,7 @@
     const readings = readingsHtml(data, job);
     return `<section class="card fm-detail">
       <details class="fm-review-details"><summary>ขั้นตอนการผลิตทั้งหมด · ${model.stepsOf(job).length} ขั้น</summary>${stepsHtml(job)}</details>
-      ${readings ? `<details class="fm-review-details"${model.isHeld(job) ? " open" : ""}><summary>ค่าพารามิเตอร์ที่บันทึก</summary>${readings}</details>` : ""}
+      ${readings ? `<details class="fm-review-details"><summary>ค่าพารามิเตอร์ที่บันทึก</summary>${readings}</details>` : ""}
       ${inspections ? `<details class="fm-review-details"${model.qcHold(job, data.job_inspections) ? " open" : ""}><summary>ผลตรวจ QC และ NCR ที่เกี่ยวข้อง</summary>${inspections}</details>` : ""}
       <details class="fm-review-details"><summary>ประวัติของใบงานนี้</summary>${timelineHtml(model.jobTimeline(data.job_history, job.id))}</details>
     </section>`;

@@ -230,10 +230,11 @@
   const paramsOf = (step) => step?.params ?? [];
   const hasParams = (step) => paramsOf(step).length > 0;
   const limit = (value) => (value === null || value === undefined || value === "" ? null : Number(value));
-  // ค่าเดียวเทียบสเปก: null = ยังไม่กรอก/ไม่ใช่ตัวเลข
+  // ค่าเดียวเทียบสเปก: null = ยังไม่กรอก/ไม่ใช่ตัวเลข · ปัด 4 ทศนิยมก่อนเทียบเหมือนฐานข้อมูล
   function inSpec(value, param) {
-    const number = toNumber(value);
-    if (number === null || !Number.isFinite(number)) return null;
+    const raw = toNumber(value);
+    if (raw === null || !Number.isFinite(raw)) return null;
+    const number = Math.round(raw * 10000) / 10000;
     const min = limit(param?.min);
     const max = limit(param?.max);
     return (min === null || number >= min) && (max === null || number <= max);
