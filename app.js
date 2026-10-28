@@ -220,7 +220,7 @@ function requestModulePage(path) {
   }
   return null;
 }
-// โมดูลที่รองรับโหมดทดสอบแล้วประกาศ sandbox: true — NCR และฝ่ายโรงงาน (ตาราง factory_*) ฐานข้อมูลแยกข้อมูลทดสอบแล้วทั้งคู่
+// โมดูลที่รองรับโหมดทดสอบแล้วประกาศ sandbox: true — NCR และใบตรวจ QC ฐานข้อมูลแยกข้อมูลทดสอบแล้วทั้งคู่
 // โมดูลอื่นถูกซ่อน และฐานข้อมูลปฏิเสธการเขียนของโมดูลที่ยังไม่รองรับ (SANDBOX_MODULE_UNSUPPORTED)
 const isSandboxMode = () => Boolean(state.employee?.isSandbox);
 const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;

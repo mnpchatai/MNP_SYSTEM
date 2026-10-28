@@ -34,8 +34,7 @@ select ok(not exists (
   'every QC table enforces sandbox scope by trigger');
 select ok(not exists (select 1 from qc_tables t where not (t.name = any (private.sandbox_unguarded_tables()))),
   'every QC table is registered as sandbox aware');
-select ok('factory_attachments' = any (private.sandbox_unguarded_tables()) and 'ncr_outcomes' = any (private.sandbox_unguarded_tables())
-          and 'factory_job_inspections' = any (private.sandbox_unguarded_tables()),
+select ok('ncr_outcomes' = any (private.sandbox_unguarded_tables()) and 'ncr_info_requests' = any (private.sandbox_unguarded_tables()),
   'the redefined sandbox list keeps the existing tables');
 select is((select count(*) from pg_constraint c join qc_tables t on c.conrelid = ('public.' || t.name)::regclass
            where c.contype = 'u' and pg_get_constraintdef(c.oid) = 'UNIQUE (id, is_test)'),
