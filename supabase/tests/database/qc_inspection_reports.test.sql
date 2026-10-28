@@ -261,7 +261,7 @@ select throws_ok($$ select public.app_qc_save_report(jsonb_set(current_setting('
 select throws_ok($$ select public.app_qc_save_report(jsonb_set(current_setting('test.base')::jsonb, '{items}',
   '[{"item_no":"A","name":"a","points":[1]},{"item_no":"A","name":"b","points":[2]}]'::jsonb)) $$, 'QC_INVALID_ITEM', 'duplicate item numbers are rejected');
 select throws_ok($$ select public.app_qc_save_report(current_setting('test.base')::jsonb - 'items') $$, 'QC_INVALID_PAYLOAD', 'the items array is required');
-select throws_ok($$ select public.app_qc_save_report(jsonb_set(current_setting('test.base')::jsonb, '{part_number}', '""'::jsonb)) $$, 'QC_INVALID_PAYLOAD', 'a part number is required');
+select throws_ok($$ select public.app_qc_save_report(jsonb_set(current_setting('test.base')::jsonb, '{part_number}', to_jsonb(repeat('x', 61)))) $$, 'QC_INVALID_PAYLOAD', 'a part number longer than 60 characters is rejected (empty is allowed since 20261028010000)');
 select throws_ok($$ select public.app_qc_save_report(jsonb_set(current_setting('test.base')::jsonb, '{template_id}', to_jsonb(gen_random_uuid()::text))) $$,
   'QC_TEMPLATE_NOT_FOUND', 'an unknown template is rejected');
 select throws_ok($$ select public.app_qc_save_report(jsonb_set(current_setting('test.base')::jsonb, '{inspected_at}', '"not a date"'::jsonb)) $$,

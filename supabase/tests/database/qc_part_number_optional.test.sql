@@ -99,6 +99,7 @@ select is(public.app_qc_report(current_setting('test.r1')::uuid) ->> 'part_numbe
 select is(jsonb_array_length(public.app_qc_reports('{}') -> 'reports'), 1, 'the report is listed');
 select is(public.app_qc_reports('{}') -> 'reports' -> 0 ->> 'part_number', '', 'the list shows an empty part number');
 select is(jsonb_array_length(public.app_qc_reports('{"part_number":"N-"}') -> 'reports'), 0, 'a part number filter does not match a report without one');
+select is(jsonb_array_length(public.app_qc_reports('{"part_number":"เดี่ยว"}') -> 'reports'), 1, 'the same filter finds the report by its part name');
 select is((public.app_qc_save_report(jsonb_set(jsonb_set(current_setting('test.nopn_report')::jsonb, '{id}', to_jsonb(current_setting('test.r1'))),
   '{version}', '1'::jsonb)) ->> 'version')::integer, 2, 'a draft without a part number can be edited');
 select is(public.app_qc_save_report(jsonb_set(current_setting('test.nopn_report')::jsonb, '{part_number}', 'null'::jsonb)) ->> 'part_number', '',

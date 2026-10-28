@@ -128,7 +128,7 @@
     return `<form class="qc-filter" id="qc-filter" role="search">
         <div class="field"><label for="qc-f-status">สถานะ</label>
           <select class="select" id="qc-f-status" name="status">${STATUS_FILTERS.map(([value, label]) => `<option value="${esc(value)}"${value === filter.status ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
-        <div class="field"><label for="qc-f-part">Part Number</label><input class="input" id="qc-f-part" name="part" maxlength="60" value="${esc(filter.part)}" autocomplete="off"></div>
+        <div class="field"><label for="qc-f-part">Part Number / Part Name</label><input class="input" id="qc-f-part" name="part" maxlength="60" value="${esc(filter.part)}" autocomplete="off"></div>
         <div class="field"><label for="qc-f-lot">Lot ยางผสม</label><input class="input" id="qc-f-lot" name="lot" maxlength="60" value="${esc(filter.lot)}" autocomplete="off"></div>
         <div class="qc-filter-actions"><button class="btn" type="submit">ค้นหา</button><a class="btn secondary" href="${esc(urlFor())}">ล้าง</a></div>
       </form>`;

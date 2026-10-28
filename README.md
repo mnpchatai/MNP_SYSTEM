@@ -927,7 +927,7 @@ migration `20261027010000_qc_inspection_reports.sql` เพิ่มฐานข
 `supabase/migrations/20261027010000_qc_inspection_reports.sql` (ตาราง `qc_*` แยกข้อมูลทดสอบด้วย `is_test` ทุก RPC ขึ้นต้น `app_qc_*`)
 โค้ดหน้าเว็บอยู่ที่ `modules/qc-model.js` (คำนวณ/ตรวจฟอร์ม) `modules/qc-sheet.js` (สำเนาชีต + Excel) `modules/module-qc.js` (หน้า)
 
-- **หน้า**: รายการใบ (กรองสถานะ/Part/Lot) · แม่แบบตรวจต่อ Part (`?view=templates`, `?view=template&id=`) · สร้าง/แก้ฉบับร่าง
+- **หน้า**: รายการใบ (กรองสถานะ/Part Number หรือ Part Name/Lot) · แม่แบบตรวจต่อ Part (`?view=templates`, `?view=template&id=`) · สร้าง/แก้ฉบับร่าง
   (`?view=new`, `?view=edit&id=`) · ใบตรวจ (`?view=report&id=`) แสดงหัวใบตามฟอร์ม ตาราง ITEM No./สเปก/point 1–5/min/max/average/Judge
   (O เขียว · N แดง · AC เหลือง) REMARK ช่องลงนาม 4 ช่อง และประวัติ ระหว่างกรอก ค่า min/max/average/Judge/ผลรวมคำนวณสดเพื่อดูประกอบ
   ฐานข้อมูลคำนวณซ้ำเองและไม่รับ Judge จากหน้าเว็บ ผู้ตรวจยอมรับรายการที่เป็น N เป็น AC ได้ต้องมีหมายเหตุรายข้อ

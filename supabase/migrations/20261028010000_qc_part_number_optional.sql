@@ -13,8 +13,9 @@
 --   3) app_qc_save_template / app_qc_save_report รับ part_number ว่าง (ยังไม่เกิน 60 ตัวอักษร)
 --   4) app_qc_issue_ncr ส่ง product_code เป็น null เมื่อใบไม่มีเลข Part (app_ncr_issue รับ null อยู่แล้ว)
 --   5) app_qc_templates เรียงแม่แบบที่มีเลข Part ก่อน แล้วแม่แบบที่ไม่มีเลข Part เรียงตาม Part Name
+--   6) app_qc_reports: ตัวกรอง part_number ค้นใน Part Name ด้วย (ใบของชิ้นงานที่ไม่มีเลข Part ค้นจากชื่อได้)
 --
--- ฟังก์ชันที่แทนที่ทั้งหมดเริ่มจากนิยามล่าสุดใน 20261027010000_qc_inspection_reports.sql และเปลี่ยนเฉพาะข้อ 3-5 ข้างต้น
+-- ฟังก์ชันที่แทนที่ทั้งหมดเริ่มจากนิยามล่าสุดใน 20261027010000_qc_inspection_reports.sql และเปลี่ยนเฉพาะข้อ 3-6 ข้างต้น
 -- (ยังขึ้นต้นด้วย private.lab_only_block() ยังเป็น security definer, search_path = '' เหมือนเดิม) สิทธิ์ระบุซ้ำท้ายไฟล์
 --
 -- การปรับใช้: ไคลเอนต์ Pilot Web ที่ส่ง part_number ว่างต้องการ migration นี้ ต้อง apply บน production (ผู้ใช้อนุมัติ) ก่อน merge
@@ -387,11 +388,66 @@ end;
 $$;
 
 -- สิทธิ์ (ระบุซ้ำหลัง create or replace ให้ตรงกับ 20261027010000: ไม่เปิดให้ anon, เรียกได้เฉพาะผู้ล็อกอิน)
+-- รายการใบ (ไม่รวมรายการตรวจ) ล่าสุด 200 ใบ กรองด้วย status, part_number (มีคำนี้อยู่ใน Part Number หรือ Part Name ไม่สนตัวพิมพ์
+-- เพื่อให้ใบของชิ้นงานที่ไม่มีเลข Part ค้นเจอ), lot (ตรงทั้งค่า), result — นิยามจาก 20261027010000 เปลี่ยนเฉพาะเงื่อนไขค้นหา
+create or replace function public.app_qc_reports(p_filter jsonb default '{}'::jsonb)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_filter jsonb := coalesce(p_filter, '{}'::jsonb);
+  v_status text;
+  v_part text;
+  v_lot text;
+  v_result text;
+begin
+  perform private.lab_only_block();
+  v_actor := private.qc_actor();
+  if not private.qc_can_read(v_actor) then raise exception 'NOT_AUTHORIZED'; end if;
+  if jsonb_typeof(v_filter) <> 'object' then raise exception 'QC_INVALID_PAYLOAD'; end if;
+  v_status := private.qc_text(v_filter, 'status', 30, 0, 'QC_INVALID_PAYLOAD');
+  v_part := private.qc_text(v_filter, 'part_number', 60, 0, 'QC_INVALID_PAYLOAD');
+  v_lot := private.qc_text(v_filter, 'lot', 60, 0, 'QC_INVALID_PAYLOAD');
+  v_result := private.qc_text(v_filter, 'result', 10, 0, 'QC_INVALID_PAYLOAD');
+  if v_status not in ('', 'draft', 'pending_qa_manager', 'pending_factory_manager', 'pending_general_manager',
+                      'approved', 'rejected', 'cancelled')
+     or v_result not in ('', 'ok', 'ng', 'accept') then
+    raise exception 'QC_INVALID_PAYLOAD';
+  end if;
+
+  return jsonb_build_object('reports', coalesce((
+    select jsonb_agg(x.entry order by x.created_at desc, x.id desc)
+    from (
+      select r.id, r.created_at, jsonb_build_object(
+          'id', r.id, 'report_no', r.report_no, 'part_number', r.part_number, 'part_name', r.part_name,
+          'customer', r.customer, 'order_no', r.order_no, 'compound_lots', to_jsonb(r.compound_lots),
+          'inspected_at', r.inspected_at,
+          'inspector_name', (select e.first_name || ' ' || e.last_name from public.employees e where e.id = r.inspected_by),
+          'result', r.result, 'status', r.status, 'current_step', r.current_step, 'version', r.version,
+          'ncr_no', case when r.ncr_id is null then null else r.ncr_no end, 'created_at', r.created_at) as entry
+      from public.qc_inspection_reports r
+      where r.is_test
+        and (v_status = '' or r.status = v_status)
+        and (v_part = '' or strpos(lower(r.part_number), lower(v_part)) > 0 or strpos(lower(r.part_name), lower(v_part)) > 0)
+        and (v_lot = '' or v_lot = any (r.compound_lots))
+        and (v_result = '' or r.result = v_result)
+      order by r.created_at desc, r.id desc
+      limit 200
+    ) x), '[]'::jsonb));
+end;
+$$;
+
 revoke all on function public.app_qc_templates() from public, anon;
+revoke all on function public.app_qc_reports(jsonb) from public, anon;
 revoke all on function public.app_qc_save_template(jsonb) from public, anon;
 revoke all on function public.app_qc_save_report(jsonb) from public, anon;
 revoke all on function public.app_qc_issue_ncr(uuid, integer, text, numeric, numeric, text, text) from public, anon;
 grant execute on function public.app_qc_templates() to authenticated;
+grant execute on function public.app_qc_reports(jsonb) to authenticated;
 grant execute on function public.app_qc_save_template(jsonb) to authenticated;
 grant execute on function public.app_qc_save_report(jsonb) to authenticated;
 grant execute on function public.app_qc_issue_ncr(uuid, integer, text, numeric, numeric, text, text) to authenticated;
