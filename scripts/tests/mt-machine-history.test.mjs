@@ -94,6 +94,48 @@ test("the list notes the cap only when it is reached", () => {
   const many = (count) => history.normalizeRows(Array.from({ length: count }, (_, index) => row({ request_id: `r-${index}` })));
   assert.doesNotMatch(history.listHtml(many(history.HISTORY_LIMIT - 1), helpers), /รายการล่าสุด/);
   assert.match(history.listHtml(many(history.HISTORY_LIMIT), helpers), new RegExp(`แสดง ${history.HISTORY_LIMIT} รายการล่าสุด`));
+  const current = history.currentRow({ id: "cur", request_no: "RB044/26", status: "completed", created_at: "2026-10-02T04:06:43Z" });
+  assert.doesNotMatch(history.listHtml(history.withCurrentRow(many(history.HISTORY_LIMIT - 1), current), helpers), /รายการล่าสุด/, "the open request does not count toward the cap");
+});
+
+const openRequest = (extra = {}) => ({
+  id: "cur", request_no: "RB044/26", doc_type: "repair", status: "completed",
+  created_at: "2026-10-02T04:06:43Z", completed_at: "2026-10-05T02:00:00Z",
+  description: "มอเตอร์ไม่หมุน", cause_analysis: "สายไฟขาด", parts_used: "สายไฟ", ...extra,
+});
+
+test("the open request becomes a row from the loaded request, and a draft does not", () => {
+  const current = history.currentRow(openRequest(), ["ศักดา สนผา", "", "สมชาย ใจดี"]);
+  assert.equal(current.id, "cur");
+  assert.equal(current.isCurrent, true);
+  assert.equal(current.canOpen, false);
+  assert.equal(current.technicians, "ศักดา สนผา, สมชาย ใจดี");
+  assert.equal(current.cause, "สายไฟขาด");
+  assert.equal(history.currentRow(openRequest({ status: "draft" })), null);
+  assert.equal(history.currentRow(null), null);
+  assert.equal(history.currentRow({ request_no: "X" }), null);
+});
+
+test("the open request is placed newest first among the other requests", () => {
+  const rows = history.normalizeRows([
+    row({ request_id: "newer", created_at: "2026-10-20T00:00:00Z" }),
+    row({ request_id: "older", created_at: "2026-09-01T00:00:00Z" }),
+  ]);
+  const current = history.currentRow(openRequest());
+  assert.deepEqual(history.withCurrentRow(rows, current).map((item) => item.id), ["newer", "cur", "older"]);
+  assert.deepEqual(history.withCurrentRow([], current).map((item) => item.id), ["cur"]);
+  assert.deepEqual(history.withCurrentRow([rows[1]], current).map((item) => item.id), ["cur", "older"]);
+  assert.deepEqual(history.withCurrentRow([rows[0]], current).map((item) => item.id), ["newer", "cur"]);
+  assert.equal(history.withCurrentRow(rows, null), rows);
+});
+
+test("the open request is labelled and not linked", () => {
+  const html = history.listHtml([history.currentRow(openRequest({ can_open: true }))], helpers);
+  assert.match(html, /<li class="machine-history-item current" aria-current="page">/);
+  assert.match(html, /<span class="machine-history-no">RB044\/26<\/span><span class="machine-history-current">ใบนี้<\/span>/);
+  assert.doesNotMatch(html, /href=/);
+  assert.doesNotMatch(html, /ยังไม่มีประวัติ/);
+  assert.doesNotMatch(history.listHtml(history.normalizeRows([row()]), helpers), /ใบนี้|aria-current/);
 });
 
 test("a database without the migration and a denied caller get specific messages", () => {

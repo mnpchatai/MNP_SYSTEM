@@ -939,6 +939,8 @@ body.no-scroll { overflow: hidden; }
 .machine-history-no { color: var(--ink); font-size: 14px; font-weight: 700; }
 a.machine-history-no { color: var(--primary); text-decoration: none; }
 a.machine-history-no:hover { text-decoration: underline; }
+.machine-history-item.current { border-color: var(--primary); }
+.machine-history-current { padding: 1px 8px; color: var(--primary); font-size: 12px; font-weight: 700; border: 1px solid var(--primary); border-radius: 999px; }
 .machine-history-type { color: var(--muted); font-size: 12px; }
 .machine-history-date { margin-left: auto; color: var(--quiet); font-size: 12px; }
 .machine-history-text { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
