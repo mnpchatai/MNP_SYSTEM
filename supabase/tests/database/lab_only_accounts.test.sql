@@ -29,7 +29,7 @@ select ok(
 );
 select ok(
   not private.lab_only_function_allowed('app_peek_request_number') and not private.lab_only_function_allowed('app_laboratory_report')
-    and not private.lab_only_function_allowed('app_factory_master_data'),
+    and not private.lab_only_function_allowed('app_qc_reports'),
   'every other function stays closed (the LAB prefix is app_lab_ exactly, not any name starting with app_lab)'
 );
 select is(
@@ -128,8 +128,8 @@ select throws_ok($$ select public.app_peek_request_number('40000000-0000-0000-00
   'LAB_ONLY_ACCOUNT', 'MNPLAB001 cannot use the request RPCs (peek number)');
 select throws_ok($$ select * from public.app_request_status_board(null, null, 10) $$,
   'LAB_ONLY_ACCOUNT', 'MNPLAB001 cannot read the organisation status board');
-select throws_ok($$ select public.app_factory_master_data() $$,
-  'LAB_ONLY_ACCOUNT', 'MNPLAB001 cannot read the factory module');
+select throws_ok($$ select public.app_qc_reports('{}'::jsonb) $$,
+  'LAB_ONLY_ACCOUNT', 'MNPLAB001 cannot read the QC inspection module');
 select throws_ok($$ select public.app_create_request('40000000-0000-0000-0000-000000000001', 'หัวข้อทดสอบ', 'รายละเอียดทดสอบ', 'normal', '{}'::jsonb, '{}'::uuid[]) $$,
   'LAB_ONLY_ACCOUNT', 'MNPLAB001 cannot create a request');
 select throws_ok($$ select * from public.app_list_credentials() $$,
@@ -174,8 +174,8 @@ select is(public.app_lab_access(), true, 'MNPLAB002 has access to MNP LAB');
 select is(public.app_lab_only(), true, 'MNPLAB002 is a lab-only account even with the admin role');
 select throws_ok($$ select * from public.app_list_credentials() $$,
   'LAB_ONLY_ACCOUNT', 'MNPLAB002 cannot use admin tools although the role is admin');
-select throws_ok($$ select public.app_factory_master_data() $$,
-  'LAB_ONLY_ACCOUNT', 'MNPLAB002 cannot read the factory module although the role is admin');
+select throws_ok($$ select public.app_qc_reports('{}'::jsonb) $$,
+  'LAB_ONLY_ACCOUNT', 'MNPLAB002 cannot read the QC inspection module although the role is admin');
 select is((select count(*)::integer from public.requests), 0, 'MNPLAB002 sees no requests although the role is admin');
 select is((select count(*)::integer from public.audit_logs), 0, 'MNPLAB002 cannot read the audit trail although the role is admin');
 select is((select count(*)::integer from public.employees), 1, 'MNPLAB002 sees only their own employee row');
@@ -193,7 +193,7 @@ update public.employees set is_active = false where id = '82000000-0000-0000-000
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"82000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select is(public.app_lab_access(), false, 'a deactivated lab-only account has no LAB access');
-select throws_ok($$ select public.app_factory_master_data() $$,
+select throws_ok($$ select public.app_qc_reports('{}'::jsonb) $$,
   'LAB_ONLY_ACCOUNT', 'a deactivated lab-only account is still shut out of every other module');
 reset role;
 update public.employees set is_active = true where id = '82000000-0000-0000-0000-000000000011';

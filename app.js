@@ -220,7 +220,7 @@ function requestModulePage(path) {
   }
   return null;
 }
-// โมดูลที่รองรับโหมดทดสอบแล้วประกาศ sandbox: true — NCR และฝ่ายโรงงาน (ตาราง factory_*) ฐานข้อมูลแยกข้อมูลทดสอบแล้วทั้งคู่
+// โมดูลที่รองรับโหมดทดสอบแล้วประกาศ sandbox: true — NCR และใบตรวจ QC ฐานข้อมูลแยกข้อมูลทดสอบแล้วทั้งคู่
 // โมดูลอื่นถูกซ่อน และฐานข้อมูลปฏิเสธการเขียนของโมดูลที่ยังไม่รองรับ (SANDBOX_MODULE_UNSUPPORTED)
 const isSandboxMode = () => Boolean(state.employee?.isSandbox);
 const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;
@@ -358,7 +358,7 @@ function friendlyError(error) {
     PUSH_ENDPOINT_NOT_ALLOWED: "เบราว์เซอร์นี้ใช้บริการแจ้งเตือนที่ระบบยังไม่รองรับ (รองรับ Chrome, Edge, Firefox และ Safari)",
     LAB_ONLY_ACCOUNT: "บัญชีนี้ใช้ได้เฉพาะ MNP LAB",
     SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
-    SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR, Item master ฝ่ายโรงงาน และใบตรวจ QC ตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
+    SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR และใบตรวจ QC ตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
     NCR_FILES_REMAIN: "ลบไฟล์แนบทดสอบไม่หมด กรุณาลองล้างข้อมูลทดสอบอีกครั้ง",
     NCR_FILES_CLEANUP_ACTIVE: "กำลังล้างไฟล์แนบทดสอบ กรุณารอให้เสร็จแล้วลองใหม่",
     SANDBOX_ATTACHMENT_UNSUPPORTED: "โหมดทดสอบยังไม่รองรับการแนบไฟล์",
@@ -1558,7 +1558,7 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong><span class="sandbox-pill">TEST</span>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR เอกสารฝ่ายโรงงาน และใบตรวจ QC ได้ พร้อมแนบไฟล์</span></div>
+    <div class="sandbox-banner-copy"><strong><span class="sandbox-pill">TEST</span>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
