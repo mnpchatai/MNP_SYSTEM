@@ -37,6 +37,9 @@
     INVALID_ITEM_PART_CODE: "รหัสอะไหล่ยาวได้ไม่เกิน 60 ตัวอักษร และห้ามมีอักขระควบคุม",
     ITEM_CODE_TAKEN: "รหัส Item นี้มีอยู่แล้ว กรุณาใช้รหัสอื่น",
     ITEM_NOT_FOUND: "ไม่พบ Item นี้ (อาจถูกล้างข้อมูลทดสอบไปแล้ว)",
+    ROUTING_STEP_NOT_FOUND: "ไม่พบขั้นตอนนี้ใน Routing (อาจถูกล้างข้อมูลทดสอบไปแล้ว)",
+    STEP_PARAMS_QC_STEP: "ขั้นตรวจ QC ใช้ฟอร์มบันทึกผลตรวจ QC กำหนดพารามิเตอร์ไม่ได้",
+    INVALID_STEP_PARAMS: "พารามิเตอร์ไม่ถูกต้อง: รหัสไม่ซ้ำ ขึ้นต้นด้วยตัวอักษรอังกฤษ มีชื่อ มีค่าต่ำสุดหรือสูงสุด (ต่ำสุดไม่เกินสูงสุด) ไม่เกิน 20 รายการ",
     ITEM_VERSION_CONFLICT: "Item นี้ถูกแก้ไขจากหน้าต่างอื่นแล้ว กรุณาเปิดรายละเอียดใหม่แล้วแก้ไขอีกครั้ง",
     ITEM_LOCKED_FIELDS: "ประเภท หน่วยนับฐาน และการติดตามล็อตแก้ไขไม่ได้หลังสร้าง",
   };
@@ -312,18 +315,47 @@
   }
 
   // ---------- Routing ----------
+  // พารามิเตอร์ของขั้น (20261029010000): ทุกแผนกเห็นสเปก ฝ่ายวางแผนแก้ได้ (ฐานข้อมูลตรวจแผนกเอง) ขั้น QC ใช้ฟอร์มตรวจ QC แทน
+  const PARAM_ROWS_EXTRA = 3;
+  const jobModel = () => window.MNP_FACTORY_JOB_MODEL;
+
+  function stepParamsHtml(step, editable) {
+    const params = step.params ?? [];
+    const list = params.length
+      ? `<ul class="fm-step-params">${params.map((param) => `<li>${escapeHtml(param.label)} <span class="muted small">${escapeHtml(param.code)}</span> · ${escapeHtml(jobModel().specText(param))}${param.unit ? ` ${escapeHtml(param.unit)}` : ""}</li>`).join("")}</ul>`
+      : "";
+    if (!editable || step.work_center_code === "QC") return list;
+    const rows = [...params, ...Array.from({ length: Math.min(PARAM_ROWS_EXTRA, jobModel().MAX_PARAMS - params.length) }, () => ({}))];
+    const cell = (name, value, label, attrs = "") => `<input class="input" name="${name}" value="${escapeHtml(value ?? "")}" aria-label="${label}" ${attrs}>`;
+    return `${list}<details class="fm-review-details"><summary>${params.length ? "แก้ไขพารามิเตอร์" : "กำหนดพารามิเตอร์"}</summary>
+        <form class="fm-form fm-params-form" data-step="${escapeHtml(step.id)}" novalidate>
+          <div class="fm-form-error" role="alert" hidden></div>
+          <div class="table-wrap"><table><thead><tr><th>รหัส</th><th>ชื่อพารามิเตอร์</th><th>หน่วย</th><th>ต่ำสุด</th><th>สูงสุด</th></tr></thead><tbody>
+          ${rows.map((row) => `<tr>
+              <td>${cell("code", row.code, "รหัส", 'maxlength="20" autocapitalize="characters"')}</td>
+              <td>${cell("label", row.label, "ชื่อพารามิเตอร์", 'maxlength="80"')}</td>
+              <td>${cell("unit", row.unit, "หน่วย", 'maxlength="20"')}</td>
+              <td>${cell("min", row.min, "ค่าต่ำสุด", 'type="number" step="any" inputmode="decimal"')}</td>
+              <td>${cell("max", row.max, "ค่าสูงสุด", 'type="number" step="any" inputmode="decimal"')}</td>
+            </tr>`).join("")}</tbody></table></div>
+          <small>ล้างทุกช่องของแถวเพื่อลบพารามิเตอร์นั้น · ค่าที่หลุดช่วงตอนปิดขั้นทำให้ใบงานถูกกักกันรอ QA</small>
+          <div class="fm-actions"><button class="btn" type="submit">บันทึกพารามิเตอร์</button></div>
+        </form></details>`;
+  }
+
   function routingHtml(data, params) {
     const routings = data.routings ?? [];
     if (!routings.length) return emptyData("ขั้นตอนการผลิต (Routing)");
     const routing = routings.find((row) => row.id === params.get("routing")) ?? routings[0];
     const steps = (data.steps ?? []).filter((step) => step.routing_id === routing.id);
+    const editable = state.employee?.department?.code === jobModel().PLANNING_DEPARTMENT;
     return `${notice("ลำดับงานตัวอย่างและเวลาต่อชุดผลิต ต้องตรวจสอบกับกระบวนการจริงก่อนนำไปใช้")}
       <section class="card">
         <div class="field"><label for="fm-routing">เลือกสินค้า</label><select class="select" id="fm-routing">${options(routings.map((row) => [row.id, `${row.code} · ${row.name} (Rev. ${row.revision})`]), routing.id)}</select></div>
         <div class="fm-detail-head"><h2>${escapeHtml(routing.name)}</h2><span>Revision ${escapeHtml(routing.revision)} · ${docStatus(routing.status)}</span></div>
         <ol class="fm-steps">${steps.map((step) => `<li>
             <span class="fm-step-no">${escapeHtml(step.sequence)}</span>
-            <div><strong>${escapeHtml(step.name)}</strong><span class="muted small">${escapeHtml(step.work_center)}</span>${step.instruction ? `<small>${escapeHtml(step.instruction)}</small>` : ""}</div>
+            <div><strong>${escapeHtml(step.name)}</strong><span class="muted small">${escapeHtml(step.work_center)}</span>${step.instruction ? `<small>${escapeHtml(step.instruction)}</small>` : ""}${stepParamsHtml(step, editable)}</div>
             <div class="fm-step-time"><strong>${qty(step.run_minutes)} นาที</strong><small>เตรียมเครื่อง ${qty(step.setup_minutes)} นาที</small></div>
           </li>`).join("")}</ol>
       </section>`;
@@ -332,6 +364,29 @@
   function bindRouting(root, params) {
     const select = root.querySelector("#fm-routing");
     select?.addEventListener("change", () => { location.hash = menu.url(params.get("item"), { routing: select.value }).slice(1); });
+    root.querySelectorAll(".fm-params-form").forEach((form) => form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const errorBox = form.querySelector(".fm-form-error");
+      errorBox.hidden = true;
+      const rows = [...form.querySelectorAll("tbody tr")].map((tr) => Object.fromEntries([...tr.querySelectorAll("input")].map((input) => [input.name, input.value])));
+      const parsed = jobModel().stepParamsPayload(rows);
+      if (parsed.error) {
+        errorBox.textContent = parsed.error;
+        errorBox.hidden = false;
+        return;
+      }
+      const button = form.querySelector("button");
+      button.disabled = true;
+      try {
+        const { error } = await sb.rpc("app_factory_set_step_params", { p_routing_step_id: form.dataset.step, ...parsed.args });
+        if (error) throw error;
+        showToast(parsed.args.p_params.length ? `บันทึกพารามิเตอร์ ${parsed.args.p_params.length} รายการแล้ว` : "ลบพารามิเตอร์ของขั้นนี้แล้ว", "success");
+        await renderRoute();
+      } catch (error) {
+        showToast(friendlyError(error), "error");
+        button.disabled = false;
+      }
+    }));
   }
 
   // ---------- คลัง ----------
