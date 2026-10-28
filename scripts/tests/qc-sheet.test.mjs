@@ -153,6 +153,25 @@ test("validateExportRecord_ keeps the form data and refuses malformed records", 
   assert.equal(call("validateExportRecord_", record({ items: Array.from({ length: 30 }, () => record().items[0]) })).items.length, 30, "up to 30 items, the database limit");
 });
 
+test("a report without a part number shows a dash on the form and in the backup row", () => {
+  for (const partNumber of ["", undefined, null]) {
+    const clean = plain(call("validateExportRecord_", record({ partNumber })));
+    assert.equal(clean.partNumber, "-", `part number ${JSON.stringify(partNumber)} is drawn as a dash`);
+    assert.equal(clean.partName, "ยางรอง", "the part name is kept");
+    const { rows } = plain(call("exportLayout_", clean));
+    const line = rows.find((row) => row.includes("Part Number"));
+    assert.equal(line[2], "-");
+  }
+  assert.equal(call("validateExportRecord_", record()).partNumber, "P-100", "a part number is kept as is");
+  let written;
+  const fakeSheet = { getLastRow: () => 0, getRange: () => ({ setNumberFormat() { return this; }, setValues(values) { written = values[0]; return this; } }) };
+  call("upsertLogRow_", fakeSheet, record({ partNumber: "" }));
+  assert.equal(written[3], "-", "the backup row shows a dash for an empty part number");
+  assert.equal(written[4], "ยางรอง");
+  call("upsertLogRow_", fakeSheet, record());
+  assert.equal(written[3], "P-100");
+});
+
 test("exportLayout_ draws the QA01-PM11 form", () => {
   const layout = plain(call("exportLayout_", call("validateExportRecord_", record())));
   const { rows } = layout;

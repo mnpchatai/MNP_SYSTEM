@@ -913,12 +913,13 @@ migration `20261027010000_qc_inspection_reports.sql` เพิ่มฐานข
 - **RPC** (`app_qc_*`): `access`, `templates`, `save_template`, `reports`, `report`, `save_report`, `submit_report`, `decide_report`, `reopen_report`, `cancel_report`, `issue_ncr`, `lots` และ `app_sandbox_purge_qc` (admin ล้างข้อมูลทดสอบ) RPC ที่เขียนข้อมูลตรวจ version กันบันทึกทับ เขียนประวัติและ `audit_logs` ส่วน RPC อ่านและ purge ไม่ใช้ version
 - **การคำนวณอยู่ที่ฐานข้อมูล**: กรอกค่าที่วัด 1-5 จุดต่อรายการ ฐานข้อมูลคำนวณ min / max / average แล้วตัดสิน `O` / `N` / `NA` (ไม่มีสเปค) จากสเปก MIN-MAX เอง ผู้ตรวจรับรายการ `N` เป็น `AC` ได้พร้อมหมายเหตุ ≥ 5 ตัวอักษร ผลรวมของใบ: `ng` ถ้ามี N, `accept` ถ้ามีแต่ AC, `ok` นอกนั้น
 - **สายอนุมัติ**: manager QA (ผจก./ผู้ช่วยผจก. แผนก QA) → factory manager → General Manager ผู้ตรวจ = คนส่งใบ อนุมัติ/ไม่อนุมัติใบตัวเองไม่ได้ ไม่อนุมัติต้องมีเหตุผล แล้ว QA เปิดกลับเป็นฉบับร่างหรือยกเลิกได้ QA ทุกบทบาทและ admin แก้ใบได้ QA/ผู้บริหาร/admin อ่านได้
+- **Part Number ไม่บังคับ** (migration `20261028010000_qc_part_number_optional.sql`): ชิ้นงานเดี่ยวบางแบบไม่มีเลข Part (ฟอร์มกระดาษใส่ "-") `part_number` ของแม่แบบและใบว่างได้ (เก็บเป็น `''`, ยาวไม่เกิน 60) ส่วน Part Name ยังบังคับ แม่แบบยังเป็นตัวกำหนดรายการตรวจ ชิ้นงานเดี่ยวใช้แม่แบบที่มีแต่ Part Name กุญแจแม่แบบคือ unique index บางส่วน `(is_test, part_number) where part_number <> ''`: แม่แบบที่ไม่มีเลข Part มีได้หลายแบบ ส่วนเลข Part ที่มีค่าซ้ำกันไม่ได้ในโหมดเดียวกัน (`QC_PART_NUMBER_TAKEN`) `app_qc_issue_ncr` ส่ง `product_code` เป็น null เมื่อใบไม่มีเลข Part และ `app_qc_templates` เรียงแม่แบบที่มีเลข Part ก่อน แล้วที่ไม่มีเลขตาม Part Name
 - **เลขที่ใบ**: `TEST-QC-<YY>-<NNN>` จากตัวนับ `QC-TEST` (ตัวนับจริงไม่ขยับ)
 - **Lot ยางผสม**: `lab_mooney_results.lot_number` (คอลัมน์ใหม่ `app_lab_mooney_import` รับ `lot_number` เพิ่ม) ใบเก็บ `compound_lots` ได้ถึง 10 Lot `app_qc_report` คืนสรุปผล Mooney ต่อ Lot (`found`, จำนวนครั้งที่ทดสอบ, ค่าเฉลี่ย MH/MV) และ `app_qc_lots` ค้นรายการ Lot
 - **NCR**: ใบที่ผลเป็น `ng` และส่งอนุมัติแล้ว (ไม่ใช่ฉบับร่าง/ถูกไม่อนุมัติ/ยกเลิก) ออก NCR ได้ครั้งเดียวด้วย `app_ncr_issue` ใบที่ผูก NCR แล้วยกเลิกไม่ได้ (แหล่งที่พบ `final_fg`) ในธุรกรรมเดียวกัน เป็นใบทดสอบ `TEST-QA…`
 - **ยังไม่มี**: รูปแนบ/รูปจุดวัด, MDR, ตัวเตือนงานค้าง/แจ้งเตือน และการเปิดใช้กับข้อมูลจริง (ต้องเปลี่ยน `private.qc_actor` เพิ่มเทสต์บทบาทจริง และตัดสินใจว่า `qc_can_read` จะเปิดผล Mooney ให้ QA/ผู้บริหารกว้างกว่า `private.can_access_lab()` หรือไม่) ชีต Mooney ส่ง `lot_number` ได้เมื่อมีคอลัมน์ `Lot` (M) ดู README ของ `apps-script/lab-mooney/`
 - **ลำดับ deploy**: migration นี้ต้อง apply ที่ production (โดยได้รับอนุมัติ) ก่อน merge หน้าเว็บ `#/qc` ที่อยู่ใน PR เดียวกัน ตาม “Deployment order” ใน AGENTS.md
-- **การตรวจ**: `supabase/tests/database/qc_inspection_reports.test.sql` (อนุญาต/ปฏิเสธตามโหมดและบทบาท, การคำนวณ, สายอนุมัติ, NCR, Lot/Mooney, ล้างข้อมูล)
+- **การตรวจ**: `supabase/tests/database/qc_inspection_reports.test.sql` (อนุญาต/ปฏิเสธตามโหมดและบทบาท, การคำนวณ, สายอนุมัติ, NCR, Lot/Mooney, ล้างข้อมูล) และ `qc_part_number_optional.test.sql` (Part Number ว่าง: แม่แบบ/ใบ/NCR, ความซ้ำ, ความยาวเกิน 60)
 
 ### ใบตรวจ QC (QA01-PM11) — Pilot Web (โหมดทดสอบ)
 
@@ -930,6 +931,9 @@ migration `20261027010000_qc_inspection_reports.sql` เพิ่มฐานข
   (`?view=new`, `?view=edit&id=`) · ใบตรวจ (`?view=report&id=`) แสดงหัวใบตามฟอร์ม ตาราง ITEM No./สเปก/point 1–5/min/max/average/Judge
   (O เขียว · N แดง · AC เหลือง) REMARK ช่องลงนาม 4 ช่อง และประวัติ ระหว่างกรอก ค่า min/max/average/Judge/ผลรวมคำนวณสดเพื่อดูประกอบ
   ฐานข้อมูลคำนวณซ้ำเองและไม่รับ Judge จากหน้าเว็บ ผู้ตรวจยอมรับรายการที่เป็น N เป็น AC ได้ต้องมีหมายเหตุรายข้อ
+- **Part Number ไม่บังคับ**: ช่อง Part Number ของแม่แบบมีป้าย “(ไม่บังคับ)” ส่วน Part Name ยังบังคับ ชิ้นงานเดี่ยวที่ไม่มีเลข Part สร้างแม่แบบที่มีแต่ Part Name ตัวเลือกแม่แบบในฟอร์มใบแสดง `เลข Part · ชื่อ` หรือชื่ออย่างเดียวเมื่อไม่มีเลข
+  รายการใบ/แม่แบบใช้ชื่อ Part เป็นป้ายหลักเมื่อไม่มีเลข หัวใบและ Excel/สำเนาชีตแสดง "-" ในช่อง Part Number (Apps Script เติม "-" เอง `modules/qc-model.js` ส่งค่าว่าง)
+  ต้อง apply migration `20261028010000_qc_part_number_optional.sql` ก่อนจึงบันทึกแม่แบบ/ใบที่ไม่มีเลข Part ได้ (ฐานข้อมูลเดิมยังรับ Part Number ที่มีค่าตามปกติ)
 - **สิทธิ์** (ตัวบังคับจริงคือ RPC หน้าเว็บใช้ `app_qc_access` แค่ซ่อน/แสดงปุ่ม): อ่านได้ทุกบทบาทของแผนก QA · ผจก.โรงงาน/ผู้ช่วย · ผจก.ทั่วไป · admin;
   สร้าง/แก้/ส่ง/เปิดกลับ/ยกเลิก/เปิด NCR ได้เฉพาะแผนก QA และ admin; อนุมัติ 3 ขั้นตามลำดับ ผจก.QA → ผจก.โรงงาน → ผจก.ทั่วไป (GM)
   ผู้ตรวจหรือผู้สร้างใบอนุมัติใบตัวเองไม่ได้ ไม่อนุมัติต้องมีเหตุผล ใบที่ไม่อนุมัติเปิดกลับเป็นฉบับร่างหรือยกเลิกได้
@@ -947,6 +951,8 @@ migration `20261027010000_qc_inspection_reports.sql` เพิ่มฐานข
 - **ยังไม่มี**: รูปแนบ/จุดวัดบนแบบ, MDR, การเปิดใช้กับข้อมูลจริง (RPC ปฏิเสธนอกโหมดทดสอบด้วย `QC_TEST_MODE_ONLY`)
 - **ลำดับ deploy**: **ต้อง apply migration `20261027010000` บน production (ได้รับอนุมัติจากผู้ใช้) ก่อน merge PR นี้** ตาม “Deployment order” ใน AGENTS.md
   ถ้าฐานข้อมูลยังไม่มีฟังก์ชัน หน้าจะแจ้งว่ายังไม่ได้ apply migration
+  การปรับ Part Number ไม่บังคับต้องมี migration `20261028010000_qc_part_number_optional.sql` apply บน production (ได้รับอนุมัติจากผู้ใช้) ก่อน merge เช่นกัน
+  ถ้ายังไม่ apply การบันทึกแม่แบบ/ใบที่ไม่มีเลข Part จะถูกฐานข้อมูลปฏิเสธ (`QC_INVALID_PAYLOAD`) ส่วนแม่แบบและใบที่มีเลข Part ใช้งานได้ตามเดิม
 
 ## สิ่งที่มีใน Phase 1
 
