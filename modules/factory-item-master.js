@@ -25,6 +25,8 @@
 //   * "จัดการข้อมูลทดสอบ" = สถานะข้อมูลทดสอบ ชุดข้อมูลตัวอย่าง และการล้างแบบตรวจรายการก่อนยืนยัน (modules/module-factory-test-data.js)
 // view = หน้าจอที่ modules/module-factory-master.js วาดให้รายการนั้น (ไม่มี view = หน้าว่าง "ยังไม่เปิดใช้งาน")
 // เมื่อได้รายการครบให้เพิ่มที่ไฟล์นี้ที่เดียว (key ต้องไม่ซ้ำทั้งเมนู)
+// ต่อมาเพิ่มโฟลเดอร์ "คุณภาพ" (ก่อนโฟลเดอร์ข้อมูลทดสอบที่ต้องอยู่ท้ายสุด) ย้ายจากต้นแบบ prototypes/rubber-mes:
+//   * "SPC / Cpk" = I-chart ฮิสโตแกรม และ Cp/Cpk/Ppk ของค่าพารามิเตอร์ที่บันทึกตอนปิดขั้น (modules/module-factory-spc.js, &ch=<ค่าที่ติดตาม>)
 //
 // เทสต์ที่ scripts/tests/factory-item-master.test.mjs
 (function (root) {
@@ -67,11 +69,12 @@
       entry("schedule-gantt", "ตารางการผลิต (Gantt)", "gantt"),
       entry("schedule-calendar", "ปฏิทินกะศูนย์งาน", "gantt-calendar"),
     ]),
+    folder("quality", "คุณภาพ", [entry("quality-spc", "SPC / Cpk", "spc")]),
     folder("test-data", "ข้อมูลทดสอบ", [entry("test-data-manage", "จัดการข้อมูลทดสอบ", "test-data")]),
   ]);
 
   // พารามิเตอร์เพิ่มเติมที่หน้าของรายการใช้ได้ (ตัวกรอง/รายการที่เลือก) — ชื่ออื่นถูกทิ้ง
-  const EXTRA_PARAMS = Object.freeze(["id", "edit", "bom", "from", "routing", "po", "mo", "wo", "jb", "part", "qty", "q", "type", "brand", "status", "sort", "page"]);
+  const EXTRA_PARAMS = Object.freeze(["id", "edit", "bom", "from", "routing", "po", "mo", "wo", "jb", "part", "qty", "ch", "q", "type", "brand", "status", "sort", "page"]);
 
   // หารายการจาก key ของรายการ — ไม่พบคืน null ไม่เดาให้ (key มาจาก DOM จึงถือเป็นข้อมูลที่ยังไม่ตรวจ)
   function findEntry(key) {

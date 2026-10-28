@@ -7,7 +7,7 @@ const { FOLDERS, findEntry, url } = createRequire(import.meta.url)("../../module
 test("item master keeps the six reference folders first, then the folders added for the ported app", () => {
   assert.deepEqual(
     FOLDERS.map((folder) => folder.name),
-    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต", "สั่งวัตถุดิบ", "ใบงานผลิต", "ตารางการผลิต", "ข้อมูลทดสอบ"],
+    ["โครงสร้าง", "สินค้า", "ราคา", "ผู้ร่วมมือ", "ใบเสนอราคา", "ใบสั่งขาย", "ขั้นตอนการผลิต", "คลังสินค้า", "ใบสั่งผลิต", "สั่งวัตถุดิบ", "ใบงานผลิต", "ตารางการผลิต", "คุณภาพ", "ข้อมูลทดสอบ"],
   );
 });
 
@@ -27,7 +27,7 @@ test("folders without confirmed entries stay empty instead of guessing", () => {
 });
 
 test("every entry view is one the factory pages know how to draw", () => {
-  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material", "job-queue", "job-new", "job", "gantt", "gantt-calendar", "test-data"]);
+  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material", "job-queue", "job-new", "job", "gantt", "gantt-calendar", "spc", "test-data"]);
   for (const folder of FOLDERS) for (const entry of folder.entries) assert.ok(known.has(entry.view), entry.key);
 });
 
@@ -36,6 +36,12 @@ test("the test data folder comes last and holds the page that seeds and purges f
   assert.equal(last.key, "test-data");
   assert.deepEqual(last.entries.map((entry) => [entry.key, entry.name, entry.view]), [["test-data-manage", "จัดการข้อมูลทดสอบ", "test-data"]]);
   assert.equal(url("test-data-manage"), "#/factory?item=test-data-manage");
+});
+
+test("quality folder holds the SPC page and its link keeps the chosen characteristic", () => {
+  const quality = FOLDERS.find((folder) => folder.key === "quality");
+  assert.deepEqual(quality.entries.map((entry) => [entry.key, entry.name, entry.view]), [["quality-spc", "SPC / Cpk", "spc"]]);
+  assert.equal(url("quality-spc", { ch: "r1:20:THICK", other: "x" }), "#/factory?item=quality-spc&ch=r1%3A20%3ATHICK");
 });
 
 test("schedule folder holds the Gantt chart and the work center calendar", () => {

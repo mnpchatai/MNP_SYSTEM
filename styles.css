@@ -2406,3 +2406,25 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
   .qc-sign-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .qc-filter .input, .qc-lot-combo .input, .qc-entry-table .qc-point { font-size: 16px; }
 }
+
+/* ฝ่ายโรงงาน: SPC / Cpk (modules/module-factory-spc.js) — สีจากตัวแปรธีม จึงใช้ได้ทั้งธีมสว่างและมืด */
+.spc-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.spc-grid { stroke: var(--soft-line); stroke-width: 1; }
+.spc-tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.spc-label { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.spc-spec { stroke: var(--danger); stroke-width: 1.5; stroke-dasharray: 6 3; }
+.spc-spec-label { fill: var(--danger); }
+.spc-limit { stroke: var(--warning); stroke-width: 1.2; stroke-dasharray: 2 3; }
+.spc-limit-label { fill: var(--warning); }
+.spc-center { stroke: var(--success); stroke-width: 1.2; }
+.spc-center-label { fill: var(--success); }
+.spc-line { fill: none; stroke: var(--quiet); stroke-width: 1.4; }
+.spc-pt { fill: var(--success); }
+.spc-pt.is-ooc { fill: var(--warning); }
+.spc-pt.is-oos { fill: var(--danger); }
+.spc-bar { fill: var(--primary); opacity: .75; }
+.spc-bar.is-oos { fill: var(--danger); }
+.spc-hist { max-width: 560px; }
+/* ตัวอักษรใน SVG ย่อตามความกว้าง: จอแคบเลื่อน I-chart ในกรอบแทนการย่อจนอ่านไม่ออก (หน้าไม่เลื่อนแนวนอน) */
+.spc-scroll { overflow-x: auto; }
+.spc-scroll .spc-chart { min-width: 600px; }
