@@ -83,6 +83,8 @@
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
   const LOSS_EDITOR_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
+  // บทบาทที่ทำงาน: บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" ใช้บทบาทนั้น — ใช้กับผู้กรอกต้นทุนเท่านั้น ขั้นอื่นของ NCR ยังดู role จริง
+  const workingRoleCode = (employee) => employee?.actingRole?.code ?? roleCode(employee);
   // ผู้ตอบ NCR ได้: พนักงาน/ผจก./ผช.ผจก. ของแผนกที่รับผิดชอบ ถ้า ผจก.โรงงานระบุผู้ตอบของแผนกไว้ ตอบได้เฉพาะคนนั้น
   // (ตรงกับ private.ncr_can_respond ใน migration 20261020010000 — ใช้ตัดสินว่าจะแสดงฟอร์มเท่านั้น ฐานข้อมูลตัดสินสิทธิ์จริง)
   const isResponderRole = (employee) => roleCode(employee) === "staff" || isDeptManager(employee);
@@ -527,8 +529,9 @@
     // ลงยอดย้อนหลังได้หลังปิด NCR แล้ว ล็อกเฉพาะใบที่ยกเลิก (ตรงกับ app_ncr_record_loss / app_ncr_review_costs / app_ncr_void_loss)
     if (ncr.status === "cancelled") return false;
     // ทั้งใบจริงและใบทดสอบ: ผจก.ทั่วไป ผจก.โรงงาน ผช.ผจก.โรงงาน และ ผจก./ผช.ผจก.แผนก QA เท่านั้น ไม่ขึ้นกับแผนกที่รับผิดชอบ
-    // (ตรงกับ private.can_edit_ncr_losses, migration 20261017030000)
-    return LOSS_EDITOR_ROLE_CODES.includes(roleCode(employee)) || isQaManager(employee);
+    // นับ admin ตามบทบาทหลักในการทำงานด้วย (ตรงกับ private.can_edit_ncr_losses, migration 20261101010000)
+    const role = workingRoleCode(employee);
+    return LOSS_EDITOR_ROLE_CODES.includes(role) || (isQa(employee) && DEPT_MANAGER_ROLE_CODES.includes(role));
   }
 
   // ผจก.โรงงานระบุ/เปลี่ยน/ยกเลิกผู้ตอบของแต่ละแผนกได้ตราบที่แผนกยังมีงานต้องทำ (ตรงกับ app_ncr_assign_responder)

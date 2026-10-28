@@ -107,6 +107,28 @@ test("who sees the loss form on a real NCR matches private.can_edit_ncr_losses",
   }
 });
 
+test("an admin account counts as its working role for the loss form, but not for signing off", async () => {
+  // บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" (state.employee.actingRole) — ตรงกับ private.can_edit_ncr_losses ใน migration 20261101010000
+  const admin = (id, deptId, deptCode, actingRoleCode) => ({ ...employee(id, deptId, deptCode, "admin"), actingRole: actingRoleCode ? { code: actingRoleCode } : null });
+  const cases = [
+    ["admin working as general manager", admin("a1", "dept-mgt", "MGT", "general_manager"), true],
+    ["admin working as assistant factory manager", admin("a2", "dept-ft", "FT", "assistant_factory_manager"), true],
+    ["admin working as factory manager", admin("a3", "dept-ft", "FT", "factory_manager"), true],
+    ["admin in QA working as department manager", admin("a4", "dept-qa", "QA", "department_manager"), true],
+    ["admin outside QA working as department manager", admin("a5", "dept-rb", "RB", "department_manager"), false],
+    ["admin working as staff", admin("a6", "dept-qa", "QA", "staff"), false],
+    ["admin without a working role", admin("a7", "dept-mgt", "MGT", null), false],
+  ];
+  for (const [label, viewer, editable] of cases) {
+    const html = await renderFor(viewer);
+    assert.equal(html.includes('id="ncr-loss-form"'), editable, `${label}: loss form ${editable ? "shown" : "hidden"}`);
+  }
+  // ขั้นลงนามยังตรวจ role จริง (app_ncr_signoff) จึงไม่แสดงปุ่มลงนามให้ admin แม้บทบาทหลักตรงกับขั้นนั้น
+  const awaitingGm = { status: "awaiting_signoff", signoff_qa_at: "2026-10-10", signoff_factory_at: "2026-10-11" };
+  assert.doesNotMatch(await renderFor(admin("a1", "dept-mgt", "MGT", "general_manager"), awaitingGm), /data-action="signoff"/);
+  assert.match(await renderFor(employee("e3", "dept-mgt", "MGT", "general_manager"), awaitingGm), /data-action="signoff"/);
+});
+
 test("a cancelled NCR locks the loss form for everyone, and the responsible department does not change who can edit", async () => {
   const factoryManager = employee("e1", "dept-ft", "FT", "factory_manager");
   const qaManager = employee("e9", "dept-qa", "QA", "department_manager");
