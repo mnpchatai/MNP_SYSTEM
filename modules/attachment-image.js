@@ -10,8 +10,11 @@
 //
 // หลักการ:
 // - ตัดสินชนิดจาก "เนื้อไฟล์" (magic bytes) ก่อน แล้วค่อยดู MIME และนามสกุล ไม่งั้นไฟล์ที่ชนิดว่างจะแปลงไม่ได้
-// - JPEG/PNG/WebP ที่ไม่ใหญ่เกิน SAFE_BYTES ส่งต่อตามเดิม (ไม่บีบซ้ำ ภาพหน้าจอจะได้ไม่เบลอ)
-// - ภาพชนิดอื่น (HEIC, AVIF, GIF, BMP, TIFF) และภาพที่ใหญ่เกิน แปลงเป็น JPEG ด้านยาวไม่เกิน MAX_EDGE
+// - JPEG/PNG/WebP ที่ไม่ใหญ่เกิน COMPRESS_BYTES ส่งต่อตามเดิม (ไม่บีบซ้ำ ภาพหน้าจอจะได้ไม่เบลอ)
+// - JPEG/PNG/WebP ที่ใหญ่กว่า COMPRESS_BYTES แต่ไม่เกิน SAFE_BYTES ลองบีบเป็น JPEG ด้านยาวไม่เกิน MAX_EDGE
+//   ถ้าบีบไม่ได้หรือได้ไฟล์ไม่เล็กลง ใช้ไฟล์เดิม (ไฟล์เดิมระบบรับได้อยู่แล้ว)
+//   เหตุผล: รูปจากกล้องโทรศัพท์ 2–4 MB ถูกเปิดดูซ้ำหลายรอบ เป็นต้นเหตุหลักของ Egress ใน Supabase
+// - ภาพชนิดอื่น (HEIC, AVIF, GIF, BMP, TIFF) และภาพที่ใหญ่เกิน SAFE_BYTES ต้องแปลงเป็น JPEG ด้านยาวไม่เกิน MAX_EDGE
 // - HEIC: ลองให้เบราว์เซอร์ถอดรหัสเองก่อน (Safari ทำได้) ถ้าไม่ได้ค่อยโหลด libheif-js มาถอดรหัสแทน
 //   ใช้ build แบบ JavaScript ล้วน (ไม่มี eval/WebAssembly/worker) จึงใช้ได้ภายใต้ CSP เดิมของ index.html โดยไม่ต้องผ่อน
 // - ไฟล์ที่ไม่ใช่ภาพ (PDF, DOCX ฯลฯ) ผ่านไปตามเดิม ให้การตรวจชนิดเดิมของแต่ละหน้าจัดการต่อ
@@ -33,10 +36,11 @@
   else root.MNP_ATTACHMENT_IMAGE = api;
 })(typeof self !== "undefined" ? self : globalThis, function attachmentImageFactory(root) {
   const SAFE_BYTES = 4 * 1024 * 1024;
+  const COMPRESS_BYTES = 1024 * 1024;
   const MAX_FILE_BYTES = 20 * 1024 * 1024;
   const MAX_BATCH_FILES = 10;
   const MAX_BATCH_BYTES = MAX_FILE_BYTES;
-  const MAX_EDGE = 2560;
+  const MAX_EDGE = 1920;
   const HEIC_TIMEOUT_MS = 60000; // โหลดไลบรารี/ถอดรหัสบนเครื่องช้าอาจใช้เวลาหลายวินาที ตั้งไว้เผื่อ
   const CANONICAL_TYPES = { jpeg: "image/jpeg", png: "image/png", webp: "image/webp" };
   const CANONICAL_EXTENSIONS = { jpeg: "jpg", png: "png", webp: "webp" };
@@ -111,11 +115,13 @@
     return KIND_BY_EXTENSION[extensionOf(file?.name)] ?? null;
   }
 
-  // skip = ไม่ใช่ภาพ, keep = ใช้ไฟล์เดิม, retype = เนื้อไฟล์ถูกแต่ชนิด/นามสกุลผิด, convert = แปลงเป็น JPEG
+  // skip = ไม่ใช่ภาพ, keep = ใช้ไฟล์เดิม, retype = เนื้อไฟล์ถูกแต่ชนิด/นามสกุลผิด, convert = ต้องแปลงเป็น JPEG
+  // compress = ลองบีบเป็น JPEG ถ้าไม่สำเร็จหรือไม่เล็กลงให้ใช้ไฟล์เดิม (แก้ชนิดให้ถูกเหมือน retype)
   function planAction(kind, size, mimeType) {
     if (!kind) return "skip";
     if (!CANONICAL_TYPES[kind]) return "convert";
     if (size > SAFE_BYTES) return "convert";
+    if (size > COMPRESS_BYTES) return "compress";
     return String(mimeType ?? "") === CANONICAL_TYPES[kind] ? "keep" : "retype";
   }
 
@@ -257,7 +263,7 @@
 
   async function encodeWithinLimit(image, options) {
     const maxEdge = options.maxEdge ?? MAX_EDGE;
-    const attempts = [[maxEdge, 0.85], [maxEdge, 0.7], [1920, 0.7], [1280, 0.6]];
+    const attempts = [[maxEdge, 0.8], [maxEdge, 0.7], [1600, 0.7], [1280, 0.6]];
     for (const [edge, quality] of attempts) {
       const { width, height } = fitWithin(image.width, image.height, edge);
       const blob = await drawToJpeg(image.source, width, height, quality);
@@ -320,8 +326,17 @@
     const kind = detectImageKind(file, head);
     const action = planAction(kind, file.size, file.type);
     if (action === "skip" || action === "keep") return file;
-    if (action === "retype") {
-      return new File([file], withExtension(file.name, kind), { type: CANONICAL_TYPES[kind], lastModified: file.lastModified });
+    const retyped = () => file.type === CANONICAL_TYPES[kind]
+      ? file
+      : new File([file], withExtension(file.name, kind), { type: CANONICAL_TYPES[kind], lastModified: file.lastModified });
+    if (action === "retype") return retyped();
+    if (action === "compress") {
+      try {
+        const compressed = await convertToJpeg(file, kind, options);
+        return compressed.size < file.size ? compressed : retyped();
+      } catch {
+        return retyped();
+      }
     }
     return convertToJpeg(file, kind, options);
   }
@@ -436,7 +451,7 @@
   }
 
   return {
-    SAFE_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
+    SAFE_BYTES, COMPRESS_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
     checkBatch, describeBatch, createThumbnail,
     normalizeAttachment, normalizeAttachments, bindFileInputs, removeSelectedFile,

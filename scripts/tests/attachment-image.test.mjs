@@ -7,7 +7,7 @@ import test from "node:test";
 const attachmentImage = createRequire(import.meta.url)("../../modules/attachment-image.js");
 const {
   sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension, SAFE_BYTES,
-  checkBatch, describeBatch, normalizeAttachments, MAX_BATCH_FILES, MAX_BATCH_BYTES, MAX_FILE_BYTES, MESSAGES, HINT,
+  COMPRESS_BYTES, MAX_EDGE, checkBatch, describeBatch, normalizeAttachment, normalizeAttachments, MAX_BATCH_FILES, MAX_BATCH_BYTES, MAX_FILE_BYTES, MESSAGES, HINT,
 } = attachmentImage;
 
 function bytes(...parts) {
@@ -75,10 +75,34 @@ test("planAction keeps small supported images and converts everything else", () 
   assert.equal(planAction("webp", 1000, "image/webp"), "keep");
   assert.equal(planAction("jpeg", 1000, ""), "retype");
   assert.equal(planAction("png", 1000, "image/x-png"), "retype");
-  assert.equal(planAction("jpeg", SAFE_BYTES, "image/jpeg"), "keep");
+  assert.equal(planAction("jpeg", COMPRESS_BYTES, "image/jpeg"), "keep");
+  assert.equal(planAction("jpeg", COMPRESS_BYTES + 1, "image/jpeg"), "compress");
+  assert.equal(planAction("png", COMPRESS_BYTES + 1, ""), "compress");
+  assert.equal(planAction("webp", SAFE_BYTES, "image/webp"), "compress");
   assert.equal(planAction("jpeg", SAFE_BYTES + 1, "image/jpeg"), "convert");
   assert.equal(planAction("png", SAFE_BYTES + 1, "image/png"), "convert");
   for (const kind of ["heic", "avif", "gif", "bmp", "tiff"]) assert.equal(planAction(kind, 1000, `image/${kind}`), "convert");
+});
+
+// รูปจากกล้องโทรศัพท์ (2–4 MB) ต้องถูกบีบก่อนอัปโหลด เพื่อลด Storage และ Egress ของ Supabase
+test("phone photos above 1 MB are compressed to at most 1920 px", () => {
+  assert.equal(COMPRESS_BYTES, 1024 * 1024);
+  assert.ok(COMPRESS_BYTES < SAFE_BYTES);
+  assert.equal(MAX_EDGE, 1920);
+});
+
+// ใน Node วาด canvas ไม่ได้ จึงบีบไม่สำเร็จ ซึ่งตรงกับกรณีเบราว์เซอร์ถอดรหัสรูปไม่ได้: ต้องคืนไฟล์เดิม ไม่ใช่โยน Error
+test("a compressible image that cannot be re-encoded falls back to the original file", async () => {
+  const jpegHead = bytes([0xff, 0xd8, 0xff, 0xe0]);
+  const body = new Uint8Array(COMPRESS_BYTES + 1);
+  body.set(jpegHead);
+  const original = new File([body], "photo.jpg", { type: "image/jpeg" });
+  assert.equal(await normalizeAttachment(original), original);
+  const untyped = new File([body], "photo", { type: "" });
+  const retyped = await normalizeAttachment(untyped);
+  assert.equal(retyped.type, "image/jpeg");
+  assert.equal(retyped.name, "photo.jpg");
+  assert.equal(retyped.size, untyped.size);
 });
 
 test("fitWithin shrinks the long edge, keeps the ratio and never upscales", () => {
