@@ -132,8 +132,7 @@ test("a department page shows the queue of that department inside the department
 test("the RB page is the RubberFlow station board (view department:RB) inside the same department frame", async () => {
   const { app } = await page("dept=RB");
   assert.match(app.innerHTML, /title="ฝ่ายโรงงาน \/ RB ขึ้นรูปยาง"/);
-  assert.match(app.innerHTML, /RubberFlow · สายผลิตยาง 4 สถานี/);
-  assert.match(app.innerHTML, /aria-label="สถานีของสาย RB"/);
+  assert.match(app.innerHTML, /aria-label="RubberFlow · สถานีของสาย RB"/);
   assert.match(app.innerHTML, /JB-1/, "the open job is on its station");
   assert.doesNotMatch(app.innerHTML, /ถึงคิวแผนก RB/, "the generic queue is replaced for RB");
   assert.match(app.innerHTML, /aria-label="สลับแผนกฝ่ายโรงงาน"/, "the department tabs are kept");

@@ -20,13 +20,14 @@
   const stageInfo = (key) => STAGES.find((stage) => stage.key === key) ?? null;
 
   // คำสำคัญในชื่อขั้น → สถานี ตรวจตามลำดับนี้ (คำที่เจาะจงกว่าอยู่ก่อน) คำไทยใช้คำประสมที่พบในชื่อขั้นของ Routing RB
-  // ("อบ" ใช้ "อบยาง/อบด้วย" เพื่อไม่ชนกับ "รอบ/ประกอบ") ขั้นที่ไม่ตรงคำใดเลยใช้สถานีของขั้น RB ก่อนหน้า (ขั้นย่อยของงานเดียวกัน)
-  // ถ้าเป็นขั้นแรกใช้ "ผสมยาง" และติดธง inferred ให้หน้าจอบอกได้ว่าจัดเข้าสถานีโดยอนุมาน
+  // "อบ" นับเฉพาะที่ขึ้นต้นคำ (ต้นข้อความ หรือหลังอักขระที่ไม่ใช่ไทย เช่น ช่องว่าง/เลข/รหัสขั้น) จึงไม่ชนกับ "รอบ/ประกอบ/ตอบ"
+  // แต่ "นำไปอบ" ที่เขียนติดกันจะไม่ตรง (ไม่ใช้ lookbehind เพราะ Safari เก่าบน iPhone ไม่รองรับ) · คำอังกฤษสั้นใช้ขอบเขตคำ
+  // ขั้นที่ไม่ตรงคำใดเลยใช้สถานีของขั้น RB ก่อนหน้า (ขั้นย่อยของงานเดียวกัน) ถ้าเป็นขั้นแรกใช้ "ผสมยาง" และติดธง inferred
   const STAGE_RULES = Object.freeze([
-    ["curing", /อบยาง|อบด้วย|อบที่|อบใน|วัลคาไนซ์|oven|hcm|vulcan|cur(?:e|ing)|autoclave/i],
+    ["curing", /(?:^|[^฀-๿])อบ|วัลคาไนซ์|oven|hcm|vulcan|\bcur(?:e|ing)\b|autoclave/i],
     ["forming", /ฉีด|รีด|ขึ้นรูป|extru|inject|calender|mold|mould/i],
-    ["finishing", /ตัด|ตกแต่ง|ตรวจ|บรรจุ|แพ็ค|finish|trim|cut|pack|inspect|deflash/i],
-    ["mixing", /ชั่ง|ผสม|ตียาง|พักยาง|เคมี|แบ่งยาง|บดยาง|mix|knead|banbury|weigh|rest/i],
+    ["finishing", /ตัด|ตกแต่ง|ตรวจ|บรรจุ|แพ็ค|finish|trim|\bcut\b|\bpack/i],
+    ["mixing", /ชั่ง|ผสม|ตียาง|พักยาง|เคมี|แบ่งยาง|บดยาง|\bmix|knead|banbury|weigh|\brest\b/i],
   ]);
 
   // สถานีจากชื่อขั้น — ไม่ตรงคำใดคืน null
@@ -88,10 +89,11 @@
 
   // กระดานสถานีของ RB จากใบงานทั้งหมด (now = เวลาปัจจุบันเป็น ms สำหรับนาฬิกาพักยาง)
   //   stations[]  { stage, label, hint, ready[], held[] }  ready = ถึงคิวสถานีนี้ ทำได้ · held = ถึงคิวแต่ถูกกักกันรอ QA (ทำไม่ได้)
-  //   handed[]    ใบงานที่ขั้นของ RB เสร็จหมดแล้วและยังไม่จบ = ส่งต่อแผนกถัดไป (SR/QC/…) พร้อมขั้นที่กำลังรออยู่
+  //   handed[]    ใบงานที่ขั้นของ RB เสร็จหมดแล้วและยังไม่จบ = ส่งต่อแผนกถัดไป (SR/QC/…) พร้อมขั้นที่กำลังรออยู่ (held = ถูกกักกันตอนปิดขั้นสุดท้ายของ RB)
   //   waiting[]   ใบงานที่ขั้นถัดไปเป็นของแผนกอื่น แต่ RB ยังมีขั้นรอทำทีหลัง (รอแผนกอื่นก่อน)
   //   completed[] ใบงานที่เสร็จแล้ว (รับผลผลิตเข้าคลังแล้ว) ที่มีขั้นของ RB
-  //   summary     { active, held, handed, completed, yieldPercent } yieldPercent = Σ ผลิตจริง / Σ จำนวนสั่ง ของใบที่เสร็จ (null ถ้าไม่มี)
+  //   summary     { active, held, handed, completed, yieldPercent } held นับทุกใบที่ถูกกักกันในสาย (ที่สถานี ส่งต่อแล้ว และรอแผนกอื่น)
+  //               yieldPercent = Σ ผลิตจริง / Σ จำนวนสั่ง ของใบที่เสร็จ (null ถ้าไม่มี)
   // แต่ละรายการ: { job, step, stage, inferred, rest, held, progress }
   function board(jobs, now = Date.now()) {
     const jobModel = model();
@@ -127,7 +129,7 @@
     const produced = completed.reduce((sum, row) => sum + Number(row.job.output_qty ?? row.job.qty ?? 0), 0);
     const summary = {
       active: stations.reduce((sum, station) => sum + station.ready.length + station.held.length, 0) + waiting.length,
-      held: stations.reduce((sum, station) => sum + station.held.length, 0),
+      held: stations.reduce((sum, station) => sum + station.held.length, 0) + [...handed, ...waiting].filter((entry) => entry.held).length,
       handed: handed.length,
       completed: completed.length,
       yieldPercent: ordered > 0 ? Math.round((produced / ordered) * 1000) / 10 : null,

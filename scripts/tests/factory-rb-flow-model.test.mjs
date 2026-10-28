@@ -33,6 +33,12 @@ test("every RB step of the trial routing lands on the RubberFlow station its nam
   for (const [name, stage] of TRIAL) assert.equal(flow.stageOf(name), stage, name);
   assert.equal(flow.stageOf("QC-01 ตรวจขนาด"), "finishing", "a QC-looking name still matches, the department decides whether it is RB");
   assert.equal(flow.stageOf("ประกอบชิ้นส่วน"), null, "the word ประกอบ does not count as อบ");
+  assert.equal(flow.stageOf("ประกอบด้วยมือ"), null, "nor does ประกอบด้วย");
+  assert.equal(flow.stageOf("ผสมยางรอบที่ 2"), "mixing", "รอบที่ is not อบที่");
+  assert.equal(flow.stageOf("ตรวจรอบที่ 1"), "finishing");
+  assert.equal(flow.stageOf("อบชิ้นงาน 150 องศา"), "curing", "อบ at the start of a word counts");
+  assert.equal(flow.stageOf("RB-11 อบ 20 นาที"), "curing");
+  assert.equal(flow.stageOf("Execute forest cutover"), null, "short English words need word boundaries");
   assert.equal(flow.stageOf("ขั้นพิเศษ"), null);
   assert.equal(flow.stageOf(null), null);
 });
@@ -79,6 +85,7 @@ const JOBS = [
   job("jH", "open", [step(10, "GR-01 แปรรูป", "GR")]),
   job("jI", "in_progress", [step(10, "RB-11 อบยางด้วย Oven", "RB", "done"), step(20, "RB-99 ขั้นพิเศษ"), step(30, "SR-01 รับเข้าคลัง", "SR")]),
   job("jJ", "completed", RB_LINE(() => "done"), { qty: 50, output_qty: null, completed_at: "2026-10-26T05:00:00Z" }),
+  job("jK", "in_progress", RB_LINE(doneBefore(50)), { on_hold: true, hold_reason: "ตัดสั้นกว่าสเปก", held_at: "2026-10-28T02:00:00Z", created_at: "2026-10-09T01:00:00Z" }),
 ];
 
 test("the board puts every active RB job at the station of its next step, keeps held jobs apart, and lists what left the line", () => {
@@ -93,10 +100,10 @@ test("the board puts every active RB job at the station of its next step, keeps 
   assert.equal(board.stations[0].ready[0].rest, null);
   assert.equal(board.stations[2].ready[0].inferred, true, "the unmatched step says it was inferred");
   assert.deepEqual(board.stations[1].held[0].progress, { done: 1, total: 4 });
-  assert.deepEqual(board.handed.map((row) => [row.job.id, row.step.name]), [["jD", "SR-01 รับเข้าคลัง"]]);
+  assert.deepEqual(board.handed.map((row) => [row.job.id, row.step.name, row.held]), [["jD", "SR-01 รับเข้าคลัง", false], ["jK", "SR-01 รับเข้าคลัง", true]], "a job held when its last RB step closed is still handed over, and marked");
   assert.deepEqual(board.waiting.map((row) => [row.job.id, row.step.department_code]), [["jE", "QA"]]);
   assert.deepEqual(board.completed.map((row) => row.job.id), ["jF", "jJ"], "newest finished first");
-  assert.deepEqual(board.summary, { active: 5, held: 1, handed: 1, completed: 2, yieldPercent: 96.7 }, "yield = (95 + 50) / (100 + 50), a missing output counts as the ordered qty");
+  assert.deepEqual(board.summary, { active: 5, held: 2, handed: 2, completed: 2, yieldPercent: 96.7 }, "held counts the handed-over held job too; yield = (95 + 50) / (100 + 50), a missing output counts as the ordered qty");
   assert.equal(flow.board([], NOW).summary.yieldPercent, null);
   assert.equal(flow.board(undefined, NOW).stations.length, 4);
 });

@@ -18,7 +18,6 @@
   const jobUi = window.MNP_FACTORY_JOB_UI;
 
   const q4 = (value) => Number(value ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 4 });
-  const dept = () => state.employee?.department?.code ?? null;
   const byId = (rows, id) => (rows ?? []).find((row) => row.id === id) ?? null;
   const tile = (title, value, hint) => `<div class="summary"><span>${escapeHtml(title)}</span><strong>${escapeHtml(value)}</strong><small>${hint}</small></div>`;
   const jobLink = (job) => `<a class="fm-item-link" href="${escapeHtml(jobUi.viewUrl(job.id))}"><strong>${escapeHtml(job.code)}</strong><span>${escapeHtml(job.production_code)}</span></a>`;
@@ -42,11 +41,11 @@
       return `<li><a class="rbf-station${active ? " is-active" : ""}${total ? " has-work" : ""}" href="${escapeHtml(flow.url({ st: station.stage }))}"${active ? ' aria-current="page"' : ""}>
           <span class="rbf-station-no">${index + 1}</span>
           <span class="rbf-station-copy"><strong>${escapeHtml(station.label)}</strong><small>${escapeHtml(station.hint)}</small></span>
-          <span class="rbf-station-count" aria-label="ถึงคิว ${station.ready.length} ใบ">${station.ready.length}</span>
+          <span class="rbf-station-count" title="ถึงคิว ${station.ready.length} ใบ">${station.ready.length}</span>
           ${station.held.length ? `<span class="badge cancelled rbf-station-held">กักกัน ${station.held.length}</span>` : ""}
         </a></li>`;
     }).join("");
-    return `<ol class="rbf-stations" aria-label="สถานีของสาย RB">${items}</ol>`;
+    return `<ol class="rbf-stations" aria-label="RubberFlow · สถานีของสาย RB">${items}</ol>`;
   }
 
   function restCell(entry) {
@@ -77,7 +76,7 @@
     const table = entries.length
       ? `<div class="table-wrap"><table><thead><tr><th>ใบงาน</th><th>ผลิต</th><th class="right">จำนวน</th><th>ขั้นที่ถึงคิว</th><th class="right">RB</th><th class="right">จัดการ</th></tr></thead><tbody>${stationRows(entries, station, openId)}</tbody></table></div>`
       : `<div class="empty">ไม่มีใบงานที่สถานี${escapeHtml(station.label)}</div>`;
-    return `<section class="card rbf-station-card"><h2>สถานีที่ ${index + 1} · ${escapeHtml(station.label)} <span class="muted small">(${station.ready.length})</span></h2>
+    return `<section class="card rbf-station-card"><h2>สถานีที่ ${index + 1} · ${escapeHtml(station.label)}</h2>
         <p class="muted small">ใบงานที่ขั้นถัดไปอยู่ในสถานีนี้ เก่าสุดก่อน — กด “ทำขั้นตอน” เพื่อเปิดฟอร์มในหน้านี้ (ต้องสลับ “ทำหน้าที่เป็น” เป็นพนักงานแผนก RB)</p>${table}</section>`;
   }
 
@@ -90,19 +89,18 @@
     if (!next) body = notice(`${job.code} ${model.JOB_STATUSES[job.status] ?? job.status} — ไม่มีขั้นให้ทำแล้ว`);
     else if (!where) body = notice(`${job.code} อยู่ที่ขั้น “${next.name}” ของแผนก ${next.department_code} ไม่ได้อยู่ในสถานีของ RB ตอนนี้`);
     else if (where.stage !== station.stage) body = `<p class="fm-notice" role="note">${escapeHtml(`${job.code} อยู่ที่สถานี${where.label}`)} — <a href="${escapeHtml(flow.url({ st: where.stage, jb: job.id }))}">ไปที่สถานี${escapeHtml(where.label)}</a></p>`;
-    else body = `<p class="fm-current-step"><strong>${escapeHtml(next.name)}</strong> · ${escapeHtml(job.item_code)} ${escapeHtml(job.item_name)} · ${q4(job.qty)} ${escapeHtml(job.unit_code)}</p>${jobUi.actionsHtml(data, job)}`;
+    else body = jobUi.actionsHtml(data, job); // ชื่อขั้นอยู่ในหัวฟอร์ม ชิ้นงาน/จำนวนอยู่ในแถวของตารางถัดลงไป ไม่ซ้ำที่นี่
     return `<section class="card rbf-open"><div class="rbf-open-head"><h2>${jobLink(job)}</h2>${full}</div>${body}</section>`;
   }
 
   function handedHtml(board) {
-    const rows = (entries) => `<div class="table-wrap"><table><thead><tr><th>ใบงาน</th><th>ผลิต</th><th>ตอนนี้อยู่ที่ขั้น</th><th class="right">จัดการ</th></tr></thead><tbody>${entries.map(({ job, step }) => `<tr>
-        <td>${jobLink(job)}</td><td>${itemCell(job)}</td><td>${escapeHtml(step.name)}<br><span class="muted small">(แผนก ${escapeHtml(step.department_code)})</span></td>
+    // ใบที่ถูกกักกันตอนปิดขั้นสุดท้ายของ RB ยังถูกกักกันอยู่แม้ส่งต่อแล้ว แผนกถัดไปทำต่อไม่ได้จนกว่า QA ตัดสิน จึงติดป้ายไว้
+    const rows = (entries) => `<div class="table-wrap"><table><thead><tr><th>ใบงาน</th><th>ผลิต</th><th>ตอนนี้อยู่ที่ขั้น</th><th class="right">จัดการ</th></tr></thead><tbody>${entries.map(({ job, step, held }) => `<tr>
+        <td>${jobLink(job)}</td><td>${itemCell(job)}</td><td>${escapeHtml(step.name)}<br><span class="muted small">(แผนก ${escapeHtml(step.department_code)})</span>${held ? `<br><span class="badge cancelled">กักกัน รอ QA</span> <span class="muted small fm-pre">${escapeHtml(job.hold_reason ?? "")}</span>` : ""}</td>
         <td class="right"><a class="btn secondary small" href="${escapeHtml(jobUi.viewUrl(job.id))}">เปิด</a></td></tr>`).join("")}</tbody></table></div>`;
     const parts = [];
     if (board.waiting.length) parts.push(fold(`รอแผนกอื่นก่อน แล้วกลับมาที่ RB <span class="muted small">(${board.waiting.length})</span>`, rows(board.waiting), { open: true, tone: "warn" }));
-    parts.push(board.handed.length
-      ? fold(`ส่งต่อแผนกถัดไปแล้ว <span class="muted small">(${board.handed.length})</span>`, rows(board.handed))
-      : fold("ส่งต่อแผนกถัดไปแล้ว <span class=\"muted small\">(0)</span>", '<div class="empty">ยังไม่มีใบงานที่ส่งต่อ</div>'));
+    parts.push(fold("ส่งต่อแผนกถัดไปแล้ว", board.handed.length ? rows(board.handed) : '<div class="empty">ยังไม่มีใบงานที่ส่งต่อ</div>'));
     return `<section class="card rbf-handed">${parts.join("")}</section>`;
   }
 
@@ -122,8 +120,8 @@
       const index = board.stations.indexOf(station);
       const job = params.get("jb") ? byId(data.jobs, params.get("jb")) : null;
       const open = params.get("jb") && !job ? `<section class="card">${notice("ไม่พบใบงานนี้ (อาจถูกล้างข้อมูลทดสอบไปแล้ว)")}</section>` : job ? openJobHtml(data, job, board, station) : "";
-      const root = frame.paint({ body: `<p class="rbf-brand">RubberFlow · สายผลิตยาง 4 สถานี${dept() === flow.DEPARTMENT ? "" : ` · <span class="muted">ตอนนี้ทำหน้าที่เป็นแผนก ${escapeHtml(dept() ?? "—")}</span>`}</p>
-        ${summaryHtml(board.summary)}${stationsHtml(board, station)}${open}${stationHtml(station, index, job?.id ?? null)}${handedHtml(board)}${linksHtml()}` });
+      // ไม่มีบรรทัดชื่อหน้า/persona ซ้ำ: หัวแผนกและแถบสีเหลืองของโหมดทดสอบบอกอยู่แล้ว
+      const root = frame.paint({ body: `${summaryHtml(board.summary)}${stationsHtml(board, station)}${open}${stationHtml(station, index, job?.id ?? null)}${handedHtml(board)}${linksHtml()}` });
       if (job) jobUi.bindDetail(root, job);
       return root;
     },

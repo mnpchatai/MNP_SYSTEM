@@ -2444,7 +2444,6 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 }
 
 /* RubberFlow — หน้าแผนก RB แบบ 4 สถานี (modules/module-factory-rb.js) ใช้สีแผนกจาก --dept ของ .factory-page */
-.rbf-brand { margin: 0 0 10px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .02em; }
 .rbf-stations { margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; list-style: none; }
 .rbf-station { position: relative; min-height: 64px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 10px; text-decoration: none; transition: border-color .18s ease-out, box-shadow .18s ease-out; }
 .rbf-station:hover { border-color: var(--dept, var(--primary)); }

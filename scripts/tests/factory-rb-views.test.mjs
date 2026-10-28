@@ -50,6 +50,7 @@ const FIXTURE = {
     job("j-form", "TEST-JB-26-003", "in_progress", line(20, { params: [{ code: "THICK", label: "ความหนา", unit: "mm", min: 1.9, max: 2.1 }] }), { started_at: "2026-10-07T02:00:00Z" }),
     job("j-held", "TEST-JB-26-004", "in_progress", line(30), { on_hold: true, hold_reason: `ความหนาหลุดสเปก ${XSS}`, held_at: "2026-10-07T04:00:00Z", started_at: "2026-10-07T02:00:00Z" }),
     job("j-handed", "TEST-JB-26-005", "in_progress", line(50), { started_at: "2026-10-07T02:00:00Z" }),
+    job("j-handed-held", "TEST-JB-26-008", "in_progress", line(50), { started_at: "2026-10-07T02:00:00Z", created_at: "2026-10-07T05:00:00Z", on_hold: true, hold_reason: "ตัดสั้นกว่าสเปก", held_at: "2026-10-07T06:00:00Z" }),
     job("j-done", "TEST-JB-26-006", "completed", line(60), { output_qty: 90, completed_at: "2026-10-08T02:00:00Z" }),
     job("j-gr", "TEST-JB-26-007", "open", [step(10, "GR-01 แปรรูป", "GR")]),
   ],
@@ -101,7 +102,7 @@ test("the RB page is registered as the department's own view and reads only the 
   assert.equal(typeof context.MNP_FACTORY_VIEWS.department, "function", "the generic queue stays for the other departments");
   const { body, log } = await render();
   assert.deepEqual(log.calls.map(([name]) => name), ["app_factory_master_data"]);
-  assert.match(body, /RubberFlow · สายผลิตยาง 4 สถานี/);
+  assert.match(body, /aria-label="RubberFlow · สถานีของสาย RB"/);
   assert.doesNotMatch(body, /<script>/, "item names and hold reasons from the database are escaped");
   assert.match(body, /ยางเส้นยาว &lt;script&gt;/);
 });
@@ -110,8 +111,8 @@ test("the summary and the station strip count the line once each, and the first 
   const { body } = await render();
   const summary = text(body.slice(0, body.indexOf("rbf-stations")));
   assert.match(summary, /ใบงานในสาย RB 4/, "mixing 2 + forming 1 + held at curing 1");
-  assert.match(summary, /ถูกกักกัน รอ QA 1/);
-  assert.match(summary, /ส่งต่อแผนกถัดไปแล้ว 1/);
+  assert.match(summary, /ถูกกักกัน รอ QA 2/, "the one held at curing and the one held after its last RB step");
+  assert.match(summary, /ส่งต่อแผนกถัดไปแล้ว 2/);
   assert.match(summary, /เสร็จแล้ว 1 ผลิตจริง\/สั่ง 90%/);
   const stations = [...body.matchAll(/<a class="rbf-station([^"]*)" href="([^"]+)"/g)].map((match) => [match[1].trim(), match[2]]);
   assert.deepEqual(stations, [
@@ -120,9 +121,9 @@ test("the summary and the station strip count the line once each, and the first 
     ["has-work", "#/factory?dept=RB&amp;st=curing"],
     ["", "#/factory?dept=RB&amp;st=finishing"],
   ]);
-  assert.match(body, /aria-label="ถึงคิว 2 ใบ">2</, "mixing has two jobs");
+  assert.match(body, /title="ถึงคิว 2 ใบ">2</, "mixing has two jobs");
   assert.match(body, /rbf-station-held">กักกัน 1</, "the held job shows on its station, not in the big count");
-  assert.match(body, /<h2>สถานีที่ 1 · ผสมยาง <span class="muted small">\(2\)<\/span><\/h2>/);
+  assert.match(body, /<h2>สถานีที่ 1 · ผสมยาง<\/h2>/, "the count is on the strip only");
   assert.match(body, /TEST-JB-26-001[\s\S]*TEST-JB-26-002/, "oldest first");
   assert.match(body, /href="#\/factory\?dept=RB&amp;st=mixing&amp;jb=j-mix"[^>]*>ทำขั้นตอน</, "the action opens the form on this page");
   assert.match(body, /⏱ พักอีก 1 ชม\. 0 นาที/, "the resting job shows its timer");
@@ -131,7 +132,7 @@ test("the summary and the station strip count the line once each, and the first 
 
 test("the station in the URL is drawn, with the held job marked and without an action for it", async () => {
   const { body } = await render("st=curing");
-  assert.match(body, /<h2>สถานีที่ 3 · อบ <span class="muted small">\(0\)<\/span><\/h2>/);
+  assert.match(body, /<h2>สถานีที่ 3 · อบ<\/h2>/);
   assert.match(body, /TEST-JB-26-004/);
   assert.match(body, /<span class="badge cancelled">กักกัน รอ QA<\/span>/);
   assert.match(body, /ความหนาหลุดสเปก &lt;script&gt;/);
@@ -146,7 +147,8 @@ test("the station in the URL is drawn, with the held job marked and without an a
 test("opening a job on its station shows the job's own step form and submits through the same RPC as the job page", async () => {
   const { body, controls, log } = await render("st=forming&jb=j-form", { dept: "RB" });
   assert.match(body, /rbf-open/);
-  assert.match(body, /<strong>RB-10 ฉีดยาง<\/strong> · WIP-RBL/);
+  assert.match(body, /<h3>RB-10 ฉีดยาง<\/h3>/, "the step name comes from the form itself");
+  assert.doesNotMatch(body, /fm-current-step/, "no second line repeating the row of the table");
   assert.match(body, /id="jb-step-form"/);
   assert.match(body, /data-reading="THICK"/, "the parameter inputs of the step are there");
   assert.match(body, /href="#\/factory\?item=job-view&amp;jb=j-form">เปิดใบงานเต็ม</);
@@ -163,7 +165,6 @@ test("opening a job on its station shows the job's own step form and submits thr
 test("another persona sees whose turn it is instead of the form, and a job elsewhere points to its station", async () => {
   const other = await render("st=forming&jb=j-form", { dept: "GR" });
   assert.doesNotMatch(other.body, /id="jb-step-form"/);
-  assert.match(text(other.body), /ตอนนี้ทำหน้าที่เป็นแผนก GR/);
   assert.match(text(other.body), /เป็นของแผนก RB — สลับ “ทำหน้าที่เป็น”/);
   const elsewhere = await render("st=curing&jb=j-mix");
   assert.match(elsewhere.body, /TEST-JB-26-001 อยู่ที่สถานีผสมยาง — <a href="#\/factory\?dept=RB&amp;st=mixing&amp;jb=j-mix">ไปที่สถานีผสมยาง<\/a>/);
@@ -179,8 +180,9 @@ test("another persona sees whose turn it is instead of the form, and a job elsew
 test("jobs that left the line are listed with the step they wait at, and the tools link to BOM, routing and SPC", async () => {
   const { body } = await render();
   const handed = body.slice(body.indexOf("rbf-handed"));
-  assert.match(handed, /ส่งต่อแผนกถัดไปแล้ว <span class="muted small">\(1\)<\/span>/);
-  assert.match(handed, /TEST-JB-26-005[\s\S]*?SR-01 รับเข้าคลัง<br><span class="muted small">\(แผนก SR\)<\/span>/);
+  assert.match(handed, /<summary>ส่งต่อแผนกถัดไปแล้ว<\/summary>/, "the count is on the summary tile only");
+  assert.match(handed, /TEST-JB-26-005[\s\S]*?SR-01 รับเข้าคลัง<br><span class="muted small">\(แผนก SR\)<\/span><\/td>/);
+  assert.match(handed, /TEST-JB-26-008[\s\S]*?\(แผนก SR\)<\/span><br><span class="badge cancelled">กักกัน รอ QA<\/span> <span class="muted small fm-pre">ตัดสั้นกว่าสเปก<\/span>/, "a job held after its last RB step is still shown as held");
   assert.doesNotMatch(handed, /รอแผนกอื่นก่อน/, "nothing is waiting for another department");
   assert.doesNotMatch(body, /TEST-JB-26-007/, "a job without RB steps is not on this page");
   for (const key of ["structure-view", "routing-view", "quality-spc", "job-view"]) assert.match(body, new RegExp(`href="#/factory\\?item=${key}"`), key);
