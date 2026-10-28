@@ -387,7 +387,6 @@ begin
 end;
 $$;
 
--- สิทธิ์ (ระบุซ้ำหลัง create or replace ให้ตรงกับ 20261027010000: ไม่เปิดให้ anon, เรียกได้เฉพาะผู้ล็อกอิน)
 -- รายการใบ (ไม่รวมรายการตรวจ) ล่าสุด 200 ใบ กรองด้วย status, part_number (มีคำนี้อยู่ใน Part Number หรือ Part Name ไม่สนตัวพิมพ์
 -- เพื่อให้ใบของชิ้นงานที่ไม่มีเลข Part ค้นเจอ), lot (ตรงทั้งค่า), result — นิยามจาก 20261027010000 เปลี่ยนเฉพาะเงื่อนไขค้นหา
 create or replace function public.app_qc_reports(p_filter jsonb default '{}'::jsonb)
@@ -441,6 +440,7 @@ begin
 end;
 $$;
 
+-- สิทธิ์ (ระบุซ้ำหลัง create or replace ให้ตรงกับ 20261027010000: ไม่เปิดให้ anon, เรียกได้เฉพาะผู้ล็อกอิน)
 revoke all on function public.app_qc_templates() from public, anon;
 revoke all on function public.app_qc_reports(jsonb) from public, anon;
 revoke all on function public.app_qc_save_template(jsonb) from public, anon;
