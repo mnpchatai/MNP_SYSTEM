@@ -462,7 +462,7 @@ function optionalAttachments(fileList) {
 // ข้อความใต้ช่องแนบไฟล์ทุกหน้า ใช้ชุดเดียวกับฝั่ง Next.js (modules/attachment-image.js)
 const ATTACHMENT_HINT = window.MNP_ATTACHMENT_IMAGE?.HINT ?? "";
 
-// รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 4 MB) ถูกแปลงเป็น JPEG ในเบราว์เซอร์
+// รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 1 MB) ถูกแปลง/บีบเป็น JPEG ในเบราว์เซอร์
 // ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
 // onSelection แสดงตัวอย่างไฟล์ที่เลือกก่อนอัปโหลด (modules/attachment-preview.js ใช้ loadPdfjs ของไฟล์นี้ร่วมกับแกลเลอรี)
 window.MNP_ATTACHMENT_IMAGE?.bindFileInputs({
@@ -535,6 +535,10 @@ async function uploadExtraFiles(requestId, files, uploaderId) {
 // ตัวอย่างไฟล์แนบ: แสดงรูปทันทีในหน้า (รวมถึงหน้าแรกของ PDF) โดยไม่ต้องกดเปิด
 // ---------------------------------------------------------------------------
 const ATTACHMENT_URL_TTL = 3600;
+// signed URL ที่สร้างแล้วถูกใช้ซ้ำจนเหลืออายุไม่ถึง 10 นาที: URL ใหม่ (token ใหม่) ทุกครั้งที่เปิดหน้าทำให้เบราว์เซอร์
+// ใช้ cache ไม่ได้และโหลดรูปเต็มซ้ำทุกรอบ ซึ่งเป็นต้นเหตุหลักของ Egress ใน Supabase ล้างเมื่อออกจากระบบ (onAuthStateChange)
+const ATTACHMENT_URL_REUSE_MS = 10 * 60 * 1000;
+const signedAttachmentUrls = new Map();
 const TEXT_PREVIEW_LIMIT = 512 * 1024;
 const attachmentKindLabels = { image: "รูปภาพ", pdf: "PDF", text: "ข้อความ", sheet: "Excel", doc: "Word", other: "ไฟล์แนบ" };
 const attachmentPreviews = new Map();
@@ -678,18 +682,37 @@ async function fillAttachmentTile(file, url) {
   }
 }
 
+// คืน Map path → signed URL โดยขอ URL ใหม่เฉพาะไฟล์ที่ยังไม่มีใน cache หรือใกล้หมดอายุ
+async function signAttachmentPaths(bucket, paths) {
+  const now = Date.now();
+  const signedByPath = new Map();
+  const missing = [];
+  for (const path of paths) {
+    const cached = signedAttachmentUrls.get(`${bucket}/${path}`);
+    if (cached && cached.expiresAt - now > ATTACHMENT_URL_REUSE_MS) signedByPath.set(path, cached.url);
+    else missing.push(path);
+  }
+  if (!missing.length) return { signedByPath, error: null };
+  const { data, error } = await sb.storage.from(bucket).createSignedUrls(missing, ATTACHMENT_URL_TTL);
+  if (error) return { signedByPath, error };
+  const expiresAt = now + ATTACHMENT_URL_TTL * 1000;
+  for (const item of data ?? []) {
+    if (!item.signedUrl) continue;
+    signedAttachmentUrls.set(`${bucket}/${item.path}`, { url: item.signedUrl, expiresAt });
+    signedByPath.set(item.path, item.signedUrl);
+  }
+  return { signedByPath, error: null };
+}
+
 // bucket: ไฟล์แนบคำร้องใช้ request-attachments ส่วน NCR ใช้ ncr-attachments (modules/module-ncr.js)
 async function hydrateAttachmentGallery(files, bucket = "request-attachments") {
   if (!files.length || !document.querySelector("#attachment-gallery")) return;
   attachmentPreviews.clear();
-  const { data, error } = await sb.storage
-    .from(bucket)
-    .createSignedUrls(files.map((file) => file.storage_path), ATTACHMENT_URL_TTL);
+  const { signedByPath, error } = await signAttachmentPaths(bucket, files.map((file) => file.storage_path));
   if (error) {
     document.querySelectorAll(".attachment-tile").forEach((tile) => setTileMessage(tile, "เปิดไฟล์แนบไม่ได้"));
     return;
   }
-  const signedByPath = new Map((data ?? []).filter((item) => item.signedUrl).map((item) => [item.path, item.signedUrl]));
   for (const file of files) {
     const url = signedByPath.get(file.storage_path);
     if (!url) {
@@ -3966,6 +3989,7 @@ async function init() {
   window.addEventListener("hashchange", renderRoute);
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
   sb.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_OUT") signedAttachmentUrls.clear();
     if (event !== "SIGNED_OUT" || !state.session) return;
     releasePushOnThisDevice({ server: false });
     state.session = null;

@@ -14,13 +14,15 @@ export type HeicDecoder = {
 export type NormalizeOptions = {
   /** ตัวโหลด libheif-js — Pilot Web ไม่ต้องส่ง (ใช้ไฟล์ใน vendor/ ให้เอง) Next.js ส่ง dynamic import เข้ามา */
   loadHeicDecoder?: () => Promise<HeicDecoder>;
-  /** ด้านยาวสูงสุดของรูปที่แปลง (พิกเซล) ค่าเริ่มต้น 2560 */
+  /** ด้านยาวสูงสุดของรูปที่แปลง (พิกเซล) ค่าเริ่มต้น 1920 */
   maxEdge?: number;
   /** normalizeAttachments เรียกก่อนเริ่มเตรียมแต่ละไฟล์ (นับจาก 1) ให้แสดงความคืบหน้า */
   onProgress?: (done: number, total: number) => void;
 };
 
 export const SAFE_BYTES: number;
+/** รูป JPEG/PNG/WebP ที่ใหญ่กว่านี้ (1 MB) ถูกลองบีบเป็น JPEG ก่อนอัปโหลด */
+export const COMPRESS_BYTES: number;
 export const MAX_EDGE: number;
 /** ขนาดสูงสุดต่อไฟล์ (20 MB) — ต้องตรงกับ check constraint / bucket ในฐานข้อมูล */
 export const MAX_FILE_BYTES: number;
@@ -59,7 +61,7 @@ export function createThumbnail(file: File, maxEdge?: number): Promise<string | 
 
 export function sniffImageType(bytes: Uint8Array): string | null;
 export function detectImageKind(file: { name?: string; type?: string }, headBytes?: Uint8Array): string | null;
-export function planAction(kind: string | null, size: number, mimeType: string): "skip" | "keep" | "retype" | "convert";
+export function planAction(kind: string | null, size: number, mimeType: string): "skip" | "keep" | "retype" | "compress" | "convert";
 export function fitWithin(width: number, height: number, maxEdge: number): { width: number; height: number };
 export function jpegName(name: string): string;
 export function withExtension(name: string, kind: string): string;
