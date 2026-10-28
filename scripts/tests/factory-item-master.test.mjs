@@ -27,7 +27,7 @@ test("folders without confirmed entries stay empty instead of guessing", () => {
 });
 
 test("every entry view is one the factory pages know how to draw", () => {
-  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "production", "production-new", "production-planning", "material-new", "material", "job-queue", "job-new", "job", "gantt", "gantt-calendar", "spc", "test-data"]);
+  const known = new Set(["bom", "bom-new", "bom-drafts", "bom-approvals", "items", "item-new", "history", "routing", "inventory", "lots", "production", "production-new", "production-planning", "material-new", "material", "job-queue", "job-new", "job", "gantt", "gantt-calendar", "spc", "test-data"]);
   for (const folder of FOLDERS) for (const entry of folder.entries) assert.ok(known.has(entry.view), entry.key);
 });
 
@@ -155,4 +155,13 @@ test("url keeps the bom and from parameters used by the BOM screens and drops un
   assert.equal(url("structure-new", { bom: "abc" }), "#/factory?item=structure-new&bom=abc");
   assert.equal(url("structure-new", { from: "def", evil: "x" }), "#/factory?item=structure-new&from=def");
   assert.equal(url("structure-approve"), "#/factory?item=structure-approve");
+});
+
+test("inventory folder holds the stock view and the lot page, which keeps its search and status filters", () => {
+  const inventory = FOLDERS.find((folder) => folder.key === "inventory");
+  assert.deepEqual(inventory.entries.map((entry) => [entry.key, entry.name, entry.view]), [
+    ["inventory-view", "สินค้าคงคลัง-ดู", "inventory"],
+    ["inventory-lots", "ล็อตวัตถุดิบ", "lots"],
+  ]);
+  assert.equal(url("inventory-lots", { q: "LOT-1", status: "hold" }), "#/factory?item=inventory-lots&q=LOT-1&status=hold");
 });

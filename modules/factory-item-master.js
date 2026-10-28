@@ -27,6 +27,7 @@
 // เมื่อได้รายการครบให้เพิ่มที่ไฟล์นี้ที่เดียว (key ต้องไม่ซ้ำทั้งเมนู)
 // ต่อมาเพิ่มโฟลเดอร์ "คุณภาพ" (ก่อนโฟลเดอร์ข้อมูลทดสอบที่ต้องอยู่ท้ายสุด) ย้ายจากต้นแบบ prototypes/rubber-mes:
 //   * "SPC / Cpk" = I-chart ฮิสโตแกรม และ Cp/Cpk/Ppk ของค่าพารามิเตอร์ที่บันทึกตอนปิดขั้น (modules/module-factory-spc.js, &ch=<ค่าที่ติดตาม>)
+// ต่อมาเพิ่ม "ล็อตวัตถุดิบ" ในโฟลเดอร์คลังสินค้า (ย้ายจากต้นแบบเดียวกัน): วันหมดอายุ กักกัน/ปลดกักกัน และลำดับ FEFO (modules/module-factory-lots.js)
 //
 // เทสต์ที่ scripts/tests/factory-item-master.test.mjs
 (function (root) {
@@ -50,7 +51,10 @@
     folder("quotation", "ใบเสนอราคา"),
     folder("sales-order", "ใบสั่งขาย"),
     folder("routing", "ขั้นตอนการผลิต", [entry("routing-view", "ขั้นตอนการผลิต-ดู", "routing")]),
-    folder("inventory", "คลังสินค้า", [entry("inventory-view", "สินค้าคงคลัง-ดู", "inventory")]),
+    folder("inventory", "คลังสินค้า", [
+      entry("inventory-view", "สินค้าคงคลัง-ดู", "inventory"),
+      entry("inventory-lots", "ล็อตวัตถุดิบ", "lots"),
+    ]),
     folder("production", "ใบสั่งผลิต", [
       entry("production-new", "ใบสั่งผลิต-ใหม่", "production-new"),
       entry("production-planning", "ใบสั่งผลิต-ฝ่ายวางแผน", "production-planning"),

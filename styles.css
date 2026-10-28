@@ -2430,3 +2430,13 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 /* ตัวอักษรใน SVG ย่อตามความกว้าง: จอแคบเลื่อน I-chart ในกรอบแทนการย่อจนอ่านไม่ออก (หน้าไม่เลื่อนแนวนอน) */
 .spc-scroll { overflow-x: auto; }
 .spc-scroll .spc-chart { min-width: 600px; }
+
+/* ฝ่ายโรงงาน: ล็อตวัตถุดิบ (modules/module-factory-lots.js) — ฟอร์มวันหมดอายุ/กักกันในช่อง "จัดการ" ของแต่ละแถว */
+.lot-table .fm-fold { min-width: 220px; }
+.lot-form { margin: 8px 0 0; display: grid; gap: 6px; }
+.lot-form + .lot-form { padding-top: 8px; border-top: 1px solid var(--soft-line); }
+.lot-form label { color: var(--muted); font-size: 12px; font-weight: 600; }
+.lot-form .btn { justify-self: start; }
+@media (max-width: 760px) {
+  .lot-form .input { font-size: 16px; }
+}
