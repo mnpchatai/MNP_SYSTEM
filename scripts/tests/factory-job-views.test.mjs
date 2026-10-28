@@ -119,7 +119,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 const text = (html) => String(html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 test("every error code the job migration can raise has a Thai message that is not hidden by another key", () => {
-  const sql = ["20261007050000_factory_job_workflow.sql", "20261007060000_factory_cancel_and_return.sql", "20261007070000_factory_qc_ncr.sql"]
+  const sql = ["20261007050000_factory_job_workflow.sql", "20261007060000_factory_cancel_and_return.sql", "20261007070000_factory_qc_ncr.sql", "20261029010000_factory_step_params_auto_hold.sql"]
     .map((file) => fs.readFileSync(`supabase/migrations/${file}`, "utf8")).join("\n");
   const codes = [...new Set([...sql.matchAll(/raise exception '((?:INVALID_)?JOB_[A-Z_]+)'/g)].map((match) => match[1]))];
   assert.ok(codes.length >= 19, `found ${codes.length} codes`);
@@ -504,4 +504,79 @@ test("a rejected file stops the action before anything is sent, and accepted fil
   await bad.controls["#jb-cancel-form"].handlers.submit({ preventDefault() {} });
   assert.ok(!bad.log.calls.some(([name]) => name === "app_factory_cancel_job"), "the cancel was not sent");
   assert.match(bad.log.toasts.at(-1)[0], /ชนิดไฟล์ไม่รองรับ/);
+});
+
+// ---------- พารามิเตอร์ของขั้นและการกักกัน (20261029010000) ----------
+const PARAMS = [{ code: "DUMP_TEMP", label: `อุณหภูมิ ${XSS}`, unit: "°C", min: 135, max: 145 }, { code: "THICK", label: "ความหนา", unit: "mm", min: null, max: 2.62 }];
+const withParams = () => ({
+  ...FIXTURE,
+  jobs: [
+    job("j-par", "TEST-JB-26-010", "in_progress", [step(10, "RB-01 ชั่งเคมี", "RB", "done", { completed_at: "2026-10-07T02:00:00Z" }), step(20, "RB-02 ตียาง", "RB", "pending", { params: PARAMS }), step(30, "SR-01 รับเข้าคลัง", "SR")]),
+    job("j-held", "TEST-JB-26-011", "in_progress", [step(10, "RB-01 ชั่งเคมี", "RB", "done", { completed_at: "2026-10-07T02:00:00Z", params: PARAMS }), step(20, "RB-02 ตียาง", "RB")],
+      { on_hold: true, held_at: "2026-10-07T02:00:00Z", hold_reason: `ค่าหลุดสเปกที่ขั้น 1: อุณหภูมิ 151 ${XSS}`, hold_ncr_id: "ncr-9", hold_ncr_no: "TEST-QA009/26" }),
+  ],
+  job_readings: [
+    { id: "r1", job_id: "j-held", step_sequence: 10, code: "DUMP_TEMP", label: "อุณหภูมิ", unit: "°C", value: 151, min: 135, max: 145, in_spec: false, recorded_at: "2026-10-07T02:00:00Z", recorded_by_name: "ทดสอบ พนักงาน RB" },
+    { id: "r2", job_id: "j-held", step_sequence: 10, code: "THICK", label: "ความหนา", unit: "mm", value: 2.5, min: null, max: 2.62, in_spec: true, recorded_at: "2026-10-07T02:00:00Z", recorded_by_name: "ทดสอบ พนักงาน RB" },
+  ],
+});
+
+test("a step with parameters asks for every reading with its spec, escaped", async () => {
+  const { body } = await render("job", { query: "jb=j-par", dept: "RB", data: withParams() });
+  assert.match(body, /name="reading:DUMP_TEMP"/);
+  assert.match(body, /name="reading:THICK"/);
+  assert.match(body, /สเปก 135–145/);
+  assert.match(body, /สเปก ≤ 2\.62/);
+  assert.doesNotMatch(body, /<script>/);
+});
+
+test("closing a step with parameters sends the readings, warns before a hold and reports the hold", async () => {
+  const view = await render("job", { query: "jb=j-par", dept: "RB", data: withParams(), rpc: (name) => ({ data: name === "app_factory_master_data" ? withParams() : { held: true }, error: null }) });
+  view.controls["#jb-step-form"].__values = { note: "", "reading:DUMP_TEMP": "151", "reading:THICK": "2.5" };
+  await view.controls["#jb-step-form"].handlers.submit({ preventDefault() {} });
+  assert.deepEqual(plain(view.log.calls.at(-1)), ["app_factory_complete_job_step_with_readings",
+    { p_id: "j-par", p_version: 6, p_sequence: 20, p_note: "", p_output_qty: null, p_readings: { DUMP_TEMP: 151, THICK: 2.5 } }]);
+  assert.match(view.log.toasts.at(-1)[0], /ใบงานถูกกักกันรอ QA/);
+  const declined = await render("job", { query: "jb=j-par", dept: "RB", data: withParams(), confirmAnswer: false });
+  declined.controls["#jb-step-form"].__values = { note: "", "reading:DUMP_TEMP": "151", "reading:THICK": "2.5" };
+  await declined.controls["#jb-step-form"].handlers.submit({ preventDefault() {} });
+  assert.ok(!declined.log.calls.some(([name]) => name === "app_factory_complete_job_step_with_readings"), "declining the warning sends nothing");
+  const missing = await render("job", { query: "jb=j-par", dept: "RB", data: withParams() });
+  missing.controls["#jb-step-form"].__values = { note: "", "reading:DUMP_TEMP": "140" };
+  await missing.controls["#jb-step-form"].handlers.submit({ preventDefault() {} });
+  assert.match(missing.controls["#jb-form-error"].textContent, /ความหนา/);
+  assert.ok(!missing.log.calls.some(([name]) => name.startsWith("app_factory_complete_job_step")));
+});
+
+test("a held job shows its reason to everyone, gives QA the decision form and nobody the step form", async () => {
+  const rb = await render("job", { query: "jb=j-held", dept: "RB", data: withParams() });
+  assert.match(rb.body, /ถูกกักกัน \(Hold\)/);
+  assert.match(rb.body, /href="#\/ncr\?id=ncr-9">TEST-QA009\/26</);
+  assert.doesNotMatch(rb.body, /id="jb-step-form"|id="jb-hold-form"/);
+  assert.match(text(rb.body), /สลับ “ทำหน้าที่เป็น” เป็นพนักงาน QA/);
+  assert.doesNotMatch(rb.body, /<script>/);
+  assert.match(rb.body, /หลุดสเปก/, "the readings table marks the out-of-spec value");
+  const qa = await render("job", { query: "jb=j-held", dept: "QA", data: withParams() });
+  assert.match(qa.body, /id="jb-hold-form"/);
+  assert.match(qa.body, /id="jb-hold-ncr-fields" hidden/);
+  qa.controls["#jb-hold-form"].__values = { decision: "release", note: "MDR ซ้ำผ่าน ปล่อยใช้งานได้" };
+  await qa.controls["#jb-hold-form"].handlers.submit({ preventDefault() {} });
+  assert.deepEqual(plain(qa.log.calls.at(-1)), ["app_factory_decide_job_hold",
+    { p_id: "j-held", p_version: 6, p_decision: "release", p_note: "MDR ซ้ำผ่าน ปล่อยใช้งานได้", p_qty_defect: null, p_defect_type_code: null }]);
+  const short = await render("job", { query: "jb=j-held", dept: "QA", data: withParams() });
+  short.controls["#jb-hold-form"].__values = { decision: "release", note: "สั้น" };
+  await short.controls["#jb-hold-form"].handlers.submit({ preventDefault() {} });
+  assert.match(short.controls["#jb-hold-error"].textContent, /10 ตัวอักษร/);
+  assert.ok(!short.log.calls.some(([name]) => name === "app_factory_decide_job_hold"));
+});
+
+test("the QA department page lists held jobs and the line's page shows the ones waiting at its next step", async () => {
+  const qa = await render("job-queue", { dept: "QA", data: withParams() });
+  assert.match(qa.body, /ถูกกักกัน รอ QA ตัดสิน/);
+  assert.match(qa.body, /TEST-JB-26-011/);
+  const rb = await render("job-queue", { dept: "RB", data: withParams() });
+  assert.match(rb.body, /ถูกกักกัน รอ QA ตัดสิน/);
+  assert.doesNotMatch(text(rb.body).split("ถึงคิวแผนก")[1] ?? "", /TEST-JB-26-011/, "the held job is not in the ready queue");
+  const sr = await render("job-queue", { dept: "SR", data: withParams() });
+  assert.doesNotMatch(sr.body, /ถูกกักกัน รอ QA ตัดสิน/);
 });

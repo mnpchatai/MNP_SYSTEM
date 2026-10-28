@@ -18,10 +18,15 @@
   // class ของ .badge ใน styles.css ที่ใกล้เคียงที่สุด (เตือน = รอเริ่ม, ฟ้า = กำลังผลิต, เขียว = เสร็จ, แดง = ยกเลิก)
   const BADGE_CLASS = Object.freeze({ open: "pending_approval", in_progress: "in_progress", completed: "completed", cancelled: "cancelled" });
   const STEP_STATUSES = Object.freeze({ pending: "รอทำ", done: "เสร็จแล้ว" });
-  const HISTORY_ACTIONS = Object.freeze({ create: "ออกใบงาน", step: "ทำขั้นตอนเสร็จ", complete: "ทำขั้นสุดท้ายเสร็จ รับเข้าคลัง", cancel: "ยกเลิกใบงาน", qc_fail: "ตรวจ QC ไม่ผ่าน (ออก NCR)", schedule: "กำหนด/เลื่อนตารางเวลา" });
+  const HISTORY_ACTIONS = Object.freeze({
+    create: "ออกใบงาน", step: "ทำขั้นตอนเสร็จ", complete: "ทำขั้นสุดท้ายเสร็จ รับเข้าคลัง", cancel: "ยกเลิกใบงาน", qc_fail: "ตรวจ QC ไม่ผ่าน (ออก NCR)", schedule: "กำหนด/เลื่อนตารางเวลา",
+    hold: "ค่าหลุดสเปก กักกันอัตโนมัติ", release: "QA ปลดกักกัน", hold_ncr: "QA ออก NCR ระหว่างกักกัน",
+  });
   const ACTIVE_STATUSES = Object.freeze(["open", "in_progress"]);
 
   const isActive = (job) => ACTIVE_STATUSES.includes(job?.status);
+  // ใบงานที่ถูกกักกัน (20261029010000): ทำขั้นใดไม่ได้จนกว่า QA ปลด ใบที่ยกเลิกแล้วไม่นับ
+  const isHeld = (job) => Boolean(job?.on_hold) && job?.status !== "cancelled";
   const stepsOf = (job) => (job?.steps ?? []).slice().sort((a, b) => a.sequence - b.sequence);
 
   // ขั้นถัดไปที่ต้องทำ = ขั้นแรกที่ยังรอทำ (ใบงานที่ไม่ active ไม่มี)
@@ -31,10 +36,10 @@
   }
   const isLastPending = (job, step) => stepsOf(job).filter((row) => row.status === "pending").length === 1 && step?.status === "pending";
 
-  // ทำขั้นนี้ได้เมื่อ: ใบงาน active · เป็นขั้นถัดไป · แผนกของผู้ใช้ตรงกับแผนกของขั้น (ฐานข้อมูลตรวจซ้ำ)
+  // ทำขั้นนี้ได้เมื่อ: ใบงาน active ไม่ถูกกักกัน · เป็นขั้นถัดไป · แผนกของผู้ใช้ตรงกับแผนกของขั้น (ฐานข้อมูลตรวจซ้ำ)
   function canRunStep(job, step, dept) {
     const next = nextStep(job);
-    return Boolean(next && step && next.sequence === step.sequence && dept && step.department_code === dept);
+    return Boolean(!isHeld(job) && next && step && next.sequence === step.sequence && dept && step.department_code === dept);
   }
 
   // ใบงานที่ฝ่ายวางแผนทำได้: ยกเลิกได้ทั้งที่ยังไม่เริ่ม (open) และที่เริ่มแล้วแต่ผลผลิตยังไม่เข้าคลัง (in_progress)
@@ -42,13 +47,14 @@
   const jobActions = (job, dept) => (dept === PLANNING_DEPARTMENT && isActive(job) ? ["cancel"] : []);
 
   // คิวของแผนก: ใบงานที่ขั้นถัดไปเป็นของแผนกนี้ (เก่าสุดก่อน) · งานที่กำลังจะมา = แผนกนี้ยังมีขั้นรอทำแต่ยังไม่ถึงคิว
+  // ใบงานที่ถูกกักกันไม่อยู่ในคิวของแผนกใด (อยู่ในรายการรอ QA ตัดสินของ heldJobs แทน)
   function deptQueue(jobs, dept) {
     const byOldest = (a, b) => String(a.job.created_at ?? "").localeCompare(String(b.job.created_at ?? "")) || String(a.job.code).localeCompare(String(b.job.code));
     const ready = [];
     const upcoming = [];
     for (const job of jobs ?? []) {
       const next = nextStep(job);
-      if (!next) continue;
+      if (!next || isHeld(job)) continue;
       if (next.department_code === dept) ready.push({ job, step: next });
       else {
         const mine = stepsOf(job).find((step) => step.status === "pending" && step.department_code === dept);
@@ -214,6 +220,97 @@
     return { args: { p_result: "fail", p_qty_checked: checked, p_qty_defect: defect, p_measurement: measurement, p_defect_type_code: defectType, p_description: description, p_output_qty: null } };
   }
 
+  // ---------- พารามิเตอร์ของขั้นและการกักกันอัตโนมัติ (20261029010000) ----------
+  // ฝ่ายวางแผนกำหนดพารามิเตอร์ (min/max) ที่ขั้นของ Routing · แผนกที่ทำขั้นบันทึกค่าตอนปิดขั้น · หลุดสเปก = ฐานข้อมูลกักกันใบงาน
+  // QA ตัดสิน: ปลดกักกัน หรือออก NCR (ใบงานยังถูกกักกัน) — ที่นี่ใช้ตรวจฟอร์มและแสดงผลสดเท่านั้น ฐานข้อมูลตัดสินจริง
+  const QA_DEPARTMENT = "QA";
+  const MAX_PARAMS = 20;
+  const MAX_READING = 1000000000;
+  const PARAM_CODE = /^[A-Z][A-Z0-9_]{0,19}$/;
+  const paramsOf = (step) => step?.params ?? [];
+  const hasParams = (step) => paramsOf(step).length > 0;
+  const limit = (value) => (value === null || value === undefined || value === "" ? null : Number(value));
+  // ปัด 4 ทศนิยมแบบ round(numeric, 4) ของฐานข้อมูล: ครึ่งพอดีปัดออกจากศูนย์ (เผื่อความคลาดของเลขฐานสอง)
+  const round4Away = (value) => Math.sign(value) * Math.round(Math.abs(value) * 10000 * (1 + Number.EPSILON)) / 10000;
+  // ค่าเดียวเทียบสเปก: null = ยังไม่กรอก/ไม่ใช่ตัวเลข · ปัด 4 ทศนิยมก่อนเทียบเหมือนฐานข้อมูล
+  function inSpec(value, param) {
+    const raw = toNumber(value);
+    if (raw === null || !Number.isFinite(raw)) return null;
+    const number = round4Away(raw);
+    const min = limit(param?.min);
+    const max = limit(param?.max);
+    return (min === null || number >= min) && (max === null || number <= max);
+  }
+  const fmt = (value) => Number(value).toLocaleString("en-US", { maximumFractionDigits: 4 });
+  function specText(param) {
+    const min = limit(param?.min);
+    const max = limit(param?.max);
+    if (min !== null && max !== null) return `${fmt(min)}–${fmt(max)}`;
+    return min !== null ? `≥ ${fmt(min)}` : `≤ ${fmt(max)}`;
+  }
+  // ค่าที่บันทึกของใบงานหนึ่ง เรียงตามขั้นแล้วตามลำดับที่บันทึก
+  const readingsOf = (readings, jobId) => (readings ?? []).filter((row) => row.job_id === jobId).slice()
+    .sort((a, b) => a.step_sequence - b.step_sequence || String(a.recorded_at ?? "").localeCompare(String(b.recorded_at ?? "")) || String(a.code).localeCompare(String(b.code)));
+  // ใบงานที่ถูกกักกันรอ QA ตัดสิน (กักกันนานสุดก่อน)
+  const heldJobs = (jobs) => (jobs ?? []).filter(isHeld).slice().sort((a, b) => String(a.held_at ?? "").localeCompare(String(b.held_at ?? "")) || String(a.code).localeCompare(String(b.code)));
+  const holdActions = (job, dept) => (isHeld(job) && dept === QA_DEPARTMENT ? ["release", "ncr"] : []);
+
+  // ค่าจากฟอร์มปิดขั้น (ช่อง "reading:<รหัส>") -> { args: { p_readings }, outOfSpec: [ชื่อพารามิเตอร์] } หรือ { error }
+  function readingsPayload(params, values) {
+    const readings = {};
+    const outOfSpec = [];
+    for (const param of params ?? []) {
+      const number = toNumber(values?.[`reading:${param.code}`]);
+      if (number === null || !Number.isFinite(number) || Math.abs(number) > MAX_READING) return { error: `กรุณากรอก “${param.label}” เป็นตัวเลข` };
+      readings[param.code] = number;
+      if (!inSpec(number, param)) outOfSpec.push(param.label);
+    }
+    return { args: { p_readings: readings }, outOfSpec };
+  }
+
+  // ค่าจากฟอร์มตัดสินใบงานที่ถูกกักกัน -> พารามิเตอร์ของ app_factory_decide_job_hold หรือ { error }
+  function holdPayload(values, job) {
+    const decision = String(values?.decision ?? "");
+    if (!["release", "ncr"].includes(decision)) return { error: "กรุณาเลือกผลการตัดสิน" };
+    const note = String(values?.note ?? "").trim();
+    if (note.length < 10 || note.length > 1000) return { error: "กรุณาระบุเหตุผลอย่างน้อย 10 ตัวอักษร (ไม่เกิน 1,000)" };
+    if (decision === "release") return { args: { p_decision: "release", p_note: note, p_qty_defect: null, p_defect_type_code: null } };
+    const base = Number(job?.output_qty ?? job?.qty);
+    const defect = toNumber(values.qty_defect);
+    if (defect === null || !Number.isFinite(defect) || Math.round(defect * 10000) / 10000 <= 0 || defect > base) {
+      return { error: "จำนวนที่เสียต้องมากกว่า 0 และไม่เกินจำนวนของใบงาน" };
+    }
+    const type = String(values.defect_type_code ?? "").trim();
+    if (!type) return { error: "กรุณาเลือกประเภทข้อบกพร่อง (ใช้ออก NCR)" };
+    return { args: { p_decision: "ncr", p_note: note, p_qty_defect: defect, p_defect_type_code: type } };
+  }
+
+  // แถวจากฟอร์มกำหนดพารามิเตอร์ของขั้น -> { args: { p_params } } หรือ { error } แถวที่ว่างทุกช่องถูกข้าม
+  function stepParamsPayload(rows) {
+    const params = [];
+    const codes = new Set();
+    for (const row of rows ?? []) {
+      const code = String(row?.code ?? "").trim().toUpperCase();
+      const label = String(row?.label ?? "").trim();
+      const unit = String(row?.unit ?? "").trim();
+      const min = toNumber(row?.min);
+      const max = toNumber(row?.max);
+      if (!code && !label && !unit && min === null && max === null) continue;
+      const name = label || code || "แถวที่ไม่มีชื่อ";
+      if (!PARAM_CODE.test(code)) return { error: `${name}: รหัสต้องขึ้นต้นด้วยตัวอักษรอังกฤษ ใช้ A–Z 0–9 _ ไม่เกิน 20 ตัว` };
+      if (codes.has(code)) return { error: `รหัส ${code} ซ้ำกัน` };
+      if (!label || label.length > 80) return { error: `${code}: กรุณาระบุชื่อพารามิเตอร์ (ไม่เกิน 80 ตัวอักษร)` };
+      if (unit.length > 20) return { error: `${code}: หน่วยยาวได้ไม่เกิน 20 ตัวอักษร` };
+      if (min === null && max === null) return { error: `${code}: ต้องมีค่าต่ำสุดหรือสูงสุดอย่างน้อยหนึ่งค่า` };
+      if ([min, max].some((value) => value !== null && (!Number.isFinite(value) || Math.abs(value) > MAX_READING))) return { error: `${code}: ค่าสเปกต้องเป็นตัวเลข` };
+      if (min !== null && max !== null && min > max) return { error: `${code}: ค่าต่ำสุดต้องไม่มากกว่าค่าสูงสุด` };
+      codes.add(code);
+      params.push({ code, label, unit, min, max });
+    }
+    if (params.length > MAX_PARAMS) return { error: `กำหนดได้ไม่เกิน ${MAX_PARAMS} พารามิเตอร์ต่อขั้น` };
+    return { args: { p_params: params } };
+  }
+
   // ประวัติของใบเดียว เก่าสุดก่อน (ข้อมูลเข้ามาใหม่สุดก่อน)
   const jobTimeline = (history, jobId) => (history ?? []).filter((entry) => entry.job_id === jobId).slice().reverse();
 
@@ -222,6 +319,7 @@
     isActive, stepsOf, nextStep, isLastPending, canRunStep, jobActions, deptQueue, countByStatus, jobsOf, progress,
     jobRequirements, inJobsQty, jobSuggestions, defaultWarehouse, jobItems, orderableOrders, jobPayload, validateJobPayload, outputQty, jobTimeline,
     isQcStep, inspectionsOf, qcHold, qcPayload,
+    QA_DEPARTMENT, MAX_PARAMS, isHeld, paramsOf, hasParams, inSpec, specText, readingsOf, heldJobs, holdActions, readingsPayload, holdPayload, stepParamsPayload,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_FACTORY_JOB_MODEL = api;

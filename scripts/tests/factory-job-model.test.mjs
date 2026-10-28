@@ -39,7 +39,100 @@ test("statuses cover every database status with a Thai label and a badge class",
   assert.deepEqual(Object.keys(model.JOB_STATUSES), ["open", "in_progress", "completed", "cancelled"]);
   assert.deepEqual(Object.keys(model.BADGE_CLASS), Object.keys(model.JOB_STATUSES));
   assert.deepEqual(Object.keys(model.STEP_STATUSES), ["pending", "done"]);
-  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "step", "complete", "cancel", "qc_fail", "schedule"]);
+  assert.deepEqual(Object.keys(model.HISTORY_ACTIONS), ["create", "step", "complete", "cancel", "qc_fail", "schedule", "hold", "release", "hold_ncr"]);
+});
+
+// ---------- พารามิเตอร์ของขั้นและการกักกัน (20261029010000) ----------
+const TEMP = { code: "DUMP_TEMP", label: "อุณหภูมิปล่อยยาง", unit: "°C", min: 135, max: 145 };
+const THICK_MAX = { code: "THICK", label: "ความหนา", unit: "mm", min: null, max: 2.62 };
+
+test("a reading is compared with a range, a minimum only or a maximum only; blanks are undecided", () => {
+  assert.equal(model.inSpec("140", TEMP), true);
+  assert.equal(model.inSpec(135, TEMP), true, "the limits are inclusive");
+  assert.equal(model.inSpec(145.0001, TEMP), false);
+  assert.equal(model.inSpec("145.00004", TEMP), true, "rounded to 4 decimals like the database");
+  assert.equal(model.inSpec("145.00005", TEMP), false, "an exact half rounds away from zero like numeric round()");
+  assert.equal(model.inSpec("134.99995", TEMP), true, "and up to the minimum");
+  assert.equal(model.inSpec("-0.00005", { min: 0, max: null }), false, "negative halves round away from zero too");
+  assert.equal(model.inSpec("2.62", THICK_MAX), true);
+  assert.equal(model.inSpec("3", THICK_MAX), false);
+  assert.equal(model.inSpec(-5, { min: 0, max: null }), false);
+  assert.equal(model.inSpec("", TEMP), null);
+  assert.equal(model.inSpec("abc", TEMP), null);
+  assert.equal(model.specText(TEMP), "135–145");
+  assert.equal(model.specText(THICK_MAX), "≤ 2.62");
+  assert.equal(model.specText({ min: "0.5", max: null }), "≥ 0.5");
+});
+
+test("a held job runs no step, leaves every department queue and waits for QA", () => {
+  const steps = [step(10, "RB", "done"), step(20, "RB")];
+  const held = job("h", "in_progress", steps, { on_hold: true, held_at: "2026-10-29T01:00:00Z" });
+  const free = job("f", "in_progress", steps);
+  assert.equal(model.isHeld(held), true);
+  assert.equal(model.isHeld({ ...held, status: "cancelled" }), false, "a cancelled job is not waiting for QA");
+  assert.equal(model.canRunStep(held, model.nextStep(held), "RB"), false);
+  assert.equal(model.canRunStep(free, model.nextStep(free), "RB"), true);
+  assert.deepEqual(model.deptQueue([held, free], "RB").ready.map((entry) => entry.job.id), ["f"]);
+  assert.deepEqual(model.heldJobs([free, held]).map((row) => row.id), ["h"]);
+  assert.deepEqual(model.holdActions(held, "QA"), ["release", "ncr"]);
+  assert.deepEqual(model.holdActions(held, "RB"), []);
+  assert.deepEqual(model.holdActions(free, "QA"), []);
+});
+
+test("readings must cover every parameter as a number and report which are out of spec", () => {
+  const ok = model.readingsPayload([TEMP, THICK_MAX], { "reading:DUMP_TEMP": "151", "reading:THICK": " 2.5 " });
+  assert.deepEqual(ok.args, { p_readings: { DUMP_TEMP: 151, THICK: 2.5 } });
+  assert.deepEqual(ok.outOfSpec, ["อุณหภูมิปล่อยยาง"]);
+  assert.match(model.readingsPayload([TEMP], {}).error, /อุณหภูมิปล่อยยาง/);
+  assert.match(model.readingsPayload([TEMP], { "reading:DUMP_TEMP": "abc" }).error, /ตัวเลข/);
+  assert.match(model.readingsPayload([TEMP], { "reading:DUMP_TEMP": "2000000000" }).error, /ตัวเลข/);
+  assert.deepEqual(model.readingsPayload([], {}).args, { p_readings: {} });
+});
+
+test("the hold decision needs a reason, and an NCR also needs a defect quantity within the job and a defect type", () => {
+  const held = { qty: 10, output_qty: null };
+  assert.deepEqual(model.holdPayload({ decision: "release", note: " ตรวจซ้ำแล้วผ่านเกณฑ์ " }, held).args,
+    { p_decision: "release", p_note: "ตรวจซ้ำแล้วผ่านเกณฑ์", p_qty_defect: null, p_defect_type_code: null });
+  assert.match(model.holdPayload({ decision: "", note: "ตรวจซ้ำแล้วผ่านเกณฑ์" }, held).error, /ผลการตัดสิน/);
+  assert.match(model.holdPayload({ decision: "release", note: "สั้น" }, held).error, /10 ตัวอักษร/);
+  assert.deepEqual(model.holdPayload({ decision: "ncr", note: "ยางร้อนเกินทั้งแบตช์", qty_defect: "10", defect_type_code: "DIM" }, held).args,
+    { p_decision: "ncr", p_note: "ยางร้อนเกินทั้งแบตช์", p_qty_defect: 10, p_defect_type_code: "DIM" });
+  assert.match(model.holdPayload({ decision: "ncr", note: "ยางร้อนเกินทั้งแบตช์", qty_defect: "11", defect_type_code: "DIM" }, held).error, /ไม่เกินจำนวน/);
+  assert.match(model.holdPayload({ decision: "ncr", note: "ยางร้อนเกินทั้งแบตช์", qty_defect: "0", defect_type_code: "DIM" }, held).error, /มากกว่า 0/);
+  assert.match(model.holdPayload({ decision: "ncr", note: "ยางร้อนเกินทั้งแบตช์", qty_defect: "5" }, held).error, /ประเภทข้อบกพร่อง/);
+  assert.equal(model.holdPayload({ decision: "ncr", note: "ยางร้อนเกินทั้งแบตช์", qty_defect: "12", defect_type_code: "DIM" }, { qty: 10, output_qty: 12 }).error, undefined,
+    "a finished job counts its real output");
+});
+
+test("the parameter form skips empty rows, upper-cases codes and checks every row like the database", () => {
+  const rows = [
+    { code: " dump_temp ", label: "อุณหภูมิปล่อยยาง", unit: "°C", min: "135", max: "145" },
+    { code: "", label: "", unit: "", min: "", max: "" },
+    { code: "THICK", label: "ความหนา", unit: "mm", min: "", max: "2.62" },
+  ];
+  assert.deepEqual(model.stepParamsPayload(rows).args, { p_params: [
+    { code: "DUMP_TEMP", label: "อุณหภูมิปล่อยยาง", unit: "°C", min: 135, max: 145 },
+    { code: "THICK", label: "ความหนา", unit: "mm", min: null, max: 2.62 },
+  ] });
+  assert.deepEqual(model.stepParamsPayload([]).args, { p_params: [] }, "no rows clears the parameters");
+  const bad = (row) => model.stepParamsPayload([{ code: "A", label: "ค่า", min: "1", ...row }]).error;
+  assert.match(bad({ code: "1A" }), /ตัวอักษรอังกฤษ/);
+  assert.match(bad({ label: "" }), /ชื่อพารามิเตอร์/);
+  assert.match(bad({ min: "", max: "" }), /อย่างน้อยหนึ่งค่า/);
+  assert.match(bad({ min: "5", max: "4" }), /ไม่มากกว่า/);
+  assert.match(bad({ unit: "x".repeat(21) }), /หน่วย/);
+  assert.match(model.stepParamsPayload([{ code: "A", label: "ก", min: "1" }, { code: "a", label: "ข", max: "2" }]).error, /ซ้ำ/);
+  assert.match(model.stepParamsPayload(Array.from({ length: 21 }, (_, n) => ({ code: `P${n}`, label: `ค่า ${n}`, min: "0" }))).error, /ไม่เกิน 20/);
+});
+
+test("readings of one job come by step and other jobs are left out", () => {
+  const list = [
+    { id: "r3", job_id: "j1", step_sequence: 20, code: "B", recorded_at: "2026-10-29T03:00:00Z" },
+    { id: "r1", job_id: "j1", step_sequence: 10, code: "A", recorded_at: "2026-10-29T01:00:00Z" },
+    { id: "r2", job_id: "j2", step_sequence: 10, code: "A", recorded_at: "2026-10-29T02:00:00Z" },
+  ];
+  assert.deepEqual(model.readingsOf(list, "j1").map((row) => row.id), ["r1", "r3"]);
+  assert.deepEqual(model.readingsOf(null, "j1"), []);
 });
 
 const qcStep = (sequence, status = "pending") => ({ sequence, name: "QC-01 ตรวจขนาด", work_center_code: "QC", department_code: "QA", status });

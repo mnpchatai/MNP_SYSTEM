@@ -48,6 +48,15 @@
     JOB_STEP_NOT_QC: "ขั้นนี้ไม่ใช่ขั้นตรวจ QC ให้ใช้ปุ่ม “ทำขั้นตอนนี้เสร็จ”",
     JOB_QC_INSPECTION_REQUIRED: "ขั้น QC ต้องบันทึกผลตรวจ (ผ่าน/ไม่ผ่าน) ในฟอร์มตรวจ QC ปิดด้วยปุ่มทำขั้นตอนเสร็จไม่ได้",
     JOB_INSUFFICIENT_STOCK: "วัตถุดิบหรือชิ้นงานที่ใช้ตามสูตรในคลังไม่พอ จึงเริ่มงานไม่ได้ (ยังไม่ได้ตัดอะไร) — ดูตารางวัตถุดิบในใบงาน ผลิตชิ้นงานที่ขาดหรือสั่งวัตถุดิบเพิ่มก่อน",
+    JOB_STEP_READINGS_REQUIRED: "ขั้นนี้ต้องบันทึกค่าพารามิเตอร์ตาม Routing ก่อนปิดขั้น — โหลดหน้าใหม่เพื่อแสดงช่องกรอกค่า",
+    JOB_STEP_NO_PARAMS: "ขั้นนี้ไม่มีพารามิเตอร์ที่ต้องบันทึก ให้ใช้ปุ่ม “ทำขั้นตอนนี้เสร็จ”",
+    INVALID_JOB_READINGS: "กรุณากรอกค่าพารามิเตอร์ให้ครบทุกช่องเป็นตัวเลข",
+    JOB_ON_HOLD: "ใบงานนี้ถูกกักกัน (ค่าหลุดสเปก) ทำขั้นต่อไม่ได้จนกว่า QA จะปลดกักกัน",
+    JOB_NOT_HELD: "ใบงานนี้ไม่ได้ถูกกักกันแล้ว (อาจถูกตัดสินจากหน้าต่างอื่น)",
+    JOB_HOLD_QA_ONLY: "เฉพาะ QA ตัดสินใบงานที่ถูกกักกันได้ — สลับ “ทำหน้าที่เป็น” เป็นพนักงาน QA",
+    JOB_HOLD_NOTE_REQUIRED: "กรุณาระบุเหตุผลการตัดสิน 10–1,000 ตัวอักษร",
+    INVALID_JOB_HOLD_DECISION: "กรุณาเลือกผลการตัดสิน ปลดกักกันหรือออก NCR",
+    JOB_HOLD_DEFECT_INVALID: "ออก NCR ต้องระบุจำนวนที่เสีย (ไม่เกินจำนวนของใบงาน) และประเภทข้อบกพร่อง",
   };
   Object.assign(window.MNP_FACTORY_ERRORS, ERROR_MESSAGES);
 
@@ -64,7 +73,7 @@
   };
 
   // ปุ่มเรียก RPC หนึ่งครั้ง: ปิดปุ่มระหว่างทำ สำเร็จแล้ววาดหน้าใหม่ ผิดพลาดแจ้งเตือนและวาดใหม่เมื่อสถานะในหน้าล้าสมัย
-  const STALE_CODES = ["JOB_VERSION_CONFLICT", "JOB_NOT_", "JOB_STEP_ALREADY_DONE", "JOB_STEP_OUT_OF_ORDER", "JOB_STEP_NOT_FOUND"];
+  const STALE_CODES = ["JOB_VERSION_CONFLICT", "JOB_NOT_", "JOB_STEP_ALREADY_DONE", "JOB_STEP_OUT_OF_ORDER", "JOB_STEP_NOT_FOUND", "JOB_ON_HOLD", "JOB_STEP_READINGS_REQUIRED"];
   // files = ไฟล์ที่แนบมากับการกระทำ (ช่องแนบของฟอร์มตรวจ QC/ทำขั้นตอน/ยกเลิก) อัปโหลดหลังการกระทำสำเร็จ พลาดไม่ย้อนการกระทำ
   async function runAction(root, rpc, args, successMessage, files = []) {
     const controls = root.querySelectorAll("[data-jb-action], .jb-form button");
@@ -93,6 +102,20 @@
       </tr>`).join("");
   }
 
+  // ใบงานที่ถูกกักกัน: หน้า QA เห็นทุกใบ (รอตัดสิน) แผนกอื่นเห็นใบที่ขั้นถัดไปเป็นของตน (ทำต่อไม่ได้จนกว่า QA ปลด)
+  function heldHtml(data, code) {
+    const held = model.heldJobs(data.jobs).filter((job) => code === model.QA_DEPARTMENT || model.nextStep(job)?.department_code === code);
+    if (!held.length) return "";
+    const rows = held.map((job) => `<tr>
+        <td><a class="fm-item-link" href="${escapeHtml(viewUrl(job.id))}"><strong>${escapeHtml(job.code)}</strong><span>${escapeHtml(job.production_code)}</span></a></td>
+        <td><strong>${escapeHtml(job.item_code)}</strong><br><span class="muted small">${escapeHtml(job.item_name)}</span></td>
+        <td class="fm-pre">${escapeHtml(job.hold_reason)}</td>
+        <td class="right"><a class="btn${code === model.QA_DEPARTMENT ? "" : " secondary"} small" href="${escapeHtml(viewUrl(job.id))}">${code === model.QA_DEPARTMENT ? "ตัดสิน" : "เปิด"}</a></td>
+      </tr>`).join("");
+    return `<section class="card"><h2>ถูกกักกัน รอ QA ตัดสิน <span class="muted small">(${held.length})</span></h2>
+        <div class="table-wrap"><table><thead><tr><th>ใบงาน</th><th>ผลิต</th><th>สาเหตุ</th><th class="right">จัดการ</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  }
+
   function queueHtml(data, code) {
     const { ready, upcoming } = model.deptQueue(data.jobs, code);
     const readyTable = ready.length
@@ -101,7 +124,7 @@
     const upcomingTable = upcoming.length
       ? `<div class="table-wrap"><table><thead><tr><th>ใบงาน</th><th>ผลิต</th><th class="right">จำนวน</th><th>ตอนนี้อยู่ที่ขั้น</th><th>ขั้นของแผนกนี้</th><th class="right">จัดการ</th></tr></thead><tbody>${queueRows(upcoming, "upcoming")}</tbody></table></div>`
       : '<div class="empty">ไม่มีใบงานที่กำลังจะมาถึงแผนกนี้</div>';
-    return `<section class="card"><h2>ถึงคิวแผนก ${escapeHtml(code)} <span class="muted small">(${ready.length})</span></h2>
+    return `${heldHtml(data, code)}<section class="card"><h2>ถึงคิวแผนก ${escapeHtml(code)} <span class="muted small">(${ready.length})</span></h2>
         <p class="muted small">ใบงานที่ขั้นถัดไปเป็นของแผนกนี้ เก่าสุดก่อน — เปิดใบงานแล้วกด “ทำขั้นตอนนี้เสร็จ” (ต้องสลับ “ทำหน้าที่เป็น” เป็นพนักงานแผนกนี้)</p>${readyTable}</section>
       <section class="card"><h2>กำลังจะมาถึง <span class="muted small">(${upcoming.length})</span></h2>
         <p class="muted small">ใบงานที่แผนกนี้ยังมีขั้นรอทำ แต่ขั้นก่อนหน้ายังไม่เสร็จ</p>${upcomingTable}</section>`;
@@ -196,11 +219,48 @@
         </form>`;
   }
 
+  // ช่องกรอกค่าพารามิเตอร์ของขั้น: สีของช่องบอกผลเทียบสเปกสดขณะกรอก (ฐานข้อมูลตัดสินจริงตอนบันทึก)
+  function readingsFieldsHtml(step) {
+    const params = model.paramsOf(step);
+    if (!params.length) return "";
+    return `<fieldset class="field full jb-readings" title="ค่าหลุดสเปก = ใบงานถูกกักกันรอ QA"><legend>ค่าพารามิเตอร์ของขั้นนี้ *</legend>
+        <div class="field-row">${params.map((param) => `<div class="field">
+            <label for="jb-reading-${escapeHtml(param.code)}">${escapeHtml(param.label)}${param.unit ? ` (${escapeHtml(param.unit)})` : ""}</label>
+            <input class="input" id="jb-reading-${escapeHtml(param.code)}" name="reading:${escapeHtml(param.code)}" data-reading="${escapeHtml(param.code)}" type="number" inputmode="decimal" step="any" required>
+            <small>สเปก ${escapeHtml(model.specText(param))}</small></div>`).join("")}</div></fieldset>`;
+  }
+
+  // ใบงานที่ถูกกักกัน: QA ตัดสิน (ปลด / ออก NCR) แผนกอื่นเห็นแค่ข้อความ (แบนเนอร์อยู่ที่หัวใบงานแล้ว)
+  function holdFormHtml(data, job) {
+    const types = data.ncr_defect_types ?? [];
+    const base = job.output_qty ?? job.qty;
+    return `<form class="fm-form jb-form" id="jb-hold-form" novalidate>
+          <h3>ตัดสินใบงานที่ถูกกักกัน</h3>
+          <div class="fm-form-error" id="jb-hold-error" role="alert" hidden></div>
+          <fieldset class="field full"><legend>ผลการตัดสิน *</legend>
+            <label><input type="radio" name="decision" value="release" checked> ปลดกักกัน ใบงานเดินต่อ</label>
+            <label><input type="radio" name="decision" value="ncr"> ออก NCR (ใบงานยังถูกกักกัน)</label></fieldset>
+          <div class="field-row" id="jb-hold-ncr-fields" hidden>
+            <div class="field"><label for="jb-hold-defect">จำนวนที่เสีย (${escapeHtml(job.unit_code)}) *</label>
+              <input class="input" id="jb-hold-defect" name="qty_defect" type="number" inputmode="decimal" min="0.0001" max="${escapeHtml(base)}" step="any"></div>
+            <div class="field"><label for="jb-hold-type">ประเภทข้อบกพร่อง (NCR) *</label>
+              <select class="select" id="jb-hold-type" name="defect_type_code">${options([["", "— เลือก —"], ...types.map((type) => [type.code, type.name_th])], "")}</select></div>
+          </div>
+          <div class="field full"><label for="jb-hold-note">เหตุผล * (อย่างน้อย 10 ตัวอักษร)</label>
+            <textarea class="textarea" id="jb-hold-note" name="note" rows="2" maxlength="1000" required></textarea></div>
+          <div class="fm-actions"><button class="btn" type="submit">บันทึกการตัดสิน</button></div>
+        </form>`;
+  }
+
   function actionsHtml(data, job) {
     const role = dept();
     const next = model.nextStep(job);
     const blocks = [];
-    if (next && model.canRunStep(job, next, role) && model.isQcStep(next)) {
+    if (model.holdActions(job, role).length) {
+      blocks.push(holdFormHtml(data, job));
+    } else if (model.isHeld(job)) {
+      blocks.push(notice(`สลับ “ทำหน้าที่เป็น” เป็นพนักงาน QA เพื่อปลดกักกันหรือออก NCR`));
+    } else if (next && model.canRunStep(job, next, role) && model.isQcStep(next)) {
       blocks.push(qcFormHtml(data, job, next, model.isLastPending(job, next)));
     } else if (next && model.canRunStep(job, next, role)) {
       const last = model.isLastPending(job, next);
@@ -209,6 +269,7 @@
           ${job.status === "open" ? notice("ขั้นแรก: เมื่อกดเสร็จ ระบบตัดวัตถุดิบตามสูตรออกจากคลัง (หยิบจากล็อตเก่าสุดก่อน)") : ""}
           ${last ? notice(`ขั้นสุดท้าย: เมื่อกดเสร็จ ระบบรับผลผลิตเข้าคลัง ${escapeHtml(job.warehouse_name)} ตามจำนวนผลิตจริง`) : ""}
           <div class="fm-form-error" id="jb-form-error" role="alert" hidden></div>
+          ${readingsFieldsHtml(next)}
           <div class="field-row">
             <div class="field full"><label for="jb-note">บันทึกขั้นตอน (ไม่บังคับ)</label><textarea class="textarea" id="jb-note" name="note" rows="2" maxlength="1000"></textarea></div>
             ${last ? `<div class="field"><label for="jb-output">จำนวนผลิตจริง (${escapeHtml(job.unit_code)})</label><input class="input" id="jb-output" name="output_qty" type="number" inputmode="decimal" min="0.0001" max="${model.MAX_QUANTITY}" step="any" placeholder="${escapeHtml(q4(job.qty))}"><small>เว้นว่าง = ${escapeHtml(q4(job.qty))} ตามจำนวนของใบงาน</small></div>` : ""}
@@ -266,6 +327,29 @@
     ? `<a href="#/ncr?id=${encodeURIComponent(row.ncr_id)}">${escapeHtml(row.ncr_no)}</a>`
     : escapeHtml(row.ncr_no ?? "—"));
 
+  // ใบงานที่ถูกกักกันเพราะค่าหลุดสเปก: สาเหตุ และ NCR ที่ QA ออกล่าสุด (ถ้ามี)
+  function jobHoldNotice(job) {
+    if (!model.isHeld(job)) return "";
+    const ncr = job.hold_ncr_no ? ` · ออก NCR ${ncrLink({ ncr_id: job.hold_ncr_id, ncr_no: job.hold_ncr_no })} แล้ว` : "";
+    return `<p class="fm-notice jb-hold" role="status"><strong>ถูกกักกัน (Hold)</strong> ${escapeHtml(job.hold_reason)}${ncr}</p>`;
+  }
+
+  function readingsHtml(data, job) {
+    const rows = model.readingsOf(data.job_readings, job.id);
+    if (!rows.length) return "";
+    const body = rows.map((row) => `<tr>
+        <td>${escapeHtml(row.step_sequence / 10)}</td>
+        <td>${escapeHtml(row.label)}</td>
+        <td class="right">${q4(row.value)}${row.unit ? ` ${escapeHtml(row.unit)}` : ""}</td>
+        <td>${escapeHtml(model.specText(row))}</td>
+        <td><span class="badge ${row.in_spec ? "completed" : "cancelled"}">${row.in_spec ? "ในสเปก" : "หลุดสเปก"}</span></td>
+        <td>${person(row.recorded_by_name, row.recorded_at)}</td>
+      </tr>`).join("");
+    return `<div class="table-wrap"><table>
+        <thead><tr><th>ขั้น</th><th>พารามิเตอร์</th><th class="right">ค่าที่วัด</th><th>สเปก</th><th>ผล</th><th>บันทึกโดย</th></tr></thead>
+        <tbody>${body}</tbody></table></div>`;
+  }
+
   // ขั้น QC ที่ผลตรวจล่าสุดไม่ผ่าน: บอกทุกแผนกว่ารอตรวจซ้ำและ NCR ที่ออกแล้ว
   function holdNotice(data, job) {
     const hold = model.qcHold(job, data.job_inspections);
@@ -298,6 +382,7 @@
           <h2>${escapeHtml(job.item_code)} · ${escapeHtml(job.item_name)}</h2>
           <p class="fm-meta">${escapeHtml(job.code)}</p></div>${statusBadge(job.status)}</div>
         ${statusNotice(job)}
+        ${jobHoldNotice(job)}
         ${holdNotice(data, job)}
         ${model.nextStep(job) ? `<p class="fm-current-step"><strong>ขั้นปัจจุบัน: ${escapeHtml(model.nextStep(job).name)}</strong> · แผนก ${escapeHtml(model.nextStep(job).department_code)}</p>` : ""}
         <dl class="definition-grid">
@@ -317,8 +402,10 @@
 
   function supportingDetailsHtml(data, job) {
     const inspections = inspectionsHtml(data, job);
+    const readings = readingsHtml(data, job);
     return `<section class="card fm-detail">
       <details class="fm-review-details"><summary>ขั้นตอนการผลิตทั้งหมด · ${model.stepsOf(job).length} ขั้น</summary>${stepsHtml(job)}</details>
+      ${readings ? `<details class="fm-review-details"><summary>ค่าพารามิเตอร์ที่บันทึก</summary>${readings}</details>` : ""}
       ${inspections ? `<details class="fm-review-details"${model.qcHold(job, data.job_inspections) ? " open" : ""}><summary>ผลตรวจ QC และ NCR ที่เกี่ยวข้อง</summary>${inspections}</details>` : ""}
       <details class="fm-review-details"><summary>ประวัติของใบงานนี้</summary>${timelineHtml(model.jobTimeline(data.job_history, job.id))}</details>
     </section>`;
@@ -368,6 +455,14 @@
     const next = model.nextStep(job);
     const stepForm = root.querySelector("#jb-step-form");
     const errorBox = root.querySelector("#jb-form-error");
+    const params = model.paramsOf(next);
+    // สีของช่องกรอกค่าตามผลเทียบสเปก (ว่าง = ไม่มีสี)
+    root.querySelectorAll("#jb-step-form [data-reading]").forEach((input) => input.addEventListener("input", () => {
+      const param = params.find((row) => row.code === input.dataset.reading);
+      const ok = model.inSpec(input.value, param);
+      input.classList.toggle("jb-reading-ok", ok === true);
+      input.classList.toggle("jb-reading-out", ok === false);
+    }));
     stepForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       if (errorBox) errorBox.hidden = true;
@@ -375,14 +470,42 @@
       if (!files) return undefined;
       const form = new FormData(stepForm);
       const output = model.outputQty(form.get("output_qty"));
-      if (output.error) {
-        errorBox.textContent = output.error;
+      const readings = params.length ? model.readingsPayload(params, Object.fromEntries(form.entries())) : null;
+      const problem = output.error ?? readings?.error;
+      if (problem) {
+        errorBox.textContent = problem;
         errorBox.hidden = false;
         return undefined;
       }
-      return runAction(root, "app_factory_complete_job_step", { ...args, p_sequence: next.sequence, p_note: String(form.get("note") ?? ""), p_output_qty: output.value },
-        model.isLastPending(job, next) ? `${job.code} ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว ยอดคงคลังเพิ่มขึ้น` : `ทำขั้น “${next.name}” เสร็จแล้ว`, files);
+      const done = model.isLastPending(job, next) ? `${job.code} ผลิตเสร็จ รับผลผลิตเข้าคลังแล้ว ยอดคงคลังเพิ่มขึ้น` : `ทำขั้น “${next.name}” เสร็จแล้ว`;
+      const base = { ...args, p_sequence: next.sequence, p_note: String(form.get("note") ?? ""), p_output_qty: output.value };
+      if (!readings) return runAction(root, "app_factory_complete_job_step", base, done, files);
+      if (readings.outOfSpec.length && !confirm(`${readings.outOfSpec.join(", ")} หลุดสเปก — บันทึกแล้วใบงานจะถูกกักกันรอ QA ใช่หรือไม่?`)) return undefined;
+      return runAction(root, "app_factory_complete_job_step_with_readings", { ...base, ...readings.args },
+        (result) => (result?.held ? `${done} — ค่าหลุดสเปก ใบงานถูกกักกันรอ QA ตัดสิน` : done), files);
     });
+    const holdForm = root.querySelector("#jb-hold-form");
+    if (holdForm) {
+      const ncrFields = root.querySelector("#jb-hold-ncr-fields");
+      root.querySelectorAll('#jb-hold-form input[name="decision"]').forEach((radio) => radio.addEventListener("change", () => {
+        if (radio.checked) ncrFields.hidden = radio.value !== "ncr";
+      }));
+      holdForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const holdError = root.querySelector("#jb-hold-error");
+        holdError.hidden = true;
+        const form = new FormData(holdForm);
+        const parsed = model.holdPayload(Object.fromEntries(form.entries()), job);
+        if (parsed.error) {
+          holdError.textContent = parsed.error;
+          holdError.hidden = false;
+          return undefined;
+        }
+        if (parsed.args.p_decision === "ncr" && !confirm("ออก NCR ใหม่สำหรับใบงานนี้ใช่หรือไม่? ใบงานยังถูกกักกันจนกว่าจะปลด")) return undefined;
+        return runAction(root, "app_factory_decide_job_hold", { ...args, ...parsed.args },
+          (result) => (parsed.args.p_decision === "ncr" ? `ออก NCR ${result?.ncr_no ?? ""} แล้ว ใบงานยังถูกกักกัน` : `ปลดกักกัน ${job.code} แล้ว ใบงานเดินต่อได้`));
+      });
+    }
     const cancelForm = root.querySelector("#jb-cancel-form");
     cancelForm?.addEventListener("submit", (event) => {
       event.preventDefault();
