@@ -2425,6 +2425,8 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .spc-bar { fill: var(--primary); opacity: .75; }
 .spc-bar.is-oos { fill: var(--danger); }
 .spc-hist { max-width: 560px; }
+/* ชื่อค่าที่ติดตามยาว (Item · ขั้น · พารามิเตอร์) ช่องเลือกจึงกว้างกว่า dropdown กรองทั่วไป (220px) */
+.factory-page .fm-listbar .select.spc-pick { flex: 1 1 360px; max-width: 640px; }
 /* ตัวอักษรใน SVG ย่อตามความกว้าง: จอแคบเลื่อน I-chart ในกรอบแทนการย่อจนอ่านไม่ออก (หน้าไม่เลื่อนแนวนอน) */
 .spc-scroll { overflow-x: auto; }
 .spc-scroll .spc-chart { min-width: 600px; }

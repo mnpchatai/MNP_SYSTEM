@@ -27,7 +27,7 @@
     const plotWidth = W - box.left - box.right;
     const values = group.points.map((point) => point.value);
     const marks = [stats.ucl, stats.lcl, group.spec.min, group.spec.max].filter((mark) => mark !== null);
-    const scale = lab.niceScale(Math.min(...values, ...marks), Math.max(...values, ...marks), 5);
+    const scale = lab.niceScale(Math.min(stats.min, ...marks), Math.max(stats.max, ...marks), 5);
     const x = (position) => box.left + (values.length === 1 ? plotWidth / 2 : (position / (values.length - 1)) * plotWidth);
     const y = (number) => box.top + (1 - (number - scale.min) / (scale.max - scale.min)) * box.height;
     const right = box.left + plotWidth;
@@ -103,7 +103,7 @@
     const unit = group.unit ? ` ${group.unit}` : "";
     const picker = `<form class="fm-listbar" data-spc-pick>
         <label class="sr-only" for="spc-ch">ค่าที่ติดตาม</label>
-        <select class="select" id="spc-ch" name="ch">${options(model.choiceLabels(groups), group.key)}</select>
+        <select class="select spc-pick" id="spc-ch" name="ch">${options(model.choiceLabels(groups), group.key)}</select>
       </form>`;
     const warnings = [
       group.specFromRouting ? "" : notice("พารามิเตอร์นี้ถูกลบออกจาก Routing แล้ว — เส้นสเปกใช้ค่าที่บันทึกไว้กับค่าล่าสุด"),
@@ -120,7 +120,7 @@
         ${tile("Cpk", index(stats.cpk), `${verdict.text}${verdict.provisional ? ` · น้อยกว่า ${model.MIN_SAMPLE} ค่า ใช้ดูแนวโน้ม` : ""}`, "σ ภายในจากช่วงเคลื่อนที่ (MR̄ / 1.128) เทียบสเปกด้านที่ใกล้กว่า")}
         ${tile("Cp / Ppk", `${index(stats.cp)} / ${index(stats.ppk)}`, "", "Cp ต้องมีสเปกทั้งสองด้าน · Ppk ใช้ SD รวมของทุกค่า")}
         ${tile("ค่าเฉลี่ย / σ", `${value(stats.mean)} / ${value(stats.sigma)}`, group.unit)}
-        ${tile("จำนวนค่า", String(stats.n), `นอกเส้นควบคุม ${stats.outOfControl.length} · นอกสเปก ${stats.outOfSpec.length}`)}
+        ${tile("จำนวนค่า", String(stats.n), `นอกเส้นควบคุม ${stats.outOfControl.length}`)}
       </div>
       <section class="card"><h2>I-chart</h2><div class="spc-scroll">${controlChart(group, stats)}</div></section>
       <div class="fm-split">

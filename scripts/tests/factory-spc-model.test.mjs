@@ -107,6 +107,26 @@ test("verdict follows the usual Cpk bands and marks small samples as provisional
   assert.equal(at(0.8).tone, "bad");
   assert.equal(at(1.5).provisional, false);
   assert.equal(at(1.5, model.MIN_SAMPLE - 1).provisional, true);
+  // ตัดสินจากค่าที่แสดง (ทศนิยม 2 ตำแหน่ง): 1.3299 แสดง 1.33 จึงผ่านเกณฑ์
+  assert.equal(at(1.3299).text, "ผ่านเกณฑ์ (≥ 1.33)");
+  assert.equal(at(0.9949).tone, "bad");
+});
+
+test("readings sort by actual time even when the timestamp text differs in precision", () => {
+  const data = { ...DATA, job_readings: [
+    reading("j1", 2.0, "2026-10-19T03:00:00.5+00:00"),
+    reading("j2", 2.05, "2026-10-19T03:00:00+00:00"),
+  ] };
+  assert.deepEqual(model.characteristics(data)[0].points.map((point) => point.job_code), ["TEST-JB-26-002", "TEST-JB-26-001"]);
+});
+
+test("statistics and the histogram handle a very long series without spreading it into arguments", () => {
+  const values = Array.from({ length: 200000 }, (_, index) => 2 + ((index * 7) % 11) / 100);
+  const stats = model.capability(values, { min: 1.9, max: 2.2 });
+  assert.equal(stats.n, values.length);
+  assert.equal(stats.max, 2.1);
+  const bins = model.histogram(values, { min: 1.9, max: 2.2 });
+  assert.equal(bins.reduce((sum, bin) => sum + bin.count, 0), values.length);
 });
 
 test("histogram spans values and spec, keeps every value and puts the top value in the last bin", () => {

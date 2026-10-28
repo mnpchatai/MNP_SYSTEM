@@ -27,7 +27,8 @@
   const finite = (value) => typeof value === "number" && Number.isFinite(value);
   const sameSpec = (a, b) => a.min === b.min && a.max === b.max;
   const outside = (value, spec) => (spec.min !== null && value < spec.min) || (spec.max !== null && value > spec.max);
-  const byTime = (a, b) => String(a.recorded_at ?? "").localeCompare(String(b.recorded_at ?? "")) || String(a.job_code).localeCompare(String(b.job_code));
+  const time = (value) => Date.parse(value ?? "") || 0;
+  const byTime = (a, b) => time(a.recorded_at) - time(b.recorded_at) || String(a.job_code).localeCompare(String(b.job_code));
 
   // job_readings + jobs + steps ของ app_factory_master_data -> รายการค่าที่ติดตาม พร้อมจุดข้อมูลเรียงตามเวลา
   // ค่าที่ไม่ใช่ตัวเลข หรือใบงานที่ไม่อยู่ในชุดข้อมูล ถูกข้าม
@@ -112,18 +113,22 @@
   }
 
   // คำตัดสิน Cpk: tone ใช้เลือกสี · provisional = ค่ายังน้อยกว่า MIN_SAMPLE
+  // ตัดสินจากค่าที่ปัด 2 ทศนิยมเท่าที่หน้าแสดง (1.3299 แสดง 1.33 จึงต้อง "ผ่านเกณฑ์" ไม่ใช่ "เฝ้าระวัง")
   function verdict(stats) {
     if (stats.cpk === null) return { tone: "none", text: stats.reason === "flat" ? "ค่าทุกตัวเท่ากัน" : "ข้อมูลไม่พอ", provisional: false };
-    const found = VERDICTS.find((entry) => stats.cpk >= entry.min);
+    const shown = Number(stats.cpk.toFixed(2));
+    const found = VERDICTS.find((entry) => shown >= entry.min);
     return { tone: found.tone, text: found.text, provisional: stats.n < MIN_SAMPLE };
   }
 
   // ฮิสโตแกรม: ช่วงครอบทั้งค่าและสเปก จำนวนช่อง = √n (5–12 ช่อง) ค่าที่ตกขอบขวาสุดนับในช่องสุดท้าย
+  // min/max หาด้วยลูปของ describe (Math.min(...list) ล้ม stack เมื่อค่าเป็นหมื่นตัว)
   function histogram(values, spec) {
     const list = (values ?? []).filter(finite);
     if (!list.length) return [];
-    let low = Math.min(...list, spec.min ?? Infinity);
-    let high = Math.max(...list, spec.max ?? -Infinity);
+    const { min, max } = lab().describe(list);
+    let low = Math.min(min, spec.min ?? Infinity);
+    let high = Math.max(max, spec.max ?? -Infinity);
     if (high === low) { low -= 0.5; high += 0.5; }
     const count = Math.min(12, Math.max(5, Math.ceil(Math.sqrt(list.length))));
     const width = (high - low) / count;

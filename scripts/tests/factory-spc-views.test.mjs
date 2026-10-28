@@ -82,7 +82,9 @@ test("the first characteristic is drawn with its indices, charts and out-of-spec
   assert.match(body, /<option value="r1:20:THICK" selected>RB-01 · 20 ขึ้นรูป · ความหนา \(mm\)<\/option>/);
   assert.match(words, /Cpk \S+ /);
   assert.match(words, /น้อยกว่า 25 ค่า ใช้ดูแนวโน้ม/);
-  assert.match(words, /จำนวนค่า 6 นอกเส้นควบคุม \d+ · นอกสเปก 1/);
+  // จำนวนค่าที่หลุดสเปกไม่ซ้ำในช่องสรุป เพราะตาราง "ค่าที่หลุดสเปก" ลงรายการไว้แล้ว
+  assert.match(words, /จำนวนค่า 6 นอกเส้นควบคุม \d+ /);
+  assert.ok(!words.includes("นอกสเปก 1"));
   assert.match(body, /<svg class="spc-chart" viewBox="0 0 720 \d+" role="img"/);
   assert.match(body, /USL 2\.1/);
   assert.match(body, /LSL 1\.9/);
@@ -119,6 +121,17 @@ test("spec notices appear only when the spec was edited after recording or the p
   assert.match(text(edited.body), /สเปกถูกแก้หลังบันทึกไปแล้ว 6 ค่า/);
   const removed = await render("", { data: { ...FIXTURE, steps: [] } });
   assert.match(text(removed.body), /พารามิเตอร์นี้ถูกลบออกจาก Routing แล้ว/);
+});
+
+test("a point outside the control limits but inside the spec is a square, and close reference labels do not overlap", async () => {
+  const values = [2.0, 2.001, 1.999, 2.0, 2.001, 1.999, 2.0, 2.06];
+  const data = { ...FIXTURE, jobs: values.map((_, index) => job(`k${index}`, `TEST-JB-26-1${index}`)),
+    job_readings: values.map((value, index) => reading(`k${index}`, "THICK", value, String(10 + index))) };
+  const { body } = await render("", { data });
+  assert.match(body, /<g class="spc-pt is-ooc"><title>TEST-JB-26-17 [^<]*<\/title><rect /);
+  const labels = [...body.matchAll(/<text class="spc-label spc-\w+-label" x="[\d.]+" y="([\d.]+)">/g)].map((match) => Number(match[1])).sort((a, b) => a - b);
+  assert.ok(labels.length >= 4);
+  for (let index = 1; index < labels.length; index += 1) assert.ok(labels[index] - labels[index - 1] >= 12.9, `labels at ${labels}`);
 });
 
 test("a single value or identical values still draw without indices", async () => {
