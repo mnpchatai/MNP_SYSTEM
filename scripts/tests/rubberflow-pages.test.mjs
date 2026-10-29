@@ -126,7 +126,7 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(gated, /กักกัน \(Hold\)/);
   assert.match(gated, /Gatekeeper/, "nothing received at extrusion yet");
   assert.doesNotMatch(gated, /data-rf-form="recordExtrusion"/);
-  // ข้ามเวลาบ่ม ส่งต่อ และรับมอบ → ฟอร์มบันทึกการรีดโผล่พร้อมช่องสเปก
+  // ข้ามเวลาบ่ม ส่งต่อ และรับมอบ → ฟอร์มบันทึกการฉีดโผล่พร้อมช่องสเปก
   const resting = env.store.data().lots.find((lot) => lot.stage === "mixing" && lot.readyAt > Date.now());
   env.store.run("endRest", { lotId: resting.id });
   const transferId = env.store.run("createTransfer", { lotId: resting.id, qty: 10 }).result;

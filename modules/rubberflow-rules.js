@@ -2,7 +2,7 @@
 // prototypes/rubber-mes/src/lib/rules.js + lib/format.js ทั้งไฟล์ (เปลี่ยนเฉพาะรูปแบบโมดูล: script ธรรมดา + CommonJS)
 // ไม่มี DOM/Supabase เทสต์ด้วย node --test (scripts/tests/rubberflow-rules.test.mjs)
 //
-// สายผลิต 4 สถานี: ผสม (mixing) → รีด (extrusion) → อบ (curing) → ตกแต่ง/บรรจุ (finishing)
+// สายผลิต 4 สถานี: ผสม (mixing) → ฉีด (extrusion) → อบ (curing) → ตกแต่ง/บรรจุ (finishing)
 // SPECS คือช่วงที่ยอมรับของแต่ละค่า ค่าที่หลุดช่วงทำให้ล็อตถูก QC Hold อัตโนมัติใน modules/rubberflow-actions.js
 (function (root) {
   const DAY = 86400000;

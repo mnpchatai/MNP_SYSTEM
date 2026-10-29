@@ -38,7 +38,7 @@
     planner: { label: "ฝ่ายวางแผนการผลิต", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
     store: { label: "เจ้าหน้าที่คลัง", modules: Object.freeze(["dashboard", "requisition", "warehouse", "wip", "trace"]) },
     mixer: { label: "พนักงานผสมยาง", modules: Object.freeze(["dashboard", "requisition", "mixing", "wip"]) },
-    extruder: { label: "พนักงานรีดยาง", modules: Object.freeze(["dashboard", "extrusion", "wip", "molds"]) },
+    extruder: { label: "พนักงานฉีดยาง", modules: Object.freeze(["dashboard", "extrusion", "wip", "molds"]) },
     curer: { label: "พนักงานอบยาง", modules: Object.freeze(["dashboard", "curing", "wip", "molds"]) },
     finisher: { label: "พนักงานตกแต่ง/บรรจุ", modules: Object.freeze(["dashboard", "finishing", "wip", "warehouse"]) },
     qc: { label: "วิศวกรควบคุมคุณภาพ", modules: Object.freeze(["dashboard", "recipes", "quality", "spc", "trace", "warehouse", "molds", "wip"]) },

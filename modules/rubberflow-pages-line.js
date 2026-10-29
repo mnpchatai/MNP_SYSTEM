@@ -208,7 +208,7 @@
           ${ui.field("ของเสีย (kg)", ui.input("scrapKg", { type: "number", step: "any" }))}
           ${ui.field("สาเหตุของเสีย", ui.input("scrapReason", { placeholder: "เช่น เศษติดใบโรเตอร์" }))}
         </div><div data-rf-dump-warn></div><div class="rf-row">${ui.submitButton("บันทึกการผสม")}<span class="small muted" data-rf-rest></span></div></form>`;
-    const html = `${ui.pageHead("สถานีที่ 1 · ผสมยาง", "รับวัตถุดิบที่ชั่งครบแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปรีด")}
+    const html = `${ui.pageHead("สถานีที่ 1 · ผสมยาง", "รับวัตถุดิบที่ชั่งครบแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปฉีด")}
       ${ui.stats([
         { label: "Yield ห้องผสม", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 99.0%" },
         { label: "ผลิตแล้วสะสม", value: `${fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0), 0)} kg` },
@@ -259,7 +259,7 @@
         ${ui.field("ยางคอมปาวด์ที่ใช้ (kg) *", ui.input("useKg", { type: "number", step: "any", required: true, extra: "data-rf-use" }), { hint: '<span data-rf-remaining></span>' })}
         ${ui.field("ยางหมุนเวียนที่ผสม (kg)", ui.input("reworkKg", { type: "number", step: "any", extra: "data-rf-rework" }), { hint: '<span data-rf-rework-hint></span>' })}
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
-        ${ui.field("เครื่องรีด", ui.select("machine", MACHINES.extrusion))}
+        ${ui.field("เครื่องฉีด", ui.select("machine", MACHINES.extrusion))}
         ${ui.field("หัวดาย *", ui.select("dieId", dies.map((die) => ({ value: die.id, label: `${die.id} · ${die.name}` })), { extra: "required" }))}
         ${ui.specInput("thickness", s.thickness.label, s.thickness)}
         ${ui.specInput("width", s.width.label, s.width)}
@@ -267,10 +267,10 @@
         ${ui.field("งานดี (m/pcs) *", ui.input("goodQty", { type: "number", step: "any", required: true }))}
         ${ui.field("ของเสีย (m/pcs)", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("สาเหตุของเสีย", ui.input("scrapReason"))}
-      </div><div data-rf-rework-warn></div><div class="rf-row">${ui.submitButton("บันทึกการรีด")}</div></form>`, { title: "บันทึกการรีด" }) : "";
+      </div><div data-rf-rework-warn></div><div class="rf-row">${ui.submitButton("บันทึกการฉีด")}</div></form>`, { title: "บันทึกการฉีด" }) : "";
     const html = `${ui.pageHead("สถานีที่ 2 · ฉีดขึ้นรูป", "ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปก")}
       ${ui.stats([
-        { label: "Yield การรีด", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 97.0%" },
+        { label: "Yield การฉีด", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 97.0%" },
         { label: "ผลิตแล้วสะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },
         { label: "ยางหมุนเวียนเฉลี่ย", value: `${avgRework.toFixed(1)}%`, sub: `เพดาน ${s.reworkMaxPct}%` },
         { label: "งานรอเข้าเครื่อง", value: String(ready.length), sub: "ใบส่งมอบที่รับแล้ว" },

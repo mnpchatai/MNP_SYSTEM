@@ -16,7 +16,7 @@ export function buildAlerts(d, now) {
     if (pct >= 0.85) alerts.push({ tone: pct >= 1 ? 'bad' : 'warn', module: 'molds', title: `ถึงรอบล้าง ${m.id}`, text: `${m.name} ใช้ไป ${Math.round(pct * 100)}% ของรอบทำความสะอาด` });
   });
   d.lots.filter((l) => l.qc === 'hold').forEach((l) => alerts.push({ tone: 'warn', module: 'quality', title: `QC Hold ${l.id}`, text: (l.holdReasons || []).join(', ') || 'รอผลตัดสินจาก QC' }));
-  d.lots.filter((l) => l.stage === 'mixing' && l.readyAt > now).forEach((l) => alerts.push({ tone: 'info', module: 'mixing', title: `กำลังบ่มยาง ${l.id}`, text: `เหลืออีก ${fmtDuration(l.readyAt - now)} จึงส่งต่อไปรีดได้` }));
+  d.lots.filter((l) => l.stage === 'mixing' && l.readyAt > now).forEach((l) => alerts.push({ tone: 'info', module: 'mixing', title: `กำลังบ่มยาง ${l.id}`, text: `เหลืออีก ${fmtDuration(l.readyAt - now)} จึงส่งต่อไปฉีดได้` }));
   d.transfers.filter((t) => t.status === 'in_transit').forEach((t) => alerts.push({ tone: 'info', module: 'wip', title: `รอรับมอบ ${t.id}`, text: `${STAGE_LABEL[t.from]} → ${STAGE_LABEL[t.to]} ${t.qtySent} ${t.uom}` }));
   d.orders.filter((o) => ['released', 'in_progress', 'on_hold'].includes(o.status) && o.dueDate - now < 3 * DAY).forEach((o) => alerts.push({ tone: o.dueDate < now ? 'bad' : 'warn', module: 'orders', title: `ใกล้กำหนดส่ง ${o.id}`, text: `${o.customer} ส่ง ${fmtDate(o.dueDate)} ผลิตแล้ว ${Math.round((o.producedQty / o.targetQty) * 100)}%` }));
   d.ncrs.filter((n) => n.status === 'open').forEach((n) => alerts.push({ tone: n.severity === 'critical' ? 'bad' : 'warn', module: 'quality', title: `NCR เปิดอยู่ ${n.id}`, text: n.title }));

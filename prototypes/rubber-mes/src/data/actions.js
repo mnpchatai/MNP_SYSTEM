@@ -280,7 +280,7 @@ export function recordExtrusion(d, p, ctx) {
   }, ctx);
   die.usageSinceClean += good;
   die.totalUsage += good;
-  audit(d, ctx, 'บันทึกการรีด', `${lot.id} ${good} ${lot.uom}${reasons.length ? ' (QC Hold อัตโนมัติ)' : ''}`);
+  audit(d, ctx, 'บันทึกการฉีด', `${lot.id} ${good} ${lot.uom}${reasons.length ? ' (QC Hold อัตโนมัติ)' : ''}`);
   return lot.id;
 }
 

@@ -7,7 +7,7 @@ import { Badge, Card, Field, PageHead, Select } from '../components/ui.jsx';
 
 // Each characteristic: where the value comes from and which spec applies.
 const CHARS = [
-  ...['thickness', 'width', 'weightPerM'].map((k) => ({ id: `ex.${k}`, label: `รีด · ${SPECS.extrusion[k].label}`, spec: SPECS.extrusion[k], source: (d) => d.lots.filter((l) => l.stage === 'extrusion').map((l) => ({ id: l.id, at: l.createdAt, v: l.params[k] })) })),
+  ...['thickness', 'width', 'weightPerM'].map((k) => ({ id: `ex.${k}`, label: `ฉีด · ${SPECS.extrusion[k].label}`, spec: SPECS.extrusion[k], source: (d) => d.lots.filter((l) => l.stage === 'extrusion').map((l) => ({ id: l.id, at: l.createdAt, v: l.params[k] })) })),
   ...['temp', 'time', 'pressure'].map((k) => ({ id: `cu.${k}`, label: `อบ · ${SPECS.curing[k].label}`, spec: SPECS.curing[k], source: (d) => d.lots.filter((l) => l.stage === 'curing').map((l) => ({ id: l.id, at: l.createdAt, v: l.params[k] })) })),
   ...Object.entries(SPECS.lab).map(([k, spec]) => ({ id: `lab.${k}`, label: `แล็บ · ${spec.label}`, spec, source: (d) => d.qcRecords.flatMap((r) => r.tests.filter((t) => t.key === k).map((t) => ({ id: r.lotId, at: r.at, v: t.value }))) })),
   { id: 'mx.dump', label: 'ผสม · Dump temp (สูตร EPDM)', spec: { label: 'Dump temp', unit: '°C', target: 140, tol: 6 }, source: (d) => d.lots.filter((l) => l.stage === 'mixing' && l.recipeId === 'RC-EPDM-DS01').map((l) => ({ id: l.id, at: l.createdAt, v: l.params.dumpTemp })) },

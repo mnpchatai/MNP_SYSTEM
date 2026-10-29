@@ -23,7 +23,7 @@ export default function Mixing() {
 
   return (
     <>
-      <PageHead title="สถานีที่ 1 · ผสมยาง" desc="รับวัตถุดิบที่ชั่งครบแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปรีด" />
+      <PageHead title="สถานีที่ 1 · ผสมยาง" desc="รับวัตถุดิบที่ชั่งครบแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปฉีด" />
       <div className="grid g4">
         <Stat icon={Gauge} label="Yield ห้องผสม" value={`${stageYield(lots).toFixed(2)}%`} sub="เป้าหมาย ≥ 99.0%" />
         <Stat icon={Waves} label="ผลิตแล้วสะสม" value={`${fmtNum(lots.reduce((s, l) => s + l.goodQty, 0), 0)} kg`} sub={`${lots.length} batch`} />

@@ -309,7 +309,7 @@
   };
 
   // ---------- แม่พิมพ์และหัวดาย ----------
-  const MOLD_KIND = { die: "หัวดายรีด", mold: "แม่พิมพ์อัด", line: "สายอบต่อเนื่อง" };
+  const MOLD_KIND = { die: "หัวดายฉีด", mold: "แม่พิมพ์อัด", line: "สายอบต่อเนื่อง" };
   const MOLD_UNIT = { m: "เมตร", pcs: "ชิ้น", shot: "รอบ" };
   pages.molds = (ctx) => {
     const { data, ui, rules } = ctx;
