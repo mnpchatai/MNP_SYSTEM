@@ -290,44 +290,18 @@ test("switching the persona redraws or leaves for the role's home, the scan form
   assert.deepEqual(env.log.toasts.at(-1), ["รีเซ็ตข้อมูลสาธิตเรียบร้อย", "ok"]);
 });
 
-test("the design switcher: ?design= wins and is remembered, unknown values fall back to the default, and the toolbar select redraws", async () => {
+test("pages carry their module hue, and the side menu, page head and callouts use the emoji icon set", async () => {
   const env = load();
   env.store.setUser("U01");
-  let html = await env.render();
-  assert.match(html, /<div class="rf-page" data-rf-design="" data-rf-mod="dashboard">/, "default = the original design");
-  assert.match(html, /<option value="" selected>ดีไซน์: แบบเดิม<\/option>/);
-  assert.match(env.module.nav[0].subnav("rubberflow"), /class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><svg class="rf-ico"/, "nav items carry an icon and their module hue");
-  html = await env.render("p=mixing&design=tiers");
-  assert.match(html, /data-rf-design="tiers" data-rf-mod="mixing"/);
-  assert.match(html, /<span class="rf-mod-ico" aria-hidden="true"><svg class="rf-ico"/, "the page head shows the module icon");
-  assert.equal(env.storage.get("mnp-rubberflow-design"), "tiers", "the chosen design is persisted");
-  html = await env.render("p=mixing");
-  assert.match(html, /data-rf-design="tiers"/, "no ?design= keeps the remembered one");
-  assert.match(html, /<option value="tiers" selected>/);
-  html = await env.render("p=mixing&design=nope");
-  assert.match(html, /data-rf-design="tiers"/, "an unknown design is ignored");
-  assert.doesNotMatch(html, /nope/);
-  const select = { ...env.root, handlers: {} };
-  select.addEventListener = (type, handler) => { select.handlers[type] = handler; };
-  env.fakes["[data-rf-design-pick]"] = [select];
-  await env.render("p=mixing");
-  select.handlers.change({ target: { value: "hero" } });
-  assert.equal(env.storage.get("mnp-rubberflow-design"), "hero");
-  assert.equal(env.log.renders, 1, "switching redraws the page");
-  select.handlers.change({ target: { value: "" } });
-  assert.equal(env.storage.has("mnp-rubberflow-design"), false, "back to the default removes the key");
-});
-
-test("picking a design while the URL carries ?design= drops the parameter so the pick is not overridden", async () => {
-  const env = load();
-  env.store.setUser("U01");
-  const select = { ...env.root, handlers: {} };
-  select.addEventListener = (type, handler) => { select.handlers[type] = handler; };
-  env.fakes["[data-rf-design-pick]"] = [select];
-  await env.render("p=mixing&design=tiers&q=MX");
-  select.handlers.change({ target: { value: "hero" } });
-  assert.equal(env.storage.get("mnp-rubberflow-design"), "hero");
-  assert.equal(env.log.hash, "#/rubberflow?p=mixing&q=MX", "design= is removed, the rest of the URL stays");
-  assert.equal(env.log.renders, 0, "the hash change redraws by itself");
-  assert.match(await env.render("p=mixing&q=MX"), /data-rf-design="hero"/);
+  const html = await env.render("p=mixing");
+  assert.match(html, /<div class="rf-page" data-rf-mod="mixing">/);
+  assert.match(html, /<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">🌀<\/span><\/span><div><h1>/, "the page head shows the module emoji before its single h1");
+  assert.equal((html.match(/<h1>/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /data-rf-design/, "no design switcher any more");
+  const sub = env.module.nav[0].subnav("rubberflow");
+  assert.match(sub, /class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">📋<\/span><\/span><span class="rf-nav-text">ใบสั่งผลิต<\/span>/);
+  const gated = await env.render("p=extrusion");
+  assert.match(gated, /<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">⚠️<\/span><\/span><div class="rf-callout-body"><strong>Gatekeeper:/);
+  assert.match(await env.render(), /<div class="rf-page" data-rf-mod="dashboard">/);
+  env.store.setUser(null);
 });
