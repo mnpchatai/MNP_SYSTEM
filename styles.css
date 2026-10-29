@@ -2205,16 +2205,17 @@ body:has(.rf-page) .sidebar-user .user-copy strong { color: #fff; }
 body:has(.rf-page) .sidebar-user .user-copy span { color: #7f94b5; }
 body:has(.rf-page) .sidebar-user .icon-button { color: #c7d3e6; background: #152c4d; border-color: #1c3356; }
 body:has(.rf-page) .avatar { color: #0b1f3a; background: #5eead4; }
-body:has(.rf-page) .topbar { color: #fff; background: #0b1f3a; backdrop-filter: none; border-bottom-color: #1c3356; }
-body:has(.rf-page) .breadcrumbs { color: #8fa3c4; }
-body:has(.rf-page) .breadcrumbs strong { color: #fff; }
-body:has(.rf-page) .topbar .icon-button { color: #c7d3e6; background: #152c4d; border-color: #1c3356; }
+body:has(.rf-page) .topbar { color: var(--ink); background: #fff; backdrop-filter: none; border-bottom-color: transparent; }
+:root[data-theme="dark"] body:has(.rf-page) .topbar { color: #fff; background: #0b1f3a; border-bottom-color: #1c3356; }
+:root[data-theme="dark"] body:has(.rf-page) .breadcrumbs { color: #8fa3c4; }
+:root[data-theme="dark"] body:has(.rf-page) .breadcrumbs strong { color: #fff; }
+:root[data-theme="dark"] body:has(.rf-page) .topbar .icon-button { color: #c7d3e6; background: #152c4d; border-color: #1c3356; }
 body:has(.rf-page) .content:has(.rf-page) { padding-top: 0; }
 body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 
-/* ---------- แถบหัวหน้า: ชื่อระบบ เครื่องมือ ชื่อหน้า (ไล่เฉดไปทางสีของโมดูล) ---------- */
-.rf-page { --rf-band: #0b1f3a; --rf-band-2: #11314f; --rf-band-ink: #ffffff; --rf-band-muted: #a9bad6; --rf-band-line: rgba(255, 255, 255, .16); --rf-band-field: rgba(255, 255, 255, .08); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
-:root[data-theme="dark"] .rf-page { --rf-accent-2: #5eead4; --rf-accent-soft: rgba(45, 212, 191, .16); }
+/* ---------- แถบหัวหน้า: ชื่อระบบ เครื่องมือ ชื่อหน้า (พื้นขาว ไล่เฉดอ่อนไปทางสีของโมดูล; ธีมมืดเป็นสีกรม) ---------- */
+.rf-page { --rf-band: #ffffff; --rf-band-2: #ffffff; --rf-band-tint: 14%; --rf-band-ink: var(--ink); --rf-band-muted: var(--muted); --rf-band-line: var(--line); --rf-band-field: var(--paper); --rf-band-hover: var(--shell); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
+:root[data-theme="dark"] .rf-page { --rf-band: #0b1f3a; --rf-band-2: #11314f; --rf-band-tint: 48%; --rf-band-ink: #ffffff; --rf-band-muted: #a9bad6; --rf-band-line: rgba(255, 255, 255, .16); --rf-band-field: rgba(255, 255, 255, .08); --rf-band-hover: rgba(255, 255, 255, .16); --rf-accent-2: #5eead4; --rf-accent-soft: rgba(45, 212, 191, .16); }
 .rf-page .rf-head, .rf-page .rf-toolbar, .rf-page .rf-pagenav, .rf-page .rf-pagehead { margin: 0 calc(-1 * var(--rf-pad-x)); padding-left: var(--rf-pad-x); padding-right: var(--rf-pad-x); color: var(--rf-band-ink); background: var(--rf-band); }
 .rf-page .rf-head { padding-top: 18px; padding-bottom: 6px; border-bottom: 0; }
 .rf-page .rf-sub { color: var(--rf-band-muted); }
@@ -2226,14 +2227,14 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-toolbar .input::placeholder { color: var(--rf-band-muted); }
 .rf-page .rf-toolbar .select option { color: #10203b; background: #fff; }
 .rf-page .rf-toolbar .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
-.rf-page .rf-toolbar .btn.secondary:hover { background: rgba(255, 255, 255, .16); }
+.rf-page .rf-toolbar .btn.secondary:hover { background: var(--rf-band-hover); }
 .rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn, .rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn:hover { color: #0b1f3a; background: #fbbf24; border-color: #fbbf24; font-weight: 700; }
 .rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad, .rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad:hover { color: #fff; background: #ef4444; border-color: #ef4444; font-weight: 700; }
 .rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn:hover { background: #f59e0b; border-color: #f59e0b; }
 .rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad:hover { background: #dc2626; border-color: #dc2626; }
 .rf-page .rf-pagenav { margin-top: -14px; padding-bottom: 8px; }
 .rf-page .rf-pagenav .btn { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
-.rf-page .rf-pagehead { margin-top: -14px; padding-top: 10px; padding-bottom: 64px; align-items: center; background: linear-gradient(120deg, var(--rf-band) 0%, var(--rf-band-2) 42%, color-mix(in srgb, var(--rf-mod) 48%, var(--rf-band)) 100%); border-radius: 0 0 22px 22px; }
+.rf-page .rf-pagehead { margin-top: -14px; padding-top: 10px; padding-bottom: 64px; align-items: center; background: linear-gradient(120deg, var(--rf-band) 0%, var(--rf-band-2) 42%, color-mix(in srgb, var(--rf-mod) var(--rf-band-tint), var(--rf-band)) 100%); border-radius: 0 0 22px 22px; }
 .rf-page .rf-pagehead h1 { font-size: 26px; letter-spacing: -.01em; }
 .rf-page .rf-pagehead p { color: var(--rf-band-muted); font-size: 14px; }
 .rf-page .rf-pagehead .btn:not(.secondary) { background: var(--rf-mod); border-color: var(--rf-mod); color: #fff; font-weight: 700; }
@@ -2263,7 +2264,7 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .btn:not(.secondary):not(.danger):not(.warning):hover { background: var(--rf-mod-ink); border-color: var(--rf-mod-ink); }
 .rf-page .btn.secondary { color: var(--ink); background: var(--paper); border-color: var(--line); }
 .rf-page .btn.secondary:hover { background: var(--rf-mod-soft); border-color: var(--rf-mod-line); }
-.rf-page .rf-pagehead .btn.secondary:hover { color: var(--rf-band-ink); background: rgba(255, 255, 255, .16); border-color: var(--rf-band-line); } /* ปุ่มรองในแถบหัวเข้ม: hover ต้องไม่เป็นขาวบนพื้นอ่อน */
+.rf-page .rf-pagehead .btn.secondary:hover { color: var(--rf-band-ink); background: var(--rf-band-hover); border-color: var(--rf-band-line); } /* ปุ่มรองในแถบหัว: hover ตามสีแถบ ไม่ใช่สีโมดูลของการ์ด */
 .rf-page .input, .rf-page .select, .rf-page .textarea { min-height: 40px; border-radius: 10px; }
 .rf-page .input:focus, .rf-page .select:focus, .rf-page .textarea:focus { border-color: var(--rf-mod); box-shadow: 0 0 0 3px var(--rf-mod-soft); }
 .rf-page .rf-scale-input { font-size: 28px; min-height: 52px; }
