@@ -210,7 +210,7 @@
   function chooserHtml(data) {
     const roles = data.users.map((row) => `<button class="rf-role" type="button" data-rf-user-pick="${escapeHtml(row.id)}"><strong>${escapeHtml(storeApi.ROLES[row.role]?.label ?? row.role)}</strong><span class="muted">${escapeHtml(row.name)}</span></button>`).join("");
     return `<section class="card rf-card rf-login"><h1>เลือกบทบาทสาธิต</h1>
-      <p class="muted">RubberFlow ควบคุมการผลิตยาง 4 สถานี ผสม → รีด → อบ → ตกแต่ง พร้อม FEFO, ชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ, Gatekeeper ส่งมอบ WIP และสืบย้อนกลับถึงล็อตวัตถุดิบ ข้อมูลทั้งหมดเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p>
+      <p class="muted">RubberFlow ควบคุมการผลิตยาง 4 สถานี ผสม → ฉีด → อบ → ตกแต่ง พร้อม FEFO, ชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ, Gatekeeper ส่งมอบ WIP และสืบย้อนกลับถึงล็อตวัตถุดิบ ข้อมูลทั้งหมดเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p>
       <div class="rf-role-grid">${roles}</div></section>`;
   }
 

@@ -196,7 +196,7 @@ test("the gatekeeper: a station can only consume a transfer it received, within 
 
 test("extrusion caps rework at 10%, auto-holds out-of-spec dimensions and counts die usage", () => {
   const d = fresh();
-  // ยางที่ยังบ่มอยู่ → ข้ามเวลาบ่ม ส่งต่อ 10 kg และรับมอบที่สถานีรีด
+  // ยางที่ยังบ่มอยู่ → ข้ามเวลาบ่ม ส่งต่อ 10 kg และรับมอบที่สถานีฉีด
   const mixing = d.lots.find((lot) => lot.stage === "mixing" && lot.qc === "pass" && lot.transferredQty < lot.goodQty);
   A.endRest(d, { lotId: mixing.id }, ctx("mixer"));
   const transferId = A.createTransfer(d, { lotId: mixing.id, qty: 10 }, ctx("mixer"));
@@ -219,7 +219,7 @@ test("extrusion caps rework at 10%, auto-holds out-of-spec dimensions and counts
 
 test("curing checks good + scrap against the input, auto-holds on temperature and counts mold shots", () => {
   const d = fresh();
-  // ล็อตรีดที่ถูกกักกันในชุดสาธิต: QC ผ่านแล้วส่งต่อไปอบและรับมอบ
+  // ล็อตฉีดที่ถูกกักกันในชุดสาธิต: QC ผ่านแล้วส่งต่อไปอบและรับมอบ
   const held = d.lots.find((lot) => lot.stage === "extrusion" && lot.qc === "hold");
   A.addQcRecord(d, { lotId: held.id, values: { hardness: 65 }, result: "pass" }, ctx("qc"));
   const sendQty = A.transferableQty(held, NOW);

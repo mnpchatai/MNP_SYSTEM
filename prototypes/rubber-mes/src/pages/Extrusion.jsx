@@ -25,16 +25,16 @@ export default function Extrusion() {
 
   return (
     <>
-      <PageHead title="สถานีที่ 2 · รีดขึ้นรูป" desc="ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปก" />
+      <PageHead title="สถานีที่ 2 · ฉีดขึ้นรูป" desc="ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปก" />
       <div className="grid g4">
-        <Stat icon={Gauge} label="Yield การรีด" value={`${stageYield(lots).toFixed(2)}%`} sub="เป้าหมาย ≥ 97.0%" />
+        <Stat icon={Gauge} label="Yield การฉีด" value={`${stageYield(lots).toFixed(2)}%`} sub="เป้าหมาย ≥ 97.0%" />
         <Stat icon={Ruler} label="ผลิตแล้วสะสม" value={fmtNum(lots.reduce((a, l) => a + l.goodQty, 0))} sub="m / pcs" />
         <Stat icon={Recycle} label="ยางหมุนเวียนเฉลี่ย" value={`${avgRework.toFixed(1)}%`} sub={`เพดาน ${s.reworkMaxPct}%`} />
         <Stat icon={Repeat} label="งานรอเข้าเครื่อง" value={ready.length} sub="ใบส่งมอบที่รับแล้ว" />
       </div>
       <GateNotice stage="extrusion" />
       {ready.length > 0 && (
-        <Card title="บันทึกการรีด">
+        <Card title="บันทึกการฉีด">
           <div className="stack">
             <div className="grid g4">
               <InboundSelect stage="extrusion" value={f.transferId} onChange={pick} />
@@ -43,7 +43,7 @@ export default function Extrusion() {
                 <input type="number" className={`input ${f.reworkKg === '' ? '' : pct > s.reworkMaxPct ? 'out' : 'ok'}`} value={f.reworkKg} onChange={set('reworkKg')} />
               </Field>
               <Field label="กะ"><Select value={f.shift} onChange={set('shift')} options={SHIFTS.map((x) => ({ value: x.id, label: x.label }))} /></Field>
-              <Field label="เครื่องรีด"><Select value={f.machine} onChange={set('machine')} options={MACHINES.extrusion} /></Field>
+              <Field label="เครื่องฉีด"><Select value={f.machine} onChange={set('machine')} options={MACHINES.extrusion} /></Field>
               <Field label="หัวดาย *"><Select value={f.dieId} onChange={set('dieId')} options={dies.map((d) => ({ value: d.id, label: `${d.id} · ${d.name}` }))} /></Field>
               <SpecInput label={s.thickness.label} spec={s.thickness} value={f.thickness} onChange={set('thickness')} />
               <SpecInput label={s.width.label} spec={s.width} value={f.width} onChange={set('width')} />
@@ -53,7 +53,7 @@ export default function Extrusion() {
               <Field label="สาเหตุของเสีย"><Input value={f.scrapReason} onChange={set('scrapReason')} /></Field>
             </div>
             {pct > s.reworkMaxPct && <Callout tone="bad">สัดส่วนยางหมุนเวียนเกินเพดาน ระบบจะไม่ให้บันทึก</Callout>}
-            <div><Button variant="primary" onClick={submit}>บันทึกการรีด</Button></div>
+            <div><Button variant="primary" onClick={submit}>บันทึกการฉีด</Button></div>
           </div>
         </Card>
       )}

@@ -96,7 +96,7 @@
   const spcChars = (rules) => {
     const { SPECS } = rules;
     return [
-      ...["thickness", "width", "weightPerM"].map((key) => ({ id: `ex.${key}`, label: `รีด · ${SPECS.extrusion[key].label}`, spec: SPECS.extrusion[key], source: (d) => d.lots.filter((lot) => lot.stage === "extrusion").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
+      ...["thickness", "width", "weightPerM"].map((key) => ({ id: `ex.${key}`, label: `ฉีด · ${SPECS.extrusion[key].label}`, spec: SPECS.extrusion[key], source: (d) => d.lots.filter((lot) => lot.stage === "extrusion").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
       ...["temp", "time", "pressure"].map((key) => ({ id: `cu.${key}`, label: `อบ · ${SPECS.curing[key].label}`, spec: SPECS.curing[key], source: (d) => d.lots.filter((lot) => lot.stage === "curing").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
       ...Object.entries(SPECS.lab).map(([key, spec]) => ({ id: `lab.${key}`, label: `แล็บ · ${spec.label}`, spec, source: (d) => d.qcRecords.flatMap((record) => record.tests.filter((test) => test.key === key).map((test) => ({ id: record.lotId, at: record.at, v: test.value }))) })),
       { id: "mx.dump", label: "ผสม · Dump temp (สูตร EPDM)", spec: { label: "Dump temp", unit: "°C", target: 140, tol: 6 }, source: (d) => d.lots.filter((lot) => lot.stage === "mixing" && lot.recipeId === "RC-EPDM-DS01").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params.dumpTemp })) },
