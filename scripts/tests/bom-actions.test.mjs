@@ -250,8 +250,9 @@ test("importing a flat sheet adds items and approved revision-1 BOMs, merges leg
   rejects(() => A.importFlat(d, payload, ctx("gr")), /ฝ่ายวางแผน/);
   rejects(() => A.importFlat(d, { items: [] }, ctx("planner")), /ไม่มีรายการ/);
   const itemsBefore = d.items.length;
-  const stats = A.importFlat(d, payload, ctx("planner"));
+  const { summary, ...stats } = A.importFlat(d, payload, ctx("planner"));
   assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1 }, "PT-00320 already has an approved BOM → skipped; P-STK-01 and PT-00320 merged");
+  assert.equal(summary, "ชิ้นงานใหม่ 4 (มีอยู่แล้ว 2) · BOM ใหม่ 2 ข้าม 1");
   assert.equal(d.items.length, itemsBefore + 4);
   const fg = approved(d, "IMP-01(P)-Y");
   assert.equal(fg.revision, 1);

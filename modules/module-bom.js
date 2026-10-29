@@ -65,7 +65,7 @@
       return false;
     }
     if (!store.isPersisted()) showToast("บันทึกในหน่วยความจำได้ แต่เบราว์เซอร์นี้ไม่ให้เก็บข้อมูล (localStorage เต็มหรือปิดอยู่) รีเฟรชแล้วข้อมูลจะหาย", "error");
-    else if (successText) showToast(String(successText).replaceAll("{result}", typeof result.result === "object" ? JSON.stringify(result.result) : String(result.result ?? "")));
+    else if (successText) showToast(String(successText).replaceAll("{result}", String(result.result?.summary ?? result.result ?? "")));
     return true;
   }
   function parseArgs(node) {

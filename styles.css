@@ -2338,7 +2338,8 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
 [data-rf-mod="bom-audit"] { --rf-mod: #4f6478; }
 .bom-page .rf-brand { background: #3f51b5; }
 .bom-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
-@media (min-width: 1041px) { .bom-split { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); } .bom-split-wide { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); } .bom-split > .rf-card:only-child { grid-column: 1 / -1; } }
+@media (min-width: 1041px) { .bom-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .bom-split-wide { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } .bom-split > .rf-card:only-child { grid-column: 1 / -1; } }
+.bom-page td .rf-mono, .bom-page td.rf-mono { white-space: nowrap; } /* รหัสมีขีดกลาง ปล่อยให้ตารางเลื่อนแนวนอนแทนการตัดคำทีละตัว */
 .bom-h3 { margin: 14px 0 6px; font-size: 14px; color: var(--muted); }
 .bom-lv { display: inline-block; }
 .bom-lv-1 { padding-left: 14px; } .bom-lv-2 { padding-left: 28px; } .bom-lv-3 { padding-left: 42px; } .bom-lv-4 { padding-left: 56px; } .bom-lv-5 { padding-left: 70px; } .bom-lv-6 { padding-left: 84px; }

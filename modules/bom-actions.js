@@ -219,8 +219,9 @@
       d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"} (อนุมัติย้อนหลังตามข้อมูลเดิม)`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
       stats.bomsAdded += 1;
     }
-    audit(d, ctx, "นำเข้า BOM จากชีต", `${p.source || "Excel"}: ชิ้นงานใหม่ ${stats.itemsAdded} รวม ${stats.itemsMerged} · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}`);
-    return stats;
+    const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}`;
+    audit(d, ctx, "นำเข้า BOM จากชีต", `${p.source || "Excel"}: ${summary}`);
+    return { ...stats, summary }; // summary = ข้อความสำหรับ toast (module-bom.js ใช้ result.summary เมื่อมี)
   }
 
   // ---------- ใบสั่งผลิต (PI) ----------
