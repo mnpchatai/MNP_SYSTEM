@@ -289,3 +289,19 @@ test("switching the persona redraws or leaves for the role's home, the scan form
   assert.ok(env.store.data().molds[0].usageSinceClean > 0);
   assert.deepEqual(env.log.toasts.at(-1), ["รีเซ็ตข้อมูลสาธิตเรียบร้อย", "ok"]);
 });
+
+test("pages carry their module hue, and the side menu, page head and callouts use the emoji icon set", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const html = await env.render("p=mixing");
+  assert.match(html, /<div class="rf-page" data-rf-mod="mixing">/);
+  assert.match(html, /<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">🌀<\/span><\/span><div><h1>/, "the page head shows the module emoji before its single h1");
+  assert.equal((html.match(/<h1>/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /data-rf-design/, "no design switcher any more");
+  const sub = env.module.nav[0].subnav("rubberflow");
+  assert.match(sub, /class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">📋<\/span><\/span><span class="rf-nav-text">ใบสั่งผลิต<\/span>/);
+  const gated = await env.render("p=extrusion");
+  assert.match(gated, /<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">⚠️<\/span><\/span><div class="rf-callout-body"><strong>Gatekeeper:/);
+  assert.match(await env.render(), /<div class="rf-page" data-rf-mod="dashboard">/);
+  env.store.setUser(null);
+});

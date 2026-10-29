@@ -179,7 +179,7 @@
     const groups = storeApi.GROUPS.map((group) => {
       const items = storeApi.MODULES.filter((entry) => entry.group === group && storeApi.canSee(user, entry.id));
       if (!items.length) return "";
-      return `<li class="rf-nav-group"><span>${escapeHtml(group)}</span><ul>${items.map((entry) => `<li><a class="rf-nav-item${entry.id === page ? " is-active" : ""}" href="${escapeHtml(url(entry.id))}"${entry.id === page ? ' aria-current="page"' : ""}>${escapeHtml(entry.label)}${counts[entry.id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(entry.id))}">${counts[entry.id]}</span>` : ""}</a></li>`).join("")}</ul></li>`;
+      return `<li class="rf-nav-group"><span>${escapeHtml(group)}</span><ul>${items.map((entry) => `<li><a class="rf-nav-item${entry.id === page ? " is-active" : ""}" data-rf-mod="${escapeHtml(entry.id)}" href="${escapeHtml(url(entry.id))}"${entry.id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${ui.icon(entry.id)}</span><span class="rf-nav-text">${escapeHtml(entry.label)}</span>${counts[entry.id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(entry.id))}">${counts[entry.id]}</span>` : ""}</a></li>`).join("")}</ul></li>`;
     }).join("");
     return `<div class="nav-sub rf-nav"><ul class="rf-nav-list">${groups}</ul></div>`;
   };
@@ -274,6 +274,7 @@
     const ctx = makeContext(params);
     const { user, page } = ctx;
     const entry = page ? storeApi.findModule(page) : null;
+    ui.module = entry && user ? page : ""; // ไอคอนหน้าชื่อหน้า (ui.pageHead)
     const title = entry && user ? `${TITLE} / ${entry.label}` : TITLE;
     let body;
     let bind = null;
@@ -290,7 +291,7 @@
       bind = built.bind ?? null;
     }
     const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">RB</span><strong class="rf-app-name">${escapeHtml(TITLE)}</strong></div><p class="rf-sub">${escapeHtml(SUBTITLE)}</p></div></header>`;
-    app.innerHTML = shell(`<div class="rf-page">${head}${user ? toolbarHtml(ctx) : ""}${body}</div>`, PATH, title);
+    app.innerHTML = shell(`<div class="rf-page" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${user ? toolbarHtml(ctx) : ""}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);

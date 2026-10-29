@@ -2149,3 +2149,180 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-spc-pick { min-width: 260px; }
 .rf-app-name { font-size: 22px; font-weight: 700; line-height: 1.3; letter-spacing: -.01em; }
 .rf-page .nowrap { white-space: nowrap; }
+
+/* ===================== RubberFlow: ดีไซน์ (กรอบเข้ม + สีตามโมดูล) =====================
+   กรอบ (แถบข้าง แถบบน แถบหัวหน้า) สีน้ำเงินเข้มทุกหน้า เนื้อหาสว่างตามธีมของระบบ
+   ทุกโมดูลมีสี (--rf-mod จาก [data-rf-mod]) และ emoji (.rf-ico) ของตัวเอง: ไอคอนเมนู ชิปหัวหน้า ไล่เฉดแถบหัว ปุ่มหลัก แท็บ แถวที่เลือก
+   สำคัญ = มีพื้นสี (KPI ต่ำกว่าเป้า แจ้งเตือนแถบทึบ) · ธรรมดา = การ์ดขาว ตารางเงียบ · ตัวเลข KPI ใหญ่เรียงหลัก · ปุ่ม/ช่องกรอก 40px สำหรับหน้างาน
+   dialog ต่ออยู่ข้าง .rf-page (ไม่ใช่ลูก) กฎของ dialog จึง scope จาก body:has(.rf-page) */
+
+/* ---------- สีประจำโมดูลและไอคอน ---------- */
+[data-rf-mod] { --rf-mod: var(--rf-accent, #0f766e); }
+[data-rf-mod="orders"], [data-rf-mod="recipes"] { --rf-mod: #2457d6; }
+[data-rf-mod="requisition"] { --rf-mod: #a3600f; }
+[data-rf-mod="mixing"] { --rf-mod: #1d6fd3; }
+[data-rf-mod="extrusion"] { --rf-mod: #d9640c; }
+[data-rf-mod="curing"] { --rf-mod: #cf3030; }
+[data-rf-mod="finishing"] { --rf-mod: #1b8f4e; }
+[data-rf-mod="wip"], [data-rf-mod="quality"] { --rf-mod: #7b3fd1; }
+[data-rf-mod="spc"] { --rf-mod: #0f8ba0; }
+[data-rf-mod="trace"] { --rf-mod: #4f52c9; }
+[data-rf-mod="warehouse"], [data-rf-mod="molds"], [data-rf-mod="audit"] { --rf-mod: #4f6478; }
+[data-rf-mod], .rf-step { --rf-mod-soft: color-mix(in srgb, var(--rf-mod) 11%, var(--paper)); --rf-mod-line: color-mix(in srgb, var(--rf-mod) 28%, var(--paper)); --rf-mod-ink: color-mix(in srgb, var(--rf-mod) 82%, var(--ink)); }
+:root[data-theme="dark"] [data-rf-mod], :root[data-theme="dark"] .rf-step { --rf-mod-soft: color-mix(in srgb, var(--rf-mod) 22%, var(--paper)); --rf-mod-line: color-mix(in srgb, var(--rf-mod) 40%, var(--paper)); --rf-mod-ink: color-mix(in srgb, var(--rf-mod) 55%, white); }
+.rf-ico { display: inline-grid; place-items: center; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif; font-style: normal; line-height: 1; }
+.rf-nav-ico { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 26px; font-size: 15px; background: color-mix(in srgb, var(--rf-mod) 30%, #0b1f3a); border-radius: 8px; }
+.rf-nav-text { min-width: 0; }
+.rf-pagehead-main { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.rf-mod-ico { display: inline-grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; font-size: 26px; background: var(--rf-mod); border-radius: 14px; box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--rf-mod) 80%, transparent); }
+.rf-callout, body:has(.rf-page) .rf-modal .rf-callout { display: flex; align-items: flex-start; gap: 10px; }
+.rf-callout-ico { display: inline-grid; place-items: center; flex: 0 0 auto; font-size: 18px; margin-top: 1px; }
+.rf-callout-body { min-width: 0; flex: 1; }
+.rf-page .rf-stat-value, .rf-page .rf-big, .rf-page td { font-variant-numeric: tabular-nums; }
+.rf-page .rf-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .85; }
+.rf-page ::selection, body:has(.rf-page) .rf-modal ::selection { background: color-mix(in srgb, var(--rf-mod, #0f766e) 24%, transparent); }
+
+/* ---------- กรอบเข้ม: แถบข้าง แถบบน ---------- */
+body:has(.rf-page) { --page-gradient: #eef1f6; --content-gradient: #eef1f6; --sidebar-gradient: #0b1f3a; --shadow: none; background: #eef1f6; }
+:root[data-theme="dark"] body:has(.rf-page) { --page-gradient: #050c18; --content-gradient: #050c18; background: #050c18; }
+body:has(.rf-page) .app-shell { box-shadow: none; }
+body:has(.rf-page) .sidebar { background: #0b1f3a; border-right-color: #1c3356; color: #c7d3e6; }
+body:has(.rf-page) .sidebar .brand { border-bottom-color: #1c3356; }
+body:has(.rf-page) .sidebar .brand strong { color: #fff; }
+body:has(.rf-page) .sidebar .brand span, body:has(.rf-page) .nav-label, body:has(.rf-page) .rf-nav-group > span { color: #7f94b5; }
+body:has(.rf-page) .nav-link { color: #c7d3e6; }
+body:has(.rf-page) .nav-link:hover { color: #fff; background: #152c4d; }
+body:has(.rf-page) .nav-link.active { color: #fff; background: #2563eb; }
+body:has(.rf-page) .nav-sub { border-left-color: #1c3356; }
+body:has(.rf-page) .nav-divider { background: #1c3356; }
+body:has(.rf-page) .rf-nav-item { min-height: 38px; padding: 5px 8px; gap: 8px; color: #c7d3e6; border-radius: 10px; }
+body:has(.rf-page) .rf-nav-item:hover { color: #fff; background: #152c4d; }
+body:has(.rf-page) .rf-nav-item.is-active { color: #fff; background: color-mix(in srgb, var(--rf-mod) 38%, #0b1f3a); }
+body:has(.rf-page) .rf-nav-item.is-active .rf-nav-ico { background: var(--rf-mod); }
+body:has(.rf-page) .rf-nav-count { color: #0b1f3a; background: #fbbf24; }
+body:has(.rf-page) .sidebar-user { border-top-color: #1c3356; }
+body:has(.rf-page) .sidebar-user .user-copy strong { color: #fff; }
+body:has(.rf-page) .sidebar-user .user-copy span { color: #7f94b5; }
+body:has(.rf-page) .sidebar-user .icon-button { color: #c7d3e6; background: #152c4d; border-color: #1c3356; }
+body:has(.rf-page) .avatar { color: #0b1f3a; background: #5eead4; }
+body:has(.rf-page) .topbar { color: #fff; background: #0b1f3a; backdrop-filter: none; border-bottom-color: #1c3356; }
+body:has(.rf-page) .breadcrumbs { color: #8fa3c4; }
+body:has(.rf-page) .breadcrumbs strong { color: #fff; }
+body:has(.rf-page) .topbar .icon-button { color: #c7d3e6; background: #152c4d; border-color: #1c3356; }
+body:has(.rf-page) .content:has(.rf-page) { padding-top: 0; }
+body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
+
+/* ---------- แถบหัวหน้า: ชื่อระบบ เครื่องมือ ชื่อหน้า (ไล่เฉดไปทางสีของโมดูล) ---------- */
+.rf-page { --rf-band: #0b1f3a; --rf-band-2: #11314f; --rf-band-ink: #ffffff; --rf-band-muted: #a9bad6; --rf-band-line: rgba(255, 255, 255, .16); --rf-band-field: rgba(255, 255, 255, .08); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
+:root[data-theme="dark"] .rf-page { --rf-accent-2: #5eead4; --rf-accent-soft: rgba(45, 212, 191, .16); }
+.rf-page .rf-head, .rf-page .rf-toolbar, .rf-page .rf-pagenav, .rf-page .rf-pagehead { margin: 0 calc(-1 * var(--rf-pad-x)); padding-left: var(--rf-pad-x); padding-right: var(--rf-pad-x); color: var(--rf-band-ink); background: var(--rf-band); }
+.rf-page .rf-head { padding-top: 18px; padding-bottom: 6px; border-bottom: 0; }
+.rf-page .rf-sub { color: var(--rf-band-muted); }
+.rf-page .rf-brand { background: var(--rf-accent); color: #04221d; }
+.rf-page .rf-toolbar { margin-top: -14px; padding-top: 6px; padding-bottom: 12px; }
+.rf-page .rf-persona { color: var(--rf-band-muted); }
+.rf-page .rf-toolbar .input, .rf-page .rf-toolbar .select { min-height: 36px; color: var(--rf-band-ink); background-color: var(--rf-band-field); border-color: var(--rf-band-line); }
+.rf-page .rf-toolbar .ss-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%23a9bad6' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.rf-page .rf-toolbar .input::placeholder { color: var(--rf-band-muted); }
+.rf-page .rf-toolbar .select option { color: #10203b; background: #fff; }
+.rf-page .rf-toolbar .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
+.rf-page .rf-toolbar .btn.secondary:hover { background: rgba(255, 255, 255, .16); }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn, .rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn:hover { color: #0b1f3a; background: #fbbf24; border-color: #fbbf24; font-weight: 700; }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad, .rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad:hover { color: #fff; background: #ef4444; border-color: #ef4444; font-weight: 700; }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn:hover { background: #f59e0b; border-color: #f59e0b; }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad:hover { background: #dc2626; border-color: #dc2626; }
+.rf-page .rf-pagenav { margin-top: -14px; padding-bottom: 8px; }
+.rf-page .rf-pagenav .btn { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
+.rf-page .rf-pagehead { margin-top: -14px; padding-top: 10px; padding-bottom: 64px; align-items: center; background: linear-gradient(120deg, var(--rf-band) 0%, var(--rf-band-2) 42%, color-mix(in srgb, var(--rf-mod) 48%, var(--rf-band)) 100%); border-radius: 0 0 22px 22px; }
+.rf-page .rf-pagehead h1 { font-size: 26px; letter-spacing: -.01em; }
+.rf-page .rf-pagehead p { color: var(--rf-band-muted); font-size: 14px; }
+.rf-page .rf-pagehead .btn:not(.secondary) { background: var(--rf-mod); border-color: var(--rf-mod); color: #fff; font-weight: 700; }
+.rf-page .rf-pagehead .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
+.rf-page .rf-pagehead + * { margin-top: -50px; }
+.rf-page .rf-pagehead + .rf-callout { margin-top: -46px; }
+.rf-page .rf-head + .card { margin-top: 2px; } /* หน้าเลือกบทบาท/ไม่มีสิทธิ์: ไม่มีแถบหัวหน้า */
+
+/* ---------- เนื้อหา: การ์ด KPI ปุ่ม ช่องกรอก ตาราง ป้าย แจ้งเตือน แท็บ ---------- */
+.rf-page .card { border: 0; border-radius: 14px; box-shadow: 0 1px 2px rgba(11, 31, 58, .06), 0 12px 32px -18px rgba(11, 31, 58, .35); }
+:root[data-theme="dark"] .rf-page .card { border: 1px solid var(--line); box-shadow: none; }
+.rf-page .rf-card-head { border-bottom: 0; padding-bottom: 6px; margin-bottom: 8px; }
+.rf-page .rf-card-head h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.rf-page .rf-card-head h3::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rf-mod); flex: 0 0 auto; }
+.rf-page .rf-stat { padding: 16px 18px; gap: 6px; }
+.rf-page .rf-stat-label { color: var(--muted); font-size: 12px; }
+.rf-page .rf-stat-value { font-size: 32px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+.rf-page .rf-stat.is-good { background: var(--success-soft); }
+.rf-page .rf-stat.is-warn { background: var(--warning-soft); }
+.rf-page .rf-stat.is-bad { background: var(--danger-soft); }
+.rf-page .rf-stat.is-good .rf-stat-label, .rf-page .rf-stat.is-good .rf-stat-sub { color: color-mix(in srgb, var(--success) 75%, var(--ink)); }
+.rf-page .rf-stat.is-warn .rf-stat-label, .rf-page .rf-stat.is-warn .rf-stat-sub { color: color-mix(in srgb, var(--warning) 75%, var(--ink)); }
+.rf-page .rf-stat.is-bad .rf-stat-label, .rf-page .rf-stat.is-bad .rf-stat-sub { color: color-mix(in srgb, var(--danger) 75%, var(--ink)); }
+.rf-page .btn { min-height: 40px; padding: 0 16px; border-radius: 10px; font-weight: 600; }
+.rf-page .btn.small { min-height: 36px; padding: 0 12px; }
+.rf-page .btn:not(.secondary):not(.danger):not(.warning) { background: var(--rf-mod); border-color: var(--rf-mod); }
+.rf-page .btn:not(.secondary):not(.danger):not(.warning):hover { background: var(--rf-mod-ink); border-color: var(--rf-mod-ink); }
+.rf-page .btn.secondary { color: var(--ink); background: var(--paper); border-color: var(--line); }
+.rf-page .btn.secondary:hover { background: var(--rf-mod-soft); border-color: var(--rf-mod-line); }
+.rf-page .rf-pagehead .btn.secondary:hover { color: var(--rf-band-ink); background: rgba(255, 255, 255, .16); border-color: var(--rf-band-line); } /* ปุ่มรองในแถบหัวเข้ม: hover ต้องไม่เป็นขาวบนพื้นอ่อน */
+.rf-page .input, .rf-page .select, .rf-page .textarea { min-height: 40px; border-radius: 10px; }
+.rf-page .input:focus, .rf-page .select:focus, .rf-page .textarea:focus { border-color: var(--rf-mod); box-shadow: 0 0 0 3px var(--rf-mod-soft); }
+.rf-page .rf-scale-input { font-size: 28px; min-height: 52px; }
+.rf-page th { padding: 8px 12px; color: var(--quiet); background: transparent; border-bottom-color: var(--line); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.rf-page td { padding: 11px 12px; }
+.rf-page tbody tr:hover td { background: var(--rf-mod-soft); }
+.rf-page .rf-table tr.is-selected td, .rf-page .rf-list-item.is-selected { background: var(--rf-mod-soft); }
+.rf-page .rf-badge { padding: 3px 9px; border-radius: 8px; font-weight: 700; }
+.rf-page .rf-badge.is-accent { color: var(--rf-mod-ink); background: var(--rf-mod-soft); }
+.rf-page .rf-badge.is-bad { color: #fff; background: var(--danger); }
+.rf-page .rf-badge.is-warn { color: #3d2300; background: #fcd34d; }
+.rf-page .rf-callout, body:has(.rf-page) .rf-modal .rf-callout { padding: 14px 16px; border-radius: 12px; font-size: 14px; font-weight: 500; }
+.rf-page .rf-callout.is-warn, body:has(.rf-page) .rf-modal .rf-callout.is-warn { color: #4a2a05; background: #fde68a; }
+.rf-page .rf-callout.is-bad, body:has(.rf-page) .rf-modal .rf-callout.is-bad { color: #fff; background: #b91c1c; }
+.rf-page .rf-callout.is-good, body:has(.rf-page) .rf-modal .rf-callout.is-good { color: #052e1b; background: #a7f3d0; }
+.rf-page .rf-callout.is-info, body:has(.rf-page) .rf-modal .rf-callout.is-info { color: #0b1f3a; background: #dbe7ff; }
+.rf-page .rf-callout .btn, body:has(.rf-page) .rf-modal .rf-callout .btn { color: inherit; background: rgba(255, 255, 255, .35); border-color: rgba(0, 0, 0, .15); }
+.rf-page .rf-callout.is-bad .btn, body:has(.rf-page) .rf-modal .rf-callout.is-bad .btn { background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .4); }
+.rf-page .rf-alert-list .rf-callout, body:has(.rf-page) .rf-modal .rf-alert-list .rf-callout { padding: 10px 12px; font-size: 13px; font-weight: 400; }
+.rf-page .rf-tabs { gap: 6px; padding: 4px; background: var(--shell); border: 1px solid var(--line); border-radius: 12px; }
+.rf-page .rf-tab { padding: 8px 14px; margin: 0; border: 0; border-radius: 9px; }
+.rf-page .rf-tab.is-active { color: #fff; background: var(--rf-mod); }
+.rf-page .rf-bar { height: 8px; }
+.rf-page .rf-bar > div { background: var(--rf-mod); }
+.rf-page .rf-bar.is-warn > div { background: var(--warning); }
+.rf-page .rf-bar.is-bad > div { background: var(--danger); }
+.rf-page .rf-chart-area, .rf-page .rf-chart-dot { fill: var(--rf-mod); }
+.rf-page .rf-chart-line { stroke: var(--rf-mod); }
+.rf-page .rf-node.is-hit { border-color: var(--rf-mod); box-shadow: 0 0 0 3px var(--rf-mod-soft); }
+.rf-page .rf-login h1 { font-size: 24px; }
+.rf-page .rf-role { min-height: 64px; border-radius: 12px; }
+
+/* ---------- สายการผลิต 4 สถานี: การ์ดพาสเทลสีประจำสถานี มีลูกศรเชื่อม ---------- */
+.rf-page .rf-flow { gap: 0; }
+.rf-page .rf-step { position: relative; margin-right: 18px; padding: 14px 16px; border: 1px solid var(--rf-mod-line); border-radius: 14px; background: var(--rf-mod-soft); }
+.rf-page .rf-step:nth-child(1) { --rf-mod: #1d6fd3; }
+.rf-page .rf-step:nth-child(2) { --rf-mod: #d9640c; }
+.rf-page .rf-step:nth-child(3) { --rf-mod: #cf3030; }
+.rf-page .rf-step:nth-child(4) { --rf-mod: #1b8f4e; margin-right: 0; }
+.rf-page .rf-step:not(:nth-child(4))::after { content: ""; position: absolute; top: 50%; right: -11px; width: 12px; height: 12px; margin-top: -6px; border-top: 2px solid var(--rf-mod-line); border-right: 2px solid var(--rf-mod-line); transform: rotate(45deg); }
+.rf-page .rf-step h3 { color: var(--rf-mod-ink); font-size: 17px; }
+.rf-page .rf-step-no { padding: 2px 8px; color: #fff; background: var(--rf-mod); border-radius: 999px; font-family: inherit; font-size: 11px; letter-spacing: .04em; }
+.rf-page .rf-step .rf-kv dd { font-weight: 600; }
+.rf-page a.rf-step:hover { border-color: var(--rf-mod); box-shadow: 0 8px 20px -12px color-mix(in srgb, var(--rf-mod) 60%, transparent); }
+
+/* ---------- dialog (อยู่นอก .rf-page) ---------- */
+body:has(.rf-page) .rf-modal { border: 0; border-radius: 16px; }
+body:has(.rf-page) .rf-modal-head { color: #fff; background: #0b1f3a; border-bottom: 0; border-radius: 16px 16px 0 0; }
+body:has(.rf-page) .rf-modal-close { color: #c7d3e6; }
+body:has(.rf-page) .rf-modal-close:hover { color: #fff; background: #152c4d; }
+body:has(.rf-page) .rf-modal .btn { min-height: 40px; border-radius: 10px; font-weight: 600; }
+body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:has(.rf-page) .rf-modal .textarea { min-height: 40px; border-radius: 10px; }
+
+@media (max-width: 1100px) {
+  .rf-page .rf-flow { gap: 12px; }
+  .rf-page .rf-step { margin-right: 0; }
+  .rf-page .rf-step::after { display: none; }
+}
+@media (max-width: 760px) {
+  .rf-page .rf-pagehead h1 { font-size: 22px; }
+  .rf-page .rf-stat-value { font-size: 28px; }
+}

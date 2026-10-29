@@ -28,13 +28,22 @@
   };
   const statusLabel = (value) => STATUS[value]?.[1] ?? String(value ?? "");
 
+  // ---------- ไอคอน (Emoji ประจำโมดูลและโทนแจ้งเตือน ใช้ในเมนูข้าง หัวหน้า และกล่องแจ้งเตือน สไตล์ .rf-ico ใน styles.css) ----------
+  const ICONS = Object.freeze({
+    dashboard: "🏭", orders: "📋", recipes: "🧪", requisition: "⚖️", mixing: "🌀", extrusion: "📐", curing: "🔥", finishing: "📦", wip: "🔄",
+    quality: "🛡️", spc: "📈", trace: "🔍", warehouse: "🏬", molds: "🧩", audit: "🕘",
+    bad: "⛔", warn: "⚠️", good: "✅", info: "ℹ️",
+  });
+  const icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${ICONS[id]}</span>` : "");
+
   // ---------- โครงหน้า ----------
-  const pageHead = (title, desc = "", actions = "") => `<header class="rf-pagehead"><div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div>${actions ? `<div class="rf-row">${actions}</div>` : ""}</header>`;
+  // api.module = หน้าปัจจุบัน (shell ตั้งก่อนวาด) ใช้ใส่ไอคอนของหน้าไว้หน้าชื่อ
+  const pageHead = (title, desc = "", actions = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${api.module && ICONS[api.module] ? `<span class="rf-mod-ico" aria-hidden="true">${icon(api.module)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actions ? `<div class="rf-row">${actions}</div>` : ""}</header>`;
   // การ์ด: title/actions เป็น HTML ที่ escape แล้ว (ชื่อการ์ดบางอันมีป้าย) body เป็น HTML
   const card = (body, { title = "", actions = "", flush = false, className = "" } = {}) => `<section class="card rf-card${className ? ` ${className}` : ""}">${title || actions ? `<div class="rf-card-head"><h3>${title}</h3><div class="rf-row">${actions}</div></div>` : ""}<div class="rf-card-body${flush ? " is-flush" : ""}">${body}</div></section>`;
   const stat = ({ label, value, sub = "", tone = "" }) => `<div class="card rf-stat${tone ? ` is-${esc(tone)}` : ""}"><span class="rf-stat-label">${esc(label)}</span><strong class="rf-stat-value">${esc(value)}</strong>${sub ? `<span class="rf-stat-sub">${esc(sub)}</span>` : ""}</div>`;
   const stats = (items) => `<div class="rf-grid rf-g4">${items.map(stat).join("")}</div>`;
-  const callout = (tone, html) => `<div class="rf-callout is-${esc(tone)}" role="note">${html}</div>`;
+  const callout = (tone, html) => `<div class="rf-callout is-${esc(tone)}" role="note"><span class="rf-callout-ico" aria-hidden="true">${icon(tone)}</span><div class="rf-callout-body">${html}</div></div>`;
   const empty = (text) => `<div class="empty rf-empty">${esc(text)}</div>`;
   const kv = (pairs) => `<dl class="rf-kv">${pairs.filter(Boolean).map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
   const progress = (value, max, tone = "") => `<div class="rf-bar${tone ? ` is-${esc(tone)}` : ""}" role="img" aria-label="${attr(`${rules.fmtNum(value)} จาก ${rules.fmtNum(max)}`)}"><div style="width:${n2(max ? Math.min(100, (Number(value) / Number(max)) * 100) : 0)}%"></div></div>`;
@@ -183,7 +192,8 @@
   }
 
   const api = {
-    STATUS, badge, status, statusLabel, pageHead, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
+    module: "",
+    STATUS, ICONS, icon, badge, status, statusLabel, pageHead, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
     field, input, textarea, select, specInput, submitButton, button, openButton, link, dialog, closeButton,
     barcode, dualChart, controlChart, histogram,
   };
