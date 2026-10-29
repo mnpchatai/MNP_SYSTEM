@@ -107,7 +107,7 @@ test("who sees the loss form on a real NCR matches private.can_edit_ncr_losses",
   }
 });
 
-test("an admin account counts as its working role for the loss form, but not for signing off", async () => {
+test("an admin account counts as its working role for the loss form", async () => {
   // บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" (state.employee.actingRole) — ตรงกับ private.can_edit_ncr_losses ใน migration 20261101010000
   const admin = (id, deptId, deptCode, actingRoleCode) => ({ ...employee(id, deptId, deptCode, "admin"), actingRole: actingRoleCode ? { code: actingRoleCode } : null });
   const cases = [
@@ -123,10 +123,47 @@ test("an admin account counts as its working role for the loss form, but not for
     const html = await renderFor(viewer);
     assert.equal(html.includes('id="ncr-loss-form"'), editable, `${label}: loss form ${editable ? "shown" : "hidden"}`);
   }
-  // ขั้นลงนามยังตรวจ role จริง (app_ncr_signoff) จึงไม่แสดงปุ่มลงนามให้ admin แม้บทบาทหลักตรงกับขั้นนั้น
+});
+
+test("the general manager sign-off step counts an admin's working role; the earlier steps keep real roles", async () => {
+  // ตรงกับ app_ncr_signoff / app_ncr_request_info ใน migration 20261102010000
+  const admin = (id, deptId, deptCode, actingRoleCode) => ({ ...employee(id, deptId, deptCode, "admin"), actingRole: actingRoleCode ? { code: actingRoleCode } : null });
   const awaitingGm = { status: "awaiting_signoff", signoff_qa_at: "2026-10-10", signoff_factory_at: "2026-10-11" };
-  assert.doesNotMatch(await renderFor(admin("a1", "dept-mgt", "MGT", "general_manager"), awaitingGm), /data-action="signoff"/);
-  assert.match(await renderFor(employee("e3", "dept-mgt", "MGT", "general_manager"), awaitingGm), /data-action="signoff"/);
+  const awaitingFactory = { status: "awaiting_signoff", signoff_qa_at: "2026-10-10", signoff_factory_at: null };
+  const awaitingQa = { status: "awaiting_signoff", signoff_qa_at: null, signoff_factory_at: null };
+  const cases = [
+    ["admin working as general manager at the GM step", admin("a1", "dept-mgt", "MGT", "general_manager"), awaitingGm, true],
+    ["real general manager at the GM step", employee("e3", "dept-mgt", "MGT", "general_manager"), awaitingGm, true],
+    ["admin without a working role at the GM step", admin("a7", "dept-mgt", "MGT", null), awaitingGm, false],
+    ["admin working as factory manager at the GM step", admin("a3", "dept-ft", "FT", "factory_manager"), awaitingGm, false],
+    ["admin working as factory manager at the factory step", admin("a3", "dept-ft", "FT", "factory_manager"), awaitingFactory, false],
+    ["admin in QA working as department manager at the QA step", admin("a4", "dept-qa", "QA", "department_manager"), awaitingQa, false],
+    ["admin working as general manager at the factory step", admin("a1", "dept-mgt", "MGT", "general_manager"), awaitingFactory, false],
+  ];
+  for (const [label, viewer, overrides, canSign] of cases) {
+    const html = await renderFor(viewer, overrides);
+    assert.equal(/data-action="signoff"/.test(html), canSign, `${label}: sign-off ${canSign ? "shown" : "hidden"}`);
+    assert.equal(/data-action="request_info"/.test(html), canSign, `${label}: request info ${canSign ? "shown" : "hidden"}`);
+  }
+});
+
+test("the waiting text names the admin working as general manager at the GM step", async () => {
+  // loadNcrStaff แปลง acting_role_id เป็น actingRole จากตาราง roles (ไม่มี foreign key จึง embed ไม่ได้) — ตรงกับ private.ncr_audience
+  const tables = {
+    roles: [{ id: "role-gm", code: "general_manager" }, { id: "role-fm", code: "factory_manager" }],
+    employees: [
+      { id: "a1", first_name: "ฟาง", last_name: "ผู้ดูแล", department_id: "dept-mgt", acting_role_id: "role-gm", role: { code: "admin" }, department: { code: "MGT" } },
+      { id: "a7", first_name: "ไอที", last_name: "ผู้ดูแล", department_id: "dept-it", acting_role_id: null, role: { code: "admin" }, department: { code: "IT" } },
+      { id: "a3", first_name: "รอง", last_name: "ผู้ดูแล", department_id: "dept-ft", acting_role_id: "role-fm", role: { code: "admin" }, department: { code: "FT" } },
+    ],
+  };
+  const viewer = employee("emp-qa", "dept-qa", "QA", "staff");
+  const html = await renderFor(viewer, { status: "awaiting_signoff", signoff_qa_at: "2026-10-10", signoff_factory_at: "2026-10-11" }, { tables });
+  assert.match(html, /ผู้จัดการทั่วไป \(ฟาง ผู้ดูแล\)/);
+  assert.doesNotMatch(html, /ไอที ผู้ดูแล/);
+  // ขั้น ผจก.โรงงานยังดู role จริง: admin ที่ตั้งบทบาทหลักเป็น ผจก.โรงงานไม่ถูกระบุชื่อ
+  const factoryHtml = await renderFor(viewer, { status: "awaiting_signoff", signoff_qa_at: "2026-10-10", signoff_factory_at: null }, { tables });
+  assert.doesNotMatch(factoryHtml, /รอง ผู้ดูแล/);
 });
 
 test("a cancelled NCR locks the loss form for everyone, and the responsible department does not change who can edit", async () => {
