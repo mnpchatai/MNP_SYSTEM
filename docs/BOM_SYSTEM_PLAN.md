@@ -54,7 +54,7 @@
 
 1. **Item master เดียว, BOM หลายชั้นจริง** เก็บความสัมพันธ์พ่อ-ลูกครั้งเดียว (SE → RB ไม่คัดลอกตาม FG) ส่วน "ใบคำนวณแบบแบน" เป็นผลการระเบิดที่สร้างเมื่อต้องการ
 2. **แต่ละแผนกเป็นเจ้าของ BOM ของชิ้นที่ตนผลิต** และแก้ได้เฉพาะชั้นของตน (ดูตาราง §3.3) ฝ่ายวางแผนเป็นเจ้าของชั้น FG และหัวใบสั่งผลิต
-3. **ทุก BOM มี revision + สถานะ + ผู้อนุมัติ** ใบสั่งผลิตล็อก revision ที่ใช้ตอนปล่อยผลิต (แทน `BOMSHEET (S)`)
+3. **ทุกการบันทึก BOM เป็น revision ใหม่พร้อมผู้บันทึกและสิ่งที่เปลี่ยน** (ไม่มีขั้นอนุมัติ ดู §3.3) ใบสั่งผลิตล็อก revision ที่ใช้ตอนปล่อยผลิต (แทน `BOMSHEET (S)`)
 4. **ใบสั่งผลิตเป็นข้อมูล ไม่ใช่ไฟล์** สถานะอยู่ในตาราง การแตกงานรายแผนกเป็น view/ตารางลูก ไม่ใช่ชีต WIP
 5. **ทำตามกติกาโปรเจค**: ตารางใหม่เปิดในโหมดทดสอบก่อน (`is_test` + trigger `private.sandbox_row_scope()` ลงทะเบียน `private.sandbox_unguarded_tables()`) · RLS + deny-all แล้วเปิดผ่าน RPC/`security definer` ที่ตรวจพนักงาน แผนก และสถานะ · `audit_logs` ทุกการอนุมัติ/เปลี่ยนสถานะ · migration ก่อน Pilot Web ตามหัวข้อ "Deployment order" ใน `AGENTS.md`
 6. **ไม่ตัดขาด Excel ทันที** ระบบ export `BOMSHEET` / `BOMASKSHEET` / `WIP-*` ในรูปเดิมได้ตลอดช่วงเปลี่ยนผ่าน
@@ -80,12 +80,12 @@
 
 | ตาราง | คอลัมน์หลัก |
 |---|---|
-| `bom_headers` | `item_id` (พ่อ) · `revision` · `status` (`draft` → `pending_approval` → `approved` → `superseded`/`obsolete`) · `effective_from` · `owner_department_id` · `created_by` `approved_by` `approved_at` · `note` · `is_test` |
+| `bom_headers` | `item_id` (พ่อ) · `revision` · `status` (`approved` = ใช้งาน → `superseded`/`obsolete`; ไม่มีร่าง/รออนุมัติ) · `effective_from` · `owner_department_id` (ใช้แยกงาน) · `created_by` `created_at` · `note` · `is_test` |
 | `bom_lines` | `bom_header_id` · `seq` · `child_item_id` · `qty_per_parent numeric` · `uom_id` · `consumer_department_id` · `producer_department_id` (คู่ `PK-ST` เดิม) · `scrap_pct` · `process_flags jsonb` (`เจาะ` `คัดแยก` …) · `note` |
 | `bom_change_log` | `bom_header_id` · `changed_by` · `field` `old` `new` · `reason` · `kaizen` | แทนชีต `รายการเปลี่ยนแปลง` (เขียนอัตโนมัติจาก RPC) |
 
 กฎ:
-- พ่อหนึ่งตัวมี `approved` ได้ revision เดียวต่อช่วงเวลา (unique partial index) อนุมัติ revision ใหม่ = ตัวเก่า `superseded` อัตโนมัติในทรานแซกชันเดียว
+- พ่อหนึ่งตัวมี `approved` ได้ revision เดียวต่อช่วงเวลา (unique partial index) บันทึก revision ใหม่ = ตัวเก่า `superseded` อัตโนมัติในทรานแซกชันเดียว บันทึกที่บรรทัดเหมือนเดิมไม่สร้าง revision
 - ห้ามวงจร (RB เป็นลูกของ SE เท่านั้น; ตรวจด้วย recursive CTE ตอนบันทึก)
 - `qty_per_parent` ของ RB ใต้ SE คำนวณจาก `cut_length_cm` `pcs_per_roll` `se_per_gr` ของ `bom_item_rubber` ให้อัตโนมัติ (ผู้ใช้กรอกข้อมูลการตัด ไม่ต้องกรอกอัตราส่วน) และยังแก้ทับได้พร้อมเหตุผล
 
@@ -163,7 +163,8 @@ bom_department_jobs.qty_done ◀── รายงานผลผลิต ─�
 
 | หน้า | ผู้ใช้ | หน้าที่ |
 |---|---|---|
-| **BOM ของแผนก** `#/bom?dept=RB` | หัวหน้า/พนักงานแผนก | รายการชิ้นที่แผนกผลิต · เปิดต้นไม้ลูก · แก้ร่าง · เสนออนุมัติ · ดูประวัติ revision และ change log · ค้นหาด้วยรหัสเดิมได้ (legacy codes) |
+| **สร้าง BOM** `#/bom?p=build` | ฝ่ายวางแผน / ผู้จัดการ | จุดเดียว: เลือกสินค้า 3 ช่อง → ตารางต้นไม้แก้ได้ทุกชั้น (+ ลูก, รหัสใหม่ = สร้างชิ้น, ข้อมูลการตัด RB ในบรรทัด) → บันทึกใช้ได้ทันที → ใช้ในใบสั่งผลิต |
+| **ค้นหาชิ้นงาน / ประวัติ BOM** `#/bom?p=items` | ทุกคน (ดูอย่างเดียว) | ต้นไม้ที่ระเบิดแล้ว · ใช้ที่ไหนบ้าง · ประวัติ revision และสิ่งที่เปลี่ยน · ค้นหาด้วยรหัสเดิมได้ (legacy codes) |
 | **ค้นหา/เปรียบเทียบ** | ทุกคน | ค้นชิ้น → ใช้ที่ไหนบ้าง (where-used ทุกชั้น) · เทียบ 2 revision |
 | **ใบสั่งผลิต (PI)** `#/bom-orders` | วางแผน | สร้างใบ กรอก FG × จำนวน กำหนดเสร็จรายแผนก · ปุ่ม **ระเบิด BOM** (ร่าง) · **ปล่อยผลิต** (ล็อก revision สร้างงานรายแผนก) · ส่งออก `BOMSHEET`/`BOMASKSHEET`/`WIP-*` .xlsx รูปเดิม |
 | **งานของแผนก** `#/bom-jobs?dept=GR` | แผนก | รายการงานที่ปล่อยแล้ว เรียงตามกำหนด · บันทึกเสร็จ/ของเสีย · RB มีปุ่ม "เปิดใน RubberFlow" |

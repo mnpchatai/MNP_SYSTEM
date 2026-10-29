@@ -153,7 +153,26 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   ] }, ctx("planner"));
   assert.deepEqual(again.saved, []);
   assert.equal(again.summary, "ไม่มีการเปลี่ยนแปลง");
+  assert.equal(again.changed, false);
   assert.equal(approved(d, "NEW-TP-02(P)-Y").revision, 1);
+  const auditCount = d.audit.length;
+  assert.ok(!d.audit.slice(0, 3).some((entry) => entry.action === "บันทึกต้นไม้ BOM" && entry.detail.includes("ไม่มีการเปลี่ยนแปลง")), "no audit row for a no-op save");
+  // แก้แค่ข้อมูลการตัดของ RB (patch) โดย BOM ไม่เปลี่ยน: ผลลัพธ์บอกว่าแก้ชิ้น ไม่ใช่ "ไม่มีการเปลี่ยนแปลง"
+  const patchOnly = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05, patch: { rubber: { compound: "DM01", cutLengthCm: "7", pcsPerRoll: "31", sePerGr: "1", kgPerRoll: "1.5" } } }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+  ] }, ctx("planner"));
+  assert.equal(patchOnly.changed, true);
+  assert.deepEqual(patchOnly.saved, []);
+  assert.deepEqual(patchOnly.patched, ["RB-DM01-02-BK01-202-18-70"]);
+  assert.match(patchOnly.summary, /แก้ข้อมูลชิ้น: RB-DM01-02-BK01-202-18-70/);
+  assert.ok(d.audit.length > auditCount);
+  // ชิ้นเดียวกันสองที่ในต้นไม้ด้วยลูกต่างกัน → ปฏิเสธ (ไม่ทิ้งลูกชุดที่สองเงียบ ๆ)
+  rejects(() => A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 },
+    { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+    { code: "SE-TP01-BK01-140-3-20", qty: 1, children: [{ code: "RB-DM02-02-BK01-225-3-20", qty: 0.0714 }] },
+    { code: "SE-NEW-01", qty: 1, children: [{ code: "RB-DM02-02-BK01-225-3-20", qty: 1 }] },
+  ] }, ctx("planner")), /ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน/);
   // แก้ชั้นลึก (PT → เม็ด) จากต้นไม้ของสินค้าใหม่ มีผลกับ PT ที่สินค้าอื่นใช้ร่วมด้วย
   const third = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
     { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.025 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
@@ -365,5 +384,18 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(noStorage.run("createOrder", { pi: "M-1", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY }).ok, true);
   assert.equal(noStorage.isPersisted(), false);
   assert.ok(storeApi.canSee(user("planner"), "build") && storeApi.canSee(user("manager"), "build") && !storeApi.canSee(user("gr"), "build") && !storeApi.canSee(user("gr"), "import") && !storeApi.canSee(null, "items"));
+  // state รุ่น 1 (มีขั้นอนุมัติ) ในเบราว์เซอร์เดิม → รุ่น 2: ร่าง/รออนุมัติถูกตัด BOM ที่ใช้งาน/ถูกแทนคงอยู่ ข้อมูลอื่นไม่หาย
+  const old = fresh();
+  old.version = 1;
+  old.boms.push({ id: "BOM-69-0999", itemCode: "DEMO-BL-60(K)-Z", revision: 1, status: "pending", ownerDept: "PK", lines: [], changeLog: [] }, { id: "BOM-69-0998", itemCode: "SE-BL60-RD01-60-0-60", revision: 1, status: "draft", ownerDept: "GR", lines: [], changeLog: [] });
+  const oldStorage = new Map([[storeApi.STATE_KEY, JSON.stringify(old)]]);
+  const oldFake = { getItem: (key) => (oldStorage.has(key) ? oldStorage.get(key) : null), setItem: (key, value) => oldStorage.set(key, String(value)), removeItem: (key) => oldStorage.delete(key) };
+  const upgraded = storeApi.createStore({ storage: oldFake, seed: fresh, actions: A, now: () => NOW });
+  assert.equal(upgraded.data().version, 2);
+  assert.equal(upgraded.data().boms.filter((bom) => ["draft", "pending"].includes(bom.status)).length, 0);
+  assert.equal(upgraded.data().boms.length, old.boms.length - 2);
+  assert.equal(upgraded.data().orders.length, 2, "orders survive the upgrade");
+  assert.equal(JSON.parse(oldStorage.get(storeApi.STATE_KEY)).version, 2, "upgraded state is written back");
+  assert.equal(storeApi.migrate({ version: 99, counters: {}, users: [], compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [] }), null, "unknown versions are reseeded");
   assert.equal(storeApi.MODULES[1].id, "build", "the single BOM builder is the first menu after the overview");
 });

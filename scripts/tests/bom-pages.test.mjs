@@ -115,6 +115,9 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   assert.match(html, /value="RB-DM01-02-OR01-202-18-70"/);
   assert.match(html, /name="pcsPerRoll\[\]"[^>]*value="31"/, "RB cutting data is editable inline");
   assert.match(html, /จากการตัด 0.0323/);
+  assert.match(html, /name="qty\[\]"[^>]*value="0.03225806452"/, "ratios are shown with 10 significant digits");
+  assert.equal(new Set(rows.map((row) => row.id)).size, rows.length, "row ids are unique");
+  assert.match(html, /aria-label="ปริมาณต่อ 1 พ่อ"/);
   assert.match(html, /ใช้ร่วมกับสินค้าอื่น 1 รายการ/, "shared sticker shows a warning");
   assert.match(html, /บันทึก BOM/);
   assert.match(html, /data-rf-open="useInOrder"/);
@@ -165,6 +168,14 @@ test("the tree form goes through the data-rf-* rules: rows become a nested tree,
   assert.equal(rb2.rubber.cutLengthCm, 4, "unchanged RB data left as is");
   assert.ok(!data.audit.some((entry) => entry.action === "แก้ชิ้นงาน" && entry.detail.startsWith("RB-DM01-01")), "no item edit audit for the unchanged RB");
   assert.equal(env.log.renders, 1);
+  // ส่งค่าที่ฟอร์มปัดทศนิยมกลับมา (0.032258 แทน 1/31) โดยแก้แค่หมายเหตุของสินค้า: อัตราส่วนเดิมคงอยู่เต็มความละเอียด
+  env.store.setUser("B03");
+  const seBefore = A.helpers.approvedBomOf(env.store.data(), "SE-TP01-BK01-140-3-20").lines[0].qty;
+  await env.submit("p=build&code=SE-TP01-BK01-140-3-20", "saveBomTree", { code: "SE-TP01-BK01-140-3-20", itemName: "แกนหาง 3 ร่อง ตอปิโด TP-01 ดำ BK01 ยาว 140", itemUom: "pcs", note: "ปัดทศนิยม", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": ["RB-DM02-02-BK01-225-3-20"], "name[]": ["x"], "kind[]": ["RB"], "uom[]": ["rod"], "qty[]": [String(Math.round(seBefore * 1e6) / 1e6)], "scrapPct[]": ["0"], "lineNote[]": ["แก้หมายเหตุ"], "weightG[]": ["170"], "compound[]": ["DM02"], "cutLengthCm[]": ["14"], "pcsPerRoll[]": ["14"], "sePerGr[]": ["1"], "kgPerRoll[]": ["0.17"] });
+  assert.equal(env.log.toasts.at(-1)[1], "ok", env.log.toasts.at(-1)[0]);
+  const seAfter = A.helpers.approvedBomOf(env.store.data(), "SE-TP01-BK01-140-3-20");
+  assert.equal(seAfter.lines[0].qty, seBefore, "the stored ratio keeps its full precision");
+  assert.equal(seAfter.lines[0].note, "แก้หมายเหตุ");
   // ฟอร์มที่ผิด: ไม่มีชื่อสินค้าใหม่ → toast error และไม่บันทึก
   await env.submit("p=build&base=NEW-ZZ&pkg=P&cs=Y", "saveBomTree", { code: "NEW-ZZ(P)-Y", itemName: "", itemUom: "set", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": ["P-STK-01"], "name[]": [""], "kind[]": ["PURCHASED"], "uom[]": ["pcs"], "qty[]": ["1"], "scrapPct[]": ["0"], "lineNote[]": [""], "weightG[]": [""], "compound[]": [""], "cutLengthCm[]": [""], "pcsPerRoll[]": [""], "sePerGr[]": [""], "kgPerRoll[]": [""] });
   assert.equal(env.log.toasts.at(-1)[1], "error");

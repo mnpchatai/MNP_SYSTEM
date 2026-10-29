@@ -75,7 +75,7 @@
   ];
 
   function emptyState() {
-    return { version: 1, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [] };
+    return { version: 2, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [] };
   }
 
   function buildSeed(now = Date.now()) {

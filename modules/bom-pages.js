@@ -61,23 +61,20 @@
 
   // ---------- สร้าง BOM (จุดเดียว) ----------
   // แถวของตารางแก้ไข: { id, parentId, level, code, kind, name, uom, qty, scrapPct, note, weightG, rubber, existing, usedIn }
-  function hashCode(text) {
-    let h = 0;
-    for (let i = 0; i < text.length; i += 1) h = (h * 31 + text.charCodeAt(i)) | 0;
-    return h;
-  }
-  function editorRowsOf(ctx, parentCode, parentId = "", level = 1, seen = new Set()) {
+  // counter: id ของแถวไม่ซ้ำกันแน่นอน (ถ้าใช้ hash ชนกันได้แล้วลูกจะไปผูกผิดแถว)
+  function editorRowsOf(ctx, parentCode, parentId = "", level = 1, seen = new Set(), counter = { n: 0 }) {
     const bom = approvedBomOf(ctx, parentCode);
     if (!bom) return [];
     const rows = [];
     for (const line of bom.lines) {
       const child = itemOf(ctx, line.childCode);
       if (!child) continue;
-      const id = `r${Math.abs(hashCode(`${parentId}|${line.childCode}`)) % 1000000}`;
+      counter.n += 1;
+      const id = `r${counter.n}`;
       rows.push({ id, parentId, level, code: child.code, kind: child.kind, name: child.name, uom: child.uom, qty: line.qty, scrapPct: line.scrapPct || 0, note: line.note || "", weightG: child.weightG || "", rubber: child.rubber ?? {}, existing: true, usedIn: whereUsed(ctx, child.code).length });
       if (!ctx.helpers.NO_BOM_KINDS.includes(child.kind) && !seen.has(child.code) && level < 6) {
         seen.add(child.code);
-        rows.push(...editorRowsOf(ctx, child.code, id, level + 1, seen));
+        rows.push(...editorRowsOf(ctx, child.code, id, level + 1, seen, counter));
       }
     }
     return rows;
@@ -94,11 +91,11 @@
     return `<tr class="bom-row${row.existing ? "" : " is-new"}" data-row="${attr(row.id)}" data-parent="${attr(row.parentId)}" data-level="${attr(String(row.level))}">
       <td class="bom-cell-code">${levelCell(row.level, `<input type="hidden" name="rowId[]" value="${attr(row.id)}"><input type="hidden" name="parentId[]" value="${attr(row.parentId)}">${ui.input("childCode[]", { value: row.code, list: "bom-item-list", placeholder: "รหัสชิ้นงาน", className: "bom-code", extra: 'data-bom-code autocapitalize="characters"' })}`)}<div class="small muted" data-bom-flag>${row.existing ? (row.usedIn > 1 ? esc(`ใช้ร่วมกับสินค้าอื่น ${row.usedIn - 1} รายการ (แก้แล้วมีผลทุกสินค้า)`) : "") : "ชิ้นใหม่"}</div></td>
       <td>${ui.input("name[]", { value: row.name, placeholder: "ชื่อชิ้นงาน", className: "bom-name" })}</td>
-      <td>${ui.select("kind[]", KIND_OPTIONS(ctx), { value: row.kind || "PURCHASED", className: "bom-kind", extra: "data-bom-kind data-native-select" })}</td>
-      <td>${ui.select("uom[]", UOM_OPTIONS(ctx), { value: row.uom || "pcs", className: "bom-uom", extra: "data-native-select" })}</td>
-      <td>${ui.input("qty[]", { type: "number", step: "any", min: 0, value: row.qty === "" || row.qty === undefined ? "" : String(Math.round(Number(row.qty) * 1e6) / 1e6), className: "bom-qty", extra: "data-bom-qty" })}<small class="rf-hint" data-bom-hint>${esc(isRb && suggestion ? `จากการตัด ${rules.fmtQty(suggestion)}` : "")}</small></td>
-      <td>${ui.input("scrapPct[]", { type: "number", step: "any", min: 0, value: row.scrapPct ?? 0, className: "bom-scrap" })}</td>
-      <td>${ui.input("lineNote[]", { value: row.note ?? "", className: "bom-note" })}</td>
+      <td>${ui.select("kind[]", KIND_OPTIONS(ctx), { value: row.kind || "PURCHASED", className: "bom-kind", extra: 'data-bom-kind data-native-select aria-label="ชนิดชิ้นงาน"' })}</td>
+      <td>${ui.select("uom[]", UOM_OPTIONS(ctx), { value: row.uom || "pcs", className: "bom-uom", extra: 'data-native-select aria-label="หน่วยนับ"' })}</td>
+      <td>${ui.input("qty[]", { type: "number", step: "any", min: 0, value: row.qty === "" || row.qty === undefined ? "" : String(Number(Number(row.qty).toPrecision(10))), className: "bom-qty", extra: 'data-bom-qty aria-label="ปริมาณต่อ 1 พ่อ"' })}<small class="rf-hint" data-bom-hint>${esc(isRb && suggestion ? `จากการตัด ${rules.fmtQty(suggestion)}` : "")}</small></td>
+      <td>${ui.input("scrapPct[]", { type: "number", step: "any", min: 0, value: row.scrapPct ?? 0, className: "bom-scrap", extra: 'aria-label="% เผื่อเสีย"' })}</td>
+      <td>${ui.input("lineNote[]", { value: row.note ?? "", className: "bom-note", extra: 'aria-label="หมายเหตุของบรรทัด"' })}</td>
       <td class="bom-cell-rubber${isRb ? "" : " is-hidden"}" data-bom-rubber>
         <div class="bom-rubber-grid">
           <label>สูตร${ui.input("compound[]", { value: r.compound ?? "", list: "bom-compound-list", className: "bom-mini" })}</label>
@@ -133,7 +130,7 @@
           ${ui.field("ชุดสี", ui.select("cs", colorOptions, { value: current.colorSet, placeholder: "ไม่ระบุ" }))}
         </div>
         <datalist id="bom-base-list">${bases.map((value) => `<option value="${attr(value)}">${esc(parsed.find((entry) => entry.base === value).item.name.slice(0, 50))}</option>`).join("")}</datalist>
-        <div class="rf-row"><button class="btn rf-btn" type="submit">เปิด BOM</button>${code ? `<span class="rf-mono">${esc(code)}</span>` : ""}</div>
+        <div class="rf-row"><button class="btn rf-btn" type="submit">เปิด BOM</button></div>
       </form>`, { title: "1. เลือกสินค้า (ฐานรหัส + แพ็กเกจ + ชุดสี เหมือนชีต ;}o)" });
     const bindPick = (rootNode) => {
       rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
@@ -226,12 +223,24 @@
             tr.querySelector('select[name="kind[]"]').value = guess === "FG" ? "PURCHASED" : guess;
             if (flag) flag.textContent = "ชิ้นใหม่";
           }
+          // เปลี่ยนรหัสของแถว = เปลี่ยนชิ้น: ลูกเดิมเป็นของชิ้นเก่า จึงแทนด้วยส่วนประกอบของชิ้นใหม่ (ถ้ามี) ไม่ปล่อยให้ลูกเก่าไปเขียนทับ BOM ของชิ้นใหม่
+          replaceChildren(tr, found);
           paintRow(tr);
         });
         tr.querySelector("[data-bom-kind]")?.addEventListener("change", () => paintRow(tr));
         tr.querySelectorAll("[data-bom-cut], select[name=\"uom[]\"]").forEach((input) => input.addEventListener("input", () => paintRow(tr)));
         tr.querySelector("[data-bom-remove]")?.addEventListener("click", () => { descendants(tr.dataset.row).forEach((row) => row.remove()); tr.remove(); if (!rowsOf().length) addRow("", 1); });
         tr.querySelector("[data-bom-add-child]")?.addEventListener("click", () => addRow(tr.dataset.row, Number(tr.dataset.level) + 1, tr));
+      };
+      const replaceChildren = (tr, item) => {
+        descendants(tr.dataset.row).forEach((row) => row.remove());
+        if (!item || ctx.helpers.NO_BOM_KINDS.includes(item.kind) || !approvedBomOf(ctx, item.code)) return;
+        seq += 1;
+        const rows = editorRowsOf(ctx, item.code, tr.dataset.row, Number(tr.dataset.level) + 1, new Set([item.code]), { n: seq * 1000 });
+        if (!rows.length) return;
+        tr.insertAdjacentHTML("afterend", rows.map((row) => editorRowHtml(ctx, { ...row, id: `c${row.id}`, parentId: row.parentId === tr.dataset.row ? row.parentId : `c${row.parentId}` })).join(""));
+        let node = tr.nextElementSibling;
+        for (let i = 0; i < rows.length && node; i += 1, node = node.nextElementSibling) wire(node);
       };
       const addRow = (parentId, level, afterRow = null) => {
         if (!template) return;

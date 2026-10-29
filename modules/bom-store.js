@@ -5,7 +5,8 @@
   const isNode = typeof module !== "undefined" && module.exports;
   const STATE_KEY = "mnp-bom-v1";
   const USER_KEY = "mnp-bom-user";
-  const STATE_VERSION = 1;
+  // v1 = รุ่นที่มีขั้นอนุมัติ (PR #246) · v2 = จุดสร้างจุดเดียว ไม่มีอนุมัติ: ร่าง/รออนุมัติค้างถูกตัดทิ้งตอน migrate
+  const STATE_VERSION = 2;
 
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม BOM", group: "ภาพรวม" },
@@ -36,8 +37,21 @@
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");
 
   const LISTS = ["users", "compounds", "items", "boms", "orders", "jobs", "audit"];
-  const isValidState = (value) => Boolean(value) && typeof value === "object" && value.version === STATE_VERSION
-    && typeof value.counters === "object" && value.counters !== null && LISTS.every((key) => Array.isArray(value[key]));
+  const hasShape = (value) => Boolean(value) && typeof value === "object" && typeof value.counters === "object" && value.counters !== null && LISTS.every((key) => Array.isArray(value[key]));
+  const isValidState = (value) => hasShape(value) && value.version === STATE_VERSION;
+  // state รุ่นเก่าในเบราว์เซอร์ → รุ่นปัจจุบัน (คืน null ถ้าแปลงไม่ได้ จะสร้างชุดสาธิตใหม่)
+  function migrate(value) {
+    if (!hasShape(value)) return null;
+    if (value.version === STATE_VERSION) return value;
+    if (value.version === 1) {
+      // รุ่นเก่ามีร่าง/รออนุมัติ ซึ่งรุ่นนี้ไม่มีคำสั่งจัดการแล้ว ตัดทิ้ง เหลือ BOM ที่ใช้งาน/ถูกแทน
+      value.boms = value.boms.filter((bom) => bom.status === "approved" || bom.status === "superseded");
+      value.version = 2;
+      value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: "รุ่น 1 → 2: ตัดร่าง/รออนุมัติที่ค้าง (รุ่นนี้บันทึก BOM แล้วใช้ได้ทันที)" });
+      return value;
+    }
+    return null;
+  }
 
   function readJson(storage, key) {
     try {
@@ -67,8 +81,9 @@
     function load() {
       if (loaded) return data;
       const saved = readJson(storage, STATE_KEY);
-      data = isValidState(saved) ? saved : seed();
-      if (!isValidState(saved)) persisted = writeJson(storage, STATE_KEY, data);
+      const valid = isValidState(saved);
+      data = valid ? saved : migrate(saved) ?? seed();
+      if (!valid) persisted = writeJson(storage, STATE_KEY, data); // เขียน state ที่อัปเกรดหรือชุดสาธิตใหม่กลับทันที
       const savedUser = readJson(storage, USER_KEY);
       userId = typeof savedUser === "string" && data.users.some((user) => user.id === savedUser) ? savedUser : null;
       loaded = true;
@@ -116,7 +131,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now };
   }
 
-  const api = { STATE_KEY, USER_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, createStore };
+  const api = { STATE_KEY, USER_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, migrate, createStore };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

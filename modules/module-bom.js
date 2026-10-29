@@ -64,9 +64,14 @@
     }));
     const data = store.data();
     const same = (a, b) => String(a ?? "") === String(b ?? "");
-    const toNode = (row) => {
+    // ฟอร์มแสดงปริมาณด้วยทศนิยมจำกัด: ถ้าค่าในฟอร์มต่างจากบรรทัดเดิมของ BOM ไม่ถึง 1e-6 ใช้ค่าเดิม (คงอัตราส่วนเช่น 1/31 ไว้เต็มความละเอียด)
+    const keepQty = (parentCode, childCode, qty) => {
+      const line = actions.helpers.approvedBomOf(data, rules.canonicalCode(parentCode))?.lines.find((entry) => entry.childCode === rules.canonicalCode(childCode));
+      return line && Math.abs(Number(qty) - line.qty) <= 1e-6 ? line.qty : qty;
+    };
+    const toNode = (row, parentCode) => {
       const item = actions.helpers.itemOf(data, row.code);
-      const node = { code: row.code, qty: row.qty, scrapPct: row.scrapPct, note: row.note, children: rows.filter((other) => other.parentId === row.id && (other.code || other.name)).map(toNode) };
+      const node = { code: row.code, qty: keepQty(parentCode, row.code, row.qty), scrapPct: row.scrapPct, note: row.note, children: rows.filter((other) => other.parentId === row.id && (other.code || other.name)).map((child) => toNode(child, row.code)) };
       if (!item) node.newItem = { kind: row.kind, name: row.name, uom: row.uom, weightG: row.weightG, rubber: row.kind === "RB" ? row.rubber : undefined };
       else {
         const patch = {};
@@ -81,7 +86,7 @@
       }
       return node;
     };
-    return { code: p.code, item: { name: p.itemName, uom: p.itemUom }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map(toNode) };
+    return { code: p.code, item: { name: p.itemName, uom: p.itemUom }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code)) };
   }
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due) }),

@@ -158,7 +158,10 @@
       const changed = (p.item.name && p.item.name.trim() !== current.name) || (p.item.uom && p.item.uom !== current.uom) || (p.item.weightG !== undefined && p.item.weightG !== "" && Number(p.item.weightG) !== Number(current.weightG || 0));
       if (changed) saveItem(d, { code: rootCode, kind: current.kind, name: p.item.name || current.name, uom: p.item.uom || current.uom, weightG: p.item.weightG }, ctx);
     }
+    const auditBefore = d.audit.length;
     const saved = [];
+    const created = [];
+    const patched = [];
     const seenPath = new Set();
     const walk = (parentCode, nodes, path) => {
       if (!Array.isArray(nodes) || !nodes.length) fail(`${parentCode}: ต้องมีส่วนประกอบอย่างน้อย 1 บรรทัด`);
@@ -172,13 +175,19 @@
           const spec = node.newItem ?? fail(`ไม่พบชิ้นงาน ${code} — ระบุชนิด ชื่อ และหน่วยเพื่อสร้าง`);
           saveItem(d, { code, kind: spec.kind, name: spec.name, uom: spec.uom, weightG: spec.weightG, rubber: spec.rubber, create: true }, ctx);
           child = itemOf(d, code);
+          created.push(code);
         } else if (node.patch && Object.keys(node.patch).length) {
           saveItem(d, { code, kind: child.kind, name: node.patch.name || child.name, uom: node.patch.uom || child.uom, weightG: node.patch.weightG, rubber: node.patch.rubber }, ctx);
+          patched.push(code);
         }
         if (Array.isArray(node.children) && node.children.length) {
           if (NO_BOM_KINDS.includes(child.kind)) fail(`${code} (${R.KINDS[child.kind].label}) มีส่วนประกอบไม่ได้`);
-          const key = `${code}`;
-          if (!seenPath.has(key)) { walk(code, node.children, [...path, code]); seenPath.add(key); }
+          // ชิ้นเดียวกันอยู่หลายที่ในต้นไม้: BOM ของมันบันทึกจากที่แรก ที่อื่นต้องมีลูกชุดเดียวกัน
+          if (!seenPath.has(code)) { walk(code, node.children, [...path, code]); seenPath.add(code); } else {
+            const current = approvedBomOf(d, code);
+            const incoming = node.children.map((entry) => ({ childCode: R.canonicalCode(entry.code), qty: Number(entry.qty), scrapPct: Number(entry.scrapPct) || 0, note: String(entry.note ?? "").trim() }));
+            if (!current || !sameLines(current.lines, incoming)) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
+          }
         }
         lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note });
       }
@@ -186,8 +195,11 @@
       if (result.changed) saved.push(`${parentCode} Rev.${result.revision}`);
     };
     walk(rootCode, p.nodes, [rootCode]);
-    audit(d, ctx, "บันทึกต้นไม้ BOM", `${rootCode}: ${saved.length ? saved.join(", ") : "ไม่มีการเปลี่ยนแปลง"}`);
-    return { code: rootCode, saved, summary: saved.length ? `บันทึกแล้ว ${saved.join(", ")}` : "ไม่มีการเปลี่ยนแปลง" };
+    const rootChanged = d.audit.length > auditBefore && d.audit.slice(0, d.audit.length - auditBefore).some((entry) => /ชิ้นงาน/.test(entry.action) && entry.detail.startsWith(rootCode));
+    const parts = [saved.length ? `BOM: ${saved.join(", ")}` : "", created.length ? `สร้างชิ้นใหม่: ${created.join(", ")}` : "", patched.length ? `แก้ข้อมูลชิ้น: ${patched.join(", ")}` : "", rootChanged && !created.includes(rootCode) ? `แก้ข้อมูลสินค้า ${rootCode}` : ""].filter(Boolean);
+    const changed = parts.length > 0;
+    if (changed) audit(d, ctx, "บันทึกต้นไม้ BOM", `${rootCode}: ${parts.join(" · ")}`);
+    return { code: rootCode, saved, created, patched, changed, summary: changed ? `บันทึกแล้ว — ${parts.join(" · ")}` : "ไม่มีการเปลี่ยนแปลง" };
   }
 
   // ---------- สูตรยาง ↔ RubberFlow ----------
