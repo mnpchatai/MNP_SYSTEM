@@ -75,7 +75,7 @@
   ];
 
   function emptyState() {
-    return { version: 1, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [] };
+    return { version: 2, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [] };
   }
 
   function buildSeed(now = Date.now()) {
@@ -87,24 +87,15 @@
     const t0 = now - 30 * DAY;
 
     d.compounds = COMPOUNDS.map((compound) => ({ ...compound, createdAt: t0 }));
-    // item master: แผนกเจ้าของเพิ่มชิ้นของตัวเอง
-    const roleOfDept = { PK: "planner", GR: "gr", RB: "rb", PT: "pt", BG: "bg", ST: "st" };
+    // item master และ BOM: ฝ่ายวางแผนสร้างทั้งหมดจากจุดเดียว (แผนกเจ้าของตามชนิดชิ้น ใช้แยกงานตอนปล่อยผลิต)
     ITEMS.forEach((item, index) => {
-      const dept = item.ownerDept ?? rules().KINDS[item.kind].dept;
-      A.saveItem(d, { ...item, ownerDept: dept, group: "TOY" }, at(t0 + index * 3600000, roleOfDept[dept]));
+      A.saveItem(d, { ...item, ownerDept: item.ownerDept ?? rules().KINDS[item.kind].dept, group: "TOY", create: true }, at(t0 + index * 3600000, "planner"));
     });
-    // BOM: แผนกเจ้าของบันทึกร่าง ส่งอนุมัติ แล้วอนุมัติ (ชั้น FG โดยผู้จัดการ ชั้นอื่นหัวหน้าแผนก)
     BOMS().forEach(([parentCode, lines], index) => {
-      const parent = d.items.find((item) => item.code === parentCode);
-      const owner = roleOfDept[parent.ownerDept];
-      const t = t0 + 2 * DAY + index * 6 * 3600000;
-      const bomId = A.saveBomDraft(d, { itemCode: parentCode, lines: lines.map(([childCode, qty]) => ({ childCode, qty })) }, at(t, owner));
-      A.submitBom(d, { bomId }, at(t + 3600000, owner));
-      A.approveBom(d, { bomId }, at(t + 2 * 3600000, parent.ownerDept === "PK" ? "manager" : owner));
+      A.saveBom(d, { itemCode: parentCode, lines: lines.map(([childCode, qty]) => ({ childCode, qty })) }, at(t0 + 2 * DAY + index * 6 * 3600000, "planner"));
     });
-    // ร่างของ GR ที่ยังรออนุมัติ (บอลยาง 60 มม.) และ FG ที่ยังไม่มี BOM
-    const draftId = A.saveBomDraft(d, { itemCode: "SE-BL60-RD01-60-0-60", lines: [{ childCode: "RB-DM01-01-OR01-200-0-72", qty: rbQty("RB-DM01-01-OR01-200-0-72") }], note: "ตัดจากเส้นหัวตอปิโด รอยืนยันความยาวตัด" }, at(now - 3 * DAY, "gr"));
-    A.submitBom(d, { bomId: draftId }, at(now - 3 * DAY + 3600000, "gr"));
+    // แก้ BOM ครั้งหนึ่งให้มีประวัติ revision (ลูกตอปิโดเปลี่ยนอัตราส่วนเส้นหัว) และ FG บอลยางที่ยังไม่มี BOM
+    A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [["RB-DM01-02-OR01-202-18-70", rbQty("RB-DM01-02-OR01-202-18-70")], ["RB-DM01-01-OR01-200-0-72", rbQty("RB-DM01-01-OR01-200-0-72")]].map(([childCode, qty]) => ({ childCode, qty, note: childCode.endsWith("72") ? "ตัด 4 ซม." : "" })), note: "ระบุความยาวตัดของเส้นหัว" }, at(now - 3 * DAY, "planner"));
 
     // ใบสั่งผลิตที่ปล่อยแล้วและมีความคืบหน้า
     const day = (n) => new Date(now + n * DAY).setHours(0, 0, 0, 0);

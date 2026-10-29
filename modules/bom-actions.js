@@ -1,6 +1,8 @@
-// BOM รายแผนก (โหมดทดสอบ) — กฎธุรกิจทั้งหมด: item master · BOM หลายชั้นมี revision/อนุมัติ · นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต ·
-// งานรายแผนก · นับคงคลังตามใบ · ผูกสูตรยางกับ RubberFlow ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน
-// (store บันทึกเฉพาะเมื่อผ่าน) "สิทธิ์" ในไฟล์นี้คือบทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง — ดู docs/BOM_SYSTEM_PLAN.md §3
+// BOM รายแผนก (โหมดทดสอบ) — กฎธุรกิจทั้งหมด: item master · BOM หลายชั้น (จุดสร้างจุดเดียว บันทึกแล้วใช้ได้ทันที เก็บเป็น revision) ·
+// นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · ผูกสูตรยางกับ RubberFlow
+// ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน (store บันทึกเฉพาะเมื่อผ่าน)
+// สิทธิ์ (บทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง): สร้าง/แก้ item และ BOM ทุกชั้น = ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล · ไม่มีขั้นอนุมัติ (ตามที่ผู้ใช้ตัดสิน
+// 29 ต.ค. 2026 ให้เหมือน Excel) · "แผนกเจ้าของ" ของชิ้นงานใช้แยกงานรายแผนกตอนปล่อยผลิตเท่านั้น — ดู docs/BOM_SYSTEM_PLAN.md §3
 // โหลดหลัง modules/bom-rules.js เทสต์ด้วย node --test (scripts/tests/bom-actions.test.mjs)
 (function (root) {
   const isNode = typeof module !== "undefined" && module.exports;
@@ -32,38 +34,32 @@
 
   // ---------- สิทธิ์ (บทบาทสาธิต) ----------
   const isBoss = (user) => Boolean(user) && (user.role === "admin" || user.role === "manager");
-  const canEditDept = (user, dept) => isBoss(user) || (Boolean(user) && user.dept === dept);
-  // ชั้น FG อนุมัติโดยผู้จัดการฝ่ายโรงงาน ชั้นอื่นหัวหน้าแผนกเจ้าของอนุมัติได้
-  const canApprove = (user, bom) => isBoss(user) || (Boolean(user) && bom.ownerDept !== "PK" && user.dept === bom.ownerDept);
-  const canPlan = (user) => isBoss(user) || user?.role === "planner";
-  const canCount = (user) => isBoss(user) || user?.role === "planner" || user?.role === "st";
+  const canPlan = (user) => isBoss(user) || user?.role === "planner"; // สร้าง/แก้ item, BOM, ใบสั่งผลิต
+  const canCount = (user) => canPlan(user) || user?.role === "st";
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
+  const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
 
   const itemOf = (d, code) => d.items.find((item) => item.code === rules().canonicalCode(code)) ?? null;
   const approvedBomOf = (d, code) => d.boms.find((bom) => bom.itemCode === code && bom.status === "approved") ?? null;
-  const openBomOf = (d, code) => d.boms.find((bom) => bom.itemCode === code && (bom.status === "draft" || bom.status === "pending")) ?? null;
   const bomById = (d, id) => d.boms.find((bom) => bom.id === id) ?? fail("ไม่พบ BOM revision นี้");
   const orderById = (d, id) => d.orders.find((order) => order.id === id) ?? fail("ไม่พบใบสั่งผลิต");
   const jobById = (d, id) => d.jobs.find((job) => job.id === id) ?? fail("ไม่พบงานของแผนก");
+  const NO_BOM_KINDS = ["RB", "PURCHASED"];
 
   // ---------- Item master ----------
+  // ชนิด/ชื่อ/หน่วย/น้ำหนัก และข้อมูลยาง (RB/SE) แผนกเจ้าของตามชนิดถ้าไม่ระบุ · create:true = เพิ่มใหม่เท่านั้น (รหัสซ้ำถูกปฏิเสธ)
   function saveItem(d, p, ctx) {
-    const user = requireUser(ctx);
+    const user = requirePlanner(ctx, "เพิ่ม/แก้ชิ้นงาน");
     const R = rules();
     const code = R.canonicalCode(text(p.code, "รหัสชิ้นงาน", 60));
     const kind = R.KINDS[p.kind] ? p.kind : fail("ชนิดชิ้นงานไม่ถูกต้อง");
     if (p.ownerDept !== undefined && p.ownerDept !== "" && !R.DEPTS.includes(p.ownerDept)) fail("แผนกเจ้าของไม่ถูกต้อง");
     const existing = itemOf(d, code);
-    // ไม่ส่ง ownerDept มา: ชิ้นเดิมคงแผนกเจ้าของเดิม ชิ้นใหม่ใช้ค่าตามชนิด
+    if (existing && p.create) fail(`มีรหัส ${code} อยู่แล้ว (${existing.name})`);
     const ownerDept = R.DEPTS.includes(p.ownerDept) ? p.ownerDept : existing?.ownerDept ?? R.ownerDeptOf(kind, p.pair);
-    if (existing && p.create) fail(`มีรหัส ${code} อยู่แล้ว (ของแผนก ${existing.ownerDept}) เปิดจากรายการเพื่อแก้แทน`);
-    // แก้ชิ้นที่มีอยู่: ต้องเป็นแผนกเจ้าของเดิม (หรือผู้จัดการ) และย้ายแผนกเจ้าของได้เฉพาะผู้จัดการ
-    if (existing && !canEditDept(user, existing.ownerDept)) fail(`ชิ้นงาน ${code} เป็นของแผนก ${existing.ownerDept} แก้ได้เฉพาะแผนกนั้นหรือผู้จัดการ`);
-    if (existing && existing.ownerDept !== ownerDept && !isBoss(user)) fail("ย้ายแผนกเจ้าของชิ้นงานได้เฉพาะผู้จัดการ");
-    if (!canEditDept(user, ownerDept)) fail(`เฉพาะแผนก ${ownerDept} (หรือผู้จัดการ) จึงเพิ่มชิ้นงานของแผนกนี้ได้`);
     const uom = R.UOMS[p.uom] ? p.uom : fail("หน่วยนับไม่ถูกต้อง");
     const name = text(p.name, "ชื่อชิ้นงาน", 160);
-    // ข้อมูลยาง: ช่องที่ฟอร์มส่งมาว่าง = ล้างค่า (เช่น เปลี่ยนเป็นไม่มีรู/ไม่มีสี) ช่องที่ฟอร์มไม่มี (undefined เช่น product ของ SE) คงค่าเดิม
+    // ข้อมูลยาง: ช่องที่ส่งมาว่าง = ล้างค่า ช่องที่ไม่ส่ง (undefined) คงค่าเดิม
     const incoming = p.rubber && typeof p.rubber === "object" ? Object.fromEntries(Object.entries(p.rubber).filter(([, value]) => value !== undefined && value !== null)) : null;
     const rubber = incoming ? { ...(existing?.rubber ?? {}), ...incoming } : existing?.rubber ?? null;
     if (rubber && (kind === "RB" || kind === "SE")) {
@@ -73,129 +69,143 @@
       }
       for (const key of ["compound", "type", "color", "product"]) if (rubber[key] !== undefined) rubber[key] = String(rubber[key]).trim().toUpperCase().slice(0, 20);
     }
-    if (kind === "RB" && rubber) {
-      if (!rubber.compound) fail("เส้นยางต้องระบุรหัสสูตรยาง (คอมปาวด์)");
+    if (kind === "RB") {
+      if (!rubber?.compound) fail(`เส้นยาง ${code} ต้องระบุรหัสสูตรยาง (คอมปาวด์)`);
       if (!d.compounds.some((entry) => entry.code === rubber.compound)) d.compounds.push({ code: rubber.compound, name: rubber.compound, recipeId: null, createdAt: ctx.now });
     }
     const item = existing ?? { code, legacyCodes: [], createdAt: ctx.now, active: true, group: p.group || "TOY" };
-    if (existing && existing.kind !== kind && approvedBomOf(d, code)) fail("เปลี่ยนชนิดชิ้นงานที่มี BOM อนุมัติแล้วไม่ได้");
-    // ย้ายแผนกเจ้าของ: BOM ของชิ้นนี้ย้ายตาม (เจ้าของ BOM = เจ้าของชิ้นเสมอ)
+    if (existing && existing.kind !== kind && approvedBomOf(d, code)) fail(`เปลี่ยนชนิดของ ${code} ที่มี BOM แล้วไม่ได้`);
     if (existing && existing.ownerDept !== ownerDept) d.boms.filter((bom) => bom.itemCode === code).forEach((bom) => { bom.ownerDept = ownerDept; bom.changeLog.push({ at: ctx.now, by: user.name, text: `ย้ายแผนกเจ้าของ ${existing.ownerDept} → ${ownerDept}` }); });
-    Object.assign(item, { kind, name, ownerDept, uom, weightG: p.weightG === undefined || p.weightG === "" ? item.weightG ?? 0 : num(p.weightG, "น้ำหนัก (กรัม)", { allowZero: true }), rubber, active: p.active === undefined ? item.active !== false : p.active !== false && p.active !== "false", updatedAt: ctx.now });
+    Object.assign(item, { kind, name, ownerDept, uom, weightG: p.weightG === undefined || p.weightG === "" ? item.weightG ?? 0 : num(p.weightG, "น้ำหนัก (กรัม)", { allowZero: true }), rubber: kind === "RB" || kind === "SE" ? rubber : null, active: p.active === undefined ? item.active !== false : p.active !== false && p.active !== "false", updatedAt: ctx.now });
     if (!existing) d.items.push(item);
     audit(d, ctx, existing ? "แก้ชิ้นงาน" : "เพิ่มชิ้นงาน", `${code} ${name}`);
     return code;
   }
 
-  // ---------- BOM revision ----------
+  // ---------- BOM ----------
   function normalizeLines(d, parent, rawLines) {
     const R = rules();
-    if (!Array.isArray(rawLines) || !rawLines.length) fail("BOM ต้องมีอย่างน้อย 1 บรรทัด");
+    if (!Array.isArray(rawLines) || !rawLines.length) fail(`BOM ของ ${parent.code} ต้องมีอย่างน้อย 1 บรรทัด`);
     const seen = new Set();
     return rawLines.map((raw, index) => {
       const childCode = R.canonicalCode(raw.childCode);
-      const child = itemOf(d, childCode) ?? fail(`บรรทัด ${index + 1}: ไม่พบชิ้นงาน ${childCode} (เพิ่มใน item master ก่อน)`);
-      if (child.code === parent.code) fail(`บรรทัด ${index + 1}: ชิ้นงานเป็นลูกของตัวเองไม่ได้`);
-      if (seen.has(childCode)) fail(`บรรทัด ${index + 1}: ${childCode} ซ้ำ รวมปริมาณเป็นบรรทัดเดียว`);
+      const child = itemOf(d, childCode) ?? fail(`${parent.code} บรรทัด ${index + 1}: ไม่พบชิ้นงาน ${childCode}`);
+      if (child.code === parent.code) fail(`${parent.code}: ชิ้นงานเป็นลูกของตัวเองไม่ได้`);
+      if (seen.has(childCode)) fail(`${parent.code}: ${childCode} ซ้ำ รวมปริมาณเป็นบรรทัดเดียว`);
       seen.add(childCode);
-      // กันวงจร: ลูกตัวนี้ (ตาม BOM อนุมัติ) ห้ามมีพ่ออยู่ข้างใต้
       const stack = [childCode];
       const visited = new Set();
       while (stack.length) {
         const code = stack.pop();
-        if (code === parent.code) fail(`บรรทัด ${index + 1}: ${childCode} มี ${parent.code} อยู่ข้างใต้ จะเป็นวงจร`);
+        if (code === parent.code) fail(`${parent.code}: ${childCode} มี ${parent.code} อยู่ข้างใต้ จะเป็นวงจร`);
         if (visited.has(code)) continue;
         visited.add(code);
         approvedBomOf(d, code)?.lines.forEach((line) => stack.push(line.childCode));
       }
       return {
-        childCode, qty: num(raw.qty, `บรรทัด ${index + 1}: ปริมาณต่อหน่วยพ่อ`), uom: child.uom, consumerDept: parent.ownerDept, producerDept: child.ownerDept,
-        scrapPct: raw.scrapPct === undefined || raw.scrapPct === "" ? 0 : num(raw.scrapPct, `บรรทัด ${index + 1}: % เผื่อเสีย`, { allowZero: true }),
+        childCode, qty: num(raw.qty, `${parent.code} → ${childCode}: ปริมาณต่อหน่วยพ่อ`), uom: child.uom, consumerDept: parent.ownerDept, producerDept: child.ownerDept,
+        scrapPct: raw.scrapPct === undefined || raw.scrapPct === "" ? 0 : num(raw.scrapPct, `${childCode}: % เผื่อเสีย`, { allowZero: true }),
         flags: Array.isArray(raw.flags) ? raw.flags.map(String).slice(0, 10) : [], note: String(raw.note ?? "").trim().slice(0, 200),
       };
     });
   }
-
-  // บันทึกร่าง: ชิ้นหนึ่งมีร่าง/รออนุมัติได้ครั้งละหนึ่ง (แก้ทับร่างเดิม) revision = อนุมัติล่าสุด + 1
-  function saveBomDraft(d, p, ctx) {
-    const user = requireUser(ctx);
-    const parent = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
-    if (parent.kind === "RB") fail("เส้นยางไม่มี BOM ในระบบนี้ (สูตรคอมปาวด์อยู่ที่ RubberFlow)");
-    if (parent.kind === "PURCHASED") fail("ของซื้อไม่มีส่วนประกอบ");
-    if (!canEditDept(user, parent.ownerDept)) fail(`BOM ของ ${parent.code} เป็นของแผนก ${parent.ownerDept} แก้ได้เฉพาะแผนกนั้นหรือผู้จัดการ`);
-    const lines = normalizeLines(d, parent, p.lines);
-    let bom = openBomOf(d, parent.code);
-    if (bom?.status === "pending" && !canApprove(user, bom)) fail("revision นี้รออนุมัติอยู่ ถอนกลับเป็นร่างก่อนจึงแก้ได้");
-    const approved = approvedBomOf(d, parent.code);
-    if (!bom) {
-      bom = { id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: (approved?.revision ?? 0) + 1, status: "draft", ownerDept: parent.ownerDept, lines: [], createdBy: user.name, createdAt: ctx.now, note: "", changeLog: [] };
-      d.boms.unshift(bom);
+  // ปริมาณที่ต่างกันน้อยกว่า 1e-6 ถือว่าเท่ากัน (ฟอร์มแสดงอัตราส่วนเช่น 1/31 ด้วยทศนิยม 6 ตำแหน่ง การบันทึกซ้ำจึงไม่สร้าง revision ลอย)
+  const QTY_EPS = 1e-6;
+  const sameLines = (a, b) => a.length === b.length && a.every((line) => b.some((other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "")));
+  function diffText(before, after) {
+    const R = rules();
+    const parts = [];
+    for (const line of after) {
+      const old = before.find((entry) => entry.childCode === line.childCode);
+      if (!old) parts.push(`+${line.childCode} ${R.fmtQty(line.qty)}`);
+      else if (Math.abs(old.qty - line.qty) > QTY_EPS) parts.push(`${line.childCode} ${R.fmtQty(old.qty)}→${R.fmtQty(line.qty)}`);
     }
-    bom.lines = lines;
-    bom.status = "draft";
-    bom.note = String(p.note ?? "").trim().slice(0, 300);
-    bom.updatedAt = ctx.now;
-    bom.changeLog.push({ at: ctx.now, by: user.name, text: `บันทึกร่าง ${lines.length} บรรทัด${bom.note ? ` — ${bom.note}` : ""}` });
-    audit(d, ctx, "บันทึกร่าง BOM", `${bom.id} ${parent.code} Rev.${bom.revision}`);
-    return bom.id;
+    for (const line of before) if (!after.some((entry) => entry.childCode === line.childCode)) parts.push(`−${line.childCode}`);
+    return parts.join(" · ");
   }
 
-  function submitBom(d, { bomId }, ctx) {
-    const user = requireUser(ctx);
-    const bom = bomById(d, bomId);
-    if (bom.status !== "draft") fail("ส่งอนุมัติได้เฉพาะร่าง");
-    if (!canEditDept(user, bom.ownerDept)) fail("เฉพาะแผนกเจ้าของ BOM จึงส่งอนุมัติได้");
-    bom.status = "pending";
-    bom.submittedBy = user.name;
-    bom.submittedAt = ctx.now;
-    bom.changeLog.push({ at: ctx.now, by: user.name, text: "ส่งอนุมัติ" });
-    audit(d, ctx, "ส่งอนุมัติ BOM", `${bom.id} ${bom.itemCode} Rev.${bom.revision}`);
-    return bom.id;
-  }
-
-  function approveBom(d, { bomId }, ctx) {
-    const user = requireUser(ctx);
-    const bom = bomById(d, bomId);
-    if (bom.status !== "pending") fail("อนุมัติได้เฉพาะ revision ที่รออนุมัติ");
-    if (!canApprove(user, bom)) fail(bom.ownerDept === "PK" ? "ชั้นสินค้าสำเร็จรูปอนุมัติโดยผู้จัดการฝ่ายโรงงานเท่านั้น" : `อนุมัติได้โดยหัวหน้าแผนก ${bom.ownerDept} หรือผู้จัดการ`);
-    // ตรวจวงจรซ้ำกับ BOM ที่อนุมัติ ณ ตอนนี้ (ร่างสองใบที่อ้างกันไปมาอาจผ่านตอนบันทึกร่างแล้วถูกอนุมัติทีหลัง)
-    const parent = itemOf(d, bom.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
-    normalizeLines(d, parent, bom.lines);
-    const previous = approvedBomOf(d, bom.itemCode);
+  // บันทึก BOM ของพ่อหนึ่งตัว: ใช้ได้ทันที (revision ใหม่ ตัวเก่า superseded) ถ้าบรรทัดเหมือนเดิมไม่สร้าง revision ซ้ำ
+  function saveBom(d, p, ctx) {
+    const user = requirePlanner(ctx, "บันทึก BOM");
+    const parent = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
+    if (parent.kind === "RB") fail(`${parent.code} เป็นเส้นยาง ไม่มี BOM ในระบบนี้ (สูตรคอมปาวด์อยู่ที่ RubberFlow)`);
+    if (parent.kind === "PURCHASED") fail(`${parent.code} เป็นของซื้อ ไม่มีส่วนประกอบ`);
+    const lines = normalizeLines(d, parent, p.lines);
+    const note = String(p.note ?? "").trim().slice(0, 300);
+    const previous = approvedBomOf(d, parent.code);
+    if (previous && sameLines(previous.lines, lines)) return { id: previous.id, revision: previous.revision, changed: false };
+    const changes = previous ? diffText(previous.lines, lines) || "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ)" : `สร้างใหม่ ${lines.length} บรรทัด`;
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
-    bom.status = "approved";
-    bom.approvedBy = user.name;
-    bom.approvedAt = ctx.now;
-    bom.changeLog.push({ at: ctx.now, by: user.name, text: previous ? `อนุมัติ แทน Rev.${previous.revision}` : "อนุมัติ" });
-    audit(d, ctx, "อนุมัติ BOM", `${bom.id} ${bom.itemCode} Rev.${bom.revision}`);
-    return bom.id;
+    const bom = { id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}` }] };
+    d.boms.unshift(bom);
+    audit(d, ctx, "บันทึก BOM", `${parent.code} Rev.${bom.revision}: ${changes}`);
+    return { id: bom.id, revision: bom.revision, changed: true };
   }
 
-  function rejectBom(d, { bomId, reason }, ctx) {
-    const user = requireUser(ctx);
-    const bom = bomById(d, bomId);
-    if (bom.status !== "pending") fail("ตีกลับได้เฉพาะ revision ที่รออนุมัติ");
-    if (!canApprove(user, bom) && !canEditDept(user, bom.ownerDept)) fail("ไม่มีสิทธิ์ตีกลับ revision นี้");
-    bom.status = "draft";
-    bom.changeLog.push({ at: ctx.now, by: user.name, text: `ตีกลับเป็นร่าง${reason ? `: ${String(reason).trim().slice(0, 200)}` : ""}` });
-    audit(d, ctx, "ตีกลับ BOM", `${bom.id} ${bom.itemCode}`);
-    return bom.id;
-  }
-
-  function discardBom(d, { bomId }, ctx) {
-    const user = requireUser(ctx);
-    const bom = bomById(d, bomId);
-    if (bom.status !== "draft") fail("ลบได้เฉพาะร่าง");
-    if (!canEditDept(user, bom.ownerDept)) fail("เฉพาะแผนกเจ้าของจึงลบร่างได้");
-    d.boms = d.boms.filter((entry) => entry.id !== bom.id);
-    audit(d, ctx, "ลบร่าง BOM", `${bom.id} ${bom.itemCode}`);
-    return true;
+  // จุดสร้างจุดเดียว: บันทึกต้นไม้ทั้งก้อนในครั้งเดียว
+  // p = { code (FG หรือพ่อระดับบน), item?: {name, uom, kind?, weightG} สำหรับสร้างพ่อใหม่, note?,
+  //       nodes: [{ code, qty, scrapPct?, note?, newItem?: {kind, name, uom, weightG?, rubber?}, patch?: {name?, weightG?, rubber?}, children?: [...] }] }
+  // ลูกที่ยังไม่มีใน item master ถูกสร้างจาก newItem · patch แก้ชิ้นที่มีอยู่ (เช่น ข้อมูลการตัดของ RB) · บรรทัดที่มี children ได้ BOM ของตัวเอง
+  function saveBomTree(d, p, ctx) {
+    requirePlanner(ctx, "บันทึก BOM");
+    const R = rules();
+    const rootCode = R.canonicalCode(text(p.code, "รหัสสินค้า", 60));
+    if (!itemOf(d, rootCode)) {
+      if (!p.item?.name) fail(`ยังไม่มีชิ้นงาน ${rootCode} กรุณาระบุชื่อและหน่วยเพื่อสร้าง`);
+      saveItem(d, { code: rootCode, kind: p.item.kind || "FG", name: p.item.name, uom: p.item.uom || "set", weightG: p.item.weightG, create: true }, ctx);
+    } else if (p.item) {
+      const current = itemOf(d, rootCode);
+      const changed = (p.item.name && p.item.name.trim() !== current.name) || (p.item.uom && p.item.uom !== current.uom) || (p.item.weightG !== undefined && p.item.weightG !== "" && Number(p.item.weightG) !== Number(current.weightG || 0));
+      if (changed) saveItem(d, { code: rootCode, kind: current.kind, name: p.item.name || current.name, uom: p.item.uom || current.uom, weightG: p.item.weightG }, ctx);
+    }
+    const auditBefore = d.audit.length;
+    const saved = [];
+    const created = [];
+    const patched = [];
+    const seenPath = new Set();
+    const walk = (parentCode, nodes, path) => {
+      if (!Array.isArray(nodes) || !nodes.length) fail(`${parentCode}: ต้องมีส่วนประกอบอย่างน้อย 1 บรรทัด`);
+      const lines = [];
+      for (const node of nodes) {
+        const code = R.canonicalCode(node.code);
+        if (!code) fail(`${parentCode}: มีบรรทัดที่ไม่มีรหัสชิ้นงาน`);
+        if (path.includes(code)) fail(`${code} ซ้อนอยู่ใต้ตัวเอง`);
+        let child = itemOf(d, code);
+        if (!child) {
+          const spec = node.newItem ?? fail(`ไม่พบชิ้นงาน ${code} — ระบุชนิด ชื่อ และหน่วยเพื่อสร้าง`);
+          saveItem(d, { code, kind: spec.kind, name: spec.name, uom: spec.uom, weightG: spec.weightG, rubber: spec.rubber, create: true }, ctx);
+          child = itemOf(d, code);
+          created.push(code);
+        } else if (node.patch && Object.keys(node.patch).length) {
+          saveItem(d, { code, kind: child.kind, name: node.patch.name || child.name, uom: node.patch.uom || child.uom, weightG: node.patch.weightG, rubber: node.patch.rubber }, ctx);
+          patched.push(code);
+        }
+        if (Array.isArray(node.children) && node.children.length) {
+          if (NO_BOM_KINDS.includes(child.kind)) fail(`${code} (${R.KINDS[child.kind].label}) มีส่วนประกอบไม่ได้`);
+          // ชิ้นเดียวกันอยู่หลายที่ในต้นไม้: BOM ของมันบันทึกจากที่แรก ที่อื่นต้องมีลูกชุดเดียวกัน
+          if (!seenPath.has(code)) { walk(code, node.children, [...path, code]); seenPath.add(code); } else {
+            const current = approvedBomOf(d, code);
+            const incoming = node.children.map((entry) => ({ childCode: R.canonicalCode(entry.code), qty: Number(entry.qty), scrapPct: Number(entry.scrapPct) || 0, note: String(entry.note ?? "").trim() }));
+            if (!current || !sameLines(current.lines, incoming)) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
+          }
+        }
+        lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note });
+      }
+      const result = saveBom(d, { itemCode: parentCode, lines, note: p.note }, ctx);
+      if (result.changed) saved.push(`${parentCode} Rev.${result.revision}`);
+    };
+    walk(rootCode, p.nodes, [rootCode]);
+    const rootChanged = d.audit.length > auditBefore && d.audit.slice(0, d.audit.length - auditBefore).some((entry) => /ชิ้นงาน/.test(entry.action) && entry.detail.startsWith(rootCode));
+    const parts = [saved.length ? `BOM: ${saved.join(", ")}` : "", created.length ? `สร้างชิ้นใหม่: ${created.join(", ")}` : "", patched.length ? `แก้ข้อมูลชิ้น: ${patched.join(", ")}` : "", rootChanged && !created.includes(rootCode) ? `แก้ข้อมูลสินค้า ${rootCode}` : ""].filter(Boolean);
+    const changed = parts.length > 0;
+    if (changed) audit(d, ctx, "บันทึกต้นไม้ BOM", `${rootCode}: ${parts.join(" · ")}`);
+    return { code: rootCode, saved, created, patched, changed, summary: changed ? `บันทึกแล้ว — ${parts.join(" · ")}` : "ไม่มีการเปลี่ยนแปลง" };
   }
 
   // ---------- สูตรยาง ↔ RubberFlow ----------
   function linkCompound(d, p, ctx) {
     const user = requireUser(ctx);
-    if (!(isBoss(user) || user.role === "rb" || user.role === "planner")) fail("ผูกสูตรยางได้โดยแผนก RB ฝ่ายวางแผน หรือผู้จัดการ");
+    if (!(canPlan(user) || user.role === "rb")) fail("ผูกสูตรยางได้โดยแผนก RB ฝ่ายวางแผน หรือผู้จัดการ");
     const code = text(p.code, "รหัสสูตรยาง", 20).toUpperCase();
     let compound = d.compounds.find((entry) => entry.code === code);
     if (!compound) { compound = { code, name: code, recipeId: null, createdAt: ctx.now }; d.compounds.push(compound); }
@@ -207,10 +217,8 @@
   }
 
   // ---------- นำเข้าจากชีต (ผลของ rules.buildFromFlat ที่แปลง Map เป็นอาร์เรย์แล้ว) ----------
-  // items: [item] · boms: [{ parentCode, lines }] · ชิ้นที่มีแล้วรวม legacy codes · พ่อที่มี BOM อนุมัติแล้วไม่ทับ (นับเป็น skipped)
   function importFlat(d, p, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("นำเข้า BOM ได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    const user = requirePlanner(ctx, "นำเข้า BOM");
     const R = rules();
     const items = Array.isArray(p.items) ? p.items : fail("ไม่มีรายการชิ้นงานให้นำเข้า");
     const boms = Array.isArray(p.boms) ? p.boms : [];
@@ -234,21 +242,20 @@
     for (const entry of boms) {
       const parent = itemOf(d, entry.parentCode);
       if (!parent || !Array.isArray(entry.lines) || !entry.lines.length) continue;
-      if (approvedBomOf(d, parent.code) || openBomOf(d, parent.code)) { stats.bomsSkipped += 1; continue; }
+      if (approvedBomOf(d, parent.code)) { stats.bomsSkipped += 1; continue; }
       const lines = entry.lines.filter((line) => itemOf(d, line.childCode) && Number(line.qty) > 0).map((line) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: itemOf(d, line.childCode).uom, consumerDept: parent.ownerDept, producerDept: itemOf(d, line.childCode).ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
       if (!lines.length) continue;
-      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"} (อนุมัติย้อนหลังตามข้อมูลเดิม)`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
+      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
       stats.bomsAdded += 1;
     }
     const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}`;
     audit(d, ctx, "นำเข้า BOM จากชีต", `${p.source || "Excel"}: ${summary}`);
-    return { ...stats, summary }; // summary = ข้อความสำหรับ toast (module-bom.js ใช้ result.summary เมื่อมี)
+    return { ...stats, summary };
   }
 
   // ---------- ใบสั่งผลิต (PI) ----------
   function createOrder(d, p, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("เปิดใบสั่งผลิตได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    const user = requirePlanner(ctx, "เปิดใบสั่งผลิต");
     const R = rules();
     const id = text(p.pi, "เลขที่ PI", 40).toUpperCase();
     if (d.orders.some((order) => order.id === id)) fail(`มีใบสั่งผลิต ${id} อยู่แล้ว`);
@@ -276,32 +283,28 @@
 
   const editable = (order) => { if (order.status !== "draft") fail("แก้รายการได้เฉพาะใบที่ยังเป็นร่าง (ยังไม่ปล่อยผลิต)"); };
 
-  // สินค้า FG ที่ฐานรหัสเดียวกัน (ต่างแพ็กเกจ/ชุดสี) ที่มี BOM อนุมัติ — ใช้เป็นต้นแบบเมื่อรหัสเต็มยังไม่มีใน item master
   function siblingsOf(d, base) {
     const R = rules();
     const key = R.canonicalCode(base);
     return d.items.filter((item) => item.kind === "FG" && R.parseFgCode(item.code).base === key && approvedBomOf(d, item.code));
   }
-  // เลือกต้นแบบ: แพ็กเกจเดียวกันก่อน แล้วชุดสีเดียวกัน แล้วตัวแรก
   function pickSibling(siblings, pkg, colorSet) {
     const R = rules();
     const parsed = siblings.map((item) => ({ item, ...R.parseFgCode(item.code) }));
     return (parsed.find((entry) => entry.pkg === pkg && entry.colorSet === colorSet) ?? parsed.find((entry) => entry.pkg === pkg) ?? parsed.find((entry) => entry.colorSet === colorSet) ?? parsed[0])?.item ?? null;
   }
-  // สร้าง FG ใหม่จากต้นแบบ: item + BOM Rev.1 อนุมัติ (คัดลอกบรรทัดทั้งหมด) บันทึกที่มาไว้ใน note/changeLog
   function cloneFg(d, code, source, { pkg, colorSet }, ctx) {
     const user = requireUser(ctx);
-    const sourceBom = approvedBomOf(d, source.code) ?? fail(`${source.code} ยังไม่มี BOM ที่อนุมัติ`);
+    const sourceBom = approvedBomOf(d, source.code) ?? fail(`${source.code} ยังไม่มี BOM`);
     const label = [pkg ? `แพ็กเกจ ${pkg}` : "", colorSet ? `ชุดสี ${colorSet}` : ""].filter(Boolean).join(" ");
     d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`, ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
-    d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sourceBom.lines.map((line) => ({ ...line, flags: [...(line.flags ?? [])] })), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `คัดลอกจาก ${source.code} Rev.${sourceBom.revision} ตอนเพิ่มในใบสั่งผลิต`, changeLog: [{ at: ctx.now, by: user.name, text: `คัดลอกจาก ${source.code} Rev.${sourceBom.revision}` }] });
+    d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sourceBom.lines.map((line) => ({ ...line, flags: [...(line.flags ?? [])] })), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `คัดลอกจาก ${source.code} Rev.${sourceBom.revision}`, changeLog: [{ at: ctx.now, by: user.name, text: `คัดลอกจาก ${source.code} Rev.${sourceBom.revision}` }] });
     audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}`);
   }
 
   // เลือกสินค้าด้วยรหัสเต็ม (fgCode) หรือ 3 ช่องแบบชีต ;}o (base + pkg + colorSet) — รหัสเต็มที่ยังไม่มีแต่มีฐานรหัสเดียวกัน จะสร้างจากต้นแบบให้
   function addOrderItem(d, p, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("แก้รายการสินค้าได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    requirePlanner(ctx, "แก้รายการสินค้า");
     const order = orderById(d, p.orderId);
     editable(order);
     const R = rules();
@@ -312,14 +315,14 @@
     let fg = itemOf(d, code);
     if (!fg && byParts) {
       const siblings = siblingsOf(d, p.base);
-      if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM อนุมัติใน item master`);
+      if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ใน item master`);
       const source = (p.cloneFrom && siblings.find((item) => item.code === R.canonicalCode(p.cloneFrom))) ?? pickSibling(siblings, pkg, colorSet);
       cloneFg(d, code, source, { pkg, colorSet }, ctx);
       fg = itemOf(d, code);
     }
     if (!fg) fail("ไม่พบสินค้า");
     if (fg.kind !== "FG") fail("เลือกได้เฉพาะสินค้าสำเร็จรูป (FG)");
-    if (!approvedBomOf(d, fg.code)) fail(`${fg.code} ยังไม่มี BOM ที่อนุมัติ`);
+    if (!approvedBomOf(d, fg.code)) fail(`${fg.code} ยังไม่มี BOM (สร้างได้ที่เมนู "สร้าง BOM")`);
     const qty = num(p.qty, "จำนวนสั่ง");
     const existing = order.items.find((item) => item.fgCode === fg.code);
     if (existing) existing.qty += qty;
@@ -330,8 +333,7 @@
   }
 
   function removeOrderItem(d, { orderId, fgCode }, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("แก้รายการสินค้าได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    requirePlanner(ctx, "แก้รายการสินค้า");
     const order = orderById(d, orderId);
     editable(order);
     const before = order.items.length;
@@ -342,10 +344,8 @@
     return order.id;
   }
 
-  // ระเบิด BOM ทุกสินค้าในใบด้วย revision ที่อนุมัติ ณ ตอนนี้ (ร่างระเบิดซ้ำได้ ปล่อยผลิตแล้วล็อก)
   function explodeOrder(d, { orderId }, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("ระเบิด BOM ได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    requirePlanner(ctx, "ระเบิด BOM");
     const order = orderById(d, orderId);
     editable(order);
     if (!order.items.length) fail("ใบยังไม่มีสินค้า");
@@ -364,19 +364,17 @@
     return lines.length;
   }
 
-  // ปล่อยผลิต: ระเบิดใหม่ให้ตรง BOM ล่าสุด ล็อก revision แล้วสร้างงานรายแผนก (หนึ่งงานต่อ แผนก × ชิ้น รวมทุกสินค้าในใบ) + งาน PK ต่อสินค้า
   function releaseOrder(d, { orderId }, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("ปล่อยผลิตได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    const user = requirePlanner(ctx, "ปล่อยผลิต");
     const order = orderById(d, orderId);
     editable(order);
     explodeOrder(d, { orderId }, ctx);
     const R = rules();
     const noBom = order.explosion.filter((line) => line.noBom).map((line) => line.itemCode);
-    if (noBom.length) fail(`ชิ้นที่ต้องผลิตแต่ยังไม่มี BOM อนุมัติ: ${[...new Set(noBom)].join(", ")}`);
+    if (noBom.length) fail(`ชิ้นที่ต้องผลิตแต่ยังไม่มี BOM: ${[...new Set(noBom)].join(", ")}`);
     const requirements = R.aggregateRequirements(order.explosion);
     for (const entry of requirements) {
-      if (!R.MANUFACTURED.includes(entry.kind)) continue; // ของซื้อ (ST) อยู่ในรายการเบิก/สั่งซื้อ ไม่ใช่งานผลิต
+      if (!R.MANUFACTURED.includes(entry.kind)) continue;
       d.jobs.push({ id: nextId(d, "JOB", ctx.now), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: Math.round(entry.required * 1e4) / 1e4, qtyDone: 0, qtyReject: 0, dueAt: order.due[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
     }
     for (const item of order.items) {
@@ -406,8 +404,7 @@
   }
 
   function cancelOrder(d, { orderId, reason }, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("ยกเลิกใบได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    requirePlanner(ctx, "ยกเลิกใบ");
     const order = orderById(d, orderId);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
     if (d.jobs.some((job) => job.orderId === order.id && job.qtyDone > 0)) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ให้ปิดใบแทน");
@@ -422,8 +419,7 @@
   }
 
   function completeOrder(d, { orderId }, ctx) {
-    const user = requireUser(ctx);
-    if (!canPlan(user)) fail("ปิดใบได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+    requirePlanner(ctx, "ปิดใบ");
     const order = orderById(d, orderId);
     if (!["released", "in_progress"].includes(order.status)) fail("ปิดได้เฉพาะใบที่ปล่อยผลิตแล้ว");
     const pkJobs = d.jobs.filter((job) => job.orderId === order.id && job.dept === "PK");
@@ -469,7 +465,6 @@
     return job.id;
   }
 
-  // บันทึกเลข WO ของ RubberFlow ที่สร้างจากงาน RB (ตัวสร้าง WO อยู่ที่หน้า เพราะเป็นอีก store)
   function linkJobToRubberFlow(d, { jobId, woId, kg }, ctx) {
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
@@ -485,8 +480,6 @@
     return job.id;
   }
 
-  // ---------- helper ให้หน้า/เทสต์ ----------
-  // กิโลกรัมคอมปาวด์ที่งาน RB ต้องใช้: หน่วย kg = ตามจำนวน · เส้น/ม้วน = จำนวน × kg ต่อเส้น · ชิ้น = จำนวน × น้ำหนักชิ้น/1000 (เผื่อ scrapPct)
   function rbJobKg(job, item, { scrapPct = 0 } = {}) {
     if (!item) return 0;
     const qty = Math.max(0, Number(job.qtyPlanned) - Number(job.qtyDone || 0));
@@ -498,11 +491,10 @@
   }
 
   const api = {
-    saveItem, saveBomDraft, submitBom, approveBom, rejectBom, discardBom, linkCompound, importFlat,
+    saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow,
-    // helpers (ไม่ใช่ action)
-    helpers: { itemOf, approvedBomOf, openBomOf, canEditDept, canApprove, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling },
+    helpers: { itemOf, approvedBomOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

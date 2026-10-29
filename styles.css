@@ -2359,3 +2359,22 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
 .bom-details ul { margin: 6px 0 0; padding-left: 18px; }
 .bom-paste { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre; }
 .bom-page .rf-table .rf-hint { display: block; margin-top: 2px; }
+/* สร้าง BOM หน้าเดียว: ตารางต้นไม้ที่แก้ได้ทุกชั้น */
+[data-rf-mod="bom-build"] { --rf-mod: #1b8f4e; }
+[data-rf-mod="bom-items"] { --rf-mod: #4f52c9; }
+.bom-page .is-hidden { display: none !important; }
+.bom-tree-table th, .bom-tree-table td { padding: 5px 6px; vertical-align: top; }
+.bom-tree-table .rf-input, .bom-tree-table .rf-select { min-height: 32px; padding: 4px 6px; font-size: 13px; }
+.bom-tree-table .bom-code { min-width: 190px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.bom-tree-table .bom-name { min-width: 200px; }
+.bom-tree-table .bom-kind { min-width: 150px; }
+.bom-tree-table .bom-uom { min-width: 90px; }
+.bom-tree-table .bom-qty, .bom-tree-table .bom-scrap { width: 92px; }
+.bom-tree-table .bom-note { min-width: 120px; }
+.bom-tree-table .bom-cell-code .bom-lv { display: flex; align-items: center; gap: 4px; }
+.bom-tree-table tr.is-new td { background: color-mix(in srgb, var(--warning, #b7791f) 8%, var(--paper)); }
+.bom-rubber-grid { display: grid; grid-template-columns: repeat(3, minmax(70px, 1fr)); gap: 4px 6px; min-width: 260px; }
+.bom-rubber-grid label { display: grid; gap: 2px; font-size: 11px; color: var(--muted); }
+.bom-rubber-grid .bom-mini { min-height: 28px; padding: 2px 6px; font-size: 12px; }
+.bom-editor .bom-actions { position: sticky; bottom: 0; padding: 10px 0; background: var(--bg, var(--paper)); }
+.bom-pick .rf-hint { display: block; }
