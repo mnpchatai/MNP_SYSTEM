@@ -53,8 +53,9 @@
     const code = R.canonicalCode(text(p.code, "รหัสชิ้นงาน", 60));
     const kind = R.KINDS[p.kind] ? p.kind : fail("ชนิดชิ้นงานไม่ถูกต้อง");
     if (p.ownerDept !== undefined && p.ownerDept !== "" && !R.DEPTS.includes(p.ownerDept)) fail("แผนกเจ้าของไม่ถูกต้อง");
-    const ownerDept = R.DEPTS.includes(p.ownerDept) ? p.ownerDept : R.ownerDeptOf(kind, p.pair);
     const existing = itemOf(d, code);
+    // ไม่ส่ง ownerDept มา: ชิ้นเดิมคงแผนกเจ้าของเดิม ชิ้นใหม่ใช้ค่าตามชนิด
+    const ownerDept = R.DEPTS.includes(p.ownerDept) ? p.ownerDept : existing?.ownerDept ?? R.ownerDeptOf(kind, p.pair);
     if (existing && p.create) fail(`มีรหัส ${code} อยู่แล้ว (ของแผนก ${existing.ownerDept}) เปิดจากรายการเพื่อแก้แทน`);
     // แก้ชิ้นที่มีอยู่: ต้องเป็นแผนกเจ้าของเดิม (หรือผู้จัดการ) และย้ายแผนกเจ้าของได้เฉพาะผู้จัดการ
     if (existing && !canEditDept(user, existing.ownerDept)) fail(`ชิ้นงาน ${code} เป็นของแผนก ${existing.ownerDept} แก้ได้เฉพาะแผนกนั้นหรือผู้จัดการ`);
@@ -62,11 +63,17 @@
     if (!canEditDept(user, ownerDept)) fail(`เฉพาะแผนก ${ownerDept} (หรือผู้จัดการ) จึงเพิ่มชิ้นงานของแผนกนี้ได้`);
     const uom = R.UOMS[p.uom] ? p.uom : fail("หน่วยนับไม่ถูกต้อง");
     const name = text(p.name, "ชื่อชิ้นงาน", 160);
-    // ข้อมูลยาง: ช่องว่างจากฟอร์มไม่ลบค่าเดิม (เช่น product ของ SE ที่ฟอร์มไม่มีช่อง)
-    const incoming = p.rubber && typeof p.rubber === "object" ? Object.fromEntries(Object.entries(p.rubber).filter(([, value]) => value !== "" && value !== undefined && value !== null)) : null;
+    // ข้อมูลยาง: ช่องที่ฟอร์มส่งมาว่าง = ล้างค่า (เช่น เปลี่ยนเป็นไม่มีรู/ไม่มีสี) ช่องที่ฟอร์มไม่มี (undefined เช่น product ของ SE) คงค่าเดิม
+    const incoming = p.rubber && typeof p.rubber === "object" ? Object.fromEntries(Object.entries(p.rubber).filter(([, value]) => value !== undefined && value !== null)) : null;
     const rubber = incoming ? { ...(existing?.rubber ?? {}), ...incoming } : existing?.rubber ?? null;
+    if (rubber && (kind === "RB" || kind === "SE")) {
+      for (const key of ["cutLengthCm", "pcsPerRoll", "sePerGr", "kgPerRoll", "lengthMm", "holeMm", "odMm"]) {
+        if (rubber[key] === "") delete rubber[key];
+        else if (rubber[key] !== undefined) rubber[key] = num(rubber[key], key, { allowZero: true });
+      }
+      for (const key of ["compound", "type", "color", "product"]) if (rubber[key] !== undefined) rubber[key] = String(rubber[key]).trim().toUpperCase().slice(0, 20);
+    }
     if (kind === "RB" && rubber) {
-      for (const key of ["cutLengthCm", "pcsPerRoll", "sePerGr", "kgPerRoll", "lengthMm", "holeMm", "odMm"]) if (rubber[key] !== undefined && rubber[key] !== "") rubber[key] = num(rubber[key], key, { allowZero: true });
       if (!rubber.compound) fail("เส้นยางต้องระบุรหัสสูตรยาง (คอมปาวด์)");
       if (!d.compounds.some((entry) => entry.code === rubber.compound)) d.compounds.push({ code: rubber.compound, name: rubber.compound, recipeId: null, createdAt: ctx.now });
     }

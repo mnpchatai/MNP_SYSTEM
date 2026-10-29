@@ -132,8 +132,11 @@ test("an existing item can only be edited by its owner department, duplicates ar
   assert.equal(item.ownerDept, "BG");
   assert.ok(d.boms.filter((bom) => bom.itemCode === "PT-00320").every((bom) => bom.ownerDept === "BG"), "the BOMs of the item follow the new owner");
   // แก้ SE ผ่านฟอร์มโดยไม่ส่ง product: ข้อมูลยางเดิมไม่หาย
-  A.saveItem(d, { code: "SE-TP01-OR01-100-18-65", kind: "SE", name: "ลูกตอปิโด", uom: "pcs", ownerDept: "GR", rubber: { color: "OR02", product: "" } }, ctx("gr"));
-  assert.deepEqual(A.helpers.itemOf(d, "SE-TP01-OR01-100-18-65").rubber, { product: "TP01", color: "OR02", lengthMm: 100, holeMm: 18, odMm: 65 });
+  A.saveItem(d, { code: "SE-TP01-OR01-100-18-65", kind: "SE", name: "ลูกตอปิโด", uom: "pcs", ownerDept: "GR", rubber: { color: "or02", lengthMm: "100", holeMm: "", odMm: "65" } }, ctx("gr"));
+  assert.deepEqual(A.helpers.itemOf(d, "SE-TP01-OR01-100-18-65").rubber, { product: "TP01", color: "OR02", lengthMm: 100, odMm: 65 }, "blank form field clears the hole, numbers are numbers, product (no form field) survives");
+  // ไม่ส่ง ownerDept: ชิ้นเดิมคงแผนกเดิม (ไม่ถูกย้ายกลับค่าเริ่มต้นเงียบๆ)
+  A.saveItem(d, { code: "PT-00320", kind: "PT", name: item.name, uom: "pcs" }, ctx("manager"));
+  assert.equal(item.ownerDept, "BG");
   // BOM ของ RB/ของซื้อไม่มีในระบบนี้
   rejects(() => A.saveBomDraft(d, { itemCode: "RB-DM01-01-OR01-200-0-72", lines: [{ childCode: "P-PEL-BK", qty: 1 }] }, ctx("rb")), /RubberFlow/);
   rejects(() => A.saveBomDraft(d, { itemCode: "P-PEL-BK", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("st")), /ของซื้อ/);
