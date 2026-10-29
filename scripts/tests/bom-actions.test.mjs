@@ -216,6 +216,43 @@ test("a production order explodes with the approved revisions, locks them at rel
   rejects(() => A.releaseOrder(d2, { orderId: "DEMO-26002" }, ctx("planner")), /ยังไม่มี BOM อนุมัติ: BG-0092/);
 });
 
+test("a product can be chosen by base code + package + color set; an unknown variant is created from a sibling's approved BOM", () => {
+  const d = fresh();
+  const day = (n) => new Date(NOW + n * DAY).setHours(0, 0, 0, 0);
+  const id = A.createOrder(d, { pi: "P3", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(9) }, ctx("planner"));
+  // รหัสเต็มที่มีอยู่แล้ว
+  A.addOrderItem(d, { orderId: id, base: "demo-tp-01", pkg: "p", colorSet: "y", qty: 10 }, ctx("planner"));
+  const order = d.orders.find((entry) => entry.id === id);
+  assert.deepEqual(order.items.map((item) => [item.fgCode, item.qty, item.colorSet]), [["DEMO-TP-01(P)-Y", 10, "Y"]]);
+  assert.equal(d.items.filter((item) => item.kind === "FG").length, 3, "no new item for an existing code");
+  // ฐานรหัสที่ไม่มีเลย
+  rejects(() => A.addOrderItem(d, { orderId: id, base: "NOPE-01", pkg: "P", colorSet: "Y", qty: 1 }, ctx("planner")), /ไม่มีฐานรหัส NOPE-01/);
+  rejects(() => A.addOrderItem(d, { orderId: id, base: "", qty: 1 }, ctx("planner")), /ไม่พบสินค้า/);
+  // ชุดสีใหม่ของฐานรหัสเดิม → สร้าง FG + BOM Rev.1 คัดลอกจากต้นแบบแพ็กเกจเดียวกัน
+  A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "A", qty: 5 }, ctx("planner"));
+  const created = A.helpers.itemOf(d, "DEMO-TP-01(P)-A");
+  assert.ok(created, "variant created");
+  assert.equal(created.kind, "FG");
+  assert.equal(created.ownerDept, "PK");
+  assert.equal(created.clonedFrom, "DEMO-TP-01(P)-Y");
+  assert.match(created.name, /ชุดสี A/);
+  const bom = approved(d, created.code);
+  assert.equal(bom.revision, 1);
+  assert.match(bom.note, /คัดลอกจาก DEMO-TP-01\(P\)-Y Rev\.1/);
+  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), approved(d, "DEMO-TP-01(P)-Y").lines.map((line) => [line.childCode, line.qty]));
+  assert.notEqual(bom.lines, approved(d, "DEMO-TP-01(P)-Y").lines, "lines are copied, not shared");
+  assert.equal(order.items.at(-1).fgCode, "DEMO-TP-01(P)-A");
+  assert.ok(d.audit.some((entry) => entry.action === "สร้างสินค้าจากฐานรหัสเดียวกัน"));
+  // ไม่ใส่แพ็กเกจ/ชุดสี = รหัสฐานล้วน ก็สร้างได้
+  A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", qty: 2 }, ctx("planner"));
+  assert.ok(A.helpers.itemOf(d, "DEMO-HL-24"));
+  assert.equal(A.helpers.pickSibling(A.helpers.siblingsOf(d, "DEMO-TP-01"), "P", "A").code, "DEMO-TP-01(P)-A", "exact variant preferred");
+  assert.equal(A.helpers.pickSibling(A.helpers.siblingsOf(d, "DEMO-TP-01"), "B", "A").code, "DEMO-TP-01(P)-A", "then same color set");
+  rejects(() => A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "Z", qty: 1 }, ctx("gr")), /ฝ่ายวางแผน/);
+  // ระเบิดได้ด้วย BOM ที่คัดลอกมา
+  assert.ok(A.explodeOrder(d, { orderId: id }, ctx("planner")) > 20);
+});
+
 test("jobs: the department reports output, hold/queue toggles, orders progress and close only when PK is done", () => {
   const d = fresh();
   const orderId = "DEMO-26001";

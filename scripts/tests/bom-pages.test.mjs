@@ -153,6 +153,25 @@ test("dialogs render for their arguments and escape user text", async () => {
     assert.match(built.html, /<dialog/);
   }
   assert.equal(D.bomEdit(c, { itemCode: "NOPE" }), null);
+  // เพิ่มสินค้าแบบ 3 ช่อง: preview บอกว่ารหัสมีอยู่ หรือจะสร้างจากต้นแบบ
+  const add = D.orderItemAdd(c, { orderId: "DEMO-26002" });
+  assert.match(add.html, /name="base"/);
+  assert.match(add.html, /value="DEMO-TP-01"/);
+  assert.match(add.html, /\(B-N\)/);
+  const makeNode = (value) => ({ value, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } });
+  const parts = [makeNode("DEMO-TP-01"), makeNode("P"), makeNode("A")];
+  const bodyNode = { textContent: "" };
+  const preview = { className: "", querySelector: () => bodyNode };
+  add.bind({ querySelector: (selector) => (selector === "[data-bom-preview]" ? preview : null), querySelectorAll: (selector) => (selector === "[data-bom-part]" ? parts : []) }, c);
+  assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-A ยังไม่มีใน item master — จะสร้างจาก BOM ของ DEMO-TP-01\(P\)-Y/);
+  assert.equal(preview.className, "rf-callout is-warn");
+  parts[2].value = "Y";
+  parts[2].handlers.change();
+  assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-Y · .* BOM Rev\.1/);
+  assert.equal(preview.className, "rf-callout is-good");
+  parts[0].value = "";
+  parts[0].handlers.change();
+  assert.equal(bodyNode.textContent, "เลือกฐานรหัสเพื่อดูรหัสเต็ม");
   assert.equal(D.stockCount(c, { orderId: "NOPE", itemCode: "PT-00320" }), null);
   const html = await env.render(`p=orders&sel=X${encodeURIComponent(XSS.toUpperCase())}`);
   assert.doesNotMatch(html, /<script>alert/);

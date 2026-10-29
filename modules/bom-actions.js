@@ -276,18 +276,54 @@
 
   const editable = (order) => { if (order.status !== "draft") fail("แก้รายการได้เฉพาะใบที่ยังเป็นร่าง (ยังไม่ปล่อยผลิต)"); };
 
+  // สินค้า FG ที่ฐานรหัสเดียวกัน (ต่างแพ็กเกจ/ชุดสี) ที่มี BOM อนุมัติ — ใช้เป็นต้นแบบเมื่อรหัสเต็มยังไม่มีใน item master
+  function siblingsOf(d, base) {
+    const R = rules();
+    const key = R.canonicalCode(base);
+    return d.items.filter((item) => item.kind === "FG" && R.parseFgCode(item.code).base === key && approvedBomOf(d, item.code));
+  }
+  // เลือกต้นแบบ: แพ็กเกจเดียวกันก่อน แล้วชุดสีเดียวกัน แล้วตัวแรก
+  function pickSibling(siblings, pkg, colorSet) {
+    const R = rules();
+    const parsed = siblings.map((item) => ({ item, ...R.parseFgCode(item.code) }));
+    return (parsed.find((entry) => entry.pkg === pkg && entry.colorSet === colorSet) ?? parsed.find((entry) => entry.pkg === pkg) ?? parsed.find((entry) => entry.colorSet === colorSet) ?? parsed[0])?.item ?? null;
+  }
+  // สร้าง FG ใหม่จากต้นแบบ: item + BOM Rev.1 อนุมัติ (คัดลอกบรรทัดทั้งหมด) บันทึกที่มาไว้ใน note/changeLog
+  function cloneFg(d, code, source, { pkg, colorSet }, ctx) {
+    const user = requireUser(ctx);
+    const sourceBom = approvedBomOf(d, source.code) ?? fail(`${source.code} ยังไม่มี BOM ที่อนุมัติ`);
+    const label = [pkg ? `แพ็กเกจ ${pkg}` : "", colorSet ? `ชุดสี ${colorSet}` : ""].filter(Boolean).join(" ");
+    d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`, ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
+    d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sourceBom.lines.map((line) => ({ ...line, flags: [...(line.flags ?? [])] })), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `คัดลอกจาก ${source.code} Rev.${sourceBom.revision} ตอนเพิ่มในใบสั่งผลิต`, changeLog: [{ at: ctx.now, by: user.name, text: `คัดลอกจาก ${source.code} Rev.${sourceBom.revision}` }] });
+    audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}`);
+  }
+
+  // เลือกสินค้าด้วยรหัสเต็ม (fgCode) หรือ 3 ช่องแบบชีต ;}o (base + pkg + colorSet) — รหัสเต็มที่ยังไม่มีแต่มีฐานรหัสเดียวกัน จะสร้างจากต้นแบบให้
   function addOrderItem(d, p, ctx) {
     const user = requireUser(ctx);
     if (!canPlan(user)) fail("แก้รายการสินค้าได้โดยฝ่ายวางแผนหรือผู้จัดการ");
     const order = orderById(d, p.orderId);
     editable(order);
-    const fg = itemOf(d, p.fgCode) ?? fail("ไม่พบสินค้า");
+    const R = rules();
+    const byParts = !p.fgCode && p.base;
+    const pkg = String(p.pkg ?? "").trim().toUpperCase();
+    const colorSet = String(p.colorSet ?? "").trim().toUpperCase();
+    const code = byParts ? R.buildFgCode(text(p.base, "ฐานรหัสสินค้า", 60), pkg, colorSet) : R.canonicalCode(p.fgCode);
+    let fg = itemOf(d, code);
+    if (!fg && byParts) {
+      const siblings = siblingsOf(d, p.base);
+      if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM อนุมัติใน item master`);
+      const source = (p.cloneFrom && siblings.find((item) => item.code === R.canonicalCode(p.cloneFrom))) ?? pickSibling(siblings, pkg, colorSet);
+      cloneFg(d, code, source, { pkg, colorSet }, ctx);
+      fg = itemOf(d, code);
+    }
+    if (!fg) fail("ไม่พบสินค้า");
     if (fg.kind !== "FG") fail("เลือกได้เฉพาะสินค้าสำเร็จรูป (FG)");
     if (!approvedBomOf(d, fg.code)) fail(`${fg.code} ยังไม่มี BOM ที่อนุมัติ`);
     const qty = num(p.qty, "จำนวนสั่ง");
     const existing = order.items.find((item) => item.fgCode === fg.code);
     if (existing) existing.qty += qty;
-    else order.items.push({ fgCode: fg.code, qty, colorSet: String(p.colorSet ?? rules().parseFgCode(fg.code).colorSet).trim().slice(0, 10), note: String(p.note ?? "").trim().slice(0, 120) });
+    else order.items.push({ fgCode: fg.code, qty, colorSet: (colorSet || R.parseFgCode(fg.code).colorSet).slice(0, 10), note: String(p.note ?? "").trim().slice(0, 120) });
     order.explosion = null;
     audit(d, ctx, "เพิ่มสินค้าในใบสั่งผลิต", `${order.id} ${fg.code} × ${qty}`);
     return order.id;
@@ -466,7 +502,7 @@
     createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow,
     // helpers (ไม่ใช่ action)
-    helpers: { itemOf, approvedBomOf, openBomOf, canEditDept, canApprove, canPlan, canCount, canWorkJob, isBoss, rbJobKg },
+    helpers: { itemOf, approvedBomOf, openBomOf, canEditDept, canApprove, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

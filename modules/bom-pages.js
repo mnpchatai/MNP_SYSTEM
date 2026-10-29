@@ -28,7 +28,6 @@
   const approvedBomOf = (ctx, code) => ctx.helpers.approvedBomOf(ctx.data, code);
   const openBomOf = (ctx, code) => ctx.helpers.openBomOf(ctx.data, code);
   const whereUsed = (ctx, code) => ctx.data.boms.filter((bom) => bom.status === "approved" && bom.lines.some((line) => line.childCode === code)).map((bom) => bom.itemCode);
-  const itemLabel = (item) => `${item.code} · ${item.name}`;
   const myDept = (ctx) => (ctx.rules.DEPTS.includes(ctx.user?.dept) ? ctx.user.dept : "PK");
   const jobProgress = (ctx, job) => `${ctx.ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "")}<div class="small muted">${esc(`${ctx.rules.fmtQty(job.qtyDone)} / ${ctx.rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}${job.qtyReject ? ` · เสีย ${ctx.rules.fmtQty(job.qtyReject)}` : ""}`)}</div>`;
   const late = (ctx, job) => job.status !== "done" && job.dueAt < ctx.now;
@@ -431,14 +430,49 @@
     </form>`;
     return { html: ui.dialog("orderNew", "เปิดใบสั่งผลิตใหม่", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-form">เปิดใบ</button>` }) };
   };
+  // เลือกสินค้าแบบ 3 ช่องเหมือนชีต ;}o ของไฟล์ MRP: ฐานรหัส + แพ็กเกจ + ชุดสี → รหัสเต็ม ถ้ารหัสเต็มยังไม่มีแต่ฐานรหัสมี ระบบสร้างจาก BOM ของตัวนั้น
   dialogs.orderItemAdd = (ctx, { orderId }) => {
-    const { ui, data } = ctx;
-    const fgs = data.items.filter((item) => item.kind === "FG" && approvedBomOf(ctx, item.code)).sort((a, b) => a.code.localeCompare(b.code));
+    const { ui, data, rules } = ctx;
+    const fgs = data.items.filter((item) => item.kind === "FG" && approvedBomOf(ctx, item.code));
+    const parsed = fgs.map((item) => ({ item, ...rules.parseFgCode(item.code) }));
+    const bases = [...new Set(parsed.map((entry) => entry.base))].sort();
+    const baseOptions = bases.map((base) => ({ value: base, label: `${base} · ${parsed.find((entry) => entry.base === base).item.name.slice(0, 40)}` }));
+    const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((pkg) => ({ value: pkg, label: `(${pkg})` }));
+    const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((set) => ({ value: set, label: set }));
     const body = `<form id="bom-order-item-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เพิ่มสินค้าแล้ว">
-      ${ui.field("สินค้า (เฉพาะ FG ที่มี BOM อนุมัติ) *", ui.select("fgCode", fgs.map((item) => ({ value: item.code, label: itemLabel(item) })), { placeholder: "เลือกสินค้า…" }))}
-      <div class="rf-grid rf-g2">${ui.field("จำนวนสั่ง *", ui.input("qty", { type: "number", step: "any", min: 1, required: true }))}${ui.field("ชุดสี", ui.input("colorSet", { placeholder: "เช่น Y" }))}</div>
+      <div class="rf-grid rf-g3">
+        ${ui.field("ฐานรหัสสินค้า *", ui.select("base", baseOptions, { placeholder: "เลือกฐานรหัส…", extra: "data-bom-part" }))}
+        ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { placeholder: "ไม่ระบุ", extra: "data-bom-part" }))}
+        ${ui.field("ชุดสี", ui.select("colorSet", colorOptions, { placeholder: "ไม่ระบุ", extra: "data-bom-part" }))}
+      </div>
+      <div class="rf-callout is-info" role="note" data-bom-preview><span class="rf-callout-ico" aria-hidden="true">${pages.icon("orders")}</span><div class="rf-callout-body">เลือกฐานรหัสเพื่อดูรหัสเต็ม</div></div>
+      ${ui.field("จำนวนสั่ง *", ui.input("qty", { type: "number", step: "any", min: 1, required: true }))}
     </form>`;
-    return { html: ui.dialog("orderItemAdd", `เพิ่มสินค้าใน ${orderId}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-item-form">เพิ่ม</button>` }) };
+    const bind = (dialog) => {
+      const preview = dialog.querySelector("[data-bom-preview]");
+      const parts = [...dialog.querySelectorAll("[data-bom-part]")];
+      const paint = () => {
+        const [base, pkg, colorSet] = parts.map((node) => String(node.value ?? "").trim());
+        const bodyNode = preview?.querySelector?.(".rf-callout-body");
+        if (!preview || !bodyNode) return;
+        if (!base) { bodyNode.textContent = "เลือกฐานรหัสเพื่อดูรหัสเต็ม"; preview.className = "rf-callout is-info"; return; }
+        const code = rules.buildFgCode(base, pkg, colorSet);
+        const item = itemOf(ctx, code);
+        if (item) {
+          const bom = approvedBomOf(ctx, item.code);
+          bodyNode.textContent = `${code} · ${item.name} · ${bom ? `BOM Rev.${bom.revision} ${bom.lines.length} บรรทัด` : "ยังไม่มี BOM อนุมัติ"}`;
+          preview.className = `rf-callout ${bom ? "is-good" : "is-warn"}`;
+          return;
+        }
+        const siblings = ctx.helpers.siblingsOf(ctx.data, base);
+        const source = ctx.helpers.pickSibling(siblings, pkg.toUpperCase(), colorSet.toUpperCase());
+        bodyNode.textContent = source ? `${code} ยังไม่มีใน item master — จะสร้างจาก BOM ของ ${source.code} (Rev.${approvedBomOf(ctx, source.code)?.revision ?? "-"}) เมื่อกดเพิ่ม` : `ไม่มีฐานรหัส ${base} ที่มี BOM อนุมัติ`;
+        preview.className = `rf-callout ${source ? "is-warn" : "is-bad"}`;
+      };
+      parts.forEach((node) => node.addEventListener("change", paint));
+      paint();
+    };
+    return { html: ui.dialog("orderItemAdd", `เพิ่มสินค้าใน ${orderId}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-item-form">เพิ่ม</button>` }), bind };
   };
   dialogs.stockCount = (ctx, { orderId, itemCode }) => {
     const { ui } = ctx;

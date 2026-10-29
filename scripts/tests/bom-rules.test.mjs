@@ -36,6 +36,12 @@ test("canonical codes merge the spelling variants of RB/SE codes and keep FG cod
   assert.deepEqual(rules.parseFgCode("MEGA-ST-01(P)-Y"), { base: "MEGA-ST-01", pkg: "P", colorSet: "Y" });
   assert.deepEqual(rules.parseFgCode("AHL-24WA(N)-A"), { base: "AHL-24WA", pkg: "N", colorSet: "A" });
   assert.deepEqual(rules.parseFgCode("ACG-01-A"), { base: "ACG-01", pkg: "", colorSet: "A" });
+  assert.equal(rules.buildFgCode("mega-st-01", "p", "y"), "MEGA-ST-01(P)-Y");
+  assert.equal(rules.buildFgCode("ACG-01", "", "A"), "ACG-01-A");
+  assert.equal(rules.buildFgCode("AHL-24WA", "N", ""), "AHL-24WA(N)");
+  assert.equal(rules.buildFgCode(" AG-01 "), "AG-01");
+  assert.deepEqual(rules.parseFgCode(rules.buildFgCode("MEGA-AT-01N-MOD", "B-N", "Y")), { base: "MEGA-AT-01N-MOD", pkg: "B-N", colorSet: "Y" });
+  assert.ok(rules.PACKAGES.includes("B-N") && rules.COLOR_SETS.includes("Y"));
   assert.deepEqual(rules.parseRbCode("RB-B0006-02- -202-18-70"), { compound: "B0006", type: "02", color: "", lengthMm: 202, holeMm: 18, odMm: 70 });
   assert.deepEqual(rules.parseRbCode("RB-DM01-02-OR01-202-18-70"), { compound: "DM01", type: "02", color: "OR01", lengthMm: 202, holeMm: 18, odMm: 70 });
   assert.equal(rules.parseRbCode("SE-ST01-100-18-65"), null);

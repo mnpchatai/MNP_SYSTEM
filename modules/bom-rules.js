@@ -45,12 +45,16 @@
   // แผนกเจ้าของ: ตามชนิด ยกเว้นชิ้นทำเองใช้แผนกผู้ใช้ของคู่ (PK-PK → PK)
   const ownerDeptOf = (kind, pair = "") => (kind === "SUBPART" ? (String(pair).split("-")[0] || "PK").toUpperCase() : KINDS[kind]?.dept ?? "ST");
 
-  // แยกส่วนของรหัส FG: MEGA-ST-01(P)-Y → ฐาน MEGA-ST-01 แพ็กเกจ P ชุดสี Y
+  // แยกส่วนของรหัส FG: MEGA-ST-01(P)-Y → ฐาน MEGA-ST-01 แพ็กเกจ P ชุดสี Y (รายการแพ็กเกจ/ชุดสีตามชีต ;}o ของไฟล์ MRP)
+  const PACKAGES = Object.freeze(["B", "C", "P", "X", "K", "N", "B-N"]);
+  const COLOR_SETS = Object.freeze(["A", "B", "C", "D", "E", "O", "S", "Y"]);
   function parseFgCode(code) {
     const text = String(code ?? "").trim();
     const match = text.match(/^(.*?)(?:\(([^)]*)\))?(?:-([A-Z]))?$/);
     return { base: match?.[1] ?? text, pkg: match?.[2] ?? "", colorSet: match?.[3] ?? "" };
   }
+  // ประกอบรหัส FG จาก 3 ช่องแบบชีต ;}o: ฐาน + (แพ็กเกจ) + -ชุดสี (ช่องว่าง = ไม่ใส่ส่วนนั้น)
+  const buildFgCode = (base, pkg = "", colorSet = "") => `${canonicalCode(base)}${String(pkg ?? "").trim() ? `(${String(pkg).trim().toUpperCase()})` : ""}${String(colorSet ?? "").trim() ? `-${String(colorSet).trim().toUpperCase()}` : ""}`;
   // รหัส RB: RB-<สูตรยาง>-<ประเภท>-<สี>-<ความยาว>-<รู/หนา>-<วงนอก>
   function parseRbCode(code) {
     const parts = canonicalCode(code).split("-");
@@ -398,8 +402,8 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, UOMS,
-    canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, parseRbCode, parseSeCode, buildRbCode,
+    DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, UOMS, PACKAGES, COLOR_SETS,
+    canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode,
     normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, toMake,
     toCsv, fmtDate, fmtDateTime, fmtQty, toInputDate, fromInputDate, orderTypeOf,
   };
