@@ -83,7 +83,8 @@
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
   const LOSS_EDITOR_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
-  // บทบาทที่ทำงาน: บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" ใช้บทบาทนั้น — ใช้กับผู้กรอกต้นทุนเท่านั้น ขั้นอื่นของ NCR ยังดู role จริง
+  // บทบาทที่ทำงาน: บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" ใช้บทบาทนั้น — ใช้กับผู้กรอกต้นทุนและขั้นลงนาม ผจก.ทั่วไป เท่านั้น
+  // ขั้นอื่นของ NCR ยังดู role จริง (ตรงกับ migration 20261101010000 และ 20261102010000)
   const workingRoleCode = (employee) => employee?.actingRole?.code ?? roleCode(employee);
   // ผู้ตอบ NCR ได้: พนักงาน/ผจก./ผช.ผจก. ของแผนกที่รับผิดชอบ ถ้า ผจก.โรงงานระบุผู้ตอบของแผนกไว้ ตอบได้เฉพาะคนนั้น
   // (ตรงกับ private.ncr_can_respond ใน migration 20261020010000 — ใช้ตัดสินว่าจะแสดงฟอร์มเท่านั้น ฐานข้อมูลตัดสินสิทธิ์จริง)
@@ -369,7 +370,8 @@
     const signer = nextSigner(ncr).key;
     if (signer === "qa") return isQaManager(employee);
     if (signer === "factory") return roleCode(employee) === "factory_manager";
-    return roleCode(employee) === "general_manager";
+    // ขั้น ผจก.ทั่วไป นับบัญชี admin ตามบทบาทหลักในการทำงาน (ตรงกับ app_ncr_signoff / app_ncr_request_info, migration 20261102010000)
+    return workingRoleCode(employee) === "general_manager";
   }
 
   // ช่องเลือกผู้ตอบของแผนกหนึ่ง (ไม่บังคับ): ค่าว่าง = ไม่ระบุ ทุกคนที่เข้าเกณฑ์ในแผนกตอบได้
@@ -470,11 +472,17 @@
   async function loadNcrStaff() {
     // โหมดทดสอบ: ใบทดสอบมีแต่บัญชีทดสอบ (persona) ซึ่ง RLS ซ่อนจากตาราง employees จึงใช้รายชื่อที่ฐานข้อมูลส่งให้ admin
     if (state.employee?.isSandbox) return [...(state.sandbox?.personas ?? [])];
-    const { data, error } = await sb.from("employees")
-      .select("id,first_name,last_name,department_id,role:roles(code),department:departments(code)")
-      .eq("is_active", true);
+    const [{ data, error }, { data: roles, error: rolesError }] = await Promise.all([
+      sb.from("employees")
+        .select("id,first_name,last_name,department_id,acting_role_id,role:roles(code),department:departments(code)")
+        .eq("is_active", true),
+      sb.from("roles").select("id,code"),
+    ]);
     if (error) throw error;
-    return data ?? [];
+    if (rolesError) throw rolesError;
+    // บทบาทหลักในการทำงานของบัญชี admin — embed ไม่ได้เพราะ acting_role_id ตั้งใจไม่มี foreign key ไป roles (migration 20261003010000)
+    const roleById = new Map((roles ?? []).map((role) => [role.id, role]));
+    return (data ?? []).map((person) => ({ ...person, actingRole: roleById.get(person.acting_role_id) ?? null }));
   }
 
   const MAX_NAMES = 3;
@@ -509,7 +517,7 @@
     if (ncr.status === "awaiting_followup") return { party: withNames("แผนก QA", qaStaff), action: "ติดตามผล" };
     if (ncr.status === "awaiting_signoff") {
       const signer = nextSigner(ncr);
-      const holders = { qa: qaStaff.filter((person) => hasRole(person, DEPT_MANAGER_ROLE_CODES)), factory: staff.filter((person) => hasRole(person, ["factory_manager"])), gm: staff.filter((person) => hasRole(person, ["general_manager"])) }[signer.key];
+      const holders = { qa: qaStaff.filter((person) => hasRole(person, DEPT_MANAGER_ROLE_CODES)), factory: staff.filter((person) => hasRole(person, ["factory_manager"])), gm: staff.filter((person) => workingRoleCode(person) === "general_manager") }[signer.key];
       return { party: withNames(signer.label, holders), action: "ลงนาม" };
     }
     return null;
