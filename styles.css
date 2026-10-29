@@ -2227,8 +2227,10 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-toolbar .select option { color: #10203b; background: #fff; }
 .rf-page .rf-toolbar .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
 .rf-page .rf-toolbar .btn.secondary:hover { background: rgba(255, 255, 255, .16); }
-.rf-page .rf-toolbar .rf-alerts-btn.is-warn { color: #0b1f3a; background: #fbbf24; border-color: #fbbf24; font-weight: 700; }
-.rf-page .rf-toolbar .rf-alerts-btn.is-bad { color: #fff; background: #ef4444; border-color: #ef4444; font-weight: 700; }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn, .rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn:hover { color: #0b1f3a; background: #fbbf24; border-color: #fbbf24; font-weight: 700; }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad, .rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad:hover { color: #fff; background: #ef4444; border-color: #ef4444; font-weight: 700; }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-warn:hover { background: #f59e0b; border-color: #f59e0b; }
+.rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad:hover { background: #dc2626; border-color: #dc2626; }
 .rf-page .rf-pagenav { margin-top: -14px; padding-bottom: 8px; }
 .rf-page .rf-pagenav .btn { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
 .rf-page .rf-pagehead { margin-top: -14px; padding-top: 10px; padding-bottom: 64px; align-items: center; background: linear-gradient(120deg, var(--rf-band) 0%, var(--rf-band-2) 42%, color-mix(in srgb, var(--rf-mod) 48%, var(--rf-band)) 100%); border-radius: 0 0 22px 22px; }
@@ -2261,6 +2263,7 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .btn:not(.secondary):not(.danger):not(.warning):hover { background: var(--rf-mod-ink); border-color: var(--rf-mod-ink); }
 .rf-page .btn.secondary { color: var(--ink); background: var(--paper); border-color: var(--line); }
 .rf-page .btn.secondary:hover { background: var(--rf-mod-soft); border-color: var(--rf-mod-line); }
+.rf-page .rf-pagehead .btn.secondary:hover { color: var(--rf-band-ink); background: rgba(255, 255, 255, .16); border-color: var(--rf-band-line); } /* ปุ่มรองในแถบหัวเข้ม: hover ต้องไม่เป็นขาวบนพื้นอ่อน */
 .rf-page .input, .rf-page .select, .rf-page .textarea { min-height: 40px; border-radius: 10px; }
 .rf-page .input:focus, .rf-page .select:focus, .rf-page .textarea:focus { border-color: var(--rf-mod); box-shadow: 0 0 0 3px var(--rf-mod-soft); }
 .rf-page .rf-scale-input { font-size: 28px; min-height: 52px; }
