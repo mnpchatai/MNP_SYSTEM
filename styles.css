@@ -2327,3 +2327,34 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
   .rf-page .rf-pagehead h1 { font-size: 22px; }
   .rf-page .rf-stat-value { font-size: 28px; }
 }
+
+/* ---------- BOM รายแผนก (โหมดทดสอบ) modules/module-bom.js และ bom-*.js — ใช้โครง .rf-* ของ RubberFlow เพิ่มเฉพาะส่วนของ BOM ---------- */
+[data-rf-mod="bom-dashboard"] { --rf-mod: #3f51b5; }
+[data-rf-mod="bom-items"] { --rf-mod: #1b8f4e; }
+[data-rf-mod="bom-compounds"] { --rf-mod: #0f766e; }
+[data-rf-mod="bom-import"] { --rf-mod: #a3600f; }
+[data-rf-mod="bom-orders"] { --rf-mod: #2457d6; }
+[data-rf-mod="bom-jobs"] { --rf-mod: #d9640c; }
+[data-rf-mod="bom-audit"] { --rf-mod: #4f6478; }
+.bom-page .rf-brand { background: #3f51b5; }
+.bom-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (min-width: 1041px) { .bom-split { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); } .bom-split-wide { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); } .bom-split > .rf-card:only-child { grid-column: 1 / -1; } }
+.bom-h3 { margin: 14px 0 6px; font-size: 14px; color: var(--muted); }
+.bom-lv { display: inline-block; }
+.bom-lv-1 { padding-left: 14px; } .bom-lv-2 { padding-left: 28px; } .bom-lv-3 { padding-left: 42px; } .bom-lv-4 { padding-left: 56px; } .bom-lv-5 { padding-left: 70px; } .bom-lv-6 { padding-left: 84px; }
+.bom-lv-1::before, .bom-lv-2::before, .bom-lv-3::before, .bom-lv-4::before, .bom-lv-5::before, .bom-lv-6::before { content: "└"; margin-right: 4px; color: var(--quiet); }
+.bom-page tr.bom-fg-row td { background: var(--rf-mod-soft); font-weight: 700; }
+.bom-page tr.is-selected td { background: var(--rf-mod-soft); }
+.bom-page tr.is-late td:first-child { box-shadow: inset 3px 0 0 #cf3030; }
+.bom-surplus { color: #1b8f4e; }
+.bom-fieldset { margin: 6px 0 10px; padding: 8px 12px 0; border: 1px solid var(--line); border-radius: 10px; }
+.bom-fieldset legend { padding: 0 6px; color: var(--muted); font-size: 12px; }
+.bom-due { display: inline-block; margin: 0 8px 4px 0; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; white-space: nowrap; }
+.bom-due b { color: var(--rf-mod-ink); }
+.bom-subtabs { margin-top: -4px; }
+.bom-subtabs .rf-tab { font-size: 12px; }
+.bom-details { margin: 8px 0; }
+.bom-details summary { cursor: pointer; color: var(--rf-mod-ink); font-size: 13px; }
+.bom-details ul { margin: 6px 0 0; padding-left: 18px; }
+.bom-paste { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre; }
+.bom-page .rf-table .rf-hint { display: block; margin-top: 2px; }
