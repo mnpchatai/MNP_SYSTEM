@@ -2148,3 +2148,4 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-spc-scroll .rf-spc-chart { min-width: 600px; }
 .rf-spc-pick { min-width: 260px; }
 .rf-app-name { font-size: 22px; font-weight: 700; line-height: 1.3; letter-spacing: -.01em; }
+.rf-page .nowrap { white-space: nowrap; }

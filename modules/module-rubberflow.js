@@ -126,6 +126,7 @@
       // สำเร็จแล้วกันกดซ้ำ: ปิด dialog ที่ฟอร์มอยู่และล็อกปุ่มของฟอร์มทันที (renderRoute ของ app.js รอข้อมูลก่อนวาดใหม่)
       form.closest?.("dialog")?.close?.();
       form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
+      if (form.id) document.querySelectorAll(`button[form="${CSS.escape(form.id)}"]`).forEach((node) => { node.disabled = true; }); // ปุ่มส่งที่อยู่นอกฟอร์ม (เช่น ส่งมอบกล่อง)
       renderRoute();
     }));
     root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", () => {
@@ -208,13 +209,13 @@
   // ไม่ได้เลือกบทบาท: ตารางบทบาทสาธิต 9 คน (หน้า Login ของต้นแบบ โดยไม่มีรหัสผ่าน เพราะผู้ใช้ล็อกอินระบบจริงแล้ว)
   function chooserHtml(data) {
     const roles = data.users.map((row) => `<button class="rf-role" type="button" data-rf-user-pick="${escapeHtml(row.id)}"><strong>${escapeHtml(storeApi.ROLES[row.role]?.label ?? row.role)}</strong><span class="muted">${escapeHtml(row.name)}</span></button>`).join("");
-    return `<section class="card rf-card rf-login"><h2>เลือกบทบาทสาธิต</h2>
+    return `<section class="card rf-card rf-login"><h1>เลือกบทบาทสาธิต</h1>
       <p class="muted">RubberFlow ควบคุมการผลิตยาง 4 สถานี ผสม → รีด → อบ → ตกแต่ง พร้อม FEFO, ชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ, Gatekeeper ส่งมอบ WIP และสืบย้อนกลับถึงล็อตวัตถุดิบ ข้อมูลทั้งหมดเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p>
       <div class="rf-role-grid">${roles}</div></section>`;
   }
 
   function deniedHtml(user) {
-    return `<section class="card rf-card"><h2>ไม่มีสิทธิ์เข้าถึงโมดูลนี้</h2><p class="muted">บทบาท “${escapeHtml(storeApi.ROLES[user.role]?.label ?? user.role)}” เข้าถึงได้เฉพาะเมนูที่แสดงในแถบข้าง</p>
+    return `<section class="card rf-card"><h1>ไม่มีสิทธิ์เข้าถึงโมดูลนี้</h1><p class="muted">บทบาท “${escapeHtml(storeApi.ROLES[user.role]?.label ?? user.role)}” เข้าถึงได้เฉพาะเมนูที่แสดงในแถบข้าง</p>
       <div class="rf-row"><a class="btn rf-btn" href="${escapeHtml(url(storeApi.homeOf(user)))}">กลับหน้าหลัก</a></div></section>`;
   }
 
@@ -298,8 +299,10 @@
   }
 
   // นาฬิกาบ่มยาง/แจ้งเตือนเดินเองทุกนาที เฉพาะเมื่อแท็บมองเห็น อยู่หน้า RubberFlow ไม่มี dialog เปิด ไม่ได้พิมพ์อยู่ และไม่มีฟอร์มที่กรอกค้าง
+  // ช่องพิมพ์ที่ modules/searchable-select.js สร้างแทน <select> (.ss-input) ตั้ง value เองโดยไม่มี attribute จึงไม่นับ ใช้ <select> ตัวจริงที่ซ่อนอยู่แทน
   const hasDraft = () => [...document.querySelectorAll(".rf-page input, .rf-page textarea, .rf-page select")]
     .some((node) => {
+      if (node.classList.contains("ss-input")) return false;
       if (node.type === "checkbox" || node.type === "radio") return node.checked !== node.defaultChecked;
       if (node.tagName === "SELECT") return node.selectedIndex !== Math.max(0, [...node.options].findIndex((option) => option.defaultSelected)); // ไม่มี selected = ตัวแรก
       return node.value !== node.defaultValue;

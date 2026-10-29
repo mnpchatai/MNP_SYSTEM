@@ -77,6 +77,10 @@
         try {
           const detector = new root.BarcodeDetector({ formats: ["qr_code", "code_128", "code_39", "ean_13"] });
           stream = await root.navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+          // กำหนด stop ก่อนเริ่มวนอ่านภาพ: ถ้า dialog ถูกปิด/ถอดระหว่างรอสิทธิ์กล้อง สตรีมที่เพิ่งมาถึงต้องถูกปิดทันที
+          stop = () => { halted = true; stream?.getTracks().forEach((track) => track.stop()); };
+          if (!dialog.isConnected || !dialog.open) { stop(); stop = null; return; }
+          dialog.addEventListener("close", () => stop?.(), { once: true });
           video.srcObject = stream;
           await video.play();
           const tick = async () => {
@@ -90,9 +94,8 @@
           };
           tick();
           button.textContent = "ปิดกล้อง";
-          stop = () => { halted = true; stream?.getTracks().forEach((track) => track.stop()); };
-          dialog.addEventListener("close", () => stop?.(), { once: true });
         } catch {
+          stream?.getTracks().forEach((track) => track.stop());
           cameraBox.innerHTML = ui.callout("warn", "เปิดกล้องไม่ได้ (ไม่ได้รับอนุญาตหรือไม่มีกล้อง)");
         }
       });

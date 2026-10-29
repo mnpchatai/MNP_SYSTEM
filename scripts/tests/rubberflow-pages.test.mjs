@@ -75,7 +75,8 @@ test("the module registers a sandbox-only standalone page, refuses users outside
   assert.equal(env.module.nav[0].subnav("rubberflow"), "", "no sub-menu before a persona is chosen");
   const html = await env.render();
   assert.match(html, /<shell path="rubberflow" title="RubberFlow MES">/);
-  assert.match(html, /เลือกบทบาทสาธิต/);
+  assert.match(html, /<h1>เลือกบทบาทสาธิต<\/h1>/, "the chooser is the page's single h1");
+  assert.equal((html.match(/<h1>/g) ?? []).length, 1);
   assert.equal((html.match(/data-rf-user-pick=/g) ?? []).length, 9);
   assert.doesNotMatch(html, /rf-toolbar/, "no toolbar before a persona is chosen");
   const outside = load({ sandbox: false });
@@ -99,8 +100,8 @@ test("every page renders for every persona without undefined/NaN, with the sideb
       assert.match(html, new RegExp(`<option value="${user.id}" selected>`), "persona select shows the chosen role");
       if (allowed) {
         assert.doesNotMatch(html, /ไม่มีสิทธิ์เข้าถึงโมดูลนี้/, `${user.role} ${page}`);
-        assert.match(html, /<h1>/);
-      } else assert.match(html, /ไม่มีสิทธิ์เข้าถึงโมดูลนี้/, `${user.role} ${page}`);
+        assert.equal((html.match(/<h1>/g) ?? []).length, 1, `${user.role} ${page}: exactly one h1`);
+      } else { assert.match(html, /<h1>ไม่มีสิทธิ์เข้าถึงโมดูลนี้<\/h1>/, `${user.role} ${page}`); assert.equal((html.match(/<h1>/g) ?? []).length, 1); }
     }
   }
   env.store.setUser("U01");
