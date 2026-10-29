@@ -289,3 +289,31 @@ test("switching the persona redraws or leaves for the role's home, the scan form
   assert.ok(env.store.data().molds[0].usageSinceClean > 0);
   assert.deepEqual(env.log.toasts.at(-1), ["รีเซ็ตข้อมูลสาธิตเรียบร้อย", "ok"]);
 });
+
+test("the design switcher: ?design= wins and is remembered, unknown values fall back to the default, and the toolbar select redraws", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  let html = await env.render();
+  assert.match(html, /<div class="rf-page" data-rf-design="" data-rf-mod="dashboard">/, "default = the original design");
+  assert.match(html, /<option value="" selected>ดีไซน์: แบบเดิม<\/option>/);
+  assert.match(env.module.nav[0].subnav("rubberflow"), /class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><svg class="rf-ico"/, "nav items carry an icon and their module hue");
+  html = await env.render("p=mixing&design=tiers");
+  assert.match(html, /data-rf-design="tiers" data-rf-mod="mixing"/);
+  assert.match(html, /<span class="rf-mod-ico" aria-hidden="true"><svg class="rf-ico"/, "the page head shows the module icon");
+  assert.equal(env.storage.get("mnp-rubberflow-design"), "tiers", "the chosen design is persisted");
+  html = await env.render("p=mixing");
+  assert.match(html, /data-rf-design="tiers"/, "no ?design= keeps the remembered one");
+  assert.match(html, /<option value="tiers" selected>/);
+  html = await env.render("p=mixing&design=nope");
+  assert.match(html, /data-rf-design="tiers"/, "an unknown design is ignored");
+  assert.doesNotMatch(html, /nope/);
+  const select = { ...env.root, handlers: {} };
+  select.addEventListener = (type, handler) => { select.handlers[type] = handler; };
+  env.fakes["[data-rf-design-pick]"] = [select];
+  await env.render("p=mixing");
+  select.handlers.change({ target: { value: "hero" } });
+  assert.equal(env.storage.get("mnp-rubberflow-design"), "hero");
+  assert.equal(env.log.renders, 1, "switching redraws the page");
+  select.handlers.change({ target: { value: "" } });
+  assert.equal(env.storage.has("mnp-rubberflow-design"), false, "back to the default removes the key");
+});

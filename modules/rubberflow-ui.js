@@ -28,13 +28,38 @@
   };
   const statusLabel = (value) => STATUS[value]?.[1] ?? String(value ?? "");
 
+  // ---------- ไอคอน (SVG เส้นเดียวกันทั้งชุด ใช้ในเมนูข้าง หัวหน้า และกล่องแจ้งเตือน ดีไซน์ทดสอบ data-rf-design ใน styles.css) ----------
+  const ICONS = Object.freeze({
+    dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+    orders: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 2.5h6v3H9zM9 11h6M9 15h6M9 19h3"/>',
+    recipes: '<path d="M9.5 3h5M11 3v6l-5.3 9.2A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.3-2.3L13 9V3M8.5 15h7"/>',
+    requisition: '<path d="M12 4v16M7 20h10M4 8h16M6 8l-2.5 6a2.8 2.8 0 0 0 5 0L6 8M18 8l-2.5 6a2.8 2.8 0 0 0 5 0L18 8"/>',
+    mixing: '<path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3M18 3v4h-4M6 21v-4h4"/>',
+    extrusion: '<rect x="3" y="7" width="8" height="10" rx="1.5"/><path d="M11 12h10M17 8l4 4-4 4"/>',
+    curing: '<path d="M12 3c1 3 5 5.5 5 10a5 5 0 0 1-10 0c0-2 .8-3.6 2-4.8 0 2 1 3.2 2 3.2 0-3-1-5-1-8.4Z"/>',
+    finishing: '<path d="M3 8l9-4 9 4-9 4-9-4ZM3 8v8l9 4 9-4V8M12 12v8"/>',
+    wip: '<path d="M4 8h12M13 5l3 3-3 3M20 16H8M11 13l-3 3 3 3"/>',
+    quality: '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6l7-3Z"/><path d="m9 12 2 2 4-4"/>',
+    spc: '<path d="M3 20h18M4 16l5-5 4 3 7-8"/><circle cx="20" cy="6" r="1.5"/>',
+    trace: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m21 21-5-5M8 10.5h5M10.5 8v5"/>',
+    warehouse: '<path d="M3 20V9l9-5 9 5v11M3 20h18M8 20v-6h8v6M10 14v-3h4v3"/>',
+    molds: '<circle cx="7.5" cy="7.5" r="3.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><path d="M4 20l3.5-6 3.5 6zM16.5 13v7M13 16.5h7"/>',
+    audit: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    warn: '<path d="M12 4 3 19h18L12 4Z"/><path d="M12 10v4M12 17h.01"/>',
+    bad: '<circle cx="12" cy="12" r="8.5"/><path d="m9 9 6 6M15 9l-6 6"/>',
+    good: '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
+    info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
+  });
+  const icon = (id) => (ICONS[id] ? `<svg class="rf-ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[id]}</svg>` : "");
+
   // ---------- โครงหน้า ----------
-  const pageHead = (title, desc = "", actions = "") => `<header class="rf-pagehead"><div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div>${actions ? `<div class="rf-row">${actions}</div>` : ""}</header>`;
+  // api.module = หน้าปัจจุบัน (shell ตั้งก่อนวาด) ใช้ใส่ไอคอนของหน้าไว้หน้าชื่อ ดีไซน์แบบเดิมซ่อนไอคอนด้วย CSS
+  const pageHead = (title, desc = "", actions = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${api.module && ICONS[api.module] ? `<span class="rf-mod-ico" aria-hidden="true">${icon(api.module)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actions ? `<div class="rf-row">${actions}</div>` : ""}</header>`;
   // การ์ด: title/actions เป็น HTML ที่ escape แล้ว (ชื่อการ์ดบางอันมีป้าย) body เป็น HTML
   const card = (body, { title = "", actions = "", flush = false, className = "" } = {}) => `<section class="card rf-card${className ? ` ${className}` : ""}">${title || actions ? `<div class="rf-card-head"><h3>${title}</h3><div class="rf-row">${actions}</div></div>` : ""}<div class="rf-card-body${flush ? " is-flush" : ""}">${body}</div></section>`;
   const stat = ({ label, value, sub = "", tone = "" }) => `<div class="card rf-stat${tone ? ` is-${esc(tone)}` : ""}"><span class="rf-stat-label">${esc(label)}</span><strong class="rf-stat-value">${esc(value)}</strong>${sub ? `<span class="rf-stat-sub">${esc(sub)}</span>` : ""}</div>`;
   const stats = (items) => `<div class="rf-grid rf-g4">${items.map(stat).join("")}</div>`;
-  const callout = (tone, html) => `<div class="rf-callout is-${esc(tone)}" role="note">${html}</div>`;
+  const callout = (tone, html) => `<div class="rf-callout is-${esc(tone)}" role="note"><span class="rf-callout-ico" aria-hidden="true">${icon(tone)}</span><div class="rf-callout-body">${html}</div></div>`;
   const empty = (text) => `<div class="empty rf-empty">${esc(text)}</div>`;
   const kv = (pairs) => `<dl class="rf-kv">${pairs.filter(Boolean).map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
   const progress = (value, max, tone = "") => `<div class="rf-bar${tone ? ` is-${esc(tone)}` : ""}" role="img" aria-label="${attr(`${rules.fmtNum(value)} จาก ${rules.fmtNum(max)}`)}"><div style="width:${n2(max ? Math.min(100, (Number(value) / Number(max)) * 100) : 0)}%"></div></div>`;
@@ -183,7 +208,8 @@
   }
 
   const api = {
-    STATUS, badge, status, statusLabel, pageHead, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
+    module: "",
+    STATUS, ICONS, icon, badge, status, statusLabel, pageHead, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
     field, input, textarea, select, specInput, submitButton, button, openButton, link, dialog, closeButton,
     barcode, dualChart, controlChart, histogram,
   };

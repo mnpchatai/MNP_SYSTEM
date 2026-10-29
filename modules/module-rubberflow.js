@@ -38,6 +38,38 @@
     try { return window.localStorage; } catch { return null; }
   })();
   const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions });
+
+  // ดีไซน์ทดสอบ 3 แบบ (เลือกจากแถบเครื่องมือ หรือ ?design= ใน URL) เก็บต่อเบราว์เซอร์ใน localStorage: สลับได้ทุกหน้าโดยไม่แตะข้อมูล
+  // "" = แบบเดิม · ref = ลอกต้นแบบ rubber-mes (prototypes/rubber-mes) · tiers = สีพาสเทลตามสถานี/กลุ่มงาน · hero = แถบหัวเข้ม + ตัวเลขใหญ่
+  const DESIGN_KEY = "mnp-rubberflow-design";
+  const DESIGNS = Object.freeze([
+    { value: "", label: "ดีไซน์: แบบเดิม" },
+    { value: "ref", label: "ดีไซน์ A · ลอก rubber-mes" },
+    { value: "tiers", label: "ดีไซน์ B · สีตามสถานี" },
+    { value: "hero", label: "ดีไซน์ C · แถบหัวเข้ม" },
+  ]);
+  const isDesign = (value) => DESIGNS.some((entry) => entry.value === value);
+  const readDesign = () => {
+    try {
+      const saved = storage?.getItem?.(DESIGN_KEY) ?? "";
+      return isDesign(saved) ? saved : "";
+    } catch { return ""; }
+  };
+  const writeDesign = (value) => {
+    try {
+      if (value) storage?.setItem?.(DESIGN_KEY, value);
+      else storage?.removeItem?.(DESIGN_KEY);
+    } catch { /* storage ปิดอยู่: ใช้ค่าในหน้านี้จนกว่าจะรีเฟรช */ }
+  };
+  // ?design= ใน URL ชนะและถูกจำไว้ (ส่งลิงก์ให้ทดสอบได้) ค่าที่ไม่รู้จักถูกข้าม
+  function currentDesign(params) {
+    const wanted = params.get("design");
+    if (wanted !== null && isDesign(wanted)) {
+      writeDesign(wanted);
+      return wanted;
+    }
+    return readDesign();
+  }
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params) };
 
@@ -179,7 +211,7 @@
     const groups = storeApi.GROUPS.map((group) => {
       const items = storeApi.MODULES.filter((entry) => entry.group === group && storeApi.canSee(user, entry.id));
       if (!items.length) return "";
-      return `<li class="rf-nav-group"><span>${escapeHtml(group)}</span><ul>${items.map((entry) => `<li><a class="rf-nav-item${entry.id === page ? " is-active" : ""}" href="${escapeHtml(url(entry.id))}"${entry.id === page ? ' aria-current="page"' : ""}>${escapeHtml(entry.label)}${counts[entry.id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(entry.id))}">${counts[entry.id]}</span>` : ""}</a></li>`).join("")}</ul></li>`;
+      return `<li class="rf-nav-group"><span>${escapeHtml(group)}</span><ul>${items.map((entry) => `<li><a class="rf-nav-item${entry.id === page ? " is-active" : ""}" data-rf-mod="${escapeHtml(entry.id)}" href="${escapeHtml(url(entry.id))}"${entry.id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${ui.icon(entry.id)}</span><span class="rf-nav-text">${escapeHtml(entry.label)}</span>${counts[entry.id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(entry.id))}">${counts[entry.id]}</span>` : ""}</a></li>`).join("")}</ul></li>`;
     }).join("");
     return `<div class="nav-sub rf-nav"><ul class="rf-nav-list">${groups}</ul></div>`;
   };
@@ -202,6 +234,7 @@
         <div class="rf-row">
           ${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}
           <button class="btn rf-btn secondary" type="button" data-rf-reset title="ล้างข้อมูลที่บันทึกในเบราว์เซอร์นี้แล้วสร้างข้อมูลสาธิตใหม่">รีเซ็ตข้อมูลสาธิต</button>
+          <label class="rf-design-pick"><span class="sr-only">ดีไซน์ทดสอบ</span>${ui.select("design", DESIGNS, { value: ctx.design, extra: 'data-rf-design-pick title="สลับดีไซน์ทดสอบของ RubberFlow (เฉพาะเบราว์เซอร์นี้ ไม่แตะข้อมูล)"' })}</label>
         </div>
       </div>`;
   }
@@ -232,6 +265,7 @@
     const page = currentPage(params);
     return {
       data, user, now, params, page,
+      design: currentDesign(params),
       q: String(params.get("q") ?? "").trim().slice(0, 100),
       url,
       pageUrl: (extra = {}) => url(page ?? "dashboard", { ...Object.fromEntries([...params.entries()].filter(([key]) => key !== "p")), ...extra }),
@@ -261,6 +295,11 @@
       event.currentTarget.reset();
       openDialog("scan", { code }, ctx);
     });
+    root.querySelector("[data-rf-design-pick]")?.addEventListener("change", (event) => {
+      const value = String(event.target.value ?? "");
+      writeDesign(isDesign(value) ? value : "");
+      renderRoute();
+    });
     root.querySelector("[data-rf-reset]")?.addEventListener("click", () => {
       if (!confirm("ล้างข้อมูลที่บันทึกทั้งหมดแล้วสร้างข้อมูลสาธิตใหม่?")) return;
       store.reset();
@@ -274,6 +313,7 @@
     const ctx = makeContext(params);
     const { user, page } = ctx;
     const entry = page ? storeApi.findModule(page) : null;
+    ui.module = entry && user ? page : ""; // ไอคอนหน้าชื่อหน้า (ui.pageHead)
     const title = entry && user ? `${TITLE} / ${entry.label}` : TITLE;
     let body;
     let bind = null;
@@ -290,7 +330,7 @@
       bind = built.bind ?? null;
     }
     const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">RB</span><strong class="rf-app-name">${escapeHtml(TITLE)}</strong></div><p class="rf-sub">${escapeHtml(SUBTITLE)}</p></div></header>`;
-    app.innerHTML = shell(`<div class="rf-page">${head}${user ? toolbarHtml(ctx) : ""}${body}</div>`, PATH, title);
+    app.innerHTML = shell(`<div class="rf-page" data-rf-design="${escapeHtml(ctx.design)}" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${user ? toolbarHtml(ctx) : ""}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
