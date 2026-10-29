@@ -125,7 +125,7 @@
     audit(d, ctx, "อนุมัติสูตร", id);
   }
 
-  // ---------- เบิกและชั่งวัตถุดิบ ----------
+  // ---------- เบิกและชั่งเคมี ----------
 
   function createRequisition(d, { orderId, batches, note }, ctx) {
     const { recipeLines, allocateFefo } = rules();

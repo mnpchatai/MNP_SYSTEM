@@ -1,4 +1,4 @@
-// RubberFlow MES (แผนก RB โหมดทดสอบ) — หน้าสายการผลิต: เบิกและชั่งวัตถุดิบ · 1 ผสมยาง · 2 รีดขึ้นรูป · 3 อบวัลคาไนซ์ · 4 ตกแต่งและบรรจุ · ส่งมอบ WIP
+// RubberFlow MES (แผนก RB โหมดทดสอบ) — หน้าสายการผลิต: เบิกและชั่งเคมี · 1 ผสมยาง · 2 ฉีดขึ้นรูป · 3 อบ HCM · 4 ตกแต่งและบรรจุ · ส่งมอบ WIP
 // ยกมาจาก pages/Requisition.jsx, Mixing.jsx, Extrusion.jsx, Curing.jsx, Finishing.jsx, Wip.jsx และ components/StageCommon.jsx ของต้นแบบ
 // ลงทะเบียนใน window.MNP_RUBBERFLOW_PAGES / _DIALOGS กติกา event อยู่ที่ modules/module-rubberflow.js — โหลดหลัง modules/rubberflow-ui.js
 (function (root) {
@@ -81,7 +81,7 @@
     return { html };
   };
 
-  // ---------- เบิกและชั่งวัตถุดิบ ----------
+  // ---------- เบิกและชั่งเคมี ----------
   pages.requisition = (ctx) => {
     const { data, ui, rules, params } = ctx;
     const { fmtDate, fmtDateTime, fmtNum, weighTolerance } = rules;
@@ -153,7 +153,7 @@
       { title: `ใบเบิก ${esc(selected.id)}`, actions: ui.openButton("พิมพ์ป้าย", "tag", { kind: "requisition", id: selected.id }, { className: "secondary small" }), flush: true }));
       detail = `<div class="rf-stack">${parts.join("")}</div>`;
     }
-    const html = `${ui.pageHead("เบิกและชั่งวัตถุดิบ", "ระเบิดสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และบังคับชั่งให้อยู่ในเกณฑ์ (Poka-Yoke)", ui.openButton("สร้างใบเบิก", "createRequisition", {}, { className: "" }))}
+    const html = `${ui.pageHead("เบิกและชั่งเคมี", "ระเบิดสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และบังคับชั่งให้อยู่ในเกณฑ์ (Poka-Yoke)", ui.openButton("สร้างใบเบิก", "createRequisition", {}, { className: "" }))}
       <div class="rf-split">${ui.card(`<div class="rf-list rf-list-tall">${listHtml || ui.empty("ยังไม่มีใบเบิก")}</div>`, { title: `ใบเบิก (${list.length})`, flush: true })}${detail}</div>`;
     return { html, bind };
   };
@@ -245,7 +245,7 @@
     return { html, bind };
   };
 
-  // ---------- สถานีที่ 2 รีดขึ้นรูป ----------
+  // ---------- สถานีที่ 2 ฉีดขึ้นรูป ----------
   pages.extrusion = (ctx) => {
     const { data, ui, rules } = ctx;
     const { MACHINES, SPECS, fmtNum } = rules;
@@ -268,7 +268,7 @@
         ${ui.field("ของเสีย (m/pcs)", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("สาเหตุของเสีย", ui.input("scrapReason"))}
       </div><div data-rf-rework-warn></div><div class="rf-row">${ui.submitButton("บันทึกการรีด")}</div></form>`, { title: "บันทึกการรีด" }) : "";
-    const html = `${ui.pageHead("สถานีที่ 2 · รีดขึ้นรูป", "ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปก")}
+    const html = `${ui.pageHead("สถานีที่ 2 · ฉีดขึ้นรูป", "ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปก")}
       ${ui.stats([
         { label: "Yield การรีด", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 97.0%" },
         { label: "ผลิตแล้วสะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },
@@ -301,7 +301,7 @@
     return { html, bind };
   };
 
-  // ---------- สถานีที่ 3 อบวัลคาไนซ์ ----------
+  // ---------- สถานีที่ 3 อบ HCM ----------
   pages.curing = (ctx) => {
     const { data, ui, rules } = ctx;
     const { SPECS, fmtNum } = rules;
@@ -323,7 +323,7 @@
         ${ui.field("ของเสีย", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("สาเหตุของเสีย", ui.input("scrapReason", { placeholder: "เช่น ฟองอากาศ, ยางไม่เต็มแบบ" }))}
       </div><div data-rf-spec-warn></div><div class="rf-row">${ui.submitButton("บันทึกการอบ")}</div></form>`, { title: "บันทึกการอบ" }) : "";
-    const html = `${ui.pageHead("สถานีที่ 3 · อบวัลคาไนซ์", "คุมอุณหภูมิ เวลา และความดันตามสเปก ถ้าค่าหลุดช่วง ระบบจะกักกันล็อตอัตโนมัติ และนับรอบการใช้แม่พิมพ์ให้")}
+    const html = `${ui.pageHead("สถานีที่ 3 · อบ HCM", "คุมอุณหภูมิ เวลา และความดันตามสเปก ถ้าค่าหลุดช่วง ระบบจะกักกันล็อตอัตโนมัติ และนับรอบการใช้แม่พิมพ์ให้")}
       ${ui.stats([
         { label: "Yield การอบ", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 98.0%" },
         { label: "ผ่านการอบสะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },

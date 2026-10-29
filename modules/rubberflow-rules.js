@@ -12,8 +12,8 @@
   const STAGE_LABEL = Object.freeze({
     warehouse: "คลังวัตถุดิบ",
     mixing: "ผสมยาง",
-    extrusion: "รีดขึ้นรูป",
-    curing: "อบวัลคาไนซ์",
+    extrusion: "ฉีดขึ้นรูป",
+    curing: "อบ HCM",
     finishing: "ตกแต่งและบรรจุ",
     fg: "คลังสินค้าสำเร็จรูป",
   });
