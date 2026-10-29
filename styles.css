@@ -2316,7 +2316,7 @@ body:has(.rf-page[data-rf-design="tiers"]) .rf-nav-count { background: var(--rf-
 .rf-page[data-rf-design="tiers"] .rf-chart-line { stroke: var(--rf-mod); }
 .rf-page[data-rf-design="tiers"] .rf-node.is-hit { border-color: var(--rf-mod); box-shadow: 0 0 0 3px var(--rf-mod-soft); }
 body:has(.rf-page[data-rf-design="tiers"]) .rf-modal { border: 0; border-radius: 16px; }
-body:has(.rf-page[data-rf-design="tiers"]) .rf-modal-head { background: var(--rf-mod-soft); border-bottom-color: var(--rf-mod-line); border-radius: 16px 16px 0 0; }
+body:has(.rf-page[data-rf-design="tiers"]) .rf-modal-head { background: color-mix(in srgb, #0f766e 11%, var(--paper)); border-bottom-color: color-mix(in srgb, #0f766e 28%, var(--paper)); border-radius: 16px 16px 0 0; } /* dialog อยู่นอก .rf-page จึงใช้สีเน้นตรง ๆ */
 @media (max-width: 1100px) {
   .rf-page[data-rf-design="tiers"] .rf-flow { gap: 12px; }
   .rf-page[data-rf-design="tiers"] .rf-step { margin-right: 0; }
@@ -2421,7 +2421,7 @@ body:has(.rf-page[data-rf-design="hero"]) .sandbox-banner { margin: 12px 0 0; }
 .rf-page[data-rf-design="hero"] .rf-step .rf-kv dd { font-weight: 600; font-variant-numeric: tabular-nums; }
 .rf-page[data-rf-design="hero"] .rf-bar { height: 8px; }
 body:has(.rf-page[data-rf-design="hero"]) .rf-modal { border: 0; border-radius: 16px; }
-body:has(.rf-page[data-rf-design="hero"]) .rf-modal-head { color: #fff; background: var(--rf-band); border-bottom: 0; border-radius: 16px 16px 0 0; }
+body:has(.rf-page[data-rf-design="hero"]) .rf-modal-head { color: #fff; background: #0b1f3a; border-bottom: 0; border-radius: 16px 16px 0 0; } /* dialog อยู่นอก .rf-page จึงใช้สีแถบตรง ๆ */
 body:has(.rf-page[data-rf-design="hero"]) .rf-modal-close { color: #c7d3e6; }
 body:has(.rf-page[data-rf-design="hero"]) .rf-modal-close:hover { color: #fff; background: #152c4d; }
 body:has(.rf-page[data-rf-design="hero"]) .rf-modal .btn { min-height: 40px; border-radius: 10px; font-weight: 600; }
