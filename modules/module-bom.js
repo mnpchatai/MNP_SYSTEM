@@ -52,9 +52,40 @@
     return payload;
   }
   const dueFrom = (due) => Object.fromEntries(Object.entries(due ?? {}).filter(([, value]) => value).map(([dept, value]) => [dept, rules.fromInputDate(value)]));
+  // ตารางสร้าง BOM: แถว (rowId[]/parentId[] + ช่องต่อแถว) → ต้นไม้ { code, item, note, nodes[] } ของ action saveBomTree
+  // ชิ้นที่ยังไม่มีใน item master ส่ง newItem (ชนิด ชื่อ หน่วย น้ำหนัก ข้อมูลยาง) · ชิ้น RB ที่มีอยู่ส่ง patch เฉพาะเมื่อข้อมูลการตัด/น้ำหนัก/ชื่อเปลี่ยน
+  function treeFromRows(p) {
+    const arr = (key) => (Array.isArray(p[key]) ? p[key] : p[key] === undefined ? [] : [p[key]]);
+    const ids = arr("rowId");
+    const rows = ids.map((id, index) => ({
+      id, parentId: arr("parentId")[index] ?? "", code: String(arr("childCode")[index] ?? "").trim(), name: String(arr("name")[index] ?? "").trim(), kind: arr("kind")[index], uom: arr("uom")[index],
+      qty: arr("qty")[index], scrapPct: arr("scrapPct")[index], note: arr("lineNote")[index], weightG: arr("weightG")[index],
+      rubber: { compound: arr("compound")[index], cutLengthCm: arr("cutLengthCm")[index], pcsPerRoll: arr("pcsPerRoll")[index], sePerGr: arr("sePerGr")[index], kgPerRoll: arr("kgPerRoll")[index] },
+    }));
+    const data = store.data();
+    const same = (a, b) => String(a ?? "") === String(b ?? "");
+    const toNode = (row) => {
+      const item = actions.helpers.itemOf(data, row.code);
+      const node = { code: row.code, qty: row.qty, scrapPct: row.scrapPct, note: row.note, children: rows.filter((other) => other.parentId === row.id && (other.code || other.name)).map(toNode) };
+      if (!item) node.newItem = { kind: row.kind, name: row.name, uom: row.uom, weightG: row.weightG, rubber: row.kind === "RB" ? row.rubber : undefined };
+      else {
+        const patch = {};
+        if (row.name && row.name !== item.name) patch.name = row.name;
+        if (item.kind === "RB") {
+          const current = item.rubber ?? {};
+          const changed = Object.entries(row.rubber).some(([key, value]) => !same(value, current[key] ?? ""));
+          if (changed) patch.rubber = row.rubber;
+          if (!same(row.weightG, item.weightG || "")) patch.weightG = row.weightG;
+        }
+        if (Object.keys(patch).length) node.patch = patch;
+      }
+      return node;
+    };
+    return { code: p.code, item: { name: p.itemName, uom: p.itemUom }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map(toNode) };
+  }
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due) }),
-    saveBomDraft: (p) => ({ ...p, lines: (p.childCode ?? []).map((childCode, index) => ({ childCode, qty: (p.qty ?? [])[index], scrapPct: (p.scrapPct ?? [])[index], note: (p.lineNote ?? [])[index] })).filter((line) => line.childCode) }),
+    saveBomTree: treeFromRows,
     saveItem: (p) => ({ ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null }),
   };
 
@@ -139,10 +170,9 @@
     return `<div class="nav-sub rf-nav"><ul class="rf-nav-list">${groups}</ul></div>`;
   };
   const navCounts = (data, user) => ({
-    items: data.boms.filter((bom) => bom.status === "pending" && actions.helpers.canApprove(user, bom)).length,
     jobs: data.jobs.filter((job) => job.status !== "done" && (actions.helpers.isBoss(user) ? false : job.dept === user.dept || (job.dept === "PK" && user.role === "planner"))).length,
   });
-  const countTitle = (id) => ({ items: "BOM รออนุมัติจากคุณ", jobs: "งานค้างของแผนก" })[id] ?? "";
+  const countTitle = (id) => ({ jobs: "งานค้างของแผนก" })[id] ?? "";
 
   function toolbarHtml(ctx) {
     const { data, user } = ctx;

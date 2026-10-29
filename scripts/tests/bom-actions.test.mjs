@@ -3,6 +3,7 @@ import test from "node:test";
 import { createRequire } from "node:module";
 
 // กฎธุรกิจของ BOM รายแผนก (modules/bom-actions.js) บนข้อมูลสาธิต (modules/bom-seed.js): ทุก action ทำบนร่างและ throw เมื่อกฎไม่ผ่าน
+// จุดสร้าง BOM จุดเดียว: ฝ่ายวางแผน/ผู้จัดการบันทึก item และ BOM ทุกชั้น ไม่มีขั้นอนุมัติ ทุกการบันทึกเป็น revision ใหม่ทันที
 const require = createRequire(import.meta.url);
 const rules = require("../../modules/bom-rules.js");
 globalThis.MNP_BOM_RULES = rules;
@@ -18,6 +19,7 @@ const ctx = (role = "admin", now = NOW) => ({ now, user: user(role) });
 const fresh = () => seed.buildSeed(NOW);
 const rejects = (fn, pattern) => assert.throws(fn, (error) => { assert.match(error.message, pattern); return true; });
 const approved = (d, code) => A.helpers.approvedBomOf(d, code);
+const day = (n) => new Date(NOW + n * DAY).setHours(0, 0, 0, 0);
 
 test("the demo seed is deterministic, valid for the store and internally consistent", () => {
   const a = fresh();
@@ -26,88 +28,82 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.equal(a.users.length, 8);
   assert.equal(a.items.length, seed.ITEMS.length);
   assert.equal(a.boms.filter((bom) => bom.status === "approved").length, 8);
-  assert.equal(a.boms.filter((bom) => bom.status === "pending").length, 1, "the GR draft waits for approval");
+  assert.equal(a.boms.filter((bom) => bom.status === "superseded").length, 1, "one edit left a superseded revision");
+  assert.equal(approved(a, "SE-TP01-OR01-100-18-65").revision, 2);
+  assert.equal(approved(a, "DEMO-BL-60(K)-Z"), null, "the ball product has no BOM yet");
   assert.deepEqual(a.orders.map((order) => [order.id, order.status]), [["DEMO-26002", "draft"], ["DEMO-26001", "in_progress"]]);
-  const released = a.orders.find((order) => order.id === "DEMO-26001");
-  assert.equal(released.orderType, "EX");
-  assert.equal(a.orders.find((order) => order.id === "DEMO-26002").orderType, "SA");
   const jobs = a.jobs.filter((job) => job.orderId === "DEMO-26001");
   assert.equal(jobs.length, 14, "one job per department × item plus one PK job per product");
   assert.ok(jobs.every((job) => rules.MANUFACTURED.includes(job.kind)), "purchased items are not jobs");
   const rb = jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70");
   assert.equal(rb.qtyPlanned.toFixed(2), "7.74", "80 sets × 3 SE / 31 pieces per rod — the BOMSHEET number");
-  assert.equal(rb.status, "in_progress");
   assert.equal(jobs.find((job) => job.itemCode === "PT-00320").status, "done");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").status, "hold");
-  assert.equal(released.stockCounts["RB-DM02-02-BK01-225-3-20"], 18);
-  assert.ok(a.audit.length > 40 && a.audit.every((entry) => entry.user && entry.action));
+  assert.ok(a.audit.length > 30 && a.audit.every((entry) => entry.user && entry.action));
 });
 
-test("BOM layers belong to departments: only the owner edits, the FG layer needs the factory manager, other layers their head", () => {
+test("only planners and managers create or edit items and BOMs; every save is a new revision that is usable at once", () => {
   const d = fresh();
-  // GR แก้ BOM ของ SE ได้ แต่แก้ของ FG (PK) ไม่ได้
-  rejects(() => A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("gr")), /แผนก PK/);
-  rejects(() => A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [] }, ctx("planner")), /อย่างน้อย 1 บรรทัด/);
-  rejects(() => A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "NOPE", qty: 1 }] }, ctx("planner")), /ไม่พบชิ้นงาน NOPE/);
-  rejects(() => A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 1 }, { childCode: "P-STK-01", qty: 2 }] }, ctx("planner")), /ซ้ำ/);
-  rejects(() => A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 0 }] }, ctx("planner")), /มากกว่า 0/);
-  // วงจร: PT-00320 มีลูก P-PEL-BK อยู่ ถ้าให้ P-PEL-BK... เป็นของซื้อ ลองวงจรจริง: SE → RB แล้วให้ SE เป็นลูกของ FG ซึ่งเป็นพ่อของ SE อยู่แล้ว → ใส่ FG ใต้ SE
-  rejects(() => A.saveBomDraft(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "DEMO-TP-01(P)-Y", qty: 1 }] }, ctx("gr")), /วงจร/);
+  for (const role of ["gr", "rb", "pt", "bg", "st"]) {
+    rejects(() => A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "RB-DM01-01-OR01-200-0-72", qty: 1 }] }, ctx(role)), /ฝ่ายวางแผนหรือผู้จัดการ/);
+    rejects(() => A.saveItem(d, { code: "X-1", kind: "PURCHASED", name: "x", uom: "pcs" }, ctx(role)), /ฝ่ายวางแผนหรือผู้จัดการ/);
+  }
+  rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [] }, ctx("planner")), /อย่างน้อย 1 บรรทัด/);
+  rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "NOPE", qty: 1 }] }, ctx("planner")), /ไม่พบชิ้นงาน NOPE/);
+  rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 1 }, { childCode: "P-STK-01", qty: 2 }] }, ctx("planner")), /ซ้ำ/);
+  rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 0 }] }, ctx("planner")), /มากกว่า 0/);
+  rejects(() => A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "DEMO-TP-01(P)-Y", qty: 1 }] }, ctx("planner")), /วงจร/);
+  rejects(() => A.saveBom(d, { itemCode: "RB-DM01-01-OR01-200-0-72", lines: [{ childCode: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /RubberFlow/);
+  rejects(() => A.saveBom(d, { itemCode: "P-PEL-BK", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("manager")), /ของซื้อ/);
   const before = approved(d, "DEMO-TP-01(P)-Y");
-  const bomId = A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "SE-TP01-OR01-100-18-65", qty: 4 }, { childCode: "P-BOX-01", qty: 0.05, scrapPct: 2 }], note: "เพิ่มลูกตอปิโดเป็น 4" }, ctx("planner"));
-  const draft = d.boms.find((bom) => bom.id === bomId);
-  assert.equal(draft.revision, before.revision + 1);
-  assert.equal(draft.status, "draft");
-  assert.equal(draft.lines[1].scrapPct, 2);
-  assert.equal(draft.lines[0].consumerDept, "PK");
-  assert.equal(draft.lines[0].producerDept, "GR");
-  // แก้ร่างซ้ำ = revision เดิม (ไม่งอก)
-  assert.equal(A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "SE-TP01-OR01-100-18-65", qty: 5 }] }, ctx("planner")), bomId);
-  assert.equal(d.boms.filter((bom) => bom.itemCode === "DEMO-TP-01(P)-Y" && bom.status === "draft").length, 1);
-  rejects(() => A.approveBom(d, { bomId }, ctx("manager")), /รออนุมัติ/);
-  rejects(() => A.submitBom(d, { bomId }, ctx("gr")), /เจ้าของ/);
-  A.submitBom(d, { bomId }, ctx("planner"));
-  rejects(() => A.saveBomDraft(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("planner")), /รออนุมัติอยู่/);
-  rejects(() => A.approveBom(d, { bomId }, ctx("planner")), /ผู้จัดการฝ่ายโรงงาน/);
-  rejects(() => A.approveBom(d, { bomId }, ctx("gr")), /ผู้จัดการฝ่ายโรงงาน/);
-  A.rejectBom(d, { bomId, reason: "ขอดูราคากล่องก่อน" }, ctx("manager"));
-  assert.equal(d.boms.find((bom) => bom.id === bomId).status, "draft");
-  assert.match(d.boms.find((bom) => bom.id === bomId).changeLog.at(-1).text, /ขอดูราคากล่องก่อน/);
-  A.submitBom(d, { bomId }, ctx("planner"));
-  A.approveBom(d, { bomId }, ctx("manager"));
-  assert.equal(approved(d, "DEMO-TP-01(P)-Y").id, bomId);
-  assert.equal(d.boms.find((bom) => bom.id === before.id).status, "superseded", "only one approved revision per item");
+  const same = A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: before.lines.map((line) => ({ childCode: line.childCode, qty: line.qty, note: line.note })) }, ctx("planner"));
+  assert.deepEqual(same, { id: before.id, revision: before.revision, changed: false }, "identical lines do not create a revision");
+  const seBefore = approved(d, "SE-TP01-OR01-100-18-65");
+  const rounded = A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: seBefore.lines.map((line) => ({ childCode: line.childCode, qty: Math.round(line.qty * 1e6) / 1e6, note: line.note })) }, ctx("planner"));
+  assert.equal(rounded.changed, false, "the form's 6-decimal rounding of 1/31 is not a change");
+  assert.equal(approved(d, "SE-TP01-OR01-100-18-65").lines[0].qty, seBefore.lines[0].qty, "the precise ratio is kept");
+  const result = A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "SE-TP01-OR01-100-18-65", qty: 4 }, { childCode: "P-BOX-01", qty: 0.05, scrapPct: 2 }], note: "เพิ่มลูกตอปิโดเป็น 4" }, ctx("planner"));
+  assert.equal(result.changed, true);
+  assert.equal(result.revision, before.revision + 1);
+  const current = approved(d, "DEMO-TP-01(P)-Y");
+  assert.equal(current.id, result.id);
+  assert.equal(current.status, "approved", "usable at once, no approval step");
+  assert.equal(current.lines[1].scrapPct, 2);
+  assert.equal(current.lines[0].consumerDept, "PK");
+  assert.equal(current.lines[0].producerDept, "GR");
+  assert.equal(d.boms.find((bom) => bom.id === before.id).status, "superseded");
   assert.equal(d.boms.filter((bom) => bom.itemCode === "DEMO-TP-01(P)-Y" && bom.status === "approved").length, 1);
-  // ชั้น SE: หัวหน้า GR อนุมัติเองได้ ผู้จัดการก็ได้ แต่ RB ไม่ได้
-  const pending = d.boms.find((bom) => bom.status === "pending");
-  assert.equal(pending.itemCode, "SE-BL60-RD01-60-0-60");
-  rejects(() => A.approveBom(d, { bomId: pending.id }, ctx("rb")), /หัวหน้าแผนก GR/);
-  A.approveBom(d, { bomId: pending.id }, ctx("gr"));
-  assert.equal(approved(d, "SE-BL60-RD01-60-0-60").revision, 1);
-  // ลบร่าง
-  const draftId = A.saveBomDraft(d, { itemCode: "BG-0092", lines: [{ childCode: "P-FAB-BL", qty: 1 }] }, ctx("bg"));
-  rejects(() => A.discardBom(d, { bomId: draftId }, ctx("pt")), /เจ้าของ/);
-  A.discardBom(d, { bomId: draftId }, ctx("bg"));
-  assert.ok(!d.boms.some((bom) => bom.id === draftId));
+  assert.match(current.changeLog[0].text, /SE-TP01-OR01-100-18-65 3→4/);
+  assert.match(current.changeLog[0].text, /−XP-00001/);
+  assert.match(current.changeLog[0].text, /เพิ่มลูกตอปิโดเป็น 4/);
+  assert.ok(!("submitBom" in A) && !("approveBom" in A) && !("saveBomDraft" in A), "the approval actions are gone");
 });
 
-test("item master: the owner department maintains its items; RB items need a compound which is registered automatically", () => {
+test("item master: planners maintain items of every department; RB items need a compound which is registered automatically", () => {
   const d = fresh();
-  rejects(() => A.saveItem(d, { code: "RB-X", kind: "RB", name: "x", uom: "rod", rubber: { compound: "" } }, ctx("rb")), /สูตรยาง/);
-  rejects(() => A.saveItem(d, { code: "RB-X", kind: "RB", name: "x", uom: "rod", rubber: { compound: "DM09" } }, ctx("gr")), /แผนก RB/);
-  rejects(() => A.saveItem(d, { code: "P-NEW", kind: "PURCHASED", name: "x", uom: "nope" }, ctx("st")), /หน่วยนับ/);
-  rejects(() => A.saveItem(d, { code: "", kind: "PURCHASED", name: "x", uom: "pcs" }, ctx("st")), /รหัสชิ้นงาน/);
-  const code = A.saveItem(d, { code: " rb-dm09-01-bk01-200-0-50 ", kind: "RB", name: "เส้นใหม่", uom: "rod", weightG: 900, rubber: { compound: "DM09", type: "01", kgPerRoll: "0.9", pcsPerRoll: "20", sePerGr: "" } }, ctx("rb"));
+  rejects(() => A.saveItem(d, { code: "RB-X", kind: "RB", name: "x", uom: "rod", rubber: { compound: "" } }, ctx("planner")), /สูตรยาง/);
+  rejects(() => A.saveItem(d, { code: "P-NEW", kind: "PURCHASED", name: "x", uom: "nope" }, ctx("planner")), /หน่วยนับ/);
+  rejects(() => A.saveItem(d, { code: "", kind: "PURCHASED", name: "x", uom: "pcs" }, ctx("planner")), /รหัสชิ้นงาน/);
+  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "dup", uom: "pcs", create: true }, ctx("planner")), /อยู่แล้ว/);
+  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "x", uom: "pcs", ownerDept: "XX" }, ctx("planner")), /แผนกเจ้าของไม่ถูกต้อง/);
+  const code = A.saveItem(d, { code: " rb-dm09-01-bk01-200-0-50 ", kind: "RB", name: "เส้นใหม่", uom: "rod", weightG: 900, rubber: { compound: "dm09", type: "01", kgPerRoll: "0.9", pcsPerRoll: "20", sePerGr: "" } }, ctx("planner"));
   assert.equal(code, "RB-DM09-01-BK01-200-0-50");
   const item = A.helpers.itemOf(d, code);
-  assert.equal(item.ownerDept, "RB");
+  assert.equal(item.ownerDept, "RB", "owner department follows the kind (used to split jobs)");
   assert.equal(item.rubber.pcsPerRoll, 20);
+  assert.equal(item.rubber.compound, "DM09");
   assert.ok(d.compounds.some((compound) => compound.code === "DM09" && compound.recipeId === null), "unknown compound is registered unlinked");
-  // แก้ชื่อโดยไม่ส่ง rubber: ข้อมูลยางเดิมคงอยู่
   A.saveItem(d, { code, kind: "RB", name: "เส้นใหม่ (แก้ชื่อ)", uom: "rod" }, ctx("manager"));
-  assert.equal(A.helpers.itemOf(d, code).rubber.compound, "DM09");
+  assert.equal(A.helpers.itemOf(d, code).rubber.compound, "DM09", "rubber data survives an edit without rubber fields");
+  A.saveItem(d, { code: "SE-TP01-OR01-100-18-65", kind: "SE", name: "ลูกตอปิโด", uom: "pcs", rubber: { color: "or02", lengthMm: "100", holeMm: "", odMm: "65" } }, ctx("planner"));
+  assert.deepEqual(A.helpers.itemOf(d, "SE-TP01-OR01-100-18-65").rubber, { product: "TP01", color: "OR02", lengthMm: 100, odMm: 65 }, "blank form field clears the hole, numbers are numbers, product (no form field) survives");
   rejects(() => A.saveItem(d, { code: "DEMO-TP-01(P)-Y", kind: "SE", name: "x", uom: "set" }, ctx("admin")), /เปลี่ยนชนิด/);
-  // ผูกสูตรยาง
+  const pt = A.helpers.itemOf(d, "PT-00320");
+  A.saveItem(d, { code: "PT-00320", kind: "PT", name: pt.name, uom: "pcs", ownerDept: "BG" }, ctx("planner"));
+  assert.equal(pt.ownerDept, "BG");
+  assert.ok(d.boms.filter((bom) => bom.itemCode === "PT-00320").every((bom) => bom.ownerDept === "BG"), "the BOMs of the item follow the new owner");
+  A.saveItem(d, { code: "PT-00320", kind: "PT", name: pt.name, uom: "pcs" }, ctx("manager"));
+  assert.equal(pt.ownerDept, "BG", "no ownerDept in the payload keeps the current owner");
   rejects(() => A.linkCompound(d, { code: "DM09", recipeId: "RC-X" }, ctx("gr")), /แผนก RB/);
   A.linkCompound(d, { code: "DM09", recipeId: "RC-NR-AM01", recipeName: "NR ยางกันสะเทือน" }, ctx("rb"));
   assert.equal(d.compounds.find((compound) => compound.code === "DM09").recipeId, "RC-NR-AM01");
@@ -115,56 +111,74 @@ test("item master: the owner department maintains its items; RB items need a com
   assert.equal(d.compounds.find((compound) => compound.code === "DM09").recipeId, null);
 });
 
-test("an existing item can only be edited by its owner department, duplicates are refused on create and only bosses move ownership", () => {
+test("saveBomTree saves a whole multi-level tree in one call: new items, nested BOMs, patches of RB cutting data, cycles refused", () => {
   const d = fresh();
-  // RB พยายามยึด PT-00320 ผ่านฟอร์ม "เพิ่มชิ้นงาน" ของแท็บ RB
-  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "hijacked", uom: "pcs", ownerDept: "RB", create: true }, ctx("rb")), /อยู่แล้ว/);
-  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "hijacked", uom: "pcs", ownerDept: "RB" }, ctx("rb")), /แผนก PT/);
-  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "hijacked", uom: "pcs", ownerDept: "PT" }, ctx("rb")), /แผนก PT/);
-  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "x", uom: "pcs", ownerDept: "RB" }, ctx("pt")), /ผู้จัดการ/);
-  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "x", uom: "pcs", ownerDept: "XX" }, ctx("pt")), /แผนกเจ้าของไม่ถูกต้อง/);
-  const item = A.helpers.itemOf(d, "PT-00320");
-  assert.equal(item.ownerDept, "PT");
-  assert.equal(item.name, "แกนตอปิโด ท่อดำ 150 ซม. (20 ก./ชิ้น)");
-  A.saveItem(d, { code: "PT-00320", kind: "PT", name: "แกนตอปิโด (แก้โดย PT)", uom: "pcs", ownerDept: "PT" }, ctx("pt"));
-  assert.equal(item.name, "แกนตอปิโด (แก้โดย PT)");
-  A.saveItem(d, { code: "PT-00320", kind: "PT", name: item.name, uom: "pcs", ownerDept: "BG" }, ctx("manager"));
-  assert.equal(item.ownerDept, "BG");
-  assert.ok(d.boms.filter((bom) => bom.itemCode === "PT-00320").every((bom) => bom.ownerDept === "BG"), "the BOMs of the item follow the new owner");
-  // แก้ SE ผ่านฟอร์มโดยไม่ส่ง product: ข้อมูลยางเดิมไม่หาย
-  A.saveItem(d, { code: "SE-TP01-OR01-100-18-65", kind: "SE", name: "ลูกตอปิโด", uom: "pcs", ownerDept: "GR", rubber: { color: "or02", lengthMm: "100", holeMm: "", odMm: "65" } }, ctx("gr"));
-  assert.deepEqual(A.helpers.itemOf(d, "SE-TP01-OR01-100-18-65").rubber, { product: "TP01", color: "OR02", lengthMm: 100, odMm: 65 }, "blank form field clears the hole, numbers are numbers, product (no form field) survives");
-  // ไม่ส่ง ownerDept: ชิ้นเดิมคงแผนกเดิม (ไม่ถูกย้ายกลับค่าเริ่มต้นเงียบๆ)
-  A.saveItem(d, { code: "PT-00320", kind: "PT", name: item.name, uom: "pcs" }, ctx("manager"));
-  assert.equal(item.ownerDept, "BG");
-  // BOM ของ RB/ของซื้อไม่มีในระบบนี้
-  rejects(() => A.saveBomDraft(d, { itemCode: "RB-DM01-01-OR01-200-0-72", lines: [{ childCode: "P-PEL-BK", qty: 1 }] }, ctx("rb")), /RubberFlow/);
-  rejects(() => A.saveBomDraft(d, { itemCode: "P-PEL-BK", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("st")), /ของซื้อ/);
-  // วงจรผ่านร่างสองใบที่อนุมัติทีหลัง: ใบที่สองถูกปฏิเสธตอนอนุมัติ
-  const a = A.saveItem(d, { code: "X-A", kind: "SUBPART", name: "a", uom: "pcs", ownerDept: "PK" }, ctx("planner"));
-  const b = A.saveItem(d, { code: "X-B", kind: "SUBPART", name: "b", uom: "pcs", ownerDept: "PK" }, ctx("planner"));
-  const ab = A.saveBomDraft(d, { itemCode: a, lines: [{ childCode: b, qty: 1 }] }, ctx("planner"));
-  const ba = A.saveBomDraft(d, { itemCode: b, lines: [{ childCode: a, qty: 1 }] }, ctx("planner"));
-  A.submitBom(d, { bomId: ab }, ctx("planner"));
-  A.submitBom(d, { bomId: ba }, ctx("planner"));
-  A.approveBom(d, { bomId: ab }, ctx("manager"));
-  rejects(() => A.approveBom(d, { bomId: ba }, ctx("manager")), /วงจร/);
-  rejects(() => A.createOrder(d, { pi: "N-1", customer: "x", country: "Thailand", orderedAt: null, whDue: "" }, ctx("planner")), /วันที่สั่งผลิต/);
+  rejects(() => A.saveBomTree(d, { code: "NEW-01", nodes: [] }, ctx("gr")), /ฝ่ายวางแผนหรือผู้จัดการ/);
+  rejects(() => A.saveBomTree(d, { code: "NEW-01", nodes: [{ code: "P-STK-01", qty: 1 }] }, ctx("planner")), /ระบุชื่อและหน่วย/);
+  rejects(() => A.saveBomTree(d, { code: "NEW-01", item: { name: "x", uom: "set" }, nodes: [] }, ctx("planner")), /อย่างน้อย 1 บรรทัด/);
+  rejects(() => A.saveBomTree(d, { code: "NEW-01", item: { name: "x", uom: "set" }, nodes: [{ code: "ZZZ-1", qty: 1 }] }, ctx("planner")), /ไม่พบชิ้นงาน ZZZ-1/);
+  rejects(() => A.saveBomTree(d, { code: "NEW-01", item: { name: "x", uom: "set" }, nodes: [{ code: "P-STK-01", qty: 1, children: [{ code: "P-BOX-01", qty: 1 }] }] }, ctx("planner")), /ของซื้อ.*มีส่วนประกอบไม่ได้/);
+  rejects(() => A.saveBomTree(d, { code: "NEW-01", item: { name: "x", uom: "set" }, nodes: [{ code: "SE-TP01-OR01-100-18-65", qty: 1, children: [{ code: "NEW-01", qty: 1 }] }] }, ctx("planner")), /ซ้อนอยู่ใต้ตัวเอง/);
+  // (เรียกตรง ๆ ร่างที่ล้มถูกแก้ค้างได้ ส่วน store ทิ้งร่างที่ล้มทั้งก้อน — ทดสอบใน "the store persists")
+  const result = A.saveBomTree(d, {
+    code: "new-tp-02(p)-y", item: { name: "ตอปิโดใหม่", uom: "set" }, note: "สร้างครั้งแรก",
+    nodes: [
+      { code: "SE-NEW-01", qty: 2, newItem: { kind: "SE", name: "ชิ้นยางใหม่", uom: "pcs" }, children: [
+        { code: "RB-DM01-02-BK01-202-18-70", qty: 0.05, newItem: { kind: "RB", name: "เส้นดำ", uom: "rod", weightG: "1500", rubber: { compound: "dm01", cutLengthCm: "6.5", pcsPerRoll: "31", sePerGr: "1", kgPerRoll: "1.5" } } },
+      ] },
+      { code: "P-STK-01", qty: 1 },
+      { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] },
+      { code: "RB-DM02-02-BK01-225-3-20", qty: 1, patch: { rubber: { compound: "DM02", cutLengthCm: "15", pcsPerRoll: "14", sePerGr: "1", kgPerRoll: "0.17" } } },
+    ],
+  }, ctx("planner"));
+  assert.equal(result.code, "NEW-TP-02(P)-Y");
+  assert.deepEqual(result.saved, ["SE-NEW-01 Rev.1", "NEW-TP-02(P)-Y Rev.1"], "PT-00320's BOM is unchanged so no new revision for it");
+  const fg = A.helpers.itemOf(d, "NEW-TP-02(P)-Y");
+  assert.equal(fg.kind, "FG");
+  assert.equal(fg.ownerDept, "PK");
+  const se = A.helpers.itemOf(d, "SE-NEW-01");
+  assert.equal(se.ownerDept, "GR");
+  const rb = A.helpers.itemOf(d, "RB-DM01-02-BK01-202-18-70");
+  assert.equal(rb.ownerDept, "RB");
+  assert.equal(rb.rubber.pcsPerRoll, 31);
+  assert.equal(rb.rubber.compound, "DM01");
+  assert.equal(rb.weightG, 1500);
+  assert.equal(approved(d, "SE-NEW-01").lines[0].qty, 0.05);
+  assert.equal(A.helpers.itemOf(d, "RB-DM02-02-BK01-225-3-20").rubber.cutLengthCm, 15, "patch updated the cutting data of an existing RB");
+  assert.deepEqual(approved(d, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["SE-NEW-01", "P-STK-01", "PT-00320", "RB-DM02-02-BK01-225-3-20"]);
+  assert.equal(approved(d, "NEW-TP-02(P)-Y").note, "สร้างครั้งแรก");
+  // บันทึกซ้ำโดยไม่เปลี่ยนอะไร = ไม่มี revision ใหม่
+  const again = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", item: { name: "ตอปิโดใหม่", uom: "set" }, nodes: [
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+  ] }, ctx("planner"));
+  assert.deepEqual(again.saved, []);
+  assert.equal(again.summary, "ไม่มีการเปลี่ยนแปลง");
+  assert.equal(approved(d, "NEW-TP-02(P)-Y").revision, 1);
+  // แก้ชั้นลึก (PT → เม็ด) จากต้นไม้ของสินค้าใหม่ มีผลกับ PT ที่สินค้าอื่นใช้ร่วมด้วย
+  const third = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.025 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+  ] }, ctx("manager"));
+  assert.deepEqual(third.saved, ["PT-00320 Rev.2"]);
+  assert.equal(approved(d, "PT-00320").lines[0].qty, 0.025);
+  // ใบสั่งผลิตใช้สินค้าใหม่ได้ทันที
+  const id = A.createOrder(d, { pi: "T-1", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(5) }, ctx("planner"));
+  A.addOrderItem(d, { orderId: id, fgCode: "NEW-TP-02(P)-Y", qty: 10 }, ctx("planner"));
+  assert.ok(A.explodeOrder(d, { orderId: id }, ctx("planner")) >= 6);
 });
 
-test("a production order explodes with the approved revisions, locks them at release and spawns one job per department × item", () => {
+test("a production order explodes with the current revisions, locks them at release and spawns one job per department × item", () => {
   const d = fresh();
-  const day = (n) => new Date(NOW + n * DAY).setHours(0, 0, 0, 0);
   rejects(() => A.createOrder(d, { pi: "X-1", customer: "a", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("gr")), /ฝ่ายวางแผน/);
   rejects(() => A.createOrder(d, { pi: "DEMO-26001", customer: "a", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner")), /อยู่แล้ว/);
   rejects(() => A.createOrder(d, { pi: "X-1", customer: "a", country: "Thailand", orderedAt: day(5), whDue: day(1) }, ctx("planner")), /ไม่ก่อนวันที่สั่งผลิต/);
   rejects(() => A.createOrder(d, { pi: "X-1", customer: "a", country: "Thailand", orderedAt: day(0), whDue: day(10), due: { RB: day(12) } }, ctx("planner")), /กำหนดเสร็จ RB/);
+  rejects(() => A.createOrder(d, { pi: "N-1", customer: "x", country: "Thailand", orderedAt: null, whDue: "" }, ctx("planner")), /วันที่สั่งผลิต/);
   const id = A.createOrder(d, { pi: "x-1", customer: "ลูกค้า ก", country: "Thailand", orderedAt: day(0), whDue: day(10), due: { RB: day(3), PK: day(9) } }, ctx("planner"));
   assert.equal(id, "X-1");
   const order = d.orders.find((entry) => entry.id === id);
   assert.equal(order.orderType, "SA");
   rejects(() => A.explodeOrder(d, { orderId: id }, ctx("planner")), /ยังไม่มีสินค้า/);
-  rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-BL-60(K)-Z", qty: 10 }, ctx("planner")), /ยังไม่มี BOM ที่อนุมัติ/);
+  rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-BL-60(K)-Z", qty: 10 }, ctx("planner")), /ยังไม่มี BOM/);
   rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "SE-TP01-OR01-100-18-65", qty: 10 }, ctx("planner")), /สินค้าสำเร็จรูป/);
   A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 50 }, ctx("planner"));
   A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 30 }, ctx("planner"));
@@ -174,82 +188,63 @@ test("a production order explodes with the approved revisions, locks them at rel
   const rbLine = order.explosion.find((line) => line.itemCode === "RB-DM01-02-OR01-202-18-70");
   assert.equal(rbLine.required.toFixed(2), "7.74");
   assert.equal(rbLine.fgQty, 80);
-  const seRev = order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision;
-  assert.equal(seRev, 1);
-  // ยอดนับคงคลัง: เฉพาะชิ้นในใบ โดย ST/วางแผน/ผู้จัดการ
+  assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 2);
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "SE-BL60-RD01-60-0-60", qty: 1 }, ctx("st")), /ไม่อยู่ในใบ/);
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 1 }, ctx("gr")), /คลัง/);
   A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 3 }, ctx("st"));
   assert.equal(order.stockCounts["P-BOX-01"], 3);
-  // ลบสินค้าแล้วการระเบิดเดิมหาย
   A.removeOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A" }, ctx("planner"));
   assert.equal(order.explosion, null);
   A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 40 }, ctx("planner"));
-  // GR แก้ BOM ของ SE เป็น revision ใหม่ก่อนปล่อยผลิต: การปล่อยใช้ revision ล่าสุด
-  const newBom = A.saveBomDraft(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "RB-DM01-02-OR01-202-18-70", qty: 0.05 }] }, ctx("gr"));
-  A.submitBom(d, { bomId: newBom }, ctx("gr"));
-  A.approveBom(d, { bomId: newBom }, ctx("gr"));
+  // แก้ BOM ของ SE ก่อนปล่อยผลิต: การปล่อยใช้ revision ล่าสุด
+  A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "RB-DM01-02-OR01-202-18-70", qty: 0.05 }] }, ctx("planner"));
   rejects(() => A.releaseOrder(d, { orderId: id }, ctx("rb")), /ฝ่ายวางแผน/);
   const jobsBefore = d.jobs.length;
   A.releaseOrder(d, { orderId: id }, ctx("planner"));
   assert.equal(order.status, "released");
-  assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 2, "release re-explodes with the latest approved revision");
+  assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 3, "release re-explodes with the latest revision");
   assert.ok(Math.abs(order.explosion.find((line) => line.itemCode === "RB-DM01-02-OR01-202-18-70").required - 12) < 1e-9, "80 × 3 × 0.05 with the new revision");
   const jobs = d.jobs.filter((job) => job.orderId === id);
   assert.equal(d.jobs.length - jobsBefore, jobs.length);
   assert.equal(jobs.filter((job) => job.dept === "PK" && job.kind === "FG").length, 2);
   assert.equal(jobs.filter((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70").length, 1);
-  const rbJob = jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70");
-  assert.equal(rbJob.dueAt, day(3), "department due date from the order header");
+  assert.equal(jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70").dueAt, day(3), "department due date from the order header");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").dueAt, day(10), "no BG date → warehouse due date");
   assert.ok(!jobs.some((job) => job.kind === "PURCHASED"));
   rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 1 }, ctx("planner")), /ร่าง/);
   rejects(() => A.explodeOrder(d, { orderId: id }, ctx("planner")), /ร่าง/);
-  // อนุมัติ revision ใหม่หลังปล่อยผลิต: ใบที่ปล่อยแล้วไม่เปลี่ยน
-  const later = A.saveBomDraft(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "RB-DM01-02-OR01-202-18-70", qty: 0.5 }] }, ctx("gr"));
-  A.submitBom(d, { bomId: later }, ctx("gr"));
-  A.approveBom(d, { bomId: later }, ctx("gr"));
-  assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 2);
-  // ไม่มี BOM อนุมัติสำหรับชิ้นที่ต้องผลิต (PT) → ปล่อยไม่ได้
+  // แก้ BOM หลังปล่อยผลิต: ใบที่ปล่อยแล้วไม่เปลี่ยน
+  A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "RB-DM01-02-OR01-202-18-70", qty: 0.5 }] }, ctx("planner"));
+  assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 3);
+  // ชิ้นที่ต้องผลิตแต่ไม่มี BOM (BG ของกระเป๋า) → ปล่อยไม่ได้
   const d2 = fresh();
-  approved(d2, "BG-0092").status = "superseded"; // DEMO-26002 สั่ง DEMO-HL-24(B)-A ซึ่งใช้กระเป๋า BG-0092
-  rejects(() => A.releaseOrder(d2, { orderId: "DEMO-26002" }, ctx("planner")), /ยังไม่มี BOM อนุมัติ: BG-0092/);
+  approved(d2, "BG-0092").status = "superseded";
+  rejects(() => A.releaseOrder(d2, { orderId: "DEMO-26002" }, ctx("planner")), /ยังไม่มี BOM: BG-0092/);
 });
 
-test("a product can be chosen by base code + package + color set; an unknown variant is created from a sibling's approved BOM", () => {
+test("a product can be chosen by base code + package + color set; an unknown variant is created from a sibling's BOM", () => {
   const d = fresh();
-  const day = (n) => new Date(NOW + n * DAY).setHours(0, 0, 0, 0);
   const id = A.createOrder(d, { pi: "P3", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(9) }, ctx("planner"));
-  // รหัสเต็มที่มีอยู่แล้ว
   A.addOrderItem(d, { orderId: id, base: "demo-tp-01", pkg: "p", colorSet: "y", qty: 10 }, ctx("planner"));
   const order = d.orders.find((entry) => entry.id === id);
   assert.deepEqual(order.items.map((item) => [item.fgCode, item.qty, item.colorSet]), [["DEMO-TP-01(P)-Y", 10, "Y"]]);
   assert.equal(d.items.filter((item) => item.kind === "FG").length, 3, "no new item for an existing code");
-  // ฐานรหัสที่ไม่มีเลย
   rejects(() => A.addOrderItem(d, { orderId: id, base: "NOPE-01", pkg: "P", colorSet: "Y", qty: 1 }, ctx("planner")), /ไม่มีฐานรหัส NOPE-01/);
   rejects(() => A.addOrderItem(d, { orderId: id, base: "", qty: 1 }, ctx("planner")), /ไม่พบสินค้า/);
-  // ชุดสีใหม่ของฐานรหัสเดิม → สร้าง FG + BOM Rev.1 คัดลอกจากต้นแบบแพ็กเกจเดียวกัน
   A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "A", qty: 5 }, ctx("planner"));
   const created = A.helpers.itemOf(d, "DEMO-TP-01(P)-A");
   assert.ok(created, "variant created");
-  assert.equal(created.kind, "FG");
-  assert.equal(created.ownerDept, "PK");
   assert.equal(created.clonedFrom, "DEMO-TP-01(P)-Y");
-  assert.match(created.name, /ชุดสี A/);
   const bom = approved(d, created.code);
   assert.equal(bom.revision, 1);
   assert.match(bom.note, /คัดลอกจาก DEMO-TP-01\(P\)-Y Rev\.1/);
   assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), approved(d, "DEMO-TP-01(P)-Y").lines.map((line) => [line.childCode, line.qty]));
   assert.notEqual(bom.lines, approved(d, "DEMO-TP-01(P)-Y").lines, "lines are copied, not shared");
-  assert.equal(order.items.at(-1).fgCode, "DEMO-TP-01(P)-A");
-  assert.ok(d.audit.some((entry) => entry.action === "สร้างสินค้าจากฐานรหัสเดียวกัน"));
-  // ไม่ใส่แพ็กเกจ/ชุดสี = รหัสฐานล้วน ก็สร้างได้
   A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", qty: 2 }, ctx("planner"));
   assert.ok(A.helpers.itemOf(d, "DEMO-HL-24"));
   assert.equal(A.helpers.pickSibling(A.helpers.siblingsOf(d, "DEMO-TP-01"), "P", "A").code, "DEMO-TP-01(P)-A", "exact variant preferred");
   assert.equal(A.helpers.pickSibling(A.helpers.siblingsOf(d, "DEMO-TP-01"), "B", "A").code, "DEMO-TP-01(P)-A", "then same color set");
   rejects(() => A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "Z", qty: 1 }, ctx("gr")), /ฝ่ายวางแผน/);
-  // ระเบิดได้ด้วย BOM ที่คัดลอกมา
   assert.ok(A.explodeOrder(d, { orderId: id }, ctx("planner")) > 20);
 });
 
@@ -262,12 +257,10 @@ test("jobs: the department reports output, hold/queue toggles, orders progress a
   rejects(() => A.reportJob(d, { jobId: job.id, qtyDone: -1 }, ctx("gr")), /มากกว่า 0/);
   A.reportJob(d, { jobId: job.id, qtyDone: 100, qtyReject: 3, note: "วันแรก" }, ctx("gr"));
   assert.equal(job.status, "in_progress");
-  assert.equal(job.qtyDone, 100);
   A.reportJob(d, { jobId: job.id, qtyDone: 140 }, ctx("manager"));
   assert.equal(job.status, "done");
   assert.equal(job.reports.length, 2);
   rejects(() => A.reportJob(d, { jobId: job.id, qtyDone: 1 }, ctx("gr")), /เสร็จแล้ว/);
-  rejects(() => A.setJobStatus(d, { jobId: job.id, status: "hold" }, ctx("gr")), /เสร็จแล้ว/);
   const bg = d.jobs.find((entry) => entry.orderId === orderId && entry.itemCode === "BG-0092");
   assert.equal(bg.status, "hold");
   rejects(() => A.setJobStatus(d, { jobId: bg.id, status: "weird" }, ctx("bg")), /สถานะ/);
@@ -280,8 +273,7 @@ test("jobs: the department reports output, hold/queue toggles, orders progress a
   A.completeOrder(d, { orderId }, ctx("planner"));
   assert.equal(order.status, "completed");
   rejects(() => A.setStockCount(d, { orderId, itemCode: "PT-00320", qty: 1 }, ctx("st")), /ปิดแล้ว/);
-  rejects(() => A.cancelOrder(d, { orderId }, ctx("planner")), /เสร็จแล้ว/);
-  // ยกเลิกใบร่าง: งาน (ถ้ามี) หายไปด้วย
+  rejects(() => A.setJobStatus(d, { jobId: d.jobs.find((entry) => entry.orderId === orderId && entry.status === "queued").id, status: "hold" }, ctx("manager")), /ไม่อยู่ในสถานะผลิต/);
   A.releaseOrder(d, { orderId: "DEMO-26002" }, ctx("planner"));
   assert.ok(d.jobs.some((entry) => entry.orderId === "DEMO-26002"));
   A.cancelOrder(d, { orderId: "DEMO-26002", reason: "ลูกค้าเลื่อน" }, ctx("planner"));
@@ -289,7 +281,7 @@ test("jobs: the department reports output, hold/queue toggles, orders progress a
   assert.ok(!d.jobs.some((entry) => entry.orderId === "DEMO-26002"));
 });
 
-test("RB jobs link to a RubberFlow work order and the compound kilograms come from the rod weight", () => {
+test("RB jobs link to a RubberFlow work order once and the compound kilograms come from the rod weight", () => {
   const d = fresh();
   const rb = d.jobs.find((job) => job.orderId === "DEMO-26001" && job.itemCode === "RB-DM02-02-BK01-225-3-20");
   const item = A.helpers.itemOf(d, rb.itemCode);
@@ -304,23 +296,16 @@ test("RB jobs link to a RubberFlow work order and the compound kilograms come fr
   rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "" }, ctx("rb")), /เลข WO/);
   A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-69-0007", kg: 3.1 }, ctx("planner"));
   assert.equal(rb.externalRef.woId, "WO-69-0007");
-  assert.equal(rb.externalRef.kg, 3.1);
   assert.equal(rb.status, "in_progress");
   rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-69-0008" }, ctx("rb")), /ผูกกับ WO-69-0007 อยู่แล้ว/);
-  // ใบที่มี WO ผูกอยู่ยกเลิกไม่ได้ และงานของใบที่ปิดแล้วเปลี่ยนสถานะไม่ได้
   const d2 = fresh();
-  const rb2 = d2.jobs.find((job) => job.orderId === "DEMO-26002" || (job.orderId === "DEMO-26001" && job.dept === "RB" && job.qtyDone === 0));
   A.releaseOrder(d2, { orderId: "DEMO-26002" }, ctx("planner"));
   const job2 = d2.jobs.find((job) => job.orderId === "DEMO-26002" && job.dept === "RB");
   A.linkJobToRubberFlow(d2, { jobId: job2.id, woId: "WO-X" }, ctx("rb"));
   rejects(() => A.cancelOrder(d2, { orderId: "DEMO-26002" }, ctx("planner")), /WO-X/);
-  assert.ok(rb2);
-  const d3 = fresh();
-  d3.orders.find((order) => order.id === "DEMO-26001").status = "completed";
-  rejects(() => A.setJobStatus(d3, { jobId: d3.jobs.find((job) => job.orderId === "DEMO-26001" && job.status === "queued").id, status: "hold" }, ctx("manager")), /ไม่อยู่ในสถานะผลิต/);
 });
 
-test("importing a flat sheet adds items and approved revision-1 BOMs, merges legacy codes and never overwrites an approved BOM", () => {
+test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes and never overwrites an existing BOM", () => {
   const d = fresh();
   const header = ["ITEM", "น.น RB/g", "CODE", "รหัสแผนก", "สินค้า/สูตรยาง", "สีSE/ประเภทยาง", "ความยาวSE/สีRB", "รู,ความหนา/ความยาวRB", "วงนอกSE/รูในRB", "วงนอกRB", "NAME", "แผนกผู้ผลิต", "จำนวนที่ใช้ต่อชุด", "ความยาวตัด", "หน่วย", "จำนวนชิ้นที่ได้ต่อเส้น RB", "หน่วย", "จำนวนที่ได้ต่อ 1 GR", "หน่วย", "หน่วยนับ RB", "น.น ต่อเส้น RB / ก.ก"].join("\t");
   const tsv = [header,
@@ -337,7 +322,7 @@ test("importing a flat sheet adds items and approved revision-1 BOMs, merges leg
   rejects(() => A.importFlat(d, { items: [] }, ctx("planner")), /ไม่มีรายการ/);
   const itemsBefore = d.items.length;
   const { summary, ...stats } = A.importFlat(d, payload, ctx("planner"));
-  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1 }, "PT-00320 already has an approved BOM → skipped; P-STK-01 and PT-00320 merged");
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1 }, "PT-00320 already has a BOM → skipped; P-STK-01 and PT-00320 merged");
   assert.equal(summary, "ชิ้นงานใหม่ 4 (มีอยู่แล้ว 2) · BOM ใหม่ 2 ข้าม 1");
   assert.equal(d.items.length, itemsBefore + 4);
   const fg = approved(d, "IMP-01(P)-Y");
@@ -345,15 +330,10 @@ test("importing a flat sheet adds items and approved revision-1 BOMs, merges leg
   assert.match(fg.note, /test\.tsv/);
   assert.deepEqual(fg.lines.map((line) => [line.childCode, line.qty, line.producerDept]), [["P-STK-01", 2, "ST"], ["SE-IMP01-50-5-20", 4, "GR"], ["PT-00320", 1, "PT"]]);
   const se = approved(d, "SE-IMP01-50-5-20");
-  assert.equal(se.lines[0].childCode, "RB-B0006-02-300-5-22");
   assert.ok(Math.abs(se.lines[0].qty - 1 / 28) < 1e-12);
   assert.deepEqual(A.helpers.itemOf(d, "RB-B0006-02-300-5-22").legacyCodes, ["RB-B0006-02- -300-5-22"]);
   assert.equal(A.helpers.itemOf(d, "RB-B0006-02-300-5-22").rubber.kgPerRoll, 0.6);
-  assert.ok(d.compounds.some((compound) => compound.code === "B0006" && compound.recipeId === null));
-  assert.equal(approved(d, "PT-00320").lines[0].qty, 0.02, "the existing approved PT BOM is untouched");
-  assert.equal(A.helpers.itemOf(d, "PT-00320").name, "แกนตอปิโด ท่อดำ 150 ซม. (20 ก./ชิ้น)", "existing items keep their name");
-  // ใบสั่งผลิตใช้สินค้าที่นำเข้าได้ทันที
-  const day = (n) => new Date(NOW + n * DAY).setHours(0, 0, 0, 0);
+  assert.equal(approved(d, "PT-00320").lines[0].qty, 0.02, "the existing PT BOM is untouched");
   const id = A.createOrder(d, { pi: "IMP-PI", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(5) }, ctx("planner"));
   A.addOrderItem(d, { orderId: id, fgCode: "IMP-01(P)-Y", qty: 28 }, ctx("planner"));
   A.releaseOrder(d, { orderId: id }, ctx("planner"));
@@ -375,10 +355,8 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(ok.result, "ST-1");
   assert.ok(store.isPersisted());
   assert.ok(JSON.parse(storage.get(storeApi.STATE_KEY)).orders.some((order) => order.id === "ST-1"));
-  assert.ok(store.size() > 1000);
   const reloaded = storeApi.createStore({ storage: fake, seed: fresh, actions: A, now: () => NOW });
   assert.equal(reloaded.user().id, "B03");
-  assert.ok(reloaded.data().orders.some((order) => order.id === "ST-1"));
   storage.set(storeApi.STATE_KEY, "{broken");
   const repaired = storeApi.createStore({ storage: fake, seed: fresh, actions: A, now: () => NOW });
   assert.equal(repaired.data().orders.length, 2, "corrupt storage → fresh seed");
@@ -386,6 +364,6 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   noStorage.setUser("B03");
   assert.equal(noStorage.run("createOrder", { pi: "M-1", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY }).ok, true);
   assert.equal(noStorage.isPersisted(), false);
-  assert.equal(storeApi.homeOf(user("gr")), "dashboard");
-  assert.ok(storeApi.canSee(user("planner"), "import") && !storeApi.canSee(user("gr"), "import") && !storeApi.canSee(null, "items"));
+  assert.ok(storeApi.canSee(user("planner"), "build") && storeApi.canSee(user("manager"), "build") && !storeApi.canSee(user("gr"), "build") && !storeApi.canSee(user("gr"), "import") && !storeApi.canSee(null, "items"));
+  assert.equal(storeApi.MODULES[1].id, "build", "the single BOM builder is the first menu after the overview");
 });

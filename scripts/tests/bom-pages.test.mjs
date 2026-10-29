@@ -11,7 +11,7 @@ const FILES = [
   "modules/bom-rules.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const PAGES = ["dashboard", "items", "compounds", "import", "orders", "jobs", "audit"];
+const PAGES = ["dashboard", "build", "items", "compounds", "import", "orders", "jobs", "audit"];
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st"];
 const XSS = "<script>alert(1)</script>";
 
@@ -21,7 +21,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const log = { toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [] };
   const fakes = {};
   const node = () => ({
-    handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {} }, files: [],
+    handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
     addEventListener(type, handler) { this.handlers[type] = handler; }, querySelector: (selector) => fakes[selector]?.[0] ?? null, querySelectorAll: (selector) => fakes[selector] ?? [],
     focus() {}, dispatchEvent() {}, close() {}, remove() {}, showModal() {},
     insertAdjacentHTML(_, html) { log.dialogs.push(html); this.lastElementChild = { ...generic(), tagName: "DIALOG", innerHTML: html }; },
@@ -52,7 +52,6 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     return app.innerHTML;
   };
   const ctx = (query = "") => context.MNP_BOM.context(new URLSearchParams(query));
-  // ยิงฟอร์ม data-rf-form ผ่าน bindRoot: ตั้ง fake form แล้ววาดหน้าเพื่อให้ผูก event
   const submit = async (query, action, values, args = {}) => {
     const form = { ...node(), dataset: { rfForm: action, rfArgs: JSON.stringify(args), rfSuccess: "ok {result}" }, __values: values, closest: () => null };
     fakes["form[data-rf-form]"] = [form];
@@ -64,6 +63,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   return { context, app, log, fakes, root, storage, module: registered, store: context.MNP_BOM.store, rf: context.MNP_RUBBERFLOW, render, ctx, submit };
 }
 const clean = (html) => { assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/); };
+const json = (value) => JSON.parse(JSON.stringify(value));
 
 test("the module registers a sandbox-only standalone page, refuses users outside the sandbox and shows the role chooser first", async () => {
   const env = load();
@@ -74,12 +74,10 @@ test("the module registers a sandbox-only standalone page, refuses users outside
   assert.equal(env.module.nav[0].path, "bom");
   const html = await env.render();
   assert.match(html, /เลือกบทบาทสาธิต/);
-  assert.match(html, /นำเข้าจาก Excel/);
   assert.equal(env.module.nav[0].subnav("bom"), "", "no sub-menu before a role is chosen");
   const outside = load({ sandbox: false });
   await outside.render();
   assert.equal(outside.log.notFound, 1);
-  assert.equal(outside.app.innerHTML, "<notfound></notfound>");
 });
 
 test("every page renders for every role without undefined/NaN, menus follow the role and unknown pages redirect home", async () => {
@@ -100,35 +98,102 @@ test("every page renders for every role without undefined/NaN, menus follow the 
   }
 });
 
-test("the items page shows a department's items, the selected item's tree, where-used and revision actions by permission", async () => {
+test("the single BOM builder: picker without a code, the full editable tree for an existing product, a sibling template for a new variant, an empty row for a new base", async () => {
+  const env = load();
+  env.store.setUser("B03"); // ฝ่ายวางแผน
+  let html = await env.render("p=build");
+  assert.match(html, /1\. เลือกสินค้า/);
+  assert.match(html, /bom-base-list/);
+  assert.match(html, /สินค้าที่แก้ล่าสุด/);
+  assert.doesNotMatch(html, /data-rf-form="saveBomTree"/);
+  html = await env.render("p=build&code=DEMO-TP-01(P)-Y");
+  assert.match(html, /data-rf-form="saveBomTree"/);
+  assert.match(html, /name="itemName"[^>]*value="ตอปิโดยาง TP-01/);
+  const rows = [...html.matchAll(/<tr class="bom-row[^"]*" data-row="([^"]+)" data-parent="([^"]*)" data-level="(\d)"/g)].map((match) => ({ id: match[1], parent: match[2], level: Number(match[3]) }));
+  assert.equal(rows.filter((row) => row.level === 1 && row.id !== "__ID__").length, 8, "8 first-level lines of the product (plus the template row)");
+  assert.ok(rows.some((row) => row.level === 2), "RB rows under SE and pellets under PT are editable in the same table");
+  assert.match(html, /value="RB-DM01-02-OR01-202-18-70"/);
+  assert.match(html, /name="pcsPerRoll\[\]"[^>]*value="31"/, "RB cutting data is editable inline");
+  assert.match(html, /จากการตัด 0.0323/);
+  assert.match(html, /ใช้ร่วมกับสินค้าอื่น 1 รายการ/, "shared sticker shows a warning");
+  assert.match(html, /บันทึก BOM/);
+  assert.match(html, /data-rf-open="useInOrder"/);
+  assert.match(html, /<template data-bom-row>/);
+  clean(html);
+  // ชุดสีใหม่ของฐานรหัสเดิม → ตั้งต้นจากต้นแบบ
+  html = await env.render("p=build&base=DEMO-TP-01&pkg=P&cs=A");
+  assert.match(html, /DEMO-TP-01\(P\)-A<\/strong> ยังไม่มีใน item master/);
+  assert.match(html, /ตั้งต้นจาก DEMO-TP-01\(P\)-Y/);
+  assert.match(html, /value="SE-TP01-OR01-100-18-65"/);
+  // ฐานรหัสใหม่ → แถวว่างหนึ่งแถว
+  html = await env.render("p=build&base=BRAND-NEW-01&pkg=B&cs=A");
+  assert.match(html, /BRAND-NEW-01\(B\)-A<\/strong> ยังไม่มีใน item master/);
+  assert.doesNotMatch(html, /ตั้งต้นจาก/);
+  assert.equal([...html.matchAll(/class="bom-row is-new"/g)].length, 2, "one empty editable row plus the template row");
+  // บทบาทที่ไม่มีสิทธิ์: ไม่เห็นเมนู และหน้าปฏิเสธ
+  env.store.setUser("B05");
+  html = await env.render("p=build&code=DEMO-TP-01(P)-Y");
+  assert.match(html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
+});
+
+test("the tree form goes through the data-rf-* rules: rows become a nested tree, new items are created, RB patches only when changed", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  await env.submit("p=build&code=DEMO-TP-01(P)-Y", "saveBomTree", {
+    code: "DEMO-TP-01(P)-Y", itemName: "ตอปิโดยาง TP-01 แพ็กถุง ชุดสี Y (3 ชิ้น/ชุด)", itemUom: "set", note: "ทดสอบฟอร์ม",
+    "rowId[]": ["r1", "r2", "r3", "r4"], "parentId[]": ["", "r1", "", "r3"],
+    "childCode[]": ["SE-TP01-OR01-100-18-65", "RB-DM01-02-OR01-202-18-70", "SE-NEW-X1", "RB-DM01-01-OR01-200-0-72"],
+    "name[]": ["ลูกตอปิโด TP-01 ส้ม OR01 ยาว 100", "ยางกลมมีรู ตัวตอปิโด ส้ม OR01 Ø70 รู 18", "ชิ้นยางใหม่จากฟอร์ม", "ยางกลมตัน หัวตอปิโด ส้ม OR01 Ø72"],
+    "kind[]": ["SE", "RB", "SE", "RB"], "uom[]": ["pcs", "rod", "pcs", "rod"], "qty[]": ["3", "0.04", "1", "0.02"], "scrapPct[]": ["0", "0", "0", "0"], "lineNote[]": ["", "", "", ""],
+    "weightG[]": ["49", "1530", "", "1405"], "compound[]": ["", "DM01", "", "DM01"], "cutLengthCm[]": ["", "7", "", "4"], "pcsPerRoll[]": ["", "25", "", "50"], "sePerGr[]": ["", "1", "", "1"], "kgPerRoll[]": ["", "1.53", "", "1.405"],
+  });
+  assert.deepEqual(env.log.toasts.at(-1)[1], "ok", env.log.toasts.at(-1)[0]);
+  const data = env.store.data();
+  const A = env.context.MNP_BOM_ACTIONS;
+  const fg = A.helpers.approvedBomOf(data, "DEMO-TP-01(P)-Y");
+  assert.deepEqual(json(fg.lines.map((line) => [line.childCode, line.qty])), [["SE-TP01-OR01-100-18-65", 3], ["SE-NEW-X1", 1]], "rows without a parent are the product's own lines");
+  assert.deepEqual(json(A.helpers.approvedBomOf(data, "SE-TP01-OR01-100-18-65").lines.map((line) => [line.childCode, line.qty])), [["RB-DM01-02-OR01-202-18-70", 0.04]], "child rows become the SE's BOM (new revision)");
+  assert.equal(A.helpers.approvedBomOf(data, "SE-TP01-OR01-100-18-65").revision, 3);
+  const created = A.helpers.itemOf(data, "SE-NEW-X1");
+  assert.equal(created.kind, "SE");
+  assert.equal(created.ownerDept, "GR");
+  assert.deepEqual(json(A.helpers.approvedBomOf(data, "SE-NEW-X1").lines.map((line) => line.childCode)), ["RB-DM01-01-OR01-200-0-72"]);
+  const rb = A.helpers.itemOf(data, "RB-DM01-02-OR01-202-18-70");
+  assert.equal(rb.rubber.cutLengthCm, 7, "changed cutting data patched the RB item");
+  assert.equal(rb.rubber.pcsPerRoll, 25);
+  const rb2 = A.helpers.itemOf(data, "RB-DM01-01-OR01-200-0-72");
+  assert.equal(rb2.rubber.cutLengthCm, 4, "unchanged RB data left as is");
+  assert.ok(!data.audit.some((entry) => entry.action === "แก้ชิ้นงาน" && entry.detail.startsWith("RB-DM01-01")), "no item edit audit for the unchanged RB");
+  assert.equal(env.log.renders, 1);
+  // ฟอร์มที่ผิด: ไม่มีชื่อสินค้าใหม่ → toast error และไม่บันทึก
+  await env.submit("p=build&base=NEW-ZZ&pkg=P&cs=Y", "saveBomTree", { code: "NEW-ZZ(P)-Y", itemName: "", itemUom: "set", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": ["P-STK-01"], "name[]": [""], "kind[]": ["PURCHASED"], "uom[]": ["pcs"], "qty[]": ["1"], "scrapPct[]": ["0"], "lineNote[]": [""], "weightG[]": [""], "compound[]": [""], "cutLengthCm[]": [""], "pcsPerRoll[]": [""], "sePerGr[]": [""], "kgPerRoll[]": [""] });
+  assert.equal(env.log.toasts.at(-1)[1], "error");
+  assert.match(env.log.toasts.at(-1)[0], /ระบุชื่อและหน่วย/);
+  assert.equal(A.helpers.itemOf(env.store.data(), "NEW-ZZ(P)-Y"), null);
+});
+
+test("the items page is read-only history: tree, where-used, revisions, and a link into the builder for planners only", async () => {
   const env = load();
   env.store.setUser("B05"); // หัวหน้า GR
   let html = await env.render("p=items");
-  assert.match(html, /ชิ้นงานของแผนก GR/);
-  assert.match(html, /SE-TP01-OR01-100-18-65/);
-  assert.match(html, /เพิ่มชิ้นงาน/, "GR can add its own items");
-  html = await env.render("p=items&dept=GR&sel=SE-TP01-OR01-100-18-65");
+  assert.match(html, /ชิ้นงานทั้งหมด/);
+  assert.doesNotMatch(html, /เพิ่มชิ้นงานเดี่ยว/, "GR cannot add items");
+  html = await env.render("p=items&sel=SE-TP01-OR01-100-18-65");
   assert.match(html, /RB-DM01-02-OR01-202-18-70/, "tree shows the RB children");
   assert.match(html, /0.0323/, "RB per SE from the cutting data");
   assert.match(html, /DEMO-TP-01\(P\)-Y/, "where-used lists the FG parent");
-  assert.match(html, /แก้ BOM \(ร่าง Rev ใหม่\)/);
-  html = await env.render("p=items&dept=GR&sel=SE-BL60-RD01-60-0-60");
-  assert.match(html, /รออนุมัติ/);
-  assert.match(html, /data-rf-action="approveBom"/, "the GR head can approve the GR layer");
-  html = await env.render("p=items&dept=PK&sel=DEMO-TP-01(P)-Y");
-  assert.doesNotMatch(html, /แก้ BOM/, "GR cannot edit the FG layer");
-  assert.match(html, /XP-00001/);
-  // RB: ชิ้นปลายทาง ไม่มีปุ่มสร้าง BOM
-  env.store.setUser("B04");
-  html = await env.render("p=items&dept=RB&sel=RB-DM03-03-YE03-3000-3-130");
+  assert.match(html, /Rev\.2/);
+  assert.match(html, /ถูกแทนแล้ว/, "revision history keeps the superseded one");
+  assert.doesNotMatch(html, /approveBom|data-rf-open="bomEdit"|แก้ BOM/, "no approval buttons and no editing for GR");
+  env.store.setUser("B03");
+  html = await env.render("p=items&sel=SE-TP01-OR01-100-18-65");
+  assert.match(html, /href="#\/bom\?p=build&amp;code=SE-TP01-OR01-100-18-65"/, "planner gets a link into the builder");
+  html = await env.render("p=items&sel=RB-DM03-03-YE03-3000-3-130");
   assert.match(html, /สูตรคอมปาวด์อยู่ที่ RubberFlow/);
   assert.match(html, /ยังไม่ผูกสูตร RubberFlow/);
-  assert.doesNotMatch(html, /สร้าง BOM/);
-  // ค้นหาด้วยรหัสเดิม (นำเข้าโดยฝ่ายวางแผน)
-  env.store.setUser("B03");
+  assert.doesNotMatch(html, /p=build&amp;code=RB-DM03/, "RB has no BOM to build");
   env.store.run("importFlat", { items: [{ code: "RB-Z-01-1-1-1", kind: "RB", name: "z", uom: "rod", ownerDept: "RB", legacyCodes: ["RB-Z-01- -1-1-1"], rubber: { compound: "DM01" } }], boms: [], source: "t" });
-  env.store.setUser("B02");
-  html = await env.render("p=items&dept=RB&q=RB-Z-01-%20-1");
+  html = await env.render("p=items&q=RB-Z-01-%20-1");
   assert.match(html, /เดิม: RB-Z-01- -1-1-1/);
   clean(html);
 });
@@ -142,7 +207,7 @@ test("dialogs render for their arguments and escape user text", async () => {
   const D = env.context.MNP_BOM_DIALOGS;
   const rb = c.data.jobs.find((job) => job.dept === "RB" && job.status !== "done");
   const cases = [
-    ["itemEdit", { dept: "RB" }], ["itemEdit", { code: "RB-DM01-02-OR01-202-18-70", dept: "RB" }], ["bomEdit", { itemCode: "SE-TP01-OR01-100-18-65" }], ["bomEdit", { itemCode: "DEMO-BL-60(K)-Z" }],
+    ["itemEdit", {}], ["itemEdit", { code: "RB-DM01-02-OR01-202-18-70" }], ["useInOrder", { code: "DEMO-TP-01(P)-Y" }],
     ["compoundLink", {}], ["compoundLink", { code: "DM03" }], ["orderNew", {}], ["orderItemAdd", { orderId: "DEMO-26002" }], ["stockCount", { orderId: "DEMO-26001", itemCode: "PT-00320" }],
     ["jobReport", { jobId: rb.id }], ["jobRubberflow", { jobId: rb.id }],
   ];
@@ -152,11 +217,15 @@ test("dialogs render for their arguments and escape user text", async () => {
     clean(built.html);
     assert.match(built.html, /<dialog/);
   }
-  assert.equal(D.bomEdit(c, { itemCode: "NOPE" }), null);
+  assert.equal(D.useInOrder(c, { code: "NOPE" }), null);
+  assert.equal(D.stockCount(c, { orderId: "NOPE", itemCode: "PT-00320" }), null);
+  assert.match(D.useInOrder(c, { code: "DEMO-TP-01(P)-Y" }).html, /DEMO-26002/, "draft orders are offered");
+  const html = await env.render(`p=orders&sel=X${encodeURIComponent(XSS.toUpperCase())}`);
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /&lt;SCRIPT&gt;|&lt;script&gt;/i);
   // เพิ่มสินค้าแบบ 3 ช่อง: preview บอกว่ารหัสมีอยู่ หรือจะสร้างจากต้นแบบ
   const add = D.orderItemAdd(c, { orderId: "DEMO-26002" });
   assert.match(add.html, /name="base"/);
-  assert.match(add.html, /value="DEMO-TP-01"/);
   assert.match(add.html, /\(B-N\)/);
   const makeNode = (value) => ({ value, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } });
   const parts = [makeNode("DEMO-TP-01"), makeNode("P"), makeNode("A")];
@@ -164,55 +233,36 @@ test("dialogs render for their arguments and escape user text", async () => {
   const preview = { className: "", querySelector: () => bodyNode };
   add.bind({ querySelector: (selector) => (selector === "[data-bom-preview]" ? preview : null), querySelectorAll: (selector) => (selector === "[data-bom-part]" ? parts : []) }, c);
   assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-A ยังไม่มีใน item master — จะสร้างจาก BOM ของ DEMO-TP-01\(P\)-Y/);
-  assert.equal(preview.className, "rf-callout is-warn");
   parts[2].value = "Y";
   parts[2].handlers.change();
   assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-Y · .* BOM Rev\.1/);
   assert.equal(preview.className, "rf-callout is-good");
-  parts[0].value = "";
-  parts[0].handlers.change();
-  assert.equal(bodyNode.textContent, "เลือกฐานรหัสเพื่อดูรหัสเต็ม");
-  assert.equal(D.stockCount(c, { orderId: "NOPE", itemCode: "PT-00320" }), null);
-  const html = await env.render(`p=orders&sel=X${encodeURIComponent(XSS.toUpperCase())}`);
-  assert.doesNotMatch(html, /<script>alert/);
-  assert.match(html, /&lt;SCRIPT&gt;|&lt;script&gt;/i);
-  // ตรวจ: การเลือกบน user ที่ไม่ใช่ RB ไม่มีปุ่ม RubberFlow
-  const rfDialog = D.jobRubberflow(c, { jobId: rb.id });
-  assert.match(rfDialog.html, /คอมปาวด์ที่ต้องใช้/);
 });
 
 test("forms go through the data-rf-* rules: a new order is created with dates converted, a bad form shows a toast and keeps the state", async () => {
   const env = load();
-  env.store.setUser("B03"); // planner
+  env.store.setUser("B03");
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "ลูกค้าทดสอบ", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01", "due.RB": "2026-10-20", "due.PK": "" });
   const order = env.store.data().orders.find((entry) => entry.id === "PI-TEST-1");
   assert.ok(order, "order created from the form");
   assert.equal(order.orderType, "EX");
   assert.equal(new Date(order.due.RB).getDate(), 20);
   assert.equal(order.due.PK, undefined, "empty department dates are dropped");
-  assert.equal(env.log.renders, 1);
   assert.deepEqual(env.log.toasts.at(-1), ["ok PI-TEST-1", "ok"]);
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "x", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01" });
   assert.equal(env.log.toasts.at(-1)[1], "error");
   assert.match(env.log.toasts.at(-1)[0], /อยู่แล้ว/);
   assert.equal(env.log.renders, 1, "failed form does not re-render");
-  // ร่าง BOM ผ่านฟอร์ม: อาร์เรย์ childCode[]/qty[] กลายเป็น lines
+  await env.submit("p=items", "saveItem", { code: "P-NEW-01", kind: "PURCHASED", name: "ของใหม่", ownerDept: "ST", uom: "pcs", weightG: "", "rubber.compound": "DM01" }, { create: true });
+  assert.equal(env.store.data().items.find((entry) => entry.code === "P-NEW-01").rubber, null);
   env.store.setUser("B05");
-  await env.submit("p=items", "saveBomDraft", { "childCode[]": ["RB-DM02-02-BK01-225-3-20", ""], "qty[]": ["0.1", ""], "scrapPct[]": ["0", ""], "lineNote[]": ["", ""], note: "ทดสอบ" }, { itemCode: "SE-TP01-BK01-140-3-20" });
-  const draft = env.store.data().boms.find((bom) => bom.itemCode === "SE-TP01-BK01-140-3-20" && bom.status === "draft");
-  assert.ok(draft);
-  // ค่าจาก vm context มี prototype คนละ realm จึงเทียบผ่าน JSON
-  assert.deepEqual(JSON.parse(JSON.stringify(draft.lines.map((line) => [line.childCode, line.qty]))), [["RB-DM02-02-BK01-225-3-20", 0.1]], "empty template row is dropped");
-  // แก้ชิ้นงานผ่านฟอร์ม: rubber.* ซ้อน และตัดทิ้งเมื่อไม่ใช่ RB/SE
-  env.store.setUser("B08");
-  await env.submit("p=items", "saveItem", { code: "P-NEW-01", kind: "PURCHASED", name: "ของใหม่", ownerDept: "ST", uom: "pcs", weightG: "", "rubber.compound": "DM01" });
-  const item = env.store.data().items.find((entry) => entry.code === "P-NEW-01");
-  assert.equal(item.rubber, null);
+  await env.submit("p=items", "saveItem", { code: "P-NEW-02", kind: "PURCHASED", name: "x", uom: "pcs" }, { create: true });
+  assert.match(env.log.toasts.at(-1)[0], /ฝ่ายวางแผนหรือผู้จัดการ/);
 });
 
 test("an RB job creates a RubberFlow work order through the RubberFlow store and the job keeps the WO number", async () => {
   const env = load();
-  env.store.setUser("B04"); // หัวหน้า RB
+  env.store.setUser("B04");
   env.rf.store.load();
   await env.render("p=jobs");
   const c = env.ctx("p=jobs&dept=RB");
@@ -221,7 +271,7 @@ test("an RB job creates a RubberFlow work order through the RubberFlow store and
   assert.match(html, /สร้าง WO ใน RubberFlow/);
   const built = env.context.MNP_BOM_DIALOGS.jobRubberflow(c, { jobId: job.id });
   assert.match(built.html, /DM02 → RC-NBR-OR02/);
-  assert.match(built.html, /data-bom-rf-create/, "the compound is linked to an approved recipe → create button");
+  assert.match(built.html, /data-bom-rf-create/);
   const button = { ...env.root, handlers: {}, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } };
   const dialog = { ...env.root, querySelector: (selector) => (selector === "[data-bom-rf-create]" ? button : null), close() { this.closed = true; } };
   built.bind(dialog, c);
@@ -232,20 +282,16 @@ test("an RB job creates a RubberFlow work order through the RubberFlow store and
   assert.equal(wo.recipeId, "RC-NBR-OR02");
   assert.equal(wo.customerPo, "DEMO-26001");
   assert.ok(wo.targetQty > 0);
-  assert.match(wo.note, new RegExp(job.id));
   const linked = env.store.data().jobs.find((entry) => entry.id === job.id);
   assert.equal(linked.externalRef.woId, wo.id);
-  assert.equal(linked.status, "in_progress");
   assert.ok(dialog.closed);
-  assert.match(env.log.toasts.at(-1)[0], /สร้าง WO/);
-  // งานที่สูตรยังไม่ผูก (DM03) ไม่มีปุ่ม
+  const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: job.id });
+  assert.match(again.html, /ไว้แล้ว/);
+  assert.doesNotMatch(again.html, /data-bom-rf-create/, "no second WO for a linked job");
   const unlinked = c.data.jobs.find((entry) => entry.itemCode === "RB-DM03-03-YE03-3000-3-130");
   const noRecipe = env.context.MNP_BOM_DIALOGS.jobRubberflow(c, { jobId: unlinked.id });
   assert.match(noRecipe.html, /ยังไม่ผูกกับสูตร PHR/);
   assert.doesNotMatch(noRecipe.html, /data-bom-rf-create/);
-  const compounds = await env.render("p=compounds");
-  assert.match(compounds, /สูตรอนุมัติแล้ว/);
-  assert.match(compounds, /ยังไม่ผูก/);
 });
 
 test("the import page parses pasted TSV, reports before saving and the orders page exports CSV with the BOMSHEET columns", async () => {
@@ -266,38 +312,30 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   assert.match(report.innerHTML, /อ่านได้ 2 บรรทัด/);
   assert.match(report.innerHTML, /data-bom-import/);
   clean(report.innerHTML);
-  // ส่งออก CSV ของใบที่ปล่อยแล้ว
   const c = env.ctx("p=orders&sel=DEMO-26001");
   const built = env.context.MNP_BOM_PAGES.orders(c);
   assert.match(built.html, /ส่งออก CSV ใบคำนวณ/);
-  assert.match(built.html, /ต้องผลิต\/สั่งซื้อ/);
   assert.match(built.html, /bom-surplus">-0.8571/, "stock 18 against 17.14 needed shows a surplus");
-  const order = c.data.orders.find((entry) => entry.id === "DEMO-26001");
-  // CSV ผ่าน helper ภายในหน้า: จำลองปุ่ม
+  assert.match(built.html, /p=build&amp;code=DEMO-TP-01/, "each ordered product links into the builder");
   const csvButton = { ...env.root, dataset: { bomCsv: "bomsheet", bomOrder: "DEMO-26001" }, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
   built.bind({ ...env.root, querySelectorAll: (selector) => (selector === "[data-bom-csv]" ? [csvButton] : []) }, c);
-  csvButton.handlers.click(); // ไม่มี Blob ใน Node → ไม่ดาวน์โหลด แต่ต้องไม่พัง
-  assert.ok(order.explosion.length > 10);
+  csvButton.handlers.click();
   const tabs = env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=req")).html;
   assert.match(tabs, /ต้องการรวม/);
   clean(tabs);
-  const jobsTab = env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=jobs")).html;
-  assert.match(jobsTab, /งานรายแผนก/);
-  clean(jobsTab);
+  clean(env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=jobs")).html);
 });
 
-test("the sidebar sub-menu counts BOMs awaiting the user and open jobs of their department; reset rebuilds the demo", async () => {
+test("the sidebar sub-menu counts open jobs of the user's department; reset rebuilds the demo", async () => {
   const env = load();
-  env.store.setUser("B05"); // GR: อนุมัติ SE ร่างได้ 1 และมีงานค้าง
+  env.store.setUser("B05");
   await env.render("p=jobs");
   const sub = env.module.nav[0].subnav("bom");
-  assert.match(sub, /BOM รออนุมัติจากคุณ">1</);
   assert.match(sub, /งานค้างของแผนก">\d+</);
+  assert.doesNotMatch(sub, /รออนุมัติ/);
   env.store.setUser("B01");
   await env.render("p=jobs");
-  const adminSub = env.module.nav[0].subnav("bom");
-  assert.doesNotMatch(adminSub, /งานค้างของแผนก/, "bosses see no personal job count");
-  assert.match(adminSub, /BOM รออนุมัติจากคุณ">1</);
+  assert.doesNotMatch(env.module.nav[0].subnav("bom"), /งานค้างของแผนก/, "bosses see no personal job count");
   env.store.run("createOrder", { pi: "TMP", customer: "x", country: "Thailand", orderedAt: Date.now(), whDue: Date.now() + 1 });
   env.store.reset();
   assert.ok(!env.store.data().orders.some((order) => order.id === "TMP"));

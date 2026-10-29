@@ -9,9 +9,10 @@
 
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม BOM", group: "ภาพรวม" },
-    { id: "items", label: "BOM ของแผนก", group: "ข้อมูลหลัก" },
-    { id: "compounds", label: "สูตรยาง ↔ RubberFlow", group: "ข้อมูลหลัก" },
-    { id: "import", label: "นำเข้าจาก Excel", group: "ข้อมูลหลัก" },
+    { id: "build", label: "สร้าง BOM", group: "BOM" },
+    { id: "items", label: "ค้นหาชิ้นงาน / ประวัติ BOM", group: "BOM" },
+    { id: "compounds", label: "สูตรยาง ↔ RubberFlow", group: "BOM" },
+    { id: "import", label: "นำเข้าจาก Excel", group: "BOM" },
     { id: "orders", label: "ใบสั่งผลิต (PI)", group: "ผลิต" },
     { id: "jobs", label: "งานของแผนก", group: "ผลิต" },
     { id: "audit", label: "บันทึกการใช้งาน", group: "ผลิต" },
@@ -20,11 +21,11 @@
   const GROUPS = Object.freeze([...new Set(MODULES.map((entry) => entry.group))]);
   const findModule = (id) => MODULES.find((entry) => entry.id === String(id ?? "")) ?? null;
 
-  // บทบาทสาธิต: dept = แผนกที่ถือสิทธิ์แก้ BOM/รายงานงาน (ดู docs/BOM_SYSTEM_PLAN.md §3.3)
+  // บทบาทสาธิต: สร้าง/แก้ BOM (เมนู สร้าง BOM, นำเข้า) = ฝ่ายวางแผนกับผู้จัดการ · dept = แผนกที่รายงานงานของตนได้
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการฝ่ายโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "items", "compounds", "import", "orders", "jobs"]) },
+    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "compounds", "import", "orders", "jobs"]) },
     rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "compounds", "jobs", "orders"]) },
     gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "jobs", "orders"]) },
     pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "jobs", "orders"]) },
