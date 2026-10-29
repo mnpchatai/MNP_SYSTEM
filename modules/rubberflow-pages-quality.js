@@ -17,7 +17,7 @@
     const fpy = records.length ? (records.filter((record) => record.result === "pass").length / records.length) * 100 : 100;
     const openNcr = data.ncrs.filter((ncr) => ncr.status === "open");
     const finLots = data.lots.filter((lot) => lot.stage === "finishing").sort((a, b) => b.createdAt - a.createdAt);
-    const tabs = ui.tabs([{ id: "hold", label: `รอตัดสิน (${held.length})` }, { id: "records", label: "ผลตรวจทั้งหมด" }, { id: "ncr", label: `NCR / CAPA (${data.ncrs.length})` }, { id: "coa", label: "ใบรับรอง CoA" }], tab, (id) => ctx.pageUrl({ tab: id === "hold" ? null : id }));
+    const tabs = ui.tabs([{ id: "hold", label: "รอตัดสิน" }, { id: "records", label: "ผลตรวจทั้งหมด" }, { id: "ncr", label: `NCR / CAPA (${data.ncrs.length})` }, { id: "coa", label: "ใบรับรอง CoA" }], tab, (id) => ctx.pageUrl({ tab: id === "hold" ? null : id }));
 
     let section = "";
     if (tab === "hold") {

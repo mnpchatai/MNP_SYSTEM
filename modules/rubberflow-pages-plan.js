@@ -67,7 +67,7 @@
       </div>
       <div class="rf-grid rf-g2-wide">
         ${ui.card(ui.table(["เลขที่", "ลูกค้า / สินค้า", "ความคืบหน้า", "กำหนดส่ง", "สถานะ"], orderRows, { emptyText: "ไม่มีใบสั่งผลิตที่กำลังดำเนินการ" }), { title: "ใบสั่งผลิตที่กำลังดำเนินการ", actions: ctx.canSee("orders") ? ui.link("ดูทั้งหมด", ctx.url("orders"), "btn rf-btn secondary small") : "", flush: true })}
-        ${ui.card(`<div class="rf-stack rf-alert-list">${alertList}</div>`, { title: `การแจ้งเตือน (${alerts.length})` })}
+        ${ui.card(`<div class="rf-stack rf-alert-list">${alertList}</div>`, { title: "การแจ้งเตือน" })}
       </div>`;
     return { html };
   };

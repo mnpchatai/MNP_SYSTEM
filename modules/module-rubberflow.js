@@ -71,7 +71,7 @@
   // ฟอร์มบางอันส่งค่าที่ action ต้องการคนละรูปแบบ (วันที่เป็น ms, รายการวัตถุดิบ, ตัวเลือกใช่/ไม่ใช่)
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, startDate: rules.fromInputDate(p.startDate), dueDate: rules.fromInputDate(p.dueDate) }),
-    receiveMaterial: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry) + rules.DAY - 1, coa: p.coa === "yes" }),
+    receiveMaterial: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry), coa: p.coa === "yes" }),
     createRecipe: (p) => ({ ...p, items: (p.materialCode ?? []).map((materialCode, index) => ({ materialCode, phr: (p.phr ?? [])[index] })) }),
     weighLine: (p) => ({ ...p, index: Number(p.index) }),
     shipBoxes: (p) => ({ ids: p.ids ?? [] }),
@@ -122,11 +122,17 @@
         showToast(friendlyError(error), "error");
         return;
       }
-      if (runAction(name, payload, form.dataset.rfSuccess)) renderRoute();
+      if (!runAction(name, payload, form.dataset.rfSuccess)) return;
+      // สำเร็จแล้วกันกดซ้ำ: ปิด dialog ที่ฟอร์มอยู่และล็อกปุ่มของฟอร์มทันที (renderRoute ของ app.js รอข้อมูลก่อนวาดใหม่)
+      form.closest?.("dialog")?.close?.();
+      form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
+      renderRoute();
     }));
     root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", () => {
       if (button.dataset.rfConfirm && !confirm(button.dataset.rfConfirm)) return;
-      if (runAction(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess)) renderRoute();
+      if (!runAction(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess)) return;
+      button.disabled = true;
+      renderRoute();
     }));
     root.querySelectorAll("[data-rf-open]").forEach((button) => button.addEventListener("click", () => openDialog(button.dataset.rfOpen, parseArgs(button), ctx)));
     root.querySelectorAll("[data-rf-go]").forEach((button) => button.addEventListener("click", () => { location.hash = button.dataset.rfGo; }));
@@ -190,7 +196,7 @@
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
     const bad = alerts.some((alert) => alert.tone === "bad");
     return `<div class="rf-toolbar">
-        <label class="rf-persona"><span>ทำหน้าที่เป็น</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>
+        <label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>
         <form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
         <div class="rf-row">
           ${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}
@@ -282,7 +288,7 @@
       body = `${pageNavHtml(user, page)}${built.html}`;
       bind = built.bind ?? null;
     }
-    const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">RB</span><h1>${escapeHtml(TITLE)}</h1></div><p class="rf-sub">${escapeHtml(SUBTITLE)}${user ? ` · ${escapeHtml(user.name)} (${escapeHtml(storeApi.ROLES[user.role]?.label ?? user.role)})` : ""}</p></div></header>`;
+    const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">RB</span><strong class="rf-app-name">${escapeHtml(TITLE)}</strong></div><p class="rf-sub">${escapeHtml(SUBTITLE)}</p></div></header>`;
     app.innerHTML = shell(`<div class="rf-page">${head}${user ? toolbarHtml(ctx) : ""}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
@@ -291,12 +297,19 @@
     return undefined;
   }
 
-  // นาฬิกาบ่มยาง/แจ้งเตือนเดินเองทุกนาที เฉพาะเมื่ออยู่หน้า RubberFlow ไม่มี dialog เปิด และไม่ได้กำลังพิมพ์ในช่องใด
+  // นาฬิกาบ่มยาง/แจ้งเตือนเดินเองทุกนาที เฉพาะเมื่อแท็บมองเห็น อยู่หน้า RubberFlow ไม่มี dialog เปิด ไม่ได้พิมพ์อยู่ และไม่มีฟอร์มที่กรอกค้าง
+  const hasDraft = () => [...document.querySelectorAll(".rf-page input, .rf-page textarea, .rf-page select")]
+    .some((node) => {
+      if (node.type === "checkbox" || node.type === "radio") return node.checked !== node.defaultChecked;
+      if (node.tagName === "SELECT") return node.selectedIndex !== Math.max(0, [...node.options].findIndex((option) => option.defaultSelected)); // ไม่มี selected = ตัวแรก
+      return node.value !== node.defaultValue;
+    });
   window.setInterval(() => {
-    if (!location.hash.startsWith(`#/${PATH}`) || !state.employee?.isSandbox) return;
+    if (document.hidden || !location.hash.startsWith(`#/${PATH}`) || !state.employee?.isSandbox) return;
     if (document.querySelector("dialog[open]")) return;
     const active = document.activeElement;
     if (active && ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName)) return;
+    if (hasDraft()) return;
     renderRoute();
   }, 60000);
 

@@ -211,7 +211,7 @@
     const html = `${ui.pageHead("สถานีที่ 1 · ผสมยาง", "รับวัตถุดิบที่ชั่งครบแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปรีด")}
       ${ui.stats([
         { label: "Yield ห้องผสม", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 99.0%" },
-        { label: "ผลิตแล้วสะสม", value: `${fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0), 0)} kg`, sub: `${lots.length} batch` },
+        { label: "ผลิตแล้วสะสม", value: `${fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0), 0)} kg` },
         { label: "กำลังบ่ม", value: String(resting.length), sub: resting[0] ? `ใกล้ครบ: ${fmtDuration(Math.min(...resting.map((lot) => lot.readyAt)) - now)}` : "ไม่มี" },
         { label: "ของเสียสะสม", value: `${fmtNum(lots.reduce((sum, lot) => sum + lot.scrapQty, 0), 1)} kg` },
       ])}

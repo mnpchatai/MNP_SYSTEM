@@ -81,6 +81,7 @@
           await video.play();
           const tick = async () => {
             if (halted) return;
+            if (!dialog.isConnected) { stop?.(); return; } // dialog ถูกถอดโดยไม่เกิด close (เช่น hash เปลี่ยน) → ปิดกล้อง
             try {
               const codes = await detector.detect(video);
               if (codes[0]) { show(codes[0].rawValue); stop?.(); stop = null; cameraBox.hidden = true; button.textContent = "เปิดกล้อง"; return; }

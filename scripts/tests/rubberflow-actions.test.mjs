@@ -45,7 +45,7 @@ test("orders: only approved recipes, positive quantities and ordered dates; the 
   rejects(() => A.createOrder(d, { recipeId: "RC-EPDM-DS01", customer: "x", targetQty: 1, startDate: NaN, dueDate: NOW }, ctx("planner")), /วันเริ่มผลิต/);
   rejects(() => A.createOrder(d, { recipeId: "RC-EPDM-DS01", customer: "x", targetQty: 1, startDate: NOW, dueDate: NOW - DAY }, ctx("planner")), /ไม่ก่อนวันเริ่ม/);
   const id = A.createOrder(d, { recipeId: "RC-EPDM-DS01", customer: " ลูกค้าใหม่ ", customerPo: "PO-1", targetQty: "120", startDate: NOW, dueDate: NOW + DAY }, ctx("planner"));
-  assert.match(id, /^WO-20261028-\d\d$/);
+  assert.match(id, new RegExp(`^WO-${rules.ymd(NOW)}-\\d\\d$`), "the id carries the local date of now (not tied to the machine's timezone)");
   const order = d.orders[0];
   assert.equal(order.id, id);
   assert.equal(order.customer, "ลูกค้าใหม่");
@@ -142,7 +142,7 @@ test("receiving material needs a future expiry and positive quantity; hold/relea
   rejects(() => A.receiveMaterial(d, { materialCode: "ZNO", qtyKg: 5, expiry: NOW - 1 }, ctx("store")), /อนาคต/);
   const lotNo = A.receiveMaterial(d, { materialCode: "ZNO", qtyKg: "5", expiry: NOW + 30 * DAY, coa: "yes" }, ctx("store"));
   const lot = d.materialLots.find((row) => row.lotNo === lotNo);
-  assert.match(lotNo, /^RM-ZNO-20261028-\d\d$/);
+  assert.match(lotNo, new RegExp(`^RM-ZNO-${rules.ymd(NOW)}-\\d\\d$`));
   assert.equal(lot.location, "ห้องเคมี D-1", "default storage of the material");
   assert.equal(lot.coa, true);
   A.setMaterialLotStatus(d, { lotNo, status: "hold" }, ctx("qc"));

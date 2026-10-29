@@ -138,7 +138,7 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(finishing, /Gatekeeper/, "nothing received at finishing yet");
   assert.doesNotMatch(finishing, /data-rf-form="recordFinishing"/);
   const quality = text(await env.render("p=quality"));
-  assert.match(quality, /รอตัดสิน \(1\)/);
+  assert.match(quality, /ล็อตรอตัดสิน \(Hold\) 1/);
   assert.match(quality, /NCR \/ CAPA \(2\)/);
   const ncr = await env.render("p=quality&tab=ncr");
   assert.match(ncr, /วิเคราะห์ 5-Why/);
