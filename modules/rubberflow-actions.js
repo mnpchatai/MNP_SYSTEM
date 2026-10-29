@@ -125,7 +125,7 @@
     audit(d, ctx, "อนุมัติสูตร", id);
   }
 
-  // ---------- เบิกและชั่งวัตถุดิบ ----------
+  // ---------- เบิกและชั่งเคมี ----------
 
   function createRequisition(d, { orderId, batches, note }, ctx) {
     const { recipeLines, allocateFefo } = rules();
@@ -286,7 +286,7 @@
     }, ctx);
     die.usageSinceClean += good;
     die.totalUsage += good;
-    audit(d, ctx, "บันทึกการรีด", `${lot.id} ${good} ${lot.uom}${reasons.length ? " (QC Hold อัตโนมัติ)" : ""}`);
+    audit(d, ctx, "บันทึกการฉีด", `${lot.id} ${good} ${lot.uom}${reasons.length ? " (QC Hold อัตโนมัติ)" : ""}`);
     return lot.id;
   }
 

@@ -33,11 +33,11 @@ export default function Login() {
         <div className="stack" style={{ gap: 16 }}>
           <h1>ควบคุมการผลิตยางตั้งแต่ชั่งสารจนถึงกล่องสินค้า</h1>
           <p style={{ color: '#a9aeb4', maxWidth: 520 }}>
-            ผสม → รีด → อบ → ตกแต่ง พร้อมกฎ FEFO, การชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ,
+            ผสม → ฉีด → อบ → ตกแต่ง พร้อมกฎ FEFO, การชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ,
             การส่งมอบงานแบบ Gatekeeper และการสืบย้อนกลับถึงล็อตวัตถุดิบ
           </p>
           <div className="flow" style={{ maxWidth: 560 }}>
-            {['ผสมยาง', 'รีดขึ้นรูป', 'อบวัลคาไนซ์', 'ตกแต่ง/บรรจุ'].map((s, i) => (
+            {['ผสมยาง', 'ฉีดขึ้นรูป', 'อบ HCM', 'ตกแต่ง/บรรจุ'].map((s, i) => (
               <div key={s} className="step" style={{ background: '#272c31', borderColor: '#353b42', color: '#e7e9eb' }}>
                 <div className="num">0{i + 1}</div>{s}
               </div>

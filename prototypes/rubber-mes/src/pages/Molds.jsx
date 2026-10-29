@@ -3,7 +3,7 @@ import { useStore } from '../data/store.jsx';
 import { fmtDate, fmtNum } from '../lib/format.js';
 import { Badge, Button, Card, PageHead, Progress } from '../components/ui.jsx';
 
-const KIND = { die: 'หัวดายรีด', mold: 'แม่พิมพ์อัด', line: 'สายอบต่อเนื่อง' };
+const KIND = { die: 'หัวดายฉีด', mold: 'แม่พิมพ์อัด', line: 'สายอบต่อเนื่อง' };
 const UNIT = { m: 'เมตร', pcs: 'ชิ้น', shot: 'รอบ' };
 
 export default function Molds() {

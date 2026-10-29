@@ -25,7 +25,7 @@ export default function Curing() {
 
   return (
     <>
-      <PageHead title="สถานีที่ 3 · อบวัลคาไนซ์" desc="คุมอุณหภูมิ เวลา และความดันตามสเปก ถ้าค่าหลุดช่วง ระบบจะกักกันล็อตอัตโนมัติ และนับรอบการใช้แม่พิมพ์ให้" />
+      <PageHead title="สถานีที่ 3 · อบ HCM" desc="คุมอุณหภูมิ เวลา และความดันตามสเปก ถ้าค่าหลุดช่วง ระบบจะกักกันล็อตอัตโนมัติ และนับรอบการใช้แม่พิมพ์ให้" />
       <div className="grid g4">
         <Stat icon={Gauge} label="Yield การอบ" value={`${stageYield(lots).toFixed(2)}%`} sub="เป้าหมาย ≥ 98.0%" />
         <Stat icon={Flame} label="ผ่านการอบสะสม" value={fmtNum(lots.reduce((a, l) => a + l.goodQty, 0))} sub="m / pcs" />

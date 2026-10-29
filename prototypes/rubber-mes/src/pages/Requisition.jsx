@@ -16,7 +16,7 @@ export default function Requisition() {
 
   return (
     <>
-      <PageHead title="เบิกและชั่งวัตถุดิบ" desc="ระเบิดสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และบังคับชั่งให้อยู่ในเกณฑ์ (Poka-Yoke)">
+      <PageHead title="เบิกและชั่งเคมี" desc="ระเบิดสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และบังคับชั่งให้อยู่ในเกณฑ์ (Poka-Yoke)">
         <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>สร้างใบเบิก</Button>
       </PageHead>
       <div className="split">
