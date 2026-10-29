@@ -2161,7 +2161,7 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-nav-ico, .rf-mod-ico, .rf-callout-ico { display: none; }
 .rf-pagehead-main { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .rf-nav-text { min-width: 0; }
-.rf-design-pick .select { min-height: 32px; padding: 4px 28px 4px 10px; font-size: 12px; }
+.rf-design-pick .select { min-height: 36px; padding: 4px 28px 4px 10px; font-size: 12px; }
 [data-rf-mod] { --rf-mod: var(--rf-accent, #0f766e); }
 [data-rf-mod="orders"], [data-rf-mod="recipes"] { --rf-mod: #2457d6; }
 [data-rf-mod="requisition"] { --rf-mod: #a3600f; }
@@ -2179,8 +2179,8 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-page[data-rf-design]:not([data-rf-design=""]) .rf-nav-ico, .rf-page[data-rf-design]:not([data-rf-design=""]) .rf-mod-ico, .rf-page[data-rf-design]:not([data-rf-design=""]) .rf-callout-ico { display: inline-grid; place-items: center; }
 body:has(.rf-page[data-rf-design]:not([data-rf-design=""])) .rf-nav-ico { display: inline-grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; font-size: 16px; }
 body:has(.rf-page[data-rf-design]:not([data-rf-design=""])) .rf-nav-item { gap: 8px; }
-.rf-page[data-rf-design]:not([data-rf-design=""]) .rf-callout { display: flex; align-items: flex-start; gap: 10px; }
-.rf-page[data-rf-design]:not([data-rf-design=""]) .rf-callout-ico { flex: 0 0 auto; font-size: 20px; margin-top: 1px; }
+.rf-page[data-rf-design]:not([data-rf-design=""]) .rf-callout, body:has(.rf-page[data-rf-design]:not([data-rf-design=""])) .rf-modal .rf-callout { display: flex; align-items: flex-start; gap: 10px; }
+.rf-page[data-rf-design]:not([data-rf-design=""]) .rf-callout-ico, body:has(.rf-page[data-rf-design]:not([data-rf-design=""])) .rf-modal .rf-callout-ico { display: inline-grid; place-items: center; flex: 0 0 auto; font-size: 20px; margin-top: 1px; }
 .rf-page[data-rf-design]:not([data-rf-design=""]) .rf-callout-body { min-width: 0; flex: 1; }
 .rf-page[data-rf-design]:not([data-rf-design=""]) .rf-mod-ico { width: 44px; height: 44px; flex: 0 0 44px; font-size: 24px; color: #fff; background: var(--rf-mod); border-radius: 12px; }
 .rf-page[data-rf-design]:not([data-rf-design=""]) .rf-stat-value, .rf-page[data-rf-design]:not([data-rf-design=""]) .rf-big, .rf-page[data-rf-design]:not([data-rf-design=""]) td { font-variant-numeric: tabular-nums; }
@@ -2315,8 +2315,8 @@ body:has(.rf-page[data-rf-design="tiers"]) .rf-nav-count { background: var(--rf-
 .rf-page[data-rf-design="tiers"] .rf-chart-area, .rf-page[data-rf-design="tiers"] .rf-chart-dot { fill: var(--rf-mod); }
 .rf-page[data-rf-design="tiers"] .rf-chart-line { stroke: var(--rf-mod); }
 .rf-page[data-rf-design="tiers"] .rf-node.is-hit { border-color: var(--rf-mod); box-shadow: 0 0 0 3px var(--rf-mod-soft); }
-.rf-page[data-rf-design="tiers"] .rf-modal { border: 0; border-radius: 16px; }
-.rf-page[data-rf-design="tiers"] .rf-modal-head { background: var(--rf-mod-soft); border-bottom-color: var(--rf-mod-line); border-radius: 16px 16px 0 0; }
+body:has(.rf-page[data-rf-design="tiers"]) .rf-modal { border: 0; border-radius: 16px; }
+body:has(.rf-page[data-rf-design="tiers"]) .rf-modal-head { background: var(--rf-mod-soft); border-bottom-color: var(--rf-mod-line); border-radius: 16px 16px 0 0; }
 @media (max-width: 1100px) {
   .rf-page[data-rf-design="tiers"] .rf-flow { gap: 12px; }
   .rf-page[data-rf-design="tiers"] .rf-step { margin-right: 0; }
@@ -2354,12 +2354,13 @@ body:has(.rf-page[data-rf-design="hero"]) .sandbox-banner { margin: 12px 0 0; }
 .rf-page[data-rf-design="hero"] { --rf-band: #0b1f3a; --rf-band-2: #11314f; --rf-band-ink: #ffffff; --rf-band-muted: #a9bad6; --rf-band-line: rgba(255, 255, 255, .16); --rf-band-field: rgba(255, 255, 255, .08); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
 :root[data-theme="dark"] .rf-page[data-rf-design="hero"] { --rf-accent-2: #5eead4; --rf-accent-soft: rgba(45, 212, 191, .16); }
 .rf-page[data-rf-design="hero"] .rf-head, .rf-page[data-rf-design="hero"] .rf-toolbar, .rf-page[data-rf-design="hero"] .rf-pagenav, .rf-page[data-rf-design="hero"] .rf-pagehead { margin: 0 calc(-1 * var(--rf-pad-x)); padding-left: var(--rf-pad-x); padding-right: var(--rf-pad-x); color: var(--rf-band-ink); background: var(--rf-band); }
-.rf-page[data-rf-design="hero"] .rf-head { margin-top: -14px; padding-top: 18px; padding-bottom: 6px; border-bottom: 0; }
+.rf-page[data-rf-design="hero"] .rf-head { padding-top: 18px; padding-bottom: 6px; border-bottom: 0; }
 .rf-page[data-rf-design="hero"] .rf-sub { color: var(--rf-band-muted); }
 .rf-page[data-rf-design="hero"] .rf-brand { background: var(--rf-accent); color: #04221d; }
 .rf-page[data-rf-design="hero"] .rf-head + .rf-toolbar, .rf-page[data-rf-design="hero"] .rf-toolbar { margin-top: -14px; padding-top: 6px; padding-bottom: 12px; }
 .rf-page[data-rf-design="hero"] .rf-persona { color: var(--rf-band-muted); }
-.rf-page[data-rf-design="hero"] .rf-toolbar .input, .rf-page[data-rf-design="hero"] .rf-toolbar .select { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
+.rf-page[data-rf-design="hero"] .rf-toolbar .input, .rf-page[data-rf-design="hero"] .rf-toolbar .select { color: var(--rf-band-ink); background-color: var(--rf-band-field); border-color: var(--rf-band-line); }
+.rf-page[data-rf-design="hero"] .rf-toolbar .ss-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%23a9bad6' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 .rf-page[data-rf-design="hero"] .rf-toolbar .input::placeholder { color: var(--rf-band-muted); }
 .rf-page[data-rf-design="hero"] .rf-toolbar .select option { color: #10203b; background: #fff; }
 .rf-page[data-rf-design="hero"] .rf-toolbar .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
@@ -2399,7 +2400,7 @@ body:has(.rf-page[data-rf-design="hero"]) .sandbox-banner { margin: 12px 0 0; }
 .rf-page[data-rf-design="hero"] .btn.secondary { color: var(--ink); border-color: var(--line); }
 .rf-page[data-rf-design="hero"] .input, .rf-page[data-rf-design="hero"] .select, .rf-page[data-rf-design="hero"] .textarea { min-height: 40px; border-radius: 10px; }
 .rf-page[data-rf-design="hero"] .rf-toolbar .input, .rf-page[data-rf-design="hero"] .rf-toolbar .select { min-height: 36px; }
-.rf-page[data-rf-design="hero"] .rf-design-pick .select { min-height: 32px; }
+.rf-page[data-rf-design="hero"] .rf-design-pick .select { min-height: 36px; }
 .rf-page[data-rf-design="hero"] .rf-scale-input { font-size: 28px; min-height: 52px; }
 .rf-page[data-rf-design="hero"] th { padding: 9px 12px; color: var(--muted); background: var(--shell); border-bottom-color: var(--line); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
 .rf-page[data-rf-design="hero"] td { padding: 11px 12px; }
@@ -2419,10 +2420,12 @@ body:has(.rf-page[data-rf-design="hero"]) .sandbox-banner { margin: 12px 0 0; }
 .rf-page[data-rf-design="hero"] .rf-step-no { color: var(--rf-mod); font-size: 11px; letter-spacing: .08em; }
 .rf-page[data-rf-design="hero"] .rf-step .rf-kv dd { font-weight: 600; font-variant-numeric: tabular-nums; }
 .rf-page[data-rf-design="hero"] .rf-bar { height: 8px; }
-.rf-page[data-rf-design="hero"] .rf-modal { border: 0; border-radius: 16px; }
-.rf-page[data-rf-design="hero"] .rf-modal-head { color: #fff; background: var(--rf-band); border-bottom: 0; border-radius: 16px 16px 0 0; }
-.rf-page[data-rf-design="hero"] .rf-modal-close { color: #c7d3e6; }
-.rf-page[data-rf-design="hero"] .rf-modal-close:hover { color: #fff; background: #152c4d; }
+body:has(.rf-page[data-rf-design="hero"]) .rf-modal { border: 0; border-radius: 16px; }
+body:has(.rf-page[data-rf-design="hero"]) .rf-modal-head { color: #fff; background: var(--rf-band); border-bottom: 0; border-radius: 16px 16px 0 0; }
+body:has(.rf-page[data-rf-design="hero"]) .rf-modal-close { color: #c7d3e6; }
+body:has(.rf-page[data-rf-design="hero"]) .rf-modal-close:hover { color: #fff; background: #152c4d; }
+body:has(.rf-page[data-rf-design="hero"]) .rf-modal .btn { min-height: 40px; border-radius: 10px; font-weight: 600; }
+body:has(.rf-page[data-rf-design="hero"]) .rf-modal .input, body:has(.rf-page[data-rf-design="hero"]) .rf-modal .select, body:has(.rf-page[data-rf-design="hero"]) .rf-modal .textarea { min-height: 40px; border-radius: 10px; }
 .rf-page[data-rf-design="hero"] .rf-login h1 { font-size: 24px; }
 .rf-page[data-rf-design="hero"] .rf-role { min-height: 64px; border-radius: 12px; }
 .rf-page[data-rf-design="hero"] .rf-nav-count { background: #fbbf24; color: #0b1f3a; }

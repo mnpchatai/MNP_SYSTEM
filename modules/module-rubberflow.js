@@ -298,7 +298,9 @@
     root.querySelector("[data-rf-design-pick]")?.addEventListener("change", (event) => {
       const value = String(event.target.value ?? "");
       writeDesign(isDesign(value) ? value : "");
-      renderRoute();
+      // URL ที่มี ?design= จะชนะค่าที่เก็บไว้ จึงถอดออกจาก URL ก่อน (hashchange วาดหน้าใหม่เอง) ไม่งั้นช่องเลือกไม่มีผล
+      if (ctx.params.has("design")) location.hash = ctx.pageUrl({ design: null });
+      else renderRoute();
     });
     root.querySelector("[data-rf-reset]")?.addEventListener("click", () => {
       if (!confirm("ล้างข้อมูลที่บันทึกทั้งหมดแล้วสร้างข้อมูลสาธิตใหม่?")) return;

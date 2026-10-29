@@ -317,3 +317,17 @@ test("the design switcher: ?design= wins and is remembered, unknown values fall 
   select.handlers.change({ target: { value: "" } });
   assert.equal(env.storage.has("mnp-rubberflow-design"), false, "back to the default removes the key");
 });
+
+test("picking a design while the URL carries ?design= drops the parameter so the pick is not overridden", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const select = { ...env.root, handlers: {} };
+  select.addEventListener = (type, handler) => { select.handlers[type] = handler; };
+  env.fakes["[data-rf-design-pick]"] = [select];
+  await env.render("p=mixing&design=tiers&q=MX");
+  select.handlers.change({ target: { value: "hero" } });
+  assert.equal(env.storage.get("mnp-rubberflow-design"), "hero");
+  assert.equal(env.log.hash, "#/rubberflow?p=mixing&q=MX", "design= is removed, the rest of the URL stays");
+  assert.equal(env.log.renders, 0, "the hash change redraws by itself");
+  assert.match(await env.render("p=mixing&q=MX"), /data-rf-design="hero"/);
+});
