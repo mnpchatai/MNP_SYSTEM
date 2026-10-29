@@ -133,7 +133,7 @@
     const uomOptions = Object.entries(rules.UOMS).map(([value, meta]) => ({ value, label: meta.label }));
     const deptOptions = rules.DEPTS.map((value) => ({ value, label: rules.DEPT_LABEL[value] }));
     const compoundOptions = data.compounds.map((entry) => entry.code);
-    const body = `<form id="bom-item-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}">
+    const body = `<form id="bom-item-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}"${item ? "" : ' data-rf-args=\'{"create":true}\''}>
       <div class="rf-grid rf-g2">
         ${ui.field("รหัสชิ้นงาน *", item ? `<input class="input rf-input" name="code" value="${attr(item.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น RB-DM01-02-OR01-202-18-70" }))}
         ${ui.field("ชนิด *", ui.select("kind", kindOptions, { value: kind, extra: "data-bom-kind" }))}
@@ -500,6 +500,8 @@
     const kg = ctx.helpers.rbJobKg(job, item, { scrapPct: 5 });
     const targetQty = recipe ? Math.max(1, Math.ceil(kg * Number(recipe.yieldPerKg || 1))) : 0;
     const problems = [];
+    if (job.externalRef?.woId) problems.push(`งานนี้สร้าง WO ${job.externalRef.woId} ไว้แล้ว`);
+    if (!["released", "in_progress"].includes(order?.status)) problems.push("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     if (!rf) problems.push("RubberFlow ยังไม่โหลดในเบราว์เซอร์นี้");
     if (!item?.rubber?.compound) problems.push("เส้นยางนี้ไม่มีรหัสสูตรยาง");
     else if (!compound?.recipeId) problems.push(`สูตรยาง ${item.rubber.compound} ยังไม่ผูกกับสูตร PHR ของ RubberFlow (เมนู “สูตรยาง ↔ RubberFlow”)`);
@@ -522,8 +524,13 @@
           startDate: new Date(ctx.now).setHours(0, 0, 0, 0), dueDate: Math.max(job.dueAt, new Date(ctx.now).setHours(0, 0, 0, 0)), priority: late(ctx, job) ? "urgent" : "normal",
           note: `จาก BOM งาน ${job.id} · PI ${job.orderId} · ${job.itemCode} ${rules.fmtQty(job.qtyPlanned - job.qtyDone)} ${uomText(ctx, job.uom)} ≈ ${rules.fmtQty(kg, 2)} kg`,
         });
-        if (!result.ok) { showToast(friendlyError(result.error), "error"); event.currentTarget.disabled = false; return; }
-        if (ctx.runAction("linkJobToRubberFlow", { jobId: job.id, woId: result.result, kg }, `สร้าง WO ${result.result} ใน RubberFlow แล้ว`)) { dialog.close?.(); renderRoute(); }
+        const button = event.currentTarget;
+        if (!result.ok) { showToast(friendlyError(result.error), "error"); button.disabled = false; return; }
+        // WO ถูกสร้างแล้ว: ถ้าบันทึกเลขที่งานไม่ได้ ให้ผู้ใช้เห็นเลข WO เพื่อไม่สร้างซ้ำ
+        if (ctx.runAction("linkJobToRubberFlow", { jobId: job.id, woId: result.result, kg }, `สร้าง WO ${result.result} ใน RubberFlow แล้ว`)) { dialog.close?.(); renderRoute(); return; }
+        showToast(`สร้าง WO ${result.result} ใน RubberFlow แล้ว แต่บันทึกเลขที่งานไม่ได้ อย่ากดสร้างซ้ำ`, "error");
+        dialog.close?.();
+        renderRoute();
       });
     };
     return { html: ui.dialog("jobRubberflow", `สร้างใบสั่งผลิตใน RubberFlow จาก ${job.id}`, body, { footer: `${ui.closeButton("ปิด")}${problems.length ? "" : '<button class="btn rf-btn" type="button" data-bom-rf-create>สร้าง WO</button>'}` }), bind };

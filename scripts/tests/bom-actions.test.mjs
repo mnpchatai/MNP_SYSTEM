@@ -115,6 +115,40 @@ test("item master: the owner department maintains its items; RB items need a com
   assert.equal(d.compounds.find((compound) => compound.code === "DM09").recipeId, null);
 });
 
+test("an existing item can only be edited by its owner department, duplicates are refused on create and only bosses move ownership", () => {
+  const d = fresh();
+  // RB พยายามยึด PT-00320 ผ่านฟอร์ม "เพิ่มชิ้นงาน" ของแท็บ RB
+  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "hijacked", uom: "pcs", ownerDept: "RB", create: true }, ctx("rb")), /อยู่แล้ว/);
+  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "hijacked", uom: "pcs", ownerDept: "RB" }, ctx("rb")), /แผนก PT/);
+  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "hijacked", uom: "pcs", ownerDept: "PT" }, ctx("rb")), /แผนก PT/);
+  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "x", uom: "pcs", ownerDept: "RB" }, ctx("pt")), /ผู้จัดการ/);
+  rejects(() => A.saveItem(d, { code: "PT-00320", kind: "PT", name: "x", uom: "pcs", ownerDept: "XX" }, ctx("pt")), /แผนกเจ้าของไม่ถูกต้อง/);
+  const item = A.helpers.itemOf(d, "PT-00320");
+  assert.equal(item.ownerDept, "PT");
+  assert.equal(item.name, "แกนตอปิโด ท่อดำ 150 ซม. (20 ก./ชิ้น)");
+  A.saveItem(d, { code: "PT-00320", kind: "PT", name: "แกนตอปิโด (แก้โดย PT)", uom: "pcs", ownerDept: "PT" }, ctx("pt"));
+  assert.equal(item.name, "แกนตอปิโด (แก้โดย PT)");
+  A.saveItem(d, { code: "PT-00320", kind: "PT", name: item.name, uom: "pcs", ownerDept: "BG" }, ctx("manager"));
+  assert.equal(item.ownerDept, "BG");
+  assert.ok(d.boms.filter((bom) => bom.itemCode === "PT-00320").every((bom) => bom.ownerDept === "BG"), "the BOMs of the item follow the new owner");
+  // แก้ SE ผ่านฟอร์มโดยไม่ส่ง product: ข้อมูลยางเดิมไม่หาย
+  A.saveItem(d, { code: "SE-TP01-OR01-100-18-65", kind: "SE", name: "ลูกตอปิโด", uom: "pcs", ownerDept: "GR", rubber: { color: "OR02", product: "" } }, ctx("gr"));
+  assert.deepEqual(A.helpers.itemOf(d, "SE-TP01-OR01-100-18-65").rubber, { product: "TP01", color: "OR02", lengthMm: 100, holeMm: 18, odMm: 65 });
+  // BOM ของ RB/ของซื้อไม่มีในระบบนี้
+  rejects(() => A.saveBomDraft(d, { itemCode: "RB-DM01-01-OR01-200-0-72", lines: [{ childCode: "P-PEL-BK", qty: 1 }] }, ctx("rb")), /RubberFlow/);
+  rejects(() => A.saveBomDraft(d, { itemCode: "P-PEL-BK", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("st")), /ของซื้อ/);
+  // วงจรผ่านร่างสองใบที่อนุมัติทีหลัง: ใบที่สองถูกปฏิเสธตอนอนุมัติ
+  const a = A.saveItem(d, { code: "X-A", kind: "SUBPART", name: "a", uom: "pcs", ownerDept: "PK" }, ctx("planner"));
+  const b = A.saveItem(d, { code: "X-B", kind: "SUBPART", name: "b", uom: "pcs", ownerDept: "PK" }, ctx("planner"));
+  const ab = A.saveBomDraft(d, { itemCode: a, lines: [{ childCode: b, qty: 1 }] }, ctx("planner"));
+  const ba = A.saveBomDraft(d, { itemCode: b, lines: [{ childCode: a, qty: 1 }] }, ctx("planner"));
+  A.submitBom(d, { bomId: ab }, ctx("planner"));
+  A.submitBom(d, { bomId: ba }, ctx("planner"));
+  A.approveBom(d, { bomId: ab }, ctx("manager"));
+  rejects(() => A.approveBom(d, { bomId: ba }, ctx("manager")), /วงจร/);
+  rejects(() => A.createOrder(d, { pi: "N-1", customer: "x", country: "Thailand", orderedAt: null, whDue: "" }, ctx("planner")), /วันที่สั่งผลิต/);
+});
+
 test("a production order explodes with the approved revisions, locks them at release and spawns one job per department × item", () => {
   const d = fresh();
   const day = (n) => new Date(NOW + n * DAY).setHours(0, 0, 0, 0);
@@ -232,6 +266,18 @@ test("RB jobs link to a RubberFlow work order and the compound kilograms come fr
   assert.equal(rb.externalRef.woId, "WO-69-0007");
   assert.equal(rb.externalRef.kg, 3.1);
   assert.equal(rb.status, "in_progress");
+  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-69-0008" }, ctx("rb")), /ผูกกับ WO-69-0007 อยู่แล้ว/);
+  // ใบที่มี WO ผูกอยู่ยกเลิกไม่ได้ และงานของใบที่ปิดแล้วเปลี่ยนสถานะไม่ได้
+  const d2 = fresh();
+  const rb2 = d2.jobs.find((job) => job.orderId === "DEMO-26002" || (job.orderId === "DEMO-26001" && job.dept === "RB" && job.qtyDone === 0));
+  A.releaseOrder(d2, { orderId: "DEMO-26002" }, ctx("planner"));
+  const job2 = d2.jobs.find((job) => job.orderId === "DEMO-26002" && job.dept === "RB");
+  A.linkJobToRubberFlow(d2, { jobId: job2.id, woId: "WO-X" }, ctx("rb"));
+  rejects(() => A.cancelOrder(d2, { orderId: "DEMO-26002" }, ctx("planner")), /WO-X/);
+  assert.ok(rb2);
+  const d3 = fresh();
+  d3.orders.find((order) => order.id === "DEMO-26001").status = "completed";
+  rejects(() => A.setJobStatus(d3, { jobId: d3.jobs.find((job) => job.orderId === "DEMO-26001" && job.status === "queued").id, status: "hold" }, ctx("manager")), /ไม่อยู่ในสถานะผลิต/);
 });
 
 test("importing a flat sheet adds items and approved revision-1 BOMs, merges legacy codes and never overwrites an approved BOM", () => {

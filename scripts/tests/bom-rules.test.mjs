@@ -110,8 +110,9 @@ test("the flat DATA sheet (per-PI header) is read into rows and rebuilt as a mul
   const fgLines = boms.get("DEMO-ST-01(P)-Y");
   assert.deepEqual(fgLines.map((line) => [line.childCode, line.qty]), [["XP-00001", 1], ["PT-00320", 0.3], ["B03-1032", 0.025], ["SE-ST01-100-18-65", 6], ["B02-092", 1]], "the duplicated SE line is merged by summing its quantity");
   assert.equal(report.merged, 1, "only the SE line under the FG is summed; the duplicated RB ratio under the SE is not doubled");
-  assert.deepEqual(boms.get("PT-00320"), [{ childCode: "D21-016", qty: 0.006, uom: "kg", consumerDept: "PT", producerDept: "ST", scrapPct: 0, flags: [], note: "" }]);
-  assert.deepEqual(boms.get("B02-092").map((line) => line.childCode), ["C17-012"]);
+  // คอลัมน์ "จำนวนที่ใช้ต่อชุด" เป็นต่อ FG ทั้งชีต: เม็ดพลาสติก 0.006 กก./ชุด ÷ แกน 0.3 ชิ้น/ชุด = 0.02 กก. ต่อแกน 1 ชิ้น (= 20 กรัมตามหน่วย "ชิ้น(20g)")
+  assert.deepEqual(boms.get("PT-00320"), [{ childCode: "D21-016", qty: 0.02, uom: "kg", consumerDept: "PT", producerDept: "ST", scrapPct: 0, flags: [], note: "" }]);
+  assert.deepEqual(boms.get("B02-092").map((line) => [line.childCode, line.qty]), [["C17-012", 0.59]], "bag used 1 per set → per-bag quantity equals the sheet quantity");
   const seLines = boms.get("SE-ST01-100-18-65");
   assert.equal(seLines.length, 1);
   assert.ok(Math.abs(seLines[0].qty - 1 / 31) < 1e-12, "RB under SE uses the cutting formula, not the repeated SE quantity");
@@ -190,8 +191,8 @@ test("explosion reproduces the BOMSHEET numbers of a real order line and aggrega
 });
 
 test("CSV output quotes commas and quotes, and formatting helpers handle empty values", () => {
-  const csv = rules.toCsv([["a", 'b "c"', "d,e"], [1, 0.5, ""]]);
-  assert.equal(csv, '﻿a,"b ""c""","d,e"\r\n1,0.5,');
+  const csv = rules.toCsv([["a", 'b "c"', "d,e"], [1, 0.5, ""], ["=SUM(A1)", "-0.86", -0.86, "@x"]]);
+  assert.equal(csv, "﻿a,\"b \"\"c\"\"\",\"d,e\"\r\n1,0.5,\r\n'=SUM(A1),'-0.86,-0.86,'@x", "formula-looking text is prefixed, numbers are not");
   assert.equal(rules.fmtQty(7.7419), "7.74");
   assert.equal(rules.fmtQty(0.0323), "0.0323");
   assert.equal(rules.fmtQty(80), "80");

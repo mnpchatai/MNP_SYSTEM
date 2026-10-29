@@ -258,9 +258,16 @@
       const fgUom = normalizeUom(fgRow?.uom || "ชุด");
       ensureItem(fgCode, { kind: "FG", name: fgRow?.name || `สินค้า ${itemName}`, uom: fgUom.code, pair: "PK" });
       const seenInThisFg = new Set([fgCode]);
+      // พ่อล่าสุดของแต่ละชนิด พร้อม "จำนวนที่ใช้ต่อชุด" ของพ่อในสินค้านี้ — คอลัมน์นั้นเป็นปริมาณต่อ 1 FG ทั้งชีต
+      // ลูกของ PT/BG/SE (เม็ดพลาสติก ผ้า ซิป ของสิ้นเปลือง) จึงต้องหารด้วยจำนวนพ่อต่อชุดให้เป็น "ต่อ 1 ชิ้นพ่อ" (เช่น เม็ด 0.006 กก./ชุด ÷ แกน 0.3 ชิ้น/ชุด = 0.02 กก./ชิ้น)
       let lastSe = null;
       let lastPt = null;
       let lastBg = null;
+      const parentQty = {};
+      const perParent = (parentCode, qty) => {
+        const divisor = Number(parentQty[parentCode]) || 0;
+        return divisor > 0 ? Math.round((qty / divisor) * 1e12) / 1e12 : qty;
+      };
       for (const row of rows) {
         if (row === fgRow) continue;
         report.lineCount += 1;
@@ -290,9 +297,10 @@
         } else if (row.pair === "PT-ST") parentCode = lastPt ?? fgCode;
         else if (row.pair === "BG-ST" || row.pair === "BG-PT") parentCode = lastBg ?? fgCode;
         else if (row.pair === "GR-ST") parentCode = lastSe ?? fgCode;
-        if (kind === "SE") lastSe = code;
-        if (kind === "PT") lastPt = code;
-        if (kind === "BG") lastBg = code;
+        if (kind !== "RB" && parentCode !== fgCode) qty = perParent(parentCode, row.qty);
+        if (kind === "SE") { lastSe = code; parentQty[code] = row.qty; }
+        if (kind === "PT") { lastPt = code; parentQty[code] = row.qty; }
+        if (kind === "BG") { lastBg = code; parentQty[code] = row.qty; }
         const consumerDept = parentCode === fgCode ? "PK" : items.get(parentCode)?.ownerDept ?? "PK";
         const line = { childCode: code, qty: Number(qty) || 0, uom: uom.code, consumerDept, producerDept: item.ownerDept, scrapPct: 0, flags: [], note: "" };
         const sameFg = seenInThisFg.has(parentCode);
@@ -351,8 +359,9 @@
   const toMake = (required, stock) => Math.round((Number(required) - (Number(stock) || 0)) * 1e4) / 1e4;
 
   // ---------- CSV (เปิดใน Excel) ----------
+  // ค่าที่ขึ้นต้นด้วย = + - @ ถูกนำหน้าด้วย ' กัน Excel ตีความเป็นสูตร (ชื่อจากชีต/ชื่อลูกค้าเป็นข้อความที่ผู้ใช้กรอก) ตัวเลขไม่ถูกแตะ
   const csvCell = (value) => {
-    const text = String(value ?? "");
+    const text = typeof value === "number" ? String(value) : /^[=+\-@]/.test(String(value ?? "")) ? `'${value}` : String(value ?? "");
     return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
   };
   const toCsv = (rows) => `﻿${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;

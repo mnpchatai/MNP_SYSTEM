@@ -52,12 +52,19 @@
     const R = rules();
     const code = R.canonicalCode(text(p.code, "รหัสชิ้นงาน", 60));
     const kind = R.KINDS[p.kind] ? p.kind : fail("ชนิดชิ้นงานไม่ถูกต้อง");
+    if (p.ownerDept !== undefined && p.ownerDept !== "" && !R.DEPTS.includes(p.ownerDept)) fail("แผนกเจ้าของไม่ถูกต้อง");
     const ownerDept = R.DEPTS.includes(p.ownerDept) ? p.ownerDept : R.ownerDeptOf(kind, p.pair);
-    if (!canEditDept(user, ownerDept)) fail(`เฉพาะแผนก ${ownerDept} (หรือผู้จัดการ) จึงแก้ชิ้นงานของแผนกนี้ได้`);
+    const existing = itemOf(d, code);
+    if (existing && p.create) fail(`มีรหัส ${code} อยู่แล้ว (ของแผนก ${existing.ownerDept}) เปิดจากรายการเพื่อแก้แทน`);
+    // แก้ชิ้นที่มีอยู่: ต้องเป็นแผนกเจ้าของเดิม (หรือผู้จัดการ) และย้ายแผนกเจ้าของได้เฉพาะผู้จัดการ
+    if (existing && !canEditDept(user, existing.ownerDept)) fail(`ชิ้นงาน ${code} เป็นของแผนก ${existing.ownerDept} แก้ได้เฉพาะแผนกนั้นหรือผู้จัดการ`);
+    if (existing && existing.ownerDept !== ownerDept && !isBoss(user)) fail("ย้ายแผนกเจ้าของชิ้นงานได้เฉพาะผู้จัดการ");
+    if (!canEditDept(user, ownerDept)) fail(`เฉพาะแผนก ${ownerDept} (หรือผู้จัดการ) จึงเพิ่มชิ้นงานของแผนกนี้ได้`);
     const uom = R.UOMS[p.uom] ? p.uom : fail("หน่วยนับไม่ถูกต้อง");
     const name = text(p.name, "ชื่อชิ้นงาน", 160);
-    const existing = itemOf(d, code);
-    const rubber = p.rubber && typeof p.rubber === "object" ? { ...p.rubber } : existing?.rubber ?? null;
+    // ข้อมูลยาง: ช่องว่างจากฟอร์มไม่ลบค่าเดิม (เช่น product ของ SE ที่ฟอร์มไม่มีช่อง)
+    const incoming = p.rubber && typeof p.rubber === "object" ? Object.fromEntries(Object.entries(p.rubber).filter(([, value]) => value !== "" && value !== undefined && value !== null)) : null;
+    const rubber = incoming ? { ...(existing?.rubber ?? {}), ...incoming } : existing?.rubber ?? null;
     if (kind === "RB" && rubber) {
       for (const key of ["cutLengthCm", "pcsPerRoll", "sePerGr", "kgPerRoll", "lengthMm", "holeMm", "odMm"]) if (rubber[key] !== undefined && rubber[key] !== "") rubber[key] = num(rubber[key], key, { allowZero: true });
       if (!rubber.compound) fail("เส้นยางต้องระบุรหัสสูตรยาง (คอมปาวด์)");
@@ -65,6 +72,8 @@
     }
     const item = existing ?? { code, legacyCodes: [], createdAt: ctx.now, active: true, group: p.group || "TOY" };
     if (existing && existing.kind !== kind && approvedBomOf(d, code)) fail("เปลี่ยนชนิดชิ้นงานที่มี BOM อนุมัติแล้วไม่ได้");
+    // ย้ายแผนกเจ้าของ: BOM ของชิ้นนี้ย้ายตาม (เจ้าของ BOM = เจ้าของชิ้นเสมอ)
+    if (existing && existing.ownerDept !== ownerDept) d.boms.filter((bom) => bom.itemCode === code).forEach((bom) => { bom.ownerDept = ownerDept; bom.changeLog.push({ at: ctx.now, by: user.name, text: `ย้ายแผนกเจ้าของ ${existing.ownerDept} → ${ownerDept}` }); });
     Object.assign(item, { kind, name, ownerDept, uom, weightG: p.weightG === undefined || p.weightG === "" ? item.weightG ?? 0 : num(p.weightG, "น้ำหนัก (กรัม)", { allowZero: true }), rubber, active: p.active === undefined ? item.active !== false : p.active !== false && p.active !== "false", updatedAt: ctx.now });
     if (!existing) d.items.push(item);
     audit(d, ctx, existing ? "แก้ชิ้นงาน" : "เพิ่มชิ้นงาน", `${code} ${name}`);
@@ -104,6 +113,8 @@
   function saveBomDraft(d, p, ctx) {
     const user = requireUser(ctx);
     const parent = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
+    if (parent.kind === "RB") fail("เส้นยางไม่มี BOM ในระบบนี้ (สูตรคอมปาวด์อยู่ที่ RubberFlow)");
+    if (parent.kind === "PURCHASED") fail("ของซื้อไม่มีส่วนประกอบ");
     if (!canEditDept(user, parent.ownerDept)) fail(`BOM ของ ${parent.code} เป็นของแผนก ${parent.ownerDept} แก้ได้เฉพาะแผนกนั้นหรือผู้จัดการ`);
     const lines = normalizeLines(d, parent, p.lines);
     let bom = openBomOf(d, parent.code);
@@ -140,6 +151,9 @@
     const bom = bomById(d, bomId);
     if (bom.status !== "pending") fail("อนุมัติได้เฉพาะ revision ที่รออนุมัติ");
     if (!canApprove(user, bom)) fail(bom.ownerDept === "PK" ? "ชั้นสินค้าสำเร็จรูปอนุมัติโดยผู้จัดการฝ่ายโรงงานเท่านั้น" : `อนุมัติได้โดยหัวหน้าแผนก ${bom.ownerDept} หรือผู้จัดการ`);
+    // ตรวจวงจรซ้ำกับ BOM ที่อนุมัติ ณ ตอนนี้ (ร่างสองใบที่อ้างกันไปมาอาจผ่านตอนบันทึกร่างแล้วถูกอนุมัติทีหลัง)
+    const parent = itemOf(d, bom.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
+    normalizeLines(d, parent, bom.lines);
     const previous = approvedBomOf(d, bom.itemCode);
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
     bom.status = "approved";
@@ -231,9 +245,9 @@
     const R = rules();
     const id = text(p.pi, "เลขที่ PI", 40).toUpperCase();
     if (d.orders.some((order) => order.id === id)) fail(`มีใบสั่งผลิต ${id} อยู่แล้ว`);
-    const orderedAt = Number(p.orderedAt);
-    const whDue = Number(p.whDue);
-    if (!Number.isFinite(orderedAt) || !Number.isFinite(whDue)) fail("กรุณาระบุวันที่สั่งผลิตและวันส่งมอบคลัง");
+    const orderedAt = p.orderedAt === null || p.orderedAt === "" ? NaN : Number(p.orderedAt);
+    const whDue = p.whDue === null || p.whDue === "" ? NaN : Number(p.whDue);
+    if (!Number.isFinite(orderedAt) || !Number.isFinite(whDue) || orderedAt <= 0 || whDue <= 0) fail("กรุณาระบุวันที่สั่งผลิตและวันส่งมอบคลัง");
     if (whDue < orderedAt) fail("วันส่งมอบคลังต้องไม่ก่อนวันที่สั่งผลิต");
     const due = {};
     for (const dept of R.DUE_DEPTS) {
@@ -354,6 +368,8 @@
     const order = orderById(d, orderId);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
     if (d.jobs.some((job) => job.orderId === order.id && job.qtyDone > 0)) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ให้ปิดใบแทน");
+    const linked = d.jobs.filter((job) => job.orderId === order.id && job.externalRef);
+    if (linked.length) fail(`มีงานที่สร้าง WO ใน RubberFlow แล้ว (${linked.map((job) => job.externalRef.woId).join(", ")}) ยกเลิก WO ใน RubberFlow ก่อน`);
     order.status = "cancelled";
     order.cancelledAt = ctx.now;
     order.cancelReason = String(reason ?? "").trim().slice(0, 200);
@@ -404,6 +420,7 @@
     if (!canWorkJob(user, job)) fail(`เปลี่ยนสถานะได้โดยแผนก ${job.dept} หรือผู้จัดการ`);
     if (!["queued", "in_progress", "hold"].includes(status)) fail("สถานะไม่ถูกต้อง");
     if (job.status === "done") fail("งานที่เสร็จแล้วเปลี่ยนสถานะไม่ได้");
+    if (!["released", "in_progress"].includes(orderById(d, job.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     job.status = status;
     audit(d, ctx, "เปลี่ยนสถานะงาน", `${job.id} → ${status}`);
     return job.id;
@@ -415,6 +432,8 @@
     const job = jobById(d, jobId);
     if (job.dept !== "RB") fail("เชื่อม RubberFlow ได้เฉพาะงานของแผนก RB");
     if (!canWorkJob(user, job) && user.role !== "planner") fail("เชื่อม RubberFlow ได้โดยแผนก RB ฝ่ายวางแผน หรือผู้จัดการ");
+    if (job.externalRef?.woId) fail(`งานนี้ผูกกับ ${job.externalRef.woId} อยู่แล้ว`);
+    if (!["released", "in_progress"].includes(orderById(d, job.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     job.externalRef = { system: "rubberflow", woId: text(woId, "เลข WO", 40), kg: Number(kg) || 0, linkedAt: ctx.now, by: user.name };
     if (job.status === "queued") job.status = "in_progress";
     const order = orderById(d, job.orderId);
