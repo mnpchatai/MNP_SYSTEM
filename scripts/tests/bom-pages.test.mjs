@@ -11,7 +11,7 @@ const FILES = [
   "modules/bom-rules.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const PAGES = ["dashboard", "build", "items", "product", "compounds", "import", "orders", "jobs", "audit"];
+const PAGES = ["dashboard", "build", "items", "product", "variants", "compounds", "import", "orders", "jobs", "audit"];
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st"];
 const XSS = "<script>alert(1)</script>";
 
@@ -221,7 +221,9 @@ test("dialogs render for their arguments and escape user text", async () => {
     ["itemEdit", {}], ["itemEdit", { code: "RB-DM01-02-OR01-202-18-70" }], ["useInOrder", { code: "DEMO-TP-01(P)-Y" }],
     ["compoundLink", {}], ["compoundLink", { code: "DM03" }], ["orderNew", {}], ["orderItemAdd", { orderId: "DEMO-26002" }], ["stockCount", { orderId: "DEMO-26001", itemCode: "PT-00320" }],
     ["jobReport", { jobId: rb.id }], ["jobRubberflow", { jobId: rb.id }],
+    ["colorSetEdit", { base: "DEMO-TP-01" }], ["colorSetEdit", { base: "DEMO-TP-01", code: "A" }], ["packageEdit", { base: "DEMO-TP-01" }], ["packageEdit", { base: "DEMO-TP-01", code: "P" }], ["packageEdit", { base: "DEMO-TP-01", code: "X", fromFg: "DEMO-TP-01(P)-Y" }], ["colorEdit", {}], ["colorEdit", { code: "OR01" }],
   ];
+  assert.equal(D.colorSetEdit(c, { base: "NOPE" }), null, "no colour slots → no dialog");
   for (const [name, args] of cases) {
     const built = D[name](c, args);
     assert.ok(built?.html, `${name} renders`);
@@ -344,6 +346,51 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   const jobsTab = env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=jobs")).html;
   clean(jobsTab);
   assert.match(env.context.MNP_BOM_PAGES.jobs(env.ctx("p=jobs&dept=PT&st=all")).html, /14 ชิ้น<div class="small muted"[^>]*>ต้องการ 24 · คลัง 10<\/div>/, "a job shows the gross need and the counted stock behind its planned quantity");
+});
+
+test("the colour-set / package page shows learned and defined sets per base, the variant matrix creates products through the definitions, and the forms go through data-rf-*", async () => {
+  const env = load();
+  env.store.setUser("B03"); // ฝ่ายวางแผน
+  let html = await env.render("p=variants");
+  assert.match(html, /ฐานรหัสที่มี BOM/);
+  assert.match(html, /DEMO-TP-01[\s\S]*?A: RD01 BK01 RD01/, "defined sets are summarised per base");
+  assert.match(html, /สี \(แม่สี \+ เฉด\)/);
+  assert.match(html, /PU01[\s\S]*?\(ยังไม่ลงทะเบียน\)/, "standard masters appear even when not registered");
+  clean(html);
+  html = await env.render("p=variants&base=DEMO-TP-01");
+  clean(html);
+  assert.match(html, /<th class="center">ชุด A<\/th><th class="center">ชุด Y<\/th>/, "defined A and learned-then-saved Y");
+  assert.match(html, /SE-TP01-\*-100-18-65/);
+  assert.match(html, /data-color="RD" title="แดง">RD01</);
+  assert.match(html, /data-rf-open="colorSetEdit"/);
+  assert.match(html, /data-rf-action="removeColorSet"/);
+  assert.match(html, /ถุงพลาสติก \+ ลังรวม 40 ชุด/);
+  assert.match(html, /แพ็กเกจ \\ ชุดสี/);
+  assert.match(html, /href="#\/bom\?p=product&amp;code=DEMO-TP-01%28P%29-Y"/, "existing variant links to the per-department view");
+  assert.match(html, /data-rf-action="createVariant" data-rf-args="\{&quot;base&quot;:&quot;DEMO-TP-01&quot;,&quot;pkg&quot;:&quot;B&quot;,&quot;colorSet&quot;:&quot;A&quot;\}"/, "missing variants get a create button");
+  // สร้างรุ่นจากตาราง → ชิ้น SE/RB สีใหม่เกิดขึ้นและหน้าเปลี่ยนเป็นลิงก์
+  const result = env.store.run("createVariant", { base: "DEMO-TP-01", pkg: "B", colorSet: "A" });
+  assert.equal(result.ok, true, String(result.error?.message ?? ""));
+  html = await env.render("p=variants&base=DEMO-TP-01");
+  assert.match(html, /href="#\/bom\?p=product&amp;code=DEMO-TP-01%28B%29-A"/);
+  assert.ok(env.store.data().items.some((item) => item.code === "SE-TP01-RD01-100-18-65"), "a red SE item was created by the colour set");
+  assert.ok(env.store.data().items.some((item) => item.code === "RB-DM01-02-RD01-202-18-70"), "and its red rod");
+  // ฟอร์มชุดสีผ่านกติกา data-rf-*: slotKey[] + slotColor[] → slots
+  await env.submit("p=variants&base=DEMO-TP-01", "saveColorSet", { code: "c", name: "ฟ้า", "slotKey[]": ["SE-TP01-*-100-18-65", "SE-TP01-*-140-3-20", "SE-TP01-*-75-3-30"], "slotColor[]": ["BL02", "", "BL02"] }, { base: "DEMO-TP-01" });
+  const setC = env.store.data().colorSets.find((set) => set.base === "DEMO-TP-01" && set.code === "C");
+  assert.deepEqual(json(setC.slots.map((slot) => slot.color)), ["BL02", "", "BL02"]);
+  await env.submit("p=variants&base=DEMO-TP-01", "savePackage", { code: "K", name: "กล่องคู่", "childCode[]": ["P-BOX-01", "", ""], "qty[]": ["0.5", "", ""] }, { base: "DEMO-TP-01" });
+  assert.deepEqual(json(env.store.data().packages.find((entry) => entry.base === "DEMO-TP-01" && entry.code === "K").lines), [{ childCode: "P-BOX-01", qty: 0.5 }]);
+  await env.submit("p=variants", "saveColor", { code: "gn05", name: "เขียวใบไม้" });
+  assert.equal(env.store.data().colors.find((color) => color.code === "GN05").name, "เขียวใบไม้");
+  // หัวหน้าแผนกอ่านได้ ไม่มีปุ่มแก้
+  env.store.setUser("B05");
+  html = await env.render("p=variants&base=DEMO-TP-01");
+  assert.doesNotMatch(html, /data-rf-open="colorSetEdit"|data-rf-action="createVariant"|data-rf-open="colorEdit"/);
+  assert.match(html, /ชุด A/);
+  html = await env.render("p=variants&base=NOPE-99");
+  assert.match(html, /ไม่มีฐานรหัส/);
+  clean(html);
 });
 
 test("the per-department view explodes one product × quantity into cards from RB to PK, links back, and copes with unknown or BOM-less products", async () => {

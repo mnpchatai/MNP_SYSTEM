@@ -6,13 +6,15 @@
   const STATE_KEY = "mnp-bom-v1";
   const USER_KEY = "mnp-bom-user";
   // v1 = รุ่นที่มีขั้นอนุมัติ (PR #246) · v2 = จุดสร้างจุดเดียว ไม่มีอนุมัติ: ร่าง/รออนุมัติค้างถูกตัดทิ้งตอน migrate
-  const STATE_VERSION = 2;
+  // v3 = สี ชุดสี และแพ็กเกจเป็นข้อมูล (colors / colorSets / packages)
+  const STATE_VERSION = 3;
 
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม BOM", group: "ภาพรวม" },
     { id: "build", label: "สร้าง BOM", group: "BOM" },
     { id: "items", label: "ค้นหาชิ้นงาน / ประวัติ BOM", group: "BOM" },
     { id: "product", label: "สินค้า 1 ตัว → งานทุกแผนก", group: "BOM" },
+    { id: "variants", label: "ชุดสี / แพ็กเกจ", group: "BOM" },
     { id: "compounds", label: "สูตรยาง ↔ RubberFlow", group: "BOM" },
     { id: "import", label: "นำเข้าจาก Excel", group: "BOM" },
     { id: "orders", label: "ใบสั่งผลิต (PI)", group: "ผลิต" },
@@ -27,31 +29,38 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการฝ่ายโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "product", "compounds", "import", "orders", "jobs"]) },
-    rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "compounds", "jobs", "orders"]) },
-    gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "jobs", "orders"]) },
-    pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "jobs", "orders"]) },
-    bg: { label: "หัวหน้าแผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "jobs", "orders"]) },
-    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["dashboard", "items", "product", "orders", "jobs"]) },
+    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "product", "variants", "compounds", "import", "orders", "jobs"]) },
+    rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "variants", "compounds", "jobs", "orders"]) },
+    gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "variants", "jobs", "orders"]) },
+    pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "variants", "jobs", "orders"]) },
+    bg: { label: "หัวหน้าแผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "variants", "jobs", "orders"]) },
+    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["dashboard", "items", "product", "variants", "orders", "jobs"]) },
   });
   const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && ROLES[user.role].modules.includes(moduleId);
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");
 
-  const LISTS = ["users", "compounds", "items", "boms", "orders", "jobs", "audit"];
-  const hasShape = (value) => Boolean(value) && typeof value === "object" && typeof value.counters === "object" && value.counters !== null && LISTS.every((key) => Array.isArray(value[key]));
+  const BASE_LISTS = ["users", "compounds", "items", "boms", "orders", "jobs", "audit"];
+  const V3_LISTS = ["colors", "colorSets", "packages"];
+  const LISTS = [...BASE_LISTS, ...V3_LISTS];
+  const hasShape = (value, lists = LISTS) => Boolean(value) && typeof value === "object" && typeof value.counters === "object" && value.counters !== null && lists.every((key) => Array.isArray(value[key]));
   const isValidState = (value) => hasShape(value) && value.version === STATE_VERSION;
   // state รุ่นเก่าในเบราว์เซอร์ → รุ่นปัจจุบัน (คืน null ถ้าแปลงไม่ได้ จะสร้างชุดสาธิตใหม่)
   function migrate(value) {
-    if (!hasShape(value)) return null;
-    if (value.version === STATE_VERSION) return value;
+    if (!hasShape(value, BASE_LISTS)) return null;
+    if (value.version === STATE_VERSION && hasShape(value)) return value;
     if (value.version === 1) {
       // รุ่นเก่ามีร่าง/รออนุมัติ ซึ่งรุ่นนี้ไม่มีคำสั่งจัดการแล้ว ตัดทิ้ง เหลือ BOM ที่ใช้งาน/ถูกแทน
       value.boms = value.boms.filter((bom) => bom.status === "approved" || bom.status === "superseded");
       value.version = 2;
       value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: "รุ่น 1 → 2: ตัดร่าง/รออนุมัติที่ค้าง (รุ่นนี้บันทึก BOM แล้วใช้ได้ทันที)" });
-      return value;
     }
-    return null;
+    if (value.version === 2) {
+      // รุ่น 3 เพิ่มตารางสี ชุดสี แพ็กเกจ (ว่างไว้ ผู้ใช้นิยามหรือกด "บันทึกชุดสีจากสินค้า" ได้)
+      for (const key of V3_LISTS) if (!Array.isArray(value[key])) value[key] = [];
+      value.version = 3;
+      value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: "รุ่น 2 → 3: เพิ่มสี ชุดสี และแพ็กเกจเป็นข้อมูล" });
+    }
+    return value.version === STATE_VERSION && hasShape(value) ? value : null;
   }
 
   function readJson(storage, key) {

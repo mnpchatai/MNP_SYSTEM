@@ -75,7 +75,7 @@
   ];
 
   function emptyState() {
-    return { version: 2, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [] };
+    return { version: 3, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [] };
   }
 
   function buildSeed(now = Date.now()) {
@@ -94,6 +94,13 @@
     BOMS().forEach(([parentCode, lines], index) => {
       A.saveBom(d, { itemCode: parentCode, lines: lines.map(([childCode, qty]) => ({ childCode, qty })) }, at(t0 + 2 * DAY + index * 6 * 3600000, "planner"));
     });
+    // สี ชุดสี และแพ็กเกจเป็นข้อมูล (แทนการแก้สีมือในชีต Edit DATA): สีที่ใช้ในชุดสาธิต · ชุด Y เรียนรู้จากสินค้าที่มี · ชุด A นิยามใหม่ (ลูก/ปีกแดง แกนดำ)
+    // แพ็กเกจของตอปิโด: P = ถุง + ลังรวม 40 ชุด · B = กล่องเดี่ยว (ลัง 12 กล่อง)
+    [["OR01", "ส้ม"], ["RD01", "แดง"], ["BK01", "ดำ"], ["YE03", "เหลืองสด"], ["BL02", "ฟ้า"], ["GN05", "เขียว"]].forEach(([code, name], index) => A.saveColor(d, { code, name }, at(t0 + 3 * DAY + index * 60000, "planner")));
+    A.learnColorSet(d, { fgCode: "DEMO-TP-01(P)-Y" }, at(t0 + 3 * DAY + 3600000, "planner"));
+    A.saveColorSet(d, { base: "DEMO-TP-01", code: "A", name: "แดง-ดำ", slots: [{ key: "SE-TP01-*-100-18-65", color: "RD01" }, { key: "SE-TP01-*-140-3-20", color: "BK01" }, { key: "SE-TP01-*-75-3-30", color: "RD01" }] }, at(t0 + 3 * DAY + 7200000, "planner"));
+    A.savePackage(d, { base: "DEMO-TP-01", code: "P", name: "ถุงพลาสติก + ลังรวม 40 ชุด", lines: [{ childCode: "P-BAG-01", qty: 0.01 }, { childCode: "P-BOX-01", qty: 0.025 }] }, at(t0 + 3 * DAY + 7260000, "planner"));
+    A.savePackage(d, { base: "DEMO-TP-01", code: "B", name: "กล่องเดี่ยว (ลัง 12 กล่อง)", lines: [{ childCode: "P-BOX-01", qty: 1 / 12 }] }, at(t0 + 3 * DAY + 7320000, "planner"));
     // แก้ BOM ครั้งหนึ่งให้มีประวัติ revision (ลูกตอปิโดเปลี่ยนอัตราส่วนเส้นหัว) และ FG บอลยางที่ยังไม่มี BOM
     A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [["RB-DM01-02-OR01-202-18-70", rbQty("RB-DM01-02-OR01-202-18-70")], ["RB-DM01-01-OR01-200-0-72", rbQty("RB-DM01-01-OR01-200-0-72")]].map(([childCode, qty]) => ({ childCode, qty, note: childCode.endsWith("72") ? "ตัด 4 ซม." : "" })), note: "ระบุความยาวตัดของเส้นหัว" }, at(now - 3 * DAY, "planner"));
 

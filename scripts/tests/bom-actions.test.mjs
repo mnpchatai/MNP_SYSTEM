@@ -276,6 +276,7 @@ test("a product can be chosen by base code + package + color set; an unknown var
   assert.equal(d.items.filter((item) => item.kind === "FG").length, 3, "no new item for an existing code");
   rejects(() => A.addOrderItem(d, { orderId: id, base: "NOPE-01", pkg: "P", colorSet: "Y", qty: 1 }, ctx("planner")), /ไม่มีฐานรหัส NOPE-01/);
   rejects(() => A.addOrderItem(d, { orderId: id, base: "", qty: 1 }, ctx("planner")), /ไม่พบสินค้า/);
+  // ชุดสี A ของฐาน DEMO-TP-01 นิยามไว้ในชุดสาธิต (ลูก/ปีกแดง แกนดำ) และแพ็กเกจ P ด้วย → รุ่นใหม่เปลี่ยนสี SE ชั้นแรกและ RB ใต้ SE ให้เอง
   A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "A", qty: 5 }, ctx("planner"));
   const created = A.helpers.itemOf(d, "DEMO-TP-01(P)-A");
   assert.ok(created, "variant created");
@@ -283,14 +284,92 @@ test("a product can be chosen by base code + package + color set; an unknown var
   const bom = approved(d, created.code);
   assert.equal(bom.revision, 1);
   assert.match(bom.note, /คัดลอกจาก DEMO-TP-01\(P\)-Y Rev\.1/);
-  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), approved(d, "DEMO-TP-01(P)-Y").lines.map((line) => [line.childCode, line.qty]));
+  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), [["XP-00001", 1], ["PT-00320", 0.3], ["P-STK-01", 1], ["SE-TP01-RD01-100-18-65", 3], ["SE-TP01-BK01-140-3-20", 3], ["SE-TP01-RD01-75-3-30", 9], ["P-BAG-01", 0.01], ["P-BOX-01", 0.025]], "orange SE slots become red, the black core stays, packaging lines come from the package definition");
+  assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /ชุดสี A: SE-TP01-OR01-100-18-65 → SE-TP01-RD01-100-18-65, SE-TP01-OR01-75-3-30 → SE-TP01-RD01-75-3-30/);
+  assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /แพ็กเกจ P: ถอด P-BAG-01, P-BOX-01 ใส่ P-BAG-01 × 0.0100, P-BOX-01 × 0.0250/);
+  const redSe = A.helpers.itemOf(d, "SE-TP01-RD01-100-18-65");
+  assert.equal(redSe.name, "ลูกตอปิโด TP-01 แดง RD01 ยาว 100", "the new SE item is named after the new colour");
+  assert.deepEqual([redSe.kind, redSe.ownerDept, redSe.rubber.color, redSe.clonedFrom], ["SE", "GR", "RD01", "SE-TP01-OR01-100-18-65"]);
+  const redSeBom = approved(d, "SE-TP01-RD01-100-18-65");
+  assert.deepEqual(redSeBom.lines.map((line) => line.childCode), ["RB-DM01-02-RD01-202-18-70", "RB-DM01-01-RD01-200-0-72"], "the rods under a recoloured SE take the SE's colour");
+  assert.equal(redSeBom.lines[0].qty, approved(d, "SE-TP01-OR01-100-18-65").lines[0].qty, "rod ratios are kept");
+  const redRb = A.helpers.itemOf(d, "RB-DM01-02-RD01-202-18-70");
+  assert.deepEqual([redRb.kind, redRb.rubber.compound, redRb.rubber.color, redRb.rubber.pcsPerRoll, redRb.weightG], ["RB", "DM01", "RD01", 31, 1530], "a recoloured rod keeps compound, cutting data and weight");
+  assert.equal(A.helpers.itemOf(d, "SE-TP01-BK01-140-3-20").clonedFrom, undefined, "an unchanged slot reuses the existing item");
+  assert.deepEqual(approved(d, "SE-TP01-RD01-75-3-30").lines.map((line) => line.childCode), ["RB-DM03-03-YE03-3000-3-130"], "a rod whose colour differs from the SE's old colour (yellow sheet under an orange wing) is kept");
+  assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /RB-DM03-03-YE03-3000-3-130 ใต้ SE-TP01-RD01-75-3-30 คงสี YE03/);
   assert.notEqual(bom.lines, approved(d, "DEMO-TP-01(P)-Y").lines, "lines are copied, not shared");
+  // แพ็กเกจ B (กล่องเดี่ยว) ของชุดสี A: ต้นแบบคือ (P)-A ที่เพิ่งสร้าง สีตรงอยู่แล้ว บรรจุภัณฑ์ถูกสลับ
+  assert.equal(A.createVariant(d, { base: "DEMO-TP-01", pkg: "B", colorSet: "A" }, ctx("planner")), "DEMO-TP-01(B)-A");
+  const boxed = approved(d, "DEMO-TP-01(B)-A");
+  assert.equal(A.helpers.itemOf(d, "DEMO-TP-01(B)-A").clonedFrom, "DEMO-TP-01(P)-A");
+  assert.deepEqual(boxed.lines.filter((line) => line.childCode.startsWith("P-B")).map((line) => [line.childCode, line.qty]), [["P-BOX-01", 1 / 12]], "the bag is removed and the single box is added");
+  assert.match(boxed.changeLog.map((entry) => entry.text).join(" | "), /ชุดสี A: สีตรงกับต้นแบบอยู่แล้ว/);
+  rejects(() => A.createVariant(d, { base: "DEMO-TP-01", pkg: "B", colorSet: "A" }, ctx("planner")), /อยู่แล้ว/);
+  rejects(() => A.createVariant(d, { base: "DEMO-TP-01", pkg: "B", colorSet: "C" }, ctx("gr")), /ฝ่ายวางแผน/);
+  // ฐานที่ยังไม่มีนิยาม: คัดลอกตรงและบันทึกไว้ว่าสียังเป็นของต้นแบบ
+  A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", pkg: "B", colorSet: "C", qty: 2 }, ctx("planner"));
+  const hl = approved(d, "DEMO-HL-24(B)-C");
+  assert.deepEqual(hl.lines.map((line) => line.childCode), approved(d, "DEMO-HL-24(B)-A").lines.map((line) => line.childCode));
+  assert.match(hl.changeLog.map((entry) => entry.text).join(" | "), /ยังไม่มีนิยามชุดสี C ของฐาน DEMO-HL-24/);
   A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", qty: 2 }, ctx("planner"));
   assert.ok(A.helpers.itemOf(d, "DEMO-HL-24"));
   assert.equal(A.helpers.pickSibling(A.helpers.siblingsOf(d, "DEMO-TP-01"), "P", "A").code, "DEMO-TP-01(P)-A", "exact variant preferred");
-  assert.equal(A.helpers.pickSibling(A.helpers.siblingsOf(d, "DEMO-TP-01"), "B", "A").code, "DEMO-TP-01(P)-A", "then same color set");
+  assert.equal(A.helpers.pickSibling(A.helpers.siblingsOf(d, "DEMO-TP-01"), "X", "A").code, "DEMO-TP-01(P)-A", "then same color set");
   rejects(() => A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "Z", qty: 1 }, ctx("gr")), /ฝ่ายวางแผน/);
   assert.ok(A.explodeOrder(d, { orderId: id }, ctx("planner")) > 20);
+});
+
+test("colours, colour sets and packages are data: learned from a product, validated, and removable", () => {
+  const d = fresh();
+  assert.deepEqual(d.colors.map((color) => color.code), ["OR01", "RD01", "BK01", "YE03", "BL02", "GN05"]);
+  const learned = A.helpers.colorSetOf(d, "DEMO-TP-01", "Y");
+  assert.deepEqual(learned.slots, [{ key: "SE-TP01-*-100-18-65", color: "OR01" }, { key: "SE-TP01-*-140-3-20", color: "BK01" }, { key: "SE-TP01-*-75-3-30", color: "OR01" }], "set Y is learned from the first-level SE lines of DEMO-TP-01(P)-Y");
+  assert.equal(learned.name, "จาก DEMO-TP-01(P)-Y");
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", slots: [{ key: "SE-TP01-*-100-18-65", color: "PURPLE" }] }, ctx("planner")), /รหัสสี PURPLE ไม่ถูกต้อง/);
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", slots: [{ key: "SE-TP01-100-18-65", color: "PU01" }] }, ctx("planner")), /กุญแจช่องสี/);
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", slots: [] }, ctx("planner")), /อย่างน้อย 1 ช่อง/);
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "toolong", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("planner")), /ยาวเกิน 4/);
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "AB", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("planner")), /ตัวเดียว/, "two letters would not be read back by parseFgCode");
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "1", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("planner")), /ตัวเดียว/);
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("gr")), /ฝ่ายวางแผน/);
+  A.saveColorSet(d, { base: "demo-tp-01", code: "b", slots: [{ key: "se-tp01-*-100-18-65", color: "pu01" }] }, ctx("planner"));
+  assert.ok(d.colors.some((color) => color.code === "PU01" && color.name === "ม่วง 01"), "an unknown colour is registered with its master name");
+  A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", name: "ม่วง", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }, { key: "SE-TP01-*-75-3-30", color: "PU01" }] }, ctx("planner"));
+  assert.equal(d.colorSets.filter((set) => set.base === "DEMO-TP-01" && set.code === "B").length, 1, "saving again replaces the set");
+  assert.equal(A.helpers.colorSetOf(d, "DEMO-TP-01", "B").slots.length, 2);
+  A.saveColor(d, { code: "pu01", name: "ม่วงเข้ม" }, ctx("manager"));
+  assert.equal(d.colors.find((color) => color.code === "PU01").name, "ม่วงเข้ม");
+  A.removeColorSet(d, { base: "DEMO-TP-01", code: "B" }, ctx("planner"));
+  rejects(() => A.removeColorSet(d, { base: "DEMO-TP-01", code: "B" }, ctx("planner")), /ไม่พบ/);
+  rejects(() => A.learnColorSet(d, { fgCode: "DEMO-HL-24" }, ctx("planner")), /ไม่พบสินค้า/);
+  // สีที่ไม่ตรงรูปแบบ (ข้อมูลเก่า) ไม่ทำให้บันทึกชุดสีจากสินค้าไม่ได้ ช่องนั้นเว้นว่าง
+  A.helpers.itemOf(d, "SE-HL24-YE03-400-19-30").rubber.color = "ORANGE";
+  A.learnColorSet(d, { fgCode: "DEMO-HL-24(B)-A" }, ctx("planner"));
+  const hlSet = A.helpers.colorSetOf(d, "DEMO-HL-24", "A");
+  assert.deepEqual(hlSet.slots, [{ key: "SE-HL24-*-400-19-30", color: "" }]);
+  assert.equal(hlSet.name, "จาก DEMO-HL-24(B)-A");
+  assert.match(hlSet.note, /SE-HL24-YE03-400-19-30=ORANGE ไม่ตรงรูปแบบ/);
+  assert.match(d.audit[0].detail, /ORANGE ไม่ตรงรูปแบบ/);
+  // แพ็กเกจ
+  assert.deepEqual(A.helpers.packageOf(d, "DEMO-TP-01", "P").lines, [{ childCode: "P-BAG-01", qty: 0.01 }, { childCode: "P-BOX-01", qty: 0.025 }]);
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "NOPE", qty: 1 }] }, ctx("planner")), /ไม่พบชิ้นงาน NOPE/);
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "DEMO-HL-24(B)-A", qty: 1 }] }, ctx("planner")), /ต้องเป็นของซื้อ/);
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "SE-TP01-BK01-140-3-20", qty: 1 }] }, ctx("planner")), /ชิ้นยาง.*ต้องเป็นของซื้อ/, "a manufactured part cannot be declared packaging (it would be silently removed from new variants)");
+  // แพ็กเกจที่นิยามไม่ครบ: บรรทัดบรรจุภัณฑ์ของต้นแบบที่ไม่อยู่ในแพ็กเกจเป้าหมายถูกถอดและบอกไว้ชัด
+  A.savePackage(d, { base: "DEMO-TP-01", code: "N", name: "กล่อง + สติ๊กเกอร์", lines: [{ childCode: "P-BOX-01", qty: 0.1 }, { childCode: "P-STK-01", qty: 1 }] }, ctx("planner"));
+  A.createVariant(d, { base: "DEMO-TP-01", pkg: "P", colorSet: "A" }, ctx("planner"));
+  const noSticker = approved(d, "DEMO-TP-01(P)-A");
+  assert.ok(!noSticker.lines.some((line) => line.childCode === "P-STK-01"), "the sticker is treated as packaging once any package of the base lists it");
+  assert.match(noSticker.changeLog.map((entry) => entry.text).join(" | "), /บรรจุภัณฑ์ของต้นแบบที่ไม่อยู่ในแพ็กเกจ P ถูกถอด: P-STK-01/);
+  A.removePackage(d, { base: "DEMO-TP-01", code: "N" }, ctx("planner"));
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "P-BOX-01", qty: 1 }, { childCode: "P-BOX-01", qty: 2 }] }, ctx("planner")), /ซ้ำ/);
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "P-BOX-01", qty: 0 }] }, ctx("planner")), /ปริมาณ/);
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [] }, ctx("planner")), /อย่างน้อย 1 บรรทัด/);
+  A.savePackage(d, { base: "DEMO-TP-01", code: "X", name: "ไม่มีบรรจุภัณฑ์", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("planner"));
+  assert.equal(d.packages.filter((entry) => entry.base === "DEMO-TP-01").length, 3);
+  A.removePackage(d, { base: "DEMO-TP-01", code: "X" }, ctx("planner"));
+  rejects(() => A.removePackage(d, { base: "DEMO-TP-01", code: "X" }, ctx("planner")), /ไม่พบ/);
 });
 
 test("jobs: the department reports output, hold/queue toggles, orders progress and close only when PK is done", () => {
@@ -417,11 +496,21 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   const oldStorage = new Map([[storeApi.STATE_KEY, JSON.stringify(old)]]);
   const oldFake = { getItem: (key) => (oldStorage.has(key) ? oldStorage.get(key) : null), setItem: (key, value) => oldStorage.set(key, String(value)), removeItem: (key) => oldStorage.delete(key) };
   const upgraded = storeApi.createStore({ storage: oldFake, seed: fresh, actions: A, now: () => NOW });
-  assert.equal(upgraded.data().version, 2);
+  assert.equal(upgraded.data().version, 3);
   assert.equal(upgraded.data().boms.filter((bom) => ["draft", "pending"].includes(bom.status)).length, 0);
   assert.equal(upgraded.data().boms.length, old.boms.length - 2);
   assert.equal(upgraded.data().orders.length, 2, "orders survive the upgrade");
-  assert.equal(JSON.parse(oldStorage.get(storeApi.STATE_KEY)).version, 2, "upgraded state is written back");
-  assert.equal(storeApi.migrate({ version: 99, counters: {}, users: [], compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [] }), null, "unknown versions are reseeded");
+  assert.equal(JSON.parse(oldStorage.get(storeApi.STATE_KEY)).version, 3, "upgraded state is written back");
+  // รุ่น 2 (ไม่มีตารางสี) → รุ่น 3 เพิ่มรายการว่าง ข้อมูลเดิมคงอยู่
+  const v2 = fresh();
+  v2.version = 2;
+  delete v2.colors; delete v2.colorSets; delete v2.packages;
+  const fromV2 = storeApi.migrate(JSON.parse(JSON.stringify(v2)));
+  assert.equal(fromV2.version, 3);
+  assert.deepEqual([fromV2.colors, fromV2.colorSets, fromV2.packages], [[], [], []]);
+  assert.equal(fromV2.items.length, v2.items.length);
+  assert.ok(storeApi.isValidState(fromV2));
+  assert.equal(storeApi.isValidState({ ...fresh(), colors: undefined }), false, "a v3 state without the colour tables is not valid as is");
+  assert.equal(storeApi.migrate({ version: 99, counters: {}, users: [], compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [] }), null, "unknown versions are reseeded");
   assert.equal(storeApi.MODULES[1].id, "build", "the single BOM builder is the first menu after the overview");
 });

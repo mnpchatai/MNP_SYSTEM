@@ -88,10 +88,14 @@
     };
     return { code: p.code, item: { name: p.itemName, uom: p.itemUom }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code)) };
   }
+  const listOf = (p, key) => (Array.isArray(p[key]) ? p[key] : p[key] === undefined ? [] : [p[key]]);
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due) }),
     saveBomTree: treeFromRows,
     saveItem: (p) => ({ ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null }),
+    // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
+    saveColorSet: (p) => ({ ...p, slots: listOf(p, "slotKey").map((key, index) => ({ key, color: listOf(p, "slotColor")[index] ?? "" })) }),
+    savePackage: (p) => ({ ...p, lines: listOf(p, "childCode").map((childCode, index) => ({ childCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.childCode ?? "").trim()) }),
   };
 
   function runAction(name, payload, successText) {
