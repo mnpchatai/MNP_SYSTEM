@@ -522,7 +522,8 @@ test("routings and unit costs: each save is a new revision, costs only on parts 
   assert.deepEqual(A.helpers.routingOf(d, "BG-0092").steps.map((step) => step.inputs), [["P-FAB-BL"], ["P-ZIP-05", "P-ROPE-01"]], "the demo places fabric at cutting, zip and rope at sewing");
   rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-BOX-01"] }] }, ctx("planner")), /P-BOX-01 ไม่ได้อยู่ใน BOM ของ BG-0092/);
   rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-FAB-BL"] }] }, ctx("planner")), /มากกว่าหนึ่งขั้น/);
-  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-ROPE-01", "P-ZIP-05"] }] }, ctx("planner")).changed, true, "moving inputs between steps is a change");
+  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-ROPE-01", "P-ZIP-05"] }] }, ctx("planner")).changed, false, "the same inputs in another order are not a change");
+  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL", "P-ZIP-05"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-ROPE-01"] }] }, ctx("planner")).changed, true, "moving an input to another step is a change");
   // process master: เพิ่มขั้นตอนใหม่แล้วใช้ใน routing ได้ · รหัสเดิมแก้ชื่อ/แผนก · แผนกต้องถูกต้อง
   A.saveProcess(d, { code: "GR-เจียร", name: "เจียร", dept: "GR" }, ctx("planner"));
   A.saveProcess(d, { code: "GR-เจียร", name: "เจียรขอบ", dept: "GR" }, ctx("planner"));

@@ -83,12 +83,14 @@
       const siblings = rows().filter((row) => row.dataset.parent === tr.dataset.parent);
       const above = siblings[siblings.indexOf(tr) - 1];
       if (!above || !canHaveChildren(above)) return false;
+      if (!withChildren()) releaseChildren(tr);
       setParent(tr, above.dataset.row, Number(above.dataset.level) + 1);
       return true;
     };
     const outdent = (tr) => {
       const parent = rowById(tr.dataset.parent);
       if (!parent) return false;
+      if (!withChildren()) releaseChildren(tr);
       const block = blockOf(tr);
       const parentEnd = blockOf(parent).filter((row) => !block.includes(row)).at(-1);
       parentEnd.after(...block);
@@ -702,7 +704,7 @@
     if (!item) return null;
     const routing = ctx.helpers.routingOf(data, item.code);
     const options = data.processes.map((process) => ({ value: process.code, label: `${process.code} ${process.name} (${process.dept})` }));
-    const stepRow = (step = {}) => `<tr data-step><td class="bom-step-cell">${dragHandle("ย้ายขั้นตอนนี้")}${ui.select("processCode[]", options, { value: step.processCode ?? "", placeholder: "เลือกขั้นตอน" })}</td><td>${ui.input("minutesPerPc[]", { type: "number", step: "any", min: "0", value: step.minutesPerPc ?? "" })}</td><td class="nowrap"><button class="btn rf-btn secondary small" type="button" data-step-remove aria-label="ลบขั้นตอน">✕</button></td></tr>`;
+    const stepRow = (step = {}) => `<tr data-step><td><div class="bom-step-cell">${dragHandle("ย้ายขั้นตอนนี้")}${ui.select("processCode[]", options, { value: step.processCode ?? "", placeholder: "เลือกขั้นตอน" })}</div></td><td>${ui.input("minutesPerPc[]", { type: "number", step: "any", min: "0", value: step.minutesPerPc ?? "" })}</td><td class="nowrap"><button class="btn rf-btn secondary small" type="button" data-step-remove aria-label="ลบขั้นตอน">✕</button></td></tr>`;
     const steps = routing?.steps ?? [];
     const lines = approvedBomOf(ctx, item.code)?.lines ?? [];
     const stepOfInput = (childCode) => steps.find((step) => (step.inputs ?? []).includes(childCode))?.processCode ?? "";
