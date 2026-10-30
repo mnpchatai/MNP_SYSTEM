@@ -217,6 +217,7 @@ test("a production order explodes with the current revisions, locks them at rele
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 1 }, ctx("gr")), /คลัง/);
   A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 3 }, ctx("st"));
   assert.equal(order.stockCounts["P-BOX-01"], 3);
+  rejects(() => A.setStockCount(d, { orderId: id, itemCode: "DEMO-TP-01(P)-Y", qty: 1 }, ctx("st")), /สินค้าสำเร็จรูป/);
   A.removeOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A" }, ctx("planner"));
   assert.equal(order.explosion, null);
   A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 40 }, ctx("planner"));
@@ -238,6 +239,7 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(jobs.find((job) => job.kind === "FG" && job.itemCode === "DEMO-TP-01(P)-Y").qtyPlanned, 80, "PK jobs carry the ordered quantity");
   rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 1 }, ctx("planner")), /ร่าง/);
   rejects(() => A.explodeOrder(d, { orderId: id }, ctx("planner")), /ร่าง/);
+  rejects(() => A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 9 }, ctx("st")), /ปล่อยผลิตแล้ว งานรายแผนกไม่เปลี่ยนตาม/, "counting after release would desync the jobs");
   // แก้ BOM หลังปล่อยผลิต: ใบที่ปล่อยแล้วไม่เปลี่ยน
   A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "RB-DM01-02-OR01-202-18-70", qty: 0.5 }] }, ctx("planner"));
   assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 3);

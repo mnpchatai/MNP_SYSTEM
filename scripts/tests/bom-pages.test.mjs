@@ -327,8 +327,10 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   const built = env.context.MNP_BOM_PAGES.orders(c);
   assert.match(built.html, /ส่งออก CSV ใบคำนวณ/);
   assert.match(built.html, /bom-surplus">-3</, "10 boxes counted against 7 needed by both products shows a surplus, once per item");
-  assert.match(built.html, /PT-00320[\s\S]*?<td class="right rf-mono">24<\/td>[\s\S]*?>10 <button[\s\S]*?<td class="right rf-mono">14<\/td>/, "stock is subtracted per item (24 needed, 10 counted → 14)");
-  assert.match(built.html, /หักคงคลังของชั้นบนก่อน/);
+  assert.match(built.html, /PT-00320[\s\S]*?<td class="right rf-mono">24<\/td>[\s\S]*?<td class="right rf-mono">10<\/td><td class="right rf-mono">14<\/td>/, "stock is subtracted per item (24 needed, 10 counted → 14)");
+  assert.match(built.html, /ต้องผลิต\/สั่งซื้อ \(รหัสนี้ทั้งใบ\)/);
+  assert.doesNotMatch(built.html, /data-rf-open="stockCount"/, "a released order cannot be counted any more (jobs would not follow)");
+  assert.match(env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26002")).html, /data-rf-open="stockCount"/, "a draft order can be counted");
   assert.match(built.html, /p=build&amp;code=DEMO-TP-01/, "each ordered product links into the builder");
   assert.match(built.html, /p=product&amp;code=DEMO-TP-01%28P%29-Y&amp;qty=80/, "each ordered product links to the per-department view with its quantity");
   const csvButton = { ...env.root, dataset: { bomCsv: "bomsheet", bomOrder: "DEMO-26001" }, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
@@ -341,7 +343,7 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   clean(tabs);
   const jobsTab = env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=jobs")).html;
   clean(jobsTab);
-  assert.match(env.context.MNP_BOM_PAGES.jobs(env.ctx("p=jobs&dept=PT&st=all")).html, /14 ชิ้น<div class="small muted"[^>]*>จาก 24 · คลัง 10<\/div>/, "a job shows the gross need and the counted stock behind its planned quantity");
+  assert.match(env.context.MNP_BOM_PAGES.jobs(env.ctx("p=jobs&dept=PT&st=all")).html, /14 ชิ้น<div class="small muted"[^>]*>ต้องการ 24 · คลัง 10<\/div>/, "a job shows the gross need and the counted stock behind its planned quantity");
 });
 
 test("the per-department view explodes one product × quantity into cards from RB to PK, links back, and copes with unknown or BOM-less products", async () => {
@@ -362,13 +364,14 @@ test("the per-department view explodes one product × quantity into cards from R
   assert.match(html, /ตัด 6\.5 ซม\. · 31 ชิ้น\/เส้น · 1 SE ต่อ GR/, "GR sees the cutting data of the rod it cuts");
   assert.match(html, /ผูก RubberFlow แล้ว/);
   assert.match(html, /สินค้าสำเร็จรูป<\/span>/, "the FG row sits in the PK card");
-  assert.match(html, /DEMO-TP-01\(P\)-Y × 80/);
+  assert.match(html, /<h3>DEMO-TP-01\(P\)-Y <span class="muted">[^<]+<\/span> × 80 ชุด<\/h3>/);
   assert.match(html, /ลึกสุด 2 ชั้น/);
+  assert.doesNotMatch(html, /<dt>สินค้า<\/dt>|<dt>จำนวนที่คิด<\/dt>|รายการ<\/span><\/h3>/, "the product, quantity and row counts are shown once (title, picker, tables)");
   assert.doesNotMatch(html, /data-rf-open="useInOrder"/, "a department head cannot push the product into an order");
   assert.doesNotMatch(html, /p=build/, "no builder links for a department head");
   env.store.setUser("B03"); // ฝ่ายวางแผน
   html = await env.render("p=product&base=DEMO-TP-01&pkg=P&cs=Y&qty=10");
-  assert.match(html, /DEMO-TP-01\(P\)-Y × 10/, "the three picker fields compose the code like sheet ;}o");
+  assert.match(html, /DEMO-TP-01\(P\)-Y <span class="muted">[^<]+<\/span> × 10 ชุด/, "the three picker fields compose the code like sheet ;}o");
   assert.match(html, /data-rf-open="useInOrder"/);
   assert.match(html, /p=build&amp;code=DEMO-TP-01/);
   assert.match(html, /<strong>0\.9677<\/strong>/, "quantities scale with the order quantity");

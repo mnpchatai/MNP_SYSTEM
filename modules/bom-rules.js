@@ -355,7 +355,8 @@
   //   ความต้องการของชิ้นลูก = ปริมาณต่อพ่อ × ส่วนที่พ่อยังต้องผลิต (ไม่ใช่ความต้องการเต็มของพ่อ)
   // ตรงกับ Excel: RB ต้องรีด = O × (SE ต้องเบิก − สต๊อก SE) − สต๊อก RB · ต่างจาก Excel สองจุดโดยตั้งใจ:
   //   ของเกินของพ่อไม่ถูกส่งต่อเป็นค่าติดลบของลูก และคงคลังนับต่อรหัสครั้งเดียวทั้งใบ ไม่ใช่ต่อบรรทัด (ชีตคีย์ซ้ำทุกบรรทัด)
-  // รหัสที่ไม่ได้นับ (undefined) ถือว่าไม่มีของ · คืนรายการเรียงตามชั้นลึกสุดแล้วตามรหัส
+  // รหัสที่ไม่ได้นับ (undefined) ถือว่าไม่มีของ · คงคลังของตัว FG (ชั้น 0) ไม่ถูกใช้ เพราะใบสั่งผลิตต้องผลิตครบจำนวนสั่งเสมอ
+  // คืนรายการเรียงตามชั้นลึกสุดแล้วตามรหัส
   function netRequirements(explodedLines, stockCounts = {}) {
     const entries = new Map();
     const edges = new Map(); // "พ่อ|ลูก" → ปริมาณลูกต่อ 1 พ่อ (รวมเศษ)
@@ -376,7 +377,7 @@
     const ordered = [...entries.values()].sort((a, b) => a.level - b.level || a.itemCode.localeCompare(b.itemCode));
     const round = (n) => Math.round(n * 1e4) / 1e4;
     for (const entry of ordered) {
-      const counted = stockCounts[entry.itemCode] !== undefined && stockCounts[entry.itemCode] !== null && stockCounts[entry.itemCode] !== "";
+      const counted = entry.level > 0 && stockCounts[entry.itemCode] !== undefined && stockCounts[entry.itemCode] !== null && stockCounts[entry.itemCode] !== "";
       entry.stock = counted ? Number(stockCounts[entry.itemCode]) || 0 : undefined;
       entry.net = entry.required - (entry.stock ?? 0);
       entry.toMake = round(Math.max(entry.net, 0));

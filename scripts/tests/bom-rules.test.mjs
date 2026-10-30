@@ -245,10 +245,13 @@ test("net requirements apply the BOMSHEET column AK rule level by level: SE stoc
   assert.deepEqual(net.SE.fgCodes, ["FG", "FG2"]);
   assert.equal(net.RB.required.toFixed(4), (508 / 28).toFixed(4));
   assert.equal(net.FG.required, 1508, "the same FG code twice adds up (the order merges lines, this is a guard)");
-  // ค่าที่นับเป็นข้อความว่าง/null = ยังไม่นับ
-  net = byCode(rules.netRequirements(explode(10), { SE: "", RB: null }));
+  // ค่าที่นับเป็นข้อความว่าง/null = ยังไม่นับ · คงคลังของตัว FG ไม่ถูกใช้ (ต้องผลิตครบจำนวนสั่ง)
+  net = byCode(rules.netRequirements(explode(10), { SE: "", RB: null, FG: 7 }));
   assert.equal(net.SE.stock, undefined);
   assert.equal(net.RB.stock, undefined);
+  assert.equal(net.FG.stock, undefined);
+  assert.equal(net.FG.toMake, 10);
+  assert.equal(net.SE.required, 10);
   // จัดกลุ่มตามแผนก ต้นน้ำ → ปลายน้ำ ข้ามแผนกที่ไม่มีงาน
   const groups = rules.groupByDept(rules.netRequirements(explode(1008), {}));
   assert.deepEqual(groups.map((group) => group.dept), ["RB", "GR", "ST", "PK"]);

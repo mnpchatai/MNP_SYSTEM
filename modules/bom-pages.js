@@ -353,7 +353,7 @@
         location.hash = ctx.url("product", { base: String(form.get("base") ?? "").trim(), pkg: String(form.get("pkg") ?? ""), cs: String(form.get("cs") ?? ""), qty: String(form.get("qty") ?? "") });
       });
     };
-    const pageHead = head(ctx, "สินค้า 1 ตัว → งานทุกแผนก", "เลือกสินค้าสำเร็จรูปแล้วดูว่าแต่ละแผนกต้องทำอะไร เท่าไร จากอะไร เรียงจากต้นน้ำ RB → GR → PT → BG → คลัง → PK (คิดจาก BOM ปัจจุบัน ไม่หักคงคลัง · ยอดหักคงคลังดูในใบสั่งผลิต)");
+    const pageHead = head(ctx, "สินค้า 1 ตัว → งานทุกแผนก", "แต่ละแผนกต้องทำอะไร เท่าไร จากอะไร ตาม BOM ปัจจุบัน (ยังไม่หักคงคลัง)");
     if (!code) {
       const withBom = parsed.filter((entry) => approvedBomOf(ctx, entry.item.code)).sort((a, b) => a.item.code.localeCompare(b.item.code));
       const html = `${pageHead}${picker}
@@ -374,10 +374,7 @@
     const noBom = [...new Set(lines.filter((line) => line.noBom).map((line) => line.itemCode))];
     const maxLevel = Math.max(...lines.map((line) => line.level));
     const facts = ui.kv([
-      ["สินค้า", `${ui.mono(item.code)} ${esc(item.name)}`],
-      ["BOM", approved ? esc(`Rev.${approved.revision} บันทึก ${rules.fmtDate(approved.approvedAt)} โดย ${approved.approvedBy}`) : ui.badge("warn", "ยังไม่มี BOM")],
-      ["จำนวนที่คิด", esc(`${rules.fmtQty(qty)} ${uomText(ctx, item.uom)}`)],
-      approved ? ["ส่วนประกอบ", esc(`${net.length - 1} รหัส · ${lines.length - 1} บรรทัด · ลึกสุด ${maxLevel} ชั้น · ${net.filter((entry) => entry.kind === "RB").length} เส้นยาง`)] : null,
+      ["BOM", approved ? esc(`Rev.${approved.revision} บันทึก ${rules.fmtDate(approved.approvedAt)} โดย ${approved.approvedBy} · ลึกสุด ${maxLevel} ชั้น`) : ui.badge("warn", "ยังไม่มี BOM")],
     ]);
     const warnings = [
       missing.length ? ui.callout("warn", `ระเบิดไม่ครบ ไม่พบชิ้นงาน: ${esc(missing.join(", "))}`) : "",
@@ -398,7 +395,7 @@
       } },
       GR: { head: ["ชิ้นยาง (SE)", "ตัดจากเส้นยาง", "การตัด", "ใช้ใน", ...QTY_HEAD(DEPT_WORK.GR)], row: (entry) => {
         const cuts = entry.children.map((ref) => cutText(itemOf(ctx, ref.code)?.rubber)).filter(Boolean);
-        return `<td>${codeCell(entry)}</td><td>${madeFrom(entry)}</td><td class="small">${cuts.length ? cuts.map((text) => `<div>${esc(text)}</div>`).join("") : '<span class="muted">—</span>'}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}`;
+        return `<td>${codeCell(entry)}</td><td>${madeFrom(entry)}</td><td class="small bom-size">${cuts.length ? cuts.map((text) => `<div>${esc(text)}</div>`).join("") : '<span class="muted">—</span>'}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}`;
       } },
       PT: { head: ["ชิ้นพลาสติก", "วัสดุ (ต่อ 1 ชิ้น)", "ใช้ใน", ...QTY_HEAD(DEPT_WORK.PT), { label: "น้ำหนัก/ชิ้น (ก.)", className: "right" }], row: (entry) => `<td>${codeCell(entry)}</td><td>${madeFrom(entry)}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}<td class="right rf-mono">${itemOf(ctx, entry.itemCode)?.weightG ? esc(rules.fmtQty(itemOf(ctx, entry.itemCode).weightG)) : '<span class="muted">—</span>'}</td>` },
       BG: { head: ["ชิ้นงานเย็บ", "วัสดุ (ต่อ 1 ชิ้น)", "ใช้ใน", ...QTY_HEAD(DEPT_WORK.BG)], row: (entry) => `<td>${codeCell(entry)}</td><td>${madeFrom(entry)}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}` },
@@ -409,14 +406,14 @@
     const cards = approved ? rules.groupByDept(net).map((group) => {
       const spec = TABLES[group.dept] ?? generic;
       const rows = group.entries.sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((entry) => `<tr>${spec.row(entry)}</tr>`);
-      return ui.card(ui.table(spec.head, rows), { title: `${esc(group.dept)} <span class="muted">${esc(rules.DEPT_LABEL[group.dept]?.replace(/^\w+ · /, "") ?? "")} · ${esc(String(group.entries.length))} รายการ</span>`, flush: true, className: "bom-dept-card" });
+      return ui.card(ui.table(spec.head, rows), { title: `${esc(group.dept)} <span class="muted">${esc(rules.DEPT_LABEL[group.dept]?.replace(/^\w+ · /, "") ?? "")}</span>`, flush: true, className: "bom-dept-card" });
     }).join("") : ui.callout("info", `สินค้านี้ยังไม่มี BOM จึงยังไม่มีงานของแผนกใด${canEdit ? ` · ${ui.link("สร้าง BOM", buildUrl(ctx, item.code))}` : ""}`);
     const actions = [
       canEdit ? ui.link(approved ? "แก้ BOM" : "สร้าง BOM", buildUrl(ctx, item.code), "btn rf-btn secondary") : "",
       canEdit && approved ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }, { className: "" }) : "",
       ui.link("ประวัติ revision", ctx.url("items", { sel: item.code }), "btn rf-btn secondary"),
     ].join("");
-    const html = `${pageHead}${picker}${ui.card(`${facts}${warnings}`, { title: `${esc(item.code)} × ${esc(rules.fmtQty(qty))}`, actions })}<div class="bom-dept-grid">${cards}</div>`;
+    const html = `${pageHead}${picker}${ui.card(`${facts}${warnings}`, { title: `${esc(item.code)} <span class="muted">${esc(item.name)}</span> × ${esc(rules.fmtQty(qty))} ${esc(uomText(ctx, item.uom))}`, actions })}<div class="bom-dept-grid">${cards}</div>`;
     return { html, bind: bindPick };
   };
 
@@ -581,7 +578,7 @@
     if (order) {
       const tab = ["bom", "req", "jobs"].includes(params.get("tab")) ? params.get("tab") : "bom";
       const draft = order.status === "draft";
-      const canCount = ctx.helpers.canCount(user) && !["completed", "cancelled"].includes(order.status);
+      const canCount = ctx.helpers.canCount(user) && draft;
       const headerKv = ui.kv([
         ["ลูกค้า", esc(order.customer)], ["ประเทศ / ประเภท", `${esc(order.country)} ${status(ctx, order.orderType)}`], ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["ส่งมอบคลัง (WH)", esc(rules.fmtDate(order.whDue))],
         ["กำหนดเสร็จรายแผนก", rules.DUE_DEPTS.map((dept) => `<span class="bom-due"><b>${esc(dept)}</b> ${esc(order.due[dept] ? rules.fmtDate(order.due[dept]) : "—")}</span>`).join(" ")],
@@ -611,8 +608,8 @@
           const stock = entry?.stock;
           return `<tr${line.level === 0 ? ' class="bom-fg-row"' : ""}><td>${levelCell(line.level, ui.link(line.itemCode, ctx.url("items", { sel: line.itemCode }), "rf-mono"))}</td><td>${esc(line.name)}${line.noBom ? ` ${ui.badge("warn", "ไม่มี BOM")}` : ""}</td><td>${deptBadge(ctx, line.producerDept)}</td><td class="right rf-mono">${line.level ? esc(rules.fmtQty(line.qtyPerFg)) : ""}</td><td class="right rf-mono">${esc(rules.fmtQty(line.required))}</td><td>${esc(uomText(ctx, line.uom))}</td><td class="right rf-mono">${line.level ? `${stock === undefined ? '<span class="muted">—</span>' : esc(rules.fmtQty(stock))}${canCount ? ` ${ui.openButton("นับ", "stockCount", { orderId: order.id, itemCode: line.itemCode }, { className: "secondary small", ariaLabel: `นับคงคลัง ${line.itemCode}` })}` : ""}` : ""}</td><td class="right rf-mono${line.level && entry && entry.net < 0 ? " bom-surplus" : ""}">${line.level && entry ? esc(rules.fmtQty(entry.net)) : ""}</td><td class="small muted">${line.revision ? `Rev.${line.revision}` : ""}</td></tr>`;
         });
-        tabBody = `${ui.table(["ชั้น / รหัส", "ชื่อวัตถุดิบ", "แผนกผลิต", { label: "ใช้ : 1 FG", className: "right" }, { label: "ต้องเบิก", className: "right" }, "หน่วย", { label: "คงคลัง", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ", className: "right" }, "BOM"], bomRows)}
-          <p class="small muted">ต้องผลิต/สั่งซื้อ คิดต่อรหัสรวมทุกบรรทัดในใบ และหักคงคลังของชั้นบนก่อน (SE ที่มีในคลังลดเส้น RB ที่ต้องรีด เหมือนคอลัมน์ AK ของ BOMSHEET) ค่าติดลบ = ของเกิน</p>`;
+        // สองคอลัมน์ท้ายเป็นยอดต่อรหัสรวมทั้งใบ (คอลัมน์ AK ของ BOMSHEET หักคงคลังชั้นบนก่อน) จึงซ้ำกันทุกบรรทัดของรหัสเดียวกัน ส่วน "ต้องเบิก" เป็นต่อบรรทัด
+        tabBody = ui.table(["ชั้น / รหัส", "ชื่อวัตถุดิบ", "แผนกผลิต", { label: "ใช้ : 1 FG", className: "right" }, { label: "ต้องเบิก", className: "right" }, "หน่วย", { label: "คงคลัง (รหัสนี้ทั้งใบ)", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ (รหัสนี้ทั้งใบ)", className: "right" }, "BOM"], bomRows);
       } else if (tab === "req") {
         const reqs = [...net.values()].filter((entry) => entry.kind !== "FG").sort((a, b) => a.dept.localeCompare(b.dept) || a.itemCode.localeCompare(b.itemCode));
         tabBody = ui.table(["แผนก", "รหัส", "ชื่อ", { label: "ต้องการรวม", className: "right" }, "หน่วย", { label: "คงคลัง", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ", className: "right" }, "ใช้ในสินค้า"],
@@ -639,7 +636,7 @@
   function bomsheetCsv(ctx, order) {
     const { rules } = ctx;
     const rows = [["ชื่อลูกค้า", order.customer, "เลขที่ PI", order.id, "ประเทศ", order.country, "วันที่สั่งผลิต", rules.fmtDate(order.orderedAt), "ส่งมอบคลัง", rules.fmtDate(order.whDue)],
-      ["ITEM สินค้า", "จำนวนสั่ง FG", "ชั้น", "รหัส", "ชื่อวัตถุดิบในการผลิต", "แผนกผู้ผลิต", "จำนวนใช้ : 1 FG", "จำนวนที่ต้องเบิก", "หน่วย", "จำนวนที่มีในคลัง", "จำนวนที่ต้องผลิตหรือสั่งซื้อ", "BOM Rev"]];
+      ["ITEM สินค้า", "จำนวนสั่ง FG", "ชั้น", "รหัส", "ชื่อวัตถุดิบในการผลิต", "แผนกผู้ผลิต", "จำนวนใช้ : 1 FG", "จำนวนที่ต้องเบิก", "หน่วย", "จำนวนที่มีในคลัง (รหัสนี้ทั้งใบ)", "จำนวนที่ต้องผลิตหรือสั่งซื้อ (รหัสนี้ทั้งใบ หักคงคลังชั้นบนก่อน)", "BOM Rev"]];
     const net = new Map(rules.netRequirements(order.explosion, order.stockCounts).map((entry) => [entry.itemCode, entry]));
     for (const line of order.explosion) {
       const entry = net.get(line.itemCode);
@@ -756,7 +753,7 @@
       if (canWork && job.status !== "done") buttons.push(ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
       if (canWork && job.status !== "done") buttons.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
       if (job.dept === "RB" && job.status !== "done" && (canWork || user.role === "planner") && !job.externalRef) buttons.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
-      return `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${ui.mono(job.id)}<div class="small muted">${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId, tab: "jobs" }))} · ${esc(order?.customer ?? "")}</div></td>${dept === "ALL" ? `<td>${deptBadge(ctx, job.dept)}</td>` : ""}<td>${ui.link(job.itemCode, ctx.url("items", { sel: job.itemCode }), "rf-mono")}<div class="small muted">${esc(job.name)}${item?.rubber?.compound ? ` · สูตร ${esc(item.rubber.compound)}` : ""}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}${job.qtyRequired && job.qtyRequired !== job.qtyPlanned ? `<div class="small muted" title="ความต้องการของใบก่อนหักคงคลังที่นับ">${esc(`จาก ${rules.fmtQty(job.qtyRequired)}${job.stockCounted !== null && job.stockCounted !== undefined ? ` · คลัง ${rules.fmtQty(job.stockCounted)}` : ""}`)}</div>` : ""}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}${late(ctx, job) ? `<div class="small">${ui.badge("bad", "เลยกำหนด")}</div>` : ""}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}${job.externalRef.kg ? `<span class="muted"> · ${esc(rules.fmtQty(job.externalRef.kg, 2))} kg</span>` : ""}</div>` : ""}</td><td class="nowrap">${buttons.join(" ")}</td></tr>`;
+      return `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${ui.mono(job.id)}<div class="small muted">${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId, tab: "jobs" }))} · ${esc(order?.customer ?? "")}</div></td>${dept === "ALL" ? `<td>${deptBadge(ctx, job.dept)}</td>` : ""}<td>${ui.link(job.itemCode, ctx.url("items", { sel: job.itemCode }), "rf-mono")}<div class="small muted">${esc(job.name)}${item?.rubber?.compound ? ` · สูตร ${esc(item.rubber.compound)}` : ""}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}${job.qtyRequired && job.qtyRequired !== job.qtyPlanned ? `<div class="small muted" title="ยอดที่ใบต้องการหลังหักคงคลังของชั้นบนแล้ว ก่อนหักคงคลังของชิ้นนี้">${esc(`ต้องการ ${rules.fmtQty(job.qtyRequired)}${job.stockCounted !== null && job.stockCounted !== undefined ? ` · คลัง ${rules.fmtQty(job.stockCounted)}` : ""}`)}</div>` : ""}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}${late(ctx, job) ? `<div class="small">${ui.badge("bad", "เลยกำหนด")}</div>` : ""}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}${job.externalRef.kg ? `<span class="muted"> · ${esc(rules.fmtQty(job.externalRef.kg, 2))} kg</span>` : ""}</div>` : ""}</td><td class="nowrap">${buttons.join(" ")}</td></tr>`;
     });
     const headCells = ["งาน / ใบ PI", ...(dept === "ALL" ? ["แผนก"] : []), "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ", ""];
     const html = `${head(ctx, "งานของแผนก", "งานเกิดจากการปล่อยใบสั่งผลิต: หนึ่งงานต่อ แผนก × ชิ้นงาน รวมทุกสินค้าในใบ · งาน RB ส่งต่อเป็นใบสั่งผลิต (WO) ใน RubberFlow ได้")}${tabs}${filters}
