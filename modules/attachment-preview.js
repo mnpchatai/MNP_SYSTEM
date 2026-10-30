@@ -193,5 +193,5 @@
     }
   }
 
-  return { KIND_LABELS, MESSAGES, kindOf, formatSize, excerpt, renderSelection };
+  return { KIND_LABELS, MESSAGES, kindOf, formatSize, excerpt, renderSelection, renderPdfFirstPage };
 });

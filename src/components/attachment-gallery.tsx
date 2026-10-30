@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
   ChevronLeft, ChevronRight, Download, ExternalLink, FileSpreadsheet,
   FileText, FileType2, ImageOff, Loader2, X,
@@ -23,6 +23,10 @@ export const kindLabels: Record<AttachmentKind, string> = {
 
 function attachmentUrl(id: string, download = false) {
   return `/api/attachments/${id}${download ? "?download=1" : ""}`;
+}
+
+function thumbnailUrl(id: string) {
+  return `/api/attachments/${id}?thumb=1`;
 }
 
 export function attachmentKind(file: Pick<AttachmentItem, "file_name" | "content_type">): AttachmentKind {
@@ -118,6 +122,15 @@ function TextPreview({ file, full = false }: { file: AttachmentItem; full?: bool
   return <pre className="attachment-preview-text">{text || "(ไฟล์ว่าง)"}</pre>;
 }
 
+/** Shows the small JPEG uploaded next to the file (see THUMBNAIL_SUFFIX in modules/attachment-image.js) so the
+ *  tile does not download the full file. Files uploaded before thumbnails existed answer 404 and fall back. */
+function ThumbnailOr({ file, alt, fallback }: { file: AttachmentItem; alt: string; fallback: ReactNode }) {
+  const [missing, setMissing] = useState(false);
+  if (missing) return <>{fallback}</>;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className="attachment-preview-media" src={thumbnailUrl(file.id)} alt={alt} loading="lazy" onError={() => setMissing(true)} />;
+}
+
 function AttachmentTile({ file, onOpen }: { file: AttachmentItem; onOpen: (file: AttachmentItem) => void }) {
   const kind = attachmentKind(file);
   const [pageCount, setPageCount] = useState<number | null>(null);
@@ -132,10 +145,22 @@ function AttachmentTile({ file, onOpen }: { file: AttachmentItem; onOpen: (file:
         aria-label={`ดูขนาดใหญ่: ${file.file_name}`}
       >
         {kind === "image" && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className="attachment-preview-media" src={attachmentUrl(file.id)} alt={file.file_name} loading="lazy" />
+          <ThumbnailOr
+            file={file}
+            alt={file.file_name}
+            fallback={
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="attachment-preview-media" src={attachmentUrl(file.id)} alt={file.file_name} loading="lazy" />
+            }
+          />
         )}
-        {kind === "pdf" && <PdfPreview file={file} width={640} onPageCount={handlePageCount} />}
+        {kind === "pdf" && (
+          <ThumbnailOr
+            file={file}
+            alt={`ตัวอย่างหน้าแรกของ ${file.file_name}`}
+            fallback={<PdfPreview file={file} width={640} onPageCount={handlePageCount} />}
+          />
+        )}
         {kind === "text" && <TextPreview file={file} />}
         {(kind === "sheet" || kind === "doc" || kind === "other") && (
           <span className="attachment-preview-state"><KindIcon kind={kind} size={26} /> {kindLabels[kind]}</span>

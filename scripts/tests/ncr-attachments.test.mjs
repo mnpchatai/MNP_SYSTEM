@@ -10,6 +10,7 @@ function load({ sandbox = false, paths = [], fail = "" } = {}) {
     window: context, state: { employee: { isSandbox: sandbox } },
     ATTACHMENT_HINT: "เลือกไฟล์", crypto: { randomUUID: () => "uuid-1" },
     escapeHtml: (s) => String(s).replaceAll('"', "&quot;").replaceAll("<", "&lt;"),
+    uploadAttachmentThumbnail: async (bucket, path, thumbnailFile) => { log.push(["thumbnail", bucket, path, thumbnailFile.name]); },
     sb: {
       storage: { from: (bucket) => ({
         upload: async (path, file, options) => {
@@ -58,6 +59,8 @@ test("uploads and previews choose the correct bucket without replacing a file", 
     assert.equal(log[1][1].p_storage_path, log[0][2]);
     assert.equal(log[1][1].p_file_name, file.name);
     assert.equal(log[1][1].p_section, "report");
+    // ภาพย่อขึ้นหลังบันทึกไฟล์สำเร็จ ใน bucket และพาธของไฟล์จริง
+    assert.deepEqual(log[2], ["thumbnail", expected, log[0][2], file.name]);
   }
 });
 
@@ -69,6 +72,7 @@ test("failed uploads never register and failed registrations remove from the sam
   await assert.rejects(() => bad.api.uploadOne(ID, file, "response"), /registration failed/);
   assert.equal(bad.log[2][1], "ncr-test-attachments");
   assert.equal(bad.log[2][2][0], bad.log[0][2]);
+  assert.ok(![...down.log, ...bad.log].some((entry) => entry[0] === "thumbnail"), "no thumbnail for a file that was not saved");
 });
 
 test("cleanup removes registered and orphan test objects in chunks before purging reports", async () => {

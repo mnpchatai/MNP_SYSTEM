@@ -59,6 +59,22 @@ export function removeSelectedFile(input: HTMLInputElement, index: number): File
 /** ภาพย่อ (data URL JPEG) ของไฟล์รูปสำหรับแสดงตัวอย่างก่อนอัปโหลด ทำทีละไฟล์ผ่านคิว คืน null ถ้าถอดรหัสไม่ได้ */
 export function createThumbnail(file: File, maxEdge?: number): Promise<string | null>;
 
+/** ต่อท้าย storage_path ของไฟล์จริงเพื่อได้พาธภาพย่อ (".thumb.jpg") */
+export const THUMBNAIL_SUFFIX: string;
+/** ด้านยาวของภาพย่อที่อัปโหลด (พิกเซล) */
+export const THUMBNAIL_EDGE: number;
+/** ขนาดสูงสุดของภาพย่อที่อัปโหลด (200 KB) */
+export const MAX_THUMBNAIL_BYTES: number;
+/** พาธภาพย่อของไฟล์แนบใน bucket เดียวกัน */
+export function thumbnailPath(storagePath: string): string;
+/** data URL แบบ base64 → Blob (null ถ้ารูปแบบไม่ถูกต้อง) */
+export function dataUrlToBlob(dataUrl: string): Blob | null;
+/** ภาพย่อ JPEG สำหรับอัปโหลดคู่กับไฟล์จริง (รูป หรือหน้าแรกของ PDF ผ่าน renderPdf) คืน null ถ้าสร้างไม่ได้ ไม่โยน error */
+export function createUploadThumbnail(
+  file: File,
+  options?: { renderPdf?: (file: File) => Promise<string> },
+): Promise<Blob | null>;
+
 export function sniffImageType(bytes: Uint8Array): string | null;
 export function detectImageKind(file: { name?: string; type?: string }, headBytes?: Uint8Array): string | null;
 export function planAction(kind: string | null, size: number, mimeType: string): "skip" | "keep" | "retype" | "compress" | "convert";

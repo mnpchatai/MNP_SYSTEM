@@ -1,4 +1,6 @@
 import { uploadAttachmentAction } from "@/app/actions/requests";
+import { renderPdfFile } from "@/lib/pdf-preview";
+import { createUploadThumbnail, THUMBNAIL_EDGE } from "../../modules/attachment-image.js";
 
 // ตัวช่วยฝั่ง client สำหรับอัปโหลดไฟล์แนบหลายไฟล์ผ่าน Server Action
 // ส่งทีละไฟล์ ไม่รวมในคำขอเดียว เพราะ Server Action บน Vercel รับ body ได้ราว 4.5 MB (ขนาดรวมสูงสุด 20 MB ตรวจที่ช่องแนบไฟล์
@@ -18,6 +20,11 @@ export async function uploadAttachments(requestId: string, files: File[]): Promi
     const body = new FormData();
     body.set("request_id", requestId);
     body.set("file", file);
+    // ภาพย่อสำหรับแกลเลอรี (ไม่มีก็อัปโหลดไฟล์จริงได้ตามปกติ)
+    const thumbnail = await createUploadThumbnail(file, {
+      renderPdf: async (pdf) => (await renderPdfFile(pdf, THUMBNAIL_EDGE)).dataUrl,
+    });
+    if (thumbnail) body.set("thumbnail", thumbnail, "thumbnail.jpg");
     try {
       const result = await uploadAttachmentAction(body);
       if (!result.ok) failures.push({ name: file.name, error: result.error });

@@ -19,6 +19,7 @@
       await sb.storage.from(target).remove([storagePath]);
       throw error;
     }
+    await uploadAttachmentThumbnail(target, storagePath, file);
   }
 
   async function purge() {

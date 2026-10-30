@@ -8,7 +8,7 @@ import { notifyEmployeeByEmail } from "@/lib/notify";
 import { allowedApprovalDecisions, getRequestModule, usesDatabaseApprovalWorkflow } from "@/lib/request-modules";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { MAX_FILE_BYTES } from "../../../modules/attachment-image.js";
+import { MAX_FILE_BYTES, MAX_THUMBNAIL_BYTES, thumbnailPath } from "../../../modules/attachment-image.js";
 
 const allowedPriorities = new Set(["low", "normal", "high", "urgent"]);
 const allowedAttachmentTypes = new Set([
@@ -273,6 +273,14 @@ export async function uploadAttachmentAction(formData: FormData): Promise<Attach
   if (metadataError) {
     await supabase.storage.from("request-attachments").remove([storagePath]);
     return { ok: false, error: "บันทึกข้อมูลไฟล์ไม่สำเร็จ" };
+  }
+  // ภาพย่อที่ client สร้างมา (ดู THUMBNAIL_SUFFIX ใน modules/attachment-image.js) เป็นของเสริม: ไม่ผ่านเกณฑ์หรืออัปโหลดไม่ได้ก็ข้าม
+  // แกลเลอรีจะใช้ไฟล์จริงแทน
+  const thumbnail = formData.get("thumbnail");
+  if (thumbnail instanceof File && thumbnail.size > 0 && thumbnail.size <= MAX_THUMBNAIL_BYTES && thumbnail.type === "image/jpeg") {
+    await supabase.storage
+      .from("request-attachments")
+      .upload(thumbnailPath(storagePath), thumbnail, { contentType: "image/jpeg", upsert: false });
   }
   revalidatePath(`/requests/${requestId}`);
   return { ok: true };

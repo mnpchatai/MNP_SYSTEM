@@ -203,3 +203,32 @@ test("describeBatch summarises count, total size against the limit and adjusted 
   const converted = new File([new Uint8Array(1 * MB)], "b.jpg", { type: "image/jpeg" });
   assert.equal(describeBatch([a, converted], [a, b]), "เลือก 2 ไฟล์ · รวม 4.0 จาก 20 MB · เตรียมรูปให้ระบบรับได้แล้ว 1 ไฟล์");
 });
+
+test("thumbnailPath keeps the thumbnail beside the original in the same folder", () => {
+  const { thumbnailPath, THUMBNAIL_SUFFIX } = attachmentImage;
+  assert.equal(THUMBNAIL_SUFFIX, ".thumb.jpg");
+  assert.equal(thumbnailPath("req-1/uuid-a.pdf"), "req-1/uuid-a.pdf.thumb.jpg");
+});
+
+test("dataUrlToBlob decodes base64 data URLs and rejects anything else", async () => {
+  const { dataUrlToBlob } = attachmentImage;
+  const blob = dataUrlToBlob(`data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff]).toString("base64")}`);
+  assert.equal(blob.type, "image/jpeg");
+  assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())], [0xff, 0xd8, 0xff]);
+  assert.equal(dataUrlToBlob("https://example.com/a.jpg"), null);
+  assert.equal(dataUrlToBlob(null), null);
+});
+
+test("createUploadThumbnail renders PDFs through the given renderer and never throws", async () => {
+  const { createUploadThumbnail, MAX_THUMBNAIL_BYTES } = attachmentImage;
+  const jpeg = (size) => `data:image/jpeg;base64,${Buffer.alloc(size, 1).toString("base64")}`;
+  const pdf = { name: "ใบเสนอราคา.PDF", type: "" };
+  const made = await createUploadThumbnail(pdf, { renderPdf: async (file) => (file === pdf ? jpeg(2000) : "") });
+  assert.equal(made.type, "image/jpeg");
+  assert.equal(made.size, 2000);
+  assert.equal(await createUploadThumbnail(pdf), null, "no renderer, no thumbnail");
+  assert.equal(await createUploadThumbnail(pdf, { renderPdf: async () => jpeg(MAX_THUMBNAIL_BYTES + 1) }), null, "oversized");
+  assert.equal(await createUploadThumbnail(pdf, { renderPdf: async () => "data:image/png;base64,AAAA" }), null, "not JPEG");
+  assert.equal(await createUploadThumbnail(pdf, { renderPdf: async () => { throw new Error("broken pdf"); } }), null);
+  assert.equal(await createUploadThumbnail({ name: "งบ.xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), null);
+});
