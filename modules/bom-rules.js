@@ -93,24 +93,29 @@
   };
   // สีในรหัส SE/RB (ช่วงที่ 3 ของ SE, ช่วงที่ 4 ของ RB) ว่าง = ชิ้นไม่ระบุสีในรหัส
   const colorOfCode = (code) => parseSeCode(code)?.color || parseRbCode(code)?.color || "";
+  // แยกรหัส SE/RB เป็นส่วนคงที่ (SE-<สินค้า> หรือ RB-<สูตร>-<ประเภท>) + สี + ตัวเลข 3 ช่วงท้าย โดยคงสตริงเดิม (065 ไม่กลายเป็น 65)
+  // null = ไม่ใช่ SE/RB หรือสามช่วงท้ายไม่ใช่ตัวเลข (รหัสแบบนั้นไม่ถือว่ามีสีในรหัส)
+  function splitColorCode(code) {
+    const parts = canonicalCode(code).split("-");
+    const fixed = parts[0] === "SE" ? 2 : parts[0] === "RB" ? 3 : 0;
+    if (!fixed || parts.length < fixed + 3) return null;
+    const tail = parts.slice(-3);
+    if (!tail.every((part) => /^\d+(\.\d+)?$/.test(part))) return null;
+    return { prefix: parts.slice(0, fixed).join("-"), color: parts.slice(fixed, -3).join("-"), tail: tail.join("-") };
+  }
   // กุญแจ "ช่องสี" = รหัส SE/RB ที่ถอดสีออก (SE-TP01-*-100-18-65) ใช้จับคู่ช่องเดียวกันข้ามชุดสี · null = ชิ้นที่ไม่มีสีในรหัส
   function colorSlotKey(code) {
-    const se = parseSeCode(code);
-    if (se) return `SE-${se.product}-*-${se.lengthMm}-${se.holeMm}-${se.odMm}`;
-    const rb = parseRbCode(code);
-    if (rb) return `RB-${rb.compound}-${rb.type}-*-${rb.lengthMm}-${rb.holeMm}-${rb.odMm}`;
-    return null;
+    const split = splitColorCode(code);
+    return split ? `${split.prefix}-*-${split.tail}` : null;
   }
-  // รหัสเดิมแต่เปลี่ยนสี (SE-TP01-OR01-100-18-65 + RD01 → SE-TP01-RD01-100-18-65) รหัสที่ไม่ใช่ SE/RB คืนเดิม
+  // รหัสเดิมแต่เปลี่ยนสี (SE-TP01-OR01-100-18-65 + RD01 → SE-TP01-RD01-100-18-65) รหัสที่ไม่ใช่ SE/RB หรือแยกส่วนไม่ได้คืนเดิม
   function recolorCode(code, color) {
     const c = String(color ?? "").trim().toUpperCase();
-    const se = parseSeCode(code);
-    if (se) return buildSeCode({ ...se, color: c });
-    const rb = parseRbCode(code);
-    if (rb) return buildRbCode({ ...rb, color: c });
-    return canonicalCode(code);
+    const split = splitColorCode(code);
+    if (!split) return canonicalCode(code);
+    return `${split.prefix}${c ? `-${c}` : ""}-${split.tail}`;
   }
-  // ชื่อชิ้นเมื่อเปลี่ยนสี: แทนรหัสสีเดิมและชื่อแม่สีไทยในชื่อ ถ้าไม่พบต่อท้ายด้วยสีใหม่
+  // ชื่อชิ้นเมื่อเปลี่ยนสี: แทนรหัสสีเดิมและชื่อสีไทยในชื่อ (ลองทั้งชื่อที่ลงทะเบียนและชื่อแม่สีมาตรฐาน ยาวก่อน) ถ้าไม่พบต่อท้ายด้วยสีใหม่
   function renameColor(name, fromColor, toColor, colors = []) {
     let text = String(name ?? "");
     const from = String(fromColor ?? "").toUpperCase();
@@ -118,9 +123,13 @@
     if (!to || from === to) return text;
     let touched = false;
     if (from && text.includes(from)) { text = text.split(from).join(to); touched = true; }
-    const fromName = from ? colorName(from, colors).replace(/\s*\d+$/, "") : "";
-    const toName = colorName(to, colors).replace(/\s*\d+$/, "");
-    if (fromName && toName && fromName !== toName && text.includes(fromName)) { text = text.split(fromName).join(toName); touched = true; }
+    const stem = (code) => colorName(code, colors).replace(/\s*\d+$/, "");
+    const masterName = (code) => COLOR_MASTERS[parseColorCode(code)?.master] ?? "";
+    const toName = stem(to);
+    const fromNames = from ? [...new Set([stem(from), masterName(from)].filter(Boolean))].sort((a, b) => b.length - a.length) : [];
+    for (const fromName of fromNames) {
+      if (fromName !== toName && text.includes(fromName)) { text = text.split(fromName).join(toName); touched = true; break; }
+    }
     return touched ? text : `${text} ${toName} ${to}`.trim();
   }
   // ช่องสีของสินค้า: บรรทัดชั้นแรกที่เป็น SE หรือ RB เรียงตามลำดับบรรทัด ซ้ำกุญแจได้ (ลูกบอลสามสีคือ SE เดียวกันสามช่อง)

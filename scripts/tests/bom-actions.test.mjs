@@ -296,6 +296,8 @@ test("a product can be chosen by base code + package + color set; an unknown var
   const redRb = A.helpers.itemOf(d, "RB-DM01-02-RD01-202-18-70");
   assert.deepEqual([redRb.kind, redRb.rubber.compound, redRb.rubber.color, redRb.rubber.pcsPerRoll, redRb.weightG], ["RB", "DM01", "RD01", 31, 1530], "a recoloured rod keeps compound, cutting data and weight");
   assert.equal(A.helpers.itemOf(d, "SE-TP01-BK01-140-3-20").clonedFrom, undefined, "an unchanged slot reuses the existing item");
+  assert.deepEqual(approved(d, "SE-TP01-RD01-75-3-30").lines.map((line) => line.childCode), ["RB-DM03-03-YE03-3000-3-130"], "a rod whose colour differs from the SE's old colour (yellow sheet under an orange wing) is kept");
+  assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /RB-DM03-03-YE03-3000-3-130 ใต้ SE-TP01-RD01-75-3-30 คงสี YE03/);
   assert.notEqual(bom.lines, approved(d, "DEMO-TP-01(P)-Y").lines, "lines are copied, not shared");
   // แพ็กเกจ B (กล่องเดี่ยว) ของชุดสี A: ต้นแบบคือ (P)-A ที่เพิ่งสร้าง สีตรงอยู่แล้ว บรรจุภัณฑ์ถูกสลับ
   assert.equal(A.createVariant(d, { base: "DEMO-TP-01", pkg: "B", colorSet: "A" }, ctx("planner")), "DEMO-TP-01(B)-A");
@@ -328,7 +330,8 @@ test("colours, colour sets and packages are data: learned from a product, valida
   rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", slots: [{ key: "SE-TP01-100-18-65", color: "PU01" }] }, ctx("planner")), /กุญแจช่องสี/);
   rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", slots: [] }, ctx("planner")), /อย่างน้อย 1 ช่อง/);
   rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "toolong", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("planner")), /ยาวเกิน 4/);
-  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "a b", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("planner")), /1–4 ตัว/);
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "AB", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("planner")), /ตัวเดียว/, "two letters would not be read back by parseFgCode");
+  rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "1", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("planner")), /ตัวเดียว/);
   rejects(() => A.saveColorSet(d, { base: "DEMO-TP-01", code: "B", slots: [{ key: "SE-TP01-*-100-18-65", color: "PU01" }] }, ctx("gr")), /ฝ่ายวางแผน/);
   A.saveColorSet(d, { base: "demo-tp-01", code: "b", slots: [{ key: "se-tp01-*-100-18-65", color: "pu01" }] }, ctx("planner"));
   assert.ok(d.colors.some((color) => color.code === "PU01" && color.name === "ม่วง 01"), "an unknown colour is registered with its master name");
@@ -340,10 +343,26 @@ test("colours, colour sets and packages are data: learned from a product, valida
   A.removeColorSet(d, { base: "DEMO-TP-01", code: "B" }, ctx("planner"));
   rejects(() => A.removeColorSet(d, { base: "DEMO-TP-01", code: "B" }, ctx("planner")), /ไม่พบ/);
   rejects(() => A.learnColorSet(d, { fgCode: "DEMO-HL-24" }, ctx("planner")), /ไม่พบสินค้า/);
+  // สีที่ไม่ตรงรูปแบบ (ข้อมูลเก่า) ไม่ทำให้บันทึกชุดสีจากสินค้าไม่ได้ ช่องนั้นเว้นว่าง
+  A.helpers.itemOf(d, "SE-HL24-YE03-400-19-30").rubber.color = "ORANGE";
+  A.learnColorSet(d, { fgCode: "DEMO-HL-24(B)-A" }, ctx("planner"));
+  const hlSet = A.helpers.colorSetOf(d, "DEMO-HL-24", "A");
+  assert.deepEqual(hlSet.slots, [{ key: "SE-HL24-*-400-19-30", color: "" }]);
+  assert.equal(hlSet.name, "จาก DEMO-HL-24(B)-A");
+  assert.match(hlSet.note, /SE-HL24-YE03-400-19-30=ORANGE ไม่ตรงรูปแบบ/);
+  assert.match(d.audit[0].detail, /ORANGE ไม่ตรงรูปแบบ/);
   // แพ็กเกจ
   assert.deepEqual(A.helpers.packageOf(d, "DEMO-TP-01", "P").lines, [{ childCode: "P-BAG-01", qty: 0.01 }, { childCode: "P-BOX-01", qty: 0.025 }]);
   rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "NOPE", qty: 1 }] }, ctx("planner")), /ไม่พบชิ้นงาน NOPE/);
-  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "DEMO-HL-24(B)-A", qty: 1 }] }, ctx("planner")), /สินค้าสำเร็จรูป/);
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "DEMO-HL-24(B)-A", qty: 1 }] }, ctx("planner")), /ต้องเป็นของซื้อ/);
+  rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "SE-TP01-BK01-140-3-20", qty: 1 }] }, ctx("planner")), /ชิ้นยาง.*ต้องเป็นของซื้อ/, "a manufactured part cannot be declared packaging (it would be silently removed from new variants)");
+  // แพ็กเกจที่นิยามไม่ครบ: บรรทัดบรรจุภัณฑ์ของต้นแบบที่ไม่อยู่ในแพ็กเกจเป้าหมายถูกถอดและบอกไว้ชัด
+  A.savePackage(d, { base: "DEMO-TP-01", code: "N", name: "กล่อง + สติ๊กเกอร์", lines: [{ childCode: "P-BOX-01", qty: 0.1 }, { childCode: "P-STK-01", qty: 1 }] }, ctx("planner"));
+  A.createVariant(d, { base: "DEMO-TP-01", pkg: "P", colorSet: "A" }, ctx("planner"));
+  const noSticker = approved(d, "DEMO-TP-01(P)-A");
+  assert.ok(!noSticker.lines.some((line) => line.childCode === "P-STK-01"), "the sticker is treated as packaging once any package of the base lists it");
+  assert.match(noSticker.changeLog.map((entry) => entry.text).join(" | "), /บรรจุภัณฑ์ของต้นแบบที่ไม่อยู่ในแพ็กเกจ P ถูกถอด: P-STK-01/);
+  A.removePackage(d, { base: "DEMO-TP-01", code: "N" }, ctx("planner"));
   rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "P-BOX-01", qty: 1 }, { childCode: "P-BOX-01", qty: 2 }] }, ctx("planner")), /ซ้ำ/);
   rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [{ childCode: "P-BOX-01", qty: 0 }] }, ctx("planner")), /ปริมาณ/);
   rejects(() => A.savePackage(d, { base: "DEMO-TP-01", code: "X", lines: [] }, ctx("planner")), /อย่างน้อย 1 บรรทัด/);

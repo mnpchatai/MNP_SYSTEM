@@ -457,7 +457,7 @@
         location.hash = ctx.url("variants", { base: String(new FormData(event.currentTarget).get("base") ?? "").trim() });
       });
     };
-    const pageHead = head(ctx, "ชุดสี / แพ็กเกจ", "นิยามครั้งเดียวต่อฐานรหัส: เลือกชุดสีแล้ว SE/RB ข้างในเปลี่ยนสีเอง เลือกแพ็กเกจแล้วบรรจุภัณฑ์สลับเอง (แทนการแก้ชีต Edit DATA ทุกใบ)", canEdit ? ui.openButton("เพิ่ม/แก้สี", "colorEdit", {}, { className: "secondary" }) : "");
+    const pageHead = head(ctx, "ชุดสี / แพ็กเกจ", "นิยามต่อฐานรหัส ใช้เมื่อสร้างรุ่นสินค้าใหม่", canEdit ? ui.openButton("เพิ่ม/แก้สี", "colorEdit", {}, { className: "secondary" }) : "");
     if (!base) {
       const rows = bases.map((value) => {
         const facts = baseFacts(ctx, value);
@@ -486,8 +486,8 @@
     });
     const setActions = setColumns.map((column) => {
       if (!canEdit) return "";
-      if (column.defined) return `<span class="bom-set-actions">${ui.mono(column.code)} ${ui.openButton("แก้", "colorSetEdit", { base, code: column.code }, { className: "secondary small" })} ${ui.button("ลบ", { action: "removeColorSet", args: { base, code: column.code }, className: "secondary small", confirmText: `ลบนิยามชุดสี ${column.code} ของ ${base}?` })}</span>`;
-      return `<span class="bom-set-actions">${ui.mono(column.code)} ${ui.button("บันทึกชุดสีนี้", { action: "learnColorSet", args: { fgCode: column.sample.item.code }, className: "secondary small", confirmText: "" })}</span>`;
+      if (column.defined) return `<span class="bom-set-actions">${ui.openButton(`แก้ชุด ${column.code}`, "colorSetEdit", { base, code: column.code }, { className: "secondary small" })}${ui.button("ลบ", { action: "removeColorSet", args: { base, code: column.code }, className: "secondary small", confirmText: `ลบนิยามชุดสี ${column.code} ของ ${base}?`, ariaLabel: `ลบชุดสี ${column.code}` })}</span>`;
+      return `<span class="bom-set-actions">${ui.button(`บันทึกชุด ${column.code} จากสินค้า`, { action: "learnColorSet", args: { fgCode: column.sample.item.code }, className: "secondary small", confirmText: "" })}</span>`;
     }).filter(Boolean).join(" ");
     const setCard = ui.card(`${ui.table(setHead, setRows, { emptyText: "สินค้านี้ไม่มีชิ้น SE/RB ที่ระบุสีในชั้นแรก" })}${setActions ? `<div class="rf-row bom-set-row">${setActions}</div>` : ""}`,
       { title: "ชุดสี", flush: true, actions: canEdit && facts.slotKeys.length ? ui.openButton("+ ชุดสีใหม่", "colorSetEdit", { base }, { className: "" }) : "" });

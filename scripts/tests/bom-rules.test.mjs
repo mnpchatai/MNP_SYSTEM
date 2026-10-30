@@ -276,6 +276,12 @@ test("colour helpers: colour codes, colourless slot keys, recolouring codes and 
   assert.equal(rules.recolorCode("SE-SL01B-68-0-68", "RD01"), "SE-SL01B-RD01-68-0-68", "a colourless code gains the colour segment");
   assert.equal(rules.recolorCode("RB-DM01-02-OR01-202-18-70", "RD01"), "RB-DM01-02-RD01-202-18-70");
   assert.equal(rules.recolorCode("PT-00320", "RD01"), "PT-00320");
+  assert.equal(rules.recolorCode("SE-X-OR01-100-18-065", "RD01"), "SE-X-RD01-100-18-065", "numeric segments keep their original spelling");
+  assert.equal(rules.recolorCode("SE-X-18-65X", "RD01"), "SE-X-18-65X", "a code whose tail is not three numbers is left alone");
+  assert.equal(rules.colorSlotKey("SE-X-18-65X"), null);
+  assert.equal(rules.colorSlotKey("RB-B0006-01-204-0-76"), "RB-B0006-01-*-204-0-76");
+  assert.equal(rules.recolorCode("RB-B0006-01-204-0-76", "RD01"), "RB-B0006-01-RD01-204-0-76");
+  assert.equal(rules.renameColor("ยางแผ่นปีก เหลือง YE03", "YE03", "RD01", [{ code: "YE03", name: "เหลืองสด" }]), "ยางแผ่นปีก แดง RD01", "the standard master name is tried when the registered name is not in the text");
   assert.equal(rules.buildSeCode({ product: "TP01", color: "", lengthMm: 100, holeMm: 18, odMm: 65 }), "SE-TP01-100-18-65");
   assert.equal(rules.renameColor("ลูกตอปิโด TP-01 ส้ม OR01 ยาว 100", "OR01", "RD01"), "ลูกตอปิโด TP-01 แดง RD01 ยาว 100");
   assert.equal(rules.renameColor("ยางกลมตัน หัวตอปิโด Ø72", "OR01", "RD01"), "ยางกลมตัน หัวตอปิโด Ø72 แดง RD01", "no colour in the name → appended");

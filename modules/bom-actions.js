@@ -318,7 +318,8 @@
     const R = rules();
     const base = R.canonicalCode(text(p.base, "ฐานรหัสสินค้า", 60));
     const code = text(p.code, "รหัสชุดสี", 4).toUpperCase();
-    if (!/^[A-Z0-9-]{1,4}$/.test(code)) fail("รหัสชุดสีต้องเป็นตัวอักษร/ตัวเลข 1–4 ตัว เช่น A หรือ Y");
+    // ตัวอักษรเดียว ให้ตรงกับท้ายรหัส FG ที่ parseFgCode อ่าน (-Y) มิฉะนั้นรุ่นที่สร้างจะไม่ถูกนับเป็นรุ่นของฐานเดียวกัน
+    if (!/^[A-Z]$/.test(code)) fail("รหัสชุดสีต้องเป็นตัวอักษร A–Z ตัวเดียว เช่น A หรือ Y (ตามท้ายรหัสสินค้า)");
     const slots = (Array.isArray(p.slots) ? p.slots : []).map((slot) => ({ key: String(slot.key ?? "").trim().toUpperCase(), color: String(slot.color ?? "").trim().toUpperCase() })).filter((slot) => slot.key);
     if (!slots.length) fail("ชุดสีต้องมีอย่างน้อย 1 ช่องสี");
     for (const slot of slots) {
@@ -328,9 +329,9 @@
     d.colorSets ??= [];
     const existing = colorSetOf(d, base, code);
     const entry = existing ?? { base, code, createdAt: ctx.now, createdBy: user.name };
-    Object.assign(entry, { slots, name: String(p.name ?? entry.name ?? "").trim().slice(0, 60), updatedAt: ctx.now, updatedBy: user.name });
+    Object.assign(entry, { slots, name: String(p.name ?? entry.name ?? "").trim().slice(0, 60), note: String(p.note ?? "").trim().slice(0, 300), updatedAt: ctx.now, updatedBy: user.name });
     if (!existing) d.colorSets.push(entry);
-    audit(d, ctx, existing ? "แก้ชุดสี" : "เพิ่มชุดสี", `${base} ชุด ${code}: ${slots.map((slot) => `${slot.key}=${slot.color || "-"}`).join(" ")}`);
+    audit(d, ctx, existing ? "แก้ชุดสี" : "เพิ่มชุดสี", `${base} ชุด ${code}: ${slots.map((slot) => `${slot.key}=${slot.color || "-"}`).join(" ")}${entry.note ? ` · ${entry.note}` : ""}`);
     return `${base} ${code}`;
   }
   function removeColorSet(d, { base, code }, ctx) {
@@ -348,9 +349,13 @@
     const fg = itemOf(d, fgCode) ?? fail("ไม่พบสินค้า");
     const { base, colorSet } = R.parseFgCode(fg.code);
     if (!colorSet) fail(`${fg.code} ไม่มีรหัสชุดสีท้ายรหัส`);
-    const slots = R.colorSlotsOf(fg.code, { itemOf: (c) => itemOf(d, c), approvedBomOf: (c) => approvedBomOf(d, c) }).filter((slot) => slot.color);
+    const all = R.colorSlotsOf(fg.code, { itemOf: (c) => itemOf(d, c), approvedBomOf: (c) => approvedBomOf(d, c) }).filter((slot) => slot.color);
+    // ช่องที่สีไม่ตรงรูปแบบ XX99 (เช่น "ORANGE" จากชีตเก่า) ถูกเว้นว่างไว้ให้ผู้ใช้เลือกเอง ไม่ทำให้ทั้งชุดบันทึกไม่ได้
+    const skipped = all.filter((slot) => !R.parseColorCode(slot.color));
+    const slots = all.map((slot) => ({ key: slot.key, color: R.parseColorCode(slot.color) ? slot.color : "" }));
     if (!slots.length) fail(`${fg.code} ไม่มีชิ้น SE/RB ที่ระบุสีในชั้นแรก`);
-    return saveColorSet(d, { base, code: colorSet, slots: slots.map((slot) => ({ key: slot.key, color: slot.color })), name: `จาก ${fg.code}` }, ctx);
+    const note = skipped.length ? `สีของ ${skipped.map((slot) => `${slot.itemCode}=${slot.color}`).join(", ")} ไม่ตรงรูปแบบ XX99 เว้นว่างไว้ให้เลือกเอง` : "";
+    return saveColorSet(d, { base, code: colorSet, slots, name: `จาก ${fg.code}`, note }, ctx);
   }
   // แพ็กเกจของฐานรหัส: รหัสแพ็กเกจ (B C P X K N) + บรรทัดบรรจุภัณฑ์ (ชิ้น × ปริมาณต่อ 1 FG) ใช้แทนบรรทัดบรรจุภัณฑ์ของต้นแบบตอนสร้างรุ่นใหม่
   function savePackage(d, p, ctx) {
@@ -362,7 +367,8 @@
     const seen = new Set();
     const lines = (Array.isArray(p.lines) ? p.lines : []).map((raw, index) => {
       const child = itemOf(d, raw.childCode) ?? fail(`แพ็กเกจ ${code} บรรทัด ${index + 1}: ไม่พบชิ้นงาน ${R.canonicalCode(raw.childCode)}`);
-      if (child.kind === "FG") fail(`แพ็กเกจ ${code}: ${child.code} เป็นสินค้าสำเร็จรูป ใส่เป็นบรรจุภัณฑ์ไม่ได้`);
+      // บรรจุภัณฑ์เป็นของซื้อเท่านั้น: ชิ้นที่ผลิตเอง (SE/RB/PT/BG) ถ้าใส่ได้ ตอนสลับแพ็กเกจจะถูกถอดออกจาก BOM ของรุ่นใหม่โดยไม่รู้ตัว
+      if (child.kind !== "PURCHASED") fail(`แพ็กเกจ ${code}: ${child.code} เป็น${R.KINDS[child.kind]?.label ?? child.kind} บรรจุภัณฑ์ต้องเป็นของซื้อ/คลัง`);
       if (seen.has(child.code)) fail(`แพ็กเกจ ${code}: ${child.code} ซ้ำ`);
       seen.add(child.code);
       return { childCode: child.code, qty: num(raw.qty, `แพ็กเกจ ${code} → ${child.code}: ปริมาณต่อ 1 FG`) };
@@ -385,21 +391,25 @@
     audit(d, ctx, "ลบแพ็กเกจ", `${key} แพ็กเกจ ${code}`);
     return true;
   }
-  // ชิ้น SE/RB สีใหม่จากชิ้นต้นแบบ (ชื่อ หน่วย น้ำหนัก ข้อมูลยาง) · SE ที่เปลี่ยนสีได้ BOM ของตัวเองโดย RB ลูกที่มีสีในรหัสเปลี่ยนสีตาม
+  // ชิ้น SE/RB สีใหม่จากชิ้นต้นแบบ (ชื่อ หน่วย น้ำหนัก ข้อมูลยาง) · SE ที่เปลี่ยนสีได้ BOM ของตัวเอง โดย RB ลูกที่สีในรหัสตรงกับสีเดิมของ SE
+  // เปลี่ยนสีตาม (RB สีอื่น เช่น แกนดำในลูกบอลสี หรือ RB ที่รหัสไม่มีสี คงเดิม)
   function ensureRecoloredItem(d, fromCode, color, ctx, user, log) {
     const R = rules();
     const toCode = R.recolorCode(fromCode, color);
     if (toCode === fromCode) return fromCode;
     const src = itemOf(d, fromCode) ?? fail(`ไม่พบชิ้นงาน ${fromCode}`);
+    const fromColor = String(src.rubber?.color || R.colorOfCode(fromCode) || "").toUpperCase();
     if (!itemOf(d, toCode)) {
-      d.items.push({ ...src, code: toCode, name: R.renameColor(src.name, src.rubber?.color || R.colorOfCode(fromCode), color, d.colors ?? []), rubber: { ...(src.rubber ?? {}), color }, legacyCodes: [], createdAt: ctx.now, updatedAt: ctx.now, clonedFrom: fromCode });
+      d.items.push({ ...src, code: toCode, name: R.renameColor(src.name, fromColor, color, d.colors ?? []), rubber: { ...(src.rubber ?? {}), color }, legacyCodes: [], createdAt: ctx.now, updatedAt: ctx.now, clonedFrom: fromCode });
       log.push(`สร้าง ${toCode} จาก ${fromCode}`);
     }
     const srcBom = approvedBomOf(d, fromCode);
     if (srcBom && !approvedBomOf(d, toCode)) {
       const lines = srcBom.lines.map((line) => {
         const child = itemOf(d, line.childCode);
-        const recolor = child?.kind === "RB" && R.colorOfCode(line.childCode);
+        const childColor = R.colorOfCode(line.childCode);
+        const recolor = child?.kind === "RB" && childColor && childColor === fromColor;
+        if (child?.kind === "RB" && childColor && !recolor) log.push(`${line.childCode} ใต้ ${toCode} คงสี ${childColor} (ไม่ใช่สี ${fromColor || "-"} ของ SE เดิม)`);
         return { ...line, flags: [...(line.flags ?? [])], childCode: recolor ? ensureRecoloredItem(d, line.childCode, color, ctx, user, log) : line.childCode };
       });
       d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
@@ -429,14 +439,19 @@
     } else if (colorSet && colorSet !== sourceSet) log.push(`ยังไม่มีนิยามชุดสี ${colorSet} ของฐาน ${base} สี SE/RB ยังเป็นของ ${source.code} (นิยามได้ที่เมนู "ชุดสี / แพ็กเกจ")`);
     const pkgDef = pkg ? packageOf(d, base, pkg) : null;
     if (pkgDef) {
+      // ถอดบรรทัดที่เป็นบรรจุภัณฑ์ของแพ็กเกจใดก็ตามของฐานนี้ (ต้นแบบอาจเป็นแพ็กเกจอื่น) แล้วใส่ของแพ็กเกจที่เลือก
+      // บรรทัดที่ถูกถอดแต่ไม่อยู่ในแพ็กเกจเป้าหมายถูกบอกไว้ชัด เผื่อผู้ใช้นิยามแพ็กเกจไม่ครบ
       const packaging = new Set((d.packages ?? []).filter((entry) => entry.base === base).flatMap((entry) => entry.lines.map((line) => line.childCode)));
+      const target = new Set(pkgDef.lines.map((line) => line.childCode));
       const removed = lines.filter((line) => packaging.has(line.childCode)).map((line) => line.childCode);
+      const dropped = removed.filter((code) => !target.has(code));
       lines = lines.filter((line) => !packaging.has(line.childCode));
       for (const line of pkgDef.lines) {
         const child = itemOf(d, line.childCode) ?? fail(`แพ็กเกจ ${pkg}: ไม่พบชิ้นงาน ${line.childCode}`);
         lines.push({ childCode: child.code, qty: line.qty, uom: child.uom, consumerDept: "PK", producerDept: child.ownerDept, scrapPct: 0, flags: [], note: `แพ็กเกจ ${pkg}` });
       }
       log.push(`แพ็กเกจ ${pkg}: ${removed.length ? `ถอด ${removed.join(", ")} ` : ""}ใส่ ${pkgDef.lines.map((line) => `${line.childCode} × ${R.fmtQty(line.qty)}`).join(", ")}`);
+      if (dropped.length) log.push(`บรรจุภัณฑ์ของต้นแบบที่ไม่อยู่ในแพ็กเกจ ${pkg} ถูกถอด: ${dropped.join(", ")} (ถ้าต้องใช้ เพิ่มในนิยามแพ็กเกจ ${pkg})`);
     } else if (pkg && pkg !== sourcePkg) log.push(`ยังไม่มีนิยามแพ็กเกจ ${pkg} ของฐาน ${base} บรรจุภัณฑ์ยังเป็นของ ${source.code}`);
     // ช่องสองช่องที่กลายเป็นชิ้นเดียวกัน (สีเดียวกัน) รวมเป็นบรรทัดเดียว
     const merged = [];
