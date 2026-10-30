@@ -140,9 +140,6 @@ function ThumbnailOr({ file, alt, fallback }: { file: AttachmentItem; alt: strin
 
 function AttachmentTile({ file, onOpen }: { file: AttachmentItem; onOpen: (file: AttachmentItem) => void }) {
   const kind = attachmentKind(file);
-  const [pageCount, setPageCount] = useState<number | null>(null);
-  const handlePageCount = useCallback((count: number) => setPageCount(count), []);
-
   return (
     <figure className="attachment-tile">
       <button
@@ -165,7 +162,7 @@ function AttachmentTile({ file, onOpen }: { file: AttachmentItem; onOpen: (file:
           <ThumbnailOr
             file={file}
             alt={`ตัวอย่างหน้าแรกของ ${file.file_name}`}
-            fallback={<PdfPreview file={file} width={640} onPageCount={handlePageCount} />}
+            fallback={<span className="attachment-preview-state"><KindIcon kind="pdf" size={26} /> กดเพื่อดูไฟล์</span>}
           />
         )}
         {kind === "text" && <TextPreview file={file} />}
@@ -174,7 +171,6 @@ function AttachmentTile({ file, onOpen }: { file: AttachmentItem; onOpen: (file:
         )}
         <span className="attachment-kind">
           {kindLabels[kind]}
-          {kind === "pdf" && pageCount ? ` · ${pageCount} หน้า` : ""}
         </span>
       </button>
       <figcaption className="attachment-caption">

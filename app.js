@@ -549,13 +549,53 @@ async function uploadExtraFiles(requestId, files, uploaderId) {
 }
 
 // ---------------------------------------------------------------------------
-// ตัวอย่างไฟล์แนบ: แสดงรูปทันทีในหน้า (รวมถึงหน้าแรกของ PDF) โดยไม่ต้องกดเปิด
+// ตัวอย่างไฟล์แนบ: แสดงรูปทันทีในหน้า (รวมถึงหน้าแรกของ PDF ที่มีภาพย่อ) โดยไม่ต้องกดเปิด
 // ---------------------------------------------------------------------------
 const ATTACHMENT_URL_TTL = 3600;
 // signed URL ที่สร้างแล้วถูกใช้ซ้ำจนเหลืออายุไม่ถึง 10 นาที: URL ใหม่ (token ใหม่) ทุกครั้งที่เปิดหน้าทำให้เบราว์เซอร์
 // ใช้ cache ไม่ได้และโหลดรูปเต็มซ้ำทุกรอบ ซึ่งเป็นต้นเหตุหลักของ Egress ใน Supabase ล้างเมื่อออกจากระบบ (onAuthStateChange)
 const ATTACHMENT_URL_REUSE_MS = 10 * 60 * 1000;
-const signedAttachmentUrls = new Map();
+// เก็บ signed URL ไว้ใน sessionStorage ด้วย รีเฟรชหน้าแล้วได้ URL เดิม เบราว์เซอร์จึงใช้ไฟล์จาก cache (max-age 1 ชม.)
+// แทนการโหลดใหม่ ใช้ sessionStorage ไม่ใช่ localStorage: URL เป็นสิทธิ์อ่านไฟล์ชั่วคราว ให้หายเมื่อปิดแท็บ
+// ผูกกับผู้ใช้ (owner): session เปลี่ยนคนโดยแท็บนี้ไม่ได้รับ SIGNED_OUT ก็ไม่ใช้ URL ของคนก่อน (ดู onAuthStateChange)
+const SIGNED_URL_STORAGE_KEY = "mnp-signed-attachment-urls";
+let signedUrlOwner = null;
+const signedAttachmentUrls = loadSignedAttachmentUrls();
+
+function loadSignedAttachmentUrls() {
+  const urls = new Map();
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SIGNED_URL_STORAGE_KEY) ?? "{}");
+    const now = Date.now();
+    signedUrlOwner = typeof saved?.owner === "string" ? saved.owner : null;
+    for (const [key, entry] of Array.isArray(saved?.entries) ? saved.entries : []) {
+      if (typeof key === "string" && typeof entry?.url === "string" && Number(entry.expiresAt) > now) urls.set(key, entry);
+    }
+  } catch {
+    // อ่านไม่ได้ (โหมดส่วนตัว/ข้อมูลเสีย) เริ่มใหม่ว่างๆ
+  }
+  return urls;
+}
+
+function saveSignedAttachmentUrls() {
+  try {
+    const now = Date.now();
+    for (const [key, entry] of signedAttachmentUrls) if (entry.expiresAt <= now) signedAttachmentUrls.delete(key);
+    if (signedAttachmentUrls.size && signedUrlOwner) {
+      sessionStorage.setItem(SIGNED_URL_STORAGE_KEY, JSON.stringify({ owner: signedUrlOwner, entries: [...signedAttachmentUrls] }));
+    } else sessionStorage.removeItem(SIGNED_URL_STORAGE_KEY);
+  } catch {
+    // เขียนไม่ได้ (เต็ม/โหมดส่วนตัว) ยังใช้ cache ในหน่วยความจำได้ตามเดิม
+  }
+}
+
+// เรียกทุกครั้งที่สถานะ auth เปลี่ยน: ออกจากระบบหรือเปลี่ยนผู้ใช้ ล้าง URL ที่จำไว้ทั้งหมด
+function syncSignedUrlOwner(userId) {
+  if (userId && userId === signedUrlOwner) return;
+  signedAttachmentUrls.clear();
+  signedUrlOwner = userId ?? null;
+  saveSignedAttachmentUrls();
+}
 const TEXT_PREVIEW_LIMIT = 512 * 1024;
 const attachmentKindLabels = { image: "รูปภาพ", pdf: "PDF", text: "ข้อความ", sheet: "Excel", doc: "Word", other: "ไฟล์แนบ" };
 const attachmentPreviews = new Map();
@@ -650,8 +690,15 @@ function setTilePreview(tile, node, badgeSuffix = "") {
 
 function setTileMessage(tile, message) {
   const preview = tile.querySelector(".attachment-preview");
-  const state = preview.querySelector(".attachment-preview-state");
-  if (state) state.textContent = message;
+  let state = preview.querySelector(".attachment-preview-state");
+  if (!state) {
+    // ภาพย่อโหลดไม่ขึ้นหลังแสดงไปแล้ว: เอารูปเสียออก แล้วใส่ข้อความแทน
+    preview.querySelector(".attachment-preview-media, .attachment-preview-text")?.remove();
+    state = document.createElement("span");
+    state.className = "attachment-preview-state";
+    preview.prepend(state);
+  }
+  state.textContent = message;
 }
 
 function previewImageNode(src, alt) {
@@ -685,10 +732,9 @@ async function fillAttachmentTile(file, url, thumbnailUrl = null) {
       setTilePreview(tile, previewImageNode(url, file.file_name));
       return;
     }
+    // PDF ที่ไม่มีภาพย่อ (ไฟล์เก่า) ไม่โหลดทั้งไฟล์มาวาดหน้าแรก — โหลดเฉพาะตอนกดเปิดใน lightbox
     if (kind === "pdf") {
-      const rendered = await renderPdfPageImage(url, 1, 640);
-      setTilePreview(tile, previewImageNode(rendered.dataUrl, `ตัวอย่างหน้าแรกของ ${file.file_name}`), ` · ${rendered.pageCount} หน้า`);
-      attachmentPreviews.get(file.id).pageCount = rendered.pageCount;
+      setTileMessage(tile, "กดเพื่อดูไฟล์");
       return;
     }
     if (kind === "text" && (file.size_bytes ?? 0) <= TEXT_PREVIEW_LIMIT) {
@@ -726,6 +772,7 @@ async function signAttachmentPaths(bucket, paths) {
     signedAttachmentUrls.set(`${bucket}/${item.path}`, { url: item.signedUrl, expiresAt });
     signedByPath.set(item.path, item.signedUrl);
   }
+  saveSignedAttachmentUrls();
   return { signedByPath, error: null };
 }
 
@@ -750,16 +797,10 @@ async function hydrateAttachmentGallery(files, bucket = "request-attachments") {
     }
     attachmentPreviews.set(file.id, { file, url, pageCount: null, thumbnailUrl: signedByPath.get(thumbnailPathOf(file)) ?? null });
   }
-  // รูปและภาพย่อโหลดขนานกันเองอยู่แล้ว ส่วน PDF ที่ไม่มีภาพย่อเรนเดอร์ทีละไฟล์เพื่อไม่ให้เปิด worker พร้อมกันหลายตัว
-  const loadsInParallel = (file, entry) => attachmentKind(file) === "image" || Boolean(entry.thumbnailUrl);
+  // กระเบื้องไม่เรนเดอร์ PDF แล้ว (ใช้ภาพย่อ) จึงเติมทุกช่องพร้อมกันได้
   for (const file of files) {
     const entry = attachmentPreviews.get(file.id);
-    if (entry && loadsInParallel(file, entry)) fillAttachmentTile(file, entry.url, entry.thumbnailUrl);
-  }
-  for (const file of files) {
-    const entry = attachmentPreviews.get(file.id);
-    if (!entry || loadsInParallel(file, entry)) continue;
-    await fillAttachmentTile(file, entry.url);
+    if (entry) fillAttachmentTile(file, entry.url, entry.thumbnailUrl);
   }
 }
 
@@ -4030,8 +4071,8 @@ async function init() {
   }
   window.addEventListener("hashchange", renderRoute);
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
-  sb.auth.onAuthStateChange((event) => {
-    if (event === "SIGNED_OUT") signedAttachmentUrls.clear();
+  sb.auth.onAuthStateChange((event, session) => {
+    syncSignedUrlOwner(event === "SIGNED_OUT" ? null : session?.user?.id);
     if (event !== "SIGNED_OUT" || !state.session) return;
     releasePushOnThisDevice({ server: false });
     state.session = null;
