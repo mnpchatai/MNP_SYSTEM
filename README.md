@@ -754,6 +754,7 @@ migration `20261103010000_purge_factory_and_test_ncr_audit_logs.sql` สร้�
 - **ลำดับที่ production**: กดปุ่ม "ล้างข้อมูลทดสอบ" ในโหมดทดสอบ **ก่อน** แล้วค่อย apply เพราะการล้างสร้างแถว audit DELETE ใหม่ ถ้ากดหลัง apply แถวเหล่านั้นจะค้าง ต้องรัน `select private.purge_test_audit_logs();` ด้วย role postgres อีกครั้ง (Data API เรียกไม่ได้)
 - **Rollback**: ลบถาวร ไม่มีสำรอง (ผู้ใช้เลือก) กู้ได้จาก backup ของ Supabase ที่มีก่อน apply เท่านั้น
 - **การตรวจ**: `supabase/tests/database/purge_test_audit_logs.test.sql`
+- **ของค้างต่อจากนั้น** (`20261104010000_remove_factory_leftovers.sql`): drop ตาราง `private._mg_deploy_chunks` (ชิ้น SQL ส่ง seed โรงงาน ไม่มีอะไรอ้าง) และลบ audit `sandbox_session` ของการเติม/ล้างข้อมูลโรงงาน (`SANDBOX_SEED_FACTORY*`, `SANDBOX_PURGE_FACTORY`) บัญชีทดสอบ `SBX-*` คงไว้เพราะยังใช้เป็น persona ของ NCR/QC ลบถาวร ไม่มี rollback ตรวจด้วย `remove_factory_leftovers.test.sql`
 
 ### RubberFlow MES — แผนก RB ทั้งโปรเจค (โหมดทดสอบ, Pilot Web รุ่น `20261102rf1`)
 
