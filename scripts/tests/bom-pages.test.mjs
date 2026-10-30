@@ -222,8 +222,30 @@ test("dialogs render for their arguments and escape user text", async () => {
     ["compoundLink", {}], ["compoundLink", { code: "DM03" }], ["orderNew", {}], ["orderItemAdd", { orderId: "DEMO-26002" }], ["stockCount", { orderId: "DEMO-26001", itemCode: "PT-00320" }],
     ["jobReport", { jobId: rb.id }], ["jobRubberflow", { jobId: rb.id }],
     ["colorSetEdit", { base: "DEMO-TP-01" }], ["colorSetEdit", { base: "DEMO-TP-01", code: "A" }], ["packageEdit", { base: "DEMO-TP-01" }], ["packageEdit", { base: "DEMO-TP-01", code: "P" }], ["packageEdit", { base: "DEMO-TP-01", code: "X", fromFg: "DEMO-TP-01(P)-Y" }], ["colorEdit", {}], ["colorEdit", { code: "OR01" }],
+    ...c.rules.SHEETS.map((sheet) => ["printSheet", { orderId: "DEMO-26001", sheet: sheet.id }]),
   ];
   assert.equal(D.colorSetEdit(c, { base: "NOPE" }), null, "no colour slots → no dialog");
+  assert.equal(D.printSheet(c, { orderId: "DEMO-26001", sheet: "NOPE" }), null);
+  assert.equal(D.printSheet(c, { orderId: "NOPE", sheet: "RB" }), null);
+  // ใบพิมพ์: หัวใบแบบ BOMSHEET + เฉพาะบรรทัดของสถานี + พิมพ์ได้ (.rf-printable)
+  const rbSheet = D.printSheet(c, { orderId: "DEMO-26001", sheet: "RB" }).html;
+  assert.match(rbSheet, /class="rf-printable bom-sheet"/);
+  assert.match(rbSheet, /ลูกค้าสาธิต เบลเยียม[\s\S]*DEMO-26001/);
+  assert.match(rbSheet, /RB-DM01-02-OR01-202-18-70/);
+  assert.doesNotMatch(rbSheet, /SE-TP01-OR01-100-18-65|PT-00320/, "the RB sheet carries FG rows and rods only");
+  assert.match(rbSheet, /data-bom-print/);
+  const ask = D.printSheet(c, { orderId: "DEMO-26001", sheet: "ASK" }).html;
+  assert.match(ask, /จำนวนที่นับได้/);
+  assert.match(ask, /คลังชิ้นยาง \(SE\)/);
+  assert.match(ask, /class="bom-sheet-se"/);
+  const wip = D.printSheet(c, { orderId: "DEMO-26001", sheet: "WIP-RBGR" }).html;
+  assert.match(wip, /ความยาวตัด \(ซม\.\)/);
+  assert.match(wip, /<td class="right rf-mono">6\.5<\/td><td class="right rf-mono">31<\/td>/, "cutting data of the rod");
+  assert.match(wip, /RB 1 พ\.ย\. 69/, "department due date per row");
+  const orderNew = D.orderNew(c, {}).html;
+  assert.match(orderNew, /name="autoDue"[^>]*checked/);
+  assert.match(orderNew, /ว่าง = ออกเลขอัตโนมัติ/);
+  assert.doesNotMatch(orderNew, /name="pi"[^>]*required/, "the PI number is optional now");
   for (const [name, args] of cases) {
     const built = D[name](c, args);
     assert.ok(built?.html, `${name} renders`);
@@ -255,6 +277,13 @@ test("dialogs render for their arguments and escape user text", async () => {
 test("forms go through the data-rf-* rules: a new order is created with dates converted, a bad form shows a toast and keeps the state", async () => {
   const env = load();
   env.store.setUser("B03");
+  // เปิดใบโดยไม่กรอกเลข PI และติ๊กเติมกำหนดเสร็จจาก lead time (ผ่าน transform ของฟอร์ม)
+  await env.submit("p=orders", "createOrder", { pi: "", customer: "อัตโนมัติ", country: "Thailand", orderedAt: "2026-10-30", whDue: "2026-12-15", autoDue: "1" });
+  const autoOrder = env.store.data().orders.find((order) => order.customer === "อัตโนมัติ");
+  assert.equal(autoOrder.id, "261030-26001");
+  assert.equal(new Date(autoOrder.due.PK).getDate(), 14);
+  assert.deepEqual(json(autoOrder.dueDefaults), ["RB", "GR", "PT", "BG", "ST", "PK"]);
+  assert.match(await env.render(`p=orders&sel=${autoOrder.id}`), /title="ค่าเริ่มต้นจาก lead time"><b>PK<\/b> 14 ธ\.ค\. 69\*/);
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "ลูกค้าทดสอบ", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01", "due.RB": "2026-10-20", "due.PK": "" });
   const order = env.store.data().orders.find((entry) => entry.id === "PI-TEST-1");
   assert.ok(order, "order created from the form");
@@ -265,7 +294,7 @@ test("forms go through the data-rf-* rules: a new order is created with dates co
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "x", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01" });
   assert.equal(env.log.toasts.at(-1)[1], "error");
   assert.match(env.log.toasts.at(-1)[0], /อยู่แล้ว/);
-  assert.equal(env.log.renders, 1, "failed form does not re-render");
+  assert.equal(env.log.renders, 2, "failed form does not re-render (two successful submits re-rendered)");
   await env.submit("p=items", "saveItem", { code: "P-NEW-01", kind: "PURCHASED", name: "ของใหม่", ownerDept: "ST", uom: "pcs", weightG: "", "rubber.compound": "DM01" }, { create: true });
   assert.equal(env.store.data().items.find((entry) => entry.code === "P-NEW-01").rubber, null);
   env.store.setUser("B05");
@@ -335,6 +364,13 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   assert.match(env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26002")).html, /data-rf-open="stockCount"/, "a draft order can be counted");
   assert.match(built.html, /p=build&amp;code=DEMO-TP-01/, "each ordered product links into the builder");
   assert.match(built.html, /p=product&amp;code=DEMO-TP-01%28P%29-Y&amp;qty=80/, "each ordered product links to the per-department view with its quantity");
+  assert.match(built.html, /data-bom-sheet[\s\S]*?<option value="RB"[\s\S]*?data-rf-open="printSheet" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;,&quot;sheet&quot;:&quot;RB&quot;\}"/, "the sheet picker and its open button");
+  // เลือกใบอื่นแล้วปุ่มเปิดชี้ไปใบนั้น (args ถูกอ่านตอนคลิก)
+  const openButton = { ...env.root, dataset: { rfOpen: "printSheet", rfArgs: JSON.stringify({ orderId: "DEMO-26001", sheet: "RB" }) } };
+  const picker = { ...env.root, value: "ASK", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, parentElement: { querySelector: () => openButton } };
+  built.bind({ ...env.root, querySelectorAll: (selector) => (selector === "[data-bom-sheet]" ? [picker] : []) }, c);
+  picker.handlers.change();
+  assert.deepEqual(JSON.parse(openButton.dataset.rfArgs), { orderId: "DEMO-26001", sheet: "ASK" });
   const csvButton = { ...env.root, dataset: { bomCsv: "bomsheet", bomOrder: "DEMO-26001" }, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
   built.bind({ ...env.root, querySelectorAll: (selector) => (selector === "[data-bom-csv]" ? [csvButton] : []) }, c);
   csvButton.handlers.click();

@@ -320,6 +320,35 @@ test("a product can be chosen by base code + package + color set; an unknown var
   assert.ok(A.explodeOrder(d, { orderId: id }, ctx("planner")) > 20);
 });
 
+test("an order without a PI number gets YYMMDD-YYnnn with a per-year sequence, and empty department due dates can be filled from lead times", () => {
+  const d = fresh();
+  const ordered = new Date(2026, 9, 30).getTime();
+  const wh = new Date(2026, 11, 15).getTime();
+  const first = A.createOrder(d, { customer: "ก", country: "Belgium", orderedAt: ordered, whDue: wh, autoDue: true }, ctx("planner"));
+  assert.equal(first, "261030-26001");
+  const second = A.createOrder(d, { pi: "", customer: "ข", country: "Thailand", orderedAt: new Date(2026, 10, 2).getTime(), whDue: wh }, ctx("planner"));
+  assert.equal(second, "261102-26002", "the sequence counts per year, the date part follows the order date");
+  A.createOrder(d, { pi: "261030-26003", customer: "ค", country: "Thailand", orderedAt: ordered, whDue: wh }, ctx("planner"));
+  assert.equal(A.createOrder(d, { customer: "ง", country: "Thailand", orderedAt: ordered, whDue: wh }, ctx("planner")), "261030-26004", "a number typed by hand is skipped");
+  assert.equal(A.createOrder(d, { customer: "จ", country: "Thailand", orderedAt: new Date(2027, 0, 5).getTime(), whDue: new Date(2027, 1, 1).getTime() }, ctx("planner")), "270105-27001", "a new year restarts the sequence");
+  assert.match(d.audit.find((entry) => entry.detail.startsWith("261030-26001")).detail, /ออกเลขอัตโนมัติ/);
+  // autoDue: ช่องว่างถูกเติมจาก lead time ช่องที่กรอกเองคงเดิม
+  const auto = d.orders.find((order) => order.id === first);
+  const day = (ms) => new Date(ms).getDate();
+  assert.deepEqual(Object.fromEntries(Object.entries(auto.due).map(([dept, ms]) => [dept, day(ms)])), { RB: 4, GR: 8, PT: 8, BG: 8, ST: 8, PK: 14 });
+  assert.deepEqual(auto.dueDefaults, ["RB", "GR", "PT", "BG", "ST", "PK"]);
+  const manual = d.orders.find((order) => order.id === second);
+  assert.deepEqual(manual.due, {}, "without autoDue nothing is filled (existing behaviour)");
+  const mixed = A.createOrder(d, { customer: "ฉ", country: "Thailand", orderedAt: ordered, whDue: wh, autoDue: true, due: { RB: new Date(2026, 10, 20).getTime() } }, ctx("planner"));
+  const mixedOrder = d.orders.find((order) => order.id === mixed);
+  assert.equal(day(mixedOrder.due.RB), 20, "a typed date wins over the default");
+  assert.deepEqual(mixedOrder.dueDefaults, ["GR", "PT", "BG", "ST", "PK"]);
+  // กำหนดเสร็จเริ่มต้นไม่ก่อนวันสั่งผลิต (ใบด่วน)
+  const rush = A.createOrder(d, { customer: "ช", country: "Thailand", orderedAt: ordered, whDue: ordered + 2 * DAY, autoDue: true }, ctx("planner"));
+  const rushOrder = d.orders.find((order) => order.id === rush);
+  assert.ok(Object.values(rushOrder.due).every((ms) => ms >= new Date(ordered).setHours(0, 0, 0, 0) && ms <= rushOrder.whDue));
+});
+
 test("colours, colour sets and packages are data: learned from a product, validated, and removable", () => {
   const d = fresh();
   assert.deepEqual(d.colors.map((color) => color.code), ["OR01", "RD01", "BK01", "YE03", "BL02", "GN05"]);
@@ -473,7 +502,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(store.run("nope", {}).ok, false);
   const bad = store.run("createOrder", { pi: "", customer: "x" });
   assert.equal(bad.ok, false);
-  assert.match(bad.error.message, /เลขที่ PI/);
+  assert.match(bad.error.message, /วันที่สั่งผลิต/, "the PI number is optional (auto), dates are not");
   assert.equal(store.data().orders.length, 2, "failed action leaves the state untouched");
   const ok = store.run("createOrder", { pi: "ST-1", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY });
   assert.equal(ok.result, "ST-1");

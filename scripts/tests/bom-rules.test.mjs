@@ -316,6 +316,54 @@ test("colour helpers: colour codes, colourless slot keys, recolouring codes and 
   assert.equal(Object.keys(rules.COLOR_MASTERS).length >= 12, true);
 });
 
+test("PI numbers follow the Excel pattern, due dates default from lead times, and the station rule table selects the BOMSHEET rows per sheet", () => {
+  const oct3 = new Date(2025, 9, 3, 10).getTime();
+  assert.equal(rules.piNumber(oct3, 41), "251003-25041", "Megaform 25041: ordered 3 Oct 2025, 41st order of 2025");
+  assert.equal(rules.piNumber(new Date(2026, 0, 7).getTime(), 3), "260107-26003");
+  assert.equal(rules.piYear(oct3), "25");
+  // ใบ 25041: WH 28 ม.ค. 2569 → PK 27 · GR/PT/BG/ST 21 · RB 17
+  const wh = new Date(2026, 0, 28).getTime();
+  const due = rules.defaultDueDates(wh);
+  const dayOf = (ms) => new Date(ms).getDate();
+  assert.deepEqual(Object.fromEntries(Object.entries(due).map(([dept, ms]) => [dept, dayOf(ms)])), { RB: 17, GR: 21, PT: 21, BG: 21, ST: 21, PK: 27 });
+  assert.deepEqual(rules.defaultDueDates(NaN), {});
+  assert.deepEqual(rules.LEAD_DAYS, { PK: 1, GR: 6, PT: 6, BG: 6, ST: 6, RB: 4 });
+  // คู่ผู้ผลิตแบบคอลัมน์ AF
+  assert.equal(rules.producerPair({ level: 0, kind: "FG" }), "PK");
+  assert.equal(rules.producerPair({ level: 1, kind: "RB" }, "GR"), "RB");
+  assert.equal(rules.producerPair({ level: 1, kind: "PT" }, "PK"), "PK-PT");
+  assert.equal(rules.producerPair({ level: 2, kind: "PURCHASED" }, "PT"), "PT-ST");
+  assert.equal(rules.producerPair({ level: 2, kind: "PURCHASED" }, "BG"), "BG-ST");
+  assert.equal(rules.producerPair({ level: 1, kind: "SUBPART" }, "PK"), "PK-PK");
+  assert.equal(rules.producerPair({ level: 1, kind: "BG" }, "PK"), "BG");
+  // ใบแต่ละสถานีเลือกบรรทัดตามตารางกฎ (ไม่ใช่สูตร IF 8 คอลัมน์)
+  const items = new Map([
+    ["FG", { code: "FG", kind: "FG", name: "สินค้า", uom: "set", ownerDept: "PK" }], ["SE", { code: "SE", kind: "SE", name: "ลูก", uom: "pcs", ownerDept: "GR" }], ["RB", { code: "RB", kind: "RB", name: "เส้น", uom: "rod", ownerDept: "RB" }],
+    ["PT", { code: "PT", kind: "PT", name: "แกน", uom: "pcs", ownerDept: "PT" }], ["PEL", { code: "PEL", kind: "PURCHASED", name: "เม็ด", uom: "kg", ownerDept: "ST" }], ["BOX", { code: "BOX", kind: "PURCHASED", name: "กล่อง", uom: "box", ownerDept: "ST" }],
+    ["BG", { code: "BG", kind: "BG", name: "กระเป๋า", uom: "pcs", ownerDept: "BG" }], ["FAB", { code: "FAB", kind: "PURCHASED", name: "ผ้า", uom: "yd", ownerDept: "ST" }], ["XP", { code: "XP", kind: "SUBPART", name: "ทำเอง", uom: "pcs", ownerDept: "PK" }],
+  ]);
+  const boms = new Map([
+    ["FG", { id: "B1", revision: 1, lines: [{ childCode: "SE", qty: 3 }, { childCode: "PT", qty: 1 }, { childCode: "BOX", qty: 0.1 }, { childCode: "BG", qty: 1 }, { childCode: "XP", qty: 1 }] }],
+    ["SE", { id: "B2", revision: 1, lines: [{ childCode: "RB", qty: 0.05 }] }], ["PT", { id: "B3", revision: 1, lines: [{ childCode: "PEL", qty: 0.02 }] }], ["BG", { id: "B4", revision: 1, lines: [{ childCode: "FAB", qty: 0.5 }] }],
+  ]);
+  const lines = rules.explode("FG", 10, { itemOf: (code) => items.get(code) ?? null, approvedBomOf: (code) => boms.get(code) ?? null }).lines.map((line) => ({ ...line, fgQty: 10 }));
+  const codes = (id) => rules.sheetLines(rules.sheetOf(id), lines).map((line) => `${line.itemCode}:${line.pair}`);
+  assert.deepEqual(codes("RB"), ["FG:PK", "RB:RB"]);
+  assert.deepEqual(codes("GR"), ["FG:PK", "SE:SE", "RB:RB"]);
+  assert.deepEqual(codes("SE"), ["FG:PK", "SE:SE"]);
+  assert.deepEqual(codes("PT"), ["FG:PK", "PT:PK-PT"]);
+  assert.deepEqual(codes("ST01"), ["FG:PK", "BOX:PK-ST", "BG:BG"]);
+  assert.deepEqual(codes("ST02"), ["FG:PK", "SE:SE", "RB:RB", "PT:PK-PT", "BOX:PK-ST", "BG:BG"]);
+  assert.deepEqual(codes("BG"), ["FG:PK", "BG:BG"]);
+  assert.deepEqual(codes("PK"), ["FG:PK", "SE:SE", "PT:PK-PT", "BOX:PK-ST", "BG:BG"]);
+  assert.deepEqual(codes("ASK"), ["FG:PK", "SE:SE", "RB:RB"]);
+  assert.deepEqual(codes("WIP-RBGR"), ["SE:SE", "RB:RB"]);
+  assert.deepEqual(codes("WIP-PTBG"), ["FG:PK", "PT:PK-PT", "PEL:PT-ST", "BOX:PK-ST", "BG:BG", "FAB:BG-ST", "XP:PK-PK"]);
+  assert.equal(rules.sheetOf("nope"), null);
+  assert.equal(rules.sheetOf("wip-rbgr").layout, "wip-rbgr");
+  assert.equal(rules.SHEETS.length, 11);
+});
+
 test("CSV output quotes commas and quotes, and formatting helpers handle empty values", () => {
   const csv = rules.toCsv([["a", 'b "c"', "d,e"], [1, 0.5, ""], ["=SUM(A1)", "-0.86", -0.86, "@x"]]);
   assert.equal(csv, "﻿a,\"b \"\"c\"\"\",\"d,e\"\r\n1,0.5,\r\n'=SUM(A1),'-0.86,-0.86,'@x", "formula-looking text is prefixed, numbers are not");

@@ -2373,6 +2373,24 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
 .bom-set-row { padding: 8px 12px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; gap: 8px 16px; }
 .bom-set-actions { display: inline-flex; align-items: center; gap: 6px; }
 .bom-matrix td { vertical-align: middle; }
+.bom-check { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.bom-check input { margin-top: 3px; }
+.bom-sheet-pick { display: inline-flex; gap: 6px; align-items: center; }
+.bom-sheet-pick .rf-select { min-width: 220px; }
+/* ใบพิมพ์รายสถานี: ตารางเส้นเต็มแบบกระดาษ แถว FG เข้ม SE/RB แต้มสีเหมือน BOMASKSHEET */
+.bom-sheet { background: #fff; color: #111; padding: 8px; }
+.bom-sheet-head { display: grid; gap: 8px; margin-bottom: 10px; }
+.bom-sheet-head h2 { margin: 0; font-size: 20px; }
+.bom-sheet-head .rf-kv { grid-template-columns: max-content 1fr max-content 1fr max-content 1fr; }
+.bom-sheet-table th, .bom-sheet-table td { border: 1px solid #999; padding: 3px 6px; font-size: 12px; }
+.bom-sheet-table th { background: #eee; }
+.bom-sheet tr.bom-sheet-fg td { font-weight: 700; background: #f3f3f3; }
+.bom-sheet tr.bom-sheet-se td { background: #fdf2c8; }
+.bom-sheet tr.bom-sheet-rb td { background: #dceefc; }
+.bom-sheet td.bom-sheet-blank { min-width: 90px; }
+.bom-sheet-sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; font-size: 12px; text-align: center; }
+.bom-sheet-foot { margin: 10px 0 0; }
+@media print { .bom-sheet { padding: 0; } .bom-sheet-table th, .bom-sheet-table td { font-size: 10px; } }
 .bom-dept-grid { display: grid; gap: 12px; margin-top: 12px; }
 .bom-dept-card .rf-card-head h3 { color: var(--rf-mod-ink); }
 .bom-dept-card .bom-size { min-width: 230px; }
