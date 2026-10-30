@@ -557,15 +557,18 @@ const ATTACHMENT_URL_TTL = 3600;
 const ATTACHMENT_URL_REUSE_MS = 10 * 60 * 1000;
 // เก็บ signed URL ไว้ใน sessionStorage ด้วย รีเฟรชหน้าแล้วได้ URL เดิม เบราว์เซอร์จึงใช้ไฟล์จาก cache (max-age 1 ชม.)
 // แทนการโหลดใหม่ ใช้ sessionStorage ไม่ใช่ localStorage: URL เป็นสิทธิ์อ่านไฟล์ชั่วคราว ให้หายเมื่อปิดแท็บ
+// ผูกกับผู้ใช้ (owner): session เปลี่ยนคนโดยแท็บนี้ไม่ได้รับ SIGNED_OUT ก็ไม่ใช้ URL ของคนก่อน (ดู onAuthStateChange)
 const SIGNED_URL_STORAGE_KEY = "mnp-signed-attachment-urls";
+let signedUrlOwner = null;
 const signedAttachmentUrls = loadSignedAttachmentUrls();
 
 function loadSignedAttachmentUrls() {
   const urls = new Map();
   try {
-    const saved = JSON.parse(sessionStorage.getItem(SIGNED_URL_STORAGE_KEY) ?? "[]");
+    const saved = JSON.parse(sessionStorage.getItem(SIGNED_URL_STORAGE_KEY) ?? "{}");
     const now = Date.now();
-    for (const [key, entry] of Array.isArray(saved) ? saved : []) {
+    signedUrlOwner = typeof saved?.owner === "string" ? saved.owner : null;
+    for (const [key, entry] of Array.isArray(saved?.entries) ? saved.entries : []) {
       if (typeof key === "string" && typeof entry?.url === "string" && Number(entry.expiresAt) > now) urls.set(key, entry);
     }
   } catch {
@@ -578,11 +581,20 @@ function saveSignedAttachmentUrls() {
   try {
     const now = Date.now();
     for (const [key, entry] of signedAttachmentUrls) if (entry.expiresAt <= now) signedAttachmentUrls.delete(key);
-    if (signedAttachmentUrls.size) sessionStorage.setItem(SIGNED_URL_STORAGE_KEY, JSON.stringify([...signedAttachmentUrls]));
-    else sessionStorage.removeItem(SIGNED_URL_STORAGE_KEY);
+    if (signedAttachmentUrls.size && signedUrlOwner) {
+      sessionStorage.setItem(SIGNED_URL_STORAGE_KEY, JSON.stringify({ owner: signedUrlOwner, entries: [...signedAttachmentUrls] }));
+    } else sessionStorage.removeItem(SIGNED_URL_STORAGE_KEY);
   } catch {
     // เขียนไม่ได้ (เต็ม/โหมดส่วนตัว) ยังใช้ cache ในหน่วยความจำได้ตามเดิม
   }
+}
+
+// เรียกทุกครั้งที่สถานะ auth เปลี่ยน: ออกจากระบบหรือเปลี่ยนผู้ใช้ ล้าง URL ที่จำไว้ทั้งหมด
+function syncSignedUrlOwner(userId) {
+  if (userId && userId === signedUrlOwner) return;
+  signedAttachmentUrls.clear();
+  signedUrlOwner = userId ?? null;
+  saveSignedAttachmentUrls();
 }
 const TEXT_PREVIEW_LIMIT = 512 * 1024;
 const attachmentKindLabels = { image: "รูปภาพ", pdf: "PDF", text: "ข้อความ", sheet: "Excel", doc: "Word", other: "ไฟล์แนบ" };
@@ -678,8 +690,15 @@ function setTilePreview(tile, node, badgeSuffix = "") {
 
 function setTileMessage(tile, message) {
   const preview = tile.querySelector(".attachment-preview");
-  const state = preview.querySelector(".attachment-preview-state");
-  if (state) state.textContent = message;
+  let state = preview.querySelector(".attachment-preview-state");
+  if (!state) {
+    // ภาพย่อโหลดไม่ขึ้นหลังแสดงไปแล้ว: เอารูปเสียออก แล้วใส่ข้อความแทน
+    preview.querySelector(".attachment-preview-media, .attachment-preview-text")?.remove();
+    state = document.createElement("span");
+    state.className = "attachment-preview-state";
+    preview.prepend(state);
+  }
+  state.textContent = message;
 }
 
 function previewImageNode(src, alt) {
@@ -4052,11 +4071,8 @@ async function init() {
   }
   window.addEventListener("hashchange", renderRoute);
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
-  sb.auth.onAuthStateChange((event) => {
-    if (event === "SIGNED_OUT") {
-      signedAttachmentUrls.clear();
-      saveSignedAttachmentUrls();
-    }
+  sb.auth.onAuthStateChange((event, session) => {
+    syncSignedUrlOwner(event === "SIGNED_OUT" ? null : session?.user?.id);
     if (event !== "SIGNED_OUT" || !state.session) return;
     releasePushOnThisDevice({ server: false });
     state.session = null;
