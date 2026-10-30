@@ -6,8 +6,10 @@
 --      และ trigger audit_row_change ยังเพิ่มแถว DELETE ของใบที่ถูกล้างเข้ามาอีก
 --
 -- วิธีระบุใบ NCR ทดสอบ: id ของ ncr_reports ที่ is_test ตอนนี้ รวมกับ id ที่ audit ของ ncr_reports เองบันทึก
---   is_test = true ไว้ใน metadata 'new' หรือ 'old' (ใช้ได้แม้ใบถูกล้างไปแล้ว จึงไม่ขึ้นกับลำดับว่ากดปุ่มล้าง
---   ก่อนหรือหลัง apply) แล้วตัด id ของใบจริงที่มีอยู่ (is_test = false) ออกเสมอ
+--   is_test = true ไว้ใน metadata 'new' หรือ 'old' (ใช้ได้แม้ใบถูกล้างไปแล้ว) แล้วตัด id ของใบจริงที่มีอยู่
+--   (is_test = false) ออกเสมอ
+--   ลำดับที่ production: กดปุ่มล้างข้อมูลทดสอบก่อน แล้วค่อย apply ถ้ากดหลัง apply แถว audit DELETE ที่ปุ่มสร้าง
+--   จะค้าง ต้องเรียก private.purge_test_audit_logs() อีกครั้ง
 --   audit ของตารางลูก (ncr_losses, ncr_outcomes, ncr_responsibilities, ncr_attachments, ncr_info_requests)
 --   ผูกกับใบผ่าน metadata 'new'/'old' ->> 'ncr_id'
 --
