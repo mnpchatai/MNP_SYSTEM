@@ -111,7 +111,10 @@
   }
   // ปริมาณที่ต่างกันน้อยกว่า 1e-6 ถือว่าเท่ากัน (ฟอร์มแสดงอัตราส่วนเช่น 1/31 ด้วยทศนิยม 6 ตำแหน่ง การบันทึกซ้ำจึงไม่สร้าง revision ลอย)
   const QTY_EPS = 1e-6;
-  const sameLines = (a, b) => a.length === b.length && a.every((line) => b.some((other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "")));
+  // ลำดับบรรทัดนับเป็นการเปลี่ยนแปลงด้วย (ผู้ใช้ลากเรียงส่วนประกอบได้ ลำดับใช้แสดงในต้นไม้และใบงาน)
+  const sameLine = (line, other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "");
+  const sameLines = (a, b) => a.length === b.length && a.every((line, index) => sameLine(line, b[index]));
+  const sameLinesAnyOrder = (a, b) => a.length === b.length && a.every((line) => b.some((other) => sameLine(line, other)));
   function diffText(before, after) {
     const R = rules();
     const parts = [];
@@ -134,7 +137,7 @@
     const note = String(p.note ?? "").trim().slice(0, 300);
     const previous = approvedBomOf(d, parent.code);
     if (previous && sameLines(previous.lines, lines)) return { id: previous.id, revision: previous.revision, changed: false };
-    const changes = previous ? diffText(previous.lines, lines) || "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ)" : `สร้างใหม่ ${lines.length} บรรทัด`;
+    const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ)") : `สร้างใหม่ ${lines.length} บรรทัด`;
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
     const bom = { id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}` }] };
     d.boms.unshift(bom);
@@ -200,6 +203,85 @@
     const changed = parts.length > 0;
     if (changed) audit(d, ctx, "บันทึกต้นไม้ BOM", `${rootCode}: ${parts.join(" · ")}`);
     return { code: rootCode, saved, created, patched, changed, summary: changed ? `บันทึกแล้ว — ${parts.join(" · ")}` : "ไม่มีการเปลี่ยนแปลง" };
+  }
+
+  // ---------- โครงสร้างสินค้า: ขั้นตอนผลิต (routing) และราคาต้นทุน (จำลอง) ----------
+  // routing ต่อชิ้นงานเก็บเป็น revision แบบเดียวกับ BOM: บันทึกแล้วใช้ทันที ตัวเก่า superseded (ไม่แก้ทับของที่อาจถูกใช้ไปแล้ว)
+  const routingOf = (d, code) => (d.routings ?? []).find((routing) => routing.itemCode === code && routing.status === "approved") ?? null;
+  const processOf = (d, code) => (d.processes ?? []).find((process) => process.code === code) ?? null;
+  // วัตถุดิบของขั้นเทียบเป็นเซต: ฟอร์มส่งตามลำดับบรรทัด BOM ปัจจุบัน ลำดับต่างกันไม่ใช่การแก้ขั้นตอน
+  const sameInputs = (a = [], b = []) => a.length === b.length && [...a].sort().every((code, index) => code === [...b].sort()[index]);
+  const sameSteps = (a, b) => a.length === b.length && a.every((step, index) => step.processCode === b[index].processCode && Math.abs(step.minutesPerPc - b[index].minutesPerPc) <= QTY_EPS && (step.note || "") === (b[index].note || "") && sameInputs(step.inputs, b[index].inputs));
+  // step.inputs = ลูกใน BOM ปัจจุบันที่เข้าที่ขั้นนี้ (ลูกหนึ่งตัวเข้าได้ขั้นเดียว) ลูกที่ไม่ระบุแสดงที่ขั้นแรก · เวลา 0 = ยังไม่ระบุเวลา
+  function saveRouting(d, p, ctx) {
+    const user = requirePlanner(ctx, "บันทึกขั้นตอนผลิต");
+    const item = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงาน");
+    if (item.kind === "PURCHASED") fail(`${item.code} เป็นของซื้อ ไม่มีขั้นตอนผลิต`);
+    const raw = Array.isArray(p.steps) ? p.steps : [];
+    if (raw.length > 20) fail("ขั้นตอนผลิตได้ไม่เกิน 20 ขั้น");
+    const children = new Set((approvedBomOf(d, item.code)?.lines ?? []).map((line) => line.childCode));
+    const seen = new Set();
+    const placed = new Set();
+    const steps = raw.map((step, index) => {
+      const process = processOf(d, String(step.processCode ?? "").trim()) ?? fail(`ขั้นที่ ${index + 1}: ไม่พบขั้นตอน ${step.processCode || "(ว่าง)"}`);
+      if (seen.has(process.code)) fail(`${item.code}: ขั้นตอน ${process.code} ซ้ำ (ใส่เวลารวมเป็นขั้นเดียว)`);
+      seen.add(process.code);
+      const inputs = (Array.isArray(step.inputs) ? step.inputs : []).map((code) => rules().canonicalCode(code)).filter(Boolean);
+      for (const code of inputs) {
+        if (!children.has(code)) fail(`${process.code}: ${code} ไม่ได้อยู่ใน BOM ของ ${item.code}`);
+        if (placed.has(code)) fail(`${code} ถูกกำหนดให้เข้ามากกว่าหนึ่งขั้น`);
+        placed.add(code);
+      }
+      return { processCode: process.code, minutesPerPc: num(step.minutesPerPc, `ขั้นที่ ${index + 1} (${process.name}): เวลา นาที/ชิ้น`, { allowZero: true }), note: String(step.note ?? "").trim().slice(0, 120), inputs };
+    });
+    const previous = routingOf(d, item.code);
+    if (!previous && !steps.length) fail("ใส่ขั้นตอนผลิตอย่างน้อย 1 ขั้น");
+    if (previous && sameSteps(previous.steps, steps)) return { id: previous.id, revision: previous.revision, changed: false, summary: "ไม่มีการเปลี่ยนแปลง" };
+    if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
+    const routing = { id: nextId(d, "RT", ctx.now), itemCode: item.code, revision: (previous?.revision ?? 0) + 1, status: "approved", steps, createdBy: user.name, createdAt: ctx.now };
+    d.routings.unshift(routing);
+    const text = steps.length ? steps.map((step) => `${step.processCode} ${rules().fmtNum(step.minutesPerPc)}`).join(" → ") : "ไม่มีขั้นตอน";
+    audit(d, ctx, "บันทึกขั้นตอนผลิต", `${item.code} Rev.${routing.revision}: ${text}`);
+    return { id: routing.id, revision: routing.revision, changed: true, summary: `${item.code} Rev.${routing.revision}` };
+  }
+  // ขั้นตอนผลิตมาตรฐาน (process master): เพิ่มหรือแก้ชื่อ/แผนก รหัสเดิมแก้ชื่อได้ ไม่ลบเพราะ routing เก่าอ้างอยู่
+  function saveProcess(d, p, ctx) {
+    requirePlanner(ctx, "เพิ่ม/แก้ขั้นตอนผลิต");
+    const code = text(p.code, "รหัสขั้นตอน", 60);
+    const dept = rules().DEPTS.includes(p.dept) ? p.dept : fail("แผนกของขั้นตอนไม่ถูกต้อง");
+    const name = text(p.name, "ชื่อขั้นตอน", 80);
+    const existing = processOf(d, code);
+    if (existing) Object.assign(existing, { name, dept });
+    else d.processes.push({ code, name, dept });
+    audit(d, ctx, existing ? "แก้ขั้นตอนผลิต" : "เพิ่มขั้นตอนผลิต", `${code} ${name} (${dept})`);
+    return { summary: code };
+  }
+  // ราคาต้นทุนตั้งเองได้เฉพาะชิ้นที่ไม่มี BOM (ของซื้อ เส้นยาง ชิ้นทำเองที่ยังไม่ลง BOM) · ค่าว่าง = ล้างราคา
+  function setItemCost(d, { code, unitCost }, ctx) {
+    requirePlanner(ctx, "ตั้งราคาต้นทุน");
+    const item = itemOf(d, code) ?? fail("ไม่พบชิ้นงาน");
+    if (approvedBomOf(d, item.code)) fail(`${item.code} มี BOM แล้ว ต้นทุนคำนวณจากส่วนประกอบและขั้นตอนผลิต`);
+    if (unitCost === "" || unitCost === null || unitCost === undefined) delete item.unitCost;
+    else item.unitCost = num(unitCost, "ราคาต้นทุนต่อหน่วย", { allowZero: true });
+    audit(d, ctx, "ตั้งราคาต้นทุน", `${item.code} = ${item.unitCost === undefined ? "ไม่ระบุ" : `${rules().fmtNum(item.unitCost)} บาท/${rules().uomLabel(item.uom)}`}`);
+    return { summary: item.code };
+  }
+  // รูปชิ้นงาน (จำลอง): รูปย่อที่เบราว์เซอร์ย่อแล้วเป็น data URL เก็บใน state ของเบราว์เซอร์ · ระบบจริงใช้ Supabase Storage แบบ private
+  // ค่าว่าง = ลบรูป · รับเฉพาะ PNG/JPEG/WebP base64 ไม่เกิน 80,000 ตัวอักษร
+  const IMAGE_MAX = 80000;
+  const IMAGE_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/;
+  function setItemImage(d, { code, image }, ctx) {
+    requirePlanner(ctx, "เปลี่ยนรูปชิ้นงาน");
+    const item = itemOf(d, code) ?? fail("ไม่พบชิ้นงาน");
+    const value = String(image ?? "").trim();
+    if (!value) delete item.image;
+    else {
+      if (!IMAGE_RE.test(value)) fail("รูปต้องเป็นไฟล์ PNG, JPEG หรือ WebP");
+      if (value.length > IMAGE_MAX) fail("รูปใหญ่เกินไป ลองรูปที่เล็กลง");
+      item.image = value;
+    }
+    audit(d, ctx, value ? "เปลี่ยนรูปชิ้นงาน" : "ลบรูปชิ้นงาน", item.code);
+    return { summary: item.code };
   }
 
   // ---------- สูตรยาง ↔ RubberFlow ----------
@@ -716,8 +798,8 @@
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
-    reportJob, setJobStatus, linkJobToRubberFlow,
-    helpers: { itemOf, approvedBomOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage,
+    helpers: { itemOf, approvedBomOf, routingOf, processOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;
