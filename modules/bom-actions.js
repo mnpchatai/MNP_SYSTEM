@@ -583,12 +583,14 @@
     return order.id;
   }
 
+  // นับได้เฉพาะใบร่าง: งานรายแผนกถูกสร้างจากยอดสุทธิตอนปล่อยผลิตครั้งเดียว ยอดที่นับทีหลังจะไม่เปลี่ยนงาน
+  const requireDraftForCount = (order) => { if (order.status !== "draft") fail(`นับคงคลังได้เฉพาะใบร่าง (ใบนี้${order.status === "completed" || order.status === "cancelled" ? "ปิดแล้ว" : "ปล่อยผลิตแล้ว งานรายแผนกไม่เปลี่ยนตาม"})`); };
   function setStockCount(d, { orderId, itemCode, qty }, ctx) {
     const user = requireUser(ctx);
     if (!canCount(user)) fail("บันทึกยอดคงคลังได้โดยคลัง (ST) ฝ่ายวางแผน หรือผู้จัดการ");
     const order = orderById(d, orderId);
     // นับได้เฉพาะใบร่าง: งานรายแผนกถูกสร้างจากยอดสุทธิตอนปล่อยผลิตครั้งเดียว ยอดที่นับทีหลังจะไม่เปลี่ยนงาน
-    if (order.status !== "draft") fail(`นับคงคลังได้เฉพาะใบร่าง (ใบนี้${order.status === "completed" || order.status === "cancelled" ? "ปิดแล้ว" : "ปล่อยผลิตแล้ว งานรายแผนกไม่เปลี่ยนตาม"})`);
+    requireDraftForCount(order);
     const code = rules().canonicalCode(itemCode);
     const line = order.explosion?.find((entry) => entry.itemCode === code);
     if (!line) fail("ชิ้นงานนี้ไม่อยู่ในใบ (ระเบิด BOM ก่อน)");
@@ -599,6 +601,28 @@
     order.stockCountedBy = user.name;
     audit(d, ctx, "นับคงคลังตามใบ", `${order.id} ${code} = ${value}`);
     return code;
+  }
+
+  // นับหลายรายการในครั้งเดียว (หน้า "นับคงคลัง" บนมือถือ): ช่องที่เว้นว่างไม่แตะยอดเดิม · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน (store.run ทำบนร่าง)
+  function setStockCounts(d, { orderId, counts }, ctx) {
+    const user = requireUser(ctx);
+    if (!canCount(user)) fail("บันทึกยอดคงคลังได้โดยคลัง (ST) ฝ่ายวางแผน หรือผู้จัดการ"); // ก่อนข้ามยอดเท่าเดิม
+    const order = orderById(d, orderId);
+    requireDraftForCount(order);
+    const list = (Array.isArray(counts) ? counts : []).filter((entry) => String(entry?.qty ?? "").trim() !== "");
+    if (!list.length) fail("ยังไม่ได้กรอกยอดที่นับ");
+    let changed = 0;
+    const seen = new Set();
+    for (const entry of list) {
+      const code = rules().canonicalCode(entry.itemCode);
+      if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
+      seen.add(code);
+      // ยอดเท่าเดิม (ฟอร์มเติมค่าที่นับไว้แล้ว) ไม่บันทึกซ้ำ จึงไม่เขียน audit ล้น
+      if (order.stockCounts?.[code] !== undefined && Number(entry.qty) === order.stockCounts[code]) continue;
+      setStockCount(d, { orderId, itemCode: code, qty: entry.qty }, ctx);
+      changed += 1;
+    }
+    return { changed, summary: changed ? `${changed} รายการ` : "0 รายการ (ยอดเท่าเดิมทั้งหมด)" };
   }
 
   function cancelOrder(d, { orderId, reason }, ctx) {
@@ -691,7 +715,7 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, cancelOrder, completeOrder,
+    createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow,
     helpers: { itemOf, approvedBomOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };

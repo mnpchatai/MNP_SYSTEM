@@ -299,25 +299,34 @@
   }
 
   // คอลัมน์ที่รู้จักของชีต DATA (หัวคอลัมน์ต่างกันเล็กน้อยระหว่าง master กับไฟล์ต่อ PI จึงจับด้วยคำสำคัญ)
+  // รองรับ 3 แบบ: master DATA BOM.xlsx · ชีต DATA ของไฟล์ต่อ PI · ชีต BOMSHEET / BOMSHEET (S) ของใบที่ออกแล้ว (หัวคอลัมน์ต่างคำ จึงมีหลายคำต่อช่อง)
   const COLUMNS = Object.freeze([
-    ["item", /^ITEM/i], ["code", /^CODE/i], ["deptKind", /^รหัสแผนก/], ["compound", /สูตรยาง/], ["c1", /^สี ?SE|ยางกลมมีรู|ประเภทยาง/],
+    ["item", /^ITEM/i], ["code", /^CODE|^รหัส FG\/RB/i], ["deptKind", /^รหัสแผนก/], ["compound", /สูตรยาง/], ["c1", /^สี ?SE|ยางกลมมีรู|ประเภทยาง/],
     ["c2", /^ความยาว ?SE/], ["c3", /^รู/], ["c4", /^วงนอก ?SE/], ["c5", /^วงนอก ?RB/], ["name", /^NAME|^ชื่อสินค้า|^ชื่อวัตถุดิบ/i],
-    ["pair", /^แผนกผู้ผลิต/], ["qty", /^จำนวนที่ใช้ต่อชุด/], ["cutLen", /^ความยาว ?(GR )?ตัด/], ["pcsPerRoll", /^จำนวนชิ้น.*ต่อเส้น/],
-    // น้ำหนัก (กรัม) ต่อเส้น/ม้วน RB อยู่คอลัมน์ "น้ำหนัก…ท่อนยาว" / "น.น ต่อเส้น RB" — ไม่ใช่คอลัมน์ B ("น.น RB/g" / "น.น ชิ้นงาน…ต่อเส้น") ซึ่งเป็นเลขลำดับแถว
-    ["sePerGr", /^จำนวนที่ได้.*1 ?GR/], ["uom", /^หน่วยนับ/], ["weight", /ท่อนยาว|^น\.น ต่อเส้น/],
+    ["pair", /^แผนกผู้ผลิต/], ["qty", /^จำนวนที่ใช้ต่อชุด|^จำนวน ?SE\/ST/], ["cutLen", /^ความยาว ?(GR )?ตัด/], ["pcsPerRoll", /^จำนวนชิ้น.*ต่อเส้น|^จำนวน ?GR ?ตัดได้/],
+    // น้ำหนัก (กรัม) ต่อเส้น/ม้วน RB อยู่คอลัมน์ "น้ำหนัก…ท่อนยาว" / "น.น ต่อเส้น RB" (BOMSHEET: "นน.ชิ้นงาน(กรัม)") — ไม่ใช่คอลัมน์ B ("น.น RB/g") ซึ่งเป็นเลขลำดับแถว
+    ["sePerGr", /^จำนวนที่ได้.*1 ?GR|^จำนวน ?SE ?ที่ได้/], ["uom", /^หน่วยนับ|^หน่วยวัสดุ/], ["weight", /ท่อนยาว|^น\.น ต่อเส้น|^นน\.ชิ้นงาน/],
   ]);
   function detectHeader(rows) {
     for (let r = 0; r < Math.min(rows.length, 10); r += 1) {
       const cells = rows[r].map((cell) => String(cell).trim());
-      if (!cells.some((cell) => /^ITEM/i.test(cell)) || !cells.some((cell) => /^CODE/i.test(cell))) continue;
+      if (!cells.some((cell) => /^ITEM/i.test(cell)) || !cells.some((cell) => /^CODE|^รหัส FG\/RB/i.test(cell))) continue;
       const map = {};
       for (const [key, pattern] of COLUMNS) {
         const index = cells.findIndex((cell, i) => pattern.test(cell) && !Object.values(map).includes(i));
         if (index >= 0) map[key] = index;
       }
-      if (map.item !== undefined && map.code !== undefined && map.name !== undefined) return { rowIndex: r, map };
+      // คอลัมน์สีของ BOMSHEET (R–W): แม่สี/เฉดที่ 3 คู่ เรียงซ้ายไปขวา จับคู่ตามลำดับ
+      const masters = cells.map((cell, i) => (/^แม่สี/.test(cell) ? i : -1)).filter((i) => i >= 0);
+      const shades = cells.map((cell, i) => (/^เฉด/.test(cell) ? i : -1)).filter((i) => i >= 0);
+      const colors = masters.slice(0, 3).map((master, k) => [master, shades[k]]).filter(([, shade]) => shade !== undefined);
+      if (map.item !== undefined && map.code !== undefined && map.name !== undefined) return { rowIndex: r, map, colors };
     }
     return null;
+  }
+  // สีของแถวจากคอลัมน์ แม่สี/เฉดที่: คู่ที่เป็นรหัสสีจริง (XX99) ต่อกันด้วย "-" ("XX"/ว่าง = ไม่มี) เช่น RD+01 → RD01 · YE+03, BK+01 → YE03-BK01
+  function rowColor(row, colors = []) {
+    return colors.filter(([master, shade]) => String(row[master] ?? "").trim() && String(row[shade] ?? "").trim()).map(([master, shade]) => parseColorCode(`${String(row[master] ?? "").trim()}${String(row[shade] ?? "").trim().padStart(2, "0")}`)).filter((parsed) => parsed && parsed.master !== "XX").map((parsed) => parsed.code).join("-");
   }
   const num = (value) => {
     const text = String(value ?? "").replace(/,/g, "").trim();
@@ -332,11 +341,11 @@
     const rows = parseDelimited(text);
     const header = detectHeader(rows);
     if (!header) throw new Error("ไม่พบแถวหัวคอลัมน์ (ต้องมี ITEM, CODE และ NAME/ชื่อสินค้า) — วางทั้งแถวหัวตารางมาด้วย");
-    const { map } = header;
+    const { map, colors } = header;
     const out = [];
     for (const row of rows.slice(header.rowIndex + 1)) {
       const item = cellText(row, map.item);
-      if (!item || item === "ITEM") continue;
+      if (!item || item === "ITEM" || item === ".") continue; // "." = แถวเว้นของ BOMSHEET
       const name = cellText(row, map.name);
       const code = cellText(row, map.code);
       if (!name && isBlankCode(code)) continue;
@@ -344,7 +353,7 @@
         item, code, deptKind: cellText(row, map.deptKind).toUpperCase(), pair: cellText(row, map.pair).toUpperCase(), name,
         compound: cellText(row, map.compound), c1: cellText(row, map.c1), c2: cellText(row, map.c2), c3: cellText(row, map.c3), c4: cellText(row, map.c4), c5: cellText(row, map.c5),
         qty: num(row[map.qty]), cutLen: num(row[map.cutLen]), pcsPerRoll: num(row[map.pcsPerRoll]), sePerGr: num(row[map.sePerGr]) || 1,
-        uom: cellText(row, map.uom), weightG: num(row[map.weight]),
+        uom: cellText(row, map.uom), weightG: num(row[map.weight]), color: rowColor(row, colors),
       });
     }
     return out;
@@ -357,19 +366,19 @@
   function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1 } = {}) {
     const items = new Map();
     const boms = new Map();
-    const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, variants: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
+    const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, variants: 0, colored: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
     let subpartSeq = subpartStart;
     const subpartByName = new Map();
 
-    const ensureItem = (code, props) => {
+    const ensureItem = (code, props, legacyRaw = code) => {
       const canonical = canonicalCode(code);
       let item = items.get(canonical);
       if (!item) {
         item = { code: canonical, kind: props.kind, name: props.name || canonical, ownerDept: ownerDeptOf(props.kind, props.pair), uom: props.uom, weightG: props.weightG || 0, group, legacyCodes: [], rubber: props.rubber ?? null, active: true };
         items.set(canonical, item);
       }
-      const raw = String(code).trim();
-      if (raw && raw !== canonical && !item.legacyCodes.includes(raw)) { item.legacyCodes.push(raw); report.variants += 1; }
+      const raw = String(legacyRaw).trim();
+      if (raw && raw !== canonical && !item.legacyCodes.includes(raw)) { item.legacyCodes.push(raw); if (canonicalCode(raw) === canonical) report.variants += 1; } // รหัสไม่มีสีของชิ้นที่ได้สีจากคอลัมน์ ไม่นับเป็นสะกดต่าง
       if (!item.name && props.name) item.name = props.name;
       if (!item.weightG && props.weightG) item.weightG = props.weightG;
       if (props.rubber && item.rubber) {
@@ -431,7 +440,11 @@
         const uom = normalizeUom(row.uom);
         if (uom.code === "other" && row.uom) report.unknownUom.add(row.uom);
         const rawCode = kind === "SUBPART" ? subpartFor(row) : row.code;
-        const code = canonicalCode(rawCode);
+        // BOMSHEET: SE/RB ที่รหัสไม่มีสี (SE-SL01B--68-0-68) แต่คอลัมน์ แม่สี/เฉดที่ ระบุสี → รหัสมีสี (SE-SL01B-RD01-68-0-68)
+        // บอลสามสีในใบเดียวจึงเป็นสามชิ้น ไม่ถูกรวมเป็นชิ้นเดียว · รหัสที่มีสีอยู่แล้วใช้สีในรหัส
+        const colorFromColumns = (kind === "SE" || kind === "RB") && row.color && !colorOfCode(rawCode) && colorSlotKey(rawCode) ? row.color : "";
+        const code = colorFromColumns ? recolorCode(rawCode, colorFromColumns) : canonicalCode(rawCode);
+        if (colorFromColumns) report.colored += 1;
         const weightG = row.weightG || uom.weightG || 0;
         let rubber = null;
         if (kind === "RB") {
@@ -442,7 +455,13 @@
           const parsed = parseSeCode(code) ?? {};
           rubber = { product: parsed.product ?? row.compound, color: parsed.color ?? row.c1, lengthMm: parsed.lengthMm ?? num(row.c2), holeMm: parsed.holeMm ?? num(row.c3), odMm: parsed.odMm ?? num(row.c4) };
         }
-        const item = ensureItem(rawCode, { kind, name: row.name, uom: uom.code, weightG, pair: row.pair, rubber }); // ส่งรหัสตามชีตเพื่อเก็บสะกดเดิมเป็น legacy code
+        // ชื่อของชิ้นที่ได้สีจากคอลัมน์: ถ้าชื่อยังไม่มีรหัสสี ต่อท้ายด้วยชื่อสี (RB ชื่อเดียวกันสามสีจะได้ชื่อต่างกัน)
+        const firstColor = colorFromColumns.split("-")[0];
+        const thaiNames = colorFromColumns.split("-").map((c) => COLOR_MASTERS[parseColorCode(c)?.master] ?? "").filter(Boolean);
+        const name = !colorFromColumns || !row.name || row.name.toUpperCase().includes(firstColor) ? row.name
+          : thaiNames.length && thaiNames.every((thai) => row.name.includes(thai)) ? `${row.name} ${colorFromColumns}` // ชื่อมีสีไทยอยู่แล้ว ต่อเฉพาะรหัส
+          : `${row.name} ${thaiNames.join("-")} ${colorFromColumns}`.replace(/\s+/g, " ").trim();
+        const item = ensureItem(code, { kind, name, uom: uom.code, weightG, pair: row.pair, rubber }, rawCode); // ส่งรหัสตามชีตเพื่อเก็บสะกดเดิมเป็น legacy code
         // พ่อของบรรทัดนี้
         let parentCode = fgCode;
         let qty = row.qty;
