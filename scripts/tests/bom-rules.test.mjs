@@ -259,6 +259,63 @@ test("net requirements apply the BOMSHEET column AK rule level by level: SE stoc
   assert.deepEqual(rules.FLOW_DEPTS, ["RB", "GR", "PT", "BG", "ST", "PK"]);
 });
 
+test("colour helpers: colour codes, colourless slot keys, recolouring codes and names, slots of a product and the change plan", () => {
+  assert.deepEqual(rules.parseColorCode("or01"), { code: "OR01", master: "OR", shade: "01" });
+  assert.equal(rules.parseColorCode("ORANGE"), null);
+  assert.equal(rules.colorName("OR01"), "ส้ม 01");
+  assert.equal(rules.colorName("OR01", [{ code: "OR01", name: "ส้มสด" }]), "ส้มสด");
+  assert.equal(rules.colorName("ZZ09"), "ZZ 09");
+  assert.equal(rules.colorOfCode("SE-TP01-OR01-100-18-65"), "OR01");
+  assert.equal(rules.colorOfCode("RB-B0006-01-204-0-76"), "", "a rod code without a colour segment (BOMSHEET column X form)");
+  assert.equal(rules.colorOfCode("P-BOX-01"), "");
+  assert.equal(rules.colorSlotKey("SE-TP01-OR01-100-18-65"), "SE-TP01-*-100-18-65");
+  assert.equal(rules.colorSlotKey("SE-SL01B-68-0-68"), "SE-SL01B-*-68-0-68", "a colourless SE has the same slot key as its coloured variants");
+  assert.equal(rules.colorSlotKey("RB-DM01-02-OR01-202-18-70"), "RB-DM01-02-*-202-18-70");
+  assert.equal(rules.colorSlotKey("PT-00320"), null);
+  assert.equal(rules.recolorCode("SE-TP01-OR01-100-18-65", "rd01"), "SE-TP01-RD01-100-18-65");
+  assert.equal(rules.recolorCode("SE-SL01B-68-0-68", "RD01"), "SE-SL01B-RD01-68-0-68", "a colourless code gains the colour segment");
+  assert.equal(rules.recolorCode("RB-DM01-02-OR01-202-18-70", "RD01"), "RB-DM01-02-RD01-202-18-70");
+  assert.equal(rules.recolorCode("PT-00320", "RD01"), "PT-00320");
+  assert.equal(rules.recolorCode("SE-X-OR01-100-18-065", "RD01"), "SE-X-RD01-100-18-065", "numeric segments keep their original spelling");
+  assert.equal(rules.recolorCode("SE-X-18-65X", "RD01"), "SE-X-18-65X", "a code whose tail is not three numbers is left alone");
+  assert.equal(rules.colorSlotKey("SE-X-18-65X"), null);
+  assert.equal(rules.colorSlotKey("RB-B0006-01-204-0-76"), "RB-B0006-01-*-204-0-76");
+  assert.equal(rules.recolorCode("RB-B0006-01-204-0-76", "RD01"), "RB-B0006-01-RD01-204-0-76");
+  assert.equal(rules.renameColor("ยางแผ่นปีก เหลือง YE03", "YE03", "RD01", [{ code: "YE03", name: "เหลืองสด" }]), "ยางแผ่นปีก แดง RD01", "the standard master name is tried when the registered name is not in the text");
+  assert.equal(rules.renameColor("ยาง แดง", "RD02", "RD01"), "ยาง แดง RD01", "a new shade of the same master keeps the Thai name once and adds the code");
+  assert.equal(rules.renameColor("ยาง แดง RD02", "RD02", "RD01"), "ยาง แดง RD01");
+  assert.equal(rules.colorOfCode("SE-TP01-OR01-100-18-65X"), "", "colorOfCode agrees with colorSlotKey: a non-numeric tail means no colour in the code");
+  assert.equal(rules.colorOfCode("SE-TP01-OR01-100-18-065"), "OR01");
+  assert.equal(rules.buildSeCode({ product: "TP01", color: "", lengthMm: 100, holeMm: 18, odMm: 65 }), "SE-TP01-100-18-65");
+  assert.equal(rules.renameColor("ลูกตอปิโด TP-01 ส้ม OR01 ยาว 100", "OR01", "RD01"), "ลูกตอปิโด TP-01 แดง RD01 ยาว 100");
+  assert.equal(rules.renameColor("ยางกลมตัน หัวตอปิโด Ø72", "OR01", "RD01"), "ยางกลมตัน หัวตอปิโด Ø72 แดง RD01", "no colour in the name → appended");
+  assert.equal(rules.renameColor("บอล 68", "", "BL02", [{ code: "BL02", name: "ฟ้าอ่อน" }]), "บอล 68 ฟ้าอ่อน BL02");
+  assert.equal(rules.renameColor("x OR01", "OR01", "OR01"), "x OR01");
+  // ช่องสีของสินค้า: SE/RB ชั้นแรกเรียงตามบรรทัด ซ้ำได้ RB ใต้ SE ไม่นับ
+  const items = new Map([
+    ["FG", { code: "FG", kind: "FG" }], ["SE-B-RD01-68-0-68", { code: "SE-B-RD01-68-0-68", kind: "SE", rubber: { color: "RD01" } }], ["SE-B-YE03-68-0-68", { code: "SE-B-YE03-68-0-68", kind: "SE", rubber: { color: "YE03" } }],
+    ["RB-C1-01-BK01-200-0-5", { code: "RB-C1-01-BK01-200-0-5", kind: "RB", rubber: { color: "BK01" } }], ["BOX", { code: "BOX", kind: "PURCHASED" }], ["RB-C1-02-RD01-100-9-25", { code: "RB-C1-02-RD01-100-9-25", kind: "RB" }],
+  ]);
+  const boms = new Map([
+    ["FG", { lines: [{ childCode: "SE-B-RD01-68-0-68", qty: 1 }, { childCode: "SE-B-YE03-68-0-68", qty: 1 }, { childCode: "RB-C1-01-BK01-200-0-5", qty: 2 }, { childCode: "BOX", qty: 0.1 }] }],
+    ["SE-B-RD01-68-0-68", { lines: [{ childCode: "RB-C1-02-RD01-100-9-25", qty: 0.04 }] }],
+  ]);
+  const opts = { itemOf: (code) => items.get(code) ?? null, approvedBomOf: (code) => boms.get(code) ?? null };
+  const slots = rules.colorSlotsOf("FG", opts);
+  assert.deepEqual(slots, [
+    { key: "SE-B-*-68-0-68", color: "RD01", itemCode: "SE-B-RD01-68-0-68", lineIndex: 0 },
+    { key: "SE-B-*-68-0-68", color: "YE03", itemCode: "SE-B-YE03-68-0-68", lineIndex: 1 },
+    { key: "RB-C1-01-*-200-0-5", color: "BK01", itemCode: "RB-C1-01-BK01-200-0-5", lineIndex: 2 },
+  ]);
+  assert.deepEqual(rules.colorSlotsOf("NOPE", opts), []);
+  // แผนเปลี่ยนสี: ช่องซ้ำจับคู่ตามลำดับ สีเดิมข้าม ช่องที่ชุดสีไม่กำหนดรายงาน
+  const { plan, unmatched } = rules.colorChangePlan(slots, [{ key: "SE-B-*-68-0-68", color: "bl02" }, { key: "SE-B-*-68-0-68", color: "YE03" }]);
+  assert.deepEqual(plan, [{ lineIndex: 0, from: "SE-B-RD01-68-0-68", to: "SE-B-BL02-68-0-68", color: "BL02", fromColor: "RD01" }]);
+  assert.deepEqual(unmatched.map((slot) => slot.itemCode), ["RB-C1-01-BK01-200-0-5"]);
+  assert.deepEqual(rules.colorChangePlan(slots, []).plan, []);
+  assert.equal(Object.keys(rules.COLOR_MASTERS).length >= 12, true);
+});
+
 test("CSV output quotes commas and quotes, and formatting helpers handle empty values", () => {
   const csv = rules.toCsv([["a", 'b "c"', "d,e"], [1, 0.5, ""], ["=SUM(A1)", "-0.86", -0.86, "@x"]]);
   assert.equal(csv, "﻿a,\"b \"\"c\"\"\",\"d,e\"\r\n1,0.5,\r\n'=SUM(A1),'-0.86,-0.86,'@x", "formula-looking text is prefixed, numbers are not");
