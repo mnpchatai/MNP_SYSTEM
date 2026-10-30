@@ -316,6 +316,39 @@ test("colour helpers: colour codes, colourless slot keys, recolouring codes and 
   assert.equal(Object.keys(rules.COLOR_MASTERS).length >= 12, true);
 });
 
+test("a BOMSHEET paste is read too, and the แม่สี/เฉดที่ columns turn a colourless SE/RB code into one item per colour", () => {
+  // หัว BOMSHEET จริง (B–AF บางส่วน) และแถว 16–21 ของใบ 25041: บอล 68 มม. สามสี SE รหัสเดียวกัน (ไม่มีสี) RB รหัสเดียวกัน
+  const H = ["ITEM  สินค้า", "จำนวนสั่งFG", "รหัส FG/RB/SE/ST/PT/BG", "รหัสแผนก", "สินค้า/สูตรยาง", "สีSE/ประเภทยาง", "ความยาวSE/สีRB", "รู,ความหนา/ความยาวRB", "วงนอกSE/รูในRB", "วงนอกRB", "จำนวนGRตัดได้", "จำนวนSE/ST/PT/BG:1FG", "แม่สี", "เฉดที่", "แม่สี", "เฉดที่", "แม่สี", "เฉดที่", "ความยาว GR ตัด / CM", "จำนวน SE ที่ได้ : 1 GR", "ชื่อวัตถุดิบในการผลิต", "แผนกผู้ผลิต", "หน่วยวัสดุ"];
+  const r = (cells) => cells.join("\t");
+  const fg = ["MEGA-SL-01B(P)-Y", "1008", "MEGA-SL-01B", "PK", "-", "-", "-", "-", "-", "-", "-", "-", "", "", "", "", "", "", "-", "-", "สินค้า SL-01B", "PK", "ชุด / SET"];
+  const se = (m, s, name) => ["MEGA-SL-01B(P)-Y", "1008", "SE-SL01B--68-0-68", "SE", "SL01B", "0", "68", "0", "68", "-", "-", "1", m, s, "XX", "XX", "XX", "XX", "-", "-", name, "SE", "ชิ้น/pcs"];
+  const rb = (m, s) => ["MEGA-SL-01B(P)-Y", "1008", "RB-B0006-01- -204-0-76", "RB", "B0006", "01", "", "204", "0", "76", "28", "1", m, s, "XX", "XX", "XX", "XX", "7.2", "1", "ยางกลมตัน บอล 68,70mm เจียร์", "RB", "ชิ้น/pcs"];
+  const dot = [".", "0", ".", "", "", "", "", "", "", "", ".", ".", "", "", "", "", "", "", ".", ".", ".", "", "."];
+  const text = [r(H), r(dot), r(fg), r(se("RD", "01", "บอล 68,70mm ลายเรียบ แดง RD01")), r(rb("RD", "01")), r(se("YE", "3", "บอล 68,70mm ลายเรียบ เหลือง YE03")), r(rb("YE", "03")), r(se("BL", "02", "บอล 68,70mm ลายเรียบ ฟ้า BL02")), r(rb("BL", "02"))].join("\n");
+  const flat = rules.readFlatRows(text);
+  assert.equal(flat.length, 7, "the '.' spacer row of BOMSHEET is skipped");
+  assert.deepEqual(flat.map((row) => row.color), ["", "RD01", "RD01", "YE03", "YE03", "BL02", "BL02"], "shade 3 is padded to 03, XX pairs are ignored");
+  assert.equal(flat[1].qty, 1, "จำนวนSE/ST/PT/BG:1FG is the quantity per set");
+  assert.equal(flat[2].pcsPerRoll, 28, "จำนวนGRตัดได้ is the pieces per rod");
+  assert.equal(flat[2].uom, "ชิ้น/pcs", "หน่วยวัสดุ is the unit");
+  const built = rules.buildFromFlat(flat);
+  const codes = [...built.items.keys()];
+  assert.ok(["SE-SL01B-RD01-68-0-68", "SE-SL01B-YE03-68-0-68", "SE-SL01B-BL02-68-0-68", "RB-B0006-01-RD01-204-0-76", "RB-B0006-01-YE03-204-0-76", "RB-B0006-01-BL02-204-0-76"].every((code) => codes.includes(code)), codes.join(" "));
+  assert.ok(!codes.includes("SE-SL01B-68-0-68"), "no colourless SE left over");
+  assert.equal(built.report.colored, 6);
+  assert.deepEqual(built.boms.get("MEGA-SL-01B(P)-Y").map((line) => [line.childCode, line.qty]), [["SE-SL01B-RD01-68-0-68", 1], ["SE-SL01B-YE03-68-0-68", 1], ["SE-SL01B-BL02-68-0-68", 1]], "three colour slots, not one SE with quantity 3");
+  assert.deepEqual(built.boms.get("SE-SL01B-YE03-68-0-68").map((line) => line.childCode), ["RB-B0006-01-YE03-204-0-76"], "each coloured SE gets its own coloured rod");
+  assert.equal(built.boms.get("SE-SL01B-RD01-68-0-68")[0].qty.toFixed(6), (1 / 28).toFixed(6));
+  const redRod = built.items.get("RB-B0006-01-RD01-204-0-76");
+  assert.equal(redRod.name, "ยางกลมตัน บอล 68,70mm เจียร์ แดง RD01", "a rod name without a colour gets the colour appended");
+  assert.equal(redRod.rubber.color, "RD01");
+  assert.ok(redRod.legacyCodes.includes("RB-B0006-01- -204-0-76"), "the sheet spelling is kept for search");
+  assert.equal(built.items.get("SE-SL01B-RD01-68-0-68").name, "บอล 68,70mm ลายเรียบ แดง RD01", "a name that already carries the colour is kept");
+  assert.equal(built.items.get("SE-SL01B-RD01-68-0-68").rubber.color, "RD01");
+  // ชีต DATA (ไม่มีคอลัมน์ แม่สี) อ่านเหมือนเดิม
+  assert.equal(rules.readFlatRows(PI_TSV).every((row) => row.color === ""), true);
+});
+
 test("PI numbers follow the Excel pattern, due dates default from lead times, and the station rule table selects the BOMSHEET rows per sheet", () => {
   const oct3 = new Date(2025, 9, 3, 10).getTime();
   assert.equal(rules.piNumber(oct3, 41), "251003-25041", "Megaform 25041: ordered 3 Oct 2025, 41st order of 2025");

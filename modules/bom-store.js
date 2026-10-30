@@ -18,6 +18,7 @@
     { id: "compounds", label: "สูตรยาง ↔ RubberFlow", group: "BOM" },
     { id: "import", label: "นำเข้าจาก Excel", group: "BOM" },
     { id: "orders", label: "ใบสั่งผลิต (PI)", group: "ผลิต" },
+    { id: "count", label: "นับคงคลังตามใบ", group: "ผลิต" },
     { id: "jobs", label: "งานของแผนก", group: "ผลิต" },
     { id: "audit", label: "บันทึกการใช้งาน", group: "ผลิต" },
   ].map((entry) => Object.freeze(entry)));
@@ -29,12 +30,12 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการฝ่ายโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "product", "variants", "compounds", "import", "orders", "jobs"]) },
+    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "product", "variants", "compounds", "import", "orders", "count", "jobs"]) },
     rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "variants", "compounds", "jobs", "orders"]) },
     gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "variants", "jobs", "orders"]) },
     pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "variants", "jobs", "orders"]) },
     bg: { label: "หัวหน้าแผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "variants", "jobs", "orders"]) },
-    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["dashboard", "items", "product", "variants", "orders", "jobs"]) },
+    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["count", "dashboard", "items", "product", "variants", "orders", "jobs"]) },
   });
   const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && ROLES[user.role].modules.includes(moduleId);
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");

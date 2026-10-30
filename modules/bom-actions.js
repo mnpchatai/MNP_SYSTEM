@@ -601,6 +601,20 @@
     return code;
   }
 
+  // นับหลายรายการในครั้งเดียว (หน้า "นับคงคลัง" บนมือถือ): ช่องที่เว้นว่างไม่แตะยอดเดิม · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน (store.run ทำบนร่าง)
+  function setStockCounts(d, { orderId, counts }, ctx) {
+    const list = (Array.isArray(counts) ? counts : []).filter((entry) => String(entry?.qty ?? "").trim() !== "");
+    if (!list.length) fail("ยังไม่ได้กรอกยอดที่นับ");
+    const seen = new Set();
+    for (const entry of list) {
+      const code = rules().canonicalCode(entry.itemCode);
+      if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
+      seen.add(code);
+      setStockCount(d, { orderId, itemCode: code, qty: entry.qty }, ctx);
+    }
+    return list.length;
+  }
+
   function cancelOrder(d, { orderId, reason }, ctx) {
     requirePlanner(ctx, "ยกเลิกใบ");
     const order = orderById(d, orderId);
@@ -691,7 +705,7 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, cancelOrder, completeOrder,
+    createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow,
     helpers: { itemOf, approvedBomOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };

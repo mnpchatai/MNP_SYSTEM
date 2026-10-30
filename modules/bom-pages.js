@@ -8,7 +8,7 @@
   const attr = (value) => esc(value ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
-  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", variants: "🎨", compounds: "🧪", import: "📥", orders: "📋", jobs: "🛠️", audit: "🕘" });
+  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", variants: "🎨", compounds: "🧪", import: "📥", orders: "📋", count: "🔢", jobs: "🛠️", audit: "🕘" });
   pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${ICONS[id]}</span>` : "");
   const head = (ctx, title, desc = "", actionsHtml = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${ICONS[ctx.page] ? `<span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
 
@@ -691,7 +691,7 @@
           const payloadSize = JSON.stringify(built).length;
           const tooBig = size + payloadSize > 4_500_000;
           const unlinked = r.compounds.filter((code) => !ctx.data.compounds.find((entry) => entry.code === code)?.recipeId);
-          report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ${esc(String(r.subparts))} · รหัสสะกดต่าง ${esc(String(r.variants))}`)}
+          report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ${esc(String(r.subparts))} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
             ${tooBig ? ui.callout("bad", `ข้อมูลชุดนี้ (${esc(rules.fmtQty(Math.round(payloadSize / 1000)))} KB) จะเกินเพดานของ localStorage นำเข้าเฉพาะสินค้าที่ต้องใช้ทดสอบ (วางทีละกลุ่ม) หรือรีเซ็ตข้อมูลก่อน`) : ""}
             ${unlinked.length ? ui.callout("warn", `สูตรยางที่ยังไม่ผูกกับ RubberFlow: ${esc(unlinked.join(", "))} (ผูกได้ภายหลังที่เมนูสูตรยาง)`) : ""}
             ${r.unknownUom.length ? ui.callout("warn", `หน่วยที่แปลงไม่ได้ (บันทึกเป็น “หน่วยอื่น”): ${esc(r.unknownUom.slice(0, 20).join(", "))}${r.unknownUom.length > 20 ? " …" : ""}`) : ""}
@@ -960,6 +960,49 @@
       ${ui.field(`ยอดที่นับได้ (${uomText(ctx, item.uom)}) *`, ui.input("qty", { type: "number", step: "any", min: 0, required: true, value: order.stockCounts[item.code] ?? "" }))}
     </form>`;
     return { html: ui.dialog("stockCount", `นับคงคลัง ${item.code}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-stock-form">บันทึก</button>` }) };
+  };
+
+  // ---------- นับคงคลังตามใบ (มือถือ) ----------
+  // แทนใบตรวจสอบชิ้นงานคงคลัง (BOMASKSHEET) ที่พิมพ์ให้คลังนับแล้วฝ่ายวางแผนคีย์กลับ: คลังกรอกบนมือถือครั้งเดียว ยอดเข้าใบทันที
+  // รายการตั้งต้นตามกฎใบตรวจสอบ (SE + RB) · all=1 แสดงทุกชิ้นในใบ · นับได้เฉพาะใบร่างที่ระเบิด BOM แล้ว (กติกาเดียวกับ setStockCount)
+  pages.count = (ctx) => {
+    const { data, ui, rules, params } = ctx;
+    const canCount = ctx.helpers.canCount(ctx.user);
+    const drafts = data.orders.filter((order) => order.status === "draft");
+    const sel = String(params.get("order") ?? "").toUpperCase();
+    const order = drafts.find((entry) => entry.id === sel) ?? null;
+    const pageHead = head(ctx, "นับคงคลังตามใบ", "กรอกยอดที่นับได้ของชิ้นในใบสั่งผลิตที่ยังเป็นร่าง");
+    if (!order) {
+      const rows = drafts.map((entry) => entry.explosion?.length
+        ? `<a class="bom-count-order" href="${attr(ctx.url("count", { order: entry.id }))}"><strong class="rf-mono">${esc(entry.id)}</strong><span>${esc(entry.customer)}</span><span class="small muted">${esc(`${Object.keys(entry.stockCounts ?? {}).length ? `นับแล้ว ${Object.keys(entry.stockCounts).length} รายการ · ` : ""}ส่งมอบ ${rules.fmtDate(entry.whDue)}`)}</span></a>`
+        : `<div class="bom-count-order is-disabled"><strong class="rf-mono">${esc(entry.id)}</strong><span>${esc(entry.customer)}</span><span class="small muted">ยังไม่ระเบิด BOM (ฝ่ายวางแผน)</span></div>`);
+      return { html: `${pageHead}${ui.card(rows.length ? `<div class="bom-count-orders">${rows.join("")}</div>` : ui.empty("ไม่มีใบสั่งผลิตที่เป็นร่าง"), { title: "เลือกใบสั่งผลิต" })}` };
+    }
+    const all = params.get("all") === "1";
+    const lines = (all ? order.explosion : rules.sheetLines(rules.sheetOf("ASK"), order.explosion)).filter((line) => line.level > 0);
+    const byCode = new Map();
+    for (const line of lines) {
+      const entry = byCode.get(line.itemCode) ?? { itemCode: line.itemCode, name: line.name, uom: line.uom, dept: line.producerDept, kind: line.kind, required: 0 };
+      entry.required += line.required;
+      byCode.set(line.itemCode, entry);
+    }
+    const entries = [...byCode.values()];
+    const groups = rules.groupByDept(entries);
+    const counted = entries.filter((entry) => order.stockCounts[entry.itemCode] !== undefined).length;
+    const toggle = ui.link(all ? "เฉพาะ SE + RB (ตามใบตรวจสอบ)" : "แสดงทุกชิ้นในใบ", ctx.url("count", { order: order.id, all: all ? null : "1" }), "btn rf-btn secondary small");
+    const rowHtml = (entry) => `<div class="bom-count-row">
+        <div class="bom-count-what"><span class="rf-mono">${esc(entry.itemCode)}</span><span>${esc(entry.name)}</span><span class="small muted">ต้องใช้ ${esc(rules.fmtQty(entry.required))} ${esc(uomText(ctx, entry.uom))}</span></div>
+        <input type="hidden" name="itemCode[]" value="${attr(entry.itemCode)}">
+        <label class="bom-count-input"><span class="sr-only">${esc(`ยอดที่นับได้ ${entry.itemCode}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" value="${attr(order.stockCounts[entry.itemCode] ?? "")}" placeholder="—"${canCount ? "" : " disabled"}><span class="small muted">${esc(uomText(ctx, entry.uom))}</span></label>
+      </div>`;
+    const body = entries.length
+      ? `<form data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่นับ {result} รายการ" class="bom-count-form">
+          ${groups.map((group) => `<h3 class="bom-h3">${esc(group.dept)} <span class="muted">${esc(rules.DEPT_LABEL[group.dept]?.replace(/^\w+ · /, "") ?? "")}</span></h3>${group.entries.sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map(rowHtml).join("")}`).join("")}
+          ${canCount ? '<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div>' : ""}
+        </form>`
+      : ui.empty("ใบนี้ไม่มีชิ้นตามกฎใบตรวจสอบ (SE/RB)");
+    const html = `${pageHead}${ui.card(body, { title: `${esc(order.id)} <span class="muted">${esc(order.customer)} · นับแล้ว ${esc(String(counted))}/${esc(String(entries.length))}</span>`, actions: `${toggle}${ui.link("เปลี่ยนใบ", ctx.url("count"), "btn rf-btn secondary small")}` })}`;
+    return { html };
   };
 
   // ---------- งานของแผนก ----------

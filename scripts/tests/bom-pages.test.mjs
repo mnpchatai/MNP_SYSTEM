@@ -11,7 +11,7 @@ const FILES = [
   "modules/bom-rules.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const PAGES = ["dashboard", "build", "items", "product", "variants", "compounds", "import", "orders", "jobs", "audit"];
+const PAGES = ["dashboard", "build", "items", "product", "variants", "compounds", "import", "orders", "count", "jobs", "audit"];
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st"];
 const XSS = "<script>alert(1)</script>";
 
@@ -94,7 +94,7 @@ test("every page renders for every role without undefined/NaN, menus follow the 
     const sub = env.module.nav[0].subnav("bom");
     for (const page of PAGES) assert.equal(sub.includes(`p=${page}`) || page === "dashboard", env.context.MNP_BOM_STORE.canSee(user, page) || page === "dashboard", `${role} menu ${page}`);
     await env.render("p=nothing");
-    assert.equal(env.log.hash, "#/bom", "unknown page → home of the role");
+    assert.equal(env.log.hash, role === "st" ? "#/bom?p=count" : "#/bom", "unknown page → home of the role (the warehouse lands on the count page)");
   }
 });
 
@@ -411,6 +411,36 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   const jobsTab = env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=jobs")).html;
   clean(jobsTab);
   assert.match(env.context.MNP_BOM_PAGES.jobs(env.ctx("p=jobs&dept=PT&st=all")).html, /14 ชิ้น<div class="small muted"[^>]*>ต้องการ 24 · คลัง 10<\/div>/, "a job shows the gross need and the counted stock behind its planned quantity");
+});
+
+test("the mobile count page lists draft orders, shows SE + RB of the stock-check rule (or every part), and saves many counts in one submit", async () => {
+  const env = load();
+  env.store.setUser("B08"); // คลัง
+  let html = await env.render("p=count");
+  clean(html);
+  assert.match(html, /href="#\/bom\?p=count&amp;order=DEMO-26002"/, "the exploded draft order can be picked");
+  assert.doesNotMatch(html, /order=DEMO-26001/, "a released order is not offered");
+  html = await env.render("p=count&order=DEMO-26002");
+  clean(html);
+  assert.match(html, /data-rf-form="setStockCounts"/);
+  assert.match(html, /name="itemCode\[\]" value="SE-HL24-YE03-400-19-30"/);
+  assert.match(html, /name="itemCode\[\]" value="RB-DM02-02-YE03-204-19-34"/);
+  assert.doesNotMatch(html, /name="itemCode\[\]" value="(BG-0092|P-BOX-01|DEMO-HL-24\(B\)-A)"/, "only SE and RB by default, never the FG");
+  assert.match(html, /ต้องใช้ 576 ชิ้น/, "192 sets × 3 sleeves");
+  assert.match(html, /inputmode="decimal"/);
+  assert.match(html, /นับแล้ว 0\/2/);
+  html = await env.render("p=count&order=DEMO-26002&all=1");
+  assert.match(html, /name="itemCode\[\]" value="P-BOX-01"/);
+  assert.doesNotMatch(html, /name="itemCode\[\]" value="DEMO-HL-24\(B\)-A"/);
+  await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30", "RB-DM02-02-YE03-204-19-34"], "qty[]": ["100", ""] }, { orderId: "DEMO-26002" });
+  const order = env.store.data().orders.find((entry) => entry.id === "DEMO-26002");
+  assert.deepEqual(json(order.stockCounts), { "SE-HL24-YE03-400-19-30": 100 }, "an empty field leaves the item uncounted");
+  assert.match(await env.render("p=count&order=DEMO-26002"), /นับแล้ว 1\/2[\s\S]*value="100"/);
+  await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30"], "qty[]": [""] }, { orderId: "DEMO-26002" });
+  assert.match(env.log.toasts.at(-1)[0], /ยังไม่ได้กรอก/);
+  // แผนกอื่นไม่เห็นเมนู
+  env.store.setUser("B05");
+  assert.match(await env.render("p=count"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
 });
 
 test("the colour-set / package page shows learned and defined sets per base, the variant matrix creates products through the definitions, and the forms go through data-rf-*", async () => {
