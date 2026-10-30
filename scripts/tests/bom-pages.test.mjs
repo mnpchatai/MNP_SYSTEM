@@ -267,6 +267,14 @@ test("dialogs render for their arguments and escape user text", async () => {
   whInput.value = "2026-11-01";
   whInput.handlers.change();
   assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 30 ต.ค. 69", "the preview shows the clamped date (not before the order date)");
+  orderedInput.value = "2026-10-20";
+  orderedInput.handlers.change();
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 21 ต.ค. 69", "changing the order date recomputes the clamp");
+  const pkInput = dueInputs.find((input) => input.dataset.bomDue === "PK");
+  pkInput.value = "2026-10-31";
+  pkInput.handlers.input();
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "PK").textContent, "", "a typed date hides its preview");
+  assert.notEqual(previews.find((node) => node.dataset.bomDuePreview === "GR").textContent, "");
   for (const [name, args] of cases) {
     const built = D[name](c, args);
     assert.ok(built?.html, `${name} renders`);

@@ -2397,6 +2397,8 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
   body:has(.rf-modal[open] .bom-sheet) .rf-modal, body:has(.rf-modal[open] .bom-sheet) .rf-modal-box, body:has(.rf-modal[open] .bom-sheet) .rf-modal-body,
   body:has(.rf-modal[open] .bom-sheet) .bom-sheet .table-wrap { position: static; overflow: visible; max-height: none; height: auto; width: auto; max-width: none; margin: 0; padding: 0; border: 0; box-shadow: none; }
   body:has(.rf-modal[open] .bom-sheet) .bom-sheet.rf-printable { position: static; width: 100%; }
+  /* หน้าเดิมด้านหลัง (ซ่อนด้วย visibility) ยังกินความสูง ทำให้มีหน้าว่างต่อท้าย: เอาออกจาก layout ตอนพิมพ์ใบ */
+  body:has(.rf-modal[open] .bom-sheet) .rf-page, body:has(.rf-modal[open] .bom-sheet) .sidebar, body:has(.rf-modal[open] .bom-sheet) .topbar { display: none; }
   .bom-sheet-table thead { display: table-header-group; }
   .bom-sheet-table tr { break-inside: avoid; page-break-inside: avoid; }
 }

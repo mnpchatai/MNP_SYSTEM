@@ -847,14 +847,16 @@
         const on = Boolean(whInput?.value) && (!auto || auto.checked);
         const defaults = on ? rules.defaultDueDates(rules.fromInputDate(whInput.value)) : {};
         const floor = ordered?.value ? rules.fromInputDate(ordered.value) : 0;
+        const typed = new Set([...dialog.querySelectorAll("[data-bom-due]")].filter((input) => input.value).map((input) => input.dataset.bomDue));
         dialog.querySelectorAll("[data-bom-due-preview]").forEach((node) => {
           const ms = defaults[node.dataset.bomDuePreview];
-          node.textContent = ms ? `ว่าง = ${rules.fmtDate(Math.max(ms, floor || ms))}` : "";
+          node.textContent = ms && !typed.has(node.dataset.bomDuePreview) ? `ว่าง = ${rules.fmtDate(Math.max(ms, floor || ms))}` : ""; // ช่องที่กรอกแล้วไม่ต้องมีตัวอย่าง
         });
       };
       whInput?.addEventListener("change", preview);
       ordered?.addEventListener("change", preview);
       auto?.addEventListener("change", preview);
+      dialog.querySelectorAll("[data-bom-due]").forEach((input) => input.addEventListener("input", preview));
     };
     return { html: ui.dialog("orderNew", "เปิดใบสั่งผลิตใหม่", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-form">เปิดใบ</button>` }), bind };
   };
