@@ -219,7 +219,8 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(order.stockCounts["P-BOX-01"], 3);
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "DEMO-TP-01(P)-Y", qty: 1 }, ctx("st")), /สินค้าสำเร็จรูป/);
   // นับหลายรายการพร้อมกัน: ว่าง = ไม่แตะ · รายการผิดตัวเดียวทั้งชุดไม่บันทึก (store ทำบนร่าง) · ซ้ำถูกปฏิเสธ
-  assert.equal(A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: "5" }, { itemCode: "P-STK-01", qty: "" }, { itemCode: "pt-00320", qty: 0 }] }, ctx("st")), 2);
+  assert.deepEqual(A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: "5" }, { itemCode: "P-STK-01", qty: "" }, { itemCode: "pt-00320", qty: 0 }] }, ctx("st")), { changed: 2, summary: "2 รายการ" });
+  assert.equal(A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: "5.0" }] }, ctx("st")).summary, "0 รายการ (ยอดเท่าเดิมทั้งหมด)");
   assert.deepEqual([order.stockCounts["P-BOX-01"], order.stockCounts["PT-00320"], order.stockCounts["P-STK-01"]], [5, 0, undefined]);
   rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: "" }] }, ctx("st")), /ยังไม่ได้กรอก/);
   rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: 1 }, { itemCode: "p-box-01", qty: 2 }] }, ctx("st")), /ซ้ำ/);

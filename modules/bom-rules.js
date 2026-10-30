@@ -460,7 +460,7 @@
         const thaiNames = colorFromColumns.split("-").map((c) => COLOR_MASTERS[parseColorCode(c)?.master] ?? "").filter(Boolean);
         const name = !colorFromColumns || !row.name || row.name.toUpperCase().includes(firstColor) ? row.name
           : thaiNames.length && thaiNames.every((thai) => row.name.includes(thai)) ? `${row.name} ${colorFromColumns}` // ชื่อมีสีไทยอยู่แล้ว ต่อเฉพาะรหัส
-          : `${row.name} ${thaiNames.join("-")} ${colorFromColumns}`.replace(/s+/g, " ").trim();
+          : `${row.name} ${thaiNames.join("-")} ${colorFromColumns}`.replace(/\s+/g, " ").trim();
         const item = ensureItem(code, { kind, name, uom: uom.code, weightG, pair: row.pair, rubber }, rawCode); // ส่งรหัสตามชีตเพื่อเก็บสะกดเดิมเป็น legacy code
         // พ่อของบรรทัดนี้
         let parentCode = fgCode;

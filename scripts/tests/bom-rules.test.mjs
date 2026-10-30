@@ -352,6 +352,9 @@ test("a BOMSHEET paste is read too, and the แม่สี/เฉดที่ c
   const twoBuilt = rules.buildFromFlat(two);
   assert.equal(twoBuilt.items.get("SE-SL01B-YE03-BK01-68-0-68").name, "บอลสองสี เหลือง-ดำ YE03-BK01");
   assert.equal(twoBuilt.items.get("SE-SL01B-RD01-68-0-68").name, "บอล แดง RD01", "a Thai colour name already in the text is not repeated");
+  const latin = rules.buildFromFlat(rules.readFlatRows([r(H), r(fg), r(se("RD", "01", "Plastic ball pcs")), r(se("ZZ", "01", "Glass ball  x"))].join(String.fromCharCode(10))));
+  assert.equal(latin.items.get("SE-SL01B-RD01-68-0-68").name, "Plastic ball pcs แดง RD01", "lower-case s is kept, spaces are collapsed");
+  assert.equal(latin.items.get("SE-SL01B-ZZ01-68-0-68").name, "Glass ball x ZZ01", "an unknown master adds only the code");
   // ชีต DATA (ไม่มีคอลัมน์ แม่สี) อ่านเหมือนเดิม
   assert.equal(rules.readFlatRows(PI_TSV).every((row) => row.color === ""), true);
 });

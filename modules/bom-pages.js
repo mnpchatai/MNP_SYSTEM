@@ -996,7 +996,7 @@
         <label class="bom-count-input"><span class="sr-only">${esc(`ยอดที่นับได้ ${entry.itemCode}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" value="${attr(order.stockCounts[entry.itemCode] ?? "")}" placeholder="—"${canCount ? "" : " disabled"}><span class="small muted">${esc(uomText(ctx, entry.uom))}</span></label>
       </div>`;
     const body = entries.length
-      ? `<form data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่นับ {result} รายการ" class="bom-count-form">
+      ? `<form data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่นับ {result}" class="bom-count-form">
           ${groups.map((group) => `<h3 class="bom-h3">${esc(group.dept)} <span class="muted">${esc(rules.DEPT_LABEL[group.dept]?.replace(/^\w+ · /, "") ?? "")}</span></h3>${group.entries.sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map(rowHtml).join("")}`).join("")}
           ${canCount ? '<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div>' : ""}
         </form>`
