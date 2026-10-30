@@ -508,6 +508,23 @@ async function uploadRequestAttachment(requestId, file, uploaderId) {
     await sb.storage.from("request-attachments").remove([storagePath]);
     throw metadataError;
   }
+  await uploadAttachmentThumbnail("request-attachments", storagePath, file);
+}
+
+// อัปโหลดภาพย่อคู่กับไฟล์แนบที่บันทึกแล้ว (ดู THUMBNAIL_SUFFIX ใน modules/attachment-image.js) ใช้กับไฟล์แนบคำร้องและ NCR
+// เป็นของเสริม: สร้างหรืออัปโหลดไม่สำเร็จก็ไม่แจ้งผู้ใช้ แกลเลอรีจะใช้ไฟล์จริงแทน
+async function uploadAttachmentThumbnail(bucket, storagePath, file) {
+  const attachmentImage = window.MNP_ATTACHMENT_IMAGE;
+  if (!attachmentImage) return;
+  try {
+    const thumbnail = await attachmentImage.createUploadThumbnail(file, {
+      renderPdf: async (pdf) => (await window.MNP_ATTACHMENT_PREVIEW.renderPdfFirstPage(pdf, loadPdfjs)).dataUrl,
+    });
+    if (!thumbnail) return;
+    await sb.storage.from(bucket).upload(attachmentImage.thumbnailPath(storagePath), thumbnail, { contentType: "image/jpeg", upsert: false });
+  } catch {
+    // ไม่มีภาพย่อ = แกลเลอรีโหลดไฟล์จริงเหมือนไฟล์เก่า
+  }
 }
 
 // ช่อง "แนบไฟล์เพิ่มเติม" ของฟอร์มตอบกลับ/ความเห็น/กรอกข้อมูลในหน้ารายละเอียดคำร้อง (ใช้ได้ทุกโมดูลที่แสดงผ่านหน้านี้)
@@ -646,7 +663,8 @@ function previewImageNode(src, alt) {
   return image;
 }
 
-async function fillAttachmentTile(file, url) {
+// thumbnailUrl: ภาพย่อที่อัปโหลดคู่กับไฟล์ (ถ้ามี) ใช้แทนไฟล์เต็มในกระเบื้อง ไฟล์เต็มโหลดเฉพาะตอนเปิด lightbox/ดาวน์โหลด
+async function fillAttachmentTile(file, url, thumbnailUrl = null) {
   const tile = document.querySelector(`.attachment-tile[data-attachment="${file.id}"]`);
   if (!tile) return;
   const kind = attachmentKind(file);
@@ -656,6 +674,13 @@ async function fillAttachmentTile(file, url) {
     downloadLink.hidden = false;
   }
   try {
+    if (thumbnailUrl && (kind === "image" || kind === "pdf")) {
+      const thumbnail = previewImageNode(thumbnailUrl, kind === "pdf" ? `ตัวอย่างหน้าแรกของ ${file.file_name}` : file.file_name);
+      // ภาพย่อเสีย/โหลดไม่ได้ กลับไปใช้ไฟล์จริงแบบไฟล์เก่า
+      thumbnail.addEventListener("error", () => fillAttachmentTile(file, url), { once: true });
+      setTilePreview(tile, thumbnail);
+      return;
+    }
     if (kind === "image") {
       setTilePreview(tile, previewImageNode(url, file.file_name));
       return;
@@ -708,7 +733,10 @@ async function signAttachmentPaths(bucket, paths) {
 async function hydrateAttachmentGallery(files, bucket = "request-attachments") {
   if (!files.length || !document.querySelector("#attachment-gallery")) return;
   attachmentPreviews.clear();
-  const { signedByPath, error } = await signAttachmentPaths(bucket, files.map((file) => file.storage_path));
+  // ขอ URL ของภาพย่อพร้อมไฟล์จริงในคำขอเดียว ไฟล์เก่าที่ไม่มีภาพย่อจะไม่ได้ URL กลับมา (ใช้ไฟล์จริงแทน)
+  const thumbnailPathOf = (file) => window.MNP_ATTACHMENT_IMAGE?.thumbnailPath(file.storage_path);
+  const thumbnailPaths = files.filter((file) => ["image", "pdf"].includes(attachmentKind(file))).map(thumbnailPathOf).filter(Boolean);
+  const { signedByPath, error } = await signAttachmentPaths(bucket, [...files.map((file) => file.storage_path), ...thumbnailPaths]);
   if (error) {
     document.querySelectorAll(".attachment-tile").forEach((tile) => setTileMessage(tile, "เปิดไฟล์แนบไม่ได้"));
     return;
@@ -720,17 +748,17 @@ async function hydrateAttachmentGallery(files, bucket = "request-attachments") {
       if (tile) setTileMessage(tile, "เปิดไฟล์แนบไม่ได้");
       continue;
     }
-    attachmentPreviews.set(file.id, { file, url, pageCount: null });
+    attachmentPreviews.set(file.id, { file, url, pageCount: null, thumbnailUrl: signedByPath.get(thumbnailPathOf(file)) ?? null });
   }
-  // รูปโหลดขนานกันเองอยู่แล้ว ส่วน PDF เรนเดอร์ทีละไฟล์เพื่อไม่ให้เปิด worker พร้อมกันหลายตัว
+  // รูปและภาพย่อโหลดขนานกันเองอยู่แล้ว ส่วน PDF ที่ไม่มีภาพย่อเรนเดอร์ทีละไฟล์เพื่อไม่ให้เปิด worker พร้อมกันหลายตัว
+  const loadsInParallel = (file, entry) => attachmentKind(file) === "image" || Boolean(entry.thumbnailUrl);
   for (const file of files) {
     const entry = attachmentPreviews.get(file.id);
-    if (!entry) continue;
-    if (attachmentKind(file) === "image") fillAttachmentTile(file, entry.url);
+    if (entry && loadsInParallel(file, entry)) fillAttachmentTile(file, entry.url, entry.thumbnailUrl);
   }
   for (const file of files) {
     const entry = attachmentPreviews.get(file.id);
-    if (!entry || attachmentKind(file) === "image") continue;
+    if (!entry || loadsInParallel(file, entry)) continue;
     await fillAttachmentTile(file, entry.url);
   }
 }

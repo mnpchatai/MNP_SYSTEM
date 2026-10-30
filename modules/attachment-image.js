@@ -42,6 +42,13 @@
   const MAX_BATCH_BYTES = MAX_FILE_BYTES;
   const MAX_EDGE = 1920;
   const HEIC_TIMEOUT_MS = 60000; // โหลดไลบรารี/ถอดรหัสบนเครื่องช้าอาจใช้เวลาหลายวินาที ตั้งไว้เผื่อ
+  // ภาพย่อที่อัปโหลดคู่กับไฟล์จริง (รูป และหน้าแรกของ PDF) เก็บที่ <storage_path>.thumb.jpg ในโฟลเดอร์เดียวกัน
+  // แกลเลอรีโหลดภาพย่อนี้แทนไฟล์เต็ม (ไฟล์เต็มโหลดเฉพาะตอนกดเปิด/ดาวน์โหลด) ลด Storage Egress ของ Supabase
+  // อยู่โฟลเดอร์เดียวกับไฟล์จริง จึงใช้นโยบาย RLS ของ bucket เดิมได้ทันที ไม่ต้องแก้ฐานข้อมูล
+  // ไฟล์เก่าที่ไม่มีภาพย่อ แกลเลอรีกลับไปใช้ไฟล์จริงเหมือนเดิม
+  const THUMBNAIL_SUFFIX = ".thumb.jpg";
+  const THUMBNAIL_EDGE = 360;
+  const MAX_THUMBNAIL_BYTES = 200 * 1024; // ตรงกับที่ uploadAttachmentAction (Next.js) ตรวจ
   const CANONICAL_TYPES = { jpeg: "image/jpeg", png: "image/png", webp: "image/webp" };
   const CANONICAL_EXTENSIONS = { jpeg: "jpg", png: "png", webp: "webp" };
   const KIND_BY_MIME = {
@@ -73,6 +80,20 @@
     "รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX";
 
   // ---- ฟังก์ชันล้วน (ไม่แตะเบราว์เซอร์ ทดสอบได้ใน Node: scripts/tests/attachment-image.test.mjs) ----
+
+  function thumbnailPath(storagePath) {
+    return `${storagePath}${THUMBNAIL_SUFFIX}`;
+  }
+
+  // แปลง data URL (base64) เป็น Blob เอง ไม่ใช้ fetch(dataUrl) เพราะ CSP connect-src ของ Pilot ไม่อนุญาต data:
+  function dataUrlToBlob(dataUrl) {
+    const match = /^data:([^;,]+);base64,(.*)$/.exec(String(dataUrl ?? ""));
+    if (!match) return null;
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type: match[1] });
+  }
 
   function ascii(bytes, start, end) {
     let text = "";
@@ -260,6 +281,23 @@
     const job = thumbnailQueue.then(() => buildThumbnail(file, maxEdge));
     thumbnailQueue = job.catch(() => {});
     return job;
+  }
+
+  // ภาพย่อ JPEG (Blob) สำหรับอัปโหลดคู่กับไฟล์จริง: รูป = ย่อเหลือ THUMBNAIL_EDGE, PDF = หน้าแรกจาก options.renderPdf(file)
+  // (คืน data URL — Pilot และ Next.js มีตัวเรนเดอร์ pdf.js ของตัวเอง) ไฟล์ชนิดอื่น สร้างไม่ได้ หรือใหญ่เกิน คืน null
+  // ไม่โยน error: ภาพย่อเป็นของเสริม การแนบไฟล์ต้องสำเร็จได้แม้สร้างภาพย่อไม่ได้
+  async function createUploadThumbnail(file, options = {}) {
+    try {
+      const type = String(file?.type ?? "").toLowerCase();
+      const name = String(file?.name ?? "").toLowerCase();
+      let dataUrl = null;
+      if (type.startsWith("image/")) dataUrl = await createThumbnail(file, THUMBNAIL_EDGE);
+      else if ((type === "application/pdf" || name.endsWith(".pdf")) && options.renderPdf) dataUrl = await options.renderPdf(file);
+      const blob = dataUrl ? dataUrlToBlob(dataUrl) : null;
+      return blob && blob.type === "image/jpeg" && blob.size > 0 && blob.size <= MAX_THUMBNAIL_BYTES ? blob : null;
+    } catch {
+      return null;
+    }
   }
 
   async function encodeWithinLimit(image, options) {
@@ -455,6 +493,7 @@
     SAFE_BYTES, COMPRESS_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
     checkBatch, describeBatch, createThumbnail,
+    THUMBNAIL_SUFFIX, THUMBNAIL_EDGE, MAX_THUMBNAIL_BYTES, thumbnailPath, dataUrlToBlob, createUploadThumbnail,
     normalizeAttachment, normalizeAttachments, bindFileInputs, removeSelectedFile,
   };
 });
