@@ -12,6 +12,10 @@
 -- Audit: เพิ่มแถวสรุป action = 'remove_factory_leftovers'
 -- Rollback: ลบถาวร กู้ได้จาก backup ของ Supabase ที่มีอยู่ก่อน apply เท่านั้น
 
+-- จำไว้ก่อน drop ว่าตารางมีอยู่จริงหรือไม่ เพื่อให้แถวสรุปตรงกับความจริง (local/CI ไม่มีตารางนี้)
+select set_config('remove_factory_leftovers.table_existed',
+                  (to_regclass('private._mg_deploy_chunks') is not null)::text, false);
+
 drop table if exists private._mg_deploy_chunks;
 
 with deleted as (
@@ -23,5 +27,6 @@ with deleted as (
 )
 insert into public.audit_logs (actor_id, action, entity_type, entity_id, metadata)
 select null, 'remove_factory_leftovers', 'audit_logs', null,
-       jsonb_build_object('dropped_table', 'private._mg_deploy_chunks',
+       jsonb_build_object('mg_deploy_chunks_dropped',
+                          current_setting('remove_factory_leftovers.table_existed')::boolean,
                           'factory_sandbox_audit_deleted', (select count(*) from deleted));
