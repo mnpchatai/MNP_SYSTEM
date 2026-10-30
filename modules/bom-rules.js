@@ -76,6 +76,83 @@
     return { product, color, lengthMm: nums[0], holeMm: nums[1], odMm: nums[2] };
   }
   const buildRbCode = (r) => `RB-${r.compound}-${r.type}${r.color ? `-${r.color}` : ""}-${r.lengthMm}-${r.holeMm}-${r.odMm}`;
+  const buildSeCode = (s) => `SE-${s.product}${s.color ? `-${s.color}` : ""}-${s.lengthMm}-${s.holeMm}-${s.odMm}`;
+
+  // ---------- สี ชุดสี แพ็กเกจ ----------
+  // สี = แม่สี 2 ตัวอักษร + เฉด 2 หลัก (OR01) ตามคอลัมน์ แม่สี/เฉดที่ ของ BOMSHEET · รายชื่อแม่สีที่พบในชีต
+  const COLOR_MASTERS = Object.freeze({ RD: "แดง", OR: "ส้ม", YE: "เหลือง", GN: "เขียว", BL: "ฟ้า", NB: "น้ำเงิน", PU: "ม่วง", PK: "ชมพู", BK: "ดำ", WH: "ขาว", GY: "เทา", BR: "น้ำตาล", XX: "ไม่ระบุ" });
+  const parseColorCode = (raw) => {
+    const match = String(raw ?? "").trim().toUpperCase().match(/^([A-Z]{2})(\d{2})$/);
+    return match ? { code: match[0], master: match[1], shade: match[2] } : null;
+  };
+  const colorName = (code, colors = []) => {
+    const known = colors.find((entry) => entry.code === String(code ?? "").toUpperCase());
+    if (known?.name) return known.name;
+    const parsed = parseColorCode(code);
+    return parsed ? `${COLOR_MASTERS[parsed.master] ?? parsed.master} ${parsed.shade}` : String(code ?? "");
+  };
+  // สีในรหัส SE/RB (ช่วงที่ 3 ของ SE, ช่วงที่ 4 ของ RB) ว่าง = ชิ้นไม่ระบุสีในรหัส
+  const colorOfCode = (code) => parseSeCode(code)?.color || parseRbCode(code)?.color || "";
+  // กุญแจ "ช่องสี" = รหัส SE/RB ที่ถอดสีออก (SE-TP01-*-100-18-65) ใช้จับคู่ช่องเดียวกันข้ามชุดสี · null = ชิ้นที่ไม่มีสีในรหัส
+  function colorSlotKey(code) {
+    const se = parseSeCode(code);
+    if (se) return `SE-${se.product}-*-${se.lengthMm}-${se.holeMm}-${se.odMm}`;
+    const rb = parseRbCode(code);
+    if (rb) return `RB-${rb.compound}-${rb.type}-*-${rb.lengthMm}-${rb.holeMm}-${rb.odMm}`;
+    return null;
+  }
+  // รหัสเดิมแต่เปลี่ยนสี (SE-TP01-OR01-100-18-65 + RD01 → SE-TP01-RD01-100-18-65) รหัสที่ไม่ใช่ SE/RB คืนเดิม
+  function recolorCode(code, color) {
+    const c = String(color ?? "").trim().toUpperCase();
+    const se = parseSeCode(code);
+    if (se) return buildSeCode({ ...se, color: c });
+    const rb = parseRbCode(code);
+    if (rb) return buildRbCode({ ...rb, color: c });
+    return canonicalCode(code);
+  }
+  // ชื่อชิ้นเมื่อเปลี่ยนสี: แทนรหัสสีเดิมและชื่อแม่สีไทยในชื่อ ถ้าไม่พบต่อท้ายด้วยสีใหม่
+  function renameColor(name, fromColor, toColor, colors = []) {
+    let text = String(name ?? "");
+    const from = String(fromColor ?? "").toUpperCase();
+    const to = String(toColor ?? "").toUpperCase();
+    if (!to || from === to) return text;
+    let touched = false;
+    if (from && text.includes(from)) { text = text.split(from).join(to); touched = true; }
+    const fromName = from ? colorName(from, colors).replace(/\s*\d+$/, "") : "";
+    const toName = colorName(to, colors).replace(/\s*\d+$/, "");
+    if (fromName && toName && fromName !== toName && text.includes(fromName)) { text = text.split(fromName).join(toName); touched = true; }
+    return touched ? text : `${text} ${toName} ${to}`.trim();
+  }
+  // ช่องสีของสินค้า: บรรทัดชั้นแรกที่เป็น SE หรือ RB เรียงตามลำดับบรรทัด ซ้ำกุญแจได้ (ลูกบอลสามสีคือ SE เดียวกันสามช่อง)
+  // RB ที่อยู่ใต้ SE ไม่เป็นช่องของตัวเอง (ตาม BOMSHEET สี RB ตามแถว SE เหนือมัน)
+  function colorSlotsOf(fgCode, { itemOf, approvedBomOf }) {
+    const bom = approvedBomOf(fgCode);
+    if (!bom) return [];
+    const slots = [];
+    bom.lines.forEach((line, lineIndex) => {
+      const item = itemOf(line.childCode);
+      if (!item || !["SE", "RB"].includes(item.kind)) return;
+      const key = colorSlotKey(line.childCode);
+      if (!key) return;
+      slots.push({ key, color: String(item.rubber?.color || colorOfCode(line.childCode) || "").toUpperCase(), itemCode: line.childCode, lineIndex });
+    });
+    return slots;
+  }
+  // แผนเปลี่ยนสีจากต้นแบบไปชุดสีเป้าหมาย: จับคู่ตามกุญแจและลำดับที่พบ → plan [{ lineIndex, from, to, color }] และช่องที่ชุดสีไม่ได้กำหนด
+  function colorChangePlan(sourceSlots, targetSlots) {
+    const pools = new Map();
+    for (const slot of targetSlots) (pools.get(slot.key) ?? pools.set(slot.key, []).get(slot.key)).push(String(slot.color ?? "").toUpperCase());
+    const plan = [];
+    const unmatched = [];
+    for (const slot of sourceSlots) {
+      const pool = pools.get(slot.key);
+      const color = pool?.length ? pool.shift() : "";
+      if (!color) { unmatched.push(slot); continue; }
+      if (color === slot.color) continue;
+      plan.push({ lineIndex: slot.lineIndex, from: slot.itemCode, to: recolorCode(slot.itemCode, color), color, fromColor: slot.color });
+    }
+    return { plan, unmatched };
+  }
 
   // ---------- หน่วยนับ ----------
   // หน่วยในชีตมี 356 แบบสะกด (ชิ้น/pcs · ชิ้น/pcs. · ชิ้น(20g) · กก.(112pcs) · ม้วน(50M) · ม้วน (50M) …) → หน่วยมาตรฐาน + ขนาดแพ็ก/น้ำหนักต่อชิ้น
@@ -454,8 +531,9 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS,
-    canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode,
+    DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
+    canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
+    parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
     normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
     toCsv, fmtDate, fmtDateTime, fmtQty, toInputDate, fromInputDate, orderTypeOf,
   };

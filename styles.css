@@ -2363,6 +2363,16 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
 [data-rf-mod="bom-build"] { --rf-mod: #1b8f4e; }
 [data-rf-mod="bom-items"] { --rf-mod: #4f52c9; }
 [data-rf-mod="bom-product"] { --rf-mod: #7b1fa2; }
+[data-rf-mod="bom-variants"] { --rf-mod: #c2185b; }
+.bom-page .rf-table th.center, .bom-page .rf-table td.center { text-align: center; }
+.bom-swatch { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; background: #fff; }
+.bom-swatch[data-color="RD"] { background: #fde2e2; } .bom-swatch[data-color="OR"] { background: #ffe5cc; } .bom-swatch[data-color="YE"] { background: #fff6c2; } .bom-swatch[data-color="GN"] { background: #d9f2dc; }
+.bom-swatch[data-color="BL"] { background: #d9ecff; } .bom-swatch[data-color="NB"] { background: #d6dcf5; } .bom-swatch[data-color="PU"] { background: #ead9f5; } .bom-swatch[data-color="PK"] { background: #fcdcec; }
+.bom-swatch[data-color="BK"] { background: #e0e0e0; } .bom-swatch[data-color="WH"] { background: #fff; } .bom-swatch[data-color="GY"] { background: #e8e8e8; } .bom-swatch[data-color="BR"] { background: #ead9cc; }
+.bom-setchip { display: inline-block; margin: 0 6px 4px 0; padding: 2px 8px; border: 1px solid var(--line); border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.bom-set-row { padding: 8px 12px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; gap: 8px 16px; }
+.bom-set-actions { display: inline-flex; align-items: center; gap: 6px; }
+.bom-matrix td { vertical-align: middle; }
 .bom-dept-grid { display: grid; gap: 12px; margin-top: 12px; }
 .bom-dept-card .rf-card-head h3 { color: var(--rf-mod-ink); }
 .bom-dept-card .bom-size { min-width: 230px; }

@@ -8,7 +8,7 @@
   const attr = (value) => esc(value ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
-  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", compounds: "🧪", import: "📥", orders: "📋", jobs: "🛠️", audit: "🕘" });
+  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", variants: "🎨", compounds: "🧪", import: "📥", orders: "📋", jobs: "🛠️", audit: "🕘" });
   pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${ICONS[id]}</span>` : "");
   const head = (ctx, title, desc = "", actionsHtml = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${ICONS[ctx.page] ? `<span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
 
@@ -415,6 +415,157 @@
     ].join("");
     const html = `${pageHead}${picker}${ui.card(`${facts}${warnings}`, { title: `${esc(item.code)} <span class="muted">${esc(item.name)}</span> × ${esc(rules.fmtQty(qty))} ${esc(uomText(ctx, item.uom))}`, actions })}<div class="bom-dept-grid">${cards}</div>`;
     return { html, bind: bindPick };
+  };
+
+  // ---------- ชุดสี / แพ็กเกจ (นิยามต่อฐานรหัส ใช้ตอนสร้างรุ่นสินค้าใหม่ แทนการแก้สีมือในชีต Edit DATA) ----------
+  // สีที่เลือกได้ = สีที่ลงทะเบียน ∪ สีที่พบในชิ้น SE/RB ∪ แม่สีมาตรฐานเฉด 01
+  const colorOptionsOf = (ctx) => {
+    const { data, rules } = ctx;
+    const codes = new Set([...(data.colors ?? []).map((color) => color.code), ...data.items.map((item) => String(item.rubber?.color ?? "").toUpperCase()).filter((code) => rules.parseColorCode(code)), ...Object.keys(rules.COLOR_MASTERS).filter((master) => master !== "XX").map((master) => `${master}01`)]);
+    return [...codes].sort().map((code) => ({ value: code, label: `${code} · ${rules.colorName(code, data.colors ?? [])}` }));
+  };
+  const swatch = (ctx, code) => (code ? `<span class="bom-swatch rf-mono" data-color="${attr(String(code).slice(0, 2))}" title="${attr(ctx.rules.colorName(code, ctx.data.colors ?? []))}">${esc(code)}</span>` : '<span class="muted">—</span>');
+  // ข้อมูลของฐานรหัสหนึ่ง: สินค้าที่มี (พร้อมช่องสีที่เรียนรู้) ชุดสีที่นิยาม แพ็กเกจที่นิยาม และกุญแจช่องสีทั้งหมดเรียงตามต้นแบบ
+  function baseFacts(ctx, base) {
+    const { data, rules } = ctx;
+    const siblings = ctx.helpers.siblingsOf(data, base).map((item) => ({ item, ...rules.parseFgCode(item.code), slots: rules.colorSlotsOf(item.code, { itemOf: (c) => itemOf(ctx, c), approvedBomOf: (c) => approvedBomOf(ctx, c) }) })).sort((a, b) => a.item.code.localeCompare(b.item.code));
+    const definedSets = (data.colorSets ?? []).filter((entry) => entry.base === base).sort((a, b) => a.code.localeCompare(b.code));
+    const packages = (data.packages ?? []).filter((entry) => entry.base === base).sort((a, b) => a.code.localeCompare(b.code));
+    const slotKeys = [];
+    for (const key of [...definedSets.flatMap((set) => set.slots.map((slot) => slot.key)), ...siblings.flatMap((entry) => entry.slots.map((slot) => slot.key))]) if (!slotKeys.includes(key)) slotKeys.push(key);
+    // ชื่อตัวอย่างของแต่ละช่อง (ชิ้นแรกที่พบในสินค้าที่มี)
+    const slotNames = Object.fromEntries(slotKeys.map((key) => [key, siblings.flatMap((entry) => entry.slots).find((slot) => slot.key === key)?.itemCode ?? ""]));
+    const setCodes = [...new Set([...definedSets.map((set) => set.code), ...siblings.map((entry) => entry.colorSet).filter(Boolean)])].sort();
+    const pkgCodes = [...new Set([...packages.map((entry) => entry.code), ...siblings.map((entry) => entry.pkg)])].sort();
+    return { siblings, definedSets, packages, slotKeys, slotNames, setCodes, pkgCodes };
+  }
+  // สีของช่อง (ตามลำดับที่พบ) จากรายการช่อง: ช่องซ้ำกุญแจเดียวกันใช้ตัวที่ n
+  const slotColors = (slots, key) => slots.filter((slot) => slot.key === key).map((slot) => slot.color);
+  pages.variants = (ctx) => {
+    const { data, ui, rules, user, params } = ctx;
+    const canEdit = ctx.helpers.canPlan(user);
+    const fgs = data.items.filter((item) => item.kind === "FG" && approvedBomOf(ctx, item.code)).map((item) => ({ item, ...rules.parseFgCode(item.code) }));
+    const bases = [...new Set(fgs.map((entry) => entry.base))].sort();
+    const base = params.get("base") ? rules.canonicalCode(params.get("base")) : "";
+    const picker = ui.card(`<form class="bom-pick" data-bom-pick><div class="rf-grid rf-g2">
+        ${ui.field("ฐานรหัสสินค้า", ui.input("base", { value: base, list: "bom-variant-base-list", placeholder: "เช่น MEGA-ST-01", extra: 'autocapitalize="characters"' }))}
+        <div class="field rf-field"><label>&nbsp;</label><button class="btn rf-btn" type="submit">เปิด</button></div></div>
+        <datalist id="bom-variant-base-list">${bases.map((value) => `<option value="${attr(value)}">${esc(fgs.find((entry) => entry.base === value).item.name.slice(0, 50))}</option>`).join("")}</datalist></form>`, { title: "ฐานรหัสสินค้า" });
+    const bindPick = (rootNode) => {
+      rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        location.hash = ctx.url("variants", { base: String(new FormData(event.currentTarget).get("base") ?? "").trim() });
+      });
+    };
+    const pageHead = head(ctx, "ชุดสี / แพ็กเกจ", "นิยามครั้งเดียวต่อฐานรหัส: เลือกชุดสีแล้ว SE/RB ข้างในเปลี่ยนสีเอง เลือกแพ็กเกจแล้วบรรจุภัณฑ์สลับเอง (แทนการแก้ชีต Edit DATA ทุกใบ)", canEdit ? ui.openButton("เพิ่ม/แก้สี", "colorEdit", {}, { className: "secondary" }) : "");
+    if (!base) {
+      const rows = bases.map((value) => {
+        const facts = baseFacts(ctx, value);
+        return `<tr><td>${ui.link(value, ctx.url("variants", { base: value }), "rf-mono")}<div class="small muted">${esc(fgs.find((entry) => entry.base === value).item.name)}</div></td><td class="right">${esc(String(facts.siblings.length))}</td><td>${facts.definedSets.length ? facts.definedSets.map((set) => swatchSet(ctx, set)).join(" ") : '<span class="muted">—</span>'}</td><td>${facts.packages.length ? facts.packages.map((entry) => ui.mono(entry.code)).join(" ") : '<span class="muted">—</span>'}</td></tr>`;
+      });
+      const colorRows = colorOptionsOf(ctx).map((option) => `<tr><td>${swatch(ctx, option.value)}</td><td>${esc(rules.colorName(option.value, data.colors ?? []))}${(data.colors ?? []).some((color) => color.code === option.value) ? "" : ' <span class="small muted">(ยังไม่ลงทะเบียน)</span>'}</td><td class="right">${esc(String(data.items.filter((item) => String(item.rubber?.color ?? "").toUpperCase() === option.value).length))}</td></tr>`);
+      const html = `${pageHead}${picker}
+        ${ui.card(ui.table(["ฐานรหัส", { label: "รุ่นที่มี", className: "right" }, "ชุดสีที่นิยาม", "แพ็กเกจที่นิยาม"], rows, { emptyText: "ยังไม่มีสินค้าที่มี BOM" }), { title: "ฐานรหัสที่มี BOM", flush: true })}
+        ${ui.card(ui.table(["สี", "ชื่อ", { label: "ใช้ใน SE/RB", className: "right" }], colorRows), { title: "สี (แม่สี + เฉด)", flush: true })}`;
+      return { html, bind: bindPick };
+    }
+    const facts = baseFacts(ctx, base);
+    if (!facts.siblings.length) {
+      return { html: `${pageHead}${picker}${ui.callout("warn", `ไม่มีฐานรหัส <strong>${esc(base)}</strong> ที่มี BOM${canEdit ? ` · ${ui.link("สร้าง BOM", ctx.url("build", { base }))}` : ""}`)}`, bind: bindPick };
+    }
+    // การ์ดชุดสี: แถว = ช่องสี คอลัมน์ = ชุดสี (นิยามแล้ว หรือเรียนรู้จากสินค้าที่มี)
+    const setColumns = facts.setCodes.map((code) => {
+      const defined = facts.definedSets.find((set) => set.code === code) ?? null;
+      const sample = facts.siblings.find((entry) => entry.colorSet === code) ?? null;
+      return { code, defined, sample, slots: defined ? defined.slots : sample?.slots ?? [] };
+    });
+    const setHead = ["ช่องสี (รหัสถอดสี)", ...setColumns.map((column) => ({ label: `ชุด ${column.code}${column.defined ? "" : " (จากสินค้า)"}`, className: "center" }))];
+    const setRows = facts.slotKeys.map((key) => {
+      const maxDup = Math.max(1, ...setColumns.map((column) => slotColors(column.slots, key).length));
+      return Array.from({ length: maxDup }, (_, dupIndex) => `<tr><td>${ui.mono(key)}${dupIndex === 0 && facts.slotNames[key] ? `<div class="small muted">${esc(itemOf(ctx, facts.slotNames[key])?.name ?? "")}</div>` : ""}${maxDup > 1 ? `<div class="small muted">ช่องที่ ${dupIndex + 1}</div>` : ""}</td>${setColumns.map((column) => `<td class="center">${swatch(ctx, slotColors(column.slots, key)[dupIndex] ?? "")}</td>`).join("")}</tr>`).join("");
+    });
+    const setActions = setColumns.map((column) => {
+      if (!canEdit) return "";
+      if (column.defined) return `<span class="bom-set-actions">${ui.mono(column.code)} ${ui.openButton("แก้", "colorSetEdit", { base, code: column.code }, { className: "secondary small" })} ${ui.button("ลบ", { action: "removeColorSet", args: { base, code: column.code }, className: "secondary small", confirmText: `ลบนิยามชุดสี ${column.code} ของ ${base}?` })}</span>`;
+      return `<span class="bom-set-actions">${ui.mono(column.code)} ${ui.button("บันทึกชุดสีนี้", { action: "learnColorSet", args: { fgCode: column.sample.item.code }, className: "secondary small", confirmText: "" })}</span>`;
+    }).filter(Boolean).join(" ");
+    const setCard = ui.card(`${ui.table(setHead, setRows, { emptyText: "สินค้านี้ไม่มีชิ้น SE/RB ที่ระบุสีในชั้นแรก" })}${setActions ? `<div class="rf-row bom-set-row">${setActions}</div>` : ""}`,
+      { title: "ชุดสี", flush: true, actions: canEdit && facts.slotKeys.length ? ui.openButton("+ ชุดสีใหม่", "colorSetEdit", { base }, { className: "" }) : "" });
+    // การ์ดแพ็กเกจ
+    const pkgRows = facts.packages.map((entry) => `<tr><td>${ui.mono(entry.code)}<div class="small muted">${esc(entry.name || "")}</div></td><td>${entry.lines.map((line) => `<div>${ui.link(line.childCode, ctx.url("items", { sel: line.childCode }), "rf-mono")} <span class="small muted">× ${esc(rules.fmtQty(line.qty))} ${esc(uomText(ctx, itemOf(ctx, line.childCode)?.uom))}</span></div>`).join("")}</td><td class="nowrap">${canEdit ? `${ui.openButton("แก้", "packageEdit", { base, code: entry.code }, { className: "secondary small" })} ${ui.button("ลบ", { action: "removePackage", args: { base, code: entry.code }, className: "secondary small", confirmText: `ลบนิยามแพ็กเกจ ${entry.code} ของ ${base}?` })}` : ""}</td></tr>`);
+    const undefinedPkgs = facts.pkgCodes.filter((code) => code && !facts.packages.some((entry) => entry.code === code));
+    const pkgCard = ui.card(`${ui.table(["แพ็กเกจ", "บรรจุภัณฑ์ต่อ 1 FG", ""], pkgRows, { emptyText: "ยังไม่มีนิยามแพ็กเกจ: รุ่นใหม่จะใช้บรรจุภัณฑ์ของต้นแบบ" })}${undefinedPkgs.length && canEdit ? `<div class="rf-row bom-set-row"><span class="small muted">มีสินค้าแพ็กเกจ ${esc(undefinedPkgs.join(", "))} แต่ยังไม่นิยาม:</span> ${undefinedPkgs.map((code) => ui.openButton(`นิยาม ${code} จากสินค้า`, "packageEdit", { base, code, fromFg: facts.siblings.find((entry) => entry.pkg === code)?.item.code ?? "" }, { className: "secondary small" })).join(" ")}</div>` : ""}`,
+      { title: "แพ็กเกจ", flush: true, actions: canEdit ? ui.openButton("+ แพ็กเกจใหม่", "packageEdit", { base, fromFg: facts.siblings[0]?.item.code ?? "" }, { className: "" }) : "" });
+    // การ์ดรุ่นสินค้า: แพ็กเกจ × ชุดสี
+    const matrixHead = ["แพ็กเกจ \\ ชุดสี", ...facts.setCodes.map((code) => ({ label: code, className: "center" }))];
+    const matrixRows = facts.pkgCodes.map((pkg) => `<tr><td>${pkg ? ui.mono(pkg) : '<span class="muted">ไม่ระบุ</span>'}${facts.packages.some((entry) => entry.code === pkg) ? "" : pkg ? ' <span class="small muted">(ไม่มีนิยาม)</span>' : ""}</td>${facts.setCodes.map((set) => {
+      const code = rules.buildFgCode(base, pkg, set);
+      const existing = itemOf(ctx, code);
+      if (existing) return `<td class="center">${ui.link(code, ctx.url("product", { code }), "rf-mono")}</td>`;
+      return `<td class="center">${canEdit ? ui.button("สร้าง", { action: "createVariant", args: { base, pkg, colorSet: set }, className: "secondary small", confirmText: `สร้าง ${code} จากต้นแบบของฐานนี้ โดยใช้นิยามชุดสี ${set}${pkg ? ` และแพ็กเกจ ${pkg}` : ""}?` }) : '<span class="muted">—</span>'}</td>`;
+    }).join("")}</tr>`);
+    const matrixCard = ui.card(ui.table(matrixHead, matrixRows, { className: "bom-matrix" }), { title: "รุ่นสินค้า (แพ็กเกจ × ชุดสี)", flush: true });
+    const html = `${pageHead}${picker}<div class="bom-dept-grid">${setCard}${pkgCard}${matrixCard}</div>`;
+    return { html, bind: bindPick };
+  };
+  const swatchSet = (ctx, set) => `<span class="bom-setchip" title="${attr(set.slots.map((slot) => `${slot.key}=${slot.color}`).join(" · "))}">${esc(set.code)}: ${set.slots.map((slot) => esc(slot.color)).join(" ")}</span>`;
+  // dialog: นิยาม/แก้ชุดสี — select สีต่อช่อง (ค่าเริ่มต้น: นิยามเดิม หรือสีของสินค้าต้นแบบตัวแรก)
+  dialogs.colorSetEdit = (ctx, { base = "", code = "" }) => {
+    const { ui } = ctx;
+    const key = ctx.rules.canonicalCode(base);
+    const facts = baseFacts(ctx, key);
+    if (!facts.slotKeys.length) return null;
+    const defined = code ? facts.definedSets.find((set) => set.code === code) : null;
+    const template = defined?.slots ?? facts.siblings[0]?.slots ?? [];
+    const options = colorOptionsOf(ctx);
+    const rows = facts.slotKeys.flatMap((slotKey) => {
+      const count = Math.max(1, slotColors(template, slotKey).length);
+      return Array.from({ length: count }, (_, index) => `<tr><td>${ui.mono(slotKey)}${count > 1 ? `<div class="small muted">ช่องที่ ${index + 1}</div>` : ""}<div class="small muted">${esc(itemOf(ctx, facts.slotNames[slotKey])?.name ?? "")}</div><input type="hidden" name="slotKey[]" value="${attr(slotKey)}"></td><td>${ui.select("slotColor[]", options, { value: slotColors(template, slotKey)[index] ?? "", placeholder: "ใช้สีของต้นแบบ" })}</td></tr>`);
+    });
+    const body = `<form id="bom-colorset-form" data-rf-form="saveColorSet" data-rf-args="${attr(JSON.stringify({ base: key }))}" data-rf-success="บันทึกชุดสี {result}">
+      <div class="rf-grid rf-g2">
+        ${ui.field("รหัสชุดสี *", defined ? `<input class="input rf-input" name="code" value="${attr(defined.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น A", list: "bom-colorset-codes", extra: 'autocapitalize="characters" maxlength="4"' }))}
+        ${ui.field("ชื่อ/คำอธิบาย", ui.input("name", { value: defined?.name ?? "", placeholder: "เช่น แดง-ดำ" }))}
+      </div>
+      <datalist id="bom-colorset-codes">${ctx.rules.COLOR_SETS.filter((value) => !facts.definedSets.some((set) => set.code === value)).map((value) => `<option value="${attr(value)}"></option>`).join("")}</datalist>
+      ${ui.table(["ช่องสี", "สี"], rows)}
+      <p class="small muted">ช่องที่ไม่เลือกสีจะใช้สีของสินค้าต้นแบบ · RB ใต้ SE ที่เปลี่ยนสีจะเปลี่ยนสีตาม SE</p>
+    </form>`;
+    return { html: ui.dialog("colorSetEdit", defined ? `แก้ชุดสี ${defined.code} ของ ${key}` : `ชุดสีใหม่ของ ${key}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-colorset-form">บันทึก</button>` }) };
+  };
+  // dialog: นิยาม/แก้แพ็กเกจ — 8 แถว (รหัสชิ้น + ปริมาณต่อ 1 FG) ค่าเริ่มต้นจากนิยามเดิม หรือบรรทัดของซื้อชั้นแรกของสินค้าต้นแบบ
+  dialogs.packageEdit = (ctx, { base = "", code = "", fromFg = "" }) => {
+    const { ui, data, rules } = ctx;
+    const key = rules.canonicalCode(base);
+    const defined = code ? ctx.helpers.packageOf(data, key, String(code).toUpperCase()) : null;
+    const source = !defined && fromFg ? approvedBomOf(ctx, rules.canonicalCode(fromFg)) : null;
+    const prefill = defined?.lines ?? (source ? source.lines.filter((line) => itemOf(ctx, line.childCode)?.kind === "PURCHASED").map((line) => ({ childCode: line.childCode, qty: line.qty })) : []);
+    const ROWS = Math.max(8, prefill.length + 2);
+    const rows = Array.from({ length: ROWS }, (_, index) => `<tr><td>${ui.input("childCode[]", { value: prefill[index]?.childCode ?? "", list: "bom-pkg-items", placeholder: index === 0 ? "รหัสบรรจุภัณฑ์" : "", className: "rf-mono", extra: 'autocapitalize="characters"' })}</td><td>${ui.input("qty[]", { type: "number", step: "any", min: 0, value: prefill[index]?.qty ?? "" })}</td></tr>`);
+    const body = `<form id="bom-package-form" data-rf-form="savePackage" data-rf-args="${attr(JSON.stringify({ base: key }))}" data-rf-success="บันทึกแพ็กเกจ {result}">
+      <div class="rf-grid rf-g2">
+        ${ui.field("รหัสแพ็กเกจ *", defined ? `<input class="input rf-input" name="code" value="${attr(defined.code)}" readonly>` : ui.input("code", { value: String(code ?? "").toUpperCase(), required: true, placeholder: "เช่น P", list: "bom-package-codes", extra: 'autocapitalize="characters" maxlength="4"' }))}
+        ${ui.field("ชื่อ/คำอธิบาย", ui.input("name", { value: defined?.name ?? "", placeholder: "เช่น ถุง + ลังรวม 40 ชุด" }))}
+      </div>
+      <datalist id="bom-package-codes">${rules.PACKAGES.map((value) => `<option value="${attr(value)}"></option>`).join("")}</datalist>
+      <datalist id="bom-pkg-items">${data.items.filter((item) => item.kind === "PURCHASED").map((item) => `<option value="${attr(item.code)}">${esc(item.name.slice(0, 50))}</option>`).join("")}</datalist>
+      ${ui.table(["บรรจุภัณฑ์ (ชิ้น)", "ปริมาณต่อ 1 FG"], rows)}
+      <p class="small muted">${source ? `ตั้งต้นจากของซื้อชั้นแรกของ ${esc(source.itemCode)} ลบแถวที่ไม่ใช่บรรจุภัณฑ์ (เช่น สติ๊กเกอร์) ออก · ` : ""}ตอนสร้างรุ่นใหม่ ระบบถอดบรรทัดที่อยู่ในแพ็กเกจใดก็ตามของฐานนี้ออกจากต้นแบบ แล้วใส่บรรทัดของแพ็กเกจที่เลือกแทน</p>
+    </form>`;
+    return { html: ui.dialog("packageEdit", defined ? `แก้แพ็กเกจ ${defined.code} ของ ${key}` : `แพ็กเกจใหม่ของ ${key}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-package-form">บันทึก</button>` }) };
+  };
+  dialogs.colorEdit = (ctx, { code = "" }) => {
+    const { ui, data, rules } = ctx;
+    const color = (data.colors ?? []).find((entry) => entry.code === String(code).toUpperCase()) ?? null;
+    const body = `<form id="bom-color-form" data-rf-form="saveColor" data-rf-success="บันทึกสี {result}">
+      <div class="rf-grid rf-g2">
+        ${ui.field("รหัสสี (แม่สี + เฉด) *", ui.input("code", { value: color?.code ?? String(code).toUpperCase(), required: true, placeholder: "เช่น OR01", list: "bom-color-codes", extra: 'autocapitalize="characters" maxlength="4"' }))}
+        ${ui.field("ชื่อ", ui.input("name", { value: color?.name ?? "", placeholder: "เช่น ส้ม" }))}
+      </div>
+      <datalist id="bom-color-codes">${colorOptionsOf(ctx).map((option) => `<option value="${attr(option.value)}">${esc(option.label)}</option>`).join("")}</datalist>
+      <p class="small muted">แม่สีที่รู้จัก: ${esc(Object.entries(rules.COLOR_MASTERS).filter(([master]) => master !== "XX").map(([master, name]) => `${master} ${name}`).join(" · "))}</p>
+    </form>`;
+    return { html: ui.dialog("colorEdit", color ? `แก้สี ${color.code}` : "เพิ่ม/แก้สี", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-color-form">บันทึก</button>` }) };
   };
 
   // dialog: เพิ่ม/แก้ชิ้นงานเดี่ยว (ชิ้นที่ไม่อยู่ในต้นไม้ไหน เช่น ของซื้อที่เตรียมไว้ก่อน)
