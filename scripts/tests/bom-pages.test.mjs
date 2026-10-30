@@ -438,6 +438,19 @@ test("the mobile count page lists draft orders, shows SE + RB of the stock-check
   assert.match(await env.render("p=count&order=DEMO-26002"), /นับแล้ว 1\/2[\s\S]*value="100"/);
   await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30"], "qty[]": [""] }, { orderId: "DEMO-26002" });
   assert.match(env.log.toasts.at(-1)[0], /ยังไม่ได้กรอก/);
+  // บันทึกซ้ำด้วยยอดเท่าเดิมไม่เขียน audit
+  const auditBefore = env.store.data().audit.length;
+  await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30"], "qty[]": ["100"] }, { orderId: "DEMO-26002" });
+  assert.equal(env.store.data().audit.length, auditBefore);
+  // ใบที่ถูกแก้จนยังไม่ระเบิดใหม่ (explosion = null): กลับหน้าเลือกใบ ไม่พัง
+  env.store.setUser("B03");
+  env.store.run("removeOrderItem", { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A" });
+  env.store.setUser("B08");
+  html = await env.render("p=count&order=DEMO-26002");
+  clean(html);
+  assert.match(html, /ยังไม่ระเบิด BOM/);
+  assert.doesNotMatch(html, /data-rf-form="setStockCounts"/);
+  clean(await env.render("p=count&order=DEMO-26002&all=1"));
   // แผนกอื่นไม่เห็นเมนู
   env.store.setUser("B05");
   assert.match(await env.render("p=count"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/);

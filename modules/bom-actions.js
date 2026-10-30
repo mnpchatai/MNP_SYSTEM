@@ -603,16 +603,24 @@
 
   // นับหลายรายการในครั้งเดียว (หน้า "นับคงคลัง" บนมือถือ): ช่องที่เว้นว่างไม่แตะยอดเดิม · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน (store.run ทำบนร่าง)
   function setStockCounts(d, { orderId, counts }, ctx) {
+    const user = requireUser(ctx);
+    if (!canCount(user)) fail("บันทึกยอดคงคลังได้โดยคลัง (ST) ฝ่ายวางแผน หรือผู้จัดการ"); // ก่อนข้ามยอดเท่าเดิม
+    const order = orderById(d, orderId);
+    if (order.status !== "draft") fail("นับคงคลังได้เฉพาะใบร่าง");
     const list = (Array.isArray(counts) ? counts : []).filter((entry) => String(entry?.qty ?? "").trim() !== "");
     if (!list.length) fail("ยังไม่ได้กรอกยอดที่นับ");
+    let changed = 0;
     const seen = new Set();
     for (const entry of list) {
       const code = rules().canonicalCode(entry.itemCode);
       if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
       seen.add(code);
+      // ยอดเท่าเดิม (ฟอร์มเติมค่าที่นับไว้แล้ว) ไม่บันทึกซ้ำ จึงไม่เขียน audit ล้น
+      if (order.stockCounts?.[code] !== undefined && Number(entry.qty) === order.stockCounts[code]) continue;
       setStockCount(d, { orderId, itemCode: code, qty: entry.qty }, ctx);
+      changed += 1;
     }
-    return list.length;
+    return changed;
   }
 
   function cancelOrder(d, { orderId, reason }, ctx) {

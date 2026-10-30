@@ -970,7 +970,7 @@
     const canCount = ctx.helpers.canCount(ctx.user);
     const drafts = data.orders.filter((order) => order.status === "draft");
     const sel = String(params.get("order") ?? "").toUpperCase();
-    const order = drafts.find((entry) => entry.id === sel) ?? null;
+    const order = drafts.find((entry) => entry.id === sel && entry.explosion?.length) ?? null; // ใบที่ถูกแก้จนยังไม่ระเบิดใหม่ กลับไปหน้าเลือกใบ
     const pageHead = head(ctx, "นับคงคลังตามใบ", "กรอกยอดที่นับได้ของชิ้นในใบสั่งผลิตที่ยังเป็นร่าง");
     if (!order) {
       const rows = drafts.map((entry) => entry.explosion?.length
@@ -989,7 +989,7 @@
     const entries = [...byCode.values()];
     const groups = rules.groupByDept(entries);
     const counted = entries.filter((entry) => order.stockCounts[entry.itemCode] !== undefined).length;
-    const toggle = ui.link(all ? "เฉพาะ SE + RB (ตามใบตรวจสอบ)" : "แสดงทุกชิ้นในใบ", ctx.url("count", { order: order.id, all: all ? null : "1" }), "btn rf-btn secondary small");
+    const toggle = ui.link(all ? "เฉพาะ SE + RB (ตามใบตรวจสอบ)" : "แสดงทุกชิ้นในใบ", ctx.url("count", { order: order.id, all: all ? null : "1" }), "btn rf-btn secondary small").replace("<a ", "<a data-bom-count-nav ");
     const rowHtml = (entry) => `<div class="bom-count-row">
         <div class="bom-count-what"><span class="rf-mono">${esc(entry.itemCode)}</span><span>${esc(entry.name)}</span><span class="small muted">ต้องใช้ ${esc(rules.fmtQty(entry.required))} ${esc(uomText(ctx, entry.uom))}</span></div>
         <input type="hidden" name="itemCode[]" value="${attr(entry.itemCode)}">
@@ -1001,8 +1001,16 @@
           ${canCount ? '<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div>' : ""}
         </form>`
       : ui.empty("ใบนี้ไม่มีชิ้นตามกฎใบตรวจสอบ (SE/RB)");
-    const html = `${pageHead}${ui.card(body, { title: `${esc(order.id)} <span class="muted">${esc(order.customer)} · นับแล้ว ${esc(String(counted))}/${esc(String(entries.length))}</span>`, actions: `${toggle}${ui.link("เปลี่ยนใบ", ctx.url("count"), "btn rf-btn secondary small")}` })}`;
-    return { html };
+    const html = `${pageHead}${ui.card(body, { title: `${esc(order.id)} <span class="muted">${esc(order.customer)} · นับแล้ว ${esc(String(counted))}/${esc(String(entries.length))}</span>`, actions: `${toggle}${ui.link("เปลี่ยนใบ", ctx.url("count"), "btn rf-btn secondary small").replace("<a ", "<a data-bom-count-nav ")}` })}`;
+    // ลิงก์สลับรายการ/เปลี่ยนใบ: ถ้ามียอดที่พิมพ์แล้วยังไม่บันทึก ถามก่อนออก (ยอดจะหาย)
+    const bind = (rootNode) => {
+      const form = rootNode.querySelector?.(".bom-count-form");
+      if (!form) return;
+      let dirty = false;
+      form.addEventListener("input", () => { dirty = true; });
+      rootNode.querySelectorAll("[data-bom-count-nav]").forEach((link) => link.addEventListener("click", (event) => { if (dirty && !confirm("มียอดที่ยังไม่บันทึก ออกจากหน้านี้?")) event.preventDefault(); }));
+    };
+    return { html, bind };
   };
 
   // ---------- งานของแผนก ----------

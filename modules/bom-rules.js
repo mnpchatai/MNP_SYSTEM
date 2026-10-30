@@ -326,7 +326,7 @@
   }
   // สีของแถวจากคอลัมน์ แม่สี/เฉดที่: คู่ที่เป็นรหัสสีจริง (XX99) ต่อกันด้วย "-" ("XX"/ว่าง = ไม่มี) เช่น RD+01 → RD01 · YE+03, BK+01 → YE03-BK01
   function rowColor(row, colors = []) {
-    return colors.map(([master, shade]) => parseColorCode(`${String(row[master] ?? "").trim()}${String(row[shade] ?? "").trim().padStart(2, "0")}`)).filter((parsed) => parsed && parsed.master !== "XX").map((parsed) => parsed.code).join("-");
+    return colors.filter(([master, shade]) => String(row[master] ?? "").trim() && String(row[shade] ?? "").trim()).map(([master, shade]) => parseColorCode(`${String(row[master] ?? "").trim()}${String(row[shade] ?? "").trim().padStart(2, "0")}`)).filter((parsed) => parsed && parsed.master !== "XX").map((parsed) => parsed.code).join("-");
   }
   const num = (value) => {
     const text = String(value ?? "").replace(/,/g, "").trim();
@@ -378,7 +378,7 @@
         items.set(canonical, item);
       }
       const raw = String(legacyRaw).trim();
-      if (raw && raw !== canonical && !item.legacyCodes.includes(raw)) { item.legacyCodes.push(raw); report.variants += 1; }
+      if (raw && raw !== canonical && !item.legacyCodes.includes(raw)) { item.legacyCodes.push(raw); if (canonicalCode(raw) === canonical) report.variants += 1; } // รหัสไม่มีสีของชิ้นที่ได้สีจากคอลัมน์ ไม่นับเป็นสะกดต่าง
       if (!item.name && props.name) item.name = props.name;
       if (!item.weightG && props.weightG) item.weightG = props.weightG;
       if (props.rubber && item.rubber) {
@@ -457,7 +457,10 @@
         }
         // ชื่อของชิ้นที่ได้สีจากคอลัมน์: ถ้าชื่อยังไม่มีรหัสสี ต่อท้ายด้วยชื่อสี (RB ชื่อเดียวกันสามสีจะได้ชื่อต่างกัน)
         const firstColor = colorFromColumns.split("-")[0];
-        const name = colorFromColumns && row.name && !row.name.toUpperCase().includes(firstColor) ? renameColor(row.name, "", colorFromColumns) : row.name;
+        const thaiNames = colorFromColumns.split("-").map((c) => COLOR_MASTERS[parseColorCode(c)?.master] ?? "").filter(Boolean);
+        const name = !colorFromColumns || !row.name || row.name.toUpperCase().includes(firstColor) ? row.name
+          : thaiNames.length && thaiNames.every((thai) => row.name.includes(thai)) ? `${row.name} ${colorFromColumns}` // ชื่อมีสีไทยอยู่แล้ว ต่อเฉพาะรหัส
+          : `${row.name} ${thaiNames.join("-")} ${colorFromColumns}`.replace(/s+/g, " ").trim();
         const item = ensureItem(code, { kind, name, uom: uom.code, weightG, pair: row.pair, rubber }, rawCode); // ส่งรหัสตามชีตเพื่อเก็บสะกดเดิมเป็น legacy code
         // พ่อของบรรทัดนี้
         let parentCode = fgCode;

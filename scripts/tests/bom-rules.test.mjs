@@ -345,6 +345,13 @@ test("a BOMSHEET paste is read too, and the แม่สี/เฉดที่ c
   assert.ok(redRod.legacyCodes.includes("RB-B0006-01- -204-0-76"), "the sheet spelling is kept for search");
   assert.equal(built.items.get("SE-SL01B-RD01-68-0-68").name, "บอล 68,70mm ลายเรียบ แดง RD01", "a name that already carries the colour is kept");
   assert.equal(built.items.get("SE-SL01B-RD01-68-0-68").rubber.color, "RD01");
+  assert.equal(built.report.variants, 0, "the colourless sheet code kept as a legacy code is not counted as a spelling variant");
+  // เฉดว่างไม่กลายเป็น 00 · สองสี · ชื่อที่มีสีไทยอยู่แล้วต่อเฉพาะรหัส
+  const two = rules.readFlatRows([r(H), r(fg), r(se("RD", "", "บอล แดง")), r(["MEGA-SL-01B(P)-Y", "1008", "SE-SL01B--68-0-68", "SE", "SL01B", "0", "68", "0", "68", "-", "-", "1", "YE", "03", "BK", "1", "XX", "XX", "-", "-", "บอลสองสี", "SE", "ชิ้น/pcs"]), r(se("RD", "01", "บอล แดง"))].join(String.fromCharCode(10)));
+  assert.deepEqual(two.map((row) => row.color), ["", "", "YE03-BK01", "RD01"]);
+  const twoBuilt = rules.buildFromFlat(two);
+  assert.equal(twoBuilt.items.get("SE-SL01B-YE03-BK01-68-0-68").name, "บอลสองสี เหลือง-ดำ YE03-BK01");
+  assert.equal(twoBuilt.items.get("SE-SL01B-RD01-68-0-68").name, "บอล แดง RD01", "a Thai colour name already in the text is not repeated");
   // ชีต DATA (ไม่มีคอลัมน์ แม่สี) อ่านเหมือนเดิม
   assert.equal(rules.readFlatRows(PI_TSV).every((row) => row.color === ""), true);
 });
