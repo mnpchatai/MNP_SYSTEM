@@ -257,16 +257,28 @@
   function createOrder(d, p, ctx) {
     const user = requirePlanner(ctx, "เปิดใบสั่งผลิต");
     const R = rules();
-    const id = text(p.pi, "เลขที่ PI", 40).toUpperCase();
-    if (d.orders.some((order) => order.id === id)) fail(`มีใบสั่งผลิต ${id} อยู่แล้ว`);
     const orderedAt = p.orderedAt === null || p.orderedAt === "" ? NaN : Number(p.orderedAt);
     const whDue = p.whDue === null || p.whDue === "" ? NaN : Number(p.whDue);
     if (!Number.isFinite(orderedAt) || !Number.isFinite(whDue) || orderedAt <= 0 || whDue <= 0) fail("กรุณาระบุวันที่สั่งผลิตและวันส่งมอบคลัง");
     if (whDue < orderedAt) fail("วันส่งมอบคลังต้องไม่ก่อนวันที่สั่งผลิต");
+    // เลข PI: ว่าง = ออกให้อัตโนมัติ YYMMDD-YYnnn (ลำดับต่อปีจากวันที่สั่งผลิต ข้ามเลขที่มีอยู่แล้ว เช่น ใบที่พิมพ์เลขเอง)
+    let id = String(p.pi ?? "").trim().toUpperCase();
+    if (!id) {
+      const key = `PI-${R.piYear(orderedAt)}`;
+      do { d.counters[key] = (d.counters[key] ?? 0) + 1; id = R.piNumber(orderedAt, d.counters[key]); } while (d.orders.some((order) => order.id === id));
+    } else {
+      id = text(id, "เลขที่ PI", 40).toUpperCase();
+      if (d.orders.some((order) => order.id === id)) fail(`มีใบสั่งผลิต ${id} อยู่แล้ว`);
+    }
+    // กำหนดเสร็จรายแผนก: ที่กรอกมาใช้ตามนั้น · autoDue = เติมช่องว่างด้วยค่าเริ่มต้นจาก lead time (ถอยจากวันส่งมอบคลัง ไม่ก่อนวันสั่งผลิต)
     const due = {};
+    const defaults = p.autoDue ? R.defaultDueDates(whDue) : {};
     for (const dept of R.DUE_DEPTS) {
       const value = p.due?.[dept];
-      if (value === undefined || value === "" || value === null) continue;
+      if (value === undefined || value === "" || value === null) {
+        if (defaults[dept] !== undefined) due[dept] = Math.max(defaults[dept], new Date(orderedAt).setHours(0, 0, 0, 0));
+        continue;
+      }
       const ms = Number(value);
       if (!Number.isFinite(ms)) fail(`กำหนดเสร็จ ${dept} ไม่ถูกต้อง`);
       if (ms > whDue) fail(`กำหนดเสร็จ ${dept} ต้องไม่หลังวันส่งมอบคลัง`);
@@ -274,10 +286,10 @@
     }
     const country = text(p.country, "ประเทศ", 60);
     d.orders.unshift({
-      id, customer: text(p.customer, "ชื่อลูกค้า", 120), country, orderType: R.orderTypeOf(country), orderedAt, whDue, due, revision: 0,
+      id, customer: text(p.customer, "ชื่อลูกค้า", 120), country, orderType: R.orderTypeOf(country), orderedAt, whDue, due, dueDefaults: p.autoDue ? R.DUE_DEPTS.filter((dept) => !p.due?.[dept] && due[dept] !== undefined) : [], revision: 0,
       status: "draft", items: [], explosion: null, explodedAt: null, stockCounts: {}, note: String(p.note ?? "").trim().slice(0, 300), createdBy: user.name, createdAt: ctx.now,
     });
-    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${p.customer}`);
+    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${p.customer}${p.pi ? "" : " (ออกเลขอัตโนมัติ)"}`);
     return id;
   }
 

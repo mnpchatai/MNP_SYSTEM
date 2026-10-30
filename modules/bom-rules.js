@@ -25,6 +25,66 @@
   // ลำดับการไหลของงาน (ต้นน้ำ → ปลายน้ำ) ใช้เรียงการ์ดในหน้า "สินค้า 1 ตัว → งานทุกแผนก"
   const FLOW_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "ST", "PK"]);
 
+  // ---------- เลขที่ PI และกำหนดเสร็จเริ่มต้น ----------
+  // เลข PI ตามไฟล์ Excel: YYMMDD-YYnnn (วันที่สั่งผลิต ค.ศ. 2 หลัก + ลำดับในปี 3 หลัก) เช่น 251003-25041 = สั่ง 3 ต.ค. 2025 ใบที่ 41 ของปี 2025
+  function piNumber(orderedAt, seq) {
+    const date = new Date(orderedAt);
+    const yy = String(date.getFullYear()).slice(-2);
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    return `${yy}${mm}${dd}-${yy}${String(seq).padStart(3, "0")}`;
+  }
+  const piYear = (orderedAt) => String(new Date(orderedAt).getFullYear()).slice(-2);
+  // ระยะเวลาเผื่อ (วัน) ถอยหลังจากวันส่งมอบคลัง ตามใบ 25041: PK = WH − 1 · GR/PT/BG/ST = PK − 6 · RB = GR − 4 (ผู้ใช้แก้ทับได้ทุกช่อง)
+  const LEAD_DAYS = Object.freeze({ PK: 1, GR: 6, PT: 6, BG: 6, ST: 6, RB: 4 });
+  // ถอยเป็น "วันปฏิทิน" (setDate) ไม่ใช่ลบมิลลิวินาที จึงไม่คลาดในโซนเวลาที่มี DST
+  function defaultDueDates(whDue) {
+    const base = new Date(Number(whDue));
+    if (Number.isNaN(base.getTime())) return {};
+    const minus = (ms, days) => { const date = new Date(ms); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - days); return date.getTime(); };
+    const pk = minus(base.getTime(), LEAD_DAYS.PK);
+    const gr = minus(pk, LEAD_DAYS.GR);
+    return { RB: minus(gr, LEAD_DAYS.RB), GR: gr, PT: minus(pk, LEAD_DAYS.PT), BG: minus(pk, LEAD_DAYS.BG), ST: minus(pk, LEAD_DAYS.ST), PK: pk };
+  }
+
+  // ---------- ใบพิมพ์รายสถานี (แทนธง P/O 8 คอลัมน์ + มาโคร Print_* ของ BOMSHEET และชีต BOMASKSHEET / WIP-RBGR / WIP-PTBG) ----------
+  // "คู่ผู้ผลิต" ของบรรทัดแบบคอลัมน์ AF ของชีต: PK (ตัว FG) · RB · SE · BG · <ผู้ใช้>-PT (ชิ้นพลาสติก) · <ผู้ใช้>-ST (ของซื้อ) · <ผู้ใช้>-PK (ชิ้นทำเอง)
+  function producerPair(line, consumerDept = "PK") {
+    if (line.level === 0) return "PK";
+    const consumer = consumerDept || "PK";
+    switch (line.kind) {
+      case "RB": return "RB";
+      case "SE": return "SE";
+      case "BG": return "BG";
+      case "PT": return `${consumer}-PT`;
+      case "PURCHASED": return `${consumer}-ST`;
+      case "SUBPART": return `${consumer}-PK`;
+      default: return String(line.kind);
+    }
+  }
+  // ตารางกฎสถานี: ใบไหนต้องเห็นคู่ผู้ผลิตใด (แปลงจากสูตร IF ในคอลัมน์ AM–AT และตัวกรองของมาโคร) · layout = ชุดคอลัมน์ของใบ
+  const SHEETS = Object.freeze([
+    { id: "RB", title: "RB", name: "ใบงานแผนกรีดเส้นยาง", pairs: ["PK", "RB"], layout: "bom" },
+    { id: "GR", title: "GR-SR-RB", name: "ใบงานคลังเส้นยาว / ตัด (GR)", pairs: ["PK", "RB", "SE"], layout: "bom" },
+    { id: "SE", title: "GR คัดแยก - SE", name: "ใบงานคัดแยกชิ้นยาง (SE)", pairs: ["PK", "SE"], layout: "bom" },
+    { id: "PT", title: "PT - คลังท่อ", name: "ใบงานแผนกฉีดพลาสติก (PT)", pairs: ["PK", "PK-PT"], layout: "bom" },
+    { id: "ST01", title: "ST", name: "ใบเบิกคลังวัตถุดิบ (ST)", pairs: ["PK", "PK-ST", "BG"], layout: "bom" },
+    { id: "ST02", title: "PP", name: "ใบรวมทุกชิ้นที่ส่งเข้า PK (PP)", pairs: ["PK", "PK-PT", "PK-ST", "SE", "BG", "RB"], layout: "bom" },
+    { id: "BG", title: "BG", name: "ใบงานแผนกกระเป๋า/เย็บ (BG)", pairs: ["PK", "BG"], layout: "bom" },
+    { id: "PK", title: "PK", name: "ใบประกอบ/บรรจุ (PK)", pairs: ["PK", "PK-PT", "PK-ST", "SE", "BG"], layout: "bom" },
+    { id: "ASK", title: "ใบตรวจสอบชิ้นงานคงคลัง", name: "ใบตรวจสอบชิ้นงานคงคลัง (ให้คลังนับ)", pairs: ["PK", "RB", "SE"], layout: "ask" },
+    { id: "WIP-RBGR", title: "WIP Stock RB/GR", name: "ใบงาน RB + GR พร้อมข้อมูลการตัด", pairs: ["RB", "SE"], layout: "wip-rbgr" },
+    { id: "WIP-PTBG", title: "WIP Stock PT/BG", name: "ใบงาน PT + BG + คลัง + PK", pairs: ["PK", "PK-PT", "PT-ST", "PK-ST", "BG-PT", "BG-ST", "PK-BG", "PK-PK", "BG", "GR-ST", "ST"], layout: "wip-ptbg" },
+  ].map((sheet) => Object.freeze({ ...sheet, pairs: Object.freeze(sheet.pairs) })));
+  const sheetOf = (id) => SHEETS.find((sheet) => sheet.id === String(id ?? "").toUpperCase()) ?? null;
+  // บรรทัดของใบหนึ่งจากผลระเบิดทั้งใบ: คู่ผู้ผลิตของแต่ละบรรทัดคิดจากแผนกของพ่อ (บรรทัดก่อนหน้าใน path)
+  function sheetLines(sheet, explodedLines) {
+    const deptOf = new Map(explodedLines.map((line) => [`${line.fgCode}|${line.itemCode}`, line.producerDept]));
+    return explodedLines
+      .map((line) => ({ ...line, pair: producerPair(line, line.parentCode ? deptOf.get(`${line.fgCode}|${line.parentCode}`) ?? "PK" : "PK") }))
+      .filter((line) => sheet.pairs.includes(line.pair));
+  }
+
   // ---------- รหัส ----------
   // รหัส canonical: ตัดช่องว่าง ยุบขีดซ้ำ ตัวพิมพ์ใหญ่ ("RB-B0005-02- -132-9-25" และ "RB-B0005-02--132-9-25" เป็นตัวเดียวกัน)
   const canonicalCode = (raw) => String(raw ?? "").replace(/\s+/g, "").replace(/-{2,}/g, "-").toUpperCase();
@@ -545,6 +605,7 @@
 
   const api = {
     DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
+    piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
     normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
