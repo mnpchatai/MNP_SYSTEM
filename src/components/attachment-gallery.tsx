@@ -126,9 +126,16 @@ function TextPreview({ file, full = false }: { file: AttachmentItem; full?: bool
  *  tile does not download the full file. Files uploaded before thumbnails existed answer 404 and fall back. */
 function ThumbnailOr({ file, alt, fallback }: { file: AttachmentItem; alt: string; fallback: ReactNode }) {
   const [missing, setMissing] = useState(false);
+  // The gallery is server-rendered, so the 404 can arrive before hydration attaches onError. The ref catches an
+  // image that has already failed. Not lazy: a deferred image reports nothing here, and thumbnails are small.
+  const checkLoaded = useCallback((image: HTMLImageElement | null) => {
+    if (image?.complete && image.naturalWidth === 0) setMissing(true);
+  }, []);
   if (missing) return <>{fallback}</>;
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img className="attachment-preview-media" src={thumbnailUrl(file.id)} alt={alt} loading="lazy" onError={() => setMissing(true)} />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img ref={checkLoaded} className="attachment-preview-media" src={thumbnailUrl(file.id)} alt={alt} onError={() => setMissing(true)} />
+  );
 }
 
 function AttachmentTile({ file, onOpen }: { file: AttachmentItem; onOpen: (file: AttachmentItem) => void }) {

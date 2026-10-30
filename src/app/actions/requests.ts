@@ -278,9 +278,13 @@ export async function uploadAttachmentAction(formData: FormData): Promise<Attach
   // แกลเลอรีจะใช้ไฟล์จริงแทน
   const thumbnail = formData.get("thumbnail");
   if (thumbnail instanceof File && thumbnail.size > 0 && thumbnail.size <= MAX_THUMBNAIL_BYTES && thumbnail.type === "image/jpeg") {
-    await supabase.storage
-      .from("request-attachments")
-      .upload(thumbnailPath(storagePath), thumbnail, { contentType: "image/jpeg", upsert: false });
+    try {
+      await supabase.storage
+        .from("request-attachments")
+        .upload(thumbnailPath(storagePath), thumbnail, { contentType: "image/jpeg", upsert: false });
+    } catch {
+      // ไฟล์จริงบันทึกแล้ว ห้ามรายงานว่าล้ม (ผู้ใช้จะแนบซ้ำ)
+    }
   }
   revalidatePath(`/requests/${requestId}`);
   return { ok: true };

@@ -675,7 +675,10 @@ async function fillAttachmentTile(file, url, thumbnailUrl = null) {
   }
   try {
     if (thumbnailUrl && (kind === "image" || kind === "pdf")) {
-      setTilePreview(tile, previewImageNode(thumbnailUrl, kind === "pdf" ? `ตัวอย่างหน้าแรกของ ${file.file_name}` : file.file_name));
+      const thumbnail = previewImageNode(thumbnailUrl, kind === "pdf" ? `ตัวอย่างหน้าแรกของ ${file.file_name}` : file.file_name);
+      // ภาพย่อเสีย/โหลดไม่ได้ กลับไปใช้ไฟล์จริงแบบไฟล์เก่า
+      thumbnail.addEventListener("error", () => fillAttachmentTile(file, url), { once: true });
+      setTilePreview(tile, thumbnail);
       return;
     }
     if (kind === "image") {
