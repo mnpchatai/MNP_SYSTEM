@@ -500,6 +500,80 @@ test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes
   assert.equal(d.jobs.find((job) => job.orderId === id && job.dept === "RB").qtyPlanned, 4, "28 sets × 4 SE / 28 pieces per rod");
 });
 
+test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {
+  const d = fresh();
+  const steps = (code) => A.helpers.routingOf(d, code)?.steps.map((step) => [step.processCode, step.minutesPerPc]);
+  assert.deepEqual(steps("DEMO-TP-01(P)-Y"), [["PK-ASM", 1.5], ["PK-QC", 0.3], ["PK-PACK", 0.5]], "the demo seeds routings");
+  assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, undefined, "the demo leaves one part without a cost");
+  const first = A.helpers.routingOf(d, "DEMO-TP-01(P)-Y");
+  const saved = A.saveRouting(d, { itemCode: "DEMO-TP-01(P)-Y", steps: [{ processCode: "PK-QC", minutesPerPc: "0.3" }, { processCode: "PK-ASM", minutesPerPc: 1.2 }] }, ctx("planner"));
+  assert.equal(saved.revision, 2);
+  assert.equal(first.status, "superseded", "the old routing is kept as history, not overwritten");
+  assert.deepEqual(steps("DEMO-TP-01(P)-Y"), [["PK-QC", 0.3], ["PK-ASM", 1.2]], "step order is kept");
+  assert.equal(A.saveRouting(d, { itemCode: "DEMO-TP-01(P)-Y", steps: [{ processCode: "PK-QC", minutesPerPc: 0.3 }, { processCode: "PK-ASM", minutesPerPc: 1.2 }] }, ctx("planner")).changed, false, "the same steps do not add a revision");
+  assert.equal(d.audit[0].detail, "DEMO-TP-01(P)-Y Rev.2: PK-QC 0.3 → PK-ASM 1.2");
+  rejects(() => A.saveRouting(d, { itemCode: "P-BOX-01", steps: [{ processCode: "PK-PACK", minutesPerPc: 1 }] }, ctx("planner")), /ของซื้อ/);
+  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "XX", minutesPerPc: 1 }] }, ctx("planner")), /ไม่พบขั้นตอน XX/);
+  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-INJ", minutesPerPc: 1 }, { processCode: "PT-INJ", minutesPerPc: 2 }] }, ctx("planner")), /ซ้ำ/);
+  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-INJ", minutesPerPc: -1 }] }, ctx("planner")), /เวลา/);
+  rejects(() => A.saveRouting(d, { itemCode: "SE-BL60-RD01-60-0-60", steps: [] }, ctx("planner")), /อย่างน้อย 1 ขั้น/);
+  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-INJ", minutesPerPc: 1 }] }, ctx("gr")), /ฝ่ายวางแผน/);
+  // วัตถุดิบเข้าที่ขั้นไหน: ต้องเป็นลูกใน BOM ปัจจุบัน และลูกหนึ่งตัวเข้าได้ขั้นเดียว
+  assert.deepEqual(A.helpers.routingOf(d, "BG-0092").steps.map((step) => step.inputs), [["P-FAB-BL"], ["P-ZIP-05", "P-ROPE-01"]], "the demo places fabric at cutting, zip and rope at sewing");
+  rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-BOX-01"] }] }, ctx("planner")), /P-BOX-01 ไม่ได้อยู่ใน BOM ของ BG-0092/);
+  rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-FAB-BL"] }] }, ctx("planner")), /มากกว่าหนึ่งขั้น/);
+  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-ROPE-01", "P-ZIP-05"] }] }, ctx("planner")).changed, true, "moving inputs between steps is a change");
+  // process master: เพิ่มขั้นตอนใหม่แล้วใช้ใน routing ได้ · รหัสเดิมแก้ชื่อ/แผนก · แผนกต้องถูกต้อง
+  A.saveProcess(d, { code: "GR-เจียร", name: "เจียร", dept: "GR" }, ctx("planner"));
+  A.saveProcess(d, { code: "GR-เจียร", name: "เจียรขอบ", dept: "GR" }, ctx("planner"));
+  assert.deepEqual({ ...A.helpers.processOf(d, "GR-เจียร") }, { code: "GR-เจียร", name: "เจียรขอบ", dept: "GR" });
+  assert.equal(A.saveRouting(d, { itemCode: "SE-TP01-OR01-75-3-30", steps: [{ processCode: "GR-CUT", minutesPerPc: 0.1 }, { processCode: "GR-เจียร", minutesPerPc: 0.2 }] }, ctx("planner")).changed, true);
+  rejects(() => A.saveProcess(d, { code: "X-1", name: "x", dept: "QQ" }, ctx("planner")), /แผนก/);
+  rejects(() => A.saveProcess(d, { code: "X-1", name: "x", dept: "GR" }, ctx("gr")), /ฝ่ายวางแผน/);
+  // รูปชิ้นงาน: data URL ของรูปเท่านั้น ขนาดจำกัด ค่าว่างลบรูป
+  A.setItemImage(d, { code: "PT-00320", image: "data:image/jpeg;base64,/9j/4AAQ" }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, "PT-00320").image, "data:image/jpeg;base64,/9j/4AAQ");
+  rejects(() => A.setItemImage(d, { code: "PT-00320", image: "data:image/svg+xml;base64,PHN2Zz4=" }, ctx("planner")), /PNG, JPEG หรือ WebP/);
+  rejects(() => A.setItemImage(d, { code: "PT-00320", image: `data:image/png;base64,${"A".repeat(80000)}` }, ctx("planner")), /ใหญ่เกินไป/);
+  rejects(() => A.setItemImage(d, { code: "PT-00320", image: "" }, ctx("pt")), /ฝ่ายวางแผน/);
+  A.setItemImage(d, { code: "PT-00320", image: "" }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, "PT-00320").image, undefined);
+  A.setItemCost(d, { code: "XP-00001", unitCost: "0.75" }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, 0.75);
+  A.setItemCost(d, { code: "XP-00001", unitCost: "" }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, undefined, "an empty value clears the cost");
+  rejects(() => A.setItemCost(d, { code: "PT-00320", unitCost: 5 }, ctx("planner")), /มี BOM แล้ว/);
+  rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: -1 }, ctx("planner")), /ราคาต้นทุน/);
+  rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: 1 }, ctx("st")), /ฝ่ายวางแผน/);
+});
+
+test("dragging BOM lines into a new order saves a new revision that keeps the order", () => {
+  const d = fresh();
+  const before = approved(d, "BG-0092");
+  const reordered = [...before.lines].reverse().map(({ childCode, qty }) => ({ childCode, qty }));
+  const result = A.saveBom(d, { itemCode: "BG-0092", lines: reordered }, ctx("planner"));
+  assert.equal(result.changed, true);
+  assert.deepEqual(approved(d, "BG-0092").lines.map((line) => line.childCode), before.lines.map((line) => line.childCode).reverse());
+  assert.match(d.audit[0].detail, /เรียงลำดับส่วนประกอบใหม่/);
+  assert.equal(A.saveBom(d, { itemCode: "BG-0092", lines: reordered }, ctx("planner")).changed, false, "saving the same order again is no change");
+});
+
+test("two tabs sharing one browser storage: a tab opened earlier re-reads before saving instead of writing its stale copy over the other tab's work", () => {
+  const shared = new Map();
+  const storage = { getItem: (key) => (shared.has(key) ? shared.get(key) : null), setItem: (key, value) => shared.set(key, String(value)), removeItem: (key) => shared.delete(key) };
+  const older = storeApi.createStore({ storage, seed: fresh, actions: A, now: () => NOW });
+  older.data(); // แท็บที่เปิดไว้ก่อน มีข้อมูลชุดเดิมในหน่วยความจำ
+  const newer = storeApi.createStore({ storage, seed: fresh, actions: A, now: () => NOW });
+  newer.setUser("B03");
+  assert.equal(newer.run("saveProcess", { code: "GR-กาว", name: "ทากาว", dept: "GR" }).ok, true);
+  older.setUser("B02"); // เปลี่ยนบทบาทในแท็บเก่า เคยเขียนข้อมูลเก่าทับ
+  const saved = JSON.parse(shared.get(storeApi.STATE_KEY));
+  assert.ok(saved.processes.some((process) => process.code === "GR-กาว"), "the newer tab's process survives the older tab's role switch");
+  assert.ok(older.data().processes.some((process) => process.code === "GR-กาว"), "and the older tab now shows it");
+  assert.equal(older.run("setItemCost", { code: "XP-00001", unitCost: 1 }).ok, true);
+  assert.ok(newer.data().items.find((item) => item.code === "XP-00001").unitCost === 1 && newer.data().processes.some((process) => process.code === "GR-กาว"), "each tab sees both changes");
+});
+
 test("the store persists through run(), rejects unknown actions and keeps working without storage", () => {
   const storage = new Map();
   const fake = { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) };
@@ -532,17 +606,19 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   const oldStorage = new Map([[storeApi.STATE_KEY, JSON.stringify(old)]]);
   const oldFake = { getItem: (key) => (oldStorage.has(key) ? oldStorage.get(key) : null), setItem: (key, value) => oldStorage.set(key, String(value)), removeItem: (key) => oldStorage.delete(key) };
   const upgraded = storeApi.createStore({ storage: oldFake, seed: fresh, actions: A, now: () => NOW });
-  assert.equal(upgraded.data().version, 3);
+  assert.equal(upgraded.data().version, storeApi.STATE_VERSION);
   assert.equal(upgraded.data().boms.filter((bom) => ["draft", "pending"].includes(bom.status)).length, 0);
   assert.equal(upgraded.data().boms.length, old.boms.length - 2);
   assert.equal(upgraded.data().orders.length, 2, "orders survive the upgrade");
-  assert.equal(JSON.parse(oldStorage.get(storeApi.STATE_KEY)).version, 3, "upgraded state is written back");
-  // รุ่น 2 (ไม่มีตารางสี) → รุ่น 3 เพิ่มรายการว่าง ข้อมูลเดิมคงอยู่
+  assert.equal(JSON.parse(oldStorage.get(storeApi.STATE_KEY)).version, storeApi.STATE_VERSION, "upgraded state is written back");
+  // รุ่น 2 (ไม่มีตารางสี) → รุ่น 3 เพิ่มรายการว่าง → รุ่น 4 เพิ่มขั้นตอนผลิตมาตรฐาน ข้อมูลเดิมคงอยู่
   const v2 = fresh();
   v2.version = 2;
-  delete v2.colors; delete v2.colorSets; delete v2.packages;
+  delete v2.colors; delete v2.colorSets; delete v2.packages; delete v2.processes; delete v2.routings;
   const fromV2 = storeApi.migrate(JSON.parse(JSON.stringify(v2)));
-  assert.equal(fromV2.version, 3);
+  assert.equal(fromV2.version, 4);
+  assert.deepEqual(fromV2.processes, rules.DEFAULT_PROCESSES.map((entry) => ({ ...entry })));
+  assert.deepEqual(fromV2.routings, []);
   assert.deepEqual([fromV2.colors, fromV2.colorSets, fromV2.packages], [[], [], []]);
   assert.equal(fromV2.items.length, v2.items.length);
   assert.ok(storeApi.isValidState(fromV2));

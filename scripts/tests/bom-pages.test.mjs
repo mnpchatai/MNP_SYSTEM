@@ -11,7 +11,7 @@ const FILES = [
   "modules/bom-rules.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const PAGES = ["dashboard", "build", "items", "product", "variants", "compounds", "import", "orders", "count", "jobs", "audit"];
+const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "count", "jobs", "audit"];
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st"];
 const XSS = "<script>alert(1)</script>";
 
@@ -557,4 +557,61 @@ test("the sidebar sub-menu counts open jobs of the user's department; reset rebu
   env.store.reset();
   assert.ok(!env.store.data().orders.some((order) => order.id === "TMP"));
   assert.ok(env.storage.has("mnp-bom-v1"));
+});
+
+test("the structure page rolls up cost and minutes per department, edits steps and costs through data-rf-*, and is read-only for departments", async () => {
+  const env = load();
+  env.store.setUser("B03"); // ฝ่ายวางแผน
+  let html = await env.render("p=structure");
+  clean(html);
+  assert.match(html, /DEMO-HL-24\(B\)-A[\s\S]*?ดูโครงสร้าง/, "the list shows finished goods");
+  assert.match(html, /ไม่ครบ/, "the torpedo misses a part cost in the demo");
+  // มุมมองลำดับผลิต (ค่าเริ่มต้น): ขั้นแรกอยู่บน สายป้อนอยู่เหนือพ่อ วัตถุดิบอยู่ที่ขั้นที่ routing ระบุ สินค้าอยู่ล่างสุด
+  html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&qty=80");
+  clean(html);
+  assert.match(html, /ต้นทุนยังไม่ครบ: ไม่มีราคาของ <strong>XP-00001<\/strong>/);
+  assert.match(html, /class="filter active" href="[^"]*view=flow" aria-current="page">ลำดับผลิต/);
+  const order = (...needles) => needles.map((needle) => html.indexOf(needle));
+  const [rbStep, seCard, asm, sticker, pack, fgCard] = order("RB-EXT", "<span class=\"rf-mono\">SE-TP01-OR01-100-18-65</span><div class=\"small\">", "PK-ASM", "P-STK-01", "PK-PACK", "<span class=\"rf-mono\">DEMO-TP-01(P)-Y</span><div class=\"small\">");
+  assert.ok(rbStep > 0 && rbStep < seCard && seCard < asm && asm < sticker && sticker < pack && pack < fgCard, "first steps come first, the product card is last");
+  assert.match(html, /คอมปาวด์ <span class="rf-mono">DM01<\/span>/, "a rod shows its compound as the first input");
+  assert.match(html, /SE-TP01-OR01-100-18-65<\/span> <span class="muted">× 3 ชิ้น<\/span> <span class="muted">\(จากสายด้านบน\)/, "a fed part points to its lane");
+  assert.match(html, /data-rf-open="routingEdit" data-rf-args="\{&quot;code&quot;:&quot;SE-TP01-OR01-100-18-65&quot;\}"/);
+  assert.match(html, /data-rf-open="itemImage" data-rf-args="\{&quot;code&quot;:&quot;DEMO-TP-01\(P\)-Y&quot;\}"/);
+  assert.match(html, /GR · ตัด\/เจาะชิ้นยาง<\/td><td class="num">3\.45<\/td><td class="num">4\.6<\/td>/, "3.45 min per set × 80 sets = 4.6 hours");
+  // มุมมองตารางต้นทุน: สินค้าอยู่บน ราคาตั้งได้เฉพาะชิ้นที่ไม่มี BOM
+  html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=table");
+  clean(html);
+  assert.match(html, /PK-ASM 1\.5′/);
+  assert.match(html, /data-rf-open="itemCost" data-rf-args="\{&quot;code&quot;:&quot;XP-00001&quot;\}"/);
+  assert.doesNotMatch(html, /data-rf-open="itemCost" data-rf-args="\{&quot;code&quot;:&quot;PT-00320&quot;\}"/, "parts with a BOM have no manual cost");
+  await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "setItemCost", { unitCost: "0.4" }, { code: "XP-00001" });
+  await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "saveRouting", { "processCode[]": ["PK-QC", "", "PK-ASM"], "minutesPerPc[]": ["0.5", "9", "1"], "inputCode[]": ["P-BOX-01", "PT-00320", "P-STK-01"], "inputStep[]": ["PK-ASM", "PK-QC", ""] }, { itemCode: "DEMO-TP-01(P)-Y" });
+  const routing = env.context.MNP_BOM_ACTIONS.helpers.routingOf(env.store.data(), "DEMO-TP-01(P)-Y");
+  assert.deepEqual(json(routing.steps.map((step) => [step.processCode, step.minutesPerPc, step.inputs])), [["PK-QC", 0.5, ["PT-00320"]], ["PK-ASM", 1, ["P-BOX-01"]]], "blank rows are skipped, the order is kept and inputs follow their step");
+  html = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
+  assert.doesNotMatch(html, /ต้นทุนยังไม่ครบ/);
+  // รูปชิ้นงาน: data URL ที่ผ่านการตรวจแสดงเป็น <img> ค่าอื่นถูกปฏิเสธ
+  const png = "data:image/png;base64,iVBORw0KGgo=";
+  await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "setItemImage", { image: png }, { code: "DEMO-TP-01(P)-Y" });
+  html = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
+  assert.match(html, /<img class="bom-pic" src="data:image\/png;base64,iVBORw0KGgo=" alt="DEMO-TP-01\(P\)-Y">/);
+  await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "setItemImage", { image: "javascript:alert(1)" }, { code: "PT-00320" });
+  assert.ok(env.log.toasts.some(([message, kind]) => kind === "error" && /PNG, JPEG หรือ WebP/.test(message)));
+  const D = env.context.MNP_BOM_DIALOGS;
+  const c = env.ctx("p=structure");
+  const dialog = D.routingEdit(c, { code: "DEMO-TP-01(P)-Y" });
+  clean(dialog.html);
+  assert.match(dialog.html, /ใช้อยู่ Rev\.2/);
+  assert.match(dialog.html, /<option value="PK-QC" selected>/);
+  assert.match(dialog.html, /name="inputCode\[\]" value="PT-00320"[\s\S]*?<option value="PK-QC" selected>PK-QC<\/option>/, "each BOM line shows the step it enters");
+  clean(D.itemCost(c, { code: "XP-00001" }).html);
+  const imageDialog = D.itemImage(c, { code: "DEMO-TP-01(P)-Y" });
+  clean(imageDialog.html);
+  assert.match(imageDialog.html, /data-rf-action="setItemImage"[^>]*>ลบรูป/);
+  assert.equal(D.routingEdit(c, { code: "NOPE" }), null);
+  env.store.setUser("B05"); // หัวหน้า GR ดูได้ แก้ไม่ได้
+  html = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
+  clean(html);
+  assert.doesNotMatch(html, /data-rf-open="routingEdit"|data-rf-open="itemCost"|data-rf-open="itemImage"/);
 });

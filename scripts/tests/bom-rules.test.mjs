@@ -421,3 +421,50 @@ test("CSV output quotes commas and quotes, and formatting helpers handle empty v
   assert.equal(rules.orderTypeOf("Thailand"), "SA");
   assert.equal(rules.orderTypeOf("Belgium"), "EX");
 });
+
+test("the product structure rolls up material, labour and minutes per department, and flags parts without a cost", () => {
+  const items = {
+    FG: { code: "FG", name: "สินค้า", kind: "FG", uom: "set", ownerDept: "PK" },
+    SE: { code: "SE", name: "ชิ้นยาง", kind: "SE", uom: "pcs", ownerDept: "GR" },
+    RB: { code: "RB", name: "เส้นยาง", kind: "RB", uom: "rod", ownerDept: "RB", unitCost: 100 },
+    BOX: { code: "BOX", name: "กล่อง", kind: "PURCHASED", uom: "box", ownerDept: "ST", unitCost: 20 },
+    XP: { code: "XP", name: "ชิ้นไม่มีราคา", kind: "SUBPART", uom: "pcs", ownerDept: "PK" },
+  };
+  const boms = {
+    FG: { revision: 2, lines: [{ childCode: "SE", qty: 3 }, { childCode: "BOX", qty: 0.25, scrapPct: 4 }] },
+    SE: { revision: 1, lines: [{ childCode: "RB", qty: 0.1 }] },
+  };
+  const routings = { FG: { revision: 1, steps: [{ processCode: "PK-ASM", minutesPerPc: 2 }] }, SE: { revision: 3, steps: [{ processCode: "GR-CUT", minutesPerPc: 0.4 }] } };
+  const processes = Object.fromEntries(rules.DEFAULT_PROCESSES.map((entry) => [entry.code, entry]));
+  const deps = { itemOf: (code) => items[code] ?? null, approvedBomOf: (code) => boms[code] ?? null, routingOf: (code) => routings[code] ?? null, processOf: (code) => processes[code] ?? null };
+  const tree = rules.structureTree("FG", deps);
+  assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.level]), [["FG", 0], ["SE", 1], ["RB", 2], ["BOX", 1]]);
+  const se = tree.rows[1];
+  assert.equal(se.material, 10, "0.1 rod × 100");
+  assert.equal(se.labor, 1, "0.4 min × 2.5 baht/min (GR)");
+  assert.equal(se.unitCost, 11);
+  assert.equal(tree.rows[3].qtyPerRoot, 0.26, "scrap is added to the quantity per product");
+  assert.equal(tree.root.material, 3 * 11 + 0.26 * 20);
+  assert.equal(tree.root.labor, 4, "2 min × 2 baht/min (PK)");
+  assert.equal(tree.root.complete, true);
+  assert.deepEqual(tree.minutesByDept, { PK: 2, GR: 1.2 }, "SE minutes count three times per product");
+  assert.equal(tree.totalMinutes, 3.2);
+  assert.deepEqual(tree.missingCost, []);
+  // มุมมองลำดับผลิต: ลูกที่มี BOM/ขั้นตอนเป็นสายป้อน · ลูกเข้าที่ขั้นที่ระบุ ที่เหลือเข้าขั้นแรก · ไม่มีขั้นตอน = ขั้นเดียว
+  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2, inputs: ["SE"] }, { processCode: "PK-PACK", minutesPerPc: 1, inputs: ["BOX", "GONE"] }];
+  const staged = rules.structureTree("FG", deps);
+  const flow = rules.flowOf(staged.root);
+  assert.deepEqual(flow.feeds.map((feed) => feed.itemCode), ["SE"]);
+  assert.deepEqual(flow.stages.map((stage) => [stage.step.processCode, stage.inputs.map((child) => child.itemCode)]), [["PK-ASM", ["SE"]], ["PK-PACK", ["BOX"]]]);
+  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2 }];
+  assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).root).stages.map((stage) => stage.inputs.length), [2], "unplaced parts enter at the first step");
+  assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).rows[2]).stages.map((stage) => stage.step), [null], "a part without steps is one unnamed stage");
+  // ชิ้นที่ไม่มี BOM และไม่มีราคา ทำให้ต้นทุนของพ่อทุกชั้นไม่ครบ · รหัสที่ไม่มีใน item master และวงจรถูกรายงาน
+  boms.FG.lines.push({ childCode: "XP", qty: 1 }, { childCode: "GONE", qty: 1 });
+  boms.SE.lines.push({ childCode: "FG", qty: 1 });
+  const broken = rules.structureTree("FG", deps);
+  assert.equal(broken.root.complete, false);
+  assert.equal(broken.rows.find((row) => row.itemCode === "SE").complete, false, "the cycle back to FG makes SE incomplete");
+  assert.deepEqual(broken.missingCost, ["XP"]);
+  assert.deepEqual(broken.missing, ["FG (วงจร)", "GONE"]);
+});

@@ -75,7 +75,7 @@
   ];
 
   function emptyState() {
-    return { version: 3, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [] };
+    return { version: 4, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [] };
   }
 
   function buildSeed(now = Date.now()) {
@@ -103,6 +103,22 @@
     A.savePackage(d, { base: "DEMO-TP-01", code: "B", name: "กล่องเดี่ยว (ลัง 12 กล่อง)", lines: [{ childCode: "P-BOX-01", qty: 1 / 12 }] }, at(t0 + 3 * DAY + 7320000, "planner"));
     // แก้ BOM ครั้งหนึ่งให้มีประวัติ revision (ลูกตอปิโดเปลี่ยนอัตราส่วนเส้นหัว) และ FG บอลยางที่ยังไม่มี BOM
     A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [["RB-DM01-02-OR01-202-18-70", rbQty("RB-DM01-02-OR01-202-18-70")], ["RB-DM01-01-OR01-200-0-72", rbQty("RB-DM01-01-OR01-200-0-72")]].map(([childCode, qty]) => ({ childCode, qty, note: childCode.endsWith("72") ? "ตัด 4 ซม." : "" })), note: "ระบุความยาวตัดของเส้นหัว" }, at(now - 3 * DAY, "planner"));
+
+    // โครงสร้างสินค้า (จำลอง): ราคาต้นทุนสาธิตของชิ้นที่ไม่มี BOM (บาทต่อหน่วยนับ) และขั้นตอนผลิต (นาที/ชิ้น)
+    // XP-00001 จงใจไม่ตั้งราคา เพื่อให้เห็นคำเตือนต้นทุนไม่ครบ
+    [["P-BOX-01", 25], ["P-STK-01", 0.5], ["P-BAG-01", 120], ["P-PEL-BK", 45], ["P-FAB-BL", 30], ["P-ZIP-05", 8], ["P-ROPE-01", 90],
+      ["RB-DM01-02-OR01-202-18-70", 130], ["RB-DM01-01-OR01-200-0-72", 119.4], ["RB-DM02-02-BK01-225-3-20", 16.2], ["RB-DM03-03-YE03-3000-3-130", 89.6], ["RB-DM02-02-YE03-204-19-34", 23.3],
+    ].forEach(([code, unitCost], index) => A.setItemCost(d, { code, unitCost }, at(t0 + 4 * DAY + index * 60000, "planner")));
+    const rbSteps = [["RB-EXT", 1.5], ["RB-CURE", 2]];
+    [
+      ...ITEMS.filter((item) => item.kind === "RB").map((item) => [item.code, rbSteps]),
+      ["SE-TP01-OR01-100-18-65", [["GR-CUT", 0.2], ["GR-DRL", 0.3]]], ["SE-TP01-BK01-140-3-20", [["GR-CUT", 0.15], ["GR-DRL", 0.2]]],
+      ["SE-TP01-OR01-75-3-30", [["GR-CUT", 0.1]]], ["SE-HL24-YE03-400-19-30", [["GR-CUT", 0.25]]],
+      ["PT-00320", [["PT-INJ", 0.5]]], ["XP-00001", [["PT-CUT", 0.1]]], ["BG-0092", [["BG-CUT", 1, ["P-FAB-BL"]], ["BG-SEW", 4, ["P-ZIP-05", "P-ROPE-01"]]]],
+      // วัตถุดิบเข้าที่ขั้นไหน (ลูกที่ไม่ระบุแสดงที่ขั้นแรก): ประกอบชิ้นยาง/แกน แล้วค่อยใส่สติ๊กเกอร์ ถุง ลัง ตอนบรรจุ
+      ["DEMO-TP-01(P)-Y", [["PK-ASM", 1.5, ["XP-00001", "PT-00320", "SE-TP01-OR01-100-18-65", "SE-TP01-BK01-140-3-20", "SE-TP01-OR01-75-3-30"]], ["PK-QC", 0.3], ["PK-PACK", 0.5, ["P-STK-01", "P-BAG-01", "P-BOX-01"]]]],
+      ["DEMO-HL-24(B)-A", [["PK-ASM", 2, ["SE-HL24-YE03-400-19-30", "BG-0092"]], ["PK-PACK", 0.5, ["P-STK-01", "P-BOX-01"]]]],
+    ].forEach(([itemCode, steps], index) => A.saveRouting(d, { itemCode, steps: steps.map(([processCode, minutesPerPc, inputs = []]) => ({ processCode, minutesPerPc, inputs })) }, at(t0 + 4 * DAY + 3600000 + index * 60000, "planner")));
 
     // ใบสั่งผลิตที่ปล่อยแล้วและมีความคืบหน้า
     const day = (n) => new Date(now + n * DAY).setHours(0, 0, 0, 0);

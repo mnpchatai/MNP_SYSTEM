@@ -8,7 +8,7 @@
   const attr = (value) => esc(value ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
-  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", variants: "🎨", compounds: "🧪", import: "📥", orders: "📋", count: "🔢", jobs: "🛠️", audit: "🕘" });
+  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", structure: "🌳", variants: "🎨", compounds: "🧪", import: "📥", orders: "📋", count: "🔢", jobs: "🛠️", audit: "🕘" });
   pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${ICONS[id]}</span>` : "");
   const head = (ctx, title, desc = "", actionsHtml = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${ICONS[ctx.page] ? `<span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
 
@@ -32,6 +32,189 @@
   const treeRows = (ctx, code, qty = 1) => ctx.rules.explode(code, qty, { itemOf: (c) => itemOf(ctx, c), approvedBomOf: (c) => approvedBomOf(ctx, c) }).lines;
   const levelCell = (level, text) => `<span class="bom-lv bom-lv-${Math.min(level, 6)}">${text}</span>`;
   const buildUrl = (ctx, code) => ctx.url("build", { code });
+
+  // ลากเพื่อเรียงแถว: กดค้างที่ด้ามจับ ⋮⋮ แล้วลากขึ้น/ลง (เมาส์เริ่มลากได้ทันที นิ้วต้องกดค้างก่อน จึงยังเลื่อนหน้าได้ตามปกติ)
+  // หรือโฟกัสด้ามจับแล้วกดลูกศรขึ้น/ลง · ย้ายได้เฉพาะในกลุ่มพี่น้องเดียวกัน แถวลูกหลาน (blockOf) ติดไปด้วย
+  // ใช้ pointer events จึงใช้ได้ทั้งเมาส์และนิ้วบน iPhone
+  const dragHandle = (label) => `<span class="bom-drag" data-drag-handle role="button" tabindex="0" aria-label="${attr(label)}" title="กดค้างแล้วลากขึ้น/ลง (หรือกดลูกศรขึ้น/ลง)">⋮⋮</span>`;
+  // ลากแถวในตารางสร้าง BOM แบบอิสระ (ไม่ติดเป็นก้อน): ใช้ตอนคัดลอกโครงสร้างมาแล้วสลับบางขั้น/บางชิ้น
+  // · ลากขึ้น/ลงข้ามกลุ่มได้: วางก่อนแถวไหน = เป็นพี่น้องของแถวนั้น · วางต่อจากแถวที่มีลูก = เป็นลูกตัวแรกของแถวนั้น
+  // · ปล่อยมือตอนลากไปทางขวา/ซ้ายเกิน 40 px = ย่อเข้า (เป็นลูกของแถวพี่ข้างบน) / ดึงออก (ขึ้นไปอยู่ชั้นของพ่อ)
+  // · ลูกเดิมของแถวที่ย้ายเลื่อนขึ้นไปอยู่กับพ่อเดิม (ไม่ติดไปด้วย) เว้นแต่ติ๊ก "ลากพร้อมส่วนประกอบข้างใต้"
+  // · คีย์บอร์ดที่ด้ามจับ: ↑/↓ ย้าย · →/← ย่อเข้า/ดึงออก · ชิ้นที่มี BOM ไม่ได้ (ของซื้อ เส้นยาง) รับลูกไม่ได้
+  function treeRowsDrag(tbody, { rows, descendants, withChildren = () => false, canHaveChildren = () => true }) {
+    const HOLD_MS = 250;
+    const rowById = (id) => rows().find((tr) => tr.dataset.row === id) ?? null;
+    const setLevel = (tr, level) => {
+      tr.dataset.level = String(level);
+      const span = tr.querySelector(".bom-lv");
+      if (span) span.className = `bom-lv bom-lv-${Math.min(level, 6)}`;
+    };
+    const setParent = (tr, parentId, level) => {
+      const delta = level - Number(tr.dataset.level);
+      const subtree = descendants(tr.dataset.row);
+      tr.dataset.parent = parentId;
+      const hidden = tr.querySelector('input[name="parentId[]"]');
+      if (hidden) hidden.value = parentId;
+      setLevel(tr, level);
+      if (delta) subtree.forEach((row) => setLevel(row, Number(row.dataset.level) + delta));
+    };
+    // ปลดลูกตรงของแถวขึ้นไปอยู่กับพ่อเดิม (ตำแหน่งในตารางคงเดิม)
+    const releaseChildren = (tr) => rows().filter((row) => row.dataset.parent === tr.dataset.row).forEach((child) => setParent(child, tr.dataset.parent, Number(tr.dataset.level)));
+    const blockOf = (tr) => [tr, ...descendants(tr.dataset.row)];
+    const move = (tr, target, after) => {
+      if (!withChildren()) releaseChildren(tr);
+      const block = withChildren() ? blockOf(tr) : [tr];
+      if (block.includes(target)) return false;
+      const next = target.nextElementSibling;
+      if (after && next && next.dataset.parent === target.dataset.row && !block.includes(next)) {
+        target.after(...block);
+        setParent(tr, target.dataset.row, Number(target.dataset.level) + 1);
+      } else if (after) {
+        blockOf(target).filter((row) => !block.includes(row)).at(-1).after(...block);
+        setParent(tr, target.dataset.parent, Number(target.dataset.level));
+      } else {
+        target.before(...block);
+        setParent(tr, target.dataset.parent, Number(target.dataset.level));
+      }
+      return true;
+    };
+    const indent = (tr) => {
+      const siblings = rows().filter((row) => row.dataset.parent === tr.dataset.parent);
+      const above = siblings[siblings.indexOf(tr) - 1];
+      if (!above || !canHaveChildren(above)) return false;
+      setParent(tr, above.dataset.row, Number(above.dataset.level) + 1);
+      return true;
+    };
+    const outdent = (tr) => {
+      const parent = rowById(tr.dataset.parent);
+      if (!parent) return false;
+      const block = blockOf(tr);
+      const parentEnd = blockOf(parent).filter((row) => !block.includes(row)).at(-1);
+      parentEnd.after(...block);
+      setParent(tr, parent.dataset.parent, Number(parent.dataset.level));
+      return true;
+    };
+    tbody.addEventListener("contextmenu", (event) => { if (event.target.closest?.("[data-drag-handle]")) event.preventDefault(); });
+    tbody.addEventListener("keydown", (event) => {
+      const handle = event.target.closest?.("[data-drag-handle]");
+      if (!handle || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const tr = handle.closest("tr");
+      if (event.key === "ArrowRight") indent(tr);
+      else if (event.key === "ArrowLeft") outdent(tr);
+      else {
+        const all = rows();
+        const skip = withChildren() ? blockOf(tr) : [tr];
+        const index = all.indexOf(tr);
+        const target = event.key === "ArrowUp" ? all.slice(0, index).reverse().find((row) => !skip.includes(row)) : all.slice(index + 1).find((row) => !skip.includes(row));
+        if (target) move(tr, target, event.key === "ArrowDown");
+      }
+      handle.focus();
+    });
+    tbody.addEventListener("pointerdown", (event) => {
+      const handle = event.target.closest?.("[data-drag-handle]");
+      if (!handle || event.button > 0) return;
+      const tr = handle.closest("tr");
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let active = false;
+      let timer = null;
+      const mark = (on) => (withChildren() ? blockOf(tr) : [tr]).forEach((row) => row.classList.toggle("is-dragging", on));
+      const start = () => { active = true; mark(true); };
+      const onMove = (ev) => {
+        if (!active) { if (Math.abs(ev.clientY - startY) > 8) end(); return; }
+        const all = rows();
+        const skip = withChildren() ? blockOf(tr) : [tr];
+        const index = all.indexOf(tr);
+        for (const [at, row] of all.entries()) {
+          if (skip.includes(row)) continue;
+          const rect = row.getBoundingClientRect();
+          if (ev.clientY < rect.top || ev.clientY > rect.bottom) continue;
+          const mid = (rect.top + rect.bottom) / 2;
+          if (at > index && ev.clientY > mid) move(tr, row, true);
+          else if (at < index && ev.clientY < mid) move(tr, row, false);
+          break;
+        }
+      };
+      const end = (ev) => {
+        clearTimeout(timer);
+        if (active && ev?.type === "pointerup") {
+          const dx = ev.clientX - startX;
+          if (dx > 40) indent(tr);
+          else if (dx < -40) outdent(tr);
+        }
+        mark(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+      if (event.pointerType === "mouse") { event.preventDefault(); start(); } else timer = setTimeout(start, HOLD_MS);
+    });
+  }
+
+  function sortableRows(container, { rows, parentOf = () => "", blockOf = (tr) => [tr], onChange = () => {} }) {
+    const HOLD_MS = 250;
+    const siblingsOf = (tr) => rows().filter((row) => parentOf(row) === parentOf(tr));
+    const place = (tr, target, after) => {
+      const block = blockOf(tr);
+      if (block.includes(target)) return;
+      if (after) blockOf(target).at(-1).after(...block);
+      else target.before(...block);
+      onChange(tr);
+    };
+    container.addEventListener("contextmenu", (event) => { if (event.target.closest?.("[data-drag-handle]")) event.preventDefault(); });
+    container.addEventListener("keydown", (event) => {
+      const handle = event.target.closest?.("[data-drag-handle]");
+      if (!handle || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      const tr = handle.closest("tr");
+      const siblings = siblingsOf(tr);
+      const index = siblings.indexOf(tr);
+      const target = siblings[index + (event.key === "ArrowUp" ? -1 : 1)];
+      if (target) { place(tr, target, event.key === "ArrowDown"); handle.focus(); }
+    });
+    container.addEventListener("pointerdown", (event) => {
+      const handle = event.target.closest?.("[data-drag-handle]");
+      if (!handle || event.button > 0) return;
+      const tr = handle.closest("tr");
+      const startY = event.clientY;
+      let active = false;
+      let timer = null;
+      // ฟัง pointermove/up ที่ window จึงไม่ต้อง setPointerCapture (ซึ่ง throw ถ้านิ้วถูกยกเลิกไปก่อนครบเวลากดค้าง)
+      const start = () => { active = true; blockOf(tr).forEach((row) => row.classList.add("is-dragging")); };
+      const move = (ev) => {
+        if (!active) { if (Math.abs(ev.clientY - startY) > 8) end(); return; }
+        const siblings = siblingsOf(tr);
+        const index = siblings.indexOf(tr);
+        for (const [at, sib] of siblings.entries()) {
+          if (sib === tr) continue;
+          const block = blockOf(sib);
+          const top = block[0].getBoundingClientRect().top;
+          const bottom = block.at(-1).getBoundingClientRect().bottom;
+          if (ev.clientY < top || ev.clientY > bottom) continue;
+          const mid = (top + bottom) / 2;
+          if (at > index && ev.clientY > mid) place(tr, sib, true);
+          else if (at < index && ev.clientY < mid) place(tr, sib, false);
+          break;
+        }
+      };
+      const end = () => {
+        clearTimeout(timer);
+        blockOf(tr).forEach((row) => row.classList.remove("is-dragging"));
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+      if (event.pointerType === "mouse") { event.preventDefault(); start(); } else timer = setTimeout(start, HOLD_MS);
+    });
+  }
 
   // ---------- ภาพรวม ----------
   pages.dashboard = (ctx) => {
@@ -89,7 +272,7 @@
     const noBom = ctx.helpers.NO_BOM_KINDS.includes(row.kind);
     const suggestion = isRb ? rules.rbPerSe({ pcsPerRoll: r.pcsPerRoll, sePerGr: r.sePerGr, uom: row.uom, weightG: row.weightG }) : 0;
     return `<tr class="bom-row${row.existing ? "" : " is-new"}" data-row="${attr(row.id)}" data-parent="${attr(row.parentId)}" data-level="${attr(String(row.level))}">
-      <td class="bom-cell-code">${levelCell(row.level, `<input type="hidden" name="rowId[]" value="${attr(row.id)}"><input type="hidden" name="parentId[]" value="${attr(row.parentId)}">${ui.input("childCode[]", { value: row.code, list: "bom-item-list", placeholder: "รหัสชิ้นงาน", className: "bom-code", extra: 'data-bom-code autocapitalize="characters"' })}`)}<div class="small muted" data-bom-flag>${row.existing ? (row.usedIn > 1 ? esc(`ใช้ร่วมกับสินค้าอื่น ${row.usedIn - 1} รายการ (แก้แล้วมีผลทุกสินค้า)`) : "") : "ชิ้นใหม่"}</div></td>
+      <td class="bom-cell-code">${levelCell(row.level, `${dragHandle("ย้ายแถวนี้และส่วนประกอบข้างใต้")}<input type="hidden" name="rowId[]" value="${attr(row.id)}"><input type="hidden" name="parentId[]" value="${attr(row.parentId)}">${ui.input("childCode[]", { value: row.code, list: "bom-item-list", placeholder: "รหัสชิ้นงาน", className: "bom-code", extra: 'data-bom-code autocapitalize="characters"' })}`)}<div class="small muted" data-bom-flag>${row.existing ? (row.usedIn > 1 ? esc(`ใช้ร่วมกับสินค้าอื่น ${row.usedIn - 1} รายการ (แก้แล้วมีผลทุกสินค้า)`) : "") : "ชิ้นใหม่"}</div></td>
       <td>${ui.input("name[]", { value: row.name, placeholder: "ชื่อชิ้นงาน", className: "bom-name" })}</td>
       <td>${ui.select("kind[]", KIND_OPTIONS(ctx), { value: row.kind || "PURCHASED", className: "bom-kind", extra: 'data-bom-kind data-native-select aria-label="ชนิดชิ้นงาน"' })}</td>
       <td>${ui.select("uom[]", UOM_OPTIONS(ctx), { value: row.uom || "pcs", className: "bom-uom", extra: 'data-native-select aria-label="หน่วยนับ"' })}</td>
@@ -172,7 +355,7 @@
       ${ui.card(`<p class="small muted">ปริมาณ = จำนวนลูกต่อ 1 หน่วยของพ่อ (ชั้นแรกต่อ 1 ${esc(uomText(ctx, item?.uom ?? "set"))} ของสินค้า) · RB ใต้ SE: ใส่ข้อมูลการตัดแล้วระบบแนะนำอัตราส่วน 1/(ชิ้นต่อเส้น × SE ต่อ GR) · พิมพ์รหัสที่ยังไม่มี = สร้างชิ้นใหม่ (ระบุชนิด ชื่อ หน่วย)</p>
         <div class="table-wrap"><table class="rf-table bom-tree-table">${tableHead}<tbody data-bom-rows>${rows.map((row) => editorRowHtml(ctx, row)).join("")}</tbody></table></div>
         <template data-bom-row>${templateRow}</template>
-        <div class="rf-row"><button class="btn rf-btn secondary small" type="button" data-bom-add-root>+ เพิ่มส่วนประกอบชั้นแรก</button></div>
+        <div class="rf-row"><button class="btn rf-btn secondary small" type="button" data-bom-add-root>+ เพิ่มส่วนประกอบชั้นแรก</button><label class="small bom-drag-option" title="ปิดไว้ = ย้ายเฉพาะแถวนั้น ลูกเดิมขึ้นไปอยู่กับพ่อเดิม · ลาก ⋮⋮ ไปทางขวา/ซ้ายแล้วปล่อย = ย่อเข้าเป็นลูกของแถวบน / ดึงออกหนึ่งชั้น"><input type="checkbox" data-drag-with-children> ลากพร้อมส่วนประกอบข้างใต้</label></div>
         ${ui.field("หมายเหตุของการแก้ครั้งนี้", ui.input("note", { placeholder: "เช่น เปลี่ยนความยาวตัดลูกตอปิโด" }))}`, { title: "3. ส่วนประกอบทุกชั้น" })}
       <div class="rf-row bom-actions">${canEdit ? '<button class="btn rf-btn" type="submit" form="bom-tree-form">บันทึก BOM</button>' : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การสร้าง/แก้ BOM ทำโดยฝ่ายวางแผนหรือผู้จัดการ")}${item && bom && canEdit ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }) : ""}${item ? ui.link("ดูต้นไม้ที่ระเบิดแล้ว", ctx.url("items", { sel: item.code }), "btn rf-btn secondary") : ""}</div>
     </form>`;
@@ -253,6 +436,8 @@
         if (tr) { wire(tr); tr.querySelector("[data-bom-code]")?.focus?.(); }
       };
       rowsOf().forEach(wire);
+      const withChildren = rootNode.querySelector("[data-drag-with-children]");
+      treeRowsDrag(tbody, { rows: rowsOf, descendants, withChildren: () => Boolean(withChildren?.checked), canHaveChildren: (tr) => !ctx.helpers.NO_BOM_KINDS.includes(tr.querySelector("[data-bom-kind]")?.value) });
       rootNode.querySelector("[data-bom-add-root]")?.addEventListener("click", () => addRow("", 1));
     };
     return { html, bind };
@@ -415,6 +600,197 @@
     ].join("");
     const html = `${pageHead}${picker}${ui.card(`${facts}${warnings}`, { title: `${esc(item.code)} <span class="muted">${esc(item.name)}</span> × ${esc(rules.fmtQty(qty))} ${esc(uomText(ctx, item.uom))}`, actions })}<div class="bom-dept-grid">${cards}</div>`;
     return { html, bind: bindPick };
+  };
+
+  // ---------- โครงสร้างสินค้า (จำลอง): ลำดับผลิต (ขั้นแรกอยู่บน) และตารางต้นทุน (FG อยู่บน) ----------
+  // แนวคิดจากเมนู "โครงสร้าง" ของ ERP เดิม: ส่วนประกอบ (BOM) กับขั้นตอนผลิต (routing นาที/ชิ้น และวัตถุดิบที่เข้าแต่ละขั้น) คำนวณโดย rules.structureTree
+  // ต่างจากของเดิมโดยตั้งใจ: ชิ้นย่อยอ้างอิง BOM/routing ของตัวเอง (ไม่คัดลอกทั้งกิ่ง) และ WIP ไม่ต้องตั้งรหัสเป็นชิ้นงาน — มุมมองลำดับผลิตสร้างจากข้อมูลชุดเดียวกัน
+  const structureDeps = (ctx) => ({ itemOf: (c) => itemOf(ctx, c), approvedBomOf: (c) => approvedBomOf(ctx, c), routingOf: (c) => ctx.helpers.routingOf(ctx.data, c), processOf: (c) => ctx.helpers.processOf(ctx.data, c) });
+  const baht = (ctx, n) => ctx.rules.fmtNum(n, 2);
+  const picture = (node, size = "") => (node.image
+    ? `<img class="bom-pic${size}" src="${attr(node.image)}" alt="${attr(node.itemCode)}">`
+    : `<span class="bom-pic${size} is-empty" aria-hidden="true">${esc({ PURCHASED: "ซื้อ", SUBPART: "ชิ้นทำ" }[node.kind] ?? node.kind)}</span>`);
+  const qtyText = (ctx, node) => `× ${esc(ctx.rules.fmtQty(node.qtyPerParent))} ${esc(uomText(ctx, node.uom))}${node.scrapPct ? ` +${esc(ctx.rules.fmtNum(node.scrapPct))}%` : ""}`;
+  const flowArrow = '<div class="bom-flow-arrow" aria-hidden="true">▼</div>';
+  function flowHtml(ctx, node, canEdit) {
+    const { ui, rules } = ctx;
+    const { feeds, stages } = rules.flowOf(node);
+    const fed = new Set(feeds.map((feed) => feed.itemCode));
+    const lanes = feeds.length ? `<div class="bom-flow-feeds">${feeds.map((feed) => `<details class="bom-flow-lane" open><summary>${ui.mono(feed.itemCode)} <span class="small muted">${qtyText(ctx, feed)}</span></summary>${flowHtml(ctx, feed, canEdit)}</details>`).join("")}</div>${flowArrow}` : "";
+    const compound = node.kind === "RB" ? itemOf(ctx, node.itemCode)?.rubber?.compound : null;
+    const parts = stages.map((stage, index) => {
+      const inputs = stage.inputs.map((child) => `<li class="bom-flow-input${fed.has(child.itemCode) ? " is-fed" : ""}" title="${attr(child.name)}">${picture(child, " is-mini")}<span>${ui.mono(child.itemCode)} <span class="muted">${qtyText(ctx, child)}</span>${fed.has(child.itemCode) ? ' <span class="muted">(จากสายด้านบน)</span>' : child.ownCost === null && !child.children.length ? ` ${ui.badge("warn", "ไม่มีราคา")}` : ""}</span></li>`);
+      // คอมปาวด์ของเส้นยาง: ถ้ามีชิ้นงานรหัสเดียวกันที่มี BOM (เช่น สูตรเคมีที่นำเข้ามา) ลิงก์ไปดูโครงสร้างของมัน ไม่กางซ้อนในต้นไม้นี้
+      const recipe = compound && approvedBomOf(ctx, rules.canonicalCode(compound)) ? ui.link("ดูสูตร", ctx.url("structure", { code: compound }), "small") : '<span class="muted">(สูตรอยู่ที่ RubberFlow)</span>';
+      if (compound && index === 0) inputs.unshift(`<li class="bom-flow-input"><span class="bom-pic is-mini is-empty" aria-hidden="true">RF</span><span>คอมปาวด์ ${ui.mono(compound)} ${recipe}</span></li>`);
+      const list = inputs.length ? `<ul class="bom-flow-inputs">${inputs.join("")}</ul>` : "";
+      const step = stage.step ? `<div class="bom-flow-step" title="${attr(`${stage.step.name} · ค่าแรง ${baht(ctx, stage.step.cost)} บาท/ชิ้น`)}"><span class="bom-flow-dept">${esc(stage.step.dept)}</span><span class="bom-flow-step-name">${esc(stage.step.name)} <span class="muted rf-mono">${esc(stage.step.processCode)}</span></span><span class="nowrap">${esc(rules.fmtNum(stage.step.minutesPerPc))} นาที</span></div>` : "";
+      return [list, step].filter(Boolean).join(list && step ? flowArrow : "");
+    }).filter(Boolean);
+    const tools = canEdit ? `<div class="rf-row">${node.kind === "PURCHASED" ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
+    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}">${picture(node)}<div class="bom-flow-item-body">${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;
+    return `<div class="bom-flow-node">${lanes}${[...parts, card].join(flowArrow)}</div>`;
+  }
+  pages.structure = (ctx) => {
+    const { data, ui, rules, user, params } = ctx;
+    const canEdit = ctx.helpers.canPlan(user);
+    const code = params.get("code") ? rules.canonicalCode(params.get("code")) : "";
+    const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
+    const view = params.get("view") === "table" ? "table" : "flow";
+    const roots = data.items.filter((item) => item.kind === "FG" || approvedBomOf(ctx, item.code)).sort((a, b) => a.code.localeCompare(b.code));
+    const picker = ui.card(`<form class="bom-pick" data-bom-pick>
+        <div class="rf-grid rf-g4">
+          ${ui.field("รหัสสินค้า/ชิ้นงาน *", ui.input("code", { value: code, list: "bom-structure-list", required: true, placeholder: "เช่น DEMO-TP-01(P)-Y", extra: 'autocapitalize="characters"' }))}
+          ${ui.field("จำนวนสั่ง", ui.input("qty", { type: "number", step: "any", min: "0.0001", value: String(qty) }))}
+        </div>
+        <datalist id="bom-structure-list">${roots.map((item) => `<option value="${attr(item.code)}">${esc(item.name.slice(0, 50))}</option>`).join("")}</datalist>
+        <div class="rf-row"><button class="btn rf-btn" type="submit">แสดงโครงสร้าง</button></div>
+      </form>`, { title: "เลือกสินค้าและจำนวน" });
+    const bind = (rootNode) => {
+      rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        location.hash = ctx.url("structure", { code: String(form.get("code") ?? "").trim(), qty: String(form.get("qty") ?? ""), view });
+      });
+    };
+    const pageHead = head(ctx, "โครงสร้างสินค้า (จำลอง)", "ลำดับผลิตจากขั้นแรกจนเป็นสินค้า ต้นทุนต่อหน่วย และเวลาที่แต่ละแผนกใช้ — ราคาและอัตราค่าแรงเป็นตัวเลขสาธิต");
+    if (!code) {
+      const rows = roots.filter((item) => item.kind === "FG").map((item) => {
+        const tree = rules.structureTree(item.code, structureDeps(ctx));
+        return `<tr><td><div class="bom-flow-pick">${picture(tree.root, " is-mini")}<span>${ui.mono(item.code)}<div class="small muted">${esc(item.name)}</div></span></div></td><td class="num nowrap">${tree.root.complete ? baht(ctx, tree.root.unitCost) : ui.badge("warn", "ไม่ครบ")}</td><td>${ui.link("ดูโครงสร้าง", ctx.url("structure", { code: item.code }), "btn rf-btn secondary small")}</td></tr>`;
+      });
+      return { html: `${pageHead}${picker}${ui.card(ui.table(["สินค้า", "ต้นทุน/หน่วย (บาท)", ""], rows, { emptyText: "ยังไม่มีสินค้า" }), { title: "สินค้าสำเร็จรูป", flush: true })}`, bind };
+    }
+    const item = itemOf(ctx, code);
+    if (!item) return { html: `${pageHead}${picker}${ui.callout("warn", `ไม่พบ <strong>${esc(code)}</strong> ใน item master`)}`, bind };
+    const tree = rules.structureTree(item.code, structureDeps(ctx));
+    const views = `<nav class="rf-pagenav" aria-label="มุมมองโครงสร้าง">${[["flow", "ลำดับผลิต (ขั้นแรกอยู่บน)"], ["table", "ตารางต้นทุน (สินค้าอยู่บน)"]].map(([id, label]) => `<a class="filter${id === view ? " active" : ""}" href="${attr(ctx.url("structure", { code: item.code, qty: String(qty), view: id }))}"${id === view ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</nav>`;
+    let body;
+    if (view === "flow") {
+      body = `<div class="bom-flow">${flowHtml(ctx, tree.root, canEdit)}</div>`;
+    } else {
+      const rows = tree.rows.map((node) => {
+        const noBomLeaf = node.bomRevision === null;
+        const stepsHtml = node.steps.map((step) => `<span class="rf-badge" title="${attr(`${step.name} · ${step.dept} · ${baht(ctx, step.cost)} บาท/ชิ้น`)}">${esc(`${step.processCode} ${rules.fmtNum(step.minutesPerPc)}′`)}</span>`).join(" ");
+        const stepEdit = canEdit && node.kind !== "PURCHASED" ? ui.openButton(node.steps.length ? "แก้" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` }) : "";
+        const material = noBomLeaf && node.ownCost === null ? ui.badge("warn", "ไม่มีราคา") : baht(ctx, node.material);
+        const costEdit = canEdit && noBomLeaf ? ` ${ui.openButton("ราคา", "itemCost", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ตั้งราคาต้นทุนของ ${node.itemCode}` })}` : "";
+        const perParent = node.level === 0 ? "" : `${esc(rules.fmtQty(node.qtyPerParent))} ${esc(uomText(ctx, node.uom))}${node.scrapPct ? ` <span class="small muted">+${esc(rules.fmtNum(node.scrapPct))}%</span>` : ""}`;
+        const name = `${levelCell(node.level, ui.mono(node.itemCode))}<div class="small muted">${esc(node.name)}${node.bomRevision ? ` · BOM Rev.${node.bomRevision}` : ""}</div>`;
+        const unit = `${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)}`;
+        return `<tr><td>${name}</td><td class="nowrap">${perParent}</td><td>${stepsHtml}${stepEdit ? ` ${stepEdit}` : ""}</td><td class="num nowrap">${material}${costEdit}</td><td class="num nowrap">${baht(ctx, node.labor)}</td><td class="num nowrap">${node.level === 0 ? `<strong>${unit}</strong>` : unit}</td><td class="num nowrap">${node.level === 0 ? "" : baht(ctx, node.costPerRoot)}</td></tr>`;
+      });
+      body = ui.table(["ชิ้นงาน", "ต่อพ่อ", "ขั้นตอนผลิต (นาที/ชิ้น)", "วัตถุดิบ/หน่วย", "ค่าแรง/หน่วย", "ต้นทุน/หน่วย", "ต่อสินค้า 1 หน่วย"], rows);
+    }
+    const rates = Object.entries(rules.LABOR_BAHT_PER_MIN).map(([dept, rate]) => `${dept} ${rules.fmtNum(rate)}`).join(" · ");
+    const depts = rules.FLOW_DEPTS.filter((dept) => tree.minutesByDept[dept]);
+    const minutesRows = depts.map((dept) => `<tr><td>${esc(rules.DEPT_LABEL[dept] ?? dept)}</td><td class="num">${rules.fmtNum(tree.minutesByDept[dept])}</td><td class="num">${rules.fmtNum(tree.minutesByDept[dept] * qty / 60, 1)}</td></tr>`);
+    if (depts.length > 1) minutesRows.push(`<tr><td><strong>รวม</strong></td><td class="num"><strong>${rules.fmtNum(tree.totalMinutes)}</strong></td><td class="num"><strong>${rules.fmtNum(tree.totalMinutes * qty / 60, 1)}</strong></td></tr>`);
+    const warnings = [
+      tree.missingCost.length ? ui.callout("warn", `ต้นทุนยังไม่ครบ: ไม่มีราคาของ ${tree.missingCost.map((entry) => `<strong>${esc(entry)}</strong>`).join(", ")}${canEdit ? ` (ตั้งราคาได้ที่ ${ui.link("ตารางต้นทุน", ctx.url("structure", { code: item.code, qty: String(qty), view: "table" }))})` : ""}`) : "",
+      tree.missing.length ? ui.callout("bad", `ไม่พบใน item master หรือเป็นวงจร: ${tree.missing.map((entry) => esc(entry)).join(", ")}`) : "",
+    ].join("");
+    const html = `${pageHead}${picker}${warnings}${views}
+      ${ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view === "table" })}
+      ${ui.card(ui.table(["แผนก", "นาที ต่อ 1 หน่วย", `ชั่วโมง สำหรับ ${rules.fmtNum(qty)} หน่วย`], minutesRows, { emptyText: "ยังไม่มีขั้นตอนผลิตในโครงสร้างนี้" }), { title: `เวลาผลิตต่อแผนก · ค่าแรงสาธิต (บาท/นาที): ${esc(rates)}`, flush: true })}`;
+    return { html, bind };
+  };
+  // dialog: ขั้นตอนผลิตของชิ้นงาน (เพิ่ม/ลบ/เลื่อนขึ้นลง และเลือกว่าวัตถุดิบแต่ละตัวเข้าที่ขั้นไหน แล้วบันทึกเป็น revision ใหม่)
+  dialogs.routingEdit = (ctx, { code = "" }) => {
+    const { ui, data, rules } = ctx;
+    const item = itemOf(ctx, code);
+    if (!item) return null;
+    const routing = ctx.helpers.routingOf(data, item.code);
+    const options = data.processes.map((process) => ({ value: process.code, label: `${process.code} ${process.name} (${process.dept})` }));
+    const stepRow = (step = {}) => `<tr data-step><td class="bom-step-cell">${dragHandle("ย้ายขั้นตอนนี้")}${ui.select("processCode[]", options, { value: step.processCode ?? "", placeholder: "เลือกขั้นตอน" })}</td><td>${ui.input("minutesPerPc[]", { type: "number", step: "any", min: "0", value: step.minutesPerPc ?? "" })}</td><td class="nowrap"><button class="btn rf-btn secondary small" type="button" data-step-remove aria-label="ลบขั้นตอน">✕</button></td></tr>`;
+    const steps = routing?.steps ?? [];
+    const lines = approvedBomOf(ctx, item.code)?.lines ?? [];
+    const stepOfInput = (childCode) => steps.find((step) => (step.inputs ?? []).includes(childCode))?.processCode ?? "";
+    const stepChoices = (selected) => `<option value="">ขั้นแรก</option>${steps.map((step) => `<option value="${attr(step.processCode)}"${step.processCode === selected ? " selected" : ""}>${esc(step.processCode)}</option>`).join("")}`;
+    const inputRows = lines.map((line) => `<tr><td>${ui.mono(line.childCode)}<input type="hidden" name="inputCode[]" value="${attr(line.childCode)}"><div class="small muted">${esc(itemOf(ctx, line.childCode)?.name ?? "")}</div></td><td class="nowrap">${esc(rules.fmtQty(line.qty))} ${esc(uomText(ctx, line.uom))}</td><td><select class="select rf-select" name="inputStep[]" data-input-step aria-label="${attr(`ขั้นที่ ${line.childCode} เข้า`)}">${stepChoices(stepOfInput(line.childCode))}</select></td></tr>`);
+    const body = `<form id="bom-routing-form" data-rf-form="saveRouting" data-rf-args="${attr(JSON.stringify({ itemCode: item.code }))}" data-rf-success="บันทึกขั้นตอนผลิต {result}">
+      <p class="small muted">${esc(item.name)} · ${esc(rules.DEPT_LABEL[item.ownerDept] ?? item.ownerDept)}${routing ? ` · ใช้อยู่ Rev.${routing.revision} โดย ${esc(routing.createdBy)}` : ""}</p>
+      ${ui.table(["ขั้นตอน (เรียงจากขั้นแรก)", "นาที/ชิ้น", ""], (steps.length ? steps : [{}]).map(stepRow), { className: "bom-routing-table" })}
+      <template data-step-template>${stepRow()}</template>
+      <div class="rf-row"><button class="btn rf-btn secondary small" type="button" data-step-add>+ เพิ่มขั้นตอน</button></div>
+      ${inputRows.length ? `<h4 class="bom-dialog-sub">วัตถุดิบเข้าที่ขั้นไหน</h4>${ui.table(["ส่วนประกอบใน BOM", "ต่อหน่วย", "เข้าที่ขั้น"], inputRows)}` : ""}
+      <p class="small muted">บันทึกแล้วเป็น revision ใหม่ ตัวเดิมเก็บเป็นประวัติ · แถวที่ไม่เลือกขั้นตอนจะถูกข้าม</p>
+    </form>`;
+    const bind = (dialog) => {
+      const tbody = dialog.querySelector(".bom-routing-table tbody");
+      const template = dialog.querySelector("[data-step-template]");
+      // ตัวเลือก "เข้าที่ขั้น" ตามขั้นตอนที่อยู่ในตารางตอนนี้ (ขั้นที่ถูกลบ/ยังไม่เลือก กลับเป็น ขั้นแรก)
+      const refresh = () => {
+        const codes = [...tbody.querySelectorAll('select[name="processCode[]"]')].map((select) => select.value).filter(Boolean);
+        dialog.querySelectorAll("[data-input-step]").forEach((select) => {
+          const keep = codes.includes(select.value) ? select.value : "";
+          select.innerHTML = `<option value="">ขั้นแรก</option>${codes.map((value) => `<option value="${attr(value)}">${esc(value)}</option>`).join("")}`;
+          select.value = keep;
+        });
+      };
+      dialog.querySelector("[data-step-add]")?.addEventListener("click", () => { tbody.insertAdjacentHTML("beforeend", template.innerHTML); refresh(); });
+      tbody.addEventListener("change", refresh);
+      tbody.addEventListener("click", (event) => {
+        const row = event.target.closest("button[data-step-remove]")?.closest("tr[data-step]");
+        if (!row) return;
+        row.remove();
+        refresh();
+      });
+      sortableRows(tbody, { rows: () => [...tbody.querySelectorAll("tr[data-step]")], onChange: refresh });
+    };
+    return { html: ui.dialog("routingEdit", `ขั้นตอนผลิต ${item.code}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-routing-form">บันทึก</button>` }), bind };
+  };
+  // dialog: ราคาต้นทุนต่อหน่วยของชิ้นที่ไม่มี BOM
+  dialogs.itemCost = (ctx, { code = "" }) => {
+    const { ui } = ctx;
+    const item = itemOf(ctx, code);
+    if (!item) return null;
+    const body = `<form id="bom-cost-form" data-rf-form="setItemCost" data-rf-args="${attr(JSON.stringify({ code: item.code }))}" data-rf-success="ตั้งราคา {result}">
+      <p class="small muted">${esc(item.name)}</p>
+      ${ui.field(`ราคาต้นทุน (บาท ต่อ ${uomText(ctx, item.uom)})`, ui.input("unitCost", { type: "number", step: "any", min: "0", value: item.unitCost ?? "", placeholder: "เว้นว่าง = ไม่ระบุ" }))}
+      <p class="small muted">ใช้กับของซื้อ เส้นยาง หรือชิ้นที่ยังไม่มี BOM · ชิ้นที่มี BOM คำนวณจากส่วนประกอบและขั้นตอนผลิต</p>
+    </form>`;
+    return { html: ui.dialog("itemCost", `ราคาต้นทุน ${item.code}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-cost-form">บันทึก</button>` }) };
+  };
+  // dialog: รูปชิ้นงาน — เบราว์เซอร์ย่อรูปเหลือด้านยาวไม่เกิน 240 px (JPEG) ก่อนเก็บ
+  dialogs.itemImage = (ctx, { code = "" }) => {
+    const { ui } = ctx;
+    const item = itemOf(ctx, code);
+    if (!item) return null;
+    const body = `<form id="bom-image-form" data-rf-form="setItemImage" data-rf-args="${attr(JSON.stringify({ code: item.code }))}" data-rf-success="บันทึกรูป {result}">
+      <p class="small muted">${esc(item.name)}</p>
+      <div class="bom-image-edit">${picture({ itemCode: item.code, kind: item.kind, image: item.image ?? null }, " is-large")}
+        ${ui.field("เลือกรูป", '<input class="input rf-input" type="file" accept="image/png,image/jpeg,image/webp" data-image-file>')}</div>
+      <input type="hidden" name="image" value="${attr(item.image ?? "")}">
+      <p class="small muted" data-image-note>รูปถูกย่อในเบราว์เซอร์ก่อนบันทึก (ตัวจำลองเก็บในเบราว์เซอร์นี้ ระบบจริงเก็บใน Storage แบบ private)</p>
+    </form>`;
+    const bind = (dialog) => {
+      const file = dialog.querySelector("[data-image-file]");
+      const hidden = dialog.querySelector('input[name="image"]');
+      file?.addEventListener("change", () => {
+        const chosen = file.files?.[0];
+        if (!chosen || typeof FileReader === "undefined") return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(1, 240 / Math.max(img.width, img.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            hidden.value = canvas.toDataURL("image/jpeg", 0.8);
+            const preview = dialog.querySelector(".bom-pic");
+            preview?.insertAdjacentHTML("afterend", `<img class="bom-pic is-large" src="${attr(hidden.value)}" alt="${attr(item.code)}">`);
+            preview?.remove();
+          };
+          img.src = String(reader.result);
+        };
+        reader.readAsDataURL(chosen);
+      });
+    };
+    const remove = item.image ? ui.button("ลบรูป", { action: "setItemImage", args: { code: item.code, image: "" }, confirmText: `ลบรูปของ ${item.code}?` }) : "";
+    return { html: ui.dialog("itemImage", `รูปชิ้นงาน ${item.code}`, body, { footer: `${remove}${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-image-form">บันทึก</button>` }), bind };
   };
 
   // ---------- ชุดสี / แพ็กเกจ (นิยามต่อฐานรหัส ใช้ตอนสร้างรุ่นสินค้าใหม่ แทนการแก้สีมือในชีต Edit DATA) ----------

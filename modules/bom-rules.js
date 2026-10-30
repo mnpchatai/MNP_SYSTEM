@@ -518,6 +518,92 @@
     return { lines, missing: [...new Set(missing)] };
   }
 
+  // ---------- โครงสร้างสินค้า: ขั้นตอนผลิต (routing) ต้นทุน และเวลา (จำลอง) ----------
+  // แนวคิดจากเมนู "โครงสร้าง" ของ ERP เดิม (Utech): ต้นไม้สินค้ามีสองกิ่ง Bom = ส่วนประกอบ และ Build = WIP → Process (เวลา นาที/ชิ้น)
+  // ที่นี่ BOM เดิมคือส่วนประกอบ ส่วนขั้นตอนผลิตเป็น routing ต่อชิ้นงาน (เก็บเป็น revision เหมือน BOM) แทนการแทรกแถว WIP/Process ลงในต้นไม้
+  // ต้นทุนต่อหน่วย = วัตถุดิบ (ลูกใน BOM × ปริมาณ × (1 + % เผื่อเสีย) หรือราคาที่ตั้งเองถ้าไม่มี BOM) + ค่าแรง (นาที/ชิ้น × อัตราของแผนก)
+  // ชิ้นที่ไม่มี BOM และยังไม่ตั้งราคา ทำให้ต้นทุนของพ่อทุกชั้น "ไม่ครบ" (complete=false) และอยู่ใน missingCost
+  const DEFAULT_PROCESSES = Object.freeze([
+    { code: "RB-EXT", name: "รีดเส้นยาง", dept: "RB" },
+    { code: "RB-CURE", name: "อบ/คงรูปเส้นยาง", dept: "RB" },
+    { code: "GR-CUT", name: "ตัดชิ้นยาง", dept: "GR" },
+    { code: "GR-DRL", name: "เจาะรู", dept: "GR" },
+    { code: "PT-INJ", name: "ฉีดพลาสติก", dept: "PT" },
+    { code: "PT-CUT", name: "ตัดท่อ/แกน", dept: "PT" },
+    { code: "BG-CUT", name: "ตัดผ้า", dept: "BG" },
+    { code: "BG-SEW", name: "เย็บ", dept: "BG" },
+    { code: "PK-ASM", name: "ประกอบ", dept: "PK" },
+    { code: "PK-QC", name: "ตรวจคุณภาพ", dept: "PK" },
+    { code: "PK-PACK", name: "บรรจุ", dept: "PK" },
+  ].map((entry) => Object.freeze(entry)));
+  // อัตราค่าแรงสาธิต (บาท/นาที) ต่อแผนก ไม่ใช่ตัวเลขจริงของบริษัท
+  const LABOR_BAHT_PER_MIN = Object.freeze({ RB: 3, GR: 2.5, PT: 2, BG: 2.5, ST: 1.5, PK: 2 });
+  const round = (n, digits = 4) => Math.round(n * 10 ** digits) / 10 ** digits;
+
+  // คืน { root, rows (เรียงแบบต้นไม้ ลึกก่อน), minutesByDept (ต่อ 1 หน่วยราก), missingCost, missing }
+  // routingOf(code) → { revision, steps: [{ processCode, minutesPerPc }] } | null · processOf(code) → { code, name, dept } | null
+  function structureTree(rootCode, { itemOf, approvedBomOf, routingOf, processOf, rates = LABOR_BAHT_PER_MIN, maxDepth = 8 }) {
+    const rows = [];
+    const missing = [];
+    const missingCost = new Set();
+    const minutesByDept = {};
+    const build = (code, level, path, line, qtyPerRoot) => {
+      const item = itemOf(code);
+      if (!item) { missing.push(code); return null; }
+      const bom = level < maxDepth ? approvedBomOf(code) : null;
+      const routing = routingOf(code);
+      const steps = (routing?.steps ?? []).map((step) => {
+        const process = processOf(step.processCode);
+        const dept = process?.dept ?? item.ownerDept;
+        const minutesPerPc = Number(step.minutesPerPc) || 0;
+        minutesByDept[dept] = round((minutesByDept[dept] ?? 0) + minutesPerPc * qtyPerRoot);
+        return { processCode: step.processCode, name: process?.name ?? step.processCode, dept, minutesPerPc, cost: round(minutesPerPc * (rates[dept] ?? 0)), inputs: Array.isArray(step.inputs) ? [...step.inputs] : [] };
+      });
+      const node = {
+        itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, qtyPerRoot,
+        bomRevision: bom?.revision ?? null, routingRevision: routing?.revision ?? null, steps, children: [], material: 0, labor: 0, unitCost: 0, complete: true, ownCost: null,
+      };
+      rows.push(node);
+      if (bom) {
+        for (const childLine of bom.lines) {
+          if (path.includes(childLine.childCode)) { missing.push(`${childLine.childCode} (วงจร)`); node.complete = false; continue; }
+          const factor = Number(childLine.qty) * (1 + (Number(childLine.scrapPct) || 0) / 100);
+          const child = build(childLine.childCode, level + 1, [...path, childLine.childCode], childLine, qtyPerRoot * factor);
+          if (!child) { node.complete = false; continue; }
+          node.children.push(child);
+          node.material += child.unitCost * factor;
+          if (!child.complete) node.complete = false;
+        }
+      } else if (Number.isFinite(item.unitCost)) {
+        node.ownCost = item.unitCost;
+        node.material = item.unitCost;
+      } else {
+        node.complete = false;
+        missingCost.add(item.code);
+      }
+      node.labor = steps.reduce((sum, step) => sum + step.cost, 0);
+      node.material = round(node.material);
+      node.labor = round(node.labor);
+      node.unitCost = round(node.material + node.labor);
+      node.costPerRoot = round(node.unitCost * qtyPerRoot);
+      return node;
+    };
+    const root = build(rootCode, 0, [rootCode], null, 1);
+    return { root, rows, minutesByDept, totalMinutes: round(Object.values(minutesByDept).reduce((sum, value) => sum + value, 0)), missingCost: [...missingCost], missing: [...new Set(missing)] };
+  }
+
+  // มุมมองลำดับผลิต (ขั้นแรกอยู่บน) ของโหนดหนึ่งใน structureTree: ลูกที่มี BOM หรือขั้นตอนผลิตของตัวเองเป็น "สายป้อน" (feeds) วางเหนือพ่อ
+  // แล้วไล่ขั้นตอนของพ่อทีละขั้น ลูกเข้าที่ขั้นที่ routing ระบุใน step.inputs ลูกที่ไม่ได้ระบุ (หรือระบุรหัสที่ไม่ใช่ลูกแล้ว) เข้าที่ขั้นแรก
+  // ไม่มีขั้นตอนผลิต = ขั้นเดียวที่ step เป็น null
+  function flowOf(node) {
+    const feeds = node.children.filter((child) => child.children.length || child.steps.length);
+    const stepIndex = new Map();
+    node.steps.forEach((step, index) => (step.inputs ?? []).forEach((code) => { if (!stepIndex.has(code)) stepIndex.set(code, index); }));
+    const stages = (node.steps.length ? node.steps : [null]).map((step) => ({ step, inputs: [] }));
+    for (const child of node.children) stages[stepIndex.get(child.itemCode) ?? 0].inputs.push(child);
+    return { feeds, stages };
+  }
+
   // ---------- ความต้องการสุทธิ (สูตร AK ของ BOMSHEET ยกมาคิดทั้งใบ) ----------
   // คิดต่อรหัสชิ้นงาน (รวมทุกบรรทัดของรหัสเดียวกันในใบ) ไล่จากชั้นบนลงล่าง:
   //   ขาด = ความต้องการ − คงคลังที่นับ · ต้องผลิต/สั่งซื้อ = ขาด (ไม่ติดลบ) · ของเกิน = คงคลังที่เหลือจากความต้องการ
@@ -610,6 +696,12 @@
     const d = digits ?? (Number.isInteger(value) ? 0 : Math.abs(value) < 1 ? 4 : 2);
     return value.toLocaleString("th-TH", { minimumFractionDigits: d, maximumFractionDigits: d });
   };
+  // เวลา (นาที) และเงิน (บาท) ของโครงสร้างสินค้า: ไม่เติมศูนย์ท้าย
+  const fmtNum = (n, maxDigits = 2) => {
+    const value = Number(n);
+    if (n === null || n === undefined || Number.isNaN(value)) return "-";
+    return value.toLocaleString("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: maxDigits });
+  };
   const toInputDate = (ms) => {
     if (!ms || !Number.isFinite(Number(ms))) return "";
     const d = new Date(Number(ms));
@@ -628,7 +720,8 @@
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
     normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
-    toCsv, fmtDate, fmtDateTime, fmtQty, toInputDate, fromInputDate, orderTypeOf,
+    DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf,
+    toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_RULES = api;
