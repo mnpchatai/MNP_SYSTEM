@@ -22,6 +22,8 @@
   const DEPT_LABEL = Object.freeze({ PK: "PK · บรรจุ/ประกอบ", GR: "GR · ตัด/เจาะชิ้นยาง", RB: "RB · รีดเส้นยาง", PT: "PT · ฉีดพลาสติก", BG: "BG · กระเป๋า/เย็บ", ST: "ST · คลังวัตถุดิบ" });
   // ลำดับกำหนดเสร็จรายแผนกในหัวใบสั่งผลิต (MAIN ของไฟล์ Excel)
   const DUE_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "ST", "PK"]);
+  // ลำดับการไหลของงาน (ต้นน้ำ → ปลายน้ำ) ใช้เรียงการ์ดในหน้า "สินค้า 1 ตัว → งานทุกแผนก"
+  const FLOW_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "ST", "PK"]);
 
   // ---------- รหัส ----------
   // รหัส canonical: ตัดช่องว่าง ยุบขีดซ้ำ ตัวพิมพ์ใหญ่ ("RB-B0005-02- -132-9-25" และ "RB-B0005-02--132-9-25" เป็นตัวเดียวกัน)
@@ -326,10 +328,10 @@
   function explode(fgCode, fgQty, { itemOf, approvedBomOf, maxDepth = 8 }) {
     const lines = [];
     const missing = [];
-    const walk = (code, qtyPerFg, level, path, parentCode) => {
+    const walk = (code, qtyPerFg, level, path, parentCode, qtyPerParent) => {
       const item = itemOf(code);
       if (!item) { missing.push(code); return; }
-      lines.push({ fgCode, level, path: [...path, code], itemCode: code, name: item.name, kind: item.kind, uom: item.uom, producerDept: item.ownerDept, parentCode, qtyPerFg, required: qtyPerFg * fgQty, bomId: null, revision: null });
+      lines.push({ fgCode, level, path: [...path, code], itemCode: code, name: item.name, kind: item.kind, uom: item.uom, producerDept: item.ownerDept, parentCode, qtyPerParent, qtyPerFg, required: qtyPerFg * fgQty, bomId: null, revision: null });
       const row = lines.at(-1);
       if (level >= maxDepth) return;
       const bom = approvedBomOf(code);
@@ -340,11 +342,60 @@
       for (const line of bom.lines) {
         if (path.includes(line.childCode)) { missing.push(`${line.childCode} (วงจร)`); continue; }
         const factor = Number(line.qty) * (1 + (Number(line.scrapPct) || 0) / 100);
-        walk(line.childCode, qtyPerFg * factor, level + 1, [...path, code], code);
+        walk(line.childCode, qtyPerFg * factor, level + 1, [...path, code], code, factor);
       }
     };
-    walk(fgCode, 1, 0, [], null);
+    walk(fgCode, 1, 0, [], null, 1);
     return { lines, missing: [...new Set(missing)] };
+  }
+
+  // ---------- ความต้องการสุทธิ (สูตร AK ของ BOMSHEET ยกมาคิดทั้งใบ) ----------
+  // คิดต่อรหัสชิ้นงาน (รวมทุกบรรทัดของรหัสเดียวกันในใบ) ไล่จากชั้นบนลงล่าง:
+  //   ขาด = ความต้องการ − คงคลังที่นับ · ต้องผลิต/สั่งซื้อ = ขาด (ไม่ติดลบ) · ของเกิน = คงคลังที่เหลือจากความต้องการ
+  //   ความต้องการของชิ้นลูก = ปริมาณต่อพ่อ × ส่วนที่พ่อยังต้องผลิต (ไม่ใช่ความต้องการเต็มของพ่อ)
+  // ตรงกับ Excel: RB ต้องรีด = O × (SE ต้องเบิก − สต๊อก SE) − สต๊อก RB · ต่างจาก Excel สองจุดโดยตั้งใจ:
+  //   ของเกินของพ่อไม่ถูกส่งต่อเป็นค่าติดลบของลูก และคงคลังนับต่อรหัสครั้งเดียวทั้งใบ ไม่ใช่ต่อบรรทัด (ชีตคีย์ซ้ำทุกบรรทัด)
+  // รหัสที่ไม่ได้นับ (undefined) ถือว่าไม่มีของ · คืนรายการเรียงตามชั้นลึกสุดแล้วตามรหัส
+  function netRequirements(explodedLines, stockCounts = {}) {
+    const entries = new Map();
+    const edges = new Map(); // "พ่อ|ลูก" → ปริมาณลูกต่อ 1 พ่อ (รวมเศษ)
+    for (const line of explodedLines) {
+      const entry = entries.get(line.itemCode) ?? { itemCode: line.itemCode, name: line.name, kind: line.kind, uom: line.uom, dept: line.producerDept, level: 0, lines: 0, required: 0, fgCodes: new Set(), parents: new Set(), children: new Set() };
+      entry.level = Math.max(entry.level, line.level);
+      entry.lines += 1;
+      entry.fgCodes.add(line.fgCode);
+      if (line.level === 0) entry.required += line.required; // ความต้องการตั้งต้น = จำนวนสั่ง FG
+      if (line.parentCode) {
+        entry.parents.add(line.parentCode);
+        entries.get(line.parentCode)?.children.add(line.itemCode);
+        edges.set(`${line.parentCode}|${line.itemCode}`, Number(line.qtyPerParent) || 0);
+      }
+      entries.set(line.itemCode, entry);
+    }
+    // พ่อทุกตัวมีชั้นลึกสุดน้อยกว่าลูก (การระเบิดเดินทั้งต้นไม้ทุกครั้งที่พบพ่อ) จึงไล่ตามชั้นได้
+    const ordered = [...entries.values()].sort((a, b) => a.level - b.level || a.itemCode.localeCompare(b.itemCode));
+    const round = (n) => Math.round(n * 1e4) / 1e4;
+    for (const entry of ordered) {
+      const counted = stockCounts[entry.itemCode] !== undefined && stockCounts[entry.itemCode] !== null && stockCounts[entry.itemCode] !== "";
+      entry.stock = counted ? Number(stockCounts[entry.itemCode]) || 0 : undefined;
+      entry.net = entry.required - (entry.stock ?? 0);
+      entry.toMake = round(Math.max(entry.net, 0));
+      entry.surplus = round(Math.max(-entry.net, 0));
+      for (const child of entry.children) {
+        const childEntry = entries.get(child);
+        if (childEntry) childEntry.required += (edges.get(`${entry.itemCode}|${child}`) ?? 0) * entry.toMake;
+      }
+    }
+    return ordered.map((entry) => ({
+      ...entry, required: round(entry.required), net: round(entry.net), fgCodes: [...entry.fgCodes],
+      parents: [...entry.parents].map((code) => ({ code, qtyPerParent: edges.get(`${code}|${entry.itemCode}`) ?? 0 })),
+      children: [...entry.children].map((code) => ({ code, qtyPerParent: edges.get(`${entry.itemCode}|${code}`) ?? 0 })),
+    }));
+  }
+  // จัดกลุ่มผล netRequirements ตามแผนกผู้ผลิต เรียงต้นน้ำ → ปลายน้ำ (แผนกที่ไม่อยู่ในรายการต่อท้าย) ข้ามแผนกที่ไม่มีงาน
+  function groupByDept(entries) {
+    const depts = [...FLOW_DEPTS, ...new Set(entries.map((entry) => entry.dept).filter((dept) => !FLOW_DEPTS.includes(dept)))];
+    return depts.map((dept) => ({ dept, entries: entries.filter((entry) => entry.dept === dept) })).filter((group) => group.entries.length);
   }
 
   // รวมความต้องการต่อ (แผนกผู้ผลิต, ชิ้น) ของทั้งใบ → งานรายแผนก / รายการเบิก-สั่งซื้อ (ST)
@@ -402,9 +453,9 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, UOMS, PACKAGES, COLOR_SETS,
+    DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, toMake,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
     toCsv, fmtDate, fmtDateTime, fmtQty, toInputDate, fromInputDate, orderTypeOf,
   };
   if (isNode) module.exports = api;

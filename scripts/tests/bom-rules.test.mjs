@@ -194,6 +194,66 @@ test("explosion reproduces the BOMSHEET numbers of a real order line and aggrega
   assert.ok(!agg.some((entry) => entry.itemCode === "FG"), "the FG rows themselves are not requirements");
   assert.equal(rules.toMake(7.7419, 18), -10.2581);
   assert.equal(rules.toMake(10, undefined), 10);
+  assert.equal(lines.find((line) => line.itemCode === "PEL").qtyPerParent, 0.02 * 1.1, "quantity per parent (with scrap) travels with the line");
+  assert.equal(lines[0].qtyPerParent, 1);
+});
+
+test("net requirements apply the BOMSHEET column AK rule level by level: SE stock is converted into rods before RB stock is subtracted", () => {
+  // Megaform 25041, BOMSHEET แถว 16–19: MEGA-SL-01B(P)-Y × 1008 → SE บอล 68 มม. 1 ชิ้น/ชุด → RB-B0006-01 ตัดได้ 28 ชิ้น/เส้น (O = 1/28)
+  const items = new Map([
+    ["FG", { code: "FG", kind: "FG", name: "สินค้า", uom: "set", ownerDept: "PK" }],
+    ["SE", { code: "SE", kind: "SE", name: "บอล 68 มม.", uom: "pcs", ownerDept: "GR" }],
+    ["RB", { code: "RB", kind: "RB", name: "เส้นยาง", uom: "rod", ownerDept: "RB" }],
+    ["BOX", { code: "BOX", kind: "PURCHASED", name: "กล่อง", uom: "box", ownerDept: "ST" }],
+  ]);
+  const boms = new Map([
+    ["FG", { id: "B1", revision: 1, lines: [{ childCode: "SE", qty: 1 }, { childCode: "BOX", qty: 1 / 12 }] }],
+    ["SE", { id: "B2", revision: 1, lines: [{ childCode: "RB", qty: 1 / 28 }] }],
+  ]);
+  const opts = { itemOf: (code) => items.get(code) ?? null, approvedBomOf: (code) => boms.get(code) ?? null };
+  const explode = (qty) => rules.explode("FG", qty, opts).lines;
+  const byCode = (entries) => Object.fromEntries(entries.map((entry) => [entry.itemCode, entry]));
+  // แถว 16–17: สต๊อก SE 416 → GR ต้องตัด 592 → RB ต้องรีด 592/28 = 21.14 (ชีตแสดง 21.142857)
+  let net = byCode(rules.netRequirements(explode(1008), { SE: 416 }));
+  assert.equal(net.SE.required, 1008);
+  assert.equal(net.SE.stock, 416);
+  assert.equal(net.SE.toMake, 592);
+  assert.equal(net.RB.required.toFixed(4), "21.1429", "RB demand comes from the SE shortage, not the full SE requirement");
+  assert.equal(net.RB.stock, undefined, "not counted");
+  assert.equal(net.RB.toMake, 21.1429);
+  assert.equal(net.BOX.toMake, 84);
+  assert.equal(net.FG.dept, "PK");
+  assert.equal(net.FG.required, 1008);
+  assert.deepEqual(net.RB.parents, [{ code: "SE", qtyPerParent: 1 / 28 }]);
+  assert.deepEqual(net.SE.children.map((child) => child.code), ["RB"]);
+  // แถว 18–19: สต๊อก SE 976 สต๊อก RB 9 → ชีตให้ AK = 32/28 − 9 = −7.857 (ของเกิน) → ที่นี่ ต้องรีด 0 และของเกิน 7.857
+  net = byCode(rules.netRequirements(explode(1008), { SE: 976, RB: 9 }));
+  assert.equal(net.RB.required.toFixed(4), "1.1429");
+  assert.equal(net.RB.net.toFixed(4), "-7.8571");
+  assert.equal(net.RB.toMake, 0);
+  assert.equal(net.RB.surplus, 7.8571);
+  // สต๊อก SE เกินความต้องการ: ไม่ส่งค่าติดลบลงไปที่ RB (ต่างจาก Excel โดยตั้งใจ)
+  net = byCode(rules.netRequirements(explode(1008), { SE: 1200 }));
+  assert.equal(net.SE.toMake, 0);
+  assert.equal(net.SE.surplus, 192);
+  assert.equal(net.RB.required, 0);
+  assert.equal(net.RB.toMake, 0);
+  // ไม่นับเลย = ต้องผลิตเต็มจำนวน และสองสินค้าที่ใช้ SE เดียวกันรวมความต้องการก่อนหักคงคลังครั้งเดียว
+  net = byCode(rules.netRequirements([...explode(1008), ...explode(500).map((line) => ({ ...line, fgCode: "FG2" }))], { SE: 1000 }));
+  assert.equal(net.SE.required, 1508);
+  assert.equal(net.SE.toMake, 508);
+  assert.deepEqual(net.SE.fgCodes, ["FG", "FG2"]);
+  assert.equal(net.RB.required.toFixed(4), (508 / 28).toFixed(4));
+  assert.equal(net.FG.required, 1508, "the same FG code twice adds up (the order merges lines, this is a guard)");
+  // ค่าที่นับเป็นข้อความว่าง/null = ยังไม่นับ
+  net = byCode(rules.netRequirements(explode(10), { SE: "", RB: null }));
+  assert.equal(net.SE.stock, undefined);
+  assert.equal(net.RB.stock, undefined);
+  // จัดกลุ่มตามแผนก ต้นน้ำ → ปลายน้ำ ข้ามแผนกที่ไม่มีงาน
+  const groups = rules.groupByDept(rules.netRequirements(explode(1008), {}));
+  assert.deepEqual(groups.map((group) => group.dept), ["RB", "GR", "ST", "PK"]);
+  assert.deepEqual(groups.find((group) => group.dept === "PK").entries.map((entry) => entry.itemCode), ["FG"]);
+  assert.deepEqual(rules.FLOW_DEPTS, ["RB", "GR", "PT", "BG", "ST", "PK"]);
 });
 
 test("CSV output quotes commas and quotes, and formatting helpers handle empty values", () => {

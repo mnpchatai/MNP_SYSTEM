@@ -8,7 +8,7 @@
   const attr = (value) => esc(value ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
-  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", compounds: "🧪", import: "📥", orders: "📋", jobs: "🛠️", audit: "🕘" });
+  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", compounds: "🧪", import: "📥", orders: "📋", jobs: "🛠️", audit: "🕘" });
   pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${ICONS[id]}</span>` : "");
   const head = (ctx, title, desc = "", actionsHtml = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${ICONS[ctx.page] ? `<span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
 
@@ -309,11 +309,115 @@
       detail = ui.card(`${facts}
         <h3 class="bom-h3">ส่วนประกอบ${approved ? ` (Rev.${approved.revision} บันทึก ${esc(rules.fmtDate(approved.approvedAt))} โดย ${esc(approved.approvedBy)})` : ""}</h3>${treeHtml}
         <h3 class="bom-h3">ประวัติ revision</h3>${ui.table(["Rev", "สถานะ", "เนื้อหา", "การเปลี่ยนแปลง"], revRows, { emptyText: "ยังไม่มี revision" })}`,
-        { title: `${esc(selected.code)} <span class="muted">${esc(selected.name)}</span>`, actions: `${canEdit ? ui.openButton("แก้ข้อมูลชิ้นงาน", "itemEdit", { code: selected.code }, { className: "secondary" }) : ""}${editable ? ui.link(approved ? "แก้ BOM" : "สร้าง BOM", buildUrl(ctx, selected.code), "btn rf-btn") : ""}` });
+        { title: `${esc(selected.code)} <span class="muted">${esc(selected.name)}</span>`, actions: `${selected.kind === "FG" && approved ? ui.link("งานทุกแผนก", ctx.url("product", { code: selected.code }), "btn rf-btn secondary") : ""}${canEdit ? ui.openButton("แก้ข้อมูลชิ้นงาน", "itemEdit", { code: selected.code }, { className: "secondary" }) : ""}${editable ? ui.link(approved ? "แก้ BOM" : "สร้าง BOM", buildUrl(ctx, selected.code), "btn rf-btn") : ""}` });
     }
     const html = `${head(ctx, "ค้นหาชิ้นงาน / ประวัติ BOM", "ดูต้นไม้ที่ระเบิดแล้ว ใช้ที่ไหนบ้าง และประวัติ revision · การแก้ทำที่เมนู “สร้าง BOM”")}${tabs}
       <div class="bom-split">${listCard}${detail}</div>`;
     return { html };
+  };
+
+  // ---------- สินค้า 1 ตัว → งานทุกแผนก (ดูอย่างเดียว) ----------
+  // เลือก FG หนึ่งตัว + จำนวน → ระเบิด BOM แล้วจัดเป็นการ์ดต่อแผนกเรียงต้นน้ำ → ปลายน้ำ (RB → GR → PT → BG → ST → PK)
+  // แต่ละการ์ดบอกว่าแผนกนั้นต้องทำอะไร เท่าไร จากอะไร และส่งต่อให้ใคร แทนการอ่าน BOMSHEET แล้วกรองธง P/O ทีละสถานีในไฟล์ Excel
+  const DEPT_WORK = Object.freeze({ RB: "ต้องรีด", GR: "ต้องตัด/เจาะ", PT: "ต้องฉีด", BG: "ต้องเย็บ", ST: "ต้องเบิก/สั่งซื้อ", PK: "ต้องประกอบ/บรรจุ" });
+  const rubberSize = (rubber) => (rubber && (rubber.lengthMm || rubber.odMm) ? `${rubber.type ? `แบบ ${rubber.type} · ` : ""}สี ${rubber.color || "-"} · ยาว ${rubber.lengthMm || "-"} × รู ${rubber.holeMm ?? "-"} × วงนอก ${rubber.odMm || "-"} มม.` : "");
+  const cutText = (rubber) => (rubber && (rubber.cutLengthCm || rubber.pcsPerRoll) ? `ตัด ${rubber.cutLengthCm || "-"} ซม. · ${rubber.pcsPerRoll || "-"} ชิ้น/เส้น · ${rubber.sePerGr || 1} SE ต่อ GR` : "");
+  const rbKg = (item, qty) => (!item ? 0 : item.uom === "kg" ? qty : item.rubber?.kgPerRoll ? qty * Number(item.rubber.kgPerRoll) : item.weightG ? qty * Number(item.weightG) / 1000 : 0);
+  pages.product = (ctx) => {
+    const { data, ui, rules, user, params } = ctx;
+    const canEdit = ctx.helpers.canPlan(user);
+    const parsed = data.items.filter((item) => item.kind === "FG").map((item) => ({ item, ...rules.parseFgCode(item.code) }));
+    const bases = [...new Set(parsed.map((entry) => entry.base))].sort();
+    const base = String(params.get("base") ?? "").trim();
+    const pkg = String(params.get("pkg") ?? "").trim().toUpperCase();
+    const cs = String(params.get("cs") ?? "").trim().toUpperCase();
+    const code = params.get("code") ? rules.canonicalCode(params.get("code")) : base ? rules.buildFgCode(base, pkg, cs) : "";
+    const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
+    const current = code ? rules.parseFgCode(code) : { base, pkg, colorSet: cs };
+    const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((value) => ({ value, label: `(${value})` }));
+    const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((value) => ({ value, label: value }));
+    const picker = ui.card(`<form class="bom-pick" data-bom-pick>
+        <div class="rf-grid rf-g4">
+          ${ui.field("ฐานรหัสสินค้า *", ui.input("base", { value: current.base, list: "bom-product-base-list", required: true, placeholder: "เช่น MEGA-ST-01", extra: 'autocapitalize="characters"' }))}
+          ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { value: current.pkg, placeholder: "ไม่ระบุ" }))}
+          ${ui.field("ชุดสี", ui.select("cs", colorOptions, { value: current.colorSet, placeholder: "ไม่ระบุ" }))}
+          ${ui.field("จำนวนสั่ง", ui.input("qty", { type: "number", step: "any", min: "0.0001", value: String(qty) }))}
+        </div>
+        <datalist id="bom-product-base-list">${bases.map((value) => `<option value="${attr(value)}">${esc(parsed.find((entry) => entry.base === value).item.name.slice(0, 50))}</option>`).join("")}</datalist>
+        <div class="rf-row"><button class="btn rf-btn" type="submit">แสดงงานทุกแผนก</button></div>
+      </form>`, { title: "เลือกสินค้า (ฐานรหัส + แพ็กเกจ + ชุดสี) และจำนวน" });
+    const bindPick = (rootNode) => {
+      rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        location.hash = ctx.url("product", { base: String(form.get("base") ?? "").trim(), pkg: String(form.get("pkg") ?? ""), cs: String(form.get("cs") ?? ""), qty: String(form.get("qty") ?? "") });
+      });
+    };
+    const pageHead = head(ctx, "สินค้า 1 ตัว → งานทุกแผนก", "เลือกสินค้าสำเร็จรูปแล้วดูว่าแต่ละแผนกต้องทำอะไร เท่าไร จากอะไร เรียงจากต้นน้ำ RB → GR → PT → BG → คลัง → PK (คิดจาก BOM ปัจจุบัน ไม่หักคงคลัง · ยอดหักคงคลังดูในใบสั่งผลิต)");
+    if (!code) {
+      const withBom = parsed.filter((entry) => approvedBomOf(ctx, entry.item.code)).sort((a, b) => a.item.code.localeCompare(b.item.code));
+      const html = `${pageHead}${picker}
+        ${ui.card(`${ui.table(["สินค้า", "BOM", ""], withBom.slice(0, 100).map((entry) => `<tr><td>${ui.mono(entry.item.code)}<div class="small muted">${esc(entry.item.name)}</div></td><td class="nowrap">Rev.${esc(String(approvedBomOf(ctx, entry.item.code).revision))}</td><td>${ui.link("ดูงานทุกแผนก", ctx.url("product", { code: entry.item.code }), "btn rf-btn secondary small")}</td></tr>`), { emptyText: "ยังไม่มีสินค้าที่มี BOM" })}${withBom.length > 100 ? `<p class="small muted">แสดง 100 จาก ${withBom.length} รายการ ใช้ช่องเลือกข้างบน</p>` : ""}`, { title: "สินค้าที่มี BOM", flush: true })}`;
+      return { html, bind: bindPick };
+    }
+    const item = itemOf(ctx, code);
+    if (!item) {
+      const html = `${pageHead}${picker}${ui.callout("warn", `ไม่พบสินค้า <strong>${esc(code)}</strong> ใน item master${canEdit ? ` · ${ui.link("สร้าง BOM ของสินค้านี้", buildUrl(ctx, code))}` : ""}`)}`;
+      return { html, bind: bindPick };
+    }
+    const { lines, missing } = rules.explode(item.code, qty, { itemOf: (c) => itemOf(ctx, c), approvedBomOf: (c) => approvedBomOf(ctx, c) });
+    const net = rules.netRequirements(lines);
+    const byCode = new Map(net.map((entry) => [entry.itemCode, entry]));
+    const perFg = new Map();
+    for (const line of lines) perFg.set(line.itemCode, (perFg.get(line.itemCode) ?? 0) + line.qtyPerFg);
+    const approved = approvedBomOf(ctx, item.code);
+    const noBom = [...new Set(lines.filter((line) => line.noBom).map((line) => line.itemCode))];
+    const maxLevel = Math.max(...lines.map((line) => line.level));
+    const facts = ui.kv([
+      ["สินค้า", `${ui.mono(item.code)} ${esc(item.name)}`],
+      ["BOM", approved ? esc(`Rev.${approved.revision} บันทึก ${rules.fmtDate(approved.approvedAt)} โดย ${approved.approvedBy}`) : ui.badge("warn", "ยังไม่มี BOM")],
+      ["จำนวนที่คิด", esc(`${rules.fmtQty(qty)} ${uomText(ctx, item.uom)}`)],
+      approved ? ["ส่วนประกอบ", esc(`${net.length - 1} รหัส · ${lines.length - 1} บรรทัด · ลึกสุด ${maxLevel} ชั้น · ${net.filter((entry) => entry.kind === "RB").length} เส้นยาง`)] : null,
+    ]);
+    const warnings = [
+      missing.length ? ui.callout("warn", `ระเบิดไม่ครบ ไม่พบชิ้นงาน: ${esc(missing.join(", "))}`) : "",
+      noBom.length ? ui.callout("warn", `ชิ้นที่ต้องผลิตแต่ยังไม่มี BOM (แผนกนั้นยังไม่รู้ว่าทำจากอะไร): ${noBom.map((c) => ui.link(c, canEdit ? buildUrl(ctx, c) : ctx.url("items", { sel: c }), "rf-mono")).join(", ")}`) : "",
+    ].join("");
+    const codeCell = (entry) => `${ui.link(entry.itemCode, ctx.url("items", { sel: entry.itemCode }), "rf-mono")}<div class="small muted">${esc(entry.name)}</div>`;
+    const refList = (refs, detail = () => "") => (refs.length ? refs.map((ref) => `<div>${ui.link(ref.code, ctx.url("items", { sel: ref.code }), "rf-mono")}${detail(ref)}</div>`).join("") : '<span class="muted">—</span>');
+    const usedBy = (entry) => refList(entry.parents, (ref) => (byCode.get(ref.code) ? ` ${deptBadge(ctx, byCode.get(ref.code).dept)}` : ""));
+    const madeFrom = (entry) => refList(entry.children, (ref) => `<span class="small muted"> × ${esc(rules.fmtQty(ref.qtyPerParent))} ${esc(uomText(ctx, byCode.get(ref.code)?.uom))}</span>`);
+    const qtyCells = (entry) => `<td class="right rf-mono">${esc(rules.fmtQty(perFg.get(entry.itemCode) ?? 0))}</td><td class="right rf-mono"><strong>${esc(rules.fmtQty(entry.required))}</strong></td><td class="nowrap">${esc(uomText(ctx, entry.uom))}</td>`;
+    const QTY_HEAD = (work) => [{ label: "ใช้ : 1 FG", className: "right" }, { label: work, className: "right" }, "หน่วย"];
+    const TABLES = {
+      RB: { head: ["เส้นยาง", "สูตรยาง", "ขนาด", "ตัดเป็น (GR)", ...QTY_HEAD(DEPT_WORK.RB), { label: "กก. โดยประมาณ", className: "right" }], row: (entry) => {
+        const rb = itemOf(ctx, entry.itemCode);
+        const compound = rb?.rubber?.compound ? data.compounds.find((c) => c.code === rb.rubber.compound) : null;
+        const kg = rbKg(rb, entry.required);
+        return `<td>${codeCell(entry)}</td><td>${rb?.rubber?.compound ? `${ui.link(rb.rubber.compound, ctx.url("compounds", { q: rb.rubber.compound }), "rf-mono")}<div class="small">${compound?.recipeId ? ui.badge("good", "ผูก RubberFlow แล้ว") : ui.badge("warn", "ยังไม่ผูกสูตร")}</div>` : '<span class="muted">—</span>'}</td><td class="small bom-size">${esc(rubberSize(rb?.rubber)) || '<span class="muted">—</span>'}</td><td>${refList(entry.parents)}<div class="small muted">${esc(cutText(rb?.rubber))}</div></td>${qtyCells(entry)}<td class="right rf-mono">${kg ? esc(rules.fmtQty(kg, 2)) : '<span class="muted">—</span>'}</td>`;
+      } },
+      GR: { head: ["ชิ้นยาง (SE)", "ตัดจากเส้นยาง", "การตัด", "ใช้ใน", ...QTY_HEAD(DEPT_WORK.GR)], row: (entry) => {
+        const cuts = entry.children.map((ref) => cutText(itemOf(ctx, ref.code)?.rubber)).filter(Boolean);
+        return `<td>${codeCell(entry)}</td><td>${madeFrom(entry)}</td><td class="small">${cuts.length ? cuts.map((text) => `<div>${esc(text)}</div>`).join("") : '<span class="muted">—</span>'}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}`;
+      } },
+      PT: { head: ["ชิ้นพลาสติก", "วัสดุ (ต่อ 1 ชิ้น)", "ใช้ใน", ...QTY_HEAD(DEPT_WORK.PT), { label: "น้ำหนัก/ชิ้น (ก.)", className: "right" }], row: (entry) => `<td>${codeCell(entry)}</td><td>${madeFrom(entry)}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}<td class="right rf-mono">${itemOf(ctx, entry.itemCode)?.weightG ? esc(rules.fmtQty(itemOf(ctx, entry.itemCode).weightG)) : '<span class="muted">—</span>'}</td>` },
+      BG: { head: ["ชิ้นงานเย็บ", "วัสดุ (ต่อ 1 ชิ้น)", "ใช้ใน", ...QTY_HEAD(DEPT_WORK.BG)], row: (entry) => `<td>${codeCell(entry)}</td><td>${madeFrom(entry)}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}` },
+      ST: { head: ["ของซื้อ / วัตถุดิบ", "เบิกให้", ...QTY_HEAD(DEPT_WORK.ST)], row: (entry) => `<td>${codeCell(entry)}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}` },
+      PK: { head: ["ชิ้นงาน", "ประกอบจาก (ชั้นแรก) / ใช้ใน", ...QTY_HEAD(DEPT_WORK.PK)], row: (entry) => `<td>${codeCell(entry)}${entry.kind === "FG" ? ` ${ui.badge("info", "สินค้าสำเร็จรูป")}` : ""}</td><td>${entry.children.length ? madeFrom(entry) : usedBy(entry)}</td>${qtyCells(entry)}` },
+    };
+    const generic = { head: ["ชิ้นงาน", "ใช้ใน", ...QTY_HEAD("ต้องการ")], row: (entry) => `<td>${codeCell(entry)}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}` };
+    const cards = approved ? rules.groupByDept(net).map((group) => {
+      const spec = TABLES[group.dept] ?? generic;
+      const rows = group.entries.sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((entry) => `<tr>${spec.row(entry)}</tr>`);
+      return ui.card(ui.table(spec.head, rows), { title: `${esc(group.dept)} <span class="muted">${esc(rules.DEPT_LABEL[group.dept]?.replace(/^\w+ · /, "") ?? "")} · ${esc(String(group.entries.length))} รายการ</span>`, flush: true, className: "bom-dept-card" });
+    }).join("") : ui.callout("info", `สินค้านี้ยังไม่มี BOM จึงยังไม่มีงานของแผนกใด${canEdit ? ` · ${ui.link("สร้าง BOM", buildUrl(ctx, item.code))}` : ""}`);
+    const actions = [
+      canEdit ? ui.link(approved ? "แก้ BOM" : "สร้าง BOM", buildUrl(ctx, item.code), "btn rf-btn secondary") : "",
+      canEdit && approved ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }, { className: "" }) : "",
+      ui.link("ประวัติ revision", ctx.url("items", { sel: item.code }), "btn rf-btn secondary"),
+    ].join("");
+    const html = `${pageHead}${picker}${ui.card(`${facts}${warnings}`, { title: `${esc(item.code)} × ${esc(rules.fmtQty(qty))}`, actions })}<div class="bom-dept-grid">${cards}</div>`;
+    return { html, bind: bindPick };
   };
 
   // dialog: เพิ่ม/แก้ชิ้นงานเดี่ยว (ชิ้นที่ไม่อยู่ในต้นไม้ไหน เช่น ของซื้อที่เตรียมไว้ก่อน)
@@ -486,7 +590,9 @@
         order.note ? ["หมายเหตุ", esc(order.note)] : null,
         order.cancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
       ]);
-      const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${canPlan ? ui.link("แก้ BOM", buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${draft && canPlan ? ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small" }) : ""}</td></tr>`);
+      const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canPlan ? ui.link("แก้ BOM", buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${draft && canPlan ? ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small" }) : ""}</td></tr>`);
+      // ความต้องการสุทธิต่อรหัส (กฎ AK ของ BOMSHEET ไล่ชั้น): ใช้ร่วมกันทั้งแท็บใบคำนวณ แท็บรวม และ CSV
+      const net = new Map(rules.netRequirements(order.explosion ?? [], order.stockCounts).map((entry) => [entry.itemCode, entry]));
       const buttons = [];
       if (draft && canPlan) {
         buttons.push(ui.openButton("เพิ่มสินค้า", "orderItemAdd", { orderId: order.id }, { className: "secondary" }));
@@ -501,15 +607,16 @@
       if (!order.explosion?.length) tabBody = ui.empty(draft ? "ยังไม่ได้ระเบิด BOM — เพิ่มสินค้าแล้วกด “ระเบิด BOM”" : "ไม่มีข้อมูลการระเบิด");
       else if (tab === "bom") {
         const bomRows = order.explosion.map((line) => {
-          const stock = order.stockCounts[line.itemCode];
-          const make = rules.toMake(line.required, stock);
-          return `<tr${line.level === 0 ? ' class="bom-fg-row"' : ""}><td>${levelCell(line.level, ui.link(line.itemCode, ctx.url("items", { sel: line.itemCode }), "rf-mono"))}</td><td>${esc(line.name)}${line.noBom ? ` ${ui.badge("warn", "ไม่มี BOM")}` : ""}</td><td>${deptBadge(ctx, line.producerDept)}</td><td class="right rf-mono">${line.level ? esc(rules.fmtQty(line.qtyPerFg)) : ""}</td><td class="right rf-mono">${esc(rules.fmtQty(line.required))}</td><td>${esc(uomText(ctx, line.uom))}</td><td class="right rf-mono">${line.level ? `${stock === undefined ? '<span class="muted">—</span>' : esc(rules.fmtQty(stock))}${canCount ? ` ${ui.openButton("นับ", "stockCount", { orderId: order.id, itemCode: line.itemCode }, { className: "secondary small", ariaLabel: `นับคงคลัง ${line.itemCode}` })}` : ""}` : ""}</td><td class="right rf-mono${line.level && stock !== undefined && make < 0 ? " bom-surplus" : ""}">${line.level ? esc(stock === undefined ? rules.fmtQty(line.required) : rules.fmtQty(make)) : ""}</td><td class="small muted">${line.revision ? `Rev.${line.revision}` : ""}</td></tr>`;
+          const entry = net.get(line.itemCode);
+          const stock = entry?.stock;
+          return `<tr${line.level === 0 ? ' class="bom-fg-row"' : ""}><td>${levelCell(line.level, ui.link(line.itemCode, ctx.url("items", { sel: line.itemCode }), "rf-mono"))}</td><td>${esc(line.name)}${line.noBom ? ` ${ui.badge("warn", "ไม่มี BOM")}` : ""}</td><td>${deptBadge(ctx, line.producerDept)}</td><td class="right rf-mono">${line.level ? esc(rules.fmtQty(line.qtyPerFg)) : ""}</td><td class="right rf-mono">${esc(rules.fmtQty(line.required))}</td><td>${esc(uomText(ctx, line.uom))}</td><td class="right rf-mono">${line.level ? `${stock === undefined ? '<span class="muted">—</span>' : esc(rules.fmtQty(stock))}${canCount ? ` ${ui.openButton("นับ", "stockCount", { orderId: order.id, itemCode: line.itemCode }, { className: "secondary small", ariaLabel: `นับคงคลัง ${line.itemCode}` })}` : ""}` : ""}</td><td class="right rf-mono${line.level && entry && entry.net < 0 ? " bom-surplus" : ""}">${line.level && entry ? esc(rules.fmtQty(entry.net)) : ""}</td><td class="small muted">${line.revision ? `Rev.${line.revision}` : ""}</td></tr>`;
         });
-        tabBody = ui.table(["ชั้น / รหัส", "ชื่อวัตถุดิบ", "แผนกผลิต", { label: "ใช้ : 1 FG", className: "right" }, { label: "ต้องเบิก", className: "right" }, "หน่วย", { label: "คงคลัง", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ", className: "right" }, "BOM"], bomRows);
+        tabBody = `${ui.table(["ชั้น / รหัส", "ชื่อวัตถุดิบ", "แผนกผลิต", { label: "ใช้ : 1 FG", className: "right" }, { label: "ต้องเบิก", className: "right" }, "หน่วย", { label: "คงคลัง", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ", className: "right" }, "BOM"], bomRows)}
+          <p class="small muted">ต้องผลิต/สั่งซื้อ คิดต่อรหัสรวมทุกบรรทัดในใบ และหักคงคลังของชั้นบนก่อน (SE ที่มีในคลังลดเส้น RB ที่ต้องรีด เหมือนคอลัมน์ AK ของ BOMSHEET) ค่าติดลบ = ของเกิน</p>`;
       } else if (tab === "req") {
-        const reqs = rules.aggregateRequirements(order.explosion).sort((a, b) => a.dept.localeCompare(b.dept) || a.itemCode.localeCompare(b.itemCode));
+        const reqs = [...net.values()].filter((entry) => entry.kind !== "FG").sort((a, b) => a.dept.localeCompare(b.dept) || a.itemCode.localeCompare(b.itemCode));
         tabBody = ui.table(["แผนก", "รหัส", "ชื่อ", { label: "ต้องการรวม", className: "right" }, "หน่วย", { label: "คงคลัง", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ", className: "right" }, "ใช้ในสินค้า"],
-          reqs.map((entry) => { const stock = order.stockCounts[entry.itemCode]; return `<tr><td>${deptBadge(ctx, entry.dept)}</td><td>${ui.mono(entry.itemCode)}</td><td>${esc(entry.name)}</td><td class="right rf-mono">${esc(rules.fmtQty(entry.required))}</td><td>${esc(uomText(ctx, entry.uom))}</td><td class="right rf-mono">${stock === undefined ? '<span class="muted">—</span>' : esc(rules.fmtQty(stock))}</td><td class="right rf-mono">${esc(rules.fmtQty(rules.toMake(entry.required, stock)))}</td><td class="small muted">${esc(entry.fgCodes.join(", "))}</td></tr>`; }));
+          reqs.map((entry) => `<tr><td>${deptBadge(ctx, entry.dept)}</td><td>${ui.mono(entry.itemCode)}</td><td>${esc(entry.name)}</td><td class="right rf-mono">${esc(rules.fmtQty(entry.required))}</td><td>${esc(uomText(ctx, entry.uom))}</td><td class="right rf-mono">${entry.stock === undefined ? '<span class="muted">—</span>' : esc(rules.fmtQty(entry.stock))}</td><td class="right rf-mono">${esc(rules.fmtQty(entry.toMake))}${entry.surplus ? `<div class="small bom-surplus">เกิน ${esc(rules.fmtQty(entry.surplus))}</div>` : ""}</td><td class="small muted">${esc(entry.fgCodes.join(", "))}</td></tr>`));
       } else {
         const jobs = data.jobs.filter((job) => job.orderId === order.id).sort((a, b) => a.dueAt - b.dueAt);
         tabBody = ui.table(["แผนก", "งาน", "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ"], jobs.map((job) => `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${deptBadge(ctx, job.dept)}</td><td>${ui.link(job.id, ctx.url("jobs", { dept: job.dept, q: job.id }), "rf-mono")}</td><td>${ui.mono(job.itemCode)}<div class="small muted">${esc(job.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(job.externalRef.woId, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}</div>` : ""}</td></tr>`), { emptyText: "ยังไม่มีงาน (ปล่อยผลิตก่อน)" });
@@ -533,16 +640,20 @@
     const { rules } = ctx;
     const rows = [["ชื่อลูกค้า", order.customer, "เลขที่ PI", order.id, "ประเทศ", order.country, "วันที่สั่งผลิต", rules.fmtDate(order.orderedAt), "ส่งมอบคลัง", rules.fmtDate(order.whDue)],
       ["ITEM สินค้า", "จำนวนสั่ง FG", "ชั้น", "รหัส", "ชื่อวัตถุดิบในการผลิต", "แผนกผู้ผลิต", "จำนวนใช้ : 1 FG", "จำนวนที่ต้องเบิก", "หน่วย", "จำนวนที่มีในคลัง", "จำนวนที่ต้องผลิตหรือสั่งซื้อ", "BOM Rev"]];
+    const net = new Map(rules.netRequirements(order.explosion, order.stockCounts).map((entry) => [entry.itemCode, entry]));
     for (const line of order.explosion) {
-      const stock = order.stockCounts[line.itemCode];
-      rows.push([line.fgCode, line.fgQty, line.level, line.itemCode, line.name, line.producerDept, line.level ? line.qtyPerFg : "", line.required, rules.uomLabel(line.uom), stock ?? "", line.level ? rules.toMake(line.required, stock) : "", line.revision ?? ""]);
+      const entry = net.get(line.itemCode);
+      rows.push([line.fgCode, line.fgQty, line.level, line.itemCode, line.name, line.producerDept, line.level ? line.qtyPerFg : "", line.required, rules.uomLabel(line.uom), entry?.stock ?? "", line.level && entry ? entry.net : "", line.revision ?? ""]);
     }
     return rules.toCsv(rows);
   }
   function requirementsCsv(ctx, order) {
     const { rules } = ctx;
-    const rows = [["เลขที่ PI", order.id, "ลูกค้า", order.customer], ["แผนกผู้ผลิต", "รหัส", "ชื่อ", "ต้องการรวม", "หน่วย", "คงคลัง", "ต้องผลิต/สั่งซื้อ", "ใช้ในสินค้า"]];
-    for (const entry of rules.aggregateRequirements(order.explosion)) rows.push([entry.dept, entry.itemCode, entry.name, entry.required, rules.uomLabel(entry.uom), order.stockCounts[entry.itemCode] ?? "", rules.toMake(entry.required, order.stockCounts[entry.itemCode]), entry.fgCodes.join(" ")]);
+    const rows = [["เลขที่ PI", order.id, "ลูกค้า", order.customer], ["แผนกผู้ผลิต", "รหัส", "ชื่อ", "ต้องการรวม", "หน่วย", "คงคลัง", "ต้องผลิต/สั่งซื้อ", "ของเกิน", "ใช้ในสินค้า"]];
+    for (const entry of rules.netRequirements(order.explosion, order.stockCounts)) {
+      if (entry.kind === "FG") continue;
+      rows.push([entry.dept, entry.itemCode, entry.name, entry.required, rules.uomLabel(entry.uom), entry.stock ?? "", entry.toMake, entry.surplus || "", entry.fgCodes.join(" ")]);
+    }
     return rules.toCsv(rows);
   }
   function downloadCsv(name, csv) {
@@ -645,7 +756,7 @@
       if (canWork && job.status !== "done") buttons.push(ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
       if (canWork && job.status !== "done") buttons.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
       if (job.dept === "RB" && job.status !== "done" && (canWork || user.role === "planner") && !job.externalRef) buttons.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
-      return `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${ui.mono(job.id)}<div class="small muted">${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId, tab: "jobs" }))} · ${esc(order?.customer ?? "")}</div></td>${dept === "ALL" ? `<td>${deptBadge(ctx, job.dept)}</td>` : ""}<td>${ui.link(job.itemCode, ctx.url("items", { sel: job.itemCode }), "rf-mono")}<div class="small muted">${esc(job.name)}${item?.rubber?.compound ? ` · สูตร ${esc(item.rubber.compound)}` : ""}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}${late(ctx, job) ? `<div class="small">${ui.badge("bad", "เลยกำหนด")}</div>` : ""}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}${job.externalRef.kg ? `<span class="muted"> · ${esc(rules.fmtQty(job.externalRef.kg, 2))} kg</span>` : ""}</div>` : ""}</td><td class="nowrap">${buttons.join(" ")}</td></tr>`;
+      return `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${ui.mono(job.id)}<div class="small muted">${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId, tab: "jobs" }))} · ${esc(order?.customer ?? "")}</div></td>${dept === "ALL" ? `<td>${deptBadge(ctx, job.dept)}</td>` : ""}<td>${ui.link(job.itemCode, ctx.url("items", { sel: job.itemCode }), "rf-mono")}<div class="small muted">${esc(job.name)}${item?.rubber?.compound ? ` · สูตร ${esc(item.rubber.compound)}` : ""}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}${job.qtyRequired && job.qtyRequired !== job.qtyPlanned ? `<div class="small muted" title="ความต้องการของใบก่อนหักคงคลังที่นับ">${esc(`จาก ${rules.fmtQty(job.qtyRequired)}${job.stockCounted !== null && job.stockCounted !== undefined ? ` · คลัง ${rules.fmtQty(job.stockCounted)}` : ""}`)}</div>` : ""}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}${late(ctx, job) ? `<div class="small">${ui.badge("bad", "เลยกำหนด")}</div>` : ""}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}${job.externalRef.kg ? `<span class="muted"> · ${esc(rules.fmtQty(job.externalRef.kg, 2))} kg</span>` : ""}</div>` : ""}</td><td class="nowrap">${buttons.join(" ")}</td></tr>`;
     });
     const headCells = ["งาน / ใบ PI", ...(dept === "ALL" ? ["แผนก"] : []), "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ", ""];
     const html = `${head(ctx, "งานของแผนก", "งานเกิดจากการปล่อยใบสั่งผลิต: หนึ่งงานต่อ แผนก × ชิ้นงาน รวมทุกสินค้าในใบ · งาน RB ส่งต่อเป็นใบสั่งผลิต (WO) ใน RubberFlow ได้")}${tabs}${filters}

@@ -2362,6 +2362,10 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
 /* สร้าง BOM หน้าเดียว: ตารางต้นไม้ที่แก้ได้ทุกชั้น */
 [data-rf-mod="bom-build"] { --rf-mod: #1b8f4e; }
 [data-rf-mod="bom-items"] { --rf-mod: #4f52c9; }
+[data-rf-mod="bom-product"] { --rf-mod: #7b1fa2; }
+.bom-dept-grid { display: grid; gap: 12px; margin-top: 12px; }
+.bom-dept-card .rf-card-head h3 { color: var(--rf-mod-ink); }
+.bom-dept-card .bom-size { min-width: 230px; }
 .bom-page .is-hidden { display: none !important; }
 .bom-tree-table th, .bom-tree-table td { padding: 5px 6px; vertical-align: top; }
 .bom-tree-table .rf-input, .bom-tree-table .rf-select { min-height: 32px; padding: 4px 6px; font-size: 13px; }

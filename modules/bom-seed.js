@@ -106,14 +106,15 @@
     A.addOrderItem(d, { orderId: pi1, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, at(now - 20 * DAY + 600000, "planner"));
     A.addOrderItem(d, { orderId: pi1, fgCode: "DEMO-HL-24(B)-A", qty: 40 }, at(now - 20 * DAY + 900000, "planner"));
     A.explodeOrder(d, { orderId: pi1 }, at(now - 19 * DAY, "planner"));
-    A.setStockCount(d, { orderId: pi1, itemCode: "RB-DM02-02-BK01-225-3-20", qty: 18 }, at(now - 18 * DAY, "st"));
-    A.setStockCount(d, { orderId: pi1, itemCode: "PT-00320", qty: 24 }, at(now - 18 * DAY + 60000, "st"));
+    // คงคลังที่นับลดงาน (กฎ AK ของ BOMSHEET): เส้นรัดผมมี 3 จาก 17.14 ที่ต้องใช้ → งาน RB เหลือ 14.14 · แกน PT มี 10 จาก 24 → งาน PT เหลือ 14
+    A.setStockCount(d, { orderId: pi1, itemCode: "RB-DM02-02-BK01-225-3-20", qty: 3 }, at(now - 18 * DAY, "st"));
+    A.setStockCount(d, { orderId: pi1, itemCode: "PT-00320", qty: 10 }, at(now - 18 * DAY + 60000, "st"));
     A.setStockCount(d, { orderId: pi1, itemCode: "P-BOX-01", qty: 10 }, at(now - 18 * DAY + 120000, "st"));
     A.releaseOrder(d, { orderId: pi1 }, at(now - 17 * DAY, "planner"));
     const job = (code) => d.jobs.find((entry) => entry.orderId === pi1 && entry.itemCode === code);
     A.reportJob(d, { jobId: job("RB-DM01-02-OR01-202-18-70").id, qtyDone: 5, note: "รอบรีดที่ 1" }, at(now - 10 * DAY, "rb"));
     A.reportJob(d, { jobId: job("RB-DM01-01-OR01-200-0-72").id, qtyDone: 4.8 }, at(now - 9 * DAY, "rb"));
-    A.reportJob(d, { jobId: job("PT-00320").id, qtyDone: 24 }, at(now - 8 * DAY, "pt"));
+    A.reportJob(d, { jobId: job("PT-00320").id, qtyDone: 14 }, at(now - 8 * DAY, "pt"));
     A.reportJob(d, { jobId: job("SE-TP01-BK01-140-3-20").id, qtyDone: 120, qtyReject: 4, note: "ครึ่งแรก" }, at(now - 5 * DAY, "gr"));
     A.setJobStatus(d, { jobId: job("BG-0092").id, status: "hold" }, at(now - 4 * DAY, "bg"));
 

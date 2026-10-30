@@ -12,6 +12,7 @@
     { id: "dashboard", label: "ภาพรวม BOM", group: "ภาพรวม" },
     { id: "build", label: "สร้าง BOM", group: "BOM" },
     { id: "items", label: "ค้นหาชิ้นงาน / ประวัติ BOM", group: "BOM" },
+    { id: "product", label: "สินค้า 1 ตัว → งานทุกแผนก", group: "BOM" },
     { id: "compounds", label: "สูตรยาง ↔ RubberFlow", group: "BOM" },
     { id: "import", label: "นำเข้าจาก Excel", group: "BOM" },
     { id: "orders", label: "ใบสั่งผลิต (PI)", group: "ผลิต" },
@@ -26,12 +27,12 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการฝ่ายโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "compounds", "import", "orders", "jobs"]) },
-    rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "compounds", "jobs", "orders"]) },
-    gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "jobs", "orders"]) },
-    pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "jobs", "orders"]) },
-    bg: { label: "หัวหน้าแผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "jobs", "orders"]) },
-    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["dashboard", "items", "orders", "jobs"]) },
+    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "product", "compounds", "import", "orders", "jobs"]) },
+    rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "compounds", "jobs", "orders"]) },
+    gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "jobs", "orders"]) },
+    pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "jobs", "orders"]) },
+    bg: { label: "หัวหน้าแผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "jobs", "orders"]) },
+    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["dashboard", "items", "product", "orders", "jobs"]) },
   });
   const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && ROLES[user.role].modules.includes(moduleId);
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");

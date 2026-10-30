@@ -372,19 +372,23 @@
     const R = rules();
     const noBom = order.explosion.filter((line) => line.noBom).map((line) => line.itemCode);
     if (noBom.length) fail(`ชิ้นที่ต้องผลิตแต่ยังไม่มี BOM: ${[...new Set(noBom)].join(", ")}`);
-    const requirements = R.aggregateRequirements(order.explosion);
-    for (const entry of requirements) {
-      if (!R.MANUFACTURED.includes(entry.kind)) continue;
-      d.jobs.push({ id: nextId(d, "JOB", ctx.now), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: Math.round(entry.required * 1e4) / 1e4, qtyDone: 0, qtyReject: 0, dueAt: order.due[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
+    // ปริมาณงาน = ความต้องการสุทธิหลังหักคงคลังที่นับ ไล่ชั้นแบบคอลัมน์ AK ของ BOMSHEET (SE ที่มีในคลังลดเส้น RB ที่ต้องรีด)
+    // งาน PK ของตัว FG ใช้จำนวนสั่งเสมอ (ใบตรวจสอบคงคลังมีแถว FG แต่ของสำเร็จรูปในคลังไม่ลดงานบรรจุของใบนี้)
+    const net = R.netRequirements(order.explosion, order.stockCounts);
+    let covered = 0;
+    for (const entry of net) {
+      if (!R.MANUFACTURED.includes(entry.kind) || entry.kind === "FG") continue;
+      if (entry.toMake <= 0) { covered += 1; continue; }
+      d.jobs.push({ id: nextId(d, "JOB", ctx.now), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: entry.toMake, qtyRequired: entry.required, stockCounted: entry.stock ?? null, qtyDone: 0, qtyReject: 0, dueAt: order.due[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
     }
     for (const item of order.items) {
       const fg = itemOf(d, item.fgCode);
-      d.jobs.push({ id: nextId(d, "JOB", ctx.now), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: item.qty, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
+      d.jobs.push({ id: nextId(d, "JOB", ctx.now), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: item.qty, qtyRequired: item.qty, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
     }
     order.status = "released";
     order.releasedAt = ctx.now;
     order.releasedBy = user.name;
-    audit(d, ctx, "ปล่อยผลิต", `${order.id} สร้างงาน ${d.jobs.filter((job) => job.orderId === order.id).length} รายการ`);
+    audit(d, ctx, "ปล่อยผลิต", `${order.id} สร้างงาน ${d.jobs.filter((job) => job.orderId === order.id).length} รายการ${covered ? ` · ${covered} ชิ้นมีคงคลังพอ ไม่สร้างงาน` : ""}`);
     return order.id;
   }
 

@@ -37,7 +37,12 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.ok(jobs.every((job) => rules.MANUFACTURED.includes(job.kind)), "purchased items are not jobs");
   const rb = jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70");
   assert.equal(rb.qtyPlanned.toFixed(2), "7.74", "80 sets × 3 SE / 31 pieces per rod — the BOMSHEET number");
-  assert.equal(jobs.find((job) => job.itemCode === "PT-00320").status, "done");
+  assert.equal(rb.qtyRequired, rb.qtyPlanned, "nothing counted → plan = gross need");
+  assert.equal(rb.stockCounted, null);
+  const pt = jobs.find((job) => job.itemCode === "PT-00320");
+  assert.equal(pt.status, "done");
+  assert.deepEqual([pt.qtyRequired, pt.stockCounted, pt.qtyPlanned], [24, 10, 14], "the counted stock reduces the planned quantity (BOMSHEET column AK)");
+  assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyPlanned.toFixed(2), "14.14", "17.14 rods needed across both products, 3 counted");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").status, "hold");
   assert.ok(a.audit.length > 30 && a.audit.every((entry) => entry.user && entry.action));
 });
@@ -230,11 +235,30 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70").dueAt, day(3), "department due date from the order header");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").dueAt, day(10), "no BG date → warehouse due date");
   assert.ok(!jobs.some((job) => job.kind === "PURCHASED"));
+  assert.equal(jobs.find((job) => job.kind === "FG" && job.itemCode === "DEMO-TP-01(P)-Y").qtyPlanned, 80, "PK jobs carry the ordered quantity");
   rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 1 }, ctx("planner")), /ร่าง/);
   rejects(() => A.explodeOrder(d, { orderId: id }, ctx("planner")), /ร่าง/);
   // แก้ BOM หลังปล่อยผลิต: ใบที่ปล่อยแล้วไม่เปลี่ยน
   A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "RB-DM01-02-OR01-202-18-70", qty: 0.5 }] }, ctx("planner"));
   assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 3);
+  // คงคลังที่นับลดงานแบบไล่ชั้น: SE ในคลังลดเส้น RB ที่ต้องรีด และชิ้นที่คลังมีพอไม่เกิดงาน (คอลัมน์ AK ของ BOMSHEET)
+  const d3 = fresh();
+  const id3 = A.createOrder(d3, { pi: "N-3", customer: "ก", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+  A.addOrderItem(d3, { orderId: id3, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner"));
+  A.explodeOrder(d3, { orderId: id3 }, ctx("planner"));
+  const seNeeded = d3.orders.find((entry) => entry.id === id3).explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").required; // 240
+  const rbPerSe = approved(d3, "SE-TP01-OR01-100-18-65").lines.find((line) => line.childCode === "RB-DM01-02-OR01-202-18-70").qty;
+  A.setStockCount(d3, { orderId: id3, itemCode: "SE-TP01-OR01-100-18-65", qty: 100 }, ctx("st"));
+  A.setStockCount(d3, { orderId: id3, itemCode: "PT-00320", qty: 500 }, ctx("st"));
+  A.releaseOrder(d3, { orderId: id3 }, ctx("planner"));
+  const jobs3 = d3.jobs.filter((job) => job.orderId === id3);
+  const se3 = jobs3.find((job) => job.itemCode === "SE-TP01-OR01-100-18-65");
+  assert.deepEqual([se3.qtyRequired, se3.stockCounted, se3.qtyPlanned], [seNeeded, 100, seNeeded - 100]);
+  const rb3 = jobs3.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70");
+  assert.ok(Math.abs(rb3.qtyRequired - (seNeeded - 100) * rbPerSe) < 1e-4, "RB demand is derived from the SE shortage, not the full SE requirement");
+  assert.equal(rb3.qtyPlanned, rb3.qtyRequired);
+  assert.equal(jobs3.find((job) => job.itemCode === "PT-00320"), undefined, "enough stock → no job");
+  assert.match(d3.audit[0].detail, /1 ชิ้นมีคงคลังพอ ไม่สร้างงาน/);
   // ชิ้นที่ต้องผลิตแต่ไม่มี BOM (BG ของกระเป๋า) → ปล่อยไม่ได้
   const d2 = fresh();
   approved(d2, "BG-0092").status = "superseded";
