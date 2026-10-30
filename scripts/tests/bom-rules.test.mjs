@@ -282,6 +282,10 @@ test("colour helpers: colour codes, colourless slot keys, recolouring codes and 
   assert.equal(rules.colorSlotKey("RB-B0006-01-204-0-76"), "RB-B0006-01-*-204-0-76");
   assert.equal(rules.recolorCode("RB-B0006-01-204-0-76", "RD01"), "RB-B0006-01-RD01-204-0-76");
   assert.equal(rules.renameColor("ยางแผ่นปีก เหลือง YE03", "YE03", "RD01", [{ code: "YE03", name: "เหลืองสด" }]), "ยางแผ่นปีก แดง RD01", "the standard master name is tried when the registered name is not in the text");
+  assert.equal(rules.renameColor("ยาง แดง", "RD02", "RD01"), "ยาง แดง RD01", "a new shade of the same master keeps the Thai name once and adds the code");
+  assert.equal(rules.renameColor("ยาง แดง RD02", "RD02", "RD01"), "ยาง แดง RD01");
+  assert.equal(rules.colorOfCode("SE-TP01-OR01-100-18-65X"), "", "colorOfCode agrees with colorSlotKey: a non-numeric tail means no colour in the code");
+  assert.equal(rules.colorOfCode("SE-TP01-OR01-100-18-065"), "OR01");
   assert.equal(rules.buildSeCode({ product: "TP01", color: "", lengthMm: 100, holeMm: 18, odMm: 65 }), "SE-TP01-100-18-65");
   assert.equal(rules.renameColor("ลูกตอปิโด TP-01 ส้ม OR01 ยาว 100", "OR01", "RD01"), "ลูกตอปิโด TP-01 แดง RD01 ยาว 100");
   assert.equal(rules.renameColor("ยางกลมตัน หัวตอปิโด Ø72", "OR01", "RD01"), "ยางกลมตัน หัวตอปิโด Ø72 แดง RD01", "no colour in the name → appended");

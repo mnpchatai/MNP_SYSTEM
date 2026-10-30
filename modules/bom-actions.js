@@ -398,7 +398,9 @@
     const toCode = R.recolorCode(fromCode, color);
     if (toCode === fromCode) return fromCode;
     const src = itemOf(d, fromCode) ?? fail(`ไม่พบชิ้นงาน ${fromCode}`);
-    const fromColor = String(src.rubber?.color || R.colorOfCode(fromCode) || "").toUpperCase();
+    // สีเดิมของ SE: ใช้ทั้งที่อยู่ในรหัสและใน rubber.color (แก้แยกกันได้) RB ลูกที่สีตรงกับตัวใดตัวหนึ่งถือว่าเป็นสีเดียวกับ SE
+    const fromColors = [...new Set([R.colorOfCode(fromCode), String(src.rubber?.color ?? "")].map((value) => String(value).toUpperCase()).filter(Boolean))];
+    const fromColor = fromColors[0] ?? "";
     if (!itemOf(d, toCode)) {
       d.items.push({ ...src, code: toCode, name: R.renameColor(src.name, fromColor, color, d.colors ?? []), rubber: { ...(src.rubber ?? {}), color }, legacyCodes: [], createdAt: ctx.now, updatedAt: ctx.now, clonedFrom: fromCode });
       log.push(`สร้าง ${toCode} จาก ${fromCode}`);
@@ -408,8 +410,8 @@
       const lines = srcBom.lines.map((line) => {
         const child = itemOf(d, line.childCode);
         const childColor = R.colorOfCode(line.childCode);
-        const recolor = child?.kind === "RB" && childColor && childColor === fromColor;
-        if (child?.kind === "RB" && childColor && !recolor) log.push(`${line.childCode} ใต้ ${toCode} คงสี ${childColor} (ไม่ใช่สี ${fromColor || "-"} ของ SE เดิม)`);
+        const recolor = child?.kind === "RB" && childColor && fromColors.includes(childColor);
+        if (child?.kind === "RB" && childColor && !recolor) log.push(`${line.childCode} ใต้ ${toCode} คงสี ${childColor} (ไม่ใช่สี ${fromColors.join("/") || "-"} ของ SE เดิม)`);
         return { ...line, flags: [...(line.flags ?? [])], childCode: recolor ? ensureRecoloredItem(d, line.childCode, color, ctx, user, log) : line.childCode };
       });
       d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });

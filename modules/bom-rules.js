@@ -91,8 +91,6 @@
     const parsed = parseColorCode(code);
     return parsed ? `${COLOR_MASTERS[parsed.master] ?? parsed.master} ${parsed.shade}` : String(code ?? "");
   };
-  // สีในรหัส SE/RB (ช่วงที่ 3 ของ SE, ช่วงที่ 4 ของ RB) ว่าง = ชิ้นไม่ระบุสีในรหัส
-  const colorOfCode = (code) => parseSeCode(code)?.color || parseRbCode(code)?.color || "";
   // แยกรหัส SE/RB เป็นส่วนคงที่ (SE-<สินค้า> หรือ RB-<สูตร>-<ประเภท>) + สี + ตัวเลข 3 ช่วงท้าย โดยคงสตริงเดิม (065 ไม่กลายเป็น 65)
   // null = ไม่ใช่ SE/RB หรือสามช่วงท้ายไม่ใช่ตัวเลข (รหัสแบบนั้นไม่ถือว่ามีสีในรหัส)
   function splitColorCode(code) {
@@ -103,6 +101,8 @@
     if (!tail.every((part) => /^\d+(\.\d+)?$/.test(part))) return null;
     return { prefix: parts.slice(0, fixed).join("-"), color: parts.slice(fixed, -3).join("-"), tail: tail.join("-") };
   }
+  // สีในรหัส SE/RB (ช่วงระหว่างส่วนคงที่กับตัวเลข 3 ช่วงท้าย) ว่าง = ชิ้นไม่ระบุสีในรหัส — นิยามเดียวกับ colorSlotKey/recolorCode
+  const colorOfCode = (code) => splitColorCode(code)?.color ?? "";
   // กุญแจ "ช่องสี" = รหัส SE/RB ที่ถอดสีออก (SE-TP01-*-100-18-65) ใช้จับคู่ช่องเดียวกันข้ามชุดสี · null = ชิ้นที่ไม่มีสีในรหัส
   function colorSlotKey(code) {
     const split = splitColorCode(code);
@@ -128,9 +128,13 @@
     const toName = stem(to);
     const fromNames = from ? [...new Set([stem(from), masterName(from)].filter(Boolean))].sort((a, b) => b.length - a.length) : [];
     for (const fromName of fromNames) {
-      if (fromName !== toName && text.includes(fromName)) { text = text.split(fromName).join(toName); touched = true; break; }
+      if (!text.includes(fromName)) continue;
+      if (fromName !== toName) text = text.split(fromName).join(toName);
+      touched = true; // เฉดใหม่ของแม่สีเดิม (RD02 → RD01): ชื่อสีไทยถูกอยู่แล้ว ไม่ต่อท้ายซ้ำ
+      break;
     }
-    return touched ? text : `${text} ${toName} ${to}`.trim();
+    if (touched) return text.includes(to) ? text : `${text} ${to}`.trim();
+    return `${text} ${toName} ${to}`.trim();
   }
   // ช่องสีของสินค้า: บรรทัดชั้นแรกที่เป็น SE หรือ RB เรียงตามลำดับบรรทัด ซ้ำกุญแจได้ (ลูกบอลสามสีคือ SE เดียวกันสามช่อง)
   // RB ที่อยู่ใต้ SE ไม่เป็นช่องของตัวเอง (ตาม BOMSHEET สี RB ตามแถว SE เหนือมัน)

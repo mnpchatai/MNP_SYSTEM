@@ -524,7 +524,7 @@
     });
     const body = `<form id="bom-colorset-form" data-rf-form="saveColorSet" data-rf-args="${attr(JSON.stringify({ base: key }))}" data-rf-success="บันทึกชุดสี {result}">
       <div class="rf-grid rf-g2">
-        ${ui.field("รหัสชุดสี *", defined ? `<input class="input rf-input" name="code" value="${attr(defined.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น A", list: "bom-colorset-codes", extra: 'autocapitalize="characters" maxlength="4"' }))}
+        ${ui.field("รหัสชุดสี *", defined ? `<input class="input rf-input" name="code" value="${attr(defined.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น A", list: "bom-colorset-codes", extra: 'autocapitalize="characters" maxlength="1" pattern="[A-Za-z]" title="ตัวอักษร A–Z ตัวเดียว ตามท้ายรหัสสินค้า"' }))}
         ${ui.field("ชื่อ/คำอธิบาย", ui.input("name", { value: defined?.name ?? "", placeholder: "เช่น แดง-ดำ" }))}
       </div>
       <datalist id="bom-colorset-codes">${ctx.rules.COLOR_SETS.filter((value) => !facts.definedSets.some((set) => set.code === value)).map((value) => `<option value="${attr(value)}"></option>`).join("")}</datalist>
