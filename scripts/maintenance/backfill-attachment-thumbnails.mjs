@@ -13,6 +13,7 @@
 // ย้อนกลับ: ลบไฟล์ *.thumb.jpg ที่สร้างขึ้น แกลเลอรีกลับไปใช้ไฟล์จริงเอง (ไม่มีอะไรอื่นอ้างถึงภาพย่อ)
 // ค่าใช้จ่าย: ดาวน์โหลดไฟล์ต้นฉบับที่ยังไม่มีภาพย่อหนึ่งรอบ (นับเป็น Egress ครั้งเดียว)
 import { createRequire } from "node:module";
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -46,8 +47,9 @@ export function planBackfill(attachments, existing) {
 async function loadModule(name, reason) {
   try {
     return await import(name);
-  } catch {
-    throw new Error(`โหลด ${name} ไม่ได้ (${reason}) กรุณารัน npm ci ที่ root ของ repo ก่อน`);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`โหลด ${name} ไม่ได้ (${reason}) กรุณารัน npm ci ที่ root ของ repo ก่อน — ${detail}`);
   }
 }
 
@@ -105,6 +107,10 @@ async function readAttachments(supabase) {
     .select("storage_path, content_type, file_name, ncr_reports!inner(is_test)")
     .eq("ncr_reports.is_test", false);
   if (ncr.error) throw new Error(`อ่าน ncr_attachments ไม่ได้: ${ncr.error.message}`);
+  // PostgREST คืนได้ครั้งละไม่เกิน 1000 แถว ตอนนี้มีไม่ถึงร้อย ถ้าถึงเพดานให้หยุด ไม่ทำแบบไม่ครบโดยไม่รู้ตัว
+  if ((requests.data ?? []).length >= 1000 || (ncr.data ?? []).length >= 1000) {
+    throw new Error("ไฟล์แนบมีตั้งแต่ 1000 แถว สคริปต์นี้ยังไม่แบ่งหน้า กรุณาปรับให้อ่านทีละหน้าก่อนรัน");
+  }
   return [
     { bucket: "request-attachments", files: requests.data ?? [] },
     { bucket: "ncr-attachments", files: (ncr.data ?? []).map(({ storage_path, content_type, file_name }) => ({ storage_path, content_type, file_name })) },
@@ -159,7 +165,9 @@ async function main() {
   if (totals.failed) process.exitCode = 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// realpath: รันผ่าน path ที่มี symlink แล้วต้องยังทำงาน ไม่ใช่เงียบแล้วจบ
+const invokedPath = process.argv[1] ? realpathSync(process.argv[1]) : "";
+if (import.meta.url === pathToFileURL(invokedPath).href) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;

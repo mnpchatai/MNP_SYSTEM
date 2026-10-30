@@ -45,7 +45,7 @@ test("small images are not enlarged", async () => {
 function minimalPdf() {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 2 >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
   ];
   const stream = "0 0 1 rg 50 50 200 200 re f";
