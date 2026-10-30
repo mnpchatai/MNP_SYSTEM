@@ -743,9 +743,17 @@ NCR มี workflow ของตัวเองในตาราง `ncr_*` (�
 โมดูลฝ่ายโรงงาน (`#/factory` เปิดได้เฉพาะโหมดทดสอบ) ถูกลบทั้งหมดตามคำขอของผู้ใช้ ทั้งหน้าเว็บ ข้อมูล และฐานข้อมูล migration `20261031010000_remove_factory_module.sql` ลบตาราง `factory_*` 27 ตารางพร้อมข้อมูล ฟังก์ชัน/RPC ของโมดูลทุกตัว bucket `factory-attachments` และ policy ของมัน และตัวนับเลขเอกสาร `FACTORY-*-TEST` migration ของโรงงานเดิม (`20261006050000` ถึง `20261030010000`) คงไว้ในประวัติเพราะอาจถูก apply แล้ว
 
 - **ก่อน apply ที่ production**: ลบไฟล์ใน bucket `factory-attachments` ผ่าน Storage API หรือหน้า Dashboard ให้หมดก่อน ถ้ายังมีไฟล์ migration หยุดด้วย `FACTORY_FILES_REMAIN` ก่อนเปลี่ยนอะไร
-- **ที่คงไว้**: trigger แยกโหมดทดสอบรายแถวเปลี่ยนชื่อจาก `private.factory_sandbox_scope()` เป็น `private.sandbox_row_scope()` เพราะใบตรวจ QC ใช้อยู่ (ตารางใหม่ที่รองรับโหมดทดสอบให้ใช้ชื่อนี้) · บัญชีทดสอบที่โมดูลเคยเพิ่ม (`SBX-SA/PP/ST/SR/GR/PT/BG/WH-STAFF`, `SBX-FT-AFM`) ยังเลือกเป็น persona ได้ และ NCR ใช้ `SBX-FT-AFM` · `audit_logs` ของรายการเดิมคงไว้เป็นบันทึกตรวจสอบ
+- **ที่คงไว้**: trigger แยกโหมดทดสอบรายแถวเปลี่ยนชื่อจาก `private.factory_sandbox_scope()` เป็น `private.sandbox_row_scope()` เพราะใบตรวจ QC ใช้อยู่ (ตารางใหม่ที่รองรับโหมดทดสอบให้ใช้ชื่อนี้) · บัญชีทดสอบที่โมดูลเคยเพิ่ม (`SBX-SA/PP/ST/SR/GR/PT/BG/WH-STAFF`, `SBX-FT-AFM`) ยังเลือกเป็น persona ได้ และ NCR ใช้ `SBX-FT-AFM` · `audit_logs` ของรายการเดิมคงไว้ใน migration นี้ แล้วถูกลบภายหลังตามคำสั่งผู้ใช้ (ดูหัวข้อถัดไป)
 - **Rollback**: ลบข้อมูลถาวร กู้ได้จาก backup ของ Supabase ที่ทำก่อน apply เท่านั้น
 - **การตรวจ**: `supabase/tests/database/remove_factory_module.test.sql`
+
+### ล้าง audit ของข้อมูลทดสอบ (โรงงาน + ใบ NCR ทดสอบ)
+
+migration `20261103010000_purge_factory_and_test_ncr_audit_logs.sql` สร้างแล้วเรียก `private.purge_test_audit_logs()` ครั้งเดียว ลบแถว `audit_logs` ของ `factory_*` ทั้งหมด และของใบ NCR ทดสอบกับตารางลูก (ncr_losses/outcomes/responsibilities/attachments/info_requests) ใบทดสอบระบุจาก `ncr_reports.is_test` และค่า `is_test` ที่ audit ของใบเองเก็บไว้ จึงครอบคลุมใบที่ถูกล้างด้วยปุ่มแล้ว ใบจริง (`is_test = false`) ถูกตัดออกเสมอ ไม่แตะใบ NCR เอง และไม่แตะ audit ประเภทอื่น (รวม `sandbox_session`) มีแถวสรุป `action = 'purge_test_audit_logs'`
+
+- **ลำดับที่ production**: กดปุ่ม "ล้างข้อมูลทดสอบ" ในโหมดทดสอบ **ก่อน** แล้วค่อย apply เพราะการล้างสร้างแถว audit DELETE ใหม่ ถ้ากดหลัง apply แถวเหล่านั้นจะค้าง ต้องรัน `select private.purge_test_audit_logs();` ด้วย role postgres อีกครั้ง (Data API เรียกไม่ได้)
+- **Rollback**: ลบถาวร ไม่มีสำรอง (ผู้ใช้เลือก) กู้ได้จาก backup ของ Supabase ที่มีก่อน apply เท่านั้น
+- **การตรวจ**: `supabase/tests/database/purge_test_audit_logs.test.sql`
 
 ### RubberFlow MES — แผนก RB ทั้งโปรเจค (โหมดทดสอบ, Pilot Web รุ่น `20261102rf1`)
 
