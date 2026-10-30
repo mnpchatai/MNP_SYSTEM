@@ -827,32 +827,34 @@
     const today = rules.toInputDate(ctx.now);
     const body = `<form id="bom-order-form" data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result}">
       <div class="rf-grid rf-g2">
-        ${ui.field("เลขที่ PI", ui.input("pi", { placeholder: "ว่าง = ออกเลขอัตโนมัติ YYMMDD-YYnnn" }), { hint: esc(`เว้นว่างแล้วระบบออกเลขจากวันที่สั่งผลิตกับลำดับในปี เช่น ${rules.piNumber(ctx.now, 1)}`) })}
+        ${ui.field("เลขที่ PI", ui.input("pi", { placeholder: `ว่าง = ออกเลขอัตโนมัติ เช่น ${rules.piNumber(ctx.now, 1)}` }))}
         ${ui.field("ชื่อลูกค้า *", ui.input("customer", { required: true }))}
         ${ui.field("ประเทศ *", ui.input("country", { required: true, value: "Thailand" }), { hint: "Thailand = ในประเทศ (SA) อื่น = ต่างประเทศ (EX)" })}
         ${ui.field("วันที่สั่งผลิต *", ui.input("orderedAt", { type: "date", required: true, value: today }))}
         ${ui.field("วันส่งมอบคลัง (WH) *", ui.input("whDue", { type: "date", required: true, extra: "data-bom-whdue" }))}
       </div>
       <fieldset class="bom-fieldset"><legend>กำหนดเสร็จรายแผนก</legend>
-        <label class="bom-check"><input type="checkbox" name="autoDue" value="1" checked data-bom-autodue> เติมช่องว่างจาก lead time (PK = ส่งมอบ − ${rules.LEAD_DAYS.PK} วัน · GR/PT/BG/ST = PK − ${rules.LEAD_DAYS.GR} · RB = GR − ${rules.LEAD_DAYS.RB})</label>
-        <div class="rf-grid rf-g3">${rules.DUE_DEPTS.map((dept) => ui.field(dept, ui.input(`due.${dept}`, { type: "date", extra: `data-bom-due="${dept}"` }))).join("")}</div></fieldset>
+        <label class="bom-check" title="${attr(`PK = ส่งมอบคลัง − ${rules.LEAD_DAYS.PK} วัน · GR/PT/BG/ST = PK − ${rules.LEAD_DAYS.GR} · RB = GR − ${rules.LEAD_DAYS.RB} (ตามใบจริง) ไม่ก่อนวันที่สั่งผลิต`)}"><input type="checkbox" name="autoDue" value="1" checked data-bom-autodue> ช่องที่เว้นว่างใช้ค่าเริ่มต้นจาก lead time</label>
+        <div class="rf-grid rf-g3">${rules.DUE_DEPTS.map((dept) => ui.field(dept, ui.input(`due.${dept}`, { type: "date", extra: `data-bom-due="${dept}"` }), { hint: `<span data-bom-due-preview="${attr(dept)}"></span>` })).join("")}</div></fieldset>
       ${ui.field("หมายเหตุ", ui.input("note"))}
     </form>`;
-    // กรอกวันส่งมอบคลังแล้วช่องกำหนดเสร็จที่ว่างถูกเติมด้วยค่าเริ่มต้น (แก้ทับได้ ช่องที่ผู้ใช้พิมพ์เองไม่ถูกเขียนทับ)
+    // แสดงค่าเริ่มต้นเป็นตัวอย่างใต้ช่อง (ไม่เขียนลงช่อง) ช่องที่ว่างจึงถูก action เติมและ clamp ฝั่งเดียว และใบจำได้ว่าช่องไหนเป็นค่าเริ่มต้น
     const bind = (dialog) => {
       const whInput = dialog.querySelector("[data-bom-whdue]");
+      const ordered = dialog.querySelector('input[name="orderedAt"]');
       const auto = dialog.querySelector("[data-bom-autodue]");
-      const fill = () => {
-        if (!whInput?.value || (auto && !auto.checked)) return;
-        const defaults = rules.defaultDueDates(rules.fromInputDate(whInput.value));
-        dialog.querySelectorAll("[data-bom-due]").forEach((input) => {
-          if (input.value && input.dataset.bomUserSet === "1") return;
-          input.value = defaults[input.dataset.bomDue] ? rules.toInputDate(defaults[input.dataset.bomDue]) : "";
+      const preview = () => {
+        const on = Boolean(whInput?.value) && (!auto || auto.checked);
+        const defaults = on ? rules.defaultDueDates(rules.fromInputDate(whInput.value)) : {};
+        const floor = ordered?.value ? rules.fromInputDate(ordered.value) : 0;
+        dialog.querySelectorAll("[data-bom-due-preview]").forEach((node) => {
+          const ms = defaults[node.dataset.bomDuePreview];
+          node.textContent = ms ? `ว่าง = ${rules.fmtDate(Math.max(ms, floor || ms))}` : "";
         });
       };
-      whInput?.addEventListener("change", fill);
-      auto?.addEventListener("change", fill);
-      dialog.querySelectorAll("[data-bom-due]").forEach((input) => input.addEventListener("input", () => { input.dataset.bomUserSet = input.value ? "1" : ""; }));
+      whInput?.addEventListener("change", preview);
+      ordered?.addEventListener("change", preview);
+      auto?.addEventListener("change", preview);
     };
     return { html: ui.dialog("orderNew", "เปิดใบสั่งผลิตใหม่", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-form">เปิดใบ</button>` }), bind };
   };
@@ -872,7 +874,7 @@
     const rowClass = (line) => (line.level === 0 ? "bom-sheet-fg" : line.kind === "SE" ? "bom-sheet-se" : line.kind === "RB" ? "bom-sheet-rb" : "");
     const commonHead = ["ITEM สินค้า", { label: "จำนวนสั่ง", className: "right" }, "รหัส", "ชื่อวัตถุดิบในการผลิต", "คู่ผู้ผลิต"];
     const commonCells = (line) => `<td class="rf-mono">${esc(line.fgCode)}</td><td class="right rf-mono">${q(line.fgQty)}</td><td class="rf-mono">${esc(line.itemCode)}</td><td>${esc(line.name)}</td><td class="rf-mono">${esc(line.pair)}</td>`;
-    const qtyHead = [{ label: "ใช้ : 1 FG", className: "right" }, { label: "ต้องเบิก", className: "right" }, "หน่วย", { label: "คงคลัง", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ", className: "right" }];
+    const qtyHead = [{ label: "ใช้ : 1 FG", className: "right" }, { label: "ต้องเบิก", className: "right" }, "หน่วย", { label: "คงคลัง (รหัสนี้ทั้งใบ)", className: "right" }, { label: "ต้องผลิต/สั่งซื้อ (รหัสนี้ทั้งใบ)", className: "right" }];
     const qtyCells = (line) => `<td class="right rf-mono">${line.level ? q(line.qtyPerFg) : ""}</td><td class="right rf-mono">${q(line.required)}</td><td>${esc(uomText(ctx, line.uom))}</td><td class="right rf-mono">${cell(stockOf(line) === undefined ? "" : rules.fmtQty(stockOf(line)))}</td><td class="right rf-mono${makeOf(line) < 0 ? " bom-surplus" : ""}">${cell(makeOf(line) === undefined ? "" : rules.fmtQty(makeOf(line)))}</td>`;
     const dueOf = (dept) => (order.due[dept] ? rules.fmtDate(order.due[dept]) : "—");
     let head = [];
@@ -890,15 +892,16 @@
       head = [...commonHead, ...qtyHead];
       rows = lines.map((line) => `<tr class="${rowClass(line)}">${commonCells(line)}${qtyCells(line)}</tr>`);
     }
+    // หัวใบพิมพ์มีชื่อใบและเลข PI ในตัว (dialog ไม่ซ้ำ) เพราะบนกระดาษเห็นเฉพาะ .rf-printable
     const header = `<div class="bom-sheet-head">
-        <div><h2>${esc(sheet.title)}</h2><div class="small muted">${esc(sheet.name)} · พิมพ์ ${esc(rules.fmtDateTime(ctx.now))}</div></div>
+        <div><h2>${esc(sheet.title)} <span class="muted">${esc(sheet.name)}</span></h2><div class="small muted">พิมพ์ ${esc(rules.fmtDateTime(ctx.now))}</div></div>
         ${ui.kv([["ชื่อลูกค้า", esc(order.customer)], ["เลขที่ใบสั่งผลิต", esc(order.id)], ["ประเทศ", `${esc(order.country)} · ${esc(order.orderType === "EX" ? "ต่างประเทศ" : "ในประเทศ")}`], ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["ส่งมอบคลัง (WH)", esc(rules.fmtDate(order.whDue))], ["REV.", esc(String(order.revision ?? 0))]])}
         <div class="bom-sheet-due">${rules.DUE_DEPTS.map((dept) => `<span class="bom-due"><b>${esc(dept)}</b> ${esc(dueOf(dept))}</span>`).join(" ")}</div>
       </div>`;
     const sign = sheet.layout === "ask" ? `<div class="bom-sheet-sign"><div>คลังชิ้นยาง (SE)<br>ลงชื่อ ..........................<br>...../...../.....</div><div>คลังเส้นยาว (SR)<br>ลงชื่อ ..........................<br>...../...../.....</div><div>ฝ่ายวางแผนการผลิต<br>ลงชื่อ ..........................<br>...../...../.....</div></div>` : "";
-    const body = `<div class="rf-printable bom-sheet">${header}${ui.table(head, rows, { emptyText: "ไม่มีบรรทัดของใบนี้", className: "bom-sheet-table" })}${sign}<p class="small muted bom-sheet-foot">**มีการเปลี่ยนแปลงหรือตกหล่น กรุณาแจ้งกลับ** · ${esc(String(lines.length))} บรรทัด · กฎ: ${esc(sheet.pairs.join(" "))}</p></div>`;
+    const body = `<div class="rf-printable bom-sheet">${header}${ui.table(head, rows, { emptyText: "ไม่มีบรรทัดของใบนี้", className: "bom-sheet-table" })}${sign}<p class="small muted bom-sheet-foot">**มีการเปลี่ยนแปลงหรือตกหล่น กรุณาแจ้งกลับ**</p></div>`;
     const bind = (dialog) => { dialog.querySelector("[data-bom-print]")?.addEventListener("click", () => { if (typeof window !== "undefined" && typeof window.print === "function") window.print(); }); };
-    return { html: ui.dialog("printSheet", `${sheet.title} · ${order.id}`, body, { wide: true, footer: `${ui.closeButton("ปิด")}<button class="btn rf-btn" type="button" data-bom-print>พิมพ์</button>` }), bind };
+    return { html: ui.dialog("printSheet", "ใบพิมพ์", body, { wide: true, footer: `${ui.closeButton("ปิด")}<button class="btn rf-btn" type="button" data-bom-print>พิมพ์</button>` }), bind };
   };
   // เลือกสินค้าแบบ 3 ช่องเหมือนชีต ;}o: ฐานรหัส + แพ็กเกจ + ชุดสี → รหัสเต็ม ถ้ารหัสเต็มยังไม่มีแต่ฐานรหัสมี ระบบสร้างจาก BOM ของตัวนั้น
   dialogs.orderItemAdd = (ctx, { orderId }) => {

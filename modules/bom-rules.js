@@ -37,12 +37,14 @@
   const piYear = (orderedAt) => String(new Date(orderedAt).getFullYear()).slice(-2);
   // ระยะเวลาเผื่อ (วัน) ถอยหลังจากวันส่งมอบคลัง ตามใบ 25041: PK = WH − 1 · GR/PT/BG/ST = PK − 6 · RB = GR − 4 (ผู้ใช้แก้ทับได้ทุกช่อง)
   const LEAD_DAYS = Object.freeze({ PK: 1, GR: 6, PT: 6, BG: 6, ST: 6, RB: 4 });
+  // ถอยเป็น "วันปฏิทิน" (setDate) ไม่ใช่ลบมิลลิวินาที จึงไม่คลาดในโซนเวลาที่มี DST
   function defaultDueDates(whDue) {
-    const base = new Date(Number(whDue)).setHours(0, 0, 0, 0);
-    if (!Number.isFinite(base)) return {};
-    const pk = base - LEAD_DAYS.PK * DAY;
-    const gr = pk - LEAD_DAYS.GR * DAY;
-    return { RB: gr - LEAD_DAYS.RB * DAY, GR: gr, PT: pk - LEAD_DAYS.PT * DAY, BG: pk - LEAD_DAYS.BG * DAY, ST: pk - LEAD_DAYS.ST * DAY, PK: pk };
+    const base = new Date(Number(whDue));
+    if (Number.isNaN(base.getTime())) return {};
+    const minus = (ms, days) => { const date = new Date(ms); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - days); return date.getTime(); };
+    const pk = minus(base.getTime(), LEAD_DAYS.PK);
+    const gr = minus(pk, LEAD_DAYS.GR);
+    return { RB: minus(gr, LEAD_DAYS.RB), GR: gr, PT: minus(pk, LEAD_DAYS.PT), BG: minus(pk, LEAD_DAYS.BG), ST: minus(pk, LEAD_DAYS.ST), PK: pk };
   }
 
   // ---------- ใบพิมพ์รายสถานี (แทนธง P/O 8 คอลัมน์ + มาโคร Print_* ของ BOMSHEET และชีต BOMASKSHEET / WIP-RBGR / WIP-PTBG) ----------

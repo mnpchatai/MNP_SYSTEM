@@ -242,10 +242,31 @@ test("dialogs render for their arguments and escape user text", async () => {
   assert.match(wip, /ความยาวตัด \(ซม\.\)/);
   assert.match(wip, /<td class="right rf-mono">6\.5<\/td><td class="right rf-mono">31<\/td>/, "cutting data of the rod");
   assert.match(wip, /RB 1 พ\.ย\. 69/, "department due date per row");
-  const orderNew = D.orderNew(c, {}).html;
+  const orderNewBuilt = D.orderNew(c, {});
+  const orderNew = orderNewBuilt.html;
   assert.match(orderNew, /name="autoDue"[^>]*checked/);
   assert.match(orderNew, /ว่าง = ออกเลขอัตโนมัติ/);
   assert.doesNotMatch(orderNew, /name="pi"[^>]*required/, "the PI number is optional now");
+  // ค่าเริ่มต้นแสดงเป็นตัวอย่างใต้ช่อง ไม่เขียนลงช่อง (action เป็นผู้เติมและ clamp) · ติ๊กออกแล้วตัวอย่างหาย
+  const mk = (extra = {}) => ({ value: "", handlers: {}, dataset: {}, textContent: "", addEventListener(type, handler) { this.handlers[type] = handler; }, ...extra });
+  const whInput = mk({ value: "2026-12-15" });
+  const orderedInput = mk({ value: "2026-10-30" });
+  const auto = mk({ checked: true });
+  const previews = c.rules.DUE_DEPTS.map((dept) => mk({ dataset: { bomDuePreview: dept } }));
+  const dueInputs = c.rules.DUE_DEPTS.map((dept) => mk({ dataset: { bomDue: dept } }));
+  const dialogNode = { querySelector: (selector) => ({ "[data-bom-whdue]": whInput, 'input[name="orderedAt"]': orderedInput, "[data-bom-autodue]": auto })[selector] ?? null, querySelectorAll: (selector) => (selector === "[data-bom-due-preview]" ? previews : selector === "[data-bom-due]" ? dueInputs : []) };
+  orderNewBuilt.bind(dialogNode);
+  whInput.handlers.change();
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "PK").textContent, "ว่าง = 14 ธ.ค. 69");
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 4 ธ.ค. 69");
+  assert.ok(dueInputs.every((input) => input.value === ""), "the date inputs themselves stay empty");
+  auto.checked = false;
+  auto.handlers.change();
+  assert.ok(previews.every((node) => node.textContent === ""), "unticking clears the previews");
+  auto.checked = true;
+  whInput.value = "2026-11-01";
+  whInput.handlers.change();
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 30 ต.ค. 69", "the preview shows the clamped date (not before the order date)");
   for (const [name, args] of cases) {
     const built = D[name](c, args);
     assert.ok(built?.html, `${name} renders`);
