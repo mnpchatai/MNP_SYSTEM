@@ -224,7 +224,7 @@
     const data = store.data();
     const user = store.user();
     const page = currentPage(params);
-    return {
+    const ctx = {
       data, user, now: Date.now(), params, page,
       q: String(params.get("q") ?? "").trim().slice(0, 100),
       url,
@@ -237,6 +237,8 @@
       rubberflow: () => window.MNP_RUBBERFLOW ?? null,
       runAction,
     };
+    ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น เมนูคลิกขวา) แทนปุ่ม data-rf-open
+    return ctx;
   }
 
   function bindPage(root, ctx) {

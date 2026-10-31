@@ -627,7 +627,7 @@
         const isFed = fed.has(child.itemCode);
         const name = !isFed && child.name && child.name !== child.itemCode ? ` <span class="bom-flow-input-name">${esc(child.name)}</span>` : "";
         const note = isFed ? ' <span class="muted">(จากสายด้านบน)</span>' : child.ownCost === null && !child.children.length ? ` ${ui.badge("warn", "ไม่มีราคา")}` : "";
-        return `<li class="bom-flow-input${isFed ? " is-fed" : ""}">${picture(child, " is-mini")}<span>${ui.mono(child.itemCode)}${name} <span class="muted nowrap">${qtyText(ctx, child)}</span>${note}</span></li>`;
+        return `<li class="bom-flow-input${isFed ? " is-fed" : ""}" data-bom-menu="${attr(child.itemCode)}" data-bom-menu-parent="${attr(node.itemCode)}">${picture(child, " is-mini")}<span>${ui.mono(child.itemCode)}${name} <span class="muted nowrap">${qtyText(ctx, child)}</span>${note}</span></li>`;
       });
       // คอมปาวด์ของเส้นยาง: ถ้ามีชิ้นงานรหัสเดียวกันที่มี BOM (เช่น สูตรเคมีที่นำเข้ามา) ลิงก์ไปดูโครงสร้างของมัน ไม่กางซ้อนในต้นไม้นี้
       const recipe = compound && approvedBomOf(ctx, rules.canonicalCode(compound)) ? ui.link("ดูสูตร", ctx.url("structure", { code: compound }), "small") : '<span class="muted">(สูตรอยู่ที่ RubberFlow)</span>';
@@ -641,9 +641,121 @@
       return [list, step].filter(Boolean).join(list ? flowArrow : "");
     }).filter(Boolean);
     const tools = canEdit ? `<div class="rf-row">${node.kind === "PURCHASED" ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
-    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}">${picture(node)}<div class="bom-flow-item-body">${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;
+    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}">${picture(node)}<div class="bom-flow-item-body">${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;
     return `<div class="bom-flow-node">${lanes}${[...parts, card].join(flowArrow)}</div>`;
   }
+  // เมนูคลิกขวา (กดค้างบนมือถือ) ของหน้าโครงสร้าง: คำสั่งของชิ้นที่ชี้ เป็นกลุ่ม แก้ไข · ไปที่ · คัดลอก
+  // target = { code, parent (พ่อเมื่อชี้แถววัตถุดิบ ว่างเมื่อชี้การ์ด), root (สินค้าที่เปิดอยู่) } · บทบาทที่แก้ไม่ได้เห็นเฉพาะไปที่/คัดลอก
+  // คืน [[{ label, open?, args?, go?, copy? }]] ทุกคำสั่งมีทางอื่นในหน้าอยู่แล้ว (ปุ่มในการ์ด ตารางต้นทุน dialog ขั้นตอน) เมนูเป็นทางลัด
+  function structureMenu(ctx, { code, parent = "", root = "" }) {
+    const item = itemOf(ctx, code);
+    if (!item) return [];
+    const canEdit = ctx.helpers.canPlan(ctx.user);
+    const hasBom = Boolean(approvedBomOf(ctx, item.code));
+    const makesBom = !ctx.helpers.NO_BOM_KINDS.includes(item.kind);
+    const parentItem = parent ? itemOf(ctx, parent) : null;
+    const edit = canEdit ? [
+      hasBom ? null : { label: "ตั้งราคา…", open: "itemCost", args: { code: item.code } },
+      parentItem ? { label: `เข้าที่ขั้นไหน… (ขั้นตอนของ ${parentItem.code})`, open: "routingEdit", args: { code: parentItem.code } }
+        : item.kind === "PURCHASED" ? null : { label: "ขั้นตอนผลิต…", open: "routingEdit", args: { code: item.code } },
+      { label: "รูป…", open: "itemImage", args: { code: item.code } },
+    ] : [];
+    const go = [
+      item.code !== root && (hasBom || makesBom) ? { label: `เปิดโครงสร้างของ ${item.code}`, go: ctx.url("structure", { code: item.code }) } : null,
+      canEdit && parentItem ? { label: `แก้บรรทัดนี้ใน BOM ของ ${parentItem.code}`, go: buildUrl(ctx, parentItem.code) } : null,
+      canEdit && !parentItem && makesBom ? { label: "แก้ส่วนประกอบ (สร้าง BOM)", go: buildUrl(ctx, item.code) } : null,
+      { label: "ประวัติ BOM / ใช้ในสินค้าไหน", go: ctx.url("items", { sel: item.code }) },
+    ];
+    const copy = [{ label: "คัดลอกรหัส", copy: item.code }, { label: "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)", copy: `${item.code}\t${item.name}` }];
+    return [edit, go, copy].map((group) => group.filter(Boolean)).filter((group) => group.length);
+  }
+
+  // ผูกเมนูกับมุมมองลำดับผลิต: คลิกขวา / ปุ่ม Menu หรือ Shift+F10 / กดค้าง 0.55 วินาทีบนจอสัมผัส · Shift+คลิกขวา = เมนูของเบราว์เซอร์
+  // popup เป็น data-popup ที่ย้ายไปอยู่ในกรอบของสิ่งที่ชี้ จึงใช้กฎกลาง closePopup ของ app.js (ปิดเมื่อแตะ/ย้าย focus ออกนอกกรอบ ไม่ใช้ blur)
+  function bindStructureMenu(ctx, flow, rootCode) {
+    const menu = document.createElement("div");
+    menu.className = "bom-ctx-menu";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("data-popup", "");
+    menu.hidden = true;
+    let entries = [];
+    let returnFocus = null;
+    const close = () => { if (!menu.hidden) closePopup(menu); };
+    const items = () => [...menu.querySelectorAll("[role=menuitem]")];
+    const open = (target, x, y) => {
+      const groups = structureMenu(ctx, { code: target.dataset.bomMenu, parent: target.dataset.bomMenuParent ?? "", root: rootCode });
+      entries = groups.flat();
+      if (!entries.length) return;
+      let index = 0;
+      menu.innerHTML = groups.map((group) => group.map((entry) => `<button type="button" role="menuitem" class="bom-ctx-item" tabindex="-1" data-i="${index++}">${esc(entry.label)}</button>`).join("")).join('<div class="bom-ctx-sep" role="separator"></div>');
+      menu.setAttribute("aria-label", `คำสั่งของ ${target.dataset.bomMenu}`);
+      const active = document.activeElement;
+      returnFocus = active && active !== document.body && !menu.contains(active) ? active : null;
+      target.append(menu);
+      menu.hidden = false;
+      menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - menu.offsetWidth - 4))}px`;
+      menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - menu.offsetHeight - 4))}px`;
+      window.addEventListener("scroll", close, { capture: true, once: true }); // เมนูติดจอ เลื่อนหน้าแล้วจะไม่ตรงกับชิ้นที่ชี้
+      items()[0]?.focus({ preventScroll: true });
+    };
+    const run = async (entry) => {
+      close();
+      if (entry.open) ctx.openDialog(entry.open, entry.args);
+      else if (entry.go) location.hash = entry.go;
+      else if (entry.copy !== undefined) {
+        try { await navigator.clipboard.writeText(entry.copy); showToast("คัดลอกแล้ว"); } catch { showToast("คัดลอกไม่ได้ เบราว์เซอร์ไม่อนุญาตให้เขียนคลิปบอร์ด", "error"); }
+      }
+    };
+    menu.addEventListener("click", (event) => {
+      const button = event.target.closest?.("[data-i]");
+      if (button) run(entries[Number(button.dataset.i)]);
+    });
+    menu.addEventListener("keydown", (event) => {
+      const list = items();
+      const at = list.indexOf(document.activeElement);
+      const move = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 }[event.key];
+      if (move !== undefined) { event.preventDefault(); list[(move + list.length) % list.length]?.focus(); }
+      else if (event.key === "Escape") { event.preventDefault(); const back = returnFocus; close(); back?.focus?.(); }
+      else if (event.key === "Tab") close();
+    });
+    flow.addEventListener("contextmenu", (event) => {
+      if (event.shiftKey) return;
+      if (menu.contains(event.target)) { event.preventDefault(); return; }
+      const target = event.target.closest?.("[data-bom-menu]");
+      if (!target) return;
+      event.preventDefault();
+      let { clientX: x, clientY: y } = event;
+      if (!x && !y) { const rect = event.target.getBoundingClientRect(); x = rect.left; y = rect.bottom; } // จากคีย์บอร์ด: ไม่มีพิกัด เปิดใต้สิ่งที่ focus
+      open(target, x, y);
+    });
+    // กดค้างบนจอสัมผัส (iPhone ไม่ส่ง contextmenu): ขยับนิ้วเกิน 10px หรือยกนิ้วก่อนเวลา = ยกเลิก · กดค้างแล้วไม่ให้ click ที่ตามมาไปกดปุ่มในการ์ด
+    let press = null;
+    flow.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "touch" || menu.contains(event.target)) return;
+      const target = event.target.closest?.("[data-bom-menu]");
+      if (!target) return;
+      clearTimeout(press?.timer);
+      const { clientX: x, clientY: y } = event;
+      press = { x, y, fired: false, timer: setTimeout(() => { press.fired = true; open(target, x, y); }, 550) };
+    });
+    flow.addEventListener("pointermove", (event) => {
+      if (press && !press.fired && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) { clearTimeout(press.timer); press = null; }
+    });
+    const release = () => {
+      if (!press) return;
+      clearTimeout(press.timer);
+      if (press.fired) {
+        // click ที่ตามการยกนิ้ว (ถ้ามี) มาทันที · iPhone บางครั้งไม่ส่ง จึงกันไว้แค่ช่วงสั้น ๆ ไม่ให้กลืน click ครั้งถัดไปของผู้ใช้
+        const block = (event) => { if (!menu.contains(event.target)) { event.preventDefault(); event.stopPropagation(); } };
+        flow.addEventListener("click", block, { capture: true, once: true });
+        setTimeout(() => flow.removeEventListener("click", block, { capture: true }), 400);
+      }
+      press = null;
+    };
+    flow.addEventListener("pointerup", release);
+    flow.addEventListener("pointercancel", release);
+  }
+
   pages.structure = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
     const canEdit = ctx.helpers.canPlan(user);
@@ -665,6 +777,8 @@
         const form = new FormData(event.currentTarget);
         location.hash = ctx.url("structure", { code: String(form.get("code") ?? "").trim(), qty: String(form.get("qty") ?? ""), view });
       });
+      const flow = rootNode.querySelector(".bom-flow");
+      if (flow && code) bindStructureMenu(ctx, flow, code);
     };
     const pageHead = head(ctx, "โครงสร้างสินค้า (จำลอง)", "ลำดับผลิตจากขั้นแรกจนเป็นสินค้า ต้นทุนต่อหน่วย และเวลาที่แต่ละแผนกใช้ — ราคาและอัตราค่าแรงเป็นตัวเลขสาธิต");
     if (!code) {
@@ -708,6 +822,7 @@
       ${ui.card(ui.table(["แผนก", "นาที ต่อ 1 หน่วย", `ชั่วโมง สำหรับ ${rules.fmtNum(qty)} หน่วย`], minutesRows, { emptyText: "ยังไม่มีขั้นตอนผลิตในโครงสร้างนี้" }), { title: `เวลาผลิตต่อแผนก · ค่าแรงสาธิต (บาท/นาที): ${esc(rates)}`, flush: true })}`;
     return { html, bind };
   };
+  pages.structure.menu = structureMenu; // ให้เทสต์ตรวจรายการคำสั่งได้โดยไม่ต้องมี DOM
   // dialog: ขั้นตอนผลิตของชิ้นงาน (เพิ่ม/ลบ/เลื่อนขึ้นลง และเลือกว่าวัตถุดิบแต่ละตัวเข้าที่ขั้นไหน แล้วบันทึกเป็น revision ใหม่)
   dialogs.routingEdit = (ctx, { code = "" }) => {
     const { ui, data, rules } = ctx;

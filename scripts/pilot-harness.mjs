@@ -83,7 +83,17 @@ async function harnessPage() {
       }
       await entry.pages[path](params);
     }
-    Object.assign(window, { escapeHtml, showToast, friendlyError, currentRoute, shell, bindShell, loadingShell, renderNotFound, renderRoute });
+    // กฎกลางของ popup (สำเนาจาก app.js): ปิดเมื่อแตะ/ย้าย focus ออกนอกกรอบของ popup ไม่ใช้ blur
+    function closePopup(popup) {
+      popup.hidden = true;
+      const owner = popup.parentElement.querySelector("[aria-expanded]");
+      if (owner) { owner.setAttribute("aria-expanded", "false"); owner.removeAttribute("aria-activedescendant"); }
+      popup.dispatchEvent(new CustomEvent("popup-close"));
+    }
+    const closePopupsOutside = (event) => document.querySelectorAll("[data-popup]:not([hidden])").forEach((popup) => { if (!popup.parentElement.contains(event.target)) closePopup(popup); });
+    document.addEventListener("pointerdown", closePopupsOutside);
+    document.addEventListener("focusin", closePopupsOutside);
+    Object.assign(window, { escapeHtml, showToast, friendlyError, currentRoute, shell, bindShell, loadingShell, renderNotFound, renderRoute, closePopup });
     window.addEventListener("DOMContentLoaded", () => {
       app = document.getElementById("app");
       window.addEventListener("hashchange", renderRoute);

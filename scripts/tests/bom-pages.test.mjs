@@ -659,8 +659,8 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&qty=80");
   clean(html);
   assert.match(html, /ต้นทุนยังไม่ครบ: ไม่มีราคาของ <strong>XP-00001<\/strong>/);
-  assert.match(html, /<li class="bom-flow-input">[\s\S]*?P-PEL-BK<\/[^>]+> <span class="bom-flow-input-name">เม็ดพลาสติก PE-LD สีดำ<\/span>/, "a material row shows its name next to the code, not only in a tooltip");
-  const fedRows = html.match(/<li class="bom-flow-input is-fed">[\s\S]*?<\/li>/g) ?? [];
+  assert.match(html, /<li class="bom-flow-input"[^>]*>[\s\S]*?P-PEL-BK<\/[^>]+> <span class="bom-flow-input-name">เม็ดพลาสติก PE-LD สีดำ<\/span>/, "a material row shows its name next to the code, not only in a tooltip");
+  const fedRows = html.match(/<li class="bom-flow-input is-fed"[^>]*>[\s\S]*?<\/li>/g) ?? [];
   assert.ok(fedRows.length > 0 && fedRows.every((row) => !row.includes("bom-flow-input-name")), "a row fed from a lane above keeps only its code (the lane card shows the name)");
   assert.match(html, /class="filter active" href="[^"]*view=flow" aria-current="page">ลำดับผลิต/);
   const order = (...needles) => needles.map((needle) => html.indexOf(needle));
@@ -708,6 +708,24 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   const numberedFlow = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
   assert.match(numberedFlow, /<div class="bom-flow-step"[^>]*><span class="bom-flow-step-no">ขั้นที่ 1<\/span>/, "a routing step carries its number");
   delete free.step;
+  // เมนูคลิกขวา: การ์ดและแถววัตถุดิบเป็นเป้า · คำสั่งตามชิ้นที่ชี้และบทบาท · ทุกกลุ่มมีคำสั่ง
+  assert.match(numberedFlow, /class="bom-flow-item is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"/);
+  assert.match(numberedFlow, /data-bom-menu="PT-00320" data-bom-menu-parent="DEMO-TP-01\(P\)-Y"/);
+  const menu = env.context.MNP_BOM_PAGES.structure.menu;
+  const labels = (groups) => json(groups.map((group) => group.map((entry) => entry.label)));
+  const planner = env.ctx("p=structure");
+  const rootMenu = menu(planner, { code: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" });
+  assert.deepEqual(labels(rootMenu), [["ขั้นตอนผลิต…", "รูป…"], ["แก้ส่วนประกอบ (สร้าง BOM)", "ประวัติ BOM / ใช้ในสินค้าไหน"], ["คัดลอกรหัส", "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)"]], "a product with a BOM has no price command and no link to itself");
+  assert.equal(rootMenu[2][1].copy, `DEMO-TP-01(P)-Y\t${A.helpers.itemOf(live, "DEMO-TP-01(P)-Y").name}`, "code and name paste into two Excel cells");
+  const bought = menu(planner, { code: "P-BAG-01", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" });
+  assert.deepEqual(labels(bought)[0], ["ตั้งราคา…", "เข้าที่ขั้นไหน… (ขั้นตอนของ DEMO-TP-01(P)-Y)", "รูป…"]);
+  assert.deepEqual(json(bought[0].map((entry) => [entry.open, entry.args.code])), [["itemCost", "P-BAG-01"], ["routingEdit", "DEMO-TP-01(P)-Y"], ["itemImage", "P-BAG-01"]], "a material row edits its own price and its parent's steps");
+  assert.deepEqual(labels(bought)[1], ["แก้บรรทัดนี้ใน BOM ของ DEMO-TP-01(P)-Y", "ประวัติ BOM / ใช้ในสินค้าไหน"], "a bought part has no structure of its own");
+  assert.ok(labels(menu(planner, { code: "PT-00320", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" }))[1].includes("เปิดโครงสร้างของ PT-00320"));
+  env.store.setUser("B05"); // หัวหน้า GR ดูอย่างเดียว
+  assert.deepEqual(labels(menu(env.ctx("p=structure"), { code: "P-BAG-01", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" })), [["ประวัติ BOM / ใช้ในสินค้าไหน"], ["คัดลอกรหัส", "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)"]], "read-only roles get only go-to and copy");
+  assert.deepEqual(json(menu(env.ctx("p=structure"), { code: "NOPE" })), []);
+  env.store.setUser("B03");
   clean(D.itemCost(c, { code: "XP-00001" }).html);
   const imageDialog = D.itemImage(c, { code: "DEMO-TP-01(P)-Y" });
   clean(imageDialog.html);
