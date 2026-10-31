@@ -428,6 +428,36 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   assert.equal(paste.value, afterB);
   assert.equal(sheetField.hidden, false);
   assert.match(report.innerHTML, /อ่านได้ 2 บรรทัด/, "the older pick's error does not replace the newer report");
+  // ไฟล์เก่าที่อ่านสำเร็จทีหลัง: รายการชีตยังเป็นของไฟล์ใหม่
+  let releaseOld;
+  const oldBook = makeZip([
+    { name: "xl/workbook.xml", data: '<workbook><sheets><sheet name="OLD" r:id="rId1"/></sheets></workbook>', store: true },
+    { name: "xl/_rels/workbook.xml.rels", data: '<Relationships><Relationship Id="rId1" Target="worksheets/o.xml"/></Relationships>', store: true },
+    { name: "xl/worksheets/o.xml", data: sheetXml([["OLD"]]), store: true },
+  ]);
+  fileInput.files = [{ name: "old.xlsm", arrayBuffer: () => new Promise((resolve) => { releaseOld = resolve; }) }];
+  const pendingOld = fileInput.handlers.change();
+  fileInput.files = [{ name: "fast-B.xlsm", arrayBuffer: async () => workbook }];
+  await fileInput.handlers.change();
+  releaseOld(oldBook);
+  await pendingOld;
+  assert.doesNotMatch(sheetSelect.innerHTML, /OLD/, "a late successful read of the older file does not replace the sheet list");
+  assert.doesNotMatch(paste.value, /^OLD/);
+  // ค่าที่อยู่เกินคอลัมน์ 256 (IW): ข้ามและเตือนในรายงานเดียวกับปุ่มนำเข้า (ไม่ต่อ innerHTML ทีหลัง ซึ่งทำให้ปุ่มเสีย handler)
+  const wideBook = makeZip([
+    { name: "xl/workbook.xml", data: '<workbook><sheets><sheet name="BOMSHEET" r:id="rId1"/></sheets></workbook>', store: true },
+    { name: "xl/_rels/workbook.xml.rels", data: '<Relationships><Relationship Id="rId1" Target="worksheets/w.xml"/></Relationships>', store: true },
+    { name: "xl/worksheets/w.xml", data: sheetXml([["ITEM", "CODE", "NAME", "รหัสแผนก", "แผนกผู้ผลิต", "จำนวนที่ใช้ต่อชุด", "หน่วยนับ"], ["X-01(P)-Y", "X-01", "สินค้า X", "PK", "PK", "-", "ชุด"], ["X-01(P)-Y", "P-STK-09", "สติ๊กเกอร์", "ST", "PK-ST", "1", "ใบ"]]).replace("</row>", '<c r="IW1" t="inlineStr"><is><t>far</t></is></c></row>'), store: true },
+  ]);
+  fileInput.files = [{ name: "wide.xlsx", arrayBuffer: async () => wideBook }];
+  await fileInput.handlers.change();
+  assert.match(report.innerHTML, /ข้ามค่า 1 ช่องที่อยู่เกินคอลัมน์ที่ 256[\s\S]*data-bom-import/, "the note is part of the check report that holds the import button");
+  check.handlers.click();
+  assert.match(report.innerHTML, /ข้ามค่า 1 ช่อง/, "checking again keeps the note of the sheet");
+  paste.handlers.input();
+  check.handlers.click();
+  assert.doesNotMatch(report.innerHTML, /ข้ามค่า/, "editing the paste box drops the note");
+  assert.doesNotMatch(fs.readFileSync("modules/bom-pages.js", "utf8"), /report\.innerHTML \+=/, "the report is never appended to after the import button is bound");
   // เปลี่ยนไปไฟล์ข้อความ: ล้างชีตและรายงานเก่า ตั้งชื่อแหล่งข้อมูลใหม่
   fileInput.files = [{ name: "rows.tsv" }];
   await fileInput.handlers.change();

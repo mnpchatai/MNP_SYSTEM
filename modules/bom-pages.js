@@ -1055,6 +1055,9 @@
       let workbook = null;
       // ทุกการเลือกไฟล์/ชีตได้ลำดับใหม่ ผลที่เสร็จทีหลังแต่เป็นของการเลือกเก่าถูกทิ้ง (ชีต DATA อ่านช้ากว่า BOMSHEET จึงอาจเสร็จทีหลัง)
       let seq = 0;
+      // หมายเหตุของชีตที่อ่านล่าสุด แสดงในรายงานของปุ่มตรวจสอบ (เขียน report ครั้งเดียว ปุ่มนำเข้าจึงยังผูก handler อยู่) ล้างเมื่อเลือกไฟล์ใหม่หรือแก้ช่องวาง
+      let sheetNote = "";
+      paste?.addEventListener("input", () => { sheetNote = ""; });
       const showError = (error) => { if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error))); };
       // ไฟล์ .xlsx/.xlsm: เปิดสมุดงาน (modules/bom-xlsx.js) อ่านชีตที่เลือกลงช่องวาง แล้วตรวจสอบเหมือนการวาง
       const loadSheet = async (book, name, mine) => {
@@ -1064,11 +1067,12 @@
           const rows = await book.rows(name);
           if (mine !== seq) return;
           paste.value = root.MNP_BOM_XLSX.rowsToTsv(rows);
+          sheetNote = rows.skippedCells ? `ข้ามค่า ${rows.skippedCells} ช่องที่อยู่เกินคอลัมน์ที่ ${root.MNP_BOM_XLSX.MAX_COLUMNS}` : "";
           rootNode.querySelector("[data-bom-check]")?.click(); // ตรวจสอบทันที รายงานบอกจำนวนสินค้า/ปัญหาของชีตนี้
-          if (rows.skippedCells && report) report.innerHTML += ui.callout("warn", `ข้ามค่า ${esc(String(rows.skippedCells))} ช่องที่อยู่เกินคอลัมน์ที่ ${esc(String(root.MNP_BOM_XLSX.MAX_COLUMNS))}`);
         } catch (error) {
           if (mine !== seq) return;
           paste.value = "";
+          sheetNote = "";
           showError(error);
         }
       };
@@ -1077,14 +1081,17 @@
         const picked = file.files?.[0];
         built = null;
         workbook = null;
+        sheetNote = "";
         if (sheetField) sheetField.hidden = true;
         if (report) report.innerHTML = "";
         if (!picked) return;
         if (sourceInput) sourceInput.value = picked.name.slice(0, 80);
+        if (paste) paste.value = "";
         if (!root.MNP_BOM_XLSX?.isWorkbookName(picked.name)) {
           if (typeof FileReader === "undefined") return;
           const reader = new FileReader();
           reader.onload = () => { if (paste && mine === seq) paste.value = String(reader.result ?? ""); };
+          reader.onerror = () => { if (mine === seq) showError(new Error(`อ่านไฟล์ ${picked.name} ไม่ได้`)); };
           reader.readAsText(picked);
           return;
         }
@@ -1121,6 +1128,7 @@
           const tooBig = size + payloadSize > 4_500_000;
           const unlinked = r.compounds.filter((code) => !ctx.data.compounds.find((entry) => entry.code === code)?.recipeId);
           report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ${esc(String(r.subparts))} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
+            ${sheetNote ? ui.callout("warn", esc(sheetNote)) : ""}
             ${tooBig ? ui.callout("bad", `ข้อมูลชุดนี้ (${esc(rules.fmtQty(Math.round(payloadSize / 1000)))} KB) จะเกินเพดานของ localStorage นำเข้าเฉพาะสินค้าที่ต้องใช้ทดสอบ (วางทีละกลุ่ม) หรือรีเซ็ตข้อมูลก่อน`) : ""}
             ${unlinked.length ? ui.callout("warn", `สูตรยางที่ยังไม่ผูกกับ RubberFlow: ${esc(unlinked.join(", "))} (ผูกได้ภายหลังที่เมนูสูตรยาง)`) : ""}
             ${r.unknownUom.length ? ui.callout("warn", `หน่วยที่แปลงไม่ได้ (บันทึกเป็น “หน่วยอื่น”): ${esc(r.unknownUom.slice(0, 20).join(", "))}${r.unknownUom.length > 20 ? " …" : ""}`) : ""}
