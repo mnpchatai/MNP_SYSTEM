@@ -1031,12 +1031,13 @@
     const { ui, rules, user, store } = ctx;
     const canImport = ctx.helpers.canPlan(user);
     const size = store.size();
-    const html = `${head(ctx, "นำเข้า BOM จาก Excel", "เปิดชีต DATA ของ DATA BOM.xlsx หรือไฟล์ Material_*.xlsm เลือกแถวหัวตารางพร้อมบรรทัดของสินค้าที่ต้องการ (Ctrl+C) แล้ววางที่นี่ ระบบประกอบเป็น BOM หลายชั้นและรายงานปัญหาก่อนบันทึก")}
+    const html = `${head(ctx, "นำเข้า BOM จาก Excel", "เลือกไฟล์ Material_*.xlsm หรือ DATA BOM.xlsx (ระบบเปิดชีต BOMSHEET หรือ DATA ให้) หรือคัดลอกแถวหัวตารางพร้อมบรรทัดของสินค้าที่ต้องการมาวาง ระบบประกอบเป็น BOM หลายชั้นและรายงานปัญหาก่อนบันทึก")}
       ${canImport ? "" : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การนำเข้าทำโดยฝ่ายวางแผนหรือผู้จัดการ")}
       ${ui.card(`<div class="rf-grid rf-g2">
           ${ui.field("วางข้อมูลจาก Excel (TSV) หรือ CSV", `<textarea class="textarea rf-textarea bom-paste" name="paste" rows="10" placeholder="ITEM\tน.น RB/g\tCODE\tรหัสแผนก\t… (วางทั้งแถวหัวตารางมาด้วย)" data-bom-paste></textarea>`)}
           <div>
-            ${ui.field("หรือเลือกไฟล์ .tsv / .csv / .txt", `<input class="input rf-input" type="file" accept=".tsv,.csv,.txt,text/plain,text/csv,text/tab-separated-values" data-bom-file>`, { hint: "ไฟล์ .xlsx/.xlsm ต้องบันทึกชีต DATA เป็น CSV UTF-8 หรือคัดลอกมาวางก่อน (Pilot Web ไม่มีไลบรารีอ่าน Excel)" })}
+            ${ui.field("หรือเลือกไฟล์ .xlsx / .xlsm / .tsv / .csv", `<input class="input rf-input" type="file" accept=".xlsx,.xlsm,.tsv,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12,text/plain,text/csv,text/tab-separated-values" data-bom-file>`, { hint: "อ่านค่าที่ Excel บันทึกไว้ในไฟล์ ไม่รันมาโคร · ไฟล์ .xls แบบเก่าให้บันทึกเป็น .xlsx ก่อน" })}
+            <div data-bom-sheet-field hidden>${ui.field("ชีต", ui.select("sheet", [], { extra: 'data-bom-sheet title="ชีตที่อ่านเข้าช่องวางข้อมูล"' }))}</div>
             ${ui.field("กลุ่มสินค้า", ui.select("group", [{ value: "TOY", label: "ของเล่น (DATA BOM.xlsx)" }, { value: "IND", label: "ยางอุตสาหกรรม" }], { value: "TOY", extra: "data-bom-group" }))}
             ${ui.field("ชื่อแหล่งข้อมูล", ui.input("source", { value: "DATA BOM.xlsx", extra: "data-bom-source" }))}
             <div class="rf-row"><button class="btn rf-btn" type="button" data-bom-check>ตรวจสอบ</button><span class="small muted">ข้อมูลในเบราว์เซอร์ตอนนี้ ${esc(rules.fmtQty(Math.round(size / 1000)))} KB (เพดาน localStorage ราว 5,000 KB)</span></div>
@@ -1047,14 +1048,50 @@
       const paste = rootNode.querySelector("[data-bom-paste]");
       const report = rootNode.querySelector("[data-bom-report]");
       const file = rootNode.querySelector("[data-bom-file]");
+      const sheetField = rootNode.querySelector("[data-bom-sheet-field]");
+      const sheetSelect = rootNode.querySelector("[data-bom-sheet]");
+      const sourceInput = rootNode.querySelector("[data-bom-source]");
       let built = null;
-      file?.addEventListener("change", () => {
+      let workbook = null;
+      // ไฟล์ .xlsx/.xlsm: เปิดสมุดงาน (modules/bom-xlsx.js) อ่านชีตที่เลือกลงช่องวาง แล้วตรวจสอบเหมือนการวาง
+      const loadSheet = async (name) => {
+        if (!workbook || !paste) return;
+        if (report) report.innerHTML = ui.callout("info", `กำลังอ่านชีต ${esc(name)}…`);
+        try {
+          paste.value = root.MNP_BOM_XLSX.rowsToTsv(await workbook.rows(name));
+          rootNode.querySelector("[data-bom-check]")?.click(); // ตรวจสอบทันที รายงานบอกจำนวนสินค้า/ปัญหาของชีตนี้
+        } catch (error) {
+          paste.value = "";
+          if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error)));
+        }
+      };
+      file?.addEventListener("change", async () => {
         const picked = file.files?.[0];
-        if (!picked || typeof FileReader === "undefined") return;
-        const reader = new FileReader();
-        reader.onload = () => { if (paste) paste.value = String(reader.result ?? ""); };
-        reader.readAsText(picked);
+        built = null;
+        workbook = null;
+        if (sheetField) sheetField.hidden = true;
+        if (!picked) return;
+        if (!root.MNP_BOM_XLSX?.isWorkbookName(picked.name)) {
+          if (typeof FileReader === "undefined") return;
+          const reader = new FileReader();
+          reader.onload = () => { if (paste) paste.value = String(reader.result ?? ""); };
+          reader.readAsText(picked);
+          return;
+        }
+        if (report) report.innerHTML = ui.callout("info", `กำลังเปิด ${esc(picked.name)}…`);
+        try {
+          workbook = await root.MNP_BOM_XLSX.openWorkbook(await picked.arrayBuffer());
+          if (!workbook.sheets.length) throw new Error("ไม่พบชีตในไฟล์นี้");
+          if (sheetSelect) sheetSelect.innerHTML = workbook.sheets.map((sheet) => `<option value="${attr(sheet.name)}"${sheet.name === workbook.defaultSheet ? " selected" : ""}>${esc(sheet.name)}${sheet.hidden ? " (ซ่อน)" : ""}</option>`).join("");
+          if (sheetField) sheetField.hidden = false;
+          if (sourceInput) sourceInput.value = picked.name.slice(0, 80);
+          await loadSheet(workbook.defaultSheet);
+        } catch (error) {
+          workbook = null;
+          if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error)));
+        }
       });
+      sheetSelect?.addEventListener("change", () => { built = null; return loadSheet(sheetSelect.value); });
       rootNode.querySelector("[data-bom-check]")?.addEventListener("click", () => {
         if (!paste || !report) return;
         try {
