@@ -359,6 +359,57 @@ test("a BOMSHEET paste is read too, and the แม่สี/เฉดที่ c
   assert.equal(rules.readFlatRows(PI_TSV).every((row) => row.color === ""), true);
 });
 
+test("BOMSHEET of 25047: a header row with another code is still the FG, zero repeat rows are not conflicts, ใบ and ถัง(18 kg) are known units", () => {
+  const H = ["ITEM  สินค้า", "จำนวนสั่งFG", "รหัส FG/RB/SE/ST/PT/BG", "รหัสแผนก", "จำนวนSE/ST/PT/BG:1FG", "ชื่อวัตถุดิบในการผลิต", "แผนกผู้ผลิต", "หน่วยวัสดุ"];
+  const r = (cells) => cells.join("\t");
+  // แถว 246–249: แถวหัวใช้รหัสลูกค้า SPORTIME-ENC-3 · แถว 41: แถวหัว MEGA-BBL-06(P) ของ ITEM MEGA-BBL-06(P)-Y
+  // แถว 384–386: แผ่นพลาสติกใส C20-020 แถวแรกเก็บพื้นที่รวม แถวถัดไปเป็น 0 · แถว 347: สีสกรีน ถัง(18 kg)
+  const rows = [
+    ["MEGA-ENC-3(P)-Y", "864", "SPORTIME-ENC-3", "PK", "", "สินค้า ENC-3 แพ็ค 3 ลูก", "PK", "ชุด / SET"],
+    ["MEGA-ENC-3(P)-Y", "864", "B01-690", "ST", "1", "คู่มือวิธีการเล่น", "PK-ST", "ใบ"],
+    ["MEGA-ENC-3(P)-Y", "864", "B28-005", "ST", "0.05", "สีสกรีน สีดำ # 47010", "PK-ST", "ถัง(18 kg)"],
+    ["MEGA-BBL-06(P)-Y", "36", "MEGA-BBL-06(P) ", "PK", "", "สินค้า MEGA-BBL-06(P) KK เหลือง-ม่วง", "PK", "ชุด / SET"],
+    ["MEGA-BBL-06(P)-Y", "36", "PT-00534", "ST", "1", "บอลพลาสติก 150mm", "PK-PT", "ลูก( 260g )"],
+    ["MEGA-MAM-03(B)-Y", "300", "MEGA-MAM-03", "PK", "", "สินค้า Megaform-MAM-03(B)", "PK", "ชุด / SET"],
+    ["MEGA-MAM-03(B)-Y", "300", "B02-038", "ST", "1", "กระเป๋า MAM-03", "PK-BG", "ชิ้น/pcs"],
+    ["MEGA-MAM-03(B)-Y", "300", "C20-020", "ST", "0.0018852157943067033", "ม้วนพลาสติกใส ( แผ่นหน้า-หลัง )", "BG-ST", "ม้วน(100Y)"],
+    ["MEGA-MAM-03(B)-Y", "300", "C20-020", "ST", "0", "ม้วนพลาสติกใส ( แผ่นคู่ซิป )", "BG-ST", "ม้วน(100Y)"],
+    ["MEGA-MAM-03(B)-Y", "300", "C20-020", "ST", "0", "ม้วนพลาสติกใส ( แผ่นข้าง )", "BG-ST", "ม้วน(100Y)"],
+  ];
+  const built = rules.buildFromFlat(rules.readFlatRows([r(H), ...rows.map(r)].join("\n")));
+  const fgs = [...built.items.values()].filter((item) => item.kind === "FG").map((item) => item.code);
+  assert.deepEqual(fgs, ["MEGA-ENC-3(P)-Y", "MEGA-BBL-06(P)-Y", "MEGA-MAM-03(B)-Y"], "the header row is not a second FG");
+  assert.equal(built.items.get("MEGA-ENC-3(P)-Y").name, "สินค้า ENC-3 แพ็ค 3 ลูก", "the header row names the FG");
+  assert.ok(built.items.get("MEGA-ENC-3(P)-Y").legacyCodes.includes("SPORTIME-ENC-3"), "the customer code is kept for search");
+  assert.ok(built.items.get("MEGA-BBL-06(P)-Y").legacyCodes.includes("MEGA-BBL-06(P)"));
+  assert.deepEqual(built.items.get("MEGA-MAM-03(B)-Y").legacyCodes, [], "a header row with the base code (MEGA-MAM-03) adds no legacy code");
+  assert.deepEqual(built.boms.get("MEGA-ENC-3(P)-Y").map((line) => line.childCode), ["B01-690", "B28-005"]);
+  assert.deepEqual(built.boms.get("MEGA-BBL-06(P)-Y").map((line) => line.childCode), ["PT-00534"]);
+  assert.equal(built.items.get("B01-690").uom, "pcs");
+  assert.equal(built.items.get("B28-005").uom, "bucket");
+  assert.deepEqual(rules.normalizeUom("ถัง(18 kg)").pack, { qty: 18, unit: "kg" });
+  assert.deepEqual([...built.report.unknownUom], []);
+  assert.deepEqual(built.boms.get("B02-038").map((line) => [line.childCode, line.qty]), [["C20-020", 0.001885215794]], "the first row holds the total area (rounded to 12 places per parent)");
+  assert.deepEqual(built.report.conflicts, [], "zero repeat rows are description rows, not conflicts");
+  // แถวแรกเป็น 0 แล้วแถวหลังมีปริมาณ: ใช้ปริมาณของแถวหลัง
+  const zeroFirst = rules.buildFromFlat(rules.readFlatRows([r(H), ...[rows[5], rows[6], rows[8], rows[7]].map(r)].join("\n")));
+  assert.equal(zeroFirst.boms.get("B02-038")[0].qty, 0.001885215794);
+  assert.deepEqual(zeroFirst.report.conflicts, []);
+  // ข้าม ITEM: ใต้พ่อเดียวกัน ปริมาณ 0 ของอีกสินค้าไม่ทับและไม่รายงาน ส่วน 0 ที่มาก่อนถูกแทนด้วยปริมาณที่มาทีหลัง
+  const bagRows = (item, plasticQty) => [
+    [item, "100", "B02-038", "ST", "1", "กระเป๋า MAM-03", "PK-BG", "ชิ้น/pcs"],
+    [item, "100", "C20-020", "ST", plasticQty, "ม้วนพลาสติกใส", "BG-ST", "ม้วน(100Y)"],
+  ];
+  const cross = (first, second) => rules.buildFromFlat(rules.readFlatRows([r(H), ...[...bagRows("MEGA-MAM-03(B)-Y", first), ...bagRows("MEGA-MAM-04(B)-Y", second)].map(r)].join("\n")));
+  const zeroLater = cross("5", "0");
+  assert.equal(zeroLater.boms.get("B02-038")[0].qty, 5);
+  assert.deepEqual(zeroLater.report.conflicts, []);
+  const zeroEarlier = cross("0", "5");
+  assert.equal(zeroEarlier.boms.get("B02-038")[0].qty, 5);
+  assert.deepEqual(zeroEarlier.report.conflicts, []);
+  assert.equal(cross("5", "4").report.conflicts.length, 1, "two different non-zero quantities are still a conflict");
+});
+
 test("PI numbers follow the Excel pattern, due dates default from lead times, and the station rule table selects the BOMSHEET rows per sheet", () => {
   const oct3 = new Date(2025, 9, 3, 10).getTime();
   assert.equal(rules.piNumber(oct3, 41), "251003-25041", "Megaform 25041: ordered 3 Oct 2025, 41st order of 2025");

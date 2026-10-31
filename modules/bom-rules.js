@@ -231,7 +231,7 @@
   // หน่วยในชีตมี 356 แบบสะกด (ชิ้น/pcs · ชิ้น/pcs. · ชิ้น(20g) · กก.(112pcs) · ม้วน(50M) · ม้วน (50M) …) → หน่วยมาตรฐาน + ขนาดแพ็ก/น้ำหนักต่อชิ้น
   const UOMS = Object.freeze({
     pcs: { label: "ชิ้น", kind: "count" }, set: { label: "ชุด", kind: "count" }, box: { label: "กล่อง", kind: "count" }, roll: { label: "ม้วน", kind: "pack" },
-    rod: { label: "เส้น", kind: "count" }, ball: { label: "ลูก", kind: "count" }, pack: { label: "แพ็ก", kind: "pack" }, sheet: { label: "แผ่น", kind: "count" },
+    rod: { label: "เส้น", kind: "count" }, ball: { label: "ลูก", kind: "count" }, pack: { label: "แพ็ก", kind: "pack" }, bucket: { label: "ถัง", kind: "pack" }, sheet: { label: "แผ่น", kind: "count" },
     kg: { label: "กก.", kind: "weight" }, g: { label: "กรัม", kind: "weight" }, m: { label: "เมตร", kind: "length" }, yd: { label: "หลา", kind: "length" }, cm: { label: "ซม.", kind: "length" },
     other: { label: "หน่วยอื่น", kind: "count" },
   });
@@ -241,10 +241,11 @@
     const paren = lower.match(/\(([^)]*)\)/)?.[1] ?? "";
     const base = lower.replace(/\([^)]*\)/g, "").replace(/\s+/g, "").replace(/\.$/, "");
     let code = "other";
-    if (/^(ชิ้น|pcs|ชิ้น\/pcs|ชิ้น\/pcs\.|pc)$/.test(base) || base.startsWith("ชิ้น")) code = "pcs";
+    if (/^(ชิ้น|pcs|ชิ้น\/pcs|ชิ้น\/pcs\.|pc|ใบ)$/.test(base) || base.startsWith("ชิ้น")) code = "pcs"; // ใบ = คู่มือ/ใบแทรก นับเป็นชิ้น
     else if (base.startsWith("ชุด") || base.includes("set")) code = "set";
     else if (base.startsWith("กล่อง")) code = "box";
     else if (base.startsWith("ม้วน")) code = "roll";
+    else if (base === "ถัง") code = "bucket"; // ถัง(18 kg) สีสกรีน
     else if (base === "เส้น") code = "rod";
     else if (base === "ลูก") code = "ball";
     else if (base.startsWith("แผ่น")) code = "sheet";
@@ -400,6 +401,9 @@
       const lines = boms.get(parentCode) ?? [];
       const existing = lines.find((entry) => entry.childCode === line.childCode);
       if (existing) {
+        // บรรทัดซ้ำที่ปริมาณ 0 เป็นแถวอธิบาย (MAM-03: แผ่นพลาสติกใส 4 แถว แถวแรกเก็บพื้นที่รวม แถวอื่นเป็น 0) จึงไม่นับเป็นข้อขัดแย้ง
+        if (line.qty === 0) return;
+        if (existing.qty === 0) { existing.qty = line.qty; return; }
         if (context.sameFg && context.parentIsFg) { existing.qty += line.qty; report.merged += 1; } else if (Math.abs(existing.qty - line.qty) > 1e-9 && report.conflicts.length < 200) {
           report.conflicts.push(`${parentCode} → ${line.childCode}: ปริมาณ ${existing.qty} (ครั้งแรก) กับ ${line.qty} (${context.item}) ไม่เท่ากัน ใช้ค่าแรก`);
         }
@@ -418,10 +422,15 @@
     for (const [itemName, rows] of byItem) {
       report.fgCount += 1;
       const fgParsed = parseFgCode(itemName);
-      const fgRow = rows.find((row) => row.deptKind === "PK" && !row.pair.includes("-") && (canonicalCode(row.code) === canonicalCode(fgParsed.base) || canonicalCode(row.code) === canonicalCode(itemName)));
+      // แถวหัวสินค้า = แถว PK (คู่ผู้ผลิตไม่มี "-") ที่รหัสตรงกับ ITEM หรือถ้าไม่มี ใช้แถวแรกของสินค้าเมื่อเป็นแถวแบบนั้น
+      // (ใบ 25047: MEGA-BBL-06(P)-Y มีแถวหัวรหัส MEGA-BBL-06(P) และ MEGA-ENC-3(P)-Y ใช้รหัสลูกค้า SPORTIME-ENC-3) รหัสในแถวหัวเก็บเป็นรหัสเดิมของ FG
+      const isHeaderRow = (row) => row?.deptKind === "PK" && !String(row.pair ?? "").includes("-");
+      const matchedRow = rows.find((row) => isHeaderRow(row) && (canonicalCode(row.code) === canonicalCode(fgParsed.base) || canonicalCode(row.code) === canonicalCode(itemName)));
+      const fallbackRow = !matchedRow && isHeaderRow(rows[0]) ? rows[0] : undefined;
+      const fgRow = matchedRow ?? fallbackRow;
       const fgCode = canonicalCode(itemName);
       const fgUom = normalizeUom(fgRow?.uom || "ชุด");
-      ensureItem(fgCode, { kind: "FG", name: fgRow?.name || `สินค้า ${itemName}`, uom: fgUom.code, pair: "PK" });
+      ensureItem(fgCode, { kind: "FG", name: fgRow?.name || `สินค้า ${itemName}`, uom: fgUom.code, pair: "PK" }, fallbackRow?.code || fgCode); // รหัสฐาน (MEGA-ST-01) ไม่เก็บเป็นรหัสเดิม
       const seenInThisFg = new Set([fgCode]);
       // พ่อล่าสุดของแต่ละชนิด พร้อม "จำนวนที่ใช้ต่อชุด" ของพ่อในสินค้านี้ — คอลัมน์นั้นเป็นปริมาณต่อ 1 FG ทั้งชีต
       // ลูกของ PT/BG/SE (เม็ดพลาสติก ผ้า ซิป ของสิ้นเปลือง) จึงต้องหารด้วยจำนวนพ่อต่อชุดให้เป็น "ต่อ 1 ชิ้นพ่อ" (เช่น เม็ด 0.006 กก./ชุด ÷ แกน 0.3 ชิ้น/ชุด = 0.02 กก./ชิ้น)
