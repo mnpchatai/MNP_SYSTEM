@@ -737,7 +737,8 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   // ป้ายบนการ์ด: ลำดับการผลิต และแผนกที่รับผิดชอบ · สินค้าได้ลำดับสุดท้าย (มากกว่าทุกสายป้อน)
   const orders = [...numberedFlow.matchAll(/<span class="bom-flow-order"[^>]*>ลำดับ (\d+)<\/span>/g)].map((match) => Number(match[1]));
   assert.ok(orders.length > 1, "every card carries its production order");
-  assert.equal(orders.at(-1), Math.max(...orders), "the product card is made last");
+  assert.ok(orders.slice(0, -1).every((order) => order < orders.at(-1)), "the product card is made after every feed");
+  assert.ok(new Set(orders).size > 2, "rods, the parts cut from them and the product get different orders");
   assert.match(numberedFlow, /is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"[^>]*>(?:<img[^>]*>|<span[^>]*>[^<]*<\/span>)<div class="bom-flow-item-body"><div class="bom-flow-tags"><span class="bom-flow-order"[^>]*>ลำดับ \d+<\/span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">PK · บรรจุ\/ประกอบ<\/span>/, "the card names its responsible department");
   env.store.setUser("B03");
   clean(D.itemCost(c, { code: "XP-00001" }).html);
