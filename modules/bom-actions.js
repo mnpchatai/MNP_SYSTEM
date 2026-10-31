@@ -212,7 +212,14 @@
   // ---------- โครงสร้างสินค้า: ขั้นตอนผลิต (routing) และราคาต้นทุน (จำลอง) ----------
   // routing ต่อชิ้นงานเก็บเป็น revision แบบเดียวกับ BOM: บันทึกแล้วใช้ทันที ตัวเก่า superseded (ไม่แก้ทับของที่อาจถูกใช้ไปแล้ว)
   const routingOf = (d, code) => (d.routings ?? []).find((routing) => routing.itemCode === code && routing.status === "approved") ?? null;
-  const processOf = (d, code) => (d.processes ?? []).find((process) => process.code === code) ?? null;
+  // ขั้นตอนมาตรฐานที่เลือกได้ = ที่เก็บในข้อมูล + ขั้นตอนเริ่มต้นใน bom-rules ที่ข้อมูลยังไม่มี (เช่น GR ทากาว/เจียร/คัดแยก, PK ใส่กระเป๋า ที่เพิ่มทีหลัง)
+  // ไม่เพิ่มลงข้อมูลที่เก็บและไม่เปลี่ยนรุ่น state เพื่อให้แท็บที่ยังเปิดโค้ดรุ่นก่อนอ่านข้อมูลเดิมได้ (รุ่นที่ไม่รู้จักจะถูกแทนด้วยชุดสาธิต)
+  const processesOf = (d) => {
+    const stored = d.processes ?? [];
+    const known = new Set(stored.map((process) => process.code));
+    return [...stored, ...rules().DEFAULT_PROCESSES.filter((entry) => !known.has(entry.code)).map((entry) => ({ ...entry }))];
+  };
+  const processOf = (d, code) => processesOf(d).find((process) => process.code === code) ?? null;
   // วัตถุดิบของขั้นเทียบเป็นเซต: ฟอร์มส่งตามลำดับบรรทัด BOM ปัจจุบัน ลำดับต่างกันไม่ใช่การแก้ขั้นตอน
   const sameInputs = (a = [], b = []) => a.length === b.length && [...a].sort().every((code, index) => code === [...b].sort()[index]);
   const sameSteps = (a, b) => a.length === b.length && a.every((step, index) => step.processCode === b[index].processCode && Math.abs(step.minutesPerPc - b[index].minutesPerPc) <= QTY_EPS && (step.note || "") === (b[index].note || "") && sameInputs(step.inputs, b[index].inputs));
@@ -254,7 +261,7 @@
     const code = text(p.code, "รหัสขั้นตอน", 60);
     const dept = rules().DEPTS.includes(p.dept) ? p.dept : fail("แผนกของขั้นตอนไม่ถูกต้อง");
     const name = text(p.name, "ชื่อขั้นตอน", 80);
-    const existing = processOf(d, code);
+    const existing = (d.processes ?? []).find((process) => process.code === code);
     if (existing) Object.assign(existing, { name, dept });
     else d.processes.push({ code, name, dept });
     audit(d, ctx, existing ? "แก้ขั้นตอนผลิต" : "เพิ่มขั้นตอนผลิต", `${code} ${name} (${dept})`);
@@ -807,7 +814,7 @@
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage,
-    helpers: { itemOf, approvedBomOf, routingOf, processOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

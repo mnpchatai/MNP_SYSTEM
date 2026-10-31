@@ -840,19 +840,19 @@
     } else if (view === "steps") {
       // ขั้นตอนตามลำดับ (ตามผังงาน ST → ผลิต → SR/QC → … → PK → WH): แถวละงาน เรียงจากลำดับแรก
       // ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับที่พร้อมใช้ และไม่ซ้ำชื่อ เพราะชื่ออยู่ในแถวของลำดับนั้นแล้ว · ของซื้อมาจากแถว ST
-      const from = (code, order) => `${ui.mono(code)} <span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(order))}</span>`;
+      const from = (order) => `<span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(order))}</span>`;
       const amount = (n, uom) => `${esc(rules.fmtQty(n * qty))} ${esc(uomText(ctx, uom))}`;
       const rows = rules.productionSteps(tree).map((step) => {
         const badge = step.type === "purchase" ? '<span class="bom-flow-order" title="ก่อนเริ่มผลิต">เริ่ม</span>' : `<span class="bom-flow-order">ลำดับ ${esc(String(step.order))}</span>`;
         const dept = `<td class="nowrap">${esc(rules.DEPT_LABEL[step.dept] ?? step.dept)}</td>`;
         if (step.type === "purchase") {
           const list = `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">รวม ${amount(input.qtyPerRoot, input.uom)}</span></li>`).join("")}</ul>`;
-          return `<tr><td>${badge}</td>${dept}<td>สั่ง/เบิกวัตถุดิบที่เกี่ยวข้องกับการผลิต</td><td class="num nowrap">${esc(String(step.inputs.length))} รายการ</td><td>${list}</td></tr>`;
+          return `<tr><td>${badge}</td>${dept}<td>สั่ง/เบิกวัตถุดิบที่เกี่ยวข้องกับการผลิต</td><td></td><td>${list}</td></tr>`;
         }
         const what = { receive: "รับเข้าคลัง · QC ตรวจขนาดขณะรับเข้า", store: "รับสินค้าจาก PK เข้าคลัง" }[step.type];
         const work = `${ui.mono(step.itemCode)}<div class="small">${esc(what ?? step.name)}</div>${step.steps.length ? `<div class="small muted">${step.steps.map((s) => esc(s.name)).join(" → ")}</div>` : ""}`;
         let inputs;
-        if (step.type !== "make") inputs = from(step.itemCode, step.order - 1);
+        if (step.type !== "make") inputs = from(step.order - 1); // ชิ้นเดียวกับคอลัมน์งาน ไม่ซ้ำรหัส
         else if (step.inputs.length) inputs = `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${input.from === null ? `${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">${qtyText(ctx, input)}</span>` : `${ui.mono(input.itemCode)} <span class="muted nowrap">${qtyText(ctx, input)}</span> <span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(input.from))}</span>`}</li>`).join("")}</ul>`;
         else inputs = itemOf(ctx, step.itemCode)?.rubber?.compound ? `คอมปาวด์ ${ui.mono(itemOf(ctx, step.itemCode).rubber.compound)} <span class="muted">(สูตรอยู่ที่ RubberFlow)</span>` : '<span class="muted">ยังไม่มี BOM</span>';
         return `<tr><td>${badge}</td>${dept}<td>${work}</td><td class="num nowrap">${amount(step.qtyPerRoot, step.uom)}</td><td>${inputs}</td></tr>`;
@@ -892,7 +892,7 @@
     const item = itemOf(ctx, code);
     if (!item) return null;
     const routing = ctx.helpers.routingOf(data, item.code);
-    const options = data.processes.map((process) => ({ value: process.code, label: `${process.code} ${process.name} (${process.dept})` }));
+    const options = ctx.helpers.processesOf(data).map((process) => ({ value: process.code, label: `${process.code} ${process.name} (${process.dept})` }));
     const stepRow = (step = {}) => `<tr data-step><td><div class="bom-step-cell">${dragHandle("ย้ายขั้นตอนนี้")}${ui.select("processCode[]", options, { value: step.processCode ?? "", placeholder: "เลือกขั้นตอน" })}</div></td><td>${ui.input("minutesPerPc[]", { type: "number", step: "any", min: "0", value: step.minutesPerPc ?? "" })}</td><td class="nowrap"><button class="btn rf-btn secondary small" type="button" data-step-remove aria-label="ลบขั้นตอน">✕</button></td></tr>`;
     const steps = routing?.steps ?? [];
     const lines = approvedBomOf(ctx, item.code)?.lines ?? [];

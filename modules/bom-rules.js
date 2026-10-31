@@ -657,7 +657,8 @@
     const root = tree.root;
     const purchase = { type: "purchase", order: 0, dept: "ST", itemCode: "", name: "", uom: "", qtyPerRoot: 0, steps: [], inputs: [...bought.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((entry) => ({ itemCode: entry.itemCode, name: entry.name, uom: entry.uom, qtyPerRoot: entry.qtyPerRoot, from: null })) };
     const store = { type: "store", order: root.order + 1, dept: "WH", itemCode: root.itemCode, name: root.name, uom: root.uom, qtyPerRoot: 1, steps: [], inputs: [] };
-    return [...(purchase.inputs.length ? [purchase] : []), ...rows, store];
+    // WH รับเฉพาะสินค้าสำเร็จรูป · เปิดโครงสร้างของชิ้นย่อย (PT, SE ฯลฯ) จบที่ชิ้นนั้น
+    return [...(purchase.inputs.length ? [purchase] : []), ...rows, ...(root.kind === "FG" ? [store] : [])];
   }
 
   // ---------- ความต้องการสุทธิ (สูตร AK ของ BOMSHEET ยกมาคิดทั้งใบ) ----------
