@@ -5,6 +5,8 @@
   const isNode = typeof module !== "undefined" && module.exports;
   const MAX_FILE_BYTES = 40 * 1024 * 1024; // Material_*.xlsm จริงราว 20 MB
   const MAX_PART_BYTES = 128 * 1024 * 1024; // XML ของชีตหลังแตก (ชีต DATA ของใบ 25047 ราว 97 MB)
+  const MAX_ROWS = 60000; // ชีต DATA ของใบ 25047 มี 29,000 แถว
+  const MAX_COLUMNS = 256; // BOMSHEET ใช้ถึงคอลัมน์ AK · เซลล์ที่ไกลกว่านี้ไม่ใช่ข้อมูล BOM และทำให้ทุกแถวกว้างเกินจำเป็น
 
   const fail = (message) => { throw new Error(message); };
   const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -57,12 +59,14 @@
     const chunks = [];
     let total = 0;
     for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.length;
+      let step;
+      try { step = await reader.read(); } catch { fail(`ไฟล์เสียหาย อ่านส่วน ${name} ไม่ได้`); }
+      if (step.done) break;
+      total += step.value.length;
       if (total > limit) { await reader.cancel(); fail(`ส่วน ${name} ใหญ่เกินที่อ่านได้ในเบราว์เซอร์ (${mb(limit)})`); }
-      chunks.push(value);
+      chunks.push(step.value);
     }
+    if (chunks.length === 1) return chunks[0];
     const out = new Uint8Array(total);
     let position = 0;
     for (const chunk of chunks) { out.set(chunk, position); position += chunk.length; }
@@ -89,7 +93,7 @@
     return out;
   };
   // ข้อความใน <si>/<is>: ต่อ <t> ทุก run ตัดคำอ่าน (rPh) ออก
-  const runText = (xml) => decodeXml([...xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, "").matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((match) => match[1]).join(""));
+  const runText = (xml) => decodeXml([...xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, "").matchAll(/<t\b[^>]*?(?:\/>|>([\s\S]*?)<\/t>)/g)].map((match) => match[1] ?? "").join(""));
 
   function sharedStrings(xml) {
     if (!xml) return [];
@@ -109,6 +113,7 @@
   // แถวของชีตเป็น array ของข้อความ (ช่องว่าง = "") ตามตำแหน่งคอลัมน์จริง แถวว่างทั้งแถวถูกข้าม
   function sheetRows(xml, strings) {
     const rows = [];
+    let skipped = 0;
     for (const rowMatch of xml.matchAll(/<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g)) {
       const cells = [];
       let next = 0;
@@ -124,15 +129,32 @@
         else if (attrs.t === "e") value = ""; // #N/A #REF! ไม่ใช่ข้อมูล
         else if (attrs.t === "str" || attrs.t === "b") value = raw == null ? "" : decodeXml(raw);
         else value = raw == null ? "" : numberText(decodeXml(raw));
-        if (index >= 0 && index < 16384) cells[index] = value.replace(/[\t\r\n]+/g, " ").trim();
+        if (index < 0) continue;
+        if (index >= MAX_COLUMNS) { if (value) skipped += 1; continue; }
+        cells[index] = value.replace(/[\t\r\n]+/g, " ").trim();
       }
-      if (cells.some((value) => value)) rows.push(Array.from(cells, (value) => value ?? ""));
+      while (cells.length && !cells[cells.length - 1]) cells.pop(); // ช่องว่างท้ายแถวไม่เก็บ
+      if (!cells.length) continue;
+      if (rows.length >= MAX_ROWS) fail(`ชีตนี้มีเกิน ${MAX_ROWS.toLocaleString("en-US")} แถว อ่านในเบราว์เซอร์ไม่ได้ ให้คัดลอกเฉพาะสินค้าที่ต้องการมาวาง`);
+      rows.push(Array.from(cells, (value) => value ?? ""));
     }
+    rows.skippedCells = skipped; // จำนวนเซลล์ที่มีค่าแต่อยู่เกินคอลัมน์ MAX_COLUMNS
     return rows;
   }
 
   // ---------- workbook ----------
-  async function openWorkbook(buffer) {
+  // Target ของ rels อ้างจากโฟลเดอร์ xl/ (หรือจากรากเมื่อขึ้นต้นด้วย /) และอาจมี ./ หรือ ../
+  function resolvePath(target) {
+    const parts = [];
+    for (const part of (target.startsWith("/") ? target.slice(1) : `xl/${target}`).split("/")) {
+      if (part === "..") parts.pop();
+      else if (part && part !== ".") parts.push(part);
+    }
+    return parts.join("/");
+  }
+
+  // maxPartBytes ปรับได้เพื่อเทสต์เพดานการแตกไฟล์
+  async function openWorkbook(buffer, { maxPartBytes = MAX_PART_BYTES } = {}) {
     if (buffer.byteLength > MAX_FILE_BYTES) fail(`ไฟล์ใหญ่ ${mb(buffer.byteLength)} เกิน ${mb(MAX_FILE_BYTES)}`);
     const zip = zipEntries(buffer);
     const workbook = await readText(zip, "xl/workbook.xml", 8 * 1024 * 1024);
@@ -141,7 +163,7 @@
     const targets = new Map([...rels.matchAll(/<Relationship\b([^>]*)\/?>/g)].map((match) => attrsOf(match[1])).map((rel) => [rel.Id, rel.Target]));
     const sheets = [...workbook.matchAll(/<sheet\b([^>]*)\/?>/g)].map((match) => attrsOf(match[1])).map((sheet) => {
       const target = String(targets.get(sheet["r:id"]) ?? "");
-      const path = target.startsWith("/") ? target.slice(1) : `xl/${target}`.replace(/\/\.\//g, "/");
+      const path = resolvePath(target);
       const entry = zip.entries.get(path);
       return { name: sheet.name ?? "", path, hidden: sheet.state === "hidden" || sheet.state === "veryHidden", size: entry?.size ?? 0 };
     }).filter((sheet) => sheet.name && zip.entries.has(sheet.path));
@@ -152,8 +174,8 @@
       defaultSheet: (sheets.find((sheet) => sheet.name.trim().toUpperCase() === "BOMSHEET") ?? sheets.find((sheet) => sheet.name.trim().toUpperCase() === "DATA") ?? sheets.find((sheet) => !sheet.hidden) ?? sheets[0])?.name ?? "",
       async rows(name) {
         const sheet = sheets.find((entry) => entry.name === name) ?? fail(`ไม่พบชีต ${name}`);
-        strings ??= sharedStrings(await readText(zip, "xl/sharedStrings.xml"));
-        return sheetRows(await readText(zip, sheet.path), strings);
+        strings ??= sharedStrings(await readText(zip, "xl/sharedStrings.xml", maxPartBytes));
+        return sheetRows(await readText(zip, sheet.path, maxPartBytes), strings);
       },
     };
   }
@@ -161,7 +183,7 @@
   const rowsToTsv = (rows) => rows.map((row) => row.join("\t")).join("\n");
   const isWorkbookName = (name) => /\.(xlsx|xlsm)$/i.test(String(name ?? ""));
 
-  const api = { MAX_FILE_BYTES, MAX_PART_BYTES, openWorkbook, rowsToTsv, isWorkbookName, sheetRows, sharedStrings, columnIndex, decodeXml };
+  const api = { MAX_FILE_BYTES, MAX_PART_BYTES, MAX_ROWS, MAX_COLUMNS, openWorkbook, resolvePath, rowsToTsv, isWorkbookName, sheetRows, sharedStrings, columnIndex, decodeXml };
   if (isNode) module.exports = api;
   else root.MNP_BOM_XLSX = api;
 })(typeof window !== "undefined" ? window : globalThis);

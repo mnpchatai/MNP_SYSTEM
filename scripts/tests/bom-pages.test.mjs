@@ -414,6 +414,26 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   sheetSelect.value = "MAIN";
   await sheetSelect.handlers.change();
   assert.match(report.innerHTML, /ไม่พบแถวหัวคอลัมน์/, "another sheet is read and checked when chosen");
+  // เลือกไฟล์ A (อ่านช้า) แล้วเลือก B ก่อน A เสร็จ: ผลของ A ที่มาทีหลังต้องไม่ทับ B
+  let releaseSlow;
+  const slow = new Promise((resolve) => { releaseSlow = resolve; });
+  fileInput.files = [{ name: "slow-A.xlsm", arrayBuffer: () => slow }];
+  const pendingA = fileInput.handlers.change();
+  fileInput.files = [{ name: "fast-B.xlsm", arrayBuffer: async () => workbook }];
+  await fileInput.handlers.change();
+  const afterB = paste.value;
+  releaseSlow(new ArrayBuffer(10)); // A กลับมาเป็นไฟล์เสีย หลัง B เสร็จแล้ว
+  await pendingA;
+  assert.equal(source.value, "fast-B.xlsm", "the older pick does not rename the source");
+  assert.equal(paste.value, afterB);
+  assert.equal(sheetField.hidden, false);
+  assert.match(report.innerHTML, /อ่านได้ 2 บรรทัด/, "the older pick's error does not replace the newer report");
+  // เปลี่ยนไปไฟล์ข้อความ: ล้างชีตและรายงานเก่า ตั้งชื่อแหล่งข้อมูลใหม่
+  fileInput.files = [{ name: "rows.tsv" }];
+  await fileInput.handlers.change();
+  assert.equal(sheetField.hidden, true);
+  assert.equal(report.innerHTML, "");
+  assert.equal(source.value, "rows.tsv");
   fileInput.files = [{ name: "broken.xlsx", arrayBuffer: async () => new ArrayBuffer(10) }];
   await fileInput.handlers.change();
   assert.equal(sheetField.hidden, true);

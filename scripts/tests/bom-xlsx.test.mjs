@@ -36,8 +36,8 @@ test("a workbook lists its sheets, opens BOMSHEET by default, and turns cached c
   const workbook = await xlsx.openWorkbook(makeZip(FILES));
   assert.deepEqual(workbook.sheets.map((sheet) => [sheet.name, sheet.hidden, sheet.path]), [["HOME", false, "xl/worksheets/sheet1.xml"], ["BOMSHEET", false, "xl/worksheets/sheet2.xml"], ["EPLAN", true, "xl/worksheets/sheet3.xml"]], "relative and absolute rel targets, attributes in any order");
   assert.equal(workbook.defaultSheet, "BOMSHEET");
-  assert.deepEqual(await workbook.rows("HOME"), [["1"]], "a stored (uncompressed) part is read too");
-  assert.deepEqual(await workbook.rows("EPLAN"), []);
+  assert.deepEqual([...await workbook.rows("HOME")], [["1"]], "a stored (uncompressed) part is read too");
+  assert.deepEqual([...await workbook.rows("EPLAN")], []);
   const rows = await workbook.rows("BOMSHEET");
   assert.equal(rows.length, 4, "blank rows are dropped");
   assert.deepEqual(rows[0], ["", "", "", "ใบคำนวณวัตถุดิบ"], "columns keep their position");
@@ -75,4 +75,31 @@ test("cell references and XML entities decode like Excel writes them", () => {
   assert.deepEqual(["A1", "Z9", "AA10", "AF7", "XFD1"].map(xlsx.columnIndex), [0, 25, 26, 31, 16383]);
   assert.equal(xlsx.decodeXml("a &lt;b&gt; &quot;c&quot; &apos;d&apos; &amp;amp; &#3585; &#xE01; &bogus;"), "a <b> \"c\" 'd' &amp; ก ก &bogus;");
   assert.deepEqual(xlsx.sharedStrings('<sst><si><t>a</t></si><si/><si><t xml:space="preserve"> b </t></si></sst>'), ["a", "", " b "]);
+});
+
+test("reader limits: inflated size is counted (a lying declared size is caught), corrupt data and wide or long sheets fail in Thai", async () => {
+  const sheetFiles = (sheetXml, extra = {}) => [
+    { name: "xl/workbook.xml", data: '<workbook><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>' },
+    { name: "xl/_rels/workbook.xml.rels", data: '<Relationships><Relationship Id="rId1" Target="../xl/./worksheets/s.xml"/></Relationships>' },
+    { name: "xl/worksheets/s.xml", data: sheetXml, ...extra },
+  ];
+  const big = `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${"x".repeat(5000)}</t></is></c></row></sheetData></worksheet>`;
+  const lying = await xlsx.openWorkbook(makeZip(sheetFiles(big, { declaredSize: 100 })), { maxPartBytes: 1000 });
+  assert.deepEqual(lying.sheets.map((sheet) => sheet.path), ["xl/worksheets/s.xml"], "../ and ./ in a rel target resolve");
+  await assert.rejects(lying.rows("S"), /ใหญ่เกินที่อ่านได้/, "the size is counted while inflating, not taken from the file");
+  const corrupt = makeZip(sheetFiles(big, { store: true }));
+  new Uint8Array(corrupt).fill(0xff, 30 + "xl/workbook.xml".length, 30 + "xl/workbook.xml".length + 3); // ข้อมูลบีบอัดของส่วนแรกเสีย (block type ไม่ถูกต้อง)
+  await assert.rejects(xlsx.openWorkbook(corrupt), /ไฟล์เสียหาย/);
+  // แถวที่มีค่าไกลกว่าคอลัมน์ MAX_COLUMNS: ข้ามค่านั้น นับไว้ และไม่สร้างแถวกว้าง 16,384 ช่อง
+  const wide = await xlsx.openWorkbook(makeZip(sheetFiles('<worksheet><sheetData><row r="1"><c r="A1"><v>1</v></c><c r="XFD1"><v>2</v></c></row><row r="2"><c r="XFD2"><v>3</v></c></row></sheetData></worksheet>')));
+  const wideRows = await wide.rows("S");
+  assert.deepEqual([...wideRows], [["1"]]);
+  assert.equal(wideRows.skippedCells, 2);
+  const many = Array.from({ length: xlsx.MAX_ROWS + 1 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}"><v>${i}</v></c></row>`).join("");
+  await assert.rejects((await xlsx.openWorkbook(makeZip(sheetFiles(`<worksheet><sheetData>${many}</sheetData></worksheet>`)))).rows("S"), /เกิน 60,000 แถว/);
+  assert.equal(xlsx.resolvePath("/xl/worksheets/a.xml"), "xl/worksheets/a.xml");
+});
+
+test("an empty text run (<t/>) adds nothing and does not swallow the next run", () => {
+  assert.deepEqual(xlsx.sharedStrings("<sst><si><r><t/></r><r><t>abc</t></r></si><si><t/></si></sst>"), ["abc", ""]);
 });

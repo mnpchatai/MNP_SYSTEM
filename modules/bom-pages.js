@@ -1053,45 +1053,59 @@
       const sourceInput = rootNode.querySelector("[data-bom-source]");
       let built = null;
       let workbook = null;
+      // ทุกการเลือกไฟล์/ชีตได้ลำดับใหม่ ผลที่เสร็จทีหลังแต่เป็นของการเลือกเก่าถูกทิ้ง (ชีต DATA อ่านช้ากว่า BOMSHEET จึงอาจเสร็จทีหลัง)
+      let seq = 0;
+      const showError = (error) => { if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error))); };
       // ไฟล์ .xlsx/.xlsm: เปิดสมุดงาน (modules/bom-xlsx.js) อ่านชีตที่เลือกลงช่องวาง แล้วตรวจสอบเหมือนการวาง
-      const loadSheet = async (name) => {
-        if (!workbook || !paste) return;
+      const loadSheet = async (book, name, mine) => {
+        if (!paste) return;
         if (report) report.innerHTML = ui.callout("info", `กำลังอ่านชีต ${esc(name)}…`);
         try {
-          paste.value = root.MNP_BOM_XLSX.rowsToTsv(await workbook.rows(name));
+          const rows = await book.rows(name);
+          if (mine !== seq) return;
+          paste.value = root.MNP_BOM_XLSX.rowsToTsv(rows);
           rootNode.querySelector("[data-bom-check]")?.click(); // ตรวจสอบทันที รายงานบอกจำนวนสินค้า/ปัญหาของชีตนี้
+          if (rows.skippedCells && report) report.innerHTML += ui.callout("warn", `ข้ามค่า ${esc(String(rows.skippedCells))} ช่องที่อยู่เกินคอลัมน์ที่ ${esc(String(root.MNP_BOM_XLSX.MAX_COLUMNS))}`);
         } catch (error) {
+          if (mine !== seq) return;
           paste.value = "";
-          if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error)));
+          showError(error);
         }
       };
       file?.addEventListener("change", async () => {
+        const mine = ++seq;
         const picked = file.files?.[0];
         built = null;
         workbook = null;
         if (sheetField) sheetField.hidden = true;
+        if (report) report.innerHTML = "";
         if (!picked) return;
+        if (sourceInput) sourceInput.value = picked.name.slice(0, 80);
         if (!root.MNP_BOM_XLSX?.isWorkbookName(picked.name)) {
           if (typeof FileReader === "undefined") return;
           const reader = new FileReader();
-          reader.onload = () => { if (paste) paste.value = String(reader.result ?? ""); };
+          reader.onload = () => { if (paste && mine === seq) paste.value = String(reader.result ?? ""); };
           reader.readAsText(picked);
           return;
         }
         if (report) report.innerHTML = ui.callout("info", `กำลังเปิด ${esc(picked.name)}…`);
         try {
-          workbook = await root.MNP_BOM_XLSX.openWorkbook(await picked.arrayBuffer());
-          if (!workbook.sheets.length) throw new Error("ไม่พบชีตในไฟล์นี้");
-          if (sheetSelect) sheetSelect.innerHTML = workbook.sheets.map((sheet) => `<option value="${attr(sheet.name)}"${sheet.name === workbook.defaultSheet ? " selected" : ""}>${esc(sheet.name)}${sheet.hidden ? " (ซ่อน)" : ""}</option>`).join("");
+          const book = await root.MNP_BOM_XLSX.openWorkbook(await picked.arrayBuffer());
+          if (mine !== seq) return;
+          if (!book.sheets.length) throw new Error("ไม่พบชีตในไฟล์นี้");
+          workbook = book;
+          if (sheetSelect) sheetSelect.innerHTML = book.sheets.map((sheet) => `<option value="${attr(sheet.name)}"${sheet.name === book.defaultSheet ? " selected" : ""}>${esc(sheet.name)}${sheet.hidden ? " (ซ่อน)" : ""}</option>`).join("");
           if (sheetField) sheetField.hidden = false;
-          if (sourceInput) sourceInput.value = picked.name.slice(0, 80);
-          await loadSheet(workbook.defaultSheet);
+          await loadSheet(book, book.defaultSheet, mine);
         } catch (error) {
-          workbook = null;
-          if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error)));
+          if (mine === seq) showError(error);
         }
       });
-      sheetSelect?.addEventListener("change", () => { built = null; return loadSheet(sheetSelect.value); });
+      sheetSelect?.addEventListener("change", () => {
+        if (!workbook) return undefined;
+        built = null;
+        return loadSheet(workbook, sheetSelect.value, ++seq);
+      });
       rootNode.querySelector("[data-bom-check]")?.addEventListener("click", () => {
         if (!paste || !report) return;
         try {
