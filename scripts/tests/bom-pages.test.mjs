@@ -670,7 +670,9 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.match(html, /SE-TP01-OR01-100-18-65<\/span> <span class="muted nowrap">× 3 ชิ้น<\/span> <span class="muted">\(จากสายด้านบน\)/, "a fed part points to its lane");
   assert.match(html, /data-rf-open="routingEdit" data-rf-args="\{&quot;code&quot;:&quot;SE-TP01-OR01-100-18-65&quot;\}"/);
   assert.match(html, /data-rf-open="itemImage" data-rf-args="\{&quot;code&quot;:&quot;DEMO-TP-01\(P\)-Y&quot;\}"/);
-  assert.match(html, /GR · ตัด\/เจาะชิ้นยาง<\/td><td class="num">3\.45<\/td><td class="num">4\.6<\/td>/, "3.45 min per set × 80 sets = 4.6 hours");
+  assert.match(html, /GR · ตัด\/เจาะชิ้นยาง<\/td><td class="num">6<\/td><td class="num">8<\/td>/, "6 min per set × 80 sets = 8 hours");
+  // ตามผังงาน: เส้นยางที่ป้อนชิ้นยางผ่าน SR รับเข้าคลัง + QC ตรวจขนาด เป็นลำดับถัดจากรีด ก่อน GR
+  assert.match(html, /aria-label="ลำดับ 1 · RB · รีดเส้นยาง · RB-DM01-02-OR01-202-18-70[\s\S]*?<div class="bom-flow-step is-receive"><span class="bom-flow-order">ลำดับ 2<\/span><span class="bom-flow-dept">SR · รับเข้าคลัง\/QC<\/span>[\s\S]*?aria-label="ลำดับ 3 · GR · ตัด\/เจาะชิ้นยาง · SE-TP01-OR01-100-18-65/, "rod (1) → receive and check (2) → rubber part (3)");
   // มุมมองตารางต้นทุน: สินค้าอยู่บน ราคาตั้งได้เฉพาะชิ้นที่ไม่มี BOM
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=table");
   clean(html);
@@ -739,13 +741,16 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.ok(orders.length > 1, "every card carries its production order");
   assert.ok(orders.slice(0, -1).every((order) => order < orders.at(-1)), "the product card is made after every feed");
   assert.ok(new Set(orders).size > 2, "rods, the parts cut from them and the product get different orders");
-  // ขั้นตอนตามลำดับ: แถวเรียงจากลำดับ 1 สินค้าอยู่แถวสุดท้าย · ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับที่มา
+  // ขั้นตอนตามลำดับ (ตามผังงาน): ST สั่ง/เบิกวัตถุดิบก่อน → ลำดับ 1 … → PK ประกอบสินค้า → WH รับเข้าคลังเป็นแถวสุดท้าย
   const stepList = await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=steps");
+  assert.match(stepList, /<tbody><tr><td><span class="bom-flow-order" title="ก่อนเริ่มผลิต">เริ่ม<\/span><\/td><td class="nowrap">ST · คลังวัตถุดิบ<\/td><td>สั่ง\/เบิกวัตถุดิบ[\s\S]*?P-BOX-01[^<]*<\/span> <span class="small">[^<]+<\/span> <span class="muted nowrap">รวม /, "ST comes first with every bought item and its total");
   const stepOrders = [...stepList.matchAll(/<tr><td><span class="bom-flow-order">ลำดับ (\d+)<\/span>/g)].map((match) => Number(match[1]));
   assert.equal(stepOrders[0], 1);
   assert.deepEqual(stepOrders, [...stepOrders].sort((a, b) => a - b), "rows run from the first order");
-  const lastRow = stepList.slice(stepList.lastIndexOf("<tr><td><span class=\"bom-flow-order\">"));
-  assert.match(lastRow, /^<tr><td><span class="bom-flow-order">ลำดับ \d+<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span>/, "the product is the last row");
+  assert.match(stepList, /<td class="nowrap">SR · รับเข้าคลัง\/QC<\/td><td><span class="rf-mono">RB-DM01-01-OR01-200-0-72<\/span><div class="small">รับเข้าคลัง · QC ตรวจขนาดขณะรับเข้า/, "each rubber rod is received and checked");
+  const lastRows = stepList.split("<tr><td><span class=\"bom-flow-order\">").slice(-2);
+  assert.match(lastRows[0], /^ลำดับ (\d+)<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span>/, "PK assembles the product just before the warehouse");
+  assert.match(lastRows[1], /^ลำดับ (\d+)<\/span><\/td><td class="nowrap">WH · คลังสินค้าสำเร็จรูป<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span><div class="small">รับสินค้าจาก PK เข้าคลัง/, "the warehouse is the last row");
   assert.match(stepList, /คอมปาวด์ <span class="rf-mono">DM01<\/span>/, "a rubber rod row names its compound");
   assert.match(stepList, /<span class="bom-flow-order is-quiet">จากลำดับ 1<\/span>/, "a part made earlier names its order");
   assert.match(stepList, /aria-current="page">ขั้นตอนตามลำดับ/);

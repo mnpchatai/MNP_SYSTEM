@@ -8,7 +8,8 @@
   // v1 = รุ่นที่มีขั้นอนุมัติ (PR #246) · v2 = จุดสร้างจุดเดียว ไม่มีอนุมัติ: ร่าง/รออนุมัติค้างถูกตัดทิ้งตอน migrate
   // v3 = สี ชุดสี และแพ็กเกจเป็นข้อมูล (colors / colorSets / packages)
   // v4 = โครงสร้างสินค้า (จำลอง): ขั้นตอนผลิตมาตรฐาน (processes) และขั้นตอนผลิตต่อชิ้นงาน (routings)
-  const STATE_VERSION = 4;
+  // v5 = ขั้นตอนมาตรฐานตามผังงาน: GR ทากาว/เจียร/คัดแยก และ PK ใส่สินค้าในกระเป๋า (เพิ่มเฉพาะรหัสที่ยังไม่มี)
+  const STATE_VERSION = 5;
 
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม BOM", group: "ภาพรวม" },
@@ -70,6 +71,14 @@
       if (!Array.isArray(value.routings)) value.routings = [];
       value.version = 4;
       value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: "รุ่น 3 → 4: เพิ่มขั้นตอนผลิตและโครงสร้างสินค้า (จำลอง)" });
+    }
+    if (value.version === 4 && Array.isArray(value.processes)) {
+      // รุ่น 5 เพิ่มขั้นตอนมาตรฐานชุดใหม่ เฉพาะรหัสที่ยังไม่มี · ขั้นตอนที่ผู้ใช้เพิ่ม/แก้ชื่อเองคงอยู่
+      const known = new Set(value.processes.map((process) => process.code));
+      const added = (root.MNP_BOM_RULES?.DEFAULT_PROCESSES ?? []).filter((entry) => !known.has(entry.code)).map((entry) => ({ ...entry }));
+      value.processes.push(...added);
+      value.version = 5;
+      value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: `รุ่น 4 → 5: เพิ่มขั้นตอนมาตรฐาน ${added.map((entry) => entry.code).join(", ") || "(มีครบแล้ว)"}` });
     }
     return value.version === STATE_VERSION && hasShape(value) ? value : null;
   }

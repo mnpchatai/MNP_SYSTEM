@@ -19,7 +19,7 @@
   });
   const MANUFACTURED = Object.freeze(["FG", "SE", "RB", "PT", "BG", "SUBPART"]);
   const DEPTS = Object.freeze(["PK", "GR", "RB", "PT", "BG", "ST"]);
-  const DEPT_LABEL = Object.freeze({ PK: "PK · บรรจุ/ประกอบ", GR: "GR · ตัด/เจาะชิ้นยาง", RB: "RB · รีดเส้นยาง", PT: "PT · ฉีดพลาสติก", BG: "BG · กระเป๋า/เย็บ", ST: "ST · คลังวัตถุดิบ" });
+  const DEPT_LABEL = Object.freeze({ PK: "PK · บรรจุ/ประกอบ", GR: "GR · ตัด/เจาะชิ้นยาง", RB: "RB · รีดเส้นยาง", PT: "PT · ฉีดพลาสติก", BG: "BG · กระเป๋า/เย็บ", ST: "ST · คลังวัตถุดิบ", SR: "SR · รับเข้าคลัง/QC", WH: "WH · คลังสินค้าสำเร็จรูป" });
   // ลำดับกำหนดเสร็จรายแผนกในหัวใบสั่งผลิต (MAIN ของไฟล์ Excel)
   const DUE_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "ST", "PK"]);
   // ลำดับการไหลของงาน (ต้นน้ำ → ปลายน้ำ) ใช้เรียงการ์ดในหน้า "สินค้า 1 ตัว → งานทุกแผนก"
@@ -537,11 +537,15 @@
     { code: "RB-CURE", name: "อบ/คงรูปเส้นยาง", dept: "RB" },
     { code: "GR-CUT", name: "ตัดชิ้นยาง", dept: "GR" },
     { code: "GR-DRL", name: "เจาะรู", dept: "GR" },
+    { code: "GR-GLUE", name: "ทากาว", dept: "GR" },
+    { code: "GR-GRIND", name: "เจียร", dept: "GR" },
+    { code: "GR-SORT", name: "คัดแยก", dept: "GR" },
     { code: "PT-INJ", name: "ฉีดพลาสติก", dept: "PT" },
     { code: "PT-CUT", name: "ตัดท่อ/แกน", dept: "PT" },
     { code: "BG-CUT", name: "ตัดผ้า", dept: "BG" },
     { code: "BG-SEW", name: "เย็บ", dept: "BG" },
     { code: "PK-ASM", name: "ประกอบ", dept: "PK" },
+    { code: "PK-BAG", name: "ใส่สินค้าในกระเป๋า", dept: "PK" },
     { code: "PK-QC", name: "ตรวจคุณภาพ", dept: "PK" },
     { code: "PK-PACK", name: "บรรจุ", dept: "PK" },
   ].map((entry) => Object.freeze(entry)));
@@ -552,6 +556,9 @@
   // ชิ้นที่ต้องผลิตก่อน (สายป้อนในมุมมองลำดับผลิต): ชิ้นที่แผนกเราทำเอง (ไม่ใช่ของซื้อ) แม้ยังไม่มี BOM/ขั้นตอน
   // เช่น เส้นยาง RB ที่มีได้แค่คอมปาวด์จาก RubberFlow · ของซื้อที่มี BOM หรือขั้นตอนก็นับด้วย
   const isFeed = (child) => child.kind !== "PURCHASED" || child.children.length > 0 || child.steps.length > 0;
+  // ลำดับที่ชิ้นพร้อมให้พ่อใช้: เส้นยาง RB พร้อมหลังขั้น SR/QC รับเข้าคลัง (ลำดับถัดจากรีด) · ชิ้นอื่นพร้อมเมื่อผลิตเสร็จ
+  const receiveOrder = (node) => (node.kind === "RB" && node.level > 0 ? node.order + 1 : null);
+  const readyOrder = (node) => receiveOrder(node) ?? node.order;
   // คืน { root, rows (เรียงแบบต้นไม้ ลึกก่อน), minutesByDept (ต่อ 1 หน่วยราก), missingCost, missing }
   // routingOf(code) → { revision, steps: [{ processCode, minutesPerPc }] } | null · processOf(code) → { code, name, dept } | null
   function structureTree(rootCode, { itemOf, approvedBomOf, routingOf, processOf, rates = LABOR_BAHT_PER_MIN, maxDepth = 8 }) {
@@ -594,7 +601,8 @@
         missingCost.add(item.code);
       }
       // ลำดับการผลิต: สายป้อนต้องเสร็จก่อนพ่อ จึง = 1 + ลำดับมากสุดของสายป้อน · สายที่ไม่ต่อกันได้เลขเดียวกัน (ทำพร้อมกันได้)
-      node.order = 1 + Math.max(0, ...node.children.filter(isFeed).map((child) => child.order));
+      // เส้นยาง RB ต้องผ่าน SR รับเข้าคลัง + QC ตรวจขนาด (receiveOrder) ก่อนแผนกถัดไปเบิกไปใช้
+      node.order = 1 + Math.max(0, ...node.children.filter(isFeed).map(readyOrder));
       node.labor = steps.reduce((sum, step) => sum + step.cost, 0);
       node.material = round(node.material);
       node.labor = round(node.labor);
@@ -621,21 +629,35 @@
     return { feeds, stages };
   }
 
-  // รายการขั้นตอนการผลิตเรียงตามลำดับ (มุมมอง "ขั้นตอนตามลำดับ"): ชิ้นที่ต้องผลิตทุกชิ้น ลำดับไหน แผนกไหน ใช้อะไรเท่าไร
-  // รหัสเดียวกันที่อยู่หลายกิ่งรวมเป็นแถวเดียว (จำนวนต่อสินค้ารวมกัน ลำดับใช้ค่ามากสุด) · เรียงลำดับ → แผนกตาม FLOW_DEPTS → รหัส
+  // รายการขั้นตอนเรียงตามลำดับ (มุมมอง "ขั้นตอนตามลำดับ") ตามผังงานของบริษัท:
+  //   type "purchase" (order 0) = ST สั่ง/เบิกของซื้อทั้งหมด ยอดต่อสินค้า 1 หน่วย
+  //   type "make" = ชิ้นที่ต้องผลิต ลำดับไหน แผนกไหน ใช้อะไรเท่าไร · type "receive" = SR รับเส้นยางเข้าคลัง + QC ตรวจขนาด (ต่อจากรีด)
+  //   type "store" (ลำดับสุดท้าย) = WH รับสินค้าสำเร็จรูปจาก PK เข้าคลัง
+  // รหัสเดียวกันที่อยู่หลายกิ่งรวมเป็นแถวเดียว (จำนวนต่อสินค้ารวมกัน ลำดับใช้ค่ามากสุด) · input.from = ลำดับที่ชิ้นนั้นพร้อมใช้ (null = ของซื้อ)
+  // เรียงลำดับ → แผนกตาม FLOW_DEPTS → รหัส
   function productionSteps(tree) {
-    const map = new Map();
+    const made = new Map();
+    const bought = new Map();
+    const add = (map, key, node, entry) => {
+      const found = map.get(key);
+      if (found) { found.order = Math.max(found.order, entry.order); found.qtyPerRoot = round(found.qtyPerRoot + node.qtyPerRoot); }
+      else map.set(key, { ...entry, itemCode: node.itemCode, name: node.name, uom: node.uom, qtyPerRoot: round(node.qtyPerRoot) });
+    };
     for (const node of tree.rows) {
-      if (node.level > 0 && !isFeed(node)) continue;
-      const entry = map.get(node.itemCode);
-      if (entry) { entry.order = Math.max(entry.order, node.order); entry.qtyPerRoot = round(entry.qtyPerRoot + node.qtyPerRoot); continue; }
-      map.set(node.itemCode, {
-        order: node.order, dept: node.dept, itemCode: node.itemCode, name: node.name, uom: node.uom, qtyPerRoot: round(node.qtyPerRoot), steps: node.steps,
-        inputs: node.children.map((child) => ({ itemCode: child.itemCode, name: child.name, kind: child.kind, uom: child.uom, qtyPerParent: child.qtyPerParent, scrapPct: child.scrapPct, made: isFeed(child) })),
-      });
+      if (node.level > 0 && !isFeed(node)) { add(bought, node.itemCode, node, { type: "purchase", order: 0, dept: "ST" }); continue; }
+      const inputs = node.children.map((child) => ({ itemCode: child.itemCode, name: child.name, kind: child.kind, uom: child.uom, qtyPerParent: child.qtyPerParent, scrapPct: child.scrapPct, from: isFeed(child) ? readyOrder(child) : null }));
+      add(made, `make|${node.itemCode}`, node, { type: "make", order: node.order, dept: node.dept, steps: node.steps, inputs });
+      if (receiveOrder(node) !== null) add(made, `receive|${node.itemCode}`, node, { type: "receive", order: receiveOrder(node), dept: "SR", steps: [], inputs: [] });
     }
     const deptRank = (dept) => (FLOW_DEPTS.includes(dept) ? FLOW_DEPTS.indexOf(dept) : FLOW_DEPTS.length);
-    return [...map.values()].sort((a, b) => a.order - b.order || deptRank(a.dept) - deptRank(b.dept) || a.itemCode.localeCompare(b.itemCode));
+    const rows = [...made.values()].sort((a, b) => a.order - b.order || deptRank(a.dept) - deptRank(b.dept) || a.itemCode.localeCompare(b.itemCode));
+    // ชิ้นที่ใช้ในหลายกิ่งแล้วพร้อมคนละลำดับ: บอกลำดับที่พร้อมครบทุกชิ้น (มากสุด)
+    const readyAt = new Map(rows.map((row) => [row.itemCode, row.order]));
+    rows.forEach((row) => row.inputs.forEach((input) => { if (input.from !== null) input.from = readyAt.get(input.itemCode) ?? input.from; }));
+    const root = tree.root;
+    const purchase = { type: "purchase", order: 0, dept: "ST", itemCode: "", name: "", uom: "", qtyPerRoot: 0, steps: [], inputs: [...bought.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((entry) => ({ itemCode: entry.itemCode, name: entry.name, uom: entry.uom, qtyPerRoot: entry.qtyPerRoot, from: null })) };
+    const store = { type: "store", order: root.order + 1, dept: "WH", itemCode: root.itemCode, name: root.name, uom: root.uom, qtyPerRoot: 1, steps: [], inputs: [] };
+    return [...(purchase.inputs.length ? [purchase] : []), ...rows, store];
   }
 
   // ---------- ความต้องการสุทธิ (สูตร AK ของ BOMSHEET ยกมาคิดทั้งใบ) ----------

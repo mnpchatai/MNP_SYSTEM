@@ -617,12 +617,22 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   v2.version = 2;
   delete v2.colors; delete v2.colorSets; delete v2.packages; delete v2.processes; delete v2.routings;
   const fromV2 = storeApi.migrate(JSON.parse(JSON.stringify(v2)));
-  assert.equal(fromV2.version, 4);
+  assert.equal(fromV2.version, storeApi.STATE_VERSION);
   assert.deepEqual(fromV2.processes, rules.DEFAULT_PROCESSES.map((entry) => ({ ...entry })));
   assert.deepEqual(fromV2.routings, []);
   assert.deepEqual([fromV2.colors, fromV2.colorSets, fromV2.packages], [[], [], []]);
   assert.equal(fromV2.items.length, v2.items.length);
   assert.ok(storeApi.isValidState(fromV2));
+  // รุ่น 4 → 5: เพิ่มขั้นตอนมาตรฐานที่ยังไม่มี (GR ทากาว/เจียร/คัดแยก, PK ใส่กระเป๋า) ขั้นตอนที่ผู้ใช้เพิ่มหรือแก้ชื่อเองคงอยู่
+  const v4 = fresh();
+  v4.version = 4;
+  v4.processes = [{ code: "GR-CUT", name: "ตัด (ชื่อที่ผู้ใช้แก้)", dept: "GR" }, { code: "X-OWN", name: "ขั้นตอนของผู้ใช้", dept: "PK" }];
+  const fromV4 = storeApi.migrate(JSON.parse(JSON.stringify(v4)));
+  assert.equal(fromV4.version, storeApi.STATE_VERSION);
+  assert.deepEqual(fromV4.processes.slice(0, 2), v4.processes, "existing steps are kept as they are");
+  assert.ok(["GR-GLUE", "GR-GRIND", "GR-SORT", "PK-BAG"].every((code) => fromV4.processes.some((process) => process.code === code)));
+  assert.equal(fromV4.processes.filter((process) => process.code === "GR-CUT").length, 1, "a step is not added twice");
+  assert.equal(fromV4.routings.length, v4.routings.length, "routings survive the upgrade");
   assert.equal(storeApi.isValidState({ ...fresh(), colors: undefined }), false, "a v3 state without the colour tables is not valid as is");
   assert.equal(storeApi.migrate({ version: 99, counters: {}, users: [], compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [] }), null, "unknown versions are reseeded");
   assert.equal(storeApi.MODULES[1].id, "build", "the single BOM builder is the first menu after the overview");
