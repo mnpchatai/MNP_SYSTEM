@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { makeZip } from "./zip-fixture.mjs";
 
 // โหลดโมดูล BOM ทั้งชุด (พร้อม RubberFlow ที่ให้ ui และ store สำหรับการเชื่อม WO) เข้า context จำลองที่มี helper ของ app.js แบบ stub
 // และ localStorage จำลอง แล้ววาดทุกหน้า × ทุกบทบาท เรียก dialog ทุกตัว และยิงฟอร์ม/ปุ่มผ่านกติกา data-rf-* ของ module-bom.js
 const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
-  "modules/bom-rules.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
+  "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "count", "jobs", "audit"];
@@ -41,6 +42,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     localStorage,
     FormData: class { constructor(form) { this.values = form?.__values ?? {}; } entries() { return Object.entries(this.values).flatMap(([key, value]) => (Array.isArray(value) ? value.map((item) => [key, item]) : [[key, value]])); } get(key) { return this.values[key] ?? null; } },
     MNP_REQUEST_MODULES: {},
+    TextDecoder, Uint8Array, DataView,
   });
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
@@ -385,6 +387,87 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   assert.match(report.innerHTML, /อ่านได้ 2 บรรทัด/);
   assert.match(report.innerHTML, /data-bom-import/);
   clean(report.innerHTML);
+  // เลือกไฟล์ .xlsm: เปิดชีต BOMSHEET อ่านลงช่องวาง ตั้งชื่อแหล่งข้อมูล แสดงตัวเลือกชีต และตรวจสอบทันที
+  const sheetField = { hidden: true };
+  const sheetSelect = { ...env.root, handlers: {}, innerHTML: "", value: "" };
+  const source = { value: "DATA BOM.xlsx" };
+  const fileInput = { ...env.root, handlers: {}, files: [] };
+  const xlsxRoot = { ...env.root, querySelector: (selector) => ({ "[data-bom-paste]": paste, "[data-bom-report]": report, "[data-bom-check]": { ...check, click: () => check.handlers.click() }, "[data-bom-group]": { value: "TOY" }, "[data-bom-source]": source, "[data-bom-file]": fileInput, "[data-bom-sheet-field]": sheetField, "[data-bom-sheet]": sheetSelect })[selector] ?? null, querySelectorAll: () => [] };
+  env.context.MNP_BOM_PAGES.import(env.ctx("p=import")).bind(xlsxRoot, env.ctx("p=import"));
+  const sheetXml = (rows) => `<worksheet><sheetData>${rows.map((cells, r) => `<row r="${r + 1}">${cells.map((value, c) => `<c r="${String.fromCharCode(65 + c)}${r + 1}" t="inlineStr"><is><t>${value}</t></is></c>`).join("")}</row>`).join("")}</sheetData></worksheet>`;
+  const workbook = makeZip([ // ไม่บีบอัด: context ของเทสต์ไม่มี Blob/DecompressionStream
+    { name: "xl/workbook.xml", data: '<workbook><sheets><sheet name="MAIN" r:id="rId1"/><sheet name="BOMSHEET" r:id="rId2"/><sheet name="EPLAN" state="hidden" r:id="rId3"/></sheets></workbook>', store: true },
+    { name: "xl/_rels/workbook.xml.rels", data: '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Target="worksheets/sheet3.xml"/></Relationships>', store: true },
+    { name: "xl/worksheets/sheet1.xml", data: sheetXml([["PI"]]), store: true },
+    { name: "xl/worksheets/sheet2.xml", data: sheetXml([["ITEM", "CODE", "NAME", "รหัสแผนก", "แผนกผู้ผลิต", "จำนวนที่ใช้ต่อชุด", "หน่วยนับ"], ["X-01(P)-Y", "X-01", "สินค้า X", "PK", "PK", "-", "ชุด"], ["X-01(P)-Y", "P-STK-09", "สติ๊กเกอร์", "ST", "PK-ST", "1", "ใบ"]]), store: true },
+    { name: "xl/worksheets/sheet3.xml", data: sheetXml([]), store: true },
+  ]);
+  fileInput.files = [{ name: "Material_X 26001.xlsm", arrayBuffer: async () => workbook }];
+  await fileInput.handlers.change();
+  assert.equal(sheetField.hidden, false, "the sheet chooser appears for a workbook");
+  assert.match(sheetSelect.innerHTML, /<option value="BOMSHEET" selected>BOMSHEET<\/option>/);
+  assert.match(sheetSelect.innerHTML, /EPLAN \(ซ่อน\)/);
+  assert.equal(source.value, "Material_X 26001.xlsm");
+  assert.match(paste.value, /^ITEM\tCODE\tNAME/);
+  assert.match(report.innerHTML, /อ่านได้ 2 บรรทัด/, "the sheet is checked right away");
+  assert.doesNotMatch(report.innerHTML, /หน่วยที่แปลงไม่ได้/);
+  sheetSelect.value = "MAIN";
+  await sheetSelect.handlers.change();
+  assert.match(report.innerHTML, /ไม่พบแถวหัวคอลัมน์/, "another sheet is read and checked when chosen");
+  // เลือกไฟล์ A (อ่านช้า) แล้วเลือก B ก่อน A เสร็จ: ผลของ A ที่มาทีหลังต้องไม่ทับ B
+  let releaseSlow;
+  const slow = new Promise((resolve) => { releaseSlow = resolve; });
+  fileInput.files = [{ name: "slow-A.xlsm", arrayBuffer: () => slow }];
+  const pendingA = fileInput.handlers.change();
+  fileInput.files = [{ name: "fast-B.xlsm", arrayBuffer: async () => workbook }];
+  await fileInput.handlers.change();
+  const afterB = paste.value;
+  releaseSlow(new ArrayBuffer(10)); // A กลับมาเป็นไฟล์เสีย หลัง B เสร็จแล้ว
+  await pendingA;
+  assert.equal(source.value, "fast-B.xlsm", "the older pick does not rename the source");
+  assert.equal(paste.value, afterB);
+  assert.equal(sheetField.hidden, false);
+  assert.match(report.innerHTML, /อ่านได้ 2 บรรทัด/, "the older pick's error does not replace the newer report");
+  // ไฟล์เก่าที่อ่านสำเร็จทีหลัง: รายการชีตยังเป็นของไฟล์ใหม่
+  let releaseOld;
+  const oldBook = makeZip([
+    { name: "xl/workbook.xml", data: '<workbook><sheets><sheet name="OLD" r:id="rId1"/></sheets></workbook>', store: true },
+    { name: "xl/_rels/workbook.xml.rels", data: '<Relationships><Relationship Id="rId1" Target="worksheets/o.xml"/></Relationships>', store: true },
+    { name: "xl/worksheets/o.xml", data: sheetXml([["OLD"]]), store: true },
+  ]);
+  fileInput.files = [{ name: "old.xlsm", arrayBuffer: () => new Promise((resolve) => { releaseOld = resolve; }) }];
+  const pendingOld = fileInput.handlers.change();
+  fileInput.files = [{ name: "fast-B.xlsm", arrayBuffer: async () => workbook }];
+  await fileInput.handlers.change();
+  releaseOld(oldBook);
+  await pendingOld;
+  assert.doesNotMatch(sheetSelect.innerHTML, /OLD/, "a late successful read of the older file does not replace the sheet list");
+  assert.doesNotMatch(paste.value, /^OLD/);
+  // ค่าที่อยู่เกินคอลัมน์ 256 (IW): ข้ามและเตือนในรายงานเดียวกับปุ่มนำเข้า (ไม่ต่อ innerHTML ทีหลัง ซึ่งทำให้ปุ่มเสีย handler)
+  const wideBook = makeZip([
+    { name: "xl/workbook.xml", data: '<workbook><sheets><sheet name="BOMSHEET" r:id="rId1"/></sheets></workbook>', store: true },
+    { name: "xl/_rels/workbook.xml.rels", data: '<Relationships><Relationship Id="rId1" Target="worksheets/w.xml"/></Relationships>', store: true },
+    { name: "xl/worksheets/w.xml", data: sheetXml([["ITEM", "CODE", "NAME", "รหัสแผนก", "แผนกผู้ผลิต", "จำนวนที่ใช้ต่อชุด", "หน่วยนับ"], ["X-01(P)-Y", "X-01", "สินค้า X", "PK", "PK", "-", "ชุด"], ["X-01(P)-Y", "P-STK-09", "สติ๊กเกอร์", "ST", "PK-ST", "1", "ใบ"]]).replace("</row>", '<c r="IW1" t="inlineStr"><is><t>far</t></is></c></row>'), store: true },
+  ]);
+  fileInput.files = [{ name: "wide.xlsx", arrayBuffer: async () => wideBook }];
+  await fileInput.handlers.change();
+  assert.match(report.innerHTML, /ข้ามค่า 1 ช่องที่อยู่เกินคอลัมน์ที่ 256[\s\S]*data-bom-import/, "the note is part of the check report that holds the import button");
+  check.handlers.click();
+  assert.match(report.innerHTML, /ข้ามค่า 1 ช่อง/, "checking again keeps the note of the sheet");
+  paste.handlers.input();
+  check.handlers.click();
+  assert.doesNotMatch(report.innerHTML, /ข้ามค่า/, "editing the paste box drops the note");
+  assert.doesNotMatch(fs.readFileSync("modules/bom-pages.js", "utf8"), /report\.innerHTML \+=/, "the report is never appended to after the import button is bound");
+  // เปลี่ยนไปไฟล์ข้อความ: ล้างชีตและรายงานเก่า ตั้งชื่อแหล่งข้อมูลใหม่
+  fileInput.files = [{ name: "rows.tsv" }];
+  await fileInput.handlers.change();
+  assert.equal(sheetField.hidden, true);
+  assert.equal(report.innerHTML, "");
+  assert.equal(source.value, "rows.tsv");
+  fileInput.files = [{ name: "broken.xlsx", arrayBuffer: async () => new ArrayBuffer(10) }];
+  await fileInput.handlers.change();
+  assert.equal(sheetField.hidden, true);
+  assert.match(report.innerHTML, /ไม่ใช่ \.xlsx/);
   const c = env.ctx("p=orders&sel=DEMO-26001");
   const built = env.context.MNP_BOM_PAGES.orders(c);
   assert.match(built.html, /ส่งออก CSV ใบคำนวณ/);

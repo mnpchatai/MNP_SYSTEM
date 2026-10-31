@@ -1031,12 +1031,13 @@
     const { ui, rules, user, store } = ctx;
     const canImport = ctx.helpers.canPlan(user);
     const size = store.size();
-    const html = `${head(ctx, "นำเข้า BOM จาก Excel", "เปิดชีต DATA ของ DATA BOM.xlsx หรือไฟล์ Material_*.xlsm เลือกแถวหัวตารางพร้อมบรรทัดของสินค้าที่ต้องการ (Ctrl+C) แล้ววางที่นี่ ระบบประกอบเป็น BOM หลายชั้นและรายงานปัญหาก่อนบันทึก")}
+    const html = `${head(ctx, "นำเข้า BOM จาก Excel", "เลือกไฟล์ Material_*.xlsm หรือ DATA BOM.xlsx (ระบบเปิดชีต BOMSHEET หรือ DATA ให้) หรือคัดลอกแถวหัวตารางพร้อมบรรทัดของสินค้าที่ต้องการมาวาง ระบบประกอบเป็น BOM หลายชั้นและรายงานปัญหาก่อนบันทึก")}
       ${canImport ? "" : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การนำเข้าทำโดยฝ่ายวางแผนหรือผู้จัดการ")}
       ${ui.card(`<div class="rf-grid rf-g2">
           ${ui.field("วางข้อมูลจาก Excel (TSV) หรือ CSV", `<textarea class="textarea rf-textarea bom-paste" name="paste" rows="10" placeholder="ITEM\tน.น RB/g\tCODE\tรหัสแผนก\t… (วางทั้งแถวหัวตารางมาด้วย)" data-bom-paste></textarea>`)}
           <div>
-            ${ui.field("หรือเลือกไฟล์ .tsv / .csv / .txt", `<input class="input rf-input" type="file" accept=".tsv,.csv,.txt,text/plain,text/csv,text/tab-separated-values" data-bom-file>`, { hint: "ไฟล์ .xlsx/.xlsm ต้องบันทึกชีต DATA เป็น CSV UTF-8 หรือคัดลอกมาวางก่อน (Pilot Web ไม่มีไลบรารีอ่าน Excel)" })}
+            ${ui.field("หรือเลือกไฟล์ .xlsx / .xlsm / .tsv / .csv", `<input class="input rf-input" type="file" accept=".xlsx,.xlsm,.tsv,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12,text/plain,text/csv,text/tab-separated-values" data-bom-file>`, { hint: "อ่านค่าที่ Excel บันทึกไว้ในไฟล์ ไม่รันมาโคร · ไฟล์ .xls แบบเก่าให้บันทึกเป็น .xlsx ก่อน" })}
+            <div data-bom-sheet-field hidden>${ui.field("ชีต", ui.select("sheet", [], { extra: 'data-bom-sheet title="ชีตที่อ่านเข้าช่องวางข้อมูล"' }))}</div>
             ${ui.field("กลุ่มสินค้า", ui.select("group", [{ value: "TOY", label: "ของเล่น (DATA BOM.xlsx)" }, { value: "IND", label: "ยางอุตสาหกรรม" }], { value: "TOY", extra: "data-bom-group" }))}
             ${ui.field("ชื่อแหล่งข้อมูล", ui.input("source", { value: "DATA BOM.xlsx", extra: "data-bom-source" }))}
             <div class="rf-row"><button class="btn rf-btn" type="button" data-bom-check>ตรวจสอบ</button><span class="small muted">ข้อมูลในเบราว์เซอร์ตอนนี้ ${esc(rules.fmtQty(Math.round(size / 1000)))} KB (เพดาน localStorage ราว 5,000 KB)</span></div>
@@ -1047,13 +1048,70 @@
       const paste = rootNode.querySelector("[data-bom-paste]");
       const report = rootNode.querySelector("[data-bom-report]");
       const file = rootNode.querySelector("[data-bom-file]");
+      const sheetField = rootNode.querySelector("[data-bom-sheet-field]");
+      const sheetSelect = rootNode.querySelector("[data-bom-sheet]");
+      const sourceInput = rootNode.querySelector("[data-bom-source]");
       let built = null;
-      file?.addEventListener("change", () => {
+      let workbook = null;
+      // ทุกการเลือกไฟล์/ชีตได้ลำดับใหม่ ผลที่เสร็จทีหลังแต่เป็นของการเลือกเก่าถูกทิ้ง (ชีต DATA อ่านช้ากว่า BOMSHEET จึงอาจเสร็จทีหลัง)
+      let seq = 0;
+      // หมายเหตุของชีตที่อ่านล่าสุด แสดงในรายงานของปุ่มตรวจสอบ (เขียน report ครั้งเดียว ปุ่มนำเข้าจึงยังผูก handler อยู่) ล้างเมื่อเลือกไฟล์ใหม่หรือแก้ช่องวาง
+      let sheetNote = "";
+      paste?.addEventListener("input", () => { sheetNote = ""; });
+      const showError = (error) => { if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error))); };
+      // ไฟล์ .xlsx/.xlsm: เปิดสมุดงาน (modules/bom-xlsx.js) อ่านชีตที่เลือกลงช่องวาง แล้วตรวจสอบเหมือนการวาง
+      const loadSheet = async (book, name, mine) => {
+        if (!paste) return;
+        if (report) report.innerHTML = ui.callout("info", `กำลังอ่านชีต ${esc(name)}…`);
+        try {
+          const rows = await book.rows(name);
+          if (mine !== seq) return;
+          paste.value = root.MNP_BOM_XLSX.rowsToTsv(rows);
+          sheetNote = rows.skippedCells ? `ข้ามค่า ${rows.skippedCells} ช่องที่อยู่เกินคอลัมน์ที่ ${root.MNP_BOM_XLSX.MAX_COLUMNS}` : "";
+          rootNode.querySelector("[data-bom-check]")?.click(); // ตรวจสอบทันที รายงานบอกจำนวนสินค้า/ปัญหาของชีตนี้
+        } catch (error) {
+          if (mine !== seq) return;
+          paste.value = "";
+          sheetNote = "";
+          showError(error);
+        }
+      };
+      file?.addEventListener("change", async () => {
+        const mine = ++seq;
         const picked = file.files?.[0];
-        if (!picked || typeof FileReader === "undefined") return;
-        const reader = new FileReader();
-        reader.onload = () => { if (paste) paste.value = String(reader.result ?? ""); };
-        reader.readAsText(picked);
+        built = null;
+        workbook = null;
+        sheetNote = "";
+        if (sheetField) sheetField.hidden = true;
+        if (report) report.innerHTML = "";
+        if (!picked) return;
+        if (sourceInput) sourceInput.value = picked.name.slice(0, 80);
+        if (paste) paste.value = "";
+        if (!root.MNP_BOM_XLSX?.isWorkbookName(picked.name)) {
+          if (typeof FileReader === "undefined") return;
+          const reader = new FileReader();
+          reader.onload = () => { if (paste && mine === seq) paste.value = String(reader.result ?? ""); };
+          reader.onerror = () => { if (mine === seq) showError(new Error(`อ่านไฟล์ ${picked.name} ไม่ได้`)); };
+          reader.readAsText(picked);
+          return;
+        }
+        if (report) report.innerHTML = ui.callout("info", `กำลังเปิด ${esc(picked.name)}…`);
+        try {
+          const book = await root.MNP_BOM_XLSX.openWorkbook(await picked.arrayBuffer());
+          if (mine !== seq) return;
+          if (!book.sheets.length) throw new Error("ไม่พบชีตในไฟล์นี้");
+          workbook = book;
+          if (sheetSelect) sheetSelect.innerHTML = book.sheets.map((sheet) => `<option value="${attr(sheet.name)}"${sheet.name === book.defaultSheet ? " selected" : ""}>${esc(sheet.name)}${sheet.hidden ? " (ซ่อน)" : ""}</option>`).join("");
+          if (sheetField) sheetField.hidden = false;
+          await loadSheet(book, book.defaultSheet, mine);
+        } catch (error) {
+          if (mine === seq) showError(error);
+        }
+      });
+      sheetSelect?.addEventListener("change", () => {
+        if (!workbook) return undefined;
+        built = null;
+        return loadSheet(workbook, sheetSelect.value, ++seq);
       });
       rootNode.querySelector("[data-bom-check]")?.addEventListener("click", () => {
         if (!paste || !report) return;
@@ -1070,6 +1128,7 @@
           const tooBig = size + payloadSize > 4_500_000;
           const unlinked = r.compounds.filter((code) => !ctx.data.compounds.find((entry) => entry.code === code)?.recipeId);
           report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ${esc(String(r.subparts))} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
+            ${sheetNote ? ui.callout("warn", esc(sheetNote)) : ""}
             ${tooBig ? ui.callout("bad", `ข้อมูลชุดนี้ (${esc(rules.fmtQty(Math.round(payloadSize / 1000)))} KB) จะเกินเพดานของ localStorage นำเข้าเฉพาะสินค้าที่ต้องใช้ทดสอบ (วางทีละกลุ่ม) หรือรีเซ็ตข้อมูลก่อน`) : ""}
             ${unlinked.length ? ui.callout("warn", `สูตรยางที่ยังไม่ผูกกับ RubberFlow: ${esc(unlinked.join(", "))} (ผูกได้ภายหลังที่เมนูสูตรยาง)`) : ""}
             ${r.unknownUom.length ? ui.callout("warn", `หน่วยที่แปลงไม่ได้ (บันทึกเป็น “หน่วยอื่น”): ${esc(r.unknownUom.slice(0, 20).join(", "))}${r.unknownUom.length > 20 ? " …" : ""}`) : ""}
