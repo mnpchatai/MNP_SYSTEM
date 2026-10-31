@@ -533,8 +533,20 @@
   // ต้นทุนต่อหน่วย = วัตถุดิบ (ลูกใน BOM × ปริมาณ × (1 + % เผื่อเสีย) หรือราคาที่ตั้งเองถ้าไม่มี BOM) + ค่าแรง (นาที/ชิ้น × อัตราของแผนก)
   // ชิ้นที่ไม่มี BOM และยังไม่ตั้งราคา ทำให้ต้นทุนของพ่อทุกชั้น "ไม่ครบ" (complete=false) และอยู่ใน missingCost
   const DEFAULT_PROCESSES = Object.freeze([
-    { code: "RB-EXT", name: "รีดเส้นยาง", dept: "RB" },
-    { code: "RB-CURE", name: "อบ/คงรูปเส้นยาง", dept: "RB" },
+    // RB ตามผังงาน RB-01 ถึง RB-13 · ขั้นพักยางเป็นเวลารอ ไม่ใช่ค่าแรง (ใส่ 0 นาที/ชิ้น)
+    { code: "RB-01", name: "ชั่งเคมี", dept: "RB" },
+    { code: "RB-02", name: "ตียางเครื่อง Auto + ใส่เคมีขั้นที่ 1", dept: "RB" },
+    { code: "RB-03", name: "ตียางเครื่อง 2 ลูกกลิ้ง ขั้นที่ 1", dept: "RB" },
+    { code: "RB-04", name: "พักยาง 4 ชั่วโมง", dept: "RB" },
+    { code: "RB-05", name: "ตียางเครื่อง Auto + ใส่เคมีขั้นที่ 2", dept: "RB" },
+    { code: "RB-06", name: "ตียางเครื่อง 2 ลูกกลิ้ง ขั้นที่ 2", dept: "RB" },
+    { code: "RB-07", name: "พักยาง 4 ชั่วโมง", dept: "RB" },
+    { code: "RB-08", name: "แบ่งยาง 4 กก. ใส่เคมีขั้นที่ 3 (Auto เล็ก)", dept: "RB" },
+    { code: "RB-09", name: "ผสมยางเคมีกับยางที่เหลือ (2 ลูกกลิ้ง)", dept: "RB" },
+    { code: "RB-10", name: "ฉีดยาง", dept: "RB" },
+    { code: "RB-11", name: "อบยางด้วย Oven", dept: "RB" },
+    { code: "RB-12", name: "อบยางด้วย HCM", dept: "RB" },
+    { code: "RB-13", name: "ตัดยางเส้นยาว", dept: "RB" },
     { code: "GR-CUT", name: "ตัดชิ้นยาง", dept: "GR" },
     { code: "GR-DRL", name: "เจาะรู", dept: "GR" },
     { code: "GR-GLUE", name: "ทากาว", dept: "GR" },
