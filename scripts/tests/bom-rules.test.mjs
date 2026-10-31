@@ -382,6 +382,7 @@ test("BOMSHEET of 25047: a header row with another code is still the FG, zero re
   assert.equal(built.items.get("MEGA-ENC-3(P)-Y").name, "สินค้า ENC-3 แพ็ค 3 ลูก", "the header row names the FG");
   assert.ok(built.items.get("MEGA-ENC-3(P)-Y").legacyCodes.includes("SPORTIME-ENC-3"), "the customer code is kept for search");
   assert.ok(built.items.get("MEGA-BBL-06(P)-Y").legacyCodes.includes("MEGA-BBL-06(P)"));
+  assert.deepEqual(built.items.get("MEGA-MAM-03(B)-Y").legacyCodes, [], "a header row with the base code (MEGA-MAM-03) adds no legacy code");
   assert.deepEqual(built.boms.get("MEGA-ENC-3(P)-Y").map((line) => line.childCode), ["B01-690", "B28-005"]);
   assert.deepEqual(built.boms.get("MEGA-BBL-06(P)-Y").map((line) => line.childCode), ["PT-00534"]);
   assert.equal(built.items.get("B01-690").uom, "pcs");
@@ -394,6 +395,19 @@ test("BOMSHEET of 25047: a header row with another code is still the FG, zero re
   const zeroFirst = rules.buildFromFlat(rules.readFlatRows([r(H), ...[rows[5], rows[6], rows[8], rows[7]].map(r)].join("\n")));
   assert.equal(zeroFirst.boms.get("B02-038")[0].qty, 0.001885215794);
   assert.deepEqual(zeroFirst.report.conflicts, []);
+  // ข้าม ITEM: ใต้พ่อเดียวกัน ปริมาณ 0 ของอีกสินค้าไม่ทับและไม่รายงาน ส่วน 0 ที่มาก่อนถูกแทนด้วยปริมาณที่มาทีหลัง
+  const bagRows = (item, plasticQty) => [
+    [item, "100", "B02-038", "ST", "1", "กระเป๋า MAM-03", "PK-BG", "ชิ้น/pcs"],
+    [item, "100", "C20-020", "ST", plasticQty, "ม้วนพลาสติกใส", "BG-ST", "ม้วน(100Y)"],
+  ];
+  const cross = (first, second) => rules.buildFromFlat(rules.readFlatRows([r(H), ...[...bagRows("MEGA-MAM-03(B)-Y", first), ...bagRows("MEGA-MAM-04(B)-Y", second)].map(r)].join("\n")));
+  const zeroLater = cross("5", "0");
+  assert.equal(zeroLater.boms.get("B02-038")[0].qty, 5);
+  assert.deepEqual(zeroLater.report.conflicts, []);
+  const zeroEarlier = cross("0", "5");
+  assert.equal(zeroEarlier.boms.get("B02-038")[0].qty, 5);
+  assert.deepEqual(zeroEarlier.report.conflicts, []);
+  assert.equal(cross("5", "4").report.conflicts.length, 1, "two different non-zero quantities are still a conflict");
 });
 
 test("PI numbers follow the Excel pattern, due dates default from lead times, and the station rule table selects the BOMSHEET rows per sheet", () => {

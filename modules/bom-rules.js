@@ -425,11 +425,12 @@
       // แถวหัวสินค้า = แถว PK (คู่ผู้ผลิตไม่มี "-") ที่รหัสตรงกับ ITEM หรือถ้าไม่มี ใช้แถวแรกของสินค้าเมื่อเป็นแถวแบบนั้น
       // (ใบ 25047: MEGA-BBL-06(P)-Y มีแถวหัวรหัส MEGA-BBL-06(P) และ MEGA-ENC-3(P)-Y ใช้รหัสลูกค้า SPORTIME-ENC-3) รหัสในแถวหัวเก็บเป็นรหัสเดิมของ FG
       const isHeaderRow = (row) => row?.deptKind === "PK" && !String(row.pair ?? "").includes("-");
-      const fgRow = rows.find((row) => isHeaderRow(row) && (canonicalCode(row.code) === canonicalCode(fgParsed.base) || canonicalCode(row.code) === canonicalCode(itemName)))
-        ?? (isHeaderRow(rows[0]) ? rows[0] : undefined);
+      const matchedRow = rows.find((row) => isHeaderRow(row) && (canonicalCode(row.code) === canonicalCode(fgParsed.base) || canonicalCode(row.code) === canonicalCode(itemName)));
+      const fallbackRow = !matchedRow && isHeaderRow(rows[0]) ? rows[0] : undefined;
+      const fgRow = matchedRow ?? fallbackRow;
       const fgCode = canonicalCode(itemName);
       const fgUom = normalizeUom(fgRow?.uom || "ชุด");
-      ensureItem(fgCode, { kind: "FG", name: fgRow?.name || `สินค้า ${itemName}`, uom: fgUom.code, pair: "PK" }, fgRow?.code || fgCode);
+      ensureItem(fgCode, { kind: "FG", name: fgRow?.name || `สินค้า ${itemName}`, uom: fgUom.code, pair: "PK" }, fallbackRow?.code || fgCode); // รหัสฐาน (MEGA-ST-01) ไม่เก็บเป็นรหัสเดิม
       const seenInThisFg = new Set([fgCode]);
       // พ่อล่าสุดของแต่ละชนิด พร้อม "จำนวนที่ใช้ต่อชุด" ของพ่อในสินค้านี้ — คอลัมน์นั้นเป็นปริมาณต่อ 1 FG ทั้งชีต
       // ลูกของ PT/BG/SE (เม็ดพลาสติก ผ้า ซิป ของสิ้นเปลือง) จึงต้องหารด้วยจำนวนพ่อต่อชุดให้เป็น "ต่อ 1 ชิ้นพ่อ" (เช่น เม็ด 0.006 กก./ชุด ÷ แกน 0.3 ชิ้น/ชุด = 0.02 กก./ชิ้น)
