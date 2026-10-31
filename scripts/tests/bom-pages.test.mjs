@@ -655,12 +655,15 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&qty=80");
   clean(html);
   assert.match(html, /ต้นทุนยังไม่ครบ: ไม่มีราคาของ <strong>XP-00001<\/strong>/);
+  assert.match(html, /<li class="bom-flow-input">[\s\S]*?P-PEL-BK<\/[^>]+> <span class="bom-flow-input-name">เม็ดพลาสติก PE-LD สีดำ<\/span>/, "a material row shows its name next to the code, not only in a tooltip");
+  const fedRows = html.match(/<li class="bom-flow-input is-fed">[\s\S]*?<\/li>/g) ?? [];
+  assert.ok(fedRows.length > 0 && fedRows.every((row) => !row.includes("bom-flow-input-name")), "a row fed from a lane above keeps only its code (the lane card shows the name)");
   assert.match(html, /class="filter active" href="[^"]*view=flow" aria-current="page">ลำดับผลิต/);
   const order = (...needles) => needles.map((needle) => html.indexOf(needle));
   const [rbStep, seCard, asm, sticker, pack, fgCard] = order("RB-EXT", "<span class=\"rf-mono\">SE-TP01-OR01-100-18-65</span><div class=\"small\">", "PK-ASM", "P-STK-01", "PK-PACK", "<span class=\"rf-mono\">DEMO-TP-01(P)-Y</span><div class=\"small\">");
   assert.ok(rbStep > 0 && rbStep < seCard && seCard < asm && asm < sticker && sticker < pack && pack < fgCard, "first steps come first, the product card is last");
   assert.match(html, /คอมปาวด์ <span class="rf-mono">DM01<\/span>/, "a rod shows its compound as the first input");
-  assert.match(html, /SE-TP01-OR01-100-18-65<\/span> <span class="muted">× 3 ชิ้น<\/span> <span class="muted">\(จากสายด้านบน\)/, "a fed part points to its lane");
+  assert.match(html, /SE-TP01-OR01-100-18-65<\/span> <span class="muted nowrap">× 3 ชิ้น<\/span> <span class="muted">\(จากสายด้านบน\)/, "a fed part points to its lane");
   assert.match(html, /data-rf-open="routingEdit" data-rf-args="\{&quot;code&quot;:&quot;SE-TP01-OR01-100-18-65&quot;\}"/);
   assert.match(html, /data-rf-open="itemImage" data-rf-args="\{&quot;code&quot;:&quot;DEMO-TP-01\(P\)-Y&quot;\}"/);
   assert.match(html, /GR · ตัด\/เจาะชิ้นยาง<\/td><td class="num">3\.45<\/td><td class="num">4\.6<\/td>/, "3.45 min per set × 80 sets = 4.6 hours");

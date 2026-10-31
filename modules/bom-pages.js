@@ -621,7 +621,13 @@
     const lanes = feeds.length ? `<div class="bom-flow-feeds">${feeds.map((feed) => `<details class="bom-flow-lane" open><summary>${ui.mono(feed.itemCode)} <span class="small muted">${qtyText(ctx, feed)}</span></summary>${flowHtml(ctx, feed, canEdit)}</details>`).join("")}</div>${flowArrow}` : "";
     const compound = node.kind === "RB" ? itemOf(ctx, node.itemCode)?.rubber?.compound : null;
     const parts = stages.map((stage, index) => {
-      const inputs = stage.inputs.map((child) => `<li class="bom-flow-input${fed.has(child.itemCode) ? " is-fed" : ""}" title="${attr(child.name)}">${picture(child, " is-mini")}<span>${ui.mono(child.itemCode)} <span class="muted">${qtyText(ctx, child)}</span>${fed.has(child.itemCode) ? ' <span class="muted">(จากสายด้านบน)</span>' : child.ownCost === null && !child.children.length ? ` ${ui.badge("warn", "ไม่มีราคา")}` : ""}</span></li>`);
+      // วัตถุดิบแสดงรหัส + ชื่อ + ปริมาณ · ชิ้นที่มาจากสายด้านบนแสดงแค่รหัส เพราะชื่ออยู่ในการ์ดของสายนั้นแล้ว
+      const inputs = stage.inputs.map((child) => {
+        const isFed = fed.has(child.itemCode);
+        const name = !isFed && child.name && child.name !== child.itemCode ? ` <span class="bom-flow-input-name">${esc(child.name)}</span>` : "";
+        const note = isFed ? ' <span class="muted">(จากสายด้านบน)</span>' : child.ownCost === null && !child.children.length ? ` ${ui.badge("warn", "ไม่มีราคา")}` : "";
+        return `<li class="bom-flow-input${isFed ? " is-fed" : ""}">${picture(child, " is-mini")}<span>${ui.mono(child.itemCode)}${name} <span class="muted nowrap">${qtyText(ctx, child)}</span>${note}</span></li>`;
+      });
       // คอมปาวด์ของเส้นยาง: ถ้ามีชิ้นงานรหัสเดียวกันที่มี BOM (เช่น สูตรเคมีที่นำเข้ามา) ลิงก์ไปดูโครงสร้างของมัน ไม่กางซ้อนในต้นไม้นี้
       const recipe = compound && approvedBomOf(ctx, rules.canonicalCode(compound)) ? ui.link("ดูสูตร", ctx.url("structure", { code: compound }), "small") : '<span class="muted">(สูตรอยู่ที่ RubberFlow)</span>';
       if (compound && index === 0) inputs.unshift(`<li class="bom-flow-input"><span class="bom-pic is-mini is-empty" aria-hidden="true">RF</span><span>คอมปาวด์ ${ui.mono(compound)} ${recipe}</span></li>`);
