@@ -739,6 +739,14 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.ok(orders.length > 1, "every card carries its production order");
   assert.ok(orders.slice(0, -1).every((order) => order < orders.at(-1)), "the product card is made after every feed");
   assert.ok(new Set(orders).size > 2, "rods, the parts cut from them and the product get different orders");
+  // ขั้นตอนตามลำดับ: แถวเรียงจากลำดับ 1 สินค้าอยู่แถวสุดท้าย · ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับที่มา
+  const stepList = await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=steps");
+  const stepOrders = [...stepList.matchAll(/<tr><td><span class="bom-flow-order">ลำดับ (\d+)<\/span>/g)].map((match) => Number(match[1]));
+  assert.equal(stepOrders[0], 1);
+  assert.deepEqual(stepOrders, [...stepOrders].sort((a, b) => a - b), "rows run from the first order");
+  assert.match(stepList, /<tr><td><span class="bom-flow-order">ลำดับ \d+<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span>[\s\S]*?<\/tr><\/tbody>/, "the product is the last row");
+  assert.match(stepList, /<span class="bom-flow-order is-quiet">จากลำดับ 1<\/span>/, "a part made earlier names its order");
+  assert.match(stepList, /aria-current="page">ขั้นตอนตามลำดับ/);
   assert.match(numberedFlow, /is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"[^>]*>(?:<img[^>]*>|<span[^>]*>[^<]*<\/span>)<div class="bom-flow-item-body"><div class="bom-flow-tags"><span class="bom-flow-order"[^>]*>ลำดับ \d+<\/span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">PK · บรรจุ\/ประกอบ<\/span>/, "the card names its responsible department");
   env.store.setUser("B03");
   clean(D.itemCost(c, { code: "XP-00001" }).html);

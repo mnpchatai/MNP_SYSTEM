@@ -549,8 +549,9 @@
   const LABOR_BAHT_PER_MIN = Object.freeze({ RB: 3, GR: 2.5, PT: 2, BG: 2.5, ST: 1.5, PK: 2 });
   const round = (n, digits = 4) => Math.round(n * 10 ** digits) / 10 ** digits;
 
-  // ลูกที่มี BOM หรือขั้นตอนผลิตของตัวเอง = ชิ้นที่ต้องผลิตก่อน (สายป้อนในมุมมองลำดับผลิต)
-  const isFeed = (child) => child.children.length > 0 || child.steps.length > 0;
+  // ชิ้นที่ต้องผลิตก่อน (สายป้อนในมุมมองลำดับผลิต): ชิ้นที่แผนกเราทำเอง (ไม่ใช่ของซื้อ) แม้ยังไม่มี BOM/ขั้นตอน
+  // เช่น เส้นยาง RB ที่มีได้แค่คอมปาวด์จาก RubberFlow · ของซื้อที่มี BOM หรือขั้นตอนก็นับด้วย
+  const isFeed = (child) => child.kind !== "PURCHASED" || child.children.length > 0 || child.steps.length > 0;
   // คืน { root, rows (เรียงแบบต้นไม้ ลึกก่อน), minutesByDept (ต่อ 1 หน่วยราก), missingCost, missing }
   // routingOf(code) → { revision, steps: [{ processCode, minutesPerPc }] } | null · processOf(code) → { code, name, dept } | null
   function structureTree(rootCode, { itemOf, approvedBomOf, routingOf, processOf, rates = LABOR_BAHT_PER_MIN, maxDepth = 8 }) {
@@ -618,6 +619,23 @@
     const stages = Array.from({ length: count }, (_, index) => ({ no: index + 1, step: node.steps[index] ?? null, inputs: [] }));
     for (const child of node.children) stages[indexOf(child)].inputs.push(child);
     return { feeds, stages };
+  }
+
+  // รายการขั้นตอนการผลิตเรียงตามลำดับ (มุมมอง "ขั้นตอนตามลำดับ"): ชิ้นที่ต้องผลิตทุกชิ้น ลำดับไหน แผนกไหน ใช้อะไรเท่าไร
+  // รหัสเดียวกันที่อยู่หลายกิ่งรวมเป็นแถวเดียว (จำนวนต่อสินค้ารวมกัน ลำดับใช้ค่ามากสุด) · เรียงลำดับ → แผนกตาม FLOW_DEPTS → รหัส
+  function productionSteps(tree) {
+    const map = new Map();
+    for (const node of tree.rows) {
+      if (node.level > 0 && !isFeed(node)) continue;
+      const entry = map.get(node.itemCode);
+      if (entry) { entry.order = Math.max(entry.order, node.order); entry.qtyPerRoot = round(entry.qtyPerRoot + node.qtyPerRoot); continue; }
+      map.set(node.itemCode, {
+        order: node.order, dept: node.dept, itemCode: node.itemCode, name: node.name, uom: node.uom, qtyPerRoot: round(node.qtyPerRoot), steps: node.steps,
+        inputs: node.children.map((child) => ({ itemCode: child.itemCode, name: child.name, kind: child.kind, uom: child.uom, qtyPerParent: child.qtyPerParent, made: isFeed(child) })),
+      });
+    }
+    const deptRank = (dept) => (FLOW_DEPTS.includes(dept) ? FLOW_DEPTS.indexOf(dept) : FLOW_DEPTS.length);
+    return [...map.values()].sort((a, b) => a.order - b.order || deptRank(a.dept) - deptRank(b.dept) || a.itemCode.localeCompare(b.itemCode));
   }
 
   // ---------- ความต้องการสุทธิ (สูตร AK ของ BOMSHEET ยกมาคิดทั้งใบ) ----------
@@ -736,7 +754,7 @@
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
     normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
-    DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf,
+    DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };
   if (isNode) module.exports = api;

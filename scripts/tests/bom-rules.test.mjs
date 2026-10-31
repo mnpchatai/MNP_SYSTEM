@@ -501,11 +501,12 @@ test("the product structure rolls up material, labour and minutes per department
   assert.deepEqual(tree.minutesByDept, { PK: 2, GR: 1.2 }, "SE minutes count three times per product");
   assert.equal(tree.totalMinutes, 3.2);
   assert.deepEqual(tree.missingCost, []);
-  // ลำดับการผลิต: ชิ้นที่ต้องผลิต (มี BOM/ขั้นตอน) ทำก่อนพ่อ · ของซื้อและชิ้นไม่มีขั้นตอนไม่เลื่อนลำดับพ่อ · แผนกจาก ownerDept
-  assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 2, "PK"], ["SE", 1, "GR"], ["RB", 1, "RB"], ["BOX", 1, "ST"]]);
-  routings.RB = { revision: 1, steps: [{ processCode: "RB-EXT", minutesPerPc: 1 }] };
-  assert.deepEqual(rules.structureTree("FG", deps).rows.map((row) => row.order), [3, 2, 1, 1], "an extruded rod is made before the part cut from it");
-  delete routings.RB;
+  // ลำดับการผลิต: ชิ้นที่แผนกเราทำเอง ทำก่อนพ่อ แม้ยังไม่มี BOM/ขั้นตอน (เส้นยาง RB) · ของซื้อไม่เลื่อนลำดับพ่อ · แผนกจาก ownerDept
+  assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 3, "PK"], ["SE", 2, "GR"], ["RB", 1, "RB"], ["BOX", 1, "ST"]], "an extruded rod is made before the part cut from it");
+  // ขั้นตอนตามลำดับ: เฉพาะชิ้นที่ต้องผลิต เรียงจากลำดับแรก · ส่วนประกอบบอกว่าต้องผลิตก่อนหรือเป็นของซื้อ
+  assert.deepEqual(rules.productionSteps(tree).map((step) => [step.order, step.dept, step.itemCode, step.qtyPerRoot, step.inputs.map((input) => [input.itemCode, input.made])]), [
+    [1, "RB", "RB", 0.3, []], [2, "GR", "SE", 3, [["RB", true]]], [3, "PK", "FG", 1, [["SE", true], ["BOX", false]]],
+  ]);
   // มุมมองลำดับผลิต: ลูกที่มี BOM/ขั้นตอนเป็นสายป้อน · ลูกเข้าที่ขั้นที่ระบุ ที่เหลือเข้าขั้นแรก · ไม่มีขั้นตอน = ขั้นเดียว
   routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2, inputs: ["SE"] }, { processCode: "PK-PACK", minutesPerPc: 1, inputs: ["BOX", "GONE"] }];
   const staged = rules.structureTree("FG", deps);

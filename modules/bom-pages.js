@@ -801,7 +801,7 @@
     const canEdit = ctx.helpers.canPlan(user);
     const code = params.get("code") ? rules.canonicalCode(params.get("code")) : "";
     const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
-    const view = params.get("view") === "table" ? "table" : "flow";
+    const view = ["table", "steps"].includes(params.get("view")) ? params.get("view") : "flow";
     const roots = data.items.filter((item) => item.kind === "FG" || approvedBomOf(ctx, item.code)).sort((a, b) => a.code.localeCompare(b.code));
     const picker = ui.card(`<form class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
@@ -831,10 +831,20 @@
     const item = itemOf(ctx, code);
     if (!item) return { html: `${pageHead}${picker}${ui.callout("warn", `ไม่พบ <strong>${esc(code)}</strong> ใน item master`)}`, bind };
     const tree = rules.structureTree(item.code, structureDeps(ctx));
-    const views = `<nav class="rf-pagenav" aria-label="มุมมองโครงสร้าง">${[["flow", "ลำดับผลิต (ขั้นแรกอยู่บน)"], ["table", "ตารางต้นทุน (สินค้าอยู่บน)"]].map(([id, label]) => `<a class="filter${id === view ? " active" : ""}" href="${attr(ctx.url("structure", { code: item.code, qty: String(qty), view: id }))}"${id === view ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</nav>`;
+    const views = `<nav class="rf-pagenav" aria-label="มุมมองโครงสร้าง">${[["flow", "ลำดับผลิต (ขั้นแรกอยู่บน)"], ["steps", "ขั้นตอนตามลำดับ (ใช้อะไร ได้อะไร)"], ["table", "ตารางต้นทุน (สินค้าอยู่บน)"]].map(([id, label]) => `<a class="filter${id === view ? " active" : ""}" href="${attr(ctx.url("structure", { code: item.code, qty: String(qty), view: id }))}"${id === view ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</nav>`;
     let body;
     if (view === "flow") {
       body = `<div class="bom-flow">${flowHtml(ctx, tree.root, canEdit)}</div>`;
+    } else if (view === "steps") {
+      // ขั้นตอนตามลำดับ: แถวละชิ้นที่ต้องผลิต เรียงจากลำดับแรก · ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับของมัน ที่เหลือเป็นของซื้อ/เบิกคลัง
+      const steps = rules.productionSteps(tree);
+      const orderOf = new Map(steps.map((step) => [step.itemCode, step.order]));
+      const rows = steps.map((step) => {
+        const inputs = step.inputs.length ? `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">× ${esc(rules.fmtQty(input.qtyPerParent))} ${esc(uomText(ctx, input.uom))}</span> ${input.made ? `<span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(orderOf.get(input.itemCode) ?? ""))}</span>` : ""}</li>`).join("")}</ul>` : itemOf(ctx, step.itemCode)?.rubber?.compound ? `คอมปาวด์ ${ui.mono(itemOf(ctx, step.itemCode).rubber.compound)} <span class="muted">(สูตรอยู่ที่ RubberFlow)</span>` : '<span class="muted">ยังไม่มี BOM</span>';
+        const routing = step.steps.length ? `<div class="small muted">${step.steps.map((s) => esc(s.name)).join(" → ")}</div>` : "";
+        return `<tr><td><span class="bom-flow-order">ลำดับ ${esc(String(step.order))}</span></td><td class="nowrap">${esc(rules.DEPT_LABEL[step.dept] ?? step.dept)}</td><td>${ui.mono(step.itemCode)}<div class="small">${esc(step.name)}</div>${routing}</td><td class="num nowrap">${esc(rules.fmtQty(step.qtyPerRoot * qty))} ${esc(uomText(ctx, step.uom))}</td><td>${inputs}</td></tr>`;
+      });
+      body = ui.table(["ลำดับ", "แผนก", "ผลิตชิ้นนี้", `ต้องผลิต (สำหรับ ${rules.fmtNum(qty)} หน่วย)`, "ใช้ (ต่อ 1 ชิ้น)"], rows);
     } else {
       const rows = tree.rows.map((node) => {
         const noBomLeaf = node.bomRevision === null;
@@ -858,7 +868,7 @@
       tree.missing.length ? ui.callout("bad", `ไม่พบใน item master หรือเป็นวงจร: ${tree.missing.map((entry) => esc(entry)).join(", ")}`) : "",
     ].join("");
     const html = `${pageHead}${picker}${warnings}${views}
-      ${ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view === "table" })}
+      ${ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view !== "flow" })}
       ${ui.card(ui.table(["แผนก", "นาที ต่อ 1 หน่วย", `ชั่วโมง สำหรับ ${rules.fmtNum(qty)} หน่วย`], minutesRows, { emptyText: "ยังไม่มีขั้นตอนผลิตในโครงสร้างนี้" }), { title: `เวลาผลิตต่อแผนก · ค่าแรงสาธิต (บาท/นาที): ${esc(rates)}`, flush: true })}`;
     return { html, bind };
   };
