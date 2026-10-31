@@ -173,11 +173,15 @@ test("the tree form goes through the data-rf-* rules: rows become a nested tree,
   // ส่งค่าที่ฟอร์มปัดทศนิยมกลับมา (0.032258 แทน 1/31) โดยแก้แค่หมายเหตุของสินค้า: อัตราส่วนเดิมคงอยู่เต็มความละเอียด
   env.store.setUser("B03");
   const seBefore = A.helpers.approvedBomOf(env.store.data(), "SE-TP01-BK01-140-3-20").lines[0].qty;
-  await env.submit("p=build&code=SE-TP01-BK01-140-3-20", "saveBomTree", { code: "SE-TP01-BK01-140-3-20", itemName: "แกนหาง 3 ร่อง ตอปิโด TP-01 ดำ BK01 ยาว 140", itemUom: "pcs", note: "ปัดทศนิยม", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": ["RB-DM02-02-BK01-225-3-20"], "name[]": ["x"], "kind[]": ["RB"], "uom[]": ["rod"], "qty[]": [String(Math.round(seBefore * 1e6) / 1e6)], "scrapPct[]": ["0"], "lineNote[]": ["แก้หมายเหตุ"], "weightG[]": ["170"], "compound[]": ["DM02"], "cutLengthCm[]": ["14"], "pcsPerRoll[]": ["14"], "sePerGr[]": ["1"], "kgPerRoll[]": ["0.17"] });
+  await env.submit("p=build&code=SE-TP01-BK01-140-3-20", "saveBomTree", { code: "SE-TP01-BK01-140-3-20", itemName: "แกนหาง 3 ร่อง ตอปิโด TP-01 ดำ BK01 ยาว 140", itemUom: "pcs", note: "ปัดทศนิยม", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": ["RB-DM02-02-BK01-225-3-20"], "name[]": ["x"], "kind[]": ["RB"], "uom[]": ["rod"], "qty[]": [String(Math.round(seBefore * 1e6) / 1e6)], "scrapPct[]": ["0"], "lineNote[]": ["แก้หมายเหตุ"], "lineStep[]": ["2"], "weightG[]": ["170"], "compound[]": ["DM02"], "cutLengthCm[]": ["14"], "pcsPerRoll[]": ["14"], "sePerGr[]": ["1"], "kgPerRoll[]": ["0.17"] });
   assert.equal(env.log.toasts.at(-1)[1], "ok", env.log.toasts.at(-1)[0]);
   const seAfter = A.helpers.approvedBomOf(env.store.data(), "SE-TP01-BK01-140-3-20");
   assert.equal(seAfter.lines[0].qty, seBefore, "the stored ratio keeps its full precision");
   assert.equal(seAfter.lines[0].note, "แก้หมายเหตุ");
+  assert.equal(seAfter.lines[0].step, 2, "the step column is saved on the BOM line");
+  const reopened = await env.render("p=build&code=SE-TP01-BK01-140-3-20");
+  assert.match(reopened, /<th title="[^"]+">ขั้นที่<\/th>/, "the column explains itself in a title, not permanent text");
+  assert.match(reopened, /name="lineStep\[\]" type="number" value="2"/);
   // ฟอร์มที่ผิด: ไม่มีชื่อสินค้าใหม่ → toast error และไม่บันทึก
   await env.submit("p=build&base=NEW-ZZ&pkg=P&cs=Y", "saveBomTree", { code: "NEW-ZZ(P)-Y", itemName: "", itemUom: "set", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": ["P-STK-01"], "name[]": [""], "kind[]": ["PURCHASED"], "uom[]": ["pcs"], "qty[]": ["1"], "scrapPct[]": ["0"], "lineNote[]": [""], "weightG[]": [""], "compound[]": [""], "cutLengthCm[]": [""], "pcsPerRoll[]": [""], "sePerGr[]": [""], "kgPerRoll[]": [""] });
   assert.equal(env.log.toasts.at(-1)[1], "error");
@@ -693,6 +697,17 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.match(dialog.html, /ใช้อยู่ Rev\.2/);
   assert.match(dialog.html, /<option value="PK-QC" selected>/);
   assert.match(dialog.html, /name="inputCode\[\]" value="PT-00320"[\s\S]*?<option value="PK-QC" selected>PK-QC<\/option>/, "each BOM line shows the step it enters");
+  // บรรทัดที่ขั้นตอนผลิตไม่ได้ระบุ แต่บรรทัด BOM มีขั้นที่: dialog บอกว่าใช้ตาม BOM · หน้าโครงสร้างใส่เลขขั้นทุกขั้น
+  const live = env.store.data();
+  const A = env.context.MNP_BOM_ACTIONS;
+  const routed = new Set(A.helpers.routingOf(live, "DEMO-TP-01(P)-Y").steps.flatMap((step) => step.inputs ?? []));
+  const free = A.helpers.approvedBomOf(live, "DEMO-TP-01(P)-Y").lines.find((line) => !routed.has(line.childCode));
+  free.step = 2;
+  const withBomStep = D.routingEdit(env.ctx("p=structure"), { code: "DEMO-TP-01(P)-Y" });
+  assert.match(withBomStep.html, new RegExp(`name="inputCode\\[\\]" value="${free.childCode.replace(/[()]/g, "\\$&")}"[\\s\\S]*?<option value="">ตาม BOM: ขั้นที่ 2</option>`));
+  const numberedFlow = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
+  assert.match(numberedFlow, /<div class="bom-flow-step"[^>]*><span class="bom-flow-step-no">ขั้นที่ 1<\/span>/, "a routing step carries its number");
+  delete free.step;
   clean(D.itemCost(c, { code: "XP-00001" }).html);
   const imageDialog = D.itemImage(c, { code: "DEMO-TP-01(P)-Y" });
   clean(imageDialog.html);

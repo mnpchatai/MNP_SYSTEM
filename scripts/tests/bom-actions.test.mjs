@@ -627,3 +627,36 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(storeApi.migrate({ version: 99, counters: {}, users: [], compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [] }), null, "unknown versions are reseeded");
   assert.equal(storeApi.MODULES[1].id, "build", "the single BOM builder is the first menu after the overview");
 });
+
+test("a BOM line can say which production step of its parent it enters (1–20); only a change of that number is a new revision", () => {
+  const d = fresh();
+  const code = "DEMO-HL-24(B)-A";
+  const before = approved(d, code);
+  const lines = (steps) => before.lines.map((line, index) => ({ childCode: line.childCode, qty: line.qty, scrapPct: line.scrapPct, note: line.note, step: steps[index] }));
+  assert.equal(A.saveBom(d, { itemCode: code, lines: lines(["", "", "", ""]) }, ctx("planner")).changed, false, "blank steps equal lines saved before the field existed");
+  rejects(() => A.saveBom(d, { itemCode: code, lines: lines(["0"]) }, ctx("planner")), /ขั้นที่ต้องเป็นจำนวนเต็ม 1–20/);
+  rejects(() => A.saveBom(d, { itemCode: code, lines: lines(["1.5"]) }, ctx("planner")), /ขั้นที่ต้องเป็นจำนวนเต็ม 1–20/);
+  rejects(() => A.saveBom(d, { itemCode: code, lines: lines(["21"]) }, ctx("planner")), /ขั้นที่ต้องเป็นจำนวนเต็ม 1–20/);
+  const saved = A.saveBom(d, { itemCode: code, lines: lines(["1", "1", "2", "2"]) }, ctx("planner"));
+  assert.equal(saved.changed, true);
+  assert.deepEqual(approved(d, code).lines.map((line) => line.step), [1, 1, 2, 2]);
+  assert.match(approved(d, code).changeLog[0].text, /ขั้นที่/);
+  assert.equal(A.saveBom(d, { itemCode: code, lines: lines([1, 1, 2, 2]) }, ctx("planner")).changed, false, "the same numbers again are no change");
+  // saveBomTree ส่งต่อขั้นที่ของแต่ละโหนด
+  A.saveBomTree(d, { code, nodes: before.lines.map((line, index) => ({ code: line.childCode, qty: line.qty, scrapPct: line.scrapPct, note: line.note, step: index === 3 ? "3" : "" })) }, ctx("planner"));
+  assert.deepEqual(approved(d, code).lines.map((line) => line.step ?? null), [null, null, null, 3]);
+  // ชิ้นเดียวกันสองที่ในต้นไม้ที่ลูกต่างกันแค่ขั้นที่ → ปฏิเสธเหมือนลูกต่างกัน
+  const rb = approved(d, "SE-TP01-BK01-140-3-20").lines[0];
+  rejects(() => A.saveBomTree(d, { code: "NEW-STEP(P)-Y", item: { name: "x", uom: "set" }, nodes: [
+    { code: "SE-TP01-BK01-140-3-20", qty: 1, children: [{ code: rb.childCode, qty: rb.qty, step: "1" }] },
+    { code: "SE-TP01-BK01-140-3-20", qty: 1, children: [{ code: rb.childCode, qty: rb.qty, step: "2" }] },
+  ] }, ctx("planner")), /ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน/);
+  // รุ่นสินค้าใหม่จากต้นแบบ: บรรทัดที่คัดลอกเก็บขั้นที่ · บรรจุภัณฑ์ของแพ็กเกจใหม่ได้ขั้นที่ของบรรจุภัณฑ์เดิม
+  const source = approved(d, "DEMO-TP-01(P)-Y");
+  const packaging = new Set(["P-BAG-01", "P-BOX-01"]);
+  A.saveBom(d, { itemCode: source.itemCode, lines: source.lines.map((line) => ({ ...line, step: packaging.has(line.childCode) ? 4 : 2 })) }, ctx("planner"));
+  A.createVariant(d, { base: "DEMO-TP-01", pkg: "B", colorSet: "A" }, ctx("planner"));
+  const variant = approved(d, "DEMO-TP-01(B)-A");
+  assert.equal(variant.lines.find((line) => line.childCode === "P-BOX-01").step, 4, "the new package's box enters where the old packaging did");
+  assert.ok(variant.lines.filter((line) => !packaging.has(line.childCode)).every((line) => line.step === 2), "copied and recoloured lines keep their step");
+});

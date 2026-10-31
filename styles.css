@@ -2426,6 +2426,7 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-tree-table .bom-kind { min-width: 150px; }
 .bom-tree-table .bom-uom { min-width: 90px; }
 .bom-tree-table .bom-qty, .bom-tree-table .bom-scrap { width: 92px; }
+.bom-tree-table .bom-step { width: 64px; }
 .bom-tree-table .bom-note { min-width: 120px; }
 .bom-tree-table .bom-cell-code .bom-lv { display: flex; align-items: center; gap: 4px; }
 .bom-tree-table tr.is-new td { background: color-mix(in srgb, var(--warning, #b7791f) 8%, var(--paper)); }
@@ -2446,6 +2447,8 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-flow-input.is-fed { background: var(--soft-line); }
 .bom-flow-step { display: flex; gap: 8px; align-items: center; padding: 5px 8px; font-size: 13px; border-radius: 8px; background: var(--shell); border: 1px solid var(--line); }
 .bom-flow-step-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bom-flow-step-no { font-weight: 700; white-space: nowrap; }
+.bom-flow-stage-head { margin: 0 0 3px; font-size: 13px; }
 .bom-flow-dept { padding: 0 6px; font-size: 11px; font-weight: 700; border-radius: 6px; color: var(--primary); background: var(--primary-soft); }
 .bom-flow-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--success) 45%, var(--line)); background: var(--success-soft); overflow-wrap: anywhere; }
 .bom-flow-item.is-root { border-width: 2px; }

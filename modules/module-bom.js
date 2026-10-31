@@ -59,7 +59,7 @@
     const ids = arr("rowId");
     const rows = ids.map((id, index) => ({
       id, parentId: arr("parentId")[index] ?? "", code: String(arr("childCode")[index] ?? "").trim(), name: String(arr("name")[index] ?? "").trim(), kind: arr("kind")[index], uom: arr("uom")[index],
-      qty: arr("qty")[index], scrapPct: arr("scrapPct")[index], note: arr("lineNote")[index], weightG: arr("weightG")[index],
+      qty: arr("qty")[index], scrapPct: arr("scrapPct")[index], note: arr("lineNote")[index], step: arr("lineStep")[index], weightG: arr("weightG")[index],
       rubber: { compound: arr("compound")[index], cutLengthCm: arr("cutLengthCm")[index], pcsPerRoll: arr("pcsPerRoll")[index], sePerGr: arr("sePerGr")[index], kgPerRoll: arr("kgPerRoll")[index] },
     }));
     const data = store.data();
@@ -71,7 +71,7 @@
     };
     const toNode = (row, parentCode) => {
       const item = actions.helpers.itemOf(data, row.code);
-      const node = { code: row.code, qty: keepQty(parentCode, row.code, row.qty), scrapPct: row.scrapPct, note: row.note, children: rows.filter((other) => other.parentId === row.id && (other.code || other.name)).map((child) => toNode(child, row.code)) };
+      const node = { code: row.code, qty: keepQty(parentCode, row.code, row.qty), scrapPct: row.scrapPct, note: row.note, step: row.step, children: rows.filter((other) => other.parentId === row.id && (other.code || other.name)).map((child) => toNode(child, row.code)) };
       if (!item) node.newItem = { kind: row.kind, name: row.name, uom: row.uom, weightG: row.weightG, rubber: row.kind === "RB" ? row.rubber : undefined };
       else {
         const patch = {};
