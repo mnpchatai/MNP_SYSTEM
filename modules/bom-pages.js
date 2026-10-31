@@ -647,8 +647,10 @@
     const deptName = rules.DEPT_LABEL[node.dept] ?? node.dept;
     const tags = `<div class="bom-flow-tags"><span class="bom-flow-order" title="ลำดับการผลิต: เลขน้อยทำก่อน เลขเดียวกันทำพร้อมกันได้">ลำดับ ${esc(String(node.order))}</span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">${esc(deptName)}</span></div>`;
     // การ์ด focus ได้ เพื่อเปิดเมนูคำสั่งด้วยปุ่ม Menu/Shift+F10 (บทบาทที่ดูอย่างเดียวไม่มีปุ่มในการ์ดให้ focus)
-    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;
-    return `<div class="bom-flow-node">${lanes}${[...parts, card].join(flowArrow)}</div>`;
+    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.ownCost === null && !node.children.length ? ui.badge("warn", "ไม่มีราคา") : `${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}`}</div>${tools}</div></div>`;
+    // เส้นยางที่ป้อนชิ้นอื่น: SR รับเข้าคลัง + QC ตรวจขนาด เป็นลำดับถัดจากรีด ก่อน GR เบิกไปแปรรูป (ตามผังงานของบริษัท)
+    const receive = node.kind === "RB" && node.level > 0 ? `<div class="bom-flow-step is-receive"><span class="bom-flow-order">ลำดับ ${esc(String(node.order + 1))}</span><span class="bom-flow-dept">${esc(rules.DEPT_LABEL.SR)}</span><span class="bom-flow-step-name">รับเส้นยางเข้าคลัง · ตรวจขนาด</span></div>` : "";
+    return `<div class="bom-flow-node">${lanes}${[...parts, card, receive].filter(Boolean).join(flowArrow)}</div>`;
   }
   // เมนูคลิกขวา (กดค้างบนมือถือ) ของหน้าโครงสร้าง: คำสั่งของชิ้นที่ชี้ เป็นกลุ่ม แก้ไข · ไปที่ · คัดลอก
   // target = { code, parent (พ่อเมื่อชี้แถววัตถุดิบ ว่างเมื่อชี้การ์ด), root (สินค้าที่เปิดอยู่) } · บทบาทที่แก้ไม่ได้เห็นเฉพาะไปที่/คัดลอก
@@ -801,7 +803,7 @@
     const canEdit = ctx.helpers.canPlan(user);
     const code = params.get("code") ? rules.canonicalCode(params.get("code")) : "";
     const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
-    const view = params.get("view") === "table" ? "table" : "flow";
+    const view = ["table", "steps"].includes(params.get("view")) ? params.get("view") : "flow";
     const roots = data.items.filter((item) => item.kind === "FG" || approvedBomOf(ctx, item.code)).sort((a, b) => a.code.localeCompare(b.code));
     const picker = ui.card(`<form class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
@@ -831,10 +833,31 @@
     const item = itemOf(ctx, code);
     if (!item) return { html: `${pageHead}${picker}${ui.callout("warn", `ไม่พบ <strong>${esc(code)}</strong> ใน item master`)}`, bind };
     const tree = rules.structureTree(item.code, structureDeps(ctx));
-    const views = `<nav class="rf-pagenav" aria-label="มุมมองโครงสร้าง">${[["flow", "ลำดับผลิต (ขั้นแรกอยู่บน)"], ["table", "ตารางต้นทุน (สินค้าอยู่บน)"]].map(([id, label]) => `<a class="filter${id === view ? " active" : ""}" href="${attr(ctx.url("structure", { code: item.code, qty: String(qty), view: id }))}"${id === view ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</nav>`;
+    const views = `<nav class="rf-pagenav" aria-label="มุมมองโครงสร้าง">${[["flow", "ลำดับผลิต (ขั้นแรกอยู่บน)"], ["steps", "ขั้นตอนตามลำดับ (ใช้อะไร ได้อะไร)"], ["table", "ตารางต้นทุน (สินค้าอยู่บน)"]].map(([id, label]) => `<a class="filter${id === view ? " active" : ""}" href="${attr(ctx.url("structure", { code: item.code, qty: String(qty), view: id }))}"${id === view ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</nav>`;
     let body;
     if (view === "flow") {
       body = `<div class="bom-flow">${flowHtml(ctx, tree.root, canEdit)}</div>`;
+    } else if (view === "steps") {
+      // ขั้นตอนตามลำดับ (ตามผังงาน ST → ผลิต → SR/QC → … → PK → WH): แถวละงาน เรียงจากลำดับแรก
+      // ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับที่พร้อมใช้ และไม่ซ้ำชื่อ เพราะชื่ออยู่ในแถวของลำดับนั้นแล้ว · ของซื้อมาจากแถว ST
+      const from = (order) => `<span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(order))}</span>`;
+      const amount = (n, uom) => `${esc(rules.fmtQty(n * qty))} ${esc(uomText(ctx, uom))}`;
+      const rows = rules.productionSteps(tree).map((step) => {
+        const badge = step.type === "purchase" ? '<span class="bom-flow-order" title="ก่อนเริ่มผลิต">เริ่ม</span>' : `<span class="bom-flow-order">ลำดับ ${esc(String(step.order))}</span>`;
+        const dept = `<td class="nowrap">${esc(rules.DEPT_LABEL[step.dept] ?? step.dept)}</td>`;
+        if (step.type === "purchase") {
+          const list = `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">รวม ${amount(input.qtyPerRoot, input.uom)}</span></li>`).join("")}</ul>`;
+          return `<tr><td>${badge}</td>${dept}<td>สั่ง/เบิกวัตถุดิบที่เกี่ยวข้องกับการผลิต</td><td></td><td>${list}</td></tr>`;
+        }
+        const what = { receive: "รับเข้าคลัง · QC ตรวจขนาดขณะรับเข้า", store: "รับสินค้าจาก PK เข้าคลัง" }[step.type];
+        const work = `${ui.mono(step.itemCode)}<div class="small">${esc(what ?? step.name)}</div>${step.steps.length ? `<div class="small muted">${step.steps.map((s) => esc(s.name)).join(" → ")}</div>` : ""}`;
+        let inputs;
+        if (step.type !== "make") inputs = from(step.order - 1); // ชิ้นเดียวกับคอลัมน์งาน ไม่ซ้ำรหัส
+        else if (step.inputs.length) inputs = `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${input.from === null ? `${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">${qtyText(ctx, input)}</span>` : `${ui.mono(input.itemCode)} <span class="muted nowrap">${qtyText(ctx, input)}</span> <span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(input.from))}</span>`}</li>`).join("")}</ul>`;
+        else inputs = itemOf(ctx, step.itemCode)?.rubber?.compound ? `คอมปาวด์ ${ui.mono(itemOf(ctx, step.itemCode).rubber.compound)} <span class="muted">(สูตรอยู่ที่ RubberFlow)</span>` : '<span class="muted">ยังไม่มี BOM</span>';
+        return `<tr><td>${badge}</td>${dept}<td>${work}</td><td class="num nowrap">${amount(step.qtyPerRoot, step.uom)}</td><td>${inputs}</td></tr>`;
+      });
+      body = ui.table(["ลำดับ", "แผนก", "งาน", `จำนวน (สำหรับ ${rules.fmtNum(qty)} หน่วย)`, "ใช้"], rows);
     } else {
       const rows = tree.rows.map((node) => {
         const noBomLeaf = node.bomRevision === null;
@@ -858,7 +881,7 @@
       tree.missing.length ? ui.callout("bad", `ไม่พบใน item master หรือเป็นวงจร: ${tree.missing.map((entry) => esc(entry)).join(", ")}`) : "",
     ].join("");
     const html = `${pageHead}${picker}${warnings}${views}
-      ${ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view === "table" })}
+      ${ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view !== "flow" })}
       ${ui.card(ui.table(["แผนก", "นาที ต่อ 1 หน่วย", `ชั่วโมง สำหรับ ${rules.fmtNum(qty)} หน่วย`], minutesRows, { emptyText: "ยังไม่มีขั้นตอนผลิตในโครงสร้างนี้" }), { title: `เวลาผลิตต่อแผนก · ค่าแรงสาธิต (บาท/นาที): ${esc(rates)}`, flush: true })}`;
     return { html, bind };
   };
@@ -869,7 +892,7 @@
     const item = itemOf(ctx, code);
     if (!item) return null;
     const routing = ctx.helpers.routingOf(data, item.code);
-    const options = data.processes.map((process) => ({ value: process.code, label: `${process.code} ${process.name} (${process.dept})` }));
+    const options = ctx.helpers.processesOf(data).map((process) => ({ value: process.code, label: `${process.code} ${process.name} (${process.dept})` }));
     const stepRow = (step = {}) => `<tr data-step><td><div class="bom-step-cell">${dragHandle("ย้ายขั้นตอนนี้")}${ui.select("processCode[]", options, { value: step.processCode ?? "", placeholder: "เลือกขั้นตอน" })}</div></td><td>${ui.input("minutesPerPc[]", { type: "number", step: "any", min: "0", value: step.minutesPerPc ?? "" })}</td><td class="nowrap"><button class="btn rf-btn secondary small" type="button" data-step-remove aria-label="ลบขั้นตอน">✕</button></td></tr>`;
     const steps = routing?.steps ?? [];
     const lines = approvedBomOf(ctx, item.code)?.lines ?? [];

@@ -501,11 +501,16 @@ test("the product structure rolls up material, labour and minutes per department
   assert.deepEqual(tree.minutesByDept, { PK: 2, GR: 1.2 }, "SE minutes count three times per product");
   assert.equal(tree.totalMinutes, 3.2);
   assert.deepEqual(tree.missingCost, []);
-  // ลำดับการผลิต: ชิ้นที่ต้องผลิต (มี BOM/ขั้นตอน) ทำก่อนพ่อ · ของซื้อและชิ้นไม่มีขั้นตอนไม่เลื่อนลำดับพ่อ · แผนกจาก ownerDept
-  assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 2, "PK"], ["SE", 1, "GR"], ["RB", 1, "RB"], ["BOX", 1, "ST"]]);
-  routings.RB = { revision: 1, steps: [{ processCode: "RB-EXT", minutesPerPc: 1 }] };
-  assert.deepEqual(rules.structureTree("FG", deps).rows.map((row) => row.order), [3, 2, 1, 1], "an extruded rod is made before the part cut from it");
-  delete routings.RB;
+  // ลำดับการผลิต: ชิ้นที่แผนกเราทำเอง ทำก่อนพ่อ แม้ยังไม่มี BOM/ขั้นตอน (เส้นยาง RB) · ของซื้อไม่เลื่อนลำดับพ่อ · แผนกจาก ownerDept
+  // เส้นยางต้องผ่าน SR รับเข้าคลัง + QC (ลำดับ 2) ก่อนชิ้นยางที่ตัดจากมัน (ลำดับ 3)
+  assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 4, "PK"], ["SE", 3, "GR"], ["RB", 1, "RB"], ["BOX", 1, "ST"]], "an extruded rod is received and checked before the part cut from it");
+  // ขั้นตอนตามลำดับตามผังงาน: ST สั่ง/เบิกของซื้อก่อน → ผลิต → SR/QC รับเส้นยาง → … → WH รับสินค้าเข้าคลังสุดท้าย
+  assert.deepEqual(rules.productionSteps(tree).map((step) => [step.type, step.order, step.dept, step.itemCode, step.qtyPerRoot, step.inputs.map((input) => [input.itemCode, input.from])]), [
+    ["purchase", 0, "ST", "", 0, [["BOX", null]]],
+    ["make", 1, "RB", "RB", 0.3, []], ["receive", 2, "SR", "RB", 0.3, []], ["make", 3, "GR", "SE", 3, [["RB", 2]]],
+    ["make", 4, "PK", "FG", 1, [["SE", 3], ["BOX", null]]], ["store", 5, "WH", "FG", 1, []],
+  ]);
+  assert.equal(rules.productionSteps(tree)[0].inputs[0].qtyPerRoot, 0.26, "ST buys the total per product, scrap included");
   // มุมมองลำดับผลิต: ลูกที่มี BOM/ขั้นตอนเป็นสายป้อน · ลูกเข้าที่ขั้นที่ระบุ ที่เหลือเข้าขั้นแรก · ไม่มีขั้นตอน = ขั้นเดียว
   routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2, inputs: ["SE"] }, { processCode: "PK-PACK", minutesPerPc: 1, inputs: ["BOX", "GONE"] }];
   const staged = rules.structureTree("FG", deps);

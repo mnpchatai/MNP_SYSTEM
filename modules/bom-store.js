@@ -109,7 +109,9 @@
     // ข้อความ state ที่อ่าน/เขียนล่าสุด: ถ้าแท็บอื่นของเบราว์เซอร์เดียวกันบันทึกทับ (ค่าใน storage ไม่ตรง) อ่านใหม่ก่อนใช้
     // เพื่อไม่ให้แท็บที่เปิดค้างไว้เขียนข้อมูลเก่าในหน่วยความจำทับของใหม่ตอนเปลี่ยนบทบาทหรือกดบันทึก
     let lastRaw = null;
+    let newer = false;
     function save() {
+      if (newer) return;
       const text = JSON.stringify(data);
       try {
         storage?.setItem?.(STATE_KEY, text);
@@ -126,8 +128,12 @@
       lastRaw = raw;
       const saved = readJson(storage, STATE_KEY);
       const valid = isValidState(saved);
-      data = valid ? saved : migrate(saved) ?? seed();
-      if (!valid) save(); // เขียน state ที่อัปเกรดหรือชุดสาธิตใหม่กลับทันที
+      // state รุ่นใหม่กว่าโค้ดนี้ (แท็บเก่าที่เปิดค้างไว้ตอนมีรุ่นใหม่ หรือย้อน deploy): ห้ามเขียนทับด้วยชุดสาธิต
+      // ใช้ชุดสาธิตในหน่วยความจำเท่านั้นและไม่บันทึก จนกว่าจะโหลดหน้าใหม่ด้วยโค้ดรุ่นที่อ่านได้
+      newer = Boolean(saved) && Number(saved.version) > STATE_VERSION;
+      if (newer) { data = seed(); persisted = false; }
+      else data = valid ? saved : migrate(saved) ?? seed();
+      if (!valid && !newer) save(); // เขียน state ที่อัปเกรดหรือชุดสาธิตใหม่กลับทันที
       const savedUser = readJson(storage, USER_KEY);
       userId = typeof savedUser === "string" && data.users.some((user) => user.id === savedUser) ? savedUser : null;
       loaded = true;

@@ -617,12 +617,32 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   v2.version = 2;
   delete v2.colors; delete v2.colorSets; delete v2.packages; delete v2.processes; delete v2.routings;
   const fromV2 = storeApi.migrate(JSON.parse(JSON.stringify(v2)));
-  assert.equal(fromV2.version, 4);
+  assert.equal(fromV2.version, storeApi.STATE_VERSION);
   assert.deepEqual(fromV2.processes, rules.DEFAULT_PROCESSES.map((entry) => ({ ...entry })));
   assert.deepEqual(fromV2.routings, []);
   assert.deepEqual([fromV2.colors, fromV2.colorSets, fromV2.packages], [[], [], []]);
   assert.equal(fromV2.items.length, v2.items.length);
   assert.ok(storeApi.isValidState(fromV2));
+  // ขั้นตอนมาตรฐานที่เพิ่มทีหลัง (GR ทากาว/เจียร/คัดแยก, PK ใส่กระเป๋า) ใช้ได้โดยไม่แก้ข้อมูลที่เก็บและไม่เปลี่ยนรุ่น state
+  // ขั้นตอนที่ผู้ใช้เพิ่มหรือแก้ชื่อเองชนะค่าเริ่มต้น · แก้ชื่อขั้นตอนเริ่มต้นแล้วเก็บเป็นของผู้ใช้ ไม่แก้ค่าเริ่มต้นที่ freeze ไว้
+  const older = fresh();
+  older.processes = [{ code: "GR-CUT", name: "ตัด (ชื่อที่ผู้ใช้แก้)", dept: "GR" }, { code: "X-OWN", name: "ขั้นตอนของผู้ใช้", dept: "PK" }];
+  const all = A.helpers.processesOf(older);
+  assert.deepEqual(all.slice(0, 2), older.processes);
+  assert.ok(["GR-GLUE", "GR-GRIND", "GR-SORT", "PK-BAG"].every((code) => A.helpers.processOf(older, code)));
+  assert.equal(all.filter((process) => process.code === "GR-CUT").length, 1, "a stored step hides the default of the same code");
+  assert.equal(older.processes.length, 2, "looking up steps does not change the stored data");
+  A.saveProcess(older, { code: "GR-GLUE", name: "ทากาวขอบ", dept: "GR" }, ctx("planner"));
+  assert.deepEqual(older.processes.at(-1), { code: "GR-GLUE", name: "ทากาวขอบ", dept: "GR" });
+  assert.equal(rules.DEFAULT_PROCESSES.find((entry) => entry.code === "GR-GLUE").name, "ทากาว");
+  // แท็บที่เปิดโค้ดรุ่นเก่ากว่าข้อมูล: ไม่เขียนชุดสาธิตทับข้อมูลรุ่นใหม่ (จะหายทั้ง BOM ที่นำเข้า)
+  const newerText = JSON.stringify({ ...fresh(), version: storeApi.STATE_VERSION + 1 });
+  const newerStorage = new Map([[storeApi.STATE_KEY, newerText]]);
+  const newerStore = storeApi.createStore({ storage: { getItem: (key) => newerStorage.get(key) ?? null, setItem: (key, value) => newerStorage.set(key, String(value)), removeItem: (key) => newerStorage.delete(key) }, seed: fresh, actions: A, now: () => NOW });
+  newerStore.setUser("B03");
+  newerStore.run("createOrder", { pi: "M-9", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY });
+  assert.equal(newerStorage.get(storeApi.STATE_KEY), newerText, "newer saved data is never overwritten");
+  assert.equal(newerStore.isPersisted(), false);
   assert.equal(storeApi.isValidState({ ...fresh(), colors: undefined }), false, "a v3 state without the colour tables is not valid as is");
   assert.equal(storeApi.migrate({ version: 99, counters: {}, users: [], compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [] }), null, "unknown versions are reseeded");
   assert.equal(storeApi.MODULES[1].id, "build", "the single BOM builder is the first menu after the overview");
