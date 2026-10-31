@@ -631,7 +631,7 @@
       if (entry) { entry.order = Math.max(entry.order, node.order); entry.qtyPerRoot = round(entry.qtyPerRoot + node.qtyPerRoot); continue; }
       map.set(node.itemCode, {
         order: node.order, dept: node.dept, itemCode: node.itemCode, name: node.name, uom: node.uom, qtyPerRoot: round(node.qtyPerRoot), steps: node.steps,
-        inputs: node.children.map((child) => ({ itemCode: child.itemCode, name: child.name, kind: child.kind, uom: child.uom, qtyPerParent: child.qtyPerParent, made: isFeed(child) })),
+        inputs: node.children.map((child) => ({ itemCode: child.itemCode, name: child.name, kind: child.kind, uom: child.uom, qtyPerParent: child.qtyPerParent, scrapPct: child.scrapPct, made: isFeed(child) })),
       });
     }
     const deptRank = (dept) => (FLOW_DEPTS.includes(dept) ? FLOW_DEPTS.indexOf(dept) : FLOW_DEPTS.length);

@@ -744,7 +744,9 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   const stepOrders = [...stepList.matchAll(/<tr><td><span class="bom-flow-order">ลำดับ (\d+)<\/span>/g)].map((match) => Number(match[1]));
   assert.equal(stepOrders[0], 1);
   assert.deepEqual(stepOrders, [...stepOrders].sort((a, b) => a - b), "rows run from the first order");
-  assert.match(stepList, /<tr><td><span class="bom-flow-order">ลำดับ \d+<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span>[\s\S]*?<\/tr><\/tbody>/, "the product is the last row");
+  const lastRow = stepList.slice(stepList.lastIndexOf("<tr><td><span class=\"bom-flow-order\">"));
+  assert.match(lastRow, /^<tr><td><span class="bom-flow-order">ลำดับ \d+<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span>/, "the product is the last row");
+  assert.match(stepList, /คอมปาวด์ <span class="rf-mono">DM01<\/span>/, "a rubber rod row names its compound");
   assert.match(stepList, /<span class="bom-flow-order is-quiet">จากลำดับ 1<\/span>/, "a part made earlier names its order");
   assert.match(stepList, /aria-current="page">ขั้นตอนตามลำดับ/);
   assert.match(numberedFlow, /is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"[^>]*>(?:<img[^>]*>|<span[^>]*>[^<]*<\/span>)<div class="bom-flow-item-body"><div class="bom-flow-tags"><span class="bom-flow-order"[^>]*>ลำดับ \d+<\/span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">PK · บรรจุ\/ประกอบ<\/span>/, "the card names its responsible department");

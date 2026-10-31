@@ -647,7 +647,7 @@
     const deptName = rules.DEPT_LABEL[node.dept] ?? node.dept;
     const tags = `<div class="bom-flow-tags"><span class="bom-flow-order" title="ลำดับการผลิต: เลขน้อยทำก่อน เลขเดียวกันทำพร้อมกันได้">ลำดับ ${esc(String(node.order))}</span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">${esc(deptName)}</span></div>`;
     // การ์ด focus ได้ เพื่อเปิดเมนูคำสั่งด้วยปุ่ม Menu/Shift+F10 (บทบาทที่ดูอย่างเดียวไม่มีปุ่มในการ์ดให้ focus)
-    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;
+    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.ownCost === null && !node.children.length ? ui.badge("warn", "ไม่มีราคา") : `${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}`}</div>${tools}</div></div>`;
     return `<div class="bom-flow-node">${lanes}${[...parts, card].join(flowArrow)}</div>`;
   }
   // เมนูคลิกขวา (กดค้างบนมือถือ) ของหน้าโครงสร้าง: คำสั่งของชิ้นที่ชี้ เป็นกลุ่ม แก้ไข · ไปที่ · คัดลอก
@@ -837,10 +837,11 @@
       body = `<div class="bom-flow">${flowHtml(ctx, tree.root, canEdit)}</div>`;
     } else if (view === "steps") {
       // ขั้นตอนตามลำดับ: แถวละชิ้นที่ต้องผลิต เรียงจากลำดับแรก · ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับของมัน ที่เหลือเป็นของซื้อ/เบิกคลัง
+      // ส่วนประกอบที่ต้องผลิตก่อนไม่ซ้ำชื่อ เพราะชื่ออยู่ในแถวของลำดับนั้นแล้ว
       const steps = rules.productionSteps(tree);
       const orderOf = new Map(steps.map((step) => [step.itemCode, step.order]));
       const rows = steps.map((step) => {
-        const inputs = step.inputs.length ? `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">× ${esc(rules.fmtQty(input.qtyPerParent))} ${esc(uomText(ctx, input.uom))}</span> ${input.made ? `<span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(orderOf.get(input.itemCode) ?? ""))}</span>` : ""}</li>`).join("")}</ul>` : itemOf(ctx, step.itemCode)?.rubber?.compound ? `คอมปาวด์ ${ui.mono(itemOf(ctx, step.itemCode).rubber.compound)} <span class="muted">(สูตรอยู่ที่ RubberFlow)</span>` : '<span class="muted">ยังไม่มี BOM</span>';
+        const inputs = step.inputs.length ? `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${ui.mono(input.itemCode)}${input.made ? "" : ` <span class="small">${esc(input.name)}</span>`} <span class="muted nowrap">${qtyText(ctx, input)}</span> ${input.made ? `<span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(orderOf.get(input.itemCode) ?? ""))}</span>` : ""}</li>`).join("")}</ul>` : itemOf(ctx, step.itemCode)?.rubber?.compound ? `คอมปาวด์ ${ui.mono(itemOf(ctx, step.itemCode).rubber.compound)} <span class="muted">(สูตรอยู่ที่ RubberFlow)</span>` : '<span class="muted">ยังไม่มี BOM</span>';
         const routing = step.steps.length ? `<div class="small muted">${step.steps.map((s) => esc(s.name)).join(" → ")}</div>` : "";
         return `<tr><td><span class="bom-flow-order">ลำดับ ${esc(String(step.order))}</span></td><td class="nowrap">${esc(rules.DEPT_LABEL[step.dept] ?? step.dept)}</td><td>${ui.mono(step.itemCode)}<div class="small">${esc(step.name)}</div>${routing}</td><td class="num nowrap">${esc(rules.fmtQty(step.qtyPerRoot * qty))} ${esc(uomText(ctx, step.uom))}</td><td>${inputs}</td></tr>`;
       });
