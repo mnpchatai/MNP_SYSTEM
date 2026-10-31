@@ -733,7 +733,12 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.deepEqual(json(menu.menuPosition(900, 700, 240, 300, 1000, 800)), { left: 756, top: 496 }, "near the right and bottom edges the menu moves back inside");
   assert.deepEqual(json(menu.menuPosition(10, 10, 240, 900, 1000, 800)), { left: 10, top: 4 }, "a menu taller than the screen starts at the top and scrolls inside");
   assert.equal(menu.copyCodeAndName("B25-018", "สติ๊กเกอร์\tCE\r\nบาร์โค้ต "), "B25-018\tสติ๊กเกอร์ CE บาร์โค้ต", "tabs and line breaks in a name do not split Excel cells");
-  assert.match(numberedFlow, /class="bom-flow-item is-root" data-bom-menu="DEMO-TP-01\(P\)-Y" tabindex="0" role="group" aria-label="DEMO-TP-01\(P\)-Y [^"]+— คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง"/, "cards take keyboard focus so read-only roles can open the menu too");
+  assert.match(numberedFlow, /class="bom-flow-item is-root" data-bom-menu="DEMO-TP-01\(P\)-Y" tabindex="0" role="group" aria-label="ลำดับ \d+ · PK · บรรจุ\/ประกอบ · DEMO-TP-01\(P\)-Y [^"]+— คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง"/, "cards take keyboard focus so read-only roles can open the menu too");
+  // ป้ายบนการ์ด: ลำดับการผลิต และแผนกที่รับผิดชอบ · สินค้าได้ลำดับสุดท้าย (มากกว่าทุกสายป้อน)
+  const orders = [...numberedFlow.matchAll(/<span class="bom-flow-order"[^>]*>ลำดับ (\d+)<\/span>/g)].map((match) => Number(match[1]));
+  assert.ok(orders.length > 1, "every card carries its production order");
+  assert.equal(orders.at(-1), Math.max(...orders), "the product card is made last");
+  assert.match(numberedFlow, /is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"[^>]*>(?:<img[^>]*>|<span[^>]*>[^<]*<\/span>)<div class="bom-flow-item-body"><div class="bom-flow-tags"><span class="bom-flow-order"[^>]*>ลำดับ \d+<\/span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">PK · บรรจุ\/ประกอบ<\/span>/, "the card names its responsible department");
   env.store.setUser("B03");
   clean(D.itemCost(c, { code: "XP-00001" }).html);
   const imageDialog = D.itemImage(c, { code: "DEMO-TP-01(P)-Y" });
