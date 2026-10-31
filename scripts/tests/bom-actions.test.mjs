@@ -627,3 +627,22 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(storeApi.migrate({ version: 99, counters: {}, users: [], compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [] }), null, "unknown versions are reseeded");
   assert.equal(storeApi.MODULES[1].id, "build", "the single BOM builder is the first menu after the overview");
 });
+
+test("a BOM line can say which production step of its parent it enters (1–20); only a change of that number is a new revision", () => {
+  const d = fresh();
+  const code = "DEMO-HL-24(B)-A";
+  const before = approved(d, code);
+  const lines = (steps) => before.lines.map((line, index) => ({ childCode: line.childCode, qty: line.qty, scrapPct: line.scrapPct, note: line.note, step: steps[index] }));
+  assert.equal(A.saveBom(d, { itemCode: code, lines: lines(["", "", "", ""]) }, ctx("planner")).changed, false, "blank steps equal lines saved before the field existed");
+  rejects(() => A.saveBom(d, { itemCode: code, lines: lines(["0"]) }, ctx("planner")), /ขั้นที่ต้องเป็นจำนวนเต็ม 1–20/);
+  rejects(() => A.saveBom(d, { itemCode: code, lines: lines(["1.5"]) }, ctx("planner")), /ขั้นที่ต้องเป็นจำนวนเต็ม 1–20/);
+  rejects(() => A.saveBom(d, { itemCode: code, lines: lines(["21"]) }, ctx("planner")), /ขั้นที่ต้องเป็นจำนวนเต็ม 1–20/);
+  const saved = A.saveBom(d, { itemCode: code, lines: lines(["1", "1", "2", "2"]) }, ctx("planner"));
+  assert.equal(saved.changed, true);
+  assert.deepEqual(approved(d, code).lines.map((line) => line.step), [1, 1, 2, 2]);
+  assert.match(approved(d, code).changeLog[0].text, /ขั้นที่/);
+  assert.equal(A.saveBom(d, { itemCode: code, lines: lines([1, 1, 2, 2]) }, ctx("planner")).changed, false, "the same numbers again are no change");
+  // saveBomTree ส่งต่อขั้นที่ของแต่ละโหนด
+  A.saveBomTree(d, { code, nodes: before.lines.map((line, index) => ({ code: line.childCode, qty: line.qty, scrapPct: line.scrapPct, note: line.note, step: index === 3 ? "3" : "" })) }, ctx("planner"));
+  assert.deepEqual(approved(d, code).lines.map((line) => line.step ?? null), [null, null, null, 3]);
+});

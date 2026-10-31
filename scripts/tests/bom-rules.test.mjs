@@ -510,6 +510,15 @@ test("the product structure rolls up material, labour and minutes per department
   routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2 }];
   assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).root).stages.map((stage) => stage.inputs.length), [2], "unplaced parts enter at the first step");
   assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).rows[2]).stages.map((stage) => stage.step), [null], "a part without steps is one unnamed stage");
+  // "ขั้นที่" ของบรรทัด BOM: ใช้เมื่อขั้นตอนผลิตไม่ได้ระบุชิ้นนั้น · เลขเกินจำนวนขั้นตอนเพิ่มขั้นที่ไม่มีชื่อ · ขั้นตอนที่ระบุลูกไว้ยังชนะ
+  boms.FG.lines[1].step = 3;
+  const numbered = rules.flowOf(rules.structureTree("FG", deps).root);
+  assert.equal(rules.structureTree("FG", deps).rows[3].step, 3, "the tree carries the line's step");
+  assert.deepEqual(numbered.stages.map((stage) => [stage.no, stage.step?.processCode ?? null, stage.inputs.map((child) => child.itemCode)]), [[1, "PK-ASM", ["SE"]], [2, null, []], [3, null, ["BOX"]]]);
+  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2, inputs: ["BOX"] }];
+  assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).root).stages.map((stage) => stage.inputs.map((child) => child.itemCode)), [["SE", "BOX"]], "a part ticked in a production step stays there whatever its line says");
+  delete boms.FG.lines[1].step;
+  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2 }];
   // ชิ้นที่ไม่มี BOM และไม่มีราคา ทำให้ต้นทุนของพ่อทุกชั้นไม่ครบ · รหัสที่ไม่มีใน item master และวงจรถูกรายงาน
   boms.FG.lines.push({ childCode: "XP", qty: 1 }, { childCode: "GONE", qty: 1 });
   boms.SE.lines.push({ childCode: "FG", qty: 1 });

@@ -245,7 +245,7 @@
   };
 
   // ---------- สร้าง BOM (จุดเดียว) ----------
-  // แถวของตารางแก้ไข: { id, parentId, level, code, kind, name, uom, qty, scrapPct, note, weightG, rubber, existing, usedIn }
+  // แถวของตารางแก้ไข: { id, parentId, level, code, kind, name, uom, qty, step, scrapPct, note, weightG, rubber, existing, usedIn }
   // counter: id ของแถวไม่ซ้ำกันแน่นอน (ถ้าใช้ hash ชนกันได้แล้วลูกจะไปผูกผิดแถว)
   function editorRowsOf(ctx, parentCode, parentId = "", level = 1, seen = new Set(), counter = { n: 0 }) {
     const bom = approvedBomOf(ctx, parentCode);
@@ -256,7 +256,7 @@
       if (!child) continue;
       counter.n += 1;
       const id = `r${counter.n}`;
-      rows.push({ id, parentId, level, code: child.code, kind: child.kind, name: child.name, uom: child.uom, qty: line.qty, scrapPct: line.scrapPct || 0, note: line.note || "", weightG: child.weightG || "", rubber: child.rubber ?? {}, existing: true, usedIn: whereUsed(ctx, child.code).length });
+      rows.push({ id, parentId, level, code: child.code, kind: child.kind, name: child.name, uom: child.uom, qty: line.qty, step: line.step || "", scrapPct: line.scrapPct || 0, note: line.note || "", weightG: child.weightG || "", rubber: child.rubber ?? {}, existing: true, usedIn: whereUsed(ctx, child.code).length });
       if (!ctx.helpers.NO_BOM_KINDS.includes(child.kind) && !seen.has(child.code) && level < 6) {
         seen.add(child.code);
         rows.push(...editorRowsOf(ctx, child.code, id, level + 1, seen, counter));
@@ -279,6 +279,7 @@
       <td>${ui.select("kind[]", KIND_OPTIONS(ctx), { value: row.kind || "PURCHASED", className: "bom-kind", extra: 'data-bom-kind data-native-select aria-label="ชนิดชิ้นงาน"' })}</td>
       <td>${ui.select("uom[]", UOM_OPTIONS(ctx), { value: row.uom || "pcs", className: "bom-uom", extra: 'data-native-select aria-label="หน่วยนับ"' })}</td>
       <td>${ui.input("qty[]", { type: "number", step: "any", min: 0, value: row.qty === "" || row.qty === undefined ? "" : String(Number(Number(row.qty).toPrecision(10))), className: "bom-qty", extra: 'data-bom-qty aria-label="ปริมาณต่อ 1 พ่อ"' })}<small class="rf-hint" data-bom-hint>${esc(isRb && suggestion ? `จากการตัด ${rules.fmtQty(suggestion)}` : "")}</small></td>
+      <td>${ui.input("lineStep[]", { type: "number", step: "1", min: 1, max: 20, value: row.step ?? "", placeholder: "1", className: "bom-step", extra: 'aria-label="ขั้นที่ของพ่อที่ชิ้นนี้เข้า (ว่าง = ขั้นแรก)"' })}</td>
       <td>${ui.input("scrapPct[]", { type: "number", step: "any", min: 0, value: row.scrapPct ?? 0, className: "bom-scrap", extra: 'aria-label="% เผื่อเสีย"' })}</td>
       <td>${ui.input("lineNote[]", { value: row.note ?? "", className: "bom-note", extra: 'aria-label="หมายเหตุของบรรทัด"' })}</td>
       <td class="bom-cell-rubber${isRb ? "" : " is-hidden"}" data-bom-rubber>
@@ -347,7 +348,7 @@
         ${ui.field("หน่วยขาย", ui.select("itemUom", UOM_OPTIONS(ctx), { value: item?.uom ?? "set", extra: "data-native-select" }))}
       </div>
       ${item ? `<div class="small muted">${esc(`ชนิด ${kindLabel(ctx, item.kind)} · แผนกเจ้าของ ${item.ownerDept}${bom ? ` · BOM ปัจจุบัน Rev.${bom.revision} บันทึก ${rules.fmtDateTime(bom.approvedAt)} โดย ${bom.approvedBy}` : " · ยังไม่มี BOM"}`)} · ${ui.link("ประวัติ revision", ctx.url("items", { sel: item.code }))}</div>` : ui.callout("info", `<strong>${esc(code)}</strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างสินค้าใหม่ให้พร้อม BOM${sourceNote ? `<div>${esc(sourceNote)}</div>` : ""}`)}`, { title: "2. สินค้า", className: "bom-item-card" });
-    const tableHead = `<thead><tr><th>ชั้น / รหัส</th><th>ชื่อ</th><th>ชนิด</th><th>หน่วย</th><th>ปริมาณต่อ 1 พ่อ</th><th>% เผื่อเสีย</th><th>หมายเหตุ</th><th>ข้อมูลยาง (RB)</th><th></th></tr></thead>`;
+    const tableHead = `<thead><tr><th>ชั้น / รหัส</th><th>ชื่อ</th><th>ชนิด</th><th>หน่วย</th><th>ปริมาณต่อ 1 พ่อ</th><th title="ขั้นผลิตของพ่อที่ชิ้นนี้เข้า 1–20 (ว่าง = ขั้นแรก) · มุมมองลำดับผลิตของหน้าโครงสร้างสินค้าเรียงวัตถุดิบตามเลขนี้">ขั้นที่</th><th>% เผื่อเสีย</th><th>หมายเหตุ</th><th>ข้อมูลยาง (RB)</th><th></th></tr></thead>`;
     const templateRow = editorRowHtml(ctx, { id: "__ID__", parentId: "__PARENT__", level: 1, code: "", kind: "PURCHASED", name: "", uom: "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 });
     const editor = `<form id="bom-tree-form" class="bom-editor" data-rf-form="saveBomTree" data-rf-success="{result}">
       <input type="hidden" name="code" value="${attr(code)}">
@@ -632,8 +633,12 @@
       const recipe = compound && approvedBomOf(ctx, rules.canonicalCode(compound)) ? ui.link("ดูสูตร", ctx.url("structure", { code: compound }), "small") : '<span class="muted">(สูตรอยู่ที่ RubberFlow)</span>';
       if (compound && index === 0) inputs.unshift(`<li class="bom-flow-input"><span class="bom-pic is-mini is-empty" aria-hidden="true">RF</span><span>คอมปาวด์ ${ui.mono(compound)} ${recipe}</span></li>`);
       const list = inputs.length ? `<ul class="bom-flow-inputs">${inputs.join("")}</ul>` : "";
-      const step = stage.step ? `<div class="bom-flow-step" title="${attr(`${stage.step.name} · ค่าแรง ${baht(ctx, stage.step.cost)} บาท/ชิ้น`)}"><span class="bom-flow-dept">${esc(stage.step.dept)}</span><span class="bom-flow-step-name">${esc(stage.step.name)} <span class="muted rf-mono">${esc(stage.step.processCode)}</span></span><span class="nowrap">${esc(rules.fmtNum(stage.step.minutesPerPc))} นาที</span></div>` : "";
-      return [list, step].filter(Boolean).join(list && step ? flowArrow : "");
+      // หลายขั้น: ใส่เลขขั้นให้ตรงกับช่อง "ขั้นที่" ของหน้าสร้าง BOM · มีขั้นตอนผลิต = เลขอยู่ในกล่องขั้นตอนที่ตามหลังวัตถุดิบ
+      // ไม่มีขั้นตอนผลิต = เลขเป็นหัวข้อเหนือวัตถุดิบของขั้นนั้น
+      const no = stages.length > 1 ? `<span class="bom-flow-step-no">ขั้นที่ ${esc(String(stage.no))}</span>` : "";
+      if (!stage.step) return list && no ? `<div class="bom-flow-stage-head">${no}</div>${list}` : list;
+      const step = `<div class="bom-flow-step" title="${attr(`${stage.step.name} · ค่าแรง ${baht(ctx, stage.step.cost)} บาท/ชิ้น`)}">${no}<span class="bom-flow-dept">${esc(stage.step.dept)}</span><span class="bom-flow-step-name">${esc(stage.step.name)} <span class="muted rf-mono">${esc(stage.step.processCode)}</span></span><span class="nowrap">${esc(rules.fmtNum(stage.step.minutesPerPc))} นาที</span></div>`;
+      return [list, step].filter(Boolean).join(list ? flowArrow : "");
     }).filter(Boolean);
     const tools = canEdit ? `<div class="rf-row">${node.kind === "PURCHASED" ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
     const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}">${picture(node)}<div class="bom-flow-item-body">${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;

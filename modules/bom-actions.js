@@ -102,7 +102,11 @@
         visited.add(code);
         approvedBomOf(d, code)?.lines.forEach((line) => stack.push(line.childCode));
       }
+      // ขั้นที่ (1–20) = ลำดับขั้นผลิตของพ่อที่ชิ้นนี้เข้า · ว่าง = ขั้นแรก · เก็บเฉพาะเมื่อระบุ (บรรทัดเดิมจึงเท่ากับบรรทัดใหม่ที่ไม่ระบุ)
+      const step = raw.step === undefined || raw.step === null || String(raw.step).trim() === "" ? null : Number(raw.step);
+      if (step !== null && !(Number.isInteger(step) && step >= 1 && step <= 20)) fail(`${parent.code} → ${childCode}: ขั้นที่ต้องเป็นจำนวนเต็ม 1–20`);
       return {
+        ...(step ? { step } : {}),
         childCode, qty: num(raw.qty, `${parent.code} → ${childCode}: ปริมาณต่อหน่วยพ่อ`), uom: child.uom, consumerDept: parent.ownerDept, producerDept: child.ownerDept,
         scrapPct: raw.scrapPct === undefined || raw.scrapPct === "" ? 0 : num(raw.scrapPct, `${childCode}: % เผื่อเสีย`, { allowZero: true }),
         flags: Array.isArray(raw.flags) ? raw.flags.map(String).slice(0, 10) : [], note: String(raw.note ?? "").trim().slice(0, 200),
@@ -112,7 +116,7 @@
   // ปริมาณที่ต่างกันน้อยกว่า 1e-6 ถือว่าเท่ากัน (ฟอร์มแสดงอัตราส่วนเช่น 1/31 ด้วยทศนิยม 6 ตำแหน่ง การบันทึกซ้ำจึงไม่สร้าง revision ลอย)
   const QTY_EPS = 1e-6;
   // ลำดับบรรทัดนับเป็นการเปลี่ยนแปลงด้วย (ผู้ใช้ลากเรียงส่วนประกอบได้ ลำดับใช้แสดงในต้นไม้และใบงาน)
-  const sameLine = (line, other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "");
+  const sameLine = (line, other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "") && (Number(other.step) || null) === (Number(line.step) || null);
   const sameLines = (a, b) => a.length === b.length && a.every((line, index) => sameLine(line, b[index]));
   const sameLinesAnyOrder = (a, b) => a.length === b.length && a.every((line) => b.some((other) => sameLine(line, other)));
   function diffText(before, after) {
@@ -137,7 +141,7 @@
     const note = String(p.note ?? "").trim().slice(0, 300);
     const previous = approvedBomOf(d, parent.code);
     if (previous && sameLines(previous.lines, lines)) return { id: previous.id, revision: previous.revision, changed: false };
-    const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ)") : `สร้างใหม่ ${lines.length} บรรทัด`;
+    const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ/ขั้นที่)") : `สร้างใหม่ ${lines.length} บรรทัด`;
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
     const bom = { id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}` }] };
     d.boms.unshift(bom);
@@ -188,11 +192,11 @@
           // ชิ้นเดียวกันอยู่หลายที่ในต้นไม้: BOM ของมันบันทึกจากที่แรก ที่อื่นต้องมีลูกชุดเดียวกัน
           if (!seenPath.has(code)) { walk(code, node.children, [...path, code]); seenPath.add(code); } else {
             const current = approvedBomOf(d, code);
-            const incoming = node.children.map((entry) => ({ childCode: R.canonicalCode(entry.code), qty: Number(entry.qty), scrapPct: Number(entry.scrapPct) || 0, note: String(entry.note ?? "").trim() }));
+            const incoming = node.children.map((entry) => ({ childCode: R.canonicalCode(entry.code), qty: Number(entry.qty), scrapPct: Number(entry.scrapPct) || 0, note: String(entry.note ?? "").trim(), step: Number(entry.step) || null }));
             if (!current || !sameLines(current.lines, incoming)) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
           }
         }
-        lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note });
+        lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note, step: node.step });
       }
       const result = saveBom(d, { itemCode: parentCode, lines, note: p.note }, ctx);
       if (result.changed) saved.push(`${parentCode} Rev.${result.revision}`);

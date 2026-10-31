@@ -569,7 +569,7 @@
         return { processCode: step.processCode, name: process?.name ?? step.processCode, dept, minutesPerPc, cost: round(minutesPerPc * (rates[dept] ?? 0)), inputs: Array.isArray(step.inputs) ? [...step.inputs] : [] };
       });
       const node = {
-        itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, qtyPerRoot,
+        itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, step: Number(line?.step) || null, qtyPerRoot,
         bomRevision: bom?.revision ?? null, routingRevision: routing?.revision ?? null, steps, children: [], material: 0, labor: 0, unitCost: 0, complete: true, ownCost: null,
       };
       rows.push(node);
@@ -602,14 +602,17 @@
   }
 
   // มุมมองลำดับผลิต (ขั้นแรกอยู่บน) ของโหนดหนึ่งใน structureTree: ลูกที่มี BOM หรือขั้นตอนผลิตของตัวเองเป็น "สายป้อน" (feeds) วางเหนือพ่อ
-  // แล้วไล่ขั้นตอนของพ่อทีละขั้น ลูกเข้าที่ขั้นที่ routing ระบุใน step.inputs ลูกที่ไม่ได้ระบุ (หรือระบุรหัสที่ไม่ใช่ลูกแล้ว) เข้าที่ขั้นแรก
-  // ไม่มีขั้นตอนผลิต = ขั้นเดียวที่ step เป็น null
+  // แล้วไล่ขั้นตอนของพ่อทีละขั้น ลูกเข้าที่ขั้นที่ routing ระบุใน step.inputs ก่อน ถ้าไม่ได้ระบุใช้ "ขั้นที่" ของบรรทัด BOM (child.step 1–20)
+  // ไม่มีทั้งสองอย่าง = ขั้นแรก · จำนวนขั้น = มากสุดของขั้นตอนผลิตและเลขขั้นที่ของบรรทัด ขั้นที่ไม่มีขั้นตอนผลิตมี step เป็น null
+  // stage.no = เลขขั้น (1 ขึ้นไป) ใช้แสดงเทียบกับช่อง "ขั้นที่" ของหน้าสร้าง BOM
   function flowOf(node) {
     const feeds = node.children.filter((child) => child.children.length || child.steps.length);
     const stepIndex = new Map();
     node.steps.forEach((step, index) => (step.inputs ?? []).forEach((code) => { if (!stepIndex.has(code)) stepIndex.set(code, index); }));
-    const stages = (node.steps.length ? node.steps : [null]).map((step) => ({ step, inputs: [] }));
-    for (const child of node.children) stages[stepIndex.get(child.itemCode) ?? 0].inputs.push(child);
+    const indexOf = (child) => stepIndex.get(child.itemCode) ?? (child.step ? child.step - 1 : 0);
+    const count = Math.max(node.steps.length, 1, ...node.children.map((child) => indexOf(child) + 1));
+    const stages = Array.from({ length: count }, (_, index) => ({ no: index + 1, step: node.steps[index] ?? null, inputs: [] }));
+    for (const child of node.children) stages[indexOf(child)].inputs.push(child);
     return { feeds, stages };
   }
 
