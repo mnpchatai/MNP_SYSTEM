@@ -2462,6 +2462,8 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-flow-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--success) 45%, var(--line)); background: var(--success-soft); overflow-wrap: anywhere; }
 .bom-flow-item.is-root { border-width: 2px; }
 .bom-flow-item-body { min-width: 0; display: grid; gap: 2px; }
+.bom-flow-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.bom-flow-order { padding: 0 6px; font-size: 11px; font-weight: 700; border-radius: 6px; color: var(--paper); background: var(--success); white-space: nowrap; }
 .bom-flow-pick { display: flex; gap: 8px; align-items: center; }
 .bom-pic { flex: none; width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); }
 .bom-pic.is-empty { display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--quiet); border-style: dashed; }

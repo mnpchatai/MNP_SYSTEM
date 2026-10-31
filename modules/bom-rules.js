@@ -549,6 +549,8 @@
   const LABOR_BAHT_PER_MIN = Object.freeze({ RB: 3, GR: 2.5, PT: 2, BG: 2.5, ST: 1.5, PK: 2 });
   const round = (n, digits = 4) => Math.round(n * 10 ** digits) / 10 ** digits;
 
+  // ลูกที่มี BOM หรือขั้นตอนผลิตของตัวเอง = ชิ้นที่ต้องผลิตก่อน (สายป้อนในมุมมองลำดับผลิต)
+  const isFeed = (child) => child.children.length > 0 || child.steps.length > 0;
   // คืน { root, rows (เรียงแบบต้นไม้ ลึกก่อน), minutesByDept (ต่อ 1 หน่วยราก), missingCost, missing }
   // routingOf(code) → { revision, steps: [{ processCode, minutesPerPc }] } | null · processOf(code) → { code, name, dept } | null
   function structureTree(rootCode, { itemOf, approvedBomOf, routingOf, processOf, rates = LABOR_BAHT_PER_MIN, maxDepth = 8 }) {
@@ -569,7 +571,7 @@
         return { processCode: step.processCode, name: process?.name ?? step.processCode, dept, minutesPerPc, cost: round(minutesPerPc * (rates[dept] ?? 0)), inputs: Array.isArray(step.inputs) ? [...step.inputs] : [] };
       });
       const node = {
-        itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, step: Number.isInteger(Number(line?.step)) && line.step >= 1 && line.step <= 20 ? Number(line.step) : null, qtyPerRoot,
+        itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, dept: item.ownerDept ?? KINDS[item.kind]?.dept ?? "ST", image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, step: Number.isInteger(Number(line?.step)) && line.step >= 1 && line.step <= 20 ? Number(line.step) : null, qtyPerRoot,
         bomRevision: bom?.revision ?? null, routingRevision: routing?.revision ?? null, steps, children: [], material: 0, labor: 0, unitCost: 0, complete: true, ownCost: null,
       };
       rows.push(node);
@@ -590,6 +592,8 @@
         node.complete = false;
         missingCost.add(item.code);
       }
+      // ลำดับการผลิต: สายป้อนต้องเสร็จก่อนพ่อ จึง = 1 + ลำดับมากสุดของสายป้อน · สายที่ไม่ต่อกันได้เลขเดียวกัน (ทำพร้อมกันได้)
+      node.order = 1 + Math.max(0, ...node.children.filter(isFeed).map((child) => child.order));
       node.labor = steps.reduce((sum, step) => sum + step.cost, 0);
       node.material = round(node.material);
       node.labor = round(node.labor);
@@ -606,7 +610,7 @@
   // ไม่มีทั้งสองอย่าง = ขั้นแรก · จำนวนขั้น = มากสุดของขั้นตอนผลิตและเลขขั้นที่ของบรรทัด ขั้นที่ไม่มีขั้นตอนผลิตมี step เป็น null
   // stage.no = เลขขั้น (1 ขึ้นไป) ใช้แสดงเทียบกับช่อง "ขั้นที่" ของหน้าสร้าง BOM
   function flowOf(node) {
-    const feeds = node.children.filter((child) => child.children.length || child.steps.length);
+    const feeds = node.children.filter(isFeed);
     const stepIndex = new Map();
     node.steps.forEach((step, index) => (step.inputs ?? []).forEach((code) => { if (!stepIndex.has(code)) stepIndex.set(code, index); }));
     const indexOf = (child) => stepIndex.get(child.itemCode) ?? (child.step ? child.step - 1 : 0);
