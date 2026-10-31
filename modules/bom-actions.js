@@ -543,12 +543,16 @@
       // บรรทัดที่ถูกถอดแต่ไม่อยู่ในแพ็กเกจเป้าหมายถูกบอกไว้ชัด เผื่อผู้ใช้นิยามแพ็กเกจไม่ครบ
       const packaging = new Set((d.packages ?? []).filter((entry) => entry.base === base).flatMap((entry) => entry.lines.map((line) => line.childCode)));
       const target = new Set(pkgDef.lines.map((line) => line.childCode));
-      const removed = lines.filter((line) => packaging.has(line.childCode)).map((line) => line.childCode);
+      const removedLines = lines.filter((line) => packaging.has(line.childCode));
+      const removed = removedLines.map((line) => line.childCode);
       const dropped = removed.filter((code) => !target.has(code));
+      // ขั้นที่ของบรรจุภัณฑ์ใหม่: ของรหัสเดียวกันในต้นแบบ ไม่เช่นนั้นขั้นที่บรรจุภัณฑ์เดิมใช้
+      const packStep = (code) => removedLines.find((line) => line.childCode === code)?.step ?? removedLines.find((line) => line.step)?.step;
       lines = lines.filter((line) => !packaging.has(line.childCode));
       for (const line of pkgDef.lines) {
         const child = itemOf(d, line.childCode) ?? fail(`แพ็กเกจ ${pkg}: ไม่พบชิ้นงาน ${line.childCode}`);
-        lines.push({ childCode: child.code, qty: line.qty, uom: child.uom, consumerDept: "PK", producerDept: child.ownerDept, scrapPct: 0, flags: [], note: `แพ็กเกจ ${pkg}` });
+        const step = packStep(child.code);
+        lines.push({ ...(step ? { step } : {}), childCode: child.code, qty: line.qty, uom: child.uom, consumerDept: "PK", producerDept: child.ownerDept, scrapPct: 0, flags: [], note: `แพ็กเกจ ${pkg}` });
       }
       log.push(`แพ็กเกจ ${pkg}: ${removed.length ? `ถอด ${removed.join(", ")} ` : ""}ใส่ ${pkgDef.lines.map((line) => `${line.childCode} × ${R.fmtQty(line.qty)}`).join(", ")}`);
       if (dropped.length) log.push(`บรรจุภัณฑ์ของต้นแบบที่ไม่อยู่ในแพ็กเกจ ${pkg} ถูกถอด: ${dropped.join(", ")} (ถ้าต้องใช้ เพิ่มในนิยามแพ็กเกจ ${pkg})`);

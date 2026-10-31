@@ -697,6 +697,17 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.match(dialog.html, /ใช้อยู่ Rev\.2/);
   assert.match(dialog.html, /<option value="PK-QC" selected>/);
   assert.match(dialog.html, /name="inputCode\[\]" value="PT-00320"[\s\S]*?<option value="PK-QC" selected>PK-QC<\/option>/, "each BOM line shows the step it enters");
+  // บรรทัดที่ขั้นตอนผลิตไม่ได้ระบุ แต่บรรทัด BOM มีขั้นที่: dialog บอกว่าใช้ตาม BOM · หน้าโครงสร้างใส่เลขขั้นทุกขั้น
+  const live = env.store.data();
+  const A = env.context.MNP_BOM_ACTIONS;
+  const routed = new Set(A.helpers.routingOf(live, "DEMO-TP-01(P)-Y").steps.flatMap((step) => step.inputs ?? []));
+  const free = A.helpers.approvedBomOf(live, "DEMO-TP-01(P)-Y").lines.find((line) => !routed.has(line.childCode));
+  free.step = 2;
+  const withBomStep = D.routingEdit(env.ctx("p=structure"), { code: "DEMO-TP-01(P)-Y" });
+  assert.match(withBomStep.html, new RegExp(`name="inputCode\\[\\]" value="${free.childCode.replace(/[()]/g, "\\$&")}"[\\s\\S]*?<option value="">ตาม BOM: ขั้นที่ 2</option>`));
+  const numberedFlow = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
+  assert.match(numberedFlow, /<div class="bom-flow-step"[^>]*><span class="bom-flow-step-no">ขั้นที่ 1<\/span>/, "a routing step carries its number");
+  delete free.step;
   clean(D.itemCost(c, { code: "XP-00001" }).html);
   const imageDialog = D.itemImage(c, { code: "DEMO-TP-01(P)-Y" });
   clean(imageDialog.html);

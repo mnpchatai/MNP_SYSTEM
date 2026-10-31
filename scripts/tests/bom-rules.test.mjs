@@ -517,8 +517,13 @@ test("the product structure rolls up material, labour and minutes per department
   assert.deepEqual(numbered.stages.map((stage) => [stage.no, stage.step?.processCode ?? null, stage.inputs.map((child) => child.itemCode)]), [[1, "PK-ASM", ["SE"]], [2, null, []], [3, null, ["BOX"]]]);
   routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2, inputs: ["BOX"] }];
   assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).root).stages.map((stage) => stage.inputs.map((child) => child.itemCode)), [["SE", "BOX"]], "a part ticked in a production step stays there whatever its line says");
-  delete boms.FG.lines[1].step;
   routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2 }];
+  for (const bad of [1.5, 0, 1e9, "x"]) {
+    boms.FG.lines[1].step = bad;
+    assert.equal(rules.structureTree("FG", deps).rows[3].step, null, `a stored step of ${bad} is ignored`);
+    assert.equal(rules.flowOf(rules.structureTree("FG", deps).root).stages.length, 1);
+  }
+  delete boms.FG.lines[1].step;
   // ชิ้นที่ไม่มี BOM และไม่มีราคา ทำให้ต้นทุนของพ่อทุกชั้นไม่ครบ · รหัสที่ไม่มีใน item master และวงจรถูกรายงาน
   boms.FG.lines.push({ childCode: "XP", qty: 1 }, { childCode: "GONE", qty: 1 });
   boms.SE.lines.push({ childCode: "FG", qty: 1 });

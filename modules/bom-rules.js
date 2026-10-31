@@ -569,7 +569,7 @@
         return { processCode: step.processCode, name: process?.name ?? step.processCode, dept, minutesPerPc, cost: round(minutesPerPc * (rates[dept] ?? 0)), inputs: Array.isArray(step.inputs) ? [...step.inputs] : [] };
       });
       const node = {
-        itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, step: Number(line?.step) || null, qtyPerRoot,
+        itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, step: Number.isInteger(Number(line?.step)) && line.step >= 1 && line.step <= 20 ? Number(line.step) : null, qtyPerRoot,
         bomRevision: bom?.revision ?? null, routingRevision: routing?.revision ?? null, steps, children: [], material: 0, labor: 0, unitCost: 0, complete: true, ownCost: null,
       };
       rows.push(node);
