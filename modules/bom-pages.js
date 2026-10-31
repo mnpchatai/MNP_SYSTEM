@@ -641,7 +641,8 @@
       return [list, step].filter(Boolean).join(list ? flowArrow : "");
     }).filter(Boolean);
     const tools = canEdit ? `<div class="rf-row">${node.kind === "PURCHASED" ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
-    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}">${picture(node)}<div class="bom-flow-item-body">${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;
+    // การ์ด focus ได้ เพื่อเปิดเมนูคำสั่งด้วยปุ่ม Menu/Shift+F10 (บทบาทที่ดูอย่างเดียวไม่มีปุ่มในการ์ดให้ focus)
+    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}</div>${tools}</div></div>`;
     return `<div class="bom-flow-node">${lanes}${[...parts, card].join(flowArrow)}</div>`;
   }
   // เมนูคลิกขวา (กดค้างบนมือถือ) ของหน้าโครงสร้าง: คำสั่งของชิ้นที่ชี้ เป็นกลุ่ม แก้ไข · ไปที่ · คัดลอก
@@ -666,23 +667,44 @@
       canEdit && !parentItem && makesBom ? { label: "แก้ส่วนประกอบ (สร้าง BOM)", go: buildUrl(ctx, item.code) } : null,
       { label: "ประวัติ BOM / ใช้ในสินค้าไหน", go: ctx.url("items", { sel: item.code }) },
     ];
-    const copy = [{ label: "คัดลอกรหัส", copy: item.code }, { label: "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)", copy: `${item.code}\t${item.name}` }];
+    const copy = [{ label: "คัดลอกรหัส", copy: item.code }, { label: "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)", copy: copyCodeAndName(item.code, item.name) }];
     return [edit, go, copy].map((group) => group.filter(Boolean)).filter((group) => group.length);
   }
 
-  // ผูกเมนูกับมุมมองลำดับผลิต: คลิกขวา / ปุ่ม Menu หรือ Shift+F10 / กดค้าง 0.55 วินาทีบนจอสัมผัส · Shift+คลิกขวา = เมนูของเบราว์เซอร์
-  // popup เป็น data-popup ที่ย้ายไปอยู่ในกรอบของสิ่งที่ชี้ จึงใช้กฎกลาง closePopup ของ app.js (ปิดเมื่อแตะ/ย้าย focus ออกนอกกรอบ ไม่ใช้ blur)
+  // ตัวช่วยล้วนของเมนู (เทสต์ได้โดยไม่มี DOM)
+  // Shift+คลิกขวาด้วยเมาส์ (button 2) = เมนูของเบราว์เซอร์ · Shift+F10 จากคีย์บอร์ดส่ง contextmenu ที่ button 0 จึงยังเปิดเมนูของเรา
+  const browserMenuWanted = (event) => Boolean(event.shiftKey) && event.button === 2;
+  // วางเมนูที่จุดคลิกแต่ไม่ให้ล้นจอ (เว้นขอบ 4px) · เมนูสูงกว่าจอใช้ max-height + เลื่อนในเมนูเอง (CSS)
+  const menuPosition = (x, y, width, height, viewWidth, viewHeight) => ({
+    left: Math.max(4, Math.min(x, viewWidth - width - 4)),
+    top: Math.max(4, Math.min(y, viewHeight - height - 4)),
+  });
+  // รหัส + ชื่อ คั่นด้วย tab (วางใน Excel ได้ 2 ช่อง) · tab/ขึ้นบรรทัดในชื่อที่นำเข้าจาก Excel กลายเป็นช่องว่าง ไม่ให้แตกช่อง
+  const copyCodeAndName = (code, name) => `${code}\t${String(name ?? "").replace(/[\t\r\n]+/g, " ").trim()}`;
+
+  // ผูกเมนูกับมุมมองลำดับผลิต: คลิกขวา / ปุ่ม Menu หรือ Shift+F10 (การ์ด focus ได้) / กดค้าง 0.55 วินาทีบนจอสัมผัส · Shift+คลิกขวา = เมนูของเบราว์เซอร์
+  // เมนูเป็น data-popup ลูกคนเดียวของกรอบ .bom-ctx-host (ต่อท้าย .bom-flow) จึงใช้กฎกลาง closePopup ของ app.js:
+  // แตะ/คลิกหรือย้าย focus ที่ใดก็ตามนอกเมนู (รวมส่วนอื่นของการ์ดเดิม) = ปิด · ไม่ปิดด้วย blur
   function bindStructureMenu(ctx, flow, rootCode) {
+    const host = document.createElement("div");
+    host.className = "bom-ctx-host";
     const menu = document.createElement("div");
     menu.className = "bom-ctx-menu";
     menu.setAttribute("role", "menu");
     menu.setAttribute("data-popup", "");
     menu.hidden = true;
+    host.append(menu);
+    flow.append(host);
     let entries = [];
+    let openFor = null;
     let returnFocus = null;
     const close = () => { if (!menu.hidden) closePopup(menu); };
+    // เมนูติดจอ: เลื่อนหน้าแล้วจะไม่ตรงกับชิ้นที่ชี้ จึงปิด · เลื่อนภายในเมนูเอง (เมนูยาว) ไม่ปิด
+    const onScroll = (event) => { if (!menu.contains(event.target)) close(); };
+    menu.addEventListener("popup-close", () => { window.removeEventListener("scroll", onScroll, true); openFor = null; });
     const items = () => [...menu.querySelectorAll("[role=menuitem]")];
     const open = (target, x, y) => {
+      if (!menu.hidden && openFor === target) return; // Android ส่ง contextmenu ระหว่างกดค้างด้วย ไม่เปิดซ้ำ
       const groups = structureMenu(ctx, { code: target.dataset.bomMenu, parent: target.dataset.bomMenuParent ?? "", root: rootCode });
       entries = groups.flat();
       if (!entries.length) return;
@@ -691,11 +713,14 @@
       menu.setAttribute("aria-label", `คำสั่งของ ${target.dataset.bomMenu}`);
       const active = document.activeElement;
       returnFocus = active && active !== document.body && !menu.contains(active) ? active : null;
-      target.append(menu);
+      openFor = target;
+      menu.style.left = "0px";
+      menu.style.top = "0px";
       menu.hidden = false;
-      menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - menu.offsetWidth - 4))}px`;
-      menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - menu.offsetHeight - 4))}px`;
-      window.addEventListener("scroll", close, { capture: true, once: true }); // เมนูติดจอ เลื่อนหน้าแล้วจะไม่ตรงกับชิ้นที่ชี้
+      const at = menuPosition(x, y, menu.offsetWidth, menu.offsetHeight, window.innerWidth, window.innerHeight);
+      menu.style.left = `${at.left}px`;
+      menu.style.top = `${at.top}px`;
+      window.addEventListener("scroll", onScroll, true);
       items()[0]?.focus({ preventScroll: true });
     };
     const run = async (entry) => {
@@ -715,38 +740,43 @@
       const at = list.indexOf(document.activeElement);
       const move = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 }[event.key];
       if (move !== undefined) { event.preventDefault(); list[(move + list.length) % list.length]?.focus(); }
-      else if (event.key === "Escape") { event.preventDefault(); const back = returnFocus; close(); back?.focus?.(); }
-      else if (event.key === "Tab") close();
+      else if (event.key === "Escape" || event.key === "Tab") {
+        if (event.key === "Escape") event.preventDefault();
+        const back = returnFocus;
+        close();
+        if (event.key === "Escape") back?.focus?.();
+      }
     });
+    let press = null;
     flow.addEventListener("contextmenu", (event) => {
-      if (event.shiftKey) return;
+      if (browserMenuWanted(event)) return;
       if (menu.contains(event.target)) { event.preventDefault(); return; }
       const target = event.target.closest?.("[data-bom-menu]");
       if (!target) return;
       event.preventDefault();
+      if (press) { clearTimeout(press.timer); press.fired = true; } // Android เปิดจาก contextmenu แล้ว ตัวจับเวลากดค้างไม่ต้องเปิดอีก
       let { clientX: x, clientY: y } = event;
       if (!x && !y) { const rect = event.target.getBoundingClientRect(); x = rect.left; y = rect.bottom; } // จากคีย์บอร์ด: ไม่มีพิกัด เปิดใต้สิ่งที่ focus
       open(target, x, y);
     });
-    // กดค้างบนจอสัมผัส (iPhone ไม่ส่ง contextmenu): ขยับนิ้วเกิน 10px หรือยกนิ้วก่อนเวลา = ยกเลิก · กดค้างแล้วไม่ให้ click ที่ตามมาไปกดปุ่มในการ์ด
-    let press = null;
+    // กดค้างบนจอสัมผัส (iPhone ไม่ส่ง contextmenu): ขยับนิ้วเกิน 10px หรือยกนิ้วก่อนเวลา = ยกเลิก · นิ้วอื่นที่แตะซ้อนไม่ยุ่งกับการกดค้างที่กำลังนับ
+    // กดค้างแล้วไม่ให้ click ที่ตามมาไปกดปุ่มในการ์ด
     flow.addEventListener("pointerdown", (event) => {
-      if (event.pointerType !== "touch" || menu.contains(event.target)) return;
+      if (event.pointerType !== "touch" || menu.contains(event.target) || press) return;
       const target = event.target.closest?.("[data-bom-menu]");
       if (!target) return;
-      clearTimeout(press?.timer);
-      const { clientX: x, clientY: y } = event;
-      press = { x, y, fired: false, timer: setTimeout(() => { press.fired = true; open(target, x, y); }, 550) };
+      const { clientX: x, clientY: y, pointerId } = event;
+      press = { pointerId, x, y, fired: false, timer: setTimeout(() => { press.fired = true; open(target, x, y); }, 550) };
     });
     flow.addEventListener("pointermove", (event) => {
-      if (press && !press.fired && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) { clearTimeout(press.timer); press = null; }
+      if (press && event.pointerId === press.pointerId && !press.fired && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) { clearTimeout(press.timer); press = null; }
     });
-    const release = () => {
-      if (!press) return;
+    const release = (event) => {
+      if (!press || event.pointerId !== press.pointerId) return;
       clearTimeout(press.timer);
       if (press.fired) {
         // click ที่ตามการยกนิ้ว (ถ้ามี) มาทันที · iPhone บางครั้งไม่ส่ง จึงกันไว้แค่ช่วงสั้น ๆ ไม่ให้กลืน click ครั้งถัดไปของผู้ใช้
-        const block = (event) => { if (!menu.contains(event.target)) { event.preventDefault(); event.stopPropagation(); } };
+        const block = (clickEvent) => { if (!menu.contains(clickEvent.target)) { clickEvent.preventDefault(); clickEvent.stopPropagation(); } };
         flow.addEventListener("click", block, { capture: true, once: true });
         setTimeout(() => flow.removeEventListener("click", block, { capture: true }), 400);
       }
@@ -755,6 +785,7 @@
     flow.addEventListener("pointerup", release);
     flow.addEventListener("pointercancel", release);
   }
+  Object.assign(structureMenu, { browserMenuWanted, menuPosition, copyCodeAndName });
 
   pages.structure = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
