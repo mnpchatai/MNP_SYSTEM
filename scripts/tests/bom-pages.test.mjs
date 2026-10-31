@@ -241,7 +241,9 @@ test("dialogs render for their arguments and escape user text", async () => {
   const wip = D.printSheet(c, { orderId: "DEMO-26001", sheet: "WIP-RBGR" }).html;
   assert.match(wip, /ความยาวตัด \(ซม\.\)/);
   assert.match(wip, /<td class="right rf-mono">6\.5<\/td><td class="right rf-mono">31<\/td>/, "cutting data of the rod");
-  assert.match(wip, /RB 1 พ\.ย\. 69/, "department due date per row");
+  // กำหนด RB ของใบสาธิต = วันนี้ + 2 วัน (bom-seed.js) คำนวณจากวันที่รัน ไม่ใช่ค่าตายตัว ไม่งั้น test พังเมื่อข้ามวัน
+  const rbDue = new Date(Date.now() + 2 * 86400000).setHours(0, 0, 0, 0);
+  assert.match(wip, new RegExp(`RB ${c.rules.fmtDate(rbDue).replace(/\./g, "\\.")}`), "department due date per row");
   const orderNewBuilt = D.orderNew(c, {});
   const orderNew = orderNewBuilt.html;
   assert.match(orderNew, /name="autoDue"[^>]*checked/);
