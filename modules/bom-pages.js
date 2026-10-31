@@ -741,10 +741,11 @@
       const move = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 }[event.key];
       if (move !== undefined) { event.preventDefault(); list[(move + list.length) % list.length]?.focus(); }
       else if (event.key === "Escape" || event.key === "Tab") {
+        // คืน focus ให้สิ่งที่เปิดเมนู: Escape อยู่ที่นั่น · Tab ไปต่อจากตรงนั้น (ไม่หลุดไปท้ายหน้า)
         if (event.key === "Escape") event.preventDefault();
         const back = returnFocus;
         close();
-        if (event.key === "Escape") back?.focus?.();
+        back?.focus?.();
       }
     });
     let press = null;
@@ -775,10 +776,13 @@
       if (!press || event.pointerId !== press.pointerId) return;
       clearTimeout(press.timer);
       if (press.fired) {
-        // click ที่ตามการยกนิ้ว (ถ้ามี) มาทันที · iPhone บางครั้งไม่ส่ง จึงกันไว้แค่ช่วงสั้น ๆ ไม่ให้กลืน click ครั้งถัดไปของผู้ใช้
-        const block = (clickEvent) => { if (!menu.contains(clickEvent.target)) { clickEvent.preventDefault(); clickEvent.stopPropagation(); } };
-        flow.addEventListener("click", block, { capture: true, once: true });
-        setTimeout(() => flow.removeEventListener("click", block, { capture: true }), 400);
+        // mouse event สังเคราะห์ที่ตามการยกนิ้ว (ถ้ามี) มาทันที: กันทั้ง mousedown (จะ focus การ์ดแล้วกฎกลางปิดเมนู) และ click
+        // รวมถึง click ที่ตกบนเมนู (เมนูถูกดันเข้าจอจนอยู่ใต้นิ้ว ไม่ให้สั่งคำสั่งเองตอนยกนิ้ว) · กันแค่ 400ms ไม่ให้กลืนการแตะครั้งถัดไป
+        const block = (mouseEvent) => { mouseEvent.preventDefault(); mouseEvent.stopPropagation(); };
+        for (const type of ["mousedown", "click"]) {
+          flow.addEventListener(type, block, { capture: true, once: true });
+          setTimeout(() => flow.removeEventListener(type, block, { capture: true }), 400);
+        }
       }
       press = null;
     };
