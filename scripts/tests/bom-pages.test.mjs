@@ -143,11 +143,15 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   assert.match(html, /bom-pick-fg is-hidden/);
   assert.match(html, /name="code"[^>]*value="SE-NEW-77"/);
   assert.match(html, /<h3>2\. ชิ้นงาน<\/h3>/);
-  assert.match(html, /SE-NEW-77<\/strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างชิ้นงานใหม่ \(WIP · ชิ้นยาง \(ตัด\/เจาะ\)\)/);
+  assert.match(html, /SE-NEW-77<\/strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างชิ้นงานใหม่ให้พร้อม BOM/, "the kind is not repeated (it is in the step-1 select)");
+  assert.match(html, /ชั้นแรกต่อ 1 ชิ้น ของชิ้นงาน/);
   assert.match(html, /name="itemKind" value="SE"/);
   assert.match(html, /name="itemUom"[\s\S]*?<option value="pcs" selected>/);
+  html = await env.render("p=build&code=SE-TP01-OR01-100-18-65");
+  assert.doesNotMatch(html, /data-rf-open="useInOrder"/, "only products go into a production order");
+  assert.doesNotMatch(html, /ชนิด WIP/, "an existing item does not repeat its kind under the card");
   html = await env.render("p=build&code=RB-DM09-02-RD01-200-3-20&kind=RB");
-  assert.match(html, /name="itemCompound"/, "a new rod root asks for its compound");
+  assert.doesNotMatch(html, /name="itemCompound"/, "a new rod takes its compound from its compound line, not a second field");
   assert.match(html, /data-row="r1"[\s\S]*?<option value="CP" selected>[\s\S]*?<option value="kg" selected>/, "the first line of a rod is a compound in kg");
   html = await env.render("p=build&code=SE-TP01-OR01-100-18-65&kind=PT");
   assert.match(html, /<option value="SE" selected>/, "an existing item keeps its own kind whatever the URL says");

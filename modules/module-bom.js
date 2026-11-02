@@ -86,7 +86,7 @@
       }
       return node;
     };
-    return { code: p.code, item: { name: p.itemName, uom: p.itemUom, kind: p.itemKind, compound: p.itemCompound }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code)) };
+    return { code: p.code, item: { name: p.itemName, uom: p.itemUom, kind: p.itemKind }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code)) };
   }
   const listOf = (p, key) => (Array.isArray(p[key]) ? p[key] : p[key] === undefined ? [] : [p[key]]);
   const TRANSFORMS = {
