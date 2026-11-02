@@ -543,3 +543,31 @@ test("the product structure rolls up material, labour and minutes per department
   assert.deepEqual(broken.missingCost, ["XP"]);
   assert.deepEqual(broken.missing, ["FG (วงจร)", "GONE"]);
 });
+
+test("categories group the kinds (สินค้า / WIP / วัตถุดิบ / สูตรยาง) and a compound sits only under a rod as an input from RubberFlow", () => {
+  assert.deepEqual(rules.CATEGORIES.map((category) => [category.label, [...category.kinds]]), [["สินค้า", ["FG"]], ["WIP", ["SE", "RB", "PT", "BG", "SUBPART"]], ["วัตถุดิบ", ["PURCHASED"]], ["สูตรยาง", ["CP"]]]);
+  assert.ok(Object.keys(rules.KINDS).every((kind) => rules.CATEGORIES.filter((category) => category.kinds.includes(kind)).length === 1), "every kind sits in exactly one category");
+  assert.equal(rules.categoryOf("NOPE"), null);
+  assert.equal(rules.childKindError("RB", "CP"), "");
+  assert.equal(rules.childKindError("SE", "RB"), "");
+  assert.match(rules.childKindError("SE", "CP"), /เฉพาะใต้เส้นยาง/);
+  assert.match(rules.childKindError("RB", "PURCHASED"), /เฉพาะสูตรยาง/);
+  assert.match(rules.childKindError("CP", "PURCHASED"), /ไม่มีส่วนประกอบ/);
+  assert.match(rules.childKindError("PURCHASED", "PURCHASED"), /ไม่มีส่วนประกอบ/);
+  const items = {
+    SE1: { code: "SE1", kind: "SE", name: "ชิ้นยาง", uom: "pcs", ownerDept: "GR" },
+    RB1: { code: "RB1", kind: "RB", name: "เส้นยาง", uom: "rod", ownerDept: "RB" },
+    DM01: { code: "DM01", kind: "CP", name: "EPDM", uom: "kg", ownerDept: "RB", unitCost: 80 },
+    P1: { code: "P1", kind: "PURCHASED", name: "กาว", uom: "kg", ownerDept: "ST", unitCost: 2 },
+  };
+  const boms = { SE1: { revision: 1, lines: [{ childCode: "RB1", qty: 0.5 }, { childCode: "P1", qty: 1 }] }, RB1: { revision: 1, lines: [{ childCode: "DM01", qty: 1.5 }] } };
+  const tree = rules.structureTree("SE1", { itemOf: (code) => items[code] ?? null, approvedBomOf: (code) => boms[code] ?? null, routingOf: () => null, processOf: () => null });
+  assert.equal(tree.rows.find((row) => row.itemCode === "RB1").unitCost, 120, "the rod costs its compound kilograms");
+  const steps = rules.productionSteps(tree);
+  assert.deepEqual(steps.find((step) => step.type === "purchase").inputs.map((input) => input.itemCode), ["P1"], "the compound is not an ST purchase");
+  assert.deepEqual(steps.find((step) => step.type === "make" && step.itemCode === "RB1").inputs.map((input) => [input.itemCode, input.from]), [["DM01", null]], "the rod lists its compound as an input");
+  assert.ok(!steps.some((step) => step.itemCode === "DM01" && step.type === "make"), "the compound is not a production lane of its own");
+  assert.deepEqual(rules.flowOf(tree.rows.find((row) => row.itemCode === "RB1")).feeds, []);
+  assert.equal(rules.producerPair({ level: 2, kind: "CP" }, "RB"), "CP");
+  assert.ok(rules.sheetOf("RB").pairs.includes("CP") && !rules.sheetOf("PK").pairs.includes("CP"), "only the RB sheet lists compound kilograms");
+});

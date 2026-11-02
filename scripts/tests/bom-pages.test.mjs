@@ -104,7 +104,9 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   const env = load();
   env.store.setUser("B03"); // ฝ่ายวางแผน
   let html = await env.render("p=build");
-  assert.match(html, /1\. เลือกสินค้า/);
+  assert.match(html, /1\. เลือกหมวดและรหัส/);
+  assert.match(html, /name="kind" data-native-select data-bom-pick-kind[^>]*><optgroup label="สินค้า"><option value="FG" selected>/, "step 1 starts with the category, product by default");
+  assert.match(html, /bom-pick-code is-hidden[\s\S]*?name="code"[^>]*disabled/, "the single code field waits until a non-product kind is chosen");
   assert.match(html, /bom-base-list/);
   assert.match(html, /สินค้าที่แก้ล่าสุด/);
   assert.doesNotMatch(html, /data-rf-form="saveBomTree"/);
@@ -135,6 +137,33 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   assert.match(html, /BRAND-NEW-01\(B\)-A<\/strong> ยังไม่มีใน item master/);
   assert.doesNotMatch(html, /ตั้งต้นจาก/);
   assert.equal([...html.matchAll(/class="bom-row is-new"/g)].length, 2, "one empty editable row plus the template row");
+  // หมวดอื่นที่ขั้นที่ 1: WIP ใหม่ใช้รหัสช่องเดียว ไม่ตั้งต้นจากสินค้า · เส้นยางใหม่เริ่มด้วยแถวสูตรยาง · ชิ้นเดิมใช้ชนิดของมันเอง
+  html = await env.render("p=build&code=SE-NEW-77&kind=SE");
+  assert.match(html, /<option value="SE" selected>/);
+  assert.match(html, /bom-pick-fg is-hidden/);
+  assert.match(html, /name="code"[^>]*value="SE-NEW-77"/);
+  assert.match(html, /<h3>2\. ชิ้นงาน<\/h3>/);
+  assert.match(html, /SE-NEW-77<\/strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างชิ้นงานใหม่ให้พร้อม BOM/, "the kind is not repeated (it is in the step-1 select)");
+  assert.match(html, /ชั้นแรกต่อ 1 ชิ้น ของชิ้นงาน/);
+  assert.match(html, /name="itemKind" value="SE"/);
+  assert.match(html, /name="itemUom"[\s\S]*?<option value="pcs" selected>/);
+  html = await env.render("p=build&code=SE-TP01-OR01-100-18-65");
+  assert.doesNotMatch(html, /data-rf-open="useInOrder"/, "only products go into a production order");
+  assert.doesNotMatch(html, /ชนิด WIP/, "an existing item does not repeat its kind under the card");
+  html = await env.render("p=build&code=RB-DM09-02-RD01-200-3-20&kind=RB");
+  assert.doesNotMatch(html, /name="itemCompound"/, "a new rod takes its compound from its compound line, not a second field");
+  assert.match(html, /data-row="r1"[\s\S]*?<option value="CP" selected>[\s\S]*?<option value="kg" selected>/, "the first line of a rod is a compound in kg");
+  html = await env.render("p=build&code=SE-TP01-OR01-100-18-65&kind=PT");
+  assert.match(html, /<option value="SE" selected>/, "an existing item keeps its own kind whatever the URL says");
+  // วัตถุดิบ / สูตรยาง: ไม่มีตารางส่วนประกอบ บันทึกเป็นชิ้นงาน
+  html = await env.render("p=build&code=DM07&kind=CP");
+  assert.doesNotMatch(html, /data-rf-form="saveBomTree"/);
+  assert.match(html, /<h3>2\. สูตรยาง<\/h3>/, "the card names the category once (the kind is in the step-1 select)");
+  assert.match(html, /data-rf-form="saveItem"[\s\S]*?name="code" value="DM07"[\s\S]*?name="kind" value="CP"[\s\S]*?<option value="kg" selected>/);
+  html = await env.render("p=build&code=P-STK-01");
+  assert.match(html, /<option value="PURCHASED" selected>/);
+  assert.match(html, /data-rf-open="itemEdit"/);
+  assert.doesNotMatch(html, /data-rf-form="saveItem"/, "an existing raw material is edited in the item dialog");
   // บทบาทที่ไม่มีสิทธิ์: ไม่เห็นเมนู และหน้าปฏิเสธ
   env.store.setUser("B05");
   html = await env.render("p=build&code=DEMO-TP-01(P)-Y");
@@ -208,7 +237,10 @@ test("the items page is read-only history: tree, where-used, revisions, and a li
   html = await env.render("p=items&sel=RB-DM03-03-YE03-3000-3-130");
   assert.match(html, /สูตรคอมปาวด์อยู่ที่ RubberFlow/);
   assert.match(html, /ยังไม่ผูกสูตร RubberFlow/);
-  assert.doesNotMatch(html, /p=build&amp;code=RB-DM03/, "RB has no BOM to build");
+  assert.match(html, /p=build&amp;code=RB-DM03/, "a rod can get a compound line in the builder");
+  html = await env.render("p=items&sel=P-STK-01");
+  assert.doesNotMatch(html, /p=build&amp;code=P-STK-01/, "a purchased part has no BOM to build");
+  assert.match(html, /วัตถุดิบ · ของซื้อ\/คลัง/, "the item shows its category with its kind");
   env.store.run("importFlat", { items: [{ code: "RB-Z-01-1-1-1", kind: "RB", name: "z", uom: "rod", ownerDept: "RB", legacyCodes: ["RB-Z-01- -1-1-1"], rubber: { compound: "DM01" } }], boms: [], source: "t" });
   html = await env.render("p=items&q=RB-Z-01-%20-1");
   assert.match(html, /เดิม: RB-Z-01- -1-1-1/);
@@ -250,8 +282,24 @@ test("dialogs render for their arguments and escape user text", async () => {
   // กำหนด RB ของใบสาธิต = วันนี้ + 2 วัน (bom-seed.js) คำนวณจากวันที่รัน ไม่ใช่ค่าตายตัว ไม่งั้น test พังเมื่อข้ามวัน
   const rbDue = new Date(Date.now() + 2 * 86400000).setHours(0, 0, 0, 0);
   assert.match(wip, new RegExp(`RB ${c.rules.fmtDate(rbDue).replace(/\./g, "\\.")}`), "department due date per row");
+  // เพิ่มชิ้นงานเดี่ยว: แผนกเจ้าของตั้งต้นตามชนิด และเปลี่ยนตามเมื่อเปลี่ยนชนิด (เดิมค้างเป็น ST ทุกชนิด)
+  const itemNew = D.itemEdit(c, {});
+  assert.match(itemNew.html, /name="ownerDept"[\s\S]*?<option value="ST" selected/, "a new item defaults to PURCHASED → ST");
+  assert.match(D.itemEdit(c, { code: "RB-DM01-02-OR01-202-18-70" }).html, /name="ownerDept"[\s\S]*?<option value="RB" selected/, "an existing rod shows its own department");
+  const kindSelect = { value: "SE", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  const deptSelect = { value: "ST" };
+  itemNew.bind({ querySelector: (selector) => ({ 'select[name="kind"]': kindSelect, 'select[name="ownerDept"]': deptSelect })[selector] ?? null });
+  kindSelect.handlers.change();
+  assert.equal(deptSelect.value, "GR", "choosing SE moves the owner department to GR");
+  kindSelect.value = "RB";
+  kindSelect.handlers.change();
+  assert.equal(deptSelect.value, "RB");
+  const existingKind = { value: "PT", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  D.itemEdit(c, { code: "RB-DM01-02-OR01-202-18-70" }).bind({ querySelector: (selector) => ({ 'select[name="kind"]': existingKind })[selector] ?? null });
+  assert.equal(existingKind.handlers.change, undefined, "an existing item keeps its saved department when the kind changes");
   const orderNewBuilt = D.orderNew(c, {});
   const orderNew = orderNewBuilt.html;
+  assert.match(orderNew, /name="orderType"[\s\S]*?<option value="SA" selected/, "the order type is an explicit choice, defaulting to domestic");
   assert.match(orderNew, /name="autoDue"[^>]*checked/);
   assert.match(orderNew, /ว่าง = ออกเลขอัตโนมัติ/);
   assert.doesNotMatch(orderNew, /name="pi"[^>]*required/, "the PI number is optional now");
@@ -262,8 +310,22 @@ test("dialogs render for their arguments and escape user text", async () => {
   const auto = mk({ checked: true });
   const previews = c.rules.DUE_DEPTS.map((dept) => mk({ dataset: { bomDuePreview: dept } }));
   const dueInputs = c.rules.DUE_DEPTS.map((dept) => mk({ dataset: { bomDue: dept } }));
-  const dialogNode = { querySelector: (selector) => ({ "[data-bom-whdue]": whInput, 'input[name="orderedAt"]': orderedInput, "[data-bom-autodue]": auto })[selector] ?? null, querySelectorAll: (selector) => (selector === "[data-bom-due-preview]" ? previews : selector === "[data-bom-due]" ? dueInputs : []) };
+  const countryInput = mk({ value: "Thailand" });
+  const typeSelect = mk({ value: "SA" });
+  const dialogNode = { querySelector: (selector) => ({ "[data-bom-whdue]": whInput, 'input[name="orderedAt"]': orderedInput, "[data-bom-autodue]": auto, "[data-bom-country]": countryInput, "[data-bom-ordertype]": typeSelect })[selector] ?? null, querySelectorAll: (selector) => (selector === "[data-bom-due-preview]" ? previews : selector === "[data-bom-due]" ? dueInputs : []) };
   orderNewBuilt.bind(dialogNode);
+  // ประเภทออร์เดอร์เดาจากประเทศจนกว่าผู้ใช้จะเลือกเอง
+  countryInput.value = "Belgium";
+  countryInput.handlers.input();
+  assert.equal(typeSelect.value, "EX", "typing a foreign country flips the guess to export");
+  countryInput.value = "Thailand";
+  countryInput.handlers.input();
+  assert.equal(typeSelect.value, "SA");
+  typeSelect.value = "EX";
+  typeSelect.handlers.change();
+  countryInput.value = "ไทย";
+  countryInput.handlers.input();
+  assert.equal(typeSelect.value, "EX", "a type chosen by hand is not overwritten by the country guess");
   whInput.handlers.change();
   assert.equal(previews.find((node) => node.dataset.bomDuePreview === "PK").textContent, "ว่าง = 14 ธ.ค. 69");
   assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 4 ธ.ค. 69");
@@ -765,4 +827,28 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
   clean(html);
   assert.doesNotMatch(html, /data-rf-open="routingEdit"|data-rf-open="itemCost"|data-rf-open="itemImage"/);
+});
+
+test("kinds are chosen by category (สินค้า / WIP / วัตถุดิบ / สูตรยาง) and a rod's compound line shows as its own card and as the rod's input", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  let html = await env.render("p=build&code=DEMO-TP-01(P)-Y");
+  clean(html);
+  assert.deepEqual([...html.matchAll(/<optgroup label="([^"]+)">/g)].slice(0, 4).map((match) => match[1]), ["สินค้า", "WIP (งานระหว่างผลิต)", "วัตถุดิบ", "สูตรยาง"]);
+  assert.match(html, /<optgroup label="สูตรยาง"><option value="CP">CP · สูตรยาง \(คอมปาวด์\)<\/option><\/optgroup>/);
+  assert.match(html, /data-native-select data-bom-kind/, "the grouped select stays a native dropdown");
+  assert.match(env.context.MNP_BOM_DIALOGS.itemEdit(env.ctx("p=items"), {}).html, /<optgroup label="วัตถุดิบ"><option value="PURCHASED" selected>/, "the item dialog uses the same grouped choice");
+  assert.equal(env.store.run("saveItem", { code: "DM01", kind: "CP", name: "EPDM ส้ม", uom: "kg", create: true }).ok, true);
+  assert.equal(env.store.run("saveBom", { itemCode: "RB-DM01-02-OR01-202-18-70", lines: [{ childCode: "DM01", qty: 1.53 }] }).ok, true);
+  html = await env.render("p=product&code=DEMO-TP-01(P)-Y&qty=80");
+  clean(html);
+  assert.match(html, /<h3>สูตรยาง <span class="muted">ผสมโดย RB ตามสูตรใน RubberFlow<\/span>/);
+  assert.match(html, /DM01[\s\S]*?RC-EPDM-DS01[\s\S]*?ผูกแล้ว[\s\S]*?<strong>11\.85<\/strong>/, "7.74 rods × 1.53 kg");
+  assert.deepEqual([...html.matchAll(/<h3>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]), ["RB", "GR", "PT", "ST", "PK"], "the department cards are unchanged");
+  html = await env.render("p=structure&code=RB-DM01-02-OR01-202-18-70");
+  clean(html);
+  assert.equal((html.match(/คอมปาวด์ <span class="rf-mono">DM01<\/span>/g) ?? []).length, 0, "the compound field is not repeated when the BOM has the compound line");
+  assert.match(html, /DM01<\/span> <span class="bom-flow-input-name">EPDM ส้ม<\/span>[\s\S]*?\(สูตรอยู่ที่ RubberFlow\)/);
+  html = await env.render("p=items&sel=DM01");
+  assert.match(html, /สูตรยาง · สูตรยาง \(คอมปาวด์\)/);
 });

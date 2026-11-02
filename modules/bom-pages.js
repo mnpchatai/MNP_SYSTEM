@@ -20,7 +20,8 @@
   });
   const status = (ctx, value) => { const [tone, label] = STATUS[value] ?? ["", String(value ?? "")]; return ctx.ui.badge(tone, label); };
   const deptBadge = (ctx, dept) => ctx.ui.badge("", dept);
-  const kindLabel = (ctx, kind) => ctx.rules.KINDS[kind]?.label ?? kind;
+  // ชนิดพร้อมหมวด เช่น "WIP · ชิ้นยาง (ตัด/เจาะ)" · "สินค้า · สินค้าสำเร็จรูป"
+  const kindLabel = (ctx, kind) => [ctx.rules.categoryOf(kind)?.label, ctx.rules.KINDS[kind]?.label ?? kind].filter(Boolean).join(" · ");
   const uomText = (ctx, code) => ctx.rules.uomLabel(code);
   const searchForm = (ctx, placeholder) => `<form class="rf-search" data-rf-search role="search"><label class="sr-only" for="bom-q">ค้นหา</label>${ctx.ui.input("q", { id: "bom-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
   const itemOf = (ctx, code) => ctx.helpers.itemOf(ctx.data, code);
@@ -264,7 +265,9 @@
     }
     return rows;
   }
-  const KIND_OPTIONS = (ctx) => Object.entries(ctx.rules.KINDS).map(([value, meta]) => ({ value, label: `${value} · ${meta.label}` }));
+  // เลือกชนิดชิ้นงานแบ่งตามหมวด (สินค้า / WIP / วัตถุดิบ / สูตรยาง) ด้วย optgroup ของ select ปกติ
+  // (data-native-select: ตัวค้นหาของ searchable-select แบนกลุ่มทิ้ง จึงใช้ dropdown ของเบราว์เซอร์)
+  const kindSelect = (ctx, name, value, { className = "", extra = "" } = {}) => `<select class="select rf-select${className ? ` ${className}` : ""}" name="${attr(name)}" data-native-select${extra ? ` ${extra}` : ""}>${ctx.rules.CATEGORIES.map((category) => `<optgroup label="${attr(category.long)}">${category.kinds.map((kind) => `<option value="${attr(kind)}"${kind === value ? " selected" : ""}>${esc(`${kind} · ${ctx.rules.KINDS[kind].label}`)}</option>`).join("")}</optgroup>`).join("")}</select>`;
   const UOM_OPTIONS = (ctx) => Object.entries(ctx.rules.UOMS).map(([value, meta]) => ({ value, label: meta.label }));
   // แถวหนึ่งของตารางแก้ไข (ใช้ทั้งแถวจริงและ template ที่ JS clone เมื่อกด "+ ลูก")
   function editorRowHtml(ctx, row) {
@@ -276,7 +279,7 @@
     return `<tr class="bom-row${row.existing ? "" : " is-new"}" data-row="${attr(row.id)}" data-parent="${attr(row.parentId)}" data-level="${attr(String(row.level))}">
       <td class="bom-cell-code">${levelCell(row.level, `${dragHandle("ย้ายแถวนี้และส่วนประกอบข้างใต้")}<input type="hidden" name="rowId[]" value="${attr(row.id)}"><input type="hidden" name="parentId[]" value="${attr(row.parentId)}">${ui.input("childCode[]", { value: row.code, list: "bom-item-list", placeholder: "รหัสชิ้นงาน", className: "bom-code", extra: 'data-bom-code autocapitalize="characters"' })}`)}<div class="small muted" data-bom-flag>${row.existing ? (row.usedIn > 1 ? esc(`ใช้ร่วมกับสินค้าอื่น ${row.usedIn - 1} รายการ (แก้แล้วมีผลทุกสินค้า)`) : "") : "ชิ้นใหม่"}</div></td>
       <td>${ui.input("name[]", { value: row.name, placeholder: "ชื่อชิ้นงาน", className: "bom-name" })}</td>
-      <td>${ui.select("kind[]", KIND_OPTIONS(ctx), { value: row.kind || "PURCHASED", className: "bom-kind", extra: 'data-bom-kind data-native-select aria-label="ชนิดชิ้นงาน"' })}</td>
+      <td>${kindSelect(ctx, "kind[]", row.kind || "PURCHASED", { className: "bom-kind", extra: 'data-bom-kind aria-label="หมวดและชนิดชิ้นงาน"' })}</td>
       <td>${ui.select("uom[]", UOM_OPTIONS(ctx), { value: row.uom || "pcs", className: "bom-uom", extra: 'data-native-select aria-label="หน่วยนับ"' })}</td>
       <td>${ui.input("qty[]", { type: "number", step: "any", min: 0, value: row.qty === "" || row.qty === undefined ? "" : String(Number(Number(row.qty).toPrecision(10))), className: "bom-qty", extra: 'data-bom-qty aria-label="ปริมาณต่อ 1 พ่อ"' })}<small class="rf-hint" data-bom-hint>${esc(isRb && suggestion ? `จากการตัด ${rules.fmtQty(suggestion)}` : "")}</small></td>
       <td>${ui.input("lineStep[]", { type: "number", step: "1", min: 1, max: 20, value: row.step ?? "", placeholder: "1", className: "bom-step", extra: 'aria-label="ขั้นที่ของพ่อที่ชิ้นนี้เข้า (ว่าง = ขั้นแรก)"' })}</td>
@@ -309,20 +312,47 @@
     const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((value) => ({ value, label: `(${value})` }));
     const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((value) => ({ value, label: value }));
     const current = code ? rules.parseFgCode(code) : { base, pkg, colorSet: cs };
+    // หมวด / ชนิดของชิ้นที่จะสร้าง: ชิ้นที่มีอยู่แล้วใช้ชนิดของมัน · ชิ้นใหม่ตาม ?kind= (ไม่ระบุ = สินค้า FG)
+    // สินค้าเลือกด้วยฐานรหัส + แพ็กเกจ + ชุดสี (ชีต ;}o) · ชนิดอื่นพิมพ์รหัสตรง ๆ ช่องเดียว
+    const kindParam = String(params.get("kind") ?? "").trim().toUpperCase();
+    const rootKind = (code ? itemOf(ctx, code)?.kind : null) ?? (rules.KINDS[kindParam] ? kindParam : "FG");
+    const isFg = rootKind === "FG";
+    const others = data.items.filter((entry) => entry.kind !== "FG").sort((a, b) => a.code.localeCompare(b.code));
+    const fgField = (label, control, opts = {}) => ui.field(label, control, { ...opts, className: `bom-pick-fg${isFg ? "" : " is-hidden"}` });
     const picker = ui.card(`<form class="bom-pick" data-bom-pick>
-        <div class="rf-grid rf-g3">
-          ${ui.field("ฐานรหัสสินค้า *", ui.input("base", { value: current.base, list: "bom-base-list", required: true, placeholder: "เลือกหรือพิมพ์รหัสใหม่ เช่น MEGA-ST-01", extra: 'autocapitalize="characters"' }), { hint: esc(`มีอยู่ ${bases.length} ฐานรหัส พิมพ์รหัสใหม่เพื่อสร้างสินค้าใหม่`) })}
-          ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { value: current.pkg, placeholder: "ไม่ระบุ" }))}
-          ${ui.field("ชุดสี", ui.select("cs", colorOptions, { value: current.colorSet, placeholder: "ไม่ระบุ" }))}
+        <div class="rf-grid rf-g4">
+          ${ui.field("หมวด / ชนิด *", kindSelect(ctx, "kind", rootKind, { extra: 'data-bom-pick-kind aria-label="หมวดและชนิดของชิ้นที่จะสร้าง"' }))}
+          ${fgField("ฐานรหัสสินค้า *", ui.input("base", { value: isFg ? current.base : "", list: "bom-base-list", required: isFg, placeholder: "เลือกหรือพิมพ์รหัสใหม่ เช่น MEGA-ST-01", extra: `autocapitalize="characters"${isFg ? "" : " disabled"}` }), { hint: esc(`มีอยู่ ${bases.length} ฐานรหัส พิมพ์รหัสใหม่เพื่อสร้างสินค้าใหม่`) })}
+          ${fgField("แพ็กเกจ", ui.select("pkg", pkgOptions, { value: isFg ? current.pkg : "", placeholder: "ไม่ระบุ", extra: isFg ? "" : "disabled" }))}
+          ${fgField("ชุดสี", ui.select("cs", colorOptions, { value: isFg ? current.colorSet : "", placeholder: "ไม่ระบุ", extra: isFg ? "" : "disabled" }))}
+          ${ui.field("รหัสชิ้นงาน *", ui.input("code", { value: isFg ? "" : code, list: "bom-code-list", required: !isFg, placeholder: "เลือกหรือพิมพ์รหัสใหม่ เช่น SE-TP01-OR01-100-18-65", extra: `autocapitalize="characters"${isFg ? " disabled" : ""}` }), { className: `bom-pick-code${isFg ? " is-hidden" : ""}` })}
         </div>
         <datalist id="bom-base-list">${bases.map((value) => `<option value="${attr(value)}">${esc(parsed.find((entry) => entry.base === value).item.name.slice(0, 50))}</option>`).join("")}</datalist>
-        <div class="rf-row"><button class="btn rf-btn" type="submit">เปิด BOM</button></div>
-      </form>`, { title: "1. เลือกสินค้า (ฐานรหัส + แพ็กเกจ + ชุดสี เหมือนชีต ;}o)" });
+        <datalist id="bom-code-list">${others.map((entry) => `<option value="${attr(entry.code)}">${esc(`${entry.kind} · ${entry.name.slice(0, 50)}`)}</option>`).join("")}</datalist>
+        <div class="rf-row"><button class="btn rf-btn" type="submit">เปิด</button></div>
+      </form>`, { title: "1. เลือกหมวดและรหัส" });
     const bindPick = (rootNode) => {
-      rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
+      const form = rootNode.querySelector("[data-bom-pick]");
+      if (!form) return;
+      // สลับช่องตามหมวด: สินค้า = ฐานรหัส/แพ็กเกจ/ชุดสี · อื่น ๆ = รหัสชิ้นงาน (ช่องที่ซ่อนถูกปิด จึงไม่ติด required และไม่ถูกส่ง)
+      const sync = () => {
+        const fg = form.querySelector("[data-bom-pick-kind]")?.value === "FG";
+        form.querySelectorAll(".bom-pick-fg").forEach((node) => node.classList.toggle("is-hidden", !fg));
+        form.querySelectorAll(".bom-pick-code").forEach((node) => node.classList.toggle("is-hidden", fg));
+        form.querySelectorAll(".bom-pick-fg input, .bom-pick-fg select").forEach((input) => { input.disabled = !fg; });
+        const codeInput = form.querySelector('input[name="code"]');
+        if (codeInput) { codeInput.disabled = fg; codeInput.required = !fg; }
+        const baseInput = form.querySelector('input[name="base"]');
+        if (baseInput) baseInput.required = fg;
+      };
+      form.querySelector("[data-bom-pick-kind]")?.addEventListener("change", sync);
+      form.addEventListener("submit", (event) => {
         event.preventDefault();
-        const form = new FormData(event.currentTarget);
-        location.hash = ctx.url("build", { base: String(form.get("base") ?? "").trim(), pkg: String(form.get("pkg") ?? ""), cs: String(form.get("cs") ?? "") });
+        const values = new FormData(event.currentTarget);
+        const kind = String(values.get("kind") ?? "FG");
+        location.hash = kind === "FG"
+          ? ctx.url("build", { base: String(values.get("base") ?? "").trim(), pkg: String(values.get("pkg") ?? ""), cs: String(values.get("cs") ?? "") })
+          : ctx.url("build", { code: String(values.get("code") ?? "").trim(), kind });
       });
     };
     if (!code) {
@@ -332,37 +362,60 @@
       return { html, bind: bindPick };
     }
     const item = itemOf(ctx, code);
+    const pageHead = head(ctx, "สร้าง BOM", "เลือกหมวดและรหัส → แก้ส่วนประกอบทุกชั้นในตารางเดียว → บันทึก ใช้ได้ทันที (เก็บเป็น revision ย้อนดูได้)");
+    const defaultUom = { FG: "set", RB: "rod", CP: "kg" }[rootKind] ?? "pcs";
+    // วัตถุดิบ / สูตรยาง ไม่มีส่วนประกอบ: หน้านี้บันทึกเป็นชิ้นงานอย่างเดียว (ชิ้นที่มีแล้วแก้ได้ที่หน้าต่างชิ้นงาน)
+    if (ctx.helpers.NO_BOM_KINDS.includes(rootKind)) {
+      const label = rules.categoryOf(rootKind)?.label ?? rootKind; // หัวการ์ดบอกหมวด ชนิดอยู่ในช่องเลือกของขั้นที่ 1 แล้ว
+      const body = item
+        ? `<p>${ui.mono(item.code)} ${esc(item.name)} <span class="muted">· ${esc(uomText(ctx, item.uom))}</span></p>
+           <div class="rf-row">${canEdit ? ui.openButton("แก้ข้อมูลชิ้นงาน", "itemEdit", { code: item.code }) : ""}${canEdit && rootKind === "CP" ? ui.openButton("ผูกสูตร RubberFlow", "compoundLink", { code: item.code }) : ""}${ui.link("ใช้ที่ไหนบ้าง / ประวัติ", ctx.url("items", { sel: item.code }), "btn rf-btn secondary")}</div>`
+        : canEdit ? `<form id="bom-leaf-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}" data-rf-args='{"create":true}'>
+            <input type="hidden" name="code" value="${attr(code)}"><input type="hidden" name="kind" value="${attr(rootKind)}">
+            <div class="rf-grid rf-g3">
+              ${ui.field("รหัส", `<input class="input rf-input rf-mono" value="${attr(code)}" readonly>`)}
+              ${ui.field("ชื่อ *", ui.input("name", { required: true }))}
+              ${ui.field("หน่วยนับ", ui.select("uom", UOM_OPTIONS(ctx), { value: defaultUom, extra: "data-native-select" }))}
+            </div>
+            <div class="rf-row"><button class="btn rf-btn" type="submit">บันทึกชิ้นงาน</button></div>
+          </form>` : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การสร้างชิ้นงานทำโดยฝ่ายวางแผนหรือผู้จัดการ");
+      const note = rootKind === "CP" ? "สูตรยางไม่มีส่วนประกอบในระบบนี้ สูตร PHR อยู่ที่ RubberFlow · ใช้เป็นบรรทัดใต้เส้นยาง" : "วัตถุดิบไม่มีส่วนประกอบ · ใช้เป็นบรรทัดใน BOM ของสินค้าหรือ WIP";
+      return { html: `${pageHead}${picker}${ui.card(`<p class="small muted">${esc(note)}</p>${body}`, { title: `2. ${esc(label)}` })}`, bind: bindPick };
+    }
     let rows = [];
     let sourceNote = "";
     if (item) rows = editorRowsOf(ctx, item.code);
-    else {
+    else if (isFg) {
       const siblings = ctx.helpers.siblingsOf(data, current.base);
       const source = ctx.helpers.pickSibling(siblings, current.pkg, current.colorSet);
       if (source) { rows = editorRowsOf(ctx, source.code); sourceNote = `ตั้งต้นจาก ${source.code} (${source.name}) แก้แล้วบันทึกเป็น ${code} โดยไม่กระทบตัวต้นแบบ`; }
     }
-    if (!rows.length) rows = [{ id: "r1", parentId: "", level: 1, code: "", kind: "PURCHASED", name: "", uom: "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 }];
+    // เส้นยางมีส่วนประกอบได้เฉพาะสูตรยาง: แถวแรกตั้งเป็นสูตรยาง หน่วย กก.
+    if (!rows.length) rows = [{ id: "r1", parentId: "", level: 1, code: "", kind: rootKind === "RB" ? "CP" : "PURCHASED", name: "", uom: rootKind === "RB" ? "kg" : "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 }];
     const bom = item ? approvedBomOf(ctx, item.code) : null;
-    const itemCard = ui.card(`<div class="rf-grid rf-g3">
-        ${ui.field("รหัสสินค้า", `<input class="input rf-input rf-mono" value="${attr(code)}" readonly>`)}
-        ${ui.field("ชื่อสินค้า *", ui.input("itemName", { value: item?.name ?? "", required: true, placeholder: "เช่น ตอปิโดยาง TP-01 แพ็กถุง ชุดสี Y" }))}
-        ${ui.field("หน่วยขาย", ui.select("itemUom", UOM_OPTIONS(ctx), { value: item?.uom ?? "set", extra: "data-native-select" }))}
+    const noun = isFg ? "สินค้า" : "ชิ้นงาน";
+    const itemCard = ui.card(`<input type="hidden" name="itemKind" value="${attr(rootKind)}">
+      <div class="rf-grid rf-g3">
+        ${ui.field(`รหัส${noun}`, `<input class="input rf-input rf-mono" value="${attr(code)}" readonly>`)}
+        ${ui.field(`ชื่อ${noun} *`, ui.input("itemName", { value: item?.name ?? "", required: true, placeholder: isFg ? "เช่น ตอปิโดยาง TP-01 แพ็กถุง ชุดสี Y" : "" }))}
+        ${ui.field(isFg ? "หน่วยขาย" : "หน่วยนับ", ui.select("itemUom", UOM_OPTIONS(ctx), { value: item?.uom ?? defaultUom, extra: "data-native-select" }))}
       </div>
-      ${item ? `<div class="small muted">${esc(`ชนิด ${kindLabel(ctx, item.kind)} · แผนกเจ้าของ ${item.ownerDept}${bom ? ` · BOM ปัจจุบัน Rev.${bom.revision} บันทึก ${rules.fmtDateTime(bom.approvedAt)} โดย ${bom.approvedBy}` : " · ยังไม่มี BOM"}`)} · ${ui.link("ประวัติ revision", ctx.url("items", { sel: item.code }))}</div>` : ui.callout("info", `<strong>${esc(code)}</strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างสินค้าใหม่ให้พร้อม BOM${sourceNote ? `<div>${esc(sourceNote)}</div>` : ""}`)}`, { title: "2. สินค้า", className: "bom-item-card" });
-    const tableHead = `<thead><tr><th>ชั้น / รหัส</th><th>ชื่อ</th><th>ชนิด</th><th>หน่วย</th><th>ปริมาณต่อ 1 พ่อ</th><th title="ขั้นผลิตของพ่อที่ชิ้นนี้เข้า 1–20 (ว่าง = ขั้นแรก) · มุมมองลำดับผลิตของหน้าโครงสร้างสินค้าเรียงวัตถุดิบตามเลขนี้">ขั้นที่</th><th>% เผื่อเสีย</th><th>หมายเหตุ</th><th>ข้อมูลยาง (RB)</th><th></th></tr></thead>`;
+      ${item ? `<div class="small muted">${esc(`แผนกเจ้าของ ${item.ownerDept}${bom ? ` · BOM ปัจจุบัน Rev.${bom.revision} บันทึก ${rules.fmtDateTime(bom.approvedAt)} โดย ${bom.approvedBy}` : " · ยังไม่มี BOM"}`)} · ${ui.link("ประวัติ revision", ctx.url("items", { sel: item.code }))}</div>` : ui.callout("info", `<strong>${esc(code)}</strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้าง${esc(noun)}ใหม่ให้พร้อม BOM${sourceNote ? `<div>${esc(sourceNote)}</div>` : ""}`)}`, { title: `2. ${noun}`, className: "bom-item-card" });
+    const tableHead = `<thead><tr><th>ชั้น / รหัส</th><th>ชื่อ</th><th title="สินค้า · WIP (ชิ้นที่ผลิตเองระหว่างทาง) · วัตถุดิบ (ของซื้อ) · สูตรยาง (ใส่ใต้เส้นยาง หน่วย กก.)">หมวด / ชนิด</th><th>หน่วย</th><th>ปริมาณต่อ 1 พ่อ</th><th title="ขั้นผลิตของพ่อที่ชิ้นนี้เข้า 1–20 (ว่าง = ขั้นแรก) · มุมมองลำดับผลิตของหน้าโครงสร้างสินค้าเรียงวัตถุดิบตามเลขนี้">ขั้นที่</th><th>% เผื่อเสีย</th><th>หมายเหตุ</th><th>ข้อมูลยาง (RB)</th><th></th></tr></thead>`;
     const templateRow = editorRowHtml(ctx, { id: "__ID__", parentId: "__PARENT__", level: 1, code: "", kind: "PURCHASED", name: "", uom: "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 });
     const editor = `<form id="bom-tree-form" class="bom-editor" data-rf-form="saveBomTree" data-rf-success="{result}">
       <input type="hidden" name="code" value="${attr(code)}">
       <datalist id="bom-item-list">${data.items.filter((entry) => entry.code !== code).map((entry) => `<option value="${attr(entry.code)}">${esc(`${entry.kind} · ${entry.name.slice(0, 50)}`)}</option>`).join("")}</datalist>
       <datalist id="bom-compound-list">${data.compounds.map((entry) => `<option value="${attr(entry.code)}">${esc(entry.name)}</option>`).join("")}</datalist>
       ${itemCard}
-      ${ui.card(`<p class="small muted">ปริมาณ = จำนวนลูกต่อ 1 หน่วยของพ่อ (ชั้นแรกต่อ 1 ${esc(uomText(ctx, item?.uom ?? "set"))} ของสินค้า) · RB ใต้ SE: ใส่ข้อมูลการตัดแล้วระบบแนะนำอัตราส่วน 1/(ชิ้นต่อเส้น × SE ต่อ GR) · พิมพ์รหัสที่ยังไม่มี = สร้างชิ้นใหม่ (ระบุชนิด ชื่อ หน่วย)</p>
+      ${ui.card(`<p class="small muted">ปริมาณ = จำนวนลูกต่อ 1 หน่วยของพ่อ (ชั้นแรกต่อ 1 ${esc(uomText(ctx, item?.uom ?? defaultUom))} ของ${esc(noun)}) · RB ใต้ SE: ใส่ข้อมูลการตัดแล้วระบบแนะนำอัตราส่วน 1/(ชิ้นต่อเส้น × SE ต่อ GR) · สูตรยางใต้ RB: ปริมาณเป็น กก. ต่อเส้น (ว่าง = ใช้ กก./เส้น ของเส้นยาง) · พิมพ์รหัสที่ยังไม่มี = สร้างชิ้นใหม่ (ระบุชนิด ชื่อ หน่วย)</p>
         <div class="table-wrap"><table class="rf-table bom-tree-table">${tableHead}<tbody data-bom-rows>${rows.map((row) => editorRowHtml(ctx, row)).join("")}</tbody></table></div>
         <template data-bom-row>${templateRow}</template>
         <div class="rf-row"><button class="btn rf-btn secondary small" type="button" data-bom-add-root>+ เพิ่มส่วนประกอบชั้นแรก</button><label class="small bom-drag-option" title="ปิดไว้ = ย้ายเฉพาะแถวนั้น ลูกเดิมขึ้นไปอยู่กับพ่อเดิม · ลาก ⋮⋮ ไปทางขวา/ซ้ายแล้วปล่อย = ย่อเข้าเป็นลูกของแถวบน / ดึงออกหนึ่งชั้น"><input type="checkbox" data-drag-with-children> ลากพร้อมส่วนประกอบข้างใต้</label></div>
         ${ui.field("หมายเหตุของการแก้ครั้งนี้", ui.input("note", { placeholder: "เช่น เปลี่ยนความยาวตัดลูกตอปิโด" }))}`, { title: "3. ส่วนประกอบทุกชั้น" })}
-      <div class="rf-row bom-actions">${canEdit ? '<button class="btn rf-btn" type="submit" form="bom-tree-form">บันทึก BOM</button>' : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การสร้าง/แก้ BOM ทำโดยฝ่ายวางแผนหรือผู้จัดการ")}${item && bom && canEdit ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }) : ""}${item ? ui.link("ดูต้นไม้ที่ระเบิดแล้ว", ctx.url("items", { sel: item.code }), "btn rf-btn secondary") : ""}</div>
+      <div class="rf-row bom-actions">${canEdit ? '<button class="btn rf-btn" type="submit" form="bom-tree-form">บันทึก BOM</button>' : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การสร้าง/แก้ BOM ทำโดยฝ่ายวางแผนหรือผู้จัดการ")}${isFg && item && bom && canEdit ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }) : ""}${item ? ui.link("ดูต้นไม้ที่ระเบิดแล้ว", ctx.url("items", { sel: item.code }), "btn rf-btn secondary") : ""}</div>
     </form>`;
-    const html = `${head(ctx, "สร้าง BOM", "เลือกสินค้า → แก้ส่วนประกอบทุกชั้นในตารางเดียว → บันทึก ใช้ได้ทันที (เก็บเป็น revision ย้อนดูได้)")}${picker}${editor}`;
+    const html = `${pageHead}${picker}${editor}`;
     const bind = (rootNode) => {
       bindPick(rootNode);
       const tbody = rootNode.querySelector("[data-bom-rows]");
@@ -375,10 +428,21 @@
         const parentOf = Object.fromEntries(all.map((tr) => [tr.dataset.row, tr.dataset.parent]));
         return all.filter((tr) => { let p = tr.dataset.parent; while (p) { if (p === id) return true; p = parentOf[p] ?? ""; } return false; });
       };
+      const rowById = (id) => (id ? rowsOf().find((row) => row.dataset.row === id) ?? null : null);
       const paintRow = (tr) => {
         const kind = tr.querySelector("[data-bom-kind]")?.value;
         tr.querySelector("[data-bom-rubber]")?.classList.toggle("is-hidden", kind !== "RB");
         tr.querySelector("[data-bom-add-child]")?.classList.toggle("is-hidden", ctx.helpers.NO_BOM_KINDS.includes(kind));
+        // สูตรยางใต้เส้นยาง: ปริมาณตั้งต้น = กก./เส้น ของเส้นยางพ่อ (ช่องว่างเท่านั้น ไม่ทับค่าที่กรอก)
+        if (kind === "CP") {
+          const parent = rowById(tr.dataset.parent);
+          const kgPerRod = parent?.querySelector("[data-bom-kind]")?.value === "RB" ? Number(parent.querySelector('input[name="kgPerRoll[]"]')?.value) || 0 : 0;
+          const hint = tr.querySelector("[data-bom-hint]");
+          const qty = tr.querySelector("[data-bom-qty]");
+          if (hint) hint.textContent = kgPerRod ? `จาก กก./เส้น ${rules.fmtQty(kgPerRod)}` : "";
+          if (qty && !qty.value && kgPerRod) qty.value = String(kgPerRod);
+          return;
+        }
         if (kind === "RB") {
           const num = (selector) => Number(tr.querySelector(selector)?.value) || 0;
           const suggested = rules.rbPerSe({ pcsPerRoll: num('input[name="pcsPerRoll[]"]'), sePerGr: num('input[name="sePerGr[]"]') || 1, uom: tr.querySelector('select[name="uom[]"]')?.value, weightG: num('input[name="weightG[]"]') });
@@ -405,16 +469,29 @@
             if (flag) flag.textContent = used ? `ใช้ร่วมกับสินค้าอื่น ${used} รายการ (แก้แล้วมีผลทุกสินค้า)` : "";
           } else if (event.target.value.trim()) {
             tr.classList.add("is-new");
-            const guess = rules.kindOf({ code: event.target.value, deptKind: "", pair: "" });
+            // รหัสที่อยู่ในรายการสูตรยาง = สูตรยาง (ชื่อตามรายการ หน่วย กก.) · อื่น ๆ เดาจากรหัสเหมือนตอนนำเข้า
+            const compound = data.compounds.find((entry) => entry.code === rules.canonicalCode(event.target.value));
+            const guess = compound ? "CP" : rules.kindOf({ code: event.target.value, deptKind: "", pair: "" });
             tr.querySelector('select[name="kind[]"]').value = guess === "FG" ? "PURCHASED" : guess;
+            if (compound) {
+              const name = tr.querySelector('input[name="name[]"]');
+              if (name && !name.value) name.value = compound.name;
+              tr.querySelector('select[name="uom[]"]').value = "kg";
+            }
             if (flag) flag.textContent = "ชิ้นใหม่";
           }
           // เปลี่ยนรหัสของแถว = เปลี่ยนชิ้น: ลูกเดิมเป็นของชิ้นเก่า จึงแทนด้วยส่วนประกอบของชิ้นใหม่ (ถ้ามี) ไม่ปล่อยให้ลูกเก่าไปเขียนทับ BOM ของชิ้นใหม่
           replaceChildren(tr, found);
           paintRow(tr);
         });
-        tr.querySelector("[data-bom-kind]")?.addEventListener("change", () => paintRow(tr));
+        tr.querySelector("[data-bom-kind]")?.addEventListener("change", (event) => {
+          // เปลี่ยนเป็นสูตรยางในแถวใหม่: หน่วยตั้งต้นเป็นกิโลกรัม
+          if (event.target.value === "CP" && tr.classList.contains("is-new")) tr.querySelector('select[name="uom[]"]').value = "kg";
+          paintRow(tr);
+        });
         tr.querySelectorAll("[data-bom-cut], select[name=\"uom[]\"]").forEach((input) => input.addEventListener("input", () => paintRow(tr)));
+        // กก./เส้น ของเส้นยางเปลี่ยน: แถวสูตรยางข้างใต้คำนวณคำแนะนำใหม่
+        tr.querySelector('input[name="kgPerRoll[]"]')?.addEventListener("input", () => descendants(tr.dataset.row).forEach((row) => { if (row.querySelector("[data-bom-kind]")?.value === "CP") paintRow(row); }));
         tr.querySelector("[data-bom-remove]")?.addEventListener("click", () => { descendants(tr.dataset.row).forEach((row) => row.remove()); tr.remove(); if (!rowsOf().length) addRow("", 1); });
         tr.querySelector("[data-bom-add-child]")?.addEventListener("click", () => addRow(tr.dataset.row, Number(tr.dataset.level) + 1, tr));
       };
@@ -436,7 +513,15 @@
         const anchor = afterRow ? (descendants(afterRow.dataset.row).at(-1) ?? afterRow) : null;
         if (anchor) anchor.insertAdjacentHTML("afterend", html); else tbody.insertAdjacentHTML("beforeend", html);
         const tr = anchor ? anchor.nextElementSibling : tbody.lastElementChild;
-        if (tr) { wire(tr); tr.querySelector("[data-bom-code]")?.focus?.(); }
+        if (!tr) return;
+        wire(tr);
+        // ลูกของเส้นยางเป็นได้แค่สูตรยาง: ตั้งชนิดและหน่วยให้เลย
+        if (afterRow?.querySelector("[data-bom-kind]")?.value === "RB") {
+          tr.querySelector('select[name="kind[]"]').value = "CP";
+          tr.querySelector('select[name="uom[]"]').value = "kg";
+          paintRow(tr);
+        }
+        tr.querySelector("[data-bom-code]")?.focus?.();
       };
       rowsOf().forEach(wire);
       const withChildren = rootNode.querySelector("[data-drag-with-children]");
@@ -481,7 +566,7 @@
       const tree = treeRows(ctx, selected.code, 1).slice(1);
       const treeHtml = ui.table(["ชั้น / ชิ้นงาน", "ชื่อ", "แผนกผลิต", { label: `ต่อ 1 ${uomText(ctx, selected.uom)}`, className: "right" }, "หน่วย", "Rev"],
         tree.map((line) => `<tr><td>${levelCell(line.level, ui.link(line.itemCode, ctx.url("items", { sel: line.itemCode }), "rf-mono"))}</td><td>${esc(line.name)}${line.noBom ? ` ${ui.badge("warn", "ไม่มี BOM")}` : ""}</td><td>${deptBadge(ctx, line.producerDept)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.qtyPerFg))}</td><td>${esc(uomText(ctx, line.uom))}</td><td class="small muted">${line.revision ? `Rev.${line.revision}` : ""}</td></tr>`),
-        { emptyText: selected.kind === "RB" ? "เส้นยางเป็นชิ้นปลายทางของ BOM นี้ สูตรคอมปาวด์อยู่ที่ RubberFlow" : selected.kind === "PURCHASED" ? "ของซื้อไม่มีส่วนประกอบ" : "ยังไม่มี BOM" });
+        { emptyText: selected.kind === "RB" ? "ยังไม่มีบรรทัดสูตรยาง (ใส่ได้ที่ “สร้าง BOM”) สูตรคอมปาวด์อยู่ที่ RubberFlow" : selected.kind === "PURCHASED" ? "ของซื้อไม่มีส่วนประกอบ" : selected.kind === "CP" ? "สูตรยางไม่มีส่วนประกอบในระบบนี้ สูตร PHR อยู่ที่ RubberFlow" : "ยังไม่มี BOM" });
       const rubber = selected.rubber;
       const facts = ui.kv([
         ["ชนิด", esc(kindLabel(ctx, selected.kind))], ["แผนกเจ้าของ (ใช้แยกงาน)", esc(`${selected.ownerDept} · ${rules.DEPT_LABEL[selected.ownerDept] ?? ""}`)], ["หน่วย", esc(uomText(ctx, selected.uom))],
@@ -591,7 +676,13 @@
       PK: { head: ["ชิ้นงาน", "ประกอบจาก (ชั้นแรก) / ใช้ใน", ...QTY_HEAD(DEPT_WORK.PK)], row: (entry) => `<td>${codeCell(entry)}${entry.kind === "FG" ? ` ${ui.badge("info", "สินค้าสำเร็จรูป")}` : ""}</td><td>${entry.children.length ? madeFrom(entry) : usedBy(entry)}</td>${qtyCells(entry)}` },
     };
     const generic = { head: ["ชิ้นงาน", "ใช้ใน", ...QTY_HEAD("ต้องการ")], row: (entry) => `<td>${codeCell(entry)}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}` };
-    const cards = approved ? rules.groupByDept(net).map((group) => {
+    // สูตรยาง (CP) แยกการ์ดของตัวเองก่อนการ์ดแผนก: เป็นกิโลกรัมคอมปาวด์ที่ RB ต้องผสม/สั่งผ่าน RubberFlow ไม่ใช่เส้นยาง
+    const compoundEntries = net.filter((entry) => entry.kind === "CP").sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+    const compoundCard = compoundEntries.length ? ui.card(ui.table(["สูตรยาง", "สูตร PHR ใน RubberFlow", "ใช้ในเส้นยาง", ...QTY_HEAD("ต้องใช้")], compoundEntries.map((entry) => {
+      const link = data.compounds.find((row) => row.code === entry.itemCode);
+      return `<tr><td>${codeCell(entry)}</td><td>${link?.recipeId ? `${ui.mono(link.recipeId)} ${ui.badge("good", "ผูกแล้ว")}` : ui.badge("warn", "ยังไม่ผูกสูตร")}</td><td>${usedBy(entry)}</td>${qtyCells(entry)}</tr>`;
+    })), { title: `สูตรยาง <span class="muted">ผสมโดย RB ตามสูตรใน RubberFlow</span>`, flush: true, className: "bom-dept-card" }) : "";
+    const cards = approved ? compoundCard + rules.groupByDept(net.filter((entry) => entry.kind !== "CP")).map((group) => {
       const spec = TABLES[group.dept] ?? generic;
       const rows = group.entries.sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((entry) => `<tr>${spec.row(entry)}</tr>`);
       return ui.card(ui.table(spec.head, rows), { title: `${esc(group.dept)} <span class="muted">${esc(rules.DEPT_LABEL[group.dept]?.replace(/^\w+ · /, "") ?? "")}</span>`, flush: true, className: "bom-dept-card" });
@@ -620,13 +711,14 @@
     const { feeds, stages } = rules.flowOf(node);
     const fed = new Set(feeds.map((feed) => feed.itemCode));
     const lanes = feeds.length ? `<div class="bom-flow-feeds">${feeds.map((feed) => `<details class="bom-flow-lane" open><summary>${ui.mono(feed.itemCode)} <span class="small muted">${qtyText(ctx, feed)}</span></summary>${flowHtml(ctx, feed, canEdit)}</details>`).join("")}</div>${flowArrow}` : "";
-    const compound = node.kind === "RB" ? itemOf(ctx, node.itemCode)?.rubber?.compound : null;
+    // คอมปาวด์จากช่องสูตรของเส้นยาง แสดงเฉพาะเมื่อยังไม่มีบรรทัดสูตรยางใน BOM (มีแล้วบรรทัดนั้นแสดงพร้อมปริมาณอยู่แล้ว)
+    const compound = node.kind === "RB" && !node.children.some((child) => child.kind === "CP") ? itemOf(ctx, node.itemCode)?.rubber?.compound : null;
     const parts = stages.map((stage, index) => {
       // วัตถุดิบแสดงรหัส + ชื่อ + ปริมาณ · ชิ้นที่มาจากสายด้านบนแสดงแค่รหัส เพราะชื่ออยู่ในการ์ดของสายนั้นแล้ว
       const inputs = stage.inputs.map((child) => {
         const isFed = fed.has(child.itemCode);
         const name = !isFed && child.name && child.name !== child.itemCode ? ` <span class="bom-flow-input-name">${esc(child.name)}</span>` : "";
-        const note = isFed ? ' <span class="muted">(จากสายด้านบน)</span>' : child.ownCost === null && !child.children.length ? ` ${ui.badge("warn", "ไม่มีราคา")}` : "";
+        const note = isFed ? ' <span class="muted">(จากสายด้านบน)</span>' : `${child.kind === "CP" ? ' <span class="muted">(สูตรอยู่ที่ RubberFlow)</span>' : ""}${child.ownCost === null && !child.children.length ? ` ${ui.badge("warn", "ไม่มีราคา")}` : ""}`;
         return `<li class="bom-flow-input${isFed ? " is-fed" : ""}" data-bom-menu="${attr(child.itemCode)}" data-bom-menu-parent="${attr(node.itemCode)}">${picture(child, " is-mini")}<span>${ui.mono(child.itemCode)}${name} <span class="muted nowrap">${qtyText(ctx, child)}</span>${note}</span></li>`;
       });
       // คอมปาวด์ของเส้นยาง: ถ้ามีชิ้นงานรหัสเดียวกันที่มี BOM (เช่น สูตรเคมีที่นำเข้ามา) ลิงก์ไปดูโครงสร้างของมัน ไม่กางซ้อนในต้นไม้นี้
@@ -642,7 +734,7 @@
       const step = `<div class="bom-flow-step" title="${attr(`${stage.step.name} · ${rules.DEPT_LABEL[stage.step.dept] ?? stage.step.dept} · ค่าแรง ${baht(ctx, stage.step.cost)} บาท/ชิ้น`)}">${no}${stepDept}<span class="bom-flow-step-name">${esc(stage.step.name)} <span class="muted rf-mono">${esc(stage.step.processCode)}</span></span><span class="nowrap">${esc(rules.fmtNum(stage.step.minutesPerPc))} นาที</span></div>`;
       return [list, step].filter(Boolean).join(list ? flowArrow : "");
     }).filter(Boolean);
-    const tools = canEdit ? `<div class="rf-row">${node.kind === "PURCHASED" ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
+    const tools = canEdit ? `<div class="rf-row">${ctx.helpers.NO_BOM_KINDS.includes(node.kind) ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
     // ป้ายบนการ์ด: ลำดับการผลิต (rules.structureTree: เลขน้อยทำก่อน เลขเท่ากันทำพร้อมกันได้) และแผนกที่รับผิดชอบ (ownerDept ของชิ้นงาน)
     const deptName = rules.DEPT_LABEL[node.dept] ?? node.dept;
     const tags = `<div class="bom-flow-tags"><span class="bom-flow-order" title="ลำดับการผลิต: เลขน้อยทำก่อน เลขเดียวกันทำพร้อมกันได้">ลำดับ ${esc(String(node.order))}</span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">${esc(deptName)}</span></div>`;
@@ -665,7 +757,7 @@
     const edit = canEdit ? [
       hasBom ? null : { label: "ตั้งราคา…", open: "itemCost", args: { code: item.code } },
       parentItem ? { label: `เข้าที่ขั้นไหน… (ขั้นตอนของ ${parentItem.code})`, open: "routingEdit", args: { code: parentItem.code } }
-        : item.kind === "PURCHASED" ? null : { label: "ขั้นตอนผลิต…", open: "routingEdit", args: { code: item.code } },
+        : ctx.helpers.NO_BOM_KINDS.includes(item.kind) ? null : { label: "ขั้นตอนผลิต…", open: "routingEdit", args: { code: item.code } },
       { label: "รูป…", open: "itemImage", args: { code: item.code } },
     ] : [];
     const go = [
@@ -862,7 +954,7 @@
       const rows = tree.rows.map((node) => {
         const noBomLeaf = node.bomRevision === null;
         const stepsHtml = node.steps.map((step) => `<span class="rf-badge" title="${attr(`${step.name} · ${step.dept} · ${baht(ctx, step.cost)} บาท/ชิ้น`)}">${esc(`${step.processCode} ${rules.fmtNum(step.minutesPerPc)}′`)}</span>`).join(" ");
-        const stepEdit = canEdit && node.kind !== "PURCHASED" ? ui.openButton(node.steps.length ? "แก้" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` }) : "";
+        const stepEdit = canEdit && !ctx.helpers.NO_BOM_KINDS.includes(node.kind) ? ui.openButton(node.steps.length ? "แก้" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` }) : "";
         const material = noBomLeaf && node.ownCost === null ? ui.badge("warn", "ไม่มีราคา") : baht(ctx, node.material);
         const costEdit = canEdit && noBomLeaf ? ` ${ui.openButton("ราคา", "itemCost", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ตั้งราคาต้นทุนของ ${node.itemCode}` })}` : "";
         const perParent = node.level === 0 ? "" : `${esc(rules.fmtQty(node.qtyPerParent))} ${esc(uomText(ctx, node.uom))}${node.scrapPct ? ` <span class="small muted">+${esc(rules.fmtNum(node.scrapPct))}%</span>` : ""}`;
@@ -1146,11 +1238,11 @@
     const body = `<form id="bom-item-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}"${item ? "" : ' data-rf-args=\'{"create":true}\''}>
       <div class="rf-grid rf-g2">
         ${ui.field("รหัสชิ้นงาน *", item ? `<input class="input rf-input" name="code" value="${attr(item.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น B25-1520" }))}
-        ${ui.field("ชนิด *", ui.select("kind", KIND_OPTIONS(ctx), { value: kind }))}
+        ${ui.field("หมวด / ชนิด *", kindSelect(ctx, "kind", kind))}
       </div>
       ${ui.field("ชื่อชิ้นงาน *", ui.input("name", { value: item?.name ?? "", required: true }))}
       <div class="rf-grid rf-g3">
-        ${ui.field("แผนกเจ้าของ (ใช้แยกงาน)", ui.select("ownerDept", deptOptions, { value: item?.ownerDept ?? "ST" }))}
+        ${ui.field("แผนกเจ้าของ (ใช้แยกงาน)", ui.select("ownerDept", deptOptions, { value: item?.ownerDept ?? rules.ownerDeptOf(kind), extra: item ? "" : 'title="ชิ้นใหม่: ตามชนิดที่เลือก แก้ทับได้"' }))}
         ${ui.field("หน่วยนับ *", ui.select("uom", UOM_OPTIONS(ctx), { value: item?.uom ?? "pcs" }))}
         ${ui.field("น้ำหนัก (กรัม/หน่วย)", ui.input("weightG", { type: "number", step: "any", min: 0, value: item?.weightG ?? "" }))}
       </div>
@@ -1169,7 +1261,16 @@
         </div>
       </fieldset>
     </form>`;
-    return { html: ui.dialog("itemEdit", item ? `แก้ข้อมูล ${item.code}` : "เพิ่มชิ้นงานเดี่ยว", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-item-form">บันทึก</button>` }) };
+    // ชิ้นใหม่: เปลี่ยนชนิด → แผนกเจ้าของตามชนิดนั้น (เดิมค้างเป็นค่าแรก ทำให้ SE/RB ที่เพิ่มทางนี้กลายเป็นงานของแผนกผิดตอนปล่อยผลิต)
+    // ชิ้นเดิมคงแผนกที่บันทึกไว้ (เช่น SUBPART ของแผนกอื่น) ให้ผู้ใช้แก้เอง
+    const bind = (dialog) => {
+      if (item) return;
+      const kindSelect = dialog.querySelector('select[name="kind"]');
+      const deptSelect = dialog.querySelector('select[name="ownerDept"]');
+      if (!kindSelect || !deptSelect) return;
+      kindSelect.addEventListener("change", () => { deptSelect.value = rules.ownerDeptOf(kindSelect.value); });
+    };
+    return { html: ui.dialog("itemEdit", item ? `แก้ข้อมูล ${item.code}` : "เพิ่มชิ้นงานเดี่ยว", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-item-form">บันทึก</button>` }), bind };
   };
 
   // ---------- สูตรยาง ↔ RubberFlow ----------
@@ -1456,7 +1557,8 @@
       <div class="rf-grid rf-g2">
         ${ui.field("เลขที่ PI", ui.input("pi", { placeholder: `ว่าง = ออกเลขอัตโนมัติ เช่น ${rules.piNumber(ctx.now, 1)}` }))}
         ${ui.field("ชื่อลูกค้า *", ui.input("customer", { required: true }))}
-        ${ui.field("ประเทศ *", ui.input("country", { required: true, value: "Thailand" }), { hint: "Thailand = ในประเทศ (SA) อื่น = ต่างประเทศ (EX)" })}
+        ${ui.field("ประเทศ *", ui.input("country", { required: true, value: "Thailand", extra: "data-bom-country" }))}
+        ${ui.field("ประเภทออร์เดอร์ *", ui.select("orderType", [{ value: "SA", label: "ในประเทศ (SA)" }, { value: "EX", label: "ต่างประเทศ (EX)" }], { value: "SA", extra: 'data-bom-ordertype title="เดาจากประเทศให้ (Thailand = ในประเทศ) แก้ทับได้"' }))}
         ${ui.field("วันที่สั่งผลิต *", ui.input("orderedAt", { type: "date", required: true, value: today }))}
         ${ui.field("วันส่งมอบคลัง (WH) *", ui.input("whDue", { type: "date", required: true, extra: "data-bom-whdue" }))}
       </div>
@@ -1484,6 +1586,12 @@
       ordered?.addEventListener("change", preview);
       auto?.addEventListener("change", preview);
       dialog.querySelectorAll("[data-bom-due]").forEach((input) => input.addEventListener("input", preview));
+      // ประเภทออร์เดอร์เดาจากประเทศจนกว่าผู้ใช้จะเลือกเอง (เดิมสะกดประเทศต่างจาก Thailand = ต่างประเทศเงียบ ๆ)
+      const countryInput = dialog.querySelector("[data-bom-country]");
+      const typeSelect = dialog.querySelector("[data-bom-ordertype]");
+      let typeChosen = false;
+      typeSelect?.addEventListener("change", () => { typeChosen = true; });
+      countryInput?.addEventListener("input", () => { if (typeSelect && !typeChosen) typeSelect.value = rules.orderTypeOf(countryInput.value); });
     };
     return { html: ui.dialog("orderNew", "เปิดใบสั่งผลิตใหม่", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-form">เปิดใบ</button>` }), bind };
   };
@@ -1684,7 +1792,10 @@
     const compound = data.compounds.find((entry) => entry.code === item?.rubber?.compound);
     const rf = ctx.rubberflow();
     const recipe = compound?.recipeId ? rfRecipes(ctx).find((row) => row.id === compound.recipeId) : null;
-    const kg = ctx.helpers.rbJobKg(job, item, { scrapPct: 5 });
+    // มีบรรทัดสูตรยางใน BOM ของเส้นยาง = ใช้กิโลกรัมและ % เผื่อเสียจากบรรทัดนั้น ไม่เช่นนั้นเผื่อ 5% จาก กก./เส้น
+    const rodBom = item ? approvedBomOf(ctx, item.code) : null;
+    const kgFromBom = ["kg", "g"].includes(rodBom?.lines?.[0]?.uom) && Number(rodBom.lines[0].qty) > 0;
+    const kg = ctx.helpers.rbJobKg(job, item, { scrapPct: 5, bom: rodBom });
     const targetQty = recipe ? Math.max(1, Math.ceil(kg * Number(recipe.yieldPerKg || 1))) : 0;
     const problems = [];
     if (job.externalRef?.woId) problems.push(`งานนี้สร้าง WO ${job.externalRef.woId} ไว้แล้ว`);
@@ -1699,7 +1810,7 @@
       ["งาน", esc(`${job.id} · ${job.orderId} · ${order?.customer ?? ""}`)], ["เส้นยาง", esc(`${job.itemCode} · ${item?.name ?? ""}`)],
       ["ต้องผลิตอีก", esc(`${rules.fmtQty(Math.max(0, job.qtyPlanned - job.qtyDone))} ${uomText(ctx, job.uom)}`)],
       ["สูตรยาง → สูตร PHR", esc(`${item?.rubber?.compound ?? "-"} → ${compound?.recipeId ?? "ยังไม่ผูก"}${recipe ? ` (${recipe.name}, ${recipe.batchKg} kg/batch)` : ""}`)],
-      ["คอมปาวด์ที่ต้องใช้ (เผื่อ 5%)", esc(`${rules.fmtQty(kg, 2)} kg${recipe ? ` ≈ ${Math.ceil(kg / Number(recipe.batchKg || 1))} batch` : ""}`)],
+      [kgFromBom ? "คอมปาวด์ที่ต้องใช้ (ตามบรรทัดสูตรยางใน BOM)" : "คอมปาวด์ที่ต้องใช้ (เผื่อ 5%)", esc(`${rules.fmtQty(kg, 2)} kg${recipe ? ` ≈ ${Math.ceil(kg / Number(recipe.batchKg || 1))} batch` : ""}`)],
       recipe ? ["จำนวนเป้าหมายใน WO", esc(`${rules.fmtQty(targetQty)} ${recipe.uom} (RubberFlow นับผลผลิตในหน่วยของสูตร)`)] : null,
       ["กำหนดส่ง", esc(rules.fmtDate(job.dueAt))],
     ])}${problems.length ? ui.callout("warn", problems.map((text) => `<div>${esc(text)}</div>`).join("")) : ui.callout("info", "สร้างแล้วเลข WO จะถูกบันทึกที่งานนี้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า")}`;
