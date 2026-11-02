@@ -684,7 +684,7 @@
       const step = `<div class="bom-flow-step" title="${attr(`${stage.step.name} · ${rules.DEPT_LABEL[stage.step.dept] ?? stage.step.dept} · ค่าแรง ${baht(ctx, stage.step.cost)} บาท/ชิ้น`)}">${no}${stepDept}<span class="bom-flow-step-name">${esc(stage.step.name)} <span class="muted rf-mono">${esc(stage.step.processCode)}</span></span><span class="nowrap">${esc(rules.fmtNum(stage.step.minutesPerPc))} นาที</span></div>`;
       return [list, step].filter(Boolean).join(list ? flowArrow : "");
     }).filter(Boolean);
-    const tools = canEdit ? `<div class="rf-row">${node.kind === "PURCHASED" ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
+    const tools = canEdit ? `<div class="rf-row">${ctx.helpers.NO_BOM_KINDS.includes(node.kind) ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
     // ป้ายบนการ์ด: ลำดับการผลิต (rules.structureTree: เลขน้อยทำก่อน เลขเท่ากันทำพร้อมกันได้) และแผนกที่รับผิดชอบ (ownerDept ของชิ้นงาน)
     const deptName = rules.DEPT_LABEL[node.dept] ?? node.dept;
     const tags = `<div class="bom-flow-tags"><span class="bom-flow-order" title="ลำดับการผลิต: เลขน้อยทำก่อน เลขเดียวกันทำพร้อมกันได้">ลำดับ ${esc(String(node.order))}</span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">${esc(deptName)}</span></div>`;
@@ -707,7 +707,7 @@
     const edit = canEdit ? [
       hasBom ? null : { label: "ตั้งราคา…", open: "itemCost", args: { code: item.code } },
       parentItem ? { label: `เข้าที่ขั้นไหน… (ขั้นตอนของ ${parentItem.code})`, open: "routingEdit", args: { code: parentItem.code } }
-        : item.kind === "PURCHASED" ? null : { label: "ขั้นตอนผลิต…", open: "routingEdit", args: { code: item.code } },
+        : ctx.helpers.NO_BOM_KINDS.includes(item.kind) ? null : { label: "ขั้นตอนผลิต…", open: "routingEdit", args: { code: item.code } },
       { label: "รูป…", open: "itemImage", args: { code: item.code } },
     ] : [];
     const go = [
@@ -904,7 +904,7 @@
       const rows = tree.rows.map((node) => {
         const noBomLeaf = node.bomRevision === null;
         const stepsHtml = node.steps.map((step) => `<span class="rf-badge" title="${attr(`${step.name} · ${step.dept} · ${baht(ctx, step.cost)} บาท/ชิ้น`)}">${esc(`${step.processCode} ${rules.fmtNum(step.minutesPerPc)}′`)}</span>`).join(" ");
-        const stepEdit = canEdit && node.kind !== "PURCHASED" ? ui.openButton(node.steps.length ? "แก้" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` }) : "";
+        const stepEdit = canEdit && !ctx.helpers.NO_BOM_KINDS.includes(node.kind) ? ui.openButton(node.steps.length ? "แก้" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` }) : "";
         const material = noBomLeaf && node.ownCost === null ? ui.badge("warn", "ไม่มีราคา") : baht(ctx, node.material);
         const costEdit = canEdit && noBomLeaf ? ` ${ui.openButton("ราคา", "itemCost", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ตั้งราคาต้นทุนของ ${node.itemCode}` })}` : "";
         const perParent = node.level === 0 ? "" : `${esc(rules.fmtQty(node.qtyPerParent))} ${esc(uomText(ctx, node.uom))}${node.scrapPct ? ` <span class="small muted">+${esc(rules.fmtNum(node.scrapPct))}%</span>` : ""}`;

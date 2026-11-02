@@ -727,3 +727,23 @@ test("a rod carries one compound line: rules on where it goes, kilograms in the 
   assert.equal(A.helpers.rbJobKg(rodJob, rodItem, { scrapPct: 5 }), Math.round(rodJob.qtyPlanned * 1.53 * 1.05 * 100) / 100, "without the BOM the rod weight and the flat allowance apply as before");
   assert.equal(A.helpers.rbJobKg(rodJob, rodItem, { scrapPct: 5, bom: { lines: [{ childCode: "DM01", qty: 1530, uom: "g" }] } }), Math.round(rodJob.qtyPlanned * 1.53 * 100) / 100, "a compound line in grams is converted");
 });
+
+test("compound guards outside the BOM editor: kind changes respect the parents, codes fit the rod field, no routing, and the rod field follows its compound line", () => {
+  const d = fresh();
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  A.saveItem(d, { code: "DM01", kind: "CP", name: "EPDM ส้ม", uom: "kg", create: true }, ctx("planner"));
+  A.saveBom(d, { itemCode: rod, lines: [{ childCode: "DM01", qty: 1.53 }] }, ctx("planner"));
+  const stk = A.helpers.itemOf(d, "P-STK-01");
+  rejects(() => A.saveItem(d, { code: "P-STK-01", kind: "CP", name: stk.name, uom: stk.uom }, ctx("planner")), /เปลี่ยน P-STK-01 เป็นสูตรยาง \(คอมปาวด์\)ไม่ได้ เพราะอยู่ใน BOM ของ DEMO-/);
+  rejects(() => A.saveItem(d, { code: "DM01", kind: "PURCHASED", name: "EPDM ส้ม", uom: "kg" }, ctx("planner")), new RegExp(`อยู่ใน BOM ของ ${rod} \\(เส้นยางมีส่วนประกอบได้เฉพาะสูตรยาง`));
+  rejects(() => A.saveItem(d, { code: "CP-VERY-LONG-COMPOUND-1", kind: "CP", name: "x", uom: "kg", create: true }, ctx("planner")), /ยาวเกิน 20 ตัวอักษร/);
+  rejects(() => A.saveRouting(d, { itemCode: "DM01", steps: [{ processCode: "RB-01", minutesPerPc: 1 }] }, ctx("planner")), /เป็นสูตรยาง/);
+  const rodItem = A.helpers.itemOf(d, rod);
+  rejects(() => A.saveItem(d, { code: rod, kind: "RB", name: rodItem.name, uom: rodItem.uom, rubber: { compound: "ZZ99" } }, ctx("planner")), /ใช้บรรทัดสูตรยาง DM01 ใน BOM/);
+  // ในหน้าสร้าง BOM แก้ช่องสูตรและบรรทัดพร้อมกันได้ (ช่องสูตรต้องตรงกับบรรทัดใหม่)
+  A.saveItem(d, { code: "DM02", kind: "CP", name: "NBR ดำ", uom: "kg", create: true }, ctx("planner"));
+  A.saveBomTree(d, { code: "SE-TP01-OR01-100-18-65", nodes: [{ code: rod, qty: 1 / 31, patch: { rubber: { compound: "DM02" } }, children: [{ code: "DM02", qty: 1.5 }] }, { code: "RB-DM01-01-OR01-200-0-72", qty: 0.02 }] }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, rod).rubber.compound, "DM02");
+  assert.equal(approved(d, rod).lines[0].childCode, "DM02");
+  rejects(() => A.saveBomTree(d, { code: "SE-TP01-OR01-100-18-65", nodes: [{ code: rod, qty: 1 / 31, patch: { rubber: { compound: "DM01" } } }, { code: "RB-DM01-01-OR01-200-0-72", qty: 0.02 }] }, ctx("planner")), /ใช้บรรทัดสูตรยาง DM02 ใน BOM/);
+});

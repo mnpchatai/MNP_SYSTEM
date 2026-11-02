@@ -49,7 +49,8 @@
 
   // ---------- Item master ----------
   // ชนิด/ชื่อ/หน่วย/น้ำหนัก และข้อมูลยาง (RB/SE) แผนกเจ้าของตามชนิดถ้าไม่ระบุ · create:true = เพิ่มใหม่เท่านั้น (รหัสซ้ำถูกปฏิเสธ)
-  function saveItem(d, p, ctx) {
+  // options (เรียกภายในเท่านั้น store.run ส่งแค่ d, p, ctx): compoundLineFollows = บรรทัดสูตรยางของเส้นยางถูกบันทึกต่อในคำสั่งเดียวกัน
+  function saveItem(d, p, ctx, options = {}) {
     const user = requirePlanner(ctx, "เพิ่ม/แก้ชิ้นงาน");
     const R = rules();
     const code = R.canonicalCode(text(p.code, "รหัสชิ้นงาน", 60));
@@ -76,12 +77,25 @@
     }
     // สูตรยางเป็นชิ้นงานได้ด้วย (บรรทัดใต้เส้นยาง): รหัสชิ้นงาน = รหัสสูตรยาง จึงลงทะเบียนในรายการสูตรยางให้ผูก RubberFlow ได้
     if (kind === "CP") {
+      // ช่องสูตรของเส้นยางและรายการสูตรยางเก็บรหัสได้ 20 ตัวอักษร รหัสสูตรยางที่ยาวกว่านั้นจะผูกกับเส้นยางไม่ได้
+      if (code.length > 20) fail(`รหัสสูตรยาง ${code} ยาวเกิน 20 ตัวอักษร`);
       const entry = d.compounds.find((row) => row.code === code);
       if (!entry) d.compounds.push({ code, name, recipeId: null, createdAt: ctx.now });
       else if (entry.name === entry.code) entry.name = name; // ชื่อชั่วคราวที่ระบบตั้งจากรหัส
     }
     const item = existing ?? { code, legacyCodes: [], createdAt: ctx.now, active: true, group: p.group || "TOY" };
     if (existing && existing.kind !== kind && approvedBomOf(d, code)) fail(`เปลี่ยนชนิดของ ${code} ที่มี BOM แล้วไม่ได้`);
+    // ชิ้นที่เป็นลูกใน BOM อยู่แล้ว: ชนิดใหม่ต้องอยู่ใต้พ่อเดิมได้ (เช่น สูตรยางอยู่ได้เฉพาะใต้เส้นยาง เส้นยางมีลูกได้เฉพาะสูตรยาง)
+    if (existing && existing.kind !== kind) {
+      for (const bom of d.boms.filter((entry) => entry.status === "approved" && entry.lines.some((line) => line.childCode === code))) {
+        const parent = itemOf(d, bom.itemCode);
+        const error = parent ? R.childKindError(parent.kind, kind) : "";
+        if (error) fail(`เปลี่ยน ${code} เป็น${R.KINDS[kind].label}ไม่ได้ เพราะอยู่ใน BOM ของ ${parent.code} (${error})`);
+      }
+    }
+    // เส้นยางที่มีบรรทัดสูตรยางแล้ว: ช่องสูตรต้องตรงกับบรรทัดนั้น (ต้นไม้ที่แก้ทั้งสองอย่างพร้อมกันตรวจที่ saveBom แทน)
+    const compoundLine = kind === "RB" ? approvedBomOf(d, code)?.lines[0]?.childCode : null;
+    if (compoundLine && !options.compoundLineFollows && rubber?.compound && R.canonicalCode(rubber.compound) !== compoundLine) fail(`เส้นยาง ${code} ใช้บรรทัดสูตรยาง ${compoundLine} ใน BOM แก้ช่องสูตรและบรรทัดสูตรยางพร้อมกันที่หน้า “สร้าง BOM”`);
     if (existing && existing.ownerDept !== ownerDept) d.boms.filter((bom) => bom.itemCode === code).forEach((bom) => { bom.ownerDept = ownerDept; bom.changeLog.push({ at: ctx.now, by: user.name, text: `ย้ายแผนกเจ้าของ ${existing.ownerDept} → ${ownerDept}` }); });
     Object.assign(item, { kind, name, ownerDept, uom, weightG: p.weightG === undefined || p.weightG === "" ? item.weightG ?? 0 : num(p.weightG, "น้ำหนัก (กรัม)", { allowZero: true }), rubber: kind === "RB" || kind === "SE" ? rubber : null, active: p.active === undefined ? item.active !== false : p.active !== false && p.active !== "false", updatedAt: ctx.now });
     if (!existing) d.items.push(item);
@@ -203,7 +217,7 @@
           child = itemOf(d, code);
           created.push(code);
         } else if (node.patch && Object.keys(node.patch).length) {
-          saveItem(d, { code, kind: child.kind, name: node.patch.name || child.name, uom: node.patch.uom || child.uom, weightG: node.patch.weightG, rubber: child.kind === "RB" && node.patch.rubber ? withCompound(node.patch.rubber) : node.patch.rubber }, ctx);
+          saveItem(d, { code, kind: child.kind, name: node.patch.name || child.name, uom: node.patch.uom || child.uom, weightG: node.patch.weightG, rubber: child.kind === "RB" && node.patch.rubber ? withCompound(node.patch.rubber) : node.patch.rubber }, ctx, { compoundLineFollows: Boolean(node.children?.length) });
           patched.push(code);
         }
         if (Array.isArray(node.children) && node.children.length) {
@@ -247,6 +261,7 @@
     const user = requirePlanner(ctx, "บันทึกขั้นตอนผลิต");
     const item = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงาน");
     if (item.kind === "PURCHASED") fail(`${item.code} เป็นของซื้อ ไม่มีขั้นตอนผลิต`);
+    if (item.kind === "CP") fail(`${item.code} เป็นสูตรยาง ขั้นตอนผสมอยู่ในขั้นตอนของเส้นยาง (RB-01 ถึง RB-09) และสูตรอยู่ที่ RubberFlow`);
     const raw = Array.isArray(p.steps) ? p.steps : [];
     if (raw.length > 20) fail("ขั้นตอนผลิตได้ไม่เกิน 20 ขั้น");
     const children = new Set((approvedBomOf(d, item.code)?.lines ?? []).map((line) => line.childCode));
