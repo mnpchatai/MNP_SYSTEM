@@ -636,7 +636,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   const fromV4 = storeApi.migrate(JSON.parse(JSON.stringify(v4)));
   assert.equal(fromV4.version, storeApi.STATE_VERSION);
   assert.deepEqual(fromV4.boms.find((bom) => bom.id === fg.id).lines.map((line) => line.childCode), ["P-STK-01", "P-BOX-01", "P-BAG-01", "SE-TP01-OR01-100-18-65", "SE-TP01-BK01-140-3-20", "SE-TP01-OR01-75-3-30", "PT-00320", "XP-00001"], "ST → GR → PT → PK, same-department lines keep their order");
-  assert.match(fromV4.audit[0].detail, /รุ่น 4 → 5: เรียงบรรทัด BOM ตามผังงาน[^(]*\(1 BOM เปลี่ยนลำดับ\)/);
+  assert.match(fromV4.audit[1].detail, /รุ่น 4 → 5: เรียงบรรทัด BOM ตามผังงาน[^(]*\(1 BOM เปลี่ยนลำดับ\)/);
   // ย้ายแผนกเจ้าของของลูกแล้วบันทึก BOM ของพ่อโดยไม่แก้อะไร: ลำดับเก่าที่ค้างไม่นับเป็นการแก้ (ไม่เกิด revision ใหม่)
   const moved = fresh();
   const sticker = A.helpers.itemOf(moved, "P-STK-01");
@@ -657,7 +657,37 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(older.processes.length, 2, "looking up steps does not change the stored data");
   A.saveProcess(older, { code: "GR-02", name: "ทากาวขอบ", dept: "GR" }, ctx("planner"));
   assert.deepEqual(older.processes.at(-1), { code: "GR-02", name: "ทากาวขอบ", dept: "GR" });
-  assert.equal(rules.DEFAULT_PROCESSES.find((entry) => entry.code === "GR-02").name, "ทากาว");
+  assert.equal(rules.DEFAULT_PROCESSES.find((entry) => entry.code === "GR-02").name, "ปั๊ม");
+  // รุ่น 5 → 6: ขั้นตอน GR เดิม 4 ขั้นย้ายเลขตาม Grinding-GR ทั้งใน processes และทุก revision ของ routing
+  // วางชุด GR ใหม่ทั้ง 9 ขั้นที่ตำแหน่งของ GR เดิม · ชื่อที่ผู้ใช้แก้คงไว้ · คัดแยกเป็น GR-10 ต่อท้ายเจาะ
+  const v5 = fresh();
+  v5.version = 5;
+  v5.processes = [
+    { code: "RB-13", name: "ตัดยางเส้นยาว", dept: "RB" },
+    { code: "GR-01", name: "ตัดยาง", dept: "GR" }, { code: "GR-02", name: "ทากาวขอบ", dept: "GR" }, { code: "GR-03", name: "เจียร์แปรรูป", dept: "GR" }, { code: "GR-04", name: "คัดแยก", dept: "GR" },
+    { code: "X-OWN", name: "ขั้นตอนของผู้ใช้", dept: "GR" }, { code: "PT-01", name: "ขึ้นรูปพลาสติก", dept: "PT" },
+  ];
+  v5.routings = [
+    { id: "RT-1", itemCode: "SE-TP01-OR01-75-3-30", revision: 2, status: "approved", steps: [{ processCode: "GR-01", minutesPerPc: 0.1 }, { processCode: "GR-03", minutesPerPc: 0.2 }, { processCode: "GR-04", minutesPerPc: 0.05 }] },
+    { id: "RT-0", itemCode: "SE-TP01-OR01-75-3-30", revision: 1, status: "superseded", steps: [{ processCode: "GR-02", minutesPerPc: 0.1 }, { processCode: "X-OWN", minutesPerPc: 0.1 }] },
+  ];
+  const fromV5 = storeApi.migrate(JSON.parse(JSON.stringify(v5)));
+  assert.equal(fromV5.version, storeApi.STATE_VERSION);
+  assert.deepEqual(fromV5.processes.map((process) => `${process.code} ${process.name}`), [
+    "RB-13 ตัดยางเส้นยาว", "GR-01 รีด", "GR-02 ปั๊ม", "GR-03 เปเปอร์", "GR-04 ตัดยาง", "GR-05 ทากาวขอบ", "GR-06 เจียร์", "GR-07 เจียร์(หยาบ)", "GR-08 เจียร์(ละเอียด)", "GR-09 เจาะ", "GR-10 คัดแยก", "X-OWN ขั้นตอนของผู้ใช้", "PT-01 ขึ้นรูปพลาสติก",
+  ]);
+  assert.deepEqual(fromV5.routings.map((routing) => routing.steps.map((step) => step.processCode)), [["GR-04", "GR-06", "GR-10"], ["GR-05", "X-OWN"]]);
+  assert.match(fromV5.audit[0].detail, /รุ่น 5 → 6: .*\(4 ขั้นใน routing เปลี่ยนรหัส\)/);
+  assert.ok(storeApi.isValidState(fromV5));
+  // ชุดรหัสก่อน #268 (GR-CUT ฯลฯ) ที่ยังค้างในเบราว์เซอร์ย้ายตามชื่อ: ตัด → GR-04 ทากาว → GR-05 เจียร → GR-06 เจาะรู → GR-09 คัดแยก → GR-10
+  const v5old = fresh();
+  v5old.version = 5;
+  v5old.processes = ["GR-CUT ตัดชิ้นยาง", "GR-DRL เจาะรู", "GR-GLUE ทากาว", "GR-GRIND เจียร", "GR-SORT คัดแยก", "PT-INJ ฉีดพลาสติก"].map((text) => ({ code: text.split(" ")[0], name: text.split(" ")[1], dept: text.startsWith("PT") ? "PT" : "GR" }));
+  v5old.routings = [{ id: "RT-2", itemCode: "SE-TP01-BK01-140-3-20", revision: 1, status: "approved", steps: [{ processCode: "GR-CUT", minutesPerPc: 0.15 }, { processCode: "GR-DRL", minutesPerPc: 0.1 }, { processCode: "GR-SORT", minutesPerPc: 0.1 }] }];
+  const fromV5old = storeApi.migrate(JSON.parse(JSON.stringify(v5old)));
+  assert.deepEqual(fromV5old.processes.map((process) => process.code), ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-06", "GR-07", "GR-08", "GR-09", "GR-10", "PT-INJ"]);
+  assert.deepEqual(fromV5old.processes.slice(3, 10).map((process) => process.name), ["ตัดยาง", "ทากาว", "เจียร์", "เจียร์(หยาบ)", "เจียร์(ละเอียด)", "เจาะ", "คัดแยก"]);
+  assert.deepEqual(fromV5old.routings[0].steps.map((step) => step.processCode), ["GR-04", "GR-09", "GR-10"]);
   // แท็บที่เปิดโค้ดรุ่นเก่ากว่าข้อมูล: ไม่เขียนชุดสาธิตทับข้อมูลรุ่นใหม่ (จะหายทั้ง BOM ที่นำเข้า)
   const newerText = JSON.stringify({ ...fresh(), version: storeApi.STATE_VERSION + 1 });
   const newerStorage = new Map([[storeApi.STATE_KEY, newerText]]);
