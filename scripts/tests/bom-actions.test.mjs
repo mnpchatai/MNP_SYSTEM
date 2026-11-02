@@ -638,6 +638,12 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(fromV4.version, storeApi.STATE_VERSION);
   assert.deepEqual(fromV4.boms.find((bom) => bom.id === fg.id).lines.map((line) => line.childCode), ["P-STK-01", "P-BOX-01", "P-BAG-01", "SE-TP01-OR01-100-18-65", "SE-TP01-BK01-140-3-20", "SE-TP01-OR01-75-3-30", "PT-00320", "XP-00001"], "ST → GR → PT → PK, same-department lines keep their order");
   assert.match(fromV4.audit[0].detail, /รุ่น 4 → 5: เรียงบรรทัด BOM ตามผังงาน[^(]*\(1 BOM เปลี่ยนลำดับ\)/);
+  // ย้ายแผนกเจ้าของของลูกแล้วบันทึก BOM ของพ่อโดยไม่แก้อะไร: ลำดับเก่าที่ค้างไม่นับเป็นการแก้ (ไม่เกิด revision ใหม่)
+  const moved = fresh();
+  const sticker = A.helpers.itemOf(moved, "P-STK-01");
+  A.saveItem(moved, { ...sticker, ownerDept: "PK" }, ctx("planner"));
+  const unchanged = approved(moved, "DEMO-TP-01(P)-Y");
+  assert.equal(A.saveBom(moved, { itemCode: "DEMO-TP-01(P)-Y", lines: unchanged.lines.map((line) => ({ ...line })) }, ctx("planner")).changed, false, "re-saving after a child changed department is not a change");
   assert.deepEqual([fromV2.colors, fromV2.colorSets, fromV2.packages], [[], [], []]);
   assert.equal(fromV2.items.length, v2.items.length);
   assert.ok(storeApi.isValidState(fromV2));

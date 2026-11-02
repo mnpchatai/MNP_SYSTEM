@@ -75,7 +75,8 @@
     if (value.version === 4) {
       // รุ่น 5 เรียงบรรทัด BOM ของทุกสินค้า/ชิ้นย่อย (ทุก revision) ตามผังงาน ST → RB → GR → PT → BG → PK · ไม่มีกฎ = คงเดิม
       const sort = root.MNP_BOM_RULES?.sortLinesByFlow;
-      const itemOf = (code) => value.items.find((item) => item.code === code) ?? null;
+      const byCode = new Map(value.items.map((item) => [item.code, item]));
+      const itemOf = (code) => byCode.get(code) ?? null;
       let changed = 0;
       for (const bom of value.boms) {
         if (!sort || !Array.isArray(bom.lines)) continue;
