@@ -688,6 +688,18 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.deepEqual(fromV5old.processes.map((process) => process.code), ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-06", "GR-07", "GR-08", "GR-09", "GR-10", "PT-INJ"]);
   assert.deepEqual(fromV5old.processes.slice(3, 10).map((process) => process.name), ["ตัดยาง", "ทากาว", "เจียร์", "เจียร์(หยาบ)", "เจียร์(ละเอียด)", "เจาะ", "คัดแยก"]);
   assert.deepEqual(fromV5old.routings[0].steps.map((step) => step.processCode), ["GR-04", "GR-09", "GR-10"]);
+  // คัดแยกที่ routing อ้างจากค่าเริ่มต้นรุ่นก่อน (ไม่ได้เก็บใน processes) ถูกเก็บเป็น GR-10 ไม่งั้นหาไม่เจอ
+  for (const stored of [[{ code: "GR-CUT", name: "ตัดชิ้นยาง", dept: "GR" }], []]) {
+    const v5sort = fresh();
+    v5sort.version = 5;
+    v5sort.processes = stored;
+    v5sort.routings = [{ id: "RT-3", itemCode: "SE-TP01-OR01-75-3-30", revision: 1, status: "approved", steps: [{ processCode: "GR-04", minutesPerPc: 0.05 }] }];
+    const fromSort = storeApi.migrate(JSON.parse(JSON.stringify(v5sort)));
+    assert.equal(A.helpers.processOf(fromSort, "GR-10")?.name, "คัดแยก");
+    assert.equal(fromSort.processes.filter((process) => process.code === "GR-10").length, 1);
+  }
+  // state รุ่น 5 ที่ไม่มี processes (แก้มือ) ไม่ทำให้ migrate พัง แต่ถือว่าแปลงไม่ได้
+  assert.equal(storeApi.migrate({ ...fresh(), version: 5, processes: undefined }), null);
   // แท็บที่เปิดโค้ดรุ่นเก่ากว่าข้อมูล: ไม่เขียนชุดสาธิตทับข้อมูลรุ่นใหม่ (จะหายทั้ง BOM ที่นำเข้า)
   const newerText = JSON.stringify({ ...fresh(), version: storeApi.STATE_VERSION + 1 });
   const newerStorage = new Map([[storeApi.STATE_KEY, newerText]]);

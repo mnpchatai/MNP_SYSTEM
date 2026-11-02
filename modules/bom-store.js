@@ -97,7 +97,7 @@
       value.version = 5;
       value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: `รุ่น 4 → 5: เรียงบรรทัด BOM ตามผังงาน ST → RB → GR → PT → BG → PK (${changed} BOM เปลี่ยนลำดับ)` });
     }
-    if (value.version === 5) {
+    if (value.version === 5 && Array.isArray(value.processes) && Array.isArray(value.routings)) {
       // รุ่น 6 ย้ายรหัสขั้นตอน GR เดิมไปเลขใหม่ (ทุก revision ของ routing) แล้ววางขั้นตอน GR ทั้งชุดเรียงตาม Grinding-GR ที่ตำแหน่งของ GR เดิม
       // ชื่อเริ่มต้นเดิมเปลี่ยนเป็นชื่อเริ่มต้นใหม่ (เจียร์แปรรูป → เจียร์) ชื่อที่ผู้ใช้แก้เองคงไว้
       const defaults = (root.MNP_BOM_RULES?.DEFAULT_PROCESSES ?? []).filter((entry) => entry.dept === "GR");
@@ -122,6 +122,13 @@
           const code = GR_V6_CODES[step.processCode];
           if (code) { step.processCode = code; moved += 1; }
         }
+      }
+      // คัดแยกที่ routing อ้างแต่ไม่เคยเก็บใน processes (เลือกจากค่าเริ่มต้นรุ่นก่อน) ไม่มีค่าเริ่มต้นให้แล้ว ต้องเก็บไว้ ไม่งั้นขั้นนั้นหายตอนแก้ routing
+      const usesSort = value.routings.some((routing) => (Array.isArray(routing.steps) ? routing.steps : []).some((step) => step.processCode === "GR-10"));
+      if (usesSort && !value.processes.some((process) => process.code === "GR-10")) {
+        const lastGr = value.processes.findLastIndex((process) => process.dept === "GR");
+        const sort = { code: "GR-10", name: "คัดแยก", dept: "GR" };
+        value.processes = lastGr === -1 ? [...value.processes, sort] : [...value.processes.slice(0, lastGr + 1), sort, ...value.processes.slice(lastGr + 1)];
       }
       value.version = 6;
       value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: `รุ่น 5 → 6: ขั้นตอน GR ตาม Grinding-GR (รีด → ปั๊ม → เปเปอร์ → ตัดยาง → ทากาว → เจียร์ → เจาะ) · ตัดยาง GR-04 ทากาว GR-05 เจียร์ GR-06 คัดแยก GR-10 (${moved} ขั้นใน routing เปลี่ยนรหัส)` });
