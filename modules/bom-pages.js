@@ -312,20 +312,47 @@
     const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((value) => ({ value, label: `(${value})` }));
     const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((value) => ({ value, label: value }));
     const current = code ? rules.parseFgCode(code) : { base, pkg, colorSet: cs };
+    // หมวด / ชนิดของชิ้นที่จะสร้าง: ชิ้นที่มีอยู่แล้วใช้ชนิดของมัน · ชิ้นใหม่ตาม ?kind= (ไม่ระบุ = สินค้า FG)
+    // สินค้าเลือกด้วยฐานรหัส + แพ็กเกจ + ชุดสี (ชีต ;}o) · ชนิดอื่นพิมพ์รหัสตรง ๆ ช่องเดียว
+    const kindParam = String(params.get("kind") ?? "").trim().toUpperCase();
+    const rootKind = (code ? itemOf(ctx, code)?.kind : null) ?? (rules.KINDS[kindParam] ? kindParam : "FG");
+    const isFg = rootKind === "FG";
+    const others = data.items.filter((entry) => entry.kind !== "FG").sort((a, b) => a.code.localeCompare(b.code));
+    const fgField = (label, control, opts = {}) => ui.field(label, control, { ...opts, className: `bom-pick-fg${isFg ? "" : " is-hidden"}` });
     const picker = ui.card(`<form class="bom-pick" data-bom-pick>
-        <div class="rf-grid rf-g3">
-          ${ui.field("ฐานรหัสสินค้า *", ui.input("base", { value: current.base, list: "bom-base-list", required: true, placeholder: "เลือกหรือพิมพ์รหัสใหม่ เช่น MEGA-ST-01", extra: 'autocapitalize="characters"' }), { hint: esc(`มีอยู่ ${bases.length} ฐานรหัส พิมพ์รหัสใหม่เพื่อสร้างสินค้าใหม่`) })}
-          ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { value: current.pkg, placeholder: "ไม่ระบุ" }))}
-          ${ui.field("ชุดสี", ui.select("cs", colorOptions, { value: current.colorSet, placeholder: "ไม่ระบุ" }))}
+        <div class="rf-grid rf-g4">
+          ${ui.field("หมวด / ชนิด *", kindSelect(ctx, "kind", rootKind, { extra: 'data-bom-pick-kind aria-label="หมวดและชนิดของชิ้นที่จะสร้าง"' }))}
+          ${fgField("ฐานรหัสสินค้า *", ui.input("base", { value: isFg ? current.base : "", list: "bom-base-list", required: isFg, placeholder: "เลือกหรือพิมพ์รหัสใหม่ เช่น MEGA-ST-01", extra: `autocapitalize="characters"${isFg ? "" : " disabled"}` }), { hint: esc(`มีอยู่ ${bases.length} ฐานรหัส พิมพ์รหัสใหม่เพื่อสร้างสินค้าใหม่`) })}
+          ${fgField("แพ็กเกจ", ui.select("pkg", pkgOptions, { value: isFg ? current.pkg : "", placeholder: "ไม่ระบุ", extra: isFg ? "" : "disabled" }))}
+          ${fgField("ชุดสี", ui.select("cs", colorOptions, { value: isFg ? current.colorSet : "", placeholder: "ไม่ระบุ", extra: isFg ? "" : "disabled" }))}
+          ${ui.field("รหัสชิ้นงาน *", ui.input("code", { value: isFg ? "" : code, list: "bom-code-list", required: !isFg, placeholder: "เลือกหรือพิมพ์รหัสใหม่ เช่น SE-TP01-OR01-100-18-65", extra: `autocapitalize="characters"${isFg ? " disabled" : ""}` }), { className: `bom-pick-code${isFg ? " is-hidden" : ""}` })}
         </div>
         <datalist id="bom-base-list">${bases.map((value) => `<option value="${attr(value)}">${esc(parsed.find((entry) => entry.base === value).item.name.slice(0, 50))}</option>`).join("")}</datalist>
-        <div class="rf-row"><button class="btn rf-btn" type="submit">เปิด BOM</button></div>
-      </form>`, { title: "1. เลือกสินค้า (ฐานรหัส + แพ็กเกจ + ชุดสี เหมือนชีต ;}o)" });
+        <datalist id="bom-code-list">${others.map((entry) => `<option value="${attr(entry.code)}">${esc(`${entry.kind} · ${entry.name.slice(0, 50)}`)}</option>`).join("")}</datalist>
+        <div class="rf-row"><button class="btn rf-btn" type="submit">เปิด</button></div>
+      </form>`, { title: "1. เลือกหมวดและรหัส" });
     const bindPick = (rootNode) => {
-      rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
+      const form = rootNode.querySelector("[data-bom-pick]");
+      if (!form) return;
+      // สลับช่องตามหมวด: สินค้า = ฐานรหัส/แพ็กเกจ/ชุดสี · อื่น ๆ = รหัสชิ้นงาน (ช่องที่ซ่อนถูกปิด จึงไม่ติด required และไม่ถูกส่ง)
+      const sync = () => {
+        const fg = form.querySelector("[data-bom-pick-kind]")?.value === "FG";
+        form.querySelectorAll(".bom-pick-fg").forEach((node) => node.classList.toggle("is-hidden", !fg));
+        form.querySelectorAll(".bom-pick-code").forEach((node) => node.classList.toggle("is-hidden", fg));
+        form.querySelectorAll(".bom-pick-fg input, .bom-pick-fg select").forEach((input) => { input.disabled = !fg; });
+        const codeInput = form.querySelector('input[name="code"]');
+        if (codeInput) { codeInput.disabled = fg; codeInput.required = !fg; }
+        const baseInput = form.querySelector('input[name="base"]');
+        if (baseInput) baseInput.required = fg;
+      };
+      form.querySelector("[data-bom-pick-kind]")?.addEventListener("change", sync);
+      form.addEventListener("submit", (event) => {
         event.preventDefault();
-        const form = new FormData(event.currentTarget);
-        location.hash = ctx.url("build", { base: String(form.get("base") ?? "").trim(), pkg: String(form.get("pkg") ?? ""), cs: String(form.get("cs") ?? "") });
+        const values = new FormData(event.currentTarget);
+        const kind = String(values.get("kind") ?? "FG");
+        location.hash = kind === "FG"
+          ? ctx.url("build", { base: String(values.get("base") ?? "").trim(), pkg: String(values.get("pkg") ?? ""), cs: String(values.get("cs") ?? "") })
+          : ctx.url("build", { code: String(values.get("code") ?? "").trim(), kind });
       });
     };
     if (!code) {
@@ -335,22 +362,46 @@
       return { html, bind: bindPick };
     }
     const item = itemOf(ctx, code);
+    const pageHead = head(ctx, "สร้าง BOM", "เลือกหมวดและรหัส → แก้ส่วนประกอบทุกชั้นในตารางเดียว → บันทึก ใช้ได้ทันที (เก็บเป็น revision ย้อนดูได้)");
+    const defaultUom = { FG: "set", RB: "rod", CP: "kg" }[rootKind] ?? "pcs";
+    // วัตถุดิบ / สูตรยาง ไม่มีส่วนประกอบ: หน้านี้บันทึกเป็นชิ้นงานอย่างเดียว (ชิ้นที่มีแล้วแก้ได้ที่หน้าต่างชิ้นงาน)
+    if (ctx.helpers.NO_BOM_KINDS.includes(rootKind)) {
+      const label = rules.categoryOf(rootKind)?.label ?? rootKind; // หัวการ์ดบอกหมวด ชนิดอยู่ในช่องเลือกของขั้นที่ 1 แล้ว
+      const body = item
+        ? `<p>${ui.mono(item.code)} ${esc(item.name)} <span class="muted">· ${esc(uomText(ctx, item.uom))}</span></p>
+           <div class="rf-row">${canEdit ? ui.openButton("แก้ข้อมูลชิ้นงาน", "itemEdit", { code: item.code }) : ""}${canEdit && rootKind === "CP" ? ui.openButton("ผูกสูตร RubberFlow", "compoundLink", { code: item.code }) : ""}${ui.link("ใช้ที่ไหนบ้าง / ประวัติ", ctx.url("items", { sel: item.code }), "btn rf-btn secondary")}</div>`
+        : canEdit ? `<form id="bom-leaf-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}" data-rf-args='{"create":true}'>
+            <input type="hidden" name="code" value="${attr(code)}"><input type="hidden" name="kind" value="${attr(rootKind)}">
+            <div class="rf-grid rf-g3">
+              ${ui.field("รหัส", `<input class="input rf-input rf-mono" value="${attr(code)}" readonly>`)}
+              ${ui.field("ชื่อ *", ui.input("name", { required: true }))}
+              ${ui.field("หน่วยนับ", ui.select("uom", UOM_OPTIONS(ctx), { value: defaultUom, extra: "data-native-select" }))}
+            </div>
+            <div class="rf-row"><button class="btn rf-btn" type="submit">บันทึกชิ้นงาน</button></div>
+          </form>` : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การสร้างชิ้นงานทำโดยฝ่ายวางแผนหรือผู้จัดการ");
+      const note = rootKind === "CP" ? "สูตรยางไม่มีส่วนประกอบในระบบนี้ สูตร PHR อยู่ที่ RubberFlow · ใช้เป็นบรรทัดใต้เส้นยาง" : "วัตถุดิบไม่มีส่วนประกอบ · ใช้เป็นบรรทัดใน BOM ของสินค้าหรือ WIP";
+      return { html: `${pageHead}${picker}${ui.card(`<p class="small muted">${esc(note)}</p>${body}`, { title: `2. ${esc(label)}` })}`, bind: bindPick };
+    }
     let rows = [];
     let sourceNote = "";
     if (item) rows = editorRowsOf(ctx, item.code);
-    else {
+    else if (isFg) {
       const siblings = ctx.helpers.siblingsOf(data, current.base);
       const source = ctx.helpers.pickSibling(siblings, current.pkg, current.colorSet);
       if (source) { rows = editorRowsOf(ctx, source.code); sourceNote = `ตั้งต้นจาก ${source.code} (${source.name}) แก้แล้วบันทึกเป็น ${code} โดยไม่กระทบตัวต้นแบบ`; }
     }
-    if (!rows.length) rows = [{ id: "r1", parentId: "", level: 1, code: "", kind: "PURCHASED", name: "", uom: "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 }];
+    // เส้นยางมีส่วนประกอบได้เฉพาะสูตรยาง: แถวแรกตั้งเป็นสูตรยาง หน่วย กก.
+    if (!rows.length) rows = [{ id: "r1", parentId: "", level: 1, code: "", kind: rootKind === "RB" ? "CP" : "PURCHASED", name: "", uom: rootKind === "RB" ? "kg" : "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 }];
     const bom = item ? approvedBomOf(ctx, item.code) : null;
-    const itemCard = ui.card(`<div class="rf-grid rf-g3">
-        ${ui.field("รหัสสินค้า", `<input class="input rf-input rf-mono" value="${attr(code)}" readonly>`)}
-        ${ui.field("ชื่อสินค้า *", ui.input("itemName", { value: item?.name ?? "", required: true, placeholder: "เช่น ตอปิโดยาง TP-01 แพ็กถุง ชุดสี Y" }))}
-        ${ui.field("หน่วยขาย", ui.select("itemUom", UOM_OPTIONS(ctx), { value: item?.uom ?? "set", extra: "data-native-select" }))}
+    const noun = isFg ? "สินค้า" : "ชิ้นงาน";
+    const itemCard = ui.card(`<input type="hidden" name="itemKind" value="${attr(rootKind)}">
+      <div class="rf-grid rf-g3">
+        ${ui.field(`รหัส${noun}`, `<input class="input rf-input rf-mono" value="${attr(code)}" readonly>`)}
+        ${ui.field(`ชื่อ${noun} *`, ui.input("itemName", { value: item?.name ?? "", required: true, placeholder: isFg ? "เช่น ตอปิโดยาง TP-01 แพ็กถุง ชุดสี Y" : "" }))}
+        ${ui.field(isFg ? "หน่วยขาย" : "หน่วยนับ", ui.select("itemUom", UOM_OPTIONS(ctx), { value: item?.uom ?? defaultUom, extra: "data-native-select" }))}
+        ${rootKind === "RB" && !item ? ui.field("รหัสสูตรยาง", ui.input("itemCompound", { list: "bom-compound-list", placeholder: "ว่าง = ใช้บรรทัดสูตรยางข้างล่าง" })) : ""}
       </div>
-      ${item ? `<div class="small muted">${esc(`ชนิด ${kindLabel(ctx, item.kind)} · แผนกเจ้าของ ${item.ownerDept}${bom ? ` · BOM ปัจจุบัน Rev.${bom.revision} บันทึก ${rules.fmtDateTime(bom.approvedAt)} โดย ${bom.approvedBy}` : " · ยังไม่มี BOM"}`)} · ${ui.link("ประวัติ revision", ctx.url("items", { sel: item.code }))}</div>` : ui.callout("info", `<strong>${esc(code)}</strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างสินค้าใหม่ให้พร้อม BOM${sourceNote ? `<div>${esc(sourceNote)}</div>` : ""}`)}`, { title: "2. สินค้า", className: "bom-item-card" });
+      ${item ? `<div class="small muted">${esc(`ชนิด ${kindLabel(ctx, item.kind)} · แผนกเจ้าของ ${item.ownerDept}${bom ? ` · BOM ปัจจุบัน Rev.${bom.revision} บันทึก ${rules.fmtDateTime(bom.approvedAt)} โดย ${bom.approvedBy}` : " · ยังไม่มี BOM"}`)} · ${ui.link("ประวัติ revision", ctx.url("items", { sel: item.code }))}</div>` : ui.callout("info", `<strong>${esc(code)}</strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้าง${esc(noun)}ใหม่ (${esc(kindLabel(ctx, rootKind))}) ให้พร้อม BOM${sourceNote ? `<div>${esc(sourceNote)}</div>` : ""}`)}`, { title: `2. ${noun}`, className: "bom-item-card" });
     const tableHead = `<thead><tr><th>ชั้น / รหัส</th><th>ชื่อ</th><th title="สินค้า · WIP (ชิ้นที่ผลิตเองระหว่างทาง) · วัตถุดิบ (ของซื้อ) · สูตรยาง (ใส่ใต้เส้นยาง หน่วย กก.)">หมวด / ชนิด</th><th>หน่วย</th><th>ปริมาณต่อ 1 พ่อ</th><th title="ขั้นผลิตของพ่อที่ชิ้นนี้เข้า 1–20 (ว่าง = ขั้นแรก) · มุมมองลำดับผลิตของหน้าโครงสร้างสินค้าเรียงวัตถุดิบตามเลขนี้">ขั้นที่</th><th>% เผื่อเสีย</th><th>หมายเหตุ</th><th>ข้อมูลยาง (RB)</th><th></th></tr></thead>`;
     const templateRow = editorRowHtml(ctx, { id: "__ID__", parentId: "__PARENT__", level: 1, code: "", kind: "PURCHASED", name: "", uom: "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 });
     const editor = `<form id="bom-tree-form" class="bom-editor" data-rf-form="saveBomTree" data-rf-success="{result}">
@@ -365,7 +416,7 @@
         ${ui.field("หมายเหตุของการแก้ครั้งนี้", ui.input("note", { placeholder: "เช่น เปลี่ยนความยาวตัดลูกตอปิโด" }))}`, { title: "3. ส่วนประกอบทุกชั้น" })}
       <div class="rf-row bom-actions">${canEdit ? '<button class="btn rf-btn" type="submit" form="bom-tree-form">บันทึก BOM</button>' : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การสร้าง/แก้ BOM ทำโดยฝ่ายวางแผนหรือผู้จัดการ")}${item && bom && canEdit ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }) : ""}${item ? ui.link("ดูต้นไม้ที่ระเบิดแล้ว", ctx.url("items", { sel: item.code }), "btn rf-btn secondary") : ""}</div>
     </form>`;
-    const html = `${head(ctx, "สร้าง BOM", "เลือกสินค้า → แก้ส่วนประกอบทุกชั้นในตารางเดียว → บันทึก ใช้ได้ทันที (เก็บเป็น revision ย้อนดูได้)")}${picker}${editor}`;
+    const html = `${pageHead}${picker}${editor}`;
     const bind = (rootNode) => {
       bindPick(rootNode);
       const tbody = rootNode.querySelector("[data-bom-rows]");

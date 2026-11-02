@@ -747,3 +747,21 @@ test("compound guards outside the BOM editor: kind changes respect the parents, 
   assert.equal(approved(d, rod).lines[0].childCode, "DM02");
   rejects(() => A.saveBomTree(d, { code: "SE-TP01-OR01-100-18-65", nodes: [{ code: rod, qty: 1 / 31, patch: { rubber: { compound: "DM01" } } }, { code: "RB-DM01-01-OR01-200-0-72", qty: 0.02 }] }, ctx("planner")), /ใช้บรรทัดสูตรยาง DM02 ใน BOM/);
 });
+
+test("the BOM tree can start from a WIP or a rod chosen in step 1, but not from a raw material or a compound", () => {
+  const d = fresh();
+  const se = A.saveBomTree(d, { code: "SE-NEW-77", item: { name: "ชิ้นยางใหม่", uom: "pcs", kind: "SE" }, nodes: [{ code: "RB-DM01-02-OR01-202-18-70", qty: 0.05 }] }, ctx("planner"));
+  assert.deepEqual(se.saved, ["SE-NEW-77 Rev.1"]);
+  const seItem = A.helpers.itemOf(d, "SE-NEW-77");
+  assert.deepEqual([seItem.kind, seItem.ownerDept, seItem.uom], ["SE", "GR", "pcs"], "the root takes the chosen kind and its department");
+  // เส้นยางเป็นพ่อ: ช่องสูตรว่างใช้บรรทัดสูตรยาง · ช่องสูตรที่กรอกต้องตรงกับบรรทัด
+  A.saveItem(d, { code: "DM07", kind: "CP", name: "NR ทดลอง", uom: "kg", create: true }, ctx("planner"));
+  A.saveBomTree(d, { code: "RB-DM07-02-RD01-200-3-20", item: { name: "เส้นยางใหม่", uom: "rod", kind: "RB", compound: "" }, nodes: [{ code: "DM07", qty: 0.25 }] }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, "RB-DM07-02-RD01-200-3-20").rubber.compound, "DM07");
+  assert.equal(approved(d, "RB-DM07-02-RD01-200-3-20").lines[0].qty, 0.25);
+  rejects(() => A.saveBomTree(d, { code: "RB-DM07-02-RD02-200-3-20", item: { name: "x", uom: "rod", kind: "RB", compound: "DM01" }, nodes: [{ code: "DM07", qty: 0.25 }] }, ctx("planner")), /ระบุสูตร DM01 แต่บรรทัดสูตรยางเป็น DM07/);
+  rejects(() => A.saveBomTree(d, { code: "DM08", item: { name: "x", uom: "kg", kind: "CP" }, nodes: [{ code: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /ไม่มีส่วนประกอบ บันทึกเป็นชิ้นงานแทน/);
+  rejects(() => A.saveBomTree(d, { code: "P-NEW-01", item: { name: "x", uom: "pcs", kind: "PURCHASED" }, nodes: [{ code: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /ไม่มีส่วนประกอบ บันทึกเป็นชิ้นงานแทน/);
+  rejects(() => A.saveBomTree(d, { code: "X-NEW-01", item: { name: "x", uom: "pcs", kind: "NOPE" }, nodes: [{ code: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /ชนิดชิ้นงานไม่ถูกต้อง/);
+  assert.equal(A.helpers.itemOf(d, "DM08"), null);
+});

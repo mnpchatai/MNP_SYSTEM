@@ -104,7 +104,9 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   const env = load();
   env.store.setUser("B03"); // ฝ่ายวางแผน
   let html = await env.render("p=build");
-  assert.match(html, /1\. เลือกสินค้า/);
+  assert.match(html, /1\. เลือกหมวดและรหัส/);
+  assert.match(html, /name="kind" data-native-select data-bom-pick-kind[^>]*><optgroup label="สินค้า"><option value="FG" selected>/, "step 1 starts with the category, product by default");
+  assert.match(html, /bom-pick-code is-hidden[\s\S]*?name="code"[^>]*disabled/, "the single code field waits until a non-product kind is chosen");
   assert.match(html, /bom-base-list/);
   assert.match(html, /สินค้าที่แก้ล่าสุด/);
   assert.doesNotMatch(html, /data-rf-form="saveBomTree"/);
@@ -135,6 +137,29 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   assert.match(html, /BRAND-NEW-01\(B\)-A<\/strong> ยังไม่มีใน item master/);
   assert.doesNotMatch(html, /ตั้งต้นจาก/);
   assert.equal([...html.matchAll(/class="bom-row is-new"/g)].length, 2, "one empty editable row plus the template row");
+  // หมวดอื่นที่ขั้นที่ 1: WIP ใหม่ใช้รหัสช่องเดียว ไม่ตั้งต้นจากสินค้า · เส้นยางใหม่เริ่มด้วยแถวสูตรยาง · ชิ้นเดิมใช้ชนิดของมันเอง
+  html = await env.render("p=build&code=SE-NEW-77&kind=SE");
+  assert.match(html, /<option value="SE" selected>/);
+  assert.match(html, /bom-pick-fg is-hidden/);
+  assert.match(html, /name="code"[^>]*value="SE-NEW-77"/);
+  assert.match(html, /<h3>2\. ชิ้นงาน<\/h3>/);
+  assert.match(html, /SE-NEW-77<\/strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างชิ้นงานใหม่ \(WIP · ชิ้นยาง \(ตัด\/เจาะ\)\)/);
+  assert.match(html, /name="itemKind" value="SE"/);
+  assert.match(html, /name="itemUom"[\s\S]*?<option value="pcs" selected>/);
+  html = await env.render("p=build&code=RB-DM09-02-RD01-200-3-20&kind=RB");
+  assert.match(html, /name="itemCompound"/, "a new rod root asks for its compound");
+  assert.match(html, /data-row="r1"[\s\S]*?<option value="CP" selected>[\s\S]*?<option value="kg" selected>/, "the first line of a rod is a compound in kg");
+  html = await env.render("p=build&code=SE-TP01-OR01-100-18-65&kind=PT");
+  assert.match(html, /<option value="SE" selected>/, "an existing item keeps its own kind whatever the URL says");
+  // วัตถุดิบ / สูตรยาง: ไม่มีตารางส่วนประกอบ บันทึกเป็นชิ้นงาน
+  html = await env.render("p=build&code=DM07&kind=CP");
+  assert.doesNotMatch(html, /data-rf-form="saveBomTree"/);
+  assert.match(html, /<h3>2\. สูตรยาง<\/h3>/, "the card names the category once (the kind is in the step-1 select)");
+  assert.match(html, /data-rf-form="saveItem"[\s\S]*?name="code" value="DM07"[\s\S]*?name="kind" value="CP"[\s\S]*?<option value="kg" selected>/);
+  html = await env.render("p=build&code=P-STK-01");
+  assert.match(html, /<option value="PURCHASED" selected>/);
+  assert.match(html, /data-rf-open="itemEdit"/);
+  assert.doesNotMatch(html, /data-rf-form="saveItem"/, "an existing raw material is edited in the item dialog");
   // บทบาทที่ไม่มีสิทธิ์: ไม่เห็นเมนู และหน้าปฏิเสธ
   env.store.setUser("B05");
   html = await env.render("p=build&code=DEMO-TP-01(P)-Y");

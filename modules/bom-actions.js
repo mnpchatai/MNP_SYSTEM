@@ -189,7 +189,13 @@
     const rootCode = R.canonicalCode(text(p.code, "รหัสสินค้า", 60));
     if (!itemOf(d, rootCode)) {
       if (!p.item?.name) fail(`ยังไม่มีชิ้นงาน ${rootCode} กรุณาระบุชื่อและหน่วยเพื่อสร้าง`);
-      saveItem(d, { code: rootCode, kind: p.item.kind || "FG", name: p.item.name, uom: p.item.uom || "set", weightG: p.item.weightG, create: true }, ctx);
+      // ชนิดของพ่อที่เลือกในขั้นที่ 1 (ไม่ระบุ = สินค้า) · วัตถุดิบ/สูตรยางไม่มีส่วนประกอบ จึงสร้างผ่านต้นไม้ไม่ได้
+      const rootKind = p.item.kind || "FG";
+      if (!R.KINDS[rootKind]) fail("ชนิดชิ้นงานไม่ถูกต้อง");
+      if (NO_BOM_KINDS.includes(rootKind)) fail(`${R.KINDS[rootKind].label}ไม่มีส่วนประกอบ บันทึกเป็นชิ้นงานแทน`);
+      // เส้นยางใหม่: รหัสสูตรจากช่องสูตร ถ้าว่างใช้บรรทัดสูตรยางชั้นแรก
+      const rootCompound = String(p.item.compound ?? "").trim() || (p.nodes ?? []).map((node) => ({ code: R.canonicalCode(node.code), kind: itemOf(d, node.code)?.kind ?? node.newItem?.kind })).find((node) => node.kind === "CP")?.code || "";
+      saveItem(d, { code: rootCode, kind: rootKind, name: p.item.name, uom: p.item.uom || "set", weightG: p.item.weightG, rubber: rootKind === "RB" ? { compound: rootCompound } : undefined, create: true }, ctx);
     } else if (p.item) {
       const current = itemOf(d, rootCode);
       const changed = (p.item.name && p.item.name.trim() !== current.name) || (p.item.uom && p.item.uom !== current.uom) || (p.item.weightG !== undefined && p.item.weightG !== "" && Number(p.item.weightG) !== Number(current.weightG || 0));
