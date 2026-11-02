@@ -252,7 +252,6 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").dueAt, day(10), "no BG date → warehouse due date");
   assert.ok(!jobs.some((job) => job.kind === "PURCHASED"));
   assert.equal(jobs.find((job) => job.kind === "FG" && job.itemCode === "DEMO-TP-01(P)-Y").qtyPlanned, 80, "PK jobs carry the ordered quantity");
-  rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 1 }, ctx("planner")), /ร่าง/);
   rejects(() => A.explodeOrder(d, { orderId: id }, ctx("planner")), /ร่าง/);
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 9 }, ctx("st")), /ปล่อยผลิตแล้ว งานรายแผนกไม่เปลี่ยนตาม/, "counting after release would desync the jobs");
   // แก้ BOM หลังปล่อยผลิต: ใบที่ปล่อยแล้วไม่เปลี่ยน
@@ -789,4 +788,83 @@ test("the BOM tree can start from a WIP or a rod chosen in step 1, but not from 
   rejects(() => A.saveBomTree(d, { code: "P-NEW-01", item: { name: "x", uom: "pcs", kind: "PURCHASED" }, nodes: [{ code: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /ไม่มีส่วนประกอบ บันทึกเป็นชิ้นงานแทน/);
   rejects(() => A.saveBomTree(d, { code: "X-NEW-01", item: { name: "x", uom: "pcs", kind: "NOPE" }, nodes: [{ code: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /ชนิดชิ้นงานไม่ถูกต้อง/);
   assert.equal(A.helpers.itemOf(d, "DM19"), null);
+});
+
+test("order items can be edited in a draft and in a released order whose jobs have not started (the order goes back to draft)", () => {
+  const d = fresh();
+  const id = A.createOrder(d, { pi: "T-EDIT", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+  const order = d.orders.find((entry) => entry.id === id);
+  A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner"));
+  A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 40 }, ctx("planner"));
+  // แก้จำนวนในใบร่าง
+  A.explodeOrder(d, { orderId: id }, ctx("planner"));
+  A.updateOrderItem(d, { orderId: id, fgCode: "demo-tp-01(p)-y", qty: "100", note: "ด่วน" }, ctx("planner"));
+  assert.deepEqual(order.items.map((item) => [item.fgCode, item.qty, item.note]), [["DEMO-TP-01(P)-Y", 100, "ด่วน"], ["DEMO-HL-24(B)-A", 40, ""]]);
+  assert.equal(order.explosion, null, "editing a quantity invalidates the explosion");
+  assert.equal(order.revision, 0, "a draft edit does not bump the revision");
+  rejects(() => A.updateOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 100, note: "ด่วน" }, ctx("planner")), /เท่าเดิม/);
+  rejects(() => A.updateOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 0 }, ctx("planner")), /จำนวนสั่ง/);
+  rejects(() => A.updateOrderItem(d, { orderId: id, fgCode: "DEMO-BL-60(K)-Z", qty: 5 }, ctx("planner")), /ไม่พบสินค้านี้ในใบ/);
+  rejects(() => A.updateOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 5 }, ctx("gr")), /ฝ่ายวางแผน/);
+  // ใบที่ปล่อยผลิตแล้ว ยังไม่มีงานเริ่ม: แก้ได้ ใบกลับเป็นร่าง งานรายแผนกถูกลบ REV. +1
+  A.releaseOrder(d, { orderId: id }, ctx("planner"));
+  assert.ok(d.jobs.some((job) => job.orderId === id));
+  A.updateOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 60 }, ctx("planner"));
+  assert.equal(order.status, "draft");
+  assert.equal(order.revision, 1);
+  assert.equal(order.releasedAt, undefined);
+  assert.equal(d.jobs.filter((job) => job.orderId === id).length, 0, "jobs of the old release are removed");
+  assert.match(d.audit[1].action, /กลับมาแก้/);
+  A.releaseOrder(d, { orderId: id }, ctx("planner"));
+  A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 20 }, ctx("planner"));
+  assert.equal(order.status, "draft");
+  assert.equal(order.revision, 2);
+  assert.equal(order.items.find((item) => item.fgCode === "DEMO-TP-01(P)-Y").qty, 120);
+  A.releaseOrder(d, { orderId: id }, ctx("planner"));
+  A.removeOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A" }, ctx("planner"));
+  assert.deepEqual([order.status, order.revision, order.items.length], ["draft", 3, 1]);
+  rejects(() => A.removeOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A" }, ctx("planner")), /ไม่พบสินค้านี้ในใบ/);
+  // มีงานเริ่มแล้ว (รายงานผลผลิต): แก้ไม่ได้ และไม่มีอะไรเปลี่ยน
+  A.releaseOrder(d, { orderId: id }, ctx("planner"));
+  const pk = d.jobs.find((job) => job.orderId === id && job.dept === "PK" && job.kind === "FG");
+  A.reportJob(d, { jobId: pk.id, qtyDone: 1 }, ctx("planner"));
+  rejects(() => A.updateOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 5 }, ctx("planner")), /มีงานที่เริ่มแล้ว \(PK DEMO-TP-01\(P\)-Y\)/);
+  rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 5 }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
+  assert.equal(order.status, "in_progress");
+  // ใบที่ยกเลิกแล้วแก้ไม่ได้
+  const other = A.createOrder(d, { pi: "T-CXL", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+  A.addOrderItem(d, { orderId: other, fgCode: "DEMO-TP-01(P)-Y", qty: 1 }, ctx("planner"));
+  A.cancelOrder(d, { orderId: other }, ctx("planner"));
+  rejects(() => A.updateOrderItem(d, { orderId: other, fgCode: "DEMO-TP-01(P)-Y", qty: 2 }, ctx("planner")), /ปิดหรือยกเลิก/);
+  // ใบตัวอย่างที่มีงานเริ่มแล้ว
+  rejects(() => A.removeOrderItem(d, { orderId: "DEMO-26001", fgCode: "DEMO-TP-01(P)-Y" }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
+});
+
+test("a job started or held without output, or linked to RubberFlow, locks the order items; stock counts survive a reopen", () => {
+  const d = fresh();
+  const open = (pi) => {
+    const id = A.createOrder(d, { pi, customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+    A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner"));
+    return d.orders.find((entry) => entry.id === id);
+  };
+  const rbJob = (order) => d.jobs.find((job) => job.orderId === order.id && job.dept === "RB");
+  for (const status of ["in_progress", "hold"]) {
+    const order = open(`T-${status}`);
+    A.releaseOrder(d, { orderId: order.id }, ctx("planner"));
+    A.setJobStatus(d, { jobId: rbJob(order).id, status }, ctx("rb"));
+    rejects(() => A.updateOrderItem(d, { orderId: order.id, fgCode: "DEMO-TP-01(P)-Y", qty: 5 }, ctx("planner")), /มีงานที่เริ่มแล้ว \(RB /);
+    rejects(() => A.updateOrderItem(d, { orderId: order.id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner")), /มีงานที่เริ่มแล้ว/, "a locked order explains the lock before a same-value check");
+  }
+  const linked = open("T-LINK");
+  A.releaseOrder(d, { orderId: linked.id }, ctx("planner"));
+  A.linkJobToRubberFlow(d, { jobId: rbJob(linked).id, woId: "WO-1", kg: 3 }, ctx("rb"));
+  A.setJobStatus(d, { jobId: rbJob(linked).id, status: "queued" }, ctx("rb"));
+  rejects(() => A.removeOrderItem(d, { orderId: linked.id, fgCode: "DEMO-TP-01(P)-Y" }, ctx("planner")), /มีงานที่เริ่มแล้ว/, "a RubberFlow work order locks the order even when the job is queued again");
+  // ยอดคงคลังที่นับไว้คงอยู่หลังเปิดใบกลับมาแก้ ส่วนเวลาระเบิดล้าง
+  const counted = open("T-COUNT");
+  A.explodeOrder(d, { orderId: counted.id }, ctx("planner"));
+  A.setStockCount(d, { orderId: counted.id, itemCode: "P-BOX-01", qty: 2 }, ctx("st"));
+  A.releaseOrder(d, { orderId: counted.id }, ctx("planner"));
+  A.updateOrderItem(d, { orderId: counted.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, ctx("planner"));
+  assert.deepEqual([counted.status, counted.explodedAt, counted.explosion, counted.stockCounts["P-BOX-01"]], ["draft", null, null, 2]);
 });

@@ -435,6 +435,23 @@
   }
 
   const editable = (order) => { if (order.status !== "draft") fail("แก้รายการได้เฉพาะใบที่ยังเป็นร่าง (ยังไม่ปล่อยผลิต)"); };
+  // งานของใบที่เริ่มแล้ว (แผนกกดเริ่ม/พักงาน รายงานผลผลิต/ของเสีย หรือสร้าง WO ใน RubberFlow) ทำให้แก้รายการสินค้าไม่ได้ เพราะงานรายแผนกคำนวณจากรายการตอนปล่อยผลิต
+  const startedJobs = (d, order) => d.jobs.filter((job) => job.orderId === order.id && (job.status !== "queued" || job.qtyDone > 0 || job.qtyReject > 0 || job.reports?.length || job.externalRef));
+  // แก้รายการสินค้า: ใบร่างแก้ได้เลย · ใบที่ปล่อยผลิตแล้วแต่ยังไม่มีงานเริ่ม กลับเป็นร่าง (ลบงานรายแผนก REV. +1) แล้วต้องระเบิด/ปล่อยผลิตใหม่
+  function editableItems(d, order, ctx) {
+    if (order.status === "draft") return;
+    if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วแก้รายการสินค้าไม่ได้");
+    const started = startedJobs(d, order);
+    if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้ปิดใบแล้วเปิดใบใหม่สำหรับส่วนที่เพิ่ม`);
+    const removed = d.jobs.filter((job) => job.orderId === order.id).length;
+    d.jobs = d.jobs.filter((job) => job.orderId !== order.id);
+    order.status = "draft";
+    order.revision = (order.revision ?? 0) + 1;
+    delete order.releasedAt;
+    delete order.releasedBy;
+    order.explodedAt = null; // ยอดคงคลังที่นับไว้คงอยู่ (ของในคลังไม่เปลี่ยนเพราะแก้ใบ) และถูกหักอีกครั้งตอนปล่อยผลิตใหม่
+    audit(d, ctx, "เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้", `${order.id} REV.${order.revision} ลบงานรายแผนก ${removed} รายการ`);
+  }
 
   function siblingsOf(d, base) {
     const R = rules();
@@ -642,7 +659,7 @@
   function addOrderItem(d, p, ctx) {
     requirePlanner(ctx, "แก้รายการสินค้า");
     const order = orderById(d, p.orderId);
-    editable(order);
+    editableItems(d, order, ctx);
     const R = rules();
     const byParts = !p.fgCode && p.base;
     const pkg = String(p.pkg ?? "").trim().toUpperCase();
@@ -671,12 +688,30 @@
   function removeOrderItem(d, { orderId, fgCode }, ctx) {
     requirePlanner(ctx, "แก้รายการสินค้า");
     const order = orderById(d, orderId);
-    editable(order);
-    const before = order.items.length;
-    order.items = order.items.filter((item) => item.fgCode !== rules().canonicalCode(fgCode));
-    if (order.items.length === before) fail("ไม่พบสินค้านี้ในใบ");
+    const code = rules().canonicalCode(fgCode);
+    if (!order.items.some((item) => item.fgCode === code)) fail("ไม่พบสินค้านี้ในใบ");
+    editableItems(d, order, ctx);
+    order.items = order.items.filter((item) => item.fgCode !== code);
     order.explosion = null;
-    audit(d, ctx, "ลบสินค้าออกจากใบสั่งผลิต", `${order.id} ${fgCode}`);
+    audit(d, ctx, "ลบสินค้าออกจากใบสั่งผลิต", `${order.id} ${code}`);
+    return order.id;
+  }
+
+  // แก้จำนวนสั่ง/หมายเหตุของสินค้าในใบ (เปลี่ยนตัวสินค้า = ลบแล้วเพิ่มใหม่)
+  function updateOrderItem(d, p, ctx) {
+    requirePlanner(ctx, "แก้รายการสินค้า");
+    const order = orderById(d, p.orderId);
+    const code = rules().canonicalCode(p.fgCode);
+    const line = order.items.find((item) => item.fgCode === code) ?? fail("ไม่พบสินค้านี้ในใบ");
+    const qty = num(p.qty, "จำนวนสั่ง");
+    const note = p.note === undefined ? line.note ?? "" : String(p.note).trim().slice(0, 120);
+    editableItems(d, order, ctx); // ใบที่ล็อกบอกเหตุผลก่อน · ถ้าค่าเท่าเดิม fail ด้านล่างและ store ทิ้งร่างทั้งชุด
+    if (qty === line.qty && note === (line.note ?? "")) fail("จำนวนและหมายเหตุเท่าเดิม");
+    const before = line.qty;
+    line.qty = qty;
+    line.note = note;
+    order.explosion = null;
+    audit(d, ctx, "แก้จำนวนสินค้าในใบสั่งผลิต", `${order.id} ${code} ${before} → ${qty}`);
     return order.id;
   }
 
@@ -865,9 +900,9 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    createOrder, addOrderItem, removeOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
+    createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage,
-    helpers: { itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;
