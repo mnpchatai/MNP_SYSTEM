@@ -664,7 +664,7 @@ test("the per-department view explodes one product × quantity into cards from R
   html = await env.render("p=product&code=DEMO-TP-01(P)-Y&qty=80");
   clean(html);
   const cardTitles = [...html.matchAll(/<h3>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]);
-  assert.deepEqual(cardTitles, ["RB", "GR", "PT", "ST", "PK"], "cards run upstream → downstream and skip departments without work (no BG in this product)");
+  assert.deepEqual(cardTitles, ["ST", "RB", "GR", "PT", "PK"], "cards follow the company flow and skip departments without work (no BG in this product)");
   assert.match(html, /ต้องรีด/);
   assert.match(html, /RB-DM01-02-OR01-202-18-70[\s\S]*?<strong>7\.74<\/strong>/, "80 sets × 3 SE / 31 pieces per rod — the BOMSHEET number, before any stock");
   assert.match(html, /ตัด 6\.5 ซม\. · 31 ชิ้น\/เส้น · 1 SE ต่อ GR/, "GR sees the cutting data of the rod it cuts");
@@ -726,25 +726,30 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.ok(fedRows.length > 0 && fedRows.every((row) => !row.includes("bom-flow-input-name")), "a row fed from a lane above keeps only its code (the lane card shows the name)");
   assert.match(html, /class="filter active" href="[^"]*view=flow" aria-current="page">ลำดับผลิต/);
   const order = (...needles) => needles.map((needle) => html.indexOf(needle));
-  const [rbStep, seCard, asm, sticker, pack, fgCard] = order("RB-01", "<span class=\"rf-mono\">SE-TP01-OR01-100-18-65</span><div class=\"small\">", "PK-ASM", "P-STK-01", "PK-PACK", "<span class=\"rf-mono\">DEMO-TP-01(P)-Y</span><div class=\"small\">");
+  const [rbStep, seCard, asm, sticker, pack, fgCard] = order("RB-01", "<span class=\"rf-mono\">SE-TP01-OR01-100-18-65</span><div class=\"small\">", "PK-01", "P-STK-01", "PK-03", "<span class=\"rf-mono\">DEMO-TP-01(P)-Y</span><div class=\"small\">");
   assert.ok(rbStep > 0 && rbStep < seCard && seCard < asm && asm < sticker && sticker < pack && pack < fgCard, "first steps come first, the product card is last");
   assert.match(html, /คอมปาวด์ <span class="rf-mono">DM01<\/span>/, "a rod shows its compound as the first input");
   assert.match(html, /SE-TP01-OR01-100-18-65<\/span> <span class="muted nowrap">× 3 ชิ้น<\/span> <span class="muted">\(จากสายด้านบน\)/, "a fed part points to its lane");
   assert.match(html, /data-rf-open="routingEdit" data-rf-args="\{&quot;code&quot;:&quot;SE-TP01-OR01-100-18-65&quot;\}"/);
   assert.match(html, /data-rf-open="itemImage" data-rf-args="\{&quot;code&quot;:&quot;DEMO-TP-01\(P\)-Y&quot;\}"/);
   assert.match(html, /GR · ตัด\/เจาะชิ้นยาง<\/td><td class="num">6<\/td><td class="num">8<\/td>/, "6 min per set × 80 sets = 8 hours");
-  // ตามผังงาน: เส้นยางที่ป้อนชิ้นยางผ่าน SR รับเข้าคลัง + QC ตรวจขนาด เป็นลำดับถัดจากรีด ก่อน GR
-  assert.match(html, /aria-label="ลำดับ 1 · RB · รีดเส้นยาง · RB-DM01-02-OR01-202-18-70[\s\S]*?<div class="bom-flow-step is-receive"><span class="bom-flow-order">ลำดับ 2<\/span><span class="bom-flow-dept">SR · รับเข้าคลัง\/QC<\/span>[\s\S]*?aria-label="ลำดับ 3 · GR · ตัด\/เจาะชิ้นยาง · SE-TP01-OR01-100-18-65/, "rod (1) → receive and check (2) → rubber part (3)");
+  // ตามผังงานบริษัท: ฝ่ายขาย (1) → วางแผน (2) → ST (3) อยู่หัวสุด · เส้นยาง (4) → SR รับยางเส้นยาว (5) → QC ตรวจขนาด (6) → GR (7) · สินค้า (10) → WH (11) ปิดท้าย
+  assert.match(html, /<div class="bom-flow"><div class="bom-flow-node"><div class="bom-flow-step is-flow"[^>]*><span class="bom-flow-order"[^>]*>ลำดับ 1<\/span><span class="bom-flow-dept">ฝ่ายขาย<\/span><span class="bom-flow-step-name">ออกใบสั่งผลิตให้แผนกวางแผน<\/span><\/div>[\s\S]*?ลำดับ 2<\/span><span class="bom-flow-dept">ฝ่ายวางแผน<\/span>[\s\S]*?ลำดับ 3<\/span><span class="bom-flow-dept">ST · คลังวัตถุดิบ<\/span>/, "the flow opens with sales, planning and ST");
+  assert.match(html, /aria-label="ลำดับ 4 · RB · รีดเส้นยาง · RB-DM01-02-OR01-202-18-70[\s\S]*?<div class="bom-flow-step is-flow"[^>]*><span class="bom-flow-order"[^>]*>ลำดับ 5<\/span><span class="bom-flow-dept">SR · คลังยางเส้นยาว<\/span>[\s\S]*?ลำดับ 6<\/span><span class="bom-flow-dept">QC · ตรวจขนาดยาง<\/span>[\s\S]*?aria-label="ลำดับ 7 · GR · ตัด\/เจาะชิ้นยาง · SE-TP01-OR01-100-18-65/, "rod (4) → receive (5) → check (6) → rubber part (7)");
+  assert.match(html, /aria-label="ลำดับ 10 · PK · บรรจุ\/ประกอบ · DEMO-TP-01\(P\)-Y[\s\S]*?ลำดับ 11<\/span><span class="bom-flow-dept">WH · คลังสินค้าสำเร็จรูป<\/span><span class="bom-flow-step-name">รับสินค้าจาก PK เข้าคลังสินค้าสำเร็จรูป<\/span><\/div><\/div><\/div>/, "the product card is followed by the warehouse step");
+  const laneOrder = [...html.matchAll(/<details class="bom-flow-lane" open><summary><span class="rf-mono">([A-Z]{2})-/g)].map((match) => match[1]).filter((prefix) => prefix !== "RB"); // สาย RB ซ้อนอยู่ในสาย SE
+  assert.deepEqual(laneOrder, ["SE", "SE", "SE", "PT", "XP"], "rubber lanes (GR, 7) come before the plastic lane (PT, 8) and the PK sub-part (10)");
+  assert.match(html, /aria-label="ลำดับ 8 · PT · ฉีดพลาสติก · PT-00320/);
   // มุมมองตารางต้นทุน: สินค้าอยู่บน ราคาตั้งได้เฉพาะชิ้นที่ไม่มี BOM
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=table");
   clean(html);
-  assert.match(html, /PK-ASM 1\.5′/);
+  assert.match(html, /PK-01 1\.5′/);
   assert.match(html, /data-rf-open="itemCost" data-rf-args="\{&quot;code&quot;:&quot;XP-00001&quot;\}"/);
   assert.doesNotMatch(html, /data-rf-open="itemCost" data-rf-args="\{&quot;code&quot;:&quot;PT-00320&quot;\}"/, "parts with a BOM have no manual cost");
   await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "setItemCost", { unitCost: "0.4" }, { code: "XP-00001" });
-  await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "saveRouting", { "processCode[]": ["PK-QC", "", "PK-ASM"], "minutesPerPc[]": ["0.5", "9", "1"], "inputCode[]": ["P-BOX-01", "PT-00320", "P-STK-01"], "inputStep[]": ["PK-ASM", "PK-QC", ""] }, { itemCode: "DEMO-TP-01(P)-Y" });
+  await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "saveRouting", { "processCode[]": ["PK-02", "", "PK-01"], "minutesPerPc[]": ["0.5", "9", "1"], "inputCode[]": ["P-BOX-01", "PT-00320", "P-STK-01"], "inputStep[]": ["PK-01", "PK-02", ""] }, { itemCode: "DEMO-TP-01(P)-Y" });
   const routing = env.context.MNP_BOM_ACTIONS.helpers.routingOf(env.store.data(), "DEMO-TP-01(P)-Y");
-  assert.deepEqual(json(routing.steps.map((step) => [step.processCode, step.minutesPerPc, step.inputs])), [["PK-QC", 0.5, ["PT-00320"]], ["PK-ASM", 1, ["P-BOX-01"]]], "blank rows are skipped, the order is kept and inputs follow their step");
+  assert.deepEqual(json(routing.steps.map((step) => [step.processCode, step.minutesPerPc, step.inputs])), [["PK-02", 0.5, ["PT-00320"]], ["PK-01", 1, ["P-BOX-01"]]], "blank rows are skipped, the order is kept and inputs follow their step");
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
   assert.doesNotMatch(html, /ต้นทุนยังไม่ครบ/);
   // รูปชิ้นงาน: data URL ที่ผ่านการตรวจแสดงเป็น <img> ค่าอื่นถูกปฏิเสธ
@@ -759,8 +764,8 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   const dialog = D.routingEdit(c, { code: "DEMO-TP-01(P)-Y" });
   clean(dialog.html);
   assert.match(dialog.html, /ใช้อยู่ Rev\.2/);
-  assert.match(dialog.html, /<option value="PK-QC" selected>/);
-  assert.match(dialog.html, /name="inputCode\[\]" value="PT-00320"[\s\S]*?<option value="PK-QC" selected>PK-QC<\/option>/, "each BOM line shows the step it enters");
+  assert.match(dialog.html, /<option value="PK-02" selected>/);
+  assert.match(dialog.html, /name="inputCode\[\]" value="PT-00320"[\s\S]*?<option value="PK-02" selected>PK-02<\/option>/, "each BOM line shows the step it enters");
   // บรรทัดที่ขั้นตอนผลิตไม่ได้ระบุ แต่บรรทัด BOM มีขั้นที่: dialog บอกว่าใช้ตาม BOM · หน้าโครงสร้างใส่เลขขั้นทุกขั้น
   const live = env.store.data();
   const A = env.context.MNP_BOM_ACTIONS;
@@ -803,18 +808,22 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.ok(orders.length > 1, "every card carries its production order");
   assert.ok(orders.slice(0, -1).every((order) => order < orders.at(-1)), "the product card is made after every feed");
   assert.ok(new Set(orders).size > 2, "rods, the parts cut from them and the product get different orders");
-  // ขั้นตอนตามลำดับ (ตามผังงาน): ST สั่ง/เบิกวัตถุดิบก่อน → ลำดับ 1 … → PK ประกอบสินค้า → WH รับเข้าคลังเป็นแถวสุดท้าย
+  // ขั้นตอนตามลำดับ (ผังงานบริษัท): ฝ่ายขาย 1 → วางแผน 2 → ST สั่งวัตถุดิบ 3 → RB 4 → SR 5 → QC 6 → GR 7 → PT 8 → PK 10 → WH 11 แถวสุดท้าย
   const stepList = await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=steps");
-  assert.match(stepList, /<tbody><tr><td><span class="bom-flow-order" title="ก่อนเริ่มผลิต">เริ่ม<\/span><\/td><td class="nowrap">ST · คลังวัตถุดิบ<\/td><td>สั่ง\/เบิกวัตถุดิบ[\s\S]*?P-BOX-01[^<]*<\/span> <span class="small">[^<]+<\/span> <span class="muted nowrap">รวม /, "ST comes first with every bought item and its total");
-  const stepOrders = [...stepList.matchAll(/<tr><td><span class="bom-flow-order">ลำดับ (\d+)<\/span>/g)].map((match) => Number(match[1]));
-  assert.equal(stepOrders[0], 1);
+  assert.match(stepList, /<tbody><tr><td><span class="bom-flow-order"[^>]*>ลำดับ 1<\/span><\/td><td class="nowrap">ฝ่ายขาย<\/td><td>ออกใบสั่งผลิตให้แผนกวางแผน<\/td><td><\/td><td><\/td><\/tr><tr><td><span class="bom-flow-order"[^>]*>ลำดับ 2<\/span><\/td><td class="nowrap">ฝ่ายวางแผน<\/td><td>ออก BOM และใบสั่งงานให้ฝ่ายผลิต<div class="small muted">สำรวจยางคงคลังก่อนสั่งผลิต<\/div><\/td>/, "sales and planning open the list");
+  assert.match(stepList, /ลำดับ 3<\/span><\/td><td class="nowrap">ST · คลังวัตถุดิบ<\/td><td>สั่งวัตถุดิบที่เกี่ยวข้องกับการผลิต<\/td><td><\/td><td><ul class="bom-step-inputs">[\s\S]*?P-BOX-01[^<]*<\/span> <span class="small">[^<]+<\/span> <span class="muted nowrap">รวม /, "ST comes third with every bought item and its total");
+  const stepOrders = [...stepList.matchAll(/<tr><td><span class="bom-flow-order"[^>]*>ลำดับ (\d+)<\/span>/g)].map((match) => Number(match[1]));
+  assert.deepEqual([stepOrders[0], stepOrders.at(-1)], [1, 11]);
   assert.deepEqual(stepOrders, [...stepOrders].sort((a, b) => a - b), "rows run from the first order");
-  assert.match(stepList, /<td class="nowrap">SR · รับเข้าคลัง\/QC<\/td><td><span class="rf-mono">RB-DM01-01-OR01-200-0-72<\/span><div class="small">รับเข้าคลัง · QC ตรวจขนาดขณะรับเข้า/, "each rubber rod is received and checked");
-  const lastRows = stepList.split("<tr><td><span class=\"bom-flow-order\">").slice(-2);
-  assert.match(lastRows[0], /^ลำดับ (\d+)<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span>/, "PK assembles the product just before the warehouse");
-  assert.match(lastRows[1], /^ลำดับ (\d+)<\/span><\/td><td class="nowrap">WH · คลังสินค้าสำเร็จรูป<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span><div class="small">รับสินค้าจาก PK เข้าคลัง/, "the warehouse is the last row");
+  assert.ok(stepOrders.includes(8) && stepOrders.indexOf(8) > stepOrders.lastIndexOf(7), "the plastic part (PT, 8) comes after every rubber part (GR, 7) as in the company flow");
+  assert.match(stepList, /<td class="nowrap">SR · คลังยางเส้นยาว<\/td><td><span class="rf-mono">RB-DM01-01-OR01-200-0-72<\/span><div class="small">รับยางเส้นยาวเข้าคลัง<\/div><\/td><td class="num nowrap">[^<]+<\/td><td><span class="bom-flow-order is-quiet">จากลำดับ 4<\/span>/, "each rubber rod is received");
+  assert.match(stepList, /<td class="nowrap">QC · ตรวจขนาดยาง<\/td><td><span class="rf-mono">RB-DM01-01-OR01-200-0-72<\/span><div class="small">ตรวจเช็คขนาดยางขณะรับเข้าคลัง<\/div><\/td><td class="num nowrap">[^<]+<\/td><td><span class="bom-flow-order is-quiet">จากลำดับ 5<\/span>/, "and checked by QC");
+  const lastRows = stepList.split("<tr><td><span class=\"bom-flow-order\"").slice(-3);
+  assert.match(lastRows[0], /^[^>]*>ลำดับ 10<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span>/, "PK assembles the product (and its own sub-part XP-00001, also order 10) just before the warehouse");
+  assert.match(lastRows[1], /^[^>]*>ลำดับ 10<\/span><\/td><td class="nowrap">PK · บรรจุ\/ประกอบ<\/td><td><span class="rf-mono">XP-00001<\/span>/);
+  assert.match(lastRows[2], /^[^>]*>ลำดับ 11<\/span><\/td><td class="nowrap">WH · คลังสินค้าสำเร็จรูป<\/td><td><span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span><div class="small">รับสินค้าจาก PK เข้าคลัง<\/div><\/td><td class="num nowrap">[^<]+<\/td><td><span class="bom-flow-order is-quiet">จากลำดับ 10<\/span>/, "the warehouse is the last row");
   assert.match(stepList, /คอมปาวด์ <span class="rf-mono">DM01<\/span>/, "a rubber rod row names its compound");
-  assert.match(stepList, /<span class="bom-flow-order is-quiet">จากลำดับ 1<\/span>/, "a part made earlier names its order");
+  assert.match(stepList, /SE-TP01-OR01-100-18-65[\s\S]*?RB-DM01-02-OR01-202-18-70<\/span> <span class="muted nowrap">× [^<]+<\/span> <span class="bom-flow-order is-quiet">จากลำดับ 6<\/span>/, "a rubber part uses the rod once QC has passed it");
   assert.match(stepList, /aria-current="page">ขั้นตอนตามลำดับ/);
   assert.match(numberedFlow, /is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"[^>]*>(?:<img[^>]*>|<span[^>]*>[^<]*<\/span>)<div class="bom-flow-item-body"><div class="bom-flow-tags"><span class="bom-flow-order"[^>]*>ลำดับ \d+<\/span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">PK · บรรจุ\/ประกอบ<\/span>/, "the card names its responsible department");
   env.store.setUser("B03");
@@ -844,7 +853,7 @@ test("kinds are chosen by category (สินค้า / WIP / วัตถุ�
   clean(html);
   assert.match(html, /<h3>สูตรยาง <span class="muted">ผสมโดย RB ตามสูตรใน RubberFlow<\/span>/);
   assert.match(html, /DM01[\s\S]*?RC-EPDM-DS01[\s\S]*?ผูกแล้ว[\s\S]*?<strong>11\.85<\/strong>/, "7.74 rods × 1.53 kg");
-  assert.deepEqual([...html.matchAll(/<h3>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]), ["RB", "GR", "PT", "ST", "PK"], "the department cards are unchanged");
+  assert.deepEqual([...html.matchAll(/<h3>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]), ["ST", "RB", "GR", "PT", "PK"], "the department cards are unchanged");
   html = await env.render("p=structure&code=RB-DM01-02-OR01-202-18-70");
   clean(html);
   assert.equal((html.match(/คอมปาวด์ <span class="rf-mono">DM01<\/span>/g) ?? []).length, 0, "the compound field is not repeated when the BOM has the compound line");
