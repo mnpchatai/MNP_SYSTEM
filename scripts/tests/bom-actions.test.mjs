@@ -839,3 +839,32 @@ test("order items can be edited in a draft and in a released order whose jobs ha
   // ใบตัวอย่างที่มีงานเริ่มแล้ว
   rejects(() => A.removeOrderItem(d, { orderId: "DEMO-26001", fgCode: "DEMO-TP-01(P)-Y" }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
 });
+
+test("a job started or held without output, or linked to RubberFlow, locks the order items; stock counts survive a reopen", () => {
+  const d = fresh();
+  const open = (pi) => {
+    const id = A.createOrder(d, { pi, customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+    A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner"));
+    return d.orders.find((entry) => entry.id === id);
+  };
+  const rbJob = (order) => d.jobs.find((job) => job.orderId === order.id && job.dept === "RB");
+  for (const status of ["in_progress", "hold"]) {
+    const order = open(`T-${status}`);
+    A.releaseOrder(d, { orderId: order.id }, ctx("planner"));
+    A.setJobStatus(d, { jobId: rbJob(order).id, status }, ctx("rb"));
+    rejects(() => A.updateOrderItem(d, { orderId: order.id, fgCode: "DEMO-TP-01(P)-Y", qty: 5 }, ctx("planner")), /มีงานที่เริ่มแล้ว \(RB /);
+    rejects(() => A.updateOrderItem(d, { orderId: order.id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner")), /มีงานที่เริ่มแล้ว/, "a locked order explains the lock before a same-value check");
+  }
+  const linked = open("T-LINK");
+  A.releaseOrder(d, { orderId: linked.id }, ctx("planner"));
+  A.linkJobToRubberFlow(d, { jobId: rbJob(linked).id, woId: "WO-1", kg: 3 }, ctx("rb"));
+  A.setJobStatus(d, { jobId: rbJob(linked).id, status: "queued" }, ctx("rb"));
+  rejects(() => A.removeOrderItem(d, { orderId: linked.id, fgCode: "DEMO-TP-01(P)-Y" }, ctx("planner")), /มีงานที่เริ่มแล้ว/, "a RubberFlow work order locks the order even when the job is queued again");
+  // ยอดคงคลังที่นับไว้คงอยู่หลังเปิดใบกลับมาแก้ ส่วนเวลาระเบิดล้าง
+  const counted = open("T-COUNT");
+  A.explodeOrder(d, { orderId: counted.id }, ctx("planner"));
+  A.setStockCount(d, { orderId: counted.id, itemCode: "P-BOX-01", qty: 2 }, ctx("st"));
+  A.releaseOrder(d, { orderId: counted.id }, ctx("planner"));
+  A.updateOrderItem(d, { orderId: counted.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, ctx("planner"));
+  assert.deepEqual([counted.status, counted.explodedAt, counted.explosion, counted.stockCounts["P-BOX-01"]], ["draft", null, null, 2]);
+});

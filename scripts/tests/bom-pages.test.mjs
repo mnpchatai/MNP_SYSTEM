@@ -877,6 +877,7 @@ test("order items show edit and delete buttons in a draft and in a released orde
   assert.match(edit.html, /data-rf-form="updateOrderItem"/);
   assert.match(edit.html, /name="qty"[^>]*value="192"/);
   assert.doesNotMatch(edit.html, /กลับเป็นร่าง/);
+  assert.match(edit.html, /name="note"[^>]*maxlength="120"/);
   assert.equal(D.orderItemEdit(c, { orderId: "DEMO-26002", fgCode: "NOPE" }), null);
   // ใบที่ปล่อยผลิตแล้ว ยังไม่มีงานเริ่ม: ปุ่มยังอยู่ และเตือนว่าใบจะกลับเป็นร่าง
   assert.equal(env.store.run("releaseOrder", { orderId: "DEMO-26002" }).ok, true);
@@ -887,6 +888,10 @@ test("order items show edit and delete buttons in a draft and in a released orde
   c = env.ctx("p=orders&sel=DEMO-26002");
   assert.match(D.orderItemEdit(c, { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A" }).html, /กลับเป็นร่าง/);
   assert.match(D.orderItemAdd(c, { orderId: "DEMO-26002" }).html, /กลับเป็นร่าง/);
+  assert.equal(env.store.run("updateOrderItem", { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A", qty: 10 }).ok, true);
+  html = await env.render("p=orders&sel=DEMO-26002");
+  assert.match(html, /<dt>REV\.<\/dt><dd>1<\/dd>/, "the bumped order revision is shown in the header");
+  assert.doesNotMatch(html, /ระเบิด BOM ล่าสุด/, "a reopened order no longer claims an explosion");
   // ใบตัวอย่างที่มีงานเริ่มแล้ว: ไม่มีปุ่มแก้
   html = await env.render("p=orders&sel=DEMO-26001");
   assert.doesNotMatch(html, /data-rf-open="orderItemEdit"|data-rf-action="removeOrderItem"|data-rf-open="orderItemAdd"/);

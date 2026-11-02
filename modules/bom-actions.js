@@ -435,8 +435,8 @@
   }
 
   const editable = (order) => { if (order.status !== "draft") fail("แก้รายการได้เฉพาะใบที่ยังเป็นร่าง (ยังไม่ปล่อยผลิต)"); };
-  // งานของใบที่เริ่มแล้ว (รายงานผลผลิต/ของเสีย หรือสร้าง WO ใน RubberFlow) ทำให้แก้รายการสินค้าไม่ได้ เพราะงานรายแผนกคำนวณจากรายการตอนปล่อยผลิต
-  const startedJobs = (d, order) => d.jobs.filter((job) => job.orderId === order.id && (job.qtyDone > 0 || job.qtyReject > 0 || job.reports?.length || job.externalRef));
+  // งานของใบที่เริ่มแล้ว (แผนกกดเริ่ม/พักงาน รายงานผลผลิต/ของเสีย หรือสร้าง WO ใน RubberFlow) ทำให้แก้รายการสินค้าไม่ได้ เพราะงานรายแผนกคำนวณจากรายการตอนปล่อยผลิต
+  const startedJobs = (d, order) => d.jobs.filter((job) => job.orderId === order.id && (job.status !== "queued" || job.qtyDone > 0 || job.qtyReject > 0 || job.reports?.length || job.externalRef));
   // แก้รายการสินค้า: ใบร่างแก้ได้เลย · ใบที่ปล่อยผลิตแล้วแต่ยังไม่มีงานเริ่ม กลับเป็นร่าง (ลบงานรายแผนก REV. +1) แล้วต้องระเบิด/ปล่อยผลิตใหม่
   function editableItems(d, order, ctx) {
     if (order.status === "draft") return;
@@ -449,6 +449,7 @@
     order.revision = (order.revision ?? 0) + 1;
     delete order.releasedAt;
     delete order.releasedBy;
+    order.explodedAt = null; // ยอดคงคลังที่นับไว้คงอยู่ (ของในคลังไม่เปลี่ยนเพราะแก้ใบ) และถูกหักอีกครั้งตอนปล่อยผลิตใหม่
     audit(d, ctx, "เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้", `${order.id} REV.${order.revision} ลบงานรายแผนก ${removed} รายการ`);
   }
 
@@ -704,8 +705,8 @@
     const line = order.items.find((item) => item.fgCode === code) ?? fail("ไม่พบสินค้านี้ในใบ");
     const qty = num(p.qty, "จำนวนสั่ง");
     const note = p.note === undefined ? line.note ?? "" : String(p.note).trim().slice(0, 120);
+    editableItems(d, order, ctx); // ใบที่ล็อกบอกเหตุผลก่อน · ถ้าค่าเท่าเดิม fail ด้านล่างและ store ทิ้งร่างทั้งชุด
     if (qty === line.qty && note === (line.note ?? "")) fail("จำนวนและหมายเหตุเท่าเดิม");
-    editableItems(d, order, ctx);
     const before = line.qty;
     line.qty = qty;
     line.note = note;

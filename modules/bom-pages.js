@@ -1469,6 +1469,7 @@
         order.explodedAt ? ["ระเบิด BOM ล่าสุด", esc(`${rules.fmtDateTime(order.explodedAt)} · ${order.explosion?.length ?? 0} บรรทัด${order.releasedAt ? ` · ล็อก revision เมื่อปล่อยผลิต ${rules.fmtDateTime(order.releasedAt)} โดย ${order.releasedBy}` : ""}`)] : null,
         order.stockCountedAt ? ["นับคงคลังล่าสุด", esc(`${rules.fmtDateTime(order.stockCountedAt)} โดย ${order.stockCountedBy}`)] : null,
         order.note ? ["หมายเหตุ", esc(order.note)] : null,
+        order.revision ? ["REV.", esc(String(order.revision))] : null,
         order.cancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
       ]);
       // แก้รายการสินค้าได้ในใบร่าง และใบที่ปล่อยผลิตแล้วแต่ยังไม่มีงานเริ่ม (แก้แล้วใบกลับเป็นร่าง ต้องปล่อยผลิตใหม่)
@@ -1663,9 +1664,8 @@
       <p class="small muted">${esc(itemOf(ctx, fgCode)?.name ?? "")}</p>
       <div class="rf-grid rf-g2">
         ${ui.field(`จำนวนสั่ง (${uomText(ctx, itemOf(ctx, fgCode)?.uom ?? "pcs")}) *`, ui.input("qty", { type: "number", step: "any", min: 1, required: true, value: line.qty }))}
-        ${ui.field("หมายเหตุ", ui.input("note", { value: line.note ?? "" }))}
+        ${ui.field("หมายเหตุ", ui.input("note", { value: line.note ?? "", extra: 'maxlength="120"' }))}
       </div>
-      <p class="small muted">เปลี่ยนตัวสินค้า: ลบแถวนี้แล้วกด “เพิ่มสินค้า”</p>
     </form>`;
     return { html: ui.dialog("orderItemEdit", `แก้จำนวน ${fgCode}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-item-edit-form">บันทึก</button>` }) };
   };
