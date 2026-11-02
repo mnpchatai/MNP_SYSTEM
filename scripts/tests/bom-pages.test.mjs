@@ -250,8 +250,21 @@ test("dialogs render for their arguments and escape user text", async () => {
   // กำหนด RB ของใบสาธิต = วันนี้ + 2 วัน (bom-seed.js) คำนวณจากวันที่รัน ไม่ใช่ค่าตายตัว ไม่งั้น test พังเมื่อข้ามวัน
   const rbDue = new Date(Date.now() + 2 * 86400000).setHours(0, 0, 0, 0);
   assert.match(wip, new RegExp(`RB ${c.rules.fmtDate(rbDue).replace(/\./g, "\\.")}`), "department due date per row");
+  // เพิ่มชิ้นงานเดี่ยว: แผนกเจ้าของตั้งต้นตามชนิด และเปลี่ยนตามเมื่อเปลี่ยนชนิด (เดิมค้างเป็น ST ทุกชนิด)
+  const itemNew = D.itemEdit(c, {});
+  assert.match(itemNew.html, /name="ownerDept"[\s\S]*?<option value="ST" selected/, "a new item defaults to PURCHASED → ST");
+  assert.match(D.itemEdit(c, { code: "RB-DM01-02-OR01-202-18-70" }).html, /name="ownerDept"[\s\S]*?<option value="RB" selected/, "an existing rod shows its own department");
+  const kindSelect = { value: "SE", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  const deptSelect = { value: "ST" };
+  itemNew.bind({ querySelector: (selector) => ({ 'select[name="kind"]': kindSelect, 'select[name="ownerDept"]': deptSelect })[selector] ?? null });
+  kindSelect.handlers.change();
+  assert.equal(deptSelect.value, "GR", "choosing SE moves the owner department to GR");
+  kindSelect.value = "RB";
+  kindSelect.handlers.change();
+  assert.equal(deptSelect.value, "RB");
   const orderNewBuilt = D.orderNew(c, {});
   const orderNew = orderNewBuilt.html;
+  assert.match(orderNew, /name="orderType"[\s\S]*?<option value="SA" selected/, "the order type is an explicit choice, defaulting to domestic");
   assert.match(orderNew, /name="autoDue"[^>]*checked/);
   assert.match(orderNew, /ว่าง = ออกเลขอัตโนมัติ/);
   assert.doesNotMatch(orderNew, /name="pi"[^>]*required/, "the PI number is optional now");
@@ -262,8 +275,22 @@ test("dialogs render for their arguments and escape user text", async () => {
   const auto = mk({ checked: true });
   const previews = c.rules.DUE_DEPTS.map((dept) => mk({ dataset: { bomDuePreview: dept } }));
   const dueInputs = c.rules.DUE_DEPTS.map((dept) => mk({ dataset: { bomDue: dept } }));
-  const dialogNode = { querySelector: (selector) => ({ "[data-bom-whdue]": whInput, 'input[name="orderedAt"]': orderedInput, "[data-bom-autodue]": auto })[selector] ?? null, querySelectorAll: (selector) => (selector === "[data-bom-due-preview]" ? previews : selector === "[data-bom-due]" ? dueInputs : []) };
+  const countryInput = mk({ value: "Thailand" });
+  const typeSelect = mk({ value: "SA" });
+  const dialogNode = { querySelector: (selector) => ({ "[data-bom-whdue]": whInput, 'input[name="orderedAt"]': orderedInput, "[data-bom-autodue]": auto, "[data-bom-country]": countryInput, "[data-bom-ordertype]": typeSelect })[selector] ?? null, querySelectorAll: (selector) => (selector === "[data-bom-due-preview]" ? previews : selector === "[data-bom-due]" ? dueInputs : []) };
   orderNewBuilt.bind(dialogNode);
+  // ประเภทออร์เดอร์เดาจากประเทศจนกว่าผู้ใช้จะเลือกเอง
+  countryInput.value = "Belgium";
+  countryInput.handlers.input();
+  assert.equal(typeSelect.value, "EX", "typing a foreign country flips the guess to export");
+  countryInput.value = "Thailand";
+  countryInput.handlers.input();
+  assert.equal(typeSelect.value, "SA");
+  typeSelect.value = "EX";
+  typeSelect.handlers.change();
+  countryInput.value = "ไทย";
+  countryInput.handlers.input();
+  assert.equal(typeSelect.value, "EX", "a type chosen by hand is not overwritten by the country guess");
   whInput.handlers.change();
   assert.equal(previews.find((node) => node.dataset.bomDuePreview === "PK").textContent, "ว่าง = 14 ธ.ค. 69");
   assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 4 ธ.ค. 69");

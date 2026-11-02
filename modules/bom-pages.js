@@ -1150,7 +1150,7 @@
       </div>
       ${ui.field("ชื่อชิ้นงาน *", ui.input("name", { value: item?.name ?? "", required: true }))}
       <div class="rf-grid rf-g3">
-        ${ui.field("แผนกเจ้าของ (ใช้แยกงาน)", ui.select("ownerDept", deptOptions, { value: item?.ownerDept ?? "ST" }))}
+        ${ui.field("แผนกเจ้าของ (ใช้แยกงาน)", ui.select("ownerDept", deptOptions, { value: item?.ownerDept ?? rules.ownerDeptOf(kind) }), { hint: "เปลี่ยนชนิดแล้วแผนกตามชนิดให้ แก้ทับได้" })}
         ${ui.field("หน่วยนับ *", ui.select("uom", UOM_OPTIONS(ctx), { value: item?.uom ?? "pcs" }))}
         ${ui.field("น้ำหนัก (กรัม/หน่วย)", ui.input("weightG", { type: "number", step: "any", min: 0, value: item?.weightG ?? "" }))}
       </div>
@@ -1169,7 +1169,14 @@
         </div>
       </fieldset>
     </form>`;
-    return { html: ui.dialog("itemEdit", item ? `แก้ข้อมูล ${item.code}` : "เพิ่มชิ้นงานเดี่ยว", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-item-form">บันทึก</button>` }) };
+    // เปลี่ยนชนิด → แผนกเจ้าของตามชนิดนั้น (เดิมค้างเป็นค่าแรก ทำให้ SE/RB ที่เพิ่มทางนี้กลายเป็นงานของแผนกผิดตอนปล่อยผลิต)
+    const bind = (dialog) => {
+      const kindSelect = dialog.querySelector('select[name="kind"]');
+      const deptSelect = dialog.querySelector('select[name="ownerDept"]');
+      if (!kindSelect || !deptSelect) return;
+      kindSelect.addEventListener("change", () => { deptSelect.value = rules.ownerDeptOf(kindSelect.value); });
+    };
+    return { html: ui.dialog("itemEdit", item ? `แก้ข้อมูล ${item.code}` : "เพิ่มชิ้นงานเดี่ยว", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-item-form">บันทึก</button>` }), bind };
   };
 
   // ---------- สูตรยาง ↔ RubberFlow ----------
@@ -1456,7 +1463,8 @@
       <div class="rf-grid rf-g2">
         ${ui.field("เลขที่ PI", ui.input("pi", { placeholder: `ว่าง = ออกเลขอัตโนมัติ เช่น ${rules.piNumber(ctx.now, 1)}` }))}
         ${ui.field("ชื่อลูกค้า *", ui.input("customer", { required: true }))}
-        ${ui.field("ประเทศ *", ui.input("country", { required: true, value: "Thailand" }), { hint: "Thailand = ในประเทศ (SA) อื่น = ต่างประเทศ (EX)" })}
+        ${ui.field("ประเทศ *", ui.input("country", { required: true, value: "Thailand", extra: "data-bom-country" }))}
+        ${ui.field("ประเภทออร์เดอร์ *", ui.select("orderType", [{ value: "SA", label: "ในประเทศ (SA)" }, { value: "EX", label: "ต่างประเทศ (EX)" }], { value: "SA", extra: "data-bom-ordertype" }), { hint: "เดาจากประเทศให้ (Thailand = ในประเทศ) แก้ทับได้" })}
         ${ui.field("วันที่สั่งผลิต *", ui.input("orderedAt", { type: "date", required: true, value: today }))}
         ${ui.field("วันส่งมอบคลัง (WH) *", ui.input("whDue", { type: "date", required: true, extra: "data-bom-whdue" }))}
       </div>
@@ -1484,6 +1492,12 @@
       ordered?.addEventListener("change", preview);
       auto?.addEventListener("change", preview);
       dialog.querySelectorAll("[data-bom-due]").forEach((input) => input.addEventListener("input", preview));
+      // ประเภทออร์เดอร์เดาจากประเทศจนกว่าผู้ใช้จะเลือกเอง (เดิมสะกดประเทศต่างจาก Thailand = ต่างประเทศเงียบ ๆ)
+      const countryInput = dialog.querySelector("[data-bom-country]");
+      const typeSelect = dialog.querySelector("[data-bom-ordertype]");
+      let typeChosen = false;
+      typeSelect?.addEventListener("change", () => { typeChosen = true; });
+      countryInput?.addEventListener("input", () => { if (typeSelect && !typeChosen) typeSelect.value = rules.orderTypeOf(countryInput.value); });
     };
     return { html: ui.dialog("orderNew", "เปิดใบสั่งผลิตใหม่", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-form">เปิดใบ</button>` }), bind };
   };

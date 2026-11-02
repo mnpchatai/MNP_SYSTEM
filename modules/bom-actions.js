@@ -378,8 +378,11 @@
       due[dept] = ms;
     }
     const country = text(p.country, "ประเทศ", 60);
+    // ประเภทออร์เดอร์: ที่เลือกมาใช้ตามนั้น (SA/EX) ไม่ส่งมา = เดาจากประเทศเหมือนเดิม
+    const typeRaw = String(p.orderType ?? "").trim().toUpperCase();
+    const orderType = typeRaw === "" ? R.orderTypeOf(country) : ["SA", "EX"].includes(typeRaw) ? typeRaw : fail("ประเภทออร์เดอร์ไม่ถูกต้อง (SA หรือ EX)");
     d.orders.unshift({
-      id, customer: text(p.customer, "ชื่อลูกค้า", 120), country, orderType: R.orderTypeOf(country), orderedAt, whDue, due, dueDefaults: p.autoDue ? R.DUE_DEPTS.filter((dept) => !p.due?.[dept] && due[dept] !== undefined) : [], revision: 0,
+      id, customer: text(p.customer, "ชื่อลูกค้า", 120), country, orderType, orderedAt, whDue, due, dueDefaults: p.autoDue ? R.DUE_DEPTS.filter((dept) => !p.due?.[dept] && due[dept] !== undefined) : [], revision: 0,
       status: "draft", items: [], explosion: null, explodedAt: null, stockCounts: {}, note: String(p.note ?? "").trim().slice(0, 300), createdBy: user.name, createdAt: ctx.now,
     });
     audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${p.customer}${p.pi ? "" : " (ออกเลขอัตโนมัติ)"}`);

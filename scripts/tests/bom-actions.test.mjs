@@ -201,6 +201,12 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(id, "X-1");
   const order = d.orders.find((entry) => entry.id === id);
   assert.equal(order.orderType, "SA");
+  // ประเภทออร์เดอร์: เลือกมาใช้ตามนั้น ไม่ส่ง = เดาจากประเทศ ค่าอื่นปฏิเสธ (เดิมสะกดประเทศต่างจาก Thailand กลายเป็น EX เงียบ ๆ)
+  const typed = A.createOrder(d, { pi: "T-EX", customer: "ข", country: "Thailand", orderType: "ex", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+  assert.equal(d.orders.find((entry) => entry.id === typed).orderType, "EX", "an explicit order type wins over the country guess");
+  const guessed = A.createOrder(d, { pi: "T-GUESS", customer: "ข", country: "ประเทศไทย", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+  assert.equal(d.orders.find((entry) => entry.id === guessed).orderType, "EX", "without a type the country guess still applies");
+  rejects(() => A.createOrder(d, { pi: "T-BAD", customer: "ข", country: "Thailand", orderType: "XX", orderedAt: day(0), whDue: day(10) }, ctx("planner")), /ประเภทออร์เดอร์ไม่ถูกต้อง/);
   rejects(() => A.explodeOrder(d, { orderId: id }, ctx("planner")), /ยังไม่มีสินค้า/);
   rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "DEMO-BL-60(K)-Z", qty: 10 }, ctx("planner")), /ยังไม่มี BOM/);
   rejects(() => A.addOrderItem(d, { orderId: id, fgCode: "SE-TP01-OR01-100-18-65", qty: 10 }, ctx("planner")), /สินค้าสำเร็จรูป/);
