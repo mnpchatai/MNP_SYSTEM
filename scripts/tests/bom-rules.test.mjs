@@ -261,7 +261,8 @@ test("net requirements apply the BOMSHEET column AK rule level by level: SE stoc
   assert.deepEqual(rules.FLOW_DEPTS, ["ST", "RB", "SR", "QC", "GR", "PT", "BG", "PK", "WH"]);
   assert.equal(rules.flowStepOf("GR"), 7);
   assert.equal(rules.flowStepOf("??"), 10, "an unknown department counts as assembly");
-  assert.ok(rules.DEFAULT_PROCESSES.filter((entry) => entry.dept === "GR").map((entry) => entry.name).join(" → ") === "ตัดยาง → ทากาว → เจียร์แปรรูป → คัดแยก", "GR has the four steps of the company flow");
+  assert.ok(rules.DEFAULT_PROCESSES.filter((entry) => entry.dept === "GR").map((entry) => entry.name).join(" → ") === "รีด → ปั๊ม → เปเปอร์ → ตัดยาง → ทากาว → เจียร์ → เจียร์(หยาบ) → เจียร์(ละเอียด) → เจาะ", "GR follows the STEP_ORDER of the Grinding-GR app");
+  assert.deepEqual(rules.DEFAULT_PROCESSES.filter((entry) => entry.dept === "GR").map((entry) => entry.code), ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-06", "GR-07", "GR-08", "GR-09"]);
   assert.ok(rules.DEFAULT_PROCESSES.filter((entry) => entry.dept === "RB").length === 13);
   // บรรทัด BOM เรียงตามแผนกผู้ผลิตของลูก (item master ก่อน producerDept ของบรรทัด ไม่รู้จัก = ST) ลำดับเท่ากันคงเดิม
   const owners = { A: { ownerDept: "PT" }, B: { ownerDept: "GR" }, C: { ownerDept: "ST" }, D: { ownerDept: "GR" } };

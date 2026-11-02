@@ -9,7 +9,12 @@
   // v3 = สี ชุดสี และแพ็กเกจเป็นข้อมูล (colors / colorSets / packages)
   // v4 = โครงสร้างสินค้า (จำลอง): ขั้นตอนผลิตมาตรฐาน (processes) และขั้นตอนผลิตต่อชิ้นงาน (routings)
   // v5 = บรรทัด BOM ทุก revision เรียงตามผังงานบริษัท (rules.sortLinesByFlow) ข้อมูลที่นำเข้าจาก Excel ก่อนหน้านี้จึงไม่ค้างลำดับของชีต
-  const STATE_VERSION = 5;
+  // v6 = ขั้นตอน GR ตาม Grinding-GR 9 ขั้น: รหัส GR เดิม (GR-01..04, GR-CUT ฯลฯ) ย้ายเลขใน processes และ routings
+  const STATE_VERSION = 6;
+  // รหัส GR เดิม → รุ่น 6 (ทั้งชุด #268 GR-01..04 และชุดก่อนนั้น GR-CUT ฯลฯ ที่ยังค้างในเบราว์เซอร์)
+  // คัดแยกไม่อยู่ในลำดับของ Grinding-GR จึงเป็นขั้นของผู้ใช้ GR-10 ต่อท้ายเจาะ
+  const GR_V6_CODES = Object.freeze({ "GR-01": "GR-04", "GR-02": "GR-05", "GR-03": "GR-06", "GR-04": "GR-10", "GR-CUT": "GR-04", "GR-GLUE": "GR-05", "GR-GRIND": "GR-06", "GR-DRL": "GR-09", "GR-SORT": "GR-10" });
+  const GR_V5_NAMES = Object.freeze({ "GR-01": "ตัดยาง", "GR-02": "ทากาว", "GR-03": "เจียร์แปรรูป", "GR-CUT": "ตัดชิ้นยาง", "GR-GLUE": "ทากาว", "GR-GRIND": "เจียร", "GR-DRL": "เจาะรู" });
 
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม BOM", group: "ภาพรวม" },
@@ -53,6 +58,8 @@
   function migrate(value) {
     if (!hasShape(value, BASE_LISTS)) return null;
     if (value.version === STATE_VERSION && hasShape(value)) return value;
+    // processes ที่เพิ่งเติมจากค่าเริ่มต้นปัจจุบันตอนอัปเกรดรุ่น 3 → 4 ใช้รหัสรุ่นล่าสุดอยู่แล้ว ไม่ต้องย้ายรหัสตอนรุ่น 5 → 6
+    let currentProcesses = false;
     if (value.version === 1) {
       // รุ่นเก่ามีร่าง/รออนุมัติ ซึ่งรุ่นนี้ไม่มีคำสั่งจัดการแล้ว ตัดทิ้ง เหลือ BOM ที่ใช้งาน/ถูกแทน
       value.boms = value.boms.filter((bom) => bom.status === "approved" || bom.status === "superseded");
@@ -67,7 +74,10 @@
     }
     if (value.version === 3) {
       // รุ่น 4 เพิ่มขั้นตอนผลิตมาตรฐาน (ชุดเริ่มต้นจาก bom-rules.js) และขั้นตอนผลิตต่อชิ้นงาน (ว่างไว้)
-      if (!Array.isArray(value.processes)) value.processes = (root.MNP_BOM_RULES?.DEFAULT_PROCESSES ?? []).map((entry) => ({ ...entry }));
+      if (!Array.isArray(value.processes)) {
+        value.processes = (root.MNP_BOM_RULES?.DEFAULT_PROCESSES ?? []).map((entry) => ({ ...entry }));
+        currentProcesses = true;
+      }
       if (!Array.isArray(value.routings)) value.routings = [];
       value.version = 4;
       value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: "รุ่น 3 → 4: เพิ่มขั้นตอนผลิตและโครงสร้างสินค้า (จำลอง)" });
@@ -86,6 +96,42 @@
       }
       value.version = 5;
       value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: `รุ่น 4 → 5: เรียงบรรทัด BOM ตามผังงาน ST → RB → GR → PT → BG → PK (${changed} BOM เปลี่ยนลำดับ)` });
+    }
+    if (value.version === 5 && Array.isArray(value.processes) && Array.isArray(value.routings)) {
+      // รุ่น 6 ย้ายรหัสขั้นตอน GR เดิมไปเลขใหม่ (ทุก revision ของ routing) แล้ววางขั้นตอน GR ทั้งชุดเรียงตาม Grinding-GR ที่ตำแหน่งของ GR เดิม
+      // ชื่อเริ่มต้นเดิมเปลี่ยนเป็นชื่อเริ่มต้นใหม่ (เจียร์แปรรูป → เจียร์) ชื่อที่ผู้ใช้แก้เองคงไว้
+      const defaults = (root.MNP_BOM_RULES?.DEFAULT_PROCESSES ?? []).filter((entry) => entry.dept === "GR");
+      const processes = value.processes.map((process) => {
+        const code = GR_V6_CODES[process.code];
+        if (!code) return process;
+        const name = process.name === GR_V5_NAMES[process.code] ? defaults.find((entry) => entry.code === code)?.name ?? process.name : process.name;
+        return { ...process, code, name };
+      });
+      const first = currentProcesses ? -1 : value.processes.findIndex((process) => GR_V6_CODES[process.code]);
+      if (first !== -1) {
+        const stored = new Map(processes.map((process) => [process.code, process]));
+        const group = [...defaults.map((entry) => stored.get(entry.code) ?? { ...entry }), ...(stored.has("GR-10") ? [stored.get("GR-10")] : [])];
+        const codes = new Set(group.map((process) => process.code));
+        const rest = processes.filter((process) => !codes.has(process.code));
+        const at = processes.slice(0, first).filter((process) => !codes.has(process.code)).length;
+        value.processes = [...rest.slice(0, at), ...group, ...rest.slice(at)];
+      }
+      let moved = 0;
+      for (const routing of value.routings) {
+        for (const step of Array.isArray(routing.steps) ? routing.steps : []) {
+          const code = GR_V6_CODES[step.processCode];
+          if (code) { step.processCode = code; moved += 1; }
+        }
+      }
+      // คัดแยกที่ routing อ้างแต่ไม่เคยเก็บใน processes (เลือกจากค่าเริ่มต้นรุ่นก่อน) ไม่มีค่าเริ่มต้นให้แล้ว ต้องเก็บไว้ ไม่งั้นขั้นนั้นหายตอนแก้ routing
+      const usesSort = value.routings.some((routing) => (Array.isArray(routing.steps) ? routing.steps : []).some((step) => step.processCode === "GR-10"));
+      if (usesSort && !value.processes.some((process) => process.code === "GR-10")) {
+        const lastGr = value.processes.findLastIndex((process) => process.dept === "GR");
+        const sort = { code: "GR-10", name: "คัดแยก", dept: "GR" };
+        value.processes = lastGr === -1 ? [...value.processes, sort] : [...value.processes.slice(0, lastGr + 1), sort, ...value.processes.slice(lastGr + 1)];
+      }
+      value.version = 6;
+      value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: `รุ่น 5 → 6: ขั้นตอน GR ตาม Grinding-GR (รีด → ปั๊ม → เปเปอร์ → ตัดยาง → ทากาว → เจียร์ → เจาะ) · ตัดยาง GR-04 ทากาว GR-05 เจียร์ GR-06 คัดแยก GR-10 (${moved} ขั้นใน routing เปลี่ยนรหัส)` });
     }
     return value.version === STATE_VERSION && hasShape(value) ? value : null;
   }

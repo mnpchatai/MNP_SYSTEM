@@ -75,7 +75,7 @@
   ];
 
   function emptyState() {
-    return { version: 5, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [] };
+    return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [] };
   }
 
   function buildSeed(now = Date.now()) {
@@ -113,9 +113,9 @@
     const rbSteps = [["RB-01", 0.2], ["RB-02", 0.3], ["RB-03", 0.3], ["RB-04", 0], ["RB-05", 0.3], ["RB-06", 0.3], ["RB-07", 0], ["RB-08", 0.2], ["RB-09", 0.4], ["RB-10", 0.5], ["RB-11", 0.4], ["RB-12", 0.4], ["RB-13", 0.2]];
     [
       ...ITEMS.filter((item) => item.kind === "RB").map((item) => [item.code, rbSteps]),
-      // GR ตามผังงาน 4 ขั้น: ตัดยาง → ทากาว → เจียร์แปรรูป → คัดแยก (ชิ้นที่ไม่ต้องทากาว/เจียร์ข้ามขั้นนั้น)
-      ["SE-TP01-OR01-100-18-65", [["GR-01", 0.3], ["GR-02", 0.2], ["GR-03", 0.4], ["GR-04", 0.2]]], ["SE-TP01-BK01-140-3-20", [["GR-01", 0.15], ["GR-03", 0.2], ["GR-04", 0.1]]],
-      ["SE-TP01-OR01-75-3-30", [["GR-01", 0.1], ["GR-04", 0.05]]], ["SE-HL24-YE03-400-19-30", [["GR-01", 0.25], ["GR-02", 0.3], ["GR-03", 0.2], ["GR-04", 0.1]]],
+      // GR ตามลำดับของ Grinding-GR: ตัดยาง GR-04 → ทากาว GR-05 → เจียร์ GR-06 → เจาะ GR-09 (ชิ้นที่ไม่ต้องทากาว/เจียร์ข้ามขั้นนั้น)
+      ["SE-TP01-OR01-100-18-65", [["GR-04", 0.3], ["GR-05", 0.2], ["GR-06", 0.4], ["GR-09", 0.2]]], ["SE-TP01-BK01-140-3-20", [["GR-04", 0.15], ["GR-06", 0.2], ["GR-09", 0.1]]],
+      ["SE-TP01-OR01-75-3-30", [["GR-04", 0.1], ["GR-09", 0.05]]], ["SE-HL24-YE03-400-19-30", [["GR-04", 0.25], ["GR-05", 0.3], ["GR-06", 0.2], ["GR-09", 0.1]]],
       ["PT-00320", [["PT-01", 0.5]]], ["XP-00001", [["PT-02", 0.1]]], ["BG-0092", [["BG-01", 1, ["P-FAB-BL"]], ["BG-02", 4, ["P-ZIP-05", "P-ROPE-01"]]]],
       // วัตถุดิบเข้าที่ขั้นไหน (ลูกที่ไม่ระบุแสดงที่ขั้นแรก): ประกอบชิ้นยาง/แกน แล้วค่อยใส่สติ๊กเกอร์ ถุง ลัง ตอนบรรจุ
       ["DEMO-TP-01(P)-Y", [["PK-01", 1.5, ["XP-00001", "PT-00320", "SE-TP01-OR01-100-18-65", "SE-TP01-BK01-140-3-20", "SE-TP01-OR01-75-3-30"]], ["PK-03", 0.5, ["P-STK-01", "P-BAG-01", "P-BOX-01"]]]],
