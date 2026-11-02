@@ -59,6 +59,10 @@
     { no: 11, dept: "WH", title: "รับสินค้าจาก PK เข้าคลังสินค้าสำเร็จรูป" },
   ].map((entry) => Object.freeze(entry)));
   const flowStepOf = (dept) => PROCESS_FLOW.find((entry) => entry.dept === dept)?.no ?? 10;
+  // บรรทัด BOM เรียงตามลำดับแผนกผู้ผลิตของลูกในผังงาน (ของซื้อ ST 3 → เส้นยาง RB 4 → ชิ้นยาง GR 7 → พลาสติก PT 8 → กระเป๋า BG 9 → ชิ้นทำเอง PK 10)
+  // ลำดับเท่ากันคงลำดับเดิม · ใช้ทุกจุดที่บันทึก BOM และตอนอัปเกรดข้อมูลเก่า (bom-store v5) ให้หน้าสร้าง BOM อ่านจากบนลงล่างตามผังงาน
+  const lineDept = (line, itemOf) => { const item = itemOf?.(line.childCode); return item?.ownerDept ?? line.producerDept ?? KINDS[item?.kind]?.dept ?? "ST"; };
+  const sortLinesByFlow = (lines, itemOf) => lines.map((line, index) => ({ line, index, rank: flowStepOf(lineDept(line, itemOf)) })).sort((a, b) => a.rank - b.rank || a.index - b.index).map(({ line }) => line);
   // ลำดับการไหลของงานรายแผนก (ลำดับ 3 → 11 ของผังงาน) ใช้เรียงการ์ดในหน้า "สินค้า 1 ตัว → งานทุกแผนก" และตารางเวลาผลิต
   const FLOW_DEPTS = Object.freeze(PROCESS_FLOW.filter((entry) => entry.no >= 3).map((entry) => entry.dept));
 
@@ -825,7 +829,7 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, DEPTS, DEPT_LABEL, DUE_DEPTS, PROCESS_FLOW, flowStepOf, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
+    DAY, KINDS, MANUFACTURED, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, DEPTS, DEPT_LABEL, DUE_DEPTS, PROCESS_FLOW, flowStepOf, sortLinesByFlow, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,

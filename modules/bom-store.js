@@ -8,7 +8,8 @@
   // v1 = รุ่นที่มีขั้นอนุมัติ (PR #246) · v2 = จุดสร้างจุดเดียว ไม่มีอนุมัติ: ร่าง/รออนุมัติค้างถูกตัดทิ้งตอน migrate
   // v3 = สี ชุดสี และแพ็กเกจเป็นข้อมูล (colors / colorSets / packages)
   // v4 = โครงสร้างสินค้า (จำลอง): ขั้นตอนผลิตมาตรฐาน (processes) และขั้นตอนผลิตต่อชิ้นงาน (routings)
-  const STATE_VERSION = 4;
+  // v5 = บรรทัด BOM ทุก revision เรียงตามผังงานบริษัท (rules.sortLinesByFlow) ข้อมูลที่นำเข้าจาก Excel ก่อนหน้านี้จึงไม่ค้างลำดับของชีต
+  const STATE_VERSION = 5;
 
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม BOM", group: "ภาพรวม" },
@@ -70,6 +71,20 @@
       if (!Array.isArray(value.routings)) value.routings = [];
       value.version = 4;
       value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: "รุ่น 3 → 4: เพิ่มขั้นตอนผลิตและโครงสร้างสินค้า (จำลอง)" });
+    }
+    if (value.version === 4) {
+      // รุ่น 5 เรียงบรรทัด BOM ของทุกสินค้า/ชิ้นย่อย (ทุก revision) ตามผังงาน ST → RB → GR → PT → BG → PK · ไม่มีกฎ = คงเดิม
+      const sort = root.MNP_BOM_RULES?.sortLinesByFlow;
+      const itemOf = (code) => value.items.find((item) => item.code === code) ?? null;
+      let changed = 0;
+      for (const bom of value.boms) {
+        if (!sort || !Array.isArray(bom.lines)) continue;
+        const sorted = sort(bom.lines, itemOf);
+        if (sorted.some((line, index) => line !== bom.lines[index])) changed += 1;
+        bom.lines = sorted;
+      }
+      value.version = 5;
+      value.audit.unshift({ at: Date.now(), user: "ระบบ", action: "อัปเกรดข้อมูล", detail: `รุ่น 4 → 5: เรียงบรรทัด BOM ตามผังงาน ST → RB → GR → PT → BG → PK (${changed} BOM เปลี่ยนลำดับ)` });
     }
     return value.version === STATE_VERSION && hasShape(value) ? value : null;
   }

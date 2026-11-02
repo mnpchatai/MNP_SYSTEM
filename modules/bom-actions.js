@@ -140,6 +140,8 @@
   const QTY_EPS = 1e-6;
   // ลำดับบรรทัดนับเป็นการเปลี่ยนแปลงด้วย (ผู้ใช้ลากเรียงส่วนประกอบได้ ลำดับใช้แสดงในต้นไม้และใบงาน)
   const sameLine = (line, other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "") && (Number(other.step) || null) === (Number(line.step) || null);
+  // ทุกจุดที่เขียน BOM เรียงบรรทัดตามผังงาน (rules.sortLinesByFlow) ผู้ใช้จึงลากย้ายได้เฉพาะภายในแผนกเดียวกัน
+  const sortLines = (d, lines) => rules().sortLinesByFlow(lines, (code) => itemOf(d, code));
   const sameLines = (a, b) => a.length === b.length && a.every((line, index) => sameLine(line, b[index]));
   const sameLinesAnyOrder = (a, b) => a.length === b.length && a.every((line) => b.some((other) => sameLine(line, other)));
   function diffText(before, after) {
@@ -161,7 +163,7 @@
     const parent = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
     if (parent.kind === "PURCHASED") fail(`${parent.code} เป็นของซื้อ ไม่มีส่วนประกอบ`);
     if (parent.kind === "CP") fail(`${parent.code} เป็นสูตรยาง ไม่มีส่วนประกอบในระบบนี้ (สูตร PHR อยู่ที่ RubberFlow)`);
-    const lines = normalizeLines(d, parent, p.lines);
+    const lines = sortLines(d, normalizeLines(d, parent, p.lines));
     // เส้นยาง: บรรทัดเดียวคือสูตรยางของมัน และต้องตรงกับช่องสูตรของเส้นยาง (รหัส RB ก็มีรหัสสูตรอยู่ในตัว)
     if (parent.kind === "RB") {
       if (lines.length > 1) fail(`เส้นยาง ${parent.code} ใช้สูตรยางได้สูตรเดียว`);
@@ -234,7 +236,7 @@
           if (!seenPath.has(code)) { walk(code, node.children, [...path, code]); seenPath.add(code); } else {
             const current = approvedBomOf(d, code);
             const incoming = node.children.map((entry) => ({ childCode: R.canonicalCode(entry.code), qty: Number(entry.qty), scrapPct: Number(entry.scrapPct) || 0, note: String(entry.note ?? "").trim(), step: Number(entry.step) || null }));
-            if (!current || !sameLines(current.lines, incoming)) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
+            if (!current || !sameLines(current.lines, sortLines(d, incoming))) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
           }
         }
         lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note, step: node.step });
@@ -380,7 +382,7 @@
       if (approvedBomOf(d, parent.code)) { stats.bomsSkipped += 1; continue; }
       const lines = entry.lines.filter((line) => itemOf(d, line.childCode) && Number(line.qty) > 0).map((line) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: itemOf(d, line.childCode).uom, consumerDept: parent.ownerDept, producerDept: itemOf(d, line.childCode).ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
       if (!lines.length) continue;
-      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
+      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines: sortLines(d, lines),createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
       stats.bomsAdded += 1;
     }
     const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}`;
@@ -564,7 +566,7 @@
         if (child?.kind === "RB" && childColor && !recolor) log.push(`${line.childCode} ใต้ ${toCode} คงสี ${childColor} (ไม่ใช่สี ${fromColors.join("/") || "-"} ของ SE เดิม)`);
         return { ...line, flags: [...(line.flags ?? [])], childCode: recolor ? ensureRecoloredItem(d, line.childCode, color, ctx, user, log) : line.childCode };
       });
-      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
+      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines: sortLines(d, lines),createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
     }
     return toCode;
   }
@@ -617,7 +619,7 @@
       else merged.push(line);
     }
     d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`, ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
-    d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: merged, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
+    d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sortLines(d, merged),createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
     audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}${log.length > 1 ? ` · ${log.slice(1).join(" · ")}` : ""}`);
   }
   // สร้างรุ่นสินค้า (ฐาน + แพ็กเกจ + ชุดสี) โดยไม่ต้องผ่านใบสั่งผลิต — จุดเดียวกับที่ addOrderItem ใช้
