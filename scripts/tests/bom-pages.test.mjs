@@ -262,6 +262,9 @@ test("dialogs render for their arguments and escape user text", async () => {
   kindSelect.value = "RB";
   kindSelect.handlers.change();
   assert.equal(deptSelect.value, "RB");
+  const existingKind = { value: "PT", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  D.itemEdit(c, { code: "RB-DM01-02-OR01-202-18-70" }).bind({ querySelector: (selector) => ({ 'select[name="kind"]': existingKind })[selector] ?? null });
+  assert.equal(existingKind.handlers.change, undefined, "an existing item keeps its saved department when the kind changes");
   const orderNewBuilt = D.orderNew(c, {});
   const orderNew = orderNewBuilt.html;
   assert.match(orderNew, /name="orderType"[\s\S]*?<option value="SA" selected/, "the order type is an explicit choice, defaulting to domestic");

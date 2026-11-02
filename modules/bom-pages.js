@@ -1150,7 +1150,7 @@
       </div>
       ${ui.field("ชื่อชิ้นงาน *", ui.input("name", { value: item?.name ?? "", required: true }))}
       <div class="rf-grid rf-g3">
-        ${ui.field("แผนกเจ้าของ (ใช้แยกงาน)", ui.select("ownerDept", deptOptions, { value: item?.ownerDept ?? rules.ownerDeptOf(kind) }), { hint: "เปลี่ยนชนิดแล้วแผนกตามชนิดให้ แก้ทับได้" })}
+        ${ui.field("แผนกเจ้าของ (ใช้แยกงาน)", ui.select("ownerDept", deptOptions, { value: item?.ownerDept ?? rules.ownerDeptOf(kind), extra: item ? "" : 'title="ชิ้นใหม่: ตามชนิดที่เลือก แก้ทับได้"' }))}
         ${ui.field("หน่วยนับ *", ui.select("uom", UOM_OPTIONS(ctx), { value: item?.uom ?? "pcs" }))}
         ${ui.field("น้ำหนัก (กรัม/หน่วย)", ui.input("weightG", { type: "number", step: "any", min: 0, value: item?.weightG ?? "" }))}
       </div>
@@ -1169,8 +1169,10 @@
         </div>
       </fieldset>
     </form>`;
-    // เปลี่ยนชนิด → แผนกเจ้าของตามชนิดนั้น (เดิมค้างเป็นค่าแรก ทำให้ SE/RB ที่เพิ่มทางนี้กลายเป็นงานของแผนกผิดตอนปล่อยผลิต)
+    // ชิ้นใหม่: เปลี่ยนชนิด → แผนกเจ้าของตามชนิดนั้น (เดิมค้างเป็นค่าแรก ทำให้ SE/RB ที่เพิ่มทางนี้กลายเป็นงานของแผนกผิดตอนปล่อยผลิต)
+    // ชิ้นเดิมคงแผนกที่บันทึกไว้ (เช่น SUBPART ของแผนกอื่น) ให้ผู้ใช้แก้เอง
     const bind = (dialog) => {
+      if (item) return;
       const kindSelect = dialog.querySelector('select[name="kind"]');
       const deptSelect = dialog.querySelector('select[name="ownerDept"]');
       if (!kindSelect || !deptSelect) return;
@@ -1464,7 +1466,7 @@
         ${ui.field("เลขที่ PI", ui.input("pi", { placeholder: `ว่าง = ออกเลขอัตโนมัติ เช่น ${rules.piNumber(ctx.now, 1)}` }))}
         ${ui.field("ชื่อลูกค้า *", ui.input("customer", { required: true }))}
         ${ui.field("ประเทศ *", ui.input("country", { required: true, value: "Thailand", extra: "data-bom-country" }))}
-        ${ui.field("ประเภทออร์เดอร์ *", ui.select("orderType", [{ value: "SA", label: "ในประเทศ (SA)" }, { value: "EX", label: "ต่างประเทศ (EX)" }], { value: "SA", extra: "data-bom-ordertype" }), { hint: "เดาจากประเทศให้ (Thailand = ในประเทศ) แก้ทับได้" })}
+        ${ui.field("ประเภทออร์เดอร์ *", ui.select("orderType", [{ value: "SA", label: "ในประเทศ (SA)" }, { value: "EX", label: "ต่างประเทศ (EX)" }], { value: "SA", extra: 'data-bom-ordertype title="เดาจากประเทศให้ (Thailand = ในประเทศ) แก้ทับได้"' }))}
         ${ui.field("วันที่สั่งผลิต *", ui.input("orderedAt", { type: "date", required: true, value: today }))}
         ${ui.field("วันส่งมอบคลัง (WH) *", ui.input("whDue", { type: "date", required: true, extra: "data-bom-whdue" }))}
       </div>
