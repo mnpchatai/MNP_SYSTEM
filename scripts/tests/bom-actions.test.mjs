@@ -686,3 +686,44 @@ test("a BOM line can say which production step of its parent it enters (1–20);
   assert.equal(variant.lines.find((line) => line.childCode === "P-BOX-01").step, 4, "the new package's box enters where the old packaging did");
   assert.ok(variant.lines.filter((line) => !packaging.has(line.childCode)).every((line) => line.step === 2), "copied and recoloured lines keep their step");
 });
+
+test("a rod carries one compound line: rules on where it goes, kilograms in the order explosion, no department job, and the RubberFlow kilograms follow the line", () => {
+  const d = fresh();
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  assert.deepEqual([...A.helpers.NO_BOM_KINDS], [...rules.LEAF_KINDS], "the actions and the rules agree on leaf kinds");
+  A.saveItem(d, { code: "DM01", kind: "CP", name: "EPDM ส้ม", uom: "kg", create: true }, ctx("planner"));
+  A.saveItem(d, { code: "dm09", kind: "CP", name: "NR ใหม่", uom: "kg", create: true }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, "DM01").ownerDept, "RB");
+  assert.equal(d.compounds.find((entry) => entry.code === "DM01").name, "EPDM ส้ม 60 Shore A", "a named compound keeps its name");
+  assert.deepEqual({ ...d.compounds.find((entry) => entry.code === "DM09"), createdAt: 0 }, { code: "DM09", name: "NR ใหม่", recipeId: null, createdAt: 0 }, "a new compound item registers itself for the RubberFlow link");
+  rejects(() => A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "DM01", qty: 1 }] }, ctx("planner")), /สูตรยางใส่ได้เฉพาะใต้เส้นยาง/);
+  rejects(() => A.saveBom(d, { itemCode: rod, lines: [{ childCode: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /เฉพาะสูตรยาง/);
+  rejects(() => A.saveBom(d, { itemCode: rod, lines: [{ childCode: "DM01", qty: 1.53 }, { childCode: "DM09", qty: 0.1 }] }, ctx("planner")), /สูตรเดียว/);
+  rejects(() => A.saveBom(d, { itemCode: rod, lines: [{ childCode: "DM09", qty: 1.53 }] }, ctx("planner")), /ระบุสูตร DM01 แต่บรรทัดสูตรยางเป็น DM09/);
+  rejects(() => A.saveBom(d, { itemCode: "DM01", lines: [{ childCode: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /สูตรยาง ไม่มีส่วนประกอบ/);
+  rejects(() => A.saveBomTree(d, { code: "NEW-CP", item: { name: "x", uom: "set" }, nodes: [{ code: "DM01", qty: 1, children: [{ code: "P-PEL-BK", qty: 1 }] }] }, ctx("planner")), /มีส่วนประกอบไม่ได้/);
+  A.saveBom(d, { itemCode: rod, lines: [{ childCode: "DM01", qty: 1.53, scrapPct: 2 }] }, ctx("planner"));
+  assert.equal(approved(d, rod).lines[0].uom, "kg");
+  // เส้นยางใหม่ในต้นไม้: ช่องสูตรว่างใช้รหัสจากบรรทัดสูตรยางข้างใต้
+  A.saveBomTree(d, { code: "SE-NEW-01", item: { name: "ชิ้นยางทดสอบ", uom: "pcs", kind: "SE" }, nodes: [{ code: "RB-DM09-02-RD01-200-3-20", qty: 0.05, newItem: { kind: "RB", name: "เส้นยางใหม่", uom: "rod", rubber: { compound: "", kgPerRoll: 0.2 } }, children: [{ code: "DM09", qty: 0.2 }] }] }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(d, "RB-DM09-02-RD01-200-3-20").rubber.compound, "DM09", "a blank compound field is filled from the compound line");
+  // ใบสั่งผลิต: สูตรยางถูกระเบิดเป็นกิโลกรัม ไม่เป็นงานของแผนก
+  const id = A.createOrder(d, { pi: "CP-1", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+  A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner"));
+  A.explodeOrder(d, { orderId: id }, ctx("planner"));
+  const order = d.orders.find((entry) => entry.id === id);
+  const rodLine = order.explosion.find((line) => line.itemCode === rod);
+  const cpLine = order.explosion.find((line) => line.itemCode === "DM01" && line.parentCode === rod);
+  assert.equal(rodLine.required.toFixed(2), "7.74");
+  assert.equal(cpLine.required.toFixed(4), (rodLine.required * 1.53 * 1.02).toFixed(4), "compound kilograms = rods × kg per rod × (1 + scrap)");
+  assert.equal(cpLine.kind, "CP");
+  A.releaseOrder(d, { orderId: id }, ctx("planner"));
+  const jobs = d.jobs.filter((job) => job.orderId === id);
+  assert.ok(!jobs.some((job) => job.itemCode === "DM01"), "a compound is not a department job");
+  const rodJob = jobs.find((job) => job.itemCode === rod);
+  assert.ok(rodJob, "the rod is still an RB job");
+  const rodItem = A.helpers.itemOf(d, rod);
+  assert.equal(A.helpers.rbJobKg(rodJob, rodItem, { scrapPct: 5, bom: approved(d, rod) }), Math.round(rodJob.qtyPlanned * 1.53 * 1.02 * 100) / 100, "the BOM line's kilograms and scrap replace the flat 5%");
+  assert.equal(A.helpers.rbJobKg(rodJob, rodItem, { scrapPct: 5 }), Math.round(rodJob.qtyPlanned * 1.53 * 1.05 * 100) / 100, "without the BOM the rod weight and the flat allowance apply as before");
+  assert.equal(A.helpers.rbJobKg(rodJob, rodItem, { scrapPct: 5, bom: { lines: [{ childCode: "DM01", qty: 1530, uom: "g" }] } }), Math.round(rodJob.qtyPlanned * 1.53 * 100) / 100, "a compound line in grams is converted");
+});

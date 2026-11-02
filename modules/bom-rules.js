@@ -7,7 +7,8 @@
 
   // ---------- ชนิดชิ้นงานและแผนกเจ้าของ ----------
   // KINDS: FG สินค้าสำเร็จรูป (PK) · SE ชิ้นยางย่อยที่ตัด/เจาะแล้ว (GR) · RB เส้นยาง (RB) · PT ชิ้นพลาสติก (PT) · BG กระเป๋า/เย็บ (BG) ·
-  // PURCHASED ของซื้อ/คลัง (ST) · SUBPART ชิ้นที่แผนกทำเองโดยยังไม่มีรหัส (เจ้าของตามคู่ผู้ผลิต)
+  // PURCHASED ของซื้อ/คลัง (ST) · SUBPART ชิ้นที่แผนกทำเองโดยยังไม่มีรหัส (เจ้าของตามคู่ผู้ผลิต) ·
+  // CP สูตรยาง/คอมปาวด์ (RB ผสม สูตร PHR อยู่ที่ RubberFlow) เป็นบรรทัดใต้เส้นยาง หน่วยกิโลกรัม ไม่มี BOM และไม่เป็นงานของแผนกในระบบนี้
   const KINDS = Object.freeze({
     FG: { label: "สินค้าสำเร็จรูป", dept: "PK" },
     SE: { label: "ชิ้นยาง (ตัด/เจาะ)", dept: "GR" },
@@ -16,8 +17,28 @@
     BG: { label: "กระเป๋า/งานเย็บ", dept: "BG" },
     PURCHASED: { label: "ของซื้อ/คลัง", dept: "ST" },
     SUBPART: { label: "ชิ้นทำเอง (ยังไม่มีรหัส)", dept: "PK" },
+    CP: { label: "สูตรยาง (คอมปาวด์)", dept: "RB" },
   });
   const MANUFACTURED = Object.freeze(["FG", "SE", "RB", "PT", "BG", "SUBPART"]);
+  // หมวดที่ผู้ใช้เลือกตอนสร้าง BOM (กลุ่มของชนิด): สินค้า · WIP · วัตถุดิบ · สูตรยาง
+  // ชนิดเป็นตัวกำหนดพฤติกรรม (แผนก งาน ต้องมี BOM ไหม) หมวดจึงคำนวณจากชนิด ไม่เก็บแยก จะได้ไม่ขัดกัน
+  const CATEGORIES = Object.freeze([
+    { id: "PRODUCT", label: "สินค้า", long: "สินค้า", kinds: ["FG"] },
+    { id: "WIP", label: "WIP", long: "WIP (งานระหว่างผลิต)", kinds: ["SE", "RB", "PT", "BG", "SUBPART"] },
+    { id: "RAW", label: "วัตถุดิบ", long: "วัตถุดิบ", kinds: ["PURCHASED"] },
+    { id: "COMPOUND", label: "สูตรยาง", long: "สูตรยาง", kinds: ["CP"] },
+  ].map((entry) => Object.freeze({ ...entry, kinds: Object.freeze(entry.kinds) })));
+  const categoryOf = (kind) => CATEGORIES.find((entry) => entry.kinds.includes(kind)) ?? null;
+  // ชนิดที่ไม่มีส่วนประกอบ: ของซื้อ และสูตรยาง (สูตร PHR อยู่ที่ RubberFlow)
+  const LEAF_KINDS = Object.freeze(["PURCHASED", "CP"]);
+  // ชิ้นชนิด childKind อยู่ใต้ parentKind ได้ไหม: "" = ได้ · ข้อความ = เหตุผลที่ไม่ได้
+  // เส้นยางมีลูกได้เฉพาะสูตรยาง และสูตรยางอยู่ได้เฉพาะใต้เส้นยาง (เส้นยางหนึ่งเส้นใช้สูตรเดียว ตรวจที่ saveBom)
+  function childKindError(parentKind, childKind) {
+    if (LEAF_KINDS.includes(parentKind)) return `${KINDS[parentKind]?.label ?? parentKind}ไม่มีส่วนประกอบ`;
+    if (parentKind === "RB" && childKind !== "CP") return "เส้นยางมีส่วนประกอบได้เฉพาะสูตรยาง (สูตร PHR อยู่ที่ RubberFlow)";
+    if (childKind === "CP" && parentKind !== "RB") return "สูตรยางใส่ได้เฉพาะใต้เส้นยาง (RB)";
+    return "";
+  }
   const DEPTS = Object.freeze(["PK", "GR", "RB", "PT", "BG", "ST"]);
   const DEPT_LABEL = Object.freeze({ PK: "PK · บรรจุ/ประกอบ", GR: "GR · ตัด/เจาะชิ้นยาง", RB: "RB · รีดเส้นยาง", PT: "PT · ฉีดพลาสติก", BG: "BG · กระเป๋า/เย็บ", ST: "ST · คลังวัตถุดิบ", SR: "SR · รับเข้าคลัง/QC", WH: "WH · คลังสินค้าสำเร็จรูป" });
   // ลำดับกำหนดเสร็จรายแผนกในหัวใบสั่งผลิต (MAIN ของไฟล์ Excel)
@@ -59,12 +80,13 @@
       case "PT": return `${consumer}-PT`;
       case "PURCHASED": return `${consumer}-ST`;
       case "SUBPART": return `${consumer}-PK`;
+      case "CP": return "CP"; // สูตรยางใต้เส้นยาง: อยู่ในใบงาน RB เท่านั้น
       default: return String(line.kind);
     }
   }
   // ตารางกฎสถานี: ใบไหนต้องเห็นคู่ผู้ผลิตใด (แปลงจากสูตร IF ในคอลัมน์ AM–AT และตัวกรองของมาโคร) · layout = ชุดคอลัมน์ของใบ
   const SHEETS = Object.freeze([
-    { id: "RB", title: "RB", name: "ใบงานแผนกรีดเส้นยาง", pairs: ["PK", "RB"], layout: "bom" },
+    { id: "RB", title: "RB", name: "ใบงานแผนกรีดเส้นยาง", pairs: ["PK", "RB", "CP"], layout: "bom" },
     { id: "GR", title: "GR-SR-RB", name: "ใบงานคลังเส้นยาว / ตัด (GR)", pairs: ["PK", "RB", "SE"], layout: "bom" },
     { id: "SE", title: "GR คัดแยก - SE", name: "ใบงานคัดแยกชิ้นยาง (SE)", pairs: ["PK", "SE"], layout: "bom" },
     { id: "PT", title: "PT - คลังท่อ", name: "ใบงานแผนกฉีดพลาสติก (PT)", pairs: ["PK", "PK-PT"], layout: "bom" },
@@ -513,7 +535,7 @@
       const row = lines.at(-1);
       if (level >= maxDepth) return;
       const bom = approvedBomOf(code);
-      // RB เป็นชิ้นปลายทางของ BOM นี้ (สูตรคอมปาวด์อยู่ที่ RubberFlow) และชิ้นทำเองไม่บังคับมี BOM
+      // RB ไม่บังคับมี BOM (มีได้เฉพาะบรรทัดสูตรยาง สูตร PHR อยู่ที่ RubberFlow) และชิ้นทำเองไม่บังคับมี BOM
       if (!bom) { if (MANUFACTURED.includes(item.kind) && !["SUBPART", "RB"].includes(item.kind)) row.noBom = true; return; }
       row.bomId = bom.id;
       row.revision = bom.revision;
@@ -567,7 +589,8 @@
 
   // ชิ้นที่ต้องผลิตก่อน (สายป้อนในมุมมองลำดับผลิต): ชิ้นที่แผนกเราทำเอง (ไม่ใช่ของซื้อ) แม้ยังไม่มี BOM/ขั้นตอน
   // เช่น เส้นยาง RB ที่มีได้แค่คอมปาวด์จาก RubberFlow · ของซื้อที่มี BOM หรือขั้นตอนก็นับด้วย
-  const isFeed = (child) => child.kind !== "PURCHASED" || child.children.length > 0 || child.steps.length > 0;
+  // สูตรยาง (CP) เป็นวัตถุดิบที่เส้นยางรับจาก RubberFlow ไม่ใช่สายป้อนของตัวเอง เว้นแต่ผู้ใช้ให้ขั้นตอนผลิตกับมัน
+  const isFeed = (child) => !LEAF_KINDS.includes(child.kind) || child.children.length > 0 || child.steps.length > 0;
   // ลำดับที่ชิ้นพร้อมให้พ่อใช้: เส้นยาง RB พร้อมหลังขั้น SR/QC รับเข้าคลัง (ลำดับถัดจากรีด) · ชิ้นอื่นพร้อมเมื่อผลิตเสร็จ
   const receiveOrder = (node) => (node.kind === "RB" && node.level > 0 ? node.order + 1 : null);
   const readyOrder = (node) => receiveOrder(node) ?? node.order;
@@ -656,7 +679,8 @@
       else map.set(key, { ...entry, itemCode: node.itemCode, name: node.name, uom: node.uom, qtyPerRoot: round(node.qtyPerRoot) });
     };
     for (const node of tree.rows) {
-      if (node.level > 0 && !isFeed(node)) { add(bought, node.itemCode, node, { type: "purchase", order: 0, dept: "ST" }); continue; }
+      // สูตรยางไม่ได้ซื้อผ่าน ST: แสดงเป็นวัตถุดิบของเส้นยาง (input.from = null) ไม่อยู่ในแถว "สั่ง/เบิกวัตถุดิบ"
+      if (node.level > 0 && !isFeed(node)) { if (node.kind !== "CP") add(bought, node.itemCode, node, { type: "purchase", order: 0, dept: "ST" }); continue; }
       const inputs = node.children.map((child) => ({ itemCode: child.itemCode, name: child.name, kind: child.kind, uom: child.uom, qtyPerParent: child.qtyPerParent, scrapPct: child.scrapPct, from: isFeed(child) ? readyOrder(child) : null }));
       add(made, `make|${node.itemCode}`, node, { type: "make", order: node.order, dept: node.dept, steps: node.steps, inputs });
       if (receiveOrder(node) !== null) add(made, `receive|${node.itemCode}`, node, { type: "receive", order: receiveOrder(node), dept: "SR", steps: [], inputs: [] });
@@ -784,7 +808,7 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, DEPTS, DEPT_LABEL, DUE_DEPTS, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
+    DAY, KINDS, MANUFACTURED, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, DEPTS, DEPT_LABEL, DUE_DEPTS, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
