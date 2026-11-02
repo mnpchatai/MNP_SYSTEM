@@ -691,8 +691,8 @@
     const bought = new Map();
     const add = (map, key, node, entry) => {
       const found = map.get(key);
-      if (found) { found.order = Math.max(found.order, entry.order); found.qtyPerRoot = round(found.qtyPerRoot + node.qtyPerRoot); }
-      else map.set(key, { ...entry, itemCode: node.itemCode, name: node.name, uom: node.uom, qtyPerRoot: round(node.qtyPerRoot) });
+      if (found) { found.order = Math.max(found.order, entry.order); found.level = Math.max(found.level, node.level); found.qtyPerRoot = round(found.qtyPerRoot + node.qtyPerRoot); }
+      else map.set(key, { ...entry, itemCode: node.itemCode, name: node.name, uom: node.uom, level: node.level, qtyPerRoot: round(node.qtyPerRoot) });
     };
     for (const node of tree.rows) {
       // สูตรยางไม่ได้ซื้อผ่าน ST: แสดงเป็นวัตถุดิบของเส้นยาง (input.from = null) ไม่อยู่ในแถว "สั่ง/เบิกวัตถุดิบ"
@@ -704,13 +704,14 @@
         add(made, `inspect|${node.itemCode}`, node, { type: "inspect", order: inspectOrder(node), fromOrder: receiveOrder(node), dept: "QC", steps: [], inputs: [] });
       }
     }
-    const rows = [...made.values()].sort((a, b) => a.order - b.order || a.itemCode.localeCompare(b.itemCode));
+    // ลำดับเท่ากัน (แผนกเดียวกัน): ชิ้นที่อยู่ลึกกว่าในต้นไม้มาก่อน (ชิ้นทำเองของ PK ก่อนตัวสินค้า) แล้วตามรหัส
+    const rows = [...made.values()].sort((a, b) => a.order - b.order || b.level - a.level || a.itemCode.localeCompare(b.itemCode));
     const root = tree.root;
     const head = (no, extra = {}) => ({ type: extra.type, order: no, dept: PROCESS_FLOW[no - 1].dept, itemCode: "", name: PROCESS_FLOW[no - 1].title, detail: PROCESS_FLOW[no - 1].detail ?? "", uom: "", qtyPerRoot: 0, steps: [], inputs: [], ...extra });
     const purchase = head(3, { type: "purchase", inputs: [...bought.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((entry) => ({ itemCode: entry.itemCode, name: entry.name, uom: entry.uom, qtyPerRoot: entry.qtyPerRoot, from: null })) });
     const store = { type: "store", order: flowStepOf("WH"), fromOrder: root.order, dept: "WH", itemCode: root.itemCode, name: root.name, uom: root.uom, qtyPerRoot: 1, steps: [], inputs: [] };
-    // ฝ่ายขาย/วางแผน/ST อยู่หัวรายการเสมอ · WH รับเฉพาะสินค้าสำเร็จรูป: เปิดโครงสร้างของชิ้นย่อย (PT, SE ฯลฯ) จบที่ชิ้นนั้น
-    return [head(1, { type: "sales" }), head(2, { type: "plan" }), ...(purchase.inputs.length ? [purchase] : []), ...rows, ...(root.kind === "FG" ? [store] : [])];
+    // ฝ่ายขาย/วางแผน/ST อยู่หัวรายการเสมอ (ST ว่างเมื่อไม่มีของซื้อ เพื่อให้เลขตรงกับมุมมองลำดับผลิต) · WH รับเฉพาะสินค้าสำเร็จรูป: เปิดโครงสร้างของชิ้นย่อย (PT, SE ฯลฯ) จบที่ชิ้นนั้น
+    return [head(1, { type: "sales" }), head(2, { type: "plan" }), purchase, ...rows, ...(root.kind === "FG" ? [store] : [])];
   }
 
   // ---------- ความต้องการสุทธิ (สูตร AK ของ BOMSHEET ยกมาคิดทั้งใบ) ----------
