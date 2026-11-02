@@ -254,9 +254,15 @@ test("net requirements apply the BOMSHEET column AK rule level by level: SE stoc
   assert.equal(net.SE.required, 10);
   // จัดกลุ่มตามแผนก ต้นน้ำ → ปลายน้ำ ข้ามแผนกที่ไม่มีงาน
   const groups = rules.groupByDept(rules.netRequirements(explode(1008), {}));
-  assert.deepEqual(groups.map((group) => group.dept), ["RB", "GR", "ST", "PK"]);
+  assert.deepEqual(groups.map((group) => group.dept), ["ST", "RB", "GR", "PK"]);
   assert.deepEqual(groups.find((group) => group.dept === "PK").entries.map((entry) => entry.itemCode), ["FG"]);
-  assert.deepEqual(rules.FLOW_DEPTS, ["RB", "GR", "PT", "BG", "ST", "PK"]);
+  // ผังงานบริษัท 11 ลำดับ: ฝ่ายขาย → วางแผน → ST → RB → SR → QC → GR → PT → BG → PK → WH · แผนกผลิตเรียงตามลำดับ 3 → 11
+  assert.deepEqual(rules.PROCESS_FLOW.map((step) => [step.no, step.dept]), [[1, "SA"], [2, "PL"], [3, "ST"], [4, "RB"], [5, "SR"], [6, "QC"], [7, "GR"], [8, "PT"], [9, "BG"], [10, "PK"], [11, "WH"]]);
+  assert.deepEqual(rules.FLOW_DEPTS, ["ST", "RB", "SR", "QC", "GR", "PT", "BG", "PK", "WH"]);
+  assert.equal(rules.flowStepOf("GR"), 7);
+  assert.equal(rules.flowStepOf("??"), 10, "an unknown department counts as assembly");
+  assert.ok(rules.DEFAULT_PROCESSES.filter((entry) => entry.dept === "GR").map((entry) => entry.name).join(" → ") === "ตัดยาง → ทากาว → เจียร์แปรรูป → คัดแยก", "GR has the four steps of the company flow");
+  assert.ok(rules.DEFAULT_PROCESSES.filter((entry) => entry.dept === "RB").length === 13);
 });
 
 test("colour helpers: colour codes, colourless slot keys, recolouring codes and names, slots of a product and the change plan", () => {
@@ -485,7 +491,7 @@ test("the product structure rolls up material, labour and minutes per department
     FG: { revision: 2, lines: [{ childCode: "SE", qty: 3 }, { childCode: "BOX", qty: 0.25, scrapPct: 4 }] },
     SE: { revision: 1, lines: [{ childCode: "RB", qty: 0.1 }] },
   };
-  const routings = { FG: { revision: 1, steps: [{ processCode: "PK-ASM", minutesPerPc: 2 }] }, SE: { revision: 3, steps: [{ processCode: "GR-CUT", minutesPerPc: 0.4 }] } };
+  const routings = { FG: { revision: 1, steps: [{ processCode: "PK-01", minutesPerPc: 2 }] }, SE: { revision: 3, steps: [{ processCode: "GR-01", minutesPerPc: 0.4 }] } };
   const processes = Object.fromEntries(rules.DEFAULT_PROCESSES.map((entry) => [entry.code, entry]));
   const deps = { itemOf: (code) => items[code] ?? null, approvedBomOf: (code) => boms[code] ?? null, routingOf: (code) => routings[code] ?? null, processOf: (code) => processes[code] ?? null };
   const tree = rules.structureTree("FG", deps);
@@ -501,33 +507,41 @@ test("the product structure rolls up material, labour and minutes per department
   assert.deepEqual(tree.minutesByDept, { PK: 2, GR: 1.2 }, "SE minutes count three times per product");
   assert.equal(tree.totalMinutes, 3.2);
   assert.deepEqual(tree.missingCost, []);
-  // ลำดับการผลิต: ชิ้นที่แผนกเราทำเอง ทำก่อนพ่อ แม้ยังไม่มี BOM/ขั้นตอน (เส้นยาง RB) · ของซื้อไม่เลื่อนลำดับพ่อ · แผนกจาก ownerDept
-  // เส้นยางต้องผ่าน SR รับเข้าคลัง + QC (ลำดับ 2) ก่อนชิ้นยางที่ตัดจากมัน (ลำดับ 3)
-  assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 4, "PK"], ["SE", 3, "GR"], ["RB", 1, "RB"], ["BOX", 1, "ST"]], "an extruded rod is received and checked before the part cut from it");
-  // ขั้นตอนตามลำดับตามผังงาน: ST สั่ง/เบิกของซื้อก่อน → ผลิต → SR/QC รับเส้นยาง → … → WH รับสินค้าเข้าคลังสุดท้าย
-  assert.deepEqual(rules.productionSteps(tree).map((step) => [step.type, step.order, step.dept, step.itemCode, step.qtyPerRoot, step.inputs.map((input) => [input.itemCode, input.from])]), [
-    ["purchase", 0, "ST", "", 0, [["BOX", null]]],
-    ["make", 1, "RB", "RB", 0.3, []], ["receive", 2, "SR", "RB", 0.3, []], ["make", 3, "GR", "SE", 3, [["RB", 2]]],
-    ["make", 4, "PK", "FG", 1, [["SE", 3], ["BOX", null]]], ["store", 5, "WH", "FG", 1, []],
+  // ลำดับการผลิต = ลำดับของแผนกเจ้าของในผังงานบริษัท (ST 3 · RB 4 · GR 7 · PK 10) · แผนกจาก ownerDept
+  assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 10, "PK"], ["SE", 7, "GR"], ["RB", 4, "RB"], ["BOX", 3, "ST"]], "each part takes its department's place in the company flow");
+  // ขั้นตอนตามลำดับตามผังงาน: ฝ่ายขาย (1) → วางแผน (2) → ST สั่งของซื้อ (3) → RB (4) → SR รับยางเส้นยาว (5) → QC ตรวจขนาด (6) → GR (7) → PK (10) → WH (11)
+  // เส้นยางพร้อมให้ GR ใช้หลัง QC (จากลำดับ 6) · แถวที่ไม่มีรายการใช้บอก fromOrder
+  assert.deepEqual(rules.productionSteps(tree).map((step) => [step.type, step.order, step.dept, step.itemCode, step.qtyPerRoot, step.inputs.map((input) => [input.itemCode, input.from]), step.fromOrder ?? null]), [
+    ["sales", 1, "SA", "", 0, [], null], ["plan", 2, "PL", "", 0, [], null], ["purchase", 3, "ST", "", 0, [["BOX", null]], null],
+    ["make", 4, "RB", "RB", 0.3, [], null], ["receive", 5, "SR", "RB", 0.3, [], 4], ["inspect", 6, "QC", "RB", 0.3, [], 5], ["make", 7, "GR", "SE", 3, [["RB", 6]], null],
+    ["make", 10, "PK", "FG", 1, [["SE", 7], ["BOX", null]], null], ["store", 11, "WH", "FG", 1, [], 10],
   ]);
-  assert.equal(rules.productionSteps(tree)[0].inputs[0].qtyPerRoot, 0.26, "ST buys the total per product, scrap included");
+  assert.deepEqual(rules.productionSteps(tree).slice(0, 2).map((step) => step.name), ["ออกใบสั่งผลิตให้แผนกวางแผน", "ออก BOM และใบสั่งงานให้ฝ่ายผลิต"]);
+  assert.equal(rules.productionSteps(tree)[2].inputs[0].qtyPerRoot, 0.26, "ST buys the total per product, scrap included");
+  assert.deepEqual(rules.productionSteps(rules.structureTree("SE", deps)).map((step) => step.type), ["sales", "plan", "purchase", "make", "receive", "inspect", "make"], "a part's structure keeps an empty ST row (same numbers as the flow view) and has no WH row");
+  assert.deepEqual(rules.productionSteps(rules.structureTree("SE", deps))[2].inputs, []);
+  // ลำดับเท่ากัน (แผนกเดียวกัน): ชิ้นทำเองของ PK ที่อยู่ลึกกว่ามาก่อนตัวสินค้า แม้รหัสจะเรียงทีหลัง
+  items.ZSUB = { code: "ZSUB", name: "ชิ้นทำเอง", kind: "SUBPART", uom: "pcs", ownerDept: "PK", unitCost: 1 };
+  boms.FG.lines.push({ childCode: "ZSUB", qty: 1 });
+  assert.deepEqual(rules.productionSteps(rules.structureTree("FG", deps)).filter((step) => step.order === 10).map((step) => step.itemCode), ["ZSUB", "FG"], "a PK sub-part is listed before the product it goes into");
+  boms.FG.lines.pop();
   // มุมมองลำดับผลิต: ลูกที่มี BOM/ขั้นตอนเป็นสายป้อน · ลูกเข้าที่ขั้นที่ระบุ ที่เหลือเข้าขั้นแรก · ไม่มีขั้นตอน = ขั้นเดียว
-  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2, inputs: ["SE"] }, { processCode: "PK-PACK", minutesPerPc: 1, inputs: ["BOX", "GONE"] }];
+  routings.FG.steps = [{ processCode: "PK-01", minutesPerPc: 2, inputs: ["SE"] }, { processCode: "PK-03", minutesPerPc: 1, inputs: ["BOX", "GONE"] }];
   const staged = rules.structureTree("FG", deps);
   const flow = rules.flowOf(staged.root);
   assert.deepEqual(flow.feeds.map((feed) => feed.itemCode), ["SE"]);
-  assert.deepEqual(flow.stages.map((stage) => [stage.step.processCode, stage.inputs.map((child) => child.itemCode)]), [["PK-ASM", ["SE"]], ["PK-PACK", ["BOX"]]]);
-  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2 }];
+  assert.deepEqual(flow.stages.map((stage) => [stage.step.processCode, stage.inputs.map((child) => child.itemCode)]), [["PK-01", ["SE"]], ["PK-03", ["BOX"]]]);
+  routings.FG.steps = [{ processCode: "PK-01", minutesPerPc: 2 }];
   assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).root).stages.map((stage) => stage.inputs.length), [2], "unplaced parts enter at the first step");
   assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).rows[2]).stages.map((stage) => stage.step), [null], "a part without steps is one unnamed stage");
   // "ขั้นที่" ของบรรทัด BOM: ใช้เมื่อขั้นตอนผลิตไม่ได้ระบุชิ้นนั้น · เลขเกินจำนวนขั้นตอนเพิ่มขั้นที่ไม่มีชื่อ · ขั้นตอนที่ระบุลูกไว้ยังชนะ
   boms.FG.lines[1].step = 3;
   const numbered = rules.flowOf(rules.structureTree("FG", deps).root);
   assert.equal(rules.structureTree("FG", deps).rows[3].step, 3, "the tree carries the line's step");
-  assert.deepEqual(numbered.stages.map((stage) => [stage.no, stage.step?.processCode ?? null, stage.inputs.map((child) => child.itemCode)]), [[1, "PK-ASM", ["SE"]], [2, null, []], [3, null, ["BOX"]]]);
-  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2, inputs: ["BOX"] }];
+  assert.deepEqual(numbered.stages.map((stage) => [stage.no, stage.step?.processCode ?? null, stage.inputs.map((child) => child.itemCode)]), [[1, "PK-01", ["SE"]], [2, null, []], [3, null, ["BOX"]]]);
+  routings.FG.steps = [{ processCode: "PK-01", minutesPerPc: 2, inputs: ["BOX"] }];
   assert.deepEqual(rules.flowOf(rules.structureTree("FG", deps).root).stages.map((stage) => stage.inputs.map((child) => child.itemCode)), [["SE", "BOX"]], "a part ticked in a production step stays there whatever its line says");
-  routings.FG.steps = [{ processCode: "PK-ASM", minutesPerPc: 2 }];
+  routings.FG.steps = [{ processCode: "PK-01", minutesPerPc: 2 }];
   for (const bad of [1.5, 0, 1e9, "x"]) {
     boms.FG.lines[1].step = bad;
     assert.equal(rules.structureTree("FG", deps).rows[3].step, null, `a stored step of ${bad} is ignored`);

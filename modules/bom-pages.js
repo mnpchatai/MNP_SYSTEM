@@ -735,15 +735,20 @@
       return [list, step].filter(Boolean).join(list ? flowArrow : "");
     }).filter(Boolean);
     const tools = canEdit ? `<div class="rf-row">${ctx.helpers.NO_BOM_KINDS.includes(node.kind) ? "" : ui.openButton(node.steps.length ? "ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ขั้นตอนผลิตของ ${node.itemCode}` })}${ui.openButton("รูป", "itemImage", { code: node.itemCode }, { className: "secondary small", ariaLabel: `รูปของ ${node.itemCode}` })}</div>` : "";
-    // ป้ายบนการ์ด: ลำดับการผลิต (rules.structureTree: เลขน้อยทำก่อน เลขเท่ากันทำพร้อมกันได้) และแผนกที่รับผิดชอบ (ownerDept ของชิ้นงาน)
+    // ป้ายบนการ์ด: ลำดับในผังงานบริษัท (rules.PROCESS_FLOW ตามแผนกเจ้าของ) และแผนกที่รับผิดชอบ (ownerDept ของชิ้นงาน)
     const deptName = rules.DEPT_LABEL[node.dept] ?? node.dept;
-    const tags = `<div class="bom-flow-tags"><span class="bom-flow-order" title="ลำดับการผลิต: เลขน้อยทำก่อน เลขเดียวกันทำพร้อมกันได้">ลำดับ ${esc(String(node.order))}</span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">${esc(deptName)}</span></div>`;
+    const tags = `<div class="bom-flow-tags"><span class="bom-flow-order" title="${attr(ORDER_TITLE)}">ลำดับ ${esc(String(node.order))}</span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">${esc(deptName)}</span></div>`;
     // การ์ด focus ได้ เพื่อเปิดเมนูคำสั่งด้วยปุ่ม Menu/Shift+F10 (บทบาทที่ดูอย่างเดียวไม่มีปุ่มในการ์ดให้ focus)
     const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.ownCost === null && !node.children.length ? ui.badge("warn", "ไม่มีราคา") : `${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}`}</div>${tools}</div></div>`;
-    // เส้นยางที่ป้อนชิ้นอื่น: SR รับเข้าคลัง + QC ตรวจขนาด เป็นลำดับถัดจากรีด ก่อน GR เบิกไปแปรรูป (ตามผังงานของบริษัท)
-    const receive = node.kind === "RB" && node.level > 0 ? `<div class="bom-flow-step is-receive"><span class="bom-flow-order">ลำดับ ${esc(String(node.order + 1))}</span><span class="bom-flow-dept">${esc(rules.DEPT_LABEL.SR)}</span><span class="bom-flow-step-name">รับเส้นยางเข้าคลัง · ตรวจขนาด</span></div>` : "";
-    return `<div class="bom-flow-node">${lanes}${[...parts, card, receive].filter(Boolean).join(flowArrow)}</div>`;
+    // ตามผังงานของบริษัท (rules.PROCESS_FLOW): ราก (สินค้าที่เปิด) เริ่มจากฝ่ายขาย → วางแผน → ST สั่งวัตถุดิบ · เส้นยางที่ป้อนชิ้นอื่นผ่าน
+    // SR รับเข้าคลัง (5) และ QC ตรวจขนาด (6) ก่อน GR เบิกไปแปรรูป · สินค้าสำเร็จรูปจบที่ WH รับเข้าคลัง (11)
+    const head = node.level === 0 ? rules.PROCESS_FLOW.filter((step) => step.no <= 3).map((step) => flowStepHtml(ctx, step)).join(flowArrow) : "";
+    const after = node.kind === "RB" && node.level > 0 ? rules.PROCESS_FLOW.filter((step) => step.dept === "SR" || step.dept === "QC") : node.level === 0 && node.kind === "FG" ? rules.PROCESS_FLOW.filter((step) => step.dept === "WH") : [];
+    return `<div class="bom-flow-node">${head ? `${head}${flowArrow}` : ""}${lanes}${[...parts, card, ...after.map((step) => flowStepHtml(ctx, step))].filter(Boolean).join(flowArrow)}</div>`;
   }
+  const ORDER_TITLE = "ลำดับตามผังงานบริษัท: 1 ฝ่ายขาย · 2 วางแผน · 3 ST · 4 RB · 5 SR · 6 QC · 7 GR · 8 PT · 9 BG · 10 PK · 11 WH";
+  // กล่องขั้นตอนของผังงานที่ไม่ใช่ชิ้นงาน (ฝ่ายขาย วางแผน ST SR QC WH) ในมุมมองลำดับผลิต
+  const flowStepHtml = (ctx, step) => `<div class="bom-flow-step is-flow" title="${attr(step.detail ? `${step.title} · ${step.detail}` : step.title)}"><span class="bom-flow-order" title="${attr(ORDER_TITLE)}">ลำดับ ${esc(String(step.no))}</span><span class="bom-flow-dept">${esc(ctx.rules.DEPT_LABEL[step.dept] ?? step.dept)}</span><span class="bom-flow-step-name">${esc(step.title)}</span></div>`;
   // เมนูคลิกขวา (กดค้างบนมือถือ) ของหน้าโครงสร้าง: คำสั่งของชิ้นที่ชี้ เป็นกลุ่ม แก้ไข · ไปที่ · คัดลอก
   // target = { code, parent (พ่อเมื่อชี้แถววัตถุดิบ ว่างเมื่อชี้การ์ด), root (สินค้าที่เปิดอยู่) } · บทบาทที่แก้ไม่ได้เห็นเฉพาะไปที่/คัดลอก
   // คืน [[{ label, open?, args?, go?, copy? }]] ทุกคำสั่งมีทางอื่นในหน้าอยู่แล้ว (ปุ่มในการ์ด ตารางต้นทุน dialog ขั้นตอน) เมนูเป็นทางลัด
@@ -930,21 +935,21 @@
     if (view === "flow") {
       body = `<div class="bom-flow">${flowHtml(ctx, tree.root, canEdit)}</div>`;
     } else if (view === "steps") {
-      // ขั้นตอนตามลำดับ (ตามผังงาน ST → ผลิต → SR/QC → … → PK → WH): แถวละงาน เรียงจากลำดับแรก
+      // ขั้นตอนตามลำดับ (ผังงานบริษัท 11 ลำดับ: ฝ่ายขาย → วางแผน → ST → RB → SR → QC → GR → PT → BG → PK → WH): แถวละงาน เรียงจากลำดับ 1
       // ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับที่พร้อมใช้ และไม่ซ้ำชื่อ เพราะชื่ออยู่ในแถวของลำดับนั้นแล้ว · ของซื้อมาจากแถว ST
       const from = (order) => `<span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(order))}</span>`;
       const amount = (n, uom) => `${esc(rules.fmtQty(n * qty))} ${esc(uomText(ctx, uom))}`;
       const rows = rules.productionSteps(tree).map((step) => {
-        const badge = step.type === "purchase" ? '<span class="bom-flow-order" title="ก่อนเริ่มผลิต">เริ่ม</span>' : `<span class="bom-flow-order">ลำดับ ${esc(String(step.order))}</span>`;
+        const badge = `<span class="bom-flow-order" title="${attr(ORDER_TITLE)}">ลำดับ ${esc(String(step.order))}</span>`;
         const dept = `<td class="nowrap">${esc(rules.DEPT_LABEL[step.dept] ?? step.dept)}</td>`;
-        if (step.type === "purchase") {
-          const list = `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">รวม ${amount(input.qtyPerRoot, input.uom)}</span></li>`).join("")}</ul>`;
-          return `<tr><td>${badge}</td>${dept}<td>สั่ง/เบิกวัตถุดิบที่เกี่ยวข้องกับการผลิต</td><td></td><td>${list}</td></tr>`;
+        if (["sales", "plan", "purchase"].includes(step.type)) {
+          const list = step.inputs.length ? `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">รวม ${amount(input.qtyPerRoot, input.uom)}</span></li>`).join("")}</ul>` : "";
+          return `<tr><td>${badge}</td>${dept}<td>${esc(step.name)}${step.detail ? `<div class="small muted">${esc(step.detail)}</div>` : ""}</td><td></td><td>${list}</td></tr>`;
         }
-        const what = { receive: "รับเข้าคลัง · QC ตรวจขนาดขณะรับเข้า", store: "รับสินค้าจาก PK เข้าคลัง" }[step.type];
+        const what = { receive: "รับยางเส้นยาวเข้าคลัง", inspect: "ตรวจเช็คขนาดยางขณะรับเข้าคลัง", store: "รับสินค้าจาก PK เข้าคลัง" }[step.type];
         const work = `${ui.mono(step.itemCode)}<div class="small">${esc(what ?? step.name)}</div>${step.steps.length ? `<div class="small muted">${step.steps.map((s) => esc(s.name)).join(" → ")}</div>` : ""}`;
         let inputs;
-        if (step.type !== "make") inputs = from(step.order - 1); // ชิ้นเดียวกับคอลัมน์งาน ไม่ซ้ำรหัส
+        if (step.type !== "make") inputs = from(step.fromOrder); // ชิ้นเดียวกับคอลัมน์งาน ไม่ซ้ำรหัส
         else if (step.inputs.length) inputs = `<ul class="bom-step-inputs">${step.inputs.map((input) => `<li>${input.from === null ? `${ui.mono(input.itemCode)} <span class="small">${esc(input.name)}</span> <span class="muted nowrap">${qtyText(ctx, input)}</span>` : `${ui.mono(input.itemCode)} <span class="muted nowrap">${qtyText(ctx, input)}</span> <span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(input.from))}</span>`}</li>`).join("")}</ul>`;
         else inputs = itemOf(ctx, step.itemCode)?.rubber?.compound ? `คอมปาวด์ ${ui.mono(itemOf(ctx, step.itemCode).rubber.compound)} <span class="muted">(สูตรอยู่ที่ RubberFlow)</span>` : '<span class="muted">ยังไม่มี BOM</span>';
         return `<tr><td>${badge}</td>${dept}<td>${work}</td><td class="num nowrap">${amount(step.qtyPerRoot, step.uom)}</td><td>${inputs}</td></tr>`;

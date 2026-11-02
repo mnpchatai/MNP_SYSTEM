@@ -509,32 +509,32 @@ test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes
 test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {
   const d = fresh();
   const steps = (code) => A.helpers.routingOf(d, code)?.steps.map((step) => [step.processCode, step.minutesPerPc]);
-  assert.deepEqual(steps("DEMO-TP-01(P)-Y"), [["PK-ASM", 1.5], ["PK-QC", 0.3], ["PK-PACK", 0.5]], "the demo seeds routings");
+  assert.deepEqual(steps("DEMO-TP-01(P)-Y"), [["PK-01", 1.5], ["PK-03", 0.5]], "the demo seeds routings");
   assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, undefined, "the demo leaves one part without a cost");
   const first = A.helpers.routingOf(d, "DEMO-TP-01(P)-Y");
-  const saved = A.saveRouting(d, { itemCode: "DEMO-TP-01(P)-Y", steps: [{ processCode: "PK-QC", minutesPerPc: "0.3" }, { processCode: "PK-ASM", minutesPerPc: 1.2 }] }, ctx("planner"));
+  const saved = A.saveRouting(d, { itemCode: "DEMO-TP-01(P)-Y", steps: [{ processCode: "PK-02", minutesPerPc: "0.3" }, { processCode: "PK-01", minutesPerPc: 1.2 }] }, ctx("planner"));
   assert.equal(saved.revision, 2);
   assert.equal(first.status, "superseded", "the old routing is kept as history, not overwritten");
-  assert.deepEqual(steps("DEMO-TP-01(P)-Y"), [["PK-QC", 0.3], ["PK-ASM", 1.2]], "step order is kept");
-  assert.equal(A.saveRouting(d, { itemCode: "DEMO-TP-01(P)-Y", steps: [{ processCode: "PK-QC", minutesPerPc: 0.3 }, { processCode: "PK-ASM", minutesPerPc: 1.2 }] }, ctx("planner")).changed, false, "the same steps do not add a revision");
-  assert.equal(d.audit[0].detail, "DEMO-TP-01(P)-Y Rev.2: PK-QC 0.3 → PK-ASM 1.2");
-  rejects(() => A.saveRouting(d, { itemCode: "P-BOX-01", steps: [{ processCode: "PK-PACK", minutesPerPc: 1 }] }, ctx("planner")), /ของซื้อ/);
+  assert.deepEqual(steps("DEMO-TP-01(P)-Y"), [["PK-02", 0.3], ["PK-01", 1.2]], "step order is kept");
+  assert.equal(A.saveRouting(d, { itemCode: "DEMO-TP-01(P)-Y", steps: [{ processCode: "PK-02", minutesPerPc: 0.3 }, { processCode: "PK-01", minutesPerPc: 1.2 }] }, ctx("planner")).changed, false, "the same steps do not add a revision");
+  assert.equal(d.audit[0].detail, "DEMO-TP-01(P)-Y Rev.2: PK-02 0.3 → PK-01 1.2");
+  rejects(() => A.saveRouting(d, { itemCode: "P-BOX-01", steps: [{ processCode: "PK-03", minutesPerPc: 1 }] }, ctx("planner")), /ของซื้อ/);
   rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "XX", minutesPerPc: 1 }] }, ctx("planner")), /ไม่พบขั้นตอน XX/);
-  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-INJ", minutesPerPc: 1 }, { processCode: "PT-INJ", minutesPerPc: 2 }] }, ctx("planner")), /ซ้ำ/);
-  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-INJ", minutesPerPc: -1 }] }, ctx("planner")), /เวลา/);
+  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-01", minutesPerPc: 1 }, { processCode: "PT-01", minutesPerPc: 2 }] }, ctx("planner")), /ซ้ำ/);
+  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-01", minutesPerPc: -1 }] }, ctx("planner")), /เวลา/);
   rejects(() => A.saveRouting(d, { itemCode: "SE-BL60-RD01-60-0-60", steps: [] }, ctx("planner")), /อย่างน้อย 1 ขั้น/);
-  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-INJ", minutesPerPc: 1 }] }, ctx("gr")), /ฝ่ายวางแผน/);
+  rejects(() => A.saveRouting(d, { itemCode: "PT-00320", steps: [{ processCode: "PT-01", minutesPerPc: 1 }] }, ctx("gr")), /ฝ่ายวางแผน/);
   // วัตถุดิบเข้าที่ขั้นไหน: ต้องเป็นลูกใน BOM ปัจจุบัน และลูกหนึ่งตัวเข้าได้ขั้นเดียว
   assert.deepEqual(A.helpers.routingOf(d, "BG-0092").steps.map((step) => step.inputs), [["P-FAB-BL"], ["P-ZIP-05", "P-ROPE-01"]], "the demo places fabric at cutting, zip and rope at sewing");
-  rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-BOX-01"] }] }, ctx("planner")), /P-BOX-01 ไม่ได้อยู่ใน BOM ของ BG-0092/);
-  rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-FAB-BL"] }] }, ctx("planner")), /มากกว่าหนึ่งขั้น/);
-  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-ROPE-01", "P-ZIP-05"] }] }, ctx("planner")).changed, false, "the same inputs in another order are not a change");
-  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-CUT", minutesPerPc: 1, inputs: ["P-FAB-BL", "P-ZIP-05"] }, { processCode: "BG-SEW", minutesPerPc: 4, inputs: ["P-ROPE-01"] }] }, ctx("planner")).changed, true, "moving an input to another step is a change");
+  rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-01", minutesPerPc: 1, inputs: ["P-BOX-01"] }] }, ctx("planner")), /P-BOX-01 ไม่ได้อยู่ใน BOM ของ BG-0092/);
+  rejects(() => A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-01", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-02", minutesPerPc: 4, inputs: ["P-FAB-BL"] }] }, ctx("planner")), /มากกว่าหนึ่งขั้น/);
+  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-01", minutesPerPc: 1, inputs: ["P-FAB-BL"] }, { processCode: "BG-02", minutesPerPc: 4, inputs: ["P-ROPE-01", "P-ZIP-05"] }] }, ctx("planner")).changed, false, "the same inputs in another order are not a change");
+  assert.equal(A.saveRouting(d, { itemCode: "BG-0092", steps: [{ processCode: "BG-01", minutesPerPc: 1, inputs: ["P-FAB-BL", "P-ZIP-05"] }, { processCode: "BG-02", minutesPerPc: 4, inputs: ["P-ROPE-01"] }] }, ctx("planner")).changed, true, "moving an input to another step is a change");
   // process master: เพิ่มขั้นตอนใหม่แล้วใช้ใน routing ได้ · รหัสเดิมแก้ชื่อ/แผนก · แผนกต้องถูกต้อง
   A.saveProcess(d, { code: "GR-เจียร", name: "เจียร", dept: "GR" }, ctx("planner"));
   A.saveProcess(d, { code: "GR-เจียร", name: "เจียรขอบ", dept: "GR" }, ctx("planner"));
   assert.deepEqual({ ...A.helpers.processOf(d, "GR-เจียร") }, { code: "GR-เจียร", name: "เจียรขอบ", dept: "GR" });
-  assert.equal(A.saveRouting(d, { itemCode: "SE-TP01-OR01-75-3-30", steps: [{ processCode: "GR-CUT", minutesPerPc: 0.1 }, { processCode: "GR-เจียร", minutesPerPc: 0.2 }] }, ctx("planner")).changed, true);
+  assert.equal(A.saveRouting(d, { itemCode: "SE-TP01-OR01-75-3-30", steps: [{ processCode: "GR-01", minutesPerPc: 0.1 }, { processCode: "GR-เจียร", minutesPerPc: 0.2 }] }, ctx("planner")).changed, true);
   rejects(() => A.saveProcess(d, { code: "X-1", name: "x", dept: "QQ" }, ctx("planner")), /แผนก/);
   rejects(() => A.saveProcess(d, { code: "X-1", name: "x", dept: "GR" }, ctx("gr")), /ฝ่ายวางแผน/);
   // รูปชิ้นงาน: data URL ของรูปเท่านั้น ขนาดจำกัด ค่าว่างลบรูป
@@ -632,15 +632,15 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   // ขั้นตอนมาตรฐานที่เพิ่มทีหลัง (GR ทากาว/เจียร/คัดแยก, PK ใส่กระเป๋า) ใช้ได้โดยไม่แก้ข้อมูลที่เก็บและไม่เปลี่ยนรุ่น state
   // ขั้นตอนที่ผู้ใช้เพิ่มหรือแก้ชื่อเองชนะค่าเริ่มต้น · แก้ชื่อขั้นตอนเริ่มต้นแล้วเก็บเป็นของผู้ใช้ ไม่แก้ค่าเริ่มต้นที่ freeze ไว้
   const older = fresh();
-  older.processes = [{ code: "GR-CUT", name: "ตัด (ชื่อที่ผู้ใช้แก้)", dept: "GR" }, { code: "X-OWN", name: "ขั้นตอนของผู้ใช้", dept: "PK" }];
+  older.processes = [{ code: "GR-01", name: "ตัด (ชื่อที่ผู้ใช้แก้)", dept: "GR" }, { code: "X-OWN", name: "ขั้นตอนของผู้ใช้", dept: "PK" }];
   const all = A.helpers.processesOf(older);
   assert.deepEqual(all.slice(0, 2), older.processes);
-  assert.ok(["GR-GLUE", "GR-GRIND", "GR-SORT", "PK-BAG"].every((code) => A.helpers.processOf(older, code)));
-  assert.equal(all.filter((process) => process.code === "GR-CUT").length, 1, "a stored step hides the default of the same code");
+  assert.ok(["GR-02", "GR-03", "GR-04", "PK-02"].every((code) => A.helpers.processOf(older, code)));
+  assert.equal(all.filter((process) => process.code === "GR-01").length, 1, "a stored step hides the default of the same code");
   assert.equal(older.processes.length, 2, "looking up steps does not change the stored data");
-  A.saveProcess(older, { code: "GR-GLUE", name: "ทากาวขอบ", dept: "GR" }, ctx("planner"));
-  assert.deepEqual(older.processes.at(-1), { code: "GR-GLUE", name: "ทากาวขอบ", dept: "GR" });
-  assert.equal(rules.DEFAULT_PROCESSES.find((entry) => entry.code === "GR-GLUE").name, "ทากาว");
+  A.saveProcess(older, { code: "GR-02", name: "ทากาวขอบ", dept: "GR" }, ctx("planner"));
+  assert.deepEqual(older.processes.at(-1), { code: "GR-02", name: "ทากาวขอบ", dept: "GR" });
+  assert.equal(rules.DEFAULT_PROCESSES.find((entry) => entry.code === "GR-02").name, "ทากาว");
   // แท็บที่เปิดโค้ดรุ่นเก่ากว่าข้อมูล: ไม่เขียนชุดสาธิตทับข้อมูลรุ่นใหม่ (จะหายทั้ง BOM ที่นำเข้า)
   const newerText = JSON.stringify({ ...fresh(), version: storeApi.STATE_VERSION + 1 });
   const newerStorage = new Map([[storeApi.STATE_KEY, newerText]]);
