@@ -861,3 +861,37 @@ test("kinds are chosen by category (สินค้า / WIP / วัตถุ�
   html = await env.render("p=items&sel=DM01");
   assert.match(html, /สูตรยาง · สูตรยาง \(คอมปาวด์\)/);
 });
+
+test("order items show edit and delete buttons in a draft and in a released order with no started job, with a reopen warning", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const D = env.context.MNP_BOM_DIALOGS;
+  // ใบร่าง: แก้จำนวน/ลบ/เพิ่มได้ ไม่มีคำเตือน
+  let html = await env.render("p=orders&sel=DEMO-26002");
+  clean(html);
+  assert.match(html, /data-rf-open="orderItemEdit"/);
+  assert.match(html, /data-rf-action="removeOrderItem"/);
+  let c = env.ctx("p=orders&sel=DEMO-26002");
+  const edit = D.orderItemEdit(c, { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A" });
+  clean(edit.html);
+  assert.match(edit.html, /data-rf-form="updateOrderItem"/);
+  assert.match(edit.html, /name="qty"[^>]*value="192"/);
+  assert.doesNotMatch(edit.html, /กลับเป็นร่าง/);
+  assert.equal(D.orderItemEdit(c, { orderId: "DEMO-26002", fgCode: "NOPE" }), null);
+  // ใบที่ปล่อยผลิตแล้ว ยังไม่มีงานเริ่ม: ปุ่มยังอยู่ และเตือนว่าใบจะกลับเป็นร่าง
+  assert.equal(env.store.run("releaseOrder", { orderId: "DEMO-26002" }).ok, true);
+  html = await env.render("p=orders&sel=DEMO-26002");
+  assert.match(html, /data-rf-open="orderItemEdit"/);
+  assert.match(html, /data-rf-open="orderItemAdd"/);
+  assert.match(html, /data-rf-confirm="[^"]*กลับเป็นร่าง/);
+  c = env.ctx("p=orders&sel=DEMO-26002");
+  assert.match(D.orderItemEdit(c, { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A" }).html, /กลับเป็นร่าง/);
+  assert.match(D.orderItemAdd(c, { orderId: "DEMO-26002" }).html, /กลับเป็นร่าง/);
+  // ใบตัวอย่างที่มีงานเริ่มแล้ว: ไม่มีปุ่มแก้
+  html = await env.render("p=orders&sel=DEMO-26001");
+  assert.doesNotMatch(html, /data-rf-open="orderItemEdit"|data-rf-action="removeOrderItem"|data-rf-open="orderItemAdd"/);
+  // แผนกอื่นไม่เห็นปุ่มแก้
+  env.store.setUser("B05");
+  html = await env.render("p=orders&sel=DEMO-26002");
+  assert.doesNotMatch(html, /data-rf-open="orderItemEdit"/);
+});
