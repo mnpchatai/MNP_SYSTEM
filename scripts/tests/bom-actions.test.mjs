@@ -73,9 +73,11 @@ test("only planners and managers create or edit items and BOMs; every save is a 
   const current = approved(d, "DEMO-TP-01(P)-Y");
   assert.equal(current.id, result.id);
   assert.equal(current.status, "approved", "usable at once, no approval step");
-  assert.equal(current.lines[1].scrapPct, 2);
-  assert.equal(current.lines[0].consumerDept, "PK");
-  assert.equal(current.lines[0].producerDept, "GR");
+  // บรรทัดเรียงตามผังงาน: ของซื้อ (ST) ก่อนชิ้นยาง (GR) แม้ฟอร์มส่งมาสลับกัน
+  assert.deepEqual(current.lines.map((line) => line.childCode), ["P-BOX-01", "SE-TP01-OR01-100-18-65"]);
+  assert.equal(current.lines[0].scrapPct, 2);
+  assert.equal(current.lines[1].consumerDept, "PK");
+  assert.equal(current.lines[1].producerDept, "GR");
   assert.equal(d.boms.find((bom) => bom.id === before.id).status, "superseded");
   assert.equal(d.boms.filter((bom) => bom.itemCode === "DEMO-TP-01(P)-Y" && bom.status === "approved").length, 1);
   assert.match(current.changeLog[0].text, /SE-TP01-OR01-100-18-65 3→4/);
@@ -150,7 +152,7 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   assert.equal(rb.weightG, 1500);
   assert.equal(approved(d, "SE-NEW-01").lines[0].qty, 0.05);
   assert.equal(A.helpers.itemOf(d, "RB-DM02-02-BK01-225-3-20").rubber.cutLengthCm, 15, "patch updated the cutting data of an existing RB");
-  assert.deepEqual(approved(d, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["SE-NEW-01", "P-STK-01", "PT-00320", "RB-DM02-02-BK01-225-3-20"]);
+  assert.deepEqual(approved(d, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["P-STK-01", "RB-DM02-02-BK01-225-3-20", "SE-NEW-01", "PT-00320"], "lines are stored in company-flow order (ST → RB → GR → PT) whatever order the tree sent");
   assert.equal(approved(d, "NEW-TP-02(P)-Y").note, "สร้างครั้งแรก");
   // บันทึกซ้ำโดยไม่เปลี่ยนอะไร = ไม่มี revision ใหม่
   const again = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", item: { name: "ตอปิโดใหม่", uom: "set" }, nodes: [
@@ -297,7 +299,7 @@ test("a product can be chosen by base code + package + color set; an unknown var
   const bom = approved(d, created.code);
   assert.equal(bom.revision, 1);
   assert.match(bom.note, /คัดลอกจาก DEMO-TP-01\(P\)-Y Rev\.1/);
-  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), [["XP-00001", 1], ["PT-00320", 0.3], ["P-STK-01", 1], ["SE-TP01-RD01-100-18-65", 3], ["SE-TP01-BK01-140-3-20", 3], ["SE-TP01-RD01-75-3-30", 9], ["P-BAG-01", 0.01], ["P-BOX-01", 0.025]], "orange SE slots become red, the black core stays, packaging lines come from the package definition");
+  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), [["P-STK-01", 1], ["P-BAG-01", 0.01], ["P-BOX-01", 0.025], ["SE-TP01-RD01-100-18-65", 3], ["SE-TP01-BK01-140-3-20", 3], ["SE-TP01-RD01-75-3-30", 9], ["PT-00320", 0.3], ["XP-00001", 1]], "orange SE slots become red, the black core stays, packaging lines come from the package definition");
   assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /ชุดสี A: SE-TP01-OR01-100-18-65 → SE-TP01-RD01-100-18-65, SE-TP01-OR01-75-3-30 → SE-TP01-RD01-75-3-30/);
   assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /แพ็กเกจ P: ถอด P-BAG-01, P-BOX-01 ใส่ P-BAG-01 × 0.0100, P-BOX-01 × 0.0250/);
   const redSe = A.helpers.itemOf(d, "SE-TP01-RD01-100-18-65");
@@ -626,6 +628,22 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(fromV2.version, storeApi.STATE_VERSION);
   assert.deepEqual(fromV2.processes, rules.DEFAULT_PROCESSES.map((entry) => ({ ...entry })));
   assert.deepEqual(fromV2.routings, []);
+  // รุ่น 4 → 5: บรรทัด BOM ทุก revision ของทุกสินค้าเรียงตามผังงาน (ข้อมูลที่นำเข้าจาก Excel เรียงตามชีต: PT ก่อน SE ท้าย)
+  const v4 = fresh();
+  v4.version = 4;
+  const fg = v4.boms.find((bom) => bom.itemCode === "DEMO-TP-01(P)-Y" && bom.status === "approved");
+  const byCode = (code) => fg.lines.find((line) => line.childCode === code);
+  fg.lines = [byCode("PT-00320"), byCode("P-STK-01"), byCode("XP-00001"), byCode("SE-TP01-OR01-100-18-65"), byCode("P-BOX-01"), byCode("SE-TP01-BK01-140-3-20"), byCode("P-BAG-01"), byCode("SE-TP01-OR01-75-3-30")];
+  const fromV4 = storeApi.migrate(JSON.parse(JSON.stringify(v4)));
+  assert.equal(fromV4.version, storeApi.STATE_VERSION);
+  assert.deepEqual(fromV4.boms.find((bom) => bom.id === fg.id).lines.map((line) => line.childCode), ["P-STK-01", "P-BOX-01", "P-BAG-01", "SE-TP01-OR01-100-18-65", "SE-TP01-BK01-140-3-20", "SE-TP01-OR01-75-3-30", "PT-00320", "XP-00001"], "ST → GR → PT → PK, same-department lines keep their order");
+  assert.match(fromV4.audit[0].detail, /รุ่น 4 → 5: เรียงบรรทัด BOM ตามผังงาน[^(]*\(1 BOM เปลี่ยนลำดับ\)/);
+  // ย้ายแผนกเจ้าของของลูกแล้วบันทึก BOM ของพ่อโดยไม่แก้อะไร: ลำดับเก่าที่ค้างไม่นับเป็นการแก้ (ไม่เกิด revision ใหม่)
+  const moved = fresh();
+  const sticker = A.helpers.itemOf(moved, "P-STK-01");
+  A.saveItem(moved, { ...sticker, ownerDept: "PK" }, ctx("planner"));
+  const unchanged = approved(moved, "DEMO-TP-01(P)-Y");
+  assert.equal(A.saveBom(moved, { itemCode: "DEMO-TP-01(P)-Y", lines: unchanged.lines.map((line) => ({ ...line })) }, ctx("planner")).changed, false, "re-saving after a child changed department is not a change");
   assert.deepEqual([fromV2.colors, fromV2.colorSets, fromV2.packages], [[], [], []]);
   assert.equal(fromV2.items.length, v2.items.length);
   assert.ok(storeApi.isValidState(fromV2));
