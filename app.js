@@ -15,6 +15,21 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 
 const app = document.querySelector("#app");
 
+// ไอคอนเส้นชุดเดียวของ Pilot (viewBox 24, เส้น 1.8 ตามสี currentColor ผ่าน .ui-icon / .nav-icon svg) แทนอีโมจิและอักขระพิเศษ
+const UI_ICON_PATHS = {
+  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>',
+  document: '<path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+  approve: '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.7 2.7L16 9.8"/>',
+  bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+  settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  signout: '<path d="M9 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H9"/><path d="m15 16 4-4-4-4M19 12H9"/>',
+  theme: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
+  building: '<path d="M4 21V5.5L12 3v18M12 8h8v13M2 21h20M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+};
+const uiIcon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${UI_ICON_PATHS[name] ?? ""}</svg>`;
+
 // ช่องรหัสผ่านทุกช่องกดแสดง/ซ่อนได้ — หน้าถูก render ใหม่ด้วย innerHTML ตลอด จึงเสริมปุ่มให้ทีหลังด้วย observer
 const PASSWORD_ICON_SHOW = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const PASSWORD_ICON_HIDE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.9 10.9 0 0 1 12 19c-6.5 0-10-7-10-7a18.5 18.5 0 0 1 4.06-5.06M9.9 4.24A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>`;
@@ -993,7 +1008,7 @@ function requestRows(requests, { showProgress = false, showRequester = false, di
               <span class="request-card-type" style="background:${requestTypeGradient(type?.code)}">${escapeHtml(type?.name_th ?? "คำร้อง")}</span>
             </div>
             <div class="request-card-tags">
-              ${ownerNames.length ? `<span class="request-owner-chip" title="ผู้รับผิดชอบ">🧰 ${escapeHtml(ownerNames.join(", "))}</span>` : ""}
+              ${ownerNames.length ? `<span class="request-owner-chip" title="ผู้รับผิดชอบ">${uiIcon("user")} ${escapeHtml(ownerNames.join(", "))}</span>` : ""}
               <span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</span>
               ${statusBadge(request.status)}
             </div>
@@ -1037,7 +1052,7 @@ function statusBoardRows(rows) {
               <span class="request-card-type" style="background:${requestTypeGradient(row.type_code)}">${escapeHtml(row.type_name_th ?? "คำร้อง")}</span>
             </div>
             <div class="request-card-tags">
-              <span class="request-department-chip" title="แผนกที่แจ้ง">🏢 ${escapeHtml(department)}</span>
+              <span class="request-department-chip" title="แผนกที่แจ้ง">${uiIcon("building")} ${escapeHtml(department)}</span>
               ${row.is_urgent ? `<span class="request-priority-chip priority-urgent">เร่งด่วน</span>` : ""}
               ${statusBadge(row.status)}
             </div>
@@ -1056,14 +1071,14 @@ function statusBoardRows(rows) {
             ${progressTracker(row.status, Boolean(row.uses_repair_workflow), { waitingOn: row.waiting_on, typeCode: row.type_code })}
             ${row.can_open
               ? `<a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>`
-              : `<span class="request-locked-note" title="สิทธิ์ของบัญชีนี้ดูได้เฉพาะสถานะและความคืบหน้า">🔒 ดูได้เฉพาะความคืบหน้า</span>`}
+              : `<span class="request-locked-note" title="สิทธิ์ของบัญชีนี้ดูได้เฉพาะสถานะและความคืบหน้า">${uiIcon("lock")} ดูได้เฉพาะความคืบหน้า</span>`}
           </footer>
         </article>`;
       }).join("")}</div>`;
 }
 
 function themeButton() {
-  return `<button class="icon-button theme-toggle" type="button" aria-label="สลับธีม" title="สลับธีม">◐</button>`;
+  return `<button class="icon-button theme-toggle" type="button" aria-label="สลับธีม" title="สลับธีม">${uiIcon("theme")}</button>`;
 }
 
 // แอปที่ติดตั้งแบบ standalone บน Desktop/Android ไม่มีปุ่มย้อนกลับ/ถัดไปของเบราว์เซอร์
@@ -1563,16 +1578,15 @@ async function loadUnread() {
   return state.unread;
 }
 
-const navEmoji = (emoji, extraClass = "") => `<span class="nav-emoji${extraClass ? ` ${extraClass}` : ""}" aria-hidden="true">${emoji}</span>`;
 const NAV_ICONS = {
-  dashboard: navEmoji("🏠"),
-  requests: navEmoji("📝"),
+  dashboard: uiIcon("home"),
+  requests: uiIcon("document"),
   new: `<span class="plus-icon" aria-hidden="true"></span>`,
-  approvals: navEmoji("✅"),
-  notifications: navEmoji("🔔", "bell-emoji"),
-  admin: navEmoji("⚙️"),
-  profile: navEmoji("👤"),
-  signout: navEmoji("🚪"),
+  approvals: uiIcon("approve"),
+  notifications: uiIcon("bell"),
+  admin: uiIcon("settings"),
+  profile: uiIcon("user"),
+  signout: uiIcon("signout"),
 };
 
 function navLink(path, label, icon, active, { featured = false, badge = 0, href = `#/${path}` } = {}) {
@@ -1615,7 +1629,7 @@ function shell(content, active, title) {
         <div class="sidebar-user">
           <div class="avatar">${escapeHtml(initials(employee))}</div>
           <div class="user-copy"><strong>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
-          <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">↪</button>
+          <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">${uiIcon("signout")}</button>
         </div>
       </aside>
       <button class="nav-backdrop" type="button" tabindex="-1" aria-label="ปิดเมนูหลัก"></button>
@@ -1853,7 +1867,7 @@ async function renderDashboard() {
     </section>
     <div class="dashboard-grid">
       <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory })}</section>
-      <section class="card flush"><div class="card-heading"><h2>คำร้องแยกตามประเภท</h2><a href="#/requests?type=all">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/requests?type=${encodeURIComponent(type.id)}"><span class="quick-icon">▤</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
+      <section class="card flush"><div class="card-heading"><h2>คำร้องแยกตามประเภท</h2><a href="#/requests?type=all">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/requests?type=${encodeURIComponent(type.id)}"><span class="quick-icon">${uiIcon("document")}</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
     </div>`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
   bindShell();
