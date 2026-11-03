@@ -1054,7 +1054,7 @@ a.machine-history-no:hover { text-decoration: underline; }
 .password-toggle {
   position: absolute; top: 0; right: 0; bottom: 0; width: 44px;
   display: grid; place-items: center; padding: 0;
-  color: var(--muted); background: transparent; border: 0; border-radius: 0 8px 8px 0; cursor: pointer;
+  color: var(--muted); background: transparent; border: 0; border-radius: 0 var(--radius-md) var(--radius-md) 0; cursor: pointer;
 }
 .password-toggle:hover { color: var(--ink); }
 .password-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
@@ -1122,7 +1122,7 @@ a.machine-history-no:hover { text-decoration: underline; }
   gap: 16px;
   padding: 22px 24px 20px;
   border-bottom: 1px solid color-mix(in srgb, var(--ncr-part-accent) 10%, var(--paper));
-  border-radius: 19px 19px 0 0;
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
   background: linear-gradient(115deg, var(--ncr-part-tint), var(--paper) 85%);
 }
 .ncr-part-number {
@@ -2073,7 +2073,6 @@ a.rf-step:hover { border-color: var(--rf-accent); }
   .rf-g2, .rf-g3, .rf-g4, .rf-flow { grid-template-columns: 1fr; }
   /* การ์ดตัวเลข KPI เป็น 2×2 บนมือถือ ไม่ให้ 4 ใบกินจอแรกทั้งจอ */
   .rf-g4:has(> .rf-stat) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .rf-page .rf-stat { padding: 12px 14px; }
   .rf-role-grid { grid-template-columns: 1fr 1fr; }
   .rf-persona .select { min-width: 0; flex: 1; }
   .rf-persona { width: 100%; }
@@ -2263,7 +2262,7 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-callout.is-bad .btn, body:has(.rf-page) .rf-modal .rf-callout.is-bad .btn { background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .4); }
 .rf-page .rf-alert-list .rf-callout, body:has(.rf-page) .rf-modal .rf-alert-list .rf-callout { padding: 10px 12px; font-size: var(--text-meta); font-weight: 400; }
 .rf-page .rf-tabs { gap: 6px; padding: 4px; background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-md); }
-.rf-page .rf-tab { padding: 8px 14px; margin: 0; border: 0; border-radius: var(--radius-md); }
+.rf-page .rf-tab { padding: 8px 14px; margin: 0; border: 0; border-radius: var(--radius-sm); }
 .rf-page .rf-tab.is-active { color: #fff; background: var(--rf-mod); }
 .rf-page .rf-bar { height: 8px; }
 .rf-page .rf-bar > div { background: var(--rf-mod); }
@@ -2304,6 +2303,7 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
 @media (max-width: 760px) {
   .rf-page .rf-pagehead h1 { font-size: var(--text-heading); }
   .rf-page .rf-stat-value { font-size: var(--text-page); }
+  .rf-page .rf-stat { padding: 12px 14px; }
 }
 
 /* ---------- BOM รายแผนก (โหมดทดสอบ) modules/module-bom.js และ bom-*.js — ใช้โครง .rf-* ของ RubberFlow เพิ่มเฉพาะส่วนของ BOM ---------- */
