@@ -376,9 +376,12 @@ function hideToast() {
   toastNode.className = "toast";
   toastNode.replaceChildren();
 }
+// Esc ปิดข้อผิดพลาดเฉพาะตอนที่ไม่มีอย่างอื่นให้ Esc ปิด (ฟังแบบ capture จึงเห็น popup ก่อนตัวจัดการของมันจะปิด)
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && toastNode.classList.contains("error") && !document.querySelector("dialog[open]")) hideToast();
-});
+  if (event.key !== "Escape" || event.defaultPrevented || !toastNode.classList.contains("error")) return;
+  if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
+  hideToast();
+}, true);
 // ผู้ใช้ไปหน้าอื่น: ข้อผิดพลาดของหน้าเดิมไม่ตามไป แต่ไม่ล้างข้อผิดพลาดที่เพิ่งแสดงก่อนโค้ดพาไปหน้าใหม่ (เช่น showToast แล้ว go())
 window.addEventListener("hashchange", () => {
   if (toastNode.classList.contains("error") && Date.now() - (showToast.shownAt ?? 0) > 1000) hideToast();
