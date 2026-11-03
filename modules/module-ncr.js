@@ -12,7 +12,7 @@
 //
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — ฟังก์ชันข้างในเรียก helper ของ app.js (sb, state, shell,
 // bindShell, loadingShell, escapeHtml, formatDate, showToast, friendlyError, setFormBusy,
-// loadEmployeeDirectory, personName, DEPT_MANAGER_ROLE_CODES) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
+// confirmDialog, loadEmployeeDirectory, personName, DEPT_MANAGER_ROLE_CODES) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 // การคำนวณสิทธิ์ในไฟล์นี้ใช้ตัดสินว่าจะแสดงฟอร์มไหนเท่านั้น RPC ในฐานข้อมูลเป็นตัวบังคับสิทธิ์จริง
 //
 // CAR (MR04-FM01) ยังเป็นคำร้องทั่วไปจนถึง Phase 2 — คู่กับฝั่ง Next.js: src/lib/request-modules/module-ncr.ts
@@ -796,7 +796,7 @@
       event.preventDefault();
       if (!form.reportValidity()) return;
       const action = form.dataset.action;
-      if (action === "cancel" && !window.confirm(`ยืนยันยกเลิก ${ncr.ncr_no}?`)) return;
+      if (action === "cancel" && !(await confirmDialog({ title: `ยืนยันยกเลิก ${ncr.ncr_no}?`, confirmLabel: "ยกเลิก NCR", danger: true }))) return;
       let evidences;
       try {
         evidences = evidencesOf(form);

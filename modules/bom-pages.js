@@ -1773,7 +1773,13 @@
       if (!form) return;
       let dirty = false;
       form.addEventListener("input", () => { dirty = true; });
-      rootNode.querySelectorAll("[data-bom-count-nav]").forEach((link) => link.addEventListener("click", (event) => { if (dirty && !confirm("มียอดที่ยังไม่บันทึก ออกจากหน้านี้?")) event.preventDefault(); }));
+      // หยุดการเปิดลิงก์ทันที (ตัดสินหลัง await ไม่ได้) แล้วไปเองเมื่อยืนยัน
+      rootNode.querySelectorAll("[data-bom-count-nav]").forEach((link) => link.addEventListener("click", async (event) => {
+        if (!dirty) return;
+        event.preventDefault();
+        const href = link.getAttribute("href");
+        if (await confirmDialog({ title: "มียอดที่ยังไม่บันทึก ออกจากหน้านี้?", confirmLabel: "ออกจากหน้านี้", danger: true })) location.hash = href;
+      }));
     };
     return { html, bind };
   };

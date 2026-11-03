@@ -11,7 +11,7 @@
 // ค่า min / max / average / Judge / ผลรวมที่เห็นสดตอนกรอกคำนวณโดย modules/qc-model.js เพื่อดูประกอบเท่านั้น ฐานข้อมูลคำนวณซ้ำเอง
 // ไฟล์นี้โหลดหลัง modules/qc-model.js และ modules/qc-sheet.js ก่อน app.js (ดู index.html) และเรียก helper ของ app.js
 // (sb, state, app, shell, bindShell, loadingShell, renderNotFound, escapeHtml, formatDate, showToast, friendlyError,
-// setFormBusy, renderRoute, closePopup) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
+// setFormBusy, renderRoute, closePopup, confirmDialog) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 // popup รายการ Lot เป็น [data-popup] อยู่ในกรอบเดียวกับช่องค้นหา ปิดด้วยกฎกลาง closePopup ของ app.js เท่านั้น (ห้ามปิดจาก blur — iPhone)
 (function registerQcModule() {
   const model = window.MNP_QC_MODEL;
@@ -716,32 +716,35 @@
 
   function bindReport(root, report) {
     const args = { p_id: report.id, p_version: report.version };
-    root.querySelector('[data-qc-action="submit"]')?.addEventListener("click", () => {
-      if (confirm(`ส่ง ${report.report_no} ขออนุมัติ? หลังส่งแล้วแก้ไขไม่ได้จนกว่าจะไม่อนุมัติ`)) runAction(root, "app_qc_submit_report", args, "ส่งขออนุมัติแล้ว");
+    root.querySelector('[data-qc-action="submit"]')?.addEventListener("click", async () => {
+      if (await confirmDialog({ title: `ส่ง ${report.report_no} ขออนุมัติ?`, message: "หลังส่งแล้วแก้ไขไม่ได้จนกว่าจะไม่อนุมัติ", confirmLabel: "ส่งขออนุมัติ" })) runAction(root, "app_qc_submit_report", args, "ส่งขออนุมัติแล้ว");
     });
-    root.querySelector('[data-qc-action="reopen"]')?.addEventListener("click", () => {
-      if (confirm(`เปิด ${report.report_no} กลับเป็นฉบับร่างเพื่อแก้ไข? ลายเซ็นเดิมจะถูกล้าง`)) runAction(root, "app_qc_reopen_report", args, "เปิดกลับเป็นฉบับร่างแล้ว");
+    root.querySelector('[data-qc-action="reopen"]')?.addEventListener("click", async () => {
+      if (await confirmDialog({ title: `เปิด ${report.report_no} กลับเป็นฉบับร่างเพื่อแก้ไข?`, message: "ลายเซ็นเดิมจะถูกล้าง", confirmLabel: "เปิดกลับเป็นฉบับร่าง", danger: true })) runAction(root, "app_qc_reopen_report", args, "เปิดกลับเป็นฉบับร่างแล้ว");
     });
-    root.querySelectorAll("[data-decision]").forEach((button) => button.addEventListener("click", () => {
+    root.querySelectorAll("[data-decision]").forEach((button) => button.addEventListener("click", async () => {
       const decision = button.dataset.decision;
       const comment = root.querySelector("#qc-decide-comment")?.value ?? "";
       if (decision === "reject" && comment.trim().length < 5) return showError(root, model.ERROR_MESSAGES.QC_REJECT_COMMENT_REQUIRED, "#qc-decide-error");
-      if (!confirm(decision === "approve" ? `อนุมัติ ${report.report_no}?` : `ไม่อนุมัติ ${report.report_no}?`)) return undefined;
+      const confirmed = decision === "approve"
+        ? await confirmDialog({ title: `อนุมัติ ${report.report_no}?`, confirmLabel: "อนุมัติ" })
+        : await confirmDialog({ title: `ไม่อนุมัติ ${report.report_no}?`, message: comment.trim(), confirmLabel: "ไม่อนุมัติ", danger: true });
+      if (!confirmed) return undefined;
       return runAction(root, "app_qc_decide_report", { ...args, p_decision: decision, p_comment: comment.trim() }, decision === "approve" ? "อนุมัติแล้ว" : "ไม่อนุมัติแล้ว");
     }));
-    root.querySelector("#qc-cancel-form")?.addEventListener("submit", (event) => {
+    root.querySelector("#qc-cancel-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const note = root.querySelector("#qc-cancel-note")?.value.trim() ?? "";
       if (note.length < 5) return showToast(model.ERROR_MESSAGES.QC_CANCEL_NOTE_REQUIRED, "error");
-      if (!confirm(`ยกเลิก ${report.report_no}? แก้กลับไม่ได้`)) return undefined;
+      if (!(await confirmDialog({ title: `ยกเลิก ${report.report_no}?`, message: "แก้กลับไม่ได้", confirmLabel: "ยกเลิกใบตรวจ", danger: true }))) return undefined;
       return runAction(root, "app_qc_cancel_report", { ...args, p_note: note }, `ยกเลิก ${report.report_no} แล้ว`);
     });
-    root.querySelector("#qc-ncr-form")?.addEventListener("submit", (event) => {
+    root.querySelector("#qc-ncr-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
       const parsed = model.ncrArgs(Object.fromEntries(["qty_total", "qty_defect", "unit", "defect_type_code", "description"].map((name) => [name, form.elements[name]?.value])));
       if (parsed.error) return showError(root, parsed.error, "#qc-ncr-error");
-      if (!confirm("เปิด NCR จากใบตรวจนี้? ใบละ 1 NCR เปิดซ้ำไม่ได้")) return undefined;
+      if (!(await confirmDialog({ title: "เปิด NCR จากใบตรวจนี้?", message: "ใบละ 1 NCR เปิดซ้ำไม่ได้", confirmLabel: "เปิด NCR" }))) return undefined;
       return runAction(root, "app_qc_issue_ncr", { ...args, ...parsed.args }, (data) => `เปิด NCR ${data?.ncr_no ?? ""} แล้ว`);
     });
     const exportButton = root.querySelector("#qc-export");
