@@ -46,20 +46,20 @@ const dom = () => new Proxy(function stub() {}, {
 });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-function load({ sandbox = true, route = "", access = EDIT, fixtures = {}, employee = {}, sandboxState = { active: true } } = {}) {
-  const calls = { notFound: 0, rpc: [], toasts: [], synced: [], closed: 0 };
+function load({ sandbox = true, route = "", access = EDIT, fixtures = {}, employee = {}, sandboxState = { active: true }, content = dom() } = {}) {
+  const calls = { notFound: 0, rpc: [], toasts: [], synced: [], closed: 0, confirms: [], confirmAnswer: true };
   const context = vm.createContext({});
   const app = { innerHTML: "" };
   const data = { app_qc_access: access, app_qc_reports: { reports: [LISTED] }, app_qc_report: REPORT, app_qc_templates: [TEMPLATE], app_qc_lots: [], ...fixtures };
   Object.assign(context, {
     window: context, console, escapeHtml, formatDate: (value) => `D(${value})`, showToast: (message) => calls.toasts.push(message), friendlyError: (error) => String(error?.message ?? error),
-    setFormBusy() {}, renderRoute: async () => {}, confirm: () => true, closePopup: () => { calls.closed += 1; },
+    setFormBusy() {}, renderRoute: async () => {}, confirmDialog: async (options) => { calls.confirms.push(options); return calls.confirmAnswer; }, closePopup: () => { calls.closed += 1; },
     URLSearchParams, Intl, Date, Number, Object, Promise, location: { hash: "" }, FormData: class {},
     app, state: { employee: { id: "emp-gm", isSandbox: sandbox, ...employee }, sandbox: sandboxState },
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {},
     renderNotFound: () => { calls.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
-    document: { querySelector: () => dom() },
+    document: { querySelector: () => content },
     sb: {
       rpc: async (name, args) => {
         calls.rpc.push([name, args]);
@@ -221,6 +221,28 @@ test("the approver of the current step gets the decision form, unless the report
   assert.match(own.app.innerHTML, /อนุมัติใบตรวจของตัวเองไม่ได้/);
   const creator = await page("view=report&id=r1", { access, fixtures: { app_qc_report: { ...REPORT, inspected_by: "someone", created_by: "emp-gm" } } });
   assert.doesNotMatch(creator.app.innerHTML, /qc-decide-form/, "the creator cannot approve either");
+});
+
+test("approve and reject ask in the in-app dialog first, and a cancelled dialog sends nothing", async () => {
+  const handlers = {};
+  const decision = (value) => ({ dataset: { decision: value }, addEventListener: (type, handler) => { handlers[value] = handler; } });
+  const content = {
+    querySelector: (selector) => (selector === "#qc-decide-comment" ? { value: "  ค่าไม่ผ่านสเปก  " } : null),
+    querySelectorAll: (selector) => (selector === "[data-decision]" ? [decision("approve"), decision("reject")] : []),
+  };
+  const env = await page("view=report&id=r1", { access: { read: true, edit: false, steps: ["qa_manager"] }, content });
+  const decided = () => env.calls.rpc.filter(([name]) => name === "app_qc_decide_report");
+  env.calls.confirmAnswer = false;
+  await handlers.approve();
+  await handlers.reject();
+  assert.equal(decided().length, 0, "nothing is sent when the dialog is cancelled");
+  assert.deepEqual(plain(env.calls.confirms), [
+    { title: "อนุมัติ TEST-QC-26-001?", confirmLabel: "อนุมัติ" },
+    { title: "ไม่อนุมัติ TEST-QC-26-001?", message: "ค่าไม่ผ่านสเปก", confirmLabel: "ไม่อนุมัติ", danger: true },
+  ]);
+  env.calls.confirmAnswer = true;
+  await handlers.reject();
+  assert.deepEqual(plain(decided()), [["app_qc_decide_report", { p_id: "r1", p_version: REPORT.version, p_decision: "reject", p_comment: "ค่าไม่ผ่านสเปก" }]]);
 });
 
 test("a rejected report can be reopened or cancelled, with the reason in the history", async () => {

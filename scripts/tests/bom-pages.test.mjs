@@ -19,7 +19,7 @@ const XSS = "<script>alert(1)</script>";
 function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [] };
+  const log = { toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
@@ -32,7 +32,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const localStorage = { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) };
   Object.assign(context, {
     window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
-    renderRoute: async () => { log.renders += 1; }, confirm: () => true, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
+    renderRoute: async () => { log.renders += 1; }, confirmDialog: async (options) => { log.confirms.push(options); return log.confirmAnswer; }, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
     location: { get hash() { return log.hash; }, set hash(value) { log.hash = value.startsWith("#") ? value : `#${value}`; } },
     app, state: { employee: { isSandbox: sandbox } },
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
@@ -605,6 +605,45 @@ test("the mobile count page lists draft orders, shows SE + RB of the stock-check
   // แผนกอื่นไม่เห็นเมนู
   env.store.setUser("B05");
   assert.match(await env.render("p=count"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
+});
+
+test("leaving the count page with typed counts stops the link at once and goes only after the dialog confirms", async () => {
+  const env = load();
+  env.store.setUser("B08");
+  const handlers = {};
+  const form = { addEventListener: (type, handler) => { handlers.input = handler; } };
+  const link = { getAttribute: (name) => (name === "href" ? "#/bom?p=count" : null), addEventListener: (type, handler) => { handlers.click = handler; } };
+  env.context.MNP_BOM_PAGES.count(env.ctx("p=count&order=DEMO-26002")).bind({ querySelector: (selector) => (selector === ".bom-count-form" ? form : null), querySelectorAll: (selector) => (selector === "[data-bom-count-nav]" ? [link] : []) });
+  const click = async () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; await handlers.click(event); return event.prevented; };
+  env.log.hash = "#/bom?p=count&order=DEMO-26002";
+  assert.equal(await click(), false, "nothing typed: the link opens normally");
+  assert.equal(env.log.confirms.length, 0);
+  handlers.input();
+  env.log.confirmAnswer = false;
+  assert.equal(await click(), true);
+  assert.equal(env.log.hash, "#/bom?p=count&order=DEMO-26002", "a cancelled dialog stays on the page");
+  assert.equal(env.log.confirms.at(-1).title, "มียอดที่ยังไม่บันทึก ออกจากหน้านี้?");
+  env.log.confirmAnswer = true;
+  assert.equal(await click(), true);
+  assert.equal(env.log.hash, "#/bom?p=count");
+});
+
+test("a data-rf-action button with data-rf-confirm runs only after the dialog confirms, and names the action on the confirm button", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const button = { ...env.root, dataset: { rfAction: "removeOrderItem", rfArgs: JSON.stringify({ orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A" }), rfConfirm: "ลบ DEMO-HL-24(B)-A ออกจากใบ DEMO-26002?" }, textContent: "ลบ", getAttribute: (name) => (name === "aria-label" ? "ลบ DEMO-HL-24(B)-A ออกจากใบ" : null), handlers: {} };
+  button.addEventListener = (type, handler) => { button.handlers[type] = handler; };
+  env.fakes["[data-rf-action]"] = [button];
+  await env.render("p=orders&sel=DEMO-26002");
+  const items = () => env.store.data().orders.find((entry) => entry.id === "DEMO-26002").items.length;
+  const before = items();
+  env.log.confirmAnswer = false;
+  await button.handlers.click();
+  assert.equal(items(), before, "a cancelled dialog runs nothing");
+  assert.deepEqual(json(env.log.confirms.at(-1)), { title: "ลบ DEMO-HL-24(B)-A ออกจากใบ DEMO-26002?", message: "", confirmLabel: "ลบ DEMO-HL-24(B)-A ออกจากใบ", danger: true });
+  env.log.confirmAnswer = true;
+  await button.handlers.click();
+  assert.equal(items(), before - 1);
 });
 
 test("the colour-set / package page shows learned and defined sets per base, the variant matrix creates products through the definitions, and the forms go through data-rf-*", async () => {

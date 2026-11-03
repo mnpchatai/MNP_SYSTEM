@@ -6,7 +6,7 @@
 // ฟังเฉพาะ loopback (127.0.0.1 และ ::1) เครื่องอื่นใน LAN ต่อไม่ได้ และเสิร์ฟเฉพาะไฟล์ชุดเดียวกับที่ scripts/build-pilot.mjs เผยแพร่
 // (/styles.css, /modules/*.js …) ไฟล์อื่นของ repo (.git, package.json, .env*) ได้ 404 แล้วสร้างหน้า /harness/ ที่โหลดสไตล์ + สคริปต์โมดูลทุกตัวตามลำดับใน
 // index.html (ยกเว้น app.js) แล้วแทน app.js ด้วย stub ของ helper ที่โมดูลเรียก (state, app, shell, bindShell, renderNotFound,
-// escapeHtml, showToast, friendlyError, renderRoute, currentRoute) โดยถือว่าอยู่ในโหมดทดสอบเสมอ ข้อมูลของโมดูลอยู่ใน localStorage
+// escapeHtml, showToast, friendlyError, confirmDialog, renderRoute, currentRoute) โดยถือว่าอยู่ในโหมดทดสอบเสมอ ข้อมูลของโมดูลอยู่ใน localStorage
 // ของเบราว์เซอร์เหมือนของจริง ใช้เพื่อดู/ลองกดเท่านั้น ไม่ใช่ทางเข้าของผู้ใช้จริง และสคริปต์นี้ไม่ถูกเผยแพร่ (ดู scripts/build-pilot.mjs)
 import http from "node:http";
 import { readFile } from "node:fs/promises";
@@ -105,7 +105,34 @@ async function harnessPage() {
     const closePopupsOutside = (event) => document.querySelectorAll("[data-popup]:not([hidden])").forEach((popup) => { if (!popup.parentElement.contains(event.target)) closePopup(popup); });
     document.addEventListener("pointerdown", closePopupsOutside);
     document.addEventListener("focusin", closePopupsOutside);
-    Object.assign(window, { escapeHtml, showToast, friendlyError, currentRoute, shell, bindShell, loadingShell, renderNotFound, renderRoute, closePopup });
+    // กล่องยืนยัน (ย่อจาก confirmDialog ของ app.js): markup/class เดียวกัน ยืนยัน = true · ยกเลิก/Esc/เปลี่ยนหน้า = false
+    function confirmDialog({ title, message = "", confirmLabel, danger = false }) {
+      return new Promise((resolve) => {
+        const dialog = document.createElement("dialog");
+        dialog.className = "confirm-dialog";
+        dialog.innerHTML = "<form method=\\"dialog\\"><h2></h2>" + (message ? "<p></p>" : "") + "<div class=\\"confirm-dialog-actions\\"><button class=\\"btn secondary\\" value=\\"cancel\\">ยกเลิก</button><button class=\\"btn" + (danger ? " danger-solid" : "") + "\\" value=\\"confirm\\"></button></div></form>";
+        dialog.querySelector("h2").textContent = title;
+        if (message) dialog.querySelector("p").textContent = message;
+        dialog.querySelector("[value=confirm]").textContent = confirmLabel;
+        let settled = false;
+        const finish = (confirmed) => {
+          if (settled) return;
+          settled = true;
+          window.removeEventListener("hashchange", cancelOnLeave);
+          if (dialog.open) dialog.close();
+          dialog.remove();
+          resolve(confirmed);
+        };
+        const cancelOnLeave = () => finish(false);
+        window.addEventListener("hashchange", cancelOnLeave, { once: true });
+        dialog.querySelector("form").addEventListener("submit", (event) => { event.preventDefault(); finish(Boolean(event.submitter && event.submitter.value === "confirm")); });
+        dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(false); });
+        document.body.appendChild(dialog);
+        dialog.showModal();
+        dialog.querySelector("[value=cancel]").focus();
+      });
+    }
+    Object.assign(window, { escapeHtml, showToast, friendlyError, currentRoute, shell, bindShell, loadingShell, renderNotFound, renderRoute, closePopup, confirmDialog });
     window.addEventListener("DOMContentLoaded", () => {
       app = document.getElementById("app");
       window.addEventListener("hashchange", renderRoute);

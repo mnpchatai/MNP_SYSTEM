@@ -17,7 +17,7 @@
 // สำเร็จแล้ววาดหน้าใหม่ทั้งหน้า (renderRoute) dialog ที่เปิดอยู่จึงหายไปพร้อมกัน · ไม่ผ่านแสดง toast และคงฟอร์มไว้
 // dialog เป็น <dialog> ของเบราว์เซอร์ (showModal) ปิดด้วย Escape/ปุ่มปิด/แตะฉากหลัง ไม่ปิดจาก blur (แตะบน iPhone ได้) ไม่มี popup ลอยอื่น
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, app, shell, bindShell, loadingShell, renderNotFound,
-// escapeHtml, showToast, friendlyError, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
+// escapeHtml, showToast, friendlyError, confirmDialog, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerRubberFlowModule() {
   const PATH = "rubberflow";
   const TITLE = "RubberFlow MES";
@@ -129,8 +129,8 @@
       if (form.id) document.querySelectorAll(`button[form="${CSS.escape(form.id)}"]`).forEach((node) => { node.disabled = true; }); // ปุ่มส่งที่อยู่นอกฟอร์ม (เช่น ส่งมอบกล่อง)
       renderRoute();
     }));
-    root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", () => {
-      if (button.dataset.rfConfirm && !confirm(button.dataset.rfConfirm)) return;
+    root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
+      if (button.dataset.rfConfirm && !(await confirmDialog(ui.confirmOptions(button)))) return;
       if (!runAction(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess)) return;
       button.disabled = true;
       renderRoute();
@@ -261,8 +261,8 @@
       event.currentTarget.reset();
       openDialog("scan", { code }, ctx);
     });
-    root.querySelector("[data-rf-reset]")?.addEventListener("click", () => {
-      if (!confirm("ล้างข้อมูลที่บันทึกทั้งหมดแล้วสร้างข้อมูลสาธิตใหม่?")) return;
+    root.querySelector("[data-rf-reset]")?.addEventListener("click", async () => {
+      if (!(await confirmDialog({ title: "ล้างข้อมูลที่บันทึกทั้งหมดแล้วสร้างข้อมูลสาธิตใหม่?", confirmLabel: "ล้างข้อมูล", danger: true }))) return;
       store.reset();
       showToast("รีเซ็ตข้อมูลสาธิตเรียบร้อย");
       renderRoute();
