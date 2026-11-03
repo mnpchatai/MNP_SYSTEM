@@ -95,14 +95,6 @@
     try { return node.dataset.rfArgs ? JSON.parse(node.dataset.rfArgs) : {}; } catch { return {}; }
   }
 
-  // data-rf-confirm ถามผ่านกล่องยืนยันของ app.js: หัวเรื่องถึง "?" ตัวแรก ที่เหลือเป็นรายละเอียด ปุ่มยืนยันใช้ชื่อปุ่มที่กด (aria-label ถ้ามี)
-  function confirmButton(button) {
-    const text = button.dataset.rfConfirm;
-    const split = text.indexOf("? ");
-    const label = button.getAttribute?.("aria-label") || String(button.textContent ?? "").trim();
-    return confirmDialog({ title: split < 0 ? text : text.slice(0, split + 1), message: split < 0 ? "" : text.slice(split + 2).trim(), confirmLabel: label, danger: /^(ลบ|ยกเลิก)/.test(label) });
-  }
-
   function bindSpecInputs(root) {
     root.querySelectorAll("[data-spec]").forEach((input) => {
       const paint = () => {
@@ -138,7 +130,7 @@
       renderRoute();
     }));
     root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
-      if (button.dataset.rfConfirm && !(await confirmButton(button))) return;
+      if (button.dataset.rfConfirm && !(await confirmDialog(ui.confirmOptions(button)))) return;
       if (!runAction(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess)) return;
       button.disabled = true;
       renderRoute();

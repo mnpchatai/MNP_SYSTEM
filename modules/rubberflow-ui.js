@@ -72,6 +72,14 @@
   const submitButton = (text, { className = "", disabled = false } = {}) => `<button class="btn rf-btn${className ? ` ${className}` : ""}" type="submit"${disabled ? " disabled" : ""}>${esc(text)}</button>`;
   const button = (text, { action = "", args = {}, className = "secondary", confirmText = "", type = "button", ariaLabel = "" } = {}) =>
     `<button class="btn rf-btn ${className}" type="${type}"${action ? ` data-rf-action="${attr(action)}"` : ""}${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${confirmText ? ` data-rf-confirm="${attr(confirmText)}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}>${esc(text)}</button>`;
+  // data-rf-confirm → ค่าสำหรับ confirmDialog ของ app.js (module-rubberflow.js และ module-bom.js ใช้ร่วมกัน):
+  // หัวเรื่องถึง "?" ตัวแรก ที่เหลือเป็นรายละเอียด ปุ่มยืนยันใช้ชื่อปุ่มที่กด (aria-label ถ้ามี) ลบ/ยกเลิก = ปุ่มสีอันตราย
+  const confirmOptions = (node) => {
+    const text = node.dataset.rfConfirm;
+    const split = text.indexOf("? ");
+    const label = node.getAttribute?.("aria-label") || String(node.textContent ?? "").trim();
+    return { title: split < 0 ? text : text.slice(0, split + 1), message: split < 0 ? "" : text.slice(split + 2).trim(), confirmLabel: label, danger: /^(ลบ|ยกเลิก)/.test(label) };
+  };
   // ปุ่มเปิด dialog (module-rubberflow.js หา data-rf-open แล้วเรียก dialog ตามชื่อ)
   const openButton = (text, dialog, args = {}, { className = "secondary", ariaLabel = "" } = {}) => `<button class="btn rf-btn ${className}" type="button" data-rf-open="${attr(dialog)}"${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}>${esc(text)}</button>`;
   const link = (text, href, className = "") => `<a${className ? ` class="${attr(className)}"` : ""} href="${attr(href)}">${esc(text)}</a>`;
@@ -194,7 +202,7 @@
   const api = {
     module: "",
     STATUS, ICONS, icon, badge, status, statusLabel, pageHead, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
-    field, input, textarea, select, specInput, submitButton, button, openButton, link, dialog, closeButton,
+    field, input, textarea, select, specInput, submitButton, button, confirmOptions, openButton, link, dialog, closeButton,
     barcode, dualChart, controlChart, histogram,
   };
   root.MNP_RUBBERFLOW_UI = api;
