@@ -333,6 +333,8 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 }
 .btn { transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .1s ease; }
 .btn:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+:where(:root[data-theme="dark"]) .btn { background: var(--primary-strong); border-color: var(--primary-strong); }
+:where(:root[data-theme="dark"]) .btn:hover { background: #1d4ed8; border-color: #1d4ed8; }
 .btn:active:not(:disabled) { transform: translateY(1px) scale(.985); }
 /* ปุ่มส่งฟอร์มระหว่างบันทึก (setFormBusy ใส่ aria-busy) */
 .btn[aria-busy="true"]:disabled { opacity: .85; }
@@ -773,17 +775,6 @@ tbody tr:hover { background: var(--shell); }
   overflow: hidden;
   box-shadow: 0 12px 26px rgba(15, 23, 42, .18);
   transition: transform .15s ease, box-shadow .15s ease;
-}
-.type-card::after {
-  content: "";
-  position: absolute;
-  top: -36px;
-  right: -36px;
-  width: 130px;
-  height: 130px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, .38), transparent 70%);
-  pointer-events: none;
 }
 .type-card:hover { transform: translateY(-3px); box-shadow: 0 18px 34px rgba(15, 23, 42, .26); }
 .type-card:active { transform: translateY(-1px); }
@@ -2090,8 +2081,8 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-nav-group > span { display: block; padding: 0 8px 2px; color: var(--quiet); font-size: var(--text-caption); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .rf-nav-item { min-height: 36px; padding: 6px 8px; display: flex; align-items: center; gap: 6px; color: var(--muted); border-radius: var(--radius-md); font-size: var(--text-meta); line-height: 1.35; text-decoration: none; }
 .rf-nav-item:hover { color: var(--ink); background: var(--paper); }
-.rf-nav-item.is-active { color: var(--rf-accent-2); background: var(--rf-accent-soft); font-weight: 700; }
-.rf-nav-count { margin-left: auto; padding: 0 7px; color: #fff; background: var(--rf-accent); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; }
+.rf-nav-item.is-active { color: var(--primary-ink); background: var(--primary-soft); font-weight: 700; }
+.rf-nav-count { margin-left: auto; padding: 0 7px; color: #fff; background: var(--warning-strong); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; }
 
 @media (min-width: 761px) and (max-width: 1040px) { .rf-pagenav { display: flex; } }
 @media (max-width: 1100px) { .rf-g4, .rf-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rf-split, .rf-g2-wide { grid-template-columns: 1fr; } }
@@ -2153,9 +2144,9 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-app-name { font-size: var(--text-heading); font-weight: 700; line-height: 1.3; letter-spacing: -.01em; }
 .rf-page .nowrap { white-space: nowrap; }
 
-/* ===================== RubberFlow: ดีไซน์ (กรอบเข้ม + สีตามโมดูล) =====================
-   กรอบ (แถบข้าง แถบบน แถบหัวหน้า) สีน้ำเงินเข้มทุกหน้า เนื้อหาสว่างตามธีมของระบบ
-   ทุกโมดูลมีสี (--rf-mod จาก [data-rf-mod]) และ emoji (.rf-ico) ของตัวเอง: ไอคอนเมนู ชิปหัวหน้า ไล่เฉดแถบหัว ปุ่มหลัก แท็บ แถวที่เลือก
+/* ===================== RubberFlow: ดีไซน์ (กรอบเดียวกับระบบหลัก + สีโมดูลเป็นเครื่องหมาย) =====================
+   แถบข้าง แถบบน และพื้นใช้ของระบบหลัก ปุ่มหลัก แท็บ และแถวที่เลือกใช้สีฟ้ากลาง
+   ทุกโมดูลมีสี (--rf-mod จาก [data-rf-mod]) และ emoji (.rf-ico) ของตัวเอง ใช้เป็นจุด พื้นไอคอน กราฟ และแถบความคืบหน้าเท่านั้น
    สำคัญ = มีพื้นสี (KPI ต่ำกว่าเป้า แจ้งเตือนแถบทึบ) · ธรรมดา = การ์ดขาว ตารางเงียบ · ตัวเลข KPI ใหญ่เรียงหลัก · ปุ่ม/ช่องกรอก 40px สำหรับหน้างาน
    dialog ต่ออยู่ข้าง .rf-page (ไม่ใช่ลูก) กฎของ dialog จึง scope จาก body:has(.rf-page) */
 
@@ -2164,20 +2155,20 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 [data-rf-mod="orders"], [data-rf-mod="recipes"] { --rf-mod: #2457d6; }
 [data-rf-mod="requisition"] { --rf-mod: #a3600f; }
 [data-rf-mod="mixing"] { --rf-mod: #1d6fd3; }
-[data-rf-mod="extrusion"] { --rf-mod: #d9640c; }
-[data-rf-mod="curing"] { --rf-mod: #cf3030; }
-[data-rf-mod="finishing"] { --rf-mod: #1b8f4e; }
-[data-rf-mod="wip"], [data-rf-mod="quality"] { --rf-mod: #7b3fd1; }
+[data-rf-mod="extrusion"] { --rf-mod: #7b3fd1; }
+[data-rf-mod="curing"] { --rf-mod: #0f8ba0; }
+[data-rf-mod="finishing"] { --rf-mod: #4f6478; }
+[data-rf-mod="wip"], [data-rf-mod="quality"] { --rf-mod: #2e7d5b; }
 [data-rf-mod="spc"] { --rf-mod: #0f8ba0; }
 [data-rf-mod="trace"] { --rf-mod: #4f52c9; }
 [data-rf-mod="warehouse"], [data-rf-mod="molds"], [data-rf-mod="audit"] { --rf-mod: #4f6478; }
-[data-rf-mod], .rf-step { --rf-mod-soft: color-mix(in srgb, var(--rf-mod) 11%, var(--paper)); --rf-mod-line: color-mix(in srgb, var(--rf-mod) 28%, var(--paper)); --rf-mod-ink: color-mix(in srgb, var(--rf-mod) 45%, var(--ink)); --rf-mod-fill: color-mix(in srgb, var(--rf-mod) 68%, #000); --rf-mod-hover: color-mix(in srgb, var(--rf-mod) 56%, #000); }
-:root[data-theme="dark"] [data-rf-mod], :root[data-theme="dark"] .rf-step { --rf-mod-soft: color-mix(in srgb, var(--rf-mod) 22%, var(--paper)); --rf-mod-line: color-mix(in srgb, var(--rf-mod) 40%, var(--paper)); --rf-mod-ink: color-mix(in srgb, var(--rf-mod) 55%, white); --rf-mod-fill: color-mix(in srgb, var(--rf-mod) 55%, #000); --rf-mod-hover: color-mix(in srgb, var(--rf-mod) 45%, #000); }
+[data-rf-mod], .rf-step { --rf-mod-soft: color-mix(in srgb, var(--rf-mod) 11%, var(--paper)); --rf-mod-line: color-mix(in srgb, var(--rf-mod) 28%, var(--paper)); --rf-mod-ink: color-mix(in srgb, var(--rf-mod) 45%, var(--ink)); }
+:root[data-theme="dark"] [data-rf-mod], :root[data-theme="dark"] .rf-step { --rf-mod-soft: color-mix(in srgb, var(--rf-mod) 22%, var(--paper)); --rf-mod-line: color-mix(in srgb, var(--rf-mod) 40%, var(--paper)); --rf-mod-ink: color-mix(in srgb, var(--rf-mod) 55%, white); }
 .rf-ico { display: inline-grid; place-items: center; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif; font-style: normal; line-height: 1; }
-.rf-nav-ico { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 26px; font-size: var(--text-body); background: color-mix(in srgb, var(--rf-mod) 30%, #0b1f3a); border-radius: var(--radius-md); }
+.rf-nav-ico { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 26px; font-size: var(--text-body); background: color-mix(in srgb, var(--rf-mod) 16%, var(--paper)); border-radius: var(--radius-md); }
 .rf-nav-text { min-width: 0; }
 .rf-pagehead-main { min-width: 0; display: flex; align-items: center; gap: 12px; }
-.rf-mod-ico { display: inline-grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; font-size: var(--text-page); background: var(--rf-mod); border-radius: var(--radius-md); box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--rf-mod) 80%, transparent); }
+.rf-mod-ico { display: inline-grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; font-size: var(--text-page); background: color-mix(in srgb, var(--rf-mod) 16%, var(--paper)); border-radius: var(--radius-md); }
 .rf-callout, body:has(.rf-page) .rf-modal .rf-callout { display: flex; align-items: flex-start; gap: 10px; }
 .rf-callout-ico { display: inline-grid; place-items: center; flex: 0 0 auto; font-size: var(--text-title); margin-top: 1px; }
 .rf-callout-body { min-width: 0; flex: 1; }
@@ -2185,48 +2176,19 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-page .rf-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .85; }
 .rf-page ::selection, body:has(.rf-page) .rf-modal ::selection { background: color-mix(in srgb, var(--rf-mod, #0f766e) 24%, transparent); }
 
-/* ---------- กรอบเข้ม: แถบข้าง แถบบน ---------- */
-body:has(.rf-page) { --page-gradient: #eef1f6; --content-gradient: #eef1f6; --sidebar-gradient: #0b1f3a; --shadow: none; background: #eef1f6; }
-:root[data-theme="dark"] body:has(.rf-page) { --page-gradient: #050c18; --content-gradient: #050c18; background: #050c18; }
-body:has(.rf-page) .app-shell { box-shadow: none; }
-body:has(.rf-page) .sidebar { background: #0b1f3a; border-right-color: #1c3356; color: #c7d3e6; }
-body:has(.rf-page) .sidebar .brand { border-bottom-color: #1c3356; }
-body:has(.rf-page) .sidebar .brand strong { color: #fff; }
-body:has(.rf-page) .sidebar .brand span, body:has(.rf-page) .nav-label, body:has(.rf-page) .rf-nav-group > span { color: #7f94b5; }
-body:has(.rf-page) .nav-link { color: #c7d3e6; }
-body:has(.rf-page) .nav-link:hover { color: #fff; background: #152c4d; }
-body:has(.rf-page) .nav-link.active { color: #fff; background: #2563eb; }
-body:has(.rf-page) .nav-sub { border-left-color: #1c3356; }
-body:has(.rf-page) .nav-divider { background: #1c3356; }
-body:has(.rf-page) .rf-nav-item { min-height: 38px; padding: 5px 8px; gap: 8px; color: #c7d3e6; border-radius: var(--radius-md); }
-body:has(.rf-page) .rf-nav-item:hover { color: #fff; background: #152c4d; }
-body:has(.rf-page) .rf-nav-item.is-active { color: #fff; background: color-mix(in srgb, var(--rf-mod) 38%, #0b1f3a); }
-body:has(.rf-page) .rf-nav-item.is-active .rf-nav-ico { background: var(--rf-mod); }
-body:has(.rf-page) .rf-nav-count { color: #0b1f3a; background: #fbbf24; }
-body:has(.rf-page) .sidebar-user { border-top-color: #1c3356; }
-body:has(.rf-page) .sidebar-user .user-copy strong { color: #fff; }
-body:has(.rf-page) .sidebar-user .user-copy span { color: #7f94b5; }
-body:has(.rf-page) .sidebar-user .icon-button { color: #c7d3e6; background: #152c4d; border-color: #1c3356; }
-body:has(.rf-page) .avatar { color: #0b1f3a; background: #5eead4; }
-body:has(.rf-page) .topbar { color: var(--ink); background: #fff; backdrop-filter: none; border-bottom-color: transparent; }
-:root[data-theme="dark"] body:has(.rf-page) .topbar { color: #fff; background: #0b1f3a; border-bottom-color: #1c3356; }
-:root[data-theme="dark"] body:has(.rf-page) .breadcrumbs { color: #8fa3c4; }
-:root[data-theme="dark"] body:has(.rf-page) .breadcrumbs strong { color: #fff; }
-:root[data-theme="dark"] body:has(.rf-page) .topbar .icon-button { color: #c7d3e6; background: #152c4d; border-color: #1c3356; }
+body:has(.rf-page) .rf-nav-item { min-height: 38px; padding: 5px 8px; gap: 8px; border-radius: var(--radius-md); }
 body:has(.rf-page) .content:has(.rf-page) { padding-top: 0; }
 body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 
-/* ---------- แถบหัวหน้า: ชื่อระบบ เครื่องมือ ชื่อหน้า (พื้นขาว ไล่เฉดอ่อนไปทางสีของโมดูล; ธีมมืดเป็นสีกรม) ---------- */
-.rf-page { --rf-band: #ffffff; --rf-band-2: #ffffff; --rf-band-tint: 14%; --rf-band-ink: var(--ink); --rf-band-muted: var(--muted); --rf-band-line: var(--line); --rf-band-field: var(--paper); --rf-band-hover: var(--shell); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
-:root[data-theme="dark"] .rf-page { --rf-band: #0b1f3a; --rf-band-2: #11314f; --rf-band-tint: 48%; --rf-band-ink: #ffffff; --rf-band-muted: #a9bad6; --rf-band-line: rgba(255, 255, 255, .16); --rf-band-field: rgba(255, 255, 255, .08); --rf-band-hover: rgba(255, 255, 255, .16); --rf-accent-2: #5eead4; --rf-accent-soft: rgba(45, 212, 191, .16); }
+/* ---------- แถบหัวหน้า: ชื่อระบบ เครื่องมือ ชื่อหน้า (วางบนพื้นของหน้า ไม่ไล่สี) ---------- */
+.rf-page { --rf-band: transparent; --rf-band-ink: var(--ink); --rf-band-muted: var(--muted); --rf-band-line: var(--line); --rf-band-field: var(--paper); --rf-band-hover: var(--shell); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
 .rf-page .rf-head, .rf-page .rf-toolbar, .rf-page .rf-pagenav, .rf-page .rf-pagehead { margin: 0 calc(-1 * var(--rf-pad-x)); padding-left: var(--rf-pad-x); padding-right: var(--rf-pad-x); color: var(--rf-band-ink); background: var(--rf-band); }
 .rf-page .rf-head { padding-top: 18px; padding-bottom: 6px; border-bottom: 0; }
 .rf-page .rf-sub { color: var(--rf-band-muted); }
-.rf-page .rf-brand { background: var(--rf-accent); color: #04221d; }
+.rf-page .rf-brand { color: #fff; background: var(--primary-strong); }
 .rf-page .rf-toolbar { margin-top: -14px; padding-top: 6px; padding-bottom: 12px; }
 .rf-page .rf-persona { color: var(--rf-band-muted); }
 .rf-page .rf-toolbar .input, .rf-page .rf-toolbar .select { min-height: 36px; color: var(--rf-band-ink); background-color: var(--rf-band-field); border-color: var(--rf-band-line); }
-.rf-page .rf-toolbar .ss-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%23a9bad6' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 .rf-page .rf-toolbar .input::placeholder { color: var(--rf-band-muted); }
 .rf-page .rf-toolbar .select option { color: #10203b; background: #fff; }
 .rf-page .rf-toolbar .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
@@ -2237,13 +2199,10 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-toolbar .btn.rf-alerts-btn.is-bad:hover { background: #b91c1c; border-color: #b91c1c; }
 .rf-page .rf-pagenav { margin-top: -14px; padding-bottom: 8px; }
 .rf-page .rf-pagenav .btn { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
-.rf-page .rf-pagehead { margin-top: -14px; padding-top: 10px; padding-bottom: 64px; align-items: center; background: linear-gradient(120deg, var(--rf-band) 0%, var(--rf-band-2) 42%, color-mix(in srgb, var(--rf-mod) var(--rf-band-tint), var(--rf-band)) 100%); border-radius: 0 0 22px 22px; }
+.rf-page .rf-pagehead { margin-top: -14px; padding-top: 10px; padding-bottom: 4px; align-items: center; background: transparent; }
 .rf-page .rf-pagehead h1 { font-size: var(--text-page); letter-spacing: -.01em; }
 .rf-page .rf-pagehead p { color: var(--rf-band-muted); font-size: var(--text-ui); }
-.rf-page .rf-pagehead .btn:not(.secondary) { background: var(--rf-mod-fill); border-color: var(--rf-mod-fill); color: #fff; font-weight: 700; }
 .rf-page .rf-pagehead .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
-.rf-page .rf-pagehead + * { margin-top: -50px; }
-.rf-page .rf-pagehead + .rf-callout { margin-top: -46px; }
 .rf-page .rf-head + .card { margin-top: 2px; } /* หน้าเลือกบทบาท/ไม่มีสิทธิ์: ไม่มีแถบหัวหน้า */
 
 /* ---------- เนื้อหา: การ์ด KPI ปุ่ม ช่องกรอก ตาราง ป้าย แจ้งเตือน แท็บ ---------- */
@@ -2263,20 +2222,18 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-stat.is-bad .rf-stat-label, .rf-page .rf-stat.is-bad .rf-stat-sub { color: color-mix(in srgb, var(--danger) 75%, var(--ink)); }
 .rf-page .btn { min-height: 40px; padding: 0 16px; border-radius: var(--radius-md); font-weight: 600; }
 .rf-page .btn.small { min-height: 36px; padding: 0 12px; }
-.rf-page .btn:not(.secondary):not(.danger):not(.warning) { background: var(--rf-mod-fill); border-color: var(--rf-mod-fill); }
-.rf-page .btn:not(.secondary):not(.danger):not(.warning):hover { background: var(--rf-mod-hover); border-color: var(--rf-mod-hover); }
 .rf-page .btn.secondary { color: var(--ink); background: var(--paper); border-color: var(--line); }
-.rf-page .btn.secondary:hover { background: var(--rf-mod-soft); border-color: var(--rf-mod-line); }
+.rf-page .btn.secondary:hover { background: var(--shell); }
 .rf-page .rf-pagehead .btn.secondary:hover { color: var(--rf-band-ink); background: var(--rf-band-hover); border-color: var(--rf-band-line); } /* ปุ่มรองในแถบหัว: hover ตามสีแถบ ไม่ใช่สีโมดูลของการ์ด */
 .rf-page .input, .rf-page .select, .rf-page .textarea { min-height: 40px; border-radius: var(--radius-md); }
-.rf-page .input:focus, .rf-page .select:focus, .rf-page .textarea:focus { border-color: var(--rf-mod); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rf-mod) 30%, transparent); }
+.rf-page .input:focus, .rf-page .select:focus, .rf-page .textarea:focus { border-color: var(--primary); box-shadow: var(--focus-ring); }
 .rf-page .rf-scale-input { font-size: var(--text-page); min-height: 52px; }
 .rf-page th { padding: 8px 12px; color: var(--quiet); background: transparent; border-bottom-color: var(--line); font-size: var(--text-caption); letter-spacing: .04em; text-transform: uppercase; }
 .rf-page td { padding: 11px 12px; }
-.rf-page tbody tr:hover td { background: var(--rf-mod-soft); }
-.rf-page .rf-table tr.is-selected td, .rf-page .rf-list-item.is-selected { background: var(--rf-mod-soft); }
+.rf-page tbody tr:hover td { background: var(--shell); }
+.rf-page .rf-table tr.is-selected td, .rf-page .rf-list-item.is-selected { background: var(--primary-soft); }
 .rf-page .rf-badge { padding: 3px 9px; border-radius: var(--radius-md); font-weight: 700; }
-.rf-page .rf-badge.is-accent { color: #fff; background: var(--rf-mod-fill); }
+.rf-page .rf-badge.is-accent { color: #fff; background: var(--primary-strong); }
 .rf-page .rf-badge.is-bad { color: #fff; background: var(--danger-strong); }
 .rf-page .rf-badge.is-warn { color: #fff; background: var(--warning-strong); }
 .rf-page .rf-callout, body:has(.rf-page) .rf-modal .rf-callout { padding: 14px 16px; border-radius: var(--radius-md); font-size: var(--text-ui); font-weight: 500; }
@@ -2289,7 +2246,7 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-alert-list .rf-callout, body:has(.rf-page) .rf-modal .rf-alert-list .rf-callout { padding: 10px 12px; font-size: var(--text-meta); font-weight: 400; }
 .rf-page .rf-tabs { gap: 6px; padding: 4px; background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .rf-page .rf-tab { padding: 8px 14px; margin: 0; border: 0; border-radius: var(--radius-sm); }
-.rf-page .rf-tab.is-active { color: #fff; background: var(--rf-mod-fill); }
+.rf-page .rf-tab.is-active { color: var(--primary-ink); background: var(--paper); box-shadow: var(--elev-1); }
 .rf-page .rf-bar { height: 8px; }
 .rf-page .rf-bar > div { background: var(--rf-mod); }
 .rf-page .rf-bar.is-warn > div { background: var(--warning); }
@@ -2300,25 +2257,23 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-login h1 { font-size: var(--text-page); }
 .rf-page .rf-role { min-height: 64px; border-radius: var(--radius-md); }
 
-/* ---------- สายการผลิต 4 สถานี: การ์ดพาสเทลสีประจำสถานี มีลูกศรเชื่อม ---------- */
+/* ---------- สายการผลิต 4 สถานี: การ์ดขาว จุดสีประจำสถานี มีลูกศรเชื่อม ---------- */
 .rf-page .rf-flow { gap: 0; }
-.rf-page .rf-step { position: relative; margin-right: 18px; padding: 14px 16px; border: 1px solid var(--rf-mod-line); border-radius: var(--radius-md); background: color-mix(in srgb, var(--rf-mod) 18%, var(--paper)); }
-:root[data-theme="dark"] .rf-page .rf-step { background: var(--rf-mod-soft); }
+.rf-page .rf-step { position: relative; margin-right: 18px; padding: 14px 16px; border: 1px solid var(--card-border); border-radius: var(--radius-md); background: var(--paper); box-shadow: var(--elev-1); }
 .rf-page .rf-step:nth-child(1) { --rf-mod: #1d6fd3; }
-.rf-page .rf-step:nth-child(2) { --rf-mod: #d9640c; }
-.rf-page .rf-step:nth-child(3) { --rf-mod: #cf3030; }
-.rf-page .rf-step:nth-child(4) { --rf-mod: #1b8f4e; margin-right: 0; }
+.rf-page .rf-step:nth-child(2) { --rf-mod: #7b3fd1; }
+.rf-page .rf-step:nth-child(3) { --rf-mod: #0f8ba0; }
+.rf-page .rf-step:nth-child(4) { --rf-mod: #4f6478; margin-right: 0; }
 .rf-page .rf-step:not(:nth-child(4))::after { content: ""; position: absolute; top: 50%; right: -11px; width: 12px; height: 12px; margin-top: -6px; border-top: 2px solid var(--rf-mod-line); border-right: 2px solid var(--rf-mod-line); transform: rotate(45deg); }
-.rf-page .rf-step h3 { color: var(--rf-mod-ink); font-size: var(--text-title); }
-.rf-page .rf-step-no { padding: 2px 8px; color: #fff; background: var(--rf-mod-fill); border-radius: var(--radius-pill); font-family: inherit; font-size: var(--text-caption); letter-spacing: .04em; }
+.rf-page .rf-step h3 { color: var(--ink); font-size: var(--text-title); }
+.rf-page .rf-step-no { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-family: inherit; font-size: var(--text-caption); letter-spacing: .04em; }
+.rf-page .rf-step-no::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rf-mod); }
 .rf-page .rf-step .rf-kv dd { font-weight: 600; }
-.rf-page a.rf-step:hover { border-color: var(--rf-mod); box-shadow: 0 8px 20px -12px color-mix(in srgb, var(--rf-mod) 60%, transparent); }
+.rf-page a.rf-step:hover { border-color: var(--rf-mod); box-shadow: var(--elev-2); }
 
 /* ---------- dialog (อยู่นอก .rf-page) ---------- */
 body:has(.rf-page) .rf-modal { border: 0; border-radius: var(--radius-lg); }
-body:has(.rf-page) .rf-modal-head { color: #fff; background: #0b1f3a; border-bottom: 0; border-radius: 16px 16px 0 0; }
-body:has(.rf-page) .rf-modal-close { color: #c7d3e6; }
-body:has(.rf-page) .rf-modal-close:hover { color: #fff; background: #152c4d; }
+body:has(.rf-page) .rf-modal-head { color: var(--ink); background: var(--paper); border-bottom: 1px solid var(--line); border-radius: 16px 16px 0 0; }
 body:has(.rf-page) .rf-modal .btn { min-height: 40px; border-radius: var(--radius-md); font-weight: 600; }
 body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:has(.rf-page) .rf-modal .textarea { min-height: 40px; border-radius: var(--radius-md); }
 
@@ -2341,7 +2296,6 @@ body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:
 [data-rf-mod="bom-orders"] { --rf-mod: #2457d6; }
 [data-rf-mod="bom-jobs"] { --rf-mod: #d9640c; }
 [data-rf-mod="bom-audit"] { --rf-mod: #4f6478; }
-.bom-page .rf-brand { color: #fff; background: #3f51b5; }
 .bom-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 @media (min-width: 1041px) { .bom-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .bom-split-wide { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } .bom-split > .rf-card:only-child { grid-column: 1 / -1; } }
 .bom-page td .rf-mono, .bom-page td.rf-mono { white-space: nowrap; } /* รหัสมีขีดกลาง ปล่อยให้ตารางเลื่อนแนวนอนแทนการตัดคำทีละตัว */
