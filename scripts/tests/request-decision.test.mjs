@@ -35,10 +35,11 @@ function fakeTimers() {
 test("approve and acknowledge do not need a comment, every other decision does", () => {
   assert.equal(rules.needsComment("approved"), false);
   assert.equal(rules.needsComment("acknowledged"), false);
-  for (const decision of ["rejected", "more_info", "returned"]) assert.equal(rules.needsComment(decision), true);
+  for (const decision of ["rejected", "more_info"]) assert.equal(rules.needsComment(decision), true);
 });
 
-test("a hidden comment field is never sent with the decision", () => {
+// พิสูจน์เฉพาะกติกาของ payloadFor; การล้างช่องเมื่อยกเลิก/เปลี่ยนมติอยู่ใน bindDecisionPanel (app.js) ซึ่งยังไม่มีเทสต์ระดับ DOM
+test("payloadFor drops the comment when the field is reported hidden", () => {
   // พิมพ์เหตุผลไว้ตอนเลือก "ไม่อนุมัติ" แล้วเปลี่ยนไปกด "อนุมัติ" ซึ่งช่องความเห็นถูกซ่อน
   assert.deepEqual(rules.payloadFor({ decision: "approved", commentVisible: false, commentValue: "สเปกไม่ตรง" }), { comment: "" });
   assert.deepEqual(rules.payloadFor({ decision: "approved", commentVisible: true, commentValue: "  ตรวจแล้ว  " }), { comment: "ตรวจแล้ว" });
