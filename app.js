@@ -613,8 +613,9 @@ async function uploadAttachmentThumbnail(bucket, storagePath, file) {
 // ลำดับที่ต้องทำเสมอ: readExtraFiles ก่อนยิง RPC (ไฟล์ผิดต้องไม่ทำให้การกระทำสำเร็จไปครึ่งเดียว)
 // แล้ว uploadExtraFiles หลัง RPC สำเร็จ — ไฟล์พลาดไม่ย้อนการกระทำ แต่ต้องบอกผู้ใช้ให้แนบใหม่
 // ไฟล์เข้า request_attachments ของคำร้องเดิม และขึ้นในลำดับเหตุการณ์ (attachmentTimelineEvents)
-function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่มเติม (ถ้ามี)") {
-  return `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>`;
+// hint: false เมื่อหน้าเดียวกันแสดงคำแนะนำไฟล์แนบไว้แล้ว (แสดงข้อความเดียวกันครั้งเดียวต่อหน้า)
+function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint = true } = {}) {
+  return `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
 }
 
 function readExtraFiles(input) {
@@ -2724,6 +2725,7 @@ function stepRepliesHtml(step, replies, directory, canReply) {
 }
 
 async function renderRequestDetail(params) {
+  activeDecisionCountdown?.flush();
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
@@ -2856,7 +2858,7 @@ async function renderRequestDetail(params) {
       </div>
       <aside class="stack">
         ${canApprove ? decisionPanelHtml({ currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
-        ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files")}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
+        ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
         <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
         <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
@@ -2950,10 +2952,13 @@ async function renderRequestDetail(params) {
 const recentDecisions = new Map();
 const RECEIPT_TTL_MS = 10 * 60 * 1000;
 const DECISION_UNDO_SECONDS = 5;
+// มติที่กำลังนับถอยหลังอยู่ (ถ้ามี) — วาดหน้าใหม่เมื่อไหร่ต้องส่งก่อน ไม่ให้ตัวนับของแถบเก่าค้างอยู่เบื้องหลัง
+let activeDecisionCountdown = null;
 
 function recentDecisionFor(requestId) {
   const entry = recentDecisions.get(requestId);
-  if (!entry) return null;
+  // ใบเสร็จเป็นของคนที่กดเท่านั้น สลับผู้ใช้ในแท็บเดียวกันแล้วไม่เห็น
+  if (!entry || entry.actorId !== state.employee?.id) return null;
   if (Date.now() - entry.at > RECEIPT_TTL_MS) {
     recentDecisions.delete(requestId);
     return null;
@@ -2982,7 +2987,7 @@ function requestDetailMenuHtml(actionsHtml) {
 }
 
 function photoStripHtml(photos, totalAttachments) {
-  return `<div class="photo-strip" id="photo-strip">${photos.map((file) => `<button type="button" class="photo-strip-item" data-attachment-open="${escapeHtml(file.id)}" aria-label="ดูรูปขนาดใหญ่: ${escapeHtml(file.file_name)}"><span class="photo-strip-placeholder" aria-hidden="true">${uiIcon("document")}</span></button>`).join("")}${totalAttachments > photos.length ? `<button type="button" class="photo-strip-more" id="photo-strip-more" aria-controls="request-attachments">ไฟล์แนบทั้งหมด ${totalAttachments}</button>` : ""}</div>`;
+  return `<div class="photo-strip" id="photo-strip">${photos.map((file) => `<button type="button" class="photo-strip-item" data-attachment-open="${escapeHtml(file.id)}" aria-label="ดูรูปขนาดใหญ่: ${escapeHtml(file.file_name)}"><span class="photo-strip-placeholder" aria-hidden="true">${uiIcon("document")}</span></button>`).join("")}${totalAttachments > photos.length ? `<button type="button" class="photo-strip-more" id="photo-strip-more" aria-controls="request-attachments">ดูไฟล์แนบทั้งหมด</button>` : ""}</div>`;
 }
 
 function fillPhotoStrip() {
@@ -3008,9 +3013,6 @@ function decisionButtonsOf(extraDecisions) {
   ];
 }
 
-// "อนุมัติ" และ "รับทราบข้อมูล" เท่านั้นที่ความเห็นเป็นทางเลือก — ตรงกับ COMMENT_REQUIRED ของ app_approval_decision
-const decisionNeedsComment = (decision) => !["approved", "acknowledged"].includes(decision);
-
 function decisionPanelHtml({ currentStep, nextStep, extraDecisions }) {
   return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
     <div class="action-panel-head">
@@ -3024,7 +3026,7 @@ function decisionPanelHtml({ currentStep, nextStep, extraDecisions }) {
         <textarea class="textarea" id="decision-comment" maxlength="1000" rows="3" aria-describedby="decision-comment-error"></textarea>
         <p class="field-error" id="decision-comment-error" hidden></p>
       </div>
-      <details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("decision-files")}</details>
+      <details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("decision-files", "เลือกไฟล์", { hint: false })}</details>
     </div>
     <div class="action-panel-buttons" id="decision-buttons">${decisionButtonsOf(extraDecisions).map((item) => `<button type="button" class="btn ${item.tone} decision-button${item.decision === "approved" ? " is-primary" : ""}" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("")}</div>
   </section>`;
@@ -3109,8 +3111,9 @@ function trackActionBarHeight() {
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
 function bindDecisionPanel({ id, params, request, currentStep, nextStep, employee, extraDecisions }) {
+  const rules = window.MNP_REQUEST_DECISION;
   const panel = document.querySelector("#decision-panel");
-  if (!panel) return;
+  if (!panel || !rules) return;
   const line = panel.querySelector("#decision-line");
   const reason = panel.querySelector("#decision-reason");
   const comment = panel.querySelector("#decision-comment");
@@ -3123,8 +3126,17 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   const hash = location.hash;
   let state = { name: "idle" };
   let lastTrigger = null;
-  let countdownTimer = null;
-  let tickTimer = null;
+
+  const countdown = rules.createCountdown({
+    seconds: DECISION_UNDO_SECONDS,
+    // อัปเดตเฉพาะตัวเลขบนปุ่ม (ไม่อยู่ใน live region) ไม่ให้โปรแกรมอ่านหน้าจออ่านซ้ำทุกวินาที และไม่ทำให้ focus หลุด
+    onTick: (secondsLeft) => {
+      const undo = buttons.querySelector('[data-action="undo"]');
+      if (undo) undo.textContent = `เลิกทำ (${secondsLeft})`;
+    },
+    onSend: (payload) => send(payload),
+  });
+  activeDecisionCountdown = countdown;
 
   const setLine = (text, kind = "") => {
     line.hidden = !text;
@@ -3143,6 +3155,13 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     comment.setAttribute("aria-invalid", "true");
     comment.focus();
   };
+  // ความเห็นและไฟล์ของมติหนึ่งต้องไม่ติดไปกับมติอื่น
+  const resetInputs = () => {
+    comment.value = "";
+    const files = panel.querySelector("#decision-files");
+    if (files) files.value = "";
+    files?.dispatchEvent(new Event("change", { bubbles: true }));
+  };
   const button = (label, className, action, attrs = "") => `<button type="button" class="btn ${className}" data-action="${action}"${attrs}>${escapeHtml(label)}</button>`;
 
   function render() {
@@ -3155,8 +3174,8 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     }
     if (state.name === "compose") {
       const { decision } = state;
-      const needsComment = decisionNeedsComment(decision);
-      setLine(`${labelOf(decision)} ${request.request_no}${decision === "approved" && nextStep ? ` → ส่งต่อให้ ${nextStep.step_name}` : ""}`);
+      const needsComment = rules.needsComment(decision);
+      setLine(`${labelOf(decision)} ${request.request_no}${rules.forwardsToNextStep(decision) && nextStep ? ` → ส่งต่อให้ ${nextStep.step_name}` : ""}`);
       reason.hidden = !needsComment && !state.showComment;
       commentLabel.textContent = decision === "rejected" ? "เหตุผลที่ไม่อนุมัติ (จำเป็น)"
         : decision === "more_info" ? "ต้องการข้อมูลเพิ่มเรื่องอะไร (จำเป็น)"
@@ -3167,8 +3186,8 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     }
     if (state.name === "pending") {
       reason.hidden = true;
-      setLine(`จะ${labelOf(state.decision)} ${request.request_no} ใน ${state.secondsLeft} วินาที`);
-      buttons.innerHTML = `${button(`เลิกทำ (${state.secondsLeft})`, "secondary", "undo")}${button("ส่งเลย", "is-primary", "send-now")}`;
+      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no} · กดเลิกทำได้ภายใน ${DECISION_UNDO_SECONDS} วินาที`);
+      buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", "is-primary", "send-now")}`;
       return;
     }
     if (state.name === "sending") {
@@ -3185,96 +3204,95 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   }
 
   function toIdle() {
-    clearTimers();
+    countdown.undo();
+    detachLeaveGuards();
     clearError();
+    resetInputs();
     state = { name: "idle" };
     render();
     buttons.querySelector(`[data-decision="${lastTrigger}"]`)?.focus();
   }
 
-  function clearTimers() {
-    window.clearTimeout(countdownTimer);
-    window.clearInterval(tickTimer);
-    countdownTimer = null;
-    tickTimer = null;
-  }
-
   function startCompose(decision) {
     lastTrigger = decision;
     clearError();
+    resetInputs();
     state = { name: "compose", decision, showComment: false };
     render();
-    if (decisionNeedsComment(decision)) comment.focus();
+    if (rules.needsComment(decision)) comment.focus();
     else buttons.querySelector('[data-action="confirm"]')?.focus();
   }
 
   function confirm() {
     const { decision } = state;
-    const text = comment.value.trim();
-    if (decisionNeedsComment(decision) && text.length < 3) {
-      return showError(decision === "rejected" ? "กรุณาระบุเหตุผลที่ไม่อนุมัติ อย่างน้อย 3 ตัวอักษร" : "กรุณาระบุว่าต้องการข้อมูลเพิ่มเติมเรื่องอะไร อย่างน้อย 3 ตัวอักษร");
+    const result = rules.payloadFor({ decision, commentVisible: !reason.hidden, commentValue: comment.value });
+    if (result.error) return showError(result.error);
+    let files = [];
+    if (!reason.hidden) {
+      try { files = readExtraFiles(panel.querySelector("#decision-files")); } catch (fileError) { return showError(friendlyError(fileError)); }
     }
-    let files;
-    try { files = readExtraFiles(document.querySelector("#decision-files")); } catch (fileError) { return showError(friendlyError(fileError)); }
     clearError();
     hideToast();
-    state = { name: "pending", decision, comment: text, files, secondsLeft: DECISION_UNDO_SECONDS };
+    state = { name: "pending", decision, comment: result.comment, files };
     render();
     buttons.querySelector('[data-action="undo"]')?.focus();
-    tickTimer = window.setInterval(() => {
-      if (state.name !== "pending") return;
-      state.secondsLeft = Math.max(0, state.secondsLeft - 1);
-      // อัปเดตเฉพาะตัวเลขบนปุ่ม ไม่วาดปุ่มใหม่ จะได้ไม่ทำให้ focus หลุด
-      const undo = buttons.querySelector('[data-action="undo"]');
-      if (undo) undo.textContent = `เลิกทำ (${state.secondsLeft})`;
-      line.textContent = `จะ${labelOf(state.decision)} ${request.request_no} ใน ${state.secondsLeft} วินาที`;
-    }, 1000);
-    countdownTimer = window.setTimeout(send, DECISION_UNDO_SECONDS * 1000);
+    countdown.start({ decision, comment: result.comment, files });
+    attachLeaveGuards();
+  }
+
+  function attachLeaveGuards() {
     window.addEventListener("hashchange", sendOnLeave);
     document.addEventListener("visibilitychange", sendWhenHidden);
     window.addEventListener("beforeunload", warnBeforeUnload);
   }
-
   function detachLeaveGuards() {
     window.removeEventListener("hashchange", sendOnLeave);
     document.removeEventListener("visibilitychange", sendWhenHidden);
     window.removeEventListener("beforeunload", warnBeforeUnload);
   }
-  // ออกจากหน้าระหว่างนับถอยหลัง = ตั้งใจส่ง ส่งทันทีแทนที่จะทิ้งมติไว้เงียบๆ
-  function sendOnLeave() { if (state.name === "pending") send(); }
-  function sendWhenHidden() { if (document.visibilityState === "hidden" && state.name === "pending") send(); }
+  // ย้ายไปหน้าอื่นในแอปหรือสลับไปแอปอื่นระหว่างนับถอยหลัง = ตั้งใจส่ง ส่งทันที
+  function sendOnLeave() { countdown.flush(); }
+  function sendWhenHidden() { if (document.visibilityState === "hidden") countdown.flush(); }
+  // ปิดแท็บ/รีเฟรช: คำขอที่เริ่มตอนหน้ากำลังปิดอาจถูกยกเลิก จึงถามให้ผู้ใช้อยู่ต่อแทนการส่งแบบไม่แน่นอน
   function warnBeforeUnload(event) {
-    if (!["pending", "sending"].includes(state.name)) return;
-    if (state.name === "pending") send();
+    if (!countdown.pending && state.name !== "sending") return;
     event.preventDefault();
     event.returnValue = "";
   }
 
-  async function send() {
-    if (!["pending", "error"].includes(state.name)) return;
-    clearTimers();
-    const { decision, comment: text, files } = state;
+  async function send({ decision, comment: text, files }) {
     state = { name: "sending", decision, comment: text, files };
     if (panel.isConnected) render();
     try {
       const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: decision, p_comment: text });
       if (error) throw error;
-      detachLeaveGuards();
-      const warning = await uploadExtraFiles(id, files, employee.id);
-      triggerNotificationEmails(id);
-      recentDecisions.set(id, { decision, comment: text, at: Date.now(), actorId: employee.id, nextStepName: decision === "approved" ? nextStep?.step_name ?? "" : "" });
-      if (warning) showToast(warning, "error");
-      if (location.hash === hash) await renderRequestDetail(params);
-      else showToast(`${labelOf(decision)} ${request.request_no} แล้ว`, "success");
     } catch (error) {
+      detachLeaveGuards();
       if (location.hash !== hash || !panel.isConnected) {
-        detachLeaveGuards();
         showToast(`${labelOf(decision)} ${request.request_no} ไม่สำเร็จ: ${friendlyError(error)}`, "error");
         return;
       }
       state = { name: "error", decision, comment: text, files, message: friendlyError(error) };
       render();
       buttons.querySelector('[data-action="retry"]')?.focus();
+      return;
+    }
+    // มติบันทึกแล้ว: จากนี้ข้อผิดพลาดใดๆ ต้องไม่ถูกบอกว่า "ไม่สำเร็จ"
+    detachLeaveGuards();
+    if (activeDecisionCountdown === countdown) activeDecisionCountdown = null;
+    recentDecisions.set(id, { decision, comment: text, at: Date.now(), actorId: employee.id, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
+    let warning = "";
+    try { warning = await uploadExtraFiles(id, files, employee.id); } catch (uploadError) { warning = friendlyError(uploadError); }
+    triggerNotificationEmails(id);
+    if (warning) showToast(`${labelOf(decision)}แล้ว แต่แนบไฟล์ไม่สำเร็จ: ${warning}`, "error");
+    if (location.hash !== hash) {
+      if (!warning) showToast(`${labelOf(decision)} ${request.request_no} แล้ว`, "success");
+      return;
+    }
+    try {
+      await renderRequestDetail(params);
+    } catch {
+      showToast(`${labelOf(decision)} ${request.request_no} แล้ว แต่โหลดหน้าใหม่ไม่ได้ กรุณารีเฟรช`, "error");
     }
   }
 
@@ -3291,22 +3309,24 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     }
     if (action === "confirm") return confirm();
     if (action === "undo") {
+      countdown.undo();
       detachLeaveGuards();
-      const { decision } = state;
-      clearTimers();
-      state = { name: "compose", decision, showComment: Boolean(comment.value.trim()) };
+      state = { name: "compose", decision: state.decision, showComment: Boolean(comment.value.trim()) };
       render();
       return buttons.querySelector('[data-action="confirm"]')?.focus();
     }
-    if (action === "send-now" || action === "retry") return send();
+    if (action === "send-now") return countdown.flush();
+    if (action === "retry") {
+      attachLeaveGuards();
+      return send(state);
+    }
     if (action === "edit") {
-      detachLeaveGuards();
       state = { name: "compose", decision: state.decision, showComment: Boolean(comment.value.trim()) };
       render();
       return comment.focus();
     }
   });
-  comment.addEventListener("input", () => { if (comment.value.trim().length >= 3) clearError(); });
+  comment.addEventListener("input", () => { if (comment.value.trim().length >= rules.MIN_COMMENT_LENGTH) clearError(); });
   panel.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     if (state.name === "compose") { event.preventDefault(); toIdle(); }

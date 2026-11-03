@@ -1057,6 +1057,9 @@ a.machine-history-no:hover { text-decoration: underline; }
   .action-panel-buttons .btn { min-height: 48px; }
   .content:has(.action-panel) { padding-bottom: calc(var(--action-bar-h, 76px) + 28px); }
   body:has(.action-panel) .toast { bottom: calc(var(--action-bar-h, 76px) + 12px); }
+  /* แถบติดตั้งแอปทับปุ่มตัดสินใจ: ซ่อนไว้เฉพาะหน้าที่มีแถบ แล้วกลับมาเองในหน้าอื่น */
+  body:has(.action-panel) .install-banner { display: none; }
+  body.has-install-banner:has(.action-panel) { padding-bottom: 0; }
   :root[data-theme="dark"] .action-panel { box-shadow: 0 -8px 24px rgb(0 0 0 / .4); }
 }
 
