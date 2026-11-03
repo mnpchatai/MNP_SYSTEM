@@ -202,6 +202,8 @@
   // มือถือ: ตารางแสดงเป็นการ์ด แต่ละช่องต้องมีชื่อคอลัมน์ (data-label จาก <th> ตามลำดับ ข้ามช่อง colspan)
   // ตารางแก้ไขที่กรอกเป็นแถว (.bom-tree-table) คงเป็นตารางเลื่อนข้าง
   const labelTables = (scope) => {
+    // แท็บที่เลือกอยู่กลางแถวแท็บที่เลื่อนข้างได้ (เลื่อนเฉพาะแถวแท็บ ไม่เลื่อนทั้งหน้า)
+    scope.querySelectorAll(".rf-tabs .rf-tab.is-active").forEach((tab) => { const bar = tab.parentElement; bar.scrollLeft = tab.offsetLeft - bar.offsetLeft - (bar.clientWidth - tab.offsetWidth) / 2; });
     scope.querySelectorAll("table.rf-table:not(.bom-tree-table)").forEach((tableNode) => {
       const labels = [...tableNode.querySelectorAll("thead th")].map((th) => th.textContent.trim());
       tableNode.querySelectorAll("tbody tr").forEach((row) => {

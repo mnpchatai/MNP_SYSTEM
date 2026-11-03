@@ -2224,7 +2224,6 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
   .rf-page .rf-table:not(.bom-tree-table) td[data-label] { padding-left: 40%; }
   .rf-page .rf-table:not(.bom-tree-table) td[data-label]::before { content: attr(data-label); position: absolute; top: 8px; left: 0; width: calc(40% - 12px); color: var(--muted); font-size: var(--text-caption); font-weight: 600; line-height: 1.4; }
   .rf-page .rf-table:not(.bom-tree-table) td.rf-empty { display: block; text-align: center; }
-  .rf-page tbody tr:hover td { background: transparent; }
   .rf-page .rf-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
   .rf-page .rf-tab { flex: none; }
   .rf-page .rf-persona > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
@@ -2272,8 +2271,16 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-scale-input { font-size: var(--text-page); min-height: 52px; }
 .rf-page th { padding: 8px 12px; color: var(--quiet); background: transparent; border-bottom-color: var(--line); font-size: var(--text-caption); letter-spacing: .04em; text-transform: uppercase; }
 .rf-page td { padding: 11px 12px; }
-.rf-page tbody tr:hover td { background: var(--shell); }
+@media (hover: hover) { .rf-page tbody tr:hover td { background: var(--shell); } }
 .rf-page .rf-table tr.is-selected td, .rf-page .rf-list-item.is-selected { background: var(--primary-soft); }
+/* มือถือ (การ์ด): ข้อความที่ห้ามตัดบรรทัดในตาราง (.rf-mono .nowrap .bom-lv ฯลฯ) ตัดได้ ไม่ดันหน้าให้เลื่อนข้าง
+   และแถวที่เลือกลงสีทั้งการ์ด */
+@media screen and (max-width: 760px) {
+  .rf-page .rf-table:not(.bom-tree-table) td, .rf-page .rf-table:not(.bom-tree-table) td * { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .rf-page .rf-table:not(.bom-tree-table) td.center { text-align: left; }
+  .rf-page .rf-table:not(.bom-tree-table) tr.is-selected { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 35%, transparent); }
+  .rf-page .rf-table:not(.bom-tree-table) tr.is-selected td { background: transparent; }
+}
 .rf-page .rf-badge { padding: 3px 9px; border-radius: var(--radius-md); font-weight: 700; }
 .rf-page .rf-badge.is-accent { color: #fff; background: var(--primary-strong); }
 .rf-page .rf-badge.is-bad { color: #fff; background: var(--danger-strong); }
