@@ -28,7 +28,8 @@
   --text-heading: 22px;
   --text-page: 26px;
   --text-figure: 32px;
-  --leading-body: 1.65;
+  --leading-body: 1.55;
+  --weight-body: 500;
   --bg: #eef3fa;
   --shell: #f8faff;
   --paper: #ffffff;
@@ -99,6 +100,7 @@ body {
   background-attachment: fixed;
   font-family: "Anuphan", "Leelawadee UI", "Noto Sans Thai", Tahoma, system-ui, sans-serif;
   font-size: var(--text-body);
+  font-weight: var(--weight-body);
   line-height: var(--leading-body);
   -webkit-font-smoothing: antialiased;
 }
@@ -428,7 +430,7 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th { padding: 11px 13px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: var(--text-caption); font-weight: 600; text-align: left; white-space: nowrap; }
-td { padding: 13px; border-bottom: 1px solid var(--soft-line); font-size: var(--text-ui); line-height: 1.55; font-variant-numeric: tabular-nums; }
+td { padding: 13px; border-bottom: 1px solid var(--soft-line); font-size: var(--text-ui); line-height: 1.45; font-variant-numeric: tabular-nums; }
 td.center { text-align: center; }
 td.center input[type="checkbox"] { width: 16px; height: 16px; }
 tbody tr:last-child td { border-bottom: 0; }
