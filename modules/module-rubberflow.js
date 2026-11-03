@@ -295,6 +295,7 @@
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
+    ui.labelTables(root);
     bind?.(root, ctx);
     return undefined;
   }

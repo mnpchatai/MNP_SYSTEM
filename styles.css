@@ -448,7 +448,7 @@ td { padding: 13px; border-bottom: 1px solid var(--soft-line); font-size: var(--
 td.center { text-align: center; }
 td.center input[type="checkbox"] { width: 16px; height: 16px; }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover { background: var(--shell); }
+@media (hover: hover) { tbody tr:hover { background: var(--shell); } }
 .request-no { color: var(--primary); font-weight: 700; }
 .request-no.locked { color: var(--quiet); cursor: default; }
 .badge { padding: 4px 8px; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); background: var(--shell); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
@@ -2211,6 +2211,23 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-sub { color: var(--rf-band-muted); }
 .rf-page .rf-brand { color: #fff; background: var(--primary-strong); }
 .rf-page .rf-head .rf-toolbar { margin: 0; padding: 0; }
+/* มือถือ: ตารางของ RubberFlow/BOM เป็นการ์ดเรียงลง ชื่อคอลัมน์มาจาก data-label (ui.labelTables)
+   แท็บเลื่อนข้างเป็นแถวเดียว และป้าย "บทบาทสาธิต" ซ่อนให้เหลือแค่ตัวเลือก (ชื่อยังอยู่ใน <label>) */
+@media screen and (max-width: 760px) {
+  .rf-page .table-wrap:has(> .rf-table:not(.bom-tree-table)) { overflow: visible; }
+  .rf-page .rf-table:not(.bom-tree-table), .rf-page .rf-table:not(.bom-tree-table) tbody, .rf-page .rf-table:not(.bom-tree-table) tr { display: block; width: 100%; }
+  .rf-page .rf-table:not(.bom-tree-table) thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .rf-page .rf-table:not(.bom-tree-table) tbody tr { margin-bottom: 10px; padding: 6px 14px; background: var(--paper); border: 1px solid var(--card-border); border-radius: var(--radius-md); box-shadow: var(--elev-1); }
+  .rf-page .rf-table:not(.bom-tree-table) td { position: relative; display: block; min-height: 34px; padding: 7px 0; text-align: left; border-bottom: 1px solid var(--soft-line); }
+  .rf-page .rf-table:not(.bom-tree-table) tr td:last-child { border-bottom: 0; }
+  /* ชื่อคอลัมน์อยู่ซ้าย เนื้อหาทุกบรรทัด (รวม <br> <small>) อยู่ขวา */
+  .rf-page .rf-table:not(.bom-tree-table) td[data-label] { padding-left: 40%; }
+  .rf-page .rf-table:not(.bom-tree-table) td[data-label]::before { content: attr(data-label); position: absolute; top: 8px; left: 0; width: calc(40% - 12px); color: var(--muted); font-size: var(--text-caption); font-weight: 600; line-height: 1.4; }
+  .rf-page .rf-table:not(.bom-tree-table) td.rf-empty { display: block; text-align: center; }
+  .rf-page .rf-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .rf-page .rf-tab { flex: none; }
+  .rf-page .rf-persona > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+}
 .rf-page .rf-persona { color: var(--rf-band-muted); }
 .rf-page .rf-toolbar .input, .rf-page .rf-toolbar .select { min-height: 36px; color: var(--rf-band-ink); background-color: var(--rf-band-field); border-color: var(--rf-band-line); }
 .rf-page .rf-toolbar .input::placeholder { color: var(--rf-band-muted); }
@@ -2254,8 +2271,16 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-scale-input { font-size: var(--text-page); min-height: 52px; }
 .rf-page th { padding: 8px 12px; color: var(--quiet); background: transparent; border-bottom-color: var(--line); font-size: var(--text-caption); letter-spacing: .04em; text-transform: uppercase; }
 .rf-page td { padding: 11px 12px; }
-.rf-page tbody tr:hover td { background: var(--shell); }
+@media (hover: hover) { .rf-page tbody tr:hover td { background: var(--shell); } }
 .rf-page .rf-table tr.is-selected td, .rf-page .rf-list-item.is-selected { background: var(--primary-soft); }
+/* มือถือ (การ์ด): ข้อความที่ห้ามตัดบรรทัดในตาราง (.rf-mono .nowrap .bom-lv ฯลฯ) ตัดได้ ไม่ดันหน้าให้เลื่อนข้าง
+   และแถวที่เลือกลงสีทั้งการ์ด */
+@media screen and (max-width: 760px) {
+  .rf-page .rf-table:not(.bom-tree-table) td, .rf-page .rf-table:not(.bom-tree-table) td * { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .rf-page .rf-table:not(.bom-tree-table) td.center { text-align: left; }
+  .rf-page .rf-table:not(.bom-tree-table) tr.is-selected { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 35%, transparent); }
+  .rf-page .rf-table:not(.bom-tree-table) tr.is-selected td { background: transparent; }
+}
 .rf-page .rf-badge { padding: 3px 9px; border-radius: var(--radius-md); font-weight: 700; }
 .rf-page .rf-badge.is-accent { color: #fff; background: var(--primary-strong); }
 .rf-page .rf-badge.is-bad { color: #fff; background: var(--danger-strong); }
@@ -2418,6 +2443,9 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-rubber-grid .bom-mini { min-height: 28px; padding: 2px 6px; font-size: var(--text-caption); }
 .bom-editor .bom-actions { position: sticky; bottom: 0; padding: 10px 0; background: var(--bg, var(--paper)); }
 .bom-pick .rf-hint { display: block; }
+/* ตัวเลือกที่ข้อความ option ยาว (เช่นเลือกสินค้าในหน้าสร้าง BOM) ไม่ดันหน้าให้กว้างกว่าจอ */
+.rf-page .field, .rf-page .rf-field { min-width: 0; }
+.rf-page .select, .rf-page .rf-select { max-width: 100%; }
 /* โครงสร้างสินค้า (จำลอง): ลำดับผลิตจากขั้นแรกอยู่บน สายป้อนวางคู่กันแล้วรวมลงที่พ่อ */
 .bom-flow { overflow-x: auto; }
 .bom-flow-node { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; }

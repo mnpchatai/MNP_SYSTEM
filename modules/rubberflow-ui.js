@@ -199,11 +199,32 @@
     return `<svg class="rf-spc-chart rf-spc-hist" viewBox="0 0 ${W} ${box.top + box.height + box.bottom}" role="img" aria-label="${attr(`ฮิสโตแกรม ${bins.length} ช่วง`)}">${grid}${bars}</svg>`;
   }
 
+  // มือถือ: ตารางแสดงเป็นการ์ด แต่ละช่องต้องมีชื่อคอลัมน์ (data-label จาก <th> ตามลำดับ ข้ามช่อง colspan)
+  // ตารางแก้ไขที่กรอกเป็นแถว (.bom-tree-table) คงเป็นตารางเลื่อนข้าง
+  const labelTables = (scope) => {
+    // แท็บที่เลือกอยู่กลางแถวแท็บที่เลื่อนข้างได้ (เลื่อนเฉพาะแถวแท็บ ไม่เลื่อนทั้งหน้า)
+    scope.querySelectorAll(".rf-tabs .rf-tab.is-active").forEach((tab) => {
+      const bar = tab.parentElement;
+      const tabBox = tab.getBoundingClientRect();
+      const barBox = bar.getBoundingClientRect();
+      bar.scrollLeft += tabBox.left - barBox.left - (barBox.width - tabBox.width) / 2;
+    });
+    scope.querySelectorAll("table.rf-table:not(.bom-tree-table)").forEach((tableNode) => {
+      const labels = [...tableNode.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+      tableNode.querySelectorAll("tbody tr").forEach((row) => {
+        [...row.children].forEach((cell, index) => {
+          if (cell.colSpan > 1) return;
+          if (labels[index]) cell.dataset.label = labels[index];
+        });
+      });
+    });
+  };
+
   const api = {
     module: "",
     STATUS, ICONS, icon, badge, status, statusLabel, pageHead, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
     field, input, textarea, select, specInput, submitButton, button, confirmOptions, openButton, link, dialog, closeButton,
-    barcode, dualChart, controlChart, histogram,
+    barcode, dualChart, controlChart, histogram, labelTables,
   };
   root.MNP_RUBBERFLOW_UI = api;
 })(typeof window !== "undefined" ? window : globalThis);
