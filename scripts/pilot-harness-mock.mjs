@@ -3,7 +3,8 @@
 //
 // createMockSupabase และ installMockSupabase ต้องไม่อ้างตัวแปรนอกฟังก์ชันของตัวเอง เพราะ mockSupabaseScript() ส่งซอร์สของทั้งสอง
 // (Function#toString) ให้เบราว์เซอร์เป็น /harness-mock-supabase.js ส่วน scripts/tests/pilot-harness-mock.test.mjs import ไปทดสอบตรงๆ
-// สิทธิ์ที่ตรวจในนี้เป็นแค่ส่วนที่หน้าจอต้องเห็น (ขั้นของฉัน ขั้นปัจจุบัน ความเห็นบังคับ ลำดับสถานะ) ไม่ใช่สำเนาของ RPC จริง
+// สิทธิ์ที่ตรวจในนี้เป็นแค่ส่วนที่หน้าจอต้องเห็น (ขั้นของฉัน ขั้นปัจจุบัน ความเห็นบังคับ ลำดับสถานะ) ใช้รหัส error เดียวกับ RPC จริงเพื่อให้ข้อความตรงกัน
+// แต่หลวมกว่า RPC จริง เช่น การมอบหมายช่างครั้งแรกไม่บังคับแผนดำเนินงาน/วันที่ และลิงก์ "ดาวน์โหลด" ไฟล์แนบใช้ไม่ได้ (data:/blob: URL)
 
 export function createMockSupabase({ empty = false, now = () => Date.now(), warn = () => {}, objectUrl = null } = {}) {
   const YEAR = "2569";
@@ -85,7 +86,7 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
       priority: spec.priority ?? "normal", created_at: createdAt, submitted_at: createdAt, updated_at: createdAt, needed_date: null,
       requester_id: spec.requester, requester_name: personName(spec.requester), assignee_id: spec.assignee ?? null,
       department_id: spec.department ?? employees.find((row) => row.id === spec.requester).department_id,
-      current_step: spec.currentStep ?? 1, details: spec.details ?? {}, cc_department_ids: spec.cc ?? [],
+      current_step: spec.currentStep ?? 1, approved_at: spec.currentStep === 0 ? createdAt : null, details: spec.details ?? {}, cc_department_ids: spec.cc ?? [],
       machine_id: machine?.id ?? null, machine_code: machine?.code ?? null, machine_name: machine?.name ?? null,
       doc_type: type.uses_repair_workflow ? "repair" : null, is_urgent: Boolean(spec.urgent), ...(spec.extra ?? {}),
     };
@@ -130,34 +131,34 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
     seedRequest({
       id: "req-mg-0019", no: "MG-2569-0019", type: "MANAGEMENT", title: "ขออนุมัติปรับกะทำงานช่วงปีใหม่ 2570",
       description: "ขอปรับกะทำงานวันที่ 29–31 ธันวาคม เป็นกะเดียว 08:00–17:00 เพื่อให้พนักงานเดินทางกลับภูมิลำเนา",
-      status: "approved", requester: ME_ID, created: 6, currentStep: 2, cc: ["dep-rb", "dep-qa"],
+      status: "approved", requester: ME_ID, created: 6, currentStep: 0, cc: ["dep-rb", "dep-qa"],
       steps: [["ผู้จัดการโรงงานพิจารณา", "e5", "approved", 5, "เห็นควรอนุมัติ"], ["ผู้จัดการทั่วไปพิจารณา", "e7", "approved", 4]],
       history: [["pending_approval", "approved", "e7", 4]],
       files: [["ตารางกะใหม่", "#6d28d9"]],
     });
     seedRequest({
       id: "req-mt-0405", no: "MT-2569-0405", type: "MT_REPAIR", title: "สายพานลำเลียง CV-02 ขาด",
-      description: "สายพานขาดตรงรอยต่อ ต้องขนชิ้นงานด้วยมือ", status: "pending_assign", requester: "e4", machine: "m-cv02", created: 4, currentStep: 2,
+      description: "สายพานขาดตรงรอยต่อ ต้องขนชิ้นงานด้วยมือ", status: "pending_assign", requester: "e4", machine: "m-cv02", created: 4, currentStep: 0,
       steps: [["ผู้จัดการโรงงานอนุมัติ", "e5", "approved", 3.8], ["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 3.5]],
       history: [["pending_approval", "pending_assign", ME_ID, 3.5]],
     });
     seedRequest({
       id: "req-mt-0401", no: "MT-2569-0401", type: "MT_REPAIR", title: "เครื่องผสมยาง MX-01 มอเตอร์ร้อนผิดปกติ",
-      description: "อุณหภูมิมอเตอร์ขึ้นถึง 95 องศาหลังเดินเครื่อง 1 ชั่วโมง", status: "assigned", requester: "e4", machine: "m-mx01", created: 5, currentStep: 2,
+      description: "อุณหภูมิมอเตอร์ขึ้นถึง 95 องศาหลังเดินเครื่อง 1 ชั่วโมง", status: "assigned", requester: "e4", machine: "m-mx01", created: 5, currentStep: 0,
       assignee: ME_ID, techs: [ME_ID, "e2"], extra: { work_expected_date: ago(-2).slice(0, 10), execution_plan: "use_existing", inspector_opinion: "self_repair" },
       steps: [["ผู้จัดการโรงงานอนุมัติ", "e5", "approved", 4.8], ["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 4.5]],
       history: [["pending_approval", "pending_assign", ME_ID, 4.5], ["pending_assign", "assigned", ME_ID, 4.4]],
     });
     seedRequest({
       id: "req-mt-0398", no: "MT-2569-0398", type: "MT_REPAIR", title: "ปั๊มลมห้องซ่อม CMP-01 แรงดันตก",
-      description: "แรงดันลมตกเหลือ 4 บาร์ เครื่องมือลมใช้งานไม่ได้", status: "in_progress", requester: "e2", machine: "m-cmp01", created: 7, currentStep: 1,
+      description: "แรงดันลมตกเหลือ 4 บาร์ เครื่องมือลมใช้งานไม่ได้", status: "in_progress", requester: "e2", machine: "m-cmp01", created: 7, currentStep: 0,
       assignee: "e2", techs: ["e2", ME_ID], extra: { work_expected_date: ago(-1).slice(0, 10), execution_plan: "need_purchase", inspector_opinion: "buy_parts" },
       steps: [["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 6.5]],
       history: [["pending_approval", "pending_assign", ME_ID, 6.5], ["pending_assign", "assigned", ME_ID, 6.4], ["assigned", "in_progress", "e2", 6]],
     });
     seedRequest({
       id: "req-mt-0390", no: "MT-2569-0390", type: "MT_REPAIR", title: "ไฟส่องสว่างอาคาร 2 ดับครึ่งแถว",
-      description: "โคมไฟแถว B ดับ 6 โคม", status: "pending_verify", requester: ME_ID, machine: "m-ltb2", created: 9, currentStep: 1,
+      description: "โคมไฟแถว B ดับ 6 โคม", status: "pending_verify", requester: ME_ID, machine: "m-ltb2", created: 9, currentStep: 0,
       assignee: "e8", techs: ["e8"], extra: { execution_plan: "immediate", inspector_opinion: "self_repair", cause_analysis: "บัลลาสต์เสื่อมสภาพ", parts_used: "บัลลาสต์ 36W 6 ตัว" },
       steps: [["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 8.8]],
       history: [["pending_approval", "pending_assign", ME_ID, 8.8], ["pending_assign", "assigned", ME_ID, 8.7], ["assigned", "in_progress", "e8", 8], ["in_progress", "pending_verify", "e8", 0.5]],
@@ -313,7 +314,7 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
     db.request_status_history.push({ id: newId("request_status_history"), request_id: request.id, from_status: null, to_status: "pending_approval", changed_by: ME_ID, note: null, created_at: at });
     return request.id;
   }
-  const requireStatus = (request, statuses) => { if (!statuses.includes(request.status)) fail("INVALID_TRANSITION"); };
+  const requireStatus = (request, statuses, code = "INVALID_TRANSITION") => { if (!statuses.includes(request.status)) fail(code); };
 
   const RPC = {
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
@@ -324,13 +325,14 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
     // ขั้นสุดท้าย ไม่อนุมัติ และขอข้อมูลเพิ่ม เปลี่ยนสถานะคำร้องและเพิ่มแถว request_status_history
     // หน้ารออนุมัติ (อนุมัติหลายรายการ) เรียก RPC นี้ทีละขั้นเช่นกัน
     app_approval_decision({ p_step_id, p_decision, p_comment }) {
-      const step = findRow("approval_steps", p_step_id, "STEP_NOT_FOUND");
+      const step = findRow("approval_steps", p_step_id, "STEP_NOT_PENDING");
       const request = findRow("requests", step.request_id, "REQUEST_NOT_FOUND");
       const type = typeOf(request);
       if (step.status !== "pending") fail("STEP_NOT_PENDING");
       if (request.status !== "pending_approval" || step.step_order !== request.current_step) fail("STEP_NOT_CURRENT");
       if (step.approver_employee_id !== ME_ID) fail("NOT_AUTHORIZED");
-      if (!["approved", "rejected", "more_info", "acknowledged"].includes(p_decision) || (p_decision === "acknowledged" && type.code !== "MANAGEMENT")) fail("INVALID_DECISION");
+      if (!["approved", "rejected", "more_info", "acknowledged"].includes(p_decision)) fail("INVALID_DECISION");
+      if (p_decision === "acknowledged" && type.code !== "MANAGEMENT") fail("DECISION_NOT_ALLOWED");
       const comment = String(p_comment ?? "").trim();
       if (["rejected", "more_info"].includes(p_decision) && comment.length < 3) fail("COMMENT_REQUIRED");
       const at = stamp();
@@ -338,6 +340,7 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
       if (["approved", "acknowledged"].includes(p_decision)) {
         const next = stepsOf(request.id).find((row) => row.step_order > step.step_order);
         if (next) { Object.assign(request, { current_step: next.step_order, updated_at: at }); return null; }
+        Object.assign(request, { current_step: 0, approved_at: at });
         setStatus(request, type.uses_repair_workflow ? "pending_assign" : p_decision, comment, at);
         return null;
       }
@@ -360,8 +363,11 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
       const request = findRow("requests", p_request_id, "REQUEST_NOT_FOUND");
       const type = typeOf(request);
       const allowed = { approved: "in_progress", in_progress: "completed" };
-      if (type.uses_repair_workflow || allowed[request.status] !== p_status || (type.code === "MANAGEMENT" && request.status === "approved")) fail("INVALID_TRANSITION");
+      if (type.uses_repair_workflow) fail("REPAIR_USES_OWN_WORKFLOW");
+      if (type.code === "MANAGEMENT" && request.status === "approved") fail("REQUEST_ENDS_AT_DECISION");
+      if (allowed[request.status] !== p_status) fail("INVALID_TRANSITION");
       if (p_status === "in_progress") request.assignee_id = ME_ID;
+      if (p_status === "completed") request.completed_at = stamp();
       setStatus(request, p_status, null);
       return null;
     },
@@ -392,10 +398,10 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
       });
     },
     app_create_machine({ p_department_id, p_code, p_name }) {
-      const code = textInRange(p_code, 1, 40, "INVALID_MACHINE_CODE");
+      const code = textInRange(p_code, 2, 40, "INVALID_MACHINE_CODE");
       const existing = machines.find((row) => row.department_id === p_department_id && row.code.toLowerCase() === code.toLowerCase());
       if (existing) return { ...existing, existed: true };
-      const machine = { id: newId("machines"), code, name: textInRange(p_name, 1, 120, "INVALID_MACHINE_NAME"), department_id: p_department_id, is_placeholder: false, is_active: true, sort_order: machines.length + 1 };
+      const machine = { id: newId("machines"), code, name: textInRange(p_name, 2, 120, "INVALID_MACHINE_NAME"), department_id: p_department_id, is_placeholder: false, is_active: true, sort_order: machines.length + 1 };
       machines.push(machine);
       return { ...machine, existed: false };
     },
@@ -416,29 +422,31 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
     },
     app_start_repair_work({ p_request_id }) {
       const request = findRow("requests", p_request_id, "REQUEST_NOT_FOUND");
-      requireStatus(request, ["assigned"]);
+      requireStatus(request, ["assigned"], "REQUEST_NOT_ASSIGNED");
       setStatus(request, "in_progress", null);
       return null;
     },
     app_save_repair_work_progress({ p_request_id, p_cause_analysis, p_parts_used_items }) {
       const request = findRow("requests", p_request_id, "REQUEST_NOT_FOUND");
-      requireStatus(request, ["in_progress"]);
+      requireStatus(request, ["in_progress"], "REQUEST_NOT_IN_PROGRESS");
       Object.assign(request, { cause_analysis: p_cause_analysis ?? null, parts_used_items: p_parts_used_items ?? [], updated_at: stamp() });
       return null;
     },
     app_finish_repair_work({ p_request_id, p_cause_analysis, p_parts_used_items }) {
       const request = findRow("requests", p_request_id, "REQUEST_NOT_FOUND");
-      requireStatus(request, ["in_progress"]);
+      requireStatus(request, ["in_progress"], "REQUEST_NOT_IN_PROGRESS");
       Object.assign(request, { cause_analysis: p_cause_analysis ?? null, parts_used_items: p_parts_used_items ?? [] });
       setStatus(request, "pending_verify", null);
       return null;
     },
     app_verify_repair({ p_request_id, p_result, p_note }) {
       const request = findRow("requests", p_request_id, "REQUEST_NOT_FOUND");
-      requireStatus(request, ["pending_verify"]);
+      requireStatus(request, ["pending_verify"], "REQUEST_NOT_PENDING_VERIFY");
       if (request.requester_id !== ME_ID) fail("NOT_AUTHORIZED");
       if (!["pass", "fail"].includes(p_result)) fail("INVALID_RESULT");
+      if (p_result === "fail" && !String(p_note ?? "").trim()) fail("NOTE_REQUIRED");
       const at = stamp();
+      if (p_result === "pass") request.completed_at = at;
       db.request_verifications.push({ id: newId("request_verifications"), request_id: request.id, result: p_result, note: p_note || null, verified_by: ME_ID, created_at: at });
       setStatus(request, p_result === "pass" ? "completed" : "assigned", p_note, at);
       return null;

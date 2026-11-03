@@ -69,7 +69,7 @@ test("approving the last repair step sends it to pending_assign and records hist
   const { sb } = mock();
   assert.equal((await decide(sb, "req-mt-0412-s2", "approved")).error, null);
   const { data: request } = await sb.from("requests").select("*").eq("id", "req-mt-0412").maybeSingle();
-  assert.equal(request.status, "pending_assign");
+  assert.deepEqual([request.status, request.current_step, typeof request.approved_at], ["pending_assign", 0, "string"]);
   const { data: history } = await sb.from("request_status_history").select("*").eq("request_id", "req-mt-0412").order("created_at", { ascending: false }).limit(1);
   assert.deepEqual([history[0].from_status, history[0].to_status, history[0].changed_by], ["pending_approval", "pending_assign", "e1"]);
   const { count } = await sb.from("requests").select("id", { count: "exact", head: true }).eq("status", "pending_assign");
@@ -81,7 +81,7 @@ test("decisions are checked: comment required, someone else's step, not the curr
   assert.equal((await decide(sb, "req-mt-0412-s2", "rejected", "")).error.message, "COMMENT_REQUIRED");
   assert.equal((await decide(sb, "req-it-0057-s2", "approved")).error.message, "NOT_AUTHORIZED");
   assert.equal((await decide(sb, "req-ncr-0088-s3", "approved")).error.message, "STEP_NOT_CURRENT");
-  assert.equal((await decide(sb, "req-mt-0412-s2", "acknowledged")).error.message, "INVALID_DECISION");
+  assert.equal((await decide(sb, "req-mt-0412-s2", "acknowledged")).error.message, "DECISION_NOT_ALLOWED");
   assert.equal((await decide(sb, "req-mt-0412-s2", "rejected", "ไม่ใช่งานซ่อม ส่งแผนกผลิตแก้เอง")).error, null);
   const { data } = await sb.from("requests").select("*").eq("id", "req-mt-0412").maybeSingle();
   assert.equal(data.status, "rejected");
@@ -112,7 +112,7 @@ test("general requests take app_update_request_status approved → in_progress �
   assert.equal((await sb.rpc("app_update_request_status", { p_request_id: id, p_status: "in_progress" })).error, null);
   assert.equal((await sb.rpc("app_update_request_status", { p_request_id: id, p_status: "completed" })).error, null);
   assert.equal(db.requests.find((row) => row.id === id).status, "completed");
-  assert.equal((await sb.rpc("app_update_request_status", { p_request_id: "req-mt-0405", p_status: "in_progress" })).error.message, "INVALID_TRANSITION");
+  assert.equal((await sb.rpc("app_update_request_status", { p_request_id: "req-mt-0405", p_status: "in_progress" })).error.message, "REPAIR_USES_OWN_WORKFLOW");
 });
 
 test("MT form: repair departments, machines, doc number, and the new request shows up in reads", async () => {
@@ -140,7 +140,7 @@ test("MT form: repair departments, machines, doc number, and the new request sho
 test("repair workflow: assign, start, finish, verify", async () => {
   const { sb, db } = mock();
   const id = "req-mt-0405";
-  assert.equal((await sb.rpc("app_start_repair_work", { p_request_id: id })).error.message, "INVALID_TRANSITION");
+  assert.equal((await sb.rpc("app_start_repair_work", { p_request_id: id })).error.message, "REQUEST_NOT_ASSIGNED");
   assert.equal((await sb.rpc("app_assign_repair_technician", { p_request_id: id, p_technician_ids: ["e2", "e8"], p_execution_plan: "immediate" })).error, null);
   const { data: techs } = await sb.from("request_technicians").select("technician_id").eq("request_id", id);
   assert.deepEqual(techs.map((row) => row.technician_id), ["e2", "e8"]);
@@ -149,6 +149,7 @@ test("repair workflow: assign, start, finish, verify", async () => {
   assert.equal(db.requests.find((row) => row.id === id).status, "pending_verify");
   // ผู้แจ้งใบนี้คือ e4 ผู้ใช้จำลองตรวจรับไม่ได้
   assert.equal((await sb.rpc("app_verify_repair", { p_request_id: id, p_result: "pass" })).error.message, "NOT_AUTHORIZED");
+  assert.equal((await sb.rpc("app_verify_repair", { p_request_id: "req-mt-0390", p_result: "fail" })).error.message, "NOTE_REQUIRED");
   assert.equal((await sb.rpc("app_verify_repair", { p_request_id: "req-mt-0390", p_result: "pass", p_note: "ไฟติดครบ" })).error, null);
   assert.equal(db.requests.find((row) => row.id === "req-mt-0390").status, "completed");
   assert.equal(db.request_verifications.length, 1);
@@ -205,6 +206,12 @@ test("the served script is self-contained: installs window.supabase and stubs cr
   assert.equal(window.createMockSupabase, undefined);
   const sb = window.supabase.createClient();
   assert.equal((await sb.from("requests").select("id", { count: "exact", head: true })).count, 0);
+  // เส้นทางเขียนผ่านสคริปต์ที่เสิร์ฟจริง: จับการอ้างตัวแปรนอกฟังก์ชันใน RPC ด้วย
+  const { data: id, error } = await sb.rpc("app_create_repair_request", { p_department_id: "dep-rb", p_machine_id: "m-hcm03", p_description: "เครื่องหยุดเอง" });
+  assert.equal(error, null);
+  const { data: steps } = await sb.from("approval_steps").select("*").eq("request_id", id);
+  assert.equal((await sb.rpc("app_approval_decision", { p_step_id: steps[0].id, p_decision: "approved", p_comment: "" })).error, null);
+  assert.equal((await sb.from("requests").select("*").eq("id", id).maybeSingle()).data.status, "pending_assign");
   assert.equal(await (await window.fetch("https://script.google.com/macros/x")).text(), "{}");
   assert.equal(await (await window.fetch("/modules/x.js")).text(), "same");
   assert.deepEqual(calls, ["/modules/x.js"]);
