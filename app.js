@@ -2855,7 +2855,7 @@ async function renderRequestDetail(params) {
         <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></details>
       </div>
       <aside class="stack">
-        ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
+        ${canApprove ? decisionPanelHtml({ currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files")}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
         <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
@@ -3011,7 +3011,7 @@ function decisionButtonsOf(extraDecisions) {
 // "อนุมัติ" และ "รับทราบข้อมูล" เท่านั้นที่ความเห็นเป็นทางเลือก — ตรงกับ COMMENT_REQUIRED ของ app_approval_decision
 const decisionNeedsComment = (decision) => !["approved", "acknowledged"].includes(decision);
 
-function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions }) {
+function decisionPanelHtml({ currentStep, nextStep, extraDecisions }) {
   return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
     <div class="action-panel-head">
       <h2 id="decision-panel-title">พิจารณาคำร้อง</h2>
