@@ -827,8 +827,8 @@ tbody tr:hover { background: var(--shell); }
 .empty-state p { margin: 0; font-size: var(--text-body); }
 .skeleton { padding: 20px; display: grid; gap: 12px; }
 .skeleton-row { height: 44px; border-radius: var(--radius-md); background: linear-gradient(90deg, var(--soft-line) 0%, var(--shell) 50%, var(--soft-line) 100%) 0 0 / 200% 100%; animation: skeleton-sheen 1.4s ease-in-out infinite; }
-.skeleton-row:nth-of-type(3n) { width: 82%; }
-.skeleton-row:nth-of-type(4n) { width: 64%; }
+.skeleton-row:nth-child(3n) { width: 82%; }
+.skeleton-row:nth-child(4n) { width: 64%; }
 @keyframes skeleton-sheen { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 .request-detail-head { padding-bottom: 20px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }

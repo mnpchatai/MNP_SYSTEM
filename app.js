@@ -1770,7 +1770,7 @@ function bindShell() {
 }
 
 // แถวโครงร่างระหว่างโหลด ผู้ใช้โปรแกรมอ่านหน้าจอยังได้ยิน "กำลังโหลดข้อมูล" ผ่าน aria-live ของ #app
-const loadingSkeleton = (rows = 4) => `<div class="skeleton"><span class="sr-only">กำลังโหลดข้อมูล…</span>${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}</div>`;
+const loadingSkeleton = (rows = 4) => `<div class="skeleton">${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}<span class="sr-only">กำลังโหลดข้อมูล…</span></div>`;
 
 // หน้าว่าง: ไอคอน + ข้อความเดิม
 const emptyState = (text) => `<div class="empty empty-state">${uiIcon("inbox")}<p>${escapeHtml(text)}</p></div>`;
