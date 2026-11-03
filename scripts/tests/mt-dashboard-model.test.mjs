@@ -192,6 +192,25 @@ test("act-now list puts overdue first, then urgent, then the longest wait", () =
   assert.equal(model.priority(model.backlog(rows, filters()), 2).length, 2);
 });
 
+test("a job waiting for its technician is late from the assigned start date, not the submit date", () => {
+  const rows = Object.fromEntries(derive([
+    req({ id: "late-start", status: "assigned", submitted_at: "2026-09-01T02:00:00Z", work_started_date: "2026-10-04", work_expected_date: "2026-10-20" }),
+    req({ id: "starts-today", status: "assigned", work_started_date: TODAY, work_expected_date: "2026-10-20" }),
+    req({ id: "started", status: "in_progress", work_started_date: "2026-10-01", work_expected_date: "2026-10-20" }),
+    req({ id: "no-start", status: "assigned", work_started_date: null, work_expected_date: "2026-10-20" }),
+    req({ id: "rework", status: "assigned", work_started_date: "2026-10-01", work_expected_date: "2026-10-20",
+      history: [at("in_progress", "2026-10-01T05:00:00Z"), at("pending_verify", "2026-10-03T05:00:00Z"), at("assigned", "2026-10-04T05:00:00Z")] }),
+  ]).map((row) => [row.id, row]));
+  assert.equal(rows.rework.lateStart, false);
+  assert.equal(rows["late-start"].lateStart, true); assert.equal(rows["late-start"].daysLateStart, 2);
+  assert.equal(rows["late-start"].overdue, false);
+  assert.equal(rows["starts-today"].lateStart, false);
+  assert.equal(rows.started.lateStart, false);
+  assert.equal(rows["no-start"].lateStart, false);
+  const top = model.priority([rows["no-start"], rows["late-start"]], 10);
+  assert.equal(top[0].id, "late-start");
+});
+
 // ---- machines, departments, technicians ----
 const NOW = Date.parse("2026-10-06T12:00:00Z");
 const deriveAt = (requests) => model.deriveRows(requests, TODAY, NOW);
