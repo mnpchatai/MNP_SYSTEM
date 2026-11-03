@@ -56,7 +56,7 @@ test("every module colour keeps white card text readable (contrast ≥ 4.5:1 at 
 
 test("the muted colour of a module that is not open still keeps white text at ≥ 4.5:1, using the filters styles.css really applies", () => {
   const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
-  const filters = [...css.matchAll(/lab-module-header\.is-off \{ filter: ([^;]+); \}/g)].map((match) => match[1]);
+  const filters = [...css.matchAll(/lab-module-card\.is-off \{ filter: ([^;]+); \}/g)].map((match) => match[1]);
   assert.equal(filters.length, 2, "one rule for the light theme and one for the dark theme");
   for (const filter of filters) {
     const saturate = Number(/saturate\(([\d.]+)\)/.exec(filter)?.[1]);
@@ -114,11 +114,12 @@ test("the chooser shows one gradient card per module; only open modules are link
   assert.equal(count(sections.chooserPage(() => "yes"), /is-off/g), 4, "only an explicit true opens a card");
 });
 
-test("a module page opens with a back link and a banner in the module's colour that names it once", () => {
+test("a module page opens with a back link and a plain heading that names it once after a dot in the module's colour", () => {
   const head = sections.moduleHead("mooney", { extra: `<span id="extra"></span>` });
   assert.match(head, /<a class="request-back-link" href="#\/lab" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ<\/a>/);
-  assert.match(head, /class="page-heading request-module-header lab-module-header" style="background:linear-gradient\(135deg, #2563eb, #1e40af\)"/);
-  assert.match(head, /<span class="type-card-badge"><svg[^]*?<\/svg><\/span><h1>Mooney test report<\/h1><\/div>/);
+  assert.match(head, /<div class="page-heading lab-module-header">/);
+  assert.doesNotMatch(head, /gradient|background:|request-module-header/, "the module colour is never a band or a gradient");
+  assert.match(head, /<div class="module-title"><span class="module-dot" style="--module-color:#1e40af" aria-hidden="true"><\/span><h1>Mooney test report<\/h1><\/div>/);
   assert.doesNotMatch(head, /eyebrow|<p>|MNP LAB/, "no eyebrow or description repeating the breadcrumb or the title");
   assert.match(head, /<span id="extra"><\/span>/);
   assert.equal(count(visibleText(head), /Mooney test report/g), 1);

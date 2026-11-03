@@ -225,10 +225,15 @@ test("the approver of the current step gets the decision form, unless the report
 
 test("approve and reject ask in the in-app dialog first, and a cancelled dialog sends nothing", async () => {
   const handlers = {};
-  const decision = (value) => ({ dataset: { decision: value }, addEventListener: (type, handler) => { handlers[value] = handler; } });
+  const decision = (value) => ({
+    dataset: { decision: value }, attributes: {},
+    addEventListener: (type, handler) => { handlers[value] = handler; },
+    setAttribute(name, attrValue) { this.attributes[name] = attrValue; }, removeAttribute(name) { delete this.attributes[name]; },
+  });
+  const buttons = [decision("approve"), decision("reject")];
   const content = {
     querySelector: (selector) => (selector === "#qc-decide-comment" ? { value: "  ค่าไม่ผ่านสเปก  " } : null),
-    querySelectorAll: (selector) => (selector === "[data-decision]" ? [decision("approve"), decision("reject")] : []),
+    querySelectorAll: (selector) => (selector === "[data-decision]" ? buttons : []),
   };
   const env = await page("view=report&id=r1", { access: { read: true, edit: false, steps: ["qa_manager"] }, content });
   const decided = () => env.calls.rpc.filter(([name]) => name === "app_qc_decide_report");
@@ -243,6 +248,8 @@ test("approve and reject ask in the in-app dialog first, and a cancelled dialog 
   env.calls.confirmAnswer = true;
   await handlers.reject();
   assert.deepEqual(plain(decided()), [["app_qc_decide_report", { p_id: "r1", p_version: REPORT.version, p_decision: "reject", p_comment: "ค่าไม่ผ่านสเปก" }]]);
+  assert.equal(buttons[1].attributes["aria-busy"], "true", "the pressed button spins until the page redraws");
+  assert.equal(buttons[0].attributes["aria-busy"], undefined, "the other button does not spin");
 });
 
 test("a rejected report can be reopened or cancelled, with the reason in the history", async () => {

@@ -62,6 +62,7 @@
   async function downloadXlsx(button, payload, helpers, { request = requestXlsx } = {}) {
     const label = button.textContent;
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
     button.textContent = "กำลังสร้างไฟล์…";
     try {
       const blob = await request(payload);
@@ -75,6 +76,7 @@
       helpers.showToast(helpers.friendlyError(exportError), "error");
     } finally {
       button.disabled = false;
+      button.removeAttribute("aria-busy");
       button.textContent = label;
     }
   }

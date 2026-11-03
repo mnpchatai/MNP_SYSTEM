@@ -20,7 +20,6 @@
   const TITLE = "ใบตรวจ QC";
   const THEME = ["#0f766e", "#134e4a"];
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 12.5l2.2 2.2 4.3-4.6M8.5 18h7"/></svg>`;
-  const HEAD_STYLE = `background:linear-gradient(135deg, ${THEME[0]}, ${THEME[1]})`;
   const RESULT_BADGE = { ok: "completed", ng: "rejected", accept: "pending_approval" };
   // รหัสที่แปลว่าหน้าที่เห็นอยู่ล้าสมัย (มีคนเปลี่ยนใบไปแล้ว) — วาดหน้าใหม่ให้เห็นสถานะล่าสุด
   const STALE_CODES = ["QC_VERSION_CONFLICT", "QC_NOT_DRAFT", "QC_STEP_NOT_CURRENT", "QC_NOT_REJECTED", "QC_NOT_CANCELLABLE", "QC_NCR_EXISTS", "QC_NCR_LINKED", "QC_NOT_SUBMITTED", "QC_NOT_ACTIVE", "QC_NOT_FOUND"];
@@ -54,11 +53,11 @@
     return document.querySelector(".content");
   }
 
-  // หัวหน้าแบบแถบสีของโมดูล (.request-module-header) + ปุ่มย้อนกลับ — ชื่อโมดูลอยู่ที่ breadcrumb แล้ว h1 บอกหน้าที่เปิดอยู่
+  // หัวหน้าพื้นเรียบแบบระบบหลัก (.page-heading) สีของโมดูลเป็นจุดหน้าชื่อเท่านั้น + ปุ่มย้อนกลับ — ชื่อโมดูลอยู่ที่ breadcrumb แล้ว h1 บอกหน้าที่เปิดอยู่
   function headHtml({ title, back = null, actions = "", badge = "" }) {
     return `${back ? `<a class="request-back-link" href="${esc(back.href)}">${esc(back.label)}</a>` : ""}
-      <div class="page-heading request-module-header qc-head" style="${HEAD_STYLE}">
-        <div class="request-module-title"><h1>${esc(title)}</h1>${badge}</div>
+      <div class="page-heading qc-head">
+        <div class="module-title"><span class="module-dot" style="--module-color:${THEME[0]}" aria-hidden="true"></span><h1>${esc(title)}</h1>${badge}</div>
         ${actions ? `<div class="request-create-entry">${actions}</div>` : ""}
       </div>`;
   }
@@ -86,16 +85,18 @@
     paint(TITLE, `${headHtml({ title: TITLE })}<section class="card">${notice(message)}</section>`);
   }
 
-  // ปุ่มเรียก RPC หนึ่งครั้ง: ปิดปุ่มระหว่างทำ สำเร็จแล้ววาดหน้าใหม่ ผิดพลาดแจ้งเตือนและวาดใหม่เมื่อหน้าล้าสมัย
-  async function runAction(root, rpcName, args, successMessage) {
+  // ปุ่มเรียก RPC หนึ่งครั้ง: ปิดปุ่มระหว่างทำ (ปุ่มที่กด = trigger หมุนรอด้วย aria-busy) สำเร็จแล้ววาดหน้าใหม่ ผิดพลาดแจ้งเตือนและวาดใหม่เมื่อหน้าล้าสมัย
+  async function runAction(root, rpcName, args, successMessage, trigger = null) {
     const controls = root.querySelectorAll(".qc-actions button");
     controls.forEach((control) => { control.disabled = true; });
+    trigger?.setAttribute("aria-busy", "true");
     try {
       const data = await rpc(rpcName, args);
       showToast(typeof successMessage === "function" ? successMessage(data) : successMessage);
       await renderRoute();
     } catch (error) {
       showToast(friendlyError(error), "error");
+      trigger?.removeAttribute("aria-busy");
       if (STALE_CODES.some((code) => String(error?.message ?? "").includes(code))) await renderRoute();
       else controls.forEach((control) => { control.disabled = false; });
     }
@@ -168,6 +169,7 @@
       confirmButton?.addEventListener("click", async () => {
         const cancel = panel.querySelector("#qc-purge-cancel");
         confirmButton.disabled = true;
+        confirmButton.setAttribute("aria-busy", "true");
         if (cancel) cancel.disabled = true;
         try {
           const data = await rpc("app_sandbox_purge_qc");
@@ -175,6 +177,7 @@
           await renderRoute();
         } catch (error) {
           confirmButton.disabled = false;
+          confirmButton.removeAttribute("aria-busy");
           if (cancel) cancel.disabled = false;
           showToast(friendlyError(error), "error");
         }
@@ -716,11 +719,13 @@
 
   function bindReport(root, report) {
     const args = { p_id: report.id, p_version: report.version };
-    root.querySelector('[data-qc-action="submit"]')?.addEventListener("click", async () => {
-      if (await confirmDialog({ title: `ส่ง ${report.report_no} ขออนุมัติ?`, message: "หลังส่งแล้วแก้ไขไม่ได้จนกว่าจะไม่อนุมัติ", confirmLabel: "ส่งขออนุมัติ" })) runAction(root, "app_qc_submit_report", args, "ส่งขออนุมัติแล้ว");
+    root.querySelector('[data-qc-action="submit"]')?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (await confirmDialog({ title: `ส่ง ${report.report_no} ขออนุมัติ?`, message: "หลังส่งแล้วแก้ไขไม่ได้จนกว่าจะไม่อนุมัติ", confirmLabel: "ส่งขออนุมัติ" })) runAction(root, "app_qc_submit_report", args, "ส่งขออนุมัติแล้ว", button);
     });
-    root.querySelector('[data-qc-action="reopen"]')?.addEventListener("click", async () => {
-      if (await confirmDialog({ title: `เปิด ${report.report_no} กลับเป็นฉบับร่างเพื่อแก้ไข?`, message: "ลายเซ็นเดิมจะถูกล้าง", confirmLabel: "เปิดกลับเป็นฉบับร่าง", danger: true })) runAction(root, "app_qc_reopen_report", args, "เปิดกลับเป็นฉบับร่างแล้ว");
+    root.querySelector('[data-qc-action="reopen"]')?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (await confirmDialog({ title: `เปิด ${report.report_no} กลับเป็นฉบับร่างเพื่อแก้ไข?`, message: "ลายเซ็นเดิมจะถูกล้าง", confirmLabel: "เปิดกลับเป็นฉบับร่าง", danger: true })) runAction(root, "app_qc_reopen_report", args, "เปิดกลับเป็นฉบับร่างแล้ว", button);
     });
     root.querySelectorAll("[data-decision]").forEach((button) => button.addEventListener("click", async () => {
       const decision = button.dataset.decision;
@@ -730,22 +735,24 @@
         ? await confirmDialog({ title: `อนุมัติ ${report.report_no}?`, confirmLabel: "อนุมัติ" })
         : await confirmDialog({ title: `ไม่อนุมัติ ${report.report_no}?`, message: comment.trim(), confirmLabel: "ไม่อนุมัติ", danger: true });
       if (!confirmed) return undefined;
-      return runAction(root, "app_qc_decide_report", { ...args, p_decision: decision, p_comment: comment.trim() }, decision === "approve" ? "อนุมัติแล้ว" : "ไม่อนุมัติแล้ว");
+      return runAction(root, "app_qc_decide_report", { ...args, p_decision: decision, p_comment: comment.trim() }, decision === "approve" ? "อนุมัติแล้ว" : "ไม่อนุมัติแล้ว", button);
     }));
     root.querySelector("#qc-cancel-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const submitter = event.submitter ?? event.currentTarget.querySelector('[type="submit"]');
       const note = root.querySelector("#qc-cancel-note")?.value.trim() ?? "";
       if (note.length < 5) return showToast(model.ERROR_MESSAGES.QC_CANCEL_NOTE_REQUIRED, "error");
       if (!(await confirmDialog({ title: `ยกเลิก ${report.report_no}?`, message: "แก้กลับไม่ได้", confirmLabel: "ยกเลิกใบตรวจ", danger: true }))) return undefined;
-      return runAction(root, "app_qc_cancel_report", { ...args, p_note: note }, `ยกเลิก ${report.report_no} แล้ว`);
+      return runAction(root, "app_qc_cancel_report", { ...args, p_note: note }, `ยกเลิก ${report.report_no} แล้ว`, submitter);
     });
     root.querySelector("#qc-ncr-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
+      const submitter = event.submitter ?? form.querySelector('[type="submit"]');
       const parsed = model.ncrArgs(Object.fromEntries(["qty_total", "qty_defect", "unit", "defect_type_code", "description"].map((name) => [name, form.elements[name]?.value])));
       if (parsed.error) return showError(root, parsed.error, "#qc-ncr-error");
       if (!(await confirmDialog({ title: "เปิด NCR จากใบตรวจนี้?", message: "ใบละ 1 NCR เปิดซ้ำไม่ได้", confirmLabel: "เปิด NCR" }))) return undefined;
-      return runAction(root, "app_qc_issue_ncr", { ...args, ...parsed.args }, (data) => `เปิด NCR ${data?.ncr_no ?? ""} แล้ว`);
+      return runAction(root, "app_qc_issue_ncr", { ...args, ...parsed.args }, (data) => `เปิด NCR ${data?.ncr_no ?? ""} แล้ว`, submitter);
     });
     const exportButton = root.querySelector("#qc-export");
     exportButton?.addEventListener("click", () => sheet.downloadXlsx(exportButton, model.buildFormExport(report), { showToast, friendlyError }));

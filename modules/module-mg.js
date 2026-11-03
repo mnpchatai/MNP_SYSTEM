@@ -161,7 +161,7 @@
       return {
         headerActionsHtml: formExportPayload ? window.MNP_MT_FORM_EXPORT.downloadButtonHtml("PP01-FM08") : "",
         facts: ccDepartmentCodes.length
-          ? [{ label: "สำเนาถึงแผนก", value: ccDepartmentCodes.join(", "), options: { icon: "▤", tone: "violet", wide: true } }]
+          ? [{ label: "สำเนาถึงแผนก", value: ccDepartmentCodes.join(", "), options: { icon: "building", tone: "violet", wide: true } }]
           : [],
       };
     },

@@ -385,7 +385,7 @@
               <input type="hidden" id="repair-machine" name="machine_id" required>
               <div class="machine-combobox" id="repair-machine-combobox">
                 <input class="input machine-search-input" id="repair-machine-search" type="search" placeholder="เลือกแผนกก่อน" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="repair-machine-list" aria-expanded="false" disabled>
-                <span class="machine-search-icon" aria-hidden="true">⌕</span>
+                <span class="machine-search-icon" aria-hidden="true">${uiIcon("search")}</span>
                 <div class="machine-listbox" id="repair-machine-list" role="listbox" data-popup hidden></div>
               </div>
               <small>ค้นหาด้วยรหัสหรือชื่อเครื่องจักร แล้วเลือกจากรายการ · ไม่พบรหัสที่ต้องการ กด "เพิ่มรหัสเครื่องจักรใหม่" ท้ายรายการ</small>
@@ -512,7 +512,7 @@
         const name = newMachineName.value.trim();
         if (!code) { newMachineMessage.innerHTML = `<div class="form-message error">กรุณาระบุรหัสเครื่องจักร</div>`; newMachineCode.focus(); return; }
         if (!name) { newMachineMessage.innerHTML = `<div class="form-message error">กรุณาระบุชื่อเครื่องจักร</div>`; newMachineName.focus(); return; }
-        newMachineSave.disabled = true;
+        setButtonBusy(newMachineSave, true);
         try {
           const { data, error: createError } = await sb.rpc("app_create_machine", {
             p_department_id: selectedDepartmentId,
@@ -532,7 +532,7 @@
         } catch (saveError) {
           newMachineMessage.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(saveError))}</div>`;
         } finally {
-          newMachineSave.disabled = false;
+          setButtonBusy(newMachineSave, false);
         }
       };
       newMachineSave.addEventListener("click", saveNewMachine);
@@ -644,24 +644,24 @@
         facts: [
           requestFact("ช่างผู้รับผิดชอบ",
             assignedTechIds.map((techId) => personName(directory, techId)).join(", ") || "—",
-            { icon: "◎", tone: "success", wide: assignedTechIds.length > 1 }),
-          requestFact("ประเภทเอกสาร", docTypeLabels[request.doc_type] ?? request.doc_type ?? "—", { icon: "▤", tone: "violet" }),
-          ...(request.received_by_name ? [requestFact("ผู้จัดการที่รับใบ", request.received_by_name, { icon: "✓", tone: "cyan" })] : []),
+            { icon: "user", tone: "success", wide: assignedTechIds.length > 1 }),
+          requestFact("ประเภทเอกสาร", docTypeLabels[request.doc_type] ?? request.doc_type ?? "—", { icon: "document", tone: "violet" }),
+          ...(request.received_by_name ? [requestFact("ผู้จัดการที่รับใบ", request.received_by_name, { icon: "approve", tone: "cyan" })] : []),
           requestFact("เครื่องจักร", `${request.machine_code ?? "—"}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${request.machine_name}` : ""}`, {
-            icon: "⚙",
+            icon: "machine",
             tone: "slate",
             ...(window.MNP_MT_MACHINE_HISTORY.hasMachineHistory(request, { employee, owningDepartmentId: type?.owning_department_id }) ? { action: "machine-history", actionLabel: "ดูประวัติการซ่อมของเครื่องนี้" } : {}),
           }),
-          requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "◉", tone: "cyan" }),
-          requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "↗", tone: request.is_urgent ? "danger" : "success" }),
-          ...(request.needed_date ? [requestFact("วันที่ต้องการใช้งาน", formatDate(request.needed_date), { icon: "◷", tone: "violet" })] : []),
-          ...(request.assigned_at ? [requestFact("มอบหมายเมื่อ", `${formatDate(request.assigned_at, true)} โดย ${personName(directory, request.assigned_by)}`, { icon: "→", tone: "cyan", wide: true })] : []),
-          ...(request.work_expected_date ? [requestFact("กำหนดเสร็จ", formatDate(request.work_expected_date), { icon: "◷", tone: "warning" })] : []),
-          ...(request.work_started_date ? [requestFact("วันที่เริ่มงาน", formatDate(request.work_started_date), { icon: "▶", tone: "primary" })] : []),
-          ...(request.execution_plan ? [requestFact("การดำเนินงาน", executionPlanLabels[request.execution_plan] ?? request.execution_plan, { icon: "✓", tone: "success" })] : []),
-          ...(request.inspector_opinion ? [requestFact("แนวทางการซ่อม", inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion, { icon: "◇", tone: "cyan" })] : []),
-          ...(request.cause_analysis ? [requestFact("วิเคราะห์สาเหตุ", request.cause_analysis, { icon: "?", tone: "warning", wide: true })] : []),
-          ...(request.parts_used ? [requestFact("อะไหล่ที่ใช้", request.parts_used, { icon: "⌁", tone: "slate", wide: true })] : []),
+          requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "user", tone: "cyan" }),
+          requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "flag", tone: request.is_urgent ? "danger" : "success" }),
+          ...(request.needed_date ? [requestFact("วันที่ต้องการใช้งาน", formatDate(request.needed_date), { icon: "calendar", tone: "violet" })] : []),
+          ...(request.assigned_at ? [requestFact("มอบหมายเมื่อ", `${formatDate(request.assigned_at, true)} โดย ${personName(directory, request.assigned_by)}`, { icon: "clock", tone: "cyan", wide: true })] : []),
+          ...(request.work_expected_date ? [requestFact("กำหนดเสร็จ", formatDate(request.work_expected_date), { icon: "calendar", tone: "warning" })] : []),
+          ...(request.work_started_date ? [requestFact("วันที่เริ่มงาน", formatDate(request.work_started_date), { icon: "calendar", tone: "primary" })] : []),
+          ...(request.execution_plan ? [requestFact("การดำเนินงาน", executionPlanLabels[request.execution_plan] ?? request.execution_plan, { icon: "clipboard", tone: "success" })] : []),
+          ...(request.inspector_opinion ? [requestFact("แนวทางการซ่อม", inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion, { icon: "wrench", tone: "cyan" })] : []),
+          ...(request.cause_analysis ? [requestFact("วิเคราะห์สาเหตุ", request.cause_analysis, { icon: "search", tone: "warning", wide: true })] : []),
+          ...(request.parts_used ? [requestFact("อะไหล่ที่ใช้", request.parts_used, { icon: "box", tone: "slate", wide: true })] : []),
         ],
         sectionsHtml: `        ${canAssign ? `<section class="card"><h2>${request.status === "pending_assign" ? "มอบหมายช่าง" : "แก้ไขการมอบหมายช่าง"}</h2><p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง — ติ๊กได้มากกว่าหนึ่งคน" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form">
           <div class="field"><label>ช่างผู้รับผิดชอบ</label><small>ติ๊กช่างที่รับผิดชอบใบนี้ อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></div>
@@ -722,14 +722,14 @@
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
       document.querySelectorAll(".progress-button").forEach((button) => button.addEventListener("click", async () => {
-        button.disabled = true;
+        setButtonBusy(button, true);
         try {
           const { error } = await sb.rpc("app_record_progress_step", { p_step_id: button.dataset.step, p_done_on: null });
           if (error) throw error;
           triggerNotificationEmails(id);
           showToast("บันทึกความคืบหน้าแล้ว");
           await renderRequestDetail(params);
-        } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
+        } catch (error) { showToast(friendlyError(error), "error"); setButtonBusy(button, false); }
       }));
       // หมุด "สั่งซื้ออุปกรณ์เรียบร้อย" ต้องเลือกก่อนว่ารับของทันที หรือระบุวันที่คาดว่าจะมาส่ง — สลับ
       // required/disabled ของช่องวันที่ตามตัวเลือกที่ติ๊กไว้ กันส่งฟอร์มไปครึ่งๆ กลางๆ
@@ -811,14 +811,15 @@
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
       document.querySelector(".start-work-button")?.addEventListener("click", async (event) => {
-        event.currentTarget.disabled = true;
+        const button = event.currentTarget;
+        setButtonBusy(button, true);
         try {
           const { error } = await sb.rpc("app_start_repair_work", { p_request_id: id });
           if (error) throw error;
           triggerNotificationEmails(id);
           showToast("เริ่มงานแล้ว");
           await renderRequestDetail(params);
-        } catch (error) { showToast(friendlyError(error), "error"); event.currentTarget.disabled = false; }
+        } catch (error) { showToast(friendlyError(error), "error"); setButtonBusy(button, false); }
       });
       renumberPartsRows(document.querySelector("#finish-parts-rows"));
       document.querySelector("#finish-parts-add")?.addEventListener("click", () => {
@@ -846,17 +847,17 @@
         } catch (error) {
           return showToast(friendlyError(error), "error");
         }
-        button.disabled = true;
+        setButtonBusy(button, true);
         try {
           const uploaded = await uploadAttachmentBatch(files, (file) => uploadRequestAttachment(id, file, employee.id));
           if (uploaded.failed.length === files.length) {
             showToast(attachmentBatchFailureText(uploaded), "error");
-            button.disabled = false;
+            setButtonBusy(button, false);
             return;
           }
           showToast(uploaded.failed.length ? attachmentBatchFailureText(uploaded) : `แนบไฟล์แล้ว${files.length > 1 ? ` ${files.length} ไฟล์` : ""}`, uploaded.failed.length ? "error" : "success");
           await renderRequestDetail(params);
-        } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
+        } catch (error) { showToast(friendlyError(error), "error"); setButtonBusy(button, false); }
       });
       // แถวที่ไม่ได้กรอกชื่ออะไหล่ถือว่าเป็นแถวว่างที่เผื่อไว้ ไม่ส่งไป — RPC ก็กรองซ้ำอีกชั้นเช่นกัน
       const collectFinishPartsUsedItems = () => [...document.querySelectorAll("#finish-parts-rows .parts-row")]
@@ -913,6 +914,7 @@
         let files;
         try { files = readExtraFiles(document.querySelector("#verify-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = true; });
+        setButtonBusy(button, true);
         try {
           const { error } = await sb.rpc("app_verify_repair", { p_request_id: id, p_result: result, p_note: note || null });
           if (error) throw error;
@@ -920,7 +922,7 @@
           triggerNotificationEmails(id);
           showToast(warning || (result === "pass" ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว"), warning ? "error" : "success");
           await renderRequestDetail(params);
-        } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = false; }); }
+        } catch (error) { showToast(friendlyError(error), "error"); setButtonBusy(button, false); document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = false; }); }
       }));
     },
   };

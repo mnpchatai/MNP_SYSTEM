@@ -15,24 +15,11 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 
 const app = document.querySelector("#app");
 
-// ไอคอนเส้นชุดเดียวของ Pilot (viewBox 24, เส้น 1.8 ตามสี currentColor ผ่าน .ui-icon / .nav-icon svg) แทนอีโมจิและอักขระพิเศษ
-const UI_ICON_PATHS = {
-  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>',
-  document: '<path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
-  approve: '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.7 2.7L16 9.8"/>',
-  bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
-  settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
-  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-  signout: '<path d="M9 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H9"/><path d="m15 16 4-4-4-4M19 12H9"/>',
-  theme: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
-  building: '<path d="M4 21V5.5L12 3v18M12 8h8v13M2 21h20M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01"/>',
-  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
-  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
-  close: '<path d="m6 6 12 12M18 6 6 18"/>',
-  alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
-  inbox: '<path d="M3 13.5 5.6 5.4A1.5 1.5 0 0 1 7 4.5h10a1.5 1.5 0 0 1 1.4.9L21 13.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/><path d="M3 13.5h5l1.5 2.5h5l1.5-2.5h5"/>',
-};
-const uiIcon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${UI_ICON_PATHS[name] ?? ""}</svg>`;
+// ไอคอนเส้นชุดเดียวของ Pilot อยู่ที่ modules/ui-icons.js (โหลดก่อน app.js) แทนอีโมจิและอักขระพิเศษ
+const UI_ICON_PATHS = window.MNP_UI_ICONS.PATHS;
+const uiIcon = window.MNP_UI_ICONS.icon;
+// ไอคอนประจำประเภทคำร้อง (ประแจ = MT, ป้ายล็อต = NCR, จอ = IT, ตราประทับ = ฝ่ายบริหาร ฯลฯ)
+const requestTypeIcon = window.MNP_UI_ICONS.typeIcon;
 
 // ช่องรหัสผ่านทุกช่องกดแสดง/ซ่อนได้ — หน้าถูก render ใหม่ด้วย innerHTML ตลอด จึงเสริมปุ่มให้ทีหลังด้วย observer
 const PASSWORD_ICON_SHOW = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
@@ -507,8 +494,15 @@ function setFormBusy(form, busy) {
   if (button) {
     if (!button.dataset.label) button.dataset.label = button.textContent;
     button.textContent = busy ? "กำลังดำเนินการ…" : button.dataset.label;
-    if (busy) button.setAttribute("aria-busy", "true"); else button.removeAttribute("aria-busy");
+    setButtonBusy(button, busy);
   }
+}
+
+// ปุ่มนอกฟอร์มที่เรียกงาน async (เริ่มงาน ตรวจรับ ส่งขออนุมัติ …): ปิดปุ่มและแสดงวงหมุน (.btn[aria-busy]) ระหว่างรอ
+function setButtonBusy(button, busy) {
+  if (!button) return;
+  button.disabled = busy;
+  if (busy) button.setAttribute("aria-busy", "true"); else button.removeAttribute("aria-busy");
 }
 
 function optionalAttachment(value) {
@@ -1007,14 +1001,16 @@ function statusBadge(status) {
 
 // action: การ์ดที่กดได้ (เช่น เครื่องจักร → ประวัติการซ่อม) วาดเป็นปุ่ม ให้โมดูลผูก click ด้วย data-fact-action
 // คำอธิบายปุ่มอยู่ใน title/aria-label ตามกติกา "ไม่ใส่ข้อความอธิบายถาวรบนจอ"
-function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "", action = "", actionLabel = "" } = {}) {
+// icon = ชื่อไอคอนใน UI_ICON_PATHS (เช่น "flag", "user", "machine", "calendar") ค่าที่ไม่ใช่ชื่อไอคอนยังแสดงเป็นตัวอักษรเหมือนเดิม
+function requestFact(label, value, { icon = "info", tone = "primary", wide = false, valueClass = "", action = "", actionLabel = "" } = {}) {
   // ช่องที่ไม่มีค่า ("—" หรือว่าง) ไม่ต้องแสดงในหน้ารายละเอียด ยกเว้นช่องที่กดเพื่อกรอกได้ (action)
   if (!action && ["", "—"].includes(String(value ?? "").trim())) return "";
   const classes = ["request-fact", `request-fact-${tone}`, wide ? "wide" : ""].filter(Boolean).join(" ");
   const valueClasses = ["request-fact-value", valueClass].filter(Boolean).join(" ");
   // <button> ใส่ได้แค่ phrasing content จึงใช้ span แทน div (สไตล์อยู่ที่ class .request-fact-copy ทั้งคู่)
   const copyTag = action ? "span" : "div";
-  const body = `<span class="request-fact-icon" aria-hidden="true">${escapeHtml(icon)}</span>
+  const iconHtml = Object.hasOwn(UI_ICON_PATHS, icon) ? uiIcon(icon) : escapeHtml(icon);
+  const body = `<span class="request-fact-icon" aria-hidden="true">${iconHtml}</span>
     <${copyTag} class="request-fact-copy">
       <span class="request-fact-label">${escapeHtml(label)}</span>
       <strong class="${escapeHtml(valueClasses)}">${escapeHtml(value ?? "—")}</strong>
@@ -1949,7 +1945,7 @@ async function renderDashboard() {
     </section>
     <div class="dashboard-grid">
       <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory, empty: { hint: "คำร้องที่เกี่ยวข้องกับคุณจะแสดงที่นี่" } })}</section>
-      <section class="card flush"><div class="card-heading"><h2>คำร้องแยกตามประเภท</h2><a href="#/requests?type=all">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/requests?type=${encodeURIComponent(type.id)}"><span class="quick-icon">${uiIcon("document")}</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
+      <section class="card flush"><div class="card-heading"><h2>คำร้องแยกตามประเภท</h2><a href="#/requests?type=all">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/requests?type=${encodeURIComponent(type.id)}"><span class="quick-icon">${requestTypeIcon(type.code)}</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
     </div>`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
   bindShell();
@@ -2146,14 +2142,14 @@ function requestCenterHeader(types, params, counts) {
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
     return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
-        <div class="request-module-title"><span class="type-card-badge">${escapeHtml(selected.prefix ?? "")}</span><div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
+        <div class="request-module-title">${typeCardMarkHtml(selected)}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
       </div>`;
   }
   return `<div class="page-heading"><div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
     <div class="request-type-heading"><h2>เลือกโมดูล</h2></div>
     <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" style="background:${requestTypeGradient(type.code)}">
-      <span class="request-type-top"><span class="type-card-badge">${escapeHtml(type.prefix ?? "")}</span><span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} รอดำเนินการ` : "ดูสถานะ"}</span></span>
+      <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} รอดำเนินการ` : "ดูสถานะ"}</span></span>
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${selected?.id === type.id ? "กำลังแสดงประเภทนี้" : "ดูรายการและสถานะ →"}</small></span>
     </a>`).join("")}</nav>`;
 }
@@ -2301,10 +2297,15 @@ function requestTypeGradient(code) {
   return `linear-gradient(135deg, ${to}, color-mix(in srgb, ${to} 72%, #000))`;
 }
 
+// ไอคอนประเภทในป้ายของการ์ด + อักษรนำหน้าเลขที่ใบ (MT, NC …) ข้างไอคอนให้จำได้จากเลขที่เอกสาร
+function typeCardMarkHtml(type) {
+  return `<span class="type-card-mark"><span class="type-card-badge">${requestTypeIcon(type.code)}</span>${type.prefix ? `<span class="type-card-prefix">${escapeHtml(type.prefix)}</span>` : ""}</span>`;
+}
+
 function typeCardHtml(type) {
   return `
     <button type="button" class="type-card" data-type-id="${escapeHtml(type.id)}" style="background:${requestTypeGradient(type.code)}">
-      <span class="type-card-badge">${escapeHtml(type.prefix ?? "")}</span>
+      ${typeCardMarkHtml(type)}
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${escapeHtml(type.description ?? "")}</small><span class="type-card-action">สร้างคำร้องประเภทนี้ →</span></span>
     </button>`;
 }
@@ -2797,15 +2798,15 @@ async function renderRequestDetail(params) {
   const priorityIsFlagged = ["high", "urgent"].includes(request.priority);
   const requestFacts = [
     priorityIsFlagged ? "" : requestFact("ความสำคัญ", priorityLabels[request.priority], {
-      icon: "!",
+      icon: "flag",
       tone: "primary",
       valueClass: `priority-${request.priority}`,
     }),
     ...(detailView?.facts ?? [
-      requestFact("ผู้รับผิดชอบ", personName(directory, request.assignee_id), { icon: "◎", tone: "success", wide: false }),
+      requestFact("ผู้รับผิดชอบ", personName(directory, request.assignee_id), { icon: "user", tone: "success", wide: false }),
     ]),
     ...detailEntries.map(([key, value]) => requestFact(detailFieldLabels[key] ?? key, value, {
-      icon: "•",
+      icon: "info",
       tone: "primary",
       wide: String(value ?? "").length > 36,
     })),
