@@ -2970,12 +2970,65 @@ async function renderApprovals(params) {
     <div class="page-heading"><div><h1>รอฉันอนุมัติ</h1><p>รายการที่เป็นขั้นตอนปัจจุบันและอยู่ในสิทธิ์ของคุณ</p></div></div>
     ${repairTasksSection}
     <div class="approval-layout">
-      <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p></div>${steps.map((step) => approvalStepItemHtml(step, `#/approvals?request=${encodeURIComponent(step.request.id)}`, step.id === selected.id)).join("")}</section>
+      <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p><div class="approval-bulk"><label class="approval-bulk-all"><input type="checkbox" id="approval-select-all"> เลือกทั้งหมด</label><button class="btn success small" type="button" id="approval-bulk-approve" disabled>อนุมัติที่เลือก</button></div></div>${steps.map((step) => `<div class="approval-select-row"><input type="checkbox" class="approval-select" value="${escapeHtml(step.id)}" aria-label="เลือก ${escapeHtml(step.request.request_no)}">${approvalStepItemHtml(step, `#/approvals?request=${encodeURIComponent(step.request.id)}`, step.id === selected.id)}</div>`).join("")}</section>
       <article class="approval-preview"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h2>${escapeHtml(request.title)}</h2><p class="description">${escapeHtml(request.description)}</p><dl class="definition-grid"><div class="definition"><dt>ประเภท</dt><dd>${escapeHtml(relation(request.request_type)?.name_th ?? "—")}</dd></div><div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div><div class="definition"><dt>ขั้นตอน</dt><dd>${escapeHtml(selected.step_name)}</dd></div><div class="definition"><dt>วันที่ส่ง</dt><dd>${formatDate(request.submitted_at, true)}</dd></div></dl><div class="approval-actions"><a class="btn" href="#/request?id=${encodeURIComponent(request.id)}">เปิดคำร้องและพิจารณา →</a></div></article>
     </div>`;
   app.innerHTML = shell(content, "approvals", "รออนุมัติ");
   bindShell();
+  bindBulkApprove(steps, params);
 }
+
+// อนุมัติหลายรายการ: เรียก app_approval_decision ทีละขั้นเหมือนกดอนุมัติในหน้ารายละเอียด (ฐานข้อมูลตรวจสิทธิ์และขั้นปัจจุบันทุกครั้ง)
+// ถามยืนยันพร้อมรายชื่อก่อน รายการที่ไม่สำเร็จแจ้งเป็นข้อผิดพลาดและยังอยู่ในรายการให้ทำต่อ
+function bindBulkApprove(steps, params) {
+  const boxes = [...document.querySelectorAll(".approval-select")];
+  const all = document.querySelector("#approval-select-all");
+  const button = document.querySelector("#approval-bulk-approve");
+  if (!boxes.length || !all || !button) return;
+  const picked = () => boxes.filter((box) => box.checked).map((box) => steps.find((step) => step.id === box.value)).filter(Boolean);
+  const sync = () => {
+    const count = picked().length;
+    button.disabled = count === 0;
+    button.textContent = count ? `อนุมัติที่เลือก (${count})` : "อนุมัติที่เลือก";
+    all.checked = count === boxes.length;
+    all.indeterminate = count > 0 && count < boxes.length;
+  };
+  boxes.forEach((box) => box.addEventListener("change", sync));
+  all.addEventListener("change", () => { boxes.forEach((box) => { box.checked = all.checked; }); sync(); });
+  button.addEventListener("click", async () => {
+    const chosen = picked();
+    if (!chosen.length) return;
+    const list = chosen.map((step) => `${step.request.request_no} · ${step.request.title}`).join("\n");
+    if (!(await confirmDialog({ title: `อนุมัติ ${chosen.length} รายการ?`, message: list, confirmLabel: `อนุมัติ ${chosen.length} รายการ` }))) return;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    boxes.forEach((box) => { box.disabled = true; });
+    all.disabled = true;
+    const failed = [];
+    for (const step of chosen) {
+      const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
+      if (error) failed.push({ step, error });
+      else triggerNotificationEmails(step.request.id);
+    }
+    const done = chosen.length - failed.length;
+    await renderApprovals(params);
+    if (failed.length) showToast(`อนุมัติแล้ว ${done} รายการ ไม่สำเร็จ ${failed.length} รายการ (${failed.map(({ step }) => step.request.request_no).join(", ")}): ${friendlyError(failed[0].error)}`, "error");
+    else showToast(`อนุมัติแล้ว ${done} รายการ`);
+  });
+}
+
+// คีย์ลัด: กด / เพื่อไปที่ช่องค้นหาของหน้า (ไม่ทำงานขณะพิมพ์ในช่องกรอกหรือมีกล่องเปิดอยู่)
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+  if (document.querySelector("dialog[open]")) return;
+  const search = document.querySelector('#app input[type="search"]') ?? document.querySelector('#app [role="search"] input:not([type="hidden"]):not([type="checkbox"])');
+  if (!search) return;
+  event.preventDefault();
+  search.focus();
+  search.select?.();
+});
 
 // คืน null เมื่อแจ้งเตือนนี้ไม่มีหน้าปลายทาง (เช่นประกาศ/คำเชิญที่ไม่มี request_id และ action_url)
 // เพื่อไม่ให้แสดงเป็นลิงก์ที่กดแล้วไม่เกิดอะไรขึ้น
