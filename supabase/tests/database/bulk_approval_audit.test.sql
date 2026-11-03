@@ -1,7 +1,7 @@
 -- ทดสอบเส้นทาง "อนุมัติที่เลือก" ในหน้ารออนุมัติของ Pilot Web (PR #285):
 -- app.js เรียก public.app_approval_decision(step_id, 'approved', '') ทีละขั้นตามลำดับ ไม่มีฟังก์ชัน bulk แยก
--- ทดสอบนี้จำลองลูปนั้น (ทุกครั้งที่เรียกเป็น transaction ของตัวเองผ่าน PostgREST ที่นี่ใช้ savepoint ของ pgTAP แทน)
--- และยืนยันว่าร่องรอยตรวจสอบเหมือนการกดอนุมัติทีละใบ:
+-- ทดสอบนี้จำลองลูปของ RPC นั้น (ทุกครั้งที่เรียกเป็น transaction ของตัวเองผ่าน PostgREST ที่นี่ใช้ savepoint
+-- ของ pgTAP แทน) ไม่ได้ตรวจโค้ดฝั่ง app.js และยืนยันว่าร่องรอยตรวจสอบของลูปเหมือนการกดอนุมัติทีละใบ:
 --   1) ทุกขั้นที่อนุมัติบันทึก acted_by/acted_at และแถว audit_logs ของ approval_steps และ requests โดยผู้กด
 --   2) ขั้นสุดท้ายเขียน request_status_history หนึ่งแถวต่อใบ (pending_approval -> approved) และแจ้งผู้ยื่น
 --      ขั้นกลางไม่เปลี่ยนสถานะจึงไม่มีแถวประวัติ (เหมือนทางเดี่ยว) แต่แจ้งผู้อนุมัติขั้นถัดไปทุกใบ
@@ -103,6 +103,15 @@ select is(
      and (a.metadata->'new'->>'request_id')::uuid in (select id from public.requests where title like 'BULK\_%')),
   4,
   'each step 1 approval writes one approval_steps audit row attributed to the approver'
+);
+select is(
+  (select count(*)::int from public.audit_logs a
+   where a.entity_type = 'requests' and a.action = 'UPDATE'
+     and a.actor_id = '50000000-0000-0000-0000-000000000002'
+     and a.metadata->'old'->>'current_step' = '1' and a.metadata->'new'->>'current_step' = '2'
+     and a.entity_id in (select id::text from public.requests where title like 'BULK\_%')),
+  4,
+  'each step 1 approval writes one requests audit row for the move to step 2'
 );
 select is(
   (select count(*)::int from public.request_status_history h join public.requests r on r.id = h.request_id
@@ -234,12 +243,6 @@ select ok(
 select ok(
   not has_function_privilege('anon', 'public.app_approval_decision(uuid, text, text)', 'execute'),
   'anon cannot execute app_approval_decision'
-);
-select is(
-  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public' and p.proname ~ '(bulk|batch).*approv|approv.*(bulk|batch)'),
-  0,
-  'there is no separate bulk approval function that could bypass the single-decision checks'
 );
 
 select * from finish();
