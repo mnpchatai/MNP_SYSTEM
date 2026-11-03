@@ -112,9 +112,12 @@ ${scripts}
 const MOCK_SUPABASE = String.raw`
 // ไม่ลงทะเบียน service worker บนหน้าจำลอง
 Object.defineProperty(navigator, "serviceWorker", { value: { register: () => Promise.resolve(), getRegistration: () => Promise.resolve(undefined), ready: new Promise(() => {}) } });
-// ไม่ยิงไปหา Supabase จริง (เช่น Edge Function ส่งอีเมลแจ้งเตือน) จากหน้าจำลอง
+// หน้าจำลองไม่ส่งอะไรออกนอกเครื่อง: fetch ข้าม origin ทุกตัว (Supabase Edge Function, Google Apps Script ที่เขียนชีตสำรอง ฯลฯ) ได้คำตอบว่างแทน
 const realFetch = window.fetch.bind(window);
-window.fetch = (input, init) => (/supabase\.co/.test(String(input && input.url || input)) ? Promise.resolve(new Response("{}", { status: 200, headers: { "content-type": "application/json" } })) : realFetch(input, init));
+window.fetch = (input, init) => {
+  const target = new URL(String(input && input.url || input), location.href);
+  return target.origin === location.origin ? realFetch(input, init) : Promise.resolve(new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+};
 (() => {
   const empty = new URLSearchParams(location.search).has("empty");
   const ME = { id: "e1", employee_no: "E001", first_name: "ปกรณ์", last_name: "ศรีวัฒนา", email: "demo@example.test", phone: "", job_title: "ผู้จัดการฝ่ายผลิต", department_id: "d1", role_id: "r1", acting_role_id: null, manager_id: null, role: { code: "manager", name_th: "ผู้จัดการ" }, department: { code: "RB", name_th: "ฝ่ายผลิต RB" } };

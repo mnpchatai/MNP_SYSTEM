@@ -996,8 +996,8 @@ function requestOwnerNames(request, directory) {
     .filter((name) => name && name !== "—");
 }
 
-function requestRows(requests, { showProgress = false, showRequester = false, directory = null } = {}) {
-  if (!requests.length) return emptyState("ยังไม่มีรายการในขณะนี้", EMPTY_REQUESTS);
+function requestRows(requests, { showProgress = false, showRequester = false, directory = null, empty = EMPTY_REQUESTS } = {}) {
+  if (!requests.length) return emptyState("ยังไม่มีรายการในขณะนี้", empty);
   return `
     <div class="request-timeline">${requests.map((request) => {
         const type = relation(request.request_type);
@@ -1874,11 +1874,11 @@ async function renderDashboard() {
       ${dashboardListToggle("completed", completed, "ปิดงานเรียบร้อย")}
     </section>
     <section class="card flush dashboard-list-panel" id="dashboard-list-panel" aria-labelledby="dashboard-list-heading" hidden>
-      <div class="card-heading"><h2 id="dashboard-list-heading"></h2><span class="muted small" id="dashboard-list-note"></span></div>
+      <div class="card-heading"><h2 class="sr-only" id="dashboard-list-heading"></h2><span class="muted small" id="dashboard-list-note"></span></div>
       <div id="dashboard-list-body"></div>
     </section>
     <div class="dashboard-grid">
-      <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory })}</section>
+      <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory, empty: { hint: "คำร้องที่เกี่ยวข้องกับคุณจะแสดงที่นี่" } })}</section>
       <section class="card flush"><div class="card-heading"><h2>คำร้องแยกตามประเภท</h2><a href="#/requests?type=all">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/requests?type=${encodeURIComponent(type.id)}"><span class="quick-icon">${uiIcon("document")}</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
     </div>`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
@@ -1890,7 +1890,7 @@ async function renderDashboard() {
 // Each dashboard summary card opens its list in one panel under the cards instead of leaving
 // the dashboard. Request lists reuse requestListPanel (RLS decides rows); filters match the counts.
 const DASHBOARD_LISTS = {
-  actions: { label: "งานที่ต้องจัดการ", note: "รออนุมัติและงานซ่อมที่ต้องดำเนินการ" },
+  actions: { label: "งานที่ต้องจัดการ", note: "" },
   mine: { label: "รายการคำร้องของฉัน", note: "ทุกประเภทและทุกสถานะที่คุณเป็นผู้แจ้ง", filter: { scope: "mine" } },
   in_progress: { label: "กำลังดำเนินการ", note: "อนุมัติแล้วหรือกำลังทำ ตามสิทธิ์ของคุณ", filter: { status: "approved,in_progress" } },
   completed: { label: "เสร็จแล้ว", note: "ปิดงานเรียบร้อย ตามสิทธิ์ของคุณ", filter: { status: "completed" } },
