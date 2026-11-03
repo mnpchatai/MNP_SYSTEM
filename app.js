@@ -997,7 +997,7 @@ function requestOwnerNames(request, directory) {
 }
 
 function requestRows(requests, { showProgress = false, showRequester = false, directory = null } = {}) {
-  if (!requests.length) return emptyState("ยังไม่มีรายการในขณะนี้");
+  if (!requests.length) return emptyState("ยังไม่มีรายการในขณะนี้", EMPTY_REQUESTS);
   return `
     <div class="request-timeline">${requests.map((request) => {
         const type = relation(request.request_type);
@@ -1041,7 +1041,7 @@ function requestRows(requests, { showProgress = false, showRequester = false, di
    ฟิลด์ระดับติดตามสถานะ ไม่มีรายละเอียดอาการ/ไฟล์แนบ/ความเห็นผู้อนุมัติ ใบที่ผู้ใช้ไม่มีสิทธิ์
    เปิดดูเต็ม (can_open = false) จึงแสดงเป็นข้อความเฉย ๆ ไม่ทำเป็นลิงก์ */
 function statusBoardRows(rows) {
-  if (!rows.length) return emptyState("ยังไม่มีรายการในขณะนี้");
+  if (!rows.length) return emptyState("ยังไม่มีรายการในขณะนี้", EMPTY_REQUESTS);
   return `
     <div class="request-timeline status-board-timeline">${rows.map((row) => {
         const href = `#/request?id=${encodeURIComponent(row.id)}`;
@@ -1772,8 +1772,9 @@ function bindShell() {
 // แถวโครงร่างระหว่างโหลด ผู้ใช้โปรแกรมอ่านหน้าจอยังได้ยิน "กำลังโหลดข้อมูล" ผ่าน aria-live ของ #app
 const loadingSkeleton = (rows = 4) => `<div class="skeleton">${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}<span class="sr-only">กำลังโหลดข้อมูล…</span></div>`;
 
-// หน้าว่าง: ไอคอน + ข้อความเดิม
-const emptyState = (text) => `<div class="empty empty-state">${uiIcon("inbox")}<p>${escapeHtml(text)}</p></div>`;
+// หน้าว่าง: ไอคอน + ข้อความ + คำแนะนำสั้นๆ และปุ่มทำต่อ (ถ้ามี)
+const emptyState = (text, { hint = "", action = null } = {}) => `<div class="empty empty-state">${uiIcon("inbox")}<p>${escapeHtml(text)}</p>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}${action ? `<a class="btn secondary small" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}</div>`;
+const EMPTY_REQUESTS = { hint: "คำร้องที่ตรงกับตัวกรองนี้จะแสดงที่นี่", action: { href: "#/new", label: "สร้างคำร้อง" } };
 
 function loadingShell(active, title) {
   app.innerHTML = shell(loadingSkeleton(), active, title);
@@ -1899,7 +1900,7 @@ function dashboardListToggle(key, count, hint) {
 }
 
 function dashboardActionItems(pending, repairTasks) {
-  if (!pending.length && !repairTasks.length) return emptyState("ไม่มีงานค้าง");
+  if (!pending.length && !repairTasks.length) return emptyState("ไม่มีงานค้าง", { hint: "งานที่ต้องดำเนินการจะแสดงที่นี่เมื่อมีคนส่งมาถึงคุณ" });
   const group = (title, items) => items.length ? `<h3 class="dashboard-list-group">${title} <span class="badge">${items.length}</span></h3>${items.join("")}` : "";
   return group("รออนุมัติ", pending.map((step) => approvalStepItemHtml(step, `#/request?id=${encodeURIComponent(step.request.id)}`)))
     + group("งานซ่อมที่ต้องดำเนินการ", repairTasks.map(repairTaskItemHtml));
@@ -2788,6 +2789,7 @@ async function renderRequestDetail(params) {
     let files;
     try { files = readExtraFiles(document.querySelector("#decision-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
     document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = true; });
+    button.setAttribute("aria-busy", "true");
     try {
       const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: decision, p_comment: comment });
       if (error) throw error;
@@ -2795,13 +2797,14 @@ async function renderRequestDetail(params) {
       triggerNotificationEmails(id);
       showToast(warning || "บันทึกผลการพิจารณาแล้ว", warning ? "error" : "success");
       await renderRequestDetail(params);
-    } catch (error) { showToast(friendlyError(error), "error"); document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = false; }); }
+    } catch (error) { showToast(friendlyError(error), "error"); button.removeAttribute("aria-busy"); document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = false; }); }
   }));
   document.querySelector(".status-button")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     let files;
     try { files = readExtraFiles(document.querySelector("#status-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
     try {
       const { error } = await sb.rpc("app_update_request_status", { p_request_id: id, p_status: button.dataset.status });
       if (error) throw error;
@@ -2809,7 +2812,7 @@ async function renderRequestDetail(params) {
       triggerNotificationEmails(id);
       showToast(warning || "อัปเดตสถานะแล้ว", warning ? "error" : "success");
       await renderRequestDetail(params);
-    } catch (error) { showToast(friendlyError(error), "error"); button.disabled = false; }
+    } catch (error) { showToast(friendlyError(error), "error"); button.removeAttribute("aria-busy"); button.disabled = false; }
   });
   separateModule?.bindDetail?.({ id, params, employee, helpers: { showToast, friendlyError } });
   document.querySelector("#resubmit-form")?.addEventListener("submit", async (event) => {
@@ -3133,7 +3136,7 @@ async function renderNotifications() {
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Notifications</div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
-    <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน")}</div>`;
+    <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   refreshPushPanel();

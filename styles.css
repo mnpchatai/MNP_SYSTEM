@@ -825,6 +825,8 @@ tbody tr:hover { background: var(--shell); }
 .empty-state { display: grid; justify-items: center; gap: 10px; }
 .empty-state .ui-icon { width: 44px; height: 44px; padding: 10px; color: var(--quiet); background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-pill); stroke-width: 1.6; }
 .empty-state p { margin: 0; font-size: var(--text-body); }
+.empty-state small { max-width: 36ch; color: var(--quiet); font-size: var(--text-meta); }
+.empty-state .btn { margin-top: 4px; }
 .skeleton { padding: 20px; display: grid; gap: 12px; }
 .skeleton-row { height: 44px; border-radius: var(--radius-md); background: linear-gradient(90deg, var(--soft-line) 0%, var(--shell) 50%, var(--soft-line) 100%) 0 0 / 200% 100%; animation: skeleton-sheen 1.4s ease-in-out infinite; }
 .skeleton-row:nth-child(3n) { width: 82%; }
