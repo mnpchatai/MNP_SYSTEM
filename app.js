@@ -1158,9 +1158,13 @@ function appNavButtons() {
   return `<div class="app-nav">${back}${forward}</div>`;
 }
 
+// ยังไม่เคยกดสลับธีม (ไม่มี "mnp-theme") → ตามธีมของระบบปฏิบัติการ และเปลี่ยนตามเมื่อผู้ใช้เปลี่ยนธีมเครื่อง
+const darkSchemeQuery = window.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
+
 function applyTheme() {
   const saved = localStorage.getItem("mnp-theme");
-  document.documentElement.dataset.theme = saved === "dark" ? "dark" : "light";
+  const dark = saved ? saved === "dark" : Boolean(darkSchemeQuery?.matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
 }
 
 function toggleTheme() {
@@ -4226,6 +4230,8 @@ async function startApp() {
 
 async function init() {
   applyTheme();
+  // applyTheme อ่าน "mnp-theme" ก่อนเสมอ ผู้ที่เลือกธีมเองแล้วจึงไม่ถูกเปลี่ยนตามเครื่อง
+  darkSchemeQuery?.addEventListener?.("change", applyTheme);
   // sw.js ไม่ cache อะไร (ดูหัวไฟล์) ลงทะเบียนพลาดก็ใช้งานเว็บได้ตามปกติ แค่ติดตั้งแบบกดปุ่มไม่ได้
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch((error) => console.warn("ลงทะเบียน service worker ไม่สำเร็จ", error));

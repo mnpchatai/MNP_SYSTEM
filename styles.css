@@ -35,7 +35,8 @@
   --paper: #ffffff;
   --ink: #10203b;
   --muted: #52627a;
-  --quiet: #68778e;
+  /* ≥ 4.5:1 บนพื้นอ่อนทุกแบบของธีมสว่าง (--primary-soft ของการ์ดสรุปที่เลือกอยู่, --bg, --soft-line) — scripts/tests/theme-contrast.test.mjs */
+  --quiet: #5d6c83;
   --line: #dae4f0;
   --soft-line: #ecf1f7;
   --primary: #1769e0;
@@ -219,6 +220,8 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
   outline: 0;
 }
 .input:focus, .select:focus, .textarea:focus { border-color: var(--primary); box-shadow: var(--focus-ring); }
+/* สีเริ่มต้นของเบราว์เซอร์ (#757575) ได้แค่ 4.11:1 บนพื้นธีมมืด */
+.input::placeholder, .textarea::placeholder { color: var(--quiet); }
 .btn:focus-visible, .filter:focus-visible, .nav-link:focus-visible, .icon-button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .textarea { min-height: 120px; resize: vertical; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
@@ -344,9 +347,11 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .btn.block { width: 100%; }
 .btn.secondary { color: var(--muted); background: var(--paper); border-color: var(--line); }
 .btn.secondary:hover { color: var(--ink); background: var(--shell); }
-.btn.success { background: var(--success); border-color: var(--success); }
+/* ปุ่มทึบตัวอักษรขาวใช้ --*-strong แบบเดียวกับ badge ทั้งสองธีม (--success ของธีมมืดสว่างเกินสำหรับตัวอักษรขาว) */
+.btn.success { background: var(--success-strong); border-color: var(--success-strong); }
+.btn.success:hover { background: color-mix(in srgb, var(--success-strong) 85%, #000); border-color: color-mix(in srgb, var(--success-strong) 85%, #000); }
 .btn.danger { color: var(--danger); background: var(--paper); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
-.btn.warning { color: var(--warning); background: var(--warning-soft); border-color: var(--warning); }
+.btn.warning { color: var(--warning-ink); background: var(--warning-soft); border-color: var(--warning); }
 .btn.small { min-height: 34px; padding: 0 11px; font-size: var(--text-caption); }
 .btn:disabled { opacity: .55; cursor: wait; }
 .icon-button { width: 35px; height: 35px; padding: 0; display: grid; place-items: center; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
@@ -371,7 +376,7 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .nav-icon-wrap { position: relative; width: 21px; height: 21px; flex: 0 0 21px; display: grid; place-items: center; }
 .nav-icon { width: 21px; height: 21px; display: grid; place-items: center; }
 .nav-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.nav-count { position: absolute; top: -9px; right: -9px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; color: white; background: var(--danger); border: 2px solid var(--paper); border-radius: var(--radius-md); font-size: var(--text-caption); font-weight: 700; line-height: 1; }
+.nav-count { position: absolute; top: -9px; right: -9px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; color: white; background: var(--danger-strong); border: 2px solid var(--paper); border-radius: var(--radius-md); font-size: var(--text-caption); font-weight: 700; line-height: 1; }
 .ui-icon { width: 1.15em; height: 1.15em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vertical-align: -.2em; }
 .icon-button .ui-icon { width: 19px; height: 19px; }
 .quick-link .quick-icon .ui-icon { width: 19px; height: 19px; }
@@ -499,24 +504,20 @@ tbody tr:last-child td { border-bottom: 0; }
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
+/* สถานะของการ์ดบอกด้วย badge (จุด + ป้าย) ในหัวการ์ดอย่างเดียว ไม่มีแถบสีข้าง */
 .request-timeline-card {
-  --timeline-accent: var(--primary);
   position: relative;
   min-width: 0;
   overflow-wrap: anywhere;
   padding: 16px 18px;
   border: 1px solid var(--line);
-  /* แถบสีวาดเป็นพื้นหลังใต้ขอบซ้ายโปร่งใส ให้อยู่ขอบนอกสุด โค้งตามมุมการ์ด และตรงแนวเดียวกับปุ่มตัวกรองด้านบน */
-  border-left-color: transparent;
   border-radius: var(--radius-md);
-  background: linear-gradient(var(--timeline-accent), var(--timeline-accent)) left / 4px 100% no-repeat border-box, var(--paper) border-box;
+  background: var(--paper);
   box-shadow: 0 3px 12px rgba(31, 61, 102, .06);
   content-visibility: auto;
   contain-intrinsic-size: 190px;
 }
-.request-timeline-card.status-completed,
-.request-timeline-card.status-acknowledged { --timeline-accent: var(--success); }
-.request-timeline-card.status-closed { --timeline-accent: var(--success); }
+:root[data-theme="dark"] .request-timeline-card { box-shadow: 0 3px 12px rgba(0, 0, 0, .3); }
 .ncr-card-status { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .ncr-owner-chip {
   max-width: 100%;
@@ -536,17 +537,6 @@ tbody tr:last-child td { border-bottom: 0; }
   .ncr-card-status { align-items: flex-start; }
   .ncr-owner-chip { text-align: left; }
 }
-.request-timeline-card.status-awaiting_disposition,
-.request-timeline-card.status-awaiting_response,
-.request-timeline-card.status-awaiting_followup,
-.request-timeline-card.status-awaiting_signoff,
-.request-timeline-card.status-awaiting_info { --timeline-accent: var(--warning); }
-.request-timeline-card.status-rejected,
-.request-timeline-card.status-cancelled { --timeline-accent: var(--danger); }
-.request-timeline-card.status-pending_approval,
-.request-timeline-card.status-pending_assign,
-.request-timeline-card.status-pending_verify,
-.request-timeline-card.status-more_info { --timeline-accent: var(--warning); }
 .request-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .request-card-identity, .request-card-tags, .request-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .request-card-identity { min-width: 0; }
@@ -655,6 +645,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .repair-department-card span { color: rgba(255, 255, 255, .9); font-size: var(--text-caption); line-height: 1.35; text-align: center; }
 .repair-department-card:hover { filter: brightness(1.08) saturate(1.08); box-shadow: 0 10px 22px rgba(31, 61, 102, .25); transform: translateY(-2px); }
 .repair-department-card.active { border-color: #fff; box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--department-from), 0 10px 22px rgba(31, 61, 102, .25); transform: translateY(-1px); }
+:root[data-theme="dark"] .repair-department-card { box-shadow: 0 7px 16px rgba(0, 0, 0, .45); }
+:root[data-theme="dark"] .repair-department-card:hover { box-shadow: 0 10px 22px rgba(0, 0, 0, .55); }
+:root[data-theme="dark"] .repair-department-card.active { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--department-from), 0 10px 22px rgba(0, 0, 0, .55); }
 .repair-department-card[data-dept-code="RB"] { --department-from: #0369a1; --department-to: #1d4ed8; }
 .repair-department-card[data-dept-code="GR"] { --department-from: #0f766e; --department-to: #115e59; }
 .repair-department-card[data-dept-code="BG"] { --department-from: #7c3aed; --department-to: #5b21b6; }
@@ -845,8 +838,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .request-overview-title span { color: var(--primary); font-size: var(--text-caption); font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .request-overview-title h2 { margin: 0; font-size: var(--text-title); line-height: 1.3; }
 .request-summary { position: relative; z-index: 1; margin: 18px 20px 0; overflow: hidden; color: var(--ink); background: var(--paper); border: 1.5px solid color-mix(in srgb, var(--primary) 42%, var(--line)); border-radius: var(--radius-md); box-shadow: 0 8px 22px color-mix(in srgb, var(--primary) 16%, transparent); }
-.request-summary::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 5px; background: var(--primary); }
-.request-summary-label { padding: 9px 16px 9px 19px; display: flex; align-items: center; gap: 8px; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--paper)); border-bottom: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line)); font-size: var(--text-caption); font-weight: 700; line-height: 1.4; }
+.request-summary-label { padding: 9px 16px 9px 19px; display: flex; align-items: center; gap: 8px; color: var(--primary-ink); background: color-mix(in srgb, var(--primary) 12%, var(--paper)); border-bottom: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line)); font-size: var(--text-caption); font-weight: 700; line-height: 1.4; }
 .request-summary-label svg { width: 16px; height: 16px; flex: none; }
 .request-summary-text { margin: 0; padding: 14px 16px 16px 20px; color: var(--ink); font-size: var(--text-title); font-weight: 500; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .request-summary-text.is-empty { color: var(--quiet); font-weight: 400; }
@@ -854,7 +846,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .request-fact { --fact-accent: var(--primary); min-width: 0; min-height: 78px; padding: 13px; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 11px; align-items: center; background: linear-gradient(135deg, var(--paper), color-mix(in srgb, var(--fact-accent) 5%, var(--paper))); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, var(--line)); border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(31, 61, 102, .05); transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .request-fact:hover { border-color: color-mix(in srgb, var(--fact-accent) 38%, var(--line)); box-shadow: 0 8px 18px rgba(31, 61, 102, .1); transform: translateY(-1px); }
 .request-fact.wide { grid-column: 1 / -1; }
-.request-fact-icon { width: 38px; height: 38px; display: grid; place-items: center; color: var(--fact-accent); background: color-mix(in srgb, var(--fact-accent) 13%, var(--paper)); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, transparent); border-radius: var(--radius-md); font-size: var(--text-title); font-weight: 700; line-height: 1; }
+/* สัญลักษณ์และลูกศรผสมสีหลักของการ์ดกับ --ink (เข้มขึ้นในธีมสว่าง สว่างขึ้นในธีมมืด) ให้อ่านได้ ≥ 4.5:1 บนพื้นอ่อนของการ์ดทุกสี */
+.request-fact { --fact-ink: color-mix(in srgb, var(--fact-accent) 70%, var(--ink)); }
+.request-fact-icon { width: 38px; height: 38px; display: grid; place-items: center; color: var(--fact-ink); background: color-mix(in srgb, var(--fact-accent) 13%, var(--paper)); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, transparent); border-radius: var(--radius-md); font-size: var(--text-title); font-weight: 700; line-height: 1; }
 .request-fact-copy { min-width: 0; display: grid; gap: 3px; }
 .request-fact-label { color: var(--quiet); font-size: var(--text-caption); font-weight: 700; line-height: 1.35; }
 .request-fact-value { overflow-wrap: anywhere; white-space: pre-line; color: var(--ink); font-size: var(--text-ui); line-height: 1.45; }
@@ -867,7 +861,7 @@ tbody tr:last-child td { border-bottom: 0; }
 /* การ์ดที่กดได้ (requestFact ตัวเลือก action) เป็นปุ่ม: ล้างสไตล์ปุ่ม แล้วใช้หน้าตาการ์ดเดิม + ลูกศรบอกว่ากดต่อได้ */
 button.request-fact { width: 100%; appearance: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .request-fact.is-action { grid-template-columns: 38px minmax(0, 1fr) auto; }
-.request-fact-chevron { color: var(--fact-accent); font-size: var(--text-heading); font-weight: 700; line-height: 1; }
+.request-fact-chevron { color: var(--fact-ink); font-size: var(--text-heading); font-weight: 700; line-height: 1; }
 .request-fact.is-action:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 :root[data-theme="dark"] .request-overview-card { background: linear-gradient(145deg, var(--paper), color-mix(in srgb, var(--primary-soft) 34%, var(--paper))); }
 :root[data-theme="dark"] .request-fact { box-shadow: 0 5px 14px rgba(0, 0, 0, .16); }
@@ -1001,6 +995,7 @@ a.machine-history-no:hover { text-decoration: underline; }
 }
 .toast.error { background: #9e332c; }
 .update-banner { position: fixed; z-index: 60; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: max-content; max-width: calc(100vw - 36px); padding: 12px 20px; color: #ffffff; background: var(--primary); border: 0; border-radius: var(--radius-pill); box-shadow: var(--shadow); font-weight: 700; transform: translateX(-50%); }
+:root[data-theme="dark"] .update-banner { background: var(--primary-strong); }
 
 @media (max-width: 1040px) {
   .app-shell { grid-template-columns: 68px minmax(0,1fr); }
@@ -1295,6 +1290,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-chip { min-height: 40px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); text-decoration: none; }
 .nd-chip:hover { background: var(--shell); }
 .nd-chip[aria-current="true"] { color: #fff; background: var(--primary); border-color: var(--primary); }
+:root[data-theme="dark"] .nd-chip[aria-current="true"] { background: var(--primary-strong); border-color: var(--primary-strong); }
 .nd-chip.removable { background: var(--shell); }
 .nd-filterbox { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .nd-filterbox summary { min-height: 44px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; font-weight: 600; list-style: none; }
