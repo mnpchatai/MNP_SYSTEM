@@ -2211,6 +2211,24 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-sub { color: var(--rf-band-muted); }
 .rf-page .rf-brand { color: #fff; background: var(--primary-strong); }
 .rf-page .rf-head .rf-toolbar { margin: 0; padding: 0; }
+/* มือถือ: ตารางของ RubberFlow/BOM เป็นการ์ดเรียงลง ชื่อคอลัมน์มาจาก data-label (ui.labelTables)
+   แท็บเลื่อนข้างเป็นแถวเดียว และป้าย "บทบาทสาธิต" ซ่อนให้เหลือแค่ตัวเลือก (ชื่อยังอยู่ใน <label>) */
+@media screen and (max-width: 760px) {
+  .rf-page .table-wrap:has(> .rf-table:not(.bom-tree-table)) { overflow: visible; }
+  .rf-page .rf-table:not(.bom-tree-table), .rf-page .rf-table:not(.bom-tree-table) tbody, .rf-page .rf-table:not(.bom-tree-table) tr { display: block; width: 100%; }
+  .rf-page .rf-table:not(.bom-tree-table) thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .rf-page .rf-table:not(.bom-tree-table) tbody tr { margin-bottom: 10px; padding: 6px 14px; background: var(--paper); border: 1px solid var(--card-border); border-radius: var(--radius-md); box-shadow: var(--elev-1); }
+  .rf-page .rf-table:not(.bom-tree-table) td { position: relative; display: block; min-height: 34px; padding: 7px 0; text-align: left; border-bottom: 1px solid var(--soft-line); }
+  .rf-page .rf-table:not(.bom-tree-table) tr td:last-child { border-bottom: 0; }
+  /* ชื่อคอลัมน์อยู่ซ้าย เนื้อหาทุกบรรทัด (รวม <br> <small>) อยู่ขวา */
+  .rf-page .rf-table:not(.bom-tree-table) td[data-label] { padding-left: 40%; }
+  .rf-page .rf-table:not(.bom-tree-table) td[data-label]::before { content: attr(data-label); position: absolute; top: 8px; left: 0; width: calc(40% - 12px); color: var(--muted); font-size: var(--text-caption); font-weight: 600; line-height: 1.4; }
+  .rf-page .rf-table:not(.bom-tree-table) td.rf-empty { display: block; text-align: center; }
+  .rf-page tbody tr:hover td { background: transparent; }
+  .rf-page .rf-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .rf-page .rf-tab { flex: none; }
+  .rf-page .rf-persona > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+}
 .rf-page .rf-persona { color: var(--rf-band-muted); }
 .rf-page .rf-toolbar .input, .rf-page .rf-toolbar .select { min-height: 36px; color: var(--rf-band-ink); background-color: var(--rf-band-field); border-color: var(--rf-band-line); }
 .rf-page .rf-toolbar .input::placeholder { color: var(--rf-band-muted); }
