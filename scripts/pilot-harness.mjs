@@ -232,10 +232,19 @@ async function handle(request, response) {
 }
 
 // สองเซิร์ฟเวอร์ใช้ handler เดียวกัน: localhost อาจถูก resolve เป็น ::1 (เช่น browser pane ของ Claude desktop) หรือ 127.0.0.1
-// เครื่องที่ปิด IPv6 จะฟังได้แค่ 127.0.0.1 ซึ่งยังใช้ได้
+// เครื่องที่ปิด IPv6 จะฟังได้แค่ 127.0.0.1 ซึ่งยังใช้ได้ ข้อผิดพลาดอื่น (เช่น EADDRINUSE) ทำให้จบด้วย exit code 1
+const IPV6_UNAVAILABLE = new Set(["EADDRNOTAVAIL", "EAFNOSUPPORT", "EINVAL"]);
 for (const address of ["127.0.0.1", "::1"]) {
   http.createServer(handle)
-    .on("error", (error) => console.warn(`Pilot harness: listen on ${address} failed (${error.code ?? error.message})`))
-    .listen(port, address, () => console.log(`Pilot harness listening on ${address.includes(":") ? `[${address}]` : address}:${port}`));
+    .on("error", (error) => {
+      if (address === "::1" && IPV6_UNAVAILABLE.has(error.code)) {
+        console.warn(`Pilot harness: IPv6 loopback unavailable (${error.code}), listening on 127.0.0.1 only`);
+        return;
+      }
+      console.error(`Pilot harness: listen on ${address}:${port} failed (${error.code ?? error.message})`);
+      process.exit(1);
+    })
+    .listen(port, address, () => {
+      if (address === "127.0.0.1") console.log(`Pilot harness: http://localhost:${port}/harness/  (BOM: #/bom · RubberFlow: #/rubberflow) · shell: /pilot-shell.html`);
+    });
 }
-console.log(`Pilot harness: http://localhost:${port}/harness/  (BOM: #/bom · RubberFlow: #/rubberflow) · shell: /pilot-shell.html`);
