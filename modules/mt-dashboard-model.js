@@ -100,7 +100,7 @@
 
   // requests: rows as loaded by the dashboard (see module-mt-dashboard.js):
   //   { id, request_no, status, current_step, is_urgent, doc_type, machine_code, machine_name, requester_name,
-  //     dept (department code), machine_is_placeholder, technician_ids, submitted_at, completed_at, work_expected_date,
+  //     dept (department code), machine_is_placeholder, technician_ids, submitted_at, completed_at, work_started_date, work_expected_date,
   //     history: [{ to_status, created_at }], verifications: [{ result }] }
   function deriveRows(requests, today, nowMs = Date.now()) {
     const open = pendingStatuses();
@@ -116,6 +116,9 @@
       const sinceOn = history.length ? bangkokDate(history[history.length - 1].created_at) : submittedOn;
       const expected = request.work_expected_date ?? null;
       const overdue = TECHNICIAN_STATUSES.includes(status) && Boolean(expected) && today > expected;
+      // A job still waiting for its technician is late once the start date the head technician assigned has passed.
+      const startOn = request.work_started_date ?? null;
+      const lateStart = status === "assigned" && Boolean(startOn) && today > startOn;
       const pastRepair = status === "pending_verify" || isCompleted;
       const verifications = request.verifications ?? [];
       const code = String(request.machine_code ?? "").trim();
@@ -135,6 +138,8 @@
         daysInStatus: isOpen ? Math.max(0, daysBetween(sinceOn, today)) : 0,
         overdue,
         daysOverdue: overdue ? daysBetween(expected, today) : 0,
+        lateStart,
+        daysLateStart: lateStart ? daysBetween(startOn, today) : 0,
         cycleDays: isCompleted ? gapDays(request.submitted_at, request.completed_at) : null,
         onTime: isCompleted && expected && completedOn ? completedOn <= expected : null,
         phases: status === "rejected" ? {} : {
@@ -240,7 +245,7 @@
   // Open requests that need action: overdue first, then urgent, then the longest in their current stage.
   function priority(openRows, limit = 10) {
     return [...openRows]
-      .sort((a, b) => Number(b.overdue) - Number(a.overdue) || Number(b.isUrgent) - Number(a.isUrgent) || b.daysInStatus - a.daysInStatus)
+      .sort((a, b) => Number(b.overdue || b.lateStart) - Number(a.overdue || a.lateStart) || Number(b.isUrgent) - Number(a.isUrgent) || b.daysInStatus - a.daysInStatus)
       .slice(0, limit);
   }
 

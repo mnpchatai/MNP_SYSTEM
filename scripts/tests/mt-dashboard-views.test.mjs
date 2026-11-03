@@ -9,14 +9,14 @@ const model = require("../../modules/mt-dashboard-model.js");
 const source = readFileSync(new URL("../../modules/module-mt-dashboard.js", import.meta.url), "utf8");
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
-async function render({ status = "assigned", technicians = ["t1"], directory, overdue = false, requesterId = "requester", requesterName = "ผู้แจ้งในใบ", owners = [], ownerError = null, section = "drill" } = {}) {
+async function render({ status = "assigned", technicians = ["t1"], directory, overdue = false, startedOn = null, requesterId = "requester", requesterName = "ผู้แจ้งในใบ", owners = [], ownerError = null, section = "drill" } = {}) {
   const root = { innerHTML: "", addEventListener() {}, querySelector: () => null };
   const mtModule = {};
   const request = {
     id: "r1", request_no: "TEST-MT-001", status, current_step: 1, doc_type: "repair",
     submitted_at: "2026-10-01T02:00:00Z", department: { code: "MT" },
     requester_id: requesterId, requester_name: requesterName,
-    work_expected_date: overdue ? "2026-10-02" : "2026-10-15",
+    work_started_date: startedOn, work_expected_date: overdue ? "2026-10-02" : "2026-10-15",
     request_technicians: technicians.map((id) => ({ technician_id: id })),
   };
   const query = {
@@ -111,4 +111,12 @@ test("act-now names have a clear fallback when data is absent, unavailable or st
   assert.match(await render({ section: "act", status: "pending_assign", ownerError: new Error("unavailable") }), /ผจก.ซ่อมบำรุง: ไม่พบชื่อผู้รับผิดชอบ/);
   assert.match(await render({ section: "act", status: "pending_assign", owners: [{ request_id: "r1", status: "pending_approval", full_name: "ผู้อนุมัติเดิม" }] }), /ผจก.ซ่อมบำรุง: ไม่พบชื่อผู้รับผิดชอบ/);
   assert.match(await render({ section: "act", status: "pending_approval", owners: [{ request_id: "r1", status: "pending_approval", current_step: 2, full_name: "ผู้อนุมัติขั้นถัดไป" }] }), /ผจก.โรงงาน: ไม่พบชื่อผู้รับผิดชอบ/);
+});
+
+test("act-now badge counts a waiting job from the assigned start date and a late job from the expected date", async () => {
+  assert.match(await render({ section: "act", startedOn: "2026-10-07" }), /เลยวันเริ่ม 3 วัน/);
+  assert.doesNotMatch(await render({ section: "act", startedOn: "2026-10-10" }), /เลยวันเริ่ม/);
+  const late = await render({ section: "act", startedOn: "2026-10-01", overdue: true });
+  assert.match(late, /เลย 8 วัน/);
+  assert.doesNotMatch(late, /เลยวันเริ่ม/);
 });
