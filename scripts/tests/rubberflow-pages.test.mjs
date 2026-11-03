@@ -25,7 +25,7 @@ const PAGES = ["dashboard", "orders", "recipes", "requisition", "mixing", "extru
 function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { toasts: [], renders: 0, notFound: 0, hash: `#/rubberflow${route ? `?${route}` : ""}`, dialogs: [] };
+  const log = { toasts: [], renders: 0, notFound: 0, hash: `#/rubberflow${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, hidden: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {} },
@@ -39,7 +39,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const localStorage = { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) };
   Object.assign(context, {
     window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
-    renderRoute: async () => { log.renders += 1; }, confirm: () => true, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, requestAnimationFrame: () => 0,
+    renderRoute: async () => { log.renders += 1; }, confirmDialog: async (options) => { log.confirms.push(options); return log.confirmAnswer; }, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, requestAnimationFrame: () => 0,
     location: { get hash() { return log.hash; }, set hash(value) { log.hash = value.startsWith("#") ? value : `#${value}`; } },
     app, state: { employee: { isSandbox: sandbox } },
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
@@ -236,12 +236,19 @@ test("forms and buttons submit through the data-rf-* contract: success saves, to
   assert.equal(env.log.renders, 1, "no redraw after a refused action");
 
   // ปุ่ม action พร้อม confirm และ args
-  const button = { ...env.root, dataset: { rfAction: "cleanMold", rfArgs: JSON.stringify({ id: "DIE-DS-01" }), rfConfirm: "ยืนยัน?" }, handlers: {} };
+  const button = { ...env.root, dataset: { rfAction: "cleanMold", rfArgs: JSON.stringify({ id: "DIE-DS-01" }), rfConfirm: "ยืนยันว่าได้ทำความสะอาด DIE-DS-01 แล้ว? นับรอบใหม่จากศูนย์" }, textContent: " บันทึกล้างแล้ว ", handlers: {} };
   button.addEventListener = (type, handler) => { button.handlers[type] = handler; };
   env.fakes["[data-rf-action]"] = [button];
   delete env.fakes["form[data-rf-form]"];
   await env.render("p=molds");
-  button.handlers.click();
+  const usage = env.store.data().molds[0].usageSinceClean;
+  env.log.confirmAnswer = false;
+  await button.handlers.click();
+  assert.equal(env.store.data().molds[0].usageSinceClean, usage, "a cancelled dialog runs nothing");
+  assert.equal(env.log.renders, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(env.log.confirms.at(-1))), { title: "ยืนยันว่าได้ทำความสะอาด DIE-DS-01 แล้ว?", message: "นับรอบใหม่จากศูนย์", confirmLabel: "บันทึกล้างแล้ว", danger: false });
+  env.log.confirmAnswer = true;
+  await button.handlers.click();
   assert.equal(env.store.data().molds[0].usageSinceClean, 0);
   assert.equal(env.log.renders, 2);
 
@@ -285,7 +292,12 @@ test("switching the persona redraws or leaves for the role's home, the scan form
   env.fakes["[data-rf-reset]"] = [reset];
   env.store.run("cleanMold", { id: "DIE-DS-01" });
   await env.render("p=molds");
-  reset.handlers.click();
+  env.log.confirmAnswer = false;
+  await reset.handlers.click();
+  assert.equal(env.store.data().molds[0].usageSinceClean, 0, "a cancelled reset keeps the data");
+  assert.equal(env.log.confirms.at(-1).danger, true);
+  env.log.confirmAnswer = true;
+  await reset.handlers.click();
   assert.ok(env.store.data().molds[0].usageSinceClean > 0);
   assert.deepEqual(env.log.toasts.at(-1), ["รีเซ็ตข้อมูลสาธิตเรียบร้อย", "ok"]);
 });

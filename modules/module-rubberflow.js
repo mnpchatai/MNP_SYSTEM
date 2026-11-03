@@ -17,7 +17,7 @@
 // สำเร็จแล้ววาดหน้าใหม่ทั้งหน้า (renderRoute) dialog ที่เปิดอยู่จึงหายไปพร้อมกัน · ไม่ผ่านแสดง toast และคงฟอร์มไว้
 // dialog เป็น <dialog> ของเบราว์เซอร์ (showModal) ปิดด้วย Escape/ปุ่มปิด/แตะฉากหลัง ไม่ปิดจาก blur (แตะบน iPhone ได้) ไม่มี popup ลอยอื่น
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, app, shell, bindShell, loadingShell, renderNotFound,
-// escapeHtml, showToast, friendlyError, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
+// escapeHtml, showToast, friendlyError, confirmDialog, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerRubberFlowModule() {
   const PATH = "rubberflow";
   const TITLE = "RubberFlow MES";
@@ -95,6 +95,14 @@
     try { return node.dataset.rfArgs ? JSON.parse(node.dataset.rfArgs) : {}; } catch { return {}; }
   }
 
+  // data-rf-confirm ถามผ่านกล่องยืนยันของ app.js: หัวเรื่องถึง "?" ตัวแรก ที่เหลือเป็นรายละเอียด ปุ่มยืนยันใช้ชื่อปุ่มที่กด (aria-label ถ้ามี)
+  function confirmButton(button) {
+    const text = button.dataset.rfConfirm;
+    const split = text.indexOf("? ");
+    const label = button.getAttribute?.("aria-label") || String(button.textContent ?? "").trim();
+    return confirmDialog({ title: split < 0 ? text : text.slice(0, split + 1), message: split < 0 ? "" : text.slice(split + 2).trim(), confirmLabel: label, danger: /^(ลบ|ยกเลิก)/.test(label) });
+  }
+
   function bindSpecInputs(root) {
     root.querySelectorAll("[data-spec]").forEach((input) => {
       const paint = () => {
@@ -129,8 +137,8 @@
       if (form.id) document.querySelectorAll(`button[form="${CSS.escape(form.id)}"]`).forEach((node) => { node.disabled = true; }); // ปุ่มส่งที่อยู่นอกฟอร์ม (เช่น ส่งมอบกล่อง)
       renderRoute();
     }));
-    root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", () => {
-      if (button.dataset.rfConfirm && !confirm(button.dataset.rfConfirm)) return;
+    root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
+      if (button.dataset.rfConfirm && !(await confirmButton(button))) return;
       if (!runAction(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess)) return;
       button.disabled = true;
       renderRoute();
@@ -261,8 +269,8 @@
       event.currentTarget.reset();
       openDialog("scan", { code }, ctx);
     });
-    root.querySelector("[data-rf-reset]")?.addEventListener("click", () => {
-      if (!confirm("ล้างข้อมูลที่บันทึกทั้งหมดแล้วสร้างข้อมูลสาธิตใหม่?")) return;
+    root.querySelector("[data-rf-reset]")?.addEventListener("click", async () => {
+      if (!(await confirmDialog({ title: "ล้างข้อมูลที่บันทึกทั้งหมดแล้วสร้างข้อมูลสาธิตใหม่?", confirmLabel: "ล้างข้อมูล", danger: true }))) return;
       store.reset();
       showToast("รีเซ็ตข้อมูลสาธิตเรียบร้อย");
       renderRoute();

@@ -5,7 +5,7 @@
 // แต่ผูกกับ store ของ BOM เท่านั้น — ข้อมูลอยู่ใน localStorage (คีย์ mnp-bom-v1) ไม่แตะฐานข้อมูล จึงไม่มี migration/RPC
 // "ทำหน้าที่เป็น" คือบทบาทสาธิต 8 คน ใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น ไม่ใช่การควบคุมสิทธิ์ของระบบจริง หน้า #/bom ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, app, shell, bindShell, renderNotFound, escapeHtml, showToast,
-// friendlyError, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
+// friendlyError, confirmDialog, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerBomModule() {
   const PATH = "bom";
   const TITLE = "BOM รายแผนก";
@@ -122,6 +122,14 @@
   function parseArgs(node) {
     try { return node.dataset.rfArgs ? JSON.parse(node.dataset.rfArgs) : {}; } catch { return {}; }
   }
+  // data-rf-confirm ถามผ่านกล่องยืนยันของ app.js แบบเดียวกับ module-rubberflow.js: หัวเรื่องถึง "?" ตัวแรก ที่เหลือเป็นรายละเอียด
+  // ปุ่มยืนยันใช้ชื่อปุ่มที่กด (aria-label ถ้ามี)
+  function confirmButton(button) {
+    const text = button.dataset.rfConfirm;
+    const split = text.indexOf("? ");
+    const label = button.getAttribute?.("aria-label") || String(button.textContent ?? "").trim();
+    return confirmDialog({ title: split < 0 ? text : text.slice(0, split + 1), message: split < 0 ? "" : text.slice(split + 2).trim(), confirmLabel: label, danger: /^(ลบ|ยกเลิก)/.test(label) });
+  }
 
   function bindRoot(root, ctx) {
     root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", (event) => {
@@ -140,8 +148,8 @@
       form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
       renderRoute();
     }));
-    root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", () => {
-      if (button.dataset.rfConfirm && !confirm(button.dataset.rfConfirm)) return;
+    root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
+      if (button.dataset.rfConfirm && !(await confirmButton(button))) return;
       if (!runAction(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess)) return;
       button.disabled = true;
       renderRoute();
@@ -254,8 +262,8 @@
       location.hash = url(storeApi.homeOf(user));
       renderRoute();
     }));
-    root.querySelector("[data-rf-reset]")?.addEventListener("click", () => {
-      if (!confirm("ล้างข้อมูลที่บันทึกทั้งหมด (รวมที่นำเข้าจาก Excel) แล้วสร้างข้อมูลสาธิตใหม่?")) return;
+    root.querySelector("[data-rf-reset]")?.addEventListener("click", async () => {
+      if (!(await confirmDialog({ title: "ล้างข้อมูลที่บันทึกทั้งหมด (รวมที่นำเข้าจาก Excel) แล้วสร้างข้อมูลสาธิตใหม่?", confirmLabel: "ล้างข้อมูล", danger: true }))) return;
       store.reset();
       showToast("รีเซ็ตข้อมูลสาธิตเรียบร้อย");
       renderRoute();
