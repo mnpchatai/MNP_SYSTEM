@@ -448,7 +448,7 @@ td { padding: 13px; border-bottom: 1px solid var(--soft-line); font-size: var(--
 td.center { text-align: center; }
 td.center input[type="checkbox"] { width: 16px; height: 16px; }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover { background: var(--shell); }
+@media (hover: hover) { tbody tr:hover { background: var(--shell); } }
 .request-no { color: var(--primary); font-weight: 700; }
 .request-no.locked { color: var(--quiet); cursor: default; }
 .badge { padding: 4px 8px; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); background: var(--shell); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
@@ -2443,6 +2443,9 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-rubber-grid .bom-mini { min-height: 28px; padding: 2px 6px; font-size: var(--text-caption); }
 .bom-editor .bom-actions { position: sticky; bottom: 0; padding: 10px 0; background: var(--bg, var(--paper)); }
 .bom-pick .rf-hint { display: block; }
+/* ตัวเลือกที่ข้อความ option ยาว (เช่นเลือกสินค้าในหน้าสร้าง BOM) ไม่ดันหน้าให้กว้างกว่าจอ */
+.rf-page .field, .rf-page .rf-field { min-width: 0; }
+.rf-page .select, .rf-page .rf-select { max-width: 100%; }
 /* โครงสร้างสินค้า (จำลอง): ลำดับผลิตจากขั้นแรกอยู่บน สายป้อนวางคู่กันแล้วรวมลงที่พ่อ */
 .bom-flow { overflow-x: auto; }
 .bom-flow-node { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; }
