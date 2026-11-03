@@ -27,7 +27,7 @@
   const PATH = "lab";
   const TITLE = "MNP LAB";
   const REFRESH_MS = 60 * 1000; // ชีตซิงก์เข้าฐานข้อมูลทุก 1 นาที ตรวจถี่กว่านี้ได้ข้อมูลใหม่ไม่มากขึ้น แต่เพิ่ม PostgREST Egress
-  const NAV_ICON = `<span class="nav-emoji" aria-hidden="true">🧪</span>`;
+  const NAV_ICON = `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6.5L4.6 18.8A1.5 1.5 0 0 0 5.9 21h12.2a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3"/><path d="M7.2 15h9.6"/></svg>`;
 
   // ผู้ที่ไม่มีสิทธิ์เห็นหน้า "ไม่พบหน้าที่ต้องการ" ข้อความเดียวกับ URL ที่ไม่มีอยู่จริง จึงไม่รู้ว่ามีโมดูลนี้
   function deniedPage() {
