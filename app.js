@@ -2814,7 +2814,6 @@ async function renderRequestDetail(params) {
   const formCode = REQUEST_FORM_CODES[type?.code] ?? "";
   const headerActionsHtml = detailView?.headerActionsHtml || moduleDetail?.headerActionsHtml || "";
   const nextStep = currentStep ? steps.find((step) => step.step_order === currentStep.step_order + 1) : null;
-  const photoAttachments = attachments.filter((file) => attachmentKind(file) === "image").slice(0, 3);
   // จอกว้าง (สองคอลัมน์) เปิดทุกส่วนไว้ จอแคบพับไว้ เพื่อให้สิ่งที่ต้องตัดสินอยู่บนสุด
   const sectionsOpen = window.matchMedia("(min-width: 1041px)").matches ? " open" : "";
   const receipt = recentDecisionFor(id);
@@ -2836,7 +2835,6 @@ async function renderRequestDetail(params) {
           ${description
             ? `<p class="request-summary-text is-clamped" id="request-description">${escapeHtml(description)}</p><button type="button" class="link-button request-more" id="request-description-more" aria-controls="request-description" aria-expanded="false" hidden>อ่านต่อ</button>`
             : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
-          ${photoAttachments.length ? photoStripHtml(photoAttachments, attachments.length) : ""}
         </section>
         ${request.status === "more_info" ? (() => {
           const moreInfoStep = steps.find((step) => step.status === "more_info");
@@ -2853,14 +2851,14 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
         <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></details>
+        ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
         ${canApprove ? decisionPanelHtml({ currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
-        <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
+        <details class="card detail-section"><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
         <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
       </aside>
     </div>`;
@@ -2943,7 +2941,7 @@ async function renderRequestDetail(params) {
     const trigger = event.target.closest("[data-attachment-open]");
     if (trigger) openAttachmentLightbox(trigger.dataset.attachmentOpen);
   });
-  hydrateAttachmentGallery(attachments).then(fillPhotoStrip).catch((error) => showToast(friendlyError(error), "error"));
+  hydrateAttachmentGallery(attachments).catch((error) => showToast(friendlyError(error), "error"));
 }
 
 // ---- หน้ารายละเอียดคำร้อง: ตัดสินใจก่อน (brief .impeccable/surfaces/src-app-app-requests-id-page-tsx.md) ----
@@ -2984,23 +2982,6 @@ function requestDetailMenuHtml(actionsHtml) {
     <button type="button" class="icon-button" id="request-detail-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="request-detail-menu-list" aria-label="ตัวเลือกเพิ่มเติม" title="ตัวเลือกเพิ่มเติม"><span aria-hidden="true">⋯</span></button>
     <div class="request-detail-menu-list" id="request-detail-menu-list" data-popup hidden>${actionsHtml}</div>
   </div>`;
-}
-
-function photoStripHtml(photos, totalAttachments) {
-  return `<div class="photo-strip" id="photo-strip">${photos.map((file) => `<button type="button" class="photo-strip-item" data-attachment-open="${escapeHtml(file.id)}" aria-label="ดูรูปขนาดใหญ่: ${escapeHtml(file.file_name)}"><span class="photo-strip-placeholder" aria-hidden="true">${uiIcon("document")}</span></button>`).join("")}${totalAttachments > photos.length ? `<button type="button" class="photo-strip-more" id="photo-strip-more" aria-controls="request-attachments">ดูไฟล์แนบทั้งหมด</button>` : ""}</div>`;
-}
-
-function fillPhotoStrip() {
-  document.querySelectorAll(".photo-strip-item").forEach((item) => {
-    const entry = attachmentPreviews.get(item.dataset.attachmentOpen);
-    if (!entry) return;
-    const image = document.createElement("img");
-    image.alt = "";
-    image.loading = "lazy";
-    image.src = entry.thumbnailUrl ?? entry.url;
-    image.addEventListener("error", () => { if (image.src !== entry.url) image.src = entry.url; }, { once: true });
-    item.replaceChildren(image);
-  });
 }
 
 // ปุ่มตัดสินใจ: ไม่อนุมัติ · ขอข้อมูลเพิ่ม · (มติเฉพาะโมดูล) · อนุมัติ — อนุมัติอยู่ขวาสุด ใต้นิ้วโป้ง
@@ -3088,16 +3069,6 @@ function bindRequestDetailChrome() {
       menuButton.focus();
     });
   }
-  document.querySelector("#photo-strip")?.addEventListener("click", (event) => {
-    const trigger = event.target.closest("[data-attachment-open]");
-    if (trigger) return openAttachmentLightbox(trigger.dataset.attachmentOpen);
-    if (event.target.closest("#photo-strip-more")) {
-      const section = document.querySelector("#request-attachments");
-      section.open = true;
-      section.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-      section.querySelector("summary")?.focus({ preventScroll: true });
-    }
-  });
 }
 
 // แถบตัดสินใจติดล่างจอบนมือถือ: บอกความสูงจริงให้ CSS เว้นที่ท้ายหน้า และยก toast ขึ้นเหนือแถบ
