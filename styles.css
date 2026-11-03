@@ -957,8 +957,9 @@ a.machine-history-no:hover { text-decoration: underline; }
 .approval-select-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; border-bottom: 1px solid var(--soft-line); }
 .approval-select-row .approval-item { border-bottom: 0; }
 .approval-select, .approval-bulk-all input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
-.approval-select { margin: 16px 0 0 18px; }
-.approval-select-row .approval-item { padding-left: 12px; }
+/* พื้นที่แตะช่องเลือก 44px (iPhone) */
+.approval-select-hit { width: 44px; min-height: 44px; padding-top: 13px; display: flex; justify-content: center; align-self: stretch; cursor: pointer; }
+.approval-select-row .approval-item { padding-left: 4px; }
 .approval-preview { padding: 28px; }
 .approval-preview h2 { margin: 10px 0; font-size: var(--text-page); }
 .approval-actions { margin-top: 20px; padding-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); }

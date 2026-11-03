@@ -2093,7 +2093,7 @@ function requestSearchForm(params, { departments, placeholder }) {
         <option value="">ทุกแผนก</option>
         ${departments.map((item) => `<option value="${escapeHtml(item.sourceCode)}"${department?.sourceCode === item.sourceCode ? " selected" : ""}>${escapeHtml(item.displayCode)} · ${escapeHtml(item.name)}</option>`).join("")}
       </select>` : ""}
-      <input class="input" id="request-filter-search" aria-label="ค้นหาคำร้อง" name="q" type="search" maxlength="80" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(search)}">
+      <input class="input" id="request-filter-search" aria-label="ค้นหาคำร้อง" aria-keyshortcuts="/" name="q" type="search" maxlength="80" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(search)}">
       <button class="btn secondary small" type="submit">ค้นหา</button>
       ${search || department ? `<a class="btn secondary small" href="${escapeHtml(requestCenterUrl(params, { q: null, dept: null }))}">ล้าง</a>` : ""}
     </form>`;
@@ -2970,7 +2970,7 @@ async function renderApprovals(params) {
     <div class="page-heading"><div><h1>รอฉันอนุมัติ</h1><p>รายการที่เป็นขั้นตอนปัจจุบันและอยู่ในสิทธิ์ของคุณ</p></div></div>
     ${repairTasksSection}
     <div class="approval-layout">
-      <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p><div class="approval-bulk"><label class="approval-bulk-all"><input type="checkbox" id="approval-select-all"> เลือกทั้งหมด</label><button class="btn success small" type="button" id="approval-bulk-approve" disabled>อนุมัติที่เลือก</button></div></div>${steps.map((step) => `<div class="approval-select-row"><input type="checkbox" class="approval-select" value="${escapeHtml(step.id)}" aria-label="เลือก ${escapeHtml(step.request.request_no)}">${approvalStepItemHtml(step, `#/approvals?request=${encodeURIComponent(step.request.id)}`, step.id === selected.id)}</div>`).join("")}</section>
+      <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p><div class="approval-bulk"><label class="approval-bulk-all"><input type="checkbox" id="approval-select-all"> เลือกทั้งหมด</label><button class="btn success small" type="button" id="approval-bulk-approve" disabled>อนุมัติที่เลือก</button></div></div>${steps.map((step) => `<div class="approval-select-row">${isOwnApprovalStep(step) ? `<label class="approval-select-hit"><input type="checkbox" class="approval-select" value="${escapeHtml(step.id)}" aria-label="เลือก ${escapeHtml(step.request.request_no)}"></label>` : `<span class="approval-select-hit" aria-hidden="true"></span>`}${approvalStepItemHtml(step, `#/approvals?request=${encodeURIComponent(step.request.id)}`, step.id === selected.id)}</div>`).join("")}</section>
       <article class="approval-preview"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h2>${escapeHtml(request.title)}</h2><p class="description">${escapeHtml(request.description)}</p><dl class="definition-grid"><div class="definition"><dt>ประเภท</dt><dd>${escapeHtml(relation(request.request_type)?.name_th ?? "—")}</dd></div><div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div><div class="definition"><dt>ขั้นตอน</dt><dd>${escapeHtml(selected.step_name)}</dd></div><div class="definition"><dt>วันที่ส่ง</dt><dd>${formatDate(request.submitted_at, true)}</dd></div></dl><div class="approval-actions"><a class="btn" href="#/request?id=${encodeURIComponent(request.id)}">เปิดคำร้องและพิจารณา →</a></div></article>
     </div>`;
   app.innerHTML = shell(content, "approvals", "รออนุมัติ");
@@ -2978,8 +2978,19 @@ async function renderApprovals(params) {
   bindBulkApprove(steps, params);
 }
 
+// ขั้นที่เป็นของผู้ใช้เอง (ระบุตัว หรือบทบาท/แผนกตรง) ไม่รวมขั้นที่เห็นเพราะเป็น admin: admin อนุมัติแทนได้ทีละใบจากหน้ารายละเอียด
+function isOwnApprovalStep(step) {
+  const employee = state.employee;
+  if (step.approver_employee_id && step.approver_employee_id === employee.id) return true;
+  const code = relation(step.request.request_type)?.code;
+  return Boolean(code) && employee.approvalModules.has(code) && window.MNP_REQUEST_APPROVAL.roleMatches(step, code, employee);
+}
+
+const BULK_APPROVE_LIMIT = 20;
+
 // อนุมัติหลายรายการ: เรียก app_approval_decision ทีละขั้นเหมือนกดอนุมัติในหน้ารายละเอียด (ฐานข้อมูลตรวจสิทธิ์และขั้นปัจจุบันทุกครั้ง)
-// ถามยืนยันพร้อมรายชื่อก่อน รายการที่ไม่สำเร็จแจ้งเป็นข้อผิดพลาดและยังอยู่ในรายการให้ทำต่อ
+// ถามยืนยันพร้อมรายชื่อก่อน ครั้งละไม่เกิน BULK_APPROVE_LIMIT รายการ แจ้งรายการที่ไม่สำเร็จเป็นข้อผิดพลาด
+// (ชีตสำรองของ MT/MG ซิงก์ตอนมีคนเปิดหน้ารายละเอียดเหมือนเดิม Supabase เป็นข้อมูลหลัก)
 function bindBulkApprove(steps, params) {
   const boxes = [...document.querySelectorAll(".approval-select")];
   const all = document.querySelector("#approval-select-all");
@@ -2988,8 +2999,8 @@ function bindBulkApprove(steps, params) {
   const picked = () => boxes.filter((box) => box.checked).map((box) => steps.find((step) => step.id === box.value)).filter(Boolean);
   const sync = () => {
     const count = picked().length;
-    button.disabled = count === 0;
-    button.textContent = count ? `อนุมัติที่เลือก (${count})` : "อนุมัติที่เลือก";
+    button.disabled = count === 0 || count > BULK_APPROVE_LIMIT;
+    button.textContent = count > BULK_APPROVE_LIMIT ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT}` : count ? `อนุมัติที่เลือก (${count})` : "อนุมัติที่เลือก";
     all.checked = count === boxes.length;
     all.indeterminate = count > 0 && count < boxes.length;
   };
@@ -3005,15 +3016,24 @@ function bindBulkApprove(steps, params) {
     boxes.forEach((box) => { box.disabled = true; });
     all.disabled = true;
     const failed = [];
-    for (const step of chosen) {
+    let done = 0;
+    for (const [index, step] of chosen.entries()) {
       const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
-      if (error) failed.push({ step, error });
-      else triggerNotificationEmails(step.request.id);
+      if (!error) { done += 1; triggerNotificationEmails(step.request.id); continue; }
+      failed.push({ step, error });
+      // session หมดอายุ: รายการที่เหลือจะไม่สำเร็จเหมือนกัน หยุดแล้วนับเป็นไม่สำเร็จ
+      if (/AUTH_REQUIRED|JWT/i.test(String(error.message ?? error.code ?? ""))) {
+        failed.push(...chosen.slice(index + 1).map((rest) => ({ step: rest, error })));
+        break;
+      }
     }
-    const done = chosen.length - failed.length;
-    await renderApprovals(params);
-    if (failed.length) showToast(`อนุมัติแล้ว ${done} รายการ ไม่สำเร็จ ${failed.length} รายการ (${failed.map(({ step }) => step.request.request_no).join(", ")}): ${friendlyError(failed[0].error)}`, "error");
-    else showToast(`อนุมัติแล้ว ${done} รายการ`);
+    const summary = failed.length
+      ? [`อนุมัติแล้ว ${done} รายการ ไม่สำเร็จ ${failed.length} รายการ (${failed.map(({ step }) => step.request.request_no).join(", ")}): ${friendlyError(failed[0].error)}`, "error"]
+      : [`อนุมัติแล้ว ${done} รายการ`];
+    if (location.hash.startsWith("#/approvals")) {
+      try { await renderApprovals(params); } catch (renderError) { console.error(renderError); }
+    }
+    showToast(...summary);
   });
 }
 
@@ -3022,8 +3042,8 @@ document.addEventListener("keydown", (event) => {
   if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
-  if (document.querySelector("dialog[open]")) return;
-  const search = document.querySelector('#app input[type="search"]') ?? document.querySelector('#app [role="search"] input:not([type="hidden"]):not([type="checkbox"])');
+  if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
+  const search = document.querySelector('#app [role="search"] input[type="search"]:not(:disabled)') ?? document.querySelector('#app [role="search"] input:not([type="hidden"]):not([type="checkbox"]):not(:disabled)');
   if (!search) return;
   event.preventDefault();
   search.focus();
