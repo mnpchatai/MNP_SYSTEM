@@ -119,7 +119,8 @@ for (const theme of ["light", "dark"]) {
   });
 
   test(`tinted buttons and labels reach 4.5:1 (${theme})`, () => {
-    for (const selector of [".btn.warning", ".btn.danger", ".btn.secondary", ".request-summary-label"]) {
+    // หัวข้อ "รายละเอียดที่ผู้ขอแจ้ง" (.request-brief-label) เป็น --muted บนการ์ด จึงอยู่ในชุด muted ด้านล่างแล้ว
+    for (const selector of [".btn.warning", ".btn.danger", ".btn.secondary", ".decision-line", ".decision-line.is-error"]) {
       assertReadable(selector, ruleValue(selector, theme, "color"), ruleValue(selector, theme, "background", "background-color"), theme);
     }
   });
