@@ -28,6 +28,7 @@ const UI_ICON_PATHS = {
   building: '<path d="M4 21V5.5L12 3v18M12 8h8v13M2 21h20M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
   inbox: '<path d="M3 13.5 5.6 5.4A1.5 1.5 0 0 1 7 4.5h10a1.5 1.5 0 0 1 1.4.9L21 13.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/><path d="M3 13.5h5l1.5 2.5h5l1.5-2.5h5"/>',
 };
@@ -359,10 +360,32 @@ function go(path) {
 
 function showToast(message, type = "success") {
   const isError = type === "error";
-  toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(message)}</span>`;
-  toastNode.className = `toast show ${isError ? "error" : "success"}`;
   window.clearTimeout(showToast.timer);
-  showToast.timer = window.setTimeout(() => { toastNode.className = "toast"; }, 3500);
+  // ข้อผิดพลาดค้างไว้จนกว่าผู้ใช้จะกดปิด และให้โปรแกรมอ่านหน้าจออ่านทันที ส่วนแจ้งสำเร็จหายเองใน 3.5 วินาที
+  toastNode.setAttribute("role", isError ? "alert" : "status");
+  toastNode.setAttribute("aria-live", isError ? "assertive" : "polite");
+  toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(message)}</span>${isError ? `<button type="button" class="toast-close" aria-label="ปิดข้อความ">${uiIcon("close")}</button>` : ""}`;
+  toastNode.className = `toast show ${isError ? "error" : "success"}`;
+  if (isError) toastNode.querySelector(".toast-close").addEventListener("click", () => { toastNode.className = "toast"; });
+  else showToast.timer = window.setTimeout(() => { toastNode.className = "toast"; }, 3500);
+}
+
+// กล่องยืนยันในแอป แทน confirm() ของเบราว์เซอร์: ปุ่มยืนยันบอกผลของการกด (เช่น "ลบบัญชี") กด Esc หรือยกเลิก = ไม่ทำ
+function confirmDialog({ title, message = "", confirmLabel, danger = false }) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.setAttribute("aria-labelledby", "confirm-dialog-title");
+    dialog.innerHTML = `<form method="dialog">
+      <h2 id="confirm-dialog-title">${escapeHtml(title)}</h2>
+      ${message ? `<p>${escapeHtml(message)}</p>` : ""}
+      <div class="confirm-dialog-actions"><button class="btn secondary" value="cancel">ยกเลิก</button><button class="btn${danger ? " danger-solid" : ""}" value="confirm">${escapeHtml(confirmLabel)}</button></div>
+    </form>`;
+    document.body.append(dialog);
+    dialog.addEventListener("close", () => { resolve(dialog.returnValue === "confirm"); dialog.remove(); }, { once: true });
+    dialog.showModal();
+    dialog.querySelector('button[value="cancel"]').focus();
+  });
 }
 
 function friendlyError(error) {
@@ -1712,8 +1735,9 @@ function bindSandboxBanner() {
     }
   });
   document.querySelector("#sandbox-purge")?.addEventListener("click", async (event) => {
-    if (!confirm("ล้างใบ NCR ทดสอบและไฟล์แนบทั้งหมด และเริ่มนับเลข TEST- ใหม่ ?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
-    event.currentTarget.disabled = true;
+    const purgeButton = event.currentTarget;
+    if (!(await confirmDialog({ title: "ล้างใบ NCR ทดสอบและไฟล์แนบทั้งหมด และเริ่มนับเลข TEST- ใหม่?", message: "ล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูลทดสอบ", danger: true }))) return;
+    purgeButton.disabled = true;
     try {
       const data = await window.MNP_NCR_ATTACHMENTS.purge();
       showToast(`ล้างข้อมูลทดสอบแล้ว ${data?.deleted ?? 0} ใบ`);
@@ -1769,8 +1793,8 @@ function bindShell() {
   }));
 }
 
-// แถวโครงร่างระหว่างโหลด ผู้ใช้โปรแกรมอ่านหน้าจอยังได้ยิน "กำลังโหลดข้อมูล" ผ่าน aria-live ของ #app
-const loadingSkeleton = (rows = 4) => `<div class="skeleton">${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}<span class="sr-only">กำลังโหลดข้อมูล…</span></div>`;
+// แถวโครงร่างระหว่างโหลด ผู้ใช้โปรแกรมอ่านหน้าจอยังได้ยิน "กำลังโหลดข้อมูล" ผ่าน role=status ของตัวเอง
+const loadingSkeleton = (rows = 4) => `<div class="skeleton" role="status">${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}<span class="sr-only">กำลังโหลดข้อมูล…</span></div>`;
 
 // หน้าว่าง: ไอคอน + ข้อความ + คำแนะนำสั้นๆ และปุ่มทำต่อ (ถ้ามี)
 const emptyState = (text, { hint = "", action = null } = {}) => `<div class="empty empty-state">${uiIcon("inbox")}<p>${escapeHtml(text)}</p>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}${action ? `<a class="btn secondary small" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}</div>`;
@@ -2791,6 +2815,7 @@ async function renderRequestDetail(params) {
     }
     let files;
     try { files = readExtraFiles(document.querySelector("#decision-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
+    if (decision === "rejected" && !(await confirmDialog({ title: "ไม่อนุมัติคำร้องนี้?", message: comment, confirmLabel: "ไม่อนุมัติ", danger: true }))) return;
     document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = true; });
     button.setAttribute("aria-busy", "true");
     try {
@@ -3544,7 +3569,7 @@ function bindHolidayForms(params) {
   });
   document.querySelectorAll("[data-holiday-delete]").forEach((button) => button.addEventListener("click", async () => {
     const date = button.dataset.holidayDelete;
-    if (!confirm(`ลบวันหยุด ${formatDate(date)} ?\n\nวันนั้นระบบจะกลับมาส่งอีเมลเตือนงานค้างตามปกติ`)) return;
+    if (!(await confirmDialog({ title: `ลบวันหยุด ${formatDate(date)}?`, message: "วันนั้นระบบจะกลับมาส่งอีเมลเตือนงานค้างตามปกติ", confirmLabel: "ลบวันหยุด", danger: true }))) return;
     button.disabled = true;
     const { error } = await sb.rpc("app_admin_delete_holiday", { p_date: date });
     if (error) {
@@ -3859,7 +3884,7 @@ async function renderAdmin(params) {
   document.querySelectorAll("[data-delete-employee]").forEach((button) => button.addEventListener("click", async () => {
     const employeeId = button.dataset.deleteEmployee;
     const label = button.dataset.employeeLabel ?? "";
-    if (!confirm(`ลบบัญชี ${label} ?\n\nถ้าบัญชีนี้ยังไม่เคยมีเอกสารหรือประวัติในระบบ จะถูกลบถาวร\nถ้ามีประวัติแล้ว ระบบจะปิดใช้งานและซ่อนบัญชีแทน เพื่อให้เอกสารเก่ายังแสดงชื่อได้\nทั้งสองกรณีเจ้าของบัญชีจะเข้าสู่ระบบไม่ได้อีก`)) return;
+    if (!(await confirmDialog({ title: `ลบบัญชี ${label}?`, message: "ถ้าบัญชีนี้ยังไม่เคยมีเอกสารหรือประวัติในระบบ จะถูกลบถาวร\nถ้ามีประวัติแล้ว ระบบจะปิดใช้งานและซ่อนบัญชีแทน เพื่อให้เอกสารเก่ายังแสดงชื่อได้\nทั้งสองกรณีเจ้าของบัญชีจะเข้าสู่ระบบไม่ได้อีก", confirmLabel: "ลบบัญชี", danger: true }))) return;
     button.disabled = true;
     try {
       const { data: sessionData } = await sb.auth.getSession();
