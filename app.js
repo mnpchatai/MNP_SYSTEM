@@ -15,7 +15,6 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 
 const app = document.querySelector("#app");
 
-// ช่องรหัสผ่านทุกช่องกดแสดง/ซ่อนได้ — หน้าถูก render ใหม่ด้วย innerHTML ตลอด จึงเสริมปุ่มให้ทีหลังด้วย observer
 // ไอคอนเส้นชุดเดียวของ Pilot (viewBox 24, เส้น 1.8 ตามสี currentColor ผ่าน .ui-icon / .nav-icon svg) แทนอีโมจิและอักขระพิเศษ
 const UI_ICON_PATHS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>',
@@ -29,8 +28,9 @@ const UI_ICON_PATHS = {
   building: '<path d="M4 21V5.5L12 3v18M12 8h8v13M2 21h20M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 };
-const uiIcon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${UI_ICON_PATHS[name]}</svg>`;
+const uiIcon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${UI_ICON_PATHS[name] ?? ""}</svg>`;
 
+// ช่องรหัสผ่านทุกช่องกดแสดง/ซ่อนได้ — หน้าถูก render ใหม่ด้วย innerHTML ตลอด จึงเสริมปุ่มให้ทีหลังด้วย observer
 const PASSWORD_ICON_SHOW = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const PASSWORD_ICON_HIDE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.9 10.9 0 0 1 12 19c-6.5 0-10-7-10-7a18.5 18.5 0 0 1 4.06-5.06M9.9 4.24A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>`;
 

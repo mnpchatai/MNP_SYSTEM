@@ -603,7 +603,7 @@ tbody tr:hover { background: var(--shell); }
   font-weight: 700;
 }
 .request-detail-link:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
-.request-locked-note { min-height: 32px; padding: 0 10px; display: inline-flex; align-items: center; flex: 0 0 auto; color: var(--quiet); background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 600; }
+.request-locked-note { min-height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; color: var(--quiet); background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 600; }
 
 @media (max-width: 820px) {
   .progress-cell { min-width: 120px; }
