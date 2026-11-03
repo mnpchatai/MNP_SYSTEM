@@ -1,54 +1,19 @@
+/* Anuphan (Cadson Demak, SIL OFL 1.1, fonts/OFL.txt) แบบ variable ไฟล์เดียวครอบคลุมน้ำหนัก 100–700 */
 @font-face {
-  font-family: "IBM Plex Sans Thai";
+  font-family: "Anuphan";
   font-style: normal;
-  font-weight: 400;
+  font-weight: 100 700;
   font-display: swap;
-  src: url("./fonts/ibm-plex-sans-thai-400-thai.woff2") format("woff2");
+  src: url("./fonts/anuphan-thai.woff2") format("woff2");
   unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
 }
 
 @font-face {
-  font-family: "IBM Plex Sans Thai";
+  font-family: "Anuphan";
   font-style: normal;
-  font-weight: 400;
+  font-weight: 100 700;
   font-display: swap;
-  src: url("./fonts/ibm-plex-sans-thai-400-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Thai";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("./fonts/ibm-plex-sans-thai-600-thai.woff2") format("woff2");
-  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Thai";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("./fonts/ibm-plex-sans-thai-600-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Thai";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("./fonts/ibm-plex-sans-thai-700-thai.woff2") format("woff2");
-  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Thai";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("./fonts/ibm-plex-sans-thai-700-latin.woff2") format("woff2");
+  src: url("./fonts/anuphan-latin.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
@@ -132,7 +97,7 @@ body {
   color: var(--ink);
   background: var(--page-gradient);
   background-attachment: fixed;
-  font-family: "IBM Plex Sans Thai", "Leelawadee UI", "Noto Sans Thai", Tahoma, system-ui, sans-serif;
+  font-family: "Anuphan", "Leelawadee UI", "Noto Sans Thai", Tahoma, system-ui, sans-serif;
   font-size: var(--text-body);
   line-height: var(--leading-body);
   -webkit-font-smoothing: antialiased;
@@ -2480,6 +2445,8 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-pic { flex: none; width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); }
 .bom-pic.is-empty { display: inline-flex; align-items: center; justify-content: center; font-size: var(--text-caption); font-weight: 700; color: var(--quiet); border-style: dashed; }
 .bom-pic.is-mini { width: 26px; height: 26px; font-size: var(--text-caption); border-radius: 6px; }
+/* ป้ายว่างขนาดย่อ ("ชิ้นทำ", "ซื้อ") กว้างตามข้อความ ไม่ตัดบรรทัดล้นกล่อง */
+.bom-pic.is-mini.is-empty { width: auto; min-width: 26px; padding: 0 5px; white-space: nowrap; }
 .bom-pic.is-large { width: 120px; height: 120px; }
 .bom-image-edit { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .bom-dialog-sub { margin: 14px 0 6px; font-size: var(--text-ui); }
