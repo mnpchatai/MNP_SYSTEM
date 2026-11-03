@@ -282,8 +282,8 @@
       body = `${pageNavHtml(user, page)}${built.html}`;
       bind = built.bind ?? null;
     }
-    const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">BOM</span><strong class="rf-app-name">${escapeHtml(TITLE)}</strong></div><p class="rf-sub">${escapeHtml(SUBTITLE)}</p></div></header>`;
-    app.innerHTML = shell(`<div class="rf-page bom-page" data-rf-mod="${escapeHtml(entry && user ? `bom-${page}` : "")}">${head}${user ? toolbarHtml(ctx) : ""}${body}</div>`, PATH, title);
+    const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">BOM</span><strong class="rf-app-name">${escapeHtml(TITLE)}</strong></div><p class="rf-sub">${escapeHtml(SUBTITLE)}</p></div>${user ? toolbarHtml(ctx) : ""}</header>`;
+    app.innerHTML = shell(`<div class="rf-page bom-page" data-rf-mod="${escapeHtml(entry && user ? `bom-${page}` : "")}">${head}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);

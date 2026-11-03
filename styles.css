@@ -746,7 +746,7 @@ tbody tr:hover { background: var(--shell); }
 .request-module-title { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .request-module-title .type-card-badge { flex: 0 0 44px; height: 44px; }
 .request-module-header h1 { font-size: clamp(24px, 2.6vw, 32px); }
-.request-module-header .eyebrow, .request-module-header p { color: rgba(255, 255, 255, .94); }
+.request-module-header p { color: rgba(255, 255, 255, .94); }
 .request-module-header .request-create-entry { flex-shrink: 0; }
 .request-module-header .btn { color: var(--ink); background: var(--paper); border-color: transparent; }
 .request-module-header .btn:hover { color: var(--primary); }
@@ -2165,7 +2165,7 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-spc-scroll { overflow-x: auto; }
 .rf-spc-scroll .rf-spc-chart { min-width: 600px; }
 .rf-spc-pick { min-width: 260px; }
-.rf-app-name { font-size: var(--text-heading); font-weight: 700; line-height: 1.3; letter-spacing: -.01em; }
+.rf-app-name { font-size: var(--text-title); font-weight: 700; line-height: 1.3; }
 .rf-page .nowrap { white-space: nowrap; }
 
 /* ===================== RubberFlow: ดีไซน์ (กรอบเดียวกับระบบหลัก + สีโมดูลเป็นเครื่องหมาย) =====================
@@ -2207,10 +2207,10 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 /* ---------- แถบหัวหน้า: ชื่อระบบ เครื่องมือ ชื่อหน้า (วางบนพื้นของหน้า ไม่ไล่สี) ---------- */
 .rf-page { --rf-band: transparent; --rf-band-ink: var(--ink); --rf-band-muted: var(--muted); --rf-band-line: var(--line); --rf-band-field: var(--paper); --rf-band-hover: var(--shell); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
 .rf-page .rf-head, .rf-page .rf-toolbar, .rf-page .rf-pagenav, .rf-page .rf-pagehead { margin: 0 calc(-1 * var(--rf-pad-x)); padding-left: var(--rf-pad-x); padding-right: var(--rf-pad-x); color: var(--rf-band-ink); background: var(--rf-band); }
-.rf-page .rf-head { padding-top: 18px; padding-bottom: 6px; border-bottom: 0; }
+.rf-page .rf-head { padding-top: 18px; padding-bottom: 12px; align-items: center; border-bottom: 0; }
 .rf-page .rf-sub { color: var(--rf-band-muted); }
 .rf-page .rf-brand { color: #fff; background: var(--primary-strong); }
-.rf-page .rf-toolbar { margin-top: -14px; padding-top: 6px; padding-bottom: 12px; }
+.rf-page .rf-head .rf-toolbar { margin: 0; padding: 0; }
 .rf-page .rf-persona { color: var(--rf-band-muted); }
 .rf-page .rf-toolbar .input, .rf-page .rf-toolbar .select { min-height: 36px; color: var(--rf-band-ink); background-color: var(--rf-band-field); border-color: var(--rf-band-line); }
 .rf-page .rf-toolbar .input::placeholder { color: var(--rf-band-muted); }

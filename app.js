@@ -1376,7 +1376,6 @@ async function renderAuth(message = "") {
       <section class="auth-aside">
         <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-512.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
         <div class="auth-copy">
-          <div class="eyebrow">Employee workspace</div>
           <h1>ระบบจัดการเอกสาร<br>ภายในองค์กร</h1>
           <p>สร้าง ส่ง อนุมัติ และติดตามเอกสารงานทุกประเภทในระบบเดียว ตั้งแต่คำร้อง ใบขออนุมัติ จนถึงเอกสารการผลิต ไม่ต้องใช้กระดาษ ไม่ต้องถามว่าถึงไหนแล้ว</p>
         </div>
@@ -1672,7 +1671,7 @@ function shell(content, active, title) {
       <aside class="sidebar" id="mobile-nav">
         <a class="brand" href="#/${homePath()}"><img class="brand-mark" src="./icons/icon-192.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></a>
         <nav class="nav" aria-label="เมนูหลัก">
-          <div class="nav-label">Workspace</div>
+          <div class="nav-label">เมนูหลัก</div>
           ${isSandboxMode() || isLabOnly() ? "" : `${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
           ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active, { href: window.MNP_REQUEST_CENTER.overviewUrl() })}
           ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}`}
@@ -2134,11 +2133,11 @@ function requestCenterHeader(types, params, counts) {
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
     return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
-        <div class="request-module-title"><span class="type-card-badge">${escapeHtml(selected.prefix ?? "")}</span><div><div class="eyebrow">คำร้อง</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
+        <div class="request-module-title"><span class="type-card-badge">${escapeHtml(selected.prefix ?? "")}</span><div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
       </div>`;
   }
-  return `<div class="page-heading"><div><div class="eyebrow">Request Center</div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
+  return `<div class="page-heading"><div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
     <div class="request-type-heading"><h2>เลือกโมดูล</h2></div>
     <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" style="background:${requestTypeGradient(type.code)}">
       <span class="request-type-top"><span class="type-card-badge">${escapeHtml(type.prefix ?? "")}</span><span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} รอดำเนินการ` : "ดูสถานะ"}</span></span>
@@ -2958,7 +2957,7 @@ async function renderApprovals(params) {
     </section>` : "";
   if (!steps.length) {
     app.innerHTML = shell(`
-      <div class="page-heading"><div><div class="eyebrow">Approval Center</div><h1>งานที่ต้องจัดการ</h1><p>รายการที่อยู่ในสิทธิ์ของคุณและรอดำเนินการ</p></div></div>
+      <div class="page-heading"><div><h1>งานที่ต้องจัดการ</h1><p>รายการที่อยู่ในสิทธิ์ของคุณและรอดำเนินการ</p></div></div>
       ${repairTasksSection || `<div class="empty"><h2>✓ ไม่มีคำร้องรออนุมัติ</h2><p>รายการใหม่ที่อยู่ในสิทธิ์ของคุณจะแสดงที่หน้านี้</p><a class="btn secondary" href="#/dashboard">กลับหน้าหลัก</a></div>`}
     `, "approvals", "รออนุมัติ");
     bindShell();
@@ -2968,7 +2967,7 @@ async function renderApprovals(params) {
   const selected = steps.find((step) => step.request.id === selectedId) ?? steps[0];
   const request = selected.request;
   const content = `
-    <div class="page-heading"><div><div class="eyebrow">Approval Center</div><h1>รอฉันอนุมัติ</h1><p>รายการที่เป็นขั้นตอนปัจจุบันและอยู่ในสิทธิ์ของคุณ</p></div></div>
+    <div class="page-heading"><div><h1>รอฉันอนุมัติ</h1><p>รายการที่เป็นขั้นตอนปัจจุบันและอยู่ในสิทธิ์ของคุณ</p></div></div>
     ${repairTasksSection}
     <div class="approval-layout">
       <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p></div>${steps.map((step) => approvalStepItemHtml(step, `#/approvals?request=${encodeURIComponent(step.request.id)}`, step.id === selected.id)).join("")}</section>
@@ -3196,7 +3195,7 @@ async function renderNotifications() {
   const { data, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
   if (error) throw error;
   const content = `
-    <div class="page-heading"><div><div class="eyebrow">Notifications</div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
+    <div class="page-heading"><div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
     <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
@@ -3227,7 +3226,7 @@ async function renderProfile() {
   }
 
   const content = `
-    <div class="page-heading"><div><div class="eyebrow">My account</div><h1>ข้อมูลส่วนตัว</h1><p>แก้ไขข้อมูลของคุณได้จากหน้านี้</p></div></div>
+    <div class="page-heading"><div><h1>ข้อมูลส่วนตัว</h1><p>แก้ไขข้อมูลของคุณได้จากหน้านี้</p></div></div>
 
     <section class="card" style="max-width:780px">
       <div style="display:flex;align-items:center;gap:13px;margin-bottom:20px">
@@ -3760,7 +3759,7 @@ async function renderAdmin(params) {
     </tr>`).join("") || `<tr><td colspan="${4 + moduleColumns.length}" class="muted small">ยังไม่มีผู้อนุมัติในระบบ</td></tr>`;
 
   const content = `
-    <div class="page-heading"><div><div class="eyebrow">Administration</div><h1>ผู้ดูแลระบบ</h1><p>อนุมัติคำร้องเปิดบัญชี กำหนดสิทธิ์ และค้นคืน ID/รหัสผ่านที่ออกให้</p></div></div>
+    <div class="page-heading"><div><h1>ผู้ดูแลระบบ</h1><p>อนุมัติคำร้องเปิดบัญชี กำหนดสิทธิ์ และค้นคืน ID/รหัสผ่านที่ออกให้</p></div></div>
     <div id="email-dispatch-status"></div>
     <div class="filters">
       <a class="filter${tab === "requests" ? " active" : ""}" href="#/admin?tab=requests">คำร้องบัญชี${pendingCount ? ` (${pendingCount})` : ""}</a>
@@ -4003,7 +4002,6 @@ async function renderSetPassword(params) {
       <section class="auth-aside">
         <div class="brand brand-lg"><img class="brand-mark" src="./icons/icon-512.png" alt=""><div><strong>MNP Workspace</strong><span>PILOT WEB</span></div></div>
         <div class="auth-copy">
-          <div class="eyebrow">Account setup</div>
           <h1>ตั้งรหัสผ่านใหม่<br>สำหรับเข้าใช้งาน</h1>
           <p>ผู้ดูแลระบบอนุมัติสิทธิ์เข้าใช้งานของคุณแล้ว ตั้งรหัสผ่านใหม่ได้ที่หน้านี้ ลิงก์ใช้ได้ครั้งเดียว</p>
         </div>
