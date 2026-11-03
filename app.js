@@ -2224,8 +2224,9 @@ function requestTypeLabel(type) {
 }
 
 function requestTypeGradient(code) {
-  const [from, to] = requestModule(code)?.theme ?? requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
-  return `linear-gradient(135deg, ${from}, ${to})`;
+  // ใช้เฉพาะปลายสีเข้มของธีม ตัวอักษรขาวบนการ์ดจึงอ่านได้ (ปลายสีอ่อน เช่น #facc15 ได้แค่ราว 1.6:1)
+  const [, to] = requestModule(code)?.theme ?? requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
+  return `linear-gradient(135deg, ${to}, color-mix(in srgb, ${to} 72%, #000))`;
 }
 
 function typeCardHtml(type) {
