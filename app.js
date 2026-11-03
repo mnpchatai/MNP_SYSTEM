@@ -164,6 +164,12 @@ const statusLabels = {
   acknowledged: "รับทราบข้อมูล",
 };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
+// สถานะของแต่ละขั้นอนุมัติ (enum approval_status) — ห้ามแสดงค่าดิบภาษาอังกฤษในหน้า
+const stepStatusLabels = { pending: "รอพิจารณา", approved: "อนุมัติ", rejected: "ไม่อนุมัติ", more_info: "ขอข้อมูลเพิ่ม", skipped: "ข้าม", acknowledged: "รับทราบข้อมูล" };
+// คำกริยาของมติแต่ละแบบ ใช้ในแถบตัดสินใจและใบเสร็จหลังกด
+const decisionVerbs = { approved: "อนุมัติ", rejected: "ไม่อนุมัติ", more_info: "ขอข้อมูลเพิ่ม", acknowledged: "รับทราบข้อมูล" };
+// เลขแบบฟอร์มกระดาษเดิมของแต่ละโมดูล แสดงคู่กับเลขที่คำร้อง
+const REQUEST_FORM_CODES = { MT_REPAIR: "MT01-FM05", MANAGEMENT: "PP01-FM08", NCR_CAR: "QA02-FM01" };
 
 // ลำดับขั้นของงานสำหรับแถบ "ไปถึงไหนแล้ว" — ใบแจ้งซ่อมเดินตาม workflow ของ MT ส่วนคำร้องทั่วไป
 // ใช้ลำดับสั้นกว่าเพราะไม่มีขั้นมอบหมายช่าง/ตรวจรับ (ดู statusLabels ด้านบนสำหรับป้ายเต็ม)
@@ -1001,6 +1007,8 @@ function statusBadge(status) {
 // action: การ์ดที่กดได้ (เช่น เครื่องจักร → ประวัติการซ่อม) วาดเป็นปุ่ม ให้โมดูลผูก click ด้วย data-fact-action
 // คำอธิบายปุ่มอยู่ใน title/aria-label ตามกติกา "ไม่ใส่ข้อความอธิบายถาวรบนจอ"
 function requestFact(label, value, { icon = "•", tone = "primary", wide = false, valueClass = "", action = "", actionLabel = "" } = {}) {
+  // ช่องที่ไม่มีค่า ("—" หรือว่าง) ไม่ต้องแสดงในหน้ารายละเอียด ยกเว้นช่องที่กดเพื่อกรอกได้ (action)
+  if (!action && ["", "—"].includes(String(value ?? "").trim())) return "";
   const classes = ["request-fact", `request-fact-${tone}`, wide ? "wide" : ""].filter(Boolean).join(" ");
   const valueClasses = ["request-fact-value", valueClass].filter(Boolean).join(" ");
   // <button> ใส่ได้แค่ phrasing content จึงใช้ span แทน div (สไตล์อยู่ที่ class .request-fact-copy ทั้งคู่)
@@ -2783,10 +2791,12 @@ async function renderRequestDetail(params) {
   const canReplyToStep = (step) => repliesAvailable && isRequester && Boolean(separateModule?.requesterReplies)
     && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
   const detailEntries = Object.entries(request.details ?? {});
+  // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
+  const priorityIsFlagged = ["high", "urgent"].includes(request.priority);
   const requestFacts = [
-    requestFact("ความสำคัญ", priorityLabels[request.priority], {
+    priorityIsFlagged ? "" : requestFact("ความสำคัญ", priorityLabels[request.priority], {
       icon: "!",
-      tone: ["high", "urgent"].includes(request.priority) ? "danger" : "primary",
+      tone: "primary",
       valueClass: `priority-${request.priority}`,
     }),
     ...(detailView?.facts ?? [
@@ -2799,19 +2809,32 @@ async function renderRequestDetail(params) {
     })),
     ...(moduleDetail?.facts ?? []).map((fact) => requestFact(fact.label, fact.value, fact.options)),
   ].join("");
+  const formCode = REQUEST_FORM_CODES[type?.code] ?? "";
+  const headerActionsHtml = detailView?.headerActionsHtml || moduleDetail?.headerActionsHtml || "";
+  const nextStep = currentStep ? steps.find((step) => step.step_order === currentStep.step_order + 1) : null;
+  const photoAttachments = attachments.filter((file) => attachmentKind(file) === "image").slice(0, 3);
+  // จอกว้าง (สองคอลัมน์) เปิดทุกส่วนไว้ จอแคบพับไว้ เพื่อให้สิ่งที่ต้องตัดสินอยู่บนสุด
+  const sectionsOpen = window.matchMedia("(min-width: 1041px)").matches ? " open" : "";
+  const receipt = recentDecisionFor(id);
+  const description = (request.description ?? "").trim();
   const content = `
-    <header class="request-detail-head"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h1>${escapeHtml(request.title)}</h1><p>${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p>${(detailView?.headerActionsHtml || moduleDetail?.headerActionsHtml) ? `<div class="request-detail-actions">${detailView?.headerActionsHtml || moduleDetail.headerActionsHtml}</div>` : ""}</header>
+    <header class="request-detail-head">
+      <div class="request-detail-kicker">
+        <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
+        <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? statusBadge(request.status)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
+      </div>
+      <h1>${escapeHtml(request.title)}</h1>
+      <p class="request-detail-meta">${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` · <span class="priority-flag">ความสำคัญ${escapeHtml(priorityLabels[request.priority])}</span>` : ""}</p>
+    </header>
     <div class="detail-grid">
       <div class="stack">
-        <section class="card request-overview-card">
-          <div class="request-overview-head"><div class="request-overview-title"><span>รายละเอียดหลัก</span><h2>ข้อมูลคำร้อง</h2></div>${detailView?.statusBadgeHtml ?? statusBadge(request.status)}</div>
-          <section class="request-summary" aria-label="รายละเอียดที่ผู้ขอแจ้ง">
-            <div class="request-summary-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>รายละเอียดที่ผู้ขอแจ้ง</div>
-            ${(request.description ?? "").trim()
-              ? `<p class="request-summary-text">${escapeHtml(request.description)}</p>`
-              : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
-          </section>
-          <div class="request-facts">${requestFacts}</div>
+        ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
+        <section class="card request-brief" aria-labelledby="request-brief-title">
+          <h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
+          ${description
+            ? `<p class="request-summary-text is-clamped" id="request-description">${escapeHtml(description)}</p><button type="button" class="link-button request-more" id="request-description-more" aria-controls="request-description" aria-expanded="false" hidden>อ่านต่อ</button>`
+            : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
+          ${photoAttachments.length ? photoStripHtml(photoAttachments, attachments.length) : ""}
         </section>
         ${request.status === "more_info" ? (() => {
           const moreInfoStep = steps.find((step) => step.status === "more_info");
@@ -2827,43 +2850,25 @@ async function renderRequestDetail(params) {
             </form>` : `<p class="muted small">มีเพียง ${escapeHtml(requesterLabel)} ผู้ยื่นคำร้องนี้เท่านั้นที่ตอบกลับได้</p>`}
           </section>`;
         })() : ""}
-        ${canApprove ? `<section class="card"><h2>พิจารณาคำร้อง</h2><p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}</p><div class="field"><label for="decision-comment">ความเห็น</label><textarea class="textarea" id="decision-comment" maxlength="1000"></textarea></div>${extraFilesFieldHtml("decision-files")}<div class="approval-actions"><button class="btn success decision-button" data-decision="approved">อนุมัติ</button><button class="btn warning decision-button" data-decision="more_info">ขอข้อมูลเพิ่ม</button>${(separateModule?.extraDecisions ?? []).map((item) => `<button class="btn secondary decision-button" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("")}<button class="btn danger decision-button" data-decision="rejected">ไม่อนุมัติ</button></div></section>` : ""}
-        ${canOperate ? `<section class="card"><h2>ดำเนินงาน</h2><p class="muted small">ผู้ปฏิบัติงานสามารถรับงานและเปลี่ยนสถานะตามลำดับ</p><div class="approval-actions">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div>${extraFilesFieldHtml("status-files")}</section>` : ""}
         ${detailView?.sectionsHtml ?? ""}
+        ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
+        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></details>
       </div>
       <aside class="stack">
-        <section class="card"><h2>ลำดับอนุมัติ</h2><div class="timeline">${steps.map((step) => `<div class="timeline-item"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status)}</strong><p>${step.acted_by ? `ดำเนินการโดย ${escapeHtml(personName(directory, step.acted_by))}` : "รอดำเนินการ"}${step.comment ? ` · ${escapeHtml(step.comment)}` : ""}</p>${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></section>
-        <section class="card"><h2>ไฟล์แนบ</h2>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></section>
-        <section class="card"><h2>ลำดับเหตุการณ์</h2><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></section>
+        ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
+        ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files")}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
+        ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
+        <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
+        <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
       </aside>
     </div>`;
   app.innerHTML = shell(content, "requests", request.request_no);
   bindShell();
 
-  document.querySelectorAll(".decision-button").forEach((button) => button.addEventListener("click", async () => {
-    const decision = button.dataset.decision;
-    const comment = document.querySelector("#decision-comment")?.value.trim() ?? "";
-    // สเปก: "อนุมัติ" และ "รับทราบข้อมูล" เท่านั้นที่หมายเหตุเป็นทางเลือก (COMMENT_REQUIRED บังคับ
-    // แค่ "ไม่อนุมัติ"/"ขอข้อมูลเพิ่ม") — ดักที่นี่ก่อนยิง RPC เพื่อไม่ให้เสียรอบไปกลับ
-    if (!["approved", "acknowledged"].includes(decision) && comment.length < 3) {
-      return showToast(decision === "rejected"
-        ? "กรุณาระบุเหตุผลที่ไม่อนุมัติ"
-        : "กรุณาระบุว่าต้องการข้อมูลเพิ่มเติมเรื่องอะไร", "error");
-    }
-    let files;
-    try { files = readExtraFiles(document.querySelector("#decision-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
-    if (decision === "rejected" && !(await confirmDialog({ title: "ไม่อนุมัติคำร้องนี้?", message: comment, confirmLabel: "ไม่อนุมัติ", danger: true }))) return;
-    document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = true; });
-    button.setAttribute("aria-busy", "true");
-    try {
-      const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: decision, p_comment: comment });
-      if (error) throw error;
-      const warning = await uploadExtraFiles(id, files, employee.id);
-      triggerNotificationEmails(id);
-      showToast(warning || "บันทึกผลการพิจารณาแล้ว", warning ? "error" : "success");
-      await renderRequestDetail(params);
-    } catch (error) { showToast(friendlyError(error), "error"); button.removeAttribute("aria-busy"); document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = false; }); }
-  }));
+  bindRequestDetailChrome();
+  if (canApprove) bindDecisionPanel({ id, params, request, currentStep, nextStep, employee, extraDecisions: separateModule?.extraDecisions ?? [] });
+  if (receipt && !canApprove && !canOperate) fillNextItemPanel(id);
+  trackActionBarHeight();
   document.querySelector(".status-button")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     let files;
@@ -2936,7 +2941,377 @@ async function renderRequestDetail(params) {
     const trigger = event.target.closest("[data-attachment-open]");
     if (trigger) openAttachmentLightbox(trigger.dataset.attachmentOpen);
   });
-  hydrateAttachmentGallery(attachments).catch((error) => showToast(friendlyError(error), "error"));
+  hydrateAttachmentGallery(attachments).then(fillPhotoStrip).catch((error) => showToast(friendlyError(error), "error"));
+}
+
+// ---- หน้ารายละเอียดคำร้อง: ตัดสินใจก่อน (brief .impeccable/surfaces/src-app-app-requests-id-page-tsx.md) ----
+
+// มติที่เพิ่งกดในแท็บนี้ เก็บไว้ทำใบเสร็จหลังวาดหน้าใหม่ (อยู่ในหน่วยความจำเท่านั้น รีเฟรชแล้วหาย ไทม์ไลน์ยังเป็นหลักฐานจริง)
+const recentDecisions = new Map();
+const RECEIPT_TTL_MS = 10 * 60 * 1000;
+const DECISION_UNDO_SECONDS = 5;
+
+function recentDecisionFor(requestId) {
+  const entry = recentDecisions.get(requestId);
+  if (!entry) return null;
+  if (Date.now() - entry.at > RECEIPT_TTL_MS) {
+    recentDecisions.delete(requestId);
+    return null;
+  }
+  return entry;
+}
+
+function decisionReceiptHtml(receipt, directory) {
+  const verb = decisionVerbs[receipt.decision] ?? "บันทึกผล";
+  const tone = receipt.decision === "rejected" ? "danger" : receipt.decision === "more_info" ? "warning" : "success";
+  return `<section class="card decision-receipt decision-receipt-${tone}" aria-labelledby="decision-receipt-title">
+    <span class="decision-receipt-icon" aria-hidden="true">${uiIcon(receipt.decision === "rejected" ? "close" : "check")}</span>
+    <div>
+      <h2 id="decision-receipt-title">${escapeHtml(verb)}แล้ว</h2>
+      <p>โดย ${escapeHtml(personName(directory, receipt.actorId))} · ${formatDate(new Date(receipt.at).toISOString(), true)}${receipt.nextStepName ? ` · ส่งต่อให้ ${escapeHtml(receipt.nextStepName)}` : ""}</p>
+      ${receipt.comment ? `<p class="decision-receipt-comment">${escapeHtml(receipt.comment)}</p>` : ""}
+    </div>
+  </section>`;
+}
+
+function requestDetailMenuHtml(actionsHtml) {
+  return `<div class="request-detail-menu">
+    <button type="button" class="icon-button" id="request-detail-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="request-detail-menu-list" aria-label="ตัวเลือกเพิ่มเติม" title="ตัวเลือกเพิ่มเติม"><span aria-hidden="true">⋯</span></button>
+    <div class="request-detail-menu-list" id="request-detail-menu-list" data-popup hidden>${actionsHtml}</div>
+  </div>`;
+}
+
+function photoStripHtml(photos, totalAttachments) {
+  return `<div class="photo-strip" id="photo-strip">${photos.map((file) => `<button type="button" class="photo-strip-item" data-attachment-open="${escapeHtml(file.id)}" aria-label="ดูรูปขนาดใหญ่: ${escapeHtml(file.file_name)}"><span class="photo-strip-placeholder" aria-hidden="true">${uiIcon("document")}</span></button>`).join("")}${totalAttachments > photos.length ? `<button type="button" class="photo-strip-more" id="photo-strip-more" aria-controls="request-attachments">ไฟล์แนบทั้งหมด ${totalAttachments}</button>` : ""}</div>`;
+}
+
+function fillPhotoStrip() {
+  document.querySelectorAll(".photo-strip-item").forEach((item) => {
+    const entry = attachmentPreviews.get(item.dataset.attachmentOpen);
+    if (!entry) return;
+    const image = document.createElement("img");
+    image.alt = "";
+    image.loading = "lazy";
+    image.src = entry.thumbnailUrl ?? entry.url;
+    image.addEventListener("error", () => { if (image.src !== entry.url) image.src = entry.url; }, { once: true });
+    item.replaceChildren(image);
+  });
+}
+
+// ปุ่มตัดสินใจ: ไม่อนุมัติ · ขอข้อมูลเพิ่ม · (มติเฉพาะโมดูล) · อนุมัติ — อนุมัติอยู่ขวาสุด ใต้นิ้วโป้ง
+function decisionButtonsOf(extraDecisions) {
+  return [
+    { decision: "rejected", label: "ไม่อนุมัติ", tone: "danger" },
+    { decision: "more_info", label: "ขอข้อมูลเพิ่ม", tone: "warning" },
+    ...extraDecisions.map((item) => ({ decision: item.decision, label: item.label, tone: "secondary" })),
+    { decision: "approved", label: "อนุมัติ", tone: "success" },
+  ];
+}
+
+// "อนุมัติ" และ "รับทราบข้อมูล" เท่านั้นที่ความเห็นเป็นทางเลือก — ตรงกับ COMMENT_REQUIRED ของ app_approval_decision
+const decisionNeedsComment = (decision) => !["approved", "acknowledged"].includes(decision);
+
+function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions }) {
+  return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
+    <div class="action-panel-head">
+      <h2 id="decision-panel-title">พิจารณาคำร้อง</h2>
+      <p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}${nextStep ? ` · ถัดไป: ${escapeHtml(nextStep.step_name)}` : " · ขั้นสุดท้าย"}</p>
+    </div>
+    <p class="decision-line" id="decision-line" hidden></p>
+    <div class="decision-reason" id="decision-reason" hidden>
+      <div class="field">
+        <label for="decision-comment" id="decision-comment-label">ความเห็น</label>
+        <textarea class="textarea" id="decision-comment" maxlength="1000" rows="3" aria-describedby="decision-comment-error"></textarea>
+        <p class="field-error" id="decision-comment-error" hidden></p>
+      </div>
+      <details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("decision-files")}</details>
+    </div>
+    <div class="action-panel-buttons" id="decision-buttons">${decisionButtonsOf(extraDecisions).map((item) => `<button type="button" class="btn ${item.tone} decision-button${item.decision === "approved" ? " is-primary" : ""}" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("")}</div>
+  </section>`;
+}
+
+function nextItemPanelHtml() {
+  return `<section class="card action-panel next-item-panel" id="next-item-panel" aria-live="polite">
+    <div class="action-panel-head"><h2>งานถัดไป</h2><p class="muted small" id="next-item-text">กำลังหางานที่รอคุณ…</p></div>
+    <div class="action-panel-buttons"><a class="btn secondary" href="#/">กลับหน้าหลัก</a></div>
+  </section>`;
+}
+
+async function fillNextItemPanel(currentId) {
+  const panel = document.querySelector("#next-item-panel");
+  if (!panel) return;
+  try {
+    const pending = (await getPendingApprovals()).filter((step) => step.request?.id && step.request.id !== currentId);
+    if (!panel.isConnected) return;
+    const text = panel.querySelector("#next-item-text");
+    const buttons = panel.querySelector(".action-panel-buttons");
+    if (!pending.length) {
+      text.textContent = "ไม่มีงานรอคุณพิจารณาแล้ว";
+      buttons.innerHTML = `<a class="btn" href="#/">กลับหน้าหลัก</a>`;
+      return;
+    }
+    const next = pending[0];
+    text.textContent = `เหลือ ${pending.length} รายการ · ถัดไป ${next.request.request_no} ${next.request.title}`;
+    buttons.innerHTML = `<a class="btn secondary" href="#/">กลับหน้าหลัก</a><a class="btn is-primary" href="#/request?id=${encodeURIComponent(next.request.id)}">รายการถัดไป (${pending.length})</a>`;
+  } catch {
+    if (panel.isConnected) panel.querySelector("#next-item-text").textContent = "โหลดงานถัดไปไม่ได้";
+  }
+}
+
+function bindRequestDetailChrome() {
+  const description = document.querySelector("#request-description");
+  const more = document.querySelector("#request-description-more");
+  if (description && more) {
+    // แสดง "อ่านต่อ" เฉพาะเมื่อข้อความยาวเกิน 6 บรรทัดจริง
+    more.hidden = description.scrollHeight <= description.clientHeight + 2;
+    more.addEventListener("click", () => {
+      const expanded = description.classList.toggle("is-clamped") === false;
+      more.setAttribute("aria-expanded", String(expanded));
+      more.textContent = expanded ? "ย่อ" : "อ่านต่อ";
+    });
+  }
+  const menuButton = document.querySelector("#request-detail-menu-button");
+  const menuList = document.querySelector("#request-detail-menu-list");
+  if (menuButton && menuList) {
+    menuButton.addEventListener("click", () => {
+      if (!menuList.hidden) return closePopup(menuList);
+      menuList.hidden = false;
+      menuButton.setAttribute("aria-expanded", "true");
+      menuList.querySelector("button, a")?.focus();
+    });
+    menuList.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closePopup(menuList);
+      menuButton.focus();
+    });
+  }
+  document.querySelector("#photo-strip")?.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-attachment-open]");
+    if (trigger) return openAttachmentLightbox(trigger.dataset.attachmentOpen);
+    if (event.target.closest("#photo-strip-more")) {
+      const section = document.querySelector("#request-attachments");
+      section.open = true;
+      section.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      section.querySelector("summary")?.focus({ preventScroll: true });
+    }
+  });
+}
+
+// แถบตัดสินใจติดล่างจอบนมือถือ: บอกความสูงจริงให้ CSS เว้นที่ท้ายหน้า และยก toast ขึ้นเหนือแถบ
+function trackActionBarHeight() {
+  const bar = document.querySelector(".action-panel");
+  if (!bar || typeof ResizeObserver !== "function") return;
+  const update = () => document.documentElement.style.setProperty("--action-bar-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+  new ResizeObserver(update).observe(bar);
+  update();
+}
+
+// ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
+function bindDecisionPanel({ id, params, request, currentStep, nextStep, employee, extraDecisions }) {
+  const panel = document.querySelector("#decision-panel");
+  if (!panel) return;
+  const line = panel.querySelector("#decision-line");
+  const reason = panel.querySelector("#decision-reason");
+  const comment = panel.querySelector("#decision-comment");
+  const commentLabel = panel.querySelector("#decision-comment-label");
+  const commentError = panel.querySelector("#decision-comment-error");
+  const buttons = panel.querySelector("#decision-buttons");
+  const options = decisionButtonsOf(extraDecisions);
+  const labelOf = (decision) => options.find((item) => item.decision === decision)?.label ?? decisionVerbs[decision] ?? decision;
+  const toneOf = (decision) => options.find((item) => item.decision === decision)?.tone ?? "secondary";
+  const hash = location.hash;
+  let state = { name: "idle" };
+  let lastTrigger = null;
+  let countdownTimer = null;
+  let tickTimer = null;
+
+  const setLine = (text, kind = "") => {
+    line.hidden = !text;
+    line.textContent = text;
+    line.className = `decision-line${kind ? ` is-${kind}` : ""}`;
+    line.setAttribute("role", kind === "error" ? "alert" : "status");
+  };
+  const clearError = () => {
+    commentError.hidden = true;
+    commentError.textContent = "";
+    comment.removeAttribute("aria-invalid");
+  };
+  const showError = (text) => {
+    commentError.textContent = text;
+    commentError.hidden = false;
+    comment.setAttribute("aria-invalid", "true");
+    comment.focus();
+  };
+  const button = (label, className, action, attrs = "") => `<button type="button" class="btn ${className}" data-action="${action}"${attrs}>${escapeHtml(label)}</button>`;
+
+  function render() {
+    panel.dataset.state = state.name;
+    if (state.name === "idle") {
+      setLine("");
+      reason.hidden = true;
+      buttons.innerHTML = options.map((item) => `<button type="button" class="btn ${item.tone} decision-button${item.decision === "approved" ? " is-primary" : ""}" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("");
+      return;
+    }
+    if (state.name === "compose") {
+      const { decision } = state;
+      const needsComment = decisionNeedsComment(decision);
+      setLine(`${labelOf(decision)} ${request.request_no}${decision === "approved" && nextStep ? ` → ส่งต่อให้ ${nextStep.step_name}` : ""}`);
+      reason.hidden = !needsComment && !state.showComment;
+      commentLabel.textContent = decision === "rejected" ? "เหตุผลที่ไม่อนุมัติ (จำเป็น)"
+        : decision === "more_info" ? "ต้องการข้อมูลเพิ่มเรื่องอะไร (จำเป็น)"
+        : needsComment ? "เหตุผล (จำเป็น)" : "ความเห็น (ถ้ามี)";
+      const confirmClass = decision === "rejected" ? "danger-solid is-primary" : decision === "approved" ? "success is-primary" : `${toneOf(decision)} is-primary`;
+      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${!needsComment && !state.showComment ? button("เพิ่มความเห็น", "secondary", "add-comment") : ""}${button(`ยืนยัน${labelOf(decision)}`, confirmClass, "confirm")}`;
+      return;
+    }
+    if (state.name === "pending") {
+      reason.hidden = true;
+      setLine(`จะ${labelOf(state.decision)} ${request.request_no} ใน ${state.secondsLeft} วินาที`);
+      buttons.innerHTML = `${button(`เลิกทำ (${state.secondsLeft})`, "secondary", "undo")}${button("ส่งเลย", "is-primary", "send-now")}`;
+      return;
+    }
+    if (state.name === "sending") {
+      reason.hidden = true;
+      setLine(`กำลังส่ง: ${labelOf(state.decision)} ${request.request_no}…`);
+      buttons.innerHTML = button("กำลังส่ง…", "is-primary", "none", ' disabled aria-busy="true"');
+      return;
+    }
+    if (state.name === "error") {
+      reason.hidden = true;
+      setLine(`ส่งไม่สำเร็จ: ${state.message}`, "error");
+      buttons.innerHTML = `${button("แก้ไข", "secondary", "edit")}${button("ลองอีกครั้ง", "is-primary", "retry")}`;
+    }
+  }
+
+  function toIdle() {
+    clearTimers();
+    clearError();
+    state = { name: "idle" };
+    render();
+    buttons.querySelector(`[data-decision="${lastTrigger}"]`)?.focus();
+  }
+
+  function clearTimers() {
+    window.clearTimeout(countdownTimer);
+    window.clearInterval(tickTimer);
+    countdownTimer = null;
+    tickTimer = null;
+  }
+
+  function startCompose(decision) {
+    lastTrigger = decision;
+    clearError();
+    state = { name: "compose", decision, showComment: false };
+    render();
+    if (decisionNeedsComment(decision)) comment.focus();
+    else buttons.querySelector('[data-action="confirm"]')?.focus();
+  }
+
+  function confirm() {
+    const { decision } = state;
+    const text = comment.value.trim();
+    if (decisionNeedsComment(decision) && text.length < 3) {
+      return showError(decision === "rejected" ? "กรุณาระบุเหตุผลที่ไม่อนุมัติ อย่างน้อย 3 ตัวอักษร" : "กรุณาระบุว่าต้องการข้อมูลเพิ่มเติมเรื่องอะไร อย่างน้อย 3 ตัวอักษร");
+    }
+    let files;
+    try { files = readExtraFiles(document.querySelector("#decision-files")); } catch (fileError) { return showError(friendlyError(fileError)); }
+    clearError();
+    hideToast();
+    state = { name: "pending", decision, comment: text, files, secondsLeft: DECISION_UNDO_SECONDS };
+    render();
+    buttons.querySelector('[data-action="undo"]')?.focus();
+    tickTimer = window.setInterval(() => {
+      if (state.name !== "pending") return;
+      state.secondsLeft = Math.max(0, state.secondsLeft - 1);
+      // อัปเดตเฉพาะตัวเลขบนปุ่ม ไม่วาดปุ่มใหม่ จะได้ไม่ทำให้ focus หลุด
+      const undo = buttons.querySelector('[data-action="undo"]');
+      if (undo) undo.textContent = `เลิกทำ (${state.secondsLeft})`;
+      line.textContent = `จะ${labelOf(state.decision)} ${request.request_no} ใน ${state.secondsLeft} วินาที`;
+    }, 1000);
+    countdownTimer = window.setTimeout(send, DECISION_UNDO_SECONDS * 1000);
+    window.addEventListener("hashchange", sendOnLeave);
+    document.addEventListener("visibilitychange", sendWhenHidden);
+    window.addEventListener("beforeunload", warnBeforeUnload);
+  }
+
+  function detachLeaveGuards() {
+    window.removeEventListener("hashchange", sendOnLeave);
+    document.removeEventListener("visibilitychange", sendWhenHidden);
+    window.removeEventListener("beforeunload", warnBeforeUnload);
+  }
+  // ออกจากหน้าระหว่างนับถอยหลัง = ตั้งใจส่ง ส่งทันทีแทนที่จะทิ้งมติไว้เงียบๆ
+  function sendOnLeave() { if (state.name === "pending") send(); }
+  function sendWhenHidden() { if (document.visibilityState === "hidden" && state.name === "pending") send(); }
+  function warnBeforeUnload(event) {
+    if (!["pending", "sending"].includes(state.name)) return;
+    if (state.name === "pending") send();
+    event.preventDefault();
+    event.returnValue = "";
+  }
+
+  async function send() {
+    if (!["pending", "error"].includes(state.name)) return;
+    clearTimers();
+    const { decision, comment: text, files } = state;
+    state = { name: "sending", decision, comment: text, files };
+    if (panel.isConnected) render();
+    try {
+      const { error } = await sb.rpc("app_approval_decision", { p_step_id: currentStep.id, p_decision: decision, p_comment: text });
+      if (error) throw error;
+      detachLeaveGuards();
+      const warning = await uploadExtraFiles(id, files, employee.id);
+      triggerNotificationEmails(id);
+      recentDecisions.set(id, { decision, comment: text, at: Date.now(), actorId: employee.id, nextStepName: decision === "approved" ? nextStep?.step_name ?? "" : "" });
+      if (warning) showToast(warning, "error");
+      if (location.hash === hash) await renderRequestDetail(params);
+      else showToast(`${labelOf(decision)} ${request.request_no} แล้ว`, "success");
+    } catch (error) {
+      if (location.hash !== hash || !panel.isConnected) {
+        detachLeaveGuards();
+        showToast(`${labelOf(decision)} ${request.request_no} ไม่สำเร็จ: ${friendlyError(error)}`, "error");
+        return;
+      }
+      state = { name: "error", decision, comment: text, files, message: friendlyError(error) };
+      render();
+      buttons.querySelector('[data-action="retry"]')?.focus();
+    }
+  }
+
+  buttons.addEventListener("click", (event) => {
+    const target = event.target.closest("button");
+    if (!target || target.disabled) return;
+    if (target.dataset.decision) return startCompose(target.dataset.decision);
+    const action = target.dataset.action;
+    if (action === "cancel") return toIdle();
+    if (action === "add-comment") {
+      state.showComment = true;
+      render();
+      return comment.focus();
+    }
+    if (action === "confirm") return confirm();
+    if (action === "undo") {
+      detachLeaveGuards();
+      const { decision } = state;
+      clearTimers();
+      state = { name: "compose", decision, showComment: Boolean(comment.value.trim()) };
+      render();
+      return buttons.querySelector('[data-action="confirm"]')?.focus();
+    }
+    if (action === "send-now" || action === "retry") return send();
+    if (action === "edit") {
+      detachLeaveGuards();
+      state = { name: "compose", decision: state.decision, showComment: Boolean(comment.value.trim()) };
+      render();
+      return comment.focus();
+    }
+  });
+  comment.addEventListener("input", () => { if (comment.value.trim().length >= 3) clearError(); });
+  panel.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (state.name === "compose") { event.preventDefault(); toIdle(); }
+    else if (state.name === "pending") { event.preventDefault(); buttons.querySelector('[data-action="undo"]')?.click(); }
+  });
 }
 
 function approvalItemHtml({ href, requestNo, date, title, detail, active = false }) {
