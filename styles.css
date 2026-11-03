@@ -951,6 +951,15 @@ a.machine-history-no:hover { text-decoration: underline; }
 .approval-item .row { display: flex; justify-content: space-between; color: var(--muted); font-size: var(--text-caption); }
 .approval-item strong { display: block; margin: 8px 0 4px; font-size: var(--text-ui); }
 .approval-item p { margin: 0; color: var(--muted); font-size: var(--text-caption); }
+/* อนุมัติหลายรายการ: ช่องเลือกอยู่หน้ารายการ (นอกลิงก์) */
+.approval-bulk { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.approval-bulk-all { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-meta); cursor: pointer; }
+.approval-select-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; border-bottom: 1px solid var(--soft-line); }
+.approval-select-row .approval-item { border-bottom: 0; }
+.approval-select, .approval-bulk-all input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+/* พื้นที่แตะช่องเลือก 44px (iPhone) */
+.approval-select-hit { width: 44px; min-height: 44px; padding-top: 13px; display: flex; justify-content: center; align-self: stretch; cursor: pointer; }
+.approval-select-row .approval-item { padding-left: 4px; }
 .approval-preview { padding: 28px; }
 .approval-preview h2 { margin: 10px 0; font-size: var(--text-page); }
 .approval-actions { margin-top: 20px; padding-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); }
