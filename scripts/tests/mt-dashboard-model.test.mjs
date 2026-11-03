@@ -198,7 +198,10 @@ test("a job waiting for its technician is late from the assigned start date, not
     req({ id: "starts-today", status: "assigned", work_started_date: TODAY, work_expected_date: "2026-10-20" }),
     req({ id: "started", status: "in_progress", work_started_date: "2026-10-01", work_expected_date: "2026-10-20" }),
     req({ id: "no-start", status: "assigned", work_started_date: null, work_expected_date: "2026-10-20" }),
+    req({ id: "rework", status: "assigned", work_started_date: "2026-10-01", work_expected_date: "2026-10-20",
+      history: [at("in_progress", "2026-10-01T05:00:00Z"), at("pending_verify", "2026-10-03T05:00:00Z"), at("assigned", "2026-10-04T05:00:00Z")] }),
   ]).map((row) => [row.id, row]));
+  assert.equal(rows.rework.lateStart, false);
   assert.equal(rows["late-start"].lateStart, true); assert.equal(rows["late-start"].daysLateStart, 2);
   assert.equal(rows["late-start"].overdue, false);
   assert.equal(rows["starts-today"].lateStart, false);

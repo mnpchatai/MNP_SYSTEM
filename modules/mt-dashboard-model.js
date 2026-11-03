@@ -117,8 +117,9 @@
       const expected = request.work_expected_date ?? null;
       const overdue = TECHNICIAN_STATUSES.includes(status) && Boolean(expected) && today > expected;
       // A job still waiting for its technician is late once the start date the head technician assigned has passed.
+      // A failed inspection returns a started job to "assigned", so only a job never put in progress counts.
       const startOn = request.work_started_date ?? null;
-      const lateStart = status === "assigned" && Boolean(startOn) && today > startOn;
+      const lateStart = status === "assigned" && !firstTo("in_progress") && Boolean(startOn) && today > startOn;
       const pastRepair = status === "pending_verify" || isCompleted;
       const verifications = request.verifications ?? [];
       const code = String(request.machine_code ?? "").trim();
