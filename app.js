@@ -366,6 +366,7 @@ function showToast(message, type = "success") {
   toastNode.setAttribute("aria-live", isError ? "assertive" : "polite");
   toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(message)}</span>${isError ? `<button type="button" class="toast-close" aria-label="ปิดข้อความ">${uiIcon("close")}</button>` : ""}`;
   toastNode.className = `toast show ${isError ? "error" : "success"}`;
+  showToast.shownAt = Date.now();
   if (isError) toastNode.querySelector(".toast-close").addEventListener("click", hideToast);
   else showToast.timer = window.setTimeout(hideToast, 3500);
 }
@@ -377,6 +378,10 @@ function hideToast() {
 }
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && toastNode.classList.contains("error") && !document.querySelector("dialog[open]")) hideToast();
+});
+// ผู้ใช้ไปหน้าอื่น: ข้อผิดพลาดของหน้าเดิมไม่ตามไป แต่ไม่ล้างข้อผิดพลาดที่เพิ่งแสดงก่อนโค้ดพาไปหน้าใหม่ (เช่น showToast แล้ว go())
+window.addEventListener("hashchange", () => {
+  if (toastNode.classList.contains("error") && Date.now() - (showToast.shownAt ?? 0) > 1000) hideToast();
 });
 
 // กล่องยืนยันในแอป แทน confirm() ของเบราว์เซอร์: ปุ่มยืนยันบอกผลของการกด (เช่น "ลบบัญชี") กด Esc หรือยกเลิก = ไม่ทำ
@@ -4053,7 +4058,6 @@ async function ncrRequestTypeId() {
 
 async function renderRoute() {
   const { path, params } = currentRoute();
-  if (toastNode.classList.contains("error")) hideToast();
   refreshInstallBanner({ hideOnly: true });
   if (path !== "requests" || pendingModuleZoom !== moduleZoomKey(params)) pendingModuleZoom = null;
   if (path === "set-password") return await renderSetPassword(params);
