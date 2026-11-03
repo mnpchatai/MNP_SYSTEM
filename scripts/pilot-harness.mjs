@@ -115,8 +115,9 @@ Object.defineProperty(navigator, "serviceWorker", { value: { register: () => Pro
 // หน้าจำลองไม่ส่งอะไรออกนอกเครื่อง: fetch ข้าม origin ทุกตัว (Supabase Edge Function, Google Apps Script ที่เขียนชีตสำรอง ฯลฯ) ได้คำตอบว่างแทน
 const realFetch = window.fetch.bind(window);
 window.fetch = (input, init) => {
-  const target = new URL(String(input && input.url || input), location.href);
-  return target.origin === location.origin ? realFetch(input, init) : Promise.resolve(new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+  let sameOrigin = false;
+  try { sameOrigin = new URL(String(input && input.url || input), location.href).origin === location.origin; } catch { sameOrigin = false; }
+  return sameOrigin ? realFetch(input, init) : Promise.resolve(new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
 };
 (() => {
   const empty = new URLSearchParams(location.search).has("empty");

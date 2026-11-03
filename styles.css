@@ -419,8 +419,8 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .summary-grid.is-strip .summary strong { margin: 2px 0 0; font-size: var(--text-heading); line-height: 1.2; }
 .summary-grid.is-strip .summary small { margin-top: 2px; }
 .summary-toggle.is-alert strong { color: var(--warning-ink); }
-/* รายการงาน: ชื่อแผงซ้ำกับการ์ดที่เลือกอยู่ จึงซ่อนแถบหัวเมื่อไม่มีคำอธิบายเพิ่ม (h2 ยังเป็นชื่อของแผงสำหรับโปรแกรมอ่านหน้าจอ) */
-.dashboard-list-panel .card-heading:has(> #dashboard-list-note:empty) { display: none; }
+/* รายการงาน: ชื่อแผงซ้ำกับการ์ดที่เลือกอยู่ จึงซ่อนแถบหัวแบบ sr-only เมื่อไม่มีคำอธิบายเพิ่ม (h2 ยังเป็นหัวข้อให้โปรแกรมอ่านหน้าจอกระโดดถึงได้) */
+.dashboard-list-panel .card-heading:has(> #dashboard-list-note:empty) { position: absolute; width: 1px; height: 1px; min-height: 0; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .summary small { color: var(--quiet); font-size: var(--text-caption); }
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .82fr); gap: 18px; }
 .card { min-width: 0; padding: 20px; background: var(--paper); border: 1px solid var(--card-border); border-radius: var(--radius-md); box-shadow: var(--elev-1); }
