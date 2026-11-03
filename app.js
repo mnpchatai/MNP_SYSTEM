@@ -27,6 +27,9 @@ const UI_ICON_PATHS = {
   theme: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
   building: '<path d="M4 21V5.5L12 3v18M12 8h8v13M2 21h20M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
+  inbox: '<path d="M3 13.5 5.6 5.4A1.5 1.5 0 0 1 7 4.5h10a1.5 1.5 0 0 1 1.4.9L21 13.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/><path d="M3 13.5h5l1.5 2.5h5l1.5-2.5h5"/>',
 };
 const uiIcon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${UI_ICON_PATHS[name] ?? ""}</svg>`;
 
@@ -355,8 +358,9 @@ function go(path) {
 }
 
 function showToast(message, type = "success") {
-  toastNode.textContent = message;
-  toastNode.className = `toast show${type === "error" ? " error" : ""}`;
+  const isError = type === "error";
+  toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(message)}</span>`;
+  toastNode.className = `toast show ${isError ? "error" : "success"}`;
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => { toastNode.className = "toast"; }, 3500);
 }
@@ -441,6 +445,7 @@ function setFormBusy(form, busy) {
   if (button) {
     if (!button.dataset.label) button.dataset.label = button.textContent;
     button.textContent = busy ? "กำลังดำเนินการ…" : button.dataset.label;
+    if (busy) button.setAttribute("aria-busy", "true"); else button.removeAttribute("aria-busy");
   }
 }
 
@@ -992,7 +997,7 @@ function requestOwnerNames(request, directory) {
 }
 
 function requestRows(requests, { showProgress = false, showRequester = false, directory = null } = {}) {
-  if (!requests.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
+  if (!requests.length) return emptyState("ยังไม่มีรายการในขณะนี้");
   return `
     <div class="request-timeline">${requests.map((request) => {
         const type = relation(request.request_type);
@@ -1036,7 +1041,7 @@ function requestRows(requests, { showProgress = false, showRequester = false, di
    ฟิลด์ระดับติดตามสถานะ ไม่มีรายละเอียดอาการ/ไฟล์แนบ/ความเห็นผู้อนุมัติ ใบที่ผู้ใช้ไม่มีสิทธิ์
    เปิดดูเต็ม (can_open = false) จึงแสดงเป็นข้อความเฉย ๆ ไม่ทำเป็นลิงก์ */
 function statusBoardRows(rows) {
-  if (!rows.length) return `<div class="empty">ยังไม่มีรายการในขณะนี้</div>`;
+  if (!rows.length) return emptyState("ยังไม่มีรายการในขณะนี้");
   return `
     <div class="request-timeline status-board-timeline">${rows.map((row) => {
         const href = `#/request?id=${encodeURIComponent(row.id)}`;
@@ -1764,8 +1769,14 @@ function bindShell() {
   }));
 }
 
+// แถวโครงร่างระหว่างโหลด ผู้ใช้โปรแกรมอ่านหน้าจอยังได้ยิน "กำลังโหลดข้อมูล"
+const loadingSkeleton = (rows = 4) => `<div class="skeleton" role="status"><span class="sr-only">กำลังโหลดข้อมูล…</span>${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}</div>`;
+
+// หน้าว่าง: ไอคอน + ข้อความเดิม
+const emptyState = (text) => `<div class="empty empty-state">${uiIcon("inbox")}<p>${escapeHtml(text)}</p></div>`;
+
 function loadingShell(active, title) {
-  app.innerHTML = shell(`<div class="empty">กำลังโหลดข้อมูล…</div>`, active, title);
+  app.innerHTML = shell(loadingSkeleton(), active, title);
   bindShell();
 }
 
@@ -1888,7 +1899,7 @@ function dashboardListToggle(key, count, hint) {
 }
 
 function dashboardActionItems(pending, repairTasks) {
-  if (!pending.length && !repairTasks.length) return `<div class="empty">ไม่มีงานค้าง</div>`;
+  if (!pending.length && !repairTasks.length) return emptyState("ไม่มีงานค้าง");
   const group = (title, items) => items.length ? `<h3 class="dashboard-list-group">${title} <span class="badge">${items.length}</span></h3>${items.join("")}` : "";
   return group("รออนุมัติ", pending.map((step) => approvalStepItemHtml(step, `#/request?id=${encodeURIComponent(step.request.id)}`)))
     + group("งานซ่อมที่ต้องดำเนินการ", repairTasks.map(repairTaskItemHtml));
@@ -1916,7 +1927,7 @@ function bindDashboardLists({ pending, repairTasks }) {
     if (!active) return;
     heading.textContent = DASHBOARD_LISTS[key].label;
     note.textContent = DASHBOARD_LISTS[key].note;
-    body.innerHTML = `<div class="empty">กำลังโหลดข้อมูล…</div>`;
+    body.innerHTML = loadingSkeleton(3);
     if (!loads.has(key)) loads.set(key, load(key));
     try {
       const html = await loads.get(key);
@@ -3122,7 +3133,7 @@ async function renderNotifications() {
   const content = `
     <div class="page-heading"><div><div class="eyebrow">Notifications</div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
-    <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || `<div class="empty">ยังไม่มีการแจ้งเตือน</div>`}</div>`;
+    <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน")}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   refreshPushPanel();
@@ -3611,7 +3622,7 @@ async function renderAdmin(params) {
           <button class="btn success" data-approve="${escapeHtml(item.id)}">อนุมัติและสร้างสิทธิ์</button>
           <button class="btn danger" data-reject="${escapeHtml(item.id)}">ไม่อนุมัติ</button>
         </div>` : `<p class="muted small">${escapeHtml(item.reviewed_by_name ? `ดำเนินการโดย ${item.reviewed_by_name}` : "ดำเนินการแล้ว")}${item.reviewed_at ? ` · ${formatDate(item.reviewed_at, true)}` : ""}${item.review_note ? ` · ${escapeHtml(item.review_note)}` : ""}</p>`}
-    </article>`).join("") || `<div class="empty">ยังไม่มีคำร้องเกี่ยวกับบัญชี</div>`;
+    </article>`).join("") || emptyState("ยังไม่มีคำร้องเกี่ยวกับบัญชี");
 
   // ข้อมูลบัญชี: ข้อมูลเดียวกับ credentials (คลัง ID/รหัสผ่าน) แค่โชว์เป็นรายละเอียดโปรไฟล์
   // ต่อคนแทนตาราง — ไม่มีคอลัมน์รหัสผ่าน เพราะช่องนั้นยังอยู่ที่แท็บคลัง ID/รหัสผ่านเท่านั้น
@@ -3636,7 +3647,7 @@ async function renderAdmin(params) {
       </dl>
       <div class="approval-actions"><a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไขบัญชี →</a></div>
     </article>`;
-  }).join("") || `<div class="empty">ยังไม่มีบัญชีในระบบ</div>`;
+  }).join("") || emptyState("ยังไม่มีบัญชีในระบบ");
 
   const credentialRows = credentials.map((item) => {
     const isSelf = item.employee_id === state.employee.id;

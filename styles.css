@@ -331,7 +331,14 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
   font-weight: 600;
   font-size: var(--text-meta);
 }
+.btn { transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .1s ease; }
 .btn:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.985); }
+/* ปุ่มส่งฟอร์มระหว่างบันทึก (setFormBusy ใส่ aria-busy) */
+.btn[aria-busy="true"]:disabled { opacity: .85; }
+.btn[aria-busy="true"]::before { content: ""; width: 14px; height: 14px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: btn-spin .7s linear infinite; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+.filter, .nav-link, .icon-button { transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
 .btn.block { width: 100%; }
 .btn.secondary { color: var(--muted); background: var(--paper); border-color: var(--line); }
 .btn.secondary:hover { color: var(--ink); background: var(--shell); }
@@ -815,6 +822,14 @@ tbody tr:hover { background: var(--shell); }
   .cc-department-other { grid-column: span 3; }
 }
 .empty { padding: 48px 20px; color: var(--muted); text-align: center; }
+.empty-state { display: grid; justify-items: center; gap: 10px; }
+.empty-state .ui-icon { width: 44px; height: 44px; padding: 10px; color: var(--quiet); background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-pill); stroke-width: 1.6; }
+.empty-state p { margin: 0; font-size: var(--text-body); }
+.skeleton { padding: 20px; display: grid; gap: 12px; }
+.skeleton-row { height: 44px; border-radius: var(--radius-md); background: linear-gradient(90deg, var(--soft-line) 0%, var(--shell) 50%, var(--soft-line) 100%) 0 0 / 200% 100%; animation: skeleton-sheen 1.4s ease-in-out infinite; }
+.skeleton-row:nth-child(3n) { width: 82%; }
+.skeleton-row:nth-child(4n) { width: 64%; }
+@keyframes skeleton-sheen { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 .request-detail-head { padding-bottom: 20px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
 .request-detail-head h1 { margin: 8px 0 7px; font-size: clamp(24px, 3vw, 31px); }
@@ -948,8 +963,16 @@ a.machine-history-no:hover { text-decoration: underline; }
 .profile-row span, .profile-row strong { display: block; }
 .profile-row span { margin-bottom: 4px; color: var(--quiet); font-size: var(--text-caption); font-weight: 600; }
 
-.toast { position: fixed; z-index: 50; right: 18px; bottom: 18px; max-width: min(390px, calc(100vw - 36px)); padding: 12px 15px; color: white; background: #172238; border-radius: var(--radius-md); box-shadow: var(--shadow); opacity: 0; transform: translateY(12px); pointer-events: none; transition: .2s ease; }
-.toast.show { opacity: 1; transform: translateY(0); }
+.toast { position: fixed; z-index: 50; right: 18px; bottom: 18px; max-width: min(390px, calc(100vw - 36px)); padding: 12px 15px; display: flex; align-items: flex-start; gap: 9px; color: white; background: #172238; border-radius: var(--radius-md); box-shadow: var(--shadow); opacity: 0; transform: translateY(12px); pointer-events: none; transition: opacity .14s ease-in, transform .14s ease-in; }
+.toast .ui-icon { width: 18px; height: 18px; margin-top: 2px; stroke-width: 2.2; }
+.toast.show { opacity: 1; transform: translateY(0); transition: opacity .18s cubic-bezier(.16, 1, .3, 1), transform .18s cubic-bezier(.16, 1, .3, 1); }
+.toast.success { background: var(--success-strong); }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-row { animation: none; }
+  .btn[aria-busy="true"]::before { animation-duration: 1.6s; }
+  .btn:active:not(:disabled) { transform: none; }
+  .toast, .toast.show { transform: none; }
+}
 .toast.error { background: #9e332c; }
 .update-banner { position: fixed; z-index: 60; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: max-content; max-width: calc(100vw - 36px); padding: 12px 20px; color: #ffffff; background: var(--primary); border: 0; border-radius: var(--radius-pill); box-shadow: var(--shadow); font-weight: 700; transform: translateX(-50%); }
 
