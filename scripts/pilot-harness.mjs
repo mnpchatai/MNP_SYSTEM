@@ -3,7 +3,8 @@
 //   npm run pilot:harness            → http://localhost:5181/harness/   (PORT=… เปลี่ยนพอร์ตได้)
 //                                    → http://localhost:5181/pilot-shell.html   (หน้าหลักจริงของ app.js ด้วย Supabase จำลอง; ?empty=1 = ไม่มีงาน)
 //
-// เสิร์ฟไฟล์ของ repo ตามเดิม (/styles.css, /modules/*.js …) และสร้างหน้า /harness/ ที่โหลดสไตล์ + สคริปต์โมดูลทุกตัวตามลำดับใน
+// ฟังเฉพาะ loopback (127.0.0.1 และ ::1) เครื่องอื่นใน LAN ต่อไม่ได้ และเสิร์ฟเฉพาะไฟล์ชุดเดียวกับที่ scripts/build-pilot.mjs เผยแพร่
+// (/styles.css, /modules/*.js …) ไฟล์อื่นของ repo (.git, package.json, .env*) ได้ 404 แล้วสร้างหน้า /harness/ ที่โหลดสไตล์ + สคริปต์โมดูลทุกตัวตามลำดับใน
 // index.html (ยกเว้น app.js) แล้วแทน app.js ด้วย stub ของ helper ที่โมดูลเรียก (state, app, shell, bindShell, renderNotFound,
 // escapeHtml, showToast, friendlyError, renderRoute, currentRoute) โดยถือว่าอยู่ในโหมดทดสอบเสมอ ข้อมูลของโมดูลอยู่ใน localStorage
 // ของเบราว์เซอร์เหมือนของจริง ใช้เพื่อดู/ลองกดเท่านั้น ไม่ใช่ทางเข้าของผู้ใช้จริง และสคริปต์นี้ไม่ถูกเผยแพร่ (ดู scripts/build-pilot.mjs)
@@ -19,6 +20,16 @@ const TYPES = {
   ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
   ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".txt": "text/plain; charset=utf-8",
 };
+// allowlist เดียวกับ scripts/build-pilot.mjs: ไฟล์ที่ราก + โฟลเดอร์ที่หน้าเว็บโหลดจริง
+const STATIC_FILES = new Set(["index.html", "app.js", "styles.css", "favicon.ico", "manifest.webmanifest", "sw.js"]);
+const STATIC_DIRS = new Set(["modules", "fonts", "vendor", "icons"]);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function servable(relative) {
+  const parts = relative.split(sep);
+  if (parts.includes("..")) return false;
+  return parts.length === 1 ? STATIC_FILES.has(parts[0]) : STATIC_DIRS.has(parts[0]) && parts.at(-1) !== "";
+}
 
 async function moduleScripts() {
   const html = await readFile(join(root, "index.html"), "utf8");
@@ -187,8 +198,12 @@ async function shellPage() {
   return html.replace(cdn, '<script defer src="/harness-mock-supabase.js"></script>');
 }
 
-http.createServer(async (request, response) => {
+async function handle(request, response) {
   try {
+    // Host ต้องเป็น loopback ด้วย กันหน้าเว็บภายนอกที่ใช้ DNS rebinding ชี้ชื่อของตัวเองมาที่ 127.0.0.1
+    let host = "";
+    try { host = new URL(`http://${request.headers.host ?? ""}`).hostname; } catch { host = ""; }
+    if (!LOOPBACK_HOSTS.has(host)) { response.writeHead(403); response.end("forbidden"); return; }
     const url = new URL(request.url, `http://localhost:${port}`);
     if (url.pathname === "/" || url.pathname === "/harness" || url.pathname === "/harness/") {
       response.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-store" });
@@ -206,7 +221,7 @@ http.createServer(async (request, response) => {
       return;
     }
     const relative = normalize(decodeURIComponent(url.pathname)).replace(/^[\\/]+/, "");
-    if (relative.split(sep).includes("..")) { response.writeHead(403); response.end("forbidden"); return; }
+    if (!servable(relative)) { response.writeHead(404); response.end("not found"); return; }
     const data = await readFile(join(root, relative));
     response.writeHead(200, { "content-type": TYPES[extname(relative)] ?? "application/octet-stream", "cache-control": "no-store" });
     response.end(data);
@@ -214,6 +229,13 @@ http.createServer(async (request, response) => {
     response.writeHead(error?.code === "ENOENT" ? 404 : 500);
     response.end(error?.code === "ENOENT" ? "not found" : "error");
   }
-}).listen(port, () => {
-  console.log(`Pilot harness: http://localhost:${port}/harness/  (BOM: #/bom · RubberFlow: #/rubberflow) · shell: /pilot-shell.html`);
-});
+}
+
+// สองเซิร์ฟเวอร์ใช้ handler เดียวกัน: localhost อาจถูก resolve เป็น ::1 (เช่น browser pane ของ Claude desktop) หรือ 127.0.0.1
+// เครื่องที่ปิด IPv6 จะฟังได้แค่ 127.0.0.1 ซึ่งยังใช้ได้
+for (const address of ["127.0.0.1", "::1"]) {
+  http.createServer(handle)
+    .on("error", (error) => console.warn(`Pilot harness: listen on ${address} failed (${error.code ?? error.message})`))
+    .listen(port, address, () => console.log(`Pilot harness listening on ${address.includes(":") ? `[${address}]` : address}:${port}`));
+}
+console.log(`Pilot harness: http://localhost:${port}/harness/  (BOM: #/bom · RubberFlow: #/rubberflow) · shell: /pilot-shell.html`);
