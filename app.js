@@ -1866,9 +1866,9 @@ async function renderDashboard() {
   const completed = completedResult.count ?? 0;
   const actionableCount = pending.length + repairTasks.length;
   const content = `
-    <div class="page-heading"><div><div class="eyebrow">Pilot workspace</div><h1>สวัสดี, ${escapeHtml(employee.first_name)}</h1><p>ภาพรวมรายการที่เกี่ยวข้องกับคุณและงานที่ต้องดำเนินการ</p></div><span class="muted small">${formatDate(new Date(), false)}</span></div>
-    <section class="summary-grid">
-      ${dashboardListToggle("actions", actionableCount, actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง")}
+    <div class="page-heading"><div><h1>งานของคุณวันนี้</h1><p>${formatDate(new Date(), false)}</p></div><a class="btn" href="#/new"><span class="plus-icon" aria-hidden="true"></span> สร้างคำร้อง</a></div>
+    <section class="summary-grid is-strip">
+      ${dashboardListToggle("actions", actionableCount, actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง", actionableCount > 0)}
       ${dashboardListToggle("mine", myRequestCount, "เฉพาะที่คุณเป็นผู้แจ้ง")}
       ${dashboardListToggle("in_progress", inProgress, "อนุมัติแล้วหรือกำลังทำ")}
       ${dashboardListToggle("completed", completed, "ปิดงานเรียบร้อย")}
@@ -1883,7 +1883,8 @@ async function renderDashboard() {
     </div>`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
   bindShell();
-  bindDashboardLists({ pending, repairTasks });
+  // มีงานรออยู่: เปิดรายการงานไว้เลย ผู้อนุมัติไม่ต้องกดการ์ดก่อนถึงจะเห็นคิว
+  bindDashboardLists({ pending, repairTasks, openFirst: actionableCount > 0 });
 }
 
 // Each dashboard summary card opens its list in one panel under the cards instead of leaving
@@ -1895,8 +1896,8 @@ const DASHBOARD_LISTS = {
   completed: { label: "เสร็จแล้ว", note: "ปิดงานเรียบร้อย ตามสิทธิ์ของคุณ", filter: { status: "completed" } },
 };
 
-function dashboardListToggle(key, count, hint) {
-  return `<button class="summary summary-toggle" type="button" data-list="${key}" aria-expanded="false" aria-controls="dashboard-list-panel"><span>${DASHBOARD_LISTS[key].label}</span><strong>${count}</strong><small>${hint}</small></button>`;
+function dashboardListToggle(key, count, hint, alert = false) {
+  return `<button class="summary summary-toggle${alert ? " is-alert" : ""}" type="button" data-list="${key}" aria-expanded="false" aria-controls="dashboard-list-panel"><span>${DASHBOARD_LISTS[key].label}</span><strong>${count}</strong><small>${hint}</small></button>`;
 }
 
 function dashboardActionItems(pending, repairTasks) {
@@ -1906,7 +1907,7 @@ function dashboardActionItems(pending, repairTasks) {
     + group("งานซ่อมที่ต้องดำเนินการ", repairTasks.map(repairTaskItemHtml));
 }
 
-function bindDashboardLists({ pending, repairTasks }) {
+function bindDashboardLists({ pending, repairTasks, openFirst = false }) {
   const panel = document.querySelector("#dashboard-list-panel");
   const heading = document.querySelector("#dashboard-list-heading");
   const note = document.querySelector("#dashboard-list-note");
@@ -1939,6 +1940,7 @@ function bindDashboardLists({ pending, repairTasks }) {
       if (active === key) body.innerHTML = `<div class="empty">${escapeHtml(friendlyError(error))}</div>`;
     }
   }));
+  if (openFirst) toggles.find((toggle) => toggle.dataset.list === "actions")?.click();
 }
 
 const REQUEST_STATUS_FILTERS = [
