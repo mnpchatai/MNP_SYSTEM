@@ -372,7 +372,7 @@
 
     renderCreateForm({ departments }, { employee }) {
       return `
-        <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="repair-form">
+        <section class="card" style="max-width:900px;margin:auto"><div id="request-message" role="status"></div><form id="repair-form">
           <div class="field full">${docNumberBoxHtml("repair-doc-number")}</div>
           <div class="field full">
             <label>แผนก</label>

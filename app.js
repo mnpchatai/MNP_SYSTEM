@@ -28,6 +28,7 @@ const UI_ICON_PATHS = {
   building: '<path d="M4 21V5.5L12 3v18M12 8h8v13M2 21h20M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
   inbox: '<path d="M3 13.5 5.6 5.4A1.5 1.5 0 0 1 7 4.5h10a1.5 1.5 0 0 1 1.4.9L21 13.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/><path d="M3 13.5h5l1.5 2.5h5l1.5-2.5h5"/>',
 };
@@ -359,10 +360,65 @@ function go(path) {
 
 function showToast(message, type = "success") {
   const isError = type === "error";
-  toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(message)}</span>`;
-  toastNode.className = `toast show ${isError ? "error" : "success"}`;
   window.clearTimeout(showToast.timer);
-  showToast.timer = window.setTimeout(() => { toastNode.className = "toast"; }, 3500);
+  // ข้อผิดพลาดค้างไว้จนกว่าผู้ใช้จะกดปิด และให้โปรแกรมอ่านหน้าจออ่านทันที ส่วนแจ้งสำเร็จหายเองใน 3.5 วินาที
+  toastNode.setAttribute("role", isError ? "alert" : "status");
+  toastNode.setAttribute("aria-live", isError ? "assertive" : "polite");
+  toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(message)}</span>${isError ? `<button type="button" class="toast-close" aria-label="ปิดข้อความ">${uiIcon("close")}</button>` : ""}`;
+  toastNode.className = `toast show ${isError ? "error" : "success"}`;
+  showToast.shownAt = Date.now();
+  if (isError) toastNode.querySelector(".toast-close").addEventListener("click", hideToast);
+  else showToast.timer = window.setTimeout(hideToast, 3500);
+}
+
+function hideToast() {
+  window.clearTimeout(showToast.timer);
+  toastNode.className = "toast";
+  toastNode.replaceChildren();
+}
+// Esc ปิดข้อผิดพลาดเฉพาะตอนที่ไม่มีอย่างอื่นให้ Esc ปิด (ฟังแบบ capture จึงเห็น popup ก่อนตัวจัดการของมันจะปิด)
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || !toastNode.classList.contains("error")) return;
+  if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
+  hideToast();
+}, true);
+// ผู้ใช้ไปหน้าอื่น: ข้อผิดพลาดของหน้าเดิมไม่ตามไป แต่ไม่ล้างข้อผิดพลาดที่เพิ่งแสดงก่อนโค้ดพาไปหน้าใหม่ (เช่น showToast แล้ว go())
+window.addEventListener("hashchange", () => {
+  if (toastNode.classList.contains("error") && Date.now() - (showToast.shownAt ?? 0) > 1000) hideToast();
+});
+
+// กล่องยืนยันในแอป แทน confirm() ของเบราว์เซอร์: ปุ่มยืนยันบอกผลของการกด (เช่น "ลบบัญชี") กด Esc หรือยกเลิก = ไม่ทำ
+function confirmDialog({ title, message = "", confirmLabel, danger = false }) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.setAttribute("aria-labelledby", "confirm-dialog-title");
+    dialog.innerHTML = `<form method="dialog">
+      <h2 id="confirm-dialog-title">${escapeHtml(title)}</h2>
+      ${message ? `<p>${escapeHtml(message)}</p>` : ""}
+      <div class="confirm-dialog-actions"><button class="btn secondary" value="cancel">ยกเลิก</button><button class="btn${danger ? " danger-solid" : ""}" value="confirm">${escapeHtml(confirmLabel)}</button></div>
+    </form>`;
+    if (typeof dialog.showModal !== "function") return resolve(window.confirm(message ? `${title}\n\n${message}` : title));
+    document.body.append(dialog);
+    // เปลี่ยนหน้าระหว่างที่กล่องเปิด (ปุ่มย้อนกลับของมือถือ) = ยกเลิก ไม่ทำกับรายการของหน้าเดิม
+    let settled = false;
+    const finish = (confirmed) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("hashchange", cancelOnLeave);
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      resolve(confirmed);
+    };
+    // ปิดเองจากปุ่ม/Esc/การเปลี่ยนหน้า ไม่รอ event close (Chromium เลื่อน close ออกไปเมื่อหน้าไม่ได้วาด เช่นแท็บอยู่เบื้องหลัง)
+    const cancelOnLeave = () => finish(false);
+    window.addEventListener("hashchange", cancelOnLeave, { once: true });
+    dialog.querySelector("form").addEventListener("submit", (event) => { event.preventDefault(); finish(event.submitter?.value === "confirm"); });
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(false); });
+    dialog.addEventListener("close", () => finish(dialog.returnValue === "confirm"), { once: true });
+    dialog.showModal();
+    dialog.querySelector('button[value="cancel"]').focus();
+  });
 }
 
 function friendlyError(error) {
@@ -1335,7 +1391,7 @@ async function renderAuth(message = "") {
           </div>
           <h2>${isRequest ? "ขอเปิดบัญชีเข้าใช้งาน" : "เข้าสู่ระบบพนักงาน"}</h2>
           <p>${isRequest ? "กำหนด ID และรหัสผ่านที่ต้องการ ผู้ดูแลระบบจะเป็นผู้อนุมัติสิทธิ์ก่อนใช้งานได้" : "ใช้รหัสพนักงานและรหัสผ่านของคุณ"}</p>
-          <div id="auth-message">${message}${directoryError ? `<div class="form-message error">${escapeHtml(directoryError)}</div>` : ""}</div>
+          <div id="auth-message" role="status">${message}${directoryError ? `<div class="form-message error">${escapeHtml(directoryError)}</div>` : ""}</div>
           <form id="auth-form">
             <div class="field"><label for="employee-no">UserID${req}</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
             ${isRequest ? requestFields : ""}
@@ -1483,7 +1539,7 @@ async function signOutLocally(message) {
 function renderConnectionError(error) {
   hideInstallBanner();
   console.error(error);
-  app.innerHTML = `<main class="boot-screen"><img class="brand-mark" src="./icons/icon-192.png" alt=""><h2>เชื่อมต่อระบบไม่ได้</h2><p>ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง คุณยังอยู่ในระบบ ไม่ต้องเข้าสู่ระบบใหม่</p><button class="btn" id="reconnect-button" type="button">ลองอีกครั้ง</button></main>`;
+  app.innerHTML = `<main class="boot-screen" role="alert"><img class="brand-mark" src="./icons/icon-192.png" alt=""><h2>เชื่อมต่อระบบไม่ได้</h2><p>ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง คุณยังอยู่ในระบบ ไม่ต้องเข้าสู่ระบบใหม่</p><button class="btn" id="reconnect-button" type="button">ลองอีกครั้ง</button></main>`;
   document.querySelector("#reconnect-button")?.addEventListener("click", startApp);
 }
 
@@ -1703,24 +1759,26 @@ function bindSandboxBanner() {
     }
   });
   document.querySelector("#sandbox-exit")?.addEventListener("click", async (event) => {
-    event.currentTarget.disabled = true;
+    const exitButton = event.currentTarget;
+    exitButton.disabled = true;
     try {
       await exitSandbox();
     } catch (error) {
-      event.currentTarget.disabled = false;
+      exitButton.disabled = false;
       showToast(friendlyError(error), "error");
     }
   });
   document.querySelector("#sandbox-purge")?.addEventListener("click", async (event) => {
-    if (!confirm("ล้างใบ NCR ทดสอบและไฟล์แนบทั้งหมด และเริ่มนับเลข TEST- ใหม่ ?\n\nล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ")) return;
-    event.currentTarget.disabled = true;
+    const purgeButton = event.currentTarget;
+    if (!(await confirmDialog({ title: "ล้างใบ NCR ทดสอบและไฟล์แนบทั้งหมด และเริ่มนับเลข TEST- ใหม่?", message: "ล้างเฉพาะข้อมูลทดสอบ ข้อมูลจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูลทดสอบ", danger: true }))) return;
+    purgeButton.disabled = true;
     try {
       const data = await window.MNP_NCR_ATTACHMENTS.purge();
       showToast(`ล้างข้อมูลทดสอบแล้ว ${data?.deleted ?? 0} ใบ`);
       if (location.hash === "#/ncr") await renderRoute();
       else go("ncr");
     } catch (error) {
-      event.currentTarget.disabled = false;
+      purgeButton.disabled = false;
       showToast(friendlyError(error), "error");
     }
   });
@@ -1769,8 +1827,8 @@ function bindShell() {
   }));
 }
 
-// แถวโครงร่างระหว่างโหลด ผู้ใช้โปรแกรมอ่านหน้าจอยังได้ยิน "กำลังโหลดข้อมูล" ผ่าน aria-live ของ #app
-const loadingSkeleton = (rows = 4) => `<div class="skeleton">${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}<span class="sr-only">กำลังโหลดข้อมูล…</span></div>`;
+// แถวโครงร่างระหว่างโหลด ผู้ใช้โปรแกรมอ่านหน้าจอยังได้ยิน "กำลังโหลดข้อมูล" ผ่าน role=status ของตัวเอง
+const loadingSkeleton = (rows = 4) => `<div class="skeleton" role="status">${'<span class="skeleton-row" aria-hidden="true"></span>'.repeat(rows)}<span class="sr-only">กำลังโหลดข้อมูล…</span></div>`;
 
 // หน้าว่าง: ไอคอน + ข้อความ + คำแนะนำสั้นๆ และปุ่มทำต่อ (ถ้ามี)
 const emptyState = (text, { hint = "", action = null } = {}) => `<div class="empty empty-state">${uiIcon("inbox")}<p>${escapeHtml(text)}</p>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}${action ? `<a class="btn secondary small" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}</div>`;
@@ -2279,7 +2337,7 @@ async function renderNewRequest(params) {
       const formContext = await loadModuleFormContext(separateModule);
       const detailFieldsHtml = separateModule?.renderFields ? separateModule.renderFields({ escapeHtml }) : dynamicDetailFields(selected.form_schema);
       body = `
-        <section class="card" style="max-width:900px;margin:auto"><div id="request-message"></div><form id="request-form">
+        <section class="card" style="max-width:900px;margin:auto"><div id="request-message" role="status"></div><form id="request-form">
           <div class="form-grid">
             <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
             <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
@@ -2791,6 +2849,7 @@ async function renderRequestDetail(params) {
     }
     let files;
     try { files = readExtraFiles(document.querySelector("#decision-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
+    if (decision === "rejected" && !(await confirmDialog({ title: "ไม่อนุมัติคำร้องนี้?", message: comment, confirmLabel: "ไม่อนุมัติ", danger: true }))) return;
     document.querySelectorAll(".decision-button").forEach((node) => { node.disabled = true; });
     button.setAttribute("aria-busy", "true");
     try {
@@ -3175,7 +3234,7 @@ async function renderProfile() {
         <div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div>
         <div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
       </div>
-      <div id="profile-message"></div>
+      <div id="profile-message" role="status"></div>
       <form id="profile-form">
         <div class="field-row">
           <div class="field"><label for="profile-first-name">ชื่อ</label><input class="input" id="profile-first-name" name="first_name" maxlength="100" value="${escapeHtml(employee.first_name)}" required></div>
@@ -3209,7 +3268,7 @@ async function renderProfile() {
       <p class="muted small">${isAccountManager
         ? "บัญชีผู้ดูแลระบบเป็นผู้อนุมัติเอง ระบบจึงบันทึกและอนุมัติให้ทันทีในขั้นตอนเดียว พร้อมเก็บประวัติไว้ในคำร้องและ audit log ตามปกติ"
         : "คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ"}</p>
-      <div id="credential-message"></div>
+      <div id="credential-message" role="status"></div>
       <form id="credential-form">
         <div class="field"><label for="new-employee-no">UserID</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
         <div class="field-row">
@@ -3544,7 +3603,7 @@ function bindHolidayForms(params) {
   });
   document.querySelectorAll("[data-holiday-delete]").forEach((button) => button.addEventListener("click", async () => {
     const date = button.dataset.holidayDelete;
-    if (!confirm(`ลบวันหยุด ${formatDate(date)} ?\n\nวันนั้นระบบจะกลับมาส่งอีเมลเตือนงานค้างตามปกติ`)) return;
+    if (!(await confirmDialog({ title: `ลบวันหยุด ${formatDate(date)}?`, message: "วันนั้นระบบจะกลับมาส่งอีเมลเตือนงานค้างตามปกติ", confirmLabel: "ลบวันหยุด", danger: true }))) return;
     button.disabled = true;
     const { error } = await sb.rpc("app_admin_delete_holiday", { p_date: date });
     if (error) {
@@ -3727,7 +3786,7 @@ async function renderAdmin(params) {
       ${adding ? `
       <section class="card">
         <div class="card-head"><div><h2>เพิ่มบัญชีใหม่</h2><p class="muted small">บัญชีใช้งานได้ทันทีโดยไม่ต้องผ่านคำร้อง ระบบส่งอีเมลแจ้ง ID พร้อมลิงก์ตั้งรหัสผ่านใหม่ให้เจ้าของบัญชี</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
-        <div id="employee-add-message"></div>
+        <div id="employee-add-message" role="status"></div>
         <form id="employee-add-form">
           <div class="field"><label for="add-employee-no">UserID${req}</label><input class="input" id="add-employee-no" name="employee_no" maxlength="32" placeholder="เช่น MNP0102" autocomplete="off" required></div>
           <div class="field-row">
@@ -3753,7 +3812,7 @@ async function renderAdmin(params) {
       ${editing ? `
       <section class="card">
         <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID ตำแหน่ง และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
-        <div id="employee-edit-message"></div>
+        <div id="employee-edit-message" role="status"></div>
         <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}" data-acting-role-id="${escapeHtml(actingRoleByEmployee.get(editing.employee_id) ?? "")}" data-admin-role-id="${escapeHtml(adminRoleId)}">
           <div class="field-row">
             <div class="field"><label for="edit-employee-no">UserID</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
@@ -3859,7 +3918,7 @@ async function renderAdmin(params) {
   document.querySelectorAll("[data-delete-employee]").forEach((button) => button.addEventListener("click", async () => {
     const employeeId = button.dataset.deleteEmployee;
     const label = button.dataset.employeeLabel ?? "";
-    if (!confirm(`ลบบัญชี ${label} ?\n\nถ้าบัญชีนี้ยังไม่เคยมีเอกสารหรือประวัติในระบบ จะถูกลบถาวร\nถ้ามีประวัติแล้ว ระบบจะปิดใช้งานและซ่อนบัญชีแทน เพื่อให้เอกสารเก่ายังแสดงชื่อได้\nทั้งสองกรณีเจ้าของบัญชีจะเข้าสู่ระบบไม่ได้อีก`)) return;
+    if (!(await confirmDialog({ title: `ลบบัญชี ${label}?`, message: "ถ้าบัญชีนี้ยังไม่เคยมีเอกสารหรือประวัติในระบบ จะถูกลบถาวร\nถ้ามีประวัติแล้ว ระบบจะปิดใช้งานและซ่อนบัญชีแทน เพื่อให้เอกสารเก่ายังแสดงชื่อได้\nทั้งสองกรณีเจ้าของบัญชีจะเข้าสู่ระบบไม่ได้อีก", confirmLabel: "ลบบัญชี", danger: true }))) return;
     button.disabled = true;
     try {
       const { data: sessionData } = await sb.auth.getSession();
@@ -3953,7 +4012,7 @@ async function renderSetPassword(params) {
         <div class="theme-button">${themeButton()}</div>
         <div class="auth-card">
           <h2>ตั้งรหัสผ่านใหม่</h2>
-          <div id="auth-message">${errorMessage ? `<div class="form-message error">${escapeHtml(errorMessage)}</div>` : ""}</div>
+          <div id="auth-message" role="status">${errorMessage ? `<div class="form-message error">${escapeHtml(errorMessage)}</div>` : ""}</div>
           ${errorMessage ? `<a class="btn secondary block" href="#/dashboard" id="setup-back">กลับไปหน้าเข้าสู่ระบบ</a>` : `
           <form id="setup-form">
             <div class="field"><label for="setup-employee-no">UserID</label><input class="input" id="setup-employee-no" value="${escapeHtml(employeeNo)}" autocomplete="username" readonly></div>
