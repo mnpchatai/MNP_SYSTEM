@@ -2433,8 +2433,8 @@ function bindQueueBulk() {
     if (location.hash === "" || /^#\/(dashboard|approvals)?(\?|$)/.test(location.hash)) {
       try {
         await renderDashboard();
-        // แบบเดียวกับใบเดียว: โฟกัสกลับมาที่คิว ไม่หลุดไปที่ body
-        document.querySelector(".queue-item.is-selected .queue-item-main, .queue-item-main")?.focus();
+        // แบบเดียวกับใบเดียว: โฟกัสกลับมาที่คิว ไม่หลุดไปที่ body — ถ้าผู้ใช้ไปทำอย่างอื่นระหว่างรอส่ง (ชุดใหญ่) ไม่แย่งโฟกัส
+        if (!document.activeElement || document.activeElement === document.body) document.querySelector(".queue-item.is-selected .queue-item-main, .queue-item-main")?.focus();
       } catch (renderError) {
         console.error(renderError);
         if (bulk.isConnected) { chosen = []; render("idle"); }
