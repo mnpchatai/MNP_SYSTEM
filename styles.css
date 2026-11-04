@@ -924,6 +924,59 @@ tbody tr:last-child td { border-bottom: 0; }
 .home-mine-head { display: flex; align-items: center; gap: 8px; }
 .home-mine-head .queue-item-icon { width: 28px; height: 28px; }
 .home-mine-head .queue-item-icon .ui-icon { width: 16px; height: 16px; }
+
+/* ฟอร์มสร้างคำร้องทีละขั้น (brief .impeccable/surfaces/src-components-request-form-tsx.md) */
+.form-card { max-width: 900px; margin: 0 auto; }
+.stepped-form { display: grid; gap: 4px; }
+.form-step { min-width: 0; margin: 0 0 8px; padding: 0; border: 0; }
+.form-step[hidden] { display: none; }
+.form-step-title { margin-bottom: 14px; padding: 0; font-size: var(--text-title); font-weight: 700; }
+.form-step-title:focus { outline: none; }
+.form-step-title:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: var(--radius-sm); }
+.form-steps-head { margin-bottom: 14px; color: var(--muted); font-size: var(--text-meta); font-weight: 700; }
+.form-steps-head[hidden] { display: none; }
+/* ข้อความหัวช่องของกลุ่มปุ่ม (แผนก ประเภทเอกสาร) หน้าตาเดียวกับ label */
+.field-label { font-size: var(--text-ui); font-weight: 700; line-height: 1.4; }
+.field-required { color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
+.stepped-actions .btn { min-height: 44px; }
+.stepped-actions .btn[hidden] { display: none; }
+.file-pick { min-height: 48px; justify-self: start; gap: 8px; cursor: pointer; }
+.file-pick .ui-icon { width: 18px; height: 18px; }
+/* input ไฟล์ซ่อนด้วยตา แต่ยังโฟกัสด้วยคีย์บอร์ดได้ (ปุ่มด้านบนเป็น label ของมัน) */
+.file-pick-input { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.file-pick:has(+ .file-pick-input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+.switch-label { min-height: 48px; padding: 0 14px; display: inline-flex; align-items: center; gap: 10px; justify-self: start; background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--text-ui); font-weight: 700; cursor: pointer; }
+.switch-label input { width: 22px; height: 22px; margin: 0; accent-color: var(--danger-strong); }
+.switch-label:has(input:checked) { color: var(--danger-ink); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.draft-banner { margin-bottom: 16px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: var(--primary-soft); border-radius: var(--radius-md); }
+.draft-banner[hidden] { display: none; }
+.draft-banner p { margin: 0; font-weight: 600; }
+.draft-banner-actions { display: flex; gap: 8px; }
+.draft-banner-actions .btn { min-height: 44px; }
+.review-grid { margin-bottom: 10px; }
+.review-grid .definition.wide { grid-column: 1 / -1; }
+.review-text { font-weight: 500; white-space: pre-wrap; overflow-wrap: anywhere; }
+.form-receipt { display: grid; gap: 16px; }
+/* ตัวเลือกวันที่ไทย (modules/date-picker.js) */
+.date-pick { position: relative; }
+.date-pick-button { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; cursor: pointer; }
+.date-pick-button .ui-icon { width: 18px; height: 18px; color: var(--muted); }
+.date-pick-empty { color: var(--quiet); }
+.date-pick-popup { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(320px, calc(100vw - 32px)); padding: 12px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+.date-pick-popup[hidden] { display: none; }
+.date-pick-head { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.date-pick-head .icon-button { width: 44px; height: 44px; font-size: var(--text-title); }
+.date-pick-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.date-pick-grid th { padding: 4px 0; text-align: center; white-space: normal; border: 0; color: var(--muted); font-size: var(--text-caption); font-weight: 700; }
+.date-pick-grid td { padding: 1px; text-align: center; border: 0; }
+.date-pick-day { width: 100%; aspect-ratio: 1; min-height: 40px; display: grid; place-items: center; color: var(--ink); background: none; border: 0; border-radius: var(--radius-md); font: inherit; font-size: var(--text-meta); cursor: pointer; }
+.date-pick-day:hover { background: var(--shell); }
+.date-pick-day.is-outside { color: var(--quiet); }
+.date-pick-day.is-today { box-shadow: inset 0 0 0 1.5px var(--primary); }
+.date-pick-day[aria-pressed="true"] { color: #fff; background: var(--primary-strong); }
+.date-pick-day:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.date-pick-foot { margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px; }
+.date-pick-foot .btn { min-height: 40px; }
 .request-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .request-fact { --fact-accent: var(--primary); min-width: 0; min-height: 78px; padding: 13px; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 11px; align-items: center; background: linear-gradient(135deg, var(--paper), color-mix(in srgb, var(--fact-accent) 5%, var(--paper))); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, var(--line)); border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(31, 61, 102, .05); transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .request-fact:hover { border-color: color-mix(in srgb, var(--fact-accent) 38%, var(--line)); box-shadow: 0 8px 18px rgba(31, 61, 102, .1); transform: translateY(-1px); }
@@ -1084,6 +1137,14 @@ a.machine-history-no:hover { text-decoration: underline; }
   .queue-detail-pane { display: none; }
   .queue-detail-text { -webkit-line-clamp: 3; line-clamp: 3; }
   .home-create.is-wide { flex-basis: 100%; min-height: 48px; }
+  /* ฟอร์มทีละขั้น: ปุ่มย้อนกลับ/ถัดไป/ส่ง ติดล่างจอใต้นิ้วโป้ง */
+  .stepped-form.is-stepped .stepped-actions { position: sticky; z-index: 6; bottom: 0; margin: 0 -20px -20px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: var(--paper); border-top: 1px solid var(--line); }
+  .stepped-form.is-stepped .stepped-actions .btn { min-height: 48px; flex: 1 1 auto; }
+  .stepped-form.is-stepped .stepped-actions .btn.is-primary { flex-grow: 2; }
+  /* แถบติดตั้งแอปทับปุ่มส่ง: ซ่อนในหน้าฟอร์มทีละขั้น และยก toast ให้พ้นแถบปุ่ม */
+  body:has(.stepped-form.is-stepped) .install-banner { display: none; }
+  body.has-install-banner:has(.stepped-form.is-stepped) { padding-bottom: 0; }
+  body:has(.stepped-form.is-stepped) .toast { bottom: calc(72px + 12px + env(safe-area-inset-bottom)); }
 }
 
 @media (max-width: 760px) {

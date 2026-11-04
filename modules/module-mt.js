@@ -370,68 +370,190 @@
       return { departments, machines: machinesResult.data ?? [] };
     },
 
+    // ฟอร์มแจ้งซ่อม 3 ขั้นบนจอแคบ (หน้าเดียวบนจอกว้าง) — brief .impeccable/surfaces/src-components-request-form-tsx.md
+    // ขั้น 1 ที่ไหน/อะไร · ขั้น 2 รูปและความเร่งด่วน · ขั้น 3 ทบทวนก่อนส่ง; ส่งไป app_create_repair_request ด้วยช่องเดิมทุกช่อง
     renderCreateForm({ departments }, { employee }) {
       return `
-        <section class="card" style="max-width:900px;margin:auto"><div id="request-message" role="status"></div><form id="repair-form">
-          <div class="field full">${docNumberBoxHtml("repair-doc-number")}</div>
-          <div class="field full">
-            <label>แผนก</label>
-            <input type="hidden" id="repair-department" name="department_id" required>
-            <div class="repair-department-grid" id="repair-department-picker">${departments.map((item) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
-          </div>
-          <div class="form-grid">
-            <div class="field full">
-              <label for="repair-machine-search">เครื่องจักร</label>
-              <input type="hidden" id="repair-machine" name="machine_id" required>
+        <section class="card form-card" id="repair-form-card"><div id="request-message" role="status"></div>
+        <div class="draft-banner" id="repair-draft" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>
+        <form id="repair-form" class="stepped-form" novalidate>
+          <div class="form-steps-head" id="repair-steps-head" hidden><span class="form-steps-label" id="repair-steps-label" aria-live="polite"></span></div>
+          <fieldset class="form-step" data-step="1">
+            <legend class="form-step-title">ที่ไหน และเป็นอะไร</legend>
+            <div class="field full">${docNumberBoxHtml("repair-doc-number")}</div>
+            <div class="field full" data-field="department_id">
+              <span class="field-label" id="repair-department-label">แผนก <span class="field-required">(จำเป็น)</span></span>
+              <input type="hidden" id="repair-department" name="department_id">
+              <div class="repair-department-grid" id="repair-department-picker" role="group" aria-labelledby="repair-department-label" data-invalid-target>${departments.map((item, index) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"${index === 0 ? " data-focus" : ""}><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
+            </div>
+            <div class="field full" data-field="machine_id">
+              <label for="repair-machine-search">เครื่องจักร <span class="field-required">(จำเป็น)</span></label>
+              <input type="hidden" id="repair-machine" name="machine_id">
               <div class="machine-combobox" id="repair-machine-combobox">
-                <input class="input machine-search-input" id="repair-machine-search" type="search" placeholder="เลือกแผนกก่อน" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="repair-machine-list" aria-expanded="false" disabled>
+                <input class="input machine-search-input" id="repair-machine-search" type="search" placeholder="เลือกแผนกก่อน" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="repair-machine-list" aria-expanded="false" data-focus disabled>
                 <span class="machine-search-icon" aria-hidden="true">${uiIcon("search")}</span>
                 <div class="machine-listbox" id="repair-machine-list" role="listbox" data-popup hidden></div>
               </div>
-              <small>ค้นหาด้วยรหัสหรือชื่อเครื่องจักร แล้วเลือกจากรายการ · ไม่พบรหัสที่ต้องการ กด "เพิ่มรหัสเครื่องจักรใหม่" ท้ายรายการ</small>
+              <small>ค้นหาด้วยรหัสหรือชื่อเครื่อง ไม่พบให้กด "เพิ่มรหัสเครื่องจักรใหม่" ท้ายรายการ</small>
               <div class="machine-new" id="repair-machine-new" hidden>
                 <div class="form-grid">
                   <div class="field"><label for="repair-machine-new-code">รหัสเครื่องจักรใหม่</label><input class="input" id="repair-machine-new-code" maxlength="40" autocomplete="off" placeholder="เช่น H-HL1-1"></div>
                   <div class="field"><label for="repair-machine-new-name">ชื่อเครื่องจักร</label><input class="input" id="repair-machine-new-name" maxlength="120" autocomplete="off" placeholder="เช่น รถยกลากพาเลส"></div>
                 </div>
-                <small>บันทึกเข้าทะเบียนเครื่องจักรของแผนกที่เลือก ครั้งต่อไปค้นหารหัสนี้เจอในรายการ ไม่ต้องพิมพ์ซ้ำ</small>
+                <small>บันทึกเข้าทะเบียนเครื่องจักรของแผนกที่เลือก ครั้งต่อไปค้นหารหัสนี้เจอในรายการ</small>
                 <div id="repair-machine-new-message" role="alert"></div>
                 <div class="form-actions"><button type="button" class="btn secondary" id="repair-machine-new-cancel">ยกเลิก</button><button type="button" class="btn" id="repair-machine-new-save">บันทึกเครื่องจักร</button></div>
               </div>
             </div>
             <div class="field full">
-              <label>ประเภทเอกสาร</label>
-              <input type="hidden" id="repair-doc-type" name="doc_type" value="repair" required>
-              <div class="filters" id="repair-doctype-picker">
-                <button type="button" class="filter active" data-doctype="repair">${escapeHtml(docTypeLabels.repair)}</button>
-                <button type="button" class="filter" data-doctype="request">${escapeHtml(docTypeLabels.request)}</button>
+              <span class="field-label" id="repair-doctype-label">ประเภทเอกสาร</span>
+              <input type="hidden" id="repair-doc-type" name="doc_type" value="repair">
+              <div class="filters" id="repair-doctype-picker" role="group" aria-labelledby="repair-doctype-label">
+                <button type="button" class="filter active" data-doctype="repair" aria-pressed="true">${escapeHtml(docTypeLabels.repair)}</button>
+                <button type="button" class="filter" data-doctype="request" aria-pressed="false">${escapeHtml(docTypeLabels.request)}</button>
               </div>
             </div>
-            <div class="field full"><label for="repair-description">รายละเอียด</label><textarea class="textarea" id="repair-description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-            <div class="field full"><label for="repair-attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="repair-attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
-            <div class="field"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
+            <div class="field full" data-field="description"><label for="repair-description">อาการ / รายละเอียด <span class="field-required">(จำเป็น)</span></label><textarea class="textarea" id="repair-description" name="description" maxlength="5000" rows="4"></textarea></div>
+          </fieldset>
+          <fieldset class="form-step" data-step="2">
+            <legend class="form-step-title">รูปและความเร่งด่วน</legend>
+            <div class="field full">
+              <span class="field-label">รูปหรือไฟล์ประกอบ (ถ้ามี)</span>
+              <label class="btn secondary file-pick" for="repair-attachment">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label>
+              <input class="file-pick-input" id="repair-attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}">
+              <small>รูปจากโทรศัพท์ทุกรุ่นใช้ได้ ระบบแปลงให้เอง</small>
+            </div>
+            <div class="field full"><label class="switch-label" for="repair-urgent"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
+            <div class="field" data-field="needed_date"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
             <div class="field"><label for="repair-requester-name">ชื่อผู้แจ้ง</label><input class="input" id="repair-requester-name" name="requester_name" maxlength="120" value="${escapeHtml(`${employee.first_name} ${employee.last_name}`)}"></div>
-            <div class="field full"><label class="checkbox-label"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
+          </fieldset>
+          <fieldset class="form-step form-step-review" data-step="3">
+            <legend class="form-step-title">ทบทวนก่อนส่ง</legend>
+            <div id="repair-review"></div>
+          </fieldset>
+          <div class="form-actions stepped-actions">
+            <a class="btn secondary" href="#/requests" data-form-cancel>ยกเลิก</a>
+            <button type="button" class="btn secondary" data-step-back hidden>‹ ย้อนกลับ</button>
+            <button type="button" class="btn is-primary" data-step-next hidden>ถัดไป ›</button>
+            <button type="submit" class="btn is-primary" data-step-submit>ส่งใบแจ้งซ่อม</button>
           </div>
-          <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งใบแจ้งซ่อม</button></div>
         </form></section>`;
     },
 
-    bindCreateForm({ machines }, { employee }) {
+    bindCreateForm({ departments, machines }, { employee }) {
+      const form = document.querySelector("#repair-form");
+      const card = document.querySelector("#repair-form-card");
       const departmentInput = document.querySelector("#repair-department");
       const machineInput = document.querySelector("#repair-machine");
       const machineSearch = document.querySelector("#repair-machine-search");
       const machineList = document.querySelector("#repair-machine-list");
       const docTypeInput = document.querySelector("#repair-doc-type");
+      const description = document.querySelector("#repair-description");
+      const neededDate = document.querySelector("#repair-needed-date");
+      const requesterName = document.querySelector("#repair-requester-name");
+      const urgent = document.querySelector("#repair-urgent");
+      const attachmentInput = document.querySelector("#repair-attachment");
       const newMachineBox = document.querySelector("#repair-machine-new");
       const newMachineCode = document.querySelector("#repair-machine-new-code");
       const newMachineName = document.querySelector("#repair-machine-new-name");
       const newMachineMessage = document.querySelector("#repair-machine-new-message");
       const newMachineSave = document.querySelector("#repair-machine-new-save");
+      const stepsApi = window.MNP_FORM_STEPS;
+      const narrowQuery = window.matchMedia("(max-width: 1040px)");
+      const defaultRequester = `${employee.first_name} ${employee.last_name}`;
+      // แผนกถูกเลือกให้เองตั้งแต่เปิดฟอร์ม และชื่อเครื่องตามเครื่องที่เลือก จึงไม่นับเป็นการกรอก ร่างที่มีแค่สองอย่างนี้ = ว่าง
+      const drafts = window.MNP_FORM_DRAFT.createDraftStore({ key: window.MNP_FORM_DRAFT.draftKey("MT_REPAIR", employee.id), ignoreForEmpty: ["requester_name", "doc_type", "department_id", "machine_label"] });
       let selectedDepartmentId = "";
       let visibleMachines = [];
       let activeMachineIndex = -1;
+      let currentStep = 1;
+      let draftDecided = true;
+      let submitted = false;
 
+      window.MNP_DATE_PICKER?.enhance(neededDate);
+
+      // ---- ช่องตรวจ: ช่องซ่อน (แผนก/เครื่อง) ตรวจเท่ากับช่องที่มองเห็น ข้อความไทยใต้ช่อง ----
+      const RULES = [
+        { name: "department_id", step: 1, required: true, message: "กรุณาเลือกแผนกของเครื่องที่เสีย" },
+        { name: "machine_id", step: 1, required: true, message: "กรุณาเลือกเครื่องจักรจากรายการ หรือเพิ่มรหัสใหม่" },
+        { name: "description", step: 1, required: true, minLength: 3, message: "กรุณาอธิบายอาการ อย่างน้อย 3 ตัวอักษร" },
+      ];
+      const currentValues = () => ({
+        department_id: departmentInput.value,
+        machine_id: machineInput.value,
+        machine_label: machineInput.value ? machineSearch.value : "",
+        doc_type: docTypeInput.value,
+        description: description.value.trim() ? description.value : "",
+        needed_date: neededDate.value,
+        requester_name: requesterName.value.trim() === defaultRequester ? "" : requesterName.value,
+        is_urgent: urgent.checked,
+      });
+      const checkStep = (step) => {
+        const errors = stepsApi.validate(RULES.filter((rule) => step === "all" || rule.step === step), currentValues());
+        if (!errors.length) { stepsApi.clearFieldErrors(form); return true; }
+        goToStep(errors[0].step, { focus: false });
+        const target = stepsApi.showFieldErrors(form, errors);
+        target?.focus();
+        return false;
+      };
+
+      // ---- ทีละขั้น ----
+      const paintSteps = () => {
+        // ออกจากหน้าแล้ว (หรือหน้าใบเสร็จแทนที่ฟอร์ม): เลิกฟังการย่อขยายจอ
+        if (!form.isConnected) { narrowQuery.removeEventListener?.("change", paintSteps); return; }
+        const view = stepsApi.stepView({ current: currentStep, count: 3, narrow: narrowQuery.matches });
+        form.classList.toggle("is-stepped", narrowQuery.matches);
+        form.querySelectorAll("[data-step]").forEach((section) => { section.hidden = !view.visible.includes(Number(section.dataset.step)); });
+        const head = form.querySelector("#repair-steps-head");
+        head.hidden = !narrowQuery.matches;
+        // ชื่อขั้นอยู่ที่ legend ของขั้นนั้นแล้ว หัวนี้บอกแค่ลำดับ
+        form.querySelector("#repair-steps-label").textContent = view.label;
+        form.querySelector("[data-step-back]").hidden = !view.showBack;
+        form.querySelector("[data-step-next]").hidden = !view.showNext;
+        form.querySelector("[data-step-submit]").hidden = !view.showSubmit;
+        if (view.visible.includes(3)) renderReview();
+      };
+      const goToStep = (step, { focus = true } = {}) => {
+        currentStep = step;
+        paintSteps();
+        if (focus && narrowQuery.matches) {
+          const legend = form.querySelector(`[data-step="${step}"] legend`);
+          legend.tabIndex = -1;
+          legend.focus();
+          card.scrollIntoView({ block: "start", behavior: "auto" });
+        }
+      };
+      form.querySelector("[data-step-next]").addEventListener("click", () => { if (checkStep(currentStep)) goToStep(currentStep + 1); });
+      form.querySelector("[data-step-back]").addEventListener("click", () => goToStep(currentStep - 1));
+      narrowQuery.addEventListener?.("change", paintSteps);
+      // Enter (หรือปุ่ม "ไป" บนแป้นมือถือ) ในช่องก่อนขั้นสุดท้าย = ถัดไป ไม่ใช่ส่งข้ามขั้นทบทวน
+      form.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
+        // ปุ่มเลือกไฟล์ใช้ Enter เปิดตัวเลือกไฟล์ (คีย์บอร์ดต่อ iPad) จึงไม่นับ
+        if (!event.target.matches("input:not([type=file])") || !narrowQuery.matches || currentStep >= 3) return;
+        event.preventDefault();
+        form.querySelector("[data-step-next]").click();
+      });
+
+      const renderReview = () => {
+        const machine = machines.find((item) => item.id === machineInput.value);
+        const department = departments.find((item) => item.id === departmentInput.value);
+        const files = [...(attachmentInput.files ?? [])];
+        const row = (label, value) => `<div class="definition"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
+        form.querySelector("#repair-review").innerHTML =`<dl class="definition-grid review-grid">
+          ${row("แผนก", escapeHtml(department ? `${department.displayCode} ${department.name}` : "—"))}
+          ${row("เครื่องจักร", escapeHtml(machine ? machineLabel(machine) : "—"))}
+          ${row("ประเภทเอกสาร", escapeHtml(docTypeLabels[docTypeInput.value] ?? docTypeInput.value))}
+          ${row("ความเร่งด่วน", urgent.checked ? '<span class="priority-flag">ด่วน</span>' : "ปกติ")}
+          ${row("วันที่ต้องการใช้งาน", escapeHtml(neededDate.value ? window.MNP_DATE_PICKER.label(neededDate.value) : "ไม่ระบุ"))}
+          ${row("ผู้แจ้ง", escapeHtml(requesterName.value.trim() || defaultRequester))}
+          <div class="definition wide"><dt>อาการ / รายละเอียด</dt><dd class="review-text">${escapeHtml(description.value.trim())}</dd></div>
+          ${row("ไฟล์แนบ", escapeHtml(files.length ? `${files.length} ไฟล์` : "ไม่มี"))}
+        </dl>
+        <p class="muted small">ตรวจแล้วกดส่ง หรือย้อนกลับไปแก้</p>`;
+      };
+
+      // ---- แผนกและเครื่องจักร ----
       const setActiveMachine = (index) => {
         const options = [...machineList.querySelectorAll(".machine-option")];
         if (!options.length) return;
@@ -441,13 +563,13 @@
         machineSearch.setAttribute("aria-activedescendant", activeOption.id);
         activeOption.scrollIntoView({ block: "nearest" });
       };
-
       const chooseMachine = (machine) => {
         machineInput.value = machine.id;
         machineSearch.value = machineLabel(machine);
         closePopup(machineList);
+        stepsApi.clearFieldError(form, "machine_id");
+        saveDraft();
       };
-
       const renderMachineList = (query = "") => {
         const normalizedQuery = query.trim().toLocaleLowerCase("th-TH");
         visibleMachines = machines.filter((machine) => machine.department_id === selectedDepartmentId && (
@@ -456,13 +578,12 @@
         activeMachineIndex = -1;
         machineList.innerHTML = visibleMachines.length
           ? visibleMachines.map((machine, index) => `<button type="button" class="machine-option" id="repair-machine-option-${index}" role="option" aria-selected="false" data-machine-index="${index}"><strong>${escapeHtml(machine.code)}</strong>${machine.is_placeholder ? "" : `<span>${escapeHtml(machine.name)}</span>`}</button>`).join("")
-          : `<div class="machine-empty">ไม่พบเครื่องจักรที่ค้นหา</div>`;
+          : `<div class="machine-empty">${normalizedQuery ? "ไม่พบเครื่องจักรที่ค้นหา" : "แผนกนี้ยังไม่มีเครื่องจักรในทะเบียน"}</div>`;
         const typedCode = query.trim();
         machineList.insertAdjacentHTML("beforeend", `<button type="button" class="machine-add" data-add-machine><span class="plus-icon" aria-hidden="true"></span> เพิ่มรหัสเครื่องจักรใหม่${typedCode ? ` "${escapeHtml(typedCode)}"` : ""}</button>`);
         machineList.hidden = false;
         machineSearch.setAttribute("aria-expanded", "true");
       };
-
       machineSearch.addEventListener("focus", () => {
         if (selectedDepartmentId) renderMachineList(machineInput.value ? "" : machineSearch.value);
       });
@@ -544,23 +665,29 @@
         saveNewMachine();
       }));
 
-      document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", async () => {
+      const selectDepartment = async (departmentId, { focusMachine = true, keepMachine = false, fromUser = false } = {}) => {
+        const button = document.querySelector(`#repair-department-picker [data-dept="${CSS.escape(departmentId)}"]`);
+        if (!button) return;
         document.querySelectorAll("#repair-department-picker [data-dept]").forEach((node) => {
-          node.classList.remove("active");
-          node.setAttribute("aria-pressed", "false");
+          node.classList.toggle("active", node === button);
+          node.setAttribute("aria-pressed", String(node === button));
         });
-        button.classList.add("active");
-        button.setAttribute("aria-pressed", "true");
-        const departmentId = button.dataset.dept;
         departmentInput.value = departmentId;
         selectedDepartmentId = departmentId;
-        machineInput.value = "";
-        machineSearch.value = "";
+        stepsApi.clearFieldError(form, "department_id");
+        if (!keepMachine) {
+          machineInput.value = "";
+          machineSearch.value = "";
+        }
         closeNewMachineForm();
         machineSearch.disabled = false;
         machineSearch.placeholder = "ค้นหารหัสหรือชื่อเครื่องจักร";
-        machineSearch.focus();
-        renderMachineList();
+        if (focusMachine) {
+          machineSearch.focus();
+          renderMachineList();
+        }
+        // เลือกเองเท่านั้นที่นับเป็นการกรอก (แผนกเริ่มต้นหรือการคืนร่างไม่สร้างร่างใหม่)
+        if (fromUser) saveDraft();
         setDocNumberBox("repair-doc-number", "…");
         try {
           const { data, error: peekError } = await sb.rpc("app_peek_repair_doc_number", { p_department_id: departmentId });
@@ -569,57 +696,175 @@
         } catch {
           setDocNumberBox("repair-doc-number", "—");
         }
-      }));
+      };
+      document.querySelectorAll("#repair-department-picker [data-dept]").forEach((button) => button.addEventListener("click", () => selectDepartment(button.dataset.dept, { fromUser: true })));
 
-      document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((button) => button.addEventListener("click", () => {
-        document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((node) => node.classList.remove("active"));
-        button.classList.add("active");
-        docTypeInput.value = button.dataset.doctype;
-      }));
+      const selectDocType = (value) => {
+        docTypeInput.value = value;
+        document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((node) => {
+          const active = node.dataset.doctype === value;
+          node.classList.toggle("active", active);
+          node.setAttribute("aria-pressed", String(active));
+        });
+      };
+      document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((button) => button.addEventListener("click", () => { selectDocType(button.dataset.doctype); saveDraft(); }));
 
-      document.querySelector("#repair-form").addEventListener("submit", async (event) => {
+      // ---- ร่างบนเครื่อง ----
+      let saveTimer = null;
+      function saveDraft() {
+        if (!draftDecided || submitted) return;
+        window.clearTimeout(saveTimer);
+        saveTimer = window.setTimeout(() => drafts.save(currentValues()), 400);
+      }
+      form.addEventListener("input", (event) => {
+        saveDraft();
+        const name = event.target.closest("[data-field]")?.dataset.field;
+        if (name) stepsApi.clearFieldError(form, name);
+      });
+      form.addEventListener("change", saveDraft);
+      // ใส่ค่าทันที ไม่รอเลขที่เอกสาร (peek) ที่ตามมาทีหลัง ไม่งั้นค่าที่ผู้ใช้เริ่มพิมพ์ระหว่างรอจะถูกทับ
+      const restoreDraft = (values) => {
+        if (values.department_id) selectDepartment(values.department_id, { focusMachine: false });
+        const machine = selectedDepartmentId && selectedDepartmentId === values.department_id
+          ? machines.find((item) => item.id === values.machine_id && item.department_id === selectedDepartmentId)
+          : null;
+        if (machine) { machineInput.value = machine.id; machineSearch.value = machineLabel(machine); }
+        if (Object.hasOwn(docTypeLabels, values.doc_type)) selectDocType(values.doc_type);
+        description.value = values.description ?? "";
+        neededDate.value = values.needed_date ?? "";
+        neededDate.dispatchEvent(new Event("datepicker:refresh"));
+        if (values.requester_name) requesterName.value = values.requester_name;
+        urgent.checked = Boolean(values.is_urgent);
+      };
+      const banner = document.querySelector("#repair-draft");
+      const draft = drafts.load();
+      if (draft) {
+        draftDecided = false;
+        banner.innerHTML = `<p>มีร่างใบแจ้งซ่อมค้างจาก ${escapeHtml(formatDate(new Date(draft.savedAt).toISOString(), true))}</p><div class="draft-banner-actions"><button type="button" class="btn secondary small" data-draft="discard">เริ่มใหม่</button><button type="button" class="btn small" data-draft="use">ใช้ร่างต่อ</button></div>`;
+        banner.hidden = false;
+        banner.addEventListener("click", (event) => {
+          const choice = event.target.closest("[data-draft]")?.dataset.draft;
+          if (!choice) return;
+          banner.hidden = true;
+          draftDecided = true;
+          // ใช้ร่าง = ร่างเดิมยังอยู่จนกว่าจะแก้; เริ่มใหม่ = ลบร่าง และไม่สร้างใหม่จนกว่าจะกรอก
+          if (choice === "use") { restoreDraft(draft.values); description.focus(); }
+          else {
+            drafts.clear();
+            selectDefaultDepartment();
+            // แถบหายไปแล้ว โฟกัสไปหัวขั้นแรกโดยไม่เปิดแป้นพิมพ์
+            const legend = form.querySelector('[data-step="1"] legend');
+            legend.tabIndex = -1;
+            legend.focus();
+          }
+        });
+      }
+      // แผนกเริ่มต้น = แผนกของผู้แจ้ง (ถ้าแจ้งซ่อมได้) โดยไม่เปิดแป้นพิมพ์บนมือถือ
+      function selectDefaultDepartment() {
+        if (departments.some((item) => item.id === employee.department_id)) selectDepartment(employee.department_id, { focusMachine: false });
+      }
+      if (!draft) selectDefaultDepartment();
+
+      // ยกเลิกเมื่อกรอกไว้แล้ว: ถามก่อนทิ้ง (ทิ้ง = ล้างร่างด้วย)
+      form.querySelector("[data-form-cancel]").addEventListener("click", async (event) => {
+        // ส่งแล้ว (กำลังแนบไฟล์): ใบถูกสร้างแล้ว ไม่มีอะไรให้ทิ้ง
+        if (submitted) return;
+        const dirty = draftDecided && (description.value.trim() || machineInput.value || neededDate.value || urgent.checked || attachmentInput.files?.length);
+        if (!dirty) return;
         event.preventDefault();
-        const form = event.currentTarget;
+        const href = event.currentTarget.getAttribute("href");
+        if (!(await confirmDialog({ title: "ทิ้งใบแจ้งซ่อมที่กรอกไว้?", message: "ข้อมูลที่กรอกและร่างบนเครื่องนี้จะหายไป", confirmLabel: "ทิ้งใบนี้", danger: true }))) return;
+        window.clearTimeout(saveTimer);
+        drafts.clear();
+        location.hash = href;
+      });
+
+      // ---- ส่ง ----
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
         const message = document.querySelector("#request-message");
         message.innerHTML = "";
-        if (!departmentInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกแผนก</div>`; return; }
-        if (!machineInput.value) { message.innerHTML = `<div class="form-message error">กรุณาเลือกเครื่องจักรจากรายการ</div>`; machineSearch.focus(); return; }
-        const values = new FormData(form);
+        if (!checkStep("all")) return;
         let attachments;
         try {
-          attachments = optionalAttachments(values.getAll("attachment"));
+          attachments = optionalAttachments(attachmentInput.files);
         } catch (attachmentError) {
+          goToStep(2, { focus: false });
+          stepsApi.showFieldErrors(form, []);
           message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
+          attachmentInput.focus();
           return;
         }
         setFormBusy(form, true);
+        let requestId;
         try {
           const { data, error: createError } = await sb.rpc("app_create_repair_request", {
             p_department_id: departmentInput.value,
-            p_machine_id: String(values.get("machine_id") ?? ""),
+            p_machine_id: machineInput.value,
             p_doc_type: docTypeInput.value,
-            p_description: String(values.get("description") ?? "").trim(),
-            p_is_urgent: form.querySelector("#repair-urgent").checked,
-            p_needed_date: String(values.get("needed_date") ?? "") || null,
-            p_requester_name: String(values.get("requester_name") ?? "").trim() || null,
+            p_description: description.value.trim(),
+            p_is_urgent: urgent.checked,
+            p_needed_date: neededDate.value || null,
+            p_requester_name: requesterName.value.trim() || null,
           });
           if (createError) throw createError;
-          triggerNotificationEmails(data);
-          if (attachments.length) {
-            const uploaded = await uploadAttachmentBatch(attachments, (file) => uploadRequestAttachment(data, file, employee.id));
-            if (uploaded.failed.length) {
-              showToast(`สร้างคำร้องแล้ว แต่${attachmentBatchFailureText(uploaded)} · กรุณาแนบใหม่ในหน้ารายละเอียด`, "error");
-              go(`request?id=${encodeURIComponent(data)}`);
-              return;
-            }
-          }
-          showToast(attachments.length ? `ส่งใบแจ้งซ่อมและแนบไฟล์${attachments.length > 1 ? ` ${attachments.length} ไฟล์` : ""}สำเร็จ` : "ส่งใบแจ้งซ่อมสำเร็จ");
-          go(`request?id=${encodeURIComponent(data)}`);
+          requestId = data;
         } catch (submitError) {
+          // ส่งไม่ผ่าน: ทุกช่องยังอยู่ บอกในขั้นที่กำลังอยู่
           message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
           setFormBusy(form, false);
+          message.scrollIntoView({ block: "nearest" });
+          // ปุ่มส่งถูกปิดระหว่างรอ โฟกัสจึงหลุด: คืนให้ที่ปุ่มส่ง กดซ้ำได้ทันที
+          form.querySelector("[data-step-submit]").focus({ preventScroll: true });
+          return;
         }
+        submitted = true;
+        window.clearTimeout(saveTimer);
+        drafts.clear();
+        triggerNotificationEmails(requestId);
+        let uploadWarning = "";
+        if (attachments.length) {
+          try {
+            const uploaded = await uploadAttachmentBatch(attachments, (file) => uploadRequestAttachment(requestId, file, employee.id));
+            if (uploaded.failed.length) uploadWarning = `${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ในหน้าใบแจ้งซ่อม`;
+          } catch (uploadError) {
+            uploadWarning = `แนบไฟล์ไม่สำเร็จ: ${friendlyError(uploadError)} แนบใหม่ได้ในหน้าใบแจ้งซ่อม`;
+          }
+        }
+        await showReceipt(requestId, uploadWarning);
       });
+
+      // ใบเสร็จหลังส่ง: เลขที่และขั้นที่รอ แทนการเด้งไปหน้าอื่นทันที
+      const showReceipt = async (requestId, uploadWarning) => {
+        let requestNo = "";
+        let waitingOn = "";
+        try {
+          const [requestResult, stepResult] = await Promise.all([
+            sb.from("requests").select("request_no").eq("id", requestId).maybeSingle(),
+            sb.from("approval_steps").select("step_name,step_order").eq("request_id", requestId).order("step_order").limit(1),
+          ]);
+          requestNo = requestResult.data?.request_no ?? "";
+          waitingOn = (stepResult.data ?? [])[0]?.step_name ?? "";
+        } catch { /* แสดงใบเสร็จแบบไม่มีเลขที่ได้ */ }
+        if (!card.isConnected) {
+          showToast(requestNo ? `ส่งใบแจ้งซ่อม ${requestNo} แล้ว` : "ส่งใบแจ้งซ่อมแล้ว");
+          return;
+        }
+        card.classList.add("form-receipt");
+        card.innerHTML = `<div class="decision-receipt" role="status">
+            <span class="decision-receipt-icon" aria-hidden="true">${uiIcon("check")}</span>
+            <div>
+              <h2 tabindex="-1" id="repair-receipt-title">ส่งใบแจ้งซ่อมแล้ว</h2>
+              <p>${requestNo ? `<span class="request-no">${escapeHtml(requestNo)}</span>` : ""}${requestNo && waitingOn ? " · " : ""}${waitingOn ? `รอ${escapeHtml(waitingOn)}` : ""}</p>
+              ${uploadWarning ? `<p class="form-message error">${escapeHtml(uploadWarning)}</p>` : ""}
+            </div>
+          </div>
+          <div class="action-panel-buttons"><a class="btn is-primary" href="#/request?id=${encodeURIComponent(requestId)}">ดูใบแจ้งซ่อม</a><button type="button" class="btn secondary" data-again>แจ้งอีกใบ</button><a class="btn secondary" href="#/">หน้าหลัก</a></div>`;
+        card.querySelector("[data-again]").addEventListener("click", () => renderRoute());
+        card.querySelector("#repair-receipt-title").focus();
+      };
+
+      paintSteps();
     },
 
     detailView({ request, type, steps, verifications, history, directory, progressSteps, assignedTechIds, employee }) {
