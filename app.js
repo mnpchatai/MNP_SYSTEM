@@ -136,6 +136,8 @@ const accountRequestStatusLabels = {
   rejected: "ไม่อนุมัติ",
 };
 
+// ชื่อสถานะชุดเดียวทั้งระบบ: ป้าย ตัวกรอง แถบ "ไปถึงไหนแล้ว" และไทม์ไลน์อ่านจากที่นี่ผ่าน statusLabel() เท่านั้น
+// (ชุดคำเดียวกับแดชบอร์ด MT ใน modules/mt-dashboard-model.js) สถานะหนึ่งมีชื่อเดียว ตรวจย้อนหลังแล้วไม่ต้องเดาว่าคือขั้นเดียวกันไหม
 const statusLabels = {
   draft: "ฉบับร่าง",
   pending_approval: "รออนุมัติ",
@@ -146,11 +148,28 @@ const statusLabels = {
   rejected: "ไม่อนุมัติ",
   cancelled: "ยกเลิก",
   pending_assign: "รอมอบหมายช่าง",
-  assigned: "รอดำเนินการ",
-  pending_verify: "รอผู้แจ้งตรวจสอบ",
+  assigned: "รอช่างเริ่มงาน",
+  pending_verify: "รอผู้แจ้งตรวจรับ",
   acknowledged: "รับทราบข้อมูล",
 };
+// ใบแจ้งซ่อม (workflow ซ่อม) เรียกขั้นดำเนินการว่า "กำลังซ่อม"; ความสำคัญของใบแจ้งซ่อมมาจากสวิตช์ "แจ้งด่วน" อย่างเดียว
+const repairStatusLabels = { in_progress: "กำลังซ่อม" };
 const priorityLabels = { low: "ต่ำ", normal: "ปกติ", high: "สูง", urgent: "เร่งด่วน" };
+
+// type = แถวของ request_types (หรือ { code }) — ใบแจ้งซ่อมคือประเภทที่ใช้ workflow ซ่อม
+function isRepairType(type) {
+  return Boolean(type?.uses_repair_workflow) || type?.code === "MT_REPAIR";
+}
+
+function statusLabel(status, repair = false) {
+  return (repair ? repairStatusLabels[status] : null) ?? statusLabels[status] ?? status;
+}
+
+// ใบแจ้งซ่อม: ความสำคัญสูง/เร่งด่วน = "ด่วน" คำเดียวกับสวิตช์ในฟอร์มและแดชบอร์ด MT
+function priorityLabel(priority, repair = false) {
+  if (repair && (priority === "high" || priority === "urgent")) return "ด่วน";
+  return priorityLabels[priority] ?? priority;
+}
 // สถานะของแต่ละขั้นอนุมัติ (enum approval_status) — ห้ามแสดงค่าดิบภาษาอังกฤษในหน้า
 const stepStatusLabels = { pending: "รอพิจารณา", approved: "อนุมัติ", rejected: "ไม่อนุมัติ", more_info: "ขอข้อมูลเพิ่ม", skipped: "ข้าม", acknowledged: "รับทราบข้อมูล" };
 // คำกริยาของมติแต่ละแบบ ใช้ในแถบตัดสินใจและใบเสร็จหลังกด
@@ -160,20 +179,10 @@ const REQUEST_FORM_CODES = { MT_REPAIR: "MT01-FM05", MANAGEMENT: "PP01-FM08", NC
 
 // ลำดับขั้นของงานสำหรับแถบ "ไปถึงไหนแล้ว" — ใบแจ้งซ่อมเดินตาม workflow ของ MT ส่วนคำร้องทั่วไป
 // ใช้ลำดับสั้นกว่าเพราะไม่มีขั้นมอบหมายช่าง/ตรวจรับ (ดู statusLabels ด้านบนสำหรับป้ายเต็ม)
-const REPAIR_STAGES = [
-  { status: "pending_approval", label: "รออนุมัติ" },
-  { status: "pending_assign", label: "รอมอบหมายช่าง" },
-  { status: "assigned", label: "รอช่างเริ่มงาน" },
-  { status: "in_progress", label: "กำลังซ่อม" },
-  { status: "pending_verify", label: "รอตรวจรับ" },
-  { status: "completed", label: "เสร็จแล้ว" },
-];
-const GENERAL_STAGES = [
-  { status: "pending_approval", label: "รออนุมัติ" },
-  { status: "approved", label: "อนุมัติแล้ว" },
-  { status: "in_progress", label: "กำลังดำเนินการ" },
-  { status: "completed", label: "เสร็จแล้ว" },
-];
+const REPAIR_STAGES = ["pending_approval", "pending_assign", "assigned", "in_progress", "pending_verify", "completed"]
+  .map((status) => ({ status, label: statusLabel(status, true) }));
+const GENERAL_STAGES = ["pending_approval", "approved", "in_progress", "completed"]
+  .map((status) => ({ status, label: statusLabel(status) }));
 // สถานะที่ออกนอกเส้นทางปกติ — ค้างอยู่ที่ขั้นอนุมัติและยังเดินต่อไม่ได้จนกว่าจะแก้
 const OFF_TRACK_STATUSES = { more_info: "warning", rejected: "danger", cancelled: "danger", draft: "muted" };
 
@@ -193,7 +202,7 @@ function requestProgress(status, usesRepairWorkflow, typeCode = null) {
     offTrack,
     // ใบที่จบแล้วนับเป็นผ่านครบทุกขั้น ใบที่ยังเดินอยู่นับเฉพาะขั้นก่อนหน้าว่าผ่านแล้ว
     done: !offTrack && index === stages.length - 1 ? stages.length : Math.max(index, 0),
-    label: offTrack ? statusLabels[status] ?? status : stages[index]?.label ?? statusLabels[status] ?? status,
+    label: offTrack ? statusLabel(status, usesRepairWorkflow) : stages[index]?.label ?? statusLabel(status, usesRepairWorkflow),
   };
 }
 
@@ -457,13 +466,13 @@ function friendlyError(error) {
     INVALID_DOC_TYPE: "กรุณาเลือกประเภทเอกสาร",
     REQUEST_NOT_PENDING_ASSIGN: "ใบนี้ไม่ได้อยู่ในขั้นรอมอบหมายช่างแล้ว",
     TECHNICIAN_NOT_FOUND: "ไม่พบช่างที่เลือกในแผนกซ่อมบำรุง",
-    REQUEST_NOT_ASSIGNED: "ใบนี้ไม่ได้อยู่ในขั้นรอเริ่มงานแล้ว",
+    REQUEST_NOT_ASSIGNED: "ใบนี้ไม่ได้อยู่ในขั้นรอช่างเริ่มงานแล้ว",
     NOT_ASSIGNED_TECHNICIAN: "คุณไม่ใช่ช่างที่ถูกมอบหมายหรือหัวหน้าแผนกซ่อมบำรุงของใบนี้",
     REQUEST_NOT_IN_PROGRESS: "ใบนี้ไม่ได้อยู่ระหว่างดำเนินการซ่อมแล้ว",
     INVALID_EXECUTION_PLAN: "กรุณาเลือกการดำเนินงาน",
     INVALID_INSPECTOR_OPINION: "กรุณาเลือกแนวทางการซ่อม",
     INVALID_CAUSE_ANALYSIS: "กรุณาระบุผลวิเคราะห์สาเหตุ 3–5,000 ตัวอักษร",
-    REQUEST_NOT_PENDING_VERIFY: "ใบนี้ไม่ได้อยู่ในขั้นรอตรวจรับแล้ว",
+    REQUEST_NOT_PENDING_VERIFY: "ใบนี้ไม่ได้อยู่ในขั้นรอผู้แจ้งตรวจรับแล้ว",
     INVALID_RESULT: "กรุณาเลือกผลการตรวจรับ",
     NOTE_REQUIRED: "กรุณาระบุสาเหตุที่ไม่ผ่านการตรวจรับ",
     COMMENT_REQUIRED: "กรุณาระบุเหตุผล (จำเป็นสำหรับ \"ไม่อนุมัติ\" และ \"ขอข้อมูลเพิ่ม\")",
@@ -1001,8 +1010,9 @@ function openAttachmentLightbox(id) {
   }
 }
 
-function statusBadge(status) {
-  return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabels[status] ?? status)}</span>`;
+// repair = ใบแจ้งซ่อม (isRepairType) — ชื่อสถานะบางขั้นของใบแจ้งซ่อมเรียกต่างจากคำร้องทั่วไป (ดู repairStatusLabels)
+function statusBadge(status, repair = false) {
+  return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status, repair))}</span>`;
 }
 
 // action: การ์ดที่กดได้ (เช่น เครื่องจักร → ประวัติการซ่อม) วาดเป็นปุ่ม ให้โมดูลผูก click ด้วย data-fact-action
@@ -1178,7 +1188,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${statusBadge(request.status)}${request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+        status: `<span class="register-badges">${statusBadge(request.status, isRepairType(type))}${request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
@@ -1213,7 +1223,7 @@ function statusBoardRows(rows, { showType = false } = {}) {
           department: escapeHtml(row.department_name ?? row.department_code ?? ""),
           requester: escapeHtml(row.requester_name ?? ""),
           updated: formatDate(row.last_changed_at ?? row.submitted_at, true),
-          status: `<span class="register-badges">${statusBadge(row.status)}${row.is_urgent ? `<span class="request-priority-chip priority-urgent">เร่งด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
+          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow))}${row.is_urgent ? `<span class="request-priority-chip priority-urgent">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
         },
       };
     }),
@@ -1988,11 +1998,12 @@ async function getPendingApprovals() {
 }
 
 const MY_REPAIR_ACTION_STATUSES = ["pending_assign", "assigned", "in_progress", "pending_verify"];
+// สิ่งที่ "ฉัน" ต้องทำกับใบนั้น (คำกริยา) — คนละเรื่องกับชื่อสถานะของใบ (statusLabels) จึงไม่ใช้คำ "รอ…" ซ้ำกับสถานะ
 const myRepairActionLabels = {
-  pending_assign: "รอมอบหมายช่าง",
-  assigned: "รอเริ่มงาน",
-  in_progress: "รอบันทึกผลซ่อม",
-  pending_verify: "รอตรวจรับ",
+  pending_assign: "มอบหมายช่าง",
+  assigned: "เริ่มงานซ่อม",
+  in_progress: "บันทึกผลซ่อม",
+  pending_verify: "ตรวจรับงาน",
 };
 
 // งานซ่อมที่ต้องลงมือทำเอง (มอบหมายช่าง/เริ่มงาน/บันทึกผลซ่อม/ตรวจรับ) ไม่มี approval_steps รองรับ
@@ -2002,7 +2013,7 @@ async function getMyRepairActionItems() {
   const employee = state.employee;
   const { data, error } = await sb
     .from("requests")
-    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th,owning_department_id),request_technicians(technician_id)")
+    .select("id,request_no,title,status,priority,created_at,requester_id,assignee_id,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id),request_technicians(technician_id)")
     .in("status", MY_REPAIR_ACTION_STATUSES)
     .order("created_at", { ascending: true });
   if (error) throw error;
@@ -2122,7 +2133,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
   const head = `<span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
-      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flagged ? `<span class="priority-flag">${escapeHtml(priorityLabels[request.priority])}</span>` : ""}</span>
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flagged ? `<span class="priority-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>
       <strong class="queue-item-title">${escapeHtml(request.title)}</strong>
       <span class="queue-item-meta">${escapeHtml(meta)}</span>
     </span>`;
@@ -2350,17 +2361,11 @@ window.matchMedia("(min-width: 1041px)").addEventListener?.("change", () => {
   if (homeQueueState.selectedId && document.querySelector("#home-queue .queue-list")) selectQueueItem(homeQueueState.selectedId);
 });
 
+// ตัวกรองสถานะ: ชื่อมาจาก statusLabels ชุดเดียวกับป้าย (ในโมดูลแจ้งซ่อม requestListFilters ใช้ชื่อแบบใบแจ้งซ่อม)
 const REQUEST_STATUS_FILTERS = [
   ["all", "ทั้งหมด"],
-  ["pending_approval", "รออนุมัติ"],
-  ["approved", "อนุมัติแล้ว"],
-  ["pending_assign", "รอมอบหมายช่าง"],
-  ["assigned", "รอดำเนินการ"],
-  ["in_progress", "กำลังดำเนินการ"],
-  ["pending_verify", "รอตรวจรับ"],
-  ["completed", "เสร็จแล้ว"],
-  ["acknowledged", "รับทราบข้อมูล"],
-  ["rejected", "ไม่อนุมัติ"],
+  ...["pending_approval", "approved", "pending_assign", "assigned", "in_progress", "pending_verify", "completed", "acknowledged", "rejected"]
+    .map((status) => [status, statusLabels[status]]),
 ];
 
 const requestCenterUrl = window.MNP_REQUEST_CENTER.url;
@@ -2425,14 +2430,14 @@ function requestScopeSwitch(params) {
 }
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
-function requestListFilters(params, { departments = null, placeholder, scope = false, search = true } = {}) {
+function requestListFilters(params, { departments = null, placeholder, scope = false, search = true, repair = false } = {}) {
   // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
   const known = knownRequestStatuses(params);
   const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
-  const options = REQUEST_STATUS_FILTERS.map(([option, label]) => ({ value: option, label: option === "all" ? "ทุกสถานะ" : label, href: requestCenterUrl(params, { status: option }) }));
+  const options = REQUEST_STATUS_FILTERS.map(([option, label]) => ({ value: option, label: option === "all" ? "ทุกสถานะ" : statusLabel(option, repair), href: requestCenterUrl(params, { status: option }) }));
   // ลิงก์จากแดชบอร์ดส่งหลายสถานะคั่นจุลภาค: เป็นตัวเลือกของตัวเอง ช่องจึงบอกค่าที่ใช้กรองอยู่จริง
   if (known.length > 1) {
-    const labels = known.map((status) => REQUEST_STATUS_FILTERS.find(([option]) => option === status)?.[1]).filter(Boolean);
+    const labels = known.map((status) => statusLabel(status, repair));
     options.splice(1, 0, { value, label: labels.join(", "), href: requestCenterUrl(params, { status: value }) });
   }
   const statusSelect = hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value });
@@ -2507,7 +2512,7 @@ function requestCenterHeader(types, params, counts) {
   return `<div class="page-heading"><div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
     <div class="request-type-heading"><h2>เลือกโมดูล</h2></div>
     <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" style="background:${requestTypeGradient(type.code)}">
-      <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} รอดำเนินการ` : "ดูสถานะ"}</span></span>
+      <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} ยังไม่จบ` : "ดูสถานะ"}</span></span>
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${selected?.id === type.id ? "กำลังแสดงประเภทนี้" : "ดูรายการและสถานะ →"}</small></span>
     </a>`).join("")}</nav>`;
 }
@@ -2529,7 +2534,7 @@ async function renderRequestsBoard(params, types) {
     && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
   const content = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
-    ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" })}
+    ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected) })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
   app.innerHTML = shell(content, "requests", "คำร้อง");
@@ -2606,7 +2611,7 @@ async function renderRequests(params) {
     const department = selectedFilterDepartment(params, departments);
     // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
     const search = departments ? (params.get("q") ?? "").trim() : "";
-    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments) })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments), repair: isRepairType(selected) })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -3031,14 +3036,6 @@ function personName(directory, id) {
   return person ? `${person.first_name} ${person.last_name}` : "—";
 }
 
-const repairTimelineStatusLabels = {
-  ...statusLabels,
-  pending_approval: "รออนุมัติ",
-  more_info: "ต้องการข้อมูลเพิ่มเติม",
-  in_progress: "กำลังซ่อม",
-  pending_verify: "รอผู้แจ้งตรวจสอบผลการซ่อม",
-  completed: "ซ่อมเรียบร้อย",
-};
 
 function closestTimelineRecord(records, createdAt, predicate = () => true) {
   const target = Date.parse(createdAt);
@@ -3097,7 +3094,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
   const latestRepairResult = [...history]
     .filter((item) => item.to_status === "pending_verify")
     .sort((left, right) => right.created_at.localeCompare(left.created_at))[0];
-  const labels = isRepair ? repairTimelineStatusLabels : statusLabels;
+  const labelOf = (status) => statusLabel(status, isRepair);
 
   const statusEvents = history.map((item) => {
     const actorName = personName(directory, item.changed_by);
@@ -3171,15 +3168,15 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     } else if (item.to_status === "completed") {
       detail = `${actor || "ผู้รับผิดชอบ"} ปิดงานว่าเสร็จแล้ว`;
     } else {
-      const fromLabel = labels[item.from_status] ?? item.from_status;
-      const toLabel = labels[item.to_status] ?? item.to_status;
+      const fromLabel = labelOf(item.from_status);
+      const toLabel = labelOf(item.to_status);
       detail = `${actor || "ผู้ใช้งาน"} เปลี่ยนสถานะจาก ${fromLabel} เป็น ${toLabel}`;
     }
 
     return {
       id: `status-${item.id}`,
       at: item.created_at,
-      title: `${labels[item.to_status] ?? item.to_status}${stage && ["pending_approval", "more_info", "rejected"].includes(item.to_status) ? ` (${stage})` : ""}`,
+      title: `${labelOf(item.to_status)}${stage && ["pending_approval", "more_info", "rejected"].includes(item.to_status) ? ` (${stage})` : ""}`,
       detail: message && message === note ? detail : appendTimelineNote(detail, note),
       message,
     };
@@ -3364,7 +3361,7 @@ async function renderRequestDetail(params) {
   // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
   const priorityIsFlagged = ["high", "urgent"].includes(request.priority);
   const requestFacts = [
-    priorityIsFlagged ? "" : requestFact("ความสำคัญ", priorityLabels[request.priority], {
+    priorityIsFlagged ? "" : requestFact("ความสำคัญ", priorityLabel(request.priority, isRepair), {
       icon: "flag",
       tone: "primary",
       valueClass: `priority-${request.priority}`,
@@ -3390,10 +3387,10 @@ async function renderRequestDetail(params) {
     <header class="request-detail-head">
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
-        <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? statusBadge(request.status)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
+        <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? statusBadge(request.status, isRepair)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${escapeHtml(request.title)}</h1>
-      <p class="request-detail-meta">${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` · <span class="priority-flag">ความสำคัญ${escapeHtml(priorityLabels[request.priority])}</span>` : ""}</p>
+      <p class="request-detail-meta">${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` · <span class="priority-flag">${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}</span>` : ""}</p>
     </header>
     <div class="detail-grid">
       <div class="stack">

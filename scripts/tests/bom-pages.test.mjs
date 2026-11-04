@@ -330,8 +330,8 @@ test("dialogs render for their arguments and escape user text", async () => {
   countryInput.handlers.input();
   assert.equal(typeSelect.value, "EX", "a type chosen by hand is not overwritten by the country guess");
   whInput.handlers.change();
-  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "PK").textContent, "ว่าง = 14 ธ.ค. 69");
-  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 4 ธ.ค. 69");
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "PK").textContent, "ว่าง = 14 ธ.ค. 2569");
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 4 ธ.ค. 2569");
   assert.ok(dueInputs.every((input) => input.value === ""), "the date inputs themselves stay empty");
   auto.checked = false;
   auto.handlers.change();
@@ -339,10 +339,10 @@ test("dialogs render for their arguments and escape user text", async () => {
   auto.checked = true;
   whInput.value = "2026-11-01";
   whInput.handlers.change();
-  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 30 ต.ค. 69", "the preview shows the clamped date (not before the order date)");
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 30 ต.ค. 2569", "the preview shows the clamped date (not before the order date)");
   orderedInput.value = "2026-10-20";
   orderedInput.handlers.change();
-  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 21 ต.ค. 69", "changing the order date recomputes the clamp");
+  assert.equal(previews.find((node) => node.dataset.bomDuePreview === "RB").textContent, "ว่าง = 21 ต.ค. 2569", "changing the order date recomputes the clamp");
   const pkInput = dueInputs.find((input) => input.dataset.bomDue === "PK");
   pkInput.value = "2026-10-31";
   pkInput.handlers.input();
@@ -385,7 +385,7 @@ test("forms go through the data-rf-* rules: a new order is created with dates co
   assert.equal(autoOrder.id, "261030-26001");
   assert.equal(new Date(autoOrder.due.PK).getDate(), 14);
   assert.deepEqual(json(autoOrder.dueDefaults), ["RB", "GR", "PT", "BG", "ST", "PK"]);
-  assert.match(await env.render(`p=orders&sel=${autoOrder.id}`), /title="ค่าเริ่มต้นจาก lead time"><b>PK<\/b> 14 ธ\.ค\. 69\*/);
+  assert.match(await env.render(`p=orders&sel=${autoOrder.id}`), /title="ค่าเริ่มต้นจาก lead time"><b>PK<\/b> 14 ธ\.ค\. 2569\*/);
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "ลูกค้าทดสอบ", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01", "due.RB": "2026-10-20", "due.PK": "" });
   const order = env.store.data().orders.find((entry) => entry.id === "PI-TEST-1");
   assert.ok(order, "order created from the form");

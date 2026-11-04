@@ -359,7 +359,7 @@
       ? { title: "รายการงานค้างตามตัวกรอง", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา แตะเลขที่เพื่อเปิดใบ` }
       : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "ใบที่แจ้งในช่วงนี้" แตะเลขที่เพื่อเปิดใบ` };
     const statusCell = (row) => {
-      const badge = row.isOpen ? `<span class="badge ${esc(row.status)}">${esc(model.STAGE_BY_KEY[row.stage]?.short ?? row.status)}</span>` : statusBadge(row.status);
+      const badge = row.isOpen ? `<span class="badge ${esc(row.status)}">${esc(model.STAGE_BY_KEY[row.stage]?.short ?? row.status)}</span>` : statusBadge(row.status, true);
       const status = row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
       if (row.stage !== "start" && row.stage !== "repair") return status;
       const names = row.technicianIds.map(techName).join(", ") || "ไม่พบข้อมูลช่างที่รับผิดชอบ";

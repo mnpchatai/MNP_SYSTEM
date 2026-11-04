@@ -798,11 +798,12 @@
   const toCsv = (rows) => `﻿${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
 
   // ---------- จัดรูปแบบ ----------
+  // วันที่แบบเดียวกับ formatDate ของระบบหลัก: วัน เดือนย่อ ปี พ.ศ. 4 หลัก (เช่น 6 พ.ย. 2569)
   const TH_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
   const fmtDate = (ms) => {
     if (!ms || !Number.isFinite(Number(ms))) return "-";
     const d = new Date(Number(ms));
-    return `${d.getDate()} ${TH_MONTHS[d.getMonth()]} ${String(d.getFullYear() + 543).slice(2)}`;
+    return `${d.getDate()} ${TH_MONTHS[d.getMonth()]} ${d.getFullYear() + 543}`;
   };
   const fmtDateTime = (ms) => {
     if (!ms) return "-";

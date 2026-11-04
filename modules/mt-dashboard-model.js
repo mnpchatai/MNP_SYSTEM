@@ -42,7 +42,7 @@
     { key: "assign", label: "รอมอบหมายช่าง", short: "รอมอบหมายช่าง", owner: "ผจก.ซ่อมบำรุง" },
     { key: "start", label: "รอช่างเริ่มงาน", short: "รอช่างเริ่มงาน", owner: "ช่าง" },
     { key: "repair", label: "กำลังซ่อม", short: "กำลังซ่อม", owner: "ช่าง" },
-    { key: "verify", label: "รอผู้แจ้งตรวจรับ", short: "รอตรวจรับ", owner: "ผู้แจ้ง" },
+    { key: "verify", label: "รอผู้แจ้งตรวจรับ", short: "รอผู้แจ้งตรวจรับ", owner: "ผู้แจ้ง" },
     // Not part of the repair workflow; kept so stage counts always add up to the open count.
     { key: "approved", label: "อนุมัติแล้ว รอดำเนินการ", short: "อนุมัติแล้ว", owner: "—" },
   ];

@@ -80,8 +80,8 @@ test("I-MR statistics use MR̄/d2 for Cp/Cpk and the overall SD for Ppk, with ve
 
 test("Thai date/number/duration formatting and date input round trip", () => {
   const at = new Date(2026, 9, 28, 9, 5).getTime();
-  assert.equal(rules.fmtDate(at), "28 ต.ค. 69");
-  assert.equal(rules.fmtDateTime(at), "28 ต.ค. 69 09:05");
+  assert.equal(rules.fmtDate(at), "28 ต.ค. 2569");
+  assert.equal(rules.fmtDateTime(at), "28 ต.ค. 2569 09:05");
   assert.equal(rules.fmtDate(0), "-");
   assert.equal(rules.fmtNum(1234.567, 2), "1,234.57");
   assert.equal(rules.fmtNum("x"), "-");

@@ -6,7 +6,7 @@
 // (app_create_repair_request, app_assign_repair_technician, app_start_repair_work, ...)
 //
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — ฟังก์ชันข้างในเรียก helper/ค่าคงที่ของ app.js
-// (sb, escapeHtml, showToast, friendlyError, setFormBusy, closePopup, statusLabels,
+// (sb, escapeHtml, showToast, friendlyError, setFormBusy, closePopup, statusLabel,
 // executionPlanLabels, inspectorOpinionLabels, renderRequestDetail ฯลฯ) ได้เพราะ hook ทุกตัวถูก
 // เรียกหลัง app.js โหลดเสร็จแล้วเท่านั้น ห้ามเรียกของ app.js ตอนโหลดไฟล์นี้
 //
@@ -48,9 +48,9 @@
       : request.status === "more_info"
         ? steps.find((step) => step.status === "more_info")?.step_name
         : null;
-    if (!stepName) return statusBadge(request.status);
+    if (!stepName) return statusBadge(request.status, true);
     const short = approverShortNames[stepName] ?? stepName;
-    const label = `${statusLabels[request.status] ?? request.status} (${short})`;
+    const label = `${statusLabel(request.status, true)} (${short})`;
     return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(label)}</span>`;
   }
 

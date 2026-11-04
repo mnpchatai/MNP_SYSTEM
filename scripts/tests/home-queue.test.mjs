@@ -51,3 +51,23 @@ test("J/K moves one item and stops at the ends", () => {
   assert.equal(queue.stepSelection(ids, "gone", 1), "a");
   assert.equal(queue.stepSelection([], "a", 1), null);
 });
+
+test("each request status has one name, shared by badges, filters, progress, timeline and the MT dashboard", async () => {
+  // ผลประเมินดีไซน์: สถานะเดียวกันเคยมีสามชื่อ (รอเริ่มงาน / รอดำเนินการ / รอช่างเริ่มงาน) — ตรวจย้อนหลังไม่ได้ถ้าชื่อไม่ตรงกัน
+  const { readFileSync } = await import("node:fs");
+  const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+  const app = read("app.js");
+  const labels = Object.fromEntries([...app.match(/const statusLabels = \{([\s\S]*?)\};/)[1].matchAll(/(\w+): "([^"]+)"/g)].map((match) => [match[1], match[2]]));
+  assert.equal(labels.assigned, "รอช่างเริ่มงาน");
+  assert.equal(labels.pending_verify, "รอผู้แจ้งตรวจรับ");
+  assert.equal(labels.pending_assign, "รอมอบหมายช่าง");
+  // ตัวกรองและแถบความคืบหน้าอ่านจาก statusLabels ไม่มีรายการชื่อของตัวเอง
+  assert.match(app, /const REQUEST_STATUS_FILTERS = \[\s*\["all", "ทั้งหมด"\],\s*\.\.\.\[/);
+  assert.match(app, /const REPAIR_STAGES = \[[^\]]*\]\s*\.map\(\(status\) => \(\{ status, label: statusLabel\(status, true\) \}\)\);/);
+  assert.doesNotMatch(app, /repairTimelineStatusLabels|"รอดำเนินการ"|"รอผู้แจ้งตรวจสอบ"/);
+  // แดชบอร์ด MT ใช้ชื่อเดียวกันในขั้นที่ตรงกัน
+  const dashboard = read("modules/mt-dashboard-model.js");
+  for (const [key, status] of [["assign", "pending_assign"], ["start", "assigned"], ["verify", "pending_verify"]]) {
+    assert.match(dashboard, new RegExp(`key: "${key}", label: "${labels[status]}", short: "${labels[status]}"`), `${key} on the dashboard reads ${labels[status]}`);
+  }
+});
