@@ -36,9 +36,15 @@ function mediaRules(query) {
 
 test("on touch screens the main-path controls reach 44px", () => {
   const { rules, start } = mediaRules("(pointer: coarse), (max-width: 760px)");
-  for (const selector of [".btn", ".btn.small", ".filter", ".view-tab", ".request-back-link", ".link-button", ".tech-option", ".parts-table .input", ".board-search .input", ".board-search .select", ".list-filter .select", ".attachment-download:not([hidden])"]) {
+  for (const selector of [".btn", ".btn.small", ".filter", ".view-tab", ".request-back-link", ".link-button", ".tech-option", ".parts-table .input", ".board-search .input", ".board-search .select", ".list-filter .select"]) {
     assert.match(rules.get(selector) ?? "", /min-height: 44px/, `${selector} min-height`);
   }
+  // ลิงก์ดาวน์โหลด: พื้นที่แตะ 19 + 13 + 13 = 45px โดยไม่ทำให้ไทล์สูงขึ้น (margin ติดลบเท่า padding)
+  assert.match(rules.get(".attachment-download:not([hidden])") ?? "", /margin: -13px -8px; padding: 13px 8px;/);
+  // แถบข้างย่อ (761–1040px) มีคอลัมน์เดียว: คอลัมน์ 44px ของปุ่มออกจากระบบใช้เฉพาะแถบเต็มกว้าง
+  assert.equal(rules.has(".sidebar-user"), false, "the collapsed sidebar keeps its single column");
+  const wide = mediaRules("(pointer: coarse) and (min-width: 1041px)").rules;
+  assert.match(wide.get(".sidebar-user") ?? "", /grid-template-columns: 34px minmax\(0, 1fr\) 44px/);
   for (const selector of [".icon-button", ".request-detail-menu > .icon-button", ".mobile-nav-toggle"]) {
     assert.match(rules.get(selector) ?? "", /width: 44px; height: 44px/, `${selector} is 44×44`);
   }
@@ -54,4 +60,5 @@ test("register cards on narrow screens open from anywhere on the card", () => {
   assert.match(rules.get(".register-table a.register-title::after") ?? "", /content: ""; position: absolute; inset: 0/);
   // ลิงก์/ปุ่มอื่นในการ์ดอยู่เหนือพื้นที่แตะของการ์ด
   assert.match(rules.get(".register-table tr :is(a:not(.register-title), button, select, input)") ?? "", /z-index: 1/);
+  assert.match(rules.get(".register-table tr:has(a.register-title:focus-visible)") ?? "", /outline: 2px solid var\(--primary\)/, "keyboard focus outlines the whole card");
 });
