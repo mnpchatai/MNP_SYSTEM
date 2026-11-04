@@ -1026,8 +1026,11 @@ function machineLabelOf(code, name, separator = " — ") {
   const machineCode = String(code ?? "").trim();
   const machineName = String(name ?? "").trim();
   if (!machineName || machineName === machineCode) return machineCode;
-  if (!machineCode || machineName.includes(machineCode)) return machineName;
-  return `${machineCode}${separator}${machineName}`;
+  if (!machineCode) return machineName;
+  // รหัสต้องอยู่ในชื่อเป็นคำทั้งคำ (ไม่ใช่ส่วนหนึ่งของรหัสอื่น เช่น "CV-0" ใน "CV-02") ไม่สนตัวพิมพ์เล็ก/ใหญ่
+  const escaped = machineCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const named = new RegExp(`(^|[^\\p{L}\\p{N}-])${escaped}($|[^\\p{L}\\p{N}-])`, "iu").test(machineName);
+  return named ? machineName : `${machineCode}${separator}${machineName}`;
 }
 
 // action: การ์ดที่กดได้ (เช่น เครื่องจักร → ประวัติการซ่อม) วาดเป็นปุ่ม ให้โมดูลผูก click ด้วย data-fact-action
@@ -2599,10 +2602,20 @@ function requestListFilters(params, { departments = null, placeholder, scope = f
   }
   const statusSelect = hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value });
   // จอแคบ: ตัวกรองทั้งแถวพับอยู่หลังปุ่ม "ตัวกรอง (n)" (n = ตัวกรองที่ใช้อยู่) รายการจึงขึ้นในจอแรก จอกว้างเห็นทั้งแถวเสมอ
-  const active = [known.length > 0, scope && params.get("scope") === "mine", Boolean(params.get("dept")), Boolean((params.get("q") ?? "").trim())].filter(Boolean).length;
+  // นับเฉพาะตัวกรองที่หน้านี้ใช้กรองจริง (คำค้นที่ค้างจากโมดูลอื่นซึ่งไม่มีช่องค้นหา หรือแผนกที่ไม่มีในรายการ ไม่นับ)
+  // พับอยู่: ค่าที่กรองอยู่บอกใน title ของปุ่ม ไม่ต้องเปิดดู
+  const department = departments ? selectedFilterDepartment(params, departments) : null;
+  const query = search ? (params.get("q") ?? "").trim() : "";
+  const applied = [
+    known.length ? `สถานะ ${known.map((status) => statusLabel(status, repair)).join(", ")}` : "",
+    scope && params.get("scope") === "mine" ? "เฉพาะที่ฉันแจ้ง" : "",
+    department ? `แผนก ${department.displayCode}` : "",
+    query ? `ค้นหา "${query}"` : "",
+  ].filter(Boolean);
+  const active = applied.length;
   const open = listFiltersOpen;
   return `<div class="list-filters${open ? " is-open" : ""}">
-    <button type="button" class="btn secondary list-filters-toggle" aria-expanded="${open}" aria-controls="list-filters-body" data-list-filters-toggle>${uiIcon("search")} ตัวกรอง${active ? ` (${active})` : ""}</button>
+    <button type="button" class="btn secondary list-filters-toggle" aria-expanded="${open}" aria-controls="list-filters-body" data-list-filters-toggle${active ? ` title="${escapeHtml(`กรองอยู่: ${applied.join(" · ")}`)}"` : ""}>${uiIcon("search")} ตัวกรอง${active ? ` (${active})` : ""}</button>
     <div class="list-filters-body" id="list-filters-body">${scope ? requestScopeSwitch(params) : ""}${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>
   </div>`;
 }
@@ -4115,6 +4128,8 @@ document.addEventListener("keydown", (event) => {
   const search = document.querySelector('#app [role="search"] input[type="search"]:not(:disabled)') ?? document.querySelector('#app [role="search"] input:not([type="hidden"]):not([type="checkbox"]):not(:disabled)');
   if (!search) return;
   event.preventDefault();
+  // จอแคบ: ช่องค้นหาอยู่ในตัวกรองที่พับไว้ เปิดตัวกรองก่อนจึงโฟกัสได้
+  if (!search.getClientRects().length) search.closest(".list-filters")?.querySelector('[data-list-filters-toggle][aria-expanded="false"]')?.click();
   search.focus();
   search.select?.();
 });

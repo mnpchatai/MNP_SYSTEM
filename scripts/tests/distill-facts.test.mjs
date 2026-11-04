@@ -26,6 +26,11 @@ test("a machine name that already carries its code is not prefixed with the code
   assert.equal(label("CV-02", ""), "CV-02");
   assert.equal(label("", "ห้องซ่อม"), "ห้องซ่อม");
   assert.equal(label(null, null), "", "no machine: callers show their own placeholder");
+  // รหัสต้องอยู่ในชื่อเป็นคำทั้งคำ: ส่วนหนึ่งของรหัสอื่นไม่นับ, ตัวพิมพ์เล็ก/ใหญ่ไม่ต่างกัน
+  assert.equal(label("CV-0", "CV-02 line"), "CV-0 — CV-02 line");
+  assert.equal(label("A", "Banana"), "A — Banana");
+  assert.equal(label("hcm-03", "เครื่องฉีดยาง HCM-03"), "เครื่องฉีดยาง HCM-03");
+  assert.equal(label("MX-1(B)", "เครื่องผสม MX-1(B)"), "เครื่องผสม MX-1(B)", "regex characters in a code are literal");
   // ทุกจุดที่แสดงเครื่องจักรใช้ตัวช่วยนี้
   assert.match(app, /const machine = machineLabelOf\(request\.machine_code, request\.machine_name, " · "\);/);
   assert.match(mt, /const machineLabel = \(machine\) => machine\.is_placeholder \? machine\.code : machineLabelOf\(machine\.code, machine\.name\);/);
@@ -55,9 +60,15 @@ test("buttons in a module header do not repeat the module name", () => {
 
 test("list filters fold behind one button on phones and stay in one row on wide screens", () => {
   const filters = pick(app, "requestListFilters");
-  assert.match(filters, /data-list-filters-toggle>\$\{uiIcon\("search"\)\} ตัวกรอง\$\{active \? ` \(\$\{active\}\)` : ""\}<\/button>/);
+  assert.match(filters, /data-list-filters-toggle\$\{[^]*?\}>\$\{uiIcon\("search"\)\} ตัวกรอง\$\{active \? ` \(\$\{active\}\)` : ""\}<\/button>/);
   assert.match(filters, /aria-expanded="\$\{open\}" aria-controls="list-filters-body"/);
   assert.match(app, /listFiltersOpen = toggle\.getAttribute\("aria-expanded"\) !== "true";/, "the toggle flips its own state");
+  // นับเฉพาะตัวกรองที่หน้านี้ใช้จริง และบอกค่าที่กรองอยู่ใน title ตอนพับ
+  assert.match(filters, /const query = search \? \(params\.get\("q"\) \?\? ""\)\.trim\(\) : "";/);
+  assert.match(filters, /const department = departments \? selectedFilterDepartment\(params, departments\) : null;/);
+  assert.match(filters, /title="\$\{escapeHtml\(`กรองอยู่: \$\{applied\.join\(" · "\)\}`\)\}"/);
+  // คีย์ลัด / เปิดตัวกรองที่พับไว้ก่อนโฟกัสช่องค้นหา
+  assert.match(app, /if \(!search\.getClientRects\(\)\.length\) search\.closest\("\.list-filters"\)\?\.querySelector\('\[data-list-filters-toggle\]\[aria-expanded="false"\]'\)\?\.click\(\);/);
   assert.match(css, /\.list-filters-body \{ display: contents; \}/, "wide screens keep the old single row");
   assert.match(css, /\.list-filters-toggle \{ display: none; \}/);
   assert.match(css, /\.list-filters:not\(\.is-open\) \.list-filters-body \{ display: none; \}/);
