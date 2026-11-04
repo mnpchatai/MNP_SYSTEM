@@ -2631,5 +2631,8 @@ tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
   .register-table tr:has(a.register-title:active) { background: var(--shell); }
   /* คีย์บอร์ด: วงโฟกัสรอบทั้งการ์ด เพราะทั้งการ์ดคือพื้นที่ของลิงก์ */
   .register-table tr:has(a.register-title:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
-  .register-table a.register-title:focus-visible { outline: none; }
+}
+/* เบราว์เซอร์ที่ไม่รองรับ :has() (iOS ก่อน 15.4) ยังเห็นวงโฟกัสที่ตัวลิงก์ */
+@supports selector(:has(*)) {
+  @media (max-width: 760px) { .register-table a.register-title:focus-visible { outline: none; } }
 }
