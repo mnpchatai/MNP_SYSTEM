@@ -2054,6 +2054,7 @@ function hasApprovalDuty(employee) {
 
 async function renderDashboard(params = new URLSearchParams()) {
   activeDecisionCountdown?.flush();
+  activeBulkCountdown?.flush();
   loadingShell("dashboard", "หน้าหลัก");
   const employee = state.employee;
   const rules = window.MNP_HOME_QUEUE;
@@ -2242,6 +2243,9 @@ function watchDecisionPanelBusy() {
   const panel = document.querySelector("#decision-panel");
   if (!panel) return;
   const sync = () => {
+    // อนุมัติหลายรายการกำลังยืนยัน/นับถอยหลัง/ส่ง: bindQueueBulk ล็อกช่องติ๊กไว้ ห้ามปลดล็อกจากที่นี่ (ชุดที่ส่งต้องตรงกับที่ยืนยัน)
+    const bulkState = document.querySelector("#queue-bulk")?.dataset.state;
+    if (bulkState && bulkState !== "idle") return;
     const busy = panel.dataset.state !== "idle";
     document.querySelectorAll(".queue-select, #queue-select-all").forEach((box) => { box.disabled = busy; });
   };
@@ -2416,11 +2420,25 @@ function bindQueueBulk() {
 
   async function send() {
     if (bulk.isConnected) render("sending");
-    const summary = await runBulkApprove(chosen);
-    detachLeaveGuards();
-    if (activeBulkCountdown === countdown) activeBulkCountdown = null;
+    let summary = null;
+    try {
+      summary = await runBulkApprove(chosen);
+    } catch (error) {
+      // ผลของแต่ละใบอยู่ในฐานข้อมูลแล้ว (ฐานข้อมูลตรวจขั้นปัจจุบันทุกครั้ง) วาดคิวใหม่จะเห็นว่าใบไหนผ่าน
+      summary = [`อนุมัติหลายรายการไม่ครบ: ${friendlyError(error)} · ดูรายการที่ยังค้างในคิว`, "error"];
+    } finally {
+      detachLeaveGuards();
+      if (activeBulkCountdown === countdown) activeBulkCountdown = null;
+    }
     if (location.hash === "" || /^#\/(dashboard|approvals)?(\?|$)/.test(location.hash)) {
-      try { await renderDashboard(); } catch (renderError) { console.error(renderError); }
+      try {
+        await renderDashboard();
+        // แบบเดียวกับใบเดียว: โฟกัสกลับมาที่คิว ไม่หลุดไปที่ body
+        document.querySelector(".queue-item.is-selected .queue-item-main, .queue-item-main")?.focus();
+      } catch (renderError) {
+        console.error(renderError);
+        if (bulk.isConnected) { chosen = []; render("idle"); }
+      }
     }
     if (summary) showToast(...summary);
   }
@@ -3421,6 +3439,7 @@ function stepRepliesHtml(step, replies, directory, canReply) {
 
 async function renderRequestDetail(params) {
   activeDecisionCountdown?.flush();
+  activeBulkCountdown?.flush();
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");

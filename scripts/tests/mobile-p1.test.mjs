@@ -104,8 +104,16 @@ test("bulk approve follows the single-approve steps in the bottom bar: confirm, 
   assert.match(bulk, /window\.addEventListener\("hashchange", sendOnLeave\);/, "leaving the page sends, like one request");
   assert.match(bulk, /if \(event\.key !== "Escape" \|\| event\.defaultPrevented\) return;/);
   assert.match(bulk, /const lockBoxes = /, "the chosen set cannot change after confirming");
-  // เปิดใบอื่นระหว่างนับถอยหลัง: ส่งของเดิมก่อน (เหมือนใบเดียว)
-  assert.match(app, /activeDecisionCountdown\?\.flush\(\);\s*activeBulkCountdown\?\.flush\(\);/);
+  // เปิดใบอื่น หรือวาดหน้าหลัก/หน้ารายละเอียดใหม่ระหว่างนับถอยหลัง: ส่งของเดิมก่อน (เหมือนใบเดียว) ไม่ให้ตัวนับเก่าส่งเงียบ ๆ ทีหลัง
+  for (const fn of ["async function selectQueueItem(", "async function renderDashboard(", "async function renderRequestDetail("]) {
+    const body = app.slice(app.indexOf(fn), app.indexOf(fn) + 800);
+    assert.match(body, /activeDecisionCountdown\?\.flush\(\);[\s\S]*activeBulkCountdown\?\.flush\(\);/, `${fn} flushes both countdowns`);
+  }
+  // แถบใบเดียวต้องไม่ปลดล็อกช่องติ๊กระหว่างที่อนุมัติหลายรายการยังไม่จบ
+  assert.match(app, /const bulkState = document\.querySelector\("#queue-bulk"\)\?\.dataset\.state;\s*if \(bulkState && bulkState !== "idle"\) return;/);
+  // ส่งพลาดหรือวาดคิวใหม่พลาด: ไม่ค้างที่ "กำลังส่ง…" และถอดตัวเฝ้าการออกจากหน้าเสมอ
+  assert.match(bulk, /\} finally \{\s*detachLeaveGuards\(\);/);
+  assert.match(bulk, /if \(bulk\.isConnected\) \{ chosen = \[\]; render\("idle"\); \}/);
 });
 
 test("form errors scroll to the middle of the screen and the step bar counts what is missing", () => {
