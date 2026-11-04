@@ -122,6 +122,16 @@
         <div class="date-pick-foot"><button type="button" class="btn secondary small" data-pick="today">วันนี้</button>${input.value ? `<button type="button" class="btn secondary small" data-pick="clear">ล้าง</button>` : ""}</div>`;
     };
     const focusDay = () => popup.querySelector(`[data-date="${focused}"]`)?.focus();
+    // ปฏิทินกว้างพอให้ช่องวันได้ 44px แต่ช่องวันที่บนมือถืออยู่ลึกในการ์ด เลื่อนปฏิทินไปทางซ้ายเท่าที่ต้องเพื่อไม่ให้ล้นขอบจอ
+    const keepInViewport = () => {
+      popup.style.left = "";
+      const rect = popup.getBoundingClientRect?.();
+      const viewport = root.document?.documentElement?.clientWidth || root.innerWidth;
+      if (!rect || !viewport) return;
+      const gutter = 16;
+      const shift = Math.min(Math.max(rect.right - (viewport - gutter), 0), Math.max(rect.left - gutter, 0));
+      if (shift > 0) popup.style.left = `${-shift}px`;
+    };
     const close = ({ restoreFocus = true } = {}) => {
       if (popup.hidden) return;
       if (typeof root.closePopup === "function") root.closePopup(popup);
@@ -133,6 +143,7 @@
       paintPopup();
       popup.hidden = false;
       button.setAttribute("aria-expanded", "true");
+      keepInViewport();
       focusDay();
       // ปฏิทินสูงราว 400px: เลื่อนให้เห็นทั้งอัน รวมปุ่มวันนี้/ล้าง ที่อยู่ท้าย
       popup.scrollIntoView?.({ block: "nearest" });

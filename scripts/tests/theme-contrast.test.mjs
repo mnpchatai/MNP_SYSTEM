@@ -120,7 +120,8 @@ for (const theme of ["light", "dark"]) {
 
   test(`tinted buttons and labels reach 4.5:1 (${theme})`, () => {
     // หัวข้อ "รายละเอียดที่ผู้ขอแจ้ง" (.request-brief-label) เป็น --muted บนการ์ด จึงอยู่ในชุด muted ด้านล่างแล้ว
-    for (const selector of [".btn.warning", ".btn.danger", ".btn.secondary", ".decision-line", ".decision-line.is-error"]) {
+    // .avatar คืออักษรย่อชื่อผู้ใช้ท้ายเมนู (เคยเป็น --primary บน --primary-soft = 4.47:1 สว่าง และ 3.8:1 มืด)
+    for (const selector of [".btn.warning", ".btn.danger", ".btn.secondary", ".decision-line", ".decision-line.is-error", ".avatar"]) {
       assertReadable(selector, ruleValue(selector, theme, "color"), ruleValue(selector, theme, "background", "background-color"), theme);
     }
   });
