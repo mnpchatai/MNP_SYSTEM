@@ -4,7 +4,7 @@
 // - อ่านผ่าน RLS เดียวกับทะเบียน NCR (ncr_reports, ncr_losses, ncr_outcomes, ncr_status_history)
 // - ฐานเวลาเดียว: วันที่ออก NCR นับจำนวนใบเต็มใบ ส่วนบาทแบ่งตามสัดส่วนแผนก
 // - ตัวกรองอยู่ใน URL แชร์ลิงก์ได้ แตะรายการในการ์ดเพื่อดูตัวเลขในหน้า (ไม่ใช้ป๊อปอัพ) แล้วกดกรองทั้งหน้า
-// - ทางเข้าคือปุ่ม "แดชบอร์ด NCR" ข้างปุ่ม "ออก NCR" ในหน้า NCR (headerLinks) ไม่มีเมนูข้างแยก
+// - ทางเข้าคือปุ่ม "แดชบอร์ด" ข้างปุ่ม "ออก NCR" ในหัวโมดูล NCR (headerLinks) ไม่มีเมนูข้างแยก
 //
 // โหลดหลัง modules/module-ncr.js และ modules/ncr-dashboard-model.js — helper ของ app.js
 // (sb, state, shell, bindShell, loadingShell, escapeHtml, relation) ถูกเรียกตอนเปิดหน้าเท่านั้น
@@ -535,6 +535,7 @@
   }
 
   ncrModule.shared.invalidateDashboard = () => { cache = null; };
-  ncrModule.headerLinks = [...(ncrModule.headerLinks ?? []), { href: `#/${PATH}`, label: "แดชบอร์ด NCR", icon: ICON }];
+  // ปุ่มอยู่ในหัวโมดูล/ทะเบียน NCR ซึ่งบอกชื่อโมดูลแล้ว จึงเขียนแค่ "แดชบอร์ด"
+  ncrModule.headerLinks = [...(ncrModule.headerLinks ?? []), { href: `#/${PATH}`, label: "แดชบอร์ด", icon: ICON }];
   ncrModule.pages = { ...(ncrModule.pages ?? {}), [PATH]: renderDashboard };
 })();

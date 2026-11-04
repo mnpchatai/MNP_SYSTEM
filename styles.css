@@ -494,6 +494,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .list-filters { margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .list-filters .scope-switch, .list-filters .board-search { margin: 0; }
 .list-filters .board-search { flex: 1 1 320px; }
+/* ปุ่มพับตัวกรอง (requestListFilters ใน app.js): จอกว้างไม่มีปุ่ม ตัวกรองทั้งแถวอยู่ในแถวเดิม (display: contents) */
+.list-filters-body { display: contents; }
+.list-filters-toggle { display: none; }
+.list-filters-toggle .ui-icon { width: 16px; height: 16px; }
 .list-filter { display: inline-flex; align-items: center; gap: 8px; }
 .list-filter-label { color: var(--muted); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
 .list-filter .select { width: auto; min-width: 150px; min-height: 40px; }
@@ -531,6 +535,9 @@ a.register-title:hover { color: var(--primary); }
 /* จอแคบ: แถวละการ์ด เลขที่กับสถานะบรรทัดแรก เรื่องเต็มบรรทัด ช่องที่เหลือเป็นบรรทัดเล็กมีชื่อคอลัมน์นำ ช่องว่างไม่แสดง */
 @media (max-width: 760px) {
   .list-filters { align-items: stretch; }
+  /* จอแคบ: ตัวกรองพับอยู่หลังปุ่ม "ตัวกรอง (n)" รายการจึงขึ้นในจอแรก */
+  .list-filters-toggle { display: inline-flex; gap: 6px; }
+  .list-filters:not(.is-open) .list-filters-body { display: none; }
   .list-filter { flex: 1 1 100%; }
   /* สถานะกับแผนกครึ่งแถวคู่กัน ช่องค้นหาบรรทัดถัดไป รายการจึงขึ้นในจอแรก */
   .list-filters .board-search > .list-filter, .list-filters .board-search .select { flex: 1 1 calc(50% - 4px); min-width: 0; max-width: none; }

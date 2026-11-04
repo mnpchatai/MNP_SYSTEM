@@ -1020,6 +1020,16 @@ function statusBadge(status, repair = false) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status, repair))}</span>`;
 }
 
+// ชื่อเครื่องจักรที่แสดง (รายการ หน้ารายละเอียด ฟอร์ม MT และแดชบอร์ด MT ใช้ตัวนี้ตัวเดียว)
+// ชื่อที่มีรหัสอยู่แล้ว (เช่น "เครื่องฉีดยาง HCM-03") ไม่นำหน้าด้วยรหัสซ้ำ — เดิมขึ้น "HCM-03 — เครื่องฉีดยาง HCM-03"
+function machineLabelOf(code, name, separator = " — ") {
+  const machineCode = String(code ?? "").trim();
+  const machineName = String(name ?? "").trim();
+  if (!machineName || machineName === machineCode) return machineCode;
+  if (!machineCode || machineName.includes(machineCode)) return machineName;
+  return `${machineCode}${separator}${machineName}`;
+}
+
 // action: การ์ดที่กดได้ (เช่น เครื่องจักร → ประวัติการซ่อม) วาดเป็นปุ่ม ให้โมดูลผูก click ด้วย data-fact-action
 // คำอธิบายปุ่มอยู่ใน title/aria-label ตามกติกา "ไม่ใส่ข้อความอธิบายถาวรบนจอ"
 // icon = ชื่อไอคอนใน UI_ICON_PATHS (เช่น "flag", "user", "machine", "calendar") ค่าที่ไม่ใช่ชื่อไอคอนยังแสดงเป็นตัวอักษรเหมือนเดิม
@@ -1177,7 +1187,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
   const rows = requests.map((request) => {
     const type = relation(request.request_type);
     const href = `#/request?id=${encodeURIComponent(request.id)}`;
-    const machine = [request.machine_code, request.machine_name].filter(Boolean).join(" · ");
+    const machine = machineLabelOf(request.machine_code, request.machine_name, " · ");
     const description = (request.description ?? "").trim();
     const main = machine || request.title;
     // บรรทัดรอง: ชื่อเรื่องเมื่อหัวเป็นเครื่องจักร ไม่งั้นรายละเอียด (ไม่ซ้ำกับหัว) + วันที่ต้องการใช้งานถ้ามี
@@ -2588,8 +2598,24 @@ function requestListFilters(params, { departments = null, placeholder, scope = f
     options.splice(1, 0, { value, label: labels.join(", "), href: requestCenterUrl(params, { status: value }) });
   }
   const statusSelect = hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value });
-  return `<div class="list-filters">${scope ? requestScopeSwitch(params) : ""}${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>`;
+  // จอแคบ: ตัวกรองทั้งแถวพับอยู่หลังปุ่ม "ตัวกรอง (n)" (n = ตัวกรองที่ใช้อยู่) รายการจึงขึ้นในจอแรก จอกว้างเห็นทั้งแถวเสมอ
+  const active = [known.length > 0, scope && params.get("scope") === "mine", Boolean(params.get("dept")), Boolean((params.get("q") ?? "").trim())].filter(Boolean).length;
+  const open = listFiltersOpen;
+  return `<div class="list-filters${open ? " is-open" : ""}">
+    <button type="button" class="btn secondary list-filters-toggle" aria-expanded="${open}" aria-controls="list-filters-body" data-list-filters-toggle>${uiIcon("search")} ตัวกรอง${active ? ` (${active})` : ""}</button>
+    <div class="list-filters-body" id="list-filters-body">${scope ? requestScopeSwitch(params) : ""}${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>
+  </div>`;
 }
+
+// เปิดตัวกรองแล้วเปลี่ยนค่า หน้าวาดใหม่: ตัวกรองยังเปิดอยู่ ไม่ต้องกดเปิดซ้ำทุกครั้ง
+let listFiltersOpen = false;
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest?.("[data-list-filters-toggle]");
+  if (!toggle) return;
+  listFiltersOpen = toggle.getAttribute("aria-expanded") !== "true";
+  toggle.setAttribute("aria-expanded", String(listFiltersOpen));
+  toggle.closest(".list-filters")?.classList.toggle("is-open", listFiltersOpen);
+});
 
 // โมดูลที่ประกาศ loadRepairDepartments (MT) มีตัวกรองแผนกในหน้ารายการ — ค่า dept ใน URL คือรหัสแผนกต้นทาง (เช่น RB, ST)
 // ตัวกรองแค่ย่อรายการ ไม่ให้สิทธิ์เพิ่ม (RLS ยังเป็นตัวตัดสินว่าอ่านใบไหนได้)
@@ -2646,7 +2672,8 @@ async function requestTypeCounts(types, mineOnly) {
 function requestCenterHeader(types, params, counts) {
   const selected = types.find((type) => type.id === params.get("type"));
   if (selected) {
-    const createLabel = { MT_REPAIR: "สร้างคำร้อง / แจ้งซ่อม MT", MANAGEMENT: "สร้างคำร้องถึงฝ่ายบริหาร", NCR_CAR: "ออก NCR", IT_REPAIR: "สร้างใบแจ้งซ่อม IT" }[selected.code] ?? `สร้าง${requestTypeLabel(selected)}`;
+    // หัวโมดูลบอกชื่อโมดูลแล้ว ปุ่มในหัวจึงไม่ต่อท้ายด้วยรหัสโมดูลซ้ำ (เดิมหัว MT มีคำว่า MT สี่ครั้ง)
+    const createLabel = { MT_REPAIR: "สร้างคำร้อง / แจ้งซ่อม", MANAGEMENT: "สร้างคำร้องถึงฝ่ายบริหาร", NCR_CAR: "ออก NCR", IT_REPAIR: "สร้างใบแจ้งซ่อม IT" }[selected.code] ?? `สร้าง${requestTypeLabel(selected)}`;
     // ลิงก์เสริมของโมดูล (เช่น แดชบอร์ด NCR) วางข้างปุ่มสร้าง — โมดูลประกาศ headerLinks: [{ href, label, icon }]
     const headerLinks = (requestModule(selected.code)?.headerLinks ?? [])
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
@@ -3539,7 +3566,7 @@ async function renderRequestDetail(params) {
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? statusBadge(request.status, isRepair)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${escapeHtml(request.title)}</h1>
-      <p class="request-detail-meta">${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` · <span class="priority-flag">${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}</span>` : ""}</p>
+      <p class="request-detail-meta">${escapeHtml(detailView?.typeLabel ?? type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` · <span class="priority-flag">${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}</span>` : ""}</p>
     </header>
     <div class="detail-grid">
       <div class="stack">
@@ -3576,7 +3603,8 @@ async function renderRequestDetail(params) {
         <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
       </aside>
     </div>`;
-  app.innerHTML = shell(content, "requests", request.request_no);
+  // แถบบนบอกโมดูล (เลขที่ใบอยู่ที่หัวใบแล้ว ไม่ซ้ำบนจอเดียวกัน) ชื่อแท็บยังเป็นเลขที่ใบ
+  app.innerHTML = shell(content, "requests", type ? requestTypeLabel(type) : "คำร้อง", request.request_no);
   bindShell();
 
   bindRequestDetailChrome();

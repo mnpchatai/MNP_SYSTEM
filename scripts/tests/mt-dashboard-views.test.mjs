@@ -8,6 +8,12 @@ const require = createRequire(import.meta.url);
 const model = require("../../modules/mt-dashboard-model.js");
 const source = readFileSync(new URL("../../modules/module-mt-dashboard.js", import.meta.url), "utf8");
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+// ชื่อเครื่องจักรใช้ตัวช่วยกลางของ app.js (ตัวจริง ไม่ใช่ของจำลอง)
+const appSource = readFileSync(new URL("../../app.js", import.meta.url), "utf8");
+const machineLabelStart = appSource.indexOf("function machineLabelOf(");
+const machineLabelContext = vm.createContext({});
+vm.runInContext(`${appSource.slice(machineLabelStart, appSource.indexOf("\n}", machineLabelStart) + 2)}\nthis.fn = machineLabelOf;`, machineLabelContext);
+const machineLabelOf = machineLabelContext.fn;
 
 async function render({ status = "assigned", technicians = ["t1"], directory, overdue = false, startedOn = null, requesterId = "requester", requesterName = "ผู้แจ้งในใบ", owners = [], ownerError = null, section = "drill" } = {}) {
   const root = { innerHTML: "", addEventListener() {}, querySelector: () => null };
@@ -36,7 +42,7 @@ async function render({ status = "assigned", technicians = ["t1"], directory, ov
       return { range: async () => ({ data: owners.map((owner) => ({ current_step: 1, ...owner })), error: ownerError }) };
     } }, state: { employee: { id: "viewer" } },
     app: { innerHTML: "" }, shell: (html) => html, bindShell() {}, loadingShell() {},
-    escapeHtml, relation: (value) => value, bangkokToday: () => "2026-10-10",
+    escapeHtml, machineLabelOf, relation: (value) => value, bangkokToday: () => "2026-10-10",
     formatDate: (value) => value, statusBadge: (value) => `<span class="badge">${value}</span>`,
     loadEmployeeDirectory: async () => directory ?? new Map([["t1", { first_name: "สมชาย", last_name: "ใจดี" }]]),
     URLSearchParams, console: { warn() {} },

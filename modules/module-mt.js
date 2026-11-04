@@ -235,7 +235,7 @@
     }).catch((syncError) => console.warn("ซิงก์ใบแจ้งซ่อมไปชีตสำรองไม่สำเร็จ", syncError));
   }
 
-  const machineLabel = (machine) => machine.is_placeholder ? machine.code : `${machine.code} — ${machine.name}`;
+  const machineLabel = (machine) => machine.is_placeholder ? machine.code : machineLabelOf(machine.code, machine.name);
 
   // สิทธิ์ที่ใช้ตัดสินว่าจะแสดงส่วนงานช่างไหน — ต้องตรงกับเงื่อนไขใน RPC ของฐานข้อมูล
   function detailPermissions({ request, type, directory, assignedTechIds, employee }) {
@@ -796,21 +796,25 @@
       });
       machineHistoryCurrent = window.MNP_MT_MACHINE_HISTORY.currentRow(request, assignedTechIds.map(nameOf));
       const { technicians, canAssign, canStartWork, canFinishWork, canVerify, canRecordProgress } = detailPermissions({ request, type, directory, assignedTechIds, employee });
+      // ผู้แจ้งในใบ (ช่องที่กรอก) ขึ้นการ์ดเฉพาะเมื่อไม่ใช่บัญชีที่ส่งใบ ซึ่งบรรทัดใต้หัวใบบอกแล้ว ("โดย …")
+      const requesterName = String(request.requester_name ?? "").trim();
+      const showRequester = requesterName && requesterName !== personName(directory, request.requester_id);
       return {
+        // ประเภทเอกสาร (ใบแจ้งซ่อม/ใบคำร้อง) แทนชื่อโมดูลในบรรทัดใต้หัวใบ จึงไม่มีการ์ดประเภทเอกสารซ้ำ
+        typeLabel: docTypeLabels[request.doc_type] ?? null,
         statusBadgeHtml: repairStatusBadge(request, steps),
         headerActionsHtml: formExportPayload ? window.MNP_MT_FORM_EXPORT.downloadButtonHtml("MT01-FM05") : "",
         facts: [
           requestFact("ช่างผู้รับผิดชอบ",
             assignedTechIds.map((techId) => personName(directory, techId)).join(", ") || "—",
             { icon: "user", tone: "success", wide: assignedTechIds.length > 1 }),
-          requestFact("ประเภทเอกสาร", docTypeLabels[request.doc_type] ?? request.doc_type ?? "—", { icon: "document", tone: "violet" }),
           ...(request.received_by_name ? [requestFact("ผู้จัดการที่รับใบ", request.received_by_name, { icon: "approve", tone: "cyan" })] : []),
-          requestFact("เครื่องจักร", `${request.machine_code ?? "—"}${request.machine_name && request.machine_name !== request.machine_code ? ` — ${request.machine_name}` : ""}`, {
+          requestFact("เครื่องจักร", machineLabelOf(request.machine_code, request.machine_name) || "—", {
             icon: "machine",
             tone: "slate",
             ...(window.MNP_MT_MACHINE_HISTORY.hasMachineHistory(request, { employee, owningDepartmentId: type?.owning_department_id }) ? { action: "machine-history", actionLabel: "ดูประวัติการซ่อมของเครื่องนี้" } : {}),
           }),
-          requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "user", tone: "cyan" }),
+          ...(showRequester ? [requestFact("ผู้แจ้ง", requesterName, { icon: "user", tone: "cyan" })] : []),
           // ใบด่วนมีป้าย "ด่วน" ในบรรทัดหัวใบแล้ว (เงื่อนไขเดียวกับหน้ารายละเอียดทั่วไป) ไม่บอกซ้ำในการ์ด
           ...(["high", "urgent"].includes(request.priority) ? [] : [requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "flag", tone: request.is_urgent ? "danger" : "success" })]),
           ...(request.needed_date ? [requestFact("วันที่ต้องการใช้งาน", formatDate(request.needed_date), { icon: "calendar", tone: "violet" })] : []),
