@@ -909,6 +909,16 @@ a.register-title:hover { color: var(--primary); }
 .field-required { color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
 .stepped-actions .btn { min-height: 44px; }
 .stepped-actions .btn[hidden] { display: none; }
+.stepped-actions { flex-wrap: wrap; align-items: center; }
+/* "ยังกรอกไม่ครบ n ช่อง": แถวของตัวเองเหนือปุ่ม */
+.stepped-summary { flex-basis: 100%; margin: 0; color: var(--danger-ink); font-size: var(--text-meta); font-weight: 700; }
+.stepped-summary[hidden] { display: none; }
+/* จอกว้างเห็นทุกช่องพร้อมข้อความผิดอยู่แล้ว: สรุปมีเฉพาะตอนเป็นขั้น (แถวปุ่มติดล่างจอ) */
+.stepped-form:not(.is-stepped) .stepped-summary { display: none; }
+/* บรรทัดบอกว่าแถบตัดสินใจเป็นของใบไหน: ปุ่มมติอ้างถึงผ่าน aria-describedby เสมอ แสดงให้เห็นเฉพาะคิวหน้าหลักจอแคบ */
+.decision-target { display: none; }
+/* หัวเรื่องที่รับโฟกัสตอนเปลี่ยนหน้าไม่ไปอยู่ใต้แถบบนที่ติดหัวจอ */
+.content h1[tabindex="-1"] { scroll-margin-top: 80px; }
 .file-pick { min-height: 48px; justify-self: start; gap: 8px; cursor: pointer; }
 .file-pick .ui-icon { width: 18px; height: 18px; }
 .attachment-upload { min-height: 44px; }
@@ -1101,6 +1111,10 @@ a.machine-history-no:hover { text-decoration: underline; }
   /* คอลัมน์เดียว: แถบตัดสินใจ/ดำเนินงานติดล่างจอ ใต้นิ้วโป้ง (ความสูงจริงมาจาก trackActionBarHeight ใน app.js) */
   .action-panel { position: fixed; z-index: 26; right: 0; bottom: 0; left: 68px; max-height: 70dvh; margin: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); overflow-y: auto; gap: 10px; border-width: 1px 0 0; border-radius: 0; box-shadow: 0 -8px 24px rgb(16 32 59 / .12); }
   .action-panel .action-panel-head { display: none; }
+  .queue-item .decision-panel[data-state="idle"] .decision-target { margin: 0; display: block; overflow: hidden; color: var(--muted); font-size: var(--text-meta); font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+  /* ใบที่ขยายเลื่อนพ้นจอ (ตอนว่าง): แถบลงไปพ้นขอบจอ ไม่ลอยค้างใต้ใบอื่น — watchQueuePanelPlacement ใน app.js */
+  .queue-item .action-panel { transition: transform .18s cubic-bezier(.16, 1, .3, 1), visibility 0s; }
+  .queue-item .action-panel.is-away { visibility: hidden; transform: translateY(110%); transition: transform .18s cubic-bezier(.16, 1, .3, 1), visibility 0s .18s; }
   .next-item-panel .action-panel-head { display: block; }
   .next-item-panel .action-panel-head h2 { display: none; }
   .next-item-panel .action-panel-head p { margin: 0; }

@@ -2169,7 +2169,7 @@ function homeQueueDetailHtml(item, nextStep, { compact = false, nextStepKnown = 
     <h3 class="queue-detail-title" id="queue-detail-title" tabindex="-1">${escapeHtml(request.title)}</h3>`}
     ${description ? `<p class="request-summary-text queue-detail-text">${escapeHtml(description)}</p>` : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
     <a class="link-button" href="#/request?id=${encodeURIComponent(item.id)}">เปิดใบเต็ม: ไฟล์แนบ ลำดับอนุมัติ และประวัติ</a>
-    ${decisionPanelHtml({ currentStep: item.step, nextStep, nextStepKnown, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
+    ${decisionPanelHtml({ request, currentStep: item.step, nextStep, nextStepKnown, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
   </article>`;
 }
 
@@ -2212,8 +2212,27 @@ async function selectQueueItem(id, { focus = false } = {}) {
   watchDecisionPanelBusy();
   syncQueueBulk();
   trackActionBarHeight();
+  if (host !== pane) watchQueuePanelPlacement(li);
   // จอกว้างย้าย focus ไปหัวเรื่องทางขวา; จอแคบ focus อยู่ที่แถวที่แตะ (แถวคือหัวเรื่องของส่วนที่ขยาย)
   if (focus && host === pane) host.querySelector(".queue-detail-title")?.focus();
+}
+
+// จอแคบ: แถบตัดสินใจลอยติดล่างจอ แต่ใบที่ขยายอาจเลื่อนพ้นจอไปแล้ว (เลื่อนดูใบอื่นอยู่)
+// ตอนว่าง (idle) ซ่อนแถบเมื่อใบนั้นไม่อยู่ในจอ ผู้อนุมัติจะได้ไม่กดมติให้ใบที่มองไม่เห็นโดยคิดว่าเป็นใบตรงหน้า
+// ระหว่างพิมพ์เหตุผล/นับถอยหลัง/ส่ง แถบอยู่ตลอด (ต้องกดเลิกทำได้เสมอ)
+let queuePanelObserver = null;
+function watchQueuePanelPlacement(li) {
+  queuePanelObserver?.disconnect();
+  queuePanelObserver = null;
+  const panel = li?.querySelector("#decision-panel");
+  if (!panel || typeof IntersectionObserver !== "function") return;
+  let inView = true;
+  const sync = () => panel.classList.toggle("is-away", !inView && panel.dataset.state === "idle");
+  const io = new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); });
+  io.observe(li);
+  const states = new MutationObserver(sync);
+  states.observe(panel, { attributes: true, attributeFilter: ["data-state"] });
+  queuePanelObserver = { disconnect: () => { io.disconnect(); states.disconnect(); } };
 }
 
 // ระหว่างที่แถบตัดสินใจกำลังยืนยัน/นับถอยหลัง/ส่ง ห้ามติ๊กอนุมัติหลายรายการ
@@ -3431,7 +3450,7 @@ async function renderRequestDetail(params) {
         ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
-        ${canApprove ? decisionPanelHtml({ currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
+        ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
         <details class="card detail-section"><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
@@ -3571,12 +3590,15 @@ function decisionButtonsOf(extraDecisions) {
 }
 
 // nextStepKnown: false เมื่อโหลดลำดับขั้นไม่ได้ ไม่บอกว่า "ขั้นสุดท้าย" ผิดความจริง
-function decisionPanelHtml({ currentStep, nextStep, extraDecisions, nextStepKnown = true }) {
+// request: ใบที่แถบนี้ตัดสิน — ปุ่มมติอ้างถึงเลขที่และหัวข้อผ่าน aria-describedby ทุกหน้า
+// และบนหน้าหลักจอแคบ (แถบลอยติดล่างจอ ห่างจากใบที่ขยาย) แสดงบรรทัดนี้ให้เห็นด้วย
+function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nextStepKnown = true }) {
   return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
     <div class="action-panel-head">
       <h2 id="decision-panel-title">พิจารณาคำร้อง</h2>
       <p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}${nextStep ? ` · ถัดไป: ${escapeHtml(nextStep.step_name)}` : nextStepKnown ? " · ขั้นสุดท้าย" : ""}</p>
     </div>
+    <p class="decision-target" id="decision-target">${escapeHtml(`${request.request_no} · ${request.title}`)}</p>
     <p class="decision-line" id="decision-line" hidden></p>
     <div class="decision-reason" id="decision-reason" hidden>
       <div class="field">
@@ -3586,8 +3608,12 @@ function decisionPanelHtml({ currentStep, nextStep, extraDecisions, nextStepKnow
       </div>
       <details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("decision-files", "เลือกไฟล์", { hint: false })}</details>
     </div>
-    <div class="action-panel-buttons" id="decision-buttons">${decisionButtonsOf(extraDecisions).map((item) => `<button type="button" class="btn ${item.tone} decision-button${item.decision === "approved" ? " is-primary" : ""}" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("")}</div>
+    <div class="action-panel-buttons" id="decision-buttons">${idleDecisionButtonsHtml(decisionButtonsOf(extraDecisions))}</div>
   </section>`;
+}
+
+function idleDecisionButtonsHtml(options) {
+  return options.map((item) => `<button type="button" class="btn ${item.tone} decision-button${item.decision === "approved" ? " is-primary" : ""}" data-decision="${escapeHtml(item.decision)}" aria-describedby="decision-target">${escapeHtml(item.label)}</button>`).join("");
 }
 
 function nextItemPanelHtml() {
@@ -3729,7 +3755,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     if (state.name === "idle") {
       setLine("");
       reason.hidden = true;
-      buttons.innerHTML = options.map((item) => `<button type="button" class="btn ${item.tone} decision-button${item.decision === "approved" ? " is-primary" : ""}" data-decision="${escapeHtml(item.decision)}">${escapeHtml(item.label)}</button>`).join("");
+      buttons.innerHTML = idleDecisionButtonsHtml(options);
       return;
     }
     if (state.name === "compose") {
@@ -5108,11 +5134,37 @@ async function navigateRoute(event) {
   // จำเฉพาะช่องกรอก/ตัวกรอง (select, input) ลิงก์หรือปุ่มที่ id ซ้ำกันในหน้าถัดไปต้องไม่ดึงโฟกัสไว้กลางหน้า
   const before = document.activeElement;
   const beforeId = before?.matches?.("select, input") ? before.id : "";
-  const fromPath = event?.oldURL ? routeFromHash(new URL(event.oldURL).hash).path : null;
+  // หน้าใหม่เริ่มที่บนสุด (เดิมตำแหน่งเลื่อนค้างจากหน้าก่อน หน้ารายละเอียดจึงเปิดกลางใบ)
+  // ย้อนกลับ/ไปหน้าที่เคยเปิดใน history: กลับไปตำแหน่งเดิม (history.state จำไว้ตอนเลื่อน)
+  // เปลี่ยนแค่ตัวกรองในหน้าเดิม: คงตำแหน่งไว้
+  const fromKey = event?.oldURL ? pageKeyOf(routeFromHash(new URL(event.oldURL).hash)) : null;
+  const pageChanged = fromKey !== pageKeyOf(currentRoute());
+  const savedY = typeof history.state?.pilotScrollY === "number" ? history.state.pilotScrollY : null;
+  if (pageChanged && savedY === null) window.scrollTo(0, 0);
   await renderRoute();
   if (seq !== routeSeq) return; // ผู้ใช้กดไปหน้าอื่นต่อระหว่างโหลด หน้าล่าสุดเป็นผู้จัดโฟกัส
-  focusRouteStart({ samePath: fromPath === currentRoute().path, beforeId });
+  if (pageChanged && savedY !== null) window.scrollTo(0, savedY);
+  focusRouteStart({ samePath: !pageChanged, beforeId });
 }
+
+// "หน้าเดียวกัน" = path เดียวกันและเป็นใบ/โหมด/โมดูลเดียวกัน: ใบ A ไปใบ B (#/request?id=) หรือรายการไปฟอร์มสร้าง (mode=create)
+// นับเป็นหน้าใหม่ ส่วนตัวกรอง (สถานะ แผนก ขอบเขต ค้นหา) เปลี่ยนแล้วยังเป็นหน้าเดิม
+function pageKeyOf({ path, params }) {
+  return [path, params.get("id"), params.get("type"), params.get("mode"), params.get("createType")].map((value) => value ?? "").join("|");
+}
+
+// จำตำแหน่งเลื่อนของหน้าปัจจุบันไว้ใน history entry ของมัน: เขียนเมื่อหยุดเลื่อน และทันทีที่แตะ/คลิก
+// (ก่อนลิงก์พาไปหน้าใหม่ ไม่งั้นเลื่อนแล้วแตะเร็วกว่ารอบหน่วงจะเสียตำแหน่งท้าย) — Safari จำกัด replaceState ไม่เกิน 100 ครั้ง/30 วินาที
+let scrollMemoTimer = 0;
+function saveScrollMemo() {
+  clearTimeout(scrollMemoTimer);
+  try { history.replaceState({ ...(history.state ?? {}), pilotScrollY: Math.round(window.scrollY) }, ""); } catch { /* เกินเพดานของเบราว์เซอร์: ย้อนกลับแล้วเริ่มบนสุดแทน */ }
+}
+window.addEventListener("scroll", () => {
+  clearTimeout(scrollMemoTimer);
+  scrollMemoTimer = setTimeout(saveScrollMemo, 300);
+}, { passive: true });
+document.addEventListener("click", (event) => { if (event.target.closest?.("a[href^='#']")) saveScrollMemo(); }, true);
 
 function focusRouteStart({ samePath, beforeId }) {
   const active = document.activeElement;

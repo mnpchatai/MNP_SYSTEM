@@ -89,6 +89,7 @@
   // แถวปุ่มล่างฟอร์ม: ยกเลิก · ย้อนกลับ · ถัดไป · ส่ง (bindStepper ซ่อน/แสดงตามขั้น บนจอแคบติดล่างจอ)
   function actionsHtml({ cancelHref, submitLabel }) {
     return `<div class="form-actions stepped-actions">
+      <p class="stepped-summary" data-steps-summary hidden></p>
       <a class="btn secondary" href="${escapeHtml(cancelHref)}" data-form-cancel>ยกเลิก</a>
       <button type="button" class="btn secondary" data-step-back hidden>‹ ย้อนกลับ</button>
       <button type="button" class="btn is-primary" data-step-next hidden>ถัดไป ›</button>
@@ -118,10 +119,23 @@
       form.querySelector("[data-step-next]").hidden = !view.showNext;
       form.querySelector("[data-step-submit]").hidden = !view.showSubmit;
       if (view.visible.includes(reviewStep)) onReview?.();
+      syncSummary();
+    };
+    // สรุปในแถวปุ่ม: ยังขาดกี่ช่องในขั้นที่เห็นอยู่ (บนจอแคบแถวปุ่มติดล่างจอ ผู้ใช้เห็นทันทีแม้ช่องที่ผิดอยู่นอกจอ)
+    const summary = form.querySelector("[data-steps-summary]");
+    const syncSummary = () => {
+      if (!summary) return;
+      const missing = [...form.querySelectorAll(".field-error[data-generated]")].filter((node) => !node.closest("[hidden]")).length;
+      // นับทั้งช่องว่างและค่าที่ไม่ถูกต้อง (เช่น จำนวน NCR เกินจำนวนทั้งหมด) จึงใช้ "ต้องแก้" ไม่ใช่ "ไม่ครบ"
+      const text = missing ? `ยังมี ${missing} ช่องที่ต้องแก้` : "";
+      if (summary.hidden !== !missing) summary.hidden = !missing;
+      // เขียนเฉพาะเมื่อข้อความเปลี่ยน: การเขียน textContent เป็น childList mutation ของฟอร์ม ซึ่ง MutationObserver ด้านล่างฟังอยู่ (ไม่ให้วนไม่จบ)
+      if (summary.textContent !== text) summary.textContent = text;
     };
     const goTo = (step, { focus = true } = {}) => {
       current = Math.min(Math.max(1, step), count);
       paint();
+      syncSummary();
       if (focus && narrowQuery.matches) {
         const legend = form.querySelector(`[data-step="${current}"] legend`);
         if (legend) {
@@ -134,14 +148,18 @@
     // step = เลขขั้น หรือ "all" (ก่อนส่ง) — ผิดแล้วพาไปขั้นที่มีช่องผิดช่องแรก และโฟกัสช่องนั้น
     const check = (step) => {
       const errors = validate(rules.filter((rule) => step === "all" || rule.step === step), values());
-      if (!errors.length) { clearFieldErrors(form); return true; }
+      if (!errors.length) { clearFieldErrors(form); syncSummary(); return true; }
       goTo(errors[0].step, { focus: false });
       // ทำเครื่องหมายระหว่างที่ระบบพาโฟกัสไปช่องที่ผิด: ช่องที่เปิดรายการเองตอนโฟกัส (เช่น ค้นหาเครื่องจักร) จะได้ไม่เปิดทับข้อความผิด
       const target = showFieldErrors(form, errors);
+      syncSummary();
       if (target) {
         target.dataset.focusFromCheck = "1";
-        target.focus();
+        target.focus({ preventScroll: true });
         delete target.dataset.focusFromCheck;
+        // เลื่อนข้อความผิดใต้ช่องมากลางจอ ไม่ให้ไปอยู่ใต้แถวปุ่มที่ติดล่างจอ (กล่องที่สูง เช่น กลุ่มปุ่มแผนก ข้อความอยู่ท้ายกล่อง)
+        const field = target.closest("[data-field]");
+        (field?.querySelector(".field-error[data-generated]") ?? field)?.scrollIntoView?.({ block: "center" });
       }
       return false;
     };
@@ -157,9 +175,12 @@
     const clearOnEdit = (event) => {
       const name = event.target.closest?.("[data-field]")?.dataset.field;
       if (name) clearFieldError(form, name);
+      syncSummary();
     };
     form.addEventListener("input", clearOnEdit);
     form.addEventListener("change", clearOnEdit);
+    // โมดูลลบข้อความผิดเองได้ด้วย (เช่น NCR แก้จำนวนทั้งหมดแล้วล้างช่องที่ขึ้นกับมัน) นับใหม่ทุกครั้งที่ข้อความผิดเปลี่ยน
+    if (summary && typeof root.MutationObserver === "function") new root.MutationObserver(syncSummary).observe(form, { childList: true, subtree: true });
     narrowQuery.addEventListener?.("change", paint);
     paint();
     return { goTo, check, paint, get current() { return current; } };
