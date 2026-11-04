@@ -418,36 +418,37 @@
     const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
     // ผู้ปิด/ผู้ยกเลิกอาจเป็นคนที่ปิดบัญชีไปแล้ว จึงใช้รายชื่อที่รวมคนที่ไม่ใช้งานแล้ว
     const directory = rows.some((row) => !OPEN_STATUSES.includes(row.status)) ? await loadEmployeeDirectory().catch(() => new Map()) : new Map();
-    // การ์ดต่อ NCR หนึ่งใบ (รูปแบบเดียวกับรายการคำร้อง): เลขที่/สถานะ → สินค้า/ลูกค้า + รายละเอียดสำคัญ → ผู้รับผิดชอบ + ลิงก์
-    const card = (row) => {
+    // ทะเบียนแบบตารางชุดเดียวกับรายการคำร้อง (registerTableHtml ใน app.js): จอกว้างเรียงคอลัมน์ จอแคบเป็นแถวการ์ดเตี้ย
+    const columns = [
+      { key: "no", label: "เลขที่", role: "no" },
+      { key: "subject", label: "สินค้า/วัตถุดิบ", role: "subject" },
+      { key: "defect", label: "ข้อบกพร่อง" },
+      { key: "departments", label: "แผนกรับผิดชอบ" },
+      { key: "issued", label: "วันที่ออก" },
+      { key: "loss", label: "ความสูญเสีย" },
+      { key: "status", label: "สถานะ", role: "status" },
+    ];
+    const tableRow = (row) => {
       const href = `#/ncr?id=${encodeURIComponent(row.id)}`;
       const departments = (row.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code).filter(Boolean).join(" + ");
       const entries = lossByNcr.get(row.id);
       const summary = entries ? window.MNP_NCR_COSTS.summarize(entries) : null;
-      const loss = summary ? formatBaht(summary.net) : null;
-      return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
-        <header class="request-card-head">
-          <div class="request-card-identity"><a class="request-card-no" href="${href}">${escapeHtml(row.ncr_no)}</a></div>
-          <div class="ncr-card-status"><div class="request-card-tags">${statusBadgeHtml(row, row.lossPending)}</div>${ownerChipHtml(row, staff, directory)}</div>
-        </header>
-        <div class="request-card-body">
-          <a class="request-card-title" href="${href}">${escapeHtml(row.product_name)}</a>
-          ${row.customer_name ? `<p class="request-card-subtitle">${escapeHtml(row.customer_name)}</p>` : ""}
-          <div class="request-card-meta">
-            <span><b>ข้อบกพร่อง:</b> ${escapeHtml(relation(row.defect_type)?.name_th ?? "—")}</span>
-            <span><b>พบปัญหา:</b> ${formatQty(row.qty_defect)} ${escapeHtml(row.unit)}</span>
-            <span><b>แผนกรับผิดชอบ:</b> ${escapeHtml(departments || "—")}</span>
-            <span><b>วันที่ออก:</b> ${formatDate(row.issue_date)}</span>
-            <span><b>ความสูญเสีย:</b> ${loss ?? "—"}${summary ? ` · สุทธิยืนยัน · รอยืนยัน ${summary.pending} รายการ` : ""}</span>
-          </div>
-        </div>
-        <footer class="request-card-footer ncr-card-footer">
-          <a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>
-        </footer>
-      </article>`;
+      const defect = [relation(row.defect_type)?.name_th, row.qty_defect !== null && row.qty_defect !== undefined ? `${formatQty(row.qty_defect)} ${row.unit ?? ""}`.trim() : ""].filter(Boolean).join(" · ");
+      return {
+        className: `status-${row.status}`,
+        cells: {
+          no: registerNoHtml(row.ncr_no, href),
+          subject: registerSubjectHtml(row.product_name, href, row.customer_name ?? ""),
+          defect: escapeHtml(defect),
+          departments: escapeHtml(departments),
+          issued: formatDate(row.issue_date),
+          loss: summary ? `${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : "",
+          status: `<span class="register-badges">${statusBadgeHtml(row, row.lossPending)}</span>${ownerChipHtml(row, staff, directory)}`,
+        },
+      };
     };
     const body = rows.length
-      ? `<section class="request-list-panel"><div class="request-timeline">${rows.map(card).join("")}</div></section>`
+      ? `<section class="request-list-panel">${registerTableHtml({ label: "ทะเบียน NCR", columns, rows: rows.map(tableRow) })}</section>`
       : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     // หน้าทะเบียนแบบเดี่ยวใช้เฉพาะโหมดทดสอบ (ไม่มีหน้าคำร้อง ซึ่งเป็นที่อยู่ของปุ่ม "ออก NCR" และลิงก์แดชบอร์ดตามปกติ)
@@ -457,7 +458,7 @@
       <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : `<div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div>`}</div>
-      <div class="filters">${LIST_FILTERS.map(([value, label]) => `<a class="filter${filter === value ? " active" : ""}" href="${escapeHtml(filterUrl(value))}">${label}</a>`).join("")}</div>
+      <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "แสดง", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
       ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");

@@ -135,5 +135,10 @@ for (const theme of ["light", "dark"]) {
 
 test("the summary tile and side stripes follow the dot-not-stripe rule", () => {
   assert.equal(declaration(".request-summary::before", "content"), null, "แถบสีข้างของ .request-summary ต้องไม่กลับมา");
-  assert.doesNotMatch(declaration(".request-timeline-card", "background"), /gradient/, "การ์ดคำร้องไม่มีแถบสีข้าง");
+  // รายการคำร้องเป็นทะเบียน (ตาราง/แถวการ์ดบนมือถือ) พื้นเรียบ ไม่มีแถบสีข้างหรือไล่สี
+  for (const selector of [".register-wrap", ".register-table tr"]) {
+    assert.ok(declaration(selector, "background") !== null, `${selector} มีพื้นของตัวเอง`);
+    assert.doesNotMatch(declaration(selector, "background"), /gradient/, `${selector} ไม่ไล่สี`);
+    assert.equal(declaration(selector, "border-left"), null, `${selector} ไม่มีแถบสีข้าง`);
+  }
 });
