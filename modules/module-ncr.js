@@ -182,36 +182,143 @@
     return data ?? [];
   }
 
+  // ฟอร์มออก NCR ทีละขั้นบนจอแคบ (หน้าเดียวบนจอกว้าง): ขั้น 1 สินค้าและล็อต · ขั้น 2 ปัญหาที่พบ · ขั้น 3 หลักฐาน · ขั้น 4 ทบทวน
+  // ช่องเดิมทุกช่องและส่ง app_ncr_issue ด้วยค่าเดิม — โครงเดียวกับฟอร์มแจ้งซ่อม MT (modules/form-steps.js)
+  const REQUIRED = '<span class="field-required">(จำเป็น)</span>';
+  const ISSUE_RULES = [
+    { name: "product_name", step: 1, required: true, minLength: 2, message: "กรุณาใส่ชื่อสินค้า/วัตถุดิบ อย่างน้อย 2 ตัวอักษร" },
+    { name: "qty_total", step: 2, required: true, message: "กรุณาใส่จำนวนทั้งหมด" },
+    { name: "qty_defect", step: 2, required: true, message: "กรุณาใส่จำนวนที่พบปัญหา" },
+    { name: "unit", step: 2, required: true, message: "กรุณาเลือกหน่วย" },
+    { name: "defect_type", step: 2, required: true, message: "กรุณาเลือกประเภทข้อบกพร่อง" },
+    { name: "source", step: 2, required: true, message: "กรุณาเลือกแหล่งที่พบ" },
+    { name: "description", step: 2, required: true, minLength: 10, message: "กรุณาอธิบายปัญหา สเปค และค่าที่วัดได้ อย่างน้อย 10 ตัวอักษร" },
+  ];
+  // ช่องข้อความ/ตัวเลข/ตัวเลือกของฟอร์ม (ไม่รวมแหล่งที่พบซึ่งเป็นปุ่มเลือก และไฟล์)
+  const ISSUE_FIELDS = ["product_code", "product_name", "customer_name", "customer_code", "po_no", "lot_no", "qty_total", "qty_sampled", "qty_defect", "qty_returned", "unit", "defect_type", "description"];
+
   function issueFormHtml(defectTypes, employee) {
+    const text = (name, label, { required = false, max = 100, type = "text" } = {}) => {
+      const numeric = type === "number";
+      return `<div class="field" data-field="${name}"><label for="ncr-${name.replaceAll("_", "-")}">${escapeHtml(label)}${required ? ` ${REQUIRED}` : ""}</label><input class="input" id="ncr-${name.replaceAll("_", "-")}" name="${name}"${numeric ? ' type="number" min="0" step="any" inputmode="decimal"' : ` maxlength="${max}"`}></div>`;
+    };
     return `
-      <section class="card ncr-card"><form id="ncr-issue-form" novalidate>
-        <div class="ncr-form-message"></div>
-        <p class="muted small">ส่วนที่ 1 ผู้รายงาน/ผู้ตรวจสอบ (ตรวจตามค่า AQL Level 2.5) · ผู้รายงาน ${escapeHtml(`${employee.first_name} ${employee.last_name}`)} แผนก ${escapeHtml(employee.department?.code ?? "—")} · เลขที่ QAxxx/yy ออกให้เมื่อกดออก NCR</p>
-        <div class="form-grid">
-          <div class="field"><label for="ncr-product-code">รหัสสินค้า/วัตถุดิบ</label><input class="input" id="ncr-product-code" name="product_code" maxlength="100"></div>
-          <div class="field"><label for="ncr-product-name">ชื่อสินค้า/วัตถุดิบ *</label><input class="input" id="ncr-product-name" name="product_name" minlength="2" maxlength="300" required></div>
-          <div class="field"><label for="ncr-customer-name">ชื่อลูกค้า/พ่อค้า</label><input class="input" id="ncr-customer-name" name="customer_name" maxlength="200"></div>
-          <div class="field"><label for="ncr-customer-code">รหัสลูกค้า</label><input class="input" id="ncr-customer-code" name="customer_code" maxlength="50"></div>
-          <div class="field"><label for="ncr-po-no">เลขที่ใบสั่งซื้อ/ใบส่งของ</label><input class="input" id="ncr-po-no" name="po_no" maxlength="100"></div>
-          <div class="field"><label for="ncr-lot-no">Lot</label><input class="input" id="ncr-lot-no" name="lot_no" maxlength="100"></div>
-          <div class="field"><label for="ncr-qty-total">จำนวนทั้งหมด *</label><input class="input" id="ncr-qty-total" name="qty_total" type="number" min="0" step="any" inputmode="decimal" required></div>
-          <div class="field"><label for="ncr-qty-sampled">จำนวนสุ่ม</label><input class="input" id="ncr-qty-sampled" name="qty_sampled" type="number" min="0" step="any" inputmode="decimal"></div>
-          <div class="field"><label for="ncr-qty-defect">จำนวนที่พบปัญหา *</label><input class="input" id="ncr-qty-defect" name="qty_defect" type="number" min="0" step="any" inputmode="decimal" required></div>
-          <div class="field"><label for="ncr-qty-returned">จำนวนที่ส่งคืน</label><input class="input" id="ncr-qty-returned" name="qty_returned" type="number" min="0" step="any" inputmode="decimal"></div>
-          <div class="field"><label for="ncr-unit">หน่วย *</label><select class="select" id="ncr-unit" name="unit" required><option value="">— เลือก —</option>${UNITS.map((unit) => `<option>${escapeHtml(unit)}</option>`).join("")}</select></div>
-          <div class="field"><label for="ncr-defect-type">ประเภทข้อบกพร่อง *</label><select class="select" id="ncr-defect-type" name="defect_type" required><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${escapeHtml(type.code)}">${escapeHtml(type.name_th)}</option>`).join("")}</select></div>
-          <fieldset class="field full ncr-fieldset"><legend>แหล่งที่พบ *</legend>${radiosHtml("source", SOURCES)}</fieldset>
-          <div class="field full"><label for="ncr-description">รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง) *</label><textarea class="textarea" id="ncr-description" name="description" minlength="10" maxlength="5000" required></textarea></div>
-        </div>
-        ${evidenceFieldHtml("ncr-issue-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปชิ้นงาน ผลวัด")}
-        <div class="form-actions"><a class="btn secondary" href="#/ncr">ยกเลิก</a><button class="btn" type="submit">ออก NCR</button></div>
+      <section class="card ncr-card form-card" id="ncr-issue-card"><div class="ncr-form-message"></div>
+      <div class="draft-banner" id="ncr-issue-draft" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>
+      <form id="ncr-issue-form" class="stepped-form" novalidate>
+        ${window.MNP_FORM_STEPS.headHtml()}
+        <fieldset class="form-step" data-step="1">
+          <legend class="form-step-title">สินค้าและล็อต</legend>
+          <p class="muted small">ส่วนที่ 1 ผู้รายงาน/ผู้ตรวจสอบ (ตรวจตามค่า AQL Level 2.5) · ผู้รายงาน ${escapeHtml(`${employee.first_name} ${employee.last_name}`)} แผนก ${escapeHtml(employee.department?.code ?? "—")} · เลขที่ QAxxx/yy ออกให้เมื่อกดออก NCR</p>
+          <div class="form-grid">
+            ${text("product_code", "รหัสสินค้า/วัตถุดิบ")}
+            ${text("product_name", "ชื่อสินค้า/วัตถุดิบ", { required: true, max: 300 })}
+            ${text("customer_name", "ชื่อลูกค้า/พ่อค้า", { max: 200 })}
+            ${text("customer_code", "รหัสลูกค้า", { max: 50 })}
+            ${text("po_no", "เลขที่ใบสั่งซื้อ/ใบส่งของ")}
+            ${text("lot_no", "Lot")}
+          </div>
+        </fieldset>
+        <fieldset class="form-step" data-step="2">
+          <legend class="form-step-title">ปัญหาที่พบ</legend>
+          <div class="form-grid">
+            ${text("qty_total", "จำนวนทั้งหมด", { required: true, type: "number" })}
+            ${text("qty_sampled", "จำนวนสุ่ม", { type: "number" })}
+            ${text("qty_defect", "จำนวนที่พบปัญหา", { required: true, type: "number" })}
+            ${text("qty_returned", "จำนวนที่ส่งคืน", { type: "number" })}
+            <div class="field" data-field="unit"><label for="ncr-unit">หน่วย ${REQUIRED}</label><select class="select" id="ncr-unit" name="unit"><option value="">— เลือก —</option>${UNITS.map((unit) => `<option>${escapeHtml(unit)}</option>`).join("")}</select></div>
+            <div class="field" data-field="defect_type"><label for="ncr-defect-type">ประเภทข้อบกพร่อง ${REQUIRED}</label><select class="select" id="ncr-defect-type" name="defect_type"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${escapeHtml(type.code)}">${escapeHtml(type.name_th)}</option>`).join("")}</select></div>
+            <fieldset class="field full ncr-fieldset" data-field="source"><legend>แหล่งที่พบ ${REQUIRED}</legend>${radiosHtml("source", SOURCES)}</fieldset>
+            <div class="field full" data-field="description"><label for="ncr-description">รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง) ${REQUIRED}</label><textarea class="textarea" id="ncr-description" name="description" maxlength="5000" rows="4"></textarea></div>
+          </div>
+        </fieldset>
+        <fieldset class="form-step" data-step="3">
+          <legend class="form-step-title">หลักฐาน</legend>
+          ${evidenceFieldHtml("ncr-issue-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปชิ้นงาน ผลวัด")}
+        </fieldset>
+        <fieldset class="form-step form-step-review" data-step="4">
+          <legend class="form-step-title">ทบทวนก่อนออก NCR</legend>
+          <div id="ncr-issue-review"></div>
+        </fieldset>
+        ${window.MNP_FORM_STEPS.actionsHtml({ cancelHref: "#/ncr", submitLabel: "ออก NCR" })}
       </form></section>`;
   }
 
   function bindIssueForm() {
     const form = document.querySelector("#ncr-issue-form");
-    form?.addEventListener("submit", async (event) => {
+    if (!form) return;
+    const card = document.querySelector("#ncr-issue-card");
+    const stepsApi = window.MNP_FORM_STEPS;
+    const draftApi = window.MNP_FORM_DRAFT;
+    const field = (name) => form.elements[name];
+    let submitted = false;
+
+    const currentValues = () => ({
+      ...Object.fromEntries(ISSUE_FIELDS.map((name) => [name, field(name).value])),
+      source: checkedValues(form, "source")[0] ?? "",
+    });
+
+    const renderReview = () => {
+      const value = (name) => field(name).value.trim();
+      const row = (label, content, full = false) => definition(label, escapeHtml(content || "—"), full);
+      const qty = (name) => (value(name) ? `${formatQty(Number(value(name)))} ${value("unit")}`.trim() : "");
+      const defectType = field("defect_type").selectedOptions[0];
+      const source = checkedValues(form, "source")[0];
+      const files = [...(form.elements.evidence?.files ?? [])];
+      form.querySelector("#ncr-issue-review").innerHTML = `<dl class="definition-grid review-grid">
+          ${row("สินค้า/วัตถุดิบ", [value("product_code"), value("product_name")].filter(Boolean).join(" · "))}
+          ${row("ลูกค้า", [value("customer_code"), value("customer_name")].filter(Boolean).join(" · "))}
+          ${row("ใบสั่งซื้อ/ใบส่งของ · Lot", [value("po_no"), value("lot_no")].filter(Boolean).join(" · "))}
+          ${row("จำนวนทั้งหมด", qty("qty_total"))}
+          ${row("จำนวนสุ่ม", qty("qty_sampled"))}
+          ${row("จำนวนที่พบปัญหา", qty("qty_defect"))}
+          ${row("จำนวนที่ส่งคืน", qty("qty_returned"))}
+          ${row("ประเภทข้อบกพร่อง", defectType?.value ? defectType.textContent : "")}
+          ${row("แหล่งที่พบ", source ? SOURCES[source] ?? source : "")}
+          ${row("หลักฐาน", files.length ? `${files.length} ไฟล์` : "ไม่มี")}
+          ${row("รายละเอียด", value("description"), true)}
+        </dl>
+        <p class="muted small">ตรวจแล้วกดออก NCR หรือย้อนกลับไปแก้</p>`;
+    };
+
+    // ---- ร่างบนเครื่อง ----
+    const drafts = draftApi.createDraftStore({ key: draftApi.draftKey("NCR_CAR", state.employee.id) });
+    const autosave = draftApi.createAutosave({ store: drafts, values: currentValues });
+    form.addEventListener("input", () => autosave.schedule());
+    form.addEventListener("change", () => autosave.schedule());
+    const restoreDraft = (values) => {
+      ISSUE_FIELDS.forEach((name) => {
+        const input = field(name);
+        if (typeof values[name] !== "string") return;
+        // ตัวเลือกที่ไม่มีแล้ว (เช่น ประเภทข้อบกพร่องที่ปิดไป) ปล่อยว่างให้เลือกใหม่
+        if (input.tagName === "SELECT" && ![...input.options].some((option) => option.value === values[name])) return;
+        input.value = values[name];
+      });
+      form.querySelectorAll('input[name="source"]').forEach((radio) => { radio.checked = radio.value === values.source; });
+    };
+    const draft = drafts.load();
+    let draftPending = Boolean(draft);
+    if (draft) {
+      autosave.stop();
+      draftApi.offerDraft({
+        banner: document.querySelector("#ncr-issue-draft"),
+        message: `มีร่าง NCR ค้างจาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
+        onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); field("product_name").focus(); },
+        onDiscard: () => { draftPending = false; autosave.start(); drafts.clear(); focusFirstStep(form); },
+      });
+    }
+
+    bindFormCancel(form, {
+      title: "ทิ้ง NCR ที่กรอกไว้?",
+      isDirty: () => !submitted && !draftPending && (!draftApi.isEmptyDraft(currentValues()) || Boolean(form.elements.evidence?.files?.length)),
+      onDiscard: () => { autosave.stop(); drafts.clear(); },
+    });
+
+    form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const messageBox = form.parentElement.querySelector(".ncr-form-message");
+      messageBox.innerHTML = "";
+      if (!stepper.check("all")) return;
       // อ่านค่าก่อน setFormBusy เสมอ — ช่องที่ถูก disable จะไม่อยู่ใน FormData
       const args = {
           p_product_name: optionalText(form, "product_name") ?? "",
@@ -233,26 +340,40 @@
       try {
         evidences = evidencesOf(form);
       } catch (error) {
-        showFormError(form, error);
+        stepper.goTo(3, { focus: false });
+        showFormError(form.parentElement, error);
+        form.elements.evidence?.focus();
         return;
       }
       setFormBusy(form, true);
+      let issued;
       try {
         const { data, error } = await sb.rpc("app_ncr_issue", args);
         if (error) throw error;
-        let message = `ออก NCR เลขที่ ${data.ncr_no} แล้ว`;
-        if (evidences.length) {
-          const uploaded = await uploadAttachmentBatch(evidences, (file) => uploadNcrAttachment(data.id, file, "report"));
-          if (uploaded.failed.length) message += ` แต่${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ในหน้า NCR`;
-        }
-        showToast(message);
-        window.MNP_REQUEST_MODULES.NCR_CAR.shared.invalidateDashboard?.();
-        location.hash = `#/ncr?id=${encodeURIComponent(data.id)}`;
+        // ไม่มีเลขที่กลับมา = ถือว่าออกไม่สำเร็จ (ไม่ทิ้งฟอร์มค้างสถานะกำลังส่ง)
+        if (!data?.id) throw new Error("NCR_NOT_ISSUED");
+        issued = data;
       } catch (error) {
-        setFormBusy(form, false);
-        showFormError(form, error);
+        showFormSubmitError(form, messageBox, error);
+        return;
       }
+      submitted = true;
+      autosave.stop();
+      drafts.clear();
+      window.MNP_REQUEST_MODULES.NCR_CAR.shared.invalidateDashboard?.();
+      const uploadWarning = await uploadAfterCreate(evidences, (file) => uploadNcrAttachment(issued.id, file, "report"), "แนบใหม่ได้ในหน้า NCR");
+      if (!card.isConnected) {
+        showToast(`ออก NCR เลขที่ ${issued.ncr_no} แล้ว`);
+        return;
+      }
+      stepsApi.showReceipt(card, {
+        title: "ออก NCR แล้ว", number: issued.ncr_no, warning: uploadWarning,
+        viewHref: `#/ncr?id=${encodeURIComponent(issued.id)}`, viewLabel: "ดู NCR",
+        againLabel: "ออกอีกใบ", onAgain: () => renderRoute(),
+      });
     });
+
+    const stepper = stepsApi.bindStepper({ form, count: 4, rules: ISSUE_RULES, values: currentValues, onReview: renderReview, scrollTarget: card });
   }
 
   // ---- ทะเบียน NCR (QA02-FM02) ----

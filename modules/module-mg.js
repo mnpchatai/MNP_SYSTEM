@@ -106,6 +106,8 @@
     theme: ["#a78bfa", "#5b21b6"],
     // ฟอร์ม PP01-FM08 ไม่มีช่องความสำคัญ — ฟังก์ชันส่งคำร้องกลางใช้ค่า normal
     hidePriority: true,
+    // ชื่อขั้นที่ 2 ของฟอร์มทีละขั้น (ไฟล์แนบ + สำเนาถึงแผนก) — เลขที่เอกสารแสดงในใบเสร็จหลังส่งแล้ว
+    stepTitles: { 2: "ไฟล์แนบและสำเนา" },
     // มติที่ 3 ของฟอร์ม PP01-FM08 นอกจากอนุมัติ/ไม่อนุมัติ — แสดงปุ่มเพิ่มในกล่องพิจารณาคำร้อง
     // ขั้นที่ยังมีขั้นถัดไปรออยู่ (ผจก.โรงงาน) จะส่งต่อขั้นถัดไป ใบปิดเป็นรับทราบข้อมูลเฉพาะมติของขั้นสุดท้าย
     extraDecisions: [{ decision: "acknowledged", label: "รับทราบข้อมูล" }],
@@ -130,12 +132,6 @@
 
     renderFormSections(formContext, { escapeHtml }) {
       return ccDepartmentGridHtml(formContext.ccDepartments, escapeHtml);
-    },
-
-    // ใบคำร้องถึงฝ่ายบริหารให้เห็นเลขที่เอกสารทันทีหลังสร้าง เป็นจุดชี้บ่งใบนั้นๆ — คืนข้อความต่อท้าย toast
-    async afterCreate({ sb, requestId }) {
-      const { data: created } = await sb.from("requests").select("request_no").eq("id", requestId).maybeSingle();
-      return created?.request_no ? ` · เลขที่ ${created.request_no}` : "";
     },
 
     // หน้ารายละเอียด: เตรียมข้อมูลสำเนาถึงแผนกและซิงก์สำเนาสำรอง คืนรายการข้อมูลที่จะแสดงเพิ่ม

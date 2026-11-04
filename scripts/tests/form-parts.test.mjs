@@ -136,3 +136,47 @@ test("the month grid is six Sunday-first weeks covering the whole month", () => 
   assert.equal(inMonth.at(-1), "2026-11-30");
   assert.equal(picker.monthMatrix("2027-02-10")[0][0].iso, "2027-01-31", "February 2027 starts on a Monday");
 });
+
+test("blank text and empty choice lists count as an empty draft", () => {
+  // คำร้องถึงฝ่ายบริหาร: สำเนาถึงแผนกที่ไม่ได้ติ๊ก ([]) และช่องที่มีแต่ช่องว่างไม่ทำให้เกิดร่าง
+  assert.equal(draft.isEmptyDraft({ title: "  \n", cc_department_ids: [], "detail.location": "" }), true);
+  assert.equal(draft.isEmptyDraft({ title: "", cc_department_ids: ["dep-qa"] }), false);
+  assert.equal(draft.isEmptyDraft({ priority: "normal", title: "" }, ["priority"]), true);
+});
+
+test("autosave waits, saves the latest values once, and stays quiet while stopped", async () => {
+  const saved = [];
+  let value = "a";
+  const autosave = draft.createAutosave({ store: { save: (values) => saved.push(values.title) }, values: () => ({ title: value }), delay: 5 });
+  autosave.schedule();
+  value = "ab";
+  autosave.schedule();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(saved, ["ab"], "two quick edits make one save of the latest text");
+  autosave.stop();
+  autosave.schedule();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(saved, ["ab"], "nothing is saved while stopped (draft prompt open, or after submit)");
+  autosave.start();
+  autosave.schedule();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(saved.length, 2);
+});
+
+test("the shared step buttons and head carry the hooks bindStepper looks for", () => {
+  const head = steps.headHtml();
+  assert.match(head, /data-steps-head/);
+  assert.match(head, /data-steps-label/);
+  const actions = steps.actionsHtml({ cancelHref: "#/ncr", submitLabel: "ออก <NCR>" });
+  for (const hook of ["data-form-cancel", "data-step-back", "data-step-next", "data-step-submit"]) assert.match(actions, new RegExp(hook));
+  assert.match(actions, /href="#\/ncr"/);
+  assert.match(actions, /ออก &lt;NCR&gt;/, "the submit label is escaped");
+});
+
+test("the IT repair form stays the original one-page form", async () => {
+  // ทีม IT ออกแบบ flow ของตัวเองใน repo work-order แล้วจะนำมาใส่เอง ฟอร์มทีละขั้นต้องไม่ถูกใช้กับ IT_REPAIR
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync(new URL("../../app.js", import.meta.url), "utf8");
+  assert.match(app, /const ORIGINAL_FORM_TYPES = new Set\(\["IT_REPAIR"\]\);/);
+  assert.match(app, /ORIGINAL_FORM_TYPES\.has\(selected\.code\)\s*\n?\s*\? originalRequestFormHtml/);
+});
