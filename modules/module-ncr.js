@@ -342,6 +342,7 @@
       } catch (error) {
         stepper.goTo(3, { focus: false });
         showFormError(form.parentElement, error);
+        form.elements.evidence?.focus();
         return;
       }
       setFormBusy(form, true);

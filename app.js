@@ -2718,6 +2718,8 @@ function bindGenericRequestForm(selected, employee) {
   const detailInputs = () => [...form.querySelectorAll(".detail-field")];
   const ccBoxes = () => [...form.querySelectorAll(".cc-department-checkbox")];
   let submitted = false;
+  // ชื่อช่องเฉพาะของโมดูลสำหรับขั้นทบทวน — อ่านก่อน enhance เพราะตัวเลือกวันที่ย้าย label ไปที่ปุ่มของมัน
+  const detailLabels = new Map(detailInputs().map((input) => [input, input.labels?.[0]?.textContent.trim() || input.name]));
   form.querySelectorAll('input[type="date"]').forEach((input) => window.MNP_DATE_PICKER?.enhance(input));
 
   const RULES = [
@@ -2751,7 +2753,7 @@ function bindGenericRequestForm(selected, employee) {
     const row = (label, value, wide = false) => `<div class="definition${wide ? " wide" : ""}"><dt>${escapeHtml(label)}</dt><dd${wide ? ' class="review-text"' : ""}>${escapeHtml(value || "—")}</dd></div>`;
     // ช่องเฉพาะของโมดูล: ชื่อจาก label ของช่องนั้น (ช่อง "อื่นๆ" ของสำเนาถึงแผนกรวมไว้ในแถวสำเนา)
     const detailRows = detailInputs().filter((input) => !input.closest(".cc-department-field"))
-      .map((input) => row(input.labels?.[0]?.textContent.trim() ?? input.name, input.type === "date" && input.value ? window.MNP_DATE_PICKER.label(input.value) : input.value.trim()));
+      .map((input) => row(detailLabels.get(input) ?? input.name, input.type === "date" && input.value ? window.MNP_DATE_PICKER.label(input.value) : input.value.trim()));
     const ccField = form.querySelector(".cc-department-field");
     const ccNames = ccField ? [
       ...ccBoxes().filter((box) => box.checked).map((box) => box.closest("label")?.textContent.trim() ?? ""),
