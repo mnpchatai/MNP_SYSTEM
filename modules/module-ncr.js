@@ -185,10 +185,16 @@
   // ฟอร์มออก NCR ทีละขั้นบนจอแคบ (หน้าเดียวบนจอกว้าง): ขั้น 1 สินค้าและล็อต · ขั้น 2 ปัญหาที่พบ · ขั้น 3 หลักฐาน · ขั้น 4 ทบทวน
   // ช่องเดิมทุกช่องและส่ง app_ncr_issue ด้วยค่าเดิม — โครงเดียวกับฟอร์มแจ้งซ่อม MT (modules/form-steps.js)
   const REQUIRED = '<span class="field-required">(จำเป็น)</span>';
+  const qty = (value) => window.MNP_FORM_STEPS.numberOf(value);
+  // จำนวนทั้งหมดยังไม่ได้กรอก/ไม่ถูก: ไม่เทียบ (ช่องจำนวนทั้งหมดบอกข้อผิดของตัวเองแล้ว)
+  const withinTotal = (value, values) => !(qty(values.qty_total) > 0) || qty(value) <= qty(values.qty_total);
   const ISSUE_RULES = [
     { name: "product_name", step: 1, required: true, minLength: 2, message: "กรุณาใส่ชื่อสินค้า/วัตถุดิบ อย่างน้อย 2 ตัวอักษร" },
-    { name: "qty_total", step: 2, required: true, message: "กรุณาใส่จำนวนทั้งหมด" },
-    { name: "qty_defect", step: 2, required: true, message: "กรุณาใส่จำนวนที่พบปัญหา" },
+    // จำนวน: กติกาเดียวกับ app_ncr_issue (20261002020000_ncr_phase1.sql) ผิดแล้วรู้ในช่องนั้น ไม่ต้องรอฐานข้อมูลปฏิเสธทั้งใบ
+    { name: "qty_total", step: 2, required: true, message: "กรุณาใส่จำนวนทั้งหมด", check: (value) => qty(value) > 0, checkMessage: "จำนวนทั้งหมดต้องมากกว่า 0" },
+    { name: "qty_sampled", step: 2, check: (value, values) => qty(value) > 0 && withinTotal(value, values), checkMessage: "จำนวนสุ่มต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
+    { name: "qty_defect", step: 2, required: true, message: "กรุณาใส่จำนวนที่พบปัญหา", check: (value, values) => qty(value) > 0 && withinTotal(value, values), checkMessage: "จำนวนที่พบปัญหาต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
+    { name: "qty_returned", step: 2, check: (value, values) => qty(value) >= 0 && withinTotal(value, values), checkMessage: "จำนวนที่ส่งคืนต้องไม่ติดลบและไม่เกินจำนวนทั้งหมด" },
     { name: "unit", step: 2, required: true, message: "กรุณาเลือกหน่วย" },
     { name: "defect_type", step: 2, required: true, message: "กรุณาเลือกประเภทข้อบกพร่อง" },
     { name: "source", step: 2, required: true, message: "กรุณาเลือกแหล่งที่พบ" },
@@ -227,7 +233,7 @@
             ${text("qty_defect", "จำนวนที่พบปัญหา", { required: true, type: "number" })}
             ${text("qty_returned", "จำนวนที่ส่งคืน", { type: "number" })}
             <div class="field" data-field="unit"><label for="ncr-unit">หน่วย ${REQUIRED}</label><select class="select" id="ncr-unit" name="unit"><option value="">— เลือก —</option>${UNITS.map((unit) => `<option>${escapeHtml(unit)}</option>`).join("")}</select></div>
-            <div class="field" data-field="defect_type"><label for="ncr-defect-type">ประเภทข้อบกพร่อง ${REQUIRED}</label><select class="select" id="ncr-defect-type" name="defect_type"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${escapeHtml(type.code)}">${escapeHtml(type.name_th)}</option>`).join("")}</select></div>
+            <div class="field" data-field="defect_type"><label for="ncr-defect-type">ประเภทข้อบกพร่อง ${REQUIRED}</label><select class="select" id="ncr-defect-type" name="defect_type"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${escapeHtml(type.code)}">${escapeHtml(type.name_th)}</option>`).join("")}</select>${defectTypes.length ? "" : '<small class="field-hint is-warning">ยังไม่มีประเภทข้อบกพร่องในระบบ จึงออก NCR ไม่ได้ แจ้งฝ่าย QA หรือผู้ดูแลระบบให้เพิ่มก่อน</small>'}</div>
             <fieldset class="field full ncr-fieldset" data-field="source"><legend>แหล่งที่พบ ${REQUIRED}</legend>${radiosHtml("source", SOURCES)}</fieldset>
             <div class="field full" data-field="description"><label for="ncr-description">รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง) ${REQUIRED}</label><textarea class="textarea" id="ncr-description" name="description" maxlength="5000" rows="4"></textarea></div>
           </div>

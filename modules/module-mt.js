@@ -465,6 +465,9 @@
       // ตั้งค่าท้ายฟังก์ชัน (หลัง renderReview) — handler ทุกตัวเรียกใช้ตอนผู้ใช้กด จึงมีค่าแล้วเสมอ
       let stepper = null;
 
+      // วันที่ต้องการใช้งานย้อนหลังไม่มีความหมาย: ตัวเลือกวันที่เริ่มที่วันนี้ (เวลาไทย) และตรวจซ้ำตอนส่ง (ร่างเก่าอาจมีวันที่ผ่านไปแล้ว)
+      const todayIso = window.MNP_DATE_PICKER?.todayIso() ?? "";
+      if (todayIso) neededDate.min = todayIso;
       window.MNP_DATE_PICKER?.enhance(neededDate);
 
       // ---- ช่องตรวจ: ช่องซ่อน (แผนก/เครื่อง) ตรวจเท่ากับช่องที่มองเห็น ข้อความไทยใต้ช่อง ----
@@ -472,6 +475,7 @@
         { name: "department_id", step: 1, required: true, message: "กรุณาเลือกแผนกของเครื่องที่เสีย" },
         { name: "machine_id", step: 1, required: true, message: "กรุณาเลือกเครื่องจักรจากรายการ หรือเพิ่มรหัสใหม่" },
         { name: "description", step: 1, required: true, minLength: 3, message: "กรุณาอธิบายอาการ อย่างน้อย 3 ตัวอักษร" },
+        { name: "needed_date", step: 2, check: (value) => !todayIso || value >= todayIso, checkMessage: "วันที่ต้องการใช้งานต้องเป็นวันนี้หรือหลังจากนี้" },
       ];
       const currentValues = () => ({
         department_id: departmentInput.value,
@@ -534,6 +538,8 @@
         machineSearch.setAttribute("aria-expanded", "true");
       };
       machineSearch.addEventListener("focus", () => {
+        // โฟกัสเพราะตรวจช่องไม่ผ่าน: ไม่เปิดรายการทับข้อความผิด (พิมพ์หรือกดลูกศรเพื่อเปิดได้ตามปกติ)
+        if (machineSearch.getAttribute("aria-invalid") === "true") return;
         if (selectedDepartmentId) renderMachineList(machineInput.value ? "" : machineSearch.value);
       });
       machineSearch.addEventListener("input", () => {
