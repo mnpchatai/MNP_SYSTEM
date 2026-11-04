@@ -13,7 +13,7 @@ export default async function NotificationsPage() {
     <>
       <div className="page-heading">
         <div><div className="eyebrow">Inbox</div><h2>การแจ้งเตือน</h2><p>เหตุการณ์สำคัญจากคำร้องและลำดับอนุมัติ</p></div>
-        <form action={markAllNotificationsReadAction}><button className="btn secondary"><CheckCheck size={15} /> อ่านทั้งหมดแล้ว</button></form>
+        <form action={markAllNotificationsReadAction}><button className="btn secondary"><CheckCheck size={15} /> ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button></form>
       </div>
       <section className="card stack">
         {!data?.length ? <div className="empty">ยังไม่มีการแจ้งเตือน</div> : data.map((item) => (
