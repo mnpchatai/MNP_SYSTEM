@@ -45,7 +45,21 @@
     return store;
   }
 
-  const draftKey = (typeCode, employeeId) => `mnp-draft:${typeCode}:${employeeId}`;
+  const PREFIX = "mnp-draft:";
+  const draftKey = (typeCode, employeeId) => `${PREFIX}${typeCode}:${employeeId}`;
 
-  root.MNP_FORM_DRAFT = Object.freeze({ VERSION, createDraftStore, isEmptyDraft, draftKey });
+  // ออกจากระบบเอง (เช่น เครื่องใช้ร่วมกัน): ลบร่างทุกใบบนเครื่อง ไม่ให้ข้อความที่กรอกค้างให้คนถัดไปเห็น
+  // session หมดอายุไม่เรียกตัวนี้ เพราะร่างคือสิ่งที่ต้องรอดไปหลังล็อกอินใหม่
+  function clearAll(storage = defaultStorage()) {
+    try {
+      const keys = [];
+      for (let index = 0; index < (storage?.length ?? 0); index += 1) {
+        const key = storage.key(index);
+        if (key?.startsWith(PREFIX)) keys.push(key);
+      }
+      keys.forEach((key) => storage.removeItem(key));
+    } catch { /* storage ใช้ไม่ได้: ไม่มีร่างให้ลบ */ }
+  }
+
+  root.MNP_FORM_DRAFT = Object.freeze({ VERSION, createDraftStore, isEmptyDraft, draftKey, clearAll });
 })(typeof window !== "undefined" ? window : globalThis);

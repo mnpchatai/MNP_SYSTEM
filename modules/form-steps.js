@@ -52,7 +52,8 @@
       message.dataset.generated = "";
       message.textContent = error.message;
       container.append(message);
-      const target = focusTargetOf(container);
+      // กลุ่มปุ่ม (เช่น แผนก) รับ aria-invalid ที่ตัวกลุ่ม [data-invalid-target] เพราะปุ่มไม่รองรับ attribute นี้
+      const target = container.querySelector("[data-invalid-target]") ?? focusTargetOf(container);
       if (target) {
         target.setAttribute("aria-invalid", "true");
         const describedBy = new Set((target.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean));
@@ -67,7 +68,7 @@
   function clearFieldError(form, name) {
     const container = form.querySelector(`[data-field="${name}"]`);
     container?.querySelector(".field-error[data-generated]")?.remove();
-    focusTargetOf(container)?.removeAttribute("aria-invalid");
+    container?.querySelectorAll("[aria-invalid='true']").forEach((node) => node.removeAttribute("aria-invalid"));
   }
 
   root.MNP_FORM_STEPS = Object.freeze({ validate, stepView, showFieldErrors, clearFieldErrors, clearFieldError });

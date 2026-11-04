@@ -1821,6 +1821,7 @@ function bindShell() {
   document.querySelectorAll(".signout-button").forEach((button) => button.addEventListener("click", async () => {
     setMobileNav(false);
     await releasePushBeforeSignOut();
+    window.MNP_FORM_DRAFT?.clearAll();
     state.session = null;
     try {
       await sb.auth.signOut();

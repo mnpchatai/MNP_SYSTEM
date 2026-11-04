@@ -15,6 +15,8 @@ function memoryStorage() {
     getItem: (key) => (data.has(key) ? data.get(key) : null),
     setItem: (key, value) => data.set(key, String(value)),
     removeItem: (key) => data.delete(key),
+    key: (index) => [...data.keys()][index] ?? null,
+    get length() { return data.size; },
     size: () => data.size,
   };
 }
@@ -36,6 +38,28 @@ test("an empty form clears the draft instead of saving it", () => {
   store.save({ description: "", is_urgent: false, requester_name: "สมใจ รักงาน" });
   assert.equal(storage.size(), 0);
   assert.equal(store.load(), null);
+});
+
+test("values the form fills in by itself never make a draft", () => {
+  // แผนกเริ่มต้นถูกเลือกให้ตอนเปิดฟอร์ม: ถ้านับเป็นการกรอก จะถามเรื่องร่างทุกครั้งที่เข้าฟอร์ม
+  const storage = memoryStorage();
+  const ignoreForEmpty = ["requester_name", "doc_type", "department_id", "machine_label"];
+  const store = draft.createDraftStore({ key: "k", storage, ignoreForEmpty });
+  store.save({ department_id: "dep-mt", machine_id: "", machine_label: "", doc_type: "repair", description: "", needed_date: "", requester_name: "", is_urgent: false });
+  assert.equal(storage.size(), 0);
+  store.save({ department_id: "dep-mt", machine_id: "m-1", machine_label: "H-HL1-1", doc_type: "repair", description: "", needed_date: "", requester_name: "", is_urgent: false });
+  assert.equal(store.load()?.values.department_id, "dep-mt", "a chosen machine keeps its department");
+});
+
+test("signing out clears every form draft on the device and nothing else", () => {
+  const storage = memoryStorage();
+  storage.setItem(draft.draftKey("MT_REPAIR", "e1"), "{}");
+  storage.setItem(draft.draftKey("IT_REPAIR", "e2"), "{}");
+  storage.setItem("mnp-theme", "dark");
+  draft.clearAll(storage);
+  assert.equal(storage.size(), 1);
+  assert.equal(storage.getItem("mnp-theme"), "dark");
+  assert.doesNotThrow(() => draft.clearAll({ get length() { throw new Error("blocked"); } }));
 });
 
 test("old, corrupt or foreign drafts are dropped", () => {

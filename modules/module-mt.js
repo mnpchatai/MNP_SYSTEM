@@ -377,14 +377,14 @@
         <section class="card form-card" id="repair-form-card"><div id="request-message" role="status"></div>
         <div class="draft-banner" id="repair-draft" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>
         <form id="repair-form" class="stepped-form" novalidate>
-          <div class="form-steps-head" id="repair-steps-head" hidden><span class="form-steps-label" id="repair-steps-label" aria-live="polite"></span><span class="form-steps-dots" aria-hidden="true"><span data-dot="1"></span><span data-dot="2"></span><span data-dot="3"></span></span></div>
+          <div class="form-steps-head" id="repair-steps-head" hidden><span class="form-steps-label" id="repair-steps-label" aria-live="polite"></span></div>
           <fieldset class="form-step" data-step="1">
             <legend class="form-step-title">ที่ไหน และเป็นอะไร</legend>
             <div class="field full">${docNumberBoxHtml("repair-doc-number")}</div>
             <div class="field full" data-field="department_id">
               <span class="field-label" id="repair-department-label">แผนก <span class="field-required">(จำเป็น)</span></span>
               <input type="hidden" id="repair-department" name="department_id">
-              <div class="repair-department-grid" id="repair-department-picker" role="group" aria-labelledby="repair-department-label">${departments.map((item, index) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"${index === 0 ? " data-focus" : ""}><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
+              <div class="repair-department-grid" id="repair-department-picker" role="group" aria-labelledby="repair-department-label" data-invalid-target>${departments.map((item, index) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"${index === 0 ? " data-focus" : ""}><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
             </div>
             <div class="field full" data-field="machine_id">
               <label for="repair-machine-search">เครื่องจักร <span class="field-required">(จำเป็น)</span></label>
@@ -461,7 +461,8 @@
       const stepsApi = window.MNP_FORM_STEPS;
       const narrowQuery = window.matchMedia("(max-width: 1040px)");
       const defaultRequester = `${employee.first_name} ${employee.last_name}`;
-      const drafts = window.MNP_FORM_DRAFT.createDraftStore({ key: window.MNP_FORM_DRAFT.draftKey("MT_REPAIR", employee.id), ignoreForEmpty: ["requester_name", "doc_type"] });
+      // แผนกถูกเลือกให้เองตั้งแต่เปิดฟอร์ม และชื่อเครื่องตามเครื่องที่เลือก จึงไม่นับเป็นการกรอก ร่างที่มีแค่สองอย่างนี้ = ว่าง
+      const drafts = window.MNP_FORM_DRAFT.createDraftStore({ key: window.MNP_FORM_DRAFT.draftKey("MT_REPAIR", employee.id), ignoreForEmpty: ["requester_name", "doc_type", "department_id", "machine_label"] });
       let selectedDepartmentId = "";
       let visibleMachines = [];
       let activeMachineIndex = -1;
@@ -482,7 +483,7 @@
         machine_id: machineInput.value,
         machine_label: machineInput.value ? machineSearch.value : "",
         doc_type: docTypeInput.value,
-        description: description.value,
+        description: description.value.trim() ? description.value : "",
         needed_date: neededDate.value,
         requester_name: requesterName.value.trim() === defaultRequester ? "" : requesterName.value,
         is_urgent: urgent.checked,
@@ -498,14 +499,15 @@
 
       // ---- ทีละขั้น ----
       const paintSteps = () => {
+        // ออกจากหน้าแล้ว (หรือหน้าใบเสร็จแทนที่ฟอร์ม): เลิกฟังการย่อขยายจอ
+        if (!form.isConnected) { narrowQuery.removeEventListener?.("change", paintSteps); return; }
         const view = stepsApi.stepView({ current: currentStep, count: 3, narrow: narrowQuery.matches });
         form.classList.toggle("is-stepped", narrowQuery.matches);
         form.querySelectorAll("[data-step]").forEach((section) => { section.hidden = !view.visible.includes(Number(section.dataset.step)); });
-        const head = document.querySelector("#repair-steps-head");
+        const head = form.querySelector("#repair-steps-head");
         head.hidden = !narrowQuery.matches;
         // ชื่อขั้นอยู่ที่ legend ของขั้นนั้นแล้ว หัวนี้บอกแค่ลำดับ
-        document.querySelector("#repair-steps-label").textContent = view.label;
-        head.querySelectorAll("[data-dot]").forEach((dot) => { dot.className = Number(dot.dataset.dot) < currentStep ? "is-done" : Number(dot.dataset.dot) === currentStep ? "is-current" : ""; });
+        form.querySelector("#repair-steps-label").textContent = view.label;
         form.querySelector("[data-step-back]").hidden = !view.showBack;
         form.querySelector("[data-step-next]").hidden = !view.showNext;
         form.querySelector("[data-step-submit]").hidden = !view.showSubmit;
@@ -524,13 +526,20 @@
       form.querySelector("[data-step-next]").addEventListener("click", () => { if (checkStep(currentStep)) goToStep(currentStep + 1); });
       form.querySelector("[data-step-back]").addEventListener("click", () => goToStep(currentStep - 1));
       narrowQuery.addEventListener?.("change", paintSteps);
+      // Enter (หรือปุ่ม "ไป" บนแป้นมือถือ) ในช่องก่อนขั้นสุดท้าย = ถัดไป ไม่ใช่ส่งข้ามขั้นทบทวน
+      form.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
+        if (!event.target.matches("input") || !narrowQuery.matches || currentStep >= 3) return;
+        event.preventDefault();
+        form.querySelector("[data-step-next]").click();
+      });
 
       const renderReview = () => {
         const machine = machines.find((item) => item.id === machineInput.value);
         const department = departments.find((item) => item.id === departmentInput.value);
         const files = [...(attachmentInput.files ?? [])];
         const row = (label, value) => `<div class="definition"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
-        document.querySelector("#repair-review").innerHTML = `<dl class="definition-grid review-grid">
+        form.querySelector("#repair-review").innerHTML =`<dl class="definition-grid review-grid">
           ${row("แผนก", escapeHtml(department ? `${department.displayCode} ${department.name}` : "—"))}
           ${row("เครื่องจักร", escapeHtml(machine ? machineLabel(machine) : "—"))}
           ${row("ประเภทเอกสาร", escapeHtml(docTypeLabels[docTypeInput.value] ?? docTypeInput.value))}
@@ -712,11 +721,14 @@
         if (name) stepsApi.clearFieldError(form, name);
       });
       form.addEventListener("change", saveDraft);
-      const restoreDraft = async (values) => {
-        if (values.department_id) await selectDepartment(values.department_id, { focusMachine: false });
-        const machine = machines.find((item) => item.id === values.machine_id && item.department_id === values.department_id);
+      // ใส่ค่าทันที ไม่รอเลขที่เอกสาร (peek) ที่ตามมาทีหลัง ไม่งั้นค่าที่ผู้ใช้เริ่มพิมพ์ระหว่างรอจะถูกทับ
+      const restoreDraft = (values) => {
+        if (values.department_id) selectDepartment(values.department_id, { focusMachine: false });
+        const machine = selectedDepartmentId && selectedDepartmentId === values.department_id
+          ? machines.find((item) => item.id === values.machine_id && item.department_id === selectedDepartmentId)
+          : null;
         if (machine) { machineInput.value = machine.id; machineSearch.value = machineLabel(machine); }
-        if (values.doc_type) selectDocType(values.doc_type);
+        if (Object.hasOwn(docTypeLabels, values.doc_type)) selectDocType(values.doc_type);
         description.value = values.description ?? "";
         neededDate.value = values.needed_date ?? "";
         neededDate.dispatchEvent(new Event("datepicker:refresh"));
@@ -729,14 +741,21 @@
         draftDecided = false;
         banner.innerHTML = `<p>มีร่างใบแจ้งซ่อมค้างจาก ${escapeHtml(formatDate(new Date(draft.savedAt).toISOString(), true))}</p><div class="draft-banner-actions"><button type="button" class="btn secondary small" data-draft="discard">เริ่มใหม่</button><button type="button" class="btn small" data-draft="use">ใช้ร่างต่อ</button></div>`;
         banner.hidden = false;
-        banner.addEventListener("click", async (event) => {
+        banner.addEventListener("click", (event) => {
           const choice = event.target.closest("[data-draft]")?.dataset.draft;
           if (!choice) return;
           banner.hidden = true;
           draftDecided = true;
-          if (choice === "use") { await restoreDraft(draft.values); description.focus(); }
-          else { drafts.clear(); selectDefaultDepartment(); }
-          saveDraft();
+          // ใช้ร่าง = ร่างเดิมยังอยู่จนกว่าจะแก้; เริ่มใหม่ = ลบร่าง และไม่สร้างใหม่จนกว่าจะกรอก
+          if (choice === "use") { restoreDraft(draft.values); description.focus(); }
+          else {
+            drafts.clear();
+            selectDefaultDepartment();
+            // แถบหายไปแล้ว โฟกัสไปหัวขั้นแรกโดยไม่เปิดแป้นพิมพ์
+            const legend = form.querySelector('[data-step="1"] legend');
+            legend.tabIndex = -1;
+            legend.focus();
+          }
         });
       }
       // แผนกเริ่มต้น = แผนกของผู้แจ้ง (ถ้าแจ้งซ่อมได้) โดยไม่เปิดแป้นพิมพ์บนมือถือ
@@ -747,6 +766,8 @@
 
       // ยกเลิกเมื่อกรอกไว้แล้ว: ถามก่อนทิ้ง (ทิ้ง = ล้างร่างด้วย)
       form.querySelector("[data-form-cancel]").addEventListener("click", async (event) => {
+        // ส่งแล้ว (กำลังแนบไฟล์): ใบถูกสร้างแล้ว ไม่มีอะไรให้ทิ้ง
+        if (submitted) return;
         const dirty = draftDecided && (description.value.trim() || machineInput.value || neededDate.value || urgent.checked || attachmentInput.files?.length);
         if (!dirty) return;
         event.preventDefault();
@@ -792,6 +813,8 @@
           message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
           setFormBusy(form, false);
           message.scrollIntoView({ block: "nearest" });
+          // ปุ่มส่งถูกปิดระหว่างรอ โฟกัสจึงหลุด: คืนให้ที่ปุ่มส่ง กดซ้ำได้ทันที
+          form.querySelector("[data-step-submit]").focus();
           return;
         }
         submitted = true;

@@ -933,12 +933,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .form-step-title { margin-bottom: 14px; padding: 0; font-size: var(--text-title); font-weight: 700; }
 .form-step-title:focus { outline: none; }
 .form-step-title:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: var(--radius-sm); }
-.form-steps-head { margin-bottom: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: var(--text-meta); font-weight: 700; }
+.form-steps-head { margin-bottom: 14px; color: var(--muted); font-size: var(--text-meta); font-weight: 700; }
 .form-steps-head[hidden] { display: none; }
-.form-steps-dots { display: inline-flex; gap: 6px; }
-.form-steps-dots span { width: 28px; height: 6px; background: var(--line); border-radius: 999px; }
-.form-steps-dots span.is-done { background: color-mix(in srgb, var(--primary) 45%, var(--line)); }
-.form-steps-dots span.is-current { background: var(--primary); }
 /* ข้อความหัวช่องของกลุ่มปุ่ม (แผนก ประเภทเอกสาร) หน้าตาเดียวกับ label */
 .field-label { font-size: var(--text-ui); font-weight: 700; line-height: 1.4; }
 .field-required { color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
@@ -971,13 +967,13 @@ tbody tr:last-child td { border-bottom: 0; }
 .date-pick-head { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .date-pick-head .icon-button { width: 44px; height: 44px; font-size: var(--text-title); }
 .date-pick-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.date-pick-grid th { padding: 4px 0; color: var(--muted); font-size: var(--text-caption); font-weight: 700; }
-.date-pick-grid td { padding: 1px; text-align: center; }
+.date-pick-grid th { padding: 4px 0; text-align: center; white-space: normal; border: 0; color: var(--muted); font-size: var(--text-caption); font-weight: 700; }
+.date-pick-grid td { padding: 1px; text-align: center; border: 0; }
 .date-pick-day { width: 100%; aspect-ratio: 1; min-height: 40px; display: grid; place-items: center; color: var(--ink); background: none; border: 0; border-radius: var(--radius-md); font: inherit; font-size: var(--text-meta); cursor: pointer; }
 .date-pick-day:hover { background: var(--shell); }
 .date-pick-day.is-outside { color: var(--quiet); }
 .date-pick-day.is-today { box-shadow: inset 0 0 0 1.5px var(--primary); }
-.date-pick-day[aria-selected="true"] { color: #fff; background: var(--primary-strong); }
+.date-pick-day[aria-pressed="true"] { color: #fff; background: var(--primary-strong); }
 .date-pick-day:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .date-pick-foot { margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px; }
 .date-pick-foot .btn { min-height: 40px; }
@@ -1145,6 +1141,10 @@ a.machine-history-no:hover { text-decoration: underline; }
   .stepped-form.is-stepped .stepped-actions { position: sticky; z-index: 6; bottom: 0; margin: 0 -20px -20px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: var(--paper); border-top: 1px solid var(--line); }
   .stepped-form.is-stepped .stepped-actions .btn { min-height: 48px; flex: 1 1 auto; }
   .stepped-form.is-stepped .stepped-actions .btn.is-primary { flex-grow: 2; }
+  /* แถบติดตั้งแอปทับปุ่มส่ง: ซ่อนในหน้าฟอร์มทีละขั้น และยก toast ให้พ้นแถบปุ่ม */
+  body:has(.stepped-form.is-stepped) .install-banner { display: none; }
+  body.has-install-banner:has(.stepped-form.is-stepped) { padding-bottom: 0; }
+  body:has(.stepped-form.is-stepped) .toast { bottom: calc(72px + 12px + env(safe-area-inset-bottom)); }
 }
 
 @media (max-width: 760px) {

@@ -115,7 +115,7 @@
         </div>
         <table class="date-pick-grid" role="grid" aria-label="${escapeHtml(monthTitle(focused))}">
           <thead><tr>${WEEKDAYS.map((day, index) => `<th scope="col" abbr="${WEEKDAYS_FULL[index]}">${day}</th>`).join("")}</tr></thead>
-          <tbody>${monthMatrix(focused).map((week) => `<tr>${week.map((cell) => `<td><button type="button" class="date-pick-day${cell.inMonth ? "" : " is-outside"}${cell.iso === today ? " is-today" : ""}" data-date="${cell.iso}" tabindex="${cell.iso === focused ? 0 : -1}" aria-selected="${cell.iso === input.value}" aria-label="${escapeHtml(fullLabel(cell.iso))}${cell.iso === today ? " (วันนี้)" : ""}">${parts(cell.iso).day}</button></td>`).join("")}</tr>`).join("")}</tbody>
+          <tbody>${monthMatrix(focused).map((week) => `<tr>${week.map((cell) => `<td><button type="button" class="date-pick-day${cell.inMonth ? "" : " is-outside"}${cell.iso === today ? " is-today" : ""}" data-date="${cell.iso}" tabindex="${cell.iso === focused ? 0 : -1}" aria-pressed="${cell.iso === input.value}"${cell.iso === today ? ' aria-current="date"' : ""} aria-label="${escapeHtml(fullLabel(cell.iso))}${cell.iso === today ? " (วันนี้)" : ""}">${parts(cell.iso).day}</button></td>`).join("")}</tr>`).join("")}</tbody>
         </table>
         <div class="date-pick-foot"><button type="button" class="btn secondary small" data-pick="today">วันนี้</button>${input.value ? `<button type="button" class="btn secondary small" data-pick="clear">ล้าง</button>` : ""}</div>`;
     };
@@ -132,6 +132,8 @@
       popup.hidden = false;
       button.setAttribute("aria-expanded", "true");
       focusDay();
+      // ปฏิทินสูงราว 400px: เลื่อนให้เห็นทั้งอัน รวมปุ่มวันนี้/ล้าง ที่อยู่ท้าย
+      popup.scrollIntoView?.({ block: "nearest" });
     };
     const choose = (iso) => {
       input.value = iso;
@@ -140,9 +142,18 @@
       paintButton();
       close();
     };
+    // เลื่อนในเดือนเดิม: ย้าย tabindex/โฟกัสอย่างเดียว ไม่วาดใหม่ (โปรแกรมอ่านจอไม่อ่านตารางซ้ำ); ข้ามเดือนจึงวาดใหม่
     const move = (next) => {
+      const sameMonth = next.slice(0, 7) === focused.slice(0, 7);
+      const current = popup.querySelector(`[data-date="${focused}"]`);
+      const target = popup.querySelector(`[data-date="${next}"]`);
       focused = next;
-      paintPopup();
+      if (sameMonth && current && target) {
+        current.tabIndex = -1;
+        target.tabIndex = 0;
+      } else {
+        paintPopup();
+      }
       focusDay();
     };
 
