@@ -1682,8 +1682,7 @@ function shell(content, active, title) {
         <nav class="nav" aria-label="เมนูหลัก">
           <div class="nav-label">เมนูหลัก</div>
           ${isSandboxMode() || isLabOnly() ? "" : `${navLink("dashboard", "หน้าหลัก", NAV_ICONS.dashboard, active)}
-          ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active, { href: window.MNP_REQUEST_CENTER.overviewUrl() })}
-          ${navLink("approvals", "รออนุมัติ", NAV_ICONS.approvals, active)}`}
+          ${navLink("requests", "คำร้อง", NAV_ICONS.requests, active, { href: window.MNP_REQUEST_CENTER.overviewUrl() })}`}
           ${requestModuleNavLinks(active)}
           ${isSandboxMode() || isLabOnly() ? "" : navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
           <div class="nav-divider"></div>
@@ -1900,114 +1899,286 @@ async function getMyRepairActionItems() {
     });
 }
 
-async function renderDashboard() {
+// ---- หน้าหลัก = คิวเดียว ตัดสินได้ในที่ (brief .impeccable/surfaces/src-app-app-page-tsx.md) ----
+// ใบที่รอผู้ใช้อนุมัติ + งานซ่อมที่ต้องลงมือ อยู่ในรายการเดียว เรียงด่วนก่อนและรอนานก่อน
+// แตะใบอนุมัติ = ขยายพร้อมแถบตัดสินใจชุดเดียวกับหน้ารายละเอียด (จอกว้าง: แสดงทางขวา)
+const homeQueueState = { selectedId: null, collapsed: false, ctx: null };
+const HOME_QUEUE_PAGE = 20;
+const HOME_OPEN_STATUSES = ["pending_approval", "more_info", "approved", "in_progress", "pending_assign", "assigned", "pending_verify"];
+const isWideLayout = () => window.matchMedia("(min-width: 1041px)").matches;
+
+function hasApprovalDuty(employee) {
+  return employee.role?.code === "admin" || DEPT_MANAGER_ROLE_CODES.includes(employee.role?.code) || (employee.approvalModules?.size ?? 0) > 0;
+}
+
+async function renderDashboard(params = new URLSearchParams()) {
+  activeDecisionCountdown?.flush();
   loadingShell("dashboard", "หน้าหลัก");
   const employee = state.employee;
-  let requestsQuery = sb
-    .from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
-    .order("created_at", { ascending: false })
-    .limit(20);
-  // เดิมกรอง requester_id ทิ้งเหมือนหน้าคำร้อง ทำให้การ์ดสรุปและ "ความเคลื่อนไหวล่าสุด"
-  // ของหัวหน้าแผนก/ช่างเป็นศูนย์ทั้งหน้า — ปล่อยให้ RLS เป็นตัวตัดสินเหมือนกัน
-  const [requestsResult, typesResult, pending, repairTasks, directory, myRequestsResult, inProgressResult, completedResult] = await Promise.all([
-    requestsQuery,
-    sb.from("request_types").select("id,code,name_th,description").eq("is_active", true).in("code", activeRequestModuleCodes()).order("sort_order").limit(5),
+  const rules = window.MNP_HOME_QUEUE;
+  const [pending, repairTasks, directory, mineResult] = await Promise.all([
     getPendingApprovals(),
     getMyRepairActionItems(),
     loadEmployeeDirectory(),
-    sb.from("requests").select("id", { count: "exact", head: true }).eq("requester_id", employee.id),
-    // นับจริงจากฐานข้อมูล (ตาม RLS) ไม่ใช่จาก 20 ใบล่าสุด เพื่อให้ตัวเลขตรงกับรายการที่เปิดดูจากการ์ด
-    sb.from("requests").select("id", { count: "exact", head: true }).in("status", ["approved", "in_progress"]),
-    sb.from("requests").select("id", { count: "exact", head: true }).eq("status", "completed"),
+    sb.from("requests")
+      .select("id,request_no,title,status,created_at,request_type:request_types(name_th,code,uses_repair_workflow)")
+      .eq("requester_id", employee.id)
+      .in("status", HOME_OPEN_STATUSES)
+      .order("created_at", { ascending: false })
+      .limit(HOME_QUEUE_PAGE),
   ]);
-  if (requestsResult.error) throw requestsResult.error;
-  if (typesResult.error) throw typesResult.error;
-  if (myRequestsResult.error) throw myRequestsResult.error;
-  if (inProgressResult.error) throw inProgressResult.error;
-  if (completedResult.error) throw completedResult.error;
-  const requests = requestsResult.data ?? [];
-  const myRequestCount = myRequestsResult.count ?? 0;
-  const inProgress = inProgressResult.count ?? 0;
-  const completed = completedResult.count ?? 0;
-  const actionableCount = pending.length + repairTasks.length;
+  if (mineResult.error) throw mineResult.error;
+  const items = rules.sortQueue([
+    ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
+    ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
+  ]);
+  const approvalIds = items.filter((item) => item.kind === "approval").map((item) => item.id);
+  // ใบที่เปิด: ใบที่ลิงก์ขอมา > ใบที่เปิดค้างไว้ > ใบแรก (หลังตัดสินใบหนึ่ง ใบถัดไปจึงเปิดเอง)
+  // จอแคบที่ผู้ใช้ยุบเองไว้ไม่เปิดใหม่จนกว่าจะแตะ
+  const requested = params.get("request");
+  const selectedId = requested
+    ? rules.pickSelection(approvalIds, { requested })
+    : homeQueueState.collapsed && !isWideLayout() ? null : rules.pickSelection(approvalIds, { current: homeQueueState.selectedId });
+  // ใบเสร็จของมติที่เพิ่งกดในแท็บนี้ (ใบนั้นหลุดจากคิวแล้ว)
+  const recent = [...recentDecisions.keys()]
+    .map((id) => ({ id, entry: recentDecisionFor(id) }))
+    .filter(({ id, entry }) => entry && !approvalIds.includes(id))
+    .sort((a, b) => b.entry.at - a.entry.at);
+  // ใบถึงฝ่ายบริหารจบที่มติ: อนุมัติแล้วถือว่าจบ ไม่ใช่ "ยังไม่จบ"
+  // ใบที่อยู่ในคิว "ต้องจัดการ" แล้ว (เช่นรอผู้แจ้งตรวจรับ) ไม่แสดงซ้ำ
+  const queuedIds = new Set(items.map((item) => item.id));
+  const mine = (mineResult.data ?? [])
+    .map((row) => ({ ...row, request_type: relation(row.request_type) }))
+    .filter((row) => !queuedIds.has(row.id) && !(requestModule(row.request_type?.code)?.endsAtDecision && row.status === "approved"));
+  const showQueue = items.length > 0 || recent.length > 0 || hasApprovalDuty(employee);
+  const ownSelectable = items.filter((item) => item.kind === "approval" && isOwnApprovalStep(item.step));
+  const queueSection = showQueue ? `
+    <section class="home-queue" id="home-queue" aria-labelledby="home-queue-title">
+      <div class="home-section-head">
+        <h2 id="home-queue-title">ต้องจัดการ${items.length ? ` <span class="detail-section-count">${items.length}</span>` : ""}</h2>
+        ${ownSelectable.length > 1 ? `<label class="queue-select-all"><input type="checkbox" id="queue-select-all"> เลือกทั้งหมดเพื่ออนุมัติ</label>` : ""}
+      </div>
+      ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
+      ${items.length ? `<div class="queue-layout">
+        <ul class="queue-list" role="list">${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= HOME_QUEUE_PAGE })).join("")}</ul>
+        <div class="queue-detail-pane" id="queue-detail-pane"></div>
+      </div>
+      ${items.length > HOME_QUEUE_PAGE ? `<button type="button" class="link-button queue-more" id="queue-more">แสดงอีก ${items.length - HOME_QUEUE_PAGE} รายการ</button>` : ""}
+      ${approvalIds.length ? `<p class="queue-hint">คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ · / ค้นหา</p>` : ""}
+      <section class="card action-panel queue-bulk" id="queue-bulk" aria-label="อนุมัติหลายรายการ" hidden>
+        <p class="queue-bulk-text" id="queue-bulk-text"></p>
+        <div class="action-panel-buttons"><button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">อนุมัติที่เลือก</button></div>
+      </section>` : `<p class="queue-empty">ไม่มีงานค้าง งานที่ส่งมาถึงคุณจะแสดงที่นี่</p>`}
+    </section>` : "";
+  const mineSection = `
+    <section class="home-mine" aria-labelledby="home-mine-title">
+      <div class="home-section-head"><h2 id="home-mine-title">ใบของฉันที่ยังไม่จบ${mine.length ? ` <span class="detail-section-count">${mine.length}</span>` : ""}</h2><a class="link-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.overviewUrl())}">ดูคำร้องทั้งหมด</a></div>
+      ${mine.length ? `<ul class="home-mine-list" role="list">${mine.map((row) => `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>`).join("")}</ul>` : `<p class="muted">ไม่มีใบที่คุณแจ้งค้างอยู่</p>`}
+    </section>`;
+  const nothingAtAll = !showQueue && !mine.length;
   const content = `
-    <div class="page-heading"><div><h1>งานของคุณวันนี้</h1><p>${formatDate(new Date(), false)}</p></div><a class="btn" href="#/new"><span class="plus-icon" aria-hidden="true"></span> สร้างคำร้อง</a></div>
-    <section class="summary-grid is-strip">
-      ${dashboardListToggle("actions", actionableCount, actionableCount ? "มีรายการที่ต้องดำเนินการ" : "ไม่มีงานค้าง", actionableCount > 0)}
-      ${dashboardListToggle("mine", myRequestCount, "เฉพาะที่คุณเป็นผู้แจ้ง")}
-      ${dashboardListToggle("in_progress", inProgress, "อนุมัติแล้วหรือกำลังทำ")}
-      ${dashboardListToggle("completed", completed, "ปิดงานเรียบร้อย")}
-    </section>
-    <section class="card flush dashboard-list-panel" id="dashboard-list-panel" aria-labelledby="dashboard-list-heading" hidden>
-      <div class="card-heading"><h2 class="sr-only" id="dashboard-list-heading"></h2><span class="muted small" id="dashboard-list-note"></span></div>
-      <div id="dashboard-list-body"></div>
-    </section>
-    <div class="dashboard-grid">
-      <section class="card flush"><div class="card-heading"><h2>ความเคลื่อนไหวล่าสุด</h2><a href="#/requests">ดูทั้งหมด →</a></div>${requestRows(requests.slice(0, 7), { directory, empty: { hint: "คำร้องที่เกี่ยวข้องกับคุณจะแสดงที่นี่" } })}</section>
-      <section class="card flush"><div class="card-heading"><h2>คำร้องแยกตามประเภท</h2><a href="#/requests?type=all">ทุกประเภท →</a></div><div class="quick-list">${(typesResult.data ?? []).map((type) => `<a class="quick-link" href="#/requests?type=${encodeURIComponent(type.id)}"><span class="quick-icon">${requestTypeIcon(type.code)}</span><span><strong>${escapeHtml(type.name_th)}</strong><small>${escapeHtml(type.description ?? "")}</small></span><span>›</span></a>`).join("")}</div></section>
-    </div>`;
+    <div class="page-heading home-heading"><div><h1>งานของคุณวันนี้</h1><p>${formatDate(new Date(), false)}</p></div><a class="btn home-create${items.length ? "" : " is-wide"}" href="#/new"><span class="plus-icon" aria-hidden="true"></span> สร้างคำร้อง</a></div>
+    ${nothingAtAll ? emptyState("ยังไม่มีคำร้อง", { hint: "แจ้งซ่อม แจ้ง NCR หรือส่งคำร้องถึงฝ่ายบริหารได้จากปุ่มสร้างคำร้อง", action: { href: "#/new", label: "สร้างคำร้องแรก" } }) : items.length ? `${queueSection}${mineSection}` : `${mineSection}${queueSection}`}`;
   app.innerHTML = shell(content, "dashboard", "หน้าหลัก");
   bindShell();
-  // มีงานรออยู่: เปิดรายการงานไว้เลย ผู้อนุมัติไม่ต้องกดการ์ดก่อนถึงจะเห็นคิว
-  bindDashboardLists({ pending, repairTasks, openFirst: actionableCount > 0 });
+  homeQueueState.ctx = { items, directory, employee };
+  homeQueueState.selectedId = selectedId;
+  if (selectedId) homeQueueState.collapsed = false;
+  bindHomeQueue();
+  if (selectedId) await selectQueueItem(selectedId);
 }
 
-// Each dashboard summary card opens its list in one panel under the cards instead of leaving
-// the dashboard. Request lists reuse requestListPanel (RLS decides rows); filters match the counts.
-const DASHBOARD_LISTS = {
-  actions: { label: "งานที่ต้องจัดการ", note: "" },
-  mine: { label: "รายการคำร้องของฉัน", note: "ทุกประเภทและทุกสถานะที่คุณเป็นผู้แจ้ง", filter: { scope: "mine" } },
-  in_progress: { label: "กำลังดำเนินการ", note: "อนุมัติแล้วหรือกำลังทำ ตามสิทธิ์ของคุณ", filter: { status: "approved,in_progress" } },
-  completed: { label: "เสร็จแล้ว", note: "ปิดงานเรียบร้อย ตามสิทธิ์ของคุณ", filter: { status: "completed" } },
-};
-
-function dashboardListToggle(key, count, hint, alert = false) {
-  return `<button class="summary summary-toggle${alert ? " is-alert" : ""}" type="button" data-list="${key}" aria-expanded="false" aria-controls="dashboard-list-panel"><span>${DASHBOARD_LISTS[key].label}</span><strong>${count}</strong><small>${hint}</small></button>`;
+function formatTimeOnly(value) {
+  return new Intl.DateTimeFormat("th-TH", { timeStyle: "short", timeZone: "Asia/Bangkok" }).format(new Date(value));
 }
 
-function dashboardActionItems(pending, repairTasks) {
-  if (!pending.length && !repairTasks.length) return emptyState("ไม่มีงานค้าง", { hint: "งานที่ต้องดำเนินการจะแสดงที่นี่เมื่อมีคนส่งมาถึงคุณ" });
-  const group = (title, items) => items.length ? `<h3 class="dashboard-list-group">${title} <span class="badge">${items.length}</span></h3>${items.join("")}` : "";
-  return group("รออนุมัติ", pending.map((step) => approvalStepItemHtml(step, `#/request?id=${encodeURIComponent(step.request.id)}`)))
-    + group("งานซ่อมที่ต้องดำเนินการ", repairTasks.map(repairTaskItemHtml));
+function homeQueueItemHtml(item, { selected, directory, hidden }) {
+  const request = item.request;
+  const type = relation(request.request_type);
+  const rules = window.MNP_HOME_QUEUE;
+  const flagged = ["high", "urgent"].includes(request.priority);
+  const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
+  const head = `<span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
+    <span class="queue-item-copy">
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flagged ? `<span class="priority-flag">${escapeHtml(priorityLabels[request.priority])}</span>` : ""}</span>
+      <strong class="queue-item-title">${escapeHtml(request.title)}</strong>
+      <span class="queue-item-meta">${escapeHtml(meta)}</span>
+    </span>`;
+  const hiddenAttr = hidden ? " hidden" : "";
+  if (item.kind === "repair") {
+    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="#/request?id=${encodeURIComponent(item.id)}">${head}<span class="queue-item-task">${escapeHtml(myRepairActionLabels[request.status] ?? statusLabels[request.status] ?? request.status)}</span></a></li>`;
+  }
+  const check = isOwnApprovalStep(item.step)
+    ? `<label class="queue-item-check"><input type="checkbox" class="queue-select" value="${escapeHtml(item.step.id)}" aria-label="เลือก ${escapeHtml(request.request_no)} เพื่ออนุมัติหลายรายการ"></label>`
+    : "";
+  return `<li class="queue-item${selected ? " is-selected" : ""}" data-request-id="${escapeHtml(item.id)}"${hiddenAttr}>${check}<button type="button" class="queue-item-main" aria-expanded="${selected}">${head}</button><div class="queue-item-slot"></div></li>`;
 }
 
-function bindDashboardLists({ pending, repairTasks, openFirst = false }) {
-  const panel = document.querySelector("#dashboard-list-panel");
-  const heading = document.querySelector("#dashboard-list-heading");
-  const note = document.querySelector("#dashboard-list-note");
-  const body = document.querySelector("#dashboard-list-body");
-  const toggles = [...document.querySelectorAll(".summary-toggle[data-list]")];
-  if (!panel || !heading || !note || !body) return;
-  // One load per list for this render; a failed load is dropped so the next open retries.
-  const loads = new Map();
-  let active = null;
-  const load = (key) => {
-    const { filter } = DASHBOARD_LISTS[key];
-    return filter ? requestListPanel(new URLSearchParams(filter), null) : Promise.resolve(dashboardActionItems(pending, repairTasks));
-  };
-  toggles.forEach((toggle) => toggle.addEventListener("click", async () => {
-    const key = toggle.dataset.list;
-    active = active === key ? null : key;
-    toggles.forEach((item) => item.setAttribute("aria-expanded", String(item.dataset.list === active)));
-    panel.hidden = !active;
-    if (!active) return;
-    heading.textContent = DASHBOARD_LISTS[key].label;
-    note.textContent = DASHBOARD_LISTS[key].note;
-    body.innerHTML = loadingSkeleton(3);
-    if (!loads.has(key)) loads.set(key, load(key));
-    try {
-      const html = await loads.get(key);
-      if (active === key) body.innerHTML = html;
-    } catch (error) {
-      loads.delete(key);
-      console.error(error);
-      if (active === key) body.innerHTML = `<div class="empty">${escapeHtml(friendlyError(error))}</div>`;
+// compact: ขยายใต้แถวบนจอแคบ แถวแสดงเลขที่ ชื่อเรื่อง ประเภท ผู้แจ้งอยู่แล้ว จึงไม่ซ้ำ
+function homeQueueDetailHtml(item, directory, nextStep, { compact = false } = {}) {
+  const request = item.request;
+  const type = relation(request.request_type);
+  const formCode = REQUEST_FORM_CODES[type?.code] ?? "";
+  const description = (request.description ?? "").trim();
+  return `<article class="queue-detail${compact ? " is-compact" : ""}" id="queue-detail" aria-label="${escapeHtml(`${request.request_no} ${request.title}`)}">
+    ${compact ? "" : `<span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
+    <h3 class="queue-detail-title" id="queue-detail-title" tabindex="-1">${escapeHtml(request.title)}</h3>
+    <p class="request-detail-meta">${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at ?? request.created_at, true)}</p>`}
+    ${description ? `<p class="request-summary-text queue-detail-text">${escapeHtml(description)}</p>` : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
+    <a class="link-button" href="#/request?id=${encodeURIComponent(item.id)}">เปิดใบเต็ม: ไฟล์แนบ ลำดับอนุมัติ และประวัติ</a>
+    ${decisionPanelHtml({ currentStep: item.step, nextStep, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
+  </article>`;
+}
+
+// เปิดใบในคิว: จอกว้างแสดงทางขวา จอแคบขยายใต้ใบนั้น; ใบเดียวที่มีแถบตัดสินใจในเวลาหนึ่ง
+async function selectQueueItem(id, { focus = false } = {}) {
+  const ctx = homeQueueState.ctx;
+  const item = ctx?.items.find((entry) => entry.kind === "approval" && entry.id === id);
+  if (!item) return;
+  homeQueueState.selectedId = id;
+  homeQueueState.collapsed = false;
+  // มติที่นับถอยหลังอยู่ของใบเดิมส่งก่อน แล้วค่อยเปิดใบใหม่
+  activeDecisionCountdown?.flush();
+  document.querySelectorAll(".queue-item").forEach((node) => {
+    const isSelected = node.dataset.requestId === id;
+    node.classList.toggle("is-selected", isSelected);
+    node.querySelector(".queue-item-main[aria-expanded]")?.setAttribute("aria-expanded", String(isSelected));
+    node.querySelector(".queue-item-slot")?.replaceChildren();
+  });
+  const pane = document.querySelector("#queue-detail-pane");
+  pane?.replaceChildren();
+  const li = document.querySelector(`.queue-item[data-request-id="${CSS.escape(id)}"]`);
+  const host = isWideLayout() ? pane : li?.querySelector(".queue-item-slot");
+  if (!host) return;
+  host.innerHTML = loadingSkeleton(2);
+  let nextStep = null;
+  const { data: steps, error } = await sb.from("approval_steps").select("id,step_order,step_name,status").eq("request_id", id).order("step_order");
+  if (homeQueueState.selectedId !== id || !host.isConnected) return;
+  if (!error) nextStep = (steps ?? []).find((step) => step.step_order === item.step.step_order + 1) ?? null;
+  host.innerHTML = homeQueueDetailHtml(item, ctx.directory, nextStep, { compact: host !== pane });
+  bindDecisionPanel({
+    id,
+    params: new URLSearchParams({ id }),
+    request: item.request,
+    currentStep: item.step,
+    nextStep,
+    employee: ctx.employee,
+    extraDecisions: requestModule(relation(item.request.request_type)?.code)?.extraDecisions ?? [],
+    onDecided: () => renderDashboard(),
+  });
+  syncQueueBulk();
+  trackActionBarHeight();
+  // จอกว้างย้าย focus ไปหัวเรื่องทางขวา; จอแคบ focus อยู่ที่แถวที่แตะ (แถวคือหัวเรื่องของส่วนที่ขยาย)
+  if (focus && host === pane) host.querySelector(".queue-detail-title")?.focus();
+}
+
+function collapseQueueItem() {
+  activeDecisionCountdown?.flush();
+  homeQueueState.selectedId = null;
+  homeQueueState.collapsed = true;
+  document.querySelectorAll(".queue-item").forEach((node) => {
+    node.classList.remove("is-selected");
+    node.querySelector(".queue-item-main[aria-expanded]")?.setAttribute("aria-expanded", "false");
+    node.querySelector(".queue-item-slot")?.replaceChildren();
+  });
+  document.querySelector("#queue-detail-pane")?.replaceChildren();
+  syncQueueBulk();
+}
+
+function bindHomeQueue() {
+  const list = document.querySelector(".queue-list");
+  if (!list) return;
+  list.addEventListener("click", (event) => {
+    const main = event.target.closest("button.queue-item-main");
+    if (!main) return;
+    const id = main.closest(".queue-item")?.dataset.requestId;
+    if (!id) return;
+    if (id === homeQueueState.selectedId && !isWideLayout()) return collapseQueueItem();
+    selectQueueItem(id, { focus: true });
+  });
+  list.addEventListener("change", (event) => { if (event.target.matches(".queue-select")) syncQueueBulk(); });
+  document.querySelector("#queue-select-all")?.addEventListener("change", (event) => {
+    document.querySelectorAll(".queue-select").forEach((box) => { box.checked = event.target.checked; });
+    syncQueueBulk();
+  });
+  document.querySelector("#queue-more")?.addEventListener("click", (event) => {
+    document.querySelectorAll(".queue-item[hidden]").forEach((node) => { node.hidden = false; });
+    event.currentTarget.remove();
+  });
+  document.querySelector("#queue-bulk-clear")?.addEventListener("click", () => {
+    document.querySelectorAll(".queue-select").forEach((box) => { box.checked = false; });
+    const all = document.querySelector("#queue-select-all");
+    if (all) all.checked = false;
+    syncQueueBulk();
+  });
+  document.querySelector("#queue-bulk-approve")?.addEventListener("click", async (event) => {
+    const chosen = pickedQueueSteps();
+    if (!chosen.length) return;
+    const button = event.currentTarget;
+    const summary = await runBulkApprove(chosen, {
+      onStart: () => { button.disabled = true; button.setAttribute("aria-busy", "true"); document.querySelectorAll(".queue-select, #queue-select-all").forEach((box) => { box.disabled = true; }); },
+    });
+    if (!summary) return;
+    if (location.hash === "" || /^#\/(dashboard|approvals)?(\?|$)/.test(location.hash)) {
+      try { await renderDashboard(); } catch (renderError) { console.error(renderError); }
     }
-  }));
-  if (openFirst) toggles.find((toggle) => toggle.dataset.list === "actions")?.click();
+    showToast(...summary);
+  });
 }
+
+function pickedQueueSteps() {
+  const ids = [...document.querySelectorAll(".queue-select:checked")].map((box) => box.value);
+  return (homeQueueState.ctx?.items ?? []).filter((item) => item.kind === "approval" && ids.includes(item.step.id)).map((item) => item.step);
+}
+
+// เลือกหลายใบแล้ว: แถบอนุมัติหลายรายการแทนที่แถบตัดสินใจของใบที่เปิดอยู่ (บนจอแคบอยู่ตำแหน่งเดียวกันล่างจอ)
+function syncQueueBulk() {
+  const bulk = document.querySelector("#queue-bulk");
+  if (!bulk) return;
+  const count = pickedQueueSteps().length;
+  const total = document.querySelectorAll(".queue-select").length;
+  bulk.hidden = count === 0;
+  const all = document.querySelector("#queue-select-all");
+  if (all) { all.checked = count > 0 && count === total; all.indeterminate = count > 0 && count < total; }
+  const tooMany = count > BULK_APPROVE_LIMIT;
+  document.querySelector("#queue-bulk-text").textContent = tooMany ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT} รายการ` : `เลือกไว้ ${count} รายการ`;
+  const approve = document.querySelector("#queue-bulk-approve");
+  approve.disabled = count === 0 || tooMany;
+  approve.textContent = `อนุมัติที่เลือก (${count})`;
+  const panel = document.querySelector("#decision-panel");
+  if (panel) panel.hidden = count > 0;
+  trackActionBarHeight();
+}
+
+// คีย์ลัดของคิว (จอที่มีคีย์บอร์ด): J/K เลื่อน, A อนุมัติ, R ไม่อนุมัติ — A/R เปิดขั้นยืนยันในแถบ ไม่ส่งทันที
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || !document.querySelector("#home-queue .queue-list")) return;
+  const key = event.key.toLowerCase();
+  if (!["j", "k", "a", "r"].includes(key)) return;
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+  if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
+  if (key === "j" || key === "k") {
+    const ids = [...document.querySelectorAll(".queue-item[data-request-id]:not([hidden])")].map((node) => node.dataset.requestId);
+    const next = window.MNP_HOME_QUEUE.stepSelection(ids, homeQueueState.selectedId, key === "j" ? 1 : -1);
+    if (!next) return;
+    event.preventDefault();
+    if (next !== homeQueueState.selectedId) selectQueueItem(next);
+    document.querySelector(`.queue-item[data-request-id="${CSS.escape(next)}"] .queue-item-main`)?.focus();
+    return;
+  }
+  const panel = document.querySelector("#decision-panel");
+  if (!panel || panel.hidden || panel.dataset.state !== "idle") return;
+  const button = panel.querySelector(`[data-decision="${key === "a" ? "approved" : "rejected"}"]`);
+  if (!button) return;
+  event.preventDefault();
+  button.click();
+});
+
+// หมุนจอหรือย่อขยายหน้าต่างข้ามขนาด: ย้ายใบที่เปิดไปอยู่ตำแหน่งของขนาดจอใหม่
+window.matchMedia("(min-width: 1041px)").addEventListener("change", () => {
+  if (homeQueueState.selectedId && document.querySelector("#home-queue .queue-list")) selectQueueItem(homeQueueState.selectedId);
+});
 
 const REQUEST_STATUS_FILTERS = [
   ["all", "ทั้งหมด"],
@@ -3074,7 +3245,7 @@ function bindRequestDetailChrome() {
 
 // แถบตัดสินใจติดล่างจอบนมือถือ: บอกความสูงจริงให้ CSS เว้นที่ท้ายหน้า และยก toast ขึ้นเหนือแถบ
 function trackActionBarHeight() {
-  const bar = document.querySelector(".action-panel");
+  const bar = document.querySelector(".action-panel:not([hidden])");
   if (!bar || typeof ResizeObserver !== "function") return;
   const update = () => document.documentElement.style.setProperty("--action-bar-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
   new ResizeObserver(update).observe(bar);
@@ -3082,7 +3253,7 @@ function trackActionBarHeight() {
 }
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
-function bindDecisionPanel({ id, params, request, currentStep, nextStep, employee, extraDecisions }) {
+function bindDecisionPanel({ id, params, request, currentStep, nextStep, employee, extraDecisions, onDecided = null }) {
   const rules = window.MNP_REQUEST_DECISION;
   const panel = document.querySelector("#decision-panel");
   if (!panel || !rules) return;
@@ -3252,7 +3423,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     // มติบันทึกแล้ว: จากนี้ข้อผิดพลาดใดๆ ต้องไม่ถูกบอกว่า "ไม่สำเร็จ"
     detachLeaveGuards();
     if (activeDecisionCountdown === countdown) activeDecisionCountdown = null;
-    recentDecisions.set(id, { decision, comment: text, at: Date.now(), actorId: employee.id, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
+    recentDecisions.set(id, { decision, comment: text, at: Date.now(), actorId: employee.id, requestNo: request.request_no, title: request.title, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
     let warning = "";
     try { warning = await uploadExtraFiles(id, files, employee.id); } catch (uploadError) { warning = friendlyError(uploadError); }
     triggerNotificationEmails(id);
@@ -3262,7 +3433,8 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
       return;
     }
     try {
-      await renderRequestDetail(params);
+      // หน้าที่เรียกใช้แถบนี้ (หน้ารายละเอียด หรือคิวหน้าหลัก) วาดผลหลังตัดสินเอง
+      await (onDecided ? onDecided({ decision }) : renderRequestDetail(params));
     } catch {
       showToast(`${labelOf(decision)} ${request.request_no} แล้ว แต่โหลดหน้าใหม่ไม่ได้ กรุณารีเฟรช`, "error");
     }
@@ -3306,50 +3478,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   });
 }
 
-function approvalItemHtml({ href, requestNo, date, title, detail, active = false }) {
-  return `<a class="approval-item${active ? " active" : ""}" href="${href}"><div class="row"><span class="request-no">${escapeHtml(requestNo)}</span><time>${formatDate(date)}</time></div><strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p></a>`;
-}
-
-function approvalStepItemHtml(step, href, active = false) {
-  return approvalItemHtml({ href, requestNo: step.request.request_no, date: step.request.created_at, title: step.request.title, detail: `${relation(step.request.request_type)?.name_th ?? ""} · ${step.step_name}`, active });
-}
-
-function repairTaskItemHtml(item) {
-  return approvalItemHtml({ href: `#/request?id=${encodeURIComponent(item.id)}`, requestNo: item.request_no, date: item.created_at, title: item.title, detail: `${item.request_type?.name_th ?? ""} · ${myRepairActionLabels[item.status] ?? statusLabels[item.status] ?? item.status}` });
-}
-
-async function renderApprovals(params) {
-  loadingShell("approvals", "รออนุมัติ");
-  const [steps, repairTasks] = await Promise.all([getPendingApprovals(), getMyRepairActionItems()]);
-  const repairTasksSection = repairTasks.length ? `
-    <section class="card flush repair-task-list">
-      <div class="card-heading"><h2>งานซ่อมที่ต้องดำเนินการ <span class="badge">${repairTasks.length}</span></h2></div>
-      ${repairTasks.map(repairTaskItemHtml).join("")}
-    </section>` : "";
-  if (!steps.length) {
-    app.innerHTML = shell(`
-      <div class="page-heading"><div><h1>งานที่ต้องจัดการ</h1><p>รายการที่อยู่ในสิทธิ์ของคุณและรอดำเนินการ</p></div></div>
-      ${repairTasksSection || `<div class="empty"><h2>✓ ไม่มีคำร้องรออนุมัติ</h2><p>รายการใหม่ที่อยู่ในสิทธิ์ของคุณจะแสดงที่หน้านี้</p><a class="btn secondary" href="#/dashboard">กลับหน้าหลัก</a></div>`}
-    `, "approvals", "รออนุมัติ");
-    bindShell();
-    return;
-  }
-  const selectedId = params.get("request") ?? steps[0].request.id;
-  const selected = steps.find((step) => step.request.id === selectedId) ?? steps[0];
-  const request = selected.request;
-  const content = `
-    <div class="page-heading"><div><h1>รอฉันอนุมัติ</h1><p>รายการที่เป็นขั้นตอนปัจจุบันและอยู่ในสิทธิ์ของคุณ</p></div></div>
-    ${repairTasksSection}
-    <div class="approval-layout">
-      <section class="approval-list"><div class="approval-list-head"><h2>ทั้งหมด <span class="badge">${steps.length}</span></h2><p>เรียงจากรายการที่รอนานที่สุด</p><div class="approval-bulk"><label class="approval-bulk-all"><input type="checkbox" id="approval-select-all"> เลือกทั้งหมด</label><button class="btn success small" type="button" id="approval-bulk-approve" disabled>อนุมัติที่เลือก</button></div></div>${steps.map((step) => `<div class="approval-select-row">${isOwnApprovalStep(step) ? `<label class="approval-select-hit"><input type="checkbox" class="approval-select" value="${escapeHtml(step.id)}" aria-label="เลือก ${escapeHtml(step.request.request_no)}"></label>` : `<span class="approval-select-hit" aria-hidden="true"></span>`}${approvalStepItemHtml(step, `#/approvals?request=${encodeURIComponent(step.request.id)}`, step.id === selected.id)}</div>`).join("")}</section>
-      <article class="approval-preview"><div class="eyebrow">${escapeHtml(request.request_no)}</div><h2>${escapeHtml(request.title)}</h2><p class="description">${escapeHtml(request.description)}</p><dl class="definition-grid"><div class="definition"><dt>ประเภท</dt><dd>${escapeHtml(relation(request.request_type)?.name_th ?? "—")}</dd></div><div class="definition"><dt>ความสำคัญ</dt><dd class="priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority])}</dd></div><div class="definition"><dt>ขั้นตอน</dt><dd>${escapeHtml(selected.step_name)}</dd></div><div class="definition"><dt>วันที่ส่ง</dt><dd>${formatDate(request.submitted_at, true)}</dd></div></dl><div class="approval-actions"><a class="btn" href="#/request?id=${encodeURIComponent(request.id)}">เปิดคำร้องและพิจารณา →</a></div></article>
-    </div>`;
-  app.innerHTML = shell(content, "approvals", "รออนุมัติ");
-  bindShell();
-  bindBulkApprove(steps, params);
-}
-
-// ขั้นที่เป็นของผู้ใช้เอง (ระบุตัว หรือบทบาท/แผนกตรง) ไม่รวมขั้นที่เห็นเพราะเป็น admin: admin อนุมัติแทนได้ทีละใบจากหน้ารายละเอียด
+// ขั้นที่เป็นของผู้ใช้เอง (ระบุตัว หรือบทบาท/แผนกตรง) ไม่รวมขั้นที่เห็นเพราะเป็น admin: admin อนุมัติแทนได้ทีละใบ
 function isOwnApprovalStep(step) {
   const employee = state.employee;
   if (step.approver_employee_id && step.approver_employee_id === employee.id) return true;
@@ -3360,52 +3489,33 @@ function isOwnApprovalStep(step) {
 const BULK_APPROVE_LIMIT = 20;
 
 // อนุมัติหลายรายการ: เรียก app_approval_decision ทีละขั้นเหมือนกดอนุมัติในหน้ารายละเอียด (ฐานข้อมูลตรวจสิทธิ์และขั้นปัจจุบันทุกครั้ง)
-// ถามยืนยันพร้อมรายชื่อก่อน ครั้งละไม่เกิน BULK_APPROVE_LIMIT รายการ แจ้งรายการที่ไม่สำเร็จเป็นข้อผิดพลาด
+// ถามยืนยันพร้อมรายชื่อก่อน ครั้งละไม่เกิน BULK_APPROVE_LIMIT รายการ คืนข้อความสรุปสำหรับ showToast (null = ผู้ใช้ยกเลิก)
 // (ชีตสำรองของ MT/MG ซิงก์ตอนมีคนเปิดหน้ารายละเอียดเหมือนเดิม Supabase เป็นข้อมูลหลัก)
-function bindBulkApprove(steps, params) {
-  const boxes = [...document.querySelectorAll(".approval-select")];
-  const all = document.querySelector("#approval-select-all");
-  const button = document.querySelector("#approval-bulk-approve");
-  if (!boxes.length || !all || !button) return;
-  const picked = () => boxes.filter((box) => box.checked).map((box) => steps.find((step) => step.id === box.value)).filter(Boolean);
-  const sync = () => {
-    const count = picked().length;
-    button.disabled = count === 0 || count > BULK_APPROVE_LIMIT;
-    button.textContent = count > BULK_APPROVE_LIMIT ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT}` : count ? `อนุมัติที่เลือก (${count})` : "อนุมัติที่เลือก";
-    all.checked = count === boxes.length;
-    all.indeterminate = count > 0 && count < boxes.length;
-  };
-  boxes.forEach((box) => box.addEventListener("change", sync));
-  all.addEventListener("change", () => { boxes.forEach((box) => { box.checked = all.checked; }); sync(); });
-  button.addEventListener("click", async () => {
-    const chosen = picked();
-    if (!chosen.length) return;
-    const list = chosen.map((step) => `${step.request.request_no} · ${step.request.title}`).join("\n");
-    if (!(await confirmDialog({ title: `อนุมัติ ${chosen.length} รายการ?`, message: list, confirmLabel: `อนุมัติ ${chosen.length} รายการ` }))) return;
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
-    boxes.forEach((box) => { box.disabled = true; });
-    all.disabled = true;
-    const failed = [];
-    let done = 0;
-    for (const [index, step] of chosen.entries()) {
-      const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
-      if (!error) { done += 1; triggerNotificationEmails(step.request.id); continue; }
-      failed.push({ step, error });
-      // session หมดอายุ: รายการที่เหลือจะไม่สำเร็จเหมือนกัน หยุดแล้วนับเป็นไม่สำเร็จ
-      if (/AUTH_REQUIRED|JWT/i.test(String(error.message ?? error.code ?? ""))) {
-        failed.push(...chosen.slice(index + 1).map((rest) => ({ step: rest, error })));
-        break;
-      }
+async function runBulkApprove(chosen, { onStart } = {}) {
+  if (!chosen.length || chosen.length > BULK_APPROVE_LIMIT) return null;
+  const list = chosen.map((step) => `${step.request.request_no} · ${step.request.title}`).join("\n");
+  if (!(await confirmDialog({ title: `อนุมัติ ${chosen.length} รายการ?`, message: list, confirmLabel: `อนุมัติ ${chosen.length} รายการ` }))) return null;
+  onStart?.();
+  const failed = [];
+  let done = 0;
+  for (const [index, step] of chosen.entries()) {
+    const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
+    if (!error) {
+      done += 1;
+      recentDecisions.set(step.request.id, { decision: "approved", comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
+      triggerNotificationEmails(step.request.id);
+      continue;
     }
-    const summary = failed.length
-      ? [`อนุมัติแล้ว ${done} รายการ ไม่สำเร็จ ${failed.length} รายการ (${failed.map(({ step }) => step.request.request_no).join(", ")}): ${friendlyError(failed[0].error)}`, "error"]
-      : [`อนุมัติแล้ว ${done} รายการ`];
-    if (location.hash.startsWith("#/approvals")) {
-      try { await renderApprovals(params); } catch (renderError) { console.error(renderError); }
+    failed.push({ step, error });
+    // session หมดอายุ: รายการที่เหลือจะไม่สำเร็จเหมือนกัน หยุดแล้วนับเป็นไม่สำเร็จ
+    if (/AUTH_REQUIRED|JWT/i.test(String(error.message ?? error.code ?? ""))) {
+      failed.push(...chosen.slice(index + 1).map((rest) => ({ step: rest, error })));
+      break;
     }
-    showToast(...summary);
-  });
+  }
+  return failed.length
+    ? [`อนุมัติแล้ว ${done} รายการ ไม่สำเร็จ ${failed.length} รายการ (${failed.map(({ step }) => step.request.request_no).join(", ")}): ${friendlyError(failed[0].error)}`, "error"]
+    : [`อนุมัติแล้ว ${done} รายการ`];
 }
 
 // คีย์ลัด: กด / เพื่อไปที่ช่องค้นหาของหน้า (ไม่ทำงานขณะพิมพ์ในช่องกรอกหรือมีกล่องเปิดอยู่)
@@ -4535,7 +4645,7 @@ async function renderRoute() {
   }
   await loadUnread();
   try {
-    if (path === "dashboard") return await renderDashboard();
+    if (path === "dashboard") return await renderDashboard(params);
     if (path === "requests") return await renderRequests(params);
     // ทะเบียน NCR อยู่ในหน้า NCR ของศูนย์คำร้อง (เลือกโมดูล NCR/CAR) ลิงก์ #/ncr เดิมและปุ่มย้อนกลับจึงพาไปที่นั่น
     // โหมดทดสอบไม่มีหน้าคำร้อง จึงใช้หน้าทะเบียนของโมดูลเอง (modules/module-ncr.js)
@@ -4555,7 +4665,8 @@ async function renderRoute() {
       return await renderNewRequest(new URLSearchParams(location.hash.split("?")[1]));
     }
     if (path === "request") return await renderRequestDetail(params);
-    if (path === "approvals") return await renderApprovals(params);
+    // หน้ารออนุมัติเดิมรวมเข้าหน้าหลักแล้ว ลิงก์เก่าในอีเมล/LINE (#/approvals?request=) เปิดคิวที่ใบนั้น
+    if (path === "approvals") return await renderDashboard(params);
     if (path === "notifications") return await renderNotifications();
     if (path === "admin") return await renderAdmin(params);
     if (path === "profile") return await renderProfile();
