@@ -119,13 +119,15 @@
       form.querySelector("[data-step-next]").hidden = !view.showNext;
       form.querySelector("[data-step-submit]").hidden = !view.showSubmit;
       if (view.visible.includes(reviewStep)) onReview?.();
+      syncSummary();
     };
     // สรุปในแถวปุ่ม: ยังขาดกี่ช่องในขั้นที่เห็นอยู่ (บนจอแคบแถวปุ่มติดล่างจอ ผู้ใช้เห็นทันทีแม้ช่องที่ผิดอยู่นอกจอ)
     const summary = form.querySelector("[data-steps-summary]");
     const syncSummary = () => {
       if (!summary) return;
       const missing = [...form.querySelectorAll(".field-error[data-generated]")].filter((node) => !node.closest("[hidden]")).length;
-      const text = missing ? `ยังกรอกไม่ครบ ${missing} ช่อง` : "";
+      // นับทั้งช่องว่างและค่าที่ไม่ถูกต้อง (เช่น จำนวน NCR เกินจำนวนทั้งหมด) จึงใช้ "ต้องแก้" ไม่ใช่ "ไม่ครบ"
+      const text = missing ? `ยังมี ${missing} ช่องที่ต้องแก้` : "";
       if (summary.hidden !== !missing) summary.hidden = !missing;
       // เขียนเฉพาะเมื่อข้อความเปลี่ยน: การเขียน textContent เป็น childList mutation ของฟอร์ม ซึ่ง MutationObserver ด้านล่างฟังอยู่ (ไม่ให้วนไม่จบ)
       if (summary.textContent !== text) summary.textContent = text;
@@ -155,8 +157,9 @@
         target.dataset.focusFromCheck = "1";
         target.focus({ preventScroll: true });
         delete target.dataset.focusFromCheck;
-        // เลื่อนทั้งกล่องของช่อง (รวมข้อความผิดใต้ช่อง) มากลางจอ ไม่ให้ข้อความไปอยู่ใต้แถวปุ่มที่ติดล่างจอ
-        target.closest("[data-field]")?.scrollIntoView?.({ block: "center" });
+        // เลื่อนข้อความผิดใต้ช่องมากลางจอ ไม่ให้ไปอยู่ใต้แถวปุ่มที่ติดล่างจอ (กล่องที่สูง เช่น กลุ่มปุ่มแผนก ข้อความอยู่ท้ายกล่อง)
+        const field = target.closest("[data-field]");
+        (field?.querySelector(".field-error[data-generated]") ?? field)?.scrollIntoView?.({ block: "center" });
       }
       return false;
     };

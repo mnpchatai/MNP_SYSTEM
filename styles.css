@@ -913,6 +913,8 @@ a.register-title:hover { color: var(--primary); }
 /* "ยังกรอกไม่ครบ n ช่อง": แถวของตัวเองเหนือปุ่ม */
 .stepped-summary { flex-basis: 100%; margin: 0; color: var(--danger-ink); font-size: var(--text-meta); font-weight: 700; }
 .stepped-summary[hidden] { display: none; }
+/* จอกว้างเห็นทุกช่องพร้อมข้อความผิดอยู่แล้ว: สรุปมีเฉพาะตอนเป็นขั้น (แถวปุ่มติดล่างจอ) */
+.stepped-form:not(.is-stepped) .stepped-summary { display: none; }
 /* บรรทัดบอกว่าแถบตัดสินใจเป็นของใบไหน: ปุ่มมติอ้างถึงผ่าน aria-describedby เสมอ แสดงให้เห็นเฉพาะคิวหน้าหลักจอแคบ */
 .decision-target { display: none; }
 /* หัวเรื่องที่รับโฟกัสตอนเปลี่ยนหน้าไม่ไปอยู่ใต้แถบบนที่ติดหัวจอ */

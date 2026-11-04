@@ -66,19 +66,38 @@ test("decision buttons name their request, and the line shows only in the mobile
   assert.match(css, /\.queue-item \.action-panel\.is-away \{ visibility: hidden; transform: translateY\(110%\);/);
 });
 
+test("request A to request B, and list to create form, count as a new page; filters do not", () => {
+  // ดึง routeFromHash + pageKeyOf จาก app.js มารันจริง
+  const pick = (name) => {
+    const start = app.indexOf(`function ${name}(`);
+    return app.slice(start, app.indexOf("\n}", start) + 2);
+  };
+  const context = vm.createContext({ URLSearchParams });
+  vm.runInContext(`${pick("routeFromHash")}\n${pick("pageKeyOf")}\nthis.key = (hash) => pageKeyOf(routeFromHash(hash));`, context);
+  const same = (a, b) => context.key(a) === context.key(b);
+  assert.equal(same("#/request?id=req-a", "#/request?id=req-b"), false, "the next request in the queue opens at the top");
+  assert.equal(same("#/requests?type=t-mt", "#/requests?type=t-mt&mode=create&createType=t-mt"), false, "list to create form");
+  assert.equal(same("#/requests?type=t-mt", "#/requests?type=t-mg"), false, "another module");
+  assert.equal(same("#/requests?type=t-mt", "#/requests?type=t-mt&status=pending_approval"), true, "a status filter keeps the place");
+  assert.equal(same("#/requests?type=t-mt&scope=mine&q=HCM", "#/requests?type=t-mt"), true, "scope and search keep the place");
+  assert.equal(same("#/ncr?id=n1", "#/ncr?id=n2"), false);
+});
+
 test("a page change starts at the top, going back restores the old position, and a filter change keeps it", () => {
-  assert.match(app, /if \(pathChanged && savedY === null\) window\.scrollTo\(0, 0\);/);
-  assert.match(app, /if \(pathChanged && savedY !== null\) window\.scrollTo\(0, savedY\);/);
-  assert.match(app, /focusRouteStart\(\{ samePath: !pathChanged, beforeId \}\);/);
-  // Safari จำกัด replaceState: เขียนเมื่อหยุดเลื่อน และไม่ให้ข้อผิดพลาดหลุดออกมา
+  assert.match(app, /if \(pageChanged && savedY === null\) window\.scrollTo\(0, 0\);/);
+  assert.match(app, /if \(pageChanged && savedY !== null\) window\.scrollTo\(0, savedY\);/);
+  assert.match(app, /focusRouteStart\(\{ samePath: !pageChanged, beforeId \}\);/);
+  // Safari จำกัด replaceState: เขียนเมื่อหยุดเลื่อนและตอนแตะลิงก์ในแอป และไม่ให้ข้อผิดพลาดหลุดออกมา
   assert.match(app, /try \{ history\.replaceState\(\{ \.\.\.\(history\.state \?\? \{\}\), pilotScrollY: Math\.round\(window\.scrollY\) \}, ""\); \} catch/);
+  assert.match(app, /document\.addEventListener\("click", \(event\) => \{ if \(event\.target\.closest\?\.\("a\[href\^='#'\]"\)\) saveScrollMemo\(\); \}, true\);/);
 });
 
 test("form errors scroll to the middle of the screen and the step bar counts what is missing", () => {
   assert.match(steps.actionsHtml({ cancelHref: "#/", submitLabel: "ส่ง" }), /<p class="stepped-summary" data-steps-summary hidden><\/p>/);
   assert.match(formSteps, /target\.focus\(\{ preventScroll: true \}\);/);
-  assert.match(formSteps, /target\.closest\("\[data-field\]"\)\?\.scrollIntoView\?\.\(\{ block: "center" \}\);/);
-  assert.match(formSteps, /`ยังกรอกไม่ครบ \$\{missing\} ช่อง`/);
+  assert.match(formSteps, /\(field\?\.querySelector\("\.field-error\[data-generated\]"\) \?\? field\)\?\.scrollIntoView\?\.\(\{ block: "center" \}\);/);
+  assert.match(formSteps, /`ยังมี \$\{missing\} ช่องที่ต้องแก้`/);
+  assert.match(css, /\.stepped-form:not\(\.is-stepped\) \.stepped-summary \{ display: none; \}/, "wide screens already show every error");
   // MutationObserver ฟังฟอร์มทั้งฟอร์ม: เขียนข้อความเฉพาะเมื่อเปลี่ยน ไม่งั้นวนไม่จบ (หน้าค้าง)
   assert.match(formSteps, /if \(summary\.textContent !== text\) summary\.textContent = text;/);
   assert.match(formSteps, /if \(summary\.hidden !== !missing\) summary\.hidden = !missing;/);

@@ -5134,27 +5134,37 @@ async function navigateRoute(event) {
   // จำเฉพาะช่องกรอก/ตัวกรอง (select, input) ลิงก์หรือปุ่มที่ id ซ้ำกันในหน้าถัดไปต้องไม่ดึงโฟกัสไว้กลางหน้า
   const before = document.activeElement;
   const beforeId = before?.matches?.("select, input") ? before.id : "";
-  const fromPath = event?.oldURL ? routeFromHash(new URL(event.oldURL).hash).path : null;
   // หน้าใหม่เริ่มที่บนสุด (เดิมตำแหน่งเลื่อนค้างจากหน้าก่อน หน้ารายละเอียดจึงเปิดกลางใบ)
   // ย้อนกลับ/ไปหน้าที่เคยเปิดใน history: กลับไปตำแหน่งเดิม (history.state จำไว้ตอนเลื่อน)
   // เปลี่ยนแค่ตัวกรองในหน้าเดิม: คงตำแหน่งไว้
-  const pathChanged = fromPath !== currentRoute().path;
+  const fromKey = event?.oldURL ? pageKeyOf(routeFromHash(new URL(event.oldURL).hash)) : null;
+  const pageChanged = fromKey !== pageKeyOf(currentRoute());
   const savedY = typeof history.state?.pilotScrollY === "number" ? history.state.pilotScrollY : null;
-  if (pathChanged && savedY === null) window.scrollTo(0, 0);
+  if (pageChanged && savedY === null) window.scrollTo(0, 0);
   await renderRoute();
   if (seq !== routeSeq) return; // ผู้ใช้กดไปหน้าอื่นต่อระหว่างโหลด หน้าล่าสุดเป็นผู้จัดโฟกัส
-  if (pathChanged && savedY !== null) window.scrollTo(0, savedY);
-  focusRouteStart({ samePath: !pathChanged, beforeId });
+  if (pageChanged && savedY !== null) window.scrollTo(0, savedY);
+  focusRouteStart({ samePath: !pageChanged, beforeId });
 }
 
-// จำตำแหน่งเลื่อนของหน้าปัจจุบันไว้ใน history entry ของมัน (เขียนเมื่อหยุดเลื่อน — Safari จำกัด replaceState ไม่เกิน 100 ครั้ง/30 วินาที)
+// "หน้าเดียวกัน" = path เดียวกันและเป็นใบ/โหมด/โมดูลเดียวกัน: ใบ A ไปใบ B (#/request?id=) หรือรายการไปฟอร์มสร้าง (mode=create)
+// นับเป็นหน้าใหม่ ส่วนตัวกรอง (สถานะ แผนก ขอบเขต ค้นหา) เปลี่ยนแล้วยังเป็นหน้าเดิม
+function pageKeyOf({ path, params }) {
+  return [path, params.get("id"), params.get("type"), params.get("mode"), params.get("createType")].map((value) => value ?? "").join("|");
+}
+
+// จำตำแหน่งเลื่อนของหน้าปัจจุบันไว้ใน history entry ของมัน: เขียนเมื่อหยุดเลื่อน และทันทีที่แตะ/คลิก
+// (ก่อนลิงก์พาไปหน้าใหม่ ไม่งั้นเลื่อนแล้วแตะเร็วกว่ารอบหน่วงจะเสียตำแหน่งท้าย) — Safari จำกัด replaceState ไม่เกิน 100 ครั้ง/30 วินาที
 let scrollMemoTimer = 0;
+function saveScrollMemo() {
+  clearTimeout(scrollMemoTimer);
+  try { history.replaceState({ ...(history.state ?? {}), pilotScrollY: Math.round(window.scrollY) }, ""); } catch { /* เกินเพดานของเบราว์เซอร์: ย้อนกลับแล้วเริ่มบนสุดแทน */ }
+}
 window.addEventListener("scroll", () => {
   clearTimeout(scrollMemoTimer);
-  scrollMemoTimer = setTimeout(() => {
-    try { history.replaceState({ ...(history.state ?? {}), pilotScrollY: Math.round(window.scrollY) }, ""); } catch { /* เกินเพดานของเบราว์เซอร์: ย้อนกลับแล้วเริ่มบนสุดแทน */ }
-  }, 300);
+  scrollMemoTimer = setTimeout(saveScrollMemo, 300);
 }, { passive: true });
+document.addEventListener("click", (event) => { if (event.target.closest?.("a[href^='#']")) saveScrollMemo(); }, true);
 
 function focusRouteStart({ samePath, beforeId }) {
   const active = document.activeElement;
