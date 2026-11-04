@@ -252,16 +252,20 @@ function sandboxRouteAllowed(path, params) {
 // เมนูย่อยต้องใช้ลิงก์ (<a href="#/…">) ที่อยู่ใน .nav-sub เพื่อให้ปิดลิ้นชักบนมือถือและโหลดหน้าใหม่ตามกติกาของ bindShell
 // โมดูลที่จำกัดสิทธิ์ (เช่น MNP LAB) ประกาศ navAllowed(employee) — ซ่อนเมนูเมื่อคืน false
 // การซ่อนเมนูเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล (RPC ของโมดูลปฏิเสธเองด้วย NOT_AUTHORIZED)
+// รายการที่ประกาศ group (เช่น "ทดสอบ" ของ RubberFlow/BOM) ได้หัวกลุ่มก่อนรายการแรกของกลุ่มนั้น
 function requestModuleNavLinks(active) {
+  let previousGroup = null;
   return Object.values(REQUEST_MODULES)
     .filter((entry) => entry.enabled && sandboxSupports(entry) && (entry.navAllowed?.(state.employee) ?? true))
     .filter((entry) => !isLabOnly() || window.MNP_LAB_ONLY.moduleAllowed(entry.code))
     .flatMap((entry) => entry.nav ?? [])
     .filter((item) => !item.sandboxOnly || isSandboxMode())
     .map((item) => {
+      const groupLabel = item.group && item.group !== previousGroup ? `<div class="nav-label nav-group-label">${escapeHtml(item.group)}</div>` : "";
+      previousGroup = item.group ?? null;
       const link = navLink(item.path, item.label, item.icon, active);
       const sub = item.subnav?.(active) ?? "";
-      return sub ? `<div class="nav-group">${link}${sub}</div>` : link;
+      return `${groupLabel}${sub ? `<div class="nav-group">${link}${sub}</div>` : link}`;
     })
     .join("");
 }

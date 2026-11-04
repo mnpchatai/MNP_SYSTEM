@@ -21,7 +21,6 @@
 (function registerRubberFlowModule() {
   const PATH = "rubberflow";
   const TITLE = "RubberFlow MES";
-  const SUBTITLE = "แผนก RB · ระบบควบคุมการผลิตยาง";
   const THEME = ["#0f766e", "#115e59"];
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9l5 3V9l5 3V6h6v13H4Z"/><path d="M8 19v-3h3v3M15 19v-3h3v3"/></svg>`;
 
@@ -193,11 +192,14 @@
   // แถบเครื่องมือของ RubberFlow ใต้หัวหน้า: ทำหน้าที่เป็น · สแกนรหัส · แจ้งเตือน · รีเซ็ต
   function toolbarHtml(ctx) {
     const { data, user, now } = ctx;
-    const alerts = derive.buildAlerts(data, now);
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
+    const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
+    // ยังไม่เลือกบทบาท: มีแค่ช่องเลือกบทบาท (สแกน แจ้งเตือน และรีเซ็ตใช้ได้หลังรู้บทบาท)
+    if (!user) return `<div class="rf-toolbar">${persona}</div>`;
+    const alerts = derive.buildAlerts(data, now);
     const bad = alerts.some((alert) => alert.tone === "bad");
     return `<div class="rf-toolbar">
-        <label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>
+        ${persona}
         <form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
         <div class="rf-row">
           ${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}
@@ -206,12 +208,10 @@
       </div>`;
   }
 
-  // ไม่ได้เลือกบทบาท: ตารางบทบาทสาธิต 9 คน (หน้า Login ของต้นแบบ โดยไม่มีรหัสผ่าน เพราะผู้ใช้ล็อกอินระบบจริงแล้ว)
-  function chooserHtml(data) {
-    const roles = data.users.map((row) => `<button class="rf-role" type="button" data-rf-user-pick="${escapeHtml(row.id)}"><strong>${escapeHtml(storeApi.ROLES[row.role]?.label ?? row.role)}</strong><span class="muted">${escapeHtml(row.name)}</span></button>`).join("");
-    return `<section class="card rf-card rf-login"><h1>เลือกบทบาทสาธิต</h1>
-      <p class="muted">RubberFlow ควบคุมการผลิตยาง 4 สถานี ผสม → ฉีด → อบ → ตกแต่ง พร้อม FEFO, ชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ, Gatekeeper ส่งมอบ WIP และสืบย้อนกลับถึงล็อตวัตถุดิบ ข้อมูลทั้งหมดเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p>
-      <div class="rf-role-grid">${roles}</div></section>`;
+  // ไม่ได้เลือกบทบาท: บอกว่าโมดูลนี้คืออะไร ส่วนการเลือกบทบาทสาธิตอยู่ในช่องของแถบเครื่องมือด้านบน (ไม่มีหน้าเลือกบทบาทแยก)
+  function introHtml() {
+    return `<section class="card rf-card rf-login"><h1>${escapeHtml(TITLE)}</h1>
+      <p class="muted">แผนก RB · ควบคุมการผลิตยาง 4 สถานี ผสม → ฉีด → อบ → ตกแต่ง พร้อม FEFO, ชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ, Gatekeeper ส่งมอบ WIP และสืบย้อนกลับถึงล็อตวัตถุดิบ ข้อมูลทั้งหมดเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p></section>`;
   }
 
   function deniedHtml(user) {
@@ -250,11 +250,6 @@
       if (user && !storeApi.canSee(user, page)) location.hash = url(storeApi.homeOf(user));
       else renderRoute();
     });
-    root.querySelectorAll("[data-rf-user-pick]").forEach((button) => button.addEventListener("click", () => {
-      const user = store.setUser(button.dataset.rfUserPick);
-      location.hash = url(storeApi.homeOf(user));
-      renderRoute();
-    }));
     root.querySelector("[data-rf-scan]")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const code = String(new FormData(event.currentTarget).get("code") ?? "").trim().slice(0, 60);
@@ -278,7 +273,7 @@
     const title = entry && user ? `${TITLE} / ${entry.label}` : TITLE;
     let body;
     let bind = null;
-    if (!user) body = chooserHtml(ctx.data);
+    if (!user) body = introHtml();
     else if (!entry) {
       // หน้าไม่รู้จัก → หน้าแรกของบทบาท (ไม่แสดงหน้าว่าง)
       location.hash = url(storeApi.homeOf(user));
@@ -290,7 +285,8 @@
       body = `${pageNavHtml(user, page)}${built.html}`;
       bind = built.bind ?? null;
     }
-    const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">RB</span><strong class="rf-app-name">${escapeHtml(TITLE)}</strong></div><p class="rf-sub">${escapeHtml(SUBTITLE)}</p></div>${user ? toolbarHtml(ctx) : ""}</header>`;
+    // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต สแกน แจ้งเตือน รีเซ็ต)
+    const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
     app.innerHTML = shell(`<div class="rf-page" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
@@ -327,7 +323,8 @@
     sandbox: true,
     label: TITLE,
     theme: THEME,
-    nav: [{ path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, subnav: sidebarNav }],
+    // group: หัวกลุ่ม "ทดสอบ" ในเมนูข้าง (โมดูลต้นแบบที่ข้อมูลอยู่ในเบราว์เซอร์) — sandboxOnly ต้องคงไว้: เห็นเฉพาะ admin ในโหมดทดสอบ
+    nav: [{ path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav }],
     pages: { [PATH]: renderRubberFlow },
   };
 })();
