@@ -475,7 +475,8 @@
         { name: "department_id", step: 1, required: true, message: "กรุณาเลือกแผนกของเครื่องที่เสีย" },
         { name: "machine_id", step: 1, required: true, message: "กรุณาเลือกเครื่องจักรจากรายการ หรือเพิ่มรหัสใหม่" },
         { name: "description", step: 1, required: true, minLength: 3, message: "กรุณาอธิบายอาการ อย่างน้อย 3 ตัวอักษร" },
-        { name: "needed_date", step: 2, check: (value) => !todayIso || value >= todayIso, checkMessage: "วันที่ต้องการใช้งานต้องเป็นวันนี้หรือหลังจากนี้" },
+        // อ่าน "วันนี้" ใหม่ทุกครั้งที่ตรวจ: ฟอร์มที่เปิดค้างข้ามเที่ยงคืนต้องไม่ปล่อยวันที่เมื่อวาน
+        { name: "needed_date", step: 2, check: (value) => value >= (window.MNP_DATE_PICKER?.todayIso() ?? value), checkMessage: "วันที่ต้องการใช้งานต้องเป็นวันนี้หรือหลังจากนี้" },
       ];
       const currentValues = () => ({
         department_id: departmentInput.value,
@@ -537,10 +538,23 @@
         machineList.hidden = false;
         machineSearch.setAttribute("aria-expanded", "true");
       };
-      machineSearch.addEventListener("focus", () => {
-        // โฟกัสเพราะตรวจช่องไม่ผ่าน: ไม่เปิดรายการทับข้อความผิด (พิมพ์หรือกดลูกศรเพื่อเปิดได้ตามปกติ)
-        if (machineSearch.getAttribute("aria-invalid") === "true") return;
+      // แตะ/คลิกช่องเปิดรายการเสมอ (รวมตอนมีข้อความผิด และตอนช่องโฟกัสอยู่แล้ว) — iPhone ไม่มีลูกศรให้เปิดรายการ
+      // ส่วนโฟกัสที่ไม่ได้มาจากการแตะ (เช่น ตรวจช่องไม่ผ่านแล้วระบบพามา) ไม่เปิดรายการทับข้อความผิด
+      let machineTapped = false;
+      const openMachineList = () => {
         if (selectedDepartmentId) renderMachineList(machineInput.value ? "" : machineSearch.value);
+      };
+      machineSearch.addEventListener("pointerdown", () => {
+        // โฟกัสตามหลังการแตะทันที — ถ้าไม่ตามมา (เช่น แตะแล้วลากออก) ล้างทิ้ง ไม่ให้ค้างไปเปิดรายการตอนระบบพาโฟกัสมาครั้งหน้า
+        machineTapped = true;
+        setTimeout(() => { machineTapped = false; }, 600);
+        if (document.activeElement === machineSearch && machineList.hidden) openMachineList();
+      });
+      machineSearch.addEventListener("focus", () => {
+        const tapped = machineTapped;
+        machineTapped = false;
+        if (!tapped && machineSearch.getAttribute("aria-invalid") === "true") return;
+        openMachineList();
       });
       machineSearch.addEventListener("input", () => {
         machineInput.value = "";

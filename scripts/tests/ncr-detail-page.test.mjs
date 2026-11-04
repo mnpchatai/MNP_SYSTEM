@@ -6,7 +6,7 @@ import vm from "node:vm";
 // โหลด modules/module-ncr.js พร้อม ncr-costs.js / ncr-loss-form.js เข้า context จำลองที่มีฟังก์ชันของ app.js แบบ stub
 // แล้ววาดหน้ารายละเอียด NCR ของพนักงานจริง (ไม่ใช่โหมดทดสอบ) ตรวจ HTML: การ์ดส่วนที่ 1–4 แบบใหม่ และใครเห็นฟอร์มความสูญเสีย
 // (ต้องตรงกับ private.can_edit_ncr_losses — ฐานข้อมูลเป็นตัวตัดสินสิทธิ์จริง ดู supabase/tests/database/ncr_loss_editors_same_in_all_modes.test.sql)
-const FILES = ["modules/ncr-costs.js", "modules/ncr-loss-form.js", "modules/module-ncr.js"];
+const FILES = ["modules/form-steps.js", "modules/ncr-costs.js", "modules/ncr-loss-form.js", "modules/module-ncr.js"];
 
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const employee = (id, deptId, deptCode, roleCode, isSandbox = false) => ({ id, department_id: deptId, department: { code: deptCode }, role: { code: roleCode }, isSandbox });
@@ -62,7 +62,7 @@ async function renderPage(viewer, overrides = {}, options = {}) {
   vm.createContext(context);
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
   await context.window.MNP_REQUEST_MODULES.NCR_CAR.pages.ncr(options.params ?? new URLSearchParams({ id: report.id }));
-  return { html: app.innerHTML, rpcCalls };
+  return { html: app.innerHTML, rpcCalls, context };
 }
 
 const renderFor = async (viewer, overrides = {}, options = {}) => (await renderPage(viewer, overrides, options)).html;
@@ -382,4 +382,20 @@ test("the NCR register lists each report as one table row with every column fill
   has('<td data-label="วันที่ออก">2026-10-01</td>');
   has('<option data-href="#/ncr?status=open" selected>ยังไม่ปิด</option>', "the category filter is one select, open by default");
   assert.doesNotMatch(html, /request-timeline-card|class="filters"/, "no card feed or chip row left");
+});
+
+test("the NCR issue form's own quantity rules match app_ncr_issue: they reject what it rejects and accept what it accepts", async () => {
+  // กติกาจริงจาก module-ncr.js (shared.ISSUE_RULES) ตรวจกับ validate() จริงของ form-steps.js — ตรงกับ 20261002020000_ncr_phase1.sql
+  const { context } = await renderPage(employee("emp-qa", "dept-qa", "QA", "staff"));
+  const rules = context.window.MNP_REQUEST_MODULES.NCR_CAR.shared.ISSUE_RULES.filter((rule) => rule.name.startsWith("qty_"));
+  // Array.from: array จาก vm เป็นคนละ realm deepStrictEqual จึงเทียบ prototype ไม่ผ่าน
+  const failing = (values) => Array.from(context.window.MNP_FORM_STEPS.validate(rules, { qty_sampled: "", qty_returned: "", ...values }), (error) => error.name);
+  assert.deepEqual(failing({ qty_total: "10", qty_defect: "10" }), [], "defect equal to the total is allowed");
+  assert.deepEqual(failing({ qty_total: "10", qty_defect: "10.5" }), ["qty_defect"], "more defects than the total is rejected");
+  assert.deepEqual(failing({ qty_total: "1,000", qty_defect: "5", qty_sampled: "50", qty_returned: "0" }), [], "thousands separators and zero returned pass");
+  assert.deepEqual(failing({ qty_total: "10", qty_defect: "5", qty_sampled: "0" }), ["qty_sampled"], "a sample of 0 is rejected like the database does");
+  assert.deepEqual(failing({ qty_total: "10", qty_defect: "5", qty_returned: "-1" }), ["qty_returned"]);
+  assert.deepEqual(failing({ qty_total: "0.0004", qty_defect: "0.0001" }), ["qty_total", "qty_defect"], "values that round to 0 in numeric(14,3) are rejected");
+  assert.deepEqual(failing({ qty_total: "100000000000", qty_defect: "5" }), ["qty_total"], "a total too big for numeric(14,3) is rejected");
+  assert.deepEqual(failing({ qty_total: "", qty_defect: "5" }), ["qty_total"], "without a total only the total is reported");
 });

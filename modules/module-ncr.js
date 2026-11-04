@@ -185,7 +185,11 @@
   // ฟอร์มออก NCR ทีละขั้นบนจอแคบ (หน้าเดียวบนจอกว้าง): ขั้น 1 สินค้าและล็อต · ขั้น 2 ปัญหาที่พบ · ขั้น 3 หลักฐาน · ขั้น 4 ทบทวน
   // ช่องเดิมทุกช่องและส่ง app_ncr_issue ด้วยค่าเดิม — โครงเดียวกับฟอร์มแจ้งซ่อม MT (modules/form-steps.js)
   const REQUIRED = '<span class="field-required">(จำเป็น)</span>';
-  const qty = (value) => window.MNP_FORM_STEPS.numberOf(value);
+  // ค่าตามที่ฐานข้อมูลจะเก็บจริง (numeric(14,3)): ปัดทศนิยม 3 ตำแหน่ง เกินช่วงของคอลัมน์ = ใช้ไม่ได้ (NaN ไม่ผ่านทุกกติกา)
+  const qty = (value) => {
+    const number = window.MNP_FORM_STEPS.numberOf(value);
+    return Number.isFinite(number) && Math.abs(number) < 1e11 ? Math.round(number * 1000) / 1000 : NaN;
+  };
   // จำนวนทั้งหมดยังไม่ได้กรอก/ไม่ถูก: ไม่เทียบ (ช่องจำนวนทั้งหมดบอกข้อผิดของตัวเองแล้ว)
   const withinTotal = (value, values) => !(qty(values.qty_total) > 0) || qty(value) <= qty(values.qty_total);
   const ISSUE_RULES = [
@@ -290,7 +294,11 @@
     // ---- ร่างบนเครื่อง ----
     const drafts = draftApi.createDraftStore({ key: draftApi.draftKey("NCR_CAR", state.employee.id) });
     const autosave = draftApi.createAutosave({ store: drafts, values: currentValues });
-    form.addEventListener("input", () => autosave.schedule());
+    form.addEventListener("input", (event) => {
+      autosave.schedule();
+      // แก้จำนวนทั้งหมด: ข้อความ "ไม่เกินจำนวนทั้งหมด" ของช่องอื่นอาจไม่จริงแล้ว ล้างไว้ก่อน ตรวจใหม่ตอนกดถัดไป/ส่ง
+      if (event.target.name === "qty_total") ["qty_sampled", "qty_defect", "qty_returned"].forEach((name) => stepsApi.clearFieldError(form, name));
+    });
     form.addEventListener("change", () => autosave.schedule());
     const restoreDraft = (values) => {
       ISSUE_FIELDS.forEach((name) => {
@@ -1008,7 +1016,8 @@
     renderCenterList: (params) => renderList(params, true),
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
-    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht },
+    // ISSUE_RULES เปิดให้เทสต์ตรวจกติกาจริงของฟอร์มออก NCR (scripts/tests/ncr-detail-page.test.mjs)
+    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht, ISSUE_RULES },
 
     pages: {
       async ncr(params) {
