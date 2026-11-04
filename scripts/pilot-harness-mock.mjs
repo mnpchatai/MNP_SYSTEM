@@ -27,7 +27,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const roles = [
     ["role-dm", "department_manager", "ผู้จัดการแผนก"], ["role-sup", "supervisor", "หัวหน้างาน"], ["role-tech", "technician", "ช่าง"],
     ["role-staff", "staff", "พนักงาน"], ["role-fm", "factory_manager", "ผู้จัดการโรงงาน"], ["role-gm", "general_manager", "ผู้จัดการทั่วไป"],
-    ["role-admin", "admin", "ผู้ดูแลระบบ"],
+    // admin มีเฉพาะโหมดทดสอบ (?sandbox=1) โหมดปกติรายการบทบาทเหมือนเดิม
+    ...(sandbox ? [["role-admin", "admin", "ผู้ดูแลระบบ"]] : []),
   ].map(([id, code, name_th], index) => ({ id, code, name_th, sort_order: index + 1 }));
   // แผนกที่เป็นจุดแจ้งซ่อมได้ต้องมีรหัสตรงกับ REPAIR_DEPARTMENT_OPTIONS ของ modules/module-mt.js ปุ่มเลือกแผนกจึงขึ้น
   const departments = [

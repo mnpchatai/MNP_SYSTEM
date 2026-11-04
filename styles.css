@@ -2268,7 +2268,6 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-page .empty { padding: 28px 16px; }
 .rf-page .filter { min-height: 32px; padding: 0 10px; }
 .rf-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.rf-sub { margin: 0; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; }
 /* ช่องตัวเลขเทียบสเปกขณะพิมพ์ */
 .rf-page .input.rf-ok, .rf-modal .input.rf-ok { border-color: var(--success); background: var(--success-soft); }
 .rf-page .input.rf-out, .rf-modal .input.rf-out { border-color: var(--danger); background: var(--danger-soft); }
@@ -2337,7 +2336,6 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page { --rf-band: transparent; --rf-band-ink: var(--ink); --rf-band-muted: var(--muted); --rf-band-line: var(--line); --rf-band-field: var(--paper); --rf-band-hover: var(--shell); --rf-accent: #14b8a6; --rf-accent-2: #0f766e; --rf-accent-soft: #d8f5f0; --rf-pad-x: 24px; gap: 14px; }
 .rf-page .rf-head, .rf-page .rf-toolbar, .rf-page .rf-pagenav, .rf-page .rf-pagehead { margin: 0 calc(-1 * var(--rf-pad-x)); padding-left: var(--rf-pad-x); padding-right: var(--rf-pad-x); color: var(--rf-band-ink); background: var(--rf-band); }
 .rf-page .rf-head { padding-top: 18px; padding-bottom: 12px; align-items: center; border-bottom: 0; }
-.rf-page .rf-sub { color: var(--rf-band-muted); }
 .rf-page .rf-head .rf-toolbar { margin: 0; padding: 0; }
 /* มือถือ: ตารางของ RubberFlow/BOM เป็นการ์ดเรียงลง ชื่อคอลัมน์มาจาก data-label (ui.labelTables)
    แท็บเลื่อนข้างเป็นแถวเดียว และป้าย "บทบาทสาธิต" ซ่อนให้เหลือแค่ตัวเลือก (ชื่อยังอยู่ใน <label>) */
@@ -2372,7 +2370,7 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-pagehead h1 { font-size: var(--text-page); letter-spacing: -.01em; }
 .rf-page .rf-pagehead p { color: var(--rf-band-muted); font-size: var(--text-ui); }
 .rf-page .rf-pagehead .btn.secondary { color: var(--rf-band-ink); background: var(--rf-band-field); border-color: var(--rf-band-line); }
-.rf-page .rf-head + .card { margin-top: 2px; } /* หน้าเลือกบทบาท/ไม่มีสิทธิ์: ไม่มีแถบหัวหน้า */
+.rf-page .rf-head + .card { margin-top: 2px; } /* ก่อนเลือกบทบาท/ไม่มีสิทธิ์: การ์ดต่อจากแถบเครื่องมือทันที */
 
 /* ---------- เนื้อหา: การ์ด KPI ปุ่ม ช่องกรอก ตาราง ป้าย แจ้งเตือน แท็บ ---------- */
 .rf-page .card { border: 0; border-radius: var(--radius-md); box-shadow: 0 1px 2px rgba(11, 31, 58, .06), 0 12px 32px -18px rgba(11, 31, 58, .35); }
@@ -2432,7 +2430,6 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-chart-line { stroke: var(--rf-mod); }
 .rf-page .rf-node.is-hit { border-color: var(--rf-mod); box-shadow: 0 0 0 3px var(--rf-mod-soft); }
 .rf-page .rf-login h1 { font-size: var(--text-page); }
-.rf-page .rf-role { min-height: 64px; border-radius: var(--radius-md); }
 
 /* ---------- สายการผลิต 4 สถานี: การ์ดขาว จุดสีประจำสถานี มีลูกศรเชื่อม ---------- */
 .rf-page .rf-flow { gap: 0; }

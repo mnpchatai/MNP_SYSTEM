@@ -327,7 +327,8 @@ test("pages carry their module hue, and the side menu, page head and callouts us
 test("RubberFlow and BOM stay admin test-mode only: menu, page and test mode all refuse everyone else", async () => {
   // ผู้ใช้ต้องการให้สองโมดูลนี้เห็นเฉพาะ admin ในโหมดทดสอบ จนกว่าจะตัดสินใจเปิดใช้จริง — เทสต์นี้กันการเอาชั้นใดชั้นหนึ่งออกโดยไม่ตั้งใจ
   const { readFileSync } = await import("node:fs");
-  const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+  // ตัดบรรทัดที่เป็นคอมเมนต์ทิ้งก่อน: โค้ดที่ถูกคอมเมนต์ออกต้องไม่นับว่ายังป้องกันอยู่
+  const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
   const app = read("app.js");
   assert.match(app, /\.filter\(\(item\) => !item\.sandboxOnly \|\| isSandboxMode\(\)\)/, "the side menu drops sandboxOnly items outside test mode");
   assert.match(app, /if \(state\.employee\?\.role\?\.code !== "admin" \|\| state\.employee\.labOnly\) return;/, "only an admin can enter test mode");
