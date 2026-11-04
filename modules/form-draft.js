@@ -11,8 +11,14 @@
   }
 
   // ค่าว่างทั้งหมด (ยกเว้นช่องที่มีค่าเริ่มต้นเอง เช่น ชื่อผู้แจ้ง) = ไม่มีอะไรให้เก็บ
+  // ข้อความที่มีแต่ช่องว่าง และรายการที่ไม่ได้เลือกอะไร (เช่น สำเนาถึงแผนก) นับเป็นว่าง
+  function isEmptyValue(value) {
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === "string") return value.trim() === "";
+    return value === false || value === null || value === undefined;
+  }
   function isEmptyDraft(values, ignore = []) {
-    return Object.entries(values ?? {}).every(([name, value]) => ignore.includes(name) || value === "" || value === false || value === null || value === undefined);
+    return Object.entries(values ?? {}).every(([name, value]) => ignore.includes(name) || isEmptyValue(value));
   }
 
   function createDraftStore({ key, storage = defaultStorage(), now = () => Date.now(), maxAgeMs = DEFAULT_MAX_AGE_MS, ignoreForEmpty = [] }) {
@@ -61,5 +67,36 @@
     } catch { /* storage ใช้ไม่ได้: ไม่มีร่างให้ลบ */ }
   }
 
-  root.MNP_FORM_DRAFT = Object.freeze({ VERSION, createDraftStore, isEmptyDraft, draftKey, clearAll });
+  // บันทึกร่างแบบหน่วงเวลา (พิมพ์รัว ๆ บันทึกครั้งเดียว) — หยุดไว้ระหว่างรอผู้ใช้ตัดสินเรื่องร่างเดิม และหลังส่งสำเร็จ
+  function createAutosave({ store, values, delay = 400, active = true }) {
+    let timer = null;
+    let running = active;
+    return {
+      schedule() {
+        if (!running) return;
+        clearTimeout(timer);
+        timer = setTimeout(() => store.save(values()), delay);
+      },
+      start() { running = true; },
+      stop() { running = false; clearTimeout(timer); },
+    };
+  }
+
+  // แถบ "มีร่างค้าง" เหนือฟอร์ม: ใช้ร่างต่อ / เริ่มใหม่ — ผู้เรียกจัดการค่าเอง (คืนค่า หรือลบร่าง)
+  const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+  function offerDraft({ banner, message, onUse, onDiscard }) {
+    banner.innerHTML = `<p>${escapeHtml(message)}</p><div class="draft-banner-actions"><button type="button" class="btn secondary small" data-draft="discard">เริ่มใหม่</button><button type="button" class="btn small" data-draft="use">ใช้ร่างต่อ</button></div>`;
+    banner.hidden = false;
+    const choose = (event) => {
+      const choice = event.target.closest("[data-draft]")?.dataset.draft;
+      if (!choice) return;
+      banner.removeEventListener("click", choose);
+      banner.hidden = true;
+      if (choice === "use") onUse();
+      else onDiscard();
+    };
+    banner.addEventListener("click", choose);
+  }
+
+  root.MNP_FORM_DRAFT = Object.freeze({ VERSION, createDraftStore, isEmptyDraft, draftKey, clearAll, createAutosave, offerDraft });
 })(typeof window !== "undefined" ? window : globalThis);

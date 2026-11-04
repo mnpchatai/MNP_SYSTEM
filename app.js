@@ -425,6 +425,8 @@ function friendlyError(error) {
     INVALID_PUSH_SUBSCRIPTION: "ข้อมูลการแจ้งเตือนของเครื่องนี้ไม่ถูกต้อง ลองเปิดใหม่อีกครั้ง",
     PUSH_ENDPOINT_NOT_ALLOWED: "เบราว์เซอร์นี้ใช้บริการแจ้งเตือนที่ระบบยังไม่รองรับ (รองรับ Chrome, Edge, Firefox และ Safari)",
     LAB_ONLY_ACCOUNT: "บัญชีนี้ใช้ได้เฉพาะ MNP LAB",
+    REQUEST_NOT_CREATED: "ระบบไม่ได้สร้างใบให้ กรุณาลองส่งอีกครั้ง",
+    NCR_NOT_ISSUED: "ระบบไม่ได้ออกเลขที่ NCR ให้ กรุณาลองอีกครั้ง",
     SANDBOX_SCOPE_MISMATCH: "รายการนี้อยู่คนละโหมดกับที่คุณใช้อยู่ (ข้อมูลทดสอบกับข้อมูลจริงแยกจากกัน)",
     SANDBOX_MODULE_UNSUPPORTED: "โหมดทดสอบรองรับเฉพาะ NCR และใบตรวจ QC ตอนนี้ กรุณาออกจากโหมดทดสอบก่อนทำรายการนี้",
     NCR_FILES_REMAIN: "ลบไฟล์แนบทดสอบไม่หมด กรุณาลองล้างข้อมูลทดสอบอีกครั้ง",
@@ -1044,6 +1046,59 @@ function docNumberBoxHtml(id) {
 function setDocNumberBox(id, value) {
   const box = document.querySelector(`#${id}`);
   if (box) box.querySelector(".doc-number-value").textContent = value || "—";
+}
+
+// ---- ส่วนที่ฟอร์มสร้างทุกโมดูลใช้ร่วมกัน (ใบแจ้งซ่อม MT, คำร้องทั่วไป IT/MG, ออก NCR) ----
+// โฟกัสหัวขั้นแรกโดยไม่เปิดแป้นพิมพ์ (เช่น หลังแถบร่างหายไป)
+function focusFirstStep(form) {
+  const legend = form.querySelector('[data-step="1"] legend');
+  if (!legend) return;
+  legend.tabIndex = -1;
+  legend.focus();
+}
+
+// ยกเลิกเมื่อกรอกไว้แล้ว: ถามก่อนทิ้ง (ทิ้ง = ล้างร่างด้วย) ไม่ได้กรอกอะไร = ออกทันที
+function bindFormCancel(form, { title, isDirty, onDiscard }) {
+  form.querySelector("[data-form-cancel]")?.addEventListener("click", async (event) => {
+    if (!isDirty()) return;
+    event.preventDefault();
+    const href = event.currentTarget.getAttribute("href");
+    if (!(await confirmDialog({ title, message: "ข้อมูลที่กรอกและร่างบนเครื่องนี้จะหายไป", confirmLabel: "ทิ้งใบนี้", danger: true }))) return;
+    onDiscard();
+    location.hash = href;
+  });
+}
+
+// ส่งไม่ผ่าน: ทุกช่องยังอยู่ บอกเหนือฟอร์ม แล้วคืนโฟกัสที่ปุ่มส่ง (ถูกปิดระหว่างรอ โฟกัสจึงหลุด) กดซ้ำได้ทันที
+function showFormSubmitError(form, messageBox, error) {
+  messageBox.innerHTML = `<div class="form-message error" role="alert">${escapeHtml(friendlyError(error))}</div>`;
+  setFormBusy(form, false);
+  messageBox.scrollIntoView({ block: "nearest" });
+  form.querySelector("[data-step-submit]")?.focus({ preventScroll: true });
+}
+
+// แนบไฟล์หลังสร้างใบแล้ว: คืนข้อความเตือนถ้าบางไฟล์ไม่ผ่าน (ใบถูกสร้างแล้ว แนบใหม่ได้ภายหลัง)
+async function uploadAfterCreate(files, upload, retryHint) {
+  if (!files.length) return "";
+  try {
+    const uploaded = await uploadAttachmentBatch(files, upload);
+    return uploaded.failed.length ? `${attachmentBatchFailureText(uploaded)} ${retryHint}` : "";
+  } catch (uploadError) {
+    return `แนบไฟล์ไม่สำเร็จ: ${friendlyError(uploadError)} ${retryHint}`;
+  }
+}
+
+// เลขที่และขั้นแรกที่รอ ของคำร้องที่เพิ่งส่ง — สำหรับใบเสร็จหลังส่ง อ่านไม่ได้ก็แสดงใบเสร็จแบบไม่มีเลขที่
+async function requestReceiptFacts(requestId) {
+  try {
+    const [requestResult, stepResult] = await Promise.all([
+      sb.from("requests").select("request_no").eq("id", requestId).maybeSingle(),
+      sb.from("approval_steps").select("step_name,step_order").eq("request_id", requestId).order("step_order").limit(1),
+    ]);
+    return { requestNo: requestResult.data?.request_no ?? "", waitingOn: (stepResult.data ?? [])[0]?.step_name ?? "" };
+  } catch {
+    return { requestNo: "", waitingOn: "" };
+  }
 }
 
 function requestOwnerNames(request, directory) {
@@ -2570,20 +2625,7 @@ async function renderNewRequest(params) {
     } else {
       const separateModule = requestModule(selected.code);
       const formContext = await loadModuleFormContext(separateModule);
-      const detailFieldsHtml = separateModule?.renderFields ? separateModule.renderFields({ escapeHtml }) : dynamicDetailFields(selected.form_schema);
-      body = `
-        <section class="card" style="max-width:900px;margin:auto"><div id="request-message" role="status"></div><form id="request-form">
-          <div class="form-grid">
-            <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
-            <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
-            <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-            <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
-            ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
-            <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
-          </div>
-          ${separateModule?.renderFormSections ? separateModule.renderFormSections(formContext, { escapeHtml }) : ""}
-          <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งคำร้อง</button></div>
-        </form></section>`;
+      body = genericRequestFormHtml(selected, separateModule, formContext);
     }
 
     app.innerHTML = shell(`<a class="request-back-link" href="${escapeHtml(requestCenterUrl(params))}">‹ กลับรายการคำร้อง</a>${heading}${body}`, "requests", "คำร้อง / สร้างคำร้อง");
@@ -2615,54 +2657,210 @@ async function renderNewRequest(params) {
       setDocNumberBox("request-doc-number", "—");
     });
 
-    document.querySelector("#request-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const values = new FormData(form);
-      let attachments;
-      try {
-        attachments = optionalAttachments(values.getAll("attachment"));
-      } catch (attachmentError) {
-        document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
-        return;
-      }
-      const details = {};
-      form.querySelectorAll(".detail-field").forEach((input) => { if (input.value.trim()) details[input.name] = input.value.trim(); });
-      const ccDepartmentIds = [...form.querySelectorAll(".cc-department-checkbox:checked")].map((input) => input.value);
-      setFormBusy(form, true);
-      try {
-        const { data, error: createError } = await sb.rpc("app_create_request", {
-          p_type_id: selected.id,
-          p_title: String(values.get("title") ?? "").trim(),
-          p_description: String(values.get("description") ?? "").trim(),
-          p_priority: values.get("priority") ?? "normal", // ใบคำร้องถึงฝ่ายบริหารไม่มีช่องนี้ ใช้ค่าปกติ
-          p_details: details,
-          p_cc_department_ids: ccDepartmentIds,
-        });
-        if (createError) throw createError;
-        triggerNotificationEmails(data);
-        if (attachments.length) {
-          const uploaded = await uploadAttachmentBatch(attachments, (file) => uploadRequestAttachment(data, file, employee.id));
-          if (uploaded.failed.length) {
-            showToast(`สร้างคำร้องแล้ว แต่${attachmentBatchFailureText(uploaded)} · กรุณาแนบใหม่ในหน้ารายละเอียด`, "error");
-            go(`request?id=${encodeURIComponent(data)}`);
-            return;
-          }
-        }
-        // โมดูลแยกไฟล์เติมข้อความต่อท้ายได้ (เช่น ใบคำร้องถึงฝ่ายบริหารแสดงเลขที่เอกสาร)
-        const separateModule = requestModule(selected.code);
-        const docNoSuffix = separateModule?.afterCreate ? await separateModule.afterCreate({ sb, requestId: data }) : "";
-        const attachedNote = attachments.length > 1 ? ` ${attachments.length} ไฟล์` : "";
-        showToast(`${attachments.length ? `สร้างคำร้องและแนบไฟล์${attachedNote}สำเร็จ` : "สร้างคำร้องสำเร็จ"}${docNoSuffix}`);
-        go(`request?id=${encodeURIComponent(data)}`);
-      } catch (submitError) {
-        document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
-        setFormBusy(form, false);
-      }
-    });
+    bindGenericRequestForm(selected, employee);
   }
 
   await paint();
+}
+
+// ฟอร์มคำร้องทั่วไป (IT, ใบคำร้องถึงฝ่ายบริหาร และประเภทที่ใช้ form_schema) ทีละ 3 ขั้นบนจอแคบ หน้าเดียวบนจอกว้าง
+// ขั้น 1 เรื่องอะไร · ขั้น 2 ไฟล์แนบ ความสำคัญ และส่วนเพิ่มของโมดูล (เช่น สำเนาถึงแผนก) · ขั้น 3 ทบทวนก่อนส่ง
+// ส่งไป app_create_request ด้วยช่องเดิมทุกช่อง — โครงเดียวกับฟอร์มแจ้งซ่อม MT (modules/form-steps.js)
+function genericRequestFormHtml(selected, separateModule, formContext) {
+  const detailFieldsHtml = separateModule?.renderFields ? separateModule.renderFields({ escapeHtml }) : dynamicDetailFields(selected.form_schema);
+  const hidePriority = Boolean(separateModule?.hidePriority);
+  const step2Title = separateModule?.stepTitles?.[2] ?? (hidePriority ? "ไฟล์แนบ" : "ไฟล์แนบและความสำคัญ");
+  const priorityPicker = hidePriority ? "" : `<div class="field full">
+      <span class="field-label" id="request-priority-label">ความสำคัญ</span>
+      <input type="hidden" id="priority" name="priority" value="normal">
+      <div class="filters" id="request-priority-picker" role="group" aria-labelledby="request-priority-label">${Object.entries(priorityLabels).map(([value, label]) => `<button type="button" class="filter${value === "normal" ? " active" : ""}" data-priority="${value}" aria-pressed="${value === "normal"}">${escapeHtml(label)}</button>`).join("")}</div>
+    </div>`;
+  return `
+    <section class="card form-card" id="request-form-card"><div id="request-message" role="status"></div>
+    <div class="draft-banner" id="request-draft" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>
+    <form id="request-form" class="stepped-form" novalidate>
+      ${window.MNP_FORM_STEPS.headHtml()}
+      <fieldset class="form-step" data-step="1">
+        <legend class="form-step-title">เรื่องอะไร</legend>
+        <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
+        <div class="field full" data-field="title"><label for="title">หัวข้อ <span class="field-required">(จำเป็น)</span></label><input class="input" id="title" name="title" maxlength="200" autocomplete="off"></div>
+        <div class="field full" data-field="description"><label for="description">รายละเอียด <span class="field-required">(จำเป็น)</span></label><textarea class="textarea" id="description" name="description" maxlength="5000" rows="4"></textarea></div>
+        ${detailFieldsHtml ? `<div class="form-grid">${detailFieldsHtml}</div>` : ""}
+      </fieldset>
+      <fieldset class="form-step" data-step="2">
+        <legend class="form-step-title">${escapeHtml(step2Title)}</legend>
+        <div class="field full">
+          <span class="field-label">ไฟล์แนบ (ถ้ามี)</span>
+          <label class="btn secondary file-pick" for="attachment">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label>
+          <input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}">
+          <small>รูปจากโทรศัพท์ทุกรุ่นใช้ได้ ระบบแปลงให้เอง</small>
+        </div>
+        ${priorityPicker}
+        ${separateModule?.renderFormSections ? separateModule.renderFormSections(formContext, { escapeHtml }) : ""}
+      </fieldset>
+      <fieldset class="form-step form-step-review" data-step="3">
+        <legend class="form-step-title">ทบทวนก่อนส่ง</legend>
+        <div id="request-review"></div>
+      </fieldset>
+      ${window.MNP_FORM_STEPS.actionsHtml({ cancelHref: "#/requests", submitLabel: "ส่งคำร้อง" })}
+    </form></section>`;
+}
+
+function bindGenericRequestForm(selected, employee) {
+  const form = document.querySelector("#request-form");
+  const card = document.querySelector("#request-form-card");
+  const stepsApi = window.MNP_FORM_STEPS;
+  const draftApi = window.MNP_FORM_DRAFT;
+  const titleInput = form.querySelector("#title");
+  const descriptionInput = form.querySelector("#description");
+  const priorityInput = form.querySelector("#priority");
+  const attachmentInput = form.querySelector("#attachment");
+  const detailInputs = () => [...form.querySelectorAll(".detail-field")];
+  const ccBoxes = () => [...form.querySelectorAll(".cc-department-checkbox")];
+  let submitted = false;
+  form.querySelectorAll('input[type="date"]').forEach((input) => window.MNP_DATE_PICKER?.enhance(input));
+
+  const RULES = [
+    { name: "title", step: 1, required: true, minLength: 3, message: "กรุณาใส่หัวข้อ อย่างน้อย 3 ตัวอักษร" },
+    { name: "description", step: 1, required: true, minLength: 3, message: "กรุณาอธิบายรายละเอียด อย่างน้อย 3 ตัวอักษร" },
+  ];
+  // ค่าในฟอร์ม (ใช้ทั้งตรวจช่องและเก็บร่าง) — ช่องเฉพาะของโมดูลเก็บเป็น detail.<ชื่อช่อง>
+  const currentValues = () => ({
+    title: titleInput.value,
+    description: descriptionInput.value,
+    priority: priorityInput?.value ?? "",
+    cc_department_ids: ccBoxes().filter((box) => box.checked).map((box) => box.value),
+    ...Object.fromEntries(detailInputs().map((input) => [`detail.${input.name}`, input.value])),
+  });
+
+  const selectPriority = (value) => {
+    if (!priorityInput || !Object.hasOwn(priorityLabels, value)) return;
+    priorityInput.value = value;
+    form.querySelectorAll("#request-priority-picker [data-priority]").forEach((node) => {
+      const active = node.dataset.priority === value;
+      node.classList.toggle("active", active);
+      node.setAttribute("aria-pressed", String(active));
+    });
+  };
+  form.querySelectorAll("#request-priority-picker [data-priority]").forEach((button) => button.addEventListener("click", () => {
+    selectPriority(button.dataset.priority);
+    autosave.schedule();
+  }));
+
+  const renderReview = () => {
+    const row = (label, value, wide = false) => `<div class="definition${wide ? " wide" : ""}"><dt>${escapeHtml(label)}</dt><dd${wide ? ' class="review-text"' : ""}>${escapeHtml(value || "—")}</dd></div>`;
+    // ช่องเฉพาะของโมดูล: ชื่อจาก label ของช่องนั้น (ช่อง "อื่นๆ" ของสำเนาถึงแผนกรวมไว้ในแถวสำเนา)
+    const detailRows = detailInputs().filter((input) => !input.closest(".cc-department-field"))
+      .map((input) => row(input.labels?.[0]?.textContent.trim() ?? input.name, input.type === "date" && input.value ? window.MNP_DATE_PICKER.label(input.value) : input.value.trim()));
+    const ccField = form.querySelector(".cc-department-field");
+    const ccNames = ccField ? [
+      ...ccBoxes().filter((box) => box.checked).map((box) => box.closest("label")?.textContent.trim() ?? ""),
+      ccField.querySelector('[name="cc_other_note"]')?.value.trim() ?? "",
+    ].filter(Boolean) : [];
+    const files = [...(attachmentInput.files ?? [])];
+    form.querySelector("#request-review").innerHTML = `<dl class="definition-grid review-grid">
+        ${row("หัวข้อ", titleInput.value.trim(), true)}
+        ${priorityInput ? row("ความสำคัญ", priorityLabels[priorityInput.value] ?? priorityInput.value) : ""}
+        ${detailRows.join("")}
+        ${ccField ? row("สำเนาถึงแผนก", ccNames.join(", ") || "ไม่มี") : ""}
+        ${row("ไฟล์แนบ", files.length ? `${files.length} ไฟล์` : "ไม่มี")}
+        ${row("รายละเอียด", descriptionInput.value.trim(), true)}
+      </dl>
+      <p class="muted small">ตรวจแล้วกดส่ง หรือย้อนกลับไปแก้</p>`;
+  };
+
+  // ---- ร่างบนเครื่อง (ต่อประเภท ต่อผู้ใช้) ----
+  const drafts = draftApi.createDraftStore({ key: draftApi.draftKey(selected.code, employee.id), ignoreForEmpty: ["priority"] });
+  const autosave = draftApi.createAutosave({ store: drafts, values: currentValues });
+  form.addEventListener("input", () => autosave.schedule());
+  form.addEventListener("change", () => autosave.schedule());
+  const restoreDraft = (values) => {
+    titleInput.value = values.title ?? "";
+    descriptionInput.value = values.description ?? "";
+    selectPriority(values.priority);
+    const ccIds = new Set(Array.isArray(values.cc_department_ids) ? values.cc_department_ids : []);
+    ccBoxes().forEach((box) => { box.checked = ccIds.has(box.value); });
+    detailInputs().forEach((input) => {
+      const value = values[`detail.${input.name}`];
+      if (typeof value === "string") input.value = value;
+      if (input.type === "date") input.dispatchEvent(new Event("datepicker:refresh"));
+    });
+  };
+  const draft = drafts.load();
+  let draftPending = Boolean(draft);
+  if (draft) {
+    autosave.stop();
+    draftApi.offerDraft({
+      banner: document.querySelector("#request-draft"),
+      message: `มีร่าง${requestTypeLabel(selected)}ค้างจาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
+      onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); titleInput.focus(); },
+      onDiscard: () => { draftPending = false; autosave.start(); drafts.clear(); focusFirstStep(form); },
+    });
+  }
+
+  bindFormCancel(form, {
+    title: "ทิ้งคำร้องที่กรอกไว้?",
+    isDirty: () => !submitted && !draftPending && (!draftApi.isEmptyDraft(currentValues(), ["priority"]) || Boolean(attachmentInput.files?.length)),
+    onDiscard: () => { autosave.stop(); drafts.clear(); },
+  });
+
+  // ---- ส่ง ----
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = document.querySelector("#request-message");
+    message.innerHTML = "";
+    if (!stepper.check("all")) return;
+    // อ่านค่าก่อน setFormBusy เสมอ — ช่องที่ถูก disable จะไม่อยู่ใน FormData
+    const values = new FormData(form);
+    let attachments;
+    try {
+      attachments = optionalAttachments(values.getAll("attachment"));
+    } catch (attachmentError) {
+      stepper.goTo(2, { focus: false });
+      message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
+      attachmentInput.focus();
+      return;
+    }
+    const details = {};
+    detailInputs().forEach((input) => { if (input.value.trim()) details[input.name] = input.value.trim(); });
+    const ccDepartmentIds = ccBoxes().filter((box) => box.checked).map((box) => box.value);
+    setFormBusy(form, true);
+    let requestId;
+    try {
+      const { data, error: createError } = await sb.rpc("app_create_request", {
+        p_type_id: selected.id,
+        p_title: String(values.get("title") ?? "").trim(),
+        p_description: String(values.get("description") ?? "").trim(),
+        p_priority: values.get("priority") ?? "normal", // ใบคำร้องถึงฝ่ายบริหารไม่มีช่องนี้ ใช้ค่าปกติ
+        p_details: details,
+        p_cc_department_ids: ccDepartmentIds,
+      });
+      if (createError) throw createError;
+      if (!data) throw new Error("REQUEST_NOT_CREATED");
+      requestId = data;
+    } catch (submitError) {
+      showFormSubmitError(form, message, submitError);
+      return;
+    }
+    submitted = true;
+    autosave.stop();
+    drafts.clear();
+    triggerNotificationEmails(requestId);
+    const uploadWarning = await uploadAfterCreate(attachments, (file) => uploadRequestAttachment(requestId, file, employee.id), "แนบใหม่ได้ในหน้ารายละเอียด");
+    // ใบเสร็จหลังส่ง: เลขที่และขั้นที่รอ แทนการเด้งไปหน้ารายละเอียดทันที
+    const { requestNo, waitingOn } = await requestReceiptFacts(requestId);
+    if (!card.isConnected) {
+      showToast(requestNo ? `ส่งคำร้อง ${requestNo} แล้ว` : "ส่งคำร้องแล้ว");
+      return;
+    }
+    window.MNP_FORM_STEPS.showReceipt(card, {
+      title: "ส่งคำร้องแล้ว", number: requestNo, waitingOn, warning: uploadWarning,
+      viewHref: `#/request?id=${encodeURIComponent(requestId)}`, viewLabel: "ดูคำร้อง",
+      againLabel: "สร้างอีกใบ", onAgain: () => renderRoute(),
+    });
+  });
+
+  const stepper = stepsApi.bindStepper({ form, count: 3, rules: RULES, values: currentValues, onReview: renderReview, scrollTarget: card });
 }
 
 // เดิมชื่อ loadDirectory() ซ้ำกับฟังก์ชันโหลดแผนกของหน้าขอเปิดบัญชี (บรรทัดข้างบน) —

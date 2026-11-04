@@ -377,7 +377,7 @@
         <section class="card form-card" id="repair-form-card"><div id="request-message" role="status"></div>
         <div class="draft-banner" id="repair-draft" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>
         <form id="repair-form" class="stepped-form" novalidate>
-          <div class="form-steps-head" id="repair-steps-head" hidden><span class="form-steps-label" id="repair-steps-label" aria-live="polite"></span></div>
+          ${window.MNP_FORM_STEPS.headHtml()}
           <fieldset class="form-step" data-step="1">
             <legend class="form-step-title">ที่ไหน และเป็นอะไร</legend>
             <div class="field full">${docNumberBoxHtml("repair-doc-number")}</div>
@@ -431,12 +431,7 @@
             <legend class="form-step-title">ทบทวนก่อนส่ง</legend>
             <div id="repair-review"></div>
           </fieldset>
-          <div class="form-actions stepped-actions">
-            <a class="btn secondary" href="#/requests" data-form-cancel>ยกเลิก</a>
-            <button type="button" class="btn secondary" data-step-back hidden>‹ ย้อนกลับ</button>
-            <button type="button" class="btn is-primary" data-step-next hidden>ถัดไป ›</button>
-            <button type="submit" class="btn is-primary" data-step-submit>ส่งใบแจ้งซ่อม</button>
-          </div>
+          ${window.MNP_FORM_STEPS.actionsHtml({ cancelHref: "#/requests", submitLabel: "ส่งใบแจ้งซ่อม" })}
         </form></section>`;
     },
 
@@ -459,16 +454,16 @@
       const newMachineMessage = document.querySelector("#repair-machine-new-message");
       const newMachineSave = document.querySelector("#repair-machine-new-save");
       const stepsApi = window.MNP_FORM_STEPS;
-      const narrowQuery = window.matchMedia("(max-width: 1040px)");
+      const draftApi = window.MNP_FORM_DRAFT;
       const defaultRequester = `${employee.first_name} ${employee.last_name}`;
       // แผนกถูกเลือกให้เองตั้งแต่เปิดฟอร์ม และชื่อเครื่องตามเครื่องที่เลือก จึงไม่นับเป็นการกรอก ร่างที่มีแค่สองอย่างนี้ = ว่าง
-      const drafts = window.MNP_FORM_DRAFT.createDraftStore({ key: window.MNP_FORM_DRAFT.draftKey("MT_REPAIR", employee.id), ignoreForEmpty: ["requester_name", "doc_type", "department_id", "machine_label"] });
+      const drafts = draftApi.createDraftStore({ key: draftApi.draftKey("MT_REPAIR", employee.id), ignoreForEmpty: ["requester_name", "doc_type", "department_id", "machine_label"] });
       let selectedDepartmentId = "";
       let visibleMachines = [];
       let activeMachineIndex = -1;
-      let currentStep = 1;
-      let draftDecided = true;
       let submitted = false;
+      // ตั้งค่าท้ายฟังก์ชัน (หลัง renderReview) — handler ทุกตัวเรียกใช้ตอนผู้ใช้กด จึงมีค่าแล้วเสมอ
+      let stepper = null;
 
       window.MNP_DATE_PICKER?.enhance(neededDate);
 
@@ -487,52 +482,6 @@
         needed_date: neededDate.value,
         requester_name: requesterName.value.trim() === defaultRequester ? "" : requesterName.value,
         is_urgent: urgent.checked,
-      });
-      const checkStep = (step) => {
-        const errors = stepsApi.validate(RULES.filter((rule) => step === "all" || rule.step === step), currentValues());
-        if (!errors.length) { stepsApi.clearFieldErrors(form); return true; }
-        goToStep(errors[0].step, { focus: false });
-        const target = stepsApi.showFieldErrors(form, errors);
-        target?.focus();
-        return false;
-      };
-
-      // ---- ทีละขั้น ----
-      const paintSteps = () => {
-        // ออกจากหน้าแล้ว (หรือหน้าใบเสร็จแทนที่ฟอร์ม): เลิกฟังการย่อขยายจอ
-        if (!form.isConnected) { narrowQuery.removeEventListener?.("change", paintSteps); return; }
-        const view = stepsApi.stepView({ current: currentStep, count: 3, narrow: narrowQuery.matches });
-        form.classList.toggle("is-stepped", narrowQuery.matches);
-        form.querySelectorAll("[data-step]").forEach((section) => { section.hidden = !view.visible.includes(Number(section.dataset.step)); });
-        const head = form.querySelector("#repair-steps-head");
-        head.hidden = !narrowQuery.matches;
-        // ชื่อขั้นอยู่ที่ legend ของขั้นนั้นแล้ว หัวนี้บอกแค่ลำดับ
-        form.querySelector("#repair-steps-label").textContent = view.label;
-        form.querySelector("[data-step-back]").hidden = !view.showBack;
-        form.querySelector("[data-step-next]").hidden = !view.showNext;
-        form.querySelector("[data-step-submit]").hidden = !view.showSubmit;
-        if (view.visible.includes(3)) renderReview();
-      };
-      const goToStep = (step, { focus = true } = {}) => {
-        currentStep = step;
-        paintSteps();
-        if (focus && narrowQuery.matches) {
-          const legend = form.querySelector(`[data-step="${step}"] legend`);
-          legend.tabIndex = -1;
-          legend.focus();
-          card.scrollIntoView({ block: "start", behavior: "auto" });
-        }
-      };
-      form.querySelector("[data-step-next]").addEventListener("click", () => { if (checkStep(currentStep)) goToStep(currentStep + 1); });
-      form.querySelector("[data-step-back]").addEventListener("click", () => goToStep(currentStep - 1));
-      narrowQuery.addEventListener?.("change", paintSteps);
-      // Enter (หรือปุ่ม "ไป" บนแป้นมือถือ) ในช่องก่อนขั้นสุดท้าย = ถัดไป ไม่ใช่ส่งข้ามขั้นทบทวน
-      form.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
-        // ปุ่มเลือกไฟล์ใช้ Enter เปิดตัวเลือกไฟล์ (คีย์บอร์ดต่อ iPad) จึงไม่นับ
-        if (!event.target.matches("input:not([type=file])") || !narrowQuery.matches || currentStep >= 3) return;
-        event.preventDefault();
-        form.querySelector("[data-step-next]").click();
       });
 
       const renderReview = () => {
@@ -710,17 +659,12 @@
       document.querySelectorAll("#repair-doctype-picker [data-doctype]").forEach((button) => button.addEventListener("click", () => { selectDocType(button.dataset.doctype); saveDraft(); }));
 
       // ---- ร่างบนเครื่อง ----
-      let saveTimer = null;
+      // หยุดไว้จนกว่าผู้ใช้จะตัดสินเรื่องร่างเดิม (ถ้ามี) และหลังส่งสำเร็จ
+      const autosave = draftApi.createAutosave({ store: drafts, values: currentValues });
       function saveDraft() {
-        if (!draftDecided || submitted) return;
-        window.clearTimeout(saveTimer);
-        saveTimer = window.setTimeout(() => drafts.save(currentValues()), 400);
+        autosave.schedule();
       }
-      form.addEventListener("input", (event) => {
-        saveDraft();
-        const name = event.target.closest("[data-field]")?.dataset.field;
-        if (name) stepsApi.clearFieldError(form, name);
-      });
+      form.addEventListener("input", saveDraft);
       form.addEventListener("change", saveDraft);
       // ใส่ค่าทันที ไม่รอเลขที่เอกสาร (peek) ที่ตามมาทีหลัง ไม่งั้นค่าที่ผู้ใช้เริ่มพิมพ์ระหว่างรอจะถูกทับ
       const restoreDraft = (values) => {
@@ -736,47 +680,31 @@
         if (values.requester_name) requesterName.value = values.requester_name;
         urgent.checked = Boolean(values.is_urgent);
       };
-      const banner = document.querySelector("#repair-draft");
-      const draft = drafts.load();
-      if (draft) {
-        draftDecided = false;
-        banner.innerHTML = `<p>มีร่างใบแจ้งซ่อมค้างจาก ${escapeHtml(formatDate(new Date(draft.savedAt).toISOString(), true))}</p><div class="draft-banner-actions"><button type="button" class="btn secondary small" data-draft="discard">เริ่มใหม่</button><button type="button" class="btn small" data-draft="use">ใช้ร่างต่อ</button></div>`;
-        banner.hidden = false;
-        banner.addEventListener("click", (event) => {
-          const choice = event.target.closest("[data-draft]")?.dataset.draft;
-          if (!choice) return;
-          banner.hidden = true;
-          draftDecided = true;
-          // ใช้ร่าง = ร่างเดิมยังอยู่จนกว่าจะแก้; เริ่มใหม่ = ลบร่าง และไม่สร้างใหม่จนกว่าจะกรอก
-          if (choice === "use") { restoreDraft(draft.values); description.focus(); }
-          else {
-            drafts.clear();
-            selectDefaultDepartment();
-            // แถบหายไปแล้ว โฟกัสไปหัวขั้นแรกโดยไม่เปิดแป้นพิมพ์
-            const legend = form.querySelector('[data-step="1"] legend');
-            legend.tabIndex = -1;
-            legend.focus();
-          }
-        });
-      }
       // แผนกเริ่มต้น = แผนกของผู้แจ้ง (ถ้าแจ้งซ่อมได้) โดยไม่เปิดแป้นพิมพ์บนมือถือ
       function selectDefaultDepartment() {
         if (departments.some((item) => item.id === employee.department_id)) selectDepartment(employee.department_id, { focusMachine: false });
       }
-      if (!draft) selectDefaultDepartment();
+      const draft = drafts.load();
+      // ระหว่างแถบถามเรื่องร่างยังเปิดอยู่ ฟอร์มยังไม่มีอะไรของผู้ใช้ ยกเลิกได้โดยไม่ถาม
+      let draftPending = Boolean(draft);
+      if (draft) {
+        autosave.stop();
+        draftApi.offerDraft({
+          banner: document.querySelector("#repair-draft"),
+          message: `มีร่างใบแจ้งซ่อมค้างจาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
+          // ใช้ร่าง = ร่างเดิมยังอยู่จนกว่าจะแก้; เริ่มใหม่ = ลบร่าง และไม่สร้างใหม่จนกว่าจะกรอก
+          onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); description.focus(); },
+          onDiscard: () => { draftPending = false; autosave.start(); drafts.clear(); selectDefaultDepartment(); focusFirstStep(form); },
+        });
+      } else {
+        selectDefaultDepartment();
+      }
 
-      // ยกเลิกเมื่อกรอกไว้แล้ว: ถามก่อนทิ้ง (ทิ้ง = ล้างร่างด้วย)
-      form.querySelector("[data-form-cancel]").addEventListener("click", async (event) => {
-        // ส่งแล้ว (กำลังแนบไฟล์): ใบถูกสร้างแล้ว ไม่มีอะไรให้ทิ้ง
-        if (submitted) return;
-        const dirty = draftDecided && (description.value.trim() || machineInput.value || neededDate.value || urgent.checked || attachmentInput.files?.length);
-        if (!dirty) return;
-        event.preventDefault();
-        const href = event.currentTarget.getAttribute("href");
-        if (!(await confirmDialog({ title: "ทิ้งใบแจ้งซ่อมที่กรอกไว้?", message: "ข้อมูลที่กรอกและร่างบนเครื่องนี้จะหายไป", confirmLabel: "ทิ้งใบนี้", danger: true }))) return;
-        window.clearTimeout(saveTimer);
-        drafts.clear();
-        location.hash = href;
+      // ยกเลิกเมื่อกรอกไว้แล้ว: ถามก่อนทิ้ง (ทิ้ง = ล้างร่างด้วย) — ส่งแล้ว (กำลังแนบไฟล์) ไม่มีอะไรให้ทิ้ง
+      bindFormCancel(form, {
+        title: "ทิ้งใบแจ้งซ่อมที่กรอกไว้?",
+        isDirty: () => !submitted && !draftPending && Boolean(description.value.trim() || machineInput.value || neededDate.value || urgent.checked || attachmentInput.files?.length),
+        onDiscard: () => { autosave.stop(); drafts.clear(); },
       });
 
       // ---- ส่ง ----
@@ -784,13 +712,13 @@
         event.preventDefault();
         const message = document.querySelector("#request-message");
         message.innerHTML = "";
-        if (!checkStep("all")) return;
+        if (!stepper.check("all")) return;
         let attachments;
         try {
           attachments = optionalAttachments(attachmentInput.files);
         } catch (attachmentError) {
-          goToStep(2, { focus: false });
-          stepsApi.showFieldErrors(form, []);
+          stepper.goTo(2, { focus: false });
+          stepsApi.clearFieldErrors(form);
           message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
           attachmentInput.focus();
           return;
@@ -808,63 +736,32 @@
             p_requester_name: requesterName.value.trim() || null,
           });
           if (createError) throw createError;
+          if (!data) throw new Error("REQUEST_NOT_CREATED");
           requestId = data;
         } catch (submitError) {
           // ส่งไม่ผ่าน: ทุกช่องยังอยู่ บอกในขั้นที่กำลังอยู่
-          message.innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
-          setFormBusy(form, false);
-          message.scrollIntoView({ block: "nearest" });
-          // ปุ่มส่งถูกปิดระหว่างรอ โฟกัสจึงหลุด: คืนให้ที่ปุ่มส่ง กดซ้ำได้ทันที
-          form.querySelector("[data-step-submit]").focus({ preventScroll: true });
+          showFormSubmitError(form, message, submitError);
           return;
         }
         submitted = true;
-        window.clearTimeout(saveTimer);
+        autosave.stop();
         drafts.clear();
         triggerNotificationEmails(requestId);
-        let uploadWarning = "";
-        if (attachments.length) {
-          try {
-            const uploaded = await uploadAttachmentBatch(attachments, (file) => uploadRequestAttachment(requestId, file, employee.id));
-            if (uploaded.failed.length) uploadWarning = `${attachmentBatchFailureText(uploaded)} แนบใหม่ได้ในหน้าใบแจ้งซ่อม`;
-          } catch (uploadError) {
-            uploadWarning = `แนบไฟล์ไม่สำเร็จ: ${friendlyError(uploadError)} แนบใหม่ได้ในหน้าใบแจ้งซ่อม`;
-          }
-        }
-        await showReceipt(requestId, uploadWarning);
-      });
-
-      // ใบเสร็จหลังส่ง: เลขที่และขั้นที่รอ แทนการเด้งไปหน้าอื่นทันที
-      const showReceipt = async (requestId, uploadWarning) => {
-        let requestNo = "";
-        let waitingOn = "";
-        try {
-          const [requestResult, stepResult] = await Promise.all([
-            sb.from("requests").select("request_no").eq("id", requestId).maybeSingle(),
-            sb.from("approval_steps").select("step_name,step_order").eq("request_id", requestId).order("step_order").limit(1),
-          ]);
-          requestNo = requestResult.data?.request_no ?? "";
-          waitingOn = (stepResult.data ?? [])[0]?.step_name ?? "";
-        } catch { /* แสดงใบเสร็จแบบไม่มีเลขที่ได้ */ }
+        const uploadWarning = await uploadAfterCreate(attachments, (file) => uploadRequestAttachment(requestId, file, employee.id), "แนบใหม่ได้ในหน้าใบแจ้งซ่อม");
+        // ใบเสร็จหลังส่ง: เลขที่และขั้นที่รอ แทนการเด้งไปหน้าอื่นทันที
+        const { requestNo, waitingOn } = await requestReceiptFacts(requestId);
         if (!card.isConnected) {
           showToast(requestNo ? `ส่งใบแจ้งซ่อม ${requestNo} แล้ว` : "ส่งใบแจ้งซ่อมแล้ว");
           return;
         }
-        card.classList.add("form-receipt");
-        card.innerHTML = `<div class="decision-receipt" role="status">
-            <span class="decision-receipt-icon" aria-hidden="true">${uiIcon("check")}</span>
-            <div>
-              <h2 tabindex="-1" id="repair-receipt-title">ส่งใบแจ้งซ่อมแล้ว</h2>
-              <p>${requestNo ? `<span class="request-no">${escapeHtml(requestNo)}</span>` : ""}${requestNo && waitingOn ? " · " : ""}${waitingOn ? `รอ${escapeHtml(waitingOn)}` : ""}</p>
-              ${uploadWarning ? `<p class="form-message error">${escapeHtml(uploadWarning)}</p>` : ""}
-            </div>
-          </div>
-          <div class="action-panel-buttons"><a class="btn is-primary" href="#/request?id=${encodeURIComponent(requestId)}">ดูใบแจ้งซ่อม</a><button type="button" class="btn secondary" data-again>แจ้งอีกใบ</button><a class="btn secondary" href="#/">หน้าหลัก</a></div>`;
-        card.querySelector("[data-again]").addEventListener("click", () => renderRoute());
-        card.querySelector("#repair-receipt-title").focus();
-      };
+        stepsApi.showReceipt(card, {
+          title: "ส่งใบแจ้งซ่อมแล้ว", number: requestNo, waitingOn, warning: uploadWarning,
+          viewHref: `#/request?id=${encodeURIComponent(requestId)}`, viewLabel: "ดูใบแจ้งซ่อม",
+          againLabel: "แจ้งอีกใบ", onAgain: () => renderRoute(),
+        });
+      });
 
-      paintSteps();
+      stepper = stepsApi.bindStepper({ form, count: 3, rules: RULES, values: currentValues, onReview: renderReview, scrollTarget: card });
     },
 
     detailView({ request, type, steps, verifications, history, directory, progressSteps, assignedTechIds, employee }) {

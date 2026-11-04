@@ -71,5 +71,104 @@
     container?.querySelectorAll("[aria-invalid='true']").forEach((node) => node.removeAttribute("aria-invalid"));
   }
 
-  root.MNP_FORM_STEPS = Object.freeze({ validate, stepView, showFieldErrors, clearFieldErrors, clearFieldError });
+  // ---- ส่วนที่ฟอร์มทีละขั้นทุกโมดูลใช้ร่วมกัน (MT, คำร้องทั่วไป IT/MG, NCR) ----
+  const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+
+  // หัว "ขั้นที่ n จาก N" (แสดงเฉพาะจอแคบ) — ชื่อขั้นอยู่ที่ legend ของแต่ละขั้นแล้ว หัวนี้บอกแค่ลำดับ
+  function headHtml() {
+    return `<div class="form-steps-head" data-steps-head hidden><span class="form-steps-label" data-steps-label aria-live="polite"></span></div>`;
+  }
+
+  // แถวปุ่มล่างฟอร์ม: ยกเลิก · ย้อนกลับ · ถัดไป · ส่ง (bindStepper ซ่อน/แสดงตามขั้น บนจอแคบติดล่างจอ)
+  function actionsHtml({ cancelHref, submitLabel }) {
+    return `<div class="form-actions stepped-actions">
+      <a class="btn secondary" href="${escapeHtml(cancelHref)}" data-form-cancel>ยกเลิก</a>
+      <button type="button" class="btn secondary" data-step-back hidden>‹ ย้อนกลับ</button>
+      <button type="button" class="btn is-primary" data-step-next hidden>ถัดไป ›</button>
+      <button type="submit" class="btn is-primary" data-step-submit>${escapeHtml(submitLabel)}</button>
+    </div>`;
+  }
+
+  // ตัวคุมฟอร์มทีละขั้น: วาดขั้นตามความกว้างจอ, ปุ่มย้อนกลับ/ถัดไป, ตรวจช่องของขั้นก่อนไปต่อ,
+  // Enter ในช่องก่อนขั้นสุดท้าย = ถัดไป (ไม่ส่งข้ามขั้นทบทวน), ล้างข้อความผิดเมื่อแก้ช่องนั้น
+  // rules: กติกาของ validate(); values(): ค่าปัจจุบันของฟอร์ม; onReview(): วาดขั้นทบทวนเมื่อมองเห็น
+  function bindStepper({ form, count, reviewStep = count, rules, values, onReview, scrollTarget = form, query = "(max-width: 1040px)" }) {
+    const narrowQuery = root.matchMedia(query);
+    let current = 1;
+    const paint = () => {
+      // ออกจากหน้าแล้ว (หรือใบเสร็จแทนที่ฟอร์ม): เลิกฟังการย่อขยายจอ
+      if (!form.isConnected) { narrowQuery.removeEventListener?.("change", paint); return; }
+      const narrow = narrowQuery.matches;
+      const view = stepView({ current, count, narrow, reviewStep });
+      form.classList.toggle("is-stepped", narrow);
+      form.querySelectorAll("[data-step]").forEach((section) => { section.hidden = !view.visible.includes(Number(section.dataset.step)); });
+      const head = form.querySelector("[data-steps-head]");
+      if (head) {
+        head.hidden = !narrow;
+        head.querySelector("[data-steps-label]").textContent = view.label;
+      }
+      form.querySelector("[data-step-back]").hidden = !view.showBack;
+      form.querySelector("[data-step-next]").hidden = !view.showNext;
+      form.querySelector("[data-step-submit]").hidden = !view.showSubmit;
+      if (view.visible.includes(reviewStep)) onReview?.();
+    };
+    const goTo = (step, { focus = true } = {}) => {
+      current = Math.min(Math.max(1, step), count);
+      paint();
+      if (focus && narrowQuery.matches) {
+        const legend = form.querySelector(`[data-step="${current}"] legend`);
+        if (legend) {
+          legend.tabIndex = -1;
+          legend.focus();
+        }
+        scrollTarget.scrollIntoView({ block: "start", behavior: "auto" });
+      }
+    };
+    // step = เลขขั้น หรือ "all" (ก่อนส่ง) — ผิดแล้วพาไปขั้นที่มีช่องผิดช่องแรก และโฟกัสช่องนั้น
+    const check = (step) => {
+      const errors = validate(rules.filter((rule) => step === "all" || rule.step === step), values());
+      if (!errors.length) { clearFieldErrors(form); return true; }
+      goTo(errors[0].step, { focus: false });
+      showFieldErrors(form, errors)?.focus();
+      return false;
+    };
+    form.querySelector("[data-step-next]").addEventListener("click", () => { if (check(current)) goTo(current + 1); });
+    form.querySelector("[data-step-back]").addEventListener("click", () => goTo(current - 1));
+    form.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
+      // ปุ่มเลือกไฟล์ใช้ Enter เปิดตัวเลือกไฟล์ (คีย์บอร์ดต่อ iPad) จึงไม่นับ
+      if (!event.target.matches("input:not([type=file])") || !narrowQuery.matches || current >= count) return;
+      event.preventDefault();
+      form.querySelector("[data-step-next]").click();
+    });
+    const clearOnEdit = (event) => {
+      const name = event.target.closest?.("[data-field]")?.dataset.field;
+      if (name) clearFieldError(form, name);
+    };
+    form.addEventListener("input", clearOnEdit);
+    form.addEventListener("change", clearOnEdit);
+    narrowQuery.addEventListener?.("change", paint);
+    paint();
+    return { goTo, check, paint, get current() { return current; } };
+  }
+
+  // ใบเสร็จหลังส่ง: แทนที่การ์ดฟอร์ม บอกเลขที่และขั้นที่รอ พร้อม ดูใบ / ทำอีกใบ / หน้าหลัก แล้วโฟกัสหัวใบเสร็จ
+  function showReceipt(card, { title, number = "", waitingOn = "", warning = "", viewHref, viewLabel, againLabel, onAgain }) {
+    const check = root.MNP_UI_ICONS?.icon("check") ?? "";
+    const facts = [number ? `<span class="request-no">${escapeHtml(number)}</span>` : "", waitingOn ? `รอ${escapeHtml(waitingOn)}` : ""].filter(Boolean).join(" · ");
+    card.classList.add("form-receipt");
+    card.innerHTML = `<div class="decision-receipt" role="status">
+        <span class="decision-receipt-icon" aria-hidden="true">${check}</span>
+        <div>
+          <h2 tabindex="-1" data-receipt-title>${escapeHtml(title)}</h2>
+          ${facts ? `<p>${facts}</p>` : ""}
+          ${warning ? `<p class="form-message error">${escapeHtml(warning)}</p>` : ""}
+        </div>
+      </div>
+      <div class="action-panel-buttons"><a class="btn is-primary" href="${escapeHtml(viewHref)}">${escapeHtml(viewLabel)}</a><button type="button" class="btn secondary" data-again>${escapeHtml(againLabel)}</button><a class="btn secondary" href="#/">หน้าหลัก</a></div>`;
+    card.querySelector("[data-again]").addEventListener("click", onAgain);
+    card.querySelector("[data-receipt-title]").focus();
+  }
+
+  root.MNP_FORM_STEPS = Object.freeze({ validate, stepView, showFieldErrors, clearFieldErrors, clearFieldError, headHtml, actionsHtml, bindStepper, showReceipt });
 })(typeof window !== "undefined" ? window : globalThis);
