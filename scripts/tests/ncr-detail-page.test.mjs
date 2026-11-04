@@ -28,7 +28,7 @@ async function renderPage(viewer, overrides = {}, options = {}) {
   const forms = options.forms ?? [];
   const query = (table) => {
     const builder = {
-      select: () => builder, eq: () => builder, order: () => builder,
+      select: () => builder, eq: () => builder, order: () => builder, in: () => builder, lt: () => builder, is: () => builder, limit: () => builder,
       maybeSingle: async () => ({ data: table === "ncr_reports" ? report : null, error: null }),
       then: (resolve, reject) => Promise.resolve({ data: options.tables?.[table] ?? [], error: null }).then(resolve, reject),
     };
@@ -45,6 +45,10 @@ async function renderPage(viewer, overrides = {}, options = {}) {
     DEPT_MANAGER_ROLE_CODES: ["department_manager", "assistant_department_manager"],
     optionalAttachments: () => [], uploadAttachmentBatch: async () => ({ total: 0, failed: [] }), attachmentBatchFailureText: () => "",
     attachmentGalleryHtml: () => "", hydrateAttachmentGallery: async () => {}, openAttachmentLightbox: noop,
+    // ตัวช่วยทะเบียนของ app.js (registerTableHtml ฯลฯ) แบบย่อ: ตรวจว่าทะเบียน NCR ส่งช่องครบ ไม่ใช่หน้าตา
+    registerTableHtml: ({ columns, rows }) => `<table>${rows.map((row) => `<tr>${columns.map((column) => `<td data-label="${column.label}">${row.cells[column.key] ?? ""}</td>`).join("")}</tr>`).join("")}</table>`,
+    registerNoHtml: (number, href) => `<a href="${href}">${number}</a>`, registerSubjectHtml: (main, href, secondary) => `${main}|${secondary}`,
+    hrefSelectHtml: ({ options, value }) => `<select>${options.map((option) => `<option data-href="${option.href}"${option.value === value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`, uiIcon: () => "",
     FormData: class { constructor(form) { this.form = form; } get(name) { return this.form.fields?.[name] ?? null; } },
     document: {
       querySelector: () => null,
@@ -57,7 +61,7 @@ async function renderPage(viewer, overrides = {}, options = {}) {
   context.window.MNP_NCR_SHEET_SYNC = { sync: noop, buildRecord: () => ({}) };
   vm.createContext(context);
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
-  await context.window.MNP_REQUEST_MODULES.NCR_CAR.pages.ncr(new URLSearchParams({ id: report.id }));
+  await context.window.MNP_REQUEST_MODULES.NCR_CAR.pages.ncr(options.params ?? new URLSearchParams({ id: report.id }));
   return { html: app.innerHTML, rpcCalls };
 }
 
@@ -364,4 +368,18 @@ test("changing the responder sends the department and null when the choice is cl
   };
   assert.deepEqual((await send({ responder: "m1" })).args, { p_ncr_id: "ncr-1", p_department_id: "dept-rb", p_responder_id: "m1" });
   assert.equal((await send({ responder: "" })).args.p_responder_id, null, "an empty choice clears the named responder");
+});
+
+test("the NCR register lists each report as one table row with every column filled, and the category is a select", async () => {
+  // ทะเบียน NCR ใช้ตารางชุดเดียวกับรายการคำร้อง (registerTableHtml ใน app.js) — สถานะที่ยังไม่ปิดมีชื่อผู้รับผิดชอบใต้สถานะ
+  const open = { ...NCR, status: "awaiting_response", customer_name: "บริษัท ทดสอบ" };
+  const { html } = await renderPage(employee("emp-qa", "dept-qa", "QA", "staff"), {}, { params: new URLSearchParams(), tables: { ncr_reports: [open] } });
+  const has = (text, message) => assert.ok(html.includes(text), message ?? text);
+  has('<a href="#/ncr?id=ncr-1">QA041/26</a>');
+  has('<td data-label="สินค้า/วัตถุดิบ">ท่อยาง|บริษัท ทดสอบ</td>');
+  has('<td data-label="ข้อบกพร่อง">ขนาดผิด · 5 ท่อน</td>');
+  has('<td data-label="แผนกรับผิดชอบ">RB</td>');
+  has('<td data-label="วันที่ออก">2026-10-01</td>');
+  has('<option data-href="#/ncr?status=open" selected>ยังไม่ปิด</option>', "the category filter is one select, open by default");
+  assert.doesNotMatch(html, /request-timeline-card|class="filters"/, "no card feed or chip row left");
 });

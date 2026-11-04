@@ -1038,9 +1038,6 @@ function requesterLabel(request, directory) {
   return (request.requester_name ?? "").trim() || "—";
 }
 
-function requestCode(requestNo) {
-  return String(requestNo ?? "REQ").match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? "REQ";
-}
 
 // กรอบแสดงเลขที่เอกสารถัดไปบนฟอร์มสร้างคำร้องทุกโมดูล (เลขจริงถูกจองตอนส่งใบ จึงเป็นค่าโดยประมาณ)
 function docNumberBoxHtml(id) {
@@ -1116,91 +1113,154 @@ function requestOwnerNames(request, directory) {
     .filter((name) => name && name !== "—");
 }
 
-function requestRows(requests, { showProgress = false, showRequester = false, directory = null, empty = EMPTY_REQUESTS } = {}) {
+// ---- ทะเบียน: รายการคำร้องของโมดูล กระดานติดตามสถานะทุกใบ และทะเบียน NCR ใช้ตารางชุดเดียว ----
+// จอกว้างเป็นตารางเรียงคอลัมน์แบบทะเบียนกระดาษ จอแคบ (≤760px) แต่ละแถวเป็นการ์ดเตี้ย: เลขที่ + สถานะบรรทัดแรก เรื่องบรรทัดที่สอง
+// ช่องที่เหลือเป็นบรรทัดเล็กที่มีชื่อคอลัมน์นำ (data-label) — columns: [{ key, label, role }] role: "no" | "subject" | "status"
+// ค่าใน cells เป็น HTML ที่ผู้เรียก escape แล้ว (ใช้ registerNoHtml / registerSubjectHtml สร้างช่องเลขที่และเรื่อง)
+// role ประกาศซ้ำทุกชั้น: บนจอแคบ CSS เปลี่ยน table/tr เป็น block/flex ซึ่ง Safari ทิ้งความหมายตารางให้โปรแกรมอ่านจอ
+function registerTableHtml({ label, columns, rows }) {
+  const head = columns.map((column) => `<th scope="col" role="columnheader">${escapeHtml(column.label)}</th>`).join("");
+  const body = rows.map((row) => `<tr role="row"${row.className ? ` class="${escapeHtml(row.className)}"` : ""}>${columns
+    .map((column) => `<td role="cell" class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}">${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
+  return `<div class="register-wrap"><table class="register-table" role="table" aria-label="${escapeHtml(label)}"><thead role="rowgroup"><tr role="row">${head}</tr></thead><tbody role="rowgroup">${body}</tbody></table></div>`;
+}
+
+// เลขที่ใบ: ลิงก์ไปหน้ารายละเอียด หรือข้อความเทาพร้อมกุญแจเมื่อบัญชีนี้เปิดดูรายละเอียดไม่ได้ (เหตุผลอยู่ใน title และข้อความสำหรับโปรแกรมอ่านจอ)
+function registerNoHtml(number, href, lockedTitle = "") {
+  return href
+    ? `<a class="request-no register-no-link" href="${href}">${escapeHtml(number)}</a>`
+    : `<span class="request-no locked" title="${escapeHtml(lockedTitle)}">${uiIcon("lock")} ${escapeHtml(number)}${lockedTitle ? `<span class="sr-only"> (${escapeHtml(lockedTitle)})</span>` : ""}</span>`;
+}
+
+// บรรทัดเล็กใต้ช่อง: จอกว้างตัดเหลือบรรทัดเดียว จึงมีค่าเต็มใน title
+function registerSubHtml(text, iconHtml = "", title = text) {
+  return `<span class="register-sub" title="${escapeHtml(title)}">${iconHtml}${escapeHtml(text)}</span>`;
+}
+
+// เรื่อง: บรรทัดหลักเป็นลิงก์ (ถ้าเปิดได้) บรรทัดรองตัดให้เหลือบรรทัดเดียว
+function registerSubjectHtml(main, href, secondary = "") {
+  const title = href ? `<a class="register-title" href="${href}">${escapeHtml(main)}</a>` : `<strong class="register-title">${escapeHtml(main)}</strong>`;
+  return `${title}${secondary ? registerSubHtml(secondary) : ""}`;
+}
+
+// ประเภทคำร้องในรายการที่รวมหลายประเภท (ในโมดูลเดียวไม่แสดง เพราะหัวโมดูลบอกแล้ว)
+function registerTypeHtml(code, name) {
+  return `<span class="request-card-type" style="background:${requestTypeGradient(code)}">${escapeHtml(name ?? "คำร้อง")}</span>`;
+}
+
+// รายการคำร้องตามสิทธิ์ (หน้ารายการของโมดูล และรายการทุกประเภทที่กรองสถานะจากแดชบอร์ด)
+function requestRows(requests, { showRequester = false, showType = false, directory = null, empty = EMPTY_REQUESTS } = {}) {
   if (!requests.length) return emptyState("ยังไม่มีรายการในขณะนี้", empty);
-  return `
-    <div class="request-timeline">${requests.map((request) => {
-        const type = relation(request.request_type);
-        const ownerNames = requestOwnerNames(request, directory);
-        const machine = [request.machine_code, request.machine_name].filter(Boolean).join(" · ");
-        const description = (request.description ?? "").trim();
-        const href = `#/request?id=${encodeURIComponent(request.id)}`;
-        return `<article class="request-timeline-card status-${escapeHtml(request.status)}">
-          <header class="request-card-head">
-            <div class="request-card-identity">
-              <a class="request-card-no" href="${href}">${escapeHtml(request.request_no)}</a>
-              <strong class="request-card-code" style="background:${requestTypeGradient(type?.code)}">${escapeHtml(requestCode(request.request_no))}</strong>
-              <span class="request-card-type" style="background:${requestTypeGradient(type?.code)}">${escapeHtml(type?.name_th ?? "คำร้อง")}</span>
-            </div>
-            <div class="request-card-tags">
-              ${ownerNames.length ? `<span class="request-owner-chip" title="ผู้รับผิดชอบ">${uiIcon("user")} ${escapeHtml(ownerNames.join(", "))}</span>` : ""}
-              <span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</span>
-              ${statusBadge(request.status)}
-            </div>
-          </header>
-          <div class="request-card-body">
-            <a class="request-card-title" href="${href}">${escapeHtml(machine || request.title)}</a>
-            ${machine && request.title !== machine ? `<p class="request-card-subtitle">${escapeHtml(request.title)}</p>` : ""}
-            ${description && description !== request.title ? `<p class="request-card-description">${escapeHtml(description)}</p>` : ""}
-            <div class="request-card-meta">
-              ${showRequester ? `<span><b>ผู้แจ้ง:</b> ${escapeHtml(requesterLabel(request, directory))}</span>` : ""}
-              ${request.needed_date ? `<span><b>ต้องการใช้งาน:</b> ${formatDate(request.needed_date)}</span>` : ""}
-              <span><b>แจ้งเมื่อ:</b> ${formatDate(request.created_at, true)}</span>
-              ${request.updated_at && request.updated_at !== request.created_at ? `<span><b>อัปเดต:</b> ${formatDate(request.updated_at, true)}</span>` : ""}
-            </div>
-          </div>
-          <footer class="request-card-footer">
-            ${showProgress ? progressTracker(request.status, Boolean(type?.uses_repair_workflow), { typeCode: type?.code }) : `<span class="muted small">ติดตามรายละเอียดและประวัติงาน</span>`}
-            <a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>
-          </footer>
-        </article>`;
-      }).join("")}</div>`;
+  const columns = [
+    { key: "no", label: "เลขที่", role: "no" },
+    { key: "subject", label: "เรื่อง", role: "subject" },
+    ...(showType ? [{ key: "type", label: "ประเภท" }] : []),
+    ...(showRequester ? [{ key: "requester", label: "ผู้แจ้ง" }] : []),
+    { key: "created", label: "แจ้งเมื่อ" },
+    { key: "status", label: "สถานะ", role: "status" },
+  ];
+  const rows = requests.map((request) => {
+    const type = relation(request.request_type);
+    const href = `#/request?id=${encodeURIComponent(request.id)}`;
+    const machine = [request.machine_code, request.machine_name].filter(Boolean).join(" · ");
+    const description = (request.description ?? "").trim();
+    const main = machine || request.title;
+    // บรรทัดรอง: ชื่อเรื่องเมื่อหัวเป็นเครื่องจักร ไม่งั้นรายละเอียด (ไม่ซ้ำกับหัว) + วันที่ต้องการใช้งานถ้ามี
+    const detail = machine ? request.title : description;
+    const secondary = [detail && detail !== main ? detail : "", request.needed_date ? `ต้องการใช้ ${formatDate(request.needed_date)}` : ""].filter(Boolean).join(" · ");
+    const owners = requestOwnerNames(request, directory);
+    return {
+      className: `status-${request.status}`,
+      cells: {
+        no: registerNoHtml(request.request_no, href),
+        subject: registerSubjectHtml(main, href, secondary),
+        type: registerTypeHtml(type?.code, type?.name_th),
+        requester: escapeHtml(requesterLabel(request, directory)),
+        created: formatDate(request.created_at, true),
+        // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
+        status: `<span class="register-badges">${statusBadge(request.status)}${request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+      },
+    };
+  });
+  return registerTableHtml({ label: "รายการคำร้อง", columns, rows });
 }
 
 /* กระดานติดตามสถานะที่ "ทุกคน" เห็นได้ — ข้อมูลมาจาก RPC app_request_status_board ซึ่งคืนเฉพาะ
    ฟิลด์ระดับติดตามสถานะ ไม่มีรายละเอียดอาการ/ไฟล์แนบ/ความเห็นผู้อนุมัติ ใบที่ผู้ใช้ไม่มีสิทธิ์
    เปิดดูเต็ม (can_open = false) จึงแสดงเป็นข้อความเฉย ๆ ไม่ทำเป็นลิงก์ */
-function statusBoardRows(rows) {
+function statusBoardRows(rows, { showType = false } = {}) {
   if (!rows.length) return emptyState("ยังไม่มีรายการในขณะนี้", EMPTY_REQUESTS);
-  return `
-    <div class="request-timeline status-board-timeline">${rows.map((row) => {
-        const href = `#/request?id=${encodeURIComponent(row.id)}`;
-        const subject = row.subject ?? "—";
-        const department = row.department_name ?? row.department_code ?? "—";
-        return `<article class="request-timeline-card status-${escapeHtml(row.status)}">
-          <header class="request-card-head">
-            <div class="request-card-identity">
-              ${row.can_open
-                ? `<a class="request-card-no" href="${href}">${escapeHtml(row.request_no)}</a>`
-                : `<span class="request-card-no locked" title="คุณไม่มีสิทธิ์เปิดดูรายละเอียดของใบนี้">${escapeHtml(row.request_no)}</span>`}
-              <strong class="request-card-code" style="background:${requestTypeGradient(row.type_code)}">${escapeHtml(requestCode(row.request_no))}</strong>
-              <span class="request-card-type" style="background:${requestTypeGradient(row.type_code)}">${escapeHtml(row.type_name_th ?? "คำร้อง")}</span>
-            </div>
-            <div class="request-card-tags">
-              <span class="request-department-chip" title="แผนกที่แจ้ง">${uiIcon("building")} ${escapeHtml(department)}</span>
-              ${row.is_urgent ? `<span class="request-priority-chip priority-urgent">เร่งด่วน</span>` : ""}
-              ${statusBadge(row.status)}
-            </div>
-          </header>
-          <div class="request-card-body">
-            ${row.can_open
-              ? `<a class="request-card-title" href="${href}">${escapeHtml(subject)}</a>`
-              : `<strong class="request-card-title">${escapeHtml(subject)}</strong>`}
-            <div class="request-card-meta">
-              <span><b>ผู้แจ้ง:</b> ${escapeHtml(row.requester_name ?? "—")}</span>
-              <span><b>แผนก:</b> ${escapeHtml(department)}</span>
-              <span><b>อัปเดตล่าสุด:</b> ${formatDate(row.last_changed_at ?? row.submitted_at, true)}</span>
-            </div>
-          </div>
-          <footer class="request-card-footer">
-            ${progressTracker(row.status, Boolean(row.uses_repair_workflow), { waitingOn: row.waiting_on, typeCode: row.type_code })}
-            ${row.can_open
-              ? `<a class="request-detail-link" href="${href}">ดูรายละเอียด <span aria-hidden="true">→</span></a>`
-              : `<span class="request-locked-note" title="สิทธิ์ของบัญชีนี้ดูได้เฉพาะสถานะและความคืบหน้า">${uiIcon("lock")} ดูได้เฉพาะความคืบหน้า</span>`}
-          </footer>
-        </article>`;
-      }).join("")}</div>`;
+  const columns = [
+    { key: "no", label: "เลขที่", role: "no" },
+    { key: "subject", label: "เรื่อง", role: "subject" },
+    ...(showType ? [{ key: "type", label: "ประเภท" }] : []),
+    { key: "department", label: "แผนก" },
+    { key: "requester", label: "ผู้แจ้ง" },
+    { key: "updated", label: "อัปเดตล่าสุด" },
+    { key: "status", label: "สถานะ", role: "status" },
+  ];
+  return registerTableHtml({
+    label: "สถานะคำร้องทุกใบ",
+    columns,
+    rows: rows.map((row) => {
+      const href = row.can_open ? `#/request?id=${encodeURIComponent(row.id)}` : "";
+      return {
+        className: `status-${row.status}`,
+        cells: {
+          no: registerNoHtml(row.request_no, href, "บัญชีนี้ดูได้เฉพาะสถานะและความคืบหน้าของใบนี้"),
+          subject: registerSubjectHtml(row.subject ?? "—", href),
+          type: registerTypeHtml(row.type_code, row.type_name_th),
+          department: escapeHtml(row.department_name ?? row.department_code ?? ""),
+          requester: escapeHtml(row.requester_name ?? ""),
+          updated: formatDate(row.last_changed_at ?? row.submitted_at, true),
+          status: `<span class="register-badges">${statusBadge(row.status)}${row.is_urgent ? `<span class="request-priority-chip priority-urgent">เร่งด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
+        },
+      };
+    }),
+  });
 }
+
+// ตัวเลือกแบบเลื่อนหน้า: แต่ละ option พาไปที่ data-href ของตัวเอง (สถานะของคำร้อง หมวดของทะเบียน NCR)
+// ใช้ dropdown ของเบราว์เซอร์ (data-native-select) เพราะตัวเลือกน้อยและไม่ต้องค้นหา บน iPhone เป็นวงล้อเลือกที่แตะง่าย
+function hrefSelectHtml({ id, label, options, value }) {
+  return `<label class="list-filter" for="${escapeHtml(id)}"><span class="list-filter-label">${escapeHtml(label)}</span><select class="select" id="${escapeHtml(id)}" data-native-select data-href-select>${options
+    .map((option) => `<option value="${escapeHtml(option.value)}" data-href="${escapeHtml(option.href)}"${option.value === value ? " selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></label>`;
+}
+// เมาส์/แตะ: เลือกแล้วไปทันที · คีย์บอร์ด: Chrome ยิง change ทุกครั้งที่กดลูกศรบน select ที่ปิดอยู่
+// จึงรอให้กด Enter หรือออกจากช่องก่อนค่อยไป (เลื่อนดูตัวเลือกได้โดยหน้าไม่เปลี่ยนใต้มือ) แล้วคืนโฟกัสที่ช่องเดิมหลังวาดหน้าใหม่
+function followHrefSelect(select) {
+  const href = select.selectedOptions[0]?.dataset.href;
+  delete select.dataset.keyed;
+  if (!href || `#${location.hash.slice(1)}` === href) return;
+  const id = select.id;
+  const refocus = (tries = 0) => {
+    const next = document.getElementById(id);
+    if (next && next !== select) next.focus();
+    else if (tries < 40) setTimeout(() => refocus(tries + 1), 50);
+  };
+  if (select.dataset.refocus === "1" && id) window.addEventListener("hashchange", () => refocus(), { once: true });
+  location.hash = href;
+}
+document.addEventListener("keydown", (event) => {
+  const select = event.target.closest?.("select[data-href-select]");
+  if (!select) return;
+  if (event.key === "Enter") {
+    event.preventDefault();
+    select.dataset.refocus = "1";
+    followHrefSelect(select);
+  } else if (event.key !== "Tab" && event.key !== "Shift") {
+    select.dataset.keyed = "1";
+  }
+});
+document.addEventListener("change", (event) => {
+  const select = event.target.closest?.("select[data-href-select]");
+  if (!select || select.dataset.keyed === "1") return;
+  followHrefSelect(select);
+});
+document.addEventListener("focusout", (event) => {
+  const select = event.target.closest?.("select[data-href-select]");
+  if (select?.dataset.keyed === "1") followHrefSelect(select);
+});
 
 function themeButton() {
   return `<button class="icon-button theme-toggle" type="button" aria-label="สลับธีม" title="สลับธีม">${uiIcon("theme")}</button>`;
@@ -2357,10 +2417,26 @@ function requestsViewTabs(params) {
   </nav>`;
 }
 
-function statusFilterBar(params) {
-  const status = params.get("status") ?? "all";
-  return `<nav class="filters" aria-label="สถานะคำร้อง">${REQUEST_STATUS_FILTERS
-    .map(([value, label]) => `<a class="filter${status === value ? " active" : ""}" href="${escapeHtml(requestCenterUrl(params, { status: value }))}">${label}</a>`).join("")}</nav>`;
+// ขอบเขตของรายการตามสิทธิ์: ทุกใบที่มีสิทธิ์ดู / เฉพาะที่ฉันแจ้ง (คำอธิบายเรื่องสิทธิ์อยู่ใน title ไม่เป็นบรรทัดถาวร)
+function requestScopeSwitch(params) {
+  const mineOnly = params.get("scope") === "mine";
+  const link = (mine, label) => `<a class="filter${mine === mineOnly ? " active" : ""}"${mine === mineOnly ? ' aria-current="true"' : ""} href="${escapeHtml(requestCenterUrl(params, { scope: mine ? "mine" : null }))}">${label}</a>`;
+  return `<nav class="scope-switch" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">${link(false, "ทุกใบที่ฉันมีสิทธิ์ดู")}${link(true, "เฉพาะที่ฉันแจ้ง")}</nav>`;
+}
+
+// แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
+function requestListFilters(params, { departments = null, placeholder, scope = false, search = true } = {}) {
+  // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
+  const known = knownRequestStatuses(params);
+  const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
+  const options = REQUEST_STATUS_FILTERS.map(([option, label]) => ({ value: option, label: option === "all" ? "ทุกสถานะ" : label, href: requestCenterUrl(params, { status: option }) }));
+  // ลิงก์จากแดชบอร์ดส่งหลายสถานะคั่นจุลภาค: เป็นตัวเลือกของตัวเอง ช่องจึงบอกค่าที่ใช้กรองอยู่จริง
+  if (known.length > 1) {
+    const labels = known.map((status) => REQUEST_STATUS_FILTERS.find(([option]) => option === status)?.[1]).filter(Boolean);
+    options.splice(1, 0, { value, label: labels.join(", "), href: requestCenterUrl(params, { status: value }) });
+  }
+  const statusSelect = hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value });
+  return `<div class="list-filters">${scope ? requestScopeSwitch(params) : ""}${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>`;
 }
 
 // โมดูลที่ประกาศ loadRepairDepartments (MT) มีตัวกรองแผนกในหน้ารายการ — ค่า dept ใน URL คือรหัสแผนกต้นทาง (เช่น RB, ST)
@@ -2375,11 +2451,12 @@ function selectedFilterDepartment(params, departments) {
   return departments?.find((item) => item.sourceCode === params.get("dept")) ?? null;
 }
 
-function requestSearchForm(params, { departments, placeholder }) {
+// leading: ตัวควบคุมที่วางหน้าแผนกในแถวเดียวกัน (ตัวเลือกสถานะ) — ไม่ส่งไปกับฟอร์ม เพราะเปลี่ยนหน้าเองเมื่อเลือก
+function requestSearchForm(params, { departments, placeholder, leading = "" }) {
   const search = (params.get("q") ?? "").trim();
   const department = selectedFilterDepartment(params, departments);
   return `<form class="board-search" id="request-filter-form" role="search">
-      ${departments ? `<select class="select" id="request-filter-department" name="dept" aria-label="กรองตามแผนก">
+      ${leading}${departments ? `<select class="select" id="request-filter-department" name="dept" aria-label="กรองตามแผนก">
         <option value="">ทุกแผนก</option>
         ${departments.map((item) => `<option value="${escapeHtml(item.sourceCode)}"${department?.sourceCode === item.sourceCode ? " selected" : ""}>${escapeHtml(item.displayCode)} · ${escapeHtml(item.name)}</option>`).join("")}
       </select>` : ""}
@@ -2452,10 +2529,9 @@ async function renderRequestsBoard(params, types) {
     && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
   const content = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
-    ${statusFilterBar(params)}
-    ${requestSearchForm(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" })}
+    ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก" })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
-    <section class="request-list-panel">${statusBoardRows(rows)}</section>`;
+    <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
   app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
   bindModuleZoom(params);
@@ -2481,7 +2557,7 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
   if (statuses.length) query = query.in("status", statuses);
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
-  return `<section class="request-list-panel">${requestRows(data ?? [], { showProgress: true, showRequester: !mineOnly, directory })}</section>`;
+  return `<section class="request-list-panel">${requestRows(data ?? [], { showRequester: !mineOnly, showType: !typeId, directory })}</section>`;
 }
 
 async function renderRequests(params) {
@@ -2524,24 +2600,20 @@ async function renderRequests(params) {
   }
   if (params.get("view") === "board") return await renderRequestsBoard(params, types);
   const counts = await requestTypeCounts([selected], mineOnly);
-  const scope = `<nav class="scope-switch" aria-label="ผู้เกี่ยวข้องกับคำร้อง">
-    <a class="filter${mineOnly ? "" : " active"}" href="${escapeHtml(requestCenterUrl(params, { scope: null }))}">ทุกใบที่ฉันมีสิทธิ์ดู</a>
-    <a class="filter${mineOnly ? " active" : ""}" href="${escapeHtml(requestCenterUrl(params, { scope: "mine" }))}">เฉพาะที่ฉันแจ้ง</a></nav>`;
   let list = "";
   if (selected.code !== "NCR_CAR") {
     const departments = await loadRequestDepartmentFilter(selected);
     const department = selectedFilterDepartment(params, departments);
     // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
     const search = departments ? (params.get("q") ?? "").trim() : "";
-    const filterForm = departments ? requestSearchForm(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม" }) : "";
-    list = `${statusFilterBar(params)}${filterForm}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments) })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
-    list += await ncrModule.renderCenterList(params);
+    // ทะเบียน NCR มีตัวเลือกหมวดของตัวเอง แถวนี้จึงมีแค่ขอบเขต
+    list += `<div class="list-filters">${requestScopeSwitch(params)}</div>${await ncrModule.renderCenterList(params)}`;
   }
-  const content = `${requestCenterHeader(types, params, counts)}${selected.code === "NCR_CAR" ? "" : requestsViewTabs(params)}${scope}
-    <p class="muted small">สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ</p>${list}`;
+  const content = `${requestCenterHeader(types, params, counts)}${selected.code === "NCR_CAR" ? "" : requestsViewTabs(params)}${list}`;
   app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
   bindModuleZoom(params);
