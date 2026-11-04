@@ -53,7 +53,8 @@ test("the review step leaves out fields that were not filled instead of showing 
 });
 
 test("send-now during the undo window wears the colour of the decision being sent", () => {
-  assert.match(app, /const decisionButtonClass = \(decision\) => \(decision === "rejected" \? "danger-solid is-primary"/);
+  assert.match(app, /if \(decision === "rejected"\) return "danger-solid is-primary";/);
+  assert.match(app, /return tone === "secondary" \? "is-primary" : `\$\{tone\} is-primary`;/, "a grey extra decision still gets a primary send button, unlike undo");
   assert.match(app, /button\("ส่งเลย", decisionButtonClass\(state\.decision\), "send-now"\)/);
   assert.doesNotMatch(app, /button\("ส่งเลย", "is-primary"/);
 });
@@ -66,6 +67,7 @@ test("copy-to-department checkboxes are glove-sized and show when chosen", () =>
 
 test("mark-all-read names the action in both clients", () => {
   assert.match(app, /id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด<\/button>/);
-  assert.match(read("src/app/(app)/notifications/page.tsx"), /ทำเครื่องหมายว่าอ่านแล้วทั้งหมด<\/button>/);
+  assert.match(read("src/app/(app)/notifications/page.tsx"), /className="page-heading notifications-heading"[\s\S]*ทำเครื่องหมายว่าอ่านแล้วทั้งหมด<\/button>/);
+  assert.match(read("src/app/globals.css"), /\.notifications-heading \{ flex-wrap: wrap; \}/, "the Next.js page lets the long button drop below the heading too");
   assert.doesNotMatch(app, /อ่านทั้งหมดแล้ว/);
 });

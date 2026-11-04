@@ -3676,7 +3676,13 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   const options = decisionButtonsOf(extraDecisions);
   const labelOf = (decision) => options.find((item) => item.decision === decision)?.label ?? decisionVerbs[decision] ?? decision;
   const toneOf = (decision) => options.find((item) => item.decision === decision)?.tone ?? "secondary";
-  const decisionButtonClass = (decision) => (decision === "rejected" ? "danger-solid is-primary" : decision === "approved" ? "success is-primary" : `${toneOf(decision)} is-primary`);
+  // มติเพิ่มของโมดูล (เช่น รับทราบ) มีโทนเทาเท่าปุ่มยกเลิก/เลิกทำ ปุ่มหลักของมันจึงใช้สีแบรนด์ให้แยกออกจากปุ่มรอง
+  const decisionButtonClass = (decision) => {
+    if (decision === "rejected") return "danger-solid is-primary";
+    if (decision === "approved") return "success is-primary";
+    const tone = toneOf(decision);
+    return tone === "secondary" ? "is-primary" : `${tone} is-primary`;
+  };
   const hash = location.hash;
   let state = { name: "idle" };
   let lastTrigger = null;

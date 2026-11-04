@@ -296,6 +296,9 @@ svg { flex: 0 0 auto; }
 .dashboard-heading, .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
 .dashboard-heading h1, .page-heading h2 { margin: 0; font-size: clamp(23px, 2.7vw, 29px); line-height: 1.25; font-weight: 600; letter-spacing: -0.025em; }
 .dashboard-heading p, .page-heading p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+/* ปุ่ม "ทำเครื่องหมายว่าอ่านแล้วทั้งหมด" ยาว: จอแคบให้ลงไปใต้หัวเรื่องแทนการบีบเป็นสองบรรทัด (เหมือน Pilot Web) */
+.notifications-heading { flex-wrap: wrap; }
+.notifications-heading .btn { white-space: nowrap; }
 .dashboard-heading time { color: var(--muted); font-size: 10px; }
 .eyebrow { margin-bottom: 5px; color: var(--primary); font-size: 9px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
 

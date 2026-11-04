@@ -11,7 +11,7 @@ export default async function NotificationsPage() {
   const { data } = await supabase.from("notifications").select("*").eq("recipient_id", employee.id).order("created_at", { ascending: false }).limit(100);
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading notifications-heading">
         <div><div className="eyebrow">Inbox</div><h2>การแจ้งเตือน</h2><p>เหตุการณ์สำคัญจากคำร้องและลำดับอนุมัติ</p></div>
         <form action={markAllNotificationsReadAction}><button className="btn secondary"><CheckCheck size={15} /> ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button></form>
       </div>
