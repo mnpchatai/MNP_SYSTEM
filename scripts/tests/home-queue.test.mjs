@@ -71,3 +71,30 @@ test("each request status has one name, shared by badges, filters, progress, tim
     assert.match(dashboard, new RegExp(`key: "${key}", label: "${labels[status]}", short: "${labels[status]}"`), `${key} on the dashboard reads ${labels[status]}`);
   }
 });
+
+test("the label functions give repair requests their own words and everything else the shared ones", async () => {
+  // ดึงส่วนป้ายจาก app.js (ตั้งแต่ statusLabels ถึง priorityLabel) มารันจริงใน vm แทนการเทียบข้อความ
+  const { readFileSync } = await import("node:fs");
+  const vm = await import("node:vm");
+  const app = readFileSync(new URL("../../app.js", import.meta.url), "utf8");
+  const start = app.indexOf("const statusLabels = {");
+  const endMarker = "function priorityLabel(";
+  const end = app.indexOf("\n}", app.indexOf(endMarker)) + 2;
+  assert.ok(start >= 0 && end > start, "label block found in app.js");
+  const context = vm.createContext({});
+  vm.runInContext(`${app.slice(start, end)}\nthis.api = { statusLabel, priorityLabel, isRepairType };`, context);
+  const { statusLabel, priorityLabel, isRepairType } = context.api;
+  assert.equal(statusLabel("in_progress", true), "กำลังซ่อม");
+  assert.equal(statusLabel("in_progress", false), "กำลังดำเนินการ", "management and IT requests keep the general word");
+  assert.equal(statusLabel("assigned", true), "รอช่างเริ่มงาน");
+  assert.equal(statusLabel("pending_verify", true), "รอผู้แจ้งตรวจรับ");
+  assert.equal(statusLabel("unknown_state"), "unknown_state", "an unknown status shows its code rather than nothing");
+  assert.equal(priorityLabel("high", true), "ด่วน");
+  assert.equal(priorityLabel("urgent", true), "ด่วน");
+  assert.equal(priorityLabel("urgent", false), "เร่งด่วน");
+  assert.equal(priorityLabel("high", false), "สูง");
+  assert.equal(isRepairType({ code: "MT_REPAIR" }), true);
+  assert.equal(isRepairType({ code: "IT_REPAIR", uses_repair_workflow: false }), false, "IT repair is not the repair workflow");
+  assert.equal(isRepairType({ code: "X", uses_repair_workflow: true }), true);
+  assert.equal(isRepairType(null), false);
+});

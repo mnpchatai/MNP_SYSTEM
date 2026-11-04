@@ -44,7 +44,7 @@
     { key: "repair", label: "กำลังซ่อม", short: "กำลังซ่อม", owner: "ช่าง" },
     { key: "verify", label: "รอผู้แจ้งตรวจรับ", short: "รอผู้แจ้งตรวจรับ", owner: "ผู้แจ้ง" },
     // Not part of the repair workflow; kept so stage counts always add up to the open count.
-    { key: "approved", label: "อนุมัติแล้ว รอดำเนินการ", short: "อนุมัติแล้ว", owner: "—" },
+    { key: "approved", label: "อนุมัติแล้ว", short: "อนุมัติแล้ว", owner: "—" },
   ];
   const STAGE_BY_KEY = Object.fromEntries(STAGES.map((stage) => [stage.key, stage]));
 

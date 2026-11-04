@@ -3155,7 +3155,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     } else if (item.to_status === "in_progress") {
       detail = `${actor || "ผู้รับผิดชอบ"} ${isRepair ? "เริ่มดำเนินการซ่อม" : "รับงานและเริ่มดำเนินการ"}`;
     } else if (item.to_status === "pending_verify") {
-      detail = `${actor || "ผู้รับผิดชอบ"} ซ่อมเสร็จสิ้น ส่งให้ผู้แจ้งตรวจสอบการใช้งาน`;
+      detail = `${actor || "ผู้รับผิดชอบ"} ซ่อมเสร็จสิ้น ส่งให้ผู้แจ้งตรวจรับ`;
       if (latestRepairResult?.id === item.id) {
         if (request.execution_plan) detail += ` · การดำเนินงาน: ${executionPlanLabels[request.execution_plan] ?? request.execution_plan}`;
         if (request.cause_analysis) detail += ` · วิเคราะห์สาเหตุ: ${request.cause_analysis}`;
@@ -3316,7 +3316,7 @@ async function renderRequestDetail(params) {
   if (repliesResult.error) console.warn("โหลดคำตอบของผู้ยื่นไม่สำเร็จ", repliesResult.error);
   const request = requestResult.data;
   const type = relation(request.request_type);
-  const isRepair = Boolean(type?.uses_repair_workflow);
+  const isRepair = isRepairType(type);
   const steps = stepsResult.data ?? [];
   const attachments = attachmentsResult.data ?? [];
   const history = historyResult.data ?? [];
