@@ -859,7 +859,8 @@
       ? [...parts.slice(0, readFirst), filesSection, actionsSection, ...parts.slice(readFirst), responderSection, lossesSection, historySection]
       : [...parts, filesSection, responderSection, lossesSection, historySection];
     const content = heading + body.join("");
-    app.innerHTML = shell(content, "ncr", ncr.ncr_no);
+    // เลขที่ NCR เป็นหัวเรื่องของหน้าแล้ว แถบบนบอกทะเบียน ส่วนชื่อแท็บยังเป็นเลขที่
+    app.innerHTML = shell(content, "ncr", "ทะเบียน NCR", ncr.ncr_no);
     bindShell();
     bindDetail(ncr, lossResult.data ?? []);
     document.querySelector("#attachment-gallery")?.addEventListener("click", (event) => {

@@ -8,7 +8,7 @@
 // - สองฐานที่ไม่ปนกัน: งานค้างนับทุกใบที่ยังไม่จบ (ไม่ขึ้นกับช่วงเวลา) ส่วนตัวเลขอื่นนับตามวันที่แจ้งในช่วงที่เลือก
 // - ตัวกรองอยู่ใน URL แชร์ลิงก์ได้ แตะแถบเพื่อดูตัวเลขในหน้า (ไม่ใช้ป๊อปอัพ) แล้วกดกรองรายการด้านล่างได้
 //   รายการใบที่กรองแล้วไม่อยู่ท้ายหน้า: แสดงต่อท้ายส่วนที่กดกรองทันทีและเลื่อนไปที่รายการ (placeDrill)
-// - ทางเข้าคือปุ่ม "แดชบอร์ด MT" ข้างปุ่ม "สร้างคำร้อง / แจ้งซ่อม MT" (headerLinks) ไม่มีเมนูข้างแยก
+// - ทางเข้าคือปุ่ม "แดชบอร์ด" ข้างปุ่ม "สร้างคำร้อง / แจ้งซ่อม" ในหัวโมดูล MT (headerLinks) ไม่มีเมนูข้างแยก
 //
 // โหลดหลัง modules/module-mt.js และ modules/mt-dashboard-model.js — helper ของ app.js
 // (sb, state, shell, bindShell, loadingShell, escapeHtml, relation, bangkokToday, formatDate, statusBadge)
@@ -349,7 +349,7 @@
   }
 
   function machineText(row) {
-    return [row.machine_code, row.machine_name].filter(Boolean).join(" — ") || "ไม่ระบุเครื่องจักร";
+    return machineLabelOf(row.machine_code, row.machine_name) || "ไม่ระบุเครื่องจักร";
   }
 
   function drillHtml(list, basis, filters) {
@@ -554,6 +554,7 @@
     paint();
   }
 
-  mtModule.headerLinks = [...(mtModule.headerLinks ?? []), { href: `#/${PATH}`, label: "แดชบอร์ด MT", icon: ICON }];
+  // ปุ่มอยู่ในหัวโมดูล MT ซึ่งบอกชื่อโมดูลแล้ว จึงเขียนแค่ "แดชบอร์ด"
+  mtModule.headerLinks = [...(mtModule.headerLinks ?? []), { href: `#/${PATH}`, label: "แดชบอร์ด", icon: ICON }];
   mtModule.pages = { ...(mtModule.pages ?? {}), [PATH]: renderDashboard };
 })();
