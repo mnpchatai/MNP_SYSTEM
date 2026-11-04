@@ -98,7 +98,7 @@
       ["เสร็จเมื่อ", row.completedAt ? formatDate(row.completedAt) : ""],
     ].filter(([, value]) => value);
     return `<li class="machine-history-item${row.isCurrent ? " current" : ""}"${row.isCurrent ? ' aria-current="page"' : ""}>
-      <div class="machine-history-head">${number}${docType ? `<span class="machine-history-type">${escapeHtml(docType)}</span>` : ""}${statusBadge(row.status)}<time class="machine-history-date" datetime="${escapeHtml(row.createdAt ?? "")}">${formatDate(row.createdAt)}</time></div>
+      <div class="machine-history-head">${number}${docType ? `<span class="machine-history-type">${escapeHtml(docType)}</span>` : ""}${statusBadge(row.status, true)}<time class="machine-history-date" datetime="${escapeHtml(row.createdAt ?? "")}">${formatDate(row.createdAt)}</time></div>
       ${row.description ? `<p class="machine-history-text">${escapeHtml(row.description)}</p>` : ""}
       ${details.length ? `<dl class="machine-history-details">${details.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>` : ""}
     </li>`;

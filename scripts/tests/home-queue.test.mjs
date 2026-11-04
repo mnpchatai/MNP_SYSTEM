@@ -51,3 +51,50 @@ test("J/K moves one item and stops at the ends", () => {
   assert.equal(queue.stepSelection(ids, "gone", 1), "a");
   assert.equal(queue.stepSelection([], "a", 1), null);
 });
+
+test("each request status has one name, shared by badges, filters, progress, timeline and the MT dashboard", async () => {
+  // ผลประเมินดีไซน์: สถานะเดียวกันเคยมีสามชื่อ (รอเริ่มงาน / รอดำเนินการ / รอช่างเริ่มงาน) — ตรวจย้อนหลังไม่ได้ถ้าชื่อไม่ตรงกัน
+  const { readFileSync } = await import("node:fs");
+  const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+  const app = read("app.js");
+  const labels = Object.fromEntries([...app.match(/const statusLabels = \{([\s\S]*?)\};/)[1].matchAll(/(\w+): "([^"]+)"/g)].map((match) => [match[1], match[2]]));
+  assert.equal(labels.assigned, "รอช่างเริ่มงาน");
+  assert.equal(labels.pending_verify, "รอผู้แจ้งตรวจรับ");
+  assert.equal(labels.pending_assign, "รอมอบหมายช่าง");
+  // ตัวกรองและแถบความคืบหน้าอ่านจาก statusLabels ไม่มีรายการชื่อของตัวเอง
+  assert.match(app, /const REQUEST_STATUS_FILTERS = \[\s*\["all", "ทั้งหมด"\],\s*\.\.\.\[/);
+  assert.match(app, /const REPAIR_STAGES = \[[^\]]*\]\s*\.map\(\(status\) => \(\{ status, label: statusLabel\(status, true\) \}\)\);/);
+  assert.doesNotMatch(app, /repairTimelineStatusLabels|"รอดำเนินการ"|"รอผู้แจ้งตรวจสอบ"/);
+  // แดชบอร์ด MT ใช้ชื่อเดียวกันในขั้นที่ตรงกัน
+  const dashboard = read("modules/mt-dashboard-model.js");
+  for (const [key, status] of [["assign", "pending_assign"], ["start", "assigned"], ["verify", "pending_verify"]]) {
+    assert.match(dashboard, new RegExp(`key: "${key}", label: "${labels[status]}", short: "${labels[status]}"`), `${key} on the dashboard reads ${labels[status]}`);
+  }
+});
+
+test("the label functions give repair requests their own words and everything else the shared ones", async () => {
+  // ดึงส่วนป้ายจาก app.js (ตั้งแต่ statusLabels ถึง priorityLabel) มารันจริงใน vm แทนการเทียบข้อความ
+  const { readFileSync } = await import("node:fs");
+  const vm = await import("node:vm");
+  const app = readFileSync(new URL("../../app.js", import.meta.url), "utf8");
+  const start = app.indexOf("const statusLabels = {");
+  const endMarker = "function priorityLabel(";
+  const end = app.indexOf("\n}", app.indexOf(endMarker)) + 2;
+  assert.ok(start >= 0 && end > start, "label block found in app.js");
+  const context = vm.createContext({});
+  vm.runInContext(`${app.slice(start, end)}\nthis.api = { statusLabel, priorityLabel, isRepairType };`, context);
+  const { statusLabel, priorityLabel, isRepairType } = context.api;
+  assert.equal(statusLabel("in_progress", true), "กำลังซ่อม");
+  assert.equal(statusLabel("in_progress", false), "กำลังดำเนินการ", "management and IT requests keep the general word");
+  assert.equal(statusLabel("assigned", true), "รอช่างเริ่มงาน");
+  assert.equal(statusLabel("pending_verify", true), "รอผู้แจ้งตรวจรับ");
+  assert.equal(statusLabel("unknown_state"), "unknown_state", "an unknown status shows its code rather than nothing");
+  assert.equal(priorityLabel("high", true), "ด่วน");
+  assert.equal(priorityLabel("urgent", true), "ด่วน");
+  assert.equal(priorityLabel("urgent", false), "เร่งด่วน");
+  assert.equal(priorityLabel("high", false), "สูง");
+  assert.equal(isRepairType({ code: "MT_REPAIR" }), true);
+  assert.equal(isRepairType({ code: "IT_REPAIR", uses_repair_workflow: false }), false, "IT repair is not the repair workflow");
+  assert.equal(isRepairType({ code: "X", uses_repair_workflow: true }), true);
+  assert.equal(isRepairType(null), false);
+});

@@ -53,7 +53,7 @@
         <td class="nowrap">${esc(fmtDate(order.dueDate))}</td><td>${ui.status(order.status)}</td></tr>`);
     const alertList = alerts.length ? alerts.slice(0, 8).map((alert) => ui.callout(alert.tone, `<strong>${esc(alert.title)}</strong><br>${esc(alert.text)}`)).join("") : ui.empty("ไม่มีการแจ้งเตือน");
 
-    const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${new Date(now).toLocaleString("th-TH")}`)}
+    const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${rules.fmtDateTime(now)}`)}
       ${ui.stats([
         { label: "Yield รวม 4 ขั้นตอน", value: `${overall.toFixed(1)}%`, sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },

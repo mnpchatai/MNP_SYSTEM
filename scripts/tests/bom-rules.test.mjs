@@ -477,7 +477,7 @@ test("CSV output quotes commas and quotes, and formatting helpers handle empty v
   assert.equal(rules.fmtQty(80), "80");
   assert.equal(rules.fmtQty(null), "-");
   assert.equal(rules.fmtDate(null), "-");
-  assert.equal(rules.fmtDate(Date.UTC(2026, 5, 22, 5)), "22 มิ.ย. 69");
+  assert.equal(rules.fmtDate(Date.UTC(2026, 5, 22, 5)), "22 มิ.ย. 2569");
   assert.equal(rules.toInputDate(NaN), "");
   assert.ok(Number.isNaN(rules.fromInputDate("")));
   assert.equal(rules.orderTypeOf("Thailand"), "SA");
