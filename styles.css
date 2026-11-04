@@ -2601,3 +2601,27 @@ tr.is-dragging td { background: var(--primary-soft); }
 tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
 .bom-step-cell { display: flex; align-items: center; gap: 2px; }
 .bom-drag-option { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--muted); }
+
+/* ---- เป้ากดบนจอสัมผัส (หน้างาน: นิ้วสวมถุงมือ ตาม PRODUCT.md) ----
+   จอสัมผัสหรือจอแคบ: ปุ่ม ตัวกรอง แท็บ ลิงก์ปุ่ม และปุ่มไอคอนสูงอย่างน้อย 44px
+   จอที่ใช้เมาส์คงความแน่นเดิม · RubberFlow/BOM (.rf-page) มีกติกาของตัวเองที่เจาะจงกว่า จึงไม่เปลี่ยน
+   อยู่ท้ายไฟล์เพื่อชนะกติกาความเจาะจงเท่ากันที่ประกาศก่อนหน้า (รวมใน @media ของจอแคบ) */
+@media (pointer: coarse), (max-width: 760px) {
+  .btn, .btn.small, .filter, .view-tab, .request-back-link, .link-button { min-height: 44px; }
+  .icon-button, .request-detail-menu > .icon-button { width: 44px; height: 44px; }
+  .sidebar-user { grid-template-columns: 34px minmax(0, 1fr) 44px; }
+  /* มอบหมายช่าง: ทั้งแถวเป็น label ของช่องติ๊ก */
+  .tech-option { min-height: 44px; }
+  .tech-option input { width: 22px; height: 22px; }
+  .parts-table .input { min-height: 44px; }
+  .mobile-nav-toggle { top: 7px; width: 44px; height: 44px; }
+  .board-search .input, .board-search .select, .list-filter .select { min-height: 44px; }
+  .attachment-download:not([hidden]) { min-height: 44px; display: inline-flex; align-items: center; }
+}
+/* ทะเบียนบนจอแคบเป็นการ์ดทีละแถว: แตะตรงไหนของการ์ดก็เปิดใบนั้น (ลิงก์หัวเรื่องขยายเต็มการ์ด ปลายทางเดียวกับลิงก์เลขที่ใบ) */
+@media (max-width: 760px) {
+  .register-table tr { position: relative; }
+  .register-table a.register-title::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+  .register-table tr :is(a:not(.register-title), button, select, input) { position: relative; z-index: 1; }
+  .register-table tr:has(a.register-title:active) { background: var(--shell); }
+}
