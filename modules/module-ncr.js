@@ -186,19 +186,30 @@
   // ช่องเดิมทุกช่องและส่ง app_ncr_issue ด้วยค่าเดิม — โครงเดียวกับฟอร์มแจ้งซ่อม MT (modules/form-steps.js)
   const REQUIRED = '<span class="field-required">(จำเป็น)</span>';
   // ค่าตามที่ฐานข้อมูลจะเก็บจริง (numeric(14,3)): ปัดทศนิยม 3 ตำแหน่ง เกินช่วงของคอลัมน์ = ใช้ไม่ได้ (NaN ไม่ผ่านทุกกติกา)
+  // ฐานข้อมูลตรวจสองชั้น: app_ncr_issue เทียบค่าที่ส่งมา (ดิบ) แล้ว CHECK ของตารางเทียบค่าที่เก็บเป็น numeric(14,3) (ปัด 3 ตำแหน่ง)
+  // ฝั่งฟอร์มจึงต้องให้ผ่านทั้งสองแบบ ไม่ยอมรับค่าที่ฐานข้อมูลจะปฏิเสธ และไม่ปฏิเสธค่าที่ฐานข้อมูลรับ
   const qty = (value) => {
-    const number = window.MNP_FORM_STEPS.numberOf(value);
-    return Number.isFinite(number) && Math.abs(number) < 1e11 ? Math.round(number * 1000) / 1000 : NaN;
+    const raw = window.MNP_FORM_STEPS.numberOf(value);
+    const stored = Math.round(raw * 1000) / 1000;
+    return Number.isFinite(raw) && Math.abs(stored) < 1e11 ? { raw, stored } : null;
   };
+  const both = (value, test) => { const number = qty(value); return Boolean(number) && test(number.raw) && test(number.stored); };
+  const positive = (value) => both(value, (number) => number > 0);
+  const nonNegative = (value) => both(value, (number) => number >= 0);
   // จำนวนทั้งหมดยังไม่ได้กรอก/ไม่ถูก: ไม่เทียบ (ช่องจำนวนทั้งหมดบอกข้อผิดของตัวเองแล้ว)
-  const withinTotal = (value, values) => !(qty(values.qty_total) > 0) || qty(value) <= qty(values.qty_total);
+  const withinTotal = (value, values) => {
+    const total = qty(values.qty_total);
+    const number = qty(value);
+    if (!positive(values.qty_total)) return true;
+    return Boolean(number) && number.raw <= total.raw && number.stored <= total.stored;
+  };
   const ISSUE_RULES = [
     { name: "product_name", step: 1, required: true, minLength: 2, message: "กรุณาใส่ชื่อสินค้า/วัตถุดิบ อย่างน้อย 2 ตัวอักษร" },
     // จำนวน: กติกาเดียวกับ app_ncr_issue (20261002020000_ncr_phase1.sql) ผิดแล้วรู้ในช่องนั้น ไม่ต้องรอฐานข้อมูลปฏิเสธทั้งใบ
-    { name: "qty_total", step: 2, required: true, message: "กรุณาใส่จำนวนทั้งหมด", check: (value) => qty(value) > 0, checkMessage: "จำนวนทั้งหมดต้องมากกว่า 0" },
-    { name: "qty_sampled", step: 2, check: (value, values) => qty(value) > 0 && withinTotal(value, values), checkMessage: "จำนวนสุ่มต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
-    { name: "qty_defect", step: 2, required: true, message: "กรุณาใส่จำนวนที่พบปัญหา", check: (value, values) => qty(value) > 0 && withinTotal(value, values), checkMessage: "จำนวนที่พบปัญหาต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
-    { name: "qty_returned", step: 2, check: (value, values) => qty(value) >= 0 && withinTotal(value, values), checkMessage: "จำนวนที่ส่งคืนต้องไม่ติดลบและไม่เกินจำนวนทั้งหมด" },
+    { name: "qty_total", step: 2, required: true, message: "กรุณาใส่จำนวนทั้งหมด", check: (value) => positive(value), checkMessage: "จำนวนทั้งหมดต้องมากกว่า 0" },
+    { name: "qty_sampled", step: 2, check: (value, values) => positive(value) && withinTotal(value, values), checkMessage: "จำนวนสุ่มต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
+    { name: "qty_defect", step: 2, required: true, message: "กรุณาใส่จำนวนที่พบปัญหา", check: (value, values) => positive(value) && withinTotal(value, values), checkMessage: "จำนวนที่พบปัญหาต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
+    { name: "qty_returned", step: 2, check: (value, values) => nonNegative(value) && withinTotal(value, values), checkMessage: "จำนวนที่ส่งคืนต้องไม่ติดลบและไม่เกินจำนวนทั้งหมด" },
     { name: "unit", step: 2, required: true, message: "กรุณาเลือกหน่วย" },
     { name: "defect_type", step: 2, required: true, message: "กรุณาเลือกประเภทข้อบกพร่อง" },
     { name: "source", step: 2, required: true, message: "กรุณาเลือกแหล่งที่พบ" },

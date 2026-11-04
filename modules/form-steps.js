@@ -136,7 +136,13 @@
       const errors = validate(rules.filter((rule) => step === "all" || rule.step === step), values());
       if (!errors.length) { clearFieldErrors(form); return true; }
       goTo(errors[0].step, { focus: false });
-      showFieldErrors(form, errors)?.focus();
+      // ทำเครื่องหมายระหว่างที่ระบบพาโฟกัสไปช่องที่ผิด: ช่องที่เปิดรายการเองตอนโฟกัส (เช่น ค้นหาเครื่องจักร) จะได้ไม่เปิดทับข้อความผิด
+      const target = showFieldErrors(form, errors);
+      if (target) {
+        target.dataset.focusFromCheck = "1";
+        target.focus();
+        delete target.dataset.focusFromCheck;
+      }
       return false;
     };
     form.querySelector("[data-step-next]").addEventListener("click", () => { if (check(current)) goTo(current + 1); });

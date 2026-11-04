@@ -398,4 +398,9 @@ test("the NCR issue form's own quantity rules match app_ncr_issue: they reject w
   assert.deepEqual(failing({ qty_total: "0.0004", qty_defect: "0.0001" }), ["qty_total", "qty_defect"], "values that round to 0 in numeric(14,3) are rejected");
   assert.deepEqual(failing({ qty_total: "100000000000", qty_defect: "5" }), ["qty_total"], "a total too big for numeric(14,3) is rejected");
   assert.deepEqual(failing({ qty_total: "", qty_defect: "5" }), ["qty_total"], "without a total only the total is reported");
+  // ฐานข้อมูลเทียบทั้งค่าดิบ (ในฟังก์ชัน) และค่าที่ปัดเก็บ (CHECK ของตาราง): ฟอร์มต้องปฏิเสธทั้งสองทาง
+  assert.deepEqual(failing({ qty_total: "99999999999.9996", qty_defect: "5" }), ["qty_total"], "rounds up past numeric(14,3)");
+  assert.deepEqual(failing({ qty_total: "10", qty_defect: "5", qty_returned: "-0.0004" }), ["qty_returned"], "negative before rounding");
+  assert.deepEqual(failing({ qty_total: "10.0003", qty_defect: "10.0004" }), ["qty_defect"], "above the total before rounding");
+  assert.deepEqual(failing({ qty_total: "10", qty_defect: "5", qty_returned: "-0" }), [], "-0 is zero for the database too");
 });

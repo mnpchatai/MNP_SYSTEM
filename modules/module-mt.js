@@ -540,20 +540,16 @@
       };
       // แตะ/คลิกช่องเปิดรายการเสมอ (รวมตอนมีข้อความผิด และตอนช่องโฟกัสอยู่แล้ว) — iPhone ไม่มีลูกศรให้เปิดรายการ
       // ส่วนโฟกัสที่ไม่ได้มาจากการแตะ (เช่น ตรวจช่องไม่ผ่านแล้วระบบพามา) ไม่เปิดรายการทับข้อความผิด
-      let machineTapped = false;
       const openMachineList = () => {
         if (selectedDepartmentId) renderMachineList(machineInput.value ? "" : machineSearch.value);
       };
+      // แตะช่องที่โฟกัสอยู่แล้วไม่เกิด focus ใหม่ จึงเปิดรายการจาก pointerdown เอง
       machineSearch.addEventListener("pointerdown", () => {
-        // โฟกัสตามหลังการแตะทันที — ถ้าไม่ตามมา (เช่น แตะแล้วลากออก) ล้างทิ้ง ไม่ให้ค้างไปเปิดรายการตอนระบบพาโฟกัสมาครั้งหน้า
-        machineTapped = true;
-        setTimeout(() => { machineTapped = false; }, 600);
         if (document.activeElement === machineSearch && machineList.hidden) openMachineList();
       });
+      // โฟกัสทุกแบบเปิดรายการ (แตะ แตะป้ายชื่อ Tab) ยกเว้นตอนตัวตรวจช่องพาโฟกัสมาเพราะไม่ผ่าน (bindStepper ทำเครื่องหมาย focusFromCheck)
       machineSearch.addEventListener("focus", () => {
-        const tapped = machineTapped;
-        machineTapped = false;
-        if (!tapped && machineSearch.getAttribute("aria-invalid") === "true") return;
+        if (machineSearch.dataset.focusFromCheck === "1") return;
         openMachineList();
       });
       machineSearch.addEventListener("input", () => {
