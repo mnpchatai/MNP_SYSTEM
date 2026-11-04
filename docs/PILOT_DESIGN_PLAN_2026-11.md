@@ -43,13 +43,14 @@
 | C1b | `#/new` เป็นรายการแถว + ไอคอน/เลขฟอร์มบนการ์ดทุกที่ | `app.js`, `styles.css` | **Fable** | B2, C1a |
 | C2 | โมดูลอื่นใช้ 3–4 ขั้น (NCR, IT, MG, MANAGEMENT, QC) | `modules/module-*.js` | Opus | C1a |
 | C3 | Next.js `request-form.tsx` 3 ขั้นบนมือถือ | `src/components/request-form.tsx` | Opus | C1a |
+| M0 | ทะเบียนโมดูล แผนก และสิทธิ์ (mini ERP): โมดูลประกาศแผนกเจ้าของ ระดับสิทธิ์ และตัวส่งงานเข้าคิวหน้าหลัก; ตารางสิทธิ์ (ตำแหน่ง/แผนก/หน้าที่ → โมดูล → ระดับ) + RPC แบบ `app_my_approval_modules`; เมนูจัดกลุ่มตามแผนก ตามหน้าจำลองที่ผู้ใช้ยืนยัน | `app.js`, `modules/`, `supabase/migrations/`, `supabase/tests/database/` | Fable (ออกแบบ) + Opus + `auditor` model opus | B2; ต้องตัดสินหน้าบ้านหลักก่อน; migration รอผู้ใช้อนุมัติ |
 | D1 | หน้า 4 RubberFlow/BOM เข้า shell | `modules/module-rubberflow.js`, `modules/bom-pages.js`, `modules/module-bom.js`, `styles.css` | Opus (brief จาก Fable) | A3, C1b (ต่อคิว `styles.css`) |
 | E1 | ตรวจ/บังคับ audit record ของ bulk approve ที่ RPC + เทสต์ | `supabase/migrations/`, `supabase/tests/database/` | Opus + `auditor` model opus | — (ขนานได้ทุกเวลา; รอผู้ใช้อนุมัติ migration) |
 | F | `/impeccable critique` ซ้ำ แล้ว `/impeccable polish` ตามผล | — | **Fable** | ทั้งหมด |
 
-สถานะ 2026-11-03: A1 (#287), A2 (#288), E1 (#286) merge แล้ว
+สถานะ 2026-11-04: A1 (#287), A2 (#288), E1 (#286), B1 (#289), A3 (#290) merge แล้ว; B2 อยู่บน branch `pilot-home-queue-b2`
 
-ลำดับฝั่ง Pilot (เรียงทีละใบ): B1 → A3 → B2 → C1a → C1b → C2 → D1 → F. งานที่ขนานกับลำดับนี้ได้: C3 และส่วน Next.js ของ B1/B2 (`src/` เท่านั้น), งานฐานข้อมูล
+ลำดับฝั่ง Pilot (เรียงทีละใบ): B1 → A3 → B2 → C1a → C1b → C2 → M0 → D1 → F. D1 ใช้เมนูจัดกลุ่มตามแผนกจาก M0 งานที่ขนานกับลำดับนี้ได้: C3 และส่วน Next.js ของ B1/B2 (`src/` เท่านั้น), งานฐานข้อมูล
 
 ## จุดสลับโมเดล
 
