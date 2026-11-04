@@ -6,6 +6,7 @@ import vm from "node:vm";
 // โหลดโมดูล RubberFlow ทั้งชุด (modules/rubberflow-*.js + module-rubberflow.js, script ธรรมดาใน browser) เข้า context จำลองที่มี helper ของ app.js
 // แบบ stub และ localStorage จำลอง แล้ววาดทุกหน้า × ทุกบทบาท เรียก dialog ทุกตัว และยิงฟอร์ม/ปุ่มผ่านกติกา data-rf-* ของไฟล์หลัก
 const FILES = [
+  "modules/ui-icons.js",
   "modules/rubberflow-rules.js",
   "modules/rubberflow-derive.js",
   "modules/rubberflow-actions.js",
@@ -302,18 +303,19 @@ test("switching the persona redraws or leaves for the role's home, the scan form
   assert.deepEqual(env.log.toasts.at(-1), ["รีเซ็ตข้อมูลสาธิตเรียบร้อย", "ok"]);
 });
 
-test("pages carry their module hue, and the side menu, page head and callouts use the emoji icon set", async () => {
+test("pages carry their module hue, and the side menu, page head and callouts use the shared line icon set", async () => {
   const env = load();
   env.store.setUser("U01");
   const html = await env.render("p=mixing");
+  const svg = (name) => env.context.MNP_UI_ICONS.icon(name).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
   assert.match(html, /<div class="rf-page" data-rf-mod="mixing">/);
-  assert.match(html, /<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">🌀<\/span><\/span><div><h1>/, "the page head shows the module emoji before its single h1");
+  assert.match(html, new RegExp(`<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("mix")}</span></span><div><h1>`), "the page head shows the module icon before its single h1");
   assert.equal((html.match(/<h1>/g) ?? []).length, 1);
   assert.doesNotMatch(html, /data-rf-design/, "no design switcher any more");
   const sub = env.module.nav[0].subnav("rubberflow");
-  assert.match(sub, /class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">📋<\/span><\/span><span class="rf-nav-text">ใบสั่งผลิต<\/span>/);
+  assert.match(sub, new RegExp(`class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("clipboard")}</span></span><span class="rf-nav-text">ใบสั่งผลิต</span>`));
   const gated = await env.render("p=extrusion");
-  assert.match(gated, /<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">⚠️<\/span><\/span><div class="rf-callout-body"><strong>Gatekeeper:/);
+  assert.match(gated, new RegExp(`<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("warning")}</span></span><div class="rf-callout-body"><strong>Gatekeeper:`));
   assert.match(await env.render(), /<div class="rf-page" data-rf-mod="dashboard">/);
   env.store.setUser(null);
 });

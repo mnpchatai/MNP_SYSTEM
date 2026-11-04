@@ -8,8 +8,11 @@
   const attr = (value) => esc(value ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
-  const ICONS = Object.freeze({ dashboard: "🧭", build: "🧰", items: "🔎", product: "🏭", structure: "🌳", variants: "🎨", compounds: "🧪", import: "📥", orders: "📋", count: "🔢", jobs: "🛠️", audit: "🕘" });
-  pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${ICONS[id]}</span>` : "");
+  // ไอคอนของแต่ละหน้า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (modules/ui-icons.js ชุดเดียวกับระบบหลัก อ้างตอนวาด)
+  const ICONS = Object.freeze({ dashboard: "dashboard", build: "layers", items: "search", product: "factory", structure: "tree", variants: "palette", compounds: "flask", import: "download", orders: "clipboard", count: "hash", jobs: "wrench", audit: "history" });
+  pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${root.MNP_UI_ICONS.icon(ICONS[id])}</span>` : "");
+  // ต้นทุนไม่ครบ (มีชิ้นข้างใต้ไม่มีราคา): ไอคอนเตือนหน้าราคา คำอธิบายอยู่ที่ title/aria-label
+  const costWarn = () => `<span class="bom-cost-warn" role="img" title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา" aria-label="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">${root.MNP_UI_ICONS.icon("warning")}</span>`;
   const head = (ctx, title, desc = "", actionsHtml = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${ICONS[ctx.page] ? `<span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
 
   const STATUS = Object.freeze({
@@ -739,7 +742,7 @@
     const deptName = rules.DEPT_LABEL[node.dept] ?? node.dept;
     const tags = `<div class="bom-flow-tags"><span class="bom-flow-order" title="${attr(ORDER_TITLE)}">ลำดับ ${esc(String(node.order))}</span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">${esc(deptName)}</span></div>`;
     // การ์ด focus ได้ เพื่อเปิดเมนูคำสั่งด้วยปุ่ม Menu/Shift+F10 (บทบาทที่ดูอย่างเดียวไม่มีปุ่มในการ์ดให้ focus)
-    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.ownCost === null && !node.children.length ? ui.badge("warn", "ไม่มีราคา") : `${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}`}</div>${tools}</div></div>`;
+    const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.ownCost === null && !node.children.length ? ui.badge("warn", "ไม่มีราคา") : `${node.complete ? "" : `${costWarn()} `}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}`}</div>${tools}</div></div>`;
     // ตามผังงานของบริษัท (rules.PROCESS_FLOW): ราก (สินค้าที่เปิด) เริ่มจากฝ่ายขาย → วางแผน → ST สั่งวัตถุดิบ · เส้นยางที่ป้อนชิ้นอื่นผ่าน
     // SR รับเข้าคลัง (5) และ QC ตรวจขนาด (6) ก่อน GR เบิกไปแปรรูป · สินค้าสำเร็จรูปจบที่ WH รับเข้าคลัง (11)
     const head = node.level === 0 ? rules.PROCESS_FLOW.filter((step) => step.no <= 3).map((step) => flowStepHtml(ctx, step)).join(flowArrow) : "";
@@ -964,7 +967,7 @@
         const costEdit = canEdit && noBomLeaf ? ` ${ui.openButton("ราคา", "itemCost", { code: node.itemCode }, { className: "secondary small", ariaLabel: `ตั้งราคาต้นทุนของ ${node.itemCode}` })}` : "";
         const perParent = node.level === 0 ? "" : `${esc(rules.fmtQty(node.qtyPerParent))} ${esc(uomText(ctx, node.uom))}${node.scrapPct ? ` <span class="small muted">+${esc(rules.fmtNum(node.scrapPct))}%</span>` : ""}`;
         const name = `${levelCell(node.level, ui.mono(node.itemCode))}<div class="small muted">${esc(node.name)}${node.bomRevision ? ` · BOM Rev.${node.bomRevision}` : ""}</div>`;
-        const unit = `${node.complete ? "" : '<span title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">⚠ </span>'}${baht(ctx, node.unitCost)}`;
+        const unit = `${node.complete ? "" : `${costWarn()} `}${baht(ctx, node.unitCost)}`;
         return `<tr><td>${name}</td><td class="nowrap">${perParent}</td><td>${stepsHtml}${stepEdit ? ` ${stepEdit}` : ""}</td><td class="num nowrap">${material}${costEdit}</td><td class="num nowrap">${baht(ctx, node.labor)}</td><td class="num nowrap">${node.level === 0 ? `<strong>${unit}</strong>` : unit}</td><td class="num nowrap">${node.level === 0 ? "" : baht(ctx, node.costPerRoot)}</td></tr>`;
       });
       body = ui.table(["ชิ้นงาน", "ต่อพ่อ", "ขั้นตอนผลิต (นาที/ชิ้น)", "วัตถุดิบ/หน่วย", "ค่าแรง/หน่วย", "ต้นทุน/หน่วย", "ต่อสินค้า 1 หน่วย"], rows);

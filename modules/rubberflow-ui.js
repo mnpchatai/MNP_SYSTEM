@@ -28,13 +28,14 @@
   };
   const statusLabel = (value) => STATUS[value]?.[1] ?? String(value ?? "");
 
-  // ---------- ไอคอน (Emoji ประจำโมดูลและโทนแจ้งเตือน ใช้ในเมนูข้าง หัวหน้า และกล่องแจ้งเตือน สไตล์ .rf-ico ใน styles.css) ----------
+  // ---------- ไอคอน (ไอคอนเส้นชุดเดียวกับระบบหลักจาก modules/ui-icons.js ประจำโมดูลและโทนแจ้งเตือน ใช้ในเมนูข้าง หัวหน้า และกล่องแจ้งเตือน สไตล์ .rf-ico ใน styles.css) ----------
+  // ค่า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (อ้างตอนวาด เพราะเทสต์โหลดไฟล์นี้แยก)
   const ICONS = Object.freeze({
-    dashboard: "🏭", orders: "📋", recipes: "🧪", requisition: "⚖️", mixing: "🌀", extrusion: "📐", curing: "🔥", finishing: "📦", wip: "🔄",
-    quality: "🛡️", spc: "📈", trace: "🔍", warehouse: "🏬", molds: "🧩", audit: "🕘",
-    bad: "⛔", warn: "⚠️", good: "✅", info: "ℹ️",
+    dashboard: "factory", orders: "clipboard", recipes: "flask", requisition: "scale", mixing: "mix", extrusion: "ruler", curing: "flame", finishing: "box", wip: "cycle",
+    quality: "shield", spc: "chart", trace: "search", warehouse: "warehouse", molds: "mold", audit: "history",
+    bad: "error", warn: "warning", good: "approve", info: "info",
   });
-  const icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${ICONS[id]}</span>` : "");
+  const icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${root.MNP_UI_ICONS.icon(ICONS[id])}</span>` : "");
 
   // ---------- โครงหน้า ----------
   // api.module = หน้าปัจจุบัน (shell ตั้งก่อนวาด) ใช้ใส่ไอคอนของหน้าไว้หน้าชื่อ
