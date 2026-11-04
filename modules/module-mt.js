@@ -529,7 +529,8 @@
       // Enter (หรือปุ่ม "ไป" บนแป้นมือถือ) ในช่องก่อนขั้นสุดท้าย = ถัดไป ไม่ใช่ส่งข้ามขั้นทบทวน
       form.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
-        if (!event.target.matches("input") || !narrowQuery.matches || currentStep >= 3) return;
+        // ปุ่มเลือกไฟล์ใช้ Enter เปิดตัวเลือกไฟล์ (คีย์บอร์ดต่อ iPad) จึงไม่นับ
+        if (!event.target.matches("input:not([type=file])") || !narrowQuery.matches || currentStep >= 3) return;
         event.preventDefault();
         form.querySelector("[data-step-next]").click();
       });
@@ -814,7 +815,7 @@
           setFormBusy(form, false);
           message.scrollIntoView({ block: "nearest" });
           // ปุ่มส่งถูกปิดระหว่างรอ โฟกัสจึงหลุด: คืนให้ที่ปุ่มส่ง กดซ้ำได้ทันที
-          form.querySelector("[data-step-submit]").focus();
+          form.querySelector("[data-step-submit]").focus({ preventScroll: true });
           return;
         }
         submitted = true;
