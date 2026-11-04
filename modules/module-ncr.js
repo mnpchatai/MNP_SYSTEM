@@ -281,7 +281,8 @@
 
     const renderReview = () => {
       const value = (name) => field(name).value.trim();
-      const row = (label, content, full = false) => definition(label, escapeHtml(content || "—"), full);
+      // ช่องที่ไม่ได้กรอกไม่ขึ้นในหน้าทบทวน (ช่องจำเป็นผ่านการตรวจมาแล้วจึงมีค่าเสมอ)
+      const row = (label, content, full = false) => (content ? definition(label, escapeHtml(content), full) : "");
       const qty = (name) => (value(name) ? `${formatQty(Number(value(name)))} ${value("unit")}`.trim() : "");
       const defectType = field("defect_type").selectedOptions[0];
       const source = checkedValues(form, "source")[0];

@@ -629,7 +629,7 @@ async function uploadAttachmentThumbnail(bucket, storagePath, file) {
 // hint: false เมื่อหน้าเดียวกันแสดงคำแนะนำไฟล์แนบไว้แล้ว (แสดงข้อความเดียวกันครั้งเดียวต่อหน้า)
 function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint = true } = {}) {
   // ปุ่มภาษาไทยแบบเดียวกับฟอร์ม แทนช่อง "Choose Files" ของเบราว์เซอร์; แบบไม่มีคำแนะนำอยู่ใต้หัวข้อที่พับได้ ("แนบไฟล์ประกอบ") จึงไม่ซ้ำหัวข้อ
-  return `<div class="field">${hint ? `<span class="field-label">${label}</span>` : ""}<label class="btn secondary file-pick" for="${id}">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
+  return `<div class="field">${hint ? `<span class="field-label">${label}</span>` : ""}<label class="btn secondary file-pick" for="${id}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
 }
 
 function readExtraFiles(input) {
@@ -2703,8 +2703,8 @@ async function renderNewRequest(params) {
   async function paint() {
     const selected = (types ?? []).find((type) => type.id === selectedId) ?? null;
     const heading = selected
-      ? `<div class="page-heading"><div><div class="eyebrow">สร้างคำร้อง · กรอกรายละเอียด</div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div>`
-      : `<div class="page-heading"><div><div class="eyebrow">ขั้นตอนที่ 1 · สร้างคำร้อง</div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1><p>เลือกประเภทด้านล่างเพื่อเปิดแบบฟอร์ม แล้วกรอกรายละเอียดก่อนส่งคำร้อง</p></div></div>`;
+      ? `<div class="page-heading"><div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div>`
+      : `<div class="page-heading"><div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1><p>เลือกประเภทด้านล่างเพื่อเปิดแบบฟอร์ม แล้วกรอกรายละเอียดก่อนส่งคำร้อง</p></div></div>`;
 
     let body;
     if (!selected) {
@@ -2851,7 +2851,7 @@ function genericRequestFormHtml(selected, separateModule, formContext) {
         <legend class="form-step-title">${escapeHtml(step2Title)}</legend>
         <div class="field full">
           <span class="field-label">ไฟล์แนบ (ถ้ามี)</span>
-          <label class="btn secondary file-pick" for="attachment">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label>
+          <label class="btn secondary file-pick" for="attachment">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label>
           <input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}">
           <small>รูปจากโทรศัพท์ทุกรุ่นใช้ได้ ระบบแปลงให้เอง</small>
         </div>
@@ -2910,7 +2910,8 @@ function bindGenericRequestForm(selected, employee) {
   }));
 
   const renderReview = () => {
-    const row = (label, value, wide = false) => `<div class="definition${wide ? " wide" : ""}"><dt>${escapeHtml(label)}</dt><dd${wide ? ' class="review-text"' : ""}>${escapeHtml(value || "—")}</dd></div>`;
+    // ช่องที่ไม่ได้กรอกไม่ขึ้นในหน้าทบทวน (ช่องจำเป็นผ่านการตรวจมาแล้วจึงมีค่าเสมอ)
+    const row = (label, value, wide = false) => (value ? `<div class="definition${wide ? " wide" : ""}"><dt>${escapeHtml(label)}</dt><dd${wide ? ' class="review-text"' : ""}>${escapeHtml(value)}</dd></div>` : "");
     // ช่องเฉพาะของโมดูล: ชื่อจาก label ของช่องนั้น (ช่อง "อื่นๆ" ของสำเนาถึงแผนกรวมไว้ในแถวสำเนา)
     const detailRows = detailInputs().filter((input) => !input.closest(".cc-department-field"))
       .map((input) => row(detailLabels.get(input) ?? input.name, input.type === "date" && input.value ? window.MNP_DATE_PICKER.label(input.value) : input.value.trim()));
@@ -3426,7 +3427,7 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
+        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
         ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
@@ -3675,6 +3676,13 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   const options = decisionButtonsOf(extraDecisions);
   const labelOf = (decision) => options.find((item) => item.decision === decision)?.label ?? decisionVerbs[decision] ?? decision;
   const toneOf = (decision) => options.find((item) => item.decision === decision)?.tone ?? "secondary";
+  // มติเพิ่มของโมดูล (เช่น รับทราบ) มีโทนเทาเท่าปุ่มยกเลิก/เลิกทำ ปุ่มหลักของมันจึงใช้สีแบรนด์ให้แยกออกจากปุ่มรอง
+  const decisionButtonClass = (decision) => {
+    if (decision === "rejected") return "danger-solid is-primary";
+    if (decision === "approved") return "success is-primary";
+    const tone = toneOf(decision);
+    return tone === "secondary" ? "is-primary" : `${tone} is-primary`;
+  };
   const hash = location.hash;
   let state = { name: "idle" };
   let lastTrigger = null;
@@ -3732,14 +3740,14 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
       commentLabel.textContent = decision === "rejected" ? "เหตุผลที่ไม่อนุมัติ (จำเป็น)"
         : decision === "more_info" ? "ต้องการข้อมูลเพิ่มเรื่องอะไร (จำเป็น)"
         : needsComment ? "เหตุผล (จำเป็น)" : "ความเห็น (ถ้ามี)";
-      const confirmClass = decision === "rejected" ? "danger-solid is-primary" : decision === "approved" ? "success is-primary" : `${toneOf(decision)} is-primary`;
-      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${!needsComment && !state.showComment ? button("เพิ่มความเห็น", "secondary", "add-comment") : ""}${button(`ยืนยัน${labelOf(decision)}`, confirmClass, "confirm")}`;
+      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${!needsComment && !state.showComment ? button("เพิ่มความเห็น", "secondary", "add-comment") : ""}${button(`ยืนยัน${labelOf(decision)}`, decisionButtonClass(decision), "confirm")}`;
       return;
     }
     if (state.name === "pending") {
       reason.hidden = true;
       setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no} · กดเลิกทำได้ภายใน ${DECISION_UNDO_SECONDS} วินาที`);
-      buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", "is-primary", "send-now")}`;
+      // "ส่งเลย" สีเดียวกับมติที่กำลังจะส่ง (ไม่อนุมัติเป็นสีแดง) ไม่ใช่สีน้ำเงินกลาง ๆ
+      buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", decisionButtonClass(state.decision), "send-now")}`;
       return;
     }
     if (state.name === "sending") {
@@ -4158,7 +4166,7 @@ async function renderNotifications() {
   const { data, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
   if (error) throw error;
   const content = `
-    <div class="page-heading"><div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">อ่านทั้งหมดแล้ว</button>` : ""}</div>
+    <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
     <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");

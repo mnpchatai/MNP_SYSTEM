@@ -384,7 +384,7 @@
             <div class="field full" data-field="department_id">
               <span class="field-label" id="repair-department-label">แผนก <span class="field-required">(จำเป็น)</span></span>
               <input type="hidden" id="repair-department" name="department_id">
-              <div class="repair-department-grid" id="repair-department-picker" role="group" aria-labelledby="repair-department-label" data-invalid-target>${departments.map((item, index) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"${index === 0 ? " data-focus" : ""}><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
+              <div class="repair-department-grid" id="repair-department-picker" role="group" aria-labelledby="repair-department-label" data-invalid-target>${departments.map((item, index) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"${index === 0 ? " data-focus" : ""}><span class="repair-department-check">${uiIcon("check")}</span><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
             </div>
             <div class="field full" data-field="machine_id">
               <label for="repair-machine-search">เครื่องจักร <span class="field-required">(จำเป็น)</span></label>
@@ -419,7 +419,7 @@
             <legend class="form-step-title">รูปและความเร่งด่วน</legend>
             <div class="field full">
               <span class="field-label">รูปหรือไฟล์ประกอบ (ถ้ามี)</span>
-              <label class="btn secondary file-pick" for="repair-attachment">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label>
+              <label class="btn secondary file-pick" for="repair-attachment">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label>
               <input class="file-pick-input" id="repair-attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}">
               <small>รูปจากโทรศัพท์ทุกรุ่นใช้ได้ ระบบแปลงให้เอง</small>
             </div>
@@ -811,7 +811,8 @@
             ...(window.MNP_MT_MACHINE_HISTORY.hasMachineHistory(request, { employee, owningDepartmentId: type?.owning_department_id }) ? { action: "machine-history", actionLabel: "ดูประวัติการซ่อมของเครื่องนี้" } : {}),
           }),
           requestFact("ผู้แจ้ง", request.requester_name ?? "—", { icon: "user", tone: "cyan" }),
-          requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "flag", tone: request.is_urgent ? "danger" : "success" }),
+          // ใบด่วนมีป้าย "ด่วน" ในบรรทัดหัวใบแล้ว (เงื่อนไขเดียวกับหน้ารายละเอียดทั่วไป) ไม่บอกซ้ำในการ์ด
+          ...(["high", "urgent"].includes(request.priority) ? [] : [requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "flag", tone: request.is_urgent ? "danger" : "success" })]),
           ...(request.needed_date ? [requestFact("วันที่ต้องการใช้งาน", formatDate(request.needed_date), { icon: "calendar", tone: "violet" })] : []),
           ...(request.assigned_at ? [requestFact("มอบหมายเมื่อ", `${formatDate(request.assigned_at, true)} โดย ${personName(directory, request.assigned_by)}`, { icon: "clock", tone: "cyan", wide: true })] : []),
           ...(request.work_expected_date ? [requestFact("กำหนดเสร็จ", formatDate(request.work_expected_date), { icon: "calendar", tone: "warning" })] : []),
@@ -835,7 +836,7 @@
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
           <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
-          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><label class="btn secondary file-pick" for="finish-parts-file">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary attachment-upload" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><label class="btn secondary file-pick" for="finish-parts-file">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary attachment-upload" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
           ${extraFilesFieldHtml("finish-files")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}

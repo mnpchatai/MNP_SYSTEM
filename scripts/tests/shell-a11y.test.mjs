@@ -99,14 +99,14 @@ test("the shell names the tab, offers a skip link and marks the content as the f
 
 test("the request detail page attaches files with the same Thai picker as the forms", () => {
   const form = app.match(/<form id="attachment-form">[\s\S]*?<\/form>/)?.[0] ?? "";
-  assert.match(form, /<label class="btn secondary file-pick" for="attachment-file">\$\{uiIcon\("download"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label>/);
+  assert.match(form, /<label class="btn secondary file-pick" for="attachment-file">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label>/);
   assert.match(form, /<input class="file-pick-input" id="attachment-file" name="file" type="file"/);
   assert.doesNotMatch(form, /\brequired\b/, "the visually hidden input must not show the browser's English required bubble");
   // ช่องแนบไฟล์ของการกระทำในหน้ารายละเอียด (มอบหมาย เลื่อนกำหนด บันทึกผล ตรวจรับ ตัดสินใจ) ใช้ตัวช่วยเดียวกัน
   const helper = app.match(/function extraFilesFieldHtml\([\s\S]*?\n\}/)?.[0] ?? "";
-  assert.match(helper, /<label class="btn secondary file-pick" for="\$\{id\}">\$\{uiIcon\("download"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="\$\{id\}" name="extra_files" type="file"/);
+  assert.match(helper, /<label class="btn secondary file-pick" for="\$\{id\}">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="\$\{id\}" name="extra_files" type="file"/);
   const mt = read("modules/module-mt.js");
-  assert.match(mt, /<label class="btn secondary file-pick" for="finish-parts-file">\$\{uiIcon\("download"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="finish-parts-file" type="file" multiple>/, "the parts receipt picker on the finish form");
+  assert.match(mt, /<label class="btn secondary file-pick" for="finish-parts-file">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="finish-parts-file" type="file" multiple>/, "the parts receipt picker on the finish form");
 });
 
 function minHeight(selector) {
