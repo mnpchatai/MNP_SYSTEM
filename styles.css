@@ -386,7 +386,7 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .nav-signout:hover { color: var(--danger); }
 .nav-spacer { flex: 1; }
 .sidebar-user { padding: 13px; display: grid; grid-template-columns: 34px minmax(0,1fr) 35px; gap: 9px; align-items: center; border-top: 1px solid var(--line); }
-.avatar { width: 34px; height: 34px; display: grid; place-items: center; color: var(--primary); background: var(--primary-soft); border-radius: 50%; font-size: var(--text-caption); font-weight: 700; }
+.avatar { width: 34px; height: 34px; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: 50%; font-size: var(--text-caption); font-weight: 700; }
 .user-copy { min-width: 0; }
 .user-copy strong, .user-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-copy strong { font-size: var(--text-meta); }
@@ -402,6 +402,10 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .breadcrumbs strong { color: var(--ink); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .content { max-width: 1420px; margin: 0 auto; padding: 32px 35px 64px; }
+/* เป้าโฟกัสของการเปลี่ยนหน้าและลิงก์ข้ามไปเนื้อหา: ไม่ใช่ปุ่ม จึงไม่วาดกรอบโฟกัส */
+.content:focus, .content h1[tabindex="-1"]:focus { outline: none; }
+.skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; min-height: 44px; padding: 0 16px; display: inline-flex; align-items: center; color: white; background: var(--primary-strong); border-radius: var(--radius-md); font-weight: 700; text-decoration: none; transform: translateY(-200%); }
+.skip-link:focus { transform: none; outline: 2px solid var(--primary); outline-offset: 2px; }
 .page-heading { margin-bottom: 23px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .page-heading h1 { margin: 5px 0 5px; font-size: clamp(28px, 3vw, 36px); line-height: 1.25; letter-spacing: -.025em; }
 .page-heading p { margin: 0; color: var(--muted); font-size: var(--text-ui); line-height: 1.6; }
@@ -900,6 +904,7 @@ a.register-title:hover { color: var(--primary); }
 .stepped-actions .btn[hidden] { display: none; }
 .file-pick { min-height: 48px; justify-self: start; gap: 8px; cursor: pointer; }
 .file-pick .ui-icon { width: 18px; height: 18px; }
+.attachment-upload { min-height: 44px; }
 /* input ไฟล์ซ่อนด้วยตา แต่ยังโฟกัสด้วยคีย์บอร์ดได้ (ปุ่มด้านบนเป็น label ของมัน) */
 .file-pick-input { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .file-pick:has(+ .file-pick-input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -920,14 +925,14 @@ a.register-title:hover { color: var(--primary); }
 .date-pick-button { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; cursor: pointer; }
 .date-pick-button .ui-icon { width: 18px; height: 18px; color: var(--muted); }
 .date-pick-empty { color: var(--quiet); }
-.date-pick-popup { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(320px, calc(100vw - 32px)); padding: 12px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+.date-pick-popup { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(344px, calc(100vw - 32px)); padding: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
 .date-pick-popup[hidden] { display: none; }
 .date-pick-head { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .date-pick-head .icon-button { width: 44px; height: 44px; font-size: var(--text-title); }
 .date-pick-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .date-pick-grid th { padding: 4px 0; text-align: center; white-space: normal; border: 0; color: var(--muted); font-size: var(--text-caption); font-weight: 700; }
 .date-pick-grid td { padding: 1px; text-align: center; border: 0; }
-.date-pick-day { width: 100%; aspect-ratio: 1; min-height: 40px; display: grid; place-items: center; color: var(--ink); background: none; border: 0; border-radius: var(--radius-md); font: inherit; font-size: var(--text-meta); cursor: pointer; }
+.date-pick-day { width: 100%; aspect-ratio: 1; min-height: 44px; display: grid; place-items: center; color: var(--ink); background: none; border: 0; border-radius: var(--radius-md); font: inherit; font-size: var(--text-meta); cursor: pointer; }
 .date-pick-day:hover { background: var(--shell); }
 .date-pick-day.is-outside { color: var(--quiet); }
 .date-pick-day.is-today { box-shadow: inset 0 0 0 1.5px var(--primary); }
@@ -939,7 +944,7 @@ a.register-title:hover { color: var(--primary); }
 /* วันที่เลือกไว้ในร่างเก่าที่ตอนนี้ย้อนหลังแล้ว: ยังเป็นปุ่มที่เลือกอยู่ ตัวอักษรขาวบนพื้นสีหลัก */
 .date-pick-day[aria-pressed="true"][aria-disabled="true"] { color: #fff; background: var(--primary-strong); }
 .date-pick-foot { margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px; }
-.date-pick-foot .btn { min-height: 40px; }
+.date-pick-foot .btn { min-height: 44px; }
 .request-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .request-fact { --fact-accent: var(--primary); min-width: 0; min-height: 78px; padding: 13px; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 11px; align-items: center; background: linear-gradient(135deg, var(--paper), color-mix(in srgb, var(--fact-accent) 5%, var(--paper))); border: 1px solid color-mix(in srgb, var(--fact-accent) 18%, var(--line)); border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(31, 61, 102, .05); transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .request-fact:hover { border-color: color-mix(in srgb, var(--fact-accent) 38%, var(--line)); box-shadow: 0 8px 18px rgba(31, 61, 102, .1); transform: translateY(-1px); }
@@ -1059,6 +1064,7 @@ a.machine-history-no:hover { text-decoration: underline; }
 .confirm-dialog h2 { margin: 0; font-size: var(--text-title); line-height: 1.4; overflow-wrap: anywhere; }
 .confirm-dialog p { max-height: 40vh; margin: 0; overflow: auto; color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; }
 .confirm-dialog-actions { margin-top: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.confirm-dialog-actions .btn { min-height: 44px; padding: 0 18px; }
 .btn.danger-solid { color: #fff; background: var(--danger-strong); border-color: var(--danger-strong); }
 .btn.danger-solid:hover { background: color-mix(in srgb, var(--danger-strong) 85%, #000); border-color: color-mix(in srgb, var(--danger-strong) 85%, #000); }
 .toast.show { opacity: 1; transform: translateY(0); transition: opacity .18s cubic-bezier(.16, 1, .3, 1), transform .18s cubic-bezier(.16, 1, .3, 1); }

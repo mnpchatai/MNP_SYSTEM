@@ -354,10 +354,14 @@ function initials(employee) {
   return `${employee?.first_name?.[0] ?? ""}${employee?.last_name?.[0] ?? ""}`;
 }
 
-function currentRoute() {
-  const raw = location.hash.replace(/^#\/?/, "") || "dashboard";
+function routeFromHash(hash) {
+  const raw = hash.replace(/^#\/?/, "") || "dashboard";
   const [path, query = ""] = raw.split("?");
   return { path, params: new URLSearchParams(query) };
+}
+
+function currentRoute() {
+  return routeFromHash(location.hash);
 }
 
 function go(path) {
@@ -1509,6 +1513,7 @@ async function renderAuth(message = "") {
       <div class="field"><label for="phone">เบอร์ติดต่อ${req}</label><input class="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" pattern="[0-9+\\- ]{9,40}" title="กรอกเบอร์โทรอย่างน้อย 9 หลัก (ตัวเลข, +, - หรือเว้นวรรค)" placeholder="เช่น 0812345678" required></div>
     </div>`;
 
+  document.title = "เข้าสู่ระบบ · MNP Workspace";
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-aside">
@@ -1676,6 +1681,7 @@ async function signOutLocally(message) {
 function renderConnectionError(error) {
   hideInstallBanner();
   console.error(error);
+  document.title = "เชื่อมต่อระบบไม่ได้ · MNP Workspace";
   app.innerHTML = `<main class="boot-screen" role="alert"><img class="brand-mark" src="./icons/icon-192.png" alt=""><h2>เชื่อมต่อระบบไม่ได้</h2><p>ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง คุณยังอยู่ในระบบ ไม่ต้องเข้าสู่ระบบใหม่</p><button class="btn" id="reconnect-button" type="button">ลองอีกครั้ง</button></main>`;
   document.querySelector("#reconnect-button")?.addEventListener("click", startApp);
 }
@@ -1796,11 +1802,14 @@ function navLink(path, label, icon, active, { featured = false, badge = 0, href 
   </a>`;
 }
 
-function shell(content, active, title) {
+function shell(content, active, title, tabTitle = title) {
   const employee = state.employee;
   active = activeNavFor(active);
+  // ชื่อแท็บบอกหน้าที่เปิดอยู่ (โปรแกรมอ่านจอและรายการแท็บ/ประวัติของเบราว์เซอร์ใช้ชื่อนี้)
+  document.title = `${tabTitle} · MNP Workspace`;
   return `
     <div class="app-shell">
+      <a class="skip-link" href="#main-content" data-skip-link>ข้ามไปเนื้อหาหลัก</a>
       <button class="mobile-nav-toggle" type="button" aria-label="เปิดเมนูหลัก" aria-controls="mobile-nav" aria-expanded="false">
         <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
@@ -1841,7 +1850,7 @@ function shell(content, active, title) {
             ${themeButton()}
           </div>
         </header>
-        <div class="content">${sandboxBannerHtml()}${content}</div>
+        <div class="content" id="main-content" tabindex="-1">${sandboxBannerHtml()}${content}</div>
       </main>
     </div>`;
 }
@@ -2619,7 +2628,7 @@ async function renderRequests(params) {
     list += `<div class="list-filters">${requestScopeSwitch(params)}</div>${await ncrModule.renderCenterList(params)}`;
   }
   const content = `${requestCenterHeader(types, params, counts)}${selected.code === "NCR_CAR" ? "" : requestsViewTabs(params)}${list}`;
-  app.innerHTML = shell(content, "requests", "คำร้อง");
+  app.innerHTML = shell(content, "requests", "คำร้อง", requestTypeLabel(selected));
   bindShell();
   bindModuleZoom(params);
   bindRequestSearchForm(params);
@@ -3416,7 +3425,7 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><label for="attachment-file">แนบไฟล์</label><input class="input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" required><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary small" type="submit">อัปโหลด</button></form></details>
+        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
         ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
@@ -4950,6 +4959,7 @@ async function renderSetPassword(params) {
     errorMessage = friendlyError(error);
   }
 
+  document.title = "ตั้งรหัสผ่าน · MNP Workspace";
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-aside">
@@ -5081,6 +5091,50 @@ async function renderRoute() {
   }
 }
 
+// เปลี่ยนหน้า (hashchange): วาดหน้าใหม่แล้วย้ายโฟกัสมาที่หน้านั้น โปรแกรมอ่านจอจึงรู้ว่าเปลี่ยนหน้าแล้ว และ Tab ต่อจากหัวเรื่องของหน้าใหม่
+// ไม่ใช้กับการวาดซ้ำในหน้าเดิม (ลองอีกครั้ง บันทึกแล้ววาดใหม่) และการเปิดแอปครั้งแรก ซึ่งไม่ได้ย้ายหน้า
+let routeSeq = 0;
+async function navigateRoute(event) {
+  const seq = ++routeSeq;
+  const before = document.activeElement;
+  const beforeId = before && before !== document.body ? before.id : "";
+  const fromPath = event?.oldURL ? routeFromHash(new URL(event.oldURL).hash).path : null;
+  await renderRoute();
+  if (seq !== routeSeq) return; // ผู้ใช้กดไปหน้าอื่นต่อระหว่างโหลด หน้าล่าสุดเป็นผู้จัดโฟกัส
+  focusRouteStart({ samePath: fromPath === currentRoute().path, beforeId });
+}
+
+function focusRouteStart({ samePath, beforeId }) {
+  const active = document.activeElement;
+  // หน้าจัดโฟกัสเองแล้ว (เช่น หัวเรื่องของใบในคิว หรือช่องแรกที่ผิด) ไม่แย่ง
+  if (active && active !== document.body && active.isConnected) return;
+  // เปลี่ยนแค่ตัวกรองในหน้าเดิม: กลับไปที่ช่องเดิมที่วาดใหม่ ไม่ต้องเริ่มจากหัวหน้า
+  if (samePath && beforeId) {
+    const again = document.getElementById(beforeId);
+    if (again && again.getClientRects().length) {
+      again.focus({ preventScroll: true });
+      return;
+    }
+  }
+  focusPageStart({ preventScroll: true });
+}
+
+// โฟกัสหัวเรื่องของหน้า (h1 ตัวแรกในเนื้อหา) หรือทั้งเนื้อหาเมื่อหน้านั้นไม่มี h1
+function focusPageStart(options) {
+  const content = document.querySelector("#main-content");
+  if (!content) return;
+  const heading = content.querySelector("h1");
+  if (heading && !heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+  (heading ?? content).focus(options);
+}
+
+// ลิงก์ข้ามไปเนื้อหา: ระบบใช้ # เป็นเส้นทางหน้า จึงย้ายโฟกัสเองแทนการเปลี่ยน hash
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.("[data-skip-link]")) return;
+  event.preventDefault();
+  focusPageStart();
+});
+
 async function startApp() {
   const { data, error } = await sb.auth.getSession();
   // ต่ออายุ session ไม่สำเร็จเพราะเน็ต: session ยังเก็บอยู่ในเครื่อง อย่าพาไปหน้าล็อกอิน
@@ -5113,7 +5167,7 @@ async function init() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch((error) => console.warn("ลงทะเบียน service worker ไม่สำเร็จ", error));
   }
-  window.addEventListener("hashchange", renderRoute);
+  window.addEventListener("hashchange", navigateRoute);
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
   sb.auth.onAuthStateChange((event, session) => {
     syncSignedUrlOwner(event === "SIGNED_OUT" ? null : session?.user?.id);
