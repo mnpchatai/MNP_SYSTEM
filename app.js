@@ -1951,6 +1951,9 @@ async function renderDashboard(params = new URLSearchParams()) {
     .map((row) => ({ ...row, request_type: relation(row.request_type) }))
     .filter((row) => !queuedIds.has(row.id) && !(requestModule(row.request_type?.code)?.endsAtDecision && row.status === "approved"));
   const showQueue = items.length > 0 || recent.length > 0 || hasApprovalDuty(employee);
+  // ใบที่เปิดอยู่ต้องมองเห็นเสมอ แม้อยู่เกินหน้าแรก (เช่นเปิดจากลิงก์ในอีเมล)
+  const selectedIndex = items.findIndex((item) => item.id === selectedId);
+  const visibleCount = Math.max(HOME_QUEUE_PAGE, selectedIndex + 1);
   const ownSelectable = items.filter((item) => item.kind === "approval" && isOwnApprovalStep(item.step));
   const queueSection = showQueue ? `
     <section class="home-queue" id="home-queue" aria-labelledby="home-queue-title">
@@ -1960,13 +1963,12 @@ async function renderDashboard(params = new URLSearchParams()) {
       </div>
       ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
       ${items.length ? `<div class="queue-layout">
-        <ul class="queue-list" role="list">${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= HOME_QUEUE_PAGE })).join("")}</ul>
+        <ul class="queue-list" role="list"${approvalIds.length ? ` title="คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ" aria-keyshortcuts="J K A R"` : ""}>${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= visibleCount })).join("")}</ul>
         <div class="queue-detail-pane" id="queue-detail-pane"></div>
       </div>
-      ${items.length > HOME_QUEUE_PAGE ? `<button type="button" class="link-button queue-more" id="queue-more">แสดงอีก ${items.length - HOME_QUEUE_PAGE} รายการ</button>` : ""}
-      ${approvalIds.length ? `<p class="queue-hint">คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ · / ค้นหา</p>` : ""}
+      ${items.length > visibleCount ? `<button type="button" class="link-button queue-more" id="queue-more">แสดงอีก ${items.length - visibleCount} รายการ</button>` : ""}
       <section class="card action-panel queue-bulk" id="queue-bulk" aria-label="อนุมัติหลายรายการ" hidden>
-        <p class="queue-bulk-text" id="queue-bulk-text"></p>
+        <p class="queue-bulk-text" id="queue-bulk-text" role="status" hidden></p>
         <div class="action-panel-buttons"><button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">อนุมัติที่เลือก</button></div>
       </section>` : `<p class="queue-empty">ไม่มีงานค้าง งานที่ส่งมาถึงคุณจะแสดงที่นี่</p>`}
     </section>` : "";
@@ -2014,19 +2016,19 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   return `<li class="queue-item${selected ? " is-selected" : ""}" data-request-id="${escapeHtml(item.id)}"${hiddenAttr}>${check}<button type="button" class="queue-item-main" aria-expanded="${selected}">${head}</button><div class="queue-item-slot"></div></li>`;
 }
 
-// compact: ขยายใต้แถวบนจอแคบ แถวแสดงเลขที่ ชื่อเรื่อง ประเภท ผู้แจ้งอยู่แล้ว จึงไม่ซ้ำ
-function homeQueueDetailHtml(item, directory, nextStep, { compact = false } = {}) {
+// แถวในรายการแสดงเลขที่ ประเภท ผู้แจ้ง และค้างกี่วันอยู่แล้ว จึงไม่ซ้ำในส่วนที่เปิด
+// compact (ขยายใต้แถวบนจอแคบ): ไม่มีหัวเรื่องซ้ำกับแถว; จอกว้าง: หัวเรื่องเป็นหัวของแผงขวา (เลขแบบฟอร์มมีเฉพาะที่นี่)
+function homeQueueDetailHtml(item, nextStep, { compact = false, nextStepKnown = true } = {}) {
   const request = item.request;
   const type = relation(request.request_type);
   const formCode = REQUEST_FORM_CODES[type?.code] ?? "";
   const description = (request.description ?? "").trim();
   return `<article class="queue-detail${compact ? " is-compact" : ""}" id="queue-detail" aria-label="${escapeHtml(`${request.request_no} ${request.title}`)}">
-    ${compact ? "" : `<span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
-    <h3 class="queue-detail-title" id="queue-detail-title" tabindex="-1">${escapeHtml(request.title)}</h3>
-    <p class="request-detail-meta">${escapeHtml(type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at ?? request.created_at, true)}</p>`}
+    ${compact ? "" : `${formCode ? `<span class="eyebrow">${escapeHtml(formCode)}</span>` : ""}
+    <h3 class="queue-detail-title" id="queue-detail-title" tabindex="-1">${escapeHtml(request.title)}</h3>`}
     ${description ? `<p class="request-summary-text queue-detail-text">${escapeHtml(description)}</p>` : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
     <a class="link-button" href="#/request?id=${encodeURIComponent(item.id)}">เปิดใบเต็ม: ไฟล์แนบ ลำดับอนุมัติ และประวัติ</a>
-    ${decisionPanelHtml({ currentStep: item.step, nextStep, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
+    ${decisionPanelHtml({ currentStep: item.step, nextStep, nextStepKnown, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
   </article>`;
 }
 
@@ -2055,7 +2057,7 @@ async function selectQueueItem(id, { focus = false } = {}) {
   const { data: steps, error } = await sb.from("approval_steps").select("id,step_order,step_name,status").eq("request_id", id).order("step_order");
   if (homeQueueState.selectedId !== id || !host.isConnected) return;
   if (!error) nextStep = (steps ?? []).find((step) => step.step_order === item.step.step_order + 1) ?? null;
-  host.innerHTML = homeQueueDetailHtml(item, ctx.directory, nextStep, { compact: host !== pane });
+  host.innerHTML = homeQueueDetailHtml(item, nextStep, { compact: host !== pane, nextStepKnown: !error });
   bindDecisionPanel({
     id,
     params: new URLSearchParams({ id }),
@@ -2064,12 +2066,55 @@ async function selectQueueItem(id, { focus = false } = {}) {
     nextStep,
     employee: ctx.employee,
     extraDecisions: requestModule(relation(item.request.request_type)?.code)?.extraDecisions ?? [],
-    onDecided: () => renderDashboard(),
+    onDecided: ({ decision }) => afterQueueDecision(id, decision),
   });
+  watchDecisionPanelBusy();
   syncQueueBulk();
   trackActionBarHeight();
   // จอกว้างย้าย focus ไปหัวเรื่องทางขวา; จอแคบ focus อยู่ที่แถวที่แตะ (แถวคือหัวเรื่องของส่วนที่ขยาย)
   if (focus && host === pane) host.querySelector(".queue-detail-title")?.focus();
+}
+
+// ระหว่างที่แถบตัดสินใจกำลังยืนยัน/นับถอยหลัง/ส่ง ห้ามติ๊กอนุมัติหลายรายการ
+// (แถบหลายรายการจะซ่อนแถบนี้ ปุ่มเลิกทำจะหายทั้งที่มติยังจะถูกส่ง)
+function watchDecisionPanelBusy() {
+  const panel = document.querySelector("#decision-panel");
+  if (!panel) return;
+  const sync = () => {
+    const busy = panel.dataset.state !== "idle";
+    document.querySelectorAll(".queue-select, #queue-select-all").forEach((box) => { box.disabled = busy; });
+  };
+  new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ["data-state"] });
+  sync();
+}
+
+// หลังตัดสินใบหนึ่ง: ถ้าผู้ใช้กำลังยืนยันหรือนับถอยหลังใบอื่นอยู่ (เปิดใบใหม่ระหว่างที่ใบเดิมกำลังส่ง)
+// ห้ามวาดใหม่ทั้งหน้า เพราะจะส่งมติของใบนั้นทันทีและทิ้งข้อความที่พิมพ์ค้าง — แค่เอาแถวที่ตัดสินแล้วออก
+async function afterQueueDecision(id, decision) {
+  const item = homeQueueState.ctx?.items.find((entry) => entry.id === id);
+  announce(`${decisionVerbs[decision] ?? "บันทึกผล"} ${item?.request.request_no ?? ""} แล้ว`);
+  const panel = document.querySelector("#decision-panel");
+  const otherBusy = homeQueueState.selectedId !== id && panel && panel.dataset.state !== "idle";
+  if (otherBusy) {
+    document.querySelector(`.queue-item[data-request-id="${CSS.escape(id)}"]`)?.remove();
+    return;
+  }
+  await renderDashboard();
+  document.querySelector(".queue-item.is-selected .queue-item-main")?.focus();
+}
+
+// ประกาศให้โปรแกรมอ่านหน้าจอ (live region อยู่นอก #app จึงไม่ถูกแทนที่ตอนวาดหน้าใหม่)
+function announce(text) {
+  let region = document.querySelector("#sr-announcer");
+  if (!region) {
+    region = document.createElement("div");
+    region.id = "sr-announcer";
+    region.className = "sr-only";
+    region.setAttribute("aria-live", "polite");
+    document.body.append(region);
+  }
+  region.textContent = "";
+  window.setTimeout(() => { region.textContent = text; }, 50);
 }
 
 function collapseQueueItem() {
@@ -2093,7 +2138,8 @@ function bindHomeQueue() {
     if (!main) return;
     const id = main.closest(".queue-item")?.dataset.requestId;
     if (!id) return;
-    if (id === homeQueueState.selectedId && !isWideLayout()) return collapseQueueItem();
+    // แตะใบที่เปิดอยู่: จอแคบ = ยุบ; จอกว้าง = ไม่ทำอะไร (ไม่ส่งมติที่นับถอยหลังหรือทิ้งข้อความที่พิมพ์ค้าง)
+    if (id === homeQueueState.selectedId) return isWideLayout() ? undefined : collapseQueueItem();
     selectQueueItem(id, { focus: true });
   });
   list.addEventListener("change", (event) => { if (event.target.matches(".queue-select")) syncQueueBulk(); });
@@ -2141,12 +2187,15 @@ function syncQueueBulk() {
   const all = document.querySelector("#queue-select-all");
   if (all) { all.checked = count > 0 && count === total; all.indeterminate = count > 0 && count < total; }
   const tooMany = count > BULK_APPROVE_LIMIT;
-  document.querySelector("#queue-bulk-text").textContent = tooMany ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT} รายการ` : `เลือกไว้ ${count} รายการ`;
+  // จำนวนที่เลือกอยู่บนปุ่มแล้ว บรรทัดนี้ขึ้นเฉพาะเมื่อเลือกเกินกำหนด
+  const text = document.querySelector("#queue-bulk-text");
+  text.hidden = !tooMany;
+  text.textContent = tooMany ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT} รายการ` : "";
   const approve = document.querySelector("#queue-bulk-approve");
   approve.disabled = count === 0 || tooMany;
   approve.textContent = `อนุมัติที่เลือก (${count})`;
   const panel = document.querySelector("#decision-panel");
-  if (panel) panel.hidden = count > 0;
+  if (panel) panel.hidden = count > 0 && panel.dataset.state === "idle";
   trackActionBarHeight();
 }
 
@@ -2176,7 +2225,8 @@ document.addEventListener("keydown", (event) => {
 });
 
 // หมุนจอหรือย่อขยายหน้าต่างข้ามขนาด: ย้ายใบที่เปิดไปอยู่ตำแหน่งของขนาดจอใหม่
-window.matchMedia("(min-width: 1041px)").addEventListener("change", () => {
+// (Safari เก่าไม่มี addEventListener บน MediaQueryList: ข้ามไป ไม่ให้แอปทั้งแอปพังตอนโหลด)
+window.matchMedia("(min-width: 1041px)").addEventListener?.("change", () => {
   if (homeQueueState.selectedId && document.querySelector("#home-queue .queue-list")) selectQueueItem(homeQueueState.selectedId);
 });
 
@@ -3166,11 +3216,12 @@ function decisionButtonsOf(extraDecisions) {
   ];
 }
 
-function decisionPanelHtml({ currentStep, nextStep, extraDecisions }) {
+// nextStepKnown: false เมื่อโหลดลำดับขั้นไม่ได้ ไม่บอกว่า "ขั้นสุดท้าย" ผิดความจริง
+function decisionPanelHtml({ currentStep, nextStep, extraDecisions, nextStepKnown = true }) {
   return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
     <div class="action-panel-head">
       <h2 id="decision-panel-title">พิจารณาคำร้อง</h2>
-      <p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}${nextStep ? ` · ถัดไป: ${escapeHtml(nextStep.step_name)}` : " · ขั้นสุดท้าย"}</p>
+      <p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}${nextStep ? ` · ถัดไป: ${escapeHtml(nextStep.step_name)}` : nextStepKnown ? " · ขั้นสุดท้าย" : ""}</p>
     </div>
     <p class="decision-line" id="decision-line" hidden></p>
     <div class="decision-reason" id="decision-reason" hidden>
@@ -3244,12 +3295,17 @@ function bindRequestDetailChrome() {
 }
 
 // แถบตัดสินใจติดล่างจอบนมือถือ: บอกความสูงจริงให้ CSS เว้นที่ท้ายหน้า และยก toast ขึ้นเหนือแถบ
+// ใช้ observer ตัวเดียวทั้งแอป ย้ายไปดูแถบที่มองเห็นอยู่ทุกครั้งที่เรียก ไม่สะสม observer
+let actionBarObserver = null;
 function trackActionBarHeight() {
   const bar = document.querySelector(".action-panel:not([hidden])");
-  if (!bar || typeof ResizeObserver !== "function") return;
-  const update = () => document.documentElement.style.setProperty("--action-bar-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
-  new ResizeObserver(update).observe(bar);
-  update();
+  if (typeof ResizeObserver !== "function") return;
+  actionBarObserver ??= new ResizeObserver((entries) => {
+    const height = entries.at(-1)?.target.getBoundingClientRect().height ?? 0;
+    if (height) document.documentElement.style.setProperty("--action-bar-h", `${Math.ceil(height)}px`);
+  });
+  actionBarObserver.disconnect();
+  if (bar) actionBarObserver.observe(bar);
 }
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
