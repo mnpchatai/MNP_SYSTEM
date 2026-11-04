@@ -2110,7 +2110,7 @@ async function renderDashboard(params = new URLSearchParams()) {
       ${items.length > visibleCount ? `<button type="button" class="link-button queue-more" id="queue-more">แสดงอีก ${items.length - visibleCount} รายการ</button>` : ""}
       <section class="card action-panel queue-bulk" id="queue-bulk" aria-label="อนุมัติหลายรายการ" hidden>
         <p class="queue-bulk-text" id="queue-bulk-text" role="status" hidden></p>
-        <div class="action-panel-buttons"><button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">อนุมัติที่เลือก</button></div>
+        <div class="action-panel-buttons" id="queue-bulk-buttons">${QUEUE_BULK_IDLE_BUTTONS}</div>
       </section>` : `<p class="queue-empty">ไม่มีงานค้าง งานที่ส่งมาถึงคุณจะแสดงที่นี่</p>`}
     </section>` : "";
   const mineSection = `
@@ -2180,8 +2180,9 @@ async function selectQueueItem(id, { focus = false } = {}) {
   if (!item) return;
   homeQueueState.selectedId = id;
   homeQueueState.collapsed = false;
-  // มติที่นับถอยหลังอยู่ของใบเดิมส่งก่อน แล้วค่อยเปิดใบใหม่
+  // มติที่นับถอยหลังอยู่ของใบเดิม (หรือของอนุมัติหลายรายการ) ส่งก่อน แล้วค่อยเปิดใบใหม่
   activeDecisionCountdown?.flush();
+  activeBulkCountdown?.flush();
   document.querySelectorAll(".queue-item").forEach((node) => {
     const isSelected = node.dataset.requestId === id;
     node.classList.toggle("is-selected", isSelected);
@@ -2311,25 +2312,118 @@ function bindHomeQueue() {
     document.querySelectorAll(".queue-item[hidden]").forEach((node) => { node.hidden = false; });
     event.currentTarget.remove();
   });
-  document.querySelector("#queue-bulk-clear")?.addEventListener("click", () => {
-    document.querySelectorAll(".queue-select").forEach((box) => { box.checked = false; });
-    const all = document.querySelector("#queue-select-all");
-    if (all) all.checked = false;
-    syncQueueBulk();
+  bindQueueBulk();
+}
+
+const QUEUE_BULK_IDLE_BUTTONS = `<button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">อนุมัติที่เลือก</button>`;
+let activeBulkCountdown = null;
+
+// อนุมัติหลายรายการ: ขั้นเดียวกับอนุมัติใบเดียวในแถบล่าง — "อนุมัติที่เลือก" → ยืนยันพร้อมเลขที่ใบ → เลิกทำได้ภายใน DECISION_UNDO_SECONDS วินาที → ส่ง
+// (เดิมเป็นกล่องยืนยันกลางจอแล้วส่งทันที ไม่มีเลิกทำ) ระหว่างยืนยัน/นับถอยหลัง/ส่ง ล็อกช่องติ๊กไว้ รายการที่จะส่งจึงตรงกับที่ยืนยัน
+function bindQueueBulk() {
+  const bulk = document.querySelector("#queue-bulk");
+  const rules = window.MNP_REQUEST_DECISION;
+  if (!bulk || !rules) return;
+  const text = bulk.querySelector("#queue-bulk-text");
+  const buttons = bulk.querySelector("#queue-bulk-buttons");
+  let chosen = [];
+  const lockBoxes = (locked) => document.querySelectorAll(".queue-select, #queue-select-all").forEach((box) => { box.disabled = locked; });
+  const button = (label, className, action, attrs = "") => `<button type="button" class="btn ${className}" data-bulk-action="${action}"${attrs}>${escapeHtml(label)}</button>`;
+  const numbers = () => chosen.map((step) => step.request.request_no).join(", ");
+  const countdown = rules.createCountdown({
+    seconds: DECISION_UNDO_SECONDS,
+    // ตัวเลขบนปุ่มเท่านั้น (ไม่อยู่ใน live region) เหมือนแถบของใบเดียว
+    onTick: (secondsLeft) => { const undo = buttons.querySelector('[data-bulk-action="undo"]'); if (undo) undo.textContent = `เลิกทำ (${secondsLeft})`; },
+    onSend: () => send(),
   });
-  document.querySelector("#queue-bulk-approve")?.addEventListener("click", async (event) => {
-    const chosen = pickedQueueSteps();
-    if (!chosen.length) return;
-    const button = event.currentTarget;
-    const summary = await runBulkApprove(chosen, {
-      onStart: () => { button.disabled = true; button.setAttribute("aria-busy", "true"); document.querySelectorAll(".queue-select, #queue-select-all").forEach((box) => { box.disabled = true; }); },
-    });
-    if (!summary) return;
+  activeBulkCountdown = countdown;
+  const setText = (value) => { text.hidden = !value; text.textContent = value; };
+  function render(name) {
+    bulk.dataset.state = name;
+    if (name === "idle") {
+      buttons.innerHTML = QUEUE_BULK_IDLE_BUTTONS;
+      lockBoxes(false);
+      syncQueueBulk();
+      return;
+    }
+    lockBoxes(true);
+    if (name === "confirm") {
+      setText(`อนุมัติ ${chosen.length} รายการ: ${numbers()}`);
+      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยันอนุมัติ ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
+    } else if (name === "pending") {
+      setText(`กำลังจะอนุมัติ ${chosen.length} รายการ · กดเลิกทำได้ภายใน ${DECISION_UNDO_SECONDS} วินาที`);
+      buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", "success is-primary", "send-now")}`;
+    } else if (name === "sending") {
+      setText(`กำลังส่ง: อนุมัติ ${chosen.length} รายการ…`);
+      buttons.innerHTML = button("กำลังส่ง…", "success is-primary", "none", ' disabled aria-busy="true"');
+    }
+    trackActionBarHeight();
+  }
+  const toIdle = () => {
+    countdown.undo();
+    detachLeaveGuards();
+    chosen = [];
+    render("idle");
+    document.querySelector("#queue-bulk-approve")?.focus();
+  };
+
+  buttons.addEventListener("click", (event) => {
+    if (event.target.closest("#queue-bulk-clear")) {
+      document.querySelectorAll(".queue-select").forEach((box) => { box.checked = false; });
+      const all = document.querySelector("#queue-select-all");
+      if (all) all.checked = false;
+      return syncQueueBulk();
+    }
+    if (event.target.closest("#queue-bulk-approve")) {
+      chosen = pickedQueueSteps();
+      if (!chosen.length || chosen.length > BULK_APPROVE_LIMIT) return;
+      render("confirm");
+      return buttons.querySelector('[data-bulk-action="confirm"]')?.focus();
+    }
+    const action = event.target.closest("[data-bulk-action]")?.dataset.bulkAction;
+    if (action === "cancel" || action === "undo") return toIdle();
+    if (action === "confirm") {
+      render("pending");
+      buttons.querySelector('[data-bulk-action="undo"]')?.focus();
+      countdown.start({});
+      return attachLeaveGuards();
+    }
+    if (action === "send-now") return countdown.flush();
+  });
+  bulk.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (bulk.dataset.state === "confirm" || bulk.dataset.state === "pending") { event.preventDefault(); toIdle(); }
+  });
+
+  // ไปหน้าอื่นหรือสลับแอประหว่างนับถอยหลัง = ตั้งใจส่ง (เหมือนใบเดียว) ปิดแท็บ/รีเฟรชถามก่อน
+  function sendOnLeave() { countdown.flush(); }
+  function sendWhenHidden() { if (document.visibilityState === "hidden") countdown.flush(); }
+  function warnBeforeUnload(event) {
+    if (!countdown.pending && bulk.dataset.state !== "sending") return;
+    event.preventDefault();
+    event.returnValue = "";
+  }
+  function attachLeaveGuards() {
+    window.addEventListener("hashchange", sendOnLeave);
+    document.addEventListener("visibilitychange", sendWhenHidden);
+    window.addEventListener("beforeunload", warnBeforeUnload);
+  }
+  function detachLeaveGuards() {
+    window.removeEventListener("hashchange", sendOnLeave);
+    document.removeEventListener("visibilitychange", sendWhenHidden);
+    window.removeEventListener("beforeunload", warnBeforeUnload);
+  }
+
+  async function send() {
+    if (bulk.isConnected) render("sending");
+    const summary = await runBulkApprove(chosen);
+    detachLeaveGuards();
+    if (activeBulkCountdown === countdown) activeBulkCountdown = null;
     if (location.hash === "" || /^#\/(dashboard|approvals)?(\?|$)/.test(location.hash)) {
       try { await renderDashboard(); } catch (renderError) { console.error(renderError); }
     }
-    showToast(...summary);
-  });
+    if (summary) showToast(...summary);
+  }
 }
 
 function pickedQueueSteps() {
@@ -2341,6 +2435,12 @@ function pickedQueueSteps() {
 function syncQueueBulk() {
   const bulk = document.querySelector("#queue-bulk");
   if (!bulk) return;
+  // กำลังยืนยัน/นับถอยหลัง/ส่ง (bindQueueBulk): แถบนี้คุมข้อความและปุ่มเอง ช่องติ๊กถูกล็อก จำนวนจึงไม่เปลี่ยน
+  if (bulk.dataset.state && bulk.dataset.state !== "idle") {
+    const panel = document.querySelector("#decision-panel");
+    if (panel && panel.dataset.state === "idle") panel.hidden = true;
+    return trackActionBarHeight();
+  }
   const count = pickedQueueSteps().length;
   const total = document.querySelectorAll(".queue-select").length;
   bulk.hidden = count === 0;
@@ -3932,13 +4032,11 @@ function isOwnApprovalStep(step) {
 const BULK_APPROVE_LIMIT = 20;
 
 // อนุมัติหลายรายการ: เรียก app_approval_decision ทีละขั้นเหมือนกดอนุมัติในหน้ารายละเอียด (ฐานข้อมูลตรวจสิทธิ์และขั้นปัจจุบันทุกครั้ง)
-// ถามยืนยันพร้อมรายชื่อก่อน ครั้งละไม่เกิน BULK_APPROVE_LIMIT รายการ คืนข้อความสรุปสำหรับ showToast (null = ผู้ใช้ยกเลิก)
+// ยืนยันและเลิกทำอยู่ในแถบล่าง (bindQueueBulk) ฟังก์ชันนี้ส่งอย่างเดียว ครั้งละไม่เกิน BULK_APPROVE_LIMIT รายการ
+// คืนข้อความสรุปสำหรับ showToast (null = ไม่มีอะไรให้ส่ง)
 // (ชีตสำรองของ MT/MG ซิงก์ตอนมีคนเปิดหน้ารายละเอียดเหมือนเดิม Supabase เป็นข้อมูลหลัก)
-async function runBulkApprove(chosen, { onStart } = {}) {
+async function runBulkApprove(chosen) {
   if (!chosen.length || chosen.length > BULK_APPROVE_LIMIT) return null;
-  const list = chosen.map((step) => `${step.request.request_no} · ${step.request.title}`).join("\n");
-  if (!(await confirmDialog({ title: `อนุมัติ ${chosen.length} รายการ?`, message: list, confirmLabel: `อนุมัติ ${chosen.length} รายการ` }))) return null;
-  onStart?.();
   const failed = [];
   let done = 0;
   for (const [index, step] of chosen.entries()) {

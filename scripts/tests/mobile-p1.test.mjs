@@ -92,6 +92,22 @@ test("a page change starts at the top, going back restores the old position, and
   assert.match(app, /document\.addEventListener\("click", \(event\) => \{ if \(event\.target\.closest\?\.\("a\[href\^='#'\]"\)\) saveScrollMemo\(\); \}, true\);/);
 });
 
+test("bulk approve follows the single-approve steps in the bottom bar: confirm, then undo, then send", () => {
+  // ผู้ใช้เลือก (หลัง critique G): แถบล่าง สีเขียว ยืนยันแล้วเลิกทำได้ภายใน 5 วินาที แทนกล่องกลางจอที่ส่งทันที
+  const runner = app.slice(app.indexOf("async function runBulkApprove("), app.indexOf("\n}", app.indexOf("async function runBulkApprove(")));
+  assert.doesNotMatch(runner, /confirmDialog/, "no centred modal any more");
+  const bulk = app.slice(app.indexOf("function bindQueueBulk("), app.indexOf("\n}\n", app.indexOf("function bindQueueBulk(")));
+  assert.match(bulk, /rules\.createCountdown\(\{\s*seconds: DECISION_UNDO_SECONDS,/, "the same undo window as one request");
+  assert.match(bulk, /setText\(`อนุมัติ \$\{chosen\.length\} รายการ: \$\{numbers\(\)\}`\)/, "confirm names the request numbers");
+  assert.match(bulk, /button\(`ยืนยันอนุมัติ \$\{chosen\.length\} รายการ`, "success is-primary", "confirm"\)/);
+  assert.match(bulk, /button\(`เลิกทำ \(\$\{DECISION_UNDO_SECONDS\}\)`, "secondary", "undo"\)\}\$\{button\("ส่งเลย", "success is-primary", "send-now"\)\}/);
+  assert.match(bulk, /window\.addEventListener\("hashchange", sendOnLeave\);/, "leaving the page sends, like one request");
+  assert.match(bulk, /if \(event\.key !== "Escape" \|\| event\.defaultPrevented\) return;/);
+  assert.match(bulk, /const lockBoxes = /, "the chosen set cannot change after confirming");
+  // เปิดใบอื่นระหว่างนับถอยหลัง: ส่งของเดิมก่อน (เหมือนใบเดียว)
+  assert.match(app, /activeDecisionCountdown\?\.flush\(\);\s*activeBulkCountdown\?\.flush\(\);/);
+});
+
 test("form errors scroll to the middle of the screen and the step bar counts what is missing", () => {
   assert.match(steps.actionsHtml({ cancelHref: "#/", submitLabel: "ส่ง" }), /<p class="stepped-summary" data-steps-summary hidden><\/p>/);
   assert.match(formSteps, /target\.focus\(\{ preventScroll: true \}\);/);
