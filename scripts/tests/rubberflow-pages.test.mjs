@@ -76,10 +76,14 @@ test("the module registers a sandbox-only standalone page, refuses users outside
   assert.equal(env.module.nav[0].subnav("rubberflow"), "", "no sub-menu before a persona is chosen");
   const html = await env.render();
   assert.match(html, /<shell path="rubberflow" title="RubberFlow MES">/);
-  assert.match(html, /<h1>เลือกบทบาทสาธิต<\/h1>/, "the chooser is the page's single h1");
+  assert.match(html, /<h1>RubberFlow MES<\/h1>/, "the intro card is the page's single h1");
   assert.equal((html.match(/<h1>/g) ?? []).length, 1);
-  assert.equal((html.match(/data-rf-user-pick=/g) ?? []).length, 9);
-  assert.doesNotMatch(html, /rf-toolbar/, "no toolbar before a persona is chosen");
+  // D1: เลือกบทบาทจากช่องในแถบเครื่องมือ ไม่มีหน้าตารางบทบาทเต็มจอ และยังไม่มีสแกน/แจ้งเตือนก่อนรู้บทบาท
+  assert.match(html, /<select[^>]*data-rf-user/, "the role is picked from the toolbar select");
+  assert.equal((html.match(/<option value="[^"]+"/g) ?? []).length, 9, "nine demo roles besides the empty placeholder");
+  assert.doesNotMatch(html, /data-rf-user-pick|rf-role-grid/, "no full-page role grid");
+  assert.doesNotMatch(html, /data-rf-scan|data-rf-reset/, "scan, alerts and reset wait for a persona");
+  assert.equal(env.module.nav[0].group, "ทดสอบ", "listed under the test group in the side menu");
   const outside = load({ sandbox: false });
   await outside.render();
   assert.equal(outside.log.notFound, 1);
@@ -318,4 +322,18 @@ test("pages carry their module hue, and the side menu, page head and callouts us
   assert.match(gated, new RegExp(`<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("warning")}</span></span><div class="rf-callout-body"><strong>Gatekeeper:`));
   assert.match(await env.render(), /<div class="rf-page" data-rf-mod="dashboard">/);
   env.store.setUser(null);
+});
+
+test("RubberFlow and BOM stay admin test-mode only: menu, page and test mode all refuse everyone else", async () => {
+  // ผู้ใช้ต้องการให้สองโมดูลนี้เห็นเฉพาะ admin ในโหมดทดสอบ จนกว่าจะตัดสินใจเปิดใช้จริง — เทสต์นี้กันการเอาชั้นใดชั้นหนึ่งออกโดยไม่ตั้งใจ
+  const { readFileSync } = await import("node:fs");
+  const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+  const app = read("app.js");
+  assert.match(app, /\.filter\(\(item\) => !item\.sandboxOnly \|\| isSandboxMode\(\)\)/, "the side menu drops sandboxOnly items outside test mode");
+  assert.match(app, /if \(state\.employee\?\.role\?\.code !== "admin" \|\| state\.employee\.labOnly\) return;/, "only an admin can enter test mode");
+  for (const file of ["modules/module-rubberflow.js", "modules/module-bom.js"]) {
+    const source = read(file);
+    assert.match(source, /if \(!state\.employee\?\.isSandbox\) return renderNotFound\(\);/, `${file} refuses a typed URL outside test mode`);
+    assert.match(source, /nav: \[\{[^\]]*sandboxOnly: true/, `${file} keeps its menu test-mode only`);
+  }
 });

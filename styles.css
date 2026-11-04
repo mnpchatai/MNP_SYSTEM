@@ -370,6 +370,8 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .sidebar .brand { height: 64px; padding: 0 18px; border-bottom: 1px solid var(--soft-line); }
 .nav { padding: 16px 11px; }
 .nav-label { padding: 0 10px 7px; color: var(--quiet); font-size: var(--text-caption); font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+/* หัวกลุ่มในเมนูข้าง (เช่น "ทดสอบ" ของ RubberFlow/BOM) เว้นจากรายการก่อนหน้า */
+.nav-group-label { margin-top: 14px; }
 .nav-link { min-height: 44px; margin: 2px 0; padding: 0 10px; display: flex; align-items: center; gap: 10px; color: var(--muted); border-radius: var(--radius-md); font-size: var(--text-ui); }
 .nav-link:hover { color: var(--ink); background: var(--paper); }
 .nav-link.active { color: var(--primary-ink); background: var(--primary-soft); font-weight: 600; }
@@ -2080,9 +2082,9 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .rf-page { --rf-accent: #0f766e; --rf-accent-2: #115e59; --rf-accent-soft: #e0f2ef; }
 :root[data-theme="dark"] .rf-page { --rf-accent: #2dd4bf; --rf-accent-2: #5eead4; --rf-accent-soft: rgba(45, 212, 191, .16); }
 .rf-head { padding-bottom: 8px; }
-.rf-brand { min-width: 34px; height: 26px; padding: 0 8px; display: inline-grid; place-items: center; color: #fff; background: var(--rf-accent); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 800; letter-spacing: .04em; }
 .rf-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .rf-persona { display: flex; align-items: center; gap: 8px; font-size: var(--text-caption); font-weight: 600; color: var(--muted); }
+.rf-persona > span { white-space: nowrap; }
 .rf-persona .select { min-width: 220px; }
 .rf-scan { flex: 1 1 280px; display: flex; gap: 6px; }
 .rf-scan .input { flex: 1; min-width: 0; }
@@ -2090,11 +2092,6 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .rf-alerts-btn.is-bad { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
 .rf-pagenav { display: none; flex-wrap: wrap; gap: 6px; }
 .rf-login { max-width: 760px; }
-.rf-login h2 { margin: 0 0 6px; }
-.rf-role-grid { margin-top: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.rf-role { min-height: 56px; padding: 8px 10px; display: grid; gap: 2px; text-align: left; color: var(--ink); background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-md); font: inherit; font-size: var(--text-meta); cursor: pointer; }
-.rf-role:hover, .rf-role:focus-visible { border-color: var(--rf-accent); background: var(--rf-accent-soft); outline: none; }
-.rf-role span { font-size: var(--text-caption); }
 
 /* โครง */
 .rf-pagehead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px; }
@@ -2249,7 +2246,6 @@ a.rf-step:hover { border-color: var(--rf-accent); }
   .rf-g2, .rf-g3, .rf-g4, .rf-flow { grid-template-columns: 1fr; }
   /* การ์ดตัวเลข KPI เป็น 2×2 บนมือถือ ไม่ให้ 4 ใบกินจอแรกทั้งจอ */
   .rf-g4:has(> .rf-stat) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .rf-role-grid { grid-template-columns: 1fr 1fr; }
   .rf-persona .select { min-width: 0; flex: 1; }
   .rf-persona { width: 100%; }
   .rf-tag { grid-template-columns: 1fr; }
@@ -2272,9 +2268,6 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-page .empty { padding: 28px 16px; }
 .rf-page .filter { min-height: 32px; padding: 0 10px; }
 .rf-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.rf-head-main { min-width: 0; display: grid; gap: 3px; }
-.rf-title { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.rf-title h1 { margin: 0; font-size: var(--text-heading); line-height: 1.3; letter-spacing: -.01em; overflow-wrap: anywhere; }
 .rf-sub { margin: 0; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; }
 /* ช่องตัวเลขเทียบสเปกขณะพิมพ์ */
 .rf-page .input.rf-ok, .rf-modal .input.rf-ok { border-color: var(--success); background: var(--success-soft); }
@@ -2300,7 +2293,6 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-spc-scroll { overflow-x: auto; }
 .rf-spc-scroll .rf-spc-chart { min-width: 600px; }
 .rf-spc-pick { min-width: 260px; }
-.rf-app-name { font-size: var(--text-title); font-weight: 700; line-height: 1.3; }
 .rf-page .nowrap { white-space: nowrap; }
 
 /* ===================== RubberFlow: ดีไซน์ (กรอบเดียวกับระบบหลัก + สีโมดูลเป็นเครื่องหมาย) =====================
@@ -2346,7 +2338,6 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-head, .rf-page .rf-toolbar, .rf-page .rf-pagenav, .rf-page .rf-pagehead { margin: 0 calc(-1 * var(--rf-pad-x)); padding-left: var(--rf-pad-x); padding-right: var(--rf-pad-x); color: var(--rf-band-ink); background: var(--rf-band); }
 .rf-page .rf-head { padding-top: 18px; padding-bottom: 12px; align-items: center; border-bottom: 0; }
 .rf-page .rf-sub { color: var(--rf-band-muted); }
-.rf-page .rf-brand { color: #fff; background: var(--primary-strong); }
 .rf-page .rf-head .rf-toolbar { margin: 0; padding: 0; }
 /* มือถือ: ตารางของ RubberFlow/BOM เป็นการ์ดเรียงลง ชื่อคอลัมน์มาจาก data-label (ui.labelTables)
    แท็บเลื่อนข้างเป็นแถวเดียว และป้าย "บทบาทสาธิต" ซ่อนให้เหลือแค่ตัวเลือก (ชื่อยังอยู่ใน <label>) */

@@ -6,7 +6,8 @@
 // สิทธิ์ที่ตรวจในนี้เป็นแค่ส่วนที่หน้าจอต้องเห็น (ขั้นของฉัน ขั้นปัจจุบัน ความเห็นบังคับ ลำดับสถานะ) ใช้รหัส error เดียวกับ RPC จริงเพื่อให้ข้อความตรงกัน
 // แต่หลวมกว่า RPC จริง เช่น การมอบหมายช่างครั้งแรกไม่บังคับแผนดำเนินงาน/วันที่ และลิงก์ "ดาวน์โหลด" ไฟล์แนบใช้ไม่ได้ (data:/blob: URL)
 
-export function createMockSupabase({ empty = false, now = () => Date.now(), warn = () => {}, objectUrl = null } = {}) {
+// sandbox = admin อยู่ในโหมดทดสอบ (?sandbox=1): ผู้ใช้จำลองเป็น admin และทำหน้าที่เป็นบัญชีทดสอบ จึงเห็นโมดูลทดสอบ (RubberFlow, BOM)
+export function createMockSupabase({ empty = false, sandbox = false, now = () => Date.now(), warn = () => {}, objectUrl = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -26,6 +27,7 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
   const roles = [
     ["role-dm", "department_manager", "ผู้จัดการแผนก"], ["role-sup", "supervisor", "หัวหน้างาน"], ["role-tech", "technician", "ช่าง"],
     ["role-staff", "staff", "พนักงาน"], ["role-fm", "factory_manager", "ผู้จัดการโรงงาน"], ["role-gm", "general_manager", "ผู้จัดการทั่วไป"],
+    ["role-admin", "admin", "ผู้ดูแลระบบ"],
   ].map(([id, code, name_th], index) => ({ id, code, name_th, sort_order: index + 1 }));
   // แผนกที่เป็นจุดแจ้งซ่อมได้ต้องมีรหัสตรงกับ REPAIR_DEPARTMENT_OPTIONS ของ modules/module-mt.js ปุ่มเลือกแผนกจึงขึ้น
   const departments = [
@@ -51,6 +53,7 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
     email: `${id}@example.test`, phone: "", is_active: true, auth_user_id: `u${index + 1}`,
   }));
   const ME = employees[0];
+  if (sandbox) ME.role_id = "role-admin";
   const personName = (id) => { const person = employees.find((row) => row.id === id); return person ? `${person.first_name} ${person.last_name}` : null; };
   const request_types = [
     ["t-mt", "MT_REPAIR", "MT", "แจ้งซ่อม", "งานซ่อมเครื่องจักรและอาคาร", true, "dep-mt"],
@@ -320,7 +323,12 @@ export function createMockSupabase({ empty = false, now = () => Date.now(), warn
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
     app_lab_only: () => false,
-    app_sandbox_status: () => null,
+    // โหมดทดสอบ: ทำหน้าที่เป็นบัญชีทดสอบ (ใช้แถวของผู้ใช้จำลองเอง) — หน้าเว็บตั้ง state.employee เป็น persona นี้
+    app_sandbox_status: () => {
+      if (!sandbox) return null;
+      const persona = { ...expand("employees", ME), id: "persona-1", job_title: "บัญชีทดสอบ ผู้จัดการแผนก" };
+      return { active: true, persona, personas: [persona] };
+    },
     // อนุมัติ/รับทราบขั้นกลางเลื่อน current_step อย่างเดียว ไม่มีแถวประวัติ (เหมือนฐานข้อมูลจริง ดู buildRequestTimeline ใน app.js)
     // ขั้นสุดท้าย ไม่อนุมัติ และขอข้อมูลเพิ่ม เปลี่ยนสถานะคำร้องและเพิ่มแถว request_status_history
     // หน้ารออนุมัติ (อนุมัติหลายรายการ) เรียก RPC นี้ทีละขั้นเช่นกัน
@@ -528,6 +536,7 @@ export function installMockSupabase(win, create) {
   };
   const { client } = create({
     empty: new win.URLSearchParams(win.location.search).has("empty"),
+    sandbox: new win.URLSearchParams(win.location.search).has("sandbox"),
     warn: (message) => win.console.warn(message),
     objectUrl: (file) => win.URL.createObjectURL(file),
   });

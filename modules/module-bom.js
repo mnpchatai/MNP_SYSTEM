@@ -9,7 +9,6 @@
 (function registerBomModule() {
   const PATH = "bom";
   const TITLE = "BOM รายแผนก";
-  const SUBTITLE = "item master · BOM หลายชั้น · ใบสั่งผลิต · งานรายแผนก (รุ่นทดสอบ)";
   const THEME = ["#3f51b5", "#283593"];
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6v4H4zM14 3h6v4h-6zM14 10h6v4h-6zM14 17h6v4h-6z"/><path d="M10 7h2v13h2M12 12h2M12 5h2"/></svg>`;
 
@@ -197,19 +196,22 @@
   function toolbarHtml(ctx) {
     const { data, user } = ctx;
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
+    const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
+    // ยังไม่เลือกบทบาท: มีแค่ช่องเลือกบทบาท
+    if (!user) return `<div class="rf-toolbar">${persona}</div>`;
     return `<div class="rf-toolbar">
-        <label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>
+        ${persona}
         <div class="rf-row">
           <a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a>
           <button class="btn rf-btn secondary" type="button" data-rf-reset title="ล้างข้อมูลที่บันทึกในเบราว์เซอร์นี้ (รวมที่นำเข้าจาก Excel) แล้วสร้างข้อมูลสาธิตใหม่">รีเซ็ตข้อมูลสาธิต</button>
         </div>
       </div>`;
   }
-  function chooserHtml(data) {
-    const roles = data.users.map((row) => `<button class="rf-role" type="button" data-rf-user-pick="${escapeHtml(row.id)}"><strong>${escapeHtml(storeApi.ROLES[row.role]?.label ?? row.role)}</strong><span class="muted">${escapeHtml(row.name)}</span></button>`).join("");
-    return `<section class="card rf-card rf-login"><h1>เลือกบทบาทสาธิต</h1>
+  // ไม่ได้เลือกบทบาท: บอกว่าโมดูลนี้คืออะไร ส่วนการเลือกบทบาทสาธิตอยู่ในช่องของแถบเครื่องมือด้านบน (ไม่มีหน้าเลือกบทบาทแยก)
+  function introHtml() {
+    return `<section class="card rf-card rf-login"><h1>${escapeHtml(TITLE)}</h1>
       <p class="muted">รุ่นทดสอบของระบบ BOM รายแผนก: item master เดียว · BOM หลายชั้นที่แต่ละแผนกเป็นเจ้าของชั้นของตนและมี revision/อนุมัติ · ใบสั่งผลิต (PI) ระเบิด BOM แล้วปล่อยเป็นงานรายแผนก · งาน RB ส่งต่อเป็นใบสั่งผลิตใน RubberFlow ข้อมูลเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น (นำเข้า BOM จริงจากชีต Excel ได้ที่เมนู “นำเข้าจาก Excel”)</p>
-      <div class="rf-role-grid">${roles}</div></section>`;
+      <p>เลือกบทบาทสาธิตจากช่องด้านบนเพื่อเริ่ม แต่ละบทบาทเห็นเมนูต่างกัน</p></section>`;
   }
   function deniedHtml(user) {
     return `<section class="card rf-card"><h1>ไม่มีสิทธิ์เข้าถึงหน้านี้</h1><p class="muted">บทบาท “${escapeHtml(storeApi.ROLES[user.role]?.label ?? user.role)}” เข้าถึงได้เฉพาะเมนูที่แสดงในแถบข้าง</p>
@@ -249,11 +251,6 @@
       if (user && !storeApi.canSee(user, page)) location.hash = url(storeApi.homeOf(user));
       else renderRoute();
     });
-    root.querySelectorAll("[data-rf-user-pick]").forEach((button) => button.addEventListener("click", () => {
-      const user = store.setUser(button.dataset.rfUserPick);
-      location.hash = url(storeApi.homeOf(user));
-      renderRoute();
-    }));
     root.querySelector("[data-rf-reset]")?.addEventListener("click", async () => {
       if (!(await confirmDialog({ title: "ล้างข้อมูลที่บันทึกทั้งหมด (รวมที่นำเข้าจาก Excel) แล้วสร้างข้อมูลสาธิตใหม่?", confirmLabel: "ล้างข้อมูล", danger: true }))) return;
       store.reset();
@@ -271,7 +268,7 @@
     const title = entry && user ? `${TITLE} / ${entry.label}` : TITLE;
     let body;
     let bind = null;
-    if (!user) body = chooserHtml(ctx.data);
+    if (!user) body = introHtml();
     else if (!entry) {
       location.hash = url(storeApi.homeOf(user));
       return undefined;
@@ -282,7 +279,8 @@
       body = `${pageNavHtml(user, page)}${built.html}`;
       bind = built.bind ?? null;
     }
-    const head = `<header class="rf-head"><div class="rf-head-main"><div class="rf-title"><span class="rf-brand" aria-hidden="true">BOM</span><strong class="rf-app-name">${escapeHtml(TITLE)}</strong></div><p class="rf-sub">${escapeHtml(SUBTITLE)}</p></div>${user ? toolbarHtml(ctx) : ""}</header>`;
+    // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต ลิงก์ RubberFlow รีเซ็ต)
+    const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
     app.innerHTML = shell(`<div class="rf-page bom-page" data-rf-mod="${escapeHtml(entry && user ? `bom-${page}` : "")}">${head}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
@@ -301,7 +299,8 @@
     sandbox: true,
     label: TITLE,
     theme: THEME,
-    nav: [{ path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, subnav: sidebarNav }],
+    // group: หัวกลุ่ม "ทดสอบ" ในเมนูข้าง — sandboxOnly ต้องคงไว้: เห็นเฉพาะ admin ในโหมดทดสอบ
+    nav: [{ path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav }],
     pages: { [PATH]: renderBom },
   };
 })();
