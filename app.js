@@ -2625,7 +2625,9 @@ async function renderNewRequest(params) {
     } else {
       const separateModule = requestModule(selected.code);
       const formContext = await loadModuleFormContext(separateModule);
-      body = genericRequestFormHtml(selected, separateModule, formContext);
+      body = ORIGINAL_FORM_TYPES.has(selected.code)
+        ? originalRequestFormHtml(selected, separateModule, formContext)
+        : genericRequestFormHtml(selected, separateModule, formContext);
     }
 
     app.innerHTML = shell(`<a class="request-back-link" href="${escapeHtml(requestCenterUrl(params))}">‹ กลับรายการคำร้อง</a>${heading}${body}`, "requests", "คำร้อง / สร้างคำร้อง");
@@ -2657,13 +2659,80 @@ async function renderNewRequest(params) {
       setDocNumberBox("request-doc-number", "—");
     });
 
-    bindGenericRequestForm(selected, employee);
+    if (ORIGINAL_FORM_TYPES.has(selected.code)) bindOriginalRequestForm(selected, employee);
+    else bindGenericRequestForm(selected, employee);
   }
 
   await paint();
 }
 
-// ฟอร์มคำร้องทั่วไป (IT, ใบคำร้องถึงฝ่ายบริหาร และประเภทที่ใช้ form_schema) ทีละ 3 ขั้นบนจอแคบ หน้าเดียวบนจอกว้าง
+// ประเภทที่ยังใช้ฟอร์มหน้าเดียวแบบเดิม (ไม่ใช่ฟอร์มทีละขั้น): ใบแจ้งซ่อม IT — ทีม IT ออกแบบ flow ของตัวเอง
+// ใน repo work-order แล้วจะนำมา commit ใน MNP_SYSTEM ภายหลัง จึงไม่ปรับฟอร์มนี้จากฝั่งนี้
+const ORIGINAL_FORM_TYPES = new Set(["IT_REPAIR"]);
+
+function originalRequestFormHtml(selected, separateModule, formContext) {
+  const detailFieldsHtml = separateModule?.renderFields ? separateModule.renderFields({ escapeHtml }) : dynamicDetailFields(selected.form_schema);
+  return `
+    <section class="card" style="max-width:900px;margin:auto"><div id="request-message" role="status"></div><form id="request-form">
+      <div class="form-grid">
+        <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
+        <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
+        <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+        <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
+        ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
+        <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
+      </div>
+      ${separateModule?.renderFormSections ? separateModule.renderFormSections(formContext, { escapeHtml }) : ""}
+      <div class="form-actions"><a class="btn secondary" href="#/requests">ยกเลิก</a><button class="btn" type="submit">ส่งคำร้อง</button></div>
+    </form></section>`;
+}
+
+function bindOriginalRequestForm(selected, employee) {
+  document.querySelector("#request-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    let attachments;
+    try {
+      attachments = optionalAttachments(values.getAll("attachment"));
+    } catch (attachmentError) {
+      document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(attachmentError))}</div>`;
+      return;
+    }
+    const details = {};
+    form.querySelectorAll(".detail-field").forEach((input) => { if (input.value.trim()) details[input.name] = input.value.trim(); });
+    const ccDepartmentIds = [...form.querySelectorAll(".cc-department-checkbox:checked")].map((input) => input.value);
+    setFormBusy(form, true);
+    try {
+      const { data, error: createError } = await sb.rpc("app_create_request", {
+        p_type_id: selected.id,
+        p_title: String(values.get("title") ?? "").trim(),
+        p_description: String(values.get("description") ?? "").trim(),
+        p_priority: values.get("priority") ?? "normal",
+        p_details: details,
+        p_cc_department_ids: ccDepartmentIds,
+      });
+      if (createError) throw createError;
+      triggerNotificationEmails(data);
+      if (attachments.length) {
+        const uploaded = await uploadAttachmentBatch(attachments, (file) => uploadRequestAttachment(data, file, employee.id));
+        if (uploaded.failed.length) {
+          showToast(`สร้างคำร้องแล้ว แต่${attachmentBatchFailureText(uploaded)} · กรุณาแนบใหม่ในหน้ารายละเอียด`, "error");
+          go(`request?id=${encodeURIComponent(data)}`);
+          return;
+        }
+      }
+      const attachedNote = attachments.length > 1 ? ` ${attachments.length} ไฟล์` : "";
+      showToast(attachments.length ? `สร้างคำร้องและแนบไฟล์${attachedNote}สำเร็จ` : "สร้างคำร้องสำเร็จ");
+      go(`request?id=${encodeURIComponent(data)}`);
+    } catch (submitError) {
+      document.querySelector("#request-message").innerHTML = `<div class="form-message error">${escapeHtml(friendlyError(submitError))}</div>`;
+      setFormBusy(form, false);
+    }
+  });
+}
+
+// ฟอร์มคำร้องทั่วไปแบบทีละขั้น (ใบคำร้องถึงฝ่ายบริหาร และประเภทที่ใช้ form_schema) 3 ขั้นบนจอแคบ หน้าเดียวบนจอกว้าง
 // ขั้น 1 เรื่องอะไร · ขั้น 2 ไฟล์แนบ ความสำคัญ และส่วนเพิ่มของโมดูล (เช่น สำเนาถึงแผนก) · ขั้น 3 ทบทวนก่อนส่ง
 // ส่งไป app_create_request ด้วยช่องเดิมทุกช่อง — โครงเดียวกับฟอร์มแจ้งซ่อม MT (modules/form-steps.js)
 function genericRequestFormHtml(selected, separateModule, formContext) {

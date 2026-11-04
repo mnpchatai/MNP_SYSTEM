@@ -172,3 +172,11 @@ test("the shared step buttons and head carry the hooks bindStepper looks for", (
   assert.match(actions, /href="#\/ncr"/);
   assert.match(actions, /ออก &lt;NCR&gt;/, "the submit label is escaped");
 });
+
+test("the IT repair form stays the original one-page form", async () => {
+  // ทีม IT ออกแบบ flow ของตัวเองใน repo work-order แล้วจะนำมาใส่เอง ฟอร์มทีละขั้นต้องไม่ถูกใช้กับ IT_REPAIR
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync(new URL("../../app.js", import.meta.url), "utf8");
+  assert.match(app, /const ORIGINAL_FORM_TYPES = new Set\(\["IT_REPAIR"\]\);/);
+  assert.match(app, /ORIGINAL_FORM_TYPES\.has\(selected\.code\)\s*\n?\s*\? originalRequestFormHtml/);
+});
