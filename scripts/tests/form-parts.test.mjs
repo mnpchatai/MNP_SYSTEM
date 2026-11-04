@@ -180,3 +180,29 @@ test("the IT repair form stays the original one-page form", async () => {
   assert.match(app, /const ORIGINAL_FORM_TYPES = new Set\(\["IT_REPAIR"\]\);/);
   assert.match(app, /ORIGINAL_FORM_TYPES\.has\(selected\.code\)\s*\n?\s*\? originalRequestFormHtml/);
 });
+
+test("check rules catch values that are filled in but wrong, including against another field", () => {
+  // กติกาจำนวนของ NCR ชุดเดียวกับ app_ncr_issue: ทั้งหมด > 0, พบปัญหา > 0 และไม่เกินทั้งหมด, สุ่มไม่บังคับแต่ถ้ากรอกต้องไม่เกินทั้งหมด
+  const qty = steps.numberOf;
+  const within = (value, values) => !(qty(values.qty_total) > 0) || qty(value) <= qty(values.qty_total);
+  const rules = [
+    { name: "qty_total", step: 2, required: true, message: "ใส่จำนวนทั้งหมด", check: (value) => qty(value) > 0, checkMessage: "ทั้งหมดต้องมากกว่า 0" },
+    { name: "qty_sampled", step: 2, check: (value, values) => qty(value) > 0 && within(value, values), checkMessage: "สุ่มเกินทั้งหมด" },
+    { name: "qty_defect", step: 2, required: true, message: "ใส่จำนวนที่พบปัญหา", check: (value, values) => qty(value) > 0 && within(value, values), checkMessage: "พบปัญหาเกินทั้งหมด" },
+  ];
+  const messages = (values) => steps.validate(rules, values).map((error) => error.message);
+  assert.deepEqual(messages({ qty_total: "10", qty_sampled: "", qty_defect: "12" }), ["พบปัญหาเกินทั้งหมด"], "more defects than the total is caught");
+  assert.deepEqual(messages({ qty_total: "1,000", qty_sampled: "50", qty_defect: "12" }), [], "thousands separators count like the database does");
+  assert.deepEqual(messages({ qty_total: "0", qty_sampled: "", qty_defect: "" }), ["ทั้งหมดต้องมากกว่า 0", "ใส่จำนวนที่พบปัญหา"]);
+  assert.deepEqual(messages({ qty_total: "10", qty_sampled: "20", qty_defect: "abc" }), ["สุ่มเกินทั้งหมด", "พบปัญหาเกินทั้งหมด"], "text in a number field fails the check");
+  assert.deepEqual(messages({ qty_total: "", qty_sampled: "5", qty_defect: "5" }), ["ใส่จำนวนทั้งหมด"], "without a total, the others are not compared");
+  assert.ok(Number.isNaN(steps.numberOf("")) && Number.isNaN(steps.numberOf(null)));
+});
+
+test("an optional date is checked only when filled, so a past needed date from an old draft is caught", () => {
+  const today = "2026-11-04";
+  const rules = [{ name: "needed_date", step: 2, check: (value) => value >= today, checkMessage: "ต้องเป็นวันนี้หรือหลังจากนี้" }];
+  assert.deepEqual(steps.validate(rules, { needed_date: "" }), []);
+  assert.deepEqual(steps.validate(rules, { needed_date: "2026-11-04" }), []);
+  assert.equal(steps.validate(rules, { needed_date: "2026-11-03" })[0].message, "ต้องเป็นวันนี้หรือหลังจากนี้");
+});

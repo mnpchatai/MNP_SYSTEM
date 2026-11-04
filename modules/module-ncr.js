@@ -185,10 +185,31 @@
   // ฟอร์มออก NCR ทีละขั้นบนจอแคบ (หน้าเดียวบนจอกว้าง): ขั้น 1 สินค้าและล็อต · ขั้น 2 ปัญหาที่พบ · ขั้น 3 หลักฐาน · ขั้น 4 ทบทวน
   // ช่องเดิมทุกช่องและส่ง app_ncr_issue ด้วยค่าเดิม — โครงเดียวกับฟอร์มแจ้งซ่อม MT (modules/form-steps.js)
   const REQUIRED = '<span class="field-required">(จำเป็น)</span>';
+  // ค่าตามที่ฐานข้อมูลจะเก็บจริง (numeric(14,3)): ปัดทศนิยม 3 ตำแหน่ง เกินช่วงของคอลัมน์ = ใช้ไม่ได้ (NaN ไม่ผ่านทุกกติกา)
+  // ฐานข้อมูลตรวจสองชั้น: app_ncr_issue เทียบค่าที่ส่งมา (ดิบ) แล้ว CHECK ของตารางเทียบค่าที่เก็บเป็น numeric(14,3) (ปัด 3 ตำแหน่ง)
+  // ฝั่งฟอร์มจึงต้องให้ผ่านทั้งสองแบบ ไม่ยอมรับค่าที่ฐานข้อมูลจะปฏิเสธ และไม่ปฏิเสธค่าที่ฐานข้อมูลรับ
+  const qty = (value) => {
+    const raw = window.MNP_FORM_STEPS.numberOf(value);
+    const stored = Math.round(raw * 1000) / 1000;
+    return Number.isFinite(raw) && Math.abs(stored) < 1e11 ? { raw, stored } : null;
+  };
+  const both = (value, test) => { const number = qty(value); return Boolean(number) && test(number.raw) && test(number.stored); };
+  const positive = (value) => both(value, (number) => number > 0);
+  const nonNegative = (value) => both(value, (number) => number >= 0);
+  // จำนวนทั้งหมดยังไม่ได้กรอก/ไม่ถูก: ไม่เทียบ (ช่องจำนวนทั้งหมดบอกข้อผิดของตัวเองแล้ว)
+  const withinTotal = (value, values) => {
+    const total = qty(values.qty_total);
+    const number = qty(value);
+    if (!positive(values.qty_total)) return true;
+    return Boolean(number) && number.raw <= total.raw && number.stored <= total.stored;
+  };
   const ISSUE_RULES = [
     { name: "product_name", step: 1, required: true, minLength: 2, message: "กรุณาใส่ชื่อสินค้า/วัตถุดิบ อย่างน้อย 2 ตัวอักษร" },
-    { name: "qty_total", step: 2, required: true, message: "กรุณาใส่จำนวนทั้งหมด" },
-    { name: "qty_defect", step: 2, required: true, message: "กรุณาใส่จำนวนที่พบปัญหา" },
+    // จำนวน: กติกาเดียวกับ app_ncr_issue (20261002020000_ncr_phase1.sql) ผิดแล้วรู้ในช่องนั้น ไม่ต้องรอฐานข้อมูลปฏิเสธทั้งใบ
+    { name: "qty_total", step: 2, required: true, message: "กรุณาใส่จำนวนทั้งหมด", check: (value) => positive(value), checkMessage: "จำนวนทั้งหมดต้องมากกว่า 0" },
+    { name: "qty_sampled", step: 2, check: (value, values) => positive(value) && withinTotal(value, values), checkMessage: "จำนวนสุ่มต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
+    { name: "qty_defect", step: 2, required: true, message: "กรุณาใส่จำนวนที่พบปัญหา", check: (value, values) => positive(value) && withinTotal(value, values), checkMessage: "จำนวนที่พบปัญหาต้องมากกว่า 0 และไม่เกินจำนวนทั้งหมด" },
+    { name: "qty_returned", step: 2, check: (value, values) => nonNegative(value) && withinTotal(value, values), checkMessage: "จำนวนที่ส่งคืนต้องไม่ติดลบและไม่เกินจำนวนทั้งหมด" },
     { name: "unit", step: 2, required: true, message: "กรุณาเลือกหน่วย" },
     { name: "defect_type", step: 2, required: true, message: "กรุณาเลือกประเภทข้อบกพร่อง" },
     { name: "source", step: 2, required: true, message: "กรุณาเลือกแหล่งที่พบ" },
@@ -227,7 +248,7 @@
             ${text("qty_defect", "จำนวนที่พบปัญหา", { required: true, type: "number" })}
             ${text("qty_returned", "จำนวนที่ส่งคืน", { type: "number" })}
             <div class="field" data-field="unit"><label for="ncr-unit">หน่วย ${REQUIRED}</label><select class="select" id="ncr-unit" name="unit"><option value="">— เลือก —</option>${UNITS.map((unit) => `<option>${escapeHtml(unit)}</option>`).join("")}</select></div>
-            <div class="field" data-field="defect_type"><label for="ncr-defect-type">ประเภทข้อบกพร่อง ${REQUIRED}</label><select class="select" id="ncr-defect-type" name="defect_type"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${escapeHtml(type.code)}">${escapeHtml(type.name_th)}</option>`).join("")}</select></div>
+            <div class="field" data-field="defect_type"><label for="ncr-defect-type">ประเภทข้อบกพร่อง ${REQUIRED}</label><select class="select" id="ncr-defect-type" name="defect_type"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${escapeHtml(type.code)}">${escapeHtml(type.name_th)}</option>`).join("")}</select>${defectTypes.length ? "" : '<small class="field-hint is-warning">ยังไม่มีประเภทข้อบกพร่องในระบบ จึงออก NCR ไม่ได้ แจ้งฝ่าย QA หรือผู้ดูแลระบบให้เพิ่มก่อน</small>'}</div>
             <fieldset class="field full ncr-fieldset" data-field="source"><legend>แหล่งที่พบ ${REQUIRED}</legend>${radiosHtml("source", SOURCES)}</fieldset>
             <div class="field full" data-field="description"><label for="ncr-description">รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง) ${REQUIRED}</label><textarea class="textarea" id="ncr-description" name="description" maxlength="5000" rows="4"></textarea></div>
           </div>
@@ -284,7 +305,11 @@
     // ---- ร่างบนเครื่อง ----
     const drafts = draftApi.createDraftStore({ key: draftApi.draftKey("NCR_CAR", state.employee.id) });
     const autosave = draftApi.createAutosave({ store: drafts, values: currentValues });
-    form.addEventListener("input", () => autosave.schedule());
+    form.addEventListener("input", (event) => {
+      autosave.schedule();
+      // แก้จำนวนทั้งหมด: ข้อความ "ไม่เกินจำนวนทั้งหมด" ของช่องอื่นอาจไม่จริงแล้ว ล้างไว้ก่อน ตรวจใหม่ตอนกดถัดไป/ส่ง
+      if (event.target.name === "qty_total") ["qty_sampled", "qty_defect", "qty_returned"].forEach((name) => stepsApi.clearFieldError(form, name));
+    });
     form.addEventListener("change", () => autosave.schedule());
     const restoreDraft = (values) => {
       ISSUE_FIELDS.forEach((name) => {
@@ -1002,7 +1027,8 @@
     renderCenterList: (params) => renderList(params, true),
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
-    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht },
+    // ISSUE_RULES เปิดให้เทสต์ตรวจกติกาจริงของฟอร์มออก NCR (scripts/tests/ncr-detail-page.test.mjs)
+    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht, ISSUE_RULES },
 
     pages: {
       async ncr(params) {

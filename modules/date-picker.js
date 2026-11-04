@@ -106,6 +106,8 @@
     const paintButton = () => {
       button.innerHTML = `<span id="${id}-value">${input.value ? escapeHtml(label(input.value)) : '<span class="date-pick-empty">เลือกวันที่</span>'}</span><span class="date-pick-icon" aria-hidden="true">${root.MNP_UI_ICONS?.icon("calendar") ?? ""}</span>`;
     };
+    // input.min (YYYY-MM-DD): วันก่อนหน้านั้นเลือกไม่ได้ — ยังโฟกัสด้วยคีย์บอร์ดผ่านได้ (aria-disabled ไม่ใช่ disabled) และโปรแกรมอ่านจอบอกว่าเลือกไม่ได้
+    const tooEarly = (iso) => isIso(input.min) && iso < input.min;
     const paintPopup = () => {
       const today = todayIso();
       popup.innerHTML = `<div class="date-pick-head">
@@ -115,7 +117,7 @@
         </div>
         <table class="date-pick-grid" role="grid" aria-label="${escapeHtml(monthTitle(focused))}">
           <thead><tr>${WEEKDAYS.map((day, index) => `<th scope="col" abbr="${WEEKDAYS_FULL[index]}">${day}</th>`).join("")}</tr></thead>
-          <tbody>${monthMatrix(focused).map((week) => `<tr>${week.map((cell) => `<td><button type="button" class="date-pick-day${cell.inMonth ? "" : " is-outside"}${cell.iso === today ? " is-today" : ""}" data-date="${cell.iso}" tabindex="${cell.iso === focused ? 0 : -1}" aria-pressed="${cell.iso === input.value}"${cell.iso === today ? ' aria-current="date"' : ""} aria-label="${escapeHtml(fullLabel(cell.iso))}${cell.iso === today ? " (วันนี้)" : ""}">${parts(cell.iso).day}</button></td>`).join("")}</tr>`).join("")}</tbody>
+          <tbody>${monthMatrix(focused).map((week) => `<tr>${week.map((cell) => `<td><button type="button" class="date-pick-day${cell.inMonth ? "" : " is-outside"}${cell.iso === today ? " is-today" : ""}" data-date="${cell.iso}" tabindex="${cell.iso === focused ? 0 : -1}" aria-pressed="${cell.iso === input.value}"${cell.iso === today ? ' aria-current="date"' : ""}${tooEarly(cell.iso) ? ' aria-disabled="true"' : ""} aria-label="${escapeHtml(fullLabel(cell.iso))}${cell.iso === today ? " (วันนี้)" : ""}${tooEarly(cell.iso) ? " (เลือกไม่ได้)" : ""}">${parts(cell.iso).day}</button></td>`).join("")}</tr>`).join("")}</tbody>
         </table>
         <div class="date-pick-foot"><button type="button" class="btn secondary small" data-pick="today">วันนี้</button>${input.value ? `<button type="button" class="btn secondary small" data-pick="clear">ล้าง</button>` : ""}</div>`;
     };
@@ -136,6 +138,7 @@
       popup.scrollIntoView?.({ block: "nearest" });
     };
     const choose = (iso) => {
+      if (iso && tooEarly(iso)) return;
       input.value = iso;
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));

@@ -465,6 +465,9 @@
       // ตั้งค่าท้ายฟังก์ชัน (หลัง renderReview) — handler ทุกตัวเรียกใช้ตอนผู้ใช้กด จึงมีค่าแล้วเสมอ
       let stepper = null;
 
+      // วันที่ต้องการใช้งานย้อนหลังไม่มีความหมาย: ตัวเลือกวันที่เริ่มที่วันนี้ (เวลาไทย) และตรวจซ้ำตอนส่ง (ร่างเก่าอาจมีวันที่ผ่านไปแล้ว)
+      const todayIso = window.MNP_DATE_PICKER?.todayIso() ?? "";
+      if (todayIso) neededDate.min = todayIso;
       window.MNP_DATE_PICKER?.enhance(neededDate);
 
       // ---- ช่องตรวจ: ช่องซ่อน (แผนก/เครื่อง) ตรวจเท่ากับช่องที่มองเห็น ข้อความไทยใต้ช่อง ----
@@ -472,6 +475,8 @@
         { name: "department_id", step: 1, required: true, message: "กรุณาเลือกแผนกของเครื่องที่เสีย" },
         { name: "machine_id", step: 1, required: true, message: "กรุณาเลือกเครื่องจักรจากรายการ หรือเพิ่มรหัสใหม่" },
         { name: "description", step: 1, required: true, minLength: 3, message: "กรุณาอธิบายอาการ อย่างน้อย 3 ตัวอักษร" },
+        // อ่าน "วันนี้" ใหม่ทุกครั้งที่ตรวจ: ฟอร์มที่เปิดค้างข้ามเที่ยงคืนต้องไม่ปล่อยวันที่เมื่อวาน
+        { name: "needed_date", step: 2, check: (value) => value >= (window.MNP_DATE_PICKER?.todayIso() ?? value), checkMessage: "วันที่ต้องการใช้งานต้องเป็นวันนี้หรือหลังจากนี้" },
       ];
       const currentValues = () => ({
         department_id: departmentInput.value,
@@ -533,8 +538,19 @@
         machineList.hidden = false;
         machineSearch.setAttribute("aria-expanded", "true");
       };
-      machineSearch.addEventListener("focus", () => {
+      // แตะ/คลิกช่องเปิดรายการเสมอ (รวมตอนมีข้อความผิด และตอนช่องโฟกัสอยู่แล้ว) — iPhone ไม่มีลูกศรให้เปิดรายการ
+      // ส่วนโฟกัสที่ไม่ได้มาจากการแตะ (เช่น ตรวจช่องไม่ผ่านแล้วระบบพามา) ไม่เปิดรายการทับข้อความผิด
+      const openMachineList = () => {
         if (selectedDepartmentId) renderMachineList(machineInput.value ? "" : machineSearch.value);
+      };
+      // แตะช่องที่โฟกัสอยู่แล้วไม่เกิด focus ใหม่ จึงเปิดรายการจาก pointerdown เอง
+      machineSearch.addEventListener("pointerdown", () => {
+        if (document.activeElement === machineSearch && machineList.hidden) openMachineList();
+      });
+      // โฟกัสทุกแบบเปิดรายการ (แตะ แตะป้ายชื่อ Tab) ยกเว้นตอนตัวตรวจช่องพาโฟกัสมาเพราะไม่ผ่าน (bindStepper ทำเครื่องหมาย focusFromCheck)
+      machineSearch.addEventListener("focus", () => {
+        if (machineSearch.dataset.focusFromCheck === "1") return;
+        openMachineList();
       });
       machineSearch.addEventListener("input", () => {
         machineInput.value = "";

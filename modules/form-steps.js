@@ -3,7 +3,8 @@
 (function (root) {
   "use strict";
 
-  // rules: [{ name, step, required, minLength, message }] เรียงตามลำดับที่อยู่บนจอ
+  // rules: [{ name, step, required, minLength, message, check, checkMessage }] เรียงตามลำดับที่อยู่บนจอ
+  // check(value, values) = กติกาของค่าที่กรอกแล้ว (เช่น ไม่เกินอีกช่อง ไม่ก่อนวันนี้) ข้ามเมื่อช่องว่าง; ไม่ผ่านใช้ checkMessage
   // คืนข้อผิดพลาดตามลำดับเดียวกัน ช่องแรกที่ผิดจึงเป็นช่องที่ต้องพาไป
   function validate(rules, values) {
     const errors = [];
@@ -11,11 +12,17 @@
       const raw = values[rule.name];
       const text = typeof raw === "string" ? raw.trim() : raw;
       const missing = text === undefined || text === null || text === "" || text === false;
-      if (rule.required && missing) { errors.push({ name: rule.name, step: rule.step, message: rule.message }); continue; }
-      if (!missing && rule.minLength && String(text).length < rule.minLength) errors.push({ name: rule.name, step: rule.step, message: rule.message });
+      const fail = (message) => errors.push({ name: rule.name, step: rule.step, message });
+      if (rule.required && missing) { fail(rule.message); continue; }
+      if (missing) continue;
+      if (rule.minLength && String(text).length < rule.minLength) { fail(rule.message); continue; }
+      if (rule.check && !rule.check(text, values)) fail(rule.checkMessage ?? rule.message);
     }
     return errors;
   }
+
+  // ตัวเลขจากช่องกรอก (รับจุลภาคคั่นหลักพัน แบบเดียวกับที่ส่งให้ฐานข้อมูล) ไม่ใช่ตัวเลข = NaN
+  const numberOf = (value) => (value === undefined || value === null || String(value).trim() === "" ? NaN : Number(String(value).replaceAll(",", "")));
 
   // ขั้นไหนแสดง และปุ่มไหนมี: จอแคบทีละขั้น (ขั้นสุดท้ายคือทบทวน), จอกว้างทุกขั้นที่กรอกได้ในหน้าเดียวไม่มีขั้นทบทวน
   function stepView({ current, count, narrow, reviewStep = count }) {
@@ -129,7 +136,13 @@
       const errors = validate(rules.filter((rule) => step === "all" || rule.step === step), values());
       if (!errors.length) { clearFieldErrors(form); return true; }
       goTo(errors[0].step, { focus: false });
-      showFieldErrors(form, errors)?.focus();
+      // ทำเครื่องหมายระหว่างที่ระบบพาโฟกัสไปช่องที่ผิด: ช่องที่เปิดรายการเองตอนโฟกัส (เช่น ค้นหาเครื่องจักร) จะได้ไม่เปิดทับข้อความผิด
+      const target = showFieldErrors(form, errors);
+      if (target) {
+        target.dataset.focusFromCheck = "1";
+        target.focus();
+        delete target.dataset.focusFromCheck;
+      }
       return false;
     };
     form.querySelector("[data-step-next]").addEventListener("click", () => { if (check(current)) goTo(current + 1); });
@@ -170,5 +183,5 @@
     card.querySelector("[data-receipt-title]").focus();
   }
 
-  root.MNP_FORM_STEPS = Object.freeze({ validate, stepView, showFieldErrors, clearFieldErrors, clearFieldError, headHtml, actionsHtml, bindStepper, showReceipt });
+  root.MNP_FORM_STEPS = Object.freeze({ validate, numberOf, stepView, showFieldErrors, clearFieldErrors, clearFieldError, headHtml, actionsHtml, bindStepper, showReceipt });
 })(typeof window !== "undefined" ? window : globalThis);
