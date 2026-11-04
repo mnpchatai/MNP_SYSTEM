@@ -253,7 +253,8 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .parts-table .parts-row-actions { width: 1%; white-space: nowrap; }
 .parts-attachment { margin-top: 10px; }
 .parts-attachment small { display: block; margin-bottom: 6px; }
-.parts-attachment-row { display: flex; gap: 8px; align-items: center; }
+.parts-attachment-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.parts-attachment-row .attachment-status { flex-basis: 100%; order: 3; }
 .parts-attachment-row .input { flex: 1; min-height: 38px; padding: 8px 10px; }
 .form-message { margin-bottom: 14px; padding: 10px 12px; border-radius: var(--radius-md); font-size: var(--text-meta); }
 .form-message.error { color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
@@ -404,7 +405,7 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .content { max-width: 1420px; margin: 0 auto; padding: 32px 35px 64px; }
 /* เป้าโฟกัสของการเปลี่ยนหน้าและลิงก์ข้ามไปเนื้อหา: ไม่ใช่ปุ่ม จึงไม่วาดกรอบโฟกัส */
 .content:focus, .content h1[tabindex="-1"]:focus { outline: none; }
-.skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; min-height: 44px; padding: 0 16px; display: inline-flex; align-items: center; color: white; background: var(--primary-strong); border-radius: var(--radius-md); font-weight: 700; text-decoration: none; transform: translateY(-200%); }
+.skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; min-height: 44px; padding: 0 16px; display: inline-flex; align-items: center; color: white; background: var(--primary-strong); border: 0; border-radius: var(--radius-md); font: inherit; font-weight: 700; cursor: pointer; transform: translateY(-200%); }
 .skip-link:focus { transform: none; outline: 2px solid var(--primary); outline-offset: 2px; }
 .page-heading { margin-bottom: 23px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .page-heading h1 { margin: 5px 0 5px; font-size: clamp(28px, 3vw, 36px); line-height: 1.25; letter-spacing: -.025em; }

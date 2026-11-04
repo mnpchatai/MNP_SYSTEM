@@ -88,7 +88,9 @@ test("a page without a heading focuses the content region, and pages outside the
 test("the shell names the tab, offers a skip link and marks the content as the focus target", () => {
   assert.match(app, /document\.title = `\$\{tabTitle\} · MNP Workspace`;/);
   assert.match(app, /document\.title = "เข้าสู่ระบบ · MNP Workspace";/, "signing out does not leave the last page's name on the tab");
-  assert.match(app, /<div class="app-shell">\s*<a class="skip-link" href="#main-content" data-skip-link>ข้ามไปเนื้อหาหลัก<\/a>\s*<button class="mobile-nav-toggle"/, "the skip link is the first stop in the shell");
+  // เป็นปุ่ม ไม่ใช่ <a href="#main-content">: ระบบใช้ # เป็นเส้นทาง ลิงก์ที่เปิดในแท็บใหม่จะกลายเป็นหน้าไม่พบข้อมูล
+  assert.match(app, /<div class="app-shell">\s*<button class="skip-link" type="button" data-skip-link>ข้ามไปเนื้อหาหลัก<\/button>\s*<button class="mobile-nav-toggle"/, "the skip control is the first stop in the shell");
+  assert.match(app, /const beforeId = before\?\.matches\?\.\("select, input"\) \? before\.id : "";/, "only form controls such as filters keep focus across a same-page change");
   assert.match(app, /<div class="content" id="main-content" tabindex="-1">/);
   assert.match(app, /window\.addEventListener\("hashchange", navigateRoute\);/);
   assert.doesNotMatch(app, /addEventListener\("hashchange", renderRoute\)/, "page changes go through navigateRoute, which moves focus");
@@ -100,6 +102,11 @@ test("the request detail page attaches files with the same Thai picker as the fo
   assert.match(form, /<label class="btn secondary file-pick" for="attachment-file">\$\{uiIcon\("download"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label>/);
   assert.match(form, /<input class="file-pick-input" id="attachment-file" name="file" type="file"/);
   assert.doesNotMatch(form, /\brequired\b/, "the visually hidden input must not show the browser's English required bubble");
+  // ช่องแนบไฟล์ของการกระทำในหน้ารายละเอียด (มอบหมาย เลื่อนกำหนด บันทึกผล ตรวจรับ ตัดสินใจ) ใช้ตัวช่วยเดียวกัน
+  const helper = app.match(/function extraFilesFieldHtml\([\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(helper, /<label class="btn secondary file-pick" for="\$\{id\}">\$\{uiIcon\("download"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="\$\{id\}" name="extra_files" type="file"/);
+  const mt = read("modules/module-mt.js");
+  assert.match(mt, /<label class="btn secondary file-pick" for="finish-parts-file">\$\{uiIcon\("download"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="finish-parts-file" type="file" multiple>/, "the parts receipt picker on the finish form");
 });
 
 function minHeight(selector) {

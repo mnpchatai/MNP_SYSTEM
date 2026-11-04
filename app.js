@@ -628,7 +628,8 @@ async function uploadAttachmentThumbnail(bucket, storagePath, file) {
 // ไฟล์เข้า request_attachments ของคำร้องเดิม และขึ้นในลำดับเหตุการณ์ (attachmentTimelineEvents)
 // hint: false เมื่อหน้าเดียวกันแสดงคำแนะนำไฟล์แนบไว้แล้ว (แสดงข้อความเดียวกันครั้งเดียวต่อหน้า)
 function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint = true } = {}) {
-  return `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
+  // ปุ่มภาษาไทยแบบเดียวกับฟอร์ม แทนช่อง "Choose Files" ของเบราว์เซอร์; แบบไม่มีคำแนะนำอยู่ใต้หัวข้อที่พับได้ ("แนบไฟล์ประกอบ") จึงไม่ซ้ำหัวข้อ
+  return `<div class="field">${hint ? `<span class="field-label">${label}</span>` : ""}<label class="btn secondary file-pick" for="${id}">${uiIcon("download")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
 }
 
 function readExtraFiles(input) {
@@ -1809,7 +1810,7 @@ function shell(content, active, title, tabTitle = title) {
   document.title = `${tabTitle} · MNP Workspace`;
   return `
     <div class="app-shell">
-      <a class="skip-link" href="#main-content" data-skip-link>ข้ามไปเนื้อหาหลัก</a>
+      <button class="skip-link" type="button" data-skip-link>ข้ามไปเนื้อหาหลัก</button>
       <button class="mobile-nav-toggle" type="button" aria-label="เปิดเมนูหลัก" aria-controls="mobile-nav" aria-expanded="false">
         <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
@@ -5096,8 +5097,9 @@ async function renderRoute() {
 let routeSeq = 0;
 async function navigateRoute(event) {
   const seq = ++routeSeq;
+  // จำเฉพาะช่องกรอก/ตัวกรอง (select, input) ลิงก์หรือปุ่มที่ id ซ้ำกันในหน้าถัดไปต้องไม่ดึงโฟกัสไว้กลางหน้า
   const before = document.activeElement;
-  const beforeId = before && before !== document.body ? before.id : "";
+  const beforeId = before?.matches?.("select, input") ? before.id : "";
   const fromPath = event?.oldURL ? routeFromHash(new URL(event.oldURL).hash).path : null;
   await renderRoute();
   if (seq !== routeSeq) return; // ผู้ใช้กดไปหน้าอื่นต่อระหว่างโหลด หน้าล่าสุดเป็นผู้จัดโฟกัส
@@ -5128,10 +5130,10 @@ function focusPageStart(options) {
   (heading ?? content).focus(options);
 }
 
-// ลิงก์ข้ามไปเนื้อหา: ระบบใช้ # เป็นเส้นทางหน้า จึงย้ายโฟกัสเองแทนการเปลี่ยน hash
+// ปุ่มข้ามไปเนื้อหา: ระบบใช้ # เป็นเส้นทางหน้า จึงเป็นปุ่มที่ย้ายโฟกัสเอง ไม่ใช่ลิงก์ #main-content
+// (ลิงก์ที่เปิดในแท็บใหม่ด้วยคลิกกลางหรือกดค้างจะกลายเป็นหน้า "ไม่พบข้อมูล")
 document.addEventListener("click", (event) => {
   if (!event.target.closest?.("[data-skip-link]")) return;
-  event.preventDefault();
   focusPageStart();
 });
 
