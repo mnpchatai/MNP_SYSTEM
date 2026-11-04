@@ -1117,24 +1117,30 @@ function requestOwnerNames(request, directory) {
 // จอกว้างเป็นตารางเรียงคอลัมน์แบบทะเบียนกระดาษ จอแคบ (≤760px) แต่ละแถวเป็นการ์ดเตี้ย: เลขที่ + สถานะบรรทัดแรก เรื่องบรรทัดที่สอง
 // ช่องที่เหลือเป็นบรรทัดเล็กที่มีชื่อคอลัมน์นำ (data-label) — columns: [{ key, label, role }] role: "no" | "subject" | "status"
 // ค่าใน cells เป็น HTML ที่ผู้เรียก escape แล้ว (ใช้ registerNoHtml / registerSubjectHtml สร้างช่องเลขที่และเรื่อง)
+// role ประกาศซ้ำทุกชั้น: บนจอแคบ CSS เปลี่ยน table/tr เป็น block/flex ซึ่ง Safari ทิ้งความหมายตารางให้โปรแกรมอ่านจอ
 function registerTableHtml({ label, columns, rows }) {
-  const head = columns.map((column) => `<th scope="col">${escapeHtml(column.label)}</th>`).join("");
-  const body = rows.map((row) => `<tr${row.className ? ` class="${escapeHtml(row.className)}"` : ""}>${columns
-    .map((column) => `<td class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}">${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
-  return `<div class="register-wrap"><table class="register-table" aria-label="${escapeHtml(label)}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  const head = columns.map((column) => `<th scope="col" role="columnheader">${escapeHtml(column.label)}</th>`).join("");
+  const body = rows.map((row) => `<tr role="row"${row.className ? ` class="${escapeHtml(row.className)}"` : ""}>${columns
+    .map((column) => `<td role="cell" class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}">${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
+  return `<div class="register-wrap"><table class="register-table" role="table" aria-label="${escapeHtml(label)}"><thead role="rowgroup"><tr role="row">${head}</tr></thead><tbody role="rowgroup">${body}</tbody></table></div>`;
 }
 
-// เลขที่ใบ: ลิงก์ไปหน้ารายละเอียด หรือข้อความเทาพร้อมกุญแจเมื่อบัญชีนี้เปิดดูรายละเอียดไม่ได้
+// เลขที่ใบ: ลิงก์ไปหน้ารายละเอียด หรือข้อความเทาพร้อมกุญแจเมื่อบัญชีนี้เปิดดูรายละเอียดไม่ได้ (เหตุผลอยู่ใน title และข้อความสำหรับโปรแกรมอ่านจอ)
 function registerNoHtml(number, href, lockedTitle = "") {
   return href
     ? `<a class="request-no register-no-link" href="${href}">${escapeHtml(number)}</a>`
-    : `<span class="request-no locked" title="${escapeHtml(lockedTitle)}">${uiIcon("lock")} ${escapeHtml(number)}</span>`;
+    : `<span class="request-no locked" title="${escapeHtml(lockedTitle)}">${uiIcon("lock")} ${escapeHtml(number)}${lockedTitle ? `<span class="sr-only"> (${escapeHtml(lockedTitle)})</span>` : ""}</span>`;
+}
+
+// บรรทัดเล็กใต้ช่อง: จอกว้างตัดเหลือบรรทัดเดียว จึงมีค่าเต็มใน title
+function registerSubHtml(text, iconHtml = "", title = text) {
+  return `<span class="register-sub" title="${escapeHtml(title)}">${iconHtml}${escapeHtml(text)}</span>`;
 }
 
 // เรื่อง: บรรทัดหลักเป็นลิงก์ (ถ้าเปิดได้) บรรทัดรองตัดให้เหลือบรรทัดเดียว
 function registerSubjectHtml(main, href, secondary = "") {
   const title = href ? `<a class="register-title" href="${href}">${escapeHtml(main)}</a>` : `<strong class="register-title">${escapeHtml(main)}</strong>`;
-  return `${title}${secondary ? `<span class="register-sub">${escapeHtml(secondary)}</span>` : ""}`;
+  return `${title}${secondary ? registerSubHtml(secondary) : ""}`;
 }
 
 // ประเภทคำร้องในรายการที่รวมหลายประเภท (ในโมดูลเดียวไม่แสดง เพราะหัวโมดูลบอกแล้ว)
@@ -1172,7 +1178,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${statusBadge(request.status)}${request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</span>` : ""}</span>${owners.length ? `<span class="register-sub" title="ผู้รับผิดชอบ">${uiIcon("user")} ${escapeHtml(owners.join(", "))}</span>` : ""}`,
+        status: `<span class="register-badges">${statusBadge(request.status)}${request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabels[request.priority] ?? request.priority)}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
@@ -1207,7 +1213,7 @@ function statusBoardRows(rows, { showType = false } = {}) {
           department: escapeHtml(row.department_name ?? row.department_code ?? ""),
           requester: escapeHtml(row.requester_name ?? ""),
           updated: formatDate(row.last_changed_at ?? row.submitted_at, true),
-          status: `<span class="register-badges">${statusBadge(row.status)}${row.is_urgent ? `<span class="request-priority-chip priority-urgent">เร่งด่วน</span>` : ""}</span>${row.waiting_on ? `<span class="register-sub">รอ${escapeHtml(row.waiting_on)}</span>` : ""}`,
+          status: `<span class="register-badges">${statusBadge(row.status)}${row.is_urgent ? `<span class="request-priority-chip priority-urgent">เร่งด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
         },
       };
     }),
@@ -1220,10 +1226,40 @@ function hrefSelectHtml({ id, label, options, value }) {
   return `<label class="list-filter" for="${escapeHtml(id)}"><span class="list-filter-label">${escapeHtml(label)}</span><select class="select" id="${escapeHtml(id)}" data-native-select data-href-select>${options
     .map((option) => `<option value="${escapeHtml(option.value)}" data-href="${escapeHtml(option.href)}"${option.value === value ? " selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></label>`;
 }
+// เมาส์/แตะ: เลือกแล้วไปทันที · คีย์บอร์ด: Chrome ยิง change ทุกครั้งที่กดลูกศรบน select ที่ปิดอยู่
+// จึงรอให้กด Enter หรือออกจากช่องก่อนค่อยไป (เลื่อนดูตัวเลือกได้โดยหน้าไม่เปลี่ยนใต้มือ) แล้วคืนโฟกัสที่ช่องเดิมหลังวาดหน้าใหม่
+function followHrefSelect(select) {
+  const href = select.selectedOptions[0]?.dataset.href;
+  delete select.dataset.keyed;
+  if (!href || `#${location.hash.slice(1)}` === href) return;
+  const id = select.id;
+  const refocus = (tries = 0) => {
+    const next = document.getElementById(id);
+    if (next && next !== select) next.focus();
+    else if (tries < 40) setTimeout(() => refocus(tries + 1), 50);
+  };
+  if (select.dataset.refocus === "1" && id) window.addEventListener("hashchange", () => refocus(), { once: true });
+  location.hash = href;
+}
+document.addEventListener("keydown", (event) => {
+  const select = event.target.closest?.("select[data-href-select]");
+  if (!select) return;
+  if (event.key === "Enter") {
+    event.preventDefault();
+    select.dataset.refocus = "1";
+    followHrefSelect(select);
+  } else if (event.key !== "Tab" && event.key !== "Shift") {
+    select.dataset.keyed = "1";
+  }
+});
 document.addEventListener("change", (event) => {
   const select = event.target.closest?.("select[data-href-select]");
-  const href = select?.selectedOptions[0]?.dataset.href;
-  if (href) location.hash = href;
+  if (!select || select.dataset.keyed === "1") return;
+  followHrefSelect(select);
+});
+document.addEventListener("focusout", (event) => {
+  const select = event.target.closest?.("select[data-href-select]");
+  if (select?.dataset.keyed === "1") followHrefSelect(select);
 });
 
 function themeButton() {
@@ -2390,14 +2426,16 @@ function requestScopeSwitch(params) {
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
 function requestListFilters(params, { departments = null, placeholder, scope = false, search = true } = {}) {
-  const status = params.get("status") ?? "all";
-  const options = REQUEST_STATUS_FILTERS.map(([value, label]) => ({ value, label: value === "all" ? "ทุกสถานะ" : label, href: requestCenterUrl(params, { status: value }) }));
+  // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
+  const known = knownRequestStatuses(params);
+  const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
+  const options = REQUEST_STATUS_FILTERS.map(([option, label]) => ({ value: option, label: option === "all" ? "ทุกสถานะ" : label, href: requestCenterUrl(params, { status: option }) }));
   // ลิงก์จากแดชบอร์ดส่งหลายสถานะคั่นจุลภาค: เป็นตัวเลือกของตัวเอง ช่องจึงบอกค่าที่ใช้กรองอยู่จริง
-  if (!options.some((option) => option.value === status)) {
-    const labels = knownRequestStatuses(params).map((value) => REQUEST_STATUS_FILTERS.find(([known]) => known === value)?.[1]).filter(Boolean);
-    options.splice(1, 0, { value: status, label: labels.join(", ") || status, href: requestCenterUrl(params) });
+  if (known.length > 1) {
+    const labels = known.map((status) => REQUEST_STATUS_FILTERS.find(([option]) => option === status)?.[1]).filter(Boolean);
+    options.splice(1, 0, { value, label: labels.join(", "), href: requestCenterUrl(params, { status: value }) });
   }
-  const statusSelect = hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value: status });
+  const statusSelect = hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value });
   return `<div class="list-filters">${scope ? requestScopeSwitch(params) : ""}${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>`;
 }
 

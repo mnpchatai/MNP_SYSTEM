@@ -537,7 +537,7 @@ a.register-title:hover { color: var(--primary); }
   .register-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .register-table tr { margin-bottom: 8px; padding: 10px 14px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .register-table td { min-width: 0; padding: 0; border: 0; }
-  .register-no { order: 1; flex: 1 1 auto; }
+  .register-no { order: 1; flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; }
   .register-status { order: 2; max-width: 100%; }
   .register-subject { order: 3; flex: 1 1 100%; min-width: 0; }
   .register-meta { order: 4; color: var(--muted); font-size: var(--text-caption); white-space: normal; }
