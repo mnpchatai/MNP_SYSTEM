@@ -1,0 +1,53 @@
+// กติกาของคิวงานหน้าหลัก (modules/home-queue.js)
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+await import("../../modules/home-queue.js");
+const queue = globalThis.MNP_HOME_QUEUE;
+
+test("urgent comes first, then high, then the rest; oldest first within each group", () => {
+  const items = [
+    { id: "normal-old", priority: "normal", createdAt: "2026-10-01T03:00:00Z" },
+    { id: "high-new", priority: "high", createdAt: "2026-11-02T03:00:00Z" },
+    { id: "urgent-new", priority: "urgent", createdAt: "2026-11-03T03:00:00Z" },
+    { id: "urgent-old", priority: "urgent", createdAt: "2026-11-01T03:00:00Z" },
+    { id: "low", priority: "low", createdAt: "2026-09-01T03:00:00Z" },
+    { id: "none", priority: undefined, createdAt: "2026-10-15T03:00:00Z" },
+  ];
+  assert.deepEqual(queue.sortQueue(items).map((item) => item.id), ["urgent-old", "urgent-new", "high-new", "low", "normal-old", "none"]);
+  assert.equal(items[0].id, "normal-old", "the input array is not reordered");
+});
+
+test("waiting days count Thai calendar days, not 24-hour blocks", () => {
+  // 23:30 ของวันที่ 2 กับ 00:30 ของวันที่ 3 เวลาไทย ห่างกันชั่วโมงเดียวแต่ต่างวัน
+  const sentLateNight = "2026-11-02T16:30:00Z"; // 23:30 ไทย
+  const nextMorning = Date.parse("2026-11-02T17:30:00Z"); // 00:30 ไทยของวันที่ 3
+  assert.equal(queue.waitingDays(sentLateNight, nextMorning), 1);
+  assert.equal(queue.waitingDays("2026-11-03T01:00:00Z", Date.parse("2026-11-03T10:00:00Z")), 0);
+  assert.equal(queue.waitingDays("2026-10-30T01:00:00Z", Date.parse("2026-11-03T01:00:00Z")), 4);
+  assert.equal(queue.waitingDays(null), 0);
+  assert.equal(queue.waitingDays("2026-11-05T01:00:00Z", Date.parse("2026-11-03T01:00:00Z")), 0, "never negative");
+});
+
+test("waiting labels read naturally", () => {
+  assert.equal(queue.waitingLabel(0), "ส่งวันนี้");
+  assert.equal(queue.waitingLabel(1), "ค้าง 1 วัน");
+  assert.equal(queue.waitingLabel(12), "ค้าง 12 วัน");
+});
+
+test("selection prefers the requested item, then the open one, then the first", () => {
+  const ids = ["a", "b", "c"];
+  assert.equal(queue.pickSelection(ids, { requested: "c", current: "b" }), "c");
+  assert.equal(queue.pickSelection(ids, { requested: "gone", current: "b" }), "b");
+  assert.equal(queue.pickSelection(ids, { requested: null, current: "gone" }), "a");
+  assert.equal(queue.pickSelection([], { requested: "a" }), null);
+});
+
+test("J/K moves one item and stops at the ends", () => {
+  const ids = ["a", "b", "c"];
+  assert.equal(queue.stepSelection(ids, "a", 1), "b");
+  assert.equal(queue.stepSelection(ids, "c", 1), "c");
+  assert.equal(queue.stepSelection(ids, "a", -1), "a");
+  assert.equal(queue.stepSelection(ids, "gone", 1), "a");
+  assert.equal(queue.stepSelection([], "a", 1), null);
+});
