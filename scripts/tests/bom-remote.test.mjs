@@ -16,7 +16,7 @@ const storeApi = require("../../modules/bom-store.js");
 
 const NOW = Date.parse("2026-11-05T10:00:00+07:00");
 const SERVER_AT = NOW + 60000;
-const MASTER = storeApi.MASTER_LISTS;
+const MASTER = storeApi.REMOTE_LISTS; // ทุกชุดที่อยู่ในฐานข้อมูล: ข้อมูลหลัก 8 ชุด + ลูกค้า ใบสั่งผลิต งาน
 const emptyMaster = () => ({ version: 0, ...Object.fromEntries(MASTER.map((list) => [list, []])) });
 const planner = { id: "p1", role: "planner", dept: "PK", name: "ณัฐพล บุญมา" };
 const viewer = { id: "v1", role: "viewer", dept: "QA", name: "ผู้ดู" };
@@ -26,15 +26,26 @@ const failure = (code) => Object.assign(new Error(code), { code });
 // เซิร์ฟเวอร์จำลองตามสัญญา: ทุกระเบียนจำเลขรุ่นที่แก้ล่าสุด · บันทึกชน (BOM_STALE) เฉพาะระเบียนที่แตะซึ่งถูกผู้อื่นแก้/ลบหลัง baseVersion
 // คืนส่วนต่างตั้งแต่ baseVersion (ของทุกคน) · since(v) คืนส่วนต่างเดียวกัน · fail = ครั้งถัดไปล้มด้วยรหัสนี้ · external* = ผู้ใช้อื่นบันทึก
 function fakeServer(initial = emptyMaster()) {
-  const server = { master: structuredClone(initial), versions: Object.fromEntries(MASTER.map((list) => [list, new Map()])), graves: [], loads: 0, saves: [], sinces: [], fail: null, hold: null, sinceFail: null };
-  const key = { items: (r) => r.code, compounds: (r) => r.code, colors: (r) => r.code, processes: (r) => r.code, boms: (r) => r.id, routings: (r) => r.id, colorSets: (r) => `${r.base}|${r.code}`, packages: (r) => `${r.base}|${r.code}` };
-  const byKey = (list) => (a, b) => (key[list](a) < key[list](b) ? -1 : key[list](a) > key[list](b) ? 1 : 0);
+  const server = { master: structuredClone(initial), versions: Object.fromEntries(MASTER.map((list) => [list, new Map()])), graves: [], loads: 0, saves: [], sinces: [], fail: null, hold: null, sinceFail: null, auditLog: [], purges: 0 };
+  for (const list of MASTER) server.master[list] ??= [];
+  const key = {
+    items: (r) => r.code, compounds: (r) => r.code, colors: (r) => r.code, processes: (r) => r.code, boms: (r) => r.id, routings: (r) => r.id, colorSets: (r) => `${r.base}|${r.code}`, packages: (r) => `${r.base}|${r.code}`,
+    customers: (r) => r.name.trim().toLowerCase(), orders: (r) => r.id, jobs: (r) => r.id,
+  };
+  // หลุมฝังศพ: ชุดสี/แพ็กเกจกุญแจ base|code · งานกุญแจเลขงาน (ส่งกลับเป็น { id })
+  const graveId = (grave) => (grave.list === "jobs" ? grave.code : `${grave.base}|${grave.code}`);
+  const targetId = (list, target) => (list === "jobs" ? target.id : `${target.base}|${target.code}`);
+  const order = {
+    orders: (a, b) => b.orderedAt - a.orderedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    jobs: (a, b) => (a.orderId < b.orderId ? -1 : a.orderId > b.orderId ? 1 : 0) || (a.dept < b.dept ? -1 : a.dept > b.dept ? 1 : 0) || (a.itemCode < b.itemCode ? -1 : a.itemCode > b.itemCode ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  };
+  const byKey = (list) => order[list] ?? ((a, b) => (key[list](a) < key[list](b) ? -1 : key[list](a) > key[list](b) ? 1 : 0));
   const view = () => structuredClone(server.master);
   server.delta = (since) => ({
     version: server.master.version,
     changes: Object.fromEntries(MASTER.map((list) => [list, {
       upsert: structuredClone(server.master[list].filter((row) => (server.versions[list].get(key[list](row)) ?? 0) > since).sort(byKey(list))),
-      delete: server.graves.filter((grave) => grave.list === list && grave.version > since).map((grave) => ({ base: grave.base, code: grave.code })),
+      delete: server.graves.filter((grave) => grave.list === list && grave.version > since).map((grave) => (list === "jobs" ? { id: grave.code } : { base: grave.base, code: grave.code })),
     }])),
   });
   // ฟิลด์ที่ฐานข้อมูลเป็นเจ้าของ (เวลา/ผู้บันทึก) ประทับใหม่ทับค่าที่ client ส่ง เหมือน RPC จริง (เวลาของเซิร์ฟเวอร์ต่างจากเวลาของ client เสมอ)
@@ -58,7 +69,7 @@ function fakeServer(initial = emptyMaster()) {
         const id = key[list](record);
         const at = server.master[list].findIndex((row) => key[list](row) === id);
         if (at === -1) {
-          if (server.graves.some((grave) => grave.list === list && `${grave.base}|${grave.code}` === id && grave.version > base)) throw failure("BOM_STALE");
+          if (server.graves.some((grave) => grave.list === list && graveId(grave) === id && grave.version > base)) throw failure("BOM_STALE");
           if ((list === "boms" || list === "routings") && server.master[list].some((row) => row.itemCode === record.itemCode && others(list, key[list](row)))) throw failure("BOM_STALE");
           server.master[list].push(stampOwned(list, record, undefined));
         } else {
@@ -67,22 +78,22 @@ function fakeServer(initial = emptyMaster()) {
         }
         server.versions[list].set(id, next);
         mine.add(`${list}|${id}`);
-        server.graves = server.graves.filter((grave) => !(grave.list === list && `${grave.base}|${grave.code}` === id));
+        server.graves = server.graves.filter((grave) => !(grave.list === list && graveId(grave) === id));
       }
       for (const target of entry.delete ?? []) {
-        const id = `${target.base}|${target.code}`;
+        const id = targetId(list, target);
         if (!server.master[list].some((row) => key[list](row) === id)) throw failure("BOM_NOT_FOUND");
         if (others(list, id)) throw failure("BOM_STALE");
         server.master[list] = server.master[list].filter((row) => key[list](row) !== id);
-        server.graves.push({ list, base: target.base, code: target.code, version: next });
+        server.graves.push(list === "jobs" ? { list, code: id, version: next } : { list, base: target.base, code: target.code, version: next });
       }
     }
     server.master.version = next;
   }
   server.remote = {
     load: async () => { server.loads += 1; return view(); },
-    save: async (changes, baseVersion, action) => {
-      server.saves.push({ changes: structuredClone(changes), baseVersion, action });
+    save: async (changes, baseVersion, action, audit) => {
+      server.saves.push({ changes: structuredClone(changes), baseVersion, action, audit: structuredClone(audit) });
       if (server.hold) await server.hold;
       if (server.fail) { const code = server.fail; server.fail = null; throw failure(code); }
       if (!Number.isInteger(baseVersion) || baseVersion < 0 || baseVersion > server.master.version) throw failure("BOM_INVALID_PAYLOAD");
@@ -93,6 +104,7 @@ function fakeServer(initial = emptyMaster()) {
         for (const list of MASTER) server.versions[list] = new Map(before.versions[list]);
         throw error;
       }
+      for (const entry of audit ?? []) server.auditLog.push({ at: new Date(SERVER_AT).toISOString(), user: "เซิร์ฟเวอร์", action: entry.action, detail: entry.detail });
       return server.delta(baseVersion);
     },
     since: async (version) => {
@@ -100,6 +112,21 @@ function fakeServer(initial = emptyMaster()) {
       if (server.sinceFail) { const code = server.sinceFail; throw failure(code); }
       if (!Number.isInteger(version) || version < 0 || version > server.master.version) throw failure("BOM_INVALID_PAYLOAD");
       return server.delta(version);
+    },
+    audit: async (limit) => {
+      server.audits = (server.audits ?? 0) + 1;
+      if (server.auditFail) throw failure(server.auditFail);
+      return [...server.auditLog].reverse().slice(0, limit);
+    },
+    purge: async () => {
+      server.purges += 1;
+      if (server.purgeFail) throw failure(server.purgeFail);
+      const deleted = MASTER.reduce((sum, list) => sum + server.master[list].length, 0);
+      server.master = emptyMaster();
+      server.versions = Object.fromEntries(MASTER.map((list) => [list, new Map()]));
+      server.graves = [];
+      server.auditLog = [];
+      return { deleted };
     },
   };
   // ผู้ใช้อื่นบันทึกไปแล้ว (ฐานข้อมูลเดียวกัน เวอร์ชันของมันเอง)
@@ -163,6 +190,9 @@ test("Thai messages for the BOM RPC errors, whatever shape the error arrives in"
   assert.match(message({ code: "PGRST202", message: "Could not find the function" }), /ยังไม่ได้ติดตั้ง migration/);
   assert.equal(message(new TypeError("Failed to fetch")), "บันทึกข้อมูล BOM ไม่สำเร็จ ลองใหม่อีกครั้ง", "raw messages never reach the user");
   assert.equal(storeApi.mapRemoteError(new TypeError("Failed to fetch"), "โหลดไม่สำเร็จ").message, "โหลดไม่สำเร็จ");
+  assert.match(message({ message: "BOM_CONFLICT" }), /ซ้ำกับที่มีอยู่แล้ว.*ลองทำรายการอีกครั้ง/);
+  assert.match(message({ message: "BOM_INVALID_TRANSITION" }), /สถานะที่ทำรายการนี้ไม่ได้/);
+  assert.match(message({ message: "BOM_FORBIDDEN" }), /แผนกอื่นรายงานได้เฉพาะงานของแผนกตน/, "the per-field rule is explained");
   const again = storeApi.mapRemoteError(storeApi.mapRemoteError({ message: "BOM_STALE" }));
   assert.equal(again.code, "BOM_STALE", "mapping twice keeps the code and the message");
 });
@@ -248,8 +278,9 @@ test("a save is optimistic, sends only the changed records with the snapshot ver
   const [call] = env.server.saves;
   assert.equal(call.baseVersion, 0);
   assert.equal(call.action, "saveItem");
-  assert.deepEqual(Object.keys(call.changes), ["items"], "audit and counters stay local");
+  assert.deepEqual(Object.keys(call.changes), ["items"], "only the touched list is sent");
   assert.equal(call.changes.items.upsert[0].code, "P-TEST-01");
+  assert.deepEqual(call.audit, [{ action: "เพิ่มชิ้นงาน", detail: "P-TEST-01 ของซื้อทดสอบ" }], "the entries of this command travel with it, as plain action + detail");
   assert.equal(env.store.version(), 1);
   assert.equal(env.events.at(-1), "saved");
 
@@ -257,32 +288,230 @@ test("a save is optimistic, sends only the changed records with the snapshot ver
   await second.saving;
   assert.equal(env.server.saves[1].baseVersion, 1, "the next save carries the version the server returned");
   assert.equal(env.server.master.items[0].name, "ชื่อใหม่");
-  assert.equal(env.store.data().audit.length, 2, "the audit trail is still written in the browser");
+  assert.deepEqual(env.server.saves[1].audit.map((entry) => entry.action), ["แก้ชิ้นงาน"]);
+  assert.deepEqual(env.store.data().audit, [], "nothing of the audit trail is kept in the browser: the audit page reads it from the database");
+  assert.deepEqual(env.storage.map.size, 0, "and nothing is written to localStorage at all");
 });
 
-test("an action that changes nothing in the master data never calls the server; orders and jobs stay in localStorage", async () => {
-  const env = await ready(remoteStore());
+// สินค้า FG-TEST-01 ที่มี BOM (ของซื้อหนึ่งชิ้น) พร้อมสร้างใบสั่งผลิต · ปล่อยผลิตแล้วได้งาน PK หนึ่งงาน
+async function fgScene(env) {
   await env.store.run("saveItem", saveItemPayload("FG-TEST-01", { kind: "FG", name: "สินค้าทดสอบ", uom: "set" })).saving;
   await env.store.run("saveItem", saveItemPayload("P-TEST-01")).saving;
   await env.store.run("saveBom", { itemCode: "FG-TEST-01", lines: [{ childCode: "P-TEST-01", qty: 2 }] }).saving;
-  const savesBefore = env.server.saves.length;
-  const order = env.store.run("createOrder", { customer: "ลูกค้า", country: "Thailand", orderedAt: NOW, whDue: NOW + 20 * 86400000 });
-  assert.equal(order.ok, true);
-  await order.saving;
-  assert.equal(env.server.saves.length, savesBefore, "an order is local");
-  assert.equal(env.store.data().orders.length, 1);
-  const stored = JSON.parse(env.storage.getItem(storeApi.LOCAL_KEY));
-  assert.equal(stored.orders.length, 1);
-  assert.deepEqual(Object.keys(stored).sort(), ["audit", "counters", "jobs", "orders", "version"], "the master lists are never written to localStorage");
+}
+const newOrder = (extra = {}) => ({ customer: "Acme Trading", country: "Thailand", orderedAt: NOW, whDue: NOW + 20 * 86400000, ...extra });
+const saved = async (out) => { assert.equal(out.ok, true, out.error?.message); const outcome = await out.saving; assert.equal(outcome.ok, true, outcome.error?.message); return out; };
 
-  const added = env.store.run("addOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 5 });
-  await added.saving;
-  assert.equal(env.server.saves.length, savesBefore, "adding an existing product changes only the order");
-  assert.equal(env.store.data().orders[0].items.length, 1);
+test("an action that changes nothing never calls the server", async () => {
+  const env = await ready(remoteStore());
+  await fgScene(env);
+  const savesBefore = env.server.saves.length;
   const same = env.store.run("saveBom", { itemCode: "FG-TEST-01", lines: [{ childCode: "P-TEST-01", qty: 2 }] });
   assert.equal(same.result.changed, false);
   await same.saving;
   assert.equal(env.server.saves.length, savesBefore, "saving an unchanged BOM is not a write");
+  assert.equal(env.storage.map.size, 0, "and nothing of BOM is kept in localStorage");
+});
+
+test("orders, customers and jobs are saved through the database: one call per command, with the customer, the audit text and server-side ids", async () => {
+  const env = await ready(remoteStore());
+  await fgScene(env);
+  const order = await saved(env.store.run("createOrder", newOrder()));
+  assert.match(order.result, /^\d{6}-\d{2}001$/, "the first automatic PI number of the year");
+  const call = env.server.saves.at(-1);
+  assert.equal(call.action, "createOrder");
+  assert.deepEqual(Object.keys(call.changes).sort(), ["customers", "orders"], "a new customer name is added to the customer list in the same call");
+  assert.deepEqual(call.changes.customers.upsert.map((record) => record.name), ["Acme Trading"]);
+  assert.deepEqual(call.audit, [{ action: "เปิดใบสั่งผลิต", detail: `${order.result} Acme Trading (ออกเลขอัตโนมัติ) · เพิ่มลูกค้าใหม่` }]);
+  assert.deepEqual(env.store.data().orders.map((row) => row.id), [order.result]);
+  assert.deepEqual(env.server.master.orders.map((row) => row.customer), ["Acme Trading"]);
+
+  // ลูกค้าที่มีอยู่ (ตัวพิมพ์ต่าง) ไม่เพิ่มซ้ำ ใบใช้ชื่อตามรายการลูกค้า · เลขถัดไปนับต่อจากเลขสูงสุดของปีในใบที่หน้าเห็น
+  const second = await saved(env.store.run("createOrder", newOrder({ customer: "  ACME TRADING " })));
+  assert.match(second.result, /^\d{6}-\d{2}002$/);
+  assert.deepEqual(Object.keys(env.server.saves.at(-1).changes), ["orders"], "no second customer record");
+  assert.equal(env.store.data().orders.find((row) => row.id === second.result).customer, "Acme Trading");
+  assert.equal(env.store.data().customers.length, 1);
+  // เลขที่พิมพ์เองคงตามที่พิมพ์ และเลขอัตโนมัติถัดไปนับต่อจากเลขสูงสุด
+  const typed = await saved(env.store.run("createOrder", newOrder({ pi: "251202-25047", customer: "ลูกค้า ข", country: "Japan" })));
+  assert.equal(typed.result, "251202-25047");
+  assert.equal(env.store.data().customers.find((row) => row.name === "ลูกค้า ข").orderType, "EX");
+  const third = await saved(env.store.run("createOrder", newOrder()));
+  assert.match(third.result, /^\d{6}-\d{2}003$/, "typed numbers of another year do not move the sequence");
+  assert.deepEqual(env.store.data().orders.map((row) => row.id), [...env.store.data().orders].sort((a, b) => b.orderedAt - a.orderedAt || (a.id < b.id ? -1 : 1)).map((row) => row.id), "orders are listed newest first, like the database");
+
+  await saved(env.store.run("addOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 5 }));
+  assert.deepEqual(Object.keys(env.server.saves.at(-1).changes), ["orders"], "adding an existing product changes only the order");
+  const explodedAt = env.store.data().orders.find((row) => row.id === order.result).explodedAt;
+  assert.equal(explodedAt, null);
+
+  // ปล่อยผลิต: ใบเปลี่ยนสถานะ + งานใหม่ในคำสั่งเดียว รหัสงานมีรหัสสุ่มต่อท้าย
+  await saved(env.store.run("releaseOrder", { orderId: order.result }));
+  const release = env.server.saves.at(-1);
+  assert.deepEqual(Object.keys(release.changes).sort(), ["jobs", "orders"]);
+  assert.equal(release.changes.orders.upsert[0].status, "released");
+  const [job] = release.changes.jobs.upsert;
+  assert.match(job.id, /^JOB-\d\d-0001-[0-9a-z]{6}$/);
+  assert.equal(job.dept, "PK");
+  assert.deepEqual(release.audit.map((entry) => entry.action), ["ระเบิด BOM", "ปล่อยผลิต"], "oldest first");
+  assert.equal(env.store.data().jobs.length, 1);
+
+  // รายงานผล: งานเปลี่ยนและใบเป็นกำลังผลิต
+  await saved(env.store.run("reportJob", { jobId: job.id, qtyDone: 3, note: "รอบแรก" }));
+  const stored = env.server.master.jobs[0];
+  assert.equal(stored.qtyDone, 3);
+  assert.equal(stored.reports.length, 1);
+  assert.equal(env.server.master.orders.find((row) => row.id === order.result).status, "in_progress");
+
+  // มีงานที่เริ่มแล้ว: แก้รายการสินค้าไม่ได้ และไม่เรียกฐานข้อมูล
+  const calls = env.server.saves.length;
+  const refused = env.store.run("removeOrderItem", { orderId: order.result, fgCode: "FG-TEST-01" });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error.message, /มีงานที่เริ่มแล้ว/);
+  assert.equal(env.server.saves.length, calls);
+});
+
+test("reopening a released order whose jobs have not started deletes its jobs in the same call: the order goes back to draft with REV + 1", async () => {
+  const env = await ready(remoteStore());
+  await fgScene(env);
+  const order = await saved(env.store.run("createOrder", newOrder()));
+  await saved(env.store.run("addOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 5 }));
+  await saved(env.store.run("releaseOrder", { orderId: order.result }));
+  assert.equal(env.server.master.jobs.length, 1);
+  const jobId = env.server.master.jobs[0].id;
+  await saved(env.store.run("updateOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 9 }));
+  const call = env.server.saves.at(-1);
+  assert.deepEqual(call.changes.jobs.delete, [{ id: jobId }], "a job is deleted by its id");
+  assert.equal(call.changes.orders.upsert[0].status, "draft");
+  assert.equal(call.changes.orders.upsert[0].revision, 1);
+  assert.deepEqual(env.server.master.jobs, []);
+  assert.deepEqual(env.store.data().jobs, []);
+  assert.deepEqual(env.server.graves.map((grave) => [grave.list, grave.code]), [["jobs", jobId]], "the database remembers the deletion for other browsers");
+
+  // ผู้ใช้อื่นเห็นการลบงานผ่านส่วนต่าง
+  const other = await ready(remoteStore({ server: env.server, user: { ...planner, id: "p2", name: "คนที่สอง" } }));
+  assert.deepEqual(other.store.data().jobs, []);
+  await saved(env.store.run("releaseOrder", { orderId: order.result }));
+  assert.equal(await other.store.catchUp(), true);
+  assert.equal(other.store.data().jobs.length, 1);
+  await saved(env.store.run("updateOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 4 }));
+  assert.equal(await other.store.catchUp(), true);
+  assert.deepEqual(other.store.data().jobs, [], "the other browser drops the deleted job");
+  assert.equal(other.store.data().orders[0].revision, 2);
+});
+
+test("a department member who reports on a job does not send the order: the database moves released to in_progress itself; stock counters send the counts without the stamp", async () => {
+  const server = fakeServer();
+  const planning = await ready(remoteStore({ server }));
+  await fgScene(planning);
+  const order = await saved(planning.store.run("createOrder", newOrder()));
+  await saved(planning.store.run("addOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 5 }));
+
+  // ST นับคงคลังของใบร่าง: ส่งเฉพาะยอดนับ ไม่ส่งเวลา/ชื่อผู้นับ (ฐานข้อมูลประทับเอง)
+  const counter = await ready(remoteStore({ server, user: { id: "s1", role: "st", dept: "ST", name: "พนักงานคลัง" } }));
+  const exploded = await saved(planning.store.run("explodeOrder", { orderId: order.result }));
+  assert.ok(exploded.result > 0);
+  await counter.store.catchUp();
+  const counts = counter.store.run("setStockCounts", { orderId: order.result, counts: [{ itemCode: "P-TEST-01", qty: 7 }] });
+  assert.equal(counts.ok, true, counts.error?.message);
+  assert.equal(counter.store.data().orders[0].stockCountedBy, "พนักงานคลัง", "the page shows the stamp at once");
+  await counts.saving;
+  const sent = server.saves.at(-1).changes.orders.upsert[0];
+  assert.deepEqual(sent.stockCounts, { "P-TEST-01": 7 });
+  assert.equal("stockCountedBy" in sent, false, "the stamp is the database's job");
+  assert.equal(server.master.orders[0].stockCounts["P-TEST-01"], 7);
+
+  // PK รายงานผล (แผนก PK ไม่ใช่ฝ่ายวางแผน): ส่งเฉพาะงาน ไม่ส่งใบ
+  await planning.store.catchUp();
+  await saved(planning.store.run("releaseOrder", { orderId: order.result }));
+  const worker = await ready(remoteStore({ server, user: { id: "k1", role: "pt", dept: "PK", name: "พนักงานบรรจุ" } }));
+  const job = worker.store.data().jobs[0];
+  const report = await saved(worker.store.run("reportJob", { jobId: job.id, qtyDone: 2 }));
+  assert.ok(report.ok);
+  const reply = server.saves.at(-1);
+  assert.deepEqual(Object.keys(reply.changes), ["jobs"], "the order stays out of a report by a non-planner");
+  assert.equal(worker.store.data().orders[0].status, "in_progress", "shown as started at once");
+  assert.equal(worker.store.data().jobs[0].qtyDone, 2);
+});
+
+test("a department that does not own the job is refused by the page rules before any call; the planner group may report on any department", async () => {
+  const server = fakeServer();
+  const planning = await ready(remoteStore({ server }));
+  await fgScene(planning);
+  const order = await saved(planning.store.run("createOrder", newOrder()));
+  await saved(planning.store.run("addOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 5 }));
+  await saved(planning.store.run("releaseOrder", { orderId: order.result }));
+  const jobId = server.master.jobs[0].id;
+  const outsider = await ready(remoteStore({ server, user: { id: "r1", role: "rb", dept: "RB", name: "พนักงานรีด" } }));
+  const calls = server.saves.length;
+  const denied = outsider.store.run("reportJob", { jobId, qtyDone: 1 });
+  assert.equal(denied.ok, false);
+  assert.match(denied.error.message, /รายงานผลได้โดยแผนก PK/);
+  assert.equal(server.saves.length, calls);
+  const manager = await ready(remoteStore({ server, user: { id: "m1", role: "manager", dept: "AD", name: "ผู้จัดการ" } }));
+  await saved(manager.store.run("reportJob", { jobId, qtyDone: 1 }));
+  assert.equal(server.master.jobs[0].qtyDone, 1);
+});
+
+test("two planners opening a PI at the same time get the same automatic number: the second is refused as stale, catches up and the next try gets the next number", async () => {
+  const server = fakeServer();
+  const a = await ready(remoteStore({ server }));
+  const b = await ready(remoteStore({ server, user: { ...planner, id: "p2", name: "คนที่สอง" } }));
+  const outA = a.store.run("createOrder", newOrder({ customer: "Acme Trading" }));
+  const outB = b.store.run("createOrder", newOrder({ customer: "ลูกค้า ข" }));
+  assert.equal(outA.result, outB.result, "both derive the same number from the same snapshot");
+  assert.equal((await outA.saving).ok, true);
+  const refused = await outB.saving;
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error.code, "BOM_STALE");
+  assert.deepEqual(b.store.data().orders.map((row) => row.customer), ["Acme Trading"], "B's optimistic order is gone and A's is shown");
+  assert.equal(b.store.data().customers.some((row) => row.name === "ลูกค้า ข"), false);
+  const again = await saved(b.store.run("createOrder", newOrder({ customer: "ลูกค้า ข" })));
+  assert.match(again.result, /002$/);
+  assert.deepEqual(server.master.orders.map((row) => row.id).sort(), [outA.result, again.result].sort());
+});
+
+test("BOM_CONFLICT and BOM_INVALID_TRANSITION revert the command and catch up with the database like a stale save", async () => {
+  for (const code of ["BOM_CONFLICT", "BOM_INVALID_TRANSITION"]) {
+    const env = await ready(remoteStore());
+    await fgScene(env);
+    env.server.external({ items: { upsert: [otherItem("P-THEIRS")] } });
+    env.server.fail = code;
+    const out = env.store.run("saveCustomer", { name: "Acme", country: "Thailand" });
+    assert.equal(out.ok, true);
+    const outcome = await out.saving;
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.error.code, code);
+    assert.equal(env.store.data().customers.length, 0, "the optimistic customer is gone");
+    assert.ok(env.store.data().items.some((item) => item.code === "P-THEIRS"), `${code}: the page caught up`);
+    assert.equal(env.store.version(), env.server.master.version);
+  }
+});
+
+test("customers: add and edit by name (case-insensitive), a duplicate add is refused, others cannot", async () => {
+  const env = await ready(remoteStore());
+  await saved(env.store.run("saveCustomer", { name: "Acme Co", country: "USA", create: true }));
+  const sent = env.server.saves.at(-1);
+  assert.equal(sent.action, "saveCustomer");
+  assert.deepEqual(sent.changes.customers.upsert, [{ name: "Acme Co", country: "USA", orderType: "EX", note: "" }]);
+  assert.deepEqual(sent.audit, [{ action: "เพิ่มลูกค้า", detail: "Acme Co · USA (EX)" }]);
+  const duplicate = env.store.run("saveCustomer", { name: " ACME co ", country: "USA", create: true });
+  assert.equal(duplicate.ok, false);
+  assert.match(duplicate.error.message, /มีลูกค้า Acme Co อยู่แล้ว/);
+  await saved(env.store.run("saveCustomer", { name: "ACME CO", country: "Thailand", note: "ลูกค้าเก่า" }));
+  assert.deepEqual(env.server.master.customers.map((row) => [row.name, row.orderType, row.note]), [["ACME CO", "SA", "ลูกค้าเก่า"]], "same key: one record, edited");
+  const viewerEnv = await ready(remoteStore({ user: viewer }));
+  assert.equal(viewerEnv.store.run("saveCustomer", { name: "X", country: "Thailand" }).ok, false);
+});
+
+test("a long command sends at most 20 audit entries and cuts text to the limits", async () => {
+  const env = await ready(remoteStore());
+  const nodes = Array.from({ length: 30 }, (_, index) => ({ code: `P-MANY-${String(index).padStart(2, "0")}`, qty: 1, newItem: { kind: "PURCHASED", name: "ก".repeat(150), uom: "pcs" } }));
+  await saved(env.store.run("saveBomTree", { code: "FG-MANY", item: { name: "สินค้ามาก", uom: "set" }, nodes }));
+  const { audit } = env.server.saves.at(-1);
+  assert.equal(audit.length, 20);
+  assert.equal(audit.at(-1).action, "รายการเพิ่มเติม");
+  assert.ok(audit.every((entry) => entry.action.length <= 80 && entry.detail.length <= 300));
 });
 
 test("a new BOM revision sends the superseded revision with it and numbers continue from the highest id on the server", async () => {
@@ -330,12 +559,12 @@ test("while a save is in flight the next action is refused with a Thai message (
   assert.deepEqual(env.server.master.items.map((item) => item.code), ["P-ONE", "P-TWO"]);
 });
 
-test("a rejected save reverts the whole action to the last server snapshot and the local lists to before it, and tells the user in Thai", async () => {
+test("a rejected save reverts the whole action to the last server snapshot, and tells the user in Thai", async () => {
   const env = await ready(remoteStore());
   await env.store.run("saveItem", saveItemPayload("TOY-01(P)-Y", { kind: "FG", name: "สินค้า", uom: "set" })).saving;
   await env.store.run("saveItem", saveItemPayload("P-REV")).saving;
   await env.store.run("saveBom", { itemCode: "TOY-01(P)-Y", lines: [{ childCode: "P-REV", qty: 1 }] }).saving;
-  const order = env.store.run("createOrder", { customer: "ลูกค้า", country: "Thailand", orderedAt: NOW, whDue: NOW + 20 * 86400000 });
+  const order = await saved(env.store.run("createOrder", { customer: "ลูกค้า", country: "Thailand", orderedAt: NOW, whDue: NOW + 20 * 86400000 }));
   const before = structuredClone(env.store.data());
 
   // บันทึกที่ฐานข้อมูลไม่รับ: หน้าเห็นผลทันที แล้วกลับเป็นของฐานข้อมูล
@@ -351,7 +580,7 @@ test("a rejected save reverts the whole action to the last server snapshot and t
   assert.equal(env.store.isSaving(), false);
   assert.equal(env.events.at(-1), "reverted");
 
-  // action เดียวแก้ทั้งข้อมูลหลัก (สร้างรุ่นสินค้าใหม่) และรายการในเครื่อง (ใบสั่งผลิต): ล้มทั้งคู่ ไม่ทิ้งใบที่อ้างสินค้าที่ไม่มี
+  // action เดียวแก้ทั้งข้อมูลหลัก (สร้างรุ่นสินค้าใหม่) และใบสั่งผลิต: ล้มทั้งคู่ ไม่ทิ้งใบที่อ้างสินค้าที่ไม่มี
   env.server.fail = "BOM_FORBIDDEN";
   const variant = env.store.run("addOrderItem", { orderId: order.result, base: "TOY-01", pkg: "B", colorSet: "A", qty: 3 });
   assert.equal(variant.ok, true);
@@ -361,7 +590,6 @@ test("a rejected save reverts the whole action to the last server snapshot and t
   assert.match(refused.error.message, /ไม่มีสิทธิ์แก้ข้อมูล BOM/);
   assert.equal(env.store.data().orders[0].items.length, 0, "the order line is gone with the product it pointed at");
   assert.equal(env.store.data().items.some((item) => item.code === "TOY-01(B)-A"), false);
-  assert.deepEqual(JSON.parse(env.storage.getItem(storeApi.LOCAL_KEY)).orders, before.orders, "and so is the stored copy");
   assert.deepEqual(env.store.data(), before);
 
   const again = env.store.run("saveItem", { code: "P-REV", kind: "PURCHASED", name: "ชื่อใหม่ที่ถูกต้อง", uom: "pcs" });
@@ -568,42 +796,145 @@ test("the browser's older full state keeps its orders, jobs, audit and counters,
     colors: [], colorSets: [], packages: [], processes: [], routings: [],
   };
   storage.setItem(storeApi.STATE_KEY, JSON.stringify(old));
+  storage.setItem(storeApi.LOCAL_KEY, JSON.stringify({ version: 1, counters: {}, orders: [{ id: "LOCAL-ONLY" }], jobs: [], audit: [] }));
+  const before = [...storage.map.entries()];
   const server = fakeServer();
   const env = await ready(remoteStore({ server, storage }));
   const data = env.store.data();
   assert.equal(data.items.length, 0, "master data of the old state is not shown");
-  assert.equal(data.boms.length, 0);
-  assert.deepEqual(data.orders.map((order) => order.id), ["DEMO-26001"]);
-  assert.equal(data.jobs.length, 1);
-  assert.equal(data.audit.length, 1);
-  assert.equal(data.counters["PI-69"], 2);
-  assert.ok(storage.getItem(storeApi.LOCAL_KEY), "the local lists moved to their own key");
-  assert.ok(storage.getItem(storeApi.STATE_KEY), "the old key is left untouched");
-  assert.equal(JSON.parse(storage.getItem(storeApi.STATE_KEY)).items.length, 1);
-
-  // ครั้งต่อไปอ่านจากคีย์ใหม่ ไม่ย้ายซ้ำจากคีย์เดิม
-  const again = await ready(remoteStore({ server, storage }));
-  assert.deepEqual(again.store.data().orders.map((order) => order.id), ["DEMO-26001"]);
-  await again.store.run("saveItem", saveItemPayload()).saving;
-  assert.equal(JSON.parse(storage.getItem(storeApi.STATE_KEY)).items.length, 1, "saving master data never rewrites the old state");
-  const third = await ready(remoteStore({ server, storage }));
-  assert.equal(third.store.data().audit.length, 2);
-  assert.equal(third.store.size() > 0, true);
+  assert.deepEqual(data.orders, [], "orders of the old browser state are not shown and not moved into the database");
+  assert.deepEqual(data.jobs, []);
+  assert.deepEqual(data.audit, []);
+  assert.deepEqual(data.customers, []);
+  await env.store.run("saveItem", saveItemPayload()).saving;
+  assert.deepEqual([...storage.map.entries()], before, "the old keys are neither read nor changed nor removed");
+  assert.equal(server.master.orders.length, 0);
 });
 
-test("a second tab's local changes are picked up before the next action instead of being overwritten", async () => {
-  const storage = memoryStorage();
-  const env = await ready(remoteStore({ storage }));
-  await env.store.run("saveItem", saveItemPayload("P-TAB-1")).saving;
-  const stored = JSON.parse(storage.getItem(storeApi.LOCAL_KEY));
-  stored.orders.push({ id: "FROM-OTHER-TAB", status: "draft", items: [], stockCounts: {} });
-  storage.setItem(storeApi.LOCAL_KEY, JSON.stringify(stored));
-  await env.store.run("saveItem", saveItemPayload("P-TAB-2")).saving;
-  assert.deepEqual(env.store.data().orders.map((order) => order.id), ["FROM-OTHER-TAB"]);
-  assert.deepEqual(JSON.parse(storage.getItem(storeApi.LOCAL_KEY)).orders.map((order) => order.id), ["FROM-OTHER-TAB"]);
+test("the audit page reads app_bom_audit: newest first, refreshed after a save and not on every redraw; a failure keeps what was shown", async () => {
+  const env = await ready(remoteStore());
+  assert.deepEqual(env.store.audit(), { status: "idle", entries: [], error: null });
+  const events = [];
+  env.store.subscribe((event) => { if (event.type === "audit") events.push(event); });
+  const first = env.store.loadAudit();
+  assert.equal(env.store.audit().status, "loading");
+  assert.equal(env.store.loadAudit(), first, "a second call joins the load in flight");
+  await first;
+  assert.equal(env.server.audits, 1);
+  assert.deepEqual(env.store.audit(), { status: "ready", entries: [], error: null });
+  assert.equal(events.length, 1, "one event per load, the page redraws on it");
+  await env.store.loadAudit();
+  assert.equal(env.server.audits, 1, "drawn again at once: no second call");
+
+  await saved(env.store.run("saveItem", saveItemPayload("P-AUD-1")));
+  await saved(env.store.run("saveItem", saveItemPayload("P-AUD-2")));
+  await env.store.loadAudit();
+  assert.equal(env.server.audits, 2, "a save marks the trail stale");
+  const view = env.store.audit();
+  assert.equal(view.status, "ready");
+  assert.deepEqual(view.entries.map((entry) => entry.detail), ["P-AUD-2 ของซื้อทดสอบ", "P-AUD-1 ของซื้อทดสอบ"], "newest first");
+  assert.equal(typeof view.entries[0].at, "number", "the ISO time of the database becomes milliseconds");
+  assert.equal(view.entries[0].at, SERVER_AT);
+  assert.equal(view.entries[0].user, "เซิร์ฟเวอร์");
+
+  await env.store.loadAudit(true);
+  assert.equal(env.server.audits, 3, "force reloads");
+  env.server.auditFail = "BOM_REMOTE_FAILED";
+  await env.store.loadAudit(true);
+  const failed = env.store.audit();
+  assert.equal(failed.status, "error");
+  assert.match(failed.error.message, /โหลดบันทึกการใช้งานไม่สำเร็จ/);
+  assert.equal(failed.entries.length, 2, "the entries already shown stay");
+  env.server.auditFail = null;
+  await env.store.loadAudit(true);
+  assert.equal(env.store.audit().status, "ready");
+
+  // ฐานข้อมูลที่ยังไม่มี app_bom_audit (ยังไม่ได้ติดตั้ง migration)
+  const old = await ready(remoteStore());
+  delete old.server.remote.audit;
+  await old.store.loadAudit();
+  assert.match(old.store.audit().error.message, /ยังไม่ได้ติดตั้ง migration/);
 });
 
-test("a whole sheet import is one save call, and reset only clears the local lists", async () => {
+test("purge: the database is emptied and the page loads again from nothing; it is refused while saving and its failures are explained in Thai", async () => {
+  const server = fakeServer();
+  const env = await ready(remoteStore({ server }));
+  await fgScene(env);
+  const order = await saved(env.store.run("createOrder", newOrder()));
+  await env.store.loadAudit();
+  assert.ok(env.store.audit().entries.length > 0);
+  const counters = env.store.data().counters;
+  assert.ok(counters["BOM-69"] >= 1 || Object.keys(counters).length >= 0);
+
+  let release;
+  server.hold = new Promise((resolve) => { release = resolve; });
+  const pending = env.store.run("saveItem", saveItemPayload("P-PENDING"));
+  const blocked = await env.store.purge();
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.busy, true);
+  assert.equal(server.purges, 0);
+  server.hold = null;
+  release();
+  await pending.saving;
+
+  const loads = server.loads;
+  const events = [];
+  env.store.subscribe((event) => events.push(event.type));
+  const outcome = await env.store.purge();
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.deleted >= 5, `deleted ${outcome.deleted}`);
+  assert.equal(server.purges, 1);
+  assert.equal(server.loads, loads + 1, "the page loads the (empty) database again");
+  assert.equal(env.store.status(), "ready");
+  assert.equal(env.store.version(), 0);
+  assert.deepEqual(env.store.data().orders, []);
+  assert.deepEqual(env.store.data().items, []);
+  assert.deepEqual(env.store.data().counters, {}, "the numbering restarts too");
+  assert.deepEqual(env.store.audit(), { status: "idle", entries: [], error: null });
+  assert.ok(events.includes("loaded"));
+  assert.equal(env.store.isSaving(), false);
+  assert.equal(order.ok, true);
+
+  server.purgeFail = "BOM_FORBIDDEN";
+  const refused = await env.store.purge();
+  assert.equal(refused.ok, false);
+  assert.match(refused.error.message, /เฉพาะผู้ดูแลระบบ/);
+  assert.equal(env.store.status(), "ready", "nothing changed");
+  server.purgeFail = "BOM_TEST_MODE_ONLY";
+  assert.match((await env.store.purge()).error.message, /โหมดทดสอบ/);
+  server.purgeFail = "BOM_REMOTE_FAILED";
+  assert.match((await env.store.purge()).error.message, /ล้างข้อมูล BOM ทดสอบไม่สำเร็จ/);
+  assert.equal(env.store.isSaving(), false);
+
+  // เครื่องอื่นที่มีเวอร์ชันล้ำหน้าฐานข้อมูลโหลดทั้งชุดใหม่เมื่อตามทัน
+  const other = await ready(remoteStore({ server: fakeServer() }));
+  await saved(other.store.run("saveItem", saveItemPayload("P-OTHER")));
+  await other.server.remote.purge();
+  assert.equal(await other.store.catchUp(), true, "the version is ahead of the database, so the page loads the whole (empty) database");
+  assert.equal(other.store.version(), 0);
+  assert.deepEqual(other.store.data().items, []);
+  // ถ้าไม่ทันตามทันก่อนบันทึก: ชนด้วย BOM_INVALID_PAYLOAD แล้วโหลดทั้งชุดแทน
+  const late = await ready(remoteStore({ server: fakeServer() }));
+  await saved(late.store.run("saveItem", saveItemPayload("P-LATE-1")));
+  await saved(late.store.run("saveItem", saveItemPayload("P-LATE-2")));
+  await late.server.remote.purge();
+  const next = late.store.run("saveItem", saveItemPayload("P-AFTER"));
+  const result = await next.saving;
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "BOM_INVALID_PAYLOAD");
+  assert.equal(late.store.version(), 0, "the conflict reply reloaded the whole (empty) database");
+  assert.deepEqual(late.store.data().items, []);
+});
+
+test("the local-mode store has the same surface for the audit page and refuses to purge", async () => {
+  const store = storeApi.createStore({ storage: memoryStorage(), seed: () => ({ version: 6, counters: {}, users: [], audit: [{ at: 1, user: "x", action: "a", detail: "d" }], compounds: [], items: [], boms: [], orders: [], jobs: [], colors: [], colorSets: [], packages: [], processes: [], routings: [] }), actions: A });
+  assert.deepEqual(store.audit().entries.map((entry) => entry.action), ["a"]);
+  await store.loadAudit();
+  const purge = await store.purge();
+  assert.equal(purge.ok, false);
+});
+
+test("a whole sheet import is one save call, and database mode has no local reset", async () => {
   const env = await ready(remoteStore());
   const header = ["ITEM", "น.น RB/g", "CODE", "รหัสแผนก", "สินค้า/สูตรยาง", "สีSE/ประเภทยาง", "ความยาวSE/สีRB", "รู,ความหนา/ความยาวRB", "วงนอกSE/รูในRB", "วงนอกRB", "NAME", "แผนกผู้ผลิต", "จำนวนที่ใช้ต่อชุด", "ความยาวตัด", "หน่วย", "จำนวนชิ้นที่ได้ต่อเส้น RB", "หน่วย", "จำนวนที่ได้ต่อ 1 GR", "หน่วย", "หน่วยนับ RB", "น.น ต่อเส้น RB / ก.ก"].join("\t");
   const tsv = [header,
@@ -622,9 +953,9 @@ test("a whole sheet import is one save call, and reset only clears the local lis
   assert.equal(env.server.master.items.length, built.items.size);
   assert.ok(env.server.master.boms.length >= 2);
   assert.ok(env.server.master.compounds.some((compound) => compound.code === "B0006"));
+  assert.equal(env.server.saves[0].audit.length, 1, "the whole import is one audit entry");
   env.store.reset();
-  assert.equal(env.store.data().audit.length, 0);
-  assert.equal(env.store.data().items.length, built.items.size, "master data is not touched by reset");
+  assert.equal(env.store.data().items.length, built.items.size, "there is no local reset in database mode: the data is not touched");
 });
 
 test("two planners starting from the same version never generate the same BOM or routing id, so unrelated saves both succeed", async () => {
@@ -856,24 +1187,25 @@ const FILES = [
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(), mockOptions = {}, mutate = () => {}, hooks = {} } = {}) {
+async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(), mockOptions = {}, mutate = () => {}, hooks = {}, persona = null, sandboxAdmin = false } = {}) {
   const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage: pageStorage, ...mockOptions });
   mutate(mock.db);
+  if (persona) await mock.client.rpc("app_sandbox_enter", { p_persona_id: persona });
   const { data } = await mock.client.rpc("app_sandbox_status");
   const status = data ?? { persona: { id: "persona-1", first_name: "ทดสอบ", last_name: "ระบบ", role: { code: "admin" }, department: { code: "MT" } } };
   const context = vm.createContext({});
   const app = { innerHTML: "" };
   const log = { toasts: [], renders: 0, notFound: 0, hash: "#/bom" };
-  const node = () => ({ handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], focus() {}, close() {}, remove() {} });
+  const node = () => ({ handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", addEventListener() {}, querySelector: (selector) => hooks.nodes?.[selector] ?? null, querySelectorAll: () => [], focus() {}, close() {}, remove() {} });
   Object.assign(context, {
     window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
     renderRoute: async () => { log.renders += 1; }, confirmDialog: async () => true, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
     location: { get hash() { return log.hash; }, set hash(value) { log.hash = value.startsWith("#") ? value : `#${value}`; } },
-    app, state: { employee: { ...status.persona, isSandbox: true } }, supabase: { createClient: () => mock.client }, sb: mock.client,
+    app, state: { employee: { ...status.persona, isSandbox: true }, ...(sandboxAdmin ? { sandbox: { active: true } } : {}) }, supabase: { createClient: () => mock.client }, sb: mock.client,
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
-    document: { querySelector: () => node(), querySelectorAll: (selector) => (selector === "dialog[open]" && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
+    document: { querySelector: (selector) => hooks.nodes?.[selector] ?? node(), querySelectorAll: (selector) => (selector === "dialog[open]" && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
     addEventListener: (type, fn) => hooks.onWindow?.(type, fn),
     localStorage: storage, FormData: class { entries() { return []; } }, MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,
   });
@@ -982,7 +1314,7 @@ test("the mock database enforces the contract: test mode, writer permission, per
   assert.equal(reply.error, null);
   assert.equal(reply.data.version, 1);
   assert.deepEqual(codes(reply), ["FG-1", "P-1"], "a save answers with a delta: every change since the base version");
-  assert.deepEqual(Object.keys(reply.data.changes), storeApi.MASTER_LISTS, "all eight lists are always present");
+  assert.deepEqual(Object.keys(reply.data.changes), storeApi.REMOTE_LISTS, "all eleven lists are always present");
   assert.deepEqual(reply.data.changes.colorSets, { upsert: [], delete: [] });
 
   // ชนรายระเบียน: ระเบียนอื่นที่ผู้อื่นแก้ไม่ขวาง ระเบียนเดียวกันขวาง
@@ -1042,15 +1374,16 @@ test("the mock database enforces the contract: test mode, writer permission, per
   const me = db.employees[0];
   const version = (await client.rpc("app_bom_master")).data.version;
   me.role_id = "role-staff";
-  assert.equal((await save({}, version)).error.code, "BOM_FORBIDDEN", "a staff member of another department may read but not write");
+  const write = (code) => save({ items: { upsert: [item(code)] } }, version);
+  assert.equal((await write("P-W1")).error.code, "BOM_FORBIDDEN", "a staff member of another department may read but not write master data");
   assert.equal((await client.rpc("app_bom_master")).error, null, "everyone signed in reads");
   assert.equal((await since(0)).error, null, "and reads the delta");
   me.role_id = "role-dm";
-  assert.equal((await save({}, version)).error, null, "a department manager writes");
+  assert.equal((await write("P-W2")).error, null, "a department manager writes");
   me.role_id = "role-staff";
   db.departments.push({ id: "dep-pp", code: "PP", name_th: "วางแผน", is_active: true, is_repair_site: false });
   me.department_id = "dep-pp";
-  assert.equal((await save({}, version)).error, null, "the planning department writes");
+  assert.equal((await write("P-W3")).error, null, "the planning department writes");
 
   const outside = createMockSupabase({ now: () => NOW });
   assert.equal((await outside.client.rpc("app_bom_master")).error.code, "BOM_TEST_MODE_ONLY");
@@ -1094,6 +1427,155 @@ test("a failed save while another form is being edited reverts the data but does
   const fresh = await env.store.run("saveItem", saveItemPayload("P-NEW")).saving;
   assert.equal(fresh.ok, true);
   assert.ok(env.log.renders >= again, "with nothing to protect the page is drawn as before");
+});
+
+// ---------- สิทธิ์ตามบัญชีทดสอบ (persona) ของ Supabase จำลอง ----------
+const mockOrder = (id, extra = {}) => ({ id, customer: "ลูกค้า", country: "Thailand", orderType: "SA", orderedAt: NOW, whDue: NOW + 9 * 86400000, due: {}, dueDefaults: [], revision: 0, status: "draft", items: [{ fgCode: "FG-1", qty: 5, colorSet: "", note: "" }], explosion: null, explodedAt: null, stockCounts: {}, note: "", createdBy: "x", createdAt: 1, ...extra });
+const mockJob = (id, orderId, dept, extra = {}) => ({ id, orderId, dept, itemCode: `${dept}-ITEM`, name: "งาน", kind: "RB", uom: "pcs", qtyPlanned: 10, qtyRequired: 10, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: NOW + 86400000, status: "queued", externalRef: null, fgCodes: ["FG-1"], createdAt: 1, reports: [], ...extra });
+
+test("the mock sandbox offers switchable personas (the planner group, producing departments, stock, a non-production department) and remembers the choice", async () => {
+  const storage = memoryStorage();
+  const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
+  const status = (await client.rpc("app_sandbox_status")).data;
+  assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-gr", "persona-st", "persona-wh", "persona-qa"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "gr", "st", "wh", "viewer"], "each persona maps to a different BOM role");
+  assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
+  assert.equal((await client.rpc("app_sandbox_status")).data.persona.department.code, "RB");
+  assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "nobody" })).error.code, "PERSONA_NOT_FOUND");
+  const again = createMockSupabase({ sandbox: true, now: () => NOW, storage });
+  assert.equal((await again.client.rpc("app_sandbox_status")).data.persona.id, "persona-rb", "a reload keeps the persona");
+  assert.equal(createMockSupabase({ now: () => NOW }).client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" }) instanceof Promise, true);
+  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error.code, "SANDBOX_NOT_AVAILABLE");
+});
+
+test("the mock database checks orders and jobs per section and per field for the persona", async () => {
+  const { client } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const as = (persona) => client.rpc("app_sandbox_enter", { p_persona_id: persona });
+  let version = 0;
+  const save = async (changes, audit = [], base = version) => {
+    const reply = await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: "t", p_audit: audit });
+    if (!reply.error) version = reply.data.version;
+    return reply;
+  };
+  const view = async () => (await client.rpc("app_bom_master")).data;
+  const code = async (changes) => (await save(changes)).error?.code ?? null;
+  // ระเบียนที่ฐานข้อมูลเก็บไว้ (มีเวลา/ผู้บันทึกที่ฐานข้อมูลประทับ) แล้วแก้บางช่อง เหมือนหน้าเว็บที่ส่งระเบียนที่อ่านมาทั้งก้อนกลับไป
+  const cur = async (list, id) => (await view())[list].find((row) => row.id === id);
+  const withJob = async (id, extra) => ({ ...(await cur("jobs", id)), ...extra });
+  const withOrder = async (id, extra) => ({ ...(await cur("orders", id)), ...extra });
+
+  // ฝ่ายวางแผน (admin): ลูกค้า ใบ งาน
+  assert.equal(await code({ customers: { upsert: [{ name: "Acme", country: "USA", orderType: "EX", note: "" }] }, orders: { upsert: [mockOrder("PI-1"), mockOrder("PI-2")] } }), null);
+  assert.equal(await code({ jobs: { upsert: [mockJob("JOB-RB", "PI-1", "RB"), mockJob("JOB-GR", "PI-1", "GR")] }, orders: { upsert: [mockOrder("PI-1", { status: "released", explosion: [] })] } }), null);
+  assert.deepEqual((await view()).orders.map((row) => row.id), ["PI-1", "PI-2"], "orders newest first, then by id");
+  assert.deepEqual((await view()).jobs.map((row) => row.id), ["JOB-GR", "JOB-RB"], "jobs by order, department, item, id");
+
+  // ผู้ที่ไม่ใช่ฝ่ายวางแผนแก้ข้อมูลหลัก ลูกค้า ใบ และสร้าง/ลบงานไม่ได้
+  const denied = async (persona, changes, why) => { await as(persona); assert.equal(await code(changes), "BOM_FORBIDDEN", why); };
+  await denied("persona-rb", { customers: { upsert: [{ name: "X", country: "Thailand", orderType: "SA" }] } }, "customers are the planner group's");
+  await denied("persona-rb", { orders: { upsert: [mockOrder("PI-3")] } }, "a new order");
+  await denied("persona-rb", { orders: { upsert: [mockOrder("PI-2", { note: "แก้" })] } }, "an order edit");
+  await denied("persona-rb", { jobs: { upsert: [mockJob("JOB-NEW", "PI-1", "RB")] } }, "a new job");
+  await denied("persona-rb", { jobs: { delete: [{ id: "JOB-RB" }] } }, "deleting a job");
+  await denied("persona-qa", { jobs: { upsert: [mockJob("JOB-RB", "PI-1", "RB", { status: "in_progress" })] } }, "a department without the job");
+  await denied("persona-rb", { jobs: { upsert: [mockJob("JOB-GR", "PI-1", "GR", { status: "in_progress" })] } }, "another department's job");
+
+  // แผนกของงาน: เฉพาะสถานะ ยอดดี/เสีย รายงาน เวลาเสร็จ (และ WO ของ RB)
+  await as("persona-rb");
+  assert.equal(await code({ jobs: { upsert: [await withJob("JOB-RB", { qtyPlanned: 99 })] } }), "BOM_FORBIDDEN", "quantities of the plan are the planner's");
+  assert.equal(await code({ jobs: { upsert: [await withJob("JOB-RB", { dueAt: 5 })] } }), "BOM_FORBIDDEN", "the due date too");
+  const report = { at: 1, by: "ปลอม", good: 4, reject: 1, note: "รอบแรก" };
+  assert.equal(await code({ jobs: { upsert: [await withJob("JOB-RB", { status: "in_progress", qtyDone: 4, qtyReject: 1, reports: [report] })] } }), null);
+  let job = (await view()).jobs.find((row) => row.id === "JOB-RB");
+  assert.equal(job.reports[0].by, "ประยุทธ รีดยาง", "the reporter is the persona, not what the page sent");
+  assert.notEqual(job.reports[0].at, 1, "and the time is the database's");
+  assert.equal((await view()).orders.find((row) => row.id === "PI-1").status, "in_progress", "a started job moves the released order on by itself");
+  assert.equal(await code({ jobs: { upsert: [{ ...job, reports: [{ ...job.reports[0], good: 40 }] }] } }), "BOM_FORBIDDEN", "a past report cannot be rewritten");
+  assert.equal(await code({ jobs: { upsert: [{ ...job, reports: [] }] } }), "BOM_FORBIDDEN", "or removed");
+  assert.equal(await code({ jobs: { upsert: [{ ...job, reports: [...job.reports, { at: 2, by: "x", good: 6, reject: 0, note: "" }], qtyDone: 10, status: "done" }] } }), null, "a report is appended");
+  job = (await view()).jobs.find((row) => row.id === "JOB-RB");
+  assert.ok(job.doneAt > 0, "doneAt is set when the job becomes done");
+  assert.equal(job.reports.length, 2);
+  assert.equal(await code({ jobs: { upsert: [{ ...job, status: "queued" }] } }), "BOM_INVALID_TRANSITION", "a done job does not reopen");
+  assert.equal(await code({ jobs: { upsert: [await withJob("JOB-GR", { externalRef: { system: "rubberflow", woId: "WO-1" } })] } }), "BOM_FORBIDDEN", "only RB (or the planners) link a Rubberflow work order");
+
+  // ST/WH: ยอดนับของใบร่างเท่านั้น
+  for (const persona of ["persona-st", "persona-wh"]) {
+    await as(persona);
+    assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { stockCounts: { "P-1": persona === "persona-st" ? 3 : 4 }, stockCountedBy: "ปลอม" })] } }), null, `${persona} counts a draft`);
+  }
+  const counted = (await view()).orders.find((row) => row.id === "PI-2");
+  assert.deepEqual(counted.stockCounts, { "P-1": 4 });
+  assert.equal(counted.stockCountedBy, "สุดา คลังสินค้า", "the stamp is the database's: the last counter");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { stockCounts: { "P-1": 3 }, note: "แอบแก้" })] } }), "BOM_FORBIDDEN", "any other field of the order is refused");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { status: "released", stockCounts: { "P-1": 4 } })] } }), "BOM_FORBIDDEN", "a count that also releases the order");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "in_progress", explosion: [], stockCounts: { "P-1": 4 } })] } }), "BOM_FORBIDDEN", "a released order is not counted");
+  await as("persona-rb");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { stockCounts: { "P-1": 9 } })] } }), "BOM_FORBIDDEN", "RB does not count");
+
+  // สถานะใบ (ฝ่ายวางแผน)
+  await as("persona-pp");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { status: "completed" })] } }), "BOM_INVALID_TRANSITION", "draft cannot be completed");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { status: "weird" })] } }), "BOM_INVALID_ORDER");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "draft", revision: 1, explosion: [] })] } }), "BOM_INVALID_TRANSITION", "reopening with its jobs still there");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "draft", revision: 1, explosion: [] })] }, jobs: { delete: [{ id: "JOB-RB" }, { id: "JOB-GR" }] } }), "BOM_INVALID_TRANSITION", "a job of the order has started");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "released", items: [], explosion: [] })] } }), "BOM_INVALID_TRANSITION", "items change only through a reopen, not on a released order");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "completed", explosion: [] })] } }), null, "an order in progress can be completed");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "cancelled", explosion: [] })] } }), "BOM_INVALID_TRANSITION", "a completed order is final");
+
+  // เปิดใบกลับมาแก้ได้เมื่อไม่มีงานเริ่ม: ลบงานทั้งหมดของใบ + revision + 1 ในคำสั่งเดียว
+  assert.equal(await code({ orders: { upsert: [mockOrder("PI-4")] } }), null);
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-4", { status: "released", explosion: [] })] }, jobs: { upsert: [mockJob("JOB-A", "PI-4", "RB"), mockJob("JOB-B", "PI-4", "GR")] } }), null);
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-4", { status: "draft", revision: 5, explosion: [] })] }, jobs: { delete: [{ id: "JOB-A" }, { id: "JOB-B" }] } }), "BOM_INVALID_TRANSITION", "the revision must go up by exactly one");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-4", { status: "draft", revision: 1, explosion: [] })] }, jobs: { delete: [{ id: "JOB-A" }] } }), "BOM_INVALID_TRANSITION", "all of the jobs go in the same call");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-4", { status: "draft", revision: 1, explosion: [] })] }, jobs: { delete: [{ id: "JOB-A" }, { id: "JOB-B" }] } }), null);
+  const after = await view();
+  assert.deepEqual(after.jobs.filter((row) => row.orderId === "PI-4"), []);
+  assert.equal(after.orders.find((row) => row.id === "PI-4").revision, 1);
+  const delta = (await client.rpc("app_bom_master_since", { p_version: version - 1 })).data;
+  assert.deepEqual(delta.changes.jobs.delete.map((row) => row.id).sort(), ["JOB-A", "JOB-B"], "deleted jobs reach other browsers as tombstones by id");
+  assert.equal(await code({ jobs: { upsert: [mockJob("JOB-NEW", "NO-SUCH-ORDER", "RB")] } }), "BOM_INVALID_JOB", "a job needs its order");
+});
+
+test("the mock database stores the audit entries of a save, newest first, and rejects malformed ones", async () => {
+  const { client } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const save = (audit, version = 0, changes = { customers: { upsert: [{ name: `C${version}`, country: "Thailand", orderType: "SA" }] } }) => client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: version, p_action: "t", p_audit: audit });
+  assert.deepEqual((await client.rpc("app_bom_audit", {})).data, []);
+  assert.equal((await save([{ action: "เปิดใบ", detail: "PI-1" }, { action: "ปล่อยผลิต", detail: "PI-1" }])).error, null);
+  assert.equal((await save([{ action: "แก้ลูกค้า", detail: "C1" }], 1)).error, null);
+  const rows = (await client.rpc("app_bom_audit", {})).data;
+  assert.deepEqual(rows.map((row) => row.action), ["แก้ลูกค้า", "ปล่อยผลิต", "เปิดใบ"], "newest first");
+  assert.deepEqual(Object.keys(rows[0]).sort(), ["action", "at", "detail", "user"]);
+  assert.equal(rows[0].user, "ปกรณ์ ศรีวัฒนา");
+  assert.equal(rows[0].at, new Date(NOW).toISOString(), "an ISO time, like timestamptz in json");
+  assert.equal((await client.rpc("app_bom_audit", { p_limit: 1 })).data.length, 1);
+  assert.equal((await client.rpc("app_bom_audit", { p_limit: 0 })).error.code, "BOM_INVALID_PAYLOAD");
+  assert.equal((await save("x", 2)).error.code, "BOM_INVALID_AUDIT");
+  assert.equal((await save(Array.from({ length: 21 }, () => ({ action: "a", detail: "d" })), 2)).error.code, "BOM_INVALID_AUDIT", "more than 20 entries");
+  assert.equal((await save([{ action: "a".repeat(81), detail: "d" }], 2)).error.code, "BOM_INVALID_AUDIT");
+  assert.equal((await save([{ action: "a", detail: "d".repeat(301) }], 2)).error.code, "BOM_INVALID_AUDIT");
+  assert.equal((await save(undefined, 2)).error, null, "the 3-argument call still works");
+  assert.equal((await client.rpc("app_bom_audit", {})).data.length, 3, "a refused save writes no audit");
+  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_bom_audit", {})).error.code, "BOM_TEST_MODE_ONLY");
+});
+
+test("the mock purge empties every BOM list, resets the version to 0 and leaves one audit row; only the real admin in the test mode may call it", async () => {
+  const storage = memoryStorage();
+  const { client, db } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
+  await client.rpc("app_bom_save_master", { p_changes: { customers: { upsert: [{ name: "A", country: "Thailand", orderType: "SA" }] }, orders: { upsert: [mockOrder("PI-1")] } }, p_base_version: 0, p_action: "t", p_audit: [{ action: "x", detail: "y" }] });
+  await client.rpc("app_sandbox_enter", { p_persona_id: "persona-qa" });
+  assert.equal((await client.rpc("app_sandbox_purge_bom")).data.deleted, 2, "the persona does not matter: the real user is the admin");
+  const master = (await client.rpc("app_bom_master")).data;
+  assert.deepEqual([master.version, master.orders.length, master.customers.length], [0, 0, 0]);
+  const audit = (await client.rpc("app_bom_audit", {})).data;
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].action, "ล้างข้อมูลทดสอบ BOM");
+  assert.equal((await client.rpc("app_bom_master_since", { p_version: 1 })).error.code, "BOM_INVALID_PAYLOAD", "a browser that was ahead gets a payload error and must reload");
+  assert.equal(JSON.parse(storage.getItem("mnp-harness-bom-master")).version, 0, "also in the page storage");
+  db.employees[0].role_id = "role-staff";
+  assert.equal((await client.rpc("app_sandbox_purge_bom")).error.code, "BOM_FORBIDDEN", "not an admin");
+  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_sandbox_purge_bom")).error.code, "BOM_TEST_MODE_ONLY");
 });
 
 test("the mock database keeps its data, record versions and tombstones in the page storage", async () => {
@@ -1283,6 +1765,201 @@ test("the server re-stamps a saved record: the user's own save is not reported a
   const savedItem = (await env.mock.client.rpc("app_bom_master")).data.items[0];
   assert.equal(typeof savedItem.createdAt, "number");
   assert.equal(savedItem.code, "P-MINE");
+});
+
+// ---------- ใบสั่งผลิต งาน นับคงคลัง ลูกค้า และบันทึกการใช้งานผ่านโมดูลบน Supabase จำลอง ----------
+const settle = () => new Promise((resolve) => setTimeout0(resolve));
+// ผู้วางแผน (admin จำลอง) สร้างสินค้า ใบร่างที่ระเบิด BOM แล้ว (D) และใบที่ปล่อยผลิตแล้ว (R) พร้อมงาน RB และ GR · คืนสภาพแวดล้อมที่ใช้ pageStorage ต่อให้บัญชีอื่นได้
+async function planningScene() {
+  const env = await pageEnv();
+  await env.store.ensureLoaded();
+  const ctx = env.ctx();
+  await fgScene(env);
+  const draft = await saved(env.store.run("createOrder", newOrder({ pi: "PI-D" })));
+  await saved(env.store.run("addOrderItem", { orderId: draft.result, fgCode: "FG-TEST-01", qty: 5 }));
+  await saved(env.store.run("explodeOrder", { orderId: draft.result }));
+  const released = await saved(env.store.run("createOrder", newOrder({ pi: "PI-R" })));
+  await saved(env.store.run("addOrderItem", { orderId: released.result, fgCode: "FG-TEST-01", qty: 5 }));
+  await saved(env.store.run("releaseOrder", { orderId: released.result }));
+  const stored = (await env.mock.client.rpc("app_bom_master")).data;
+  const extra = [mockJob("JOB-RB1", "PI-R", "RB"), mockJob("JOB-GR1", "PI-R", "GR")];
+  const reply = await env.mock.client.rpc("app_bom_save_master", { p_changes: { jobs: { upsert: extra } }, p_base_version: stored.version, p_action: "t" });
+  assert.equal(reply.error, null);
+  return { env, ctx };
+}
+const asPersona = async (scene, persona, options = {}) => {
+  const env = await pageEnv({ pageStorage: scene.env.pageStorage, persona, ...options });
+  await env.store.ensureLoaded();
+  return env;
+};
+
+test("a planner opens a PI, releases it, a department reports, counts are saved and the audit page lists it all, through the module on the (mock) database", async () => {
+  const env = await pageEnv();
+  await env.store.ensureLoaded();
+  const ctx = env.ctx();
+  await fgScene(env);
+  assert.equal(ctx.runAction("createOrder", { customer: "ลูกค้า ทดสอบ", country: "Thailand", orderedAt: NOW, whDue: NOW + 9 * 86400000 }, "เปิดใบสั่งผลิต {result}"), true);
+  await settle();
+  const id = env.store.data().orders[0].id;
+  assert.match(env.log.toasts.at(-1)[0], new RegExp(`^เปิดใบสั่งผลิต ${id}$`));
+  assert.match(id, /^\d{6}-\d{2}001$/);
+  const stored = JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master"));
+  assert.deepEqual(stored.orders.map((order) => order.id), [id], "the order is in the (mock) database, not in the browser's BOM storage");
+  assert.deepEqual(stored.customers.map((row) => row.name), ["ลูกค้า ทดสอบ"]);
+
+  for (const [action, payload] of [["addOrderItem", { orderId: id, fgCode: "FG-TEST-01", qty: 5 }], ["explodeOrder", { orderId: id }]]) {
+    assert.equal(ctx.runAction(action, payload, ""), true, action);
+    await settle();
+  }
+  let html = await env.render(`p=orders&sel=${id}`);
+  assert.match(html, /data-rf-action="releaseOrder"/, "a draft shows the release button to the planner");
+  assert.match(html, /data-rf-open="stockCount"/, "and the count buttons");
+  assert.equal(ctx.runAction("setStockCount", { orderId: id, itemCode: "P-TEST-01", qty: 3 }, "บันทึกยอดคงคลัง {result}"), true);
+  await settle();
+  assert.equal(JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).orders[0].stockCounts["P-TEST-01"], 3);
+  assert.equal(ctx.runAction("releaseOrder", { orderId: id }, "ปล่อยผลิต {result}"), true);
+  await settle();
+  const job = env.store.data().jobs[0];
+  assert.match(job.id, /^JOB-\d\d-0001-[0-9a-z]{6}$/);
+  assert.equal(job.qtyPlanned, 5, "the PK job is for the order quantity");
+  assert.equal(ctx.runAction("reportJob", { jobId: job.id, qtyDone: 5, note: "ครบ" }, "บันทึกผลผลิต {result}"), true);
+  await settle();
+  const database = JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master"));
+  assert.equal(database.jobs[0].status, "done");
+  assert.equal(database.jobs[0].reports[0].by, "ปกรณ์ ศรีวัฒนา");
+  assert.equal(ctx.runAction("completeOrder", { orderId: id }, "ปิดใบ {result}"), true);
+  await settle();
+  assert.equal(JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).orders[0].status, "completed");
+  assert.deepEqual(env.log.toasts.filter(([, kind]) => kind === "error"), []);
+
+  // หน้าบันทึกการใช้งานอ่านจาก RPC: ครั้งแรกบอกว่ากำลังโหลด แล้ววาดใหม่เมื่อมาถึง
+  html = await env.render("p=audit");
+  assert.match(html, /กำลังโหลดบันทึกการใช้งาน|ไม่พบรายการ/);
+  const renders = env.log.renders;
+  await settle();
+  assert.ok(env.log.renders > renders, "the page is redrawn when the audit arrives");
+  html = await env.render("p=audit");
+  for (const text of ["เปิดใบสั่งผลิต", "เพิ่มสินค้าในใบสั่งผลิต", "ระเบิด BOM", "นับคงคลังตามใบ", "ปล่อยผลิต", "รายงานผลผลิต", "ปิดใบสั่งผลิต"]) assert.match(html, new RegExp(text), text);
+  assert.match(html, /ปกรณ์ ศรีวัฒนา/, "the user comes from the database row");
+  assert.match(html, /data-bom-audit-reload/);
+  assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
+  assert.ok(html.indexOf("ปิดใบสั่งผลิต") < html.indexOf("เปิดใบสั่งผลิต"), "newest first");
+  const search = await env.render("p=audit&q=ปิดใบ");
+  assert.match(search, /ปิดใบสั่งผลิต/);
+  assert.doesNotMatch(search, /เพิ่มสินค้าในใบสั่งผลิต/);
+  assert.equal(env.pageStorage.getItem("mnp-bom-local-v1"), null, "nothing in the legacy BOM key");
+});
+
+test("the screens show only what the persona may do: planner group everything, ST/WH counts, a department its own jobs, anyone else read-only", async () => {
+  const scene = await planningScene();
+  const buttons = (html, name) => (html.match(new RegExp(`data-rf-(?:open|action)="${name}"`, "g")) ?? []).length;
+  const sees = async (persona, query) => { const env = await asPersona(scene, persona); return { env, html: await env.render(query) }; };
+
+  // หน้าใบสั่งผลิต: เปิดใบใหม่ ปล่อยผลิต ยกเลิก = ฝ่ายวางแผน · นับ = ฝ่ายวางแผน + ST/WH
+  for (const [persona, planner, count] of [["persona-1", true, true], ["persona-pp", true, true], ["persona-st", false, true], ["persona-wh", false, true], ["persona-rb", false, false], ["persona-qa", false, false]]) {
+    const list = await sees(persona, "p=orders");
+    assert.equal(buttons(list.html, "orderNew") > 0, planner, `${persona}: open a new PI`);
+    const draft = await sees(persona, "p=orders&sel=PI-D");
+    assert.equal(buttons(draft.html, "releaseOrder") > 0, planner, `${persona}: release`);
+    assert.equal(buttons(draft.html, "cancelOrder") > 0, planner, `${persona}: cancel`);
+    assert.equal(buttons(draft.html, "explodeOrder") > 0, planner, `${persona}: explode`);
+    assert.equal(buttons(draft.html, "orderItemAdd") > 0, planner, `${persona}: add products`);
+    assert.equal(buttons(draft.html, "stockCount") > 0, count, `${persona}: count buttons on a draft`);
+    const released = await sees(persona, "p=orders&sel=PI-R");
+    assert.equal(buttons(released.html, "completeOrder") > 0, planner, `${persona}: complete`);
+    assert.equal(buttons(released.html, "stockCount"), 0, `${persona}: no counting once released`);
+  }
+
+  // เมนู: ลูกค้าเฉพาะฝ่ายวางแผนขึ้นไป · นับคงคลังและใบสั่งผลิตเห็นกัน ST/WH
+  const menu = (persona) => asPersona(scene, persona).then((env) => storeApi.MODULES.filter((entry) => storeApi.canSee(env.store.user(), entry.id)).map((entry) => entry.id));
+  assert.ok((await menu("persona-pp")).includes("customers"));
+  assert.ok((await menu("persona-1")).includes("customers"));
+  for (const persona of ["persona-rb", "persona-st", "persona-wh", "persona-qa"]) assert.equal((await menu(persona)).includes("customers"), false, persona);
+  for (const persona of ["persona-st", "persona-wh"]) assert.ok((await menu(persona)).includes("count"), persona);
+  assert.equal((await menu("persona-rb")).includes("count"), false);
+  const denied = await sees("persona-rb", "p=customers");
+  assert.match(denied.html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
+
+  // งานของแผนก: รายงาน/พักงานเฉพาะงานของแผนกตน (planner group ทุกแผนก) · WO ของ RubberFlow เฉพาะ RB และฝ่ายวางแผน
+  const jobPage = async (persona) => (await sees(persona, "p=jobs&dept=ALL")).html;
+  const rowOf = (html, id) => html.split("<tr").find((row) => row.includes(`>${id}<`)) ?? "";
+  const rb = await jobPage("persona-rb");
+  assert.match(rowOf(rb, "JOB-RB1"), /data-rf-open="jobReport"/, "RB reports its job");
+  assert.match(rowOf(rb, "JOB-RB1"), /data-rf-open="jobRubberflow"/, "and creates the WO");
+  assert.doesNotMatch(rowOf(rb, "JOB-GR1"), /data-rf-open="jobReport"|data-rf-action="setJobStatus"/, "but not the GR job");
+  const gr = await jobPage("persona-gr");
+  assert.match(rowOf(gr, "JOB-GR1"), /data-rf-open="jobReport"/);
+  assert.doesNotMatch(rowOf(gr, "JOB-RB1"), /data-rf-open="jobReport"|jobRubberflow/);
+  const planner = await jobPage("persona-pp");
+  for (const id of ["JOB-RB1", "JOB-GR1"]) assert.match(rowOf(planner, id), /data-rf-open="jobReport"/, `the planner group reports ${id}`);
+  assert.match(rowOf(planner, "JOB-RB1"), /jobRubberflow/);
+  for (const persona of ["persona-qa", "persona-st", "persona-wh"]) {
+    const html = await jobPage(persona);
+    assert.doesNotMatch(html, /data-rf-open="jobReport"|data-rf-action="setJobStatus"|jobRubberflow/, `${persona} reads only`);
+  }
+
+  // ลูกค้า: เพิ่ม/แก้เฉพาะฝ่ายวางแผนขึ้นไป · ฟอร์มเปิดใบมีรายการลูกค้าให้เลือก
+  const customers = await sees("persona-pp", "p=customers");
+  assert.match(customers.html, /Acme Trading/);
+  assert.equal(buttons(customers.html, "customerEdit") >= 2, true, "add + edit");
+  const dialog = customers.env.context.MNP_BOM_DIALOGS.orderNew(customers.env.ctx());
+  assert.match(dialog.html, /<datalist id="bom-customer-list"><option value="Acme Trading">/);
+  assert.match(dialog.html, /list="bom-customer-list"/);
+
+  // ล้างข้อมูลทดสอบ: เห็นเฉพาะ admin ตัวจริงในโหมดทดสอบ (state.sandbox) ไม่ว่าตอนนี้ทำหน้าที่เป็นบัญชีไหน
+  assert.doesNotMatch((await sees("persona-rb", "p=orders")).html, /data-bom-purge/);
+  const admin = await asPersona(scene, "persona-rb", { sandboxAdmin: true });
+  assert.match(await admin.render("p=orders"), /data-bom-purge/);
+});
+
+test("the purge button asks first, empties the database, reloads from nothing and tells how many rows went", async () => {
+  const scene = await planningScene();
+  const button = { handlers: {}, disabled: false, addEventListener(type, fn) { this.handlers[type] = fn; } };
+  const env = await asPersona(scene, "persona-1", { sandboxAdmin: true, hooks: { nodes: { "[data-bom-purge]": button } } });
+  await env.render("p=orders");
+  assert.equal(typeof button.handlers.click, "function", "the page binds the button");
+  assert.equal(env.store.data().orders.length > 0, true);
+
+  // ตอบไม่ใช่ใน dialog ยืนยัน: ไม่ลบอะไร
+  env.context.confirmDialog = async (options) => { env.log.confirm = options; return false; };
+  await button.handlers.click({ currentTarget: button });
+  assert.equal(env.log.confirm.danger, true);
+  assert.match(env.log.confirm.title, /ล้างข้อมูล BOM ทดสอบ/);
+  assert.equal(env.store.data().orders.length > 0, true, "cancelled: nothing deleted");
+  assert.equal(button.disabled, false);
+
+  env.context.confirmDialog = async () => true;
+  await button.handlers.click({ currentTarget: button });
+  assert.equal(env.store.status(), "ready");
+  assert.deepEqual(env.store.data().orders, []);
+  assert.deepEqual(env.store.data().items, []);
+  assert.equal(JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).version, 0);
+  assert.match(env.log.toasts.at(-1)[0], /^ล้างข้อมูล BOM ทดสอบแล้ว \d+ รายการ$/);
+  assert.ok(Number(/\d+/.exec(env.log.toasts.at(-1)[0])[0]) >= 6);
+  const html = await env.render("p=orders");
+  assert.match(html, /ไม่มีใบสั่งผลิต/);
+});
+
+test("a department member's report goes through the mock database as a field-limited update and the order moves to in_progress on the server", async () => {
+  const scene = await planningScene();
+  const rb = await asPersona(scene, "persona-rb");
+  const before = rb.store.data().orders.find((order) => order.id === "PI-R");
+  assert.equal(before.status, "released");
+  assert.equal(rb.ctx().runAction("reportJob", { jobId: "JOB-RB1", qtyDone: 3, note: "RB รอบแรก" }, "บันทึกผลผลิต {result}"), true);
+  await settle();
+  assert.deepEqual(rb.log.toasts.filter(([, kind]) => kind === "error"), []);
+  const database = JSON.parse(rb.pageStorage.getItem("mnp-harness-bom-master"));
+  const job = database.jobs.find((row) => row.id === "JOB-RB1");
+  assert.equal(job.qtyDone, 3);
+  assert.equal(job.reports[0].by, "ประยุทธ รีดยาง");
+  assert.equal(database.orders.find((order) => order.id === "PI-R").status, "in_progress", "set by the database, not sent by the RB persona");
+  assert.equal(rb.store.data().orders.find((order) => order.id === "PI-R").status, "in_progress");
+  // แผนกอื่นถูกปฏิเสธที่ฝั่งหน้าก่อนถึงฐานข้อมูล · ถ้าข้ามหน้ามาฐานข้อมูลก็ปฏิเสธ
+  const other = rb.ctx().runAction("reportJob", { jobId: "JOB-GR1", qtyDone: 1 }, "x");
+  assert.equal(other, false);
+  assert.match(rb.log.toasts.at(-1)[0], /รายงานผลได้โดยแผนก GR/);
+  const direct = await rb.mock.client.rpc("app_bom_save_master", { p_changes: { jobs: { upsert: [{ ...database.jobs.find((row) => row.id === "JOB-GR1"), qtyDone: 1 }] } }, p_base_version: database.version, p_action: "t" });
+  assert.equal(direct.error.code, "BOM_FORBIDDEN");
 });
 
 function setTimeout0(fn) {

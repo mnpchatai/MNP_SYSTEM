@@ -13,7 +13,7 @@ const FILES = [
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "count", "jobs", "audit"];
+const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "jobs", "audit"];
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st"];
 const XSS = "<script>alert(1)</script>";
 
@@ -374,6 +374,42 @@ test("dialogs render for their arguments and escape user text", async () => {
   parts[2].handlers.change();
   assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-Y · .* BOM Rev\.1/);
   assert.equal(preview.className, "rf-callout is-good");
+});
+
+test("customers: the list escapes names, a new PI adds its customer, the form adds and edits by name and the PI form offers the list", async () => {
+  const env = load();
+  env.store.setUser("B03"); // ฝ่ายวางแผน
+  env.store.run("createOrder", { pi: "C-XSS-1", customer: XSS, country: "Thailand", orderedAt: Date.now(), whDue: Date.now() + 86400000 });
+  let html = await env.render("p=customers");
+  clean(html);
+  assert.ok(!html.includes(XSS), "the name is escaped");
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /ลูกค้าสาธิต เบลเยียม/, "the customers of the demo orders are listed");
+  assert.match(html, /data-rf-open="customerEdit"/);
+  const D = env.context.MNP_BOM_DIALOGS;
+  const c = env.ctx("p=customers");
+  const add = D.customerEdit(c, {}).html;
+  assert.match(add, /data-rf-form="saveCustomer"/);
+  assert.match(add, /data-rf-args="\{&quot;create&quot;:true\}"/, "adding refuses an existing name");
+  assert.doesNotMatch(add, /readonly/);
+  const edit = D.customerEdit(c, { name: "ลูกค้าสาธิต เบลเยียม" }).html;
+  assert.match(edit, /readonly/, "the name is the key of an existing customer");
+  assert.doesNotMatch(edit, /create/);
+  assert.equal(D.customerEdit(c, { name: "ไม่มีคนนี้" }), null);
+  assert.match(D.orderNew(c).html, /<option value="ลูกค้าสาธิต เบลเยียม">Belgium<\/option>/);
+  assert.ok(!D.orderNew(c).html.includes(XSS), "the PI form escapes the list too");
+
+  await env.submit("p=customers", "saveCustomer", { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" }, { create: true });
+  assert.deepEqual(json(env.store.data().customers.find((customer) => customer.name === "ลูกค้าใหม่")), { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" });
+  assert.deepEqual(env.log.toasts.at(-1), ["ok ลูกค้าใหม่", "ok"]);
+  await env.submit("p=customers", "saveCustomer", { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" }, { create: true });
+  assert.match(env.log.toasts.at(-1)[0], /มีลูกค้า ลูกค้าใหม่ อยู่แล้ว/);
+  assert.equal(env.store.data().customers.filter((customer) => customer.name === "ลูกค้าใหม่").length, 1);
+
+  // ผู้ที่ไม่ใช่ฝ่ายวางแผนไม่มีเมนูลูกค้าและเปิดหน้าไม่ได้
+  env.store.setUser("B05");
+  html = await env.render("p=customers");
+  assert.match(html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
 });
 
 test("forms go through the data-rf-* rules: a new order is created with dates converted, a bad form shows a toast and keeps the state", async () => {

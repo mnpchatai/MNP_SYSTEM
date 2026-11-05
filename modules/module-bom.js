@@ -2,8 +2,8 @@
 // โครงเดียวกับ RubberFlow: modules/bom-rules.js (กฎล้วน) · bom-actions.js (กฎธุรกิจ) · bom-seed.js (ข้อมูลสาธิต) · bom-store.js (บทบาท + localStorage) ·
 // bom-pages.js (หน้าและ dialog ลงทะเบียนใน window.MNP_BOM_PAGES / _DIALOGS) · ไฟล์นี้ (shell เส้นทาง การผูก event)
 // ใช้ชิ้นส่วน HTML และสไตล์ .rf-* ของ RubberFlow (window.MNP_RUBBERFLOW_UI) จึงใช้กติกา event ชื่อเดียวกัน (data-rf-form / data-rf-action / data-rf-open / data-rf-go)
-// แต่ผูกกับ store ของ BOM เท่านั้น — ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลหลัก (ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต) อยู่ในฐานข้อมูลผ่าน RPC
-// app_bom_master / app_bom_master_since / app_bom_save_master (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) ส่วนใบสั่งผลิต งาน และบันทึกการใช้งานยังอยู่ใน localStorage (คีย์ mnp-bom-local-v1) ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
+// แต่ผูกกับ store ของ BOM เท่านั้น — ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลทั้งหมด (ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต ลูกค้า ใบสั่งผลิต งาน) อยู่ในฐานข้อมูลผ่าน RPC
+// app_bom_master / app_bom_master_since / app_bom_save_master (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) บันทึกการใช้งานอ่านจาก app_bom_audit และ admin ล้างข้อมูลทดสอบได้ด้วย app_sandbox_purge_bom · ไม่มีอะไรเก็บใน localStorage ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
 // และบทบาท BOM มาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตใน localStorage และบทบาทสาธิต 8 คนเหมือนเดิม
 // การซ่อน/แสดงเมนูและปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล หน้า #/bom ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, app, shell, bindShell, renderNotFound, escapeHtml, showToast,
@@ -32,13 +32,23 @@
       if (error) throw error;
       return data;
     },
-    async save(changes, baseVersion, action) {
-      const { data, error } = await sb.rpc("app_bom_save_master", { p_changes: changes, p_base_version: baseVersion, p_action: action });
+    async save(changes, baseVersion, action, audit) {
+      const { data, error } = await sb.rpc("app_bom_save_master", { p_changes: changes, p_base_version: baseVersion, p_action: action, p_audit: audit ?? [] });
       if (error) throw error;
       return data;
     },
     async since(version) {
       const { data, error } = await sb.rpc("app_bom_master_since", { p_version: version });
+      if (error) throw error;
+      return data;
+    },
+    async audit(limit) {
+      const { data, error } = await sb.rpc("app_bom_audit", { p_limit: limit });
+      if (error) throw error;
+      return data;
+    },
+    async purge() {
+      const { data, error } = await sb.rpc("app_sandbox_purge_bom");
       if (error) throw error;
       return data;
     },
@@ -57,7 +67,7 @@
   const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
-  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset]";
+  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload]";
   function markDirty(event) {
     if (!event?.isTrusted || !onBomRoute()) return;
     const target = event.target;
@@ -79,6 +89,12 @@
   };
   store.subscribe((event) => {
     if (!onBomRoute()) return;
+    // บันทึกการใช้งานโหลดเสร็จ: วาดใหม่เฉพาะเมื่อผู้ใช้ยังอยู่ที่หน้านั้นและไม่ได้แก้ฟอร์มอื่นค้าง
+    if (event.type === "audit") {
+      if (currentPage(currentRoute().params) === "audit" && !isEditing()) renderRoute();
+      return;
+    }
+    if (event.type === "purge-failed") { updateSync(); return; }
     if (event.type === "saving") updateSync();
     else if (event.type === "saved") {
       updateSync();
@@ -273,18 +289,21 @@
     return `<div class="nav-sub rf-nav"><ul class="rf-nav-list">${groups}</ul></div>`;
   };
   const navCounts = (data, user) => ({
-    jobs: data.jobs.filter((job) => job.status !== "done" && (actions.helpers.isBoss(user) ? false : job.dept === user.dept || (job.dept === "PK" && user.role === "planner"))).length,
+    jobs: data.jobs.filter((job) => job.status !== "done" && (actions.helpers.canPlan(user) ? false : job.dept === user.dept)).length,
   });
   const countTitle = (id) => ({ jobs: "งานค้างของแผนก" })[id] ?? "";
 
   // สถานะการติดต่อฐานข้อมูล (โหมดฐานข้อมูล): ว่างเมื่อไม่มีอะไรค้าง · อัปเดตที่ [data-bom-sync] โดยไม่วาดหน้าใหม่
   const syncText = () => (store.status() === "loading" ? "กำลังโหลดข้อมูล…" : store.isSaving() ? "กำลังบันทึก…" : "");
+  const canPurge = () => store.isRemote() && Boolean(state.sandbox?.active);
   function toolbarHtml(ctx) {
     const { data, user } = ctx;
     // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
     if (store.isRemote()) {
+      // ล้างข้อมูล BOM ทดสอบ: เฉพาะ admin ที่อยู่ในโหมดทดสอบ (state.sandbox มีเฉพาะ admin ตัวจริง ไม่ว่าตอนนี้ทำหน้าที่เป็นบัญชีทดสอบคนไหน) · ฐานข้อมูลตรวจสิทธิ์ซ้ำ
+      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-bom-purge title="ลบใบสั่งผลิต งาน ชิ้นงาน BOM ลูกค้า และบันทึกการใช้งานทดสอบทั้งหมดในฐานข้อมูล แล้วเริ่มใหม่จากศูนย์">ล้างข้อมูล BOM ทดสอบ</button>` : "";
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-bom-sync>${escapeHtml(syncText())}</span>
-        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a></div></div>`;
+        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a>${purge}</div></div>`;
     }
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
     const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
@@ -354,6 +373,16 @@
     });
     root.querySelector("[data-bom-retry]")?.addEventListener("click", () => {
       store.reload();
+      renderRoute();
+    });
+    root.querySelector("[data-bom-audit-reload]")?.addEventListener("click", () => { store.loadAudit(true); renderRoute(); });
+    root.querySelector("[data-bom-purge]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (!(await confirmDialog({ title: "ล้างข้อมูล BOM ทดสอบทั้งหมด?", message: "ลบใบสั่งผลิต งานรายแผนก ลูกค้า ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต และบันทึกการใช้งานที่เป็นข้อมูลทดสอบในฐานข้อมูลทั้งหมด แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) ย้อนกลับไม่ได้ · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล BOM ทดสอบ", danger: true }))) return;
+      button.disabled = true;
+      const outcome = await store.purge();
+      if (outcome.ok) showToast(`ล้างข้อมูล BOM ทดสอบแล้ว ${outcome.deleted} รายการ`);
+      else { button.disabled = false; showToast(friendlyError(outcome.error), "error"); }
       renderRoute();
     });
     root.querySelector("[data-rf-reset]")?.addEventListener("click", async () => {

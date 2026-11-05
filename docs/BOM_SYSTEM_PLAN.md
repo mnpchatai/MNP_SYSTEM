@@ -61,7 +61,7 @@
 
 ## 3. แบบข้อมูล (Supabase)
 
-ข้อมูลหลักย้ายจากเบราว์เซอร์ (`modules/bom-store.js` state v6) เข้า Supabase แล้วใน migration `20261105010000_bom_master_data.sql` (PR 1) ตารางใช้ prefix `bom_` ทุกตารางเป็นโหมดทดสอบ (`is_test` จาก trigger `private.sandbox_row_scope()`, RLS deny-all, ถอนสิทธิ์ตรง, อ่าน/เขียนผ่าน RPC `security definer` เท่านั้น) เริ่มจากว่าง ผู้ใช้นำเข้า Excel ใหม่ผ่านหน้านำเข้าเดิม
+ข้อมูลหลักย้ายจากเบราว์เซอร์ (`modules/bom-store.js` state v6) เข้า Supabase แล้วใน migration `20261105010000_bom_master_data.sql` (PR 1) ส่วนใบสั่งผลิต งานรายแผนก นับคงคลัง ลูกค้า audit และล้างข้อมูลทดสอบอยู่ใน `20261106010000_bom_orders_jobs.sql` (PR 2 ดู 3.4) ตารางใช้ prefix `bom_` ทุกตารางเป็นโหมดทดสอบ (`is_test` จาก trigger `private.sandbox_row_scope()`, RLS deny-all, ถอนสิทธิ์ตรง, อ่าน/เขียนผ่าน RPC `security definer` เท่านั้น) เริ่มจากว่าง ผู้ใช้นำเข้า Excel ใหม่ผ่านหน้านำเข้าเดิม
 
 ### 3.1 Master data และ BOM (PR 1 — มีแล้ว)
 
@@ -82,7 +82,7 @@ RPC (ผู้เรียกต้องเป็น admin ในโหมด�
 
 **การชนกันของผู้ใช้หลายคน (รายระเบียน)** ตัวนับ `version` ทั้งชุดคงไว้เรียงลำดับ แต่ `app_bom_save_master` ให้ `BOM_STALE` เฉพาะเมื่อระเบียนที่คำสั่งนี้แตะถูกคนอื่นแก้ (`changed_version > base_version`): เขียนทับแถวที่มีอยู่ · สร้างกุญแจที่มีแล้ว · ลบแถวนั้น · เขียนทับ/ลบชุดสี/แพ็กเกจที่คนอื่นเพิ่งลบ · เพิ่ม revision ใหม่ของชิ้นที่คนอื่นเพิ่ง/แก้ revision ไว้ (สองคนบันทึก revision ใหม่ของชิ้นเดียวกันพร้อมกัน คนที่สองถูกปฏิเสธ) ส่วนระเบียนอื่นที่คนอื่นแก้ระหว่างนั้นไม่ขวาง (ต่างชิ้นกันบันทึกพร้อมกันได้ทั้งคู่) · `base_version` ต้อง 0 ถึง version ปัจจุบัน (นอกช่วง = `BOM_INVALID_PAYLOAD`)
 
-**delta** `{ version, changes: { <ชุด>: { upsert: [เรคอร์ดเต็มรูปเดียวกับ snapshot], delete: [{base, code}] } } }` ครบทั้งแปดชุด มีทุกการเปลี่ยนแปลงตั้งแต่ `base_version` ของทุกคน (รวม BOM ที่เซิร์ฟเวอร์ตั้ง `superseded` และชุดสี/แพ็กเกจที่ลบ) client รวมเข้าชุดข้อมูลตามกุญแจ (`code` / `id` / `base+code`) แล้วตั้ง `version` จึงตามทันได้ในรอบเดียวแม้ snapshot ใหญ่ (BOM ~30,000 บรรทัด ~1.5 MB) · `BOM_STALE` → client เรียก `app_bom_master_since` แล้วย้อน action นั้น
+**delta** `{ version, changes: { <ชุด>: { upsert: [เรคอร์ดเต็มรูปเดียวกับ snapshot], delete: [{base, code}] } } }` ครบทุกชุด (แปดชุดข้อมูลหลัก + `customers` `orders` `jobs` ตั้งแต่ PR 2 delete ของ `jobs` เป็น `{id, code}`) มีทุกการเปลี่ยนแปลงตั้งแต่ `base_version` ของทุกคน (รวม BOM ที่เซิร์ฟเวอร์ตั้ง `superseded` และชุดสี/แพ็กเกจที่ลบ) client รวมเข้าชุดข้อมูลตามกุญแจ (`code` / `id` / `base+code`) แล้วตั้ง `version` จึงตามทันได้ในรอบเดียวแม้ snapshot ใหญ่ (BOM ~30,000 บรรทัด ~1.5 MB) · `BOM_STALE` → client เรียก `app_bom_master_since` แล้วย้อน action นั้น
 
 ### 3.2 กฎ BOM ที่ฐานข้อมูลบังคับ
 
@@ -108,17 +108,21 @@ RPC (ผู้เรียกต้องเป็น admin ในโหมด�
 
 สิทธิ์อ่าน: ทุกคนที่ล็อกอินอ่าน BOM ปัจจุบันและประวัติ revision ได้ สิทธิ์เขียน: บทบาทวางแผน/ผู้จัดการ/ผู้ดูแลเท่านั้น
 
-### 3.4 ใบสั่งผลิตและงานรายแผนก
+### 3.4 ใบสั่งผลิต งานรายแผนก ลูกค้า (PR 2 — `20261106010000_bom_orders_jobs.sql`)
 
-| ตาราง | คอลัมน์หลัก | มาจากชีต |
+ใช้กลไกเดียวกับข้อมูลหลัก (ตัวนับ `bom_master_state` ตัวเดียว · `changed_version` ต่อแถว · `BOM_STALE` รายระเบียน · delta · หลุมฝังศพใน `bom_deleted_keys` · RLS deny-all · เฉพาะโหมดทดสอบ) แทนที่แบบร่างเดิม (`bom_production_orders` / `bom_order_explosions` / `bom_stock_checks` และ `private.bom_explode`): ตัวระเบิด BOM ยังคำนวณที่ client (`rules.explode`) แล้วเก็บผลเป็น jsonb ที่ฐานข้อมูลตรวจรูปและขนาด
+
+| ตาราง | คอลัมน์หลัก | หมายเหตุ |
 |---|---|---|
-| `bom_production_orders` | `pi_number` · `revision` · `customer_id` · `country` · `order_type` (EX/SA) · `ordered_at` · `wh_due` · `due_rb` `due_gr` `due_pt` `due_bg` `due_st` `due_pk` · `status` (`draft` → `materials_pending` → `released` → `in_progress` → `completed`/`cancelled`) · `is_test` | `MAIN` + โฟลเดอร์ 2/3/1 |
-| `bom_production_order_items` | `order_id` · `fg_item_id` · `qty` · `color_set` · `note` | แถว FG ใน `BOMSHEET` |
-| `bom_order_explosions` | `order_item_id` · `path` (ltree/array ของ item) · `level` · `item_id` · `bom_header_id` (revision ที่ล็อก) · `qty_per_fg` · `qty_required` · `uom_id` · `producer_department_id` · `stock_on_hand` · `qty_to_make_or_buy` · `stage_flags` | `BOMSHEET`/`BOMSHEET (S)` — สร้างโดย RPC `bom_explode_order` ตอนปล่อยผลิต และสร้างใหม่ได้เฉพาะตอนยังเป็นร่าง |
-| `bom_department_jobs` | `order_id` · `department_id` · `item_id` · `qty_planned` · `qty_done` · `qty_reject` · `due_at` · `status` (`queued` `in_progress` `done` `hold`) · `external_ref` (เช่น RubberFlow WO) | `WIP-RBGR` `WIP-PTBG` — หนึ่งงานต่อ (ใบ, แผนก, ชิ้น) รวมปริมาณจากทุก FG ในใบ |
-| `bom_stock_checks` | `order_id` · `item_id` · `counted_qty` · `counted_by` · `counted_at` | `BOMASKSHEET` — จนกว่า Phase 5 (คลัง) จะให้ยอดจริง ยอดนับนี้คือ `stock_on_hand` |
+| `bom_customers` | `name` (กุญแจ ไม่แยกตัวพิมพ์) · `country` · `order_type` (SA/EX) · `note` | เพิ่มอัตโนมัติเมื่อบันทึก PI ที่ใช้ชื่อลูกค้าใหม่ · ลบไม่ได้ |
+| `bom_orders` | `pi_no` (กุญแจ unique ต่อโหมด) · `customer` `country` `order_type` · `ordered_at` `wh_due` (ms) · `due jsonb` `due_defaults jsonb` · `revision` · `status` (`draft` `released` `in_progress` `completed` `cancelled`) · `items jsonb` · `explosion jsonb` · `stock_counts jsonb` · `note` · เวลา/ผู้ทำที่เซิร์ฟเวอร์ตั้ง (`created_*` `released_*` `completed_at` `cancelled_at` `exploded_at` `stock_counted_*`) | ไม่มีเลขรันที่ฐานข้อมูล: client ออก `YYMMDD-YYnnn` จากเลขสูงสุดใน snapshot + 1 เลขซ้ำกับของคนอื่นที่เพิ่งสร้าง = `BOM_STALE` แล้วกดบันทึกใหม่ได้เลขถัดไป |
+| `bom_jobs` | `job_no` · `order_pk` · `dept` · `item_code` · `name` `kind` `uom` · `qty_planned` `qty_required` `stock_counted` `qty_done` `qty_reject` · `due_at` · `status` (`queued` `in_progress` `done` `hold`) · `external_ref jsonb` (RubberFlow WO) · `fg_codes` · `reports jsonb` (ต่อท้ายเท่านั้น) · `done_at` | unique `(order_pk, dept, item_code)` · ลบงานจดหลุมฝังศพ (`bom_deleted_keys.list = 'jobs'`) |
 
-การคำนวณอยู่ใน SQL ฟังก์ชันเดียว (`private.bom_explode`) ให้ Pilot Web และ Next.js ได้ผลเท่ากัน และมี unit test เทียบกับตัวอย่างจริงจากไฟล์ `Material_Megaform 26017.xlsm` (เช่น `MEGA-ST-01(P)-Y` × 80 → `RB-B0006-02-202-18-70` ต้องเบิก 7.74 ชิ้น)
+RPC เพิ่ม/เปลี่ยน: snapshot และ delta ได้ครบสิบเอ็ดชุด (เพิ่ม `customers` `orders` `jobs`) · `app_bom_save_master(changes, base_version, action, audit default '[]')` (แทนฟังก์ชัน 3 อาร์กิวเมนต์) · `app_bom_audit(limit)` ประวัติใหม่สุดก่อน · `app_sandbox_purge_bom()` (admin ในโหมดทดสอบ ลบทุกแถว `is_test` ของ `bom_*` ตั้งตัวนับเป็น 0 และเขียน audit)
+
+สิทธิ์ (ตรวจที่ RPC รายส่วนและรายช่อง): กลุ่มวางแผน (แผนก PP หรือ department_manager ขึ้นไป) ทำได้ทุกอย่างของใบ ลูกค้า ข้อมูลหลัก · นับคงคลังของใบ draft: กลุ่มวางแผนหรือพนักงานแผนก ST/WH · งาน: กลุ่มวางแผนแก้ได้ทุกช่อง พนักงานแผนกเดียวกับ `job.dept` (ทุกบทบาท) แก้ได้เฉพาะ `status` `qtyDone` `qtyReject` `reports` (ต่อท้าย `by`/`at` เซิร์ฟเวอร์ตั้ง) ส่วนผูก WO เฉพาะกลุ่มวางแผนหรือแผนก RB · สถานะใบตรวจจากฐานข้อมูล (`BOM_INVALID_TRANSITION`): `draft → released` (ต้องมีงานในคำสั่งเดียวกัน) · `released/in_progress → completed` (งาน PK done ครบ) · `→ cancelled` (ไม่มีงานที่รายงานยอดดีหรือผูก WO) · `released/in_progress → draft` เฉพาะเมื่อไม่มีงานใดเริ่ม (ทุกงาน `queued` ไม่มีรายงาน/ยอด/WO) งานทั้งหมดถูกลบ revision + 1 ยอดนับคงคลังคงอยู่ · `released → in_progress` ฐานข้อมูลตั้งเองเมื่องานเริ่ม
+
+ยังอยู่ที่ client: การคำนวณระเบิด BOM และปริมาณงานสุทธิ (`rules.explode` / `netRequirements`) ตัวเลขที่ผู้วางแผนส่งมาถูกเก็บตามที่ส่ง (ตรวจรูปและขนาดเท่านั้น) ถ้าจะให้ฐานข้อมูลคำนวณเองต้องพอร์ตเพิ่มและมี unit test เทียบกับตัวอย่างจริงจากไฟล์ `Material_Megaform 26017.xlsm` (เช่น `MEGA-ST-01(P)-Y` × 80 → `RB-B0006-02-202-18-70` ต้องเบิก 7.74 ชิ้น)
 
 ## 4. เชื่อมกับใบสั่งผลิตของ RubberFlow
 
