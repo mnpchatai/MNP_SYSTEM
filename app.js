@@ -174,16 +174,6 @@ function priorityLabel(priority, repair = false) {
 const stepStatusLabels = { pending: "รอพิจารณา", approved: "อนุมัติ", rejected: "ไม่อนุมัติ", more_info: "ขอข้อมูลเพิ่ม", skipped: "ข้าม", acknowledged: "รับทราบข้อมูล" };
 // คำกริยาของมติแต่ละแบบ ใช้ในแถบตัดสินใจและใบเสร็จหลังกด
 const decisionVerbs = { approved: "อนุมัติ", rejected: "ไม่อนุมัติ", more_info: "ขอข้อมูลเพิ่ม", acknowledged: "รับทราบข้อมูล" };
-
-// คำกริยาของขั้นจากชื่อขั้น (เช่น "ผู้จัดการแผนกซ่อมบำรุงรับงาน" → รับงาน) ใช้บนปุ่มมติ ใบเสร็จ และลำดับเหตุการณ์
-// ให้ตรงกับแบบฟอร์มและข้อความแจ้งเตือน ("รอคุณรับงาน") — มติที่บันทึกในฐานข้อมูลยังเป็น approved เหมือนเดิม
-function stepVerbOf(stepName) {
-  const name = String(stepName ?? "");
-  if (name.includes("รับงาน")) return "รับงาน";
-  if (name.includes("รับทราบ")) return "รับทราบ";
-  if (/ปิด\s*NCR/i.test(name)) return "ปิด NCR";
-  return "อนุมัติ";
-}
 // เลขแบบฟอร์มกระดาษเดิมของแต่ละโมดูล แสดงคู่กับเลขที่คำร้อง
 const REQUEST_FORM_CODES = { MT_REPAIR: "MT01-FM05", MANAGEMENT: "PP01-FM08", NCR_CAR: "QA02-FM01" };
 
@@ -2126,7 +2116,7 @@ async function renderDashboard(params = new URLSearchParams()) {
         <h2 id="home-queue-title">ต้องจัดการ${items.length ? ` <span class="detail-section-count">${items.length}</span>` : ""}</h2>
         ${ownSelectable.length > 1 ? `<label class="queue-select-all"><input type="checkbox" id="queue-select-all"> เลือกทั้งหมดเพื่ออนุมัติ</label>` : ""}
       </div>
-      ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(entry.verb ?? decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
+      ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
       ${items.length ? `<div class="queue-layout">
         <ul class="queue-list" role="list"${approvalIds.length ? ` title="คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ" aria-keyshortcuts="J K A R"` : ""}>${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= visibleCount })).join("")}</ul>
         <div class="queue-detail-pane" id="queue-detail-pane"></div>
@@ -2193,7 +2183,7 @@ function homeQueueDetailHtml(item, nextStep, { compact = false, nextStepKnown = 
     <h3 class="queue-detail-title" id="queue-detail-title" tabindex="-1">${escapeHtml(request.title)}</h3>`}
     ${description ? `<p class="request-summary-text queue-detail-text">${escapeHtml(description)}</p>` : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
     <a class="link-button" href="#/request?id=${encodeURIComponent(item.id)}">เปิดใบเต็ม: ไฟล์แนบ ลำดับอนุมัติ และประวัติ</a>
-    ${decisionPanelHtml({ request, currentStep: item.step, nextStep, nextStepKnown, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [], afterApproval: isRepairType(type) ? myRepairActionLabels.pending_assign : "" })}
+    ${decisionPanelHtml({ request, currentStep: item.step, nextStep, nextStepKnown, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
   </article>`;
 }
 
@@ -2280,7 +2270,7 @@ function watchDecisionPanelBusy() {
 // ห้ามวาดใหม่ทั้งหน้า เพราะจะส่งมติของใบนั้นทันทีและทิ้งข้อความที่พิมพ์ค้าง — แค่เอาแถวที่ตัดสินแล้วออก
 async function afterQueueDecision(id, decision) {
   const item = homeQueueState.ctx?.items.find((entry) => entry.id === id);
-  announce(`${(decision === "approved" ? stepVerbOf(item?.step?.step_name) : decisionVerbs[decision]) ?? "บันทึกผล"} ${item?.request.request_no ?? ""} แล้ว`);
+  announce(`${decisionVerbs[decision] ?? "บันทึกผล"} ${item?.request.request_no ?? ""} แล้ว`);
   const panel = document.querySelector("#decision-panel");
   const otherBusy = homeQueueState.selectedId !== id && panel && panel.dataset.state !== "idle";
   if (otherBusy) {
@@ -2503,8 +2493,9 @@ function syncQueueBulk() {
 // คีย์ลัดของคิว (จอที่มีคีย์บอร์ด): J/K เลื่อน, A อนุมัติ, R ไม่อนุมัติ — A/R เปิดขั้นยืนยันในแถบ ไม่ส่งทันที
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || !document.querySelector("#home-queue .queue-list")) return;
-  // ปุ่มจริงบนคีย์บอร์ด (event.code): คีย์บอร์ดที่ค้างภาษาไทยส่ง "่", "า", "ฟ", "พ" แทน j/k/a/r
-  const key = { KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r" }[event.code] ?? event.key.toLowerCase();
+  // คีย์บอร์ดที่ค้างภาษาไทยส่ง "่", "า", "ฟ", "พ" แทน j/k/a/r: ใช้ตำแหน่งปุ่ม (event.code) เฉพาะเมื่อไม่ได้ตัวอักษรละติน
+  // แป้นละตินแบบอื่น (AZERTY, Dvorak) ยังใช้ตัวอักษรที่พิมพ์ได้จริง
+  const key = /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : ({ KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r" }[event.code] ?? event.key.toLowerCase());
   if (!["j", "k", "a", "r"].includes(key)) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
@@ -2601,12 +2592,13 @@ function requestScopeSwitch(params) {
 }
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
-function requestListFilters(params, { departments = null, placeholder, scope = false, search = true, repair = false } = {}) {
+// module: หน้าเป็นของโมดูลเดียว ตัวเลือกสถานะจึงตามขั้นตอนของโมดูลนั้น (กระดานทุกโมดูลแสดงทุกสถานะ)
+function requestListFilters(params, { departments = null, placeholder, scope = false, search = true, repair = false, module = false } = {}) {
   // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
   const known = knownRequestStatuses(params);
   const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
-  // ตัวเลือกตามขั้นตอนของโมดูล: งานซ่อมไม่มี "รับทราบข้อมูล" โมดูลอื่นไม่มีขั้นของช่าง (ค่าที่กรองอยู่แสดงเสมอ)
-  const offWorkflow = repair ? ["acknowledged"] : ["pending_assign", "assigned", "pending_verify"];
+  // โมดูลเดียว: งานซ่อมไม่มี "รับทราบข้อมูล" โมดูลอื่นไม่มีขั้นของช่าง (ค่าที่กรองอยู่แสดงเสมอ)
+  const offWorkflow = !module ? [] : repair ? ["acknowledged"] : ["pending_assign", "assigned", "pending_verify"];
   const options = REQUEST_STATUS_FILTERS.filter(([option]) => !offWorkflow.includes(option) || known.includes(option)).map(([option, label]) => ({ value: option, label: option === "all" ? "ทุกสถานะ" : statusLabel(option, repair), href: requestCenterUrl(params, { status: option }) }));
   // ลิงก์จากแดชบอร์ดส่งหลายสถานะคั่นจุลภาค: เป็นตัวเลือกของตัวเอง ช่องจึงบอกค่าที่ใช้กรองอยู่จริง
   if (known.length > 1) {
@@ -2734,7 +2726,7 @@ async function renderRequestsBoard(params, types) {
     && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
   const content = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
-    ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected) })}
+    ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
   app.innerHTML = shell(content, "requests", "คำร้อง");
@@ -2811,7 +2803,7 @@ async function renderRequests(params) {
     const department = selectedFilterDepartment(params, departments);
     // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
     const search = departments ? (params.get("q") ?? "").trim() : "";
-    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments), repair: isRepairType(selected) })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -3152,6 +3144,7 @@ function bindGenericRequestForm(selected, employee) {
       // กรอกเองโดยไม่ตอบแถบ = เริ่มใบใหม่ ร่างเดิมถูกแทนด้วยสิ่งที่กรอก
       form,
       onEdit: () => { draftPending = false; autosave.start(); autosave.schedule(); },
+      hasInput: () => !draftApi.isEmptyDraft(currentValues(), ["priority"]),
     });
   }
 
@@ -3349,11 +3342,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     } else if (item.to_status === "pending_approval" && item.from_status === "pending_assign") {
       detail = `${actor || "ระบบ"} ย้อนกลับไปรออนุมัติ${stage ? `ขั้น ${stage}` : ""}`;
     } else if (["approved", "pending_assign"].includes(item.to_status)) {
-      // ขั้นที่ไม่ใช่การอนุมัติ (เช่น "…รับงาน") ใช้คำกริยาของขั้น ให้ลำดับเหตุการณ์ตรงกับที่เกิดจริง
-      const stageVerb = stepVerbOf(stage);
-      detail = stageVerb === "อนุมัติ"
-        ? `${actor || "ผู้อนุมัติ"} อนุมัติ${stage ? `ขั้น ${stage}` : "คำร้อง"} แล้ว`
-        : `${actor || "ผู้อนุมัติ"} ${stageVerb}แล้ว (${stage})`;
+      detail = `${actor || "ผู้อนุมัติ"} อนุมัติ${stage ? `ขั้น ${stage}` : "คำร้อง"} แล้ว`;
       message = note || matchingDecision?.comment || "";
     } else if (item.to_status === "assigned" && item.from_status === "pending_verify") {
       detail = `${actor || "ผู้แจ้ง"} ตรวจรับไม่ผ่าน ส่งกลับให้ ${personName(directory, request.assignee_id)} ซ่อมเพิ่มเติม`;
@@ -3397,13 +3386,12 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     const nextStep = orderedSteps[index + 1];
     if (!["approved", "acknowledged"].includes(step.status) || !step.acted_at || !nextStep) return [];
     const actorName = personName(directory, step.acted_by);
-    const stepVerb = stepVerbOf(step.step_name);
+    const verb = step.status === "acknowledged" ? "รับทราบข้อมูลขั้น" : "อนุมัติขั้น";
     return [{
       id: `approval-${step.id}`,
       at: step.acted_at,
       title: `รออนุมัติ (${nextStep.step_name})`,
-      detail: `${actorName === "—" ? "ผู้อนุมัติ" : actorName} ${step.status === "acknowledged" ? `รับทราบข้อมูลขั้น ${step.step_name} แล้ว`
-        : stepVerb === "อนุมัติ" ? `อนุมัติขั้น ${step.step_name} แล้ว` : `${stepVerb}แล้ว (${step.step_name})`}`,
+      detail: `${actorName === "—" ? "ผู้อนุมัติ" : actorName} ${verb} ${step.step_name} แล้ว`,
       message: String(step.comment ?? "").trim(),
     }];
   });
@@ -3631,7 +3619,7 @@ async function renderRequestDetail(params) {
         ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
-        ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [], afterApproval: isRepair ? myRepairActionLabels.pending_assign : "" }) : ""}
+        ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
         <details class="card detail-section"><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
@@ -3742,8 +3730,7 @@ function recentDecisionFor(requestId) {
 }
 
 function decisionReceiptHtml(receipt, directory) {
-  // คำกริยาของขั้นที่ตัดสิน (เช่น "รับงานแล้ว") ใบเสร็จเก่าที่ไม่มีค่านี้ใช้ชื่อมติ
-  const verb = receipt.verb ?? decisionVerbs[receipt.decision] ?? "บันทึกผล";
+  const verb = decisionVerbs[receipt.decision] ?? "บันทึกผล";
   const tone = receipt.decision === "rejected" ? "danger" : receipt.decision === "more_info" ? "warning" : "success";
   return `<section class="card decision-receipt decision-receipt-${tone}" aria-labelledby="decision-receipt-title">
     <span class="decision-receipt-icon" aria-hidden="true">${uiIcon(receipt.decision === "rejected" ? "close" : "check")}</span>
@@ -3763,25 +3750,23 @@ function requestDetailMenuHtml(actionsHtml) {
 }
 
 // ปุ่มตัดสินใจ: ไม่อนุมัติ · ขอข้อมูลเพิ่ม · (มติเฉพาะโมดูล) · อนุมัติ — อนุมัติอยู่ขวาสุด ใต้นิ้วโป้ง
-// verb: คำกริยาของขั้น (stepVerbOf) ขั้น "รับงาน" ได้ปุ่ม "รับงาน" / "ไม่รับงาน" แทน "อนุมัติ" / "ไม่อนุมัติ"
-function decisionButtonsOf(extraDecisions, verb = "อนุมัติ") {
+function decisionButtonsOf(extraDecisions) {
   return [
-    { decision: "rejected", label: verb === "รับงาน" ? "ไม่รับงาน" : "ไม่อนุมัติ", tone: "danger" },
+    { decision: "rejected", label: "ไม่อนุมัติ", tone: "danger" },
     { decision: "more_info", label: "ขอข้อมูลเพิ่ม", tone: "warning" },
     ...extraDecisions.map((item) => ({ decision: item.decision, label: item.label, tone: "secondary" })),
-    { decision: "approved", label: verb, tone: "success" },
+    { decision: "approved", label: "อนุมัติ", tone: "success" },
   ];
 }
 
 // nextStepKnown: false เมื่อโหลดลำดับขั้นไม่ได้ ไม่บอกว่า "ขั้นสุดท้าย" ผิดความจริง
 // request: ใบที่แถบนี้ตัดสิน — ปุ่มมติอ้างถึงเลขที่และหัวข้อผ่าน aria-describedby ทุกหน้า
 // และบนหน้าหลักจอแคบ (แถบลอยติดล่างจอ ห่างจากใบที่ขยาย) แสดงบรรทัดนี้ให้เห็นด้วย
-// afterApproval: งานที่ต่อจากขั้นอนุมัติสุดท้าย (ใบแจ้งซ่อมต่อด้วย "มอบหมายช่าง") — ไม่บอก "ขั้นสุดท้าย" ทั้งที่งานยังไม่จบ
-function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nextStepKnown = true, afterApproval = "" }) {
+function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nextStepKnown = true }) {
   return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
     <div class="action-panel-head">
       <h2 id="decision-panel-title">พิจารณาคำร้อง</h2>
-      <p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}${nextStep ? ` · ถัดไป: ${escapeHtml(nextStep.step_name)}` : !nextStepKnown ? "" : afterApproval ? ` · ถัดไป: ${escapeHtml(afterApproval)}` : " · ขั้นสุดท้าย"}</p>
+      <p class="muted small">ขั้นตอน: ${escapeHtml(currentStep.step_name)}${nextStep ? ` · ถัดไป: ${escapeHtml(nextStep.step_name)}` : nextStepKnown ? " · ขั้นสุดท้าย" : ""}</p>
     </div>
     <p class="decision-target" id="decision-target">${escapeHtml(`${request.request_no} · ${request.title}`)}</p>
     <p class="decision-line" id="decision-line" hidden></p>
@@ -3793,7 +3778,7 @@ function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nex
       </div>
       <details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("decision-files", "เลือกไฟล์", { hint: false })}</details>
     </div>
-    <div class="action-panel-buttons" id="decision-buttons">${idleDecisionButtonsHtml(decisionButtonsOf(extraDecisions, stepVerbOf(currentStep.step_name)))}</div>
+    <div class="action-panel-buttons" id="decision-buttons">${idleDecisionButtonsHtml(decisionButtonsOf(extraDecisions))}</div>
   </section>`;
 }
 
@@ -3812,39 +3797,18 @@ async function fillNextItemPanel(currentId) {
   const panel = document.querySelector("#next-item-panel");
   if (!panel) return;
   try {
-    // นับแบบเดียวกับคิวหน้าหลัก (ใบรออนุมัติ + งานซ่อมที่ต้องลงมือ) ตัวเลขจึงตรงกับ "ต้องจัดการ"
-    const [approvals, repairs] = await Promise.all([getPendingApprovals(), getMyRepairActionItems()]);
+    const pending = (await getPendingApprovals()).filter((step) => step.request?.id && step.request.id !== currentId);
     if (!panel.isConnected) return;
-    const sameRequestTask = repairs.find((task) => task.id === currentId);
-    const others = window.MNP_HOME_QUEUE.sortQueue([
-      ...approvals.filter((step) => step.request?.id && step.request.id !== currentId)
-        .map((step) => ({ id: step.request.id, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
-      ...repairs.filter((task) => task.id !== currentId)
-        .map((task) => ({ id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
-    ]);
     const text = panel.querySelector("#next-item-text");
     const buttons = panel.querySelector(".action-panel-buttons");
-    const next = others[0];
-    const otherLink = () => next ? `<a class="btn secondary" href="#/request?id=${encodeURIComponent(next.id)}">งานอื่น (${others.length})</a>` : `<a class="btn secondary" href="#/">กลับหน้าหลัก</a>`;
-    // ใบนี้ยังมีงานของผู้ใช้ต่อ (เช่น เพิ่งรับงานแล้วต้องมอบหมายช่าง): ชี้งานนั้นก่อน ไม่พาออกไปใบอื่น
-    const sameTarget = sameRequestTask?.status === "pending_assign" ? document.querySelector("#assign-form") : null;
-    if (sameTarget) {
-      const label = myRepairActionLabels[sameRequestTask.status];
-      text.textContent = `ใบนี้ต่อด้วย: ${label}${others.length ? ` · งานอื่นอีก ${others.length} รายการ` : ""}`;
-      buttons.innerHTML = `${otherLink()}<button type="button" class="btn is-primary" data-next-same>${escapeHtml(label)}</button>`;
-      buttons.querySelector("[data-next-same]").addEventListener("click", () => {
-        sameTarget.scrollIntoView({ block: "start", behavior: "smooth" });
-        sameTarget.querySelector("input:not([type=hidden]), select, textarea")?.focus({ preventScroll: true });
-      });
-      return;
-    }
-    if (!next) {
-      text.textContent = "ไม่มีงานรอคุณแล้ว";
+    if (!pending.length) {
+      text.textContent = "ไม่มีงานรอคุณพิจารณาแล้ว";
       buttons.innerHTML = `<a class="btn" href="#/">กลับหน้าหลัก</a>`;
       return;
     }
-    text.textContent = `เหลือ ${others.length} รายการ · ถัดไป ${next.request.request_no} ${next.request.title}`;
-    buttons.innerHTML = `<a class="btn secondary" href="#/">กลับหน้าหลัก</a><a class="btn is-primary" href="#/request?id=${encodeURIComponent(next.id)}">รายการถัดไป (${others.length})</a>`;
+    const next = pending[0];
+    text.textContent = `เหลือ ${pending.length} รายการ · ถัดไป ${next.request.request_no} ${next.request.title}`;
+    buttons.innerHTML = `<a class="btn secondary" href="#/">กลับหน้าหลัก</a><a class="btn is-primary" href="#/request?id=${encodeURIComponent(next.request.id)}">รายการถัดไป (${pending.length})</a>`;
   } catch {
     if (panel.isConnected) panel.querySelector("#next-item-text").textContent = "โหลดงานถัดไปไม่ได้";
   }
@@ -3905,7 +3869,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   const commentLabel = panel.querySelector("#decision-comment-label");
   const commentError = panel.querySelector("#decision-comment-error");
   const buttons = panel.querySelector("#decision-buttons");
-  const options = decisionButtonsOf(extraDecisions, stepVerbOf(currentStep.step_name));
+  const options = decisionButtonsOf(extraDecisions);
   const labelOf = (decision) => options.find((item) => item.decision === decision)?.label ?? decisionVerbs[decision] ?? decision;
   const toneOf = (decision) => options.find((item) => item.decision === decision)?.tone ?? "secondary";
   // มติเพิ่มของโมดูล (เช่น รับทราบ) มีโทนเทาเท่าปุ่มยกเลิก/เลิกทำ ปุ่มหลักของมันจึงใช้สีแบรนด์ให้แยกออกจากปุ่มรอง
@@ -4072,7 +4036,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     // มติบันทึกแล้ว: จากนี้ข้อผิดพลาดใดๆ ต้องไม่ถูกบอกว่า "ไม่สำเร็จ"
     detachLeaveGuards();
     if (activeDecisionCountdown === countdown) activeDecisionCountdown = null;
-    recentDecisions.set(id, { decision, verb: labelOf(decision), comment: text, at: Date.now(), actorId: employee.id, requestNo: request.request_no, title: request.title, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
+    recentDecisions.set(id, { decision, comment: text, at: Date.now(), actorId: employee.id, requestNo: request.request_no, title: request.title, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
     let warning = "";
     try { warning = await uploadExtraFiles(id, files, employee.id); } catch (uploadError) { warning = friendlyError(uploadError); }
     triggerNotificationEmails(id);
@@ -4149,7 +4113,7 @@ async function runBulkApprove(chosen) {
     const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
     if (!error) {
       done += 1;
-      recentDecisions.set(step.request.id, { decision: "approved", verb: stepVerbOf(step.step_name), comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
+      recentDecisions.set(step.request.id, { decision: "approved", comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
       triggerNotificationEmails(step.request.id);
       continue;
     }
@@ -4167,8 +4131,8 @@ async function runBulkApprove(chosen) {
 
 // คีย์ลัด: กด / เพื่อไปที่ช่องค้นหาของหน้า (ไม่ทำงานขณะพิมพ์ในช่องกรอกหรือมีกล่องเปิดอยู่)
 document.addEventListener("keydown", (event) => {
-  // ปุ่ม / จริง (คีย์บอร์ดภาษาไทยส่ง "ฝ") หรือตัวอักษร / จากแป้นแบบอื่น
-  const slash = event.key === "/" || (event.code === "Slash" && !event.shiftKey);
+  // ปุ่ม / ที่ตำแหน่งเดิมเมื่อคีย์บอร์ดเป็นภาษาไทย (ส่ง "ฝ") ยังเปิดช่องค้นหาได้
+  const slash = event.key === "/" || (event.code === "Slash" && !event.shiftKey && !/^[\x20-\x7e]$/.test(event.key));
   if (!slash || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;

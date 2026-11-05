@@ -86,7 +86,8 @@
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
   // form + onEdit: ผู้ใช้เริ่มกรอกเองโดยไม่ตอบแถบ (แตะ/พิมพ์จริง ไม่ใช่ event ที่โค้ดยิง) = เริ่มใบใหม่
   // ปิดแถบแล้วเรียก onEdit (ผู้เรียกเริ่มบันทึกร่างของใบใหม่) — เดิมแถบค้างไว้แล้วสิ่งที่กรอกไม่ถูกเก็บ และยกเลิกได้โดยไม่ถาม
-  function offerDraft({ banner, message, onUse, onDiscard, form = null, onEdit = null }) {
+  // hasInput: ฟอร์มมีค่าที่ลงร่างได้จริงหรือยัง (พิมพ์แค่ช่องว่าง พิมพ์แล้วลบ หรือเลือกไฟล์ ยังไม่นับ จึงไม่ทับร่างเดิมด้วยร่างว่าง)
+  function offerDraft({ banner, message, onUse, onDiscard, form = null, onEdit = null, hasInput = () => true }) {
     banner.innerHTML = `<p>${escapeHtml(message)}</p><div class="draft-banner-actions"><button type="button" class="btn secondary small" data-draft="discard">เริ่มใหม่</button><button type="button" class="btn small" data-draft="use">ใช้ร่างต่อ</button></div>`;
     banner.hidden = false;
     const close = () => {
@@ -103,7 +104,7 @@
       else onDiscard();
     };
     const editedFirst = (event) => {
-      if (!event.isTrusted || banner.contains(event.target)) return;
+      if (!event.isTrusted || banner.contains(event.target) || !hasInput()) return;
       close();
       onEdit();
     };

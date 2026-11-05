@@ -334,6 +334,7 @@
         // กรอกเองโดยไม่ตอบแถบ = เริ่มใบใหม่ ร่างเดิมถูกแทนด้วยสิ่งที่กรอก
         form,
         onEdit: () => { draftPending = false; autosave.start(); autosave.schedule(); },
+        hasInput: () => !draftApi.isEmptyDraft(currentValues()),
       });
     }
 

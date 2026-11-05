@@ -714,6 +714,7 @@
           // กรอกเองโดยไม่ตอบแถบ = เริ่มใบใหม่ (ไม่ย้ายโฟกัสหรือเปลี่ยนแผนกที่ผู้ใช้กำลังเลือก) ร่างเดิมถูกแทนด้วยสิ่งที่กรอก
           form,
           onEdit: () => { draftPending = false; autosave.start(); autosave.schedule(); },
+          hasInput: () => Boolean(description.value.trim() || machineInput.value || neededDate.value || urgent.checked),
         });
       } else {
         selectDefaultDepartment();
