@@ -402,11 +402,19 @@
     return out;
   }
 
+  // ตัวเลือกเลข XP- ของชิ้นที่ไม่มีรหัสตอนนำเข้า · ในเครื่อง = นับชิ้น SUBPART + 1 (เหมือนเดิม)
+  // โหมดฐานข้อมูล (ส่งรหัสสุ่ม suffix มา) = เลขสูงสุดของ XP- ที่มีอยู่ + 1 และต่อ -suffix: ผู้วางแผนสองคนที่นำเข้าจากเวอร์ชันเดียวกันจึงไม่ได้รหัสซ้ำกัน (ซ้ำ = BOM_STALE ทั้งชุดถูกย้อนกลับ)
+  function subpartOptions(items, suffix = "") {
+    if (!suffix) return { subpartStart: items.filter((item) => item.kind === "SUBPART").length + 1 };
+    const numbers = items.map((item) => /^XP-(\d+)/.exec(String(item.code ?? ""))).filter(Boolean).map((match) => Number(match[1]));
+    return { subpartStart: Math.max(0, ...numbers) + 1, subpartSuffix: suffix };
+  }
+
   // ---------- ประกอบต้นไม้จากชีตแบน ----------
   // แต่ละ ITEM: แถว PK ที่รหัส = ฐานของ ITEM คือ FG · SE เป็นลูกของ FG · RB เป็นลูกของ SE ล่าสุด (ปริมาณจากสูตร rbPerSe ไม่ใช่ตัวเลขในชีตที่ซ้ำกับ SE) ·
   // คู่ PT-ST/BG-ST/BG-PT เป็นลูกของชิ้น PT/BG ล่าสุด · GR-ST ลูกของ SE ล่าสุด · คู่ PK-* ลูกของ FG · บรรทัดซ้ำ (ลูกเดียวกันใต้พ่อเดียวกัน) รวมปริมาณ
   // คืน { items: Map(code → item), boms: Map(parentCode → lines[]), report }
-  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1 } = {}) {
+  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1, subpartSuffix = "" } = {}) {
     const items = new Map();
     const boms = new Map();
     const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, variants: 0, colored: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
@@ -432,7 +440,7 @@
     const subpartFor = (row) => {
       const key = `${row.name}|${row.uom}`;
       if (!subpartByName.has(key)) {
-        subpartByName.set(key, `XP-${String(subpartSeq).padStart(5, "0")}`);
+        subpartByName.set(key, `XP-${String(subpartSeq).padStart(5, "0")}${subpartSuffix ? `-${subpartSuffix}` : ""}`.toUpperCase());
         subpartSeq += 1;
         report.subparts += 1;
       }
@@ -840,7 +848,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

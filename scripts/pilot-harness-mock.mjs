@@ -415,12 +415,14 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           next[list].push(bomStamp(list, record, undefined));
         } else {
           if (changedByOthers(list, id)) fail("BOM_STALE");
-          // BOM และ routing ที่บันทึกแล้วแก้ไม่ได้ นอกจากถูกแทนที่ (approved → superseded)
+          // BOM และ routing ที่บันทึกแล้วแก้ไม่ได้ (BOM_REVISION_IMMUTABLE) นอกจากถูกแทนที่ (approved → superseded) · BOM แก้แผนกเจ้าของได้และต่อท้าย changeLog ได้ (ตรงกับ app_bom_save_master)
           if (list === "boms" || list === "routings") {
             const old = next[list][at];
-            const owned = { status: 0, supersededAt: 0, createdAt: 0, createdBy: 0, approvedAt: 0, approvedBy: 0 }; // ฟิลด์ที่ฐานข้อมูลเป็นเจ้าของ ไม่นับเป็นการแก้เนื้อหา
+            const owned = { status: 0, supersededAt: 0, createdAt: 0, createdBy: 0, approvedAt: 0, approvedBy: 0, ...(list === "boms" ? { ownerDept: 0, changeLog: 0 } : {}) }; // ฟิลด์ที่ฐานข้อมูลเป็นเจ้าของหรือเปลี่ยนได้ ไม่นับเป็นการแก้เนื้อหา
             const same = bomCanon({ ...old, ...owned }) === bomCanon({ ...record, ...owned });
-            if (!same || (old.status !== record.status && !(old.status === "approved" && record.status === "superseded"))) fail("BOM_INVALID_REVISION_IMMUTABLE");
+            const logOf = (row) => (Array.isArray(row.changeLog) ? row.changeLog : []);
+            const logKept = list !== "boms" || (logOf(record).length >= logOf(old).length && logOf(old).every((entry, index) => bomCanon(entry) === bomCanon(logOf(record)[index])));
+            if (!same || !logKept || (old.status !== record.status && !(old.status === "approved" && record.status === "superseded"))) fail("BOM_REVISION_IMMUTABLE");
           }
           next[list][at] = bomStamp(list, record, next[list][at]);
         }

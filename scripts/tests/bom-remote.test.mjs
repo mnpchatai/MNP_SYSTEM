@@ -106,11 +106,12 @@ function fakeServer(initial = emptyMaster()) {
   server.external = (changes) => apply(changes, server.master.version);
   return server;
 }
-function remoteStore({ server = fakeServer(), storage = memoryStorage(), user = planner } = {}) {
+function remoteStore({ server = fakeServer(), storage = memoryStorage(), user = planner, shouldHold } = {}) {
   const events = [];
-  const store = storeApi.createStore({ storage, actions: A, now: () => NOW, remote: server.remote, persona: () => user });
-  store.subscribe((event) => events.push(event.type));
-  return { store, server, storage, events };
+  const raw = [];
+  const store = storeApi.createStore({ storage, actions: A, now: () => NOW, remote: server.remote, persona: () => user, shouldHold });
+  store.subscribe((event) => { events.push(event.type); raw.push(event); });
+  return { store, server, storage, events, raw };
 }
 const ready = async (env) => { await env.store.ensureLoaded(); return env; };
 const saveItemPayload = (code = "P-TEST-01", extra = {}) => ({ code, kind: "PURCHASED", name: "ของซื้อทดสอบ", uom: "pcs", create: true, ...extra });
@@ -730,6 +731,123 @@ test("a catch-up that finds the page's version ahead of the database falls back 
   assert.equal(env.events.includes("synced"), true);
 });
 
+// หน้าเริ่มแก้ฟอร์มอื่น (หรือเปิด dialog) ระหว่างที่การบันทึกกำลังรอคำตอบ: ผู้อื่นแก้ P-Z ไปก่อน · ฟอร์มสร้างจากข้อมูลก่อนหน้านั้น
+async function inFlightScene(hold) {
+  const state = { holding: false };
+  const env = await ready(remoteStore({ shouldHold: () => state.holding }));
+  const { store, server } = env;
+  await store.run("saveItem", { code: "P-Z", kind: "PURCHASED", name: "Z old", uom: "pcs", create: true }).saving;
+  server.external({ items: { upsert: [{ ...server.master.items.find((row) => row.code === "P-Z"), name: "Z renamed by C" }] } });
+  const baseBefore = store.version();
+  const unrelated = store.run("saveItem", saveItemPayload("P-B", { name: "B" }));
+  state.holding = hold; // ผู้ใช้เปิดฟอร์มแก้ P-Z ตอนนี้ (ข้อมูลที่ฟอร์มใช้คือ "Z old")
+  const formName = store.data().items.find((row) => row.code === "P-Z").name;
+  assert.equal(formName, "Z old");
+  return { ...env, state, baseBefore, unrelated, formName };
+}
+const zPayload = (name) => ({ code: "P-Z", kind: "PURCHASED", name, uom: "kg" });
+
+test("a save reply with other users records does not move the base or the data while a form is open: the form's later save conflicts and the other user's change survives", async () => {
+  const scene = await inFlightScene(true);
+  const { store, server, state, raw } = scene;
+  assert.equal(scene.unrelated.ok, true);
+  assert.deepEqual(await scene.unrelated.saving, { ok: true });
+  assert.equal(store.version(), scene.baseBefore, "the base version used by the next save did not move");
+  assert.equal(store.hasNewer(), true);
+  const saved = raw.filter((event) => event.type === "saved").at(-1);
+  assert.deepEqual([saved.changed, saved.others, saved.held], [false, true, true], "the page is told the reply was held, so it does not redraw");
+  assert.equal(raw.filter((event) => event.type === "pending").length, 1);
+  const names = Object.fromEntries(store.data().items.map((row) => [row.code, row.name]));
+  assert.equal(names["P-Z"], "Z old", "the data under the open form is untouched");
+  assert.equal(names["P-B"], "B", "this client's own record stays visible");
+
+  // ฟอร์มส่ง (เปลี่ยนแค่หน่วย แต่ payload พกชื่อเดิม): ตรวจชนจากฐานเดิม → ชน ไม่ทับชื่อที่ C แก้
+  const out = await store.run("saveItem", zPayload(scene.formName)).saving;
+  assert.equal(server.saves.at(-1).baseVersion, scene.baseBefore);
+  assert.equal(out.ok, false);
+  assert.equal(out.error.code, "BOM_STALE");
+  assert.equal(server.master.items.find((row) => row.code === "P-Z").name, "Z renamed by C", "C's change survived");
+
+  // ชนตอนยังมีฟอร์มค้าง: ไม่ดึงข้อมูลผู้อื่นเข้า data/ฐาน (ย้อนกลับไปที่ snapshot เดิม = ฐานเดิม + P-B ของเราเอง) แค่จำว่ามีข้อมูลใหม่
+  assert.equal(store.version(), scene.baseBefore);
+  assert.equal(store.data().items.find((row) => row.code === "P-Z").name, "Z old");
+  assert.equal(store.data().items.some((row) => row.code === "P-B"), true, "the revert base keeps this client's earlier saved record");
+  assert.equal(store.hasNewer(), true);
+  assert.equal(raw.at(-1).type, "reverted");
+  assert.equal(raw.at(-1).held, true);
+
+  // ฟอร์มจบแล้ว: รวมทุกอย่างพร้อมกัน ฐานขยับ และบันทึกใหม่จากข้อมูลล่าสุดสำเร็จ
+  state.holding = false;
+  assert.equal(await store.catchUp(), true);
+  assert.equal(store.data().items.find((row) => row.code === "P-Z").name, "Z renamed by C");
+  assert.equal(store.hasNewer(), false);
+  assert.equal(store.version(), server.master.version);
+  assert.equal((await store.run("saveItem", zPayload("Z renamed by C")).saving).ok, true);
+  assert.equal(server.master.items.find((row) => row.code === "P-Z").uom, "kg");
+});
+
+test("a save reply with other users records merges as before when no form is open", async () => {
+  const scene = await inFlightScene(false);
+  const { store, server, raw } = scene;
+  assert.deepEqual(await scene.unrelated.saving, { ok: true });
+  assert.equal(store.version(), server.master.version, "the base moved to the reply's version");
+  assert.equal(store.hasNewer(), false);
+  assert.equal(store.data().items.find((row) => row.code === "P-Z").name, "Z renamed by C", "the other user's record was merged");
+  const saved = raw.filter((event) => event.type === "saved").at(-1);
+  assert.equal(saved.others, true);
+  assert.equal(saved.changed, true);
+  assert.equal(saved.held, undefined);
+  assert.equal(raw.some((event) => event.type === "pending"), false);
+  assert.equal((await store.run("saveItem", zPayload("Z renamed by C")).saving).ok, true);
+  assert.equal(server.master.items.find((row) => row.code === "P-Z").uom, "kg");
+});
+
+test("a reply without other users records merges even while a form is open; a conflict during a form reverts without pulling data in", async () => {
+  const state = { holding: false };
+  const env = await ready(remoteStore({ shouldHold: () => state.holding }));
+  const out = env.store.run("saveItem", saveItemPayload("P-ONLY"));
+  state.holding = true;
+  assert.deepEqual(await out.saving, { ok: true });
+  assert.equal(env.store.version(), env.server.master.version, "nothing foreign in the reply: the base moves");
+  assert.equal(env.store.hasNewer(), false);
+
+  // ชน แล้วผู้ใช้เริ่มแก้ฟอร์มอื่น: ย้อนกลับแต่ไม่ตามทันฐานข้อมูล (ไม่เรียก since)
+  env.server.external({ items: { upsert: [otherItem("P-ONLY", "ของ C")] } });
+  const before = env.store.version();
+  const sinces = env.server.sinces.length;
+  state.holding = false;
+  const stale = env.store.run("saveItem", { code: "P-ONLY", kind: "PURCHASED", name: "ของเรา", uom: "pcs" });
+  state.holding = true;
+  assert.equal((await stale.saving).error.code, "BOM_STALE");
+  assert.equal(env.server.sinces.length, sinces, "no catch-up while a form is open");
+  assert.equal(env.store.version(), before);
+  assert.equal(env.store.hasNewer(), true);
+  assert.equal(env.store.data().items.find((row) => row.code === "P-ONLY").name, saveItemPayload("P-ONLY").name, "reverted to the snapshot, not to the other user's version");
+});
+
+test("the full-load fallback of a catch-up is dropped when a form opens while it is loading", async () => {
+  const state = { holding: false };
+  const server = fakeServer();
+  const env = await ready(remoteStore({ server, shouldHold: () => state.holding }));
+  server.external({ items: { upsert: [otherItem("P-OLD")] } });
+  assert.equal(await env.store.catchUp(), true);
+  server.master = emptyMaster();
+  server.versions = Object.fromEntries(MASTER.map((list) => [list, new Map()]));
+  server.master.items.push(otherItem("P-NEW"));
+  server.versions.items.set("P-NEW", 0);
+  const load = server.remote.load;
+  server.remote.load = async () => { state.holding = true; return load(); };
+  assert.equal(await env.store.catchUp(), false, "a form opened while the snapshot was loading");
+  assert.deepEqual(env.store.data().items.map((item) => item.code), ["P-OLD"], "the page's data was not replaced");
+  assert.equal(env.store.version(), 1);
+  assert.equal(env.events.filter((type) => type === "synced").length, 1, "only the first catch-up redrew");
+
+  state.holding = false;
+  server.remote.load = load;
+  assert.equal(await env.store.catchUp(), true, "the next focus tries again");
+  assert.deepEqual(env.store.data().items.map((item) => item.code), ["P-NEW"]);
+});
+
 // ---------- โมดูลทั้งชุดบน Supabase จำลองของ harness ----------
 const FILES = [
   "modules/ui-icons.js",
@@ -896,7 +1014,7 @@ test("the mock database enforces the contract: test mode, writer permission, per
 
   assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "P-1")] } }, 3)).error, null);
   assert.equal((await save({ boms: { upsert: [bom("B2", "FG-1", "approved", "P-1", 2)] } }, 4)).error.code, "BOM_INVALID_BOM_STATUS", "two approved revisions of one item");
-  assert.equal((await save({ boms: { upsert: [{ ...bom("B1", "FG-1", "approved", "P-1", 5) }] } }, 4)).error.code, "BOM_INVALID_REVISION_IMMUTABLE", "a saved revision cannot be edited");
+  assert.equal((await save({ boms: { upsert: [{ ...bom("B1", "FG-1", "approved", "P-1", 5) }] } }, 4)).error.code, "BOM_REVISION_IMMUTABLE", "a saved revision cannot be edited");
   const supersede = await save({ boms: { upsert: [{ ...bom("B1", "FG-1", "superseded", "P-1"), supersededAt: NOW }, bom("B2", "FG-1", "approved", "P-1", 2)] } }, 4);
   assert.equal(supersede.error, null, "a new revision supersedes the previous one in the same call");
   assert.deepEqual(supersede.data.changes.boms.upsert.map((row) => `${row.id}:${row.status}`), ["B1:superseded", "B2:approved"], "the delta carries the superseded revision too");
@@ -938,6 +1056,44 @@ test("the mock database enforces the contract: test mode, writer permission, per
   assert.equal((await outside.client.rpc("app_bom_master")).error.code, "BOM_TEST_MODE_ONLY");
   assert.equal((await outside.client.rpc("app_bom_master_since", { p_version: 0 })).error.code, "BOM_TEST_MODE_ONLY");
   assert.equal((await outside.client.rpc("app_bom_save_master", { p_changes: {}, p_base_version: 0, p_action: "t" })).error.code, "BOM_TEST_MODE_ONLY");
+});
+
+test("the mock database follows the real revision rule: owner department and an appended change log may change, anything else is BOM_REVISION_IMMUTABLE", async () => {
+  const { client } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const save = (changes, version) => client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: version, p_action: "t" });
+  const part = (code, kind) => ({ code, kind, name: code, ownerDept: "ST", uom: "pcs", weightG: 0, legacyCodes: [], active: true });
+  const bom = { id: "B1", itemCode: "FG-1", revision: 1, status: "approved", ownerDept: "PK", lines: [{ childCode: "P-1", qty: 1 }], note: "", changeLog: [{ at: NOW, by: "ก", text: "สร้าง" }] };
+  assert.equal((await save({ items: { upsert: [part("FG-1", "FG"), part("P-1", "PURCHASED")] } }, 0)).error, null);
+  assert.equal((await save({ boms: { upsert: [bom] } }, 1)).error, null);
+  assert.equal((await save({ boms: { upsert: [{ ...bom, ownerDept: "ST" }] } }, 2)).error, null, "the owner department can be moved");
+  const appended = { ...bom, ownerDept: "ST", changeLog: [...bom.changeLog, { at: NOW, by: "ข", text: "ย้ายแผนก" }] };
+  assert.equal((await save({ boms: { upsert: [appended] } }, 3)).error, null, "a change log entry can be appended");
+  for (const [label, row] of [
+    ["a rewritten entry", { ...appended, changeLog: [{ ...bom.changeLog[0], text: "แก้" }, appended.changeLog[1]] }],
+    ["a shortened log", { ...appended, changeLog: [] }],
+    ["a changed line", { ...appended, lines: [{ childCode: "P-1", qty: 2 }] }],
+    ["a changed note", { ...appended, note: "x" }],
+  ]) {
+    const refused = await save({ boms: { upsert: [row] } }, 4);
+    assert.equal(refused.error?.code, "BOM_REVISION_IMMUTABLE", label);
+  }
+});
+
+test("a failed save while another form is being edited reverts the data but does not redraw the page over what was typed", async () => {
+  const env = await dirtyEnv();
+  await env.othersSave("P-SAME");
+  await env.fire("input", env.event("input"));
+  const renders = env.log.renders;
+  const saved = await env.store.run("saveItem", saveItemPayload("P-SAME")).saving;
+  assert.equal(saved.error.code, "BOM_STALE");
+  await new Promise((resolve) => setTimeout0(resolve));
+  assert.equal(env.log.renders, renders, "no redraw while a form is dirty");
+  await env.render();
+  const again = renders + 1;
+  await env.othersSave("P-OTHER");
+  const fresh = await env.store.run("saveItem", saveItemPayload("P-NEW")).saving;
+  assert.equal(fresh.ok, true);
+  assert.ok(env.log.renders >= again, "with nothing to protect the page is drawn as before");
 });
 
 test("the mock database keeps its data, record versions and tombstones in the page storage", async () => {
@@ -1042,6 +1198,12 @@ test("a form with unsaved edits holds the catch-up: no merge, no redraw, the bas
   const saved = await out.saving;
   assert.equal(saved.ok, false);
   assert.equal(saved.error.code, "BOM_STALE", "the other user's record is not overwritten silently");
+  // ฟอร์มยังเปิดอยู่ตอนชน: ย้อนกลับแต่ไม่ดึงงานของผู้อื่นเข้ามา (ฟอร์มอื่นที่ค้างอยู่จะได้ไม่ส่งทับด้วยเวอร์ชันใหม่) · วาดหน้าใหม่ = ฟอร์มจบแล้ว จึงรวม
+  assert.deepEqual(Array.from(env.store.data().items, (item) => item.name), []);
+  assert.equal(env.store.version(), 0);
+  assert.equal(env.store.hasNewer(), true);
+  await env.render();
+  await new Promise((resolve) => setTimeout0(resolve));
   assert.deepEqual(Array.from(env.store.data().items, (item) => item.name), ["ของคนอื่น"]);
   assert.equal(env.store.hasNewer(), false);
 });

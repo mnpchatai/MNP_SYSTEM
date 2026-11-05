@@ -43,7 +43,7 @@
       return data;
     },
   } : null;
-  const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee) });
+  const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing() });
   window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params) };
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
@@ -52,7 +52,7 @@
   // ข้อมูลที่แสดงเปลี่ยนเพราะผู้อื่นบันทึก (ตามทันหรือส่วนต่างหลังบันทึก): วาดหน้าใหม่ เว้นแต่ผู้ใช้กำลังแก้ฟอร์ม/เปิด dialog อยู่ (ไม่ทับสิ่งที่พิมพ์) แจ้งแทน
   // "กำลังแก้" = dirty: ติดตามจาก event ที่เบราว์เซอร์ส่งจริง (isTrusted) ไม่ใช้ว่าช่องไหนมีโฟกัส เพราะตารางสร้าง BOM เก็บแถวไว้ใน DOM อย่างเดียว
   // ลบ/ลากแถวหรือแตะปุ่มแล้วโฟกัสหลุดไป body (บน iPhone ปุ่มที่แตะไม่ได้โฟกัสเลย) ฟอร์มก็ยังไม่ได้บันทึก · ล้าง dirty เมื่อวาดหน้าใหม่ (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
-  // ระหว่าง dirty/มี dialog store ไม่รวมข้อมูลของผู้อื่นเข้า data และไม่ขยับเวอร์ชันฐาน (store.catchUp(isEditing)) การบันทึกจึงตรวจชนจากเวอร์ชันที่ฟอร์มวาดมา
+  // ระหว่าง dirty/มี dialog store ไม่รวมข้อมูลของผู้อื่นเข้า data และไม่ขยับเวอร์ชันฐาน (store รู้จาก shouldHold ทั้งตอน catchUp และตอนคำตอบของการบันทึกมาถึง) การบันทึกจึงตรวจชนจากเวอร์ชันที่ฟอร์มวาดมา
   let dirty = false;
   const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
@@ -83,15 +83,18 @@
     else if (event.type === "saved") {
       updateSync();
       // ผู้อื่นบันทึกระหว่างนั้น = แจ้งเมื่อกำลังแก้อยู่ · เนื้อหาต่างเพราะฐานข้อมูลประทับเวลา/ผู้บันทึกให้ระเบียนของเราเอง = วาดใหม่เงียบๆ เมื่อไม่ได้แก้อะไรค้าง
+      // held = store กันข้อมูลผู้อื่นไว้ไม่รวม (มีฟอร์มค้างตอนคำตอบมา) แจ้งด้วย event pending แล้ว
+      if (event.held) return;
       if (event.others) refreshForOthers();
       else if (event.changed && !isEditing()) renderRoute();
     } else if (event.type === "pending") showToast("มีผู้อื่นบันทึกข้อมูล BOM ไปแล้ว ระบบจะรวมข้อมูลล่าสุดให้เมื่อบันทึกหรือเปิดหน้านี้ใหม่");
     else if (event.type === "synced") refreshForOthers();
+    else if (event.type === "reverted" && isEditing()) updateSync(); // ข้อมูลย้อนกลับแล้ว และ runAction แจ้งข้อความไทยของข้อผิดพลาดให้แล้ว · ไม่วาดหน้าใหม่ทับสิ่งที่พิมพ์ค้างในฟอร์มอื่น
     else if (event.type !== "status") renderRoute();
   });
   // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า BOM: ตามทันการบันทึกของผู้อื่น (store.catchUp วาดหน้าใหม่ผ่าน event synced เฉพาะเมื่อมีอะไรเปลี่ยน · มีฟอร์มค้างไม่รวม แค่แจ้ง)
   const catchUpOnFocus = () => {
-    if (store.isRemote() && onBomRoute() && !document.hidden) store.catchUp(isEditing);
+    if (store.isRemote() && onBomRoute() && !document.hidden) store.catchUp();
   };
   window.addEventListener?.("focus", catchUpOnFocus);
   document.addEventListener?.("visibilitychange", catchUpOnFocus);
@@ -394,7 +397,7 @@
     ui.labelTables(root);
     bind?.(root, ctx);
     // ระหว่างแก้ฟอร์มมีข้อมูลใหม่ของผู้อื่นค้าง (store ไม่ได้รวมให้): ฟอร์มจบแล้ว รวมตอนนี้ (ยังเปิด dialog อยู่ = ค้างต่อ)
-    if (store.hasNewer()) store.catchUp(isEditing);
+    if (store.hasNewer()) store.catchUp();
     return undefined;
   }
 

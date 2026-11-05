@@ -1421,7 +1421,8 @@
           if (!flat.length) throw new Error("ไม่พบบรรทัดข้อมูลใต้หัวตาราง");
           const group = rootNode.querySelector("[data-bom-group]")?.value || "TOY";
           const source = String(rootNode.querySelector("[data-bom-source]")?.value || "Excel").slice(0, 80);
-          const result = rules.buildFromFlat(flat, { group, subpartStart: ctx.data.items.filter((item) => item.kind === "SUBPART").length + 1 });
+          // เลข XP- ของชิ้นที่ไม่มีรหัส: โหมดฐานข้อมูลต่อรหัสสุ่ม (ctx.store.idSuffix · ทั้งชุดใช้รหัสเดียว) กันผู้วางแผนสองคนได้รหัสซ้ำ · โหมดในเครื่องนับเหมือนเดิม
+          const result = rules.buildFromFlat(flat, { group, ...rules.subpartOptions(ctx.data.items, remote ? ctx.store.idSuffix?.() : "") });
           built = { items: [...result.items.values()], boms: [...result.boms.entries()].map(([parentCode, lines]) => ({ parentCode, lines })), group, source };
           const r = result.report;
           const existing = built.items.filter((item) => itemOf(ctx, item.code)).length;

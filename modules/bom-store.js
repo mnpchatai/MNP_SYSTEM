@@ -348,7 +348,9 @@
     return snapshot;
   }
 
-  function createRemoteStore({ storage, actions, now, remote, persona, idSuffix = randomSuffix }) {
+  // shouldHold() = หน้ามีฟอร์มที่แก้ค้าง/เปิด dialog อยู่ (หน้าส่งมา): ระหว่างนั้นข้อมูลของผู้อื่นที่มากับ catchUp หรือคำตอบของการบันทึกห้ามรวมเข้า data และห้ามขยับเวอร์ชันฐาน
+  function createRemoteStore({ storage, actions, now, remote, persona, idSuffix = randomSuffix, shouldHold: pageHolds = () => false }) {
+    const shouldHold = () => { try { return Boolean(pageHolds()); } catch { return false; } };
     let snapshot = null; // ข้อมูลหลักชุดล่าสุดจากฐานข้อมูล (null = ยังไม่โหลด)
     let local = null; // { counters, orders, jobs, audit } ใน localStorage
     let data = null; // ข้อมูลที่หน้าใช้: ข้อมูลหลัก (ตามฐานข้อมูล + ที่เพิ่งแก้และรอบันทึก) + รายการในเครื่อง
@@ -409,12 +411,16 @@
       return Promise.resolve().then(() => remote.load());
     }
     // รวมส่วนต่างเข้าชุดข้อมูลหลักของฐานข้อมูล (snapshot) และเข้า data ที่หน้าใช้ถ้า intoData · คืน true ถ้าเนื้อหาใน data ต่างไปจากเดิม (ต้องวาดหน้าใหม่)
+    function snapshotWith(base, delta) {
+      const next = { ...base, version: Math.max(base.version ?? 0, delta.version) };
+      for (const list of MASTER_LISTS) next[list] = applyEntry(list, base[list], delta.changes[list], false).records;
+      return next;
+    }
     function mergeDelta(delta, intoData) {
-      const nextSnapshot = { ...snapshot, version: Math.max(snapshot.version ?? 0, delta.version) };
+      const nextSnapshot = snapshotWith(snapshot, delta);
       const nextData = intoData ? { ...data } : null;
       let changed = false;
       for (const list of MASTER_LISTS) {
-        nextSnapshot[list] = applyEntry(list, snapshot[list], delta.changes[list], false).records;
         if (nextData) {
           const result = applyEntry(list, data[list], delta.changes[list], true);
           nextData[list] = result.records;
@@ -426,11 +432,12 @@
       return changed;
     }
     // ตามทันฐานข้อมูลหลังชน: ส่วนต่างตั้งแต่เวอร์ชันที่มี · ไม่ได้ (เครือข่าย หรือเวอร์ชันไม่ตรงฐานข้อมูล) ก็โหลดทั้งชุด · ไม่ได้อีกก็ใช้ชุดเดิม ลองใหม่ได้ภายหลัง
-    async function refreshFromServer() {
+    // คืนชุดข้อมูลหลักใหม่โดยยังไม่ตั้งเป็น snapshot (ผู้เรียกตรวจว่าผู้ใช้ไม่ได้เริ่มแก้ฟอร์มระหว่างรอก่อน) · null = ใช้ชุดเดิม
+    async function fetchSnapshotAfterConflict() {
       try {
-        mergeDelta(normalizeDelta(await remote.since(snapshot.version)), false);
+        return snapshotWith(snapshot, normalizeDelta(await remote.since(snapshot.version)));
       } catch {
-        try { snapshot = normalizeSnapshot(await fetchSnapshot()); } catch { /* ใช้ชุดเดิม */ }
+        try { return normalizeSnapshot(await fetchSnapshot()); } catch { return null; }
       }
     }
     const deltaHasRecords = (delta) => MASTER_LISTS.some((list) => delta.changes[list].upsert.length || delta.changes[list].delete.length);
@@ -443,19 +450,31 @@
         return delta.changes[list].upsert.some((record) => !mine.has(key(record))) || delta.changes[list].delete.some((target) => !removed.has(deleteKey(target)));
       });
     }
+    // ส่วนของคำตอบที่เป็นระเบียนที่เราส่งเอง (กุญแจตรงกับที่ส่ง) · version = เวอร์ชันฐานเดิม (ไม่ขยับ)
+    function ownRecordsOf(delta, sent, version) {
+      const changes = {};
+      for (const list of MASTER_LISTS) {
+        const key = MASTER_KEY[list];
+        const mine = new Set((sent[list]?.upsert ?? []).map(key));
+        const removed = new Set((sent[list]?.delete ?? []).map(deleteKey));
+        changes[list] = { upsert: delta.changes[list].upsert.filter((record) => mine.has(key(record))), delete: delta.changes[list].delete.filter((target) => removed.has(deleteKey(target))) };
+      }
+      return { version, changes };
+    }
     // หน้ากลับมาโฟกัส: ดึงส่วนต่างของผู้อื่นเข้ามาเงียบๆ วาดหน้าใหม่ (event synced) เฉพาะเมื่อเนื้อหาที่แสดงเปลี่ยนจริง
-    // shouldHold() (เรียกตอนส่วนต่างมาถึง) เป็นจริง = ผู้ใช้มีฟอร์มที่แก้ค้าง: ห้ามรวมเข้า data และห้ามขยับเวอร์ชันฐาน ไม่งั้นการบันทึกถัดไปที่คำนวณจากฟอร์มเก่าจะส่งไปพร้อมเวอร์ชันใหม่
+    // shouldHold ของ store (หรือที่ส่งมาตรงนี้ · เรียกตอนส่วนต่างมาถึง) เป็นจริง = ผู้ใช้มีฟอร์มที่แก้ค้าง: ห้ามรวมเข้า data และห้ามขยับเวอร์ชันฐาน ไม่งั้นการบันทึกถัดไปที่คำนวณจากฟอร์มเก่าจะส่งไปพร้อมเวอร์ชันใหม่
     // แล้วฐานข้อมูลมองไม่เห็นว่าชน (ทับงานของผู้อื่นเงียบๆ) · จำแค่ว่ามีข้อมูลใหม่ (event pending ครั้งเดียว) ตอนบันทึกฐานข้อมูลตรวจชนจากเวอร์ชันฐานเดิมและตอบส่วนต่างทั้งหมดตั้งแต่นั้นกลับมา
     // ไม่ทำขณะบันทึกอยู่ และทิ้งผลถ้ามี action เริ่มระหว่างรอ (ข้อมูลที่แสดงมีส่วนที่ผู้ใช้เพิ่งแก้) · ผิดพลาด = เงียบ รอบโฟกัสถัดไปลองใหม่
     // เวอร์ชันของเราล้ำหน้าฐานข้อมูล (BOM_INVALID_PAYLOAD เช่น ล้างข้อมูลทดสอบ) = โหลดทั้งชุดแทนส่วนต่าง (เงียบ ไม่เปลี่ยนสถานะเป็นกำลังโหลด · ไม่ทำถ้ามีฟอร์มค้าง)
-    function catchUp(shouldHold = () => false) {
+    function catchUp(extraHold = () => false) {
+      const holding = () => shouldHold() || Boolean(extraHold());
       if (status !== "ready" || busy) return Promise.resolve(false);
       if (catching) return catching;
       const base = snapshot.version;
       catching = Promise.resolve().then(() => remote.since(base)).then(normalizeDelta).then(
         (delta) => {
           if (busy || snapshot.version !== base) return false;
-          if (shouldHold()) {
+          if (holding()) {
             if (deltaHasRecords(delta) && !newerPending) { newerPending = true; emit({ type: "pending" }); }
             return false;
           }
@@ -465,8 +484,12 @@
           return changed;
         },
         async (error) => {
-          if (busy || snapshot.version !== base || shouldHold() || mapRemoteError(error).code !== "BOM_INVALID_PAYLOAD") return false;
-          try { snapshot = normalizeSnapshot(await fetchSnapshot()); } catch { return false; }
+          if (busy || snapshot.version !== base || holding() || mapRemoteError(error).code !== "BOM_INVALID_PAYLOAD") return false;
+          let full;
+          try { full = normalizeSnapshot(await fetchSnapshot()); } catch { return false; }
+          // ระหว่างรอโหลดทั้งชุด ผู้ใช้อาจเริ่มบันทึก/แก้ฟอร์ม หรือมีคนขยับเวอร์ชันฐาน: ทิ้งผล (รอบโฟกัสถัดไปลองใหม่)
+          if (busy || snapshot.version !== base || holding()) return false;
+          snapshot = full;
           newerPending = false;
           assemble();
           emit({ type: "synced", changed: true });
@@ -527,6 +550,17 @@
           // เนื้อหาเท่ากับที่แสดงอยู่แล้ว (เช่น มีแต่ของเรา) ไม่ต้องวาดหน้าใหม่
           // changed = เนื้อหาต่างจากที่แสดง (รวมที่ฐานข้อมูลประทับเวลา/ผู้บันทึกให้ระเบียนของเราเอง) · others = มีระเบียนที่เราไม่ได้ส่ง (ผู้อื่นบันทึกระหว่างนั้น) ใช้แจ้งผู้ใช้
           const others = hasForeignRecords(delta, changes);
+          if (others && shouldHold()) {
+            // ระหว่างรอคำตอบ ผู้ใช้เริ่มแก้ฟอร์มอื่น/เปิด dialog (สร้างจากข้อมูลก่อนที่ผู้อื่นบันทึก): ห้ามรวมระเบียนของผู้อื่นเข้า data และห้ามขยับเวอร์ชันฐานของการบันทึกถัดไป
+            // ไม่งั้นการบันทึกถัดไปจากฟอร์มนั้นจะส่งพร้อมเวอร์ชันใหม่แล้วฐานข้อมูลมองไม่เห็นว่าชน (ทับงานของผู้อื่นเงียบๆ)
+            // รวมเฉพาะระเบียนของเราเองเข้า snapshot (data มีอยู่แล้วแบบ optimistic) แต่ไม่ขยับเวอร์ชัน · ฐานย้อนกลับ (ถ้าบันทึกถัดไปล้ม) = snapshot นี้ · การบันทึกถัดไปที่แตะระเบียนเดิมของเราอาจได้ BOM_STALE เทียม (ปลอดภัย)
+            // ที่เหลือ (ของผู้อื่น + ตัวที่ฐานข้อมูลประทับใหม่) มากับ catchUp/การวาดหน้าครั้งถัดไป ซึ่งดึงส่วนต่างตั้งแต่เวอร์ชันฐานเดิม
+            snapshot = snapshotWith(snapshot, ownRecordsOf(delta, changes, snapshot.version));
+            busy = false;
+            emit({ type: "saved", changed: false, others: true, held: true });
+            if (!newerPending) { newerPending = true; emit({ type: "pending" }); }
+            return { ok: true };
+          }
           const changed = mergeDelta(delta, true);
           newerPending = false; // ส่วนต่างตั้งแต่เวอร์ชันฐานรวมทุกอย่างของผู้อื่นแล้ว
           busy = false;
@@ -538,11 +572,19 @@
           // ย้อนกลับทั้งคำสั่ง: ข้อมูลหลักกลับเป็นของฐานข้อมูลล่าสุด รายการในเครื่องกลับเป็นก่อนรัน (action เดียวอาจแก้ทั้งสองส่วน เช่น เพิ่มสินค้าในใบพร้อมสร้างรุ่นสินค้า)
           local = previousLocal;
           // ชน (ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน) หรือเวอร์ชันฐานไม่ตรงฐานข้อมูล: ตามทันด้วยส่วนต่าง (ไม่ได้ก็โหลดทั้งชุด) ก่อนแสดงข้อมูลล่าสุดให้ผู้ใช้ทำรายการใหม่
-          if (mapped.code === "BOM_STALE" || mapped.code === "BOM_INVALID_PAYLOAD") { await refreshFromServer(); newerPending = false; }
+          // ฐานย้อนกลับ = snapshot ปัจจุบัน (เวอร์ชันฐานเดิม + ระเบียนของเราที่บันทึกสำเร็จไปแล้วแต่ยังถูกกันไว้) · ถ้าผู้ใช้มีฟอร์มค้างอยู่ (ก่อนหรือระหว่างรอตามทัน) ไม่ดึงข้อมูลผู้อื่นเข้ามา แค่จำว่ามีใหม่
+          const conflict = mapped.code === "BOM_STALE" || mapped.code === "BOM_INVALID_PAYLOAD";
+          let held = shouldHold();
+          if (conflict && !held) {
+            const fresh = await fetchSnapshotAfterConflict();
+            held = shouldHold();
+            if (fresh && !held) { snapshot = fresh; newerPending = false; }
+          }
+          if (conflict && held && !newerPending) { newerPending = true; emit({ type: "pending" }); }
           assemble();
           writeLocal();
           busy = false;
-          emit({ type: "reverted", error: mapped });
+          emit({ type: "reverted", error: mapped, held });
           return { ok: false, error: mapped };
         },
       );
@@ -561,15 +603,15 @@
     return {
       load: () => { init(); return data; }, data: () => { init(); return data; }, user: () => persona(), setUser: () => persona(), run, reset, isPersisted: () => persisted, size, now,
       isRemote: () => true, status: () => status, error: () => loadError, isSaving: () => busy, hasNewer: () => newerPending, version: () => snapshot?.version ?? null,
-      ensureLoaded, reload, catchUp, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      ensureLoaded, reload, catchUp, idSuffix, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     };
   }
 
   // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action): Promise<delta>, since(version): Promise<delta> } → ข้อมูลหลักอยู่ในฐานข้อมูล (createRemoteStore)
   // snapshot = { version, <ชุดข้อมูลหลัก>: [...] } · delta = { version, changes: { <ชุด>: { upsert: [...], delete: [{base, code}] } } }
   // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
-  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix } = {}) {
-    if (remote) return createRemoteStore({ storage, actions, now, remote, persona, idSuffix });
+  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold } = {}) {
+    if (remote) return createRemoteStore({ storage, actions, now, remote, persona, idSuffix, shouldHold });
     let data = null;
     let userId = null;
     let loaded = false;

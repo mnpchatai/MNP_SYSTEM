@@ -28,6 +28,20 @@ const PI_TSV = [
   row(["DEMO-AT-01(B)-A", "4", "F13-028", "ST", "-", "-", "-", "-", "-", "-", "ถุงพลาสติก IPP 9x13", "PK-ST", "0.01", "-", "-", "-", "-", "-", "-", "กก.(112pcs)", "-"]),
 ].join("\n");
 
+test("XP codes for uncoded parts: counted from the SUBPART items locally, continued after the highest XP code with a random suffix when the database is the source", () => {
+  const items = [{ code: "XP-00007", kind: "SUBPART" }, { code: "XP-00002-ABC123", kind: "SUBPART" }, { code: "P-1", kind: "PURCHASED" }];
+  assert.deepEqual(rules.subpartOptions(items), { subpartStart: 3 }, "local mode counts SUBPART items + 1, as before");
+  assert.deepEqual(rules.subpartOptions(items, "a1b2c3"), { subpartStart: 8, subpartSuffix: "a1b2c3" });
+  assert.deepEqual(rules.subpartOptions([], "a1b2c3"), { subpartStart: 1, subpartSuffix: "a1b2c3" });
+  // ชีตจริง: รหัส XP- ต่อรหัสสุ่ม (ตัวพิมพ์ใหญ่เหมือนรหัสอื่น) · ไม่ส่ง suffix = รูปเดิม
+  const flat = rules.readFlatRows(PI_TSV);
+  const local = rules.buildFromFlat(flat, rules.subpartOptions([]));
+  const remote = rules.buildFromFlat(flat, rules.subpartOptions([{ code: "XP-00004", kind: "SUBPART" }], "a1b2c3"));
+  assert.deepEqual([...local.items.keys()].filter((code) => code.startsWith("XP-")), ["XP-00001"]);
+  assert.deepEqual([...remote.items.keys()].filter((code) => code.startsWith("XP-")), ["XP-00005-A1B2C3"]);
+  assert.equal([...remote.boms.values()].some((lines) => lines.some((line) => line.childCode === "XP-00005-A1B2C3")), true, "the BOM line points at the suffixed code");
+});
+
 test("canonical codes merge the spelling variants of RB/SE codes and keep FG code parts", () => {
   assert.equal(rules.canonicalCode("RB-B0005-02- -132-9-25"), "RB-B0005-02-132-9-25");
   assert.equal(rules.canonicalCode("RB-B0005-02--132-9-25"), "RB-B0005-02-132-9-25");
