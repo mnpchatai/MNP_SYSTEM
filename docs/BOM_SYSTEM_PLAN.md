@@ -67,15 +67,22 @@
 
 | ตาราง | คอลัมน์หลัก | หมายเหตุ |
 |---|---|---|
-| `bom_master_state` | `is_test` · `version bigint` | ตัวนับเวอร์ชันข้อมูลหลักทั้งชุด เพิ่มทุกครั้งที่บันทึกสำเร็จ ใช้กันบันทึกทับ (`BOM_STALE`) |
+| `bom_master_state` | `is_test` · `version bigint` | ตัวนับเวอร์ชันข้อมูลหลักทั้งชุด เพิ่มทุกครั้งที่บันทึกสำเร็จ ใช้เรียงลำดับการเปลี่ยนแปลง (การชนตัดสินรายระเบียน ดูข้างล่าง) |
 | `bom_items` | `code` (canonical) · `kind` (`FG` `SE` `RB` `PT` `BG` `PURCHASED` `SUBPART` `CP`) · `name` · `owner_dept` → `departments.code` · `uom` · `weight_g` · `rubber jsonb` (เฉพาะ RB/SE) · `legacy_codes jsonb` · `active` · `item_group` · `unit_cost` · `image` | รูปเป็น data URL ไม่เกิน 80,000 ตัวอักษรเก็บในคอลัมน์ text ชั่วคราว ต้องย้ายไป Storage แบบ private ก่อนใช้จริง · แผนก `PL`/`QC` ของโมดูลคือ `PP`/`QA` (ฐานข้อมูลรับเป็นนามแฝง เก็บและคืนรหัสจริง) |
 | `bom_compounds` | `code` · `name` · `recipe_id` `recipe_name` | จุดเชื่อม BOM ↔ สูตร PHR ของ RubberFlow |
 | `bom_colors` · `bom_color_sets` · `bom_packages` | สี `OR01` · ชุดสี `(base, code, slots jsonb)` · แพ็กเกจ `(base, code, lines jsonb)` | ลูกของแพ็กเกจเป็นของซื้อเท่านั้น |
 | `bom_boms` | `bom_id` (รหัสของ client เช่น `BOM-69-0001`) · `item_code` · `revision` · `status` (`approved`/`superseded`) · `owner_dept` · `created_by` `approved_by` (id พนักงาน) · `change_log jsonb` | ไม่มีขั้นอนุมัติ unique index บางส่วน: `approved` ได้ตัวเดียวต่อชิ้น |
 | `bom_bom_lines` | `bom_pk` · `line_no` · `step` · `child_code` · `qty` · `uom` · `consumer_dept` `producer_dept` · `scrap_pct` · `flags jsonb` · `note` | แยกตารางไว้ตรวจวงจรและ where-used |
 | `bom_processes` · `bom_routings` | ขั้นตอนมาตรฐานที่ผู้ใช้เพิ่ม · routing ต่อชิ้น (`steps jsonb` ไม่เกิน 20 ขั้น) เก็บเป็น revision เหมือน BOM | ขั้นตอนเริ่มต้นยังอยู่ใน `modules/bom-rules.js` |
+| `bom_deleted_keys` | `list` (`colorSets`/`packages`) · `base` · `code` · `changed_version` | หลุมฝังศพของชุดสี/แพ็กเกจที่ถูกลบ ให้ delta บอกเครื่องอื่นว่าอะไรหายไป (สร้างกุญแจเดิมใหม่ = ลบหลุมฝังศพ) |
 
-RPC (ผู้เรียกต้องเป็น admin ในโหมดทดสอบที่ใช้ persona): `app_bom_master()` คืน snapshot ทั้งชุดรูป state v6 พร้อม `version` · `app_bom_save_master(changes, base_version, action)` บันทึกชุดการเปลี่ยนแปลงในธุรกรรมเดียว คืน snapshot ใหม่ · อ่านได้ทุก persona · เขียนได้เฉพาะแผนก `PP` และบทบาท department_manager / assistant_factory_manager / factory_manager / general_manager / admin (นอกนั้น `BOM_FORBIDDEN`)
+ทุกตารางข้อมูลหลัก (ไม่รวมตัวนับและ `bom_bom_lines`) มี `changed_version bigint` = เวอร์ชันของ `bom_master_state` ที่แก้แถวนั้นล่าสุด ประทับโดย trigger `bom_stamp_version` (รวม revision ที่เซิร์ฟเวอร์ตั้ง `superseded` เอง) และมีดัชนี `(is_test, changed_version)`
+
+RPC (ผู้เรียกต้องเป็น admin ในโหมดทดสอบที่ใช้ persona): `app_bom_master()` คืน snapshot ทั้งชุดรูป state v6 พร้อม `version` (โหลดครั้งแรก) · `app_bom_master_since(version)` คืน delta (ตามทันหลัง `BOM_STALE` และเมื่อหน้ากลับมาโฟกัส) · `app_bom_save_master(changes, base_version, action)` บันทึกชุดการเปลี่ยนแปลงในธุรกรรมเดียว คืน delta ตั้งแต่ `base_version` · อ่านได้ทุก persona · เขียนได้เฉพาะแผนก `PP` และบทบาท department_manager / assistant_factory_manager / factory_manager / general_manager / admin (นอกนั้น `BOM_FORBIDDEN`)
+
+**การชนกันของผู้ใช้หลายคน (รายระเบียน)** ตัวนับ `version` ทั้งชุดคงไว้เรียงลำดับ แต่ `app_bom_save_master` ให้ `BOM_STALE` เฉพาะเมื่อระเบียนที่คำสั่งนี้แตะถูกคนอื่นแก้ (`changed_version > base_version`): เขียนทับแถวที่มีอยู่ · สร้างกุญแจที่มีแล้ว · ลบแถวนั้น · เขียนทับ/ลบชุดสี/แพ็กเกจที่คนอื่นเพิ่งลบ · เพิ่ม revision ใหม่ของชิ้นที่คนอื่นเพิ่ง/แก้ revision ไว้ (สองคนบันทึก revision ใหม่ของชิ้นเดียวกันพร้อมกัน คนที่สองถูกปฏิเสธ) ส่วนระเบียนอื่นที่คนอื่นแก้ระหว่างนั้นไม่ขวาง (ต่างชิ้นกันบันทึกพร้อมกันได้ทั้งคู่) · `base_version` ต้อง 0 ถึง version ปัจจุบัน (นอกช่วง = `BOM_INVALID_PAYLOAD`)
+
+**delta** `{ version, changes: { <ชุด>: { upsert: [เรคอร์ดเต็มรูปเดียวกับ snapshot], delete: [{base, code}] } } }` ครบทั้งแปดชุด มีทุกการเปลี่ยนแปลงตั้งแต่ `base_version` ของทุกคน (รวม BOM ที่เซิร์ฟเวอร์ตั้ง `superseded` และชุดสี/แพ็กเกจที่ลบ) client รวมเข้าชุดข้อมูลตามกุญแจ (`code` / `id` / `base+code`) แล้วตั้ง `version` จึงตามทันได้ในรอบเดียวแม้ snapshot ใหญ่ (BOM ~30,000 บรรทัด ~1.5 MB) · `BOM_STALE` → client เรียก `app_bom_master_since` แล้วย้อน action นั้น
 
 ### 3.2 กฎ BOM ที่ฐานข้อมูลบังคับ
 

@@ -6,12 +6,26 @@
 --   PR 2 (ยังไม่ทำ ไม่มีตารางในไฟล์นี้): ใบสั่งผลิต/PI, งานรายแผนก, นับคงคลัง
 --   เริ่มจากว่าง ไม่ย้ายข้อมูลจากเบราว์เซอร์ ผู้ใช้นำเข้าไฟล์ Excel ใหม่ผ่านหน้านำเข้าเดิม
 --
--- RPC (2 ตัว สัญญากับ Pilot Web)
+-- RPC (3 ตัว สัญญากับ Pilot Web)
 --   public.app_bom_master()                                  -> snapshot ทั้งชุด { version, items, compounds, colors, colorSets,
---                                                               packages, boms, processes, routings } รูปแบบเดียวกับ state v6 (camelCase)
---   public.app_bom_save_master(p_changes, p_base_version, p_action) -> บันทึกชุดการเปลี่ยนแปลงในธุรกรรมเดียว คืน snapshot ใหม่
+--                                                               packages, boms, processes, routings } รูปแบบเดียวกับ state v6 (camelCase) ใช้โหลดครั้งแรก
+--   public.app_bom_master_since(p_version)                   -> delta (อ่านอย่างเดียว ทุก persona) ใช้ตามทันหลัง BOM_STALE และเมื่อหน้ากลับมาโฟกัส
+--   public.app_bom_save_master(p_changes, p_base_version, p_action) -> บันทึกชุดการเปลี่ยนแปลงในธุรกรรมเดียว คืน delta ตั้งแต่ p_base_version
 --     p_changes = { "<section>": { "upsert": [เรคอร์ดเต็ม], "delete": [{base, code}] (เฉพาะ colorSets/packages) } } ทุกส่วนเป็น optional
---     BOM_STALE เมื่อ p_base_version ไม่ตรง version ปัจจุบัน (ล็อกแถวตัวนับ for update ก่อนเทียบ)
+--   รูป delta = { "version": <version ปัจจุบัน>, "changes": { "<ชุด>": { "upsert": [เรคอร์ดเต็มรูปเดียวกับ snapshot], "delete": [{base, code}] } } }
+--     ครบทั้งแปดชุดเสมอ (delete ของชุดอื่นนอกจาก colorSets/packages เป็น []) มีทุกการเปลี่ยนแปลงที่ changed_version > p_base_version
+--     ของทุกคน (รวม BOM/routing revision เดิมที่เซิร์ฟเวอร์ตั้ง superseded เอง และชุดสี/แพ็กเกจที่ถูกลบ) client จึงตามทันได้ในรอบเดียว
+--
+-- การชนกันของผู้ใช้หลายคน (รายระเบียน ไม่ใช่ทั้งชุด)
+--   ตัวนับ version ทั้งชุดคงไว้เรียงลำดับการเปลี่ยนแปลง (เพิ่ม 1 ต่อการบันทึกสำเร็จ) แต่ทุกแถวข้อมูลหลักมี changed_version = version ที่แก้แถวนั้นล่าสุด
+--   (trigger bom_stamp_version ตั้งให้ ไม่รับจาก client) ตัวนับถูกล็อก for update ก่อนตรวจ บันทึกพร้อมกันต่อคิวกัน
+--   app_bom_save_master ให้ BOM_STALE เฉพาะเมื่อระเบียนที่คำสั่งนี้แตะถูกคนอื่นแก้หลัง p_base_version (changed_version > p_base_version):
+--     - เขียนทับ (upsert) แถวที่มีอยู่แล้ว หรือสร้างแถวที่กุญแจนั้นมีอยู่แล้ว · ลบแถวนั้น · เขียนทับชุดสี/แพ็กเกจที่คนอื่นเพิ่งลบ
+--     - BOM/routing ใหม่ของชิ้นที่คนอื่นเพิ่ง/แก้ revision ไว้หลัง p_base_version (รวม revision ที่ถูกตั้ง superseded) = BOM_STALE แทน BOM_REVISION_ORDER
+--       เลขรุ่นที่ข้ามลำดับโดยไม่มีใครแก้ยังเป็น BOM_REVISION_ORDER · สองคนบันทึก revision ใหม่ของชิ้นเดียวกันพร้อมกัน คนที่สองถูกปฏิเสธเสมอ
+--     ระเบียนอื่นที่คนอื่นแก้ระหว่างนั้นไม่ขวาง (ต่างชิ้นกันบันทึกพร้อมกันได้ทั้งคู่)
+--   p_base_version ต้องไม่ว่างและ 0 ถึง version ปัจจุบัน (นอกช่วง = BOM_INVALID_PAYLOAD) · แถวที่คำสั่งเดียวกันแก้เอง (version + 1) ไม่ถูกนับว่าเป็นของคนอื่น
+--   ชุดสี/แพ็กเกจที่ลบจดไว้ใน bom_deleted_keys (หลุมฝังศพ) ให้ delta ส่ง delete · สร้างกุญแจเดิมใหม่ = ลบหลุมฝังศพ
 --
 -- เปิดเฉพาะโหมดทดสอบ (admin ที่ทำหน้าที่เป็น persona) เหมือนใบตรวจ QC (20261027010000_qc_inspection_reports.sql) ทุกประการ
 --   ทุก RPC ปฏิเสธนอกโหมดทดสอบด้วย BOM_TEST_MODE_ONLY (private.bom_actor) เมื่อจะเปิดใช้จริงต้องเปลี่ยน bom_actor ให้คืนพนักงานจริง
@@ -53,32 +67,34 @@
 --
 -- สิทธิ์: ทุกตารางปิด RLS แบบ deny-all และถอนสิทธิ์ anon/authenticated ทั้งหมด อ่าน/เขียนผ่าน RPC security definer (search_path ว่าง)
 --   RPC execute ให้ authenticated เท่านั้น ถอนจาก public/anon ตัวช่วย private ถอนจากทุกบทบาท
---   audit_logs: 1 แถวต่อการบันทึก (action BOM_MASTER_SAVE) เก็บชื่อ action ของ client กับจำนวนต่อส่วน ไม่เก็บ payload
+--   audit_logs: 1 แถวต่อการบันทึก (action BOM_MASTER_SAVE) เก็บชื่อ action ของ client เวอร์ชันฐาน/ใหม่ กับจำนวนต่อส่วน ไม่เก็บ payload
 --   ผู้กระทำคือ admin ตัวจริงเบื้องหลัง persona (private.bom_audit_actor_id)
 --
 -- นิยามที่ replace ในไฟล์นี้ (เริ่มจากนิยามล่าสุดของแต่ละตัว)
---   - private.sandbox_unguarded_tables(): จาก 20261031010000_remove_factory_module.sql เพิ่มเฉพาะ bom_*
+--   - private.sandbox_unguarded_tables(): จาก 20261031010000_remove_factory_module.sql เพิ่มเฉพาะ bom_* (รวม bom_deleted_keys)
 --
--- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้ (modules/module-bom.js) เรียก app_bom_master / app_bom_save_master แล้ว
+-- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้ (modules/module-bom.js) เรียก app_bom_master / app_bom_master_since / app_bom_save_master แล้ว
 --   จึงต้อง apply ไฟล์นี้ที่ production (ด้วยการอนุมัติของผู้ใช้) ก่อน merge PR นี้ ตาม "Deployment order" ใน AGENTS.md
 --   ถ้า merge ก่อน หน้า #/bom ในโหมดทดสอบจะขึ้น "ฐานข้อมูลยังไม่มีระบบ BOM" จนกว่าจะ apply · ก่อน apply ให้เทียบ md5(pg_get_functiondef(oid)) ของ private.sandbox_unguarded_tables ที่ production
 --   กับนิยามใน 20261031010000_remove_factory_module.sql (ถ้ามี migration อื่นแก้ไปแล้ว ต้องเริ่มจากนิยามล่าสุด)
 --
 -- Rollback (ตาราง bom_* มีแต่ข้อมูลทดสอบ):
---   drop function public.app_bom_master(), public.app_bom_save_master(jsonb, bigint, text);
+--   drop function public.app_bom_master(), public.app_bom_master_since(bigint), public.app_bom_save_master(jsonb, bigint, text);
 --   drop function private.bom_actor(), bom_audit_actor_id(), bom_can_edit(public.employees), bom_client_actions(), bom_uoms(),
 --   bom_code(text), bom_dept(text), bom_text(jsonb, text, integer, integer, text), bom_num(jsonb, text, numeric, numeric), bom_ms(timestamptz),
 --   bom_person(uuid), bom_parse_lines(text, text, jsonb), bom_lines_json(uuid), bom_log(jsonb, jsonb, text), bom_parse_steps(jsonb),
---   bom_save_compounds(uuid, jsonb), bom_save_colors(uuid, jsonb), bom_save_processes(uuid, jsonb), bom_save_items(uuid, jsonb),
---   bom_save_color_sets(uuid, jsonb), bom_save_packages(uuid, jsonb), bom_save_boms(uuid, text, jsonb), bom_save_routings(uuid, jsonb),
---   bom_snapshot();
---   drop table bom_bom_lines, bom_routings, bom_boms, bom_packages, bom_color_sets, bom_colors, bom_processes, bom_compounds,
+--   bom_check_keyed(text, text, text, bigint, bigint), bom_stamp_version(),
+--   bom_save_compounds(uuid, jsonb, bigint, bigint), bom_save_colors(uuid, jsonb, bigint, bigint), bom_save_processes(uuid, jsonb, bigint, bigint),
+--   bom_save_items(uuid, jsonb, bigint, bigint), bom_save_color_sets(uuid, jsonb, bigint, bigint), bom_save_packages(uuid, jsonb, bigint, bigint),
+--   bom_save_boms(uuid, text, jsonb, bigint, bigint), bom_save_routings(uuid, jsonb, bigint, bigint),
+--   bom_records(bigint), bom_snapshot(), bom_delta(bigint);
+--   drop table bom_deleted_keys, bom_bom_lines, bom_routings, bom_boms, bom_packages, bom_color_sets, bom_colors, bom_processes, bom_compounds,
 --   bom_items, bom_master_state (ลูกก่อนแม่);
 --   แล้ว create or replace private.sandbox_unguarded_tables ด้วยนิยามเดิมจาก 20261031010000_remove_factory_module.sql
 -- ============================================================================
 
 -- 1. ตาราง (แยกโหมดด้วย is_test) ----------------------------------------------------------
--- ตัวนับเวอร์ชันของข้อมูลหลักทั้งชุด (1 แถวต่อโหมด) เพิ่มทุกครั้งที่บันทึกสำเร็จ ใช้กันบันทึกทับ (BOM_STALE)
+-- ตัวนับเวอร์ชันของข้อมูลหลักทั้งชุด (1 แถวต่อโหมด) เพิ่มทุกครั้งที่บันทึกสำเร็จ ใช้เรียงลำดับการเปลี่ยนแปลง (การชนตัดสินรายระเบียนด้วย changed_version)
 create table public.bom_master_state (
   is_test boolean primary key default false,
   version bigint not null default 0 check (version >= 0),
@@ -91,6 +107,7 @@ comment on column public.bom_master_state.is_test is 'แถวโหมดท�
 create table public.bom_items (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   code text not null check (char_length(code) between 1 and 60),
   kind text not null check (kind in ('FG', 'SE', 'RB', 'PT', 'BG', 'PURCHASED', 'SUBPART', 'CP')),
   name text not null check (char_length(name) between 1 and 160),
@@ -121,6 +138,7 @@ comment on table public.bom_items is 'item master ของโมดูล BOM (
 create table public.bom_compounds (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   code text not null check (char_length(code) between 1 and 20),
   name text not null check (char_length(name) between 1 and 120),
   recipe_id text check (recipe_id is null or char_length(recipe_id) between 1 and 60),
@@ -135,6 +153,7 @@ comment on table public.bom_compounds is 'รายการสูตรยา�
 create table public.bom_colors (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   code text not null check (code ~ '^[A-Z]{2}[0-9]{2}$'),
   name text not null check (char_length(name) between 1 and 60),
   created_at timestamptz not null default now(),
@@ -147,6 +166,7 @@ comment on table public.bom_colors is 'สี = แม่สี 2 ตัวอ�
 create table public.bom_color_sets (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   base text not null check (char_length(base) between 1 and 60),
   code text not null check (code ~ '^[A-Z]$'),
   name text not null default '' check (char_length(name) <= 60),
@@ -165,6 +185,7 @@ comment on table public.bom_color_sets is 'ชุดสีของฐานร�
 create table public.bom_packages (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   base text not null check (char_length(base) between 1 and 60),
   code text not null check (code ~ '^[A-Z0-9-]{1,4}$'),
   name text not null default '' check (char_length(name) <= 60),
@@ -182,6 +203,7 @@ comment on table public.bom_packages is 'แพ็กเกจ (บรรจุ�
 create table public.bom_boms (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   -- id ของ client เช่น BOM-69-0001 (ออกที่ client ฐานข้อมูลเก็บตามที่ส่งมา)
   bom_id text not null check (bom_id ~ '^[A-Za-z0-9._-]{1,40}$'),
   item_code text not null,
@@ -233,6 +255,7 @@ comment on table public.bom_bom_lines is 'บรรทัด BOM (แยกต�
 create table public.bom_processes (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   code text not null check (char_length(code) between 1 and 60),
   name text not null check (char_length(name) between 1 and 80),
   dept text not null references public.departments(code),
@@ -246,6 +269,7 @@ comment on table public.bom_processes is 'ขั้นตอนผลิตม�
 create table public.bom_routings (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
   routing_id text not null check (routing_id ~ '^[A-Za-z0-9._-]{1,40}$'),
   item_code text not null,
   revision integer not null check (revision >= 1),
@@ -263,8 +287,58 @@ create table public.bom_routings (
 create unique index bom_routings_one_approved_idx on public.bom_routings (item_code, is_test) where status = 'approved';
 comment on table public.bom_routings is 'ขั้นตอนผลิตต่อชิ้นงาน เก็บเป็น revision เหมือน BOM (ตัวเก่า superseded)';
 
+-- หลุมฝังศพของระเบียนที่ถูกลบ (เฉพาะชุดสี/แพ็กเกจที่ลบได้) ให้ delta (app_bom_master_since) บอกเครื่องอื่นว่าระเบียนไหนหายไป
+-- changed_version = เวอร์ชันที่ลบ (ตั้งโดย trigger) · สร้างระเบียนกุญแจเดิมใหม่ = ลบหลุมฝังศพทิ้ง
+create table public.bom_deleted_keys (
+  id uuid primary key default gen_random_uuid(),
+  is_test boolean not null default false,
+  changed_version bigint not null default 0 check (changed_version >= 0),
+  list text not null check (list in ('colorSets', 'packages')),
+  base text not null,
+  code text not null,
+  deleted_at timestamptz not null default now(),
+  unique (list, base, code, is_test)
+);
+comment on table public.bom_deleted_keys is 'หลุมฝังศพของชุดสี/แพ็กเกจที่ถูกลบ ใช้ส่ง delete ใน delta ของ app_bom_save_master / app_bom_master_since';
+
+-- ดัชนีตามเวอร์ชันที่แก้ล่าสุด: delta อ่านเฉพาะแถวที่ changed_version > เวอร์ชันฐานของ client
+create index bom_items_changed_idx on public.bom_items (is_test, changed_version);
+create index bom_compounds_changed_idx on public.bom_compounds (is_test, changed_version);
+create index bom_colors_changed_idx on public.bom_colors (is_test, changed_version);
+create index bom_color_sets_changed_idx on public.bom_color_sets (is_test, changed_version);
+create index bom_packages_changed_idx on public.bom_packages (is_test, changed_version);
+create index bom_boms_changed_idx on public.bom_boms (is_test, changed_version);
+create index bom_processes_changed_idx on public.bom_processes (is_test, changed_version);
+create index bom_routings_changed_idx on public.bom_routings (is_test, changed_version);
+create index bom_deleted_keys_changed_idx on public.bom_deleted_keys (is_test, changed_version);
+
+comment on column public.bom_items.changed_version is 'เวอร์ชันของ bom_master_state ที่แก้แถวนี้ล่าสุด (trigger bom_stamp_version ตั้งให้ ไม่รับจาก client) ใช้ตรวจชนรายระเบียนและคำนวณ delta';
+comment on column public.bom_compounds.changed_version is 'เวอร์ชันที่แก้แถวนี้ล่าสุด (ดู bom_items.changed_version)';
+comment on column public.bom_colors.changed_version is 'เวอร์ชันที่แก้แถวนี้ล่าสุด (ดู bom_items.changed_version)';
+comment on column public.bom_color_sets.changed_version is 'เวอร์ชันที่แก้แถวนี้ล่าสุด (ดู bom_items.changed_version)';
+comment on column public.bom_packages.changed_version is 'เวอร์ชันที่แก้แถวนี้ล่าสุด (ดู bom_items.changed_version)';
+comment on column public.bom_boms.changed_version is 'เวอร์ชันที่แก้แถวนี้ล่าสุด รวมที่เซิร์ฟเวอร์ตั้ง superseded เอง (ดู bom_items.changed_version)';
+comment on column public.bom_processes.changed_version is 'เวอร์ชันที่แก้แถวนี้ล่าสุด (ดู bom_items.changed_version)';
+comment on column public.bom_routings.changed_version is 'เวอร์ชันที่แก้แถวนี้ล่าสุด รวมที่เซิร์ฟเวอร์ตั้ง superseded เอง (ดู bom_items.changed_version)';
+comment on column public.bom_deleted_keys.changed_version is 'เวอร์ชันที่ลบ (ดู bom_items.changed_version)';
+
 -- ตัวนับเวอร์ชันเริ่มต้นของโหมดทดสอบ (migration ไม่มี auth.uid() trigger จึงไม่ทับ is_test)
 insert into public.bom_master_state (is_test, version) values (true, 0);
+
+-- ประทับเวอร์ชันที่แก้ล่าสุดทุกครั้งที่เพิ่ม/แก้แถว: version ของตัวนับ + 1 (RPC บันทึกล็อกแถวตัวนับไว้แล้วและเพิ่ม version ตอนท้ายธุรกรรม)
+-- ใช้ trigger เพื่อให้รวมแถวที่เซิร์ฟเวอร์แก้เอง (revision เดิมถูกตั้ง superseded) · ชื่อ trigger เรียงหลัง *_sandbox_scope จึงเห็น is_test ที่ตั้งแล้ว
+create or replace function private.bom_stamp_version()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  new.changed_version := coalesce((select s.version from public.bom_master_state s where s.is_test = new.is_test), 0) + 1;
+  return new;
+end;
+$$;
+revoke all on function private.bom_stamp_version() from public, anon, authenticated;
 
 -- 2. แยกโหมด: is_test มาจากโหมดของผู้ทำรายการ ห้ามแก้/ลบข้ามโหมด -----------------------------
 do $$
@@ -273,11 +347,20 @@ declare
 begin
   foreach v_table in array array[
     'bom_master_state', 'bom_items', 'bom_compounds', 'bom_colors', 'bom_color_sets', 'bom_packages',
-    'bom_boms', 'bom_bom_lines', 'bom_processes', 'bom_routings'
+    'bom_boms', 'bom_bom_lines', 'bom_processes', 'bom_routings', 'bom_deleted_keys'
   ] loop
     execute format(
       'create trigger %I before insert or update or delete on public.%I '
       'for each row execute function private.sandbox_row_scope()', v_table || '_sandbox_scope', v_table);
+  end loop;
+  -- เวอร์ชันที่แก้ล่าสุด: ทุกตารางที่ delta อ่าน (ไม่รวมตัวนับ และบรรทัด BOM ซึ่งแก้ไม่ได้และไปกับ BOM)
+  foreach v_table in array array[
+    'bom_items', 'bom_compounds', 'bom_colors', 'bom_color_sets', 'bom_packages', 'bom_boms', 'bom_processes', 'bom_routings',
+    'bom_deleted_keys'
+  ] loop
+    execute format(
+      'create trigger %I before insert or update on public.%I '
+      'for each row execute function private.bom_stamp_version()', v_table || '_stamp_version', v_table);
   end loop;
 end $$;
 
@@ -288,7 +371,7 @@ declare
 begin
   foreach v_table in array array[
     'bom_master_state', 'bom_items', 'bom_compounds', 'bom_colors', 'bom_color_sets', 'bom_packages',
-    'bom_boms', 'bom_bom_lines', 'bom_processes', 'bom_routings'
+    'bom_boms', 'bom_bom_lines', 'bom_processes', 'bom_routings', 'bom_deleted_keys'
   ] loop
     execute format('revoke all on public.%I from anon, authenticated', v_table);
     execute format('alter table public.%I enable row level security', v_table);
@@ -308,6 +391,7 @@ select private.lab_only_guard_table('public.bom_boms');
 select private.lab_only_guard_table('public.bom_bom_lines');
 select private.lab_only_guard_table('public.bom_processes');
 select private.lab_only_guard_table('public.bom_routings');
+select private.lab_only_guard_table('public.bom_deleted_keys');
 
 -- ตารางใหม่รู้จักโหมดทดสอบแล้ว (นิยามจาก 20261031010000_remove_factory_module.sql ทุกชื่อ แล้วเพิ่ม bom_*)
 create or replace function private.sandbox_unguarded_tables()
@@ -317,7 +401,7 @@ returns text[] language sql immutable set search_path = '' as $$
     'qc_inspection_templates','qc_inspection_template_items','qc_inspection_reports',
     'qc_inspection_items','qc_inspection_approvals','qc_inspection_history',
     'bom_master_state','bom_items','bom_compounds','bom_colors','bom_color_sets','bom_packages',
-    'bom_boms','bom_bom_lines','bom_processes','bom_routings']
+    'bom_boms','bom_bom_lines','bom_processes','bom_routings','bom_deleted_keys']
 $$;
 revoke all on function private.sandbox_unguarded_tables() from public, anon, authenticated;
 
@@ -679,8 +763,40 @@ end;
 $$;
 revoke all on function private.bom_parse_steps(jsonb) from public, anon, authenticated;
 
+-- ชุดสี/แพ็กเกจที่เขียนทับ (upsert) ต้องไม่ถูกคนอื่นแก้หรือลบหลังเวอร์ชันฐานของ client: มีแถวอยู่แล้ว = เทียบ changed_version,
+-- ไม่มีแถว = ถ้ามีหลุมฝังศพที่ลบหลังเวอร์ชันฐานคือชน มิฉะนั้นเป็นการสร้างใหม่ (ลบหลุมฝังศพของกุญแจนี้ทิ้ง ไม่ให้ delta ส่ง delete ซ้อนกับ upsert)
+-- p_cur = เวอร์ชันก่อนบันทึกนี้ แถวที่คำสั่งเดียวกันเพิ่งแก้ (เวอร์ชัน p_cur + 1) จึงไม่นับว่าเป็นของคนอื่น
+create or replace function private.bom_check_keyed(p_list text, p_key_base text, p_code text, p_base bigint, p_cur bigint)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_version bigint;
+begin
+  if p_list = 'colorSets' then
+    select s.changed_version into v_version from public.bom_color_sets s where s.is_test and s.base = p_key_base and s.code = p_code;
+  else
+    select p.changed_version into v_version from public.bom_packages p where p.is_test and p.base = p_key_base and p.code = p_code;
+  end if;
+  if found then
+    if v_version > p_base and v_version <= p_cur then raise exception 'BOM_STALE'; end if;
+    return;
+  end if;
+  if exists (
+    select 1 from public.bom_deleted_keys k
+    where k.is_test and k.list = p_list and k.base = p_key_base and k.code = p_code
+      and k.changed_version > p_base and k.changed_version <= p_cur) then
+    raise exception 'BOM_STALE';
+  end if;
+  delete from public.bom_deleted_keys k where k.is_test and k.list = p_list and k.base = p_key_base and k.code = p_code;
+end;
+$$;
+revoke all on function private.bom_check_keyed(text, text, text, bigint, bigint) from public, anon, authenticated;
+
 -- 5. ตัวเขียนข้อมูลแต่ละส่วน (เรียกจาก app_bom_save_master เท่านั้น) ------------------------------
-create or replace function private.bom_save_compounds(p_actor uuid, p_rows jsonb)
+create or replace function private.bom_save_compounds(p_actor uuid, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
 security definer
@@ -696,6 +812,10 @@ begin
     v_code := upper(private.bom_text(v_row, 'code', 20, 1, 'BOM_INVALID_COMPOUND'));
     if v_code = any (v_seen) then raise exception 'BOM_INVALID_COMPOUND'; end if;
     v_seen := v_seen || v_code;
+    if exists (select 1 from public.bom_compounds c where c.is_test and c.code = v_code
+               and c.changed_version > p_base and c.changed_version <= p_cur) then
+      raise exception 'BOM_STALE';
+    end if;
     insert into public.bom_compounds (is_test, code, name, recipe_id, recipe_name)
     values (true, v_code,
             coalesce(nullif(private.bom_text(v_row, 'name', 120, 0, 'BOM_INVALID_COMPOUND'), ''), v_code),
@@ -707,9 +827,9 @@ begin
   return cardinality(v_seen);
 end;
 $$;
-revoke all on function private.bom_save_compounds(uuid, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_compounds(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
 
-create or replace function private.bom_save_colors(p_actor uuid, p_rows jsonb)
+create or replace function private.bom_save_colors(p_actor uuid, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
 security definer
@@ -725,6 +845,10 @@ begin
     v_code := upper(private.bom_text(v_row, 'code', 4, 1, 'BOM_INVALID_COLOR'));
     if v_code !~ '^[A-Z]{2}[0-9]{2}$' or v_code = any (v_seen) then raise exception 'BOM_INVALID_COLOR'; end if;
     v_seen := v_seen || v_code;
+    if exists (select 1 from public.bom_colors c where c.is_test and c.code = v_code
+               and c.changed_version > p_base and c.changed_version <= p_cur) then
+      raise exception 'BOM_STALE';
+    end if;
     insert into public.bom_colors (is_test, code, name)
     values (true, v_code, private.bom_text(v_row, 'name', 60, 1, 'BOM_INVALID_COLOR'))
     on conflict (code, is_test) do update set name = excluded.name, updated_at = now();
@@ -732,9 +856,9 @@ begin
   return cardinality(v_seen);
 end;
 $$;
-revoke all on function private.bom_save_colors(uuid, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_colors(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
 
-create or replace function private.bom_save_processes(p_actor uuid, p_rows jsonb)
+create or replace function private.bom_save_processes(p_actor uuid, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
 security definer
@@ -750,6 +874,10 @@ begin
     v_code := private.bom_text(v_row, 'code', 60, 1, 'BOM_INVALID_PROCESS');
     if v_code = any (v_seen) then raise exception 'BOM_INVALID_PROCESS'; end if;
     v_seen := v_seen || v_code;
+    if exists (select 1 from public.bom_processes p where p.is_test and p.code = v_code
+               and p.changed_version > p_base and p.changed_version <= p_cur) then
+      raise exception 'BOM_STALE';
+    end if;
     insert into public.bom_processes (is_test, code, name, dept)
     values (true, v_code, private.bom_text(v_row, 'name', 80, 1, 'BOM_INVALID_PROCESS'),
             private.bom_dept(private.bom_text(v_row, 'dept', 10, 1, 'BOM_INVALID_DEPT')))
@@ -758,10 +886,10 @@ begin
   return cardinality(v_seen);
 end;
 $$;
-revoke all on function private.bom_save_processes(uuid, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_processes(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
 
 -- item master: คืนรหัส canonical ของชิ้นที่เขียน (ใช้ตรวจกฎ BOM หลังเขียน)
-create or replace function private.bom_save_items(p_actor uuid, p_rows jsonb)
+create or replace function private.bom_save_items(p_actor uuid, p_rows jsonb, p_base bigint, p_cur bigint)
 returns text[]
 language plpgsql
 security definer
@@ -788,6 +916,7 @@ declare
   v_image text;
   v_image_total integer := 0;
   v_old_kind text;
+  v_old_version bigint;
 begin
   for v_row in select value from jsonb_array_elements(p_rows) loop
     if jsonb_typeof(v_row) <> 'object' then raise exception 'BOM_INVALID_ITEM'; end if;
@@ -857,7 +986,9 @@ begin
     end if;
 
     -- ชิ้นที่มี BOM แล้วเปลี่ยนชนิดไม่ได้ (rules: เปลี่ยนชนิดของชิ้นที่มี BOM แล้วไม่ได้)
-    select i.kind into v_old_kind from public.bom_items i where i.is_test and i.code = v_code;
+    select i.kind, i.changed_version into v_old_kind, v_old_version from public.bom_items i where i.is_test and i.code = v_code;
+    -- มีคนอื่นแก้ชิ้นนี้หลังเวอร์ชันฐานของ client (หรือสร้างรหัสนี้ไปก่อนแล้ว)
+    if found and v_old_version > p_base and v_old_version <= p_cur then raise exception 'BOM_STALE'; end if;
     if found and v_old_kind <> v_kind and exists (
       select 1 from public.bom_boms b where b.is_test and b.item_code = v_code and b.status = 'approved') then
       raise exception 'BOM_ITEM_KIND_LOCKED';
@@ -881,9 +1012,9 @@ begin
   return v_codes;
 end;
 $$;
-revoke all on function private.bom_save_items(uuid, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_items(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
 
-create or replace function private.bom_save_color_sets(p_actor uuid, p_rows jsonb)
+create or replace function private.bom_save_color_sets(p_actor uuid, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
 security definer
@@ -920,6 +1051,7 @@ begin
       end if;
       v_clean := v_clean || jsonb_build_array(jsonb_build_object('key', v_key, 'color', v_color));
     end loop;
+    perform private.bom_check_keyed('colorSets', v_base, v_code, p_base, p_cur);
     insert into public.bom_color_sets (is_test, base, code, name, note, slots, created_by, updated_by)
     values (true, v_base, v_code, private.bom_text(v_row, 'name', 60, 0, 'BOM_INVALID_COLOR_SET'),
             private.bom_text(v_row, 'note', 300, 0, 'BOM_INVALID_COLOR_SET'), v_clean, p_actor, p_actor)
@@ -929,9 +1061,9 @@ begin
   return cardinality(v_seen);
 end;
 $$;
-revoke all on function private.bom_save_color_sets(uuid, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_color_sets(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
 
-create or replace function private.bom_save_packages(p_actor uuid, p_rows jsonb)
+create or replace function private.bom_save_packages(p_actor uuid, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
 security definer
@@ -975,6 +1107,7 @@ begin
       if v_qty is null or v_qty <= 0 then raise exception 'BOM_INVALID_PACKAGE'; end if;
       v_clean := v_clean || jsonb_build_array(jsonb_build_object('childCode', v_child, 'qty', v_qty));
     end loop;
+    perform private.bom_check_keyed('packages', v_base, v_code, p_base, p_cur);
     insert into public.bom_packages (is_test, base, code, name, lines, created_by, updated_by)
     values (true, v_base, v_code, private.bom_text(v_row, 'name', 60, 0, 'BOM_INVALID_PACKAGE'), v_clean, p_actor, p_actor)
     on conflict (base, code, is_test) do update set
@@ -983,10 +1116,10 @@ begin
   return cardinality(v_seen);
 end;
 $$;
-revoke all on function private.bom_save_packages(uuid, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_packages(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
 
 -- BOM: คืนรหัสชิ้นของ revision ใหม่ที่เพิ่ม (ใช้เริ่มตรวจวงจร)
-create or replace function private.bom_save_boms(p_actor uuid, p_actor_name text, p_rows jsonb)
+create or replace function private.bom_save_boms(p_actor uuid, p_actor_name text, p_rows jsonb, p_base bigint, p_cur bigint)
 returns text[]
 language plpgsql
 security definer
@@ -1007,6 +1140,7 @@ declare
   v_log jsonb;
   v_old public.bom_boms%rowtype;
   v_max integer;
+  v_changed boolean;
   v_pk uuid;
 begin
   for v_row in select value from jsonb_array_elements(p_rows) loop
@@ -1027,6 +1161,8 @@ begin
 
     select * into v_old from public.bom_boms b where b.is_test and b.bom_id = v_id;
     if found then
+      -- มีคนอื่นแก้ revision นี้หลังเวอร์ชันฐานของ client (เช่น ตั้ง superseded ด้วย revision ใหม่ หรือย้ายแผนกเจ้าของ)
+      if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
       -- revision ที่มีอยู่แล้วเปลี่ยนได้เฉพาะ approved -> superseded, แผนกเจ้าของ และ changeLog ต่อท้าย
       if v_old.item_code <> v_item_code or v_old.revision <> v_rev::integer or v_old.note <> v_note
          or private.bom_lines_json(v_old.id) <> v_lines then
@@ -1043,7 +1179,10 @@ begin
     else
       -- revision ใหม่: approved เสมอ และต้องเป็น (สูงสุดเดิม + 1) ตัวที่ approved อยู่ถูกตั้ง superseded ในคำสั่งเดียวกัน
       if v_status <> 'approved' then raise exception 'BOM_INVALID_BOM'; end if;
-      select coalesce(max(b.revision), 0) into v_max from public.bom_boms b where b.is_test and b.item_code = v_item_code;
+      select coalesce(max(b.revision), 0), coalesce(bool_or(b.changed_version > p_base and b.changed_version <= p_cur), false)
+      into v_max, v_changed from public.bom_boms b where b.is_test and b.item_code = v_item_code;
+      -- มีคนอื่นเพิ่ม/แก้ revision ของชิ้นนี้หลังเวอร์ชันฐานของ client = ชน (ให้ client โหลดส่วนต่างแล้วทำใหม่) · เลขรุ่นข้ามลำดับโดยไม่มีใครแก้ = ผิดลำดับ
+      if v_changed then raise exception 'BOM_STALE'; end if;
       if v_rev::integer <> v_max + 1 then raise exception 'BOM_REVISION_ORDER'; end if;
       update public.bom_boms set status = 'superseded', superseded_at = now()
       where is_test and item_code = v_item_code and status = 'approved';
@@ -1064,9 +1203,9 @@ begin
   return v_roots;
 end;
 $$;
-revoke all on function private.bom_save_boms(uuid, text, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_boms(uuid, text, jsonb, bigint, bigint) from public, anon, authenticated;
 
-create or replace function private.bom_save_routings(p_actor uuid, p_rows jsonb)
+create or replace function private.bom_save_routings(p_actor uuid, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
 security definer
@@ -1083,6 +1222,7 @@ declare
   v_steps jsonb;
   v_old public.bom_routings%rowtype;
   v_max integer;
+  v_changed boolean;
 begin
   for v_row in select value from jsonb_array_elements(p_rows) loop
     if jsonb_typeof(v_row) <> 'object' then raise exception 'BOM_INVALID_ROUTING'; end if;
@@ -1102,6 +1242,7 @@ begin
 
     select * into v_old from public.bom_routings r where r.is_test and r.routing_id = v_id;
     if found then
+      if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
       if v_old.item_code <> v_item_code or v_old.revision <> v_rev::integer or v_old.steps <> v_steps then
         raise exception 'BOM_REVISION_IMMUTABLE';
       end if;
@@ -1112,7 +1253,9 @@ begin
       where id = v_old.id;
     else
       if v_status <> 'approved' then raise exception 'BOM_INVALID_ROUTING'; end if;
-      select coalesce(max(r.revision), 0) into v_max from public.bom_routings r where r.is_test and r.item_code = v_item_code;
+      select coalesce(max(r.revision), 0), coalesce(bool_or(r.changed_version > p_base and r.changed_version <= p_cur), false)
+      into v_max, v_changed from public.bom_routings r where r.is_test and r.item_code = v_item_code;
+      if v_changed then raise exception 'BOM_STALE'; end if;
       if v_rev::integer <> v_max + 1 then raise exception 'BOM_REVISION_ORDER'; end if;
       update public.bom_routings set status = 'superseded', superseded_at = now()
       where is_test and item_code = v_item_code and status = 'approved';
@@ -1123,10 +1266,11 @@ begin
   return cardinality(v_seen);
 end;
 $$;
-revoke all on function private.bom_save_routings(uuid, jsonb) from public, anon, authenticated;
+revoke all on function private.bom_save_routings(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
 
--- snapshot ทั้งชุดในรูป state v6 (camelCase) เรียงแบบกำหนดได้: รหัส/id จากน้อยไปมาก (collate "C") บรรทัด BOM ตามลำดับที่บันทึก
-create or replace function private.bom_snapshot()
+-- ระเบียนของข้อมูลหลักที่ changed_version > p_since ในรูป state v6 (camelCase) แยกตามชุด เรียงแบบกำหนดได้: รหัส/id จากน้อยไปมาก (collate "C") บรรทัด BOM ตามลำดับที่บันทึก
+-- p_since = -1 ได้ระเบียนทั้งหมด (snapshot) · ใช้ร่วมกันทั้ง snapshot และ delta จึงมีรูปเรคอร์ดเดียวกันเสมอ
+create or replace function private.bom_records(p_since bigint)
 returns jsonb
 language sql
 stable
@@ -1134,7 +1278,6 @@ security definer
 set search_path = ''
 as $$
   select jsonb_build_object(
-    'version', coalesce((select s.version from public.bom_master_state s where s.is_test), 0),
     'items', coalesce((
       select jsonb_agg(
         jsonb_build_object(
@@ -1146,31 +1289,31 @@ as $$
         || case when i.imported_from is null then '{}'::jsonb else jsonb_build_object('importedFrom', i.imported_from) end
         || case when i.cloned_from is null then '{}'::jsonb else jsonb_build_object('clonedFrom', i.cloned_from) end
         order by i.code collate "C")
-      from public.bom_items i where i.is_test), '[]'::jsonb),
+      from public.bom_items i where i.is_test and i.changed_version > p_since), '[]'::jsonb),
     'compounds', coalesce((
       select jsonb_agg(jsonb_build_object(
           'code', c.code, 'name', c.name, 'recipeId', c.recipe_id, 'recipeName', c.recipe_name,
           'createdAt', private.bom_ms(c.created_at)) order by c.code collate "C")
-      from public.bom_compounds c where c.is_test), '[]'::jsonb),
+      from public.bom_compounds c where c.is_test and c.changed_version > p_since), '[]'::jsonb),
     'colors', coalesce((
       select jsonb_agg(jsonb_build_object(
           'code', c.code, 'master', substr(c.code, 1, 2), 'shade', substr(c.code, 3, 2), 'name', c.name,
           'createdAt', private.bom_ms(c.created_at)) order by c.code collate "C")
-      from public.bom_colors c where c.is_test), '[]'::jsonb),
+      from public.bom_colors c where c.is_test and c.changed_version > p_since), '[]'::jsonb),
     'colorSets', coalesce((
       select jsonb_agg(jsonb_build_object(
           'base', s.base, 'code', s.code, 'name', s.name, 'note', s.note, 'slots', s.slots,
           'createdAt', private.bom_ms(s.created_at), 'createdBy', coalesce(private.bom_person(s.created_by), ''),
           'updatedAt', private.bom_ms(s.updated_at), 'updatedBy', coalesce(private.bom_person(s.updated_by), ''))
         order by s.base collate "C", s.code collate "C")
-      from public.bom_color_sets s where s.is_test), '[]'::jsonb),
+      from public.bom_color_sets s where s.is_test and s.changed_version > p_since), '[]'::jsonb),
     'packages', coalesce((
       select jsonb_agg(jsonb_build_object(
           'base', p.base, 'code', p.code, 'name', p.name, 'lines', p.lines,
           'createdAt', private.bom_ms(p.created_at), 'createdBy', coalesce(private.bom_person(p.created_by), ''),
           'updatedAt', private.bom_ms(p.updated_at), 'updatedBy', coalesce(private.bom_person(p.updated_by), ''))
         order by p.base collate "C", p.code collate "C")
-      from public.bom_packages p where p.is_test), '[]'::jsonb),
+      from public.bom_packages p where p.is_test and p.changed_version > p_since), '[]'::jsonb),
     'boms', coalesce((
       select jsonb_agg(
         jsonb_build_object(
@@ -1180,10 +1323,10 @@ as $$
           'approvedAt', private.bom_ms(b.approved_at), 'note', b.note, 'changeLog', b.change_log)
         || case when b.superseded_at is null then '{}'::jsonb else jsonb_build_object('supersededAt', private.bom_ms(b.superseded_at)) end
         order by b.bom_id collate "C")
-      from public.bom_boms b where b.is_test), '[]'::jsonb),
+      from public.bom_boms b where b.is_test and b.changed_version > p_since), '[]'::jsonb),
     'processes', coalesce((
       select jsonb_agg(jsonb_build_object('code', p.code, 'name', p.name, 'dept', p.dept) order by p.code collate "C")
-      from public.bom_processes p where p.is_test), '[]'::jsonb),
+      from public.bom_processes p where p.is_test and p.changed_version > p_since), '[]'::jsonb),
     'routings', coalesce((
       select jsonb_agg(
         jsonb_build_object(
@@ -1191,9 +1334,45 @@ as $$
           'createdBy', coalesce(private.bom_person(r.created_by), ''), 'createdAt', private.bom_ms(r.created_at))
         || case when r.superseded_at is null then '{}'::jsonb else jsonb_build_object('supersededAt', private.bom_ms(r.superseded_at)) end
         order by r.routing_id collate "C")
-      from public.bom_routings r where r.is_test), '[]'::jsonb))
+      from public.bom_routings r where r.is_test and r.changed_version > p_since), '[]'::jsonb))
+$$;
+revoke all on function private.bom_records(bigint) from public, anon, authenticated;
+
+-- snapshot ทั้งชุด: { version, items, compounds, colors, colorSets, packages, boms, processes, routings }
+create or replace function private.bom_snapshot()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object('version', coalesce((select s.version from public.bom_master_state s where s.is_test), 0))
+         || private.bom_records(-1)
 $$;
 revoke all on function private.bom_snapshot() from public, anon, authenticated;
+
+-- ส่วนต่างหลังเวอร์ชัน p_since: { version, changes: { <ชุด>: { upsert: [เรคอร์ดเต็ม], delete: [กุญแจ] } } } ครบทั้งแปดชุดเสมอ
+-- upsert = ระเบียนที่เพิ่ม/แก้หลัง p_since (ของทุกคน รวม revision ที่เซิร์ฟเวอร์ตั้ง superseded เอง) · delete = {base, code} ของชุดสี/แพ็กเกจที่ถูกลบหลัง p_since (ชุดอื่นเป็น [])
+create or replace function private.bom_delta(p_since bigint)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'version', coalesce((select s.version from public.bom_master_state s where s.is_test), 0),
+    'changes', (
+      select jsonb_object_agg(l.list, jsonb_build_object(
+        'upsert', r.records -> l.list,
+        'delete', case when l.list in ('colorSets', 'packages') then coalesce((
+            select jsonb_agg(jsonb_build_object('base', k.base, 'code', k.code) order by k.base collate "C", k.code collate "C")
+            from public.bom_deleted_keys k where k.is_test and k.list = l.list and k.changed_version > p_since), '[]'::jsonb)
+          else '[]'::jsonb end))
+      from (values ('items'), ('compounds'), ('colors'), ('colorSets'), ('packages'), ('boms'), ('processes'), ('routings')) as l(list)
+      cross join (select private.bom_records(p_since) as records) r))
+$$;
+revoke all on function private.bom_delta(bigint) from public, anon, authenticated;
 
 -- 6. RPC สาธารณะ -------------------------------------------------------------------------------
 -- อ่านข้อมูลหลักทั้งชุด: persona ทุกตัวอ่านได้
@@ -1211,8 +1390,30 @@ begin
 end;
 $$;
 
--- บันทึกชุดการเปลี่ยนแปลงข้อมูลหลักในธุรกรรมเดียว (ผิดข้อใดข้อหนึ่ง = ไม่เขียนอะไรเลย) คืน snapshot ใหม่
--- ไม่มีการเปลี่ยนแปลงเลย (ทุกส่วนว่าง) = คืน snapshot เดิมโดยไม่เพิ่ม version และไม่เขียน audit
+-- ส่วนต่างหลังเวอร์ชัน p_version (อ่านอย่างเดียว ทุก persona): ใช้ตามทัน (catch up) หลัง BOM_STALE และเมื่อหน้ากลับมาโฟกัส
+-- p_version ต้องไม่ว่าง 0 ถึง version ปัจจุบัน (เกินปัจจุบัน = ข้อมูลฝั่ง client ไม่ตรงกับฐานข้อมูล ให้โหลดทั้งชุดใหม่)
+create or replace function public.app_bom_master_since(p_version bigint)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.lab_only_block();
+  perform private.bom_actor();
+  if p_version is null or p_version < 0
+     or p_version > coalesce((select s.version from public.bom_master_state s where s.is_test), 0) then
+    raise exception 'BOM_INVALID_PAYLOAD';
+  end if;
+  return private.bom_delta(p_version);
+end;
+$$;
+
+-- บันทึกชุดการเปลี่ยนแปลงข้อมูลหลักในธุรกรรมเดียว (ผิดข้อใดข้อหนึ่ง = ไม่เขียนอะไรเลย) คืน delta ตั้งแต่ p_base_version: { version, changes }
+-- ชนรายระเบียน: BOM_STALE เมื่อระเบียนที่คำสั่งนี้แตะ (เขียนทับ ลบ หรือสร้างกุญแจที่มีอยู่แล้ว) ถูกคนอื่นแก้/ลบหลัง p_base_version
+--   ระเบียนอื่นที่คนอื่นแก้ระหว่างนั้นไม่ขวาง · ตัวนับ version รวมใช้เรียงลำดับการเปลี่ยนแปลงเท่านั้น
+-- ไม่มีการเปลี่ยนแปลงเลย (ทุกส่วนว่าง) = คืน delta โดยไม่เพิ่ม version และไม่เขียน audit
 create or replace function public.app_bom_save_master(p_changes jsonb, p_base_version bigint, p_action text)
 returns jsonb
 language plpgsql
@@ -1232,6 +1433,9 @@ declare
   v_counts jsonb := '{}'::jsonb;
   v_version bigint;
   v_row jsonb;
+  v_dbase text;
+  v_dcode text;
+  v_row_version bigint;
   v_item_codes text[] := '{}';
   v_roots text[] := '{}';
   v_touched text[];
@@ -1241,7 +1445,7 @@ begin
   v_actor := private.bom_actor();
   if not private.bom_can_edit(v_actor) then raise exception 'BOM_FORBIDDEN'; end if;
   if p_action is null or not (p_action = any (private.bom_client_actions())) then raise exception 'BOM_INVALID_ACTION'; end if;
-  if p_changes is null or jsonb_typeof(p_changes) <> 'object' or p_base_version is null then
+  if p_changes is null or jsonb_typeof(p_changes) <> 'object' or p_base_version is null or p_base_version < 0 then
     raise exception 'BOM_INVALID_PAYLOAD';
   end if;
 
@@ -1263,42 +1467,62 @@ begin
     end loop;
   end loop;
 
-  -- ล็อกตัวนับก่อนเทียบเวอร์ชัน: บันทึกพร้อมกันต่อคิวกัน คนที่สองเห็น version ใหม่แล้วได้ BOM_STALE
+  -- ล็อกตัวนับก่อนตรวจชน: บันทึกพร้อมกันต่อคิวกัน คนที่สองเห็นเวอร์ชันของระเบียนที่คนแรกเพิ่งแก้ (changed_version) แล้วได้ BOM_STALE เฉพาะที่ชนกัน
+  -- v_version = เวอร์ชันก่อนบันทึกนี้ (p_cur ของตัวเขียน) ระเบียนที่แก้ในคำสั่งนี้ได้ v_version + 1 จึงไม่ถูกนับว่าเป็นของคนอื่น
   insert into public.bom_master_state (is_test) values (true) on conflict (is_test) do nothing;
   select s.version into v_version from public.bom_master_state s where s.is_test for update;
-  if p_base_version <> v_version then raise exception 'BOM_STALE'; end if;
-  if v_total = 0 then return private.bom_snapshot(); end if;
+  if p_base_version > v_version then raise exception 'BOM_INVALID_PAYLOAD'; end if;
+  if v_total = 0 then return private.bom_delta(p_base_version); end if;
 
   v_actor_name := v_actor.first_name || ' ' || v_actor.last_name;
 
   begin
-    perform private.bom_save_compounds(v_actor.id, coalesce(p_changes #> '{compounds,upsert}', '[]'::jsonb));
-    perform private.bom_save_colors(v_actor.id, coalesce(p_changes #> '{colors,upsert}', '[]'::jsonb));
-    perform private.bom_save_processes(v_actor.id, coalesce(p_changes #> '{processes,upsert}', '[]'::jsonb));
-    v_item_codes := private.bom_save_items(v_actor.id, coalesce(p_changes #> '{items,upsert}', '[]'::jsonb));
+    perform private.bom_save_compounds(v_actor.id, coalesce(p_changes #> '{compounds,upsert}', '[]'::jsonb), p_base_version, v_version);
+    perform private.bom_save_colors(v_actor.id, coalesce(p_changes #> '{colors,upsert}', '[]'::jsonb), p_base_version, v_version);
+    perform private.bom_save_processes(v_actor.id, coalesce(p_changes #> '{processes,upsert}', '[]'::jsonb), p_base_version, v_version);
+    v_item_codes := private.bom_save_items(v_actor.id, coalesce(p_changes #> '{items,upsert}', '[]'::jsonb), p_base_version, v_version);
 
-    -- ลบก่อนเขียน (ลบแล้วสร้างใหม่รหัสเดิมในคำสั่งเดียวกันได้) ไม่พบ = BOM_NOT_FOUND
+    -- ลบก่อนเขียน (ลบแล้วสร้างใหม่รหัสเดิมในคำสั่งเดียวกันได้) ไม่พบ = BOM_NOT_FOUND แต่ถ้าคนอื่นเพิ่งลบหลังเวอร์ชันฐาน = BOM_STALE
+    -- แถวที่คนอื่นแก้หลังเวอร์ชันฐานลบไม่ได้ (BOM_STALE) · ที่ลบแล้วจดหลุมฝังศพไว้ให้ delta
     for v_row in select value from jsonb_array_elements(coalesce(p_changes #> '{colorSets,delete}', '[]'::jsonb)) loop
       if jsonb_typeof(v_row) <> 'object' then raise exception 'BOM_INVALID_COLOR_SET'; end if;
-      delete from public.bom_color_sets
-      where is_test
-        and base = private.bom_code(private.bom_text(v_row, 'base', 60, 1, 'BOM_INVALID_COLOR_SET'))
-        and code = upper(private.bom_text(v_row, 'code', 4, 1, 'BOM_INVALID_COLOR_SET'));
-      if not found then raise exception 'BOM_NOT_FOUND'; end if;
+      v_dbase := private.bom_code(private.bom_text(v_row, 'base', 60, 1, 'BOM_INVALID_COLOR_SET'));
+      v_dcode := upper(private.bom_text(v_row, 'code', 4, 1, 'BOM_INVALID_COLOR_SET'));
+      select s.changed_version into v_row_version from public.bom_color_sets s where s.is_test and s.base = v_dbase and s.code = v_dcode;
+      if not found then
+        if exists (select 1 from public.bom_deleted_keys k where k.is_test and k.list = 'colorSets' and k.base = v_dbase and k.code = v_dcode
+                   and k.changed_version > p_base_version and k.changed_version <= v_version) then
+          raise exception 'BOM_STALE';
+        end if;
+        raise exception 'BOM_NOT_FOUND';
+      end if;
+      if v_row_version > p_base_version and v_row_version <= v_version then raise exception 'BOM_STALE'; end if;
+      delete from public.bom_color_sets where is_test and base = v_dbase and code = v_dcode;
+      insert into public.bom_deleted_keys (is_test, list, base, code) values (true, 'colorSets', v_dbase, v_dcode)
+      on conflict (list, base, code, is_test) do update set deleted_at = now();
     end loop;
     for v_row in select value from jsonb_array_elements(coalesce(p_changes #> '{packages,delete}', '[]'::jsonb)) loop
       if jsonb_typeof(v_row) <> 'object' then raise exception 'BOM_INVALID_PACKAGE'; end if;
-      delete from public.bom_packages
-      where is_test
-        and base = private.bom_code(private.bom_text(v_row, 'base', 60, 1, 'BOM_INVALID_PACKAGE'))
-        and code = upper(private.bom_text(v_row, 'code', 4, 1, 'BOM_INVALID_PACKAGE'));
-      if not found then raise exception 'BOM_NOT_FOUND'; end if;
+      v_dbase := private.bom_code(private.bom_text(v_row, 'base', 60, 1, 'BOM_INVALID_PACKAGE'));
+      v_dcode := upper(private.bom_text(v_row, 'code', 4, 1, 'BOM_INVALID_PACKAGE'));
+      select p.changed_version into v_row_version from public.bom_packages p where p.is_test and p.base = v_dbase and p.code = v_dcode;
+      if not found then
+        if exists (select 1 from public.bom_deleted_keys k where k.is_test and k.list = 'packages' and k.base = v_dbase and k.code = v_dcode
+                   and k.changed_version > p_base_version and k.changed_version <= v_version) then
+          raise exception 'BOM_STALE';
+        end if;
+        raise exception 'BOM_NOT_FOUND';
+      end if;
+      if v_row_version > p_base_version and v_row_version <= v_version then raise exception 'BOM_STALE'; end if;
+      delete from public.bom_packages where is_test and base = v_dbase and code = v_dcode;
+      insert into public.bom_deleted_keys (is_test, list, base, code) values (true, 'packages', v_dbase, v_dcode)
+      on conflict (list, base, code, is_test) do update set deleted_at = now();
     end loop;
 
-    perform private.bom_save_color_sets(v_actor.id, coalesce(p_changes #> '{colorSets,upsert}', '[]'::jsonb));
-    perform private.bom_save_packages(v_actor.id, coalesce(p_changes #> '{packages,upsert}', '[]'::jsonb));
-    v_roots := private.bom_save_boms(v_actor.id, v_actor_name, coalesce(p_changes #> '{boms,upsert}', '[]'::jsonb));
-    perform private.bom_save_routings(v_actor.id, coalesce(p_changes #> '{routings,upsert}', '[]'::jsonb));
+    perform private.bom_save_color_sets(v_actor.id, coalesce(p_changes #> '{colorSets,upsert}', '[]'::jsonb), p_base_version, v_version);
+    perform private.bom_save_packages(v_actor.id, coalesce(p_changes #> '{packages,upsert}', '[]'::jsonb), p_base_version, v_version);
+    v_roots := private.bom_save_boms(v_actor.id, v_actor_name, coalesce(p_changes #> '{boms,upsert}', '[]'::jsonb), p_base_version, v_version);
+    perform private.bom_save_routings(v_actor.id, coalesce(p_changes #> '{routings,upsert}', '[]'::jsonb), p_base_version, v_version);
 
     -- ตรวจกฎ BOM หลังเขียนเฉพาะส่วนที่เกี่ยว: BOM ที่ approved ของชิ้นที่ถูกแก้/มี revision ใหม่ และ BOM ที่ใช้ชิ้นที่ถูกแก้เป็นลูก
     v_touched := v_item_codes || v_roots;
@@ -1369,13 +1593,15 @@ begin
   update public.bom_master_state set version = v_version, updated_at = now(), updated_by = v_actor.id where is_test;
   insert into public.audit_logs (actor_id, action, entity_type, entity_id, metadata)
   values (private.bom_audit_actor_id(), 'BOM_MASTER_SAVE', 'bom_master', v_version::text,
-          jsonb_build_object('client_action', p_action, 'version', v_version, 'counts', v_counts, 'is_test', true,
-                             'persona_employee_no', v_actor.employee_no));
-  return private.bom_snapshot();
+          jsonb_build_object('client_action', p_action, 'version', v_version, 'base_version', p_base_version, 'counts', v_counts,
+                             'is_test', true, 'persona_employee_no', v_actor.employee_no));
+  return private.bom_delta(p_base_version);
 end;
 $$;
 
 revoke all on function public.app_bom_master() from public, anon;
+revoke all on function public.app_bom_master_since(bigint) from public, anon;
 revoke all on function public.app_bom_save_master(jsonb, bigint, text) from public, anon;
 grant execute on function public.app_bom_master() to authenticated;
+grant execute on function public.app_bom_master_since(bigint) to authenticated;
 grant execute on function public.app_bom_save_master(jsonb, bigint, text) to authenticated;

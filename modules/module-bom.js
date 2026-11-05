@@ -3,7 +3,7 @@
 // bom-pages.js (หน้าและ dialog ลงทะเบียนใน window.MNP_BOM_PAGES / _DIALOGS) · ไฟล์นี้ (shell เส้นทาง การผูก event)
 // ใช้ชิ้นส่วน HTML และสไตล์ .rf-* ของ RubberFlow (window.MNP_RUBBERFLOW_UI) จึงใช้กติกา event ชื่อเดียวกัน (data-rf-form / data-rf-action / data-rf-open / data-rf-go)
 // แต่ผูกกับ store ของ BOM เท่านั้น — ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลหลัก (ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต) อยู่ในฐานข้อมูลผ่าน RPC
-// app_bom_master / app_bom_save_master ส่วนใบสั่งผลิต งาน และบันทึกการใช้งานยังอยู่ใน localStorage (คีย์ mnp-bom-local-v1) ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
+// app_bom_master / app_bom_master_since / app_bom_save_master (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) ส่วนใบสั่งผลิต งาน และบันทึกการใช้งานยังอยู่ใน localStorage (คีย์ mnp-bom-local-v1) ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
 // และบทบาท BOM มาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตใน localStorage และบทบาทสาธิต 8 คนเหมือนเดิม
 // การซ่อน/แสดงเมนูและปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล หน้า #/bom ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, app, shell, bindShell, renderNotFound, escapeHtml, showToast,
@@ -37,6 +37,11 @@
       if (error) throw error;
       return data;
     },
+    async since(version) {
+      const { data, error } = await sb.rpc("app_bom_master_since", { p_version: version });
+      if (error) throw error;
+      return data;
+    },
   } : null;
   const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee) });
   window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params) };
@@ -44,14 +49,31 @@
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
   const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
   const updateSync = () => document.querySelectorAll("[data-bom-sync]").forEach((node) => { node.textContent = syncText(); });
+  // ข้อมูลที่แสดงเปลี่ยนเพราะผู้อื่นบันทึก (ตามทันหรือส่วนต่างหลังบันทึก): วาดหน้าใหม่ เว้นแต่ผู้ใช้กำลังกรอกฟอร์ม/เปิด dialog อยู่ (ไม่ทับสิ่งที่พิมพ์) แจ้งแทน
+  const isEditing = () => {
+    if (document.querySelectorAll("dialog[open]").length) return true;
+    const active = document.activeElement;
+    return Boolean(active && /^(INPUT|TEXTAREA|SELECT)$/.test(String(active.tagName)) && active.closest?.(".content"));
+  };
+  const refreshForOthers = () => {
+    if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล BOM ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
+    else renderRoute();
+  };
   store.subscribe((event) => {
     if (!onBomRoute()) return;
     if (event.type === "saving") updateSync();
     else if (event.type === "saved") {
       updateSync();
-      if (event.changed) renderRoute();
-    } else if (event.type !== "status") renderRoute();
+      if (event.changed) refreshForOthers();
+    } else if (event.type === "synced") refreshForOthers();
+    else if (event.type !== "status") renderRoute();
   });
+  // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า BOM: ตามทันการบันทึกของผู้อื่น (store.catchUp วาดหน้าใหม่ผ่าน event synced เฉพาะเมื่อมีอะไรเปลี่ยน)
+  const catchUpOnFocus = () => {
+    if (store.isRemote() && onBomRoute() && !document.hidden) store.catchUp();
+  };
+  window.addEventListener?.("focus", catchUpOnFocus);
+  document.addEventListener?.("visibilitychange", catchUpOnFocus);
 
   function url(page = "dashboard", extra = {}) {
     const query = new URLSearchParams();
