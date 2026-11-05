@@ -41,13 +41,15 @@ select is((select count(*) from pg_constraint c where c.conrelid = 'public.bom_j
   2::bigint, 'jobs reference their order and item with foreign keys paired with is_test');
 select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_customers_name_idx' and indexdef like '%lower(name)%'),
   'a customer name is unique ignoring case');
-select ok(not exists (select 1 from unnest(array['public.app_bom_save_master(jsonb,bigint,text,jsonb)', 'public.app_bom_audit(integer)', 'public.app_sandbox_purge_bom()']) f(sig)
+select ok(not exists (select 1 from unnest(array['public.app_bom_save_master(jsonb,bigint,text,jsonb,text)', 'public.app_bom_audit(integer)', 'public.app_sandbox_purge_bom()']) f(sig)
                       where has_function_privilege('anon', f.sig, 'execute') or not has_function_privilege('authenticated', f.sig, 'execute')),
   'only signed-in users can execute the new and changed RPCs');
-select ok(to_regprocedure('public.app_bom_save_master(jsonb,bigint,text)') is null,
-  'the 3-argument save function is replaced (no ambiguous overload); 3-argument calls use the default audit');
+select ok(to_regprocedure('public.app_bom_save_master(jsonb,bigint,text)') is null and to_regprocedure('public.app_bom_save_master(jsonb,bigint,text,jsonb)') is null,
+  'the older save signatures are replaced (no ambiguous overload); 3- and 4-argument calls use the defaults for the audit and the epoch');
+select ok(exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bom_master_state' and column_name = 'epoch' and is_nullable = 'NO'),
+  'the counter row carries a required epoch');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p
-           where p.oid in ('public.app_bom_save_master(jsonb,bigint,text,jsonb)'::regprocedure, 'public.app_bom_audit(integer)'::regprocedure,
+           where p.oid in ('public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure, 'public.app_bom_audit(integer)'::regprocedure,
                            'public.app_sandbox_purge_bom()'::regprocedure)),
   'the RPCs are security definer with an empty search_path');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
@@ -134,6 +136,16 @@ select is(public.app_bom_master() -> 'customers', '[]'::jsonb, 'there are no cus
 select is(jsonb_array_length(public.app_bom_master_since(0) -> 'changes' -> 'items' -> 'upsert'), 5, 'the delta still carries the master lists');
 select ok(public.app_bom_master_since(0) -> 'changes' ?& array['customers', 'orders', 'jobs'], 'the delta carries the three new lists');
 select lives_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem') $$, 'the 3-argument call still works (default audit) and is a no-op for an empty change');
+select ok((public.app_bom_master() ->> 'epoch') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'the snapshot carries the epoch');
+select is(public.app_bom_master_since(0) ->> 'epoch', public.app_bom_master() ->> 'epoch', 'the delta carries the same epoch');
+select set_config('test.epoch0', public.app_bom_master() ->> 'epoch', true);
+select is(public.app_bom_save_master('{}'::jsonb, 1, 'saveItem', '[]'::jsonb, current_setting('test.epoch0')) ->> 'epoch', current_setting('test.epoch0'),
+  'a save with the current epoch is accepted and its reply carries the epoch');
+select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 1, 'saveItem', '[]'::jsonb, '00000000-0000-0000-0000-000000000000') $$, 'BOM_RESET',
+  'a save that holds another epoch is refused, even when it changes nothing');
+select throws_ok($$ select public.app_bom_save_master('{"customers":{"upsert":[{"name":"STALE-EPOCH"}]}}'::jsonb, 1, 'saveCustomer', '[]'::jsonb, 'not-a-uuid') $$, 'BOM_RESET',
+  'a malformed epoch is refused the same way and nothing is written');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'customers') c where c ->> 'name' = 'STALE-EPOCH'), 0, 'the refused save wrote nothing');
 
 -- 5. ลูกค้า -------------------------------------------------------------------------------
 select is(public.app_bom_save_master(
@@ -207,7 +219,12 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert
   'the creator is the persona, not what the client sent');
 select isnt(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'createdAt', '1', 'the creation time is the server time');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'revision', '0', 'a new order starts at revision 0');
-select is(jsonb_array_length(public.app_bom_master() -> 'customers'), 1, 'the customer is unchanged (same name)');
+select is(jsonb_array_length(public.app_bom_master() -> 'customers'), 1, 'saving the order with an existing customer name does not add a second customer');
+select is(public.app_bom_master() -> 'customers' -> 0 ->> 'country', 'TH', 'the customer sent with the order (same name) updated the existing record');
+select is(public.app_bom_save_master('{"customers":{"upsert":[{"name":"  Spaced   Name ","country":"TH","orderType":"SA","note":""}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'saveCustomer') -> 'changes' -> 'customers' -> 'upsert' -> 0 ->> 'name', 'Spaced Name',
+  'inner whitespace of a customer name is collapsed (the client key uses the same rule)');
+
 
 -- ใบ draft: แก้สินค้า/ระเบิดได้ (planner) แล้วนับคงคลัง (planner / ST / WH)
 select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25001'), true);
@@ -576,6 +593,102 @@ select is(public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_ob
   -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'id', '251106-25010', 'from the current base the next number is accepted (a department manager is a planner)');
 select is(public.app_bom_master() -> 'orders' -> 0 ->> 'id', '251106-25010', 'the latest order date is listed first');
 
+-- 9b. สำเนาเก่าของ client ต้องได้ BOM_STALE (ชนก่อนสิทธิ์) ไม่ใช่ BOM_FORBIDDEN ---------------------------------------
+-- (c) ST นับคงคลังใบ draft จากสำเนาเก่า ขณะที่ฝ่ายวางแผนแก้รายการสินค้าไปแล้ว
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.ord')::jsonb || jsonb_build_object('id', '251106-25011', 'customer', ' Spaced    Name', 'items', '[{"fgCode":"FG-A","qty":5,"colorSet":"A","note":""}]'::jsonb,
+                                                           'explosion', current_setting('test.expl')::jsonb)))),
+  (public.app_bom_master() ->> 'version')::bigint, 'createOrder');
+select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25011'), true);
+select is(current_setting('test.o')::jsonb ->> 'customer', 'Spaced Name', 'the customer name stored on the order is collapsed like the customer table (the client key uses the same rule)');
+select set_config('test.bc', (public.app_bom_master() ->> 'version'), true);
+select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o')::jsonb || '{"items":[{"fgCode":"FG-A","qty":6,"colorSet":"A","note":""}]}'::jsonb))), current_setting('test.bc')::bigint, 'updateOrderItem');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o')::jsonb || '{"stockCounts":{"SE-A":3}}'::jsonb))), current_setting('test.bc')::bigint, 'setStockCounts') $$,
+  'BOM_STALE', 'ST counting a draft from a copy whose items a planner changed since is stale, not forbidden');
+select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25011'), true);
+select is(public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o')::jsonb || '{"stockCounts":{"SE-A":3}}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'setStockCounts')
+  -> 'changes' -> 'orders' -> 'upsert' -> 0 -> 'stockCounts', '{"SE-A":3}'::jsonb, 'after catching up the same count is accepted');
+
+-- (a) พนักงานสองคนของแผนกเดียวกันรายงานงานเดียวกันจากฐานเดียวกัน: คนที่สองได้ BOM_STALE
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25011'), true);
+select public.app_bom_save_master(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.o')::jsonb || '{"status":"released"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB-4-GR","orderId":"251106-25011","dept":"GR","itemCode":"SE-A","kind":"SE"}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB-4-PK","orderId":"251106-25011","dept":"PK","itemCode":"FG-A","kind":"FG","uom":"set"}'::jsonb))),
+  (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
+select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-4-GR'), true);
+select set_config('test.b4', (public.app_bom_master() ->> 'version'), true);
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select is(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('status', 'in_progress', 'qtyDone', 2, 'reports',
+    jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 2, 'reject', 0, 'note', 'คนแรก')))))), current_setting('test.b4')::bigint, 'reportJob')
+  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '2', 'the first GR report from the base is accepted');
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('status', 'in_progress', 'qtyDone', 3, 'reports',
+    jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 3, 'reject', 0, 'note', 'อีกเครื่องของคนเดิม')))))), current_setting('test.b4')::bigint, 'reportJob') $$,
+  'BOM_STALE', 'the same staff member reporting again from a stale copy (another tab) is stale');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('status', 'in_progress', 'qtyDone', 3, 'reports',
+    jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 3, 'reject', 0, 'note', 'คนที่สอง')))))), current_setting('test.b4')::bigint, 'reportJob') $$,
+  'BOM_STALE', 'a second report on the same job from the same base is stale, not forbidden');
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || '{"status":"hold"}'::jsonb))), current_setting('test.b4')::bigint, 'setJobStatus') $$,
+  'BOM_STALE', 'a stale copy that reports nothing is stale too');
+select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-4-GR'), true);
+select is(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('qtyDone', 5, 'reports', (current_setting('test.j')::jsonb -> 'reports')
+    || '[{"at":1,"by":"x","good":3,"reject":0,"note":"คนที่สอง"}]'::jsonb)))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob')
+  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '5', 'after catching up the second report is accepted');
+
+-- ฝ่ายวางแผนแก้งาน (วันครบกำหนด/จำนวนแผน) ขณะที่พนักงานแผนกรายงานจากสำเนาเก่า
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-4-GR'), true);
+select set_config('test.b4b', (public.app_bom_master() ->> 'version'), true);
+select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || '{"dueAt":1765100000000,"qtyPlanned":90}'::jsonb))), current_setting('test.b4b')::bigint, 'reportJob');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('qtyDone', 6, 'reports', (current_setting('test.j')::jsonb -> 'reports')
+    || '[{"at":1,"by":"x","good":1,"reject":0,"note":""}]'::jsonb)))), current_setting('test.b4b')::bigint, 'reportJob') $$,
+  'BOM_STALE', 'a report on a copy whose due date and quantity a planner changed since is stale, not forbidden');
+
+-- (b) พนักงานรายงานงานที่ถูกลบไปแล้วเพราะฝ่ายวางแผนเปิดใบกลับมาแก้หลังฐานของเขา
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.ord')::jsonb || jsonb_build_object('id', '251106-25012', 'items', '[{"fgCode":"FG-A","qty":5,"colorSet":"A","note":""}]'::jsonb,
+                                                           'explosion', current_setting('test.expl')::jsonb)))),
+  (public.app_bom_master() ->> 'version')::bigint, 'createOrder');
+select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25012'), true);
+select public.app_bom_save_master(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.o')::jsonb || '{"status":"released"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB-5-GR","orderId":"251106-25012","dept":"GR","itemCode":"SE-A","kind":"SE"}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB-5-PK","orderId":"251106-25012","dept":"PK","itemCode":"FG-A","kind":"FG","uom":"set"}'::jsonb))),
+  (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
+select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25012'), true);
+select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-5-GR'), true);
+select set_config('test.b5', (public.app_bom_master() ->> 'version'), true);
+select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o')::jsonb || '{"status":"draft"}'::jsonb))), current_setting('test.b5')::bigint, 'updateOrderItem');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251106-25012'), 0, 'the planner reopened the order and its jobs are gone');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('status', 'in_progress', 'qtyDone', 2, 'reports',
+    jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 2, 'reject', 0, 'note', '')))))), current_setting('test.b5')::bigint, 'reportJob') $$,
+  'BOM_STALE', 'a report on a job that a reopen deleted after the base is stale, not forbidden');
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('status', 'in_progress', 'qtyDone', 2, 'reports',
+    jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 2, 'reject', 0, 'note', '')))))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob') $$,
+  'BOM_FORBIDDEN', 'from the current base the same missing job is a plain refusal (staff cannot create jobs)');
+
 -- 10. audit ----------------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_bom_save_master('{"customers":{"upsert":[{"name":"B"}]}}'::jsonb, (public.app_bom_master() ->> 'version')::bigint, 'saveCustomer',
@@ -592,16 +705,20 @@ select is((select count(*)::integer from jsonb_array_elements(public.app_bom_mas
 select public.app_bom_save_master('{"customers":{"upsert":[{"name":"B","country":"JP","orderType":"EX"}]}}'::jsonb, (public.app_bom_master() ->> 'version')::bigint, 'saveCustomer',
   '[{"action":"บันทึกลูกค้า","detail":"B"},{"action":"บันทึกลูกค้า","detail":"B JP"}]'::jsonb);
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
-select is(public.app_bom_audit(2), jsonb_build_array(
-  jsonb_build_object('at', public.app_bom_audit(2) -> 0 -> 'at', 'user', current_setting('test.n_sbx_pp_staff'), 'action', 'บันทึกลูกค้า', 'detail', 'B JP'),
-  jsonb_build_object('at', public.app_bom_audit(2) -> 1 -> 'at', 'user', current_setting('test.n_sbx_pp_staff'), 'action', 'บันทึกลูกค้า', 'detail', 'B')),
-  'any persona reads the audit, newest entry first, with the persona name');
+select is(public.app_bom_audit(1), jsonb_build_array(
+  jsonb_build_object('at', public.app_bom_audit(1) -> 0 -> 'at', 'user', current_setting('test.n_sbx_pp_staff'), 'action', 'saveCustomer', 'detail', 'customers +1',
+                     'entries', '[{"action":"บันทึกลูกค้า","detail":"B"},{"action":"บันทึกลูกค้า","detail":"B JP"}]'::jsonb)),
+  'any persona reads the audit: the action and the counts are what the server recorded, the client text is kept apart as entries');
 select is(jsonb_array_length(public.app_bom_audit(0)), 1, 'a limit below 1 is clamped to 1');
 select ok(jsonb_array_length(public.app_bom_audit()) > 10, 'the default limit returns the history');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'ปล่อยผลิต' and a ->> 'detail' = '251106-25001 สร้างงาน 3 รายการ'),
-  'the entries the client sent with the release are in the history');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'importFlat' and a ->> 'detail' = ''),
-  'a save without client entries shows its action name');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a
+                  where a ->> 'action' = 'releaseOrder' and a ->> 'detail' = 'jobs +3, orders +1'
+                    and a -> 'entries' = '[{"action":"ปล่อยผลิต","detail":"251106-25001 สร้างงาน 3 รายการ"}]'::jsonb),
+  'a release shows the server-recorded counts as the line and the client text only as an entry');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'importFlat' and a ->> 'detail' = 'items +5' and a -> 'entries' = '[]'::jsonb),
+  'a save without client entries shows its action name and counts');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'setJobStatus' and a ->> 'detail' like 'jobs +1%'),
+  'job saves are listed with their counts');
 reset role;
 select is((select jsonb_array_length(metadata -> 'entries') from public.audit_logs where action = 'BOM_MASTER_SAVE' and metadata ->> 'client_action' = 'saveCustomer'
            order by id desc limit 1), 2, 'one audit_logs row per save holds all the client entries');
@@ -612,10 +729,10 @@ set local role authenticated;
 
 -- 11. ตารางเป็นแบบแยกโหมด: นับด้วยบทบาทของเทสต์ --------------------------------------------------
 reset role;
-select is((select count(*) from public.bom_orders where is_test), 5::bigint, 'five test orders exist (25001, 25002, 25003, 25009, 25010)');
+select is((select count(*) from public.bom_orders where is_test), 7::bigint, 'seven test orders exist (25001, 25002, 25003, 25009, 25010, 25011, 25012)');
 select is((select count(*) from public.bom_orders where not is_test), 1::bigint, 'the real order is untouched');
 select is((select count(*) from public.bom_jobs where not is_test), 1::bigint, 'the real job is untouched');
-select is((select count(*) from public.bom_deleted_keys where is_test and list = 'jobs'), 5::bigint, 'five job tombstones: JOB-2-RB/PK (reopen), JOB-2B-RB/PK (cancel), JOB-3-RB (direct delete)');
+select is((select count(*) from public.bom_deleted_keys where is_test and list = 'jobs'), 7::bigint, 'seven job tombstones: JOB-2-RB/PK (reopen), JOB-2B-RB/PK (cancel), JOB-3-RB (direct delete), JOB-5-GR/PK (reopen)');
 select ok((select bool_and(changed_version > 0) from public.bom_orders where is_test) and (select bool_and(changed_version > 0) from public.bom_jobs where is_test),
   'every test order and job is stamped with the version that changed it');
 set local role authenticated;
@@ -628,22 +745,32 @@ select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the sa
 select throws_ok('select public.app_sandbox_purge_bom()', 'SANDBOX_NOT_ACTIVE', 'the purge works only inside the test mode');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.pre_version', (public.app_bom_master() ->> 'version'), true);
+select set_config('test.pre_epoch', (public.app_bom_master() ->> 'epoch'), true);
 select ok(current_setting('test.pre_version')::bigint > 10, 'the counter is well above zero before the purge');
 select set_config('test.purge', public.app_sandbox_purge_bom()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 15, 'the purge reports the deleted rows');
-select is(public.app_bom_master(),
-  '{"version":0,"items":[],"compounds":[],"colors":[],"colorSets":[],"packages":[],"boms":[],"processes":[],"routings":[],"customers":[],"orders":[],"jobs":[]}'::jsonb,
-  'the test master is empty again and the counter is back to 0');
-select throws_ok(format('select public.app_bom_master_since(%s)', current_setting('test.pre_version')), 'BOM_INVALID_PAYLOAD',
-  'a client holding a newer version must reload');
+select is(public.app_bom_master() - 'epoch',
+  jsonb_build_object('version', current_setting('test.pre_version')::bigint, 'items', '[]'::jsonb, 'compounds', '[]'::jsonb, 'colors', '[]'::jsonb, 'colorSets', '[]'::jsonb,
+                     'packages', '[]'::jsonb, 'boms', '[]'::jsonb, 'processes', '[]'::jsonb, 'routings', '[]'::jsonb, 'customers', '[]'::jsonb, 'orders', '[]'::jsonb, 'jobs', '[]'::jsonb),
+  'the test master is empty again and the counter keeps its value (it never goes back)');
+select isnt(public.app_bom_master() ->> 'epoch', current_setting('test.pre_epoch'), 'the purge changed the epoch');
+select is(public.app_bom_master_since(current_setting('test.pre_version')::bigint) ->> 'epoch', public.app_bom_master() ->> 'epoch',
+  'a client that is only behind by version sees the new epoch in the delta (and reloads)');
+select throws_ok(format('select public.app_bom_master_since(%s)', current_setting('test.pre_version')::bigint + 1), 'BOM_INVALID_PAYLOAD',
+  'a version above the counter is still refused');
+select throws_ok(format($f$ select public.app_bom_save_master('{"customers":{"upsert":[{"name":"ก่อนล้าง"}]}}'::jsonb, %s, 'saveCustomer', '[]'::jsonb, %L) $f$,
+  current_setting('test.pre_version')::bigint, current_setting('test.pre_epoch')), 'BOM_RESET', 'a save that still holds the epoch from before the purge is refused');
 select is(public.app_bom_audit(1) -> 0 ->> 'action', 'ล้างข้อมูล BOM ทดสอบ', 'the purge is the newest history entry (earlier history is kept)');
+select is(public.app_bom_audit(1) -> 0 ->> 'detail', 'ลบ ' || (current_setting('test.purge')::jsonb ->> 'deleted') || ' แถว', 'the purge entry is written by the server');
 select ok(jsonb_array_length(public.app_bom_audit()) > 10, 'the history before the purge is kept');
 reset role;
 select is((select count(*) from public.bom_items where is_test), 0::bigint, 'no test item is left');
 select is((select count(*) from public.bom_orders where is_test) + (select count(*) from public.bom_jobs where is_test)
           + (select count(*) from public.bom_customers where is_test) + (select count(*) from public.bom_deleted_keys where is_test)
           + (select count(*) from public.bom_boms where is_test), 0::bigint, 'no test order, job, customer, tombstone or BOM is left');
-select is((select version from public.bom_master_state where is_test), 0::bigint, 'the test counter row is reset to version 0');
+select is((select version from public.bom_master_state where is_test), current_setting('test.pre_version')::bigint, 'the test counter row keeps its version');
+select isnt((select epoch::text from public.bom_master_state where is_test), current_setting('test.pre_epoch'), 'the test counter row has a new epoch');
+select isnt((select epoch from public.bom_master_state where not is_test), (select epoch from public.bom_master_state where is_test), 'the real counter row has its own epoch');
 select is((select version from public.bom_master_state where not is_test), 99::bigint, 'the real counter row is untouched');
 select is((select count(*) from public.bom_items where not is_test), 1::bigint, 'the real item is untouched');
 select is((select count(*) from public.bom_orders where not is_test) + (select count(*) from public.bom_jobs where not is_test)
@@ -651,8 +778,11 @@ select is((select count(*) from public.bom_orders where not is_test) + (select c
 select is((select count(*) from public.audit_logs where action = 'BOM_SANDBOX_PURGE' and actor_id = '8e000000-0000-0000-0000-000000000101'), 1::bigint,
   'the purge is audited with the real admin as the actor');
 set local role authenticated;
-select is(public.app_bom_save_master('{"customers":{"upsert":[{"name":"หลังล้าง"}]}}'::jsonb, 0, 'saveCustomer') ->> 'version', '1',
-  'saving works again from version 0 after the purge');
+select is(public.app_bom_save_master('{"customers":{"upsert":[{"name":"หลังล้าง"}]}}'::jsonb, current_setting('test.pre_version')::bigint, 'saveCustomer', '[]'::jsonb,
+  public.app_bom_master() ->> 'epoch') ->> 'version', (current_setting('test.pre_version')::bigint + 1)::text,
+  'saving works again after the purge, with the new epoch, and the counter goes on from where it was');
+select is(public.app_bom_master_since(current_setting('test.pre_version')::bigint) -> 'changes' -> 'customers' -> 'upsert' -> 0 ->> 'name', 'หลังล้าง',
+  'a row created after the purge is newer than any version a client could have held before it');
 
 select * from finish();
 rollback;

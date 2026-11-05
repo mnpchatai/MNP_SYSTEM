@@ -32,8 +32,8 @@
       if (error) throw error;
       return data;
     },
-    async save(changes, baseVersion, action, audit) {
-      const { data, error } = await sb.rpc("app_bom_save_master", { p_changes: changes, p_base_version: baseVersion, p_action: action, p_audit: audit ?? [] });
+    async save(changes, baseVersion, action, audit, epoch) {
+      const { data, error } = await sb.rpc("app_bom_save_master", { p_changes: changes, p_base_version: baseVersion, p_action: action, p_audit: audit ?? [], p_epoch: epoch ?? null });
       if (error) throw error;
       return data;
     },
@@ -301,7 +301,7 @@
     // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
     if (store.isRemote()) {
       // ล้างข้อมูล BOM ทดสอบ: เฉพาะ admin ที่อยู่ในโหมดทดสอบ (state.sandbox มีเฉพาะ admin ตัวจริง ไม่ว่าตอนนี้ทำหน้าที่เป็นบัญชีทดสอบคนไหน) · ฐานข้อมูลตรวจสิทธิ์ซ้ำ
-      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-bom-purge title="ลบใบสั่งผลิต งาน ชิ้นงาน BOM ลูกค้า และบันทึกการใช้งานทดสอบทั้งหมดในฐานข้อมูล แล้วเริ่มใหม่จากศูนย์">ล้างข้อมูล BOM ทดสอบ</button>` : "";
+      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-bom-purge title="ลบใบสั่งผลิต งาน ชิ้นงาน BOM ลูกค้า และข้อมูลทดสอบอื่นของ BOM ทั้งหมดในฐานข้อมูล แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล BOM ทดสอบ</button>` : "";
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-bom-sync>${escapeHtml(syncText())}</span>
         <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a>${purge}</div></div>`;
     }
@@ -378,7 +378,7 @@
     root.querySelector("[data-bom-audit-reload]")?.addEventListener("click", () => { store.loadAudit(true); renderRoute(); });
     root.querySelector("[data-bom-purge]")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
-      if (!(await confirmDialog({ title: "ล้างข้อมูล BOM ทดสอบทั้งหมด?", message: "ลบใบสั่งผลิต งานรายแผนก ลูกค้า ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต และบันทึกการใช้งานที่เป็นข้อมูลทดสอบในฐานข้อมูลทั้งหมด แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) ย้อนกลับไม่ได้ · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล BOM ทดสอบ", danger: true }))) return;
+      if (!(await confirmDialog({ title: "ล้างข้อมูล BOM ทดสอบทั้งหมด?", message: "ลบใบสั่งผลิต งานรายแผนก ลูกค้า ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต และข้อมูลทดสอบอื่นของ BOM ในฐานข้อมูลทั้งหมด แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) ย้อนกลับไม่ได้ · ประวัติการใช้งาน (audit) ไม่ถูกลบและมีบรรทัดบันทึกการล้างเพิ่ม · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล BOM ทดสอบ", danger: true }))) return;
       button.disabled = true;
       const outcome = await store.purge();
       if (outcome.ok) showToast(`ล้างข้อมูล BOM ทดสอบแล้ว ${outcome.deleted} รายการ`);

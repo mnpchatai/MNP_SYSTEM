@@ -353,11 +353,14 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const JOB_STATUSES = ["queued", "in_progress", "done", "hold"];
   const JOB_DEPTS = ["PK", "GR", "RB", "PT", "BG", "ST"];
   let bomMaster = null;
-  const freshBom = () => ({ version: 0, ...Object.fromEntries(BOM_LISTS.map((list) => [list, []])), versions: Object.fromEntries(BOM_LISTS.map((list) => [list, {}])), tombstones: [], audit: [] });
+  // รหัสรอบข้อมูล (bom_master_state.epoch): เปลี่ยนเฉพาะตอนล้างข้อมูลทดสอบ · ตัวนับ version ไม่ถูกตั้งกลับ
+  const newEpoch = () => globalThis.crypto?.randomUUID?.() ?? `e-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const freshBom = () => ({ version: 0, epoch: newEpoch(), ...Object.fromEntries(BOM_LISTS.map((list) => [list, []])), versions: Object.fromEntries(BOM_LISTS.map((list) => [list, {}])), tombstones: [], audit: [] });
   function bomLoad() {
     if (!bomMaster) {
       try { bomMaster = JSON.parse(storage?.getItem?.(BOM_KEY) ?? "null"); } catch { bomMaster = null; }
       if (!bomMaster || typeof bomMaster.version !== "number") bomMaster = freshBom();
+      if (typeof bomMaster.epoch !== "string") bomMaster.epoch = newEpoch();
       for (const list of BOM_LISTS) if (!Array.isArray(bomMaster[list])) bomMaster[list] = [];
       bomMaster.versions = Object.fromEntries(BOM_LISTS.map((list) => [list, bomMaster.versions?.[list] ?? {}]));
       if (!Array.isArray(bomMaster.tombstones)) bomMaster.tombstones = [];
@@ -369,7 +372,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     try { storage?.setItem?.(BOM_KEY, JSON.stringify(bomMaster)); } catch { warnOnce("bom-storage", "[pilot harness] เก็บข้อมูล BOM ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
   }
   // ที่หน้าเห็น (ตรงกับ app_bom_master): ไม่มีข้อมูลภายใน (versions / tombstones / audit)
-  const bomView = (current) => ({ version: current.version, ...Object.fromEntries(BOM_LISTS.map((list) => [list, clone(current[list]).sort(bomSorter(list))])) });
+  const bomView = (current) => ({ version: current.version, epoch: current.epoch, ...Object.fromEntries(BOM_LISTS.map((list) => [list, clone(current[list]).sort(bomSorter(list))])) });
   // ส่วนต่างตั้งแต่เวอร์ชัน since (ตรงกับ private.bom_delta): ครบทุกชุด delete มีเฉพาะชุดสี/แพ็กเกจ/งาน
   function bomDelta(current, since) {
     const changes = {};
@@ -378,7 +381,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       const deleted = current.tombstones.filter((row) => row.list === list && row.version > since).map((row) => (list === "jobs" ? { id: row.code } : { base: row.base, code: row.code }));
       changes[list] = { upsert: clone(upsert), delete: deleted };
     }
-    return { version: current.version, changes };
+    return { version: current.version, epoch: current.epoch, changes };
   }
 
   // ---- บัญชีทดสอบ (persona) ของโหมดทดสอบ: เลือกที่แถบ "ทำหน้าที่เป็น" (app_sandbox_enter) แล้วสิทธิ์ของ BOM ตามแผนกของบัญชีนั้น ----
@@ -452,40 +455,88 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       return;
     }
     if (list === "jobs" && prev && !planner) {
-      if (actor.dept !== prev.dept) fail("BOM_FORBIDDEN");
       const own = ["status", "qtyDone", "qtyReject", "reports", "doneAt", ...(actor.dept === "RB" ? ["externalRef"] : [])];
+      const workChanged = ["status", "qtyDone", "qtyReject", "reports"].some((key) => bomCanon(prev[key] ?? null) !== bomCanon(record[key] ?? null));
+      // แผนกอื่นแก้ชื่อ จำนวนแผน วันครบกำหนด ฯลฯ ไม่ได้ · รายงาน/สถานะ/ยอดแก้ได้เฉพาะพนักงานแผนกเดียวกับงาน (ตรงกับ bom_save_jobs)
       if (bomCanon(bomWithout(prev, own)) !== bomCanon(bomWithout(record, own))) fail("BOM_FORBIDDEN");
-      const oldReports = Array.isArray(prev.reports) ? prev.reports : [];
-      const newReports = Array.isArray(record.reports) ? record.reports : [];
-      if (newReports.length < oldReports.length || oldReports.some((entry, index) => bomCanon(entry) !== bomCanon(newReports[index]))) fail("BOM_FORBIDDEN");
+      if (workChanged && actor.dept !== prev.dept) fail("BOM_FORBIDDEN");
+      // ผูก WO: แผนก RB เฉพาะงานที่ยังไม่ผูก และห้ามถอด
+      const extOf = (ref) => (ref ? bomCanon(bomWithout(ref, ["linkedAt", "by"])) : "null");
+      if (extOf(prev.externalRef) !== extOf(record.externalRef) && (actor.dept !== "RB" || prev.externalRef || !record.externalRef)) fail("BOM_FORBIDDEN");
       return;
     }
     if (!planner) fail("BOM_FORBIDDEN");
   }
-  // สถานะของใบ: draft→released · released→in_progress · released/in_progress→completed · ที่ยังไม่จบ→cancelled · released/in_progress→draft เฉพาะเปิดใบกลับมาแก้ (ตรวจหลังรวมงาน)
-  function bomOrderTransition(prev, record, reopened) {
+  // สถานะของใบ (ตรงกับ bom_save_orders): ใบใหม่ต้องเป็น draft · draft→released (ต้องมีสินค้า ระเบิดแล้ว และมีงานในคำสั่งเดียวกัน) · released→in_progress (มากับงาน) ·
+  // released/in_progress→completed (งาน PK เสร็จครบ) · ที่ยังไม่จบ→cancelled (ห้ามถ้ามีงานรายงานยอดดีหรือผูก WO; งานของใบถูกลบ) ·
+  // released/in_progress→draft เฉพาะเปิดใบกลับมาแก้ (ห้ามถ้ามีงานเริ่ม; งานของใบถูกลบ) · เนื้อหา/ยอดนับแก้ได้เฉพาะใบ draft
+  const BOM_ORDER_CONTENT = ["customer", "country", "orderType", "orderedAt", "whDue", "due", "dueDefaults", "items", "explosion", "note"];
+  const bomOrderContent = (row) => bomCanon(Object.fromEntries(BOM_ORDER_CONTENT.map((key) => [key, row[key] ?? null])));
+  function bomOrderTransition(prev, record, ctx) {
     if (!ORDER_STATUSES.includes(record.status) || !Array.isArray(record.items)) fail("BOM_INVALID_ORDER");
     if (!prev) {
-      if (record.status !== "draft" && record.status !== "released") fail("BOM_INVALID_TRANSITION");
+      if (record.status !== "draft") fail("BOM_INVALID_TRANSITION");
       return;
     }
     const from = prev.status;
     const to = record.status;
-    if (from === to) {
-      // แก้รายการสินค้า/ผลระเบิดได้เฉพาะใบร่าง · ใบที่จบแล้วแก้ไม่ได้เลย
-      if (["completed", "cancelled"].includes(from) && bomCanon(prev) !== bomCanon(record)) fail("BOM_INVALID_TRANSITION");
-      if (from !== "draft" && (bomCanon(prev.items) !== bomCanon(record.items) || bomCanon(prev.explosion ?? null) !== bomCanon(record.explosion ?? null))) fail("BOM_INVALID_TRANSITION");
+    const content = bomOrderContent(prev) !== bomOrderContent(record);
+    const counts = bomCanon(prev.stockCounts ?? {}) !== bomCanon(record.stockCounts ?? {});
+    const statusChanged = from !== to;
+    if (!content && !counts && !statusChanged) return;
+    // released → in_progress ที่มากับงานของใบนี้ (ฐานข้อมูลตั้งเองตอนงานเริ่ม) ไม่ถือเป็นการแก้ใบ
+    if (statusChanged && from === "released" && to === "in_progress" && !content && !counts) {
+      if (!ctx.jobRows.some((job) => String(job?.orderId ?? "").toUpperCase() === String(record.id).toUpperCase())) fail("BOM_INVALID_TRANSITION");
       return;
     }
-    const allowed = { draft: ["released", "cancelled"], released: ["in_progress", "completed", "cancelled", "draft"], in_progress: ["completed", "cancelled", "draft"] }[from] ?? [];
-    if (!allowed.includes(to)) fail("BOM_INVALID_TRANSITION");
-    if (to === "draft") {
+    if (counts && from !== "draft") fail("BOM_INVALID_TRANSITION");
+    if (content && from !== "draft" && to !== "draft") fail("BOM_INVALID_TRANSITION");
+    if (!statusChanged) return;
+    const jobs = ctx.jobsOf(prev.id);
+    if (from === "draft" && to === "released") {
+      if (!record.items.length || !record.explosion) fail("BOM_INVALID_TRANSITION");
+      ctx.released.push(prev.id);
+    } else if (from === "draft" && to === "cancelled") {
+      // ไม่มีอะไรเพิ่ม
+    } else if ((from === "released" || from === "in_progress") && to === "completed") {
+      if (jobs.some((job) => job.dept === "PK" && job.status !== "done")) fail("BOM_INVALID_TRANSITION");
+    } else if ((from === "released" || from === "in_progress") && to === "cancelled") {
+      if (jobs.some((job) => Number(job.qtyDone) > 0 || job.externalRef)) fail("BOM_INVALID_TRANSITION");
+      ctx.dropJobs(prev.id);
+    } else if ((from === "released" || from === "in_progress") && to === "draft") {
+      if (jobs.some(bomJobStarted)) fail("BOM_INVALID_TRANSITION");
       if (Number(record.revision) !== Number(prev.revision) + 1) fail("BOM_INVALID_TRANSITION");
-      reopened.push(prev.id);
-    }
+      ctx.dropJobs(prev.id);
+    } else fail("BOM_INVALID_TRANSITION");
   }
   // งานที่เริ่มแล้ว (ตรงกับกฎ startedJobs ของหน้า): สถานะไม่ใช่รอคิว มีรายงาน ยอดดี/เสีย หรือผูก WO ของ RubberFlow
   const bomJobStarted = (job) => job.status !== "queued" || Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0 || (Array.isArray(job.reports) && job.reports.length > 0) || Boolean(job.externalRef);
+  // กฎของงาน (ตรงกับ bom_save_jobs): งานใหม่เกิดตอนปล่อยผลิตเท่านั้น (queued ว่าง) · แก้งานได้เฉพาะใบที่ released / in_progress ·
+  // รายงานต่อท้ายเท่านั้น (ทุกบทบาท) · พนักงานแผนก: งาน done แล้วแก้ไม่ได้ ยอดเพิ่มได้อย่างเดียวและเท่าผลรวมรายงานใหม่ · ผูก WO ได้เฉพาะงานแผนก RB
+  function bomJobRules(prev, record, actor, next, released) {
+    if (!JOB_STATUSES.includes(record.status) || !JOB_DEPTS.includes(record.dept)) fail("BOM_INVALID_JOB");
+    const order = next.orders.find((row) => row.id === record.orderId);
+    const reports = Array.isArray(record.reports) ? record.reports : [];
+    if (!prev) {
+      if (!order) fail("BOM_INVALID_JOB");
+      if (!released.includes(order.id)) fail("BOM_INVALID_TRANSITION");
+      if (record.status !== "queued" || Number(record.qtyDone) > 0 || Number(record.qtyReject) > 0 || record.externalRef || reports.length) fail("BOM_INVALID_JOB");
+      return;
+    }
+    const oldReports = Array.isArray(prev.reports) ? prev.reports : [];
+    if (reports.length < oldReports.length || oldReports.some((entry, index) => bomCanon(entry) !== bomCanon(reports[index]))) fail("BOM_FORBIDDEN");
+    if (!order || !["released", "in_progress"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
+    if (record.externalRef && prev.dept !== "RB") fail("BOM_INVALID_JOB");
+    if (!bomIsPlanner(actor)) {
+      const workChanged = ["status", "qtyDone", "qtyReject", "reports"].some((key) => bomCanon(prev[key] ?? null) !== bomCanon(record[key] ?? null));
+      if (workChanged) {
+        if (prev.status === "done") fail("BOM_INVALID_TRANSITION");
+        const sum = (key) => reports.slice(oldReports.length).reduce((total, entry) => total + (Number(entry?.[key]) || 0), 0);
+        if (Number(record.qtyDone) < Number(prev.qtyDone) || Number(record.qtyReject) < Number(prev.qtyReject)) fail("BOM_INVALID_JOB");
+        if (Math.abs((Number(record.qtyDone) - Number(prev.qtyDone)) - sum("good")) > 0.001 || Math.abs((Number(record.qtyReject) - Number(prev.qtyReject)) - sum("reject")) > 0.001) fail("BOM_INVALID_JOB");
+      }
+    }
+  }
   function bomApply(current, changes, base, actor, at) {
     const next = clone(current);
     const nextVersion = current.version + 1;
@@ -493,8 +544,18 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     const mine = new Set();
     const changedByOthers = (list, id) => (next.versions[list][id] ?? 0) > base && !mine.has(`${list}|${id}`);
     const stamp = (list, id) => { next.versions[list][id] = nextVersion; mine.add(`${list}|${id}`); };
-    const reopened = [];
+    const released = []; // ใบที่ปล่อยผลิตในคำสั่งนี้ (งานใหม่เกิดได้เฉพาะใบเหล่านี้ และต้องมีงานอย่างน้อยหนึ่งงาน)
     const startedJobs = [];
+    const jobsOf = (orderId) => next.jobs.filter((job) => job.orderId === orderId);
+    // ลบงานทั้งหมดของใบ (ยกเลิก / เปิดกลับมาแก้) พร้อมหลุมฝังศพ เหมือนที่ฐานข้อมูลทำเอง
+    const dropJobs = (orderId) => {
+      for (const job of jobsOf(orderId)) {
+        next.jobs = next.jobs.filter((row) => row !== job);
+        delete next.versions.jobs[job.id];
+        next.tombstones = next.tombstones.filter((row) => !(row.list === "jobs" && row.code === job.id));
+        next.tombstones.push({ list: "jobs", base: null, code: job.id, version: nextVersion });
+      }
+    };
     for (const list of BOM_LISTS) {
       const entry = changes[list];
       if (entry === undefined) continue;
@@ -507,12 +568,13 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         const id = idOf(record);
         const index = next[list].findIndex((row) => idOf(row) === id);
         const prev = index === -1 ? null : next[list][index];
+        // ชนก่อนสิทธิ์เสมอ (ใบสั่งผลิต/งาน): ระเบียนถูกผู้อื่นแก้ หรืองานถูกลบหลัง base = ฝั่ง client ถือสำเนาเก่า ต้องได้ BOM_STALE ไม่ใช่ BOM_FORBIDDEN
+        if ((list === "orders" || list === "jobs") && (prev
+          ? changedByOthers(list, id)
+          : next.tombstones.some((row) => row.list === list && graveKey(row) === id && row.version > base && row.version <= current.version))) fail("BOM_STALE");
         bomCheckRecord(list, prev, record, actor);
-        if (list === "orders") bomOrderTransition(prev, record, reopened);
-        if (list === "jobs") {
-          if (!JOB_STATUSES.includes(record.status) || !JOB_DEPTS.includes(record.dept)) fail("BOM_INVALID_JOB");
-          if (prev && prev.status === "done" && record.status !== "done") fail("BOM_INVALID_TRANSITION");
-        }
+        if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released });
+        if (list === "jobs") bomJobRules(prev, record, actor, next, released);
         if (index === -1) {
           if (list === "colorSets" || list === "packages" || list === "jobs") {
             // ผู้อื่นลบหลัง base = ชน · สร้างกุญแจเดิมใหม่ = ลบหลุมฝังศพ
@@ -546,18 +608,21 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         if (!bomIsPlanner(actor)) fail("BOM_FORBIDDEN");
         const id = targetKey(list, target);
         const index = next[list].findIndex((row) => idOf(row) === id);
-        if (index === -1) fail(next.tombstones.some((row) => row.list === list && graveKey(row) === id && row.version > base) ? "BOM_STALE" : "BOM_NOT_FOUND");
+        if (index === -1) {
+          const grave = next.tombstones.find((row) => row.list === list && graveKey(row) === id);
+          if (list === "jobs" && grave?.version === nextVersion) continue; // ถูกลบในคำสั่งเดียวกัน (ยกเลิก / เปิดใบกลับมาแก้) ข้าม
+          fail(grave && grave.version > base ? "BOM_STALE" : "BOM_NOT_FOUND");
+        }
         if (changedByOthers(list, id)) fail("BOM_STALE");
+        if (list === "jobs" && bomJobStarted(next[list][index])) fail("BOM_INVALID_TRANSITION"); // งานที่เริ่มแล้วลบตรงๆ ไม่ได้
         next[list].splice(index, 1);
         delete next.versions[list][id];
         next.tombstones = next.tombstones.filter((row) => !(row.list === list && graveKey(row) === id));
         next.tombstones.push(list === "jobs" ? { list, base: null, code: id, version: nextVersion } : { list, base: target.base, code: target.code, version: nextVersion });
       }
     }
-    // เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้: งานทั้งหมดของใบต้องถูกลบในคำสั่งเดียวกัน และก่อนหน้านั้นต้องไม่มีงานที่เริ่มแล้ว
-    for (const orderId of reopened) {
-      if (next.jobs.some((job) => job.orderId === orderId) || current.jobs.some((job) => job.orderId === orderId && bomJobStarted(job))) fail("BOM_INVALID_TRANSITION");
-    }
+    // ใบที่ปล่อยผลิตต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้)
+    for (const orderId of released) if (!next.jobs.some((job) => job.orderId === orderId)) fail("BOM_INVALID_TRANSITION");
     // งานเริ่ม (ออกจากรอคิว) ทำให้ใบที่ปล่อยผลิตแล้วเปลี่ยนเป็นกำลังผลิตเองในคำสั่งเดียวกัน (ผู้รายงานไม่ใช่ฝ่ายวางแผนก็ไม่ต้องส่งการแก้ใบ)
     for (const job of startedJobs) {
       const order = next.orders.find((row) => row.id === job.orderId);
@@ -598,10 +663,12 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       if (!Number.isInteger(p_version) || p_version < 0 || p_version > current.version) fail("BOM_INVALID_PAYLOAD");
       return bomDelta(current, p_version);
     },
-    app_bom_save_master({ p_changes, p_base_version, p_action, p_audit }) {
+    app_bom_save_master({ p_changes, p_base_version, p_action, p_audit, p_epoch }) {
       if (!sandbox) fail("BOM_TEST_MODE_ONLY");
       const actor = bomActor();
       const current = bomLoad();
+      // client ถือข้อมูลของรอบก่อนล้างข้อมูลทดสอบ: ไม่เขียนอะไร (null / ไม่ส่ง = ไม่ตรวจ)
+      if (p_epoch !== undefined && p_epoch !== null && p_epoch !== current.epoch) fail("BOM_RESET");
       if (!p_changes || typeof p_changes !== "object" || Array.isArray(p_changes)) fail("BOM_INVALID_CHANGES");
       if (!Number.isInteger(p_base_version) || p_base_version < 0 || p_base_version > current.version) fail("BOM_INVALID_PAYLOAD");
       if (typeof p_action !== "string" || !p_action) fail("BOM_INVALID_ACTION");
@@ -614,7 +681,13 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       const touched = BOM_LISTS.some((list) => (p_changes[list]?.upsert?.length ?? 0) + (p_changes[list]?.delete?.length ?? 0) > 0);
       if (!touched) return bomDelta(current, p_base_version);
       next.version = current.version + 1;
-      next.audit = [...next.audit, ...auditIn.map((entry) => ({ at: iso(at), user: actor.name, action: entry.action, detail: entry.detail }))].slice(-2000);
+      // บรรทัดหลัก = ชื่อ action และจำนวนระเบียนต่อส่วนที่เซิร์ฟเวอร์บันทึกเอง (เหมือน app_bom_audit) · entries = ข้อความของ client เป็นหมายเหตุรอง
+      const counts = Object.keys(p_changes).sort().map((key) => {
+        const up = p_changes[key]?.upsert?.length ?? 0;
+        const del = p_changes[key]?.delete?.length ?? 0;
+        return up || del ? `${key}${up ? ` +${up}` : ""}${del ? ` -${del}` : ""}` : "";
+      }).filter(Boolean).join(", ");
+      next.audit = [...next.audit, { at: iso(at), user: actor.name, action: p_action, detail: counts, entries: auditIn.map((entry) => ({ action: entry.action, detail: entry.detail })) }].slice(-2000);
       bomMaster = next;
       bomPersist();
       return bomDelta(bomMaster, p_base_version);
@@ -632,8 +705,10 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       if (roles.find((row) => row.id === ME.role_id)?.code !== "admin") fail("BOM_FORBIDDEN");
       const current = bomLoad();
       const deleted = BOM_LISTS.reduce((sum, list) => sum + current[list].length, 0);
+      const { version, audit } = current;
       bomMaster = freshBom();
-      bomMaster.audit.push({ at: iso(now()), user: bomActor().name, action: "ล้างข้อมูลทดสอบ BOM", detail: `ลบ ${deleted} รายการ` });
+      bomMaster.version = version; // ตัวนับไม่ถูกตั้งกลับ · epoch ใหม่บอก client เก่าให้โหลดทั้งชุด
+      bomMaster.audit = [...audit, { at: iso(now()), user: bomActor().name, action: "ล้างข้อมูล BOM ทดสอบ", detail: `ลบ ${deleted} แถว`, entries: [] }];
       bomPersist();
       return { deleted };
     },

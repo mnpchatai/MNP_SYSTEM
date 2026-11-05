@@ -16,14 +16,19 @@
 --     รูป snapshot / delta ได้อีก 3 ชุด: customers, orders, jobs (รวมสิบเอ็ดชุดเสมอ) เรียงแบบกำหนดได้: orders ตาม orderedAt มากไปน้อยแล้ว id,
 --     jobs ตาม orderId, dept, itemCode, id (collate "C"), customers ตามชื่อ · delete ของ jobs ในรูป { id, code } (ค่าเดียวกัน = รหัส JOB-…)
 --     ชุดอื่นนอก colorSets/packages/jobs ไม่มี delete (ใบสั่งผลิตและลูกค้าลบไม่ได้ ยกเลิกเท่านั้น)
---   public.app_bom_save_master(p_changes, p_base_version, p_action, p_audit default '[]'): แทนที่ฟังก์ชัน 3 อาร์กิวเมนต์เดิม (drop แล้วสร้างใหม่ ไม่ทำ overload
---     เพราะ overload ทำให้การเรียก 3 อาร์กิวเมนต์กำกวม) การเรียกแบบ 3 อาร์กิวเมนต์ของ Pilot รุ่นเดิมยังทำงานได้ผ่านค่าเริ่มต้นของอาร์กิวเมนต์ที่ 4
+--   public.app_bom_save_master(p_changes, p_base_version, p_action, p_audit default '[]', p_epoch default null): แทนที่ฟังก์ชัน 3 อาร์กิวเมนต์เดิม (drop แล้วสร้างใหม่
+--     ไม่ทำ overload เพราะ overload ทำให้การเรียก 3 อาร์กิวเมนต์กำกวม) การเรียกแบบ 3 อาร์กิวเมนต์ของ Pilot รุ่นเดิมยังทำงานได้ผ่านค่าเริ่มต้นของอาร์กิวเมนต์ที่ 4 และ 5
 --     p_audit = [{action, detail}] ไม่เกิน 20 รายการ (action <= 80, detail <= 300 ตัวอักษร) เก็บใน metadata.entries ของแถว audit_logs แถวเดียวของการบันทึก
+--       (ข้อความของ client เป็นข้อมูลประกอบ ไม่ใช่หลักฐาน: app_bom_audit แสดง client_action และจำนวนที่เซิร์ฟเวอร์บันทึกเป็นบรรทัดหลัก)
+--     p_epoch = epoch ที่ client ถือ (ได้จาก snapshot / delta) ถ้าไม่ตรงกับของฐานข้อมูล (มีการล้างข้อมูลทดสอบหลังจากนั้น) = BOM_RESET ไม่เขียนอะไร (null = ไม่ตรวจ ไว้ให้ Pilot รุ่นเดิม)
+--   epoch (bom_master_state.epoch): รหัสรอบข้อมูลของโหมดทดสอบ เปลี่ยนเฉพาะตอนล้างข้อมูลทดสอบ · snapshot และ delta ทุกแบบคืน epoch มาด้วย client ที่เห็น epoch ต่างจากที่ถือต้องโหลดทั้งชุดใหม่
+--     (ตัวนับ version ไม่ถูกตั้งกลับเป็น 0 ตอนล้าง จึงไม่มี client ที่ถือ version เก่าแล้วพลาดแถวที่สร้างหลังล้าง หรือเอาระเบียนที่ลบไปแล้วกลับมา)
 --     delete ของ jobs รับ "JOB-…" เป็นข้อความ หรือ { id } หรือ { code }
---   public.app_bom_audit(p_limit integer default 200) -> [{ at, user, action, detail }] ใหม่สุดก่อน จากแถว audit_logs ของ BOM ในโหมดทดสอบ (persona ทุกตัวอ่านได้)
+--   public.app_bom_audit(p_limit integer default 200) -> [{ at, user, action, detail, entries }] ใหม่สุดก่อน จากแถว audit_logs ของ BOM ในโหมดทดสอบ (persona ทุกตัวอ่านได้)
+--     action / detail = ที่เซิร์ฟเวอร์บันทึกเอง (ชื่อ action + จำนวนระเบียนต่อส่วน) · entries = ข้อความของ client เป็นหมายเหตุรอง
 --   public.app_sandbox_purge_bom() -> { deleted } admin จริงที่อยู่ในโหมดทดสอบเท่านั้น (แบบเดียวกับ app_sandbox_purge_ncr / app_sandbox_purge_qc)
---     ลบทุกแถว is_test ของตาราง bom_* ทั้งหมด ตั้งตัวนับกลับเป็น version 0 และเขียน audit (แถว audit_logs เดิมคงไว้) ไม่แตะข้อมูลจริง
---     client ที่ถือ version ใหม่กว่าได้ BOM_INVALID_PAYLOAD ตอนขอ delta แล้วต้องโหลดทั้งชุดใหม่
+--     ลบทุกแถว is_test ของตาราง bom_* ทั้งหมด เปลี่ยน epoch (ตัวนับ version เดินต่อ ไม่ตั้งกลับ) และเขียน audit (แถว audit_logs เดิมคงไว้ ประวัติการใช้งานจึงยังอ่านได้) ไม่แตะข้อมูลจริง
+--     client ที่ถือ epoch เดิมเห็น epoch ใหม่ตอนขอ delta แล้วโหลดทั้งชุดใหม่ ถ้าบันทึกก่อนรู้ก็ได้ BOM_RESET
 --
 -- สิทธิ์ (ตัวบังคับจริงคือ RPC หน้าเว็บซ่อนปุ่มอย่างเดียว) ทุกอย่างเปิดเฉพาะโหมดทดสอบ (private.bom_actor)
 --   กลุ่มวางแผน (private.bom_can_edit): แผนก PP ทุกบทบาท หรือ department_manager / assistant_factory_manager / factory_manager / general_manager / admin
@@ -46,22 +51,25 @@
 --   audit: ผู้กระทำในแถว audit_logs = admin จริงเบื้องหลัง persona เหมือนเดิม ชื่อ persona อยู่ใน metadata.persona_name
 --
 -- ข้อควรทราบ: งานของพนักงานแผนกและ auto in_progress ทำให้ changed_version ของใบขยับ คนที่ถือใบนั้นอยู่จะได้ BOM_STALE ตอนบันทึกแล้วตามทันตามปกติ
+-- ลำดับการตรวจของตัวเขียนใบสั่งผลิต/งาน: ชน (BOM_STALE: แถวถูกแก้หลังเวอร์ชันฐาน หรืองานถูกลบหลังเวอร์ชันฐาน) มาก่อนการเทียบสิทธิ์/เนื้อหาเสมอ
+--   สำเนาเก่าของ client ต่างจากแถวล่าสุดเป็นเรื่องปกติ ต้องไม่ถูกตัดสินว่าแก้ช่องที่ไม่มีสิทธิ์ (BOM_FORBIDDEN) ไม่เช่นนั้น client ไม่ตามทันแล้วค้าง
 --
 -- รหัสข้อผิดพลาดใหม่ (นอกจากของ 20261105010000): BOM_INVALID_CUSTOMER BOM_INVALID_ORDER BOM_INVALID_JOB BOM_INVALID_TRANSITION
 --
 -- นิยามที่ replace ในไฟล์นี้ (เริ่มจากนิยามล่าสุดใน 20261105010000_bom_master_data.sql ทั้งหมด)
 --   private.sandbox_unguarded_tables() (เพิ่ม bom_customers, bom_orders, bom_jobs) · private.bom_client_actions() (เพิ่มชื่อ action ของใบสั่งผลิต งาน นับคงคลัง ลูกค้า)
---   private.bom_records(bigint) และ private.bom_delta(bigint) (เพิ่ม 3 ชุด) · public.app_bom_save_master (ดูข้างบน)
+--   private.bom_records(bigint) และ private.bom_delta(bigint) (เพิ่ม 3 ชุด และ epoch) · private.bom_snapshot() (เพิ่ม epoch) · public.app_bom_save_master (ดูข้างบน)
+--   เพิ่มคอลัมน์ bom_master_state.epoch
 --   check ของ bom_deleted_keys.list (เพิ่ม 'jobs')
 --
 -- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้ (modules/bom-*.js) เรียก RPC ที่ไฟล์นี้เพิ่ม/เปลี่ยน (app_bom_save_master 4 อาร์กิวเมนต์,
 --   app_bom_audit, app_sandbox_purge_bom และรูป snapshot ที่มี orders/jobs/customers) จึงต้อง apply ไฟล์นี้ที่ production (ด้วยการอนุมัติของผู้ใช้) ก่อน merge PR
---   ก่อน apply เทียบ md5(pg_get_functiondef(oid)) ของ private.sandbox_unguarded_tables, private.bom_client_actions, private.bom_records, private.bom_delta,
+--   ก่อน apply เทียบ md5(pg_get_functiondef(oid)) ของ private.sandbox_unguarded_tables, private.bom_client_actions, private.bom_records, private.bom_snapshot, private.bom_delta,
 --   public.app_bom_save_master ที่ production กับนิยามใน 20261105010000_bom_master_data.sql (ถ้ามี migration อื่นแก้ไปแล้ว ต้องเริ่มจากนิยามล่าสุด)
 --   Pilot Web รุ่นเดิม (PR #306) ยังทำงานกับฐานใหม่ได้: เรียก app_bom_save_master แบบ 3 อาร์กิวเมนต์ได้ และอ่านเฉพาะแปดชุดเดิมจาก delta
 --
 -- Rollback (ตาราง bom_orders / bom_jobs / bom_customers มีแต่ข้อมูลทดสอบ):
---   1) drop function public.app_bom_audit(integer), public.app_sandbox_purge_bom(), public.app_bom_save_master(jsonb, bigint, text, jsonb);
+--   1) drop function public.app_bom_audit(integer), public.app_sandbox_purge_bom(), public.app_bom_save_master(jsonb, bigint, text, jsonb, text);
 --   2) drop function private.bom_staff_actions(), bom_dept_of(public.employees), bom_started_jobs(uuid), bom_delete_order_jobs(uuid),
 --      bom_delete_jobs(boolean, jsonb, bigint, bigint), bom_parse_order_items(jsonb), bom_parse_stock_counts(jsonb), bom_parse_due(jsonb),
 --      bom_parse_explosion(jsonb), bom_parse_reports(jsonb, jsonb, text), bom_parse_external_ref(jsonb), bom_save_customers(uuid, jsonb, bigint, bigint),
@@ -69,11 +77,16 @@
 --   3) delete from public.bom_deleted_keys where list = 'jobs'; alter table public.bom_deleted_keys drop constraint bom_deleted_keys_list_check;
 --      alter table public.bom_deleted_keys add constraint bom_deleted_keys_list_check check (list in ('colorSets', 'packages'));
 --   4) drop table public.bom_jobs, public.bom_orders, public.bom_customers (ลูกก่อนแม่)
---   5) คืนนิยามของ 20261105010000_bom_master_data.sql ของ private.sandbox_unguarded_tables(), private.bom_client_actions(), private.bom_records(bigint),
---      private.bom_delta(bigint) และ public.app_bom_save_master(jsonb, bigint, text) (รัน create or replace จากไฟล์นั้น รวม revoke/grant ท้ายไฟล์)
+--   5) alter table public.bom_master_state drop column epoch;
+--   6) คืนนิยามของ 20261105010000_bom_master_data.sql ของ private.sandbox_unguarded_tables(), private.bom_client_actions(), private.bom_records(bigint),
+--      private.bom_snapshot(), private.bom_delta(bigint) และ public.app_bom_save_master(jsonb, bigint, text) (รัน create or replace จากไฟล์นั้น รวม revoke/grant ท้ายไฟล์)
 -- ============================================================================
 
 -- 1. ตาราง (แยกโหมดด้วย is_test) ----------------------------------------------------------
+-- รหัสรอบข้อมูล: เปลี่ยนเมื่อล้างข้อมูลทดสอบ (ตัวนับ version ไม่ถูกตั้งกลับ) แถวที่มีอยู่ได้รหัสสุ่มของตัวเอง
+alter table public.bom_master_state add column epoch uuid not null default gen_random_uuid();
+comment on column public.bom_master_state.epoch is 'รหัสรอบข้อมูล เปลี่ยนเฉพาะตอนล้างข้อมูลทดสอบ (app_sandbox_purge_bom) client ที่ถือ epoch เก่าต้องโหลดทั้งชุดใหม่';
+
 -- ลูกค้า: กุญแจ = ชื่อ (ตัดช่องว่างซ้ำ ไม่แยกตัวพิมพ์เล็ก/ใหญ่)
 create table public.bom_customers (
   id uuid primary key default gen_random_uuid(),
@@ -571,7 +584,8 @@ begin
     v_pi := upper(private.bom_text(v_row, 'id', 40, 1, 'BOM_INVALID_ORDER'));
     if v_pi ~ '[[:cntrl:]]' or v_pi = any (v_seen) then raise exception 'BOM_INVALID_ORDER'; end if;
     v_seen := v_seen || v_pi;
-    v_customer := private.bom_text(v_row, 'customer', 120, 1, 'BOM_INVALID_ORDER');
+    -- ชื่อลูกค้าบนใบใช้การจัดรูปเดียวกับตาราง bom_customers (ช่องว่างซ้ำรวมเป็นช่องเดียว ตัดหัวท้าย) client ใช้กฎเดียวกันกับกุญแจ
+    v_customer := btrim(regexp_replace(private.bom_text(v_row, 'customer', 120, 1, 'BOM_INVALID_ORDER'), '\s+', ' ', 'g'));
     v_country := private.bom_text(v_row, 'country', 60, 1, 'BOM_INVALID_ORDER');
     v_type := upper(private.bom_text(v_row, 'orderType', 2, 1, 'BOM_INVALID_ORDER'));
     if v_type not in ('SA', 'EX') then raise exception 'BOM_INVALID_ORDER'; end if;
@@ -613,6 +627,9 @@ begin
       continue;
     end if;
 
+    -- ชนก่อนเสมอ: ใบถูกคนอื่นแก้หลังเวอร์ชันฐาน = ฝั่ง client ถือสำเนาเก่า (เทียบสิทธิ์/เนื้อหากับแถวล่าสุดไม่ได้ ไม่งั้นสำเนาเก่าถูกมองเป็นการแก้ที่ไม่มีสิทธิ์) ให้ตามทันแล้วทำใหม่
+    if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
+
     v_content := v_old.customer <> v_customer or v_old.country <> v_country or v_old.order_type <> v_type
       or v_old.ordered_at <> v_ordered::bigint or v_old.wh_due <> v_wh::bigint or v_old.due <> v_due
       or v_old.due_defaults <> v_defaults or v_old.items <> v_items or v_old.explosion is distinct from v_expl or v_old.note <> v_note;
@@ -631,7 +648,6 @@ begin
     if not p_planner then
       if v_content or v_status_changed or v_dept is null or v_dept not in ('ST', 'WH') then raise exception 'BOM_FORBIDDEN'; end if;
     end if;
-    if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
 
     -- นับคงคลังได้เฉพาะใบ draft · ใบที่ไม่ใช่ draft แก้เนื้อหาไม่ได้ (เว้นแต่เปิดกลับเป็น draft)
     if v_counts_changed and v_old.status <> 'draft' then raise exception 'BOM_INVALID_TRANSITION'; end if;
@@ -778,6 +794,7 @@ declare
   v_rej numeric;
   v_ext_stored jsonb;
   v_done_at timestamptz;
+  v_present boolean;
 begin
   for v_row in select value from jsonb_array_elements(p_rows) loop
     if jsonb_typeof(v_row) <> 'object' then raise exception 'BOM_INVALID_JOB'; end if;
@@ -815,7 +832,16 @@ begin
     v_ext := private.bom_parse_external_ref(v_row -> 'externalRef');
 
     select * into v_old from public.bom_jobs j where j.is_test and j.job_no = v_no;
-    if not found then
+    -- ชนก่อนสิทธิ์/รูปเสมอ: งานถูกคนอื่นแก้หลังเวอร์ชันฐาน หรือถูกลบหลังเวอร์ชันฐาน (เปิดใบกลับมาแก้ / ยกเลิก) = ฝั่ง client ถือสำเนาเก่า
+    -- เทียบกับแถวล่าสุดแล้วตัดสินว่าไม่มีสิทธิ์ไม่ได้ (สองคนในแผนกเดียวกันรายงานงานเดียวกันจากฐานเดียวกัน คนที่สองต้องได้ BOM_STALE ไม่ใช่ BOM_FORBIDDEN)
+    v_present := found;
+    if v_present then
+      if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
+    elsif exists (select 1 from public.bom_deleted_keys k where k.is_test and k.list = 'jobs' and k.code = v_no
+                  and k.changed_version > p_base and k.changed_version <= p_cur) then
+      raise exception 'BOM_STALE';
+    end if;
+    if not v_present then
       -- งานใหม่: เกิดตอนปล่อยผลิตเท่านั้น (ใบ draft -> released ในคำสั่งเดียวกัน) เริ่มที่ queued ว่าง
       if not p_planner then raise exception 'BOM_FORBIDDEN'; end if;
       if not (v_ord.id = any (p_released)) then raise exception 'BOM_INVALID_TRANSITION'; end if;
@@ -851,7 +877,6 @@ begin
       end if;
     end if;
     if v_old.order_pk <> v_ord.id then raise exception 'BOM_INVALID_JOB'; end if; -- ย้ายงานไปใบอื่นไม่ได้
-    if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
     -- แก้งานได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด (อ่านสถานะล่าสุดหลังเปลี่ยนสถานะใบในคำสั่งนี้)
     select * into v_ord from public.bom_orders o where o.id = v_old.order_pk;
     if v_ord.status not in ('released', 'in_progress') then raise exception 'BOM_INVALID_TRANSITION'; end if;
@@ -997,7 +1022,7 @@ as $$
 $$;
 revoke all on function private.bom_records(bigint) from public, anon, authenticated;
 
--- ส่วนต่างหลังเวอร์ชัน p_since: { version, changes: { <ชุด>: { upsert, delete } } } ครบทั้งสิบเอ็ดชุดเสมอ
+-- ส่วนต่างหลังเวอร์ชัน p_since: { version, epoch, changes: { <ชุด>: { upsert, delete } } } ครบทั้งสิบเอ็ดชุดเสมอ
 -- delete ของ colorSets/packages = {base, code} · ของ jobs = {id, code} (ค่าเดียวกัน = รหัสงาน) · ชุดอื่นเป็น []
 create or replace function private.bom_delta(p_since bigint)
 returns jsonb
@@ -1008,6 +1033,7 @@ set search_path = ''
 as $$
   select jsonb_build_object(
     'version', coalesce((select s.version from public.bom_master_state s where s.is_test), 0),
+    'epoch', (select s.epoch from public.bom_master_state s where s.is_test),
     'changes', (
       select jsonb_object_agg(l.list, jsonb_build_object(
         'upsert', r.records -> l.list,
@@ -1025,14 +1051,29 @@ as $$
 $$;
 revoke all on function private.bom_delta(bigint) from public, anon, authenticated;
 
+-- snapshot ทั้งชุด: { version, epoch, items, ..., jobs } (นิยามจาก 20261105010000 แล้วเพิ่ม epoch)
+create or replace function private.bom_snapshot()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object('version', coalesce((select s.version from public.bom_master_state s where s.is_test), 0),
+                            'epoch', (select s.epoch from public.bom_master_state s where s.is_test))
+         || private.bom_records(-1)
+$$;
+revoke all on function private.bom_snapshot() from public, anon, authenticated;
+
 -- 5. RPC สาธารณะ -------------------------------------------------------------------------------
 -- app_bom_master() และ app_bom_master_since(bigint) ใช้นิยามเดิมของ 20261105010000 (ผ่าน bom_snapshot / bom_delta ที่เพิ่มสามชุดข้างบน)
 
 -- บันทึกชุดการเปลี่ยนแปลงในธุรกรรมเดียว (นิยามจาก 20261105010000 แล้วเพิ่มสามส่วน สิทธิ์รายส่วน/รายช่อง และ p_audit)
--- ผิดข้อใดข้อหนึ่ง = ไม่เขียนอะไรเลย คืน delta ตั้งแต่ p_base_version: { version, changes }
+-- ผิดข้อใดข้อหนึ่ง = ไม่เขียนอะไรเลย คืน delta ตั้งแต่ p_base_version: { version, epoch, changes }
 -- ไม่มีการเปลี่ยนแปลงเลย (ทุกส่วนว่าง) = คืน delta โดยไม่เพิ่ม version และไม่เขียน audit
 drop function public.app_bom_save_master(jsonb, bigint, text);
-create or replace function public.app_bom_save_master(p_changes jsonb, p_base_version bigint, p_action text, p_audit jsonb default '[]'::jsonb)
+create or replace function public.app_bom_save_master(
+  p_changes jsonb, p_base_version bigint, p_action text, p_audit jsonb default '[]'::jsonb, p_epoch text default null)
 returns jsonb
 language plpgsql
 security definer
@@ -1057,6 +1098,7 @@ declare
   v_audit jsonb := '[]'::jsonb;
   v_entry jsonb;
   v_version bigint;
+  v_epoch uuid;
   v_row jsonb;
   v_dbase text;
   v_dcode text;
@@ -1112,7 +1154,9 @@ begin
   -- ล็อกตัวนับก่อนตรวจชน: บันทึกพร้อมกันต่อคิวกัน คนที่สองเห็นเวอร์ชันของระเบียนที่คนแรกเพิ่งแก้ (changed_version) แล้วได้ BOM_STALE เฉพาะที่ชนกัน
   -- v_version = เวอร์ชันก่อนบันทึกนี้ (p_cur ของตัวเขียน) ระเบียนที่แก้ในคำสั่งนี้ได้ v_version + 1 จึงไม่ถูกนับว่าเป็นของคนอื่น
   insert into public.bom_master_state (is_test) values (true) on conflict (is_test) do nothing;
-  select s.version into v_version from public.bom_master_state s where s.is_test for update;
+  select s.version, s.epoch into v_version, v_epoch from public.bom_master_state s where s.is_test for update;
+  -- client ถือข้อมูลของรอบก่อนล้างข้อมูลทดสอบ: ไม่เขียนอะไร (ระเบียนที่มันถืออยู่ไม่มีแล้ว การบันทึกจะสร้างระเบียนที่ถูกล้างกลับมา)
+  if p_epoch is not null and p_epoch <> v_epoch::text then raise exception 'BOM_RESET'; end if;
   if p_base_version > v_version then raise exception 'BOM_INVALID_PAYLOAD'; end if;
   if v_total = 0 then return private.bom_delta(p_base_version); end if;
 
@@ -1257,8 +1301,9 @@ begin
 end;
 $$;
 
--- ประวัติการใช้งาน BOM ของโหมดทดสอบ (ใหม่สุดก่อน) จากแถว audit_logs ของ BOM: แต่ละรายการของ client เป็นหนึ่งบรรทัด
--- แถวที่ไม่มีรายการจาก client (เช่นของ PR 1) แสดงชื่อ action ของ client เป็นบรรทัดเดียว · persona ทุกตัวอ่านได้
+-- ประวัติการใช้งาน BOM ของโหมดทดสอบ (ใหม่สุดก่อน) จากแถว audit_logs ของ BOM: หนึ่งแถว audit_logs = หนึ่งบรรทัด
+-- action / detail เป็นสิ่งที่เซิร์ฟเวอร์บันทึกเอง: ชื่อ action ของ client (ผ่านรายการที่อนุญาต) และจำนวนระเบียนที่เปลี่ยนต่อส่วน (เช่น "orders +1, jobs +3 -1" = เพิ่ม/แก้ 1 ใบ เพิ่ม/แก้ 3 งาน ลบ 1 งาน)
+-- entries = ข้อความไทยที่ client ส่งมาเอง (ผู้บันทึกคนใดก็เขียนอะไรก็ได้) แสดงเป็นหมายเหตุรอง ไม่ใช่หลักฐาน · แถวล้างข้อมูลทดสอบเซิร์ฟเวอร์เขียนเองทั้งหมด · persona ทุกตัวอ่านได้
 create or replace function public.app_bom_audit(p_limit integer default 200)
 returns jsonb
 language plpgsql
@@ -1272,28 +1317,28 @@ begin
   perform private.lab_only_block();
   perform private.bom_actor();
   return coalesce((
-    select jsonb_agg(jsonb_build_object('at', t.at, 'user', t.usr, 'action', t.action, 'detail', t.detail) order by t.id desc, t.ord desc)
+    select jsonb_agg(jsonb_build_object('at', t.at, 'user', t.usr, 'action', t.action, 'detail', t.detail, 'entries', t.entries) order by t.id desc)
     from (
       select a.id, private.bom_ms(a.created_at) as at,
              coalesce(a.metadata ->> 'persona_name', a.metadata ->> 'persona_employee_no', '') as usr,
-             e.entry ->> 'action' as action, coalesce(e.entry ->> 'detail', '') as detail, e.ord
+             case when a.action = 'BOM_SANDBOX_PURGE' then 'ล้างข้อมูล BOM ทดสอบ' else coalesce(a.metadata ->> 'client_action', a.action) end as action,
+             case when a.action = 'BOM_SANDBOX_PURGE' then 'ลบ ' || coalesce(a.metadata ->> 'deleted', '0') || ' แถว'
+                  else coalesce((
+                    select string_agg(c.key || coalesce(' +' || nullif(c.value ->> 'upsert', '0'), '') || coalesce(' -' || nullif(c.value ->> 'delete', '0'), ''), ', ' order by c.key)
+                    from jsonb_each(case when jsonb_typeof(a.metadata -> 'counts') = 'object' then a.metadata -> 'counts' else '{}'::jsonb end) c
+                    where jsonb_typeof(c.value) = 'object'
+                      and (coalesce(c.value ->> 'upsert', '0') <> '0' or coalesce(c.value ->> 'delete', '0') <> '0')), '') end as detail,
+             case when a.action = 'BOM_MASTER_SAVE' and jsonb_typeof(a.metadata -> 'entries') = 'array' then a.metadata -> 'entries' else '[]'::jsonb end as entries
       from public.audit_logs a
-      cross join lateral (
-        select x.value as entry, x.ord
-        from jsonb_array_elements(
-          case when jsonb_typeof(a.metadata -> 'entries') = 'array' and jsonb_array_length(a.metadata -> 'entries') > 0
-               then a.metadata -> 'entries'
-               else jsonb_build_array(jsonb_build_object('action', coalesce(a.metadata ->> 'client_action', a.action), 'detail', '')) end
-        ) with ordinality as x(value, ord)) e
       where a.action in ('BOM_MASTER_SAVE', 'BOM_SANDBOX_PURGE') and a.metadata ->> 'is_test' = 'true'
-      order by a.id desc, e.ord desc
+      order by a.id desc
       limit v_limit
     ) t), '[]'::jsonb);
 end;
 $$;
 
 -- ล้างข้อมูล BOM ทดสอบ (admin จริงที่อยู่ในโหมดทดสอบ แบบเดียวกับ app_sandbox_purge_ncr / app_sandbox_purge_qc)
--- ลบทุกแถว is_test ของตาราง bom_* (ลูกก่อนแม่) ตั้งตัวนับกลับเป็น version 0 เขียน audit (audit_logs เดิมคงไว้) ไม่แตะข้อมูลจริง
+-- ลบทุกแถว is_test ของตาราง bom_* (ลูกก่อนแม่) เปลี่ยน epoch (ตัวนับ version เดินต่อ) เขียน audit (audit_logs เดิมคงไว้) ไม่แตะข้อมูลจริง
 create or replace function public.app_sandbox_purge_bom()
 returns jsonb
 language plpgsql
@@ -1306,6 +1351,7 @@ declare
   v_table text;
   v_n integer;
   v_deleted integer := 0;
+  v_version bigint;
 begin
   perform private.lab_only_block();
   v_admin := private.sandbox_admin();
@@ -1322,13 +1368,15 @@ begin
     get diagnostics v_n = row_count;
     v_deleted := v_deleted + v_n;
   end loop;
-  update public.bom_master_state set version = 0, updated_at = now(), updated_by = null where is_test;
+  -- ไม่ตั้ง version กลับเป็น 0: ตัวนับเดินต่อ แถวที่สร้างหลังล้างจึงได้เวอร์ชันใหม่กว่าที่ client ใดเคยถือ · epoch ใหม่บอก client เก่าให้โหลดทั้งชุด
+  update public.bom_master_state set epoch = gen_random_uuid(), updated_at = now(), updated_by = null where is_test returning version into v_version;
   if not found then
     insert into public.bom_master_state (is_test, version) values (true, 0);
+    v_version := 0;
   end if;
 
   insert into public.audit_logs (actor_id, action, entity_type, entity_id, metadata)
-  values (v_admin.id, 'BOM_SANDBOX_PURGE', 'bom_master', '0',
+  values (v_admin.id, 'BOM_SANDBOX_PURGE', 'bom_master', v_version::text,
           jsonb_build_object('deleted', v_deleted, 'is_test', true, 'persona_employee_no', v_persona.employee_no,
                              'persona_name', v_persona.first_name || ' ' || v_persona.last_name,
                              'entries', jsonb_build_array(jsonb_build_object(
@@ -1337,9 +1385,9 @@ begin
 end;
 $$;
 
-revoke all on function public.app_bom_save_master(jsonb, bigint, text, jsonb) from public, anon;
+revoke all on function public.app_bom_save_master(jsonb, bigint, text, jsonb, text) from public, anon;
 revoke all on function public.app_bom_audit(integer) from public, anon;
 revoke all on function public.app_sandbox_purge_bom() from public, anon;
-grant execute on function public.app_bom_save_master(jsonb, bigint, text, jsonb) to authenticated;
+grant execute on function public.app_bom_save_master(jsonb, bigint, text, jsonb, text) to authenticated;
 grant execute on function public.app_bom_audit(integer) to authenticated;
 grant execute on function public.app_sandbox_purge_bom() to authenticated;

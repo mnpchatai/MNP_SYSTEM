@@ -178,12 +178,15 @@
   const REMOTE_LISTS = Object.freeze([...MASTER_LISTS, ...WORK_LISTS]);
   const LOCAL_KEY = "mnp-bom-local-v1"; // รุ่นก่อนหน้าเก็บใบสั่งผลิต/งาน/บันทึกการใช้งานไว้ที่นี่ · ตอนนี้ไม่อ่านไม่เขียน (ข้อมูลทดสอบเก่าไม่ย้ายเข้าฐานข้อมูล)
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  // ชื่อลูกค้า: ช่องว่างซ้ำรวมเป็นช่องเดียวและตัดหัวท้าย (กฎเดียวกับฐานข้อมูล ทั้งตารางลูกค้าและชื่อบนใบ) · กุญแจ = ชื่อนี้แบบไม่สนตัวพิมพ์
+  const customerName = (name) => String(name ?? "").replace(/\s+/g, " ").trim();
+  const customerKey = (name) => customerName(name).toLowerCase();
   // กุญแจของระเบียนในแต่ละชุด: code · id · base+code (ชุดสี/แพ็กเกจรหัสซ้ำข้ามฐานรหัสได้) · ชื่อลูกค้าตัดช่องว่างและไม่สนตัวพิมพ์
   const MASTER_KEY = Object.freeze({
     items: (record) => record.code, compounds: (record) => record.code, colors: (record) => record.code, processes: (record) => record.code,
     boms: (record) => record.id, routings: (record) => record.id,
     colorSets: (record) => `${record.base}\u0000${record.code}`, packages: (record) => `${record.base}\u0000${record.code}`,
-    customers: (record) => String(record.name ?? "").trim().toLowerCase(), orders: (record) => record.id, jobs: (record) => record.id,
+    customers: (record) => customerKey(record.name), orders: (record) => record.id, jobs: (record) => record.id,
   });
   const MASTER_DELETABLE = Object.freeze(["colorSets", "packages", "jobs"]);
   // ลำดับของชุดตามฐานข้อมูล: ใบสั่งผลิตใหม่สุดก่อน (วันที่สั่งผลิต แล้วเลขที่) · งานเรียงตามใบ แผนก ชิ้นงาน เลขงาน · ชุดอื่นเรียงตามกุญแจ
@@ -279,7 +282,7 @@
       const entry = value.changes[list];
       changes[list] = { upsert: Array.isArray(entry?.upsert) ? entry.upsert : [], delete: Array.isArray(entry?.delete) ? entry.delete : [] };
     }
-    return { version: Number(value.version), changes };
+    return { version: Number(value.version), epoch: typeof value.epoch === "string" ? value.epoch : null, changes };
   }
   // รวมส่วนต่างของชุดเดียวเข้ากับระเบียนปัจจุบันตามกุญแจ (ลบก่อน แล้วระเบียนใหม่ทับ) · changed = เนื้อหาต่างจากที่มีอยู่จริง ไม่นับแค่ลำดับกุญแจในระเบียน
   // ชุดที่ไม่มีส่วนต่าง = คืนอาร์เรย์เดิม · ที่มี = อาร์เรย์ใหม่เรียงเหมือนฐานข้อมูล (กุญแจ collate "C" · ใบสั่งผลิต/งานตาม LIST_ORDER) · copy = ทำสำเนาระเบียนที่รับเข้ามา
@@ -344,6 +347,7 @@
       BOM_STALE: "มีผู้อื่นบันทึกข้อมูล BOM ไปก่อน ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว (เช่น เลขที่ PI) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_INVALID_TRANSITION: "ใบสั่งผลิตอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน หรือมีงานที่เริ่มแล้ว) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       BOM_TOO_MANY: "ข้อมูลชุดนี้มากเกินกว่าจะบันทึกในครั้งเดียว (เกิน 5,000 รายการต่อประเภท) แบ่งนำเข้าทีละส่วน",
       BOM_TOO_LARGE: "รูปชิ้นงานรวมกันใหญ่เกินกว่าจะบันทึกในครั้งเดียว",
@@ -361,7 +365,7 @@
     return Object.assign(new Error(message), { code });
   }
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะใบเปลี่ยนไปแล้ว → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
-  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION"]);
+  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET"]);
 
   // บัญชีทดสอบ (state.employee ของ app.js ในโหมดทดสอบ) → ผู้ใช้ของ BOM
   // admin → admin · ผู้จัดการแผนกขึ้นไป → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST/WH → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
@@ -388,7 +392,7 @@
 
   function normalizeSnapshot(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("ข้อมูล BOM จากฐานข้อมูลอยู่ในรูปแบบที่ไม่รู้จัก");
-    const snapshot = { version: value.version ?? 0 };
+    const snapshot = { version: value.version ?? 0, epoch: typeof value.epoch === "string" ? value.epoch : null };
     for (const list of REMOTE_LISTS) snapshot[list] = Array.isArray(value[list]) ? value[list] : [];
     return snapshot;
   }
@@ -397,7 +401,9 @@
     if (!Array.isArray(rows)) throw new Error("บันทึกการใช้งานจากฐานข้อมูลอยู่ในรูปแบบที่ไม่รู้จัก");
     return rows.map((row) => {
       const at = typeof row?.at === "number" ? row.at : Date.parse(String(row?.at ?? ""));
-      return { at: Number.isFinite(at) ? at : 0, user: String(row?.user ?? ""), action: String(row?.action ?? ""), detail: String(row?.detail ?? "") };
+      // entries = ข้อความที่ผู้บันทึกเขียนเอง (หมายเหตุรอง) · action / detail ที่เซิร์ฟเวอร์บันทึกเองเป็นบรรทัดหลัก
+      const entries = (Array.isArray(row?.entries) ? row.entries : []).map((entry) => ({ action: String(entry?.action ?? ""), detail: String(entry?.detail ?? "") }));
+      return { at: Number.isFinite(at) ? at : 0, user: String(row?.user ?? ""), action: String(row?.action ?? ""), detail: String(row?.detail ?? ""), entries };
     });
   }
   // รายการบันทึกการใช้งานของคำสั่งหนึ่ง (เก่าสุดก่อน): ฐานข้อมูลรับไม่เกิน 20 รายการ ชื่อการกระทำไม่เกิน 80 ตัวอักษร รายละเอียดไม่เกิน 300 · เกินกว่านั้นรวมท้ายเป็นรายการเดียว
@@ -441,7 +447,7 @@
     }
     // รวมส่วนต่างเข้าชุดข้อมูลของฐานข้อมูล (snapshot) และเข้า data ที่หน้าใช้ถ้า intoData · คืน true ถ้าเนื้อหาใน data ต่างไปจากเดิม (ต้องวาดหน้าใหม่)
     function snapshotWith(base, delta) {
-      const next = { ...base, version: Math.max(base.version ?? 0, delta.version) };
+      const next = { ...base, version: Math.max(base.version ?? 0, delta.version), epoch: base.epoch ?? delta.epoch ?? null };
       for (const list of REMOTE_LISTS) next[list] = applyEntry(list, base[list], delta.changes[list], false).records;
       return next;
     }
@@ -461,23 +467,34 @@
       if (changed) auditStale = true;
       return changed;
     }
-    // ตามทันฐานข้อมูลหลังชน: ส่วนต่างตั้งแต่เวอร์ชันที่มี · ไม่ได้ (เครือข่าย หรือเวอร์ชันไม่ตรงฐานข้อมูล) ก็โหลดทั้งชุด · ไม่ได้อีกก็ใช้ชุดเดิม ลองใหม่ได้ภายหลัง
+    // ฐานข้อมูลเริ่มรอบข้อมูลใหม่ (ล้างข้อมูลทดสอบ) ตั้งแต่ที่เราโหลดมา: ส่วนต่างตั้งแต่เวอร์ชันเดิมบอกไม่ได้ว่าระเบียนไหนถูกลบ ต้องโหลดทั้งชุด
+    const epochChanged = (delta) => Boolean(snapshot?.epoch) && Boolean(delta.epoch) && delta.epoch !== snapshot.epoch;
+    // ตามทันฐานข้อมูลหลังชน: ส่วนต่างตั้งแต่เวอร์ชันที่มี · ไม่ได้ (เครือข่าย เวอร์ชันไม่ตรงฐานข้อมูล หรือเปลี่ยนรอบข้อมูล) ก็โหลดทั้งชุด · ไม่ได้อีกก็ใช้ชุดเดิม ลองใหม่ได้ภายหลัง
     // คืนชุดข้อมูลใหม่โดยยังไม่ตั้งเป็น snapshot (ผู้เรียกตรวจว่าผู้ใช้ไม่ได้เริ่มแก้ฟอร์มระหว่างรอก่อน) · null = ใช้ชุดเดิม
     async function fetchSnapshotAfterConflict() {
       try {
-        return snapshotWith(snapshot, normalizeDelta(await remote.since(snapshot.version)));
+        const delta = normalizeDelta(await remote.since(snapshot.version));
+        if (epochChanged(delta)) throw new Error("epoch changed");
+        return snapshotWith(snapshot, delta);
       } catch {
         try { return normalizeSnapshot(await fetchSnapshot()); } catch { return null; }
       }
     }
     const deltaHasRecords = (delta) => REMOTE_LISTS.some((list) => delta.changes[list].upsert.length || delta.changes[list].delete.length);
     // ส่วนต่างมีระเบียนที่ไม่ได้อยู่ในสิ่งที่เราเพิ่งส่ง (ของผู้อื่น หรือที่ฐานข้อมูลแก้เอง) · ระเบียนของเราที่ฐานข้อมูลประทับเวลา/ผู้บันทึกใหม่ไม่นับ
-    function hasForeignRecords(delta, sent) {
+    // ใบที่ฐานข้อมูลเปลี่ยน released → in_progress เองเพราะงานของคำสั่งนี้เริ่ม (เนื้อหาใบเหมือนเดิมทุกช่อง) นับเป็นของเรา ไม่ใช่การบันทึกของผู้อื่น
+    const isOwnStartFlip = (record, sent, before) => {
+      const prev = (before?.orders ?? []).find((order) => order.id === record.id);
+      return Boolean(prev) && prev.status === "released" && record.status === "in_progress" && sameValue(withoutKeys(prev, ["status"]), withoutKeys(record, ["status"]))
+        && (sent.jobs?.upsert ?? []).some((job) => job.orderId === record.id);
+    };
+    function hasForeignRecords(delta, sent, before) {
       return REMOTE_LISTS.some((list) => {
         const key = MASTER_KEY[list];
         const mine = new Set((sent[list]?.upsert ?? []).map(key));
         const removed = new Set((sent[list]?.delete ?? []).map((target) => deleteKey(list, target)));
-        return delta.changes[list].upsert.some((record) => !mine.has(key(record))) || delta.changes[list].delete.some((target) => !removed.has(deleteKey(list, target)));
+        return delta.changes[list].upsert.some((record) => !mine.has(key(record)) && !(list === "orders" && isOwnStartFlip(record, sent, before)))
+          || delta.changes[list].delete.some((target) => !removed.has(deleteKey(list, target)));
       });
     }
     // ส่วนของคำตอบที่เป็นระเบียนที่เราส่งเอง (กุญแจตรงกับที่ส่ง) · version = เวอร์ชันฐานเดิม (ไม่ขยับ)
@@ -501,13 +518,27 @@
       if (status !== "ready" || busy) return Promise.resolve(false);
       if (catching) return catching;
       const base = snapshot.version;
+      // โหลดทั้งชุดแทนส่วนต่าง (เวอร์ชันล้ำหน้าฐานข้อมูล หรือเปลี่ยนรอบข้อมูล) เงียบ ไม่เปลี่ยนสถานะเป็นกำลังโหลด
+      const fullReload = async () => {
+        let full;
+        try { full = normalizeSnapshot(await fetchSnapshot()); } catch { return false; }
+        // ระหว่างรอโหลดทั้งชุด ผู้ใช้อาจเริ่มบันทึก/แก้ฟอร์ม หรือมีคนขยับเวอร์ชันฐาน: ทิ้งผล (รอบโฟกัสถัดไปลองใหม่)
+        if (busy || snapshot.version !== base || holding()) return false;
+        snapshot = full;
+        newerPending = false;
+        auditStale = true;
+        assemble();
+        emit({ type: "synced", changed: true });
+        return true;
+      };
       catching = Promise.resolve().then(() => remote.since(base)).then(normalizeDelta).then(
         (delta) => {
           if (busy || snapshot.version !== base) return false;
           if (holding()) {
-            if (deltaHasRecords(delta) && !newerPending) { newerPending = true; emit({ type: "pending" }); }
+            if ((deltaHasRecords(delta) || epochChanged(delta)) && !newerPending) { newerPending = true; emit({ type: "pending" }); }
             return false;
           }
+          if (epochChanged(delta)) return fullReload();
           newerPending = false;
           const changed = mergeDelta(delta, true);
           if (changed) emit({ type: "synced", changed });
@@ -515,16 +546,7 @@
         },
         async (error) => {
           if (busy || snapshot.version !== base || holding() || mapRemoteError(error).code !== "BOM_INVALID_PAYLOAD") return false;
-          let full;
-          try { full = normalizeSnapshot(await fetchSnapshot()); } catch { return false; }
-          // ระหว่างรอโหลดทั้งชุด ผู้ใช้อาจเริ่มบันทึก/แก้ฟอร์ม หรือมีคนขยับเวอร์ชันฐาน: ทิ้งผล (รอบโฟกัสถัดไปลองใหม่)
-          if (busy || snapshot.version !== base || holding()) return false;
-          snapshot = full;
-          newerPending = false;
-          auditStale = true;
-          assemble();
-          emit({ type: "synced", changed: true });
-          return true;
+          return fullReload();
         },
       ).finally(() => { catching = null; });
       return catching;
@@ -578,12 +600,33 @@
       busy = true;
       emit({ type: "saving" });
       const baseVersion = snapshot.version;
-      const saving = Promise.resolve().then(() => remote.save(sent, baseVersion, name, auditEntries)).then(normalizeDelta).then(
+      const baseEpoch = snapshot.epoch ?? null; // รอบข้อมูลที่ถือ: ฐานข้อมูลปฏิเสธ (BOM_RESET) ถ้าถูกล้างข้อมูลทดสอบไปแล้ว
+      // ชน หรือเวอร์ชันฐานไม่ตรงฐานข้อมูล: ตามทันด้วยส่วนต่าง (ไม่ได้ก็โหลดทั้งชุด) ก่อนแสดงข้อมูลล่าสุดให้ผู้ใช้ทำรายการใหม่
+      // ย้อนกลับทั้งคำสั่ง: ฐานย้อนกลับ = snapshot ปัจจุบัน (เวอร์ชันฐานเดิม + ระเบียนของเราที่บันทึกสำเร็จไปแล้วแต่ยังถูกกันไว้) · ถ้าผู้ใช้มีฟอร์มค้างอยู่ (ก่อนหรือระหว่างรอตามทัน) ไม่ดึงข้อมูลผู้อื่นเข้ามา แค่จำว่ามีใหม่
+      const onSaveFailed = async (error) => {
+        const mapped = mapRemoteError(error);
+        const conflict = CONFLICT_CODES.includes(mapped.code);
+        let held = shouldHold();
+        if (conflict && !held) {
+          const fresh = await fetchSnapshotAfterConflict();
+          held = shouldHold();
+          if (fresh && !held) { snapshot = fresh; newerPending = false; auditStale = true; }
+        }
+        if (conflict && held && !newerPending) { newerPending = true; emit({ type: "pending" }); }
+        counters = previousCounters;
+        assemble();
+        busy = false;
+        emit({ type: "reverted", error: mapped, held });
+        return { ok: false, error: mapped };
+      };
+      const saving = Promise.resolve().then(() => remote.save(sent, baseVersion, name, auditEntries, baseEpoch)).then(normalizeDelta).then(
         (delta) => {
+          // ฐานข้อมูลตอบรอบข้อมูลใหม่ (ปกติถูกปฏิเสธ BOM_RESET ก่อนแล้ว): ถือว่าการบันทึกไม่ผ่าน ตามทันด้วยการโหลดทั้งชุด
+          if (epochChanged(delta)) return onSaveFailed(Object.assign(new Error("BOM_RESET"), { code: "BOM_RESET" }));
           // ฐานข้อมูลตอบส่วนต่างตั้งแต่เวอร์ชันฐาน: ของเราที่ตรวจแล้ว + ที่ผู้อื่นบันทึกระหว่างนั้น · รวมเข้าชุดข้อมูลตามกุญแจ ลำดับและรูปแบบตามฐานข้อมูลเป็นหลัก
           // เนื้อหาเท่ากับที่แสดงอยู่แล้ว (เช่น มีแต่ของเรา) ไม่ต้องวาดหน้าใหม่
           // changed = เนื้อหาต่างจากที่แสดง (รวมที่ฐานข้อมูลประทับเวลา/ผู้บันทึกให้ระเบียนของเราเอง) · others = มีระเบียนที่เราไม่ได้ส่ง (ผู้อื่นบันทึกระหว่างนั้น) ใช้แจ้งผู้ใช้
-          const others = hasForeignRecords(delta, changes);
+          const others = hasForeignRecords(delta, changes, before);
           auditStale = true;
           if (others && shouldHold()) {
             // ระหว่างรอคำตอบ ผู้ใช้เริ่มแก้ฟอร์มอื่น/เปิด dialog (สร้างจากข้อมูลก่อนที่ผู้อื่นบันทึก): ห้ามรวมระเบียนของผู้อื่นเข้า data และห้ามขยับเวอร์ชันฐานของการบันทึกถัดไป
@@ -602,33 +645,18 @@
           emit({ type: "saved", changed, others });
           return { ok: true };
         },
-        async (error) => {
-          const mapped = mapRemoteError(error);
-          // ชน หรือเวอร์ชันฐานไม่ตรงฐานข้อมูล: ตามทันด้วยส่วนต่าง (ไม่ได้ก็โหลดทั้งชุด) ก่อนแสดงข้อมูลล่าสุดให้ผู้ใช้ทำรายการใหม่
-          // ย้อนกลับทั้งคำสั่ง: ฐานย้อนกลับ = snapshot ปัจจุบัน (เวอร์ชันฐานเดิม + ระเบียนของเราที่บันทึกสำเร็จไปแล้วแต่ยังถูกกันไว้) · ถ้าผู้ใช้มีฟอร์มค้างอยู่ (ก่อนหรือระหว่างรอตามทัน) ไม่ดึงข้อมูลผู้อื่นเข้ามา แค่จำว่ามีใหม่
-          const conflict = CONFLICT_CODES.includes(mapped.code);
-          let held = shouldHold();
-          if (conflict && !held) {
-            const fresh = await fetchSnapshotAfterConflict();
-            held = shouldHold();
-            if (fresh && !held) { snapshot = fresh; newerPending = false; auditStale = true; }
-          }
-          if (conflict && held && !newerPending) { newerPending = true; emit({ type: "pending" }); }
-          counters = previousCounters;
-          assemble();
-          busy = false;
-          emit({ type: "reverted", error: mapped, held });
-          return { ok: false, error: mapped };
-        },
+        onSaveFailed,
       );
       return { ok: true, result: result ?? true, saving };
     }
 
     // บันทึกการใช้งาน: อ่านจาก app_bom_audit (ใหม่สุดก่อน) ทุกครั้งที่หน้านี้วาดและข้อมูลเก่ากว่าที่บันทึกล่าสุดหรือเกิน AUDIT_FRESH_MS · force = โหลดใหม่ทันที
+    // โหลดไม่สำเร็จ = ไม่ลองใหม่เอง (event audit วาดหน้าใหม่ซึ่งเรียกฟังก์ชันนี้อีก ถ้าลองซ้ำเองจะเรียก RPC วนไม่จบ): ค้างที่สถานะ error ให้ผู้ใช้กด "โหลดใหม่" (force)
+    // หรือรอจนมีการบันทึกที่ทำให้บันทึกที่แสดงเก่า (auditStale) · ไม่เปลี่ยน error เป็น loading ก่อนที่หน้าจะอ่านข้อความผิดพลาด
     function loadAudit(force = false) {
       init();
       if (auditLoading) return auditLoading;
-      if (!force && !auditStale && now() - auditAt < AUDIT_FRESH_MS) return Promise.resolve();
+      if (!force && !auditStale && (auditView.status === "error" || now() - auditAt < AUDIT_FRESH_MS)) return Promise.resolve();
       if (typeof remote.audit !== "function") {
         auditView = { status: "error", entries: [], error: mapRemoteError({ code: "PGRST202" }) };
         return Promise.resolve();
@@ -636,7 +664,7 @@
       auditView = { ...auditView, status: auditView.entries.length ? "ready" : "loading" };
       auditLoading = Promise.resolve().then(() => remote.audit(200)).then(normalizeAudit).then(
         (entries) => { auditView = { status: "ready", entries, error: null }; auditStale = false; },
-        (error) => { auditView = { status: "error", entries: auditView.entries, error: mapRemoteError(error, "โหลดบันทึกการใช้งานไม่สำเร็จ") }; },
+        (error) => { auditView = { status: "error", entries: auditView.entries, error: mapRemoteError(error, "โหลดบันทึกการใช้งานไม่สำเร็จ") }; auditStale = false; },
       ).then(() => { auditAt = now(); auditLoading = null; emit({ type: "audit" }); });
       return auditLoading;
     }
@@ -674,8 +702,8 @@
     };
   }
 
-  // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action, audit): Promise<delta>, since(version): Promise<delta>, audit(limit): Promise<[{at, user, action, detail}]>, purge(): Promise<{deleted}> } → ข้อมูลทั้งหมดอยู่ในฐานข้อมูล (createRemoteStore)
-  // snapshot = { version, <ชุดข้อมูล>: [...] } · delta = { version, changes: { <ชุด>: { upsert: [...], delete: [{base, code}] | [{id}] } } }
+  // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action, audit, epoch): Promise<delta>, since(version): Promise<delta>, audit(limit): Promise<[{at, user, action, detail}]>, purge(): Promise<{deleted}> } → ข้อมูลทั้งหมดอยู่ในฐานข้อมูล (createRemoteStore)
+  // snapshot = { version, epoch, <ชุดข้อมูล>: [...] } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [{base, code}] | [{id}] } } }
   // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
   function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold } = {}) {
     if (remote) return createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold });
@@ -759,7 +787,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล BOM ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, sameMaster, mapRemoteError, roleOfEmployee, personaUser };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -1612,7 +1612,7 @@
       countryInput?.addEventListener("input", () => { if (typeSelect && !typeChosen) typeSelect.value = rules.orderTypeOf(countryInput.value); });
       // เลือกลูกค้าที่มีอยู่: เติมประเทศและประเภทตามที่เก็บไว้ (ยังแก้ทับได้)
       dialog.querySelector("[data-bom-customer]")?.addEventListener("change", (event) => {
-        const known = customersOf(ctx).find((customer) => customer.name.trim().toLowerCase() === String(event.target.value ?? "").trim().toLowerCase());
+        const known = customersOf(ctx).find((customer) => ctx.helpers.customerKey(customer.name) === ctx.helpers.customerKey(event.target.value));
         if (!known) return;
         if (countryInput) countryInput.value = known.country;
         if (typeSelect) { typeSelect.value = known.orderType; typeChosen = true; }
@@ -1921,13 +1921,35 @@
 
   // ---------- บันทึกการใช้งาน ----------
   // โหมดฐานข้อมูล: อ่านจาก app_bom_audit (store.loadAudit ดึงเมื่อเปิดหน้าและหลังมีการบันทึก แล้ววาดหน้าใหม่ผ่าน event audit) · โหมดในเครื่อง: data.audit
+  // โหมดฐานข้อมูล: การกระทำและจำนวนเป็นสิ่งที่เซิร์ฟเวอร์บันทึกเอง (บรรทัดหลัก) · ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ
+  const AUDIT_ACTION_LABEL = Object.freeze({
+    saveItem: "บันทึกชิ้นงาน", saveBom: "บันทึก BOM", saveBomTree: "บันทึก BOM (ทั้งต้นไม้)", linkCompound: "ผูกสูตรยาง", importFlat: "นำเข้าจาก Excel",
+    saveColor: "บันทึกสี", saveColorSet: "บันทึกชุดสี", removeColorSet: "ลบชุดสี", learnColorSet: "เรียนรู้ชุดสี", savePackage: "บันทึกแพ็กเกจ", removePackage: "ลบแพ็กเกจ",
+    createVariant: "สร้างรุ่นสินค้า", saveRouting: "บันทึกขั้นตอนผลิตของชิ้นงาน", saveProcess: "บันทึกขั้นตอนผลิตมาตรฐาน", setItemCost: "ตั้งต้นทุน", setItemImage: "ตั้งรูปชิ้นงาน",
+    createOrder: "เปิดใบสั่งผลิต", addOrderItem: "เพิ่มสินค้าในใบ", removeOrderItem: "ลบสินค้าจากใบ", updateOrderItem: "แก้สินค้าในใบ", explodeOrder: "ระเบิด BOM",
+    releaseOrder: "ปล่อยผลิต", setStockCount: "นับคงคลัง", setStockCounts: "นับคงคลัง", cancelOrder: "ยกเลิกใบสั่งผลิต", completeOrder: "ปิดใบสั่งผลิต",
+    reportJob: "รายงานผลงาน", setJobStatus: "เปลี่ยนสถานะงาน", linkJobToRubberFlow: "ผูก WO ของ RubberFlow", saveCustomer: "บันทึกลูกค้า",
+  });
+  const AUDIT_SECTION_LABEL = Object.freeze({
+    items: "ชิ้นงาน", compounds: "สูตรยาง", colors: "สี", colorSets: "ชุดสี", packages: "แพ็กเกจ", boms: "BOM", processes: "ขั้นตอนผลิต", routings: "ขั้นตอนผลิตของชิ้นงาน",
+    customers: "ลูกค้า", orders: "ใบสั่งผลิต", jobs: "งาน",
+  });
+  // "jobs +3 -1, orders +1" (เซิร์ฟเวอร์เขียน) → "งาน +3 -1, ใบสั่งผลิต +1"
+  const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");
   pages.audit = (ctx) => {
     const { data, ui, rules, store } = ctx;
     store.loadAudit();
     const view = store.audit();
-    const entries = store.isRemote() ? view.entries : data.audit;
-    const rows = entries.filter((entry) => includes(`${entry.user} ${entry.action} ${entry.detail}`, ctx.q)).slice(0, 300)
-      .map((entry) => `<tr><td class="nowrap small">${esc(rules.fmtDateTime(entry.at))}</td><td>${esc(entry.user)}</td><td>${esc(entry.action)}</td><td class="rf-mono small">${esc(entry.detail)}</td></tr>`);
+    const remote = store.isRemote();
+    const entries = remote ? view.entries : data.audit;
+    const noteOf = (entry) => (entry.entries ?? []).map((note) => `${note.action} ${note.detail}`.trim()).join(" · ");
+    const rows = entries.filter((entry) => includes(`${entry.user} ${entry.action} ${AUDIT_ACTION_LABEL[entry.action] ?? ""} ${entry.detail} ${noteOf(entry)}`, ctx.q)).slice(0, 300)
+      .map((entry) => {
+        const claimed = remote ? (entry.entries ?? []).map((note) => `${note.action}${note.detail ? ` — ${note.detail}` : ""}`) : [];
+        const notes = claimed.length ? `<div class="small muted" title="ข้อความที่ผู้บันทึกเขียนเอง ระบบไม่ได้ตรวจ">ผู้บันทึกระบุ: ${esc(claimed.join(" · "))}</div>` : "";
+        const detail = remote ? auditCounts(entry.detail) : entry.detail;
+        return `<tr><td class="nowrap small">${esc(rules.fmtDateTime(entry.at))}</td><td>${esc(entry.user)}</td><td>${esc(remote ? AUDIT_ACTION_LABEL[entry.action] ?? entry.action : entry.action)}</td><td class="rf-mono small">${esc(detail)}${notes}</td></tr>`;
+      });
     const reload = store.isRemote() ? `<button class="btn rf-btn secondary" type="button" data-bom-audit-reload title="โหลดบันทึกการใช้งานล่าสุดจากฐานข้อมูล">โหลดใหม่</button>` : "";
     const note = store.isRemote() && view.status === "error" ? ui.callout("warn", esc(view.error?.message ?? "โหลดบันทึกการใช้งานไม่สำเร็จ")) : "";
     const emptyText = store.isRemote() && view.status === "loading" ? "กำลังโหลดบันทึกการใช้งาน…" : "ไม่พบรายการ";

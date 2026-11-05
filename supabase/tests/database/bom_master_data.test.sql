@@ -59,10 +59,10 @@ select is((select count(*)::integer from private.lab_only_unguarded_functions())
 select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_boms_one_approved_idx')
       and exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_routings_one_approved_idx'),
   'at most one approved BOM and one approved routing per item is enforced by a partial unique index');
-select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text,jsonb)']) f(sig)
+select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)']) f(sig)
                       where has_function_privilege('anon', f.sig, 'execute')),
   'anon cannot execute any BOM RPC');
-select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text,jsonb)']) f(sig)
+select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)']) f(sig)
                       where not has_function_privilege('authenticated', f.sig, 'execute')),
   'signed-in users can call all three BOM RPCs (each checks the mode and role itself)');
 select ok((select p.prosecdef and p.proconfig @> array['search_path=""'] from pg_proc p where p.oid = 'public.app_bom_master_since(bigint)'::regprocedure),
@@ -138,10 +138,10 @@ select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem'
 
 -- 5. อ่านได้ทุก persona แต่เขียนไม่ได้ถ้าไม่ใช่ PP / ผู้จัดการขึ้นไป ------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select is(public.app_bom_master(),
+select is(public.app_bom_master() - 'epoch',
   '{"version":0,"items":[],"compounds":[],"colors":[],"colorSets":[],"packages":[],"boms":[],"processes":[],"routings":[],"customers":[],"orders":[],"jobs":[]}'::jsonb,
-  'a rubber-department staff persona reads an empty master and never sees the real row');
-select is(public.app_bom_master_since(0), '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]},"customers":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]},"jobs":{"upsert":[],"delete":[]}}}'::jsonb,
+  'a rubber-department staff persona reads an empty master and never sees the real row (the epoch is a separate field)');
+select is(public.app_bom_master_since(0) - 'epoch', '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]},"customers":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]},"jobs":{"upsert":[],"delete":[]}}}'::jsonb,
   'a rubber-department staff persona reads the delta of an empty master: all eleven lists, empty upsert and delete');
 select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[]}}'::jsonb, 0, 'saveItem') $$, 'BOM_FORBIDDEN',
   'a rubber-department staff persona cannot save');

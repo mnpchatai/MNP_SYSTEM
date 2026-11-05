@@ -438,7 +438,7 @@
     const typeRaw = String(p.orderType ?? "").trim().toUpperCase();
     const orderType = typeRaw === "" ? R.orderTypeOf(country) : ["SA", "EX"].includes(typeRaw) ? typeRaw : fail("ประเภทออร์เดอร์ไม่ถูกต้อง (SA หรือ EX)");
     // ลูกค้า: ชื่อที่ตรงกับลูกค้าที่มีอยู่ (ไม่สนตัวพิมพ์/ช่องว่างหัวท้าย) ใช้ชื่อตามรายการลูกค้า · ชื่อใหม่ถูกเพิ่มเข้ารายการลูกค้าพร้อมกับใบ
-    const typedCustomer = text(p.customer, "ชื่อลูกค้า", 120);
+    const typedCustomer = text(customerName(p.customer), "ชื่อลูกค้า", 120);
     d.customers ??= [];
     const knownCustomer = d.customers.find((entry) => customerKey(entry.name) === customerKey(typedCustomer));
     if (!knownCustomer) d.customers.push({ name: typedCustomer, country, orderType, note: "" });
@@ -452,11 +452,13 @@
 
   // ---------- ลูกค้า ----------
   // ชื่อเป็นกุญแจ (ตัดช่องว่างหัวท้าย ไม่สนตัวพิมพ์) · เพิ่มหรือแก้ได้ ไม่มีลบ (ใบสั่งผลิตเดิมยังอ้างชื่อ) · create:true = เพิ่มใหม่เท่านั้น
-  const customerKey = (name) => String(name ?? "").trim().toLowerCase();
+  // ฐานข้อมูลใช้กฎเดียวกัน (ช่องว่างซ้ำรวมเป็นช่องเดียว ตัดหัวท้าย) · modules/bom-store.js มีสำเนาของกฎนี้สำหรับกุญแจลูกค้า (เทสต์ตรวจว่าตรงกัน)
+  const customerName = (name) => String(name ?? "").replace(/\s+/g, " ").trim();
+  const customerKey = (name) => customerName(name).toLowerCase();
   function saveCustomer(d, p, ctx) {
     requirePlanner(ctx, "เพิ่ม/แก้ลูกค้า");
     const R = rules();
-    const name = text(p.name, "ชื่อลูกค้า", 120);
+    const name = text(customerName(p.name), "ชื่อลูกค้า", 120);
     const country = text(p.country, "ประเทศ", 60);
     const typeRaw = String(p.orderType ?? "").trim().toUpperCase();
     const orderType = typeRaw === "" ? R.orderTypeOf(country) : ["SA", "EX"].includes(typeRaw) ? typeRaw : fail("ประเภทออร์เดอร์ไม่ถูกต้อง (SA หรือ EX)");
@@ -941,7 +943,7 @@
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage,
-    helpers: { startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;
