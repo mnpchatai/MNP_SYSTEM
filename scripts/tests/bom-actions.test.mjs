@@ -945,3 +945,79 @@ test("a job started or held without output, or linked to RubberFlow, locks the o
   A.updateOrderItem(d, { orderId: counted.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, ctx("planner"));
   assert.deepEqual([counted.status, counted.explodedAt, counted.explosion, counted.stockCounts["P-BOX-01"]], ["draft", null, null, 2]);
 });
+
+test("who may do what with a job or a count: the planner group everywhere, a department its own jobs, ST and WH count, RubberFlow links are RB's or the planners'", () => {
+  const d = fresh();
+  const job = d.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.dept === "GR" && entry.status !== "done");
+  const staff = (role, dept) => ({ id: role, role, dept, name: role });
+  const { canWorkJob, canCount, canLinkRubberflow } = A.helpers;
+  for (const planning of [user("planner"), user("manager"), user("admin")]) assert.equal(canWorkJob(planning, job), true, "the planner group reports for every department");
+  assert.equal(canWorkJob(user("gr"), job), true, "the department of the job");
+  assert.equal(canWorkJob(staff("viewer", "GR"), job), true, "any role of that department");
+  for (const other of [user("rb"), user("st"), staff("wh", "WH"), staff("viewer", "QA")]) assert.equal(canWorkJob(other, job), false);
+  assert.equal(canWorkJob({ role: "viewer", dept: "" }, { dept: "" }), false, "no department matches no job");
+  for (const allowed of [user("planner"), user("manager"), user("admin"), user("st"), staff("wh", "WH")]) assert.equal(canCount(allowed), true);
+  for (const denied of [user("rb"), user("gr"), staff("viewer", "QA")]) assert.equal(canCount(denied), false);
+  const rbJob = { dept: "RB" };
+  for (const allowed of [user("planner"), user("manager"), user("admin"), user("rb")]) assert.equal(canLinkRubberflow(allowed, rbJob), true);
+  for (const denied of [user("gr"), user("st")]) assert.equal(canLinkRubberflow(denied, rbJob), false);
+  assert.equal(canLinkRubberflow(user("planner"), job), false, "only RB jobs");
+
+  // planner กลุ่มรายงานงานของแผนกอื่นได้ (เดิมได้เฉพาะ PK)
+  const before = job.qtyDone;
+  A.reportJob(d, { jobId: job.id, qtyDone: 1 }, ctx("planner"));
+  assert.equal(job.qtyDone, before + 1);
+  const order = d.orders.find((entry) => entry.status === "draft");
+  A.explodeOrder(d, { orderId: order.id }, ctx("planner"));
+  const line = order.explosion.find((entry) => entry.level > 0);
+  A.setStockCount(d, { orderId: order.id, itemCode: line.itemCode, qty: 2 }, { now: NOW, user: staff("wh", "WH") });
+  assert.equal(order.stockCounts[line.itemCode], 2, "WH counts");
+  rejects(() => A.setStockCount(d, { orderId: order.id, itemCode: line.itemCode, qty: 2 }, ctx("rb")), /ST\/WH/);
+});
+
+test("customers: a PI with a new name adds it, a known name (any case) is reused with its stored spelling, saveCustomer adds and edits by name and only for planners", () => {
+  const d = fresh();
+  assert.deepEqual(d.customers.map((customer) => customer.name), ["ลูกค้าสาธิต เบลเยียม", "ลูกค้าสาธิต กรุงเทพ"], "the demo orders added their customers when the seed was built");
+  d.customers = [];
+  const order = (customer, extra = {}) => A.createOrder(d, { customer, country: "Thailand", orderedAt: day(0), whDue: day(10), ...extra }, ctx("planner"));
+  order("Acme");
+  assert.deepEqual(d.customers, [{ name: "Acme", country: "Thailand", orderType: "SA", note: "" }]);
+  assert.match(d.audit[0].detail, /เพิ่มลูกค้าใหม่/);
+  const second = order("  aCME ");
+  assert.equal(d.customers.length, 1);
+  assert.equal(d.orders.find((entry) => entry.id === second).customer, "Acme");
+  assert.doesNotMatch(d.audit[0].detail, /เพิ่มลูกค้าใหม่/);
+  A.saveCustomer(d, { name: "ACME", country: "Japan", note: " หมายเหตุ " }, ctx("manager"));
+  assert.deepEqual(d.customers, [{ name: "ACME", country: "Japan", orderType: "EX", note: "หมายเหตุ" }], "same key: edited, the new spelling kept");
+  rejects(() => A.saveCustomer(d, { name: "acme", country: "Japan", create: true }, ctx("planner")), /มีลูกค้า ACME อยู่แล้ว/);
+  rejects(() => A.saveCustomer(d, { name: "", country: "Japan" }, ctx("planner")), /ชื่อลูกค้า/);
+  rejects(() => A.saveCustomer(d, { name: "X", country: "Japan", orderType: "ZZ" }, ctx("planner")), /SA หรือ EX/);
+  for (const role of ["rb", "st", "gr"]) rejects(() => A.saveCustomer(d, { name: "Y", country: "Thailand" }, ctx(role)), /ฝ่ายวางแผนหรือผู้จัดการ/);
+});
+
+test("database mode: the PI number follows the highest -YYnnn of the year in the snapshot, and jobs get a random suffix like BOM and routing ids", () => {
+  const d = fresh();
+  const remote = (suffix = "abc123") => ({ now: NOW, user: user("planner"), idSuffix: () => suffix, remote: true });
+  const year = rules.piYear(day(0));
+  d.orders.push({ id: `250101-${year}047`, status: "draft", items: [], stockCounts: {} }, { id: `240101-${String(Number(year) - 1)}099`, status: "draft", items: [], stockCounts: {} });
+  const id = A.createOrder(d, { customer: "A", country: "Thailand", orderedAt: day(0), whDue: day(10) }, remote());
+  assert.equal(id, rules.piNumber(day(0), 48), "one after the highest sequence of the same year; another year's number does not count");
+  assert.equal(d.counters[`PI-${year}`], undefined, "no local counter in database mode");
+  const typed = A.createOrder(d, { pi: "my-typed-1", customer: "A", country: "Thailand", orderedAt: day(0), whDue: day(10) }, remote());
+  assert.equal(typed, "MY-TYPED-1", "a typed number is kept");
+  assert.equal(A.createOrder(d, { customer: "A", country: "Thailand", orderedAt: day(0), whDue: day(10) }, remote()), rules.piNumber(day(0), 49));
+
+  A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 3 }, ctx("planner"));
+  A.releaseOrder(d, { orderId: id }, remote("zz9"));
+  const jobs = d.jobs.filter((job) => job.orderId === id);
+  assert.ok(jobs.length > 1);
+  assert.ok(jobs.every((job) => /^JOB-\d\d-\d{4}-zz9$/.test(job.id)), jobs.map((job) => job.id).join(","));
+  assert.equal(new Set(jobs.map((job) => job.id)).size, jobs.length, "the counter part still differs between jobs");
+  assert.ok(jobs.every((job) => job.id.length <= 40));
+  // ในเครื่อง (ไม่มี idSuffix) รหัสงานเหมือนเดิม
+  const local = fresh();
+  const localId = A.createOrder(local, { customer: "A", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+  A.addOrderItem(local, { orderId: localId, fgCode: "DEMO-TP-01(P)-Y", qty: 3 }, ctx("planner"));
+  A.releaseOrder(local, { orderId: localId }, ctx("planner"));
+  assert.ok(local.jobs.filter((job) => job.orderId === localId).every((job) => /^JOB-\d\d-\d{4}$/.test(job.id)));
+});

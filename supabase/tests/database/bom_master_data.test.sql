@@ -48,7 +48,8 @@ select ok(not exists (select 1 from pg_trigger g where g.tgname in ('bom_bom_lin
 select is((select count(*) from information_schema.columns where table_schema = 'public' and column_name = 'changed_version'
            and table_name in (select name from bom_tables)),
   9::bigint, 'every table the delta reads has changed_version');
-select is((select count(*) from pg_indexes where schemaname = 'public' and indexname like 'bom\_%\_changed\_idx'),
+select is((select count(*) from pg_indexes where schemaname = 'public' and indexname like 'bom\_%\_changed\_idx'
+           and indexname <> all (array['bom_customers_changed_idx', 'bom_orders_changed_idx', 'bom_jobs_changed_idx'])),
   9::bigint, 'each of them is indexed by (is_test, changed_version)');
 select is((select count(*) from pg_constraint c join bom_tables t on c.conrelid = ('public.' || t.name)::regclass
            where c.contype = 'f' and pg_get_constraintdef(c.oid) like '%, is_test) REFERENCES %bom_%'),
@@ -58,10 +59,10 @@ select is((select count(*)::integer from private.lab_only_unguarded_functions())
 select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_boms_one_approved_idx')
       and exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_routings_one_approved_idx'),
   'at most one approved BOM and one approved routing per item is enforced by a partial unique index');
-select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text)']) f(sig)
+select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)']) f(sig)
                       where has_function_privilege('anon', f.sig, 'execute')),
   'anon cannot execute any BOM RPC');
-select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text)']) f(sig)
+select ok(not exists (select 1 from unnest(array['public.app_bom_master()', 'public.app_bom_master_since(bigint)', 'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)']) f(sig)
                       where not has_function_privilege('authenticated', f.sig, 'execute')),
   'signed-in users can call all three BOM RPCs (each checks the mode and role itself)');
 select ok((select p.prosecdef and p.proconfig @> array['search_path=""'] from pg_proc p where p.oid = 'public.app_bom_master_since(bigint)'::regprocedure),
@@ -137,11 +138,11 @@ select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem'
 
 -- 5. อ่านได้ทุก persona แต่เขียนไม่ได้ถ้าไม่ใช่ PP / ผู้จัดการขึ้นไป ------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select is(public.app_bom_master(),
-  '{"version":0,"items":[],"compounds":[],"colors":[],"colorSets":[],"packages":[],"boms":[],"processes":[],"routings":[]}'::jsonb,
-  'a rubber-department staff persona reads an empty master and never sees the real row');
-select is(public.app_bom_master_since(0), '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]}}}'::jsonb,
-  'a rubber-department staff persona reads the delta of an empty master: all eight lists, empty upsert and delete');
+select is(public.app_bom_master() - 'epoch',
+  '{"version":0,"items":[],"compounds":[],"colors":[],"colorSets":[],"packages":[],"boms":[],"processes":[],"routings":[],"customers":[],"orders":[],"jobs":[]}'::jsonb,
+  'a rubber-department staff persona reads an empty master and never sees the real row (the epoch is a separate field)');
+select is(public.app_bom_master_since(0) - 'epoch', '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]},"customers":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]},"jobs":{"upsert":[],"delete":[]}}}'::jsonb,
+  'a rubber-department staff persona reads the delta of an empty master: all eleven lists, empty upsert and delete');
 select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[]}}'::jsonb, 0, 'saveItem') $$, 'BOM_FORBIDDEN',
   'a rubber-department staff persona cannot save');
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
@@ -196,7 +197,7 @@ select throws_ok($$ select public.app_bom_save_master(current_setting('test.s1')
 select throws_ok($$ select public.app_bom_save_master(current_setting('test.s1')::jsonb, 0, null) $$, 'BOM_INVALID_ACTION', 'a missing action name is rejected');
 select throws_ok($$ select public.app_bom_save_master(current_setting('test.s1')::jsonb, null, 'importFlat') $$, 'BOM_INVALID_PAYLOAD', 'a missing base version is rejected');
 select throws_ok($$ select public.app_bom_save_master('[]'::jsonb, 0, 'importFlat') $$, 'BOM_INVALID_PAYLOAD', 'the changes must be an object');
-select throws_ok($$ select public.app_bom_save_master('{"orders":{"upsert":[]}}'::jsonb, 0, 'importFlat') $$, 'BOM_INVALID_PAYLOAD', 'an unknown section is rejected');
+select throws_ok($$ select public.app_bom_save_master('{"widgets":{"upsert":[]}}'::jsonb, 0, 'importFlat') $$, 'BOM_INVALID_PAYLOAD', 'an unknown section is rejected');
 select throws_ok($$ select public.app_bom_save_master('{"items":{"delete":[]}}'::jsonb, 0, 'importFlat') $$, 'BOM_INVALID_PAYLOAD', 'items cannot be deleted');
 select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":{}}}'::jsonb, 0, 'importFlat') $$, 'BOM_INVALID_PAYLOAD', 'a section must hold arrays');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('items', jsonb_build_object('upsert', (select jsonb_agg('{}'::jsonb) from generate_series(1, 5001)))), 0, 'importFlat') $$,

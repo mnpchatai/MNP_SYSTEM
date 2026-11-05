@@ -63,9 +63,17 @@ async function harnessPage() {
     // stub ของ app.js: โมดูลอ้างเป็น global และ root.escapeHtml จึงต้องเป็น property ของ window
     window.MNP_REQUEST_MODULES = {};
     // บัญชีทดสอบ (persona) แบบ admin: BOM เทียบกับตำแหน่ง/แผนกนี้เพื่อให้เขียนข้อมูลหลักได้ (เหมือน persona ของ /pilot-shell.html?sandbox=1)
-    const state = { employee: { isSandbox: true, id: "persona-1", employee_no: "E001", first_name: "ปกรณ์", last_name: "ศรีวัฒนา", display_name: "harness", role: { code: "admin" }, department: { code: "MT" } } };
+    // state.sandbox = admin ตัวจริงอยู่ในโหมดทดสอบ (ปุ่ม "ล้างข้อมูล BOM ทดสอบ" ของ BOM เห็นเฉพาะกรณีนี้) · persona เลือกได้ที่แถบข้าง "ทำหน้าที่เป็น" (โหลดจาก app_sandbox_status ของ Supabase จำลอง)
+    const state = { employee: { isSandbox: true, id: "persona-1", employee_no: "E001", first_name: "ปกรณ์", last_name: "ศรีวัฒนา", display_name: "harness", role: { code: "admin" }, department: { code: "MT" } }, sandbox: { active: true } };
     // sb ของ app.js: RPC ข้อมูลหลัก BOM ไปที่ Supabase จำลองตัวเดียวกับ /pilot-shell.html (สคริปต์ /harness-mock-sandbox.js) ข้อมูลเก็บใน localStorage ของพอร์ตนี้
     const sb = { rpc: (name, args) => window.supabase.createClient().rpc(name, args) };
+    let personas = [];
+    async function loadPersonas() {
+      const { data } = await sb.rpc("app_sandbox_status");
+      if (!data || !data.persona) return;
+      personas = data.personas || [];
+      state.employee = { ...data.persona, isSandbox: true };
+    }
     let app = null;
     const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
     const showToast = (message, kind = "ok") => {
@@ -85,7 +93,8 @@ async function harnessPage() {
     const shell = (content, path, title) => {
       document.title = title;
       const nav = navItems().map((item) => "<div><a href=\\"#/" + item.path + "\\">" + escapeHtml(item.label) + "</a>" + ((item.subnav && item.subnav(path)) || "") + "</div>").join("");
-      return "<div class=\\"h-shell\\"><aside class=\\"h-side\\"><strong>Pilot harness</strong><div class=\\"h-note\\">โหมดทดสอบจำลอง ไม่มี Supabase</div>" + nav + "</aside><main class=\\"content\\">" + content + "</main></div>";
+      const picker = personas.length ? "<div><label class=\\"h-note\\" for=\\"h-persona\\">ทำหน้าที่เป็น</label><select id=\\"h-persona\\" style=\\"width:100%\\">" + personas.map((persona) => "<option value=\\"" + escapeHtml(persona.id) + "\\"" + (persona.id === state.employee.id ? " selected" : "") + ">" + escapeHtml((persona.job_title || persona.first_name) + " · " + ((persona.department && persona.department.code) || "")) + "</option>").join("") + "</select></div>" : "";
+      return "<div class=\\"h-shell\\"><aside class=\\"h-side\\"><strong>Pilot harness</strong><div class=\\"h-note\\">โหมดทดสอบจำลอง ไม่มี Supabase</div>" + picker + nav + "</aside><main class=\\"content\\">" + content + "</main></div>";
     };
     const bindShell = () => {};
     const loadingShell = () => {};
@@ -99,6 +108,19 @@ async function harnessPage() {
         return;
       }
       await entry.pages[path](params);
+      bindPersonaPicker();
+    }
+    // เลือกบัญชีทดสอบ: บอก Supabase จำลอง (app_sandbox_enter) แล้ววาดหน้าใหม่ด้วยบัญชีนั้น · ข้อมูล BOM เป็นของฐานข้อมูลจำลองเดียวกัน จึงเห็นข้อมูลชุดเดิมแต่ปุ่มตามสิทธิ์ของบัญชี
+    function bindPersonaPicker() {
+      const picker = document.getElementById("h-persona");
+      if (!picker || picker.dataset.bound) return;
+      picker.dataset.bound = "1";
+      picker.addEventListener("change", async () => {
+        picker.disabled = true;
+        await sb.rpc("app_sandbox_enter", { p_persona_id: picker.value });
+        await loadPersonas();
+        renderRoute();
+      });
     }
     // กฎกลางของ popup (สำเนาจาก app.js): ปิดเมื่อแตะ/ย้าย focus ออกนอกกรอบของ popup ไม่ใช้ blur
     function closePopup(popup) {
@@ -138,9 +160,10 @@ async function harnessPage() {
       });
     }
     Object.assign(window, { escapeHtml, showToast, friendlyError, currentRoute, shell, bindShell, loadingShell, renderNotFound, renderRoute, closePopup, confirmDialog });
-    window.addEventListener("DOMContentLoaded", () => {
+    window.addEventListener("DOMContentLoaded", async () => {
       app = document.getElementById("app");
       window.addEventListener("hashchange", renderRoute);
+      await loadPersonas();
       renderRoute();
     });
   </script>

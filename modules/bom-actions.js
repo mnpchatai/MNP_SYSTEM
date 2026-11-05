@@ -41,7 +41,7 @@
   // ---------- สิทธิ์ (บทบาทสาธิต) ----------
   const isBoss = (user) => Boolean(user) && (user.role === "admin" || user.role === "manager");
   const canPlan = (user) => isBoss(user) || user?.role === "planner"; // สร้าง/แก้ item, BOM, ใบสั่งผลิต
-  const canCount = (user) => canPlan(user) || user?.role === "st";
+  const canCount = (user) => canPlan(user) || user?.role === "st" || user?.role === "wh"; // นับคงคลังของใบร่าง: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือพนักงานแผนก ST / WH
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
   const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
 
@@ -424,7 +424,12 @@
     if (whDue < orderedAt) fail("วันส่งมอบคลังต้องไม่ก่อนวันที่สั่งผลิต");
     // เลข PI: ว่าง = ออกให้อัตโนมัติ YYMMDD-YYnnn (ลำดับต่อปีจากวันที่สั่งผลิต ข้ามเลขที่มีอยู่แล้ว เช่น ใบที่พิมพ์เลขเอง)
     let id = String(p.pi ?? "").trim().toUpperCase();
-    if (!id) {
+    if (!id && ctx.remote) {
+      // โหมดฐานข้อมูล: ลำดับถัดจากเลข -YYnnn สูงสุดของปีนั้นในใบที่หน้าเห็น (ไม่ใช้ตัวนับในเครื่อง) · ผู้วางแผนสองคนที่เปิดใบพร้อมกันได้เลขเดียวกัน ฐานข้อมูลปฏิเสธใบที่สองด้วย BOM_STALE แล้วกดบันทึกใหม่จะได้เลขถัดไป
+      const year = R.piYear(orderedAt);
+      let seq = d.orders.reduce((max, order) => { const match = /-(\d{2})(\d{3,})$/.exec(String(order.id)); return match && match[1] === year ? Math.max(max, Number(match[2])) : max; }, 0);
+      do { seq += 1; id = R.piNumber(orderedAt, seq); } while (d.orders.some((order) => order.id === id));
+    } else if (!id) {
       const key = `PI-${R.piYear(orderedAt)}`;
       do { d.counters[key] = (d.counters[key] ?? 0) + 1; id = R.piNumber(orderedAt, d.counters[key]); } while (d.orders.some((order) => order.id === id));
     } else {
@@ -449,12 +454,39 @@
     // ประเภทออร์เดอร์: ที่เลือกมาใช้ตามนั้น (SA/EX) ไม่ส่งมา = เดาจากประเทศเหมือนเดิม
     const typeRaw = String(p.orderType ?? "").trim().toUpperCase();
     const orderType = typeRaw === "" ? R.orderTypeOf(country) : ["SA", "EX"].includes(typeRaw) ? typeRaw : fail("ประเภทออร์เดอร์ไม่ถูกต้อง (SA หรือ EX)");
+    // ลูกค้า: ชื่อที่ตรงกับลูกค้าที่มีอยู่ (ไม่สนตัวพิมพ์/ช่องว่างหัวท้าย) ใช้ชื่อตามรายการลูกค้า · ชื่อใหม่ถูกเพิ่มเข้ารายการลูกค้าพร้อมกับใบ
+    const typedCustomer = text(customerName(p.customer), "ชื่อลูกค้า", 120);
+    d.customers ??= [];
+    const knownCustomer = d.customers.find((entry) => customerKey(entry.name) === customerKey(typedCustomer));
+    if (!knownCustomer) d.customers.push({ name: typedCustomer, country, orderType, note: "" });
     d.orders.unshift({
-      id, customer: text(p.customer, "ชื่อลูกค้า", 120), country, orderType, orderedAt, whDue, due, dueDefaults: p.autoDue ? R.DUE_DEPTS.filter((dept) => !p.due?.[dept] && due[dept] !== undefined) : [], revision: 0,
+      id, customer: knownCustomer?.name ?? typedCustomer, country, orderType, orderedAt, whDue, due, dueDefaults: p.autoDue ? R.DUE_DEPTS.filter((dept) => !p.due?.[dept] && due[dept] !== undefined) : [], revision: 0,
       status: "draft", items: [], explosion: null, explodedAt: null, stockCounts: {}, note: String(p.note ?? "").trim().slice(0, 300), createdBy: user.name, createdAt: ctx.now,
     });
-    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${p.customer}${p.pi ? "" : " (ออกเลขอัตโนมัติ)"}`);
+    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${knownCustomer?.name ?? typedCustomer}${p.pi ? "" : " (ออกเลขอัตโนมัติ)"}${knownCustomer ? "" : " · เพิ่มลูกค้าใหม่"}`);
     return id;
+  }
+
+  // ---------- ลูกค้า ----------
+  // ชื่อเป็นกุญแจ (ตัดช่องว่างหัวท้าย ไม่สนตัวพิมพ์) · เพิ่มหรือแก้ได้ ไม่มีลบ (ใบสั่งผลิตเดิมยังอ้างชื่อ) · create:true = เพิ่มใหม่เท่านั้น
+  // ฐานข้อมูลใช้กฎเดียวกัน (ช่องว่างซ้ำรวมเป็นช่องเดียว ตัดหัวท้าย) · modules/bom-store.js มีสำเนาของกฎนี้สำหรับกุญแจลูกค้า (เทสต์ตรวจว่าตรงกัน)
+  const customerName = (name) => String(name ?? "").replace(/\s+/g, " ").trim();
+  const customerKey = (name) => customerName(name).toLowerCase();
+  function saveCustomer(d, p, ctx) {
+    requirePlanner(ctx, "เพิ่ม/แก้ลูกค้า");
+    const R = rules();
+    const name = text(customerName(p.name), "ชื่อลูกค้า", 120);
+    const country = text(p.country, "ประเทศ", 60);
+    const typeRaw = String(p.orderType ?? "").trim().toUpperCase();
+    const orderType = typeRaw === "" ? R.orderTypeOf(country) : ["SA", "EX"].includes(typeRaw) ? typeRaw : fail("ประเภทออร์เดอร์ไม่ถูกต้อง (SA หรือ EX)");
+    d.customers ??= [];
+    const existing = d.customers.find((entry) => customerKey(entry.name) === customerKey(name));
+    if (existing && p.create) fail(`มีลูกค้า ${existing.name} อยู่แล้ว`);
+    const record = existing ?? { name };
+    Object.assign(record, { name, country, orderType, note: String(p.note ?? "").trim().slice(0, 300) });
+    if (!existing) d.customers.push(record);
+    audit(d, ctx, existing ? "แก้ลูกค้า" : "เพิ่มลูกค้า", `${name} · ${country} (${orderType})`);
+    return name;
   }
 
   const editable = (order) => { if (order.status !== "draft") fail("แก้รายการได้เฉพาะใบที่ยังเป็นร่าง (ยังไม่ปล่อยผลิต)"); };
@@ -773,11 +805,11 @@
     for (const entry of net) {
       if (!R.MANUFACTURED.includes(entry.kind) || entry.kind === "FG") continue;
       if (entry.toMake <= 0) { covered += 1; continue; }
-      d.jobs.push({ id: nextId(d, "JOB", ctx.now), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: entry.toMake, qtyRequired: entry.required, stockCounted: entry.stock ?? null, qtyDone: 0, qtyReject: 0, dueAt: order.due[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
+      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: entry.toMake, qtyRequired: entry.required, stockCounted: entry.stock ?? null, qtyDone: 0, qtyReject: 0, dueAt: order.due[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
     }
     for (const item of order.items) {
       const fg = itemOf(d, item.fgCode);
-      d.jobs.push({ id: nextId(d, "JOB", ctx.now), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: item.qty, qtyRequired: item.qty, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
+      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: item.qty, qtyRequired: item.qty, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
     }
     order.status = "released";
     order.releasedAt = ctx.now;
@@ -790,7 +822,7 @@
   const requireDraftForCount = (order) => { if (order.status !== "draft") fail(`นับคงคลังได้เฉพาะใบร่าง (ใบนี้${order.status === "completed" || order.status === "cancelled" ? "ปิดแล้ว" : "ปล่อยผลิตแล้ว งานรายแผนกไม่เปลี่ยนตาม"})`); };
   function setStockCount(d, { orderId, itemCode, qty }, ctx) {
     const user = requireUser(ctx);
-    if (!canCount(user)) fail("บันทึกยอดคงคลังได้โดยคลัง (ST) ฝ่ายวางแผน หรือผู้จัดการ");
+    if (!canCount(user)) fail("บันทึกยอดคงคลังได้โดยคลัง (ST/WH) ฝ่ายวางแผน หรือผู้จัดการ");
     const order = orderById(d, orderId);
     // นับได้เฉพาะใบร่าง: งานรายแผนกถูกสร้างจากยอดสุทธิตอนปล่อยผลิตครั้งเดียว ยอดที่นับทีหลังจะไม่เปลี่ยนงาน
     requireDraftForCount(order);
@@ -809,7 +841,7 @@
   // นับหลายรายการในครั้งเดียว (หน้า "นับคงคลัง" บนมือถือ): ช่องที่เว้นว่างไม่แตะยอดเดิม · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน (store.run ทำบนร่าง)
   function setStockCounts(d, { orderId, counts }, ctx) {
     const user = requireUser(ctx);
-    if (!canCount(user)) fail("บันทึกยอดคงคลังได้โดยคลัง (ST) ฝ่ายวางแผน หรือผู้จัดการ"); // ก่อนข้ามยอดเท่าเดิม
+    if (!canCount(user)) fail("บันทึกยอดคงคลังได้โดยคลัง (ST/WH) ฝ่ายวางแผน หรือผู้จัดการ"); // ก่อนข้ามยอดเท่าเดิม
     const order = orderById(d, orderId);
     requireDraftForCount(order);
     const list = (Array.isArray(counts) ? counts : []).filter((entry) => String(entry?.qty ?? "").trim() !== "");
@@ -856,7 +888,10 @@
   }
 
   // ---------- งานรายแผนก ----------
-  const canWorkJob = (user, job) => isBoss(user) || user?.dept === job.dept || (job.dept === "PK" && user?.role === "planner");
+  // รายงานผล/เปลี่ยนสถานะงาน: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล (ทุกแผนก) หรือพนักงานทุกบทบาทของแผนกเจ้าของงาน · แผนกอื่นดูได้อย่างเดียว
+  const canWorkJob = (user, job) => canPlan(user) || (Boolean(user?.dept) && user.dept === job.dept);
+  // ผูกงาน RB กับ RubberFlow: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือแผนก RB
+  const canLinkRubberflow = (user, job) => job?.dept === "RB" && (canPlan(user) || user?.dept === "RB");
 
   function reportJob(d, p, ctx) {
     const user = requireUser(ctx);
@@ -894,7 +929,7 @@
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
     if (job.dept !== "RB") fail("เชื่อม RubberFlow ได้เฉพาะงานของแผนก RB");
-    if (!canWorkJob(user, job) && user.role !== "planner") fail("เชื่อม RubberFlow ได้โดยแผนก RB ฝ่ายวางแผน หรือผู้จัดการ");
+    if (!canLinkRubberflow(user, job)) fail("เชื่อม RubberFlow ได้โดยแผนก RB ฝ่ายวางแผน หรือผู้จัดการ");
     if (job.externalRef?.woId) fail(`งานนี้ผูกกับ ${job.externalRef.woId} อยู่แล้ว`);
     if (!["released", "in_progress"].includes(orderById(d, job.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     job.externalRef = { system: "rubberflow", woId: text(woId, "เลข WO", 40), kg: Number(kg) || 0, linkedAt: ctx.now, by: user.name };
@@ -923,9 +958,9 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage,
-    helpers: { startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;
