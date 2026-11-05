@@ -1021,3 +1021,109 @@ test("database mode: the PI number follows the highest -YYnnn of the year in the
   A.releaseOrder(local, { orderId: localId }, ctx("planner"));
   assert.ok(local.jobs.filter((job) => job.orderId === localId).every((job) => /^JOB-\d\d-\d{4}$/.test(job.id)));
 });
+
+// ---------- ตรวจข้อมูล · เลิกใช้ชิ้นงาน · วางหลายบรรทัดจาก Excel ----------
+test("the data check lists what blocks a release: used-but-no-BOM make items, RB without a compound, FGs without a BOM, other units and generated codes", () => {
+  const d = fresh();
+  const codes = (audit, group) => audit[group].map((entry) => entry.item.code);
+  let audit = rules.auditMaster(d);
+  assert.deepEqual(codes(audit, "noBom"), [], "the seed has no make item that is used without a BOM");
+  assert.deepEqual(codes(audit, "fgNoBom"), ["DEMO-BL-60(K)-Z"]);
+  assert.deepEqual(codes(audit, "generated"), ["XP-00001"], "a generated code is listed");
+  assert.equal(audit.rbCompound.length, 0, "demo rods have the compound field (no CP line is fine: Excel imports never have one)");
+  // MEGA-BBL-06 ในโลกจริง: SE ถูกใช้ใน BOM ของสินค้าแล้วแต่ SE เองยังไม่มี BOM → ระเบิดแล้วเป็น noBom ปล่อยผลิตไม่ได้
+  A.saveBom(d, { itemCode: "DEMO-BL-60(K)-Z", lines: [{ childCode: "SE-BL60-RD01-60-0-60", qty: 1 }] }, ctx("planner"));
+  audit = rules.auditMaster(d);
+  assert.deepEqual(audit.noBom.map((entry) => [entry.item.code, entry.usedIn]), [["SE-BL60-RD01-60-0-60", ["DEMO-BL-60(K)-Z"]]]);
+  assert.deepEqual(codes(audit, "fgNoBom"), [], "the product now has a BOM");
+  const exploded = rules.explode("DEMO-BL-60(K)-Z", 1, { itemOf: (code) => A.helpers.itemOf(d, code), approvedBomOf: (code) => approved(d, code) });
+  assert.deepEqual(exploded.lines.filter((line) => line.noBom).map((line) => line.itemCode), ["SE-BL60-RD01-60-0-60"], "the check uses the same rule as the release");
+  A.saveBom(d, { itemCode: "SE-BL60-RD01-60-0-60", lines: [{ childCode: "RB-DM01-01-OR01-200-0-72", qty: 0.1 }] }, ctx("planner"));
+  assert.deepEqual(codes(rules.auditMaster(d), "noBom"), []);
+  // RB ที่ไม่มีสูตรทั้งสองทาง · หน่วยอื่น · เลิกใช้ไม่ถูกนับ (ยกเว้นกลุ่มแรก)
+  A.saveItem(d, { code: "RB-NEW-1", kind: "RB", name: "เส้นใหม่", uom: "rod", rubber: { compound: "DM01" }, create: true }, ctx("planner"));
+  A.saveItem(d, { code: "P-ODD", kind: "PURCHASED", name: "ของแปลก", uom: "other", create: true }, ctx("planner"));
+  audit = rules.auditMaster(d);
+  assert.equal(audit.rbCompound.find((entry) => entry.item.code === "RB-NEW-1"), undefined, "a rod with the compound field is not listed");
+  assert.deepEqual(codes(audit, "uomOther"), ["P-ODD"]);
+  A.saveItem(d, { code: "P-ODD", kind: "PURCHASED", name: "ของแปลก", uom: "other", active: false }, ctx("planner"));
+  A.saveItem(d, { code: "XP-00001", kind: "SUBPART", name: "แกนตอปิโด ตัดยาว 14 ซม.", uom: "pcs", active: false }, ctx("planner"));
+  audit = rules.auditMaster(d);
+  assert.deepEqual([codes(audit, "uomOther"), codes(audit, "generated")], [[], []], "retired items are not listed");
+  // ไม่มีทั้งช่องสูตรและบรรทัด CP
+  d.items.find((item) => item.code === "RB-NEW-1").rubber = {};
+  assert.deepEqual(rules.auditMaster(d).rbCompound.find((entry) => entry.item.code === "RB-NEW-1").reasons, ["noCompound"]);
+});
+
+test("deactivating an item keeps every existing BOM and order valid but refuses it as a new line or a new order item", () => {
+  const d = fresh();
+  const planner = ctx("planner");
+  rejects(() => A.saveItem(d, { code: "P-BOX-01", kind: "PURCHASED", name: "x", uom: "pcs", active: false }, ctx("gr")), /ฝ่ายวางแผนหรือผู้จัดการ/);
+  A.saveItem(d, { code: "P-BOX-01", kind: "PURCHASED", name: "กล่องนอก 40 × 60 × 30 ซม. (ลัง 40 ชุด)", uom: "pcs", active: false }, planner);
+  assert.equal(A.helpers.itemOf(d, "P-BOX-01").active, false);
+  // แก้ชิ้นงานโดยไม่ส่ง active = คงสถานะเดิม
+  A.saveItem(d, { code: "P-BOX-01", kind: "PURCHASED", name: "กล่องนอก ชื่อใหม่", uom: "pcs" }, planner);
+  assert.equal(A.helpers.itemOf(d, "P-BOX-01").active, false);
+  // BOM เดิมที่ใช้ชิ้นนี้ยังบันทึกซ้ำ/แก้ปริมาณอื่นได้
+  const before = approved(d, "DEMO-TP-01(P)-Y");
+  assert.ok(before.lines.some((line) => line.childCode === "P-BOX-01"));
+  const lines = before.lines.map((line) => ({ childCode: line.childCode, qty: line.childCode === "P-STK-01" ? 2 : line.qty, scrapPct: line.scrapPct, note: line.note }));
+  const saved = A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines, note: "แก้สติ๊กเกอร์" }, planner);
+  assert.equal(saved.changed, true);
+  assert.ok(approved(d, "DEMO-TP-01(P)-Y").lines.some((line) => line.childCode === "P-BOX-01"), "the retired item stays in the BOM");
+  // แต่เพิ่มเป็นบรรทัดใหม่ของ BOM อื่นไม่ได้
+  rejects(() => A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [...approved(d, "SE-TP01-OR01-100-18-65").lines.map((line) => ({ childCode: line.childCode, qty: line.qty })), { childCode: "P-BOX-01", qty: 1 }] }, planner), /P-BOX-01 เลิกใช้แล้ว/);
+  // ใบสั่งผลิต: สินค้าที่เลิกใช้เพิ่มเป็นรายการใหม่ไม่ได้ แต่รายการที่อยู่ในใบแล้วยังเพิ่มจำนวนได้
+  const orderId = A.createOrder(d, { customer: "A", country: "Thailand", orderedAt: day(0), whDue: day(10) }, planner);
+  A.addOrderItem(d, { orderId, fgCode: "DEMO-HL-24(B)-A", qty: 2 }, planner);
+  A.saveItem(d, { code: "DEMO-HL-24(B)-A", kind: "FG", name: "ห่วงฮูล่า HL-24 นิ้ว กล่อง ชุดสี A", uom: "set", active: false }, planner);
+  A.addOrderItem(d, { orderId, fgCode: "DEMO-HL-24(B)-A", qty: 1 }, planner);
+  assert.equal(d.orders.find((order) => order.id === orderId).items[0].qty, 3, "an item already on the order can still be added to");
+  const other = A.createOrder(d, { customer: "B", country: "Thailand", orderedAt: day(0), whDue: day(10) }, planner);
+  rejects(() => A.addOrderItem(d, { orderId: other, fgCode: "DEMO-HL-24(B)-A", qty: 1 }, planner), /เลิกใช้แล้ว/);
+  // ปล่อยผลิตใบที่ใช้ชิ้นที่เลิกใช้ได้ตามปกติ
+  assert.equal(A.releaseOrder(d, { orderId }, planner), orderId);
+  // เปิดใช้อีกครั้ง
+  A.saveItem(d, { code: "DEMO-HL-24(B)-A", kind: "FG", name: "ห่วงฮูล่า HL-24 นิ้ว กล่อง ชุดสี A", uom: "set", active: true }, planner);
+  assert.equal(A.helpers.itemOf(d, "DEMO-HL-24(B)-A").active, true);
+  assert.equal(A.addOrderItem(d, { orderId: other, fgCode: "DEMO-HL-24(B)-A", qty: 1 }, planner), other);
+  // เส้นยางที่ข้อมูลไม่ครบ เลิกใช้ได้ (เก็บของเสียออกจากตัวเลือก) แต่เปิดใช้อีกครั้งต้องแก้ให้ครบก่อน
+  A.saveItem(d, { code: "RB-BAD-1", kind: "RB", name: "เส้นเสีย", uom: "rod", rubber: { compound: "DM01" }, create: true }, planner);
+  A.helpers.itemOf(d, "RB-BAD-1").rubber = {};
+  A.saveItem(d, { code: "RB-BAD-1", kind: "RB", name: "เส้นเสีย", uom: "rod", active: false }, planner);
+  assert.equal(A.helpers.itemOf(d, "RB-BAD-1").active, false);
+  rejects(() => A.saveItem(d, { code: "RB-BAD-1", kind: "RB", name: "เส้นเสีย", uom: "rod", active: true }, planner), /ต้องระบุรหัสสูตรยาง/);
+});
+
+test("pasting from Excel: header detection, TSV and CSV, optional columns, bad quantities, duplicates", () => {
+  const tsv = rules.parseBomPaste("รหัส\tจำนวน\tหน่วย\t% เผื่อเสีย\tหมายเหตุ\nP-STK-01\t2\tชิ้น\t3\tติดกล่อง\nP-BOX-01\t0.5");
+  assert.equal(tsv.header, true);
+  assert.deepEqual(tsv.rows.map((row) => [row.line, row.code, row.qty, row.uom, row.scrapPct, row.note, row.error]), [[2, "P-STK-01", 2, "pcs", 3, "ติดกล่อง", ""], [3, "P-BOX-01", 0.5, "", 0, "", ""]]);
+  // ไม่มีแถวหัว: ตามลำดับ รหัส ปริมาณ หน่วย % หมายเหตุ · CSV · ตัวคั่นหลักพัน · รหัสพิมพ์เล็ก/มีช่องว่าง
+  const csv = rules.parseBomPaste("p-stk-01,1,pcs\n P-BOX-01 ,\"1,000\"");
+  assert.equal(csv.header, false);
+  assert.deepEqual(csv.rows.map((row) => [row.line, row.code, row.qty, row.error]), [[1, "P-STK-01", 1, ""], [2, "P-BOX-01", 1000, ""]]);
+  // แถวหัวที่ไม่รู้จักชื่อ: ช่องปริมาณของแถวแรกไม่ใช่ตัวเลขแต่แถวถัดไปใช่ = ข้ามแถวแรก
+  const unknown = rules.parseBomPaste("Part No\tQuantity per set\nA-1\t2");
+  assert.equal(unknown.header, true);
+  assert.deepEqual(unknown.rows.map((row) => [row.code, row.qty]), [["A-1", 2]]);
+  // ชื่อคอลัมน์อังกฤษ สลับลำดับ มีคอลัมน์ชื่อ
+  const english = rules.parseBomPaste("Qty\tName\tCode\tUOM\n4\tกล่องใหญ่\tp-new-1\tbox");
+  assert.deepEqual(english.rows.map((row) => [row.code, row.qty, row.name, row.uom]), [["P-NEW-1", 4, "กล่องใหญ่", "box"]]);
+  // ผิด: ไม่มีรหัส · ปริมาณไม่ใช่ตัวเลข/ศูนย์/ติดลบ · % ติดลบ · ซ้ำ
+  const bad = rules.parseBomPaste("A-1\t2\nA-2\tabc\nA-3\t0\nA-4\t-1\nA-5\t1\t\t-5\n\t3\nA-1\t5");
+  assert.deepEqual(bad.rows.map((row) => row.error), ["", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "% เผื่อเสียต้องเป็นตัวเลขไม่ติดลบ", "ไม่มีรหัสชิ้นงาน", "รหัสซ้ำกับบรรทัดก่อนหน้า (รวมปริมาณเป็นบรรทัดเดียว)"]);
+  assert.deepEqual(rules.parseBomPaste("").rows, []);
+  assert.equal(rules.parseBomPaste(Array.from({ length: 600 }, (_, i) => `X-${i}\t1`).join("\n")).rows.length, 500, "at most 500 lines are read");
+});
+
+test("deactivating sends active in the record the remote store diffs", () => {
+  const before = fresh();
+  const after = structuredClone(before);
+  A.saveItem(after, { code: "P-BOX-01", kind: "PURCHASED", name: "กล่องนอก 40 × 60 × 30 ซม. (ลัง 40 ชุด)", uom: "pcs", active: false }, ctx("planner"));
+  const changes = storeApi.diffMaster(before, after);
+  assert.deepEqual(Object.keys(changes), ["items"]);
+  assert.equal(changes.items.upsert.length, 1);
+  assert.equal(changes.items.upsert[0].code, "P-BOX-01");
+  assert.equal(changes.items.upsert[0].active, false);
+});

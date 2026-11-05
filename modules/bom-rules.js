@@ -20,6 +20,8 @@
     CP: { label: "สูตรยาง (คอมปาวด์)", dept: "RB" },
   });
   const MANUFACTURED = Object.freeze(["FG", "SE", "RB", "PT", "BG", "SUBPART"]);
+  // ชิ้นที่ต้องมี BOM ก่อนปล่อยผลิต (ระเบิดแล้วไม่มี BOM = ปล่อยไม่ได้): ชิ้นที่ผลิตเอง ยกเว้นเส้นยาง (มีได้แค่สูตรยางจาก RubberFlow) และชิ้นทำเอง
+  const NEEDS_BOM_KINDS = Object.freeze(MANUFACTURED.filter((kind) => !["SUBPART", "RB"].includes(kind)));
   // หมวดที่ผู้ใช้เลือกตอนสร้าง BOM (กลุ่มของชนิด): สินค้า · WIP · วัตถุดิบ · สูตรยาง
   // ชนิดเป็นตัวกำหนดพฤติกรรม (แผนก งาน ต้องมี BOM ไหม) หมวดจึงคำนวณจากชนิด ไม่เก็บแยก จะได้ไม่ขัดกัน
   const CATEGORIES = Object.freeze([
@@ -402,6 +404,76 @@
     return out;
   }
 
+  // ---------- วางหลายบรรทัดจาก Excel ลงตารางสร้าง BOM ----------
+  // อ่านข้อความที่ copy จากชีต (TSV หรือ CSV): คอลัมน์ รหัส · ปริมาณ · หน่วย · % เผื่อเสีย · หมายเหตุ (· ชื่อ เฉพาะเมื่อมีแถวหัว)
+  // มีแถวหัว (ชื่อคอลัมน์ไทย/อังกฤษที่รู้จัก) = จับคอลัมน์ตามชื่อ · ไม่มี = ตามลำดับข้างบน · แถวแรกที่ช่องปริมาณไม่ใช่ตัวเลขแต่แถวถัดไปเป็นตัวเลข ถือเป็นแถวหัวที่ไม่รู้จัก ข้ามไป
+  // คืน { header, truncated, rows: [{ line, code, qty, uom, scrapPct, note, name, error }] } error ว่าง = อ่านได้ (ยังไม่ตรวจกับ item master)
+  const PASTE_MAX_ROWS = 500;
+  const PASTE_HEADS = Object.freeze([["code", /^(code|part|รหัส)/i], ["qty", /^(qty|quantity|จำนวน|ปริมาณ)/i], ["uom", /^(uom|unit|หน่วย)/i], ["scrap", /^(scrap|%|เผื่อ)/i], ["note", /^(note|remark|หมายเหตุ)/i], ["name", /^(name|description|ชื่อ)/i]]);
+  const pasteNumber = (value) => {
+    const text = String(value ?? "").replace(/[,\s%]/g, "");
+    return text === "" ? NaN : Number(text);
+  };
+  function parseBomPaste(text) {
+    const cells = parseDelimited(text);
+    let map = { code: 0, qty: 1, uom: 2, scrap: 3, note: 4 };
+    let start = 0;
+    let header = false;
+    if (cells.length) {
+      const named = {};
+      cells[0].forEach((cell, index) => { const found = PASTE_HEADS.find(([key, pattern]) => named[key] === undefined && pattern.test(String(cell).trim())); if (found) named[found[0]] = index; });
+      if (named.code !== undefined && named.qty !== undefined && named.code !== named.qty) { map = named; start = 1; header = true; }
+      else if (cells.length > 1 && Number.isNaN(pasteNumber(cells[0][1])) && !Number.isNaN(pasteNumber(cells[1][1]))) { start = 1; header = true; }
+    }
+    const body = cells.slice(start);
+    const seen = new Set();
+    const rows = body.slice(0, PASTE_MAX_ROWS).map((row, index) => {
+      const at = (key) => (map[key] === undefined ? "" : String(row[map[key]] ?? "").trim());
+      const code = canonicalCode(at("code"));
+      const qty = pasteNumber(at("qty"));
+      const scrapText = at("scrap");
+      const scrapPct = scrapText === "" ? 0 : pasteNumber(scrapText);
+      const uomText = at("uom");
+      const uom = uomText && UOMS[uomText.toLowerCase()] ? uomText.toLowerCase() : uomText ? (normalizeUom(uomText).code !== "other" ? normalizeUom(uomText).code : "") : "";
+      let error = "";
+      if (!code || isBlankCode(code)) error = "ไม่มีรหัสชิ้นงาน";
+      else if (!Number.isFinite(qty) || qty <= 0) error = "ปริมาณต้องเป็นตัวเลขมากกว่า 0";
+      else if (!Number.isFinite(scrapPct) || scrapPct < 0) error = "% เผื่อเสียต้องเป็นตัวเลขไม่ติดลบ";
+      else if (seen.has(code)) error = "รหัสซ้ำกับบรรทัดก่อนหน้า (รวมปริมาณเป็นบรรทัดเดียว)";
+      if (code) seen.add(code);
+      return { line: start + index + 1, code, qty: Number.isFinite(qty) ? qty : 0, uom, scrapPct: Number.isFinite(scrapPct) ? scrapPct : 0, note: at("note").slice(0, 200), name: at("name").slice(0, 160), error };
+    });
+    return { header, truncated: body.length > PASTE_MAX_ROWS, rows };
+  }
+
+  // ---------- ตรวจข้อมูลก่อนปล่อยผลิต (หน้า "ตรวจข้อมูล") ----------
+  // คำนวณจากข้อมูลในหน้า ด้วยกฎเดียวกับ action: ชิ้นต้องผลิตที่ถูกใช้ใน BOM แล้วแต่ไม่มี BOM (ระเบิดแล้วเป็น noBom ปล่อยผลิตไม่ได้) ·
+  // เส้นยางไม่มีสูตรยาง (ช่องสูตร และ/หรือ บรรทัด CP) · สินค้าไม่มี BOM · หน่วย "หน่วยอื่น" · รหัสที่ระบบสร้างให้ (XP-)
+  // ชิ้นที่เลิกใช้ไม่ถูกนับ ยกเว้นกลุ่มแรกเพราะ BOM ที่ใช้อยู่ยังอ้างถึงมัน · อัตราส่วน RB ของ SE ที่ใช้ร่วมกันตรวจไม่ได้ (ไม่ได้เก็บหลังนำเข้า)
+  function auditMaster({ items = [], boms = [] }) {
+    const byCode = new Map(items.map((item) => [item.code, item]));
+    const approved = new Map();
+    for (const bom of boms) if (bom.status === "approved") approved.set(bom.itemCode, bom);
+    const usedIn = new Map();
+    for (const bom of approved.values()) for (const line of bom.lines) usedIn.set(line.childCode, [...(usedIn.get(line.childCode) ?? []), bom.itemCode]);
+    const out = { noBom: [], rbCompound: [], fgNoBom: [], uomOther: [], generated: [] };
+    for (const item of items) {
+      const bom = approved.get(item.code);
+      const parents = usedIn.get(item.code) ?? [];
+      if (item.kind !== "FG" && NEEDS_BOM_KINDS.includes(item.kind) && !bom && parents.length) out.noBom.push({ item, usedIn: parents });
+      if (item.active === false) continue;
+      if (item.kind === "FG" && !bom) out.fgNoBom.push({ item });
+      // เส้นยางที่ไม่รู้สูตรเลย (ไม่มีทั้งช่องสูตรและบรรทัด CP) · ช่องสูตรอย่างเดียวพอ: ข้อมูลที่นำเข้าจาก Excel ไม่มีบรรทัด CP และการปล่อยผลิตไม่ต้องใช้
+      if (item.kind === "RB" && !item.rubber?.compound && !bom?.lines.some((line) => byCode.get(line.childCode)?.kind === "CP")) {
+        out.rbCompound.push({ item, reasons: ["noCompound"] });
+      }
+      if (item.uom === "other") out.uomOther.push({ item });
+      if (/^XP-\d+/.test(item.code)) out.generated.push({ item });
+    }
+    for (const list of Object.values(out)) list.sort((a, b) => a.item.code.localeCompare(b.item.code));
+    return out;
+  }
+
   // ตัวเลือกเลข XP- ของชิ้นที่ไม่มีรหัสตอนนำเข้า · ในเครื่อง = นับชิ้น SUBPART + 1 (เหมือนเดิม)
   // โหมดฐานข้อมูล (ส่งรหัสสุ่ม suffix มา) = เลขสูงสุดของ XP- ที่มีอยู่ + 1 และต่อ -suffix: ผู้วางแผนสองคนที่นำเข้าจากเวอร์ชันเดียวกันจึงไม่ได้รหัสซ้ำกัน (ซ้ำ = BOM_STALE ทั้งชุดถูกย้อนกลับ)
   function subpartOptions(items, suffix = "") {
@@ -564,7 +636,7 @@
       if (level >= maxDepth) return;
       const bom = approvedBomOf(code);
       // RB ไม่บังคับมี BOM (มีได้เฉพาะบรรทัดสูตรยาง สูตร PHR อยู่ที่ RubberFlow) และชิ้นทำเองไม่บังคับมี BOM
-      if (!bom) { if (MANUFACTURED.includes(item.kind) && !["SUBPART", "RB"].includes(item.kind)) row.noBom = true; return; }
+      if (!bom) { if (NEEDS_BOM_KINDS.includes(item.kind)) row.noBom = true; return; }
       row.bomId = bom.id;
       row.revision = bom.revision;
       for (const line of bom.lines) {
@@ -844,11 +916,11 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, DEPTS, DEPT_LABEL, DUE_DEPTS, PROCESS_FLOW, flowStepOf, sortLinesByFlow, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
+    DAY, KINDS, MANUFACTURED, NEEDS_BOM_KINDS, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, DEPTS, DEPT_LABEL, DUE_DEPTS, PROCESS_FLOW, flowStepOf, sortLinesByFlow, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

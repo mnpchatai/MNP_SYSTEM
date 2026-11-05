@@ -2280,3 +2280,24 @@ test("customer names use one rule on both sides: inner whitespace collapses, the
 function setTimeout0(fn) {
   return setImmediate(fn);
 }
+
+test("deactivating and reactivating an item travels as active in the saved record, and an edit that does not mention it keeps the state", async () => {
+  const env = await ready(remoteStore());
+  await env.store.run("saveItem", saveItemPayload("P-TEST-01")).saving;
+  assert.equal(env.server.master.items[0].active, true);
+  const off = env.store.run("saveItem", { code: "P-TEST-01", kind: "PURCHASED", name: "ของซื้อทดสอบ", uom: "pcs", active: false });
+  assert.equal(off.ok, true);
+  assert.equal(env.store.data().items[0].active, false, "the page shows the change before the server answers");
+  assert.deepEqual(await off.saving, { ok: true });
+  const [, call] = env.server.saves;
+  assert.equal(call.action, "saveItem");
+  assert.deepEqual(Object.keys(call.changes), ["items"]);
+  assert.equal(call.changes.items.upsert[0].active, false);
+  assert.equal(env.server.master.items[0].active, false);
+  assert.deepEqual(call.audit.map((entry) => entry.action), ["แก้ชิ้นงาน"]);
+  await env.store.run("saveItem", { code: "P-TEST-01", kind: "PURCHASED", name: "ชื่อใหม่", uom: "pcs" }).saving;
+  assert.equal(env.server.master.items[0].active, false, "editing the name keeps it retired");
+  await env.store.run("saveItem", { code: "P-TEST-01", kind: "PURCHASED", name: "ชื่อใหม่", uom: "pcs", active: true }).saving;
+  assert.equal(env.server.master.items[0].active, true);
+  assert.equal(env.server.saves.at(-1).changes.items.upsert[0].active, true);
+});

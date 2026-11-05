@@ -2607,6 +2607,11 @@ tr.is-dragging td { background: var(--primary-soft); }
 tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
 .bom-step-cell { display: flex; align-items: center; gap: 2px; }
 .bom-drag-option { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--muted); }
+/* ตั้งต้นจากชิ้นอื่น / วางจาก Excel ในหน้าสร้าง BOM */
+.bom-tools { margin: 0 0 8px; }
+.bom-tools .bom-copy-src { flex: 1 1 260px; max-width: 420px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.bom-paste { display: grid; gap: 8px; margin: 0 0 12px; padding: 10px; border: 1px solid var(--line, #d8dde6); border-radius: var(--radius-sm); }
+.bom-paste .bom-paste-text { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
 /* ---- เป้ากดบนจอสัมผัส (หน้างาน: นิ้วสวมถุงมือ ตาม PRODUCT.md) ----
    จอสัมผัสหรือจอแคบ: ปุ่ม ตัวกรอง แท็บ ลิงก์ปุ่ม และปุ่มไอคอนสูงอย่างน้อย 44px
