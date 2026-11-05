@@ -9,7 +9,7 @@
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
   // ไอคอนของแต่ละหน้า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (modules/ui-icons.js ชุดเดียวกับระบบหลัก อ้างตอนวาด)
-  const ICONS = Object.freeze({ dashboard: "dashboard", build: "layers", items: "search", product: "factory", structure: "tree", variants: "palette", compounds: "flask", import: "download", orders: "clipboard", count: "hash", jobs: "wrench", audit: "history" });
+  const ICONS = Object.freeze({ dashboard: "dashboard", build: "layers", items: "search", product: "factory", structure: "tree", variants: "palette", compounds: "flask", import: "download", orders: "clipboard", customers: "building", count: "hash", jobs: "wrench", audit: "history" });
   pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${root.MNP_UI_ICONS.icon(ICONS[id])}</span>` : "");
   // ต้นทุนไม่ครบ (มีชิ้นข้างใต้ไม่มีราคา): ไอคอนเตือนหน้าราคา คำอธิบายอยู่ที่ title/aria-label
   const costWarn = () => `<span class="bom-cost-warn" role="img" title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา" aria-label="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">${root.MNP_UI_ICONS.icon("warning")}</span>`;
@@ -1575,7 +1575,7 @@
     const body = `<form id="bom-order-form" data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result}">
       <div class="rf-grid rf-g2">
         ${ui.field("เลขที่ PI", ui.input("pi", { placeholder: `ว่าง = ออกเลขอัตโนมัติ เช่น ${rules.piNumber(ctx.now, 1)}` }))}
-        ${ui.field("ชื่อลูกค้า *", ui.input("customer", { required: true }))}
+        ${ui.field("ชื่อลูกค้า *", `${ui.input("customer", { required: true, list: "bom-customer-list", extra: 'data-bom-customer title="เลือกจากรายการลูกค้า หรือพิมพ์ชื่อใหม่ ระบบเพิ่มเข้ารายการให้"' })}<datalist id="bom-customer-list">${customersOf(ctx).map((customer) => `<option value="${attr(customer.name)}">${esc(customer.country)}</option>`).join("")}</datalist>`)}
         ${ui.field("ประเทศ *", ui.input("country", { required: true, value: "Thailand", extra: "data-bom-country" }))}
         ${ui.field("ประเภทออร์เดอร์ *", ui.select("orderType", [{ value: "SA", label: "ในประเทศ (SA)" }, { value: "EX", label: "ต่างประเทศ (EX)" }], { value: "SA", extra: 'data-bom-ordertype title="เดาจากประเทศให้ (Thailand = ในประเทศ) แก้ทับได้"' }))}
         ${ui.field("วันที่สั่งผลิต *", ui.input("orderedAt", { type: "date", required: true, value: today }))}
@@ -1611,6 +1611,13 @@
       let typeChosen = false;
       typeSelect?.addEventListener("change", () => { typeChosen = true; });
       countryInput?.addEventListener("input", () => { if (typeSelect && !typeChosen) typeSelect.value = rules.orderTypeOf(countryInput.value); });
+      // เลือกลูกค้าที่มีอยู่: เติมประเทศและประเภทตามที่เก็บไว้ (ยังแก้ทับได้)
+      dialog.querySelector("[data-bom-customer]")?.addEventListener("change", (event) => {
+        const known = customersOf(ctx).find((customer) => ctx.helpers.customerKey(customer.name) === ctx.helpers.customerKey(event.target.value));
+        if (!known) return;
+        if (countryInput) countryInput.value = known.country;
+        if (typeSelect) { typeSelect.value = known.orderType; typeChosen = true; }
+      });
     };
     return { html: ui.dialog("orderNew", "เปิดใบสั่งผลิตใหม่", body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-form">เปิดใบ</button>` }), bind };
   };
@@ -1735,6 +1742,42 @@
     return { html: ui.dialog("stockCount", `นับคงคลัง ${item.code}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-stock-form">บันทึก</button>` }) };
   };
 
+  // ---------- ลูกค้า ----------
+  // รายการที่ใบสั่งผลิตใหม่เลือกจาก (ช่องชื่อลูกค้าในฟอร์มเปิดใบ) · เปิดใบด้วยชื่อใหม่ก็เพิ่มลูกค้าให้เอง ที่นี่เพิ่ม/แก้ประเทศ ประเภท และหมายเหตุได้ ชื่อเป็นกุญแจจึงไม่มีลบ
+  const customersOf = (ctx) => [...(ctx.data.customers ?? [])].sort((a, b) => a.name.localeCompare(b.name, "th"));
+  pages.customers = (ctx) => {
+    const { ui, user } = ctx;
+    const canEdit = ctx.helpers.canPlan(user);
+    const list = customersOf(ctx).filter((customer) => includes(`${customer.name} ${customer.country} ${customer.note ?? ""}`, ctx.q));
+    const rows = list.map((customer) => `<tr><td>${esc(customer.name)}</td><td>${esc(customer.country)}</td><td>${status(ctx, customer.orderType)}</td><td class="small muted">${esc(customer.note ?? "")}</td><td class="nowrap">${canEdit ? ui.openButton("แก้ไข", "customerEdit", { name: customer.name }, { className: "secondary small", ariaLabel: `แก้ไขลูกค้า ${customer.name}` }) : ""}</td></tr>`);
+    const html = `${head(ctx, "ลูกค้า", "รายการที่ใช้เลือกตอนเปิดใบสั่งผลิต", `${searchForm(ctx, "ค้นหาชื่อลูกค้าหรือประเทศ…")}${canEdit ? ui.openButton("เพิ่มลูกค้า", "customerEdit", {}, { className: "" }) : ""}`)}
+      ${canEdit ? "" : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว ฝ่ายวางแผนหรือผู้จัดการเพิ่ม/แก้ลูกค้า")}
+      ${ui.card(ui.table(["ชื่อลูกค้า", "ประเทศ", "ประเภท", "หมายเหตุ", ""], rows, { emptyText: "ยังไม่มีลูกค้า (เปิดใบสั่งผลิตด้วยชื่อใหม่ ระบบเพิ่มให้เอง)" }), { flush: true })}`;
+    return { html };
+  };
+  dialogs.customerEdit = (ctx, { name = "" }) => {
+    const { ui, rules } = ctx;
+    const customer = name ? customersOf(ctx).find((entry) => entry.name === name) : null;
+    if (name && !customer) return null;
+    const body = `<form id="bom-customer-form" data-rf-form="saveCustomer"${customer ? "" : ' data-rf-args="{&quot;create&quot;:true}"'} data-rf-success="บันทึกลูกค้า {result} แล้ว">
+      <div class="rf-grid rf-g2">
+        ${ui.field("ชื่อลูกค้า *", ui.input("name", { required: true, value: customer?.name ?? "", extra: customer ? 'maxlength="120" readonly title="ชื่อเป็นกุญแจของลูกค้า แก้ไม่ได้ (เพิ่มเป็นลูกค้าใหม่แทน)"' : 'maxlength="120"' }))}
+        ${ui.field("ประเทศ *", ui.input("country", { required: true, value: customer?.country ?? "Thailand", extra: "data-bom-country" }))}
+        ${ui.field("ประเภทออร์เดอร์ *", ui.select("orderType", [{ value: "SA", label: "ในประเทศ (SA)" }, { value: "EX", label: "ต่างประเทศ (EX)" }], { value: customer?.orderType ?? "SA", extra: 'data-bom-ordertype title="เดาจากประเทศให้ (Thailand = ในประเทศ) แก้ทับได้"' }))}
+      </div>
+      ${ui.field("หมายเหตุ", ui.input("note", { value: customer?.note ?? "", extra: 'maxlength="300"' }))}
+    </form>`;
+    // ประเภทเดาจากประเทศจนกว่าผู้ใช้จะเลือกเอง (เหมือนฟอร์มเปิดใบ) · ลูกค้าที่มีอยู่แล้วคงประเภทที่เก็บไว้
+    const bind = (dialog) => {
+      const countryInput = dialog.querySelector("[data-bom-country]");
+      const typeSelect = dialog.querySelector("[data-bom-ordertype]");
+      let typeChosen = Boolean(customer);
+      typeSelect?.addEventListener("change", () => { typeChosen = true; });
+      countryInput?.addEventListener("input", () => { if (typeSelect && !typeChosen) typeSelect.value = rules.orderTypeOf(countryInput.value); });
+    };
+    return { html: ui.dialog("customerEdit", customer ? `แก้ไขลูกค้า ${customer.name}` : "เพิ่มลูกค้า", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-customer-form">บันทึก</button>` }), bind };
+  };
+
   // ---------- นับคงคลังตามใบ (มือถือ) ----------
   // แทนใบตรวจสอบชิ้นงานคงคลัง (BOMASKSHEET) ที่พิมพ์ให้คลังนับแล้วฝ่ายวางแผนคีย์กลับ: คลังกรอกบนมือถือครั้งเดียว ยอดเข้าใบทันที
   // รายการตั้งต้นตามกฎใบตรวจสอบ (SE + RB) · all=1 แสดงทุกชิ้นในใบ · นับได้เฉพาะใบร่างที่ระเบิด BOM แล้ว (กติกาเดียวกับ setStockCount)
@@ -1795,7 +1838,7 @@
   // ---------- งานของแผนก ----------
   pages.jobs = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
-    const dept = [...rules.DEPTS, "ALL"].includes(params.get("dept")) ? params.get("dept") : (ctx.helpers.isBoss(user) ? "ALL" : myDept(ctx));
+    const dept = [...rules.DEPTS, "ALL"].includes(params.get("dept")) ? params.get("dept") : (ctx.helpers.canPlan(user) ? "ALL" : myDept(ctx));
     const show = ["open", "done", "all"].includes(params.get("st")) ? params.get("st") : "open";
     const jobs = data.jobs.filter((job) => (dept === "ALL" || job.dept === dept) && (show === "all" || (show === "done" ? job.status === "done" : job.status !== "done")) && includes(`${job.id} ${job.orderId} ${job.itemCode} ${job.name}`, ctx.q)).sort((a, b) => (a.status === "done") - (b.status === "done") || a.dueAt - b.dueAt);
     const tabs = ui.tabs([...rules.DEPTS, "ALL"].map((code) => ({ id: code, label: code === "ALL" ? "ทุกแผนก" : `${code} (${data.jobs.filter((job) => job.dept === code && job.status !== "done").length})` })), dept, (id) => ctx.url("jobs", { dept: id, st: show }));
@@ -1807,7 +1850,7 @@
       const buttons = [];
       if (canWork && job.status !== "done") buttons.push(ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
       if (canWork && job.status !== "done") buttons.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
-      if (job.dept === "RB" && job.status !== "done" && (canWork || user.role === "planner") && !job.externalRef) buttons.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
+      if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) buttons.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
       return `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${ui.mono(job.id)}<div class="small muted">${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId, tab: "jobs" }))} · ${esc(order?.customer ?? "")}</div></td>${dept === "ALL" ? `<td>${deptBadge(ctx, job.dept)}</td>` : ""}<td>${ui.link(job.itemCode, ctx.url("items", { sel: job.itemCode }), "rf-mono")}<div class="small muted">${esc(job.name)}${item?.rubber?.compound ? ` · สูตร ${esc(item.rubber.compound)}` : ""}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}${job.qtyRequired && job.qtyRequired !== job.qtyPlanned ? `<div class="small muted" title="ยอดที่ใบต้องการหลังหักคงคลังของชั้นบนแล้ว ก่อนหักคงคลังของชิ้นนี้">${esc(`ต้องการ ${rules.fmtQty(job.qtyRequired)}${job.stockCounted !== null && job.stockCounted !== undefined ? ` · คลัง ${rules.fmtQty(job.stockCounted)}` : ""}`)}</div>` : ""}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}${late(ctx, job) ? `<div class="small">${ui.badge("bad", "เลยกำหนด")}</div>` : ""}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}${job.externalRef.kg ? `<span class="muted"> · ${esc(rules.fmtQty(job.externalRef.kg, 2))} kg</span>` : ""}</div>` : ""}</td><td class="nowrap">${buttons.join(" ")}</td></tr>`;
     });
     const headCells = ["งาน / ใบ PI", ...(dept === "ALL" ? ["แผนก"] : []), "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ", ""];
@@ -1878,12 +1921,41 @@
   };
 
   // ---------- บันทึกการใช้งาน ----------
+  // โหมดฐานข้อมูล: อ่านจาก app_bom_audit (store.loadAudit ดึงเมื่อเปิดหน้าและหลังมีการบันทึก แล้ววาดหน้าใหม่ผ่าน event audit) · โหมดในเครื่อง: data.audit
+  // โหมดฐานข้อมูล: การกระทำและจำนวนเป็นสิ่งที่เซิร์ฟเวอร์บันทึกเอง (บรรทัดหลัก) · ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ
+  const AUDIT_ACTION_LABEL = Object.freeze({
+    saveItem: "บันทึกชิ้นงาน", saveBom: "บันทึก BOM", saveBomTree: "บันทึก BOM (ทั้งต้นไม้)", linkCompound: "ผูกสูตรยาง", importFlat: "นำเข้าจาก Excel",
+    saveColor: "บันทึกสี", saveColorSet: "บันทึกชุดสี", removeColorSet: "ลบชุดสี", learnColorSet: "เรียนรู้ชุดสี", savePackage: "บันทึกแพ็กเกจ", removePackage: "ลบแพ็กเกจ",
+    createVariant: "สร้างรุ่นสินค้า", saveRouting: "บันทึกขั้นตอนผลิตของชิ้นงาน", saveProcess: "บันทึกขั้นตอนผลิตมาตรฐาน", setItemCost: "ตั้งต้นทุน", setItemImage: "ตั้งรูปชิ้นงาน",
+    createOrder: "เปิดใบสั่งผลิต", addOrderItem: "เพิ่มสินค้าในใบ", removeOrderItem: "ลบสินค้าจากใบ", updateOrderItem: "แก้สินค้าในใบ", explodeOrder: "ระเบิด BOM",
+    releaseOrder: "ปล่อยผลิต", setStockCount: "นับคงคลัง", setStockCounts: "นับคงคลัง", cancelOrder: "ยกเลิกใบสั่งผลิต", completeOrder: "ปิดใบสั่งผลิต",
+    reportJob: "รายงานผลงาน", setJobStatus: "เปลี่ยนสถานะงาน", linkJobToRubberFlow: "ผูก WO ของ RubberFlow", saveCustomer: "บันทึกลูกค้า",
+  });
+  const AUDIT_SECTION_LABEL = Object.freeze({
+    items: "ชิ้นงาน", compounds: "สูตรยาง", colors: "สี", colorSets: "ชุดสี", packages: "แพ็กเกจ", boms: "BOM", processes: "ขั้นตอนผลิต", routings: "ขั้นตอนผลิตของชิ้นงาน",
+    customers: "ลูกค้า", orders: "ใบสั่งผลิต", jobs: "งาน",
+  });
+  // "jobs +3 -1, orders +1" (เซิร์ฟเวอร์เขียน) → "งาน +3 -1, ใบสั่งผลิต +1"
+  const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");
   pages.audit = (ctx) => {
-    const { data, ui, rules } = ctx;
-    const rows = data.audit.filter((entry) => includes(`${entry.user} ${entry.action} ${entry.detail}`, ctx.q)).slice(0, 300)
-      .map((entry) => `<tr><td class="nowrap small">${esc(rules.fmtDateTime(entry.at))}</td><td>${esc(entry.user)}</td><td>${esc(entry.action)}</td><td class="rf-mono small">${esc(entry.detail)}</td></tr>`);
-    const html = `${head(ctx, "บันทึกการใช้งาน", "ทุกการแก้ item master, BOM, ใบสั่งผลิต และงานรายแผนก พร้อมผู้ทำและเวลา", searchForm(ctx, "ค้นหาผู้ใช้ การกระทำ หรือรหัส…"))}
-      ${ui.card(ui.table(["เวลา", "ผู้ใช้", "การกระทำ", "รายละเอียด"], rows, { emptyText: "ไม่พบรายการ" }), { flush: true })}`;
+    const { data, ui, rules, store } = ctx;
+    store.loadAudit();
+    const view = store.audit();
+    const remote = store.isRemote();
+    const entries = remote ? view.entries : data.audit;
+    const noteOf = (entry) => (entry.entries ?? []).map((note) => `${note.action} ${note.detail}`.trim()).join(" · ");
+    const rows = entries.filter((entry) => includes(`${entry.user} ${entry.action} ${AUDIT_ACTION_LABEL[entry.action] ?? ""} ${entry.detail} ${noteOf(entry)}`, ctx.q)).slice(0, 300)
+      .map((entry) => {
+        const claimed = remote ? (entry.entries ?? []).map((note) => `${note.action}${note.detail ? ` — ${note.detail}` : ""}`) : [];
+        const notes = claimed.length ? `<div class="small muted" title="ข้อความที่ผู้บันทึกเขียนเอง ระบบไม่ได้ตรวจ">ผู้บันทึกระบุ: ${esc(claimed.join(" · "))}</div>` : "";
+        const detail = remote ? auditCounts(entry.detail) : entry.detail;
+        return `<tr><td class="nowrap small">${esc(rules.fmtDateTime(entry.at))}</td><td>${esc(entry.user)}</td><td>${esc(remote ? AUDIT_ACTION_LABEL[entry.action] ?? entry.action : entry.action)}</td><td class="rf-mono small">${esc(detail)}${notes}</td></tr>`;
+      });
+    const reload = store.isRemote() ? `<button class="btn rf-btn secondary" type="button" data-bom-audit-reload title="โหลดบันทึกการใช้งานล่าสุดจากฐานข้อมูล">โหลดใหม่</button>` : "";
+    const note = store.isRemote() && view.status === "error" ? ui.callout("warn", esc(view.error?.message ?? "โหลดบันทึกการใช้งานไม่สำเร็จ")) : "";
+    const emptyText = store.isRemote() && view.status === "loading" ? "กำลังโหลดบันทึกการใช้งาน…" : "ไม่พบรายการ";
+    const html = `${head(ctx, "บันทึกการใช้งาน", "ทุกการแก้ item master, BOM, ใบสั่งผลิต และงานรายแผนก พร้อมผู้ทำและเวลา", `${searchForm(ctx, "ค้นหาผู้ใช้ การกระทำ หรือรหัส…")}${reload}`)}
+      ${note}${ui.card(ui.table(["เวลา", "ผู้ใช้", "การกระทำ", "รายละเอียด"], rows, { emptyText }), { flush: true })}`;
     return { html };
   };
 })(typeof window !== "undefined" ? window : globalThis);
