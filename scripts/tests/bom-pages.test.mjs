@@ -514,6 +514,7 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   assert.match(sheetSelect.innerHTML, /EPLAN \(ซ่อน\)/);
   assert.equal(source.value, "Material_X 26001.xlsm");
   assert.match(paste.value, /^ITEM\tCODE\tNAME/);
+  assert.equal(paste.readOnly, true, "a sheet read from a file is shown as a preview, the check reads the kept text");
   assert.match(report.innerHTML, /อ่านได้ 2 บรรทัด/, "the sheet is checked right away");
   assert.doesNotMatch(report.innerHTML, /หน่วยที่แปลงไม่ได้/);
   sheetSelect.value = "MAIN";

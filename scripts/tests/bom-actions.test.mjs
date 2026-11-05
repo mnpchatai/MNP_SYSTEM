@@ -489,7 +489,7 @@ test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes
   rejects(() => A.importFlat(d, { items: [] }, ctx("planner")), /ไม่มีรายการ/);
   const itemsBefore = d.items.length;
   const { summary, ...stats } = A.importFlat(d, payload, ctx("planner"));
-  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1 }, "PT-00320 already has a BOM → skipped; P-STK-01 and PT-00320 merged");
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1, linesSkipped: 0 }, "PT-00320 already has a BOM → skipped; P-STK-01 and PT-00320 merged");
   assert.equal(summary, "ชิ้นงานใหม่ 4 (มีอยู่แล้ว 2) · BOM ใหม่ 2 ข้าม 1");
   assert.equal(d.items.length, itemsBefore + 4);
   const fg = approved(d, "IMP-01(P)-Y");
@@ -531,7 +531,7 @@ test("importing a whole DATA sheet (thousands of items, tens of thousands of lin
   const started = performance.now();
   const { summary, ...stats } = A.importFlat(d, { items, boms, source: "big.xlsx", group: "TOY" }, ctx("planner"));
   const elapsed = performance.now() - started;
-  assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
+  assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1, linesSkipped: 0 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
   assert.ok(elapsed < 5000, `importFlat took ${Math.round(elapsed)} ms`);
   assert.equal(summary, `ชิ้นงานใหม่ ${FG * 2 + 2300} (มีอยู่แล้ว 1) · BOM ใหม่ ${FG * 2} ข้าม 1`);
   const fg = approved(d, "BIG-0000(P)-Y");
@@ -540,6 +540,28 @@ test("importing a whole DATA sheet (thousands of items, tens of thousands of lin
   assert.deepEqual(fg.lines.slice(0, 2).map((line) => line.childCode), ["P-SHARED-0", "P-SHARED-1"], "lines sorted by flow: ST before GR");
   assert.equal(A.helpers.itemOf(d, "P-SHARED-0").name, "ชิ้นซื้อ 0", "the first copy of a repeated code wins");
   assert.equal(d.compounds.filter((entry) => /^CP\d$/.test(entry.code)).length, 7, "each new compound is added once");
+});
+
+test("importing skips the BOM lines the database rejects (a purchased parent, a rod with a child that is not a compound) instead of failing the whole sheet", () => {
+  // DATA BOM.xlsx จริง: B02-1001 เป็นของซื้อในสินค้าหนึ่งแต่มีผ้า/เทปเป็นลูกจากอีกสินค้า → ฐานข้อมูลตอบ BOM_INVALID_PARENT_KIND และย้อนกลับทั้ง 4,721 ชิ้น
+  const d = fresh();
+  const items = [
+    { code: "FG-KIND(P)-Y", kind: "FG", name: "สินค้า", uom: "set", ownerDept: "PK" },
+    { code: "P-BUY-1", kind: "PURCHASED", name: "สายสะพาย", uom: "pcs", ownerDept: "ST" },
+    { code: "P-BUY-2", kind: "PURCHASED", name: "ผ้า", uom: "m", ownerDept: "ST" },
+    { code: "RB-K-01-1-1-1", kind: "RB", name: "เส้นยาง", uom: "rod", ownerDept: "RB" },
+  ];
+  const boms = [
+    { parentCode: "FG-KIND(P)-Y", lines: [{ childCode: "RB-K-01-1-1-1", qty: 2 }, { childCode: "P-BUY-1", qty: 1 }] },
+    { parentCode: "P-BUY-1", lines: [{ childCode: "P-BUY-2", qty: 3 }] },
+    { parentCode: "RB-K-01-1-1-1", lines: [{ childCode: "P-BUY-2", qty: 1 }] },
+  ];
+  const { summary, ...stats } = A.importFlat(d, { items, boms, source: "kinds.xlsx" }, ctx("planner"));
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 1, bomsSkipped: 0, linesSkipped: 2 });
+  assert.match(summary, /ข้าม 2 บรรทัดที่ชนิดพ่อ\/ลูกไม่เข้ากัน$/);
+  assert.equal(approved(d, "P-BUY-1"), null, "a purchased part gets no BOM");
+  assert.equal(approved(d, "RB-K-01-1-1-1"), null, "a rod's only child may be a compound");
+  assert.deepEqual(approved(d, "FG-KIND(P)-Y").lines.map((line) => line.childCode), ["P-BUY-1", "RB-K-01-1-1-1"], "valid lines stay, sorted ST before RB");
 });
 
 test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {

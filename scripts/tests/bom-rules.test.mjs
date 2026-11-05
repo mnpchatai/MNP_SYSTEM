@@ -604,3 +604,24 @@ test("categories group the kinds (สินค้า / WIP / วัตถุด�
   assert.equal(rules.producerPair({ level: 2, kind: "CP" }, "RB"), "CP");
   assert.ok(rules.sheetOf("RB").pairs.includes("CP") && !rules.sheetOf("PK").pairs.includes("CP"), "only the RB sheet lists compound kilograms");
 });
+
+test("a code that is purchased in one product but made by a department in another becomes the made kind, and all-zero rows are not data", () => {
+  // DATA BOM.xlsx จริง: B02-1001 (สายสะพาย) เป็นคู่ PK-ST ในสินค้าแรกและ PK-BG ในสินค้าถัดไป ผ้า/เทปใต้มันทำให้ของซื้อมีส่วนประกอบ ซึ่งฐานข้อมูลไม่รับ
+  const tsv = ["ITEM\tCODE\tNAME\tรหัสแผนก\tแผนกผู้ผลิต\tจำนวนที่ใช้ต่อชุด\tหน่วยนับ",
+    "A-01(P)-Y\tA-01\tสินค้า A\tPK\tPK\t-\tชุด",
+    "A-01(P)-Y\tB02-9\tสายสะพาย\tST\tPK-ST\t1\tชิ้น/pcs",
+    "A-01(P)-Y\t0\t0\tSE\tSE\t0\tชิ้น/pcs",
+    "B-01(P)-Y\tB-01\tสินค้า B\tPK\tPK\t-\tชุด",
+    "B-01(P)-Y\tB02-9\tสายสะพาย\tST\tPK-BG\t1\tชิ้น/pcs",
+    "B-01(P)-Y\tC17-1\tผ้า\tST\tBG-ST\t0.5\tเมตร",
+  ].join("\n");
+  const flat = rules.readFlatRows(tsv);
+  assert.equal(flat.length, 5, "the row whose code and name are both 0 is skipped");
+  const { items, boms, report } = rules.buildFromFlat(flat, { group: "TOY" });
+  assert.equal(items.get("B02-9").kind, "BG");
+  assert.equal(items.get("B02-9").ownerDept, "BG");
+  assert.deepEqual(boms.get("B02-9").map((line) => line.childCode), ["C17-1"], "the fabric hangs under the bag");
+  assert.ok(report.conflicts.some((text) => text.startsWith("B02-9:") && text.includes("กระเป๋า")), "the kind change is reported");
+  assert.ok(!items.has("0"));
+  for (const [parentCode, lines] of boms) for (const line of lines) assert.equal(rules.childKindError(items.get(parentCode).kind, items.get(line.childCode).kind), "", `${parentCode} → ${line.childCode}`);
+});

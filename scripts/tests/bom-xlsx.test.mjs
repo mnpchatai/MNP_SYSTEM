@@ -103,3 +103,20 @@ test("reader limits: inflated size is counted (a lying declared size is caught),
 test("an empty text run (<t/>) adds nothing and does not swallow the next run", () => {
   assert.deepEqual(xlsx.sharedStrings("<sst><si><r><t/></r><r><t>abc</t></r></si><si><t/></si></sst>"), ["abc", ""]);
 });
+
+test("a long sheet is read in slices that hand control back to the browser, with exactly the rows of the one-shot parser", async () => {
+  const count = xlsx.ROWS_PER_SLICE * 3 + 7;
+  const many = Array.from({ length: count }, (_, r) => `<row r="${r + 1}"><c r="A${r + 1}"><v>${r}</v></c><c r="B${r + 1}" t="inlineStr"><is><t>แถว ${r}</t></is></c></row>`).join("");
+  const xml = `<worksheet><sheetData>${many}</sheetData></worksheet>`;
+  const workbook = await xlsx.openWorkbook(makeZip([
+    { name: "xl/workbook.xml", data: '<workbook><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>' },
+    { name: "xl/_rels/workbook.xml.rels", data: '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>' },
+    { name: "xl/worksheets/sheet1.xml", data: xml },
+  ]));
+  const rows = await workbook.rows("S");
+  assert.equal(rows.length, count);
+  assert.deepEqual([...rows], [...xlsx.sheetRows(xml, [])]);
+  assert.deepEqual(rows[count - 1], [String(count - 1), `แถว ${count - 1}`]);
+  assert.equal(rows.skippedCells, 0);
+  await xlsx.yieldToBrowser(); // resolves in node (MessageChannel) as well as in browsers
+});
