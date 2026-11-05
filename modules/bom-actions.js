@@ -45,7 +45,11 @@
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
   const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
 
-  const itemOf = (d, code) => d.items.find((item) => item.code === rules().canonicalCode(code)) ?? null;
+  // แปลงรหัสครั้งเดียวก่อนไล่หา (เดิมแปลงซ้ำทุกชิ้นที่ไล่ผ่าน) · งานที่ค้นเป็นพันครั้ง เช่น importFlat ใช้ดัชนี Map แทน
+  const itemOf = (d, code) => {
+    const key = rules().canonicalCode(code);
+    return d.items.find((item) => item.code === key) ?? null;
+  };
   const approvedBomOf = (d, code) => d.boms.find((bom) => bom.itemCode === code && bom.status === "approved") ?? null;
   const bomById = (d, id) => d.boms.find((bom) => bom.id === id) ?? fail("ไม่พบ BOM revision นี้");
   const orderById = (d, id) => d.orders.find((order) => order.id === id) ?? fail("ไม่พบใบสั่งผลิต");
@@ -368,28 +372,41 @@
     const boms = Array.isArray(p.boms) ? p.boms : [];
     if (!items.length) fail("ไม่มีรายการชิ้นงานให้นำเข้า");
     const stats = { itemsAdded: 0, itemsMerged: 0, bomsAdded: 0, bomsSkipped: 0 };
+    // ดัชนีครั้งเดียว: ชีต DATA ทั้งไฟล์มีหลายพันชิ้นและหลายหมื่นบรรทัด ถ้าไล่หาใน d.items ทุกบรรทัด (itemOf) หน้าค้างหลายนาที
+    // ผลเท่ากับ itemOf/approvedBomOf: ชิ้นแรกของรหัสนั้น · BOM อนุมัติของพ่อ · ของที่เพิ่มในคำสั่งนี้เข้าดัชนีทันที
+    const byCode = new Map();
+    for (const item of d.items) if (!byCode.has(item.code)) byCode.set(item.code, item);
+    const lookup = (code) => byCode.get(R.canonicalCode(code)) ?? null;
+    const approvedParents = new Set(d.boms.filter((bom) => bom.status === "approved").map((bom) => bom.itemCode));
+    const compoundCodes = new Set(d.compounds.map((entry) => entry.code));
     for (const raw of items) {
       const code = R.canonicalCode(raw.code);
       if (!code || !R.KINDS[raw.kind]) continue;
-      const existing = itemOf(d, code);
+      const existing = byCode.get(code) ?? null;
       if (existing) {
         for (const legacy of raw.legacyCodes ?? []) if (!existing.legacyCodes.includes(legacy)) existing.legacyCodes.push(legacy);
         if (!existing.weightG && raw.weightG) existing.weightG = raw.weightG;
         if (!existing.rubber && raw.rubber) existing.rubber = raw.rubber;
         stats.itemsMerged += 1;
       } else {
-        d.items.push({ code, kind: raw.kind, name: String(raw.name ?? code).slice(0, 160), ownerDept: R.DEPTS.includes(raw.ownerDept) ? raw.ownerDept : R.ownerDeptOf(raw.kind), uom: R.UOMS[raw.uom] ? raw.uom : "other", weightG: Number(raw.weightG) || 0, group: raw.group || p.group || "TOY", legacyCodes: [...(raw.legacyCodes ?? [])], rubber: raw.rubber ?? null, active: true, createdAt: ctx.now, importedFrom: p.source || "Excel" });
+        const added = { code, kind: raw.kind, name: String(raw.name ?? code).slice(0, 160), ownerDept: R.DEPTS.includes(raw.ownerDept) ? raw.ownerDept : R.ownerDeptOf(raw.kind), uom: R.UOMS[raw.uom] ? raw.uom : "other", weightG: Number(raw.weightG) || 0, group: raw.group || p.group || "TOY", legacyCodes: [...(raw.legacyCodes ?? [])], rubber: raw.rubber ?? null, active: true, createdAt: ctx.now, importedFrom: p.source || "Excel" };
+        d.items.push(added);
+        byCode.set(code, added);
         stats.itemsAdded += 1;
-        if (raw.rubber?.compound && !d.compounds.some((entry) => entry.code === raw.rubber.compound)) d.compounds.push({ code: raw.rubber.compound, name: raw.rubber.compound, recipeId: null, createdAt: ctx.now });
+        if (raw.rubber?.compound && !compoundCodes.has(raw.rubber.compound)) {
+          d.compounds.push({ code: raw.rubber.compound, name: raw.rubber.compound, recipeId: null, createdAt: ctx.now });
+          compoundCodes.add(raw.rubber.compound);
+        }
       }
     }
     for (const entry of boms) {
-      const parent = itemOf(d, entry.parentCode);
+      const parent = lookup(entry.parentCode);
       if (!parent || !Array.isArray(entry.lines) || !entry.lines.length) continue;
-      if (approvedBomOf(d, parent.code)) { stats.bomsSkipped += 1; continue; }
-      const lines = entry.lines.filter((line) => itemOf(d, line.childCode) && Number(line.qty) > 0).map((line) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: itemOf(d, line.childCode).uom, consumerDept: parent.ownerDept, producerDept: itemOf(d, line.childCode).ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
+      if (approvedParents.has(parent.code)) { stats.bomsSkipped += 1; continue; }
+      const lines = entry.lines.map((line) => ({ line, child: lookup(line.childCode) })).filter(({ line, child }) => child && Number(line.qty) > 0).map(({ line, child }) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: child.uom, consumerDept: parent.ownerDept, producerDept: child.ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
       if (!lines.length) continue;
-      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines: sortLines(d, lines), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
+      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines: R.sortLinesByFlow(lines, lookup), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
+      approvedParents.add(parent.code);
       stats.bomsAdded += 1;
     }
     const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}`;

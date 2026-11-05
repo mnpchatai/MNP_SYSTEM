@@ -507,6 +507,41 @@ test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes
   assert.equal(d.jobs.find((job) => job.orderId === id && job.dept === "RB").qtyPlanned, 4, "28 sets × 4 SE / 28 pieces per rod");
 });
 
+test("importing a whole DATA sheet (thousands of items, tens of thousands of lines) finishes quickly and keeps the same results", () => {
+  // ขนาดเท่าไฟล์ DATA BOM.xlsx จริง (ชีต DATA_TOY: ~4,700 ชิ้น ~2,800 BOM ~28,000 บรรทัด) · เดิมไล่หาใน d.items ทุกบรรทัด หน้าค้างหลายนาที
+  const d = fresh();
+  const FG = 1200;
+  const PER_FG = 22;
+  const items = [];
+  const boms = [];
+  for (let f = 0; f < FG; f += 1) {
+    const fg = `BIG-${String(f).padStart(4, "0")}(P)-Y`;
+    items.push({ code: fg, kind: "FG", name: fg, uom: "set", ownerDept: "PK" });
+    const se = `SE-BIG${f}-50-5-20`;
+    items.push({ code: se, kind: "SE", name: se, uom: "pcs", ownerDept: "GR" });
+    boms.push({ parentCode: se, lines: [{ childCode: "P-SHARED-0", qty: 1 }] });
+    const lines = [{ childCode: se, qty: 2 }];
+    for (let k = 0; k < PER_FG; k += 1) lines.push({ childCode: `P-SHARED-${(f + k) % 2300}`, qty: k + 1 });
+    lines.push({ childCode: "NOT-IN-PAYLOAD", qty: 1 }, { childCode: "P-SHARED-1", qty: 0 });
+    boms.push({ parentCode: fg, lines });
+  }
+  for (let s = 0; s < 2300; s += 1) items.push({ code: `P-SHARED-${s}`, kind: "PURCHASED", name: `ชิ้นซื้อ ${s}`, uom: "pcs", ownerDept: "ST", rubber: s % 50 === 0 ? { compound: `CP${s % 7}` } : null });
+  items.push({ code: "P-SHARED-0", kind: "PURCHASED", name: "ซ้ำในชุด", uom: "pcs", ownerDept: "ST" });
+  boms.push({ parentCode: "BIG-0000(P)-Y", lines: [{ childCode: "P-SHARED-5", qty: 9 }] });
+  const started = performance.now();
+  const { summary, ...stats } = A.importFlat(d, { items, boms, source: "big.xlsx", group: "TOY" }, ctx("planner"));
+  const elapsed = performance.now() - started;
+  assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
+  assert.ok(elapsed < 5000, `importFlat took ${Math.round(elapsed)} ms`);
+  assert.equal(summary, `ชิ้นงานใหม่ ${FG * 2 + 2300} (มีอยู่แล้ว 1) · BOM ใหม่ ${FG * 2} ข้าม 1`);
+  const fg = approved(d, "BIG-0000(P)-Y");
+  assert.equal(fg.lines.length, PER_FG + 1, "lines to unknown codes and zero quantities are dropped");
+  assert.equal(fg.lines.find((line) => line.childCode === "SE-BIG0-50-5-20").producerDept, "GR");
+  assert.deepEqual(fg.lines.slice(0, 2).map((line) => line.childCode), ["P-SHARED-0", "P-SHARED-1"], "lines sorted by flow: ST before GR");
+  assert.equal(A.helpers.itemOf(d, "P-SHARED-0").name, "ชิ้นซื้อ 0", "the first copy of a repeated code wins");
+  assert.equal(d.compounds.filter((entry) => /^CP\d$/.test(entry.code)).length, 7, "each new compound is added once");
+});
+
 test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {
   const d = fresh();
   const steps = (code) => A.helpers.routingOf(d, code)?.steps.map((step) => [step.processCode, step.minutesPerPc]);
