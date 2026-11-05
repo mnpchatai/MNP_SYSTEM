@@ -15,6 +15,13 @@ Project subagents live in `.claude/agents/`. AGENTS.md stays the single source o
 
 Workflow for a non-trivial change: plan, implement (`coder` or the main session), commit locally, `auditor`, fix the blocking findings, confirm with the user, push.
 
+Keep the number of pull requests small. A redesign of the static Pilot took 19 pull requests over two days (#286–#304), and most of that time went into the per-PR cycle rather than the work itself.
+
+- Plan one pull request per milestone or screen, not one per skill command (layout, clarify, harden, audit, polish) or per review finding. Work that touches the same files (`app.js`, `styles.css`, the `?v=` in `index.html`) goes on one branch, as several commits if needed.
+- Per pull request: one `auditor` round, one test link for the user, then a single confirmation that covers push, opening the pull request and merging after CI passes. Do not ask about Auto-fix on every pull request.
+- Before building anything that changes a business workflow (approval steps, who acts next, wording that ends up in the audit trail), confirm the rule with the user and check it against the real schema and data in `supabase/migrations/` and `supabase/seed.sql`, not only the harness mock.
+- Set the goal and the stop condition before starting. When a metric such as a design-critique score stops moving between rounds, report that and recommend stopping instead of starting another round. Run a full critique once at the end, not after every pull request.
+
 - Commit before running `auditor`. `scripts/ci/check-pr-guards.sh` only inspects committed state, so on uncommitted work its `?v=` and migration checks pass without checking anything.
 - Give `auditor` the task and the diff, not your own conclusion, so its read stays independent.
 - One `auditor` round per pull request. Fix its blocking findings. Put its non-blocking findings in the pull request description, or in a follow-up task, instead of fixing them in the same pull request, unless the defect was introduced by this change.
