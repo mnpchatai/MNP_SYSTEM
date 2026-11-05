@@ -365,6 +365,25 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     return role === "admin" || BOM_MANAGER_ROLES.includes(role) || department === "PP";
   }
   const bomCanon = (value) => (Array.isArray(value) ? `[${value.map(bomCanon).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => `${JSON.stringify(key)}:${bomCanon(value[key])}`).join(",")}}` : JSON.stringify(value) ?? "null");
+  // ฟิลด์ที่ฐานข้อมูลจริงเป็นเจ้าของ (เวลาที่สร้าง/แก้/อนุมัติ/ถูกแทนที่ และชื่อผู้บันทึก): ประทับใหม่ทับค่าที่ client ส่งมา ไม่เก็บระเบียนของ client ตรงๆ
+  // ระเบียนที่บันทึกจึงต่างจากที่ client เห็นก่อนบันทึกเหมือน RPC จริง (client ต้องไม่ถือว่า "เนื้อหาเปลี่ยน" คือมีผู้อื่นบันทึก)
+  function bomStamp(list, record, old) {
+    const at = now();
+    const who = `${ME.first_name ?? ""} ${ME.last_name ?? ""}`.trim();
+    const out = clone(record);
+    if (list === "items") { out.createdAt = old?.createdAt ?? at; out.updatedAt = at; }
+    else if (list === "compounds" || list === "colors") out.createdAt = old?.createdAt ?? at;
+    else if (list === "colorSets" || list === "packages") {
+      out.createdAt = old?.createdAt ?? at; out.createdBy = old?.createdBy ?? who;
+      out.updatedAt = at; out.updatedBy = who;
+    } else if (list === "boms" || list === "routings") {
+      out.createdAt = old?.createdAt ?? at; out.createdBy = old?.createdBy ?? who;
+      if (list === "boms") { out.approvedAt = old?.approvedAt ?? at; out.approvedBy = old?.approvedBy ?? who; }
+      if (out.status === "superseded") out.supersededAt = old?.status === "superseded" ? old.supersededAt : at;
+      else delete out.supersededAt;
+    }
+    return out;
+  }
   function bomApply(current, changes, base) {
     const next = clone(current);
     const nextVersion = current.version + 1;
@@ -393,16 +412,17 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           }
           // BOM และ routing ใหม่ของชิ้นที่ผู้อื่นเพิ่ง/แก้ revision ไว้หลัง base = ชน (ผู้บันทึกคนที่สองของ revision เดียวกัน)
           if ((list === "boms" || list === "routings") && next[list].some((row) => row.itemCode === record.itemCode && changedByOthers(list, idOf(row)))) fail("BOM_STALE");
-          next[list].push(record);
+          next[list].push(bomStamp(list, record, undefined));
         } else {
           if (changedByOthers(list, id)) fail("BOM_STALE");
           // BOM และ routing ที่บันทึกแล้วแก้ไม่ได้ นอกจากถูกแทนที่ (approved → superseded)
           if (list === "boms" || list === "routings") {
             const old = next[list][at];
-            const same = bomCanon({ ...old, status: 0, supersededAt: 0 }) === bomCanon({ ...record, status: 0, supersededAt: 0 });
+            const owned = { status: 0, supersededAt: 0, createdAt: 0, createdBy: 0, approvedAt: 0, approvedBy: 0 }; // ฟิลด์ที่ฐานข้อมูลเป็นเจ้าของ ไม่นับเป็นการแก้เนื้อหา
+            const same = bomCanon({ ...old, ...owned }) === bomCanon({ ...record, ...owned });
             if (!same || (old.status !== record.status && !(old.status === "approved" && record.status === "superseded"))) fail("BOM_INVALID_REVISION_IMMUTABLE");
           }
-          next[list][at] = record;
+          next[list][at] = bomStamp(list, record, next[list][at]);
         }
         stamp(list, id);
       }

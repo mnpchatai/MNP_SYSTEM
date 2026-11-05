@@ -31,6 +31,12 @@
     d.counters[key] = (d.counters[key] ?? 0) + 1;
     return `${key}-${String(d.counters[key]).padStart(4, "0")}`;
   }
+  // รหัส BOM / routing ที่ลงข้อมูลหลักร่วมกัน: โหมดฐานข้อมูล (store ส่ง ctx.idSuffix) ต่อท้ายด้วยรหัสสุ่มสั้นๆ เพราะตัวนับอยู่ในเครื่อง
+  // ผู้วางแผนสองคนที่เริ่มจากเวอร์ชันเดียวกันจึงไม่ได้เลขซ้ำกัน (ซ้ำ = ฐานข้อมูลตอบ BOM_STALE) · โหมดในเครื่องไม่มี ctx.idSuffix ใช้เลขนับล้วนเหมือนเดิม
+  function masterId(d, prefix, ctx) {
+    const id = nextId(d, prefix, ctx.now);
+    return typeof ctx.idSuffix === "function" ? `${id}-${ctx.idSuffix()}` : id;
+  }
 
   // ---------- สิทธิ์ (บทบาทสาธิต) ----------
   const isBoss = (user) => Boolean(user) && (user.role === "admin" || user.role === "manager");
@@ -176,7 +182,7 @@
     if (previous && sameLines(sortLines(d, previous.lines), lines)) return { id: previous.id, revision: previous.revision, changed: false };
     const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ/ขั้นที่)") : `สร้างใหม่ ${lines.length} บรรทัด`;
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
-    const bom = { id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }] }; // ฐานข้อมูลรับข้อความ changeLog ไม่เกิน 1,000 ตัวอักษร
+    const bom = { id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }] }; // ฐานข้อมูลรับข้อความ changeLog ไม่เกิน 1,000 ตัวอักษร
     d.boms.unshift(bom);
     audit(d, ctx, "บันทึก BOM", `${parent.code} Rev.${bom.revision}: ${changes}`);
     return { id: bom.id, revision: bom.revision, changed: true };
@@ -294,7 +300,7 @@
     if (!previous && !steps.length) fail("ใส่ขั้นตอนผลิตอย่างน้อย 1 ขั้น");
     if (previous && sameSteps(previous.steps, steps)) return { id: previous.id, revision: previous.revision, changed: false, summary: "ไม่มีการเปลี่ยนแปลง" };
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
-    const routing = { id: nextId(d, "RT", ctx.now), itemCode: item.code, revision: (previous?.revision ?? 0) + 1, status: "approved", steps, createdBy: user.name, createdAt: ctx.now };
+    const routing = { id: masterId(d, "RT", ctx), itemCode: item.code, revision: (previous?.revision ?? 0) + 1, status: "approved", steps, createdBy: user.name, createdAt: ctx.now };
     d.routings.unshift(routing);
     const text = steps.length ? steps.map((step) => `${step.processCode} ${rules().fmtNum(step.minutesPerPc)}`).join(" → ") : "ไม่มีขั้นตอน";
     audit(d, ctx, "บันทึกขั้นตอนผลิต", `${item.code} Rev.${routing.revision}: ${text}`);
@@ -383,7 +389,7 @@
       if (approvedBomOf(d, parent.code)) { stats.bomsSkipped += 1; continue; }
       const lines = entry.lines.filter((line) => itemOf(d, line.childCode) && Number(line.qty) > 0).map((line) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: itemOf(d, line.childCode).uom, consumerDept: parent.ownerDept, producerDept: itemOf(d, line.childCode).ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
       if (!lines.length) continue;
-      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines: sortLines(d, lines), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
+      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines: sortLines(d, lines), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
       stats.bomsAdded += 1;
     }
     const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}`;
@@ -584,7 +590,7 @@
         if (child?.kind === "RB" && childColor && !recolor) log.push(`${line.childCode} ใต้ ${toCode} คงสี ${childColor} (ไม่ใช่สี ${fromColors.join("/") || "-"} ของ SE เดิม)`);
         return { ...line, flags: [...(line.flags ?? [])], childCode: recolor ? ensureRecoloredItem(d, line.childCode, color, ctx, user, log) : line.childCode };
       });
-      d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines: sortLines(d, lines), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
+      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines: sortLines(d, lines), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
     }
     return toCode;
   }
@@ -637,7 +643,7 @@
       else merged.push(line);
     }
     d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`.slice(0, 160), ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
-    d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sortLines(d, merged), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
+    d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sortLines(d, merged), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
     audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}${log.length > 1 ? ` · ${log.slice(1).join(" · ")}` : ""}`);
   }
   // สร้างรุ่นสินค้า (ฐาน + แพ็กเกจ + ชุดสี) โดยไม่ต้องผ่านใบสั่งผลิต — จุดเดียวกับที่ addOrderItem ใช้

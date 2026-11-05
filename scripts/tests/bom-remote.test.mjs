@@ -15,6 +15,7 @@ globalThis.MNP_BOM_ACTIONS = A;
 const storeApi = require("../../modules/bom-store.js");
 
 const NOW = Date.parse("2026-11-05T10:00:00+07:00");
+const SERVER_AT = NOW + 60000;
 const MASTER = storeApi.MASTER_LISTS;
 const emptyMaster = () => ({ version: 0, ...Object.fromEntries(MASTER.map((list) => [list, []])) });
 const planner = { id: "p1", role: "planner", dept: "PK", name: "ณัฐพล บุญมา" };
@@ -36,6 +37,17 @@ function fakeServer(initial = emptyMaster()) {
       delete: server.graves.filter((grave) => grave.list === list && grave.version > since).map((grave) => ({ base: grave.base, code: grave.code })),
     }])),
   });
+  // ฟิลด์ที่ฐานข้อมูลเป็นเจ้าของ (เวลา/ผู้บันทึก) ประทับใหม่ทับค่าที่ client ส่ง เหมือน RPC จริง (เวลาของเซิร์ฟเวอร์ต่างจากเวลาของ client เสมอ)
+  const stampOwned = (list, record, old) => {
+    const out = structuredClone(record);
+    if (list === "items") { out.createdAt = old?.createdAt ?? SERVER_AT; out.updatedAt = SERVER_AT; }
+    if (list === "boms" || list === "routings") {
+      out.createdAt = old?.createdAt ?? SERVER_AT; out.createdBy = old?.createdBy ?? "เซิร์ฟเวอร์";
+      if (list === "boms") { out.approvedAt = old?.approvedAt ?? SERVER_AT; out.approvedBy = old?.approvedBy ?? "เซิร์ฟเวอร์"; }
+      if (out.status === "superseded") out.supersededAt = old?.status === "superseded" ? old.supersededAt : SERVER_AT; else delete out.supersededAt;
+    }
+    return out;
+  };
   // changes: { list: { upsert, delete } } → ธุรกรรมเดียว: ระเบียนที่แตะต้องไม่ถูกผู้อื่นแก้หลัง base · BOM ใหม่ของชิ้นที่มี revision ถูกแก้หลัง base = ชน
   function apply(changes, base) {
     const next = server.master.version + 1;
@@ -48,10 +60,10 @@ function fakeServer(initial = emptyMaster()) {
         if (at === -1) {
           if (server.graves.some((grave) => grave.list === list && `${grave.base}|${grave.code}` === id && grave.version > base)) throw failure("BOM_STALE");
           if ((list === "boms" || list === "routings") && server.master[list].some((row) => row.itemCode === record.itemCode && others(list, key[list](row)))) throw failure("BOM_STALE");
-          server.master[list].push(structuredClone(record));
+          server.master[list].push(stampOwned(list, record, undefined));
         } else {
           if (others(list, id)) throw failure("BOM_STALE");
-          server.master[list][at] = structuredClone(record);
+          server.master[list][at] = stampOwned(list, record, server.master[list][at]);
         }
         server.versions[list].set(id, next);
         mine.add(`${list}|${id}`);
@@ -283,7 +295,8 @@ test("a new BOM revision sends the superseded revision with it and numbers conti
   const sent = env.server.saves[0].changes.boms.upsert;
   assert.deepEqual(sent.map((bom) => `${bom.status}:${bom.revision}`).sort(), ["approved:2", "superseded:1"]);
   const created = sent.find((bom) => bom.status === "approved");
-  assert.match(created.id, /^BOM-\d\d-0042$/, "the new id does not collide with ids made on another machine");
+  assert.match(created.id, /^BOM-\d\d-0042-[0-9a-z]{6}$/, "the counter continues after the highest id on the server, with a random suffix so two planners never get the same id");
+  assert.match(created.id, /^[A-Za-z0-9._-]{1,40}$/, "and it passes the server id check");
   assert.equal(created.createdBy, planner.name, "display name of the persona");
 });
 
@@ -411,12 +424,12 @@ test("a stale save whose catch-up fails falls back to a full load; when that fai
   assert.equal(env.store.isSaving(), false);
 });
 
-test("the reply to a save carries other users' changes too: merged by key in server order, deletions removed, and the page is told to redraw only when it shows something new", async () => {
+test("the reply to a save carries other users' changes too: merged by key in server order, deletions removed, and the page is told about others only when the reply holds records it did not send", async () => {
   const server = fakeServer();
   server.master.colorSets.push({ base: "X", code: "A", slots: [] }, { base: "X", code: "B", slots: [] });
   const env = await ready(remoteStore({ server }));
   const seen = [];
-  env.store.subscribe((event) => { if (event.type === "saved") seen.push(event.changed); });
+  env.store.subscribe((event) => { if (event.type === "saved") seen.push([event.changed, event.others]); });
   // ผู้อื่นเพิ่มชิ้น ลบชุดสี และแก้ชิ้นเดิมไปแล้ว
   server.external({ items: { upsert: [otherItem("P-ZZZ"), otherItem("P-AAA")] } });
   server.external({ colorSets: { delete: [{ base: "X", code: "A" }] } });
@@ -424,10 +437,11 @@ test("the reply to a save carries other users' changes too: merged by key in ser
   assert.deepEqual(env.store.data().items.map((item) => item.code), ["P-AAA", "P-MID", "P-ZZZ"], "merged by key, sorted like the database");
   assert.deepEqual(env.store.data().colorSets.map((set) => set.code), ["B"], "their deletion reached this page without a reload");
   assert.equal(env.server.loads, 1, "one load at the start, none after");
-  assert.deepEqual(seen, [true], "something new was shown");
+  assert.deepEqual(seen, [[true, true]], "something new was shown, and it came from others");
   assert.equal(env.store.version(), server.master.version);
   await env.store.run("saveItem", { code: "P-MID", kind: "PURCHASED", name: "ชื่อใหม่", uom: "pcs" }).saving;
-  assert.deepEqual(seen, [true, false], "a reply that only holds this page's own change does not redraw");
+  assert.deepEqual(seen, [[true, true], [true, false]], "a reply that only holds this page's own record (re-stamped by the database) is not reported as others' work");
+  assert.equal(env.store.data().items.find((item) => item.code === "P-MID").updatedAt, SERVER_AT, "the server's stamp replaced the client's");
   assert.deepEqual(env.store.data().items.map((item) => item.name), ["ของเครื่องอื่น", "ชื่อใหม่", "ของเครื่องอื่น"]);
 });
 
@@ -525,15 +539,15 @@ test("catching up is skipped while a save is in flight or nothing is loaded, and
   assert.equal(failing.store.status(), "ready");
 });
 
-test("when the server answers with other data than the page shows, the page is told to redraw; the same data is silent", async () => {
+test("when the server answers with other data than the page shows, the page is told to redraw; re-stamped records of this save are never reported as others' work", async () => {
   const env = await ready(remoteStore());
   const quiet = env.store.run("saveItem", saveItemPayload("P-QUIET"));
   await quiet.saving;
   assert.equal(env.events.filter((type) => type === "saved").length, 1);
   const seen = [];
-  env.store.subscribe((event) => { if (event.type === "saved") seen.push(event.changed); });
+  env.store.subscribe((event) => { if (event.type === "saved") seen.push([event.changed, event.others]); });
   await env.store.run("saveItem", { code: "P-QUIET", kind: "PURCHASED", name: "ชื่อ", uom: "pcs" }).saving;
-  assert.deepEqual(seen, [false]);
+  assert.deepEqual(seen, [[true, false]]);
   const original = env.server.remote.save;
   env.server.remote.save = async (...args) => {
     const reply = await original(...args);
@@ -541,7 +555,7 @@ test("when the server answers with other data than the page shows, the page is t
     return reply;
   };
   await env.store.run("saveItem", { code: "P-QUIET", kind: "PURCHASED", name: "ชื่อ 2", uom: "pcs" }).saving;
-  assert.deepEqual(seen, [false, true]);
+  assert.deepEqual(seen, [[true, false], [true, false]]);
   assert.equal(env.store.data().items[0].name, "ปรับโดยฐานข้อมูล");
 });
 
@@ -612,6 +626,110 @@ test("a whole sheet import is one save call, and reset only clears the local lis
   assert.equal(env.store.data().items.length, built.items.size, "master data is not touched by reset");
 });
 
+test("two planners starting from the same version never generate the same BOM or routing id, so unrelated saves both succeed", async () => {
+  const server = fakeServer();
+  const part = (code, kind) => ({ code, kind, name: code, ownerDept: kind === "FG" ? "PK" : "ST", uom: kind === "FG" ? "set" : "pcs", weightG: 0, legacyCodes: [], active: true });
+  server.master.items.push(part("FG-X", "FG"), part("FG-Y", "FG"), part("P-X", "PURCHASED"));
+  server.master.processes.push({ code: "BG-01", name: "เย็บ", dept: "BG" }); // ขั้นตอนมาตรฐานมีอยู่แล้ว: สองคนสร้างขั้นตอนเดียวกันพร้อมกันเป็นการชนอีกเรื่อง
+  const a = await ready(remoteStore({ server }));
+  const b = await ready(remoteStore({ server, user: { ...planner, id: "p2", name: "คนที่สอง" } }));
+  // ทั้งสองเครื่องโหลดที่เวอร์ชัน 0 และตัวนับเริ่มเท่ากัน · A บันทึกก่อน แล้ว B บันทึกอีกชิ้นจากเวอร์ชันเดิมโดยไม่ได้ตามทัน
+  const outA = a.store.run("saveBom", { itemCode: "FG-X", lines: [{ childCode: "P-X", qty: 1 }] });
+  const outB = b.store.run("saveBom", { itemCode: "FG-Y", lines: [{ childCode: "P-X", qty: 2 }] });
+  assert.equal(outA.ok && outB.ok, true);
+  assert.deepEqual(await outA.saving, { ok: true });
+  assert.deepEqual(await outB.saving, { ok: true }, "B's BOM is saved: A touched another product and the ids differ");
+  const [idA, idB] = [server.saves[0].changes.boms.upsert[0].id, server.saves[1].changes.boms.upsert[0].id];
+  assert.notEqual(idA, idB);
+  assert.equal(idA.replace(/-[0-9a-z]{6}$/, ""), idB.replace(/-[0-9a-z]{6}$/, ""), "the readable counter part is the same on both machines");
+  for (const id of [idA, idB]) assert.match(id, /^BOM-\d\d-0001-[0-9a-z]{6}$/);
+  assert.deepEqual(server.master.boms.map((bom) => bom.itemCode).sort(), ["FG-X", "FG-Y"], "B's work is not reverted");
+
+  // routing: ขั้นตอนผลิตของสองชิ้นจากเวอร์ชันเดียวกันก็ได้รหัสไม่ซ้ำ
+  const c = await ready(remoteStore({ server }));
+  const d = await ready(remoteStore({ server, user: { ...planner, id: "p3", name: "คนที่สาม" } }));
+  const outC = c.store.run("saveRouting", { itemCode: "FG-X", steps: [{ processCode: "BG-01", minutesPerPc: 2 }] });
+  const outD = d.store.run("saveRouting", { itemCode: "FG-Y", steps: [{ processCode: "BG-01", minutesPerPc: 3 }] });
+  assert.equal(outC.ok && outD.ok, true, outC.error?.message ?? outD.error?.message);
+  assert.deepEqual(await outC.saving, { ok: true });
+  assert.deepEqual(await outD.saving, { ok: true });
+  assert.notEqual(server.saves.at(-2).changes.routings.upsert[0].id, server.saves.at(-1).changes.routings.upsert[0].id);
+  assert.match(server.saves.at(-1).changes.routings.upsert[0].id, /^RT-\d\d-0001-[0-9a-z]{6}$/);
+
+  // ตัวนับยังอ่านเลขจากรหัสที่มีรหัสสุ่มต่อท้าย
+  const e = await ready(remoteStore({ server }));
+  await e.store.run("saveBom", { itemCode: "FG-X", lines: [{ childCode: "P-X", qty: 5 }] }).saving;
+  assert.match(server.saves.at(-1).changes.boms.upsert.find((bom) => bom.status === "approved").id, /^BOM-\d\d-0002-[0-9a-z]{6}$/, "continues after the highest counter on the server");
+});
+
+test("while the user has a form open the catch-up does not merge or move the base version: it notes that newer data exists once, and the save is checked against the old base", async () => {
+  const server = fakeServer();
+  const a = await ready(remoteStore({ server }));
+  const b = await ready(remoteStore({ server, user: { ...planner, id: "p2", name: "คนที่สอง" } }));
+  await a.store.run("saveItem", saveItemPayload("P-SAME", { name: "ของ A" })).saving;
+
+  assert.equal(await b.store.catchUp(() => true), false, "held");
+  assert.equal(b.store.version(), 0, "the base version did not move");
+  assert.deepEqual(b.store.data().items, [], "and nothing was merged into the data under the open form");
+  assert.equal(b.store.hasNewer(), true);
+  assert.equal(await b.store.catchUp(() => true), false);
+  assert.equal(b.events.filter((type) => type === "pending").length, 1, "the page is told once, not on every focus");
+  assert.equal(b.events.includes("synced"), false);
+
+  // ฟอร์มที่เปิดค้างไว้บันทึก: ส่งไปพร้อมเวอร์ชันฐานเดิม ฐานข้อมูลจึงเห็นว่าชิ้นนี้ถูก A แก้ไปแล้ว
+  const out = b.store.run("saveItem", saveItemPayload("P-SAME", { name: "ของ B" }));
+  assert.equal(out.ok, true);
+  assert.equal(server.saves.at(-1).baseVersion, 0, "sent with the version the form was drawn from");
+  const result = await out.saving;
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "BOM_STALE", "A's change is not overwritten silently");
+  assert.equal(server.master.items[0].name, "ของ A");
+  assert.equal(b.store.data().items[0].name, "ของ A", "B now sees A's version");
+  assert.equal(b.store.hasNewer(), false, "caught up by the conflict reply");
+
+  // บันทึกชิ้นอื่นจากฐานเดิม: สำเร็จ และคำตอบพาของผู้อื่นมาให้ด้วย (แจ้งว่าเป็นของผู้อื่น)
+  const c = await ready(remoteStore({ server: fakeServer() }));
+  const d = await ready(remoteStore({ server: c.server, user: { ...planner, id: "p4", name: "คนที่สี่" } }));
+  await c.store.run("saveItem", saveItemPayload("P-FROM-C")).saving;
+  assert.equal(await d.store.catchUp(() => true), false);
+  assert.equal(d.store.hasNewer(), true);
+  const saw = [];
+  d.store.subscribe((event) => { if (event.type === "saved") saw.push(event.others); });
+  assert.equal((await d.store.run("saveItem", saveItemPayload("P-FROM-D")).saving).ok, true);
+  assert.deepEqual(d.store.data().items.map((item) => item.code), ["P-FROM-C", "P-FROM-D"], "the reply brought everything since the old base");
+  assert.deepEqual(saw, [true]);
+  assert.equal(d.store.hasNewer(), false);
+
+  // ไม่มีอะไรใหม่ = ไม่แจ้ง · ไม่มีฟอร์มค้างแล้ว = รวมตามปกติ
+  assert.equal(await d.store.catchUp(() => true), false);
+  assert.equal(d.events.filter((type) => type === "pending").length, 1, "nothing newer, no notice");
+  c.server.external({ items: { upsert: [otherItem("P-LATE")] } });
+  assert.equal(await d.store.catchUp(() => false), true);
+  assert.deepEqual(d.store.data().items.map((item) => item.code), ["P-FROM-C", "P-FROM-D", "P-LATE"]);
+});
+
+test("a catch-up that finds the page's version ahead of the database falls back to a full load, unless a form is open", async () => {
+  const server = fakeServer();
+  const env = await ready(remoteStore({ server }));
+  server.external({ items: { upsert: [otherItem("P-OLD")] } });
+  assert.equal(await env.store.catchUp(), true);
+  assert.equal(env.store.version(), 1);
+  // ล้างข้อมูลทดสอบฝั่งฐานข้อมูล: เวอร์ชันกลับไปเป็น 0
+  server.master = emptyMaster();
+  server.versions = Object.fromEntries(MASTER.map((list) => [list, new Map()]));
+  server.master.items.push(otherItem("P-NEW"));
+  server.versions.items.set("P-NEW", 0);
+  const loads = server.loads;
+  assert.equal(await env.store.catchUp(() => true), false, "a form is open: nothing is replaced under it");
+  assert.equal(server.loads, loads);
+  assert.equal(await env.store.catchUp(), true);
+  assert.equal(server.loads, loads + 1, "the full snapshot was loaded");
+  assert.deepEqual(env.store.data().items.map((item) => item.code), ["P-NEW"]);
+  assert.equal(env.store.version(), 0);
+  assert.equal(env.store.status(), "ready", "the page never went back to the loading state");
+  assert.equal(env.events.includes("synced"), true);
+});
+
 // ---------- โมดูลทั้งชุดบน Supabase จำลองของ harness ----------
 const FILES = [
   "modules/ui-icons.js",
@@ -637,7 +755,7 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
-    document: { querySelector: () => node(), querySelectorAll: () => [], body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
+    document: { querySelector: () => node(), querySelectorAll: (selector) => (selector === "dialog[open]" && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
     addEventListener: (type, fn) => hooks.onWindow?.(type, fn),
     localStorage: storage, FormData: class { entries() { return []; } }, MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,
   });
@@ -830,7 +948,7 @@ test("the mock database keeps its data, record versions and tombstones in the pa
   const second = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const { data } = await second.client.rpc("app_bom_master");
   assert.equal(data.version, 2);
-  assert.deepEqual(data.compounds, [{ code: "DM01", name: "x" }]);
+  assert.deepEqual(data.compounds, [{ code: "DM01", name: "x", createdAt: NOW }], "server-owned fields are stamped by the database");
   assert.equal("versions" in data || "tombstones" in data, false, "the snapshot never shows the bookkeeping");
   const delta = (await second.client.rpc("app_bom_master_since", { p_version: 1 })).data;
   assert.deepEqual(delta.changes.colorSets.delete, [{ base: "X", code: "A" }], "the tombstone survives a reload");
@@ -886,6 +1004,123 @@ test("a persona who may not write sees read-only pages and a save is refused by 
   assert.equal(failed.ok, false);
   assert.match(failed.error.message, /ไม่มีสิทธิ์แก้ข้อมูล BOM/);
   assert.equal(asPlanner.store.data().items.length, 0, "reverted");
+});
+
+// ---------- ฟอร์มที่แก้ค้าง: catch-up ต้องไม่รวมข้อมูลของผู้อื่นหรือขยับเวอร์ชันฐานใต้ฟอร์ม ----------
+async function dirtyEnv(hooks = {}) {
+  const handlers = {};
+  const add = (type, fn) => (handlers[type] ??= []).push(fn);
+  const env = await pageEnv({ hooks: { onWindow: add, onDocument: add, ...hooks } });
+  await env.store.ensureLoaded();
+  // event ของเบราว์เซอร์: target.closest ตอบตามตารางที่ให้ (".content" มีเสมอ) · fire ส่งให้ทุก listener ที่หน้าลงทะเบียนไว้แล้วรอให้งานค้างจบ
+  const event = (type, { trusted = true, inside = {}, extra = {} } = {}) => ({ type, isTrusted: trusted, target: { closest: (selector) => (selector === ".content" ? {} : selector.includes("[data-rf-search]") ? inside.search ?? null : inside[selector] ?? null) }, ...extra });
+  const fire = async (type, ev) => { for (const fn of handlers[type] ?? []) fn(ev ?? { type }); await new Promise((resolve) => setTimeout0(resolve)); };
+  const othersSave = (code) => env.mock.client.rpc("app_bom_save_master", { p_changes: { items: { upsert: [{ code, kind: "PURCHASED", name: "ของคนอื่น", ownerDept: "ST", uom: "pcs", weightG: 0, legacyCodes: [], active: true }] } }, p_base_version: 0, p_action: "saveItem" });
+  return Object.assign(env, { handlers, event, fire, othersSave });
+}
+const NOTICE = /ระบบจะรวมข้อมูลล่าสุดให้/;
+
+test("a form with unsaved edits holds the catch-up: no merge, no redraw, the base version stays, one notice; the save is then checked against that base and the conflict is found", async () => {
+  const env = await dirtyEnv();
+  assert.equal((await env.othersSave("P-SAME")).error, null);
+  const renders = env.log.renders;
+  // แถวที่ลบ/ลากในตารางสร้าง BOM มีแต่ใน DOM: เหลือโฟกัสที่ body แล้ว ต้องนับจาก event ที่ส่งจริง
+  await env.fire("click", env.event("click", { inside: { button: { type: "button" } } }));
+  await env.fire("focus");
+  assert.equal(env.store.version(), 0, "the base version did not move under the open form");
+  assert.deepEqual(env.store.data().items, []);
+  assert.equal(env.log.renders, renders, "and nothing was redrawn over it");
+  assert.equal(env.store.hasNewer(), true);
+  assert.equal(env.log.toasts.filter(([message]) => NOTICE.test(message)).length, 1, "one small notice in Thai");
+  await env.fire("focus");
+  await env.fire("visibilitychange");
+  assert.equal(env.log.toasts.filter(([message]) => NOTICE.test(message)).length, 1, "not repeated on every focus");
+
+  // บันทึกจากฟอร์มเดิม (ชิ้นเดียวกับที่ผู้อื่นแก้) → ฐานข้อมูลเห็นว่าชน
+  const out = env.store.run("saveItem", saveItemPayload("P-SAME"));
+  assert.equal(out.ok, true);
+  const saved = await out.saving;
+  assert.equal(saved.ok, false);
+  assert.equal(saved.error.code, "BOM_STALE", "the other user's record is not overwritten silently");
+  assert.deepEqual(Array.from(env.store.data().items, (item) => item.name), ["ของคนอื่น"]);
+  assert.equal(env.store.hasNewer(), false);
+});
+
+test("every kind of edit marks the page dirty (typing, a row button, a drag handle by pointer or keyboard); scripted events, the search box and submit buttons do not", async () => {
+  const edits = {
+    "typing": ["input", { inside: {} }],
+    "a select": ["change", { inside: {} }],
+    "a button inside the form": ["click", { inside: { button: { type: "button" } } }],
+    "dragging a row handle": ["pointerdown", { inside: { "[data-drag-handle]": {} }, extra: { button: 0 } }],
+    "moving a row by keyboard": ["keydown", { inside: { "[data-drag-handle]": {} }, extra: { key: "ArrowDown" } }],
+  };
+  for (const [name, [type, options]] of Object.entries(edits)) {
+    const env = await dirtyEnv();
+    await env.othersSave("P-X");
+    await env.fire(type, env.event(type, options));
+    await env.fire("focus");
+    assert.equal(env.store.version(), 0, `${name}: the page is dirty, so nothing was merged`);
+    assert.equal(env.store.hasNewer(), true, name);
+  }
+  const noEdits = {
+    "a scripted (untrusted) event": ["input", { trusted: false, inside: {} }],
+    "the search box": ["input", { inside: { search: {} } }],
+    "a submit button": ["click", { inside: { button: { type: "submit" } } }],
+    "a pointer on something that is not a handle": ["pointerdown", { inside: {}, extra: { button: 0 } }],
+    "another key on a handle": ["keydown", { inside: { "[data-drag-handle]": {} }, extra: { key: "Tab" } }],
+  };
+  for (const [name, [type, options]] of Object.entries(noEdits)) {
+    const env = await dirtyEnv();
+    await env.othersSave("P-X");
+    const renders = env.log.renders;
+    await env.fire(type, env.event(type, options));
+    await env.fire("focus");
+    assert.deepEqual(Array.from(env.store.data().items, (item) => item.code), ["P-X"], `${name}: nothing is being edited, so the catch-up merged`);
+    assert.equal(env.log.renders, renders + 1, name);
+  }
+});
+
+test("an open dialog holds the catch-up even before anything is typed, and the notice is not shown for an update with nothing new", async () => {
+  let dialog = true;
+  const env = await dirtyEnv({ dialogOpen: () => dialog });
+  await env.fire("focus");
+  assert.deepEqual(env.log.toasts, [], "nothing newer: no notice");
+  await env.othersSave("P-D");
+  await env.fire("focus");
+  assert.equal(env.store.version(), 0);
+  assert.deepEqual(env.store.data().items, []);
+  assert.equal(env.store.hasNewer(), true);
+  dialog = false;
+  await env.fire("focus");
+  assert.deepEqual(Array.from(env.store.data().items, (item) => item.code), ["P-D"], "once the dialog is closed the next focus merges as before");
+  assert.equal(env.store.hasNewer(), false);
+});
+
+test("drawing a fresh page clears the dirty state and merges what was held", async () => {
+  const env = await dirtyEnv();
+  await env.othersSave("P-HELD");
+  await env.fire("input", env.event("input"));
+  await env.fire("focus");
+  assert.equal(env.store.hasNewer(), true);
+  const renders = env.log.renders;
+  await env.render();
+  await new Promise((resolve) => setTimeout0(resolve));
+  assert.deepEqual(Array.from(env.store.data().items, (item) => item.code), ["P-HELD"], "the fresh page has no form to protect, so the held data is merged");
+  assert.equal(env.store.hasNewer(), false);
+  assert.equal(env.log.renders, renders + 1, "and drawn once");
+});
+
+test("the server re-stamps a saved record: the user's own save is not reported as someone else's update and draws silently", async () => {
+  const env = await dirtyEnv();
+  const outcomes = [];
+  env.store.subscribe((e) => { if (e.type === "saved") outcomes.push([e.changed, e.others]); });
+  const out = env.store.run("saveItem", saveItemPayload("P-MINE"));
+  assert.equal((await out.saving).ok, true);
+  assert.deepEqual(outcomes, [[true, false]], "stamps differ from what was sent (changed) but nothing foreign came back (others)");
+  assert.equal(env.log.toasts.filter(([message]) => /ผู้อื่น/.test(message)).length, 0, "no 'others updated' notice");
+  const savedItem = (await env.mock.client.rpc("app_bom_master")).data.items[0];
+  assert.equal(typeof savedItem.createdAt, "number");
+  assert.equal(savedItem.code, "P-MINE");
 });
 
 function setTimeout0(fn) {

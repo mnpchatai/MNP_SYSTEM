@@ -49,12 +49,30 @@
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
   const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
   const updateSync = () => document.querySelectorAll("[data-bom-sync]").forEach((node) => { node.textContent = syncText(); });
-  // ข้อมูลที่แสดงเปลี่ยนเพราะผู้อื่นบันทึก (ตามทันหรือส่วนต่างหลังบันทึก): วาดหน้าใหม่ เว้นแต่ผู้ใช้กำลังกรอกฟอร์ม/เปิด dialog อยู่ (ไม่ทับสิ่งที่พิมพ์) แจ้งแทน
-  const isEditing = () => {
-    if (document.querySelectorAll("dialog[open]").length) return true;
-    const active = document.activeElement;
-    return Boolean(active && /^(INPUT|TEXTAREA|SELECT)$/.test(String(active.tagName)) && active.closest?.(".content"));
-  };
+  // ข้อมูลที่แสดงเปลี่ยนเพราะผู้อื่นบันทึก (ตามทันหรือส่วนต่างหลังบันทึก): วาดหน้าใหม่ เว้นแต่ผู้ใช้กำลังแก้ฟอร์ม/เปิด dialog อยู่ (ไม่ทับสิ่งที่พิมพ์) แจ้งแทน
+  // "กำลังแก้" = dirty: ติดตามจาก event ที่เบราว์เซอร์ส่งจริง (isTrusted) ไม่ใช้ว่าช่องไหนมีโฟกัส เพราะตารางสร้าง BOM เก็บแถวไว้ใน DOM อย่างเดียว
+  // ลบ/ลากแถวหรือแตะปุ่มแล้วโฟกัสหลุดไป body (บน iPhone ปุ่มที่แตะไม่ได้โฟกัสเลย) ฟอร์มก็ยังไม่ได้บันทึก · ล้าง dirty เมื่อวาดหน้าใหม่ (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
+  // ระหว่าง dirty/มี dialog store ไม่รวมข้อมูลของผู้อื่นเข้า data และไม่ขยับเวอร์ชันฐาน (store.catchUp(isEditing)) การบันทึกจึงตรวจชนจากเวอร์ชันที่ฟอร์มวาดมา
+  let dirty = false;
+  const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
+  const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+  // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
+  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset]";
+  function markDirty(event) {
+    if (!event?.isTrusted || !onBomRoute()) return;
+    const target = event.target;
+    if (!target?.closest?.(".content") || target.closest(NOT_EDITING)) return;
+    if (event.type === "click") {
+      const button = target.closest("button");
+      if (!button || button.type === "submit") return;
+    } else if (event.type === "pointerdown") {
+      if (!target.closest("[data-drag-handle]") || event.button > 0) return;
+    } else if (event.type === "keydown") {
+      if (!target.closest("[data-drag-handle]") || !MOVE_KEYS.includes(event.key)) return;
+    }
+    dirty = true;
+  }
+  for (const type of ["input", "change", "click", "pointerdown", "keydown"]) document.addEventListener?.(type, markDirty, true);
   const refreshForOthers = () => {
     if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล BOM ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
     else renderRoute();
@@ -64,13 +82,16 @@
     if (event.type === "saving") updateSync();
     else if (event.type === "saved") {
       updateSync();
-      if (event.changed) refreshForOthers();
-    } else if (event.type === "synced") refreshForOthers();
+      // ผู้อื่นบันทึกระหว่างนั้น = แจ้งเมื่อกำลังแก้อยู่ · เนื้อหาต่างเพราะฐานข้อมูลประทับเวลา/ผู้บันทึกให้ระเบียนของเราเอง = วาดใหม่เงียบๆ เมื่อไม่ได้แก้อะไรค้าง
+      if (event.others) refreshForOthers();
+      else if (event.changed && !isEditing()) renderRoute();
+    } else if (event.type === "pending") showToast("มีผู้อื่นบันทึกข้อมูล BOM ไปแล้ว ระบบจะรวมข้อมูลล่าสุดให้เมื่อบันทึกหรือเปิดหน้านี้ใหม่");
+    else if (event.type === "synced") refreshForOthers();
     else if (event.type !== "status") renderRoute();
   });
-  // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า BOM: ตามทันการบันทึกของผู้อื่น (store.catchUp วาดหน้าใหม่ผ่าน event synced เฉพาะเมื่อมีอะไรเปลี่ยน)
+  // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า BOM: ตามทันการบันทึกของผู้อื่น (store.catchUp วาดหน้าใหม่ผ่าน event synced เฉพาะเมื่อมีอะไรเปลี่ยน · มีฟอร์มค้างไม่รวม แค่แจ้ง)
   const catchUpOnFocus = () => {
-    if (store.isRemote() && onBomRoute() && !document.hidden) store.catchUp();
+    if (store.isRemote() && onBomRoute() && !document.hidden) store.catchUp(isEditing);
   };
   window.addEventListener?.("focus", catchUpOnFocus);
   document.addEventListener?.("visibilitychange", catchUpOnFocus);
@@ -365,12 +386,15 @@
     }
     // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต ลิงก์ RubberFlow รีเซ็ต)
     const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
+    dirty = false; // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างแล้ว (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
     app.innerHTML = shell(`<div class="rf-page bom-page" data-rf-mod="${escapeHtml(entry && user ? `bom-${page}` : "")}">${head}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
     ui.labelTables(root);
     bind?.(root, ctx);
+    // ระหว่างแก้ฟอร์มมีข้อมูลใหม่ของผู้อื่นค้าง (store ไม่ได้รวมให้): ฟอร์มจบแล้ว รวมตอนนี้ (ยังเปิด dialog อยู่ = ค้างต่อ)
+    if (store.hasNewer()) store.catchUp(isEditing);
     return undefined;
   }
 

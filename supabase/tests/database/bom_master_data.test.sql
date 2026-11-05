@@ -642,6 +642,22 @@ select is(public.app_bom_save_master(
   '{"packages":{"delete":[],"upsert":[{"base":"FG-T1","code":"Q","lines":[{"childCode":"P-BOX-1","qty":3}]}]}}'::jsonb, 19, 'savePackage') ->> 'version', '20',
   'a package can be created again from the current base');
 
+-- รหัส BOM / routing ที่ client ออกเอง: สองคนเริ่มจาก base เดียวกันได้ส่วนนับเท่ากัน (0007) แต่ต่อรหัสสุ่มท้ายรหัส จึงเป็นคนละรหัส และบันทึกชิ้นที่ไม่เกี่ยวกันได้ทั้งคู่ (ตอนนี้ version 20)
+-- ไม่ใช่การเปลี่ยนฝั่งฐานข้อมูล: เป็นสัญญาที่ client พึ่งอยู่ (รหัสซ้ำกับที่มีอยู่ = BOM_STALE ทำให้งานของคนที่สองถูกย้อนทั้งชุด)
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select is(public.app_bom_save_master(
+  '{"boms":{"upsert":[{"id":"BOM-69-0007-k3x9ab","itemCode":"FG-T1","revision":4,"status":"approved","lines":[{"childCode":"P-BOX-1","qty":1}]}]},
+    "routings":{"upsert":[{"id":"RT-69-0003-k3x9ab","itemCode":"FG-T1","revision":3,"status":"approved","steps":[{"processCode":"X-01","minutesPerPc":2,"inputs":[]}]}]}}'::jsonb, 20, 'saveBom') ->> 'version', '21',
+  'A saves a new revision of one product with ids BOM-69-0007-k3x9ab and RT-69-0003-k3x9ab');
+select public.app_sandbox_enter(current_setting('test.p_sbx_ft_afm')::uuid);
+select is(public.app_bom_save_master(
+  '{"boms":{"upsert":[{"id":"BOM-69-0007-p1q2zz","itemCode":"SE-T1-OR01-100-18-65","revision":4,"status":"approved","lines":[{"childCode":"RB-DM01-A-OR01-100-18-65","qty":0.3}]}]},
+    "routings":{"upsert":[{"id":"RT-69-0003-p1q2zz","itemCode":"SE-T1-OR01-100-18-65","revision":1,"status":"approved","steps":[{"processCode":"X-01","minutesPerPc":3,"inputs":[]}]}]}}'::jsonb, 20, 'saveBom') ->> 'version', '22',
+  'B saves a revision of another product from the same old base with the same counter part but another suffix: not stale');
+select is((select count(*) from public.bom_boms where is_test and bom_id in ('BOM-69-0007-k3x9ab', 'BOM-69-0007-p1q2zz')), 2::bigint, 'both new BOM ids exist');
+select is((select count(*) from public.bom_routings where is_test and routing_id in ('RT-69-0003-k3x9ab', 'RT-69-0003-p1q2zz')), 2::bigint, 'both new routing ids exist');
+select is((select count(*) from public.bom_boms where is_test and item_code in ('FG-T1', 'SE-T1-OR01-100-18-65') and status = 'approved'), 2::bigint, 'one approved revision per product, neither reverted');
+
 -- audit และข้อมูลจริง
 reset role;
 select is((select metadata ->> 'base_version' from public.audit_logs where action = 'BOM_MASTER_SAVE' and entity_id = '8'), '7', 'the audit row records the base version');
