@@ -2493,7 +2493,9 @@ function syncQueueBulk() {
 // คีย์ลัดของคิว (จอที่มีคีย์บอร์ด): J/K เลื่อน, A อนุมัติ, R ไม่อนุมัติ — A/R เปิดขั้นยืนยันในแถบ ไม่ส่งทันที
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || !document.querySelector("#home-queue .queue-list")) return;
-  const key = event.key.toLowerCase();
+  // คีย์บอร์ดที่ค้างภาษาไทยส่ง "่", "า", "ฟ", "พ" แทน j/k/a/r: ใช้ตำแหน่งปุ่ม (event.code) เฉพาะเมื่อไม่ได้ตัวอักษรละติน
+  // แป้นละตินแบบอื่น (AZERTY, Dvorak) ยังใช้ตัวอักษรที่พิมพ์ได้จริง
+  const key = /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : ({ KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r" }[event.code] ?? event.key.toLowerCase());
   if (!["j", "k", "a", "r"].includes(key)) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
@@ -2590,11 +2592,14 @@ function requestScopeSwitch(params) {
 }
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
-function requestListFilters(params, { departments = null, placeholder, scope = false, search = true, repair = false } = {}) {
+// module: หน้าเป็นของโมดูลเดียว ตัวเลือกสถานะจึงตามขั้นตอนของโมดูลนั้น (กระดานทุกโมดูลแสดงทุกสถานะ)
+function requestListFilters(params, { departments = null, placeholder, scope = false, search = true, repair = false, module = false } = {}) {
   // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
   const known = knownRequestStatuses(params);
   const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
-  const options = REQUEST_STATUS_FILTERS.map(([option, label]) => ({ value: option, label: option === "all" ? "ทุกสถานะ" : statusLabel(option, repair), href: requestCenterUrl(params, { status: option }) }));
+  // โมดูลเดียว: งานซ่อมไม่มี "รับทราบข้อมูล" โมดูลอื่นไม่มีขั้นของช่าง (ค่าที่กรองอยู่แสดงเสมอ)
+  const offWorkflow = !module ? [] : repair ? ["acknowledged"] : ["pending_assign", "assigned", "pending_verify"];
+  const options = REQUEST_STATUS_FILTERS.filter(([option]) => !offWorkflow.includes(option) || known.includes(option)).map(([option, label]) => ({ value: option, label: option === "all" ? "ทุกสถานะ" : statusLabel(option, repair), href: requestCenterUrl(params, { status: option }) }));
   // ลิงก์จากแดชบอร์ดส่งหลายสถานะคั่นจุลภาค: เป็นตัวเลือกของตัวเอง ช่องจึงบอกค่าที่ใช้กรองอยู่จริง
   if (known.length > 1) {
     const labels = known.map((status) => statusLabel(status, repair));
@@ -2692,7 +2697,7 @@ function requestCenterHeader(types, params, counts) {
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
     return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
-        <div class="request-module-title">${typeCardMarkHtml(selected)}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
+        <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
       </div>`;
   }
@@ -2721,7 +2726,7 @@ async function renderRequestsBoard(params, types) {
     && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
   const content = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
-    ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected) })}
+    ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
   app.innerHTML = shell(content, "requests", "คำร้อง");
@@ -2798,7 +2803,7 @@ async function renderRequests(params) {
     const department = selectedFilterDepartment(params, departments);
     // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
     const search = departments ? (params.get("q") ?? "").trim() : "";
-    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments), repair: isRepairType(selected) })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -2843,8 +2848,9 @@ function requestTypeGradient(code) {
 }
 
 // ไอคอนประเภทในป้ายของการ์ด + อักษรนำหน้าเลขที่ใบ (MT, NC …) ข้างไอคอนให้จำได้จากเลขที่เอกสาร
-function typeCardMarkHtml(type) {
-  return `<span class="type-card-mark"><span class="type-card-badge">${requestTypeIcon(type.code)}</span>${type.prefix ? `<span class="type-card-prefix">${escapeHtml(type.prefix)}</span>` : ""}</span>`;
+// prefix: false ในหัวโมดูลเมื่อชื่อโมดูลมีตัวย่ออยู่แล้ว ("ใบคำร้อง/แจ้งซ่อม MT") ไม่ขึ้น "MT" ซ้ำข้างกัน
+function typeCardMarkHtml(type, { prefix = true } = {}) {
+  return `<span class="type-card-mark"><span class="type-card-badge">${requestTypeIcon(type.code)}</span>${prefix && type.prefix ? `<span class="type-card-prefix">${escapeHtml(type.prefix)}</span>` : ""}</span>`;
 }
 
 function typeCardHtml(type) {
@@ -3135,6 +3141,10 @@ function bindGenericRequestForm(selected, employee) {
       message: `มีร่าง${requestTypeLabel(selected)}ค้างจาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
       onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); titleInput.focus(); },
       onDiscard: () => { draftPending = false; autosave.start(); drafts.clear(); focusFirstStep(form); },
+      // กรอกเองโดยไม่ตอบแถบ = เริ่มใบใหม่ ร่างเดิมถูกแทนด้วยสิ่งที่กรอก
+      form,
+      onEdit: () => { draftPending = false; autosave.start(); autosave.schedule(); },
+      hasInput: () => !draftApi.isEmptyDraft(currentValues(), ["priority"]),
     });
   }
 
@@ -3605,7 +3615,7 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
+        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
         ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
@@ -4121,7 +4131,9 @@ async function runBulkApprove(chosen) {
 
 // คีย์ลัด: กด / เพื่อไปที่ช่องค้นหาของหน้า (ไม่ทำงานขณะพิมพ์ในช่องกรอกหรือมีกล่องเปิดอยู่)
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+  // ปุ่ม / ที่ตำแหน่งเดิมเมื่อคีย์บอร์ดเป็นภาษาไทย (ส่ง "ฝ") ยังเปิดช่องค้นหาได้
+  const slash = event.key === "/" || (event.code === "Slash" && !event.shiftKey && !/^[\x20-\x7e]$/.test(event.key));
+  if (!slash || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
   if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
