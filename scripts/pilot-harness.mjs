@@ -38,7 +38,8 @@ async function moduleScripts() {
 }
 
 async function harnessPage() {
-  const scripts = (await moduleScripts()).map((path) => `  <script defer src="/${path}"></script>`).join("\n");
+  // Supabase จำลองต้องโหลดก่อนโมดูล: module-bom.js ดูว่ามี window.supabase หรือไม่เพื่อเลือกเก็บข้อมูลหลักในฐานข้อมูล (จำลอง) แทน localStorage
+  const scripts = ["harness-mock-sandbox.js", ...(await moduleScripts())].map((path) => `  <script defer src="/${path}"></script>`).join("\n");
   return `<!doctype html>
 <html lang="th">
 <head>
@@ -61,7 +62,10 @@ async function harnessPage() {
   <script>
     // stub ของ app.js: โมดูลอ้างเป็น global และ root.escapeHtml จึงต้องเป็น property ของ window
     window.MNP_REQUEST_MODULES = {};
-    const state = { employee: { isSandbox: true, display_name: "harness" } };
+    // บัญชีทดสอบ (persona) แบบ admin: BOM เทียบกับตำแหน่ง/แผนกนี้เพื่อให้เขียนข้อมูลหลักได้ (เหมือน persona ของ /pilot-shell.html?sandbox=1)
+    const state = { employee: { isSandbox: true, id: "persona-1", employee_no: "E001", first_name: "ปกรณ์", last_name: "ศรีวัฒนา", display_name: "harness", role: { code: "admin" }, department: { code: "MT" } } };
+    // sb ของ app.js: RPC ข้อมูลหลัก BOM ไปที่ Supabase จำลองตัวเดียวกับ /pilot-shell.html (สคริปต์ /harness-mock-sandbox.js) ข้อมูลเก็บใน localStorage ของพอร์ตนี้
+    const sb = { rpc: (name, args) => window.supabase.createClient().rpc(name, args) };
     let app = null;
     const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
     const showToast = (message, kind = "ok") => {
@@ -170,6 +174,12 @@ async function handle(request, response) {
     if (url.pathname === "/harness-mock-supabase.js") {
       response.writeHead(200, { "content-type": TYPES[".js"], "cache-control": "no-store" });
       response.end(mockSupabaseScript());
+      return;
+    }
+    // หน้า /harness/ ไม่มี ?sandbox=1 ใน URL จึงได้ Supabase จำลองที่เปิดโหมดทดสอบไว้เลย
+    if (url.pathname === "/harness-mock-sandbox.js") {
+      response.writeHead(200, { "content-type": TYPES[".js"], "cache-control": "no-store" });
+      response.end(mockSupabaseScript({ sandbox: true }));
       return;
     }
     if (url.pathname === "/pilot-shell.html") {

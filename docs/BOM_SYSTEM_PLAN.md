@@ -61,37 +61,40 @@
 
 ## 3. แบบข้อมูล (Supabase)
 
-ชื่อตารางเป็นข้อเสนอ ใช้ prefix `bom_` เพื่อไม่ชนกับตาราง `factory_*` ที่เคยลบและตารางคำร้องเดิม
+ข้อมูลหลักย้ายจากเบราว์เซอร์ (`modules/bom-store.js` state v6) เข้า Supabase แล้วใน migration `20261105010000_bom_master_data.sql` (PR 1) ตารางใช้ prefix `bom_` ทุกตารางเป็นโหมดทดสอบ (`is_test` จาก trigger `private.sandbox_row_scope()`, RLS deny-all, ถอนสิทธิ์ตรง, อ่าน/เขียนผ่าน RPC `security definer` เท่านั้น) เริ่มจากว่าง ผู้ใช้นำเข้า Excel ใหม่ผ่านหน้านำเข้าเดิม
 
-### 3.1 Master data
+### 3.1 Master data และ BOM (PR 1 — มีแล้ว)
 
 | ตาราง | คอลัมน์หลัก | หมายเหตุ |
 |---|---|---|
-| `bom_uoms` | `code` `name_th` `kind` (count/weight/length/pack) `pack_qty` `pack_uom` | แผนที่จาก 356 สะกดเดิม → หน่วยมาตรฐาน ~20 ตัว เช่น `ม้วน(50M)` = pack ของ `m` × 50 |
-| `bom_product_groups` | `code` (`TOY`, `IND`) | รวมสอง master เป็นตารางเดียว กรองด้วยกลุ่ม |
-| `bom_items` | `code` (canonical) · `kind` (`FG` `SE` `RB` `PT` `BG` `PURCHASED` `SUBPART`) · `name_th` · `owner_department_id` → `departments` · `uom_id` · `product_group_id` · `weight_g` · `is_active` · `legacy_codes text[]` | `kind=SUBPART` รองรับชิ้นที่วันนี้ไม่มีรหัส (ระบบออกรหัส `XP-00001` ให้ และเก็บชื่อเดิม) · `legacy_codes` เก็บสะกดเดิมทุกแบบเพื่อ import/ค้นหา |
-| `bom_item_rubber` | `item_id` · `compound_code` → `bom_compounds` · `rubber_type` (01/02/03) · `length_mm` `hole_mm` `od_mm` · `color1..3` · `kg_per_roll` · `cut_length_cm` `pcs_per_roll` `se_per_gr` | คุณสมบัติที่วันนี้ฝังในรหัส RB/SE แยกเป็นคอลัมน์ รหัสยังสร้างจากคุณสมบัติได้ (generated) |
-| `bom_compounds` | `code` (`B0006`) · `name` · `rubberflow_recipe_id` (nullable) · `status` | จุดเชื่อม BOM ↔ สูตรยาง PHR ของ RubberFlow |
-| `bom_colors` | `masterbatch` (`OR`) · `shade` (`01`) · `name_th` | รายการแม่สี/เฉด |
-| `bom_fg_variants` | `fg_item_id` · `base_code` · `package_code` · `color_set` | แยกส่วน `(P)` `-Y` ของรหัส FG ให้ค้นและจัดกลุ่มได้ |
-| `bom_customers` | `code` `name` `country` | จากชีต `System`/`;}o`; ประเภทออร์เดอร์ (EX/SA) คำนวณจากประเทศเหมือนเดิม |
+| `bom_master_state` | `is_test` · `version bigint` | ตัวนับเวอร์ชันข้อมูลหลักทั้งชุด เพิ่มทุกครั้งที่บันทึกสำเร็จ ใช้เรียงลำดับการเปลี่ยนแปลง (การชนตัดสินรายระเบียน ดูข้างล่าง) |
+| `bom_items` | `code` (canonical) · `kind` (`FG` `SE` `RB` `PT` `BG` `PURCHASED` `SUBPART` `CP`) · `name` · `owner_dept` → `departments.code` · `uom` · `weight_g` · `rubber jsonb` (เฉพาะ RB/SE) · `legacy_codes jsonb` · `active` · `item_group` · `unit_cost` · `image` | รูปเป็น data URL ไม่เกิน 80,000 ตัวอักษรเก็บในคอลัมน์ text ชั่วคราว ต้องย้ายไป Storage แบบ private ก่อนใช้จริง · แผนก `PL`/`QC` ของโมดูลคือ `PP`/`QA` (ฐานข้อมูลรับเป็นนามแฝง เก็บและคืนรหัสจริง) |
+| `bom_compounds` | `code` · `name` · `recipe_id` `recipe_name` | จุดเชื่อม BOM ↔ สูตร PHR ของ RubberFlow |
+| `bom_colors` · `bom_color_sets` · `bom_packages` | สี `OR01` · ชุดสี `(base, code, slots jsonb)` · แพ็กเกจ `(base, code, lines jsonb)` | ลูกของแพ็กเกจเป็นของซื้อเท่านั้น |
+| `bom_boms` | `bom_id` (รหัสของ client เช่น `BOM-69-0001`) · `item_code` · `revision` · `status` (`approved`/`superseded`) · `owner_dept` · `created_by` `approved_by` (id พนักงาน) · `change_log jsonb` | ไม่มีขั้นอนุมัติ unique index บางส่วน: `approved` ได้ตัวเดียวต่อชิ้น |
+| `bom_bom_lines` | `bom_pk` · `line_no` · `step` · `child_code` · `qty` · `uom` · `consumer_dept` `producer_dept` · `scrap_pct` · `flags jsonb` · `note` | แยกตารางไว้ตรวจวงจรและ where-used |
+| `bom_processes` · `bom_routings` | ขั้นตอนมาตรฐานที่ผู้ใช้เพิ่ม · routing ต่อชิ้น (`steps jsonb` ไม่เกิน 20 ขั้น) เก็บเป็น revision เหมือน BOM | ขั้นตอนเริ่มต้นยังอยู่ใน `modules/bom-rules.js` |
+| `bom_deleted_keys` | `list` (`colorSets`/`packages`) · `base` · `code` · `changed_version` | หลุมฝังศพของชุดสี/แพ็กเกจที่ถูกลบ ให้ delta บอกเครื่องอื่นว่าอะไรหายไป (สร้างกุญแจเดิมใหม่ = ลบหลุมฝังศพ) |
 
-### 3.2 BOM (หลายชั้น มี revision)
+ทุกตารางข้อมูลหลัก (ไม่รวมตัวนับและ `bom_bom_lines`) มี `changed_version bigint` = เวอร์ชันของ `bom_master_state` ที่แก้แถวนั้นล่าสุด ประทับโดย trigger `bom_stamp_version` (รวม revision ที่เซิร์ฟเวอร์ตั้ง `superseded` เอง) และมีดัชนี `(is_test, changed_version)`
 
-| ตาราง | คอลัมน์หลัก |
-|---|---|
-| `bom_headers` | `item_id` (พ่อ) · `revision` · `status` (`approved` = ใช้งาน → `superseded`/`obsolete`; ไม่มีร่าง/รออนุมัติ) · `effective_from` · `owner_department_id` (ใช้แยกงาน) · `created_by` `created_at` · `note` · `is_test` |
-| `bom_lines` | `bom_header_id` · `seq` · `child_item_id` · `qty_per_parent numeric` · `uom_id` · `consumer_department_id` · `producer_department_id` (คู่ `PK-ST` เดิม) · `scrap_pct` · `process_flags jsonb` (`เจาะ` `คัดแยก` …) · `note` |
-| `bom_change_log` | `bom_header_id` · `changed_by` · `field` `old` `new` · `reason` · `kaizen` | แทนชีต `รายการเปลี่ยนแปลง` (เขียนอัตโนมัติจาก RPC) |
+RPC (ผู้เรียกต้องเป็น admin ในโหมดทดสอบที่ใช้ persona): `app_bom_master()` คืน snapshot ทั้งชุดรูป state v6 พร้อม `version` (โหลดครั้งแรก) · `app_bom_master_since(version)` คืน delta (ตามทันหลัง `BOM_STALE` และเมื่อหน้ากลับมาโฟกัส) · `app_bom_save_master(changes, base_version, action)` บันทึกชุดการเปลี่ยนแปลงในธุรกรรมเดียว คืน delta ตั้งแต่ `base_version` · อ่านได้ทุก persona · เขียนได้เฉพาะแผนก `PP` และบทบาท department_manager / assistant_factory_manager / factory_manager / general_manager / admin (นอกนั้น `BOM_FORBIDDEN`)
 
-กฎ:
-- พ่อหนึ่งตัวมี `approved` ได้ revision เดียวต่อช่วงเวลา (unique partial index) บันทึก revision ใหม่ = ตัวเก่า `superseded` อัตโนมัติในทรานแซกชันเดียว บันทึกที่บรรทัดเหมือนเดิมไม่สร้าง revision
-- ห้ามวงจร (RB เป็นลูกของ SE เท่านั้น; ตรวจด้วย recursive CTE ตอนบันทึก)
-- `qty_per_parent` ของ RB ใต้ SE คำนวณจาก `cut_length_cm` `pcs_per_roll` `se_per_gr` ของ `bom_item_rubber` ให้อัตโนมัติ (ผู้ใช้กรอกข้อมูลการตัด ไม่ต้องกรอกอัตราส่วน) และยังแก้ทับได้พร้อมเหตุผล
+**การชนกันของผู้ใช้หลายคน (รายระเบียน)** ตัวนับ `version` ทั้งชุดคงไว้เรียงลำดับ แต่ `app_bom_save_master` ให้ `BOM_STALE` เฉพาะเมื่อระเบียนที่คำสั่งนี้แตะถูกคนอื่นแก้ (`changed_version > base_version`): เขียนทับแถวที่มีอยู่ · สร้างกุญแจที่มีแล้ว · ลบแถวนั้น · เขียนทับ/ลบชุดสี/แพ็กเกจที่คนอื่นเพิ่งลบ · เพิ่ม revision ใหม่ของชิ้นที่คนอื่นเพิ่ง/แก้ revision ไว้ (สองคนบันทึก revision ใหม่ของชิ้นเดียวกันพร้อมกัน คนที่สองถูกปฏิเสธ) ส่วนระเบียนอื่นที่คนอื่นแก้ระหว่างนั้นไม่ขวาง (ต่างชิ้นกันบันทึกพร้อมกันได้ทั้งคู่) · `base_version` ต้อง 0 ถึง version ปัจจุบัน (นอกช่วง = `BOM_INVALID_PAYLOAD`)
+
+**delta** `{ version, changes: { <ชุด>: { upsert: [เรคอร์ดเต็มรูปเดียวกับ snapshot], delete: [{base, code}] } } }` ครบทั้งแปดชุด มีทุกการเปลี่ยนแปลงตั้งแต่ `base_version` ของทุกคน (รวม BOM ที่เซิร์ฟเวอร์ตั้ง `superseded` และชุดสี/แพ็กเกจที่ลบ) client รวมเข้าชุดข้อมูลตามกุญแจ (`code` / `id` / `base+code`) แล้วตั้ง `version` จึงตามทันได้ในรอบเดียวแม้ snapshot ใหญ่ (BOM ~30,000 บรรทัด ~1.5 MB) · `BOM_STALE` → client เรียก `app_bom_master_since` แล้วย้อน action นั้น
+
+### 3.2 กฎ BOM ที่ฐานข้อมูลบังคับ
+
+- ลูกต้องมีอยู่ ปริมาณ > 0 ขั้นที่ 1–20 ลูกซ้ำในบรรทัดเดียวกันไม่ได้ · ของซื้อ/สูตรยางเป็นพ่อไม่ได้ · เส้นยาง (RB) มีลูกได้เฉพาะสูตรยาง (CP) บรรทัดเดียวและต้องตรงกับ `rubber.compound` · CP อยู่ได้เฉพาะใต้ RB
+- ห้ามวงจร (recursive CTE บน BOM ที่ `approved` หลังเขียน เพดาน 30 ชั้น)
+- revision แก้ไม่ได้: เรคอร์ดที่มีแล้วเปลี่ยนได้เฉพาะ `approved` → `superseded` (เวลาตั้งโดยเซิร์ฟเวอร์) แผนกเจ้าของ และ changeLog ต่อท้าย · revision ใหม่ต้องเป็นสูงสุดเดิม + 1 และตัวที่ `approved` อยู่ถูกเซิร์ฟเวอร์ตั้ง `superseded` ในคำสั่งเดียวกัน
+- เปลี่ยนชนิดของชิ้นที่มี BOM แล้วไม่ได้ · audit 1 แถวต่อการบันทึก (ชื่อ action ของ client + จำนวนต่อส่วน ไม่เก็บ payload)
+- `qty_per_parent` ของ RB ใต้ SE (คำนวณจากข้อมูลการตัด) ยังคำนวณที่ client ฐานข้อมูลเก็บค่าที่ส่งมา
 
 ### 3.3 ใครสร้าง/แก้ BOM และแผนกเจ้าของชั้นไหน
 
-**ตัดสินแล้ว 29 ต.ค. 2026** (ผู้ใช้): จุดสร้าง BOM ต้องมีจุดเดียวเหมือน MAIN ของ Excel — ฝ่ายวางแผนกับผู้จัดการฝ่ายโรงงาน (และผู้ดูแลระบบ) สร้าง/แก้ item และ BOM **ทุกชั้นจากหน้าเดียว** บันทึกแล้วใช้ได้ทันที **ไม่มีขั้นอนุมัติ** ระบบเก็บทุกการบันทึกเป็น revision พร้อมผู้บันทึกและสิ่งที่เปลี่ยน (แทน "รายการเปลี่ยนแปลง" ในชีต) ตารางข้างล่างจึงเหลือความหมายเดียวคือ "แผนกเจ้าของ" ของชิ้นงาน ใช้แยกงานรายแผนกตอนปล่อยผลิตและใช้แจ้งแผนกเมื่อชั้นของเขาถูกแก้ ไม่ใช่เงื่อนไขสิทธิ์ (ในฐานข้อมูล: `bom_headers.status` เหลือ `approved`/`superseded`, ตัด `pending_approval`; สิทธิ์เขียน = บทบาทวางแผน/ผู้จัดการ ไม่เทียบ `owner_department_id`)
+**ตัดสินแล้ว 29 ต.ค. 2026** (ผู้ใช้): จุดสร้าง BOM ต้องมีจุดเดียวเหมือน MAIN ของ Excel — ฝ่ายวางแผนกับผู้จัดการฝ่ายโรงงาน (และผู้ดูแลระบบ) สร้าง/แก้ item และ BOM **ทุกชั้นจากหน้าเดียว** บันทึกแล้วใช้ได้ทันที **ไม่มีขั้นอนุมัติ** ระบบเก็บทุกการบันทึกเป็น revision พร้อมผู้บันทึกและสิ่งที่เปลี่ยน (แทน "รายการเปลี่ยนแปลง" ในชีต) ตารางข้างล่างจึงเหลือความหมายเดียวคือ "แผนกเจ้าของ" ของชิ้นงาน ใช้แยกงานรายแผนกตอนปล่อยผลิตและใช้แจ้งแผนกเมื่อชั้นของเขาถูกแก้ ไม่ใช่เงื่อนไขสิทธิ์ (ในฐานข้อมูล: `bom_boms.status` เหลือ `approved`/`superseded`; สิทธิ์เขียน = แผนก PP หรือผู้จัดการแผนกขึ้นไป ไม่เทียบ `owner_dept`)
 
 | ชั้น BOM | แผนกเจ้าของ (ใช้แยกงาน/แจ้งเตือน) | ข้อมูลที่ดูแล |
 |---|---|---|

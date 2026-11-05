@@ -7,7 +7,8 @@
 // แต่หลวมกว่า RPC จริง เช่น การมอบหมายช่างครั้งแรกไม่บังคับแผนดำเนินงาน/วันที่ และลิงก์ "ดาวน์โหลด" ไฟล์แนบใช้ไม่ได้ (data:/blob: URL)
 
 // sandbox = admin อยู่ในโหมดทดสอบ (?sandbox=1): ผู้ใช้จำลองเป็น admin และทำหน้าที่เป็นบัญชีทดสอบ จึงเห็นโมดูลทดสอบ (RubberFlow, BOM)
-export function createMockSupabase({ empty = false, sandbox = false, now = () => Date.now(), warn = () => {}, objectUrl = null } = {}) {
+// storage = ที่เก็บข้อมูลหลัก BOM ของหน้า (localStorage) ไม่ส่ง = อยู่ในหน่วยความจำอย่างเดียว
+export function createMockSupabase({ empty = false, sandbox = false, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -320,10 +321,175 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   }
   const requireStatus = (request, statuses, code = "INVALID_TRANSITION") => { if (!statuses.includes(request.status)) fail(code); };
 
+  // ---- ข้อมูลหลักของ BOM (โมดูลทดสอบ #/bom): app_bom_master / app_bom_master_since / app_bom_save_master ----
+  // อยู่ในหน่วยความจำและเก็บลง storage ของเครื่องที่เปิดหน้า (คีย์ mnp-harness-bom-master) รีเฟรชแล้วข้อมูลยังอยู่ · ไม่ได้เป็นฐานข้อมูลจริง
+  // บังคับสัญญาเดียวกับ RPC จริง: เฉพาะโหมดทดสอบ · ผู้เขียน = admin ผู้จัดการแผนกขึ้นไป หรือแผนก PP
+// ชนรายระเบียน: ทุกระเบียนจำเลขรุ่นที่แก้ล่าสุด (versions) · บันทึกชนเมื่อระเบียนที่แตะถูกผู้อื่นแก้/ลบหลัง p_base_version (BOM_STALE) ระเบียนอื่นไม่ขวาง
+// บันทึกคืนส่วนต่าง { version, changes: { <ชุด>: { upsert, delete } } } ตั้งแต่ p_base_version · ชุดสี/แพ็กเกจที่ลบจดเป็นหลุมฝังศพ (tombstones)
+  // กฎของ BOM ใช้ bom-rules.js ที่หน้าโหลดไว้ (window.MNP_BOM_RULES) ถ้ามี
+  const BOM_KEY = "mnp-harness-bom-master";
+  const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings"];
+  const BOM_ID = {
+    items: (record) => record.code, compounds: (record) => record.code, colors: (record) => record.code, processes: (record) => record.code,
+    boms: (record) => record.id, routings: (record) => record.id,
+    colorSets: (record) => `${record.base}|${record.code}`, packages: (record) => `${record.base}|${record.code}`,
+  };
+  const BOM_MANAGER_ROLES = ["department_manager", "assistant_factory_manager", "factory_manager", "general_manager"];
+  let bomMaster = null;
+  function bomLoad() {
+    if (!bomMaster) {
+      try { bomMaster = JSON.parse(storage?.getItem?.(BOM_KEY) ?? "null"); } catch { bomMaster = null; }
+      if (!bomMaster || typeof bomMaster.version !== "number") bomMaster = { version: 0, ...Object.fromEntries(BOM_LISTS.map((list) => [list, []])) };
+      for (const list of BOM_LISTS) if (!Array.isArray(bomMaster[list])) bomMaster[list] = [];
+      bomMaster.versions = Object.fromEntries(BOM_LISTS.map((list) => [list, bomMaster.versions?.[list] ?? {}]));
+      if (!Array.isArray(bomMaster.tombstones)) bomMaster.tombstones = [];
+    }
+    return bomMaster;
+  }
+  // ที่หน้าเห็น (ตรงกับ app_bom_master): เรียงตามกุญแจเหมือนฐานข้อมูล ไม่มีข้อมูลภายใน (versions / tombstones)
+  const bomByKey = (list) => (a, b) => { const x = BOM_ID[list](a); const y = BOM_ID[list](b); return x < y ? -1 : x > y ? 1 : 0; };
+  const bomView = (current) => ({ version: current.version, ...Object.fromEntries(BOM_LISTS.map((list) => [list, clone(current[list]).sort(bomByKey(list))])) });
+  // ส่วนต่างตั้งแต่เวอร์ชัน since (ตรงกับ private.bom_delta): ครบทั้งแปดชุด delete มีเฉพาะชุดสี/แพ็กเกจ
+  function bomDelta(current, since) {
+    const changes = {};
+    for (const list of BOM_LISTS) {
+      const upsert = current[list].filter((row) => (current.versions[list][BOM_ID[list](row)] ?? 0) > since).sort(bomByKey(list));
+      const deleted = current.tombstones.filter((row) => row.list === list && row.version > since).map((row) => ({ base: row.base, code: row.code }));
+      changes[list] = { upsert: clone(upsert), delete: deleted };
+    }
+    return { version: current.version, changes };
+  }
+  function bomCanWrite() {
+    const role = roles.find((row) => row.id === ME.role_id)?.code;
+    const department = departments.find((row) => row.id === ME.department_id)?.code;
+    return role === "admin" || BOM_MANAGER_ROLES.includes(role) || department === "PP";
+  }
+  const bomCanon = (value) => (Array.isArray(value) ? `[${value.map(bomCanon).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => `${JSON.stringify(key)}:${bomCanon(value[key])}`).join(",")}}` : JSON.stringify(value) ?? "null");
+  // ฟิลด์ที่ฐานข้อมูลจริงเป็นเจ้าของ (เวลาที่สร้าง/แก้/อนุมัติ/ถูกแทนที่ และชื่อผู้บันทึก): ประทับใหม่ทับค่าที่ client ส่งมา ไม่เก็บระเบียนของ client ตรงๆ
+  // ระเบียนที่บันทึกจึงต่างจากที่ client เห็นก่อนบันทึกเหมือน RPC จริง (client ต้องไม่ถือว่า "เนื้อหาเปลี่ยน" คือมีผู้อื่นบันทึก)
+  function bomStamp(list, record, old) {
+    const at = now();
+    const who = `${ME.first_name ?? ""} ${ME.last_name ?? ""}`.trim();
+    const out = clone(record);
+    if (list === "items") { out.createdAt = old?.createdAt ?? at; out.updatedAt = at; }
+    else if (list === "compounds" || list === "colors") out.createdAt = old?.createdAt ?? at;
+    else if (list === "colorSets" || list === "packages") {
+      out.createdAt = old?.createdAt ?? at; out.createdBy = old?.createdBy ?? who;
+      out.updatedAt = at; out.updatedBy = who;
+    } else if (list === "boms" || list === "routings") {
+      out.createdAt = old?.createdAt ?? at; out.createdBy = old?.createdBy ?? who;
+      if (list === "boms") { out.approvedAt = old?.approvedAt ?? at; out.approvedBy = old?.approvedBy ?? who; }
+      if (out.status === "superseded") out.supersededAt = old?.status === "superseded" ? old.supersededAt : at;
+      else delete out.supersededAt;
+    }
+    return out;
+  }
+  function bomApply(current, changes, base) {
+    const next = clone(current);
+    const nextVersion = current.version + 1;
+    // ระเบียนที่คำสั่งนี้แก้เอง (เวอร์ชัน nextVersion) ไม่นับว่าเป็นของผู้อื่น
+    const mine = new Set();
+    const changedByOthers = (list, id) => (next.versions[list][id] ?? 0) > base && !mine.has(`${list}|${id}`);
+    const stamp = (list, id) => { next.versions[list][id] = nextVersion; mine.add(`${list}|${id}`); };
+    const keyed = (list) => list === "colorSets" || list === "packages";
+    for (const list of BOM_LISTS) {
+      const entry = changes[list];
+      if (entry === undefined) continue;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail("BOM_INVALID_CHANGES");
+      const idOf = BOM_ID[list];
+      for (const record of entry.upsert ?? []) {
+        if (!record || typeof record !== "object" || !(keyed(list) ? record.base && record.code : record[list === "boms" || list === "routings" ? "id" : "code"])) fail("BOM_INVALID_RECORD");
+        const id = idOf(record);
+        const at = next[list].findIndex((row) => idOf(row) === id);
+        if (at === -1) {
+          if (keyed(list)) {
+            // ผู้อื่นลบหลัง base = ชน · สร้างกุญแจเดิมใหม่ = ลบหลุมฝังศพ
+            const grave = next.tombstones.findIndex((row) => row.list === list && `${row.base}|${row.code}` === id);
+            if (grave !== -1) {
+              if (next.tombstones[grave].version > base) fail("BOM_STALE");
+              next.tombstones.splice(grave, 1);
+            }
+          }
+          // BOM และ routing ใหม่ของชิ้นที่ผู้อื่นเพิ่ง/แก้ revision ไว้หลัง base = ชน (ผู้บันทึกคนที่สองของ revision เดียวกัน)
+          if ((list === "boms" || list === "routings") && next[list].some((row) => row.itemCode === record.itemCode && changedByOthers(list, idOf(row)))) fail("BOM_STALE");
+          next[list].push(bomStamp(list, record, undefined));
+        } else {
+          if (changedByOthers(list, id)) fail("BOM_STALE");
+          // BOM และ routing ที่บันทึกแล้วแก้ไม่ได้ (BOM_REVISION_IMMUTABLE) นอกจากถูกแทนที่ (approved → superseded) · BOM แก้แผนกเจ้าของได้และต่อท้าย changeLog ได้ (ตรงกับ app_bom_save_master)
+          if (list === "boms" || list === "routings") {
+            const old = next[list][at];
+            const owned = { status: 0, supersededAt: 0, createdAt: 0, createdBy: 0, approvedAt: 0, approvedBy: 0, ...(list === "boms" ? { ownerDept: 0, changeLog: 0 } : {}) }; // ฟิลด์ที่ฐานข้อมูลเป็นเจ้าของหรือเปลี่ยนได้ ไม่นับเป็นการแก้เนื้อหา
+            const same = bomCanon({ ...old, ...owned }) === bomCanon({ ...record, ...owned });
+            const logOf = (row) => (Array.isArray(row.changeLog) ? row.changeLog : []);
+            const logKept = list !== "boms" || (logOf(record).length >= logOf(old).length && logOf(old).every((entry, index) => bomCanon(entry) === bomCanon(logOf(record)[index])));
+            if (!same || !logKept || (old.status !== record.status && !(old.status === "approved" && record.status === "superseded"))) fail("BOM_REVISION_IMMUTABLE");
+          }
+          next[list][at] = bomStamp(list, record, next[list][at]);
+        }
+        stamp(list, id);
+      }
+      for (const target of entry.delete ?? []) {
+        if (!keyed(list)) fail("BOM_INVALID_CHANGES");
+        const id = `${target?.base}|${target?.code}`;
+        const at = next[list].findIndex((row) => idOf(row) === id);
+        if (at === -1) fail(next.tombstones.some((row) => row.list === list && `${row.base}|${row.code}` === id && row.version > base) ? "BOM_STALE" : "BOM_NOT_FOUND");
+        if (changedByOthers(list, id)) fail("BOM_STALE");
+        next[list].splice(at, 1);
+        delete next.versions[list][id];
+        next.tombstones = next.tombstones.filter((row) => !(row.list === list && `${row.base}|${row.code}` === id));
+        next.tombstones.push({ list, base: target.base, code: target.code, version: nextVersion });
+      }
+    }
+    const R = globalThis.MNP_BOM_RULES;
+    const itemOf = (code) => next.items.find((row) => row.code === code);
+    for (const item of next.items) if (R && !Object.hasOwn(R.KINDS, item.kind)) fail("BOM_INVALID_ITEM_KIND");
+    for (const bom of next.boms) {
+      const parent = itemOf(bom.itemCode) ?? fail("BOM_INVALID_BOM_ITEM");
+      if (!["approved", "superseded"].includes(bom.status)) fail("BOM_INVALID_BOM_STATUS");
+      if (bom.status === "approved" && next.boms.some((row) => row !== bom && row.itemCode === bom.itemCode && row.status === "approved")) fail("BOM_INVALID_BOM_STATUS");
+      if (!Array.isArray(bom.lines) || !bom.lines.length) fail("BOM_INVALID_BOM_LINE");
+      for (const line of bom.lines) {
+        const child = itemOf(line.childCode) ?? fail("BOM_INVALID_BOM_LINE");
+        if (!(Number(line.qty) > 0)) fail("BOM_INVALID_BOM_LINE");
+        if (R && R.childKindError(parent.kind, child.kind)) fail("BOM_INVALID_BOM_LINE");
+      }
+    }
+    for (const routing of next.routings) {
+      if (!itemOf(routing.itemCode)) fail("BOM_INVALID_ROUTING");
+      if (routing.status === "approved" && next.routings.some((row) => row !== routing && row.itemCode === routing.itemCode && row.status === "approved")) fail("BOM_INVALID_ROUTING");
+    }
+    return next;
+  }
   const RPC = {
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
     app_lab_only: () => false,
+    app_bom_master() {
+      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      return bomView(bomLoad());
+    },
+    app_bom_master_since({ p_version }) {
+      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      const current = bomLoad();
+      if (!Number.isInteger(p_version) || p_version < 0 || p_version > current.version) fail("BOM_INVALID_PAYLOAD");
+      return bomDelta(current, p_version);
+    },
+    app_bom_save_master({ p_changes, p_base_version, p_action }) {
+      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      if (!bomCanWrite()) fail("BOM_FORBIDDEN");
+      const current = bomLoad();
+      if (!p_changes || typeof p_changes !== "object" || Array.isArray(p_changes)) fail("BOM_INVALID_CHANGES");
+      if (!Number.isInteger(p_base_version) || p_base_version < 0 || p_base_version > current.version) fail("BOM_INVALID_PAYLOAD");
+      if (typeof p_action !== "string" || !p_action) fail("BOM_INVALID_ACTION");
+      const next = bomApply(current, p_changes, p_base_version);
+      // ไม่มีการเปลี่ยนแปลงเลย = ไม่เพิ่มเวอร์ชัน (เหมือน RPC จริง) คืนส่วนต่างตั้งแต่ base
+      const touched = BOM_LISTS.some((list) => (p_changes[list]?.upsert?.length ?? 0) + (p_changes[list]?.delete?.length ?? 0) > 0);
+      if (!touched) return bomDelta(current, p_base_version);
+      next.version = current.version + 1;
+      bomMaster = next;
+      try { storage?.setItem?.(BOM_KEY, JSON.stringify(bomMaster)); } catch { warnOnce("bom-storage", "[pilot harness] เก็บข้อมูล BOM ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
+      return bomDelta(bomMaster, p_base_version);
+    },
     // โหมดทดสอบ: ทำหน้าที่เป็นบัญชีทดสอบ (ใช้แถวของผู้ใช้จำลองเอง) — หน้าเว็บตั้ง state.employee เป็น persona นี้
     app_sandbox_status: () => {
       if (!sandbox) return null;
@@ -527,7 +693,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
 
 // ติดตั้งในหน้า: ไม่ลงทะเบียน service worker, fetch ข้าม origin ทุกตัว (Supabase Edge Function, Google Apps Script ที่เขียนชีตสำรอง ฯลฯ)
 // ได้คำตอบว่างแทน หน้าจำลองจึงไม่ส่งอะไรออกนอกเครื่อง แล้วแทน window.supabase ด้วย client จำลอง (?empty=1 = ไม่มีคำร้องเลย)
-export function installMockSupabase(win, create) {
+// options.sandbox = เปิดโหมดทดสอบโดยไม่ต้องมี ?sandbox=1 (หน้า /harness/ ที่ไม่มี URL ของ pilot-shell)
+export function installMockSupabase(win, create, options = {}) {
   Object.defineProperty(win.navigator, "serviceWorker", { value: { register: () => Promise.resolve(), getRegistration: () => Promise.resolve(undefined), ready: new Promise(() => {}) } });
   const realFetch = win.fetch.bind(win);
   win.fetch = (input, init) => {
@@ -537,13 +704,14 @@ export function installMockSupabase(win, create) {
   };
   const { client } = create({
     empty: new win.URLSearchParams(win.location.search).has("empty"),
-    sandbox: new win.URLSearchParams(win.location.search).has("sandbox"),
+    sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
+    storage: (() => { try { return win.localStorage; } catch { return null; } })(),
     warn: (message) => win.console.warn(message),
     objectUrl: (file) => win.URL.createObjectURL(file),
   });
   win.supabase = { createClient: () => client };
 }
 
-export function mockSupabaseScript() {
-  return `(() => {\n${createMockSupabase.toString()}\n(${installMockSupabase.toString()})(window, createMockSupabase);\n})();\n`;
+export function mockSupabaseScript({ sandbox = false } = {}) {
+  return `(() => {\n${createMockSupabase.toString()}\n(${installMockSupabase.toString()})(window, createMockSupabase, ${JSON.stringify({ sandbox })});\n})();\n`;
 }

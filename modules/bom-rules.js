@@ -40,18 +40,18 @@
     return "";
   }
   const DEPTS = Object.freeze(["PK", "GR", "RB", "PT", "BG", "ST"]);
-  const DEPT_LABEL = Object.freeze({ PK: "PK · บรรจุ/ประกอบ", GR: "GR · ตัด/เจาะชิ้นยาง", RB: "RB · รีดเส้นยาง", PT: "PT · ฉีดพลาสติก", BG: "BG · กระเป๋า/เย็บ", ST: "ST · คลังวัตถุดิบ", SR: "SR · คลังยางเส้นยาว", QC: "QC · ตรวจขนาดยาง", WH: "WH · คลังสินค้าสำเร็จรูป", SA: "ฝ่ายขาย", PL: "ฝ่ายวางแผน" });
+  const DEPT_LABEL = Object.freeze({ PK: "PK · บรรจุ/ประกอบ", GR: "GR · ตัด/เจาะชิ้นยาง", RB: "RB · รีดเส้นยาง", PT: "PT · ฉีดพลาสติก", BG: "BG · กระเป๋า/เย็บ", ST: "ST · คลังวัตถุดิบ", SR: "SR · คลังยางเส้นยาว", QA: "QA · ตรวจขนาดยาง", WH: "WH · คลังสินค้าสำเร็จรูป", SA: "ฝ่ายขาย", PP: "ฝ่ายวางแผน" });
   // ลำดับกำหนดเสร็จรายแผนกในหัวใบสั่งผลิต (MAIN ของไฟล์ Excel)
   const DUE_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "ST", "PK"]);
   // ผังงานของบริษัท 11 ลำดับ (ใบสั่งผลิต → BOM/ใบสั่งงาน → วัตถุดิบ → ผลิต → คลัง) "ลำดับ" ของทุกหน้าโครงสร้างคือเลขนี้:
   // ชิ้นงานได้ลำดับตามแผนกเจ้าของ เลขน้อยทำก่อน เลขเดียวกันคือแผนกเดียวกัน (ลำดับภายในแผนกดูจากรายการ "ใช้")
   const PROCESS_FLOW = Object.freeze([
     { no: 1, dept: "SA", title: "ออกใบสั่งผลิตให้แผนกวางแผน" },
-    { no: 2, dept: "PL", title: "ออก BOM และใบสั่งงานให้ฝ่ายผลิต", detail: "สำรวจยางคงคลังก่อนสั่งผลิต" },
+    { no: 2, dept: "PP", title: "ออก BOM และใบสั่งงานให้ฝ่ายผลิต", detail: "สำรวจยางคงคลังก่อนสั่งผลิต" },
     { no: 3, dept: "ST", title: "สั่งวัตถุดิบที่เกี่ยวข้องกับการผลิต" },
     { no: 4, dept: "RB", title: "ขึ้นรูปยาง", detail: "13 ขั้น: ชั่งเคมี → ตียาง/ใส่เคมี → พักยาง → … → ฉีด → อบ Oven/HCM → ตัดยางเส้นยาว" },
     { no: 5, dept: "SR", title: "รับยางเส้นยาวเข้าคลัง" },
-    { no: 6, dept: "QC", title: "ตรวจเช็คขนาดยางขณะรับเข้าคลัง" },
+    { no: 6, dept: "QA", title: "ตรวจเช็คขนาดยางขณะรับเข้าคลัง" },
     { no: 7, dept: "GR", title: "แปรรูปยาง", detail: "9 ขั้น: รีด → ปั๊ม → เปเปอร์ → ตัดยาง → ทากาว → เจียร์ (หยาบ/ละเอียด เฉพาะบางไซส์) → เจาะ" },
     { no: 8, dept: "PT", title: "ขึ้นรูปพลาสติก" },
     { no: 9, dept: "BG", title: "เย็บกระเป๋าใส่สินค้า" },
@@ -402,11 +402,19 @@
     return out;
   }
 
+  // ตัวเลือกเลข XP- ของชิ้นที่ไม่มีรหัสตอนนำเข้า · ในเครื่อง = นับชิ้น SUBPART + 1 (เหมือนเดิม)
+  // โหมดฐานข้อมูล (ส่งรหัสสุ่ม suffix มา) = เลขสูงสุดของ XP- ที่มีอยู่ + 1 และต่อ -suffix: ผู้วางแผนสองคนที่นำเข้าจากเวอร์ชันเดียวกันจึงไม่ได้รหัสซ้ำกัน (ซ้ำ = BOM_STALE ทั้งชุดถูกย้อนกลับ)
+  function subpartOptions(items, suffix = "") {
+    if (!suffix) return { subpartStart: items.filter((item) => item.kind === "SUBPART").length + 1 };
+    const numbers = items.map((item) => /^XP-(\d+)/.exec(String(item.code ?? ""))).filter(Boolean).map((match) => Number(match[1]));
+    return { subpartStart: Math.max(0, ...numbers) + 1, subpartSuffix: suffix };
+  }
+
   // ---------- ประกอบต้นไม้จากชีตแบน ----------
   // แต่ละ ITEM: แถว PK ที่รหัส = ฐานของ ITEM คือ FG · SE เป็นลูกของ FG · RB เป็นลูกของ SE ล่าสุด (ปริมาณจากสูตร rbPerSe ไม่ใช่ตัวเลขในชีตที่ซ้ำกับ SE) ·
   // คู่ PT-ST/BG-ST/BG-PT เป็นลูกของชิ้น PT/BG ล่าสุด · GR-ST ลูกของ SE ล่าสุด · คู่ PK-* ลูกของ FG · บรรทัดซ้ำ (ลูกเดียวกันใต้พ่อเดียวกัน) รวมปริมาณ
   // คืน { items: Map(code → item), boms: Map(parentCode → lines[]), report }
-  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1 } = {}) {
+  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1, subpartSuffix = "" } = {}) {
     const items = new Map();
     const boms = new Map();
     const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, variants: 0, colored: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
@@ -432,7 +440,7 @@
     const subpartFor = (row) => {
       const key = `${row.name}|${row.uom}`;
       if (!subpartByName.has(key)) {
-        subpartByName.set(key, `XP-${String(subpartSeq).padStart(5, "0")}`);
+        subpartByName.set(key, `XP-${String(subpartSeq).padStart(5, "0")}${subpartSuffix ? `-${subpartSuffix}` : ""}`.toUpperCase());
         subpartSeq += 1;
         report.subparts += 1;
       }
@@ -616,9 +624,9 @@
   // เช่น เส้นยาง RB ที่มีได้แค่คอมปาวด์จาก RubberFlow · ของซื้อที่มี BOM หรือขั้นตอนก็นับด้วย
   // สูตรยาง (CP) เป็นวัตถุดิบที่เส้นยางรับจาก RubberFlow ไม่ใช่สายป้อนของตัวเอง เว้นแต่ผู้ใช้ให้ขั้นตอนผลิตกับมัน
   const isFeed = (child) => !LEAF_KINDS.includes(child.kind) || child.children.length > 0 || child.steps.length > 0;
-  // เส้นยางที่ป้อนชิ้นอื่นต้องผ่าน SR รับเข้าคลัง (ลำดับ 5) และ QC ตรวจขนาด (ลำดับ 6) ก่อน · ชิ้นอื่นพร้อมเมื่อแผนกเจ้าของทำเสร็จ
+  // เส้นยางที่ป้อนชิ้นอื่นต้องผ่าน SR รับเข้าคลัง (ลำดับ 5) และ QA ตรวจขนาด (ลำดับ 6) ก่อน · ชิ้นอื่นพร้อมเมื่อแผนกเจ้าของทำเสร็จ
   const receiveOrder = (node) => (node.kind === "RB" && node.level > 0 ? flowStepOf("SR") : null);
-  const inspectOrder = (node) => (receiveOrder(node) === null ? null : flowStepOf("QC"));
+  const inspectOrder = (node) => (receiveOrder(node) === null ? null : flowStepOf("QA"));
   const readyOrder = (node) => inspectOrder(node) ?? node.order;
   // คืน { root, rows (เรียงแบบต้นไม้ ลึกก่อน), minutesByDept (ต่อ 1 หน่วยราก), missingCost, missing }
   // routingOf(code) → { revision, steps: [{ processCode, minutesPerPc }] } | null · processOf(code) → { code, name, dept } | null
@@ -661,7 +669,7 @@
         node.complete = false;
         missingCost.add(item.code);
       }
-      // ลำดับการผลิต = ลำดับของแผนกเจ้าของในผังงานบริษัท (PROCESS_FLOW: RB 4 → SR 5 → QC 6 → GR 7 → PT 8 → BG 9 → PK 10)
+      // ลำดับการผลิต = ลำดับของแผนกเจ้าของในผังงานบริษัท (PROCESS_FLOW: RB 4 → SR 5 → QA 6 → GR 7 → PT 8 → BG 9 → PK 10)
       node.order = flowStepOf(node.dept);
       node.labor = steps.reduce((sum, step) => sum + step.cost, 0);
       node.material = round(node.material);
@@ -692,7 +700,7 @@
 
   // รายการขั้นตอนเรียงตามลำดับ (มุมมอง "ขั้นตอนตามลำดับ") ตามผังงานของบริษัท 11 ลำดับ (PROCESS_FLOW):
   //   type "sales" (1) ฝ่ายขายออกใบสั่งผลิต · "plan" (2) ฝ่ายวางแผนออก BOM/ใบสั่งงาน · "purchase" (3) ST สั่งของซื้อทั้งหมด ยอดต่อสินค้า 1 หน่วย
-  //   type "make" = ชิ้นที่ต้องผลิต (ลำดับของแผนกเจ้าของ) ใช้อะไรเท่าไร · "receive" (5) SR รับยางเส้นยาวเข้าคลัง · "inspect" (6) QC ตรวจขนาดขณะรับเข้า
+  //   type "make" = ชิ้นที่ต้องผลิต (ลำดับของแผนกเจ้าของ) ใช้อะไรเท่าไร · "receive" (5) SR รับยางเส้นยาวเข้าคลัง · "inspect" (6) QA ตรวจขนาดขณะรับเข้า
   //   type "store" (11) = WH รับสินค้าสำเร็จรูปจาก PK เข้าคลัง (เฉพาะเมื่อรากเป็น FG)
   // รหัสเดียวกันที่อยู่หลายกิ่งรวมเป็นแถวเดียว (จำนวนต่อสินค้ารวมกัน) · input.from = ลำดับที่ชิ้นนั้นพร้อมใช้ (null = ของซื้อ)
   // แถวที่ไม่มีรายการ "ใช้" (receive/inspect/store) บอก fromOrder = ลำดับที่ส่งของมา · เรียงลำดับ → รหัส
@@ -711,7 +719,7 @@
       add(made, `make|${node.itemCode}`, node, { type: "make", order: node.order, dept: node.dept, steps: node.steps, inputs });
       if (receiveOrder(node) !== null) {
         add(made, `receive|${node.itemCode}`, node, { type: "receive", order: receiveOrder(node), fromOrder: node.order, dept: "SR", steps: [], inputs: [] });
-        add(made, `inspect|${node.itemCode}`, node, { type: "inspect", order: inspectOrder(node), fromOrder: receiveOrder(node), dept: "QC", steps: [], inputs: [] });
+        add(made, `inspect|${node.itemCode}`, node, { type: "inspect", order: inspectOrder(node), fromOrder: receiveOrder(node), dept: "QA", steps: [], inputs: [] });
       }
     }
     // ลำดับเท่ากัน (แผนกเดียวกัน): ชิ้นที่อยู่ลึกกว่าในต้นไม้มาก่อน (ชิ้นทำเองของ PK ก่อนตัวสินค้า) แล้วตามรหัส
@@ -840,7 +848,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };
