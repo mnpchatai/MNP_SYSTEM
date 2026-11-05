@@ -647,6 +647,16 @@ select is(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_obje
   current_setting('test.j')::jsonb || jsonb_build_object('qtyDone', 5, 'reports', (current_setting('test.j')::jsonb -> 'reports')
     || '[{"at":1,"by":"x","good":3,"reject":0,"note":"คนที่สอง"}]'::jsonb)))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob')
   -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '5', 'after catching up the second report is accepted');
+-- ฝ่ายวางแผนถือฐานเก่า (ตอนนั้นใบยัง released) รายงานงาน PK ของใบเดียวกัน หลังที่รายงานของ GR ทำให้ใบเป็น in_progress ไปแล้ว:
+-- client ส่งใบ in_progress มาพร้อมงาน (reportJob ของ client) ใบที่ตรงกับแถวล่าสุดไม่ถูกเขียนและไม่นับว่าชน
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select set_config('test.pk', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-4-PK'), true);
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_save_master(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.o')::jsonb || '{"status":"in_progress"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.pk')::jsonb || jsonb_build_object('status', 'in_progress', 'qtyDone', 1,
+    'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 1, 'reject', 0, 'note', 'ฝ่ายวางแผน')))))),
+  current_setting('test.b4')::bigint, 'reportJob') -> 'changes' -> 'jobs' -> 'upsert') j where j ->> 'id' = 'JOB-4-PK'), 1::numeric,
+  'a planner on an old base reporting another job of an order that is already in_progress is not stale (the order copy matches the latest row)');
 
 -- ฝ่ายวางแผนแก้งาน (วันครบกำหนด/จำนวนแผน) ขณะที่พนักงานแผนกรายงานจากสำเนาเก่า
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

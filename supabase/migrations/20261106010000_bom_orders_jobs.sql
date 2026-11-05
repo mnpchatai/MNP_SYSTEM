@@ -62,7 +62,7 @@
 --   เพิ่มคอลัมน์ bom_master_state.epoch
 --   check ของ bom_deleted_keys.list (เพิ่ม 'jobs')
 --
--- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้ (modules/bom-*.js) เรียก RPC ที่ไฟล์นี้เพิ่ม/เปลี่ยน (app_bom_save_master 4 อาร์กิวเมนต์,
+-- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้ (modules/bom-*.js) เรียก RPC ที่ไฟล์นี้เพิ่ม/เปลี่ยน (app_bom_save_master 5 อาร์กิวเมนต์ มี p_audit และ p_epoch,
 --   app_bom_audit, app_sandbox_purge_bom และรูป snapshot ที่มี orders/jobs/customers) จึงต้อง apply ไฟล์นี้ที่ production (ด้วยการอนุมัติของผู้ใช้) ก่อน merge PR
 --   ก่อน apply เทียบ md5(pg_get_functiondef(oid)) ของ private.sandbox_unguarded_tables, private.bom_client_actions, private.bom_records, private.bom_snapshot, private.bom_delta,
 --   public.app_bom_save_master ที่ production กับนิยามใน 20261105010000_bom_master_data.sql (ถ้ามี migration อื่นแก้ไปแล้ว ต้องเริ่มจากนิยามล่าสุด)
@@ -627,22 +627,24 @@ begin
       continue;
     end if;
 
-    -- ชนก่อนเสมอ: ใบถูกคนอื่นแก้หลังเวอร์ชันฐาน = ฝั่ง client ถือสำเนาเก่า (เทียบสิทธิ์/เนื้อหากับแถวล่าสุดไม่ได้ ไม่งั้นสำเนาเก่าถูกมองเป็นการแก้ที่ไม่มีสิทธิ์) ให้ตามทันแล้วทำใหม่
-    if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
-
     v_content := v_old.customer <> v_customer or v_old.country <> v_country or v_old.order_type <> v_type
       or v_old.ordered_at <> v_ordered::bigint or v_old.wh_due <> v_wh::bigint or v_old.due <> v_due
       or v_old.due_defaults <> v_defaults or v_old.items <> v_items or v_old.explosion is distinct from v_expl or v_old.note <> v_note;
     v_counts_changed := v_old.stock_counts <> v_counts;
     v_status_changed := v_old.status <> v_status;
+    -- สำเนาที่ตรงกับแถวล่าสุดทุกช่อง ไม่เขียนอะไร (ไม่ต้องตรวจชน: เช่นใบที่ผู้อื่นเพิ่งเปลี่ยนเป็น in_progress แล้วสำเนานี้ก็เป็น in_progress)
     if not (v_content or v_counts_changed or v_status_changed) then continue; end if;
 
-    -- released -> in_progress เกิดเองเมื่องานเริ่ม (ตั้งตอนบันทึกงาน) ยอมรับเมื่อมาพร้อมงานของใบนี้ ข้ามไม่เขียน
+    -- released -> in_progress เกิดเองเมื่องานเริ่ม (ตั้งตอนบันทึกงาน) ยอมรับเมื่อมาพร้อมงานของใบนี้ ข้ามไม่เขียน (ตัวเขียนงานตรวจชนของงานเอง)
     if v_status_changed and v_old.status = 'released' and v_status = 'in_progress' and not v_content and not v_counts_changed then
       v_has_job := exists (select 1 from jsonb_array_elements(p_job_rows) j where upper(btrim(coalesce(j.value ->> 'orderId', ''))) = v_pi);
       if not v_has_job then raise exception 'BOM_INVALID_TRANSITION'; end if;
       continue;
     end if;
+
+    -- ชนก่อนสิทธิ์เสมอ: สำเนาที่ต่างจากแถวล่าสุดและแถวนั้นถูกคนอื่นแก้หลังเวอร์ชันฐาน = ฝั่ง client ถือสำเนาเก่า
+    -- (เทียบสิทธิ์/เนื้อหากับแถวล่าสุดไม่ได้ ไม่งั้นสำเนาเก่าถูกมองเป็นการแก้ที่ไม่มีสิทธิ์) ให้ตามทันแล้วทำใหม่
+    if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
 
     -- สิทธิ์: กลุ่มวางแผนแก้ได้ทุกอย่าง · ST/WH แก้ได้เฉพาะ stockCounts ของใบ draft · คนอื่นแก้ไม่ได้
     if not p_planner then
@@ -1359,6 +1361,10 @@ begin
   if v_persona.id is null then
     raise exception 'SANDBOX_NOT_ACTIVE';
   end if;
+
+  -- ล็อกแถวตัวนับก่อนลบ (เหมือน app_bom_save_master) การบันทึกที่กำลังทำอยู่จึงจบก่อน และไม่มีการบันทึกใหม่แทรกระหว่างลบ
+  insert into public.bom_master_state (is_test, version) values (true, 0) on conflict (is_test) do nothing;
+  perform 1 from public.bom_master_state s where s.is_test for update;
 
   foreach v_table in array array[
     'bom_jobs', 'bom_orders', 'bom_customers', 'bom_bom_lines', 'bom_boms', 'bom_routings', 'bom_color_sets', 'bom_packages',

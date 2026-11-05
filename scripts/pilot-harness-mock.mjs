@@ -472,6 +472,17 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   // released/in_progress→draft เฉพาะเปิดใบกลับมาแก้ (ห้ามถ้ามีงานเริ่ม; งานของใบถูกลบ) · เนื้อหา/ยอดนับแก้ได้เฉพาะใบ draft
   const BOM_ORDER_CONTENT = ["customer", "country", "orderType", "orderedAt", "whDue", "due", "dueDefaults", "items", "explosion", "note"];
   const bomOrderContent = (row) => bomCanon(Object.fromEntries(BOM_ORDER_CONTENT.map((key) => [key, row[key] ?? null])));
+  function bomOrderPassThrough(prev, record, jobRows) {
+    if (!ORDER_STATUSES.includes(record.status) || !Array.isArray(record.items)) return false;
+    if (bomOrderContent(prev) !== bomOrderContent(record)) return false;
+    if (bomCanon(prev.stockCounts ?? {}) !== bomCanon(record.stockCounts ?? {})) return false;
+    if (prev.status === record.status) return true;
+    if (prev.status === "released" && record.status === "in_progress") {
+      if (!jobRows.some((job) => String(job?.orderId ?? "").toUpperCase() === String(record.id).toUpperCase())) fail("BOM_INVALID_TRANSITION");
+      return true;
+    }
+    return false;
+  }
   function bomOrderTransition(prev, record, ctx) {
     if (!ORDER_STATUSES.includes(record.status) || !Array.isArray(record.items)) fail("BOM_INVALID_ORDER");
     if (!prev) {
@@ -568,6 +579,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         const id = idOf(record);
         const index = next[list].findIndex((row) => idOf(row) === id);
         const prev = index === -1 ? null : next[list][index];
+        // ใบที่ตรงกับแถวล่าสุด หรือมีแค่ released → in_progress ที่มากับงานของใบนี้: ไม่เขียนและไม่ตรวจชน (ตรงกับ bom_save_orders)
+        if (list === "orders" && prev && bomOrderPassThrough(prev, record, changes.jobs?.upsert ?? [])) continue;
         // ชนก่อนสิทธิ์เสมอ (ใบสั่งผลิต/งาน): ระเบียนถูกผู้อื่นแก้ หรืองานถูกลบหลัง base = ฝั่ง client ถือสำเนาเก่า ต้องได้ BOM_STALE ไม่ใช่ BOM_FORBIDDEN
         if ((list === "orders" || list === "jobs") && (prev
           ? changedByOthers(list, id)
