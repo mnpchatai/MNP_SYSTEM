@@ -2,8 +2,10 @@
 // โครงเดียวกับ RubberFlow: modules/bom-rules.js (กฎล้วน) · bom-actions.js (กฎธุรกิจ) · bom-seed.js (ข้อมูลสาธิต) · bom-store.js (บทบาท + localStorage) ·
 // bom-pages.js (หน้าและ dialog ลงทะเบียนใน window.MNP_BOM_PAGES / _DIALOGS) · ไฟล์นี้ (shell เส้นทาง การผูก event)
 // ใช้ชิ้นส่วน HTML และสไตล์ .rf-* ของ RubberFlow (window.MNP_RUBBERFLOW_UI) จึงใช้กติกา event ชื่อเดียวกัน (data-rf-form / data-rf-action / data-rf-open / data-rf-go)
-// แต่ผูกกับ store ของ BOM เท่านั้น — ข้อมูลอยู่ใน localStorage (คีย์ mnp-bom-v1) ไม่แตะฐานข้อมูล จึงไม่มี migration/RPC
-// "ทำหน้าที่เป็น" คือบทบาทสาธิต 8 คน ใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น ไม่ใช่การควบคุมสิทธิ์ของระบบจริง หน้า #/bom ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
+// แต่ผูกกับ store ของ BOM เท่านั้น — ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลหลัก (ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต) อยู่ในฐานข้อมูลผ่าน RPC
+// app_bom_master / app_bom_save_master ส่วนใบสั่งผลิต งาน และบันทึกการใช้งานยังอยู่ใน localStorage (คีย์ mnp-bom-local-v1) ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
+// และบทบาท BOM มาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตใน localStorage และบทบาทสาธิต 8 คนเหมือนเดิม
+// การซ่อน/แสดงเมนูและปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล หน้า #/bom ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, app, shell, bindShell, renderNotFound, escapeHtml, showToast,
 // friendlyError, confirmDialog, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerBomModule() {
@@ -23,8 +25,33 @@
   const storage = (() => {
     try { return window.localStorage; } catch { return null; }
   })();
-  const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions });
+  // โหมดฐานข้อมูล: มี Supabase (CDN โหลดก่อนไฟล์นี้) · sb สร้างใน app.js หลังไฟล์นี้โหลด จึงอ้างตอนเรียกใช้เท่านั้น (เหมือน state)
+  const remote = typeof window.supabase !== "undefined" ? {
+    async load() {
+      const { data, error } = await sb.rpc("app_bom_master");
+      if (error) throw error;
+      return data;
+    },
+    async save(changes, baseVersion, action) {
+      const { data, error } = await sb.rpc("app_bom_save_master", { p_changes: changes, p_base_version: baseVersion, p_action: action });
+      if (error) throw error;
+      return data;
+    },
+  } : null;
+  const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee) });
   window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params) };
+  // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
+  // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
+  const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
+  const updateSync = () => document.querySelectorAll("[data-bom-sync]").forEach((node) => { node.textContent = syncText(); });
+  store.subscribe((event) => {
+    if (!onBomRoute()) return;
+    if (event.type === "saving") updateSync();
+    else if (event.type === "saved") {
+      updateSync();
+      if (event.changed) renderRoute();
+    } else if (event.type !== "status") renderRoute();
+  });
 
   function url(page = "dashboard", extra = {}) {
     const query = new URLSearchParams();
@@ -114,8 +141,19 @@
       showToast(friendlyError(result.error), "error");
       return false;
     }
-    if (!store.isPersisted()) showToast("บันทึกในหน่วยความจำได้ แต่เบราว์เซอร์นี้ไม่ให้เก็บข้อมูล (localStorage เต็มหรือปิดอยู่) รีเฟรชแล้วข้อมูลจะหาย", "error");
-    else if (successText) showToast(String(successText).replaceAll("{result}", String(result.result?.summary ?? result.result ?? "")));
+    const report = () => {
+      if (!store.isPersisted()) showToast("บันทึกในหน่วยความจำได้ แต่เบราว์เซอร์นี้ไม่ให้เก็บข้อมูล (localStorage เต็มหรือปิดอยู่) รีเฟรชแล้วข้อมูลจะหาย", "error");
+      else if (successText) showToast(String(successText).replaceAll("{result}", String(result.result?.summary ?? result.result ?? "")));
+    };
+    if (!result.saving) {
+      report();
+      return true;
+    }
+    // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
+    result.saving.then((outcome) => {
+      if (outcome.ok) report();
+      else showToast(friendlyError(outcome.error), "error");
+    });
     return true;
   }
   function parseArgs(node) {
@@ -193,8 +231,15 @@
   });
   const countTitle = (id) => ({ jobs: "งานค้างของแผนก" })[id] ?? "";
 
+  // สถานะการติดต่อฐานข้อมูล (โหมดฐานข้อมูล): ว่างเมื่อไม่มีอะไรค้าง · อัปเดตที่ [data-bom-sync] โดยไม่วาดหน้าใหม่
+  const syncText = () => (store.status() === "loading" ? "กำลังโหลดข้อมูล…" : store.isSaving() ? "กำลังบันทึก…" : "");
   function toolbarHtml(ctx) {
     const { data, user } = ctx;
+    // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
+    if (store.isRemote()) {
+      return `<div class="rf-toolbar"><span class="small muted" role="status" data-bom-sync>${escapeHtml(syncText())}</span>
+        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a></div></div>`;
+    }
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
     const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
     // ยังไม่เลือกบทบาท: มีแค่ช่องเลือกบทบาท
@@ -215,6 +260,17 @@
   function deniedHtml(user) {
     return `<section class="card rf-card"><h1>ไม่มีสิทธิ์เข้าถึงหน้านี้</h1><p class="muted">บทบาท “${escapeHtml(storeApi.ROLES[user.role]?.label ?? user.role)}” เข้าถึงได้เฉพาะเมนูที่แสดงในแถบข้าง</p>
       <div class="rf-row"><a class="btn rf-btn" href="${escapeHtml(url(storeApi.homeOf(user)))}">กลับหน้าหลัก</a></div></section>`;
+  }
+  // โหมดฐานข้อมูล: กำลังโหลด หรือโหลดไม่สำเร็จ (ปุ่มลองใหม่) แทนเนื้อหาหน้า
+  function loadStateHtml() {
+    if (store.status() === "error") return `<section class="card rf-card" role="alert"><h1>โหลดข้อมูล BOM ไม่สำเร็จ</h1><p class="muted">${escapeHtml(store.error()?.message ?? "")}</p><div class="rf-row"><button class="btn rf-btn" type="button" data-bom-retry>ลองอีกครั้ง</button></div></section>`;
+    return ui.card(ui.empty("กำลังโหลดข้อมูล BOM…"));
+  }
+  // โหมดฐานข้อมูลที่ยังไม่มีชิ้นงานเลย: หน้าที่อ่านข้อมูลหลักบอกทางไปหน้านำเข้า (ผู้ที่นำเข้าได้) แทนตารางว่างหลายใบ
+  const EMPTY_MASTER_PAGES = Object.freeze(["dashboard", "items", "product", "structure", "variants"]);
+  function emptyMasterHtml(user) {
+    const canImport = actions.helpers.canPlan(user);
+    return `<section class="card rf-card">${ui.empty("ยังไม่มีข้อมูล BOM ในฐานข้อมูล")}${canImport ? `<div class="rf-row"><a class="btn rf-btn" href="${escapeHtml(url("import"))}">นำเข้าจาก Excel</a></div>` : `<p class="small muted">ฝ่ายวางแผนหรือผู้จัดการนำเข้าข้อมูลได้ที่เมนู “นำเข้าจาก Excel”</p>`}</section>`;
   }
   function pageNavHtml(user, page) {
     const items = storeApi.MODULES.filter((entry) => storeApi.canSee(user, entry.id));
@@ -250,6 +306,10 @@
       if (user && !storeApi.canSee(user, page)) location.hash = url(storeApi.homeOf(user));
       else renderRoute();
     });
+    root.querySelector("[data-bom-retry]")?.addEventListener("click", () => {
+      store.reload();
+      renderRoute();
+    });
     root.querySelector("[data-rf-reset]")?.addEventListener("click", async () => {
       if (!(await confirmDialog({ title: "ล้างข้อมูลที่บันทึกทั้งหมด (รวมที่นำเข้าจาก Excel) แล้วสร้างข้อมูลสาธิตใหม่?", confirmLabel: "ล้างข้อมูล", danger: true }))) return;
       store.reset();
@@ -260,6 +320,7 @@
 
   async function renderBom(params) {
     if (!state.employee?.isSandbox) return renderNotFound();
+    store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;
     const entry = page ? storeApi.findModule(page) : null;
@@ -272,6 +333,8 @@
       location.hash = url(storeApi.homeOf(user));
       return undefined;
     } else if (!storeApi.canSee(user, page)) body = deniedHtml(user);
+    else if (store.status() !== "ready") body = `${pageNavHtml(user, page)}${loadStateHtml()}`;
+    else if (store.isRemote() && !ctx.data.items.length && EMPTY_MASTER_PAGES.includes(page)) body = `${pageNavHtml(user, page)}${emptyMasterHtml(user)}`;
     else {
       const render = pages[page];
       const built = render ? render(ctx) : { html: ui.card(ui.empty("หน้านี้ยังไม่พร้อม")) };
@@ -294,7 +357,7 @@
     code: "BOM",
     enabled: true,
     standalone: true,
-    // ไม่แตะฐานข้อมูล: ข้อมูลสาธิตอยู่ใน localStorage จึงเปิดในโหมดทดสอบได้โดยไม่ต้องทำกติกา 5 ข้อของตารางโหมดทดสอบ
+    // ข้อมูลหลักอยู่ในตาราง/RPC ของ BOM ที่รับเฉพาะ admin ในโหมดทดสอบ (BOM_TEST_MODE_ONLY) ไม่แตะตารางของโมดูลอื่น
     sandbox: true,
     label: TITLE,
     theme: THEME,

@@ -256,9 +256,9 @@ test("net requirements apply the BOMSHEET column AK rule level by level: SE stoc
   const groups = rules.groupByDept(rules.netRequirements(explode(1008), {}));
   assert.deepEqual(groups.map((group) => group.dept), ["ST", "RB", "GR", "PK"]);
   assert.deepEqual(groups.find((group) => group.dept === "PK").entries.map((entry) => entry.itemCode), ["FG"]);
-  // ผังงานบริษัท 11 ลำดับ: ฝ่ายขาย → วางแผน → ST → RB → SR → QC → GR → PT → BG → PK → WH · แผนกผลิตเรียงตามลำดับ 3 → 11
-  assert.deepEqual(rules.PROCESS_FLOW.map((step) => [step.no, step.dept]), [[1, "SA"], [2, "PL"], [3, "ST"], [4, "RB"], [5, "SR"], [6, "QC"], [7, "GR"], [8, "PT"], [9, "BG"], [10, "PK"], [11, "WH"]]);
-  assert.deepEqual(rules.FLOW_DEPTS, ["ST", "RB", "SR", "QC", "GR", "PT", "BG", "PK", "WH"]);
+  // ผังงานบริษัท 11 ลำดับ: ฝ่ายขาย → วางแผน → ST → RB → SR → QA → GR → PT → BG → PK → WH · แผนกผลิตเรียงตามลำดับ 3 → 11
+  assert.deepEqual(rules.PROCESS_FLOW.map((step) => [step.no, step.dept]), [[1, "SA"], [2, "PP"], [3, "ST"], [4, "RB"], [5, "SR"], [6, "QA"], [7, "GR"], [8, "PT"], [9, "BG"], [10, "PK"], [11, "WH"]]);
+  assert.deepEqual(rules.FLOW_DEPTS, ["ST", "RB", "SR", "QA", "GR", "PT", "BG", "PK", "WH"]);
   assert.equal(rules.flowStepOf("GR"), 7);
   assert.equal(rules.flowStepOf("??"), 10, "an unknown department counts as assembly");
   assert.ok(rules.DEFAULT_PROCESSES.filter((entry) => entry.dept === "GR").map((entry) => entry.name).join(" → ") === "รีด → ปั๊ม → เปเปอร์ → ตัดยาง → ทากาว → เจียร์ → เจียร์(หยาบ) → เจียร์(ละเอียด) → เจาะ", "GR follows the STEP_ORDER of the Grinding-GR app");
@@ -514,11 +514,11 @@ test("the product structure rolls up material, labour and minutes per department
   assert.deepEqual(tree.missingCost, []);
   // ลำดับการผลิต = ลำดับของแผนกเจ้าของในผังงานบริษัท (ST 3 · RB 4 · GR 7 · PK 10) · แผนกจาก ownerDept
   assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 10, "PK"], ["SE", 7, "GR"], ["RB", 4, "RB"], ["BOX", 3, "ST"]], "each part takes its department's place in the company flow");
-  // ขั้นตอนตามลำดับตามผังงาน: ฝ่ายขาย (1) → วางแผน (2) → ST สั่งของซื้อ (3) → RB (4) → SR รับยางเส้นยาว (5) → QC ตรวจขนาด (6) → GR (7) → PK (10) → WH (11)
-  // เส้นยางพร้อมให้ GR ใช้หลัง QC (จากลำดับ 6) · แถวที่ไม่มีรายการใช้บอก fromOrder
+  // ขั้นตอนตามลำดับตามผังงาน: ฝ่ายขาย (1) → วางแผน (2) → ST สั่งของซื้อ (3) → RB (4) → SR รับยางเส้นยาว (5) → QA ตรวจขนาด (6) → GR (7) → PK (10) → WH (11)
+  // เส้นยางพร้อมให้ GR ใช้หลัง QA (จากลำดับ 6) · แถวที่ไม่มีรายการใช้บอก fromOrder
   assert.deepEqual(rules.productionSteps(tree).map((step) => [step.type, step.order, step.dept, step.itemCode, step.qtyPerRoot, step.inputs.map((input) => [input.itemCode, input.from]), step.fromOrder ?? null]), [
-    ["sales", 1, "SA", "", 0, [], null], ["plan", 2, "PL", "", 0, [], null], ["purchase", 3, "ST", "", 0, [["BOX", null]], null],
-    ["make", 4, "RB", "RB", 0.3, [], null], ["receive", 5, "SR", "RB", 0.3, [], 4], ["inspect", 6, "QC", "RB", 0.3, [], 5], ["make", 7, "GR", "SE", 3, [["RB", 6]], null],
+    ["sales", 1, "SA", "", 0, [], null], ["plan", 2, "PP", "", 0, [], null], ["purchase", 3, "ST", "", 0, [["BOX", null]], null],
+    ["make", 4, "RB", "RB", 0.3, [], null], ["receive", 5, "SR", "RB", 0.3, [], 4], ["inspect", 6, "QA", "RB", 0.3, [], 5], ["make", 7, "GR", "SE", 3, [["RB", 6]], null],
     ["make", 10, "PK", "FG", 1, [["SE", 7], ["BOX", null]], null], ["store", 11, "WH", "FG", 1, [], 10],
   ]);
   assert.deepEqual(rules.productionSteps(tree).slice(0, 2).map((step) => step.name), ["ออกใบสั่งผลิตให้แผนกวางแผน", "ออก BOM และใบสั่งงานให้ฝ่ายผลิต"]);

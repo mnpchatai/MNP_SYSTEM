@@ -744,13 +744,13 @@
     // การ์ด focus ได้ เพื่อเปิดเมนูคำสั่งด้วยปุ่ม Menu/Shift+F10 (บทบาทที่ดูอย่างเดียวไม่มีปุ่มในการ์ดให้ focus)
     const card = `<div class="bom-flow-item${node.level === 0 ? " is-root" : ""}" data-bom-menu="${attr(node.itemCode)}" tabindex="0" role="group" aria-label="${attr(`ลำดับ ${node.order} · ${deptName} · ${node.itemCode} ${node.name} — คลิกขวา กดค้าง หรือปุ่ม Menu เพื่อดูคำสั่ง`)}">${picture(node)}<div class="bom-flow-item-body">${tags}${ui.mono(node.itemCode)}<div class="small">${esc(node.name)}</div><div class="small muted">${node.ownCost === null && !node.children.length ? ui.badge("warn", "ไม่มีราคา") : `${node.complete ? "" : `${costWarn()} `}${baht(ctx, node.unitCost)} บาท/${esc(uomText(ctx, node.uom))}`}</div>${tools}</div></div>`;
     // ตามผังงานของบริษัท (rules.PROCESS_FLOW): ราก (สินค้าที่เปิด) เริ่มจากฝ่ายขาย → วางแผน → ST สั่งวัตถุดิบ · เส้นยางที่ป้อนชิ้นอื่นผ่าน
-    // SR รับเข้าคลัง (5) และ QC ตรวจขนาด (6) ก่อน GR เบิกไปแปรรูป · สินค้าสำเร็จรูปจบที่ WH รับเข้าคลัง (11)
+    // SR รับเข้าคลัง (5) และ QA ตรวจขนาด (6) ก่อน GR เบิกไปแปรรูป · สินค้าสำเร็จรูปจบที่ WH รับเข้าคลัง (11)
     const head = node.level === 0 ? rules.PROCESS_FLOW.filter((step) => step.no <= 3).map((step) => flowStepHtml(ctx, step)).join(flowArrow) : "";
-    const after = node.kind === "RB" && node.level > 0 ? rules.PROCESS_FLOW.filter((step) => step.dept === "SR" || step.dept === "QC") : node.level === 0 && node.kind === "FG" ? rules.PROCESS_FLOW.filter((step) => step.dept === "WH") : [];
+    const after = node.kind === "RB" && node.level > 0 ? rules.PROCESS_FLOW.filter((step) => step.dept === "SR" || step.dept === "QA") : node.level === 0 && node.kind === "FG" ? rules.PROCESS_FLOW.filter((step) => step.dept === "WH") : [];
     return `<div class="bom-flow-node">${head ? `${head}${flowArrow}` : ""}${lanes}${[...parts, card, ...after.map((step) => flowStepHtml(ctx, step))].filter(Boolean).join(flowArrow)}</div>`;
   }
-  const ORDER_TITLE = "ลำดับตามผังงานบริษัท: 1 ฝ่ายขาย · 2 วางแผน · 3 ST · 4 RB · 5 SR · 6 QC · 7 GR · 8 PT · 9 BG · 10 PK · 11 WH";
-  // กล่องขั้นตอนของผังงานที่ไม่ใช่ชิ้นงาน (ฝ่ายขาย วางแผน ST SR QC WH) ในมุมมองลำดับผลิต
+  const ORDER_TITLE = "ลำดับตามผังงานบริษัท: 1 ฝ่ายขาย · 2 วางแผน · 3 ST · 4 RB · 5 SR · 6 QA · 7 GR · 8 PT · 9 BG · 10 PK · 11 WH";
+  // กล่องขั้นตอนของผังงานที่ไม่ใช่ชิ้นงาน (ฝ่ายขาย วางแผน ST SR QA WH) ในมุมมองลำดับผลิต
   const flowStepHtml = (ctx, step) => `<div class="bom-flow-step is-flow" title="${attr(step.detail ? `${step.title} · ${step.detail}` : step.title)}"><span class="bom-flow-order" title="${attr(ORDER_TITLE)}">ลำดับ ${esc(String(step.no))}</span><span class="bom-flow-dept">${esc(ctx.rules.DEPT_LABEL[step.dept] ?? step.dept)}</span><span class="bom-flow-step-name">${esc(step.title)}</span></div>`;
   // เมนูคลิกขวา (กดค้างบนมือถือ) ของหน้าโครงสร้าง: คำสั่งของชิ้นที่ชี้ เป็นกลุ่ม แก้ไข · ไปที่ · คัดลอก
   // target = { code, parent (พ่อเมื่อชี้แถววัตถุดิบ ว่างเมื่อชี้การ์ด), root (สินค้าที่เปิดอยู่) } · บทบาทที่แก้ไม่ได้เห็นเฉพาะไปที่/คัดลอก
@@ -938,7 +938,7 @@
     if (view === "flow") {
       body = `<div class="bom-flow">${flowHtml(ctx, tree.root, canEdit)}</div>`;
     } else if (view === "steps") {
-      // ขั้นตอนตามลำดับ (ผังงานบริษัท 11 ลำดับ: ฝ่ายขาย → วางแผน → ST → RB → SR → QC → GR → PT → BG → PK → WH): แถวละงาน เรียงจากลำดับ 1
+      // ขั้นตอนตามลำดับ (ผังงานบริษัท 11 ลำดับ: ฝ่ายขาย → วางแผน → ST → RB → SR → QA → GR → PT → BG → PK → WH): แถวละงาน เรียงจากลำดับ 1
       // ส่วนประกอบที่ต้องผลิตก่อนบอกลำดับที่พร้อมใช้ และไม่ซ้ำชื่อ เพราะชื่ออยู่ในแถวของลำดับนั้นแล้ว · ของซื้อมาจากแถว ST
       const from = (order) => `<span class="bom-flow-order is-quiet">จากลำดับ ${esc(String(order))}</span>`;
       const amount = (n, uom) => `${esc(rules.fmtQty(n * qty))} ${esc(uomText(ctx, uom))}`;
@@ -1054,7 +1054,7 @@
       <div class="bom-image-edit">${picture({ itemCode: item.code, kind: item.kind, image: item.image ?? null }, " is-large")}
         ${ui.field("เลือกรูป", '<input class="input rf-input" type="file" accept="image/png,image/jpeg,image/webp" data-image-file>')}</div>
       <input type="hidden" name="image" value="${attr(item.image ?? "")}">
-      <p class="small muted" data-image-note>รูปถูกย่อในเบราว์เซอร์ก่อนบันทึก (ตัวจำลองเก็บในเบราว์เซอร์นี้ ระบบจริงเก็บใน Storage แบบ private)</p>
+      <p class="small muted" data-image-note>รูปถูกย่อในเบราว์เซอร์ก่อนบันทึก (ตัวจำลองเก็บ${ctx.store.isRemote() ? "รูปย่อไว้กับรายการชิ้นงานในฐานข้อมูล" : "ในเบราว์เซอร์นี้"} ระบบจริงเก็บใน Storage แบบ private)</p>
     </form>`;
     const bind = (dialog) => {
       const file = dialog.querySelector("[data-image-file]");
@@ -1330,6 +1330,7 @@
     const { ui, rules, user, store } = ctx;
     const canImport = ctx.helpers.canPlan(user);
     const size = store.size();
+    const remote = store.isRemote(); // โหมดฐานข้อมูล: ข้อมูลหลักไม่ได้อยู่ใน localStorage จึงไม่มีเพดานขนาด
     const html = `${head(ctx, "นำเข้า BOM จาก Excel", "เลือกไฟล์ Material_*.xlsm หรือ DATA BOM.xlsx (ระบบเปิดชีต BOMSHEET หรือ DATA ให้) หรือคัดลอกแถวหัวตารางพร้อมบรรทัดของสินค้าที่ต้องการมาวาง ระบบประกอบเป็น BOM หลายชั้นและรายงานปัญหาก่อนบันทึก")}
       ${canImport ? "" : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การนำเข้าทำโดยฝ่ายวางแผนหรือผู้จัดการ")}
       ${ui.card(`<div class="rf-grid rf-g2">
@@ -1339,7 +1340,7 @@
             <div data-bom-sheet-field hidden>${ui.field("ชีต", ui.select("sheet", [], { extra: 'data-bom-sheet title="ชีตที่อ่านเข้าช่องวางข้อมูล"' }))}</div>
             ${ui.field("กลุ่มสินค้า", ui.select("group", [{ value: "TOY", label: "ของเล่น (DATA BOM.xlsx)" }, { value: "IND", label: "ยางอุตสาหกรรม" }], { value: "TOY", extra: "data-bom-group" }))}
             ${ui.field("ชื่อแหล่งข้อมูล", ui.input("source", { value: "DATA BOM.xlsx", extra: "data-bom-source" }))}
-            <div class="rf-row"><button class="btn rf-btn" type="button" data-bom-check>ตรวจสอบ</button><span class="small muted">ข้อมูลในเบราว์เซอร์ตอนนี้ ${esc(rules.fmtQty(Math.round(size / 1000)))} KB (เพดาน localStorage ราว 5,000 KB)</span></div>
+            <div class="rf-row"><button class="btn rf-btn" type="button" data-bom-check>ตรวจสอบ</button>${remote ? "" : `<span class="small muted">ข้อมูลในเบราว์เซอร์ตอนนี้ ${esc(rules.fmtQty(Math.round(size / 1000)))} KB (เพดาน localStorage ราว 5,000 KB)</span>`}</div>
           </div>
         </div>
         <div data-bom-report></div>`)}`;
@@ -1424,7 +1425,7 @@
           const r = result.report;
           const existing = built.items.filter((item) => itemOf(ctx, item.code)).length;
           const payloadSize = JSON.stringify(built).length;
-          const tooBig = size + payloadSize > 4_500_000;
+          const tooBig = !remote && size + payloadSize > 4_500_000;
           const unlinked = r.compounds.filter((code) => !ctx.data.compounds.find((entry) => entry.code === code)?.recipeId);
           report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ${esc(String(r.subparts))} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
             ${sheetNote ? ui.callout("warn", esc(sheetNote)) : ""}

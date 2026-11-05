@@ -7,7 +7,8 @@
 // แต่หลวมกว่า RPC จริง เช่น การมอบหมายช่างครั้งแรกไม่บังคับแผนดำเนินงาน/วันที่ และลิงก์ "ดาวน์โหลด" ไฟล์แนบใช้ไม่ได้ (data:/blob: URL)
 
 // sandbox = admin อยู่ในโหมดทดสอบ (?sandbox=1): ผู้ใช้จำลองเป็น admin และทำหน้าที่เป็นบัญชีทดสอบ จึงเห็นโมดูลทดสอบ (RubberFlow, BOM)
-export function createMockSupabase({ empty = false, sandbox = false, now = () => Date.now(), warn = () => {}, objectUrl = null } = {}) {
+// storage = ที่เก็บข้อมูลหลัก BOM ของหน้า (localStorage) ไม่ส่ง = อยู่ในหน่วยความจำอย่างเดียว
+export function createMockSupabase({ empty = false, sandbox = false, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -320,10 +321,100 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   }
   const requireStatus = (request, statuses, code = "INVALID_TRANSITION") => { if (!statuses.includes(request.status)) fail(code); };
 
+  // ---- ข้อมูลหลักของ BOM (โมดูลทดสอบ #/bom): app_bom_master / app_bom_save_master ----
+  // อยู่ในหน่วยความจำและเก็บลง storage ของเครื่องที่เปิดหน้า (คีย์ mnp-harness-bom-master) รีเฟรชแล้วข้อมูลยังอยู่ · ไม่ได้เป็นฐานข้อมูลจริง
+  // บังคับสัญญาเดียวกับ RPC จริง: เฉพาะโหมดทดสอบ · ผู้เขียน = admin ผู้จัดการแผนกขึ้นไป หรือแผนก PP · เลขรุ่น (version) ต้องตรง ไม่ตรง = BOM_STALE
+  // กฎของ BOM ใช้ bom-rules.js ที่หน้าโหลดไว้ (window.MNP_BOM_RULES) ถ้ามี
+  const BOM_KEY = "mnp-harness-bom-master";
+  const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings"];
+  const BOM_ID = {
+    items: (record) => record.code, compounds: (record) => record.code, colors: (record) => record.code, processes: (record) => record.code,
+    boms: (record) => record.id, routings: (record) => record.id,
+    colorSets: (record) => `${record.base}|${record.code}`, packages: (record) => `${record.base}|${record.code}`,
+  };
+  const BOM_MANAGER_ROLES = ["department_manager", "assistant_factory_manager", "factory_manager", "general_manager"];
+  let bomMaster = null;
+  function bomLoad() {
+    if (!bomMaster) {
+      try { bomMaster = JSON.parse(storage?.getItem?.(BOM_KEY) ?? "null"); } catch { bomMaster = null; }
+      if (!bomMaster || typeof bomMaster.version !== "number") bomMaster = { version: 0, ...Object.fromEntries(BOM_LISTS.map((list) => [list, []])) };
+      for (const list of BOM_LISTS) if (!Array.isArray(bomMaster[list])) bomMaster[list] = [];
+    }
+    return bomMaster;
+  }
+  function bomCanWrite() {
+    const role = roles.find((row) => row.id === ME.role_id)?.code;
+    const department = departments.find((row) => row.id === ME.department_id)?.code;
+    return role === "admin" || BOM_MANAGER_ROLES.includes(role) || department === "PP";
+  }
+  const bomCanon = (value) => (Array.isArray(value) ? `[${value.map(bomCanon).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => `${JSON.stringify(key)}:${bomCanon(value[key])}`).join(",")}}` : JSON.stringify(value) ?? "null");
+  function bomApply(current, changes) {
+    const next = clone(current);
+    for (const list of BOM_LISTS) {
+      const entry = changes[list];
+      if (entry === undefined) continue;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail("BOM_INVALID_CHANGES");
+      const idOf = BOM_ID[list];
+      for (const record of entry.upsert ?? []) {
+        if (!record || typeof record !== "object" || !(list === "colorSets" || list === "packages" ? record.base && record.code : record[list === "boms" || list === "routings" ? "id" : "code"])) fail("BOM_INVALID_RECORD");
+        const at = next[list].findIndex((row) => idOf(row) === idOf(record));
+        if (at === -1) next[list].push(record);
+        else {
+          // BOM และ routing ที่บันทึกแล้วแก้ไม่ได้ นอกจากถูกแทนที่ (approved → superseded)
+          if (list === "boms" || list === "routings") {
+            const old = next[list][at];
+            const same = bomCanon({ ...old, status: 0, supersededAt: 0 }) === bomCanon({ ...record, status: 0, supersededAt: 0 });
+            if (!same || (old.status !== record.status && !(old.status === "approved" && record.status === "superseded"))) fail("BOM_INVALID_REVISION_IMMUTABLE");
+          }
+          next[list][at] = record;
+        }
+      }
+      for (const target of entry.delete ?? []) {
+        if (list !== "colorSets" && list !== "packages") fail("BOM_INVALID_CHANGES");
+        next[list] = next[list].filter((row) => !(row.base === target?.base && row.code === target?.code));
+      }
+    }
+    const R = globalThis.MNP_BOM_RULES;
+    const itemOf = (code) => next.items.find((row) => row.code === code);
+    for (const item of next.items) if (R && !Object.hasOwn(R.KINDS, item.kind)) fail("BOM_INVALID_ITEM_KIND");
+    for (const bom of next.boms) {
+      const parent = itemOf(bom.itemCode) ?? fail("BOM_INVALID_BOM_ITEM");
+      if (!["approved", "superseded"].includes(bom.status)) fail("BOM_INVALID_BOM_STATUS");
+      if (bom.status === "approved" && next.boms.some((row) => row !== bom && row.itemCode === bom.itemCode && row.status === "approved")) fail("BOM_INVALID_BOM_STATUS");
+      if (!Array.isArray(bom.lines) || !bom.lines.length) fail("BOM_INVALID_BOM_LINE");
+      for (const line of bom.lines) {
+        const child = itemOf(line.childCode) ?? fail("BOM_INVALID_BOM_LINE");
+        if (!(Number(line.qty) > 0)) fail("BOM_INVALID_BOM_LINE");
+        if (R && R.childKindError(parent.kind, child.kind)) fail("BOM_INVALID_BOM_LINE");
+      }
+    }
+    for (const routing of next.routings) {
+      if (!itemOf(routing.itemCode)) fail("BOM_INVALID_ROUTING");
+      if (routing.status === "approved" && next.routings.some((row) => row !== routing && row.itemCode === routing.itemCode && row.status === "approved")) fail("BOM_INVALID_ROUTING");
+    }
+    return next;
+  }
   const RPC = {
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
     app_lab_only: () => false,
+    app_bom_master() {
+      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      return bomLoad();
+    },
+    app_bom_save_master({ p_changes, p_base_version, p_action }) {
+      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      if (!bomCanWrite()) fail("BOM_FORBIDDEN");
+      const current = bomLoad();
+      if (Number(p_base_version) !== current.version) fail("BOM_STALE");
+      if (!p_changes || typeof p_changes !== "object" || Array.isArray(p_changes)) fail("BOM_INVALID_CHANGES");
+      if (typeof p_action !== "string" || !p_action) fail("BOM_INVALID_ACTION");
+      const next = bomApply(current, p_changes);
+      next.version = current.version + 1;
+      bomMaster = next;
+      try { storage?.setItem?.(BOM_KEY, JSON.stringify(bomMaster)); } catch { warnOnce("bom-storage", "[pilot harness] เก็บข้อมูล BOM ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
+      return bomMaster;
+    },
     // โหมดทดสอบ: ทำหน้าที่เป็นบัญชีทดสอบ (ใช้แถวของผู้ใช้จำลองเอง) — หน้าเว็บตั้ง state.employee เป็น persona นี้
     app_sandbox_status: () => {
       if (!sandbox) return null;
@@ -527,7 +618,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
 
 // ติดตั้งในหน้า: ไม่ลงทะเบียน service worker, fetch ข้าม origin ทุกตัว (Supabase Edge Function, Google Apps Script ที่เขียนชีตสำรอง ฯลฯ)
 // ได้คำตอบว่างแทน หน้าจำลองจึงไม่ส่งอะไรออกนอกเครื่อง แล้วแทน window.supabase ด้วย client จำลอง (?empty=1 = ไม่มีคำร้องเลย)
-export function installMockSupabase(win, create) {
+// options.sandbox = เปิดโหมดทดสอบโดยไม่ต้องมี ?sandbox=1 (หน้า /harness/ ที่ไม่มี URL ของ pilot-shell)
+export function installMockSupabase(win, create, options = {}) {
   Object.defineProperty(win.navigator, "serviceWorker", { value: { register: () => Promise.resolve(), getRegistration: () => Promise.resolve(undefined), ready: new Promise(() => {}) } });
   const realFetch = win.fetch.bind(win);
   win.fetch = (input, init) => {
@@ -537,13 +629,14 @@ export function installMockSupabase(win, create) {
   };
   const { client } = create({
     empty: new win.URLSearchParams(win.location.search).has("empty"),
-    sandbox: new win.URLSearchParams(win.location.search).has("sandbox"),
+    sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
+    storage: (() => { try { return win.localStorage; } catch { return null; } })(),
     warn: (message) => win.console.warn(message),
     objectUrl: (file) => win.URL.createObjectURL(file),
   });
   win.supabase = { createClient: () => client };
 }
 
-export function mockSupabaseScript() {
-  return `(() => {\n${createMockSupabase.toString()}\n(${installMockSupabase.toString()})(window, createMockSupabase);\n})();\n`;
+export function mockSupabaseScript({ sandbox = false } = {}) {
+  return `(() => {\n${createMockSupabase.toString()}\n(${installMockSupabase.toString()})(window, createMockSupabase, ${JSON.stringify({ sandbox })});\n})();\n`;
 }

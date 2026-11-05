@@ -1,6 +1,8 @@
-// BOM รายแผนก (โหมดทดสอบ) — เมนู บทบาทสาธิต และที่เก็บ state ในเบราว์เซอร์ (แบบเดียวกับ modules/rubberflow-store.js)
-// ข้อมูลทั้งชุดอยู่ใน localStorage ของเบราว์เซอร์นี้ (ข้อมูลสมมติ ไม่ขึ้นฐานข้อมูล) "ทำหน้าที่เป็น" คือบทบาทสาธิตใช้ซ่อน/แสดงเมนูและปุ่ม
-// ไม่ใช่การควบคุมสิทธิ์ของระบบจริง ทุก action เดินผ่าน run() ที่ clone state ก่อน แล้วบันทึกเฉพาะเมื่อกฎผ่าน
+// BOM รายแผนก (โหมดทดสอบ) — เมนู บทบาท และที่เก็บ state (แบบเดียวกับ modules/rubberflow-store.js)
+// สองโหมด: (1) ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage ของเบราว์เซอร์นี้ (ข้อมูลสาธิต + บทบาทสาธิต 8 คน ใช้ใน Node เทสต์)
+// (2) ส่ง remote = ข้อมูลหลัก (ชิ้นงาน BOM สี ชุดสี แพ็กเกจ สูตรยาง ขั้นตอนผลิต routing) อยู่ใน Supabase ผ่าน app_bom_master / app_bom_save_master
+// ส่วนใบสั่งผลิต งาน บันทึกการใช้งาน และตัวนับอยู่ใน localStorage คีย์ mnp-bom-local-v1 ผู้ใช้คือบัญชีทดสอบของ admin (personaUser)
+// บทบาทเป็นแค่ตัวซ่อน/แสดงเมนูและปุ่ม สิทธิ์จริงตัดสินที่ฐานข้อมูล · ทุก action เดินผ่าน run() ที่ clone state ก่อน แล้วบันทึกเฉพาะเมื่อกฎผ่าน
 (function (root) {
   const isNode = typeof module !== "undefined" && module.exports;
   const STATE_KEY = "mnp-bom-v1";
@@ -38,12 +40,14 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการฝ่ายโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน / PK", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "count", "jobs"]) },
+    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "count", "jobs"]) },
     rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "compounds", "jobs", "orders"]) },
     gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders"]) },
     pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders"]) },
     bg: { label: "หัวหน้าแผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders"]) },
     st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["count", "dashboard", "items", "product", "structure", "variants", "orders", "jobs"]) },
+    // บัญชีทดสอบที่ไม่ใช่แผนกด้านบน (โหมดฐานข้อมูล): ดูข้อมูลได้อย่างเดียว
+    viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "jobs"]) },
   });
   const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && ROLES[user.role].modules.includes(moduleId);
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");
@@ -163,7 +167,283 @@
     }
   }
 
-  function createStore({ storage = null, seed, actions, now = () => Date.now() } = {}) {
+  // ---------- โหมดฐานข้อมูล (remote): ข้อมูลหลักอยู่ใน Supabase ----------
+  // ข้อมูลหลัก (master) ที่ย้ายไปฐานข้อมูล: ชิ้นงาน สูตรยาง สี ชุดสี แพ็กเกจ BOM ขั้นตอนผลิต และ routing
+  // ที่ยังอยู่ใน localStorage ของเบราว์เซอร์จนกว่าจะย้ายรอบถัดไป: ใบสั่งผลิต (orders) งาน (jobs) บันทึกการใช้งาน (audit) และตัวนับเลข (counters)
+  const MASTER_LISTS = Object.freeze(["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings"]);
+  const LOCAL_LISTS = Object.freeze(["orders", "jobs", "audit"]);
+  const LOCAL_KEY = "mnp-bom-local-v1";
+  const LOCAL_VERSION = 1;
+  // กุญแจของระเบียนในแต่ละชุด: code · id · base+code (ชุดสี/แพ็กเกจรหัสซ้ำข้ามฐานรหัสได้)
+  const MASTER_KEY = Object.freeze({
+    items: (record) => record.code, compounds: (record) => record.code, colors: (record) => record.code, processes: (record) => record.code,
+    boms: (record) => record.id, routings: (record) => record.id,
+    colorSets: (record) => `${record.base}\u0000${record.code}`, packages: (record) => `${record.base}\u0000${record.code}`,
+  });
+  const MASTER_DELETABLE = Object.freeze(["colorSets", "packages"]);
+
+  // เทียบค่าทั้งก้อน: ออบเจ็กต์ไม่สนลำดับกุญแจ (jsonb ของฐานข้อมูลเรียงกุญแจใหม่) อาร์เรย์สนลำดับ
+  function sameValue(a, b) {
+    if (a === b) return true;
+    if (typeof a !== typeof b || a === null || b === null || typeof a !== "object") return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    if (Array.isArray(a)) return a.length === b.length && a.every((value, index) => sameValue(value, b[index]));
+    const keys = Object.keys(a).filter((key) => a[key] !== undefined);
+    const otherKeys = Object.keys(b).filter((key) => b[key] !== undefined);
+    return keys.length === otherKeys.length && keys.every((key) => Object.hasOwn(b, key) && sameValue(a[key], b[key]));
+  }
+  // ชุดข้อมูลหลักสองชุดเหมือนกันไหม (ไม่สนลำดับระเบียนในชุด)
+  function sameMaster(a, b) {
+    return MASTER_LISTS.every((list) => {
+      const left = a[list] ?? [];
+      const right = b[list] ?? [];
+      if (left.length !== right.length) return false;
+      const key = MASTER_KEY[list];
+      const byKey = new Map(right.map((record) => [key(record), record]));
+      return left.every((record) => byKey.has(key(record)) && sameValue(record, byKey.get(key(record))));
+    });
+  }
+  // ส่วนต่างของข้อมูลหลักก่อน/หลังรัน action → p_changes ของ app_bom_save_master (ระเบียนที่เพิ่ม/เปลี่ยน ส่งทั้งระเบียน · ชุดสี/แพ็กเกจลบได้)
+  function diffMaster(before, after) {
+    const changes = {};
+    for (const list of MASTER_LISTS) {
+      const key = MASTER_KEY[list];
+      const old = new Map((before[list] ?? []).map((record) => [key(record), record]));
+      const upsert = [];
+      const kept = new Set();
+      for (const record of after[list] ?? []) {
+        kept.add(key(record));
+        if (!old.has(key(record)) || !sameValue(old.get(key(record)), record)) upsert.push(clone(record));
+      }
+      const entry = {};
+      if (upsert.length) entry.upsert = upsert;
+      if (MASTER_DELETABLE.includes(list)) {
+        const removed = (before[list] ?? []).filter((record) => !kept.has(key(record))).map((record) => ({ base: record.base, code: record.code }));
+        if (removed.length) entry.delete = removed;
+      }
+      if (Object.keys(entry).length) changes[list] = entry;
+    }
+    return changes;
+  }
+  const hasChanges = (changes) => Object.keys(changes).length > 0;
+
+  // เลขที่ BOM-yy-nnnn / RT-yy-nnnn ออกจากตัวนับในเครื่อง: ตั้งตัวนับให้ไม่ต่ำกว่าเลขสูงสุดที่ฐานข้อมูลมี เครื่องอื่นจึงไม่ออกเลขชนกัน
+  function seedCounters(d) {
+    for (const record of [...(d.boms ?? []), ...(d.routings ?? [])]) {
+      const match = /^(BOM|RT)-(\d{2})-(\d+)$/.exec(String(record.id ?? ""));
+      if (!match) continue;
+      const key = `${match[1]}-${match[2]}`;
+      d.counters[key] = Math.max(d.counters[key] ?? 0, Number(match[3]));
+    }
+  }
+  // routing ที่อ้างขั้นตอนมาตรฐานซึ่งยังไม่มีในฐานข้อมูล (ค่าเริ่มต้นใน bom-rules ที่ action เลือกได้แต่ไม่ได้เก็บ): เก็บลง processes พร้อมกัน ฐานข้อมูลจึงมีขั้นตอนที่ routing อ้างครบ
+  function materializeProcesses(d, before) {
+    const defaults = root.MNP_BOM_RULES?.DEFAULT_PROCESSES ?? [];
+    const known = new Set(d.processes.map((process) => process.code));
+    const sent = new Map((before.routings ?? []).map((routing) => [routing.id, routing]));
+    for (const routing of d.routings) {
+      if (sent.has(routing.id) && sameValue(sent.get(routing.id), routing)) continue;
+      for (const step of Array.isArray(routing.steps) ? routing.steps : []) {
+        const entry = !known.has(step.processCode) ? defaults.find((process) => process.code === step.processCode) : null;
+        if (entry) { d.processes.push({ ...entry }); known.add(entry.code); }
+      }
+    }
+  }
+
+  // ข้อผิดพลาดของ RPC ข้อมูล BOM → ข้อความไทยสั้นๆ (ไม่แสดงข้อความดิบของฐานข้อมูล) · code ของ Error คือรหัสที่ฐานข้อมูลส่งมา
+  function mapRemoteError(error, fallback = "บันทึกข้อมูล BOM ไม่สำเร็จ ลองใหม่อีกครั้ง") {
+    const haystack = `${error?.code ?? ""} ${error?.message ?? ""} ${error?.details ?? ""} ${typeof error === "string" ? error : ""}`;
+    const code = /BOM_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/PGRST202|42883/.test(haystack) ? "BOM_NOT_DEPLOYED" : "BOM_REMOTE_FAILED");
+    const message = {
+      BOM_TEST_MODE_ONLY: "ข้อมูล BOM ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
+      BOM_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์แก้ข้อมูล BOM (ทำได้เฉพาะฝ่ายวางแผน ผู้จัดการ และผู้ดูแลระบบ)",
+      BOM_STALE: "มีผู้อื่นบันทึกข้อมูล BOM ไปก่อน ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
+      BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
+    }[code] ?? (code.startsWith("BOM_INVALID") ? `ข้อมูลไม่ผ่านการตรวจของฐานข้อมูล (${code})` : fallback);
+    return Object.assign(new Error(message), { code });
+  }
+
+  // บัญชีทดสอบ (state.employee ของ app.js ในโหมดทดสอบ) → ผู้ใช้ของ BOM
+  // admin → admin · ผู้จัดการแผนกขึ้นไป → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
+  // สิทธิ์จริงตัดสินที่ฐานข้อมูล (app_bom_save_master) ตรงนี้ใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น
+  const MANAGER_ROLE_CODES = Object.freeze(["department_manager", "assistant_factory_manager", "factory_manager", "general_manager"]);
+  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", GR: "gr", PT: "pt", BG: "bg", ST: "st" });
+  function roleOfEmployee(employee) {
+    if (!employee) return "viewer";
+    const roleCode = employee.role?.code ?? employee.role_code ?? "";
+    if (roleCode === "admin") return "admin";
+    if (MANAGER_ROLE_CODES.includes(roleCode)) return "manager";
+    return DEPT_ROLES[String(employee.department?.code ?? employee.department_code ?? "").toUpperCase()] ?? "viewer";
+  }
+  function personaUser(employee) {
+    if (!employee) return null;
+    const role = roleOfEmployee(employee);
+    const deptCode = String(employee.department?.code ?? employee.department_code ?? "").toUpperCase();
+    const depts = root.MNP_BOM_RULES?.DEPTS ?? [];
+    // dept ใช้แยกงานรายแผนก (DEPTS ของ bom-rules): ฝ่ายวางแผนทำงานบรรจุแทนในงาน PK · แผนกอื่นที่ไม่อยู่ในรายการเก็บรหัสจริงไว้ (ไม่ตรงกับงานใดๆ)
+    const dept = depts.includes(deptCode) ? deptCode : role === "planner" ? "PK" : role === "admin" ? "AD" : deptCode;
+    const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name };
+  }
+
+  function normalizeSnapshot(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("ข้อมูล BOM จากฐานข้อมูลอยู่ในรูปแบบที่ไม่รู้จัก");
+    const snapshot = { version: value.version ?? 0 };
+    for (const list of MASTER_LISTS) snapshot[list] = Array.isArray(value[list]) ? value[list] : [];
+    return snapshot;
+  }
+
+  function createRemoteStore({ storage, actions, now, remote, persona }) {
+    let snapshot = null; // ข้อมูลหลักชุดล่าสุดจากฐานข้อมูล (null = ยังไม่โหลด)
+    let local = null; // { counters, orders, jobs, audit } ใน localStorage
+    let data = null; // ข้อมูลที่หน้าใช้: ข้อมูลหลัก (ตามฐานข้อมูล + ที่เพิ่งแก้และรอบันทึก) + รายการในเครื่อง
+    let status = "idle"; // idle · loading · ready · error
+    let loadError = null;
+    let busy = false;
+    let loading = null;
+    let persisted = true;
+    let lastRaw = null;
+    const listeners = new Set();
+    const emit = (event) => { for (const listener of [...listeners]) { try { listener(event); } catch { /* ผู้ฟังพังไม่ทำให้ store พัง */ } } };
+
+    const emptyLocal = () => ({ counters: {}, orders: [], jobs: [], audit: [] });
+    const hasLocalShape = (value) => Boolean(value) && typeof value === "object" && typeof value.counters === "object" && value.counters !== null && LOCAL_LISTS.every((key) => Array.isArray(value[key]));
+    const pickLocal = (value) => ({ counters: value.counters, orders: value.orders, jobs: value.jobs, audit: value.audit });
+    function writeLocal() {
+      const text = JSON.stringify({ version: LOCAL_VERSION, ...pickLocal(local) });
+      try {
+        storage?.setItem?.(LOCAL_KEY, text);
+        if (storage?.setItem) lastRaw = text;
+        persisted = true;
+      } catch {
+        persisted = false;
+      }
+    }
+    // เปิดครั้งแรก: ใบสั่งผลิต งาน บันทึกการใช้งาน และตัวนับจากข้อมูลรุ่นเดิมของเบราว์เซอร์นี้ (mnp-bom-v1) ย้ายมาต่อ ส่วนข้อมูลหลักของรุ่นเดิมไม่ใช้
+    function readLocal() {
+      lastRaw = readRaw(storage, LOCAL_KEY);
+      const saved = readJson(storage, LOCAL_KEY);
+      if (hasLocalShape(saved)) return pickLocal(saved);
+      const old = readJson(storage, STATE_KEY);
+      local = hasLocalShape(old) ? pickLocal(old) : emptyLocal();
+      writeLocal();
+      return local;
+    }
+    function assemble() {
+      const master = Object.fromEntries(MASTER_LISTS.map((list) => [list, clone(snapshot?.[list] ?? [])]));
+      data = { version: STATE_VERSION, users: [], ...pickLocal(local), ...master };
+    }
+    function init() {
+      if (local) return;
+      local = readLocal();
+      assemble();
+    }
+    // แท็บอื่นของเบราว์เซอร์เดียวกันบันทึกรายการในเครื่องไปแล้ว: อ่านใหม่ก่อนทำงาน ไม่เขียนข้อมูลเก่าทับ
+    function refreshLocal() {
+      const raw = readRaw(storage, LOCAL_KEY);
+      if (raw === lastRaw) return;
+      lastRaw = raw;
+      const saved = readJson(storage, LOCAL_KEY);
+      if (!hasLocalShape(saved)) return;
+      local = pickLocal(saved);
+      Object.assign(data, pickLocal(local));
+    }
+    function fetchSnapshot() {
+      return Promise.resolve().then(() => remote.load());
+    }
+    function reload() {
+      init();
+      status = "loading";
+      loadError = null;
+      emit({ type: "status" });
+      loading = fetchSnapshot().then(normalizeSnapshot).then(
+        (value) => { snapshot = value; assemble(); status = "ready"; emit({ type: "loaded" }); },
+        (error) => { loadError = mapRemoteError(error, "โหลดข้อมูล BOM ไม่สำเร็จ"); status = "error"; emit({ type: "load-failed", error: loadError }); },
+      );
+      return loading;
+    }
+    // โหลดครั้งแรกเท่านั้น: หลังโหลดไม่สำเร็จไม่โหลดซ้ำเองทุกครั้งที่วาดหน้า (วนไม่จบ) ผู้ใช้กดลองอีกครั้ง = reload()
+    function ensureLoaded() {
+      init();
+      if (status === "idle") return reload();
+      return status === "loading" ? loading : Promise.resolve();
+    }
+
+    const blocked = (text, extra = {}) => ({ ok: false, error: new Error(text), ...extra });
+    function run(name, payload) {
+      init();
+      const action = actions[name];
+      if (typeof action !== "function") return { ok: false, error: new Error(`ไม่รู้จักคำสั่ง ${name}`) };
+      // ทีละรายการ: ระหว่างบันทึกรายการก่อนหน้า (รอผลจากฐานข้อมูลเพื่อรู้เลขรุ่นใหม่) รายการถัดไปถูกปฏิเสธ ไม่เข้าคิว
+      if (status !== "ready") return blocked(status === "loading" ? "กำลังโหลดข้อมูล BOM รอสักครู่แล้วลองอีกครั้ง" : "ยังโหลดข้อมูล BOM ไม่ได้ โหลดหน้าใหม่แล้วลองอีกครั้ง");
+      if (busy) return blocked("กำลังบันทึกรายการก่อนหน้า รอสักครู่แล้วลองอีกครั้ง", { busy: true });
+      refreshLocal();
+      const before = data;
+      const draft = clone(data);
+      seedCounters(draft);
+      let result;
+      try {
+        result = action(draft, payload ?? {}, { now: now(), user: persona() });
+        materializeProcesses(draft, before);
+      } catch (error) {
+        return { ok: false, error };
+      }
+      const changes = diffMaster(before, draft);
+      data = draft;
+      local = pickLocal(draft);
+      writeLocal();
+      if (!hasChanges(changes)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
+      busy = true;
+      emit({ type: "saving" });
+      const baseVersion = snapshot.version;
+      const previousLocal = pickLocal(before);
+      const saving = Promise.resolve().then(() => remote.save(changes, baseVersion, name)).then(normalizeSnapshot).then(
+        (next) => {
+          const same = sameMaster(next, data);
+          snapshot = next;
+          // ลำดับและรูปแบบตามฐานข้อมูลเป็นหลัก · ถ้าเนื้อหาเท่ากับที่แสดงอยู่แล้วไม่ต้องวาดหน้าใหม่
+          data = { ...data, ...Object.fromEntries(MASTER_LISTS.map((list) => [list, clone(snapshot[list])])) };
+          busy = false;
+          emit({ type: "saved", changed: !same });
+          return { ok: true };
+        },
+        async (error) => {
+          const mapped = mapRemoteError(error);
+          // ย้อนกลับทั้งคำสั่ง: ข้อมูลหลักกลับเป็นของฐานข้อมูลล่าสุด รายการในเครื่องกลับเป็นก่อนรัน (action เดียวอาจแก้ทั้งสองส่วน เช่น เพิ่มสินค้าในใบพร้อมสร้างรุ่นสินค้า)
+          local = previousLocal;
+          if (mapped.code === "BOM_STALE") {
+            try { snapshot = normalizeSnapshot(await fetchSnapshot()); } catch { /* ใช้ชุดเดิม: ลองใหม่ได้เมื่อเครือข่ายกลับมา */ }
+          }
+          assemble();
+          writeLocal();
+          busy = false;
+          emit({ type: "reverted", error: mapped });
+          return { ok: false, error: mapped };
+        },
+      );
+      return { ok: true, result: result ?? true, saving };
+    }
+
+    // ล้างเฉพาะรายการในเครื่อง (ใบสั่งผลิต งาน บันทึกการใช้งาน) ข้อมูลหลักอยู่ในฐานข้อมูล ไม่ถูกแตะ
+    function reset() {
+      init();
+      local = emptyLocal();
+      writeLocal();
+      assemble();
+      return data;
+    }
+    const size = () => { init(); return JSON.stringify(pickLocal(local)).length; };
+    return {
+      load: () => { init(); return data; }, data: () => { init(); return data; }, user: () => persona(), setUser: () => persona(), run, reset, isPersisted: () => persisted, size, now,
+      isRemote: () => true, status: () => status, error: () => loadError, isSaving: () => busy, version: () => snapshot?.version ?? null,
+      ensureLoaded, reload, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    };
+  }
+
+  // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action): Promise<snapshot> } → ข้อมูลหลักอยู่ในฐานข้อมูล (createRemoteStore)
+  // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
+  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null } = {}) {
+    if (remote) return createRemoteStore({ storage, actions, now, remote, persona });
     let data = null;
     let userId = null;
     let loaded = false;
@@ -240,10 +520,11 @@
     }
     // ขนาดข้อมูลที่เก็บ (ตัวอักษร JSON) ให้หน้า "นำเข้า" เตือนเมื่อใกล้เพดานของ localStorage (~5 ล้านตัวอักษร)
     const size = () => { load(); return JSON.stringify(data).length; };
-    return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now };
+    // ส่วนเดียวกับ store โหมดฐานข้อมูล เพื่อให้ module-bom ใช้โค้ดชุดเดียว: ไม่มีการโหลด/บันทึกระยะไกล
+    return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, migrate, createStore };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, diffMaster, sameMaster, mapRemoteError, roleOfEmployee, personaUser };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);
