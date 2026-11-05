@@ -80,8 +80,8 @@
       // ช่องสูตรของเส้นยางและรายการสูตรยางเก็บรหัสได้ 20 ตัวอักษร รหัสสูตรยางที่ยาวกว่านั้นจะผูกกับเส้นยางไม่ได้
       if (code.length > 20) fail(`รหัสสูตรยาง ${code} ยาวเกิน 20 ตัวอักษร`);
       const entry = d.compounds.find((row) => row.code === code);
-      if (!entry) d.compounds.push({ code, name, recipeId: null, createdAt: ctx.now });
-      else if (entry.name === entry.code) entry.name = name; // ชื่อชั่วคราวที่ระบบตั้งจากรหัส
+      if (!entry) d.compounds.push({ code, name: name.slice(0, 120), recipeId: null, createdAt: ctx.now });
+      else if (entry.name === entry.code) entry.name = name.slice(0, 120); // ชื่อชั่วคราวที่ระบบตั้งจากรหัส
     }
     const item = existing ?? { code, legacyCodes: [], createdAt: ctx.now, active: true, group: p.group || "TOY" };
     if (existing && existing.kind !== kind && approvedBomOf(d, code)) fail(`เปลี่ยนชนิดของ ${code} ที่มี BOM แล้วไม่ได้`);
@@ -176,7 +176,7 @@
     if (previous && sameLines(sortLines(d, previous.lines), lines)) return { id: previous.id, revision: previous.revision, changed: false };
     const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ/ขั้นที่)") : `สร้างใหม่ ${lines.length} บรรทัด`;
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
-    const bom = { id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}` }] };
+    const bom = { id: nextId(d, "BOM", ctx.now), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }] }; // ฐานข้อมูลรับข้อความ changeLog ไม่เกิน 1,000 ตัวอักษร
     d.boms.unshift(bom);
     audit(d, ctx, "บันทึก BOM", `${parent.code} Rev.${bom.revision}: ${changes}`);
     return { id: bom.id, revision: bom.revision, changed: true };
@@ -636,7 +636,7 @@
       if (same) same.qty += line.qty;
       else merged.push(line);
     }
-    d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`, ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
+    d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`.slice(0, 160), ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
     d.boms.push({ id: nextId(d, "BOM", ctx.now), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sortLines(d, merged), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
     audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}${log.length > 1 ? ` · ${log.slice(1).join(" · ")}` : ""}`);
   }

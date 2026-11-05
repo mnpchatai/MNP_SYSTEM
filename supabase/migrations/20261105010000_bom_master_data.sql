@@ -59,8 +59,9 @@
 -- นิยามที่ replace ในไฟล์นี้ (เริ่มจากนิยามล่าสุดของแต่ละตัว)
 --   - private.sandbox_unguarded_tables(): จาก 20261031010000_remove_factory_module.sql เพิ่มเฉพาะ bom_*
 --
--- ก่อน apply / ลำดับ deploy: migration นี้ต้อง apply ที่ production (ด้วยการอนุมัติของผู้ใช้) ก่อน merge Pilot Web ของ PR 2 ที่เรียก RPC นี้
---   ตาม "Deployment order" ใน AGENTS.md ก่อน apply ให้เทียบ md5(pg_get_functiondef(oid)) ของ private.sandbox_unguarded_tables ที่ production
+-- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้ (modules/module-bom.js) เรียก app_bom_master / app_bom_save_master แล้ว
+--   จึงต้อง apply ไฟล์นี้ที่ production (ด้วยการอนุมัติของผู้ใช้) ก่อน merge PR นี้ ตาม "Deployment order" ใน AGENTS.md
+--   ถ้า merge ก่อน หน้า #/bom ในโหมดทดสอบจะขึ้น "ฐานข้อมูลยังไม่มีระบบ BOM" จนกว่าจะ apply · ก่อน apply ให้เทียบ md5(pg_get_functiondef(oid)) ของ private.sandbox_unguarded_tables ที่ production
 --   กับนิยามใน 20261031010000_remove_factory_module.sql (ถ้ามี migration อื่นแก้ไปแล้ว ต้องเริ่มจากนิยามล่าสุด)
 --
 -- Rollback (ตาราง bom_* มีแต่ข้อมูลทดสอบ):

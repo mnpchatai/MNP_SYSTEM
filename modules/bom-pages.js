@@ -1288,7 +1288,8 @@
   pages.compounds = (ctx) => {
     const { data, ui, user } = ctx;
     const recipes = rfRecipes(ctx);
-    const canLink = ctx.helpers.canPlan(user) || user.role === "rb";
+    // โหมดฐานข้อมูล: ฐานข้อมูลให้ผูกสูตรยางได้เฉพาะผู้แก้ข้อมูลหลัก (ฝ่ายวางแผน ผู้จัดการ admin) หัวหน้า RB ผูกได้เฉพาะโหมดสาธิตในเบราว์เซอร์
+    const canLink = ctx.helpers.canPlan(user) || (user.role === "rb" && !ctx.store?.isRemote?.());
     const rows = data.compounds.filter((entry) => includes(`${entry.code} ${entry.name} ${entry.recipeId ?? ""}`, ctx.q)).sort((a, b) => a.code.localeCompare(b.code)).map((entry) => {
       const uses = data.items.filter((item) => item.kind === "RB" && item.rubber?.compound === entry.code);
       const recipe = recipes.find((row) => row.id === entry.recipeId);
