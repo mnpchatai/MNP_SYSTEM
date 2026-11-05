@@ -533,6 +533,7 @@ test("importing a whole DATA sheet (thousands of items, tens of thousands of lin
   const elapsed = performance.now() - started;
   assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
   assert.ok(elapsed < 5000, `importFlat took ${Math.round(elapsed)} ms`);
+  assert.equal(summary, `ชิ้นงานใหม่ ${FG * 2 + 2300} (มีอยู่แล้ว 1) · BOM ใหม่ ${FG * 2} ข้าม 1`);
   const fg = approved(d, "BIG-0000(P)-Y");
   assert.equal(fg.lines.length, PER_FG + 1, "lines to unknown codes and zero quantities are dropped");
   assert.equal(fg.lines.find((line) => line.childCode === "SE-BIG0-50-5-20").producerDept, "GR");
