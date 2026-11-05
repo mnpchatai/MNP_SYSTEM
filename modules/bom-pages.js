@@ -1605,21 +1605,37 @@
       let seq = 0;
       // หมายเหตุของชีตที่อ่านล่าสุด แสดงในรายงานของปุ่มตรวจสอบ (เขียน report ครั้งเดียว ปุ่มนำเข้าจึงยังผูก handler อยู่) ล้างเมื่อเลือกไฟล์ใหม่หรือแก้ช่องวาง
       let sheetNote = "";
+      // ข้อความของชีตที่อ่านจากไฟล์ เก็บในหน่วยความจำ ไม่ใส่ช่องวางทั้งหมด: ชีต DATA ทั้งไฟล์ยาว 4.6 ล้านตัวอักษร เบราว์เซอร์จัดวางช่องข้อความขนาดนั้นหลายวินาที (หน้าค้าง)
+      // ช่องวางแสดงตัวอย่างและอ่านอย่างเดียวจนกว่าจะเลือกไฟล์ใหม่หรือยกเลิกไฟล์ · การตรวจสอบอ่านจากข้อความนี้ก่อนช่องวาง
+      let loaded = null;
+      const PREVIEW_ROWS = 20;
+      const clearLoaded = () => {
+        loaded = null;
+        if (paste) { paste.value = ""; paste.readOnly = false; }
+      };
+      const showLoaded = (rows) => {
+        const X = root.MNP_BOM_XLSX;
+        loaded = X.rowsToTsv(rows);
+        paste.value = rows.length > PREVIEW_ROWS ? `${X.rowsToTsv(rows.slice(0, PREVIEW_ROWS))}\n… อ่านจากไฟล์ ${rules.fmtQty(rows.length)} แถว (แสดง ${PREVIEW_ROWS} แถวแรก) · จะวางเองให้ยกเลิกไฟล์ก่อน` : loaded;
+        paste.readOnly = true;
+      };
       paste?.addEventListener("input", () => { sheetNote = ""; });
       const showError = (error) => { if (report) report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error))); };
-      // ไฟล์ .xlsx/.xlsm: เปิดสมุดงาน (modules/bom-xlsx.js) อ่านชีตที่เลือกลงช่องวาง แล้วตรวจสอบเหมือนการวาง
+      // ไฟล์ .xlsx/.xlsm: เปิดสมุดงาน (modules/bom-xlsx.js) อ่านชีตที่เลือก แสดงตัวอย่างในช่องวาง แล้วตรวจสอบเหมือนการวาง
       const loadSheet = async (book, name, mine) => {
         if (!paste) return;
         if (report) report.innerHTML = ui.callout("info", `กำลังอ่านชีต ${esc(name)}…`);
         try {
           const rows = await book.rows(name);
           if (mine !== seq) return;
-          paste.value = root.MNP_BOM_XLSX.rowsToTsv(rows);
+          showLoaded(rows);
           sheetNote = rows.skippedCells ? `ข้ามค่า ${rows.skippedCells} ช่องที่อยู่เกินคอลัมน์ที่ ${root.MNP_BOM_XLSX.MAX_COLUMNS}` : "";
+          await (root.MNP_BOM_XLSX.yieldToBrowser?.() ?? Promise.resolve()); // ให้เบราว์เซอร์วาดตัวอย่างและรับคลิกก่อน การตรวจสอบชีตทั้งไฟล์ใช้ราว 1 วินาที
+          if (mine !== seq) return;
           rootNode.querySelector("[data-bom-check]")?.click(); // ตรวจสอบทันที รายงานบอกจำนวนสินค้า/ปัญหาของชีตนี้
         } catch (error) {
           if (mine !== seq) return;
-          paste.value = "";
+          clearLoaded();
           sheetNote = "";
           showError(error);
         }
@@ -1632,6 +1648,7 @@
         sheetNote = "";
         if (sheetField) sheetField.hidden = true;
         if (report) report.innerHTML = "";
+        if (loaded) clearLoaded(); // ยกเลิกไฟล์ = กลับไปวางเอง · ข้อความที่ผู้ใช้วางเองอยู่ในช่องวางอยู่แล้ว ไม่แตะ
         if (!picked) return;
         if (sourceInput) sourceInput.value = picked.name.slice(0, 80);
         if (paste) paste.value = "";
@@ -1664,7 +1681,7 @@
       rootNode.querySelector("[data-bom-check]")?.addEventListener("click", () => {
         if (!paste || !report) return;
         try {
-          const flat = rules.readFlatRows(paste.value);
+          const flat = rules.readFlatRows(loaded ?? paste.value);
           if (!flat.length) throw new Error("ไม่พบบรรทัดข้อมูลใต้หัวตาราง");
           const group = rootNode.querySelector("[data-bom-group]")?.value || "TOY";
           const source = String(rootNode.querySelector("[data-bom-source]")?.value || "Excel").slice(0, 80);
@@ -1677,11 +1694,22 @@
           const payloadSize = JSON.stringify(built).length;
           const tooBig = !remote && size + payloadSize > 4_500_000;
           const unlinked = r.compounds.filter((code) => !ctx.data.compounds.find((entry) => entry.code === code)?.recipeId);
+          // บรรทัดที่ชนิดพ่อ/ลูกไม่เข้ากัน (เช่น ของซื้อมีส่วนประกอบ): importFlat ข้ามให้ บอกผู้ใช้ก่อนเพราะฐานข้อมูลไม่รับบรรทัดแบบนี้
+          const kindIssues = [];
+          for (const entry of built.boms) {
+            const parentKind = result.items.get(entry.parentCode)?.kind;
+            for (const line of entry.lines) {
+              const childKind = result.items.get(rules.canonicalCode(line.childCode))?.kind;
+              const why = parentKind && childKind ? rules.childKindError(parentKind, childKind) : "";
+              if (why) kindIssues.push(`${entry.parentCode} → ${line.childCode} (${why})`);
+            }
+          }
           report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ${esc(String(r.subparts))} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
             ${sheetNote ? ui.callout("warn", esc(sheetNote)) : ""}
             ${tooBig ? ui.callout("bad", `ข้อมูลชุดนี้ (${esc(rules.fmtQty(Math.round(payloadSize / 1000)))} KB) จะเกินเพดานของ localStorage นำเข้าเฉพาะสินค้าที่ต้องใช้ทดสอบ (วางทีละกลุ่ม) หรือรีเซ็ตข้อมูลก่อน`) : ""}
             ${unlinked.length ? ui.callout("warn", `สูตรยางที่ยังไม่ผูกกับ RubberFlow: ${esc(unlinked.join(", "))} (ผูกได้ภายหลังที่เมนูสูตรยาง)`) : ""}
             ${r.unknownUom.length ? ui.callout("warn", `หน่วยที่แปลงไม่ได้ (บันทึกเป็น “หน่วยอื่น”): ${esc(r.unknownUom.slice(0, 20).join(", "))}${r.unknownUom.length > 20 ? " …" : ""}`) : ""}
+            ${kindIssues.length ? ui.callout("warn", `จะข้าม ${esc(String(kindIssues.length))} บรรทัดที่ชนิดพ่อ/ลูกไม่เข้ากัน: ${esc(kindIssues.slice(0, 5).join(" · "))}${kindIssues.length > 5 ? " …" : ""}`) : ""}
             ${r.conflicts.length ? `<details class="bom-details"><summary>ข้อขัดแย้ง ${esc(String(r.conflicts.length))} รายการ (ใช้ค่าชุดแรก)</summary><ul class="small">${r.conflicts.slice(0, 50).map((text) => `<li>${esc(text)}</li>`).join("")}</ul></details>` : ""}
             ${ui.table(["สินค้า (FG)", "ส่วนประกอบชั้นแรก", "ชั้นลึกสุด"], built.boms.filter((entry) => result.items.get(entry.parentCode)?.kind === "FG").slice(0, 30).map((entry) => `<tr><td>${esc(entry.parentCode)}<div class="small muted">${esc(result.items.get(entry.parentCode)?.name ?? "")}</div></td><td>${esc(String(entry.lines.length))} บรรทัด</td><td>${esc(String(Math.max(...rules.explode(entry.parentCode, 1, { itemOf: (code) => result.items.get(rules.canonicalCode(code)) ?? null, approvedBomOf: (code) => (result.boms.has(code) ? { id: code, revision: 1, lines: result.boms.get(code) } : null) }).lines.map((line) => line.level))))}</td></tr>`), { emptyText: "ไม่พบสินค้า" })}
             <div class="rf-row">${canImport && !tooBig ? `<button class="btn rf-btn" type="button" data-bom-import>นำเข้า ${esc(String(r.itemCount))} ชิ้นงาน / ${esc(String(r.bomCount))} BOM</button>` : ""}<span class="small muted">พ่อที่มี BOM อยู่แล้วจะไม่ถูกทับ (ข้าม) แก้ได้ที่เมนู “สร้าง BOM”</span></div>`;

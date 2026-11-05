@@ -110,35 +110,68 @@
     return value !== "" && Number.isFinite(n) ? String(n) : value; // 0.10100000000000001 → 0.101
   };
 
-  // แถวของชีตเป็น array ของข้อความ (ช่องว่าง = "") ตามตำแหน่งคอลัมน์จริง แถวว่างทั้งแถวถูกข้าม
+  // คืนคิวให้เบราว์เซอร์ (วาดหน้า รับคลิก) ระหว่างงานยาว · scheduler.yield ถ้ามี ไม่งั้น MessageChannel ซึ่งไม่ถูกหน่วงเหมือน setTimeout ในแท็บพื้นหลัง
+  // ที่ไม่มีทั้งสองอย่าง (เทสต์ใน vm) ทำต่อทันที
+  const yieldToBrowser = () => {
+    if (typeof scheduler !== "undefined" && typeof scheduler.yield === "function") return scheduler.yield();
+    if (typeof MessageChannel === "undefined") return Promise.resolve();
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => { channel.port1.close(); resolve(); };
+      channel.port2.postMessage(0);
+    });
+  };
+  const ROW_PATTERN = /<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g;
+  const ROWS_PER_SLICE = 1000; // ชีต DATA ทั้งไฟล์ (XML 100 MB, 31,000 แถว) อ่านรวดเดียวเกือบ 2 วินาที จึงคืนคิวให้เบราว์เซอร์ทุกพันแถว
+
+  // เซลล์ของแถว <row> หนึ่งแถว (ช่องว่าง = "") ตามตำแหน่งคอลัมน์จริง · null = แถวว่างทั้งแถว · counters.skipped นับเซลล์ที่มีค่าแต่อยู่เกินคอลัมน์ MAX_COLUMNS
+  function parseRow(rowXml, strings, counters) {
+    const cells = [];
+    let next = 0;
+    for (const cell of rowXml.matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const attrs = attrsOf(cell[1]);
+      const index = attrs.r ? columnIndex(attrs.r) : next;
+      next = index + 1;
+      const body = cell[2] ?? "";
+      const raw = body.match(/<v\b[^>]*>([\s\S]*?)<\/v>/)?.[1];
+      let value = "";
+      if (attrs.t === "s") value = raw == null ? "" : strings[Number(raw)] ?? "";
+      else if (attrs.t === "inlineStr") value = runText(body.match(/<is\b[^>]*>([\s\S]*?)<\/is>/)?.[1] ?? "");
+      else if (attrs.t === "e") value = ""; // #N/A #REF! ไม่ใช่ข้อมูล
+      else if (attrs.t === "str" || attrs.t === "b") value = raw == null ? "" : decodeXml(raw);
+      else value = raw == null ? "" : numberText(decodeXml(raw));
+      if (index < 0) continue;
+      if (index >= MAX_COLUMNS) { if (value) counters.skipped += 1; continue; }
+      cells[index] = value.replace(/[\t\r\n]+/g, " ").trim();
+    }
+    while (cells.length && !cells[cells.length - 1]) cells.pop(); // ช่องว่างท้ายแถวไม่เก็บ
+    return cells.length ? Array.from(cells, (value) => value ?? "") : null;
+  }
+  const pushRow = (rows, cells) => {
+    if (!cells) return;
+    if (rows.length >= MAX_ROWS) fail(`ชีตนี้มีเกิน ${MAX_ROWS.toLocaleString("en-US")} แถว อ่านในเบราว์เซอร์ไม่ได้ ให้คัดลอกเฉพาะสินค้าที่ต้องการมาวาง`);
+    rows.push(cells);
+  };
+
+  // แถวของชีตเป็น array ของข้อความ แถวว่างทั้งแถวถูกข้าม · แบบรวดเดียว (เทสต์และชีตเล็ก)
   function sheetRows(xml, strings) {
     const rows = [];
-    let skipped = 0;
-    for (const rowMatch of xml.matchAll(/<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g)) {
-      const cells = [];
-      let next = 0;
-      for (const cell of (rowMatch[1] ?? "").matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-        const attrs = attrsOf(cell[1]);
-        const index = attrs.r ? columnIndex(attrs.r) : next;
-        next = index + 1;
-        const body = cell[2] ?? "";
-        const raw = body.match(/<v\b[^>]*>([\s\S]*?)<\/v>/)?.[1];
-        let value = "";
-        if (attrs.t === "s") value = raw == null ? "" : strings[Number(raw)] ?? "";
-        else if (attrs.t === "inlineStr") value = runText(body.match(/<is\b[^>]*>([\s\S]*?)<\/is>/)?.[1] ?? "");
-        else if (attrs.t === "e") value = ""; // #N/A #REF! ไม่ใช่ข้อมูล
-        else if (attrs.t === "str" || attrs.t === "b") value = raw == null ? "" : decodeXml(raw);
-        else value = raw == null ? "" : numberText(decodeXml(raw));
-        if (index < 0) continue;
-        if (index >= MAX_COLUMNS) { if (value) skipped += 1; continue; }
-        cells[index] = value.replace(/[\t\r\n]+/g, " ").trim();
-      }
-      while (cells.length && !cells[cells.length - 1]) cells.pop(); // ช่องว่างท้ายแถวไม่เก็บ
-      if (!cells.length) continue;
-      if (rows.length >= MAX_ROWS) fail(`ชีตนี้มีเกิน ${MAX_ROWS.toLocaleString("en-US")} แถว อ่านในเบราว์เซอร์ไม่ได้ ให้คัดลอกเฉพาะสินค้าที่ต้องการมาวาง`);
-      rows.push(Array.from(cells, (value) => value ?? ""));
+    const counters = { skipped: 0 };
+    for (const rowMatch of xml.matchAll(ROW_PATTERN)) pushRow(rows, parseRow(rowMatch[1] ?? "", strings, counters));
+    rows.skippedCells = counters.skipped; // จำนวนเซลล์ที่มีค่าแต่อยู่เกินคอลัมน์ MAX_COLUMNS
+    return rows;
+  }
+  // แบบแบ่งช่วง: ผลเหมือน sheetRows แต่คืนคิวให้เบราว์เซอร์ทุก ROWS_PER_SLICE แถว หน้าจึงไม่ค้างระหว่างอ่านชีตใหญ่
+  async function sheetRowsAsync(xml, strings) {
+    const rows = [];
+    const counters = { skipped: 0 };
+    let seen = 0;
+    for (const rowMatch of xml.matchAll(ROW_PATTERN)) {
+      pushRow(rows, parseRow(rowMatch[1] ?? "", strings, counters));
+      seen += 1;
+      if (seen % ROWS_PER_SLICE === 0) await yieldToBrowser();
     }
-    rows.skippedCells = skipped; // จำนวนเซลล์ที่มีค่าแต่อยู่เกินคอลัมน์ MAX_COLUMNS
+    rows.skippedCells = counters.skipped;
     return rows;
   }
 
@@ -175,7 +208,7 @@
       async rows(name) {
         const sheet = sheets.find((entry) => entry.name === name) ?? fail(`ไม่พบชีต ${name}`);
         strings ??= sharedStrings(await readText(zip, "xl/sharedStrings.xml", maxPartBytes));
-        return sheetRows(await readText(zip, sheet.path, maxPartBytes), strings);
+        return sheetRowsAsync(await readText(zip, sheet.path, maxPartBytes), strings);
       },
     };
   }
@@ -183,7 +216,7 @@
   const rowsToTsv = (rows) => rows.map((row) => row.join("\t")).join("\n");
   const isWorkbookName = (name) => /\.(xlsx|xlsm)$/i.test(String(name ?? ""));
 
-  const api = { MAX_FILE_BYTES, MAX_PART_BYTES, MAX_ROWS, MAX_COLUMNS, openWorkbook, resolvePath, rowsToTsv, isWorkbookName, sheetRows, sharedStrings, columnIndex, decodeXml };
+  const api = { MAX_FILE_BYTES, MAX_PART_BYTES, MAX_ROWS, MAX_COLUMNS, ROWS_PER_SLICE, openWorkbook, resolvePath, rowsToTsv, isWorkbookName, sheetRows, sheetRowsAsync, sharedStrings, columnIndex, decodeXml, yieldToBrowser };
   if (isNode) module.exports = api;
   else root.MNP_BOM_XLSX = api;
 })(typeof window !== "undefined" ? window : globalThis);

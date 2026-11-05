@@ -375,7 +375,7 @@
     const items = Array.isArray(p.items) ? p.items : fail("ไม่มีรายการชิ้นงานให้นำเข้า");
     const boms = Array.isArray(p.boms) ? p.boms : [];
     if (!items.length) fail("ไม่มีรายการชิ้นงานให้นำเข้า");
-    const stats = { itemsAdded: 0, itemsMerged: 0, bomsAdded: 0, bomsSkipped: 0 };
+    const stats = { itemsAdded: 0, itemsMerged: 0, bomsAdded: 0, bomsSkipped: 0, linesSkipped: 0 };
     // ดัชนีครั้งเดียว: ชีต DATA ทั้งไฟล์มีหลายพันชิ้นและหลายหมื่นบรรทัด ถ้าไล่หาใน d.items ทุกบรรทัด (itemOf) หน้าค้างหลายนาที
     // ผลเท่ากับ itemOf/approvedBomOf: ชิ้นแรกของรหัสนั้น · BOM อนุมัติของพ่อ · ของที่เพิ่มในคำสั่งนี้เข้าดัชนีทันที
     const byCode = new Map();
@@ -407,13 +407,18 @@
       const parent = lookup(entry.parentCode);
       if (!parent || !Array.isArray(entry.lines) || !entry.lines.length) continue;
       if (approvedParents.has(parent.code)) { stats.bomsSkipped += 1; continue; }
-      const lines = entry.lines.map((line) => ({ line, child: lookup(line.childCode) })).filter(({ line, child }) => child && Number(line.qty) > 0).map(({ line, child }) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: child.uom, consumerDept: parent.ownerDept, producerDept: child.ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
+      const lines = entry.lines.map((line) => ({ line, child: lookup(line.childCode) })).filter(({ line, child }) => {
+        if (!child || !(Number(line.qty) > 0)) return false;
+        // ชนิดพ่อ/ลูกที่ฐานข้อมูลไม่รับ (ของซื้อมีส่วนประกอบ เส้นยางมีลูกที่ไม่ใช่สูตรยาง): ข้ามบรรทัดนั้น ไม่ให้บรรทัดเดียวทำให้ทั้งชุดถูกปฏิเสธ (BOM_INVALID_PARENT_KIND / _CHILD_KIND)
+        if (R.childKindError(parent.kind, child.kind)) { stats.linesSkipped += 1; return false; }
+        return true;
+      }).map(({ line, child }) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: child.uom, consumerDept: parent.ownerDept, producerDept: child.ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
       if (!lines.length) continue;
       d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines: R.sortLinesByFlow(lines, lookup), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
       approvedParents.add(parent.code);
       stats.bomsAdded += 1;
     }
-    const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}`;
+    const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}${stats.linesSkipped ? ` · ข้าม ${stats.linesSkipped} บรรทัดที่ชนิดพ่อ/ลูกไม่เข้ากัน` : ""}`;
     audit(d, ctx, "นำเข้า BOM จากชีต", `${p.source || "Excel"}: ${summary}`);
     return { ...stats, summary };
   }

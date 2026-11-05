@@ -393,7 +393,7 @@
       if (!item || item === "ITEM" || item === ".") continue; // "." = แถวเว้นของ BOMSHEET
       const name = cellText(row, map.name);
       const code = cellText(row, map.code);
-      if (!name && isBlankCode(code)) continue;
+      if (isBlankCode(name) && isBlankCode(code)) continue; // แถวว่างหรือแถวเลขศูนย์ของชีต (ชื่อและรหัสเป็น "", "-" หรือ "0") ไม่ใช่ข้อมูล
       out.push({
         item, code, deptKind: cellText(row, map.deptKind).toUpperCase(), pair: cellText(row, map.pair).toUpperCase(), name,
         compound: cellText(row, map.compound), c1: cellText(row, map.c1), c2: cellText(row, map.c2), c3: cellText(row, map.c3), c4: cellText(row, map.c4), c5: cellText(row, map.c5),
@@ -508,6 +508,7 @@
   // แต่ละ ITEM: แถว PK ที่รหัส = ฐานของ ITEM คือ FG · SE เป็นลูกของ FG · RB เป็นลูกของ SE ล่าสุด (ปริมาณจากสูตร rbPerSe ไม่ใช่ตัวเลขในชีตที่ซ้ำกับ SE) ·
   // คู่ PT-ST/BG-ST/BG-PT เป็นลูกของชิ้น PT/BG ล่าสุด · GR-ST ลูกของ SE ล่าสุด · คู่ PK-* ลูกของ FG · บรรทัดซ้ำ (ลูกเดียวกันใต้พ่อเดียวกัน) รวมปริมาณ
   // คืน { items: Map(code → item), boms: Map(parentCode → lines[]), report }
+  const MADE_FROM_PURCHASED = Object.freeze(["BG", "PT", "SE", "RB"]); // ชนิดที่แถวหลังยกระดับของซื้อให้ได้ (แผนกผลิตเอง)
   function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1, subpartSuffix = "" } = {}) {
     const items = new Map();
     const boms = new Map();
@@ -521,6 +522,13 @@
       if (!item) {
         item = { code: canonical, kind: props.kind, name: props.name || canonical, ownerDept: ownerDeptOf(props.kind, props.pair), uom: props.uom, weightG: props.weightG || 0, group, legacyCodes: [], rubber: props.rubber ?? null, active: true };
         items.set(canonical, item);
+      } else if (item.kind === "PURCHASED" && MADE_FROM_PURCHASED.includes(props.kind)) {
+        // รหัสเดียวกันเป็นของซื้อในสินค้าหนึ่ง (คู่ PK-ST) แต่อีกสินค้าบอกว่าแผนกผลิตเอง (คู่ PK-BG / รหัสแผนก): ใช้ชนิดที่ผลิตเอง
+        // ไม่งั้นชิ้นนั้นมีส่วนประกอบ (ผ้า เทป) ทั้งที่เป็นของซื้อ ซึ่งฐานข้อมูลไม่รับ (BOM_INVALID_PARENT_KIND) และทั้งชุดถูกปฏิเสธ
+        if (report.conflicts.length < 200) report.conflicts.push(`${canonical}: เป็นของซื้อในสินค้าหนึ่งแต่เป็น${KINDS[props.kind].label}ในอีกสินค้า ใช้${KINDS[props.kind].label}`);
+        item.kind = props.kind;
+        item.ownerDept = ownerDeptOf(props.kind, props.pair);
+        if (props.rubber && !item.rubber) item.rubber = props.rubber; // ของซื้อไม่มีข้อมูลยาง: ยกเป็น RB/SE ต้องได้สูตร/ขนาดจากแถวนี้
       }
       const raw = String(legacyRaw).trim();
       if (raw && raw !== canonical && !item.legacyCodes.includes(raw)) { item.legacyCodes.push(raw); if (canonicalCode(raw) === canonical) report.variants += 1; } // รหัสไม่มีสีของชิ้นที่ได้สีจากคอลัมน์ ไม่นับเป็นสะกดต่าง
