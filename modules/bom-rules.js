@@ -528,6 +528,7 @@
         if (report.conflicts.length < 200) report.conflicts.push(`${canonical}: เป็นของซื้อในสินค้าหนึ่งแต่เป็น${KINDS[props.kind].label}ในอีกสินค้า ใช้${KINDS[props.kind].label}`);
         item.kind = props.kind;
         item.ownerDept = ownerDeptOf(props.kind, props.pair);
+        if (props.rubber && !item.rubber) item.rubber = props.rubber; // ของซื้อไม่มีข้อมูลยาง: ยกเป็น RB/SE ต้องได้สูตร/ขนาดจากแถวนี้
       }
       const raw = String(legacyRaw).trim();
       if (raw && raw !== canonical && !item.legacyCodes.includes(raw)) { item.legacyCodes.push(raw); if (canonicalCode(raw) === canonical) report.variants += 1; } // รหัสไม่มีสีของชิ้นที่ได้สีจากคอลัมน์ ไม่นับเป็นสะกดต่าง

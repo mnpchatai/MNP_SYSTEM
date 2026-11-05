@@ -614,14 +614,20 @@ test("a code that is purchased in one product but made by a department in anothe
     "B-01(P)-Y\tB-01\tสินค้า B\tPK\tPK\t-\tชุด",
     "B-01(P)-Y\tB02-9\tสายสะพาย\tST\tPK-BG\t1\tชิ้น/pcs",
     "B-01(P)-Y\tC17-1\tผ้า\tST\tBG-ST\t0.5\tเมตร",
+    "C-01(P)-Y\tC-01\tสินค้า C\tPK\tPK\t-\tชุด",
+    "C-01(P)-Y\tZ9\tเส้นยางซื้อ\tST\tPK-ST\t1\tชิ้น/pcs",
+    "D-01(P)-Y\tD-01\tสินค้า D\tPK\tPK\t-\tชุด",
+    "D-01(P)-Y\tZ9\tเส้นยางรีดเอง\tRB\tRB\t1\tชิ้น/pcs",
   ].join("\n");
   const flat = rules.readFlatRows(tsv);
-  assert.equal(flat.length, 5, "the row whose code and name are both 0 is skipped");
+  assert.equal(flat.length, 9, "the row whose code and name are both 0 is skipped");
   const { items, boms, report } = rules.buildFromFlat(flat, { group: "TOY" });
   assert.equal(items.get("B02-9").kind, "BG");
   assert.equal(items.get("B02-9").ownerDept, "BG");
   assert.deepEqual(boms.get("B02-9").map((line) => line.childCode), ["C17-1"], "the fabric hangs under the bag");
   assert.ok(report.conflicts.some((text) => text.startsWith("B02-9:") && text.includes("กระเป๋า")), "the kind change is reported");
   assert.ok(!items.has("0"));
+  assert.equal(items.get("Z9").kind, "RB");
+  assert.ok(items.get("Z9").rubber && typeof items.get("Z9").rubber === "object", "a part upgraded to a rod takes the rod data of the row that upgraded it");
   for (const [parentCode, lines] of boms) for (const line of lines) assert.equal(rules.childKindError(items.get(parentCode).kind, items.get(line.childCode).kind), "", `${parentCode} → ${line.childCode}`);
 });
