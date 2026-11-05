@@ -81,7 +81,8 @@
       }
       for (const key of ["compound", "type", "color", "product"]) if (rubber[key] !== undefined) rubber[key] = String(rubber[key]).trim().toUpperCase().slice(0, 20);
     }
-    if (kind === "RB") {
+    // เลิกใช้ (active:false) ทำได้แม้ข้อมูลเส้นยางยังไม่ครบ ชิ้นที่ข้อมูลผิดจึงเก็บออกจากตัวเลือกได้
+    if (kind === "RB" && p.active !== false && p.active !== "false") {
       if (!rubber?.compound) fail(`เส้นยาง ${code} ต้องระบุรหัสสูตรยาง (คอมปาวด์)`);
       if (!d.compounds.some((entry) => entry.code === rubber.compound)) d.compounds.push({ code: rubber.compound, name: rubber.compound, recipeId: null, createdAt: ctx.now });
     }
@@ -182,6 +183,9 @@
     }
     const note = String(p.note ?? "").trim().slice(0, 300);
     const previous = approvedBomOf(d, parent.code);
+    // ชิ้นที่เลิกใช้: BOM เดิมที่ใช้อยู่ยังบันทึกซ้ำได้ แต่เพิ่มเป็นบรรทัดใหม่ไม่ได้
+    const retired = lines.map((line) => line.childCode).filter((code) => itemOf(d, code)?.active === false && !previous?.lines.some((line) => line.childCode === code));
+    if (retired.length) fail(`${parent.code}: ${retired.join(", ")} เลิกใช้แล้ว เพิ่มเป็นส่วนประกอบใหม่ไม่ได้ (ลบบรรทัดนั้นออก หรือเปิดใช้ชิ้นงานอีกครั้งที่ “แก้ข้อมูลชิ้นงาน”)`);
     // เทียบกับ revision เดิมที่เรียงด้วยกฎปัจจุบัน: ถ้าแผนกเจ้าของของลูกเพิ่งเปลี่ยน ลำดับเก่าที่ค้างไม่นับเป็นการแก้ BOM
     if (previous && sameLines(sortLines(d, previous.lines), lines)) return { id: previous.id, revision: previous.revision, changed: false };
     const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ/ขั้นที่)") : `สร้างใหม่ ${lines.length} บรรทัด`;
@@ -733,6 +737,7 @@
     if (!approvedBomOf(d, fg.code)) fail(`${fg.code} ยังไม่มี BOM (สร้างได้ที่เมนู "สร้าง BOM")`);
     const qty = num(p.qty, "จำนวนสั่ง");
     const existing = order.items.find((item) => item.fgCode === fg.code);
+    if (fg.active === false && !existing) fail(`${fg.code} เลิกใช้แล้ว เพิ่มในใบสั่งผลิตใหม่ไม่ได้`);
     if (existing) existing.qty += qty;
     else order.items.push({ fgCode: fg.code, qty, colorSet: (colorSet || R.parseFgCode(fg.code).colorSet).slice(0, 10), note: String(p.note ?? "").trim().slice(0, 120) });
     order.explosion = null;
