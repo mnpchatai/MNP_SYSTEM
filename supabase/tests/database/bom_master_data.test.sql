@@ -605,7 +605,10 @@ select is((select string_agg((b ->> 'id') || ':' || (b ->> 'status'), ',' order 
   'the delta holds both users'' new revisions and the revisions the server superseded for them');
 select is(current_setting('test.b2')::jsonb -> 'changes', public.app_bom_master_since(12) -> 'changes', 'the reply to a save equals the delta RPC from the same base');
 select is(public.app_bom_master_since(14) -> 'changes' -> 'boms' -> 'upsert', '[]'::jsonb, 'the delta from the current version is empty');
+-- authenticated อ่านตารางตรงไม่ได้ (RLS deny-all) จึงนับด้วยบทบาทของเทสต์ แล้วกลับเป็น authenticated (claims ของ session ยังอยู่)
+reset role;
 select is((select count(*) from public.bom_boms where item_code = 'FG-T1' and status = 'approved' and is_test), 1::bigint, 'still exactly one approved revision per item');
+set local role authenticated;
 
 -- ลบ: ระเบียนที่คนอื่นแก้ หรือที่คนอื่นลบไปแล้ว (ตอนนี้ version 14)
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -654,6 +657,7 @@ select is(public.app_bom_save_master(
   '{"boms":{"upsert":[{"id":"BOM-69-0007-p1q2zz","itemCode":"SE-T1-OR01-100-18-65","revision":4,"status":"approved","lines":[{"childCode":"RB-DM01-A-OR01-100-18-65","qty":0.3}]}]},
     "routings":{"upsert":[{"id":"RT-69-0003-p1q2zz","itemCode":"SE-T1-OR01-100-18-65","revision":1,"status":"approved","steps":[{"processCode":"X-01","minutesPerPc":3,"inputs":[]}]}]}}'::jsonb, 20, 'saveBom') ->> 'version', '22',
   'B saves a revision of another product from the same old base with the same counter part but another suffix: not stale');
+reset role; -- อ่านตารางตรงด้วยบทบาทของเทสต์ (authenticated ถูก RLS deny-all)
 select is((select count(*) from public.bom_boms where is_test and bom_id in ('BOM-69-0007-k3x9ab', 'BOM-69-0007-p1q2zz')), 2::bigint, 'both new BOM ids exist');
 select is((select count(*) from public.bom_routings where is_test and routing_id in ('RT-69-0003-k3x9ab', 'RT-69-0003-p1q2zz')), 2::bigint, 'both new routing ids exist');
 select is((select count(*) from public.bom_boms where is_test and item_code in ('FG-T1', 'SE-T1-OR01-100-18-65') and status = 'approved'), 2::bigint, 'one approved revision per product, neither reverted');
