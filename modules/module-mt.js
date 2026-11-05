@@ -711,6 +711,9 @@
           // ใช้ร่าง = ร่างเดิมยังอยู่จนกว่าจะแก้; เริ่มใหม่ = ลบร่าง และไม่สร้างใหม่จนกว่าจะกรอก
           onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); description.focus(); },
           onDiscard: () => { draftPending = false; autosave.start(); drafts.clear(); selectDefaultDepartment(); focusFirstStep(form); },
+          // กรอกเองโดยไม่ตอบแถบ = เริ่มใบใหม่ (ไม่ย้ายโฟกัสหรือเปลี่ยนแผนกที่ผู้ใช้กำลังเลือก) ร่างเดิมถูกแทนด้วยสิ่งที่กรอก
+          form,
+          onEdit: () => { draftPending = false; autosave.start(); autosave.schedule(); },
         });
       } else {
         selectDefaultDepartment();

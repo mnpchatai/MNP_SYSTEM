@@ -99,7 +99,8 @@ test("the shell names the tab, offers a skip link and marks the content as the f
 
 test("the request detail page attaches files with the same Thai picker as the forms", () => {
   const form = app.match(/<form id="attachment-form">[\s\S]*?<\/form>/)?.[0] ?? "";
-  assert.match(form, /<label class="btn secondary file-pick" for="attachment-file">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label>/);
+  // คำแนะนำไฟล์แนบอยู่ใน title ของปุ่ม (ไม่ใช่ข้อความถาวรใต้ปุ่ม)
+  assert.match(form, /<label class="btn secondary file-pick" for="attachment-file" title="\$\{escapeHtml\(ATTACHMENT_HINT\)\}">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label>/);
   assert.match(form, /<input class="file-pick-input" id="attachment-file" name="file" type="file"/);
   assert.doesNotMatch(form, /\brequired\b/, "the visually hidden input must not show the browser's English required bubble");
   // ช่องแนบไฟล์ของการกระทำในหน้ารายละเอียด (มอบหมาย เลื่อนกำหนด บันทึกผล ตรวจรับ ตัดสินใจ) ใช้ตัวช่วยเดียวกัน

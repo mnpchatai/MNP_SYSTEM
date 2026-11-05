@@ -433,7 +433,7 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .more-info-card, .expected-date-overdue { border-color: var(--warning); background: var(--warning-soft); }
 .more-info-card h2, .expected-date-overdue h2 { color: var(--warning); }
 /* คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ ใต้ขั้นใน "ลำดับอนุมัติ" */
-.step-reply { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--primary); background: var(--primary-soft); border-radius: var(--radius-sm); font-size: 0.9em; overflow-wrap: anywhere; }
+.step-reply { margin: 6px 0 0; padding: 6px 10px; background: var(--primary-soft); border-radius: var(--radius-sm); font-size: 0.9em; overflow-wrap: anywhere; }
 .step-reply-form { margin-top: 8px; }
 .card-heading { min-height: 52px; padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); }
 .card-heading h2, .card h2, .card h3 { margin: 0; font-size: var(--text-title); line-height: 1.4; }
@@ -673,10 +673,9 @@ a.register-title:hover { color: var(--primary); }
 .request-type-count { position: relative; z-index: 1; font-size: var(--text-caption); font-weight: 600; }
 .request-type-card.selected { outline: 3px solid var(--ink); outline-offset: 4px; }
 .request-type-card:focus-visible { outline: 3px solid var(--primary); outline-offset: 4px; }
-.request-back-link { min-height: 36px; margin-bottom: 18px; padding: 0 16px 0 12px; display: inline-flex; align-items: center; gap: 6px; color: #fff; background: var(--primary); border: 1px solid var(--primary); border-radius: var(--radius-pill); box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 30%, transparent); font-size: var(--text-ui); font-weight: 600; text-decoration: none; }
-.request-back-link:hover { color: #fff; background: var(--primary-hover); border-color: var(--primary-hover); }
-:root[data-theme="dark"] .request-back-link { background: #2563eb; border-color: #2563eb; }
-:root[data-theme="dark"] .request-back-link:hover { background: #1d4ed8; border-color: #1d4ed8; }
+/* ลิงก์ย้อนกลับเป็นตัวรอง: ไม่แย่งน้ำหนักกับปุ่มหลักของหน้า (เดิมทึบสีแบรนด์มีเงาเท่าปุ่มหลัก) */
+.request-back-link { min-height: 36px; margin-bottom: 18px; padding: 0 16px 0 12px; display: inline-flex; align-items: center; gap: 6px; color: var(--primary-ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); font-weight: 600; text-decoration: none; }
+.request-back-link:hover { color: var(--primary-ink); background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 40%, var(--line)); }
 .request-back-link:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
 .request-create-entry { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-create-entry small { color: var(--muted); font-size: var(--text-caption); }
@@ -1003,7 +1002,7 @@ button.request-fact { width: 100%; appearance: none; font: inherit; color: inher
 .timeline-item strong { font-size: var(--text-meta); }
 .timeline-item p { margin: 3px 0 0; color: var(--muted); font-size: var(--text-caption); }
 .timeline-item .timeline-item-detail { color: var(--copy); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
-.timeline-item .timeline-item-message { margin-top: 5px; padding: 6px 10px; border-left: 3px solid var(--primary); border-radius: 0 8px 8px 0; background: var(--primary-soft); color: var(--ink); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.timeline-item .timeline-item-message { margin-top: 5px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--primary-soft); color: var(--ink); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
 .timeline-item-time { display: block; margin-top: 3px; color: var(--muted); font-size: var(--text-caption); }
 .attachment-grid { margin-bottom: 14px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
 .attachment-tile { margin: 0; display: flex; flex-direction: column; gap: 5px; }

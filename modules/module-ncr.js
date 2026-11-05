@@ -331,6 +331,9 @@
         message: `มีร่าง NCR ค้างจาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
         onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); field("product_name").focus(); },
         onDiscard: () => { draftPending = false; autosave.start(); drafts.clear(); focusFirstStep(form); },
+        // กรอกเองโดยไม่ตอบแถบ = เริ่มใบใหม่ ร่างเดิมถูกแทนด้วยสิ่งที่กรอก
+        form,
+        onEdit: () => { draftPending = false; autosave.start(); autosave.schedule(); },
       });
     }
 
@@ -480,10 +483,11 @@
     // หน้าทะเบียนแบบเดี่ยวใช้เฉพาะโหมดทดสอบ (ไม่มีหน้าคำร้อง ซึ่งเป็นที่อยู่ของปุ่ม "ออก NCR" และลิงก์แดชบอร์ดตามปกติ)
     // จึงต้องมีทางเข้าฟอร์มออกใบและแดชบอร์ดจากทะเบียนโดยตรง
     const headerLinks = (modules.NCR_CAR.headerLinks ?? []).map((link) => `<a class="btn secondary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join("");
+    // ในหน้าคำร้อง (embedded) หัวโมดูล NCR/CAR บอกแล้ว ไม่ซ้อนหัว "ทะเบียน NCR" อีกชั้น
     const content = `
-      <div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div>${embedded ? "" : `<div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
+      ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
-        : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div>`}</div>
+        : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
       <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "แสดง", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
       ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
