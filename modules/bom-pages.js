@@ -1425,7 +1425,8 @@
           const result = rules.buildFromFlat(flat, { group, ...rules.subpartOptions(ctx.data.items, remote ? ctx.store.idSuffix?.() : "") });
           built = { items: [...result.items.values()], boms: [...result.boms.entries()].map(([parentCode, lines]) => ({ parentCode, lines })), group, source };
           const r = result.report;
-          const existing = built.items.filter((item) => itemOf(ctx, item.code)).length;
+          const known = new Set(ctx.data.items.map((item) => item.code)); // ชุดเดียว ไม่ไล่หาทีละชิ้น (ชีตทั้งไฟล์มีหลายพันชิ้น)
+          const existing = built.items.filter((item) => known.has(rules.canonicalCode(item.code))).length;
           const payloadSize = JSON.stringify(built).length;
           const tooBig = !remote && size + payloadSize > 4_500_000;
           const unlinked = r.compounds.filter((code) => !ctx.data.compounds.find((entry) => entry.code === code)?.recipeId);
