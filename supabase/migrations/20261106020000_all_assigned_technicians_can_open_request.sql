@@ -7,9 +7,9 @@
 -- ทั้งที่ app_start_repair_work / app_finish_repair_work อนุญาตช่างทุกคนในชุดอยู่แล้ว
 -- (private.is_request_technician)
 --
--- นิยามด้านล่างเริ่มจากนิยามล่าสุดบน main (20261009094227) แล้วเพิ่มเงื่อนไขเดียว:
--- or private.is_request_technician(r.id, me.id)
--- is_request_technician ครอบทั้ง assignee_id และ request_technicians จึงตรงกับฝั่ง RPC ทุกตัว
+-- นิยามด้านล่างเริ่มจากนิยามล่าสุดบน main (20261009094227) แล้วเพิ่มเงื่อนไขเดียว: แถวของผู้เรียก
+-- ใน request_technicians (เขียน inline แบบ 20260921090000 เพื่อใช้ PK ตรง ๆ ไม่เรียกฟังก์ชันซ้อนทุกแถว)
+-- assignee_id + request_technicians ตรงกับ private.is_request_technician ที่ RPC งานช่างใช้ตรวจสิทธิ์
 --
 -- Recovery: restore private.can_access_request from 20261009094227 (ไม่มีข้อมูลเปลี่ยน ไม่มีสิทธิ์อื่นเปลี่ยน)
 create or replace function private.can_access_request(target_request_id uuid)
@@ -28,7 +28,10 @@ as $$
         r.requester_id = me.id
         or r.assignee_id = me.id
         -- ช่างทุกคนในชุด (ตาราง request_technicians) ไม่ใช่เฉพาะคนแรกที่อยู่ใน assignee_id
-        or private.is_request_technician(r.id, me.id)
+        or exists (
+          select 1 from public.request_technicians rt
+          where rt.request_id = r.id and rt.technician_id = me.id
+        )
         or exists (
           select 1 from public.approval_steps s
           where s.request_id = r.id

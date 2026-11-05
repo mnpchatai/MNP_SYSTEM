@@ -2,11 +2,11 @@
 --   บั๊กเดิม: ใบ FT058/26 มอบหมายช่าง 2 คน คนที่ไม่ได้อยู่ใน assignee_id มองไม่เห็นใบ
 --   จึงไม่มีปุ่มเริ่มงาน ทั้งที่ app_start_repair_work อนุญาตช่างทุกคนในชุด
 --   - allow: ช่างคนที่ 2 อ่านใบ รายชื่อช่าง และกดเริ่มงานได้
---   - deny: คนนอกชุด และช่างที่ถูกถอดออกจากชุดแล้ว อ่านไม่ได้และเริ่มงานไม่ได้
+--   - deny: คนนอกชุด และช่างที่ไม่อยู่ในชุดของใบนั้น อ่านไม่ได้และเริ่มงานไม่ได้; ช่างในชุดที่ถูกปิดบัญชีอ่านไม่ได้
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(10);
+select plan(11);
 
 insert into auth.users (id, email, raw_user_meta_data) values
   ('86000000-0000-0000-0000-000000000001', 'tech-first@mnp.local', '{}'::jsonb),
@@ -98,6 +98,16 @@ select lives_ok(
 select isnt_empty(
   $$ select 1 from public.requests where id = '86000000-0000-0000-0000-000000000021' and status = 'in_progress' $$,
   'the second technician still reads the request once it is in progress'
+);
+
+-- deny: ช่างในชุดที่ถูกปิดบัญชีแล้วอ่านใบไม่ได้
+reset role;
+update public.employees set is_active = false where id = '86000000-0000-0000-0000-000000000012';
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"86000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select is_empty(
+  $$ select 1 from public.requests where id = '86000000-0000-0000-0000-000000000021' $$,
+  'an inactive technician in the crew cannot read the request'
 );
 
 select * from finish();
