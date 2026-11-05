@@ -406,15 +406,36 @@
 
   // ---------- วางหลายบรรทัดจาก Excel ลงตารางสร้าง BOM ----------
   // อ่านข้อความที่ copy จากชีต (TSV หรือ CSV): คอลัมน์ รหัส · ปริมาณ · หน่วย · % เผื่อเสีย · หมายเหตุ (· ชื่อ เฉพาะเมื่อมีแถวหัว)
-  // มีแถวหัว (ชื่อคอลัมน์ไทย/อังกฤษที่รู้จัก) = จับคอลัมน์ตามชื่อ · ไม่มี = ตามลำดับข้างบน · แถวแรกที่ช่องปริมาณไม่ใช่ตัวเลขแต่แถวถัดไปเป็นตัวเลข ถือเป็นแถวหัวที่ไม่รู้จัก ข้ามไป
+  // มีแถวหัว (ชื่อคอลัมน์ไทย/อังกฤษที่รู้จัก) = จับคอลัมน์ตามชื่อ · ไม่มี = ตามลำดับข้างบน · แถวแรกที่ช่องปริมาณไม่ใช่ตัวเลขแต่แถวถัดไปเป็นตัวเลข และช่องรหัสไม่ใช่ชิ้นงานที่มีอยู่ (isKnownCode) ถือเป็นแถวหัวที่ไม่รู้จัก ข้ามไป
   // คืน { header, truncated, rows: [{ line, code, qty, uom, scrapPct, note, name, error }] } error ว่าง = อ่านได้ (ยังไม่ตรวจกับ item master)
   const PASTE_MAX_ROWS = 500;
   const PASTE_HEADS = Object.freeze([["code", /^(code|part|รหัส)/i], ["qty", /^(qty|quantity|จำนวน|ปริมาณ)/i], ["uom", /^(uom|unit|หน่วย)/i], ["scrap", /^(scrap|%|เผื่อ)/i], ["note", /^(note|remark|หมายเหตุ)/i], ["name", /^(name|description|ชื่อ)/i]]);
+  // ตัวเลขจากชีต: . กับ , อยู่ด้วยกัน = ตัวท้ายเป็นทศนิยม อีกตัวเป็นหลักพัน (ต้องจัดกลุ่ม 3 หลักให้ถูก) · มี , อย่างเดียว: ตามด้วย 3 หลักพอดีและส่วนหน้าเป็นหลักพันที่ถูกต้อง (1,500) = หลักพัน นอกนั้น (0,5 · 1,5 · 12,25) = ทศนิยม ·
+  // มี . อย่างเดียวเป็นทศนิยมตามปกติ · รูปแบบอื่นที่กำกวมหรือผิด (0,500 · 1.000.000 · 1,2,3 · 1e3) = NaN ให้ผู้ใช้แก้เอง ไม่เดาเงียบๆ
   const pasteNumber = (value) => {
-    const text = String(value ?? "").replace(/[,\s%]/g, "");
-    return text === "" ? NaN : Number(text);
+    const match = /^([+-]?)([\d.,]+)$/.exec(String(value ?? "").replace(/[\s%]/g, ""));
+    if (!match) return NaN;
+    const [, sign, body] = match;
+    const grouped = (part, separator) => (separator === "," ? /^[1-9]\d{0,2}(,\d{3})+$/ : /^[1-9]\d{0,2}(\.\d{3})+$/).test(part);
+    const dot = body.lastIndexOf(".");
+    const comma = body.lastIndexOf(",");
+    let canonical = "";
+    if (dot >= 0 && comma >= 0) {
+      const at = Math.max(dot, comma);
+      const groupSep = at === dot ? "," : ".";
+      const integer = body.slice(0, at);
+      const fraction = body.slice(at + 1);
+      if (!grouped(integer, groupSep) || !/^\d+$/.test(fraction)) return NaN;
+      canonical = `${integer.replaceAll(groupSep, "")}.${fraction}`;
+    } else if (comma >= 0) {
+      if (grouped(body, ",")) canonical = body.replaceAll(",", "");
+      else if (/^\d+,\d+$/.test(body) && !/,\d{3}$/.test(body)) canonical = body.replace(",", ".");
+      else return NaN; // 0,500 · 1234,567 · 1,2,3 · ,5 · 5,
+    } else if (/^(\d+(\.\d+)?|\.\d+)$/.test(body)) canonical = body;
+    else return NaN;
+    return Number(`${sign}${canonical}`);
   };
-  function parseBomPaste(text) {
+  function parseBomPaste(text, { isKnownCode = () => false } = {}) {
     const cells = parseDelimited(text);
     let map = { code: 0, qty: 1, uom: 2, scrap: 3, note: 4 };
     let start = 0;
@@ -423,7 +444,8 @@
       const named = {};
       cells[0].forEach((cell, index) => { const found = PASTE_HEADS.find(([key, pattern]) => named[key] === undefined && pattern.test(String(cell).trim())); if (found) named[found[0]] = index; });
       if (named.code !== undefined && named.qty !== undefined && named.code !== named.qty) { map = named; start = 1; header = true; }
-      else if (cells.length > 1 && Number.isNaN(pasteNumber(cells[0][1])) && !Number.isNaN(pasteNumber(cells[1][1]))) { start = 1; header = true; }
+      // หัวที่ไม่รู้จัก: ช่องปริมาณของบรรทัดแรกอ่านเป็นตัวเลขไม่ได้ + บรรทัดถัดไปอ่านได้ + ช่องรหัสของบรรทัดแรกไม่ใช่รหัสชิ้นงานที่มีอยู่ (ไม่งั้นเป็นบรรทัดข้อมูลที่พิมพ์ปริมาณผิด ไม่ข้าม)
+      else if (cells.length > 1 && Number.isNaN(pasteNumber(cells[0][1])) && !Number.isNaN(pasteNumber(cells[1][1])) && !isKnownCode(canonicalCode(String(cells[0][0] ?? "").trim()))) { start = 1; header = true; }
     }
     const body = cells.slice(start);
     const seen = new Set();
@@ -437,7 +459,7 @@
       const uom = uomText && UOMS[uomText.toLowerCase()] ? uomText.toLowerCase() : uomText ? (normalizeUom(uomText).code !== "other" ? normalizeUom(uomText).code : "") : "";
       let error = "";
       if (!code || isBlankCode(code)) error = "ไม่มีรหัสชิ้นงาน";
-      else if (!Number.isFinite(qty) || qty <= 0) error = "ปริมาณต้องเป็นตัวเลขมากกว่า 0";
+      else if (!Number.isFinite(qty) || qty <= 0) error = at("qty") && !Number.isFinite(qty) ? "อ่านปริมาณไม่ได้หรือกำกวม ใช้จุดเป็นทศนิยม เช่น 0.5 และ 1,500 = หนึ่งพันห้าร้อย" : "ปริมาณต้องเป็นตัวเลขมากกว่า 0";
       else if (!Number.isFinite(scrapPct) || scrapPct < 0) error = "% เผื่อเสียต้องเป็นตัวเลขไม่ติดลบ";
       else if (seen.has(code)) error = "รหัสซ้ำกับบรรทัดก่อนหน้า (รวมปริมาณเป็นบรรทัดเดียว)";
       if (code) seen.add(code);

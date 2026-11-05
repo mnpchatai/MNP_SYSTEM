@@ -1112,9 +1112,36 @@ test("pasting from Excel: header detection, TSV and CSV, optional columns, bad q
   assert.deepEqual(english.rows.map((row) => [row.code, row.qty, row.name, row.uom]), [["P-NEW-1", 4, "กล่องใหญ่", "box"]]);
   // ผิด: ไม่มีรหัส · ปริมาณไม่ใช่ตัวเลข/ศูนย์/ติดลบ · % ติดลบ · ซ้ำ
   const bad = rules.parseBomPaste("A-1\t2\nA-2\tabc\nA-3\t0\nA-4\t-1\nA-5\t1\t\t-5\n\t3\nA-1\t5");
-  assert.deepEqual(bad.rows.map((row) => row.error), ["", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "% เผื่อเสียต้องเป็นตัวเลขไม่ติดลบ", "ไม่มีรหัสชิ้นงาน", "รหัสซ้ำกับบรรทัดก่อนหน้า (รวมปริมาณเป็นบรรทัดเดียว)"]);
+  assert.deepEqual(bad.rows.map((row) => row.error), ["", "อ่านปริมาณไม่ได้หรือกำกวม ใช้จุดเป็นทศนิยม เช่น 0.5 และ 1,500 = หนึ่งพันห้าร้อย", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "ปริมาณต้องเป็นตัวเลขมากกว่า 0", "% เผื่อเสียต้องเป็นตัวเลขไม่ติดลบ", "ไม่มีรหัสชิ้นงาน", "รหัสซ้ำกับบรรทัดก่อนหน้า (รวมปริมาณเป็นบรรทัดเดียว)"]);
   assert.deepEqual(rules.parseBomPaste("").rows, []);
   assert.equal(rules.parseBomPaste(Array.from({ length: 600 }, (_, i) => `X-${i}\t1`).join("\n")).rows.length, 500, "at most 500 lines are read");
+});
+
+test("pasting from Excel: a decimal comma or a thousands comma is read by one rule and anything ambiguous is flagged, never guessed", () => {
+  const read = (text) => rules.parseBomPaste(`A-1\t${text}`).rows[0];
+  const good = { "0,5": 0.5, "1,5": 1.5, "12,25": 12.25, "1,500": 1500, "1,000,000": 1000000, "1.000,50": 1000.5, "1,000.50": 1000.5, "1.234.567,8": 1234567.8, "0.5": 0.5, ".5": 0.5, "1.000": 1, "1,5000": 1.5, "7": 7, " 3 % ": 3 };
+  for (const [text, expected] of Object.entries(good)) assert.deepEqual([read(text).qty, read(text).error], [expected, ""], `${text} = ${expected}`);
+  // กำกวม/ผิดรูป: ไม่เดา ติดธงบรรทัดและไม่เอาค่า
+  for (const text of ["0,500", "1.000.000", "1,2,3", "1234,567", "1.5,3", "1,00.5", "1e3", "5,", ",5", "1,5,", "--1", "1.2.3", "0x10"]) {
+    assert.match(read(text).error, /อ่านปริมาณไม่ได้หรือกำกวม/, `${text} is flagged`);
+    assert.equal(read(text).qty, 0);
+  }
+  // % เผื่อเสีย ใช้กฎเดียวกัน: 2,5 = 2.5 · 1,2,3 ผิด
+  assert.equal(rules.parseBomPaste("A-1\t1\tpcs\t2,5").rows[0].scrapPct, 2.5);
+  assert.match(rules.parseBomPaste("A-1\t1\tpcs\t1,2,3").rows[0].error, /% เผื่อเสีย/);
+});
+
+test("pasting from Excel: an unknown header line is skipped only when it cannot be data, and the page says so", () => {
+  // หัวที่ไม่รู้จัก: ข้าม · ถ้ารหัสในบรรทัดแรกเป็นชิ้นงานที่มีอยู่ ถือเป็นบรรทัดข้อมูลที่ปริมาณผิด ไม่ข้าม
+  const text = "A-1\tx\nA-2\t3";
+  const skipped = rules.parseBomPaste(text);
+  assert.equal(skipped.header, true);
+  assert.deepEqual(skipped.rows.map((row) => [row.line, row.code]), [[2, "A-2"]]);
+  const kept = rules.parseBomPaste(text, { isKnownCode: (code) => code === "A-1" });
+  assert.equal(kept.header, false);
+  assert.deepEqual(kept.rows.map((row) => [row.line, row.code, Boolean(row.error)]), [[1, "A-1", true], [2, "A-2", false]]);
+  // หัวที่รู้จักชื่อ: ข้ามเสมอ ไม่ถามรายการชิ้นงาน
+  assert.equal(rules.parseBomPaste("รหัส\tจำนวน\nA-1\t2", { isKnownCode: () => true }).header, true);
 });
 
 test("deactivating sends active in the record the remote store diffs", () => {

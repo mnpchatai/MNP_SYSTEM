@@ -307,7 +307,8 @@
   // ข้อความบอกที่มาของแถวในตาราง (แสดงครั้งเดียวใต้ปุ่ม "ตั้งต้นจาก") ใช้ทั้งตอนตั้งต้นจากสินค้าพี่น้องและตอนเลือก "ตั้งต้นจาก" เอง
   const sourceNoteOf = (source, code) => `ตั้งต้นจาก ${source.code} (${source.name}) แก้แล้วบันทึกเป็น ${code} โดยไม่กระทบตัวต้นแบบ`;
   // "ตั้งต้นจาก": แถวของต้นไม้ทั้งก้อนของ srcCode ที่จะใส่ในตารางของ targetCode (ชนิด targetKind) · ไม่เขียนข้อมูล บันทึกเมื่อกด "บันทึก BOM"
-  // คืน { error } หรือ { rows, note, retired } · retired = ชิ้นที่เลิกใช้แล้วในโครงสร้างนั้น (บันทึกไม่ผ่านจนกว่าจะลบบรรทัดนั้น)
+  // คืน { error } หรือ { rows, note, retired } · retired = ชิ้นที่เลิกใช้แล้วที่ saveBom จะปฏิเสธจริง: เป็นบรรทัดชั้นแรกใหม่ใต้ targetCode ที่ BOM ปัจจุบันของมันยังไม่มี
+  // (ชิ้นเลิกใช้ที่อยู่ลึกกว่านั้นมาจาก BOM เดิมของพ่อของมันเอง บันทึกซ้ำได้)
   function copyPlan(ctx, srcCode, targetCode, targetKind, counter = { n: 0 }) {
     const code = ctx.rules.canonicalCode(srcCode);
     const source = itemOf(ctx, code);
@@ -322,13 +323,16 @@
       if (kindError) return { error: `${targetCode} รับ ${row.code} ไม่ได้: ${kindError}` };
     }
     if (rows.some((row) => row.code === targetCode)) return { error: `โครงสร้างของ ${source.code} มี ${targetCode} อยู่ข้างใต้ จะเป็นวงจร` };
-    return { rows, note: sourceNoteOf(source, targetCode), retired: [...new Set(rows.filter((row) => row.inactive).map((row) => row.code))] };
+    const targetLines = approvedBomOf(ctx, targetCode)?.lines ?? [];
+    const refused = rows.filter((row) => row.level === 1 && row.inactive && !targetLines.some((line) => line.childCode === row.code)).map((row) => row.code);
+    return { rows, note: sourceNoteOf(source, targetCode), retired: [...new Set(refused)] };
   }
   // "วางจาก Excel": อ่านข้อความ (rules.parseBomPaste) แล้วตรวจกับ item master ว่าแต่ละบรรทัดเป็นชิ้นเดิม (known) ชิ้นใหม่ที่ต้องกรอกชื่อต่อ (new) หรือผิด (error)
   // parentKind = ชนิดของพ่อที่จะเพิ่มลูกใต้ · ancestors = รหัสของพ่อและบรรพบุรุษ (กันวงจร) · siblings = รหัสที่มีใต้พ่อนั้นในตารางแล้ว
-  function pastePlan(ctx, text, { parentKind, ancestors = [], siblings = [] }) {
+  // compoundsUnder = จำนวนบรรทัดสูตรยาง (CP) ที่มีใต้พ่อนั้นในตารางแล้ว (ใช้เตือนเมื่อเส้นยางจะมีเกินหนึ่งสูตร)
+  function pastePlan(ctx, text, { parentKind, ancestors = [], siblings = [], compoundsUnder = 0 }) {
     const { rules } = ctx;
-    const parsed = rules.parseBomPaste(text);
+    const parsed = rules.parseBomPaste(text, { isKnownCode: (code) => Boolean(itemOf(ctx, code)) });
     const above = new Set(ancestors);
     const present = new Set(siblings);
     const rows = parsed.rows.map((entry) => {
@@ -351,13 +355,16 @@
       if (kindError) return bad(kindError);
       return { ...entry, status: "new", kind, uom: kind === "CP" ? "kg" : entry.uom || "pcs", name: entry.name || compound?.name || "", error: "", warn: "" };
     });
-    return { header: parsed.header, truncated: parsed.truncated, rows, addable: rows.filter((row) => row.status !== "error").length };
+    // เส้นยางใช้สูตรยางได้สูตรเดียว (saveBom ปฏิเสธเมื่อบันทึก) จึงเตือนตั้งแต่ตอนดูตัวอย่าง
+    const compounds = compoundsUnder + rows.filter((row) => row.status !== "error" && row.kind === "CP").length;
+    const warning = parentKind === "RB" && compounds > 1 ? (compoundsUnder ? "เส้นยางนี้มีสูตรยางอยู่แล้ว ใช้ได้สูตรเดียว บันทึกไม่ผ่านถ้ามีหลายบรรทัด ลบบรรทัดเดิมหรือข้ามบรรทัดที่วางมา" : "เส้นยางใช้สูตรยางได้สูตรเดียว แต่วางสูตรยางมาหลายบรรทัด บันทึกไม่ผ่านจนกว่าจะเหลือบรรทัดเดียว") : "";
+    return { header: parsed.header, truncated: parsed.truncated, rows, warning, addable: rows.filter((row) => row.status !== "error").length };
   }
   const pasteTableHtml = (ctx, plan) => {
     const { ui } = ctx;
     const badges = { known: ui.badge("good", "ชิ้นเดิม"), new: ui.badge("warn", "ชิ้นใหม่") };
     const body = plan.rows.map((row) => `<tr><td class="right">${esc(String(row.line))}</td><td>${ui.mono(row.code || "—")}</td><td>${row.status === "error" ? `${ui.badge("bad", "ข้าม")} <span class="small">${esc(row.error)}</span>` : `${badges[row.status]}${row.warn ? ` <span class="small muted">${esc(row.warn)}</span>` : ""}`}</td><td class="right">${esc(ctx.rules.fmtQty(row.qty))}</td><td class="nowrap">${esc(row.status === "error" ? "" : uomText(ctx, row.uom))}</td><td class="right">${esc(String(row.scrapPct || ""))}</td><td class="small">${esc(row.note)}</td></tr>`);
-    return `${ui.table(["บรรทัด", "รหัส", "ผลการตรวจ", { label: "ปริมาณ", className: "right" }, "หน่วย", { label: "% เผื่อเสีย", className: "right" }, "หมายเหตุ"], body, { emptyText: "ยังไม่มีบรรทัดที่อ่านได้" })}${plan.truncated ? '<p class="small muted">อ่านเฉพาะ 500 บรรทัดแรก</p>' : ""}`;
+    return `${plan.header ? '<p class="small muted">ข้ามบรรทัดที่ 1 (ถือเป็นหัวตาราง)</p>' : ""}${plan.warning ? ui.callout("warn", plan.warning) : ""}${ui.table(["บรรทัด", "รหัส", "ผลการตรวจ", { label: "ปริมาณ", className: "right" }, "หน่วย", { label: "% เผื่อเสีย", className: "right" }, "หมายเหตุ"], body, { emptyText: "ยังไม่มีบรรทัดที่อ่านได้" })}${plan.truncated ? '<p class="small muted">อ่านเฉพาะ 500 บรรทัดแรก</p>' : ""}`;
   };
   pages.tools = { editorRowsOf, copyPlan, pastePlan };
 
@@ -623,7 +630,7 @@
         rowsOf().forEach(wire);
         if (sourceNode) sourceNode.textContent = plan.note;
         if (copySrc) copySrc.value = "";
-        if (plan.retired.length) showToast(`โหลดแล้ว แต่ ${plan.retired.join(", ")} เลิกใช้แล้ว ต้องลบบรรทัดนั้นก่อนบันทึก`, "error");
+        if (plan.retired.length) showToast(`โหลดแล้ว แต่ ${plan.retired.join(", ")} เลิกใช้แล้ว เพิ่มเป็นบรรทัดใหม่ของ ${code} ไม่ได้ ต้องลบบรรทัดนั้นก่อนบันทึก`, "error");
         else showToast(`โหลดโครงสร้างของ ${from} แล้ว ยังไม่ได้บันทึก`);
       };
       rootNode.querySelector("[data-bom-copy]")?.addEventListener("click", copyFrom);
@@ -650,7 +657,8 @@
         const ancestors = [code];
         for (let node = parent; node; node = rowById(node.dataset.parent)) ancestors.push(codeOf(node));
         const siblings = rowsOf().filter((tr) => tr.dataset.parent === (parent?.dataset.row ?? "")).map(codeOf).filter(Boolean);
-        return { parent, parentKind: parent ? kindOfRow(parent) : rootKind, ancestors, siblings };
+        const compoundsUnder = rowsOf().filter((tr) => tr.dataset.parent === (parent?.dataset.row ?? "") && kindOfRow(tr) === "CP").length;
+        return { parent, parentKind: parent ? kindOfRow(parent) : rootKind, ancestors, siblings, compoundsUnder };
       };
       let pasted = null;
       const paintPreview = () => {
@@ -675,7 +683,19 @@
       pasteParent?.addEventListener("change", paintPreview);
       pasteAdd?.addEventListener("click", () => {
         if (!pasted?.plan.addable) return;
-        const { parent, plan } = pasted;
+        // ตารางอาจเปลี่ยนตั้งแต่วาดตัวอย่าง (ลบแถวพ่อ แก้รหัส/ชนิด): ตรวจพ่อกับกฎวงจร/ชนิดกับตารางตอนนี้ ถ้าต่างจากที่แสดง วาดตัวอย่างใหม่ให้ดูก่อน ไม่แทรกลงแถวที่ไม่อยู่แล้ว
+        const shown = pasted;
+        const signature = (entry) => JSON.stringify(entry.plan.rows.map((row) => [row.code, row.status, row.error]));
+        const parentGone = Boolean(shown.parent) && !rowsOf().includes(shown.parent);
+        const fresh = parentGone ? null : (() => { const base = pasteContext(); return { ...base, plan: pastePlan(ctx, String(pasteText?.value ?? ""), base) }; })();
+        if (!fresh || fresh.parent !== shown.parent || signature(fresh) !== signature(shown)) {
+          showToast(parentGone ? "แถวที่เลือกถูกลบไปแล้ว ตรวจรายการและเลือกแถวใหม่อีกครั้ง" : "ตารางเปลี่ยนไปตั้งแต่ตรวจรายการ ตรวจรายการใหม่อีกครั้งก่อนเพิ่ม", "error");
+          parentOptions();
+          paintPreview();
+          return;
+        }
+        pasted = fresh;
+        const { parent, plan } = fresh;
         const level = parent ? Number(parent.dataset.level) + 1 : 1;
         const parentId = parent?.dataset.row ?? "";
         // แถวว่างที่ไม่มีลูก (เช่นแถวตั้งต้นของชิ้นใหม่) ไม่ต้องเก็บไว้ · ลบก่อนหาตำแหน่งแทรก
@@ -688,7 +708,7 @@
           htmlRows.push(editorRowHtml(ctx, { id, parentId, level, code: entry.code, kind: entry.kind, name: entry.name, uom: entry.uom, qty: entry.qty, step: "", scrapPct: entry.scrapPct, note: entry.note, weightG: item?.weightG || "", rubber: item?.rubber ?? {}, existing: Boolean(item), usedIn: item ? whereUsed(ctx, item.code).length : 0, inactive: false }));
           // ชิ้นเดิมที่มี BOM: ลูกของมันตามมาในตารางเหมือนพิมพ์รหัสเอง
           if (item && !ctx.helpers.NO_BOM_KINDS.includes(item.kind) && approvedBomOf(ctx, item.code)) {
-            const children = editorRowsOf(ctx, item.code, id, level + 1, new Set([item.code, ...pasted.ancestors]), { n: seq * 1000 });
+            const children = editorRowsOf(ctx, item.code, id, level + 1, new Set([item.code, ...fresh.ancestors]), { n: seq * 1000 });
             children.forEach((row) => htmlRows.push(editorRowHtml(ctx, { ...row, id: `c${id}${row.id}`, parentId: row.parentId === id ? id : `c${id}${row.parentId}` })));
           }
         }
@@ -1446,17 +1466,36 @@
     // ชิ้นใหม่: เปลี่ยนชนิด → แผนกเจ้าของตามชนิดนั้น (เดิมค้างเป็นค่าแรก ทำให้ SE/RB ที่เพิ่มทางนี้กลายเป็นงานของแผนกผิดตอนปล่อยผลิต)
     // ชิ้นเดิมคงแผนกที่บันทึกไว้ (เช่น SUBPART ของแผนกอื่น) ให้ผู้ใช้แก้เอง
     const bind = (dialog) => {
-      if (item) return;
+      if (item) return bindToggle(dialog);
       const kindSelect = dialog.querySelector('select[name="kind"]');
       const deptSelect = dialog.querySelector('select[name="ownerDept"]');
       if (!kindSelect || !deptSelect) return;
       kindSelect.addEventListener("change", () => { deptSelect.value = rules.ownerDeptOf(kindSelect.value); });
     };
+    // ปุ่มเลิกใช้/เปิดใช้: ส่งเรคคอร์ดที่เก็บอยู่ตอนกด (จาก store) พลิกเฉพาะ active ไม่ส่งชื่อ/หน่วยที่ค้างมาตั้งแต่เปิด dialog จึงไม่ทับการเปลี่ยนชื่อของคนอื่น ·
+    // ถ้าฟอร์มมีค่าที่แก้ไว้แต่ยังไม่บันทึก ถามก่อนว่าจะทิ้ง (ปุ่มนี้ไม่บันทึกค่าในฟอร์ม) · ถ้าสถานะเปลี่ยนไปแล้วตั้งแต่เปิด dialog ไม่ทำต่อ
+    const bindToggle = (dialog) => {
+      const button = dialog.querySelector("[data-bom-item-toggle]");
+      if (!button) return;
+      const form = dialog.querySelector("#bom-item-form");
+      const snapshot = () => JSON.stringify([...(form?.querySelectorAll("input[name], select[name]") ?? [])].map((field) => [field.name, field.value]));
+      const opened = snapshot();
+      button.addEventListener("click", async () => {
+        const stored = ctx.store.data().items.find((row) => row.code === item.code);
+        if (!stored) { showToast(`ไม่พบชิ้นงาน ${item.code} แล้ว`, "error"); return; }
+        if ((stored.active === false) !== retired) { showToast(`สถานะของ ${item.code} ถูกเปลี่ยนไปแล้ว ปิดหน้าต่างนี้แล้วเปิดใหม่`, "error"); return; }
+        if (snapshot() !== opened && !(await confirmDialog({ title: "ทิ้งการแก้ไขที่ยังไม่บันทึก?", message: `ค่าที่แก้ในฟอร์มยังไม่ได้บันทึก และ${toggleText}จะไม่บันทึกค่าเหล่านั้น (กด “บันทึก” ก่อนถ้าต้องการเก็บไว้)`, confirmLabel: "ทิ้งการแก้ไข", danger: true }))) return;
+        if (!(await confirmDialog(ui.confirmOptions(button)))) return;
+        if (!ctx.runAction("saveItem", { code: stored.code, kind: stored.kind, name: stored.name, uom: stored.uom, active: retired }, button.dataset.rfSuccess)) return;
+        dialog.close?.();
+        renderRoute();
+      });
+    };
     // เลิกใช้ = ซ่อนจากตัวเลือกบรรทัด BOM / สินค้าในใบสั่งผลิตใหม่ / ตั้งต้นจาก · BOM และใบสั่งผลิตเดิมที่ใช้ชิ้นนี้ยังใช้ได้ · ส่งผ่าน saveItem (ชื่อ action ที่ฐานข้อมูลรับอยู่แล้ว)
     const retired = item?.active === false;
     const toggleText = retired ? "เปิดใช้อีกครั้ง" : "เลิกใช้ชิ้นงาน";
     const toggle = item && ctx.helpers.canPlan(ctx.user)
-      ? `<button class="btn rf-btn secondary" type="button" data-rf-action="saveItem" data-rf-args="${attr(JSON.stringify({ code: item.code, kind: item.kind, name: item.name, uom: item.uom, active: retired }))}" data-rf-confirm="${attr(retired ? `เปิดใช้ ${item.code} อีกครั้ง? ชิ้นงานจะกลับมาอยู่ในตัวเลือกตามปกติ` : `เลิกใช้ ${item.code}? ชิ้นงานจะไม่แสดงในตัวเลือกเมื่อเพิ่มส่วนประกอบหรือสินค้าในใบสั่งผลิตใหม่ ส่วน BOM และใบสั่งผลิตเดิมที่ใช้ชิ้นนี้ยังใช้ได้ตามปกติ`)}" data-rf-success="${attr(retired ? `เปิดใช้ ${item.code} อีกครั้งแล้ว` : `เลิกใช้ ${item.code} แล้ว`)}">${toggleText}</button>`
+      ? `<button class="btn rf-btn secondary" type="button" data-bom-item-toggle data-rf-confirm="${attr(retired ? `เปิดใช้ ${item.code} อีกครั้ง? ชิ้นงานจะกลับมาอยู่ในตัวเลือกตามปกติ` : `เลิกใช้ ${item.code}? ชิ้นงานจะไม่แสดงในตัวเลือกเมื่อเพิ่มส่วนประกอบหรือสินค้าในใบสั่งผลิตใหม่ ส่วน BOM และใบสั่งผลิตเดิมที่ใช้ชิ้นนี้ยังใช้ได้ตามปกติ`)}" data-rf-success="${attr(retired ? `เปิดใช้ ${item.code} อีกครั้งแล้ว` : `เลิกใช้ ${item.code} แล้ว`)}">${toggleText}</button>`
       : "";
     return { html: ui.dialog("itemEdit", item ? `แก้ข้อมูล ${item.code}${retired ? " (เลิกใช้)" : ""}` : "เพิ่มชิ้นงานเดี่ยว", body, { wide: true, footer: `${toggle}${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-item-form">บันทึก</button>` }), bind };
   };
@@ -1507,7 +1546,7 @@
   };
 
   // ---------- ตรวจข้อมูล ----------
-  // สิ่งที่ต้องแก้ก่อนปล่อยผลิต คำนวณจากข้อมูลในหน้าด้วยกฎเดียวกับ action (rules.auditMaster) · ทุกคนที่เห็นเมนู BOM ดูได้ ปุ่มแก้เฉพาะฝ่ายวางแผนขึ้นไป
+  // ข้อมูลที่ควรแก้ คำนวณจากข้อมูลในหน้าด้วยกฎเดียวกับ action (rules.auditMaster) · เฉพาะกลุ่มแรก (ใช้ใน BOM แล้วแต่ยังไม่มี BOM) ที่ทำให้ปล่อยผลิต/ระเบิด BOM ไม่ได้ กลุ่มอื่นเป็นคุณภาพข้อมูล · ทุกคนที่เห็นเมนู BOM ดูได้ ปุ่มแก้เฉพาะฝ่ายวางแผนขึ้นไป
   // ไม่ตรวจอัตราส่วน RB ของ SE ที่ใช้ร่วมกัน: ข้อมูลนั้นไม่ได้เก็บหลังนำเข้า
   const CHECK_LIMIT = 200;
   pages.check = (ctx) => {
@@ -1518,7 +1557,7 @@
     const buildLink = (label) => (entry) => ui.link(label, buildUrl(ctx, entry.item.code), "btn rf-btn secondary small");
     const editButton = (label) => (entry) => ui.openButton(label, "itemEdit", { code: entry.item.code }, { className: "secondary small" });
     const groups = [
-      { id: "noBom", title: "ใช้ใน BOM แล้วแต่ยังไม่มี BOM", hint: "ใบสั่งผลิตที่ใช้ชิ้นเหล่านี้ปล่อยผลิตไม่ได้จนกว่าจะมี BOM", list: audit.noBom, detail: (entry) => `ใช้ใน ${entry.usedIn.slice(0, 3).join(", ")}${entry.usedIn.length > 3 ? ` และอีก ${entry.usedIn.length - 3}` : ""}`, fix: buildLink("สร้าง BOM") },
+      { id: "noBom", title: "ใช้ใน BOM แล้วแต่ยังไม่มี BOM", hint: "ปล่อยผลิตไม่ได้จนกว่าจะมี BOM", list: audit.noBom, detail: (entry) => `ใช้ใน ${entry.usedIn.slice(0, 3).join(", ")}${entry.usedIn.length > 3 ? ` และอีก ${entry.usedIn.length - 3}` : ""}`, fix: buildLink("สร้าง BOM") },
       { id: "rbCompound", title: "เส้นยาง (RB) ที่ยังไม่มีสูตรยาง", hint: "", list: audit.rbCompound, detail: (entry) => entry.reasons.map((reason) => reasonText[reason]).join(" · "), fix: buildLink("แก้ BOM") },
       { id: "fgNoBom", title: "สินค้า (FG) ที่ยังไม่มี BOM", hint: "", list: audit.fgNoBom, detail: null, fix: buildLink("สร้าง BOM") },
       { id: "uomOther", title: "หน่วยนับเป็น “หน่วยอื่น”", hint: "หน่วยที่ระบบไม่รู้จักตอนนำเข้า เลือกหน่วยที่ถูกต้อง", list: audit.uomOther, detail: null, fix: editButton("แก้หน่วย") },
@@ -1530,7 +1569,7 @@
       return ui.card(`${group.hint ? `<p class="small muted">${esc(group.hint)}</p>` : ""}${ui.table(columns, rows)}${group.list.length > CHECK_LIMIT ? `<p class="small muted">แสดง ${CHECK_LIMIT} จาก ${group.list.length} รายการ แก้แล้วรายการถัดไปจะขึ้นมา</p>` : ""}`,
         { title: `${esc(group.title)} <span class="muted">${esc(String(group.list.length))}</span>`, flush: true });
     });
-    const html = `${head(ctx, "ตรวจข้อมูล", "สิ่งที่ต้องแก้ก่อนปล่อยผลิต")}${cards.length ? cards.join("") : ui.card(ui.empty("ข้อมูลครบ ไม่มีรายการที่ต้องแก้"))}`;
+    const html = `${head(ctx, "ตรวจข้อมูล", "ข้อมูลที่ควรแก้")}${cards.length ? cards.join("") : ui.card(ui.empty("ข้อมูลครบ ไม่มีรายการที่ต้องแก้"))}`;
     return { html };
   };
 

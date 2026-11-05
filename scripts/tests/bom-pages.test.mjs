@@ -1076,10 +1076,16 @@ test("the builder starts from any product or item that has a BOM; a filled table
   assert.match(plan("DEMO-HL-24(B)-A").error, /เลิกใช้แล้ว/);
   env.store.run("saveItem", { code: "P-BOX-01", kind: "PURCHASED", name: "กล่องนอก", uom: "pcs", active: false });
   assert.deepEqual(json(plan("DEMO-TP-01(P)-Y").retired), ["P-BOX-01"]);
+  // เลิกใช้ที่อยู่ลึกกว่าชั้นแรก (มาจาก BOM เดิมของพ่อมันเอง) ไม่ถูกปฏิเสธตอนบันทึก จึงไม่อยู่ในคำเตือน
+  const deep = plan("DEMO-TP-01(P)-Y").rows.find((row) => row.level === 2 && row.code !== "P-BOX-01");
+  assert.ok(deep, "the source tree has a deeper line");
+  env.store.run("saveItem", { code: deep.code, kind: deep.kind, name: deep.name, uom: deep.uom, active: false });
+  assert.deepEqual(json(plan("DEMO-TP-01(P)-Y").retired), ["P-BOX-01"], "only the first-level retired line is refused by saveBom");
+  assert.equal(plan("DEMO-TP-01(P)-Y").rows.find((row) => row.code === deep.code).inactive, true, "but the row is still marked");
   const withRetired = fakeBuilder(env, "p=build&base=BRAND-NEW-01&pkg=B&cs=A", { copyValue: "DEMO-TP-01(P)-Y" });
   env.log.toasts.length = 0;
   await withRetired.named["[data-bom-copy]"].handlers.click();
-  assert.match(env.log.toasts.at(-1)[0], /P-BOX-01 เลิกใช้แล้ว ต้องลบบรรทัดนั้นก่อนบันทึก/);
+  assert.match(env.log.toasts.at(-1)[0], /P-BOX-01 เลิกใช้แล้ว เพิ่มเป็นบรรทัดใหม่ของ BRAND-NEW-01\(B\)-A ไม่ได้ ต้องลบบรรทัดนั้นก่อนบันทึก/);
   assert.match(withRetired.table.rows.find((row) => row.code === "P-BOX-01").html, /เลิกใช้/, "the row is marked");
 });
 
@@ -1150,6 +1156,7 @@ test("the data check page: groups with counts, links to the builder or the item 
   let html = await env.render("p=check");
   clean(html);
   assert.match(html, /<h1>ตรวจข้อมูล<\/h1>/);
+  assert.doesNotMatch(html, /ปล่อยผลิตไม่ได้/, "nothing here blocks a release yet, so no group claims it");
   assert.doesNotMatch(html, /เส้นยาง \(RB\) ที่ยังไม่มีสูตรยาง/, "rods with the compound field are fine without a CP line (Excel imports never have one)");
   assert.match(html, /สินค้า \(FG\) ที่ยังไม่มี BOM <span class="muted">1<\/span>/);
   assert.match(html, /รหัสที่ระบบสร้างให้ \(XP-…\) <span class="muted">1<\/span>/);
@@ -1162,6 +1169,8 @@ test("the data check page: groups with counts, links to the builder or the item 
   html = await env.render("p=check");
   assert.match(html, /ใช้ใน BOM แล้วแต่ยังไม่มี BOM <span class="muted">1<\/span>/);
   assert.match(html, /ใช้ใน DEMO-BL-60\(K\)-Z/);
+  assert.equal([...html.matchAll(/ปล่อยผลิตไม่ได้/g)].length, 1, "only the used-but-no-BOM group says it blocks a release, once");
+  assert.match(html, /<p class="small muted">ปล่อยผลิตไม่ได้จนกว่าจะมี BOM<\/p>/);
   assert.doesNotMatch(html, /สินค้า \(FG\) ที่ยังไม่มี BOM/);
   // ทุกบทบาทที่เห็นเมนู BOM เปิดได้ แต่ปุ่มแก้เฉพาะฝ่ายวางแผนขึ้นไป
   for (const role of ROLES) {
@@ -1216,22 +1225,152 @@ test("deactivated items: a mark in the lists, left out of the pickers for new li
   // dialog แก้ชิ้นงาน: ปุ่มเลิกใช้/เปิดใช้อีกครั้ง ส่ง saveItem พร้อม active ผ่านกล่องยืนยัน · เฉพาะฝ่ายวางแผน
   const D = env.context.MNP_BOM_DIALOGS;
   const live = D.itemEdit(env.ctx("p=items"), { code: "P-STK-01" }).html;
-  assert.match(live, /data-rf-action="saveItem" data-rf-args="[^"]*&quot;active&quot;:false[^"]*" data-rf-confirm="เลิกใช้ P-STK-01\? [^"]*" data-rf-success="[^"]*">เลิกใช้ชิ้นงาน<\/button>/);
+  assert.match(live, /data-bom-item-toggle data-rf-confirm="เลิกใช้ P-STK-01\? [^"]*" data-rf-success="[^"]*">เลิกใช้ชิ้นงาน<\/button>/);
+  assert.doesNotMatch(live, /data-rf-action="saveItem"/, "no name/uom captured at render time is sent");
   const retired = D.itemEdit(env.ctx("p=items"), { code: "P-BOX-01" }).html;
   assert.match(retired, /แก้ข้อมูล P-BOX-01 \(เลิกใช้\)/);
-  assert.match(retired, /&quot;active&quot;:true[^>]*data-rf-confirm="เปิดใช้ P-BOX-01 อีกครั้ง\?[^>]*>เปิดใช้อีกครั้ง<\/button>/);
-  assert.doesNotMatch(D.itemEdit(env.ctx("p=items"), {}).html, /data-rf-action="saveItem"/, "a new item has nothing to deactivate");
+  assert.match(retired, /data-bom-item-toggle data-rf-confirm="เปิดใช้ P-BOX-01 อีกครั้ง\?[^>]*>เปิดใช้อีกครั้ง<\/button>/);
+  assert.doesNotMatch(D.itemEdit(env.ctx("p=items"), {}).html, /data-bom-item-toggle/, "a new item has nothing to deactivate");
   env.store.setUser("B05");
-  assert.doesNotMatch(D.itemEdit(env.ctx("p=items"), { code: "P-STK-01" }).html, /data-rf-action="saveItem"/, "department users cannot");
-  // ผ่านกติกา data-rf-action: ยืนยันก่อน แล้วชิ้นถูกเลิกใช้จริง และกลับมาใช้ได้
+  assert.doesNotMatch(D.itemEdit(env.ctx("p=items"), { code: "P-STK-01" }).html, /data-bom-item-toggle/, "department users cannot");
+});
+
+test("the deactivate button sends the stored record with only active flipped, asks before dropping unsaved edits and refuses a stale state", async () => {
+  const env = load();
   env.store.setUser("B03");
-  const button = { ...env.root, dataset: { rfAction: "saveItem", rfConfirm: "เลิกใช้ P-STK-01? ชิ้นงานจะไม่แสดงในตัวเลือก", rfArgs: JSON.stringify({ code: "P-STK-01", kind: "PURCHASED", name: "สติ๊กเกอร์ CE บาร์โค้ด", uom: "pcs", active: false }), rfSuccess: "เลิกใช้ P-STK-01 แล้ว" }, getAttribute: () => null, textContent: "เลิกใช้ชิ้นงาน", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
-  env.fakes["[data-rf-action]"] = [button];
-  await env.render("p=items");
-  env.fakes["[data-rf-action]"] = [];
+  const D = env.context.MNP_BOM_DIALOGS;
+  const stored = (code) => env.store.data().items.find((item) => item.code === code);
+  // dialog จำลอง: ปุ่มจากข้อความ html จริง · ฟอร์มมีช่องที่แก้ได้
+  const open = (code) => {
+    const built = D.itemEdit(env.ctx("p=items"), { code });
+    const attrs = (name) => new RegExp(`data-bom-item-toggle[^>]*${name}="([^"]*)"`).exec(built.html)?.[1];
+    const button = { dataset: { rfConfirm: attrs("data-rf-confirm"), rfSuccess: attrs("data-rf-success") }, getAttribute: () => null, textContent: />([^<]*)<\/button><button class="btn rf-btn secondary" type="button" data-rf-close>/.exec(built.html)?.[1] ?? "", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+    const fields = [{ name: "name", value: stored(code).name }, { name: "uom", value: stored(code).uom }];
+    const form = { querySelectorAll: () => fields };
+    const dialog = { closed: 0, close() { this.closed += 1; }, querySelector: (selector) => ({ "[data-bom-item-toggle]": button, "#bom-item-form": form })[selector] ?? null };
+    built.bind(dialog);
+    return { button, fields, dialog };
+  };
+  const first = open("P-STK-01");
+  assert.match(first.button.dataset.rfConfirm, /^เลิกใช้ P-STK-01\? /);
+  // คนอื่นเปลี่ยนชื่อหลังเปิด dialog: ปุ่มต้องไม่เอาชื่อเก่าไปทับ
+  assert.equal(env.store.run("saveItem", { code: "P-STK-01", kind: "PURCHASED", name: "ชื่อใหม่ของอีกคน", uom: "pcs" }).ok, true);
   env.log.confirms.length = 0;
-  await button.handlers.click();
-  assert.equal(env.log.confirms.length, 1);
-  assert.equal(env.store.data().items.find((item) => item.code === "P-STK-01").active, false);
+  await first.button.handlers.click();
+  assert.equal(env.log.confirms.length, 1, "a clean form asks only the usual confirmation");
+  assert.equal(stored("P-STK-01").active, false);
+  assert.equal(stored("P-STK-01").name, "ชื่อใหม่ของอีกคน", "the other user's rename survives");
+  assert.equal(first.dialog.closed, 1);
   assert.match(env.log.toasts.at(-1)[0], /เลิกใช้ P-STK-01 แล้ว/);
+  // ซ้ำจากหน้าต่างเก่า (สถานะเปลี่ยนไปแล้ว): ไม่ทำ
+  env.log.confirms.length = 0;
+  await first.button.handlers.click();
+  assert.match(env.log.toasts.at(-1)[0], /สถานะของ P-STK-01 ถูกเปลี่ยนไปแล้ว/);
+  assert.equal(env.log.confirms.length, 0);
+  // เปิดใช้อีกครั้ง: มีค่าในฟอร์มที่ยังไม่บันทึก = ถามว่าจะทิ้งก่อน · ปฏิเสธ = ไม่เปลี่ยนอะไร
+  const second = open("P-STK-01");
+  assert.match(second.button.dataset.rfConfirm, /^เปิดใช้ P-STK-01 อีกครั้ง\? /);
+  second.fields[0].value = "แก้ค้างไว้";
+  env.log.confirms.length = 0;
+  env.log.confirmAnswer = false;
+  await second.button.handlers.click();
+  assert.equal(env.log.confirms.length, 1);
+  assert.equal(env.log.confirms[0].title, "ทิ้งการแก้ไขที่ยังไม่บันทึก?");
+  assert.equal(stored("P-STK-01").active, false, "declined: still retired");
+  env.log.confirmAnswer = true;
+  await second.button.handlers.click();
+  assert.equal(env.log.confirms.length, 3, "discard question, then the usual confirmation");
+  assert.equal(stored("P-STK-01").active, true);
+  assert.equal(stored("P-STK-01").name, "ชื่อใหม่ของอีกคน", "the unsaved text in the form is not sent");
+});
+
+test("paste from Excel: a header line is announced, an unknown header never swallows a real item line", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const preview = (text) => {
+    const built = fakeBuilder(env, "p=build&base=BRAND-NEW-01&pkg=B&cs=A", { pasteValue: text });
+    built.named["[data-bom-paste-toggle]"].handlers.click();
+    return built.named["[data-bom-paste-preview]"].innerHTML;
+  };
+  assert.match(preview("รหัส\tจำนวน\nP-STK-01\t2"), /ข้ามบรรทัดที่ 1 \(ถือเป็นหัวตาราง\)/, "a known header");
+  assert.match(preview("ITEM\tHOWMANY\nP-STK-01\t2"), /ข้ามบรรทัดที่ 1 \(ถือเป็นหัวตาราง\)/, "an unknown header");
+  assert.doesNotMatch(preview("P-STK-01\t2"), /ข้ามบรรทัดที่ 1/);
+  // บรรทัดแรกเป็นชิ้นงานที่มีอยู่แต่พิมพ์ปริมาณผิด: ไม่ถูกกลืนเป็นหัว · ติดธงปริมาณ
+  const html = preview("P-STK-01\tx\nP-BOX-01\t3");
+  assert.doesNotMatch(html, /ข้ามบรรทัดที่ 1 \(/);
+  assert.match(html, /P-STK-01[\s\S]*อ่านปริมาณไม่ได้หรือกำกวม/);
+  const tools = env.context.MNP_BOM_PAGES.tools;
+  assert.deepEqual(json(tools.pastePlan(env.ctx("p=build"), "P-STK-01\tx\nP-BOX-01\t3", { parentKind: "FG" }).rows.map((row) => [row.line, row.code, row.status])), [[1, "P-STK-01", "error"], [2, "P-BOX-01", "known"]]);
+  // เลขทศนิยมแบบจุลภาคไปถึงแถวที่เพิ่ม
+  assert.equal(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t0,5", { parentKind: "FG" }).rows[0].qty, 0.5);
+  assert.equal(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t0,500", { parentKind: "FG" }).rows[0].status, "error");
+});
+
+test("paste from Excel: more than one compound under a rod is warned in the preview", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const tools = env.context.MNP_BOM_PAGES.tools;
+  const plan = (text, extra) => tools.pastePlan(env.ctx("p=build"), text, { parentKind: "RB", ...extra });
+  assert.equal(plan("DM01\t1").warning, "", "one compound is fine");
+  assert.match(plan("DM01\t1\nDM02\t1").warning, /สูตรยางได้สูตรเดียว/);
+  assert.match(plan("DM01\t1", { compoundsUnder: 1 }).warning, /มีสูตรยางอยู่แล้ว/, "a rod that already has one");
+  assert.equal(plan("DM01\t1\nDM01\t1").warning, "", "a duplicate line is skipped, so only one would be added");
+  assert.equal(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t1\nP-BOX-01\t1", { parentKind: "FG" }).warning, "");
+  // ผ่านตารางจริง: ใต้เส้นยางที่มีสูตรอยู่แล้ว
+  const built = fakeBuilder(env, "p=build&base=BRAND-NEW-01&pkg=B&cs=A", { pasteValue: "RB-NEW-7\t1" });
+  const { named } = built;
+  named["[data-bom-paste-toggle]"].handlers.click();
+  named["[data-bom-paste-add]"].handlers.click();
+  const rod = built.table.rows[0];
+  rod.insertAdjacentHTML("afterend", `<tr class="bom-row" data-row="cp1" data-parent="${rod.dataset.row}" data-level="2"><input name="childCode[]" value="DM01"><select name="kind[]"><option value="CP" selected>`);
+  named["[data-bom-paste-parent]"].value = rod.dataset.row;
+  named["[data-bom-paste-text]"].value = "DM02\t1";
+  named["[data-bom-paste-text]"].handlers.input();
+  assert.match(named["[data-bom-paste-preview]"].innerHTML, /เส้นยางนี้มีสูตรยางอยู่แล้ว/);
+});
+
+test("paste from Excel: Add re-checks the table, so a deleted parent or a changed code never inserts into a detached row", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const built = fakeBuilder(env, "p=build&base=BRAND-NEW-01&pkg=B&cs=A", { pasteValue: "RB-NEW-7\t1" });
+  const { named } = built;
+  named["[data-bom-paste-toggle]"].handlers.click();
+  named["[data-bom-paste-add]"].handlers.click();
+  const rod = built.table.rows[0];
+  assert.equal(rod.code, "RB-NEW-7");
+  const add = () => named["[data-bom-paste-add]"].handlers.click();
+  // 1) พ่อที่เลือกถูกลบหลังดูตัวอย่าง
+  named["[data-bom-paste-parent]"].value = rod.dataset.row;
+  named["[data-bom-paste-text]"].value = "DM01\t0.5";
+  named["[data-bom-paste-text]"].handlers.input();
+  assert.equal(named["[data-bom-paste-add]"].disabled, false);
+  rod.remove();
+  env.log.toasts.length = 0;
+  const detached = built.table.rows.length;
+  add();
+  assert.equal(built.table.rows.length, detached, "nothing is inserted");
+  assert.deepEqual(env.log.toasts.at(-1), ["แถวที่เลือกถูกลบไปแล้ว ตรวจรายการและเลือกแถวใหม่อีกครั้ง", "error"]);
+  assert.doesNotMatch(named["[data-bom-paste-parent]"].innerHTML, new RegExp(`value="${rod.dataset.row}"`), "the parent options are refreshed");
+  assert.equal(named["[data-bom-paste-text]"].value, "DM01\t0.5", "the pasted text is kept");
+  // 2) พ่อยังอยู่แต่ตารางเปลี่ยน (มีบรรทัดเดียวกันใต้พ่อแล้ว): วาดตัวอย่างใหม่ ไม่เพิ่ม
+  const built2 = fakeBuilder(env, "p=build&base=BRAND-NEW-01&pkg=B&cs=A", { pasteValue: "RB-NEW-7\t1" });
+  const n2 = built2.named;
+  n2["[data-bom-paste-toggle]"].handlers.click();
+  n2["[data-bom-paste-add]"].handlers.click();
+  const rod2 = built2.table.rows[0];
+  n2["[data-bom-paste-parent]"].value = rod2.dataset.row;
+  n2["[data-bom-paste-text]"].value = "DM01\t0.5";
+  n2["[data-bom-paste-text]"].handlers.input();
+  rod2.insertAdjacentHTML("afterend", `<tr class="bom-row" data-row="cp1" data-parent="${rod2.dataset.row}" data-level="2"><input name="childCode[]" value="DM01"><select name="kind[]"><option value="CP" selected>`);
+  const before = built2.table.rows.length;
+  n2["[data-bom-paste-add]"].handlers.click();
+  assert.equal(built2.table.rows.length, before, "nothing is added");
+  assert.match(env.log.toasts.at(-1)[0], /ตารางเปลี่ยนไปตั้งแต่ตรวจรายการ/);
+  assert.match(n2["[data-bom-paste-preview]"].innerHTML, /มีในตารางแล้วใต้พ่อเดียวกัน/, "the preview now shows the conflict");
+  assert.equal(n2["[data-bom-paste-add]"].disabled, true);
+  // 3) ไม่มีอะไรเปลี่ยน: เพิ่มได้ตามปกติ
+  n2["[data-bom-paste-text]"].value = "DM02\t1";
+  n2["[data-bom-paste-text]"].handlers.input();
+  n2["[data-bom-paste-add]"].handlers.click();
+  assert.ok(built2.table.rows.some((row) => row.code === "DM02" && row.dataset.parent === rod2.dataset.row));
 });
