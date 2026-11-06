@@ -192,9 +192,12 @@ select is((select w ->> 'color' from jsonb_array_elements(public.app_rf_master()
   'an item without a color gets the default color');
 select is((select jsonb_build_array(w -> 'targetQty', w -> 'targetKg', w -> 'kgPerUnit') from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '09'),
   '[7, 0.37, 0.0528571428571]'::jsonb, 'the kilograms per unit are rounded to 12 significant digits (0.37 / 7)');
+-- ฟังก์ชันใน private เรียกตรงได้เฉพาะเจ้าของ (authenticated ถูกถอนสิทธิ์) จึงเรียกด้วย reset role แล้วกลับเป็น authenticated
+reset role;
 select is(private.bom_kg_per_unit(2.72, 7000), 0.000388571428571, 'a tiny part keeps 12 significant digits (2.72 / 7000)');
 select is(private.bom_kg_per_unit(221.76, 48), 4.62, 'an exact quotient is not padded');
 select is(round(2.72 / private.bom_kg_per_unit(2.72, 7000), 3), 7000.000, 'the received kilograms convert back to the planned pieces');
+set local role authenticated;
 select is((select w ->> 'uom' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '12'), 'kg',
   'the work order uses the unit of the job');
 select is((select jsonb_build_array(w ->> 'priority', (w ->> 'dueDate')::bigint, (w ->> 'startDate')::bigint)
