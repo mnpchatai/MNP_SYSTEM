@@ -97,8 +97,7 @@
       customerPo: p.customerPo?.trim() || "",
       recipeId: recipe.id,
       recipeRevision: recipe.revision,
-      productCode: recipe.productCode,
-      productName: recipe.productName,
+      productCode: recipe.productCode || "",
       uom: recipe.uom,
       color: p.color || "ดำ",
       targetQty,
@@ -122,7 +121,7 @@
       }
     }
     d.orders.unshift(order);
-    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${recipe.productName} ${targetQty} ${order.uom}`);
+    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${rules().recipeLabel(recipe)} ${targetQty} ${order.uom}`);
     return id;
   }
 
@@ -185,27 +184,40 @@
   // ---------- สูตรยาง ----------
 
   // ค่าที่ฟอร์มสูตรกรอก (ใช้ทั้งสร้างและออก revision ใหม่) · รหัสสูตรไม่อยู่ในนี้
+  // ผสมสองขั้น: อุณหภูมิ 0–1000 °C เวลา (นาที) มากกว่า 0 ถึง 1440 · ใช้ทั้งค่าตามสูตรและค่าที่บันทึกที่สถานีผสม
+  function stageValues(row, stage, { requireTime = true } = {}) {
+    const temp = (value, label) => {
+      const n = num(value, `${label} ขั้น ${stage}`);
+      if (n < 0 || n > 1000) fail(`${label} ขั้น ${stage} ต้องอยู่ระหว่าง 0–1000 °C`);
+      return n;
+    };
+    const mixerTemp = temp(row?.mixerTemp, "อุณหภูมิเครื่องผสม");
+    const dumpTemp = temp(row?.dumpTemp, "Dump temp");
+    const mixMin = num(row?.mixMin, `เวลาผสม ขั้น ${stage}`);
+    if (requireTime && (mixMin <= 0 || mixMin > 1440)) fail(`เวลาผสม ขั้น ${stage} ต้องมากกว่า 0 และไม่เกิน 1,440 นาที`);
+    return { stage, mixerTemp, dumpTemp, mixMin };
+  }
+
   function recipeFields(p) {
     const items = (p.items ?? []).filter((item) => item.materialCode && Number(item.phr) > 0);
     if (!items.length) fail("สูตรต้องมีวัตถุดิบอย่างน้อย 1 รายการ");
+    const productCode = String(p.productCode ?? "").trim();
+    if (productCode.length > 60) fail("รหัสสินค้ายาวเกิน 60 ตัวอักษร");
     return {
-      name: p.name.trim(),
-      productCode: p.productCode?.trim() || p.id.trim(),
-      productName: p.productName.trim(),
+      productCode,
       uom: p.uom || "m",
       batchKg: num(p.batchKg, "น้ำหนักต่อ batch"),
-      dumpTemp: num(p.dumpTemp, "อุณหภูมิปล่อยยาง"),
+      stages: rules().MIX_STAGES.map((stage) => stageValues((p.stages ?? []).find((row) => Number(row?.stage) === stage), stage)),
       dumpTol: Number(p.dumpTol) || 5,
-      mixSec: num(p.mixSec, "เวลาผสม"),
       restHours: Number(p.restHours) || 4,
       yieldPerKg: num(p.yieldPerKg, "ผลผลิตต่อกิโลกรัม"),
-      items: items.map((item) => ({ materialCode: item.materialCode, phr: Number(item.phr) })),
+      items: items.map((item) => ({ materialCode: item.materialCode, phr: Number(item.phr), stage: Number(item.stage) === 2 ? 2 : 1 })),
     };
   }
 
   function createRecipe(d, p, ctx) {
     needRight(ctx, "master");
-    if (!p.id?.trim() || !p.name?.trim() || !p.productName?.trim()) fail("กรุณากรอกรหัสสูตร ชื่อสูตร และชื่อสินค้า");
+    if (!p.id?.trim()) fail("กรุณากรอกรหัสสูตร");
     if (!RECIPE_CODE.test(p.id.trim())) fail("รหัสสูตรใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่มีช่องว่าง) ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 60 ตัวอักษร");
     if (d.recipes.some((recipe) => recipe.id === p.id.trim())) fail("รหัสสูตรนี้มีอยู่แล้ว");
     d.recipes.push({
@@ -227,7 +239,6 @@
     const id = String(p.id ?? "").trim();
     const history = revisionsOf(d.recipes, id);
     if (!history.length) fail(`ไม่พบสูตร ${id}`);
-    if (!p.name?.trim() || !p.productName?.trim()) fail("กรุณากรอกชื่อสูตรและชื่อสินค้า");
     const fields = recipeFields({ ...p, id });
     const draft = history.find((recipe) => recipe.status === "draft");
     if (draft) {
@@ -284,7 +295,7 @@
       if (shortage > 0.0001) shortages.push(`${item.materialCode} ขาด ${shortage.toFixed(2)} kg`);
       picks.forEach((pick) => {
         reserved[pick.lotNo] = (reserved[pick.lotNo] || 0) + pick.kg;
-        lines.push({ materialCode: item.materialCode, lotNo: pick.lotNo, targetKg: pick.kg, actualKg: null, weighedAt: null });
+        lines.push({ materialCode: item.materialCode, stage: item.stage, lotNo: pick.lotNo, targetKg: pick.kg, actualKg: null, weighedAt: null });
       });
     }
     if (shortages.length) fail(`สต็อกไม่พอตามหลัก FEFO: ${shortages.join(", ")}`);
@@ -369,18 +380,24 @@
     const requisition = find(d.requisitions, p.reqId, "ใบเบิก");
     if (requisition.status !== "issued") fail("ใบเบิกยังจ่ายวัตถุดิบไม่ครบ หรือถูกใช้ไปแล้ว");
     const recipe = rules().recipeOf(d.recipes, requisition.recipeId, requisition.recipeRevision) || fail(`ไม่พบสูตร ${requisition.recipeId}`);
-    const dumpTemp = num(p.dumpTemp, "อุณหภูมิปล่อยยาง");
-    const mixSec = num(p.mixSec, "เวลาผสม");
+    // บันทึกทั้งสองขั้น (อุณหภูมิเครื่องผสม Dump temp เวลาเป็นนาที)
+    const stages = rules().MIX_STAGES.map((stage) => stageValues((p.stages ?? []).find((row) => Number(row?.stage) === stage), stage));
     const outputKg = num(p.outputKg, "น้ำหนักยางที่ได้");
     const scrapKg = Number(p.scrapKg) || 0;
     const issued = requisition.lines.reduce((sum, line) => sum + line.actualKg, 0);
     if (outputKg + scrapKg > issued + 0.5) fail(`น้ำหนักยางรวมเกินวัตถุดิบที่จ่าย (${issued.toFixed(2)} kg)`);
     const reasons = [];
-    if (Math.abs(dumpTemp - recipe.dumpTemp) > recipe.dumpTol) reasons.push(`Dump temp ${dumpTemp}°C นอกช่วง ${recipe.dumpTemp}±${recipe.dumpTol}`);
+    // Dump temp ของแต่ละขั้นเทียบกับค่าของสูตรในขั้นนั้นด้วยค่าเผื่อเดียวกัน (dumpTol) ขั้นไหนหลุด = ล็อตถูก QC Hold
+    for (const row of stages) {
+      const standard = rules().recipeStage(recipe, row.stage);
+      if (standard && Math.abs(row.dumpTemp - standard.dumpTemp) > recipe.dumpTol) {
+        reasons.push(`Dump temp ขั้น ${row.stage} ${row.dumpTemp}°C นอกช่วง ${standard.dumpTemp}±${recipe.dumpTol}`);
+      }
+    }
     const lot = newLot(d, "mixing", "MX", {
       orderId: requisition.orderId, recipeId: recipe.id, uom: "kg", machine: p.machine, shift: p.shift,
       sources: [{ type: "requisition", id: requisition.id }],
-      params: { dumpTemp, mixSec, batches: requisition.batches },
+      params: { stages, batches: requisition.batches },
       goodQty: outputKg, scrapQty: scrapKg, scrapReason: p.scrapReason || "",
       qc: reasons.length ? "hold" : "pass", holdReasons: reasons,
       readyAt: ctx.now + recipe.restHours * HOUR,
@@ -478,7 +495,7 @@
       i += 1;
       d.fgBoxes.unshift({
         id: `${lot.id.replace("FN", "BOX")}-${String(i).padStart(3, "0")}`, lotId: lot.id, orderId: order.id,
-        productName: order.productName, qty: +qty.toFixed(3), uom: order.uom, grade: lot.grade,
+        recipeId: order.recipeId, productCode: order.productCode, qty: +qty.toFixed(3), uom: order.uom, grade: lot.grade,
         status: result === "pass" ? "in_stock" : "hold", createdAt: ctx.now,
       });
       left -= qty;

@@ -12,7 +12,7 @@
   const STATE_KEY = "mnp-rubberflow-v1";
   const USER_KEY = "mnp-rubberflow-user";
   const LOCAL_KEY = "mnp-rubberflow-local-v1"; // โหมดฐานข้อมูล: ส่วนที่ยังไม่ขึ้นฐานข้อมูล
-  const STATE_VERSION = 1;
+  const STATE_VERSION = 2; // 2: สูตรผสมสองขั้น (stages) ไม่มีชื่อสูตร/ชื่อสินค้า · state เดิมของเบราว์เซอร์ถูกสร้างใหม่จากชุดสาธิต
 
   // เมนูของโมดูล (id = ค่า p= ใน URL) เรียงตามกลุ่มที่แสดงในแถบข้าง
   const MODULES = Object.freeze([

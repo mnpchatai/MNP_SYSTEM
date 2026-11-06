@@ -2311,7 +2311,7 @@ const rfPage = async (env, query = "", { wait = true } = {}) => {
   return env.app.innerHTML;
 };
 const RF_MATERIALS = [{ code: "EPDM-55", name: "ยาง EPDM", category: "โพลิเมอร์", storage: "A-1", active: true }, { code: "CB-N550", name: "เขม่าดำ", category: "สารตัวเติม", storage: "B-1", active: true }];
-const RF_RECIPE = { id: "RC-TEST-01", name: "สูตรทดสอบ", productName: "สินค้าทดสอบ", uom: "m", batchKg: 50, dumpTemp: 130, mixSec: 270, yieldPerKg: 6, items: [{ materialCode: "EPDM-55", phr: 100 }, { materialCode: "CB-N550", phr: 60 }] };
+const RF_RECIPE = { id: "RC-TEST-01", productCode: "P-TEST", uom: "m", batchKg: 50, dumpTol: 5, yieldPerKg: 6, stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], items: [{ materialCode: "EPDM-55", phr: 100, stage: 1 }, { materialCode: "CB-N550", phr: 60, stage: 2 }] };
 async function rfScene() {
   const scene = await planningScene();
   const rf = (env) => env.context.MNP_RUBBERFLOW.store;
@@ -2367,7 +2367,7 @@ test("RubberFlow in database mode: loading state, no demo role picker or reset, 
   html = await rfPage(head, "p=recipes");
   assert.match(html, />ออก revision ใหม่</, "an approved recipe offers a new revision, not an edit");
   assert.doesNotMatch(html, /data-rf-action="approveRecipe"/);
-  await saved(rf(head).run("saveRecipe", { ...RF_RECIPE, name: "สูตรทดสอบ แก้" }));
+  await saved(rf(head).run("saveRecipe", { ...RF_RECIPE, productCode: "P-TEST-2" }));
   html = await rfPage(head, "p=recipes&sel=RC-TEST-01");
   assert.match(html, /ร่าง Rev\.2/, "the list flags the pending draft");
   assert.match(html, /Rev\.2 รออนุมัติ/);

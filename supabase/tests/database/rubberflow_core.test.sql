@@ -122,15 +122,17 @@ select ok(not (select private.rf_is_qa(e) from public.employees e where e.employ
 -- ข้อมูลจริง (ไม่ใช่โหมดทดสอบ) ใส่ตรงแบบงานระบบ เพื่อตรวจว่าโหมดทดสอบมองไม่เห็น และ purge ไม่แตะ
 insert into public.rf_master_state (is_test, version) values (false, 99);
 insert into public.rf_materials (code, name) values ('REAL-MAT', 'วัตถุดิบจริง');
-insert into public.rf_recipes (recipe_code, revision, name, product_code, product_name, uom, batch_kg, dump_temp, mix_sec, yield_per_kg, items, status)
-values ('REAL-RC', 1, 'สูตรจริง', 'RP', 'สินค้าจริง', 'm', 10, 100, 100, 1, '[{"materialCode":"REAL-MAT","phr":1}]'::jsonb, 'approved');
-insert into public.rf_orders (wo_no, customer, recipe_code, recipe_revision, product_code, product_name, uom, target_qty, start_date, due_date)
-values ('REAL-WO', 'ลูกค้าจริง', 'REAL-RC', 1, 'RP', 'สินค้าจริง', 'm', 5, 1762300000000, 1762400000000);
+insert into public.rf_recipes (recipe_code, revision, product_code, uom, batch_kg, stages, yield_per_kg, items, status)
+values ('REAL-RC', 1, 'RP', 'm', 10,
+  '[{"stage":1,"mixerTemp":80,"dumpTemp":100,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":110,"mixMin":2}]'::jsonb, 1,
+  '[{"materialCode":"REAL-MAT","phr":1,"stage":1}]'::jsonb, 'approved');
+insert into public.rf_orders (wo_no, customer, recipe_code, recipe_revision, product_code, uom, target_qty, start_date, due_date)
+values ('REAL-WO', 'ลูกค้าจริง', 'REAL-RC', 1, 'RP', 'm', 5, 1762300000000, 1762400000000);
 select is((select count(*) from public.rf_orders where not is_test), 1::bigint, 'the real work order was inserted as a real (non-test) row');
 
 -- แม่แบบเรคอร์ดที่ใช้ซ้ำ (ทับด้วย || ที่ id / ช่องที่ต้องการ)
 select set_config('test.mat', '{"code":"X","name":"x","category":"โพลิเมอร์","storage":"โกดัง A-1","uom":"kg","active":true}', true);
-select set_config('test.rec', '{"id":"X","revision":1,"name":"สูตรทดสอบ","productCode":"P-1","productName":"สินค้าทดสอบ","uom":"m","batchKg":60,"dumpTemp":140,"dumpTol":6,"mixSec":300,"restHours":4,"yieldPerKg":6.1,"items":[{"materialCode":"MAT-A","phr":100},{"materialCode":"MAT-B","phr":10}],"status":"draft"}', true);
+select set_config('test.rec', '{"id":"X","revision":1,"productCode":"P-1","uom":"m","batchKg":60,"stages":[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":140,"mixMin":2}],"dumpTol":6,"restHours":4,"yieldPerKg":6.1,"items":[{"materialCode":"MAT-A","phr":100,"stage":1},{"materialCode":"MAT-B","phr":10,"stage":2}],"status":"draft"}', true);
 select set_config('test.wo', '{"id":"WO-X","customer":"ACME","customerPo":"PO-1","recipeId":"RC-1","recipeRevision":2,"color":"ดำ","targetQty":100,"producedQty":0,"startDate":1762387200000,"dueDate":1765065600000,"priority":"normal","note":"","status":"planned"}', true);
 -- แม่แบบของ BOM (เหมือน bom_orders_jobs.test.sql)
 select set_config('test.ord', '{"id":"X","customer":"ACME","country":"TH","orderType":"SA","orderedAt":1762387200000,"whDue":1765065600000,"due":{"RB":1763000000000,"PK":1764000000000},"dueDefaults":["RB"],"revision":0,"status":"draft","items":[],"explosion":null,"explodedAt":null,"stockCounts":{},"note":""}', true);
@@ -282,12 +284,17 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'recipes' -> 'upser
   'the creator is the persona, not what the client sent');
 select isnt(current_setting('test.res')::jsonb -> 'changes' -> 'recipes' -> 'upsert' -> 0 ->> 'createdAt', '1', 'the creation time is the server time');
 select ok(not (current_setting('test.res')::jsonb -> 'changes' -> 'recipes' -> 'upsert' -> 0 ? 'approvedBy'), 'a draft carries no approver from the client');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'recipes' -> 'upsert' -> 0 -> 'items', '[{"materialCode":"MAT-A","phr":100},{"materialCode":"MAT-B","phr":10}]'::jsonb,
-  'the items are stored in the order sent');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'recipes' -> 'upsert' -> 0 -> 'items', '[{"materialCode":"MAT-A","phr":100,"stage":1},{"materialCode":"MAT-B","phr":10,"stage":2}]'::jsonb,
+  'the items are stored in the order sent, each with its mixing stage');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'recipes' -> 'upsert' -> 0 -> 'stages',
+  '[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":140,"mixMin":2}]'::jsonb,
+  'the recipe stores both mixing stages (mixer temp, dump temp, minutes)');
+select ok(not (current_setting('test.res')::jsonb -> 'changes' -> 'recipes' -> 'upsert' -> 0 ?| array['name', 'productName', 'dumpTemp', 'mixSec']),
+  'a recipe has no name, product name, single dump temp or seconds field');
 
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.rec')::jsonb || '{"id":"RC-2","name":"สูตรที่สอง"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe')
+  current_setting('test.rec')::jsonb || '{"id":"RC-2","productCode":"P-2"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe')
   -> 'changes' -> 'recipes' -> 'upsert' -> 0 ->> 'id', 'RC-2', 'a planner creates a draft recipe too');
 
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
@@ -318,6 +325,30 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', json
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.rec')::jsonb || '{"id":"RC-N","batchKg":0}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
   'RF_INVALID_RECIPE', 'a zero batch weight is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  (current_setting('test.rec')::jsonb - 'stages') || '{"id":"RC-N"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'a recipe without stages is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.rec')::jsonb || '{"id":"RC-N","stages":[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":3}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'a recipe with one stage only is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.rec')::jsonb || '{"id":"RC-N","stages":[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":3},{"stage":1,"mixerTemp":90,"dumpTemp":140,"mixMin":2}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'two entries for stage 1 (and none for stage 2) are refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.rec')::jsonb || '{"id":"RC-N","stages":[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":0},{"stage":2,"mixerTemp":90,"dumpTemp":140,"mixMin":2}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'a zero mixing time is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.rec')::jsonb || '{"id":"RC-N","stages":[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":1001,"mixMin":2}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'a dump temp above 1000 is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.rec')::jsonb || '{"id":"RC-N","stages":[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":140}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'a stage without a mixing time is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.rec')::jsonb || '{"id":"RC-N","items":[{"materialCode":"MAT-A","phr":1,"stage":3}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'a material line in stage 3 is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.rec')::jsonb || '{"id":"RC-N","items":[{"materialCode":"MAT-A","phr":1,"stage":1.5}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
+  'RF_INVALID_RECIPE', 'a fractional stage on a material line is refused');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.rec')::jsonb || '{"id":"RC-N","revision":2}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe') $$,
   'RF_REVISION_ORDER', 'a brand new recipe must start at revision 1');
@@ -370,6 +401,12 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', json
   current_setting('test.r1')::jsonb || '{"batchKg":99}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveRecipe') $$,
   'RF_REVISION_IMMUTABLE', 'an approved revision cannot be edited');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.r1')::jsonb || '{"stages":[{"stage":1,"mixerTemp":80,"dumpTemp":110,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":150,"mixMin":2}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveRecipe') $$,
+  'RF_REVISION_IMMUTABLE', 'changing a stage value of an approved revision is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.r1')::jsonb || '{"items":[{"materialCode":"MAT-A","phr":100,"stage":2},{"materialCode":"MAT-B","phr":10,"stage":2}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveRecipe') $$,
+  'RF_REVISION_IMMUTABLE', 'moving a material line to another stage of an approved revision is refused');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.r1')::jsonb || '{"status":"draft"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveRecipe') $$,
   'RF_INVALID_TRANSITION', 'an approved revision cannot go back to draft');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
@@ -401,8 +438,8 @@ select is(public.app_rf_save(jsonb_build_object('materials', jsonb_build_object(
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.r2', (select r::text from jsonb_array_elements(public.app_rf_master() -> 'recipes') r where r ->> 'id' = 'RC-1' and (r ->> 'revision') = '2'), true);
 select is(public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.r2')::jsonb || '{"name":"สูตรทดสอบ แก้ไข"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveRecipe')
-  -> 'changes' -> 'recipes' -> 'upsert' -> 0 ->> 'name', 'สูตรทดสอบ แก้ไข', 'the draft keeps a retired material that the previous revision already used');
+  current_setting('test.r2')::jsonb || '{"productCode":"P-1B"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveRecipe')
+  -> 'changes' -> 'recipes' -> 'upsert' -> 0 ->> 'productCode', 'P-1B', 'the draft keeps a retired material that the previous revision already used');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.r2')::jsonb || '{"items":[{"materialCode":"MAT-A","phr":100},{"materialCode":"MAT-C","phr":5}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveRecipe') $$,
   'RF_INVALID_RECIPE', 'a retired material that the previous revision did not use cannot be added');
@@ -448,12 +485,15 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', json
 -- ชนก่อนสิทธิ์: RB staff ถือสำเนาร่างเก่าแล้วกดอนุมัติ (ไม่มีสิทธิ์) ต้องได้ RF_STALE ไม่ใช่ RF_FORBIDDEN
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.rec')::jsonb || '{"id":"RC-3","items":[{"materialCode":"MAT-A","phr":100},{"materialCode":"MAT-D","phr":5}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe');
+  (current_setting('test.rec')::jsonb - 'productCode') || '{"id":"RC-3","items":[{"materialCode":"MAT-A","phr":100},{"materialCode":"MAT-D","phr":5}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRecipe');
 select set_config('test.r3', (select r::text from jsonb_array_elements(public.app_rf_master() -> 'recipes') r where r ->> 'id' = 'RC-3'), true);
+select is(current_setting('test.r3')::jsonb ->> 'productCode', '', 'the product code is optional (empty when not given, no longer the recipe code)');
+select is(current_setting('test.r3')::jsonb -> 'items', '[{"materialCode":"MAT-A","phr":100,"stage":1},{"materialCode":"MAT-D","phr":5,"stage":1}]'::jsonb,
+  'a material line without a stage is stored in stage 1');
 select set_config('test.b3', public.app_rf_master() ->> 'version', true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.r3')::jsonb || '{"name":"แก้โดยฝ่ายวางแผน"}'::jsonb))), current_setting('test.b3')::bigint, 'saveRecipe');
+  current_setting('test.r3')::jsonb || '{"productCode":"PP-1"}'::jsonb))), current_setting('test.b3')::bigint, 'saveRecipe');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.r3')::jsonb || '{"status":"approved"}'::jsonb))), current_setting('test.b3')::bigint, 'approveRecipe') $$,
@@ -512,11 +552,12 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb
   (public.app_rf_master() ->> 'version')::bigint, 'createOrder') $$, 'RF_INVALID_ORDER', 'the same work order twice in one call is refused');
 
 select set_config('test.res', public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (current_setting('test.wo')::jsonb - 'recipeRevision') || jsonb_build_object('id', 'WO-20261107-01', 'productName', 'ชื่ออื่น', 'uom', 'kg', 'createdBy', 'ใครก็ได้', 'createdAt', 1)))),
+  (current_setting('test.wo')::jsonb - 'recipeRevision') || jsonb_build_object('id', 'WO-20261107-01', 'productCode', 'ZZ-9', 'productName', 'ชื่ออื่น', 'uom', 'kg', 'createdBy', 'ใครก็ได้', 'createdAt', 1)))),
   (public.app_rf_master() ->> 'version')::bigint, 'createOrder')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'planned', 'an RB member creates a planned work order');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'recipeRevision', '2', 'without a revision the work order takes the approved one');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'productName', 'สินค้าทดสอบ', 'the product comes from the recipe, not from the client');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'productCode', 'P-1B', 'the product code is copied from the recipe, not from the client');
+select ok(not (current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ? 'productName'), 'a work order has no product name');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'uom', 'm', 'a manual work order takes the unit of the recipe');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'createdBy', current_setting('test.n_sbx_rb_staff'), 'the creator is the persona');
 select isnt(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'createdAt', '1', 'the creation time is the server time');

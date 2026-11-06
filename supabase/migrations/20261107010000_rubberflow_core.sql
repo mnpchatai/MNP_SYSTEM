@@ -31,6 +31,8 @@
 --     ดัชนี unique บางส่วน: approved ได้ตัวเดียวและ draft ได้ตัวเดียวต่อรหัสสูตร · revision ใหม่ต้องเป็น (revision สูงสุดของรหัส) + 1 และเริ่มเป็น draft เสมอ
 --     ใช้ได้เฉพาะสูตร approved ใน WO · วัตถุดิบในสูตรต้องมีอยู่ใน rf_materials (ที่เลิกใช้แล้วใส่ใหม่ไม่ได้ เว้นแต่มีอยู่ใน revision ก่อนหน้า)
 --     อนุมัติได้เฉพาะร่างที่เนื้อหาตรงกับที่เก็บ (แก้เนื้อหาพร้อมอนุมัติในคำสั่งเดียวไม่ได้)
+--     สูตรไม่มีชื่อสูตร/ชื่อสินค้า (ใช้รหัสสูตร รหัสสินค้าไม่บังคับ) ผสมสองขั้น: stages = [{stage 1, mixerTemp °C, dumpTemp °C, mixMin นาที}, {stage 2, ...}] ทั้งสองขั้นบังคับ
+--     dumpTol (±°C) ค่าเดียวทั้งสูตร · ทุกบรรทัดส่วนผสมมี stage 1|2 (ไม่ระบุ = 1) ผสมขั้นไหน
 --   - WO: สร้าง = กลุ่มวางแผนหรือสมาชิก RB (เริ่มที่ planned เสมอ producedQty 0 ใช้ได้เฉพาะสูตร approved · ผู้สร้าง/เวลา เซิร์ฟเวอร์ตั้ง)
 --     สถานะตาม ORDER_FLOW ของ modules/rubberflow-actions.js: planned -> released | cancelled · released -> in_progress | on_hold | cancelled ·
 --     in_progress -> on_hold | completed · on_hold -> in_progress อย่างอื่น = RF_INVALID_TRANSITION (completed/cancelled เป็นสถานะสุดท้าย)
@@ -142,17 +144,18 @@ create table public.rf_recipes (
   -- รหัสสูตร เช่น RC-EPDM-DS01 (กุญแจของสูตร) + revision = กุญแจของแถว · BOM ผูกคอมปาวด์กับรหัสสูตร
   recipe_code text not null check (recipe_code ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$'),
   revision integer not null check (revision between 1 and 9999),
-  name text not null check (char_length(name) between 1 and 160),
-  product_code text not null check (char_length(product_code) between 1 and 60),
-  product_name text not null check (char_length(product_name) between 1 and 160),
+  -- รหัสสินค้า (ไม่บังคับ: ว่าง = ไม่มี) · สูตรไม่มีชื่อสูตร/ชื่อสินค้า ใช้รหัสสูตรแทน
+  product_code text not null default '' check (char_length(product_code) <= 60),
   uom text not null check (char_length(uom) between 1 and 20),
   batch_kg numeric not null check (batch_kg > 0 and batch_kg <= 1000000),
-  dump_temp numeric not null check (dump_temp >= 0 and dump_temp <= 1000),
+  -- ผสมสองขั้น: [{stage: 1, mixerTemp, dumpTemp, mixMin}, {stage: 2, ...}] (°C, °C, นาที) ตรวจเนื้อหาใน rf_save_recipes
+  -- เลือก jsonb หนึ่งคอลัมน์แทนหกคอลัมน์ตัวเลข: เทียบ/ส่งออกเป็นก้อนเดียวกับ items และ rf_save_recipes ยังเรียบง่าย
+  stages jsonb not null check (jsonb_typeof(stages) = 'array' and jsonb_array_length(stages) = 2),
+  -- ค่าเผื่อ Dump temp (±°C) ใช้ร่วมทั้งสองขั้น
   dump_tol numeric not null default 5 check (dump_tol >= 0 and dump_tol <= 100),
-  mix_sec numeric not null check (mix_sec > 0 and mix_sec <= 86400),
   rest_hours numeric not null default 4 check (rest_hours >= 0 and rest_hours <= 1000),
   yield_per_kg numeric not null check (yield_per_kg > 0 and yield_per_kg <= 1000000000),
-  -- [{materialCode, phr}] 1-100 รายการ ตรวจใน RPC (วัตถุดิบต้องมีอยู่ ไม่ซ้ำ phr > 0)
+  -- [{materialCode, phr, stage}] 1-100 รายการ stage = 1|2 (ผสมขั้นไหน) ตรวจใน RPC (วัตถุดิบต้องมีอยู่ ไม่ซ้ำ phr > 0)
   items jsonb not null check (jsonb_typeof(items) = 'array' and jsonb_array_length(items) between 1 and 100),
   status text not null check (status in ('draft', 'approved', 'superseded')),
   created_by uuid references public.employees(id) on delete set null,
@@ -179,8 +182,7 @@ create table public.rf_orders (
   customer_po text not null default '' check (char_length(customer_po) <= 60),
   recipe_code text not null,
   recipe_revision integer not null,
-  product_code text not null check (char_length(product_code) between 1 and 60),
-  product_name text not null check (char_length(product_name) between 1 and 160),
+  product_code text not null default '' check (char_length(product_code) <= 60),
   -- หน่วยของ targetQty/producedQty: หน่วยของงาน BOM (เส้น/ชิ้น) เมื่อสร้างจากงาน BOM ไม่เช่นนั้นหน่วยของสูตร
   uom text not null check (char_length(uom) between 1 and 20),
   color text not null default '' check (char_length(color) <= 40),
@@ -387,7 +389,7 @@ end;
 $$;
 revoke all on function private.rf_lock_bom() from public, anon, authenticated;
 
--- ส่วนผสมของสูตร: [{materialCode, phr}] 1-100 รายการ ไม่ซ้ำ phr > 0 วัตถุดิบต้องมีอยู่ใน rf_materials
+-- ส่วนผสมของสูตร: [{materialCode, phr, stage}] 1-100 รายการ ไม่ซ้ำ phr > 0 stage 1|2 (ไม่ระบุ = 1) วัตถุดิบต้องมีอยู่ใน rf_materials
 -- วัตถุดิบที่เลิกใช้แล้ว (active = false) ใส่ได้เฉพาะที่มีอยู่ใน p_prev (items ของ revision ก่อนหน้า/ของแถวเดิม)
 create or replace function private.rf_parse_items(p_node jsonb, p_prev jsonb)
 returns jsonb
@@ -402,6 +404,7 @@ declare
   v_seen text[] := '{}';
   v_code text;
   v_phr numeric;
+  v_stage numeric;
   v_active boolean;
 begin
   if p_node is null or jsonb_typeof(p_node) <> 'array' or jsonb_array_length(p_node) not between 1 and 100 then
@@ -414,13 +417,15 @@ begin
     v_seen := v_seen || v_code;
     v_phr := private.bom_num(v_el -> 'phr', 'RF_INVALID_RECIPE', 0, 100000);
     if v_phr is null or v_phr <= 0 then raise exception 'RF_INVALID_RECIPE'; end if;
+    v_stage := coalesce(private.bom_num(v_el -> 'stage', 'RF_INVALID_RECIPE', 1, 2), 1);
+    if v_stage <> trunc(v_stage) then raise exception 'RF_INVALID_RECIPE'; end if;
     select m.active into v_active from public.rf_materials m where m.is_test and m.code = v_code;
     if not found then raise exception 'RF_INVALID_RECIPE'; end if;
     if not v_active and not exists (
          select 1 from jsonb_array_elements(coalesce(p_prev, '[]'::jsonb)) e where e ->> 'materialCode' = v_code) then
       raise exception 'RF_INVALID_RECIPE';
     end if;
-    v_out := v_out || jsonb_build_array(jsonb_build_object('materialCode', v_code, 'phr', v_phr));
+    v_out := v_out || jsonb_build_array(jsonb_build_object('materialCode', v_code, 'phr', v_phr, 'stage', v_stage::integer));
   end loop;
   return v_out;
 end;
@@ -502,14 +507,16 @@ declare
   v_approving text[] := '{}';
   v_code text;
   v_rev numeric;
-  v_name text;
   v_pcode text;
-  v_pname text;
   v_uom text;
   v_batch numeric;
+  v_stages jsonb;
+  v_el jsonb;
+  v_i integer;
+  v_mixer numeric;
   v_dump numeric;
-  v_tol numeric;
   v_mix numeric;
+  v_tol numeric;
   v_rest numeric;
   v_yield numeric;
   v_items jsonb;
@@ -535,18 +542,27 @@ begin
     if v_rev is null or v_rev <> trunc(v_rev) then raise exception 'RF_INVALID_RECIPE'; end if;
     if (v_code || '#' || v_rev::integer) = any (v_seen) then raise exception 'RF_INVALID_RECIPE'; end if;
     v_seen := v_seen || (v_code || '#' || v_rev::integer);
-    v_name := private.bom_text(v_row, 'name', 160, 1, 'RF_INVALID_RECIPE');
-    v_pcode := coalesce(nullif(private.bom_text(v_row, 'productCode', 60, 0, 'RF_INVALID_RECIPE'), ''), v_code);
-    v_pname := private.bom_text(v_row, 'productName', 160, 1, 'RF_INVALID_RECIPE');
+    v_pcode := private.bom_text(v_row, 'productCode', 60, 0, 'RF_INVALID_RECIPE');
     v_uom := coalesce(nullif(private.bom_text(v_row, 'uom', 20, 0, 'RF_INVALID_RECIPE'), ''), 'm');
     if not (v_uom = any (private.bom_uoms())) then raise exception 'RF_INVALID_RECIPE'; end if;
     v_batch := private.bom_num(v_row -> 'batchKg', 'RF_INVALID_RECIPE', 0, 1000000);
-    v_dump := private.bom_num(v_row -> 'dumpTemp', 'RF_INVALID_RECIPE', 0, 1000);
     v_tol := coalesce(private.bom_num(v_row -> 'dumpTol', 'RF_INVALID_RECIPE', 0, 100), 5);
-    v_mix := private.bom_num(v_row -> 'mixSec', 'RF_INVALID_RECIPE', 0, 86400);
+    -- ผสมสองขั้น: ต้องมีขั้น 1 และขั้น 2 อย่างละหนึ่ง (เก็บเรียง 1, 2 ให้เทียบกับที่เก็บได้) อุณหภูมิ 0-1000 °C เวลา > 0 ถึง 1440 นาที
+    v_node := v_row -> 'stages';
+    if v_node is null or jsonb_typeof(v_node) <> 'array' or jsonb_array_length(v_node) <> 2 then raise exception 'RF_INVALID_RECIPE'; end if;
+    v_stages := '[]'::jsonb;
+    for v_i in 1..2 loop
+      select t.e into v_el from jsonb_array_elements(v_node) as t(e) where jsonb_typeof(t.e) = 'object' and t.e ->> 'stage' = v_i::text;
+      if not found then raise exception 'RF_INVALID_RECIPE'; end if;
+      v_mixer := private.bom_num(v_el -> 'mixerTemp', 'RF_INVALID_RECIPE', 0, 1000);
+      v_dump := private.bom_num(v_el -> 'dumpTemp', 'RF_INVALID_RECIPE', 0, 1000);
+      v_mix := private.bom_num(v_el -> 'mixMin', 'RF_INVALID_RECIPE', 0, 1440);
+      if v_mixer is null or v_dump is null or v_mix is null or v_mix <= 0 then raise exception 'RF_INVALID_RECIPE'; end if;
+      v_stages := v_stages || jsonb_build_array(jsonb_build_object('stage', v_i, 'mixerTemp', v_mixer, 'dumpTemp', v_dump, 'mixMin', v_mix));
+    end loop;
     v_rest := coalesce(private.bom_num(v_row -> 'restHours', 'RF_INVALID_RECIPE', 0, 1000), 4);
     v_yield := private.bom_num(v_row -> 'yieldPerKg', 'RF_INVALID_RECIPE', 0, 1000000000);
-    if v_batch is null or v_batch <= 0 or v_dump is null or v_mix is null or v_mix <= 0 or v_yield is null or v_yield <= 0 then
+    if v_batch is null or v_batch <= 0 or v_yield is null or v_yield <= 0 then
       raise exception 'RF_INVALID_RECIPE';
     end if;
     v_status := private.bom_text(v_row, 'status', 20, 1, 'RF_INVALID_RECIPE');
@@ -560,8 +576,8 @@ begin
     v_items := private.rf_parse_items(v_row -> 'items', v_node);
 
     if v_found then
-      v_same := v_old.name = v_name and v_old.product_code = v_pcode and v_old.product_name = v_pname and v_old.uom = v_uom
-        and v_old.batch_kg = v_batch and v_old.dump_temp = v_dump and v_old.dump_tol = v_tol and v_old.mix_sec = v_mix
+      v_same := v_old.product_code = v_pcode and v_old.uom = v_uom
+        and v_old.batch_kg = v_batch and v_old.stages = v_stages and v_old.dump_tol = v_tol
         and v_old.rest_hours = v_rest and v_old.yield_per_kg = v_yield and v_old.items = v_items;
       -- สำเนาที่ตรงกับแถวล่าสุดทุกช่อง ไม่เขียนอะไร (ไม่ต้องตรวจชน)
       if v_same and v_old.status = v_status then continue; end if;
@@ -572,8 +588,8 @@ begin
       if v_old.status = 'draft' then
         if v_status = 'draft' then
           update public.rf_recipes set
-            name = v_name, product_code = v_pcode, product_name = v_pname, uom = v_uom, batch_kg = v_batch, dump_temp = v_dump,
-            dump_tol = v_tol, mix_sec = v_mix, rest_hours = v_rest, yield_per_kg = v_yield, items = v_items, updated_at = now()
+            product_code = v_pcode, uom = v_uom, batch_kg = v_batch, stages = v_stages,
+            dump_tol = v_tol, rest_hours = v_rest, yield_per_kg = v_yield, items = v_items, updated_at = now()
           where id = v_old.id;
         elsif v_status = 'approved' then
           -- อนุมัติ: หัว RB เท่านั้น และเนื้อหาต้องตรงกับที่เก็บ (แก้พร้อมอนุมัติในคำสั่งเดียวไม่ได้)
@@ -619,9 +635,9 @@ begin
       if v_latest.status = 'draft' then raise exception 'RF_INVALID_TRANSITION'; end if;
     end if;
     insert into public.rf_recipes (
-      is_test, recipe_code, revision, name, product_code, product_name, uom, batch_kg, dump_temp, dump_tol, mix_sec, rest_hours,
+      is_test, recipe_code, revision, product_code, uom, batch_kg, stages, dump_tol, rest_hours,
       yield_per_kg, items, status, created_by)
-    values (true, v_code, v_rev::integer, v_name, v_pcode, v_pname, v_uom, v_batch, v_dump, v_tol, v_mix, v_rest,
+    values (true, v_code, v_rev::integer, v_pcode, v_uom, v_batch, v_stages, v_tol, v_rest,
             v_yield, v_items, 'draft', p_actor);
   end loop;
   return cardinality(v_seen);
@@ -934,10 +950,10 @@ begin
       v_uom := v_job.uom;
     end if;
     insert into public.rf_orders (
-      is_test, wo_no, customer, customer_po, recipe_code, recipe_revision, product_code, product_name, uom, color,
+      is_test, wo_no, customer, customer_po, recipe_code, recipe_revision, product_code, uom, color,
       target_qty, target_kg, kg_per_unit, produced_qty, start_date, due_date, priority, note, status, source_job_no, created_by)
     values (
-      true, v_wo, v_customer, v_po, v_rec.recipe_code, v_rec.revision, v_rec.product_code, v_rec.product_name, v_uom, v_color,
+      true, v_wo, v_customer, v_po, v_rec.recipe_code, v_rec.revision, v_rec.product_code, v_uom, v_color,
       v_target, v_tkg, v_kpu, 0, v_start::bigint, v_due::bigint, v_priority, v_note, 'planned', v_src, p_actor.id);
     if v_src is not null then
       v_res := private.rf_link_job(v_job, p_actor_name, v_wo, coalesce(v_tkg, 0));
@@ -968,8 +984,8 @@ as $$
     'recipes', coalesce((
       select jsonb_agg(
         jsonb_build_object(
-          'id', r.recipe_code, 'revision', r.revision, 'name', r.name, 'productCode', r.product_code, 'productName', r.product_name,
-          'uom', r.uom, 'batchKg', r.batch_kg, 'dumpTemp', r.dump_temp, 'dumpTol', r.dump_tol, 'mixSec', r.mix_sec,
+          'id', r.recipe_code, 'revision', r.revision, 'productCode', r.product_code,
+          'uom', r.uom, 'batchKg', r.batch_kg, 'stages', r.stages, 'dumpTol', r.dump_tol,
           'restHours', r.rest_hours, 'yieldPerKg', r.yield_per_kg, 'items', r.items, 'status', r.status,
           'createdBy', coalesce(private.bom_person(r.created_by), ''), 'createdAt', private.bom_ms(r.created_at))
         || case when r.approved_at is null then '{}'::jsonb
@@ -981,7 +997,7 @@ as $$
       select jsonb_agg(
         jsonb_build_object(
           'id', o.wo_no, 'customer', o.customer, 'customerPo', o.customer_po, 'recipeId', o.recipe_code, 'recipeRevision', o.recipe_revision,
-          'productCode', o.product_code, 'productName', o.product_name, 'uom', o.uom, 'color', o.color,
+          'productCode', o.product_code, 'uom', o.uom, 'color', o.color,
           'targetQty', o.target_qty, 'producedQty', o.produced_qty, 'startDate', o.start_date, 'dueDate', o.due_date,
           'priority', o.priority, 'note', o.note, 'status', o.status,
           'createdBy', coalesce(private.bom_person(o.created_by), ''), 'createdAt', private.bom_ms(o.created_at))

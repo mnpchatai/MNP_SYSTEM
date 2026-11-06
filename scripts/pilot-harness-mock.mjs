@@ -718,6 +718,20 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const rfIsQa = (actor) => actor.dept === "QA";
   const rfIsHead = (actor) => (rfIsRb(actor) && ["department_manager", "assistant_department_manager"].includes(actor.role)) || ["assistant_factory_manager", "factory_manager", "general_manager", "admin"].includes(actor.role);
   const rfText = (value, max, code) => { const text = String(value ?? "").trim(); if (!text || text.length > max) fail(code); return text; };
+  // สูตรผสมสองขั้น (ตรงกับ rf_save_recipes): แต่ละบรรทัดวัตถุดิบมี stage 1|2 (ไม่ระบุ = 1) และ stages = [{stage 1}, {stage 2}] (mixerTemp °C, dumpTemp °C, mixMin นาที)
+  // rfCanonRecipe ทำให้สำเนาที่ client ส่งเทียบกับที่เก็บได้ (เติม stage ของบรรทัด เรียง stages ตามขั้น รหัสสินค้าว่าง = "")
+  const rfCanonRecipe = (record) => {
+    const out = clone(record);
+    if (Array.isArray(out.items)) out.items = out.items.map((item) => (item && typeof item === "object" && !Array.isArray(item) ? { ...item, stage: item.stage ?? 1 } : item));
+    if (Array.isArray(out.stages)) out.stages = out.stages.slice().sort((a, b) => Number(a?.stage) - Number(b?.stage));
+    if (out.productCode === undefined || out.productCode === null) out.productCode = "";
+    else if (typeof out.productCode === "string") out.productCode = out.productCode.trim();
+    return out;
+  };
+  const rfStagesValid = (stages) => Array.isArray(stages) && stages.length === 2
+    && stages.every((row, index) => row && typeof row === "object" && row.stage === index + 1
+      && [row.mixerTemp, row.dumpTemp].every((value) => typeof value === "number" && value >= 0 && value <= 1000)
+      && typeof row.mixMin === "number" && row.mixMin > 0 && row.mixMin <= 1440);
   const rfSame = (a, b, owned) => bomCanon(bomWithout(a, owned)) === bomCanon(bomWithout(b, owned));
 
   // บันทึกการเปลี่ยนแปลงทั้งชุดในธุรกรรมเดียว (ตรงกับ app_rf_save): คืน { next, ops, wrote } โดย ops = งานของ BOM ที่ต้องเขียนต่อเมื่อบันทึกสำเร็จ (ผูกงาน / ป้อนยอดผลิตกลับ / ล้างการผูกตอนยกเลิก)
@@ -748,8 +762,9 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     const seen = new Set();
     for (const list of RF_LISTS) {
       const bad = RF_BAD[list];
-      for (const record of changes[list]?.upsert ?? []) {
-        if (!record || typeof record !== "object" || Array.isArray(record)) fail(bad);
+      for (const raw of changes[list]?.upsert ?? []) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) fail(bad);
+        const record = list === "recipes" ? rfCanonRecipe(raw) : raw;
         const key = list === "materials" ? record.code : record.id;
         if (typeof key !== "string" || !RF_CODE[list].test(key)) fail(bad);
         if (list === "recipes" && !(Number.isInteger(record.revision) && record.revision >= 1 && record.revision <= 9999)) fail(bad);
@@ -772,15 +787,15 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         } else if (list === "recipes") {
           if (!["draft", "approved", "superseded"].includes(record.status)) fail(bad);
           const siblings = next.recipes.filter((row) => row.id === record.id);
-          rfText(record.name, 160, bad);
-          rfText(record.productName, 160, bad);
+          if (typeof record.productCode !== "string" || record.productCode.length > 60) fail(bad);
+          if (!rfStagesValid(record.stages)) fail(bad);
           if (!Array.isArray(record.items) || !record.items.length || record.items.length > 100) fail(bad);
           // วัตถุดิบในสูตรต้องมีอยู่ ไม่ซ้ำ phr > 0 · วัตถุดิบที่เลิกใช้แล้วใส่ได้เฉพาะที่ revision ก่อนหน้า/แถวเดิมใช้อยู่
           const before = prev ?? siblings.slice().sort((a, b) => b.revision - a.revision)[0];
           const codes = new Set();
           for (const item of record.items) {
             const material = next.materials.find((row) => row.code === item?.materialCode);
-            if (!material || codes.has(item.materialCode) || !(Number(item?.phr) > 0)) fail(bad);
+            if (!material || codes.has(item.materialCode) || !(Number(item?.phr) > 0) || ![1, 2].includes(item.stage)) fail(bad);
             codes.add(item.materialCode);
             if (material.active === false && !(before?.items ?? []).some((row) => row.materialCode === item.materialCode)) fail(bad);
           }
@@ -840,7 +855,9 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
               uom = job.uom;
             }
             // สินค้า/หน่วย/revision ได้จากสูตรหรืองาน BOM ไม่เชื่อ client
-            next.orders.push({ ...clone(record), productCode: recipe.productCode, productName: recipe.productName, uom, recipeRevision: recipe.revision, producedQty: 0, createdAt: at, createdBy: actor.name });
+            const created = { ...clone(record), productCode: recipe.productCode, uom, recipeRevision: recipe.revision, producedQty: 0, createdAt: at, createdBy: actor.name };
+            delete created.productName; // สินค้าอ้างจากรหัสสูตร + รหัสสินค้า ไม่มีชื่อสินค้า
+            next.orders.push(created);
           } else {
             const from = prev.status;
             const to = record.status;

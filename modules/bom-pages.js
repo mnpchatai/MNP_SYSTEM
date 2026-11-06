@@ -1532,7 +1532,7 @@
     const rows = data.compounds.filter((entry) => includes(`${entry.code} ${entry.name} ${entry.recipeId ?? ""}`, ctx.q)).sort((a, b) => a.code.localeCompare(b.code)).map((entry) => {
       const uses = data.items.filter((item) => item.kind === "RB" && item.rubber?.compound === entry.code);
       const recipe = recipes.find((row) => row.id === entry.recipeId);
-      return `<tr><td>${ui.mono(entry.code)}<div class="small muted">${esc(entry.name)}</div></td><td>${entry.recipeId ? `${ui.mono(entry.recipeId)}<div class="small muted">${esc(recipe?.name ?? entry.recipeName ?? "")}</div>${recipe ? (recipe.status === "approved" ? ui.badge("good", "สูตรอนุมัติแล้ว") : ui.badge("warn", "สูตรยังไม่อนุมัติ")) : ui.badge("warn", rfRemote(ctx) && !rfReady(ctx) ? "กำลังโหลดสูตร…" : "ไม่พบสูตรนี้ใน RubberFlow")}` : ui.badge("warn", "ยังไม่ผูก")}</td><td class="right">${esc(String(uses.length))}</td><td class="nowrap">${canLink ? ui.openButton("ผูกสูตร", "compoundLink", { code: entry.code }, { className: "secondary small" }) : ""}</td></tr>`;
+      return `<tr><td>${ui.mono(entry.code)}<div class="small muted">${esc(entry.name)}</div></td><td>${entry.recipeId ? `${ui.mono(entry.recipeId)}<div class="small muted">${esc(recipe?.productCode ?? "")}</div>${recipe ? (recipe.status === "approved" ? ui.badge("good", "สูตรอนุมัติแล้ว") : ui.badge("warn", "สูตรยังไม่อนุมัติ")) : ui.badge("warn", rfRemote(ctx) && !rfReady(ctx) ? "กำลังโหลดสูตร…" : "ไม่พบสูตรนี้ใน RubberFlow")}` : ui.badge("warn", "ยังไม่ผูก")}</td><td class="right">${esc(String(uses.length))}</td><td class="nowrap">${canLink ? ui.openButton("ผูกสูตร", "compoundLink", { code: entry.code }, { className: "secondary small" }) : ""}</td></tr>`;
     });
     const html = `${head(ctx, "สูตรยาง ↔ RubberFlow", "รหัสคอมปาวด์ในรหัส RB (คอลัมน์ “สินค้า/สูตรยาง” ของชีต) ผูกกับสูตร PHR ที่อนุมัติใน RubberFlow เพื่อสร้างใบสั่งผลิตเส้นยางจากงานของแผนก RB", canLink ? ui.openButton("เพิ่มสูตรยาง", "compoundLink", {}, { className: "" }) : "")}
       ${recipes.length ? "" : rfRemote(ctx) ? ui.callout("warn", rfReady(ctx) ? "ยังไม่มีสูตรใน RubberFlow ในฐานข้อมูล สร้างสูตรและให้หัวหน้าแผนก RB อนุมัติที่เมนู RubberFlow ก่อนจึงผูกได้" : "กำลังโหลดสูตรจาก RubberFlow…") : ui.callout("warn", "ยังไม่พบข้อมูล RubberFlow ในเบราว์เซอร์นี้ (เปิดเมนู RubberFlow ครั้งหนึ่งเพื่อสร้างข้อมูลสาธิต) ผูกสูตรด้วยการพิมพ์รหัสสูตรได้")}
@@ -1544,7 +1544,7 @@
     const compound = data.compounds.find((entry) => entry.code === code);
     const recipes = rfRecipes(ctx).filter((recipe) => recipe.status === "approved");
     const recipeControl = recipes.length || rfRemote(ctx)
-      ? ui.select("recipeId", recipes.map((recipe) => ({ value: recipe.id, label: `${recipe.id} · ${recipe.name} (${recipe.productName})` })), { value: compound?.recipeId ?? "", placeholder: "ไม่ผูก" })
+      ? ui.select("recipeId", recipes.map((recipe) => ({ value: recipe.id, label: recipe.productCode ? `${recipe.id} · ${recipe.productCode}` : recipe.id })), { value: compound?.recipeId ?? "", placeholder: "ไม่ผูก" })
       : ui.input("recipeId", { value: compound?.recipeId ?? "", placeholder: "รหัสสูตรใน RubberFlow เช่น RC-EPDM-DS01" });
     const body = `<form id="bom-compound-form" data-rf-form="linkCompound" data-rf-success="บันทึกสูตรยาง {result}">
       ${ui.field("รหัสสูตรยาง *", compound ? `<input class="input rf-input" name="code" value="${attr(compound.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น B0006" }))}
@@ -2196,7 +2196,7 @@
     const body = `${ui.kv([
       ["งาน", esc(`${job.id} · ${job.orderId} · ${order?.customer ?? ""}`)], ["เส้นยาง", esc(`${job.itemCode} · ${item?.name ?? ""}`)],
       ["ต้องผลิตอีก", esc(`${rules.fmtQty(Math.max(0, job.qtyPlanned - job.qtyDone))} ${uomText(ctx, job.uom)}`)],
-      ["สูตรยาง → สูตร PHR", esc(`${item?.rubber?.compound ?? "-"} → ${compound?.recipeId ?? "ยังไม่ผูก"}${recipe ? ` (${recipe.name}, ${recipe.batchKg} kg/batch)` : ""}`)],
+      ["สูตรยาง → สูตร PHR", esc(`${item?.rubber?.compound ?? "-"} → ${compound?.recipeId ?? "ยังไม่ผูก"}${recipe ? ` (${recipe.productCode ? `${recipe.productCode}, ` : ""}${recipe.batchKg} kg/batch)` : ""}`)],
       [kgFromBom ? "คอมปาวด์ที่ต้องใช้ (ตามบรรทัดสูตรยางใน BOM)" : "คอมปาวด์ที่ต้องใช้ (เผื่อ 5%)", esc(`${rules.fmtQty(kg, 2)} kg${recipe ? ` ≈ ${Math.ceil(kg / Number(recipe.batchKg || 1))} batch` : ""}`)],
       recipe ? ["จำนวนเป้าหมายใน WO", esc(remoteFlow ? `${rules.fmtQty(targetQty)} ${uomText(ctx, job.uom)} (นับในหน่วยของงาน)` : `${rules.fmtQty(targetQty)} ${recipe.uom} (RubberFlow นับผลผลิตในหน่วยของสูตร)`)] : null,
       ["กำหนดส่ง", esc(rules.fmtDate(job.dueAt))],

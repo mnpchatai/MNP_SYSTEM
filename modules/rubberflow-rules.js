@@ -80,11 +80,22 @@
 
   const weighTolerance = (targetKg) => Math.max(WEIGH_TOL_MIN_KG, (targetKg * WEIGH_TOL_PCT) / 100);
 
-  // น้ำหนักวัตถุดิบต่อ batch จาก PHR (ส่วนต่อยาง 100 ส่วน)
+  // สูตรผสมสองขั้น: แต่ละบรรทัดวัตถุดิบมี stage 1|2 (ไม่ระบุ = 1) · ค่าของแต่ละขั้น { stage, mixerTemp (°C), dumpTemp (°C), mixMin (นาที) }
+  const MIX_STAGES = Object.freeze([1, 2]);
+  const itemStage = (item) => (Number(item?.stage) === 2 ? 2 : 1);
+  const recipeStage = (recipe, stage) => (recipe?.stages ?? []).find((row) => Number(row.stage) === stage) ?? null;
+
+  // น้ำหนักวัตถุดิบต่อ batch จาก PHR (ส่วนต่อยาง 100 ส่วน) · เรียงตามขั้น (ขั้น 1 ก่อน ขั้น 2) ลำดับเดิมในขั้นเดียวกัน
   function recipeLines(recipe) {
     const total = recipe.items.reduce((sum, item) => sum + Number(item.phr), 0);
-    return recipe.items.map((item) => ({ ...item, kgPerBatch: total ? (Number(item.phr) / total) * recipe.batchKg : 0 }));
+    return recipe.items
+      .map((item) => ({ ...item, stage: itemStage(item), kgPerBatch: total ? (Number(item.phr) / total) * recipe.batchKg : 0 }))
+      .sort((a, b) => a.stage - b.stage);
   }
+
+  // สูตร/สินค้าที่แสดงบนจอ: สูตรไม่มีชื่อ ใช้รหัสสูตร (+ รหัสสินค้าถ้ามี) · ใบสั่งผลิตและกล่อง FG เก็บ recipeId + productCode ของสูตร
+  const recipeLabel = (recipe) => (recipe ? (recipe.productCode ? `${recipe.id} · ${recipe.productCode}` : String(recipe.id)) : "-");
+  const orderLabel = (row) => (row ? (row.productCode ? `${row.recipeId} · ${row.productCode}` : String(row.recipeId ?? "-")) : "-");
 
   const totalPhr = (recipe) => recipe.items.reduce((sum, item) => sum + Number(item.phr), 0);
 
@@ -230,7 +241,7 @@
 
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, stats, cpkVerdict,
+    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

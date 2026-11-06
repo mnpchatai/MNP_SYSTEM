@@ -37,6 +37,17 @@ test("weighing tolerance is 1.5% but never under 20 g, and recipe lines split th
   assert.deepEqual(lines.map((line) => +line.kgPerBatch.toFixed(3)), [50, 25, 25]);
   assert.equal(rules.totalPhr(recipe), 200);
   assert.deepEqual(rules.recipeLines({ batchKg: 10, items: [] }), []);
+  // ผสมสองขั้น: บรรทัดไม่ระบุขั้น = ขั้น 1 เรียงขั้น 1 ก่อนขั้น 2 (ลำดับเดิมในขั้นเดียวกัน)
+  const staged = { batchKg: 100, items: [{ materialCode: "S", phr: 50, stage: 2 }, { materialCode: "A", phr: 100 }, { materialCode: "B", phr: 50, stage: 1 }], stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }] };
+  assert.deepEqual(rules.recipeLines(staged).map((line) => [line.materialCode, line.stage]), [["A", 1], ["B", 1], ["S", 2]]);
+  assert.equal(rules.recipeStage(staged, 2).dumpTemp, 130);
+  assert.equal(rules.recipeStage({ stages: [] }, 1), null);
+  assert.equal(rules.recipeStage(undefined, 1), null);
+  // สูตร/สินค้าบนจอ: รหัสสูตร (+ รหัสสินค้าถ้ามี) ไม่มีชื่อ
+  assert.equal(rules.recipeLabel({ id: "RC-1", productCode: "P-1" }), "RC-1 · P-1");
+  assert.equal(rules.recipeLabel({ id: "RC-1", productCode: "" }), "RC-1");
+  assert.equal(rules.orderLabel({ recipeId: "RC-1", productCode: "P-1" }), "RC-1 · P-1");
+  assert.equal(rules.orderLabel({ recipeId: "RC-1" }), "RC-1");
 });
 
 test("lotState and FEFO allocation skip held, empty and expired lots and take the earliest expiry first", () => {

@@ -156,13 +156,16 @@
   }
 
   const listOf = (value) => (Array.isArray(value) ? value : value === undefined ? [] : [value]);
-  const itemsOf = (p) => listOf(p.materialCode).map((materialCode, index) => ({ materialCode, phr: listOf(p.phr)[index] }));
+  const itemsOf = (p) => listOf(p.materialCode).map((materialCode, index) => ({ materialCode, phr: listOf(p.phr)[index], stage: listOf(p.stage)[index] }));
+  // ฟอร์มสูตรและฟอร์มผสมมีช่อง mixerTemp1 dumpTemp1 mixMin1 / ...2 (ขั้น 1 และขั้น 2) รวมเป็น stages
+  const stagesOf = (p) => rules.MIX_STAGES.map((stage) => ({ stage, mixerTemp: p[`mixerTemp${stage}`], dumpTemp: p[`dumpTemp${stage}`], mixMin: p[`mixMin${stage}`] }));
   // ฟอร์มบางอันส่งค่าที่ action ต้องการคนละรูปแบบ (วันที่เป็น ms, รายการวัตถุดิบ, ตัวเลือกใช่/ไม่ใช่)
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, startDate: rules.fromInputDate(p.startDate), dueDate: rules.fromInputDate(p.dueDate) }),
     receiveMaterial: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry), coa: p.coa === "yes" }),
-    createRecipe: (p) => ({ ...p, items: itemsOf(p) }),
-    saveRecipe: (p) => ({ ...p, items: itemsOf(p) }),
+    createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
+    saveRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
+    recordMixing: (p) => ({ ...p, stages: stagesOf(p) }),
     saveMaterial: (p) => ({ ...p, active: p.active !== "0" }),
     weighLine: (p) => ({ ...p, index: Number(p.index) }),
     shipBoxes: (p) => ({ ids: p.ids ?? [] }),

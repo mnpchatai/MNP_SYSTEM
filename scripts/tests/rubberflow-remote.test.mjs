@@ -84,7 +84,7 @@ async function session({ withBom = false, storage = memoryStorage() } = {}) {
   return { mock, storage, adapter, as, make, call, rows };
 }
 
-const RECIPE = { id: "RC-TEST-01", name: "สูตรทดสอบ", productName: "สินค้าทดสอบ", uom: "m", batchKg: 50, dumpTemp: 130, mixSec: 270, yieldPerKg: 6, items: [{ materialCode: "EPDM-55", phr: 100 }, { materialCode: "CB-N550", phr: 60 }] };
+const RECIPE = { id: "RC-TEST-01", productCode: "P-TEST", uom: "m", batchKg: 50, dumpTol: 5, yieldPerKg: 6, stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], items: [{ materialCode: "EPDM-55", phr: 100, stage: 1 }, { materialCode: "CB-N550", phr: 60, stage: 2 }] };
 const ORDER = { recipeId: "RC-TEST-01", customer: "ลูกค้า ทดสอบ", targetQty: 100, startDate: NOW, dueDate: NOW + DAY };
 async function withMaterials(s, rig) {
   await s.as("persona-1");
@@ -180,6 +180,34 @@ test("materials and recipes: RB staff and the planner group draft, only the RB h
   assert.equal(rules.currentRecipe(rig.store.data().recipes, "RC-TEST-01").revision, 1);
 });
 
+test("recipes are two-stage: both stages are required, each line has stage 1 or 2, and the database stores them in order", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await s.as("persona-rb");
+  await withMaterials(s, rig);
+  await s.as("persona-rb");
+  const direct = async (over) => {
+    const snapshot = unwrap(await s.mock.client.rpc("app_rf_master"));
+    return s.mock.client.rpc("app_rf_save", { p_changes: { recipes: { upsert: [{ ...RECIPE, revision: 1, status: "draft", ...over }] } }, p_base_version: snapshot.version, p_action: "createRecipe" });
+  };
+  const [one, two] = RECIPE.stages;
+  assert.equal((await direct({ stages: undefined })).error.code, "RF_INVALID_RECIPE", "stages are required");
+  assert.equal((await direct({ stages: [one] })).error.code, "RF_INVALID_RECIPE", "one stage only");
+  assert.equal((await direct({ stages: [one, { ...one }] })).error.code, "RF_INVALID_RECIPE", "stage 1 twice");
+  assert.equal((await direct({ stages: [one, { ...two, mixMin: 0 }] })).error.code, "RF_INVALID_RECIPE", "zero minutes");
+  assert.equal((await direct({ stages: [one, { ...two, dumpTemp: 1001 }] })).error.code, "RF_INVALID_RECIPE", "temperature above 1000");
+  assert.equal((await direct({ stages: [one, { stage: 2, mixerTemp: 90, dumpTemp: 130 }] })).error.code, "RF_INVALID_RECIPE", "a stage without minutes");
+  assert.equal((await direct({ items: [{ materialCode: "EPDM-55", phr: 100, stage: 3 }] })).error.code, "RF_INVALID_RECIPE", "stage 3 on a line");
+  // รหัสสินค้าไม่บังคับ (ไม่ใช้รหัสสูตรแทน) · บรรทัดไม่ระบุขั้น = ขั้น 1 · stages เรียงขั้น 1, 2
+  const saved1 = await direct({ productCode: undefined, stages: [two, one], items: [{ materialCode: "EPDM-55", phr: 100 }, { materialCode: "CB-N550", phr: 60, stage: 2 }] });
+  assert.ok(!saved1.error, "a recipe without a product code and with unordered stages is accepted");
+  const stored = unwrap(await s.mock.client.rpc("app_rf_master")).recipes[0];
+  assert.equal(stored.productCode, "");
+  assert.deepEqual(stored.stages.map((row) => row.stage), [1, 2]);
+  assert.deepEqual(stored.items.map((row) => row.stage), [1, 2]);
+  assert.ok(!("name" in stored) && !("productName" in stored) && !("mixSec" in stored) && !("dumpTemp" in stored));
+});
+
 test("an approved revision is immutable: editing issues revision + 1 as a draft, approving it supersedes the old one, and orders keep the revision they were opened with", async () => {
   const s = await session();
   const rig = await s.make();
@@ -191,21 +219,21 @@ test("an approved revision is immutable: editing issues revision + 1 as a draft,
   assert.equal(rig.store.data().orders[0].recipeRevision, 1);
 
   // แก้สูตรที่อนุมัติแล้ว = ร่าง revision 2 ของรหัสเดิม (revision 1 ใช้งานต่อ)
-  const edit = await saved(rig.store.run("saveRecipe", { ...RECIPE, name: "สูตรทดสอบ แก้", items: [{ materialCode: "EPDM-55", phr: 100 }, { materialCode: "CB-N550", phr: 70 }] }));
+  const edit = await saved(rig.store.run("saveRecipe", { ...RECIPE, productCode: "P-TEST-2", items: [{ materialCode: "EPDM-55", phr: 100, stage: 1 }, { materialCode: "CB-N550", phr: 70, stage: 2 }] }));
   assert.equal(edit.result, 2, "the new revision number");
   const rows = rules.revisionsOf(rig.store.data().recipes, "RC-TEST-01");
   assert.deepEqual(rows.map((row) => [row.revision, row.status]), [[2, "draft"], [1, "approved"]]);
-  assert.equal(rows[1].name, "สูตรทดสอบ", "revision 1 is untouched");
+  assert.equal(rows[1].productCode, "P-TEST", "revision 1 is untouched");
   assert.equal(rules.currentRecipe(rig.store.data().recipes, "RC-TEST-01").revision, 1, "the approved revision stays the working one");
   assert.deepEqual(rules.approvedRecipes(rig.store.data().recipes).map((row) => row.revision), [1]);
   assert.equal(rules.currentRecipes(rig.store.data().recipes).length, 1, "one row per recipe code");
   // แก้ร่างซ้ำ = แก้ร่างเดิม ไม่ออก revision 3
-  const again = await saved(rig.store.run("saveRecipe", { ...RECIPE, name: "สูตรทดสอบ แก้อีก" }));
+  const again = await saved(rig.store.run("saveRecipe", { ...RECIPE, productCode: "P-TEST-3" }));
   assert.equal(again.result, 2);
   assert.equal(rules.revisionsOf(rig.store.data().recipes, "RC-TEST-01").length, 2);
   // ฐานข้อมูลปฏิเสธการแก้ revision ที่อนุมัติแล้วตรงๆ
   const snapshot = unwrap(await s.mock.client.rpc("app_rf_master"));
-  const direct = await s.mock.client.rpc("app_rf_save", { p_changes: { recipes: { upsert: [{ ...snapshot.recipes[0], name: "แก้ตรงๆ" }] } }, p_base_version: snapshot.version, p_action: "saveRecipe" });
+  const direct = await s.mock.client.rpc("app_rf_save", { p_changes: { recipes: { upsert: [{ ...snapshot.recipes[0], stages: [snapshot.recipes[0].stages[0], { ...snapshot.recipes[0].stages[1], dumpTemp: 150 }] }] } }, p_base_version: snapshot.version, p_action: "saveRecipe" });
   assert.equal(direct.error.code, "RF_REVISION_IMMUTABLE");
 
   // อนุมัติ revision 2 → revision 1 ถูกแทนที่ในคำสั่งเดียวกัน (อนุมัติได้หนึ่ง revision ต่อรหัส)
@@ -535,7 +563,7 @@ test("material and recipe actions validate their input and the demo mode keeps w
   assert.throws(() => A.saveMaterial(d, { code: "NEW", name: " " }, ctx), /ชื่อวัตถุดิบ/);
   for (const code of ["-LEAD", ".dot", "ก-1", "A/B", "A".repeat(41)]) assert.throws(() => A.saveMaterial(d, { code, name: "x" }, ctx), /รหัสวัตถุดิบใช้ได้เฉพาะตัวอักษรอังกฤษ/, code);
   assert.equal(A.saveMaterial(d, { code: "A".repeat(40), name: "ยาว 40" }, ctx), "A".repeat(40), "40 characters are allowed");
-  for (const id of ["RC 1", "-RC", "รหัส", "R".repeat(61)]) assert.throws(() => A.createRecipe(d, { id, name: "n", productName: "p", batchKg: 1, dumpTemp: 1, mixSec: 1, yieldPerKg: 1, items: [{ materialCode: "EPDM-55", phr: 1 }] }, ctx), /รหัสสูตรใช้ได้เฉพาะตัวอักษรอังกฤษ/, id);
+  for (const id of ["RC 1", "-RC", "รหัส", "R".repeat(61)]) assert.throws(() => A.createRecipe(d, { ...RECIPE, id }, ctx), /รหัสสูตรใช้ได้เฉพาะตัวอักษรอังกฤษ/, id);
   assert.equal(A.saveMaterial(d, { code: "NEW-1", name: "วัตถุดิบใหม่", category: "ทดสอบ", active: "0" }, ctx), "NEW-1");
   assert.equal(d.materials.at(-1).active, false);
   assert.equal(A.saveMaterial(d, { code: "NEW-1", name: "ชื่อใหม่", active: "1" }, ctx), "NEW-1");
@@ -543,12 +571,12 @@ test("material and recipe actions validate their input and the demo mode keeps w
   assert.equal(d.materials.find((row) => row.code === "NEW-1").active, true);
   // สูตรสาธิต: ออก revision ใหม่ของสูตรที่อนุมัติแล้ว แล้วอนุมัติแทนของเดิม (ในเครื่องก็ใช้กฎเดียวกัน)
   const before = d.recipes.length;
-  assert.equal(A.saveRecipe(d, { id: "RC-EPDM-DS01", name: "EPDM Rev ใหม่", productName: "ซีล", batchKg: 60, dumpTemp: 140, mixSec: 300, yieldPerKg: 6.1, items: [{ materialCode: "EPDM-55", phr: 100 }] }, ctx), 4);
+  assert.equal(A.saveRecipe(d, { ...RECIPE, id: "RC-EPDM-DS01", batchKg: 60, yieldPerKg: 6.1, items: [{ materialCode: "EPDM-55", phr: 100 }] }, ctx), 4);
   assert.equal(d.recipes.length, before + 1);
   assert.throws(() => A.createOrder(d, { recipeId: "RC-NR-AM01", customer: "x", targetQty: 1, startDate: NOW, dueDate: NOW }, ctx), /ยังไม่ได้รับอนุมัติ/);
   A.approveRecipe(d, { id: "RC-EPDM-DS01" }, ctx);
   assert.deepEqual(rules.revisionsOf(d.recipes, "RC-EPDM-DS01").map((row) => [row.revision, row.status]), [[4, "approved"], [3, "superseded"]]);
-  assert.throws(() => A.saveRecipe(d, { id: "RC-NOPE", name: "x", productName: "y", batchKg: 1, dumpTemp: 1, mixSec: 1, yieldPerKg: 1, items: [{ materialCode: "A", phr: 1 }] }, ctx), /ไม่พบสูตร/);
+  assert.throws(() => A.saveRecipe(d, { ...RECIPE, id: "RC-NOPE" }, ctx), /ไม่พบสูตร/);
   // ไม่มี remote = ไม่ตรวจสิทธิ์ในคำสั่ง และเลข WO ใช้ตัวนับในเครื่อง
   const planned = A.createOrder(d, { recipeId: "RC-EPDM-DS01", customer: "ลูกค้า", targetQty: 10, startDate: NOW, dueDate: NOW }, { now: NOW, user: seed.USERS.find((row) => row.role === "mixer") });
   assert.match(planned, /^WO-\d{8}-\d\d$/);
@@ -664,7 +692,7 @@ test("QA raises a work order's produced quantity only through addQcRecord (also 
   assert.equal((await order({ ...c, producedQty: 10 })).error.code, "RF_FORBIDDEN", "never lower");
   assert.equal((await order({ ...w, id: "WO-NEW-01", status: "planned", producedQty: 0 })).error.code, "RF_FORBIDDEN", "no new order");
   assert.equal((await save({ materials: { upsert: [{ code: "QA-M", name: "x", active: true }] } })).error.code, "RF_FORBIDDEN", "no material");
-  assert.equal((await save({ recipes: { upsert: [{ ...(await master()).recipes[0], name: "แก้" }] } })).error.code, "RF_FORBIDDEN", "no recipe");
+  assert.equal((await save({ recipes: { upsert: [{ ...(await master()).recipes[0], productCode: "แก้" }] } })).error.code, "RF_FORBIDDEN", "no recipe");
   assert.equal((await order({ ...(await row(idle)), producedQty: 5 })).error.code, "RF_INVALID_ORDER", "a work order that is not released yet cannot report production");
 
   const bomBefore = (await s.call("app_bom_master")).version;
