@@ -57,8 +57,8 @@
 --   สังเกต: ใบส่งมอบทุกสถานีรวมสถานีผสม (kg) ป้อนกลับตามสัญญา จึงรับยอดซ้ำเมื่อชิ้นงานเดียวกันผ่านหลายสถานีและถูกรับมอบหลายครั้ง (ตามที่ผู้ใช้กำหนด ไม่ใช่ข้อบกพร่อง)
 --   rf_orders.fed_back_at ถูกลบ (เลิกใช้: ป้อนกลับต่อใบส่งมอบ ใบส่งมอบรับมอบได้ครั้งเดียวอยู่แล้ว) · WO: producedQty ที่ client ส่งมาถูกเมินเสมอ (เซิร์ฟเวอร์เป็นเจ้าของ)
 --
--- รหัสข้อผิดพลาดใหม่ (ข้อความตายตัว): RF_INVALID_MOLD RF_INVALID_MATLOT RF_INVALID_REQ RF_INVALID_LOT RF_INVALID_TRANSFER RF_INVALID_BOX RF_INVALID_QC RF_INVALID_NCR
---   RF_INSUFFICIENT_STOCK (ของรอบที่ 1 ยังใช้: RF_FORBIDDEN RF_STALE RF_RESET RF_CONFLICT RF_INVALID_TRANSITION RF_INVALID_ORDER RF_INVALID_DATA ฯลฯ)
+-- รหัสข้อผิดพลาดใหม่ (ข้อความตายตัว): RF_INVALID_MOLD RF_INVALID_MATERIAL_LOT RF_INVALID_REQUISITION RF_INVALID_LOT RF_INVALID_TRANSFER RF_INVALID_BOX RF_INVALID_QC RF_INVALID_NCR
+--   RF_INSUFFICIENT_STOCK RF_OUT_OF_TOLERANCE RF_LOT_UNAVAILABLE (ของรอบที่ 1 ยังใช้: RF_FORBIDDEN RF_STALE RF_RESET RF_CONFLICT RF_INVALID_TRANSITION RF_INVALID_ORDER RF_INVALID_DATA ฯลฯ)
 --
 -- นิยามที่ replace / ถูกแทนในไฟล์นี้ (เริ่มจากนิยามล่าสุดใน 20261107010000_rubberflow_core.sql ทุกตัว)
 --   - public.app_rf_save(jsonb, bigint, text, jsonb, text), app_sandbox_purge_rf()  (create or replace ลายเซ็นเดิม)
@@ -539,7 +539,7 @@ $$;
 revoke all on function private.rf_save_molds(uuid, boolean, text, jsonb, bigint, bigint) from public, anon, authenticated;
 
 -- ล็อตวัตถุดิบ: ST (หรือกลุ่มวางแผน) รับเข้าเป็นล็อตใหม่ available · ST/QA (หรือกลุ่มวางแผน) ตั้ง available <-> hold · เนื้อหาของล็อตเดิมแก้ไม่ได้
--- (RF_INVALID_MATLOT) · qty_kg / initial_kg ของล็อตเดิมที่ client ส่งมาเมิน (เซิร์ฟเวอร์ลดเองตอนชั่ง) · ผู้รับ/เวลาเซิร์ฟเวอร์ตั้ง
+-- (RF_INVALID_MATERIAL_LOT) · qty_kg / initial_kg ของล็อตเดิมที่ client ส่งมาเมิน (เซิร์ฟเวอร์ลดเองตอนชั่ง) · ผู้รับ/เวลาเซิร์ฟเวอร์ตั้ง
 create or replace function private.rf_save_material_lots(p_actor uuid, p_planner boolean, p_st boolean, p_qa boolean, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
@@ -563,25 +563,25 @@ declare
   v_content boolean;
 begin
   for v_row in select value from jsonb_array_elements(p_rows) loop
-    if jsonb_typeof(v_row) <> 'object' then raise exception 'RF_INVALID_MATLOT'; end if;
-    v_no := private.bom_text(v_row, 'lotNo', 60, 1, 'RF_INVALID_MATLOT');
-    if v_no !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' or v_no = any (v_seen) then raise exception 'RF_INVALID_MATLOT'; end if;
+    if jsonb_typeof(v_row) <> 'object' then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
+    v_no := private.bom_text(v_row, 'lotNo', 60, 1, 'RF_INVALID_MATERIAL_LOT');
+    if v_no !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' or v_no = any (v_seen) then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
     v_seen := v_seen || v_no;
-    v_code := private.bom_text(v_row, 'materialCode', 40, 1, 'RF_INVALID_MATLOT');
-    v_qty := private.bom_num(v_row -> 'qtyKg', 'RF_INVALID_MATLOT', 0, 1000000000);
-    v_exp := private.bom_num(v_row -> 'expiry', 'RF_INVALID_MATLOT', 1, 100000000000000);
-    if v_exp is null or v_exp <> trunc(v_exp) then raise exception 'RF_INVALID_MATLOT'; end if;
-    v_sup := coalesce(nullif(private.bom_text(v_row, 'supplier', 120, 0, 'RF_INVALID_MATLOT'), ''), '-');
-    v_loc := private.bom_text(v_row, 'location', 160, 0, 'RF_INVALID_MATLOT');
-    v_status := coalesce(nullif(private.bom_text(v_row, 'status', 10, 0, 'RF_INVALID_MATLOT'), ''), 'available');
-    if v_status not in ('available', 'hold') then raise exception 'RF_INVALID_MATLOT'; end if;
+    v_code := private.bom_text(v_row, 'materialCode', 40, 1, 'RF_INVALID_MATERIAL_LOT');
+    v_qty := private.bom_num(v_row -> 'qtyKg', 'RF_INVALID_MATERIAL_LOT', 0, 1000000000);
+    v_exp := private.bom_num(v_row -> 'expiry', 'RF_INVALID_MATERIAL_LOT', 1, 100000000000000);
+    if v_exp is null or v_exp <> trunc(v_exp) then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
+    v_sup := coalesce(nullif(private.bom_text(v_row, 'supplier', 120, 0, 'RF_INVALID_MATERIAL_LOT'), ''), '-');
+    v_loc := private.bom_text(v_row, 'location', 160, 0, 'RF_INVALID_MATERIAL_LOT');
+    v_status := coalesce(nullif(private.bom_text(v_row, 'status', 10, 0, 'RF_INVALID_MATERIAL_LOT'), ''), 'available');
+    if v_status not in ('available', 'hold') then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
     v_node := v_row -> 'coa';
     if v_node is null or jsonb_typeof(v_node) = 'null' then
       v_coa := 'false'::jsonb;
     elsif jsonb_typeof(v_node) in ('boolean', 'object') and char_length(v_node::text) <= 2000 then
       v_coa := v_node;
     else
-      raise exception 'RF_INVALID_MATLOT';
+      raise exception 'RF_INVALID_MATERIAL_LOT';
     end if;
 
     select * into v_old from public.rf_material_lots l where l.is_test and l.lot_no = v_no;
@@ -595,7 +595,7 @@ begin
       if not (v_content or v_old.status <> v_status) then continue; end if;
       if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'RF_STALE'; end if;
       if not (p_planner or p_st or p_qa) then raise exception 'RF_FORBIDDEN'; end if;
-      if v_content then raise exception 'RF_INVALID_MATLOT'; end if;
+      if v_content then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
       update public.rf_material_lots set status = v_status, updated_at = now() where id = v_old.id;
       continue;
     end if;
@@ -604,9 +604,9 @@ begin
     if not (p_planner or p_st) then raise exception 'RF_FORBIDDEN'; end if;
     if v_status <> 'available' then raise exception 'RF_INVALID_TRANSITION'; end if;
     select * into v_mat from public.rf_materials m where m.is_test and m.code = v_code;
-    if not found or not v_mat.active then raise exception 'RF_INVALID_MATLOT'; end if;
-    if v_qty is null or v_qty <= 0 then raise exception 'RF_INVALID_MATLOT'; end if;
-    if v_exp <= private.bom_ms(now()) then raise exception 'RF_INVALID_MATLOT'; end if;
+    if not found or not v_mat.active then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
+    if v_qty is null or v_qty <= 0 then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
+    if v_exp <= private.bom_ms(now()) then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
     insert into public.rf_material_lots (is_test, lot_no, material_code, qty_kg, initial_kg, expiry, supplier, location, status, coa, received_by)
     values (true, v_no, v_mat.code, v_qty, v_qty, v_exp::bigint, v_sup, coalesce(nullif(v_loc, ''), v_mat.storage_location), 'available', v_coa, p_actor);
   end loop;
@@ -656,9 +656,9 @@ declare
   v_done boolean;
 begin
   for v_row in select value from jsonb_array_elements(p_rows) loop
-    if jsonb_typeof(v_row) <> 'object' then raise exception 'RF_INVALID_REQ'; end if;
-    v_no := private.bom_text(v_row, 'id', 60, 1, 'RF_INVALID_REQ');
-    if v_no !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' or v_no = any (v_seen) then raise exception 'RF_INVALID_REQ'; end if;
+    if jsonb_typeof(v_row) <> 'object' then raise exception 'RF_INVALID_REQUISITION'; end if;
+    v_no := private.bom_text(v_row, 'id', 60, 1, 'RF_INVALID_REQUISITION');
+    if v_no !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' or v_no = any (v_seen) then raise exception 'RF_INVALID_REQUISITION'; end if;
     v_seen := v_seen || v_no;
 
     select * into v_old from public.rf_requisitions q where q.is_test and q.req_no = v_no;
@@ -690,14 +690,14 @@ begin
         v_sact := case when jsonb_typeof(v_sline -> 'actualKg') = 'number' then (v_sline ->> 'actualKg')::numeric end;
         continue when v_cact is not distinct from v_sact;
         -- ชั่งซ้ำบรรทัดที่ชั่งแล้ว หรือลบค่าที่ชั่ง ไม่ได้
-        if v_sact is not null or v_cact is null then raise exception 'RF_INVALID_REQ'; end if;
+        if v_sact is not null or v_cact is null then raise exception 'RF_INVALID_REQUISITION'; end if;
         v_target := (v_sline ->> 'targetKg')::numeric;
         v_tol := greatest(0.02, v_target * 1.5 / 100);
-        if abs(v_cact - v_target) > v_tol + 0.000000001 then raise exception 'RF_INVALID_REQ'; end if;
+        if abs(v_cact - v_target) > v_tol + 0.000000001 then raise exception 'RF_OUT_OF_TOLERANCE'; end if;
         select * into v_lot from public.rf_material_lots l where l.is_test and l.lot_no = (v_sline ->> 'lotNo') for update;
-        if not found then raise exception 'RF_INVALID_REQ'; end if;
+        if not found then raise exception 'RF_LOT_UNAVAILABLE'; end if;
         if v_lot.status = 'hold' or v_lot.qty_kg <= 0.0001 or v_lot.expiry <= v_now_ms or v_lot.qty_kg < v_cact then
-          perform private.rf_fail(v_lot.changed_version, p_base, p_cur, 'RF_INVALID_REQ');
+          perform private.rf_fail(v_lot.changed_version, p_base, p_cur, 'RF_LOT_UNAVAILABLE');
         end if;
         update public.rf_material_lots set qty_kg = greatest(0, trim_scale(round(v_lot.qty_kg - v_cact, 6))), updated_at = now() where id = v_lot.id;
         v_lines := jsonb_set(v_lines, array[v_i::text],
@@ -716,14 +716,14 @@ begin
 
     -- ใบใหม่: สมาชิก RB / กลุ่มวางแผน · WO ต้อง released หรือ in_progress · เซิร์ฟเวอร์จัดสรร FEFO เอง
     if not p_may then raise exception 'RF_FORBIDDEN'; end if;
-    v_order := private.bom_text(v_row, 'orderId', 40, 1, 'RF_INVALID_REQ');
-    v_batches := private.bom_num(v_row -> 'batches', 'RF_INVALID_REQ', 1, 10);
-    if v_batches is null then raise exception 'RF_INVALID_REQ'; end if;
-    v_note := private.bom_text(v_row, 'note', 300, 0, 'RF_INVALID_REQ');
+    v_order := private.bom_text(v_row, 'orderId', 40, 1, 'RF_INVALID_REQUISITION');
+    v_batches := private.bom_num(v_row -> 'batches', 'RF_INVALID_REQUISITION', 1, 10);
+    if v_batches is null then raise exception 'RF_INVALID_REQUISITION'; end if;
+    v_note := private.bom_text(v_row, 'note', 300, 0, 'RF_INVALID_REQUISITION');
     select * into v_ord from public.rf_orders o where o.is_test and o.wo_no = v_order;
-    if not found then raise exception 'RF_INVALID_REQ'; end if;
+    if not found then raise exception 'RF_INVALID_REQUISITION'; end if;
     if v_ord.status not in ('released', 'in_progress') then
-      perform private.rf_fail(v_ord.changed_version, p_base, p_cur, 'RF_INVALID_REQ');
+      perform private.rf_fail(v_ord.changed_version, p_base, p_cur, 'RF_INVALID_REQUISITION');
     end if;
     select * into v_rec from public.rf_recipes r where r.is_test and r.recipe_code = v_ord.recipe_code and r.revision = v_ord.recipe_revision;
     v_total := (select sum((e ->> 'phr')::numeric) from jsonb_array_elements(v_rec.items) e);
