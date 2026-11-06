@@ -120,8 +120,8 @@
     orders: (record) => record.id,
   });
   const deleteKey = (list, target) => (list === "recipes" ? MASTER_KEY.recipes(target ?? {}) : String(target?.code ?? target?.id ?? ""));
-  // คำสั่งของส่วนในเครื่องที่แก้ใบสั่งผลิตด้วย (เริ่มผลิต ยอดผลิตเข้าใบ ปิดใบเมื่อครบ) ส่งไปฐานข้อมูลเป็นการเปลี่ยนสถานะ/ยอดของใบ
-  const REMOTE_ACTION = Object.freeze({ recordMixing: "setOrderStatus", recordFinishing: "setOrderStatus", addQcRecord: "setOrderStatus" });
+  // คำสั่งของส่วนในเครื่องที่แก้ใบสั่งผลิตด้วย (recordMixing เริ่มผลิต · recordFinishing / addQcRecord ยอดผลิตเข้าใบและปิดใบเมื่อครบ) ส่งไปฐานข้อมูลด้วยชื่อคำสั่งเดิม:
+  // ฐานข้อมูลอนุญาตให้ QA เพิ่มยอดผลิตของใบได้เฉพาะ action addQcRecord จึงห้ามแปลงเป็น setOrderStatus
 
   function sameValue(a, b) {
     if (a === b) return true;
@@ -175,7 +175,7 @@
   // ข้อผิดพลาดของ RPC RubberFlow → ข้อความไทยสั้นๆ (ไม่แสดงข้อความดิบของฐานข้อมูล) · code ของ Error คือรหัสที่ฐานข้อมูลส่งมา
   function mapRemoteError(error, fallback = "บันทึกข้อมูล RubberFlow ไม่สำเร็จ ลองใหม่อีกครั้ง") {
     const haystack = `${error?.code ?? ""} ${error?.message ?? ""} ${error?.details ?? ""} ${typeof error === "string" ? error : ""}`;
-    const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
+    const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
       RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (วัตถุดิบ สูตร และใบสั่งผลิต: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB · อนุมัติสูตรและปล่อยผลิต: หัวหน้าแผนก RB ขึ้นไป)",
@@ -187,11 +187,15 @@
       RF_REVISION_IMMUTABLE: "สูตร revision ที่อนุมัติแล้วแก้ไม่ได้ ให้ออก revision ใหม่",
       RF_INVALID_SOURCE_JOB: "งาน BOM ที่ใช้สร้างใบสั่งผลิตนี้ใช้ไม่ได้แล้ว (อาจผูกกับ WO อื่นไปแล้ว หรือใบ PI ไม่อยู่ในสถานะผลิต) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       RF_INVALID_PRODUCED: "ใบสั่งผลิตที่มาจากงาน BOM ต้องระบุปริมาณผลิตจริงมากกว่า 0 ก่อนปิดใบ",
+      RF_INVALID_MATERIAL: "ข้อมูลวัตถุดิบไม่ถูกต้อง รหัสใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่เกิน 40 ตัวอักษร) และต้องมีชื่อ",
+      RF_REVISION_ORDER: "revision ของสูตรต้องเรียงต่อจากล่าสุดทีละ 1 ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาออก revision ใหม่อีกครั้ง",
+      NOT_AUTHORIZED: "ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
+      SANDBOX_NOT_ACTIVE: "ต้องเข้าโหมดทดสอบ (เลือกบัญชีทดสอบ) ก่อนจึงล้างข้อมูล RubberFlow ทดสอบได้",
     }[code] ?? (code.startsWith("RF_INVALID") || code.startsWith("BOM_") ? `ข้อมูลไม่ผ่านการตรวจของฐานข้อมูล (${code})` : fallback);
     return Object.assign(new Error(message), { code });
   }
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะเปลี่ยนไปแล้ว · งาน BOM ที่ผูกเปลี่ยนไป → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
-  const CONFLICT_CODES = Object.freeze(["RF_STALE", "RF_INVALID_PAYLOAD", "RF_CONFLICT", "RF_INVALID_TRANSITION", "RF_INVALID_SOURCE_JOB", "RF_RESET"]);
+  const CONFLICT_CODES = Object.freeze(["RF_STALE", "RF_INVALID_PAYLOAD", "RF_CONFLICT", "RF_INVALID_TRANSITION", "RF_INVALID_SOURCE_JOB", "RF_REVISION_ORDER", "RF_RESET"]);
 
   // บัญชีทดสอบ (state.employee ของ app.js ในโหมดทดสอบ) → ผู้ใช้ของ RubberFlow
   // planner = กลุ่มวางแผน (admin · ผู้จัดการแผนกขึ้นไป · แผนก PP) ทำได้ทุกอย่างของข้อมูลหลัก · rb = สมาชิกแผนก RB ทุกตำแหน่ง · rbHead = หัวหน้า RB ขึ้นไป (อนุมัติสูตร ปล่อยผลิต)
@@ -209,7 +213,7 @@
     const rbHead = (rb && RB_HEAD_DEPT_ROLE_CODES.includes(roleCode)) || RB_HEAD_ANY_ROLE_CODES.includes(roleCode);
     const role = roleCode === "admin" ? "admin" : PLANNER_ROLE_CODES.includes(roleCode) ? "manager" : DEPT_ROLES[dept] ?? "viewer";
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, planner, rb, rbHead, db: true };
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, planner, rb, rbHead, qa: dept === "QA", db: true };
   }
 
   function normalizeSnapshot(value) {
@@ -435,7 +439,7 @@
         emit({ type: "reverted", error: mapped, held });
         return { ok: false, error: mapped };
       };
-      const saving = Promise.resolve().then(() => remote.save(changes, baseVersion, REMOTE_ACTION[name] ?? name, auditEntries, baseEpoch)).then(normalizeDelta).then(
+      const saving = Promise.resolve().then(() => remote.save(changes, baseVersion, name, auditEntries, baseEpoch)).then(normalizeDelta).then(
         (delta) => {
           // ฐานข้อมูลตอบรอบข้อมูลใหม่ (ปกติถูกปฏิเสธ RF_RESET ก่อนแล้ว): ถือว่าการบันทึกไม่ผ่าน ตามทันด้วยการโหลดทั้งชุด
           if (epochChanged(delta)) return onSaveFailed(Object.assign(new Error("RF_RESET"), { code: "RF_RESET" }));
@@ -493,7 +497,7 @@
         busy = false;
         const mapped = mapRemoteError(error, "ล้างข้อมูล RubberFlow ทดสอบไม่สำเร็จ");
         emit({ type: "purge-failed", error: mapped });
-        return { ok: false, error: ["RF_FORBIDDEN", "BOM_FORBIDDEN"].includes(mapped.code) ? Object.assign(new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ"), { code: mapped.code }) : mapped };
+        return { ok: false, error: ["RF_FORBIDDEN", "BOM_FORBIDDEN", "NOT_AUTHORIZED"].includes(mapped.code) ? Object.assign(new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ"), { code: mapped.code }) : mapped };
       }
       busy = false;
       local = { ...emptyLocal(), ...(typeof localSeed === "function" ? localSeed() : {}) };

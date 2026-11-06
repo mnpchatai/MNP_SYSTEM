@@ -30,6 +30,10 @@
     return n;
   }
 
+  // รหัสวัตถุดิบ / รหัสสูตร ใช้รูปแบบเดียวกับฐานข้อมูล (rf_materials.code, rf_recipes.recipe_code) เพื่อบอกผู้ใช้ก่อนส่ง
+  const MATERIAL_CODE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+  const RECIPE_CODE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/;
+
   const find = (rows, id, label) => rows.find((row) => row.id === id) || fail(`ไม่พบ${label} ${id}`);
 
   function startOrderIfReleased(d, orderId, ctx) {
@@ -157,7 +161,7 @@
     needRight(ctx, "master");
     const code = String(p.code ?? "").trim();
     if (!code) fail("กรุณาระบุรหัสวัตถุดิบ");
-    if (code.length > 40 || /[\s"'<>]/.test(code)) fail("รหัสวัตถุดิบยาวไม่เกิน 40 ตัวอักษรและไม่มีช่องว่าง");
+    if (!MATERIAL_CODE.test(code)) fail("รหัสวัตถุดิบใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่มีช่องว่าง) ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 40 ตัวอักษร");
     const name = String(p.name ?? "").trim();
     if (!name) fail("กรุณาระบุชื่อวัตถุดิบ");
     const fields = {
@@ -202,6 +206,7 @@
   function createRecipe(d, p, ctx) {
     needRight(ctx, "master");
     if (!p.id?.trim() || !p.name?.trim() || !p.productName?.trim()) fail("กรุณากรอกรหัสสูตร ชื่อสูตร และชื่อสินค้า");
+    if (!RECIPE_CODE.test(p.id.trim())) fail("รหัสสูตรใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่มีช่องว่าง) ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 60 ตัวอักษร");
     if (d.recipes.some((recipe) => recipe.id === p.id.trim())) fail("รหัสสูตรนี้มีอยู่แล้ว");
     d.recipes.push({
       id: p.id.trim(),
@@ -485,11 +490,17 @@
     return lot.id;
   }
 
+  // ยอดผลิตเข้าใบ: เพิ่มได้อย่างเดียว (ใบที่ปิดแล้วก็เพิ่มได้ ผลิตเกิน / ปล่อยของช้า) ฐานข้อมูลปฏิเสธการลดยอด และการเพิ่มยอดของใบที่ยังไม่ปล่อยผลิตหรือถูกยกเลิก
+  // โหมดฐานข้อมูล: QA เพิ่มยอดผ่านการบันทึกผลตรวจ (addQcRecord) ได้อย่างเดียว ปิดใบเองไม่ได้ (เปลี่ยนสถานะเป็นสิทธิ์ของฝ่ายวางแผนและพนักงาน RB)
   function addProduced(d, orderId, qty, ctx) {
     const order = d.orders.find((row) => row.id === orderId);
     if (!order) return;
-    order.producedQty = +(order.producedQty + qty).toFixed(3);
-    if (order.producedQty >= order.targetQty && order.status === "in_progress") {
+    const add = Number(qty);
+    if (!(add > 0)) return;
+    if (ctx.remote && ["planned", "cancelled"].includes(order.status)) fail(`ใบสั่งผลิต ${order.id} ${order.status === "planned" ? "ยังไม่ได้ปล่อยผลิต" : "ถูกยกเลิกแล้ว"} บันทึกยอดผลิตเข้าใบไม่ได้`);
+    order.producedQty = +(order.producedQty + add).toFixed(3);
+    const mayClose = !ctx.remote || Boolean(ctx.user?.planner || ctx.user?.rb);
+    if (mayClose && order.producedQty >= order.targetQty && order.status === "in_progress") {
       order.status = "completed";
       audit(d, ctx, "ปิดใบสั่งผลิต (ครบจำนวน)", order.id);
     }

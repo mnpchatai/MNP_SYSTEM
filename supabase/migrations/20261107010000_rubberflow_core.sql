@@ -15,7 +15,8 @@
 --   public.app_rf_master_since(p_version)          -> delta { version, epoch, changes: { materials|recipes|orders: { upsert, delete: [] } } }
 --   public.app_rf_save(p_changes, p_base_version, p_action, p_audit default '[]', p_epoch default null) -> delta ตั้งแต่ p_base_version
 --     p_changes = { materials|recipes|orders: { upsert: [เรคอร์ดเต็ม] } } (ไม่มี delete: วัตถุดิบเลิกใช้ด้วย active=false ใบสั่งผลิตยกเลิกด้วยสถานะ)
---     ชนรายระเบียนด้วย RF_STALE ก่อนการตรวจสิทธิ์/เนื้อหาเสมอ (หลังตรวจรูปของ payload) · เขียนซ้ำค่าเดิมทุกช่อง = ไม่ทำอะไร
+--     ชนรายระเบียนด้วย RF_STALE ก่อนการตรวจสิทธิ์/เนื้อหาเสมอ (หลังตรวจรูปของ payload) · เขียนซ้ำค่าเดิมทุกช่อง = ไม่ทำอะไร: ไม่เพิ่ม version
+--     ไม่เขียน audit คืน delta ตั้งแต่ p_base_version (ตรวจจากแถว rf_* ที่ changed_version > version ก่อนบันทึก และจำนวนแถว BOM ที่เขียน)
 --   public.app_rf_audit(p_limit default 200)       -> [{ at, user, action, detail, entries }] ใหม่สุดก่อน (persona ทุกตัวอ่านได้)
 --   public.app_sandbox_purge_rf()                  -> { deleted } admin จริงที่อยู่ในโหมดทดสอบเท่านั้น ลบทุกแถว is_test ของ rf_* เปลี่ยน epoch (version เดินต่อ)
 --     ไม่แตะ BOM: external_ref ของงาน BOM ที่ชี้ไป WO ที่ถูกล้างจะค้างอยู่ (ข้อมูลทดสอบ ล้างด้วย app_sandbox_purge_bom)
@@ -35,15 +36,23 @@
 --     in_progress -> on_hold | completed · on_hold -> in_progress อย่างอื่น = RF_INVALID_TRANSITION (completed/cancelled เป็นสถานะสุดท้าย)
 --     planned -> released = กลุ่มวางแผนหรือหัว RB · สถานะอื่นทุกตัว = กลุ่มวางแผนหรือสมาชิก RB · ที่เหลือ RF_FORBIDDEN
 --     เนื้อหาของ WO (ลูกค้า สูตร จำนวนเป้าหมาย วันที่ ฯลฯ) แก้หลังสร้างไม่ได้ (RF_INVALID_ORDER) producedQty เปลี่ยนได้เฉพาะ WO ที่ปล่อยแล้ว
---     (released / in_progress / on_hold) และสถานะใหม่เป็น in_progress / on_hold / completed · product/uom ได้จากสูตรหรืองาน BOM ไม่เชื่อ client
+--     (released / in_progress / on_hold) และสถานะใหม่เป็น in_progress / on_hold / completed · WO ที่ completed แล้วเพิ่ม producedQty ได้อย่างเดียว
+--     (ผลิตเกิน / ปล่อยของช้า) ลดไม่ได้ (RF_INVALID_ORDER) · product/uom ได้จากสูตรหรืองาน BOM ไม่เชื่อ client
+--     แผนก QA (ทุกบทบาท) เขียน WO ได้ทางเดียว: p_action = 'addQcRecord' ส่งใบเดิมที่ต่างจากที่เก็บแค่ producedQty ที่มากขึ้น (รวมใบ completed)
+--     อย่างอื่นทุกอย่างของ QA = RF_FORBIDDEN (วัตถุดิบ สูตร ใบใหม่ เปลี่ยนสถานะ แก้เนื้อหา ลดยอด)
 --
 -- การเชื่อมกับ BOM (ข้ามโมดูล ธุรกรรมเดียวกับการบันทึก WO)
 --   - สร้าง WO ที่มี sourceJobId (job_no ของ bom_jobs): ตรวจว่างานเป็นแผนก RB, ใบ PI เป็น released / in_progress, งานยังไม่ done และยังไม่มี external_ref
---     (ผิด = RF_INVALID_SOURCE_JOB) แล้วเขียน bom_jobs.external_ref = { system: "rubberflow", woId, kg (= targetKg หรือ 0), linkedAt, by } เหมือน linkJobToRubberFlow
+--     (หรือ external_ref ชี้ไป WO ที่ยกเลิกแล้ว) (ผิด = RF_INVALID_SOURCE_JOB) แล้วเขียน bom_jobs.external_ref = { system: "rubberflow", woId, kg (= targetKg หรือ 0), linkedAt, by } เหมือน linkJobToRubberFlow
 --     ของ client: งาน queued เป็น in_progress และใบ released เป็น in_progress · WO ใช้หน่วย (uom) ของงาน
 --   - WO ที่ผูกงาน BOM เปลี่ยนเป็น completed: ต้องมี producedQty > 0 (ไม่เช่นนั้น RF_INVALID_PRODUCED) แล้วเซิร์ฟเวอร์ต่อรายงานเข้างาน
---     { at, by, good = producedQty - qty_done เดิม, reject = 0, note = "จาก WO ..." } ตั้ง qty_done = producedQty, status = done ถ้า >= qty_planned มิฉะนั้น in_progress,
---     ใบ released เป็น in_progress · ข้ามไม่เขียน (WO ยังปิดได้) เมื่อใบ PI ไม่ใช่ released / in_progress แล้ว หรืองานนั้น done แล้ว หรือไม่พบงาน
+--     { at, by, good = producedQty, reject = 0, note = "จาก WO ..." } (producedQty คือผลผลิตของ WO ใบนี้ ไม่ใช่ยอดรวมของงาน) ตั้ง
+--     qty_done = qty_done เดิม + producedQty, status = done ถ้า >= qty_planned มิฉะนั้น in_progress, ใบ released เป็น in_progress
+--     ข้ามไม่เขียน (WO ยังปิดได้) เมื่อใบ PI ไม่ใช่ released / in_progress แล้ว หรืองานนั้น done แล้ว หรือไม่พบงาน หรือ external_ref ของงานไม่ชี้มา WO นี้
+--     ป้อนกลับครั้งเดียวต่อ WO: rf_orders.fed_back_at ถูกตั้งในธุรกรรมเดียวกับที่เขียนงาน (การเพิ่ม producedQty หลังปิด WO ไม่ป้อนกลับซ้ำ)
+--   - ยกเลิก WO ที่ผูกงาน BOM: เซิร์ฟเวอร์ล้าง bom_jobs.external_ref ในธุรกรรมเดียวกัน (ยอด qty_done/รายงานเดิมคงไว้ สถานะงานไม่เปลี่ยน) และต่อรายงาน
+--     { at, by, good = 0, reject = 0, note = "WO ... ถูกยกเลิก" } ให้ตัวนับ BOM เพิ่ม 1 งานนั้นผูกกับ WO ใบใหม่ได้ (rf_job_for_link รับงานที่ไม่มี external_ref
+--     หรือที่ external_ref ชี้ไป WO ที่ยกเลิกแล้ว) ข้ามไม่เขียนเมื่อไม่พบงานหรือ external_ref ไม่ชี้มา WO นี้
 --   - การเขียนฝั่ง BOM เพิ่ม bom_master_state.version อีก 1 ผ่านตัวนับ BOM และเขียนแถว audit BOM_MASTER_SAVE (client_action = 'rubberflow:<action>')
 --     ให้ client ของ BOM ตามทันด้วย app_bom_master_since ตามปกติ (changed_version ของงาน/ใบถูกประทับโดย trigger bom_stamp_version)
 --   - ลำดับล็อก (กัน deadlock) เป็นลำดับเดียวเสมอ: rf_master_state (for update) ก่อน แล้ว bom_master_state (for update) เฉพาะเมื่อมีการเขียนฝั่ง BOM
@@ -73,17 +82,23 @@
 --   กับนิยามใน 20261106010000_bom_orders_jobs.sql / 20261105010000_bom_master_data.sql (ถ้ามี migration อื่นแก้ไปแล้ว ต้องเริ่มจากนิยามล่าสุด)
 --   ถ้า merge ก่อน apply หน้า #/rubberflow ในโหมดทดสอบจะเรียก RPC ที่ยังไม่มี
 --
--- Rollback (ตาราง rf_* มีแต่ข้อมูลทดสอบ):
+--   ตรวจนิยามและสิทธิ์หลัง apply ที่ production: เทียบ md5(pg_get_functiondef(oid)) ของฟังก์ชัน rf_* / app_rf_* / app_sandbox_purge_rf กับ local stack ที่ผ่าน db:test
+--   และตรวจ has_function_privilege (anon ไม่ได้, authenticated เฉพาะ RPC สาธารณะห้าตัว) กับ relrowsecurity + policy ของตาราง rf_* ก่อนเปิดใช้งาน
+--
+-- Rollback (ตาราง rf_* มีแต่ข้อมูลทดสอบ) ลำดับสำคัญ: trigger ของตารางเรียก rf_stamp_version() และ rf_apply_feedback / rf_unlink_job รับชนิดแถวของ rf_orders
 --   1) drop function public.app_rf_master(), public.app_rf_master_since(bigint), public.app_rf_save(jsonb, bigint, text, jsonb, text),
 --      public.app_rf_audit(integer), public.app_sandbox_purge_rf();
---   2) drop function private.rf_actor(), rf_is_rb(public.employees), rf_is_rb_head(public.employees), rf_client_actions(), rf_lock_bom(), rf_stamp_version(),
---      rf_parse_items(jsonb, jsonb), rf_save_materials(uuid, jsonb, bigint, bigint), rf_save_recipes(uuid, boolean, jsonb, bigint, bigint),
---      rf_save_orders(public.employees, text, boolean, boolean, boolean, jsonb, bigint, bigint), rf_job_for_link(text), rf_link_job(public.bom_jobs, text, text, numeric),
---      rf_apply_feedback(text, public.rf_orders), rf_records(bigint), rf_snapshot(), rf_delta(bigint);
+--   2) drop function ที่เหลือยกเว้น rf_stamp_version(): private.rf_actor(), rf_is_rb(public.employees), rf_is_rb_head(public.employees), rf_is_qa(public.employees),
+--      rf_client_actions(), rf_lock_bom(), rf_parse_items(jsonb, jsonb), rf_save_materials(uuid, jsonb, bigint, bigint),
+--      rf_save_recipes(uuid, boolean, jsonb, bigint, bigint),
+--      rf_save_orders(public.employees, text, boolean, boolean, boolean, boolean, text, jsonb, bigint, bigint), rf_job_for_link(text),
+--      rf_link_job(public.bom_jobs, text, text, numeric), rf_apply_feedback(text, public.rf_orders), rf_unlink_job(text, public.rf_orders),
+--      rf_records(bigint), rf_snapshot(), rf_delta(bigint);
 --   3) drop table public.rf_orders, public.rf_recipes, public.rf_materials, public.rf_deleted_keys, public.rf_master_state (ลูกก่อนแม่)
---   4) คืนนิยามเดิมของ private.sandbox_unguarded_tables() (20261106010000_bom_orders_jobs.sql) และ private.bom_save_compounds (20261105010000_bom_master_data.sql)
+--   4) drop function private.rf_stamp_version() (ท้ายสุด หลังตารางหายไปแล้ว)
+--   5) คืนนิยามเดิมของ private.sandbox_unguarded_tables() (20261106010000_bom_orders_jobs.sql) และ private.bom_save_compounds (20261105010000_bom_master_data.sql)
 --      ด้วยการรัน create or replace จากไฟล์นั้น รวม revoke ท้ายฟังก์ชัน
---   งานของ BOM ที่ผูกไว้แล้ว (external_ref) และรายงานผลที่ต่อเข้างานไม่ถูกย้อนกลับ (เป็นข้อมูลของ BOM)
+--   งานของ BOM ที่ผูกไว้แล้ว (external_ref) รายงานผลที่ต่อเข้างาน และการล้าง external_ref ตอนยกเลิก WO ไม่ถูกย้อนกลับ (เป็นข้อมูลของ BOM)
 -- ============================================================================
 
 -- 1. ตาราง (แยกโหมดด้วย is_test) ----------------------------------------------------------
@@ -187,6 +202,8 @@ create table public.rf_orders (
   released_by uuid references public.employees(id) on delete set null,
   completed_at timestamptz,
   cancelled_at timestamptz,
+  -- เวลาที่ผลผลิตของ WO ถูกป้อนกลับเข้างาน BOM แล้ว (ตั้งครั้งเดียวในธุรกรรมเดียวกับที่เขียนงาน กันป้อนซ้ำ)
+  fed_back_at timestamptz,
   updated_at timestamptz not null default now(),
   foreign key (recipe_code, recipe_revision, is_test) references public.rf_recipes(recipe_code, revision, is_test),
   unique (id, is_test),
@@ -328,6 +345,18 @@ as $$
       or coalesce(private.employee_role_code(p_employee.id) in ('assistant_factory_manager', 'factory_manager', 'general_manager', 'admin'), false)
 $$;
 revoke all on function private.rf_is_rb_head(public.employees) from public, anon, authenticated;
+
+-- สมาชิก QA: พนักงานที่แผนกคือ QA (ทุกบทบาท) เขียน WO ได้ทางเดียวคือเพิ่ม producedQty ผ่าน action addQcRecord
+create or replace function private.rf_is_qa(p_employee public.employees)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(private.bom_dept_of(p_employee) = 'QA', false)
+$$;
+revoke all on function private.rf_is_qa(public.employees) from public, anon, authenticated;
 
 -- ชื่อ action ของ client ที่เขียนข้อมูลได้ ใช้ตรวจ p_action (saveMaterial / saveRecipe เป็นชื่อใหม่ของรอบนี้)
 create or replace function private.rf_client_actions()
@@ -613,7 +642,13 @@ declare
 begin
   perform private.rf_lock_bom();
   select * into v_job from public.bom_jobs j where j.is_test and j.job_no = p_job_no for update;
-  if not found or v_job.dept <> 'RB' or v_job.status = 'done' or v_job.external_ref is not null then
+  if not found or v_job.dept <> 'RB' or v_job.status = 'done' then
+    raise exception 'RF_INVALID_SOURCE_JOB';
+  end if;
+  -- ผูกแล้วผูกซ้ำไม่ได้ เว้นแต่ WO เดิมถูกยกเลิก (ปกติยกเลิก WO ล้าง external_ref เองแล้ว กรณีนี้รับข้อมูลค้างจากก่อนหน้า)
+  if v_job.external_ref is not null and not exists (
+       select 1 from public.rf_orders o
+       where o.is_test and o.wo_no = v_job.external_ref ->> 'woId' and o.status = 'cancelled') then
     raise exception 'RF_INVALID_SOURCE_JOB';
   end if;
   select * into v_ord from public.bom_orders o where o.id = v_job.order_pk;
@@ -649,8 +684,9 @@ end;
 $$;
 revoke all on function private.rf_link_job(public.bom_jobs, text, text, numeric) from public, anon, authenticated;
 
--- ผลผลิตของ WO ที่ผูกงาน BOM กลับเข้างาน (WO เพิ่งเปลี่ยนเป็น completed): ต่อรายงาน ตั้ง qty_done/สถานะ ดันใบ released -> in_progress
--- ข้ามไม่เขียนเมื่อไม่พบงาน / ใบไม่ใช่ released-in_progress แล้ว / งาน done แล้ว คืน { jobs, orders }
+-- ผลผลิตของ WO ที่ผูกงาน BOM กลับเข้างาน (WO เพิ่งเปลี่ยนเป็น completed): ต่อรายงาน good = producedQty ของ WO นี้ (ผลผลิตของ WO ไม่ใช่ยอดรวมของงาน)
+-- qty_done = qty_done เดิม + producedQty ตั้งสถานะ ดันใบ released -> in_progress แล้วตั้ง fed_back_at (ป้อนกลับครั้งเดียวต่อ WO)
+-- ข้ามไม่เขียนเมื่อป้อนไปแล้ว / ไม่พบงาน / external_ref ของงานไม่ชี้มา WO นี้ / ใบไม่ใช่ released-in_progress แล้ว / งาน done แล้ว คืน { jobs, orders }
 create or replace function private.rf_apply_feedback(p_actor_name text, p_wo public.rf_orders)
 returns jsonb
 language plpgsql
@@ -660,27 +696,30 @@ as $$
 declare
   v_job public.bom_jobs%rowtype;
   v_ord public.bom_orders%rowtype;
-  v_good numeric;
+  v_fed timestamptz;
   v_done numeric;
   v_status text;
   v_reports jsonb;
   v_orders integer := 0;
 begin
   perform private.rf_lock_bom();
+  select o.fed_back_at into v_fed from public.rf_orders o where o.id = p_wo.id for update;
+  if v_fed is not null then return jsonb_build_object('jobs', 0, 'orders', 0); end if;
   select * into v_job from public.bom_jobs j where j.is_test and j.job_no = p_wo.source_job_no for update;
-  if not found then return jsonb_build_object('jobs', 0, 'orders', 0); end if;
+  if not found or (v_job.external_ref ->> 'woId') is distinct from p_wo.wo_no then
+    return jsonb_build_object('jobs', 0, 'orders', 0);
+  end if;
   select * into v_ord from public.bom_orders o where o.id = v_job.order_pk for update;
   if v_ord.status not in ('released', 'in_progress') or v_job.status = 'done' then
     return jsonb_build_object('jobs', 0, 'orders', 0);
   end if;
 
-  v_good := p_wo.produced_qty - v_job.qty_done;
   v_reports := v_job.reports;
-  if v_good > 0 then
+  if p_wo.produced_qty > 0 then
     v_reports := v_reports || jsonb_build_array(jsonb_build_object(
-      'at', private.bom_ms(now()), 'by', p_actor_name, 'good', v_good, 'reject', 0, 'note', left('จาก WO ' || p_wo.wo_no, 200)));
+      'at', private.bom_ms(now()), 'by', p_actor_name, 'good', p_wo.produced_qty, 'reject', 0, 'note', left('จาก WO ' || p_wo.wo_no, 200)));
   end if;
-  v_done := greatest(v_job.qty_done, p_wo.produced_qty);
+  v_done := v_job.qty_done + p_wo.produced_qty;
   v_status := case when v_done >= v_job.qty_planned then 'done' else 'in_progress' end;
   update public.bom_jobs set
     qty_done = v_done, reports = v_reports, status = v_status,
@@ -691,15 +730,43 @@ begin
     update public.bom_orders set status = 'in_progress', updated_at = now() where id = v_ord.id;
     v_orders := 1;
   end if;
+  update public.rf_orders set fed_back_at = now() where id = p_wo.id;
   return jsonb_build_object('jobs', 1, 'orders', v_orders);
 end;
 $$;
 revoke all on function private.rf_apply_feedback(text, public.rf_orders) from public, anon, authenticated;
 
+-- ยกเลิก WO ที่ผูกงาน BOM: ล้าง external_ref ของงาน (คงยอดและรายงานเดิม) ต่อรายงานบอกว่า WO ถูกยกเลิก (good = 0, reject = 0) คืน { jobs, orders }
+-- ข้ามไม่เขียนเมื่อไม่พบงานหรือ external_ref ของงานไม่ชี้มา WO นี้ (งานถูกผูกใหม่ไปแล้ว) · ตัวนับ BOM เพิ่มโดย app_rf_save
+create or replace function private.rf_unlink_job(p_actor_name text, p_wo public.rf_orders)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_job public.bom_jobs%rowtype;
+begin
+  perform private.rf_lock_bom();
+  select * into v_job from public.bom_jobs j where j.is_test and j.job_no = p_wo.source_job_no for update;
+  if not found or (v_job.external_ref ->> 'woId') is distinct from p_wo.wo_no then
+    return jsonb_build_object('jobs', 0, 'orders', 0);
+  end if;
+  update public.bom_jobs set
+    external_ref = null,
+    reports = v_job.reports || jsonb_build_array(jsonb_build_object(
+      'at', private.bom_ms(now()), 'by', p_actor_name, 'good', 0, 'reject', 0, 'note', left('WO ' || p_wo.wo_no || ' ถูกยกเลิก', 200))),
+    updated_at = now()
+  where id = v_job.id;
+  return jsonb_build_object('jobs', 1, 'orders', 0);
+end;
+$$;
+revoke all on function private.rf_unlink_job(text, public.rf_orders) from public, anon, authenticated;
+
 -- ใบสั่งผลิต WO: สิทธิ์ + กฎสถานะ + เชื่อม/ป้อนกลับ BOM (ดูหัวไฟล์) คืนจำนวนแถว BOM ที่เขียน { jobs, orders }
--- p_planner = กลุ่มวางแผน · p_rb = สมาชิก RB · p_head = หัว RB
+-- p_planner = กลุ่มวางแผน · p_rb = สมาชิก RB · p_head = หัว RB · p_qa = สมาชิก QA (เพิ่ม producedQty ผ่าน p_action = 'addQcRecord' เท่านั้น)
 create or replace function private.rf_save_orders(
-  p_actor public.employees, p_actor_name text, p_planner boolean, p_rb boolean, p_head boolean,
+  p_actor public.employees, p_actor_name text, p_planner boolean, p_rb boolean, p_head boolean, p_qa boolean, p_action text,
   p_rows jsonb, p_base bigint, p_cur bigint)
 returns jsonb
 language plpgsql
@@ -783,7 +850,12 @@ begin
       -- ชนก่อนสิทธิ์/กฎเสมอ: สำเนาที่ต่างจากแถวล่าสุดและแถวนั้นถูกคนอื่นแก้หลังเวอร์ชันฐาน = client ถือสำเนาเก่า
       if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'RF_STALE'; end if;
 
-      if not (p_planner or p_rb) then raise exception 'RF_FORBIDDEN'; end if;
+      if not (p_planner or p_rb) then
+        -- QA: ทำได้ทางเดียว = เพิ่ม producedQty ของใบเดิมผ่านการบันทึกผลตรวจ (addQcRecord) อย่างอื่นทุกอย่าง = RF_FORBIDDEN
+        if not (p_qa and p_action = 'addQcRecord' and not v_content and not v_status_changed and v_prod > v_old.produced_qty) then
+          raise exception 'RF_FORBIDDEN';
+        end if;
+      end if;
       if v_content then raise exception 'RF_INVALID_ORDER'; end if;
       -- ปล่อยผลิต: กลุ่มวางแผนหรือหัว RB (ตรวจสิทธิ์ก่อนความถูกต้องของสถานะ)
       if v_status_changed and v_status = 'released' and not (p_planner or p_head) then raise exception 'RF_FORBIDDEN'; end if;
@@ -796,9 +868,13 @@ begin
           else false end;
         if not v_flow then raise exception 'RF_INVALID_TRANSITION'; end if;
       end if;
-      -- ยอดผลิตเปลี่ยนได้เฉพาะใบที่ปล่อยแล้ว และสถานะใหม่ยังผลิตอยู่/พักงาน/ปิดงาน
-      if v_prod_changed and (v_old.status not in ('released', 'in_progress', 'on_hold') or v_status not in ('in_progress', 'on_hold', 'completed')) then
-        raise exception 'RF_INVALID_ORDER';
+      -- ยอดผลิตเปลี่ยนได้เฉพาะใบที่ปล่อยแล้ว และสถานะใหม่ยังผลิตอยู่/พักงาน/ปิดงาน · ใบ completed แล้วเพิ่มได้อย่างเดียว (ผลิตเกิน / ปล่อยของช้า)
+      if v_prod_changed then
+        if v_old.status = 'completed' then
+          if v_prod < v_old.produced_qty then raise exception 'RF_INVALID_ORDER'; end if;
+        elsif v_old.status not in ('released', 'in_progress', 'on_hold') or v_status not in ('in_progress', 'on_hold', 'completed') then
+          raise exception 'RF_INVALID_ORDER';
+        end if;
       end if;
       -- ปิด WO ที่ผูกงาน BOM ต้องมียอดผลิต
       if v_status_changed and v_status = 'completed' and v_old.source_job_no is not null and v_prod <= 0 then
@@ -816,6 +892,12 @@ begin
       returning * into v_new;
       if v_status_changed and v_status = 'completed' and v_new.source_job_no is not null then
         v_res := private.rf_apply_feedback(p_actor_name, v_new);
+        v_bom_jobs := v_bom_jobs + (v_res ->> 'jobs')::integer;
+        v_bom_orders := v_bom_orders + (v_res ->> 'orders')::integer;
+      end if;
+      -- ยกเลิก WO ที่ผูกงาน BOM: ล้างการผูกของงาน (ผูกกับ WO ใบใหม่ได้) ในธุรกรรมเดียวกัน
+      if v_status_changed and v_status = 'cancelled' and v_new.source_job_no is not null then
+        v_res := private.rf_unlink_job(p_actor_name, v_new);
         v_bom_jobs := v_bom_jobs + (v_res ->> 'jobs')::integer;
         v_bom_orders := v_bom_orders + (v_res ->> 'orders')::integer;
       end if;
@@ -860,7 +942,7 @@ begin
   return jsonb_build_object('jobs', v_bom_jobs, 'orders', v_bom_orders);
 end;
 $$;
-revoke all on function private.rf_save_orders(public.employees, text, boolean, boolean, boolean, jsonb, bigint, bigint) from public, anon, authenticated;
+revoke all on function private.rf_save_orders(public.employees, text, boolean, boolean, boolean, boolean, text, jsonb, bigint, bigint) from public, anon, authenticated;
 
 -- 5. snapshot / delta -----------------------------------------------------------------------
 -- ระเบียนที่ changed_version > p_since แยกตามชุด เรียงแบบกำหนดได้ · p_since = -1 ได้ทั้งหมด (snapshot)
@@ -991,6 +1073,7 @@ declare
   v_planner boolean;
   v_rb boolean;
   v_head boolean;
+  v_qa boolean;
   v_sections constant text[] := array['materials', 'recipes', 'orders'];
   v_key text;
   v_sub text;
@@ -1011,6 +1094,7 @@ begin
   v_planner := private.bom_can_edit(v_actor);
   v_rb := private.rf_is_rb(v_actor);
   v_head := private.rf_is_rb_head(v_actor);
+  v_qa := private.rf_is_qa(v_actor);
   if p_action is null or not (p_action = any (private.rf_client_actions())) then raise exception 'RF_INVALID_ACTION'; end if;
   if p_changes is null or jsonb_typeof(p_changes) <> 'object' or p_base_version is null or p_base_version < 0 then
     raise exception 'RF_INVALID_PAYLOAD';
@@ -1038,8 +1122,8 @@ begin
       if jsonb_typeof(v_node) <> 'array' then raise exception 'RF_INVALID_PAYLOAD'; end if;
       v_n := jsonb_array_length(v_node);
       if v_n > 5000 then raise exception 'RF_TOO_MANY'; end if;
-      -- เขียนได้เฉพาะกลุ่มวางแผนหรือสมาชิก RB (สิทธิ์รายระเบียนตรวจในตัวเขียน)
-      if v_n > 0 and not (v_planner or v_rb) then raise exception 'RF_FORBIDDEN'; end if;
+      -- เขียนได้เฉพาะกลุ่มวางแผนหรือสมาชิก RB · QA เฉพาะส่วน orders ผ่าน addQcRecord (สิทธิ์รายระเบียนตรวจในตัวเขียน)
+      if v_n > 0 and not (v_planner or v_rb or (v_qa and v_key = 'orders' and p_action = 'addQcRecord')) then raise exception 'RF_FORBIDDEN'; end if;
       v_total := v_total + v_n;
       v_counts := v_counts || jsonb_build_object(v_key, coalesce(v_counts -> v_key, '{}'::jsonb) || jsonb_build_object(v_sub, v_n));
     end loop;
@@ -1058,8 +1142,8 @@ begin
   begin
     perform private.rf_save_materials(v_actor.id, coalesce(p_changes #> '{materials,upsert}', '[]'::jsonb), p_base_version, v_version);
     perform private.rf_save_recipes(v_actor.id, v_head, coalesce(p_changes #> '{recipes,upsert}', '[]'::jsonb), p_base_version, v_version);
-    v_bom := private.rf_save_orders(v_actor, v_actor_name, v_planner, v_rb, v_head, coalesce(p_changes #> '{orders,upsert}', '[]'::jsonb),
-                                    p_base_version, v_version);
+    v_bom := private.rf_save_orders(v_actor, v_actor_name, v_planner, v_rb, v_head, v_qa, p_action,
+                                    coalesce(p_changes #> '{orders,upsert}', '[]'::jsonb), p_base_version, v_version);
   exception
     when unique_violation then
       raise exception 'RF_CONFLICT';
@@ -1068,6 +1152,15 @@ begin
       -- ข้อความกลาง ๆ ไม่คืนค่าหรือชื่อ constraint กลับไป
       raise exception 'RF_INVALID_DATA';
   end;
+
+  -- ไม่มีแถวไหนเปลี่ยนจริง (ทุกเรคอร์ดตรงกับที่เก็บ): คืน delta โดยไม่เพิ่ม version ไม่เขียน audit
+  -- แถวที่เขียนในคำสั่งนี้ถูก trigger ประทับ version ก่อนบันทึก + 1 จึงมี changed_version > v_version ส่วนฝั่ง BOM นับจาก v_bom
+  if (v_bom ->> 'jobs')::integer + (v_bom ->> 'orders')::integer = 0
+     and not exists (select 1 from public.rf_materials t where t.is_test and t.changed_version > v_version)
+     and not exists (select 1 from public.rf_recipes t where t.is_test and t.changed_version > v_version)
+     and not exists (select 1 from public.rf_orders t where t.is_test and t.changed_version > v_version) then
+    return private.rf_delta(p_base_version);
+  end if;
 
   v_version := v_version + 1;
   update public.rf_master_state set version = v_version, updated_at = now(), updated_by = v_actor.id where is_test;

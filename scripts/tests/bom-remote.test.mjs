@@ -1259,7 +1259,7 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
-    document: { querySelector: (selector) => hooks.nodes?.[selector] ?? node(), querySelectorAll: (selector) => (selector === "dialog[open]" && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
+    document: { querySelector: (selector) => hooks.nodes?.[selector] ?? node(), querySelectorAll: (selector) => (["dialog[open]", "dialog[data-rf-dialog][open]"].includes(selector) && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
     addEventListener: (type, fn) => hooks.onWindow?.(type, fn),
     localStorage: storage, FormData: class { entries() { return []; } }, MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,
   });
@@ -2426,9 +2426,18 @@ test("the BOM 'create WO' dialog creates the WO through the RubberFlow store wit
   assert.match(built.html, /data-bom-rf-create/);
   const button = { handlers: {}, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } };
   const dialog = { querySelector: (selector) => (selector === "[data-bom-rf-create]" ? button : null), close() { this.closed = true; } };
+  // ตามทันข้อมูล RubberFlow ก่อนออกเลข WO (เลขออกจากข้อมูลที่เครื่องมี) แล้วจึงสร้าง
+  const steps = [];
+  const realCatchUp = rfStore.catchUp;
+  const realRun = rfStore.run;
+  rfStore.catchUp = (...args) => { steps.push("catchUp"); return realCatchUp(...args); };
+  rfStore.run = (...args) => { steps.push("run"); return realRun(...args); };
   built.bind(dialog, ctx);
   button.handlers.click({ currentTarget: button });
   for (let turn = 0; turn < 8; turn += 1) await new Promise((resolve) => setTimeout0(resolve));
+  assert.deepEqual(steps.slice(0, 2), ["catchUp", "run"], "the dialog catches RubberFlow up right before it builds the WO");
+  rfStore.catchUp = realCatchUp;
+  rfStore.run = realRun;
   const wo = rfStore.data().orders.at(-1);
   assert.deepEqual([wo.sourceJobId, wo.uom, wo.targetQty, wo.targetKg, wo.recipeRevision, wo.customerPo], ["JOB-RB1", "pcs", 10, 5.25, 1, "PI-R"], "10 pcs x 500 g + 5% allowance = 5.25 kg of compound");
   assert.equal(wo.kgPerUnit, 0.525);
@@ -2452,6 +2461,45 @@ test("the BOM 'create WO' dialog creates the WO through the RubberFlow store wit
   const job = reopened.store.data().jobs.find((row) => row.id === "JOB-RB1");
   assert.deepEqual([job.qtyDone, job.status], [10, "done"]);
   assert.equal(job.reports.at(-1).note, `จาก WO ${wo.id}`);
+});
+
+test("RubberFlow's store holds other users' data back only for its own forms on its own page, so an open BOM dialog never blocks catching up after a duplicate WO number", async () => {
+  let dialog = false;
+  const env = await pageEnv({ persona: "persona-rb", sandboxAdmin: false, hooks: { dialogOpen: () => dialog } });
+  const editing = env.context.MNP_RUBBERFLOW.isEditing;
+  env.log.hash = "#/bom?p=jobs";
+  dialog = true;
+  assert.equal(editing(), false, "the create-WO dialog of BOM is not a RubberFlow form");
+  env.log.hash = "#/rubberflow?p=orders";
+  assert.equal(editing(), true, "a RubberFlow dialog on the RubberFlow page is");
+  dialog = false;
+  assert.equal(editing(), false);
+});
+
+test("cancelling the WO in RubberFlow clears the job's link in BOM and the job offers the create-WO dialog again", async () => {
+  const { scene, rf } = await rfScene();
+  const admin = await asPersona(scene, "persona-1");
+  await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
+  await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
+  const env = await asPersona(scene, "persona-rb");
+  const rfStore = rf(env);
+  await rfStore.ensureLoaded();
+  const rowOf = (html) => html.split("<tr").find((row) => row.includes(">JOB-RB1<")) ?? "";
+  const out = await saved(rfStore.run("createOrder", { recipeId: "RC-TEST-01", customer: "ลูกค้า", customerPo: "PI-R", targetQty: 10, startDate: NOW, dueDate: NOW + 86400000, sourceJobId: "JOB-RB1", uom: "pcs", targetKg: 5.25, kgPerUnit: 0.525 }));
+  await env.store.catchUp();
+  assert.equal(env.store.data().jobs.find((row) => row.id === "JOB-RB1").externalRef?.woId, out.result);
+  assert.doesNotMatch(rowOf(await env.render("p=jobs&dept=RB")), /jobRubberflow/, "linked: no create button");
+
+  await saved(rfStore.run("setOrderStatus", { id: out.result, status: "cancelled" }));
+  await env.store.catchUp();
+  const job = env.store.data().jobs.find((row) => row.id === "JOB-RB1");
+  assert.equal(job.externalRef, null, "the server cleared the link when the WO was cancelled");
+  assert.equal(job.reports.at(-1).note, `WO ${out.result} ถูกยกเลิก`);
+  assert.match(rowOf(await env.render("p=jobs&dept=RB")), /data-rf-open="jobRubberflow"/, "the job can take a new WO");
+  const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
+  assert.match(again.html, /data-bom-rf-create/);
+  assert.doesNotMatch(again.html, /ไว้แล้ว/);
+  assert.match(again.html, /ยอดผลิตจริงของ WO นั้นจะถูกบวกเพิ่ม/, "the dialog says the WO's output is added to the job");
 });
 
 test("the compounds page and the link dialog list only recipes approved in the database, and the BOM page loads RubberFlow by itself", async () => {

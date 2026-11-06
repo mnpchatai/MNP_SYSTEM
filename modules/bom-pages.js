@@ -2200,11 +2200,13 @@
       [kgFromBom ? "คอมปาวด์ที่ต้องใช้ (ตามบรรทัดสูตรยางใน BOM)" : "คอมปาวด์ที่ต้องใช้ (เผื่อ 5%)", esc(`${rules.fmtQty(kg, 2)} kg${recipe ? ` ≈ ${Math.ceil(kg / Number(recipe.batchKg || 1))} batch` : ""}`)],
       recipe ? ["จำนวนเป้าหมายใน WO", esc(remoteFlow ? `${rules.fmtQty(targetQty)} ${uomText(ctx, job.uom)} (นับในหน่วยของงาน)` : `${rules.fmtQty(targetQty)} ${recipe.uom} (RubberFlow นับผลผลิตในหน่วยของสูตร)`)] : null,
       ["กำหนดส่ง", esc(rules.fmtDate(job.dueAt))],
-    ])}${problems.length ? ui.callout("warn", problems.map((text) => `<div>${esc(text)}</div>`).join("")) : ui.callout("info", remoteFlow ? "สร้างแล้วฐานข้อมูลผูกเลข WO กับงานนี้ให้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า · เมื่อปิด WO ยอดผลิตจริงจะถูกส่งกลับมาเป็นยอดของงานนี้" : "สร้างแล้วเลข WO จะถูกบันทึกที่งานนี้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า")}`;
+    ])}${problems.length ? ui.callout("warn", problems.map((text) => `<div>${esc(text)}</div>`).join("")) : ui.callout("info", remoteFlow ? "สร้างแล้วฐานข้อมูลผูกเลข WO กับงานนี้ให้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า · เมื่อปิด WO ยอดผลิตจริงของ WO นั้นจะถูกบวกเพิ่มเข้ายอดของงานนี้ · ถ้ายกเลิก WO ก่อนปิด การผูกกับงานนี้ถูกล้างและสร้าง WO ใหม่ได้" : "สร้างแล้วเลข WO จะถูกบันทึกที่งานนี้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า")}`;
     const bind = (dialog) => {
-      dialog.querySelector("[data-bom-rf-create]")?.addEventListener("click", (event) => {
+      dialog.querySelector("[data-bom-rf-create]")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
         button.disabled = true;
+        // โหมดฐานข้อมูล: ตามทันข้อมูล RubberFlow ก่อนออกเลข WO (เลขออกจากข้อมูลที่เครื่องนี้มี ถ้าเครื่องอื่นเปิดใบไปแล้วเลขจะซ้ำ → RF_STALE) · ผิดพลาด = ไปต่อ ฐานข้อมูลตรวจเลขซ้ำอีกชั้น
+        if (remoteFlow) { try { await rf.store.catchUp?.(); } catch { /* ไปต่อด้วยข้อมูลที่มี */ } }
         const result = rf.store.run("createOrder", {
           recipeId: recipe.id, customer: order?.customer ?? job.orderId, customerPo: job.orderId, targetQty, color: item.rubber?.color || "ดำ",
           startDate: new Date(ctx.now).setHours(0, 0, 0, 0), dueDate: Math.max(job.dueAt, new Date(ctx.now).setHours(0, 0, 0, 0)), priority: late(ctx, job) ? "urgent" : "normal",

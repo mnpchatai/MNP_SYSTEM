@@ -72,7 +72,7 @@
     persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(),
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
-  window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params) };
+  window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing() };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -80,8 +80,10 @@
   const updateSync = () => document.querySelectorAll("[data-rf-sync]").forEach((node) => { node.textContent = syncText(); });
   // "กำลังแก้" = dirty: ติดตามจาก event ที่เบราว์เซอร์ส่งจริง (isTrusted) · ล้าง dirty เมื่อวาดหน้าใหม่ (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
   // ระหว่าง dirty/มี dialog store ไม่รวมข้อมูลของผู้อื่นเข้า data และไม่ขยับเวอร์ชันฐาน การบันทึกจึงตรวจชนจากเวอร์ชันที่ฟอร์มวาดมา
+  // เฉพาะตอนอยู่ที่หน้า RubberFlow และนับเฉพาะ dialog ของ RubberFlow เอง (data-rf-dialog): dialog ของหน้าอื่น เช่น "สร้าง WO" ของ BOM ไม่ใช่ฟอร์มของโมดูลนี้
+  // ถ้านับด้วย store จะไม่ตามทันหลัง RF_STALE ที่เกิดจากเลข WO ซ้ำ ตราบที่ dialog ของ BOM ยังเปิดอยู่
   let dirty = false;
-  const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
+  const isEditing = () => onRfRoute() && (dirty || Boolean(document.querySelectorAll("dialog[data-rf-dialog][open]").length));
   // ช่องค้นหา/สแกน/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
   const NOT_EDITING = "[data-rf-search], [data-rf-scan], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-rf-retry], [data-rf-reset], [data-rf-purge], [data-rf-audit-reload]";
   function markDirty(event) {
