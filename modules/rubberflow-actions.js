@@ -390,7 +390,9 @@
     // Dump temp ของแต่ละขั้นเทียบกับค่าของสูตรในขั้นนั้นด้วยค่าเผื่อเดียวกัน (dumpTol) ขั้นไหนหลุด = ล็อตถูก QC Hold
     for (const row of stages) {
       const standard = rules().recipeStage(recipe, row.stage);
-      if (standard && Math.abs(row.dumpTemp - standard.dumpTemp) > recipe.dumpTol) {
+      // สูตรที่ไม่มีค่ามาตรฐานของขั้นนี้ (ข้อมูลรูปเก่า) บันทึกไม่ได้ แทนที่จะปล่อยผ่านโดยไม่เทียบ
+      if (!standard) fail(`สูตร ${recipe.id} ไม่มีค่ามาตรฐานขั้น ${row.stage} กรุณาออก revision ใหม่ของสูตรก่อน`);
+      if (Math.abs(row.dumpTemp - standard.dumpTemp) > recipe.dumpTol) {
         reasons.push(`Dump temp ขั้น ${row.stage} ${row.dumpTemp}°C นอกช่วง ${standard.dumpTemp}±${recipe.dumpTol}`);
       }
     }
