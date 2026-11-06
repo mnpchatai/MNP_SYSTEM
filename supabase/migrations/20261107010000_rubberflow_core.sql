@@ -746,10 +746,16 @@ set search_path = ''
 as $$
 declare
   v_job public.bom_jobs%rowtype;
+  v_ord public.bom_orders%rowtype;
 begin
   perform private.rf_lock_bom();
   select * into v_job from public.bom_jobs j where j.is_test and j.job_no = p_wo.source_job_no for update;
   if not found or (v_job.external_ref ->> 'woId') is distinct from p_wo.wo_no then
+    return jsonb_build_object('jobs', 0, 'orders', 0);
+  end if;
+  -- ใบ PI ที่ปิด/ยกเลิกแล้ว หรืองานที่ done แล้ว ไม่ถูกแตะ (เงื่อนไขเดียวกับ rf_apply_feedback)
+  select * into v_ord from public.bom_orders o where o.id = v_job.order_pk for update;
+  if v_ord.status not in ('released', 'in_progress') or v_job.status = 'done' then
     return jsonb_build_object('jobs', 0, 'orders', 0);
   end if;
   update public.bom_jobs set

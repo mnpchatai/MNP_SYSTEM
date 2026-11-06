@@ -497,7 +497,8 @@
     if (!order) return;
     const add = Number(qty);
     if (!(add > 0)) return;
-    if (ctx.remote && ["planned", "cancelled"].includes(order.status)) fail(`ใบสั่งผลิต ${order.id} ${order.status === "planned" ? "ยังไม่ได้ปล่อยผลิต" : "ถูกยกเลิกแล้ว"} บันทึกยอดผลิตเข้าใบไม่ได้`);
+    // ฐานข้อมูลรับยอดเฉพาะใบ in_progress / on_hold / completed (ใบ released ต้องเริ่มงานก่อน)
+    if (ctx.remote && ["planned", "released", "cancelled"].includes(order.status)) fail(`ใบสั่งผลิต ${order.id} ${order.status === "planned" ? "ยังไม่ได้ปล่อยผลิต" : order.status === "released" ? "ยังไม่ได้เริ่มงาน" : "ถูกยกเลิกแล้ว"} บันทึกยอดผลิตเข้าใบไม่ได้`);
     order.producedQty = +(order.producedQty + add).toFixed(3);
     const mayClose = !ctx.remote || Boolean(ctx.user?.planner || ctx.user?.rb);
     if (mayClose && order.producedQty >= order.targetQty && order.status === "in_progress") {

@@ -929,7 +929,9 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     // ยกเลิก WO: ล้างการผูกของงาน (คงยอดและรายงานเดิม) ต่อรายงานหมายเหตุของระบบ good = 0 · ข้ามเมื่อไม่พบงานหรืองานไม่ชี้มา WO นี้
     for (const item of ops.unlink) {
       const job = bom.jobs.find((row) => row.id === item.job);
-      if (!job || job.externalRef?.woId !== item.woId) continue;
+      const order = job ? bom.orders.find((row) => row.id === job.orderId) : null;
+      // ใบ PI ที่ปิด/ยกเลิกแล้ว หรืองานที่ done แล้ว ไม่ถูกแตะ (เงื่อนไขเดียวกับ rf_unlink_job)
+      if (!job || job.externalRef?.woId !== item.woId || !["released", "in_progress"].includes(order?.status) || job.status === "done") continue;
       job.externalRef = null;
       job.reports = [...(job.reports ?? []), { at, by: actor.name, good: 0, reject: 0, note: `WO ${item.woId} ถูกยกเลิก` }];
       touchJob(job);
