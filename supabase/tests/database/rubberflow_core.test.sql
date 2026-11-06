@@ -700,7 +700,7 @@ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_objec
   current_setting('test.ord')::jsonb || jsonb_build_object('id', '251107-25001', 'items', '[{"fgCode":"FG-A","qty":10,"colorSet":"A","note":""}]'::jsonb, 'explosion', current_setting('test.expl')::jsonb),
   current_setting('test.ord')::jsonb || jsonb_build_object('id', '251107-25002', 'items', '[{"fgCode":"FG-A","qty":10,"colorSet":"A","note":""}]'::jsonb, 'explosion', current_setting('test.expl')::jsonb),
   current_setting('test.ord')::jsonb || jsonb_build_object('id', '251107-25003', 'items', '[{"fgCode":"FG-A","qty":10,"colorSet":"A","note":""}]'::jsonb, 'explosion', current_setting('test.expl')::jsonb),
-  current_setting('test.ord')::jsonb || jsonb_build_object('id', '251107-25004', 'items', '[{"fgCode":"FG-A","qty":10,"colorSet":"A","note":""}]'::jsonb, 'explosion', current_setting('test.expl')::jsonb))),
+  current_setting('test.ord')::jsonb || jsonb_build_object('id', '251107-25004', 'items', '[{"fgCode":"FG-A","qty":10,"colorSet":"A","note":""}]'::jsonb, 'explosion', current_setting('test.expl')::jsonb)))),
   (public.app_bom_master() ->> 'version')::bigint, 'createOrder');
 select public.app_bom_save_master(jsonb_build_object(
   'orders', jsonb_build_object('upsert', (select jsonb_agg(o || '{"status":"released"}'::jsonb) from jsonb_array_elements(public.app_bom_master() -> 'orders') o)),
