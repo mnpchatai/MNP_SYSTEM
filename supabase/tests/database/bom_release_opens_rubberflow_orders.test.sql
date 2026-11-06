@@ -191,7 +191,10 @@ select is((select w - 'createdAt' from jsonb_array_elements(public.app_rf_master
 select is((select w ->> 'color' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '10'), 'ดำ',
   'an item without a color gets the default color');
 select is((select jsonb_build_array(w -> 'targetQty', w -> 'targetKg', w -> 'kgPerUnit') from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '09'),
-  '[7, 0.37, 0.052857]'::jsonb, 'the kilograms per unit are rounded to 6 places (0.37 / 7), so the page can send the record back unchanged');
+  '[7, 0.37, 0.0528571428571]'::jsonb, 'the kilograms per unit are rounded to 12 significant digits (0.37 / 7)');
+select is(private.bom_kg_per_unit(2.72, 7000), 0.000388571428571, 'a tiny part keeps 12 significant digits (2.72 / 7000)');
+select is(private.bom_kg_per_unit(221.76, 48), 4.62, 'an exact quotient is not padded');
+select is(round(2.72 / private.bom_kg_per_unit(2.72, 7000), 3), 7000.000, 'the received kilograms convert back to the planned pieces');
 select is((select w ->> 'uom' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '12'), 'kg',
   'the work order uses the unit of the job');
 select is((select jsonb_build_array(w ->> 'priority', (w ->> 'dueDate')::bigint, (w ->> 'startDate')::bigint)
@@ -239,6 +242,12 @@ select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('up
   (select w || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '08')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'releasedBy', current_setting('test.n_sbx_rb_mgr'),
   'the RB head releases the automatic work order as usual');
+-- ระเบียนที่ผ่านตัวเลข JS (double) แล้วส่งกลับ: kgPerUnit 12 เลขนัยสำคัญกลับมาเท่าเดิม ฐานข้อมูลจึงไม่มองว่าเนื้อหาเปลี่ยน
+select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  (select w || jsonb_build_object('status', 'released', 'kgPerUnit', (w ->> 'kgPerUnit')::double precision, 'targetKg', (w ->> 'targetKg')::double precision)
+   from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '09')))),
+  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'released',
+  'a work order whose numbers went through a JavaScript double (0.0528571428571) comes back unchanged and can be released');
 select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-A-01'), 'queued', 'releasing the work order does not touch the BOM job');
 
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);

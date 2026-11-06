@@ -1391,7 +1391,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           id: woId, customer: pi.customer, customerPo: pi.id, recipeId: recipe.id, recipeRevision: recipe.revision, productCode: recipe.productCode ?? "", uom: job.uom,
           color: String(item.rubber?.color ?? "").slice(0, 40).trim() || "ดำ", targetQty: qty, producedQty: 0, startDate: start, dueDate: Math.max(job.dueAt, start), priority: job.dueAt < at ? "urgent" : "normal",
           note: `จาก BOM งาน ${job.id} · PI ${pi.id} · ${job.itemCode} ${qty} ${job.uom} ≈ ${kg} kg · เปิดอัตโนมัติตอนปล่อยใบ`.slice(0, 300),
-          status: "planned", sourceJobId: job.id, targetKg: kg, kgPerUnit: Math.round((kg / qty) * 1e6) / 1e6, createdAt: at, createdBy: actor.name,
+          status: "planned", sourceJobId: job.id, targetKg: kg, kgPerUnit: Number((kg / qty).toPrecision(12)), createdAt: at, createdBy: actor.name,
         });
         rf.versions.orders[woId] = version;
         job.externalRef = { system: "rubberflow", woId, kg, linkedAt: at, by: actor.name, auto: true }; // งานยัง queued และใบยัง released (ผูกมือเท่านั้นที่ขยับสถานะ)
