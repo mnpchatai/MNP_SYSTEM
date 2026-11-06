@@ -1201,14 +1201,14 @@ test("a job linked to a RubberFlow work order is started only once the WO is pas
   // ยกเลิกใบ: WO แผนก/ปล่อยผลิตไม่ขวาง (ฐานข้อมูลยกเลิกให้) · เริ่มแล้วหรือไม่มีรายการ WO ขวาง
   rejects(() => A.cancelOrder(d, { orderId: a.id }, ctx("planner")), /WO-T-AUTO-A/);
   rejects(() => A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "in_progress" }] }), /WO-T-AUTO-A/);
-  A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "released" }] });
+  A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "released", sourceJobId: a.rb.id }] });
   assert.equal(a.order.status, "cancelled");
   assert.equal(d.jobs.some((job) => job.orderId === a.id), false, "the jobs go with the cancelled order");
   // เปิดใบกลับมาแก้: ตามกฎเดียวกัน
   const b = open("T-AUTO-B");
   rejects(() => A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
   rejects(() => A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-B", status: "completed" }] }), /มีงานที่เริ่มแล้ว/);
-  A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-B", status: "planned" }] });
+  A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-B", status: "planned", sourceJobId: b.rb.id }] });
   assert.equal(b.order.status, "draft");
 });
 
