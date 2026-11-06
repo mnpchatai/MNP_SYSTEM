@@ -3578,8 +3578,9 @@ async function renderRequestDetail(params) {
   const formCode = REQUEST_FORM_CODES[type?.code] ?? "";
   const headerActionsHtml = detailView?.headerActionsHtml || moduleDetail?.headerActionsHtml || "";
   const nextStep = currentStep ? steps.find((step) => step.step_order === currentStep.step_order + 1) : null;
-  // จอกว้าง (สองคอลัมน์) เปิดทุกส่วนไว้ จอแคบพับไว้ เพื่อให้สิ่งที่ต้องตัดสินอยู่บนสุด
-  const sectionsOpen = window.matchMedia("(min-width: 1041px)").matches ? " open" : "";
+  // ไฟล์แนบและข้อมูลเพิ่มเติมเปิดไว้ทุกขนาดจอ (แถบตัดสินใจบนจอแคบติดล่างจออยู่แล้ว ไม่ถูกดันลง)
+  // ลำดับเหตุการณ์: จอกว้าง (สองคอลัมน์) เปิดไว้ จอแคบพับไว้
+  const timelineOpen = window.matchMedia("(min-width: 1041px)").matches ? " open" : "";
   const receipt = recentDecisionFor(id);
   const description = (request.description ?? "").trim();
   const content = `
@@ -3615,15 +3616,15 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
-        ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
+        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
+        ${requestFacts ? `<details class="card detail-section" open><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
         ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
         <details class="card detail-section"><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
-        <details class="card detail-section"${sectionsOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
+        <details class="card detail-section"${timelineOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
       </aside>
     </div>`;
   // แถบบนบอกโมดูล (เลขที่ใบอยู่ที่หัวใบแล้ว ไม่ซ้ำบนจอเดียวกัน) ชื่อแท็บยังเป็นเลขที่ใบ
