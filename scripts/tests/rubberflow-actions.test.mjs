@@ -15,6 +15,9 @@ const { DAY, HOUR } = rules;
 const user = (role) => seed.USERS.find((row) => row.role === role);
 const ctx = (role = "admin", now = NOW) => ({ now, user: user(role) });
 const fresh = () => seed.buildSeed(NOW);
+// สูตรผสมสองขั้น: ค่าตัวอย่างที่ฟอร์มสูตร/สถานีผสมส่งเป็น stages
+const STAGES = [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }];
+const recipeForm = (over = {}) => ({ id: "RC-NEW", items: [{ materialCode: "ZNO", phr: "5" }], batchKg: "40", stages: STAGES, yieldPerKg: "3", ...over });
 const rejects = (fn, pattern) => assert.throws(fn, (error) => { assert.match(error.message, pattern); return true; });
 
 test("the demo seed is deterministic and internally consistent", () => {
@@ -64,13 +67,24 @@ test("orders: only approved recipes, positive quantities and ordered dates; the 
 
 test("recipes: required fields, unique ids, at least one material, draft until approved once", () => {
   const d = fresh();
-  rejects(() => A.createRecipe(d, { id: "", name: "n", productName: "p", items: [] }, ctx("qc")), /กรุณากรอก/);
-  rejects(() => A.createRecipe(d, { id: "RC-EPDM-DS01", name: "n", productName: "p", items: [{ materialCode: "ZNO", phr: 1 }] }, ctx("qc")), /มีอยู่แล้ว/);
-  rejects(() => A.createRecipe(d, { id: "RC-NEW", name: "n", productName: "p", items: [{ materialCode: "ZNO", phr: "0" }] }, ctx("qc")), /อย่างน้อย 1 รายการ/);
-  rejects(() => A.createRecipe(d, { id: "RC-NEW", name: "n", productName: "p", items: [{ materialCode: "ZNO", phr: "5" }], batchKg: "" }, ctx("qc")), /น้ำหนักต่อ batch/);
-  A.createRecipe(d, { id: " RC-NEW ", name: "ใหม่", productName: "สินค้า", items: [{ materialCode: "ZNO", phr: "5" }, { materialCode: "", phr: 9 }], batchKg: "40", dumpTemp: "130", mixSec: "200", yieldPerKg: "3", dumpTol: "", restHours: "" }, ctx("qc"));
+  rejects(() => A.createRecipe(d, recipeForm({ id: "" }), ctx("qc")), /กรุณากรอกรหัสสูตร/);
+  rejects(() => A.createRecipe(d, recipeForm({ id: "RC-EPDM-DS01" }), ctx("qc")), /มีอยู่แล้ว/);
+  rejects(() => A.createRecipe(d, recipeForm({ items: [{ materialCode: "ZNO", phr: "0" }] }), ctx("qc")), /อย่างน้อย 1 รายการ/);
+  rejects(() => A.createRecipe(d, recipeForm({ batchKg: "" }), ctx("qc")), /น้ำหนักต่อ batch/);
+  // ผสมสองขั้น: ต้องมีครบทั้งสองขั้น อุณหภูมิ 0–1000 °C เวลา (นาที) > 0
+  rejects(() => A.createRecipe(d, recipeForm({ stages: undefined }), ctx("qc")), /อุณหภูมิเครื่องผสม ขั้น 1/);
+  rejects(() => A.createRecipe(d, recipeForm({ stages: [STAGES[0]] }), ctx("qc")), /อุณหภูมิเครื่องผสม ขั้น 2/);
+  rejects(() => A.createRecipe(d, recipeForm({ stages: [STAGES[0], { ...STAGES[1], dumpTemp: "" }] }), ctx("qc")), /Dump temp ขั้น 2/);
+  rejects(() => A.createRecipe(d, recipeForm({ stages: [STAGES[0], { ...STAGES[1], mixMin: "0" }] }), ctx("qc")), /เวลาผสม ขั้น 2/);
+  rejects(() => A.createRecipe(d, recipeForm({ stages: [{ ...STAGES[0], mixerTemp: 1200 }, STAGES[1]] }), ctx("qc")), /0–1000/);
+  rejects(() => A.createRecipe(d, recipeForm({ productCode: "P".repeat(61) }), ctx("qc")), /รหัสสินค้า/);
+  A.createRecipe(d, recipeForm({ id: " RC-NEW ", items: [{ materialCode: "ZNO", phr: "5", stage: "2" }, { materialCode: "STA", phr: "1" }, { materialCode: "", phr: 9 }], stages: [STAGES[1], STAGES[0]], dumpTol: "", restHours: "" }), ctx("qc"));
   const recipe = d.recipes.find((row) => row.id === "RC-NEW");
-  assert.deepEqual(recipe.items, [{ materialCode: "ZNO", phr: 5 }]);
+  assert.deepEqual(recipe.items, [{ materialCode: "ZNO", phr: 5, stage: 2 }, { materialCode: "STA", phr: 1, stage: 1 }], "each line has a stage, default 1");
+  assert.deepEqual(recipe.stages, STAGES, "stages are stored in order 1, 2");
+  assert.equal(recipe.productCode, "", "the product code is optional and no longer defaults to the recipe id");
+  assert.ok(!("name" in recipe) && !("productName" in recipe) && !("mixSec" in recipe) && !("dumpTemp" in recipe), "no recipe name, product name, seconds or single dump temp");
+  assert.deepEqual(rules.recipeLines(recipe).map((line) => [line.materialCode, line.stage]), [["STA", 1], ["ZNO", 2]], "recipe lines are grouped by stage");
   assert.equal(recipe.dumpTol, 5, "defaults");
   assert.equal(recipe.restHours, 4);
   assert.equal(recipe.status, "draft");
@@ -157,16 +171,23 @@ test("mixing consumes an issued requisition, auto-holds on dump temperature and 
   const req = d.requisitions.find((row) => row.status === "weighing");
   req.lines.forEach((row, i) => { if (row.actualKg === null) A.weighLine(d, { reqId: req.id, index: i, actualKg: row.targetKg }, ctx("store")); });
   const issued = req.lines.reduce((sum, row) => sum + row.actualKg, 0);
-  rejects(() => A.recordMixing(d, { reqId: req.id, dumpTemp: 120, mixSec: 240, outputKg: issued + 1 }, ctx("mixer")), /เกินวัตถุดิบที่จ่าย/);
   const recipe = d.recipes.find((row) => row.id === req.recipeId);
-  const lotId = A.recordMixing(d, { reqId: req.id, machine: "BM-02 Banbury 110L", shift: "N", dumpTemp: recipe.dumpTemp + recipe.dumpTol + 1, mixSec: 240, outputKg: issued - 1, scrapKg: "0.5" }, ctx("mixer"));
+  const onSpec = recipe.stages.map((row) => ({ stage: row.stage, mixerTemp: row.mixerTemp, dumpTemp: row.dumpTemp, mixMin: row.mixMin }));
+  rejects(() => A.recordMixing(d, { reqId: req.id, stages: onSpec, outputKg: issued + 1 }, ctx("mixer")), /เกินวัตถุดิบที่จ่าย/);
+  rejects(() => A.recordMixing(d, { reqId: req.id, stages: [onSpec[0]], outputKg: 1 }, ctx("mixer")), /อุณหภูมิเครื่องผสม ขั้น 2/);
+  rejects(() => A.recordMixing(d, { reqId: req.id, stages: [onSpec[0], { ...onSpec[1], mixMin: "" }], outputKg: 1 }, ctx("mixer")), /เวลาผสม ขั้น 2/);
+  const bothOut = onSpec.map((row) => ({ ...row, dumpTemp: row.dumpTemp + recipe.dumpTol + 1 }));
+  const lotId = A.recordMixing(d, { reqId: req.id, machine: "BM-02 Banbury 110L", shift: "N", stages: bothOut, outputKg: issued - 1, scrapKg: "0.5" }, ctx("mixer"));
   const lot = d.lots.find((row) => row.id === lotId);
   assert.equal(lot.qc, "hold", "dump temp outside the recipe window holds the lot");
-  assert.match(lot.holdReasons[0], /Dump temp/);
+  assert.deepEqual(lot.params.stages, bothOut, "the lot records mixer temp, dump temp and minutes of both stages");
+  assert.equal(lot.holdReasons.length, 2, "each stage out of tolerance adds a reason");
+  assert.match(lot.holdReasons[0], /Dump temp ขั้น 1/);
+  assert.match(lot.holdReasons[1], /Dump temp ขั้น 2/);
   assert.equal(lot.readyAt, NOW + recipe.restHours * HOUR);
   assert.equal(req.status, "consumed");
   assert.equal(req.consumedBy, lotId);
-  rejects(() => A.recordMixing(d, { reqId: req.id, dumpTemp: 120, mixSec: 1, outputKg: 1 }, ctx("mixer")), /ถูกใช้ไปแล้ว/);
+  rejects(() => A.recordMixing(d, { reqId: req.id, stages: onSpec, outputKg: 1 }, ctx("mixer")), /ถูกใช้ไปแล้ว/);
   assert.equal(A.transferableQty(lot, NOW), 0, "held lots cannot move");
   rejects(() => A.createTransfer(d, { lotId, qty: 1 }, ctx("mixer")), /ยังไม่ผ่าน QC/);
   A.addQcRecord(d, { lotId, values: { t90: 3.2 }, result: "pass" }, ctx("qc"));
@@ -179,6 +200,33 @@ test("mixing consumes an issued requisition, auto-holds on dump temperature and 
   assert.equal(d.transfers[0].id, transferId);
   assert.equal(d.transfers[0].to, "extrusion");
   rejects(() => A.createTransfer(d, { lotId, qty: 1 }, ctx("mixer")), /ปริมาณส่งมอบต้องอยู่ระหว่าง 0–0/);
+});
+
+test("mixing hold rule: each stage's dump temp is compared with the recipe's value for that stage (one shared tolerance)", () => {
+  const cases = [
+    { label: "both stages in tolerance", delta: [0, 0], hold: [] },
+    { label: "edge of the window is still in", delta: "edge", hold: [] },
+    { label: "only stage 1 out", delta: [7, 0], hold: [1] },
+    { label: "only stage 2 out", delta: [0, -7], hold: [2] },
+    { label: "the two stages values swapped", delta: "swap", hold: [1, 2] },
+  ];
+  for (const { label, delta, hold } of cases) {
+    const d = fresh();
+    const req = d.requisitions.find((row) => row.status === "weighing");
+    req.lines.forEach((row, i) => { if (row.actualKg === null) A.weighLine(d, { reqId: req.id, index: i, actualKg: row.targetKg }, ctx("store")); });
+    const issued = req.lines.reduce((sum, row) => sum + row.actualKg, 0);
+    const recipe = d.recipes.find((row) => row.id === req.recipeId);
+    const [s1, s2] = recipe.stages;
+    let temps;
+    if (delta === "edge") temps = [s1.dumpTemp + recipe.dumpTol, s2.dumpTemp - recipe.dumpTol];
+    else if (delta === "swap") temps = [s2.dumpTemp, s1.dumpTemp];
+    else temps = [s1.dumpTemp + delta[0] * (recipe.dumpTol / 6), s2.dumpTemp + delta[1] * (recipe.dumpTol / 6)];
+    const stages = [{ ...s1, dumpTemp: temps[0] }, { ...s2, dumpTemp: temps[1] }];
+    const lotId = A.recordMixing(d, { reqId: req.id, stages, outputKg: issued - 1 }, ctx("mixer"));
+    const lot = d.lots.find((row) => row.id === lotId);
+    assert.equal(lot.qc, hold.length ? "hold" : "pass", label);
+    assert.deepEqual(lot.holdReasons.map((reason) => Number(/ขั้น (\d)/.exec(reason)[1])), hold, label);
+  }
 });
 
 test("the gatekeeper: a station can only consume a transfer it received, within the received quantity", () => {

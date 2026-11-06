@@ -338,3 +338,68 @@ test("RubberFlow and BOM stay admin test-mode only: menu, page and test mode all
     assert.match(source, /nav: \[\{[^\]]*sandboxOnly: true/, `${file} keeps its menu test-mode only`);
   }
 });
+
+test("two-stage recipe: the recipe form and the mixing station have six stage inputs, the forms send stages, and no recipe or product name is shown", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const stageInputs = (html) => {
+    for (const stage of [1, 2]) {
+      for (const key of ["mixerTemp", "dumpTemp", "mixMin"]) assert.match(html, new RegExp(`name="${key}${stage}"`), `${key}${stage}`);
+      for (const label of [`อุณหภูมิเครื่องผสม ขั้น ${stage} (°C)`, `Dump temp ขั้น ${stage} (°C)`, `เวลาผสม ขั้น ${stage} (นาที)`]) assert.ok(html.includes(label), label);
+    }
+    assert.doesNotMatch(html, /name="mixSec"|name="name"|name="productName"|เวลาผสม \(s\)/);
+  };
+  // dialog สร้างสูตร: ช่องของสองขั้น + เลือกขั้นต่อบรรทัดวัตถุดิบ ไม่มีชื่อสูตร/ชื่อสินค้า
+  const built = env.context.MNP_RUBBERFLOW_DIALOGS.createRecipe(env.ctx(), {});
+  stageInputs(built.html);
+  assert.match(built.html, /name="stage\[\]"/, "each material line has a stage select");
+  assert.match(built.html, /name="productCode"/);
+  // สถานีผสม: หกช่อง + ตารางล็อตแสดงสองขั้น (ชั่งใบเบิกที่ค้างให้ครบก่อน จึงมีใบเบิกที่จ่ายครบให้ผสม)
+  const weighing = env.store.data().requisitions.find((row) => row.status === "weighing");
+  weighing.lines.forEach((line, index) => { if (line.actualKg === null) assert.equal(env.store.run("weighLine", { reqId: weighing.id, index, actualKg: line.targetKg }).ok, true); });
+  const mixing = await env.render("p=mixing");
+  stageInputs(mixing);
+  assert.match(mixing, /ขั้น 1: [\d.]+°C · [\d.]+ นาที/);
+  assert.doesNotMatch(mixing, /undefined|NaN/);
+  // หน้าสูตร/ใบสั่งผลิต: รหัสสูตร (+ รหัสสินค้า) ไม่มีชื่อ
+  const recipes = text(await env.render("p=recipes&sel=RC-EPDM-DS01"));
+  assert.match(recipes, /RC-EPDM-DS01 · DS-1825/);
+  assert.match(recipes, /ขั้น 1[\s\S]*ขั้น 2/);
+  assert.doesNotMatch(recipes, /ซีลยางประตูรถยนต์|EPDM ซีลประตูรถยนต์/);
+  const orders = text(await env.render("p=orders"));
+  assert.match(orders, /RC-EPDM-DS01 · DS-1825/);
+  assert.doesNotMatch(orders, /ซีลยางประตูรถยนต์/);
+
+  // ฟอร์มสูตรส่ง stages และขั้นของบรรทัดผ่าน TRANSFORMS
+  const form = { ...env.root, dataset: { rfForm: "createRecipe", rfSuccess: "ok" }, handlers: {}, __values: {
+    id: "RC-FORM-01", productCode: "", uom: "m", batchKg: "50", yieldPerKg: "6", restHours: "4", dumpTol: "5",
+    mixerTemp1: "80", dumpTemp1: "110", mixMin1: "3", mixerTemp2: "90", dumpTemp2: "130", mixMin2: "2",
+    "materialCode[]": ["ZNO", "S-80"], "phr[]": ["5", "2"], "stage[]": ["1", "2"],
+  } };
+  form.addEventListener = (type, handler) => { form.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [form];
+  await env.render("p=recipes");
+  await form.handlers.submit({ preventDefault() {} });
+  const made = env.store.data().recipes.find((row) => row.id === "RC-FORM-01");
+  assert.deepEqual(JSON.parse(JSON.stringify(made.stages)), [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(made.items)), [{ materialCode: "ZNO", phr: 5, stage: 1 }, { materialCode: "S-80", phr: 2, stage: 2 }]);
+  assert.equal(made.productCode, "");
+
+  // ฟอร์มผสมส่งหกค่า: ขั้น 2 หลุดช่วง → QC Hold
+  const req = env.store.data().requisitions.find((row) => row.status === "issued");
+  const recipe = env.store.data().recipes.find((row) => row.id === req.recipeId);
+  const mixForm = { ...env.root, dataset: { rfForm: "recordMixing", rfSuccess: "บันทึก {result} แล้ว" }, handlers: {}, __values: {
+    reqId: req.id, machine: "BM-02 Banbury 110L", shift: "D", outputKg: "10", scrapKg: "", scrapReason: "",
+    mixerTemp1: "80", dumpTemp1: String(recipe.stages[0].dumpTemp), mixMin1: "3",
+    mixerTemp2: "90", dumpTemp2: String(recipe.stages[1].dumpTemp + recipe.dumpTol + 2), mixMin2: "2",
+  } };
+  mixForm.addEventListener = (type, handler) => { mixForm.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [mixForm];
+  await env.render("p=mixing");
+  await mixForm.handlers.submit({ preventDefault() {} });
+  const lot = env.store.data().lots.find((row) => row.stage === "mixing" && row.sources[0].id === req.id);
+  assert.equal(lot.qc, "hold");
+  assert.match(lot.holdReasons.join(" "), /Dump temp ขั้น 2/);
+  assert.doesNotMatch(lot.holdReasons.join(" "), /ขั้น 1/);
+  assert.equal(lot.params.stages.length, 2);
+});

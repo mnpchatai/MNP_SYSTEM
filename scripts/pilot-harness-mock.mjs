@@ -389,6 +389,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const PERSONA_SPECS = [
     ["persona-pp", "สมศรี", "วางแผน", "เจ้าหน้าที่วางแผน (PP)", "PP", "ฝ่ายวางแผน"],
     ["persona-rb", "ประยุทธ", "รีดยาง", "พนักงานแผนก RB", "RB", "ฝ่ายผลิต RB"],
+    // หัวหน้าแผนก RB (ผู้จัดการแผนก): อนุมัติสูตร/ปล่อยผลิตของ RubberFlow ได้ · ตำแหน่งที่ 7 = รหัสบทบาท (ไม่ระบุ = พนักงาน staff)
+    ["persona-rbh", "สุรีย์", "หัวหน้ารีด", "หัวหน้าแผนก RB", "RB", "ฝ่ายผลิต RB", "department_manager"],
     ["persona-gr", "มานี", "ตัดยาง", "พนักงานแผนก GR", "GR", "ฝ่ายผลิต GR"],
     ["persona-st", "วิชัย", "คลังวัตถุดิบ", "พนักงานคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ"],
     ["persona-wh", "สุดา", "คลังสินค้า", "พนักงานคลังสินค้า (WH)", "WH", "คลังสินค้า"],
@@ -396,9 +398,9 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   ];
   const personaRows = () => [
     { ...expand("employees", ME), id: "persona-1", job_title: "บัญชีทดสอบ ผู้จัดการแผนก" },
-    ...PERSONA_SPECS.map(([id, first_name, last_name, job_title, dept, deptName]) => ({
-      ...expand("employees", ME), id, employee_no: `T-${dept}`, first_name, last_name, job_title,
-      role: { code: "staff", name_th: "พนักงาน" }, department: { code: dept, name_th: deptName },
+    ...PERSONA_SPECS.map(([id, first_name, last_name, job_title, dept, deptName, roleCode]) => ({
+      ...expand("employees", ME), id, employee_no: `T-${dept}${roleCode ? "H" : ""}`, first_name, last_name, job_title,
+      role: roleCode ? { code: roleCode, name_th: "ผู้จัดการแผนก" } : { code: "staff", name_th: "พนักงาน" }, department: { code: dept, name_th: deptName },
     })),
   ];
   let personaId = null;
@@ -586,6 +588,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           ? changedByOthers(list, id)
           : next.tombstones.some((row) => row.list === list && graveKey(row) === id && row.version > base && row.version <= current.version))) fail("BOM_STALE");
         bomCheckRecord(list, prev, record, actor);
+        // สูตรยางผูกกับสูตร PHR ของ RubberFlow ได้เฉพาะรหัสสูตรที่มีอยู่ในฐานข้อมูล RubberFlow (revision ใดก็ได้ · ตรงกับ bom_save_compounds)
+        if (list === "compounds" && record.recipeId !== undefined && record.recipeId !== null && !rfLoad().recipes.some((row) => row.id === record.recipeId)) fail("BOM_INVALID_COMPOUND");
         if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released });
         if (list === "jobs") bomJobRules(prev, record, actor, next, released);
         if (index === -1) {
@@ -662,6 +666,300 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     for (const job of next.jobs) if (!next.orders.some((order) => order.id === job.orderId)) fail("BOM_INVALID_JOB");
     return next;
   }
+  // ---- ข้อมูลของ RubberFlow (โมดูลทดสอบ #/rubberflow): app_rf_master / app_rf_master_since / app_rf_save / app_rf_audit และ app_sandbox_purge_rf ----
+  // โครงเดียวกับข้อมูลหลักของ BOM ด้านบน (ทุกระเบียนจำเลขรุ่นที่แก้ล่าสุด ชนรายระเบียน RF_STALE ก่อนตรวจสิทธิ์ ส่วนต่าง {version, epoch, changes} รอบข้อมูล epoch) เก็บที่ storage คีย์ mnp-harness-rf-master
+  // ข้อมูลหลัก 3 ชุด: materials (code) · recipes (รหัสสูตร + revision ทุก revision) · orders (WO) · ขั้นนี้ไม่มีการลบ
+  // สิทธิ์: กลุ่มวางแผน (admin ผู้จัดการแผนกขึ้นไป แผนก PP) หรือสมาชิกแผนก RB แก้วัตถุดิบ/ร่างสูตร/เปิด WO ได้ · อนุมัติสูตรและปล่อยผลิต = หัวหน้า RB (ผู้จัดการ/ผู้ช่วยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการโรงงานขึ้นไป) หรือกลุ่มวางแผน (ปล่อยผลิต)
+  // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) และเมื่อปิด (completed) ส่ง producedQty เข้างานเป็นรายงานผล (ทั้งสองเขียนผ่านตัวนับเวอร์ชันของ BOM ด้วย)
+  const RF_KEY = "mnp-harness-rf-master";
+  const RF_LISTS = ["materials", "recipes", "orders"];
+  const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id };
+  const rfSorter = (list) => (list === "recipes" ? (a, b) => bomCmp(a.id, b.id) || a.revision - b.revision : (a, b) => bomCmp(RF_ID[list](a), RF_ID[list](b)));
+  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "recordMixing", "recordExtrusion", "recordCuring", "recordFinishing", "addQcRecord"];
+  const RF_FLOW = { planned: ["released", "cancelled"], released: ["in_progress", "on_hold", "cancelled"], in_progress: ["on_hold", "completed"], on_hold: ["in_progress"] };
+  const RF_ORDER_STATUSES = ["planned", "released", "in_progress", "on_hold", "completed", "cancelled"];
+  // ฟิลด์ที่เซิร์ฟเวอร์เป็นเจ้าของ (ตราผู้บันทึก/เวลา): ไม่นับเป็นการแก้เนื้อหา · RECIPE_OWNED / ORDER_OWNED รวมสถานะ (และยอดผลิต) ที่เปลี่ยนตามกฎของตัวเอง
+  const RF_RECIPE_STAMPS = ["createdAt", "createdBy", "approvedAt", "approvedBy", "supersededAt"];
+  const RF_RECIPE_OWNED = ["status", ...RF_RECIPE_STAMPS];
+  const RF_ORDER_STAMPS = ["createdAt", "createdBy", "releasedAt", "releasedBy", "completedAt", "cancelledAt"];
+  const RF_ORDER_OWNED = ["status", "producedQty", ...RF_ORDER_STAMPS];
+  const RF_MATERIAL_STAMPS = ["createdAt", "createdBy", "updatedAt", "updatedBy"];
+  // รหัสต้องตรงกับ check ของตาราง rf_* (rf_materials.code · rf_recipes.recipe_code · rf_orders.wo_no) ผิด = รหัสข้อผิดพลาดของชุดนั้น
+  const RF_CODE = { materials: /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/, recipes: /^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/, orders: /^[A-Za-z0-9._-]{1,40}$/ };
+  const RF_BAD = { materials: "RF_INVALID_MATERIAL", recipes: "RF_INVALID_RECIPE", orders: "RF_INVALID_ORDER" };
+  let rfMaster = null;
+  // fed = { <เลข WO>: เวลา } WO ที่ป้อนผลผลิตกลับเข้างาน BOM แล้ว (rf_orders.fed_back_at) ไม่แสดงให้ client
+  const freshRf = () => ({ version: 0, epoch: newEpoch(), ...Object.fromEntries(RF_LISTS.map((list) => [list, []])), versions: Object.fromEntries(RF_LISTS.map((list) => [list, {}])), fed: {}, audit: [] });
+  function rfLoad() {
+    if (!rfMaster) {
+      try { rfMaster = JSON.parse(storage?.getItem?.(RF_KEY) ?? "null"); } catch { rfMaster = null; }
+      if (!rfMaster || typeof rfMaster.version !== "number") rfMaster = freshRf();
+      if (typeof rfMaster.epoch !== "string") rfMaster.epoch = newEpoch();
+      for (const list of RF_LISTS) if (!Array.isArray(rfMaster[list])) rfMaster[list] = [];
+      rfMaster.versions = Object.fromEntries(RF_LISTS.map((list) => [list, rfMaster.versions?.[list] ?? {}]));
+      if (!rfMaster.fed || typeof rfMaster.fed !== "object" || Array.isArray(rfMaster.fed)) rfMaster.fed = {};
+      if (!Array.isArray(rfMaster.audit)) rfMaster.audit = [];
+    }
+    return rfMaster;
+  }
+  function rfPersist() {
+    try { storage?.setItem?.(RF_KEY, JSON.stringify(rfMaster)); } catch { warnOnce("rf-storage", "[pilot harness] เก็บข้อมูล RubberFlow ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
+  }
+  const rfView = (current) => ({ version: current.version, epoch: current.epoch, ...Object.fromEntries(RF_LISTS.map((list) => [list, clone(current[list]).sort(rfSorter(list))])) });
+  function rfDelta(current, since) {
+    const changes = {};
+    for (const list of RF_LISTS) {
+      const upsert = current[list].filter((row) => (current.versions[list][RF_ID[list](row)] ?? 0) > since).sort(rfSorter(list));
+      changes[list] = { upsert: clone(upsert), delete: [] };
+    }
+    return { version: current.version, epoch: current.epoch, changes };
+  }
+  const rfIsRb = (actor) => actor.dept === "RB";
+  const rfIsQa = (actor) => actor.dept === "QA";
+  const rfIsHead = (actor) => (rfIsRb(actor) && ["department_manager", "assistant_department_manager"].includes(actor.role)) || ["assistant_factory_manager", "factory_manager", "general_manager", "admin"].includes(actor.role);
+  const rfText = (value, max, code) => { const text = String(value ?? "").trim(); if (!text || text.length > max) fail(code); return text; };
+  // สูตรผสมสองขั้น (ตรงกับ rf_save_recipes): แต่ละบรรทัดวัตถุดิบมี stage 1|2 (ไม่ระบุ = 1) และ stages = [{stage 1}, {stage 2}] (mixerTemp °C, dumpTemp °C, mixMin นาที)
+  // rfCanonRecipe ทำให้สำเนาที่ client ส่งเทียบกับที่เก็บได้ (เติม stage ของบรรทัด เรียง stages ตามขั้น รหัสสินค้าว่าง = "")
+  const rfCanonRecipe = (record) => {
+    const out = clone(record);
+    if (Array.isArray(out.items)) out.items = out.items.map((item) => (item && typeof item === "object" && !Array.isArray(item) ? { ...item, stage: item.stage ?? 1 } : item));
+    if (Array.isArray(out.stages)) out.stages = out.stages.slice().sort((a, b) => Number(a?.stage) - Number(b?.stage));
+    if (out.productCode === undefined || out.productCode === null) out.productCode = "";
+    else if (typeof out.productCode === "string") out.productCode = out.productCode.trim();
+    return out;
+  };
+  const rfStagesValid = (stages) => Array.isArray(stages) && stages.length === 2
+    && stages.every((row, index) => row && typeof row === "object" && row.stage === index + 1
+      && [row.mixerTemp, row.dumpTemp].every((value) => typeof value === "number" && value >= 0 && value <= 1000)
+      && typeof row.mixMin === "number" && row.mixMin > 0 && row.mixMin <= 1440);
+  const rfSame = (a, b, owned) => bomCanon(bomWithout(a, owned)) === bomCanon(bomWithout(b, owned));
+
+  // บันทึกการเปลี่ยนแปลงทั้งชุดในธุรกรรมเดียว (ตรงกับ app_rf_save): คืน { next, ops, wrote } โดย ops = งานของ BOM ที่ต้องเขียนต่อเมื่อบันทึกสำเร็จ (ผูกงาน / ป้อนยอดผลิตกลับ / ล้างการผูกตอนยกเลิก)
+  // wrote = จำนวนระเบียนที่เขียนจริง (0 = ทุกเรคอร์ดตรงกับที่เก็บ ไม่ต้องเพิ่มเวอร์ชัน)
+  function rfApply(current, changes, base, actor, at, action) {
+    const next = clone(current);
+    const nextVersion = current.version + 1;
+    const mine = new Set();
+    const stale = (list, id) => (next.versions[list][id] ?? 0) > base && !mine.has(`${list}|${id}`);
+    const stampVersion = (list, id) => { next.versions[list][id] = nextVersion; mine.add(`${list}|${id}`); };
+    const planner = bomIsPlanner(actor);
+    const master = planner || rfIsRb(actor);
+    const head = rfIsHead(actor);
+    const qaPath = rfIsQa(actor) && action === "addQcRecord"; // QA เขียนได้ทางเดียว: เพิ่ม producedQty ของใบที่มีอยู่ ผ่านการบันทึกผลตรวจ
+    const approvedNow = [];
+    const supersededSent = [];
+    const ops = { link: [], complete: [], unlink: [] };
+    // รูปของ payload และสิทธิ์ระดับส่วน (ก่อนตรวจรายระเบียน)
+    for (const list of Object.keys(changes)) {
+      if (!RF_LISTS.includes(list)) fail("RF_INVALID_PAYLOAD");
+      const entry = changes[list];
+      if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).some((key) => key !== "upsert")) fail("RF_INVALID_PAYLOAD");
+      if (entry.upsert === undefined) continue;
+      if (!Array.isArray(entry.upsert)) fail("RF_INVALID_PAYLOAD");
+      if (entry.upsert.length > 5000) fail("RF_TOO_MANY");
+      if (entry.upsert.length && !(master || (qaPath && list === "orders"))) fail("RF_FORBIDDEN");
+    }
+    const seen = new Set();
+    for (const list of RF_LISTS) {
+      const bad = RF_BAD[list];
+      for (const raw of changes[list]?.upsert ?? []) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) fail(bad);
+        const record = list === "recipes" ? rfCanonRecipe(raw) : raw;
+        const key = list === "materials" ? record.code : record.id;
+        if (typeof key !== "string" || !RF_CODE[list].test(key)) fail(bad);
+        if (list === "recipes" && !(Number.isInteger(record.revision) && record.revision >= 1 && record.revision <= 9999)) fail(bad);
+        const id = RF_ID[list](record);
+        if (seen.has(`${list}|${id}`)) fail(bad);
+        seen.add(`${list}|${id}`);
+        const index = next[list].findIndex((row) => RF_ID[list](row) === id);
+        const prev = index === -1 ? null : next[list][index];
+        // เท่าของล่าสุดทุกช่อง (ไม่นับตราของเซิร์ฟเวอร์) = ไม่ทำอะไร ไม่ตรวจชน ไม่ตรวจสิทธิ์ (เหมือนตัวเขียนของฐานข้อมูล)
+        if (prev && rfSame(prev, record, list === "materials" ? RF_MATERIAL_STAMPS : list === "recipes" ? RF_RECIPE_STAMPS : RF_ORDER_STAMPS)) continue;
+        // ชนก่อนสิทธิ์/เนื้อหาเสมอ: ระเบียนถูกผู้อื่นแก้/เพิ่มหลัง base (รวมเลข WO ซ้ำ) = ฝั่ง client ถือสำเนาเก่า ต้องได้ RF_STALE ไม่ใช่ RF_FORBIDDEN
+        if (prev && stale(list, id)) fail("RF_STALE");
+        if (list === "materials") {
+          rfText(record.name, 160, bad);
+          if (record.active !== undefined && record.active !== null && typeof record.active !== "boolean") fail(bad);
+          // รหัสที่ต่างจากของเดิมแค่ตัวพิมพ์ = ซ้ำ
+          if (!prev && next.materials.some((row) => row.code.toUpperCase() === record.code.toUpperCase())) fail("RF_CONFLICT");
+          const out = { ...clone(record), createdAt: prev?.createdAt ?? at, createdBy: prev?.createdBy ?? actor.name, updatedAt: at, updatedBy: actor.name };
+          if (prev) next.materials[index] = out; else next.materials.push(out);
+        } else if (list === "recipes") {
+          if (!["draft", "approved", "superseded"].includes(record.status)) fail(bad);
+          const siblings = next.recipes.filter((row) => row.id === record.id);
+          if (typeof record.productCode !== "string" || record.productCode.length > 60) fail(bad);
+          if (!rfStagesValid(record.stages)) fail(bad);
+          if (!Array.isArray(record.items) || !record.items.length || record.items.length > 100) fail(bad);
+          // วัตถุดิบในสูตรต้องมีอยู่ ไม่ซ้ำ phr > 0 · วัตถุดิบที่เลิกใช้แล้วใส่ได้เฉพาะที่ revision ก่อนหน้า/แถวเดิมใช้อยู่
+          const before = prev ?? siblings.slice().sort((a, b) => b.revision - a.revision)[0];
+          const codes = new Set();
+          for (const item of record.items) {
+            const material = next.materials.find((row) => row.code === item?.materialCode);
+            if (!material || codes.has(item.materialCode) || !(Number(item?.phr) > 0) || ![1, 2].includes(item.stage)) fail(bad);
+            codes.add(item.materialCode);
+            if (material.active === false && !(before?.items ?? []).some((row) => row.materialCode === item.materialCode)) fail(bad);
+          }
+          if (!(Number(record.batchKg) > 0) || !(Number(record.yieldPerKg) > 0)) fail(bad);
+          if (!prev) {
+            // ระเบียนใหม่เริ่มเป็นร่างเสมอ · revision ต้องเป็นล่าสุด + 1 (สูตรใหม่ = 1) มีผู้อื่นแก้สูตรนี้หลัง base = ถือสำเนาเก่า
+            if (record.status !== "draft") fail("RF_INVALID_TRANSITION");
+            if (!siblings.length) {
+              if (next.recipes.some((row) => row.id.toUpperCase() === record.id.toUpperCase())) fail("RF_CONFLICT");
+              if (record.revision !== 1) fail("RF_REVISION_ORDER");
+            } else {
+              if (record.revision !== Math.max(...siblings.map((row) => row.revision)) + 1) {
+                if (siblings.some((row) => stale("recipes", RF_ID.recipes(row)))) fail("RF_STALE");
+                fail("RF_REVISION_ORDER");
+              }
+              if (siblings.some((row) => row.status === "draft")) fail("RF_INVALID_TRANSITION");
+            }
+          } else if (prev.status === "draft") {
+            if (record.status === "draft") { /* แก้ร่าง: กลุ่มวางแผนหรือสมาชิก RB (ตรวจที่ส่วนแล้ว) */ }
+            else if (record.status === "approved") {
+              if (!head) fail("RF_FORBIDDEN");
+              if (!rfSame(prev, record, RF_RECIPE_OWNED)) fail("RF_INVALID_TRANSITION");
+              approvedNow.push(record);
+            } else fail("RF_INVALID_TRANSITION");
+          } else if (prev.status === "approved") {
+            if (!rfSame(prev, record, RF_RECIPE_OWNED)) fail("RF_REVISION_IMMUTABLE");
+            if (record.status !== "superseded") fail("RF_INVALID_TRANSITION");
+            supersededSent.push(record);
+          } else fail("RF_REVISION_IMMUTABLE");
+          const out = clone(record);
+          out.createdAt = prev?.createdAt ?? at;
+          out.createdBy = prev?.createdBy ?? actor.name;
+          if (out.status === "approved") { out.approvedAt = prev?.approvedAt ?? at; out.approvedBy = prev?.approvedBy ?? actor.name; } else { delete out.approvedAt; delete out.approvedBy; }
+          if (out.status === "superseded") out.supersededAt = prev?.supersededAt ?? at; else delete out.supersededAt;
+          if (prev) next.recipes[index] = out; else next.recipes.push(out);
+        } else {
+          if (!RF_ORDER_STATUSES.includes(record.status)) fail(bad);
+          if (!(Number(record.targetQty) > 0) || !String(record.customer ?? "").trim() || !(Number(record.producedQty ?? 0) >= 0)) fail(bad);
+          if (!prev) {
+            if (!master) fail("RF_FORBIDDEN");
+            if (record.status !== "planned") fail("RF_INVALID_TRANSITION");
+            if (Number(record.producedQty ?? 0) !== 0) fail(bad);
+            if (record.sourceJobId !== undefined && record.sourceJobId !== null && !RF_CODE.orders.test(String(record.sourceJobId))) fail(bad);
+            const recipe = next.recipes.find((row) => row.id === record.recipeId && (record.recipeRevision === undefined || record.recipeRevision === null ? row.status === "approved" : row.revision === record.recipeRevision));
+            if (!recipe || recipe.status !== "approved") {
+              if (next.recipes.some((row) => row.id === record.recipeId && stale("recipes", RF_ID.recipes(row)))) fail("RF_STALE");
+              fail("RF_INVALID_RECIPE");
+            }
+            let uom = recipe.uom;
+            if (record.sourceJobId) {
+              // งานต้องเป็นงาน RB ที่ยังไม่ done ของใบที่ปล่อยผลิตแล้ว และยังไม่ถูกผูก (หรือผูกกับ WO ที่ยกเลิกแล้ว) · ไม่บังคับกิโลกรัม (ผูกด้วย 0)
+              const job = bomLoad().jobs.find((row) => row.id === record.sourceJobId);
+              const jobOrder = job ? bomLoad().orders.find((row) => row.id === job.orderId) : null;
+              const priorCancelled = job?.externalRef && next.orders.some((row) => row.id === job.externalRef.woId && row.status === "cancelled");
+              if (!job || job.dept !== "RB" || job.status === "done" || !["released", "in_progress"].includes(jobOrder?.status) || (job.externalRef && !priorCancelled) || ops.link.some((item) => item.job === job.id)) fail("RF_INVALID_SOURCE_JOB");
+              ops.link.push({ job: job.id, woId: record.id, kg: Number(record.targetKg) || 0 });
+              uom = job.uom;
+            }
+            // สินค้า/หน่วย/revision ได้จากสูตรหรืองาน BOM ไม่เชื่อ client
+            const created = { ...clone(record), productCode: recipe.productCode, uom, recipeRevision: recipe.revision, producedQty: 0, createdAt: at, createdBy: actor.name };
+            delete created.productName; // สินค้าอ้างจากรหัสสูตร + รหัสสินค้า ไม่มีชื่อสินค้า
+            next.orders.push(created);
+          } else {
+            const from = prev.status;
+            const to = record.status;
+            const produced = Number(record.producedQty ?? 0);
+            const raised = produced > Number(prev.producedQty);
+            if (!master) {
+              // QA: ทำได้ทางเดียว = เพิ่ม producedQty ของใบเดิมผ่านการบันทึกผลตรวจ (addQcRecord) อย่างอื่นทุกอย่าง = RF_FORBIDDEN
+              if (!(qaPath && rfSame(prev, record, RF_ORDER_OWNED) && from === to && raised)) fail("RF_FORBIDDEN");
+            }
+            if (!rfSame(prev, record, RF_ORDER_OWNED)) fail("RF_INVALID_ORDER");
+            if (to === "released" && from !== to && !(planner || head)) fail("RF_FORBIDDEN");
+            if (from !== to && !(RF_FLOW[from] ?? []).includes(to)) fail("RF_INVALID_TRANSITION");
+            // ยอดผลิตเปลี่ยนได้เฉพาะใบที่ปล่อยแล้ว (สถานะใหม่ยังผลิตอยู่/พักงาน/ปิดงาน) · ใบ completed แล้วเพิ่มได้อย่างเดียว (ผลิตเกิน / ปล่อยของช้า)
+            if (produced !== Number(prev.producedQty)) {
+              if (from === "completed") { if (!raised) fail("RF_INVALID_ORDER"); }
+              else if (!["released", "in_progress", "on_hold"].includes(from) || !["in_progress", "on_hold", "completed"].includes(to)) fail("RF_INVALID_ORDER");
+            }
+            const out = { ...clone(record), createdAt: prev.createdAt, createdBy: prev.createdBy };
+            for (const stampKey of ["releasedAt", "releasedBy", "completedAt", "cancelledAt"]) if (prev[stampKey] !== undefined) out[stampKey] = prev[stampKey];
+            if (from !== to) {
+              if (to === "released") { out.releasedAt = at; out.releasedBy = actor.name; }
+              if (to === "completed") {
+                if (prev.sourceJobId && !(produced > 0)) fail("RF_INVALID_PRODUCED");
+                out.completedAt = at;
+                if (prev.sourceJobId) ops.complete.push({ job: prev.sourceJobId, woId: prev.id, produced });
+              }
+              if (to === "cancelled") {
+                out.cancelledAt = at;
+                if (prev.sourceJobId) ops.unlink.push({ job: prev.sourceJobId, woId: prev.id });
+              }
+            }
+            next.orders[index] = out;
+          }
+        }
+        stampVersion(list, id);
+      }
+    }
+    // อนุมัติ revision ใหม่ = revision ที่อนุมัติอยู่เดิมของรหัสเดียวกันถูกแทนที่ในคำสั่งเดียวกัน (อนุมัติได้ครั้งละหนึ่ง revision ต่อรหัส)
+    for (const recipe of approvedNow) {
+      for (const row of next.recipes) {
+        if (row.id === recipe.id && row.revision !== recipe.revision && row.status === "approved") {
+          row.status = "superseded";
+          row.supersededAt = at;
+          stampVersion("recipes", RF_ID.recipes(row));
+        }
+      }
+    }
+    for (const recipe of supersededSent) if (!approvedNow.some((row) => row.id === recipe.id)) fail("RF_INVALID_TRANSITION"); // แทนที่ได้เฉพาะพร้อมการอนุมัติ revision ใหม่ของรหัสเดียวกัน
+    for (const row of next.recipes) if (row.status === "approved" && next.recipes.some((other) => other !== row && other.id === row.id && other.status === "approved")) fail("RF_INVALID_RECIPE");
+    return { next, ops, wrote: mine.size };
+  }
+  // งานของ BOM ที่ WO สั่ง (หลังบันทึกของ RubberFlow สำเร็จ ตรงกับ rf_link_job / rf_apply_feedback / rf_unlink_job): ผ่านตัวนับเวอร์ชันของ BOM ครั้งเดียวต่อการบันทึก
+  // ให้ client ของ BOM ตามทันด้วยส่วนต่าง และเขียนบรรทัดบันทึกการใช้งานของ BOM (rubberflow:<action>) · ไม่มีอะไรเขียนจริง (ข้ามทุกอย่าง) = ตัวนับ BOM ไม่ขยับ
+  function rfApplyBomOps(ops, actor, at, action) {
+    if (!ops.link.length && !ops.complete.length && !ops.unlink.length) return;
+    const bom = bomLoad();
+    const version = bom.version + 1;
+    const jobs = new Set();
+    const orders = new Set();
+    const touchJob = (job) => { bom.versions.jobs[job.id] = version; jobs.add(job.id); };
+    const startOrder = (job) => {
+      const order = bom.orders.find((row) => row.id === job.orderId);
+      if (order && order.status === "released") { order.status = "in_progress"; bom.versions.orders[order.id] = version; orders.add(order.id); }
+    };
+    // ผูกงาน: external_ref, งาน queued → in_progress, ใบ released → in_progress
+    for (const item of ops.link) {
+      const job = bom.jobs.find((row) => row.id === item.job);
+      job.externalRef = { system: "rubberflow", woId: item.woId, kg: item.kg, linkedAt: at, by: actor.name };
+      if (job.status === "queued") job.status = "in_progress";
+      touchJob(job);
+      startOrder(job);
+    }
+    // ป้อนกลับครั้งเดียวต่อ WO: รายงาน good = ยอดผลิตของ WO ใบนี้ qtyDone = เดิม + ยอดผลิต · ข้ามเมื่อป้อนไปแล้ว / ไม่พบงาน / งานไม่ชี้มา WO นี้ / ใบไม่ใช่ released-in_progress / งาน done แล้ว
+    for (const item of ops.complete) {
+      const job = bom.jobs.find((row) => row.id === item.job);
+      const order = job ? bom.orders.find((row) => row.id === job.orderId) : null;
+      if (rfMaster.fed[item.woId] || !job || job.externalRef?.woId !== item.woId || !["released", "in_progress"].includes(order?.status) || job.status === "done") continue;
+      job.reports = [...(job.reports ?? []), { at, by: actor.name, good: item.produced, reject: 0, note: `จาก WO ${item.woId}` }];
+      job.qtyDone = Math.round((Number(job.qtyDone) + item.produced) * 1e4) / 1e4;
+      job.status = job.qtyDone + 1e-9 >= Number(job.qtyPlanned) ? "done" : "in_progress";
+      if (job.status === "done") job.doneAt = job.doneAt ?? at; else delete job.doneAt;
+      touchJob(job);
+      startOrder(job);
+      rfMaster.fed[item.woId] = at;
+    }
+    // ยกเลิก WO: ล้างการผูกของงาน (คงยอดและรายงานเดิม) ต่อรายงานหมายเหตุของระบบ good = 0 · ข้ามเมื่อไม่พบงานหรืองานไม่ชี้มา WO นี้
+    for (const item of ops.unlink) {
+      const job = bom.jobs.find((row) => row.id === item.job);
+      const order = job ? bom.orders.find((row) => row.id === job.orderId) : null;
+      // ใบ PI ที่ปิด/ยกเลิกแล้ว หรืองานที่ done แล้ว ไม่ถูกแตะ (เงื่อนไขเดียวกับ rf_unlink_job)
+      if (!job || job.externalRef?.woId !== item.woId || !["released", "in_progress"].includes(order?.status) || job.status === "done") continue;
+      job.externalRef = null;
+      job.reports = [...(job.reports ?? []), { at, by: actor.name, good: 0, reject: 0, note: `WO ${item.woId} ถูกยกเลิก` }];
+      touchJob(job);
+    }
+    rfPersist(); // fed
+    if (!jobs.size && !orders.size) return;
+    bom.version = version;
+    const detail = [jobs.size ? `jobs +${jobs.size}` : "", orders.size ? `orders +${orders.size}` : ""].filter(Boolean).join(", ");
+    bom.audit = [...bom.audit, { at: iso(at), user: actor.name, action: `rubberflow:${action}`, detail, entries: [] }].slice(-2000);
+    bomPersist();
+  }
   const RPC = {
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
@@ -723,6 +1021,59 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       bomMaster.version = version; // ตัวนับไม่ถูกตั้งกลับ · epoch ใหม่บอก client เก่าให้โหลดทั้งชุด
       bomMaster.audit = [...audit, { at: iso(now()), user: bomActor().name, action: "ล้างข้อมูล BOM ทดสอบ", detail: `ลบ ${deleted} แถว`, entries: [] }];
       bomPersist();
+      return { deleted };
+    },
+    app_rf_master() {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      return rfView(rfLoad());
+    },
+    app_rf_master_since({ p_version }) {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      const current = rfLoad();
+      if (!Number.isInteger(p_version) || p_version < 0 || p_version > current.version) fail("RF_INVALID_PAYLOAD");
+      return rfDelta(current, p_version);
+    },
+    app_rf_save({ p_changes, p_base_version, p_action, p_audit, p_epoch }) {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      const actor = bomActor();
+      const current = rfLoad();
+      // client ถือข้อมูลของรอบก่อนล้างข้อมูลทดสอบ: ไม่เขียนอะไร (null / ไม่ส่ง = ไม่ตรวจ)
+      if (p_epoch !== undefined && p_epoch !== null && p_epoch !== current.epoch) fail("RF_RESET");
+      if (typeof p_action !== "string" || !RF_ACTIONS.includes(p_action)) fail("RF_INVALID_ACTION");
+      if (!p_changes || typeof p_changes !== "object" || Array.isArray(p_changes)) fail("RF_INVALID_PAYLOAD");
+      if (!Number.isInteger(p_base_version) || p_base_version < 0 || p_base_version > current.version) fail("RF_INVALID_PAYLOAD");
+      const auditIn = p_audit === undefined || p_audit === null ? [] : p_audit;
+      if (!Array.isArray(auditIn) || auditIn.length > 20 || auditIn.some((entry) => !entry || typeof entry.action !== "string" || !entry.action || entry.action.length > 80 || typeof entry.detail !== "string" || entry.detail.length > 300)) fail("RF_INVALID_PAYLOAD");
+      const at = now();
+      const { next, ops, wrote } = rfApply(current, p_changes, p_base_version, actor, at, p_action);
+      // ไม่มีระเบียนไหนเปลี่ยนจริง (ทุกเรคอร์ดตรงกับที่เก็บ) = ไม่เพิ่มเวอร์ชัน ไม่เขียน audit คืนส่วนต่างตั้งแต่ base (เหมือน RPC จริง)
+      if (!wrote) return rfDelta(current, p_base_version);
+      next.version = current.version + 1;
+      const counts = Object.keys(p_changes).sort().map((key) => { const up = p_changes[key]?.upsert?.length ?? 0; return up ? `${key} +${up}` : ""; }).filter(Boolean).join(", ");
+      next.audit = [...next.audit, { at: iso(at), user: actor.name, action: p_action, detail: counts, entries: auditIn.map((entry) => ({ action: entry.action, detail: entry.detail })) }].slice(-2000);
+      rfMaster = next;
+      rfPersist();
+      rfApplyBomOps(ops, actor, at, p_action);
+      return rfDelta(rfMaster, p_base_version);
+    },
+    app_rf_audit({ p_limit } = {}) {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      const limit = p_limit === undefined || p_limit === null ? 200 : p_limit;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail("RF_INVALID_PAYLOAD");
+      return [...rfLoad().audit].reverse().slice(0, limit);
+    },
+    // ล้างข้อมูล RubberFlow ทดสอบ: เฉพาะ admin ตัวจริง · เวอร์ชันไม่ถูกตั้งกลับ epoch ใหม่ · งาน BOM ที่ผูก WO เดิมไว้ไม่ถูกแตะ
+    app_sandbox_purge_rf() {
+      // admin จริงเท่านั้น (NOT_AUTHORIZED) ที่อยู่ในโหมดทดสอบ (SANDBOX_NOT_ACTIVE) ตรงกับ app_sandbox_purge_rf
+      if (roles.find((row) => row.id === ME.role_id)?.code !== "admin") fail("NOT_AUTHORIZED");
+      if (!sandbox) fail("SANDBOX_NOT_ACTIVE");
+      const current = rfLoad();
+      const deleted = RF_LISTS.reduce((sum, list) => sum + current[list].length, 0);
+      const { version, audit } = current;
+      rfMaster = freshRf();
+      rfMaster.version = version;
+      rfMaster.audit = [...audit, { at: iso(now()), user: bomActor().name, action: "ล้างข้อมูล RubberFlow ทดสอบ", detail: `ลบ ${deleted} แถว`, entries: [] }];
+      rfPersist();
       return { deleted };
     },
     // โหมดทดสอบ: ทำหน้าที่เป็นบัญชีทดสอบ — หน้าเว็บตั้ง state.employee เป็น persona ที่เลือก (ตัวแรกใช้แถวของผู้ใช้จำลองเอง ที่เหลือเป็นพนักงานของแต่ละแผนก)

@@ -24,8 +24,8 @@
       return ui.kv([["วัตถุดิบ", esc(material?.name ?? "-")], ["คงเหลือ", esc(`${fmtNum(it.qtyKg, 2)} kg`)], ["หมดอายุ", esc(fmtDate(it.expiry))], ["สถานะ", ui.status(lotState(it, now))], ["ที่เก็บ", esc(it.location)]]);
     }
     if (hit.kind === "lot") return ui.kv([["ขั้นตอน", esc(STAGE_LABEL[it.stage])], ["ใบสั่งผลิต", ui.mono(it.orderId)], ["งานดี", esc(`${fmtNum(it.goodQty, 2)} ${it.uom}`)], ["QC", ui.status(it.qc)], ["บันทึกเมื่อ", esc(`${fmtDateTime(it.createdAt)} · ${it.operator ?? "-"}`)]]);
-    if (hit.kind === "box") return ui.kv([["สินค้า", esc(it.productName)], ["จำนวน", esc(`${fmtNum(it.qty)} ${it.uom}`)], ["เกรด", esc(it.grade)], ["สถานะ", ui.status(it.status)], ["ล็อตต้นทาง", ui.mono(it.lotId)]]);
-    if (hit.kind === "order") return ui.kv([["ลูกค้า", esc(it.customer)], ["สินค้า", esc(it.productName)], ["ความคืบหน้า", esc(`${fmtNum(it.producedQty)} / ${fmtNum(it.targetQty)} ${it.uom}`)], ["สถานะ", ui.status(it.status)]]);
+    if (hit.kind === "box") return ui.kv([["สินค้า", esc(rules.orderLabel(it))], ["จำนวน", esc(`${fmtNum(it.qty)} ${it.uom}`)], ["เกรด", esc(it.grade)], ["สถานะ", ui.status(it.status)], ["ล็อตต้นทาง", ui.mono(it.lotId)]]);
+    if (hit.kind === "order") return ui.kv([["ลูกค้า", esc(it.customer)], ["สินค้า", esc(rules.orderLabel(it))], ["ความคืบหน้า", esc(`${fmtNum(it.producedQty)} / ${fmtNum(it.targetQty)} ${it.uom}`)], ["สถานะ", ui.status(it.status)]]);
     if (hit.kind === "transfer") return ui.kv([["เส้นทาง", esc(`${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`)], ["ล็อต", ui.mono(it.lotId)], ["จำนวน", esc(`${it.qtySent} ${it.uom}`)], ["สถานะ", ui.status(it.status)]]);
     if (hit.kind === "requisition") return ui.kv([["ใบสั่งผลิต", ui.mono(it.orderId)], ["จำนวน", esc(`${it.batches} batch · ${fmtNum(it.totalKg, 2)} kg`)], ["สถานะ", ui.status(it.status)]]);
     return ui.kv([["ชื่อ", esc(it.name)], ["รอบตั้งแต่ล้าง", esc(`${fmtNum(it.usageSinceClean)} / ${fmtNum(it.cleanEvery)}`)]]);
@@ -114,7 +114,7 @@
     const order = data.orders.find((row) => row.id === (it.orderId || it.id));
     const rows = [];
     if (kind === "lot") rows.push(["ขั้นตอน", STAGE_LABEL[it.stage]], ["จำนวนงานดี", `${fmtNum(it.goodQty, 2)} ${it.uom}`], ["QC", String(it.qc).toUpperCase()], ["ล็อตต้นทาง", derive.parentLotIds(data, it).join(", ") || (it.sources?.[0]?.id ?? "-")]);
-    if (kind === "box") rows.push(["สินค้า", it.productName], ["จำนวน", `${fmtNum(it.qty)} ${it.uom}`], ["เกรด", it.grade], ["ล็อตตกแต่ง", it.lotId]);
+    if (kind === "box") rows.push(["สินค้า", rules.orderLabel(it)], ["จำนวน", `${fmtNum(it.qty)} ${it.uom}`], ["เกรด", it.grade], ["ล็อตตกแต่ง", it.lotId]);
     if (kind === "material") { const material = data.materials.find((row) => row.code === it.materialCode); rows.push(["วัตถุดิบ", material?.name ?? "-"], ["รับเข้า", `${fmtNum(it.initialKg, 2)} kg`], ["หมดอายุ", fmtDate(it.expiry)], ["ผู้ขาย", it.supplier]); }
     if (kind === "requisition") rows.push(["จำนวน", `${it.batches} batch · ${fmtNum(it.totalKg, 2)} kg`], ["รายการ", `${it.lines.length} ล็อตวัตถุดิบ`]);
     if (kind === "transfer") rows.push(["เส้นทาง", `${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`], ["ล็อต", it.lotId], ["จำนวนส่ง", `${it.qtySent} ${it.uom}`]);
@@ -123,7 +123,7 @@
     const body = `<div class="rf-tag rf-printable"><div class="rf-stack rf-tight">
         <div class="small">${esc(COMPANY.name)}</div><div class="rf-tag-code rf-mono">${esc(code)}</div>
         <div><strong>${esc(KIND_LABEL[kind])}</strong>${order && kind !== "order" ? ` · ${esc(order.id)}` : ""}</div>
-        ${order ? `<div class="small">${esc(`${order.productName} · ${order.customer}`)}</div>` : ""}
+        ${order ? `<div class="small">${esc(`${rules.orderLabel(order)} · ${order.customer}`)}</div>` : ""}
         <table class="rf-tag-table small"><tbody>${rows.map(([key, value]) => `<tr><td>${esc(key)}</td><td><strong>${esc(value ?? "-")}</strong></td></tr>`).join("")}</tbody></table>
         <div class="small">พิมพ์เมื่อ ${esc(fmtDateTime(Date.now()))}</div></div>${ui.barcode(code)}</div>`;
     const html = ui.dialog("tag", "ป้ายติดตามงาน (Traveler Tag)", body, { footer: `${ui.closeButton("ปิด")}${printButton(ui)}` });
@@ -137,7 +137,7 @@
     const lot = data.lots.find((row) => row.id === lotId);
     if (!lot) return null;
     const order = data.orders.find((row) => row.id === lot.orderId);
-    const recipe = data.recipes.find((row) => row.id === order?.recipeId);
+    const recipe = order ? rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision) : undefined;
     // รวบรวมผลแล็บจากล็อตนี้และทุกล็อตต้นทาง
     const chain = [];
     const walk = (current) => { chain.push(current); derive.parentLotIds(data, current).forEach((parentId) => { const parent = data.lots.find((row) => row.id === parentId); if (parent) walk(parent); }); };
@@ -150,7 +150,7 @@
     const boxes = data.fgBoxes.filter((box) => box.lotId === lot.id);
     const body = `<div class="rf-doc rf-printable rf-stack">
         <div class="rf-row rf-between"><div><h2>CERTIFICATE OF ANALYSIS</h2><div class="small">${esc(COMPANY.name)}<br>${esc(COMPANY.address)}</div></div>${ui.barcode(lot.id, { height: 36 })}</div>
-        ${ui.kv([["ลูกค้า", esc(`${order?.customer ?? "-"} (PO ${order?.customerPo || "-"})`)], ["สินค้า", esc(`${order?.productCode ?? "-"} · ${order?.productName ?? "-"}`)], ["สูตร", esc(`${recipe?.id ?? "-"} Rev.${recipe?.revision ?? "-"}`)], ["ล็อต", `${ui.mono(lot.id)} ${esc(`(ผลิต ${fmtDate(lot.createdAt)})`)}`],
+        ${ui.kv([["ลูกค้า", esc(`${order?.customer ?? "-"} (PO ${order?.customerPo || "-"})`)], ["สินค้า", esc(order?.productCode || "-")], ["สูตร", esc(`${recipe?.id ?? "-"} Rev.${recipe?.revision ?? "-"}`)], ["ล็อต", `${ui.mono(lot.id)} ${esc(`(ผลิต ${fmtDate(lot.createdAt)})`)}`],
           ["จำนวน", esc(`${rules.fmtNum(lot.goodQty)} ${lot.uom} · ${boxes.length} กล่อง · เกรด ${lot.grade || "A"}`)], curing ? ["สภาวะอบ", esc(`${curing.params.temp}°C · ${curing.params.time} s · ${curing.params.pressure} bar (${curing.id})`)] : null])}
         ${ui.table(["รายการทดสอบ", "วิธีทดสอบ", "สเปก", "ผลทดสอบ", "ผล"], Object.entries(SPECS.lab).map(([key, spec]) => `<tr><td>${esc(spec.label)}</td><td>${esc(spec.method)}</td><td>${esc(specText(spec))}</td><td>${esc(latest[key] ? `${latest[key].value} ${spec.unit}` : "ไม่ได้ทดสอบ")}</td><td>${esc(latest[key] ? (latest[key].pass ? "PASS" : "FAIL") : "-")}</td></tr>`), { className: "rf-doc-table" })}
         <div><strong>${esc(`สรุปผล: ${allPass ? "ผ่านเกณฑ์ (ACCEPTED)" : "ยังไม่สามารถรับรองได้"}`)}</strong></div>

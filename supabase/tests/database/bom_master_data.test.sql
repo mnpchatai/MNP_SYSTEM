@@ -153,6 +153,13 @@ select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem'
 
 -- 6. PP staff บันทึกครั้งแรก (นำเข้า) -------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+-- สูตร RubberFlow ที่คอมปาวด์ผูกไว้ต้องมีอยู่จริง (private.bom_save_compounds ตรวจ recipeId กับ rf_recipes ตั้งแต่ 20261107010000_rubberflow_core.sql) ใส่ตรงแบบงานระบบ
+reset role;
+insert into public.rf_recipes (is_test, recipe_code, revision, product_code, uom, batch_kg, stages, yield_per_kg, items, status)
+values (true, 'RC-EPDM-DS01', 1, 'DS-1825', 'm', 60,
+  '[{"stage":1,"mixerTemp":80,"dumpTemp":115,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":140,"mixMin":2}]'::jsonb, 6.1,
+  '[{"materialCode":"EPDM-55","phr":100,"stage":1}]'::jsonb, 'draft');
+set local role authenticated;
 select set_config('test.s1', $json$
 {
  "compounds": {"upsert": [{"code": "DM01", "name": "EPDM ส้ม", "recipeId": "RC-EPDM-DS01", "recipeName": "EPDM ซีล"}]},

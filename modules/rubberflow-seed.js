@@ -39,30 +39,33 @@
 
   const RECIPES = [
     {
-      id: "RC-EPDM-DS01", name: "EPDM ซีลประตูรถยนต์ Rev.3", productCode: "DS-1825", productName: "ซีลยางประตูรถยนต์ 18×2.5",
-      uom: "m", batchKg: 60, dumpTemp: 140, dumpTol: 6, mixSec: 300, restHours: 4, yieldPerKg: 6.1, revision: 3,
+      id: "RC-EPDM-DS01", productCode: "DS-1825",
+      uom: "m", batchKg: 60, dumpTol: 6, restHours: 4, yieldPerKg: 6.1, revision: 3,
+      stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 115, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 140, mixMin: 2 }],
       items: [
-        { materialCode: "EPDM-55", phr: 100 }, { materialCode: "CB-N550", phr: 90 }, { materialCode: "OIL-PAR", phr: 50 },
-        { materialCode: "CACO3", phr: 30 }, { materialCode: "ZNO", phr: 5 }, { materialCode: "STA", phr: 1 },
-        { materialCode: "S-80", phr: 1.5 }, { materialCode: "TMTD", phr: 1 }, { materialCode: "CBS", phr: 1.5 },
+        { materialCode: "EPDM-55", phr: 100, stage: 1 }, { materialCode: "CB-N550", phr: 90, stage: 1 }, { materialCode: "OIL-PAR", phr: 50, stage: 1 },
+        { materialCode: "CACO3", phr: 30, stage: 1 }, { materialCode: "ZNO", phr: 5, stage: 1 }, { materialCode: "STA", phr: 1, stage: 1 },
+        { materialCode: "S-80", phr: 1.5, stage: 2 }, { materialCode: "TMTD", phr: 1, stage: 2 }, { materialCode: "CBS", phr: 1.5, stage: 2 },
       ],
     },
     {
-      id: "RC-NBR-OR02", name: "NBR โอริงทนน้ำมัน Rev.2", productCode: "OR-4030", productName: "โอริง NBR 40×3 mm",
-      uom: "pcs", batchKg: 40, dumpTemp: 120, dumpTol: 5, mixSec: 240, restHours: 4, yieldPerKg: 240, revision: 2,
+      id: "RC-NBR-OR02", productCode: "OR-4030",
+      uom: "pcs", batchKg: 40, dumpTol: 5, restHours: 4, yieldPerKg: 240, revision: 2,
+      stages: [{ stage: 1, mixerTemp: 75, dumpTemp: 100, mixMin: 2 }, { stage: 2, mixerTemp: 85, dumpTemp: 120, mixMin: 2 }],
       items: [
-        { materialCode: "NBR-33", phr: 100 }, { materialCode: "CB-N330", phr: 60 }, { materialCode: "ZNO", phr: 5 },
-        { materialCode: "STA", phr: 1 }, { materialCode: "S-80", phr: 1.8 }, { materialCode: "CBS", phr: 1.2 },
-        { materialCode: "AO-6PPD", phr: 2 },
+        { materialCode: "NBR-33", phr: 100, stage: 1 }, { materialCode: "CB-N330", phr: 60, stage: 1 }, { materialCode: "ZNO", phr: 5, stage: 1 },
+        { materialCode: "STA", phr: 1, stage: 1 }, { materialCode: "S-80", phr: 1.8, stage: 2 }, { materialCode: "CBS", phr: 1.2, stage: 2 },
+        { materialCode: "AO-6PPD", phr: 2, stage: 1 },
       ],
     },
     {
-      id: "RC-NR-AM01", name: "NR ยางกันสะเทือน (ร่าง)", productCode: "AM-6040", productName: "ยางกันสะเทือนแท่นเครื่อง 60×40",
-      uom: "pcs", batchKg: 50, dumpTemp: 130, dumpTol: 6, mixSec: 270, restHours: 6, yieldPerKg: 7.5, revision: 1,
+      id: "RC-NR-AM01", productCode: "AM-6040",
+      uom: "pcs", batchKg: 50, dumpTol: 6, restHours: 6, yieldPerKg: 7.5, revision: 1,
+      stages: [{ stage: 1, mixerTemp: 70, dumpTemp: 105, mixMin: 3 }, { stage: 2, mixerTemp: 80, dumpTemp: 130, mixMin: 2 }],
       items: [
-        { materialCode: "NR-SVR10", phr: 100 }, { materialCode: "CB-N330", phr: 45 }, { materialCode: "ZNO", phr: 5 },
-        { materialCode: "STA", phr: 2 }, { materialCode: "S-80", phr: 2.5 }, { materialCode: "CBS", phr: 1.2 },
-        { materialCode: "AO-6PPD", phr: 1.5 },
+        { materialCode: "NR-SVR10", phr: 100, stage: 1 }, { materialCode: "CB-N330", phr: 45, stage: 1 }, { materialCode: "ZNO", phr: 5, stage: 1 },
+        { materialCode: "STA", phr: 2, stage: 1 }, { materialCode: "S-80", phr: 2.5, stage: 2 }, { materialCode: "CBS", phr: 1.2, stage: 2 },
+        { materialCode: "AO-6PPD", phr: 1.5, stage: 1 },
       ],
     },
   ];
@@ -88,7 +91,7 @@
 
   function emptyState() {
     return {
-      version: 1,
+      version: 2, // ตรงกับ STATE_VERSION ของ rubberflow-store.js
       counters: {},
       users: USERS.map((user) => ({ ...user })),
       materials: MATERIALS.map((material) => ({ ...material })),
@@ -167,7 +170,10 @@
       const kg = recipeLines(recipe).reduce((sum, line) => sum + line.kgPerBatch, 0);
       const mx = A.recordMixing(d, {
         reqId, machine: isM ? "KN-01 Kneader 75L" : "BM-02 Banbury 110L", shift: "D",
-        dumpTemp: r1(gauss(recipe.dumpTemp, recipe.dumpTol / 3.2)), mixSec: Math.round(gauss(recipe.mixSec, 8)),
+        stages: recipe.stages.map((row) => ({
+          stage: row.stage, mixerTemp: r1(gauss(row.mixerTemp, 1.5)),
+          dumpTemp: r1(gauss(row.dumpTemp, recipe.dumpTol / 3.2)), mixMin: r1(gauss(row.mixMin, 0.1)),
+        })),
         outputKg: r1(kg * (0.985 + rnd() * 0.008), 2), scrapKg: r1(kg * 0.004, 2), scrapReason: "เศษติดใบโรเตอร์",
       }, at(start + HOUR, "mixer"));
       const mxLot = d.lots.find((lot) => lot.id === mx);
@@ -266,7 +272,13 @@
     return d;
   }
 
-  const api = { USERS, MATERIALS, emptyState, buildSeed };
+  // โหมดฐานข้อมูล: ฐานข้อมูลเริ่มว่าง (ไม่มีชุดสาธิต) ส่วนที่ยังอยู่ในเครื่องมีแต่แม่พิมพ์/หัวดายตั้งต้น (เครื่องมือของโรงงาน ไม่ใช่ข้อมูลธุรกรรม) ใช้เป็นข้อมูลตั้งต้นของไฟล์ local
+  function localSeed(now = Date.now()) {
+    const { DAY } = rules();
+    return { molds: MOLDS.map((mold) => ({ ...mold, usageSinceClean: 0, lastCleanAt: now - 9 * DAY })) };
+  }
+
+  const api = { USERS, MATERIALS, MOLDS, emptyState, buildSeed, localSeed };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_SEED = api;
 })(typeof window !== "undefined" ? window : globalThis);

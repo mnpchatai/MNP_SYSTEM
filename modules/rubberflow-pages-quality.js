@@ -31,7 +31,7 @@
     } else {
       section = ui.card(ui.table(["ล็อตสินค้าสำเร็จรูป", "ลูกค้า / สินค้า", { label: "จำนวน", className: "right" }, "QC", { label: "", className: "right" }], finLots.map((lot) => {
         const order = data.orders.find((row) => row.id === lot.orderId);
-        return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(fmtDate(lot.createdAt))}</div></td><td>${esc(order?.customer ?? "")}<div class="small muted">${esc(order?.productName ?? "")}</div></td><td class="right">${esc(`${fmtNum(lot.goodQty)} ${lot.uom}`)}<div class="small muted">${esc(`${lot.boxes} กล่อง`)}</div></td><td>${ui.status(lot.qc)}</td><td class="right">${ui.openButton("เปิด CoA", "coa", { lotId: lot.id }, { className: "secondary small" })}</td></tr>`;
+        return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(fmtDate(lot.createdAt))}</div></td><td>${esc(order?.customer ?? "")}<div class="small muted">${esc(order ? rules.orderLabel(order) : "")}</div></td><td class="right">${esc(`${fmtNum(lot.goodQty)} ${lot.uom}`)}<div class="small muted">${esc(`${lot.boxes} กล่อง`)}</div></td><td>${ui.status(lot.qc)}</td><td class="right">${ui.openButton("เปิด CoA", "coa", { lotId: lot.id }, { className: "secondary small" })}</td></tr>`;
       }), { emptyText: "ยังไม่มีล็อตสินค้าสำเร็จรูป" }), { flush: true });
     }
     const actions = decide ? `${ui.openButton("เปิด NCR", "ncr", {}, { className: "secondary" })}${ui.openButton("บันทึกผลตรวจ", "qcRecord", {}, { className: "" })}` : "";
@@ -99,7 +99,7 @@
       ...["thickness", "width", "weightPerM"].map((key) => ({ id: `ex.${key}`, label: `ฉีด · ${SPECS.extrusion[key].label}`, spec: SPECS.extrusion[key], source: (d) => d.lots.filter((lot) => lot.stage === "extrusion").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
       ...["temp", "time", "pressure"].map((key) => ({ id: `cu.${key}`, label: `อบ · ${SPECS.curing[key].label}`, spec: SPECS.curing[key], source: (d) => d.lots.filter((lot) => lot.stage === "curing").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
       ...Object.entries(SPECS.lab).map(([key, spec]) => ({ id: `lab.${key}`, label: `แล็บ · ${spec.label}`, spec, source: (d) => d.qcRecords.flatMap((record) => record.tests.filter((test) => test.key === key).map((test) => ({ id: record.lotId, at: record.at, v: test.value }))) })),
-      { id: "mx.dump", label: "ผสม · Dump temp (สูตร EPDM)", spec: { label: "Dump temp", unit: "°C", target: 140, tol: 6 }, source: (d) => d.lots.filter((lot) => lot.stage === "mixing" && lot.recipeId === "RC-EPDM-DS01").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params.dumpTemp })) },
+      { id: "mx.dump", label: "ผสม · Dump temp ขั้น 2 (สูตร EPDM)", spec: { label: "Dump temp", unit: "°C", target: 140, tol: 6 }, source: (d) => d.lots.filter((lot) => lot.stage === "mixing" && lot.recipeId === "RC-EPDM-DS01").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params?.stages?.find((row) => Number(row.stage) === 2)?.dumpTemp })) },
     ];
   };
 
@@ -170,7 +170,7 @@
       let sub = "";
       let statusValue = null;
       if (treeNode.kind === "lot") { sub = `${STAGE_LABEL[it.stage]} · ${fmtNum(it.goodQty, 2)} ${it.uom} · ${fmtDateTime(it.createdAt)}`; statusValue = it.qc; }
-      if (treeNode.kind === "box") { sub = `กล่อง · ${it.productName} · ${fmtNum(it.qty)} ${it.uom}`; statusValue = it.status; }
+      if (treeNode.kind === "box") { sub = `กล่อง · ${rules.orderLabel(it)} · ${fmtNum(it.qty)} ${it.uom}`; statusValue = it.status; }
       if (treeNode.kind === "requisition") sub = `ใบเบิก · ${it.batches} batch · ${fmtNum(it.totalKg, 1)} kg`;
       if (treeNode.kind === "material") { const material = data.materials.find((row) => row.code === it?.materialCode); sub = `วัตถุดิบ · ${material?.name ?? "-"}${treeNode.kg ? ` · ใช้ ${fmtNum(treeNode.kg, 3)} kg` : ""} · ${it?.supplier ?? "-"}`; }
       return `<li><div class="rf-node${treeNode.id === hitId ? " is-hit" : ""}"><div class="rf-row"><strong class="rf-mono">${esc(treeNode.id)}</strong>${statusValue ? ui.status(statusValue) : ""}</div><div class="small muted">${esc(sub)}</div></div>${treeNode.children?.length ? `<ul class="rf-tree">${treeNode.children.map(node).join("")}</ul>` : ""}</li>`;
