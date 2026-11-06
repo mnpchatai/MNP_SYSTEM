@@ -53,7 +53,14 @@
       return data;
     },
   } : null;
-  const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing() });
+  // WO ของ RubberFlow ที่โหลดจากฐานข้อมูลแล้ว (null = ยังไม่โหลด หรือเป็นโหมดในเครื่อง) · ใช้ตัดสินว่างานที่ผูก WO เริ่มแล้วหรือยัง
+  const loadedRfOrders = () => {
+    try {
+      const rf = window.MNP_RUBBERFLOW?.store;
+      return rf?.isRemote?.() && rf.status() === "ready" ? rf.data().orders ?? null : null;
+    } catch { return null; }
+  };
+  const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(), rfOrders: loadedRfOrders });
   window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params) };
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
@@ -213,8 +220,12 @@
     }
     // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
     result.saving.then((outcome) => {
-      if (outcome.ok) report();
-      else showToast(friendlyError(outcome.error), "error");
+      if (!outcome.ok) { showToast(friendlyError(outcome.error), "error"); return; }
+      report();
+      const notice = actions.helpers.rubberflowNotice(name, payload, outcome.rubberflow);
+      if (notice) showToast(notice.text, notice.type);
+      // WO ที่ฐานข้อมูลเปิด/ยกเลิกให้ ตามทันฝั่ง RubberFlow ให้เลข WO และหน้าของ RubberFlow เป็นปัจจุบัน
+      if (outcome.rubberflow) { try { window.MNP_RUBBERFLOW?.store?.catchUp?.(); } catch { /* RubberFlow ตามทันเองตอนเปิดหน้า */ } }
     });
     return true;
   }

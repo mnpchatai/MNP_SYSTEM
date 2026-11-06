@@ -13,6 +13,7 @@ globalThis.MNP_BOM_RULES = rules;
 const A = require("../../modules/bom-actions.js");
 globalThis.MNP_BOM_ACTIONS = A;
 const storeApi = require("../../modules/bom-store.js");
+globalThis.MNP_RUBBERFLOW_RULES = require("../../modules/rubberflow-rules.js"); // Supabase จำลองของ harness ใช้กฎสเปก/FEFO ของ RubberFlow ตอนบันทึกชุดหน้างาน
 
 const NOW = Date.parse("2026-11-05T10:00:00+07:00");
 const SERVER_AT = NOW + 60000;
@@ -1495,8 +1496,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-wh", "persona-qa"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "wh", "viewer"], "each persona maps to a different BOM role (the RB head is a department manager)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-qa"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "viewer"], "each persona maps to a BOM role (the RB head is a department manager; SR and QA are not BOM departments)");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
   assert.equal((await client.rpc("app_sandbox_status")).data.persona.department.code, "RB");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "nobody" })).error.code, "PERSONA_NOT_FOUND");
@@ -2394,7 +2395,7 @@ test("RubberFlow in database mode: loading state, no demo role picker or reset, 
   assert.match(html, /Rev\.2/, "the order shows the recipe revision it was opened with");
   assert.match(html, /data-rf-open="createOrder"/);
   const close = dialogs.closeOrder(head.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=orders")), { id: order.result });
-  assert.match(close.html, /name="producedQty"/);
+  assert.doesNotMatch(close.html, /name="producedQty"/, "the database counts the produced quantity from the finishing lots; there is nothing to type");
   assert.match(close.html, /data-rf-form="setOrderStatus"/);
 
   // บันทึกการใช้งาน: บรรทัดหลักเป็นการกระทำที่เซิร์ฟเวอร์บันทึกเอง ภาษาไทย
@@ -2450,17 +2451,69 @@ test("the BOM 'create WO' dialog creates the WO through the RubberFlow store wit
   assert.doesNotMatch(again.html, /data-bom-rf-create/, "no second WO for a linked job");
   assert.doesNotMatch((await env.render("p=jobs&dept=RB")).split("<tr").find((row) => row.includes(">JOB-RB1<")) ?? "", /jobRubberflow/);
 
-  // ปิด WO ในฐานข้อมูล: ยอดผลิตกลับไปที่งาน
+  // ปิด WO ในฐานข้อมูล: ไม่ต้องมียอดผลิต และการปิดไม่ส่งยอดเข้างาน (ยอดเข้างานเกิดตอน SR รับมอบใบส่งมอบ)
   const head = await asPersona(scene, "persona-rbh");
   await rf(head).ensureLoaded();
   await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "released" }));
   await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "in_progress" }));
-  assert.equal(rf(head).run("setOrderStatus", { id: wo.id, status: "completed" }).ok, false, "a BOM-linked WO needs the produced quantity");
-  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "completed", producedQty: 10 }));
+  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "completed" }));
   const reopened = await asPersona(scene, "persona-rb"); // another page of the same database (the mock caches per page, so open a fresh one)
-  const job = reopened.store.data().jobs.find((row) => row.id === "JOB-RB1");
-  assert.deepEqual([job.qtyDone, job.status], [10, "done"]);
-  assert.equal(job.reports.at(-1).note, `จาก WO ${wo.id}`);
+  const closedJob = reopened.store.data().jobs.find((row) => row.id === "JOB-RB1");
+  assert.deepEqual([closedJob.qtyDone, closedJob.reports.length, closedJob.externalRef.woId], [0, 0, wo.id], "closing the WO feeds nothing back");
+});
+
+// SR รับมอบใบส่งมอบ → ฐานข้อมูลรายงานยอดเข้างาน BOM → หน้า RubberFlow ตามทัน BOM แล้วแจ้งผล (ใช้โมดูลจริงในหน้าจำลอง)
+test("when SR receives a transfer the module catches BOM up and says what the job received", async () => {
+  const { scene, rf } = await rfScene();
+  const admin = await asPersona(scene, "persona-1");
+  await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
+  await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
+  const env = await asPersona(scene, "persona-rb");
+  await rf(env).ensureLoaded();
+  // WO ที่ผูกงาน JOB-RB1 (10 เส้น เส้นละ 0.525 kg) ผ่านปุ่มของ BOM
+  const ctx = env.ctx("p=jobs&dept=RB");
+  const built = env.context.MNP_BOM_DIALOGS.jobRubberflow(ctx, { jobId: "JOB-RB1" });
+  const button = { handlers: {}, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  built.bind({ querySelector: (selector) => (selector === "[data-bom-rf-create]" ? button : null), close() {} }, ctx);
+  button.handlers.click({ currentTarget: button });
+  for (let turn = 0; turn < 8; turn += 1) await new Promise((resolve) => setTimeout0(resolve));
+  const wo = rf(env).data().orders.at(-1);
+  const head = await asPersona(scene, "persona-rbh");
+  await rf(head).ensureLoaded();
+  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "released" }));
+  // คลังรับวัตถุดิบ → RB เบิก ชั่ง ผสม ส่งมอบ
+  const st = await asPersona(scene, "persona-st");
+  await rf(st).ensureLoaded();
+  for (const code of ["EPDM-55", "CB-N550"]) await saved(rf(st).run("receiveMaterial", { materialCode: code, qtyKg: 40, expiry: NOW + 30 * 86400000 }));
+  // สถานีผลิตและ SR ใช้เวลาจริงของเครื่อง (เวลาบ่มของยางเทียบกับเวลาของหน้าและของฐานข้อมูลจำลองต้องเป็นนาฬิกาเดียวกัน)
+  const realClock = { mockOptions: { now: () => Date.now() } };
+  const rb = await asPersona(scene, "persona-rb", realClock);
+  await rf(rb).ensureLoaded();
+  const req = await saved(rf(rb).run("createRequisition", { orderId: wo.id, batches: 1 }));
+  const requisition = rf(rb).data().requisitions.find((row) => row.id === req.result);
+  for (let index = 0; index < requisition.lines.length; index += 1) await saved(rf(rb).run("weighLine", { reqId: req.result, index, actualKg: requisition.lines[index].targetKg }));
+  const lot = await saved(rf(rb).run("recordMixing", { reqId: req.result, machine: "KN-01 Kneader 75L", shift: "D", stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], outputKg: 10.5 }));
+  await saved(rf(rb).run("endRest", { lotId: lot.result }));
+  const transfer = await saved(rf(rb).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
+
+  // SR รับมอบ: ผ่านโมดูลของหน้า (ปุ่มรับมอบ) → ตามทัน BOM → แจ้งยอดที่งานได้รับ
+  const sr = await asPersona(scene, "persona-sr", realClock);
+  await rf(sr).ensureLoaded();
+  await sr.store.ensureLoaded();
+  const view = sr.context.MNP_RUBBERFLOW;
+  const before = view.bomJobOfTransfer(transfer.result);
+  assert.deepEqual(JSON.parse(JSON.stringify(before)), { id: "JOB-RB1", qtyDone: 0 }, "the module finds the BOM job that follows the transfer's WO");
+  const received = rf(sr).run("receiveTransfer", { id: transfer.result, qtyReceived: 10.5 });
+  assert.equal(received.ok, true, received.error?.message);
+  assert.equal(sr.store.data().jobs.find((row) => row.id === "JOB-RB1").qtyDone, 0, "the page does not touch the BOM job itself");
+  assert.equal((await received.saving).ok, true);
+  await view.showBomFeedback(before);
+  const job = sr.store.data().jobs.find((row) => row.id === "JOB-RB1");
+  assert.deepEqual([job.qtyDone, job.status, job.reports.length], [20, "done", 1], "10.5 kg ÷ 0.525 kg per piece = 20 pieces (more than the 10 planned: the job is done)");
+  assert.match(job.reports[0].note, new RegExp("^รับโอน " + transfer.result + " จาก WO " + wo.id + "$"));
+  assert.match(sr.log.toasts.at(-1)[0], /งาน BOM JOB-RB1 รับยอดจากการรับมอบแล้ว: ทำได้ 20\/10 \(งานครบแล้ว\)/);
+  // ใบส่งมอบของ WO ที่ไม่ผูกงาน BOM: ไม่มีงานให้ตามทัน
+  assert.equal(view.bomJobOfTransfer("TR-NOPE"), null);
 });
 
 test("RubberFlow's store holds other users' data back only for its own forms on its own page, so an open BOM dialog never blocks catching up after a duplicate WO number", async () => {
@@ -2499,7 +2552,7 @@ test("cancelling the WO in RubberFlow clears the job's link in BOM and the job o
   const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
   assert.match(again.html, /data-bom-rf-create/);
   assert.doesNotMatch(again.html, /ไว้แล้ว/);
-  assert.match(again.html, /ยอดผลิตจริงของ WO นั้นจะถูกบวกเพิ่ม/, "the dialog says the WO's output is added to the job");
+  assert.match(again.html, /แผนก SR รับมอบใบส่งมอบของ WO นั้น/, "the dialog says each SR receive adds its quantity to the job");
 });
 
 test("the compounds page and the link dialog list only recipes approved in the database, and the BOM page loads RubberFlow by itself", async () => {
@@ -2517,4 +2570,308 @@ test("the compounds page and the link dialog list only recipes approved in the d
   assert.match(dialog.html, /<option value="RC-TEST-01">/);
   assert.match(dialog.html, /ฐานข้อมูลไม่รับรหัสสูตรที่ไม่มีอยู่/);
   assert.doesNotMatch(dialog.html, /<input[^>]*name="recipeId"/, "a typed code would be refused by the database");
+});
+
+// ---------- ปล่อยผลิต PI แล้วฐานข้อมูลเปิด WO ใน RubberFlow ให้งาน RB เอง (ตรงกับ private.bom_open_rf_orders / bom_cancel_rf_orders) ----------
+const ymdLocal = (ms) => { const day = new Date(ms); return `${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`; };
+const TODAY_WO = `WO-${ymdLocal(NOW)}`;
+const rpcData = async (env, name, args) => { const out = await env.mock.client.rpc(name, args); assert.equal(out.error, null, out.error?.message); return out.data; };
+// ฉาก: สูตร RC-TEST-01 อนุมัติแล้ว + สูตรร่าง RC-DRAFT · เส้นยางหลายแบบ (คำนวณ กก. จากน้ำหนักชิ้น / กก. ต่อเส้น / บรรทัดสูตรยางใน BOM) · สูตรยางที่ไม่ผูก/ผูกสูตรร่าง · ใบ PI-S แบบร่างที่ระเบิดแล้วและสินค้า FG-RF
+async function autoWoScene() {
+  const { scene, rf } = await rfScene();
+  const head = await asPersona(scene, "persona-rbh");
+  await rf(head).ensureLoaded();
+  await saved(rf(head).run("createRecipe", { ...RF_RECIPE, id: "RC-DRAFT" }));
+  const admin = await asPersona(scene, "persona-1");
+  const run = async (name, payload) => saved(admin.store.run(name, payload));
+  const rod = (code, compound, extra = {}) => run("saveItem", saveItemPayload(code, { kind: "RB", name: `เส้นยาง ${code}`, uom: "pcs", rubber: { compound, color: "BK" }, ...extra }));
+  await run("saveItem", saveItemPayload("DM01", { kind: "CP", name: "EPDM ส้ม", uom: "kg" }));
+  await rod("RB-W", "DM01", { weightG: 500 });
+  await rod("RB-K", "DM01", { rubber: { compound: "DM01", kgPerRoll: 2 } });
+  await rod("RB-B", "DM01", { weightG: 100 });
+  await run("saveBom", { itemCode: "RB-B", lines: [{ childCode: "DM01", qty: 1.5, scrapPct: 2 }] });
+  await rod("RB-Z", "DM01"); // ไม่มีน้ำหนักชิ้นหรือ กก./เส้น
+  await rod("RB-NL", "DM02"); // สูตรยางไม่ผูกสูตร RubberFlow
+  await rod("RB-UA", "DM03"); // ผูกสูตรร่าง
+  await run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" });
+  await run("linkCompound", { code: "DM03", recipeId: "RC-DRAFT" });
+  await run("saveItem", saveItemPayload("FG-RF", { kind: "FG", name: "สินค้าเส้นยาง", uom: "set" }));
+  await run("saveBom", { itemCode: "FG-RF", lines: [{ childCode: "RB-W", qty: 2 }, { childCode: "RB-B", qty: 1 }] });
+  const draft = async (pi, fgCode = "FG-TEST-01", qty = 5) => {
+    const order = await run("createOrder", newOrder({ pi }));
+    await run("addOrderItem", { orderId: order.result, fgCode, qty });
+    await run("explodeOrder", { orderId: order.result });
+    return order.result;
+  };
+  // ปล่อยผลิตด้วยงานที่กำหนดเอง (ตรงกับคำสั่งที่ฐานข้อมูลรับ) · คืนคำตอบดิบของ RPC
+  const releaseWith = async (id, jobs) => {
+    const stored = await rpcData(admin, "app_bom_master");
+    const order = stored.orders.find((row) => row.id === id);
+    return admin.mock.client.rpc("app_bom_save_master", { p_changes: { orders: { upsert: [{ ...order, status: "released", releasedAt: NOW, releasedBy: "x" }] }, jobs: { upsert: jobs } }, p_base_version: stored.version, p_action: "releaseOrder" });
+  };
+  const call = async (changes, action) => admin.mock.client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: (await rpcData(admin, "app_bom_master")).version, p_action: action });
+  return { scene, rf, admin, head, run, draft, releaseWith, call };
+}
+const rfOrderOf = async (env, id) => (await rpcData(env, "app_rf_master")).orders.find((row) => row.id === id);
+
+test("releasing a PI opens one planned WO per RB job that can be served (numbers, fields, kilograms, link) and says why the others were skipped", async () => {
+  const s = await autoWoScene();
+  const id = await s.draft("PI-S");
+  const rfBefore = await rpcData(s.admin, "app_rf_master");
+  const bomBefore = await rpcData(s.admin, "app_bom_master");
+  const late = NOW - 2 * 86400000;
+  const jobs = [
+    mockJob("JOB-A1", id, "RB", { itemCode: "RB-W", qtyPlanned: 10 }), // 10 x 500 g = 5 kg + 5%
+    mockJob("JOB-A2", id, "RB", { itemCode: "RB-K", qtyPlanned: 10, dueAt: late }), // 10 x 2 kg + 5%, due date already passed
+    mockJob("JOB-A3", id, "RB", { itemCode: "RB-B", qtyPlanned: 10 }), // first BOM line: 10 x 1.5 kg x 1.02
+    mockJob("JOB-S1", id, "RB", { itemCode: "RB-GHOST" }),
+    mockJob("JOB-S2", id, "RB", { itemCode: "RB-NL" }),
+    mockJob("JOB-S3", id, "RB", { itemCode: "RB-UA" }),
+    mockJob("JOB-S4", id, "RB", { itemCode: "RB-Z" }),
+    mockJob("JOB-G1", id, "GR"),
+  ];
+  const reply = await s.releaseWith(id, jobs);
+  assert.equal(reply.error, null, reply.error?.message);
+  const rubberflow = reply.data.rubberflow;
+  assert.deepEqual(rubberflow.opened, [
+    { jobId: "JOB-A1", woId: `${TODAY_WO}-01`, kg: 5.25 },
+    { jobId: "JOB-A2", woId: `${TODAY_WO}-02`, kg: 21 },
+    { jobId: "JOB-A3", woId: `${TODAY_WO}-03`, kg: 15.3 },
+  ], "consecutive numbers within one release, ordered by job number, kilograms like the job dialog");
+  assert.deepEqual(rubberflow.skipped, [
+    { jobId: "JOB-S1", itemCode: "RB-GHOST", reason: "ไม่มีรหัสสูตรยาง" },
+    { jobId: "JOB-S2", itemCode: "RB-NL", reason: "ยังไม่ผูกสูตร RubberFlow" },
+    { jobId: "JOB-S3", itemCode: "RB-UA", reason: "สูตร RC-DRAFT ยังไม่อนุมัติ" },
+    { jobId: "JOB-S4", itemCode: "RB-Z", reason: "คำนวณกิโลกรัมไม่ได้" },
+  ]);
+  assert.deepEqual(rubberflow.cancelled, []);
+  assert.equal(reply.data.version, bomBefore.version + 1, "the BOM counter moves once");
+
+  const first = await rfOrderOf(s.admin, `${TODAY_WO}-01`);
+  const start = new Date(NOW).setHours(0, 0, 0, 0);
+  assert.deepEqual({ ...first, createdAt: 0 }, {
+    id: `${TODAY_WO}-01`, customer: "Acme Trading", customerPo: id, recipeId: "RC-TEST-01", recipeRevision: 1, productCode: "P-TEST", uom: "pcs", color: "BK",
+    targetQty: 10, producedQty: 0, startDate: start, dueDate: NOW + 86400000, priority: "normal", status: "planned", sourceJobId: "JOB-A1", targetKg: 5.25, kgPerUnit: 0.525,
+    note: `จาก BOM งาน JOB-A1 · PI ${id} · RB-W 10 pcs ≈ 5.25 kg · เปิดอัตโนมัติตอนปล่อยใบ`, createdAt: 0, createdBy: first.createdBy,
+  });
+  assert.ok(first.createdBy, "created by the planner who released");
+  const urgent = await rfOrderOf(s.admin, `${TODAY_WO}-02`);
+  assert.deepEqual([urgent.priority, urgent.dueDate], ["urgent", start], "an overdue job is urgent and the WO is due no earlier than today");
+
+  const stored = await rpcData(s.admin, "app_bom_master");
+  const a1 = stored.jobs.find((row) => row.id === "JOB-A1");
+  assert.deepEqual([a1.externalRef.system, a1.externalRef.woId, a1.externalRef.kg, a1.externalRef.auto, a1.externalRef.by], ["rubberflow", `${TODAY_WO}-01`, 5.25, true, first.createdBy]);
+  assert.deepEqual([a1.status, stored.orders.find((row) => row.id === id).status], ["queued", "released"], "the job stays queued and the PI released until the first transfer is received");
+  for (const jobId of ["JOB-S1", "JOB-S2", "JOB-S3", "JOB-S4", "JOB-G1"]) assert.equal(stored.jobs.find((row) => row.id === jobId).externalRef, null, jobId);
+  assert.equal(reply.data.changes.jobs.upsert.find((row) => row.id === "JOB-A1").externalRef.woId, `${TODAY_WO}-01`, "the reply already carries the links");
+
+  // RubberFlow: เวอร์ชัน +1 ครั้งเดียว ไคลเอนต์ RubberFlow เห็น WO จาก app_rf_master_since และบันทึกการใช้งานบอกว่ามาจาก BOM
+  const rfAfter = await rpcData(s.admin, "app_rf_master");
+  assert.equal(rfAfter.version, rfBefore.version + 1);
+  assert.deepEqual((await rpcData(s.admin, "app_rf_master_since", { p_version: rfBefore.version })).changes.orders.upsert.map((row) => row.id), [`${TODAY_WO}-01`, `${TODAY_WO}-02`, `${TODAY_WO}-03`]);
+  const rfAudit = (await rpcData(s.admin, "app_rf_audit", { p_limit: 1 }))[0];
+  assert.deepEqual([rfAudit.action, rfAudit.detail], ["bom:releaseOrder", "orders +3"]);
+  const bomAudit = (await rpcData(s.admin, "app_bom_audit", { p_limit: 1 }))[0];
+  assert.deepEqual([bomAudit.action, bomAudit.rubberflow], ["releaseOrder", { opened: 3, skipped: 4, cancelled: 0 }]);
+
+  // WO ที่เปิดไว้ปล่อยผลิตโดยหัวหน้า RB ได้ตามปกติ · งานที่ถูกข้ามสร้าง WO เองได้ตามเดิม (sourceJobId)
+  const head = await asPersona(s.scene, "persona-rbh");
+  await rf(head).ensureLoaded();
+  await saved(rf(head).run("setOrderStatus", { id: `${TODAY_WO}-01`, status: "released" }));
+  assert.equal(rf(head).data().orders.find((row) => row.id === `${TODAY_WO}-01`).status, "released");
+  function rf(env) { return env.context.MNP_RUBBERFLOW.store; }
+});
+
+test("a release with nothing for RubberFlow keeps the old reply, and a skipped job can still get its WO by hand", async () => {
+  const s = await autoWoScene();
+  const id = await s.draft("PI-N");
+  const rfBefore = await rpcData(s.admin, "app_rf_master");
+  const reply = await s.releaseWith(id, [mockJob("JOB-G9", id, "GR")]);
+  assert.equal(reply.error, null);
+  assert.equal("rubberflow" in reply.data, false, "no RB job: the reply has no rubberflow key");
+  assert.equal((await rpcData(s.admin, "app_rf_master")).version, rfBefore.version, "and RubberFlow is not touched");
+  assert.equal((await rpcData(s.admin, "app_bom_audit", { p_limit: 1 }))[0].rubberflow, undefined);
+
+  const other = await s.draft("PI-M");
+  const skipped = await s.releaseWith(other, [mockJob("JOB-M1", other, "RB", { itemCode: "RB-NL" })]);
+  assert.deepEqual(skipped.data.rubberflow, { opened: [], skipped: [{ jobId: "JOB-M1", itemCode: "RB-NL", reason: "ยังไม่ผูกสูตร RubberFlow" }], cancelled: [] });
+  assert.equal((await rpcData(s.admin, "app_rf_master")).version, rfBefore.version, "only skips: RubberFlow version unchanged");
+  // ผูกสูตรแล้วสร้างด้วยมือ (กล่อง "สร้าง WO ใน RubberFlow") ยังใช้ได้
+  await s.run("linkCompound", { code: "DM02", recipeId: "RC-TEST-01" });
+  const rfStore = s.admin.context.MNP_RUBBERFLOW.store;
+  await rfStore.ensureLoaded();
+  await saved(rfStore.run("createOrder", { recipeId: "RC-TEST-01", customer: "Acme Trading", customerPo: other, targetQty: 10, startDate: NOW, dueDate: NOW + 86400000, sourceJobId: "JOB-M1", uom: "pcs", targetKg: 5, kgPerUnit: 0.5 }));
+  const manual = (await rpcData(s.admin, "app_bom_master")).jobs.find((row) => row.id === "JOB-M1");
+  assert.equal(manual.externalRef.auto, undefined, "a manual link is not marked auto");
+  assert.equal(manual.status, "in_progress", "the manual link keeps its old behaviour");
+});
+
+test("cancelling a PI or reopening it to draft cancels its planned and released WOs (manual ones too); a WO past released refuses", async () => {
+  const s = await autoWoScene();
+  const toDraft = (order) => ({ ...order, status: "draft", revision: order.revision + 1 });
+  // ยกเลิกใบ: WO แผนกและปล่อยผลิตถูกยกเลิก งานของใบถูกลบ
+  const id = await s.draft("PI-C");
+  const opened = (await s.releaseWith(id, [mockJob("JOB-C1", id, "RB", { itemCode: "RB-W" }), mockJob("JOB-C2", id, "RB", { itemCode: "RB-K" })])).data.rubberflow.opened;
+  const rfBefore = await rpcData(s.admin, "app_rf_master");
+  const head = await asPersona(s.scene, "persona-rbh");
+  await head.context.MNP_RUBBERFLOW.store.ensureLoaded();
+  await saved(head.context.MNP_RUBBERFLOW.store.run("setOrderStatus", { id: opened[1].woId, status: "released" }));
+  const reachedBy = await asPersona(s.scene, "persona-1");
+  const order = (await rpcData(reachedBy, "app_bom_master")).orders.find((row) => row.id === id);
+  const cancelled = await reachedBy.mock.client.rpc("app_bom_save_master", { p_changes: { orders: { upsert: [{ ...order, status: "cancelled", cancelledAt: NOW }] } }, p_base_version: (await rpcData(reachedBy, "app_bom_master")).version, p_action: "cancelOrder" });
+  assert.equal(cancelled.error, null, cancelled.error?.message);
+  assert.deepEqual(cancelled.data.rubberflow, { opened: [], skipped: [], cancelled: opened.map((row) => row.woId) });
+  assert.equal(cancelled.data.changes.jobs.delete.length, 2, "the jobs are deleted as before");
+  const rfNow = await rpcData(reachedBy, "app_rf_master");
+  assert.deepEqual(rfNow.orders.filter((row) => row.status === "cancelled").map((row) => row.id), opened.map((row) => row.woId));
+  assert.ok(rfNow.orders.every((row) => row.cancelledAt || row.status !== "cancelled"));
+  assert.equal(rfNow.version, rfBefore.version + 2, "the head's release and the cancel are one version each");
+  const audit = (await rpcData(reachedBy, "app_rf_audit", { p_limit: 1 }))[0];
+  assert.deepEqual([audit.action, audit.detail], ["bom:cancelOrder", "orders +2"]);
+  assert.deepEqual((await rpcData(reachedBy, "app_bom_audit", { p_limit: 1 }))[0].rubberflow, { opened: 0, skipped: 0, cancelled: 2 });
+
+  // เปิดใบกลับมาแก้ (กลับเป็นร่าง): ยกเลิก WO แล้วปล่อยผลิตใหม่ได้เลขใหม่
+  const second = await autoWoScene();
+  const sid = await second.draft("PI-R2");
+  const first = (await second.releaseWith(sid, [mockJob("JOB-R1", sid, "RB", { itemCode: "RB-W" })])).data.rubberflow.opened[0].woId;
+  const reopened = await second.call({ orders: { upsert: [toDraft((await rpcData(second.admin, "app_bom_master")).orders.find((row) => row.id === sid))] } }, "addOrderItem");
+  assert.equal(reopened.error, null, reopened.error?.message);
+  assert.deepEqual(reopened.data.rubberflow, { opened: [], skipped: [], cancelled: [first] });
+  assert.equal((await rpcData(second.admin, "app_rf_audit", { p_limit: 1 }))[0].action, "bom:reopenOrder");
+  const again = await second.releaseWith(sid, [mockJob("JOB-R2", sid, "RB", { itemCode: "RB-W" })]);
+  assert.equal(again.error, null, again.error?.message);
+  assert.equal(again.data.rubberflow.opened[0].woId, `${TODAY_WO}-02`, "numbers keep counting after a cancelled WO");
+
+  // WO ที่เริ่มผลิตแล้ว: ยกเลิกใบ / เปิดกลับมาแก้ไม่ได้ ไม่เขียนอะไรเลย
+  const third = await autoWoScene();
+  const tid = await third.draft("PI-T");
+  const wo = (await third.releaseWith(tid, [mockJob("JOB-T1", tid, "RB", { itemCode: "RB-W" })])).data.rubberflow.opened[0].woId;
+  const headT = await asPersona(third.scene, "persona-rbh");
+  const headStore = headT.context.MNP_RUBBERFLOW.store;
+  await headStore.ensureLoaded();
+  await saved(headStore.run("setOrderStatus", { id: wo, status: "released" }));
+  await saved(headStore.run("setOrderStatus", { id: wo, status: "in_progress" }));
+  const env = await asPersona(third.scene, "persona-1");
+  const current = (await rpcData(env, "app_bom_master")).orders.find((row) => row.id === tid);
+  const rfVersion = (await rpcData(env, "app_rf_master")).version;
+  const bomVersion = (await rpcData(env, "app_bom_master")).version;
+  // ยกเลิกใบ: ต้องปิด/ยกเลิก WO ใน RubberFlow ก่อน (BOM_RF_ORDER_STARTED) · เปิดกลับมาแก้: งานที่ผูก WO ที่เริ่มแล้วนับเป็นงานที่เริ่มแล้ว (BOM_INVALID_TRANSITION) เหมือนกฎเดิมของงานที่เริ่ม
+  for (const [change, action, code] of [[{ ...current, status: "cancelled", cancelledAt: NOW }, "cancelOrder", /BOM_RF_ORDER_STARTED/], [toDraft(current), "addOrderItem", /BOM_INVALID_TRANSITION/]]) {
+    const refused = await env.mock.client.rpc("app_bom_save_master", { p_changes: { orders: { upsert: [change] } }, p_base_version: bomVersion, p_action: action });
+    assert.match(refused.error.message, code, action);
+  }
+  assert.equal((await rpcData(env, "app_bom_master")).version, bomVersion, "refused: BOM untouched");
+  assert.equal((await rpcData(env, "app_rf_master")).version, rfVersion, "refused: RubberFlow untouched");
+  assert.equal((await rfOrderOf(env, wo)).status, "in_progress");
+});
+
+test("through the module: release says how many WOs were opened and why jobs were skipped, RubberFlow catches up, cancel and reopen say which WOs were cancelled", async () => {
+  const s = await autoWoScene();
+  const rfStore = s.admin.context.MNP_RUBBERFLOW.store;
+  await rfStore.ensureLoaded();
+  const ctx = s.admin.ctx();
+  const turns = async (n = 8) => { for (let turn = 0; turn < n; turn += 1) await new Promise((resolve) => setTimeout0(resolve)); };
+  const toasts = s.admin.log.toasts;
+  // FG-RF: 5 ชุด → RB-W 10 เส้น (5.25 kg) และ RB-B 5 เส้น (5 x 1.5 x 1.02 = 7.65 kg)
+  const open = async (pi, fgCode = "FG-RF") => {
+    const order = await s.run("createOrder", newOrder({ pi }));
+    await s.run("addOrderItem", { orderId: order.result, fgCode, qty: 5 });
+    await s.run("explodeOrder", { orderId: order.result });
+    return order.result;
+  };
+  const id = await open("PI-Q");
+  assert.equal(rfStore.data().orders.length, 0);
+  assert.equal(ctx.runAction("releaseOrder", { orderId: id }, ""), true);
+  await turns();
+  assert.equal(toasts.at(-1)[0], `ปล่อยผลิต ${id} แล้ว · เปิด WO ใน RubberFlow 2 ใบ`);
+  assert.equal(toasts.at(-1)[1], "success");
+  const wos = rfStore.data().orders;
+  assert.deepEqual(wos.map((row) => row.sourceJobId).sort(), s.admin.store.data().jobs.filter((job) => job.orderId === id && job.dept === "RB").map((job) => job.id).sort(), "RubberFlow caught up and shows the WOs");
+  assert.deepEqual([...wos.map((row) => row.targetKg)].sort((a, b) => a - b), [5.25, 7.65]);
+  const jobs = s.admin.store.data().jobs.filter((job) => job.orderId === id && job.dept === "RB");
+  assert.deepEqual(JSON.parse(JSON.stringify(jobs.map((job) => [job.status, Boolean(job.externalRef?.woId), job.externalRef?.auto]))), [["queued", true, true], ["queued", true, true]], "BOM caught up with the links");
+
+  // PI ที่มีงานถูกข้าม: ข้อความค้างแบบเตือนบอกเหตุผล
+  const rodOnly = await s.run("createOrder", newOrder({ pi: "PI-Q3" }));
+  await s.run("saveItem", saveItemPayload("FG-NL", { kind: "FG", name: "สินค้า DM02", uom: "set" }));
+  await s.run("saveBom", { itemCode: "FG-NL", lines: [{ childCode: "RB-NL", qty: 1 }] });
+  await s.run("addOrderItem", { orderId: rodOnly.result, fgCode: "FG-NL", qty: 5 });
+  await s.run("explodeOrder", { orderId: rodOnly.result });
+  assert.equal(ctx.runAction("releaseOrder", { orderId: rodOnly.result }, ""), true);
+  await turns();
+  const skipToast = toasts.at(-1);
+  assert.equal(skipToast[1], "success", "the release succeeded, so the notice is a normal toast even with a skipped job (the PI page keeps the list)");
+  assert.match(skipToast[0], new RegExp(`^ปล่อยผลิต ${rodOnly.result} แล้ว · ยังไม่ได้เปิด WO 1 งาน \\(JOB-[0-9a-z-]+ RB-NL: ยังไม่ผูกสูตร RubberFlow\\)$`));
+
+  // ยกเลิกใบ: ยกเลิก WO ด้วยและ RubberFlow ตามทัน
+  assert.equal(ctx.runAction("cancelOrder", { orderId: id, reason: "ลูกค้ายกเลิก" }, ""), true);
+  await turns();
+  assert.match(toasts.at(-1)[0], /^ยกเลิก WO WO-\d{8}-0[12], WO-\d{8}-0[12] ด้วย$/);
+  assert.deepEqual(rfStore.data().orders.filter((row) => row.status === "cancelled").length, 2);
+
+  // เปิดใบกลับมาแก้ (แก้จำนวนสินค้า): WO แผนกถูกยกเลิก ปล่อยผลิตใหม่ได้ WO ชุดใหม่
+  const again = await open("PI-Q4");
+  assert.equal(ctx.runAction("releaseOrder", { orderId: again }, ""), true);
+  await turns();
+  assert.equal(rfStore.data().orders.filter((row) => row.status === "planned").length, 2);
+  assert.equal(ctx.runAction("updateOrderItem", { orderId: again, fgCode: "FG-RF", qty: 6 }, "แก้จำนวนแล้ว"), true);
+  await turns();
+  assert.match(toasts.at(-1)[0], /^ยกเลิก WO WO-\d{8}-0[34], WO-\d{8}-0[34] ด้วย$/);
+  assert.equal(s.admin.store.data().orders.find((row) => row.id === again).status, "draft");
+  assert.equal(rfStore.data().orders.filter((row) => row.status === "planned").length, 0);
+});
+
+test("the module refuses to cancel while a WO is already running, and the database message for BOM_RF_ORDER_STARTED is Thai", async () => {
+  assert.match(storeApi.mapRemoteError({ message: "BOM_RF_ORDER_STARTED" }).message, /ยกเลิกหรือแก้ใบไม่ได้: WO ใน RubberFlow.*เริ่มผลิตแล้ว.*ปิดหรือยกเลิก WO นั้นใน RubberFlow ก่อน/);
+  assert.equal(storeApi.mapRemoteError({ message: "P0001: BOM_RF_ORDER_STARTED" }).code, "BOM_RF_ORDER_STARTED");
+  const s = await autoWoScene();
+  const id = await s.draft("PI-X");
+  const wo = (await s.releaseWith(id, [mockJob("JOB-X1", id, "RB", { itemCode: "RB-W" })])).data.rubberflow.opened[0].woId;
+  const env = await asPersona(s.scene, "persona-rbh");
+  const rfStore = env.context.MNP_RUBBERFLOW.store;
+  await rfStore.ensureLoaded();
+  await saved(rfStore.run("setOrderStatus", { id: wo, status: "released" }));
+  await saved(rfStore.run("setOrderStatus", { id: wo, status: "in_progress" }));
+  const planner = await asPersona(s.scene, "persona-1");
+  await planner.context.MNP_RUBBERFLOW.store.ensureLoaded();
+  await planner.store.ensureLoaded();
+  const out = planner.store.run("cancelOrder", { orderId: id, reason: "x" });
+  assert.equal(out.ok, false, "the page rule uses the loaded WO list: a running WO blocks before any call");
+  assert.match(out.error.message, new RegExp(wo));
+  // รายการ WO ยังไม่โหลด: กฎเดิม (ผูก WO = เริ่มแล้ว) ไม่เดาแทนฐานข้อมูล
+  const cold = await asPersona(s.scene, "persona-1");
+  await cold.store.ensureLoaded();
+  assert.equal(cold.store.run("cancelOrder", { orderId: id, reason: "x" }).ok, false);
+});
+
+test("the PI page lists RB jobs that have no WO yet with the reason, and the release confirm mentions the WOs (database mode only)", async () => {
+  const s = await autoWoScene();
+  const id = await s.draft("PI-P");
+  const sku = await s.draft("PI-P2");
+  let html = await s.admin.render(`p=orders&sel=${id}`);
+  assert.match(html, /เปิด WO ใน RubberFlow ให้งาน RB ที่ผูกสูตรแล้ว/, "the release confirm tells that WOs are opened");
+  const reply = await s.releaseWith(id, [
+    mockJob("JOB-P1", id, "RB", { itemCode: "RB-W" }), mockJob("JOB-P2", id, "RB", { itemCode: "RB-NL" }), mockJob("JOB-P3", id, "RB", { itemCode: "RB-UA" }),
+    mockJob("JOB-P4", id, "RB", { itemCode: "RB-GHOST" }), mockJob("JOB-P5", id, "RB", { itemCode: "RB-Z" }), mockJob("JOB-P6", id, "GR"),
+  ]);
+  assert.equal(reply.error, null, reply.error?.message);
+  const env = await asPersona(s.scene, "persona-1");
+  const rfStore = env.context.MNP_RUBBERFLOW.store;
+  await rfStore.ensureLoaded();
+  await env.store.ensureLoaded();
+  html = await env.render(`p=orders&sel=${id}&tab=jobs`);
+  assert.match(html, /งาน RB ที่ยังไม่มี WO ใน RubberFlow/);
+  const callout = html.split("งาน RB ที่ยังไม่มี WO ใน RubberFlow")[1].split("</table>")[0].split("<table")[0];
+  assert.match(callout, /JOB-P2[\s\S]*ยังไม่ผูกสูตร RubberFlow/);
+  assert.match(callout, /JOB-P3[\s\S]*สูตร RC-DRAFT ยังไม่อนุมัติ/);
+  assert.match(callout, /JOB-P4[\s\S]*ไม่มีรหัสสูตรยาง/);
+  assert.match(callout, /JOB-P5[\s\S]*คำนวณกิโลกรัมไม่ได้/);
+  assert.doesNotMatch(callout, /JOB-P1|JOB-P6/, "a job with a WO and a non-RB job are not listed");
+  assert.match(callout, /สร้าง WO ใน RubberFlow/, "the hint that the jobs page still creates one by hand");
+  assert.match(html, new RegExp(`${TODAY_WO}-01`), "the table still shows the WO number of the linked job");
+  clean(html);
+  // PI ที่ยังเป็นร่างหรือที่ทุกงาน RB มี WO แล้ว: ไม่มีกล่องเตือน
+  html = await env.render(`p=orders&sel=${sku}&tab=jobs`);
+  assert.doesNotMatch(html, /งาน RB ที่ยังไม่มี WO/);
+  function clean(text) { assert.doesNotMatch(text, /undefined|NaN|\[object Object\]/); }
 });

@@ -1375,3 +1375,15 @@ test("paste from Excel: Add re-checks the table, so a deleted parent or a change
   n2["[data-bom-paste-add]"].handlers.click();
   assert.ok(built2.table.rows.some((row) => row.code === "DM02" && row.dataset.parent === rod2.dataset.row));
 });
+
+test("in the in-browser demo a release opens no WOs: the confirm says nothing about RubberFlow and the jobs tab has no missing-WO callout", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  let html = await env.render("p=orders&sel=DEMO-26002");
+  assert.match(html, /data-rf-confirm="ปล่อยผลิต DEMO-26002\? ระบบจะล็อก revision ของ BOM และสร้างงานรายแผนก"/);
+  assert.doesNotMatch(html, /เปิด WO ใน RubberFlow/);
+  assert.equal(env.store.run("releaseOrder", { orderId: "DEMO-26002" }).ok, true);
+  html = await env.render("p=orders&sel=DEMO-26002&tab=jobs");
+  clean(html);
+  assert.doesNotMatch(html, /งาน RB ที่ยังไม่มี WO ใน RubberFlow/, "demo jobs are linked by hand; the database mode is the only one that opens WOs for you");
+});

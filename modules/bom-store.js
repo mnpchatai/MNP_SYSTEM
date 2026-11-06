@@ -283,7 +283,10 @@
       const entry = value.changes[list];
       changes[list] = { upsert: Array.isArray(entry?.upsert) ? entry.upsert : [], delete: Array.isArray(entry?.delete) ? entry.delete : [] };
     }
-    return { version: Number(value.version), epoch: typeof value.epoch === "string" ? value.epoch : null, changes };
+    const out = { version: Number(value.version), epoch: typeof value.epoch === "string" ? value.epoch : null, changes };
+    // ผลที่ฐานข้อมูลเปิด/ยกเลิก WO ของ RubberFlow ให้ตอนปล่อยผลิต/ยกเลิก/เปิดใบกลับมาแก้ (มีเฉพาะเมื่อมีอะไรเกิดขึ้น)
+    if (value.rubberflow && typeof value.rubberflow === "object" && !Array.isArray(value.rubberflow)) out.rubberflow = value.rubberflow;
+    return out;
   }
   // รวมส่วนต่างของชุดเดียวเข้ากับระเบียนปัจจุบันตามกุญแจ (ลบก่อน แล้วระเบียนใหม่ทับ) · changed = เนื้อหาต่างจากที่มีอยู่จริง ไม่นับแค่ลำดับกุญแจในระเบียน
   // ชุดที่ไม่มีส่วนต่าง = คืนอาร์เรย์เดิม · ที่มี = อาร์เรย์ใหม่เรียงเหมือนฐานข้อมูล (กุญแจ collate "C" · ใบสั่งผลิต/งานตาม LIST_ORDER) · copy = ทำสำเนาระเบียนที่รับเข้ามา
@@ -348,6 +351,7 @@
       BOM_STALE: "มีผู้อื่นบันทึกข้อมูล BOM ไปก่อน ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว (เช่น เลขที่ PI) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_INVALID_TRANSITION: "ใบสั่งผลิตอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน หรือมีงานที่เริ่มแล้ว) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      BOM_RF_ORDER_STARTED: "ยกเลิกหรือแก้ใบไม่ได้: WO ใน RubberFlow ที่ผูกงานของใบนี้เริ่มผลิตแล้ว ปิดหรือยกเลิก WO นั้นใน RubberFlow ก่อน",
       BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       BOM_TOO_MANY: "ข้อมูลชุดนี้มากเกินกว่าจะบันทึกในครั้งเดียว (เกิน 5,000 รายการต่อประเภท) แบ่งนำเข้าทีละส่วน",
@@ -417,7 +421,7 @@
   const AUDIT_FRESH_MS = 3000; // หน้าบันทึกการใช้งานวาดซ้ำภายในช่วงนี้ไม่ดึงใหม่ (ดึงใหม่เมื่อมีการบันทึกหรือกดโหลดใหม่)
 
   // shouldHold() = หน้ามีฟอร์มที่แก้ค้าง/เปิด dialog อยู่ (หน้าส่งมา): ระหว่างนั้นข้อมูลของผู้อื่นที่มากับ catchUp หรือคำตอบของการบันทึกห้ามรวมเข้า data และห้ามขยับเวอร์ชันฐาน
-  function createRemoteStore({ actions, now, remote, persona, idSuffix = randomSuffix, shouldHold: pageHolds = () => false }) {
+  function createRemoteStore({ actions, now, remote, persona, idSuffix = randomSuffix, shouldHold: pageHolds = () => false, rfOrders = () => null }) {
     const shouldHold = () => { try { return Boolean(pageHolds()); } catch { return false; } };
     const canPlan = (user) => (typeof actions.helpers?.canPlan === "function" ? actions.helpers.canPlan(user) : true);
     let snapshot = null; // ข้อมูลชุดล่าสุดจากฐานข้อมูล (null = ยังไม่โหลด)
@@ -585,7 +589,7 @@
       seedCounters(draft);
       let result;
       try {
-        result = action(draft, payload ?? {}, { now: now(), user, idSuffix, remote: true });
+        result = action(draft, payload ?? {}, { now: now(), user, idSuffix, remote: true, rfOrders: rfOrders() });
         materializeProcesses(draft, before);
       } catch (error) {
         return { ok: false, error };
@@ -638,13 +642,13 @@
             busy = false;
             emit({ type: "saved", changed: false, others: true, held: true });
             if (!newerPending) { newerPending = true; emit({ type: "pending" }); }
-            return { ok: true };
+            return delta.rubberflow ? { ok: true, rubberflow: delta.rubberflow } : { ok: true };
           }
           const changed = mergeDelta(delta, true);
           newerPending = false; // ส่วนต่างตั้งแต่เวอร์ชันฐานรวมทุกอย่างของผู้อื่นแล้ว
           busy = false;
           emit({ type: "saved", changed, others });
-          return { ok: true };
+          return delta.rubberflow ? { ok: true, rubberflow: delta.rubberflow } : { ok: true };
         },
         onSaveFailed,
       );
@@ -706,8 +710,9 @@
   // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action, audit, epoch): Promise<delta>, since(version): Promise<delta>, audit(limit): Promise<[{at, user, action, detail}]>, purge(): Promise<{deleted}> } → ข้อมูลทั้งหมดอยู่ในฐานข้อมูล (createRemoteStore)
   // snapshot = { version, epoch, <ชุดข้อมูล>: [...] } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [{base, code}] | [{id}] } } }
   // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
-  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold } = {}) {
-    if (remote) return createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold });
+  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold, rfOrders } = {}) {
+    // rfOrders() = รายการ WO ของ RubberFlow ที่โหลดอยู่ (หรือ null) ให้ action ตัดสินว่างานที่ผูก WO เริ่มแล้วหรือยัง · เฉพาะโหมดฐานข้อมูล
+    if (remote) return createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold, rfOrders });
     let data = null;
     let userId = null;
     let loaded = false;

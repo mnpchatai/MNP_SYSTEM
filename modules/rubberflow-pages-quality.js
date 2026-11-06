@@ -49,13 +49,17 @@
     const { ui, rules } = ctx;
     const { STAGE_LABEL, fmtDateTime, fmtNum } = rules;
     const closeForm = ncr.status === "open" && canClose ? `<form class="rf-row" data-rf-form="closeNcr" data-rf-args='${esc(JSON.stringify({ id: ncr.id }))}' data-rf-success="ปิด NCR แล้ว"><div class="rf-grow">${ui.input("verification", { placeholder: "ผลการทวนสอบประสิทธิผล…" })}</div>${ui.submitButton("ปิดเคส")}</form>` : "";
+    // แผนก RB และ QA กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่ได้ (ปิดเคสเป็นของ QA) · ปิดแล้วแสดงอย่างเดียว
+    const fillForm = ncr.status === "open" && ctx.can("fillNcr")
+      ? `<form class="rf-stack" data-rf-form="updateNcr" data-rf-args='${esc(JSON.stringify({ id: ncr.id }))}' data-rf-success="บันทึกการแก้ไข/ป้องกันแล้ว">${ui.field("แก้ไข (Corrective)", ui.textarea("corrective", { value: ncr.corrective ?? "", rows: 2 }))}${ui.field("ป้องกันซ้ำ (Preventive)", ui.textarea("preventive", { value: ncr.preventive ?? "", rows: 2 }))}<div class="rf-row">${ui.submitButton("บันทึก", { className: "secondary" })}</div></form>`
+      : "";
     return ui.card(`<div class="rf-grid rf-g2">
         <div class="rf-stack">${ui.kv([["ขั้นตอนที่พบ", esc(STAGE_LABEL[ncr.stage] ?? ncr.stage)], ["ล็อต", ui.mono(ncr.lotId)], ["ชิ้นงานเสีย", esc(fmtNum(ncr.defectQty))], ["ผู้รับผิดชอบ", esc(ncr.owner ?? "-")], ["เปิดเมื่อ", esc(fmtDateTime(ncr.createdAt))], ncr.closedAt ? ["ปิดเมื่อ", esc(`${fmtDateTime(ncr.closedAt)} · ${ncr.closedBy ?? ""}`)] : null])}
           <div><strong class="small">วิเคราะห์ 5-Why</strong><ol class="small rf-whys">${ncr.whys.map((why) => `<li>${esc(why)}</li>`).join("")}</ol></div></div>
         <div class="rf-stack small">
           <div><strong>ควบคุมทันที (Containment)</strong><div>${esc(ncr.containment || "-")}</div></div>
-          <div><strong>แก้ไข (Corrective)</strong><div>${esc(ncr.corrective || "-")}</div></div>
-          <div><strong>ป้องกันซ้ำ (Preventive)</strong><div>${esc(ncr.preventive || "-")}</div></div>
+          ${fillForm || `<div><strong>แก้ไข (Corrective)</strong><div>${esc(ncr.corrective || "-")}</div></div>
+          <div><strong>ป้องกันซ้ำ (Preventive)</strong><div>${esc(ncr.preventive || "-")}</div></div>`}
           ${ncr.verification ? `<div><strong>ผลการทวนสอบ</strong><div>${esc(ncr.verification)}</div></div>` : ""}${closeForm}</div></div>`,
     { title: `${ui.mono(ncr.id)} ${esc(ncr.title)}`, actions: `${ui.status(ncr.severity)}${ui.status(ncr.status)}` });
   }

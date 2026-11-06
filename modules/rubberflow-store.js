@@ -2,16 +2,16 @@
 // ไม่มี DOM/Supabase: storage ส่งเข้ามาได้ (localStorage ในเบราว์เซอร์ / Map ในเทสต์) เทสต์ด้วย node --test (scripts/tests/rubberflow-store.test.mjs)
 //
 // สองโหมด: (1) ไม่ส่ง remote = ข้อมูลทั้งชุดอยู่ใน localStorage ของเบราว์เซอร์นี้ (ข้อมูลสมมติ + บทบาทสาธิต 9 คน ใช้ใน Node เทสต์) เหมือนต้นแบบ
-// (2) ส่ง remote = ข้อมูลหลัก 3 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO) อยู่ใน Supabase ผ่าน app_rf_master (โหลดครั้งแรก) app_rf_save (บันทึก คืนส่วนต่างตั้งแต่เวอร์ชันฐาน)
-// และ app_rf_master_since (ตามทัน) ชนกันรายระเบียน · บันทึกการใช้งานอ่านจาก app_rf_audit · ส่วนที่เหลือ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์)
-// ยังอยู่ใน localStorage (คีย์ mnp-rubberflow-local-v1) จนกว่าจะย้ายขึ้นฐานข้อมูลในขั้นถัดไป · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin (personaUser)
-// บทบาทเป็นแค่ตัวซ่อน/แสดงเมนูและปุ่ม สิทธิ์จริงของข้อมูลหลักตัดสินที่ฐานข้อมูล (ดูข้อจำกัดในหัวข้อ "RubberFlow MES" ของ README)
+// (2) ส่ง remote = ข้อมูลทั้ง 11 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์) อยู่ใน Supabase ผ่าน app_rf_master (โหลดครั้งแรก)
+// app_rf_save (บันทึก คืนส่วนต่างตั้งแต่เวอร์ชันฐาน) และ app_rf_master_since (ตามทัน) ชนกันรายระเบียน · บันทึกการใช้งานอ่านจาก app_rf_audit · ไม่มีข้อมูลธุรกิจเหลืออยู่ในเบราว์เซอร์
+// (คีย์ mnp-rubberflow-local-v1 ของรุ่นก่อนไม่ถูกอ่านและไม่ถูกแตะ) · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin (personaUser)
+// บทบาทเป็นแค่ตัวซ่อน/แสดงเมนูและปุ่ม สิทธิ์จริงทุกชุดตัดสินที่ฐานข้อมูล (ดูข้อจำกัดในหัวข้อ "RubberFlow MES" ของ README)
 // ทุก action เดินผ่าน run() ที่ clone state ก่อน แล้วบันทึกเฉพาะเมื่อกฎผ่าน · โครงโหมดฐานข้อมูลเดียวกับ modules/bom-store.js
 (function (root) {
   const isNode = typeof module !== "undefined" && module.exports;
   const STATE_KEY = "mnp-rubberflow-v1";
   const USER_KEY = "mnp-rubberflow-user";
-  const LOCAL_KEY = "mnp-rubberflow-local-v1"; // โหมดฐานข้อมูล: ส่วนที่ยังไม่ขึ้นฐานข้อมูล
+  const LOCAL_KEY = "mnp-rubberflow-local-v1"; // รุ่นก่อนหน้าเก็บล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ฯลฯ ไว้ที่นี่ · ตอนนี้โหมดฐานข้อมูลไม่อ่านและไม่แตะคีย์นี้
   const STATE_VERSION = 2; // 2: สูตรผสมสองขั้น (stages) ไม่มีชื่อสูตร/ชื่อสินค้า · state เดิมของเบราว์เซอร์ถูกสร้างใหม่จากชุดสาธิต
 
   // เมนูของโมดูล (id = ค่า p= ใน URL) เรียงตามกลุ่มที่แสดงในแถบข้าง
@@ -47,8 +47,9 @@
     finisher: { label: "พนักงานตกแต่ง/บรรจุ", modules: Object.freeze(["dashboard", "finishing", "wip", "warehouse"]) },
     qc: { label: "วิศวกรควบคุมคุณภาพ", modules: Object.freeze(["dashboard", "recipes", "quality", "spc", "trace", "warehouse", "molds", "wip"]) },
     // บัญชีทดสอบของโหมดฐานข้อมูล (personaUser): พนักงานแผนก RB ทำงานสายผลิตทั้งสาย · แผนก SR รับมอบ WIP · แผนกอื่นดูได้อย่างเดียว
-    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "trace", "warehouse", "molds"]) },
+    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "trace", "warehouse", "molds"]) },
     gatekeeper: { label: "ผู้รับมอบ WIP (SR)", modules: Object.freeze(["dashboard", "wip", "trace", "warehouse"]) },
+    warehouse: { label: "พนักงานคลังสินค้า (WH)", modules: Object.freeze(["dashboard", "warehouse", "wip", "trace"]) },
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
   });
 
@@ -61,6 +62,7 @@
     workOrder: PLAN_ROLES, // พัก/ผลิตต่อ/ปิดงาน/ยกเลิกใบสั่งผลิต
     editMaster: Object.freeze(["admin", "manager", "planner", "qc"]), // วัตถุดิบ / ร่างสูตร
     qcDecision: Object.freeze(["admin", "manager", "qc"]),
+    holdMaterial: Object.freeze(["admin", "manager", "qc"]), // กักกัน/ปลดกักกันล็อตวัตถุดิบ
     demoSkip: Object.freeze(["admin", "manager", "mixer", "qc"]),
   });
   const DB_CAN = Object.freeze({
@@ -69,16 +71,45 @@
     createOrder: (user) => Boolean(user.planner || user.rb),
     workOrder: (user) => Boolean(user.planner || user.rb),
     editMaster: (user) => Boolean(user.planner || user.rb),
-    demoSkip: () => false, // ข้ามเวลาบ่มใช้ได้เฉพาะข้อมูลสาธิตในเครื่อง
+    qcDecision: (user) => Boolean(user.planner || user.qa), // บันทึกผลตรวจ / เปิด-ปิด NCR / ตัดสินล็อต
+    holdMaterial: (user) => Boolean(user.planner || user.st || user.qa),
+    demoSkip: (user) => Boolean(user.planner || user.rb), // ข้ามเวลาบ่ม: คำสั่งของพนักงาน RB ที่ฐานข้อมูลประทับเวลาเอง
+    // ชุดที่ย้ายขึ้นฐานข้อมูลในขั้นที่ 2: โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้ (ไม่อยู่ใน CAN)
+    receiveMaterial: (user) => Boolean(user.planner || user.st), // รับวัตถุดิบเข้าคลัง
+    requisition: (user) => Boolean(user.planner || user.rb), // สร้างใบเบิกและชั่ง
+    station: (user) => Boolean(user.planner || user.rb), // บันทึกผสม/ฉีด/อบ/ตกแต่ง ทำความสะอาดแม่พิมพ์
+    sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP
+    receiveTransfer: (user) => Boolean(user.planner || user.sr), // รับมอบ WIP
+    shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า
+    fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่
+    editMold: (user) => Boolean(user.planner || user.rb),
   });
+
+  // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
+  const ACTION_RIGHT = Object.freeze({
+    receiveMaterial: "receiveMaterial", setMaterialLotStatus: "holdMaterial", createRequisition: "requisition", weighLine: "requisition",
+    recordMixing: "station", endRest: "demoSkip", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
+    createTransfer: "sendTransfer", receiveTransfer: "receiveTransfer", shipBoxes: "shipBoxes", addQcRecord: "qcDecision", createNcr: "qcDecision", closeNcr: "qcDecision",
+    updateNcr: "fillNcr", saveMold: "editMold",
+    saveMaterial: "editMaster", createRecipe: "editMaster", saveRecipe: "editMaster", approveRecipe: "approveRecipe", createOrder: "createOrder",
+  });
+  // dialog ที่เปิดจากปุ่ม → คำสั่งที่ dialog นั้นส่ง
+  const DIALOG_ACTION = Object.freeze({
+    receiveMaterial: "receiveMaterial", createRequisition: "createRequisition", transfer: "createTransfer", receive: "receiveTransfer", qcRecord: "addQcRecord", ncr: "createNcr",
+    moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
+  });
+  const rightForAction = (name) => ACTION_RIGHT[name] ?? null;
+  const rightForDialog = (name) => (DIALOG_ACTION[name] ? ACTION_RIGHT[DIALOG_ACTION[name]] ?? null : null);
 
   const can = (user, permission) => {
     if (!user) return false;
     if (user.db && DB_CAN[permission]) return Boolean(DB_CAN[permission](user));
+    if (!(permission in CAN) && permission in DB_CAN) return true; // โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มที่มีเฉพาะโหมดฐานข้อมูล
     return (CAN[permission] ?? []).includes(user.role);
   };
   // โหมดฐานข้อมูล: บันทึกการใช้งานอ่านได้ทุกบัญชีทดสอบ (ข้อมูลหลักอยู่ในฐานข้อมูลที่ทุกคนเห็นร่วมกัน เหมือนหน้าบันทึกการใช้งานของ BOM)
-  const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && (ROLES[user.role].modules.includes(moduleId) || (Boolean(user.db) && moduleId === "audit"));
+  // กลุ่มวางแผน (role planner) ทำได้ทุกอย่างในฐานข้อมูล จึงเห็นทุกหน้าเหมือนผู้จัดการ · เซิร์ฟเวอร์ยังเป็นด่านตัดสินสิทธิ์ · โหมดสาธิตเมนูเดิม
+  const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && (ROLES[user.role].modules.includes(moduleId) || (Boolean(user.db) && (moduleId === "audit" || user.role === "planner")));
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");
 
   // state ที่อ่านจาก storage ต้องมีโครงครบ ไม่เช่นนั้นถือว่าเสีย (สร้างชุดสาธิตใหม่)
@@ -107,21 +138,29 @@
 
   const clone = (value) => (typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value)));
 
-  // ---------- โหมดฐานข้อมูล (remote): ข้อมูลหลัก 3 ชุดอยู่ใน Supabase ----------
-  // ชุดที่ขึ้นฐานข้อมูล: วัตถุดิบ (materials) · สูตรยางทุก revision (recipes) · ใบสั่งผลิต WO (orders) · ชุดที่เหลือยังอยู่ในเครื่อง (LOCAL_LISTS) แม้ remote ล้มก็ไม่หาย
-  // ชนกันรายระเบียน ไม่ใช่ทั้งชุด · ตัวนับเลข REQ/MX/TR/QC/NCR ของส่วนในเครื่องอยู่ใน counters ของไฟล์ local · เลข WO ออกจากข้อมูลที่มีในฐานข้อมูล (action ส่ง ctx.remote)
-  const REMOTE_LISTS = Object.freeze(["materials", "recipes", "orders"]);
-  const LOCAL_LISTS = Object.freeze(["materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds"]);
+  // ---------- โหมดฐานข้อมูล (remote): ข้อมูลทั้ง 11 ชุดอยู่ใน Supabase ----------
+  // วัตถุดิบ (materials) · สูตรยางทุก revision (recipes) · ใบสั่งผลิต WO (orders) · ล็อตวัตถุดิบ (materialLots) · ใบเบิก (requisitions) · ล็อตผลิต MX/EX/CU/FN (lots) ·
+  // ใบส่งมอบ WIP (transfers) · กล่องสินค้า (fgBoxes) · ผลตรวจ QC (qcRecords) · NCR (ncrs) · แม่พิมพ์/หัวดาย (molds) — ไม่มีชุดไหนเหลืออยู่ในเครื่อง
+  // ชนกันรายระเบียน ไม่ใช่ทั้งชุด · เลขเอกสาร WO/REQ/MX/EX/CU/FN/TR/QC/NCR/RM ออกจากข้อมูลที่มีในฐานข้อมูล (เลขสูงสุดของวันนั้น + 1 · action ส่ง ctx.remote) ซ้ำ = ฐานข้อมูลตอบ RF_STALE
+  // ตัวเลขที่ฐานข้อมูลคำนวณเอง (สต็อกล็อตหลังชั่ง ยอดส่งต่อ/คงเหลือของใบส่งมอบ ยอดผลิตของใบสั่งผลิต การใช้แม่พิมพ์) action ยังคำนวณสำเนาของตัวเองให้หน้าจอเห็นทันที — ส่วนต่างที่ตอบกลับแก้ให้ตรงของจริง
+  const REMOTE_LISTS = Object.freeze(["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds"]);
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-  // กุญแจของระเบียน: วัตถุดิบ = code · สูตร = รหัส + revision · ใบสั่งผลิต = เลข WO
+  // กุญแจของระเบียน: วัตถุดิบ = code · สูตร = รหัส + revision · ล็อตวัตถุดิบ = lotNo · ที่เหลือ = id
+  const byId = (record) => record.id;
   const MASTER_KEY = Object.freeze({
     materials: (record) => record.code,
     recipes: (record) => `${record.id}\u0000${String(Number(record.revision) || 0).padStart(6, "0")}`,
-    orders: (record) => record.id,
+    orders: byId,
+    materialLots: (record) => record.lotNo,
+    requisitions: byId,
+    lots: byId,
+    transfers: byId,
+    fgBoxes: byId,
+    qcRecords: byId,
+    ncrs: byId,
+    molds: byId,
   });
-  const deleteKey = (list, target) => (list === "recipes" ? MASTER_KEY.recipes(target ?? {}) : String(target?.code ?? target?.id ?? ""));
-  // คำสั่งของส่วนในเครื่องที่แก้ใบสั่งผลิตด้วย (recordMixing เริ่มผลิต · recordFinishing / addQcRecord ยอดผลิตเข้าใบและปิดใบเมื่อครบ) ส่งไปฐานข้อมูลด้วยชื่อคำสั่งเดิม:
-  // ฐานข้อมูลอนุญาตให้ QA เพิ่มยอดผลิตของใบได้เฉพาะ action addQcRecord จึงห้ามแปลงเป็น setOrderStatus
+  const deleteKey = (list, target) => (list === "recipes" ? MASTER_KEY.recipes(target ?? {}) : String(target?.code ?? target?.lotNo ?? target?.id ?? ""));
 
   function sameValue(a, b) {
     if (a === b) return true;
@@ -178,7 +217,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (วัตถุดิบ สูตร และใบสั่งผลิต: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB · อนุมัติสูตรและปล่อยผลิต: หัวหน้าแผนก RB ขึ้นไป)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (รับวัตถุดิบ: คลังวัตถุดิบ · เบิก ชั่ง ผลิต ส่งมอบ: แผนก RB · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: หัวหน้าแผนก RB ขึ้นไป · ฝ่ายวางแผนและผู้จัดการทำได้ทุกอย่าง)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
@@ -186,7 +225,18 @@
       RF_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ RubberFlow (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       RF_REVISION_IMMUTABLE: "สูตร revision ที่อนุมัติแล้วแก้ไม่ได้ ให้ออก revision ใหม่",
       RF_INVALID_SOURCE_JOB: "งาน BOM ที่ใช้สร้างใบสั่งผลิตนี้ใช้ไม่ได้แล้ว (อาจผูกกับ WO อื่นไปแล้ว หรือใบ PI ไม่อยู่ในสถานะผลิต) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
-      RF_INVALID_PRODUCED: "ใบสั่งผลิตที่มาจากงาน BOM ต้องระบุปริมาณผลิตจริงมากกว่า 0 ก่อนปิดใบ",
+      RF_INSUFFICIENT_STOCK: "สต็อกวัตถุดิบพร้อมใช้ไม่พอตามหลัก FEFO (ไม่นับล็อตหมดอายุ กักกัน หรือที่ใบเบิกอื่นจองไว้) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      RF_OUT_OF_TOLERANCE: "น้ำหนักที่ชั่งอยู่นอกเกณฑ์ ฐานข้อมูลไม่รับ",
+      RF_LOT_UNAVAILABLE: "ล็อตวัตถุดิบใช้ไม่ได้แล้ว (หมดอายุ กักกัน หรือคงเหลือไม่พอ) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      RF_INVALID_MATERIAL_LOT: "ข้อมูลล็อตวัตถุดิบไม่ถูกต้อง",
+      RF_INVALID_REQUISITION: "ข้อมูลใบเบิกไม่ถูกต้อง",
+      RF_INVALID_LOT: "ข้อมูลล็อตผลิตไม่ถูกต้อง",
+      RF_INVALID_TRANSFER: "ข้อมูลใบส่งมอบไม่ถูกต้อง (ล็อตต้องผ่าน QC ครบเวลาบ่ม และปริมาณไม่เกินที่ส่งต่อได้)",
+      RF_INVALID_BOX: "ข้อมูลกล่องสินค้าไม่ถูกต้อง",
+      RF_INVALID_ORDER: "ข้อมูลใบสั่งผลิตไม่ถูกต้อง หรือใบสั่งผลิตอยู่ในสถานะที่รับยอดผลิตไม่ได้",
+      RF_INVALID_QC: "ข้อมูลผลตรวจ QC ไม่ถูกต้อง",
+      RF_INVALID_NCR: "ข้อมูล NCR ไม่ถูกต้อง (การปิดเคสต้องมีทั้งการแก้ไขและการป้องกัน)",
+      RF_INVALID_MOLD: "ข้อมูลแม่พิมพ์ไม่ถูกต้อง",
       RF_INVALID_MATERIAL: "ข้อมูลวัตถุดิบไม่ถูกต้อง รหัสใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่เกิน 40 ตัวอักษร) และต้องมีชื่อ",
       RF_REVISION_ORDER: "revision ของสูตรต้องเรียงต่อจากล่าสุดทีละ 1 ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาออก revision ใหม่อีกครั้ง",
       NOT_AUTHORIZED: "ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
@@ -195,15 +245,16 @@
     return Object.assign(new Error(message), { code });
   }
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะเปลี่ยนไปแล้ว · งาน BOM ที่ผูกเปลี่ยนไป → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
-  const CONFLICT_CODES = Object.freeze(["RF_STALE", "RF_INVALID_PAYLOAD", "RF_CONFLICT", "RF_INVALID_TRANSITION", "RF_INVALID_SOURCE_JOB", "RF_REVISION_ORDER", "RF_RESET"]);
+  const CONFLICT_CODES = Object.freeze(["RF_STALE", "RF_INVALID_PAYLOAD", "RF_CONFLICT", "RF_INVALID_TRANSITION", "RF_INVALID_SOURCE_JOB", "RF_REVISION_ORDER", "RF_RESET", "RF_INSUFFICIENT_STOCK", "RF_LOT_UNAVAILABLE"]);
 
   // บัญชีทดสอบ (state.employee ของ app.js ในโหมดทดสอบ) → ผู้ใช้ของ RubberFlow
   // planner = กลุ่มวางแผน (admin · ผู้จัดการแผนกขึ้นไป · แผนก PP) ทำได้ทุกอย่างของข้อมูลหลัก · rb = สมาชิกแผนก RB ทุกตำแหน่ง · rbHead = หัวหน้า RB ขึ้นไป (อนุมัติสูตร ปล่อยผลิต)
-  // role ใช้เลือกเมนูเท่านั้น: admin → admin · ผู้จัดการขึ้นไป → manager · PP → planner · RB → rb · ST → store · QA → qc · SR → gatekeeper · อื่นๆ → ดูอย่างเดียว
+  // role ใช้เลือกเมนูเท่านั้น: admin → admin · ผู้จัดการขึ้นไป → manager · PP → planner · RB → rb · ST → store · QA → qc · SR → gatekeeper · WH → warehouse · อื่นๆ → ดูอย่างเดียว
+  // st / sr / wh / qa = สมาชิกแผนกนั้น (ทุกตำแหน่ง) ใช้ซ่อน/แสดงปุ่ม · สิทธิ์จริงอยู่ที่ฐานข้อมูล
   const PLANNER_ROLE_CODES = Object.freeze(["department_manager", "assistant_factory_manager", "factory_manager", "general_manager"]);
   const RB_HEAD_DEPT_ROLE_CODES = Object.freeze(["department_manager", "assistant_department_manager"]);
   const RB_HEAD_ANY_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager", "admin"]);
-  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", ST: "store", QA: "qc", SR: "gatekeeper" });
+  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", ST: "store", QA: "qc", SR: "gatekeeper", WH: "warehouse" });
   function personaUser(employee) {
     if (!employee) return null;
     const roleCode = String(employee.role?.code ?? employee.role_code ?? "");
@@ -213,7 +264,7 @@
     const rbHead = (rb && RB_HEAD_DEPT_ROLE_CODES.includes(roleCode)) || RB_HEAD_ANY_ROLE_CODES.includes(roleCode);
     const role = roleCode === "admin" ? "admin" : PLANNER_ROLE_CODES.includes(roleCode) ? "manager" : DEPT_ROLES[dept] ?? "viewer";
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, planner, rb, rbHead, qa: dept === "QA", db: true };
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", qa: dept === "QA", db: true };
   }
 
   function normalizeSnapshot(value) {
@@ -240,16 +291,11 @@
   }
   const AUDIT_FRESH_MS = 3000;
 
-  const isValidLocal = (value) => Boolean(value) && typeof value === "object" && typeof value.counters === "object" && value.counters !== null && LOCAL_LISTS.every((key) => Array.isArray(value[key]));
-  const emptyLocal = () => ({ counters: {}, ...Object.fromEntries(LOCAL_LISTS.map((key) => [key, []])) });
-
   // shouldHold() = หน้ามีฟอร์มที่แก้ค้าง/เปิด dialog อยู่ (หน้าส่งมา): ระหว่างนั้นข้อมูลของผู้อื่นที่มากับ catchUp หรือคำตอบของการบันทึกห้ามรวมเข้า data และห้ามขยับเวอร์ชันฐาน
-  function createRemoteStore({ storage, localSeed, actions, now, remote, persona, idSuffix, shouldHold: pageHolds = () => false }) {
+  function createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold: pageHolds = () => false }) {
     const shouldHold = () => { try { return Boolean(pageHolds()); } catch { return false; } };
-    let snapshot = null; // ข้อมูลหลักชุดล่าสุดจากฐานข้อมูล (null = ยังไม่โหลด)
-    let local = null; // ส่วนในเครื่อง: LOCAL_LISTS + counters
-    let data = null; // ข้อมูลที่หน้าใช้: ตามฐานข้อมูล + ที่เพิ่งแก้และรอบันทึก + ส่วนในเครื่อง · users / audit ว่างเสมอ
-    let persisted = true;
+    let snapshot = null; // ข้อมูลชุดล่าสุดจากฐานข้อมูล (null = ยังไม่โหลด)
+    let data = null; // ข้อมูลที่หน้าใช้: ตามฐานข้อมูล + ที่เพิ่งแก้และรอบบันทึก · users / audit ว่างเสมอ · counters ว่าง (เลขเอกสารออกจากข้อมูลที่มี)
     let status = "idle"; // idle · loading · ready · error
     let loadError = null;
     let busy = false;
@@ -263,20 +309,11 @@
     const listeners = new Set();
     const emit = (event) => { for (const listener of [...listeners]) { try { listener(event); } catch { /* ผู้ฟังพังไม่ทำให้ store พัง */ } } };
 
-    function loadLocal() {
-      const saved = readJson(storage, LOCAL_KEY);
-      local = isValidLocal(saved) ? saved : { ...emptyLocal(), ...(typeof localSeed === "function" ? localSeed() : {}) };
-      if (!isValidLocal(saved)) persistLocal();
-    }
-    function persistLocal() {
-      persisted = writeJson(storage, LOCAL_KEY, local);
-    }
     function assemble() {
       const lists = Object.fromEntries(REMOTE_LISTS.map((list) => [list, clone(snapshot?.[list] ?? [])]));
-      data = { version: STATE_VERSION, users: [], audit: [], ...clone(local), ...lists };
+      data = { version: STATE_VERSION, users: [], audit: [], counters: {}, ...lists };
     }
     function init() {
-      if (!local) loadLocal();
       if (!data) assemble();
     }
     function fetchSnapshot() {
@@ -399,7 +436,6 @@
       if (status !== "ready") return blocked(status === "loading" ? "กำลังโหลดข้อมูล RubberFlow รอสักครู่แล้วลองอีกครั้ง" : "ยังโหลดข้อมูล RubberFlow ไม่ได้ โหลดหน้าใหม่แล้วลองอีกครั้ง");
       if (busy) return blocked("กำลังบันทึกรายการก่อนหน้า รอสักครู่แล้วลองอีกครั้ง", { busy: true });
       const before = data;
-      const localBefore = local;
       const user = persona();
       const draft = clone(data);
       draft.audit = []; // action เขียนบันทึกการใช้งานลงร่างนี้ แล้วส่งไปกับการบันทึก (ฐานข้อมูลเก็บ)
@@ -412,15 +448,14 @@
       const changes = diffMaster(before, draft);
       const auditEntries = auditPayload(draft.audit);
       draft.audit = [];
+      draft.counters = {};
       data = draft;
-      local = Object.fromEntries(["counters", ...LOCAL_LISTS].map((key) => [key, draft[key]]));
-      if (!sameValue(local, localBefore)) persistLocal();
       if (!hasChanges(changes)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
       busy = true;
       emit({ type: "saving" });
       const baseVersion = snapshot.version;
       const baseEpoch = snapshot.epoch ?? null; // รอบข้อมูลที่ถือ: ฐานข้อมูลปฏิเสธ (RF_RESET) ถ้าถูกล้างข้อมูลทดสอบไปแล้ว
-      // ชน หรือเวอร์ชันฐานไม่ตรงฐานข้อมูล: ตามทันด้วยส่วนต่าง (ไม่ได้ก็โหลดทั้งชุด) ก่อนแสดงข้อมูลล่าสุดให้ผู้ใช้ทำรายการใหม่ · ย้อนกลับทั้งคำสั่ง (รวมส่วนในเครื่อง)
+      // ชน หรือเวอร์ชันฐานไม่ตรงฐานข้อมูล: ตามทันด้วยส่วนต่าง (ไม่ได้ก็โหลดทั้งชุด) ก่อนแสดงข้อมูลล่าสุดให้ผู้ใช้ทำรายการใหม่ · ย้อนกลับทั้งคำสั่ง
       // ถ้าผู้ใช้มีฟอร์มค้างอยู่ (ก่อนหรือระหว่างรอตามทัน) ไม่ดึงข้อมูลผู้อื่นเข้ามา แค่จำว่ามีใหม่
       const onSaveFailed = async (error) => {
         const mapped = mapRemoteError(error);
@@ -432,8 +467,6 @@
           if (fresh && !held) { snapshot = fresh; newerPending = false; auditStale = true; }
         }
         if (conflict && held && !newerPending) { newerPending = true; emit({ type: "pending" }); }
-        local = localBefore;
-        persistLocal();
         assemble();
         busy = false;
         emit({ type: "reverted", error: mapped, held });
@@ -483,7 +516,7 @@
       ).then(() => { auditAt = now(); auditLoading = null; emit({ type: "audit" }); });
       return auditLoading;
     }
-    // ล้างข้อมูล RubberFlow ทดสอบในฐานข้อมูล (เฉพาะผู้ดูแลระบบในโหมดทดสอบ ฐานข้อมูลตรวจเอง) แล้วโหลดใหม่จากศูนย์ · ส่วนในเครื่องที่อ้างใบสั่งผลิต/สูตรที่หายไปถูกล้างด้วย (ไม่ทำขณะบันทึกอยู่)
+    // ล้างข้อมูล RubberFlow ทดสอบในฐานข้อมูล (เฉพาะผู้ดูแลระบบในโหมดทดสอบ ฐานข้อมูลตรวจเอง) แล้วโหลดใหม่จากศูนย์ (ไม่ทำขณะบันทึกอยู่)
     async function purge() {
       init();
       if (busy) return blocked("กำลังบันทึกรายการก่อนหน้า รอสักครู่แล้วลองอีกครั้ง", { busy: true });
@@ -500,8 +533,6 @@
         return { ok: false, error: ["RF_FORBIDDEN", "BOM_FORBIDDEN", "NOT_AUTHORIZED"].includes(mapped.code) ? Object.assign(new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ"), { code: mapped.code }) : mapped };
       }
       busy = false;
-      local = { ...emptyLocal(), ...(typeof localSeed === "function" ? localSeed() : {}) };
-      persistLocal();
       auditView = { status: "idle", entries: [], error: null };
       auditStale = true;
       snapshot = null;
@@ -512,18 +543,18 @@
 
     const reset = () => { init(); return data; }; // โหมดฐานข้อมูลไม่มีการรีเซ็ตในเครื่อง (ล้างข้อมูลทดสอบ = purge)
     return {
-      load: () => { init(); return data; }, data: () => { init(); return data; }, user: () => persona(), setUser: () => persona(), run, reset, isPersisted: () => persisted, now,
+      load: () => { init(); return data; }, data: () => { init(); return data; }, user: () => persona(), setUser: () => persona(), run, reset, isPersisted: () => true, now,
       isRemote: () => true, status: () => status, error: () => loadError, isSaving: () => busy, hasNewer: () => newerPending, version: () => snapshot?.version ?? null,
       ensureLoaded, reload, catchUp, idSuffix, audit: () => auditView, loadAudit, purge, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     };
   }
 
   // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action, audit, epoch): Promise<delta>, since(version): Promise<delta>, audit(limit): Promise<[{at, user, action, detail}]>, purge(): Promise<{deleted}> }
-  // snapshot = { version, epoch, materials, recipes, orders } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [...] } } }
-  // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล · localSeed() = ข้อมูลตั้งต้นของส่วนในเครื่อง (แม่พิมพ์)
+  // snapshot = { version, epoch, <ทั้ง 11 ชุด> } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [...] } } }
+  // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
   // storage: { getItem, setItem, removeItem } · seed: buildSeed() · actions: ตาราง action · now: () => ms
-  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, localSeed, idSuffix, shouldHold } = {}) {
-    if (remote) return createRemoteStore({ storage, localSeed, actions, now, remote, persona, idSuffix, shouldHold });
+  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold } = {}) {
+    if (remote) return createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold });
     let data = null;
     let userId = null;
     let loaded = false;
@@ -586,7 +617,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, LOCAL_LISTS, diffMaster, mapRemoteError, personaUser };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, rightForAction, rightForDialog };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);
