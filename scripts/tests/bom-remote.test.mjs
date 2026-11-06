@@ -13,6 +13,7 @@ globalThis.MNP_BOM_RULES = rules;
 const A = require("../../modules/bom-actions.js");
 globalThis.MNP_BOM_ACTIONS = A;
 const storeApi = require("../../modules/bom-store.js");
+globalThis.MNP_RUBBERFLOW_RULES = require("../../modules/rubberflow-rules.js"); // Supabase จำลองของ harness ใช้กฎสเปก/FEFO ของ RubberFlow ตอนบันทึกชุดหน้างาน
 
 const NOW = Date.parse("2026-11-05T10:00:00+07:00");
 const SERVER_AT = NOW + 60000;
@@ -1495,8 +1496,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-wh", "persona-qa"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "wh", "viewer"], "each persona maps to a different BOM role (the RB head is a department manager)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-qa"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "viewer"], "each persona maps to a BOM role (the RB head is a department manager; SR and QA are not BOM departments)");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
   assert.equal((await client.rpc("app_sandbox_status")).data.persona.department.code, "RB");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "nobody" })).error.code, "PERSONA_NOT_FOUND");
@@ -2394,7 +2395,7 @@ test("RubberFlow in database mode: loading state, no demo role picker or reset, 
   assert.match(html, /Rev\.2/, "the order shows the recipe revision it was opened with");
   assert.match(html, /data-rf-open="createOrder"/);
   const close = dialogs.closeOrder(head.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=orders")), { id: order.result });
-  assert.match(close.html, /name="producedQty"/);
+  assert.doesNotMatch(close.html, /name="producedQty"/, "the database counts the produced quantity from the finishing lots; there is nothing to type");
   assert.match(close.html, /data-rf-form="setOrderStatus"/);
 
   // บันทึกการใช้งาน: บรรทัดหลักเป็นการกระทำที่เซิร์ฟเวอร์บันทึกเอง ภาษาไทย
@@ -2450,17 +2451,69 @@ test("the BOM 'create WO' dialog creates the WO through the RubberFlow store wit
   assert.doesNotMatch(again.html, /data-bom-rf-create/, "no second WO for a linked job");
   assert.doesNotMatch((await env.render("p=jobs&dept=RB")).split("<tr").find((row) => row.includes(">JOB-RB1<")) ?? "", /jobRubberflow/);
 
-  // ปิด WO ในฐานข้อมูล: ยอดผลิตกลับไปที่งาน
+  // ปิด WO ในฐานข้อมูล: ไม่ต้องมียอดผลิต และการปิดไม่ส่งยอดเข้างาน (ยอดเข้างานเกิดตอน SR รับมอบใบส่งมอบ)
   const head = await asPersona(scene, "persona-rbh");
   await rf(head).ensureLoaded();
   await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "released" }));
   await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "in_progress" }));
-  assert.equal(rf(head).run("setOrderStatus", { id: wo.id, status: "completed" }).ok, false, "a BOM-linked WO needs the produced quantity");
-  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "completed", producedQty: 10 }));
+  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "completed" }));
   const reopened = await asPersona(scene, "persona-rb"); // another page of the same database (the mock caches per page, so open a fresh one)
-  const job = reopened.store.data().jobs.find((row) => row.id === "JOB-RB1");
-  assert.deepEqual([job.qtyDone, job.status], [10, "done"]);
-  assert.equal(job.reports.at(-1).note, `จาก WO ${wo.id}`);
+  const closedJob = reopened.store.data().jobs.find((row) => row.id === "JOB-RB1");
+  assert.deepEqual([closedJob.qtyDone, closedJob.reports.length, closedJob.externalRef.woId], [0, 0, wo.id], "closing the WO feeds nothing back");
+});
+
+// SR รับมอบใบส่งมอบ → ฐานข้อมูลรายงานยอดเข้างาน BOM → หน้า RubberFlow ตามทัน BOM แล้วแจ้งผล (ใช้โมดูลจริงในหน้าจำลอง)
+test("when SR receives a transfer the module catches BOM up and says what the job received", async () => {
+  const { scene, rf } = await rfScene();
+  const admin = await asPersona(scene, "persona-1");
+  await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
+  await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
+  const env = await asPersona(scene, "persona-rb");
+  await rf(env).ensureLoaded();
+  // WO ที่ผูกงาน JOB-RB1 (10 เส้น เส้นละ 0.525 kg) ผ่านปุ่มของ BOM
+  const ctx = env.ctx("p=jobs&dept=RB");
+  const built = env.context.MNP_BOM_DIALOGS.jobRubberflow(ctx, { jobId: "JOB-RB1" });
+  const button = { handlers: {}, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  built.bind({ querySelector: (selector) => (selector === "[data-bom-rf-create]" ? button : null), close() {} }, ctx);
+  button.handlers.click({ currentTarget: button });
+  for (let turn = 0; turn < 8; turn += 1) await new Promise((resolve) => setTimeout0(resolve));
+  const wo = rf(env).data().orders.at(-1);
+  const head = await asPersona(scene, "persona-rbh");
+  await rf(head).ensureLoaded();
+  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "released" }));
+  // คลังรับวัตถุดิบ → RB เบิก ชั่ง ผสม ส่งมอบ
+  const st = await asPersona(scene, "persona-st");
+  await rf(st).ensureLoaded();
+  for (const code of ["EPDM-55", "CB-N550"]) await saved(rf(st).run("receiveMaterial", { materialCode: code, qtyKg: 40, expiry: NOW + 30 * 86400000 }));
+  // สถานีผลิตและ SR ใช้เวลาจริงของเครื่อง (เวลาบ่มของยางเทียบกับเวลาของหน้าและของฐานข้อมูลจำลองต้องเป็นนาฬิกาเดียวกัน)
+  const realClock = { mockOptions: { now: () => Date.now() } };
+  const rb = await asPersona(scene, "persona-rb", realClock);
+  await rf(rb).ensureLoaded();
+  const req = await saved(rf(rb).run("createRequisition", { orderId: wo.id, batches: 1 }));
+  const requisition = rf(rb).data().requisitions.find((row) => row.id === req.result);
+  for (let index = 0; index < requisition.lines.length; index += 1) await saved(rf(rb).run("weighLine", { reqId: req.result, index, actualKg: requisition.lines[index].targetKg }));
+  const lot = await saved(rf(rb).run("recordMixing", { reqId: req.result, machine: "KN-01 Kneader 75L", shift: "D", stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], outputKg: 10.5 }));
+  await saved(rf(rb).run("endRest", { lotId: lot.result }));
+  const transfer = await saved(rf(rb).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
+
+  // SR รับมอบ: ผ่านโมดูลของหน้า (ปุ่มรับมอบ) → ตามทัน BOM → แจ้งยอดที่งานได้รับ
+  const sr = await asPersona(scene, "persona-sr", realClock);
+  await rf(sr).ensureLoaded();
+  await sr.store.ensureLoaded();
+  const view = sr.context.MNP_RUBBERFLOW;
+  const before = view.bomJobOfTransfer(transfer.result);
+  assert.deepEqual(JSON.parse(JSON.stringify(before)), { id: "JOB-RB1", qtyDone: 0 }, "the module finds the BOM job that follows the transfer's WO");
+  const received = rf(sr).run("receiveTransfer", { id: transfer.result, qtyReceived: 10.5 });
+  assert.equal(received.ok, true, received.error?.message);
+  assert.equal(sr.store.data().jobs.find((row) => row.id === "JOB-RB1").qtyDone, 0, "the page does not touch the BOM job itself");
+  assert.equal((await received.saving).ok, true);
+  await view.showBomFeedback(before);
+  const job = sr.store.data().jobs.find((row) => row.id === "JOB-RB1");
+  assert.deepEqual([job.qtyDone, job.status, job.reports.length], [20, "done", 1], "10.5 kg ÷ 0.525 kg per piece = 20 pieces (more than the 10 planned: the job is done)");
+  assert.match(job.reports[0].note, new RegExp("^รับโอน " + transfer.result + " จาก WO " + wo.id + "$"));
+  assert.match(sr.log.toasts.at(-1)[0], /งาน BOM JOB-RB1 รับยอดจากการรับมอบแล้ว: ทำได้ 20\/10 \(งานครบแล้ว\)/);
+  // ใบส่งมอบของ WO ที่ไม่ผูกงาน BOM: ไม่มีงานให้ตามทัน
+  assert.equal(view.bomJobOfTransfer("TR-NOPE"), null);
 });
 
 test("RubberFlow's store holds other users' data back only for its own forms on its own page, so an open BOM dialog never blocks catching up after a duplicate WO number", async () => {
@@ -2499,7 +2552,7 @@ test("cancelling the WO in RubberFlow clears the job's link in BOM and the job o
   const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
   assert.match(again.html, /data-bom-rf-create/);
   assert.doesNotMatch(again.html, /ไว้แล้ว/);
-  assert.match(again.html, /ยอดผลิตจริงของ WO นั้นจะถูกบวกเพิ่ม/, "the dialog says the WO's output is added to the job");
+  assert.match(again.html, /แผนก SR รับมอบใบส่งมอบของ WO นั้น/, "the dialog says each SR receive adds its quantity to the job");
 });
 
 test("the compounds page and the link dialog list only recipes approved in the database, and the BOM page loads RubberFlow by itself", async () => {

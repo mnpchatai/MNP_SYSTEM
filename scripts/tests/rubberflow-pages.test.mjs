@@ -403,3 +403,58 @@ test("two-stage recipe: the recipe form and the mixing station have six stage in
   assert.doesNotMatch(lot.holdReasons.join(" "), /ขั้น 1/);
   assert.equal(lot.params.stages.length, 2);
 });
+
+test("molds can be added and edited from the page (escaped, validated by the action), NCRs offer the corrective / preventive form while open, and the audit page names every action", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  let html = await env.render("p=molds");
+  assert.match(html, /data-rf-open="moldEdit"/, "the page offers the add button");
+  assert.match(html, /aria-label="แก้ไข DIE-DS-01"/, "and one edit button per mold");
+  const dialogs = env.context.MNP_RUBBERFLOW_DIALOGS;
+  const add = dialogs.moldEdit(env.ctx());
+  assert.match(add.html, /data-rf-form="saveMold"[\s\S]*name="id"[\s\S]*name="name"[\s\S]*name="kind"[\s\S]*name="unit"[\s\S]*name="perCycle"[\s\S]*name="cleanEvery"[\s\S]*name="pmLimit"/);
+  assert.doesNotMatch(add.html, /name="usageSinceClean"|name="totalUsage"/, "usage is counted from production, never typed");
+  const edit = dialogs.moldEdit(env.ctx(), { id: "DIE-DS-01" });
+  assert.match(edit.html, /name="id" value="DIE-DS-01" readonly/);
+  assert.match(edit.html, /แก้ไข DIE-DS-01/);
+  // the action behind the form (demo mode has no right check; the XSS name is escaped on the page)
+  const saved = env.store.run("saveMold", { id: "DIE-X", name: XSS, kind: "die", unit: "m", perCycle: "1", cleanEvery: "100", pmLimit: "1000" });
+  assert.equal(saved.ok, true, saved.error?.message);
+  html = await env.render("p=molds");
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(env.store.run("saveMold", { id: "DIE-X", name: "x", kind: "nope", unit: "m", perCycle: 1, cleanEvery: 1, pmLimit: 1 }).error.message, /ชนิด/);
+
+  // an open NCR carries the fill form (the close form stays with the QC decision); a closed one is read-only text
+  const lot = env.store.data().lots[0];
+  const ncr = env.store.run("createNcr", { title: "ผิวหยาบ", lotId: lot.id, stage: lot.stage, whys: ["ก"], containment: "ข" }).result;
+  html = await env.render("p=quality&tab=ncr");
+  assert.match(html, /data-rf-form="updateNcr"[^>]*>[\s\S]*name="corrective"[\s\S]*name="preventive"/);
+  assert.equal(env.store.run("updateNcr", { id: ncr, corrective: "ล้างแม่พิมพ์", preventive: "เพิ่มรอบล้าง" }).ok, true);
+  assert.equal(env.store.run("closeNcr", { id: ncr, verification: "ok" }).ok, true);
+  html = await env.render("p=quality&tab=ncr");
+  assert.doesNotMatch(html.split("<section").find((part) => part.includes(ncr)) ?? "", /data-rf-form="updateNcr"/, "a closed NCR has no form");
+  assert.match(html, /ล้างแม่พิมพ์/);
+  assert.match(env.store.run("updateNcr", { id: ncr, corrective: "x" }).error.message, /ปิดแล้ว/);
+  assert.match(env.store.run("updateNcr", { id: "NCR-NOPE", corrective: "x" }).error.message, /ไม่พบ/);
+
+  // the audit page of the database mode has a Thai label for every action the database whitelists
+  const source = fs.readFileSync("modules/rubberflow-pages-plan.js", "utf8");
+  for (const action of ["receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold"]) {
+    assert.match(source, new RegExp(`\\b${action}: "`), action);
+  }
+  assert.match(source, /molds: "แม่พิมพ์"/);
+});
+
+test("the closing dialog of a work order asks for a produced quantity in the demo only; the database counts it from the finishing lots", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const order = env.store.data().orders.find((row) => row.status === "in_progress");
+  const demo = env.context.MNP_RUBBERFLOW_DIALOGS.closeOrder(env.ctx("p=orders"), { id: order.id });
+  assert.match(demo.html, /name="producedQty"/);
+  // a store that says it is on the database (stub of the three methods the dialog reads)
+  const remoteCtx = { ...env.ctx("p=orders"), store: { isRemote: () => true } };
+  const remote = env.context.MNP_RUBBERFLOW_DIALOGS.closeOrder(remoteCtx, { id: order.id });
+  assert.doesNotMatch(remote.html, /name="producedQty"/);
+  assert.match(remote.html, /data-rf-form="setOrderStatus"/);
+});

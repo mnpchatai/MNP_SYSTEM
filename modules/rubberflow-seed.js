@@ -272,13 +272,8 @@
     return d;
   }
 
-  // โหมดฐานข้อมูล: ฐานข้อมูลเริ่มว่าง (ไม่มีชุดสาธิต) ส่วนที่ยังอยู่ในเครื่องมีแต่แม่พิมพ์/หัวดายตั้งต้น (เครื่องมือของโรงงาน ไม่ใช่ข้อมูลธุรกรรม) ใช้เป็นข้อมูลตั้งต้นของไฟล์ local
-  function localSeed(now = Date.now()) {
-    const { DAY } = rules();
-    return { molds: MOLDS.map((mold) => ({ ...mold, usageSinceClean: 0, lastCleanAt: now - 9 * DAY })) };
-  }
-
-  const api = { USERS, MATERIALS, MOLDS, emptyState, buildSeed, localSeed };
+  // โหมดฐานข้อมูล: ฐานข้อมูลเริ่มว่างทุกชุด (ไม่มีชุดสาธิต ไม่มีแม่พิมพ์ตั้งต้น) แม่พิมพ์เพิ่มจากหน้า "แม่พิมพ์และหัวดาย" · ชุดนี้ใช้เฉพาะโหมดสาธิตในเครื่อง
+  const api = { USERS, MATERIALS, MOLDS, emptyState, buildSeed };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_SEED = api;
 })(typeof window !== "undefined" ? window : globalThis);

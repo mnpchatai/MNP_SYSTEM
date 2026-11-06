@@ -3,17 +3,27 @@
 //
 // ทุก action แก้ไข "ร่าง" ของ state ที่ clone มาแล้ว: action(draft, payload, ctx) โดย ctx = { now, user, remote?, idSuffix? }
 // ถ้ากฎใดไม่ผ่านจะ throw Error ข้อความภาษาไทย (modules/rubberflow-store.js จับไปแสดง toast และไม่บันทึกร่างนั้น)
-// ข้อมูลหลัก (วัตถุดิบ สูตร ใบสั่งผลิต) ในเบราว์เซอร์จริงอยู่ในฐานข้อมูล (ctx.remote) ซึ่งตัดสินสิทธิ์และสถานะจริงอีกครั้ง · ส่วนที่เหลือและโหมดสาธิตอยู่ใน localStorage
-// (ข้อมูลสมมติ) กฎส่วนนั้นเป็นกฎของเดโม ไม่ใช่การควบคุมสิทธิ์ของระบบจริง — ดูหัวข้อ "RubberFlow MES" ใน README
+// ในเบราว์เซอร์จริงข้อมูลทุกชุดอยู่ในฐานข้อมูล (ctx.remote) ซึ่งตัดสินสิทธิ์ สถานะ และตัวเลขที่คำนวณเอง (สต็อกล็อตหลังชั่ง ยอดส่งต่อ/คงเหลือของใบส่งมอบ ยอดผลิตของใบ การใช้แม่พิมพ์) อีกครั้ง
+// ตรงนี้คำนวณสำเนาของตัวเองให้หน้าจอเห็นทันที (ส่วนต่างที่ฐานข้อมูลตอบกลับแก้ให้ตรง) · โหมดสาธิตอยู่ใน localStorage (ข้อมูลสมมติ) กฎส่วนนั้นเป็นกฎของเดโม ไม่ใช่การควบคุมสิทธิ์ของระบบจริง — ดูหัวข้อ "RubberFlow MES" ใน README
 // โหลดหลัง modules/rubberflow-rules.js (ใน Node เทสต์ตั้ง globalThis.MNP_RUBBERFLOW_RULES ก่อน require ไฟล์นี้)
 (function (root) {
   const rules = () => root.MNP_RUBBERFLOW_RULES;
 
-  function nextId(d, prefix, now) {
+  // เลขเอกสาร <prefix>-<yyyymmdd>-<nn>: โหมดฐานข้อมูลออกจากเลขสูงสุดของวันนั้นในรายการที่มี + 1 (เครื่องอื่นออกซ้ำ = ฐานข้อมูลตอบ RF_STALE แล้วบันทึกอีกครั้งได้) · โหมดสาธิตใช้ตัวนับในเครื่อง
+  function nextId(d, prefix, now, ctx, rows, idOf) {
     const key = `${prefix}-${rules().ymd(now)}`;
+    if (ctx?.remote) {
+      const top = (rows ?? []).reduce((max, row) => {
+        const id = String(idOf(row));
+        const tail = id.startsWith(`${key}-`) ? id.slice(key.length + 1) : "";
+        return /^\d+$/.test(tail) ? Math.max(max, Number(tail)) : max;
+      }, 0);
+      return `${key}-${String(top + 1).padStart(2, "0")}`;
+    }
     d.counters[key] = (d.counters[key] || 0) + 1;
     return `${key}-${String(d.counters[key]).padStart(2, "0")}`;
   }
+  const rowId = (row) => row.id;
 
   function audit(d, ctx, action, detail) {
     d.audit.unshift({ at: ctx.now, user: ctx.user?.name || "ระบบ", action, detail });
@@ -53,12 +63,32 @@
     approve: (user) => Boolean(user.rbHead), // อนุมัติสูตร: หัวหน้า RB ขึ้นไป
     release: (user) => Boolean(user.planner || user.rbHead), // ปล่อยผลิต
     work: (user) => Boolean(user.planner || user.rb), // สถานะอื่นของใบสั่งผลิต
+    receiveMaterial: (user) => Boolean(user.planner || user.st), // รับวัตถุดิบเข้าคลัง: คลังวัตถุดิบ (ST)
+    holdMaterial: (user) => Boolean(user.planner || user.st || user.qa), // กักกัน/ปลดกักกันล็อตวัตถุดิบ: ST หรือ QA
+    requisition: (user) => Boolean(user.planner || user.rb), // สร้างใบเบิก ชั่ง: แผนก RB
+    station: (user) => Boolean(user.planner || user.rb), // ผสม ฉีด อบ ตกแต่ง ข้ามเวลาบ่ม ทำความสะอาดแม่พิมพ์: แผนก RB
+    sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP: แผนก RB
+    receiveTransfer: (user) => Boolean(user.planner || user.sr), // รับมอบ WIP: แผนก SR
+    shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า: คลังสินค้า (WH)
+    qc: (user) => Boolean(user.planner || user.qa), // ผลตรวจ เปิด/ปิด NCR: แผนก QA
+    fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่: QA หรือ RB
+    editMold: (user) => Boolean(user.planner || user.rb), // เพิ่ม/แก้แม่พิมพ์: แผนก RB
   });
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
     approve: "อนุมัติสูตรได้โดยหัวหน้าแผนก RB ผู้จัดการโรงงานขึ้นไป หรือผู้ดูแลระบบ",
     release: "ปล่อยผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือหัวหน้าแผนก RB",
     work: "เปลี่ยนสถานะใบสั่งผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือพนักงานแผนก RB",
+    receiveMaterial: "รับวัตถุดิบเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) หรือฝ่ายวางแผน",
+    holdMaterial: "กักกัน/ปลดกักกันล็อตวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) หรือ QA",
+    requisition: "สร้างใบเบิกและชั่งเคมีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    station: "บันทึกการผลิตของสถานีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    sendTransfer: "สร้างใบส่งมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    receiveTransfer: "รับมอบ WIP ได้โดยแผนก SR หรือฝ่ายวางแผน",
+    shipBoxes: "ส่งมอบกล่องสินค้าได้โดยแผนกคลังสินค้า (WH) หรือฝ่ายวางแผน",
+    qc: "บันทึกผลตรวจและเปิด/ปิด NCR ได้โดยแผนก QA หรือฝ่ายวางแผน",
+    fillNcr: "กรอกการแก้ไขและป้องกันของ NCR ได้โดยแผนก QA พนักงานแผนก RB หรือฝ่ายวางแผน",
+    editMold: "เพิ่ม/แก้แม่พิมพ์ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
   });
   function needRight(ctx, right) {
     if (!ctx.remote) return;
@@ -132,18 +162,21 @@
     on_hold: ["in_progress"],
   });
 
-  // producedQty: ปริมาณผลิตจริงตอนปิดใบ (หน่วยของใบ) · ใบที่สร้างจากงาน BOM ต้องมากกว่า 0 เพราะฐานข้อมูลส่งยอดนี้กลับไปที่งาน
+  // producedQty: ปริมาณผลิตจริงตอนปิดใบ (หน่วยของใบ) ใช้เฉพาะโหมดสาธิต · โหมดฐานข้อมูลยอดผลิตมาจากล็อตตกแต่งที่นับแล้ว ฐานข้อมูลคำนวณเองและไม่รับค่าจากหน้าจอ
+  // (ยอดที่รับมอบส่งกลับงาน BOM ทีละใบส่งมอบตอน SR รับ ไม่ใช่ตอนปิดใบ จึงปิดใบที่ผูกงาน BOM ได้โดยไม่ต้องมียอดผลิต)
   function setOrderStatus(d, { id, status, producedQty }, ctx) {
     const order = find(d.orders, id, "ใบสั่งผลิต");
     if (!(ORDER_FLOW[order.status] || []).includes(status)) fail(`เปลี่ยนสถานะจาก ${order.status} เป็น ${status} ไม่ได้`);
     needRight(ctx, status === "released" ? "release" : "work");
     if (status === "completed") {
-      if (producedQty !== undefined && producedQty !== null && producedQty !== "") {
-        const produced = Number(producedQty);
-        if (!Number.isFinite(produced) || produced < 0) fail("ปริมาณผลิตจริงต้องเป็นตัวเลขไม่ติดลบ");
-        order.producedQty = produced;
+      if (!ctx.remote) {
+        if (producedQty !== undefined && producedQty !== null && producedQty !== "") {
+          const produced = Number(producedQty);
+          if (!Number.isFinite(produced) || produced < 0) fail("ปริมาณผลิตจริงต้องเป็นตัวเลขไม่ติดลบ");
+          order.producedQty = produced;
+        }
+        if (order.sourceJobId && !(Number(order.producedQty) > 0)) fail("ใบสั่งผลิตนี้มาจากงาน BOM กรุณาระบุปริมาณผลิตจริง (มากกว่า 0) ก่อนปิดใบ");
       }
-      if (order.sourceJobId && !(Number(order.producedQty) > 0)) fail("ใบสั่งผลิตนี้มาจากงาน BOM กรุณาระบุปริมาณผลิตจริง (มากกว่า 0) ก่อนปิดใบ");
       order.completedAt = ctx.now;
     } else if (status === "released") {
       order.releasedAt = ctx.now;
@@ -277,16 +310,17 @@
   // ---------- เบิกและชั่งเคมี ----------
 
   function createRequisition(d, { orderId, batches, note }, ctx) {
+    needRight(ctx, "requisition");
     const { recipeLines, allocateFefo } = rules();
     const order = find(d.orders, orderId, "ใบสั่งผลิต");
     if (!["released", "in_progress"].includes(order.status)) fail('ใบสั่งผลิตต้องอยู่ในสถานะ "ปล่อยผลิต" หรือ "กำลังผลิต"');
     const n = num(batches, "จำนวน batch");
     if (n < 1 || n > 10) fail("จำนวน batch ต้องอยู่ระหว่าง 1–10");
     const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร ${order.recipeId}`);
-    // จองสต็อกที่ใบเบิกเปิดอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน
+    // จองสต็อกที่ใบเบิกเปิดอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน · โหมดฐานข้อมูลหักสต็อกตอนชั่งแต่ละรายการ จึงจองเฉพาะรายการที่ยังไม่ชั่ง
     const reserved = {};
     d.requisitions.filter((requisition) => requisition.status !== "issued" && requisition.status !== "consumed").forEach((requisition) =>
-      requisition.lines.forEach((line) => { reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg; }));
+      requisition.lines.filter((line) => !ctx.remote || line.actualKg === null).forEach((line) => { reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg; }));
     const lines = [];
     const shortages = [];
     for (const item of recipeLines(recipe)) {
@@ -299,7 +333,7 @@
       });
     }
     if (shortages.length) fail(`สต็อกไม่พอตามหลัก FEFO: ${shortages.join(", ")}`);
-    const id = nextId(d, "REQ", ctx.now);
+    const id = nextId(d, "REQ", ctx.now, ctx, d.requisitions, rowId);
     d.requisitions.unshift({
       id, orderId, recipeId: recipe.id, recipeRevision: recipe.revision, batches: n, totalKg: recipe.batchKg * n, lines,
       status: "weighing", note: note || "", requestedBy: ctx.user?.name, createdAt: ctx.now,
@@ -309,6 +343,7 @@
   }
 
   function weighLine(d, { reqId, index, actualKg }, ctx) {
+    needRight(ctx, "requisition");
     const { weighTolerance, lotState } = rules();
     const requisition = find(d.requisitions, reqId, "ใบเบิก");
     if (requisition.status !== "weighing") fail("ใบเบิกนี้ชั่งครบแล้ว");
@@ -322,11 +357,15 @@
     line.actualKg = kg;
     line.weighedAt = ctx.now;
     line.weighedBy = ctx.user?.name;
+    // โหมดฐานข้อมูล: ฐานข้อมูลหักสต็อกของล็อตทันทีที่ชั่งแต่ละรายการ (โหมดสาธิตหักตอนชั่งครบทุกรายการ)
+    if (ctx.remote) lot.qtyKg = Math.max(0, +(lot.qtyKg - kg).toFixed(6));
     if (requisition.lines.every((row) => row.actualKg !== null)) {
-      requisition.lines.forEach((row) => {
-        const materialLot = d.materialLots.find((item) => item.lotNo === row.lotNo);
-        materialLot.qtyKg = Math.max(0, materialLot.qtyKg - row.actualKg);
-      });
+      if (!ctx.remote) {
+        requisition.lines.forEach((row) => {
+          const materialLot = d.materialLots.find((item) => item.lotNo === row.lotNo);
+          materialLot.qtyKg = Math.max(0, materialLot.qtyKg - row.actualKg);
+        });
+      }
       requisition.status = "issued";
       requisition.issuedAt = ctx.now;
       requisition.issuedBy = ctx.user?.name;
@@ -335,12 +374,13 @@
   }
 
   function receiveMaterial(d, p, ctx) {
+    needRight(ctx, "receiveMaterial");
     const material = d.materials.find((row) => row.code === p.materialCode) || fail("กรุณาเลือกวัตถุดิบ");
     if (material.active === false) fail("วัตถุดิบนี้เลิกใช้แล้ว รับเข้าคลังไม่ได้");
     const qty = num(p.qtyKg, "ปริมาณรับเข้า");
     if (qty <= 0) fail("ปริมาณต้องมากกว่า 0");
     if (!p.expiry || p.expiry <= ctx.now) fail("วันหมดอายุต้องเป็นวันในอนาคต");
-    const lotNo = nextId(d, `RM-${material.code}`, ctx.now);
+    const lotNo = nextId(d, `RM-${material.code}`, ctx.now, ctx, d.materialLots, (row) => row.lotNo);
     d.materialLots.push({
       lotNo, materialCode: material.code, qtyKg: qty, initialKg: qty, expiry: p.expiry, receivedAt: ctx.now,
       supplier: p.supplier || "-", location: p.location || material.storage, status: "available", coa: Boolean(p.coa),
@@ -350,6 +390,7 @@
   }
 
   function setMaterialLotStatus(d, { lotNo, status }, ctx) {
+    needRight(ctx, "holdMaterial");
     if (!["hold", "available"].includes(status)) fail("สถานะล็อตไม่ถูกต้อง");
     const lot = d.materialLots.find((row) => row.lotNo === lotNo) || fail("ไม่พบล็อต");
     lot.status = status;
@@ -359,7 +400,7 @@
   // ---------- บันทึกของแต่ละสถานี ----------
 
   function newLot(d, stage, prefix, base, ctx) {
-    const id = nextId(d, prefix, ctx.now);
+    const id = nextId(d, prefix, ctx.now, ctx, d.lots, rowId);
     const lot = { id, stage, transferredQty: 0, createdAt: ctx.now, operator: ctx.user?.name, ...base };
     d.lots.unshift(lot);
     return lot;
@@ -376,6 +417,7 @@
   }
 
   function recordMixing(d, p, ctx) {
+    needRight(ctx, "station");
     const { HOUR } = rules();
     const requisition = find(d.requisitions, p.reqId, "ใบเบิก");
     if (requisition.status !== "issued") fail("ใบเบิกยังจ่ายวัตถุดิบไม่ครบ หรือถูกใช้ไปแล้ว");
@@ -411,13 +453,17 @@
     return lot.id;
   }
 
+  // โหมดฐานข้อมูล: คำสั่งของพนักงาน RB ที่ฐานข้อมูลตั้งเวลาครบบ่มเป็นเวลาของเซิร์ฟเวอร์เอง (ไม่เชื่อเวลาของเครื่อง) และบันทึกในประวัติการใช้งาน
   function endRest(d, { lotId }, ctx) {
+    needRight(ctx, "station");
     const lot = find(d.lots, lotId, "ล็อต");
+    if (ctx.remote && !(lot.readyAt > ctx.now)) fail("ล็อตนี้บ่มครบเวลาแล้ว");
     lot.readyAt = ctx.now;
-    audit(d, ctx, "ข้ามเวลาบ่ม (โหมดสาธิต)", lotId);
+    audit(d, ctx, ctx.remote ? "ข้ามเวลาบ่ม" : "ข้ามเวลาบ่ม (โหมดสาธิต)", lotId);
   }
 
   function recordExtrusion(d, p, ctx) {
+    needRight(ctx, "station");
     const { SPECS, inSpec } = rules();
     const useKg = num(p.useKg, "น้ำหนักยางที่ใช้");
     const reworkKg = Number(p.reworkKg) || 0;
@@ -449,6 +495,7 @@
   }
 
   function recordCuring(d, p, ctx) {
+    needRight(ctx, "station");
     const { SPECS, inSpec } = rules();
     const useQty = num(p.useQty, "ปริมาณที่นำเข้าอบ");
     const transfer = takeFromTransfer(d, p.transferId, "curing", useQty);
@@ -475,6 +522,7 @@
   }
 
   function recordFinishing(d, p, ctx) {
+    needRight(ctx, "station");
     const useQty = num(p.useQty, "ปริมาณที่รับเข้าตกแต่ง");
     const transfer = takeFromTransfer(d, p.transferId, "finishing", useQty);
     const passed = num(p.passedQty, "จำนวนผ่าน QC");
@@ -527,12 +575,14 @@
   }
 
   function shipBoxes(d, { ids }, ctx) {
+    needRight(ctx, "shipBoxes");
     if (!Array.isArray(ids) || !ids.length) fail("กรุณาเลือกกล่องที่จะส่งมอบ");
     ids.forEach((id) => {
       const box = find(d.fgBoxes, id, "กล่อง");
       if (box.status !== "in_stock") fail(`กล่อง ${id} ไม่พร้อมส่ง`);
       box.status = "shipped";
       box.shippedAt = ctx.now;
+      box.shippedBy = ctx.user?.name;
     });
     audit(d, ctx, "ส่งมอบสินค้า", `${ids.length} กล่อง`);
   }
@@ -548,6 +598,7 @@
   }
 
   function createTransfer(d, { lotId, qty, note }, ctx) {
+    needRight(ctx, "sendTransfer");
     const { NEXT_STAGE } = rules();
     const lot = find(d.lots, lotId, "ล็อต");
     if (!NEXT_STAGE[lot.stage]) fail("ล็อตนี้เป็นขั้นตอนสุดท้ายแล้ว");
@@ -557,7 +608,7 @@
     const available = transferableQty(lot, ctx.now);
     if (q <= 0 || q > available + 1e-9) fail(`ปริมาณส่งมอบต้องอยู่ระหว่าง 0–${available}`);
     lot.transferredQty = +(lot.transferredQty + q).toFixed(3);
-    const id = nextId(d, "TR", ctx.now);
+    const id = nextId(d, "TR", ctx.now, ctx, d.transfers, rowId);
     d.transfers.unshift({
       id, lotId, orderId: lot.orderId, from: lot.stage, to: NEXT_STAGE[lot.stage], uom: lot.uom,
       qtySent: q, qtyReceived: null, remaining: 0, condition: null, note: note || "",
@@ -567,7 +618,9 @@
     return id;
   }
 
+  // โหมดฐานข้อมูล: ฐานข้อมูลส่งยอดที่รับ (หน่วยของใบสั่งผลิต กิโลกรัม→หน่วยตาม kgPerUnit) เข้ารายงานของงาน BOM ที่ผูกใบสั่งผลิตนี้ในคำสั่งเดียวกัน (ทีละใบส่งมอบ) หน้าจอไม่แตะงาน BOM
   function receiveTransfer(d, { id, qtyReceived, condition }, ctx) {
+    needRight(ctx, "receiveTransfer");
     const transfer = find(d.transfers, id, "ใบส่งมอบ");
     if (transfer.status !== "in_transit") fail("ใบส่งมอบนี้รับไปแล้ว");
     const q = num(qtyReceived, "จำนวนที่รับจริง");
@@ -584,6 +637,7 @@
   // ---------- คุณภาพ ----------
 
   function addQcRecord(d, p, ctx) {
+    needRight(ctx, "qc");
     const { SPECS, inSpec } = rules();
     const lot = find(d.lots, p.lotId, "ล็อต");
     const values = p.values ?? {};
@@ -595,7 +649,7 @@
     const result = p.result || (allPass ? "pass" : "hold");
     if (!["pass", "hold", "fail"].includes(result)) fail("ผลตัดสินไม่ถูกต้อง");
     if (result === "pass" && !allPass) fail('มีค่าทดสอบนอกสเปก ตัดสินเป็น "ผ่าน" ไม่ได้');
-    const id = nextId(d, "QC", ctx.now);
+    const id = nextId(d, "QC", ctx.now, ctx, d.qcRecords, rowId);
     d.qcRecords.unshift({ id, lotId: lot.id, orderId: lot.orderId, stage: lot.stage, tests, result, note: p.note || "", inspector: ctx.user?.name, at: ctx.now });
     lot.qc = result;
     if (result === "pass") lot.holdReasons = [];
@@ -612,9 +666,10 @@
   }
 
   function createNcr(d, p, ctx) {
+    needRight(ctx, "qc");
     if (!p.title?.trim()) fail("กรุณาระบุหัวข้อปัญหา");
     if (!p.lotId?.trim()) fail("กรุณาระบุล็อตที่พบปัญหา");
-    const id = nextId(d, "NCR", ctx.now);
+    const id = nextId(d, "NCR", ctx.now, ctx, d.ncrs, rowId);
     const lot = d.lots.find((row) => row.id === p.lotId.trim());
     if (lot && lot.qc === "pass") {
       lot.qc = "hold";
@@ -630,10 +685,26 @@
     return id;
   }
 
+  // แผนก RB (และ QA) กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่ได้ ไม่ต้องมีสิทธิ์ปิดเคส · ช่องที่ไม่ส่งมาไม่ถูกแตะ
+  function updateNcr(d, { id, corrective, preventive }, ctx) {
+    needRight(ctx, "fillNcr");
+    const ncr = find(d.ncrs, id, "NCR");
+    if (ncr.status === "closed") fail("NCR นี้ปิดแล้ว แก้ไขไม่ได้");
+    const next = { corrective: corrective === undefined ? undefined : String(corrective).trim(), preventive: preventive === undefined ? undefined : String(preventive).trim() };
+    if (next.corrective === undefined && next.preventive === undefined) fail("กรุณากรอกการแก้ไข (Corrective) หรือการป้องกัน (Preventive)");
+    if (!next.corrective && !next.preventive && !(ncr.corrective || ncr.preventive)) fail("กรุณากรอกการแก้ไข (Corrective) หรือการป้องกัน (Preventive)");
+    if (next.corrective !== undefined) ncr.corrective = next.corrective;
+    if (next.preventive !== undefined) ncr.preventive = next.preventive;
+    audit(d, ctx, "บันทึกการแก้ไข/ป้องกัน NCR", id);
+  }
+
   function closeNcr(d, { id, verification }, ctx) {
+    needRight(ctx, "qc");
     const ncr = find(d.ncrs, id, "NCR");
     if (ncr.status === "closed") fail("NCR นี้ปิดแล้ว");
     if (!ncr.corrective?.trim()) fail("ต้องมีการแก้ไข (Corrective action) ก่อนปิดเคส");
+    // ฐานข้อมูลปิดเคสได้เมื่อมีทั้งการแก้ไขและการป้องกัน (โหมดสาธิตตรวจแค่การแก้ไขเหมือนเดิม)
+    if (ctx.remote && !ncr.preventive?.trim()) fail("ต้องมีการป้องกัน (Preventive action) ก่อนปิดเคส");
     ncr.status = "closed";
     ncr.closedAt = ctx.now;
     ncr.closedBy = ctx.user?.name;
@@ -643,7 +714,40 @@
 
   // ---------- แม่พิมพ์และหัวดาย ----------
 
+  const MOLD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+  const MOLD_KINDS = Object.freeze(["die", "mold", "line"]);
+  const MOLD_UNITS = Object.freeze(["m", "pcs", "shot"]);
+  // เพิ่มหรือแก้แม่พิมพ์/หัวดาย/สายอบ (รหัสแก้ไม่ได้) · ยอดใช้งานสะสมนับจากการบันทึกผลิตเท่านั้น แก้ด้วยมือไม่ได้
+  function saveMold(d, p, ctx) {
+    needRight(ctx, "editMold");
+    const id = String(p.id ?? "").trim();
+    if (!id) fail("กรุณาระบุรหัสแม่พิมพ์");
+    if (!MOLD_ID.test(id)) fail("รหัสแม่พิมพ์ใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่มีช่องว่าง) ยาวไม่เกิน 40 ตัวอักษร");
+    const name = String(p.name ?? "").trim();
+    if (!name) fail("กรุณาระบุชื่อ");
+    const kind = String(p.kind ?? "");
+    const unit = String(p.unit ?? "");
+    if (!MOLD_KINDS.includes(kind)) fail("ชนิดไม่ถูกต้อง");
+    if (!MOLD_UNITS.includes(unit)) fail("หน่วยนับไม่ถูกต้อง");
+    const perCycle = num(p.perCycle, "จำนวน cavity ต่อรอบ");
+    const cleanEvery = num(p.cleanEvery, "รอบทำความสะอาด");
+    const pmLimit = num(p.pmLimit, "อายุสะสมก่อน PM ใหญ่");
+    if (!Number.isInteger(perCycle) || perCycle < 1) fail("จำนวน cavity ต่อรอบต้องเป็นจำนวนเต็มตั้งแต่ 1");
+    if (!(cleanEvery > 0) || !(pmLimit > 0)) fail("รอบทำความสะอาดและอายุสะสมก่อน PM ใหญ่ต้องมากกว่า 0");
+    const fields = { name: name.slice(0, 120), kind, unit, perCycle, cleanEvery, pmLimit };
+    const existing = d.molds.find((row) => row.id === id);
+    if (existing) {
+      Object.assign(existing, fields);
+      audit(d, ctx, "แก้แม่พิมพ์/หัวดาย", id);
+    } else {
+      d.molds.push({ id, ...fields, usageSinceClean: 0, totalUsage: 0, lastCleanAt: ctx.now });
+      audit(d, ctx, "เพิ่มแม่พิมพ์/หัวดาย", id);
+    }
+    return id;
+  }
+
   function cleanMold(d, { id }, ctx) {
+    needRight(ctx, "station");
     const mold = find(d.molds, id, "แม่พิมพ์");
     mold.usageSinceClean = 0;
     mold.lastCleanAt = ctx.now;
@@ -653,7 +757,7 @@
   const api = {
     ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, receiveMaterial, setMaterialLotStatus,
     recordMixing, endRest, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
-    addQcRecord, createNcr, closeNcr, cleanMold,
+    addQcRecord, createNcr, updateNcr, closeNcr, saveMold, cleanMold,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_RUBBERFLOW_ACTIONS = api;

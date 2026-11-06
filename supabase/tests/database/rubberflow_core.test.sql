@@ -174,11 +174,10 @@ select throws_ok('select public.app_sandbox_purge_rf()', 'SANDBOX_NOT_ACTIVE', '
 
 -- 4. วัตถุดิบ ------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select is(public.app_rf_master() - 'epoch', '{"version":0,"materials":[],"recipes":[],"orders":[]}'::jsonb,
-  'a planner reads an empty RubberFlow and never sees the real rows (the epoch is a separate field)');
-select is(public.app_rf_master_since(0) - 'epoch',
-  '{"version":0,"changes":{"materials":{"upsert":[],"delete":[]},"recipes":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]}}}'::jsonb,
-  'the delta of an empty RubberFlow lists all three lists with empty upsert and delete');
+select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', 0) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
+  'a planner reads an empty RubberFlow (eleven lists) and never sees the real rows (the epoch is a separate field)');
+select is(public.app_rf_master_since(0) - 'epoch', (select jsonb_build_object('version', 0, 'changes', jsonb_object_agg(l, '{"upsert":[],"delete":[]}'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
+  'the delta of an empty RubberFlow lists all eleven lists with empty upsert and delete');
 select ok((public.app_rf_master() ->> 'epoch') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'the snapshot carries the epoch');
 select is(public.app_rf_master_since(0) ->> 'epoch', public.app_rf_master() ->> 'epoch', 'the delta carries the same epoch');
 select set_config('test.epoch0', public.app_rf_master() ->> 'epoch', true);
@@ -220,7 +219,7 @@ select throws_ok($$ select public.app_rf_save('{}'::jsonb, 2, 'reportJob') $$, '
 select throws_ok($$ select public.app_rf_save('{}'::jsonb, 2, null) $$, 'RF_INVALID_ACTION', 'a missing action is refused');
 select throws_ok($$ select public.app_rf_save('{"materials":{"delete":[{"code":"MAT-A"}]}}'::jsonb, 2, 'saveMaterial') $$,
   'RF_INVALID_PAYLOAD', 'materials cannot be deleted');
-select throws_ok($$ select public.app_rf_save('{"lots":{"upsert":[]}}'::jsonb, 2, 'saveMaterial') $$, 'RF_INVALID_PAYLOAD', 'an unknown list is refused');
+select throws_ok($$ select public.app_rf_save('{"bogus":{"upsert":[]}}'::jsonb, 2, 'saveMaterial') $$, 'RF_INVALID_PAYLOAD', 'an unknown list is refused');
 select throws_ok($$ select public.app_rf_save('{"materials":{"upsert":{}}}'::jsonb, 2, 'saveMaterial') $$, 'RF_INVALID_PAYLOAD', 'a list must be an array');
 select throws_ok($$ select public.app_rf_save('[]'::jsonb, 2, 'saveMaterial') $$, 'RF_INVALID_PAYLOAD', 'the changes must be an object');
 select throws_ok($$ select public.app_rf_save('{}'::jsonb, 3, 'saveMaterial') $$, 'RF_INVALID_PAYLOAD', 'a base version above the counter is refused');
@@ -581,9 +580,9 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.w1')::jsonb || '{"targetQty":999}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$,
   'RF_INVALID_ORDER', 'the target cannot change after the work order is created');
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.w1')::jsonb || '{"producedQty":10}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$,
-  'RF_INVALID_ORDER', 'a planned work order cannot report production');
+select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.w1')::jsonb || '{"producedQty":10}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') ->> 'version',
+  public.app_rf_master() ->> 'version', 'a produced quantity sent by the client is ignored (the server counts it from finishing lots): nothing is written');
 
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.res', public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
@@ -618,18 +617,15 @@ select set_config('test.w1', (select w::text from jsonb_array_elements(public.ap
 select set_config('test.res', public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.w1')::jsonb || '{"status":"completed","producedQty":60}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'an RB member completes the work order');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'producedQty', '60', 'the produced quantity is stored');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'producedQty', '0', 'the produced quantity sent by the client is ignored (the server owns it)');
 select ok(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ? 'completedAt', 'the completion time is set by the server');
 select set_config('test.w1', (select w::text from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-01'), true);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.w1')::jsonb || '{"status":"cancelled"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$,
   'RF_INVALID_TRANSITION', 'a completed work order is final');
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.w1')::jsonb || '{"producedQty":10}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$,
-  'RF_INVALID_ORDER', 'a completed work order cannot lower its produced quantity');
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.w1')::jsonb || '{"producedQty":65}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus')
-  -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'producedQty', '65', 'an RB member can raise the produced quantity of a completed work order (overproduction)');
+  current_setting('test.w1')::jsonb || '{"producedQty":65}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') ->> 'version',
+  public.app_rf_master() ->> 'version', 'a produced quantity sent for a completed work order is ignored too: nothing is written');
 
 -- ปิด WO ที่ไม่ผูก BOM โดยไม่มียอดผลิตได้ · ยกเลิกใบ planned · ผู้ช่วย ผจก. RB (หัว RB ที่ไม่ใช่กลุ่มวางแผน) ปล่อยผลิตได้
 select set_config('test.res', public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
@@ -810,41 +806,29 @@ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upser
   (select w || '{"status":"in_progress"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-12'),
   (select w || '{"status":"in_progress"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-13')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus');
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select w || '{"status":"completed"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-11')))),
-  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_INVALID_PRODUCED', 'a work order linked to a BOM job cannot be closed without a produced quantity');
-select is((select w ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-11'), 'in_progress', 'the refused close changed nothing');
 select set_config('test.bv1', public.app_bom_master() ->> 'version', true);
-select set_config('test.rv1', public.app_rf_master() ->> 'version', true);
-select set_config('test.res', public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select w || '{"status":"completed","producedQty":40}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-11')))),
-  current_setting('test.rv1')::bigint, 'setOrderStatus')::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'the linked work order closes with a produced quantity');
-select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 40::numeric, 'the BOM job received the produced quantity');
-select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 'in_progress', 'below the plan the job stays in progress');
-select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 1, 'one report entry was appended');
-select is((select (j -> 'reports' -> 0) - 'at' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'),
-  jsonb_build_object('by', current_setting('test.n_sbx_rb_staff'), 'good', 40, 'reject', 0, 'note', 'จาก WO WO-20261107-11'),
-  'the report is written by the server: persona as author, good = produced, no rejects, a note naming the work order');
-select isnt((select j -> 'reports' -> 0 ->> 'at' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), null, 'the report carries the server time');
-select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bv1')::bigint + 1, 'the BOM counter went up by one for the feedback');
-select is((select jsonb_agg(j ->> 'id') from jsonb_array_elements(public.app_bom_master_since(current_setting('test.bv1')::bigint) -> 'changes' -> 'jobs' -> 'upsert') j), '["JOB-L1-RB"]'::jsonb,
-  'a BOM client catches up on the feedback with the normal delta');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:setOrderStatus' and a ->> 'detail' = 'jobs +1'),
-  'the BOM history records the feedback');
+select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  (select w || '{"status":"completed"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-11')))),
+  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed',
+  'a work order linked to a BOM job closes without a produced quantity (the feedback moved to the transfer receipt)');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 0::numeric,
+  'closing a linked work order writes nothing to the BOM job');
+select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 0, 'and appends no report');
+select is(public.app_bom_master() ->> 'version', current_setting('test.bv1'), 'and the BOM counter did not move');
+select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:setOrderStatus'), 'the BOM history has no feedback row');
+select is((select w ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-11'), '0',
+  'the produced quantity stays with the server (nothing was counted)');
 
--- WO-12: งานถูกรายงาน 30 ผ่าน BOM ก่อน แล้ว WO ปิดด้วย 70 (ผลผลิตของ WO ใบนี้) → ยอดงาน 30 + 70 = 100 และงานเสร็จ
+-- WO-12: งานถูกรายงาน 30 ผ่าน BOM ก่อน → ปิด WO แล้วยอดงานยังเป็น 30
 select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('status', 'in_progress', 'qtyDone', 30, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 30, 'reject', 0, 'note', 'กะเช้า')))
    from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob');
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"completed","producedQty":70}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-12')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus');
-select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB'), 100::numeric, 'the job total is what was reported before plus the produced quantity of the work order (30 + 70)');
-select is((select (j -> 'reports' -> 1 ->> 'good')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB'), 70::numeric,
-  'the appended report holds the produced quantity of the work order, not the difference to the job total');
-select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB'), 'done', 'reaching the plan finishes the job');
-select ok((select j ? 'doneAt' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB'), 'the finish time is set by the server');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB'), 30::numeric,
+  'the job total is what was reported through BOM (closing the work order adds nothing)');
+select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB'), 'in_progress', 'and the job stays in progress');
 
 -- WO-13: ใบ PI ปิดไปก่อน → WO ยังปิดได้ แต่ไม่เขียนอะไรเข้างาน
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -935,13 +919,12 @@ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upser
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"completed","producedQty":50}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-32')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus');
-select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 80::numeric,
-  'the job total is what it had when linked plus the produced quantity of the work order (30 + 50)');
-select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 'in_progress', 'below the plan the job stays in progress');
-select is((select (j -> 'reports' -> 2 ->> 'good')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 50::numeric,
-  'the appended report holds the produced quantity of the work order');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 30::numeric,
+  'closing the second work order does not change the job total either');
+select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 2,
+  'and appends no report (the two entries are the earlier shift report and the unlink note)');
 
--- QA: เพิ่ม producedQty ผ่าน addQcRecord เท่านั้น (รวมใบ completed) อย่างอื่นทุกอย่าง = RF_FORBIDDEN
+-- QA เขียน WO ไม่ได้เลย (ยอดผลิตนับฝั่งเซิร์ฟเวอร์ตอน QA บันทึกผลตรวจ ดู rubberflow_shopfloor.test.sql)
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-33"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -957,17 +940,11 @@ select set_config('test.w32', (select w::text from jsonb_array_elements(public.a
 select set_config('test.w33', (select w::text from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-33'), true);
 select set_config('test.bv6', public.app_bom_master() ->> 'version', true);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.w33')::jsonb || '{"producedQty":20}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$,
-  'RF_FORBIDDEN', 'QA cannot raise the produced quantity through any action but addQcRecord');
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.w33')::jsonb || '{"producedQty":20,"note":"แก้"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$,
   'RF_FORBIDDEN', 'QA cannot change anything but the produced quantity');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.w33')::jsonb || '{"producedQty":20,"status":"on_hold"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$,
   'RF_FORBIDDEN', 'QA cannot change the status');
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.w32')::jsonb || '{"producedQty":10}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$,
-  'RF_FORBIDDEN', 'QA cannot lower the produced quantity');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-34"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$,
   'RF_FORBIDDEN', 'QA cannot create a work order');
@@ -977,21 +954,11 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', js
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.rec')::jsonb || '{"id":"RC-QA"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$,
   'RF_FORBIDDEN', 'QA cannot add a recipe even through addQcRecord');
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select w || '{"producedQty":5}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-06')))),
-  (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$,
-  'RF_INVALID_ORDER', 'a work order that is not released yet cannot report production even through QC');
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.w33')::jsonb || '{"producedQty":20}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord')
-  -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'producedQty', '20', 'QA raises the produced quantity of a work order in progress through addQcRecord');
-select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.w32')::jsonb || '{"producedQty":60}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord')
-  -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'producedQty', '60', 'QA raises the produced quantity of a completed work order through addQcRecord (overproduction)');
-select is((select w ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-32'), 'completed', 'the status of the completed work order is untouched');
-select is(public.app_bom_master() ->> 'version', current_setting('test.bv6'), 'raising the quantity after the close does not feed the BOM job again');
-select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 80::numeric, 'and the job total stays at 80');
-select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'addQcRecord' and a ->> 'detail' = 'orders +1'),
-  'the history records the QC action by its name');
+  current_setting('test.w33')::jsonb || '{"producedQty":20}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') ->> 'version',
+  public.app_rf_master() ->> 'version', 'a produced quantity sent by QA is ignored: nothing is written');
+select is((select w ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-33'), '0', 'the work order keeps its server-side produced quantity');
+select is(public.app_bom_master() ->> 'version', current_setting('test.bv6'), 'and the BOM job is not fed');
 
 -- 10. คอมปาวด์ BOM ผูกกับสูตร ---------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -1024,13 +991,10 @@ select throws_ok($$ select public.app_bom_save_master('{"compounds":{"upsert":[{
 
 -- 11. delta / audit ---------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_build_object(
-    'materials', jsonb_build_object('upsert', public.app_rf_master() -> 'materials', 'delete', '[]'::jsonb),
-    'recipes', jsonb_build_object('upsert', public.app_rf_master() -> 'recipes', 'delete', '[]'::jsonb),
-    'orders', jsonb_build_object('upsert', public.app_rf_master() -> 'orders', 'delete', '[]'::jsonb))),
+select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
   'the delta from version 0 equals the snapshot (same shapes, same order)');
 select is(public.app_rf_master_since((public.app_rf_master() ->> 'version')::bigint) -> 'changes',
-  '{"materials":{"upsert":[],"delete":[]},"recipes":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]}}'::jsonb, 'a client at the current version gets an empty delta');
+  (select jsonb_object_agg(l, '{"upsert":[],"delete":[]}'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l), 'a client at the current version gets an empty delta');
 select is((select jsonb_agg(m ->> 'code') from jsonb_array_elements(public.app_rf_master() -> 'materials') m), '["MAT-A","MAT-B","MAT-C","MAT-D"]'::jsonb, 'materials are listed by code');
 select is((select jsonb_agg((r ->> 'id') || '/' || (r ->> 'revision')) from jsonb_array_elements(public.app_rf_master() -> 'recipes') r),
   '["RC-1/1","RC-1/2","RC-2/1","RC-2/2","RC-3/1"]'::jsonb, 'recipes carry every revision, ordered by code then revision');
@@ -1054,8 +1018,8 @@ select ok(not exists (select 1 from public.audit_logs where action = 'RF_SAVE' a
 select ok((select count(*) from public.audit_logs where action = 'RF_SAVE' and metadata ->> 'persona_name' is null) = 0, 'every audit row names the persona');
 select ok(not exists (select 1 from public.audit_logs where action = 'BOM_MASTER_SAVE' and metadata ->> 'client_action' like 'rubberflow:%' and actor_id <> '8f000000-0000-0000-0000-000000000101'),
   'the BOM audit rows written for RubberFlow also name the real admin');
-select is((select count(*) from public.audit_logs where action = 'BOM_MASTER_SAVE' and metadata ->> 'client_action' like 'rubberflow:%'), 8::bigint,
-  'eight BOM audit rows: four link calls (WO-11; WO-12 and WO-13 together; WO-31; WO-32), three feedbacks (WO-11, WO-12, WO-32; WO-13 wrote nothing) and one unlink (WO-31 cancelled)');
+select is((select count(*) from public.audit_logs where action = 'BOM_MASTER_SAVE' and metadata ->> 'client_action' like 'rubberflow:%'), 5::bigint,
+  'five BOM audit rows: four link calls (WO-11; WO-12 and WO-13 together; WO-31; WO-32) and one unlink (WO-31 cancelled); closing work orders feeds nothing back any more');
 
 -- 12. ตารางเป็นแบบแยกโหมด: นับด้วยบทบาทของเทสต์ ------------------------------------------------
 select is((select count(*) from public.rf_orders where not is_test), 1::bigint, 'the real work order is untouched');
@@ -1064,13 +1028,10 @@ select is((select count(*) from public.rf_materials where not is_test), 1::bigin
 select ok((select bool_and(changed_version > 0) from public.rf_orders where is_test) and (select bool_and(changed_version > 0) from public.rf_recipes where is_test)
           and (select bool_and(changed_version > 0) from public.rf_materials where is_test), 'every test row is stamped with the version that changed it');
 select is((select count(*) from public.rf_deleted_keys), 0::bigint, 'the tombstone table stays empty in this round');
-select ok((select fed_back_at is not null from public.rf_orders where is_test and wo_no = 'WO-20261107-11')
-          and (select fed_back_at is not null from public.rf_orders where is_test and wo_no = 'WO-20261107-32'), 'a work order whose output was fed back records when');
-select ok((select fed_back_at is null from public.rf_orders where is_test and wo_no = 'WO-20261107-13')
-          and (select fed_back_at is null from public.rf_orders where is_test and wo_no = 'WO-20261107-31'), 'a work order that fed nothing back has no feedback time');
-select is(private.rf_apply_feedback('x', (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-20261107-32')) ->> 'jobs', '0',
-  'the feedback of a work order runs once: a second run writes nothing');
-select is((select qty_done from public.bom_jobs where is_test and job_no = 'JOB-L5-RB'), 80::numeric, 'and the job total is unchanged by it');
+select ok(not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'rf_orders' and column_name = 'fed_back_at'),
+  'the retired feedback marker column is gone (feedback happens per transfer receipt now)');
+select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_apply_feedback' and p.pronargs = 2),
+  'and the old order-based feedback function is gone');
 select is((select max(changed_version) from public.rf_orders where is_test), (select version from public.rf_master_state where is_test), 'the newest row carries the counter version');
 set local role authenticated;
 
@@ -1095,7 +1056,7 @@ select set_config('test.pre_bom_version', public.app_bom_master() ->> 'version',
 select ok(current_setting('test.pre_version')::bigint > 20, 'the counter is well above zero before the purge');
 select set_config('test.purge', public.app_sandbox_purge_rf()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 15, 'the purge reports the deleted rows');
-select is(public.app_rf_master() - 'epoch', jsonb_build_object('version', current_setting('test.pre_version')::bigint, 'materials', '[]'::jsonb, 'recipes', '[]'::jsonb, 'orders', '[]'::jsonb),
+select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
   'the test data is empty again and the counter keeps its value (it never goes back)');
 select isnt(public.app_rf_master() ->> 'epoch', current_setting('test.pre_epoch'), 'the purge changed the epoch');
 select is(public.app_rf_master_since(current_setting('test.pre_version')::bigint) ->> 'epoch', public.app_rf_master() ->> 'epoch',
@@ -1111,7 +1072,10 @@ select is((select count(*)::integer from jsonb_array_elements(public.app_bom_mas
   'BOM jobs keep their links to the purged work orders (only RubberFlow data is purged)');
 reset role;
 select is((select count(*) from public.rf_materials where is_test) + (select count(*) from public.rf_recipes where is_test) + (select count(*) from public.rf_orders where is_test)
-          + (select count(*) from public.rf_deleted_keys where is_test), 0::bigint, 'no test row is left in any RubberFlow table');
+          + (select count(*) from public.rf_deleted_keys where is_test) + (select count(*) from public.rf_molds where is_test) + (select count(*) from public.rf_material_lots where is_test)
+          + (select count(*) from public.rf_requisitions where is_test) + (select count(*) from public.rf_lots where is_test) + (select count(*) from public.rf_transfers where is_test)
+          + (select count(*) from public.rf_fg_boxes where is_test) + (select count(*) from public.rf_qc_records where is_test) + (select count(*) from public.rf_ncrs where is_test),
+  0::bigint, 'no test row is left in any RubberFlow table');
 select is((select version from public.rf_master_state where is_test), current_setting('test.pre_version')::bigint, 'the test counter row keeps its version');
 select isnt((select epoch::text from public.rf_master_state where is_test), current_setting('test.pre_epoch'), 'the test counter row has a new epoch');
 select isnt((select epoch from public.rf_master_state where not is_test), (select epoch from public.rf_master_state where is_test), 'the real counter row has its own epoch');

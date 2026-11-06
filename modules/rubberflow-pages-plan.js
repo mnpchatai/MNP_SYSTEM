@@ -287,7 +287,11 @@
     const order = data.orders.find((row) => row.id === id);
     if (!order) return null;
     const linked = Boolean(order.sourceJobId);
-    const body = `<p class="muted small">${esc(`${order.id} · ${rules.orderLabel(order)} · เป้าหมาย ${rules.fmtNum(order.targetQty)} ${order.uom}${order.producedQty < order.targetQty ? " · ยังไม่ครบจำนวน ปิดใบก่อนครบได้" : ""}`)}</p>
+    // โหมดฐานข้อมูล: ยอดผลิตมาจากล็อตตกแต่งที่นับแล้ว ฐานข้อมูลคำนวณเอง ไม่ต้องกรอก · ยอดที่รับมอบรายงานเข้างาน BOM ทีละใบส่งมอบไปแล้ว ปิดใบไม่ส่งยอดซ้ำ
+    const info = `<p class="muted small">${esc(`${order.id} · ${rules.orderLabel(order)} · เป้าหมาย ${rules.fmtNum(order.targetQty)} ${order.uom}${order.producedQty < order.targetQty ? " · ยังไม่ครบจำนวน ปิดใบก่อนครบได้" : ""}`)}</p>`;
+    const body = ctx.store.isRemote()
+      ? `${info}${linked ? `<p class="small muted">${esc(`ยอดที่ SR รับมอบถูกรายงานเข้างาน ${order.sourceJobId} ของ BOM ทีละใบส่งมอบแล้ว การปิดใบไม่ส่งยอดซ้ำ`)}</p>` : ""}`
+      : `${info}
       ${ui.field(`ปริมาณผลิตจริง (${order.uom})${linked ? " *" : ""}`, ui.input("producedQty", { type: "number", step: "any", min: linked ? 0.0001 : 0, value: order.producedQty ? String(order.producedQty) : "", required: linked }), { hint: linked ? esc(`ส่งยอดนี้กลับไปที่งาน ${order.sourceJobId} ของ BOM เป็นยอดผลิตเสร็จ`) : "" })}`;
     const html = ui.dialog("closeOrder", `ปิดงาน ${order.id}`, `<form data-rf-form="setOrderStatus" data-rf-args="${esc(JSON.stringify({ id: order.id, status: "completed" }))}" data-rf-success="ปิดงาน ${esc(order.id)} แล้ว" id="rf-close-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-close-order">ปิดงาน</button>` });
     return { html };
@@ -308,7 +312,7 @@
     const boxes = [...data.fgBoxes].sort((a, b) => b.createdAt - a.createdAt).filter((box) => includes(`${box.id} ${box.orderId}`, ctx.q));
     // ล็อตแรกที่ใช้ได้ของแต่ละวัตถุดิบ = ล็อตที่ FEFO จะจ่ายถัดไป
     const nextFefo = new Set(data.materials.map((material) => available.filter((lot) => lot.materialCode === material.code).sort((a, b) => a.expiry - b.expiry)[0]?.lotNo).filter(Boolean));
-    const decide = ctx.can("qcDecision");
+    const decide = ctx.can("holdMaterial");
     const mayEditMaterial = ctx.can("editMaster");
 
     const rawRows = lots.map((lot) => {
@@ -399,10 +403,27 @@
           <div><strong>${esc(mold.name)}</strong><div class="small muted">${esc(`${MOLD_KIND[mold.kind] ?? mold.kind}${mold.perCycle > 1 ? ` · ${mold.perCycle} cavity` : ""}`)}</div></div>
           <div><div class="rf-row rf-between small"><span>ตั้งแต่ทำความสะอาดล่าสุด</span><span>${esc(`${fmtNum(mold.usageSinceClean)} / ${fmtNum(mold.cleanEvery)} ${MOLD_UNIT[mold.unit] ?? mold.unit}`)}</span></div>${ui.progress(mold.usageSinceClean, mold.cleanEvery, tone)}</div>
           <div><div class="rf-row rf-between small"><span>อายุสะสม (PM ใหญ่)</span><span>${esc(`${Math.round(pmPct * 100)}%`)}</span></div>${ui.progress(mold.totalUsage, mold.pmLimit, pmPct > 0.9 ? "warn" : "")}<div class="small muted">${esc(`${fmtNum(mold.totalUsage)} / ${fmtNum(mold.pmLimit)} ${MOLD_UNIT[mold.unit] ?? mold.unit}`)}</div></div>
-          <div class="rf-row rf-between"><span class="small muted">${esc(`ล้างล่าสุด ${fmtDate(mold.lastCleanAt)}`)}</span>${ui.button("บันทึกล้างแล้ว", { action: "cleanMold", args: { id: mold.id }, className: "secondary small", confirmText: `ยืนยันว่าได้ทำความสะอาด ${mold.id} แล้ว?` })}</div>
+          <div class="rf-row rf-between"><span class="small muted">${esc(`ล้างล่าสุด ${fmtDate(mold.lastCleanAt)}`)}</span><div class="rf-row">${ui.openButton("แก้ไข", "moldEdit", { id: mold.id }, { className: "secondary small", ariaLabel: `แก้ไข ${mold.id}` })}${ui.button("บันทึกล้างแล้ว", { action: "cleanMold", args: { id: mold.id }, className: "secondary small", confirmText: `ยืนยันว่าได้ทำความสะอาด ${mold.id} แล้ว?` })}</div></div>
         </div>`, { title: ui.mono(mold.id), actions: ui.badge(tone || "good", tone === "bad" ? "เกินรอบล้าง" : tone === "warn" ? "ใกล้ถึงรอบล้าง" : "ปกติ") });
     }).join("");
-    const html = `${ui.pageHead("แม่พิมพ์และหัวดาย", "ระบบนับรอบการใช้งานจากการบันทึกผลิตจริง แจ้งเตือนเมื่อใกล้ถึงรอบทำความสะอาด และติดตามอายุสะสมเทียบรอบซ่อมบำรุงใหญ่ (PM)")}<div class="rf-grid rf-g3">${cards}</div>`;
+    const html = `${ui.pageHead("แม่พิมพ์และหัวดาย", "ระบบนับรอบการใช้งานจากการบันทึกผลิตจริง แจ้งเตือนเมื่อใกล้ถึงรอบทำความสะอาด และติดตามอายุสะสมเทียบรอบซ่อมบำรุงใหญ่ (PM)", ui.openButton("เพิ่มแม่พิมพ์/หัวดาย", "moldEdit", {}, { className: "" }))}${cards ? `<div class="rf-grid rf-g3">${cards}</div>` : ui.card(ui.empty("ยังไม่มีแม่พิมพ์หรือหัวดาย เพิ่มได้จากปุ่มด้านบน"))}`;
+    return { html };
+  };
+
+  // เพิ่ม/แก้แม่พิมพ์ หัวดาย สายอบ · รหัสแก้ไม่ได้ · ยอดใช้งานสะสมนับจากการบันทึกผลิตจริงเท่านั้น (ไม่มีช่องให้กรอก)
+  dialogs.moldEdit = (ctx, { id = "" } = {}) => {
+    const { data, ui } = ctx;
+    const mold = data.molds.find((row) => row.id === id) ?? null;
+    const body = `<div class="rf-grid rf-g2">
+        ${ui.field("รหัส *", mold ? `<input class="input rf-input" name="id" value="${esc(mold.id)}" readonly>` : ui.input("id", { required: true, placeholder: "เช่น DIE-DS-02" }))}
+        ${ui.field("ชื่อ *", ui.input("name", { required: true, value: mold?.name ?? "" }))}
+        ${ui.field("ชนิด *", ui.select("kind", Object.entries(MOLD_KIND).map(([value, label]) => ({ value, label })), { value: mold?.kind ?? "die" }))}
+        ${ui.field("หน่วยนับการใช้งาน *", ui.select("unit", Object.entries(MOLD_UNIT).map(([value, label]) => ({ value, label })), { value: mold?.unit ?? "m" }), { hint: "หัวดายและสายอบนับเป็นเมตรหรือชิ้น แม่พิมพ์อัดนับเป็นรอบ" })}
+        ${ui.field("จำนวน cavity ต่อรอบ *", ui.input("perCycle", { type: "number", step: "1", min: 1, required: true, value: String(mold?.perCycle ?? 1) }))}
+        ${ui.field("ทำความสะอาดทุก (ตามหน่วยนับ) *", ui.input("cleanEvery", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.cleanEvery) : "" }))}
+        ${ui.field("อายุสะสมก่อน PM ใหญ่ (ตามหน่วยนับ) *", ui.input("pmLimit", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.pmLimit) : "" }))}
+      </div>`;
+    const html = ui.dialog("moldEdit", mold ? `แก้ไข ${mold.id}` : "เพิ่มแม่พิมพ์/หัวดาย", `<form data-rf-form="saveMold" data-rf-success="บันทึกแม่พิมพ์ {result} แล้ว" id="rf-mold-form">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-mold-form">บันทึก</button>` });
     return { html };
   };
 
@@ -411,8 +432,13 @@
   // ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ · ส่วนในเครื่อง (ล็อต ใบเบิก ฯลฯ) ไม่อยู่ในนี้เพราะยังไม่ขึ้นฐานข้อมูล
   const AUDIT_ACTION_LABEL = Object.freeze({
     saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออก revision ใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
+    receiveMaterial: "รับวัตถุดิบเข้าคลัง", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "สร้างใบเบิก", weighLine: "ชั่งวัตถุดิบ", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
+    recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", shipBoxes: "ส่งมอบกล่องสินค้า",
+    addQcRecord: "บันทึกผล QC", createNcr: "เปิด NCR", updateNcr: "บันทึกการแก้ไข/ป้องกัน NCR", closeNcr: "ปิด NCR", cleanMold: "บันทึกล้างแม่พิมพ์", saveMold: "บันทึกแม่พิมพ์/หัวดาย",
   });
-  const AUDIT_SECTION_LABEL = Object.freeze({ materials: "วัตถุดิบ", recipes: "สูตร", orders: "ใบสั่งผลิต" });
+  const AUDIT_SECTION_LABEL = Object.freeze({
+    materials: "วัตถุดิบ", recipes: "สูตร", orders: "ใบสั่งผลิต", materialLots: "ล็อตวัตถุดิบ", requisitions: "ใบเบิก", lots: "ล็อตผลิต", transfers: "ใบส่งมอบ", fgBoxes: "กล่องสินค้า", qcRecords: "ผลตรวจ QC", ncrs: "NCR", molds: "แม่พิมพ์",
+  });
   // "orders +1, recipes +2" (เซิร์ฟเวอร์เขียน) → "ใบสั่งผลิต +1, สูตร +2"
   const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");
   pages.audit = (ctx) => {
@@ -430,7 +456,7 @@
     const reload = remote ? `<button class="btn rf-btn secondary" type="button" data-rf-audit-reload title="โหลดบันทึกการใช้งานล่าสุดจากฐานข้อมูล">โหลดใหม่</button>` : "";
     const note = remote && view.status === "error" ? ui.callout("warn", esc(view.error?.message ?? "โหลดบันทึกการใช้งานไม่สำเร็จ")) : "";
     const emptyText = remote && view.status === "loading" ? "กำลังโหลดบันทึกการใช้งาน…" : "ไม่พบรายการ";
-    const html = `${ui.pageHead("บันทึกการใช้งาน (Audit Trail)", remote ? "ทุกการแก้วัตถุดิบ สูตร และใบสั่งผลิตถูกบันทึกพร้อมชื่อผู้ทำและเวลา" : "ทุกการเข้าสู่ระบบและทุกธุรกรรมถูกบันทึกพร้อมชื่อผู้ทำและเวลา", `${searchForm(ctx, "ค้นหาผู้ใช้ การกระทำ หรือรหัส…")}${reload}`)}
+    const html = `${ui.pageHead("บันทึกการใช้งาน (Audit Trail)", remote ? "ทุกการบันทึกข้อมูล RubberFlow ถูกบันทึกพร้อมชื่อผู้ทำและเวลา" : "ทุกการเข้าสู่ระบบและทุกธุรกรรมถูกบันทึกพร้อมชื่อผู้ทำและเวลา", `${searchForm(ctx, "ค้นหาผู้ใช้ การกระทำ หรือรหัส…")}${reload}`)}
       ${note}${ui.card(ui.table(["เวลา", "ผู้ใช้", "การกระทำ", "รายละเอียด"], rows, { emptyText }), { flush: true })}`;
     return { html };
   };

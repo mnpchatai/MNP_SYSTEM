@@ -5,11 +5,11 @@
 // rubberflow-derive.js (แจ้งเตือน/ค้นหา/สืบย้อน) · rubberflow-store.js (บทบาทสาธิต + localStorage) · rubberflow-ui.js (ชิ้นส่วน HTML) ·
 // rubberflow-pages-*.js และ rubberflow-documents.js (หน้าและ dialog ลงทะเบียนใน window.MNP_RUBBERFLOW_PAGES / _DIALOGS) · ไฟล์นี้ (shell เส้นทาง การผูก event)
 //
-// ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลหลัก 3 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO) อยู่ในฐานข้อมูลผ่าน RPC app_rf_master / app_rf_master_since / app_rf_save
-// (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) บันทึกการใช้งานอ่านจาก app_rf_audit และ admin ล้างข้อมูลทดสอบได้ด้วย app_sandbox_purge_rf · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
-// บทบาทมาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ส่วนที่เหลือ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์) ยังอยู่ใน localStorage ของเบราว์เซอร์ (ข้อมูลสมมติ)
+// ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลทั้ง 11 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ใบส่งมอบ WIP กล่องสินค้า ผลตรวจ QC NCR แม่พิมพ์)
+// อยู่ในฐานข้อมูลผ่าน RPC app_rf_master / app_rf_master_since / app_rf_save (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) บันทึกการใช้งานอ่านจาก app_rf_audit และ admin ล้างข้อมูลทดสอบได้ด้วย
+// app_sandbox_purge_rf · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin ซึ่งบทบาทมาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ไม่มีข้อมูลธุรกิจเหลืออยู่ในเบราว์เซอร์
 // ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตทั้งชุดใน localStorage และบทบาทสาธิต 9 คนของต้นแบบเหมือนเดิม
-// บทบาทใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น สิทธิ์จริงของข้อมูลหลักตัดสินที่ฐานข้อมูล — หน้า #/rubberflow ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
+// บทบาทใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น (โหมดฐานข้อมูลซ่อนปุ่มและปิดฟอร์มของคำสั่งที่บัญชีไม่มีสิทธิ์ ดู applyRights) สิทธิ์จริงทุกชุดตัดสินที่ฐานข้อมูล — หน้า #/rubberflow ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // (เมนูข้างโผล่เฉพาะโหมดทดสอบ nav.sandboxOnly แต่ URL พิมพ์เข้ามาได้)
 //
 // กติกา event (ทุกหน้าใช้ร่วมกัน ผูกโดย bindRoot):
@@ -68,11 +68,12 @@
     },
   } : null;
   const store = storeApi.createStore({
-    storage, seed: () => seed.buildSeed(Date.now()), actions, remote, localSeed: () => seed.localSeed(Date.now()),
+    storage, seed: () => seed.buildSeed(Date.now()), actions, remote,
     persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(),
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
-  window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing() };
+  // bomJobOfTransfer / showBomFeedback: ขั้น "รับมอบ → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
+  window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfTransfer: (id) => bomJobOfTransfer(id), showBomFeedback: (before) => showBomFeedback(before) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -188,11 +189,50 @@
       return true;
     }
     // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
+    const sentJob = name === "receiveTransfer" ? bomJobOfTransfer(payload?.id) : null; // ก่อนบันทึก: งาน BOM ที่ผูกใบสั่งผลิตของใบส่งมอบ และยอดที่งานทำไว้
     result.saving.then((outcome) => {
-      if (outcome.ok) report();
+      if (outcome.ok) { report(); if (sentJob) showBomFeedback(sentJob); }
       else showToast(friendlyError(outcome.error), "error");
     });
     return true;
+  }
+
+  // ---------- รับมอบ WIP → รายงานเข้างาน BOM ----------
+  // ฐานข้อมูลส่งยอดที่ SR รับ (หน่วยของใบสั่งผลิต) เข้ารายงานของงาน BOM ที่ผูกใบสั่งผลิตนั้นในธุรกรรมเดียวกัน หน้าจอไม่แตะงาน BOM · หลังบันทึกจึงตามทัน BOM แล้วบอกผล
+  const bomStore = () => { try { const bom = window.MNP_BOM?.store; return bom?.isRemote?.() ? bom : null; } catch { return null; } };
+  function bomJobOfTransfer(transferId) {
+    const bom = bomStore();
+    if (!bom || bom.status() !== "ready" || !store.isRemote()) return null;
+    const data = store.data();
+    const transfer = data.transfers.find((row) => row.id === transferId);
+    const jobId = data.orders.find((row) => row.id === transfer?.orderId)?.sourceJobId;
+    const job = jobId ? bom.data().jobs.find((row) => row.id === jobId) : null;
+    return job ? { id: job.id, qtyDone: Number(job.qtyDone) || 0 } : null;
+  }
+  async function showBomFeedback(before) {
+    const bom = bomStore();
+    if (!bom) return;
+    try { await bom.catchUp(); } catch { /* ไม่ได้ตามทัน: BOM จะเห็นยอดเมื่อเปิดหน้า BOM */ }
+    const job = bom.data().jobs.find((row) => row.id === before.id);
+    if (job && Number(job.qtyDone) > before.qtyDone) showToast(`งาน BOM ${job.id} รับยอดจากการรับมอบแล้ว: ทำได้ ${job.qtyDone}/${job.qtyPlanned}${job.status === "done" ? " (งานครบแล้ว)" : ""}`);
+  }
+
+  // ---------- สิทธิ์ของปุ่มและฟอร์ม (โหมดฐานข้อมูล) ----------
+  // บัญชีที่ไม่มีสิทธิ์ของคำสั่งนั้น: ซ่อนปุ่ม (คำสั่ง/เปิด dialog) และปิดฟอร์มพร้อมบอกครั้งเดียว · เป็นแค่ตัวช่วยไม่ให้กดผิด ฐานข้อมูลตัดสินสิทธิ์จริงอีกครั้งเสมอ
+  // คำสั่งที่ไม่อยู่ในตารางสิทธิ์ (storeApi.rightForAction) ไม่ถูกจำกัดที่หน้าจอ · โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้
+  const NO_RIGHT_NOTE = "บัญชีนี้ดูข้อมูลได้อย่างเดียว ไม่มีสิทธิ์ทำรายการนี้";
+  function applyRights(root, ctx) {
+    if (!store.isRemote() || !ctx.user) return;
+    const lacks = (right) => Boolean(right) && !storeApi.can(ctx.user, right);
+    root.querySelectorAll("[data-rf-action]").forEach((button) => { if (lacks(storeApi.rightForAction(button.dataset.rfAction))) button.remove(); });
+    root.querySelectorAll("[data-rf-open]").forEach((button) => { if (lacks(storeApi.rightForDialog(button.dataset.rfOpen))) button.remove(); });
+    root.querySelectorAll("form[data-rf-form]").forEach((form) => {
+      if (!lacks(storeApi.rightForAction(form.dataset.rfForm))) return;
+      form.dataset.rfReadonly = "";
+      form.querySelectorAll("input, select, textarea, button").forEach((node) => { node.disabled = true; });
+      if (form.id) root.querySelectorAll(`button[form="${CSS.escape(form.id)}"]`).forEach((node) => { node.disabled = true; });
+      if (!form.closest("dialog")) form.insertAdjacentHTML("beforebegin", `<p class="small muted" role="note">${NO_RIGHT_NOTE}</p>`);
+    });
   }
 
   // ---------- ผูก event ----------
@@ -216,6 +256,7 @@
   }
 
   function bindRoot(root, ctx) {
+    applyRights(root, ctx);
     root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", (event) => {
       event.preventDefault();
       const name = form.dataset.rfForm;
@@ -301,7 +342,7 @@
     const { data, user, now } = ctx;
     // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล) · ล้างข้อมูลทดสอบ = เฉพาะ admin ตัวจริงในโหมดทดสอบ (ฐานข้อมูลตรวจซ้ำ)
     if (store.isRemote()) {
-      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-rf-purge title="ลบวัตถุดิบ สูตร และใบสั่งผลิตของ RubberFlow ทั้งหมดในฐานข้อมูล แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้ · ส่วนที่เก็บในเบราว์เซอร์นี้ถูกล้างด้วย)">ล้างข้อมูล RubberFlow ทดสอบ</button>` : "";
+      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-rf-purge title="ลบข้อมูลทั้งหมดของ RubberFlow ในฐานข้อมูล (วัตถุดิบ สูตร ใบสั่งผลิต ล็อต ใบเบิก ส่งมอบ กล่อง QC NCR แม่พิมพ์) แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล RubberFlow ทดสอบ</button>` : "";
       const alerts = user && store.status() === "ready" ? derive.buildAlerts(data, now) : [];
       const bad = alerts.some((alert) => alert.tone === "bad");
       const tools = user && store.status() === "ready" ? `<form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
@@ -385,7 +426,7 @@
     root.querySelector("[data-rf-audit-reload]")?.addEventListener("click", () => { store.loadAudit(true); renderRoute(); });
     root.querySelector("[data-rf-purge]")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
-      if (!(await confirmDialog({ title: "ล้างข้อมูล RubberFlow ทดสอบทั้งหมด?", message: "ลบวัตถุดิบ สูตรยางทุก revision และใบสั่งผลิต (WO) ของ RubberFlow ในฐานข้อมูลทั้งหมด แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) รวมทั้งล้างล็อตวัตถุดิบ ใบเบิก ล็อตผลิต และข้อมูลอื่นที่เก็บในเบราว์เซอร์นี้ ย้อนกลับไม่ได้ · งาน BOM ที่ผูก WO เดิมไว้ไม่ถูกแตะ · ประวัติการใช้งาน (audit) ไม่ถูกลบและมีบรรทัดบันทึกการล้างเพิ่ม · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล RubberFlow ทดสอบ", danger: true }))) return;
+      if (!(await confirmDialog({ title: "ล้างข้อมูล RubberFlow ทดสอบทั้งหมด?", message: "ลบข้อมูล RubberFlow ในฐานข้อมูลทั้งหมด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ใบส่งมอบ กล่องสินค้า ผลตรวจ QC NCR และแม่พิมพ์) แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) ย้อนกลับไม่ได้ · งาน BOM ที่ผูก WO เดิมไว้และยอดที่รายงานเข้างานแล้วไม่ถูกแตะ · ประวัติการใช้งาน (audit) ไม่ถูกลบและมีบรรทัดบันทึกการล้างเพิ่ม · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล RubberFlow ทดสอบ", danger: true }))) return;
       button.disabled = true;
       const outcome = await store.purge();
       if (outcome.ok) showToast(`ล้างข้อมูล RubberFlow ทดสอบแล้ว ${outcome.deleted} รายการ`);
@@ -460,7 +501,7 @@
     code: "RUBBERFLOW",
     enabled: true,
     standalone: true,
-    // ข้อมูลหลัก 3 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่รับเฉพาะ admin ในโหมดทดสอบ (RF_TEST_MODE_ONLY) ส่วนที่เหลืออยู่ใน localStorage ของเบราว์เซอร์ (ข้อมูลสมมติ)
+    // ข้อมูลทั้ง 11 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่รับเฉพาะ admin ในโหมดทดสอบ (RF_TEST_MODE_ONLY)
     sandbox: true,
     label: TITLE,
     theme: THEME,
