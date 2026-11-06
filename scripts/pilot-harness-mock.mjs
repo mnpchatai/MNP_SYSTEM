@@ -515,16 +515,33 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     } else if ((from === "released" || from === "in_progress") && to === "completed") {
       if (jobs.some((job) => job.dept === "PK" && job.status !== "done")) fail("BOM_INVALID_TRANSITION");
     } else if ((from === "released" || from === "in_progress") && to === "cancelled") {
-      if (jobs.some((job) => Number(job.qtyDone) > 0 || job.externalRef)) fail("BOM_INVALID_TRANSITION");
+      if (jobs.some((job) => Number(job.qtyDone) > 0)) fail("BOM_INVALID_TRANSITION");
+      ctx.rfCancel.push(bomRfCancelOp("cancelOrder", jobs));
       ctx.dropJobs(prev.id);
     } else if ((from === "released" || from === "in_progress") && to === "draft") {
       if (jobs.some(bomJobStarted)) fail("BOM_INVALID_TRANSITION");
       if (Number(record.revision) !== Number(prev.revision) + 1) fail("BOM_INVALID_TRANSITION");
+      ctx.rfCancel.push(bomRfCancelOp("reopenOrder", jobs));
       ctx.dropJobs(prev.id);
     } else fail("BOM_INVALID_TRANSITION");
   }
-  // งานที่เริ่มแล้ว (ตรงกับกฎ startedJobs ของหน้า): สถานะไม่ใช่รอคิว มีรายงาน ยอดดี/เสีย หรือผูก WO ของ RubberFlow
-  const bomJobStarted = (job) => job.status !== "queued" || Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0 || (Array.isArray(job.reports) && job.reports.length > 0) || Boolean(job.externalRef);
+  // WO ของ RubberFlow ที่เลย "ปล่อยผลิต" ไปแล้ว (กำลังผลิต พัก เสร็จ) = เริ่มแล้ว · WO ที่ยังเป็นแผนก/ปล่อยผลิต (รวมที่เปิดอัตโนมัติตอนปล่อยใบ) ยังไม่นับ
+  const RF_WO_STARTED = ["in_progress", "on_hold", "completed"];
+  const bomRfWoOf = (job) => (job.externalRef?.woId ? rfLoad().orders.find((row) => row.id === job.externalRef.woId) : undefined);
+  // งานที่เริ่มแล้ว (ตรงกับกฎ startedJobs ของหน้า): สถานะไม่ใช่รอคิว มีรายงาน ยอดดี/เสีย หรือผูก WO ของ RubberFlow ที่เริ่มแล้ว (หรือหา WO ไม่พบ)
+  const bomJobStarted = (job) => job.status !== "queued" || Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0 || (Array.isArray(job.reports) && job.reports.length > 0)
+    || (Boolean(job.externalRef) && (!bomRfWoOf(job) || RF_WO_STARTED.includes(bomRfWoOf(job).status)));
+  // ยกเลิกใบ / เปิดใบกลับมาแก้: WO ที่ผูกงานของใบต้องยังเป็นแผนก/ปล่อยผลิต (ฐานข้อมูลยกเลิกให้) ไม่งั้นทั้งคำสั่งล้ม BOM_RF_ORDER_STARTED (ตรงกับ private.bom_cancel_rf_orders)
+  function bomRfCancelOp(action, jobs) {
+    const woIds = [];
+    for (const job of jobs) {
+      const wo = bomRfWoOf(job);
+      if (!wo) continue;
+      if (RF_WO_STARTED.includes(wo.status)) fail("BOM_RF_ORDER_STARTED");
+      woIds.push(wo.id);
+    }
+    return { action, woIds };
+  }
   // กฎของงาน (ตรงกับ bom_save_jobs): งานใหม่เกิดตอนปล่อยผลิตเท่านั้น (queued ว่าง) · แก้งานได้เฉพาะใบที่ released / in_progress ·
   // รายงานต่อท้ายเท่านั้น (ทุกบทบาท) · พนักงานแผนก: งาน done แล้วแก้ไม่ได้ ยอดเพิ่มได้อย่างเดียวและเท่าผลรวมรายงานใหม่ · ผูก WO ได้เฉพาะงานแผนก RB
   function bomJobRules(prev, record, actor, next, released) {
@@ -551,7 +568,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       }
     }
   }
-  function bomApply(current, changes, base, actor, at) {
+  function bomApply(current, changes, base, actor, at, rfOps = { release: [], cancel: [] }) {
     const next = clone(current);
     const nextVersion = current.version + 1;
     // ระเบียนที่คำสั่งนี้แก้เอง (เวอร์ชัน nextVersion) ไม่นับว่าเป็นของผู้อื่น
@@ -591,7 +608,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         bomCheckRecord(list, prev, record, actor);
         // สูตรยางผูกกับสูตร PHR ของ RubberFlow ได้เฉพาะรหัสสูตรที่มีอยู่ในฐานข้อมูล RubberFlow (revision ใดก็ได้ · ตรงกับ bom_save_compounds)
         if (list === "compounds" && record.recipeId !== undefined && record.recipeId !== null && !rfLoad().recipes.some((row) => row.id === record.recipeId)) fail("BOM_INVALID_COMPOUND");
-        if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released });
+        if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released, rfCancel: rfOps.cancel });
         if (list === "jobs") bomJobRules(prev, record, actor, next, released);
         if (index === -1) {
           if (list === "colorSets" || list === "packages" || list === "jobs") {
@@ -641,6 +658,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     }
     // ใบที่ปล่อยผลิตต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้)
     for (const orderId of released) if (!next.jobs.some((job) => job.orderId === orderId)) fail("BOM_INVALID_TRANSITION");
+    rfOps.release = [...released];
     // งานเริ่ม (ออกจากรอคิว) ทำให้ใบที่ปล่อยผลิตแล้วเปลี่ยนเป็นกำลังผลิตเองในคำสั่งเดียวกัน (ผู้รายงานไม่ใช่ฝ่ายวางแผนก็ไม่ต้องส่งการแก้ใบ)
     for (const job of startedJobs) {
       const order = next.orders.find((row) => row.id === job.orderId);
@@ -1318,6 +1336,76 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     bom.audit = [...bom.audit, { at: iso(at), user: actor.name, action: `rubberflow:${action}`, detail, entries: [] }].slice(-2000);
     bomPersist();
   }
+  // ใบ PI ที่ปล่อยผลิต: เปิด WO (planned) ใน RubberFlow ให้งาน RB ที่ผูกสูตรอนุมัติแล้ว · ยกเลิก/เปิดใบกลับมาแก้: ยกเลิก WO แผนก/ปล่อยผลิตที่ผูกงานของใบ
+  // ตรงกับ private.bom_open_rf_orders / bom_cancel_rf_orders (ธุรกรรมเดียวกับการบันทึก BOM) · เรียกหลังบันทึก BOM สำเร็จ แก้ next (งานได้ externalRef.auto) และข้อมูล RubberFlow (เวอร์ชัน +1 ครั้งเดียว บันทึกการใช้งาน bom:<action>)
+  // คืน { opened: [{jobId, woId, kg}], skipped: [{jobId, itemCode, reason}], cancelled: [woId] }
+  function bomRfFollow(next, rfOps, actor, at) {
+    const rf = rfLoad();
+    const version = rf.version + 1;
+    const out = { opened: [], skipped: [], cancelled: [] };
+    const audits = [];
+    for (const op of rfOps.cancel) {
+      let count = 0;
+      for (const woId of op.woIds) {
+        const wo = rf.orders.find((row) => row.id === woId);
+        if (!wo || !["planned", "released"].includes(wo.status)) continue;
+        wo.status = "cancelled";
+        wo.cancelledAt = at;
+        rf.versions.orders[wo.id] = version;
+        out.cancelled.push(wo.id);
+        count += 1;
+      }
+      if (count) audits.push({ action: `bom:${op.action}`, count });
+    }
+    const day = new Date(at);
+    const key = `WO-${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`;
+    const top = () => rf.orders.reduce((max, row) => { const match = /^WO-(\d{8})-(\d+)$/.exec(String(row.id)); return match && `WO-${match[1]}` === key ? Math.max(max, Number(match[2])) : max; }, 0);
+    const start = new Date(at).setHours(0, 0, 0, 0);
+    let openedCount = 0;
+    for (const orderId of rfOps.release) {
+      const pi = next.orders.find((row) => row.id === orderId);
+      const jobs = next.jobs.filter((row) => row.orderId === orderId && row.dept === "RB" && !row.externalRef).sort((a, b) => bomCmp(a.id, b.id));
+      for (const job of jobs) {
+        const item = next.items.find((row) => row.code === job.itemCode);
+        const compoundCode = item?.rubber?.compound;
+        const compound = compoundCode ? next.compounds.find((row) => row.code === compoundCode) : null;
+        const recipe = compound?.recipeId ? rf.recipes.find((row) => row.id === compound.recipeId && row.status === "approved") : null;
+        const qty = Math.max(0, Number(job.qtyPlanned) - Number(job.qtyDone || 0));
+        // kg = rbJobKg ของหน้า: บรรทัดแรกของ BOM ที่อนุมัติแล้วเป็น kg/g ใช้ปริมาณ + % เผื่อเสียของบรรทัดนั้น ไม่เช่นนั้น kg/เส้น หรือน้ำหนักต่อชิ้น เผื่อ 5%
+        const line = next.boms.find((row) => row.itemCode === job.itemCode && row.status === "approved")?.lines?.[0];
+        const perKg = { kg: 1, g: 0.001 }[line?.uom];
+        let kg = 0;
+        if (line && perKg && Number(line.qty) > 0) kg = Math.round(qty * Number(line.qty) * perKg * (1 + (Number(line.scrapPct) || 0) / 100) * 100) / 100;
+        else {
+          if (item?.uom === "kg") kg = qty;
+          else if (item?.rubber?.kgPerRoll) kg = qty * Number(item.rubber.kgPerRoll);
+          else if (item?.weightG) kg = qty * Number(item.weightG) / 1000;
+          kg = Math.round(kg * 1.05 * 100) / 100;
+        }
+        const reason = !compoundCode ? "ไม่มีรหัสสูตรยาง" : !compound?.recipeId ? "ยังไม่ผูกสูตร RubberFlow" : !recipe ? `สูตร ${compound.recipeId} ยังไม่อนุมัติ` : !(qty > 0) ? "ไม่มียอดให้ผลิต" : !(kg > 0) ? "คำนวณกิโลกรัมไม่ได้" : "";
+        if (reason) { out.skipped.push({ jobId: job.id, itemCode: job.itemCode, reason }); continue; }
+        const woId = `${key}-${String(top() + 1).padStart(2, "0")}`;
+        rf.orders.push({
+          id: woId, customer: pi.customer, customerPo: pi.id, recipeId: recipe.id, recipeRevision: recipe.revision, productCode: recipe.productCode ?? "", uom: job.uom,
+          color: String(item.rubber?.color ?? "").trim() || "ดำ", targetQty: qty, producedQty: 0, startDate: start, dueDate: Math.max(job.dueAt, start), priority: job.dueAt < at ? "urgent" : "normal",
+          note: `จาก BOM งาน ${job.id} · PI ${pi.id} · ${job.itemCode} ${qty} ${job.uom} ≈ ${kg} kg · เปิดอัตโนมัติตอนปล่อยใบ`.slice(0, 300),
+          status: "planned", sourceJobId: job.id, targetKg: kg, kgPerUnit: kg / qty, createdAt: at, createdBy: actor.name,
+        });
+        rf.versions.orders[woId] = version;
+        job.externalRef = { system: "rubberflow", woId, kg, linkedAt: at, by: actor.name, auto: true }; // งานยัง queued และใบยัง released (ผูกมือเท่านั้นที่ขยับสถานะ)
+        out.opened.push({ jobId: job.id, woId, kg });
+        openedCount += 1;
+      }
+    }
+    if (openedCount) audits.push({ action: "bom:releaseOrder", count: openedCount });
+    if (audits.length) {
+      rf.version = version;
+      for (const row of audits) rf.audit.push({ at: iso(at), user: actor.name, action: row.action, detail: `orders +${row.count}`, entries: [] });
+      rf.audit = rf.audit.slice(-2000);
+      rfPersist();
+    }
+    return out;
+  }
   const RPC = {
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
@@ -1345,7 +1433,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       const auditIn = p_audit === undefined || p_audit === null ? [] : p_audit;
       if (!Array.isArray(auditIn) || auditIn.length > 20 || auditIn.some((entry) => !entry || typeof entry.action !== "string" || !entry.action || entry.action.length > 80 || typeof entry.detail !== "string" || entry.detail.length > 300)) fail("BOM_INVALID_AUDIT");
       const at = now();
-      const next = bomApply(current, p_changes, p_base_version, actor, at);
+      const rfOps = { release: [], cancel: [] };
+      const next = bomApply(current, p_changes, p_base_version, actor, at, rfOps);
       // ไม่มีการเปลี่ยนแปลงเลย = ไม่เพิ่มเวอร์ชัน (เหมือน RPC จริง) คืนส่วนต่างตั้งแต่ base
       const touched = BOM_LISTS.some((list) => (p_changes[list]?.upsert?.length ?? 0) + (p_changes[list]?.delete?.length ?? 0) > 0);
       if (!touched) return bomDelta(current, p_base_version);
@@ -1356,10 +1445,17 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         const del = p_changes[key]?.delete?.length ?? 0;
         return up || del ? `${key}${up ? ` +${up}` : ""}${del ? ` -${del}` : ""}` : "";
       }).filter(Boolean).join(", ");
-      next.audit = [...next.audit, { at: iso(at), user: actor.name, action: p_action, detail: counts, entries: auditIn.map((entry) => ({ action: entry.action, detail: entry.detail })) }].slice(-2000);
+      const rubberflow = bomRfFollow(next, rfOps, actor, at);
+      const row = { at: iso(at), user: actor.name, action: p_action, detail: counts, entries: auditIn.map((entry) => ({ action: entry.action, detail: entry.detail })) };
+      const tally = { opened: rubberflow.opened.length, skipped: rubberflow.skipped.length, cancelled: rubberflow.cancelled.length };
+      const touchedRf = tally.opened + tally.skipped + tally.cancelled > 0;
+      if (touchedRf) row.rubberflow = tally;
+      next.audit = [...next.audit, row].slice(-2000);
       bomMaster = next;
       bomPersist();
-      return bomDelta(bomMaster, p_base_version);
+      const delta = bomDelta(bomMaster, p_base_version);
+      // เฉพาะเมื่อมีอะไรเกิดขึ้นกับ WO (เปิด / ข้าม / ยกเลิก) · ไม่มี = รูปคำตอบเดิม
+      return touchedRf ? { ...delta, rubberflow } : delta;
     },
     // บันทึกการใช้งาน: ใหม่สุดก่อน (ตรงกับ app_bom_audit) ทุกบัญชีทดสอบอ่านได้
     app_bom_audit({ p_limit } = {}) {

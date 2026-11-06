@@ -1176,3 +1176,50 @@ test("deactivating sends active in the record the remote store diffs", () => {
   assert.equal(changes.items.upsert[0].code, "P-BOX-01");
   assert.equal(changes.items.upsert[0].active, false);
 });
+
+test("a job linked to a RubberFlow work order is started only once the WO is past released, when the WO list is known; without it the old rule holds", () => {
+  const d = fresh();
+  const open = (pi) => {
+    const id = A.createOrder(d, { pi, customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
+    A.addOrderItem(d, { orderId: id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner"));
+    A.releaseOrder(d, { orderId: id }, ctx("planner"));
+    const order = d.orders.find((entry) => entry.id === id);
+    const rb = d.jobs.find((job) => job.orderId === id && job.dept === "RB");
+    // งานที่ฐานข้อมูลผูก WO ให้ตอนปล่อยผลิต: ยังรอคิว มีแค่ externalRef (auto)
+    rb.externalRef = { system: "rubberflow", woId: `WO-${pi}`, kg: 3, linkedAt: NOW, by: "x", auto: true };
+    return { id, order, rb };
+  };
+  const a = open("T-AUTO-A");
+  assert.equal(a.rb.status, "queued");
+  assert.equal(A.helpers.startedJobs(d, a.order).length, 1, "no WO list (local mode or RubberFlow not loaded): a link counts as started, as before");
+  for (const [status, started] of [["planned", 0], ["released", 0], ["cancelled", 0], ["in_progress", 1], ["on_hold", 1], ["completed", 1]]) {
+    assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status }]).length, started, `WO ${status}`);
+  }
+  assert.equal(A.helpers.startedJobs(d, a.order, []).length, 1, "a WO that cannot be found counts as started");
+  assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status: "planned" }]).length, 0);
+  // ยกเลิกใบ: WO แผนก/ปล่อยผลิตไม่ขวาง (ฐานข้อมูลยกเลิกให้) · เริ่มแล้วหรือไม่มีรายการ WO ขวาง
+  rejects(() => A.cancelOrder(d, { orderId: a.id }, ctx("planner")), /WO-T-AUTO-A/);
+  rejects(() => A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "in_progress" }] }), /WO-T-AUTO-A/);
+  A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "released" }] });
+  assert.equal(a.order.status, "cancelled");
+  assert.equal(d.jobs.some((job) => job.orderId === a.id), false, "the jobs go with the cancelled order");
+  // เปิดใบกลับมาแก้: ตามกฎเดียวกัน
+  const b = open("T-AUTO-B");
+  rejects(() => A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
+  rejects(() => A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-B", status: "completed" }] }), /มีงานที่เริ่มแล้ว/);
+  A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-B", status: "planned" }] });
+  assert.equal(b.order.status, "draft");
+});
+
+test("the notice for what the database did in RubberFlow: opened count, skipped reasons (sticky), cancelled work orders, nothing otherwise", () => {
+  const notice = A.helpers.rubberflowNotice;
+  assert.equal(notice("releaseOrder", { orderId: "PI-1" }, undefined), null);
+  assert.equal(notice("releaseOrder", { orderId: "PI-1" }, { opened: [], skipped: [], cancelled: [] }), null);
+  assert.deepEqual(notice("releaseOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J1", woId: "WO-1", kg: 2 }, { jobId: "J2", woId: "WO-2", kg: 3 }] }), { text: "ปล่อยผลิต PI-1 แล้ว · เปิด WO ใน RubberFlow 2 ใบ", type: "success" });
+  const skipped = (n) => Array.from({ length: n }, (_, i) => ({ jobId: `J${i + 1}`, itemCode: `RB-${i + 1}`, reason: "ยังไม่ผูกสูตร RubberFlow" }));
+  assert.deepEqual(notice("releaseOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J0", woId: "WO-0", kg: 1 }], skipped: skipped(1) }),
+    { text: "ปล่อยผลิต PI-1 แล้ว · เปิด WO ใน RubberFlow 1 ใบ · ยังไม่ได้เปิด WO 1 งาน (J1 RB-1: ยังไม่ผูกสูตร RubberFlow)", type: "error" });
+  assert.match(notice("releaseOrder", { orderId: "PI-1" }, { skipped: skipped(5) }).text, /^ปล่อยผลิต PI-1 แล้ว · ยังไม่ได้เปิด WO 5 งาน \(J1 RB-1: .* · J3 RB-3: .* · อีก 2 งาน\)$/);
+  assert.deepEqual(notice("cancelOrder", { orderId: "PI-1" }, { cancelled: ["WO-1", "WO-2"] }), { text: "ยกเลิก WO WO-1, WO-2 ด้วย", type: "success" });
+  assert.equal(notice("cancelOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J1", woId: "WO-1", kg: 1 }] }), null, "only a release says what it opened");
+});

@@ -500,12 +500,21 @@
 
   const editable = (order) => { if (order.status !== "draft") fail("แก้รายการได้เฉพาะใบที่ยังเป็นร่าง (ยังไม่ปล่อยผลิต)"); };
   // งานของใบที่เริ่มแล้ว (แผนกกดเริ่ม/พักงาน รายงานผลผลิต/ของเสีย หรือสร้าง WO ใน RubberFlow) ทำให้แก้รายการสินค้าไม่ได้ เพราะงานรายแผนกคำนวณจากรายการตอนปล่อยผลิต
-  const startedJobs = (d, order) => d.jobs.filter((job) => job.orderId === order.id && (job.status !== "queued" || job.qtyDone > 0 || job.qtyReject > 0 || job.reports?.length || job.externalRef));
+  // งานที่ผูก WO นับว่าเริ่มแล้วเมื่อ WO เลย "ปล่อยผลิต" ไปแล้ว (กำลังผลิต พัก เสร็จ) หรือหา WO ไม่พบ · WO ที่ยังเป็นแผนก/ปล่อยผลิต (รวม WO ที่เปิดอัตโนมัติตอนปล่อยใบ) ยังไม่นับ
+  // rfOrders = รายการ WO จาก RubberFlow ที่โหลดอยู่ (ctx.rfOrders) · ไม่มี (โหมดในเครื่อง หรือ RubberFlow ยังไม่โหลด) = ผูก WO แล้วนับว่าเริ่ม ตามกฎเดิม
+  const WO_STARTED = Object.freeze(["in_progress", "on_hold", "completed"]);
+  const woStarted = (job, rfOrders) => {
+    if (!job.externalRef) return false;
+    if (!Array.isArray(rfOrders)) return true;
+    const wo = rfOrders.find((row) => row.id === job.externalRef.woId);
+    return !wo || WO_STARTED.includes(wo.status);
+  };
+  const startedJobs = (d, order, rfOrders = null) => d.jobs.filter((job) => job.orderId === order.id && (job.status !== "queued" || job.qtyDone > 0 || job.qtyReject > 0 || job.reports?.length || woStarted(job, rfOrders)));
   // แก้รายการสินค้า: ใบร่างแก้ได้เลย · ใบที่ปล่อยผลิตแล้วแต่ยังไม่มีงานเริ่ม กลับเป็นร่าง (ลบงานรายแผนก REV. +1) แล้วต้องระเบิด/ปล่อยผลิตใหม่
   function editableItems(d, order, ctx) {
     if (order.status === "draft") return;
     if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วแก้รายการสินค้าไม่ได้");
-    const started = startedJobs(d, order);
+    const started = startedJobs(d, order, ctx?.rfOrders);
     if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้ปิดใบแล้วเปิดใบใหม่สำหรับส่วนที่เพิ่ม`);
     const removed = d.jobs.filter((job) => job.orderId === order.id).length;
     d.jobs = d.jobs.filter((job) => job.orderId !== order.id);
@@ -875,7 +884,8 @@
     const order = orderById(d, orderId);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
     if (d.jobs.some((job) => job.orderId === order.id && job.qtyDone > 0)) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ให้ปิดใบแทน");
-    const linked = d.jobs.filter((job) => job.orderId === order.id && job.externalRef);
+    // WO ที่ยังเป็นแผนก/ปล่อยผลิต ฐานข้อมูลยกเลิกให้พร้อมใบ · ที่เริ่มแล้วต้องปิดหรือยกเลิกใน RubberFlow ก่อน
+    const linked = d.jobs.filter((job) => job.orderId === order.id && woStarted(job, ctx.rfOrders));
     if (linked.length) fail(`มีงานที่สร้าง WO ใน RubberFlow แล้ว (${linked.map((job) => job.externalRef.woId).join(", ")}) ยกเลิก WO ใน RubberFlow ก่อน`);
     order.status = "cancelled";
     order.cancelledAt = ctx.now;
@@ -965,12 +975,35 @@
     return Math.round(kg * (1 + scrapPct / 100) * 100) / 100;
   }
 
+  // ผลที่ฐานข้อมูลเปิด/ยกเลิก WO ของ RubberFlow ให้ (มากับคำตอบของการบันทึก ปล่อยผลิต/ยกเลิก/เปิดใบกลับมาแก้) → ข้อความแจ้งผู้ใช้ · null = ไม่มีอะไรต้องแจ้ง
+  // มีงานที่ยังเปิด WO ไม่ได้ = ข้อความค้างแบบเตือน (type error) ให้ผู้วางแผนอ่านเหตุผล · เหตุผลต่อเนื่องดูได้ที่แท็บงานรายแผนกของใบ
+  const SKIP_SHOWN = 3;
+  function rubberflowNotice(name, payload, info) {
+    if (!info || typeof info !== "object") return null;
+    const opened = Array.isArray(info.opened) ? info.opened : [];
+    const skipped = Array.isArray(info.skipped) ? info.skipped : [];
+    const cancelled = Array.isArray(info.cancelled) ? info.cancelled : [];
+    const release = name === "releaseOrder";
+    if (!skipped.length && !cancelled.length && !(release && opened.length)) return null;
+    const parts = [];
+    if (release) {
+      parts.push(`ปล่อยผลิต ${payload?.orderId ?? ""} แล้ว`);
+      if (opened.length) parts.push(`เปิด WO ใน RubberFlow ${opened.length} ใบ`);
+    }
+    if (cancelled.length) parts.push(`ยกเลิก WO ${cancelled.join(", ")} ด้วย`);
+    if (skipped.length) {
+      const shown = skipped.slice(0, SKIP_SHOWN).map((row) => `${row.jobId} ${row.itemCode}: ${row.reason}`).join(" · ");
+      parts.push(`ยังไม่ได้เปิด WO ${skipped.length} งาน (${shown}${skipped.length > SKIP_SHOWN ? ` · อีก ${skipped.length - SKIP_SHOWN} งาน` : ""})`);
+    }
+    return { text: parts.join(" · "), type: skipped.length ? "error" : "success" };
+  }
+
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage,
-    helpers: { customerName, customerKey, startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

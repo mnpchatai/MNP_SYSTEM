@@ -49,6 +49,8 @@
 --   - ผลตรวจ QC: pass ของแต่ละค่าคำนวณใหม่จาก SPECS.lab · ผลตัดสิน pass ได้เมื่อทุกค่าผ่าน · สถานะ QC ของล็อต: จาก fail ย้อนกลับเป็น pass/hold ไม่ได้ (นอกนั้นเปลี่ยนได้)
 --     กล่องที่ยังไม่ส่งของล็อตเปลี่ยนตาม (pass = in_stock อย่างอื่น = hold) · NCR ใหม่ทำให้ล็อตที่ pass อยู่เป็น hold (เหตุผล "เปิด <เลข NCR>")
 --
+-- ลำดับล็อก: app_rf_save ล็อก advisory 'mnp_bom_rf_master' เป็นอย่างแรกหลัง lab_only_block (ตัวเดียวกับ app_bom_save_master ของ 20261108020000 ที่เปิด/ยกเลิก WO ตอนปล่อยผลิต/ยกเลิกใบ) แล้วจึงล็อกแถว rf ก่อน bom
+--
 -- การเชื่อมกับ BOM: การป้อนผลผลิตกลับเข้างาน BOM ย้ายจาก "ตอนปิด WO" (รอบที่ 1) มาเป็น "ตอน SR รับมอบใบส่งมอบ" ทุกใบ
 --   เมื่อใบส่งมอบรับมอบ (receiveTransfer) และล็อตของใบเป็นของ WO ที่ผูกงาน BOM (external_ref ชี้มา WO นี้) เซิร์ฟเวอร์ต่อรายงานเข้างาน
 --   { at, by, good = qtyReceived (ล็อตหน่วย kg และ WO ไม่ใช่หน่วย kg = qtyReceived / kgPerUnit ปัดทศนิยม 3 ตำแหน่ง ไม่มี kgPerUnit = ไม่เขียนอะไร), reject = 0,
@@ -1760,7 +1762,7 @@ revoke all on function private.rf_delta(bigint) from public, anon, authenticated
 -- app_rf_master / app_rf_master_since / app_rf_audit ไม่เปลี่ยน (เรียก private.rf_snapshot / rf_delta ซึ่งคืน 11 ชุดแล้ว)
 -- บันทึกชุดการเปลี่ยนแปลงในธุรกรรมเดียว ผิดข้อใดข้อหนึ่ง = ไม่เขียนอะไรเลย คืน delta ตั้งแต่ p_base_version: { version, epoch, changes }
 -- ไม่มีการเปลี่ยนแปลงเลย (ทุกส่วนว่าง) = คืน delta โดยไม่เพิ่ม version และไม่เขียน audit
--- ลำดับล็อก (กัน deadlock): rf_master_state ก่อน แล้ว bom_master_state เฉพาะเมื่อมีการเขียนฝั่ง BOM (ผูก/ล้างการผูกงาน หรือป้อนผลผลิตกลับตอนรับมอบ)
+-- ลำดับล็อก (กัน deadlock): advisory lock 'mnp_bom_rf_master' ก่อน (ตัวเดียวกับ app_bom_save_master) แล้ว rf_master_state ก่อน bom_master_state เฉพาะเมื่อมีการเขียนฝั่ง BOM (ผูก/ล้างการผูกงาน หรือป้อนผลผลิตกลับตอนรับมอบ)
 create or replace function public.app_rf_save(
   p_changes jsonb, p_base_version bigint, p_action text, p_audit jsonb default '[]'::jsonb, p_epoch text default null)
 returns jsonb
@@ -1798,6 +1800,8 @@ declare
   v_may boolean;
 begin
   perform private.lab_only_block();
+  -- ล็อกเดียวกับ app_bom_save_master (20261108020000: ปล่อยผลิตแล้วเปิด WO ล็อก BOM ก่อน RF) ธุรกรรมละหนึ่งตัว ปล่อยเมื่อจบ จึงไม่วนกัน
+  perform pg_advisory_xact_lock(hashtext('mnp_bom_rf_master'));
   v_actor := private.rf_actor();
   v_planner := private.bom_can_edit(v_actor);
   v_rb := private.rf_is_rb(v_actor);

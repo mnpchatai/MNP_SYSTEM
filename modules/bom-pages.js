@@ -1506,6 +1506,28 @@
   const rfStore = (ctx) => { try { return ctx.rubberflow()?.store ?? null; } catch { return null; } };
   const rfRemote = (ctx) => Boolean(rfStore(ctx)?.isRemote?.());
   const rfReady = (ctx) => { const store = rfStore(ctx); return Boolean(store) && (!store.isRemote?.() || store.status() === "ready"); };
+  // WO ของ RubberFlow ที่โหลดจากฐานข้อมูลแล้ว (null = ยังไม่โหลด หรือโหมดในเครื่อง) · สั่งโหลดให้เมื่อยังไม่ได้โหลด (เหมือน rfRecipes) เพื่อรู้ว่างานที่ผูก WO เริ่มแล้วหรือยัง
+  const rfOrdersOf = (ctx) => {
+    const store = rfStore(ctx);
+    if (!store?.isRemote?.()) return null;
+    if (store.status() === "idle") store.ensureLoaded().then(() => { try { if (currentRoute().path === "bom") renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } });
+    if (!rfReady(ctx)) return null;
+    try { return store.data().orders ?? null; } catch { return null; }
+  };
+  // เหตุผลที่ฐานข้อมูลยังเปิด WO ให้งาน RB นี้ไม่ได้ตอนปล่อยผลิต (เช็กชุดเดียวกับ dialog jobRubberflow และกฎของฐานข้อมูล) · ว่าง = เปิดได้ แต่ยังไม่มี WO (เช่น ปล่อยผลิตก่อนมีระบบนี้ หรือ WO ถูกยกเลิก)
+  function rbJobWoReason(ctx, job) {
+    const item = itemOf(ctx, job.itemCode);
+    const code = item?.rubber?.compound;
+    if (!code) return "ไม่มีรหัสสูตรยาง";
+    const compound = ctx.data.compounds.find((entry) => entry.code === code);
+    if (!compound?.recipeId) return "ยังไม่ผูกสูตร RubberFlow";
+    if (!rfReady(ctx)) return "กำลังโหลดข้อมูล RubberFlow";
+    const recipe = rfRecipes(ctx).find((row) => row.id === compound.recipeId);
+    if (recipe?.status !== "approved") return `สูตร ${compound.recipeId} ยังไม่อนุมัติ`;
+    if (Number(job.qtyPlanned) - Number(job.qtyDone || 0) <= 0) return "ไม่มียอดให้ผลิต";
+    if (!ctx.helpers.rbJobKg(job, item, { scrapPct: 5, bom: approvedBomOf(ctx, item.code) })) return "คำนวณกิโลกรัมไม่ได้";
+    return "";
+  }
   const rfRecipes = (ctx) => {
     const store = rfStore(ctx);
     if (!store) return [];
@@ -1776,7 +1798,7 @@
         order.cancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
       ]);
       // แก้รายการสินค้าได้ในใบร่าง และใบที่ปล่อยผลิตแล้วแต่ยังไม่มีงานเริ่ม (แก้แล้วใบกลับเป็นร่าง ต้องปล่อยผลิตใหม่)
-      const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.startedJobs(data, order).length;
+      const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.startedJobs(data, order, rfOrdersOf(ctx)).length;
       const canEditItems = canPlan && (draft || reopen);
       const reopenNote = reopen ? " ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับเป็นร่าง งานรายแผนกถูกลบ ต้องระเบิด BOM และปล่อยผลิตใหม่" : "";
       const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canPlan ? ui.link("แก้ BOM", buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${canEditItems ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${reopenNote}` })}` : ""}</td></tr>`);
@@ -1787,7 +1809,7 @@
       if (draft && canPlan) {
         buttons.push(ui.openButton("เพิ่มสินค้า", "orderItemAdd", { orderId: order.id }, { className: "secondary" }));
         buttons.push(ui.button("ระเบิด BOM", { action: "explodeOrder", args: { orderId: order.id }, className: "secondary" }));
-        buttons.push(ui.button("ปล่อยผลิต", { action: "releaseOrder", args: { orderId: order.id }, className: "", confirmText: `ปล่อยผลิต ${order.id}? ระบบจะล็อก revision ของ BOM และสร้างงานรายแผนก` }));
+        buttons.push(ui.button("ปล่อยผลิต", { action: "releaseOrder", args: { orderId: order.id }, className: "", confirmText: `ปล่อยผลิต ${order.id}? ระบบจะล็อก revision ของ BOM และสร้างงานรายแผนก${ctx.store?.isRemote?.() ? " และเปิด WO ใน RubberFlow ให้งาน RB ที่ผูกสูตรแล้ว" : ""}` }));
       }
       if (["released", "in_progress"].includes(order.status) && canPlan) buttons.push(ui.button("ปิดใบ", { action: "completeOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ปิดใบสั่งผลิตนี้?" }));
       if (!["completed", "cancelled"].includes(order.status) && canPlan) buttons.push(ui.button("ยกเลิกใบ", { action: "cancelOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ยกเลิกใบสั่งผลิตนี้?" }));
@@ -1810,7 +1832,11 @@
           reqs.map((entry) => `<tr><td>${deptBadge(ctx, entry.dept)}</td><td>${ui.mono(entry.itemCode)}</td><td>${esc(entry.name)}</td><td class="right rf-mono">${esc(rules.fmtQty(entry.required))}</td><td>${esc(uomText(ctx, entry.uom))}</td><td class="right rf-mono">${entry.stock === undefined ? '<span class="muted">—</span>' : esc(rules.fmtQty(entry.stock))}</td><td class="right rf-mono">${esc(rules.fmtQty(entry.toMake))}${entry.surplus ? `<div class="small bom-surplus">เกิน ${esc(rules.fmtQty(entry.surplus))}</div>` : ""}</td><td class="small muted">${esc(entry.fgCodes.join(", "))}</td></tr>`));
       } else {
         const jobs = data.jobs.filter((job) => job.orderId === order.id).sort((a, b) => a.dueAt - b.dueAt);
-        tabBody = ui.table(["แผนก", "งาน", "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ"], jobs.map((job) => `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${deptBadge(ctx, job.dept)}</td><td>${ui.link(job.id, ctx.url("jobs", { dept: job.dept, q: job.id }), "rf-mono")}</td><td>${ui.mono(job.itemCode)}<div class="small muted">${esc(job.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(job.externalRef.woId, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}</div>` : ""}</td></tr>`), { emptyText: "ยังไม่มีงาน (ปล่อยผลิตก่อน)" });
+        // โหมดฐานข้อมูล: ปล่อยผลิตแล้วฐานข้อมูลเปิด WO ใน RubberFlow ให้งาน RB เอง · งานที่ยังไม่มี WO แสดงเหตุผลตรงนี้ (งานที่มี WO แสดงเลข WO ในตารางอยู่แล้ว)
+        const noWo = ctx.store?.isRemote?.() && ["released", "in_progress"].includes(order.status)
+          ? jobs.filter((job) => job.dept === "RB" && job.status !== "done" && !job.externalRef).map((job) => ({ job, reason: rbJobWoReason(ctx, job) })) : [];
+        const woNote = noWo.length ? ui.callout("warn", `<div><strong>งาน RB ที่ยังไม่มี WO ใน RubberFlow</strong></div>${noWo.map(({ job, reason }) => `<div>${ui.mono(job.id)} ${esc(job.itemCode)}${reason ? ` — ${esc(reason)}` : ""}</div>`).join("")}<div class="small muted">แก้เหตุผลแล้วสร้างเองได้ที่เมนูงานของแผนก RB (ปุ่ม “สร้าง WO ใน RubberFlow”)</div>`) : "";
+        tabBody = woNote + ui.table(["แผนก", "งาน", "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ"], jobs.map((job) => `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${deptBadge(ctx, job.dept)}</td><td>${ui.link(job.id, ctx.url("jobs", { dept: job.dept, q: job.id }), "rf-mono")}</td><td>${ui.mono(job.itemCode)}<div class="small muted">${esc(job.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(job.externalRef.woId, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}</div>` : ""}</td></tr>`), { emptyText: "ยังไม่มีงาน (ปล่อยผลิตก่อน)" });
       }
       detail = ui.card(`${headerKv}<h3 class="bom-h3">สินค้าที่สั่ง</h3>${ui.table(["สินค้า (FG)", { label: "จำนวน", className: "right" }, "ชุดสี", ""], itemRows, { emptyText: "ยังไม่มีสินค้า" })}${tabsHtml}${tabBody}`,
         { title: `${esc(order.id)} ${status(ctx, order.status)}`, actions: buttons.join("") });
