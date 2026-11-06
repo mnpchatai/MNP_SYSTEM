@@ -1211,9 +1211,12 @@ a.machine-history-no:hover { text-decoration: underline; }
   .field-row { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 360px) {
-  .request-facts { grid-template-columns: 1fr; }
-  .request-fact.wide { grid-column: auto; }
+/* มือถือแคบ (Android หลายรุ่นกว้าง 360px): การ์ดข้อมูลยังเรียงคู่ ย่อไอคอนและระยะในการ์ดให้ข้อความมีที่ */
+@media (max-width: 420px) {
+  .request-fact { min-height: 72px; padding: 10px; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+  .request-fact.is-action { grid-template-columns: 28px minmax(0, 1fr) auto; gap: 6px; }
+  .request-fact-icon { width: 28px; height: 28px; }
+  .request-fact-icon .ui-icon { width: 16px; height: 16px; }
 }
 
 /* ช่องรหัสผ่านที่กดแสดง/ซ่อนได้ */

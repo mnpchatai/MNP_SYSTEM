@@ -3578,7 +3578,8 @@ async function renderRequestDetail(params) {
   const formCode = REQUEST_FORM_CODES[type?.code] ?? "";
   const headerActionsHtml = detailView?.headerActionsHtml || moduleDetail?.headerActionsHtml || "";
   const nextStep = currentStep ? steps.find((step) => step.step_order === currentStep.step_order + 1) : null;
-  // จอกว้าง (สองคอลัมน์) เปิดทุกส่วนไว้ จอแคบพับไว้ เพื่อให้สิ่งที่ต้องตัดสินอยู่บนสุด
+  // ไฟล์แนบและข้อมูลเพิ่มเติมเปิดไว้ทุกขนาดจอ (แถบตัดสินใจบนจอแคบติดล่างจออยู่แล้ว ไม่ถูกดันลง)
+  // ลำดับเหตุการณ์: จอกว้าง (สองคอลัมน์) เปิดไว้ จอแคบพับไว้
   const sectionsOpen = window.matchMedia("(min-width: 1041px)").matches ? " open" : "";
   const receipt = recentDecisionFor(id);
   const description = (request.description ?? "").trim();
@@ -3615,8 +3616,8 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments"${sectionsOpen}><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
-        ${requestFacts ? `<details class="card detail-section"${sectionsOpen}><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
+        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
+        ${requestFacts ? `<details class="card detail-section" open><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
         ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
