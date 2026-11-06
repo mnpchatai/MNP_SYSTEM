@@ -23,6 +23,7 @@
 --   materialLots         ST รับเข้า (receiveMaterial: ล็อตใหม่ available เท่านั้น) · ST หรือ QA ตั้ง available <-> hold (เปลี่ยนอย่างอื่นของล็อตเดิมไม่ได้)
 --   requisitions         สมาชิก RB สร้างใบ (เซิร์ฟเวอร์จัดสรร FEFO เอง ไม่เชื่อบรรทัดที่ client ส่ง) และชั่งทีละบรรทัด (weighLine)
 --   lots                 สมาชิก RB บันทึกผสม/ฉีด/อบ/ตกแต่ง และจบเวลาบ่ม (endRest) · ล็อตเดิมไม่มีช่องที่ client แก้ได้นอกจาก readyAt ผ่าน endRest
+--                        บันทึกล็อตได้เฉพาะใบ WO ที่ released / in_progress / on_hold (อื่นๆ = RF_INVALID_TRANSITION · ยกเว้นล็อตตกแต่งที่ปิดใบในคำสั่งเดียวกัน)
 --   transfers            สมาชิก RB สร้างใบส่งมอบ · SR รับมอบ (qtyReceived)
 --   fgBoxes              กล่องเกิดจากการตกแต่งเท่านั้น · WH ส่งมอบ (in_stock -> shipped)
 --   qcRecords            QA บันทึกผล (ผลตัดสิน pass/hold/fail ตั้งสถานะ QC ของล็อต)
@@ -95,7 +96,7 @@ create table public.rf_molds (
   is_test boolean not null default false,
   changed_version bigint not null default 0 check (changed_version >= 0),
   mold_no text not null check (mold_no ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$'),
-  name text not null check (char_length(name) between 1 and 160),
+  name text not null check (char_length(name) between 1 and 120),
   kind text not null default 'mold' check (kind in ('die', 'line', 'mold')),
   unit text not null default 'shot' check (char_length(unit) between 1 and 20),
   per_cycle numeric not null default 1 check (per_cycle > 0 and per_cycle <= 1000000),
@@ -468,8 +469,8 @@ $$;
 revoke all on function private.rf_add_produced(text, numeric, boolean, bigint, bigint) from public, anon, authenticated;
 
 -- 4. ตัวเขียนของรอบที่ 2 (เรียกจาก app_rf_save เท่านั้น) ----------------------------------------------
--- แม่พิมพ์ / หัวดาย: เพิ่ม/แก้ข้อมูลหลัก (สมาชิก RB หรือกลุ่มวางแผน = p_may) และล้าง (p_action = 'cleanMold') · usage_* / last_clean_at ของ client เมินยกเว้นตอนสร้างครั้งแรก
--- (ยอดสะสมตั้งต้น) และตอนล้าง · ระเบียนที่ต่างกันเฉพาะช่องที่เซิร์ฟเวอร์คำนวณ (usage) = ไม่ทำอะไร
+-- แม่พิมพ์ / หัวดาย: เพิ่ม/แก้ข้อมูลหลัก (สมาชิก RB หรือกลุ่มวางแผน = p_may) และล้าง (p_action = 'cleanMold') · usage_* / last_clean_at ของ client เมินเสมอ (สร้างใหม่ = ยอดใช้ 0 และเวลาล้างเป็นเวลาเซิร์ฟเวอร์) ยกเว้นตอนล้าง
+-- ระเบียนที่ต่างกันเฉพาะช่องที่เซิร์ฟเวอร์คำนวณ (usage) = ไม่ทำอะไร
 create or replace function private.rf_save_molds(p_actor uuid, p_may boolean, p_action text, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
@@ -486,7 +487,6 @@ declare
   v_per numeric;
   v_every numeric;
   v_pm numeric;
-  v_total numeric;
   v_since numeric;
   v_clean_ms numeric;
   v_old public.rf_molds%rowtype;
@@ -498,14 +498,13 @@ begin
     v_id := private.bom_text(v_row, 'id', 60, 1, 'RF_INVALID_MOLD');
     if v_id !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' or v_id = any (v_seen) then raise exception 'RF_INVALID_MOLD'; end if;
     v_seen := v_seen || v_id;
-    v_name := private.bom_text(v_row, 'name', 160, 1, 'RF_INVALID_MOLD');
+    v_name := private.bom_text(v_row, 'name', 120, 1, 'RF_INVALID_MOLD');
     v_kind := coalesce(nullif(private.bom_text(v_row, 'kind', 10, 0, 'RF_INVALID_MOLD'), ''), 'mold');
     if v_kind not in ('die', 'line', 'mold') then raise exception 'RF_INVALID_MOLD'; end if;
     v_unit := coalesce(nullif(private.bom_text(v_row, 'unit', 20, 0, 'RF_INVALID_MOLD'), ''), 'shot');
     v_per := coalesce(private.bom_num(v_row -> 'perCycle', 'RF_INVALID_MOLD', 0, 1000000), 1);
     v_every := private.bom_num(v_row -> 'cleanEvery', 'RF_INVALID_MOLD', 0, 1000000000);
     v_pm := coalesce(private.bom_num(v_row -> 'pmLimit', 'RF_INVALID_MOLD', 0, 1000000000), 0);
-    v_total := coalesce(private.bom_num(v_row -> 'totalUsage', 'RF_INVALID_MOLD', 0, 1000000000), 0);
     v_since := coalesce(private.bom_num(v_row -> 'usageSinceClean', 'RF_INVALID_MOLD', 0, 1000000000), 0);
     v_clean_ms := private.bom_num(v_row -> 'lastCleanAt', 'RF_INVALID_MOLD', 0, 100000000000000);
     if v_per <= 0 or v_every is null or v_every <= 0 then raise exception 'RF_INVALID_MOLD'; end if;
@@ -529,8 +528,8 @@ begin
     else
       if not p_may then raise exception 'RF_FORBIDDEN'; end if;
       insert into public.rf_molds (is_test, mold_no, name, kind, unit, per_cycle, clean_every, pm_limit, total_usage, usage_since_clean, last_clean_at, created_by, updated_by)
-      values (true, v_id, v_name, v_kind, v_unit, v_per, v_every, v_pm, v_total, v_since,
-              case when v_clean_ms is null then null else to_timestamp(v_clean_ms / 1000.0) end, p_actor, p_actor);
+      -- แม่พิมพ์ใหม่: ยอดใช้งานเริ่มที่ 0 และเวลาล้างล่าสุดเป็นเวลาเซิร์ฟเวอร์ (ค่า totalUsage / usageSinceClean / lastCleanAt จาก client เมิน)
+      values (true, v_id, v_name, v_kind, v_unit, v_per, v_every, v_pm, 0, 0, now(), p_actor, p_actor);
     end if;
   end loop;
   return cardinality(v_seen);
@@ -1002,6 +1001,15 @@ begin
     -- ล็อตที่ client ระบุใบสั่งผลิตต่างจากเอกสารต้นทาง = ผิด
     v_cid := nullif(private.bom_text(v_row, 'orderId', 40, 0, 'RF_INVALID_LOT'), '');
     if v_cid is not null and v_cid <> v_order_no then raise exception 'RF_INVALID_LOT'; end if;
+
+    -- บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบ WO ที่ released / in_progress / on_hold (planned / completed / cancelled = RF_INVALID_TRANSITION)
+    -- ข้อยกเว้นเดียว: ล็อตตกแต่งที่ client ปิดใบเป็น completed ในคำสั่งเดียวกัน (ใบถูกประทับด้วยเวอร์ชันของคำสั่งนี้ เพราะ client ปิดใบเองเมื่อครบเป้า)
+    select * into v_ord from public.rf_orders o where o.is_test and o.wo_no = v_order_no for update;
+    if not found then raise exception 'RF_INVALID_LOT'; end if;
+    if v_ord.status not in ('released', 'in_progress', 'on_hold')
+       and not (v_stage = 'finishing' and v_ord.status = 'completed' and v_ord.changed_version > p_cur) then
+      perform private.rf_fail(v_ord.changed_version, p_base, p_cur, 'RF_INVALID_TRANSITION');
+    end if;
 
     if v_stage = 'finishing' then
       -- ผลตัดสินของงานตกแต่งมาจากผู้บันทึก (ผ่านนับเข้าใบทันที) อื่น ๆ รอ QA

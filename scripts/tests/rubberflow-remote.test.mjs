@@ -148,6 +148,9 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   assert.ok(storeApi.canSee(rbStaff, "recipes") && storeApi.canSee(rbStaff, "mixing"));
   assert.ok(storeApi.canSee(rbStaff, "audit") && storeApi.canSee(rbHead, "audit"), "every database account reads the audit trail");
   assert.equal(storeApi.canSee({ role: "planner" }, "audit"), false, "the demo roles keep their own menus");
+  assert.equal(storeApi.canSee({ role: "planner" }, "mixing"), false, "the demo planner keeps the short menu");
+  const pp = storeApi.personaUser(employee("staff", "PP"));
+  for (const entry of storeApi.MODULES) assert.ok(storeApi.canSee(pp, entry.id), "the database planner group sees " + entry.id);
   assert.equal(storeApi.canSee(storeApi.personaUser(employee("staff", "SR")), "orders"), false);
 });
 
@@ -1132,4 +1135,79 @@ test("molds are added and edited through the database; cleaning resets the count
   await s.as("persona-st");
   assert.match(rig.store.run("cleanMold", { id: "DIE-9" }).error.message, /ไม่มีสิทธิ์/);
   assert.match(rig.store.run("saveMold", good).error.message, /ไม่มีสิทธิ์/);
+});
+
+test("a station lot is recorded only on a released / in-progress / on-hold work order: the page says so first and the database repeats it", async () => {
+  const s = await session();
+  const rig = await s.make();
+  const { order } = await prepare(s, rig);
+  const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
+  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
+  await go(s, rig, "persona-rbh", "setOrderStatus", { id: order, status: "cancelled" });
+  await s.as("persona-rb");
+  const mixing = { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 };
+  assert.match(rig.store.run("recordMixing", mixing).error.message, /ถูกยกเลิกแล้ว/, "the page refuses before sending");
+  // ข้ามหน้าจอ: ส่งล็อตผสม + ใบเบิกที่ใช้แล้วตรงไปที่ฐานข้อมูล → RF_INVALID_TRANSITION และไม่มีอะไรเปลี่ยน
+  const snapshot = await s.call("app_rf_master");
+  const lot = { id: `MX-${TODAY}-99`, stage: "mixing", orderId: order, recipeId: "RC-TEST-01", uom: "kg", machine: "KN-01", shift: "D", sources: [{ type: "requisition", id: requisition }],
+    params: { stages: STAGES2, batches: 1 }, goodQty: 48, scrapQty: 1, qc: "pass", holdReasons: [], transferredQty: 0, createdAt: NOW, operator: "x" };
+  const changes = { lots: { upsert: [lot] }, requisitions: { upsert: [{ ...snapshot.requisitions[0], status: "consumed", consumedBy: lot.id }] } };
+  const reply = await s.mock.client.rpc("app_rf_save", { p_changes: changes, p_base_version: snapshot.version, p_action: "recordMixing" });
+  assert.equal(reply.error?.code, "RF_INVALID_TRANSITION", "a cancelled work order takes no mixing lot");
+  assert.equal((await s.call("app_rf_master")).version, snapshot.version);
+  assert.equal(storeApi.mapRemoteError({ message: "RF_INVALID_ORDER" }).message.includes("RF_INVALID_ORDER"), false, "the order error has a Thai message");
+});
+
+test("a work order on hold still takes station lots", async () => {
+  const s = await session();
+  const rig = await s.make();
+  const { order } = await prepare(s, rig);
+  const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
+  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
+  await go(s, rig, "persona-rbh", "setOrderStatus", { id: order, status: "on_hold" });
+  const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 })).result;
+  const master = await s.call("app_rf_master");
+  assert.ok(master.lots.some((row) => row.id === mx));
+  assert.equal(master.orders[0].status, "on_hold");
+});
+
+test("the database builds the boxes of a finishing lot itself: boxes sent by a client are ignored, and a new mold starts with zero usage", async () => {
+  const s = await session();
+  const rig = await s.make();
+  const { order } = await prepare(s, rig);
+  const { mx } = await mixAndSend(s, rig, order);
+  await go(s, rig, "persona-rb", "endRest", { lotId: mx });
+  const tr1 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
+  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr1, qtyReceived: 47 });
+  const ex = (await go(s, rig, "persona-rb", "recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 100, scrapQty: 2, dieId: "DIE-1", shift: "D" })).result;
+  const tr2 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: ex, qty: 100 })).result;
+  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr2, qtyReceived: 100 });
+  const cu = (await go(s, rig, "persona-rb", "recordCuring", { transferId: tr2, useQty: 100, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 98, scrapQty: 2, shift: "D" })).result;
+  const tr3 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: cu, qty: 98 })).result;
+  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr3, qtyReceived: 98 });
+  await s.as("persona-rb");
+  const snapshot = await s.call("app_rf_master");
+  const fn = `FN-${TODAY}-99`;
+  const lot = { id: fn, stage: "finishing", orderId: order, uom: "pcs", shift: "D", grade: "A", sources: [{ type: "transfer", id: tr3, lotId: cu, qty: 98 }], params: { perBox: 40 },
+    goodQty: 98, scrapQty: 0, qc: "pass", holdReasons: [], transferredQty: 0, createdAt: NOW, operator: "x" };
+  const boxes = [
+    { id: `BOX-${TODAY}-99-001`, lotId: fn, orderId: order, recipeId: "RC-TEST-01", productCode: "", qty: 1, uom: "pcs", grade: "A", status: "in_stock", createdAt: NOW },
+    { id: "BOX-STRAY-1", lotId: fn, orderId: order, recipeId: "RC-TEST-01", productCode: "", qty: 7, uom: "pcs", grade: "A", status: "in_stock", createdAt: NOW },
+  ];
+  const reply = await s.mock.client.rpc("app_rf_save", { p_changes: { lots: { upsert: [lot] }, fgBoxes: { upsert: boxes } }, p_base_version: snapshot.version, p_action: "recordFinishing" });
+  assert.equal(reply.error, null, reply.error?.message);
+  const after = await s.call("app_rf_master");
+  assert.deepEqual(after.fgBoxes.map((box) => [box.id, box.qty, box.status]), [[`BOX-${TODAY}-99-001`, 40, "in_stock"], [`BOX-${TODAY}-99-002`, 40, "in_stock"], [`BOX-${TODAY}-99-003`, 18, "in_stock"]]);
+
+  // แม่พิมพ์ใหม่: ยอดใช้งานจาก client เมิน เวลาล้างล่าสุดเป็นเวลาเซิร์ฟเวอร์ · ชื่อยาวเกิน 120 ตัวอักษรไม่รับ
+  const mold = { id: "DIE-NEW", name: "หัวดายใหม่", kind: "die", unit: "m", perCycle: 1, cleanEvery: 5000, pmLimit: 100000, totalUsage: 999, usageSinceClean: 50, lastCleanAt: 1 };
+  const base = (await s.call("app_rf_master")).version;
+  const made = await s.mock.client.rpc("app_rf_save", { p_changes: { molds: { upsert: [mold] } }, p_base_version: base, p_action: "saveMold" });
+  assert.equal(made.error, null, made.error?.message);
+  const row = (await s.call("app_rf_master")).molds.find((item) => item.id === "DIE-NEW");
+  assert.deepEqual([row.totalUsage, row.usageSinceClean, row.lastCleanAt], [0, 0, NOW]);
+  const long = await s.mock.client.rpc("app_rf_save", { p_changes: { molds: { upsert: [{ ...mold, id: "DIE-LONG", name: "ก".repeat(121) }] } }, p_base_version: (await s.call("app_rf_master")).version, p_action: "saveMold" });
+  assert.equal(long.error?.code, "RF_INVALID_MOLD");
 });

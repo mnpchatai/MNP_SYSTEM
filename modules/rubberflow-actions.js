@@ -406,9 +406,18 @@
     return lot;
   }
 
-  function takeFromTransfer(d, transferId, stage, qty) {
+  // โหมดฐานข้อมูล: บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบสั่งผลิตที่ปล่อยผลิต กำลังผลิต หรือพักงาน (ฐานข้อมูลปฏิเสธนอกนี้ด้วย RF_INVALID_TRANSITION)
+  function needOrderOpen(d, orderId, ctx) {
+    const order = d.orders.find((row) => row.id === orderId);
+    if (!ctx.remote || !order || ["released", "in_progress", "on_hold"].includes(order.status)) return;
+    const why = { planned: "ยังไม่ได้ปล่อยผลิต", completed: "ปิดแล้ว", cancelled: "ถูกยกเลิกแล้ว" }[order.status] ?? "ไม่อยู่ในสถานะที่ผลิตได้";
+    fail(`ใบสั่งผลิต ${order.id} ${why} บันทึกการผลิตไม่ได้`);
+  }
+
+  function takeFromTransfer(d, transferId, stage, qty, ctx) {
     const transfer = find(d.transfers, transferId, "ใบส่งมอบ");
     if (transfer.to !== stage) fail("ใบส่งมอบนี้ไม่ได้ส่งมาที่สถานีนี้");
+    needOrderOpen(d, transfer.orderId, ctx);
     if (transfer.status !== "received") fail("Gatekeeper: ต้องกดรับมอบงานก่อนจึงจะเริ่มผลิตได้");
     if (qty <= 0) fail("ปริมาณที่ใช้ต้องมากกว่า 0");
     if (qty > transfer.remaining + 1e-9) fail(`ปริมาณเกินที่รับมา (คงเหลือ ${transfer.remaining})`);
@@ -421,6 +430,7 @@
     const { HOUR } = rules();
     const requisition = find(d.requisitions, p.reqId, "ใบเบิก");
     if (requisition.status !== "issued") fail("ใบเบิกยังจ่ายวัตถุดิบไม่ครบ หรือถูกใช้ไปแล้ว");
+    needOrderOpen(d, requisition.orderId, ctx);
     const recipe = rules().recipeOf(d.recipes, requisition.recipeId, requisition.recipeRevision) || fail(`ไม่พบสูตร ${requisition.recipeId}`);
     // บันทึกทั้งสองขั้น (อุณหภูมิเครื่องผสม Dump temp เวลาเป็นนาที)
     const stages = rules().MIX_STAGES.map((stage) => stageValues((p.stages ?? []).find((row) => Number(row?.stage) === stage), stage));
@@ -469,7 +479,7 @@
     const reworkKg = Number(p.reworkKg) || 0;
     const pct = (reworkKg / (useKg + reworkKg)) * 100;
     if (pct > SPECS.extrusion.reworkMaxPct) fail(`สัดส่วนยางหมุนเวียน ${pct.toFixed(1)}% เกิน ${SPECS.extrusion.reworkMaxPct}%`);
-    const transfer = takeFromTransfer(d, p.transferId, "extrusion", useKg);
+    const transfer = takeFromTransfer(d, p.transferId, "extrusion", useKg, ctx);
     const die = find(d.molds, p.dieId, "หัวดาย");
     const params = {
       thickness: num(p.thickness, "ความหนา"),
@@ -498,7 +508,7 @@
     needRight(ctx, "station");
     const { SPECS, inSpec } = rules();
     const useQty = num(p.useQty, "ปริมาณที่นำเข้าอบ");
-    const transfer = takeFromTransfer(d, p.transferId, "curing", useQty);
+    const transfer = takeFromTransfer(d, p.transferId, "curing", useQty, ctx);
     const mold = find(d.molds, p.moldId, "แม่พิมพ์/สายอบ");
     const params = { temp: num(p.temp, "อุณหภูมิ"), time: num(p.time, "เวลาอบ"), pressure: num(p.pressure, "ความดัน") };
     const good = num(p.goodQty, "ปริมาณงานดี");
@@ -524,7 +534,7 @@
   function recordFinishing(d, p, ctx) {
     needRight(ctx, "station");
     const useQty = num(p.useQty, "ปริมาณที่รับเข้าตกแต่ง");
-    const transfer = takeFromTransfer(d, p.transferId, "finishing", useQty);
+    const transfer = takeFromTransfer(d, p.transferId, "finishing", useQty, ctx);
     const passed = num(p.passedQty, "จำนวนผ่าน QC");
     const scrap = Number(p.scrapQty) || 0;
     const perBox = num(p.perBox, "จำนวนต่อกล่อง");

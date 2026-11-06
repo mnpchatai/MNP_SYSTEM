@@ -782,7 +782,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     const inDept = (dept) => planner || actor.dept === dept; // สมาชิกแผนกนั้น หรือกลุ่มวางแผน (ทำได้ทุกอย่าง)
     const claims = []; // ใบเบิก issued → consumed ต้องมาพร้อมล็อตผสมที่เพิ่มในคำสั่งเดียวกัน
     const mixingNew = [];
-    const finishingNew = new Map(); // ล็อตตกแต่งที่เพิ่มในคำสั่งนี้ → กล่องที่ต้องมาด้วย
+    const finishingNew = new Set(); // ล็อตตกแต่งที่เพิ่มในคำสั่งนี้ (ฐานข้อมูลสร้างกล่องให้เอง กล่องที่ client ส่งมาเมิน)
     const qcFor = new Set((changes.qcRecords?.upsert ?? []).map((row) => row?.lotId));
     const ncrFor = new Set((changes.ncrs?.upsert ?? []).map((row) => row?.lotId));
     const qcNew = [];
@@ -902,7 +902,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         }
         if (!master) fail("RF_FORBIDDEN");
         const order = next.orders.find((row) => row.id === record.orderId);
-        if (!order || ["planned", "cancelled"].includes(order.status)) fail(bad);
+        if (!order) fail(bad);
         const good = num(record.goodQty);
         const scrap = num(record.scrapQty ?? 0);
         if (good < 0 || scrap < 0 || !Array.isArray(record.sources) || record.sources.length !== 1 || !record.params || typeof record.params !== "object") fail(bad);
@@ -913,7 +913,6 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           if (source?.type !== "requisition") fail(bad);
           const requisition = current.requisitions.find((row) => row.id === source.id);
           if (!requisition || requisition.status !== "issued" || requisition.orderId !== record.orderId) fail("RF_INVALID_TRANSITION");
-          if (!["released", "in_progress"].includes(order.status)) fail(bad);
           const recipe = next.recipes.find((row) => row.id === requisition.recipeId && row.revision === requisition.recipeRevision);
           if (!recipe) fail(bad);
           const stages = record.params.stages;
@@ -972,10 +971,26 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
             if (record.qc !== "pass") reasons.push(...(Array.isArray(record.holdReasons) && record.holdReasons.length ? record.holdReasons.map((reason) => String(reason).slice(0, 200)).slice(0, 20) : ["ผลตรวจตกแต่งไม่ผ่าน/รอตัดสิน"]));
             out.qc = record.qc;
             out.countedToOrder = record.qc === "pass";
-            finishingNew.set(record.id, { perBox, good, boxes: good > 0 ? Math.ceil(good / perBox - 1e-9) : 0, sum: 0, count: 0 });
+            // กล่อง: ฐานข้อมูลสร้างเองจากล็อต (ใบละไม่เกิน perBox ชิ้น กล่องสุดท้ายเศษ) id = เลขล็อต (FN → BOX) ต่อด้วยลำดับ 3 หลัก
+            const count = good > 0 ? Math.ceil(good / perBox - 1e-9) : 0;
+            if (count > 1000) fail(bad);
+            out.grade = String(record.grade ?? "").trim().slice(0, 20) || "A";
+            out.boxes = count;
+            finishingNew.add(record.id);
+            for (let n = 1; n <= count; n += 1) {
+              const box = {
+                id: `${record.id.replace("FN", "BOX")}-${String(n).padStart(3, "0")}`, lotId: record.id, orderId: order.id, recipeId: order.recipeId, productCode: order.productCode ?? "",
+                qty: round3(Math.min(perBox, good - (n - 1) * perBox)), uom: order.uom, grade: out.grade, status: record.qc === "pass" ? "in_stock" : "hold", createdAt: at,
+              };
+              next.fgBoxes.push(box);
+              stampVersion("fgBoxes", box.id);
+            }
             if (out.countedToOrder) touchedOrders.add(order.id);
           }
         }
+        // บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบ WO ที่ released / in_progress / on_hold
+        // (ข้อยกเว้นเดียว: ล็อตตกแต่งที่ client ปิดใบเป็น completed ในคำสั่งเดียวกัน)
+        if (!["released", "in_progress", "on_hold"].includes(order.status) && !(record.stage === "finishing" && order.status === "completed" && mine.has(`orders|${order.id}`))) fail("RF_INVALID_TRANSITION");
         if (record.stage !== "finishing") out.qc = reasons.length ? "hold" : "pass";
         out.holdReasons = reasons;
         put(out);
@@ -1014,22 +1029,12 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       if (list === "fgBoxes") {
         if (!prev) {
           if (!master) fail("RF_FORBIDDEN");
-          const lot = next.lots.find((row) => row.id === record.lotId);
-          const info = finishingNew.get(record.lotId);
-          if (!lot || !info || !record.id.startsWith(`${lot.id.replace("FN", "BOX")}-`)) fail(bad);
-          const order = next.orders.find((row) => row.id === lot.orderId);
-          const qty = num(record.qty);
-          if (!(qty > 0) || qty > info.perBox + 1e-9) fail(bad);
-          info.sum += qty;
-          info.count += 1;
-          put({ ...clone(record), orderId: lot.orderId, recipeId: order.recipeId, productCode: order.productCode ?? "", uom: lot.uom, status: lot.qc === "pass" ? "in_stock" : "hold", createdAt: at });
-          return null;
+          // กล่องเกิดจากล็อตตกแต่งที่เพิ่งบันทึกในคำสั่งเดียวกันเท่านั้น (ฐานข้อมูลสร้างให้แล้ว) ไม่ใช่จาก client
+          if (finishingNew.has(record.lotId)) return "skip";
+          fail(bad);
         }
         // in_stock ↔ hold ตามผล QC ของล็อต ฐานข้อมูลตั้งเอง ไม่รับจาก client
-        if (["in_stock", "hold"].includes(prev.status) && ["in_stock", "hold"].includes(record.status)) {
-          if (!rfSame(prev, record, ["status", ...RF_NOOP.fgBoxes])) fail(bad);
-          return "skip";
-        }
+        if (["in_stock", "hold"].includes(prev.status) && ["in_stock", "hold"].includes(record.status)) return "skip"; // ช่องอื่นของกล่องเป็นของฐานข้อมูล client ส่งมาเมิน
         if (prev.status !== "in_stock" || record.status !== "shipped") fail("RF_INVALID_TRANSITION");
         if (!inDept("WH")) fail("RF_FORBIDDEN");
         if (!rfSame(prev, record, ["status", ...RF_NOOP.fgBoxes])) fail(bad);
@@ -1230,8 +1235,6 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     // ใบเบิกที่ถูกใช้ผสม (issued → consumed) กับล็อตผสมที่เพิ่ม ต้องมาคู่กัน
     for (const claim of claims) if (!mixingNew.some((row) => row.lot === claim.lot && row.req === claim.req)) fail("RF_INVALID_TRANSITION");
     for (const row of mixingNew) if (!claims.some((claim) => claim.lot === row.lot && claim.req === row.req)) fail("RF_INVALID_TRANSITION");
-    // ล็อตตกแต่งใหม่: กล่องครบจำนวนและรวมเท่ากับงานดี
-    for (const info of finishingNew.values()) if (info.count !== info.boxes || Math.abs(info.sum - info.good) > 1e-6) fail("RF_INVALID_BOX");
     // ผลตรวจ: ผลตัดสินต้องตรงกับสถานะ QC ของล็อตหลังบันทึก · กล่องที่ยังไม่ส่งตามผล QC (ผ่าน = พร้อมส่ง ไม่ผ่าน/รอตัดสิน = hold)
     for (const item of qcNew) {
       const lot = next.lots.find((row) => row.id === item.lotId);

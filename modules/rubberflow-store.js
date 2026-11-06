@@ -108,7 +108,8 @@
     return (CAN[permission] ?? []).includes(user.role);
   };
   // โหมดฐานข้อมูล: บันทึกการใช้งานอ่านได้ทุกบัญชีทดสอบ (ข้อมูลหลักอยู่ในฐานข้อมูลที่ทุกคนเห็นร่วมกัน เหมือนหน้าบันทึกการใช้งานของ BOM)
-  const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && (ROLES[user.role].modules.includes(moduleId) || (Boolean(user.db) && moduleId === "audit"));
+  // กลุ่มวางแผน (role planner) ทำได้ทุกอย่างในฐานข้อมูล จึงเห็นทุกหน้าเหมือนผู้จัดการ · เซิร์ฟเวอร์ยังเป็นด่านตัดสินสิทธิ์ · โหมดสาธิตเมนูเดิม
+  const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && (ROLES[user.role].modules.includes(moduleId) || (Boolean(user.db) && (moduleId === "audit" || user.role === "planner")));
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");
 
   // state ที่อ่านจาก storage ต้องมีโครงครบ ไม่เช่นนั้นถือว่าเสีย (สร้างชุดสาธิตใหม่)
@@ -232,6 +233,7 @@
       RF_INVALID_LOT: "ข้อมูลล็อตผลิตไม่ถูกต้อง",
       RF_INVALID_TRANSFER: "ข้อมูลใบส่งมอบไม่ถูกต้อง (ล็อตต้องผ่าน QC ครบเวลาบ่ม และปริมาณไม่เกินที่ส่งต่อได้)",
       RF_INVALID_BOX: "ข้อมูลกล่องสินค้าไม่ถูกต้อง",
+      RF_INVALID_ORDER: "ข้อมูลใบสั่งผลิตไม่ถูกต้อง หรือใบสั่งผลิตอยู่ในสถานะที่รับยอดผลิตไม่ได้",
       RF_INVALID_QC: "ข้อมูลผลตรวจ QC ไม่ถูกต้อง",
       RF_INVALID_NCR: "ข้อมูล NCR ไม่ถูกต้อง (การปิดเคสต้องมีทั้งการแก้ไขและการป้องกัน)",
       RF_INVALID_MOLD: "ข้อมูลแม่พิมพ์ไม่ถูกต้อง",
