@@ -465,7 +465,7 @@ select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs',
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"cancelled"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder') $$,
-  'BOM_INVALID_TRANSITION', 'an order with a linked work order cannot be cancelled');
+  'BOM_INVALID_TRANSITION', 'an order with a job that already has output cannot be cancelled (a planned linked work order alone no longer blocks it)');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"draft","items":[{"fgCode":"FG-A","qty":1,"colorSet":"A","note":""}]}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'updateOrderItem') $$,
   'BOM_INVALID_TRANSITION', 'an order with started jobs cannot be reopened for editing');

@@ -1193,10 +1193,11 @@ test("a job linked to a RubberFlow work order is started only once the WO is pas
   assert.equal(a.rb.status, "queued");
   assert.equal(A.helpers.startedJobs(d, a.order).length, 1, "no WO list (local mode or RubberFlow not loaded): a link counts as started, as before");
   for (const [status, started] of [["planned", 0], ["released", 0], ["cancelled", 0], ["in_progress", 1], ["on_hold", 1], ["completed", 1]]) {
-    assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status }]).length, started, `WO ${status}`);
+    assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status, sourceJobId: a.rb.id }]).length, started, `WO ${status}`);
   }
   assert.equal(A.helpers.startedJobs(d, a.order, []).length, 1, "a WO that cannot be found counts as started");
-  assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status: "planned" }]).length, 0);
+  assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status: "planned", sourceJobId: a.rb.id }]).length, 0);
+  assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status: "planned", sourceJobId: "JOB-OTHER" }]).length, 1, "a WO that does not point back at this job counts as not found");
   // ยกเลิกใบ: WO แผนก/ปล่อยผลิตไม่ขวาง (ฐานข้อมูลยกเลิกให้) · เริ่มแล้วหรือไม่มีรายการ WO ขวาง
   rejects(() => A.cancelOrder(d, { orderId: a.id }, ctx("planner")), /WO-T-AUTO-A/);
   rejects(() => A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "in_progress" }] }), /WO-T-AUTO-A/);
@@ -1218,7 +1219,7 @@ test("the notice for what the database did in RubberFlow: opened count, skipped 
   assert.deepEqual(notice("releaseOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J1", woId: "WO-1", kg: 2 }, { jobId: "J2", woId: "WO-2", kg: 3 }] }), { text: "ปล่อยผลิต PI-1 แล้ว · เปิด WO ใน RubberFlow 2 ใบ", type: "success" });
   const skipped = (n) => Array.from({ length: n }, (_, i) => ({ jobId: `J${i + 1}`, itemCode: `RB-${i + 1}`, reason: "ยังไม่ผูกสูตร RubberFlow" }));
   assert.deepEqual(notice("releaseOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J0", woId: "WO-0", kg: 1 }], skipped: skipped(1) }),
-    { text: "ปล่อยผลิต PI-1 แล้ว · เปิด WO ใน RubberFlow 1 ใบ · ยังไม่ได้เปิด WO 1 งาน (J1 RB-1: ยังไม่ผูกสูตร RubberFlow)", type: "error" });
+    { text: "ปล่อยผลิต PI-1 แล้ว · เปิด WO ใน RubberFlow 1 ใบ · ยังไม่ได้เปิด WO 1 งาน (J1 RB-1: ยังไม่ผูกสูตร RubberFlow)", type: "success" });
   assert.match(notice("releaseOrder", { orderId: "PI-1" }, { skipped: skipped(5) }).text, /^ปล่อยผลิต PI-1 แล้ว · ยังไม่ได้เปิด WO 5 งาน \(J1 RB-1: .* · J3 RB-3: .* · อีก 2 งาน\)$/);
   assert.deepEqual(notice("cancelOrder", { orderId: "PI-1" }, { cancelled: ["WO-1", "WO-2"] }), { text: "ยกเลิก WO WO-1, WO-2 ด้วย", type: "success" });
   assert.equal(notice("cancelOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J1", woId: "WO-1", kg: 1 }] }), null, "only a release says what it opened");

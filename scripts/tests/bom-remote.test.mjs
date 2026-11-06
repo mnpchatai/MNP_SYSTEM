@@ -2800,7 +2800,7 @@ test("through the module: release says how many WOs were opened and why jobs wer
   assert.equal(ctx.runAction("releaseOrder", { orderId: rodOnly.result }, ""), true);
   await turns();
   const skipToast = toasts.at(-1);
-  assert.equal(skipToast[1], "error", "a skipped job keeps the notice until it is read");
+  assert.equal(skipToast[1], "success", "the release succeeded, so the notice is a normal toast even with a skipped job (the PI page keeps the list)");
   assert.match(skipToast[0], new RegExp(`^ปล่อยผลิต ${rodOnly.result} แล้ว · ยังไม่ได้เปิด WO 1 งาน \\(JOB-[0-9a-z-]+ RB-NL: ยังไม่ผูกสูตร RubberFlow\\)$`));
 
   // ยกเลิกใบ: ยกเลิก WO ด้วยและ RubberFlow ตามทัน

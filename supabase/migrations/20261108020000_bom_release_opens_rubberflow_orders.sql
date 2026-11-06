@@ -189,7 +189,7 @@ begin
       where m.n is not null;
     end if;
     v_seq := v_seq + 1;
-    v_wo := 'WO-' || v_stamp || '-' || lpad(v_seq::text, 2, '0');
+    v_wo := 'WO-' || v_stamp || '-' || lpad(v_seq::text, greatest(2, length(v_seq::text)), '0');
 
     insert into public.rf_orders (
       is_test, wo_no, customer, customer_po, recipe_code, recipe_revision, product_code, uom, color,
@@ -197,7 +197,7 @@ begin
     values (
       true, v_wo, v_ord.customer, v_ord.pi_no, v_rec.recipe_code, v_rec.revision, v_rec.product_code, v_job.uom,
       coalesce(nullif(left(v_item.rubber ->> 'color', 40), ''), 'ดำ'),
-      v_qty, v_kg, v_kg / v_qty, 0, v_today, greatest(coalesce(v_job.due_at, v_today), v_today),
+      v_qty, v_kg, round(v_kg / v_qty, 6), 0, v_today, greatest(coalesce(v_job.due_at, v_today), v_today),
       case when v_job.due_at < v_now then 'urgent' else 'normal' end,
       left('จาก BOM งาน ' || v_job.job_no || ' · PI ' || v_ord.pi_no || ' · ' || v_job.item_code || ' ' || trim_scale(v_qty)::text || ' ' || v_job.uom
            || ' ≈ ' || trim_scale(v_kg)::text || ' kg · เปิดอัตโนมัติตอนปล่อยใบ', 300),
@@ -241,7 +241,8 @@ begin
       perform private.bom_lock_rf();
       v_locked := true;
     end if;
-    select * into v_wo from public.rf_orders o where o.is_test and o.wo_no = (v_job.external_ref ->> 'woId') for update;
+    -- WO ต้องชี้กลับมาที่งานนี้ (source_job_no) ไม่งั้นถือว่าไม่มี WO ให้ยกเลิก (งานที่ถูกผูกมือกับ WO ของใบอื่นแตะ WO นั้นไม่ได้)
+    select * into v_wo from public.rf_orders o where o.is_test and o.wo_no = (v_job.external_ref ->> 'woId') and o.source_job_no = v_job.job_no for update;
     if not found then continue; end if;
     if v_wo.status in ('planned', 'released') then
       update public.rf_orders set status = 'cancelled', cancelled_at = now(), updated_at = now() where id = v_wo.id;
@@ -271,7 +272,7 @@ as $$
            -- ผูก WO: นับว่าเริ่มแล้วต่อเมื่อ WO เลย released ไปแล้ว หรือหา WO ไม่พบ (WO planned / released / cancelled ไม่นับ)
            or (j.external_ref is not null and not exists (
                  select 1 from public.rf_orders o
-                 where o.is_test and o.wo_no = (j.external_ref ->> 'woId') and o.status in ('planned', 'released', 'cancelled')))))
+                 where o.is_test and o.wo_no = (j.external_ref ->> 'woId') and o.source_job_no = j.job_no and o.status in ('planned', 'released', 'cancelled')))))
 $$;
 revoke all on function private.bom_started_jobs(uuid) from public, anon, authenticated;
 revoke all on function private.bom_started_jobs(uuid) from public, anon, authenticated;

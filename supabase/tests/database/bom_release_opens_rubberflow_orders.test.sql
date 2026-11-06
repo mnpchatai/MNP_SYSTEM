@@ -135,7 +135,7 @@ select set_config('test.res', public.app_bom_save_master(jsonb_build_object(
     (select o || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26001'))),
   'jobs', jsonb_build_object('upsert', jsonb_build_array(
     current_setting('test.job')::jsonb || '{"id":"JOB-A-01","orderId":"261108-26001","itemCode":"RB-K"}'::jsonb,
-    current_setting('test.job')::jsonb || '{"id":"JOB-A-02","orderId":"261108-26001","itemCode":"RB-W","dueAt":1764201600000}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB-A-02","orderId":"261108-26001","itemCode":"RB-W","dueAt":1764201600000,"qtyPlanned":7,"qtyRequired":7}'::jsonb,
     current_setting('test.job')::jsonb || '{"id":"JOB-A-03","orderId":"261108-26001","itemCode":"RB-B"}'::jsonb,
     current_setting('test.job')::jsonb || '{"id":"JOB-A-04","orderId":"261108-26001","itemCode":"RB-G"}'::jsonb,
     current_setting('test.job')::jsonb || '{"id":"JOB-A-05","orderId":"261108-26001","itemCode":"RB-KG","uom":"kg"}'::jsonb,
@@ -151,7 +151,7 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert
 select is((select count(*)::integer from jsonb_array_elements(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert')), 12, 'twelve jobs were created by the release');
 select is(current_setting('test.res')::jsonb -> 'rubberflow' -> 'opened', jsonb_build_array(
   jsonb_build_object('jobId', 'JOB-A-01', 'woId', current_setting('test.wp') || '08', 'kg', 210),
-  jsonb_build_object('jobId', 'JOB-A-02', 'woId', current_setting('test.wp') || '09', 'kg', 5.25),
+  jsonb_build_object('jobId', 'JOB-A-02', 'woId', current_setting('test.wp') || '09', 'kg', 0.37),
   jsonb_build_object('jobId', 'JOB-A-03', 'woId', current_setting('test.wp') || '10', 'kg', 11),
   jsonb_build_object('jobId', 'JOB-A-04', 'woId', current_setting('test.wp') || '11', 'kg', 5),
   jsonb_build_object('jobId', 'JOB-A-05', 'woId', current_setting('test.wp') || '12', 'kg', 105)),
@@ -190,6 +190,8 @@ select is((select w - 'createdAt' from jsonb_array_elements(public.app_rf_master
   'the work order carries the PI customer and number, the approved recipe, the job unit, the item color, the quantities, the kilograms per unit, the planned status and the releaser as creator');
 select is((select w ->> 'color' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '10'), 'ดำ',
   'an item without a color gets the default color');
+select is((select jsonb_build_array(w -> 'targetQty', w -> 'targetKg', w -> 'kgPerUnit') from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '09'),
+  '[7, 0.37, 0.052857]'::jsonb, 'the kilograms per unit are rounded to 6 places (0.37 / 7), so the page can send the record back unchanged');
 select is((select w ->> 'uom' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '12'), 'kg',
   'the work order uses the unit of the job');
 select is((select jsonb_build_array(w ->> 'priority', (w ->> 'dueDate')::bigint, (w ->> 'startDate')::bigint)

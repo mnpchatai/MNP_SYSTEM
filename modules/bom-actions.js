@@ -506,7 +506,8 @@
   const woStarted = (job, rfOrders) => {
     if (!job.externalRef) return false;
     if (!Array.isArray(rfOrders)) return true;
-    const wo = rfOrders.find((row) => row.id === job.externalRef.woId);
+    // WO ต้องชี้กลับมาที่งานนี้ด้วย (ตรงกับฐานข้อมูล) ไม่งั้นถือว่าไม่พบ = เริ่มแล้ว
+    const wo = rfOrders.find((row) => row.id === job.externalRef.woId && row.sourceJobId === job.id);
     return !wo || WO_STARTED.includes(wo.status);
   };
   const startedJobs = (d, order, rfOrders = null) => d.jobs.filter((job) => job.orderId === order.id && (job.status !== "queued" || job.qtyDone > 0 || job.qtyReject > 0 || job.reports?.length || woStarted(job, rfOrders)));
@@ -995,7 +996,8 @@
       const shown = skipped.slice(0, SKIP_SHOWN).map((row) => `${row.jobId} ${row.itemCode}: ${row.reason}`).join(" · ");
       parts.push(`ยังไม่ได้เปิด WO ${skipped.length} งาน (${shown}${skipped.length > SKIP_SHOWN ? ` · อีก ${skipped.length - SKIP_SHOWN} งาน` : ""})`);
     }
-    return { text: parts.join(" · "), type: skipped.length ? "error" : "success" };
+    // ปล่อยผลิตสำเร็จเสมอ จึงเป็นข้อความปกติแม้มีงานที่ข้าม (รายการที่ข้ามค้างอยู่ในคำเตือนบนใบ PI แล้ว)
+    return { text: parts.join(" · "), type: "success" };
   }
 
   const api = {

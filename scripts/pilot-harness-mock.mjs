@@ -527,7 +527,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   }
   // WO ของ RubberFlow ที่เลย "ปล่อยผลิต" ไปแล้ว (กำลังผลิต พัก เสร็จ) = เริ่มแล้ว · WO ที่ยังเป็นแผนก/ปล่อยผลิต (รวมที่เปิดอัตโนมัติตอนปล่อยใบ) ยังไม่นับ
   const RF_WO_STARTED = ["in_progress", "on_hold", "completed"];
-  const bomRfWoOf = (job) => (job.externalRef?.woId ? rfLoad().orders.find((row) => row.id === job.externalRef.woId) : undefined);
+  // WO ที่ผูกงานต้องชี้กลับมาที่งานนี้ด้วย (sourceJobId) ไม่งั้นถือว่าไม่พบ (ตรงกับ bom_started_jobs / bom_cancel_rf_orders)
+  const bomRfWoOf = (job) => (job.externalRef?.woId ? rfLoad().orders.find((row) => row.id === job.externalRef.woId && row.sourceJobId === job.id) : undefined);
   // งานที่เริ่มแล้ว (ตรงกับกฎ startedJobs ของหน้า): สถานะไม่ใช่รอคิว มีรายงาน ยอดดี/เสีย หรือผูก WO ของ RubberFlow ที่เริ่มแล้ว (หรือหา WO ไม่พบ)
   const bomJobStarted = (job) => job.status !== "queued" || Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0 || (Array.isArray(job.reports) && job.reports.length > 0)
     || (Boolean(job.externalRef) && (!bomRfWoOf(job) || RF_WO_STARTED.includes(bomRfWoOf(job).status)));
@@ -1382,14 +1383,15 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           else if (item?.weightG) kg = qty * Number(item.weightG) / 1000;
           kg = Math.round(kg * 1.05 * 100) / 100;
         }
-        const reason = !compoundCode ? "ไม่มีรหัสสูตรยาง" : !compound?.recipeId ? "ยังไม่ผูกสูตร RubberFlow" : !recipe ? `สูตร ${compound.recipeId} ยังไม่อนุมัติ` : !(qty > 0) ? "ไม่มียอดให้ผลิต" : !(kg > 0) ? "คำนวณกิโลกรัมไม่ได้" : "";
+        // เพดานเท่าคอลัมน์ target_kg / kg_per_unit ของฐานข้อมูล: เกินแล้วข้ามเหมือน SQL
+        const reason = !compoundCode ? "ไม่มีรหัสสูตรยาง" : !compound?.recipeId ? "ยังไม่ผูกสูตร RubberFlow" : !recipe ? `สูตร ${compound.recipeId} ยังไม่อนุมัติ` : !(qty > 0) ? "ไม่มียอดให้ผลิต" : !(kg > 0) || kg > 1e9 || kg / qty > 1e9 ? "คำนวณกิโลกรัมไม่ได้" : "";
         if (reason) { out.skipped.push({ jobId: job.id, itemCode: job.itemCode, reason }); continue; }
         const woId = `${key}-${String(top() + 1).padStart(2, "0")}`;
         rf.orders.push({
           id: woId, customer: pi.customer, customerPo: pi.id, recipeId: recipe.id, recipeRevision: recipe.revision, productCode: recipe.productCode ?? "", uom: job.uom,
-          color: String(item.rubber?.color ?? "").trim() || "ดำ", targetQty: qty, producedQty: 0, startDate: start, dueDate: Math.max(job.dueAt, start), priority: job.dueAt < at ? "urgent" : "normal",
+          color: String(item.rubber?.color ?? "").slice(0, 40).trim() || "ดำ", targetQty: qty, producedQty: 0, startDate: start, dueDate: Math.max(job.dueAt, start), priority: job.dueAt < at ? "urgent" : "normal",
           note: `จาก BOM งาน ${job.id} · PI ${pi.id} · ${job.itemCode} ${qty} ${job.uom} ≈ ${kg} kg · เปิดอัตโนมัติตอนปล่อยใบ`.slice(0, 300),
-          status: "planned", sourceJobId: job.id, targetKg: kg, kgPerUnit: kg / qty, createdAt: at, createdBy: actor.name,
+          status: "planned", sourceJobId: job.id, targetKg: kg, kgPerUnit: Math.round((kg / qty) * 1e6) / 1e6, createdAt: at, createdBy: actor.name,
         });
         rf.versions.orders[woId] = version;
         job.externalRef = { system: "rubberflow", woId, kg, linkedAt: at, by: actor.name, auto: true }; // งานยัง queued และใบยัง released (ผูกมือเท่านั้นที่ขยับสถานะ)
