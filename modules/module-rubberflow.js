@@ -5,8 +5,11 @@
 // rubberflow-derive.js (แจ้งเตือน/ค้นหา/สืบย้อน) · rubberflow-store.js (บทบาทสาธิต + localStorage) · rubberflow-ui.js (ชิ้นส่วน HTML) ·
 // rubberflow-pages-*.js และ rubberflow-documents.js (หน้าและ dialog ลงทะเบียนใน window.MNP_RUBBERFLOW_PAGES / _DIALOGS) · ไฟล์นี้ (shell เส้นทาง การผูก event)
 //
-// ข้อมูลอยู่ใน localStorage ของเบราว์เซอร์ (ข้อมูลสมมติ เหมือนต้นแบบ) ไม่แตะฐานข้อมูล จึงไม่มี migration/RPC "ทำหน้าที่เป็น" คือบทบาทสาธิต 9 คน
-// ของต้นแบบ ใช้ซ่อน/แสดงเมนูเท่านั้น ไม่ใช่การควบคุมสิทธิ์ของระบบจริง — หน้า #/rubberflow ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
+// ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลหลัก 3 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO) อยู่ในฐานข้อมูลผ่าน RPC app_rf_master / app_rf_master_since / app_rf_save
+// (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) บันทึกการใช้งานอ่านจาก app_rf_audit และ admin ล้างข้อมูลทดสอบได้ด้วย app_sandbox_purge_rf · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
+// บทบาทมาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ส่วนที่เหลือ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์) ยังอยู่ใน localStorage ของเบราว์เซอร์ (ข้อมูลสมมติ)
+// ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตทั้งชุดใน localStorage และบทบาทสาธิต 9 คนของต้นแบบเหมือนเดิม
+// บทบาทใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น สิทธิ์จริงของข้อมูลหลักตัดสินที่ฐานข้อมูล — หน้า #/rubberflow ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
 // (เมนูข้างโผล่เฉพาะโหมดทดสอบ nav.sandboxOnly แต่ URL พิมพ์เข้ามาได้)
 //
 // กติกา event (ทุกหน้าใช้ร่วมกัน ผูกโดย bindRoot):
@@ -36,9 +39,92 @@
   const storage = (() => {
     try { return window.localStorage; } catch { return null; }
   })();
-  const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions });
+  // โหมดฐานข้อมูล: มี Supabase (CDN โหลดก่อนไฟล์นี้) · sb สร้างใน app.js หลังไฟล์นี้โหลด จึงอ้างตอนเรียกใช้เท่านั้น (เหมือน state)
+  const remote = typeof window.supabase !== "undefined" ? {
+    async load() {
+      const { data, error } = await sb.rpc("app_rf_master");
+      if (error) throw error;
+      return data;
+    },
+    async save(changes, baseVersion, action, audit, epoch) {
+      const { data, error } = await sb.rpc("app_rf_save", { p_changes: changes, p_base_version: baseVersion, p_action: action, p_audit: audit ?? [], p_epoch: epoch ?? null });
+      if (error) throw error;
+      return data;
+    },
+    async since(version) {
+      const { data, error } = await sb.rpc("app_rf_master_since", { p_version: version });
+      if (error) throw error;
+      return data;
+    },
+    async audit(limit) {
+      const { data, error } = await sb.rpc("app_rf_audit", { p_limit: limit });
+      if (error) throw error;
+      return data;
+    },
+    async purge() {
+      const { data, error } = await sb.rpc("app_sandbox_purge_rf");
+      if (error) throw error;
+      return data;
+    },
+  } : null;
+  const store = storeApi.createStore({
+    storage, seed: () => seed.buildSeed(Date.now()), actions, remote, localSeed: () => seed.localSeed(Date.now()),
+    persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(),
+  });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params) };
+
+  // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
+  const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
+  const syncText = () => (store.status() === "loading" ? "กำลังโหลดข้อมูล…" : store.isSaving() ? "กำลังบันทึก…" : "");
+  const updateSync = () => document.querySelectorAll("[data-rf-sync]").forEach((node) => { node.textContent = syncText(); });
+  // "กำลังแก้" = dirty: ติดตามจาก event ที่เบราว์เซอร์ส่งจริง (isTrusted) · ล้าง dirty เมื่อวาดหน้าใหม่ (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
+  // ระหว่าง dirty/มี dialog store ไม่รวมข้อมูลของผู้อื่นเข้า data และไม่ขยับเวอร์ชันฐาน การบันทึกจึงตรวจชนจากเวอร์ชันที่ฟอร์มวาดมา
+  let dirty = false;
+  const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
+  // ช่องค้นหา/สแกน/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
+  const NOT_EDITING = "[data-rf-search], [data-rf-scan], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-rf-retry], [data-rf-reset], [data-rf-purge], [data-rf-audit-reload]";
+  function markDirty(event) {
+    if (!store.isRemote() || !event?.isTrusted || !onRfRoute()) return;
+    const target = event.target;
+    if (!target?.closest?.(".content") || target.closest(NOT_EDITING)) return;
+    if (event.type === "click") {
+      const button = target.closest("button");
+      if (!button || button.type === "submit") return;
+    }
+    dirty = true;
+  }
+  for (const type of ["input", "change", "click"]) document.addEventListener?.(type, markDirty, true);
+  const refreshForOthers = () => {
+    if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล RubberFlow ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
+    else renderRoute();
+  };
+  store.subscribe((event) => {
+    if (!onRfRoute()) return;
+    // บันทึกการใช้งานโหลดเสร็จ: วาดใหม่เฉพาะเมื่อผู้ใช้ยังอยู่ที่หน้านั้นและไม่ได้แก้ฟอร์มอื่นค้าง
+    if (event.type === "audit") {
+      if (currentPage(currentRoute().params) === "audit" && !isEditing()) renderRoute();
+      return;
+    }
+    if (event.type === "purge-failed") { updateSync(); return; }
+    if (event.type === "saving") updateSync();
+    else if (event.type === "saved") {
+      updateSync();
+      // ผู้อื่นบันทึกระหว่างนั้น = แจ้งเมื่อกำลังแก้อยู่ · เนื้อหาต่างเพราะฐานข้อมูลประทับเวลา/ผู้บันทึกให้ระเบียนของเราเอง = วาดใหม่เงียบๆ เมื่อไม่ได้แก้อะไรค้าง
+      if (event.held) return;
+      if (event.others) refreshForOthers();
+      else if (event.changed && !isEditing()) renderRoute();
+    } else if (event.type === "pending") showToast("มีผู้อื่นบันทึกข้อมูล RubberFlow ไปแล้ว ระบบจะรวมข้อมูลล่าสุดให้เมื่อบันทึกหรือเปิดหน้านี้ใหม่");
+    else if (event.type === "synced") refreshForOthers();
+    else if (event.type === "reverted" && isEditing()) updateSync(); // ข้อมูลย้อนกลับแล้ว และ runAction แจ้งข้อความไทยของข้อผิดพลาดให้แล้ว
+    else if (event.type !== "status") renderRoute();
+  });
+  // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า RubberFlow: ตามทันการบันทึกของผู้อื่น (มีฟอร์มค้างไม่รวม แค่แจ้ง)
+  const catchUpOnFocus = () => {
+    if (store.isRemote() && onRfRoute() && !document.hidden) store.catchUp();
+  };
+  window.addEventListener?.("focus", catchUpOnFocus);
+  document.addEventListener?.("visibilitychange", catchUpOnFocus);
 
   // ---------- URL ----------
   function url(page = "dashboard", extra = {}) {
@@ -67,11 +153,15 @@
     return payload;
   }
 
+  const listOf = (value) => (Array.isArray(value) ? value : value === undefined ? [] : [value]);
+  const itemsOf = (p) => listOf(p.materialCode).map((materialCode, index) => ({ materialCode, phr: listOf(p.phr)[index] }));
   // ฟอร์มบางอันส่งค่าที่ action ต้องการคนละรูปแบบ (วันที่เป็น ms, รายการวัตถุดิบ, ตัวเลือกใช่/ไม่ใช่)
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, startDate: rules.fromInputDate(p.startDate), dueDate: rules.fromInputDate(p.dueDate) }),
     receiveMaterial: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry), coa: p.coa === "yes" }),
-    createRecipe: (p) => ({ ...p, items: (p.materialCode ?? []).map((materialCode, index) => ({ materialCode, phr: (p.phr ?? [])[index] })) }),
+    createRecipe: (p) => ({ ...p, items: itemsOf(p) }),
+    saveRecipe: (p) => ({ ...p, items: itemsOf(p) }),
+    saveMaterial: (p) => ({ ...p, active: p.active !== "0" }),
     weighLine: (p) => ({ ...p, index: Number(p.index) }),
     shipBoxes: (p) => ({ ids: p.ids ?? [] }),
     createNcr: (p) => ({ ...p, whys: p.whys ?? [] }),
@@ -84,8 +174,19 @@
       showToast(friendlyError(result.error), "error");
       return false;
     }
-    if (!store.isPersisted()) showToast("บันทึกในหน่วยความจำได้ แต่เบราว์เซอร์นี้ไม่ให้เก็บข้อมูล (localStorage) รีเฟรชแล้วข้อมูลจะหาย", "error");
-    else if (successText) showToast(String(successText).replaceAll("{result}", String(result.result ?? "")));
+    const report = () => {
+      if (!store.isPersisted()) showToast("บันทึกในหน่วยความจำได้ แต่เบราว์เซอร์นี้ไม่ให้เก็บข้อมูล (localStorage) รีเฟรชแล้วข้อมูลจะหาย", "error");
+      else if (successText) showToast(String(successText).replaceAll("{result}", String(result.result ?? "")));
+    };
+    if (!result.saving) {
+      report();
+      return true;
+    }
+    // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
+    result.saving.then((outcome) => {
+      if (outcome.ok) report();
+      else showToast(friendlyError(outcome.error), "error");
+    });
     return true;
   }
 
@@ -190,8 +291,18 @@
   const countTitle = (id) => ({ wip: "ใบส่งมอบรอรับ", requisition: "ใบเบิกกำลังชั่ง", quality: "ล็อตรอตัดสิน" })[id] ?? "";
 
   // แถบเครื่องมือของ RubberFlow ใต้หัวหน้า: ทำหน้าที่เป็น · สแกนรหัส · แจ้งเตือน · รีเซ็ต
+  const canPurge = () => store.isRemote() && Boolean(state.sandbox?.active);
   function toolbarHtml(ctx) {
     const { data, user, now } = ctx;
+    // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล) · ล้างข้อมูลทดสอบ = เฉพาะ admin ตัวจริงในโหมดทดสอบ (ฐานข้อมูลตรวจซ้ำ)
+    if (store.isRemote()) {
+      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-rf-purge title="ลบวัตถุดิบ สูตร และใบสั่งผลิตของ RubberFlow ทั้งหมดในฐานข้อมูล แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้ · ส่วนที่เก็บในเบราว์เซอร์นี้ถูกล้างด้วย)">ล้างข้อมูล RubberFlow ทดสอบ</button>` : "";
+      const alerts = user && store.status() === "ready" ? derive.buildAlerts(data, now) : [];
+      const bad = alerts.some((alert) => alert.tone === "bad");
+      const tools = user && store.status() === "ready" ? `<form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
+        <div class="rf-row">${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}${purge}</div>` : `<div class="rf-row">${purge}</div>`;
+      return `<div class="rf-toolbar"><span class="small muted" role="status" data-rf-sync>${escapeHtml(syncText())}</span>${tools}</div>`;
+    }
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
     const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
     // ยังไม่เลือกบทบาท: มีแค่ช่องเลือกบทบาท (สแกน แจ้งเตือน และรีเซ็ตใช้ได้หลังรู้บทบาท)
@@ -212,6 +323,12 @@
   function introHtml() {
     return `<section class="card rf-card rf-login"><h1>${escapeHtml(TITLE)}</h1>
       <p class="muted">แผนก RB · ควบคุมการผลิตยาง 4 สถานี ผสม → ฉีด → อบ → ตกแต่ง พร้อม FEFO, ชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ, Gatekeeper ส่งมอบ WIP และสืบย้อนกลับถึงล็อตวัตถุดิบ ข้อมูลทั้งหมดเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p></section>`;
+  }
+
+  // โหมดฐานข้อมูล: กำลังโหลด หรือโหลดไม่สำเร็จ (ปุ่มลองใหม่) แทนเนื้อหาหน้า
+  function loadStateHtml() {
+    if (store.status() === "error") return `<section class="card rf-card" role="alert"><h1>โหลดข้อมูล RubberFlow ไม่สำเร็จ</h1><p class="muted">${escapeHtml(store.error()?.message ?? "")}</p><div class="rf-row"><button class="btn rf-btn" type="button" data-rf-retry>ลองอีกครั้ง</button></div></section>`;
+    return ui.card(ui.empty("กำลังโหลดข้อมูล RubberFlow…"));
   }
 
   function deniedHtml(user) {
@@ -256,6 +373,20 @@
       event.currentTarget.reset();
       openDialog("scan", { code }, ctx);
     });
+    root.querySelector("[data-rf-retry]")?.addEventListener("click", () => {
+      store.reload();
+      renderRoute();
+    });
+    root.querySelector("[data-rf-audit-reload]")?.addEventListener("click", () => { store.loadAudit(true); renderRoute(); });
+    root.querySelector("[data-rf-purge]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (!(await confirmDialog({ title: "ล้างข้อมูล RubberFlow ทดสอบทั้งหมด?", message: "ลบวัตถุดิบ สูตรยางทุก revision และใบสั่งผลิต (WO) ของ RubberFlow ในฐานข้อมูลทั้งหมด แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) รวมทั้งล้างล็อตวัตถุดิบ ใบเบิก ล็อตผลิต และข้อมูลอื่นที่เก็บในเบราว์เซอร์นี้ ย้อนกลับไม่ได้ · งาน BOM ที่ผูก WO เดิมไว้ไม่ถูกแตะ · ประวัติการใช้งาน (audit) ไม่ถูกลบและมีบรรทัดบันทึกการล้างเพิ่ม · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล RubberFlow ทดสอบ", danger: true }))) return;
+      button.disabled = true;
+      const outcome = await store.purge();
+      if (outcome.ok) showToast(`ล้างข้อมูล RubberFlow ทดสอบแล้ว ${outcome.deleted} รายการ`);
+      else { button.disabled = false; showToast(friendlyError(outcome.error), "error"); }
+      renderRoute();
+    });
     root.querySelector("[data-rf-reset]")?.addEventListener("click", async () => {
       if (!(await confirmDialog({ title: "ล้างข้อมูลที่บันทึกทั้งหมดแล้วสร้างข้อมูลสาธิตใหม่?", confirmLabel: "ล้างข้อมูล", danger: true }))) return;
       store.reset();
@@ -266,6 +397,7 @@
 
   async function renderRubberFlow(params) {
     if (!state.employee?.isSandbox) return renderNotFound();
+    store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;
     const entry = page ? storeApi.findModule(page) : null;
@@ -279,6 +411,7 @@
       location.hash = url(storeApi.homeOf(user));
       return undefined;
     } else if (!storeApi.canSee(user, page)) body = deniedHtml(user);
+    else if (store.status() !== "ready") body = `${pageNavHtml(user, page)}${loadStateHtml()}`;
     else {
       const render = pages[page];
       const built = render ? render(ctx) : { html: ui.card(ui.empty("หน้านี้ยังไม่พร้อม")) };
@@ -287,12 +420,15 @@
     }
     // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต สแกน แจ้งเตือน รีเซ็ต)
     const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
+    dirty = false; // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างแล้ว (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
     app.innerHTML = shell(`<div class="rf-page" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${body}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
     ui.labelTables(root);
     bind?.(root, ctx);
+    // ระหว่างแก้ฟอร์มมีข้อมูลใหม่ของผู้อื่นค้าง (store ไม่ได้รวมให้): ฟอร์มจบแล้ว รวมตอนนี้ (ยังเปิด dialog อยู่ = ค้างต่อ)
+    if (store.hasNewer()) store.catchUp();
     return undefined;
   }
 
@@ -319,7 +455,7 @@
     code: "RUBBERFLOW",
     enabled: true,
     standalone: true,
-    // ไม่แตะฐานข้อมูล: ข้อมูลสาธิตอยู่ใน localStorage ของเบราว์เซอร์ จึงเปิดในโหมดทดสอบได้โดยไม่ต้องทำกติกา 5 ข้อของตาราง
+    // ข้อมูลหลัก 3 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่รับเฉพาะ admin ในโหมดทดสอบ (RF_TEST_MODE_ONLY) ส่วนที่เหลืออยู่ใน localStorage ของเบราว์เซอร์ (ข้อมูลสมมติ)
     sandbox: true,
     label: TITLE,
     theme: THEME,

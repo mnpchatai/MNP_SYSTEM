@@ -166,6 +166,10 @@ bom_department_jobs.qty_done ◀── รายงานผลผลิต ─�
 | B. ย้าย WO ขึ้นฐานข้อมูล | `orders`/`requisitions`/`lots`/`transfers` ของ RubberFlow เป็นตารางจริง (ตาม README: ต้องมี migration/RPC/เทสต์ของตัวเอง) | `rubberflow_orders.source_job_id`, trigger อัปเดต `bom_department_jobs.qty_done` จากการรับมอบ |
 | C. สูตรยาง | ย้าย `recipes` ขึ้นฐานข้อมูลเป็น `bom_compounds` + `bom_compound_revisions(items PHR, batchKg, dumpTemp …)` ให้ BOM และ RubberFlow ใช้ตารางเดียว | สถานะอนุมัติสูตรของ RubberFlow เป็นของตาราง ไม่ใช่ `localStorage` |
 
+**สถานะ (7 พ.ย. 2026, โหมดทดสอบ)**: ขั้น B/C ส่วนแรกทำแล้ว — migration `20261107010000_rubberflow_core.sql` ย้าย `materials`, `recipes` (PHR ทุก revision อนุมัติโดยหัว RB) และ `orders` (WO) ของ RubberFlow ขึ้นฐานข้อมูลเป็นตาราง `rf_*` (ชื่อจริงต่างจากร่างในตารางข้างบน) ใช้กลไกเดียวกับ BOM · WO ผูกงาน RB ด้วย `sourceJobId`: เซิร์ฟเวอร์ตรวจงาน เขียน `bom_jobs.external_ref` และเดินตัวนับ BOM ในธุรกรรมเดียวกัน (ลำดับล็อก rf ก่อน bom) · ขั้น A "รายงานผลผลิตกลับ" ทำเป็นการป้อนกลับตอน WO ปิด (ยอดผลิตของ WO → รายงานในงาน + `qty_done` + สถานะงาน + ใบ PI released → in_progress) เพราะใบส่งมอบ (`transfers`) ยังอยู่ใน localStorage · คอมปาวด์ของ BOM ผูกกับรหัสสูตรใน `rf_recipes` ได้เฉพาะรหัสที่มีอยู่
+
+ยังไม่ทำ (รอบที่ 2): `requisitions`, `lots`, `transfers`, `fgBoxes`, `qcRecords`, `ncrs`, `molds`, `materialLots` ขึ้นฐานข้อมูล และย้ายการป้อนกลับมาเป็นตอน SR รับมอบ (`receiveTransfer`) ตามที่ผู้ใช้เลือก · ตาราง `rubberflow_wo_sources` (หลายงานต่อ WO) ยังไม่ทำ รอบนี้ WO หนึ่งใบผูกงาน BOM ได้หนึ่งงาน (ดัชนี unique บางส่วนบน `rf_orders.source_job_no`)
+
 ## 5. หน้าจอ (Pilot Web ก่อน, Next.js ตาม)
 
 | หน้า | ผู้ใช้ | หน้าที่ |

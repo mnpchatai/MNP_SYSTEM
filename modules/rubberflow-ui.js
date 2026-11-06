@@ -18,7 +18,7 @@
     open: ["bad", "เปิดอยู่"], closed: ["good", "ปิดแล้ว"],
     available: ["good", "พร้อมใช้"], expired: ["bad", "หมดอายุ (บล็อก)"], empty: ["", "หมด"],
     in_stock: ["good", "ในคลัง"], shipped: ["info", "ส่งมอบแล้ว"],
-    draft: ["warn", "รออนุมัติ"], approved: ["good", "อนุมัติแล้ว"],
+    draft: ["warn", "รออนุมัติ"], approved: ["good", "อนุมัติแล้ว"], superseded: ["", "ถูกแทนที่"],
     critical: ["bad", "Critical"], major: ["warn", "Major"], minor: ["", "Minor"],
   });
   const badge = (tone, text) => `<span class="rf-badge${tone ? ` is-${esc(tone)}` : ""}">${esc(text)}</span>`;

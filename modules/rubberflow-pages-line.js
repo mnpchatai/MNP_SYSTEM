@@ -96,7 +96,7 @@
     let bind = null;
     if (selected) {
       const order = data.orders.find((row) => row.id === selected.orderId);
-      const recipe = data.recipes.find((row) => row.id === selected.recipeId);
+      const recipe = ctx.rules.recipeOf(data.recipes, selected.recipeId, selected.recipeRevision);
       const nextIdx = selected.lines.findIndex((line) => line.actualKg === null);
       const parts = [];
       if (selected.status === "weighing" && nextIdx >= 0) {
@@ -174,7 +174,7 @@
       const submit = dialog.querySelector("[data-rf-submit]");
       const paint = () => {
         const order = data.orders.find((row) => row.id === orderSelect.value);
-        const recipe = order && data.recipes.find((row) => row.id === order.recipeId);
+        const recipe = order && rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
         const n = Number(batches.value || 0);
         const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now) })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
@@ -227,7 +227,7 @@
       const dump = form.querySelector("[data-rf-dump]");
       const paint = () => {
         const requisition = data.requisitions.find((row) => row.id === reqSelect.value);
-        const recipe = requisition && data.recipes.find((row) => row.id === requisition.recipeId);
+        const recipe = requisition && ctx.rules.recipeOf(data.recipes, requisition.recipeId, requisition.recipeRevision);
         const issuedKg = requisition ? requisition.lines.reduce((sum, line) => sum + line.actualKg, 0) : 0;
         form.querySelector("[data-rf-mix-hint]").textContent = recipe ? `มาตรฐาน ${recipe.mixSec} s` : "";
         form.querySelector("[data-rf-dump-hint]").textContent = recipe ? `มาตรฐาน ${recipe.dumpTemp} ± ${recipe.dumpTol} °C` : "";

@@ -137,7 +137,7 @@
     const lot = data.lots.find((row) => row.id === lotId);
     if (!lot) return null;
     const order = data.orders.find((row) => row.id === lot.orderId);
-    const recipe = data.recipes.find((row) => row.id === order?.recipeId);
+    const recipe = order ? rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision) : undefined;
     // รวบรวมผลแล็บจากล็อตนี้และทุกล็อตต้นทาง
     const chain = [];
     const walk = (current) => { chain.push(current); derive.parentLotIds(data, current).forEach((parentId) => { const parent = data.lots.find((row) => row.id === parentId); if (parent) walk(parent); }); };

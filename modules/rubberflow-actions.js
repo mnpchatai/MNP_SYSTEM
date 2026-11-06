@@ -1,10 +1,10 @@
 // RubberFlow MES (แผนก RB โหมดทดสอบ) — กฎธุรกิจทั้งหมดของสายผลิตยาง 4 สถานี ยกมาจาก prototypes/rubber-mes/src/data/actions.js ทั้งไฟล์
 // ไม่มี DOM/Supabase เทสต์ด้วย node --test (scripts/tests/rubberflow-actions.test.mjs)
 //
-// ทุก action แก้ไข "ร่าง" ของ state ที่ clone มาแล้ว: action(draft, payload, ctx) โดย ctx = { now, user }
+// ทุก action แก้ไข "ร่าง" ของ state ที่ clone มาแล้ว: action(draft, payload, ctx) โดย ctx = { now, user, remote?, idSuffix? }
 // ถ้ากฎใดไม่ผ่านจะ throw Error ข้อความภาษาไทย (modules/rubberflow-store.js จับไปแสดง toast และไม่บันทึกร่างนั้น)
-// ข้อมูลอยู่ใน localStorage ของเบราว์เซอร์ (ข้อมูลสมมติ) กฎในไฟล์นี้จึงเป็นกฎของเดโม ไม่ใช่การควบคุมสิทธิ์ของระบบจริง
-// (การย้ายไปฐานข้อมูลต้องมี migration/RPC/เทสต์ของตัวเองตาม AGENTS.md — ดูหัวข้อ "RubberFlow MES" ใน README)
+// ข้อมูลหลัก (วัตถุดิบ สูตร ใบสั่งผลิต) ในเบราว์เซอร์จริงอยู่ในฐานข้อมูล (ctx.remote) ซึ่งตัดสินสิทธิ์และสถานะจริงอีกครั้ง · ส่วนที่เหลือและโหมดสาธิตอยู่ใน localStorage
+// (ข้อมูลสมมติ) กฎส่วนนั้นเป็นกฎของเดโม ไม่ใช่การควบคุมสิทธิ์ของระบบจริง — ดูหัวข้อ "RubberFlow MES" ใน README
 // โหลดหลัง modules/rubberflow-rules.js (ใน Node เทสต์ตั้ง globalThis.MNP_RUBBERFLOW_RULES ก่อน require ไฟล์นี้)
 (function (root) {
   const rules = () => root.MNP_RUBBERFLOW_RULES;
@@ -42,20 +42,57 @@
 
   // ---------- ใบสั่งผลิต ----------
 
+  // โหมดฐานข้อมูล (ctx.remote): ผู้ใช้คือบัญชีทดสอบที่มี flags planner / rb / rbHead (modules/rubberflow-store.js personaUser) · ฐานข้อมูลตัดสินสิทธิ์จริงอีกครั้ง
+  // ตรงนี้ปฏิเสธก่อนส่งเพื่อให้ได้ข้อความไทย · โหมดสาธิต (localStorage) ไม่ตรวจสิทธิ์ในคำสั่ง เหมือนเดิม
+  const MAY = Object.freeze({
+    master: (user) => Boolean(user.planner || user.rb), // วัตถุดิบ / สูตร (ร่าง) / เปิดใบสั่งผลิต: ฝ่ายวางแผนขึ้นไป หรือพนักงานแผนก RB
+    approve: (user) => Boolean(user.rbHead), // อนุมัติสูตร: หัวหน้า RB ขึ้นไป
+    release: (user) => Boolean(user.planner || user.rbHead), // ปล่อยผลิต
+    work: (user) => Boolean(user.planner || user.rb), // สถานะอื่นของใบสั่งผลิต
+  });
+  const MAY_TEXT = Object.freeze({
+    master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
+    approve: "อนุมัติสูตรได้โดยหัวหน้าแผนก RB ผู้จัดการโรงงานขึ้นไป หรือผู้ดูแลระบบ",
+    release: "ปล่อยผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือหัวหน้าแผนก RB",
+    work: "เปลี่ยนสถานะใบสั่งผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือพนักงานแผนก RB",
+  });
+  function needRight(ctx, right) {
+    if (!ctx.remote) return;
+    if (!ctx.user) fail("ไม่พบบัญชีผู้ใช้ทดสอบ");
+    if (!MAY[right](ctx.user)) fail(`บัญชีนี้ไม่มีสิทธิ์: ${MAY_TEXT[right]}`);
+  }
+
+  // เลขใบสั่งผลิต: โหมดฐานข้อมูลออกจากเลขสูงสุดของวันนั้นในข้อมูลที่มี + 1 (เครื่องอื่นออกซ้ำ = ฐานข้อมูลตอบ RF_STALE แล้วบันทึกอีกครั้งได้) · โหมดสาธิตใช้ตัวนับในเครื่อง
+  function nextOrderId(d, ctx) {
+    if (!ctx.remote) return nextId(d, "WO", ctx.now);
+    const key = `WO-${rules().ymd(ctx.now)}`;
+    const top = d.orders.reduce((max, order) => {
+      const match = /^WO-(\d{8})-(\d+)$/.exec(String(order.id));
+      return match && `WO-${match[1]}` === key ? Math.max(max, Number(match[2])) : max;
+    }, 0);
+    return `${key}-${String(top + 1).padStart(2, "0")}`;
+  }
+
+  // ---------- ใบสั่งผลิต ----------
+
   function createOrder(d, p, ctx) {
-    const recipe = find(d.recipes, p.recipeId, "สูตร");
+    needRight(ctx, "master");
+    const { currentRecipe } = rules();
+    const recipe = currentRecipe(d.recipes, p.recipeId) || fail(`ไม่พบสูตร ${p.recipeId}`);
+    // สูตรที่ใช้เปิดใบ = revision ที่อนุมัติแล้วของรหัสนั้น (ใบผูก revision ที่เปิดไว้)
     if (recipe.status !== "approved") fail("สูตรนี้ยังไม่ได้รับอนุมัติ ใช้เปิดใบสั่งผลิตไม่ได้");
     if (!p.customer?.trim()) fail("กรุณาระบุชื่อลูกค้า");
     const targetQty = num(p.targetQty, "จำนวนเป้าหมาย");
     if (targetQty <= 0) fail("จำนวนเป้าหมายต้องมากกว่า 0");
     if (!Number.isFinite(p.startDate) || !Number.isFinite(p.dueDate)) fail("กรุณาระบุวันเริ่มผลิตและวันกำหนดส่ง");
     if (p.dueDate < p.startDate) fail("วันส่งมอบต้องไม่ก่อนวันเริ่มผลิต");
-    const id = nextId(d, "WO", ctx.now);
-    d.orders.unshift({
+    const id = nextOrderId(d, ctx);
+    const order = {
       id,
       customer: p.customer.trim(),
       customerPo: p.customerPo?.trim() || "",
       recipeId: recipe.id,
+      recipeRevision: recipe.revision,
       productCode: recipe.productCode,
       productName: recipe.productName,
       uom: recipe.uom,
@@ -69,8 +106,19 @@
       status: "planned",
       createdAt: ctx.now,
       createdBy: ctx.user?.name,
-    });
-    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${recipe.productName} ${targetQty} ${recipe.uom}`);
+    };
+    // ใบที่สร้างจากงาน RB ของ BOM: หน่วยของงาน (เส้น/ชิ้น) พร้อมกิโลกรัมคอมปาวด์ · ฐานข้อมูลตรวจงานและผูกงานให้ในคำสั่งเดียวกัน
+    if (p.sourceJobId) {
+      const kg = Number(p.targetKg);
+      order.sourceJobId = String(p.sourceJobId).trim();
+      order.uom = String(p.uom || recipe.uom);
+      if (Number.isFinite(kg) && kg > 0) {
+        order.targetKg = kg;
+        order.kgPerUnit = Number(p.kgPerUnit) > 0 ? Number(p.kgPerUnit) : kg / targetQty;
+      }
+    }
+    d.orders.unshift(order);
+    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${recipe.productName} ${targetQty} ${order.uom}`);
     return id;
   }
 
@@ -81,22 +129,62 @@
     on_hold: ["in_progress"],
   });
 
-  function setOrderStatus(d, { id, status }, ctx) {
+  // producedQty: ปริมาณผลิตจริงตอนปิดใบ (หน่วยของใบ) · ใบที่สร้างจากงาน BOM ต้องมากกว่า 0 เพราะฐานข้อมูลส่งยอดนี้กลับไปที่งาน
+  function setOrderStatus(d, { id, status, producedQty }, ctx) {
     const order = find(d.orders, id, "ใบสั่งผลิต");
     if (!(ORDER_FLOW[order.status] || []).includes(status)) fail(`เปลี่ยนสถานะจาก ${order.status} เป็น ${status} ไม่ได้`);
+    needRight(ctx, status === "released" ? "release" : "work");
+    if (status === "completed") {
+      if (producedQty !== undefined && producedQty !== null && producedQty !== "") {
+        const produced = Number(producedQty);
+        if (!Number.isFinite(produced) || produced < 0) fail("ปริมาณผลิตจริงต้องเป็นตัวเลขไม่ติดลบ");
+        order.producedQty = produced;
+      }
+      if (order.sourceJobId && !(Number(order.producedQty) > 0)) fail("ใบสั่งผลิตนี้มาจากงาน BOM กรุณาระบุปริมาณผลิตจริง (มากกว่า 0) ก่อนปิดใบ");
+      order.completedAt = ctx.now;
+    } else if (status === "released") {
+      order.releasedAt = ctx.now;
+      order.releasedBy = ctx.user?.name;
+    } else if (status === "cancelled") order.cancelledAt = ctx.now;
     order.status = status;
     audit(d, ctx, "เปลี่ยนสถานะใบสั่งผลิต", `${id} → ${status}`);
   }
 
+  // ---------- วัตถุดิบ (ข้อมูลหลัก) ----------
+
+  // เพิ่มหรือแก้วัตถุดิบ (รหัสแก้ไม่ได้) · ลบไม่ได้ ใช้ active=false แทน · ระเบียนที่ไม่มี active (ชุดสาธิต) ถือว่าใช้งานอยู่
+  function saveMaterial(d, p, ctx) {
+    needRight(ctx, "master");
+    const code = String(p.code ?? "").trim();
+    if (!code) fail("กรุณาระบุรหัสวัตถุดิบ");
+    if (code.length > 40 || /[\s"'<>]/.test(code)) fail("รหัสวัตถุดิบยาวไม่เกิน 40 ตัวอักษรและไม่มีช่องว่าง");
+    const name = String(p.name ?? "").trim();
+    if (!name) fail("กรุณาระบุชื่อวัตถุดิบ");
+    const fields = {
+      name: name.slice(0, 120),
+      category: String(p.category ?? "").trim().slice(0, 60),
+      storage: String(p.storage ?? "").trim().slice(0, 120),
+      uom: String(p.uom ?? "").trim().slice(0, 12) || "kg",
+      active: p.active === undefined ? true : !(p.active === false || p.active === "0" || p.active === "false"),
+    };
+    const existing = d.materials.find((row) => row.code === code);
+    if (existing) {
+      Object.assign(existing, fields);
+      audit(d, ctx, "แก้ข้อมูลวัตถุดิบ", `${code}${fields.active ? "" : " (เลิกใช้)"}`);
+    } else {
+      d.materials.push({ code, ...fields, createdAt: ctx.now, createdBy: ctx.user?.name });
+      audit(d, ctx, "เพิ่มวัตถุดิบ", code);
+    }
+    return code;
+  }
+
   // ---------- สูตรยาง ----------
 
-  function createRecipe(d, p, ctx) {
-    if (!p.id?.trim() || !p.name?.trim() || !p.productName?.trim()) fail("กรุณากรอกรหัสสูตร ชื่อสูตร และชื่อสินค้า");
-    if (d.recipes.some((recipe) => recipe.id === p.id.trim())) fail("รหัสสูตรนี้มีอยู่แล้ว");
+  // ค่าที่ฟอร์มสูตรกรอก (ใช้ทั้งสร้างและออก revision ใหม่) · รหัสสูตรไม่อยู่ในนี้
+  function recipeFields(p) {
     const items = (p.items ?? []).filter((item) => item.materialCode && Number(item.phr) > 0);
     if (!items.length) fail("สูตรต้องมีวัตถุดิบอย่างน้อย 1 รายการ");
-    d.recipes.push({
-      id: p.id.trim(),
+    return {
       name: p.name.trim(),
       productCode: p.productCode?.trim() || p.id.trim(),
       productName: p.productName.trim(),
@@ -108,6 +196,16 @@
       restHours: Number(p.restHours) || 4,
       yieldPerKg: num(p.yieldPerKg, "ผลผลิตต่อกิโลกรัม"),
       items: items.map((item) => ({ materialCode: item.materialCode, phr: Number(item.phr) })),
+    };
+  }
+
+  function createRecipe(d, p, ctx) {
+    needRight(ctx, "master");
+    if (!p.id?.trim() || !p.name?.trim() || !p.productName?.trim()) fail("กรุณากรอกรหัสสูตร ชื่อสูตร และชื่อสินค้า");
+    if (d.recipes.some((recipe) => recipe.id === p.id.trim())) fail("รหัสสูตรนี้มีอยู่แล้ว");
+    d.recipes.push({
+      id: p.id.trim(),
+      ...recipeFields(p),
       revision: 1,
       status: "draft",
       createdAt: ctx.now,
@@ -116,13 +214,48 @@
     audit(d, ctx, "สร้างสูตรใหม่", p.id);
   }
 
-  function approveRecipe(d, { id }, ctx) {
-    const recipe = find(d.recipes, id, "สูตร");
+  // แก้สูตร: revision ที่อนุมัติแล้วแก้ตรงๆ ไม่ได้ → ออก revision ใหม่ (revision + 1) เป็นร่างของรหัสเดิม · มีร่างค้างอยู่แล้ว = แก้ร่างนั้น
+  // คืนเลข revision ที่ถูกแก้/ออกใหม่
+  function saveRecipe(d, p, ctx) {
+    needRight(ctx, "master");
+    const { revisionsOf } = rules();
+    const id = String(p.id ?? "").trim();
+    const history = revisionsOf(d.recipes, id);
+    if (!history.length) fail(`ไม่พบสูตร ${id}`);
+    if (!p.name?.trim() || !p.productName?.trim()) fail("กรุณากรอกชื่อสูตรและชื่อสินค้า");
+    const fields = recipeFields({ ...p, id });
+    const draft = history.find((recipe) => recipe.status === "draft");
+    if (draft) {
+      Object.assign(draft, fields);
+      audit(d, ctx, "แก้ร่างสูตร", `${id} Rev.${draft.revision}`);
+      return draft.revision;
+    }
+    const revision = history[0].revision + 1;
+    d.recipes.push({ id, ...fields, revision, status: "draft", createdAt: ctx.now, createdBy: ctx.user?.name });
+    audit(d, ctx, "ออกสูตร revision ใหม่", `${id} Rev.${revision}`);
+    return revision;
+  }
+
+  // อนุมัติร่าง (revision ที่ระบุ ไม่ระบุ = ร่างล่าสุด) · revision ที่อนุมัติอยู่เดิมของรหัสเดียวกันถูกแทนที่ (superseded) ในคำสั่งเดียวกัน
+  function approveRecipe(d, { id, revision }, ctx) {
+    needRight(ctx, "approve");
+    const { revisionsOf } = rules();
+    const history = revisionsOf(d.recipes, id);
+    if (!history.length) fail(`ไม่พบสูตร ${id}`);
+    const recipe = revision === undefined || revision === null || revision === "" ? history.find((row) => row.status === "draft") : history.find((row) => Number(row.revision) === Number(revision));
+    if (!recipe) fail(history.some((row) => row.status === "approved") ? "สูตรนี้อนุมัติแล้ว" : "ไม่มีร่างสูตรที่รออนุมัติ");
     if (recipe.status === "approved") fail("สูตรนี้อนุมัติแล้ว");
+    if (recipe.status !== "draft") fail("สูตร revision นี้ถูกแทนที่แล้ว อนุมัติไม่ได้");
+    for (const previous of history) {
+      if (previous.status === "approved") {
+        previous.status = "superseded";
+        previous.supersededAt = ctx.now;
+      }
+    }
     recipe.status = "approved";
     recipe.approvedBy = ctx.user?.name;
     recipe.approvedAt = ctx.now;
-    audit(d, ctx, "อนุมัติสูตร", id);
+    audit(d, ctx, "อนุมัติสูตร", `${id} Rev.${recipe.revision}`);
   }
 
   // ---------- เบิกและชั่งเคมี ----------
@@ -133,7 +266,7 @@
     if (!["released", "in_progress"].includes(order.status)) fail('ใบสั่งผลิตต้องอยู่ในสถานะ "ปล่อยผลิต" หรือ "กำลังผลิต"');
     const n = num(batches, "จำนวน batch");
     if (n < 1 || n > 10) fail("จำนวน batch ต้องอยู่ระหว่าง 1–10");
-    const recipe = find(d.recipes, order.recipeId, "สูตร");
+    const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร ${order.recipeId}`);
     // จองสต็อกที่ใบเบิกเปิดอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน
     const reserved = {};
     d.requisitions.filter((requisition) => requisition.status !== "issued" && requisition.status !== "consumed").forEach((requisition) =>
@@ -152,7 +285,7 @@
     if (shortages.length) fail(`สต็อกไม่พอตามหลัก FEFO: ${shortages.join(", ")}`);
     const id = nextId(d, "REQ", ctx.now);
     d.requisitions.unshift({
-      id, orderId, recipeId: recipe.id, batches: n, totalKg: recipe.batchKg * n, lines,
+      id, orderId, recipeId: recipe.id, recipeRevision: recipe.revision, batches: n, totalKg: recipe.batchKg * n, lines,
       status: "weighing", note: note || "", requestedBy: ctx.user?.name, createdAt: ctx.now,
     });
     audit(d, ctx, "ระเบิดสูตรและสร้างใบเบิก", `${id} (${order.id}, ${n} batch)`);
@@ -187,6 +320,7 @@
 
   function receiveMaterial(d, p, ctx) {
     const material = d.materials.find((row) => row.code === p.materialCode) || fail("กรุณาเลือกวัตถุดิบ");
+    if (material.active === false) fail("วัตถุดิบนี้เลิกใช้แล้ว รับเข้าคลังไม่ได้");
     const qty = num(p.qtyKg, "ปริมาณรับเข้า");
     if (qty <= 0) fail("ปริมาณต้องมากกว่า 0");
     if (!p.expiry || p.expiry <= ctx.now) fail("วันหมดอายุต้องเป็นวันในอนาคต");
@@ -229,7 +363,7 @@
     const { HOUR } = rules();
     const requisition = find(d.requisitions, p.reqId, "ใบเบิก");
     if (requisition.status !== "issued") fail("ใบเบิกยังจ่ายวัตถุดิบไม่ครบ หรือถูกใช้ไปแล้ว");
-    const recipe = find(d.recipes, requisition.recipeId, "สูตร");
+    const recipe = rules().recipeOf(d.recipes, requisition.recipeId, requisition.recipeRevision) || fail(`ไม่พบสูตร ${requisition.recipeId}`);
     const dumpTemp = num(p.dumpTemp, "อุณหภูมิปล่อยยาง");
     const mixSec = num(p.mixSec, "เวลาผสม");
     const outputKg = num(p.outputKg, "น้ำหนักยางที่ได้");
@@ -486,7 +620,7 @@
   }
 
   const api = {
-    ORDER_FLOW, createOrder, setOrderStatus, createRecipe, approveRecipe, createRequisition, weighLine, receiveMaterial, setMaterialLotStatus,
+    ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, receiveMaterial, setMaterialLotStatus,
     recordMixing, endRest, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
     addQcRecord, createNcr, closeNcr, cleanMold,
   };

@@ -389,6 +389,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const PERSONA_SPECS = [
     ["persona-pp", "สมศรี", "วางแผน", "เจ้าหน้าที่วางแผน (PP)", "PP", "ฝ่ายวางแผน"],
     ["persona-rb", "ประยุทธ", "รีดยาง", "พนักงานแผนก RB", "RB", "ฝ่ายผลิต RB"],
+    // หัวหน้าแผนก RB (ผู้จัดการแผนก): อนุมัติสูตร/ปล่อยผลิตของ RubberFlow ได้ · ตำแหน่งที่ 7 = รหัสบทบาท (ไม่ระบุ = พนักงาน staff)
+    ["persona-rbh", "สุรีย์", "หัวหน้ารีด", "หัวหน้าแผนก RB", "RB", "ฝ่ายผลิต RB", "department_manager"],
     ["persona-gr", "มานี", "ตัดยาง", "พนักงานแผนก GR", "GR", "ฝ่ายผลิต GR"],
     ["persona-st", "วิชัย", "คลังวัตถุดิบ", "พนักงานคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ"],
     ["persona-wh", "สุดา", "คลังสินค้า", "พนักงานคลังสินค้า (WH)", "WH", "คลังสินค้า"],
@@ -396,9 +398,9 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   ];
   const personaRows = () => [
     { ...expand("employees", ME), id: "persona-1", job_title: "บัญชีทดสอบ ผู้จัดการแผนก" },
-    ...PERSONA_SPECS.map(([id, first_name, last_name, job_title, dept, deptName]) => ({
-      ...expand("employees", ME), id, employee_no: `T-${dept}`, first_name, last_name, job_title,
-      role: { code: "staff", name_th: "พนักงาน" }, department: { code: dept, name_th: deptName },
+    ...PERSONA_SPECS.map(([id, first_name, last_name, job_title, dept, deptName, roleCode]) => ({
+      ...expand("employees", ME), id, employee_no: `T-${dept}${roleCode ? "H" : ""}`, first_name, last_name, job_title,
+      role: roleCode ? { code: roleCode, name_th: "ผู้จัดการแผนก" } : { code: "staff", name_th: "พนักงาน" }, department: { code: dept, name_th: deptName },
     })),
   ];
   let personaId = null;
@@ -586,6 +588,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           ? changedByOthers(list, id)
           : next.tombstones.some((row) => row.list === list && graveKey(row) === id && row.version > base && row.version <= current.version))) fail("BOM_STALE");
         bomCheckRecord(list, prev, record, actor);
+        // สูตรยางผูกกับสูตร PHR ของ RubberFlow ได้เฉพาะรหัสสูตรที่มีอยู่ในฐานข้อมูล RubberFlow (revision ใดก็ได้ · ตรงกับ bom_save_compounds)
+        if (list === "compounds" && record.recipeId !== undefined && record.recipeId !== null && !rfLoad().recipes.some((row) => row.id === record.recipeId)) fail("BOM_INVALID_COMPOUND");
         if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released });
         if (list === "jobs") bomJobRules(prev, record, actor, next, released);
         if (index === -1) {
@@ -662,6 +666,197 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     for (const job of next.jobs) if (!next.orders.some((order) => order.id === job.orderId)) fail("BOM_INVALID_JOB");
     return next;
   }
+  // ---- ข้อมูลของ RubberFlow (โมดูลทดสอบ #/rubberflow): app_rf_master / app_rf_master_since / app_rf_save / app_rf_audit และ app_sandbox_purge_rf ----
+  // โครงเดียวกับข้อมูลหลักของ BOM ด้านบน (ทุกระเบียนจำเลขรุ่นที่แก้ล่าสุด ชนรายระเบียน RF_STALE ก่อนตรวจสิทธิ์ ส่วนต่าง {version, epoch, changes} รอบข้อมูล epoch) เก็บที่ storage คีย์ mnp-harness-rf-master
+  // ข้อมูลหลัก 3 ชุด: materials (code) · recipes (รหัสสูตร + revision ทุก revision) · orders (WO) · ขั้นนี้ไม่มีการลบ
+  // สิทธิ์: กลุ่มวางแผน (admin ผู้จัดการแผนกขึ้นไป แผนก PP) หรือสมาชิกแผนก RB แก้วัตถุดิบ/ร่างสูตร/เปิด WO ได้ · อนุมัติสูตรและปล่อยผลิต = หัวหน้า RB (ผู้จัดการ/ผู้ช่วยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการโรงงานขึ้นไป) หรือกลุ่มวางแผน (ปล่อยผลิต)
+  // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) และเมื่อปิด (completed) ส่ง producedQty เข้างานเป็นรายงานผล (ทั้งสองเขียนผ่านตัวนับเวอร์ชันของ BOM ด้วย)
+  const RF_KEY = "mnp-harness-rf-master";
+  const RF_LISTS = ["materials", "recipes", "orders"];
+  const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id };
+  const rfSorter = (list) => (list === "recipes" ? (a, b) => bomCmp(a.id, b.id) || a.revision - b.revision : (a, b) => bomCmp(RF_ID[list](a), RF_ID[list](b)));
+  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus"];
+  const RF_FLOW = { planned: ["released", "cancelled"], released: ["in_progress", "on_hold", "cancelled"], in_progress: ["on_hold", "completed"], on_hold: ["in_progress"] };
+  const RF_ORDER_STATUSES = ["planned", "released", "in_progress", "on_hold", "completed", "cancelled"];
+  const RF_RECIPE_OWNED = ["status", "createdAt", "createdBy", "approvedAt", "approvedBy", "supersededAt"];
+  const RF_ORDER_OWNED = ["status", "producedQty", "createdAt", "createdBy", "releasedAt", "releasedBy", "completedAt", "cancelledAt"];
+  let rfMaster = null;
+  const freshRf = () => ({ version: 0, epoch: newEpoch(), ...Object.fromEntries(RF_LISTS.map((list) => [list, []])), versions: Object.fromEntries(RF_LISTS.map((list) => [list, {}])), audit: [] });
+  function rfLoad() {
+    if (!rfMaster) {
+      try { rfMaster = JSON.parse(storage?.getItem?.(RF_KEY) ?? "null"); } catch { rfMaster = null; }
+      if (!rfMaster || typeof rfMaster.version !== "number") rfMaster = freshRf();
+      if (typeof rfMaster.epoch !== "string") rfMaster.epoch = newEpoch();
+      for (const list of RF_LISTS) if (!Array.isArray(rfMaster[list])) rfMaster[list] = [];
+      rfMaster.versions = Object.fromEntries(RF_LISTS.map((list) => [list, rfMaster.versions?.[list] ?? {}]));
+      if (!Array.isArray(rfMaster.audit)) rfMaster.audit = [];
+    }
+    return rfMaster;
+  }
+  function rfPersist() {
+    try { storage?.setItem?.(RF_KEY, JSON.stringify(rfMaster)); } catch { warnOnce("rf-storage", "[pilot harness] เก็บข้อมูล RubberFlow ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
+  }
+  const rfView = (current) => ({ version: current.version, epoch: current.epoch, ...Object.fromEntries(RF_LISTS.map((list) => [list, clone(current[list]).sort(rfSorter(list))])) });
+  function rfDelta(current, since) {
+    const changes = {};
+    for (const list of RF_LISTS) {
+      const upsert = current[list].filter((row) => (current.versions[list][RF_ID[list](row)] ?? 0) > since).sort(rfSorter(list));
+      changes[list] = { upsert: clone(upsert), delete: [] };
+    }
+    return { version: current.version, epoch: current.epoch, changes };
+  }
+  const rfIsRb = (actor) => actor.dept === "RB";
+  const rfIsHead = (actor) => (rfIsRb(actor) && ["department_manager", "assistant_department_manager"].includes(actor.role)) || ["assistant_factory_manager", "factory_manager", "general_manager", "admin"].includes(actor.role);
+  const rfText = (value, max, code) => { const text = String(value ?? "").trim(); if (!text || text.length > max) fail(code); return text; };
+  const rfSame = (a, b, owned) => bomCanon(bomWithout(a, owned)) === bomCanon(bomWithout(b, owned));
+
+  // บันทึกการเปลี่ยนแปลงทั้งชุดในธุรกรรมเดียว: คืน { next, ops } โดย ops = งานของ BOM ที่ต้องเขียนต่อเมื่อบันทึกสำเร็จ (ผูกงาน / ส่งยอดผลิตกลับเข้างาน)
+  function rfApply(current, changes, base, actor, at) {
+    const next = clone(current);
+    const nextVersion = current.version + 1;
+    const mine = new Set();
+    const stale = (list, id) => (next.versions[list][id] ?? 0) > base && !mine.has(`${list}|${id}`);
+    const stampVersion = (list, id) => { next.versions[list][id] = nextVersion; mine.add(`${list}|${id}`); };
+    const planner = bomIsPlanner(actor);
+    const master = planner || rfIsRb(actor);
+    const head = rfIsHead(actor);
+    const approvedNow = [];
+    const supersededSent = [];
+    const ops = { link: [], complete: [] };
+    for (const list of RF_LISTS) {
+      const entry = changes[list];
+      if (entry === undefined) continue;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry) || (entry.delete ?? []).length) fail("RF_INVALID_CHANGES");
+      for (const record of entry.upsert ?? []) {
+        if (!record || typeof record !== "object" || Array.isArray(record)) fail("RF_INVALID_RECORD");
+        if (list === "materials") rfText(record.code, 40, "RF_INVALID_RECORD");
+        else if (list === "recipes") { rfText(record.id, 40, "RF_INVALID_RECORD"); if (!Number.isInteger(record.revision) || record.revision < 1) fail("RF_INVALID_RECORD"); }
+        else rfText(record.id, 40, "RF_INVALID_RECORD");
+        const id = RF_ID[list](record);
+        const index = next[list].findIndex((row) => RF_ID[list](row) === id);
+        const prev = index === -1 ? null : next[list][index];
+        // ชนก่อนสิทธิ์เสมอ: ระเบียนถูกผู้อื่นแก้/เพิ่มหลัง base (รวมเลข WO ซ้ำ) = ฝั่ง client ถือสำเนาเก่า ต้องได้ RF_STALE ไม่ใช่ RF_FORBIDDEN
+        if (prev && stale(list, id)) fail("RF_STALE");
+        if (list === "materials") {
+          if (!master) fail("RF_FORBIDDEN");
+          rfText(record.name, 120, "RF_INVALID_MATERIAL");
+          if (record.active !== undefined && typeof record.active !== "boolean") fail("RF_INVALID_MATERIAL");
+          const out = { ...clone(record), createdAt: prev?.createdAt ?? at, createdBy: prev?.createdBy ?? actor.name, updatedAt: at, updatedBy: actor.name };
+          if (prev) next.materials[index] = out; else next.materials.push(out);
+        } else if (list === "recipes") {
+          if (!["draft", "approved", "superseded"].includes(record.status)) fail("RF_INVALID_RECIPE");
+          const siblings = next.recipes.filter((row) => row.id === record.id);
+          if (!prev) {
+            if (!master) fail("RF_FORBIDDEN");
+            if (record.status !== "draft") fail("RF_INVALID_TRANSITION");
+            if (record.revision !== Math.max(0, ...siblings.map((row) => row.revision)) + 1) fail("RF_INVALID_RECIPE");
+            if (siblings.some((row) => row.status === "draft")) fail("RF_INVALID_TRANSITION");
+          }
+          rfText(record.name, 120, "RF_INVALID_RECIPE");
+          rfText(record.productName, 120, "RF_INVALID_RECIPE");
+          if (!Array.isArray(record.items) || !record.items.length || record.items.some((item) => !next.materials.some((material) => material.code === item?.materialCode) || !(Number(item?.phr) > 0))) fail("RF_INVALID_RECIPE");
+          if (!(Number(record.batchKg) > 0) || !(Number(record.yieldPerKg) > 0)) fail("RF_INVALID_RECIPE");
+          if (prev) {
+            if (prev.status === "draft") {
+              if (record.status === "draft") { if (!master) fail("RF_FORBIDDEN"); }
+              else if (record.status === "approved") {
+                if (!head) fail("RF_FORBIDDEN");
+                if (!rfSame(prev, record, RF_RECIPE_OWNED)) fail("RF_INVALID_TRANSITION");
+                approvedNow.push(record);
+              } else fail("RF_INVALID_TRANSITION");
+            } else if (prev.status === "approved") {
+              if (record.status !== "superseded" || !rfSame(prev, record, RF_RECIPE_OWNED)) fail("RF_REVISION_IMMUTABLE");
+              supersededSent.push(record);
+            } else fail("RF_REVISION_IMMUTABLE");
+          }
+          const out = clone(record);
+          out.createdAt = prev?.createdAt ?? at;
+          out.createdBy = prev?.createdBy ?? actor.name;
+          if (out.status === "approved") { out.approvedAt = prev?.approvedAt ?? at; out.approvedBy = prev?.approvedBy ?? actor.name; } else { delete out.approvedAt; delete out.approvedBy; }
+          if (out.status === "superseded") out.supersededAt = prev?.supersededAt ?? at; else delete out.supersededAt;
+          if (prev) next.recipes[index] = out; else next.recipes.push(out);
+        } else {
+          if (!RF_ORDER_STATUSES.includes(record.status)) fail("RF_INVALID_ORDER");
+          if (!prev) {
+            if (!master) fail("RF_FORBIDDEN");
+            if (record.status !== "planned") fail("RF_INVALID_TRANSITION");
+            const recipe = next.recipes.find((row) => row.id === record.recipeId && (record.recipeRevision === undefined || row.revision === record.recipeRevision));
+            if (!recipe || recipe.status !== "approved") fail("RF_INVALID_ORDER");
+            if (!(Number(record.targetQty) > 0) || !String(record.customer ?? "").trim()) fail("RF_INVALID_ORDER");
+            if (record.sourceJobId) {
+              const job = bomLoad().jobs.find((row) => row.id === record.sourceJobId);
+              const jobOrder = job ? bomLoad().orders.find((row) => row.id === job.orderId) : null;
+              if (!job || job.dept !== "RB" || job.externalRef || !["released", "in_progress"].includes(jobOrder?.status) || !(Number(record.targetKg) > 0)) fail("RF_INVALID_SOURCE_JOB");
+              ops.link.push({ job: job.id, woId: record.id, kg: Number(record.targetKg) });
+            }
+            next.orders.push({ ...clone(record), producedQty: 0, createdAt: at, createdBy: actor.name });
+          } else {
+            const from = prev.status;
+            const to = record.status;
+            if (!rfSame(prev, record, RF_ORDER_OWNED)) fail("RF_INVALID_ORDER");
+            if (from === to && Number(prev.producedQty) === Number(record.producedQty)) continue;
+            if (from !== to && !(RF_FLOW[from] ?? []).includes(to)) fail("RF_INVALID_TRANSITION");
+            if (to === "released" && from !== to ? !(planner || head) : !(planner || rfIsRb(actor))) fail("RF_FORBIDDEN");
+            if (!(Number(record.producedQty) >= 0)) fail("RF_INVALID_ORDER");
+            const out = { ...clone(record), createdAt: prev.createdAt, createdBy: prev.createdBy };
+            for (const key of ["releasedAt", "releasedBy", "completedAt", "cancelledAt"]) if (prev[key] !== undefined) out[key] = prev[key];
+            if (from !== to) {
+              if (to === "released") { out.releasedAt = at; out.releasedBy = actor.name; }
+              if (to === "completed") {
+                out.completedAt = at;
+                if (prev.sourceJobId) {
+                  if (!(Number(record.producedQty) > 0)) fail("RF_INVALID_PRODUCED");
+                  ops.complete.push({ job: prev.sourceJobId, woId: prev.id, produced: Number(record.producedQty) });
+                }
+              }
+              if (to === "cancelled") out.cancelledAt = at;
+            }
+            next.orders[index] = out;
+          }
+        }
+        stampVersion(list, id);
+      }
+    }
+    // อนุมัติ revision ใหม่ = revision ที่อนุมัติอยู่เดิมของรหัสเดียวกันถูกแทนที่ในคำสั่งเดียวกัน (อนุมัติได้ครั้งละหนึ่ง revision ต่อรหัส)
+    for (const recipe of approvedNow) {
+      for (const row of next.recipes) {
+        if (row.id === recipe.id && row.revision !== recipe.revision && row.status === "approved") {
+          row.status = "superseded";
+          row.supersededAt = at;
+          stampVersion("recipes", RF_ID.recipes(row));
+        }
+      }
+    }
+    for (const recipe of supersededSent) if (!next.recipes.some((row) => row.id === recipe.id && row.status === "approved")) fail("RF_REVISION_IMMUTABLE");
+    for (const row of next.recipes) if (row.status === "approved" && next.recipes.some((other) => other !== row && other.id === row.id && other.status === "approved")) fail("RF_INVALID_RECIPE");
+    return { next, ops };
+  }
+  // งานของ BOM ที่ WO สั่ง (หลังบันทึกของ RubberFlow สำเร็จ): ผูกงาน / ส่งยอดผลิตกลับเข้างาน · ผ่านตัวนับเวอร์ชันของ BOM เพื่อให้ client ของ BOM ตามทันผ่านส่วนต่าง
+  function rfApplyBomOps(ops, actor, at) {
+    if (!ops.link.length && !ops.complete.length) return;
+    const bom = bomLoad();
+    const version = bom.version + 1;
+    for (const item of ops.link) {
+      const job = bom.jobs.find((row) => row.id === item.job);
+      job.externalRef = { system: "rubberflow", woId: item.woId, kg: item.kg, linkedAt: at, by: actor.name };
+      bom.versions.jobs[job.id] = version;
+    }
+    for (const item of ops.complete) {
+      const job = bom.jobs.find((row) => row.id === item.job);
+      if (!job) continue;
+      const reported = (Array.isArray(job.reports) ? job.reports : []).reduce((sum, entry) => sum + (Number(entry?.good) || 0), 0);
+      const good = Math.max(0, Math.round((item.produced - reported) * 1e4) / 1e4);
+      job.reports = [...(job.reports ?? []), { at, by: actor.name, good, reject: 0, note: `จาก WO ${item.woId}` }];
+      job.qtyDone = Math.round((Number(job.qtyDone) + good) * 1e4) / 1e4;
+      job.status = job.qtyDone + 1e-9 >= Number(job.qtyPlanned) ? "done" : "in_progress";
+      if (job.status === "done") job.doneAt = at;
+      bom.versions.jobs[job.id] = version;
+      const order = bom.orders.find((row) => row.id === job.orderId);
+      if (order && order.status === "released") { order.status = "in_progress"; bom.versions.orders[order.id] = version; }
+    }
+    bom.version = version;
+    bomPersist();
+  }
   const RPC = {
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
@@ -723,6 +918,58 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       bomMaster.version = version; // ตัวนับไม่ถูกตั้งกลับ · epoch ใหม่บอก client เก่าให้โหลดทั้งชุด
       bomMaster.audit = [...audit, { at: iso(now()), user: bomActor().name, action: "ล้างข้อมูล BOM ทดสอบ", detail: `ลบ ${deleted} แถว`, entries: [] }];
       bomPersist();
+      return { deleted };
+    },
+    app_rf_master() {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      return rfView(rfLoad());
+    },
+    app_rf_master_since({ p_version }) {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      const current = rfLoad();
+      if (!Number.isInteger(p_version) || p_version < 0 || p_version > current.version) fail("RF_INVALID_PAYLOAD");
+      return rfDelta(current, p_version);
+    },
+    app_rf_save({ p_changes, p_base_version, p_action, p_audit, p_epoch }) {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      const actor = bomActor();
+      const current = rfLoad();
+      // client ถือข้อมูลของรอบก่อนล้างข้อมูลทดสอบ: ไม่เขียนอะไร (null / ไม่ส่ง = ไม่ตรวจ)
+      if (p_epoch !== undefined && p_epoch !== null && p_epoch !== current.epoch) fail("RF_RESET");
+      if (!p_changes || typeof p_changes !== "object" || Array.isArray(p_changes)) fail("RF_INVALID_CHANGES");
+      if (!Number.isInteger(p_base_version) || p_base_version < 0 || p_base_version > current.version) fail("RF_INVALID_PAYLOAD");
+      if (typeof p_action !== "string" || !RF_ACTIONS.includes(p_action)) fail("RF_INVALID_ACTION");
+      const auditIn = p_audit === undefined || p_audit === null ? [] : p_audit;
+      if (!Array.isArray(auditIn) || auditIn.length > 20 || auditIn.some((entry) => !entry || typeof entry.action !== "string" || !entry.action || entry.action.length > 80 || typeof entry.detail !== "string" || entry.detail.length > 300)) fail("RF_INVALID_AUDIT");
+      const at = now();
+      const { next, ops } = rfApply(current, p_changes, p_base_version, actor, at);
+      const touched = RF_LISTS.some((list) => (p_changes[list]?.upsert?.length ?? 0) > 0);
+      if (!touched) return rfDelta(current, p_base_version);
+      next.version = current.version + 1;
+      const counts = Object.keys(p_changes).sort().map((key) => { const up = p_changes[key]?.upsert?.length ?? 0; return up ? `${key} +${up}` : ""; }).filter(Boolean).join(", ");
+      next.audit = [...next.audit, { at: iso(at), user: actor.name, action: p_action, detail: counts, entries: auditIn.map((entry) => ({ action: entry.action, detail: entry.detail })) }].slice(-2000);
+      rfMaster = next;
+      rfPersist();
+      rfApplyBomOps(ops, actor, at);
+      return rfDelta(rfMaster, p_base_version);
+    },
+    app_rf_audit({ p_limit } = {}) {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      const limit = p_limit === undefined || p_limit === null ? 200 : p_limit;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail("RF_INVALID_PAYLOAD");
+      return [...rfLoad().audit].reverse().slice(0, limit);
+    },
+    // ล้างข้อมูล RubberFlow ทดสอบ: เฉพาะ admin ตัวจริง · เวอร์ชันไม่ถูกตั้งกลับ epoch ใหม่ · งาน BOM ที่ผูก WO เดิมไว้ไม่ถูกแตะ
+    app_sandbox_purge_rf() {
+      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      if (roles.find((row) => row.id === ME.role_id)?.code !== "admin") fail("RF_FORBIDDEN");
+      const current = rfLoad();
+      const deleted = RF_LISTS.reduce((sum, list) => sum + current[list].length, 0);
+      const { version, audit } = current;
+      rfMaster = freshRf();
+      rfMaster.version = version;
+      rfMaster.audit = [...audit, { at: iso(now()), user: bomActor().name, action: "ล้างข้อมูล RubberFlow ทดสอบ", detail: `ลบ ${deleted} แถว`, entries: [] }];
+      rfPersist();
       return { deleted };
     },
     // โหมดทดสอบ: ทำหน้าที่เป็นบัญชีทดสอบ — หน้าเว็บตั้ง state.employee เป็น persona ที่เลือก (ตัวแรกใช้แถวของผู้ใช้จำลองเอง ที่เหลือเป็นพนักงานของแต่ละแผนก)

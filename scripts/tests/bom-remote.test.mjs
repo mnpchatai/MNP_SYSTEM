@@ -1495,8 +1495,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-gr", "persona-st", "persona-wh", "persona-qa"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "gr", "st", "wh", "viewer"], "each persona maps to a different BOM role");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-wh", "persona-qa"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "wh", "viewer"], "each persona maps to a different BOM role (the RB head is a department manager)");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
   assert.equal((await client.rpc("app_sandbox_status")).data.persona.department.code, "RB");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "nobody" })).error.code, "PERSONA_NOT_FOUND");
@@ -1666,8 +1666,8 @@ test("focusing the page catches up with other users' saves and redraws only when
   const handlers = { focus: [], visibilitychange: [] };
   const env = await pageEnv({ hooks: { onWindow: (type, fn) => handlers[type]?.push(fn), onDocument: (type, fn) => handlers[type]?.push(fn) } });
   await env.store.ensureLoaded();
-  assert.equal(handlers.focus.length, 1, "the module listens for the window gaining focus");
-  assert.equal(handlers.visibilitychange.length, 1, "and for the tab becoming visible");
+  assert.equal(handlers.focus.length, 2, "RubberFlow and BOM each listen for the window gaining focus");
+  assert.equal(handlers.visibilitychange.length, 2, "and for the tab becoming visible");
   const fire = async (type = "focus") => { handlers[type].forEach((fn) => fn()); await new Promise((resolve) => setTimeout0(resolve)); };
   const rendersBefore = env.log.renders;
 
@@ -2300,4 +2300,173 @@ test("deactivating and reactivating an item travels as active in the saved recor
   await env.store.run("saveItem", { code: "P-TEST-01", kind: "PURCHASED", name: "ชื่อใหม่", uom: "pcs", active: true }).saving;
   assert.equal(env.server.master.items[0].active, true);
   assert.equal(env.server.saves.at(-1).changes.items.upsert[0].active, true);
+});
+
+// ---------- RubberFlow บนฐานข้อมูล: หน้าของโมดูล (สูตรหลาย revision วัตถุดิบ ปิดงาน บันทึกการใช้งาน) และขั้นสร้าง WO จากงาน RB ของ BOM ----------
+const rfPage = async (env, query = "", { wait = true } = {}) => {
+  if (wait) await env.context.MNP_RUBBERFLOW.store.ensureLoaded();
+  env.log.hash = `#/rubberflow${query ? `?${query}` : ""}`;
+  env.app.innerHTML = "";
+  await env.context.MNP_REQUEST_MODULES.RUBBERFLOW.pages.rubberflow(new URLSearchParams(query));
+  return env.app.innerHTML;
+};
+const RF_MATERIALS = [{ code: "EPDM-55", name: "ยาง EPDM", category: "โพลิเมอร์", storage: "A-1", active: true }, { code: "CB-N550", name: "เขม่าดำ", category: "สารตัวเติม", storage: "B-1", active: true }];
+const RF_RECIPE = { id: "RC-TEST-01", name: "สูตรทดสอบ", productName: "สินค้าทดสอบ", uom: "m", batchKg: 50, dumpTemp: 130, mixSec: 270, yieldPerKg: 6, items: [{ materialCode: "EPDM-55", phr: 100 }, { materialCode: "CB-N550", phr: 60 }] };
+async function rfScene() {
+  const scene = await planningScene();
+  const rf = (env) => env.context.MNP_RUBBERFLOW.store;
+  const env = await asPersona(scene, "persona-rbh");
+  await rf(env).ensureLoaded();
+  for (const material of RF_MATERIALS) await saved(rf(env).run("saveMaterial", material));
+  await saved(rf(env).run("createRecipe", RF_RECIPE));
+  await saved(rf(env).run("approveRecipe", { id: "RC-TEST-01", revision: 1 }));
+  return { scene, rf };
+}
+
+test("RubberFlow in database mode: loading state, no demo role picker or reset, every page draws on an empty database, and the buttons follow the persona", async () => {
+  const scene = await planningScene();
+  const PAGES = ["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "spc", "trace", "warehouse", "molds", "audit"];
+  const admin = await asPersona(scene, "persona-1", { sandboxAdmin: true });
+  let html = await rfPage(admin, "", { wait: false });
+  assert.equal(admin.context.MNP_RUBBERFLOW.store.isRemote(), true);
+  assert.match(html, /กำลังโหลดข้อมูล RubberFlow/, "first paint shows the loading state");
+  assert.doesNotMatch(html, /data-rf-user|data-rf-reset/, "no demo role picker and no reset in database mode");
+  assert.match(html, /data-rf-sync/);
+  assert.match(html, /data-rf-purge/, "the real admin in test mode gets the purge button");
+  await admin.context.MNP_RUBBERFLOW.store.ensureLoaded();
+  for (const page of PAGES) {
+    html = await rfPage(admin, page === "dashboard" ? "" : `p=${page}`);
+    assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/, `${page} draws on an empty database`);
+  }
+  html = await rfPage(admin, "p=warehouse&tab=materials");
+  assert.match(html, /data-rf-open="materialEdit"/, "add a material");
+  assert.match(html, /ยังไม่มีวัตถุดิบ/);
+  const noPurge = await asPersona(scene, "persona-rb");
+  assert.doesNotMatch(await rfPage(noPurge), /data-rf-purge/, "a persona that is not the admin session never sees it");
+
+  // ข้อมูลหลัก: หัวหน้า RB สร้างวัตถุดิบ สูตร และอนุมัติ แล้วทุกบัญชีเห็นจากฐานข้อมูลเดียวกัน
+  const rf = (env) => env.context.MNP_RUBBERFLOW.store;
+  const head = await asPersona(scene, "persona-rbh");
+  await rf(head).ensureLoaded();
+  await saved(rf(head).run("saveMaterial", RF_MATERIALS[0]));
+  await saved(rf(head).run("saveMaterial", RF_MATERIALS[1]));
+  await saved(rf(head).run("createRecipe", RF_RECIPE));
+  html = await rfPage(head, "p=recipes");
+  assert.match(html, /data-rf-action="approveRecipe"/, "the head sees approve on a draft");
+  assert.match(html, /data-rf-open="recipeEdit"/, "and edit");
+  const staff = await asPersona(scene, "persona-rb");
+  html = await rfPage(staff, "p=recipes");
+  assert.match(html, /RC-TEST-01/);
+  assert.doesNotMatch(html, /data-rf-action="approveRecipe"/, "RB staff cannot approve");
+  assert.match(html, /data-rf-open="recipeEdit"/, "but edits the draft");
+  const planner = await asPersona(scene, "persona-pp");
+  assert.doesNotMatch(await rfPage(planner, "p=recipes"), /data-rf-action="approveRecipe"/, "the planner group cannot approve either");
+  const store = await asPersona(scene, "persona-st");
+  assert.doesNotMatch(await rfPage(store, "p=warehouse&tab=materials"), /data-rf-open="materialEdit"/, "a store keeper only reads");
+  await saved(rf(head).run("approveRecipe", { id: "RC-TEST-01", revision: 1 }));
+  html = await rfPage(head, "p=recipes");
+  assert.match(html, />ออก revision ใหม่</, "an approved recipe offers a new revision, not an edit");
+  assert.doesNotMatch(html, /data-rf-action="approveRecipe"/);
+  await saved(rf(head).run("saveRecipe", { ...RF_RECIPE, name: "สูตรทดสอบ แก้" }));
+  html = await rfPage(head, "p=recipes&sel=RC-TEST-01");
+  assert.match(html, /ร่าง Rev\.2/, "the list flags the pending draft");
+  assert.match(html, /Rev\.2 รออนุมัติ/);
+  assert.match(html, /Rev\.1 อนุมัติแล้ว/);
+  assert.doesNotMatch(html, /data-rf-action="approveRecipe"/, "the revision in use is shown first; the draft is reviewed on its own tab");
+  assert.match(await rfPage(head, "p=recipes&sel=RC-TEST-01&rev=2"), /data-rf-action="approveRecipe"/);
+  html = await rfPage(head, "p=recipes&sel=RC-TEST-01&rev=1");
+  assert.match(html, /aria-label="revision ของสูตร RC-TEST-01"/);
+  assert.doesNotMatch(html, />ออก revision ใหม่</, "no new revision while a draft is pending");
+  const dialogs = head.context.MNP_RUBBERFLOW_DIALOGS;
+  const rfCtx = head.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=recipes"));
+  assert.match(dialogs.recipeEdit(rfCtx, { id: "RC-TEST-01" }).html, /แก้ร่างสูตร RC-TEST-01 Rev\.2/);
+  assert.match(dialogs.materialEdit(rfCtx, { code: "EPDM-55" }).html, /readonly/);
+  assert.match(dialogs.createRecipe(rfCtx).html, /name="id"/);
+  assert.equal(dialogs.recipeEdit(rfCtx, { id: "RC-NOPE" }), null);
+
+  // เปิดใบ → ปล่อย → ผลิต → ปิดงาน ผ่าน dialog ถามยอดผลิตจริง
+  await saved(rf(head).run("approveRecipe", { id: "RC-TEST-01", revision: 2 }));
+  const order = await saved(rf(head).run("createOrder", { recipeId: "RC-TEST-01", customer: "ลูกค้า", targetQty: 100, startDate: NOW, dueDate: NOW + 86400000 }));
+  await saved(rf(head).run("setOrderStatus", { id: order.result, status: "released" }));
+  await saved(rf(head).run("setOrderStatus", { id: order.result, status: "in_progress" }));
+  html = await rfPage(head, "p=orders");
+  assert.doesNotMatch(html, /data-rf-open="closeOrder"/, "an order without produced quantity that is not from a BOM job cannot be closed yet");
+  assert.match(html, /Rev\.2/, "the order shows the recipe revision it was opened with");
+  assert.match(html, /data-rf-open="createOrder"/);
+  const close = dialogs.closeOrder(head.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=orders")), { id: order.result });
+  assert.match(close.html, /name="producedQty"/);
+  assert.match(close.html, /data-rf-form="setOrderStatus"/);
+
+  // บันทึกการใช้งาน: บรรทัดหลักเป็นการกระทำที่เซิร์ฟเวอร์บันทึกเอง ภาษาไทย
+  await rfPage(head, "p=audit");
+  await rf(head).loadAudit();
+  html = await rfPage(head, "p=audit");
+  for (const text of ["บันทึกวัตถุดิบ", "สร้างสูตรใหม่", "อนุมัติสูตร", "แก้สูตร / ออก revision ใหม่", "เปิดใบสั่งผลิต", "เปลี่ยนสถานะใบสั่งผลิต", "ใบสั่งผลิต \\+1"]) assert.match(html, new RegExp(text), text);
+  assert.match(html, /data-rf-audit-reload/);
+  assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
+  assert.equal(scene.env.pageStorage.getItem("mnp-rubberflow-v1"), null, "the demo state key is untouched");
+});
+
+test("the BOM 'create WO' dialog creates the WO through the RubberFlow store with the job's unit, the database links the job, and a closed WO brings the quantity back", async () => {
+  const { scene, rf } = await rfScene();
+  const admin = await asPersona(scene, "persona-1");
+  // ชิ้นเส้นยาง RB-ITEM ของงาน JOB-RB1 (10 เส้น เส้นละ 500 กรัม) ใช้สูตรยาง DM01 ผูกกับสูตร PHR ของ RubberFlow
+  await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
+  const refused = admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-NOPE" });
+  assert.equal((await refused.saving).error.code, "BOM_INVALID_COMPOUND", "the database only links a recipe code that exists in RubberFlow");
+  await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
+
+  const env = await asPersona(scene, "persona-rb");
+  const rfStore = rf(env);
+  await rfStore.ensureLoaded();
+  const ctx = env.ctx("p=jobs&dept=RB");
+  const built = env.context.MNP_BOM_DIALOGS.jobRubberflow(ctx, { jobId: "JOB-RB1" });
+  assert.match(built.html, /DM01 → RC-TEST-01/);
+  assert.match(built.html, /นับในหน่วยของงาน/, "database mode counts in the job's unit");
+  assert.match(built.html, /data-bom-rf-create/);
+  const button = { handlers: {}, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  const dialog = { querySelector: (selector) => (selector === "[data-bom-rf-create]" ? button : null), close() { this.closed = true; } };
+  built.bind(dialog, ctx);
+  button.handlers.click({ currentTarget: button });
+  for (let turn = 0; turn < 8; turn += 1) await new Promise((resolve) => setTimeout0(resolve));
+  const wo = rfStore.data().orders.at(-1);
+  assert.deepEqual([wo.sourceJobId, wo.uom, wo.targetQty, wo.targetKg, wo.recipeRevision, wo.customerPo], ["JOB-RB1", "pcs", 10, 5.25, 1, "PI-R"], "10 pcs x 500 g + 5% allowance = 5.25 kg of compound");
+  assert.equal(wo.kgPerUnit, 0.525);
+  assert.ok(dialog.closed, "the dialog closes when the database answered");
+  assert.equal(env.store.data().jobs.find((job) => job.id === "JOB-RB1").externalRef?.woId, wo.id, "BOM caught the link up");
+  assert.deepEqual(env.log.toasts.filter(([, kind]) => kind === "error"), []);
+  assert.match(env.log.toasts.at(-1)[0], new RegExp(`สร้าง WO ${wo.id} ใน RubberFlow แล้ว`));
+  const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
+  assert.match(again.html, /ไว้แล้ว/);
+  assert.doesNotMatch(again.html, /data-bom-rf-create/, "no second WO for a linked job");
+  assert.doesNotMatch((await env.render("p=jobs&dept=RB")).split("<tr").find((row) => row.includes(">JOB-RB1<")) ?? "", /jobRubberflow/);
+
+  // ปิด WO ในฐานข้อมูล: ยอดผลิตกลับไปที่งาน
+  const head = await asPersona(scene, "persona-rbh");
+  await rf(head).ensureLoaded();
+  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "released" }));
+  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "in_progress" }));
+  assert.equal(rf(head).run("setOrderStatus", { id: wo.id, status: "completed" }).ok, false, "a BOM-linked WO needs the produced quantity");
+  await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "completed", producedQty: 10 }));
+  const reopened = await asPersona(scene, "persona-rb"); // another page of the same database (the mock caches per page, so open a fresh one)
+  const job = reopened.store.data().jobs.find((row) => row.id === "JOB-RB1");
+  assert.deepEqual([job.qtyDone, job.status], [10, "done"]);
+  assert.equal(job.reports.at(-1).note, `จาก WO ${wo.id}`);
+});
+
+test("the compounds page and the link dialog list only recipes approved in the database, and the BOM page loads RubberFlow by itself", async () => {
+  const { scene } = await rfScene();
+  const env = await asPersona(scene, "persona-1");
+  assert.equal(env.context.MNP_RUBBERFLOW.store.status(), "idle", "RubberFlow was not opened in this page");
+  const ctx = env.ctx("p=compounds");
+  let html = await env.render("p=compounds");
+  assert.match(html, /กำลังโหลดสูตรจาก RubberFlow/, "asks RubberFlow to load and says so");
+  await new Promise((resolve) => setTimeout0(resolve));
+  await new Promise((resolve) => setTimeout0(resolve));
+  assert.equal(env.context.MNP_RUBBERFLOW.store.status(), "ready");
+  assert.ok(env.log.renders >= 1, "the BOM page is redrawn when RubberFlow arrived");
+  const dialog = env.context.MNP_BOM_DIALOGS.compoundLink(ctx, {});
+  assert.match(dialog.html, /<option value="RC-TEST-01">/);
+  assert.match(dialog.html, /ฐานข้อมูลไม่รับรหัสสูตรที่ไม่มีอยู่/);
+  assert.doesNotMatch(dialog.html, /<input[^>]*name="recipeId"/, "a typed code would be refused by the database");
 });
