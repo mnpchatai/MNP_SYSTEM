@@ -275,6 +275,8 @@
         ${ui.field("หมวด", ui.input("category", { value: material?.category ?? "", list: "rf-material-categories" }))}
         ${ui.field("หน่วย", ui.input("uom", { value: material?.uom ?? "kg" }))}
         ${ui.field("ที่จัดเก็บ", ui.input("storage", { value: material?.storage ?? "" }))}
+        ${ui.field("สต็อกขั้นต่ำ (safety stock) (kg)", ui.input("safetyKg", { type: "number", step: "any", min: 0, value: String(material?.safetyKg ?? 0) }))}
+        ${ui.field("อายุการเก็บ (วัน)", ui.input("shelfLifeDays", { type: "number", step: "1", min: 1, max: 3650, value: String(material?.shelfLifeDays ?? 180) }))}
         ${ui.field("สถานะ", ui.select("active", [{ value: "1", label: "ใช้งาน" }, { value: "0", label: "เลิกใช้ (ไม่แสดงในสูตรและการรับเข้า)" }], { value: material?.active === false ? "0" : "1" }))}
       </div><datalist id="rf-material-categories">${categories.map((category) => `<option value="${esc(category)}"></option>`).join("")}</datalist>`;
     const html = ui.dialog("materialEdit", material ? `แก้วัตถุดิบ ${material.code}` : "เพิ่มวัตถุดิบ", `<form data-rf-form="saveMaterial" data-rf-success="บันทึกวัตถุดิบ {result} แล้ว" id="rf-material-form">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-material-form">บันทึก</button>` });
@@ -301,7 +303,7 @@
   pages.warehouse = (ctx) => {
     const { data, now, ui, rules, params } = ctx;
     const { DAY, lotState, fmtDate, fmtNum } = rules;
-    const tab = ["fg", "materials"].includes(params.get("tab")) ? params.get("tab") : "raw";
+    const tab = ["fg", "materials", "po"].includes(params.get("tab")) ? params.get("tab") : "raw";
     const lots = [...data.materialLots]
       .filter((lot) => lot.qtyKg > 0.0001 || lotState(lot, now) === "expired")
       .filter((lot) => includes(`${lot.lotNo} ${lot.materialCode}`, ctx.q))
@@ -335,17 +337,44 @@
         <td class="rf-mono small">${esc(box.id)}<div class="muted">${esc(fmtDate(box.createdAt))}</div></td><td class="rf-mono">${esc(rules.orderLabel(box))}</td><td class="rf-mono small">${esc(box.orderId)}</td>
         <td class="right">${esc(`${fmtNum(box.qty)} ${box.uom}`)}</td><td>${esc(box.grade)}</td><td>${ui.status(box.status)}</td>
         <td class="right">${ui.openButton("ป้าย", "tag", { kind: "box", id: box.id }, { className: "secondary small", ariaLabel: `พิมพ์ป้าย ${box.id}` })}</td></tr>`);
-    const tabs = ui.tabs([{ id: "raw", label: "ล็อตวัตถุดิบ" }, { id: "materials", label: "รายการวัตถุดิบ" }, { id: "fg", label: "สินค้าสำเร็จรูป" }], tab, (id) => ctx.pageUrl({ tab: id === "raw" ? null : id, q: null }));
+    const purchaseOrders = data.purchaseOrders ?? [];
+    const openOrders = purchaseOrders.filter((po) => po.status === "ordered").length;
+    const tabs = ui.tabs([{ id: "raw", label: "ล็อตวัตถุดิบ" }, { id: "po", label: `ใบสั่งซื้อ${openOrders ? ` (${openOrders})` : ""}` }, { id: "materials", label: "รายการวัตถุดิบ" }, { id: "fg", label: "สินค้าสำเร็จรูป" }], tab, (id) => ctx.pageUrl({ tab: id === "raw" ? null : id, q: null }));
     const materialRows = data.materials
       .filter((material) => includes(`${material.code} ${material.name} ${material.category ?? ""}`, ctx.q))
-      .map((material) => `<tr><td class="rf-mono small">${esc(material.code)}</td><td>${esc(material.name)}</td><td class="small">${esc(material.category ?? "")}</td><td class="small">${esc(material.storage ?? "")}</td><td>${esc(material.uom ?? "kg")}</td><td>${material.active === false ? ui.badge("", "เลิกใช้") : ui.badge("good", "ใช้งาน")}</td><td class="right">${mayEditMaterial ? ui.openButton("แก้ไข", "materialEdit", { code: material.code }, { className: "secondary small", ariaLabel: `แก้ไข ${material.code}` }) : ""}</td></tr>`);
+      .map((material) => `<tr><td class="rf-mono small">${esc(material.code)}</td><td>${esc(material.name)}</td><td class="small">${esc(material.category ?? "")}</td><td class="small">${esc(material.storage ?? "")}</td><td>${esc(material.uom ?? "kg")}</td><td class="right">${esc(fmtNum(material.safetyKg ?? 0, 2))}</td><td class="right">${esc(fmtNum(material.shelfLifeDays ?? 180))}</td><td>${material.active === false ? ui.badge("", "เลิกใช้") : ui.badge("good", "ใช้งาน")}</td><td class="right">${mayEditMaterial ? ui.openButton("แก้ไข", "materialEdit", { code: material.code }, { className: "secondary small", ariaLabel: `แก้ไข ${material.code}` }) : ""}</td></tr>`);
+    // ใบสั่งซื้อ: ใบที่ยังรอรับก่อน แล้วรับครบ/ยกเลิก (ใหม่สุดก่อนในแต่ละกลุ่ม) · หนึ่งแถวหัวใบ (เลขที่ สถานะ ผู้สั่ง ต้นทาง ยกเลิก) แล้วหนึ่งแถวต่อวัตถุดิบ (ปุ่มตรวจสอบรับเข้าอยู่ที่บรรทัด)
+    const mayReceive = ctx.can("receiveMaterial");
+    const mayCancelPo = ctx.can("cancelPurchase");
+    const receivedLine = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
+    const poStatus = { ordered: ["warn", "รอรับเข้า"], received: ["good", "รับครบแล้ว"], cancelled: ["bad", "ยกเลิก"] };
+    const poRows = purchaseOrders
+      .filter((po) => includes(`${po.id} ${po.sourcePi ?? ""} ${po.sourceRequisition ?? ""} ${po.lines.map((line) => line.materialCode).join(" ")}`, ctx.q))
+      .sort((a, b) => (a.status === "ordered" ? 0 : 1) - (b.status === "ordered" ? 0 : 1) || b.createdAt - a.createdAt)
+      .flatMap((po) => {
+        const cancel = mayCancelPo && po.status === "ordered" && !po.lines.some(receivedLine)
+          ? ui.button("ยกเลิกใบ", { action: "cancelPurchaseOrder", args: { id: po.id }, className: "danger small", confirmText: `ยกเลิก ${po.id}? ใบสั่งซื้อที่ยกเลิกแล้วแก้กลับไม่ได้`, ariaLabel: `ยกเลิก ${po.id}` }) : "";
+        const source = [po.sourcePi, po.sourceRequisition].filter(Boolean).join(" · ");
+        const head = `<tr class="rf-po-head"><td colspan="4"><div class="rf-row rf-between"><div><strong class="rf-mono">${esc(po.id)}</strong> ${ui.badge(...poStatus[po.status] ?? ["", po.status])}<div class="small muted">${esc(`${fmtDate(po.createdAt)} · ${po.createdBy ?? "-"}${source ? ` · ${source}` : ""}`)}</div></div>${cancel}</div></td></tr>`;
+        const lines = po.lines.map((line) => {
+          const material = data.materials.find((row) => row.code === line.materialCode);
+          const action = po.status === "ordered" && !receivedLine(line) && mayReceive ? ui.openButton("ตรวจสอบรับเข้า", "receivePurchase", { id: po.id, materialCode: line.materialCode }, { className: "small", ariaLabel: `ตรวจสอบรับเข้า ${po.id} ${line.materialCode}` }) : "";
+          const got = receivedLine(line)
+            ? `${esc(`${fmtNum(line.receivedKg, 2)} kg`)}<div class="small muted rf-mono">${esc(`${line.lotNo ?? "-"} · หมดอายุ ${fmtDate(line.expiry)}`)}</div>`
+            : po.status === "cancelled" ? "-" : ui.badge("warn", "รอรับ");
+          return `<tr><td>${ui.mono(line.materialCode)}<div class="small muted">${esc(material?.name ?? "")}</div></td><td class="right nowrap">${esc(`${fmtNum(line.qtyKg, 2)} kg`)}</td><td>${got}</td><td class="right">${action}</td></tr>`;
+        });
+        return [head, ...lines];
+      });
     const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "fg" ? `<button class="btn rf-btn small" type="submit" form="rf-ship" data-rf-ship disabled>ส่งมอบกล่องที่เลือก</button>` : ""}${searchForm(ctx, "ค้นหารหัส…", { tab: true })}</div></div>`;
     const tableHtml = tab === "materials"
-      ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: "ยังไม่มีวัตถุดิบ" })
+      ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: "ยังไม่มีวัตถุดิบ" })
+      : tab === "po"
+      ? ui.table(["วัตถุดิบ", { label: "สั่ง", className: "right" }, "รับเข้า", { label: "", className: "right" }], poRows, { emptyText: "ยังไม่มีใบสั่งซื้อ" })
       : tab === "raw"
       ? ui.table(["ล็อต", "วัตถุดิบ", "ที่เก็บ / ผู้ขาย", "หมดอายุ", { label: "คงเหลือ", className: "right" }, "สถานะ", { label: "", className: "right" }], rawRows, { emptyText: "ไม่พบล็อตวัตถุดิบ" })
       : `<form id="rf-ship" data-rf-form="shipBoxes" data-rf-success="ส่งมอบกล่องแล้ว">${ui.table(["", "กล่อง", "สินค้า", "ใบสั่งผลิต", { label: "จำนวน", className: "right" }, "เกรด", "สถานะ", { label: "", className: "right" }], fgRows, { emptyText: "ไม่พบกล่องสินค้า" })}</form>`;
-    const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "ควบคุมสต็อกตามหลัก FEFO บล็อกล็อตหมดอายุหรือถูกกักกัน และจัดการกล่องสินค้าพร้อมส่ง", ui.openButton("รับวัตถุดิบเข้าคลัง", "receiveMaterial", {}, { className: "" }))}
+    const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "ควบคุมสต็อกตามหลัก FEFO บล็อกล็อตหมดอายุหรือถูกกักกัน ตรวจสอบรับเข้าตามใบสั่งซื้อ และจัดการกล่องสินค้าพร้อมส่ง", ui.openButton("รับวัตถุดิบเข้าคลัง", "receiveMaterial", {}, { className: "" }))}
       ${ui.stats([
         { label: "สต็อกวัตถุดิบพร้อมใช้", value: `${fmtNum(available.reduce((sum, lot) => sum + lot.qtyKg, 0))} kg`, sub: `${available.length} ล็อต` },
         { label: "ใกล้หมดอายุ (30 วัน)", value: String(soon.length), sub: "จะถูกจ่ายก่อนตาม FEFO", tone: soon.length ? "warn" : "" },
@@ -376,7 +405,7 @@
     const body = `<div class="rf-grid rf-g2">
         ${ui.field("วัตถุดิบ *", ui.select("materialCode", activeMaterials.map((material) => ({ value: material.code, label: `${material.code} · ${material.name}` })), { value: first?.code ?? "", extra: "data-rf-material" }))}
         ${ui.field("ปริมาณ (kg) *", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true }))}
-        ${ui.field("วันหมดอายุ *", ui.input("expiry", { type: "date", value: toInputDate(now + 180 * DAY), required: true }))}
+        ${ui.field("วันหมดอายุ *", ui.input("expiry", { type: "date", value: toInputDate(now + (Number(first?.shelfLifeDays) || 180) * DAY), required: true, extra: "data-rf-expiry" }))}
         ${ui.field("ผู้ขาย", ui.input("supplier"))}
         ${ui.field("ตำแหน่งจัดเก็บ", ui.input("location"), { hint: `ค่าเริ่มต้น: <span data-rf-storage>${esc(first?.storage ?? "")}</span>` })}
         ${ui.field("เอกสาร CoA จากผู้ขาย", ui.select("coa", [{ value: "yes", label: "มี" }, { value: "no", label: "ไม่มี" }]))}
@@ -384,7 +413,87 @@
     const html = ui.dialog("receiveMaterial", "รับวัตถุดิบเข้าคลัง", `<form data-rf-form="receiveMaterial" data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-material">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-material">รับเข้าและสร้างล็อต</button>` });
     const bind = (dialog) => {
       const select = dialog.querySelector("[data-rf-material]");
-      select?.addEventListener("change", () => { dialog.querySelector("[data-rf-storage]").textContent = data.materials.find((material) => material.code === select.value)?.storage ?? ""; });
+      const expiry = dialog.querySelector("[data-rf-expiry]");
+      let edited = false;
+      expiry?.addEventListener("input", () => { edited = true; });
+      // เลือกวัตถุดิบแล้วที่จัดเก็บตั้งต้นและวันหมดอายุ (วันนี้ + อายุการเก็บ) ตามวัตถุดิบนั้น จนกว่าผู้ใช้จะแก้วันหมดอายุเอง
+      select?.addEventListener("change", () => {
+        const material = data.materials.find((row) => row.code === select.value);
+        dialog.querySelector("[data-rf-storage]").textContent = material?.storage ?? "";
+        if (expiry && !edited) expiry.value = toInputDate(now + (Number(material?.shelfLifeDays) || 180) * DAY);
+      });
+    };
+    return { html, bind };
+  };
+
+  // ตรวจสอบรับเข้าตามใบสั่งซื้อ: ตั้งต้นเป็นปริมาณที่สั่งและวันหมดอายุ = วันนี้ + อายุการเก็บของวัตถุดิบ · คลังแก้ปริมาณจริงและวันหมดอายุได้ แล้วยืนยัน (ไม่มีขั้นอนุมัติ)
+  // ได้ล็อตวัตถุดิบพร้อมใช้ (ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) และบรรทัดนั้นถูกปิดในคำสั่งเดียวกัน
+  dialogs.receivePurchase = (ctx, { id, materialCode } = {}) => {
+    const { data, now, ui, rules } = ctx;
+    const { DAY, toInputDate } = rules;
+    const po = (data.purchaseOrders ?? []).find((row) => row.id === id);
+    const line = po?.lines.find((row) => row.materialCode === materialCode);
+    if (!po || !line || po.status !== "ordered" || (line.receivedKg !== null && line.receivedKg !== undefined)) return null;
+    const material = data.materials.find((row) => row.code === materialCode);
+    const days = Number(material?.shelfLifeDays) || 180;
+    // เลขใบสั่งซื้ออยู่ที่หัวเรื่อง · ปริมาณที่สั่งคือค่าตั้งต้นของช่องปริมาณ · คำอธิบายค่าตั้งต้นอยู่ใน title ของช่อง
+    const body = `${ui.kv([["วัตถุดิบ", esc(`${materialCode}${material?.name ? ` · ${material.name}` : ""}`)]])}
+      <div class="rf-grid rf-g2">
+        ${ui.field("ปริมาณที่รับจริง (kg) *", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }))}
+        ${ui.field("วันหมดอายุ *", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY), extra: `title="${esc(`ตั้งต้น = วันนี้ + อายุการเก็บ ${days} วัน`)}"` }))}
+        ${ui.field("ผู้ขาย", ui.input("supplier", { extra: 'title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"' }))}
+      </div>`;
+    const html = ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` });
+    return { html };
+  };
+
+  // สั่งซื้อวัตถุดิบ — dialog เดียวสามทางเข้า: หลังปล่อยผลิต PI / ปุ่ม "ตรวจวัตถุดิบ" ของ PI (args.woIds: WO ของ PI นั้น คำนวณด้วย rules.chemicalNeeds) และ "สั่งซื้อส่วนที่ขาด" ในใบเบิก (args.rows: ส่วนที่ขาดของใบเบิกนั้น)
+  // แต่ละวัตถุดิบ: ต้องใช้ · คงเหลือในคลัง · จองแล้ว · สั่งค้างรับ · ขาด · สต็อกขั้นต่ำ (แก้ได้ บันทึกเข้าวัตถุดิบ) · จำนวนสั่ง (ตั้งต้น = ขาด + สต็อกขั้นต่ำ แก้ได้) · ปุ่ม "สั่งซื้อ" สร้างใบสั่งซื้อหนึ่งใบ บรรทัดละวัตถุดิบที่จำนวนสั่งมากกว่า 0
+  // ไม่มีคอลัมน์พร้อมใช้ (= คงเหลือ − จองแล้ว + สั่งค้างรับ) เพราะแต่ละส่วนแสดงอยู่แล้ว · ใบสั่งซื้อยังเก็บ availableKg (ติดลบได้) ตามที่ฐานข้อมูลรับ · args.rows จากใบเบิกเป็นแถวของ rules.chemicalNeeds (ความต้องการ = ของใบเบิกนั้น) จึงได้ตัวเลขชุดเดียวกัน
+  dialogs.purchase = (ctx, args = {}) => {
+    const { data, now, ui, rules } = ctx;
+    const { fmtNum } = rules;
+    let rows;
+    let skipped = Number(args.skippedJobs) || 0;
+    if (Array.isArray(args.rows)) {
+      rows = args.rows.map((row) => {
+        const material = data.materials.find((item) => item.code === row.materialCode);
+        const safetyKg = Math.max(0, Number(row.safetyKg ?? material?.safetyKg) || 0);
+        return { ...row, name: row.name ?? material?.name ?? "", safetyKg, orderKg: row.orderKg ?? rules.suggestOrderKg(row.shortageKg, safetyKg) };
+      });
+    } else {
+      const result = rules.chemicalNeeds(data, args.woIds ?? [], now, { remote: ctx.store.isRemote() });
+      rows = result.rows;
+      skipped += result.skipped.length;
+    }
+    // ส่วนแยกของสต็อก: ไม่มีค่าแสดง "-" · จองแล้วบอกที่มาใน title
+    const stockCell = (value, title = "") => (Number.isFinite(value) ? `<td class="right rf-mono"${title ? ` title="${esc(title)}"` : ""}>${esc(fmtNum(value, 3))}</td>` : '<td class="right muted">-</td>');
+    const reservedTitle = (row) => (Number.isFinite(row.requisitionKg) && Number.isFinite(row.otherNeedKg) ? `ใบเบิกเก่าที่ค้างจ่าย ${fmtNum(row.requisitionKg, 3)} + WO อื่นที่ยังไม่ได้เบิก ${fmtNum(row.otherNeedKg, 3)}` : "");
+    const formArgs = { sourcePi: args.sourcePi ?? "", sourceRequisition: args.sourceRequisition ?? "", note: args.note ?? "" };
+    const tableRows = rows.map((row) => {
+      const code = esc(row.materialCode);
+      const hidden = ["materialCode", "needKg", "availableKg", "shortageKg"].map((name) => `<input type="hidden" name="${name}[]" value="${esc(String(row[name]))}">`).join("");
+      return `<tr data-rf-po-row data-short="${esc(String(row.shortageKg))}"><td>${ui.mono(row.materialCode)}<div class="small muted">${esc(row.name)}</div>${hidden}</td>
+        <td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td>${stockCell(row.onHandKg)}${stockCell(row.reservedKg, reservedTitle(row))}${stockCell(row.onOrderKg)}
+        <td class="right rf-mono">${row.shortageKg > 0 ? ui.badge("bad", fmtNum(row.shortageKg, 3)) : esc(fmtNum(0, 3))}</td>
+        <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"` })}</td>
+        <td>${ui.input("qtyKg[]", { type: "number", step: "any", min: 0, value: String(row.orderKg), extra: `data-rf-qty title="ตั้งต้น = ขาด + สต็อกขั้นต่ำ" aria-label="จำนวนสั่ง ${code}"` })}</td></tr>`;
+    });
+    const notes = skipped ? ui.callout("warn", esc(`ไม่ได้นับ ${skipped} งานที่ยังไม่มี WO หรือไม่มีสูตร`)) : "";
+    const body = rows.length
+      ? `${notes}<form data-rf-form="createPurchaseOrder" data-rf-args='${esc(JSON.stringify(formArgs))}' data-rf-success="สั่งซื้อ {result} แล้ว" id="rf-purchase">${ui.table(["วัตถุดิบ", { label: "ต้องใช้ (kg)", className: "right" }, { label: "คงเหลือในคลัง (kg)", className: "right", title: "ล็อตที่ใช้ได้ (ไม่หมดอายุ ไม่กักกัน)" }, { label: "จองแล้ว (kg)", className: "right", title: "ใบเบิกเก่าที่ค้างจ่าย + ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก" }, { label: "สั่งค้างรับ (kg)", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด (kg)", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ (safety stock) (kg)", "จำนวนสั่ง (kg)"], tableRows)}</form>`
+      : `${notes}${ui.empty("ไม่มีวัตถุดิบให้ตรวจ (WO ไม่มีสูตร หรือปิด/ยกเลิกแล้ว)")}`;
+    const html = ui.dialog("purchase", `สั่งซื้อวัตถุดิบ${args.sourcePi ? ` · ${args.sourcePi}` : ""}`, body, { wide: true, footer: `${ui.closeButton()}${rows.length ? '<button class="btn rf-btn" type="submit" form="rf-purchase">สั่งซื้อ</button>' : ""}` });
+    // แก้สต็อกขั้นต่ำแล้วจำนวนสั่งตามไปจนกว่าผู้ใช้จะแก้จำนวนสั่งเอง
+    const bind = (dialog) => {
+      dialog.querySelectorAll("[data-rf-po-row]").forEach((tr) => {
+        const short = Number(tr.dataset.short) || 0;
+        const safety = tr.querySelector("[data-rf-safety]");
+        const qty = tr.querySelector("[data-rf-qty]");
+        let touched = false;
+        qty.addEventListener("input", () => { touched = true; });
+        safety.addEventListener("input", () => { if (!touched) qty.value = String(rules.suggestOrderKg(short, Number(safety.value))); });
+      });
     };
     return { html, bind };
   };
@@ -432,12 +541,12 @@
   // ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ · ทุกรายการ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ฯลฯ) อยู่ในฐานข้อมูลและบันทึกที่นี่เหมือนกัน
   const AUDIT_ACTION_LABEL = Object.freeze({
     saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออก revision ใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
-    receiveMaterial: "รับวัตถุดิบเข้าคลัง", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "สร้างใบเบิก", weighLine: "ชั่งวัตถุดิบ", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
+    receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
     recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", shipBoxes: "ส่งมอบกล่องสินค้า",
     addQcRecord: "บันทึกผล QC", createNcr: "เปิด NCR", updateNcr: "บันทึกการแก้ไข/ป้องกัน NCR", closeNcr: "ปิด NCR", cleanMold: "บันทึกล้างแม่พิมพ์", saveMold: "บันทึกแม่พิมพ์/หัวดาย",
   });
   const AUDIT_SECTION_LABEL = Object.freeze({
-    materials: "วัตถุดิบ", recipes: "สูตร", orders: "ใบสั่งผลิต", materialLots: "ล็อตวัตถุดิบ", requisitions: "ใบเบิก", lots: "ล็อตผลิต", transfers: "ใบส่งมอบ", fgBoxes: "กล่องสินค้า", qcRecords: "ผลตรวจ QC", ncrs: "NCR", molds: "แม่พิมพ์",
+    materials: "วัตถุดิบ", recipes: "สูตร", orders: "ใบสั่งผลิต", materialLots: "ล็อตวัตถุดิบ", requisitions: "ใบเบิก", lots: "ล็อตผลิต", transfers: "ใบส่งมอบ", fgBoxes: "กล่องสินค้า", qcRecords: "ผลตรวจ QC", ncrs: "NCR", molds: "แม่พิมพ์", purchaseOrders: "ใบสั่งซื้อ",
   });
   // "orders +1, recipes +2" (เซิร์ฟเวอร์เขียน) → "ใบสั่งผลิต +1, สูตร +2"
   const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");

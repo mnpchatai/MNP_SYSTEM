@@ -13,7 +13,7 @@
     planned: ["", "วางแผน"], released: ["info", "ปล่อยผลิต"], in_progress: ["accent", "กำลังผลิต"], on_hold: ["warn", "พักงาน"],
     completed: ["good", "เสร็จสิ้น"], cancelled: ["bad", "ยกเลิก"],
     pass: ["good", "ผ่าน"], hold: ["warn", "กักกัน (Hold)"], fail: ["bad", "ไม่ผ่าน"],
-    weighing: ["warn", "กำลังชั่ง"], issued: ["info", "จ่ายครบ รอผสม"], consumed: ["good", "ใช้ผสมแล้ว"],
+    weighing: ["warn", "ค้างจ่าย"], issued: ["info", "จ่ายครบ รอผสม"], consumed: ["good", "ใช้ผสมแล้ว"],
     in_transit: ["warn", "รอรับมอบ"], received: ["good", "รับมอบแล้ว"],
     open: ["bad", "เปิดอยู่"], closed: ["good", "ปิดแล้ว"],
     available: ["good", "พร้อมใช้"], expired: ["bad", "หมดอายุ (บล็อก)"], empty: ["", "หมด"],
@@ -48,7 +48,7 @@
   const empty = (text) => `<div class="empty rf-empty">${esc(text)}</div>`;
   const kv = (pairs) => `<dl class="rf-kv">${pairs.filter(Boolean).map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
   const progress = (value, max, tone = "") => `<div class="rf-bar${tone ? ` is-${esc(tone)}` : ""}" role="img" aria-label="${attr(`${rules.fmtNum(value)} จาก ${rules.fmtNum(max)}`)}"><div style="width:${n2(max ? Math.min(100, (Number(value) / Number(max)) * 100) : 0)}%"></div></div>`;
-  const table = (head, rows, { emptyText = "ไม่มีข้อมูล", colSpan = head.length, className = "" } = {}) => `<div class="table-wrap"><table class="rf-table${className ? ` ${className}` : ""}"><thead><tr>${head.map((cell) => (typeof cell === "string" ? `<th>${esc(cell)}</th>` : `<th class="${attr(cell.className ?? "")}">${esc(cell.label ?? "")}</th>`)).join("")}</tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="${colSpan}" class="empty rf-empty">${esc(emptyText)}</td></tr>`}</tbody></table></div>`;
+  const table = (head, rows, { emptyText = "ไม่มีข้อมูล", colSpan = head.length, className = "" } = {}) => `<div class="table-wrap"><table class="rf-table${className ? ` ${className}` : ""}"><thead><tr>${head.map((cell) => (typeof cell === "string" ? `<th>${esc(cell)}</th>` : `<th class="${attr(cell.className ?? "")}"${cell.title ? ` title="${attr(cell.title)}"` : ""}>${esc(cell.label ?? "")}</th>`)).join("")}</tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="${colSpan}" class="empty rf-empty">${esc(emptyText)}</td></tr>`}</tbody></table></div>`;
   // แท็บเป็นลิงก์ธรรมดา (?tab=) หน้าโหลดใหม่ตาม URL ไม่มี popup
   const tabs = (items, current, urlOf) => `<nav class="rf-tabs" role="tablist">${items.map((tab) => `<a class="rf-tab${tab.id === current ? " is-active" : ""}" role="tab" aria-selected="${tab.id === current}" href="${attr(urlOf(tab.id))}">${esc(tab.label)}</a>`).join("")}</nav>`;
   const mono = (text) => `<span class="rf-mono">${esc(text)}</span>`;
@@ -71,8 +71,8 @@
     return field(`${label} (${spec.unit})`, input(name, { value, type: "number", step, extra: data }), { hint: esc(`มาตรฐาน ${rules.specText(spec)}`) });
   };
   const submitButton = (text, { className = "", disabled = false } = {}) => `<button class="btn rf-btn${className ? ` ${className}` : ""}" type="submit"${disabled ? " disabled" : ""}>${esc(text)}</button>`;
-  const button = (text, { action = "", args = {}, className = "secondary", confirmText = "", type = "button", ariaLabel = "" } = {}) =>
-    `<button class="btn rf-btn ${className}" type="${type}"${action ? ` data-rf-action="${attr(action)}"` : ""}${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${confirmText ? ` data-rf-confirm="${attr(confirmText)}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}>${esc(text)}</button>`;
+  const button = (text, { action = "", args = {}, className = "secondary", confirmText = "", type = "button", ariaLabel = "", success = "" } = {}) =>
+    `<button class="btn rf-btn ${className}" type="${type}"${action ? ` data-rf-action="${attr(action)}"` : ""}${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${confirmText ? ` data-rf-confirm="${attr(confirmText)}"` : ""}${success ? ` data-rf-success="${attr(success)}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}>${esc(text)}</button>`;
   // data-rf-confirm → ค่าสำหรับ confirmDialog ของ app.js (module-rubberflow.js และ module-bom.js ใช้ร่วมกัน):
   // หัวเรื่องถึง "?" ตัวแรก ที่เหลือเป็นรายละเอียด ปุ่มยืนยันใช้ชื่อปุ่มที่กด (aria-label ถ้ามี) ลบ/ยกเลิก = ปุ่มสีอันตราย
   const confirmOptions = (node) => {

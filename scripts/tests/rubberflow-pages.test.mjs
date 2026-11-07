@@ -162,8 +162,21 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(warehouse, /data-rf-form="shipBoxes"/);
   assert.match(warehouse, /name="ids\[\]"/);
   const requisition = await env.render("p=requisition");
-  assert.match(requisition, /สถานีชั่ง · รายการ 3\/\d+/, "the open requisition has two lines weighed");
-  assert.match(requisition, /data-rf-form="weighLine"/);
+  assert.match(requisition, /<th class="right">จ่าย \(kg\)<\/th>/, "the detail lists the kilos that were issued");
+  assert.match(requisition, /จ่ายวัตถุดิบครบแล้ว รอห้องผสมนำไปผสม/);
+  assert.doesNotMatch(requisition, /<th>สถานะ<\/th>|จ่ายแล้ว<\/span>/, "a requisition that was issued says so once: no status on every line");
+  assert.doesNotMatch(requisition, /data-rf-form="weighLine"|data-rf-sim|สถานีชั่ง|data-rf-action="issueRequisition"/, "no weighing station and nothing to issue: the seed has no requisition left on the scale");
+  // an old requisition that is still on the scale gets one button for the whole slip
+  const old = env.store.data().requisitions.find((row) => row.status === "issued");
+  old.status = "weighing";
+  old.lines.forEach((line) => { line.actualKg = null; line.weighedAt = null; });
+  const legacy = await env.render(`p=requisition&sel=${old.id}`);
+  assert.match(legacy, /data-rf-action="issueRequisition"/);
+  assert.match(legacy, /เบิกทั้งใบ/);
+  assert.match(legacy, /data-rf-action="issueRequisition"[^>]*data-rf-confirm="เบิกทั้งใบ [^"]+"|data-rf-confirm="เบิกทั้งใบ [^"]+"[^>]*data-rf-action="issueRequisition"/, "issuing the whole slip draws the stock down, so it asks first");
+  assert.match(legacy, /รอจ่าย/);
+  assert.match(legacy, /<th>สถานะ<\/th>/, "the per-line status stays for a slip that is not fully issued");
+  assert.doesNotMatch(legacy, /data-rf-form="weighLine"|data-rf-sim|สถานีชั่ง/);
 });
 
 test("text from the data is escaped on every page that shows it", async () => {
@@ -187,6 +200,79 @@ test("text from the data is escaped on every page that shows it", async () => {
   assert.match(tag.html, /&lt;script&gt;/);
 });
 
+test("the requisition dialog sends the purchase dialog the same breakdown: its own need, on hand, reserved, on order and shortage that add up", () => {
+  const env = load();
+  env.store.setUser("U03");
+  const data = env.store.data();
+  const rules = env.context.MNP_RUBBERFLOW_RULES;
+  // the dialog lists only WOs with batches left: take the first of them; its batch count comes from the WO (not typed)
+  const recipeOfOrder = (row) => rules.recipeOf(data.recipes, row.recipeId, row.recipeRevision);
+  const order = data.orders.find((row) => ["released", "in_progress"].includes(row.status) && rules.nextRequisitionBatches(row, recipeOfOrder(row), data.requisitions) > 0);
+  const recipe = recipeOfOrder(order);
+  const batches = rules.nextRequisitionBatches(order, recipe, data.requisitions);
+  assert.ok(batches >= 1);
+  const [first] = rules.recipeLines(recipe);
+  for (const lot of data.materialLots) if (lot.materialCode === first.materialCode) lot.qtyKg = 0;
+  const opened = [];
+  const run = (onOrderKg) => {
+    data.purchaseOrders = onOrderKg ? [{ id: "PO-T", status: "ordered", lines: [{ materialCode: first.materialCode, qtyKg: onOrderKg, receivedKg: null }] }] : [];
+    const nodes = {
+      "[data-rf-order]": { value: order.id, addEventListener() {} }, "[data-rf-batches]": { value: "" }, "[data-rf-submit]": { disabled: false },
+      "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } },
+    };
+    const built = env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx());
+    built.bind({ querySelector: (selector) => nodes[selector] }, { openDialog: (name, args) => opened.push([name, args]) });
+    assert.match(nodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "the shortage button is offered");
+    nodes["[data-rf-shortage]"].handlers.click({ target: { closest: (selector) => (selector === "[data-rf-po-short]" ? {} : null) } });
+    const [name, args] = opened.at(-1);
+    assert.equal(name, "purchase");
+    return args.rows.find((row) => row.materialCode === first.materialCode);
+  };
+  const plain = run(0);
+  const ordered = run(1);
+  assert.equal(plain.needKg, Math.round(first.kgPerBatch * batches * 1000) / 1000, "the need is the batches the WO still has to requisition");
+  assert.equal(ordered.onOrderKg, 1, "the line on order is passed on");
+  for (const row of [plain, ordered]) {
+    assert.equal(row.availableKg, Math.round((row.onHandKg - row.reservedKg + row.onOrderKg) * 1000) / 1000, "on hand − reserved + on order");
+    assert.equal(row.shortageKg, Math.round(Math.max(0, row.needKg - row.availableKg) * 1000) / 1000, "shortage = need − available");
+  }
+  assert.equal(Math.round((plain.shortageKg - ordered.shortageKg) * 1000) / 1000, 1, "the kilos already on order reduce the shortage");
+  assert.equal(Math.round((plain.orderKg - ordered.orderKg) * 1000) / 1000, 1, "and the default order quantity");
+});
+
+test("the requisition dialog lists only work orders with batches left, fills the batch count from the WO (read-only, shown once) and shows an empty state when every WO is covered", () => {
+  const env = load();
+  env.store.setUser("U03");
+  const data = env.store.data();
+  const rules = env.context.MNP_RUBBERFLOW_RULES;
+  const recipeOfOrder = (row) => rules.recipeOf(data.recipes, row.recipeId, row.recipeRevision);
+  const open = data.orders.filter((row) => ["released", "in_progress"].includes(row.status));
+  const left = (row) => rules.nextRequisitionBatches(row, recipeOfOrder(row), data.requisitions);
+  const covered = open.filter((row) => left(row) === 0);
+  const listed = open.filter((row) => left(row) > 0);
+  assert.ok(covered.length >= 1 && listed.length >= 1, "the demo has a WO whose requisitions cover it and a WO with batches left");
+  const build = () => env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx());
+  const html = build().html;
+  for (const row of covered) assert.doesNotMatch(html, new RegExp(`value="${row.id}"`), `${row.id} is covered: not listed`);
+  for (const row of listed) assert.match(html, new RegExp(`value="${row.id}"`), `${row.id} has batches left: listed`);
+  assert.match(html, /data-rf-batches readonly/, "the batch count is not typed");
+  assert.equal((html.match(/name="batches"/g) ?? []).length, 1, "shown once");
+  // bind: the field shows the WO's remaining batches and follows the selection
+  const nodes = {
+    "[data-rf-order]": { value: listed[0].id, addEventListener() {} }, "[data-rf-batches]": { value: "" }, "[data-rf-submit]": { disabled: false },
+    "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", addEventListener() {} },
+  };
+  build().bind({ querySelector: (selector) => nodes[selector] }, {});
+  assert.equal(nodes["[data-rf-batches]"].value, String(left(listed[0])));
+  // every WO covered: an empty state instead of an empty select, and no submit
+  for (const row of data.orders) row.status = "completed";
+  const empty = build();
+  assert.match(empty.html, /ไม่มีใบสั่งผลิตที่รอเบิกเคมี/);
+  assert.doesNotMatch(empty.html, /data-rf-order/);
+  assert.match(empty.html, /data-rf-submit[^>]*disabled/);
+  empty.bind({ querySelector: () => null }, {});
+});
+
 test("every dialog of the prototype builds from the seed, with print documents carrying a Code 39 barcode", () => {
   const env = load();
   env.store.setUser("U01");
@@ -198,7 +284,7 @@ test("every dialog of the prototype builds from the seed, with print documents c
   const finishing = data.lots.find((lot) => lot.stage === "finishing");
   const cases = [
     ["createOrder", {}, /data-rf-form="createOrder"/], ["createRecipe", {}, /data-rf-form="createRecipe"/], ["receiveMaterial", {}, /data-rf-form="receiveMaterial"/],
-    ["createRequisition", {}, /data-rf-form="createRequisition"/], ["transfer", { lotId: sendable.id }, /data-rf-form="createTransfer"/], ["receive", { id: inTransit.id }, /data-rf-form="receiveTransfer"/],
+    ["createRequisition", {}, /data-rf-form="createRequisition"[^>]*data-rf-success="เบิก \{result\} แล้ว"[\s\S]*data-rf-submit[^>]*>เบิก<\/button>/], ["transfer", { lotId: sendable.id }, /data-rf-form="createTransfer"/], ["receive", { id: inTransit.id }, /data-rf-form="receiveTransfer"/],
     ["qcRecord", { lotId: data.lots[0].id }, /data-rf-form="addQcRecord"[\s\S]*name="values\.hardness"/], ["ncr", {}, /data-rf-form="createNcr"[\s\S]*name="whys\[\]"/],
     ["scan", { code: data.fgBoxes[0].id }, /กล่องสินค้าสำเร็จรูป/], ["alerts", {}, /การแจ้งเตือน \(\d+\)/],
     ["tag", { kind: "lot", id: data.lots[0].id }, /rf-barcode/], ["tag", { kind: "box", id: data.fgBoxes[0].id }, /ป้ายติดตามงาน/], ["tag", { kind: "material", id: data.materialLots[0].lotNo }, /ล็อตวัตถุดิบ/],
@@ -354,9 +440,7 @@ test("two-stage recipe: the recipe form and the mixing station have six stage in
   stageInputs(built.html);
   assert.match(built.html, /name="stage\[\]"/, "each material line has a stage select");
   assert.match(built.html, /name="productCode"/);
-  // สถานีผสม: หกช่อง + ตารางล็อตแสดงสองขั้น (ชั่งใบเบิกที่ค้างให้ครบก่อน จึงมีใบเบิกที่จ่ายครบให้ผสม)
-  const weighing = env.store.data().requisitions.find((row) => row.status === "weighing");
-  weighing.lines.forEach((line, index) => { if (line.actualKg === null) assert.equal(env.store.run("weighLine", { reqId: weighing.id, index, actualKg: line.targetKg }).ok, true); });
+  // สถานีผสม: หกช่อง + ตารางล็อตแสดงสองขั้น (ข้อมูลสาธิตมีใบเบิกที่จ่ายแล้วรอผสม)
   const mixing = await env.render("p=mixing");
   stageInputs(mixing);
   assert.match(mixing, /ขั้น 1: [\d.]+°C · [\d.]+ นาที/);
@@ -440,7 +524,7 @@ test("molds can be added and edited from the page (escaped, validated by the act
 
   // the audit page of the database mode has a Thai label for every action the database whitelists
   const source = fs.readFileSync("modules/rubberflow-pages-plan.js", "utf8");
-  for (const action of ["receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold"]) {
+  for (const action of ["receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "issueRequisition", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold"]) {
     assert.match(source, new RegExp(`\\b${action}: "`), action);
   }
   assert.match(source, /molds: "แม่พิมพ์"/);
@@ -457,4 +541,141 @@ test("the closing dialog of a work order asks for a produced quantity in the dem
   const remote = env.context.MNP_RUBBERFLOW_DIALOGS.closeOrder(remoteCtx, { id: order.id });
   assert.doesNotMatch(remote.html, /name="producedQty"/);
   assert.match(remote.html, /data-rf-form="setOrderStatus"/);
+});
+
+test("purchasing screens: the check opens one dialog (escaped, safety stock and order quantity editable), the form creates the order, the warehouse tab lists it and the receive dialog closes a line", async () => {
+  const env = load();
+  env.store.setUser("U03");
+  const DAY = 86400000;
+  const now = Date.now();
+  const { MNP_RUBBERFLOW: module, MNP_RUBBERFLOW_DIALOGS: dialogs, MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const big = env.store.run("createOrder", { recipeId: "RC-EPDM-DS01", customer: "ลูกค้า", targetQty: 600000, startDate: now, dueDate: now + DAY });
+  assert.equal(big.ok, true, big.error?.message);
+
+  // auto check with a shortage opens the dialog; the PI number is escaped
+  const opened = await module.checkMaterials({ woIds: [big.result], sourcePi: XSS, skippedJobs: 2, auto: true });
+  assert.equal(opened.opened, true);
+  const html = env.log.dialogs.at(-1);
+  assert.match(html, /data-rf-dialog="purchase"/);
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /data-rf-form="createPurchaseOrder"/);
+  assert.match(html, /ไม่ได้นับ 2 งานที่ยังไม่มี WO หรือไม่มีสูตร/);
+  for (const name of ["materialCode[]", "needKg[]", "availableKg[]", "shortageKg[]", "safetyKg[]", "qtyKg[]"]) assert.ok(html.includes(`name="${name}"`), name);
+  for (const code of ["EPDM-55", "CB-N550", "ZNO"]) assert.ok(html.includes(`>${code}<`) || html.includes(`value="${code}"`), code);
+  assert.match(html, /สต็อกขั้นต่ำ \(safety stock\) \(kg\)/);
+  assert.match(html, />สั่งซื้อ<\/button>/);
+  assert.doesNotMatch(html, /undefined|NaN/);
+  assert.equal(env.log.toasts.length, 0, "no toast when the dialog opens");
+
+  // the dialog factory used directly: nothing to check shows the empty note and no order button
+  const empty = dialogs.purchase(env.ctx(), { woIds: ["WO-NONE"] });
+  assert.match(empty.html, /ไม่มีวัตถุดิบให้ตรวจ/);
+  assert.doesNotMatch(empty.html, /form="rf-purchase"/);
+  // rows from a requisition shortage: the safety stock comes from the material, the default order is shortage + safety
+  env.store.run("saveMaterial", { code: "ZNO", name: "ซิงค์ออกไซด์", safetyKg: "4" });
+  const fromRequisition = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 10, availableKg: 6, shortageKg: 4 }], note: "ขาดจากใบเบิก" });
+  assert.match(fromRequisition.html, /name="safetyKg\[\]"[^>]*value="4"/);
+  assert.match(fromRequisition.html, /name="qtyKg\[\]"[^>]*value="8"/);
+  assert.match(fromRequisition.html, /ขาดจากใบเบิก/);
+  assert.match(fromRequisition.html, /<td class="right muted">-<\/td>/, "a part the requisition shortage does not know is shown as a dash");
+  // the stock status is separate columns (need, on hand, reserved, on order) + shortage; the signed "available" is not a column any more
+  for (const label of ["ต้องใช้ (kg)", "คงเหลือในคลัง (kg)", "จองแล้ว (kg)", "สั่งค้างรับ (kg)", "ขาด (kg)"]) assert.ok(html.includes(`>${label}</th>`), label);
+  assert.doesNotMatch(html, /พร้อมใช้ \(kg\)/);
+  assert.match(html, /<th class="right" title="[^"]+">จองแล้ว \(kg\)<\/th>/, "the header explains what is reserved in a tooltip");
+  // reserved by old open requisitions and by other open WOs is one column with the split in a tooltip; the signed balance (on hand − reserved + on order) stays stored for the order line
+  const crowded = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 225.598, onHandKg: 100, reservedKg: 260.787, requisitionKg: 5, otherNeedKg: 255.787, onOrderKg: 0, availableKg: -160.787, shortageKg: 386.385 }] });
+  assert.ok(crowded.html.includes('<td class="right rf-mono">100.000</td>'), "on hand");
+  assert.match(crowded.html, /<td class="right rf-mono" title="ใบเบิกเก่าที่ค้างจ่าย 5\.000 \+ WO อื่นที่ยังไม่ได้เบิก 255\.787">260\.787<\/td>/);
+  assert.ok(crowded.html.includes('name="availableKg[]" value="-160.787"'), "signed value stored");
+  assert.ok(!crowded.html.includes(">-160.787</td>"), "and not shown as a column");
+
+  // submitting the form: lines, the safety stock to the material, the PI number from the form args
+  const form = { ...env.root, dataset: { rfForm: "createPurchaseOrder", rfSuccess: "สั่งซื้อ {result} แล้ว", rfArgs: JSON.stringify({ sourcePi: "PI-9", sourceRequisition: "", note: "" }) }, handlers: {}, __values: {
+    "materialCode[]": ["EPDM-55", "ZNO"], "needKg[]": ["50", "10"], "availableKg[]": ["10", "6"], "shortageKg[]": ["40", "4"], "safetyKg[]": ["20", "4"], "qtyKg[]": ["60", "0"],
+  } };
+  form.addEventListener = (type, handler) => { form.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [form];
+  await env.render("p=warehouse&tab=po");
+  await form.handlers.submit({ preventDefault() {} });
+  assert.deepEqual(env.log.toasts.filter(([, kind]) => kind === "error"), []);
+  const [po] = env.store.data().purchaseOrders;
+  assert.match(po.id, /^PO-\d{8}-01$/);
+  assert.equal(JSON.stringify(po.lines.map((line) => [line.materialCode, line.qtyKg, line.safetyKg, line.shortageKg])), JSON.stringify([["EPDM-55", 60, 20, 40]]), "the zero quantity is not ordered");
+  assert.equal(po.sourcePi, "PI-9");
+  assert.equal(env.store.data().materials.find((row) => row.code === "EPDM-55").safetyKg, 20, "the safety stock goes to the material");
+  assert.match(env.log.toasts.at(-1)[0], /^สั่งซื้อ PO-\d{8}-01 แล้ว$/);
+  delete env.fakes["form[data-rf-form]"];
+
+  // the warehouse tab: the open order first with its receive button and cancel button, the tab counts open orders
+  let page = await env.render("p=warehouse&tab=po");
+  assert.match(page, /ใบสั่งซื้อ \(1\)/);
+  assert.ok(page.includes(po.id));
+  assert.match(page, /data-rf-open="receivePurchase"/);
+  assert.match(page, /data-rf-action="cancelPurchaseOrder"/);
+  assert.match(page, /ตรวจสอบรับเข้า/);
+  assert.doesNotMatch(page, /undefined|NaN/);
+  // the buttons follow the rights of the account (the database decides for real)
+  const wh = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "receiveMaterial" && right !== "cancelPurchase" }).html;
+  assert.doesNotMatch(wh, /data-rf-open="receivePurchase"|cancelPurchaseOrder/);
+  assert.ok(wh.includes(po.id), "read-only accounts still see the order");
+  // the materials tab and the material form carry the new fields
+  page = await env.render("p=warehouse&tab=materials");
+  assert.match(page, /สต็อกขั้นต่ำ \(kg\)/);
+  assert.match(page, /อายุการเก็บ \(วัน\)/);
+  const material = dialogs.materialEdit(env.ctx(), { code: "EPDM-55" }).html;
+  assert.match(material, /name="safetyKg"[^>]*value="20"/);
+  assert.match(material, /name="shelfLifeDays"[^>]*value="180"/);
+
+  // the receive dialog: ordered quantity, expiry = today + shelf life
+  env.store.run("saveMaterial", { code: "EPDM-55", name: "ยาง EPDM", shelfLifeDays: "90" });
+  const receive = dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" });
+  assert.match(receive.html, /data-rf-form="receivePurchaseLine"/);
+  assert.match(receive.html, /name="qtyKg"[^>]*value="60"/);
+  assert.match(receive.html, new RegExp(`name="expiry"[^>]*value="${env.context.MNP_RUBBERFLOW_RULES.toInputDate(now + 90 * DAY)}"`));
+  assert.ok(receive.html.includes('title="ตั้งต้น = วันนี้ + อายุการเก็บ 90 วัน"'),"the starting point of the expiry is a tooltip");
+  // each fact once: the order number is the title only (no row, no placeholder), the ordered quantity is the field's value, no permanent hint text
+  assert.ok(receive.html.includes(`ตรวจสอบรับเข้า · ${po.id}`), "the title carries the order number");
+  assert.ok(!receive.html.includes(`>${po.id}<`), "no visible row repeats the order number");
+  assert.doesNotMatch(receive.html, /สั่งไว้|rf-hint|placeholder|>ใบสั่งซื้อ</);
+  assert.match(receive.html, /name="supplier"[^>]*title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"/);
+  assert.equal(dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "ZNO" }), null, "a material that is not on the order");
+  assert.equal(dialogs.receivePurchase(env.ctx(), { id: "PO-NOPE", materialCode: "ZNO" }), null);
+  const receiveForm = { ...env.root, dataset: { rfForm: "receivePurchaseLine", rfSuccess: "รับเข้าล็อต {result} แล้ว", rfArgs: JSON.stringify({ id: po.id, materialCode: "EPDM-55" }) }, handlers: {}, __values: { qtyKg: "58", expiry: "2027-06-30", supplier: "" } };
+  receiveForm.addEventListener = (type, handler) => { receiveForm.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [receiveForm];
+  await env.render("p=warehouse&tab=po");
+  await receiveForm.handlers.submit({ preventDefault() {} });
+  const lot = env.store.data().materialLots.find((row) => row.supplier === po.id);
+  assert.deepEqual([lot.materialCode, lot.qtyKg, lot.expiry], ["EPDM-55", 58, new Date(2027, 5, 30).getTime()]);
+  assert.equal(env.store.data().purchaseOrders[0].status, "received");
+  assert.match(env.log.toasts.at(-1)[0], /^รับเข้าล็อต RM-EPDM-55-\d{8}-\d\d แล้ว$/);
+  delete env.fakes["form[data-rf-form]"];
+  page = text(await env.render("p=warehouse&tab=po"));
+  assert.match(page, /รับครบแล้ว/);
+  assert.ok(page.includes(lot.lotNo));
+  assert.doesNotMatch(page, /รอรับ/, "no open line is left");
+
+  // enough stock: only a short note, no dialog
+  for (const row of env.store.data().materials) env.store.run("receiveMaterial", { materialCode: row.code, qtyKg: 1e7, expiry: now + 365 * DAY });
+  const small = env.store.run("createOrder", { recipeId: "RC-EPDM-DS01", customer: "ลูกค้า", targetQty: 6, startDate: now, dueDate: now + DAY });
+  const dialogsBefore = env.log.dialogs.length;
+  const quiet = await module.checkMaterials({ woIds: [small.result], sourcePi: "PI-OK", auto: true });
+  assert.equal(quiet.opened, false);
+  assert.equal(env.log.dialogs.length, dialogsBefore, "no dialog when nothing is short");
+  assert.equal(env.log.toasts.at(-1)[0], "เคมีพอสำหรับ WO ที่เปิด");
+  // the button of the PI page opens it anyway
+  const manual = await module.checkMaterials({ woIds: [small.result], sourcePi: "PI-OK", auto: false });
+  assert.equal(manual.opened, true);
+  assert.match(env.log.dialogs.at(-1), /สั่งซื้อวัตถุดิบ · PI-OK/);
+});
+
+test("the material check refuses accounts that may not order, and says nothing when no WO can be counted", async () => {
+  const env = load();
+  const { MNP_RUBBERFLOW: module } = env.context;
+  assert.equal((await module.checkMaterials({ woIds: ["WO-1"], auto: true })).reason, "rights", "no persona chosen");
+  env.store.setUser("U03");
+  const before = env.log.toasts.length;
+  const none = await module.checkMaterials({ woIds: ["WO-NONE"], sourcePi: "PI-0", auto: true });
+  assert.equal(none.opened, false);
+  assert.equal(env.log.toasts.length, before, "nothing countable: no 'enough' claim");
 });

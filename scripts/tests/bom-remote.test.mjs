@@ -1381,8 +1381,8 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
   const status = data ?? { persona: { id: "persona-1", first_name: "ทดสอบ", last_name: "ระบบ", role: { code: "admin" }, department: { code: "MT" } } };
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { toasts: [], renders: 0, notFound: 0, hash: "#/bom" };
-  const node = () => ({ handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", addEventListener() {}, querySelector: (selector) => hooks.nodes?.[selector] ?? null, querySelectorAll: () => [], focus() {}, close() {}, remove() {} });
+  const log = { toasts: [], renders: 0, notFound: 0, hash: "#/bom", dialogs: [] };
+  const node = () => ({ handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", addEventListener() {}, querySelector: (selector) => hooks.nodes?.[selector] ?? null, querySelectorAll: () => [], focus() {}, close() {}, remove() {}, showModal() {}, setAttribute() {}, insertAdjacentHTML(_, html) { log.dialogs.push(html); this.lastElementChild = { ...node(), tagName: "DIALOG" }; } });
   Object.assign(context, {
     window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
     renderRoute: async () => { log.renders += 1; }, confirmDialog: async () => true, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
@@ -2622,8 +2622,6 @@ test("when SR receives a transfer the module catches BOM up and says what the jo
   const rb = await asPersona(scene, "persona-rb", realClock);
   await rf(rb).ensureLoaded();
   const req = await saved(rf(rb).run("createRequisition", { orderId: wo.id, batches: 1 }));
-  const requisition = rf(rb).data().requisitions.find((row) => row.id === req.result);
-  for (let index = 0; index < requisition.lines.length; index += 1) await saved(rf(rb).run("weighLine", { reqId: req.result, index, actualKg: requisition.lines[index].targetKg }));
   const lot = await saved(rf(rb).run("recordMixing", { reqId: req.result, machine: "KN-01 Kneader 75L", shift: "D", stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], outputKg: 10.5 }));
   await saved(rf(rb).run("endRest", { lotId: lot.result }));
   const transfer = await saved(rf(rb).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
@@ -2917,6 +2915,18 @@ test("through the module: release says how many WOs were opened and why jobs wer
   await turns();
   assert.equal(toasts.at(-1)[0], `ปล่อยผลิต ${id} แล้ว · เปิด WO ใน RubberFlow 2 ใบ`);
   assert.equal(toasts.at(-1)[1], "success");
+  // หลังปล่อยผลิต: ตรวจเคมีของ WO ที่เปิดเทียบสต็อก (ยังไม่มีล็อตเลย = ขาดทุกตัว) แล้วเปิด dialog สั่งซื้อพร้อมเลข PI · ไม่มี toast เพิ่ม
+  const purchase = s.admin.log.dialogs.filter((html) => /data-rf-dialog="purchase"/.test(html));
+  assert.equal(purchase.length, 1);
+  assert.match(purchase[0], new RegExp(`สั่งซื้อวัตถุดิบ · ${id}`));
+  assert.ok(purchase[0].includes("62.5") && purchase[0].includes("37.5"), "two WOs of 5.25 and 7.65 kg each take a whole 50 kg batch: 100 kg of compound split 100 : 60 between EPDM-55 and CB-N550");
+  assert.match(purchase[0], /data-rf-form="createPurchaseOrder"/);
+  assert.doesNotMatch(purchase[0], /ไม่ได้นับ/, "every job got a WO");
+  // ใบ PI ที่ปล่อยผลิตแล้วมีปุ่ม "ตรวจวัตถุดิบ" พร้อมเลข WO ของใบ · ใบร่างไม่มี
+  const piPage = await s.admin.render(`p=orders&sel=${id}`);
+  assert.match(piPage, /data-bom-rf-check/);
+  assert.match(piPage, />ตรวจวัตถุดิบ</);
+  for (const woId of rfStore.data().orders.map((row) => row.id)) assert.ok(piPage.includes(woId), woId);
   const wos = rfStore.data().orders;
   assert.deepEqual(wos.map((row) => row.sourceJobId).sort(), s.admin.store.data().jobs.filter((job) => job.orderId === id && job.dept === "RB").map((job) => job.id).sort(), "RubberFlow caught up and shows the WOs");
   assert.deepEqual([...wos.map((row) => row.targetKg)].sort((a, b) => a - b), [5.25, 7.65]);

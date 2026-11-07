@@ -1,5 +1,5 @@
-// RubberFlow MES (แผนก RB โหมดทดสอบ) — หน้าสายการผลิต: เบิกและชั่งเคมี · 1 ผสมยาง · 2 ฉีดขึ้นรูป · 3 อบ HCM · 4 ตกแต่งและบรรจุ · ส่งมอบ WIP
-// ยกมาจาก pages/Requisition.jsx, Mixing.jsx, Extrusion.jsx, Curing.jsx, Finishing.jsx, Wip.jsx และ components/StageCommon.jsx ของต้นแบบ
+// RubberFlow MES (แผนก RB โหมดทดสอบ) — หน้าสายการผลิต: เบิกเคมี · 1 ผสมยาง · 2 ฉีดขึ้นรูป · 3 อบ HCM · 4 ตกแต่งและบรรจุ · ส่งมอบ WIP
+// ยกมาจาก pages/Requisition.jsx (สถานีชั่งรายบรรทัดถูกแทนด้วยการเบิกแบบจ่ายทันที), Mixing.jsx, Extrusion.jsx, Curing.jsx, Finishing.jsx, Wip.jsx และ components/StageCommon.jsx ของต้นแบบ
 // ลงทะเบียนใน window.MNP_RUBBERFLOW_PAGES / _DIALOGS กติกา event อยู่ที่ modules/module-rubberflow.js — โหลดหลัง modules/rubberflow-ui.js
 (function (root) {
   const pages = (root.MNP_RUBBERFLOW_PAGES ??= {});
@@ -81,110 +81,98 @@
     return { html };
   };
 
-  // ---------- เบิกและชั่งเคมี ----------
+  // ---------- เบิกเคมี ----------
+  // เบิก = สร้างใบเบิกและจ่ายทันที (dialog สร้างใบเบิก) · ใบเก่าที่ค้างสถานะ weighing มีปุ่ม "เบิกทั้งใบ" ปุ่มเดียว ไม่มีสถานีชั่งรายบรรทัดแล้ว
   pages.requisition = (ctx) => {
     const { data, ui, rules, params } = ctx;
-    const { fmtDate, fmtDateTime, fmtNum, weighTolerance } = rules;
+    const { fmtDate, fmtDateTime, fmtNum } = rules;
     const list = [...data.requisitions].sort((a, b) => b.createdAt - a.createdAt);
     const selected = data.requisitions.find((row) => row.id === params.get("sel")) ?? list.find((row) => row.status === "weighing") ?? list[0] ?? null;
     const listHtml = list.map((requisition) => {
-      const done = requisition.lines.filter((line) => line.actualKg !== null).length;
-      return `<a class="rf-list-item${requisition.id === selected?.id ? " is-selected" : ""}" href="${esc(ctx.pageUrl({ sel: requisition.id }))}"${requisition.id === selected?.id ? ' aria-current="true"' : ""}><div class="rf-row rf-between"><strong class="rf-mono">${esc(requisition.id)}</strong>${ui.status(requisition.status)}</div><div class="small muted">${esc(`${requisition.orderId} · ${requisition.batches} batch · ${fmtNum(requisition.totalKg, 1)} kg · ชั่งแล้ว ${done}/${requisition.lines.length}`)}</div></a>`;
+      const left = requisition.lines.filter((line) => line.actualKg === null).length;
+      return `<a class="rf-list-item${requisition.id === selected?.id ? " is-selected" : ""}" href="${esc(ctx.pageUrl({ sel: requisition.id }))}"${requisition.id === selected?.id ? ' aria-current="true"' : ""}><div class="rf-row rf-between"><strong class="rf-mono">${esc(requisition.id)}</strong>${ui.status(requisition.status)}</div><div class="small muted">${esc(`${requisition.orderId} · ${requisition.batches} batch · ${fmtNum(requisition.totalKg, 1)} kg${left ? ` · ค้างจ่าย ${left}/${requisition.lines.length}` : ""}`)}</div></a>`;
     }).join("");
 
     let detail = ui.card(ui.empty("ยังไม่มีใบเบิก"));
-    let bind = null;
     if (selected) {
       const order = data.orders.find((row) => row.id === selected.orderId);
       const recipe = ctx.rules.recipeOf(data.recipes, selected.recipeId, selected.recipeRevision);
-      const nextIdx = selected.lines.findIndex((line) => line.actualKg === null);
       const parts = [];
-      if (selected.status === "weighing" && nextIdx >= 0) {
-        const line = selected.lines[nextIdx];
-        const material = data.materials.find((row) => row.code === line.materialCode);
-        const tol = weighTolerance(line.targetKg);
-        parts.push(ui.card(`<form data-rf-form="weighLine" data-rf-args='${esc(JSON.stringify({ reqId: selected.id, index: nextIdx }))}' data-rf-success="บันทึกน้ำหนัก ${esc(material?.code ?? "")} แล้ว" data-rf-weigh data-target="${line.targetKg}" data-tol="${tol}"><div class="rf-grid rf-g2">
-            <div class="rf-stack"><div><span class="small muted">${esc(`วัตถุดิบ · ขั้น ${line.stage ?? 1}`)}</span><h2>${esc(material?.name ?? line.materialCode)}</h2><div class="rf-mono small">${esc(`${line.materialCode} · ล็อต ${line.lotNo}`)}</div></div>
-              <div class="rf-grid rf-g2"><div><span class="small muted">น้ำหนักเป้าหมาย</span><div class="rf-big rf-mono">${esc(`${line.targetKg.toFixed(3)} kg`)}</div></div><div><span class="small muted">เกณฑ์ยอมรับ</span><div class="rf-big rf-mono">${esc(`± ${tol.toFixed(3)}`)}</div></div></div></div>
-            <div class="rf-stack">${ui.field("ค่าที่อ่านได้จากตาชั่ง (kg)", ui.input("actualKg", { type: "number", step: "0.001", className: "rf-scale-input", required: true }))}
-              <div class="rf-row small"><span class="muted">จำลองตาชั่ง:</span><button class="btn rf-btn secondary small" type="button" data-rf-sim="low">ขาด</button><button class="btn rf-btn secondary small" type="button" data-rf-sim="ok">พอดี</button><button class="btn rf-btn secondary small" type="button" data-rf-sim="high">เกิน</button></div>
-              <div data-rf-weigh-status></div>
-              <button class="btn rf-btn" type="submit" disabled>ยืนยันน้ำหนักและไปรายการถัดไป</button></div></div></form>`,
-        { title: `สถานีชั่ง · รายการ ${nextIdx + 1}/${selected.lines.length}` }));
-        bind = (rootNode) => {
-          const form = rootNode.querySelector("[data-rf-weigh]");
-          if (!form) return;
-          const target = Number(form.dataset.target);
-          const tolerance = Number(form.dataset.tol);
-          const input = form.querySelector('[name="actualKg"]');
-          const statusBox = form.querySelector("[data-rf-weigh-status]");
-          const submit = form.querySelector('button[type="submit"]');
-          const paint = () => {
-            const v = Number(input.value);
-            const status = input.value === "" ? "empty" : v < target - tolerance ? "low" : v > target + tolerance ? "high" : "ok";
-            input.classList.toggle("rf-ok", status === "ok");
-            input.classList.toggle("rf-out", status === "low" || status === "high");
-            submit.disabled = status !== "ok";
-            statusBox.innerHTML = status === "low" ? ui.callout("bad", esc(`น้อยกว่าเกณฑ์ ขาดอีก ${(target - tolerance - v).toFixed(3)} kg ระบบล็อกปุ่มยืนยัน`))
-              : status === "high" ? ui.callout("bad", esc(`เกินเกณฑ์ ${(v - target - tolerance).toFixed(3)} kg ตักออกก่อนจึงยืนยันได้`))
-                : status === "ok" ? ui.callout("good", esc(`อยู่ในเกณฑ์ (ต่าง ${(v - target).toFixed(3)} kg)`)) : "";
-          };
-          input.addEventListener("input", paint);
-          form.querySelectorAll("[data-rf-sim]").forEach((button) => button.addEventListener("click", () => {
-            const mode = button.dataset.rfSim;
-            const delta = mode === "ok" ? (Math.random() - 0.5) * tolerance : mode === "low" ? -tolerance * 2.5 : tolerance * 2.5;
-            input.value = (target + delta).toFixed(3);
-            paint();
-          }));
-          paint();
-        };
+      if (selected.status === "weighing") {
+        parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>ใบเบิกเก่าที่ยังจ่ายไม่ครบ</span>${ui.button("เบิกทั้งใบ", { action: "issueRequisition", args: { id: selected.id }, className: "small", confirmText: `เบิกทั้งใบ ${selected.id}? ระบบจะหักสต็อกทุกรายการที่ยังไม่จ่ายตามสูตร`, success: `เบิก ${selected.id} แล้ว`, ariaLabel: `เบิกทั้งใบ ${selected.id}` })}</div>`));
       }
       if (selected.status === "issued") parts.push(ui.callout("good", "จ่ายวัตถุดิบครบแล้ว รอห้องผสมนำไปผสม"));
+      // สถานะรายบรรทัดมีความหมายเฉพาะใบเก่าที่จ่ายไม่ครบ · ใบที่จ่ายแล้วแสดงสถานะที่ป้ายในรายการและแถบสรุปแล้ว
+      const lineStatus = selected.status === "weighing";
       const lineRows = selected.lines.map((line, i) => {
         const lot = data.materialLots.find((row) => row.lotNo === line.lotNo);
         const material = data.materials.find((row) => row.code === line.materialCode);
-        return `<tr${i === nextIdx && selected.status === "weighing" ? ' class="is-selected"' : ""}><td>${i + 1}</td><td>${esc(material?.name ?? "")}<div class="small muted rf-mono">${esc(line.materialCode)}</div></td><td class="nowrap">${esc(`ขั้น ${line.stage ?? 1}`)}</td><td class="rf-mono small">${esc(line.lotNo)}</td>
-          <td class="small nowrap">${esc(fmtDate(lot?.expiry))}<div class="muted">${esc(lot?.location ?? "")}</div></td><td class="right rf-mono">${esc(fmtNum(line.targetKg, 3))}</td><td class="right rf-mono">${line.actualKg === null ? "-" : esc(fmtNum(line.actualKg, 3))}</td>
-          <td>${line.actualKg === null ? ui.badge("warn", "รอชั่ง") : ui.badge("good", "ผ่าน")}</td></tr>`;
+        return `<tr><td>${i + 1}</td><td>${esc(material?.name ?? "")}<div class="small muted rf-mono">${esc(line.materialCode)}</div></td><td class="nowrap">${esc(`ขั้น ${line.stage ?? 1}`)}</td><td class="rf-mono small">${esc(line.lotNo)}</td>
+          <td class="small nowrap">${esc(fmtDate(lot?.expiry))}<div class="muted">${esc(lot?.location ?? "")}</div></td><td class="right rf-mono">${esc(fmtNum(line.actualKg ?? line.targetKg, 3))}</td>
+          ${lineStatus ? `<td>${line.actualKg === null ? ui.badge("warn", "รอจ่าย") : ui.badge("good", "จ่ายแล้ว")}</td>` : ""}</tr>`;
       });
       parts.push(ui.card(`<div class="rf-card-pad">${ui.kv([["ใบสั่งผลิต", esc(`${order?.id ?? "-"} · ${order?.customer ?? ""}`)], ["สูตร", esc(`${rules.recipeLabel(recipe)} · ${selected.batches} batch · ${fmtNum(selected.totalKg, 2)} kg`)], ["ผู้ขอเบิก", esc(`${selected.requestedBy ?? "-"} · ${fmtDateTime(selected.createdAt)}`)],
         selected.issuedBy ? ["ผู้จ่าย", esc(`${selected.issuedBy} · ${fmtDateTime(selected.issuedAt)}`)] : null, selected.consumedBy ? ["ใช้ผสมเป็น", ui.mono(selected.consumedBy)] : null])}</div>
-        ${ui.table(["#", "วัตถุดิบ", "ขั้น", "ล็อตที่จ่าย (FEFO)", "หมดอายุ", { label: "ตามสูตร (kg)", className: "right" }, { label: "ชั่งจริง (kg)", className: "right" }, "สถานะ"], lineRows)}`,
+        ${ui.table(["#", "วัตถุดิบ", "ขั้น", "ล็อตที่จ่าย (FEFO)", "หมดอายุ", { label: "จ่าย (kg)", className: "right" }, ...(lineStatus ? ["สถานะ"] : [])], lineRows)}`,
       { title: `ใบเบิก ${esc(selected.id)}`, actions: ui.openButton("พิมพ์ป้าย", "tag", { kind: "requisition", id: selected.id }, { className: "secondary small" }), flush: true }));
       detail = `<div class="rf-stack">${parts.join("")}</div>`;
     }
-    const html = `${ui.pageHead("เบิกและชั่งเคมี", "ระเบิดสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และบังคับชั่งให้อยู่ในเกณฑ์ (Poka-Yoke)", ui.openButton("สร้างใบเบิก", "createRequisition", {}, { className: "" }))}
+    const html = `${ui.pageHead("เบิกเคมี", "ระเบิดสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และจ่ายทันทีเมื่อกดเบิก", ui.openButton("สร้างใบเบิก", "createRequisition", {}, { className: "" }))}
       <div class="rf-split">${ui.card(`<div class="rf-list rf-list-tall">${listHtml || ui.empty("ยังไม่มีใบเบิก")}</div>`, { title: `ใบเบิก (${list.length})`, flush: true })}${detail}</div>`;
-    return { html, bind };
+    return { html };
   };
 
   dialogs.createRequisition = (ctx) => {
     const { data, now, ui, rules } = ctx;
     const { recipeLines, allocateFefo, fmtNum } = rules;
-    const orders = data.orders.filter((order) => ["released", "in_progress"].includes(order.status));
-    const body = `<div class="rf-grid rf-g3">
-        ${ui.field("ใบสั่งผลิต *", ui.select("orderId", orders.map((order) => ({ value: order.id, label: `${order.id} · ${rules.orderLabel(order)}` })), { value: orders[0]?.id ?? "", placeholder: orders.length ? null : "ไม่มีใบสั่งผลิตที่ปล่อยผลิต", extra: "data-rf-order required" }))}
-        ${ui.field("จำนวน batch *", ui.input("batches", { type: "number", min: 1, max: 10, value: "1", required: true, extra: "data-rf-batches" }))}
+    // ลิสต์เฉพาะ WO ที่ยังมี batch ไม่ได้เบิก (เบิกครบแล้วไม่ขึ้นอีก) · จำนวน batch มาจาก WO ไม่ต้องกรอก
+    const batchesOf = (order) => {
+      const recipe = rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
+      return recipe ? rules.nextRequisitionBatches(order, recipe, data.requisitions) : 0;
+    };
+    const orders = data.orders.filter((order) => ["released", "in_progress"].includes(order.status) && batchesOf(order) > 0);
+    const body = !orders.length ? ui.empty("ไม่มีใบสั่งผลิตที่รอเบิกเคมี (ใบที่ปล่อยผลิตเบิกครบแล้ว หรือยังไม่มีใบที่ปล่อยผลิต)") : `<div class="rf-grid rf-g3">
+        ${ui.field("ใบสั่งผลิต *", ui.select("orderId", orders.map((order) => ({ value: order.id, label: `${order.id} · ${rules.orderLabel(order)}` })), { value: orders[0]?.id ?? "", extra: "data-rf-order required" }))}
+        ${ui.field("จำนวน batch", ui.input("batches", { type: "number", value: "", extra: "data-rf-batches readonly" }))}
         ${ui.field("หมายเหตุ", ui.input("note"))}
       </div><div class="muted small" data-rf-recipe-line></div><div data-rf-shortage></div><div data-rf-preview></div>`;
-    const html = ui.dialog("createRequisition", "สร้างใบเบิกวัตถุดิบ (ระเบิดสูตร)", `<form data-rf-form="createRequisition" data-rf-success="สร้างใบเบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit${orders.length ? "" : " disabled"}>สร้างใบเบิก</button>`, wide: true });
-    const bind = (dialog) => {
-      const orderSelect = dialog.querySelector("[data-rf-order]");
-      const batches = dialog.querySelector("[data-rf-batches]");
+    const html = ui.dialog("createRequisition", "เบิกเคมี (ระเบิดสูตร)", `<form data-rf-form="createRequisition" data-rf-success="เบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit title="จ่ายทันที หักสต็อกตามล็อตที่แสดง"${orders.length ? "" : " disabled"}>เบิก</button>`, wide: true });
+    const bind = (dialog, bindCtx) => {
       const submit = dialog.querySelector("[data-rf-submit]");
+      const orderSelect = dialog.querySelector("[data-rf-order]");
+      if (!orderSelect) return;
+      const batches = dialog.querySelector("[data-rf-batches]");
+      const mayBuy = ctx.can("purchase") && typeof (bindCtx ?? ctx).openDialog === "function";
+      let shortRows = [];
+      let shortNote = "";
       const paint = () => {
         const order = data.orders.find((row) => row.id === orderSelect.value);
         const recipe = order && rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
-        const n = Number(batches.value || 0);
+        const n = order ? batchesOf(order) : 0;
+        batches.value = n ? String(n) : "";
+        // เหลือเกิน 10 batch: ใบนี้เบิกได้ 10 ที่เหลือเบิกเป็นใบถัดไป (บอกใน title ไม่เพิ่มข้อความถาวร)
+        const left = order && recipe ? rules.remainingBatches(order, recipe, data.requisitions) : 0;
+        batches.title = left > n ? `ใบนี้เบิกได้สูงสุด ${n} batch · เหลืออีก ${left - n} batch ต้องเบิกเป็นใบถัดไป` : "";
         const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now) })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
+        // ปุ่ม "สั่งซื้อส่วนที่ขาด" ส่งวัตถุดิบที่ขาดเข้า dialog สั่งซื้อ โดยคำนวณคอลัมน์เดียวกับทางเข้าอื่น (rules.chemicalNeeds): ขาด = ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)
+        // ความต้องการ = ของใบเบิกนี้ (n batch) · ใบเบิกเก่าของ WO เดียวกันที่ค้างจ่ายยังนับเป็นจองแล้ว และที่สั่งค้างรับหักออกจากจำนวนสั่ง
+        const shortCodes = new Set(preview.filter((row) => row.shortage > 0.0001).map((row) => row.materialCode));
+        shortRows = order && recipe && shortCodes.size
+          ? rules.chemicalNeeds(data, [order.id], now, { remote: ctx.store.isRemote(), needKg: { [order.id]: recipe.batchKg * n } }).rows.filter((row) => shortCodes.has(row.materialCode))
+          : [];
+        shortNote = order ? `ขาดจากใบเบิกของ ${order.id} (${n} batch)` : "";
         dialog.querySelector("[data-rf-recipe-line]").textContent = recipe ? `สูตร ${rules.recipeLabel(recipe)} · น้ำหนักรวม ${fmtNum(recipe.batchKg * n, 2)} kg` : "";
-        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", "สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)") : "";
+        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayBuy ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>สั่งซื้อส่วนที่ขาด</button>' : ""}`) : "";
         dialog.querySelector("[data-rf-preview]").innerHTML = ui.table(["วัตถุดิบ", "ขั้น", { label: "ต้องใช้ (kg)", className: "right" }, "ล็อตที่ระบบจะจ่าย (FEFO)"], preview.map((row) => `<tr><td class="rf-mono">${esc(row.materialCode)}</td><td class="nowrap">${esc(`ขั้น ${row.stage}`)}</td><td class="right rf-mono">${esc(fmtNum(row.need, 3))}</td><td class="small">${row.picks.map((pick) => `<div class="rf-mono">${esc(`${pick.lotNo} → ${pick.kg.toFixed(3)} kg`)}</div>`).join("")}${row.shortage > 0.0001 ? ui.badge("bad", `ขาด ${row.shortage.toFixed(2)} kg`) : ""}</td></tr>`), { emptyText: "เลือกใบสั่งผลิตก่อน" });
         if (submit) submit.disabled = !order || short;
       };
       orderSelect.addEventListener("change", paint);
-      batches.addEventListener("input", paint);
+      // ปุ่มอยู่ในกล่องที่วาดซ้ำทุกครั้ง จึงผูกที่กล่อง: เปิด dialog สั่งซื้อพร้อมส่วนที่ขาดของใบเบิกนี้ (แทน dialog นี้)
+      dialog.querySelector("[data-rf-shortage]").addEventListener("click", (event) => {
+        if (!event.target?.closest?.("[data-rf-po-short]")) return;
+        (bindCtx ?? ctx).openDialog?.("purchase", { rows: shortRows, note: shortNote });
+      });
       paint();
     };
     return { html, bind };
@@ -203,7 +191,7 @@
       ui.field(`Dump temp ขั้น ${stage} (°C) *`, ui.input(`dumpTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, extra: `data-rf-dump="${stage}"` }), { hint: `<span data-rf-hint="dumpTemp${stage}"></span>` }),
       ui.field(`เวลาผสม ขั้น ${stage} (นาที) *`, ui.input(`mixMin${stage}`, { type: "number", step: "any", min: 0, required: true }), { hint: `<span data-rf-hint="mixMin${stage}"></span>` }),
     ].join("")).join("");
-    const form = issued.length === 0 ? ui.callout("warn", "ยังไม่มีใบเบิกที่ชั่งครบ ต้องให้คลังจ่ายวัตถุดิบครบทุกรายการก่อน")
+    const form = issued.length === 0 ? ui.callout("warn", "ยังไม่มีใบเบิกที่จ่ายแล้ว ต้องเบิกเคมีก่อน")
       : `<form data-rf-form="recordMixing" data-rf-success="บันทึก {result} แล้ว" data-rf-mixing><div class="rf-grid rf-g3">
           ${ui.field("ใบเบิกที่จ่ายครบ *", ui.select("reqId", issued.map((requisition) => ({ value: requisition.id, label: `${requisition.id} · ${requisition.orderId}` })), { value: issued[0]?.id ?? "", extra: "data-rf-req required" }))}
           ${ui.field("เครื่องผสม", ui.select("machine", MACHINES.mixing))}
@@ -213,7 +201,7 @@
           ${ui.field("ของเสีย (kg)", ui.input("scrapKg", { type: "number", step: "any" }))}
           ${ui.field("สาเหตุของเสีย", ui.input("scrapReason", { placeholder: "เช่น เศษติดใบโรเตอร์" }))}
         </div><div data-rf-dump-warn></div><div class="rf-row">${ui.submitButton("บันทึกการผสม")}<span class="small muted" data-rf-rest></span></div></form>`;
-    const html = `${ui.pageHead("สถานีที่ 1 · ผสมยาง", "รับวัตถุดิบที่ชั่งครบแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปฉีด")}
+    const html = `${ui.pageHead("สถานีที่ 1 · ผสมยาง", "รับวัตถุดิบที่เบิกแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปฉีด")}
       ${ui.stats([
         { label: "Yield ห้องผสม", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 99.0%" },
         { label: "ผลิตแล้วสะสม", value: `${fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0), 0)} kg` },

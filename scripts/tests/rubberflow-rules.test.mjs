@@ -157,3 +157,134 @@ test("lookupCode finds every document kind by code (case-insensitive) and tracea
   assert.equal(derive.parentLotIds(d, d.lots.find((lot) => lot.stage === "mixing")).length, 0, "a mixing lot has no parent lot (its source is a requisition)");
   assert.ok(HOUR > 0);
 });
+
+// ---------- ความต้องการเคมีของ WO เทียบสต็อก (สั่งซื้อ) ----------
+test("chemicalNeeds: need of the asked WOs against on-hand, reservations, other open WOs and what is on order; expired / held lots, closed WOs and received lines do not count", () => {
+  const recipe = { id: "R1", revision: 1, status: "approved", uom: "m", batchKg: 50, yieldPerKg: 6, dumpTol: 5, restHours: 4, stages: [], items: [{ materialCode: "EPDM", phr: 100, stage: 1 }, { materialCode: "CB", phr: 60, stage: 2 }] };
+  const lot = (lotNo, materialCode, qtyKg, extra = {}) => ({ lotNo, materialCode, qtyKg, initialKg: qtyKg, expiry: NOW + 90 * DAY, receivedAt: NOW - DAY, status: "available", ...extra });
+  const wo = (id, status, extra = {}) => ({ id, status, recipeId: "R1", recipeRevision: 1, targetQty: 6, targetKg: null, ...extra });
+  const data = {
+    materials: [{ code: "EPDM", name: "ยาง EPDM", safetyKg: 10 }, { code: "CB", name: "เขม่าดำ" }],
+    recipes: [recipe],
+    orders: [
+      wo("WO-ASK", "planned", { targetKg: 80 }), // 80 kg = 2 batches of 50 = 100 kg → EPDM 62.5, CB 37.5
+      wo("WO-OTHER", "planned", { targetQty: 120 }), // 120 / 6 = 20 kg → 1 batch, but its requisition already covers it
+      wo("WO-RUN", "in_progress", { targetKg: 80 }), // 80 − 50 (1 batch requisitioned) = 30 kg → 1 batch = 50 kg → EPDM 31.25, CB 18.75
+      wo("WO-OFF", "cancelled", { targetKg: 999 }),
+      wo("WO-DONE", "completed", { targetKg: 999 }),
+      wo("WO-NORECIPE", "planned", { recipeId: "NOPE" }),
+    ],
+    requisitions: [
+      { id: "REQ-1", orderId: "WO-RUN", batches: 1, totalKg: 50, status: "weighing", lines: [{ materialCode: "EPDM", targetKg: 5, actualKg: null }, { materialCode: "EPDM", targetKg: 3, actualKg: 3 }] },
+      { id: "REQ-2", orderId: "WO-OTHER", batches: 1, totalKg: 50, status: "consumed", lines: [{ materialCode: "EPDM", targetKg: 40, actualKg: 40 }] },
+    ],
+    materialLots: [
+      lot("E1", "EPDM", 20), lot("E-OLD", "EPDM", 100, { expiry: NOW - DAY }), lot("E-HOLD", "EPDM", 100, { status: "hold" }), lot("E-EMPTY", "EPDM", 0),
+      lot("C1", "CB", 100),
+    ],
+    purchaseOrders: [
+      { id: "PO-1", status: "ordered", lines: [{ materialCode: "EPDM", qtyKg: 40, receivedKg: null }, { materialCode: "CB", qtyKg: 10, receivedKg: 9 }] },
+      { id: "PO-2", status: "cancelled", lines: [{ materialCode: "EPDM", qtyKg: 500, receivedKg: null }] },
+      { id: "PO-3", status: "received", lines: [{ materialCode: "EPDM", qtyKg: 500, receivedKg: 500 }] },
+    ],
+  };
+  // WO-RUN: 1 batch requisitioned covers 50 of 80 kg, so its remaining need is 30 kg; WO-OTHER's requisition is already consumed, so it is covered up to 50 kg (more than its 20 kg need): nothing left
+  const out = rules.chemicalNeeds(data, ["WO-ASK", "WO-OFF", "WO-NORECIPE", "WO-GHOST"], NOW);
+  assert.deepEqual(out.counted, ["WO-ASK"]);
+  assert.deepEqual(out.skipped, [{ woId: "WO-NORECIPE", reason: "ไม่พบสูตร" }, { woId: "WO-GHOST", reason: "ไม่พบ WO" }], "a closed WO is simply not a need; a WO without recipe is reported");
+  const epdm = out.rows.find((row) => row.materialCode === "EPDM");
+  // on hand 20 (expired / held / empty lots ignored) − reserved 5 (the weighed line already left the lot) − other need 31.25 (WO-RUN's last batch; WO-OTHER is covered by its requisition) + on order 40 = 23.75
+  assert.deepEqual(
+    [epdm.needKg, epdm.onHandKg, epdm.reservedKg, epdm.requisitionKg, epdm.otherNeedKg, epdm.onOrderKg, epdm.availableKg, epdm.shortageKg],
+    [62.5, 20, 36.25, 5, 31.25, 40, 23.75, 38.75],
+    "reserved (shown in one column) = the open requisitions' unissued kilos + the other open WOs' remaining need; available = on hand − reserved + on order",
+  );
+  for (const row of out.rows) assert.equal(row.availableKg, Math.round((row.onHandKg - row.reservedKg + row.onOrderKg) * 1000) / 1000, `${row.materialCode}: available is derivable from the three columns`);
+  assert.equal(epdm.safetyKg, 10);
+  assert.equal(epdm.orderKg, 48.75, "default order = shortage + safety stock");
+  assert.equal(epdm.name, "ยาง EPDM");
+  const cb = out.rows.find((row) => row.materialCode === "CB");
+  assert.deepEqual([cb.needKg, cb.onHandKg, cb.otherNeedKg, cb.onOrderKg, cb.shortageKg, cb.orderKg], [37.5, 100, 18.75, 0, 0, 0], "the received PO line (even partly) is not on order any more; nothing short = nothing to order");
+  assert.equal(out.anyShort, true);
+  assert.deepEqual(out.rows.map((row) => row.materialCode), ["CB", "EPDM"], "sorted by code");
+
+  // the demo mode takes the kilograms out of the lot only when the whole requisition is weighed, so every line of an open requisition is reserved
+  const demo = rules.chemicalNeeds(data, ["WO-ASK"], NOW, { remote: false });
+  const demoEpdm = demo.rows.find((row) => row.materialCode === "EPDM");
+  assert.deepEqual([demoEpdm.requisitionKg, demoEpdm.reservedKg], [8, 39.25]);
+  // asking for another open WO counts its remaining need too (and it is no longer an "other" need)
+  const both = rules.chemicalNeeds(data, ["WO-ASK", "WO-RUN"], NOW);
+  assert.deepEqual(both.counted, ["WO-ASK", "WO-RUN"]);
+  assert.equal(both.rows.find((row) => row.materialCode === "EPDM").needKg, 93.75);
+  // nothing asked / nothing countable
+  assert.deepEqual(rules.chemicalNeeds(data, [], NOW).rows, []);
+  assert.equal(rules.chemicalNeeds(data, ["WO-NORECIPE"], NOW).anyShort, false);
+  assert.deepEqual(rules.chemicalNeeds({}, ["X"], NOW).skipped, [{ woId: "X", reason: "ไม่พบ WO" }], "missing lists are empty");
+  // plenty of stock: no shortage, no order quantity
+  const plenty = rules.chemicalNeeds({ ...data, materialLots: [lot("E2", "EPDM", 1000), lot("C2", "CB", 1000)] }, ["WO-ASK"], NOW);
+  assert.equal(plenty.anyShort, false);
+  assert.deepEqual(plenty.rows.map((row) => row.orderKg), [0, 0]);
+  // a negative balance (other WOs want more than the stock) stays negative so the shortage is explained, and counts as short
+  const crowded = rules.chemicalNeeds({ ...data, materialLots: [lot("E3", "EPDM", 10)], purchaseOrders: [] }, ["WO-ASK"], NOW);
+  const row = crowded.rows.find((item) => item.materialCode === "EPDM");
+  assert.deepEqual([row.availableKg, row.reservedKg, row.shortageKg], [-26.25, 36.25, 62.5 - (10 - 5 - 31.25)], "10 − 5 − 31.25 = −26.25 → available stays negative, shortage 88.75");
+  // options.needKg replaces the remaining need of an asked WO (the requisition being created): on-order lines then reduce the shortage and the default order
+  const own = rules.chemicalNeeds(data, ["WO-RUN"], NOW, { needKg: { "WO-RUN": 100 } }).rows.find((item) => item.materialCode === "EPDM");
+  assert.deepEqual([own.needKg, own.onOrderKg, own.availableKg, own.shortageKg], [62.5, 40, own.onHandKg - own.reservedKg + 40, Math.max(0, 62.5 - (own.onHandKg - own.reservedKg + 40))], "the given kilos are the need: 100 kg of compound = 62.5 kg EPDM");
+  const withoutOrders = rules.chemicalNeeds({ ...data, purchaseOrders: [] }, ["WO-RUN"], NOW, { needKg: { "WO-RUN": 100 } }).rows.find((item) => item.materialCode === "EPDM");
+  assert.equal(Math.round((withoutOrders.shortageKg - own.shortageKg) * 1000) / 1000, 40, "the 40 kg already on order come off the shortage");
+  assert.equal(rules.chemicalNeeds(data, ["WO-RUN"], NOW, { needKg: { "WO-OTHER": 999 } }).rows.find((item) => item.materialCode === "EPDM").needKg, 31.25, "an override for a WO that was not asked is ignored");
+  assert.equal(rules.suggestOrderKg(0, 5), 0);
+  assert.equal(rules.suggestOrderKg(2.5, 5), 7.5);
+  assert.equal(rules.suggestOrderKg(2.5, -1), 2.5);
+});
+
+test("chemicalNeeds uses the WO's own recipe revision and the kilograms of the BOM job when the WO has them", () => {
+  const item = (code, phr) => ({ materialCode: code, phr, stage: 1 });
+  const base = { yieldPerKg: 10, batchKg: 40, status: "approved", uom: "m", stages: [] };
+  const recipes = [{ ...base, id: "R", revision: 1, status: "superseded", items: [item("A", 100)] }, { ...base, id: "R", revision: 2, items: [item("B", 100)] }];
+  const orders = [{ id: "W1", status: "released", recipeId: "R", recipeRevision: 1, targetQty: 100, targetKg: 4 }, { id: "W2", status: "released", recipeId: "R", recipeRevision: 2, targetQty: 100 }];
+  const out = rules.chemicalNeeds({ orders, recipes }, ["W1", "W2"], NOW);
+  assert.deepEqual(out.rows.map((row) => [row.materialCode, row.needKg]), [["A", 40], ["B", 40]], "W1 keeps revision 1 and its targetKg (4 kg → 1 whole batch of 40); W2 derives 10 kg from quantity ÷ yield → 1 batch");
+  assert.ok(out.rows.every((row) => row.shortageKg === row.needKg && row.availableKg === 0));
+});
+
+test("chemicalNeeds counts whole batches, like the requisition issues them: 70 kg with 60 kg batches needs 120 kg, for the asked WO and for other open WOs, with no cap of 10 batches", () => {
+  const recipe = { id: "R", revision: 1, status: "approved", uom: "m", batchKg: 60, yieldPerKg: 6, items: [{ materialCode: "A", phr: 100, stage: 1 }] };
+  const wo = (id, extra = {}) => ({ id, status: "released", recipeId: "R", recipeRevision: 1, targetQty: 6, targetKg: 70, ...extra });
+  const data = { recipes: [recipe], orders: [wo("W1"), wo("W2"), wo("W3", { targetKg: 1300 })], requisitions: [{ id: "REQ-1", orderId: "W2", batches: 1, totalKg: 60, status: "issued", lines: [] }], materialLots: [], purchaseOrders: [] };
+  const asked = rules.chemicalNeeds(data, ["W1"], NOW).rows[0];
+  assert.deepEqual([asked.needKg, asked.otherNeedKg], [120, 1380], "own need 120; others = W2 (70 − 60 = 10 → 1 batch = 60) + W3 (1300 kg = 22 batches = 1320)");
+  assert.equal(rules.chemicalNeeds(data, ["W3"], NOW).rows[0].needKg, 1320, "the whole remaining need, not only the 10 batches of the next requisition");
+});
+
+// ---------- batch ของใบเบิกมาจาก WO ----------
+test("remainingBatches: the kilograms a WO needs (targetKg, else quantity ÷ yield) minus what its requisitions took, in whole batches; a covered WO has none; one requisition is capped at 10 batches", () => {
+  const recipe = { id: "R", revision: 1, batchKg: 50, yieldPerKg: 6 };
+  const order = (extra = {}) => ({ id: "W", recipeId: "R", recipeRevision: 1, targetQty: 6, targetKg: null, ...extra });
+  const req = (batches, extra = {}) => ({ id: `Q${batches}`, orderId: "W", batches, totalKg: batches * 50, status: "issued", ...extra });
+  // targetKg wins over quantity ÷ yield: 120 kg / 50 = 2.4 → 3 batches (the quantity alone would say 6 / 6 = 1 kg)
+  assert.equal(rules.remainingBatches(order({ targetKg: 120 }), recipe, []), 3);
+  // no targetKg: 600 / 6 = 100 kg → 2 batches
+  assert.equal(rules.remainingBatches(order({ targetQty: 600 }), recipe, []), 2);
+  assert.equal(rules.remainingBatches(order({ targetKg: 0, targetQty: 600 }), recipe, []), 2, "targetKg 0 counts as not set");
+  // an earlier requisition took 50 kg: 120 − 50 = 70 kg → 2 batches left
+  assert.equal(rules.remainingBatches(order({ targetKg: 120 }), recipe, [req(1)]), 2);
+  // every status counts (a weighing and a consumed requisition both took their kilograms) · other WOs' requisitions do not
+  assert.equal(rules.remainingBatches(order({ targetKg: 120 }), recipe, [req(1, { status: "weighing" }), req(1, { status: "consumed" }), req(5, { orderId: "OTHER" })]), 1);
+  // exact multiple: 100 kg = exactly 2 batches (no float spill to a third), then 0 once both are taken
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), recipe, []), 2);
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), recipe, [req(2)]), 0);
+  assert.equal(rules.remainingBatches(order({ targetKg: 0.3 * 3 * 50 / 0.9 }), recipe, []), 1, "float noise below 1e-9 does not add a batch");
+  // over-covered or unusable input: none
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), recipe, [req(3)]), 0);
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), { ...recipe, batchKg: 0 }, []), 0);
+  assert.equal(rules.remainingBatches(order({ targetKg: null, targetQty: 0 }), recipe, []), 0);
+  assert.equal(rules.remainingBatches(null, recipe, []), 0);
+  // the next requisition takes at most 10 batches; the rest stays on the WO
+  assert.equal(rules.remainingBatches(order({ targetKg: 1000 }), recipe, []), 20);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 1000 }), recipe, []), 10);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 1000 }), recipe, [req(10)]), 10);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 1000 }), recipe, [req(10), req(10)]), 0);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 120 }), recipe, []), 3);
+});

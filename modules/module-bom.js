@@ -74,7 +74,7 @@
   const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
-  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create]";
+  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check]";
   function markDirty(event) {
     if (!event?.isTrusted || !onBomRoute()) return;
     const target = event.target;
@@ -226,6 +226,11 @@
       if (notice) showToast(notice.text, notice.type);
       // WO ที่ฐานข้อมูลเปิด/ยกเลิกให้ ตามทันฝั่ง RubberFlow ให้เลข WO และหน้าของ RubberFlow เป็นปัจจุบัน
       if (outcome.rubberflow) { try { window.MNP_RUBBERFLOW?.store?.catchUp?.(); } catch { /* RubberFlow ตามทันเองตอนเปิดหน้า */ } }
+      // ปล่อยผลิตแล้วเปิด WO ให้งาน RB: ตรวจเคมีที่ WO เหล่านั้นต้องใช้เทียบสต็อก ขาด = เปิด dialog สั่งซื้อ (ผู้ที่สั่งซื้อไม่ได้ไม่เห็น) · ที่เหลือแจ้งสั้นๆ ว่าพอ
+      const opened = name === "releaseOrder" && Array.isArray(outcome.rubberflow?.opened) ? outcome.rubberflow.opened : [];
+      if (opened.length) {
+        try { Promise.resolve(window.MNP_RUBBERFLOW?.checkMaterials?.({ woIds: opened.map((row) => row.woId), sourcePi: payload?.orderId ?? "", skippedJobs: outcome.rubberflow.skipped?.length ?? 0, auto: true })).catch(() => {}); } catch { /* ตรวจเคมีไม่ได้: ปุ่ม "ตรวจวัตถุดิบ" ที่ใบ PI ยังใช้ได้ */ }
+      }
     });
     return true;
   }

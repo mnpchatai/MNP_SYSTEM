@@ -715,20 +715,26 @@ async function prepare(s, rig, { linked = false, target = 90 } = {}) {
   }
   return { order, lots };
 }
+// ใบสั่งผลิตอีกใบ (ปล่อยผลิตแล้ว ต้องใช้ 1 batch เหมือนใบแรก): ใบเบิกใบแรกของ WO เบิกครบทุก batch แล้ว ใบเบิกใบที่สองของข้อทดสอบจึงต้องเป็นของ WO อีกใบ
+async function addOrder(s, rig) {
+  await s.as("persona-rb");
+  const id = (await saved(rig.store.run("createOrder", { ...ORDER }))).result;
+  await s.as("persona-rbh");
+  await saved(rig.store.run("setOrderStatus", { id, status: "released" }));
+  return id;
+}
 const go = async (s, rig, persona, name, payload) => {
   await s.as(persona);
   return saved(rig.store.run(name, payload));
 };
-// ใบเบิก 1 batch → ชั่งครบ → ผสม → (ข้ามเวลาบ่ม) → ส่งมอบ → SR รับ : คืน id ของแต่ละเอกสาร
+// ใบเบิก 1 batch (จ่ายทันที) → ผสม → (ข้ามเวลาบ่ม) → ส่งมอบ → SR รับ : คืน id ของแต่ละเอกสาร
 async function mixAndSend(s, rig, order, { dump1 = 110, outputKg = 48 } = {}) {
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1, note: "ทดสอบ" })).result;
-  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
-  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
   const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: [{ ...STAGES2[0], dumpTemp: dump1 }, STAGES2[1]], outputKg, scrapKg: 1 })).result;
   return { requisition, mx };
 }
 
-test("the whole line on the database: receive → FEFO requisition → weigh → mix → rest → transfer → receive → extrude → cure → finish → ship, with the page equal to the database at every step", async () => {
+test("the whole line on the database: receive → FEFO requisition (issued at once) → mix → rest → transfer → receive → extrude → cure → finish → ship, with the page equal to the database at every step", async () => {
   const s = await session();
   const rig = await s.make();
   const { order, lots } = await prepare(s, rig);
@@ -738,31 +744,30 @@ test("the whole line on the database: receive → FEFO requisition → weigh →
   assert.deepEqual(lots, [`RM-EPDM-55-${TODAY}-01`, `RM-EPDM-55-${TODAY}-02`, `RM-CB-N550-${TODAY}-01`]);
   assert.equal((await master()).materialLots[0].receivedBy, "วิชัย คลังวัตถุดิบ");
 
-  // ใบเบิก: FEFO หยิบล็อตที่หมดอายุก่อน (-02) แม้รับเข้าทีหลัง · ใบสั่งผลิตที่ยังไม่เริ่มผสมยังเป็น released
+  // ใบเบิก = จ่ายทันที: FEFO หยิบล็อตที่หมดอายุก่อน (-02) แม้รับเข้าทีหลัง · ทุกรายการจ่ายตามสูตร สต็อกหักทันที · ใบสั่งผลิตที่ยังไม่เริ่มผสมยังเป็น released
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1, note: "รอบแรก" })).result;
   assert.equal(requisition, `REQ-${TODAY}-01`);
   const req = (await master()).requisitions[0];
-  assert.deepEqual(req.lines.map((line) => [line.materialCode, line.lotNo, line.targetKg, line.actualKg]), [["EPDM-55", soon, 31.25, null], ["CB-N550", carbon, 18.75, null]]);
+  assert.deepEqual(req.lines.map((line) => [line.materialCode, line.lotNo, line.targetKg, line.actualKg]), [["EPDM-55", soon, 31.25, 31.25], ["CB-N550", carbon, 18.75, 18.75]]);
   assert.equal(req.requestedBy, "ประยุทธ รีดยาง");
-  await inSync(s, rig, "requisition");
-  // ใบเบิกที่สองเห็นว่า 31.25 kg ของล็อต -02 ถูกจองแล้ว → หยิบส่วนที่เหลือของ -02 แล้วต่อด้วย -01
-  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  assert.deepEqual([req.status, req.issuedBy, req.lines[0].weighedBy, typeof req.issuedAt], ["issued", "ประยุทธ รีดยาง", "ประยุทธ รีดยาง", "number"]);
+  assert.deepEqual([(await master()).materialLots.find((row) => row.lotNo === soon).qtyKg, (await master()).materialLots.find((row) => row.lotNo === carbon).qtyKg], [8.75, 21.25], "stock fell by the issued kilograms at once");
+  await inSync(s, rig, "requisition issued");
+  // WO นี้เบิกครบแล้ว (ต้องใช้ 1 batch): เบิกซ้ำไม่ได้ ทั้งหน้าจอและฐานข้อมูล (batch ไม่ตรงกับที่เหลือ = 0)
+  assert.match(rig.store.run("createRequisition", { orderId: order }).error.message, /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+  await s.as("persona-rb");
+  const covered = await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...req, id: `REQ-${TODAY}-77`, batches: 1 }] } }, p_base_version: (await master()).version, p_action: "createRequisition" });
+  assert.equal(covered.error.code, "RF_INVALID_REQUISITION", "the database refuses a second requisition for a covered WO");
+  const wrongCount = await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...req, id: `REQ-${TODAY}-78`, orderId: order, batches: 3 }] } }, p_base_version: (await master()).version, p_action: "createRequisition" });
+  assert.equal(wrongCount.error.code, "RF_INVALID_REQUISITION", "a batch count that is not the WO's remaining batches is refused");
+  // ใบเบิกที่สองของ WO อีกใบเห็นว่าล็อต -02 เหลือ 8.75 kg → หยิบส่วนที่เหลือของ -02 แล้วต่อด้วย -01
+  const orderB = await addOrder(s, rig);
+  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: orderB })).result;
   assert.deepEqual((await master()).requisitions.find((row) => row.id === second).lines.filter((line) => line.materialCode === "EPDM-55").map((line) => [line.lotNo, line.targetKg]), [[soon, 8.75], [slow, 22.5]]);
   // สต็อก CB เหลือ 40 − 2 × 18.75 = 2.5 kg: ใบที่สามไม่พอ (หน้าจอปฏิเสธก่อน · ฐานข้อมูลตอบรหัสเอง)
-  assert.match(rig.store.run("createRequisition", { orderId: order, batches: 1 }).error.message, /สต็อกไม่พอตามหลัก FEFO/);
-
-  // ชั่ง: นอกเกณฑ์ไม่รับ · สต็อกของล็อตหักทันทีที่ชั่งแต่ละรายการ
-  assert.match(rig.store.run("weighLine", { reqId: requisition, index: 0, actualKg: 33 }).error.message, /นอกเกณฑ์/);
-  const direct = await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...req, lines: [{ ...req.lines[0], actualKg: 33 }, req.lines[1]] }] } }, p_base_version: (await master()).version, p_action: "weighLine" });
-  assert.equal(direct.error.code, "RF_OUT_OF_TOLERANCE", "the database refuses it too");
-  await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index: 0, actualKg: 31.3 });
-  assert.equal((await master()).materialLots.find((row) => row.lotNo === soon).qtyKg, 8.7, "stock fell by the weighed kilograms");
-  assert.equal((await master()).requisitions.find((row) => row.id === requisition).status, "weighing");
-  await inSync(s, rig, "first line weighed");
-  await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index: 1, actualKg: 18.7 });
-  const issued = (await master()).requisitions.find((row) => row.id === requisition);
-  assert.deepEqual([issued.status, issued.issuedBy, issued.lines[0].weighedBy], ["issued", "ประยุทธ รีดยาง", "ประยุทธ รีดยาง"]);
-  await inSync(s, rig, "issued");
+  const orderC = await addOrder(s, rig);
+  assert.match(rig.store.run("createRequisition", { orderId: orderC }).error.message, /สต็อกไม่พอตามหลัก FEFO/);
+  await inSync(s, rig, "second requisition issued");
 
   // ผสม: สองขั้น · Dump temp ขั้น 2 ตามสูตร → ผ่าน · ใบเบิกถูกใช้ · ใบสั่งผลิต released → in_progress ในคำสั่งเดียวกัน
   const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 })).result;
@@ -826,7 +831,7 @@ test("the whole line on the database: receive → FEFO requisition → weigh →
   // ประวัติการใช้งานของฐานข้อมูลบอกการกระทำทุกขั้น
   await rig.store.loadAudit(true);
   const actions = rig.store.audit().entries.map((entry) => entry.action);
-  for (const name of ["receiveMaterial", "createRequisition", "weighLine", "recordMixing", "endRest", "createTransfer", "receiveTransfer", "recordExtrusion", "recordCuring", "recordFinishing", "addQcRecord", "shipBoxes", "saveMold"]) assert.ok(actions.includes(name), name);
+  for (const name of ["receiveMaterial", "createRequisition", "recordMixing", "endRest", "createTransfer", "receiveTransfer", "recordExtrusion", "recordCuring", "recordFinishing", "addQcRecord", "shipBoxes", "saveMold"]) assert.ok(actions.includes(name), name);
   // ล้างแม่พิมพ์: ตัวนับกลับเป็น 0 (แม่พิมพ์ที่ไม่มีการใช้งานไม่มีอะไรให้ล้าง)
   await go(s, rig, "persona-rb", "cleanMold", { id: "DIE-1" });
   assert.equal((await master()).molds.find((row) => row.id === "DIE-1").usageSinceClean, 0);
@@ -836,6 +841,97 @@ test("the whole line on the database: receive → FEFO requisition → weigh →
   const purged = await rig.store.purge();
   assert.equal(purged.ok, true);
   for (const list of storeApi.REMOTE_LISTS) assert.deepEqual(rig.store.data()[list], [], list);
+});
+
+test("an old requisition that is still weighing: weigh it line by line within the tolerance, or issue it whole in one press at exactly the target kilograms; the rights and the strictness are the database's", async () => {
+  const s = await session();
+  const rig = await s.make();
+  const { order, lots } = await prepare(s, rig);
+  const [slow, soon, carbon] = lots;
+  const master = () => s.call("app_rf_master");
+  const stock = async (lotNo) => (await master()).materialLots.find((row) => row.lotNo === lotNo).qtyKg;
+  // a requisition the way the database held it before the one-press issue: kilograms back in the lots, no weights, status weighing (the action cannot create one any more)
+  const makeOld = (id) => s.mock.rf.edit((m) => {
+    const q = m.requisitions.find((row) => row.id === id);
+    m.version += 1;
+    for (const line of q.lines) {
+      const lot = m.materialLots.find((row) => row.lotNo === line.lotNo);
+      lot.qtyKg = Math.round((lot.qtyKg + line.actualKg) * 1e6) / 1e6;
+      m.versions.materialLots[lot.lotNo] = m.version;
+      line.actualKg = null;
+      line.weighedAt = null;
+      delete line.weighedBy;
+    }
+    q.status = "weighing";
+    delete q.issuedAt;
+    delete q.issuedBy;
+    m.versions.requisitions[id] = m.version;
+  });
+  const first = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order })).result;
+  makeOld(first);
+  await rig.store.catchUp();
+  // ใบเก่าที่ยังค้างชั่งก็นับว่า WO เบิกแล้ว: เบิกซ้ำของ WO เดิมไม่ได้ · ใบที่สองจึงเป็นของ WO อีกใบ
+  assert.match(rig.store.run("createRequisition", { orderId: order }).error.message, /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: await addOrder(s, rig) })).result;
+  assert.deepEqual((await master()).requisitions.find((row) => row.id === second).lines.map((line) => [line.lotNo, line.targetKg, line.actualKg]), [[soon, 8.75, 8.75], [slow, 22.5, 22.5], [carbon, 18.75, 18.75]], "an old requisition still reserves its kilograms: the new one is issued from what is free");
+  makeOld(second);
+  await rig.store.catchUp();
+  assert.deepEqual([await stock(soon), await stock(slow), await stock(carbon)], [40, 40, 40]);
+  await inSync(s, rig, "two old requisitions");
+  const old = (id) => rig.store.data().requisitions.find((row) => row.id === id);
+  const send = async (persona, id, lines, action) => {
+    await s.as(persona);
+    const snapshot = await master();
+    const row = snapshot.requisitions.find((item) => item.id === id);
+    return (await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...row, lines: row.lines.map((line, index) => ({ ...line, ...(lines[index] ?? {}) })) }] } }, p_base_version: snapshot.version, p_action: action })).error?.code;
+  };
+
+  // weighing line by line still works: the tolerance and the stock draw-down are the database's
+  await s.as("persona-rb");
+  assert.match(rig.store.run("weighLine", { reqId: first, index: 0, actualKg: 33 }).error.message, /นอกเกณฑ์/);
+  assert.equal(await send("persona-rb", first, [{ actualKg: 33 }], "weighLine"), "RF_OUT_OF_TOLERANCE");
+  await go(s, rig, "persona-rb", "weighLine", { reqId: first, index: 0, actualKg: 31.2 });
+  assert.equal(await stock(soon), 8.8, "stock fell by the weighed kilograms");
+  assert.equal((await master()).requisitions.find((row) => row.id === first).status, "weighing");
+  await inSync(s, rig, "first line weighed");
+
+  // issuing whole: ST and QA may not; the weights must all be set and exactly the target
+  assert.equal(await send("persona-st", second, [{ actualKg: 8.75 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "issueRequisition"), "RF_FORBIDDEN");
+  assert.equal(await send("persona-qa", second, [{ actualKg: 8.75 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "issueRequisition"), "RF_FORBIDDEN");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.75 }], "issueRequisition"), "RF_INVALID_REQUISITION", "every open line must be issued together");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.76 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "issueRequisition"), "RF_INVALID_REQUISITION", "not within a tolerance: exactly the target");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.75 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "bogusAction"), "RF_INVALID_ACTION");
+  await s.as("persona-st");
+  await rig.store.catchUp();
+  assert.match(rig.store.run("issueRequisition", { id: second }).error.message, /ไม่มีสิทธิ์/, "the page says no first");
+  assert.equal((await master()).requisitions.find((row) => row.id === second).status, "weighing", "nothing was written");
+  assert.deepEqual([await stock(soon), await stock(slow), await stock(carbon)], [8.8, 40, 40]);
+
+  // one press by an RB member: every open line at its target, the stock drawn down once, status issued
+  await s.as("persona-rb");
+  await rig.store.catchUp();
+  await go(s, rig, "persona-rb", "issueRequisition", { id: second });
+  const issued = (await master()).requisitions.find((row) => row.id === second);
+  assert.deepEqual([issued.status, issued.issuedBy, issued.lines.map((line) => line.actualKg), issued.lines.every((line) => line.weighedBy === "ประยุทธ รีดยาง" && typeof line.weighedAt === "number")], ["issued", "ประยุทธ รีดยาง", [8.75, 22.5, 18.75], true]);
+  assert.deepEqual([await stock(soon), await stock(slow), await stock(carbon)], [0.05, 17.5, 21.25]);
+  await inSync(s, rig, "issued whole");
+  assert.match(rig.store.run("issueRequisition", { id: second }).error.message, /จ่ายวัตถุดิบครบแล้ว/, "an issued requisition is issued once");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.75 }], "issueRequisition"), undefined, "sending the same weights again changes nothing");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8 }], "issueRequisition"), "RF_INVALID_TRANSITION", "different weights on an issued requisition are refused");
+
+  // the first one: its weighed line keeps its weight, only the open line is issued at the target
+  await go(s, rig, "persona-rb", "issueRequisition", { id: first });
+  const done = (await master()).requisitions.find((row) => row.id === first);
+  assert.deepEqual([done.status, done.lines.map((line) => line.actualKg)], ["issued", [31.2, 18.75]]);
+  assert.deepEqual([await stock(soon), await stock(carbon)], [0.05, 2.5]);
+  assert.equal(old(first).status, "issued");
+  await inSync(s, rig, "both issued");
+  // mixing takes the issued old requisition like any other
+  const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: first, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 49, scrapKg: 0.5 })).result;
+  assert.equal((await master()).requisitions.find((row) => row.id === first).consumedBy, mx);
+  await rig.store.loadAudit(true);
+  const actions = rig.store.audit().entries.map((entry) => entry.action);
+  for (const name of ["createRequisition", "weighLine", "issueRequisition"]) assert.ok(actions.includes(name), name);
 });
 
 test("each shop-floor action is open to its own department and the planner group only: the page says no first and the database says RF_FORBIDDEN to a direct call", async () => {
@@ -859,7 +955,7 @@ test("each shop-floor action is open to its own department and the planner group
   forbidden("rb", "addQcRecord", { lotId: mx, values: { hardness: 65 } });
   forbidden("rb", "createNcr", { title: "x", lotId: mx });
   await s.as("persona-st");
-  for (const [name, payload] of [["createRequisition", { orderId: order, batches: 1 }], ["weighLine", { reqId: requisition, index: 0, actualKg: 1 }], ["recordMixing", { reqId: requisition }], ["endRest", { lotId: mx }], ["createTransfer", { lotId: mx, qty: 1 }], ["cleanMold", { id: "DIE-1" }], ["saveMold", { id: "X", name: "x" }], ["receiveTransfer", { id: tr, qtyReceived: 1 }]]) forbidden("st", name, payload);
+  for (const [name, payload] of [["createRequisition", { orderId: order, batches: 1 }], ["weighLine", { reqId: requisition, index: 0, actualKg: 1 }], ["issueRequisition", { id: requisition }], ["recordMixing", { reqId: requisition }], ["endRest", { lotId: mx }], ["createTransfer", { lotId: mx, qty: 1 }], ["cleanMold", { id: "DIE-1" }], ["saveMold", { id: "X", name: "x" }], ["receiveTransfer", { id: tr, qtyReceived: 1 }]]) forbidden("st", name, payload);
   await s.as("persona-sr");
   forbidden("sr", "createTransfer", { lotId: mx, qty: 1 });
   forbidden("sr", "receiveMaterial", { materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY });
@@ -944,7 +1040,7 @@ test("the database computes the numbers itself: a client cannot set the stock, t
   assert.equal((await save({ transfers: { upsert: [extra] } }, "createTransfer")).error.code, "RF_INVALID_TRANSFER", "nothing left to send from the lot");
   // ล็อตวัตถุดิบที่กักกัน (ล็อต -02) ไม่ถูกจัดสรร: ใบเบิกใหม่หยิบจากล็อต -01 ทั้งหมด
   await go(s, rig, "persona-st", "setMaterialLotStatus", { lotNo: lots[1], status: "hold" });
-  const next = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  const next = (await go(s, rig, "persona-rb", "createRequisition", { orderId: await addOrder(s, rig) })).result;
   assert.deepEqual((await master()).requisitions.find((row) => row.id === next).lines.map((line) => line.lotNo), [lots[0], lots[2]], "held stock is not allocated");
 });
 
@@ -1079,18 +1175,15 @@ test("shop-floor records collide per record: stale is reported before permission
   // เครื่อง A ออกใบเบิก 01 · เครื่อง B ยังไม่เห็นจึงออก 01 ซ้ำ → RF_STALE ย้อนกลับแล้วตามทัน
   const one = await go(s, a, "persona-rb", "createRequisition", { orderId: order, batches: 1 });
   assert.equal(one.result, `REQ-${TODAY}-01`);
-  const dup = b.store.run("createRequisition", { orderId: order, batches: 1, note: "อีกเครื่อง" });
+  const dup = b.store.run("createRequisition", { orderId: order, note: "อีกเครื่อง" });
   assert.equal(dup.result, `REQ-${TODAY}-01`);
   assert.equal((await dup.saving).error.code, "RF_STALE");
   assert.equal(b.store.data().requisitions.length, 1, "reverted and caught up");
-  assert.equal((await saved(b.store.run("createRequisition", { orderId: order, batches: 1 }))).result, `REQ-${TODAY}-02`);
-  // ชั่งพร้อมกัน: A ชั่งรายการ 0 · B (ฐานเก่า) ชั่งรายการ 0 ของใบเดียวกัน → ชน
+  // ตามทันแล้วเห็นว่า WO นี้เบิกครบแล้ว (ใบ 01 ของเครื่อง A) จึงเบิกซ้ำไม่ได้ · ใบที่สองเป็นของ WO อีกใบ
+  assert.match(b.store.run("createRequisition", { orderId: order }).error.message, /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+  assert.equal((await saved(b.store.run("createRequisition", { orderId: await addOrder(s, b) }))).result, `REQ-${TODAY}-02`);
   await a.store.catchUp();
   await b.store.catchUp();
-  await saved(a.store.run("weighLine", { reqId: `REQ-${TODAY}-01`, index: 0, actualKg: 31.25 }));
-  const clash = b.store.run("weighLine", { reqId: `REQ-${TODAY}-01`, index: 0, actualKg: 31.3 }); // ค่าต่างจากที่ A ชั่ง (ค่าเท่ากันทุกช่องถือว่าไม่มีอะไรเปลี่ยน)
-  assert.equal(clash.ok, true, clash.error?.message);
-  assert.equal((await clash.saving).error.code, "RF_STALE");
   // ชนก่อนสิทธิ์: ST ฐานเก่าแก้ใบเบิก → RF_STALE ไม่ใช่ RF_FORBIDDEN; ฐานล่าสุด → RF_FORBIDDEN
   await s.as("persona-st");
   const snapshot = await s.call("app_rf_master");
@@ -1142,8 +1235,6 @@ test("a station lot is recorded only on a released / in-progress / on-hold work 
   const rig = await s.make();
   const { order } = await prepare(s, rig);
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
-  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
-  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
   await go(s, rig, "persona-rbh", "setOrderStatus", { id: order, status: "cancelled" });
   await s.as("persona-rb");
   const mixing = { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 };
@@ -1164,8 +1255,6 @@ test("a work order on hold still takes station lots", async () => {
   const rig = await s.make();
   const { order } = await prepare(s, rig);
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
-  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
-  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
   await go(s, rig, "persona-rbh", "setOrderStatus", { id: order, status: "on_hold" });
   const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 })).result;
   const master = await s.call("app_rf_master");
@@ -1210,4 +1299,309 @@ test("the database builds the boxes of a finishing lot itself: boxes sent by a c
   assert.deepEqual([row.totalUsage, row.usageSinceClean, row.lastCleanAt], [0, 0, NOW]);
   const long = await s.mock.client.rpc("app_rf_save", { p_changes: { molds: { upsert: [{ ...mold, id: "DIE-LONG", name: "ก".repeat(121) }] } }, p_base_version: (await s.call("app_rf_master")).version, p_action: "saveMold" });
   assert.equal(long.error?.code, "RF_INVALID_MOLD");
+});
+
+// ---------- ใบสั่งซื้อวัตถุดิบ (ชุดที่ 12: purchaseOrders) ----------
+const D8 = rules.ymd(NOW);
+const PO_LINE = (code, over = {}) => ({ materialCode: code, needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 0, qtyKg: 60, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null, ...over });
+const PO_ROW = (id, lines, over = {}) => ({ id, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines, createdAt: 0, createdBy: "x", cancelledAt: null, ...over });
+const PO_NO = `PO-${rules.ymd(NOW)}-01`;
+// ส่งตรงไปที่ฐานข้อมูลในนามบัญชีหนึ่ง : คืนรหัส error (ไม่มี = สำเร็จ) และตรวจว่าที่ผิดไม่เขียนอะไรเลย
+async function sendPo(s, persona, changes, action = "createPurchaseOrder") {
+  await s.as(persona);
+  const snapshot = await s.call("app_rf_master");
+  const reply = await s.mock.client.rpc("app_rf_save", { p_changes: changes, p_base_version: snapshot.version, p_action: action });
+  if (reply.error) assert.equal((await s.call("app_rf_master")).version, snapshot.version, `${persona} ${action}: nothing was written`);
+  return reply.error?.code;
+}
+
+test("the purchase order list is the 12th list: in the snapshot, in the delta and in the store, and the materials carry the safety stock and the shelf life", async () => {
+  assert.equal(storeApi.REMOTE_LISTS.length, 12);
+  assert.equal(storeApi.REMOTE_LISTS.at(-1), "purchaseOrders");
+  const s = await session();
+  const rig = await s.make();
+  assert.deepEqual(rig.store.data().purchaseOrders, []);
+  assert.deepEqual((await s.call("app_rf_master")).purchaseOrders, []);
+  await withMaterials(s, rig);
+  // วัตถุดิบ: ไม่ส่ง = ค่าตั้งต้น (0 และ 180) · ส่งแล้วเก็บ · ค่าผิดช่วงฐานข้อมูลไม่รับ
+  assert.deepEqual(rig.store.data().materials.map((row) => [row.code, row.safetyKg, row.shelfLifeDays]), [["CB-N550", 0, 180], ["EPDM-55", 0, 180]]);
+  await saved(rig.store.run("saveMaterial", { code: "EPDM-55", name: "ยาง EPDM", safetyKg: "25.5", shelfLifeDays: "90" }));
+  const epdm = rig.store.data().materials.find((row) => row.code === "EPDM-55");
+  assert.deepEqual([epdm.safetyKg, epdm.shelfLifeDays], [25.5, 90]);
+  const stored = (await s.call("app_rf_master")).materials.find((row) => row.code === "EPDM-55");
+  for (const bad of [{ safetyKg: -1 }, { safetyKg: 1e9 + 1 }, { safetyKg: "5" }, { shelfLifeDays: 0 }, { shelfLifeDays: 3651 }, { shelfLifeDays: 1.5 }]) {
+    assert.equal(await sendPo(s, "persona-1", { materials: { upsert: [{ ...stored, ...bad }] } }, "saveMaterial"), "RF_INVALID_MATERIAL", JSON.stringify(bad));
+  }
+  assert.equal(await sendPo(s, "persona-st", { materials: { upsert: [{ ...stored, safetyKg: 30 }] } }, "saveMaterial"), "RF_FORBIDDEN", "ST edits no material");
+  const version = (await s.call("app_rf_master")).version;
+  assert.deepEqual((await s.call("app_rf_master_since", { p_version: version - 1 })).changes.purchaseOrders, { upsert: [], delete: [] }, "the delta carries the list even when empty");
+});
+
+test("ordering: the planner group and RB members create the order with the edited safety stock in one save; ST and others are refused; bad shapes are refused", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await withMaterials(s, rig);
+  await s.as("persona-pp");
+  const before = (await s.call("app_rf_master")).version;
+  const out = await saved(rig.store.run("createPurchaseOrder", {
+    lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, qtyKg: "65.5" }, { materialCode: "CB-N550", needKg: 30, availableKg: 30, shortageKg: 0, qtyKg: 0 }],
+    safety: { "EPDM-55": "25.5", "CB-N550": "5" }, sourcePi: "PI-1", note: "เร่ง",
+  }));
+  assert.equal(out.result, PO_NO);
+  const master = await s.call("app_rf_master");
+  assert.equal(master.version, before + 1, "the order and the safety stock of both materials are one save");
+  assert.deepEqual(master.purchaseOrders, [{
+    id: PO_NO, status: "ordered", sourcePi: "PI-1", sourceRequisition: null, note: "เร่ง", createdAt: NOW, createdBy: "สมศรี วางแผน", cancelledAt: null,
+    lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 25.5, qtyKg: 65.5, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null }],
+  }]);
+  assert.deepEqual(master.materials.map((row) => [row.code, row.safetyKg]), [["CB-N550", 5], ["EPDM-55", 25.5]], "safety stock edited for a material that is not ordered is saved too");
+  assert.deepEqual(rig.store.data().purchaseOrders, master.purchaseOrders, "the page equals the database");
+  await inSync(s, rig, "after ordering");
+  const audit = (await s.call("app_rf_audit", { p_limit: 1 }))[0];
+  assert.deepEqual([audit.action, audit.detail], ["createPurchaseOrder", "materials +2, purchaseOrders +1"]);
+
+  // สมาชิก RB สั่งได้ (ส่วนที่ขาดของใบเบิก) · เลขถัดไป
+  await s.as("persona-rb");
+  const second = await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "CB-N550", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }], note: "ขาดจากใบเบิก", sourceRequisition: "REQ-X" }));
+  assert.equal(second.result, `PO-${rules.ymd(NOW)}-02`);
+  assert.equal(rig.store.data().purchaseOrders.find((row) => row.id === second.result).createdBy, "ประยุทธ รีดยาง");
+
+  // ST / SR / QA / GR: หน้าจอปฏิเสธก่อน และฐานข้อมูลปฏิเสธเมื่อส่งตรง
+  const payload = { lines: [{ materialCode: "CB-N550", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }] };
+  for (const persona of ["persona-st", "persona-sr", "persona-qa", "persona-gr", "persona-wh"]) {
+    await s.as(persona);
+    assert.match(rig.store.run("createPurchaseOrder", payload).error.message, /ไม่มีสิทธิ์: สั่งซื้อวัตถุดิบได้โดย/, persona);
+    assert.equal(await sendPo(s, persona, { purchaseOrders: { upsert: [PO_ROW(`PO-${D8}-09`, [PO_LINE("CB-N550")])] } }), "RF_FORBIDDEN", persona);
+  }
+
+  // รูปที่ไม่ถูกต้อง : RF_INVALID_PURCHASE / สถานะ RF_INVALID_TRANSITION · ไม่เขียนอะไร
+  const send = (row) => sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row] } });
+  const NEW = `PO-${D8}-09`;
+  assert.equal(await send(PO_ROW(NEW, [PO_LINE("CB-N550")])), undefined, "a clean row is accepted");
+  const cases = [
+    ["a bad number", PO_ROW("not-a-po-no", [PO_LINE("CB-N550")]), "RF_INVALID_PURCHASE"],
+    ["no lines", PO_ROW(`PO-${D8}-10`, []), "RF_INVALID_PURCHASE"],
+    ["101 lines", PO_ROW(`PO-${D8}-10`, Array.from({ length: 101 }, (_, i) => PO_LINE(`M${i}`))), "RF_INVALID_PURCHASE"],
+    ["a zero quantity", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550", { qtyKg: 0 })]), "RF_INVALID_PURCHASE"],
+    ["a negative need", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550", { needKg: -1 })]), "RF_INVALID_PURCHASE"],
+    ["more than 1e9 kg", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550", { qtyKg: 1e9 + 1 })]), "RF_INVALID_PURCHASE"],
+    ["the same material twice", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550"), PO_LINE("CB-N550")]), "RF_INVALID_PURCHASE"],
+    ["an unknown material", PO_ROW(`PO-${D8}-10`, [PO_LINE("NOPE")]), "RF_INVALID_PURCHASE"],
+    ["received data on a new order", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550", { receivedKg: 5, lotNo: "RM-X", expiry: NOW + DAY })]), "RF_INVALID_PURCHASE"],
+    ["a lot number on a new order", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550", { lotNo: "RM-X" })]), "RF_INVALID_PURCHASE"],
+    ["a status other than ordered", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "received" }), "RF_INVALID_PURCHASE"],
+    ["a cancelled new order", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "cancelled" }), "RF_INVALID_PURCHASE"],
+    ["an unknown status", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "shipped" }), "RF_INVALID_PURCHASE"],
+    ["a note over 300 characters", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { note: "x".repeat(301) }), "RF_INVALID_PURCHASE"],
+  ];
+  for (const [label, row, code] of cases) assert.equal(await send(row), code, label);
+  // เลขซ้ำกับที่มีอยู่ (ฐานข้อมูลเป็นฝั่งตัดสิน: base ปัจจุบัน = RF_CONFLICT ส่วน base เก่า = RF_STALE ดูเทสต์สองหน้าจอ)
+  assert.equal(await send(PO_ROW(PO_NO, [PO_LINE("CB-N550", { qtyKg: 61 })])), "RF_CONFLICT", "a duplicate number");
+  // ชุดข้อมูลที่ส่งได้ขึ้นกับคำสั่ง: purchaseOrders ส่งได้เฉพาะสามคำสั่งของใบสั่งซื้อ · สั่งซื้อส่งได้แค่ purchaseOrders + materials
+  const row9 = PO_ROW(`PO-${D8}-11`, [PO_LINE("CB-N550")]);
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] } }, "saveMaterial"), "RF_INVALID_PURCHASE", "orders sent by another action");
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] } }, "cancelPurchaseOrder"), "RF_INVALID_PURCHASE", "a new order sent as a cancel");
+  const stockLot = { lotNo: `RM-CB-N550-${D8}-01`, materialCode: "CB-N550", qtyKg: 5, initialKg: 5, expiry: NOW + DAY, supplier: "x", location: "B-1", status: "available", coa: false };
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] }, materialLots: { upsert: [stockLot] } }), "RF_INVALID_PURCHASE", "an order may not carry lots");
+  // วัตถุดิบมากับใบสั่งซื้อได้เฉพาะ safetyKg ของวัตถุดิบที่มีอยู่
+  const material = (await s.call("app_rf_master")).materials.find((row) => row.code === "EPDM-55");
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] }, materials: { upsert: [{ ...material, name: "เปลี่ยนชื่อ" }] } }), "RF_INVALID_MATERIAL", "only the safety stock may change");
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] }, materials: { upsert: [{ ...material, code: "NEW-MAT", name: "ใหม่" }] } }), "RF_INVALID_MATERIAL", "no new material");
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [PO_ROW(`PO-${D8}-11`, [PO_LINE("EPDM-55")])] }, materials: { upsert: [{ ...material, safetyKg: 8 }] } }), undefined, "the safety stock of an existing material comes with the order");
+  // วัตถุดิบที่เลิกใช้สั่งไม่ได้
+  await s.as("persona-rbh");
+  await saved(rig.store.run("saveMaterial", { code: "CB-N550", name: "เขม่าดำ", category: "สารตัวเติม", storage: "B-1", uom: "kg", active: "0" }));
+  assert.equal(await send(PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")])), "RF_INVALID_PURCHASE", "inactive material");
+  await s.as("persona-pp");
+  assert.match(rig.store.run("createPurchaseOrder", payload).error.message, /เลิกใช้/);
+});
+
+test("receiving: ST checks the line in, the lot is made in the same save and matches, a line is received once, the order flips to received with the last line", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await withMaterials(s, rig);
+  await saved(rig.store.run("saveMaterial", { code: "EPDM-55", name: "ยาง EPDM", category: "โพลิเมอร์", storage: "A-1", uom: "kg", active: true, shelfLifeDays: 90 }));
+  await s.as("persona-pp");
+  const po = (await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, qtyKg: 60 }, { materialCode: "CB-N550", needKg: 20, availableKg: 0, shortageKg: 20, qtyKg: 30 }] }))).result;
+  assert.equal(po, PO_NO);
+
+  // ผู้ที่รับไม่ได้ : RB / QA / SR (หน้าจอปฏิเสธก่อน)
+  for (const persona of ["persona-rb", "persona-qa", "persona-sr", "persona-gr"]) {
+    await s.as(persona);
+    assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 60, expiry: NOW + 90 * DAY }).error.message, /ไม่มีสิทธิ์: รับวัตถุดิบเข้าคลัง/, persona);
+  }
+  // ...และฐานข้อมูลปฏิเสธเมื่อส่งตรง (ล็อตใหม่ + บรรทัดรับ)
+  const master = () => s.call("app_rf_master");
+  const snap = await master();
+  const row = snap.purchaseOrders[0];
+  const received = { ...row, lines: [{ ...row.lines[0], receivedKg: 60, lotNo: `RM-EPDM-55-${D8}-01`, expiry: NOW + 90 * DAY }, row.lines[1]] };
+  const lot = { lotNo: `RM-EPDM-55-${D8}-01`, materialCode: "EPDM-55", qtyKg: 60, initialKg: 60, expiry: NOW + 90 * DAY, supplier: po, location: "A-1", status: "available", coa: false };
+  const receipt = (over = {}, lotOver = {}) => ({ purchaseOrders: { upsert: [{ ...received, ...over }] }, materialLots: { upsert: [{ ...lot, ...lotOver }] } });
+  for (const persona of ["persona-rb", "persona-qa", "persona-sr"]) assert.equal(await sendPo(s, persona, receipt(), "receivePurchaseLine"), "RF_FORBIDDEN", persona);
+
+  // รับไม่ตรง : ไม่มีล็อต / ล็อตสองล็อต / วัตถุดิบ ปริมาณ วันหมดอายุ หรือเลขล็อตไม่ตรงบรรทัด → RF_INVALID_PURCHASE ไม่เขียนอะไร
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [received] } }, "receivePurchaseLine"), "RF_INVALID_PURCHASE", "a receipt without its lot");
+  assert.equal(await sendPo(s, "persona-st", { ...receipt(), materialLots: { upsert: [lot, { ...lot, lotNo: `RM-EPDM-55-${D8}-02` }] } }, "receivePurchaseLine"), "RF_INVALID_PURCHASE", "two new lots");
+  assert.equal(await sendPo(s, "persona-st", receipt({}, { qtyKg: 59, initialKg: 59 }), "receivePurchaseLine"), "RF_INVALID_PURCHASE", "the lot weighs less");
+  assert.equal(await sendPo(s, "persona-st", receipt({}, { expiry: NOW + 91 * DAY }), "receivePurchaseLine"), "RF_INVALID_PURCHASE", "another expiry");
+  assert.equal(await sendPo(s, "persona-st", receipt({}, { materialCode: "CB-N550" }), "receivePurchaseLine"), "RF_INVALID_PURCHASE", "another material");
+  assert.equal(await sendPo(s, "persona-st", receipt({}, { lotNo: `RM-EPDM-55-${D8}-09` }), "receivePurchaseLine"), "RF_INVALID_PURCHASE", "another lot number");
+  assert.equal(await sendPo(s, "persona-st", receipt({ lines: [{ ...received.lines[0], receivedKg: 0 }, row.lines[1]] }), "receivePurchaseLine"), "RF_INVALID_PURCHASE", "nothing received");
+  assert.equal(await sendPo(s, "persona-st", receipt({ lines: [{ ...received.lines[0], expiry: NOW - DAY }, row.lines[1]] }), "receivePurchaseLine"), "RF_INVALID_PURCHASE", "expiry in the past");
+  // สองบรรทัดพร้อมกัน / แก้ส่วนอื่นของใบ → ไม่รับ
+  const both = { ...received, lines: [received.lines[0], { ...row.lines[1], receivedKg: 30, lotNo: `RM-CB-N550-${D8}-01`, expiry: NOW + DAY }] };
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [both] }, materialLots: { upsert: [lot, { ...lot, lotNo: `RM-CB-N550-${D8}-01`, materialCode: "CB-N550", qtyKg: 30, initialKg: 30, expiry: NOW + DAY }] } }, "receivePurchaseLine"), "RF_INVALID_PURCHASE", "one line per save");
+  assert.equal(await sendPo(s, "persona-st", receipt({ note: "แก้โน้ต" }), "receivePurchaseLine"), "RF_INVALID_TRANSITION", "the header cannot change");
+  assert.equal(await sendPo(s, "persona-st", receipt({ lines: [{ ...received.lines[0], qtyKg: 70 }, row.lines[1]] }), "receivePurchaseLine"), "RF_INVALID_TRANSITION", "the ordered quantity cannot change");
+  assert.equal((await master()).materialLots.length, 0, "no refused receipt left a lot behind");
+
+  // ST ตรวจสอบรับเข้า : แก้ปริมาณจริงและวันหมดอายุได้ ล็อตและบรรทัดเกิดในการบันทึกครั้งเดียว
+  await s.as("persona-st");
+  const before = (await master()).version;
+  const lotNo = (await saved(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: "58.5", expiry: NOW + 80 * DAY }))).result;
+  assert.match(lotNo, /^RM-EPDM-55-\d{8}-01$/);
+  const after = await master();
+  assert.equal(after.version, before + 1, "the lot and the line are one save");
+  assert.deepEqual(after.materialLots.map((item) => [item.lotNo, item.materialCode, item.qtyKg, item.initialKg, item.expiry, item.supplier, item.location, item.status, item.receivedBy]), [[lotNo, "EPDM-55", 58.5, 58.5, NOW + 80 * DAY, po, "A-1", "available", "วิชัย คลังวัตถุดิบ"]]);
+  const line = after.purchaseOrders[0].lines[0];
+  assert.deepEqual([line.receivedKg, line.lotNo, line.expiry, line.receivedAt, line.receivedBy], [58.5, lotNo, NOW + 80 * DAY, NOW, "วิชัย คลังวัตถุดิบ"]);
+  assert.equal(after.purchaseOrders[0].status, "ordered", "one line still open");
+  await inSync(s, rig, "after the first receipt");
+  assert.equal((await s.call("app_rf_audit", { p_limit: 1 }))[0].detail, "materialLots +1, purchaseOrders +1");
+  // รับซ้ำบรรทัดเดิม: หน้าจอปฏิเสธ · ฐานข้อมูลปฏิเสธเมื่อส่งตรง
+  assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY }).error.message, /รับเข้าแล้ว/);
+  const again = (await master()).purchaseOrders[0];
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...again, lines: [{ ...again.lines[0], receivedKg: 1 }, again.lines[1]] }] }, materialLots: { upsert: [{ ...lot, lotNo: `RM-EPDM-55-${D8}-09`, qtyKg: 1, initialKg: 1 }] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION", "a received line cannot be received again");
+  // ยกเลิกไม่ได้เมื่อมีบรรทัดรับแล้ว
+  await s.as("persona-pp");
+  assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /รับเข้าแล้ว/);
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...again, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  // บรรทัดสุดท้าย : ผู้วางแผนรับได้เหมือน ST → ใบเป็น received
+  const last = await go(s, rig, "persona-pp", "receivePurchaseLine", { id: po, materialCode: "CB-N550", qtyKg: 30, expiry: NOW + 60 * DAY, supplier: "ผู้ขาย ก" });
+  assert.match(last.result, /^RM-CB-N550-/);
+  const done = (await master());
+  assert.equal(done.purchaseOrders[0].status, "received");
+  assert.equal(done.materialLots.find((item) => item.lotNo === last.result).supplier, "ผู้ขาย ก");
+  assert.equal(done.purchaseOrders[0].lines[1].receivedBy, "สมศรี วางแผน");
+  assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "CB-N550", qtyKg: 1, expiry: NOW + DAY }).error.message, /รับครบแล้ว/);
+  await inSync(s, rig, "after the last receipt");
+  // ใบที่รับครบแล้วแก้อะไรไม่ได้อีก
+  const closed = done.purchaseOrders[0];
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...closed, status: "ordered" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...closed, note: "x" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+});
+
+test("cancelling: only the planner group, only an ordered order with no received line; the cancelled order cannot be received and no longer counts as on order", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await withMaterials(s, rig);
+  await s.as("persona-pp");
+  const make = async () => (await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }] }))).result;
+  const po = await make();
+  // RB สั่งแล้วยกเลิกเองไม่ได้ ST/QA ก็ไม่ได้ (หน้าจอปฏิเสธก่อน ฐานข้อมูลปฏิเสธเมื่อส่งตรง)
+  const row = (await s.call("app_rf_master")).purchaseOrders[0];
+  for (const persona of ["persona-rb", "persona-st", "persona-qa"]) {
+    await s.as(persona);
+    assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /ไม่มีสิทธิ์: ยกเลิกใบสั่งซื้อ/, persona);
+    assert.equal(await sendPo(s, persona, { purchaseOrders: { upsert: [{ ...row, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_FORBIDDEN", persona);
+  }
+  const before = (await s.call("app_rf_master")).version;
+  await go(s, rig, "persona-pp", "cancelPurchaseOrder", { id: po });
+  const cancelled = (await s.call("app_rf_master")).purchaseOrders[0];
+  assert.deepEqual([cancelled.status, cancelled.cancelledAt, (await s.call("app_rf_master")).version], ["cancelled", NOW, before + 1]);
+  assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /ยกเลิกไปแล้ว/);
+  assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY }).error.message, /ถูกยกเลิกแล้ว/);
+  // ส่งตรงเพื่อรับใบที่ยกเลิก / ยกเลิกซ้ำ / เปลี่ยนกลับ → RF_INVALID_TRANSITION
+  const lot = { lotNo: `RM-EPDM-55-${D8}-01`, materialCode: "EPDM-55", qtyKg: 10, initialKg: 10, expiry: NOW + DAY, supplier: po, location: "A-1", status: "available", coa: false };
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...cancelled, status: "ordered", lines: [{ ...cancelled.lines[0], receivedKg: 10, lotNo: lot.lotNo, expiry: lot.expiry }] }] }, materialLots: { upsert: [lot] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION");
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...cancelled, status: "ordered" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  await inSync(s, rig, "after the cancel");
+});
+
+test("purchase order saves follow the database: signed availability, 60-character sources, an identical copy is a no-op, the right is checked before the transition, a lot alone is a plain lot save", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await withMaterials(s, rig);
+  await s.as("persona-pp");
+  const send = (row, persona = "persona-pp", action = "createPurchaseOrder") => sendPo(s, persona, { purchaseOrders: { upsert: [row] } }, action);
+  // availableKg may be negative (other open WOs already use the stock) within +-1e9; the other quantities stay 0 or more
+  const crowded = await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: -13.75, shortageKg: 63.75, qtyKg: 70 }] }));
+  const stored = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === crowded.result);
+  assert.equal(stored.lines[0].availableKg, -13.75);
+  assert.equal(await send(PO_ROW(`PO-${D8}-20`, [PO_LINE("CB-N550", { availableKg: -1e9 })])), undefined);
+  assert.equal(await send(PO_ROW(`PO-${D8}-21`, [PO_LINE("CB-N550", { availableKg: -1e9 - 1 })])), "RF_INVALID_PURCHASE", "below -1e9");
+  assert.equal(await send(PO_ROW(`PO-${D8}-21`, [PO_LINE("CB-N550", { shortageKg: -1 })])), "RF_INVALID_PURCHASE", "a negative shortage");
+  // the source references hold 60 characters
+  assert.equal(await send(PO_ROW(`PO-${D8}-22`, [PO_LINE("CB-N550")], { sourcePi: "P".repeat(60), sourceRequisition: "R".repeat(60) })), undefined);
+  assert.equal(await send(PO_ROW(`PO-${D8}-23`, [PO_LINE("CB-N550")], { sourcePi: "P".repeat(61) })), "RF_INVALID_PURCHASE");
+  assert.equal(await send(PO_ROW(`PO-${D8}-23`, [PO_LINE("CB-N550")], { sourceRequisition: "R".repeat(61) })), "RF_INVALID_PURCHASE");
+  assert.equal(await send(PO_ROW(`PO-${D8}-1234567`, [PO_LINE("CB-N550")])), "RF_INVALID_PURCHASE", "more than six digits in the sequence");
+  // a copy identical to the stored order changes nothing; a different one is refused as a transition (not a conflict); another creation time is a clash
+  const version = (await s.call("app_rf_master")).version;
+  assert.equal(await send(stored), undefined, "an identical copy");
+  assert.equal((await s.call("app_rf_master")).version, version, "an identical copy writes nothing");
+  assert.equal(await send({ ...stored, lines: [{ ...stored.lines[0], qtyKg: 71 }] }), "RF_INVALID_TRANSITION", "the same number with other content");
+  assert.equal(await send({ ...stored, createdAt: stored.createdAt + 1 }), "RF_CONFLICT", "another creation time");
+  // a new order with a status other than ordered is a bad shape for any account that may order; one that may not order is refused first
+  assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" })), "RF_INVALID_PURCHASE");
+  assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" }), "persona-st"), "RF_FORBIDDEN");
+  // cancelling: the right comes before the transition (RB may not cancel even an order that cannot be cancelled), the planner gets the transition error
+  await go(s, rig, "persona-st", "receivePurchaseLine", { id: crowded.result, materialCode: "EPDM-55", qtyKg: 70, expiry: NOW + 90 * DAY });
+  const receivedOrder = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === crowded.result);
+  assert.equal(receivedOrder.status, "received");
+  assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-rb", "cancelPurchaseOrder"), "RF_FORBIDDEN");
+  assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-pp", "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  // a lot sent alone under the receive action is a plain lot save: the database only checks a receipt when an order line comes with it
+  const lot = { lotNo: `RM-CB-N550-${D8}-07`, materialCode: "CB-N550", qtyKg: 5, initialKg: 5, expiry: NOW + DAY, supplier: "x", location: "B-1", status: "available", coa: false };
+  assert.equal(await sendPo(s, "persona-st", { materialLots: { upsert: [lot] } }, "receivePurchaseLine"), undefined);
+  assert.deepEqual((await s.call("app_rf_master")).materialLots.map((row) => row.lotNo).filter((no) => no === lot.lotNo), [lot.lotNo]);
+});
+
+test("two screens ordering at once: the second gets the same number and is told it is stale, then catches up and orders again with the next number", async () => {
+  const s = await session();
+  const a = await s.make();
+  const b = await s.make();
+  await withMaterials(s, a);
+  await b.store.catchUp();
+  await s.as("persona-pp");
+  const payload = { lines: [{ materialCode: "EPDM-55", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }] };
+  const first = await saved(a.store.run("createPurchaseOrder", payload));
+  const mine = b.store.run("createPurchaseOrder", { lines: [{ ...payload.lines[0], qtyKg: 11 }] });
+  assert.equal(mine.result, first.result, "b has not seen a's order: the same number");
+  const clash = await mine.saving;
+  assert.equal(clash.ok, false);
+  assert.equal(clash.error.code, "RF_STALE");
+  assert.deepEqual(b.store.data().purchaseOrders.map((row) => row.id), [first.result], "b caught up with a's order and its own was reverted");
+  const retry = await saved(b.store.run("createPurchaseOrder", { lines: [{ ...payload.lines[0], qtyKg: 11 }] }));
+  assert.equal(retry.result, `PO-${rules.ymd(NOW)}-02`);
+  assert.equal((await s.call("app_rf_master")).purchaseOrders.length, 2);
+  // a's page gets b's order by catching up (the list is merged by id)
+  assert.equal(await a.store.catchUp(), true);
+  assert.deepEqual(a.store.data().purchaseOrders.map((row) => row.id), [`PO-${rules.ymd(NOW)}-01`, `PO-${rules.ymd(NOW)}-02`]);
+});
+
+test("purge removes the purchase orders with the rest, and the invalid-purchase code has a Thai message", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await withMaterials(s, rig);
+  await s.as("persona-1");
+  await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }] }));
+  const purged = await rig.store.purge();
+  assert.equal(purged.ok, true);
+  assert.equal(purged.deleted, 3, "two materials and the order");
+  assert.deepEqual(rig.store.data().purchaseOrders, []);
+  assert.deepEqual((await s.call("app_rf_master")).purchaseOrders, []);
+  assert.match(storeApi.mapRemoteError({ message: "RF_INVALID_PURCHASE" }).message, /ใบสั่งซื้อไม่ถูกต้อง/);
+  assert.equal(storeApi.mapRemoteError({ message: "RF_INVALID_PURCHASE" }).code, "RF_INVALID_PURCHASE");
+  // the rights of the buttons (the database decides for real)
+  const employee = (role, dept) => storeApi.personaUser({ id: `${role}-${dept}`, first_name: "ก", last_name: "ข", role: { code: role }, department: { code: dept } });
+  const who = { pp: employee("staff", "PP"), rb: employee("staff", "RB"), st: employee("staff", "ST"), qa: employee("staff", "QA"), mgr: employee("department_manager", "GR") };
+  const allowed = { purchase: ["pp", "rb", "mgr"], cancelPurchase: ["pp", "mgr"], receiveMaterial: ["pp", "st", "mgr"] };
+  for (const [permission, keys] of Object.entries(allowed)) for (const key of Object.keys(who)) assert.equal(storeApi.can(who[key], permission), keys.includes(key), `${permission} for ${key}`);
+  assert.equal(storeApi.rightForAction("createPurchaseOrder"), "purchase");
+  assert.equal(storeApi.rightForAction("receivePurchaseLine"), "receiveMaterial");
+  assert.equal(storeApi.rightForAction("cancelPurchaseOrder"), "cancelPurchase");
+  assert.equal(storeApi.rightForDialog("purchase"), "purchase");
+  assert.equal(storeApi.rightForDialog("receivePurchase"), "receiveMaterial");
+  assert.equal(storeApi.can({ role: "viewer" }, "purchase"), true, "the demo mode does not restrict these buttons");
 });

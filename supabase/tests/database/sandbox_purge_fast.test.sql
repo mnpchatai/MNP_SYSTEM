@@ -21,7 +21,7 @@ create temp table purge_bom_tables(name text) on commit drop;
 insert into purge_bom_tables values ('bom_jobs'), ('bom_orders'), ('bom_customers'), ('bom_bom_lines'), ('bom_boms'), ('bom_routings'), ('bom_color_sets'),
   ('bom_packages'), ('bom_colors'), ('bom_processes'), ('bom_compounds'), ('bom_items'), ('bom_deleted_keys');
 create temp table purge_rf_tables(name text) on commit drop;
-insert into purge_rf_tables values ('rf_ncrs'), ('rf_qc_records'), ('rf_fg_boxes'), ('rf_transfers'), ('rf_requisitions'), ('rf_lots'), ('rf_material_lots'),
+insert into purge_rf_tables values ('rf_purchase_orders'), ('rf_ncrs'), ('rf_qc_records'), ('rf_fg_boxes'), ('rf_transfers'), ('rf_requisitions'), ('rf_lots'), ('rf_material_lots'),
   ('rf_molds'), ('rf_orders'), ('rf_recipes'), ('rf_materials'), ('rf_deleted_keys');
 
 -- 1. ดัชนีฝั่งตารางลูกของ foreign key และนิยามฟังก์ชัน -----------------------------------------
@@ -85,6 +85,7 @@ values ('REAL-RC', 1, 'RP', 'm', 10,
 insert into public.rf_orders (wo_no, customer, recipe_code, recipe_revision, product_code, uom, target_qty, start_date, due_date)
 values ('REAL-WO', 'ลูกค้าจริง', 'REAL-RC', 1, 'RP', 'm', 5, 1762300000000, 1762400000000);
 insert into public.rf_molds (mold_no, name, clean_every) values ('REAL-DIE', 'หัวดายจริง', 1000);
+insert into public.rf_purchase_orders (po_no, lines) values ('PO-20260101-01', '[{"materialCode":"REAL-MAT","qtyKg":1}]'::jsonb);
 
 -- 3.2 BOM ทดสอบจำนวนมากเท่าขนาดข้อมูลจริง: 7,000 item · 4,000 BOM × 5 บรรทัด · งาน 500 · และตารางที่เหลืออย่างน้อยหนึ่งแถว
 insert into public.bom_items (is_test, code, kind, name, owner_dept, uom)
@@ -128,6 +129,8 @@ select true, 'TBX-' || g, 'TL-' || g, 'TWO-' || g, 'TRC', 1, 'kg' from generate_
 insert into public.rf_qc_records (is_test, qc_no, lot_no, order_no, stage, tests, result)
 select true, 'TQC-' || g, 'TL-' || g, 'TWO-' || g, 'mixing', '[{"key":"hardness","value":50,"pass":true}]'::jsonb, 'pass' from generate_series(1, 300) g;
 insert into public.rf_ncrs (is_test, ncr_no, title, lot_no) values (true, 'TN-1', 'NCR ทดสอบ', 'TL-1');
+insert into public.rf_purchase_orders (is_test, po_no, lines)
+select true, 'PO-20260102-' || lpad(g::text, 3, '0'), '[{"materialCode":"TM-1","qtyKg":1}]'::jsonb from generate_series(1, 20) g;
 insert into public.rf_deleted_keys (is_test, list, key) values (true, 'orders', 'T-DEL');
 
 select ok(pg_temp.cnt('bom_bom_lines', true) = 20000 and pg_temp.cnt('bom_items', true) = 7000 and pg_temp.cnt('bom_boms', true) = 4000,
@@ -144,7 +147,7 @@ select set_config('test.epoch_bom', (select epoch::text from public.bom_master_s
 select set_config('test.epoch_rf', (select epoch::text from public.rf_master_state where is_test), true);
 select set_config('test.audit_bom', (select count(*)::text from public.audit_logs where action = 'BOM_SANDBOX_PURGE'), true);
 select set_config('test.audit_rf', (select count(*)::text from public.audit_logs where action = 'RF_SANDBOX_PURGE'), true);
-select ok(current_setting('test.real_bom')::bigint >= 8 and current_setting('test.real_rf')::bigint >= 4,
+select ok(current_setting('test.real_bom')::bigint >= 8 and current_setting('test.real_rf')::bigint >= 5,
   'the real fixture rows are in place');
 
 -- 4. ปฏิเสธ: ไม่มี session / ไม่ใช่ admin / admin นอกโหมดทดสอบ -------------------------------------
