@@ -454,11 +454,14 @@
   // ฐานข้อมูลตรวจรหัสของซื้อกับ item master และตั้งหน่วยเอง · โหมดในเครื่อง RubberFlow และ BOM แยกที่เก็บ จึงรับของซื้อแล้วยอดคงเหลือของ BOM ไม่เปลี่ยน (เปลี่ยนเฉพาะโหมดฐานข้อมูล)
   // ฐานข้อมูลตรวจซ้ำทุกข้อและประทับเวลา/ผู้บันทึกเอง · สร้างได้เฉพาะ ordered ที่ยังไม่มีข้อมูลการรับ
   const PO_MAX_LINES = 100;
-  const kgOf = (value, label, { positive = false } = {}) => {
+  const kgOf = (value, label, { positive = false, digits = 3 } = {}) => {
     const n = Number(value);
     if (value === "" || value === null || value === undefined || !Number.isFinite(n) || n < 0 || n > 1e9 || (positive && n <= 0)) fail(`${label}ต้องเป็นตัวเลข${positive ? "มากกว่า 0" : "0 ขึ้นไป"}`);
-    return Math.round(n * 1000) / 1000;
+    const scale = 10 ** digits;
+    return Math.round(n * scale) / scale;
   };
+  // สต็อกขั้นต่ำของซื้อ: ความละเอียดเดียวกับหน้าคลังของซื้อของ BOM (4 ตำแหน่ง) ค่าที่เก็บจึงเทียบกับฐานข้อมูลได้ตรงตัว
+  const partSafetyOf = (value, code) => kgOf(value, `สต็อกขั้นต่ำของ ${code}`, { digits: 4 });
   // พร้อมใช้ติดลบได้ (ฐานข้อมูลรับ ±1e9)
   const signedKgOf = (value, label) => {
     const n = Number(value);
@@ -487,12 +490,12 @@
         if (!uom) fail(`ไม่ทราบหน่วยของ ${code}`);
         // สต็อกขั้นต่ำของซื้อ (เก็บที่คลังของซื้อ) แก้ได้เฉพาะกลุ่มวางแผน: สมาชิก RB สั่งซื้อได้ต่อเมื่อค่าเท่าที่เก็บ (storedSafetyKg ที่หน้าต่างสั่งซื้อส่งมา) · ฐานข้อมูลตรวจซ้ำ (RF_FORBIDDEN)
         if (ctx.remote && !ctx.user?.planner) {
-          const wanted = kgOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`);
-          if (wanted !== kgOf(line.storedSafetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`)) fail(`แก้สต็อกขั้นต่ำของของซื้อ ${code} ได้โดยฝ่ายวางแผนเท่านั้น`);
+          const wanted = partSafetyOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, code);
+          if (wanted !== partSafetyOf(line.storedSafetyKg ?? 0, code)) fail(`แก้สต็อกขั้นต่ำของของซื้อ ${code} ได้โดยฝ่ายวางแผนเท่านั้น`);
         }
         return {
           materialCode: code, source: "bom", uom, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: signedKgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
-          safetyKg: kgOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`), qtyKg: kgOf(line.qtyKg, `จำนวนสั่งของ ${code}`, { positive: true }),
+          safetyKg: partSafetyOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, code), qtyKg: kgOf(line.qtyKg, `จำนวนสั่งของ ${code}`, { positive: true }),
           receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null,
         };
       }

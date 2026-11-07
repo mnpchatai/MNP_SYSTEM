@@ -597,3 +597,12 @@ test("a purchase order can mix chemical lines and purchased-part lines: a part l
   assert.equal(d.purchaseOrders[0].status, "received", "the order is received once the chemical and the part line are in");
   assert.ok(d.audit.some((row) => row.action === "ตรวจสอบรับเข้าตามใบสั่งซื้อ" && row.detail === `${id} P-BOX-01 18.5 box`));
 });
+
+test("a part's safety stock keeps the stock page's 4 decimals, so an RB member can order a part whose stored safety has 4 decimals and still cannot change it", () => {
+  const d = fresh();
+  const rb = remoteCtx({ rb: true });
+  const line = { materialCode: "P-KG-01", source: "bom", uom: "kg", needKg: 2, availableKg: 0, shortageKg: 2, safetyKg: 1.2345, storedSafetyKg: 1.2345, qtyKg: 3 };
+  A.createPurchaseOrder(d, { lines: [line], safety: { "P-KG-01": "1.2345" } }, rb);
+  assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.2345, "sent exactly as stored (the database compares numerics exactly)");
+  rejects(() => A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, rb), /ฝ่ายวางแผนเท่านั้น/);
+});
