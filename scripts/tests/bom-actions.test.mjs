@@ -489,7 +489,7 @@ test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes
   rejects(() => A.importFlat(d, { items: [] }, ctx("planner")), /ไม่มีรายการ/);
   const itemsBefore = d.items.length;
   const { summary, ...stats } = A.importFlat(d, payload, ctx("planner"));
-  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1, linesSkipped: 0 }, "PT-00320 already has a BOM → skipped; P-STK-01 and PT-00320 merged");
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1, linesSkipped: 0, cycleLinesSkipped: 0 }, "PT-00320 already has a BOM → skipped; P-STK-01 and PT-00320 merged");
   assert.equal(summary, "ชิ้นงานใหม่ 4 (มีอยู่แล้ว 2) · BOM ใหม่ 2 ข้าม 1");
   assert.equal(d.items.length, itemsBefore + 4);
   const fg = approved(d, "IMP-01(P)-Y");
@@ -531,7 +531,7 @@ test("importing a whole DATA sheet (thousands of items, tens of thousands of lin
   const started = performance.now();
   const { summary, ...stats } = A.importFlat(d, { items, boms, source: "big.xlsx", group: "TOY" }, ctx("planner"));
   const elapsed = performance.now() - started;
-  assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1, linesSkipped: 0 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
+  assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1, linesSkipped: 0, cycleLinesSkipped: 0 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
   assert.ok(elapsed < 5000, `importFlat took ${Math.round(elapsed)} ms`);
   assert.equal(summary, `ชิ้นงานใหม่ ${FG * 2 + 2300} (มีอยู่แล้ว 1) · BOM ใหม่ ${FG * 2} ข้าม 1`);
   const fg = approved(d, "BIG-0000(P)-Y");
@@ -557,11 +557,33 @@ test("importing skips the BOM lines the database rejects (a purchased parent, a 
     { parentCode: "RB-K-01-1-1-1", lines: [{ childCode: "P-BUY-2", qty: 1 }] },
   ];
   const { summary, ...stats } = A.importFlat(d, { items, boms, source: "kinds.xlsx" }, ctx("planner"));
-  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 1, bomsSkipped: 0, linesSkipped: 2 });
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 1, bomsSkipped: 0, linesSkipped: 2, cycleLinesSkipped: 0 });
   assert.match(summary, /ข้าม 2 บรรทัดที่ชนิดพ่อ\/ลูกไม่เข้ากัน$/);
   assert.equal(approved(d, "P-BUY-1"), null, "a purchased part gets no BOM");
   assert.equal(approved(d, "RB-K-01-1-1-1"), null, "a rod's only child may be a compound");
   assert.deepEqual(approved(d, "FG-KIND(P)-Y").lines.map((line) => line.childCode), ["P-BUY-1", "RB-K-01-1-1-1"], "valid lines stay, sorted ST before RB");
+});
+
+test("importing skips a line that makes a BOM contain itself (directly or through its children) instead of the database refusing the whole batch with BOM_CYCLE", () => {
+  // DATA_BOM.xlsx จริง: 20 BOM ใช้ตัวเองเป็นส่วนประกอบ (PT-00224 → PT-00224, SG-08-0009 → SG-08-0009) ฐานข้อมูลปฏิเสธส่วนนั้นและการนำเข้าหยุดกลางทาง
+  const d = fresh();
+  const items = [
+    { code: "PT-SELF-1", kind: "PT", name: "ท่อ", uom: "pcs", ownerDept: "PT" },
+    { code: "P-RESIN-1", kind: "PURCHASED", name: "เม็ดพลาสติก", uom: "kg", ownerDept: "ST" },
+    { code: "SE-LOOP-A", kind: "SE", name: "ชิ้น A", uom: "pcs", ownerDept: "GR" },
+    { code: "SE-LOOP-B", kind: "SE", name: "ชิ้น B", uom: "pcs", ownerDept: "GR" },
+  ];
+  const boms = [
+    { parentCode: "PT-SELF-1", lines: [{ childCode: "PT-SELF-1", qty: 1 }, { childCode: "P-RESIN-1", qty: 0.2 }] },
+    { parentCode: "SE-LOOP-A", lines: [{ childCode: "SE-LOOP-B", qty: 1 }] },
+    { parentCode: "SE-LOOP-B", lines: [{ childCode: "SE-LOOP-A", qty: 1 }, { childCode: "P-RESIN-1", qty: 0.1 }] },
+  ];
+  const { summary, ...stats } = A.importFlat(d, { items, boms, source: "cycles.xlsx" }, ctx("planner"));
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 3, bomsSkipped: 0, linesSkipped: 0, cycleLinesSkipped: 2 });
+  assert.match(summary, /ข้าม 2 บรรทัดที่ใช้ตัวเองเป็นส่วนประกอบ$/);
+  assert.deepEqual(approved(d, "PT-SELF-1").lines.map((line) => line.childCode), ["P-RESIN-1"], "the self line is dropped, the rest of the BOM stays");
+  assert.deepEqual(approved(d, "SE-LOOP-A").lines.map((line) => line.childCode), ["SE-LOOP-B"], "the first BOM of a two-part loop is kept");
+  assert.deepEqual(approved(d, "SE-LOOP-B").lines.map((line) => line.childCode), ["P-RESIN-1"], "the line that closes the loop is dropped");
 });
 
 test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {

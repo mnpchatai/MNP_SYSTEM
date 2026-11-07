@@ -1738,6 +1738,10 @@
           const unlinked = r.compounds.filter((code) => !ctx.data.compounds.find((entry) => entry.code === code)?.recipeId);
           // บรรทัดที่ชนิดพ่อ/ลูกไม่เข้ากัน (เช่น ของซื้อมีส่วนประกอบ): importFlat ข้ามให้ บอกผู้ใช้ก่อนเพราะฐานข้อมูลไม่รับบรรทัดแบบนี้
           const kindIssues = [];
+          const selfIssues = []; // พ่อใช้ตัวเองเป็นส่วนประกอบ: ฐานข้อมูลตอบ BOM_CYCLE · importFlat ข้ามบรรทัดนี้ (และวงจรที่ยาวกว่า)
+          for (const entry of built.boms) {
+            for (const line of entry.lines) if (rules.canonicalCode(line.childCode) === entry.parentCode) selfIssues.push(entry.parentCode);
+          }
           for (const entry of built.boms) {
             const parentKind = result.items.get(entry.parentCode)?.kind;
             for (const line of entry.lines) {
@@ -1752,6 +1756,7 @@
             ${unlinked.length ? ui.callout("warn", `สูตรยางที่ยังไม่ผูกกับ RubberFlow: ${esc(unlinked.join(", "))} (ผูกได้ภายหลังที่เมนูสูตรยาง)`) : ""}
             ${r.unknownUom.length ? ui.callout("warn", `หน่วยที่แปลงไม่ได้ (บันทึกเป็น “หน่วยอื่น”): ${esc(r.unknownUom.slice(0, 20).join(", "))}${r.unknownUom.length > 20 ? " …" : ""}`) : ""}
             ${kindIssues.length ? ui.callout("warn", `จะข้าม ${esc(String(kindIssues.length))} บรรทัดที่ชนิดพ่อ/ลูกไม่เข้ากัน: ${esc(kindIssues.slice(0, 5).join(" · "))}${kindIssues.length > 5 ? " …" : ""}`) : ""}
+            ${selfIssues.length ? ui.callout("warn", `จะข้าม ${esc(String(selfIssues.length))} บรรทัดที่ใช้ตัวเองเป็นส่วนประกอบ: ${esc(selfIssues.slice(0, 10).join(", "))}${selfIssues.length > 10 ? " …" : ""}`) : ""}
             ${r.conflicts.length ? `<details class="bom-details"><summary>ข้อขัดแย้ง ${esc(String(r.conflicts.length))} รายการ (ใช้ค่าชุดแรก)</summary><ul class="small">${r.conflicts.slice(0, 50).map((text) => `<li>${esc(text)}</li>`).join("")}</ul></details>` : ""}
             ${ui.table(["สินค้า (FG)", "ส่วนประกอบชั้นแรก", "ชั้นลึกสุด"], built.boms.filter((entry) => result.items.get(entry.parentCode)?.kind === "FG").slice(0, 30).map((entry) => `<tr><td>${esc(entry.parentCode)}<div class="small muted">${esc(result.items.get(entry.parentCode)?.name ?? "")}</div></td><td>${esc(String(entry.lines.length))} บรรทัด</td><td>${esc(String(Math.max(...rules.explode(entry.parentCode, 1, { itemOf: (code) => result.items.get(rules.canonicalCode(code)) ?? null, approvedBomOf: (code) => (result.boms.has(code) ? { id: code, revision: 1, lines: result.boms.get(code) } : null) }).lines.map((line) => line.level))))}</td></tr>`), { emptyText: "ไม่พบสินค้า" })}
             <div class="rf-row">${canImport && !tooBig ? `<button class="btn rf-btn" type="button" data-bom-import>นำเข้า ${esc(String(r.itemCount))} ชิ้นงาน / ${esc(String(r.bomCount))} BOM</button>` : ""}<span class="small muted">พ่อที่มี BOM อยู่แล้วจะไม่ถูกทับ (ข้าม) แก้ได้ที่เมนู “สร้าง BOM”</span></div>`;
