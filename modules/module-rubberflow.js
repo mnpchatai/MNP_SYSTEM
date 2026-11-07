@@ -174,7 +174,6 @@
     saveRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
     recordMixing: (p) => ({ ...p, stages: stagesOf(p) }),
     saveMaterial: (p) => ({ ...p, active: p.active !== "0" }),
-    weighLine: (p) => ({ ...p, index: Number(p.index) }),
     shipBoxes: (p) => ({ ids: p.ids ?? [] }),
     createNcr: (p) => ({ ...p, whys: p.whys ?? [] }),
     addQcRecord: (p) => ({ ...p, values: p.values ?? {}, result: p.result || undefined }),

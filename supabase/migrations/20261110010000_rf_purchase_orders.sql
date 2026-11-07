@@ -465,6 +465,7 @@ declare
   v_left numeric;
   v_free numeric;
   v_take numeric;
+  v_after numeric;
   v_short text[] := '{}';
   v_new_lines jsonb;
   v_clines jsonb;
@@ -581,7 +582,7 @@ begin
                         and jsonb_typeof(e -> 'actualKg') is distinct from 'number'), 0)
           - coalesce((select sum((e ->> 'targetKg')::numeric) from jsonb_array_elements(v_new_lines) e where e ->> 'lotNo' = v_lot.lot_no), 0);
         continue when v_free <= 0.0001;
-        v_take := round(least(v_free, v_left), 4);
+        v_take := trunc(least(v_free, v_left), 4);
         continue when v_take <= 0;
         v_new_lines := v_new_lines || jsonb_build_array(jsonb_build_object(
           'materialCode', v_item.code, 'stage', v_item.stage, 'lotNo', v_lot.lot_no,
@@ -605,7 +606,10 @@ begin
       v_sline := v_new_lines -> v_i;
       v_target := (v_sline ->> 'targetKg')::numeric;
       select * into v_lot from public.rf_material_lots l where l.is_test and l.lot_no = (v_sline ->> 'lotNo') for update;
-      update public.rf_material_lots set qty_kg = greatest(0, trim_scale(round(v_lot.qty_kg - v_target, 6))), updated_at = now() where id = v_lot.id;
+      -- ตัดทศนิยม (trunc) ตอนจัดสรรไม่ให้เกินคงเหลือ · ถ้าหักแล้วติดลบให้หยุดทั้งธุรกรรม ไม่ปัดเป็น 0 เงียบ ๆ
+      v_after := v_lot.qty_kg - v_target;
+      if v_after < 0 then raise exception 'RF_INSUFFICIENT_STOCK'; end if;
+      update public.rf_material_lots set qty_kg = trim_scale(v_after), updated_at = now() where id = v_lot.id;
       v_new_lines := jsonb_set(v_new_lines, array[v_i::text],
         v_sline || jsonb_build_object('actualKg', v_target, 'weighedAt', v_now_ms, 'weighedBy', p_actor_name));
     end loop;

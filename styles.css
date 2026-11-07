@@ -2163,7 +2163,6 @@ a.rf-step:hover { border-color: var(--rf-accent); }
 .rf-step h3 { margin: 0; font-size: var(--text-body); }
 .rf-step-no { color: var(--rf-accent); font-family: ui-monospace, monospace; font-size: var(--text-caption); font-weight: 700; }
 .rf-big { font-size: var(--text-page); font-weight: 700; }
-.rf-scale-input { font-size: var(--text-heading); font-family: ui-monospace, monospace; }
 .rf-whys { margin: 4px 0 0; padding-left: 20px; }
 .rf-alert-list { max-height: 330px; overflow-y: auto; }
 .rf-hint { display: block; }
@@ -2385,7 +2384,6 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-pagehead .btn.secondary:hover { color: var(--rf-band-ink); background: var(--rf-band-hover); border-color: var(--rf-band-line); } /* ปุ่มรองในแถบหัว: hover ตามสีแถบ ไม่ใช่สีโมดูลของการ์ด */
 .rf-page .input, .rf-page .select, .rf-page .textarea { min-height: 40px; border-radius: var(--radius-md); }
 .rf-page .input:focus, .rf-page .select:focus, .rf-page .textarea:focus { border-color: var(--primary); box-shadow: var(--focus-ring); }
-.rf-page .rf-scale-input { font-size: var(--text-page); min-height: 52px; }
 .rf-page th { padding: 8px 12px; color: var(--quiet); background: transparent; border-bottom-color: var(--line); font-size: var(--text-caption); letter-spacing: .04em; text-transform: uppercase; }
 .rf-page td { padding: 11px 12px; }
 @media (hover: hover) { .rf-page tbody tr:hover td { background: var(--shell); } }

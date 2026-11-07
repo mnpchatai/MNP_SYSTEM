@@ -167,6 +167,7 @@
   // · onOrderKg สั่งค้างรับ (บรรทัดของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ) · availableKg พร้อมใช้ = onHandKg − reservedKg + onOrderKg (เก็บในบรรทัดใบสั่งซื้อ ไม่แสดงเป็นคอลัมน์)
   // พร้อมใช้ติดลบได้ (WO อื่น/ใบเบิกใช้สต็อกไปแล้วเกินที่มี) เก็บตามจริง · ขาด = max(0, ต้องใช้ − พร้อมใช้) · WO ที่ไม่มีสูตรไม่นับ (คืนใน skipped) · WO ที่ปิด/ยกเลิกแล้วไม่ใช่ความต้องการ
   // ใบเบิกใหม่จ่ายทันทีและหักสต็อกแล้ว จึงไม่จองอะไร · options.remote = false (โหมดสาธิต): ใบเก่าหักสต็อกตอนจ่ายครบ จึงจองทุกรายการของใบที่ยังจ่ายไม่ครบ
+  // options.needKg = { [รหัส WO]: kg } ใช้ kg นี้เป็นความต้องการของ WO ที่ถาม แทนส่วนที่ยังไม่ได้เบิก (ใบเบิกที่กำลังสร้างเบิกอยู่แล้ว)
   function chemicalNeeds(data, woIds, now = Date.now(), options = {}) {
     const { orders = [], recipes = [], requisitions = [], materialLots = [], purchaseOrders = [], materials = [] } = data ?? {};
     const remote = options.remote !== false;
@@ -177,8 +178,8 @@
     const add = (map, code, kg) => map.set(code, (map.get(code) || 0) + kg);
     const skipped = [];
     const counted = [];
-    const share = (order, recipe, map) => {
-      const kg = orderRemainingKg(order, recipe, requisitions);
+    const share = (order, recipe, map, ownKg) => {
+      const kg = Number.isFinite(ownKg) ? ownKg : orderRemainingKg(order, recipe, requisitions);
       const total = totalPhr(recipe);
       if (!(kg > 0) || !(total > 0)) return;
       for (const item of recipe.items) add(map, item.materialCode, (kg * Number(item.phr)) / total);
@@ -190,7 +191,7 @@
       const recipe = recipeOf(recipes, order.recipeId, order.recipeRevision);
       if (!recipe || !Array.isArray(recipe.items) || !recipe.items.length) { skipped.push({ woId: id, reason: "ไม่พบสูตร" }); continue; }
       counted.push(id);
-      share(order, recipe, need);
+      share(order, recipe, need, options.needKg?.[id]);
     }
     for (const order of orders) {
       if (askedSet.has(order.id) || !OPEN_ORDER.includes(order.status)) continue;

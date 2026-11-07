@@ -880,7 +880,10 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           }
           for (const line of lines) {
             const lotIndex = next.materialLots.findIndex((row) => row.lotNo === line.lotNo);
-            next.materialLots[lotIndex] = { ...next.materialLots[lotIndex], qtyKg: Math.max(0, Math.round((next.materialLots[lotIndex].qtyKg - line.targetKg) * 1e6) / 1e6) };
+            // ตรงกับ SQL: หักแล้วติดลบ = หยุด ไม่ปัดเป็น 0 เงียบ ๆ
+            const after = Math.round((next.materialLots[lotIndex].qtyKg - line.targetKg) * 1e6) / 1e6;
+            if (after < 0) fail("RF_INSUFFICIENT_STOCK");
+            next.materialLots[lotIndex] = { ...next.materialLots[lotIndex], qtyKg: after };
             stampVersion("materialLots", line.lotNo);
           }
           put({ ...clone(record), recipeId: recipe.id, recipeRevision: recipe.revision, totalKg: recipe.batchKg * record.batches, lines, status: "issued", requestedBy: actor.name, createdAt: at, issuedAt: at, issuedBy: actor.name });

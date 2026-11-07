@@ -99,19 +99,21 @@
       const recipe = ctx.rules.recipeOf(data.recipes, selected.recipeId, selected.recipeRevision);
       const parts = [];
       if (selected.status === "weighing") {
-        parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>ใบเบิกเก่าที่ยังจ่ายไม่ครบ</span>${ui.button("เบิกทั้งใบ", { action: "issueRequisition", args: { id: selected.id }, className: "small", success: `เบิก ${selected.id} แล้ว`, ariaLabel: `เบิกทั้งใบ ${selected.id}` })}</div>`));
+        parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>ใบเบิกเก่าที่ยังจ่ายไม่ครบ</span>${ui.button("เบิกทั้งใบ", { action: "issueRequisition", args: { id: selected.id }, className: "small", confirmText: `เบิกทั้งใบ ${selected.id}? ระบบจะหักสต็อกทุกรายการที่ยังไม่จ่ายตามสูตร`, success: `เบิก ${selected.id} แล้ว`, ariaLabel: `เบิกทั้งใบ ${selected.id}` })}</div>`));
       }
       if (selected.status === "issued") parts.push(ui.callout("good", "จ่ายวัตถุดิบครบแล้ว รอห้องผสมนำไปผสม"));
+      // สถานะรายบรรทัดมีความหมายเฉพาะใบเก่าที่จ่ายไม่ครบ · ใบที่จ่ายแล้วแสดงสถานะที่ป้ายในรายการและแถบสรุปแล้ว
+      const lineStatus = selected.status === "weighing";
       const lineRows = selected.lines.map((line, i) => {
         const lot = data.materialLots.find((row) => row.lotNo === line.lotNo);
         const material = data.materials.find((row) => row.code === line.materialCode);
         return `<tr><td>${i + 1}</td><td>${esc(material?.name ?? "")}<div class="small muted rf-mono">${esc(line.materialCode)}</div></td><td class="nowrap">${esc(`ขั้น ${line.stage ?? 1}`)}</td><td class="rf-mono small">${esc(line.lotNo)}</td>
           <td class="small nowrap">${esc(fmtDate(lot?.expiry))}<div class="muted">${esc(lot?.location ?? "")}</div></td><td class="right rf-mono">${esc(fmtNum(line.actualKg ?? line.targetKg, 3))}</td>
-          <td>${line.actualKg === null ? ui.badge("warn", "รอจ่าย") : ui.badge("good", "จ่ายแล้ว")}</td></tr>`;
+          ${lineStatus ? `<td>${line.actualKg === null ? ui.badge("warn", "รอจ่าย") : ui.badge("good", "จ่ายแล้ว")}</td>` : ""}</tr>`;
       });
       parts.push(ui.card(`<div class="rf-card-pad">${ui.kv([["ใบสั่งผลิต", esc(`${order?.id ?? "-"} · ${order?.customer ?? ""}`)], ["สูตร", esc(`${rules.recipeLabel(recipe)} · ${selected.batches} batch · ${fmtNum(selected.totalKg, 2)} kg`)], ["ผู้ขอเบิก", esc(`${selected.requestedBy ?? "-"} · ${fmtDateTime(selected.createdAt)}`)],
         selected.issuedBy ? ["ผู้จ่าย", esc(`${selected.issuedBy} · ${fmtDateTime(selected.issuedAt)}`)] : null, selected.consumedBy ? ["ใช้ผสมเป็น", ui.mono(selected.consumedBy)] : null])}</div>
-        ${ui.table(["#", "วัตถุดิบ", "ขั้น", "ล็อตที่จ่าย (FEFO)", "หมดอายุ", { label: "จ่าย (kg)", className: "right" }, "สถานะ"], lineRows)}`,
+        ${ui.table(["#", "วัตถุดิบ", "ขั้น", "ล็อตที่จ่าย (FEFO)", "หมดอายุ", { label: "จ่าย (kg)", className: "right" }, ...(lineStatus ? ["สถานะ"] : [])], lineRows)}`,
       { title: `ใบเบิก ${esc(selected.id)}`, actions: ui.openButton("พิมพ์ป้าย", "tag", { kind: "requisition", id: selected.id }, { className: "secondary small" }), flush: true }));
       detail = `<div class="rf-stack">${parts.join("")}</div>`;
     }
@@ -143,22 +145,12 @@
         const n = Number(batches.value || 0);
         const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now) })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
-        // ส่วนที่ขาดรวมต่อวัตถุดิบ (สูตรอาจใช้วัตถุดิบเดียวกันสองขั้น) ให้ปุ่ม "สั่งซื้อส่วนที่ขาด" ส่งเข้า dialog สั่งซื้อ
-        const byCode = new Map();
-        for (const row of preview) {
-          const entry = byCode.get(row.materialCode) ?? { materialCode: row.materialCode, needKg: 0, shortageKg: 0 };
-          entry.needKg += row.need;
-          entry.shortageKg += row.shortage;
-          byCode.set(row.materialCode, entry);
-        }
-        shortRows = [...byCode.values()].filter((row) => row.shortageKg > 0.0001).map((row) => {
-          const needKg = Math.round(row.needKg * 1000) / 1000;
-          const shortageKg = Math.round(row.shortageKg * 1000) / 1000;
-          const onHandKg = Math.max(0, Math.round((needKg - shortageKg) * 1000) / 1000);
-          // คงเหลือที่จัดสรรได้ (ไม่นับล็อตหมดอายุ/กักกัน/ที่ใบเก่าจอง) และที่สั่งค้างรับของวัตถุดิบนี้ ให้ dialog สั่งซื้อแสดงเป็นคอลัมน์เดียวกับทางเข้าอื่น
-          const onOrderKg = Math.round((data.purchaseOrders ?? []).filter((po) => po.status === "ordered").reduce((sum, po) => sum + po.lines.filter((line) => line.materialCode === row.materialCode && (line.receivedKg === null || line.receivedKg === undefined)).reduce((kg, line) => kg + (Number(line.qtyKg) || 0), 0), 0) * 1000) / 1000;
-          return { materialCode: row.materialCode, needKg, availableKg: onHandKg, onHandKg, reservedKg: 0, onOrderKg, shortageKg };
-        });
+        // ปุ่ม "สั่งซื้อส่วนที่ขาด" ส่งวัตถุดิบที่ขาดเข้า dialog สั่งซื้อ โดยคำนวณคอลัมน์เดียวกับทางเข้าอื่น (rules.chemicalNeeds): ขาด = ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)
+        // ความต้องการ = ของใบเบิกนี้ (n batch) · ใบเบิกเก่าของ WO เดียวกันที่ค้างจ่ายยังนับเป็นจองแล้ว และที่สั่งค้างรับหักออกจากจำนวนสั่ง
+        const shortCodes = new Set(preview.filter((row) => row.shortage > 0.0001).map((row) => row.materialCode));
+        shortRows = order && recipe && shortCodes.size
+          ? rules.chemicalNeeds(data, [order.id], now, { remote: ctx.store.isRemote(), needKg: { [order.id]: recipe.batchKg * n } }).rows.filter((row) => shortCodes.has(row.materialCode))
+          : [];
         shortNote = order ? `ขาดจากใบเบิกของ ${order.id} (${n} batch)` : "";
         dialog.querySelector("[data-rf-recipe-line]").textContent = recipe ? `สูตร ${rules.recipeLabel(recipe)} · น้ำหนักรวม ${fmtNum(recipe.batchKg * n, 2)} kg` : "";
         dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayBuy ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>สั่งซื้อส่วนที่ขาด</button>' : ""}`) : "";

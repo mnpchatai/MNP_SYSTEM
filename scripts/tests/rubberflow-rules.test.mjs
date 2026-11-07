@@ -228,6 +228,12 @@ test("chemicalNeeds: need of the asked WOs against on-hand, reservations, other 
   const crowded = rules.chemicalNeeds({ ...data, materialLots: [lot("E3", "EPDM", 10)], purchaseOrders: [] }, ["WO-ASK"], NOW);
   const row = crowded.rows.find((item) => item.materialCode === "EPDM");
   assert.deepEqual([row.availableKg, row.reservedKg, row.shortageKg], [-13.75, 23.75, 50 - (10 - 5 - 18.75)], "10 − 5 − 18.75 = −13.75 → available stays negative, shortage 63.75");
+  // options.needKg replaces the remaining need of an asked WO (the requisition being created): on-order lines then reduce the shortage and the default order
+  const own = rules.chemicalNeeds(data, ["WO-RUN"], NOW, { needKg: { "WO-RUN": 100 } }).rows.find((item) => item.materialCode === "EPDM");
+  assert.deepEqual([own.needKg, own.onOrderKg, own.availableKg, own.shortageKg], [62.5, 40, own.onHandKg - own.reservedKg + 40, Math.max(0, 62.5 - (own.onHandKg - own.reservedKg + 40))], "the given kilos are the need: 100 kg of compound = 62.5 kg EPDM");
+  const withoutOrders = rules.chemicalNeeds({ ...data, purchaseOrders: [] }, ["WO-RUN"], NOW, { needKg: { "WO-RUN": 100 } }).rows.find((item) => item.materialCode === "EPDM");
+  assert.equal(Math.round((withoutOrders.shortageKg - own.shortageKg) * 1000) / 1000, 40, "the 40 kg already on order come off the shortage");
+  assert.equal(rules.chemicalNeeds(data, ["WO-RUN"], NOW, { needKg: { "WO-OTHER": 999 } }).rows.find((item) => item.materialCode === "EPDM").needKg, 18.75, "an override for a WO that was not asked is ignored");
   assert.equal(rules.suggestOrderKg(0, 5), 0);
   assert.equal(rules.suggestOrderKg(2.5, 5), 7.5);
   assert.equal(rules.suggestOrderKg(2.5, -1), 2.5);

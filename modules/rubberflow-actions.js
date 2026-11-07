@@ -337,7 +337,11 @@
     if (lot.qtyKg < kg) fail(`ล็อต ${line.lotNo} คงเหลือไม่พอ`);
     return lot;
   }
-  const deduct = (lot, kg) => { lot.qtyKg = Math.max(0, +(lot.qtyKg - kg).toFixed(6)); };
+  // หักแล้วติดลบ = หยุด ไม่ปัดเป็น 0 เงียบ ๆ (|| 0 กัน -0)
+  const deduct = (lot, kg) => {
+    if (kg > lot.qtyKg + 1e-9) fail(`ล็อต ${lot.lotNo} คงเหลือไม่พอ`);
+    lot.qtyKg = +(lot.qtyKg - kg).toFixed(6) || 0;
+  };
 
   // เบิก = สร้างใบเบิกและจ่ายทันที: ระเบิดสูตร จัดสรร FEFO หักสต็อกล็อตตามบรรทัด จ่ายตามสูตร (actualKg = targetKg) สถานะ issued พร้อมผสม · ไม่มีขั้นตอนชั่งรายบรรทัด
   function createRequisition(d, { orderId, batches, note }, ctx) {

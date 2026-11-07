@@ -164,6 +164,7 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const requisition = await env.render("p=requisition");
   assert.match(requisition, /<th class="right">จ่าย \(kg\)<\/th>/, "the detail lists the kilos that were issued");
   assert.match(requisition, /จ่ายวัตถุดิบครบแล้ว รอห้องผสมนำไปผสม/);
+  assert.doesNotMatch(requisition, /<th>สถานะ<\/th>|จ่ายแล้ว<\/span>/, "a requisition that was issued says so once: no status on every line");
   assert.doesNotMatch(requisition, /data-rf-form="weighLine"|data-rf-sim|สถานีชั่ง|data-rf-action="issueRequisition"/, "no weighing station and nothing to issue: the seed has no requisition left on the scale");
   // an old requisition that is still on the scale gets one button for the whole slip
   const old = env.store.data().requisitions.find((row) => row.status === "issued");
@@ -172,7 +173,9 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const legacy = await env.render(`p=requisition&sel=${old.id}`);
   assert.match(legacy, /data-rf-action="issueRequisition"/);
   assert.match(legacy, /เบิกทั้งใบ/);
+  assert.match(legacy, /data-rf-action="issueRequisition"[^>]*data-rf-confirm="เบิกทั้งใบ [^"]+"|data-rf-confirm="เบิกทั้งใบ [^"]+"[^>]*data-rf-action="issueRequisition"/, "issuing the whole slip draws the stock down, so it asks first");
   assert.match(legacy, /รอจ่าย/);
+  assert.match(legacy, /<th>สถานะ<\/th>/, "the per-line status stays for a slip that is not fully issued");
   assert.doesNotMatch(legacy, /data-rf-form="weighLine"|data-rf-sim|สถานีชั่ง/);
 });
 
@@ -195,6 +198,42 @@ test("text from the data is escaped on every page that shows it", async () => {
   const tag = env.context.MNP_RUBBERFLOW_DIALOGS.tag(env.ctx(), { kind: "order", id: result.result });
   assert.doesNotMatch(tag.html, /<script>/);
   assert.match(tag.html, /&lt;script&gt;/);
+});
+
+test("the requisition dialog sends the purchase dialog the same breakdown: its own need, on hand, reserved, on order and shortage that add up", () => {
+  const env = load();
+  env.store.setUser("U03");
+  const data = env.store.data();
+  const rules = env.context.MNP_RUBBERFLOW_RULES;
+  const order = data.orders.find((row) => ["released", "in_progress"].includes(row.status));
+  const recipe = rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
+  const [first] = rules.recipeLines(recipe);
+  for (const lot of data.materialLots) if (lot.materialCode === first.materialCode) lot.qtyKg = 0;
+  const opened = [];
+  const run = (onOrderKg) => {
+    data.purchaseOrders = onOrderKg ? [{ id: "PO-T", status: "ordered", lines: [{ materialCode: first.materialCode, qtyKg: onOrderKg, receivedKg: null }] }] : [];
+    const nodes = {
+      "[data-rf-order]": { value: order.id, addEventListener() {} }, "[data-rf-batches]": { value: "1", addEventListener() {} }, "[data-rf-submit]": { disabled: false },
+      "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } },
+    };
+    const built = env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx());
+    built.bind({ querySelector: (selector) => nodes[selector] }, { openDialog: (name, args) => opened.push([name, args]) });
+    assert.match(nodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "the shortage button is offered");
+    nodes["[data-rf-shortage]"].handlers.click({ target: { closest: (selector) => (selector === "[data-rf-po-short]" ? {} : null) } });
+    const [name, args] = opened.at(-1);
+    assert.equal(name, "purchase");
+    return args.rows.find((row) => row.materialCode === first.materialCode);
+  };
+  const plain = run(0);
+  const ordered = run(1);
+  assert.equal(plain.needKg, Math.round(first.kgPerBatch * 1000) / 1000, "the need is the one batch of this requisition");
+  assert.equal(ordered.onOrderKg, 1, "the line on order is passed on");
+  for (const row of [plain, ordered]) {
+    assert.equal(row.availableKg, Math.round((row.onHandKg - row.reservedKg + row.onOrderKg) * 1000) / 1000, "on hand − reserved + on order");
+    assert.equal(row.shortageKg, Math.round(Math.max(0, row.needKg - row.availableKg) * 1000) / 1000, "shortage = need − available");
+  }
+  assert.equal(Math.round((plain.shortageKg - ordered.shortageKg) * 1000) / 1000, 1, "the kilos already on order reduce the shortage");
+  assert.equal(Math.round((plain.orderKg - ordered.orderKg) * 1000) / 1000, 1, "and the default order quantity");
 });
 
 test("every dialog of the prototype builds from the seed, with print documents carrying a Code 39 barcode", () => {
