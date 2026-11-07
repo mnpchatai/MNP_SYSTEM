@@ -7,7 +7,7 @@
 --      (join 4 ตาราง อิงตาม auth.uid()) รวมประมาณ 31,000 ครั้งต่อการล้างหนึ่งครั้ง ทั้งที่ผู้เรียกผ่านการตรวจ admin + โหมดทดสอบมาแล้ว
 --      sandbox_scope_matches ตอบ true ทันทีเมื่อ auth.uid() เป็น null (งาน cron/service) และ auth.uid() อ่านจาก request.jwt.claim.sub กับ request.jwt.claims
 --   2) foreign key ที่ฝั่งตารางลูกไม่มีดัชนี การตรวจ FK / ON DELETE CASCADE จึงสแกนทั้งตารางต่อแถวที่ลบ:
---      bom_bom_lines(bom_pk, is_test) (cascade จาก bom_boms), bom_jobs(item_code, is_test) และฝั่ง RubberFlow
+--      bom_jobs(item_code, is_test) และฝั่ง RubberFlow (bom_bom_lines ไม่ต้อง: unique (bom_pk, line_no) / (bom_pk, child_code) ใน 20261105010000 รองรับ cascade จาก bom_boms อยู่แล้ว)
 --      rf_orders(recipe_code, recipe_revision, is_test), rf_requisitions(order_no, is_test), rf_requisitions(recipe_code, recipe_revision, is_test),
 --      rf_lots(mold_id, is_test), rf_transfers(order_no, is_test), rf_transfers(lot_no, is_test), rf_fg_boxes(order_no, is_test), rf_qc_records(order_no, is_test)
 --
@@ -23,16 +23,16 @@
 --   public.app_sandbox_purge_bom()  จาก 20261106010000_bom_orders_jobs.sql
 --   public.app_sandbox_purge_rf()   จาก 20261108010000_rubberflow_shopfloor.sql
 --
--- ลำดับ deploy: ไม่มีโค้ด client เปลี่ยน apply เมื่อไรก็ได้ (client เดิมเรียก RPC ชื่อและผลลัพธ์เดิม)
---   ตรวจนิยามหลัง apply ที่ production: เทียบ md5(pg_get_functiondef(oid)) ของสองฟังก์ชันกับ local stack ที่ผ่าน db:test
+-- ลำดับ deploy: ไม่มีโค้ด client เปลี่ยน (client เดิมเรียก RPC ชื่อและผลลัพธ์เดิม) จึงไม่ต้องรอ merge แต่ยังต้องได้การอนุมัติจากผู้ใช้ก่อน apply ตาม AGENTS.md
+--   ก่อน apply: เทียบ md5(prosrc) ของสองฟังก์ชันบน production กับนิยามในไฟล์ต้นทางข้างบน (ต้องตรง ไม่งั้นมีงานใหม่กว่าที่จะถูกทับ)
+--   หลัง apply: เทียบ md5(prosrc) กับนิยามในไฟล์นี้ และตรวจว่าดัชนีมีครบ
 --
 -- Rollback: คืนนิยามเดิมของสองฟังก์ชันด้วยการรัน create or replace จาก 20261106010000_bom_orders_jobs.sql และ 20261108010000_rubberflow_shopfloor.sql
---   (รวม revoke/grant ท้ายฟังก์ชัน) แล้ว drop index ที่สร้างในไฟล์นี้ (bom_bom_lines_bom_pk_idx, bom_jobs_item_idx, rf_orders_recipe_idx, rf_requisitions_order_idx,
+--   (รวม revoke/grant ท้ายฟังก์ชัน) แล้ว drop index ที่สร้างในไฟล์นี้ (bom_jobs_item_idx, rf_orders_recipe_idx, rf_requisitions_order_idx,
 --   rf_requisitions_recipe_idx, rf_lots_mold_idx, rf_transfers_order_idx, rf_transfers_lot_idx, rf_fg_boxes_order_idx, rf_qc_records_order_idx) · ไม่มีข้อมูลถูกแก้
 -- ============================================================================
 
 -- 1. ดัชนีฝั่งตารางลูกของ foreign key (คู่กับ is_test เพราะ FK ทุกตัวอ้างทั้งสองคอลัมน์) -------------------------
-create index if not exists bom_bom_lines_bom_pk_idx on public.bom_bom_lines (bom_pk, is_test);
 create index if not exists bom_jobs_item_idx on public.bom_jobs (item_code, is_test);
 create index if not exists rf_orders_recipe_idx on public.rf_orders (recipe_code, recipe_revision, is_test);
 create index if not exists rf_requisitions_order_idx on public.rf_requisitions (order_no, is_test);

@@ -26,11 +26,10 @@ insert into purge_rf_tables values ('rf_ncrs'), ('rf_qc_records'), ('rf_fg_boxes
 
 -- 1. ดัชนีฝั่งตารางลูกของ foreign key และนิยามฟังก์ชัน -----------------------------------------
 select is((select count(*) from pg_indexes where schemaname = 'public' and indexname in (
-    'bom_bom_lines_bom_pk_idx', 'bom_jobs_item_idx', 'rf_orders_recipe_idx', 'rf_requisitions_order_idx', 'rf_requisitions_recipe_idx',
+    'bom_jobs_item_idx', 'rf_orders_recipe_idx', 'rf_requisitions_order_idx', 'rf_requisitions_recipe_idx',
     'rf_lots_mold_idx', 'rf_transfers_order_idx', 'rf_transfers_lot_idx', 'rf_fg_boxes_order_idx', 'rf_qc_records_order_idx')),
-  10::bigint, 'the ten foreign key indexes exist');
-select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_bom_lines_bom_pk_idx' and indexdef like '%(bom_pk, is_test)%')
-      and exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_jobs_item_idx' and indexdef like '%(item_code, is_test)%')
+  9::bigint, 'the nine foreign key indexes exist');
+select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_jobs_item_idx' and indexdef like '%(item_code, is_test)%')
       and exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'rf_orders_recipe_idx' and indexdef like '%(recipe_code, recipe_revision, is_test)%')
       and exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'rf_requisitions_order_idx' and indexdef like '%(order_no, is_test)%')
       and exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'rf_requisitions_recipe_idx' and indexdef like '%(recipe_code, recipe_revision, is_test)%')
