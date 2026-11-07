@@ -699,6 +699,11 @@ test("purchasing with purchased parts: the dialog adds a part table after the ch
   assert.match(dialog, /name="qtyKg\[\]"[^>]*value="12"/, "the default quantity is the shortage plus the safety stock");
   assert.doesNotMatch(dialog, /undefined|NaN/);
   assert.equal((dialog.match(/data-rf-po-row/g) ?? []).length, 2, "both parts are rows of the one form");
+  const plannerDialog = dialogs.purchase({ ...ctx, user: { ...ctx.user, planner: true } }, { woIds: [], sourcePi: "PI-9" }).html;
+  assert.doesNotMatch(plannerDialog, /name="safetyKg\[\]"[^>]*readonly/, "a planner edits the safety stock of a part");
+  assert.ok(dialog.includes('name="storedSafetyKg[]" value="10"'), "the stored value travels with the row");
+  // สมาชิก RB: สต็อกขั้นต่ำของซื้อแก้ไม่ได้ (ช่องอ่านอย่างเดียว) · ของเคมียังแก้ได้
+  assert.equal((dialog.match(/name="safetyKg\[\]"[^>]*readonly/g) ?? []).length, 2, "both part rows are read-only for an RB member (the test account is not a planner)");
   // ไม่มีข้อมูลของซื้อ (BOM ไม่ได้โหลด) หรือเปิดจากใบเบิก: ไม่มีตารางของซื้อ
   assert.doesNotMatch(dialogs.purchase(ctx, { woIds: [], sourcePi: "PI-OTHER" }).html, /ของซื้อ \(ตามหน่วยของชิ้น\)/);
   assert.doesNotMatch(dialogs.purchase(ctx, { rows: [{ materialCode: "ZNO", needKg: 1, availableKg: 0, shortageKg: 1 }], sourcePi: "PI-9" }).html, /ของซื้อ \(ตามหน่วยของชิ้น\)/);

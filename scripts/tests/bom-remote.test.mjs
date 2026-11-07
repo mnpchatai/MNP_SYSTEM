@@ -3052,7 +3052,6 @@ test("part stock through the module on the (mock) database: counts send only the
 
   // ST: หน้าคลังของซื้อ → นับ → ส่งเฉพาะชุด stock (ไม่ส่งประวัติ) · ฐานข้อมูลประทับผู้นับและเขียนประวัติ
   const st = await asPersona({ env: planning }, "persona-st");
-  const stCtx = st.ctx();
   let html = await st.render("p=stock");
   assert.match(html, /data-rf-form="countPartStock"/);
   assert.match(html, /name="itemCode\[\]" value="P-TEST-01"/);
@@ -3149,6 +3148,19 @@ test("purchasing across the modules: releasing a PI with purchased parts opens o
   assert.equal(env.log.dialogs.length, dialogsBefore);
   assert.match(env.log.toasts.at(-1)[0], /ของซื้อพอ/);
   assert.equal(JSON.parse(JSON.stringify(again.parts.rows.map((row) => [row.itemCode, row.needQty, row.onOrderQty, row.shortage]))).join(), "P-TEST-01,10,12,0");
+
+  // สต็อกขั้นต่ำของซื้อที่แก้ในหน้าต่างแต่สั่ง 0: ไม่อยู่ในบรรทัดใบสั่งซื้อ จึงบันทึกเข้าคลังของซื้อแยก (countPartStock) หลังใบสั่งซื้อสำเร็จ
+  await env.store.run("saveItem", saveItemPayload("P-TEST-02", { name: "ของซื้ออีกตัว" })).saving;
+  const second = rf.runAction("createPurchaseOrder", {
+    lines: [
+      { materialCode: "P-TEST-01", source: "bom", uom: "pcs", needKg: 1, availableKg: 0, shortageKg: 1, safetyKg: 2, storedSafetyKg: 2, qtyKg: 3 },
+      { materialCode: "P-TEST-02", source: "bom", uom: "pcs", needKg: 0, availableKg: 0, shortageKg: 0, safetyKg: 6, storedSafetyKg: 0, qtyKg: 0 },
+    ], safety: { "P-TEST-01": 2, "P-TEST-02": 6 }, sourcePi: id,
+  }, "");
+  assert.equal(second, true);
+  for (let turn = 0; turn < 60 && !bomDb().stock.some((row) => row.itemCode === "P-TEST-02"); turn += 1) await settle();
+  assert.deepEqual(bomDb().stock.map((row) => [row.itemCode, row.safetyQty]), [["P-TEST-01", 2], ["P-TEST-02", 6]], "the safety stock of the part that was not ordered was saved too");
+  assert.equal(bomDb().stockMoves.length, 0, "a safety change writes no move");
 });
 
 test("the mock database follows the SQL rules of the part stock: payload shapes per action, rights, stale checks, all-or-none issue, part jobs reported only through the issue", async () => {
@@ -3211,6 +3223,7 @@ test("the mock database follows the SQL rules of the part stock: payload shapes 
   assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts")), "BOM_FORBIDDEN");
   await as("persona-st");
   assert.equal(await code(save({ jobs: { upsert: [done(p1)] } }, "issueOrderParts")), "BOM_INVALID_JOB", "partial set");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2), jobs.find((job) => job.id === "J-PK")] } }, "issueOrderParts")), "BOM_INVALID_JOB", "an unchanged row of another kind in the set refuses it too (every row goes to the issue, like the SQL)");
   assert.equal(await code(save({ jobs: { upsert: [done(p1), { ...done(p2), qtyDone: 1 }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "must be done in full");
   assert.equal(await code(save({ jobs: { upsert: [done(p1), done(jobs.find((job) => job.id === "J-PK"))] } }, "issueOrderParts")), "BOM_FORBIDDEN", "a job of another department in the set");
   const base = await version();

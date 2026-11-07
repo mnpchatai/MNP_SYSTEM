@@ -42,8 +42,9 @@
 --   source 'rf' (เคมี ค่าเริ่มต้นเมื่อไม่มี เช่น ใบ/Pilot รุ่นเก่า) | 'bom' (ของซื้อ) · uom (หน่วยของชิ้นจาก bom_items.uom ที่เซิร์ฟเวอร์ตั้ง ค่าของ client เมิน; null ในบรรทัด rf)
 --   ชื่อช่องเดิม (materialCode, needKg, availableKg, shortageKg, safetyKg, qtyKg, receivedKg) ใช้ต่อกับบรรทัด bom โดยหน่วยเป็นหน่วยของชิ้นนั้น (ไม่ใช่ kg) · lotNo / expiry เป็น null เสมอ
 --   สร้างใบ: บรรทัด bom ต้องเป็นชิ้น PURCHASED ที่มีอยู่ (รหัสเป็น canonical ตามที่เก็บ) ถ้า safetyKg ต่างจาก bom_stock.safety_qty (ไม่มีแถว = 0) เซิร์ฟเวอร์ upsert สต็อกขั้นต่ำให้
---     (หน้าต่างสั่งซื้อแก้สต็อกขั้นต่ำของชิ้นได้) · app_rf_save ล็อก bom_master_state ต่อจาก RF แล้วเพิ่มเวอร์ชัน BOM หนึ่งครั้งพร้อม audit BOM_MASTER_SAVE (client_action 'rubberflow:<action>')
---   รับบรรทัด bom (receivePurchaseLine, ST หรือกลุ่มวางแผน): receivedKg > 0, ห้ามมี lotNo/expiry, ห้ามส่งล็อตวัตถุดิบมาด้วย (RF_INVALID_PURCHASE) · เซิร์ฟเวอร์บวก bom_stock.qty
+--     (หน้าต่างสั่งซื้อแก้สต็อกขั้นต่ำของชิ้นได้) · การเปลี่ยนสต็อกขั้นต่ำของชิ้นต้องเป็นกลุ่มวางแผนเท่านั้น เหมือน countPartStock (สมาชิก RB สร้างใบได้ แต่ safetyKg ของบรรทัด bom ต้องเท่าที่เก็บ ไม่เช่นนั้น RF_FORBIDDEN)
+--     · app_rf_save ล็อก bom_master_state ต่อจาก RF (private.rf_lock_bom ของ 20261107010000) แล้วเพิ่มเวอร์ชัน BOM หนึ่งครั้งพร้อม audit BOM_MASTER_SAVE (client_action 'rubberflow:<action>')
+--   รับบรรทัด bom (receivePurchaseLine, ST หรือกลุ่มวางแผน): ชิ้นต้องยังเป็น PURCHASED ใน bom_items (ไม่เช่นนั้น RF_INVALID_PURCHASE), receivedKg > 0, ห้ามมี lotNo/expiry, ห้ามส่งล็อตวัตถุดิบมาด้วย (RF_INVALID_PURCHASE) · เซิร์ฟเวอร์บวก bom_stock.qty
 --     เขียน 'receive' (ref = เลข PO) ตั้ง receivedAt / receivedBy ของบรรทัด และตั้งใบเป็น received เมื่อรับครบทุกบรรทัด · บรรทัดเคมีไม่เปลี่ยน (สร้างล็อต + วันหมดอายุ)
 --
 -- นิยามที่ replace / ถูกแทนในไฟล์นี้ (เริ่มจากนิยามล่าสุดบน main ทุกตัว)
@@ -55,7 +56,7 @@
 --   - public.app_bom_save_master จาก 20261108020000_bom_release_opens_rubberflow_orders.sql
 --   - public.app_sandbox_purge_bom จาก 20261109010000_sandbox_purge_fast.sql (คงการพัก JWT claims ระหว่างลบ)
 --   - private.rf_po_parse_lines, private.rf_save_purchase_orders, public.app_rf_save จาก 20261110010000_rf_purchase_orders.sql
---   - ใหม่: private.bom_save_stock, private.bom_issue_parts, private.rf_lock_bom_state
+--   - ใหม่: private.bom_save_stock, private.bom_issue_parts (ล็อกตัวนับ BOM ฝั่ง RF ใช้ private.rf_lock_bom() เดิมของ 20261107010000 ไม่สร้างใหม่)
 --   - ไม่แตะ: private.bom_snapshot / app_bom_master / app_bom_master_since / app_bom_audit (คืนชุดตามที่ bom_records / bom_delta คืน) · rf_records / rf_delta · rf_check_po_receipt
 --
 -- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้เรียก RPC ที่เปลี่ยน (action ใหม่ countPartStock / issueOrderParts, ชุด stock / stockMoves, บรรทัดใบสั่งซื้อ source 'bom')
@@ -70,7 +71,7 @@
 --      20261106010000_bom_orders_jobs.sql ด้วยการรัน create or replace จากไฟล์เหล่านั้น (รวม revoke/grant ท้ายฟังก์ชัน) · ทำข้อ 1 ก่อนข้อ 2 เพื่อให้ app_bom_save_master เดิมเรียกลายเซ็นเดิมของ bom_save_jobs
 --   2) drop function private.bom_save_jobs(public.employees, text, boolean, text, jsonb, uuid[], bigint, bigint) แล้วสร้าง private.bom_save_jobs(public.employees, text, boolean, jsonb, uuid[], bigint, bigint)
 --      ใหม่ตามนิยามใน 20261108020000_bom_release_opens_rubberflow_orders.sql · คืน private.rf_po_parse_lines / rf_save_purchase_orders จาก 20261110010000_rf_purchase_orders.sql
---   3) drop function private.bom_save_stock(public.employees, boolean, jsonb, bigint, bigint), private.bom_issue_parts(public.employees, boolean, jsonb, bigint, bigint), private.rf_lock_bom_state()
+--   3) drop function private.bom_save_stock(public.employees, boolean, jsonb, bigint, bigint), private.bom_issue_parts(public.employees, boolean, jsonb, bigint, bigint)
 --   4) drop table public.bom_stock_moves, public.bom_stock
 --   ข้อมูลทดสอบของสต็อก/ประวัติหายไปพร้อมกัน · งานของซื้อที่สร้างตอนปล่อยผลิตอยู่ใน bom_jobs ต่อ (ไม่ถูกย้อน) · บรรทัด bom ใน rf_purchase_orders.lines คงอยู่ (jsonb)
 -- ============================================================================
@@ -338,20 +339,7 @@ end;
 $$;
 revoke all on function private.bom_issue_parts(public.employees, boolean, jsonb, bigint, bigint) from public, anon, authenticated;
 
--- ล็อกแถวตัวนับ BOM ต่อจากฝั่ง RF (เรียกจาก private.rf_save_purchase_orders ก่อนเขียน bom_stock: ผู้เรียกถือ advisory lock 'mnp_bom_rf_master' อยู่แล้ว จึงไม่วนกับ app_bom_save_master)
-create or replace function private.rf_lock_bom_state()
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  insert into public.bom_master_state (is_test) values (true) on conflict (is_test) do nothing;
-  perform 1 from public.bom_master_state s where s.is_test for update;
-end;
-$$;
-revoke all on function private.rf_lock_bom_state() from public, anon, authenticated;
-
+-- ล็อกตัวนับ BOM ฝั่ง RF ใช้ private.rf_lock_bom() เดิมของ 20261107010000 (ไม่สร้างฟังก์ชันใหม่)
 -- 4. งานรายแผนก: ช่องผลงานของงานของซื้อ (PURCHASED / ST) เขียนได้เฉพาะ action issueOrderParts (นิยามจาก 20261108020000 แล้วเพิ่ม p_action และด่านข้างบน) ------------
 drop function if exists private.bom_save_jobs(public.employees, text, boolean, jsonb, uuid[], bigint, bigint);
 create or replace function private.bom_save_jobs(
@@ -1208,7 +1196,12 @@ begin
       v_src := coalesce(v_sl ->> 'source', 'rf');
       if v_src = 'bom' then
         -- บรรทัดของซื้อ: บวกยอดคงเหลือ + ประวัติ 'receive' (ref = เลขใบ) ไม่มีล็อต/วันหมดอายุ (ตัวแยกวิเคราะห์บรรทัดบังคับ lotNo / expiry เป็น null แล้ว)
-        if not v_locked then perform private.rf_lock_bom_state(); v_locked := true; end if;
+        -- ชิ้นต้องยังเป็นของซื้อที่มีอยู่ใน item master (เปลี่ยนชนิดหรือหายไปหลังสั่งแล้ว = รับเข้าไม่ได้)
+        if not exists (select 1 from public.bom_items i where i.is_test and i.code = (v_sl ->> 'materialCode') and i.kind = 'PURCHASED') then
+          raise exception 'RF_INVALID_PURCHASE';
+        end if;
+        -- ล็อกตัวนับ BOM (private.rf_lock_bom: rf_master_state ถูกล็อกก่อนแล้วใน app_rf_save) แล้วค่อยเขียนแถวสต็อก
+        if not v_locked then perform private.rf_lock_bom(); v_locked := true; end if;
         select * into v_stock from public.bom_stock s where s.is_test and s.item_code = (v_sl ->> 'materialCode') for update;
         if found then
           v_bal := v_stock.qty + v_kg;
@@ -1255,14 +1248,17 @@ begin
           select * into v_item from public.bom_items i where i.is_test and i.code = private.bom_code(v_nl ->> 'materialCode') and i.kind = 'PURCHASED';
           if not found then raise exception 'RF_INVALID_PURCHASE'; end if;
           v_safety := (v_nl ->> 'safetyKg')::numeric;
-          if not v_locked then perform private.rf_lock_bom_state(); v_locked := true; end if;
+          if not v_locked then perform private.rf_lock_bom(); v_locked := true; end if;
           select * into v_stock from public.bom_stock s where s.is_test and s.item_code = v_item.code for update;
           if found then
             if v_stock.safety_qty <> v_safety then
+              -- สต็อกขั้นต่ำเปลี่ยนได้เฉพาะกลุ่มวางแผน (สมาชิก RB สร้างใบที่ไม่แตะสต็อกขั้นต่ำได้)
+              if not p_planner then raise exception 'RF_FORBIDDEN'; end if;
               update public.bom_stock set safety_qty = v_safety, updated_at = now() where id = v_stock.id;
               v_bom_n := v_bom_n + 1;
             end if;
           elsif v_safety <> 0 then
+            if not p_planner then raise exception 'RF_FORBIDDEN'; end if;
             insert into public.bom_stock (is_test, item_code, qty, safety_qty) values (true, v_item.code, 0, v_safety);
             v_bom_n := v_bom_n + 1;
           end if;

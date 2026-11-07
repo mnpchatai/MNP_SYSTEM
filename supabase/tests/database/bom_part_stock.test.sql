@@ -52,7 +52,6 @@ select ok(not exists (select 1 from unnest(array['public.app_bom_save_master(jso
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p
            where p.oid in ('private.bom_save_stock(public.employees,boolean,jsonb,bigint,bigint)'::regprocedure,
                            'private.bom_issue_parts(public.employees,boolean,jsonb,bigint,bigint)'::regprocedure,
-                           'private.rf_lock_bom_state()'::regprocedure,
                            'private.bom_save_jobs(public.employees,text,boolean,text,jsonb,uuid[],bigint,bigint)'::regprocedure,
                            'private.rf_save_purchase_orders(public.employees,text,boolean,boolean,boolean,text,jsonb,bigint,bigint)'::regprocedure,
                            'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure, 'public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure,
@@ -406,6 +405,21 @@ select is(ps_t.po_save(ps_t.po('PO-20261111-01')) ->> 'version', current_setting
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and nothing in BOM');
 select throws_ok($$ select ps_t.po_save(ps_t.po('PO-20261111-01') || jsonb_build_object('lines',
   jsonb_set(ps_t.po('PO-20261111-01') -> 'lines', '{1,source}', '"rf"'::jsonb))) $$, 'RF_INVALID_TRANSITION', 'a line cannot change its source afterwards');
+-- สต็อกขั้นต่ำของของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน: สมาชิก RB สร้างใบที่ไม่แตะสต็อกขั้นต่ำได้ แต่ที่ต่างจากที่เก็บ (รวมแถวสต็อกที่ยังไม่มี) = RF_FORBIDDEN
+select set_config('test.vb', ps_t.ver()::text, true);
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'an RB member cannot change the safety stock of a part through an order');
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":2},{"materialCode":"P-2","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":7,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'nor one line of several (the whole order is refused)');
+select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and the refused orders wrote nothing to the BOM');
+select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 1, 'nor an order');
+select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"qtyKg":2}]'::jsonb)) is not null, 'an RB member can order a part when its safety stock is left as stored');
+select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and that order changes no BOM row');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 
 -- 8.3 รับบรรทัดของซื้อ (ST หรือกลุ่มวางแผน): บวกยอด เขียนประวัติ ไม่มีล็อต/วันหมดอายุ
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
@@ -446,6 +460,24 @@ select is(ps_t.po('PO-20261111-02') ->> 'status', 'received', 'the order becomes
 select is(ps_t.po('PO-20261111-02') -> 'lines' -> 0 ->> 'receivedKg', '7.5', 'the received quantity can differ from the ordered quantity');
 select is(ps_t.qty('P-2'), 35::numeric, 'and the balance follows (27.5 + 7.5)');
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 3), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received order cannot be received again or corrected');
+-- รับบรรทัดของซื้อที่ชิ้นไม่ได้เป็น PURCHASED แล้ว (ถูกเปลี่ยนชนิดหลังสั่ง) = RF_INVALID_PURCHASE ไม่แตะสต็อก
+select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-04', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":5}]'::jsonb)) is not null, 'a planner orders a part that will change kind afterwards');
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.bom_items set kind = 'SE' where is_test and code = 'P-3';
+select set_config('request.jwt.claims', '{"sub":"8e100000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-04', 0, 5), 'receivePurchaseLine') $$, 'RF_INVALID_PURCHASE', 'a part line cannot be received once the item is no longer a purchased part');
+select is(ps_t.qty('P-3'), 0::numeric, 'and the stock did not move');
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.bom_items set kind = 'PURCHASED' where is_test and code = 'P-3';
+select set_config('request.jwt.claims', '{"sub":"8e100000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(ps_t.po_save(ps_t.receipt('PO-20261111-04', 0, 5), 'receivePurchaseLine') is not null, 'with the kind restored the same receipt works');
 
 -- 9. snapshot / delta ----------------------------------------------------------------------
 select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 13::bigint, 'the snapshot still has thirteen lists');

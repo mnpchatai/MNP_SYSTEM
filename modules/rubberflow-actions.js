@@ -485,6 +485,11 @@
         seen.add(code);
         const uom = String(line.uom ?? "").trim().slice(0, 20);
         if (!uom) fail(`ไม่ทราบหน่วยของ ${code}`);
+        // สต็อกขั้นต่ำของซื้อ (เก็บที่คลังของซื้อ) แก้ได้เฉพาะกลุ่มวางแผน: สมาชิก RB สั่งซื้อได้ต่อเมื่อค่าเท่าที่เก็บ (storedSafetyKg ที่หน้าต่างสั่งซื้อส่งมา) · ฐานข้อมูลตรวจซ้ำ (RF_FORBIDDEN)
+        if (ctx.remote && !ctx.user?.planner) {
+          const wanted = kgOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`);
+          if (wanted !== kgOf(line.storedSafetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`)) fail(`แก้สต็อกขั้นต่ำของของซื้อ ${code} ได้โดยฝ่ายวางแผนเท่านั้น`);
+        }
         return {
           materialCode: code, source: "bom", uom, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: signedKgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
           safetyKg: kgOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`), qtyKg: kgOf(line.qtyKg, `จำนวนสั่งของ ${code}`, { positive: true }),

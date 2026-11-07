@@ -655,7 +655,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       if (list === "stockMoves" || (list === "stock" && entry && typeof entry === "object" && Object.hasOwn(entry, "delete"))) fail("BOM_INVALID_PAYLOAD");
       if (count > 0 && ((list === "stock" && action !== "countPartStock") || (action === "countPartStock" && list !== "stock") || (action === "issueOrderParts" && !(list === "jobs" && !entry?.delete?.length)))) fail("BOM_INVALID_PAYLOAD");
     }
-    const partRows = []; // แถวงานของซื้อที่ issueOrderParts ส่งมา (ตรวจแล้ว ยังไม่เขียน)
+    // แถวงานของซื้อที่ issueOrderParts ส่งมาตรวจโดย bomIssueParts ด้านล่าง
     // ระเบียนที่คำสั่งนี้แก้เอง (เวอร์ชัน nextVersion) ไม่นับว่าเป็นของผู้อื่น
     const mine = new Set();
     const changedByOthers = (list, id) => (next.versions[list][id] ?? 0) > base && !mine.has(`${list}|${id}`);
@@ -696,7 +696,6 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           if (bomCanon(bomWithout(prev, workKeys)) !== bomCanon(bomWithout(record, workKeys))) fail("BOM_INVALID_JOB");
           const owner = next.orders.find((row) => row.id === prev.orderId);
           if (!owner || !["released", "in_progress"].includes(owner.status)) fail("BOM_INVALID_TRANSITION");
-          partRows.push(record);
           continue;
         }
         // สูตรยางผูกกับสูตร PHR ของ RubberFlow ได้เฉพาะรหัสสูตรที่มีอยู่ในฐานข้อมูล RubberFlow (revision ใดก็ได้ · ตรงกับ bom_save_compounds)
@@ -751,7 +750,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     }
     // สต็อกของซื้อ: นับ (countPartStock) และเบิกจ่ายรายใบ (issueOrderParts) ในธุรกรรมเดียวกับงาน
     bomSaveStock(next, changes.stock?.upsert ?? [], base, current.version, nextVersion, actor, at);
-    if (action === "issueOrderParts") meta.issued = bomIssueParts(next, partRows, base, current.version, nextVersion, actor, at);
+    // ส่งทุกแถวของ jobs.upsert (เหมือน SQL): แถวที่ไม่ใช่งานของซื้อของใบเดียวกัน = BOM_INVALID_JOB
+    if (action === "issueOrderParts") meta.issued = bomIssueParts(next, changes.jobs?.upsert ?? [], base, current.version, nextVersion, actor, at);
     // ใบที่ปล่อยผลิตต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้)
     for (const orderId of released) if (!next.jobs.some((job) => job.orderId === orderId)) fail("BOM_INVALID_TRANSITION");
     rfOps.release = [...released];
@@ -1262,6 +1262,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
             const common = { needKg: line.needKg, availableKg: line.availableKg, shortageKg: line.shortageKg, safetyKg: line.safetyKg, qtyKg: line.qtyKg, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null };
             if (line.source === "bom") {
               const item = bomLoad().items.find((row) => row.code === bomCode(line.materialCode) && row.kind === "PURCHASED") ?? fail(bad);
+              // สต็อกขั้นต่ำของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน (ไม่มีแถวสต็อก = 0) · ตรงกับ rf_save_purchase_orders
+              if (line.safetyKg !== (bomLoad().stock.find((entry) => entry.itemCode === item.code)?.safetyQty ?? 0) && !planner) fail("RF_FORBIDDEN");
               ops.stock.push({ kind: "safety", code: item.code, qty: line.safetyKg });
               return { materialCode: item.code, source: "bom", uom: item.uom, ...common };
             }
@@ -1308,6 +1310,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         if ((prev.lines[index2].source ?? "rf") === "bom") {
           // ของซื้อ: รับเฉพาะปริมาณ (ไม่มีล็อต/วันหมดอายุ) บวกยอดคงเหลือและเขียนประวัติ receive ฝั่ง BOM · ห้ามมีล็อตวัตถุดิบมาด้วย (ตรวจท้ายคำสั่ง)
           if (!(money(line.receivedKg) && line.receivedKg > 0)) fail(bad);
+          // ชิ้นต้องยังเป็นของซื้อใน item master (ตรงกับตรวจตอนรับใน rf_save_purchase_orders)
+          if (!bomLoad().items.some((row) => row.code === prev.lines[index2].materialCode && row.kind === "PURCHASED")) fail(bad);
           partReceipts.push({ kind: "receive", code: prev.lines[index2].materialCode, qty: line.receivedKg, ref: record.id });
           ops.stock.push(partReceipts.at(-1));
           const partLines = prev.lines.map((old, i) => (i === index2 ? { ...old, receivedKg: line.receivedKg, lotNo: null, expiry: null, receivedAt: at, receivedBy: actor.name } : old));

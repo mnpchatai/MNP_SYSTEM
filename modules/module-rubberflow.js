@@ -73,7 +73,7 @@
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfTransfer / showBomFeedback: ขั้น "รับมอบ → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfTransfer: (id) => bomJobOfTransfer(id), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options) };
+  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfTransfer: (id) => bomJobOfTransfer(id), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -168,7 +168,7 @@
     receivePurchaseLine: (p) => (p.expiry === undefined ? { ...p } : { ...p, expiry: rules.fromInputDate(p.expiry) }),
     // ฟอร์มสั่งซื้อ: materialCode[] source[] uom[] needKg[] availableKg[] shortageKg[] safetyKg[] qtyKg[] ตามลำดับแถว (เคมีก่อน ของซื้อตาม) → lines · safety = สต็อกขั้นต่ำที่แก้ไว้ต่อวัตถุดิบ (บันทึกเข้าวัตถุดิบ) · จำนวนสั่งที่ว่าง/0 ถูกข้ามใน action
     createPurchaseOrder: (p) => {
-      const lines = listOf(p.materialCode).map((materialCode, index) => ({ materialCode, source: listOf(p.source)[index] === "bom" ? "bom" : "rf", uom: listOf(p.uom)[index] || undefined, needKg: listOf(p.needKg)[index], availableKg: listOf(p.availableKg)[index], shortageKg: listOf(p.shortageKg)[index], safetyKg: listOf(p.safetyKg)[index], qtyKg: listOf(p.qtyKg)[index] }));
+      const lines = listOf(p.materialCode).map((materialCode, index) => ({ materialCode, source: listOf(p.source)[index] === "bom" ? "bom" : "rf", uom: listOf(p.uom)[index] || undefined, storedSafetyKg: listOf(p.storedSafetyKg)[index], needKg: listOf(p.needKg)[index], availableKg: listOf(p.availableKg)[index], shortageKg: listOf(p.shortageKg)[index], safetyKg: listOf(p.safetyKg)[index], qtyKg: listOf(p.qtyKg)[index] }));
       return { lines, safety: Object.fromEntries(lines.map((line) => [line.materialCode, line.safetyKg])), sourcePi: p.sourcePi, sourceRequisition: p.sourceRequisition, note: p.note };
     },
     createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
@@ -202,9 +202,29 @@
         if (sentJob) showBomFeedback(sentJob);
         // ใบสั่งซื้อที่มีบรรทัดของซื้อแก้สต็อกขั้นต่ำ/ยอดคงเหลือฝั่ง BOM ในคำสั่งเดียวกัน: ตามทัน BOM ให้หน้าคลังของซื้อและหน้าต่างสั่งซื้อเห็นค่าล่าสุด
         if (name === "createPurchaseOrder" || name === "receivePurchaseLine") { try { bomStore()?.catchUp?.(); } catch { /* BOM ตามทันเองตอนเปิดหน้า */ } }
+        if (name === "createPurchaseOrder") saveUnorderedPartSafety(payload);
       } else showToast(friendlyError(outcome.error), "error");
     });
     return true;
+  }
+
+  // สต็อกขั้นต่ำของของซื้อที่แก้ในหน้าต่างสั่งซื้อแต่จำนวนสั่งเป็น 0 (ไม่อยู่ในบรรทัดใบสั่งซื้อ จึงเซิร์ฟเวอร์ไม่บันทึกให้ในคำสั่งเดียว):
+  // บันทึกเข้าคลังของซื้อของ BOM ด้วย countPartStock (เฉพาะกลุ่มวางแผน ซึ่งเป็นผู้เดียวที่แก้ช่องนี้ได้) หลังใบสั่งซื้อสำเร็จ · ไม่สำเร็จ = แจ้ง ไม่ย้อนใบสั่งซื้อ
+  async function saveUnorderedPartSafety(payload) {
+    const counts = (payload?.lines ?? []).filter((line) => line?.source === "bom" && !(Number(line.qtyKg) > 0) && Number(line.safetyKg) >= 0 && Number(line.safetyKg) !== (Number(line.storedSafetyKg) || 0))
+      .map((line) => ({ itemCode: line.materialCode, safetyQty: Number(line.safetyKg) }));
+    const bom = bomStore();
+    if (!counts.length || !bom) return;
+    try {
+      await bom.catchUp();
+      const outcome = bom.run("countPartStock", { counts });
+      if (!outcome.ok) throw outcome.error;
+      const saved = await outcome.saving;
+      if (saved && saved.ok === false) throw saved.error;
+      showToast(`บันทึกสต็อกขั้นต่ำของซื้อ ${counts.length} รายการที่ไม่ได้สั่งแล้ว`);
+    } catch (error) {
+      showToast(`สั่งซื้อแล้ว แต่บันทึกสต็อกขั้นต่ำของของซื้อที่ไม่ได้สั่งไม่สำเร็จ: ${friendlyError(error)}`, "error");
+    }
   }
 
   // ---------- รับมอบ WIP → รายงานเข้างาน BOM ----------

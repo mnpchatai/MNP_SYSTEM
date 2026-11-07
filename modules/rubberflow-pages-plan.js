@@ -488,7 +488,7 @@
       const hidden = Object.entries({ materialCode: row.materialCode, source: row.source, uom: row.uom ?? "", needKg: row.needKg, availableKg: row.availableKg, shortageKg: row.shortageKg }).map(([name, value]) => `<input type="hidden" name="${name}[]" value="${esc(String(value))}">`).join("");
       return `<tr data-rf-po-row data-short="${esc(String(row.shortageKg))}"><td>${ui.mono(row.materialCode)}<div class="small muted">${esc(row.name)}${row.source === "bom" ? ` · ${esc(partUnit(row.uom))}` : ""}</div>${hidden}</td>
         ${cells}
-        <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"` })}</td>
+        <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"${row.source === "bom" && !ctx.user?.planner ? ' readonly title="สต็อกขั้นต่ำของซื้อแก้ได้โดยฝ่ายวางแผนเท่านั้น"' : ""}` })}<input type="hidden" name="storedSafetyKg[]" value="${esc(String(row.safetyKg))}"></td>
         <td>${ui.input("qtyKg[]", { type: "number", step: "any", min: 0, value: String(row.orderKg), extra: `data-rf-qty title="ตั้งต้น = ขาด + สต็อกขั้นต่ำ" aria-label="จำนวนสั่ง ${code}"` })}</td></tr>`;
     };
     const tableRows = rows.map((row) => rowHtml(`<td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td>${stockCell(row.onHandKg)}${stockCell(row.reservedKg, reservedTitle(row))}${stockCell(row.onOrderKg)}
