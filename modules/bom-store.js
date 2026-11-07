@@ -344,7 +344,7 @@
   // ข้อผิดพลาดของ RPC ข้อมูล BOM → ข้อความไทยสั้นๆ (ไม่แสดงข้อความดิบของฐานข้อมูล) · code ของ Error คือรหัสที่ฐานข้อมูลส่งมา
   function mapRemoteError(error, fallback = "บันทึกข้อมูล BOM ไม่สำเร็จ ลองใหม่อีกครั้ง") {
     const haystack = `${error?.code ?? ""} ${error?.message ?? ""} ${error?.details ?? ""} ${typeof error === "string" ? error : ""}`;
-    const code = /BOM_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/PGRST202|42883/.test(haystack) ? "BOM_NOT_DEPLOYED" : "BOM_REMOTE_FAILED");
+    const code = /BOM_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/PGRST202|42883/.test(haystack) ? "BOM_NOT_DEPLOYED" : /57014|statement timeout/i.test(haystack) ? "BOM_TIMEOUT" : "BOM_REMOTE_FAILED");
     const message = {
       BOM_TEST_MODE_ONLY: "ข้อมูล BOM ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
       BOM_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์แก้ข้อมูล BOM รายการนี้ (ฝ่ายวางแผน ผู้จัดการ และผู้ดูแลระบบทำได้ทุกรายการ แผนกอื่นรายงานได้เฉพาะงานของแผนกตน)",
@@ -355,6 +355,7 @@
       BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       BOM_TOO_MANY: "ข้อมูลชุดนี้มากเกินกว่าจะบันทึกในครั้งเดียว (เกิน 5,000 รายการต่อประเภท) แบ่งนำเข้าทีละส่วน",
+      BOM_TIMEOUT: "ฐานข้อมูลบันทึกไม่ทันเวลาที่กำหนด ลองใหม่อีกครั้ง ถ้ายังไม่ได้ให้แบ่งข้อมูลเป็นชุดเล็กลง",
       BOM_TOO_LARGE: "รูปชิ้นงานรวมกันใหญ่เกินกว่าจะบันทึกในครั้งเดียว",
       BOM_TOO_DEEP: "BOM ซ้อนกันลึกเกิน 30 ชั้น ตรวจว่ามีชิ้นงานใช้ตัวเองเป็นส่วนประกอบหรือไม่",
       BOM_CHILD_NOT_FOUND: "มีส่วนประกอบที่ยังไม่มีในรายการชิ้นงาน",
@@ -420,6 +421,56 @@
   }
   const AUDIT_FRESH_MS = 3000; // หน้าบันทึกการใช้งานวาดซ้ำภายในช่วงนี้ไม่ดึงใหม่ (ดึงใหม่เมื่อมีการบันทึกหรือกดโหลดใหม่)
 
+  // คำสั่งที่ใหญ่เกินจะบันทึกครั้งเดียว (นำเข้าชีต DATA ทั้งไฟล์ ราว 5 MB): ฐานข้อมูลตัดคำสั่งของบัญชีผู้ใช้ที่นานเกิน 8 วินาที (statement_timeout ของ authenticated)
+  // จึงแบ่งส่งหลายครั้ง ครั้งละไม่เกิน SAVE_BATCH_RECORDS ระเบียน / SAVE_BATCH_BYTES ตัวอักษร ตามลำดับที่ฐานข้อมูลเขียน (สูตรยาง สี ขั้นตอน → ชิ้นงาน → ชุดสี แพ็กเกจ → BOM → routing)
+  // ระเบียนที่ถูกอ้างจึงถึงฐานข้อมูลก่อนระเบียนที่อ้าง · แบ่งเฉพาะข้อมูลหลักที่ไม่มีการลบ (ใบสั่งผลิต งาน ลูกค้า และการลบ ส่งครั้งเดียวทั้งคำสั่งเหมือนเดิม)
+  const SAVE_BATCH_RECORDS = 300;
+  const SAVE_BATCH_BYTES = 250_000;
+  const SAVE_ORDER = Object.freeze(["compounds", "colors", "processes", "items", "colorSets", "packages", "boms", "routings"]);
+  function splitForSave(changes) {
+    const lists = Object.keys(changes);
+    if (lists.some((list) => !SAVE_ORDER.includes(list) || changes[list].delete?.length)) return [changes];
+    const sized = SAVE_ORDER.flatMap((list) => (changes[list]?.upsert ?? []).map((record) => ({ list, record, bytes: JSON.stringify(record).length })));
+    const totalBytes = sized.reduce((sum, entry) => sum + entry.bytes, 0);
+    if (sized.length <= SAVE_BATCH_RECORDS && totalBytes <= SAVE_BATCH_BYTES) return [changes];
+    const batches = [];
+    let batch = {};
+    let count = 0;
+    let bytes = 0;
+    for (const { list, record, bytes: size } of sized) {
+      if (count && (count + 1 > SAVE_BATCH_RECORDS || bytes + size > SAVE_BATCH_BYTES)) {
+        batches.push(batch);
+        batch = {};
+        count = 0;
+        bytes = 0;
+      }
+      (batch[list] ??= { upsert: [] }).upsert.push(record);
+      count += 1;
+      bytes += size;
+    }
+    if (count) batches.push(batch);
+    return batches;
+  }
+  // ส่วนต่างของการบันทึกหลายครั้งต่อกัน → ส่วนต่างเดียวตั้งแต่เวอร์ชันฐานของครั้งแรก (เหมือนบันทึกครั้งเดียว) · ระเบียนเดียวกันใช้ค่าจากครั้งหลังสุด (ลบแล้วเพิ่ม หรือเพิ่มแล้วลบ)
+  function combineDeltas(deltas) {
+    const last = deltas[deltas.length - 1];
+    if (deltas.length === 1) return last;
+    const changes = {};
+    for (const list of REMOTE_LISTS) {
+      const latest = new Map();
+      for (const delta of deltas) {
+        for (const target of delta.changes[list].delete) latest.set(deleteKey(list, target), { target });
+        for (const record of delta.changes[list].upsert) latest.set(MASTER_KEY[list](record), { record });
+      }
+      const values = [...latest.values()];
+      changes[list] = { upsert: values.filter((entry) => entry.record).map((entry) => entry.record), delete: values.filter((entry) => entry.target).map((entry) => entry.target) };
+    }
+    const out = { version: last.version, epoch: last.epoch, changes };
+    const rubberflow = deltas.map((delta) => delta.rubberflow).filter(Boolean);
+    if (rubberflow.length) out.rubberflow = rubberflow[rubberflow.length - 1];
+    return out;
+  }
+
   // shouldHold() = หน้ามีฟอร์มที่แก้ค้าง/เปิด dialog อยู่ (หน้าส่งมา): ระหว่างนั้นข้อมูลของผู้อื่นที่มากับ catchUp หรือคำตอบของการบันทึกห้ามรวมเข้า data และห้ามขยับเวอร์ชันฐาน
   function createRemoteStore({ actions, now, remote, persona, idSuffix = randomSuffix, shouldHold: pageHolds = () => false, rfOrders = () => null }) {
     const shouldHold = () => { try { return Boolean(pageHolds()); } catch { return false; } };
@@ -430,6 +481,7 @@
     let status = "idle"; // idle · loading · ready · error
     let loadError = null;
     let busy = false;
+    let progress = null; // คำสั่งที่แบ่งส่งหลายครั้ง: { done, total } ระหว่างส่ง · ครั้งเดียว = null
     let loading = null;
     let catching = null;
     let newerPending = false; // ฐานข้อมูลมีข้อมูลใหม่ของผู้อื่นที่ยังไม่รวม เพราะผู้ใช้มีฟอร์มที่แก้ค้างอยู่ (เวอร์ชันฐานของฟอร์มต้องไม่ขยับ)
@@ -602,14 +654,24 @@
       counters = draft.counters;
       const sent = canPlan(user) ? changes : shapeForActor(changes, before);
       if (!hasChanges(sent)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
+      const batches = splitForSave(sent);
+      progress = batches.length > 1 ? { done: 0, total: batches.length } : null;
       busy = true;
       emit({ type: "saving" });
       const baseVersion = snapshot.version;
       const baseEpoch = snapshot.epoch ?? null; // รอบข้อมูลที่ถือ: ฐานข้อมูลปฏิเสธ (BOM_RESET) ถ้าถูกล้างข้อมูลทดสอบไปแล้ว
       // ชน หรือเวอร์ชันฐานไม่ตรงฐานข้อมูล: ตามทันด้วยส่วนต่าง (ไม่ได้ก็โหลดทั้งชุด) ก่อนแสดงข้อมูลล่าสุดให้ผู้ใช้ทำรายการใหม่
       // ย้อนกลับทั้งคำสั่ง: ฐานย้อนกลับ = snapshot ปัจจุบัน (เวอร์ชันฐานเดิม + ระเบียนของเราที่บันทึกสำเร็จไปแล้วแต่ยังถูกกันไว้) · ถ้าผู้ใช้มีฟอร์มค้างอยู่ (ก่อนหรือระหว่างรอตามทัน) ไม่ดึงข้อมูลผู้อื่นเข้ามา แค่จำว่ามีใหม่
-      const onSaveFailed = async (error) => {
-        const mapped = mapRemoteError(error);
+      // committed = ส่วนต่างของส่วนที่บันทึกสำเร็จไปแล้วก่อนส่วนที่ล้ม (คำสั่งที่แบ่งส่งหลายครั้ง): อยู่ในฐานข้อมูลแล้ว ฐานย้อนกลับจึงรวมส่วนเหล่านั้นด้วย
+      // (มีฟอร์มค้าง = รวมเฉพาะระเบียนของเราเหมือนคำตอบที่ถูกกันไว้ ไม่ขยับเวอร์ชันฐาน) · ข้อความบอกว่าบันทึกไปแล้วกี่ส่วน นำเข้าซ้ำได้ (ชิ้นงานที่มีแล้วรวม BOM ที่มีแล้วข้าม)
+      const onSaveFailed = async (error, committed = [], total = 1) => {
+        let mapped = mapRemoteError(error);
+        if (committed.length) {
+          const done = combineDeltas(committed);
+          snapshot = shouldHold() ? snapshotWith(snapshot, ownRecordsOf(done, changes, snapshot.version)) : snapshotWith(snapshot, done);
+          auditStale = true;
+          mapped = Object.assign(new Error(`${mapped.message} (บันทึกไปแล้ว ${committed.length} จาก ${total} ส่วน ส่วนที่เหลือยังไม่ได้บันทึก ทำรายการเดิมอีกครั้งได้ ข้อมูลที่บันทึกแล้วจะถูกข้าม)`), { code: mapped.code });
+        }
         const conflict = CONFLICT_CODES.includes(mapped.code);
         let held = shouldHold();
         if (conflict && !held) {
@@ -621,13 +683,36 @@
         counters = previousCounters;
         assemble();
         busy = false;
+        progress = null;
         emit({ type: "reverted", error: mapped, held });
         return { ok: false, error: mapped };
       };
-      const saving = Promise.resolve().then(() => remote.save(sent, baseVersion, name, auditEntries, baseEpoch)).then(normalizeDelta).then(
-        (delta) => {
+      // ส่งทีละส่วน: ส่วนถัดไปใช้เวอร์ชันที่ส่วนก่อนได้เป็นฐาน · บันทึกการใช้งานของผู้ใช้ไปกับส่วนแรก ส่วนถัดไปบอกแค่ลำดับส่วน
+      // ไม่แตะ snapshot/data ระหว่างส่ง (เหมือนรอคำตอบเดียว) แล้วรวมส่วนต่างทุกส่วนเป็นคำตอบเดียวตั้งแต่เวอร์ชันฐานเดิม
+      // ผลของส่วนที่ล้ม: ข้อผิดพลาดเดิม (ไม่แก้ออบเจ็กต์ของมัน) + ส่วนต่างของส่วนที่บันทึกสำเร็จก่อนหน้า
+      const failedAfter = (cause, committed) => ({ batchFailure: true, cause, committed: [...committed] });
+      const sendAll = async () => {
+        const deltas = [];
+        let version = baseVersion;
+        for (const [index, batch] of batches.entries()) {
+          const audit = index === 0 ? auditEntries : [{ action: "บันทึกต่อเนื่อง", detail: `ส่วนที่ ${index + 1} จาก ${batches.length} ของคำสั่งเดียวกัน` }];
+          let delta;
+          try {
+            delta = normalizeDelta(await remote.save(batch, version, name, audit, baseEpoch));
+          } catch (error) {
+            throw failedAfter(error, deltas);
+          }
           // ฐานข้อมูลตอบรอบข้อมูลใหม่ (ปกติถูกปฏิเสธ BOM_RESET ก่อนแล้ว): ถือว่าการบันทึกไม่ผ่าน ตามทันด้วยการโหลดทั้งชุด
-          if (epochChanged(delta)) return onSaveFailed(Object.assign(new Error("BOM_RESET"), { code: "BOM_RESET" }));
+          if (epochChanged(delta)) throw failedAfter(Object.assign(new Error("BOM_RESET"), { code: "BOM_RESET" }), deltas);
+          deltas.push(delta);
+          version = delta.version;
+          if (progress && index + 1 < batches.length) { progress = { done: index + 1, total: batches.length }; emit({ type: "saving" }); }
+        }
+        return combineDeltas(deltas);
+      };
+      const saving = Promise.resolve().then(sendAll).then(
+        (delta) => {
+          progress = null;
           // ฐานข้อมูลตอบส่วนต่างตั้งแต่เวอร์ชันฐาน: ของเราที่ตรวจแล้ว + ที่ผู้อื่นบันทึกระหว่างนั้น · รวมเข้าชุดข้อมูลตามกุญแจ ลำดับและรูปแบบตามฐานข้อมูลเป็นหลัก
           // เนื้อหาเท่ากับที่แสดงอยู่แล้ว (เช่น มีแต่ของเรา) ไม่ต้องวาดหน้าใหม่
           // changed = เนื้อหาต่างจากที่แสดง (รวมที่ฐานข้อมูลประทับเวลา/ผู้บันทึกให้ระเบียนของเราเอง) · others = มีระเบียนที่เราไม่ได้ส่ง (ผู้อื่นบันทึกระหว่างนั้น) ใช้แจ้งผู้ใช้
@@ -650,7 +735,7 @@
           emit({ type: "saved", changed, others });
           return delta.rubberflow ? { ok: true, rubberflow: delta.rubberflow } : { ok: true };
         },
-        onSaveFailed,
+        (failure) => (failure?.batchFailure ? onSaveFailed(failure.cause, failure.committed, batches.length) : onSaveFailed(failure)),
       );
       return { ok: true, result: result ?? true, saving };
     }
@@ -702,7 +787,7 @@
     const reset = () => { init(); return data; }; // โหมดฐานข้อมูลไม่มีการรีเซ็ตในเครื่อง (ล้างข้อมูลทดสอบ = purge)
     return {
       load: () => { init(); return data; }, data: () => { init(); return data; }, user: () => persona(), setUser: () => persona(), run, reset, isPersisted: () => true, size: () => 0, now,
-      isRemote: () => true, status: () => status, error: () => loadError, isSaving: () => busy, hasNewer: () => newerPending, version: () => snapshot?.version ?? null,
+      isRemote: () => true, status: () => status, error: () => loadError, isSaving: () => busy, saveProgress: () => (busy && progress ? { ...progress } : null), hasNewer: () => newerPending, version: () => snapshot?.version ?? null,
       ensureLoaded, reload, catchUp, idSuffix, audit: () => auditView, loadAudit, purge, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     };
   }
@@ -793,7 +878,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล BOM ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);
