@@ -1823,8 +1823,10 @@
       const partsLeft = ctx.helpers.partIssuePlan(data, order.id).lines.length;
       if (openOrder && partsLeft && ctx.helpers.canIssueParts(user)) buttons.push(ui.openButton("เบิกจ่ายของซื้อ", "issueParts", { orderId: order.id }, { className: "" }));
       // คืนของซื้อ: เมื่อมีของที่เบิกจ่ายแล้ว (ST / ฝ่ายวางแผน) · คืนของเหลือได้จนกว่าใบจะถูกยกเลิก (รวมใบที่ปิดแล้ว) · ยกเลิกการเบิกจ่ายได้เฉพาะใบที่ยังไม่ปิด
-      if (rules.partReturnLines(data, order.id).length && ctx.helpers.canIssueParts(user)) {
-        if (order.status !== "cancelled") buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
+      // คืนของเหลือแสดงเมื่อยังมีรายการที่คืนได้ (คืนครบแล้วไม่แสดง) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
+      const returnLines = rules.partReturnLines(data, order.id);
+      if (returnLines.length && ctx.helpers.canIssueParts(user)) {
+        if (order.status !== "cancelled" && returnLines.some((line) => line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
         if (openOrder) buttons.push(ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary" }));
       }
       if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(user, { dept: "RB" })) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก แล้วสั่งซื้อส่วนที่ขาด">ตรวจวัตถุดิบ</button>`);

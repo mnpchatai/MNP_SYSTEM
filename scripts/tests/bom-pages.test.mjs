@@ -1529,4 +1529,13 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
   assert.match(box, /คืน[\s\S]*เบิกผิดใบ/);
   // บันทึกการใช้งานเรียกชื่อการกระทำเป็นภาษาไทย
   assert.ok(env.store.data().audit.some((row) => row.action === "ยกเลิกการเบิกจ่ายของซื้อ"));
+  // เบิกจ่ายใหม่แล้วคืนของเหลือครบทุกรายการ: ปุ่มคืนของเหลือหายไป แต่ยกเลิกการเบิกจ่ายยังอยู่ (พางานกลับเป็นรอเบิกได้)
+  assert.equal(env.store.run("issueOrderParts", { orderId: "DEMO-26001" }).ok, true);
+  const rules = env.context.MNP_BOM_RULES;
+  const all = rules.partReturnLines(env.store.data(), "DEMO-26001").filter((line) => line.returnable > 0).map((line) => ({ itemCode: line.itemCode, qty: line.returnable }));
+  assert.ok(all.length > 0);
+  assert.equal(env.store.run("returnOrderParts", { orderId: "DEMO-26001", lines: all, reason: "คืนครบ" }).ok, true);
+  html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return → no leftover button");
+  assert.match(html, /data-rf-open="undoParts"/, "the undo stays");
 });
