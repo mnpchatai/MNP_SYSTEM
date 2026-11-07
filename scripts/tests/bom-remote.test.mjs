@@ -1013,6 +1013,137 @@ test("a whole sheet import is one save call, and database mode has no local rese
   assert.equal(env.store.data().items.length, built.items.size, "there is no local reset in database mode: the data is not touched");
 });
 
+// ชีต DATA ทั้งไฟล์: ชิ้นงานหลายร้อยชิ้นและ BOM หลายร้อยพ่อ (ใหญ่เกินกว่าฐานข้อมูลบันทึกทันในคำสั่งเดียว)
+const bigImport = (parts = 650, products = 200) => ({
+  items: [
+    ...Array.from({ length: parts }, (_, n) => ({ code: `P-BIG-${String(n).padStart(4, "0")}`, kind: "PURCHASED", name: `ชิ้นส่วน ${n}`, uom: "pcs" })),
+    ...Array.from({ length: products }, (_, n) => ({ code: `BIG-${String(n).padStart(3, "0")}(P)-Y`, kind: "FG", name: `สินค้า ${n}`, uom: "set" })),
+  ],
+  boms: Array.from({ length: products }, (_, n) => ({ parentCode: `BIG-${String(n).padStart(3, "0")}(P)-Y`, lines: [0, 1, 2].map((k) => ({ childCode: `P-BIG-${String((n * 3 + k) % parts).padStart(4, "0")}`, qty: k + 1 })) })),
+  source: "DATA BOM.xlsx",
+  group: "TOY",
+});
+
+test("splitForSave keeps small and work-list saves whole, and cuts big master saves in the database's write order", () => {
+  const { splitForSave, SAVE_BATCH_RECORDS } = storeApi;
+  const item = (n) => ({ code: `P-${n}`, kind: "PURCHASED", name: "x", uom: "pcs" });
+  const small = { items: { upsert: [item(1)] }, boms: { upsert: [{ id: "BOM-1", itemCode: "FG", lines: [] }] } };
+  assert.deepEqual(splitForSave(small), [small], "a normal save is one call");
+  const many = Array.from({ length: SAVE_BATCH_RECORDS * 2 }, (_, n) => item(n));
+  const withOrders = { items: { upsert: many }, orders: { upsert: [{ id: "PI-1" }] } };
+  assert.deepEqual(splitForSave(withOrders), [withOrders], "orders, customers and jobs keep the whole command in one transaction");
+  const withDelete = { items: { upsert: many }, colorSets: { delete: [{ base: "TOY-01", code: "A" }] } };
+  assert.deepEqual(splitForSave(withDelete), [withDelete], "a command that deletes is never split");
+
+  // กุญแจของ changes มาลำดับไหนก็ได้ ส่วนที่ส่งเรียงตามที่ฐานข้อมูลเขียน: สูตรยางก่อนชิ้นงาน ชิ้นงานก่อน BOM
+  const boms = Array.from({ length: 10 }, (_, n) => ({ id: `BOM-${n}`, itemCode: `FG-${n}`, lines: [] }));
+  const batches = splitForSave({ boms: { upsert: boms }, items: { upsert: many }, compounds: { upsert: [{ code: "B0006" }] } });
+  assert.equal(batches.length, 3);
+  assert.deepEqual(Object.keys(batches[0]), ["compounds", "items"]);
+  assert.ok(batches.every((batch) => Object.values(batch).reduce((sum, entry) => sum + entry.upsert.length, 0) <= SAVE_BATCH_RECORDS));
+  assert.deepEqual(Object.keys(batches[2]), ["items", "boms"], "BOMs go after the last items");
+  assert.equal(batches.flatMap((batch) => batch.items?.upsert ?? []).length, many.length, "nothing is lost or repeated");
+  assert.equal(batches.flatMap((batch) => batch.boms?.upsert ?? []).length, boms.length);
+
+  // ระเบียนใหญ่ (เช่น ชิ้นงานที่มีรูป) แบ่งตามขนาดด้วย
+  const heavy = Array.from({ length: 6 }, (_, n) => ({ ...item(n), photo: "x".repeat(100_000) }));
+  assert.equal(splitForSave({ items: { upsert: heavy } }).length, 3, "at most about 250 KB per call");
+});
+
+test("a whole DATA sheet import is saved in several calls, each on the version of the one before, and the page ends with everything", async () => {
+  const env = await ready(remoteStore());
+  const payload = bigImport();
+  const out = env.store.run("importFlat", payload);
+  assert.equal(out.ok, true);
+  assert.equal(env.store.isSaving(), true);
+  assert.deepEqual(env.store.saveProgress(), { done: 0, total: 4 }, "the page can say which part is being saved");
+  const result = await out.saving;
+  assert.equal(result.ok, true);
+  assert.equal(env.server.saves.length, 4, "650 + 200 items and 200 BOMs at 300 records a call");
+  assert.deepEqual(env.server.saves.map((save) => save.baseVersion), [0, 1, 2, 3], "each part is checked against the version the previous part made");
+  assert.ok(env.server.saves.every((save) => save.action === "importFlat"));
+  const firstBom = env.server.saves.findIndex((save) => save.changes.boms);
+  const lastItems = env.server.saves.findLastIndex((save) => save.changes.items);
+  assert.ok(lastItems <= firstBom, "every item is in the database before a BOM that uses it");
+  assert.match(env.server.saves[0].audit[0].action, /นำเข้า BOM/);
+  assert.deepEqual(env.server.saves[0].audit[1], { action: "บันทึกต่อเนื่อง", detail: "ส่วนที่ 1 จาก 4 ของคำสั่งเดียวกัน" }, "the audit says the import totals came with part 1 of 4");
+  assert.equal(env.server.saves[0].audit.length, 2);
+  assert.deepEqual(env.server.saves.slice(1).map((save) => save.audit[0].detail), ["ส่วนที่ 2 จาก 4 ของคำสั่งเดียวกัน", "ส่วนที่ 3 จาก 4 ของคำสั่งเดียวกัน", "ส่วนที่ 4 จาก 4 ของคำสั่งเดียวกัน"]);
+  assert.equal(env.server.master.items.length, 850);
+  assert.equal(env.server.master.boms.length, 200);
+  assert.equal(env.store.version(), 4);
+  assert.equal(env.store.data().items.length, 850);
+  assert.equal(env.store.data().boms.length, 200);
+  assert.equal(env.store.data().items.find((item) => item.code === "P-BIG-0000").updatedAt, SERVER_AT, "records of the first part carry the server's stamps too");
+  assert.equal(env.store.saveProgress(), null);
+  assert.equal(env.events.filter((type) => type === "saving").length, 4, "one notice per part so the status text moves on");
+  assert.equal(env.events.at(-1), "saved");
+});
+
+test("a part that fails keeps the parts already saved, says how far it got, and running the import again finishes the rest", async () => {
+  const env = await ready(remoteStore());
+  const save = env.server.remote.save;
+  let calls = 0;
+  env.server.remote.save = (...args) => {
+    calls += 1;
+    if (calls === 3) return Promise.reject({ code: "57014", message: "canceling statement due to statement timeout" });
+    return save(...args);
+  };
+  const failed = await env.store.run("importFlat", bigImport()).saving;
+  assert.equal(failed.ok, false);
+  assert.equal(failed.error.code, "BOM_TIMEOUT");
+  assert.match(failed.error.message, /บันทึกไม่ทันเวลา/);
+  assert.match(failed.error.message, /บันทึกไปแล้ว 2 จาก 4 ส่วน/);
+  assert.equal(env.server.master.items.length, 600, "the database kept the two parts it accepted");
+  assert.equal(env.store.data().items.length, 600, "the page shows what the database has, not the whole optimistic import");
+  assert.equal(env.store.data().boms.length, 0);
+  assert.equal(env.store.version(), 2);
+  assert.equal(env.store.isSaving(), false);
+  assert.equal(env.store.saveProgress(), null);
+
+  const again = await env.store.run("importFlat", bigImport()).saving;
+  assert.equal(again.ok, true, "the items already saved are merged, not sent again as new");
+  assert.equal(env.server.saves.at(-1).baseVersion, 3);
+  assert.equal(env.server.master.items.length, 850);
+  assert.equal(env.server.master.boms.length, 200);
+  assert.equal(env.store.data().boms.length, 200);
+});
+
+test("only the Excel import is split: a large save from another command is still one call", async () => {
+  const env = await ready(remoteStore());
+  await env.store.run("importFlat", bigImport()).saving;
+  const before = env.server.saves.length;
+  // ชิ้นงานใหม่ 400 ชิ้นจากคำสั่งที่ไม่ใช่การนำเข้า (เช่น saveItem ที่ทำงานกับข้อมูลชุดใหญ่) ไม่ถูกแบ่ง
+  const many = { items: Array.from({ length: 400 }, (_, n) => ({ code: `P-ONE-${n}`, kind: "PURCHASED", name: "x", uom: "pcs" })) };
+  const actions = { ...A, bulkTest: (d) => { for (const item of many.items) d.items.push({ ...item, ownerDept: "ST", weightG: 0, group: "TOY", legacyCodes: [], rubber: null, active: true }); return true; } };
+  const other = storeApi.createStore({ storage: memoryStorage(), actions, now: () => NOW, remote: env.server.remote, persona: () => planner });
+  await other.ensureLoaded();
+  const out = await other.run("bulkTest").saving;
+  assert.equal(out.ok, true);
+  assert.equal(env.server.saves.length, before + 1);
+  assert.equal(env.server.saves.at(-1).changes.items.upsert.length, 400);
+});
+
+test("a test-data reset in the middle of an import does not claim the earlier parts were kept", async () => {
+  const env = await ready(remoteStore());
+  const save = env.server.remote.save;
+  let calls = 0;
+  env.server.remote.save = (...args) => {
+    calls += 1;
+    if (calls === 3) return Promise.reject({ code: "P0001", message: "BOM_RESET" });
+    return save(...args);
+  };
+  const failed = await env.store.run("importFlat", bigImport()).saving;
+  assert.equal(failed.error.code, "BOM_RESET");
+  assert.doesNotMatch(failed.error.message, /บันทึกไปแล้ว/);
+});
+
+test("Thai message for a database statement timeout", () => {
+  const error = storeApi.mapRemoteError({ code: "57014", message: "canceling statement due to statement timeout" });
+  assert.equal(error.code, "BOM_TIMEOUT");
+  assert.doesNotMatch(error.message, /canceling/);
+});
+
 test("two planners starting from the same version never generate the same BOM or routing id, so unrelated saves both succeed", async () => {
   const server = fakeServer();
   const part = (code, kind) => ({ code, kind, name: code, ownerDept: kind === "FG" ? "PK" : "ST", uom: kind === "FG" ? "set" : "pcs", weightG: 0, legacyCodes: [], active: true });

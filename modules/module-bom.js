@@ -305,7 +305,13 @@
   const countTitle = (id) => ({ jobs: "งานค้างของแผนก" })[id] ?? "";
 
   // สถานะการติดต่อฐานข้อมูล (โหมดฐานข้อมูล): ว่างเมื่อไม่มีอะไรค้าง · อัปเดตที่ [data-bom-sync] โดยไม่วาดหน้าใหม่
-  const syncText = () => (store.status() === "loading" ? "กำลังโหลดข้อมูล…" : store.isSaving() ? "กำลังบันทึก…" : "");
+  // คำสั่งใหญ่ (นำเข้าชีตทั้งไฟล์) ส่งหลายครั้ง: บอกว่าถึงส่วนไหนแล้ว
+  const syncText = () => {
+    if (store.status() === "loading") return "กำลังโหลดข้อมูล…";
+    if (!store.isSaving()) return "";
+    const progress = store.saveProgress?.();
+    return progress ? `กำลังบันทึก ส่วนที่ ${progress.done + 1} จาก ${progress.total}…` : "กำลังบันทึก…";
+  };
   const canPurge = () => store.isRemote() && Boolean(state.sandbox?.active);
   function toolbarHtml(ctx) {
     const { data, user } = ctx;
