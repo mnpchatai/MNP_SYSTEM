@@ -580,10 +580,50 @@ test("importing skips a line that makes a BOM contain itself (directly or throug
   ];
   const { summary, ...stats } = A.importFlat(d, { items, boms, source: "cycles.xlsx" }, ctx("planner"));
   assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 3, bomsSkipped: 0, linesSkipped: 0, cycleLinesSkipped: 2 });
-  assert.match(summary, /ข้าม 2 บรรทัดที่ใช้ตัวเองเป็นส่วนประกอบ$/);
+  assert.match(summary, /ข้าม 2 บรรทัดที่วนกลับมาใช้ตัวเองเป็นส่วนประกอบ$/);
   assert.deepEqual(approved(d, "PT-SELF-1").lines.map((line) => line.childCode), ["P-RESIN-1"], "the self line is dropped, the rest of the BOM stays");
   assert.deepEqual(approved(d, "SE-LOOP-A").lines.map((line) => line.childCode), ["SE-LOOP-B"], "the first BOM of a two-part loop is kept");
   assert.deepEqual(approved(d, "SE-LOOP-B").lines.map((line) => line.childCode), ["P-RESIN-1"], "the line that closes the loop is dropped");
+
+  // ลูกร่วม (diamond) ไม่ใช่วงจร: A → B, C · B → D · C → D ไม่ถูกตัด · วงจรผ่าน BOM ที่อนุมัติไว้ก่อนแล้ว (SE-LOOP-A → SE-LOOP-B) ถูกตัด
+  const more = [
+    { code: "SE-DIA-A", kind: "SE", name: "A", uom: "pcs", ownerDept: "GR" }, { code: "SE-DIA-B", kind: "SE", name: "B", uom: "pcs", ownerDept: "GR" },
+    { code: "SE-DIA-C", kind: "SE", name: "C", uom: "pcs", ownerDept: "GR" }, { code: "SE-DIA-D", kind: "SE", name: "D", uom: "pcs", ownerDept: "GR" },
+    { code: "SE-OLD-X", kind: "SE", name: "X", uom: "pcs", ownerDept: "GR" }, { code: "SE-DIA-E", kind: "SE", name: "E", uom: "pcs", ownerDept: "GR" },
+  ];
+  const second = A.importFlat(d, { items: more, boms: [
+    { parentCode: "SE-DIA-A", lines: [{ childCode: "SE-DIA-B", qty: 1 }, { childCode: "SE-DIA-C", qty: 1 }] },
+    { parentCode: "SE-DIA-B", lines: [{ childCode: "SE-DIA-D", qty: 1 }] },
+    { parentCode: "SE-DIA-C", lines: [{ childCode: "SE-DIA-D", qty: 1 }] },
+    { parentCode: "SE-DIA-D", lines: [{ childCode: "P-RESIN-1", qty: 1 }, { childCode: "SE-DIA-E", qty: 1 }] },
+    { parentCode: "SE-OLD-X", lines: [{ childCode: "SE-LOOP-A", qty: 1 }, { childCode: "P-RESIN-1", qty: 1 }] },
+  ], source: "more.xlsx" }, ctx("planner"));
+  assert.equal(second.cycleLinesSkipped, 0, "shared children and a parent above an existing BOM are not loops");
+  assert.deepEqual(approved(d, "SE-DIA-A").lines.map((line) => line.childCode), ["SE-DIA-B", "SE-DIA-C"]);
+  // วงจรผ่าน BOM ที่อนุมัติไว้ก่อนแล้ว: A → B → D → E มีอยู่ นำเข้า E → A ต้องตัดบรรทัด E → A แต่คงบรรทัดอื่นของ E
+  const loopOld = A.importFlat(d, { items: [{ code: "SE-DIA-E", kind: "SE", name: "E", uom: "pcs", ownerDept: "GR" }], boms: [{ parentCode: "SE-DIA-E", lines: [{ childCode: "SE-DIA-A", qty: 1 }, { childCode: "P-RESIN-1", qty: 1 }] }], source: "x" }, ctx("planner"));
+  assert.equal(loopOld.cycleLinesSkipped, 1, "a loop through BOMs approved earlier is caught");
+  assert.deepEqual(approved(d, "SE-DIA-E").lines.map((line) => line.childCode), ["P-RESIN-1"]);
+});
+
+test("the loop check stays fast on a whole sheet ordered either way (parents first or children first)", () => {
+  // ชีตจริงมีหลายพัน BOM และหลายหมื่นบรรทัด หน้าเคยค้างตอนกดนำเข้า (PR #311): 8 ชั้น × 350 ชิ้น × 11 ลูก ต้องไม่เดินต้นไม้ซ้ำทุกบรรทัด
+  for (const order of ["parents-first", "children-first"]) {
+    const d = fresh();
+    const items = [];
+    const boms = [];
+    for (let level = 0; level < 8; level += 1) for (let i = 0; i < 350; i += 1) items.push({ code: `SE-P${level}-${i}`, kind: "SE", name: "x", uom: "pcs", ownerDept: "GR" });
+    for (let level = 0; level < 7; level += 1) for (let i = 0; i < 350; i += 1) {
+      boms.push({ parentCode: `SE-P${level}-${i}`, lines: Array.from({ length: 11 }, (_, k) => ({ childCode: `SE-P${level + 1}-${(i * 7 + k * 13) % 350}`, qty: 1 })) });
+    }
+    if (order === "children-first") boms.reverse();
+    const started = performance.now();
+    const stats = A.importFlat(d, { items, boms, source: order }, ctx("planner"));
+    const took = performance.now() - started;
+    assert.equal(stats.bomsAdded, 2450, order);
+    assert.equal(stats.cycleLinesSkipped, 0, order);
+    assert.ok(took < 1500, `${order}: ${Math.round(took)} ms`);
+  }
 });
 
 test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {

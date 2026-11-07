@@ -405,38 +405,49 @@
     }
     // ลูกของ BOM ที่อนุมัติแล้ว (ของเดิม + ที่เพิ่มในคำสั่งนี้) ใช้ตรวจวงจร: บรรทัดที่ลูกคือพ่อเอง หรือเดินลงจากลูกแล้วเจอพ่อ = วนกลับมาหาตัวเอง
     // ฐานข้อมูลปฏิเสธทั้งส่วนที่ส่งด้วย BOM_CYCLE (ไฟล์จริงมี เช่น PT-00224 ใช้ PT-00224 เป็นส่วนประกอบ) จึงข้ามบรรทัดนั้นแล้วบอกผู้ใช้
+    // เร็วพอสำหรับชีตทั้งไฟล์ไม่ว่าเรียงลำดับไหน: พ่อที่ยังไม่เคยเป็นลูกของ BOM ใดวนกลับมาหาตัวเองไม่ได้ (ไม่ต้องเดินเลย ชีตที่เรียงลูกก่อนพ่อเป็นแบบนี้ทั้งหมด)
+    // ส่วนพ่อที่เป็นลูกอยู่แล้ว ทุกบรรทัดของพ่อเดียวกันใช้ชุด seen ร่วมกัน (โหนดที่เดินแล้วไม่เจอพ่อ บรรทัดถัดไปก็ไม่เจอ) จึงเดินแต่ละโหนดครั้งเดียวต่อ BOM
     const childrenOf = new Map();
-    for (const bom of d.boms) if (bom.status === "approved") childrenOf.set(bom.itemCode, bom.lines.map((line) => line.childCode));
-    const reaches = (from, target) => {
+    const usedAsChild = new Set();
+    const addEdges = (parentCode, children) => {
+      childrenOf.set(parentCode, children);
+      for (const child of children) usedAsChild.add(child);
+    };
+    for (const bom of d.boms) if (bom.status === "approved") addEdges(bom.itemCode, bom.lines.map((line) => line.childCode));
+    const loopCheck = (target) => {
+      if (!usedAsChild.has(target)) return (from) => from === target;
       const seen = new Set();
-      const stack = [from];
-      while (stack.length) {
-        const code = stack.pop();
-        if (code === target) return true;
-        if (seen.has(code)) continue;
-        seen.add(code);
-        for (const child of childrenOf.get(code) ?? []) stack.push(child);
-      }
-      return false;
+      return (from) => {
+        const stack = [from];
+        while (stack.length) {
+          const code = stack.pop();
+          if (code === target) return true;
+          if (seen.has(code)) continue;
+          seen.add(code);
+          for (const child of childrenOf.get(code) ?? []) stack.push(child);
+        }
+        return false;
+      };
     };
     for (const entry of boms) {
       const parent = lookup(entry.parentCode);
       if (!parent || !Array.isArray(entry.lines) || !entry.lines.length) continue;
       if (approvedParents.has(parent.code)) { stats.bomsSkipped += 1; continue; }
+      const reaches = loopCheck(parent.code);
       const lines = entry.lines.map((line) => ({ line, child: lookup(line.childCode) })).filter(({ line, child }) => {
         if (!child || !(Number(line.qty) > 0)) return false;
         // ชนิดพ่อ/ลูกที่ฐานข้อมูลไม่รับ (ของซื้อมีส่วนประกอบ เส้นยางมีลูกที่ไม่ใช่สูตรยาง): ข้ามบรรทัดนั้น ไม่ให้บรรทัดเดียวทำให้ทั้งชุดถูกปฏิเสธ (BOM_INVALID_PARENT_KIND / _CHILD_KIND)
         if (R.childKindError(parent.kind, child.kind)) { stats.linesSkipped += 1; return false; }
-        if (reaches(child.code, parent.code)) { stats.cycleLinesSkipped += 1; return false; }
+        if (reaches(child.code)) { stats.cycleLinesSkipped += 1; return false; }
         return true;
       }).map(({ line, child }) => ({ childCode: R.canonicalCode(line.childCode), qty: Number(line.qty), uom: child.uom, consumerDept: parent.ownerDept, producerDept: child.ownerDept, scrapPct: 0, flags: line.flags ?? [], note: "" }));
       if (!lines.length) continue;
-      childrenOf.set(parent.code, lines.map((line) => line.childCode));
+      addEdges(parent.code, lines.map((line) => line.childCode));
       d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: 1, status: "approved", ownerDept: parent.ownerDept, lines: R.sortLinesByFlow(lines, lookup), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `นำเข้าจาก ${p.source || "Excel"}`, changeLog: [{ at: ctx.now, by: user.name, text: `นำเข้าจาก ${p.source || "Excel"}` }] });
       approvedParents.add(parent.code);
       stats.bomsAdded += 1;
     }
-    const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}${stats.linesSkipped ? ` · ข้าม ${stats.linesSkipped} บรรทัดที่ชนิดพ่อ/ลูกไม่เข้ากัน` : ""}${stats.cycleLinesSkipped ? ` · ข้าม ${stats.cycleLinesSkipped} บรรทัดที่ใช้ตัวเองเป็นส่วนประกอบ` : ""}`;
+    const summary = `ชิ้นงานใหม่ ${stats.itemsAdded} (มีอยู่แล้ว ${stats.itemsMerged}) · BOM ใหม่ ${stats.bomsAdded} ข้าม ${stats.bomsSkipped}${stats.linesSkipped ? ` · ข้าม ${stats.linesSkipped} บรรทัดที่ชนิดพ่อ/ลูกไม่เข้ากัน` : ""}${stats.cycleLinesSkipped ? ` · ข้าม ${stats.cycleLinesSkipped} บรรทัดที่วนกลับมาใช้ตัวเองเป็นส่วนประกอบ` : ""}`;
     audit(d, ctx, "นำเข้า BOM จากชีต", `${p.source || "Excel"}: ${summary}`);
     return { ...stats, summary };
   }
