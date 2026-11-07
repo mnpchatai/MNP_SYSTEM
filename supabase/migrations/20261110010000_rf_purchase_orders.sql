@@ -15,7 +15,7 @@
 --     lines: [{ materialCode, needKg, availableKg, shortageKg, safetyKg, qtyKg, receivedKg, lotNo, expiry, receivedAt, receivedBy }] }
 --   ช่องรับเข้าของบรรทัดที่ยังไม่รับ (receivedKg lotNo expiry receivedAt receivedBy) เป็น null ทั้งหมด · materials เพิ่มช่อง safetyKg และ shelfLifeDays
 --
--- p_action เพิ่ม: createPurchaseOrder receivePurchaseLine cancelPurchaseOrder · saveMaterial รับ safetyKg / shelfLifeDays ได้ (ไม่ส่ง = คงค่าเดิม)
+-- p_action เพิ่ม: createPurchaseOrder receivePurchaseLine cancelPurchaseOrder issueRequisition · saveMaterial รับ safetyKg / shelfLifeDays ได้ (ไม่ส่ง = คงค่าเดิม)
 --   ชุดที่ส่งได้ต่อ action: createPurchaseOrder = purchaseOrders + materials · receivePurchaseLine = purchaseOrders + materialLots · cancelPurchaseOrder = purchaseOrders
 --   และชุด purchaseOrders ส่งได้เฉพาะสามคำสั่งนี้ (ผิด = RF_INVALID_PURCHASE)
 --
@@ -30,12 +30,17 @@
 --   ผิดสิทธิ์ = RF_FORBIDDEN · ชนรายระเบียน = RF_STALE (ก่อนสิทธิ์/เนื้อหาเสมอ) · รูปข้อมูลผิด = RF_INVALID_PURCHASE (ข้อความตายตัว)
 --   saveMaterial / createPurchaseOrder: ใบสั่งซื้อพ่วงแก้วัตถุดิบได้ช่องเดียวคือ safetyKg (วัตถุดิบต้องมีอยู่ ช่องอื่นต่างจากที่เก็บ = RF_INVALID_MATERIAL)
 --
+-- ใบเบิก (ผู้ใช้ขอ 2026-11-07): สร้างใบ = จ่ายทันที ไม่มีสถานีชั่งรายบรรทัด · createRequisition ให้เซิร์ฟเวอร์จัดสรร FEFO เองแล้วตั้ง actualKg = targetKg, weighedAt/weighedBy, หักสต็อกล็อต,
+--   สถานะ issued, issued_at/by ในคำสั่งเดียว (ไม่มีเกณฑ์ชั่ง) · weighLine ยังใช้ได้กับใบเก่าที่ค้างสถานะ weighing · issueRequisition (ใหม่) จ่ายทุกบรรทัดที่ยังไม่ชั่งของใบ weighing
+--   ที่ targetKg พอดีในคำสั่งเดียว (หักสต็อกเท่ากัน -> issued) · สิทธิ์: สมาชิก RB หรือกลุ่มวางแผน เหมือน weighLine · ชุดที่ส่งได้ไม่เปลี่ยน (requisitions + materialLots ที่ client คำนวณสำเนาไว้ เซิร์ฟเวอร์เมินค่า qty)
+--
 -- ลำดับการเขียนใน app_rf_save: ... molds -> purchaseOrders -> materialLots -> (ตรวจใบรับเข้า) -> requisitions ... ตัวเขียนใบสั่งซื้อทำก่อนตัวเขียนล็อต เพื่อให้ RF_STALE ของใบมาก่อนสิทธิ์
 --   ของล็อต แล้ว private.rf_check_po_receipt ตรวจหลังตัวเขียนล็อตว่ามีล็อตที่เปลี่ยนในคำสั่งนี้เพียงแถวเดียวและตรงกับบรรทัดที่รับ (ไม่ตรง = ย้อนทั้งคำสั่ง)
 --
 -- นิยามที่ replace / ถูกแทนในไฟล์นี้ (เริ่มจากนิยามล่าสุดทุกตัว)
 --   - private.rf_save_materials: ลายเซ็นเดิม (uuid, jsonb, bigint, bigint) ถูก DROP แล้วสร้างใหม่เป็น (uuid, text, jsonb, bigint, bigint) (เพิ่ม p_action) จาก 20261107010000_rubberflow_core.sql
 --   - private.rf_client_actions, private.sandbox_unguarded_tables, private.rf_records, private.rf_delta, public.app_rf_save  จาก 20261108010000_rubberflow_shopfloor.sql
+--   - private.rf_save_requisitions: ลายเซ็นเดิม (uuid, text, boolean, jsonb, bigint, bigint) ถูก DROP แล้วสร้างใหม่เป็น (uuid, text, boolean, text, jsonb, bigint, bigint) (เพิ่ม p_action) จาก 20261108010000_rubberflow_shopfloor.sql
 --   - public.app_sandbox_purge_rf  จาก 20261109010000_sandbox_purge_fast.sql (คงการพัก JWT claims ระหว่างลบ)
 --   - ใหม่: private.rf_po_parse_lines, private.rf_save_purchase_orders, private.rf_check_po_receipt
 --   - ไม่แตะ: app_rf_master / app_rf_master_since / app_rf_audit / rf_snapshot (คืนชุดที่ 12 ตามที่ rf_records / rf_delta คืน)
@@ -50,6 +55,8 @@
 --      20261108010000_rubberflow_shopfloor.sql / 20261109010000_sandbox_purge_fast.sql (รวม revoke/grant ท้ายฟังก์ชัน)
 --   2) drop function private.rf_save_materials(uuid, text, jsonb, bigint, bigint) แล้วสร้าง private.rf_save_materials(uuid, jsonb, bigint, bigint) ใหม่ตามนิยามใน 20261107010000_rubberflow_core.sql
 --   3) drop function private.rf_po_parse_lines(jsonb), private.rf_save_purchase_orders(public.employees, text, boolean, boolean, boolean, text, jsonb, bigint, bigint), private.rf_check_po_receipt(uuid, jsonb, bigint)
+--      และ drop function private.rf_save_requisitions(uuid, text, boolean, text, jsonb, bigint, bigint) แล้วสร้าง private.rf_save_requisitions(uuid, text, boolean, jsonb, bigint, bigint) ใหม่ตามนิยามใน 20261108010000_rubberflow_shopfloor.sql
+--      (ลำดับ: ทำข้อ 1 ก่อนเพื่อให้ app_rf_save เดิมเรียกลายเซ็นเดิม · ใบเบิกที่จ่ายทันทีแล้วอยู่ใน rf_requisitions ต่อเป็น issued ปกติ)
 --   4) drop table public.rf_purchase_orders · alter table public.rf_materials drop column safety_kg, drop column shelf_life_days
 --   ข้อมูลทดสอบของใบสั่งซื้อและค่าสต็อกสำรอง/อายุเก็บหายไปพร้อมกัน · ล็อตวัตถุดิบที่สร้างจากการรับเข้าแล้วอยู่ใน rf_material_lots ต่อ (ไม่ถูกย้อน)
 -- ============================================================================
@@ -123,7 +130,7 @@ as $$
     'recordMixing', 'recordExtrusion', 'recordCuring', 'recordFinishing', 'addQcRecord',
     'receiveMaterial', 'setMaterialLotStatus', 'createRequisition', 'weighLine', 'endRest',
     'createTransfer', 'receiveTransfer', 'shipBoxes', 'createNcr', 'updateNcr', 'closeNcr', 'cleanMold', 'saveMold',
-    'createPurchaseOrder', 'receivePurchaseLine', 'cancelPurchaseOrder']
+    'createPurchaseOrder', 'receivePurchaseLine', 'cancelPurchaseOrder', 'issueRequisition']
 $$;
 revoke all on function private.rf_client_actions() from public, anon, authenticated;
 
@@ -428,6 +435,189 @@ end;
 $$;
 revoke all on function private.rf_check_po_receipt(uuid, jsonb, bigint) from public, anon, authenticated;
 
+-- ใบเบิก (นิยามจาก 20261108010000_rubberflow_shopfloor.sql เพิ่ม p_action): สร้างใหม่ = เซิร์ฟเวอร์ระเบิดสูตรของ WO × จำนวน batch แล้วจัดสรร FEFO เองและ "จ่ายทันที" ในธุรกรรมเดียว
+-- (ทุกบรรทัด actualKg = targetKg, weighedAt/weighedBy = เวลาและผู้เรียก, หักสต็อกล็อตตามบรรทัด, สถานะ issued, issued_at/by) ไม่มีเกณฑ์ชั่ง · บรรทัดที่ client ส่งมาเมิน
+-- ใบเดิม: ส่งซ้ำที่ทุกบรรทัดตรงกับที่เก็บ = ไม่ทำอะไร (เหมือนเดิม) · ใบที่ยัง weighing (ข้อมูลเก่า) ชั่งต่อได้ด้วย weighLine (client ใส่ actualKg ของบรรทัดที่ยังไม่ชั่ง อยู่ในเกณฑ์ ± max(0.02, 1.5%))
+-- หรือจ่ายทั้งใบด้วย issueRequisition (ทุกบรรทัดที่ยังไม่ชั่งต้องตั้ง actualKg = targetKg พอดี ไม่ครบ/ไม่พอดี = RF_INVALID_REQUISITION) · ช่องอื่นของใบเดิม (status/issued/consumed) เมิน
+-- p_may = สมาชิก RB หรือกลุ่มวางแผน · RF_STALE ก่อนสิทธิ์/สถานะเสมอ
+drop function if exists private.rf_save_requisitions(uuid, text, boolean, jsonb, bigint, bigint);
+create or replace function private.rf_save_requisitions(p_actor uuid, p_actor_name text, p_may boolean, p_action text, p_rows jsonb, p_base bigint, p_cur bigint)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row jsonb;
+  v_seen text[] := '{}';
+  v_no text;
+  v_order text;
+  v_batches numeric;
+  v_note text;
+  v_now_ms bigint := private.bom_ms(now());
+  v_old public.rf_requisitions%rowtype;
+  v_ord public.rf_orders%rowtype;
+  v_rec public.rf_recipes%rowtype;
+  v_lot public.rf_material_lots%rowtype;
+  v_item record;
+  v_total numeric;
+  v_need numeric;
+  v_left numeric;
+  v_free numeric;
+  v_take numeric;
+  v_short text[] := '{}';
+  v_new_lines jsonb;
+  v_clines jsonb;
+  v_cline jsonb;
+  v_sline jsonb;
+  v_lines jsonb;
+  v_i integer;
+  v_cact numeric;
+  v_sact numeric;
+  v_target numeric;
+  v_tol numeric;
+  v_changed boolean;
+  v_done boolean;
+begin
+  for v_row in select value from jsonb_array_elements(p_rows) loop
+    if jsonb_typeof(v_row) <> 'object' then raise exception 'RF_INVALID_REQUISITION'; end if;
+    v_no := private.bom_text(v_row, 'id', 60, 1, 'RF_INVALID_REQUISITION');
+    if v_no !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' or v_no = any (v_seen) then raise exception 'RF_INVALID_REQUISITION'; end if;
+    v_seen := v_seen || v_no;
+
+    select * into v_old from public.rf_requisitions q where q.is_test and q.req_no = v_no;
+    if found then
+      -- เลขใบเบิกซ้ำกับที่คนอื่นเพิ่งสร้าง (เวลาสร้างต่างกัน) = ชน
+      if private.rf_created_differs(v_row, array['createdAt'], v_old.created_at) then
+        perform private.rf_fail(v_old.changed_version, p_base, p_cur, 'RF_CONFLICT');
+      end if;
+      v_clines := v_row -> 'lines';
+      if jsonb_typeof(v_clines) is distinct from 'array' then v_clines := '[]'::jsonb; end if;
+      v_changed := false;
+      for v_i in 0 .. jsonb_array_length(v_old.lines) - 1 loop
+        v_cline := v_clines -> v_i;
+        continue when v_cline is null or jsonb_typeof(v_cline) <> 'object';
+        v_cact := case when jsonb_typeof(v_cline -> 'actualKg') = 'number' then (v_cline ->> 'actualKg')::numeric end;
+        v_sact := case when jsonb_typeof(v_old.lines -> v_i -> 'actualKg') = 'number' then (v_old.lines -> v_i ->> 'actualKg')::numeric end;
+        if v_cact is distinct from v_sact then v_changed := true; end if;
+      end loop;
+      if not v_changed then continue; end if;
+      if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'RF_STALE'; end if;
+      if not p_may then raise exception 'RF_FORBIDDEN'; end if;
+      if v_old.status <> 'weighing' then raise exception 'RF_INVALID_TRANSITION'; end if;
+      v_lines := v_old.lines;
+      for v_i in 0 .. jsonb_array_length(v_old.lines) - 1 loop
+        v_cline := v_clines -> v_i;
+        continue when v_cline is null or jsonb_typeof(v_cline) <> 'object';
+        v_cact := case when jsonb_typeof(v_cline -> 'actualKg') = 'number' then (v_cline ->> 'actualKg')::numeric end;
+        v_sline := v_old.lines -> v_i;
+        v_sact := case when jsonb_typeof(v_sline -> 'actualKg') = 'number' then (v_sline ->> 'actualKg')::numeric end;
+        continue when v_cact is not distinct from v_sact;
+        -- ชั่งซ้ำบรรทัดที่ชั่งแล้ว หรือลบค่าที่ชั่ง ไม่ได้
+        if v_sact is not null or v_cact is null then raise exception 'RF_INVALID_REQUISITION'; end if;
+        v_target := (v_sline ->> 'targetKg')::numeric;
+        -- จ่ายทั้งใบ = ต้องเท่าเป้าหมายพอดี · ชั่งทีละบรรทัด (ข้อมูลเก่า) = อยู่ในเกณฑ์
+        if p_action = 'issueRequisition' then
+          if abs(v_cact - v_target) > 0.000000001 then raise exception 'RF_INVALID_REQUISITION'; end if;
+        else
+          v_tol := greatest(0.02, v_target * 1.5 / 100);
+          if abs(v_cact - v_target) > v_tol + 0.000000001 then raise exception 'RF_OUT_OF_TOLERANCE'; end if;
+        end if;
+        select * into v_lot from public.rf_material_lots l where l.is_test and l.lot_no = (v_sline ->> 'lotNo') for update;
+        if not found then raise exception 'RF_LOT_UNAVAILABLE'; end if;
+        if v_lot.status = 'hold' or v_lot.qty_kg <= 0.0001 or v_lot.expiry <= v_now_ms or v_lot.qty_kg < v_cact then
+          perform private.rf_fail(v_lot.changed_version, p_base, p_cur, 'RF_LOT_UNAVAILABLE');
+        end if;
+        update public.rf_material_lots set qty_kg = greatest(0, trim_scale(round(v_lot.qty_kg - v_cact, 6))), updated_at = now() where id = v_lot.id;
+        v_lines := jsonb_set(v_lines, array[v_i::text],
+          (v_lines -> v_i) || jsonb_build_object('actualKg', v_cact, 'weighedAt', v_now_ms, 'weighedBy', p_actor_name));
+      end loop;
+      v_done := not exists (select 1 from jsonb_array_elements(v_lines) e where jsonb_typeof(e -> 'actualKg') is distinct from 'number');
+      if p_action = 'issueRequisition' and not v_done then raise exception 'RF_INVALID_REQUISITION'; end if;
+      update public.rf_requisitions set
+        lines = v_lines,
+        status = case when v_done then 'issued' else status end,
+        issued_at = case when v_done then now() else issued_at end,
+        issued_by = case when v_done then p_actor else issued_by end,
+        updated_at = now()
+      where id = v_old.id;
+      continue;
+    end if;
+
+    -- ใบใหม่: สมาชิก RB / กลุ่มวางแผน · WO ต้อง released หรือ in_progress · เซิร์ฟเวอร์จัดสรร FEFO เองแล้วจ่ายทันที
+    if not p_may then raise exception 'RF_FORBIDDEN'; end if;
+    v_order := private.bom_text(v_row, 'orderId', 40, 1, 'RF_INVALID_REQUISITION');
+    v_batches := private.bom_num(v_row -> 'batches', 'RF_INVALID_REQUISITION', 1, 10);
+    if v_batches is null then raise exception 'RF_INVALID_REQUISITION'; end if;
+    v_note := private.bom_text(v_row, 'note', 300, 0, 'RF_INVALID_REQUISITION');
+    select * into v_ord from public.rf_orders o where o.is_test and o.wo_no = v_order;
+    if not found then raise exception 'RF_INVALID_REQUISITION'; end if;
+    if v_ord.status not in ('released', 'in_progress') then
+      perform private.rf_fail(v_ord.changed_version, p_base, p_cur, 'RF_INVALID_REQUISITION');
+    end if;
+    select * into v_rec from public.rf_recipes r where r.is_test and r.recipe_code = v_ord.recipe_code and r.revision = v_ord.recipe_revision;
+    v_total := (select sum((e ->> 'phr')::numeric) from jsonb_array_elements(v_rec.items) e);
+    v_new_lines := '[]'::jsonb;
+    for v_item in
+      select t.e ->> 'materialCode' as code, coalesce((t.e ->> 'stage')::integer, 1) as stage, (t.e ->> 'phr')::numeric as phr
+      from jsonb_array_elements(v_rec.items) with ordinality as t(e, ord)
+      order by 2, t.ord
+    loop
+      v_need := round(v_item.phr / v_total * v_rec.batch_kg * v_batches, 4);
+      v_left := v_need;
+      -- ล็อกแถวล็อตของวัตถุดิบนี้ (เรียงตามเลขล็อต) ก่อนจัดสรร
+      perform 1 from public.rf_material_lots l where l.is_test and l.material_code = v_item.code order by l.lot_no for update;
+      for v_lot in
+        select * from public.rf_material_lots l
+        where l.is_test and l.material_code = v_item.code and l.status = 'available' and l.qty_kg > 0.0001 and l.expiry > v_now_ms
+        order by l.expiry, l.received_at, l.lot_no
+      loop
+        exit when v_left <= 0.0001;
+        -- คงเหลือที่จองได้ = สต็อก - ที่ใบเบิกเก่า (ยัง weighing) จองบรรทัดที่ยังไม่ชั่ง - ที่ใบนี้จัดสรรไปแล้ว
+        v_free := v_lot.qty_kg
+          - coalesce((select sum((e ->> 'targetKg')::numeric)
+                      from public.rf_requisitions q, jsonb_array_elements(q.lines) e
+                      where q.is_test and q.status = 'weighing' and e ->> 'lotNo' = v_lot.lot_no
+                        and jsonb_typeof(e -> 'actualKg') is distinct from 'number'), 0)
+          - coalesce((select sum((e ->> 'targetKg')::numeric) from jsonb_array_elements(v_new_lines) e where e ->> 'lotNo' = v_lot.lot_no), 0);
+        continue when v_free <= 0.0001;
+        v_take := round(least(v_free, v_left), 4);
+        continue when v_take <= 0;
+        v_new_lines := v_new_lines || jsonb_build_array(jsonb_build_object(
+          'materialCode', v_item.code, 'stage', v_item.stage, 'lotNo', v_lot.lot_no,
+          'targetKg', trim_scale(v_take), 'actualKg', null, 'weighedAt', null));
+        v_left := v_left - v_take;
+      end loop;
+      if v_left > 0.0001 then
+        v_short := v_short || (v_item.code || ' ขาด ' || trim_scale(round(v_left, 2))::text || ' kg');
+      end if;
+    end loop;
+    if cardinality(v_short) > 0 then
+      -- สต็อก/ใบเบิกเปลี่ยนหลังเวอร์ชันฐาน = client ถือข้อมูลเก่า (ตามทันแล้วลองใหม่) ไม่เช่นนั้นสต็อกไม่พอจริง
+      if exists (select 1 from public.rf_material_lots l where l.is_test and l.changed_version > p_base and l.changed_version <= p_cur)
+         or exists (select 1 from public.rf_requisitions q where q.is_test and q.changed_version > p_base and q.changed_version <= p_cur) then
+        raise exception 'RF_STALE';
+      end if;
+      raise exception 'RF_INSUFFICIENT_STOCK';
+    end if;
+    -- จ่ายทันที: หักสต็อกล็อตตามบรรทัด (ล็อกไว้แล้วข้างบน จัดสรรไม่เกินคงเหลือ) แล้วตั้งค่าที่จ่ายจริง = เป้าหมาย
+    for v_i in 0 .. jsonb_array_length(v_new_lines) - 1 loop
+      v_sline := v_new_lines -> v_i;
+      v_target := (v_sline ->> 'targetKg')::numeric;
+      select * into v_lot from public.rf_material_lots l where l.is_test and l.lot_no = (v_sline ->> 'lotNo') for update;
+      update public.rf_material_lots set qty_kg = greatest(0, trim_scale(round(v_lot.qty_kg - v_target, 6))), updated_at = now() where id = v_lot.id;
+      v_new_lines := jsonb_set(v_new_lines, array[v_i::text],
+        v_sline || jsonb_build_object('actualKg', v_target, 'weighedAt', v_now_ms, 'weighedBy', p_actor_name));
+    end loop;
+    insert into public.rf_requisitions (is_test, req_no, order_no, recipe_code, recipe_revision, batches, total_kg, lines, status, note, requested_by, issued_at, issued_by)
+    values (true, v_no, v_order, v_ord.recipe_code, v_ord.recipe_revision, v_batches,
+            trim_scale(round(v_rec.batch_kg * v_batches, 4)), v_new_lines, 'issued', v_note, p_actor, now(), p_actor);
+  end loop;
+  return cardinality(v_seen);
+end;
+$$;
+revoke all on function private.rf_save_requisitions(uuid, text, boolean, text, jsonb, bigint, bigint) from public, anon, authenticated;
+
 -- 6. snapshot / delta -----------------------------------------------------------------------
 -- ระเบียนที่ changed_version > p_since แยกตามชุด เรียงแบบกำหนดได้ · p_since = -1 ได้ทั้งหมด (snapshot) · 12 ชุด (ชุดที่ 12 = purchaseOrders)
 -- นิยามจาก 20261108010000_rubberflow_shopfloor.sql เพิ่มช่อง safetyKg / shelfLifeDays ของวัตถุดิบ และชุด purchaseOrders (ช่องว่างเป็น null ทุกช่อง)
@@ -712,7 +902,7 @@ begin
                                             coalesce(p_changes #> '{purchaseOrders,upsert}', '[]'::jsonb), p_base_version, v_version);
     perform private.rf_save_material_lots(v_actor.id, v_planner, v_st, v_qa, coalesce(p_changes #> '{materialLots,upsert}', '[]'::jsonb), p_base_version, v_version);
     perform private.rf_check_po_receipt(v_actor.id, v_po -> 'receipt', v_version);
-    perform private.rf_save_requisitions(v_actor.id, v_actor_name, v_planner or v_rb, coalesce(p_changes #> '{requisitions,upsert}', '[]'::jsonb), p_base_version, v_version);
+    perform private.rf_save_requisitions(v_actor.id, v_actor_name, v_planner or v_rb, p_action, coalesce(p_changes #> '{requisitions,upsert}', '[]'::jsonb), p_base_version, v_version);
     perform private.rf_save_lots(v_actor, v_actor_name, v_planner or v_rb, v_planner or v_rb, p_action, coalesce(p_changes #> '{lots,upsert}', '[]'::jsonb), p_base_version, v_version);
     v_res := private.rf_save_transfers(v_actor, v_actor_name, v_planner or v_rb, v_planner or v_sr,
                                        coalesce(p_changes #> '{transfers,upsert}', '[]'::jsonb), p_base_version, v_version);

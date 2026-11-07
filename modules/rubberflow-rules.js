@@ -163,9 +163,10 @@
   const suggestOrderKg = (shortageKg, safetyKg) => (Number(shortageKg) > 0 ? round3(Number(shortageKg) + Math.max(0, Number(safetyKg) || 0)) : 0);
 
   // data = { orders, recipes, requisitions, materialLots, purchaseOrders, materials } · woIds = WO ที่ถามถึง (เช่น ที่เปิดให้ PI นี้)
-  // พร้อมใช้ของวัตถุดิบ = คงคลังที่ใช้ได้ (ล็อต available ไม่หมดอายุ) − ที่ใบเบิกค้างชั่งจองไว้ − ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก + ที่สั่งซื้อค้างรับ (บรรทัดของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ)
-  // พร้อมใช้ติดลบได้ (WO อื่น/ใบเบิกใช้สต็อกไปแล้วเกินที่มี) แสดงและเก็บตามจริง · ขาด = max(0, ต้องใช้ − พร้อมใช้) · WO ที่ไม่มีสูตรไม่นับ (คืนใน skipped) · WO ที่ปิด/ยกเลิกแล้วไม่ใช่ความต้องการ
-  // options.remote = false (โหมดสาธิต): ใบเบิกลดสต็อกตอนชั่งครบทุกรายการ จึงจองทุกรายการของใบเบิกที่ยังชั่งไม่ครบ
+  // แต่ละวัตถุดิบคืนตัวแยก: onHandKg คงเหลือในคลัง (ล็อต available ไม่หมดอายุ) · reservedKg จองแล้ว = ใบเบิกเก่าที่ค้างจ่ายจองไว้ (requisitionKg) + ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก (otherNeedKg)
+  // · onOrderKg สั่งค้างรับ (บรรทัดของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ) · availableKg พร้อมใช้ = onHandKg − reservedKg + onOrderKg (เก็บในบรรทัดใบสั่งซื้อ ไม่แสดงเป็นคอลัมน์)
+  // พร้อมใช้ติดลบได้ (WO อื่น/ใบเบิกใช้สต็อกไปแล้วเกินที่มี) เก็บตามจริง · ขาด = max(0, ต้องใช้ − พร้อมใช้) · WO ที่ไม่มีสูตรไม่นับ (คืนใน skipped) · WO ที่ปิด/ยกเลิกแล้วไม่ใช่ความต้องการ
+  // ใบเบิกใหม่จ่ายทันทีและหักสต็อกแล้ว จึงไม่จองอะไร · options.remote = false (โหมดสาธิต): ใบเก่าหักสต็อกตอนจ่ายครบ จึงจองทุกรายการของใบที่ยังจ่ายไม่ครบ
   function chemicalNeeds(data, woIds, now = Date.now(), options = {}) {
     const { orders = [], recipes = [], requisitions = [], materialLots = [], purchaseOrders = [], materials = [] } = data ?? {};
     const remote = options.remote !== false;
@@ -211,11 +212,12 @@
     const rows = [...need.keys()].filter((code) => round3(need.get(code)) > 0).sort().map((code) => {
       const material = materials.find((row) => row.code === code);
       const needKg = round3(need.get(code));
-      const free = (onHand.get(code) || 0) - (reserved.get(code) || 0) - (other.get(code) || 0) + (onOrder.get(code) || 0);
+      const heldKg = (reserved.get(code) || 0) + (other.get(code) || 0);
+      const free = (onHand.get(code) || 0) - heldKg + (onOrder.get(code) || 0);
       const shortageKg = round3(Math.max(0, needKg - free));
       const safetyKg = Math.max(0, Number(material?.safetyKg) || 0);
       return {
-        materialCode: code, name: material?.name ?? "", needKg, onHandKg: round3(onHand.get(code) || 0), reservedKg: round3(reserved.get(code) || 0), otherNeedKg: round3(other.get(code) || 0),
+        materialCode: code, name: material?.name ?? "", needKg, onHandKg: round3(onHand.get(code) || 0), reservedKg: round3(heldKg), requisitionKg: round3(reserved.get(code) || 0), otherNeedKg: round3(other.get(code) || 0),
         onOrderKg: round3(onOrder.get(code) || 0), availableKg: round3(free), shortageKg, safetyKg, orderKg: suggestOrderKg(shortageKg, safetyKg),
       };
     });

@@ -162,8 +162,18 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(warehouse, /data-rf-form="shipBoxes"/);
   assert.match(warehouse, /name="ids\[\]"/);
   const requisition = await env.render("p=requisition");
-  assert.match(requisition, /สถานีชั่ง · รายการ 3\/\d+/, "the open requisition has two lines weighed");
-  assert.match(requisition, /data-rf-form="weighLine"/);
+  assert.match(requisition, /<th class="right">จ่าย \(kg\)<\/th>/, "the detail lists the kilos that were issued");
+  assert.match(requisition, /จ่ายวัตถุดิบครบแล้ว รอห้องผสมนำไปผสม/);
+  assert.doesNotMatch(requisition, /data-rf-form="weighLine"|data-rf-sim|สถานีชั่ง|data-rf-action="issueRequisition"/, "no weighing station and nothing to issue: the seed has no requisition left on the scale");
+  // an old requisition that is still on the scale gets one button for the whole slip
+  const old = env.store.data().requisitions.find((row) => row.status === "issued");
+  old.status = "weighing";
+  old.lines.forEach((line) => { line.actualKg = null; line.weighedAt = null; });
+  const legacy = await env.render(`p=requisition&sel=${old.id}`);
+  assert.match(legacy, /data-rf-action="issueRequisition"/);
+  assert.match(legacy, /เบิกทั้งใบ/);
+  assert.match(legacy, /รอจ่าย/);
+  assert.doesNotMatch(legacy, /data-rf-form="weighLine"|data-rf-sim|สถานีชั่ง/);
 });
 
 test("text from the data is escaped on every page that shows it", async () => {
@@ -198,7 +208,7 @@ test("every dialog of the prototype builds from the seed, with print documents c
   const finishing = data.lots.find((lot) => lot.stage === "finishing");
   const cases = [
     ["createOrder", {}, /data-rf-form="createOrder"/], ["createRecipe", {}, /data-rf-form="createRecipe"/], ["receiveMaterial", {}, /data-rf-form="receiveMaterial"/],
-    ["createRequisition", {}, /data-rf-form="createRequisition"/], ["transfer", { lotId: sendable.id }, /data-rf-form="createTransfer"/], ["receive", { id: inTransit.id }, /data-rf-form="receiveTransfer"/],
+    ["createRequisition", {}, /data-rf-form="createRequisition"[^>]*data-rf-success="เบิก \{result\} แล้ว"[\s\S]*data-rf-submit[^>]*>เบิก<\/button>/], ["transfer", { lotId: sendable.id }, /data-rf-form="createTransfer"/], ["receive", { id: inTransit.id }, /data-rf-form="receiveTransfer"/],
     ["qcRecord", { lotId: data.lots[0].id }, /data-rf-form="addQcRecord"[\s\S]*name="values\.hardness"/], ["ncr", {}, /data-rf-form="createNcr"[\s\S]*name="whys\[\]"/],
     ["scan", { code: data.fgBoxes[0].id }, /กล่องสินค้าสำเร็จรูป/], ["alerts", {}, /การแจ้งเตือน \(\d+\)/],
     ["tag", { kind: "lot", id: data.lots[0].id }, /rf-barcode/], ["tag", { kind: "box", id: data.fgBoxes[0].id }, /ป้ายติดตามงาน/], ["tag", { kind: "material", id: data.materialLots[0].lotNo }, /ล็อตวัตถุดิบ/],
@@ -354,9 +364,7 @@ test("two-stage recipe: the recipe form and the mixing station have six stage in
   stageInputs(built.html);
   assert.match(built.html, /name="stage\[\]"/, "each material line has a stage select");
   assert.match(built.html, /name="productCode"/);
-  // สถานีผสม: หกช่อง + ตารางล็อตแสดงสองขั้น (ชั่งใบเบิกที่ค้างให้ครบก่อน จึงมีใบเบิกที่จ่ายครบให้ผสม)
-  const weighing = env.store.data().requisitions.find((row) => row.status === "weighing");
-  weighing.lines.forEach((line, index) => { if (line.actualKg === null) assert.equal(env.store.run("weighLine", { reqId: weighing.id, index, actualKg: line.targetKg }).ok, true); });
+  // สถานีผสม: หกช่อง + ตารางล็อตแสดงสองขั้น (ข้อมูลสาธิตมีใบเบิกที่จ่ายแล้วรอผสม)
   const mixing = await env.render("p=mixing");
   stageInputs(mixing);
   assert.match(mixing, /ขั้น 1: [\d.]+°C · [\d.]+ นาที/);
@@ -440,7 +448,7 @@ test("molds can be added and edited from the page (escaped, validated by the act
 
   // the audit page of the database mode has a Thai label for every action the database whitelists
   const source = fs.readFileSync("modules/rubberflow-pages-plan.js", "utf8");
-  for (const action of ["receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold"]) {
+  for (const action of ["receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "issueRequisition", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold"]) {
     assert.match(source, new RegExp(`\\b${action}: "`), action);
   }
   assert.match(source, /molds: "แม่พิมพ์"/);
@@ -493,12 +501,17 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.match(fromRequisition.html, /name="safetyKg\[\]"[^>]*value="4"/);
   assert.match(fromRequisition.html, /name="qtyKg\[\]"[^>]*value="8"/);
   assert.match(fromRequisition.html, /ขาดจากใบเบิก/);
-  assert.doesNotMatch(fromRequisition.html, /ติดลบ = /, "a plain availability has no tooltip");
-  // availability below zero (other open WOs already use the stock) is shown as it is, signed, with a tooltip, and stored as it is
-  const crowded = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 225.598, availableKg: -160.787, shortageKg: 386.385 }] });
-  assert.ok(crowded.html.includes('>-160.787</td>'), "signed value");
-  assert.match(crowded.html, /<td class="right rf-mono" title="ติดลบ = [^"]+">-160/);
+  assert.match(fromRequisition.html, /<td class="right muted">-<\/td>/, "a part the requisition shortage does not know is shown as a dash");
+  // the stock status is separate columns (need, on hand, reserved, on order) + shortage; the signed "available" is not a column any more
+  for (const label of ["ต้องใช้ (kg)", "คงเหลือในคลัง (kg)", "จองแล้ว (kg)", "สั่งค้างรับ (kg)", "ขาด (kg)"]) assert.ok(html.includes(`>${label}</th>`), label);
+  assert.doesNotMatch(html, /พร้อมใช้ \(kg\)/);
+  assert.match(html, /<th class="right" title="[^"]+">จองแล้ว \(kg\)<\/th>/, "the header explains what is reserved in a tooltip");
+  // reserved by old open requisitions and by other open WOs is one column with the split in a tooltip; the signed balance (on hand − reserved + on order) stays stored for the order line
+  const crowded = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 225.598, onHandKg: 100, reservedKg: 260.787, requisitionKg: 5, otherNeedKg: 255.787, onOrderKg: 0, availableKg: -160.787, shortageKg: 386.385 }] });
+  assert.ok(crowded.html.includes('<td class="right rf-mono">100.000</td>'), "on hand");
+  assert.match(crowded.html, /<td class="right rf-mono" title="ใบเบิกเก่าที่ค้างจ่าย 5\.000 \+ WO อื่นที่ยังไม่ได้เบิก 255\.787">260\.787<\/td>/);
   assert.ok(crowded.html.includes('name="availableKg[]" value="-160.787"'), "signed value stored");
+  assert.ok(!crowded.html.includes(">-160.787</td>"), "and not shown as a column");
 
   // submitting the form: lines, the safety stock to the material, the PI number from the form args
   const form = { ...env.root, dataset: { rfForm: "createPurchaseOrder", rfSuccess: "สั่งซื้อ {result} แล้ว", rfArgs: JSON.stringify({ sourcePi: "PI-9", sourceRequisition: "", note: "" }) }, handlers: {}, __values: {

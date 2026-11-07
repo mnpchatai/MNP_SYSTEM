@@ -340,7 +340,7 @@
     requisition: data.requisitions.filter((requisition) => requisition.status === "weighing").length,
     quality: data.lots.filter((lot) => lot.qc === "hold").length,
   });
-  const countTitle = (id) => ({ wip: "ใบส่งมอบรอรับ", requisition: "ใบเบิกกำลังชั่ง", quality: "ล็อตรอตัดสิน" })[id] ?? "";
+  const countTitle = (id) => ({ wip: "ใบส่งมอบรอรับ", requisition: "ใบเบิกเก่าที่ค้างจ่าย", quality: "ล็อตรอตัดสิน" })[id] ?? "";
 
   // แถบเครื่องมือของ RubberFlow ใต้หัวหน้า: ทำหน้าที่เป็น · สแกนรหัส · แจ้งเตือน · รีเซ็ต
   const canPurge = () => store.isRemote() && Boolean(state.sandbox?.active);

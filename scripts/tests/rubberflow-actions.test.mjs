@@ -19,6 +19,21 @@ const fresh = () => seed.buildSeed(NOW);
 const STAGES = [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }];
 const recipeForm = (over = {}) => ({ id: "RC-NEW", items: [{ materialCode: "ZNO", phr: "5" }], batchKg: "40", stages: STAGES, yieldPerKg: "3", ...over });
 const rejects = (fn, pattern) => assert.throws(fn, (error) => { assert.match(error.message, pattern); return true; });
+// ใบเก่าที่ค้างสถานะ weighing (ข้อมูลก่อนมีการจ่ายทันที): สร้างด้วย createRequisition แล้วคืนสถานะและสต็อกให้เป็นแบบเดิม
+function legacyWeighing(d, orderId, batches = 1) {
+  const id = A.createRequisition(d, { orderId, batches }, ctx("store"));
+  const req = d.requisitions.find((row) => row.id === id);
+  for (const line of req.lines) {
+    d.materialLots.find((lot) => lot.lotNo === line.lotNo).qtyKg += line.actualKg;
+    line.actualKg = null;
+    line.weighedAt = null;
+    delete line.weighedBy;
+  }
+  req.status = "weighing";
+  delete req.issuedAt;
+  delete req.issuedBy;
+  return req;
+}
 
 test("the demo seed is deterministic and internally consistent", () => {
   const a = fresh();
@@ -29,7 +44,9 @@ test("the demo seed is deterministic and internally consistent", () => {
   assert.equal(a.orders.filter((order) => order.status === "completed").length, 1, "order 1 is complete");
   assert.deepEqual(a.lots.filter((lot) => lot.qc === "hold").map((lot) => lot.stage), ["extrusion"], "one extrusion lot is held by the NCR");
   assert.equal(a.ncrs.filter((ncr) => ncr.status === "open").length, 1);
-  assert.equal(a.requisitions.filter((req) => req.status === "weighing").length, 1, "one requisition is still on the scale");
+  assert.equal(a.requisitions.filter((req) => req.status === "weighing").length, 0, "no requisition waits on a scale any more");
+  assert.equal(a.requisitions.filter((req) => req.status === "issued").length, 1, "one requisition is issued and waits for mixing");
+  assert.ok(a.requisitions.every((req) => req.lines.every((line) => line.actualKg === line.targetKg && line.weighedAt)), "every line is issued at its target");
   assert.equal(a.materialLots.filter((lot) => rules.lotState(lot, NOW) === "expired").length, 1);
   assert.equal(a.materialLots.filter((lot) => lot.status === "hold").length, 1);
   for (const transfer of a.transfers) assert.ok(transfer.remaining >= 0 && transfer.qtySent > 0, transfer.id);
@@ -94,15 +111,22 @@ test("recipes: required fields, unique ids, at least one material, draft until a
   rejects(() => A.approveRecipe(d, { id: "RC-NEW" }, ctx("manager")), /อนุมัติแล้ว/);
 });
 
-test("requisitions allocate FEFO, reserve kilos promised to open requisitions, and refuse when stock is short", () => {
+test("a requisition is issued in one press: FEFO lots, every line at its target, stock drawn down at once; old weighing requisitions still reserve their kilos; short stock refuses", () => {
   const d = fresh();
   const released = d.orders.find((order) => order.status === "released");
   rejects(() => A.createRequisition(d, { orderId: d.orders.find((order) => order.status === "planned").id, batches: 1 }, ctx("store")), /ปล่อยผลิต/);
   rejects(() => A.createRequisition(d, { orderId: released.id, batches: 0 }, ctx("store")), /1–10/);
   rejects(() => A.createRequisition(d, { orderId: released.id, batches: 11 }, ctx("store")), /1–10/);
+  const stockBefore = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.qtyKg]));
   const id = A.createRequisition(d, { orderId: released.id, batches: 2 }, ctx("store"));
   const req = d.requisitions.find((row) => row.id === id);
-  assert.equal(req.status, "weighing");
+  assert.equal(req.status, "issued", "issued at once, ready for mixing");
+  assert.equal(req.issuedBy, user("store").name);
+  assert.equal(req.issuedAt, NOW);
+  assert.ok(req.lines.every((line) => line.actualKg === line.targetKg && line.weighedAt === NOW && line.weighedBy === user("store").name), "every line is issued at its target");
+  const drawn = {};
+  for (const line of req.lines) drawn[line.lotNo] = (drawn[line.lotNo] || 0) + line.targetKg;
+  for (const [lotNo, kg] of Object.entries(drawn)) assert.ok(Math.abs(d.materialLots.find((lot) => lot.lotNo === lotNo).qtyKg - (stockBefore[lotNo] - kg)) < 1e-6, `${lotNo} is drawn down by what was issued`);
   assert.equal(req.totalKg, 120);
   const recipe = d.recipes.find((row) => row.id === released.recipeId);
   for (const line of rules.recipeLines(recipe)) {
@@ -111,23 +135,28 @@ test("requisitions allocate FEFO, reserve kilos promised to open requisitions, a
   }
   for (const line of req.lines) {
     const lot = d.materialLots.find((row) => row.lotNo === line.lotNo);
-    assert.equal(rules.lotState(lot, NOW), "available", "no expired or held lot is issued");
+    assert.equal(rules.lotState({ ...lot, qtyKg: stockBefore[line.lotNo] }, NOW), "available", "no expired or held lot is issued");
   }
   // ล็อต EPDM ที่จะหมดอายุก่อนถูกหยิบก่อน
   const epdm = req.lines.filter((line) => line.materialCode === "EPDM-55");
-  const soonest = d.materialLots.filter((lot) => lot.materialCode === "EPDM-55" && rules.lotState(lot, NOW) === "available").sort((a, b) => a.expiry - b.expiry)[0];
+  const soonest = d.materialLots.map((lot) => ({ ...lot, qtyKg: stockBefore[lot.lotNo] })).filter((lot) => lot.materialCode === "EPDM-55" && rules.lotState(lot, NOW) === "available").sort((a, b) => a.expiry - b.expiry)[0];
   assert.equal(epdm[0].lotNo, soonest.lotNo);
-  // สต็อกพร้อมใช้ไม่พอ (ล็อตที่เหลือเล็กกว่าที่ใบเบิกเปิดอยู่จองไว้แล้ว + ที่ต้องใช้) → ปฏิเสธทั้งใบ ไม่สร้างใบเบิกครึ่งเดียว
-  const reservedEpdm = req.lines.filter((line) => line.materialCode === "EPDM-55").reduce((sum, line) => sum + line.targetKg, 0);
+  // ใบเก่าที่ค้าง weighing จองกิโลที่ยังไม่จ่าย ใบใหม่ไม่หยิบซ้ำ · สต็อกไม่พอ → ปฏิเสธทั้งใบ ไม่สร้างใบเบิกครึ่งเดียว
+  const old = legacyWeighing(d, released.id, 1);
+  A.createRequisition(d, { orderId: released.id, batches: 1 }, ctx("store"));
+  const owed = {};
+  old.lines.forEach((line) => { owed[line.lotNo] = (owed[line.lotNo] || 0) + line.targetKg; });
+  for (const [lotNo, kg] of Object.entries(owed)) assert.ok(d.materialLots.find((lot) => lot.lotNo === lotNo).qtyKg >= kg - 1e-9, `the kilos the old requisition promised on ${lotNo} are not taken again`);
+  const reservedEpdm = 1;
   d.materialLots.filter((lot) => lot.materialCode === "EPDM-55").forEach((lot) => { lot.qtyKg = Math.min(lot.qtyKg, reservedEpdm); });
   const count = d.requisitions.length;
   rejects(() => A.createRequisition(d, { orderId: released.id, batches: 10 }, ctx("store")), /สต็อกไม่พอตามหลัก FEFO: EPDM-55 ขาด/);
   assert.equal(d.requisitions.length, count);
 });
 
-test("weighing is Poka-Yoke: outside ±1.5% is refused, blocked lots are refused, and the last line issues the stock", () => {
+test("an old requisition that is still weighing: weighing is Poka-Yoke (outside ±1.5% refused, blocked lots refused, the last line issues the stock)", () => {
   const d = fresh();
-  const req = d.requisitions.find((row) => row.status === "weighing");
+  const req = legacyWeighing(d, d.orders.find((order) => order.status === "released").id);
   const index = req.lines.findIndex((line) => line.actualKg === null);
   const line = req.lines[index];
   const tol = rules.weighTolerance(line.targetKg);
@@ -149,6 +178,44 @@ test("weighing is Poka-Yoke: outside ±1.5% is refused, blocked lots are refused
   rejects(() => A.weighLine(d, { reqId: req.id, index: 0, actualKg: 1 }, ctx("store")), /ชั่งครบแล้ว/);
 });
 
+test("issueRequisition issues every line of an old weighing requisition at its target kilos in one press and draws the stock down once", () => {
+  for (const remote of [false, true]) {
+    const d = fresh();
+    const released = d.orders.find((order) => order.status === "released");
+    const req = legacyWeighing(d, released.id, 2);
+    const run = (name, payload) => A[name](d, payload, { ...ctx("store"), remote, user: { ...user("store"), rb: true } });
+    const before = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.qtyKg]));
+    rejects(() => run("issueRequisition", { id: "REQ-NOPE" }), /ไม่พบใบเบิก/);
+    // ถ้าบางบรรทัดถูกชั่งไปแล้ว (ค่าจริงต่างจากเป้าหมายได้) ที่เหลือจ่ายตามเป้าหมาย
+    const first = req.lines[0];
+    const odd = +(first.targetKg * 0.995).toFixed(3);
+    run("weighLine", { reqId: req.id, index: 0, actualKg: odd });
+    const lot = d.materialLots.find((row) => row.lotNo === req.lines[1].lotNo);
+    lot.status = "hold";
+    rejects(() => run("issueRequisition", { id: req.id }), /ใช้ไม่ได้แล้ว/);
+    assert.equal(req.status, "weighing", "nothing changed when a lot is blocked");
+    assert.ok(req.lines.slice(1).every((line) => line.actualKg === null));
+    lot.status = "available";
+    run("issueRequisition", { id: req.id });
+    assert.equal(req.status, "issued");
+    assert.equal(req.issuedBy, user("store").name);
+    assert.equal(req.issuedAt, NOW);
+    assert.equal(req.lines[0].actualKg, odd, "a line weighed earlier keeps its weight");
+    assert.ok(req.lines.slice(1).every((line) => line.actualKg === line.targetKg && line.weighedAt === NOW && line.weighedBy === user("store").name));
+    const expected = {};
+    req.lines.forEach((line) => { expected[line.lotNo] = (expected[line.lotNo] || 0) + line.actualKg; });
+    for (const [lotNo, kg] of Object.entries(expected)) assert.ok(Math.abs(d.materialLots.find((row) => row.lotNo === lotNo).qtyKg - (before[lotNo] - kg)) < 1e-6, `${remote ? "database" : "demo"} mode draws ${lotNo} down exactly once`);
+    rejects(() => run("issueRequisition", { id: req.id }), /จ่ายวัตถุดิบครบแล้ว/);
+    rejects(() => run("weighLine", { reqId: req.id, index: 0, actualKg: 1 }), /ชั่งครบแล้ว/);
+  }
+  const d = fresh();
+  const req = legacyWeighing(d, d.orders.find((order) => order.status === "released").id);
+  rejects(() => A.issueRequisition(d, { id: req.id }, { ...ctx("qc"), remote: true }), /ไม่มีสิทธิ์/);
+  rejects(() => A.issueRequisition(d, { id: req.id }, { ...ctx("store"), remote: true, user: { ...user("store"), rb: false, planner: false } }), /ไม่มีสิทธิ์/);
+  A.issueRequisition(d, { id: req.id }, { ...ctx("store"), remote: true, user: { ...user("store"), rb: true } });
+  assert.equal(req.status, "issued");
+});
+
 test("receiving material needs a future expiry and positive quantity; hold/release toggles the lot", () => {
   const d = fresh();
   rejects(() => A.receiveMaterial(d, { materialCode: "nope", qtyKg: 1, expiry: NOW + DAY }, ctx("store")), /เลือกวัตถุดิบ/);
@@ -168,8 +235,7 @@ test("receiving material needs a future expiry and positive quantity; hold/relea
 
 test("mixing consumes an issued requisition, auto-holds on dump temperature and starts the rest clock; rest gates the transfer", () => {
   const d = fresh();
-  const req = d.requisitions.find((row) => row.status === "weighing");
-  req.lines.forEach((row, i) => { if (row.actualKg === null) A.weighLine(d, { reqId: req.id, index: i, actualKg: row.targetKg }, ctx("store")); });
+  const req = d.requisitions.find((row) => row.status === "issued");
   const issued = req.lines.reduce((sum, row) => sum + row.actualKg, 0);
   const recipe = d.recipes.find((row) => row.id === req.recipeId);
   const onSpec = recipe.stages.map((row) => ({ stage: row.stage, mixerTemp: row.mixerTemp, dumpTemp: row.dumpTemp, mixMin: row.mixMin }));
@@ -212,8 +278,7 @@ test("mixing hold rule: each stage's dump temp is compared with the recipe's val
   ];
   for (const { label, delta, hold } of cases) {
     const d = fresh();
-    const req = d.requisitions.find((row) => row.status === "weighing");
-    req.lines.forEach((row, i) => { if (row.actualKg === null) A.weighLine(d, { reqId: req.id, index: i, actualKg: row.targetKg }, ctx("store")); });
+    const req = d.requisitions.find((row) => row.status === "issued");
     const issued = req.lines.reduce((sum, row) => sum + row.actualKg, 0);
     const recipe = d.recipes.find((row) => row.id === req.recipeId);
     const [s1, s2] = recipe.stages;

@@ -710,7 +710,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id, materialLots: (record) => record.lotNo };
   for (const list of RF_LISTS) RF_ID[list] ??= (record) => record.id;
   const rfSorter = (list) => (list === "recipes" ? (a, b) => bomCmp(a.id, b.id) || a.revision - b.revision : (a, b) => bomCmp(RF_ID[list](a), RF_ID[list](b)));
-  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold", "createPurchaseOrder", "receivePurchaseLine", "cancelPurchaseOrder"];
+  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold", "createPurchaseOrder", "receivePurchaseLine", "cancelPurchaseOrder", "issueRequisition"];
   const RF_FLOW = { planned: ["released", "cancelled"], released: ["in_progress", "on_hold", "cancelled"], in_progress: ["on_hold", "completed"], on_hold: ["in_progress"] };
   const RF_ORDER_STATUSES = ["planned", "released", "in_progress", "on_hold", "completed", "cancelled"];
   // ฟิลด์ที่เซิร์ฟเวอร์เป็นเจ้าของ (ตราผู้บันทึก/เวลา): ไม่นับเป็นการแก้เนื้อหา · RECIPE_OWNED / ORDER_OWNED รวมสถานะ (และยอดผลิต) ที่เปลี่ยนตามกฎของตัวเอง
@@ -860,13 +860,13 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       if (list === "requisitions") {
         if (!master) fail("RF_FORBIDDEN");
         if (!prev) {
-          if (record.status !== "weighing") fail("RF_INVALID_TRANSITION");
+          // ใบใหม่จ่ายทันที (สถานะที่ client ส่งมาเมิน): ตรงกับ rf_save_requisitions
           const order = next.orders.find((row) => row.id === record.orderId);
           if (!order || !["released", "in_progress"].includes(order.status)) fail(bad);
           if (!Number.isInteger(record.batches) || record.batches < 1 || record.batches > 10) fail(bad);
           const recipe = next.recipes.find((row) => row.id === order.recipeId && row.revision === order.recipeRevision);
           if (!recipe) fail(bad);
-          // FEFO ในธุรกรรมเดียวกับการสร้างใบ: หักที่ใบเบิกอื่นจองไว้ (รายการที่ยังไม่ชั่ง) · ฐานข้อมูลจัดสรรเอง ไม่เชื่อรายการล็อตที่ client ส่ง
+          // FEFO ในธุรกรรมเดียวกับการสร้างใบ: หักที่ใบเบิกเก่า (ยัง weighing) จองไว้ในรายการที่ยังไม่ชั่ง · ฐานข้อมูลจัดสรรเอง ไม่เชื่อรายการล็อตที่ client ส่ง · แล้วจ่ายทันที: actualKg = targetKg หักสต็อกล็อตตามบรรทัด
           const reserved = {};
           for (const open of next.requisitions) for (const line of open.status === "weighing" ? open.lines : []) if (line.actualKg === null) reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg;
           const lines = [];
@@ -875,10 +875,15 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
             if (shortage > 0.0001) fail("RF_INSUFFICIENT_STOCK");
             for (const pick of picks) {
               reserved[pick.lotNo] = (reserved[pick.lotNo] || 0) + pick.kg;
-              lines.push({ materialCode: item.materialCode, stage: item.stage, lotNo: pick.lotNo, targetKg: pick.kg, actualKg: null, weighedAt: null });
+              lines.push({ materialCode: item.materialCode, stage: item.stage, lotNo: pick.lotNo, targetKg: pick.kg, actualKg: pick.kg, weighedAt: at, weighedBy: actor.name });
             }
           }
-          put({ ...clone(record), recipeId: recipe.id, recipeRevision: recipe.revision, totalKg: recipe.batchKg * record.batches, lines, status: "weighing", requestedBy: actor.name, createdAt: at });
+          for (const line of lines) {
+            const lotIndex = next.materialLots.findIndex((row) => row.lotNo === line.lotNo);
+            next.materialLots[lotIndex] = { ...next.materialLots[lotIndex], qtyKg: Math.max(0, Math.round((next.materialLots[lotIndex].qtyKg - line.targetKg) * 1e6) / 1e6) };
+            stampVersion("materialLots", line.lotNo);
+          }
+          put({ ...clone(record), recipeId: recipe.id, recipeRevision: recipe.revision, totalKg: recipe.batchKg * record.batches, lines, status: "issued", requestedBy: actor.name, createdAt: at, issuedAt: at, issuedBy: actor.name });
           return null;
         }
         if (prev.status === "consumed") fail("RF_INVALID_TRANSITION");
@@ -894,8 +899,9 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           if (prev.status !== "weighing") fail("RF_INVALID_TRANSITION");
           const kg = num(line.actualKg);
           if (!(kg > 0)) fail(bad);
-          // ชั่งนอกเกณฑ์ไม่รับ · ล็อตต้องใช้ได้และพอ · สต็อกหักทันทีที่ชั่งรายการนั้น
-          if (Math.abs(kg - old.targetKg) > R.weighTolerance(old.targetKg) + 1e-9) fail("RF_OUT_OF_TOLERANCE");
+          // จ่ายทั้งใบ (issueRequisition) = ต้องเท่าเป้าหมายพอดี · ชั่งทีละบรรทัด (ใบเก่า) นอกเกณฑ์ไม่รับ · ล็อตต้องใช้ได้และพอ · สต็อกหักทันทีที่จ่ายรายการนั้น
+          if (action === "issueRequisition") { if (Math.abs(kg - old.targetKg) > 1e-9) fail(bad); }
+          else if (Math.abs(kg - old.targetKg) > R.weighTolerance(old.targetKg) + 1e-9) fail("RF_OUT_OF_TOLERANCE");
           const lotIndex = next.materialLots.findIndex((row) => row.lotNo === old.lotNo);
           const lot = next.materialLots[lotIndex];
           if (!lot || R.lotState(lot, at) !== "available" || lot.qtyKg + 1e-9 < kg) fail("RF_LOT_UNAVAILABLE");
@@ -912,6 +918,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           claims.push({ req: prev.id, lot: out.consumedBy });
         } else {
           const expected = lines.every((line) => line.actualKg !== null) ? "issued" : "weighing";
+          if (action === "issueRequisition" && expected !== "issued") fail(bad);
           if (record.status !== expected) fail("RF_INVALID_TRANSITION");
           if (prev.status === "weighing" && expected === "issued") { out.issuedAt = at; out.issuedBy = actor.name; }
           out.status = expected;
@@ -1838,7 +1845,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),
     removeChannel() {},
   };
-  return { client, db };
+  // rf.edit: ใช้ในเทสต์เท่านั้น แก้ข้อมูล RubberFlow ของฐานข้อมูลจำลองตรงๆ (ใช้สร้างข้อมูลเก่า เช่นใบเบิกที่ค้าง weighing ซึ่งคำสั่งปัจจุบันสร้างไม่ได้แล้ว) · ผู้แก้ต้องประทับเวอร์ชันเอง
+  return { client, db, rf: { edit: (change) => { change(rfLoad()); rfPersist(); } } };
 }
 
 // ติดตั้งในหน้า: ไม่ลงทะเบียน service worker, fetch ข้าม origin ทุกตัว (Supabase Edge Function, Google Apps Script ที่เขียนชีตสำรอง ฯลฯ)

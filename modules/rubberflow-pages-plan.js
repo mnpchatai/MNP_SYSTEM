@@ -448,7 +448,8 @@
   };
 
   // สั่งซื้อวัตถุดิบ — dialog เดียวสามทางเข้า: หลังปล่อยผลิต PI / ปุ่ม "ตรวจวัตถุดิบ" ของ PI (args.woIds: WO ของ PI นั้น คำนวณด้วย rules.chemicalNeeds) และ "สั่งซื้อส่วนที่ขาด" ในใบเบิก (args.rows: ส่วนที่ขาดของใบเบิกนั้น)
-  // แต่ละวัตถุดิบ: ต้องใช้ · พร้อมใช้ · ขาด · สต็อกขั้นต่ำ (แก้ได้ บันทึกเข้าวัตถุดิบ) · จำนวนสั่ง (ตั้งต้น = ขาด + สต็อกขั้นต่ำ แก้ได้) · ปุ่ม "สั่งซื้อ" สร้างใบสั่งซื้อหนึ่งใบ บรรทัดละวัตถุดิบที่จำนวนสั่งมากกว่า 0
+  // แต่ละวัตถุดิบ: ต้องใช้ · คงเหลือในคลัง · จองแล้ว · สั่งค้างรับ · ขาด · สต็อกขั้นต่ำ (แก้ได้ บันทึกเข้าวัตถุดิบ) · จำนวนสั่ง (ตั้งต้น = ขาด + สต็อกขั้นต่ำ แก้ได้) · ปุ่ม "สั่งซื้อ" สร้างใบสั่งซื้อหนึ่งใบ บรรทัดละวัตถุดิบที่จำนวนสั่งมากกว่า 0
+  // ไม่มีคอลัมน์พร้อมใช้ (= คงเหลือ − จองแล้ว + สั่งค้างรับ) เพราะแต่ละส่วนแสดงอยู่แล้ว · ใบสั่งซื้อยังเก็บ availableKg (ติดลบได้) ตามที่ฐานข้อมูลรับ · args.rows จากใบเบิกส่งส่วนแยกมาเอง (คงเหลือที่จัดสรรได้ · จองแล้ว 0 · สั่งค้างรับ)
   dialogs.purchase = (ctx, args = {}) => {
     const { data, now, ui, rules } = ctx;
     const { fmtNum } = rules;
@@ -465,19 +466,22 @@
       rows = result.rows;
       skipped += result.skipped.length;
     }
+    // ส่วนแยกของสต็อก: ไม่มีค่าแสดง "-" · จองแล้วบอกที่มาใน title
+    const stockCell = (value, title = "") => (Number.isFinite(value) ? `<td class="right rf-mono"${title ? ` title="${esc(title)}"` : ""}>${esc(fmtNum(value, 3))}</td>` : '<td class="right muted">-</td>');
+    const reservedTitle = (row) => (Number.isFinite(row.requisitionKg) && Number.isFinite(row.otherNeedKg) ? `ใบเบิกเก่าที่ค้างจ่าย ${fmtNum(row.requisitionKg, 3)} + WO อื่นที่ยังไม่ได้เบิก ${fmtNum(row.otherNeedKg, 3)}` : "");
     const formArgs = { sourcePi: args.sourcePi ?? "", sourceRequisition: args.sourceRequisition ?? "", note: args.note ?? "" };
     const tableRows = rows.map((row) => {
       const code = esc(row.materialCode);
       const hidden = ["materialCode", "needKg", "availableKg", "shortageKg"].map((name) => `<input type="hidden" name="${name}[]" value="${esc(String(row[name]))}">`).join("");
       return `<tr data-rf-po-row data-short="${esc(String(row.shortageKg))}"><td>${ui.mono(row.materialCode)}<div class="small muted">${esc(row.name)}</div>${hidden}</td>
-        <td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td><td class="right rf-mono"${row.availableKg < 0 ? ' title="ติดลบ = สต็อกถูกใบเบิกและ WO อื่นที่ยังเปิดอยู่ใช้ไปแล้วเกินที่มี"' : ""}>${esc(fmtNum(row.availableKg, 3))}</td>
+        <td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td>${stockCell(row.onHandKg)}${stockCell(row.reservedKg, reservedTitle(row))}${stockCell(row.onOrderKg)}
         <td class="right rf-mono">${row.shortageKg > 0 ? ui.badge("bad", fmtNum(row.shortageKg, 3)) : esc(fmtNum(0, 3))}</td>
         <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"` })}</td>
         <td>${ui.input("qtyKg[]", { type: "number", step: "any", min: 0, value: String(row.orderKg), extra: `data-rf-qty title="ตั้งต้น = ขาด + สต็อกขั้นต่ำ" aria-label="จำนวนสั่ง ${code}"` })}</td></tr>`;
     });
     const notes = skipped ? ui.callout("warn", esc(`ไม่ได้นับ ${skipped} งานที่ยังไม่มี WO หรือไม่มีสูตร`)) : "";
     const body = rows.length
-      ? `${notes}<form data-rf-form="createPurchaseOrder" data-rf-args='${esc(JSON.stringify(formArgs))}' data-rf-success="สั่งซื้อ {result} แล้ว" id="rf-purchase">${ui.table(["วัตถุดิบ", { label: "ต้องใช้ (kg)", className: "right" }, { label: "พร้อมใช้ (kg)", className: "right" }, { label: "ขาด (kg)", className: "right" }, "สต็อกขั้นต่ำ (safety stock) (kg)", "จำนวนสั่ง (kg)"], tableRows)}</form>`
+      ? `${notes}<form data-rf-form="createPurchaseOrder" data-rf-args='${esc(JSON.stringify(formArgs))}' data-rf-success="สั่งซื้อ {result} แล้ว" id="rf-purchase">${ui.table(["วัตถุดิบ", { label: "ต้องใช้ (kg)", className: "right" }, { label: "คงเหลือในคลัง (kg)", className: "right", title: "ล็อตที่ใช้ได้ (ไม่หมดอายุ ไม่กักกัน)" }, { label: "จองแล้ว (kg)", className: "right", title: "ใบเบิกเก่าที่ค้างจ่าย + ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก" }, { label: "สั่งค้างรับ (kg)", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด (kg)", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ (safety stock) (kg)", "จำนวนสั่ง (kg)"], tableRows)}</form>`
       : `${notes}${ui.empty("ไม่มีวัตถุดิบให้ตรวจ (WO ไม่มีสูตร หรือปิด/ยกเลิกแล้ว)")}`;
     const html = ui.dialog("purchase", `สั่งซื้อวัตถุดิบ${args.sourcePi ? ` · ${args.sourcePi}` : ""}`, body, { wide: true, footer: `${ui.closeButton()}${rows.length ? '<button class="btn rf-btn" type="submit" form="rf-purchase">สั่งซื้อ</button>' : ""}` });
     // แก้สต็อกขั้นต่ำแล้วจำนวนสั่งตามไปจนกว่าผู้ใช้จะแก้จำนวนสั่งเอง
@@ -537,7 +541,7 @@
   // ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ · ทุกรายการ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ฯลฯ) อยู่ในฐานข้อมูลและบันทึกที่นี่เหมือนกัน
   const AUDIT_ACTION_LABEL = Object.freeze({
     saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออก revision ใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
-    receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "สร้างใบเบิก", weighLine: "ชั่งวัตถุดิบ", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
+    receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
     recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", shipBoxes: "ส่งมอบกล่องสินค้า",
     addQcRecord: "บันทึกผล QC", createNcr: "เปิด NCR", updateNcr: "บันทึกการแก้ไข/ป้องกัน NCR", closeNcr: "ปิด NCR", cleanMold: "บันทึกล้างแม่พิมพ์", saveMold: "บันทึกแม่พิมพ์/หัวดาย",
   });

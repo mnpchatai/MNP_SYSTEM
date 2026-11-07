@@ -65,7 +65,7 @@
     work: (user) => Boolean(user.planner || user.rb), // สถานะอื่นของใบสั่งผลิต
     receiveMaterial: (user) => Boolean(user.planner || user.st), // รับวัตถุดิบเข้าคลัง: คลังวัตถุดิบ (ST)
     holdMaterial: (user) => Boolean(user.planner || user.st || user.qa), // กักกัน/ปลดกักกันล็อตวัตถุดิบ: ST หรือ QA
-    requisition: (user) => Boolean(user.planner || user.rb), // สร้างใบเบิก ชั่ง: แผนก RB
+    requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) / จ่ายใบเก่าที่ค้างชั่ง: แผนก RB
     station: (user) => Boolean(user.planner || user.rb), // ผสม ฉีด อบ ตกแต่ง ข้ามเวลาบ่ม ทำความสะอาดแม่พิมพ์: แผนก RB
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP: แผนก RB
     receiveTransfer: (user) => Boolean(user.planner || user.sr), // รับมอบ WIP: แผนก SR
@@ -83,7 +83,7 @@
     work: "เปลี่ยนสถานะใบสั่งผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือพนักงานแผนก RB",
     receiveMaterial: "รับวัตถุดิบเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) หรือฝ่ายวางแผน",
     holdMaterial: "กักกัน/ปลดกักกันล็อตวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) หรือ QA",
-    requisition: "สร้างใบเบิกและชั่งเคมีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    requisition: "เบิกเคมีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     station: "บันทึกการผลิตของสถานีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     sendTransfer: "สร้างใบส่งมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     receiveTransfer: "รับมอบ WIP ได้โดยแผนก SR หรือฝ่ายวางแผน",
@@ -319,8 +319,27 @@
     audit(d, ctx, "อนุมัติสูตร", `${id} Rev.${recipe.revision}`);
   }
 
-  // ---------- เบิกและชั่งเคมี ----------
+  // ---------- เบิกเคมี ----------
 
+  // ใบเบิกที่ยังค้างสถานะ weighing (ข้อมูลเก่าก่อนมีการจ่ายทันที) จองสต็อกของบรรทัดที่ยังไม่จ่าย · โหมดสาธิตหักสต็อกตอนจ่ายครบ จึงจองทุกบรรทัดของใบที่ยังไม่จ่ายครบ
+  function reservedByOpenRequisitions(d, ctx) {
+    const reserved = {};
+    d.requisitions.filter((requisition) => requisition.status === "weighing").forEach((requisition) =>
+      requisition.lines.filter((line) => !ctx.remote || line.actualKg === null).forEach((line) => { reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg; }));
+    return reserved;
+  }
+
+  // ล็อตของบรรทัดต้องใช้ได้และมีพอ แล้วหักสต็อกตามกิโลที่จ่าย (ฐานข้อมูลทำเองเช่นกัน)
+  function takeFromLot(d, line, kg, ctx) {
+    const { lotState } = rules();
+    const lot = d.materialLots.find((row) => row.lotNo === line.lotNo);
+    if (!lot || lotState(lot, ctx.now) !== "available") fail(`ล็อต ${line.lotNo} ใช้ไม่ได้แล้ว (หมดอายุ/กักกัน/หมด)`);
+    if (lot.qtyKg < kg) fail(`ล็อต ${line.lotNo} คงเหลือไม่พอ`);
+    return lot;
+  }
+  const deduct = (lot, kg) => { lot.qtyKg = Math.max(0, +(lot.qtyKg - kg).toFixed(6)); };
+
+  // เบิก = สร้างใบเบิกและจ่ายทันที: ระเบิดสูตร จัดสรร FEFO หักสต็อกล็อตตามบรรทัด จ่ายตามสูตร (actualKg = targetKg) สถานะ issued พร้อมผสม · ไม่มีขั้นตอนชั่งรายบรรทัด
   function createRequisition(d, { orderId, batches, note }, ctx) {
     needRight(ctx, "requisition");
     const { recipeLines, allocateFefo } = rules();
@@ -329,10 +348,8 @@
     const n = num(batches, "จำนวน batch");
     if (n < 1 || n > 10) fail("จำนวน batch ต้องอยู่ระหว่าง 1–10");
     const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร ${order.recipeId}`);
-    // จองสต็อกที่ใบเบิกเปิดอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน · โหมดฐานข้อมูลหักสต็อกตอนชั่งแต่ละรายการ จึงจองเฉพาะรายการที่ยังไม่ชั่ง
-    const reserved = {};
-    d.requisitions.filter((requisition) => requisition.status !== "issued" && requisition.status !== "consumed").forEach((requisition) =>
-      requisition.lines.filter((line) => !ctx.remote || line.actualKg === null).forEach((line) => { reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg; }));
+    // จองสต็อกที่ใบเบิกเก่าที่ค้างอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน
+    const reserved = reservedByOpenRequisitions(d, ctx);
     const lines = [];
     const shortages = [];
     for (const item of recipeLines(recipe)) {
@@ -341,48 +358,70 @@
       if (shortage > 0.0001) shortages.push(`${item.materialCode} ขาด ${shortage.toFixed(2)} kg`);
       picks.forEach((pick) => {
         reserved[pick.lotNo] = (reserved[pick.lotNo] || 0) + pick.kg;
-        lines.push({ materialCode: item.materialCode, stage: item.stage, lotNo: pick.lotNo, targetKg: pick.kg, actualKg: null, weighedAt: null });
+        lines.push({ materialCode: item.materialCode, stage: item.stage, lotNo: pick.lotNo, targetKg: pick.kg, actualKg: pick.kg, weighedAt: ctx.now, weighedBy: ctx.user?.name });
       });
     }
     if (shortages.length) fail(`สต็อกไม่พอตามหลัก FEFO: ${shortages.join(", ")}`);
+    for (const line of lines) deduct(d.materialLots.find((row) => row.lotNo === line.lotNo), line.targetKg);
     const id = nextId(d, "REQ", ctx.now, ctx, d.requisitions, rowId);
     d.requisitions.unshift({
       id, orderId, recipeId: recipe.id, recipeRevision: recipe.revision, batches: n, totalKg: recipe.batchKg * n, lines,
-      status: "weighing", note: note || "", requestedBy: ctx.user?.name, createdAt: ctx.now,
+      status: "issued", note: note || "", requestedBy: ctx.user?.name, createdAt: ctx.now, issuedAt: ctx.now, issuedBy: ctx.user?.name,
     });
-    audit(d, ctx, "ระเบิดสูตรและสร้างใบเบิก", `${id} (${order.id}, ${n} batch)`);
+    audit(d, ctx, "เบิกเคมีและจ่ายวัตถุดิบ", `${id} (${order.id}, ${n} batch)`);
     return id;
   }
 
+  // ใบเก่าที่ค้างชั่งทีละบรรทัด (ข้อมูลก่อนมีการจ่ายทันที): ยังชั่งต่อได้ครบเหมือนเดิม
   function weighLine(d, { reqId, index, actualKg }, ctx) {
     needRight(ctx, "requisition");
-    const { weighTolerance, lotState } = rules();
+    const { weighTolerance } = rules();
     const requisition = find(d.requisitions, reqId, "ใบเบิก");
     if (requisition.status !== "weighing") fail("ใบเบิกนี้ชั่งครบแล้ว");
     const line = requisition.lines[index] || fail("ไม่พบรายการชั่ง");
     const kg = num(actualKg, "น้ำหนักที่ชั่งได้");
     const tol = weighTolerance(line.targetKg);
     if (Math.abs(kg - line.targetKg) > tol + 1e-9) fail(`น้ำหนักอยู่นอกเกณฑ์ ±${tol.toFixed(3)} kg ระบบไม่ให้บันทึก`);
-    const lot = d.materialLots.find((row) => row.lotNo === line.lotNo);
-    if (!lot || lotState(lot, ctx.now) !== "available") fail(`ล็อต ${line.lotNo} ใช้ไม่ได้แล้ว (หมดอายุ/กักกัน/หมด)`);
-    if (lot.qtyKg < kg) fail(`ล็อต ${line.lotNo} คงเหลือไม่พอ`);
+    const lot = takeFromLot(d, line, kg, ctx);
     line.actualKg = kg;
     line.weighedAt = ctx.now;
     line.weighedBy = ctx.user?.name;
     // โหมดฐานข้อมูล: ฐานข้อมูลหักสต็อกของล็อตทันทีที่ชั่งแต่ละรายการ (โหมดสาธิตหักตอนชั่งครบทุกรายการ)
-    if (ctx.remote) lot.qtyKg = Math.max(0, +(lot.qtyKg - kg).toFixed(6));
-    if (requisition.lines.every((row) => row.actualKg !== null)) {
-      if (!ctx.remote) {
-        requisition.lines.forEach((row) => {
-          const materialLot = d.materialLots.find((item) => item.lotNo === row.lotNo);
-          materialLot.qtyKg = Math.max(0, materialLot.qtyKg - row.actualKg);
-        });
-      }
-      requisition.status = "issued";
-      requisition.issuedAt = ctx.now;
-      requisition.issuedBy = ctx.user?.name;
-      audit(d, ctx, "จ่ายวัตถุดิบครบ", requisition.id);
+    if (ctx.remote) deduct(lot, kg);
+    if (requisition.lines.every((row) => row.actualKg !== null)) finishWeighing(d, requisition, ctx);
+  }
+
+  // จ่ายทั้งใบที่ค้างสถานะ weighing: ทุกบรรทัดที่ยังไม่ชั่งจ่ายตามสูตร (actualKg = targetKg) หักสต็อกเท่ากัน แล้วใบเป็น issued ในคราวเดียว
+  function issueRequisition(d, { id }, ctx) {
+    needRight(ctx, "requisition");
+    const requisition = find(d.requisitions, id, "ใบเบิก");
+    if (requisition.status !== "weighing") fail("ใบเบิกนี้จ่ายวัตถุดิบครบแล้ว");
+    const open = requisition.lines.filter((line) => line.actualKg === null);
+    // ตรวจทุกบรรทัดก่อนแก้อะไร (ล็อตเดียวกันอาจอยู่หลายบรรทัด จึงรวมกิโลต่อล็อต)
+    const need = {};
+    for (const line of open) takeFromLot(d, line, 0, ctx);
+    for (const line of ctx.remote ? open : requisition.lines) need[line.lotNo] = (need[line.lotNo] || 0) + line.targetKg;
+    for (const [lotNo, kg] of Object.entries(need)) {
+      if (d.materialLots.find((row) => row.lotNo === lotNo).qtyKg < kg - 1e-9) fail(`ล็อต ${lotNo} คงเหลือไม่พอ`);
     }
+    for (const line of open) {
+      line.actualKg = line.targetKg;
+      line.weighedAt = ctx.now;
+      line.weighedBy = ctx.user?.name;
+      if (ctx.remote) deduct(d.materialLots.find((row) => row.lotNo === line.lotNo), line.targetKg);
+    }
+    finishWeighing(d, requisition, ctx);
+  }
+
+  // ทุกบรรทัดจ่ายแล้ว: โหมดสาธิตหักสต็อกทั้งใบตอนนี้ (โหมดฐานข้อมูลหักไปแล้วรายบรรทัด) แล้วใบเป็น issued
+  function finishWeighing(d, requisition, ctx) {
+    if (!ctx.remote) {
+      requisition.lines.forEach((row) => deduct(d.materialLots.find((item) => item.lotNo === row.lotNo), row.actualKg));
+    }
+    requisition.status = "issued";
+    requisition.issuedAt = ctx.now;
+    requisition.issuedBy = ctx.user?.name;
+    audit(d, ctx, "จ่ายวัตถุดิบครบ", requisition.id);
   }
 
   function receiveMaterial(d, p, ctx) {
@@ -870,7 +909,7 @@
   }
 
   const api = {
-    ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, receiveMaterial, createPurchaseOrder, receivePurchaseLine, cancelPurchaseOrder, setMaterialLotStatus,
+    ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, issueRequisition, receiveMaterial, createPurchaseOrder, receivePurchaseLine, cancelPurchaseOrder, setMaterialLotStatus,
     recordMixing, endRest, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
     addQcRecord, createNcr, updateNcr, closeNcr, saveMold, cleanMold,
   };

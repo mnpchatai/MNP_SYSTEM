@@ -28,8 +28,8 @@ select ok(exists (select 1 from pg_indexes where schemaname = 'public' and index
   'the purchase order table is indexed by (is_test, changed_version)');
 select is((select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'rf_materials' and column_name in ('safety_kg', 'shelf_life_days')),
   2::bigint, 'materials have the safety stock and shelf life columns');
-select ok(array['createPurchaseOrder', 'receivePurchaseLine', 'cancelPurchaseOrder', 'saveMaterial', 'receiveMaterial'] <@ private.rf_client_actions(),
-  'the action whitelist knows the three purchase order actions and keeps the earlier ones');
+select ok(array['createPurchaseOrder', 'receivePurchaseLine', 'cancelPurchaseOrder', 'saveMaterial', 'receiveMaterial', 'createRequisition', 'weighLine', 'issueRequisition'] <@ private.rf_client_actions(),
+  'the action whitelist knows the three purchase order actions and the whole-requisition issue, and keeps the earlier ones');
 select ok(not exists (select 1 from unnest(array['public.app_rf_master()', 'public.app_rf_master_since(bigint)', 'public.app_rf_save(jsonb,bigint,text,jsonb,text)',
                                                   'public.app_rf_audit(integer)', 'public.app_sandbox_purge_rf()']) f(sig)
                       where has_function_privilege('anon', f.sig, 'execute') or not has_function_privilege('authenticated', f.sig, 'execute')),
@@ -38,10 +38,13 @@ select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""'
            where p.oid in ('public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure, 'public.app_sandbox_purge_rf()'::regprocedure,
                            'private.rf_save_purchase_orders(public.employees,text,boolean,boolean,boolean,text,jsonb,bigint,bigint)'::regprocedure,
                            'private.rf_check_po_receipt(uuid,jsonb,bigint)'::regprocedure,
+                           'private.rf_save_requisitions(uuid,text,boolean,text,jsonb,bigint,bigint)'::regprocedure,
                            'private.rf_save_materials(uuid,text,jsonb,bigint,bigint)'::regprocedure)),
   'the replaced RPCs and the new writers are security definer with an empty search_path');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_save_materials' and p.pronargs = 4),
   'the old four-argument material writer is gone');
+select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_save_requisitions' and p.pronargs = 6),
+  'the old six-argument requisition writer is gone (the new one takes the action name)');
 select ok(not exists (
     select 1 from pg_proc p
     where p.pronamespace = 'private'::regnamespace and p.proname like 'rf\_%'

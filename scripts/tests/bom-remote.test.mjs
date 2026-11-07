@@ -2622,8 +2622,6 @@ test("when SR receives a transfer the module catches BOM up and says what the jo
   const rb = await asPersona(scene, "persona-rb", realClock);
   await rf(rb).ensureLoaded();
   const req = await saved(rf(rb).run("createRequisition", { orderId: wo.id, batches: 1 }));
-  const requisition = rf(rb).data().requisitions.find((row) => row.id === req.result);
-  for (let index = 0; index < requisition.lines.length; index += 1) await saved(rf(rb).run("weighLine", { reqId: req.result, index, actualKg: requisition.lines[index].targetKg }));
   const lot = await saved(rf(rb).run("recordMixing", { reqId: req.result, machine: "KN-01 Kneader 75L", shift: "D", stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], outputKg: 10.5 }));
   await saved(rf(rb).run("endRest", { lotId: lot.result }));
   const transfer = await saved(rf(rb).run("createTransfer", { lotId: lot.result, qty: 10.5 }));

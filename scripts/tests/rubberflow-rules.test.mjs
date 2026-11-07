@@ -195,9 +195,11 @@ test("chemicalNeeds: need of the asked WOs against on-hand, reservations, other 
   const epdm = out.rows.find((row) => row.materialCode === "EPDM");
   // on hand 20 (expired / held / empty lots ignored) − reserved 5 (the weighed line already left the lot) − other need 18.75 (WO-OTHER is covered by its requisition) + on order 40 = 36.25
   assert.deepEqual(
-    [epdm.needKg, epdm.onHandKg, epdm.reservedKg, epdm.otherNeedKg, epdm.onOrderKg, epdm.availableKg, epdm.shortageKg],
-    [50, 20, 5, 18.75, 40, 36.25, 13.75],
+    [epdm.needKg, epdm.onHandKg, epdm.reservedKg, epdm.requisitionKg, epdm.otherNeedKg, epdm.onOrderKg, epdm.availableKg, epdm.shortageKg],
+    [50, 20, 23.75, 5, 18.75, 40, 36.25, 13.75],
+    "reserved (shown in one column) = the open requisitions' unissued kilos + the other open WOs' remaining need; available = on hand − reserved + on order",
   );
+  for (const row of out.rows) assert.equal(row.availableKg, Math.round((row.onHandKg - row.reservedKg + row.onOrderKg) * 1000) / 1000, `${row.materialCode}: available is derivable from the three columns`);
   assert.equal(epdm.safetyKg, 10);
   assert.equal(epdm.orderKg, 23.75, "default order = shortage + safety stock");
   assert.equal(epdm.name, "ยาง EPDM");
@@ -208,7 +210,8 @@ test("chemicalNeeds: need of the asked WOs against on-hand, reservations, other 
 
   // the demo mode takes the kilograms out of the lot only when the whole requisition is weighed, so every line of an open requisition is reserved
   const demo = rules.chemicalNeeds(data, ["WO-ASK"], NOW, { remote: false });
-  assert.equal(demo.rows.find((row) => row.materialCode === "EPDM").reservedKg, 8);
+  const demoEpdm = demo.rows.find((row) => row.materialCode === "EPDM");
+  assert.deepEqual([demoEpdm.requisitionKg, demoEpdm.reservedKg], [8, 26.75]);
   // asking for another open WO counts its remaining need too (and it is no longer an "other" need)
   const both = rules.chemicalNeeds(data, ["WO-ASK", "WO-RUN"], NOW);
   assert.deepEqual(both.counted, ["WO-ASK", "WO-RUN"]);
@@ -224,7 +227,7 @@ test("chemicalNeeds: need of the asked WOs against on-hand, reservations, other 
   // a negative balance (other WOs want more than the stock) stays negative so the shortage is explained, and counts as short
   const crowded = rules.chemicalNeeds({ ...data, materialLots: [lot("E3", "EPDM", 10)], purchaseOrders: [] }, ["WO-ASK"], NOW);
   const row = crowded.rows.find((item) => item.materialCode === "EPDM");
-  assert.deepEqual([row.availableKg, row.shortageKg], [-13.75, 50 - (10 - 5 - 18.75)], "10 − 5 − 18.75 = −13.75 → available stays negative, shortage 63.75");
+  assert.deepEqual([row.availableKg, row.reservedKg, row.shortageKg], [-13.75, 23.75, 50 - (10 - 5 - 18.75)], "10 − 5 − 18.75 = −13.75 → available stays negative, shortage 63.75");
   assert.equal(rules.suggestOrderKg(0, 5), 0);
   assert.equal(rules.suggestOrderKg(2.5, 5), 7.5);
   assert.equal(rules.suggestOrderKg(2.5, -1), 2.5);

@@ -19,7 +19,7 @@
     { id: "dashboard", label: "ภาพรวมโรงงาน", group: "ภาพรวม" },
     { id: "orders", label: "ใบสั่งผลิต", group: "วางแผน" },
     { id: "recipes", label: "สูตรยาง (BOM/PHR)", group: "วางแผน" },
-    { id: "requisition", label: "เบิกและชั่งเคมี", group: "สายการผลิต" },
+    { id: "requisition", label: "เบิกเคมี", group: "สายการผลิต" },
     { id: "mixing", label: "1 · ผสมยาง", group: "สายการผลิต" },
     { id: "extrusion", label: "2 · ฉีดขึ้นรูป", group: "สายการผลิต" },
     { id: "curing", label: "3 · อบ HCM", group: "สายการผลิต" },
@@ -76,7 +76,7 @@
     demoSkip: (user) => Boolean(user.planner || user.rb), // ข้ามเวลาบ่ม: คำสั่งของพนักงาน RB ที่ฐานข้อมูลประทับเวลาเอง
     // ชุดที่ย้ายขึ้นฐานข้อมูลในขั้นที่ 2: โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้ (ไม่อยู่ใน CAN)
     receiveMaterial: (user) => Boolean(user.planner || user.st), // รับวัตถุดิบเข้าคลัง
-    requisition: (user) => Boolean(user.planner || user.rb), // สร้างใบเบิกและชั่ง
+    requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) · จ่ายใบเก่าที่ค้างชั่ง
     station: (user) => Boolean(user.planner || user.rb), // บันทึกผสม/ฉีด/อบ/ตกแต่ง ทำความสะอาดแม่พิมพ์
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP
     receiveTransfer: (user) => Boolean(user.planner || user.sr), // รับมอบ WIP
@@ -89,7 +89,7 @@
 
   // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
   const ACTION_RIGHT = Object.freeze({
-    receiveMaterial: "receiveMaterial", setMaterialLotStatus: "holdMaterial", createRequisition: "requisition", weighLine: "requisition",
+    receiveMaterial: "receiveMaterial", setMaterialLotStatus: "holdMaterial", createRequisition: "requisition", weighLine: "requisition", issueRequisition: "requisition",
     recordMixing: "station", endRest: "demoSkip", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
     createTransfer: "sendTransfer", receiveTransfer: "receiveTransfer", shipBoxes: "shipBoxes", addQcRecord: "qcDecision", createNcr: "qcDecision", closeNcr: "qcDecision",
     updateNcr: "fillNcr", saveMold: "editMold",
@@ -222,7 +222,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (รับวัตถุดิบและตรวจสอบรับเข้าตามใบสั่งซื้อ: คลังวัตถุดิบ · สั่งซื้อ เบิก ชั่ง ผลิต ส่งมอบ: แผนก RB · ยกเลิกใบสั่งซื้อ: ฝ่ายวางแผน · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: หัวหน้าแผนก RB ขึ้นไป · ฝ่ายวางแผนและผู้จัดการทำได้ทุกอย่าง)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (รับวัตถุดิบและตรวจสอบรับเข้าตามใบสั่งซื้อ: คลังวัตถุดิบ · สั่งซื้อ เบิกเคมี ผลิต ส่งมอบ: แผนก RB · ยกเลิกใบสั่งซื้อ: ฝ่ายวางแผน · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: หัวหน้าแผนก RB ขึ้นไป · ฝ่ายวางแผนและผู้จัดการทำได้ทุกอย่าง)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",

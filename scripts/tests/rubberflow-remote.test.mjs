@@ -719,16 +719,14 @@ const go = async (s, rig, persona, name, payload) => {
   await s.as(persona);
   return saved(rig.store.run(name, payload));
 };
-// ใบเบิก 1 batch → ชั่งครบ → ผสม → (ข้ามเวลาบ่ม) → ส่งมอบ → SR รับ : คืน id ของแต่ละเอกสาร
+// ใบเบิก 1 batch (จ่ายทันที) → ผสม → (ข้ามเวลาบ่ม) → ส่งมอบ → SR รับ : คืน id ของแต่ละเอกสาร
 async function mixAndSend(s, rig, order, { dump1 = 110, outputKg = 48 } = {}) {
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1, note: "ทดสอบ" })).result;
-  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
-  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
   const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: [{ ...STAGES2[0], dumpTemp: dump1 }, STAGES2[1]], outputKg, scrapKg: 1 })).result;
   return { requisition, mx };
 }
 
-test("the whole line on the database: receive → FEFO requisition → weigh → mix → rest → transfer → receive → extrude → cure → finish → ship, with the page equal to the database at every step", async () => {
+test("the whole line on the database: receive → FEFO requisition (issued at once) → mix → rest → transfer → receive → extrude → cure → finish → ship, with the page equal to the database at every step", async () => {
   const s = await session();
   const rig = await s.make();
   const { order, lots } = await prepare(s, rig);
@@ -738,31 +736,21 @@ test("the whole line on the database: receive → FEFO requisition → weigh →
   assert.deepEqual(lots, [`RM-EPDM-55-${TODAY}-01`, `RM-EPDM-55-${TODAY}-02`, `RM-CB-N550-${TODAY}-01`]);
   assert.equal((await master()).materialLots[0].receivedBy, "วิชัย คลังวัตถุดิบ");
 
-  // ใบเบิก: FEFO หยิบล็อตที่หมดอายุก่อน (-02) แม้รับเข้าทีหลัง · ใบสั่งผลิตที่ยังไม่เริ่มผสมยังเป็น released
+  // ใบเบิก = จ่ายทันที: FEFO หยิบล็อตที่หมดอายุก่อน (-02) แม้รับเข้าทีหลัง · ทุกรายการจ่ายตามสูตร สต็อกหักทันที · ใบสั่งผลิตที่ยังไม่เริ่มผสมยังเป็น released
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1, note: "รอบแรก" })).result;
   assert.equal(requisition, `REQ-${TODAY}-01`);
   const req = (await master()).requisitions[0];
-  assert.deepEqual(req.lines.map((line) => [line.materialCode, line.lotNo, line.targetKg, line.actualKg]), [["EPDM-55", soon, 31.25, null], ["CB-N550", carbon, 18.75, null]]);
+  assert.deepEqual(req.lines.map((line) => [line.materialCode, line.lotNo, line.targetKg, line.actualKg]), [["EPDM-55", soon, 31.25, 31.25], ["CB-N550", carbon, 18.75, 18.75]]);
   assert.equal(req.requestedBy, "ประยุทธ รีดยาง");
-  await inSync(s, rig, "requisition");
-  // ใบเบิกที่สองเห็นว่า 31.25 kg ของล็อต -02 ถูกจองแล้ว → หยิบส่วนที่เหลือของ -02 แล้วต่อด้วย -01
+  assert.deepEqual([req.status, req.issuedBy, req.lines[0].weighedBy, typeof req.issuedAt], ["issued", "ประยุทธ รีดยาง", "ประยุทธ รีดยาง", "number"]);
+  assert.deepEqual([(await master()).materialLots.find((row) => row.lotNo === soon).qtyKg, (await master()).materialLots.find((row) => row.lotNo === carbon).qtyKg], [8.75, 21.25], "stock fell by the issued kilograms at once");
+  await inSync(s, rig, "requisition issued");
+  // ใบเบิกที่สองเห็นว่าล็อต -02 เหลือ 8.75 kg → หยิบส่วนที่เหลือของ -02 แล้วต่อด้วย -01
   const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
   assert.deepEqual((await master()).requisitions.find((row) => row.id === second).lines.filter((line) => line.materialCode === "EPDM-55").map((line) => [line.lotNo, line.targetKg]), [[soon, 8.75], [slow, 22.5]]);
   // สต็อก CB เหลือ 40 − 2 × 18.75 = 2.5 kg: ใบที่สามไม่พอ (หน้าจอปฏิเสธก่อน · ฐานข้อมูลตอบรหัสเอง)
   assert.match(rig.store.run("createRequisition", { orderId: order, batches: 1 }).error.message, /สต็อกไม่พอตามหลัก FEFO/);
-
-  // ชั่ง: นอกเกณฑ์ไม่รับ · สต็อกของล็อตหักทันทีที่ชั่งแต่ละรายการ
-  assert.match(rig.store.run("weighLine", { reqId: requisition, index: 0, actualKg: 33 }).error.message, /นอกเกณฑ์/);
-  const direct = await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...req, lines: [{ ...req.lines[0], actualKg: 33 }, req.lines[1]] }] } }, p_base_version: (await master()).version, p_action: "weighLine" });
-  assert.equal(direct.error.code, "RF_OUT_OF_TOLERANCE", "the database refuses it too");
-  await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index: 0, actualKg: 31.3 });
-  assert.equal((await master()).materialLots.find((row) => row.lotNo === soon).qtyKg, 8.7, "stock fell by the weighed kilograms");
-  assert.equal((await master()).requisitions.find((row) => row.id === requisition).status, "weighing");
-  await inSync(s, rig, "first line weighed");
-  await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index: 1, actualKg: 18.7 });
-  const issued = (await master()).requisitions.find((row) => row.id === requisition);
-  assert.deepEqual([issued.status, issued.issuedBy, issued.lines[0].weighedBy], ["issued", "ประยุทธ รีดยาง", "ประยุทธ รีดยาง"]);
-  await inSync(s, rig, "issued");
+  await inSync(s, rig, "second requisition issued");
 
   // ผสม: สองขั้น · Dump temp ขั้น 2 ตามสูตร → ผ่าน · ใบเบิกถูกใช้ · ใบสั่งผลิต released → in_progress ในคำสั่งเดียวกัน
   const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 })).result;
@@ -826,7 +814,7 @@ test("the whole line on the database: receive → FEFO requisition → weigh →
   // ประวัติการใช้งานของฐานข้อมูลบอกการกระทำทุกขั้น
   await rig.store.loadAudit(true);
   const actions = rig.store.audit().entries.map((entry) => entry.action);
-  for (const name of ["receiveMaterial", "createRequisition", "weighLine", "recordMixing", "endRest", "createTransfer", "receiveTransfer", "recordExtrusion", "recordCuring", "recordFinishing", "addQcRecord", "shipBoxes", "saveMold"]) assert.ok(actions.includes(name), name);
+  for (const name of ["receiveMaterial", "createRequisition", "recordMixing", "endRest", "createTransfer", "receiveTransfer", "recordExtrusion", "recordCuring", "recordFinishing", "addQcRecord", "shipBoxes", "saveMold"]) assert.ok(actions.includes(name), name);
   // ล้างแม่พิมพ์: ตัวนับกลับเป็น 0 (แม่พิมพ์ที่ไม่มีการใช้งานไม่มีอะไรให้ล้าง)
   await go(s, rig, "persona-rb", "cleanMold", { id: "DIE-1" });
   assert.equal((await master()).molds.find((row) => row.id === "DIE-1").usageSinceClean, 0);
@@ -836,6 +824,94 @@ test("the whole line on the database: receive → FEFO requisition → weigh →
   const purged = await rig.store.purge();
   assert.equal(purged.ok, true);
   for (const list of storeApi.REMOTE_LISTS) assert.deepEqual(rig.store.data()[list], [], list);
+});
+
+test("an old requisition that is still weighing: weigh it line by line within the tolerance, or issue it whole in one press at exactly the target kilograms; the rights and the strictness are the database's", async () => {
+  const s = await session();
+  const rig = await s.make();
+  const { order, lots } = await prepare(s, rig);
+  const [slow, soon, carbon] = lots;
+  const master = () => s.call("app_rf_master");
+  const stock = async (lotNo) => (await master()).materialLots.find((row) => row.lotNo === lotNo).qtyKg;
+  // a requisition the way the database held it before the one-press issue: kilograms back in the lots, no weights, status weighing (the action cannot create one any more)
+  const makeOld = (id) => s.mock.rf.edit((m) => {
+    const q = m.requisitions.find((row) => row.id === id);
+    m.version += 1;
+    for (const line of q.lines) {
+      const lot = m.materialLots.find((row) => row.lotNo === line.lotNo);
+      lot.qtyKg = Math.round((lot.qtyKg + line.actualKg) * 1e6) / 1e6;
+      m.versions.materialLots[lot.lotNo] = m.version;
+      line.actualKg = null;
+      line.weighedAt = null;
+      delete line.weighedBy;
+    }
+    q.status = "weighing";
+    delete q.issuedAt;
+    delete q.issuedBy;
+    m.versions.requisitions[id] = m.version;
+  });
+  const first = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  makeOld(first);
+  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  assert.deepEqual((await master()).requisitions.find((row) => row.id === second).lines.map((line) => [line.lotNo, line.targetKg, line.actualKg]), [[soon, 8.75, 8.75], [slow, 22.5, 22.5], [carbon, 18.75, 18.75]], "an old requisition still reserves its kilograms: the new one is issued from what is free");
+  makeOld(second);
+  await rig.store.catchUp();
+  assert.deepEqual([await stock(soon), await stock(slow), await stock(carbon)], [40, 40, 40]);
+  await inSync(s, rig, "two old requisitions");
+  const old = (id) => rig.store.data().requisitions.find((row) => row.id === id);
+  const send = async (persona, id, lines, action) => {
+    await s.as(persona);
+    const snapshot = await master();
+    const row = snapshot.requisitions.find((item) => item.id === id);
+    return (await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...row, lines: row.lines.map((line, index) => ({ ...line, ...(lines[index] ?? {}) })) }] } }, p_base_version: snapshot.version, p_action: action })).error?.code;
+  };
+
+  // weighing line by line still works: the tolerance and the stock draw-down are the database's
+  await s.as("persona-rb");
+  assert.match(rig.store.run("weighLine", { reqId: first, index: 0, actualKg: 33 }).error.message, /นอกเกณฑ์/);
+  assert.equal(await send("persona-rb", first, [{ actualKg: 33 }], "weighLine"), "RF_OUT_OF_TOLERANCE");
+  await go(s, rig, "persona-rb", "weighLine", { reqId: first, index: 0, actualKg: 31.2 });
+  assert.equal(await stock(soon), 8.8, "stock fell by the weighed kilograms");
+  assert.equal((await master()).requisitions.find((row) => row.id === first).status, "weighing");
+  await inSync(s, rig, "first line weighed");
+
+  // issuing whole: ST and QA may not; the weights must all be set and exactly the target
+  assert.equal(await send("persona-st", second, [{ actualKg: 8.75 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "issueRequisition"), "RF_FORBIDDEN");
+  assert.equal(await send("persona-qa", second, [{ actualKg: 8.75 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "issueRequisition"), "RF_FORBIDDEN");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.75 }], "issueRequisition"), "RF_INVALID_REQUISITION", "every open line must be issued together");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.76 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "issueRequisition"), "RF_INVALID_REQUISITION", "not within a tolerance: exactly the target");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.75 }, { actualKg: 22.5 }, { actualKg: 18.75 }], "bogusAction"), "RF_INVALID_ACTION");
+  await s.as("persona-st");
+  await rig.store.catchUp();
+  assert.match(rig.store.run("issueRequisition", { id: second }).error.message, /ไม่มีสิทธิ์/, "the page says no first");
+  assert.equal((await master()).requisitions.find((row) => row.id === second).status, "weighing", "nothing was written");
+  assert.deepEqual([await stock(soon), await stock(slow), await stock(carbon)], [8.8, 40, 40]);
+
+  // one press by an RB member: every open line at its target, the stock drawn down once, status issued
+  await s.as("persona-rb");
+  await rig.store.catchUp();
+  await go(s, rig, "persona-rb", "issueRequisition", { id: second });
+  const issued = (await master()).requisitions.find((row) => row.id === second);
+  assert.deepEqual([issued.status, issued.issuedBy, issued.lines.map((line) => line.actualKg), issued.lines.every((line) => line.weighedBy === "ประยุทธ รีดยาง" && typeof line.weighedAt === "number")], ["issued", "ประยุทธ รีดยาง", [8.75, 22.5, 18.75], true]);
+  assert.deepEqual([await stock(soon), await stock(slow), await stock(carbon)], [0.05, 17.5, 21.25]);
+  await inSync(s, rig, "issued whole");
+  assert.match(rig.store.run("issueRequisition", { id: second }).error.message, /จ่ายวัตถุดิบครบแล้ว/, "an issued requisition is issued once");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8.75 }], "issueRequisition"), undefined, "sending the same weights again changes nothing");
+  assert.equal(await send("persona-rb", second, [{ actualKg: 8 }], "issueRequisition"), "RF_INVALID_TRANSITION", "different weights on an issued requisition are refused");
+
+  // the first one: its weighed line keeps its weight, only the open line is issued at the target
+  await go(s, rig, "persona-rb", "issueRequisition", { id: first });
+  const done = (await master()).requisitions.find((row) => row.id === first);
+  assert.deepEqual([done.status, done.lines.map((line) => line.actualKg)], ["issued", [31.2, 18.75]]);
+  assert.deepEqual([await stock(soon), await stock(carbon)], [0.05, 2.5]);
+  assert.equal(old(first).status, "issued");
+  await inSync(s, rig, "both issued");
+  // mixing takes the issued old requisition like any other
+  const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: first, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 49, scrapKg: 0.5 })).result;
+  assert.equal((await master()).requisitions.find((row) => row.id === first).consumedBy, mx);
+  await rig.store.loadAudit(true);
+  const actions = rig.store.audit().entries.map((entry) => entry.action);
+  for (const name of ["createRequisition", "weighLine", "issueRequisition"]) assert.ok(actions.includes(name), name);
 });
 
 test("each shop-floor action is open to its own department and the planner group only: the page says no first and the database says RF_FORBIDDEN to a direct call", async () => {
@@ -859,7 +935,7 @@ test("each shop-floor action is open to its own department and the planner group
   forbidden("rb", "addQcRecord", { lotId: mx, values: { hardness: 65 } });
   forbidden("rb", "createNcr", { title: "x", lotId: mx });
   await s.as("persona-st");
-  for (const [name, payload] of [["createRequisition", { orderId: order, batches: 1 }], ["weighLine", { reqId: requisition, index: 0, actualKg: 1 }], ["recordMixing", { reqId: requisition }], ["endRest", { lotId: mx }], ["createTransfer", { lotId: mx, qty: 1 }], ["cleanMold", { id: "DIE-1" }], ["saveMold", { id: "X", name: "x" }], ["receiveTransfer", { id: tr, qtyReceived: 1 }]]) forbidden("st", name, payload);
+  for (const [name, payload] of [["createRequisition", { orderId: order, batches: 1 }], ["weighLine", { reqId: requisition, index: 0, actualKg: 1 }], ["issueRequisition", { id: requisition }], ["recordMixing", { reqId: requisition }], ["endRest", { lotId: mx }], ["createTransfer", { lotId: mx, qty: 1 }], ["cleanMold", { id: "DIE-1" }], ["saveMold", { id: "X", name: "x" }], ["receiveTransfer", { id: tr, qtyReceived: 1 }]]) forbidden("st", name, payload);
   await s.as("persona-sr");
   forbidden("sr", "createTransfer", { lotId: mx, qty: 1 });
   forbidden("sr", "receiveMaterial", { materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY });
@@ -1084,13 +1160,8 @@ test("shop-floor records collide per record: stale is reported before permission
   assert.equal((await dup.saving).error.code, "RF_STALE");
   assert.equal(b.store.data().requisitions.length, 1, "reverted and caught up");
   assert.equal((await saved(b.store.run("createRequisition", { orderId: order, batches: 1 }))).result, `REQ-${TODAY}-02`);
-  // ชั่งพร้อมกัน: A ชั่งรายการ 0 · B (ฐานเก่า) ชั่งรายการ 0 ของใบเดียวกัน → ชน
   await a.store.catchUp();
   await b.store.catchUp();
-  await saved(a.store.run("weighLine", { reqId: `REQ-${TODAY}-01`, index: 0, actualKg: 31.25 }));
-  const clash = b.store.run("weighLine", { reqId: `REQ-${TODAY}-01`, index: 0, actualKg: 31.3 }); // ค่าต่างจากที่ A ชั่ง (ค่าเท่ากันทุกช่องถือว่าไม่มีอะไรเปลี่ยน)
-  assert.equal(clash.ok, true, clash.error?.message);
-  assert.equal((await clash.saving).error.code, "RF_STALE");
   // ชนก่อนสิทธิ์: ST ฐานเก่าแก้ใบเบิก → RF_STALE ไม่ใช่ RF_FORBIDDEN; ฐานล่าสุด → RF_FORBIDDEN
   await s.as("persona-st");
   const snapshot = await s.call("app_rf_master");
@@ -1142,8 +1213,6 @@ test("a station lot is recorded only on a released / in-progress / on-hold work 
   const rig = await s.make();
   const { order } = await prepare(s, rig);
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
-  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
-  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
   await go(s, rig, "persona-rbh", "setOrderStatus", { id: order, status: "cancelled" });
   await s.as("persona-rb");
   const mixing = { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 };
@@ -1164,8 +1233,6 @@ test("a work order on hold still takes station lots", async () => {
   const rig = await s.make();
   const { order } = await prepare(s, rig);
   const requisition = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
-  const req = rig.store.data().requisitions.find((row) => row.id === requisition);
-  for (let index = 0; index < req.lines.length; index += 1) await go(s, rig, "persona-rb", "weighLine", { reqId: requisition, index, actualKg: req.lines[index].targetKg });
   await go(s, rig, "persona-rbh", "setOrderStatus", { id: order, status: "on_hold" });
   const mx = (await go(s, rig, "persona-rb", "recordMixing", { reqId: requisition, machine: "KN-01 Kneader 75L", shift: "D", stages: STAGES2, outputKg: 48, scrapKg: 1 })).result;
   const master = await s.call("app_rf_master");

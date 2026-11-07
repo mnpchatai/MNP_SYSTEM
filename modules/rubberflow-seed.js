@@ -151,14 +151,6 @@
     });
     d.materialLots.find((lot) => lot.materialCode === "CBS" && lot.initialKg === 45).status = "hold";
 
-    const weighAll = (reqId, t) => {
-      const requisition = d.requisitions.find((row) => row.id === reqId);
-      requisition.lines.forEach((line, i) => {
-        const tol = Math.max(0.02, line.targetKg * 0.015);
-        A.weighLine(d, { reqId, index: i, actualKg: r1(line.targetKg + (rnd() - 0.5) * tol, 3) }, at(t + i * 4 * 60000, "store"));
-      });
-    };
-
     // เดินหนึ่ง batch ผ่านสายผลิต หยุดหลังขั้น `until`
     const chain = (orderId, start, until = "finishing", opts = {}) => {
       const order = d.orders.find((row) => row.id === orderId);
@@ -166,8 +158,6 @@
       const isM = order.uom === "m";
       const reqId = A.createRequisition(d, { orderId, batches: 1 }, at(start, "store"));
       if (until === "request") return { reqId };
-      weighAll(reqId, start + 15 * 60000);
-      if (until === "weighed") return { reqId };
       const kg = recipeLines(recipe).reduce((sum, line) => sum + line.kgPerBatch, 0);
       const mx = A.recordMixing(d, {
         reqId, machine: isM ? "KN-01 Kneader 75L" : "BM-02 Banbury 110L", shift: "D",
@@ -238,14 +228,12 @@
     chain(o2, now - 13 * HOUR, "curing");
     chain(o2, now - 1.5 * HOUR, "mixing");
 
-    // ใบสั่งผลิต 3: โอริง NBR มีประวัติ และใบเบิกหนึ่งใบยังอยู่บนตาชั่ง
+    // ใบสั่งผลิต 3: โอริง NBR มีประวัติ และใบเบิกหนึ่งใบจ่ายแล้วรอผสม
     const o3 = mkOrder({ customer: "บจก. อีสเทิร์นไฮดรอลิก", customerPo: "EH-7720", recipeId: "RC-NBR-OR02", targetQty: 40000, color: "ดำ", startDate: now - 5 * DAY, dueDate: now + 6 * DAY }, now - 6 * DAY);
     release(o3, now - 5.5 * DAY);
     chain(o3, now - 5 * DAY);
     chain(o3, now - 2.5 * DAY);
-    const pending = chain(o3, now - 40 * 60000, "request");
-    const pr = d.requisitions.find((row) => row.id === pending.reqId);
-    pr.lines.slice(0, 2).forEach((line, i) => A.weighLine(d, { reqId: pr.id, index: i, actualKg: r1(line.targetKg, 3) }, at(now - 30 * 60000 + i * 60000, "store")));
+    chain(o3, now - 40 * 60000, "request");
 
     // ใบสั่งผลิต 4 และ 5: วางแผนไว้เท่านั้น
     const o4 = mkOrder({ customer: "บจก. ไทยออโต้พาร์ท", customerPo: "TAP-PO-55377", recipeId: "RC-EPDM-DS01", targetQty: 3000, color: "ดำ", startDate: now + 3 * DAY, dueDate: now + 12 * DAY }, now - 2 * DAY);
