@@ -841,6 +841,7 @@
   // ตรงกับ Excel: RB ต้องรีด = O × (SE ต้องเบิก − สต๊อก SE) − สต๊อก RB · ต่างจาก Excel สองจุดโดยตั้งใจ:
   //   ของเกินของพ่อไม่ถูกส่งต่อเป็นค่าติดลบของลูก และคงคลังนับต่อรหัสครั้งเดียวทั้งใบ ไม่ใช่ต่อบรรทัด (ชีตคีย์ซ้ำทุกบรรทัด)
   // รหัสที่ไม่ได้นับ (undefined) ถือว่าไม่มีของ · คงคลังของตัว FG (ชั้น 0) ไม่ถูกใช้ เพราะใบสั่งผลิตต้องผลิตครบจำนวนสั่งเสมอ
+  // ของซื้อ (PURCHASED) ไม่ใช้ยอดนับตามใบ: สต็อกของซื้อเป็นยอดเดียวต่อรหัสที่หน้า "คลังของซื้อ" (partNeeds) จึงต้องการสุทธิ = ต้องการเต็ม และ ST เบิกจ่ายตามงานของซื้อที่ปล่อยผลิตสร้างไว้
   // คืนรายการเรียงตามชั้นลึกสุดแล้วตามรหัส
   function netRequirements(explodedLines, stockCounts = {}) {
     const entries = new Map();
@@ -862,7 +863,7 @@
     const ordered = [...entries.values()].sort((a, b) => a.level - b.level || a.itemCode.localeCompare(b.itemCode));
     const round = (n) => Math.round(n * 1e4) / 1e4;
     for (const entry of ordered) {
-      const counted = entry.level > 0 && stockCounts[entry.itemCode] !== undefined && stockCounts[entry.itemCode] !== null && stockCounts[entry.itemCode] !== "";
+      const counted = entry.level > 0 && entry.kind !== "PURCHASED" && stockCounts[entry.itemCode] !== undefined && stockCounts[entry.itemCode] !== null && stockCounts[entry.itemCode] !== "";
       entry.stock = counted ? Number(stockCounts[entry.itemCode]) || 0 : undefined;
       entry.net = entry.required - (entry.stock ?? 0);
       entry.toMake = round(Math.max(entry.net, 0));
@@ -898,6 +899,60 @@
     return [...map.values()].map((entry) => ({ ...entry, fgCodes: [...entry.fgCodes] }));
   }
   const toMake = (required, stock) => Math.round((Number(required) - (Number(stock) || 0)) * 1e4) / 1e4;
+
+  // ---------- ของซื้อ: ความต้องการเทียบสต็อก (หน้าต่างสั่งซื้อ) ----------
+  // งานของซื้อ = งาน dept ST ชนิด PURCHASED ที่ตอนปล่อยผลิตสร้างต่อรายการของซื้อของใบ (ยอด = ความต้องการเต็ม) · ST เบิกจ่ายครั้งเดียวต่อใบ ทำให้งานเสร็จและหักสต็อก
+  // data = { jobs, orders, stock, purchaseOrders } (BOM: jobs orders stock · RubberFlow: purchaseOrders) · orderId = ใบ PI ที่ถามถึง
+  // แต่ละรหัสที่ใบนี้ยังไม่ได้เบิกจ่าย: needQty ต้องใช้ (ส่วนที่เหลือของงาน) · onHandQty คงเหลือ · reservedQty จองแล้ว = ที่ใบ PI อื่นที่ปล่อยผลิตแล้วยังไม่ได้เบิกจ่ายต้องใช้
+  // · onOrderQty สั่งค้างรับ (บรรทัดของซื้อของใบสั่งซื้อ ordered ที่ยังไม่รับ) · shortage = max(0, needQty − (onHandQty − reservedQty + onOrderQty)) · orderQty = ค่าตั้งต้นจำนวนสั่ง (ขาด + สต็อกขั้นต่ำ ไม่ขาด = 0)
+  // ชื่อ/หน่วยมาจากงาน (ชื่อและหน่วยของชิ้น ณ ตอนปล่อยผลิต) · รูปเดียวกับ chemicalNeeds ของ RubberFlow: { rows, anyShort }
+  const PART_OPEN_ORDER = Object.freeze(["released", "in_progress"]);
+  const partRound3 = (n) => Math.round(n * 1e3) / 1e3;
+  // งานของซื้อที่ยังไม่เบิกจ่ายของใบที่ปล่อยผลิตอยู่ (released / in_progress) · ส่วนที่เหลือของงาน = แผน - ที่เบิกจ่ายแล้ว
+  const openPartJobs = (jobs, orders) => {
+    const statusOf = new Map((orders ?? []).map((order) => [order.id, order.status]));
+    return (jobs ?? []).filter((job) => job.dept === "ST" && job.kind === "PURCHASED" && job.status !== "done" && PART_OPEN_ORDER.includes(statusOf.get(job.orderId)));
+  };
+  const partLeft = (job) => Math.max(0, Number(job.qtyPlanned) - Number(job.qtyDone || 0));
+  // จองแล้วต่อรหัส = ที่ใบ PI ที่ปล่อยผลิตแล้วยังไม่ได้เบิกจ่ายต้องใช้ (exceptOrderId = ข้ามใบนี้ ใช้ตอนคิดความต้องการของใบนั้นเอง)
+  function partReserved(jobs, orders, exceptOrderId = null) {
+    const reserved = new Map();
+    for (const job of openPartJobs(jobs, orders)) if (job.orderId !== exceptOrderId) reserved.set(job.itemCode, (reserved.get(job.itemCode) || 0) + partLeft(job));
+    return reserved;
+  }
+  // สั่งค้างรับต่อรหัส = บรรทัดของซื้อ (source bom) ของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ
+  function partOnOrder(purchaseOrders) {
+    const onOrder = new Map();
+    for (const po of purchaseOrders ?? []) {
+      if (po.status !== "ordered") continue;
+      for (const line of po.lines ?? []) {
+        if (line.source === "bom" && (line.receivedKg === null || line.receivedKg === undefined)) onOrder.set(line.materialCode, (onOrder.get(line.materialCode) || 0) + (Number(line.qtyKg) || 0));
+      }
+    }
+    return onOrder;
+  }
+  function partNeeds(data, orderId) {
+    const { jobs = [], orders = [], stock = [], purchaseOrders = [] } = data ?? {};
+    const need = new Map();
+    const meta = new Map();
+    for (const job of openPartJobs(jobs, orders).filter((entry) => entry.orderId === orderId)) {
+      need.set(job.itemCode, (need.get(job.itemCode) || 0) + partLeft(job));
+      meta.set(job.itemCode, { name: job.name, uom: job.uom });
+    }
+    const reserved = partReserved(jobs, orders, orderId);
+    const onOrder = partOnOrder(purchaseOrders);
+    const rows = [...need.keys()].filter((code) => partRound3(need.get(code)) > 0).sort().map((code) => {
+      const row = stock.find((entry) => entry.itemCode === code);
+      const needQty = partRound3(need.get(code));
+      const onHandQty = partRound3(Number(row?.qty) || 0);
+      const reservedQty = partRound3(reserved.get(code) || 0);
+      const onOrderQty = partRound3(onOrder.get(code) || 0);
+      const shortage = partRound3(Math.max(0, needQty - (onHandQty - reservedQty + onOrderQty)));
+      const safetyQty = Math.max(0, Number(row?.safetyQty) || 0);
+      return { itemCode: code, name: meta.get(code)?.name ?? "", uom: meta.get(code)?.uom ?? "", needQty, onHandQty, reservedQty, onOrderQty, shortage, safetyQty, orderQty: shortage > 0 ? partRound3(shortage + safetyQty) : 0 };
+    });
+    return { rows, anyShort: rows.some((row) => row.shortage > 0) };
+  }
 
   // ---------- CSV (เปิดใน Excel) ----------
   // ค่าที่ขึ้นต้นด้วย = + - @ ถูกนำหน้าด้วย ' กัน Excel ตีความเป็นสูตร (ชื่อจากชีต/ชื่อลูกค้าเป็นข้อความที่ผู้ใช้กรอก) ตัวเลขไม่ถูกแตะ
@@ -950,7 +1005,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

@@ -493,8 +493,8 @@ test("a purchase order: one line per material with an order quantity, the edited
   assert.deepEqual(po, {
     id, status: "ordered", sourcePi: "PI-1", sourceRequisition: null, note: "เร่งด่วน", createdAt: NOW, createdBy: user.user.name, cancelledAt: null,
     lines: [
-      { materialCode: "ZNO", needKg: 50, availableKg: 20, shortageKg: 30, safetyKg: 12, qtyKg: 40.123, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null },
-      { materialCode: "CBS", needKg: 50, availableKg: 20, shortageKg: 30, safetyKg: 3, qtyKg: 5, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null },
+      { materialCode: "ZNO", source: "rf", uom: null, needKg: 50, availableKg: 20, shortageKg: 30, safetyKg: 12, qtyKg: 40.123, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null },
+      { materialCode: "CBS", source: "rf", uom: null, needKg: 50, availableKg: 20, shortageKg: 30, safetyKg: 3, qtyKg: 5, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null },
     ],
   }, "the zero-quantity line is skipped; the safety map wins over the line's own value");
   const stock = (code) => d.materials.find((row) => row.code === code).safetyKg;
@@ -566,4 +566,34 @@ test("purchasing rights on the database accounts: RB members and the planner gro
   assert.equal(A.cancelPurchaseOrder(d, { id: open }, remoteCtx(planner)), open);
   // the demo mode checks no rights in the actions, as before
   assert.ok(A.createPurchaseOrder(d, { lines: [poLine("ZNO")] }, ctx("viewer")));
+});
+
+test("a purchase order can mix chemical lines and purchased-part lines: a part line carries its unit and its own safety stock, and is received by quantity only", () => {
+  const d = fresh();
+  const planner = ctx("planner");
+  const part = (code, extra = {}) => ({ materialCode: code, source: "bom", uom: "box", needKg: 7, availableKg: -2, shortageKg: 9, safetyKg: 10, qtyKg: 19, ...extra });
+  rejects(() => A.createPurchaseOrder(d, { lines: [part("P-BOX-01", { uom: "" })] }, planner), /ไม่ทราบหน่วย/);
+  rejects(() => A.createPurchaseOrder(d, { lines: [part("P-BOX-01"), part("P-BOX-01")] }, planner), /ซ้ำ/);
+  rejects(() => A.createPurchaseOrder(d, { lines: [part("P-BOX-01", { safetyKg: -1 })] }, planner), /สต็อกขั้นต่ำ/);
+  rejects(() => A.createPurchaseOrder(d, { lines: [part("")] }, planner), /รหัสของซื้อ/);
+  const id = A.createPurchaseOrder(d, { lines: [poLine("ZNO", { qtyKg: 40 }), part("P-BOX-01"), part("P-STK-01", { uom: "pcs", qtyKg: 0 })], safety: { ZNO: "12", "P-BOX-01": "15" }, sourcePi: "PI-9" }, planner);
+  const [po] = d.purchaseOrders;
+  assert.deepEqual(po.lines.map((line) => [line.materialCode, line.source, line.uom]), [["ZNO", "rf", null], ["P-BOX-01", "bom", "box"]], "the zero-quantity part line is skipped");
+  assert.equal(po.lines[1].safetyKg, 15, "the safety map wins over the line's own value, like a chemical");
+  assert.deepEqual([po.lines[1].qtyKg, po.lines[1].availableKg, po.lines[1].receivedKg, po.lines[1].lotNo, po.lines[1].expiry], [19, -2, null, null, null]);
+  assert.equal(d.materials.find((row) => row.code === "ZNO").safetyKg, 12, "the chemical keeps its own safety stock on the material");
+  assert.ok(!d.materials.some((row) => row.code === "P-BOX-01"), "a part is not turned into a material");
+
+  // รับบรรทัดของซื้อ: เฉพาะปริมาณ ไม่มีล็อต ไม่มีวันหมดอายุ
+  const lots = d.materialLots.length;
+  rejects(() => A.receivePurchaseLine(d, { id, materialCode: "P-BOX-01", qtyKg: 0 }, ctx("store")), /มากกว่า 0/);
+  assert.equal(A.receivePurchaseLine(d, { id, materialCode: "P-BOX-01", qtyKg: "18.5" }, ctx("store")), "P-BOX-01");
+  const received = d.purchaseOrders[0].lines[1];
+  assert.deepEqual([received.receivedKg, received.lotNo, received.expiry, received.receivedAt, received.receivedBy], [18.5, null, null, NOW, user("store").name]);
+  assert.equal(d.materialLots.length, lots, "a part receipt makes no lot");
+  assert.equal(d.purchaseOrders[0].status, "ordered", "the chemical line is still open");
+  rejects(() => A.receivePurchaseLine(d, { id, materialCode: "P-BOX-01", qtyKg: 1 }, ctx("store")), /รับเข้าแล้ว/);
+  A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 40, expiry: NOW + 100 * DAY }, ctx("store"));
+  assert.equal(d.purchaseOrders[0].status, "received", "the order is received once the chemical and the part line are in");
+  assert.ok(d.audit.some((row) => row.action === "ตรวจสอบรับเข้าตามใบสั่งซื้อ" && row.detail === `${id} P-BOX-01 18.5 box`));
 });

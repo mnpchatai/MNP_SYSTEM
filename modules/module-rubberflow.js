@@ -164,10 +164,11 @@
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, startDate: rules.fromInputDate(p.startDate), dueDate: rules.fromInputDate(p.dueDate) }),
     receiveMaterial: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry), coa: p.coa === "yes" }),
-    receivePurchaseLine: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry) }),
-    // ฟอร์มสั่งซื้อ: materialCode[] needKg[] availableKg[] shortageKg[] safetyKg[] qtyKg[] ตามลำดับแถว → lines · safety = สต็อกขั้นต่ำที่แก้ไว้ต่อวัตถุดิบ (บันทึกเข้าวัตถุดิบ) · จำนวนสั่งที่ว่าง/0 ถูกข้ามใน action
+    // บรรทัดของซื้อไม่มีช่องวันหมดอายุ (รับเฉพาะปริมาณ)
+    receivePurchaseLine: (p) => (p.expiry === undefined ? { ...p } : { ...p, expiry: rules.fromInputDate(p.expiry) }),
+    // ฟอร์มสั่งซื้อ: materialCode[] source[] uom[] needKg[] availableKg[] shortageKg[] safetyKg[] qtyKg[] ตามลำดับแถว (เคมีก่อน ของซื้อตาม) → lines · safety = สต็อกขั้นต่ำที่แก้ไว้ต่อวัตถุดิบ (บันทึกเข้าวัตถุดิบ) · จำนวนสั่งที่ว่าง/0 ถูกข้ามใน action
     createPurchaseOrder: (p) => {
-      const lines = listOf(p.materialCode).map((materialCode, index) => ({ materialCode, needKg: listOf(p.needKg)[index], availableKg: listOf(p.availableKg)[index], shortageKg: listOf(p.shortageKg)[index], safetyKg: listOf(p.safetyKg)[index], qtyKg: listOf(p.qtyKg)[index] }));
+      const lines = listOf(p.materialCode).map((materialCode, index) => ({ materialCode, source: listOf(p.source)[index] === "bom" ? "bom" : "rf", uom: listOf(p.uom)[index] || undefined, needKg: listOf(p.needKg)[index], availableKg: listOf(p.availableKg)[index], shortageKg: listOf(p.shortageKg)[index], safetyKg: listOf(p.safetyKg)[index], qtyKg: listOf(p.qtyKg)[index] }));
       return { lines, safety: Object.fromEntries(lines.map((line) => [line.materialCode, line.safetyKg])), sourcePi: p.sourcePi, sourceRequisition: p.sourceRequisition, note: p.note };
     },
     createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
@@ -196,8 +197,12 @@
     // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
     const sentJob = name === "receiveTransfer" ? bomJobOfTransfer(payload?.id) : null; // ก่อนบันทึก: งาน BOM ที่ผูกใบสั่งผลิตของใบส่งมอบ และยอดที่งานทำไว้
     result.saving.then((outcome) => {
-      if (outcome.ok) { report(); if (sentJob) showBomFeedback(sentJob); }
-      else showToast(friendlyError(outcome.error), "error");
+      if (outcome.ok) {
+        report();
+        if (sentJob) showBomFeedback(sentJob);
+        // ใบสั่งซื้อที่มีบรรทัดของซื้อแก้สต็อกขั้นต่ำ/ยอดคงเหลือฝั่ง BOM ในคำสั่งเดียวกัน: ตามทัน BOM ให้หน้าคลังของซื้อและหน้าต่างสั่งซื้อเห็นค่าล่าสุด
+        if (name === "createPurchaseOrder" || name === "receivePurchaseLine") { try { bomStore()?.catchUp?.(); } catch { /* BOM ตามทันเองตอนเปิดหน้า */ } }
+      } else showToast(friendlyError(outcome.error), "error");
     });
     return true;
   }
@@ -406,6 +411,16 @@
       ui, rules, derive, actions, store,
       can: (permission) => storeApi.can(user, permission),
       canSee: (id) => storeApi.canSee(user, id),
+      // ความต้องการของซื้อของใบ PI เทียบสต็อกใน BOM (โหมดฐานข้อมูลที่โหลด BOM แล้วเท่านั้น · null = ไม่มีข้อมูล) ใช้ในหน้าต่างสั่งซื้อและ checkMaterials
+      bomPartNeeds: (sourcePi) => {
+        try {
+          const bom = bomStore();
+          const partNeeds = window.MNP_BOM_RULES?.partNeeds;
+          if (!sourcePi || !bom || bom.status() !== "ready" || typeof partNeeds !== "function") return null;
+          const bomData = bom.data();
+          return partNeeds({ jobs: bomData.jobs, orders: bomData.orders, stock: bomData.stock ?? [], purchaseOrders: data.purchaseOrders ?? [] }, sourcePi);
+        } catch { return null; }
+      },
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };
     ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น ปุ่ม "สั่งซื้อส่วนที่ขาด" ในใบเบิก)
@@ -426,9 +441,11 @@
       if (store.status() !== "ready") return { ok: false, reason: "not-ready" };
       const ctx = makeContext(new URLSearchParams());
       const result = rules.chemicalNeeds(ctx.data, woIds, ctx.now, { remote: store.isRemote() });
-      if (auto && !result.anyShort) {
-        if (result.rows.length) showToast("เคมีพอสำหรับ WO ที่เปิด");
-        return { ok: true, opened: false, result };
+      const parts = ctx.bomPartNeeds(sourcePi);
+      if (auto && !result.anyShort && !parts?.anyShort) {
+        const enough = [result.rows.length ? "เคมี" : "", parts?.rows.length ? "ของซื้อ" : ""].filter(Boolean);
+        if (enough.length) showToast(enough.length === 2 ? "เคมีและของซื้อพอสำหรับใบนี้" : enough[0] === "เคมี" ? "เคมีพอสำหรับ WO ที่เปิด" : "ของซื้อพอสำหรับใบนี้");
+        return { ok: true, opened: false, result, parts };
       }
       openDialog("purchase", { woIds, sourcePi, skippedJobs }, ctx);
       return { ok: true, opened: true, result };

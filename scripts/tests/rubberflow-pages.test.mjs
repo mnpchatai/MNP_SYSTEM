@@ -679,3 +679,50 @@ test("the material check refuses accounts that may not order, and says nothing w
   assert.equal(none.opened, false);
   assert.equal(env.log.toasts.length, before, "nothing countable: no 'enough' claim");
 });
+
+test("purchasing with purchased parts: the dialog adds a part table after the chemicals (unit shown, same form), a part order line is listed with its unit and received by quantity only", async () => {
+  const env = load();
+  env.store.setUser("U03");
+  const { MNP_RUBBERFLOW_DIALOGS: dialogs, MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const parts = { rows: [
+    { itemCode: "P-BOX-01", name: "กล่องนอก <b>", uom: "box", needQty: 7, onHandQty: 5, reservedQty: 0, onOrderQty: 0, shortage: 2, safetyQty: 10, orderQty: 12 },
+    { itemCode: "P-STK-01", name: "สติ๊กเกอร์", uom: "pcs", needQty: 120, onHandQty: 400, reservedQty: 0, onOrderQty: 0, shortage: 0, safetyQty: 0, orderQty: 0 },
+  ], anyShort: true };
+  const ctx = { ...env.ctx("p=orders"), bomPartNeeds: (pi) => (pi === "PI-9" ? parts : null) };
+  const dialog = dialogs.purchase(ctx, { woIds: [], sourcePi: "PI-9" }).html;
+  assert.match(dialog, /สั่งซื้อวัตถุดิบและของซื้อ · PI-9/);
+  assert.doesNotMatch(dialog, /ไม่มีวัตถุดิบให้ตรวจ/, "parts alone are enough to order");
+  assert.match(dialog, /ของซื้อ \(ตามหน่วยของชิ้น\)/);
+  assert.match(dialog, /กล่องนอก &lt;b&gt; · box/, "the name is escaped and the unit is next to it (the code when the BOM rules are not loaded)");
+  assert.ok(dialog.includes('name="source[]" value="bom"') && dialog.includes('name="uom[]" value="box"'), "part rows post their source and unit");
+  assert.ok(dialog.includes('name="availableKg[]" value="5"'), "the stored availability of a part is on hand - reserved + on order");
+  assert.match(dialog, /name="qtyKg\[\]"[^>]*value="12"/, "the default quantity is the shortage plus the safety stock");
+  assert.doesNotMatch(dialog, /undefined|NaN/);
+  assert.equal((dialog.match(/data-rf-po-row/g) ?? []).length, 2, "both parts are rows of the one form");
+  // ไม่มีข้อมูลของซื้อ (BOM ไม่ได้โหลด) หรือเปิดจากใบเบิก: ไม่มีตารางของซื้อ
+  assert.doesNotMatch(dialogs.purchase(ctx, { woIds: [], sourcePi: "PI-OTHER" }).html, /ของซื้อ \(ตามหน่วยของชิ้น\)/);
+  assert.doesNotMatch(dialogs.purchase(ctx, { rows: [{ materialCode: "ZNO", needKg: 1, availableKg: 0, shortageKg: 1 }], sourcePi: "PI-9" }).html, /ของซื้อ \(ตามหน่วยของชิ้น\)/);
+
+  // the form posts chemicals and parts together
+  const posted = env.store.run("createPurchaseOrder", {
+    lines: [{ materialCode: "ZNO", needKg: 10, availableKg: 6, shortageKg: 4, qtyKg: 5 }, { materialCode: "P-BOX-01", source: "bom", uom: "box", needKg: 7, availableKg: 5, shortageKg: 2, safetyKg: 10, qtyKg: 12 }],
+    safety: { ZNO: 4, "P-BOX-01": 10 }, sourcePi: "PI-9",
+  });
+  assert.equal(posted.ok, true, posted.error?.message);
+
+  // the order list shows the unit and no lot line for the part, the receive dialog asks the quantity only
+  const po = env.store.data().purchaseOrders[0];
+  const list = text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html);
+  assert.match(list, /P-BOX-01[^]*12\.00 box/);
+  assert.match(list, /ZNO[^]*5\.00 kg/);
+  const receive = dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }).html;
+  assert.match(receive, /ปริมาณที่รับจริง \(box\)/);
+  assert.doesNotMatch(receive, /name="expiry"|name="supplier"/, "no expiry or supplier for a part");
+  assert.match(receive, /data-rf-success="รับเข้า \{result\} แล้ว"/);
+  const chem = dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "ZNO" }).html;
+  assert.match(chem, /name="expiry"/, "a chemical line still asks the expiry");
+  const received = env.store.run("receivePurchaseLine", { id: po.id, materialCode: "P-BOX-01", qtyKg: 11 });
+  assert.equal(received.ok, true, received.error?.message);
+  assert.match(text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html), /11\.00 box/);
+  assert.equal(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }), null, "a received line has no receive dialog");
+});

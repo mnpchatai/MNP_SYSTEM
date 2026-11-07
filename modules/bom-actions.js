@@ -1,5 +1,5 @@
 // BOM รายแผนก (โหมดทดสอบ) — กฎธุรกิจทั้งหมด: item master · BOM หลายชั้น (จุดสร้างจุดเดียว บันทึกแล้วใช้ได้ทันที เก็บเป็น revision) ·
-// นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · ผูกสูตรยางกับ RubberFlow
+// นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · สต็อกของซื้อ (นับ/เบิกจ่ายรายใบ) · ผูกสูตรยางกับ RubberFlow
 // ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน (store บันทึกเฉพาะเมื่อผ่าน)
 // สิทธิ์ (บทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง): สร้าง/แก้ item และ BOM ทุกชั้น = ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล · ไม่มีขั้นอนุมัติ (ตามที่ผู้ใช้ตัดสิน
 // 29 ต.ค. 2026 ให้เหมือน Excel) · "แผนกเจ้าของ" ของชิ้นงานใช้แยกงานรายแผนกตอนปล่อยผลิตเท่านั้น — ดู docs/BOM_SYSTEM_PLAN.md §3
@@ -42,6 +42,9 @@
   const isBoss = (user) => Boolean(user) && (user.role === "admin" || user.role === "manager");
   const canPlan = (user) => isBoss(user) || user?.role === "planner"; // สร้าง/แก้ item, BOM, ใบสั่งผลิต
   const canCount = (user) => canPlan(user) || user?.role === "st" || user?.role === "wh"; // นับคงคลังของใบร่าง: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือพนักงานแผนก ST / WH
+  // ของซื้อ: งานของซื้อ (ST / PURCHASED) เปลี่ยนผลงานได้ทางเดียวคือ "เบิกจ่ายของซื้อ" ของใบ (issueOrderParts) · เบิกจ่าย = กลุ่มวางแผนหรือแผนก ST · สต็อกขั้นต่ำแก้ได้เฉพาะกลุ่มวางแผน
+  const isPartJob = (job) => job?.dept === "ST" && job?.kind === "PURCHASED";
+  const canIssueParts = (user) => canPlan(user) || user?.role === "st";
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
   const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
 
@@ -861,6 +864,11 @@
       const fg = itemOf(d, item.fgCode);
       d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: item.qty, qtyRequired: item.qty, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
     }
+    // ของซื้อ: หนึ่งงาน ST ต่อรายการของซื้อที่ระเบิดได้ ยอด = ความต้องการเต็ม (ไม่หักยอดนับตามใบ สต็อกของซื้อเป็นยอดรวมต่อรหัส) · ST เบิกจ่ายครั้งเดียวต่อใบ (issueOrderParts)
+    for (const entry of net) {
+      if (entry.kind !== "PURCHASED" || !(entry.required > 0)) continue;
+      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: "ST", itemCode: entry.itemCode, name: entry.name, kind: "PURCHASED", uom: entry.uom, qtyPlanned: entry.required, qtyRequired: entry.required, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: order.due.ST ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
+    }
     order.status = "released";
     order.releasedAt = ctx.now;
     order.releasedBy = user.name;
@@ -880,6 +888,7 @@
     const line = order.explosion?.find((entry) => entry.itemCode === code);
     if (!line) fail("ชิ้นงานนี้ไม่อยู่ในใบ (ระเบิด BOM ก่อน)");
     if (line.level === 0) fail("ตัวสินค้าสำเร็จรูปไม่นับคงคลังในใบ (ต้องผลิตครบจำนวนสั่ง)");
+    if (line.kind === "PURCHASED") fail(`${code} เป็นของซื้อ นับที่เมนู “คลังของซื้อ” (ยอดรวมต่อรหัส) ไม่นับตามใบ`);
     const value = num(qty, "ยอดคงคลัง", { allowZero: true });
     order.stockCounts[code] = value;
     order.stockCountedAt = ctx.now;
@@ -947,6 +956,7 @@
   function reportJob(d, p, ctx) {
     const user = requireUser(ctx);
     const job = jobById(d, p.jobId);
+    if (isPartJob(job)) fail("งานของซื้อ (ST) รายงานผลเองไม่ได้ ใช้ปุ่ม “เบิกจ่ายของซื้อ” ที่ใบสั่งผลิต");
     if (!canWorkJob(user, job)) fail(`รายงานผลได้โดยแผนก ${job.dept} หรือผู้จัดการ`);
     if (job.status === "done") fail("งานนี้เสร็จแล้ว");
     const order = orderById(d, job.orderId);
@@ -967,6 +977,7 @@
   function setJobStatus(d, { jobId, status }, ctx) {
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
+    if (isPartJob(job)) fail("งานของซื้อ (ST) เปลี่ยนสถานะเองไม่ได้ ใช้ปุ่ม “เบิกจ่ายของซื้อ” ที่ใบสั่งผลิต");
     if (!canWorkJob(user, job)) fail(`เปลี่ยนสถานะได้โดยแผนก ${job.dept} หรือผู้จัดการ`);
     if (!["queued", "in_progress", "hold"].includes(status)) fail("สถานะไม่ถูกต้อง");
     if (job.status === "done") fail("งานที่เสร็จแล้วเปลี่ยนสถานะไม่ได้");
@@ -974,6 +985,94 @@
     job.status = status;
     audit(d, ctx, "เปลี่ยนสถานะงาน", `${job.id} → ${status}`);
     return job.id;
+  }
+
+  // ---------- สต็อกของซื้อ (หน้า "คลังของซื้อ") ----------
+  // หนึ่งแถวต่อรหัสของซื้อ { itemCode, qty, safetyQty, countedAt, countedBy, updatedAt } + ประวัติ stockMoves { id, itemCode, kind: count|receive|issue, qty (มีเครื่องหมาย), balance, ref, at, by }
+  // โหมดฐานข้อมูล: ประวัติและการหักสต็อกตอนเบิกจ่ายเป็นของเซิร์ฟเวอร์ (client ส่งเฉพาะแถว stock ของ countPartStock) ฝั่งนี้คำนวณไว้แสดงทันทีแล้วใช้ค่าจากเซิร์ฟเวอร์ทับ
+  const qtyRound = (n) => Math.round(n * 1e4) / 1e4;
+  const stockRowOf = (d, code) => (d.stock ?? []).find((row) => row.itemCode === code) ?? null;
+  function pushMove(d, ctx, itemCode, kind, qty, balance, ref) {
+    d.stockMoves ??= [];
+    if (ctx.remote) return; // โหมดฐานข้อมูล: ประวัติเซิร์ฟเวอร์เขียนเอง มากับคำตอบของการบันทึก
+    d.stockMoves.push({ id: `local-${ctx.now}-${d.stockMoves.length + 1}`, itemCode, kind, qty, balance, ref: ref ?? null, at: ctx.now, by: ctx.user?.name ?? "" });
+  }
+  const filled = (value) => String(value ?? "").trim() !== "";
+  // counts: [{ itemCode, qty?, safetyQty? }] ช่องที่เว้นว่างไม่แตะค่าเดิม · ยอดที่เปลี่ยนต้องเป็นคลัง (ST/WH) ฝ่ายวางแผน หรือผู้จัดการ · สต็อกขั้นต่ำต้องเป็นฝ่ายวางแผนหรือผู้จัดการ · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน
+  function countPartStock(d, { counts }, ctx) {
+    const user = requireUser(ctx);
+    d.stock ??= [];
+    const list = (Array.isArray(counts) ? counts : []).filter((entry) => filled(entry?.qty) || filled(entry?.safetyQty));
+    if (!list.length) fail("ยังไม่ได้กรอกยอดที่นับ");
+    const seen = new Set();
+    let changed = 0;
+    for (const entry of list) {
+      const code = rules().canonicalCode(entry.itemCode);
+      if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
+      seen.add(code);
+      const item = itemOf(d, code) ?? fail(`ไม่พบชิ้นงาน ${code}`);
+      if (item.kind !== "PURCHASED") fail(`${code} ไม่ใช่ของซื้อ (นับได้เฉพาะของซื้อ)`);
+      const row = stockRowOf(d, code);
+      const oldQty = row?.qty ?? 0;
+      const oldSafety = row?.safetyQty ?? 0;
+      const qty = filled(entry.qty) ? qtyRound(num(entry.qty, "ยอดที่นับ", { allowZero: true })) : oldQty;
+      const safety = filled(entry.safetyQty) ? qtyRound(num(entry.safetyQty, "สต็อกขั้นต่ำ", { allowZero: true })) : oldSafety;
+      if (qty > 1e9 || safety > 1e9) fail("ตัวเลขใหญ่เกินไป");
+      if (qty === oldQty && safety === oldSafety) continue;
+      if (qty !== oldQty && !canCount(user)) fail("นับสต็อกของซื้อได้โดยคลัง (ST/WH) ฝ่ายวางแผน หรือผู้จัดการ");
+      if (safety !== oldSafety && !canPlan(user)) fail("ตั้งสต็อกขั้นต่ำได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+      const target = row ?? { itemCode: code, qty: 0, safetyQty: 0, countedAt: null, countedBy: "", updatedAt: ctx.now };
+      if (!row) d.stock.push(target);
+      target.qty = qty;
+      target.safetyQty = safety;
+      target.updatedAt = ctx.now;
+      if (qty !== oldQty) {
+        target.countedAt = ctx.now;
+        target.countedBy = user.name;
+        pushMove(d, ctx, code, "count", qtyRound(qty - oldQty), qty, null);
+        audit(d, ctx, "นับสต็อกของซื้อ", `${code} ${oldQty} → ${qty}`);
+      }
+      if (safety !== oldSafety) audit(d, ctx, "ตั้งสต็อกขั้นต่ำของซื้อ", `${code} ${oldSafety} → ${safety}`);
+      changed += 1;
+    }
+    return { changed, summary: changed ? `${changed} รายการ` : "0 รายการ (ยอดเท่าเดิมทั้งหมด)" };
+  }
+
+  // แผนเบิกจ่ายของซื้อของใบ: ทุกงานของซื้อที่ยังไม่เสร็จ จ่ายเต็มส่วนที่เหลือ · short = รายการที่สต็อกไม่พอ (เบิกจ่ายไม่ได้ทั้งใบ) · ใช้ทั้งใน action และหน้าต่างยืนยัน
+  function partIssuePlan(d, orderId) {
+    const lines = d.jobs.filter((job) => job.orderId === orderId && isPartJob(job) && job.status !== "done").sort((a, b) => a.itemCode.localeCompare(b.itemCode))
+      .map((job) => {
+        const remaining = Math.max(0, qtyRound(Number(job.qtyPlanned) - Number(job.qtyDone || 0)));
+        const onHand = stockRowOf(d, job.itemCode)?.qty ?? 0;
+        return { job, itemCode: job.itemCode, name: job.name, uom: job.uom, remaining, onHand, short: Math.max(0, qtyRound(remaining - onHand)) };
+      });
+    return { lines, short: lines.filter((line) => line.short > 0), anyShort: lines.some((line) => line.short > 0) };
+  }
+  // เบิกจ่ายของซื้อของใบ PI ครั้งเดียว: ทุกรายการจ่ายเต็มส่วนที่เหลือและหักสต็อก ถ้ารายการใดสต็อกไม่พอ = ไม่จ่ายอะไรเลย (บอกที่ขาด)
+  function issueOrderParts(d, { orderId }, ctx) {
+    const user = requireUser(ctx);
+    if (!canIssueParts(user)) fail("เบิกจ่ายของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");
+    const order = orderById(d, orderId);
+    if (!["released", "in_progress"].includes(order.status)) fail("เบิกจ่ายของซื้อได้เฉพาะใบที่ปล่อยผลิตแล้ว");
+    d.stock ??= [];
+    const plan = partIssuePlan(d, order.id);
+    if (!plan.lines.length) fail("ใบนี้ไม่มีของซื้อที่ต้องเบิกจ่าย (เบิกจ่ายครบแล้ว หรือปล่อยผลิตก่อนมีงานของซื้อ)");
+    if (plan.anyShort) fail(`สต็อกของซื้อไม่พอ จึงไม่ได้เบิกจ่ายอะไรเลย: ${plan.short.map((line) => `${line.itemCode} ขาด ${qtyRound(line.short)} ${rules().uomLabel(line.uom)}`).join(", ")}`);
+    for (const line of plan.lines) {
+      const row = stockRowOf(d, line.itemCode);
+      if (line.remaining > 0) {
+        row.qty = qtyRound(row.qty - line.remaining);
+        row.updatedAt = ctx.now;
+        pushMove(d, ctx, line.itemCode, "issue", -line.remaining, row.qty, order.id);
+      }
+      line.job.qtyDone = line.job.qtyPlanned;
+      line.job.status = "done";
+      line.job.doneAt = ctx.now;
+    }
+    // โหมดฐานข้อมูล: ใบ released -> in_progress เป็นของเซิร์ฟเวอร์ (กติกางานเริ่ม) ไม่ส่งเป็นการแก้ใบ
+    if (!ctx.remote && order.status === "released") order.status = "in_progress";
+    audit(d, ctx, "เบิกจ่ายของซื้อ", `${order.id} ${plan.lines.length} รายการ`);
+    return { issued: plan.lines.length, summary: `${plan.lines.length} รายการ` };
   }
 
   function linkJobToRubberFlow(d, { jobId, woId, kg }, ctx) {
@@ -1034,8 +1133,8 @@
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
-    reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage,
-    helpers: { customerName, customerKey, startedJobs, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts,
+    helpers: { customerName, customerKey, startedJobs, isPartJob, canIssueParts, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

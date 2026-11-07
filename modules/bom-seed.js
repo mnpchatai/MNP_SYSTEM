@@ -75,7 +75,7 @@
   ];
 
   function emptyState() {
-    return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [] };
+    return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [], stock: [], stockMoves: [] };
   }
 
   function buildSeed(now = Date.now()) {
@@ -135,7 +135,9 @@
     // คงคลังที่นับลดงาน (กฎ AK ของ BOMSHEET): เส้นรัดผมมี 3 จาก 17.14 ที่ต้องใช้ → งาน RB เหลือ 14.14 · แกน PT มี 10 จาก 24 → งาน PT เหลือ 14
     A.setStockCount(d, { orderId: pi1, itemCode: "RB-DM02-02-BK01-225-3-20", qty: 3 }, at(now - 18 * DAY, "st"));
     A.setStockCount(d, { orderId: pi1, itemCode: "PT-00320", qty: 10 }, at(now - 18 * DAY + 60000, "st"));
-    A.setStockCount(d, { orderId: pi1, itemCode: "P-BOX-01", qty: 10 }, at(now - 18 * DAY + 120000, "st"));
+    // ของซื้อนับที่หน้า "คลังของซื้อ" (ยอดรวมต่อรหัส ไม่นับตามใบ): กล่องมี 5 ไม่พอใบนี้ (ต้องใช้ 7) ส่วนที่เหลือพอ ให้เห็นตอนเบิกจ่ายแล้วสั่งซื้อส่วนที่ขาด
+    A.countPartStock(d, { counts: [{ itemCode: "P-BOX-01", qty: 5 }, { itemCode: "P-STK-01", qty: 400 }, { itemCode: "P-BAG-01", qty: 10 }, { itemCode: "P-FAB-BL", qty: 50 }, { itemCode: "P-PEL-BK", qty: 5 }, { itemCode: "P-ROPE-01", qty: 5 }, { itemCode: "P-ZIP-05", qty: 100 }] }, at(now - 18 * DAY + 120000, "st"));
+    A.countPartStock(d, { counts: [{ itemCode: "P-BOX-01", safetyQty: 10 }] }, at(now - 18 * DAY + 180000, "planner"));
     A.releaseOrder(d, { orderId: pi1 }, at(now - 17 * DAY, "planner"));
     const job = (code) => d.jobs.find((entry) => entry.orderId === pi1 && entry.itemCode === code);
     A.reportJob(d, { jobId: job("RB-DM01-02-OR01-202-18-70").id, qtyDone: 5, note: "รอบรีดที่ 1" }, at(now - 10 * DAY, "rb"));
