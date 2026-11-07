@@ -1531,6 +1531,7 @@ test("the mock database enforces the contract: test mode, writer permission, per
   assert.equal((await save({ boms: { upsert: [bom("B1", "P-1", "approved", "FG-1")] } }, 3)).error.code, "BOM_INVALID_BOM_LINE", "a purchased part has no components");
   assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "P-1", 0)] } }, 3)).error.code, "BOM_INVALID_BOM_LINE");
   assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "draft", "P-1")] } }, 3)).error.code, "BOM_INVALID_BOM_STATUS");
+  assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "FG-1")] } }, 3)).error.code, "BOM_CYCLE", "a BOM that contains itself is refused, as the database does");
   assert.equal((await client.rpc("app_bom_master")).data.version, 3, "a refused save changes nothing");
 
   assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "P-1")] } }, 3)).error, null);

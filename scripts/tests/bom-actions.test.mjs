@@ -489,7 +489,7 @@ test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes
   rejects(() => A.importFlat(d, { items: [] }, ctx("planner")), /ไม่มีรายการ/);
   const itemsBefore = d.items.length;
   const { summary, ...stats } = A.importFlat(d, payload, ctx("planner"));
-  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1, linesSkipped: 0 }, "PT-00320 already has a BOM → skipped; P-STK-01 and PT-00320 merged");
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 2, bomsAdded: 2, bomsSkipped: 1, linesSkipped: 0, cycleLinesSkipped: 0 }, "PT-00320 already has a BOM → skipped; P-STK-01 and PT-00320 merged");
   assert.equal(summary, "ชิ้นงานใหม่ 4 (มีอยู่แล้ว 2) · BOM ใหม่ 2 ข้าม 1");
   assert.equal(d.items.length, itemsBefore + 4);
   const fg = approved(d, "IMP-01(P)-Y");
@@ -531,7 +531,7 @@ test("importing a whole DATA sheet (thousands of items, tens of thousands of lin
   const started = performance.now();
   const { summary, ...stats } = A.importFlat(d, { items, boms, source: "big.xlsx", group: "TOY" }, ctx("planner"));
   const elapsed = performance.now() - started;
-  assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1, linesSkipped: 0 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
+  assert.deepEqual(stats, { itemsAdded: FG * 2 + 2300, itemsMerged: 1, bomsAdded: FG * 2, bomsSkipped: 1, linesSkipped: 0, cycleLinesSkipped: 0 }, "a code repeated in the payload merges into the item just added · a parent repeated in the payload is skipped");
   assert.ok(elapsed < 5000, `importFlat took ${Math.round(elapsed)} ms`);
   assert.equal(summary, `ชิ้นงานใหม่ ${FG * 2 + 2300} (มีอยู่แล้ว 1) · BOM ใหม่ ${FG * 2} ข้าม 1`);
   const fg = approved(d, "BIG-0000(P)-Y");
@@ -557,11 +557,86 @@ test("importing skips the BOM lines the database rejects (a purchased parent, a 
     { parentCode: "RB-K-01-1-1-1", lines: [{ childCode: "P-BUY-2", qty: 1 }] },
   ];
   const { summary, ...stats } = A.importFlat(d, { items, boms, source: "kinds.xlsx" }, ctx("planner"));
-  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 1, bomsSkipped: 0, linesSkipped: 2 });
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 1, bomsSkipped: 0, linesSkipped: 2, cycleLinesSkipped: 0 });
   assert.match(summary, /ข้าม 2 บรรทัดที่ชนิดพ่อ\/ลูกไม่เข้ากัน$/);
   assert.equal(approved(d, "P-BUY-1"), null, "a purchased part gets no BOM");
   assert.equal(approved(d, "RB-K-01-1-1-1"), null, "a rod's only child may be a compound");
   assert.deepEqual(approved(d, "FG-KIND(P)-Y").lines.map((line) => line.childCode), ["P-BUY-1", "RB-K-01-1-1-1"], "valid lines stay, sorted ST before RB");
+});
+
+test("importing skips a line that makes a BOM contain itself (directly or through its children) instead of the database refusing the whole batch with BOM_CYCLE", () => {
+  // DATA_BOM.xlsx จริง: 20 BOM ใช้ตัวเองเป็นส่วนประกอบ (PT-00224 → PT-00224, SG-08-0009 → SG-08-0009) ฐานข้อมูลปฏิเสธส่วนนั้นและการนำเข้าหยุดกลางทาง
+  const d = fresh();
+  const items = [
+    { code: "PT-SELF-1", kind: "PT", name: "ท่อ", uom: "pcs", ownerDept: "PT" },
+    { code: "P-RESIN-1", kind: "PURCHASED", name: "เม็ดพลาสติก", uom: "kg", ownerDept: "ST" },
+    { code: "SE-LOOP-A", kind: "SE", name: "ชิ้น A", uom: "pcs", ownerDept: "GR" },
+    { code: "SE-LOOP-B", kind: "SE", name: "ชิ้น B", uom: "pcs", ownerDept: "GR" },
+  ];
+  const boms = [
+    { parentCode: "PT-SELF-1", lines: [{ childCode: "PT-SELF-1", qty: 1 }, { childCode: "P-RESIN-1", qty: 0.2 }] },
+    { parentCode: "SE-LOOP-A", lines: [{ childCode: "SE-LOOP-B", qty: 1 }] },
+    { parentCode: "SE-LOOP-B", lines: [{ childCode: "SE-LOOP-A", qty: 1 }, { childCode: "P-RESIN-1", qty: 0.1 }] },
+  ];
+  const { summary, ...stats } = A.importFlat(d, { items, boms, source: "cycles.xlsx" }, ctx("planner"));
+  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 3, bomsSkipped: 0, linesSkipped: 0, cycleLinesSkipped: 2 });
+  assert.match(summary, /ข้าม 2 บรรทัดที่วนกลับมาใช้ตัวเองเป็นส่วนประกอบ$/);
+  assert.deepEqual(approved(d, "PT-SELF-1").lines.map((line) => line.childCode), ["P-RESIN-1"], "the self line is dropped, the rest of the BOM stays");
+  assert.deepEqual(approved(d, "SE-LOOP-A").lines.map((line) => line.childCode), ["SE-LOOP-B"], "the first BOM of a two-part loop is kept");
+  assert.deepEqual(approved(d, "SE-LOOP-B").lines.map((line) => line.childCode), ["P-RESIN-1"], "the line that closes the loop is dropped");
+
+  // ลูกร่วม (diamond) ไม่ใช่วงจร: A → B, C · B → D · C → D ไม่ถูกตัด · วงจรผ่าน BOM ที่อนุมัติไว้ก่อนแล้ว (SE-LOOP-A → SE-LOOP-B) ถูกตัด
+  const more = [
+    { code: "SE-DIA-A", kind: "SE", name: "A", uom: "pcs", ownerDept: "GR" }, { code: "SE-DIA-B", kind: "SE", name: "B", uom: "pcs", ownerDept: "GR" },
+    { code: "SE-DIA-C", kind: "SE", name: "C", uom: "pcs", ownerDept: "GR" }, { code: "SE-DIA-D", kind: "SE", name: "D", uom: "pcs", ownerDept: "GR" },
+    { code: "SE-OLD-X", kind: "SE", name: "X", uom: "pcs", ownerDept: "GR" }, { code: "SE-DIA-E", kind: "SE", name: "E", uom: "pcs", ownerDept: "GR" },
+  ];
+  const second = A.importFlat(d, { items: more, boms: [
+    { parentCode: "SE-DIA-A", lines: [{ childCode: "SE-DIA-B", qty: 1 }, { childCode: "SE-DIA-C", qty: 1 }] },
+    { parentCode: "SE-DIA-B", lines: [{ childCode: "SE-DIA-D", qty: 1 }] },
+    { parentCode: "SE-DIA-C", lines: [{ childCode: "SE-DIA-D", qty: 1 }] },
+    { parentCode: "SE-DIA-D", lines: [{ childCode: "P-RESIN-1", qty: 1 }, { childCode: "SE-DIA-E", qty: 1 }] },
+    { parentCode: "SE-OLD-X", lines: [{ childCode: "SE-LOOP-A", qty: 1 }, { childCode: "P-RESIN-1", qty: 1 }] },
+  ], source: "more.xlsx" }, ctx("planner"));
+  assert.equal(second.cycleLinesSkipped, 0, "shared children and a parent above an existing BOM are not loops");
+  assert.deepEqual(approved(d, "SE-DIA-A").lines.map((line) => line.childCode), ["SE-DIA-B", "SE-DIA-C"]);
+  // วงจรผ่าน BOM ที่อนุมัติไว้ก่อนแล้ว: A → B → D → E มีอยู่ นำเข้า E → A ต้องตัดบรรทัด E → A แต่คงบรรทัดอื่นของ E
+  const loopOld = A.importFlat(d, { items: [{ code: "SE-DIA-E", kind: "SE", name: "E", uom: "pcs", ownerDept: "GR" }], boms: [{ parentCode: "SE-DIA-E", lines: [{ childCode: "SE-DIA-A", qty: 1 }, { childCode: "P-RESIN-1", qty: 1 }] }], source: "x" }, ctx("planner"));
+  assert.equal(loopOld.cycleLinesSkipped, 1, "a loop through BOMs approved earlier is caught");
+  assert.deepEqual(approved(d, "SE-DIA-E").lines.map((line) => line.childCode), ["P-RESIN-1"]);
+
+  // สองบรรทัดของพ่อเดียวกันวนทั้งคู่ผ่านทางที่ใช้โหนดร่วมกัน: มี A2 → [B2, P] และ C2 → A2 อยู่แล้ว นำเข้า P2 → [A2, C2] ต้องตัดทั้งสองบรรทัด
+  // (เดินจาก A2 เจอ P2 กลางทางก่อนเดินลูกอื่นครบ ถ้าชุด seen ค้างไว้ บรรทัด C2 → A2 → … จะถูกมองว่าไม่วนแล้วฐานข้อมูลปฏิเสธทั้งส่วน)
+  const twoParts = ["SE-TW-A2", "SE-TW-B2", "SE-TW-C2", "SE-TW-P2"].map((code) => ({ code, kind: "SE", name: code, uom: "pcs", ownerDept: "GR" }));
+  A.importFlat(d, { items: twoParts, boms: [
+    { parentCode: "SE-TW-A2", lines: [{ childCode: "SE-TW-B2", qty: 1 }, { childCode: "SE-TW-P2", qty: 1 }] },
+    { parentCode: "SE-TW-C2", lines: [{ childCode: "SE-TW-A2", qty: 1 }] },
+  ], source: "x" }, ctx("planner"));
+  const both = A.importFlat(d, { items: twoParts, boms: [
+    { parentCode: "SE-TW-P2", lines: [{ childCode: "SE-TW-A2", qty: 1 }, { childCode: "SE-TW-C2", qty: 1 }, { childCode: "P-RESIN-1", qty: 1 }] },
+  ], source: "x" }, ctx("planner"));
+  assert.equal(both.cycleLinesSkipped, 2, "both looping lines of one parent are dropped");
+  assert.deepEqual(approved(d, "SE-TW-P2").lines.map((line) => line.childCode), ["P-RESIN-1"]);
+});
+
+test("the loop check stays fast on a whole sheet ordered either way (parents first or children first)", () => {
+  // ชีตจริงมีหลายพัน BOM และหลายหมื่นบรรทัด หน้าเคยค้างตอนกดนำเข้า (PR #311): 8 ชั้น × 350 ชิ้น × 11 ลูก ต้องไม่เดินต้นไม้ซ้ำทุกบรรทัด
+  for (const order of ["parents-first", "children-first"]) {
+    const d = fresh();
+    const items = [];
+    const boms = [];
+    for (let level = 0; level < 8; level += 1) for (let i = 0; i < 350; i += 1) items.push({ code: `SE-P${level}-${i}`, kind: "SE", name: "x", uom: "pcs", ownerDept: "GR" });
+    for (let level = 0; level < 7; level += 1) for (let i = 0; i < 350; i += 1) {
+      boms.push({ parentCode: `SE-P${level}-${i}`, lines: Array.from({ length: 11 }, (_, k) => ({ childCode: `SE-P${level + 1}-${(i * 7 + k * 13) % 350}`, qty: 1 })) });
+    }
+    if (order === "children-first") boms.reverse();
+    const started = performance.now();
+    const stats = A.importFlat(d, { items, boms, source: order }, ctx("planner"));
+    const took = performance.now() - started;
+    assert.equal(stats.bomsAdded, 2450, order);
+    assert.equal(stats.cycleLinesSkipped, 0, order);
+    assert.ok(took < 5000, `${order}: ${Math.round(took)} ms (about 40 ms on a laptop; the old per-line walk took over 3 s children-first)`);
+  }
 });
 
 test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {

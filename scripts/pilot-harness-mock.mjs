@@ -679,6 +679,18 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         if (R && R.childKindError(parent.kind, child.kind)) fail("BOM_INVALID_BOM_LINE");
       }
     }
+    // วงจร: เดินจาก BOM ที่อนุมัติลงไปตามลูก ห้ามเจอพ่อเดิมในเส้นทาง (ตรงกับการตรวจ BOM_CYCLE ของฐานข้อมูล)
+    const kids = new Map(next.boms.filter((bom) => bom.status === "approved").map((bom) => [bom.itemCode, bom.lines.map((line) => line.childCode)]));
+    const state = new Map();
+    const walk = (code) => {
+      state.set(code, 1);
+      for (const child of kids.get(code) ?? []) {
+        if (state.get(child) === 1) fail("BOM_CYCLE");
+        if (!state.has(child)) walk(child);
+      }
+      state.set(code, 2);
+    };
+    for (const code of kids.keys()) if (!state.has(code)) walk(code);
     for (const routing of next.routings) {
       if (!itemOf(routing.itemCode)) fail("BOM_INVALID_ROUTING");
       if (routing.status === "approved" && next.routings.some((row) => row !== routing && row.itemCode === routing.itemCode && row.status === "approved")) fail("BOM_INVALID_ROUTING");
