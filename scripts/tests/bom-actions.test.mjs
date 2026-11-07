@@ -33,8 +33,9 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.equal(approved(a, "DEMO-BL-60(K)-Z"), null, "the ball product has no BOM yet");
   assert.deepEqual(a.orders.map((order) => [order.id, order.status]), [["DEMO-26002", "draft"], ["DEMO-26001", "in_progress"]]);
   const jobs = a.jobs.filter((job) => job.orderId === "DEMO-26001");
-  assert.equal(jobs.length, 14, "one job per department × item plus one PK job per product");
-  assert.ok(jobs.every((job) => rules.MANUFACTURED.includes(job.kind)), "purchased items are not jobs");
+  assert.equal(jobs.length, 21, "one job per department × item plus one PK job per product, plus one ST job per purchased part");
+  assert.deepEqual(jobs.filter((job) => !rules.MANUFACTURED.includes(job.kind)).map((job) => [job.dept, job.kind]), Array(7).fill(["ST", "PURCHASED"]), "the purchased parts are ST jobs");
+  assert.deepEqual(a.stock.map((row) => row.itemCode).sort(), ["P-BAG-01", "P-BOX-01", "P-FAB-BL", "P-PEL-BK", "P-ROPE-01", "P-STK-01", "P-ZIP-05"], "every purchased part of the demo order has a counted balance");
   const rb = jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70");
   assert.equal(rb.qtyPlanned.toFixed(2), "7.74", "80 sets × 3 SE / 31 pieces per rod — the BOMSHEET number");
   assert.equal(rb.qtyRequired, rb.qtyPlanned, "nothing counted → plan = gross need");
@@ -222,17 +223,19 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(rbLine.fgQty, 80);
   assert.equal(order.explosion.find((line) => line.itemCode === "SE-TP01-OR01-100-18-65").revision, 2);
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "SE-BL60-RD01-60-0-60", qty: 1 }, ctx("st")), /ไม่อยู่ในใบ/);
-  rejects(() => A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 1 }, ctx("gr")), /คลัง/);
-  A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 3 }, ctx("st"));
-  assert.equal(order.stockCounts["P-BOX-01"], 3);
+  rejects(() => A.setStockCount(d, { orderId: id, itemCode: "PT-00320", qty: 1 }, ctx("gr")), /คลัง/);
+  A.setStockCount(d, { orderId: id, itemCode: "PT-00320", qty: 3 }, ctx("st"));
+  assert.equal(order.stockCounts["PT-00320"], 3);
+  rejects(() => A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 3 }, ctx("st")), /คลังของซื้อ/, "purchased parts are counted on the part stock page, not per PI");
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "DEMO-TP-01(P)-Y", qty: 1 }, ctx("st")), /สินค้าสำเร็จรูป/);
   // นับหลายรายการพร้อมกัน: ว่าง = ไม่แตะ · รายการผิดตัวเดียวทั้งชุดไม่บันทึก (store ทำบนร่าง) · ซ้ำถูกปฏิเสธ
-  assert.deepEqual(A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: "5" }, { itemCode: "P-STK-01", qty: "" }, { itemCode: "pt-00320", qty: 0 }] }, ctx("st")), { changed: 2, summary: "2 รายการ" });
-  assert.equal(A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: "5.0" }] }, ctx("st")).summary, "0 รายการ (ยอดเท่าเดิมทั้งหมด)");
-  assert.deepEqual([order.stockCounts["P-BOX-01"], order.stockCounts["PT-00320"], order.stockCounts["P-STK-01"]], [5, 0, undefined]);
-  rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: "" }] }, ctx("st")), /ยังไม่ได้กรอก/);
-  rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: 1 }, { itemCode: "p-box-01", qty: 2 }] }, ctx("st")), /ซ้ำ/);
-  rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "P-BOX-01", qty: 1 }] }, ctx("gr")), /คลัง/);
+  assert.deepEqual(A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "SE-TP01-BK01-140-3-20", qty: "5" }, { itemCode: "SE-TP01-OR01-100-18-65", qty: "" }, { itemCode: "pt-00320", qty: 0 }] }, ctx("st")), { changed: 2, summary: "2 รายการ" });
+  assert.equal(A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "SE-TP01-BK01-140-3-20", qty: "5.0" }] }, ctx("st")).summary, "0 รายการ (ยอดเท่าเดิมทั้งหมด)");
+  assert.deepEqual([order.stockCounts["SE-TP01-BK01-140-3-20"], order.stockCounts["PT-00320"], order.stockCounts["SE-TP01-OR01-100-18-65"]], [5, 0, undefined]);
+  rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "PT-00320", qty: "" }] }, ctx("st")), /ยังไม่ได้กรอก/);
+  rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "PT-00320", qty: 1 }, { itemCode: "pt-00320", qty: 2 }] }, ctx("st")), /ซ้ำ/);
+  rejects(() => A.setStockCounts(d, { orderId: id, counts: [{ itemCode: "PT-00320", qty: 1 }] }, ctx("gr")), /คลัง/);
+  rejects(() => A.setStockCounts(structuredClone(d), { orderId: id, counts: [{ itemCode: "PT-00320", qty: 1 }, { itemCode: "P-BOX-01", qty: 1 }] }, ctx("st")), /คลังของซื้อ/, "one purchased part in the batch refuses the whole batch (the store runs actions on a draft)");
   A.removeOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A" }, ctx("planner"));
   assert.equal(order.explosion, null);
   A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty: 40 }, ctx("planner"));
@@ -250,7 +253,14 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(jobs.filter((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70").length, 1);
   assert.equal(jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70").dueAt, day(3), "department due date from the order header");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").dueAt, day(10), "no BG date → warehouse due date");
-  assert.ok(!jobs.some((job) => job.kind === "PURCHASED"));
+  // ของซื้อ: หนึ่งงาน ST ต่อรายการที่ระเบิดได้ ยอด = ความต้องการเต็ม (ไม่หักยอดนับ) กำหนด = ช่อง ST ของใบ ไม่มีก็วันส่งคลัง
+  const partJobs = jobs.filter((job) => job.kind === "PURCHASED");
+  assert.ok(partJobs.length > 0 && partJobs.every((job) => job.dept === "ST" && job.status === "queued" && job.stockCounted === null && job.qtyPlanned === job.qtyRequired && job.qtyDone === 0));
+  const boxJob = partJobs.find((job) => job.itemCode === "P-BOX-01");
+  assert.equal(boxJob.qtyPlanned, order.explosion.filter((line) => line.itemCode === "P-BOX-01").reduce((sum, line) => sum + line.required, 0), "gross requirement across both products");
+  assert.equal(boxJob.dueAt, day(10), "no ST date → warehouse due date");
+  const purchasedCodes = [...new Set(order.explosion.filter((line) => line.kind === "PURCHASED").map((line) => line.itemCode))].sort();
+  assert.deepEqual(partJobs.map((job) => job.itemCode).sort(), purchasedCodes, "one job per purchased item");
   assert.equal(jobs.find((job) => job.kind === "FG" && job.itemCode === "DEMO-TP-01(P)-Y").qtyPlanned, 80, "PK jobs carry the ordered quantity");
   rejects(() => A.explodeOrder(d, { orderId: id }, ctx("planner")), /ร่าง/);
   rejects(() => A.setStockCount(d, { orderId: id, itemCode: "P-BOX-01", qty: 9 }, ctx("st")), /ปล่อยผลิตแล้ว งานรายแผนกไม่เปลี่ยนตาม/, "counting after release would desync the jobs");
@@ -1037,10 +1047,11 @@ test("a job started or held without output, or linked to RubberFlow, locks the o
   // ยอดคงคลังที่นับไว้คงอยู่หลังเปิดใบกลับมาแก้ ส่วนเวลาระเบิดล้าง
   const counted = open("T-COUNT");
   A.explodeOrder(d, { orderId: counted.id }, ctx("planner"));
-  A.setStockCount(d, { orderId: counted.id, itemCode: "P-BOX-01", qty: 2 }, ctx("st"));
+  A.setStockCount(d, { orderId: counted.id, itemCode: "PT-00320", qty: 2 }, ctx("st"));
   A.releaseOrder(d, { orderId: counted.id }, ctx("planner"));
   A.updateOrderItem(d, { orderId: counted.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, ctx("planner"));
-  assert.deepEqual([counted.status, counted.explodedAt, counted.explosion, counted.stockCounts["P-BOX-01"]], ["draft", null, null, 2]);
+  assert.deepEqual([counted.status, counted.explodedAt, counted.explosion, counted.stockCounts["PT-00320"]], ["draft", null, null, 2]);
+  assert.ok(!d.jobs.some((job) => job.orderId === counted.id), "reopening deletes the part jobs with the other jobs");
 });
 
 test("who may do what with a job or a count: the planner group everywhere, a department its own jobs, ST and WH count, RubberFlow links are RB's or the planners'", () => {
@@ -1066,7 +1077,7 @@ test("who may do what with a job or a count: the planner group everywhere, a dep
   assert.equal(job.qtyDone, before + 1);
   const order = d.orders.find((entry) => entry.status === "draft");
   A.explodeOrder(d, { orderId: order.id }, ctx("planner"));
-  const line = order.explosion.find((entry) => entry.level > 0);
+  const line = order.explosion.find((entry) => entry.level > 0 && entry.kind !== "PURCHASED");
   A.setStockCount(d, { orderId: order.id, itemCode: line.itemCode, qty: 2 }, { now: NOW, user: staff("wh", "WH") });
   assert.equal(order.stockCounts[line.itemCode], 2, "WH counts");
   rejects(() => A.setStockCount(d, { orderId: order.id, itemCode: line.itemCode, qty: 2 }, ctx("rb")), /ST\/WH/);
@@ -1298,4 +1309,86 @@ test("the notice for what the database did in RubberFlow: opened count, skipped 
   assert.match(notice("releaseOrder", { orderId: "PI-1" }, { skipped: skipped(5) }).text, /^ปล่อยผลิต PI-1 แล้ว · ยังไม่ได้เปิด WO 5 งาน \(J1 RB-1: .* · J3 RB-3: .* · อีก 2 งาน\)$/);
   assert.deepEqual(notice("cancelOrder", { orderId: "PI-1" }, { cancelled: ["WO-1", "WO-2"] }), { text: "ยกเลิก WO WO-1, WO-2 ด้วย", type: "success" });
   assert.equal(notice("cancelOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J1", woId: "WO-1", kg: 1 }] }), null, "only a release says what it opened");
+});
+
+test("part stock: ST and WH count, only planners set the safety stock, only purchased parts, blanks keep the stored value, every changed balance is a move", () => {
+  const d = fresh();
+  const wh = { now: NOW, user: { id: "wh", role: "wh", dept: "WH", name: "คลังสินค้า" } };
+  const stock = (code) => d.stock.find((row) => row.itemCode === code);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 5 }] }, ctx("rb")), /ST\/WH/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 5 }] }, ctx("gr")), /ST\/WH/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 5 }] }, { now: NOW, user: null }), /เลือกบทบาท/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", safetyQty: 50 }] }, ctx("st")), /สต็อกขั้นต่ำ.*ฝ่ายวางแผน/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "PT-00320", qty: 5 }] }, ctx("st")), /ไม่ใช่ของซื้อ/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "NOPE", qty: 5 }] }, ctx("st")), /ไม่พบชิ้นงาน NOPE/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: -1 }] }, ctx("st")), /ยอดที่นับ/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: "abc" }] }, ctx("st")), /ยอดที่นับ/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 2e9 }] }, ctx("st")), /ใหญ่เกิน/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 1 }, { itemCode: "p-stk-01", qty: 2 }] }, ctx("st")), /ซ้ำ/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: "" }, { itemCode: "P-BOX-01" }] }, ctx("st")), /ยังไม่ได้กรอก/);
+  rejects(() => A.countPartStock(structuredClone(d), {}, ctx("st")), /ยังไม่ได้กรอก/);
+  const moves = d.stockMoves.length;
+  assert.deepEqual(A.countPartStock(d, { counts: [{ itemCode: "p-stk-01", qty: "450" }, { itemCode: "P-ZIP-05", qty: "" }] }, ctx("st")), { changed: 1, summary: "1 รายการ" });
+  assert.deepEqual([stock("P-STK-01").qty, stock("P-STK-01").countedBy, stock("P-STK-01").countedAt], [450, "สมศักดิ์ แก้วใส", NOW]);
+  assert.deepEqual(d.stockMoves.at(-1), { id: `local-${NOW}-${moves + 1}`, itemCode: "P-STK-01", kind: "count", qty: 50, balance: 450, ref: null, at: NOW, by: "สมศักดิ์ แก้วใส" }, "the move is the difference and the balance after it");
+  assert.equal(A.countPartStock(d, { counts: [{ itemCode: "P-STK-01", qty: "450.0", safetyQty: "" }] }, ctx("st")).summary, "0 รายการ (ยอดเท่าเดิมทั้งหมด)", "the same value again writes nothing");
+  assert.equal(d.stockMoves.length, moves + 1);
+  A.countPartStock(d, { counts: [{ itemCode: "P-STK-01", qty: 440 }] }, wh);
+  assert.deepEqual([stock("P-STK-01").qty, d.stockMoves.at(-1).qty, d.stockMoves.at(-1).by], [440, -10, "คลังสินค้า"], "WH counts too");
+  A.countPartStock(d, { counts: [{ itemCode: "P-STK-01", safetyQty: 60 }] }, ctx("planner"));
+  assert.deepEqual([stock("P-STK-01").safetyQty, stock("P-STK-01").qty, d.stockMoves.length], [60, 440, moves + 2], "a safety change alone writes no move");
+  A.countPartStock(d, { counts: [{ itemCode: "P-ROPE-01", qty: 1, safetyQty: 2 }] }, ctx("manager"));
+  assert.deepEqual([stock("P-ROPE-01").qty, stock("P-ROPE-01").safetyQty], [1, 2], "a manager counts and sets the safety stock in one row");
+  A.countPartStock(d, { counts: [{ itemCode: "P-ROPE-01", qty: 0 }] }, ctx("st"));
+  assert.equal(stock("P-ROPE-01").qty, 0, "a part can be counted down to zero");
+  assert.match(d.audit[0].detail, /P-ROPE-01 1 → 0/);
+});
+
+test("issuing the purchased parts of a PI is all or nothing, then the part jobs are done, the stock is down and the order has started; part jobs cannot be reported any other way", () => {
+  const d = fresh();
+  const order = d.orders.find((entry) => entry.id === "DEMO-26001");
+  const parts = () => d.jobs.filter((job) => job.orderId === order.id && A.helpers.isPartJob(job));
+  const stock = (code) => d.stock.find((row) => row.itemCode === code);
+  assert.equal(parts().length, 7);
+  assert.equal(A.helpers.isPartJob(d.jobs.find((job) => job.dept === "PK")), false);
+  // สิทธิ์และสถานะของใบ
+  rejects(() => A.issueOrderParts(d, { orderId: order.id }, ctx("rb")), /ST/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id }, ctx("gr")), /ST/);
+  rejects(() => A.issueOrderParts(d, { orderId: "DEMO-26002" }, ctx("st")), /ปล่อยผลิตแล้ว/);
+  assert.deepEqual([A.helpers.canIssueParts(user("st")), A.helpers.canIssueParts(user("planner")), A.helpers.canIssueParts(user("manager")), A.helpers.canIssueParts(user("rb")), A.helpers.canIssueParts({ role: "wh" })], [true, true, true, false, false]);
+  // สต็อกกล่องไม่พอ (ต้อง 7 มี 5) = ไม่จ่ายอะไรเลย
+  const plan = A.helpers.partIssuePlan(d, order.id);
+  assert.deepEqual(plan.short.map((line) => [line.itemCode, line.short]), [["P-BOX-01", 2]]);
+  assert.equal(plan.anyShort, true);
+  const before = structuredClone(d);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id }, ctx("st")), /ไม่ได้เบิกจ่ายอะไรเลย: P-BOX-01 ขาด 2/);
+  assert.deepEqual(d, before, "a shortage on one line changes nothing — not even the lines that had enough");
+  // นับเพิ่มแล้วจ่ายครบ
+  A.countPartStock(d, { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }, ctx("st"));
+  const moves = d.stockMoves.length;
+  assert.equal(order.status, "in_progress");
+  assert.deepEqual(A.issueOrderParts(d, { orderId: order.id }, ctx("st")), { issued: 7, summary: "7 รายการ" });
+  assert.ok(parts().every((job) => job.status === "done" && job.qtyDone === job.qtyPlanned && job.doneAt === NOW));
+  assert.deepEqual([stock("P-BOX-01").qty, stock("P-STK-01").qty], [0, 280], "each balance dropped by the job's remaining quantity");
+  assert.equal(d.stockMoves.length, moves + 7);
+  assert.deepEqual(d.stockMoves.filter((move) => move.kind === "issue" && move.itemCode === "P-STK-01").map((move) => [move.qty, move.balance, move.ref]), [[-120, 280, "DEMO-26001"]]);
+  assert.match(d.audit[0].detail, /DEMO-26001 7 รายการ/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id }, ctx("st")), /ไม่มีของซื้อที่ต้องเบิกจ่าย/, "issuing twice finds nothing left");
+  // ใบที่ released: ฐานข้อมูลเปลี่ยนเป็น in_progress เอง (โหมดฐานข้อมูลไม่แก้ใบเอง) · โหมดในเครื่องเปลี่ยนทันที
+  for (const remote of [false, true]) {
+    const r = fresh();
+    const released = r.orders.find((entry) => entry.id === "DEMO-26001");
+    released.status = "released";
+    A.countPartStock(r, { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }, ctx("planner"));
+    A.issueOrderParts(r, { orderId: released.id }, { ...ctx("planner"), remote });
+    assert.equal(released.status, remote ? "released" : "in_progress");
+  }
+  // งานของซื้อรายงานผล/เปลี่ยนสถานะเองไม่ได้ (ทุกบทบาท)
+  const open = fresh();
+  const job = open.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "P-STK-01");
+  for (const role of ["st", "planner", "manager", "admin"]) {
+    rejects(() => A.reportJob(open, { jobId: job.id, qtyDone: 1 }, ctx(role)), /เบิกจ่ายของซื้อ/);
+    rejects(() => A.setJobStatus(open, { jobId: job.id, status: "hold" }, ctx(role)), /เบิกจ่ายของซื้อ/);
+  }
+  assert.deepEqual([job.status, job.qtyDone], ["queued", 0]);
 });

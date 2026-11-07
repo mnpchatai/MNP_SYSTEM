@@ -761,7 +761,7 @@ select set_config('test.purge', public.app_sandbox_purge_bom()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 15, 'the purge reports the deleted rows');
 select is(public.app_bom_master() - 'epoch',
   jsonb_build_object('version', current_setting('test.pre_version')::bigint, 'items', '[]'::jsonb, 'compounds', '[]'::jsonb, 'colors', '[]'::jsonb, 'colorSets', '[]'::jsonb,
-                     'packages', '[]'::jsonb, 'boms', '[]'::jsonb, 'processes', '[]'::jsonb, 'routings', '[]'::jsonb, 'customers', '[]'::jsonb, 'orders', '[]'::jsonb, 'jobs', '[]'::jsonb),
+                     'packages', '[]'::jsonb, 'boms', '[]'::jsonb, 'processes', '[]'::jsonb, 'routings', '[]'::jsonb, 'customers', '[]'::jsonb, 'orders', '[]'::jsonb, 'jobs', '[]'::jsonb, 'stock', '[]'::jsonb, 'stockMoves', '[]'::jsonb),
   'the test master is empty again and the counter keeps its value (it never goes back)');
 select isnt(public.app_bom_master() ->> 'epoch', current_setting('test.pre_epoch'), 'the purge changed the epoch');
 select is(public.app_bom_master_since(current_setting('test.pre_version')::bigint) ->> 'epoch', public.app_bom_master() ->> 'epoch',

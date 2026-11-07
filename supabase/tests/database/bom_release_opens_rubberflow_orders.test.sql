@@ -13,7 +13,7 @@ select ok(not exists (
     select 1 from unnest(array['private.bom_lock_rf()', 'private.bom_rb_job_kg(public.bom_jobs,public.bom_items)', 'private.bom_open_rf_orders(public.employees,text,uuid)',
                                'private.bom_cancel_rf_orders(uuid)', 'private.bom_started_jobs(uuid)',
                                'private.bom_save_orders(public.employees,text,boolean,jsonb,jsonb,bigint,bigint)',
-                               'private.bom_save_jobs(public.employees,text,boolean,jsonb,uuid[],bigint,bigint)']) f(sig)
+                               'private.bom_save_jobs(public.employees,text,boolean,text,jsonb,uuid[],bigint,bigint)']) f(sig)
     where has_function_privilege('anon', f.sig::regprocedure, 'execute') or has_function_privilege('authenticated', f.sig::regprocedure, 'execute')),
   'clients cannot call the new or replaced private helpers');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p

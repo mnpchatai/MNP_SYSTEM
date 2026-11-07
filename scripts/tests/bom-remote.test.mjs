@@ -31,7 +31,7 @@ function fakeServer(initial = emptyMaster()) {
   for (const list of MASTER) server.master[list] ??= [];
   const key = {
     items: (r) => r.code, compounds: (r) => r.code, colors: (r) => r.code, processes: (r) => r.code, boms: (r) => r.id, routings: (r) => r.id, colorSets: (r) => `${r.base}|${r.code}`, packages: (r) => `${r.base}|${r.code}`,
-    customers: (r) => r.name.trim().toLowerCase(), orders: (r) => r.id, jobs: (r) => r.id,
+    customers: (r) => r.name.trim().toLowerCase(), orders: (r) => r.id, jobs: (r) => r.id, stock: (r) => r.itemCode, stockMoves: (r) => r.id,
   };
   // หลุมฝังศพ: ชุดสี/แพ็กเกจกุญแจ base|code · งานกุญแจเลขงาน (ส่งกลับเป็น { id })
   const graveId = (grave) => (grave.list === "jobs" ? grave.code : `${grave.base}|${grave.code}`);
@@ -303,6 +303,13 @@ async function fgScene(env) {
   await env.store.run("saveItem", saveItemPayload("P-TEST-01")).saving;
   await env.store.run("saveBom", { itemCode: "FG-TEST-01", lines: [{ childCode: "P-TEST-01", qty: 2 }] }).saving;
 }
+// สินค้าเดิม + ท่อ PT ที่ใช้ของซื้อตัวเดียวกัน: หน้าที่ต้องมีชิ้นที่นับตามใบได้ (ของซื้อนับที่หน้าคลังของซื้อ ไม่นับตามใบ)
+async function fgScenePt(env) {
+  await fgScene(env);
+  await env.store.run("saveItem", saveItemPayload("PT-TEST-01", { kind: "PT", name: "ท่อทดสอบ" })).saving;
+  await env.store.run("saveBom", { itemCode: "PT-TEST-01", lines: [{ childCode: "P-TEST-01", qty: 1 }] }).saving;
+  await env.store.run("saveBom", { itemCode: "FG-TEST-01", lines: [{ childCode: "P-TEST-01", qty: 2 }, { childCode: "PT-TEST-01", qty: 1 }] }).saving;
+}
 const newOrder = (extra = {}) => ({ customer: "Acme Trading", country: "Thailand", orderedAt: NOW, whDue: NOW + 20 * 86400000, ...extra });
 const saved = async (out) => { assert.equal(out.ok, true, out.error?.message); const outcome = await out.saving; assert.equal(outcome.ok, true, outcome.error?.message); return out; };
 
@@ -358,11 +365,12 @@ test("orders, customers and jobs are saved through the database: one call per co
   assert.match(job.id, /^JOB-\d\d-0001-[0-9a-z]{6}$/);
   assert.equal(job.dept, "PK");
   assert.deepEqual(release.audit.map((entry) => entry.action), ["ระเบิด BOM", "ปล่อยผลิต"], "oldest first");
-  assert.equal(env.store.data().jobs.length, 1);
+  assert.equal(env.store.data().jobs.length, 2, "the PK job and the ST job of the purchased part");
+  assert.deepEqual(release.changes.jobs.upsert.map((row) => [row.dept, row.kind, row.itemCode, row.qtyPlanned]), [["PK", "FG", "FG-TEST-01", 5], ["ST", "PURCHASED", "P-TEST-01", 10]], "the purchased part is a job with its gross requirement (5 sets × 2)");
 
   // รายงานผล: งานเปลี่ยนและใบเป็นกำลังผลิต
   await saved(env.store.run("reportJob", { jobId: job.id, qtyDone: 3, note: "รอบแรก" }));
-  const stored = env.server.master.jobs[0];
+  const stored = env.server.master.jobs.find((row) => row.id === job.id);
   assert.equal(stored.qtyDone, 3);
   assert.equal(stored.reports.length, 1);
   assert.equal(env.server.master.orders.find((row) => row.id === order.result).status, "in_progress");
@@ -381,23 +389,23 @@ test("reopening a released order whose jobs have not started deletes its jobs in
   const order = await saved(env.store.run("createOrder", newOrder()));
   await saved(env.store.run("addOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 5 }));
   await saved(env.store.run("releaseOrder", { orderId: order.result }));
-  assert.equal(env.server.master.jobs.length, 1);
-  const jobId = env.server.master.jobs[0].id;
+  assert.equal(env.server.master.jobs.length, 2);
+  const jobIds = env.server.master.jobs.map((row) => row.id).sort();
   await saved(env.store.run("updateOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 9 }));
   const call = env.server.saves.at(-1);
-  assert.deepEqual(call.changes.jobs.delete, [{ id: jobId }], "a job is deleted by its id");
+  assert.deepEqual(call.changes.jobs.delete.map((target) => target.id).sort(), jobIds, "every job (the part job too) is deleted by its id");
   assert.equal(call.changes.orders.upsert[0].status, "draft");
   assert.equal(call.changes.orders.upsert[0].revision, 1);
   assert.deepEqual(env.server.master.jobs, []);
   assert.deepEqual(env.store.data().jobs, []);
-  assert.deepEqual(env.server.graves.map((grave) => [grave.list, grave.code]), [["jobs", jobId]], "the database remembers the deletion for other browsers");
+  assert.deepEqual(env.server.graves.map((grave) => [grave.list, grave.code]).sort(), jobIds.map((id) => ["jobs", id]), "the database remembers the deletion for other browsers");
 
   // ผู้ใช้อื่นเห็นการลบงานผ่านส่วนต่าง
   const other = await ready(remoteStore({ server: env.server, user: { ...planner, id: "p2", name: "คนที่สอง" } }));
   assert.deepEqual(other.store.data().jobs, []);
   await saved(env.store.run("releaseOrder", { orderId: order.result }));
   assert.equal(await other.store.catchUp(), true);
-  assert.equal(other.store.data().jobs.length, 1);
+  assert.equal(other.store.data().jobs.length, 2);
   await saved(env.store.run("updateOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 4 }));
   assert.equal(await other.store.catchUp(), true);
   assert.deepEqual(other.store.data().jobs, [], "the other browser drops the deleted job");
@@ -408,6 +416,10 @@ test("a department member who reports on a job does not send the order: the data
   const server = fakeServer();
   const planning = await ready(remoteStore({ server }));
   await fgScene(planning);
+  // ท่อ PT ที่ใช้ของซื้อตัวเดียวกัน: ชิ้นที่นับตามใบได้ (ของซื้อนับที่คลังของซื้อ ไม่นับตามใบ)
+  await planning.store.run("saveItem", saveItemPayload("PT-TEST-01", { kind: "PT", name: "ท่อทดสอบ" })).saving;
+  await planning.store.run("saveBom", { itemCode: "PT-TEST-01", lines: [{ childCode: "P-TEST-01", qty: 1 }] }).saving;
+  await planning.store.run("saveBom", { itemCode: "FG-TEST-01", lines: [{ childCode: "P-TEST-01", qty: 2 }, { childCode: "PT-TEST-01", qty: 1 }] }).saving;
   const order = await saved(planning.store.run("createOrder", newOrder()));
   await saved(planning.store.run("addOrderItem", { orderId: order.result, fgCode: "FG-TEST-01", qty: 5 }));
 
@@ -416,26 +428,29 @@ test("a department member who reports on a job does not send the order: the data
   const exploded = await saved(planning.store.run("explodeOrder", { orderId: order.result }));
   assert.ok(exploded.result > 0);
   await counter.store.catchUp();
-  const counts = counter.store.run("setStockCounts", { orderId: order.result, counts: [{ itemCode: "P-TEST-01", qty: 7 }] });
+  const refusedPart = counter.store.run("setStockCounts", { orderId: order.result, counts: [{ itemCode: "P-TEST-01", qty: 7 }] });
+  assert.equal(refusedPart.ok, false);
+  assert.match(refusedPart.error.message, /คลังของซื้อ/, "a purchased part is not counted per PI");
+  const counts = counter.store.run("setStockCounts", { orderId: order.result, counts: [{ itemCode: "PT-TEST-01", qty: 7 }] });
   assert.equal(counts.ok, true, counts.error?.message);
   assert.equal(counter.store.data().orders[0].stockCountedBy, "พนักงานคลัง", "the page shows the stamp at once");
   await counts.saving;
   const sent = server.saves.at(-1).changes.orders.upsert[0];
-  assert.deepEqual(sent.stockCounts, { "P-TEST-01": 7 });
+  assert.deepEqual(sent.stockCounts, { "PT-TEST-01": 7 });
   assert.equal("stockCountedBy" in sent, false, "the stamp is the database's job");
-  assert.equal(server.master.orders[0].stockCounts["P-TEST-01"], 7);
+  assert.equal(server.master.orders[0].stockCounts["PT-TEST-01"], 7);
 
   // PK รายงานผล (แผนก PK ไม่ใช่ฝ่ายวางแผน): ส่งเฉพาะงาน ไม่ส่งใบ
   await planning.store.catchUp();
   await saved(planning.store.run("releaseOrder", { orderId: order.result }));
   const worker = await ready(remoteStore({ server, user: { id: "k1", role: "pt", dept: "PK", name: "พนักงานบรรจุ" } }));
-  const job = worker.store.data().jobs[0];
+  const job = worker.store.data().jobs.find((row) => row.dept === "PK");
   const report = await saved(worker.store.run("reportJob", { jobId: job.id, qtyDone: 2 }));
   assert.ok(report.ok);
   const reply = server.saves.at(-1);
   assert.deepEqual(Object.keys(reply.changes), ["jobs"], "the order stays out of a report by a non-planner");
   assert.equal(worker.store.data().orders[0].status, "in_progress", "shown as started at once");
-  assert.equal(worker.store.data().jobs[0].qtyDone, 2);
+  assert.equal(worker.store.data().jobs.find((row) => row.id === job.id).qtyDone, 2);
 });
 
 test("a department that does not own the job is refused by the page rules before any call; the planner group may report on any department", async () => {
@@ -1974,7 +1989,7 @@ async function planningScene() {
   const env = await pageEnv();
   await env.store.ensureLoaded();
   const ctx = env.ctx();
-  await fgScene(env);
+  await fgScenePt(env);
   const draft = await saved(env.store.run("createOrder", newOrder({ pi: "PI-D" })));
   await saved(env.store.run("addOrderItem", { orderId: draft.result, fgCode: "FG-TEST-01", qty: 5 }));
   await saved(env.store.run("explodeOrder", { orderId: draft.result }));
@@ -1999,7 +2014,7 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
   const env = await pageEnv();
   await env.store.ensureLoaded();
   const ctx = env.ctx();
-  await fgScene(env);
+  await fgScenePt(env);
   assert.equal(ctx.runAction("createOrder", { customer: "ลูกค้า ทดสอบ", country: "Thailand", orderedAt: NOW, whDue: NOW + 9 * 86400000 }, "เปิดใบสั่งผลิต {result}"), true);
   await settle();
   const id = env.store.data().orders[0].id;
@@ -2016,19 +2031,21 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
   let html = await env.render(`p=orders&sel=${id}`);
   assert.match(html, /data-rf-action="releaseOrder"/, "a draft shows the release button to the planner");
   assert.match(html, /data-rf-open="stockCount"/, "and the count buttons");
-  assert.equal(ctx.runAction("setStockCount", { orderId: id, itemCode: "P-TEST-01", qty: 3 }, "บันทึกยอดคงคลัง {result}"), true);
+  assert.equal(ctx.runAction("setStockCount", { orderId: id, itemCode: "PT-TEST-01", qty: 3 }, "บันทึกยอดคงคลัง {result}"), true);
   await settle();
-  assert.equal(JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).orders[0].stockCounts["P-TEST-01"], 3);
+  assert.equal(JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).orders[0].stockCounts["PT-TEST-01"], 3);
   assert.equal(ctx.runAction("releaseOrder", { orderId: id }, "ปล่อยผลิต {result}"), true);
   await settle();
-  const job = env.store.data().jobs[0];
-  assert.match(job.id, /^JOB-\d\d-0001-[0-9a-z]{6}$/);
+  assert.deepEqual(JSON.parse(JSON.stringify(env.store.data().jobs.map((row) => [row.dept, row.kind]))), [["PK", "FG"], ["PT", "PT"], ["ST", "PURCHASED"]], "the PT job, the PK job and the ST job of the purchased part");
+  const job = env.store.data().jobs.find((row) => row.dept === "PK");
+  assert.match(job.id, /^JOB-\d\d-000\d-[0-9a-z]{6}$/);
   assert.equal(job.qtyPlanned, 5, "the PK job is for the order quantity");
   assert.equal(ctx.runAction("reportJob", { jobId: job.id, qtyDone: 5, note: "ครบ" }, "บันทึกผลผลิต {result}"), true);
   await settle();
   const database = JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master"));
-  assert.equal(database.jobs[0].status, "done");
-  assert.equal(database.jobs[0].reports[0].by, "ปกรณ์ ศรีวัฒนา");
+  const storedJob = database.jobs.find((row) => row.id === job.id);
+  assert.equal(storedJob.status, "done");
+  assert.equal(storedJob.reports[0].by, "ปกรณ์ ศรีวัฒนา");
   assert.equal(ctx.runAction("completeOrder", { orderId: id }, "ปิดใบ {result}"), true);
   await settle();
   assert.equal(JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).orders[0].status, "completed");
@@ -3016,4 +3033,219 @@ test("the PI page lists RB jobs that have no WO yet with the reason, and the rel
   html = await env.render(`p=orders&sel=${sku}&tab=jobs`);
   assert.doesNotMatch(html, /งาน RB ที่ยังไม่มี WO/);
   function clean(text) { assert.doesNotMatch(text, /undefined|NaN|\[object Object\]/); }
+});
+
+test("part stock through the module on the (mock) database: counts send only the stock list, the issue sends only the jobs and the stock and moves come back, rights follow the persona", async () => {
+  const planning = await pageEnv();
+  await planning.store.ensureLoaded();
+  await fgScene(planning);
+  const planCtx = planning.ctx();
+  assert.equal(planCtx.runAction("createOrder", { customer: "ลูกค้า ทดสอบ", country: "Thailand", orderedAt: NOW, whDue: NOW + 9 * 86400000 }, ""), true);
+  await settle();
+  const id = planning.store.data().orders[0].id;
+  for (const [action, payload] of [["addOrderItem", { orderId: id, fgCode: "FG-TEST-01", qty: 5 }], ["explodeOrder", { orderId: id }], ["releaseOrder", { orderId: id }]]) {
+    assert.equal(planCtx.runAction(action, payload, ""), true, action);
+    await settle();
+  }
+  const partJob = planning.store.data().jobs.find((row) => row.dept === "ST");
+  assert.deepEqual([partJob.kind, partJob.itemCode, partJob.qtyPlanned, partJob.qtyRequired, partJob.stockCounted], ["PURCHASED", "P-TEST-01", 10, 10, null], "release made the ST job of the purchased part with its gross requirement");
+
+  // ST: หน้าคลังของซื้อ → นับ → ส่งเฉพาะชุด stock (ไม่ส่งประวัติ) · ฐานข้อมูลประทับผู้นับและเขียนประวัติ
+  const st = await asPersona({ env: planning }, "persona-st");
+  let html = await st.render("p=stock");
+  assert.match(html, /data-rf-form="countPartStock"/);
+  assert.match(html, /name="itemCode\[\]" value="P-TEST-01"/);
+  assert.doesNotMatch(html, /name="safetyQty\[\]"/, "ST cannot edit the safety stock");
+  assert.match(html, /data-rf-open="partHistory"/);
+  const outcome = st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 6 }] });
+  assert.equal(outcome.ok, true, outcome.error?.message);
+  await outcome.saving;
+  const database = () => JSON.parse(planning.pageStorage.getItem("mnp-harness-bom-master"));
+  assert.deepEqual(Object.keys(database().stock[0]).sort(), ["countedAt", "countedBy", "itemCode", "qty", "safetyQty", "updatedAt"]);
+  assert.equal(database().stock[0].countedBy, "วิชัย คลังวัตถุดิบ");
+  assert.deepEqual(database().stockMoves.map((move) => [move.kind, move.qty, move.balance, move.ref]), [["count", 6, 6, null]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(st.store.data().stockMoves.map((move) => move.kind))), ["count"], "the move came back in the reply (the page does not invent its own)");
+
+  // เบิกจ่ายตอนสต็อกไม่พอ: หน้าปฏิเสธก่อนเรียกฐานข้อมูล (ไม่เขียนอะไร) · ฐานข้อมูลก็ปฏิเสธถ้าส่งมาเอง
+  const versionBefore = database().version;
+  const short = st.store.run("issueOrderParts", { orderId: id });
+  assert.equal(short.ok, false);
+  assert.match(short.error.message, /P-TEST-01 ขาด 4/);
+  assert.equal(database().version, versionBefore);
+  const direct = await st.mock.client.rpc("app_bom_save_master", { p_changes: { jobs: { upsert: [{ ...partJob, status: "done", qtyDone: 10 }] } }, p_base_version: database().version, p_action: "issueOrderParts" });
+  assert.match(direct.error.message, /BOM_INSUFFICIENT_STOCK/);
+
+  // สต็อกพอแล้วเบิกจ่าย: ส่งเฉพาะงาน (ไม่ส่งสต็อก/ประวัติ/ใบ) ฐานข้อมูลหักสต็อก เขียนประวัติ ตั้งงานเป็น done
+  const more = st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 12 }] });
+  await more.saving;
+  const issued = st.store.run("issueOrderParts", { orderId: id });
+  assert.equal(issued.ok, true, issued.error?.message);
+  await issued.saving;
+  const after = database();
+  assert.deepEqual(after.stock.map((row) => [row.itemCode, row.qty]), [["P-TEST-01", 2]]);
+  assert.deepEqual(after.stockMoves.map((move) => [move.kind, move.qty, move.balance, move.ref]), [["count", 6, 6, null], ["count", 6, 12, null], ["issue", -10, 2, id]]);
+  assert.deepEqual([after.jobs.find((row) => row.dept === "ST").status, after.jobs.find((row) => row.dept === "ST").qtyDone], ["done", 10]);
+  assert.equal(after.orders[0].status, "in_progress", "the database turned the released order in_progress");
+  assert.equal(after.audit.at(-1).action, "issueOrderParts");
+  assert.equal(after.audit.at(-1).detail, "jobs +1, stock +1");
+  assert.equal(st.store.data().stock[0].qty, 2, "the page shows the database's balance");
+  assert.equal(st.store.data().orders[0].status, "in_progress");
+  assert.equal(st.store.run("issueOrderParts", { orderId: id }).ok, false, "nothing left to issue");
+  assert.equal(st.store.run("reportJob", { jobId: partJob.id, qtyDone: 1 }).ok, false, "a part job is never reported");
+
+  // สิทธิ์ตามบัญชี: RB นับไม่ได้ (ฐานข้อมูลปฏิเสธ หน้าย้อนกลับ) · สต็อกขั้นต่ำเฉพาะฝ่ายวางแผน
+  const rb = await asPersona({ env: planning }, "persona-rb");
+  const denied = rb.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 1 }] });
+  assert.equal(denied.ok, false, "the page rule refuses before calling");
+  const pp = await asPersona({ env: planning }, "persona-pp");
+  const safety = pp.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", safetyQty: 4 }] });
+  assert.equal(safety.ok, true, safety.error?.message);
+  await safety.saving;
+  assert.equal(database().stock[0].safetyQty, 4);
+  assert.equal(database().stockMoves.length, 3, "a safety change writes no move");
+  html = await pp.render("p=stock");
+  assert.match(html, /name="safetyQty\[\]"/, "the planner edits the safety stock");
+  html = await pp.render(`p=orders&sel=${id}`);
+  assert.doesNotMatch(html, /data-rf-open="issueParts"/, "nothing left to issue → no issue button");
+});
+
+test("purchasing across the modules: releasing a PI with purchased parts opens one purchase dialog with the part table, the order lands in RubberFlow, the part's safety stock in the BOM, and the next check counts the order as on order", async () => {
+  const env = await pageEnv();
+  await env.store.ensureLoaded();
+  await fgScene(env);
+  const ctx = env.ctx();
+  assert.equal(ctx.runAction("createOrder", { customer: "ลูกค้า ทดสอบ", country: "Thailand", orderedAt: NOW, whDue: NOW + 9 * 86400000 }, ""), true);
+  await settle();
+  const id = env.store.data().orders[0].id;
+  for (const [action, payload] of [["addOrderItem", { orderId: id, fgCode: "FG-TEST-01", qty: 5 }], ["explodeOrder", { orderId: id }]]) {
+    assert.equal(ctx.runAction(action, payload, ""), true, action);
+    await settle();
+  }
+  assert.equal(ctx.runAction("releaseOrder", { orderId: id }, ""), true);
+  for (let turn = 0; turn < 40 && !env.log.dialogs.some((html) => html.includes('data-rf-dialog="purchase"')); turn += 1) await settle();
+  const dialog = env.log.dialogs.find((html) => html.includes('data-rf-dialog="purchase"'));
+  assert.ok(dialog, "the release found the parts short (nothing on hand) and opened the purchase dialog");
+  assert.match(dialog, /สั่งซื้อวัตถุดิบและของซื้อ/);
+  assert.ok(dialog.includes('name="source[]" value="bom"') && dialog.includes('value="P-TEST-01"'));
+  assert.match(dialog, /name="qtyKg\[\]"[^>]*value="10"/, "need 10, nothing on hand, no safety stock yet");
+  assert.doesNotMatch(dialog, /undefined|NaN/);
+
+  const rf = env.context.MNP_RUBBERFLOW;
+  const bomDb = () => JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master"));
+  const bomVersion = bomDb().version;
+  const out = rf.store.run("createPurchaseOrder", { lines: [{ materialCode: "P-TEST-01", source: "bom", uom: "pcs", needKg: 10, availableKg: 0, shortageKg: 10, safetyKg: 2, qtyKg: 12 }], safety: { "P-TEST-01": 2 }, sourcePi: id });
+  assert.equal(out.ok, true, out.error?.message);
+  await out.saving;
+  assert.deepEqual(bomDb().stock.map((row) => [row.itemCode, row.qty, row.safetyQty]), [["P-TEST-01", 0, 2]], "the safety stock went to the BOM stock");
+  assert.equal(bomDb().version, bomVersion + 1);
+  await env.store.catchUp();
+  assert.equal(env.store.data().stock[0].safetyQty, 2, "the BOM page catches up");
+
+  // ตรวจอีกครั้งอัตโนมัติ: ใบสั่งซื้อค้างรับ 12 ครอบความต้องการ 10 → ไม่ขาด ไม่เปิด dialog ใหม่ แจ้งสั้นๆ ว่าพอ
+  const dialogsBefore = env.log.dialogs.length;
+  const again = await rf.checkMaterials({ woIds: [], sourcePi: id, auto: true });
+  assert.equal(again.opened, false);
+  assert.equal(env.log.dialogs.length, dialogsBefore);
+  assert.match(env.log.toasts.at(-1)[0], /ของซื้อพอ/);
+  assert.equal(JSON.parse(JSON.stringify(again.parts.rows.map((row) => [row.itemCode, row.needQty, row.onOrderQty, row.shortage]))).join(), "P-TEST-01,10,12,0");
+
+  // สต็อกขั้นต่ำของซื้อที่แก้ในหน้าต่างแต่สั่ง 0: ไม่อยู่ในบรรทัดใบสั่งซื้อ จึงบันทึกเข้าคลังของซื้อแยก (countPartStock) หลังใบสั่งซื้อสำเร็จ
+  await env.store.run("saveItem", saveItemPayload("P-TEST-02", { name: "ของซื้ออีกตัว" })).saving;
+  const second = rf.runAction("createPurchaseOrder", {
+    lines: [
+      { materialCode: "P-TEST-01", source: "bom", uom: "pcs", needKg: 1, availableKg: 0, shortageKg: 1, safetyKg: 2, storedSafetyKg: 2, qtyKg: 3 },
+      { materialCode: "P-TEST-02", source: "bom", uom: "pcs", needKg: 0, availableKg: 0, shortageKg: 0, safetyKg: 6, storedSafetyKg: 0, qtyKg: 0 },
+    ], safety: { "P-TEST-01": 2, "P-TEST-02": 6 }, sourcePi: id,
+  }, "");
+  assert.equal(second, true);
+  for (let turn = 0; turn < 60 && !bomDb().stock.some((row) => row.itemCode === "P-TEST-02"); turn += 1) await settle();
+  assert.deepEqual(bomDb().stock.map((row) => [row.itemCode, row.safetyQty]), [["P-TEST-01", 2], ["P-TEST-02", 6]], "the safety stock of the part that was not ordered was saved too");
+  assert.equal(bomDb().stockMoves.length, 0, "a safety change writes no move");
+});
+
+test("the mock database follows the SQL rules of the part stock: payload shapes per action, rights, stale checks, all-or-none issue, part jobs reported only through the issue", async () => {
+  const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage: memoryStorage() });
+  const rpc = (name, args) => mock.client.rpc(name, args);
+  const as = (id) => rpc("app_sandbox_enter", { p_persona_id: id });
+  const version = async () => (await rpc("app_bom_master")).data.version;
+  const save = async (changes, action, base) => rpc("app_bom_save_master", { p_changes: changes, p_base_version: base ?? await version(), p_action: action });
+  const code = async (promise) => (await promise).error?.code;
+  const counts = (rows, base) => save({ stock: { upsert: rows } }, "countPartStock", base);
+  const view = async () => (await rpc("app_bom_master")).data;
+  await as("persona-pp");
+  const item = (itemCode, kind, uom = "pcs") => ({ code: itemCode, kind, name: itemCode, ownerDept: kind === "PURCHASED" ? "ST" : "PK", uom });
+  assert.equal((await save({ items: { upsert: [item("FG-1", "FG", "set"), item("P-1", "PURCHASED"), item("P-2", "PURCHASED", "kg"), item("SE-1", "SE")] } }, "importFlat")).error, null);
+  const order = { id: "PI-M1", customer: "ACME", country: "TH", orderType: "SA", orderedAt: NOW, whDue: NOW + 9 * 86400000, due: {}, dueDefaults: [], revision: 0, status: "draft", items: [{ fgCode: "FG-1", qty: 2, colorSet: "", note: "" }], explosion: [{ itemCode: "FG-1", level: 0, required: 2 }], stockCounts: {}, note: "" };
+  assert.equal((await save({ orders: { upsert: [order] } }, "createOrder")).error, null);
+  const partJob = (id, itemCode, qty) => ({ id, orderId: "PI-M1", dept: "ST", itemCode, name: itemCode, kind: "PURCHASED", uom: "pcs", qtyPlanned: qty, qtyRequired: qty, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: NOW + 86400000, status: "queued", externalRef: null, fgCodes: ["FG-1"], reports: [] });
+  const pkJob = { ...partJob("J-PK", "FG-1", 2), dept: "PK", kind: "FG", uom: "set" };
+  assert.equal((await save({ orders: { upsert: [{ ...order, status: "released" }] }, jobs: { upsert: [pkJob, partJob("J-P1", "P-1", 8), partJob("J-P2", "P-2", 3)] } }, "releaseOrder")).error, null);
+
+  // payload shapes per action
+  assert.equal(await code(save({ stock: { upsert: [{ itemCode: "P-1", qty: 5 }] } }, "setStockCounts")), "BOM_INVALID_PAYLOAD", "stock only with countPartStock");
+  assert.equal(await code(save({ stock: { upsert: [{ itemCode: "P-1", qty: 5 }] }, customers: { upsert: [{ name: "Z" }] } }, "countPartStock")), "BOM_INVALID_PAYLOAD", "a count carries only stock");
+  assert.equal(await code(save({ stock: { delete: [] } }, "countPartStock")), "BOM_INVALID_PAYLOAD", "no deletes");
+  assert.equal(await code(save({ stockMoves: { upsert: [{ id: "x" }] } }, "countPartStock")), "BOM_INVALID_PAYLOAD", "moves are written by the server only");
+  assert.equal(await code(save({ jobs: { upsert: [] }, stock: { upsert: [{ itemCode: "P-1", qty: 1 }] } }, "issueOrderParts")), "BOM_INVALID_PAYLOAD", "an issue carries only jobs");
+  for (const bad of [{ itemCode: "SE-1", qty: 1 }, { itemCode: "NOPE", qty: 1 }, { itemCode: "P-1", qty: -1 }, { itemCode: "P-1", qty: "5" }, { itemCode: "P-1", qty: 1e10 }]) assert.equal(await code(counts([bad])), "BOM_INVALID_STOCK", JSON.stringify(bad));
+  assert.equal(await code(counts([{ itemCode: "P-1", qty: 1 }, { itemCode: "p-1", qty: 2 }])), "BOM_INVALID_STOCK", "the same item twice");
+
+  // rights: ST, WH and the planner group count; RB cannot; the safety stock is the planners; stale comes before rights
+  await as("persona-rb");
+  assert.equal(await code(counts([{ itemCode: "P-1", qty: 5 }])), "BOM_FORBIDDEN");
+  await as("persona-st");
+  const before = await version();
+  assert.equal((await counts([{ itemCode: "P-1", qty: 5 }, { itemCode: "P-2", qty: 1 }])).error, null);
+  assert.equal(await version(), before + 1);
+  assert.equal(await code(counts([{ itemCode: "P-1", safetyQty: 3 }])), "BOM_FORBIDDEN", "ST cannot set the safety stock");
+  const same = await counts([{ itemCode: "P-1", qty: 5, safetyQty: 0 }]);
+  assert.equal(same.error, null);
+  assert.deepEqual(same.data.changes.stock.upsert, [], "the same values change no row (the counter still moves, like any save)");
+  const moves = (await view()).stockMoves;
+  assert.deepEqual(moves.map((move) => [move.itemCode, move.kind, move.qty, move.balance, move.ref, move.by]).sort(), [["P-1", "count", 5, 5, null, "วิชัย คลังวัตถุดิบ"], ["P-2", "count", 1, 1, null, "วิชัย คลังวัตถุดิบ"]]);
+  await as("persona-wh");
+  assert.equal((await counts([{ itemCode: "P-1", qty: 4 }], before + 1)).error, null, "WH counts too");
+  await as("persona-rb");
+  assert.equal(await code(counts([{ itemCode: "P-1", qty: 9 }], before + 1)), "BOM_STALE", "the stale check comes before the permission check");
+
+  // a part job is not reported any other way
+  const jobs = (await view()).jobs;
+  const p1 = jobs.find((job) => job.id === "J-P1");
+  await as("persona-st");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...p1, status: "done", qtyDone: 8 }] } }, "reportJob")), "BOM_INVALID_TRANSITION");
+  await as("persona-pp");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...p1, status: "hold" }] } }, "setJobStatus")), "BOM_INVALID_TRANSITION", "not even a planner");
+
+  // the issue: other department, partial set, not in full, shortage = nothing issued (stale when the stock changed after the copy), success
+  const done = (job) => ({ ...job, status: "done", qtyDone: job.qtyPlanned });
+  const p2 = jobs.find((job) => job.id === "J-P2");
+  await as("persona-rb");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts")), "BOM_FORBIDDEN");
+  await as("persona-st");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1)] } }, "issueOrderParts")), "BOM_INVALID_JOB", "partial set");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2), jobs.find((job) => job.id === "J-PK")] } }, "issueOrderParts")), "BOM_INVALID_JOB", "an unchanged row of another kind in the set refuses it too (every row goes to the issue, like the SQL)");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), { ...done(p2), qtyDone: 1 }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "must be done in full");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), done(jobs.find((job) => job.id === "J-PK"))] } }, "issueOrderParts")), "BOM_FORBIDDEN", "a job of another department in the set");
+  const base = await version();
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts")), "BOM_INSUFFICIENT_STOCK", "P-1 has 4 of 8, P-2 has 1 of 3");
+  await as("persona-wh");
+  assert.equal((await counts([{ itemCode: "P-2", qty: 0 }])).error, null);
+  await as("persona-st");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts", base)), "BOM_STALE", "the stock changed after the copy the shortage was read from");
+  assert.equal((await view()).stock.find((row) => row.itemCode === "P-1").qty, 4, "nothing was issued by the refused calls");
+  assert.equal((await counts([{ itemCode: "P-1", qty: 8 }, { itemCode: "P-2", qty: 3 }])).error, null);
+  const issued = await save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts");
+  assert.equal(issued.error, null);
+  const after = await view();
+  assert.deepEqual(after.stock.map((row) => [row.itemCode, row.qty]), [["P-1", 0], ["P-2", 0]]);
+  assert.deepEqual(after.jobs.filter((job) => job.dept === "ST").map((job) => [job.id, job.status, job.qtyDone]), [["J-P1", "done", 8], ["J-P2", "done", 3]]);
+  assert.equal(after.orders[0].status, "in_progress");
+  assert.deepEqual(after.stockMoves.filter((move) => move.kind === "issue").map((move) => [move.itemCode, move.qty, move.balance, move.ref]).sort(), [["P-1", -8, 0, "PI-M1"], ["P-2", -3, 0, "PI-M1"]]);
+  assert.equal((await rpc("app_bom_audit")).data[0].detail, "jobs +2, stock +2");
+  assert.equal(await code(save({ jobs: { upsert: [after.jobs.find((job) => job.id === "J-P1"), after.jobs.find((job) => job.id === "J-P2")] } }, "issueOrderParts")), "BOM_INVALID_JOB", "issuing twice finds nothing left");
+  // the test-data purge removes the stock and the moves too
+  await as("persona-1");
+  assert.ok((await rpc("app_sandbox_purge_bom")).data.deleted >= 9);
+  const emptied = await view();
+  assert.deepEqual([emptied.stock, emptied.stockMoves], [[], []]);
 });

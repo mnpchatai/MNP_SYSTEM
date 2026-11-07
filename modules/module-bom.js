@@ -74,7 +74,7 @@
   const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
-  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check]";
+  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy]";
   function markDirty(event) {
     if (!event?.isTrusted || !onBomRoute()) return;
     const target = event.target;
@@ -191,6 +191,8 @@
     // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
     saveColorSet: (p) => ({ ...p, slots: listOf(p, "slotKey").map((key, index) => ({ key, color: listOf(p, "slotColor")[index] ?? "" })) }),
     setStockCounts: (p) => ({ ...p, counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),
+    // ฟอร์มคลังของซื้อ: itemCode[] + qty[] (+ safetyQty[] ถ้าแก้สต็อกขั้นต่ำได้) ตามลำดับแถว · ช่องว่าง = ไม่แตะค่าเดิม
+    countPartStock: (p) => ({ counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "", safetyQty: listOf(p, "safetyQty")[index] ?? "" })) }),
     // ฟอร์มขั้นตอนผลิต: processCode[] + minutesPerPc[] → steps ตามลำดับแถว (แถวที่ไม่เลือกขั้นตอนถูกข้าม)
     // inputCode[] + inputStep[] → step.inputs (ส่วนประกอบที่เลือก "ขั้นแรก" ไม่ถูกผูก จึงแสดงที่ขั้นแรก)
     saveRouting: (p) => {
@@ -226,10 +228,11 @@
       if (notice) showToast(notice.text, notice.type);
       // WO ที่ฐานข้อมูลเปิด/ยกเลิกให้ ตามทันฝั่ง RubberFlow ให้เลข WO และหน้าของ RubberFlow เป็นปัจจุบัน
       if (outcome.rubberflow) { try { window.MNP_RUBBERFLOW?.store?.catchUp?.(); } catch { /* RubberFlow ตามทันเองตอนเปิดหน้า */ } }
-      // ปล่อยผลิตแล้วเปิด WO ให้งาน RB: ตรวจเคมีที่ WO เหล่านั้นต้องใช้เทียบสต็อก ขาด = เปิด dialog สั่งซื้อ (ผู้ที่สั่งซื้อไม่ได้ไม่เห็น) · ที่เหลือแจ้งสั้นๆ ว่าพอ
+      // ปล่อยผลิตแล้วเปิด WO ให้งาน RB และ/หรือมีงานของซื้อ (ST): ตรวจเคมีที่ WO เหล่านั้นต้องใช้และของซื้อของใบเทียบสต็อก ขาด = เปิด dialog สั่งซื้อ (ผู้ที่สั่งซื้อไม่ได้ไม่เห็น) · ที่เหลือแจ้งสั้นๆ ว่าพอ
       const opened = name === "releaseOrder" && Array.isArray(outcome.rubberflow?.opened) ? outcome.rubberflow.opened : [];
-      if (opened.length) {
-        try { Promise.resolve(window.MNP_RUBBERFLOW?.checkMaterials?.({ woIds: opened.map((row) => row.woId), sourcePi: payload?.orderId ?? "", skippedJobs: outcome.rubberflow.skipped?.length ?? 0, auto: true })).catch(() => {}); } catch { /* ตรวจเคมีไม่ได้: ปุ่ม "ตรวจวัตถุดิบ" ที่ใบ PI ยังใช้ได้ */ }
+      const hasParts = name === "releaseOrder" && store.isRemote() && store.data().jobs.some((job) => job.orderId === payload?.orderId && actions.helpers.isPartJob(job));
+      if (opened.length || hasParts) {
+        try { Promise.resolve(window.MNP_RUBBERFLOW?.checkMaterials?.({ woIds: opened.map((row) => row.woId), sourcePi: payload?.orderId ?? "", skippedJobs: outcome.rubberflow?.skipped?.length ?? 0, auto: true })).catch(() => {}); } catch { /* ตรวจเคมีไม่ได้: ปุ่ม "ตรวจวัตถุดิบ" ที่ใบ PI ยังใช้ได้ */ }
       }
     });
     return true;

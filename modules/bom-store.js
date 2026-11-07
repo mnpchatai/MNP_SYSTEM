@@ -32,6 +32,7 @@
     { id: "orders", label: "ใบสั่งผลิต (PI)", group: "ผลิต" },
     { id: "customers", label: "ลูกค้า", group: "ผลิต" },
     { id: "count", label: "นับคงคลังตามใบ", group: "ผลิต" },
+    { id: "stock", label: "คลังของซื้อ", group: "ผลิต" },
     { id: "jobs", label: "งานของแผนก", group: "ผลิต" },
     { id: "audit", label: "บันทึกการใช้งาน", group: "ผลิต" },
   ].map((entry) => Object.freeze(entry)));
@@ -43,13 +44,13 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการฝ่ายโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "jobs", "check"]) },
+    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "stock", "jobs", "check"]) },
     rb: { label: "หัวหน้าแผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "compounds", "jobs", "orders", "check"]) },
     gr: { label: "หัวหน้าแผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     pt: { label: "หัวหน้าแผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     bg: { label: "หัวหน้าแผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
-    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["count", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
-    wh: { label: "คลังสินค้า (WH)", modules: Object.freeze(["count", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
+    st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["count", "stock", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
+    wh: { label: "คลังสินค้า (WH)", modules: Object.freeze(["count", "stock", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
     // บัญชีทดสอบที่ไม่ใช่แผนกด้านบน (โหมดฐานข้อมูล): ดูข้อมูลได้อย่างเดียว
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
   });
@@ -175,7 +176,8 @@
   // ข้อมูลหลัก (master): ชิ้นงาน สูตรยาง สี ชุดสี แพ็กเกจ BOM ขั้นตอนผลิต และ routing · ข้อมูลที่ใช้ทำงาน: ลูกค้า ใบสั่งผลิต (PI) และงานรายแผนก
   // ทั้งหมดอยู่ในฐานข้อมูลผ่าน RPC ชุดเดียวกัน (ชนกันรายระเบียน คืนส่วนต่าง) · บันทึกการใช้งานอ่านจาก app_bom_audit · ตัวนับเลข BOM/RT/JOB อยู่ในหน่วยความจำของหน้าและตั้งต้นจากเลขสูงสุดที่ฐานข้อมูลมี
   const MASTER_LISTS = Object.freeze(["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings"]);
-  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs"]);
+  // stock = ยอดคงเหลือของซื้อ (นับด้วย countPartStock) · stockMoves = ประวัติ (เซิร์ฟเวอร์เขียนเอง client อ่านอย่างเดียว ไม่ส่งกลับ)
+  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves"]);
   const REMOTE_LISTS = Object.freeze([...MASTER_LISTS, ...WORK_LISTS]);
   const LOCAL_KEY = "mnp-bom-local-v1"; // รุ่นก่อนหน้าเก็บใบสั่งผลิต/งาน/บันทึกการใช้งานไว้ที่นี่ · ตอนนี้ไม่อ่านไม่เขียน (ข้อมูลทดสอบเก่าไม่ย้ายเข้าฐานข้อมูล)
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -188,12 +190,14 @@
     boms: (record) => record.id, routings: (record) => record.id,
     colorSets: (record) => `${record.base}\u0000${record.code}`, packages: (record) => `${record.base}\u0000${record.code}`,
     customers: (record) => customerKey(record.name), orders: (record) => record.id, jobs: (record) => record.id,
+    stock: (record) => record.itemCode, stockMoves: (record) => record.id,
   });
   const MASTER_DELETABLE = Object.freeze(["colorSets", "packages", "jobs"]);
   // ลำดับของชุดตามฐานข้อมูล: ใบสั่งผลิตใหม่สุดก่อน (วันที่สั่งผลิต แล้วเลขที่) · งานเรียงตามใบ แผนก ชิ้นงาน เลขงาน · ชุดอื่นเรียงตามกุญแจ
   const LIST_ORDER = Object.freeze({
     orders: (a, b) => (Number(b.orderedAt) || 0) - (Number(a.orderedAt) || 0) || compareKey(a.id, b.id),
     jobs: (a, b) => compareKey(a.orderId, b.orderId) || compareKey(a.dept, b.dept) || compareKey(a.itemCode, b.itemCode) || compareKey(a.id, b.id),
+    stockMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
   });
   // เป้าหมายการลบ: ชุดสี/แพ็กเกจ = {base, code} · งาน = {id}
   const deleteTarget = (list, record) => (list === "jobs" ? { id: record.id } : { base: record.base, code: record.code });
@@ -221,9 +225,12 @@
     });
   }
   // ส่วนต่างของข้อมูลก่อน/หลังรัน action → p_changes ของ app_bom_save_master (ระเบียนที่เพิ่ม/เปลี่ยน ส่งทั้งระเบียน · ชุดสี/แพ็กเกจ/งานลบได้)
-  function diffMaster(before, after) {
+  // stockMoves เซิร์ฟเวอร์เขียนเองเสมอ · stock ส่งเฉพาะ action countPartStock (การเบิกจ่ายหักสต็อกที่เซิร์ฟเวอร์ ค่าที่คำนวณในเครื่องใช้แสดงจนกว่าคำตอบมาถึง)
+  const SERVER_WRITTEN = Object.freeze(["stockMoves"]);
+  function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
+      if (SERVER_WRITTEN.includes(list) || (list === "stock" && action !== "countPartStock")) continue;
       const key = MASTER_KEY[list];
       const old = new Map((before[list] ?? []).map((record) => [key(record), record]));
       const upsert = [];
@@ -352,6 +359,8 @@
       BOM_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว (เช่น เลขที่ PI) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_INVALID_TRANSITION: "ใบสั่งผลิตอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน หรือมีงานที่เริ่มแล้ว) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       BOM_RF_ORDER_STARTED: "ยกเลิกหรือแก้ใบไม่ได้: WO ใน RubberFlow ที่ผูกงานของใบนี้เริ่มผลิตแล้ว ปิดหรือยกเลิก WO นั้นใน RubberFlow ก่อน",
+      BOM_INSUFFICIENT_STOCK: "สต็อกของซื้อไม่พอ จึงไม่ได้เบิกจ่ายอะไรเลย ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      BOM_INVALID_STOCK: "รหัสที่นับไม่ใช่ของซื้อ หรือตัวเลขไม่ถูกต้อง (ต้อง 0 ขึ้นไป)",
       BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       BOM_TOO_MANY: "ข้อมูลชุดนี้มากเกินกว่าจะบันทึกในครั้งเดียว (เกิน 5,000 รายการต่อประเภท) แบ่งนำเข้าทีละส่วน",
@@ -371,7 +380,7 @@
     return Object.assign(new Error(message), { code });
   }
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะใบเปลี่ยนไปแล้ว → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
-  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET"]);
+  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK"]);
 
   // บัญชีทดสอบ (state.employee ของ app.js ในโหมดทดสอบ) → ผู้ใช้ของ BOM
   // admin → admin · ผู้จัดการแผนกขึ้นไป → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST/WH → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
@@ -547,6 +556,7 @@
     };
     function hasForeignRecords(delta, sent, before) {
       return REMOTE_LISTS.some((list) => {
+        if (list === "stock" || list === "stockMoves") return false;
         const key = MASTER_KEY[list];
         const mine = new Set((sent[list]?.upsert ?? []).map(key));
         const removed = new Set((sent[list]?.delete ?? []).map((target) => deleteKey(list, target)));
@@ -646,7 +656,7 @@
       } catch (error) {
         return { ok: false, error };
       }
-      const changes = diffMaster(before, draft);
+      const changes = diffMaster(before, draft, name);
       const auditEntries = auditPayload(draft.audit);
       draft.audit = [];
       data = draft;

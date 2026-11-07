@@ -1352,7 +1352,7 @@ test("ordering: the planner group and RB members create the order with the edite
   assert.equal(master.version, before + 1, "the order and the safety stock of both materials are one save");
   assert.deepEqual(master.purchaseOrders, [{
     id: PO_NO, status: "ordered", sourcePi: "PI-1", sourceRequisition: null, note: "เร่ง", createdAt: NOW, createdBy: "สมศรี วางแผน", cancelledAt: null,
-    lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 25.5, qtyKg: 65.5, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null }],
+    lines: [{ materialCode: "EPDM-55", source: "rf", uom: null, needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 25.5, qtyKg: 65.5, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null }],
   }]);
   assert.deepEqual(master.materials.map((row) => [row.code, row.safetyKg]), [["CB-N550", 5], ["EPDM-55", 25.5]], "safety stock edited for a material that is not ordered is saved too");
   assert.deepEqual(rig.store.data().purchaseOrders, master.purchaseOrders, "the page equals the database");
@@ -1604,4 +1604,95 @@ test("purge removes the purchase orders with the rest, and the invalid-purchase 
   assert.equal(storeApi.rightForDialog("purchase"), "purchase");
   assert.equal(storeApi.rightForDialog("receivePurchase"), "receiveMaterial");
   assert.equal(storeApi.can({ role: "viewer" }, "purchase"), true, "the demo mode does not restrict these buttons");
+});
+
+test("a purchase order can carry purchased-part lines: the unit comes from the BOM item, the part's safety stock is saved to the BOM stock, the receipt adds the balance and a move — without a lot", async () => {
+  const storage = memoryStorage();
+  seedBom(storage);
+  const bomState = JSON.parse(storage.getItem(BOM_KEY));
+  bomState.items = [{ code: "P-BOX", kind: "PURCHASED", name: "กล่องนอก", ownerDept: "ST", uom: "box" }, { code: "SE-X", kind: "SE", name: "ชิ้นยาง", ownerDept: "GR", uom: "pcs" }];
+  bomState.versions.items = { "P-BOX": 4, "SE-X": 4 };
+  storage.setItem(BOM_KEY, JSON.stringify(bomState));
+  const bom = () => JSON.parse(storage.getItem(BOM_KEY));
+  const s = await session({ storage });
+  const rig = await s.make();
+  await withMaterials(s, rig);
+  await s.as("persona-pp");
+  const chem = { materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 0, qtyKg: 65 };
+  const part = { materialCode: "P-BOX", source: "bom", uom: "box", needKg: 7, availableKg: -2, shortageKg: 9, safetyKg: 0, qtyKg: 12 };
+
+  // ปฏิเสธก่อนเขียน: ไม่ใช่ของซื้อ / ไม่มีใน item master / ล็อต-วันหมดอายุในบรรทัดของซื้อ / source แปลก
+  const send = (lines) => sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ id: PO_NO, status: "ordered", sourcePi: "PI-R", sourceRequisition: null, note: "", lines }] } });
+  assert.equal(await send([{ ...part, materialCode: "SE-X" }]), "RF_INVALID_PURCHASE", "a made item is not a part");
+  assert.equal(await send([{ ...part, materialCode: "NOPE" }]), "RF_INVALID_PURCHASE");
+  assert.equal(await send([{ ...part, lotNo: "L-1", receivedKg: 3, expiry: NOW + DAY }]), "RF_INVALID_PURCHASE");
+  assert.equal(await send([{ ...part, source: "xyz" }]), "RF_INVALID_PURCHASE");
+  assert.equal(await send([chem, { ...chem, source: "bom", materialCode: "epdm-55", uom: "kg" }]), "RF_INVALID_PURCHASE", "a chemical code is not a part and a code cannot repeat");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ id: PO_NO, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [part] }] } }), "RF_FORBIDDEN", "ST cannot order");
+  assert.equal(bom().stock?.length ?? 0, 0, "the refused orders touched no BOM stock");
+
+  // สั่งซื้อเคมี + ของซื้อใบเดียว: สต็อกขั้นต่ำของของซื้อเข้า BOM (แถวสต็อกถูกสร้าง ยอด 0) เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
+  const bomVersion = bom().version;
+  await s.as("persona-pp");
+  const out = await saved(rig.store.run("createPurchaseOrder", { lines: [chem, part], safety: { "EPDM-55": 5, "P-BOX": 3 }, sourcePi: "PI-R" }));
+  assert.equal(out.result, PO_NO);
+  const master = await s.call("app_rf_master");
+  assert.deepEqual(master.purchaseOrders[0].lines.map((line) => [line.materialCode, line.source, line.uom, line.safetyKg]), [["EPDM-55", "rf", null, 5], ["P-BOX", "bom", "box", 3]]);
+  assert.deepEqual(rig.store.data().purchaseOrders, master.purchaseOrders, "the page equals the database");
+  assert.deepEqual(bom().stock.map((row) => [row.itemCode, row.qty, row.safetyQty]), [["P-BOX", 0, 3]]);
+  assert.equal(bom().version, bomVersion + 1);
+  assert.deepEqual([bom().audit.at(-1).action, bom().audit.at(-1).detail], ["rubberflow:createPurchaseOrder", "stock +1"]);
+  assert.equal(master.materials.find((row) => row.code === "EPDM-55").safetyKg, 5, "the chemical keeps its safety stock on the material");
+
+  // สต็อกขั้นต่ำของซื้อ: เฉพาะกลุ่มวางแผน · สมาชิก RB สั่งได้เมื่อค่าเท่าที่เก็บ (3) แต่ค่าต่างไป = RF_FORBIDDEN ทั้งใบ และหน้าปฏิเสธก่อนเรียกฐานข้อมูล
+  const rbOrder = (id, safetyKg) => ({ purchaseOrders: { upsert: [{ id, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg }] }] } });
+  const bomBefore = bom().version;
+  assert.equal(await sendPo(s, "persona-rb", rbOrder(`PO-${rules.ymd(NOW)}-02`, 9)), "RF_FORBIDDEN", "RB changes the safety stock of a part through an order");
+  assert.equal(await sendPo(s, "persona-rb", rbOrder(`PO-${rules.ymd(NOW)}-02`, 3)), undefined, "RB orders the part with the safety stock left as stored");
+  assert.equal(bom().version, bomBefore, "that order changed no BOM row");
+  await s.as("persona-rb");
+  const refusedByPage = rig.store.run("createPurchaseOrder", { lines: [{ ...part, safetyKg: 9, storedSafetyKg: 3 }], safety: { "P-BOX": 9 } });
+  assert.equal(refusedByPage.ok, false);
+  assert.match(refusedByPage.error.message, /ฝ่ายวางแผนเท่านั้น/, "the page refuses before calling the database");
+  await rig.store.catchUp();
+
+  // รับบรรทัดของซื้อ (ST): ปริมาณอย่างเดียว · ยอดคงเหลือและประวัติ receive ฝั่ง BOM · ใบยังรอบรรทัดเคมี
+  await s.as("persona-rb");
+  assert.match(rig.store.run("receivePurchaseLine", { id: PO_NO, materialCode: "P-BOX", qtyKg: 10 }).error?.message ?? "", /ไม่มีสิทธิ์/, "an RB member cannot receive");
+  await s.as("persona-st");
+  const lotTry = await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...master.purchaseOrders[0], lines: master.purchaseOrders[0].lines.map((line) => (line.materialCode === "P-BOX" ? { ...line, receivedKg: 10, lotNo: "L-9", expiry: NOW + 30 * DAY } : line)) }] } }, "receivePurchaseLine");
+  assert.equal(lotTry, "RF_INVALID_PURCHASE", "a part receipt carries no lot or expiry");
+  await saved(rig.store.run("receivePurchaseLine", { id: PO_NO, materialCode: "P-BOX", qtyKg: 10 }));
+  const after = (await s.call("app_rf_master")).purchaseOrders[0];
+  assert.equal(after.status, "ordered");
+  assert.deepEqual([after.lines[1].receivedKg, after.lines[1].lotNo, after.lines[1].expiry], [10, null, null]);
+  assert.equal((await s.call("app_rf_master")).materialLots.length, 0, "no lot was made");
+  assert.deepEqual(bom().stock.map((row) => [row.itemCode, row.qty, row.safetyQty]), [["P-BOX", 10, 3]]);
+  assert.deepEqual(bom().stockMoves.map((move) => [move.kind, move.qty, move.balance, move.ref]), [["receive", 10, 10, PO_NO]]);
+  assert.equal(bom().version, bomVersion + 2);
+  assert.equal(bom().audit.at(-1).detail, "stock +1");
+  assert.equal(rig.store.run("receivePurchaseLine", { id: PO_NO, materialCode: "P-BOX", qtyKg: 1 }).ok, false, "a line is received once");
+  await saved(rig.store.run("receivePurchaseLine", { id: PO_NO, materialCode: "EPDM-55", qtyKg: 65, expiry: NOW + 90 * DAY }));
+  assert.equal((await s.call("app_rf_master")).purchaseOrders[0].status, "received", "the order is received once the chemical and the part line are in");
+  assert.equal(bom().stock[0].qty, 10, "the chemical receipt does not touch the part stock");
+
+  // ชิ้นที่ถูกเปลี่ยนชนิดหลังสั่ง รับเข้าไม่ได้ (ยอดไม่ขยับ) จนกว่าจะกลับเป็นของซื้อ
+  await s.as("persona-pp");
+  const ordered = await saved(rig.store.run("createPurchaseOrder", { lines: [{ ...part, safetyKg: 3, storedSafetyKg: 3, qtyKg: 4 }], safety: { "P-BOX": 3 }, sourcePi: "PI-R" }));
+  const secondNo = ordered.result;
+  const setKind = async (kind) => {
+    await s.as("persona-pp");
+    const item = bom().items.find((row) => row.code === "P-BOX");
+    return s.mock.client.rpc("app_bom_save_master", { p_changes: { items: { upsert: [{ ...item, kind }] } }, p_base_version: bom().version, p_action: "saveItem" });
+  };
+  assert.equal((await setKind("SE")).error, null);
+  await s.as("persona-st");
+  const retyped = await s.call("app_rf_master");
+  const open = retyped.purchaseOrders.find((row) => row.id === secondNo);
+  const receiveSecond = () => sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...open, lines: open.lines.map((line) => ({ ...line, receivedKg: 4 })) }] } }, "receivePurchaseLine");
+  assert.equal(await receiveSecond(), "RF_INVALID_PURCHASE", "the item is no longer a purchased part");
+  assert.equal(bom().stock[0].qty, 10);
+  assert.equal((await setKind("PURCHASED")).error, null);
+  assert.equal(await receiveSecond(), undefined, "with the kind restored the receipt works");
+  assert.equal(bom().stock[0].qty, 14);
 });

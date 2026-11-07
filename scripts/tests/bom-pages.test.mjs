@@ -13,7 +13,7 @@ const FILES = [
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "check", "orders", "customers", "count", "jobs", "audit"];
+const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "check", "orders", "customers", "count", "stock", "jobs", "audit"];
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st"];
 const XSS = "<script>alert(1)</script>";
 
@@ -577,7 +577,9 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   const c = env.ctx("p=orders&sel=DEMO-26001");
   const built = env.context.MNP_BOM_PAGES.orders(c);
   assert.match(built.html, /ส่งออก CSV ใบคำนวณ/);
-  assert.match(built.html, /bom-surplus">-3</, "10 boxes counted against 7 needed by both products shows a surplus, once per item");
+  env.store.data().orders.find((entry) => entry.id === "DEMO-26002").stockCounts["SE-HL24-YE03-400-19-30"] = 600; // 24 more than the 576 sleeves the draft order needs
+  assert.match(env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26002")).html, /bom-surplus">-24</, "600 sleeves counted against 576 needed shows a surplus, once per item");
+  assert.doesNotMatch(built.html, /bom-surplus/, "the released order has no counted surplus (its purchased parts are not counted per PI)");
   assert.match(built.html, /PT-00320[\s\S]*?<td class="right rf-mono">24<\/td>[\s\S]*?<td class="right rf-mono">10<\/td><td class="right rf-mono">14<\/td>/, "stock is subtracted per item (24 needed, 10 counted → 14)");
   assert.match(built.html, /ต้องผลิต\/สั่งซื้อ \(รหัสนี้ทั้งใบ\)/);
   assert.doesNotMatch(built.html, /data-rf-open="stockCount"/, "a released order cannot be counted any more (jobs would not follow)");
@@ -596,7 +598,7 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   csvButton.handlers.click();
   const tabs = env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=req")).html;
   assert.match(tabs, /ต้องการรวม/);
-  assert.match(tabs, /P-BOX-01[\s\S]*?<td class="right rf-mono">0<div class="small bom-surplus">เกิน 3<\/div>/, "the summary tab shows what to make (never negative) and the surplus apart");
+  assert.match(env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26002&tab=req")).html, /SE-HL24-YE03-400-19-30[\s\S]*?<td class="right rf-mono">0<div class="small bom-surplus">เกิน 24<\/div>/, "the summary tab shows what to make (never negative) and the surplus apart");
   assert.doesNotMatch(tabs, /DEMO-TP-01\(P\)-Y<\/span><\/td>/, "the FG itself is not a requirement line");
   clean(tabs);
   const jobsTab = env.context.MNP_BOM_PAGES.orders(env.ctx("p=orders&sel=DEMO-26001&tab=jobs")).html;
@@ -621,8 +623,8 @@ test("the mobile count page lists draft orders, shows SE + RB of the stock-check
   assert.match(html, /inputmode="decimal"/);
   assert.match(html, /นับแล้ว 0\/2/);
   html = await env.render("p=count&order=DEMO-26002&all=1");
-  assert.match(html, /name="itemCode\[\]" value="P-BOX-01"/);
-  assert.doesNotMatch(html, /name="itemCode\[\]" value="DEMO-HL-24\(B\)-A"/);
+  assert.match(html, /name="itemCode\[\]" value="BG-0092"/, "every counted kind is listed with all=1");
+  assert.doesNotMatch(html, /name="itemCode\[\]" value="(P-BOX-01|DEMO-HL-24\(B\)-A)"/, "purchased parts are counted on the part stock page, and never the FG");
   await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30", "RB-DM02-02-YE03-204-19-34"], "qty[]": ["100", ""] }, { orderId: "DEMO-26002" });
   const order = env.store.data().orders.find((entry) => entry.id === "DEMO-26002");
   assert.deepEqual(json(order.stockCounts), { "SE-HL24-YE03-400-19-30": 100 }, "an empty field leaves the item uncounted");
@@ -1386,4 +1388,83 @@ test("in the in-browser demo a release opens no WOs: the confirm says nothing ab
   html = await env.render("p=orders&sel=DEMO-26002&tab=jobs");
   clean(html);
   assert.doesNotMatch(html, /งาน RB ที่ยังไม่มี WO ใน RubberFlow/, "demo jobs are linked by hand; the database mode is the only one that opens WOs for you");
+});
+
+test("the part stock page: ST and WH count, only planners edit the safety stock, the list is searchable and paged, the history dialog lists the moves", async () => {
+  const env = load();
+  env.store.setUser("B08"); // ST
+  let html = await env.render("p=stock");
+  clean(html);
+  assert.match(html, /data-rf-form="countPartStock"/);
+  assert.match(html, /name="itemCode\[\]" value="P-BOX-01"/);
+  assert.match(html, /name="qty\[\]"[^>]*value="5"/, "the counted balance of the demo box");
+  assert.doesNotMatch(html, /name="safetyQty\[\]"/, "ST cannot edit the safety stock");
+  assert.doesNotMatch(html, /value="(SE|RB|BG|PT)-/, "only purchased parts are listed");
+  assert.match(html, /data-rf-open="partHistory"/);
+  assert.match(html, /—/, "no RubberFlow purchase data in this run: the on-order column shows a dash");
+  html = await env.render("p=stock&q=box");
+  assert.match(html, /P-BOX-01/);
+  assert.doesNotMatch(html, /value="P-STK-01"/, "search narrows the list");
+  assert.match(await env.render("p=stock&q=zzzz"), /ไม่พบของซื้อที่ค้นหา/);
+  env.store.setUser("B03"); // ฝ่ายวางแผน
+  html = await env.render("p=stock");
+  assert.match(html, /name="safetyQty\[\]"[^>]*value="10"/, "the planner edits the safety stock");
+  env.store.setUser("B04"); // RB: เมนูนี้ไม่มี
+  assert.match(await env.render("p=stock"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
+
+  // หลายร้อยรายการ: แสดง 100 แล้ว "แสดงเพิ่ม"
+  env.store.setUser("B03");
+  const data = env.store.data();
+  for (let n = 0; n < 250; n += 1) data.items.push({ code: `P-BULK-${String(n).padStart(3, "0")}`, kind: "PURCHASED", name: `ของซื้อ ${n}`, uom: "pcs", ownerDept: "ST", active: true });
+  html = await env.render("p=stock");
+  assert.equal((html.match(/name="itemCode\[\]"/g) ?? []).length, 100);
+  assert.match(html, /แสดงเพิ่ม \(อีก 15\d\)/);
+  assert.equal((await env.render("p=stock&n=200")).match(/name="itemCode\[\]"/g).length, 200);
+
+  // ประวัติของชิ้น
+  const D = env.context.MNP_BOM_DIALOGS;
+  env.store.setUser("B08");
+  const history = D.partHistory(env.ctx("p=stock"), { code: "P-BOX-01" }).html;
+  clean(history);
+  assert.match(history, /นับ[\s\S]*\+5[\s\S]*สมศักดิ์ แก้วใส/);
+  assert.equal(D.partHistory(env.ctx("p=stock"), { code: "NOPE" }), null);
+});
+
+test("issuing parts from the PI page: the dialog lists every line, a shortage blocks the whole issue and offers the purchase, a full stock offers one button; part jobs have no report buttons", async () => {
+  const env = load();
+  env.store.setUser("B08"); // ST
+  const D = env.context.MNP_BOM_DIALOGS;
+  let html = await env.render("p=orders&sel=DEMO-26001");
+  assert.match(html, /data-rf-open="issueParts"[^>]*>เบิกจ่ายของซื้อ</, "ST sees the issue button of a PI with parts left");
+  assert.doesNotMatch(html, /data-rf-open="stockCount"/, "no per-PI counting of a released PI, and none for purchased parts");
+  let dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
+  clean(dialog);
+  assert.match(dialog, /P-BOX-01[\s\S]*ขาด 2/, "the shortage of the boxes (7 needed, 5 on hand)");
+  assert.match(dialog, /ไม่ได้|เบิกจ่ายไม่ได้/);
+  assert.doesNotMatch(dialog, /data-rf-action="issueOrderParts"/, "a shortage hides the issue button");
+  assert.doesNotMatch(dialog, /data-bom-parts-buy/, "ST cannot order, the planner can");
+  env.store.setUser("B03");
+  dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
+  assert.match(dialog, /data-bom-parts-buy/, "the planner can open the purchase from the shortage");
+  env.store.setUser("B08");
+  assert.equal(env.store.run("countPartStock", { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }).ok, true);
+  dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
+  assert.match(dialog, /data-rf-action="issueOrderParts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
+  assert.doesNotMatch(dialog, /data-bom-parts-buy/);
+  // กด → เบิกจ่าย → ไม่มีอะไรเหลือ: ปุ่มและ dialog หาย
+  const issued = env.store.run("issueOrderParts", { orderId: "DEMO-26001" });
+  assert.equal(issued.ok, true, issued.error?.message);
+  html = await env.render("p=orders&sel=DEMO-26001");
+  assert.doesNotMatch(html, /data-rf-open="issueParts"/);
+  assert.equal(D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }), null);
+  assert.equal(D.issueParts(env.ctx("p=orders&sel=DEMO-26002"), { orderId: "DEMO-26002" }), null, "a draft order has no part jobs");
+  // หน้างานแผนก ST: งานของซื้อไม่มีปุ่มรายงาน/พักงาน
+  html = await env.render("p=jobs&dept=ST&st=all");
+  assert.match(html, /P-BOX-01/);
+  assert.doesNotMatch(html, /data-rf-open="jobReport"|data-rf-action="setJobStatus"/);
+  const fresh = load();
+  fresh.store.setUser("B08");
+  html = await fresh.render("p=jobs&dept=ST");
+  assert.match(html, /เบิกจ่ายที่ใบ PI/, "an open part job points to the PI page");
+  assert.doesNotMatch(html, /data-rf-open="jobReport"|data-rf-action="setJobStatus"/, "and offers no report or hold");
 });

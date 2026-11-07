@@ -631,3 +631,37 @@ test("a code that is purchased in one product but made by a department in anothe
   assert.ok(items.get("Z9").rubber && typeof items.get("Z9").rubber === "object", "a part upgraded to a rod takes the rod data of the row that upgraded it");
   for (const [parentCode, lines] of boms) for (const line of lines) assert.equal(rules.childKindError(items.get(parentCode).kind, items.get(line.childCode).kind), "", `${parentCode} → ${line.childCode}`);
 });
+
+test("net requirements ignore the per-PI counts of purchased parts (their stock is one balance per part), other kinds keep the BOMSHEET rule", () => {
+  const line = (itemCode, kind, level, required, parentCode = null, qtyPerParent = 0) => ({ itemCode, name: itemCode, kind, uom: "pcs", producerDept: kind === "PURCHASED" ? "ST" : "GR", level, required, fgCode: "FG-1", parentCode, qtyPerParent });
+  const lines = [line("FG-1", "FG", 0, 10), line("SE-1", "SE", 1, 20, "FG-1", 2), line("P-1", "PURCHASED", 1, 30, "FG-1", 3)];
+  const net = new Map(rules.netRequirements(lines, { "SE-1": 5, "P-1": 12 }).map((entry) => [entry.itemCode, entry]));
+  assert.deepEqual([net.get("SE-1").stock, net.get("SE-1").toMake], [5, 15], "a counted SE still reduces the work");
+  assert.deepEqual([net.get("P-1").stock, net.get("P-1").toMake, net.get("P-1").net, net.get("P-1").surplus], [undefined, 30, 30, 0], "a purchased part needs its full requirement whatever was counted for the PI");
+});
+
+test("partNeeds: this PI's unissued ST part jobs against the part balance, minus what other released PIs hold, plus open part order lines", () => {
+  const job = (id, orderId, itemCode, qtyPlanned, extra = {}) => ({ id, orderId, dept: "ST", kind: "PURCHASED", itemCode, name: `ชื่อ ${itemCode}`, uom: "box", qtyPlanned, qtyRequired: qtyPlanned, qtyDone: 0, status: "queued", ...extra });
+  const orders = [{ id: "PI-1", status: "released" }, { id: "PI-2", status: "in_progress" }, { id: "PI-3", status: "completed" }, { id: "PI-4", status: "cancelled" }];
+  const jobs = [
+    job("J1", "PI-1", "P-1", 30), job("J2", "PI-1", "P-2", 5), job("J3", "PI-1", "P-3", 4, { status: "done", qtyDone: 4 }),
+    job("J4", "PI-2", "P-1", 20, { qtyDone: 5 }), job("J5", "PI-3", "P-1", 99), job("J6", "PI-4", "P-1", 99),
+    { ...job("J7", "PI-1", "P-9", 7), dept: "GR", kind: "SE" }, { ...job("J8", "PI-1", "P-8", 7), kind: "FG" },
+  ];
+  const stock = [{ itemCode: "P-1", qty: 40, safetyQty: 8 }, { itemCode: "P-3", qty: 100, safetyQty: 0 }];
+  const purchaseOrders = [
+    { id: "PO-1", status: "ordered", lines: [{ materialCode: "P-1", source: "bom", qtyKg: 25, receivedKg: null }, { materialCode: "P-1", source: "bom", qtyKg: 100, receivedKg: 100 }, { materialCode: "P-1", source: "rf", qtyKg: 500, receivedKg: null }] },
+    { id: "PO-2", status: "cancelled", lines: [{ materialCode: "P-1", source: "bom", qtyKg: 900, receivedKg: null }] },
+  ];
+  const withPo = rules.partNeeds({ jobs, orders, stock, purchaseOrders }, "PI-1");
+  assert.deepEqual(withPo.rows.map((row) => row.itemCode), ["P-1", "P-2"], "only this PI's unissued ST part jobs (a done job, other kinds and other departments are not needs)");
+  assert.deepEqual(withPo.rows[0], { itemCode: "P-1", name: "ชื่อ P-1", uom: "box", needQty: 30, onHandQty: 40, reservedQty: 15, onOrderQty: 25, shortage: 0, safetyQty: 8, orderQty: 0 },
+    "reserved = what the other released PI still has to issue (20 - 5); on order = open part lines only (not received, not chemicals, not cancelled orders)");
+  assert.equal(withPo.anyShort, true, "P-2 has no stock row at all");
+  assert.deepEqual(withPo.rows[1], { itemCode: "P-2", name: "ชื่อ P-2", uom: "box", needQty: 5, onHandQty: 0, reservedQty: 0, onOrderQty: 0, shortage: 5, safetyQty: 0, orderQty: 5 }, "a missing stock row means a balance of 0");
+  const noPo = rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, "PI-1");
+  assert.deepEqual([noPo.rows[0].shortage, noPo.rows[0].orderQty], [5, 13], "40 - 15 = 25 free against 30 needed: short 5, suggested order = short + safety stock");
+  assert.deepEqual(rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, "PI-2").rows.map((row) => [row.itemCode, row.needQty, row.reservedQty]), [["P-1", 15, 30]], "from the other PI the first one is the reservation");
+  assert.deepEqual(rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, "PI-3"), { rows: [], anyShort: false }, "a closed PI needs nothing");
+  assert.deepEqual(rules.partNeeds({}, "X"), { rows: [], anyShort: false }, "empty data is tolerated");
+});

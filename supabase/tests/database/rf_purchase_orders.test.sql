@@ -259,7 +259,7 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' ->
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'cancelledAt', 'null'::jsonb, 'a cancel time sent by the client is ignored');
 select ok((current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'createdAt')::numeric > 0, 'the creation time is set by the server');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 0,
-  '{"materialCode":"MAT-A","needKg":100,"availableKg":20,"shortageKg":80,"safetyKg":60,"qtyKg":140,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
+  '{"materialCode":"MAT-A","source":"rf","uom":null,"needKg":100,"availableKg":20,"shortageKg":80,"safetyKg":60,"qtyKg":140,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
   'a line is stored in the canonical shape with empty receipt fields');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'availableKg', '-5', 'an availability below zero is kept');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'sourcePi', '251110-25001', 'the source PI is kept');

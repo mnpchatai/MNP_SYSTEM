@@ -449,14 +449,19 @@
 
   // ---------- ใบสั่งซื้อวัตถุดิบ ----------
   // ใบสั่งซื้อ { id: PO-yyyymmdd-nn, status: ordered|received|cancelled, sourcePi, sourceRequisition, note, lines, createdAt, createdBy, cancelledAt }
-  // บรรทัด { materialCode, needKg, availableKg, shortageKg, safetyKg, qtyKg, receivedKg|null, lotNo|null, expiry|null, receivedAt|null, receivedBy|null }
+  // บรรทัด { materialCode, source: rf|bom, uom: null|หน่วยของชิ้น, needKg, availableKg, shortageKg, safetyKg, qtyKg, receivedKg|null, lotNo|null, expiry|null, receivedAt|null, receivedBy|null }
+  // source "rf" = เคมี (kg สร้างล็อต + วันหมดอายุตอนรับ) · "bom" = ของซื้อจาก BOM (ชื่อช่อง ...Kg ใช้ต่อกันแต่หน่วยเป็น uom ของชิ้น รับเข้าเพิ่มยอดคงเหลือของ BOM ไม่มีล็อต ไม่มีวันหมดอายุ)
+  // ฐานข้อมูลตรวจรหัสของซื้อกับ item master และตั้งหน่วยเอง · โหมดในเครื่อง RubberFlow และ BOM แยกที่เก็บ จึงรับของซื้อแล้วยอดคงเหลือของ BOM ไม่เปลี่ยน (เปลี่ยนเฉพาะโหมดฐานข้อมูล)
   // ฐานข้อมูลตรวจซ้ำทุกข้อและประทับเวลา/ผู้บันทึกเอง · สร้างได้เฉพาะ ordered ที่ยังไม่มีข้อมูลการรับ
   const PO_MAX_LINES = 100;
-  const kgOf = (value, label, { positive = false } = {}) => {
+  const kgOf = (value, label, { positive = false, digits = 3 } = {}) => {
     const n = Number(value);
     if (value === "" || value === null || value === undefined || !Number.isFinite(n) || n < 0 || n > 1e9 || (positive && n <= 0)) fail(`${label}ต้องเป็นตัวเลข${positive ? "มากกว่า 0" : "0 ขึ้นไป"}`);
-    return Math.round(n * 1000) / 1000;
+    const scale = 10 ** digits;
+    return Math.round(n * scale) / scale;
   };
+  // สต็อกขั้นต่ำของซื้อ: ความละเอียดเดียวกับหน้าคลังของซื้อของ BOM (4 ตำแหน่ง) ค่าที่เก็บจึงเทียบกับฐานข้อมูลได้ตรงตัว
+  const partSafetyOf = (value, code) => kgOf(value, `สต็อกขั้นต่ำของ ${code}`, { digits: 4 });
   // พร้อมใช้ติดลบได้ (ฐานข้อมูลรับ ±1e9)
   const signedKgOf = (value, label) => {
     const n = Number(value);
@@ -476,6 +481,24 @@
     const seen = new Set();
     const lines = given.map((line) => {
       const code = String(line.materialCode ?? "").trim();
+      if (line.source === "bom") {
+        // ของซื้อ: สต็อกขั้นต่ำเก็บที่คลังของซื้อของ BOM (ฐานข้อมูลบันทึกให้ในคำสั่งเดียวกัน) ไม่ใช่ที่วัตถุดิบ
+        if (!code) fail("ไม่พบรหัสของซื้อ");
+        if (seen.has(code)) fail(`${code} ซ้ำในใบสั่งซื้อ`);
+        seen.add(code);
+        const uom = String(line.uom ?? "").trim().slice(0, 20);
+        if (!uom) fail(`ไม่ทราบหน่วยของ ${code}`);
+        // สต็อกขั้นต่ำของซื้อ (เก็บที่คลังของซื้อ) แก้ได้เฉพาะกลุ่มวางแผน: สมาชิก RB สั่งซื้อได้ต่อเมื่อค่าเท่าที่เก็บ (storedSafetyKg ที่หน้าต่างสั่งซื้อส่งมา) · ฐานข้อมูลตรวจซ้ำ (RF_FORBIDDEN)
+        if (ctx.remote && !ctx.user?.planner) {
+          const wanted = partSafetyOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, code);
+          if (wanted !== partSafetyOf(line.storedSafetyKg ?? 0, code)) fail(`แก้สต็อกขั้นต่ำของของซื้อ ${code} ได้โดยฝ่ายวางแผนเท่านั้น`);
+        }
+        return {
+          materialCode: code, source: "bom", uom, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: signedKgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
+          safetyKg: partSafetyOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? 0, code), qtyKg: kgOf(line.qtyKg, `จำนวนสั่งของ ${code}`, { positive: true }),
+          receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null,
+        };
+      }
       const material = d.materials.find((row) => row.code === code) || fail(`ไม่พบวัตถุดิบ ${code}`);
       if (material.active === false) fail(`วัตถุดิบ ${code} เลิกใช้แล้ว สั่งซื้อไม่ได้`);
       if (seen.has(code)) fail(`${code} ซ้ำในใบสั่งซื้อ`);
@@ -486,7 +509,7 @@
         audit(d, ctx, "แก้สต็อกขั้นต่ำ", `${code} = ${safetyKg} kg`);
       }
       return {
-        materialCode: code, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: signedKgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
+        materialCode: code, source: "rf", uom: null, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: signedKgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
         safetyKg, qtyKg: kgOf(line.qtyKg, `จำนวนสั่งของ ${code}`, { positive: true }),
         receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null,
       };
@@ -516,6 +539,18 @@
     if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกแล้ว"} รับเข้าไม่ได้`);
     const line = order.lines.find((row) => row.materialCode === materialCode) || fail(`ไม่พบวัตถุดิบ ${materialCode} ในใบสั่งซื้อ ${order.id}`);
     if (isReceived(line)) fail(`${materialCode} ในใบสั่งซื้อ ${order.id} รับเข้าแล้ว`);
+    if (line.source === "bom") {
+      // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต/วันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มที่ฐานข้อมูลในคำสั่งเดียวกัน
+      const qty = kgOf(qtyKg, "ปริมาณที่รับ", { positive: true });
+      line.receivedKg = qty;
+      line.lotNo = null;
+      line.expiry = null;
+      line.receivedAt = ctx.now;
+      line.receivedBy = ctx.user?.name ?? null;
+      if (order.lines.every(isReceived)) order.status = "received";
+      audit(d, ctx, "ตรวจสอบรับเข้าตามใบสั่งซื้อ", `${order.id} ${materialCode} ${qty} ${line.uom ?? ""}`.trim());
+      return materialCode;
+    }
     const lotNo = receiveMaterial(d, { materialCode, qtyKg, expiry, supplier: String(supplier ?? "").trim() || order.id }, ctx);
     const lot = d.materialLots.find((row) => row.lotNo === lotNo);
     line.receivedKg = lot.qtyKg;
