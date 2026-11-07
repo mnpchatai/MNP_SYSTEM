@@ -172,6 +172,9 @@
   // batch ของใบเบิกใบถัดไป = ที่ยังไม่ได้เบิก แต่ไม่เกิน MAX_REQ_BATCHES ต่อใบ (เหลือมากกว่านั้นเบิกต่อได้อีกใบ)
   const nextRequisitionBatches = (order, recipe, requisitions) => Math.min(MAX_REQ_BATCHES, remainingBatches(order, recipe, requisitions));
 
+  // กิโลคอมปาวด์ที่ WO ยังต้องเบิก ตามที่ใบเบิกจะจ่ายจริง = batch ที่ยังไม่ได้เบิกทั้งหมด (ปัดขึ้น ไม่จำกัด 10 ต่อใบ) × น้ำหนักต่อ batch · สูตรไม่มีน้ำหนักต่อ batch ใช้กิโลตรง ๆ
+  const remainingNeedKg = (order, recipe, requisitions) => (Number(recipe?.batchKg) > 0 ? remainingBatches(order, recipe, requisitions) * Number(recipe.batchKg) : orderRemainingKg(order, recipe, requisitions));
+
   // ค่าตั้งต้นของจำนวนสั่ง: ขาด = ส่วนที่ขาด + สต็อกขั้นต่ำ · ไม่ขาด = 0 (ผู้วางแผนใส่เองได้)
   const suggestOrderKg = (shortageKg, safetyKg) => (Number(shortageKg) > 0 ? round3(Number(shortageKg) + Math.max(0, Number(safetyKg) || 0)) : 0);
 
@@ -180,6 +183,7 @@
   // · onOrderKg สั่งค้างรับ (บรรทัดของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ) · availableKg พร้อมใช้ = onHandKg − reservedKg + onOrderKg (เก็บในบรรทัดใบสั่งซื้อ ไม่แสดงเป็นคอลัมน์)
   // พร้อมใช้ติดลบได้ (WO อื่น/ใบเบิกใช้สต็อกไปแล้วเกินที่มี) เก็บตามจริง · ขาด = max(0, ต้องใช้ − พร้อมใช้) · WO ที่ไม่มีสูตรไม่นับ (คืนใน skipped) · WO ที่ปิด/ยกเลิกแล้วไม่ใช่ความต้องการ
   // ใบเบิกใหม่จ่ายทันทีและหักสต็อกแล้ว จึงไม่จองอะไร · options.remote = false (โหมดสาธิต): ใบเก่าหักสต็อกตอนจ่ายครบ จึงจองทุกรายการของใบที่ยังจ่ายไม่ครบ
+  // ความต้องการของ WO ที่ยังไม่ได้เบิก (ทั้งที่ถามและ WO อื่น) = batch ที่เหลือ × น้ำหนักต่อ batch (remainingNeedKg) เท่ากับที่ใบเบิกจะจ่ายจริง
   // options.needKg = { [รหัส WO]: kg } ใช้ kg นี้เป็นความต้องการของ WO ที่ถาม แทนส่วนที่ยังไม่ได้เบิก (ใบเบิกที่กำลังสร้างเบิกอยู่แล้ว)
   function chemicalNeeds(data, woIds, now = Date.now(), options = {}) {
     const { orders = [], recipes = [], requisitions = [], materialLots = [], purchaseOrders = [], materials = [] } = data ?? {};
@@ -192,7 +196,7 @@
     const skipped = [];
     const counted = [];
     const share = (order, recipe, map, ownKg) => {
-      const kg = Number.isFinite(ownKg) ? ownKg : orderRemainingKg(order, recipe, requisitions);
+      const kg = Number.isFinite(ownKg) ? ownKg : remainingNeedKg(order, recipe, requisitions);
       const total = totalPhr(recipe);
       if (!(kg > 0) || !(total > 0)) return;
       for (const item of recipe.items) add(map, item.materialCode, (kg * Number(item.phr)) / total);

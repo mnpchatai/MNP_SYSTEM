@@ -2919,7 +2919,7 @@ test("through the module: release says how many WOs were opened and why jobs wer
   const purchase = s.admin.log.dialogs.filter((html) => /data-rf-dialog="purchase"/.test(html));
   assert.equal(purchase.length, 1);
   assert.match(purchase[0], new RegExp(`สั่งซื้อวัตถุดิบ · ${id}`));
-  assert.ok(purchase[0].includes("8.063") && purchase[0].includes("4.838"), "12.9 kg of compound split 100 : 60 between EPDM-55 and CB-N550");
+  assert.ok(purchase[0].includes("62.5") && purchase[0].includes("37.5"), "two WOs of 5.25 and 7.65 kg each take a whole 50 kg batch: 100 kg of compound split 100 : 60 between EPDM-55 and CB-N550");
   assert.match(purchase[0], /data-rf-form="createPurchaseOrder"/);
   assert.doesNotMatch(purchase[0], /ไม่ได้นับ/, "every job got a WO");
   // ใบ PI ที่ปล่อยผลิตแล้วมีปุ่ม "ตรวจวัตถุดิบ" พร้อมเลข WO ของใบ · ใบร่างไม่มี

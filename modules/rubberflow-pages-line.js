@@ -150,6 +150,9 @@
         const recipe = order && rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
         const n = order ? batchesOf(order) : 0;
         batches.value = n ? String(n) : "";
+        // เหลือเกิน 10 batch: ใบนี้เบิกได้ 10 ที่เหลือเบิกเป็นใบถัดไป (บอกใน title ไม่เพิ่มข้อความถาวร)
+        const left = order && recipe ? rules.remainingBatches(order, recipe, data.requisitions) : 0;
+        batches.title = left > n ? `ใบนี้เบิกได้สูงสุด ${n} batch · เหลืออีก ${left - n} batch ต้องเบิกเป็นใบถัดไป` : "";
         const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now) })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
         // ปุ่ม "สั่งซื้อส่วนที่ขาด" ส่งวัตถุดิบที่ขาดเข้า dialog สั่งซื้อ โดยคำนวณคอลัมน์เดียวกับทางเข้าอื่น (rules.chemicalNeeds): ขาด = ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)

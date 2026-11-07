@@ -353,6 +353,7 @@
     if (!["released", "in_progress"].includes(order.status)) fail('ใบสั่งผลิตต้องอยู่ในสถานะ "ปล่อยผลิต" หรือ "กำลังผลิต"');
     const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร ${order.recipeId}`);
     const n = ctx.history ? num(batches, "จำนวน batch") : rules().nextRequisitionBatches(order, recipe, d.requisitions);
+    if (ctx.history && (!Number.isInteger(n) || n < 1 || n > 10)) fail("จำนวน batch ต้องเป็นจำนวนเต็ม 1–10");
     if (n < 1) fail(`${order.id} เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว`);
     // จองสต็อกที่ใบเบิกเก่าที่ค้างอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน
     const reserved = reservedByOpenRequisitions(d, ctx);
