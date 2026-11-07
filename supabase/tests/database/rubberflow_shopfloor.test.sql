@@ -290,9 +290,9 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions',
 reset role;
 update public.rf_orders set target_kg = 180 where is_test and wo_no = 'WO-S1';
 update public.rf_master_state set version = version + 1 where is_test;
+select is((select count(*) from public.rf_requisitions where is_test and order_no = 'WO-S1'), 1::bigint, 'only the first requisition exists for the work order so far');
 set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select is((select count(*) from public.rf_requisitions where is_test and order_no = 'WO-S1'), 1::bigint, 'only the first requisition exists for the work order so far');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-X","batches":1}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', '180 kg needed - 60 kg requisitioned = 120 kg = 2 batches: one batch is not what the work order needs');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-X","batches":3}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'and three batches are too many');
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-2","batches":2}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition'))::text, true);
