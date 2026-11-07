@@ -205,15 +205,19 @@ test("the requisition dialog sends the purchase dialog the same breakdown: its o
   env.store.setUser("U03");
   const data = env.store.data();
   const rules = env.context.MNP_RUBBERFLOW_RULES;
-  const order = data.orders.find((row) => ["released", "in_progress"].includes(row.status));
-  const recipe = rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
+  // the dialog lists only WOs with batches left: take the first of them; its batch count comes from the WO (not typed)
+  const recipeOfOrder = (row) => rules.recipeOf(data.recipes, row.recipeId, row.recipeRevision);
+  const order = data.orders.find((row) => ["released", "in_progress"].includes(row.status) && rules.nextRequisitionBatches(row, recipeOfOrder(row), data.requisitions) > 0);
+  const recipe = recipeOfOrder(order);
+  const batches = rules.nextRequisitionBatches(order, recipe, data.requisitions);
+  assert.ok(batches >= 1);
   const [first] = rules.recipeLines(recipe);
   for (const lot of data.materialLots) if (lot.materialCode === first.materialCode) lot.qtyKg = 0;
   const opened = [];
   const run = (onOrderKg) => {
     data.purchaseOrders = onOrderKg ? [{ id: "PO-T", status: "ordered", lines: [{ materialCode: first.materialCode, qtyKg: onOrderKg, receivedKg: null }] }] : [];
     const nodes = {
-      "[data-rf-order]": { value: order.id, addEventListener() {} }, "[data-rf-batches]": { value: "1", addEventListener() {} }, "[data-rf-submit]": { disabled: false },
+      "[data-rf-order]": { value: order.id, addEventListener() {} }, "[data-rf-batches]": { value: "" }, "[data-rf-submit]": { disabled: false },
       "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } },
     };
     const built = env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx());
@@ -226,7 +230,7 @@ test("the requisition dialog sends the purchase dialog the same breakdown: its o
   };
   const plain = run(0);
   const ordered = run(1);
-  assert.equal(plain.needKg, Math.round(first.kgPerBatch * 1000) / 1000, "the need is the one batch of this requisition");
+  assert.equal(plain.needKg, Math.round(first.kgPerBatch * batches * 1000) / 1000, "the need is the batches the WO still has to requisition");
   assert.equal(ordered.onOrderKg, 1, "the line on order is passed on");
   for (const row of [plain, ordered]) {
     assert.equal(row.availableKg, Math.round((row.onHandKg - row.reservedKg + row.onOrderKg) * 1000) / 1000, "on hand − reserved + on order");
@@ -234,6 +238,39 @@ test("the requisition dialog sends the purchase dialog the same breakdown: its o
   }
   assert.equal(Math.round((plain.shortageKg - ordered.shortageKg) * 1000) / 1000, 1, "the kilos already on order reduce the shortage");
   assert.equal(Math.round((plain.orderKg - ordered.orderKg) * 1000) / 1000, 1, "and the default order quantity");
+});
+
+test("the requisition dialog lists only work orders with batches left, fills the batch count from the WO (read-only, shown once) and shows an empty state when every WO is covered", () => {
+  const env = load();
+  env.store.setUser("U03");
+  const data = env.store.data();
+  const rules = env.context.MNP_RUBBERFLOW_RULES;
+  const recipeOfOrder = (row) => rules.recipeOf(data.recipes, row.recipeId, row.recipeRevision);
+  const open = data.orders.filter((row) => ["released", "in_progress"].includes(row.status));
+  const left = (row) => rules.nextRequisitionBatches(row, recipeOfOrder(row), data.requisitions);
+  const covered = open.filter((row) => left(row) === 0);
+  const listed = open.filter((row) => left(row) > 0);
+  assert.ok(covered.length >= 1 && listed.length >= 1, "the demo has a WO whose requisitions cover it and a WO with batches left");
+  const build = () => env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx());
+  const html = build().html;
+  for (const row of covered) assert.doesNotMatch(html, new RegExp(`value="${row.id}"`), `${row.id} is covered: not listed`);
+  for (const row of listed) assert.match(html, new RegExp(`value="${row.id}"`), `${row.id} has batches left: listed`);
+  assert.match(html, /data-rf-batches readonly/, "the batch count is not typed");
+  assert.equal((html.match(/name="batches"/g) ?? []).length, 1, "shown once");
+  // bind: the field shows the WO's remaining batches and follows the selection
+  const nodes = {
+    "[data-rf-order]": { value: listed[0].id, addEventListener() {} }, "[data-rf-batches]": { value: "" }, "[data-rf-submit]": { disabled: false },
+    "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", addEventListener() {} },
+  };
+  build().bind({ querySelector: (selector) => nodes[selector] }, {});
+  assert.equal(nodes["[data-rf-batches]"].value, String(left(listed[0])));
+  // every WO covered: an empty state instead of an empty select, and no submit
+  for (const row of data.orders) row.status = "completed";
+  const empty = build();
+  assert.match(empty.html, /ไม่มีใบสั่งผลิตที่รอเบิกเคมี/);
+  assert.doesNotMatch(empty.html, /data-rf-order/);
+  assert.match(empty.html, /data-rf-submit[^>]*disabled/);
+  empty.bind({ querySelector: () => null }, {});
 });
 
 test("every dialog of the prototype builds from the seed, with print documents carrying a Code 39 barcode", () => {

@@ -866,6 +866,11 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           if (!Number.isInteger(record.batches) || record.batches < 1 || record.batches > 10) fail(bad);
           const recipe = next.recipes.find((row) => row.id === order.recipeId && row.revision === order.recipeRevision);
           if (!recipe) fail(bad);
+          // จำนวน batch ต้องเท่ากับที่ WO ยังไม่ได้เบิก (ไม่เกิน 10 ต่อใบ): เบิกครบแล้ว (0) หรือไม่ตรง = RF_INVALID_REQUISITION · ถ้าใบเบิกของ WO นี้เปลี่ยนหลัง base = client ถือสำเนาเก่า ได้ RF_STALE แทน (ตรงกับ SQL)
+          if (record.batches !== R.nextRequisitionBatches(order, recipe, next.requisitions)) {
+            if (next.requisitions.some((row) => row.orderId === order.id && stale("requisitions", row.id))) fail("RF_STALE");
+            fail(bad);
+          }
           // FEFO ในธุรกรรมเดียวกับการสร้างใบ: หักที่ใบเบิกเก่า (ยัง weighing) จองไว้ในรายการที่ยังไม่ชั่ง · ฐานข้อมูลจัดสรรเอง ไม่เชื่อรายการล็อตที่ client ส่ง · แล้วจ่ายทันที: actualKg = targetKg หักสต็อกล็อตตามบรรทัด
           const reserved = {};
           for (const open of next.requisitions) for (const line of open.status === "weighing" ? open.lines : []) if (line.actualKg === null) reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg;

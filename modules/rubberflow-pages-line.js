@@ -125,24 +125,31 @@
   dialogs.createRequisition = (ctx) => {
     const { data, now, ui, rules } = ctx;
     const { recipeLines, allocateFefo, fmtNum } = rules;
-    const orders = data.orders.filter((order) => ["released", "in_progress"].includes(order.status));
-    const body = `<div class="rf-grid rf-g3">
-        ${ui.field("ใบสั่งผลิต *", ui.select("orderId", orders.map((order) => ({ value: order.id, label: `${order.id} · ${rules.orderLabel(order)}` })), { value: orders[0]?.id ?? "", placeholder: orders.length ? null : "ไม่มีใบสั่งผลิตที่ปล่อยผลิต", extra: "data-rf-order required" }))}
-        ${ui.field("จำนวน batch *", ui.input("batches", { type: "number", min: 1, max: 10, value: "1", required: true, extra: "data-rf-batches" }))}
+    // ลิสต์เฉพาะ WO ที่ยังมี batch ไม่ได้เบิก (เบิกครบแล้วไม่ขึ้นอีก) · จำนวน batch มาจาก WO ไม่ต้องกรอก
+    const batchesOf = (order) => {
+      const recipe = rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
+      return recipe ? rules.nextRequisitionBatches(order, recipe, data.requisitions) : 0;
+    };
+    const orders = data.orders.filter((order) => ["released", "in_progress"].includes(order.status) && batchesOf(order) > 0);
+    const body = !orders.length ? ui.empty("ไม่มีใบสั่งผลิตที่รอเบิกเคมี (ใบที่ปล่อยผลิตเบิกครบแล้ว หรือยังไม่มีใบที่ปล่อยผลิต)") : `<div class="rf-grid rf-g3">
+        ${ui.field("ใบสั่งผลิต *", ui.select("orderId", orders.map((order) => ({ value: order.id, label: `${order.id} · ${rules.orderLabel(order)}` })), { value: orders[0]?.id ?? "", extra: "data-rf-order required" }))}
+        ${ui.field("จำนวน batch", ui.input("batches", { type: "number", value: "", extra: "data-rf-batches readonly" }))}
         ${ui.field("หมายเหตุ", ui.input("note"))}
       </div><div class="muted small" data-rf-recipe-line></div><div data-rf-shortage></div><div data-rf-preview></div>`;
     const html = ui.dialog("createRequisition", "เบิกเคมี (ระเบิดสูตร)", `<form data-rf-form="createRequisition" data-rf-success="เบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit title="จ่ายทันที หักสต็อกตามล็อตที่แสดง"${orders.length ? "" : " disabled"}>เบิก</button>`, wide: true });
     const bind = (dialog, bindCtx) => {
-      const orderSelect = dialog.querySelector("[data-rf-order]");
-      const batches = dialog.querySelector("[data-rf-batches]");
       const submit = dialog.querySelector("[data-rf-submit]");
+      const orderSelect = dialog.querySelector("[data-rf-order]");
+      if (!orderSelect) return;
+      const batches = dialog.querySelector("[data-rf-batches]");
       const mayBuy = ctx.can("purchase") && typeof (bindCtx ?? ctx).openDialog === "function";
       let shortRows = [];
       let shortNote = "";
       const paint = () => {
         const order = data.orders.find((row) => row.id === orderSelect.value);
         const recipe = order && rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
-        const n = Number(batches.value || 0);
+        const n = order ? batchesOf(order) : 0;
+        batches.value = n ? String(n) : "";
         const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now) })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
         // ปุ่ม "สั่งซื้อส่วนที่ขาด" ส่งวัตถุดิบที่ขาดเข้า dialog สั่งซื้อ โดยคำนวณคอลัมน์เดียวกับทางเข้าอื่น (rules.chemicalNeeds): ขาด = ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)
@@ -158,7 +165,6 @@
         if (submit) submit.disabled = !order || short;
       };
       orderSelect.addEventListener("change", paint);
-      batches.addEventListener("input", paint);
       // ปุ่มอยู่ในกล่องที่วาดซ้ำทุกครั้ง จึงผูกที่กล่อง: เปิด dialog สั่งซื้อพร้อมส่วนที่ขาดของใบเบิกนี้ (แทน dialog นี้)
       dialog.querySelector("[data-rf-shortage]").addEventListener("click", (event) => {
         if (!event.target?.closest?.("[data-rf-po-short]")) return;

@@ -715,6 +715,14 @@ async function prepare(s, rig, { linked = false, target = 90 } = {}) {
   }
   return { order, lots };
 }
+// ใบสั่งผลิตอีกใบ (ปล่อยผลิตแล้ว ต้องใช้ 1 batch เหมือนใบแรก): ใบเบิกใบแรกของ WO เบิกครบทุก batch แล้ว ใบเบิกใบที่สองของข้อทดสอบจึงต้องเป็นของ WO อีกใบ
+async function addOrder(s, rig) {
+  await s.as("persona-rb");
+  const id = (await saved(rig.store.run("createOrder", { ...ORDER }))).result;
+  await s.as("persona-rbh");
+  await saved(rig.store.run("setOrderStatus", { id, status: "released" }));
+  return id;
+}
 const go = async (s, rig, persona, name, payload) => {
   await s.as(persona);
   return saved(rig.store.run(name, payload));
@@ -745,11 +753,20 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   assert.deepEqual([req.status, req.issuedBy, req.lines[0].weighedBy, typeof req.issuedAt], ["issued", "ประยุทธ รีดยาง", "ประยุทธ รีดยาง", "number"]);
   assert.deepEqual([(await master()).materialLots.find((row) => row.lotNo === soon).qtyKg, (await master()).materialLots.find((row) => row.lotNo === carbon).qtyKg], [8.75, 21.25], "stock fell by the issued kilograms at once");
   await inSync(s, rig, "requisition issued");
-  // ใบเบิกที่สองเห็นว่าล็อต -02 เหลือ 8.75 kg → หยิบส่วนที่เหลือของ -02 แล้วต่อด้วย -01
-  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  // WO นี้เบิกครบแล้ว (ต้องใช้ 1 batch): เบิกซ้ำไม่ได้ ทั้งหน้าจอและฐานข้อมูล (batch ไม่ตรงกับที่เหลือ = 0)
+  assert.match(rig.store.run("createRequisition", { orderId: order }).error.message, /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+  await s.as("persona-rb");
+  const covered = await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...req, id: `REQ-${TODAY}-77`, batches: 1 }] } }, p_base_version: (await master()).version, p_action: "createRequisition" });
+  assert.equal(covered.error.code, "RF_INVALID_REQUISITION", "the database refuses a second requisition for a covered WO");
+  const wrongCount = await s.mock.client.rpc("app_rf_save", { p_changes: { requisitions: { upsert: [{ ...req, id: `REQ-${TODAY}-78`, orderId: order, batches: 3 }] } }, p_base_version: (await master()).version, p_action: "createRequisition" });
+  assert.equal(wrongCount.error.code, "RF_INVALID_REQUISITION", "a batch count that is not the WO's remaining batches is refused");
+  // ใบเบิกที่สองของ WO อีกใบเห็นว่าล็อต -02 เหลือ 8.75 kg → หยิบส่วนที่เหลือของ -02 แล้วต่อด้วย -01
+  const orderB = await addOrder(s, rig);
+  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: orderB })).result;
   assert.deepEqual((await master()).requisitions.find((row) => row.id === second).lines.filter((line) => line.materialCode === "EPDM-55").map((line) => [line.lotNo, line.targetKg]), [[soon, 8.75], [slow, 22.5]]);
   // สต็อก CB เหลือ 40 − 2 × 18.75 = 2.5 kg: ใบที่สามไม่พอ (หน้าจอปฏิเสธก่อน · ฐานข้อมูลตอบรหัสเอง)
-  assert.match(rig.store.run("createRequisition", { orderId: order, batches: 1 }).error.message, /สต็อกไม่พอตามหลัก FEFO/);
+  const orderC = await addOrder(s, rig);
+  assert.match(rig.store.run("createRequisition", { orderId: orderC }).error.message, /สต็อกไม่พอตามหลัก FEFO/);
   await inSync(s, rig, "second requisition issued");
 
   // ผสม: สองขั้น · Dump temp ขั้น 2 ตามสูตร → ผ่าน · ใบเบิกถูกใช้ · ใบสั่งผลิต released → in_progress ในคำสั่งเดียวกัน
@@ -850,9 +867,12 @@ test("an old requisition that is still weighing: weigh it line by line within th
     delete q.issuedBy;
     m.versions.requisitions[id] = m.version;
   });
-  const first = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  const first = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order })).result;
   makeOld(first);
-  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  await rig.store.catchUp();
+  // ใบเก่าที่ยังค้างชั่งก็นับว่า WO เบิกแล้ว: เบิกซ้ำของ WO เดิมไม่ได้ · ใบที่สองจึงเป็นของ WO อีกใบ
+  assert.match(rig.store.run("createRequisition", { orderId: order }).error.message, /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+  const second = (await go(s, rig, "persona-rb", "createRequisition", { orderId: await addOrder(s, rig) })).result;
   assert.deepEqual((await master()).requisitions.find((row) => row.id === second).lines.map((line) => [line.lotNo, line.targetKg, line.actualKg]), [[soon, 8.75, 8.75], [slow, 22.5, 22.5], [carbon, 18.75, 18.75]], "an old requisition still reserves its kilograms: the new one is issued from what is free");
   makeOld(second);
   await rig.store.catchUp();
@@ -1020,7 +1040,7 @@ test("the database computes the numbers itself: a client cannot set the stock, t
   assert.equal((await save({ transfers: { upsert: [extra] } }, "createTransfer")).error.code, "RF_INVALID_TRANSFER", "nothing left to send from the lot");
   // ล็อตวัตถุดิบที่กักกัน (ล็อต -02) ไม่ถูกจัดสรร: ใบเบิกใหม่หยิบจากล็อต -01 ทั้งหมด
   await go(s, rig, "persona-st", "setMaterialLotStatus", { lotNo: lots[1], status: "hold" });
-  const next = (await go(s, rig, "persona-rb", "createRequisition", { orderId: order, batches: 1 })).result;
+  const next = (await go(s, rig, "persona-rb", "createRequisition", { orderId: await addOrder(s, rig) })).result;
   assert.deepEqual((await master()).requisitions.find((row) => row.id === next).lines.map((line) => line.lotNo), [lots[0], lots[2]], "held stock is not allocated");
 });
 
@@ -1155,11 +1175,13 @@ test("shop-floor records collide per record: stale is reported before permission
   // เครื่อง A ออกใบเบิก 01 · เครื่อง B ยังไม่เห็นจึงออก 01 ซ้ำ → RF_STALE ย้อนกลับแล้วตามทัน
   const one = await go(s, a, "persona-rb", "createRequisition", { orderId: order, batches: 1 });
   assert.equal(one.result, `REQ-${TODAY}-01`);
-  const dup = b.store.run("createRequisition", { orderId: order, batches: 1, note: "อีกเครื่อง" });
+  const dup = b.store.run("createRequisition", { orderId: order, note: "อีกเครื่อง" });
   assert.equal(dup.result, `REQ-${TODAY}-01`);
   assert.equal((await dup.saving).error.code, "RF_STALE");
   assert.equal(b.store.data().requisitions.length, 1, "reverted and caught up");
-  assert.equal((await saved(b.store.run("createRequisition", { orderId: order, batches: 1 }))).result, `REQ-${TODAY}-02`);
+  // ตามทันแล้วเห็นว่า WO นี้เบิกครบแล้ว (ใบ 01 ของเครื่อง A) จึงเบิกซ้ำไม่ได้ · ใบที่สองเป็นของ WO อีกใบ
+  assert.match(b.store.run("createRequisition", { orderId: order }).error.message, /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+  assert.equal((await saved(b.store.run("createRequisition", { orderId: await addOrder(s, b) }))).result, `REQ-${TODAY}-02`);
   await a.store.catchUp();
   await b.store.catchUp();
   // ชนก่อนสิทธิ์: ST ฐานเก่าแก้ใบเบิก → RF_STALE ไม่ใช่ RF_FORBIDDEN; ฐานล่าสุด → RF_FORBIDDEN

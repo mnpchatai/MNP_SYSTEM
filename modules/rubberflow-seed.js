@@ -156,7 +156,7 @@
       const order = d.orders.find((row) => row.id === orderId);
       const recipe = d.recipes.find((row) => row.id === order.recipeId);
       const isM = order.uom === "m";
-      const reqId = A.createRequisition(d, { orderId, batches: 1 }, at(start, "store"));
+      const reqId = A.createRequisition(d, { orderId, batches: 1 }, { ...at(start, "store"), history: true });
       if (until === "request") return { reqId };
       const kg = recipeLines(recipe).reduce((sum, line) => sum + line.kgPerBatch, 0);
       const mx = A.recordMixing(d, {

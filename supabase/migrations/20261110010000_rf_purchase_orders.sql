@@ -437,6 +437,7 @@ revoke all on function private.rf_check_po_receipt(uuid, jsonb, bigint) from pub
 
 -- ใบเบิก (นิยามจาก 20261108010000_rubberflow_shopfloor.sql เพิ่ม p_action): สร้างใหม่ = เซิร์ฟเวอร์ระเบิดสูตรของ WO × จำนวน batch แล้วจัดสรร FEFO เองและ "จ่ายทันที" ในธุรกรรมเดียว
 -- (ทุกบรรทัด actualKg = targetKg, weighedAt/weighedBy = เวลาและผู้เรียก, หักสต็อกล็อตตามบรรทัด, สถานะ issued, issued_at/by) ไม่มีเกณฑ์ชั่ง · บรรทัดที่ client ส่งมาเมิน
+-- จำนวน batch ของใบใหม่ต้องเท่ากับที่ WO ยังไม่ได้เบิก (คำนวณจาก WO และใบเบิกเดิมของ WO นั้น ไม่เกิน 10 ต่อใบ) · WO ที่เบิกครบแล้วเบิกอีกไม่ได้ (RF_INVALID_REQUISITION)
 -- ใบเดิม: ส่งซ้ำที่ทุกบรรทัดตรงกับที่เก็บ = ไม่ทำอะไร (เหมือนเดิม) · ใบที่ยัง weighing (ข้อมูลเก่า) ชั่งต่อได้ด้วย weighLine (client ใส่ actualKg ของบรรทัดที่ยังไม่ชั่ง อยู่ในเกณฑ์ ± max(0.02, 1.5%))
 -- หรือจ่ายทั้งใบด้วย issueRequisition (ทุกบรรทัดที่ยังไม่ชั่งต้องตั้ง actualKg = targetKg พอดี ไม่ครบ/ไม่พอดี = RF_INVALID_REQUISITION) · ช่องอื่นของใบเดิม (status/issued/consumed) เมิน
 -- p_may = สมาชิก RB หรือกลุ่มวางแผน · RF_STALE ก่อนสิทธิ์/สถานะเสมอ
@@ -461,6 +462,9 @@ declare
   v_lot public.rf_material_lots%rowtype;
   v_item record;
   v_total numeric;
+  v_need_kg numeric;
+  v_done_kg numeric;
+  v_next numeric;
   v_need numeric;
   v_left numeric;
   v_free numeric;
@@ -551,12 +555,22 @@ begin
     v_batches := private.bom_num(v_row -> 'batches', 'RF_INVALID_REQUISITION', 1, 10);
     if v_batches is null then raise exception 'RF_INVALID_REQUISITION'; end if;
     v_note := private.bom_text(v_row, 'note', 300, 0, 'RF_INVALID_REQUISITION');
-    select * into v_ord from public.rf_orders o where o.is_test and o.wo_no = v_order;
+    -- ล็อกแถว WO ไว้ (และทั้งธุรกรรมถือ advisory lock ของ app_rf_save อยู่แล้ว) ใบเบิกของ WO เดียวกันจึงไม่ซ้อนกัน
+    select * into v_ord from public.rf_orders o where o.is_test and o.wo_no = v_order for update;
     if not found then raise exception 'RF_INVALID_REQUISITION'; end if;
     if v_ord.status not in ('released', 'in_progress') then
       perform private.rf_fail(v_ord.changed_version, p_base, p_cur, 'RF_INVALID_REQUISITION');
     end if;
     select * into v_rec from public.rf_recipes r where r.is_test and r.recipe_code = v_ord.recipe_code and r.revision = v_ord.recipe_revision;
+    -- จำนวน batch มาจาก WO ไม่ใช่ที่ผู้ใช้กรอก (เหมือน rules.nextRequisitionBatches ของ client): กิโลที่ WO ต้องใช้ = target_kg (ถ้ามี) ไม่เช่นนั้น target_qty ÷ yield_per_kg ของสูตรที่ WO ใช้
+    -- ลบกิโลที่ใบเบิกทุกใบของ WO นี้เบิกไปแล้ว (batches × batch_kg · ไม่มีสถานะยกเลิก นับทุกใบ) ปัดขึ้นเป็น batch (เผื่อ 1e-9) ไม่เกิน 10 ต่อใบ
+    -- 0 (เบิกครบแล้ว) หรือไม่ตรงกับที่ client ส่ง = RF_INVALID_REQUISITION · แต่ถ้าใบเบิกของ WO นี้เปลี่ยนหลังเวอร์ชันฐาน = client ถือข้อมูลเก่า ได้ RF_STALE (ตามทันแล้วลองใหม่)
+    v_need_kg := case when v_ord.target_kg > 0 then v_ord.target_kg else v_ord.target_qty / v_rec.yield_per_kg end;
+    v_done_kg := coalesce((select sum(q.batches * v_rec.batch_kg) from public.rf_requisitions q where q.is_test and q.order_no = v_order), 0);
+    v_next := least(10, greatest(0, ceil(greatest(0, v_need_kg - v_done_kg) / v_rec.batch_kg - 0.000000001)));
+    if v_batches is distinct from v_next or v_next < 1 then
+      perform private.rf_fail((select max(q.changed_version) from public.rf_requisitions q where q.is_test and q.order_no = v_order), p_base, p_cur, 'RF_INVALID_REQUISITION');
+    end if;
     v_total := (select sum((e ->> 'phr')::numeric) from jsonb_array_elements(v_rec.items) e);
     v_new_lines := '[]'::jsonb;
     for v_item in

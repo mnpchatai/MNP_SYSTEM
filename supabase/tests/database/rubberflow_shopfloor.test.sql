@@ -240,8 +240,22 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions',
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","batches":11}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'more than 10 batches is refused');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","batches":0.5}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'less than one batch is refused');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"bad id"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'a requisition number with a space is refused');
+-- WO ต้องใช้ 600 kg = 10 batch (ใบละไม่เกิน 10): ทดสอบสต็อกไม่พอของใบ 10 batch
+reset role;
+update public.rf_orders set target_kg = 600 where is_test and wo_no = 'WO-S1';
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","batches":10}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INSUFFICIENT_STOCK', 'ten batches need more MAT-A than the stock holds');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","batches":10}'::jsonb))), 0, 'createRequisition') $$, 'RF_STALE', 'the same shortage seen from an old version is stale, not a real shortage');
+reset role;
+update public.rf_orders set target_kg = 17.5 where is_test and wo_no = 'WO-S1';
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+-- จำนวน batch ที่ client ส่งต้องเท่ากับที่ WO เหลือ (17.5 kg ÷ 60 = 1 batch)
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","batches":2}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'two batches are refused when the work order needs one');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","batches":10}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'ten batches are refused when the work order needs one (the stock is not even looked at)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"hold"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
@@ -269,6 +283,18 @@ select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master()
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'status', 'issued', 'the status is set by the server, not by the client: a requisition is issued at once');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'requestedBy', current_setting('test.n_sbx_rb_staff'), 'the requester is the persona');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'totalKg', '60', 'the total is batches x batch weight');
+-- จำนวน batch มาจาก WO (ต้องใช้ target_kg ÷ batch_kg ปัดขึ้น หักที่ใบเบิกก่อนหน้าเบิกไปแล้ว): WO-S1 ต้องใช้ 17.5 kg = 1 batch และ REQ-1 เบิกไปแล้ว จึงเหลือ 0
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-X","batches":1}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'a work order whose batches are all requisitioned cannot be requisitioned again');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-X","batches":2}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'and a different batch count does not get around it');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-X","batches":1}'::jsonb))), 0, 'createRequisition') $$, 'RF_STALE', 'a copy older than the requisition sees the work order as covered: stale, so the client catches up first');
+reset role;
+update public.rf_orders set target_kg = 180 where is_test and wo_no = 'WO-S1';
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select is((select count(*) from public.rf_requisitions where is_test and order_no = 'WO-S1'), 1::bigint, 'only the first requisition exists for the work order so far');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-X","batches":1}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', '180 kg needed - 60 kg requisitioned = 120 kg = 2 batches: one batch is not what the work order needs');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-X","batches":3}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INVALID_REQUISITION', 'and three batches are too many');
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-2","batches":2}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition'))::text, true);
 select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines'), '4', 'a second requisition splits MAT-A over two lots');
 select is((current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 0 ->> 'lotNo') || '/' || (current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 0 ->> 'targetKg'), 'RM-A-1/62.5', 'the first lot is only free for what the first requisition did not reserve');
@@ -282,6 +308,7 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions',
 -- 7. ใบเบิกเก่าที่ค้างสถานะ weighing (ข้อมูลก่อนมีการจ่ายทันที ตอนนี้สร้างด้วย createRequisition ไม่ได้แล้ว จึงใส่ตรงด้วยสิทธิ์เจ้าของตาราง) ----------------
 -- weighLine ยังใช้ได้ทีละบรรทัด (เกณฑ์ ± max(0.02, 1.5%) หักสต็อกล็อตทันที) · issueRequisition จ่ายทุกบรรทัดที่ยังไม่ชั่งที่ targetKg พอดีในคำสั่งเดียว
 reset role;
+update public.rf_orders set target_kg = 17.5 where is_test and wo_no = 'WO-S1';
 insert into public.rf_requisitions (is_test, req_no, order_no, recipe_code, recipe_revision, batches, total_kg, lines, status)
 values
   (true, 'REQ-L1', 'WO-S1', 'RC-1', 1, 1, 60, '[{"materialCode":"MAT-A","stage":1,"lotNo":"RM-A-2","targetKg":10,"actualKg":null,"weighedAt":null},{"materialCode":"MAT-B","stage":1,"lotNo":"RM-B-1","targetKg":5,"actualKg":null,"weighedAt":null},{"materialCode":"MAT-C","stage":2,"lotNo":"RM-C-1","targetKg":2,"actualKg":null,"weighedAt":null}]'::jsonb, 'weighing'),

@@ -19,9 +19,9 @@ const fresh = () => seed.buildSeed(NOW);
 const STAGES = [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }];
 const recipeForm = (over = {}) => ({ id: "RC-NEW", items: [{ materialCode: "ZNO", phr: "5" }], batchKg: "40", stages: STAGES, yieldPerKg: "3", ...over });
 const rejects = (fn, pattern) => assert.throws(fn, (error) => { assert.match(error.message, pattern); return true; });
-// ใบเก่าที่ค้างสถานะ weighing (ข้อมูลก่อนมีการจ่ายทันที): สร้างด้วย createRequisition แล้วคืนสถานะและสต็อกให้เป็นแบบเดิม
+// ใบเก่าที่ค้างสถานะ weighing (ข้อมูลก่อนมีการจ่ายทันที และก่อนกฎจำนวน batch จาก WO): สร้างด้วย createRequisition (ctx.history ข้ามกฎ) แล้วคืนสถานะและสต็อกให้เป็นแบบเดิม
 function legacyWeighing(d, orderId, batches = 1) {
-  const id = A.createRequisition(d, { orderId, batches }, ctx("store"));
+  const id = A.createRequisition(d, { orderId, batches }, { ...ctx("store"), history: true });
   const req = d.requisitions.find((row) => row.id === id);
   for (const line of req.lines) {
     d.materialLots.find((lot) => lot.lotNo === line.lotNo).qtyKg += line.actualKg;
@@ -114,12 +114,13 @@ test("recipes: required fields, unique ids, at least one material, draft until a
 test("a requisition is issued in one press: FEFO lots, every line at its target, stock drawn down at once; old weighing requisitions still reserve their kilos; short stock refuses", () => {
   const d = fresh();
   const released = d.orders.find((order) => order.status === "released");
-  rejects(() => A.createRequisition(d, { orderId: d.orders.find((order) => order.status === "planned").id, batches: 1 }, ctx("store")), /ปล่อยผลิต/);
-  rejects(() => A.createRequisition(d, { orderId: released.id, batches: 0 }, ctx("store")), /1–10/);
-  rejects(() => A.createRequisition(d, { orderId: released.id, batches: 11 }, ctx("store")), /1–10/);
+  rejects(() => A.createRequisition(d, { orderId: d.orders.find((order) => order.status === "planned").id }, ctx("store")), /ปล่อยผลิต/);
+  // จำนวน batch มาจาก WO (ต้องใช้ 120 kg ÷ 60 kg ต่อ batch = 2) ค่า batches ที่ส่งมาเมิน
+  released.targetKg = 120;
   const stockBefore = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.qtyKg]));
-  const id = A.createRequisition(d, { orderId: released.id, batches: 2 }, ctx("store"));
+  const id = A.createRequisition(d, { orderId: released.id, batches: 7 }, ctx("store"));
   const req = d.requisitions.find((row) => row.id === id);
+  assert.equal(req.batches, 2, "batches come from the work order, not from the input");
   assert.equal(req.status, "issued", "issued at once, ready for mixing");
   assert.equal(req.issuedBy, user("store").name);
   assert.equal(req.issuedAt, NOW);
@@ -142,15 +143,22 @@ test("a requisition is issued in one press: FEFO lots, every line at its target,
   const soonest = d.materialLots.map((lot) => ({ ...lot, qtyKg: stockBefore[lot.lotNo] })).filter((lot) => lot.materialCode === "EPDM-55" && rules.lotState(lot, NOW) === "available").sort((a, b) => a.expiry - b.expiry)[0];
   assert.equal(epdm[0].lotNo, soonest.lotNo);
   // ใบเก่าที่ค้าง weighing จองกิโลที่ยังไม่จ่าย ใบใหม่ไม่หยิบซ้ำ · สต็อกไม่พอ → ปฏิเสธทั้งใบ ไม่สร้างใบเบิกครึ่งเดียว
+  // WO เบิกครบแล้ว (เบิก 2 batch ตามที่ต้องใช้) เบิกอีกไม่ได้ จนกว่ายอดที่ต้องใช้จะเพิ่ม
+  const before = d.requisitions.length;
+  rejects(() => A.createRequisition(d, { orderId: released.id, batches: 1 }, ctx("store")), /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+  assert.equal(d.requisitions.length, before);
   const old = legacyWeighing(d, released.id, 1);
-  A.createRequisition(d, { orderId: released.id, batches: 1 }, ctx("store"));
+  released.targetKg = 240;
+  A.createRequisition(d, { orderId: released.id }, ctx("store"));
+  assert.equal(d.requisitions[0].batches, 1, "240 kg needed − 120 issued − 60 old requisition = 1 batch");
   const owed = {};
   old.lines.forEach((line) => { owed[line.lotNo] = (owed[line.lotNo] || 0) + line.targetKg; });
   for (const [lotNo, kg] of Object.entries(owed)) assert.ok(d.materialLots.find((lot) => lot.lotNo === lotNo).qtyKg >= kg - 1e-9, `the kilos the old requisition promised on ${lotNo} are not taken again`);
   const reservedEpdm = 1;
   d.materialLots.filter((lot) => lot.materialCode === "EPDM-55").forEach((lot) => { lot.qtyKg = Math.min(lot.qtyKg, reservedEpdm); });
   const count = d.requisitions.length;
-  rejects(() => A.createRequisition(d, { orderId: released.id, batches: 10 }, ctx("store")), /สต็อกไม่พอตามหลัก FEFO: EPDM-55 ขาด/);
+  released.targetKg = 1200;
+  rejects(() => A.createRequisition(d, { orderId: released.id }, ctx("store")), /สต็อกไม่พอตามหลัก FEFO: EPDM-55 ขาด/);
   assert.equal(d.requisitions.length, count);
 });
 

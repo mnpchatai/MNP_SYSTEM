@@ -159,6 +159,19 @@
     return Math.max(0, total - covered);
   }
 
+  // จำนวน batch ที่ใบเบิกใบหนึ่งเบิกได้สูงสุด (ตรงกับ check ของตาราง rf_requisitions)
+  const MAX_REQ_BATCHES = 10;
+  // batch ที่ WO ยังไม่ได้เบิก = ปัดขึ้น((กิโลที่ WO ต้องใช้ − กิโลที่ใบเบิกทุกใบของ WO นี้เบิกไปแล้ว (batch × น้ำหนักต่อ batch)) ÷ น้ำหนักต่อ batch) · 0 = เบิกครบแล้ว
+  // กฎเดียวกับเซิร์ฟเวอร์ (rf_save_requisitions) และโหมดสาธิต · ใบเบิกไม่มีสถานะยกเลิก จึงนับทุกใบ
+  function remainingBatches(order, recipe, requisitions) {
+    const batchKg = Number(recipe?.batchKg);
+    if (!order || !(batchKg > 0)) return 0;
+    const left = orderRemainingKg(order, recipe, requisitions);
+    return left > 0 ? Math.max(0, Math.ceil(left / batchKg - 1e-9)) : 0;
+  }
+  // batch ของใบเบิกใบถัดไป = ที่ยังไม่ได้เบิก แต่ไม่เกิน MAX_REQ_BATCHES ต่อใบ (เหลือมากกว่านั้นเบิกต่อได้อีกใบ)
+  const nextRequisitionBatches = (order, recipe, requisitions) => Math.min(MAX_REQ_BATCHES, remainingBatches(order, recipe, requisitions));
+
   // ค่าตั้งต้นของจำนวนสั่ง: ขาด = ส่วนที่ขาด + สต็อกขั้นต่ำ · ไม่ขาด = 0 (ผู้วางแผนใส่เองได้)
   const suggestOrderKg = (shortageKg, safetyKg) => (Number(shortageKg) > 0 ? round3(Number(shortageKg) + Math.max(0, Number(safetyKg) || 0)) : 0);
 
@@ -324,7 +337,7 @@
 
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
+    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

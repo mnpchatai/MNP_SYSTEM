@@ -248,3 +248,34 @@ test("chemicalNeeds uses the WO's own recipe revision and the kilograms of the B
   assert.deepEqual(out.rows.map((row) => [row.materialCode, row.needKg]), [["A", 4], ["B", 10]], "W1 keeps revision 1 and its targetKg; W2 derives kilograms from quantity ÷ yield");
   assert.ok(out.rows.every((row) => row.shortageKg === row.needKg && row.availableKg === 0));
 });
+
+// ---------- batch ของใบเบิกมาจาก WO ----------
+test("remainingBatches: the kilograms a WO needs (targetKg, else quantity ÷ yield) minus what its requisitions took, in whole batches; a covered WO has none; one requisition is capped at 10 batches", () => {
+  const recipe = { id: "R", revision: 1, batchKg: 50, yieldPerKg: 6 };
+  const order = (extra = {}) => ({ id: "W", recipeId: "R", recipeRevision: 1, targetQty: 6, targetKg: null, ...extra });
+  const req = (batches, extra = {}) => ({ id: `Q${batches}`, orderId: "W", batches, totalKg: batches * 50, status: "issued", ...extra });
+  // targetKg wins over quantity ÷ yield: 120 kg / 50 = 2.4 → 3 batches (the quantity alone would say 6 / 6 = 1 kg)
+  assert.equal(rules.remainingBatches(order({ targetKg: 120 }), recipe, []), 3);
+  // no targetKg: 600 / 6 = 100 kg → 2 batches
+  assert.equal(rules.remainingBatches(order({ targetQty: 600 }), recipe, []), 2);
+  assert.equal(rules.remainingBatches(order({ targetKg: 0, targetQty: 600 }), recipe, []), 2, "targetKg 0 counts as not set");
+  // an earlier requisition took 50 kg: 120 − 50 = 70 kg → 2 batches left
+  assert.equal(rules.remainingBatches(order({ targetKg: 120 }), recipe, [req(1)]), 2);
+  // every status counts (a weighing and a consumed requisition both took their kilograms) · other WOs' requisitions do not
+  assert.equal(rules.remainingBatches(order({ targetKg: 120 }), recipe, [req(1, { status: "weighing" }), req(1, { status: "consumed" }), req(5, { orderId: "OTHER" })]), 1);
+  // exact multiple: 100 kg = exactly 2 batches (no float spill to a third), then 0 once both are taken
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), recipe, []), 2);
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), recipe, [req(2)]), 0);
+  assert.equal(rules.remainingBatches(order({ targetKg: 0.3 * 3 * 50 / 0.9 }), recipe, []), 1, "float noise below 1e-9 does not add a batch");
+  // over-covered or unusable input: none
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), recipe, [req(3)]), 0);
+  assert.equal(rules.remainingBatches(order({ targetKg: 100 }), { ...recipe, batchKg: 0 }, []), 0);
+  assert.equal(rules.remainingBatches(order({ targetKg: null, targetQty: 0 }), recipe, []), 0);
+  assert.equal(rules.remainingBatches(null, recipe, []), 0);
+  // the next requisition takes at most 10 batches; the rest stays on the WO
+  assert.equal(rules.remainingBatches(order({ targetKg: 1000 }), recipe, []), 20);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 1000 }), recipe, []), 10);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 1000 }), recipe, [req(10)]), 10);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 1000 }), recipe, [req(10), req(10)]), 0);
+  assert.equal(rules.nextRequisitionBatches(order({ targetKg: 120 }), recipe, []), 3);
+});

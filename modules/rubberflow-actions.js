@@ -344,14 +344,16 @@
   };
 
   // เบิก = สร้างใบเบิกและจ่ายทันที: ระเบิดสูตร จัดสรร FEFO หักสต็อกล็อตตามบรรทัด จ่ายตามสูตร (actualKg = targetKg) สถานะ issued พร้อมผสม · ไม่มีขั้นตอนชั่งรายบรรทัด
+  // จำนวน batch ไม่ได้กรอก: คำนวณจาก WO (ที่ WO ต้องใช้ − ที่ใบเบิกก่อนหน้าเบิกไปแล้ว ปัดขึ้นเป็น batch · ใบละไม่เกิน 10) ค่า batches ที่ส่งมาเมิน · WO ที่เบิกครบแล้วเบิกอีกไม่ได้
+  // ctx.history (เฉพาะตัวสร้างข้อมูลสาธิต modules/rubberflow-seed.js ที่จำลองประวัติเบิกทีละ batch) ใช้ batches ที่ส่งมาโดยไม่ตรวจยอดที่เบิกแล้ว
   function createRequisition(d, { orderId, batches, note }, ctx) {
     needRight(ctx, "requisition");
     const { recipeLines, allocateFefo } = rules();
     const order = find(d.orders, orderId, "ใบสั่งผลิต");
     if (!["released", "in_progress"].includes(order.status)) fail('ใบสั่งผลิตต้องอยู่ในสถานะ "ปล่อยผลิต" หรือ "กำลังผลิต"');
-    const n = num(batches, "จำนวน batch");
-    if (n < 1 || n > 10) fail("จำนวน batch ต้องอยู่ระหว่าง 1–10");
     const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร ${order.recipeId}`);
+    const n = ctx.history ? num(batches, "จำนวน batch") : rules().nextRequisitionBatches(order, recipe, d.requisitions);
+    if (n < 1) fail(`${order.id} เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว`);
     // จองสต็อกที่ใบเบิกเก่าที่ค้างอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน
     const reserved = reservedByOpenRequisitions(d, ctx);
     const lines = [];
