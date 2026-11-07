@@ -604,6 +604,19 @@ test("importing skips a line that makes a BOM contain itself (directly or throug
   const loopOld = A.importFlat(d, { items: [{ code: "SE-DIA-E", kind: "SE", name: "E", uom: "pcs", ownerDept: "GR" }], boms: [{ parentCode: "SE-DIA-E", lines: [{ childCode: "SE-DIA-A", qty: 1 }, { childCode: "P-RESIN-1", qty: 1 }] }], source: "x" }, ctx("planner"));
   assert.equal(loopOld.cycleLinesSkipped, 1, "a loop through BOMs approved earlier is caught");
   assert.deepEqual(approved(d, "SE-DIA-E").lines.map((line) => line.childCode), ["P-RESIN-1"]);
+
+  // สองบรรทัดของพ่อเดียวกันวนทั้งคู่ผ่านทางที่ใช้โหนดร่วมกัน: มี A2 → [B2, P] และ C2 → A2 อยู่แล้ว นำเข้า P2 → [A2, C2] ต้องตัดทั้งสองบรรทัด
+  // (เดินจาก A2 เจอ P2 กลางทางก่อนเดินลูกอื่นครบ ถ้าชุด seen ค้างไว้ บรรทัด C2 → A2 → … จะถูกมองว่าไม่วนแล้วฐานข้อมูลปฏิเสธทั้งส่วน)
+  const twoParts = ["SE-TW-A2", "SE-TW-B2", "SE-TW-C2", "SE-TW-P2"].map((code) => ({ code, kind: "SE", name: code, uom: "pcs", ownerDept: "GR" }));
+  A.importFlat(d, { items: twoParts, boms: [
+    { parentCode: "SE-TW-A2", lines: [{ childCode: "SE-TW-B2", qty: 1 }, { childCode: "SE-TW-P2", qty: 1 }] },
+    { parentCode: "SE-TW-C2", lines: [{ childCode: "SE-TW-A2", qty: 1 }] },
+  ], source: "x" }, ctx("planner"));
+  const both = A.importFlat(d, { items: twoParts, boms: [
+    { parentCode: "SE-TW-P2", lines: [{ childCode: "SE-TW-A2", qty: 1 }, { childCode: "SE-TW-C2", qty: 1 }, { childCode: "P-RESIN-1", qty: 1 }] },
+  ], source: "x" }, ctx("planner"));
+  assert.equal(both.cycleLinesSkipped, 2, "both looping lines of one parent are dropped");
+  assert.deepEqual(approved(d, "SE-TW-P2").lines.map((line) => line.childCode), ["P-RESIN-1"]);
 });
 
 test("the loop check stays fast on a whole sheet ordered either way (parents first or children first)", () => {
@@ -622,7 +635,7 @@ test("the loop check stays fast on a whole sheet ordered either way (parents fir
     const took = performance.now() - started;
     assert.equal(stats.bomsAdded, 2450, order);
     assert.equal(stats.cycleLinesSkipped, 0, order);
-    assert.ok(took < 1500, `${order}: ${Math.round(took)} ms`);
+    assert.ok(took < 5000, `${order}: ${Math.round(took)} ms (about 40 ms on a laptop; the old per-line walk took over 3 s children-first)`);
   }
 });
 

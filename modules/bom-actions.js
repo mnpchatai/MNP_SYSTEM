@@ -421,7 +421,8 @@
         const stack = [from];
         while (stack.length) {
           const code = stack.pop();
-          if (code === target) return true;
+          // เจอพ่อ = หยุดกลางทาง โหนดใน seen บางตัวยังเดินลูกไม่ครบ ล้างทิ้งก่อน ไม่งั้นบรรทัดถัดไปของพ่อเดียวกันอาจข้ามโหนดนั้นแล้วตอบว่าไม่วนผิด ๆ
+          if (code === target) { seen.clear(); return true; }
           if (seen.has(code)) continue;
           seen.add(code);
           for (const child of childrenOf.get(code) ?? []) stack.push(child);
