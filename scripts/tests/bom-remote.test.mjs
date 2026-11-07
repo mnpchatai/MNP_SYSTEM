@@ -3249,3 +3249,185 @@ test("the mock database follows the SQL rules of the part stock: payload shapes 
   const emptied = await view();
   assert.deepEqual([emptied.stock, emptied.stockMoves], [[], []]);
 });
+
+test("returning parts through the module on the (mock) database: the page sends only the return request, the database computes stock, jobs and moves, undo then issue again, then a leftover; the order can be cancelled after an undo", async () => {
+  const planning = await pageEnv();
+  await planning.store.ensureLoaded();
+  await fgScene(planning);
+  const planCtx = planning.ctx();
+  assert.equal(planCtx.runAction("createOrder", { customer: "ลูกค้า ทดสอบ", country: "Thailand", orderedAt: NOW, whDue: NOW + 9 * 86400000 }, ""), true);
+  await settle();
+  const id = planning.store.data().orders[0].id;
+  for (const [action, payload] of [["addOrderItem", { orderId: id, fgCode: "FG-TEST-01", qty: 5 }], ["explodeOrder", { orderId: id }], ["releaseOrder", { orderId: id }]]) {
+    assert.equal(planCtx.runAction(action, payload, ""), true, action);
+    await settle();
+  }
+  const database = () => JSON.parse(planning.pageStorage.getItem("mnp-harness-bom-master"));
+  const st = await asPersona({ env: planning }, "persona-st");
+  await st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 12 }] }).saving;
+  await st.store.run("issueOrderParts", { orderId: id }).saving;
+  assert.equal(database().stock[0].qty, 2);
+
+  // ยกเลิกการเบิกจ่าย: ส่งเฉพาะ partReturns · เซิร์ฟเวอร์คืนสต็อกและตั้งงานกลับเป็นรอเบิกจ่าย
+  const none = st.store.run("undoOrderParts", { orderId: id, reason: "  " });
+  assert.equal(none.ok, false, "the page refuses an empty reason before calling the database");
+  const undo = st.store.run("undoOrderParts", { orderId: id, reason: "เบิกผิดใบ" });
+  assert.equal(undo.ok, true, undo.error?.message);
+  assert.equal((await undo.saving).ok, true);
+  let db = database();
+  assert.deepEqual(db.stock.map((row) => [row.itemCode, row.qty]), [["P-TEST-01", 12]]);
+  assert.deepEqual(db.stockMoves.map((move) => [move.kind, move.qty, move.balance, move.ref, move.note]), [["count", 12, 12, null, null], ["issue", -10, 2, id, null], ["return", 10, 12, id, "เบิกผิดใบ"]]);
+  const partJob = db.jobs.find((row) => row.dept === "ST");
+  assert.deepEqual([partJob.status, partJob.qtyDone, "doneAt" in partJob], ["queued", 0, false]);
+  assert.equal(db.orders[0].status, "in_progress", "the order status does not change");
+  assert.equal(db.audit.at(-1).action, "undoOrderParts");
+  assert.equal(db.audit.at(-1).detail, "partReturns +1, stock +1");
+  assert.deepEqual(JSON.parse(JSON.stringify(st.store.data().stockMoves.map((move) => move.kind))), ["count", "issue", "return"], "the page shows the database's moves");
+  assert.equal(st.store.data().stock[0].qty, 12);
+  assert.equal(st.store.run("undoOrderParts", { orderId: id, reason: "อีกครั้ง" }).ok, false, "nothing is issued now");
+
+  // เบิกจ่ายใหม่ แล้วคืนของเหลือ: ยอดที่คืนได้นับตั้งแต่การเบิกจ่ายล่าสุด
+  await st.store.run("issueOrderParts", { orderId: id }).saving;
+  assert.equal(database().stock[0].qty, 2);
+  const tooMany = st.store.run("returnOrderParts", { orderId: id, lines: [{ itemCode: "P-TEST-01", qty: 11 }], reason: "เหลือ" });
+  assert.equal(tooMany.ok, false);
+  assert.match(tooMany.error.message, /ไม่เกิน 10/);
+  const leftover = st.store.run("returnOrderParts", { orderId: id, lines: [{ itemCode: "P-TEST-01", qty: 4 }], reason: "ใช้ไม่หมด" });
+  assert.equal(leftover.ok, true, leftover.error?.message);
+  assert.equal((await leftover.saving).ok, true);
+  db = database();
+  assert.equal(db.stock[0].qty, 6);
+  assert.deepEqual(db.stockMoves.at(-1) && [db.stockMoves.at(-1).kind, db.stockMoves.at(-1).qty, db.stockMoves.at(-1).note], ["return", 4, "ใช้ไม่หมด"]);
+  assert.equal(db.jobs.find((row) => row.dept === "ST").status, "done", "a leftover return keeps the job done");
+  assert.equal(db.audit.at(-1).detail, "partReturns +1, stock +1");
+  assert.equal(st.store.run("returnOrderParts", { orderId: id, lines: [{ itemCode: "P-TEST-01", qty: 7 }], reason: "เกิน" }).ok, false, "only 6 are left to return");
+
+  // RB ทำไม่ได้ (หน้าปฏิเสธก่อนเรียกฐานข้อมูล)
+  const rb = await asPersona({ env: planning }, "persona-rb");
+  assert.equal(rb.store.run("undoOrderParts", { orderId: id, reason: "x" }).ok, false);
+
+  // หลังยกเลิกการเบิกจ่ายยกเลิกใบได้ (ไม่เหลืองานที่ทำแล้ว) · งานแผนกอื่นของใบนี้ยังไม่เริ่ม
+  await st.store.run("undoOrderParts", { orderId: id, reason: "ยกเลิกใบ" }).saving;
+  assert.equal(database().stock[0].qty, 12 - 0, "the 4 returned earlier are not returned twice");
+  const planner = await asPersona({ env: planning }, "persona-pp");
+  const cancel = planner.store.run("cancelOrder", { orderId: id, reason: "ลูกค้ายกเลิก" });
+  assert.equal(cancel.ok, true, cancel.error?.message);
+  assert.equal((await cancel.saving).ok, true, "cancelling a PI whose parts were all given back is allowed");
+  assert.equal(database().orders[0].status, "cancelled");
+  assert.equal(planner.store.run("returnOrderParts", { orderId: id, lines: [{ itemCode: "P-TEST-01", qty: 1 }], reason: "x" }).ok, false, "a cancelled PI returns nothing");
+});
+
+test("the mock database follows the SQL rules of the part return: payload shapes, the order of the checks, undo and leftover limits since the latest issue, stale, rights", async () => {
+  const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage: memoryStorage() });
+  const rpc = (name, args) => mock.client.rpc(name, args);
+  const as = (id) => rpc("app_sandbox_enter", { p_persona_id: id });
+  const version = async () => (await rpc("app_bom_master")).data.version;
+  const view = async () => (await rpc("app_bom_master")).data;
+  const save = async (changes, action, base) => rpc("app_bom_save_master", { p_changes: changes, p_base_version: base ?? await version(), p_action: action });
+  const code = async (promise) => (await promise).error?.code;
+  const counts = (rows) => save({ stock: { upsert: rows } }, "countPartStock");
+  const ret = (row, action = "returnOrderParts", base) => save({ partReturns: { upsert: [row] } }, action, base);
+  const undo = (reason = "ผิดใบ", extra = {}, base) => ret({ orderId: "PI-M1", mode: "undo", reason, ...extra }, "undoOrderParts", base);
+  const left = (lines, reason = "เหลือ", extra = {}, base) => ret({ orderId: "PI-M1", mode: "leftover", reason, lines, ...extra }, "returnOrderParts", base);
+  await as("persona-pp");
+  const item = (itemCode, kind, uom = "pcs") => ({ code: itemCode, kind, name: itemCode, ownerDept: kind === "PURCHASED" ? "ST" : "PK", uom });
+  assert.equal((await save({ items: { upsert: [item("FG-1", "FG", "set"), item("P-1", "PURCHASED"), item("P-2", "PURCHASED", "kg")] } }, "importFlat")).error, null);
+  const order = { id: "PI-M1", customer: "ACME", country: "TH", orderType: "SA", orderedAt: NOW, whDue: NOW + 9 * 86400000, due: {}, dueDefaults: [], revision: 0, status: "draft", items: [{ fgCode: "FG-1", qty: 2, colorSet: "", note: "" }], explosion: [{ itemCode: "FG-1", level: 0, required: 2 }], stockCounts: {}, note: "" };
+  assert.equal((await save({ orders: { upsert: [order] } }, "createOrder")).error, null);
+  const partJob = (id, itemCode, qty) => ({ id, orderId: "PI-M1", dept: "ST", itemCode, name: itemCode, kind: "PURCHASED", uom: "pcs", qtyPlanned: qty, qtyRequired: qty, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: NOW + 86400000, status: "queued", externalRef: null, fgCodes: ["FG-1"], reports: [] });
+  const pkJob = { ...partJob("J-PK", "FG-1", 2), dept: "PK", kind: "FG", uom: "set" };
+  assert.equal((await save({ orders: { upsert: [{ ...order, status: "released" }] }, jobs: { upsert: [pkJob, partJob("J-P1", "P-1", 8), partJob("J-P2", "P-2", 3)] } }, "releaseOrder")).error, null);
+  await as("persona-st");
+  assert.equal((await counts([{ itemCode: "P-1", qty: 20 }, { itemCode: "P-2", qty: 10 }])).error, null);
+  const done = (job) => ({ ...job, status: "done", qtyDone: job.qtyPlanned });
+  const jobsNow = async () => (await view()).jobs;
+  const pull = async () => { const rows = await jobsNow(); return [rows.find((row) => row.id === "J-P1"), rows.find((row) => row.id === "J-P2")]; };
+
+  // nothing issued yet
+  assert.equal(await code(undo()), "BOM_INVALID_RETURN", "no done part job");
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 1 }])), "BOM_INVALID_RETURN", "nothing issued of the item");
+
+  const [p1, p2] = await pull();
+  assert.equal((await save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts")).error, null);
+  assert.deepEqual((await view()).stock.map((row) => [row.itemCode, row.qty]), [["P-1", 12], ["P-2", 7]]);
+
+  // payload shapes
+  assert.equal(await code(save({ partReturns: { upsert: [{ orderId: "PI-M1", mode: "undo", reason: "x" }] } }, "countPartStock")), "BOM_INVALID_PAYLOAD", "partReturns only with the two return actions");
+  assert.equal(await code(save({ partReturns: { upsert: [{ orderId: "PI-M1", mode: "undo", reason: "x" }] }, customers: { upsert: [{ name: "Z" }] } }, "undoOrderParts")), "BOM_INVALID_PAYLOAD", "a return carries only partReturns");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1)] } }, "undoOrderParts")), "BOM_INVALID_PAYLOAD");
+  assert.equal(await code(save({ partReturns: { delete: [] } }, "undoOrderParts")), "BOM_INVALID_PAYLOAD", "no deletes");
+  assert.equal(await code(save({ nothing: { upsert: [] } }, "undoOrderParts")), "BOM_INVALID_PAYLOAD", "an unknown section");
+  assert.equal(await code(save({ partReturns: { upsert: [{ orderId: "PI-M1", mode: "undo", reason: "a" }, { orderId: "PI-M1", mode: "undo", reason: "b" }] } }, "undoOrderParts")), "BOM_INVALID_RETURN", "one row per call");
+  // row shape
+  assert.equal(await code(undo("")), "BOM_INVALID_RETURN", "a reason is required");
+  assert.equal(await code(undo("ก".repeat(201))), "BOM_INVALID_RETURN", "a reason is at most 200 characters");
+  assert.equal(await code(ret({ orderId: "PI-M1", mode: "bogus", reason: "x" }, "undoOrderParts")), "BOM_INVALID_RETURN");
+  assert.equal(await code(ret({ orderId: "NOPE", mode: "undo", reason: "x" }, "undoOrderParts")), "BOM_INVALID_RETURN", "an unknown order");
+  assert.equal(await code(undo("ผิดใบ", { lines: [{ itemCode: "P-1", qty: 1 }] })), "BOM_INVALID_RETURN", "an undo carries no lines");
+  for (const lines of [[], [{ itemCode: "P-1", qty: 0 }], [{ itemCode: "P-1", qty: -1 }], [{ itemCode: "P-1", qty: "2" }], [{ itemCode: "P-1" }], [{ itemCode: "P-1", qty: 1 }, { itemCode: "p-1", qty: 1 }], [{ qty: 1 }], ["P-1"]]) assert.equal(await code(left(lines)), "BOM_INVALID_RETURN", JSON.stringify(lines));
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 1 }], "")), "BOM_INVALID_RETURN", "a reason is required");
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 9 }])), "BOM_INVALID_RETURN", "more than issued (8)");
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 1 }, { itemCode: "FG-1", qty: 1 }])), "BOM_INVALID_RETURN", "an item that was not issued");
+
+  // rights: stale comes first, then the permission
+  await as("persona-rb");
+  const base = (await version()) - 1;
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 1 }])), "BOM_FORBIDDEN");
+  assert.equal(await code(undo()), "BOM_FORBIDDEN");
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 1 }], "เหลือ", {}, base)), "BOM_STALE", "the issue is newer than the copy this RB member holds");
+  await as("persona-wh");
+  assert.equal(await code(undo()), "BOM_FORBIDDEN", "WH counts but does not return");
+  await as("persona-st");
+
+  // leftovers: the cap, a typed quantity, the whole call or nothing
+  const versionBefore = await version();
+  assert.equal(await code(left([{ itemCode: "P-2", qty: 1 }, { itemCode: "P-1", qty: 8.5 }])), "BOM_INVALID_RETURN");
+  assert.equal(await version(), versionBefore, "a refused return writes nothing");
+  assert.equal((await left([{ itemCode: "P-1", qty: 3 }, { itemCode: "P-2", qty: 1.5 }], "ใช้ไม่หมด")).error, null);
+  let now = await view();
+  assert.deepEqual(now.stock.map((row) => [row.itemCode, row.qty]), [["P-1", 15], ["P-2", 8.5]]);
+  assert.deepEqual(now.stockMoves.filter((move) => move.kind === "return").map((move) => [move.itemCode, move.qty, move.balance, move.ref, move.note, move.by]).sort(), [["P-1", 3, 15, "PI-M1", "ใช้ไม่หมด", "วิชัย คลังวัตถุดิบ"], ["P-2", 1.5, 8.5, "PI-M1", "ใช้ไม่หมด", "วิชัย คลังวัตถุดิบ"]]);
+  assert.ok(now.jobs.filter((job) => job.dept === "ST").every((job) => job.status === "done"), "a leftover keeps the jobs done");
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 5.5 }])), "BOM_INVALID_RETURN", "5 left of 8, 3 returned");
+  assert.equal((await rpc("app_bom_audit")).data[0].detail, "partReturns +1, stock +2");
+
+  // undo gives back only what is not yet returned; jobs wait again; the order keeps its status
+  assert.equal((await undo("เบิกผิดใบ")).error, null);
+  now = await view();
+  assert.deepEqual(now.stock.map((row) => [row.itemCode, row.qty]), [["P-1", 20], ["P-2", 10]], "every balance is back to the count before the issue");
+  assert.deepEqual(now.jobs.filter((job) => job.dept === "ST").map((job) => [job.id, job.status, job.qtyDone, "doneAt" in job]), [["J-P1", "queued", 0, false], ["J-P2", "queued", 0, false]]);
+  assert.equal(now.orders[0].status, "in_progress");
+  assert.equal(await code(undo()), "BOM_INVALID_RETURN", "nothing is issued now");
+
+  // after a new issue the earlier leftovers do not count
+  const [q1, q2] = await pull();
+  assert.equal((await save({ jobs: { upsert: [done(q1), done(q2)] } }, "issueOrderParts")).error, null);
+  assert.equal((await left([{ itemCode: "P-1", qty: 8 }])).error, null, "the leftovers of the first issue are not counted against the second");
+  assert.equal(await code(left([{ itemCode: "P-1", qty: 0.5 }])), "BOM_INVALID_RETURN");
+
+  // a completed PI still takes leftovers but is not undone; a cancelled PI takes nothing at all
+  await as("persona-pp");
+  const pk = (await jobsNow()).find((row) => row.id === "J-PK");
+  assert.equal((await save({ jobs: { upsert: [done(pk)] } }, "reportJob")).error, null);
+  const open = (await view()).orders.find((row) => row.id === "PI-M1");
+  assert.equal((await save({ orders: { upsert: [{ ...open, status: "completed" }] } }, "completeOrder")).error, null);
+  await as("persona-st");
+  assert.equal(await code(undo()), "BOM_INVALID_TRANSITION", "a completed PI cannot be undone");
+  assert.equal((await left([{ itemCode: "P-2", qty: 1 }])).error, null, "but it still takes leftovers");
+  assert.equal((await view()).stock.find((row) => row.itemCode === "P-2").qty, 8);
+  await as("persona-pp");
+  const second = { ...order, id: "PI-M2" };
+  assert.equal((await save({ orders: { upsert: [second] } }, "createOrder")).error, null);
+  assert.equal((await save({ orders: { upsert: [{ ...second, status: "released" }] }, jobs: { upsert: [{ ...partJob("J2-P1", "P-1", 2), orderId: "PI-M2" }] } }, "releaseOrder")).error, null);
+  await as("persona-st");
+  const second1 = (await jobsNow()).find((row) => row.id === "J2-P1");
+  assert.equal((await save({ jobs: { upsert: [done(second1)] } }, "issueOrderParts")).error, null);
+  assert.equal((await ret({ orderId: "PI-M2", mode: "undo", reason: "ผิดใบ" }, "undoOrderParts")).error, null);
+  await as("persona-pp");
+  const toCancel = (await view()).orders.find((row) => row.id === "PI-M2");
+  assert.equal(toCancel.status, "in_progress");
+  assert.equal((await save({ orders: { upsert: [{ ...toCancel, status: "cancelled" }] } }, "cancelOrder")).error, null, "after the undo the PI has no started work and can be cancelled");
+  await as("persona-st");
+  assert.equal(await code(ret({ orderId: "PI-M2", mode: "leftover", reason: "x", lines: [{ itemCode: "P-1", qty: 1 }] })), "BOM_INVALID_TRANSITION", "a cancelled PI takes no return");
+  assert.equal(await code(ret({ orderId: "PI-M2", mode: "undo", reason: "x" }, "undoOrderParts")), "BOM_INVALID_TRANSITION");
+});

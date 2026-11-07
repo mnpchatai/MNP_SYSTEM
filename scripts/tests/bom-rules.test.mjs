@@ -665,3 +665,25 @@ test("partNeeds: this PI's unissued ST part jobs against the part balance, minus
   assert.deepEqual(rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, "PI-3"), { rows: [], anyShort: false }, "a closed PI needs nothing");
   assert.deepEqual(rules.partNeeds({}, "X"), { rows: [], anyShort: false }, "empty data is tolerated");
 });
+
+test("partReturned counts the returns of a (PI, item) pair since its latest issue; partReturnLines sums the done part jobs per item", () => {
+  const moves = [
+    { kind: "issue", ref: "PI-1", itemCode: "P-1", qty: -10 },
+    { kind: "return", ref: "PI-1", itemCode: "P-1", qty: 3 },
+    { kind: "return", ref: "PI-2", itemCode: "P-1", qty: 99 },
+    { kind: "return", ref: "PI-1", itemCode: "P-2", qty: 50 },
+    { kind: "return", ref: "PI-1", itemCode: "P-1", qty: 0.1 },
+    { kind: "receive", ref: "PO-1", itemCode: "P-1", qty: 20 },
+  ];
+  assert.equal(rules.partReturned(moves, "PI-1", "P-1"), 3.1, "other PIs, other items and other kinds do not count");
+  assert.equal(rules.partReturned([...moves, { kind: "issue", ref: "PI-1", itemCode: "P-1", qty: -10 }], "PI-1", "P-1"), 0, "a later issue starts the count again");
+  assert.equal(rules.partReturned([...moves, { kind: "issue", ref: "PI-1", itemCode: "P-1", qty: -10 }, { kind: "return", ref: "PI-1", itemCode: "P-1", qty: 2 }], "PI-1", "P-1"), 2);
+  assert.equal(rules.partReturned(undefined, "PI-1", "P-1"), 0);
+  const job = (id, itemCode, status, qtyDone, extra = {}) => ({ id, orderId: "PI-1", dept: "ST", kind: "PURCHASED", itemCode, name: itemCode, uom: "pcs", status, qtyDone, ...extra });
+  const lines = rules.partReturnLines({
+    jobs: [job("J1", "P-2", "done", 60), job("J2", "P-1", "done", 10), job("J3", "P-3", "queued", 0), job("J4", "P-4", "done", 5, { dept: "PK" }), job("J5", "P-1", "done", 5), job("J6", "P-9", "done", 1, { orderId: "PI-2" })],
+    stockMoves: moves,
+  }, "PI-1");
+  assert.deepEqual(lines.map((line) => [line.itemCode, line.issued, line.returned, line.returnable]), [["P-1", 15, 3.1, 11.9], ["P-2", 60, 50, 10]], "sorted by code; only done ST part jobs of the order");
+  assert.deepEqual(rules.partReturnLines({}, "PI-1"), []);
+});
