@@ -706,11 +706,11 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   // SR รับมอบ WIP · WH ส่งมอบกล่อง · QA บันทึกผลตรวจและเปิด/ปิด NCR · ฐานข้อมูลคำนวณเอง: สต็อกล็อตหลังชั่ง คงเหลือ/ยอดส่งต่อของใบส่งมอบ ยอดผลิตของ WO สถานะกล่องตามผล QC การใช้แม่พิมพ์ (ไม่เชื่อค่าที่ client ส่ง)
   // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · SR รับมอบใบส่งมอบของ WO ที่ผูกงาน → ส่งยอดที่รับเข้างานเป็นรายงานผลทีละใบส่งมอบ (กิโลกรัม→หน่วยของ WO ตาม kgPerUnit) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
   const RF_KEY = "mnp-harness-rf-master";
-  const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds"];
+  const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
   const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id, materialLots: (record) => record.lotNo };
   for (const list of RF_LISTS) RF_ID[list] ??= (record) => record.id;
   const rfSorter = (list) => (list === "recipes" ? (a, b) => bomCmp(a.id, b.id) || a.revision - b.revision : (a, b) => bomCmp(RF_ID[list](a), RF_ID[list](b)));
-  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold"];
+  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold", "createPurchaseOrder", "receivePurchaseLine", "cancelPurchaseOrder"];
   const RF_FLOW = { planned: ["released", "cancelled"], released: ["in_progress", "on_hold", "cancelled"], in_progress: ["on_hold", "completed"], on_hold: ["in_progress"] };
   const RF_ORDER_STATUSES = ["planned", "released", "in_progress", "on_hold", "completed", "cancelled"];
   // ฟิลด์ที่เซิร์ฟเวอร์เป็นเจ้าของ (ตราผู้บันทึก/เวลา): ไม่นับเป็นการแก้เนื้อหา · RECIPE_OWNED / ORDER_OWNED รวมสถานะ (และยอดผลิต) ที่เปลี่ยนตามกฎของตัวเอง
@@ -721,18 +721,25 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const RF_MATERIAL_STAMPS = ["createdAt", "createdBy", "updatedAt", "updatedBy"];
   // รหัสต้องตรงกับ check ของตาราง rf_* (rf_materials.code · rf_recipes.recipe_code · rf_orders.wo_no) ผิด = รหัสข้อผิดพลาดของชุดนั้น
   const RF_CODE = { materials: /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/, recipes: /^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/, orders: /^[A-Za-z0-9._-]{1,40}$/ };
-  const RF_BAD = { materials: "RF_INVALID_MATERIAL", recipes: "RF_INVALID_RECIPE", orders: "RF_INVALID_ORDER", materialLots: "RF_INVALID_MATERIAL_LOT", requisitions: "RF_INVALID_REQUISITION", lots: "RF_INVALID_LOT", transfers: "RF_INVALID_TRANSFER", fgBoxes: "RF_INVALID_BOX", qcRecords: "RF_INVALID_QC", ncrs: "RF_INVALID_NCR", molds: "RF_INVALID_MOLD" };
-  // ชุดหน้างาน: เลขที่/รหัสของเอกสาร (lotNo ของล็อตวัตถุดิบ, id ของที่เหลือ)
+  const RF_BAD = { materials: "RF_INVALID_MATERIAL", recipes: "RF_INVALID_RECIPE", orders: "RF_INVALID_ORDER", materialLots: "RF_INVALID_MATERIAL_LOT", requisitions: "RF_INVALID_REQUISITION", lots: "RF_INVALID_LOT", transfers: "RF_INVALID_TRANSFER", fgBoxes: "RF_INVALID_BOX", qcRecords: "RF_INVALID_QC", ncrs: "RF_INVALID_NCR", molds: "RF_INVALID_MOLD", purchaseOrders: "RF_INVALID_PURCHASE" };
+  // ชุดหน้างาน: เลขที่/รหัสของเอกสาร (lotNo ของล็อตวัตถุดิบ, id ของที่เหลือ) · ใบสั่งซื้อ = PO-yyyymmdd-nn (po_no)
   for (const list of RF_LISTS.slice(3)) RF_CODE[list] = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+  RF_CODE.purchaseOrders = /^PO-[0-9]{8}-[0-9]{2,}$/;
   // ช่องที่ฐานข้อมูลประทับ/คำนวณเอง ต่อชุด: ระเบียนที่ต่างจากของเดิมเฉพาะช่องเหล่านี้ถือว่าไม่มีอะไรเปลี่ยน (ไม่ตรวจชน ไม่ตรวจสิทธิ์ ไม่เพิ่มเวอร์ชัน)
   const RF_NOOP = {
     materials: RF_MATERIAL_STAMPS, recipes: RF_RECIPE_STAMPS, orders: [...RF_ORDER_STAMPS, "producedQty"],
     materialLots: ["qtyKg", "receivedAt", "receivedBy"], requisitions: ["requestedBy", "createdAt", "issuedAt", "issuedBy"],
     lots: ["operator", "createdAt", "transferredQty", "countedToOrder"], transfers: ["remaining", "createdAt", "createdBy", "receivedAt", "receivedBy"],
     fgBoxes: ["createdAt", "shippedAt", "shippedBy"], qcRecords: ["inspector", "at"], ncrs: ["createdAt", "createdBy", "closedAt", "closedBy"], molds: ["totalUsage"],
+    purchaseOrders: ["createdAt", "createdBy", "cancelledAt"],
   };
-  // ใบเบิก: เวลา/ผู้ชั่งของแต่ละรายการเป็นตราของฐานข้อมูล
-  const rfNorm = (list, record) => (list === "requisitions" && Array.isArray(record?.lines) ? { ...record, lines: record.lines.map((line) => bomWithout(line, ["weighedAt", "weighedBy"])) } : record);
+  // ใบเบิก: เวลา/ผู้ชั่งของแต่ละรายการเป็นตราของฐานข้อมูล · ใบสั่งซื้อ: เวลา/ผู้รับของแต่ละบรรทัดเป็นตราของฐานข้อมูล · วัตถุดิบที่ไม่ส่งสต็อกขั้นต่ำ/อายุการเก็บ = ค่าตั้งต้น (0 และ 180)
+  const rfNorm = (list, record) => {
+    if (list === "requisitions" && Array.isArray(record?.lines)) return { ...record, lines: record.lines.map((line) => bomWithout(line, ["weighedAt", "weighedBy"])) };
+    if (list === "purchaseOrders" && Array.isArray(record?.lines)) return { ...record, lines: record.lines.map((line) => bomWithout(line, ["receivedAt", "receivedBy"])) };
+    if (list === "materials" && record && typeof record === "object") return { safetyKg: 0, shelfLifeDays: 180, ...record };
+    return record;
+  };
   let rfMaster = null;
   const freshRf = () => ({ version: 0, epoch: newEpoch(), ...Object.fromEntries(RF_LISTS.map((list) => [list, []])), versions: Object.fromEntries(RF_LISTS.map((list) => [list, {}])), audit: [] });
   function rfLoad() {
@@ -779,7 +786,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
 
   // บันทึกการเปลี่ยนแปลงทั้งชุดในธุรกรรมเดียว (ตรงกับ app_rf_save): คืน { next, ops, wrote } โดย ops = งานของ BOM ที่ต้องเขียนต่อเมื่อบันทึกสำเร็จ (ผูกงาน / ป้อนยอดผลิตกลับ / ล้างการผูกตอนยกเลิก)
   // wrote = จำนวนระเบียนที่เขียนจริง (0 = ทุกเรคอร์ดตรงกับที่เก็บ ไม่ต้องเพิ่มเวอร์ชัน)
-  function rfApply(current, changes, base, actor, at) {
+  function rfApply(current, changes, base, actor, at, action) {
     const next = clone(current);
     const nextVersion = current.version + 1;
     const mine = new Set();
@@ -791,6 +798,12 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     const approvedNow = [];
     const supersededSent = [];
     const ops = { link: [], receive: [], unlink: [] };
+    // ใบสั่งซื้อ: ส่งชุดข้อมูลได้เฉพาะตามคำสั่ง · createPurchaseOrder = purchaseOrders + materials (ใช้แก้ safetyKg เท่านั้น) · receivePurchaseLine = purchaseOrders + materialLots · cancelPurchaseOrder = purchaseOrders · purchaseOrders ส่งได้เฉพาะสามคำสั่งนี้
+    const PO_LISTS = { createPurchaseOrder: ["purchaseOrders", "materials"], receivePurchaseLine: ["purchaseOrders", "materialLots"], cancelPurchaseOrder: ["purchaseOrders"] };
+    for (const list of Object.keys(changes)) {
+      const sent = Array.isArray(changes[list]?.upsert) && changes[list].upsert.length > 0;
+      if (sent && (PO_LISTS[action] ? !PO_LISTS[action].includes(list) : list === "purchaseOrders")) fail("RF_INVALID_PURCHASE");
+    }
     // รูปของ payload และสิทธิ์ระดับส่วน (ก่อนตรวจรายระเบียน)
     for (const list of Object.keys(changes)) {
       if (!RF_LISTS.includes(list)) fail("RF_INVALID_PAYLOAD");
@@ -813,6 +826,8 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     const inDept = (dept) => planner || actor.dept === dept; // สมาชิกแผนกนั้น หรือกลุ่มวางแผน (ทำได้ทุกอย่าง)
     const claims = []; // ใบเบิก issued → consumed ต้องมาพร้อมล็อตผสมที่เพิ่มในคำสั่งเดียวกัน
     const mixingNew = [];
+    const newLots = []; // ล็อตวัตถุดิบที่เพิ่มในคำสั่งนี้ · receipts = การตรวจสอบรับเข้าของใบสั่งซื้อ (ต้องมาคู่กับล็อตใหม่ที่ตรงกันล็อตเดียว)
+    const receipts = [];
     const finishingNew = new Set(); // ล็อตตกแต่งที่เพิ่มในคำสั่งนี้ (ฐานข้อมูลสร้างกล่องให้เอง กล่องที่ client ส่งมาเมิน)
     const qcFor = new Set((changes.qcRecords?.upsert ?? []).map((row) => row?.lotId));
     const ncrFor = new Set((changes.ncrs?.upsert ?? []).map((row) => row?.lotId));
@@ -834,6 +849,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           if (!(num(record.qtyKg) > 0) || record.initialKg !== record.qtyKg || num(record.expiry) <= at) fail(bad);
           if (record.status !== "available") fail("RF_INVALID_TRANSITION");
           put({ ...clone(record), receivedAt: at, receivedBy: actor.name });
+          newLots.push(record.lotNo);
           return null;
         }
         if (!(inDept("ST") || actor.dept === "QA")) fail("RF_FORBIDDEN");
@@ -1110,6 +1126,60 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         put(out);
         return null;
       }
+      // ใบสั่งซื้อ: สร้างใหม่ = กลุ่มวางแผนหรือสมาชิก RB (ordered ไม่มีข้อมูลการรับ) · หลังสร้างเปลี่ยนได้สองอย่างเท่านั้น: ตรวจสอบรับเข้า (ST หรือกลุ่มวางแผน: บรรทัดเดียวจากยังไม่รับเป็นรับแล้ว มากับล็อตวัตถุดิบใหม่ที่ตรงกันในคำสั่งเดียวกัน)
+      // และยกเลิก (กลุ่มวางแผน: ใบ ordered ที่ไม่มีบรรทัดรับเข้า) · ที่เหลือ = RF_INVALID_TRANSITION · ใบที่ทุกบรรทัดรับครบเป็น received (ฐานข้อมูลตั้งเอง)
+      if (list === "purchaseOrders") {
+        const money = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e9;
+        const received = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
+        const plain = (line) => bomWithout(line, ["receivedKg", "lotNo", "expiry", "receivedAt", "receivedBy"]);
+        const optText = (value, max) => value === undefined || value === null || (typeof value === "string" && value.length <= max);
+        const shape = (line) => Boolean(line) && typeof line === "object" && !Array.isArray(line) && typeof line.materialCode === "string" && [line.needKg, line.availableKg, line.shortageKg, line.safetyKg].every(money) && money(line.qtyKg) && line.qtyKg > 0;
+        if (!["ordered", "received", "cancelled"].includes(record.status) || !Array.isArray(record.lines) || !record.lines.length || record.lines.length > 100 || !record.lines.every(shape)) fail(bad);
+        if (!optText(record.sourcePi, 40) || !optText(record.sourceRequisition, 40) || !optText(record.note, 300)) fail(bad);
+        if (!prev) {
+          if (action !== "createPurchaseOrder") fail(bad); // ใบใหม่มากับคำสั่งสั่งซื้อเท่านั้น
+          if (!master) fail("RF_FORBIDDEN");
+          if (record.status !== "ordered") fail("RF_INVALID_TRANSITION");
+          const codes = new Set();
+          for (const line of record.lines) {
+            const material = next.materials.find((row) => row.code === line.materialCode);
+            if (!material || material.active === false || codes.has(line.materialCode)) fail(bad);
+            codes.add(line.materialCode);
+            if ([line.receivedKg, line.lotNo, line.expiry, line.receivedAt, line.receivedBy].some((value) => value !== null && value !== undefined)) fail(bad);
+          }
+          put({
+            id: record.id, status: "ordered", sourcePi: record.sourcePi ?? null, sourceRequisition: record.sourceRequisition ?? null, note: record.note ?? "",
+            lines: record.lines.map((line) => ({ materialCode: line.materialCode, needKg: line.needKg, availableKg: line.availableKg, shortageKg: line.shortageKg, safetyKg: line.safetyKg, qtyKg: line.qtyKg, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null })),
+            createdAt: at, createdBy: actor.name, cancelledAt: null,
+          });
+          return null;
+        }
+        if (action === "createPurchaseOrder") fail("RF_CONFLICT"); // เลขใบสั่งซื้อซ้ำกับที่มีอยู่ (ชนเวอร์ชันถูกตัดสินก่อนหน้านี้เป็น RF_STALE)
+        if (prev.status !== "ordered") fail("RF_INVALID_TRANSITION");
+        if (record.lines.length !== prev.lines.length || record.lines.some((line, i) => bomCanon(plain(line)) !== bomCanon(plain(prev.lines[i])))) fail("RF_INVALID_TRANSITION");
+        for (const key of ["sourcePi", "sourceRequisition", "note"]) if ((record[key] ?? "") !== (prev[key] ?? "")) fail("RF_INVALID_TRANSITION");
+        if (action === "cancelPurchaseOrder") {
+          if (record.status !== "cancelled") fail("RF_INVALID_TRANSITION");
+          if (!planner) fail("RF_FORBIDDEN");
+          if (prev.lines.some(received) || record.lines.some(received)) fail("RF_INVALID_TRANSITION");
+          put({ ...prev, status: "cancelled", cancelledAt: at });
+          return null;
+        }
+        if (!inDept("ST")) fail("RF_FORBIDDEN");
+        const changed = [];
+        record.lines.forEach((line, i) => {
+          if (received(prev.lines[i])) { if (bomCanon(bomWithout(line, ["receivedAt", "receivedBy"])) !== bomCanon(bomWithout(prev.lines[i], ["receivedAt", "receivedBy"]))) fail("RF_INVALID_TRANSITION"); return; }
+          if (received(line)) changed.push(i);
+        });
+        if (changed.length !== 1 || receipts.length) fail(changed.length === 1 ? bad : "RF_INVALID_TRANSITION");
+        const index2 = changed[0];
+        const line = record.lines[index2];
+        if (!(money(line.receivedKg) && line.receivedKg > 0) || typeof line.expiry !== "number" || !(line.expiry > at) || typeof line.lotNo !== "string" || !line.lotNo) fail(bad);
+        receipts.push({ materialCode: line.materialCode, kg: line.receivedKg, expiry: line.expiry, lotNo: line.lotNo });
+        const lines = prev.lines.map((old, i) => (i === index2 ? { ...old, receivedKg: line.receivedKg, lotNo: line.lotNo, expiry: line.expiry, receivedAt: at, receivedBy: actor.name } : old));
+        put({ ...prev, lines, status: lines.every(received) ? "received" : "ordered" });
+        return null;
+      }
       // molds: เพิ่ม/แก้นิยามและบันทึกล้าง = กลุ่มวางแผนหรือแผนก RB · ยอดใช้งานสะสมนับจากล็อตฉีด/อบเท่านั้น
       if (!master) fail("RF_FORBIDDEN");
       if (blank(record.name) || String(record.name).length > 120 || !["die", "mold", "line"].includes(record.kind) || !["m", "pcs", "shot"].includes(record.unit)) fail(bad);
@@ -1146,11 +1216,17 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         // ชนก่อนสิทธิ์/เนื้อหาเสมอ: ระเบียนถูกผู้อื่นแก้/เพิ่มหลัง base (รวมเลข WO ซ้ำ) = ฝั่ง client ถือสำเนาเก่า ต้องได้ RF_STALE ไม่ใช่ RF_FORBIDDEN
         if (prev && stale(list, id)) fail("RF_STALE");
         if (list === "materials") {
+          // สั่งซื้อ: วัตถุดิบที่มากับใบสั่งซื้อแก้ได้เฉพาะ safetyKg ของวัตถุดิบที่มีอยู่ (ที่เหลือหรือวัตถุดิบใหม่ = RF_INVALID_MATERIAL)
+          if (action === "createPurchaseOrder" && (!prev || !rfSame(rfNorm(list, prev), rfNorm(list, record), [...RF_MATERIAL_STAMPS, "safetyKg"]))) fail(bad);
           rfText(record.name, 160, bad);
           if (record.active !== undefined && record.active !== null && typeof record.active !== "boolean") fail(bad);
           // รหัสที่ต่างจากของเดิมแค่ตัวพิมพ์ = ซ้ำ
           if (!prev && next.materials.some((row) => row.code.toUpperCase() === record.code.toUpperCase())) fail("RF_CONFLICT");
-          const out = { ...clone(record), createdAt: prev?.createdAt ?? at, createdBy: prev?.createdBy ?? actor.name, updatedAt: at, updatedBy: actor.name };
+          // สต็อกขั้นต่ำ 0–1e9 kg · อายุการเก็บ 1–3650 วัน (จำนวนเต็ม) · ไม่ส่ง = คงค่าเดิม (ใหม่ 0 และ 180)
+          const safetyKg = record.safetyKg ?? prev?.safetyKg ?? 0;
+          const shelfLifeDays = record.shelfLifeDays ?? prev?.shelfLifeDays ?? 180;
+          if (typeof safetyKg !== "number" || !(safetyKg >= 0 && safetyKg <= 1e9) || !Number.isInteger(shelfLifeDays) || shelfLifeDays < 1 || shelfLifeDays > 3650) fail(bad);
+          const out = { ...clone(record), safetyKg, shelfLifeDays, createdAt: prev?.createdAt ?? at, createdBy: prev?.createdBy ?? actor.name, updatedAt: at, updatedBy: actor.name };
           if (prev) next.materials[index] = out; else next.materials.push(out);
         } else if (list === "recipes") {
           if (!["draft", "approved", "superseded"].includes(record.status)) fail(bad);
@@ -1266,6 +1342,12 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     // ใบเบิกที่ถูกใช้ผสม (issued → consumed) กับล็อตผสมที่เพิ่ม ต้องมาคู่กัน
     for (const claim of claims) if (!mixingNew.some((row) => row.lot === claim.lot && row.req === claim.req)) fail("RF_INVALID_TRANSITION");
     for (const row of mixingNew) if (!claims.some((claim) => claim.lot === row.lot && claim.req === row.req)) fail("RF_INVALID_TRANSITION");
+    // ตรวจสอบรับเข้า: ล็อตวัตถุดิบใหม่ล็อตเดียวของคำสั่งนี้ ต้องตรงกับบรรทัดที่รับ (เลขล็อต วัตถุดิบ ปริมาณ วันหมดอายุ)
+    if (action === "receivePurchaseLine" && (receipts.length !== 1 || (changes.materialLots?.upsert?.length ?? 0) !== 1)) fail("RF_INVALID_PURCHASE");
+    for (const receipt of receipts) {
+      const lot = newLots.length === 1 ? next.materialLots.find((row) => row.lotNo === newLots[0]) : null;
+      if (!lot || lot.lotNo !== receipt.lotNo || lot.materialCode !== receipt.materialCode || lot.qtyKg !== receipt.kg || lot.initialKg !== receipt.kg || lot.expiry !== receipt.expiry) fail("RF_INVALID_PURCHASE");
+    }
     // ผลตรวจ: ผลตัดสินต้องตรงกับสถานะ QC ของล็อตหลังบันทึก · กล่องที่ยังไม่ส่งตามผล QC (ผ่าน = พร้อมส่ง ไม่ผ่าน/รอตัดสิน = hold)
     for (const item of qcNew) {
       const lot = next.lots.find((row) => row.id === item.lotId);
@@ -1513,7 +1595,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       const auditIn = p_audit === undefined || p_audit === null ? [] : p_audit;
       if (!Array.isArray(auditIn) || auditIn.length > 20 || auditIn.some((entry) => !entry || typeof entry.action !== "string" || !entry.action || entry.action.length > 80 || typeof entry.detail !== "string" || entry.detail.length > 300)) fail("RF_INVALID_PAYLOAD");
       const at = now();
-      const { next, ops, wrote } = rfApply(current, p_changes, p_base_version, actor, at);
+      const { next, ops, wrote } = rfApply(current, p_changes, p_base_version, actor, at, p_action);
       // ไม่มีระเบียนไหนเปลี่ยนจริง (ทุกเรคอร์ดตรงกับที่เก็บ) = ไม่เพิ่มเวอร์ชัน ไม่เขียน audit คืนส่วนต่างตั้งแต่ base (เหมือน RPC จริง)
       if (!wrote) return rfDelta(current, p_base_version);
       next.version = current.version + 1;

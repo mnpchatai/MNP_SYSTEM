@@ -5,7 +5,7 @@
 // rubberflow-derive.js (แจ้งเตือน/ค้นหา/สืบย้อน) · rubberflow-store.js (บทบาทสาธิต + localStorage) · rubberflow-ui.js (ชิ้นส่วน HTML) ·
 // rubberflow-pages-*.js และ rubberflow-documents.js (หน้าและ dialog ลงทะเบียนใน window.MNP_RUBBERFLOW_PAGES / _DIALOGS) · ไฟล์นี้ (shell เส้นทาง การผูก event)
 //
-// ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลทั้ง 11 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ใบส่งมอบ WIP กล่องสินค้า ผลตรวจ QC NCR แม่พิมพ์)
+// ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลทั้ง 12 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ใบส่งมอบ WIP กล่องสินค้า ผลตรวจ QC NCR แม่พิมพ์ ใบสั่งซื้อ)
 // อยู่ในฐานข้อมูลผ่าน RPC app_rf_master / app_rf_master_since / app_rf_save (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) บันทึกการใช้งานอ่านจาก app_rf_audit และ admin ล้างข้อมูลทดสอบได้ด้วย
 // app_sandbox_purge_rf · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin ซึ่งบทบาทมาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ไม่มีข้อมูลธุรกิจเหลืออยู่ในเบราว์เซอร์
 // ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตทั้งชุดใน localStorage และบทบาทสาธิต 9 คนของต้นแบบเหมือนเดิม
@@ -73,7 +73,7 @@
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfTransfer / showBomFeedback: ขั้น "รับมอบ → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfTransfer: (id) => bomJobOfTransfer(id), showBomFeedback: (before) => showBomFeedback(before) };
+  window.MNP_RUBBERFLOW = { store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfTransfer: (id) => bomJobOfTransfer(id), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -164,6 +164,12 @@
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, startDate: rules.fromInputDate(p.startDate), dueDate: rules.fromInputDate(p.dueDate) }),
     receiveMaterial: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry), coa: p.coa === "yes" }),
+    receivePurchaseLine: (p) => ({ ...p, expiry: rules.fromInputDate(p.expiry) }),
+    // ฟอร์มสั่งซื้อ: materialCode[] needKg[] availableKg[] shortageKg[] safetyKg[] qtyKg[] ตามลำดับแถว → lines · safety = สต็อกขั้นต่ำที่แก้ไว้ต่อวัตถุดิบ (บันทึกเข้าวัตถุดิบ) · จำนวนสั่งที่ว่าง/0 ถูกข้ามใน action
+    createPurchaseOrder: (p) => {
+      const lines = listOf(p.materialCode).map((materialCode, index) => ({ materialCode, needKg: listOf(p.needKg)[index], availableKg: listOf(p.availableKg)[index], shortageKg: listOf(p.shortageKg)[index], safetyKg: listOf(p.safetyKg)[index], qtyKg: listOf(p.qtyKg)[index] }));
+      return { lines, safety: Object.fromEntries(lines.map((line) => [line.materialCode, line.safetyKg])), sourcePi: p.sourcePi, sourceRequisition: p.sourceRequisition, note: p.note };
+    },
     createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
     saveRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
     recordMixing: (p) => ({ ...p, stages: stagesOf(p) }),
@@ -342,7 +348,7 @@
     const { data, user, now } = ctx;
     // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล) · ล้างข้อมูลทดสอบ = เฉพาะ admin ตัวจริงในโหมดทดสอบ (ฐานข้อมูลตรวจซ้ำ)
     if (store.isRemote()) {
-      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-rf-purge title="ลบข้อมูลทั้งหมดของ RubberFlow ในฐานข้อมูล (วัตถุดิบ สูตร ใบสั่งผลิต ล็อต ใบเบิก ส่งมอบ กล่อง QC NCR แม่พิมพ์) แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล RubberFlow ทดสอบ</button>` : "";
+      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-rf-purge title="ลบข้อมูลทั้งหมดของ RubberFlow ในฐานข้อมูล (วัตถุดิบ สูตร ใบสั่งผลิต ล็อต ใบเบิก ส่งมอบ กล่อง QC NCR แม่พิมพ์ ใบสั่งซื้อ) แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล RubberFlow ทดสอบ</button>` : "";
       const alerts = user && store.status() === "ready" ? derive.buildAlerts(data, now) : [];
       const bad = alerts.some((alert) => alert.tone === "bad");
       const tools = user && store.status() === "ready" ? `<form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
@@ -393,7 +399,7 @@
     const user = store.user();
     const now = Date.now();
     const page = currentPage(params);
-    return {
+    const ctx = {
       data, user, now, params, page,
       q: String(params.get("q") ?? "").trim().slice(0, 100),
       url,
@@ -403,6 +409,34 @@
       canSee: (id) => storeApi.canSee(user, id),
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };
+    ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น ปุ่ม "สั่งซื้อส่วนที่ขาด" ในใบเบิก)
+    return ctx;
+  }
+
+  // ---------- ตรวจวัตถุดิบ → สั่งซื้อ ----------
+  // เรียกจากฝั่ง BOM (หลังปล่อยผลิต PI และปุ่ม "ตรวจวัตถุดิบ" ของ PI) · ตามทัน RubberFlow ให้เห็น WO ที่เพิ่งเปิดก่อน แล้วเทียบความต้องการเคมีของ WO เหล่านั้นกับสต็อก (rules.chemicalNeeds)
+  // auto = หลังปล่อยผลิต: ขาด → เปิด dialog สั่งซื้อ · ไม่ขาด → แจ้งสั้นๆ ว่าเคมีพอ · ปุ่มเรียกเอง (auto = false) เปิด dialog เสมอ · บัญชีที่ไม่มีสิทธิ์สั่งซื้อไม่เห็นอะไร
+  async function checkMaterials({ woIds = [], sourcePi = "", skippedJobs = 0, auto = false } = {}) {
+    try {
+      const user = store.user();
+      if (!user || !storeApi.can(user, "purchase")) return { ok: false, reason: "rights" };
+      await store.ensureLoaded();
+      if (store.status() !== "ready") return { ok: false, reason: "not-ready" };
+      try { await store.catchUp(); } catch { /* ใช้ข้อมูลที่มี */ }
+      if (store.isRemote() && woIds.some((id) => !store.data().orders.some((order) => order.id === id))) { try { await store.reload(); } catch { /* ใช้ข้อมูลที่มี */ } }
+      if (store.status() !== "ready") return { ok: false, reason: "not-ready" };
+      const ctx = makeContext(new URLSearchParams());
+      const result = rules.chemicalNeeds(ctx.data, woIds, ctx.now, { remote: store.isRemote() });
+      if (auto && !result.anyShort) {
+        if (result.rows.length) showToast("เคมีพอสำหรับ WO ที่เปิด");
+        return { ok: true, opened: false, result };
+      }
+      openDialog("purchase", { woIds, sourcePi, skippedJobs }, ctx);
+      return { ok: true, opened: true, result };
+    } catch (error) {
+      showToast(friendlyError(error), "error");
+      return { ok: false, reason: "error" };
+    }
   }
 
   function bindPage(root, ctx) {
@@ -426,7 +460,7 @@
     root.querySelector("[data-rf-audit-reload]")?.addEventListener("click", () => { store.loadAudit(true); renderRoute(); });
     root.querySelector("[data-rf-purge]")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
-      if (!(await confirmDialog({ title: "ล้างข้อมูล RubberFlow ทดสอบทั้งหมด?", message: "ลบข้อมูล RubberFlow ในฐานข้อมูลทั้งหมด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ใบส่งมอบ กล่องสินค้า ผลตรวจ QC NCR และแม่พิมพ์) แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) ย้อนกลับไม่ได้ · งาน BOM ที่ผูก WO เดิมไว้และยอดที่รายงานเข้างานแล้วไม่ถูกแตะ · ประวัติการใช้งาน (audit) ไม่ถูกลบและมีบรรทัดบันทึกการล้างเพิ่ม · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล RubberFlow ทดสอบ", danger: true }))) return;
+      if (!(await confirmDialog({ title: "ล้างข้อมูล RubberFlow ทดสอบทั้งหมด?", message: "ลบข้อมูล RubberFlow ในฐานข้อมูลทั้งหมด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ใบส่งมอบ กล่องสินค้า ผลตรวจ QC NCR แม่พิมพ์ และใบสั่งซื้อ) แล้วเริ่มใหม่จากศูนย์ (ผู้ใช้อื่นที่เปิดหน้านี้อยู่ต้องโหลดใหม่) ย้อนกลับไม่ได้ · งาน BOM ที่ผูก WO เดิมไว้และยอดที่รายงานเข้างานแล้วไม่ถูกแตะ · ประวัติการใช้งาน (audit) ไม่ถูกลบและมีบรรทัดบันทึกการล้างเพิ่ม · ข้อมูลระบบจริงไม่ถูกแตะ", confirmLabel: "ล้างข้อมูล RubberFlow ทดสอบ", danger: true }))) return;
       button.disabled = true;
       const outcome = await store.purge();
       if (outcome.ok) showToast(`ล้างข้อมูล RubberFlow ทดสอบแล้ว ${outcome.deleted} รายการ`);
@@ -501,7 +535,7 @@
     code: "RUBBERFLOW",
     enabled: true,
     standalone: true,
-    // ข้อมูลทั้ง 11 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่รับเฉพาะ admin ในโหมดทดสอบ (RF_TEST_MODE_ONLY)
+    // ข้อมูลทั้ง 12 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่รับเฉพาะ admin ในโหมดทดสอบ (RF_TEST_MODE_ONLY)
     sandbox: true,
     label: TITLE,
     theme: THEME,

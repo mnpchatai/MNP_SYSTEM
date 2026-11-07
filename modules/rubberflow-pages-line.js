@@ -168,23 +168,45 @@
         ${ui.field("หมายเหตุ", ui.input("note"))}
       </div><div class="muted small" data-rf-recipe-line></div><div data-rf-shortage></div><div data-rf-preview></div>`;
     const html = ui.dialog("createRequisition", "สร้างใบเบิกวัตถุดิบ (ระเบิดสูตร)", `<form data-rf-form="createRequisition" data-rf-success="สร้างใบเบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit${orders.length ? "" : " disabled"}>สร้างใบเบิก</button>`, wide: true });
-    const bind = (dialog) => {
+    const bind = (dialog, bindCtx) => {
       const orderSelect = dialog.querySelector("[data-rf-order]");
       const batches = dialog.querySelector("[data-rf-batches]");
       const submit = dialog.querySelector("[data-rf-submit]");
+      const mayBuy = ctx.can("purchase") && typeof (bindCtx ?? ctx).openDialog === "function";
+      let shortRows = [];
+      let shortNote = "";
       const paint = () => {
         const order = data.orders.find((row) => row.id === orderSelect.value);
         const recipe = order && rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
         const n = Number(batches.value || 0);
         const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now) })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
+        // ส่วนที่ขาดรวมต่อวัตถุดิบ (สูตรอาจใช้วัตถุดิบเดียวกันสองขั้น) ให้ปุ่ม "สั่งซื้อส่วนที่ขาด" ส่งเข้า dialog สั่งซื้อ
+        const byCode = new Map();
+        for (const row of preview) {
+          const entry = byCode.get(row.materialCode) ?? { materialCode: row.materialCode, needKg: 0, shortageKg: 0 };
+          entry.needKg += row.need;
+          entry.shortageKg += row.shortage;
+          byCode.set(row.materialCode, entry);
+        }
+        shortRows = [...byCode.values()].filter((row) => row.shortageKg > 0.0001).map((row) => {
+          const needKg = Math.round(row.needKg * 1000) / 1000;
+          const shortageKg = Math.round(row.shortageKg * 1000) / 1000;
+          return { materialCode: row.materialCode, needKg, availableKg: Math.max(0, Math.round((needKg - shortageKg) * 1000) / 1000), shortageKg };
+        });
+        shortNote = order ? `ขาดจากใบเบิกของ ${order.id} (${n} batch)` : "";
         dialog.querySelector("[data-rf-recipe-line]").textContent = recipe ? `สูตร ${rules.recipeLabel(recipe)} · น้ำหนักรวม ${fmtNum(recipe.batchKg * n, 2)} kg` : "";
-        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", "สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)") : "";
+        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayBuy ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>สั่งซื้อส่วนที่ขาด</button>' : ""}`) : "";
         dialog.querySelector("[data-rf-preview]").innerHTML = ui.table(["วัตถุดิบ", "ขั้น", { label: "ต้องใช้ (kg)", className: "right" }, "ล็อตที่ระบบจะจ่าย (FEFO)"], preview.map((row) => `<tr><td class="rf-mono">${esc(row.materialCode)}</td><td class="nowrap">${esc(`ขั้น ${row.stage}`)}</td><td class="right rf-mono">${esc(fmtNum(row.need, 3))}</td><td class="small">${row.picks.map((pick) => `<div class="rf-mono">${esc(`${pick.lotNo} → ${pick.kg.toFixed(3)} kg`)}</div>`).join("")}${row.shortage > 0.0001 ? ui.badge("bad", `ขาด ${row.shortage.toFixed(2)} kg`) : ""}</td></tr>`), { emptyText: "เลือกใบสั่งผลิตก่อน" });
         if (submit) submit.disabled = !order || short;
       };
       orderSelect.addEventListener("change", paint);
       batches.addEventListener("input", paint);
+      // ปุ่มอยู่ในกล่องที่วาดซ้ำทุกครั้ง จึงผูกที่กล่อง: เปิด dialog สั่งซื้อพร้อมส่วนที่ขาดของใบเบิกนี้ (แทน dialog นี้)
+      dialog.querySelector("[data-rf-shortage]").addEventListener("click", (event) => {
+        if (!event.target?.closest?.("[data-rf-po-short]")) return;
+        (bindCtx ?? ctx).openDialog?.("purchase", { rows: shortRows, note: shortNote });
+      });
       paint();
     };
     return { html, bind };

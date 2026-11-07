@@ -96,6 +96,7 @@
       users: USERS.map((user) => ({ ...user })),
       materials: MATERIALS.map((material) => ({ ...material })),
       materialLots: [],
+      purchaseOrders: [],
       recipes: [],
       orders: [],
       requisitions: [],

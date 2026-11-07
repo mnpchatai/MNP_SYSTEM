@@ -1816,6 +1816,9 @@
         buttons.push(ui.button("ระเบิด BOM", { action: "explodeOrder", args: { orderId: order.id }, className: "secondary" }));
         buttons.push(ui.button("ปล่อยผลิต", { action: "releaseOrder", args: { orderId: order.id }, className: "", confirmText: `ปล่อยผลิต ${order.id}? ระบบจะล็อก revision ของ BOM และสร้างงานรายแผนก${ctx.store?.isRemote?.() ? " และเปิด WO ใน RubberFlow ให้งาน RB ที่ผูกสูตรแล้ว" : ""}` }));
       }
+      // ตรวจวัตถุดิบ: เทียบเคมีที่ WO ของใบนี้ต้องใช้กับสต็อกใน RubberFlow แล้วสั่งซื้อส่วนที่ขาด (dialog เดียวกับที่เด้งหลังปล่อยผลิต) · ผู้ที่สั่งซื้อได้ = ฝ่ายวางแผนหรือแผนก RB
+      const checkWos = data.jobs.filter((job) => job.orderId === order.id && job.dept === "RB" && job.externalRef?.woId).map((job) => job.externalRef.woId);
+      if (["released", "in_progress"].includes(order.status) && checkWos.length && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(user, { dept: "RB" })) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้กับสต็อกใน RubberFlow แล้วสั่งซื้อส่วนที่ขาด">ตรวจวัตถุดิบ</button>`);
       if (["released", "in_progress"].includes(order.status) && canPlan) buttons.push(ui.button("ปิดใบ", { action: "completeOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ปิดใบสั่งผลิตนี้?" }));
       if (!["completed", "cancelled"].includes(order.status) && canPlan) buttons.push(ui.button("ยกเลิกใบ", { action: "cancelOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ยกเลิกใบสั่งผลิตนี้?" }));
       if (order.explosion?.length) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-csv="bomsheet" data-bom-order="${attr(order.id)}" title="ใบคำนวณวัตถุดิบรูปแบบเดียวกับ BOMSHEET เปิดใน Excel ได้">ส่งออก CSV ใบคำนวณ</button>`, `<button class="btn rf-btn secondary" type="button" data-bom-csv="req" data-bom-order="${attr(order.id)}" title="รายการที่ต้องเบิก/สั่งซื้อรวมทุกสินค้าในใบ">ส่งออก CSV รายการเบิก</button>`,
@@ -1854,6 +1857,12 @@
         if (!target?.explosion) return;
         const csv = button.dataset.bomCsv === "req" ? requirementsCsv(ctx, target) : bomsheetCsv(ctx, target);
         downloadCsv(`${target.id}-${button.dataset.bomCsv}.csv`, csv);
+      }));
+      rootNode.querySelectorAll("[data-bom-rf-check]").forEach((button) => button.addEventListener("click", async () => {
+        let woIds = [];
+        try { woIds = JSON.parse(button.dataset.bomWos || "[]"); } catch { woIds = []; }
+        button.disabled = true;
+        try { await ctx.rubberflow()?.checkMaterials?.({ woIds, sourcePi: button.dataset.bomOrder || "", auto: false }); } finally { button.disabled = false; }
       }));
       // เลือกใบพิมพ์แล้วปุ่ม "เปิดใบพิมพ์" (data-rf-open อ่าน args ตอนคลิก) ชี้ไปใบนั้น
       rootNode.querySelectorAll("[data-bom-sheet]").forEach((select) => select.addEventListener("change", () => {

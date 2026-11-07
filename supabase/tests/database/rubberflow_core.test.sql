@@ -174,10 +174,10 @@ select throws_ok('select public.app_sandbox_purge_rf()', 'SANDBOX_NOT_ACTIVE', '
 
 -- 4. วัตถุดิบ ------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', 0) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
-  'a planner reads an empty RubberFlow (eleven lists) and never sees the real rows (the epoch is a separate field)');
-select is(public.app_rf_master_since(0) - 'epoch', (select jsonb_build_object('version', 0, 'changes', jsonb_object_agg(l, '{"upsert":[],"delete":[]}'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
-  'the delta of an empty RubberFlow lists all eleven lists with empty upsert and delete');
+select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', 0) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l),
+  'a planner reads an empty RubberFlow (twelve lists) and never sees the real rows (the epoch is a separate field)');
+select is(public.app_rf_master_since(0) - 'epoch', (select jsonb_build_object('version', 0, 'changes', jsonb_object_agg(l, '{"upsert":[],"delete":[]}'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l),
+  'the delta of an empty RubberFlow lists all twelve lists with empty upsert and delete');
 select ok((public.app_rf_master() ->> 'epoch') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'the snapshot carries the epoch');
 select is(public.app_rf_master_since(0) ->> 'epoch', public.app_rf_master() ->> 'epoch', 'the delta carries the same epoch');
 select set_config('test.epoch0', public.app_rf_master() ->> 'epoch', true);
@@ -187,8 +187,8 @@ select is(public.app_rf_save(jsonb_build_object('materials', jsonb_build_object(
   current_setting('test.mat')::jsonb || '{"code":"MAT-B","name":"เขม่าดำ","category":"สารตัวเติม"}'::jsonb))), 0, 'saveMaterial') ->> 'version', '1',
   'a planner adds materials');
 select is(jsonb_array_length(public.app_rf_master() -> 'materials'), 2, 'both materials are in the snapshot');
-select is((public.app_rf_master() -> 'materials' -> 0) - 'createdAt', '{"code":"MAT-A","name":"ยาง EPDM","category":"โพลิเมอร์","storage":"โกดัง A-1","uom":"kg","active":true}'::jsonb,
-  'a material is returned with its master fields');
+select is((public.app_rf_master() -> 'materials' -> 0) - 'createdAt', '{"code":"MAT-A","name":"ยาง EPDM","category":"โพลิเมอร์","storage":"โกดัง A-1","uom":"kg","active":true,"safetyKg":0,"shelfLifeDays":180}'::jsonb,
+  'a material is returned with its master fields (safety stock 0 and shelf life 180 days by default)');
 
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is(public.app_rf_master() ->> 'version', '1', 'RB staff reads');
@@ -991,10 +991,10 @@ select throws_ok($$ select public.app_bom_save_master('{"compounds":{"upsert":[{
 
 -- 11. delta / audit ---------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
+select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l),
   'the delta from version 0 equals the snapshot (same shapes, same order)');
 select is(public.app_rf_master_since((public.app_rf_master() ->> 'version')::bigint) -> 'changes',
-  (select jsonb_object_agg(l, '{"upsert":[],"delete":[]}'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l), 'a client at the current version gets an empty delta');
+  (select jsonb_object_agg(l, '{"upsert":[],"delete":[]}'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l), 'a client at the current version gets an empty delta');
 select is((select jsonb_agg(m ->> 'code') from jsonb_array_elements(public.app_rf_master() -> 'materials') m), '["MAT-A","MAT-B","MAT-C","MAT-D"]'::jsonb, 'materials are listed by code');
 select is((select jsonb_agg((r ->> 'id') || '/' || (r ->> 'revision')) from jsonb_array_elements(public.app_rf_master() -> 'recipes') r),
   '["RC-1/1","RC-1/2","RC-2/1","RC-2/2","RC-3/1"]'::jsonb, 'recipes carry every revision, ordered by code then revision');
@@ -1056,7 +1056,7 @@ select set_config('test.pre_bom_version', public.app_bom_master() ->> 'version',
 select ok(current_setting('test.pre_version')::bigint > 20, 'the counter is well above zero before the purge');
 select set_config('test.purge', public.app_sandbox_purge_rf()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 15, 'the purge reports the deleted rows');
-select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l),
+select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l),
   'the test data is empty again and the counter keeps its value (it never goes back)');
 select isnt(public.app_rf_master() ->> 'epoch', current_setting('test.pre_epoch'), 'the purge changed the epoch');
 select is(public.app_rf_master_since(current_setting('test.pre_version')::bigint) ->> 'epoch', public.app_rf_master() ->> 'epoch',

@@ -458,3 +458,124 @@ test("the closing dialog of a work order asks for a produced quantity in the dem
   assert.doesNotMatch(remote.html, /name="producedQty"/);
   assert.match(remote.html, /data-rf-form="setOrderStatus"/);
 });
+
+test("purchasing screens: the check opens one dialog (escaped, safety stock and order quantity editable), the form creates the order, the warehouse tab lists it and the receive dialog closes a line", async () => {
+  const env = load();
+  env.store.setUser("U03");
+  const DAY = 86400000;
+  const now = Date.now();
+  const { MNP_RUBBERFLOW: module, MNP_RUBBERFLOW_DIALOGS: dialogs, MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const big = env.store.run("createOrder", { recipeId: "RC-EPDM-DS01", customer: "ลูกค้า", targetQty: 600000, startDate: now, dueDate: now + DAY });
+  assert.equal(big.ok, true, big.error?.message);
+
+  // auto check with a shortage opens the dialog; the PI number is escaped
+  const opened = await module.checkMaterials({ woIds: [big.result], sourcePi: XSS, skippedJobs: 2, auto: true });
+  assert.equal(opened.opened, true);
+  const html = env.log.dialogs.at(-1);
+  assert.match(html, /data-rf-dialog="purchase"/);
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /data-rf-form="createPurchaseOrder"/);
+  assert.match(html, /ไม่ได้นับ 2 งานที่ยังไม่มี WO หรือไม่มีสูตร/);
+  for (const name of ["materialCode[]", "needKg[]", "availableKg[]", "shortageKg[]", "safetyKg[]", "qtyKg[]"]) assert.ok(html.includes(`name="${name}"`), name);
+  for (const code of ["EPDM-55", "CB-N550", "ZNO"]) assert.ok(html.includes(`>${code}<`) || html.includes(`value="${code}"`), code);
+  assert.match(html, /สต็อกขั้นต่ำ \(safety stock\) \(kg\)/);
+  assert.match(html, />สั่งซื้อ<\/button>/);
+  assert.doesNotMatch(html, /undefined|NaN/);
+  assert.equal(env.log.toasts.length, 0, "no toast when the dialog opens");
+
+  // the dialog factory used directly: nothing to check shows the empty note and no order button
+  const empty = dialogs.purchase(env.ctx(), { woIds: ["WO-NONE"] });
+  assert.match(empty.html, /ไม่มีวัตถุดิบให้ตรวจ/);
+  assert.doesNotMatch(empty.html, /form="rf-purchase"/);
+  // rows from a requisition shortage: the safety stock comes from the material, the default order is shortage + safety
+  env.store.run("saveMaterial", { code: "ZNO", name: "ซิงค์ออกไซด์", safetyKg: "4" });
+  const fromRequisition = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 10, availableKg: 6, shortageKg: 4 }], note: "ขาดจากใบเบิก" });
+  assert.match(fromRequisition.html, /name="safetyKg\[\]"[^>]*value="4"/);
+  assert.match(fromRequisition.html, /name="qtyKg\[\]"[^>]*value="8"/);
+  assert.match(fromRequisition.html, /ขาดจากใบเบิก/);
+
+  // submitting the form: lines, the safety stock to the material, the PI number from the form args
+  const form = { ...env.root, dataset: { rfForm: "createPurchaseOrder", rfSuccess: "สั่งซื้อ {result} แล้ว", rfArgs: JSON.stringify({ sourcePi: "PI-9", sourceRequisition: "", note: "" }) }, handlers: {}, __values: {
+    "materialCode[]": ["EPDM-55", "ZNO"], "needKg[]": ["50", "10"], "availableKg[]": ["10", "6"], "shortageKg[]": ["40", "4"], "safetyKg[]": ["20", "4"], "qtyKg[]": ["60", "0"],
+  } };
+  form.addEventListener = (type, handler) => { form.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [form];
+  await env.render("p=warehouse&tab=po");
+  await form.handlers.submit({ preventDefault() {} });
+  assert.deepEqual(env.log.toasts.filter(([, kind]) => kind === "error"), []);
+  const [po] = env.store.data().purchaseOrders;
+  assert.match(po.id, /^PO-\d{8}-01$/);
+  assert.equal(JSON.stringify(po.lines.map((line) => [line.materialCode, line.qtyKg, line.safetyKg, line.shortageKg])), JSON.stringify([["EPDM-55", 60, 20, 40]]), "the zero quantity is not ordered");
+  assert.equal(po.sourcePi, "PI-9");
+  assert.equal(env.store.data().materials.find((row) => row.code === "EPDM-55").safetyKg, 20, "the safety stock goes to the material");
+  assert.match(env.log.toasts.at(-1)[0], /^สั่งซื้อ PO-\d{8}-01 แล้ว$/);
+  delete env.fakes["form[data-rf-form]"];
+
+  // the warehouse tab: the open order first with its receive button and cancel button, the tab counts open orders
+  let page = await env.render("p=warehouse&tab=po");
+  assert.match(page, /ใบสั่งซื้อ \(1\)/);
+  assert.ok(page.includes(po.id));
+  assert.match(page, /data-rf-open="receivePurchase"/);
+  assert.match(page, /data-rf-action="cancelPurchaseOrder"/);
+  assert.match(page, /ตรวจสอบรับเข้า/);
+  assert.doesNotMatch(page, /undefined|NaN/);
+  // the buttons follow the rights of the account (the database decides for real)
+  const wh = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "receiveMaterial" && right !== "cancelPurchase" }).html;
+  assert.doesNotMatch(wh, /data-rf-open="receivePurchase"|cancelPurchaseOrder/);
+  assert.ok(wh.includes(po.id), "read-only accounts still see the order");
+  // the materials tab and the material form carry the new fields
+  page = await env.render("p=warehouse&tab=materials");
+  assert.match(page, /สต็อกขั้นต่ำ \(kg\)/);
+  assert.match(page, /อายุการเก็บ \(วัน\)/);
+  const material = dialogs.materialEdit(env.ctx(), { code: "EPDM-55" }).html;
+  assert.match(material, /name="safetyKg"[^>]*value="20"/);
+  assert.match(material, /name="shelfLifeDays"[^>]*value="180"/);
+
+  // the receive dialog: ordered quantity, expiry = today + shelf life
+  env.store.run("saveMaterial", { code: "EPDM-55", name: "ยาง EPDM", shelfLifeDays: "90" });
+  const receive = dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" });
+  assert.match(receive.html, /data-rf-form="receivePurchaseLine"/);
+  assert.match(receive.html, /name="qtyKg"[^>]*value="60"/);
+  assert.match(receive.html, new RegExp(`name="expiry"[^>]*value="${env.context.MNP_RUBBERFLOW_RULES.toInputDate(now + 90 * DAY)}"`));
+  assert.match(receive.html, /อายุการเก็บ 90 วัน/);
+  assert.equal(dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "ZNO" }), null, "a material that is not on the order");
+  assert.equal(dialogs.receivePurchase(env.ctx(), { id: "PO-NOPE", materialCode: "ZNO" }), null);
+  const receiveForm = { ...env.root, dataset: { rfForm: "receivePurchaseLine", rfSuccess: "รับเข้าล็อต {result} แล้ว", rfArgs: JSON.stringify({ id: po.id, materialCode: "EPDM-55" }) }, handlers: {}, __values: { qtyKg: "58", expiry: "2027-06-30", supplier: "" } };
+  receiveForm.addEventListener = (type, handler) => { receiveForm.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [receiveForm];
+  await env.render("p=warehouse&tab=po");
+  await receiveForm.handlers.submit({ preventDefault() {} });
+  const lot = env.store.data().materialLots.find((row) => row.supplier === po.id);
+  assert.deepEqual([lot.materialCode, lot.qtyKg, lot.expiry], ["EPDM-55", 58, new Date(2027, 5, 30).getTime()]);
+  assert.equal(env.store.data().purchaseOrders[0].status, "received");
+  assert.match(env.log.toasts.at(-1)[0], /^รับเข้าล็อต RM-EPDM-55-\d{8}-\d\d แล้ว$/);
+  delete env.fakes["form[data-rf-form]"];
+  page = text(await env.render("p=warehouse&tab=po"));
+  assert.match(page, /รับครบแล้ว/);
+  assert.ok(page.includes(lot.lotNo));
+  assert.doesNotMatch(page, /รอรับ/, "no open line is left");
+
+  // enough stock: only a short note, no dialog
+  for (const row of env.store.data().materials) env.store.run("receiveMaterial", { materialCode: row.code, qtyKg: 1e7, expiry: now + 365 * DAY });
+  const small = env.store.run("createOrder", { recipeId: "RC-EPDM-DS01", customer: "ลูกค้า", targetQty: 6, startDate: now, dueDate: now + DAY });
+  const dialogsBefore = env.log.dialogs.length;
+  const quiet = await module.checkMaterials({ woIds: [small.result], sourcePi: "PI-OK", auto: true });
+  assert.equal(quiet.opened, false);
+  assert.equal(env.log.dialogs.length, dialogsBefore, "no dialog when nothing is short");
+  assert.equal(env.log.toasts.at(-1)[0], "เคมีพอสำหรับ WO ที่เปิด");
+  // the button of the PI page opens it anyway
+  const manual = await module.checkMaterials({ woIds: [small.result], sourcePi: "PI-OK", auto: false });
+  assert.equal(manual.opened, true);
+  assert.match(env.log.dialogs.at(-1), /สั่งซื้อวัตถุดิบ · PI-OK/);
+});
+
+test("the material check refuses accounts that may not order, and says nothing when no WO can be counted", async () => {
+  const env = load();
+  const { MNP_RUBBERFLOW: module } = env.context;
+  assert.equal((await module.checkMaterials({ woIds: ["WO-1"], auto: true })).reason, "rights", "no persona chosen");
+  env.store.setUser("U03");
+  const before = env.log.toasts.length;
+  const none = await module.checkMaterials({ woIds: ["WO-NONE"], sourcePi: "PI-0", auto: true });
+  assert.equal(none.opened, false);
+  assert.equal(env.log.toasts.length, before, "nothing countable: no 'enough' claim");
+});

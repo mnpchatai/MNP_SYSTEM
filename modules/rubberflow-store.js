@@ -2,7 +2,7 @@
 // ไม่มี DOM/Supabase: storage ส่งเข้ามาได้ (localStorage ในเบราว์เซอร์ / Map ในเทสต์) เทสต์ด้วย node --test (scripts/tests/rubberflow-store.test.mjs)
 //
 // สองโหมด: (1) ไม่ส่ง remote = ข้อมูลทั้งชุดอยู่ใน localStorage ของเบราว์เซอร์นี้ (ข้อมูลสมมติ + บทบาทสาธิต 9 คน ใช้ใน Node เทสต์) เหมือนต้นแบบ
-// (2) ส่ง remote = ข้อมูลทั้ง 11 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์) อยู่ใน Supabase ผ่าน app_rf_master (โหลดครั้งแรก)
+// (2) ส่ง remote = ข้อมูลทั้ง 12 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์ ใบสั่งซื้อ) อยู่ใน Supabase ผ่าน app_rf_master (โหลดครั้งแรก)
 // app_rf_save (บันทึก คืนส่วนต่างตั้งแต่เวอร์ชันฐาน) และ app_rf_master_since (ตามทัน) ชนกันรายระเบียน · บันทึกการใช้งานอ่านจาก app_rf_audit · ไม่มีข้อมูลธุรกิจเหลืออยู่ในเบราว์เซอร์
 // (คีย์ mnp-rubberflow-local-v1 ของรุ่นก่อนไม่ถูกอ่านและไม่ถูกแตะ) · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin (personaUser)
 // บทบาทเป็นแค่ตัวซ่อน/แสดงเมนูและปุ่ม สิทธิ์จริงทุกชุดตัดสินที่ฐานข้อมูล (ดูข้อจำกัดในหัวข้อ "RubberFlow MES" ของ README)
@@ -83,6 +83,8 @@
     shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่
     editMold: (user) => Boolean(user.planner || user.rb),
+    purchase: (user) => Boolean(user.planner || user.rb), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ)
+    cancelPurchase: (user) => Boolean(user.planner), // ยกเลิกใบสั่งซื้อ
   });
 
   // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
@@ -91,11 +93,13 @@
     recordMixing: "station", endRest: "demoSkip", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
     createTransfer: "sendTransfer", receiveTransfer: "receiveTransfer", shipBoxes: "shipBoxes", addQcRecord: "qcDecision", createNcr: "qcDecision", closeNcr: "qcDecision",
     updateNcr: "fillNcr", saveMold: "editMold",
+    createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
     saveMaterial: "editMaster", createRecipe: "editMaster", saveRecipe: "editMaster", approveRecipe: "approveRecipe", createOrder: "createOrder",
   });
   // dialog ที่เปิดจากปุ่ม → คำสั่งที่ dialog นั้นส่ง
   const DIALOG_ACTION = Object.freeze({
     receiveMaterial: "receiveMaterial", createRequisition: "createRequisition", transfer: "createTransfer", receive: "receiveTransfer", qcRecord: "addQcRecord", ncr: "createNcr",
+    purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine",
     moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
   });
   const rightForAction = (name) => ACTION_RIGHT[name] ?? null;
@@ -138,12 +142,12 @@
 
   const clone = (value) => (typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value)));
 
-  // ---------- โหมดฐานข้อมูล (remote): ข้อมูลทั้ง 11 ชุดอยู่ใน Supabase ----------
+  // ---------- โหมดฐานข้อมูล (remote): ข้อมูลทั้ง 12 ชุดอยู่ใน Supabase ----------
   // วัตถุดิบ (materials) · สูตรยางทุก revision (recipes) · ใบสั่งผลิต WO (orders) · ล็อตวัตถุดิบ (materialLots) · ใบเบิก (requisitions) · ล็อตผลิต MX/EX/CU/FN (lots) ·
-  // ใบส่งมอบ WIP (transfers) · กล่องสินค้า (fgBoxes) · ผลตรวจ QC (qcRecords) · NCR (ncrs) · แม่พิมพ์/หัวดาย (molds) — ไม่มีชุดไหนเหลืออยู่ในเครื่อง
+  // ใบส่งมอบ WIP (transfers) · กล่องสินค้า (fgBoxes) · ผลตรวจ QC (qcRecords) · NCR (ncrs) · แม่พิมพ์/หัวดาย (molds) · ใบสั่งซื้อ (purchaseOrders) — ไม่มีชุดไหนเหลืออยู่ในเครื่อง
   // ชนกันรายระเบียน ไม่ใช่ทั้งชุด · เลขเอกสาร WO/REQ/MX/EX/CU/FN/TR/QC/NCR/RM ออกจากข้อมูลที่มีในฐานข้อมูล (เลขสูงสุดของวันนั้น + 1 · action ส่ง ctx.remote) ซ้ำ = ฐานข้อมูลตอบ RF_STALE
   // ตัวเลขที่ฐานข้อมูลคำนวณเอง (สต็อกล็อตหลังชั่ง ยอดส่งต่อ/คงเหลือของใบส่งมอบ ยอดผลิตของใบสั่งผลิต การใช้แม่พิมพ์) action ยังคำนวณสำเนาของตัวเองให้หน้าจอเห็นทันที — ส่วนต่างที่ตอบกลับแก้ให้ตรงของจริง
-  const REMOTE_LISTS = Object.freeze(["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds"]);
+  const REMOTE_LISTS = Object.freeze(["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"]);
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   // กุญแจของระเบียน: วัตถุดิบ = code · สูตร = รหัส + revision · ล็อตวัตถุดิบ = lotNo · ที่เหลือ = id
   const byId = (record) => record.id;
@@ -159,6 +163,7 @@
     qcRecords: byId,
     ncrs: byId,
     molds: byId,
+    purchaseOrders: byId,
   });
   const deleteKey = (list, target) => (list === "recipes" ? MASTER_KEY.recipes(target ?? {}) : String(target?.code ?? target?.lotNo ?? target?.id ?? ""));
 
@@ -217,7 +222,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (รับวัตถุดิบ: คลังวัตถุดิบ · เบิก ชั่ง ผลิต ส่งมอบ: แผนก RB · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: หัวหน้าแผนก RB ขึ้นไป · ฝ่ายวางแผนและผู้จัดการทำได้ทุกอย่าง)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (รับวัตถุดิบและตรวจสอบรับเข้าตามใบสั่งซื้อ: คลังวัตถุดิบ · สั่งซื้อ เบิก ชั่ง ผลิต ส่งมอบ: แผนก RB · ยกเลิกใบสั่งซื้อ: ฝ่ายวางแผน · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: หัวหน้าแผนก RB ขึ้นไป · ฝ่ายวางแผนและผู้จัดการทำได้ทุกอย่าง)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
@@ -237,6 +242,7 @@
       RF_INVALID_QC: "ข้อมูลผลตรวจ QC ไม่ถูกต้อง",
       RF_INVALID_NCR: "ข้อมูล NCR ไม่ถูกต้อง (การปิดเคสต้องมีทั้งการแก้ไขและการป้องกัน)",
       RF_INVALID_MOLD: "ข้อมูลแม่พิมพ์ไม่ถูกต้อง",
+      RF_INVALID_PURCHASE: "ข้อมูลใบสั่งซื้อไม่ถูกต้อง (รายการต้องไม่ซ้ำและจำนวนมากกว่า 0 การรับเข้าต้องมีล็อตที่ตรงกัน)",
       RF_INVALID_MATERIAL: "ข้อมูลวัตถุดิบไม่ถูกต้อง รหัสใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่เกิน 40 ตัวอักษร) และต้องมีชื่อ",
       RF_REVISION_ORDER: "revision ของสูตรต้องเรียงต่อจากล่าสุดทีละ 1 ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาออก revision ใหม่อีกครั้ง",
       NOT_AUTHORIZED: "ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
@@ -550,7 +556,7 @@
   }
 
   // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action, audit, epoch): Promise<delta>, since(version): Promise<delta>, audit(limit): Promise<[{at, user, action, detail}]>, purge(): Promise<{deleted}> }
-  // snapshot = { version, epoch, <ทั้ง 11 ชุด> } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [...] } } }
+  // snapshot = { version, epoch, <ทั้ง 12 ชุด> } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [...] } } }
   // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
   // storage: { getItem, setItem, removeItem } · seed: buildSeed() · actions: ตาราง action · now: () => ms
   function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold } = {}) {

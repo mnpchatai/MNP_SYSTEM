@@ -157,3 +157,85 @@ test("lookupCode finds every document kind by code (case-insensitive) and tracea
   assert.equal(derive.parentLotIds(d, d.lots.find((lot) => lot.stage === "mixing")).length, 0, "a mixing lot has no parent lot (its source is a requisition)");
   assert.ok(HOUR > 0);
 });
+
+// ---------- ความต้องการเคมีของ WO เทียบสต็อก (สั่งซื้อ) ----------
+test("chemicalNeeds: need of the asked WOs against on-hand, reservations, other open WOs and what is on order; expired / held lots, closed WOs and received lines do not count", () => {
+  const recipe = { id: "R1", revision: 1, status: "approved", uom: "m", batchKg: 50, yieldPerKg: 6, dumpTol: 5, restHours: 4, stages: [], items: [{ materialCode: "EPDM", phr: 100, stage: 1 }, { materialCode: "CB", phr: 60, stage: 2 }] };
+  const lot = (lotNo, materialCode, qtyKg, extra = {}) => ({ lotNo, materialCode, qtyKg, initialKg: qtyKg, expiry: NOW + 90 * DAY, receivedAt: NOW - DAY, status: "available", ...extra });
+  const wo = (id, status, extra = {}) => ({ id, status, recipeId: "R1", recipeRevision: 1, targetQty: 6, targetKg: null, ...extra });
+  const data = {
+    materials: [{ code: "EPDM", name: "ยาง EPDM", safetyKg: 10 }, { code: "CB", name: "เขม่าดำ" }],
+    recipes: [recipe],
+    orders: [
+      wo("WO-ASK", "planned", { targetKg: 80 }), // 80 kg → EPDM 50, CB 30
+      wo("WO-OTHER", "planned", { targetQty: 120 }), // 120 / 6 = 20 kg → EPDM 12.5, CB 7.5
+      wo("WO-RUN", "in_progress", { targetKg: 80 }), // 80 − 50 (1 batch requisitioned) = 30 kg → EPDM 18.75, CB 11.25
+      wo("WO-OFF", "cancelled", { targetKg: 999 }),
+      wo("WO-DONE", "completed", { targetKg: 999 }),
+      wo("WO-NORECIPE", "planned", { recipeId: "NOPE" }),
+    ],
+    requisitions: [
+      { id: "REQ-1", orderId: "WO-RUN", batches: 1, totalKg: 50, status: "weighing", lines: [{ materialCode: "EPDM", targetKg: 5, actualKg: null }, { materialCode: "EPDM", targetKg: 3, actualKg: 3 }] },
+      { id: "REQ-2", orderId: "WO-OTHER", batches: 1, totalKg: 50, status: "consumed", lines: [{ materialCode: "EPDM", targetKg: 40, actualKg: 40 }] },
+    ],
+    materialLots: [
+      lot("E1", "EPDM", 20), lot("E-OLD", "EPDM", 100, { expiry: NOW - DAY }), lot("E-HOLD", "EPDM", 100, { status: "hold" }), lot("E-EMPTY", "EPDM", 0),
+      lot("C1", "CB", 100),
+    ],
+    purchaseOrders: [
+      { id: "PO-1", status: "ordered", lines: [{ materialCode: "EPDM", qtyKg: 40, receivedKg: null }, { materialCode: "CB", qtyKg: 10, receivedKg: 9 }] },
+      { id: "PO-2", status: "cancelled", lines: [{ materialCode: "EPDM", qtyKg: 500, receivedKg: null }] },
+      { id: "PO-3", status: "received", lines: [{ materialCode: "EPDM", qtyKg: 500, receivedKg: 500 }] },
+    ],
+  };
+  // WO-RUN: 1 batch requisitioned covers 50 of 80 kg, so its remaining need is 30 kg; WO-OTHER's requisition is already consumed, so it is covered up to 50 kg (more than its 20 kg need): nothing left
+  const out = rules.chemicalNeeds(data, ["WO-ASK", "WO-OFF", "WO-NORECIPE", "WO-GHOST"], NOW);
+  assert.deepEqual(out.counted, ["WO-ASK"]);
+  assert.deepEqual(out.skipped, [{ woId: "WO-NORECIPE", reason: "ไม่พบสูตร" }, { woId: "WO-GHOST", reason: "ไม่พบ WO" }], "a closed WO is simply not a need; a WO without recipe is reported");
+  const epdm = out.rows.find((row) => row.materialCode === "EPDM");
+  // on hand 20 (expired / held / empty lots ignored) − reserved 5 (the weighed line already left the lot) − other need 18.75 (WO-OTHER is covered by its requisition) + on order 40 = 36.25
+  assert.deepEqual(
+    [epdm.needKg, epdm.onHandKg, epdm.reservedKg, epdm.otherNeedKg, epdm.onOrderKg, epdm.availableKg, epdm.shortageKg],
+    [50, 20, 5, 18.75, 40, 36.25, 13.75],
+  );
+  assert.equal(epdm.safetyKg, 10);
+  assert.equal(epdm.orderKg, 23.75, "default order = shortage + safety stock");
+  assert.equal(epdm.name, "ยาง EPDM");
+  const cb = out.rows.find((row) => row.materialCode === "CB");
+  assert.deepEqual([cb.needKg, cb.onHandKg, cb.otherNeedKg, cb.onOrderKg, cb.shortageKg, cb.orderKg], [30, 100, 11.25, 0, 0, 0], "the received PO line (even partly) is not on order any more; nothing short = nothing to order");
+  assert.equal(out.anyShort, true);
+  assert.deepEqual(out.rows.map((row) => row.materialCode), ["CB", "EPDM"], "sorted by code");
+
+  // the demo mode takes the kilograms out of the lot only when the whole requisition is weighed, so every line of an open requisition is reserved
+  const demo = rules.chemicalNeeds(data, ["WO-ASK"], NOW, { remote: false });
+  assert.equal(demo.rows.find((row) => row.materialCode === "EPDM").reservedKg, 8);
+  // asking for another open WO counts its remaining need too (and it is no longer an "other" need)
+  const both = rules.chemicalNeeds(data, ["WO-ASK", "WO-RUN"], NOW);
+  assert.deepEqual(both.counted, ["WO-ASK", "WO-RUN"]);
+  assert.equal(both.rows.find((row) => row.materialCode === "EPDM").needKg, 68.75);
+  // nothing asked / nothing countable
+  assert.deepEqual(rules.chemicalNeeds(data, [], NOW).rows, []);
+  assert.equal(rules.chemicalNeeds(data, ["WO-NORECIPE"], NOW).anyShort, false);
+  assert.deepEqual(rules.chemicalNeeds({}, ["X"], NOW).skipped, [{ woId: "X", reason: "ไม่พบ WO" }], "missing lists are empty");
+  // plenty of stock: no shortage, no order quantity
+  const plenty = rules.chemicalNeeds({ ...data, materialLots: [lot("E2", "EPDM", 1000), lot("C2", "CB", 1000)] }, ["WO-ASK"], NOW);
+  assert.equal(plenty.anyShort, false);
+  assert.deepEqual(plenty.rows.map((row) => row.orderKg), [0, 0]);
+  // a negative balance (other WOs want more than the stock) is not shown as negative stock but still counts as short
+  const crowded = rules.chemicalNeeds({ ...data, materialLots: [lot("E3", "EPDM", 10)], purchaseOrders: [] }, ["WO-ASK"], NOW);
+  const row = crowded.rows.find((item) => item.materialCode === "EPDM");
+  assert.deepEqual([row.availableKg, row.shortageKg], [0, 50 - (10 - 5 - 18.75)], "10 − 5 − 18.75 = −13.75 → available shows 0, shortage 63.75");
+  assert.equal(rules.suggestOrderKg(0, 5), 0);
+  assert.equal(rules.suggestOrderKg(2.5, 5), 7.5);
+  assert.equal(rules.suggestOrderKg(2.5, -1), 2.5);
+});
+
+test("chemicalNeeds uses the WO's own recipe revision and the kilograms of the BOM job when the WO has them", () => {
+  const item = (code, phr) => ({ materialCode: code, phr, stage: 1 });
+  const base = { yieldPerKg: 10, batchKg: 40, status: "approved", uom: "m", stages: [] };
+  const recipes = [{ ...base, id: "R", revision: 1, status: "superseded", items: [item("A", 100)] }, { ...base, id: "R", revision: 2, items: [item("B", 100)] }];
+  const orders = [{ id: "W1", status: "released", recipeId: "R", recipeRevision: 1, targetQty: 100, targetKg: 4 }, { id: "W2", status: "released", recipeId: "R", recipeRevision: 2, targetQty: 100 }];
+  const out = rules.chemicalNeeds({ orders, recipes }, ["W1", "W2"], NOW);
+  assert.deepEqual(out.rows.map((row) => [row.materialCode, row.needKg]), [["A", 4], ["B", 10]], "W1 keeps revision 1 and its targetKg; W2 derives kilograms from quantity ÷ yield");
+  assert.ok(out.rows.every((row) => row.shortageKg === row.needKg && row.availableKg === 0));
+});

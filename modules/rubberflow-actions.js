@@ -73,6 +73,8 @@
     qc: (user) => Boolean(user.planner || user.qa), // ผลตรวจ เปิด/ปิด NCR: แผนก QA
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่: QA หรือ RB
     editMold: (user) => Boolean(user.planner || user.rb), // เพิ่ม/แก้แม่พิมพ์: แผนก RB
+    purchase: (user) => Boolean(user.planner || user.rb), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): ฝ่ายวางแผนหรือแผนก RB
+    cancelPurchase: (user) => Boolean(user.planner), // ยกเลิกใบสั่งซื้อ: ฝ่ายวางแผน
   });
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
@@ -89,6 +91,8 @@
     qc: "บันทึกผลตรวจและเปิด/ปิด NCR ได้โดยแผนก QA หรือฝ่ายวางแผน",
     fillNcr: "กรอกการแก้ไขและป้องกันของ NCR ได้โดยแผนก QA พนักงานแผนก RB หรือฝ่ายวางแผน",
     editMold: "เพิ่ม/แก้แม่พิมพ์ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    purchase: "สั่งซื้อวัตถุดิบได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    cancelPurchase: "ยกเลิกใบสั่งซื้อได้โดยฝ่ายวางแผน ผู้จัดการ หรือผู้ดูแลระบบ",
   });
   function needRight(ctx, right) {
     if (!ctx.remote) return;
@@ -196,14 +200,22 @@
     if (!MATERIAL_CODE.test(code)) fail("รหัสวัตถุดิบใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่มีช่องว่าง) ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 40 ตัวอักษร");
     const name = String(p.name ?? "").trim();
     if (!name) fail("กรุณาระบุชื่อวัตถุดิบ");
+    const existing = d.materials.find((row) => row.code === code);
+    // สต็อกขั้นต่ำ (kg, 0–1e9) และอายุการเก็บ (วัน, จำนวนเต็ม 1–3650) · ไม่ส่ง/เว้นว่าง = คงค่าเดิม (วัตถุดิบใหม่ 0 และ 180)
+    const blank = (value) => value === undefined || value === null || String(value).trim() === "";
+    const safetyKg = blank(p.safetyKg) ? existing?.safetyKg ?? 0 : Number(p.safetyKg);
+    if (!Number.isFinite(safetyKg) || safetyKg < 0 || safetyKg > 1e9) fail("สต็อกขั้นต่ำ (safety stock) ต้องเป็นตัวเลข 0 ขึ้นไป");
+    const shelfLifeDays = blank(p.shelfLifeDays) ? existing?.shelfLifeDays ?? 180 : Number(p.shelfLifeDays);
+    if (!Number.isInteger(shelfLifeDays) || shelfLifeDays < 1 || shelfLifeDays > 3650) fail("อายุการเก็บ (วัน) ต้องเป็นจำนวนเต็ม 1–3650");
     const fields = {
       name: name.slice(0, 120),
       category: String(p.category ?? "").trim().slice(0, 60),
       storage: String(p.storage ?? "").trim().slice(0, 120),
       uom: String(p.uom ?? "").trim().slice(0, 12) || "kg",
       active: p.active === undefined ? true : !(p.active === false || p.active === "0" || p.active === "false"),
+      safetyKg,
+      shelfLifeDays,
     };
-    const existing = d.materials.find((row) => row.code === code);
     if (existing) {
       Object.assign(existing, fields);
       audit(d, ctx, "แก้ข้อมูลวัตถุดิบ", `${code}${fields.active ? "" : " (เลิกใช้)"}`);
@@ -387,6 +399,93 @@
     });
     audit(d, ctx, "รับวัตถุดิบเข้าคลัง", `${lotNo} ${qty} kg`);
     return lotNo;
+  }
+
+  // ---------- ใบสั่งซื้อวัตถุดิบ ----------
+  // ใบสั่งซื้อ { id: PO-yyyymmdd-nn, status: ordered|received|cancelled, sourcePi, sourceRequisition, note, lines, createdAt, createdBy, cancelledAt }
+  // บรรทัด { materialCode, needKg, availableKg, shortageKg, safetyKg, qtyKg, receivedKg|null, lotNo|null, expiry|null, receivedAt|null, receivedBy|null }
+  // ฐานข้อมูลตรวจซ้ำทุกข้อและประทับเวลา/ผู้บันทึกเอง · สร้างได้เฉพาะ ordered ที่ยังไม่มีข้อมูลการรับ
+  const PO_MAX_LINES = 100;
+  const kgOf = (value, label, { positive = false } = {}) => {
+    const n = Number(value);
+    if (value === "" || value === null || value === undefined || !Number.isFinite(n) || n < 0 || n > 1e9 || (positive && n <= 0)) fail(`${label}ต้องเป็นตัวเลข${positive ? "มากกว่า 0" : "0 ขึ้นไป"}`);
+    return Math.round(n * 1000) / 1000;
+  };
+  const isReceived = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
+
+  // lines: [{ materialCode, needKg, availableKg, shortageKg, safetyKg?, qtyKg }] (บรรทัดที่จำนวนสั่งเป็น 0 ถูกข้าม) · safety: { รหัสวัตถุดิบ: kg } = สต็อกขั้นต่ำที่แก้ในหน้าสั่งซื้อ บันทึกเข้าวัตถุดิบในคำสั่งเดียวกัน
+  function createPurchaseOrder(d, p, ctx) {
+    needRight(ctx, "purchase");
+    d.purchaseOrders ??= [];
+    const safety = p.safety && typeof p.safety === "object" ? p.safety : {};
+    const given = (Array.isArray(p.lines) ? p.lines : []).filter((line) => Number(line?.qtyKg) > 0);
+    if (!given.length) fail("กรุณาระบุจำนวนสั่งอย่างน้อย 1 รายการ");
+    if (given.length > PO_MAX_LINES) fail(`ใบสั่งซื้อมีได้ไม่เกิน ${PO_MAX_LINES} รายการ`);
+    const seen = new Set();
+    const lines = given.map((line) => {
+      const code = String(line.materialCode ?? "").trim();
+      const material = d.materials.find((row) => row.code === code) || fail(`ไม่พบวัตถุดิบ ${code}`);
+      if (material.active === false) fail(`วัตถุดิบ ${code} เลิกใช้แล้ว สั่งซื้อไม่ได้`);
+      if (seen.has(code)) fail(`${code} ซ้ำในใบสั่งซื้อ`);
+      seen.add(code);
+      const safetyKg = kgOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? material.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`);
+      if (safetyKg !== (Number(material.safetyKg) || 0)) {
+        material.safetyKg = safetyKg;
+        audit(d, ctx, "แก้สต็อกขั้นต่ำ", `${code} = ${safetyKg} kg`);
+      }
+      return {
+        materialCode: code, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: kgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
+        safetyKg, qtyKg: kgOf(line.qtyKg, `จำนวนสั่งของ ${code}`, { positive: true }),
+        receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null,
+      };
+    });
+    // สต็อกขั้นต่ำที่แก้ไว้ของวัตถุดิบที่ไม่ได้สั่งครั้งนี้ก็บันทึกเข้าวัตถุดิบด้วย
+    for (const [code, value] of Object.entries(safety)) {
+      const material = seen.has(code) ? null : d.materials.find((row) => row.code === code);
+      if (!material || material.active === false) continue;
+      const safetyKg = kgOf(value, `สต็อกขั้นต่ำของ ${code}`);
+      if (safetyKg === (Number(material.safetyKg) || 0)) continue;
+      material.safetyKg = safetyKg;
+      audit(d, ctx, "แก้สต็อกขั้นต่ำ", `${code} = ${safetyKg} kg`);
+    }
+    const id = nextId(d, "PO", ctx.now, ctx, d.purchaseOrders, rowId);
+    d.purchaseOrders.unshift({
+      id, status: "ordered", sourcePi: String(p.sourcePi ?? "").trim().slice(0, 40) || null, sourceRequisition: String(p.sourceRequisition ?? "").trim().slice(0, 40) || null,
+      note: String(p.note ?? "").trim().slice(0, 300), lines, createdAt: ctx.now, createdBy: ctx.user?.name, cancelledAt: null,
+    });
+    audit(d, ctx, "สั่งซื้อวัตถุดิบ", `${id} ${lines.length} รายการ`);
+    return id;
+  }
+
+  // ตรวจสอบรับเข้า: รับได้ครั้งเดียวต่อบรรทัด (ส่งมาไม่ครบ = รับเท่าที่มา ที่เหลือสั่งใหม่) สร้างล็อตวัตถุดิบ (พร้อมใช้ ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) และปิดบรรทัดในคำสั่งเดียวกัน · ทุกบรรทัดรับครบ = ใบเป็น received
+  function receivePurchaseLine(d, { id, materialCode, qtyKg, expiry, supplier }, ctx) {
+    needRight(ctx, "receiveMaterial");
+    const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
+    if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกแล้ว"} รับเข้าไม่ได้`);
+    const line = order.lines.find((row) => row.materialCode === materialCode) || fail(`ไม่พบวัตถุดิบ ${materialCode} ในใบสั่งซื้อ ${order.id}`);
+    if (isReceived(line)) fail(`${materialCode} ในใบสั่งซื้อ ${order.id} รับเข้าแล้ว`);
+    const lotNo = receiveMaterial(d, { materialCode, qtyKg, expiry, supplier: String(supplier ?? "").trim() || order.id }, ctx);
+    const lot = d.materialLots.find((row) => row.lotNo === lotNo);
+    line.receivedKg = lot.qtyKg;
+    line.lotNo = lotNo;
+    line.expiry = lot.expiry;
+    line.receivedAt = ctx.now;
+    line.receivedBy = ctx.user?.name ?? null;
+    if (order.lines.every(isReceived)) order.status = "received";
+    audit(d, ctx, "ตรวจสอบรับเข้าตามใบสั่งซื้อ", `${order.id} ${materialCode} ${lot.qtyKg} kg → ${lotNo}`);
+    return lotNo;
+  }
+
+  // ยกเลิกได้เฉพาะใบ ordered ที่ยังไม่มีบรรทัดไหนรับเข้า (ฝ่ายวางแผน) · ใบสั่งซื้อไม่มีการแก้ไขหลังสร้าง
+  function cancelPurchaseOrder(d, { id }, ctx) {
+    needRight(ctx, "cancelPurchase");
+    const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
+    if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกไปแล้ว"} ยกเลิกไม่ได้`);
+    if (order.lines.some(isReceived)) fail(`ใบสั่งซื้อ ${order.id} มีรายการที่รับเข้าแล้ว ยกเลิกไม่ได้`);
+    order.status = "cancelled";
+    order.cancelledAt = ctx.now;
+    audit(d, ctx, "ยกเลิกใบสั่งซื้อ", order.id);
+    return order.id;
   }
 
   function setMaterialLotStatus(d, { lotNo, status }, ctx) {
@@ -765,7 +864,7 @@
   }
 
   const api = {
-    ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, receiveMaterial, setMaterialLotStatus,
+    ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, receiveMaterial, createPurchaseOrder, receivePurchaseLine, cancelPurchaseOrder, setMaterialLotStatus,
     recordMixing, endRest, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
     addQcRecord, createNcr, updateNcr, closeNcr, saveMold, cleanMold,
   };

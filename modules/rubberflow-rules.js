@@ -142,6 +142,86 @@
     return { picks, shortage: Math.max(0, remaining) };
   }
 
+  // ---------- ความต้องการเคมีของ WO เทียบสต็อก (ใบสั่งซื้อ) ----------
+  // ใช้ร่วมกันทุกจุดที่เสนอสั่งซื้อ (หลังปล่อยผลิต PI · ปุ่ม "ตรวจวัตถุดิบ" ของ PI) · ไม่มี DOM/Supabase
+  const OPEN_ORDER = Object.freeze(["planned", "released", "in_progress", "on_hold"]);
+  const round3 = (value) => Math.round(Number(value) * 1000) / 1000;
+
+  // กิโลกรัมคอมปาวด์ที่ WO ยังต้องใช้ = เป้าหมาย (targetKg ถ้ามี ไม่เช่นนั้น targetQty ÷ ผลผลิตต่อ kg ของสูตร) − ที่ใบเบิกของ WO นี้ครอบคลุมแล้ว (batch × น้ำหนักต่อ batch)
+  function orderRemainingKg(order, recipe, requisitions) {
+    let total = Number(order.targetKg);
+    if (!(total > 0)) total = Number(order.targetQty) / Number(recipe.yieldPerKg);
+    if (!Number.isFinite(total) || total <= 0) return 0;
+    const covered = (requisitions ?? []).filter((row) => row.orderId === order.id).reduce((sum, row) => {
+      const kg = Number.isFinite(Number(row.batches)) && Number(row.batches) > 0 ? Number(row.batches) * Number(recipe.batchKg) : Number(row.totalKg);
+      return sum + (Number.isFinite(kg) ? kg : 0);
+    }, 0);
+    return Math.max(0, total - covered);
+  }
+
+  // ค่าตั้งต้นของจำนวนสั่ง: ขาด = ส่วนที่ขาด + สต็อกขั้นต่ำ · ไม่ขาด = 0 (ผู้วางแผนใส่เองได้)
+  const suggestOrderKg = (shortageKg, safetyKg) => (Number(shortageKg) > 0 ? round3(Number(shortageKg) + Math.max(0, Number(safetyKg) || 0)) : 0);
+
+  // data = { orders, recipes, requisitions, materialLots, purchaseOrders, materials } · woIds = WO ที่ถามถึง (เช่น ที่เปิดให้ PI นี้)
+  // พร้อมใช้ของวัตถุดิบ = คงคลังที่ใช้ได้ (ล็อต available ไม่หมดอายุ) − ที่ใบเบิกค้างชั่งจองไว้ − ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก + ที่สั่งซื้อค้างรับ (บรรทัดของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ)
+  // ขาด = max(0, ต้องใช้ − พร้อมใช้) · WO ที่ไม่มีสูตรไม่นับ (คืนใน skipped) · WO ที่ปิด/ยกเลิกแล้วไม่ใช่ความต้องการ
+  // options.remote = false (โหมดสาธิต): ใบเบิกลดสต็อกตอนชั่งครบทุกรายการ จึงจองทุกรายการของใบเบิกที่ยังชั่งไม่ครบ
+  function chemicalNeeds(data, woIds, now = Date.now(), options = {}) {
+    const { orders = [], recipes = [], requisitions = [], materialLots = [], purchaseOrders = [], materials = [] } = data ?? {};
+    const remote = options.remote !== false;
+    const asked = [...new Set((woIds ?? []).map(String))];
+    const askedSet = new Set(asked);
+    const need = new Map();
+    const other = new Map();
+    const add = (map, code, kg) => map.set(code, (map.get(code) || 0) + kg);
+    const skipped = [];
+    const counted = [];
+    const share = (order, recipe, map) => {
+      const kg = orderRemainingKg(order, recipe, requisitions);
+      const total = totalPhr(recipe);
+      if (!(kg > 0) || !(total > 0)) return;
+      for (const item of recipe.items) add(map, item.materialCode, (kg * Number(item.phr)) / total);
+    };
+    for (const id of asked) {
+      const order = orders.find((row) => row.id === id);
+      if (!order) { skipped.push({ woId: id, reason: "ไม่พบ WO" }); continue; }
+      if (!OPEN_ORDER.includes(order.status)) continue;
+      const recipe = recipeOf(recipes, order.recipeId, order.recipeRevision);
+      if (!recipe || !Array.isArray(recipe.items) || !recipe.items.length) { skipped.push({ woId: id, reason: "ไม่พบสูตร" }); continue; }
+      counted.push(id);
+      share(order, recipe, need);
+    }
+    for (const order of orders) {
+      if (askedSet.has(order.id) || !OPEN_ORDER.includes(order.status)) continue;
+      const recipe = recipeOf(recipes, order.recipeId, order.recipeRevision);
+      if (recipe && Array.isArray(recipe.items) && recipe.items.length) share(order, recipe, other);
+    }
+    const onHand = new Map();
+    for (const lot of materialLots) if (lotState(lot, now) === "available") add(onHand, lot.materialCode, Number(lot.qtyKg) || 0);
+    const reserved = new Map();
+    for (const requisition of requisitions) {
+      if (requisition.status !== "weighing") continue;
+      for (const line of requisition.lines ?? []) if (!remote || line.actualKg === null || line.actualKg === undefined) add(reserved, line.materialCode, Number(line.targetKg) || 0);
+    }
+    const onOrder = new Map();
+    for (const po of purchaseOrders) {
+      if (po.status !== "ordered") continue;
+      for (const line of po.lines ?? []) if (line.receivedKg === null || line.receivedKg === undefined) add(onOrder, line.materialCode, Number(line.qtyKg) || 0);
+    }
+    const rows = [...need.keys()].filter((code) => round3(need.get(code)) > 0).sort().map((code) => {
+      const material = materials.find((row) => row.code === code);
+      const needKg = round3(need.get(code));
+      const free = (onHand.get(code) || 0) - (reserved.get(code) || 0) - (other.get(code) || 0) + (onOrder.get(code) || 0);
+      const shortageKg = round3(Math.max(0, needKg - free));
+      const safetyKg = Math.max(0, Number(material?.safetyKg) || 0);
+      return {
+        materialCode: code, name: material?.name ?? "", needKg, onHandKg: round3(onHand.get(code) || 0), reservedKg: round3(reserved.get(code) || 0), otherNeedKg: round3(other.get(code) || 0),
+        onOrderKg: round3(onOrder.get(code) || 0), availableKg: round3(Math.max(0, free)), shortageKg, safetyKg, orderKg: suggestOrderKg(shortageKg, safetyKg),
+      };
+    });
+    return { rows, skipped, counted, anyShort: rows.some((row) => row.shortageKg > 0) };
+  }
+
   // สถิติ I-MR: เส้นควบคุมและ Cp/Cpk ใช้ σ ภายในกลุ่ม (MR̄ / d2, d2 = 1.128) Ppk ใช้ SD รวม
   function stats(values, lsl, usl) {
     const n = values.length;
@@ -241,7 +321,7 @@
 
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, stats, cpkVerdict,
+    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

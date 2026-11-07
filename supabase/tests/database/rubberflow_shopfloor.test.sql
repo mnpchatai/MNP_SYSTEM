@@ -678,7 +678,7 @@ select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a wh
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'createRequisition' and a ->> 'detail' = 'requisitions +1'), 'and a requisition');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'weighLine' and a ->> 'detail' = 'requisitions +1'), 'and a weighing');
 select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:receiveTransfer'), 3::bigint, 'the BOM history has one row per receipt that fed the job (three transfers)');
-select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l), 'the delta from version 0 equals the snapshot for all eleven lists');
+select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l), 'the delta from version 0 equals the snapshot for all twelve lists');
 select set_config('test.vb', (public.app_rf_master() ->> 'version')::text, true);
 select set_config('test.res', public.app_rf_save(jsonb_build_object('molds', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.mold')::jsonb || '{"id":"DIE-9","name":"หัวดายใหม่"}'::jsonb))), current_setting('test.vb')::bigint, 'saveMold')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes', public.app_rf_master_since(current_setting('test.vb')::bigint) -> 'changes', 'the reply to a save equals the delta RPC from the same base');
@@ -696,7 +696,7 @@ select set_config('test.pre_version', public.app_rf_master() ->> 'version', true
 select set_config('test.pre_bom_version', public.app_bom_master() ->> 'version', true);
 select set_config('test.purge', public.app_sandbox_purge_rf()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 40, 'the purge reports the many rows it deleted');
-select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs']) l), 'all eleven lists are empty again and the counter keeps its value');
+select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l), 'all twelve lists are empty again and the counter keeps its value');
 select is(public.app_bom_master() ->> 'version', current_setting('test.pre_bom_version'), 'the purge did not touch BOM');
 reset role;
 select is((select count(*) from public.rf_molds where is_test) + (select count(*) from public.rf_material_lots where is_test) + (select count(*) from public.rf_requisitions where is_test)
