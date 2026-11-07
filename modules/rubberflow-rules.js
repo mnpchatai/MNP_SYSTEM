@@ -164,7 +164,7 @@
 
   // data = { orders, recipes, requisitions, materialLots, purchaseOrders, materials } · woIds = WO ที่ถามถึง (เช่น ที่เปิดให้ PI นี้)
   // พร้อมใช้ของวัตถุดิบ = คงคลังที่ใช้ได้ (ล็อต available ไม่หมดอายุ) − ที่ใบเบิกค้างชั่งจองไว้ − ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก + ที่สั่งซื้อค้างรับ (บรรทัดของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ)
-  // ขาด = max(0, ต้องใช้ − พร้อมใช้) · WO ที่ไม่มีสูตรไม่นับ (คืนใน skipped) · WO ที่ปิด/ยกเลิกแล้วไม่ใช่ความต้องการ
+  // พร้อมใช้ติดลบได้ (WO อื่น/ใบเบิกใช้สต็อกไปแล้วเกินที่มี) แสดงและเก็บตามจริง · ขาด = max(0, ต้องใช้ − พร้อมใช้) · WO ที่ไม่มีสูตรไม่นับ (คืนใน skipped) · WO ที่ปิด/ยกเลิกแล้วไม่ใช่ความต้องการ
   // options.remote = false (โหมดสาธิต): ใบเบิกลดสต็อกตอนชั่งครบทุกรายการ จึงจองทุกรายการของใบเบิกที่ยังชั่งไม่ครบ
   function chemicalNeeds(data, woIds, now = Date.now(), options = {}) {
     const { orders = [], recipes = [], requisitions = [], materialLots = [], purchaseOrders = [], materials = [] } = data ?? {};
@@ -216,7 +216,7 @@
       const safetyKg = Math.max(0, Number(material?.safetyKg) || 0);
       return {
         materialCode: code, name: material?.name ?? "", needKg, onHandKg: round3(onHand.get(code) || 0), reservedKg: round3(reserved.get(code) || 0), otherNeedKg: round3(other.get(code) || 0),
-        onOrderKg: round3(onOrder.get(code) || 0), availableKg: round3(Math.max(0, free)), shortageKg, safetyKg, orderKg: suggestOrderKg(shortageKg, safetyKg),
+        onOrderKg: round3(onOrder.get(code) || 0), availableKg: round3(free), shortageKg, safetyKg, orderKg: suggestOrderKg(shortageKg, safetyKg),
       };
     });
     return { rows, skipped, counted, anyShort: rows.some((row) => row.shortageKg > 0) };

@@ -411,6 +411,12 @@
     if (value === "" || value === null || value === undefined || !Number.isFinite(n) || n < 0 || n > 1e9 || (positive && n <= 0)) fail(`${label}ต้องเป็นตัวเลข${positive ? "มากกว่า 0" : "0 ขึ้นไป"}`);
     return Math.round(n * 1000) / 1000;
   };
+  // พร้อมใช้ติดลบได้ (ฐานข้อมูลรับ ±1e9)
+  const signedKgOf = (value, label) => {
+    const n = Number(value);
+    if (value === "" || value === null || value === undefined || !Number.isFinite(n) || Math.abs(n) > 1e9) fail(`${label}ต้องเป็นตัวเลข`);
+    return Math.round(n * 1000) / 1000;
+  };
   const isReceived = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
 
   // lines: [{ materialCode, needKg, availableKg, shortageKg, safetyKg?, qtyKg }] (บรรทัดที่จำนวนสั่งเป็น 0 ถูกข้าม) · safety: { รหัสวัตถุดิบ: kg } = สต็อกขั้นต่ำที่แก้ในหน้าสั่งซื้อ บันทึกเข้าวัตถุดิบในคำสั่งเดียวกัน
@@ -434,7 +440,7 @@
         audit(d, ctx, "แก้สต็อกขั้นต่ำ", `${code} = ${safetyKg} kg`);
       }
       return {
-        materialCode: code, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: kgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
+        materialCode: code, needKg: kgOf(line.needKg ?? 0, `ความต้องการของ ${code}`), availableKg: signedKgOf(line.availableKg ?? 0, `พร้อมใช้ของ ${code}`), shortageKg: kgOf(line.shortageKg ?? 0, `ส่วนที่ขาดของ ${code}`),
         safetyKg, qtyKg: kgOf(line.qtyKg, `จำนวนสั่งของ ${code}`, { positive: true }),
         receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null,
       };

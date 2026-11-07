@@ -403,6 +403,8 @@ test("a purchase order: one line per material with an order quantity, the edited
   rejects(() => A.createPurchaseOrder(d, { lines: [poLine("ZNO"), poLine("ZNO")] }, user), /ซ้ำ/);
   rejects(() => A.createPurchaseOrder(d, { lines: [poLine("ZNO", { qtyKg: 2e9 })] }, user), /จำนวนสั่ง/);
   rejects(() => A.createPurchaseOrder(d, { lines: [poLine("ZNO", { needKg: -1 })] }, user), /ความต้องการ/);
+  rejects(() => A.createPurchaseOrder(d, { lines: [poLine("ZNO", { availableKg: -2e9 })] }, user), /พร้อมใช้/);
+  rejects(() => A.createPurchaseOrder(d, { lines: [poLine("ZNO", { shortageKg: -1 })] }, user), /ส่วนที่ขาด/);
   rejects(() => A.createPurchaseOrder(d, { lines: Array.from({ length: 101 }, (_, i) => poLine(`M${i}`)) }, user), /ไม่เกิน 100/);
   d.materials.find((row) => row.code === "STA").active = false;
   rejects(() => A.createPurchaseOrder(d, { lines: [poLine("STA")] }, user), /เลิกใช้/);

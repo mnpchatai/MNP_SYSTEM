@@ -221,10 +221,10 @@ test("chemicalNeeds: need of the asked WOs against on-hand, reservations, other 
   const plenty = rules.chemicalNeeds({ ...data, materialLots: [lot("E2", "EPDM", 1000), lot("C2", "CB", 1000)] }, ["WO-ASK"], NOW);
   assert.equal(plenty.anyShort, false);
   assert.deepEqual(plenty.rows.map((row) => row.orderKg), [0, 0]);
-  // a negative balance (other WOs want more than the stock) is not shown as negative stock but still counts as short
+  // a negative balance (other WOs want more than the stock) stays negative so the shortage is explained, and counts as short
   const crowded = rules.chemicalNeeds({ ...data, materialLots: [lot("E3", "EPDM", 10)], purchaseOrders: [] }, ["WO-ASK"], NOW);
   const row = crowded.rows.find((item) => item.materialCode === "EPDM");
-  assert.deepEqual([row.availableKg, row.shortageKg], [0, 50 - (10 - 5 - 18.75)], "10 − 5 − 18.75 = −13.75 → available shows 0, shortage 63.75");
+  assert.deepEqual([row.availableKg, row.shortageKg], [-13.75, 50 - (10 - 5 - 18.75)], "10 − 5 − 18.75 = −13.75 → available stays negative, shortage 63.75");
   assert.equal(rules.suggestOrderKg(0, 5), 0);
   assert.equal(rules.suggestOrderKg(2.5, 5), 7.5);
   assert.equal(rules.suggestOrderKg(2.5, -1), 2.5);

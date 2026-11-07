@@ -493,6 +493,12 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.match(fromRequisition.html, /name="safetyKg\[\]"[^>]*value="4"/);
   assert.match(fromRequisition.html, /name="qtyKg\[\]"[^>]*value="8"/);
   assert.match(fromRequisition.html, /ขาดจากใบเบิก/);
+  assert.doesNotMatch(fromRequisition.html, /ติดลบ = /, "a plain availability has no tooltip");
+  // availability below zero (other open WOs already use the stock) is shown as it is, signed, with a tooltip, and stored as it is
+  const crowded = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 225.598, availableKg: -160.787, shortageKg: 386.385 }] });
+  assert.ok(crowded.html.includes('>-160.787</td>'), "signed value");
+  assert.match(crowded.html, /<td class="right rf-mono" title="ติดลบ = [^"]+">-160/);
+  assert.ok(crowded.html.includes('name="availableKg[]" value="-160.787"'), "signed value stored");
 
   // submitting the form: lines, the safety stock to the material, the PI number from the form args
   const form = { ...env.root, dataset: { rfForm: "createPurchaseOrder", rfSuccess: "สั่งซื้อ {result} แล้ว", rfArgs: JSON.stringify({ sourcePi: "PI-9", sourceRequisition: "", note: "" }) }, handlers: {}, __values: {
@@ -537,7 +543,12 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.match(receive.html, /data-rf-form="receivePurchaseLine"/);
   assert.match(receive.html, /name="qtyKg"[^>]*value="60"/);
   assert.match(receive.html, new RegExp(`name="expiry"[^>]*value="${env.context.MNP_RUBBERFLOW_RULES.toInputDate(now + 90 * DAY)}"`));
-  assert.match(receive.html, /อายุการเก็บ 90 วัน/);
+  assert.ok(receive.html.includes('title="ตั้งต้น = วันนี้ + อายุการเก็บ 90 วัน"'),"the starting point of the expiry is a tooltip");
+  // each fact once: the order number is the title only (no row, no placeholder), the ordered quantity is the field's value, no permanent hint text
+  assert.ok(receive.html.includes(`ตรวจสอบรับเข้า · ${po.id}`), "the title carries the order number");
+  assert.ok(!receive.html.includes(`>${po.id}<`), "no visible row repeats the order number");
+  assert.doesNotMatch(receive.html, /สั่งไว้|rf-hint|placeholder|>ใบสั่งซื้อ</);
+  assert.match(receive.html, /name="supplier"[^>]*title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"/);
   assert.equal(dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "ZNO" }), null, "a material that is not on the order");
   assert.equal(dialogs.receivePurchase(env.ctx(), { id: "PO-NOPE", materialCode: "ZNO" }), null);
   const receiveForm = { ...env.root, dataset: { rfForm: "receivePurchaseLine", rfSuccess: "รับเข้าล็อต {result} แล้ว", rfArgs: JSON.stringify({ id: po.id, materialCode: "EPDM-55" }) }, handlers: {}, __values: { qtyKg: "58", expiry: "2027-06-30", supplier: "" } };

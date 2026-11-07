@@ -1300,8 +1300,8 @@ test("ordering: the planner group and RB members create the order with the edite
     ["an unknown material", PO_ROW(`PO-${D8}-10`, [PO_LINE("NOPE")]), "RF_INVALID_PURCHASE"],
     ["received data on a new order", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550", { receivedKg: 5, lotNo: "RM-X", expiry: NOW + DAY })]), "RF_INVALID_PURCHASE"],
     ["a lot number on a new order", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550", { lotNo: "RM-X" })]), "RF_INVALID_PURCHASE"],
-    ["a status other than ordered", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "received" }), "RF_INVALID_TRANSITION"],
-    ["a cancelled new order", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "cancelled" }), "RF_INVALID_TRANSITION"],
+    ["a status other than ordered", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "received" }), "RF_INVALID_PURCHASE"],
+    ["a cancelled new order", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "cancelled" }), "RF_INVALID_PURCHASE"],
     ["an unknown status", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { status: "shipped" }), "RF_INVALID_PURCHASE"],
     ["a note over 300 characters", PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")], { note: "x".repeat(301) }), "RF_INVALID_PURCHASE"],
   ];
@@ -1361,7 +1361,7 @@ test("receiving: ST checks the line in, the lot is made in the same save and mat
   assert.equal(await sendPo(s, "persona-st", receipt({ lines: [{ ...received.lines[0], expiry: NOW - DAY }, row.lines[1]] }), "receivePurchaseLine"), "RF_INVALID_PURCHASE", "expiry in the past");
   // สองบรรทัดพร้อมกัน / แก้ส่วนอื่นของใบ → ไม่รับ
   const both = { ...received, lines: [received.lines[0], { ...row.lines[1], receivedKg: 30, lotNo: `RM-CB-N550-${D8}-01`, expiry: NOW + DAY }] };
-  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [both] }, materialLots: { upsert: [lot, { ...lot, lotNo: `RM-CB-N550-${D8}-01`, materialCode: "CB-N550", qtyKg: 30, initialKg: 30, expiry: NOW + DAY }] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION", "one line per save");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [both] }, materialLots: { upsert: [lot, { ...lot, lotNo: `RM-CB-N550-${D8}-01`, materialCode: "CB-N550", qtyKg: 30, initialKg: 30, expiry: NOW + DAY }] } }, "receivePurchaseLine"), "RF_INVALID_PURCHASE", "one line per save");
   assert.equal(await sendPo(s, "persona-st", receipt({ note: "แก้โน้ต" }), "receivePurchaseLine"), "RF_INVALID_TRANSITION", "the header cannot change");
   assert.equal(await sendPo(s, "persona-st", receipt({ lines: [{ ...received.lines[0], qtyKg: 70 }, row.lines[1]] }), "receivePurchaseLine"), "RF_INVALID_TRANSITION", "the ordered quantity cannot change");
   assert.equal((await master()).materialLots.length, 0, "no refused receipt left a lot behind");
@@ -1427,6 +1427,45 @@ test("cancelling: only the planner group, only an ordered order with no received
   assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...cancelled, status: "ordered", lines: [{ ...cancelled.lines[0], receivedKg: 10, lotNo: lot.lotNo, expiry: lot.expiry }] }] }, materialLots: { upsert: [lot] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION");
   assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...cancelled, status: "ordered" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
   await inSync(s, rig, "after the cancel");
+});
+
+test("purchase order saves follow the database: signed availability, 60-character sources, an identical copy is a no-op, the right is checked before the transition, a lot alone is a plain lot save", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await withMaterials(s, rig);
+  await s.as("persona-pp");
+  const send = (row, persona = "persona-pp", action = "createPurchaseOrder") => sendPo(s, persona, { purchaseOrders: { upsert: [row] } }, action);
+  // availableKg may be negative (other open WOs already use the stock) within +-1e9; the other quantities stay 0 or more
+  const crowded = await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: -13.75, shortageKg: 63.75, qtyKg: 70 }] }));
+  const stored = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === crowded.result);
+  assert.equal(stored.lines[0].availableKg, -13.75);
+  assert.equal(await send(PO_ROW(`PO-${D8}-20`, [PO_LINE("CB-N550", { availableKg: -1e9 })])), undefined);
+  assert.equal(await send(PO_ROW(`PO-${D8}-21`, [PO_LINE("CB-N550", { availableKg: -1e9 - 1 })])), "RF_INVALID_PURCHASE", "below -1e9");
+  assert.equal(await send(PO_ROW(`PO-${D8}-21`, [PO_LINE("CB-N550", { shortageKg: -1 })])), "RF_INVALID_PURCHASE", "a negative shortage");
+  // the source references hold 60 characters
+  assert.equal(await send(PO_ROW(`PO-${D8}-22`, [PO_LINE("CB-N550")], { sourcePi: "P".repeat(60), sourceRequisition: "R".repeat(60) })), undefined);
+  assert.equal(await send(PO_ROW(`PO-${D8}-23`, [PO_LINE("CB-N550")], { sourcePi: "P".repeat(61) })), "RF_INVALID_PURCHASE");
+  assert.equal(await send(PO_ROW(`PO-${D8}-23`, [PO_LINE("CB-N550")], { sourceRequisition: "R".repeat(61) })), "RF_INVALID_PURCHASE");
+  assert.equal(await send(PO_ROW(`PO-${D8}-1234567`, [PO_LINE("CB-N550")])), "RF_INVALID_PURCHASE", "more than six digits in the sequence");
+  // a copy identical to the stored order changes nothing; a different one is refused as a transition (not a conflict); another creation time is a clash
+  const version = (await s.call("app_rf_master")).version;
+  assert.equal(await send(stored), undefined, "an identical copy");
+  assert.equal((await s.call("app_rf_master")).version, version, "an identical copy writes nothing");
+  assert.equal(await send({ ...stored, lines: [{ ...stored.lines[0], qtyKg: 71 }] }), "RF_INVALID_TRANSITION", "the same number with other content");
+  assert.equal(await send({ ...stored, createdAt: stored.createdAt + 1 }), "RF_CONFLICT", "another creation time");
+  // a new order with a status other than ordered is a bad shape for any account that may order; one that may not order is refused first
+  assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" })), "RF_INVALID_PURCHASE");
+  assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" }), "persona-st"), "RF_FORBIDDEN");
+  // cancelling: the right comes before the transition (RB may not cancel even an order that cannot be cancelled), the planner gets the transition error
+  await go(s, rig, "persona-st", "receivePurchaseLine", { id: crowded.result, materialCode: "EPDM-55", qtyKg: 70, expiry: NOW + 90 * DAY });
+  const receivedOrder = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === crowded.result);
+  assert.equal(receivedOrder.status, "received");
+  assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-rb", "cancelPurchaseOrder"), "RF_FORBIDDEN");
+  assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-pp", "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  // a lot sent alone under the receive action is a plain lot save: the database only checks a receipt when an order line comes with it
+  const lot = { lotNo: `RM-CB-N550-${D8}-07`, materialCode: "CB-N550", qtyKg: 5, initialKg: 5, expiry: NOW + DAY, supplier: "x", location: "B-1", status: "available", coa: false };
+  assert.equal(await sendPo(s, "persona-st", { materialLots: { upsert: [lot] } }, "receivePurchaseLine"), undefined);
+  assert.deepEqual((await s.call("app_rf_master")).materialLots.map((row) => row.lotNo).filter((no) => no === lot.lotNo), [lot.lotNo]);
 });
 
 test("two screens ordering at once: the second gets the same number and is told it is stale, then catches up and orders again with the next number", async () => {

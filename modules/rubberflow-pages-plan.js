@@ -430,17 +430,18 @@
   // ได้ล็อตวัตถุดิบพร้อมใช้ (ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) และบรรทัดนั้นถูกปิดในคำสั่งเดียวกัน
   dialogs.receivePurchase = (ctx, { id, materialCode } = {}) => {
     const { data, now, ui, rules } = ctx;
-    const { DAY, fmtNum, toInputDate } = rules;
+    const { DAY, toInputDate } = rules;
     const po = (data.purchaseOrders ?? []).find((row) => row.id === id);
     const line = po?.lines.find((row) => row.materialCode === materialCode);
     if (!po || !line || po.status !== "ordered" || (line.receivedKg !== null && line.receivedKg !== undefined)) return null;
     const material = data.materials.find((row) => row.code === materialCode);
     const days = Number(material?.shelfLifeDays) || 180;
-    const body = `${ui.kv([["ใบสั่งซื้อ", ui.mono(po.id)], ["วัตถุดิบ", esc(`${materialCode}${material?.name ? ` · ${material.name}` : ""}`)], ["สั่งไว้", esc(`${fmtNum(line.qtyKg, 3)} kg`)]])}
+    // เลขใบสั่งซื้ออยู่ที่หัวเรื่อง · ปริมาณที่สั่งคือค่าตั้งต้นของช่องปริมาณ · คำอธิบายค่าตั้งต้นอยู่ใน title ของช่อง
+    const body = `${ui.kv([["วัตถุดิบ", esc(`${materialCode}${material?.name ? ` · ${material.name}` : ""}`)]])}
       <div class="rf-grid rf-g2">
-        ${ui.field("ปริมาณที่รับจริง (kg) *", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg) }))}
-        ${ui.field("วันหมดอายุ *", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY) }), { hint: esc(`ตั้งต้น: วันนี้ + อายุการเก็บ ${days} วัน`) })}
-        ${ui.field("ผู้ขาย", ui.input("supplier", { placeholder: po.id }))}
+        ${ui.field("ปริมาณที่รับจริง (kg) *", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }))}
+        ${ui.field("วันหมดอายุ *", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY), extra: `title="${esc(`ตั้งต้น = วันนี้ + อายุการเก็บ ${days} วัน`)}"` }))}
+        ${ui.field("ผู้ขาย", ui.input("supplier", { extra: 'title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"' }))}
       </div>`;
     const html = ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` });
     return { html };
@@ -469,7 +470,7 @@
       const code = esc(row.materialCode);
       const hidden = ["materialCode", "needKg", "availableKg", "shortageKg"].map((name) => `<input type="hidden" name="${name}[]" value="${esc(String(row[name]))}">`).join("");
       return `<tr data-rf-po-row data-short="${esc(String(row.shortageKg))}"><td>${ui.mono(row.materialCode)}<div class="small muted">${esc(row.name)}</div>${hidden}</td>
-        <td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td><td class="right rf-mono">${esc(fmtNum(row.availableKg, 3))}</td>
+        <td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td><td class="right rf-mono"${row.availableKg < 0 ? ' title="ติดลบ = สต็อกถูกใบเบิกและ WO อื่นที่ยังเปิดอยู่ใช้ไปแล้วเกินที่มี"' : ""}>${esc(fmtNum(row.availableKg, 3))}</td>
         <td class="right rf-mono">${row.shortageKg > 0 ? ui.badge("bad", fmtNum(row.shortageKg, 3)) : esc(fmtNum(0, 3))}</td>
         <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"` })}</td>
         <td>${ui.input("qtyKg[]", { type: "number", step: "any", min: 0, value: String(row.orderKg), extra: `data-rf-qty title="ตั้งต้น = ขาด + สต็อกขั้นต่ำ" aria-label="จำนวนสั่ง ${code}"` })}</td></tr>`;

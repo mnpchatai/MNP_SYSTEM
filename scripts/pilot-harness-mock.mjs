@@ -724,7 +724,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const RF_BAD = { materials: "RF_INVALID_MATERIAL", recipes: "RF_INVALID_RECIPE", orders: "RF_INVALID_ORDER", materialLots: "RF_INVALID_MATERIAL_LOT", requisitions: "RF_INVALID_REQUISITION", lots: "RF_INVALID_LOT", transfers: "RF_INVALID_TRANSFER", fgBoxes: "RF_INVALID_BOX", qcRecords: "RF_INVALID_QC", ncrs: "RF_INVALID_NCR", molds: "RF_INVALID_MOLD", purchaseOrders: "RF_INVALID_PURCHASE" };
   // ชุดหน้างาน: เลขที่/รหัสของเอกสาร (lotNo ของล็อตวัตถุดิบ, id ของที่เหลือ) · ใบสั่งซื้อ = PO-yyyymmdd-nn (po_no)
   for (const list of RF_LISTS.slice(3)) RF_CODE[list] = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
-  RF_CODE.purchaseOrders = /^PO-[0-9]{8}-[0-9]{2,}$/;
+  RF_CODE.purchaseOrders = /^PO-[0-9]{8}-[0-9]{2,6}$/;
   // ช่องที่ฐานข้อมูลประทับ/คำนวณเอง ต่อชุด: ระเบียนที่ต่างจากของเดิมเฉพาะช่องเหล่านี้ถือว่าไม่มีอะไรเปลี่ยน (ไม่ตรวจชน ไม่ตรวจสิทธิ์ ไม่เพิ่มเวอร์ชัน)
   const RF_NOOP = {
     materials: RF_MATERIAL_STAMPS, recipes: RF_RECIPE_STAMPS, orders: [...RF_ORDER_STAMPS, "producedQty"],
@@ -1133,13 +1133,12 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         const received = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
         const plain = (line) => bomWithout(line, ["receivedKg", "lotNo", "expiry", "receivedAt", "receivedBy"]);
         const optText = (value, max) => value === undefined || value === null || (typeof value === "string" && value.length <= max);
-        const shape = (line) => Boolean(line) && typeof line === "object" && !Array.isArray(line) && typeof line.materialCode === "string" && [line.needKg, line.availableKg, line.shortageKg, line.safetyKg].every(money) && money(line.qtyKg) && line.qtyKg > 0;
+        const shape = (line) => Boolean(line) && typeof line === "object" && !Array.isArray(line) && typeof line.materialCode === "string" && [line.needKg, line.shortageKg, line.safetyKg].every(money) && money(line.qtyKg) && typeof line.availableKg === "number" && Number.isFinite(line.availableKg) && Math.abs(line.availableKg) <= 1e9 && line.qtyKg > 0;
         if (!["ordered", "received", "cancelled"].includes(record.status) || !Array.isArray(record.lines) || !record.lines.length || record.lines.length > 100 || !record.lines.every(shape)) fail(bad);
-        if (!optText(record.sourcePi, 40) || !optText(record.sourceRequisition, 40) || !optText(record.note, 300)) fail(bad);
+        if (!optText(record.sourcePi, 60) || !optText(record.sourceRequisition, 60) || !optText(record.note, 300)) fail(bad);
         if (!prev) {
-          if (action !== "createPurchaseOrder") fail(bad); // ใบใหม่มากับคำสั่งสั่งซื้อเท่านั้น
           if (!master) fail("RF_FORBIDDEN");
-          if (record.status !== "ordered") fail("RF_INVALID_TRANSITION");
+          if (action !== "createPurchaseOrder" || record.status !== "ordered") fail(bad); // ใบใหม่มากับคำสั่งสั่งซื้อและเป็น ordered เท่านั้น
           const codes = new Set();
           for (const line of record.lines) {
             const material = next.materials.find((row) => row.code === line.materialCode);
@@ -1154,24 +1153,34 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
           });
           return null;
         }
-        if (action === "createPurchaseOrder") fail("RF_CONFLICT"); // เลขใบสั่งซื้อซ้ำกับที่มีอยู่ (ชนเวอร์ชันถูกตัดสินก่อนหน้านี้เป็น RF_STALE)
-        if (prev.status !== "ordered") fail("RF_INVALID_TRANSITION");
-        if (record.lines.length !== prev.lines.length || record.lines.some((line, i) => bomCanon(plain(line)) !== bomCanon(plain(prev.lines[i])))) fail("RF_INVALID_TRANSITION");
-        for (const key of ["sourcePi", "sourceRequisition", "note"]) if ((record[key] ?? "") !== (prev[key] ?? "")) fail("RF_INVALID_TRANSITION");
-        if (action === "cancelPurchaseOrder") {
-          if (record.status !== "cancelled") fail("RF_INVALID_TRANSITION");
+        // ส่งมาเป็น "ใบใหม่" ด้วยเลขที่มีอยู่แล้ว (เวลาสร้างต่างจากที่เก็บ) = เลขเอกสารชนกัน (ชนเวอร์ชันถูกตัดสินก่อนหน้านี้เป็น RF_STALE) · สำเนาที่ตรงกับที่เก็บถูกข้ามไปแล้วตั้งแต่ก่อนถึงตรงนี้
+        if (typeof record.createdAt === "number" && record.createdAt !== prev.createdAt) fail("RF_CONFLICT");
+        // เทียบกับใบที่เก็บ: ช่องของใบ + ทุกบรรทัด (เวลา/ผู้รับของ client ไม่นับ) · นับบรรทัดที่ client บอกว่าเพิ่งรับเข้า
+        const stamps = ["receivedAt", "receivedBy"];
+        let other = record.lines.length !== prev.lines.length || ["sourcePi", "sourceRequisition", "note"].some((key) => (record[key] ?? "") !== (prev[key] ?? ""));
+        const changed = [];
+        if (!other) {
+          record.lines.forEach((line, i) => {
+            const old = prev.lines[i];
+            if (bomCanon(plain(line)) !== bomCanon(plain(old))) other = true;
+            else if (!received(old)) { if (received(line)) changed.push(i); }
+            else if (bomCanon(bomWithout(line, stamps)) !== bomCanon(bomWithout(old, stamps))) other = true;
+          });
+        }
+        // ยกเลิก: สิทธิ์ก่อน (กลุ่มวางแผน) แล้วค่อยตรวจสถานะ — เฉพาะใบ ordered ที่ไม่มีบรรทัดรับเข้า
+        if (record.status === "cancelled" && prev.status !== "cancelled") {
           if (!planner) fail("RF_FORBIDDEN");
-          if (prev.lines.some(received) || record.lines.some(received)) fail("RF_INVALID_TRANSITION");
+          if (action !== "cancelPurchaseOrder") fail(bad);
+          if (prev.status !== "ordered" || other || changed.length || prev.lines.some(received)) fail("RF_INVALID_TRANSITION");
           put({ ...prev, status: "cancelled", cancelledAt: at });
           return null;
         }
+        // ที่เหลือที่ยอมให้มีได้ทางเดียวคือรับเข้าหนึ่งบรรทัด (ST หรือกลุ่มวางแผน) ที่มาพร้อมล็อตใหม่
+        if (!changed.length) fail("RF_INVALID_TRANSITION");
         if (!inDept("ST")) fail("RF_FORBIDDEN");
-        const changed = [];
-        record.lines.forEach((line, i) => {
-          if (received(prev.lines[i])) { if (bomCanon(bomWithout(line, ["receivedAt", "receivedBy"])) !== bomCanon(bomWithout(prev.lines[i], ["receivedAt", "receivedBy"]))) fail("RF_INVALID_TRANSITION"); return; }
-          if (received(line)) changed.push(i);
-        });
-        if (changed.length !== 1 || receipts.length) fail(changed.length === 1 ? bad : "RF_INVALID_TRANSITION");
+        if (action !== "receivePurchaseLine") fail(bad);
+        if (prev.status !== "ordered" || other) fail("RF_INVALID_TRANSITION");
+        if (changed.length !== 1 || receipts.length) fail(bad);
         const index2 = changed[0];
         const line = record.lines[index2];
         if (!(money(line.receivedKg) && line.receivedKg > 0) || typeof line.expiry !== "number" || !(line.expiry > at) || typeof line.lotNo !== "string" || !line.lotNo) fail(bad);
@@ -1212,7 +1221,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
         const index = next[list].findIndex((row) => RF_ID[list](row) === id);
         const prev = index === -1 ? null : next[list][index];
         // เท่าของล่าสุดทุกช่อง (ไม่นับตราของเซิร์ฟเวอร์) = ไม่ทำอะไร ไม่ตรวจชน ไม่ตรวจสิทธิ์ (เหมือนตัวเขียนของฐานข้อมูล)
-        if (prev && rfSame(rfNorm(list, prev), rfNorm(list, record), RF_NOOP[list])) continue;
+        if (prev && !(list === "purchaseOrders" && typeof record.createdAt === "number" && record.createdAt !== prev.createdAt) && rfSame(rfNorm(list, prev), rfNorm(list, record), RF_NOOP[list])) continue;
         // ชนก่อนสิทธิ์/เนื้อหาเสมอ: ระเบียนถูกผู้อื่นแก้/เพิ่มหลัง base (รวมเลข WO ซ้ำ) = ฝั่ง client ถือสำเนาเก่า ต้องได้ RF_STALE ไม่ใช่ RF_FORBIDDEN
         if (prev && stale(list, id)) fail("RF_STALE");
         if (list === "materials") {
@@ -1343,7 +1352,6 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     for (const claim of claims) if (!mixingNew.some((row) => row.lot === claim.lot && row.req === claim.req)) fail("RF_INVALID_TRANSITION");
     for (const row of mixingNew) if (!claims.some((claim) => claim.lot === row.lot && claim.req === row.req)) fail("RF_INVALID_TRANSITION");
     // ตรวจสอบรับเข้า: ล็อตวัตถุดิบใหม่ล็อตเดียวของคำสั่งนี้ ต้องตรงกับบรรทัดที่รับ (เลขล็อต วัตถุดิบ ปริมาณ วันหมดอายุ)
-    if (action === "receivePurchaseLine" && (receipts.length !== 1 || (changes.materialLots?.upsert?.length ?? 0) !== 1)) fail("RF_INVALID_PURCHASE");
     for (const receipt of receipts) {
       const lot = newLots.length === 1 ? next.materialLots.find((row) => row.lotNo === newLots[0]) : null;
       if (!lot || lot.lotNo !== receipt.lotNo || lot.materialCode !== receipt.materialCode || lot.qtyKg !== receipt.kg || lot.initialKg !== receipt.kg || lot.expiry !== receipt.expiry) fail("RF_INVALID_PURCHASE");
