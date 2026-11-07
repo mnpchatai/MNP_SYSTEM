@@ -355,7 +355,7 @@
       BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       BOM_TOO_MANY: "ข้อมูลชุดนี้มากเกินกว่าจะบันทึกในครั้งเดียว (เกิน 5,000 รายการต่อประเภท) แบ่งนำเข้าทีละส่วน",
-      BOM_TIMEOUT: "ฐานข้อมูลบันทึกไม่ทันเวลาที่กำหนด ลองใหม่อีกครั้ง ถ้ายังไม่ได้ให้แบ่งข้อมูลเป็นชุดเล็กลง",
+      BOM_TIMEOUT: "ฐานข้อมูลบันทึกไม่ทันเวลาที่กำหนด ลองใหม่อีกครั้ง",
       BOM_TOO_LARGE: "รูปชิ้นงานรวมกันใหญ่เกินกว่าจะบันทึกในครั้งเดียว",
       BOM_TOO_DEEP: "BOM ซ้อนกันลึกเกิน 30 ชั้น ตรวจว่ามีชิ้นงานใช้ตัวเองเป็นส่วนประกอบหรือไม่",
       BOM_CHILD_NOT_FOUND: "มีส่วนประกอบที่ยังไม่มีในรายการชิ้นงาน",
@@ -654,7 +654,8 @@
       counters = draft.counters;
       const sent = canPlan(user) ? changes : shapeForActor(changes, before);
       if (!hasChanges(sent)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
-      const batches = splitForSave(sent);
+      // แบ่งเฉพาะการนำเข้าจาก Excel: ทำซ้ำได้ปลอดภัย (ชิ้นงานที่มีแล้วรวม BOM ที่มีแล้วข้าม) · คำสั่งอื่นที่ทำซ้ำอาจสร้าง revision ซ้ำ จึงส่งครั้งเดียวเสมอ
+      const batches = name === "importFlat" ? splitForSave(sent) : [sent];
       progress = batches.length > 1 ? { done: 0, total: batches.length } : null;
       busy = true;
       emit({ type: "saving" });
@@ -666,7 +667,8 @@
       // (มีฟอร์มค้าง = รวมเฉพาะระเบียนของเราเหมือนคำตอบที่ถูกกันไว้ ไม่ขยับเวอร์ชันฐาน) · ข้อความบอกว่าบันทึกไปแล้วกี่ส่วน นำเข้าซ้ำได้ (ชิ้นงานที่มีแล้วรวม BOM ที่มีแล้วข้าม)
       const onSaveFailed = async (error, committed = [], total = 1) => {
         let mapped = mapRemoteError(error);
-        if (committed.length) {
+        // ข้อมูลทดสอบถูกล้างระหว่างส่ง: ส่วนที่บันทึกไปแล้วไม่มีอยู่แล้ว ไม่รวมและไม่บอกว่าบันทึกไปกี่ส่วน (ตามทันด้วยการโหลดทั้งชุด)
+        if (committed.length && mapped.code !== "BOM_RESET") {
           const done = combineDeltas(committed);
           snapshot = shouldHold() ? snapshotWith(snapshot, ownRecordsOf(done, changes, snapshot.version)) : snapshotWith(snapshot, done);
           auditStale = true;
@@ -695,7 +697,9 @@
         const deltas = [];
         let version = baseVersion;
         for (const [index, batch] of batches.entries()) {
-          const audit = index === 0 ? auditEntries : [{ action: "บันทึกต่อเนื่อง", detail: `ส่วนที่ ${index + 1} จาก ${batches.length} ของคำสั่งเดียวกัน` }];
+          // ส่วนแรกบอกด้วยว่าเป็นส่วนที่ 1 (ยอดในข้อความของผู้ใช้เป็นของทั้งคำสั่ง ส่วนหลังอาจล้ม) · รวมไม่เกิน AUDIT_MAX
+          const part = { action: "บันทึกต่อเนื่อง", detail: `ส่วนที่ ${index + 1} จาก ${batches.length} ของคำสั่งเดียวกัน` };
+          const audit = batches.length === 1 ? auditEntries : index === 0 ? [...auditEntries.slice(0, AUDIT_MAX - 1), part] : [part];
           let delta;
           try {
             delta = normalizeDelta(await remote.save(batch, version, name, audit, baseEpoch));
