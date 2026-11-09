@@ -8,7 +8,9 @@
 
 // sandbox = admin อยู่ในโหมดทดสอบ (?sandbox=1): ผู้ใช้จำลองเป็น admin และทำหน้าที่เป็นบัญชีทดสอบ จึงเห็นโมดูลทดสอบ (RubberFlow, BOM)
 // storage = ที่เก็บข้อมูลหลัก BOM ของหน้า (localStorage) ไม่ส่ง = อยู่ในหน่วยความจำอย่างเดียว
-export function createMockSupabase({ empty = false, sandbox = false, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
+// ncr = สถานการณ์ NCR อย่างเดียว (?ncr=1): ไม่มีคำร้องอื่น มี NCR ครบทุกขั้น และกดขั้นของ NCR ได้จริงในฐานข้อมูลจำลอง (เก็บลง storage
+// ใบจึงเดินต่อเมื่อสลับผู้ใช้) · as = รหัสพนักงานจำลองที่ใช้เข้าระบบ (?as=e5) ใช้ได้เฉพาะสถานการณ์ NCR
+export function createMockSupabase({ empty = false, sandbox = false, ncr = false, as = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -24,7 +26,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
   const warned = new Set();
   const warnOnce = (key, message) => { if (!warned.has(key)) { warned.add(key); warn(message); } };
 
-  const ME_ID = "e1";
+  const ME_ID = ncr && /^e([1-9]|1[01])$/.test(String(as ?? "")) ? as : "e1";
   const roles = [
     ["role-dm", "department_manager", "ผู้จัดการแผนก"], ["role-sup", "supervisor", "หัวหน้างาน"], ["role-tech", "technician", "ช่าง"],
     ["role-staff", "staff", "พนักงาน"], ["role-fm", "factory_manager", "ผู้จัดการโรงงาน"], ["role-gm", "general_manager", "ผู้จัดการทั่วไป"],
@@ -50,11 +52,17 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     ["e6", "E041", "ธนพล", "มีสุข", "ผู้จัดการแผนก IT", "dep-it", "role-dm"],
     ["e7", "E003", "กมล", "รัตนชัย", "ผู้จัดการทั่วไป", "dep-rb", "role-gm"],
     ["e8", "E017", "ประเสริฐ", "แสงทอง", "ช่างไฟฟ้า", "dep-mt", "role-tech"],
+    // สถานการณ์ NCR: ผู้ตอบของแผนก RB (พนักงาน + ผจก.แผนก) และ ผจก.แผนก QA ผู้ลงนามลำดับแรก
+    ...(ncr ? [
+      ["e9", "E052", "มานพ", "ขึ้นรูปดี", "พนักงานแผนกขึ้นรูปยาง", "dep-rb", "role-staff"],
+      ["e10", "E030", "สุภาพร", "ผลิตผล", "ผู้จัดการแผนกขึ้นรูปยาง", "dep-rb", "role-dm"],
+      ["e11", "E020", "อรทัย", "มาตรฐาน", "ผู้จัดการแผนก QA", "dep-qa", "role-dm"],
+    ] : []),
   ].map(([id, employee_no, first_name, last_name, job_title, department_id, role_id], index) => ({
     id, employee_no, first_name, last_name, job_title, department_id, role_id, acting_role_id: null, manager_id: null,
     email: `${id}@example.test`, phone: "", is_active: true, auth_user_id: `u${index + 1}`,
   }));
-  const ME = employees[0];
+  const ME = employees.find((row) => row.id === ME_ID) ?? employees[0];
   if (sandbox) ME.role_id = "role-admin";
   const personName = (id) => { const person = employees.find((row) => row.id === id); return person ? `${person.first_name} ${person.last_name}` : null; };
   const request_types = [
@@ -112,7 +120,7 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     (spec.techs ?? []).forEach((technician_id) => db.request_technicians.push({ id: newId("request_technicians"), request_id: spec.id, technician_id }));
   }
 
-  if (!empty) {
+  if (!empty && !ncr) {
     seedRequest({
       id: "req-mt-0412", no: "MT-2569-0412", type: "MT_REPAIR", title: "แจ้งซ่อมเครื่องฉีดยาง HCM-03 น้ำมันไฮดรอลิกรั่ว", priority: "high", urgent: true,
       description: "น้ำมันไฮดรอลิกรั่วบริเวณกระบอกสูบด้านซ้าย หยดลงพื้นตลอดกะ ต้องหยุดเครื่องเติมน้ำมันทุก 2 ชั่วโมง",
@@ -188,6 +196,71 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       { id: "n1", recipient_id: ME_ID, request_id: "req-mt-0412", title: "MT-2569-0412 รอคุณรับงาน", body: "แจ้งซ่อมเครื่องฉีดยาง HCM-03 น้ำมันไฮดรอลิกรั่ว", kind: "approval", action_url: null, read_at: null, created_at: ago(0.8) },
       { id: "n2", recipient_id: ME_ID, request_id: "req-ncr-0088", title: "NCR-2569-0088 รอคุณรับทราบ", body: "NCR ยางขอบไม่เต็ม ล็อต RB-1103", kind: "approval", action_url: null, read_at: null, created_at: ago(1.5) },
     );
+  }
+
+  // ---- สถานการณ์ NCR (?ncr=1): NCR ครบทุกขั้นของ workflow และทุกบทบาท เก็บลง storage (คีย์ mnp-harness-ncr) ----
+  // แถว ncr_reports เก็บความสัมพันธ์ที่หน้าเว็บ embed (ncr_responsibilities, defect_type, reporter_department) ไว้ในตัว
+  const NCR_KEY = "mnp-harness-ncr";
+  const NCR_TABLES = ["ncr_reports", "ncr_status_history", "ncr_info_requests"];
+  const bangkokDate = (ms) => new Date(ms + 7 * 3600000).toISOString().slice(0, 10);
+  const addDays = (date, days) => { const value = new Date(`${date}T00:00:00Z`); value.setUTCDate(value.getUTCDate() + days); return value.toISOString().slice(0, 10); };
+  const deptCode = (id) => departments.find((row) => row.id === id)?.code ?? null;
+  const responsibility = (departmentId, responderId = null, share = 1) => ({ share, department_id: departmentId, responder_id: responderId, department: { code: deptCode(departmentId), name_th: departments.find((row) => row.id === departmentId)?.name_th ?? "" } });
+  const NCR_DEFECT_TYPES = [["dimension", "ขนาดผิด"], ["bubble", "ฟองอากาศ/ผิวไม่เรียบ"], ["short_fill", "ขอบไม่เต็ม"], ["other", "อื่นๆ"]]
+    .map(([code, name_th], index) => ({ id: `dt-${code}`, code, name_th, is_active: true, sort_order: index + 1 }));
+  let ncrSeq = 100;
+  function ncrSeed() {
+    const today = bangkokDate(startedAt);
+    const report = (no, status, product, reporter, issuedDaysAgo, extra = {}) => {
+      const issue_date = addDays(today, -issuedDaysAgo);
+      const reporterRow = employees.find((row) => row.id === reporter);
+      return {
+        id: `ncr-${no.replace("/", "-")}`, ncr_no: no, form_code: "QA02-FM01", status, is_test: false, product_name: product, product_code: null, customer_name: null, po_no: null, lot_no: null,
+        reporter_id: reporter, reporter_department_id: reporterRow.department_id, reporter_department: { code: deptCode(reporterRow.department_id) },
+        issue_date, response_due: addDays(issue_date, 5), unit: "ชิ้น", source: "in_process", qty_total: 200, qty_sampled: 50, qty_defect: 12, qty_returned: 0,
+        defect_type_id: "dt-dimension", defect_type: { name_th: "ขนาดผิด" }, description: `${product} ไม่ได้ตามสเปค พบระหว่างตรวจในกระบวนการ`,
+        dispositions: [], disposition_note: null, disposed_by: null, disposed_at: null, causes: [], root_cause: null, correction: null, correction_due: null,
+        prevention: null, prevention_due: null, responded_by: null, responded_at: null, followup_note: null, followed_up_by: null, followed_up_at: null,
+        signoff_qa_by: null, signoff_qa_at: null, signoff_factory_by: null, signoff_factory_at: null, signoff_gm_by: null, signoff_gm_at: null, closed_at: null,
+        cancelled_by: null, cancelled_at: null, cancel_reason: null, created_at: ago(issuedDaysAgo), updated_at: ago(Math.max(0, issuedDaysAgo - 1)), ncr_responsibilities: [],
+        ...extra,
+      };
+    };
+    const disposed = (departments_, days) => ({ dispositions: ["sort"], disposed_by: "e5", disposed_at: ago(days), ncr_responsibilities: departments_ });
+    const answered = (days, prevention) => ({ causes: ["machine"], root_cause: "แม่พิมพ์สึก ระยะเปิดปิดคลาดเคลื่อน", correction: "ปรับตั้งแม่พิมพ์และคัดแยกชิ้นงาน", responded_by: "e10", responded_at: ago(days), prevention });
+    const rows = [
+      report("QA060/26", "awaiting_disposition", "ปะเก็นยางฝาถัง TK-200", "e9", 1),
+      report("QA058/26", "awaiting_response", "ซีลยางปั๊มลม CMP-01", "e3", 8, { ...disposed([responsibility("dep-rb")], 7) }),
+      report("QA057/26", "awaiting_response", "ยางกันกระแทกประตู DR-15", "e3", 3, { ...disposed([responsibility("dep-rb", "e9", 0.5), responsibility("dep-mt", null, 0.5)], 2) }),
+      report("QA055/26", "awaiting_followup", "ท่อยางน้ำมัน HS-08", "e1", 9, { ...disposed([responsibility("dep-rb")], 8), ...answered(5, null) }),
+      report("QA053/26", "awaiting_followup", "โอริงยาง OR-32", "e9", 10, { ...disposed([responsibility("dep-rb")], 9), ...answered(6, "ตรวจแม่พิมพ์ทุกต้นกะ บันทึกในใบตรวจเครื่อง") }),
+      report("QA050/26", "awaiting_signoff", "ยางรองแท่นเครื่อง ล็อต RB-1098", "e1", 14, { ...disposed([responsibility("dep-rb")], 13), ...answered(10, "เปลี่ยนรอบล้างช่องระบายอากาศเป็นทุกวัน"), followed_up_by: "e3", followed_up_at: ago(2) }),
+      report("QA048/26", "awaiting_signoff", "บูชยางช่วงล่าง BS-21", "e3", 16, { ...disposed([responsibility("dep-rb")], 15), ...answered(12, "เพิ่มจุดตรวจขนาดหลังอบ"), followed_up_by: "e3", followed_up_at: ago(4), signoff_qa_by: "e11", signoff_qa_at: ago(3) }),
+      report("QA046/26", "awaiting_signoff", "แผ่นยางรองพื้น MT-90", "e9", 18, { ...disposed([responsibility("dep-rb")], 17), ...answered(14, "อบรมพนักงานเรื่องการวางชิ้นงาน"), followed_up_by: "e3", followed_up_at: ago(6), signoff_qa_by: "e11", signoff_qa_at: ago(5), signoff_factory_by: "e5", signoff_factory_at: ago(4) }),
+      report("QA045/26", "awaiting_info", "ยางขอบกระจก WS-40", "e3", 20, { ...disposed([responsibility("dep-rb")], 19), ...answered(15, "ตรวจความหนืดยางทุกล็อต"), followed_up_by: "e3", followed_up_at: ago(8), signoff_qa_by: "e11", signoff_qa_at: ago(7) }),
+      report("QA040/26", "closed", "จุกยางขวด CP-05", "e9", 30, { ...disposed([responsibility("dep-rb")], 29), ...answered(25, "เปลี่ยนสูตรยาง"), followed_up_by: "e3", followed_up_at: ago(20), signoff_qa_by: "e11", signoff_qa_at: ago(19), signoff_factory_by: "e5", signoff_factory_at: ago(18), signoff_gm_by: "e7", signoff_gm_at: ago(17), closed_at: ago(17) }),
+    ];
+    for (const row of rows) if (row.responded_at) Object.assign(row, { correction_due: row.response_due, prevention_due: addDays(row.response_due, 7) });
+    // แก้ล่าสุด = การกระทำล่าสุดของใบ (หน้าหลักนับ "ค้างกี่วัน" จาก updated_at) · QA045/26 ถูกขอข้อมูลเพิ่ม 2 วันก่อน
+    for (const row of rows) row.updated_at = [row.created_at, row.disposed_at, row.responded_at, row.followed_up_at, row.signoff_qa_at, row.signoff_factory_at, row.closed_at].filter(Boolean).sort().pop();
+    rows.find((row) => row.ncr_no === "QA045/26").updated_at = ago(2);
+    return {
+      ncr_reports: rows,
+      ncr_status_history: rows.map((row, index) => ({ id: index + 1, ncr_id: row.id, from_status: null, to_status: "awaiting_disposition", action: "issue", note: null, changed_by: row.reporter_id, changed_at: row.created_at })),
+      ncr_info_requests: [{ id: "info-1", ncr_id: "ncr-QA045-26", step: "factory", request_note: "ขอผลวัดความหนืดของล็อตที่ผลิตหลังปรับแก้", requested_by: "e5", requested_at: ago(2), answer_note: null, answered_by: null, answered_at: null }],
+    };
+  }
+  function ncrPersist() {
+    try { storage?.setItem?.(NCR_KEY, JSON.stringify({ seq: ncrSeq, ...Object.fromEntries(NCR_TABLES.map((table) => [table, db[table]])) })); } catch { warnOnce("ncr-storage", "[pilot harness] เก็บข้อมูล NCR ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
+  }
+  if (ncr) {
+    let saved = null;
+    try { saved = JSON.parse(storage?.getItem?.(NCR_KEY) ?? "null"); } catch { saved = null; }
+    const data = saved && NCR_TABLES.every((table) => Array.isArray(saved[table])) ? saved : ncrSeed();
+    for (const table of NCR_TABLES) db[table] = data[table];
+    ncrSeq = Number(data.seq) || ncrSeq;
+    db.ncr_defect_types = NCR_DEFECT_TYPES;
+    if (!saved) ncrPersist();
   }
 
   // ---- อ่าน: แถวที่ส่งกลับมีความสัมพันธ์ที่หน้าเว็บ embed ไว้ใน select ติดมาเสมอ (คอลัมน์เกินไม่มีผลกับหน้าเว็บ)
@@ -1763,7 +1836,133 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     }
     return out;
   }
+  // ---- ขั้นของ NCR (สถานการณ์ ?ncr=1): สถานะ กำหนด และสิทธิ์ตาม app_ncr_* ล่าสุดใน supabase/migrations (หลวมกว่าเรื่องการตรวจข้อความ) ----
+  const roleOf = (person) => roles.find((row) => row.id === person.role_id)?.code ?? "";
+  const ncrIsQa = (person) => deptCode(person.department_id) === "QA";
+  const ncrIsManager = (person) => ["department_manager", "assistant_department_manager"].includes(roleOf(person));
+  const ncrCanRespond = (row, person) => (roleOf(person) === "staff" || ncrIsManager(person))
+    && row.ncr_responsibilities.some((item) => item.department_id === person.department_id && (!item.responder_id || item.responder_id === person.id));
+  const ncrSigner = (row) => (!row.signoff_qa_at ? "qa" : !row.signoff_factory_at ? "factory" : "gm");
+  const ncrCanSign = (row, person) => ({ qa: ncrIsQa(person) && ncrIsManager(person), factory: roleOf(person) === "factory_manager", gm: roleOf(person) === "general_manager" })[ncrSigner(row)];
+  function ncrStep(id, { from, allowed, next, action, note = null, change = () => {} }) {
+    if (!ncr) fail("NOT_AUTHORIZED");
+    const row = db.ncr_reports.find((item) => item.id === id) ?? fail("NCR_NOT_FOUND");
+    if (!from.includes(row.status)) fail("INVALID_TRANSITION");
+    if (!allowed(row)) fail("NOT_AUTHORIZED");
+    const previous = row.status;
+    change(row);
+    row.status = next ?? row.status;
+    row.updated_at = stamp();
+    if (next) db.ncr_status_history.push({ id: db.ncr_status_history.length + 1, ncr_id: row.id, from_status: previous, to_status: row.status, action, note: String(note ?? "").trim() || null, changed_by: ME_ID, changed_at: row.updated_at });
+    ncrPersist();
+    return row.id;
+  }
+  const NCR_RPC = {
+    app_ncr_issue(args) {
+      if (!ncr) fail("NOT_AUTHORIZED");
+      const defect = NCR_DEFECT_TYPES.find((row) => row.code === args.p_defect_type_code) ?? fail("INVALID_DEFECT_TYPE");
+      const issue_date = bangkokDate(now());
+      const id = `ncr-new-${++ncrSeq}`;
+      const ncr_no = `QA${String(ncrSeq - 39).padStart(3, "0")}/26`;
+      db.ncr_reports.push({
+        ...ncrSeed().ncr_reports[0], id, ncr_no, status: "awaiting_disposition", reporter_id: ME_ID, reporter_department_id: ME.department_id, reporter_department: { code: deptCode(ME.department_id) },
+        issue_date, response_due: addDays(issue_date, 5), product_name: args.p_product_name, product_code: args.p_product_code ?? null, customer_name: args.p_customer_name ?? null,
+        po_no: args.p_po_no ?? null, lot_no: args.p_lot_no ?? null, unit: args.p_unit, source: args.p_source, qty_total: args.p_qty_total, qty_sampled: args.p_qty_sampled ?? null,
+        qty_defect: args.p_qty_defect, qty_returned: args.p_qty_returned ?? null, defect_type_id: defect.id, defect_type: { name_th: defect.name_th }, description: args.p_description,
+        created_at: stamp(), updated_at: stamp(),
+      });
+      db.ncr_status_history.push({ id: db.ncr_status_history.length + 1, ncr_id: id, from_status: null, to_status: "awaiting_disposition", action: "issue", note: null, changed_by: ME_ID, changed_at: stamp() });
+      ncrPersist();
+      return { id, ncr_no };
+    },
+    app_ncr_dispose: ({ p_ncr_id, p_dispositions, p_department_ids, p_note, p_responder_ids = [] }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_disposition"], allowed: () => roleOf(ME) === "factory_manager", next: "awaiting_response", action: "dispose", note: p_note,
+      change(row) {
+        if (!(p_dispositions ?? []).length) fail("INVALID_DISPOSITION");
+        const ids = [...new Set(p_department_ids ?? [])];
+        if (!ids.length) fail("INVALID_RESPONSIBILITIES");
+        const share = Math.round(10000 / ids.length) / 10000;
+        row.ncr_responsibilities = ids.map((departmentId, index) => responsibility(departmentId,
+          (p_responder_ids ?? []).find((responderId) => employees.find((person) => person.id === responderId)?.department_id === departmentId) ?? null,
+          index === ids.length - 1 ? Math.round((1 - share * (ids.length - 1)) * 10000) / 10000 : share));
+        Object.assign(row, { dispositions: p_dispositions, disposition_note: String(p_note ?? "").trim() || null, disposed_by: ME_ID, disposed_at: stamp() });
+      },
+    }),
+    app_ncr_assign_responder: ({ p_ncr_id, p_department_id, p_responder_id }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_response", "awaiting_followup", "awaiting_info"], allowed: () => roleOf(ME) === "factory_manager",
+      change(row) {
+        const item = row.ncr_responsibilities.find((entry) => entry.department_id === p_department_id) ?? fail("INVALID_RESPONDER");
+        item.responder_id = p_responder_id || null;
+      },
+    }),
+    app_ncr_respond: ({ p_ncr_id, p_causes, p_root_cause, p_correction, p_prevention }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_response"], allowed: (row) => ncrCanRespond(row, ME), next: "awaiting_followup", action: "respond",
+      change(row) {
+        if (!(p_causes ?? []).length) fail("INVALID_CAUSES");
+        if (!String(p_root_cause ?? "").trim()) fail("INVALID_ROOT_CAUSE");
+        if (!String(p_correction ?? "").trim()) fail("INVALID_CORRECTION");
+        const prevention = String(p_prevention ?? "").trim() || null;
+        if (prevention && prevention.length < 5) fail("INVALID_PREVENTION");
+        Object.assign(row, { causes: p_causes, root_cause: p_root_cause.trim(), correction: p_correction.trim(), correction_due: row.response_due, prevention: prevention ?? row.prevention,
+          prevention_due: addDays(row.response_due, 7), responded_by: ME_ID, responded_at: stamp() });
+      },
+    }),
+    app_ncr_submit_prevention: ({ p_ncr_id, p_prevention }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_followup"], allowed: (row) => ncrCanRespond(row, ME),
+      change(row) {
+        if (row.prevention) fail("NCR_PREVENTION_ALREADY_SUBMITTED");
+        if (String(p_prevention ?? "").trim().length < 5) fail("INVALID_PREVENTION");
+        row.prevention = p_prevention.trim();
+      },
+    }),
+    app_ncr_followup: ({ p_ncr_id, p_result, p_note }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_followup"], allowed: () => ncrIsQa(ME), next: p_result === "close" ? "awaiting_signoff" : "awaiting_response", action: `followup_${p_result}`, note: p_note,
+      change(row) {
+        if (!["close", "return"].includes(p_result)) fail("INVALID_FOLLOWUP_RESULT");
+        if (p_result === "return" && String(p_note ?? "").trim().length < 3) fail("NCR_RETURN_NOTE_REQUIRED");
+        if (p_result === "close" && !row.prevention) fail("NCR_PREVENTION_REQUIRED");
+        Object.assign(row, { followup_note: String(p_note ?? "").trim() || null, followed_up_by: ME_ID, followed_up_at: stamp() });
+        if (p_result === "return") row.response_due = addDays(bangkokDate(now()), 5);
+      },
+    }),
+    app_ncr_signoff: ({ p_ncr_id }) => {
+      const row = db.ncr_reports.find((item) => item.id === p_ncr_id);
+      const last = row && row.status === "awaiting_signoff" && ncrSigner(row) === "gm";
+      return ncrStep(p_ncr_id, {
+        from: ["awaiting_signoff"], allowed: (current) => ncrCanSign(current, ME), next: last ? "closed" : "awaiting_signoff", action: `signoff_${row ? ncrSigner(row) : "qa"}`,
+        change(current) {
+          const step = ncrSigner(current);
+          Object.assign(current, { [`signoff_${step}_by`]: ME_ID, [`signoff_${step}_at`]: stamp() });
+          if (step === "gm") current.closed_at = stamp();
+        },
+      });
+    },
+    app_ncr_request_info: ({ p_ncr_id, p_note }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_signoff"], allowed: (row) => ncrCanSign(row, ME), next: "awaiting_info", action: "request_info", note: p_note,
+      change(row) {
+        if (String(p_note ?? "").trim().length < 5) fail("INVALID_INFO_REQUEST");
+        db.ncr_info_requests.push({ id: `info-${db.ncr_info_requests.length + 1}`, ncr_id: row.id, step: ncrSigner(row), request_note: p_note.trim(), requested_by: ME_ID, requested_at: stamp(), answer_note: null, answered_by: null, answered_at: null });
+      },
+    }),
+    app_ncr_answer_info: ({ p_ncr_id, p_note }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_info"], allowed: (row) => ncrCanRespond(row, ME), next: "awaiting_signoff", action: "answer_info", note: p_note,
+      change(row) {
+        if (String(p_note ?? "").trim().length < 5) fail("INVALID_INFO_ANSWER");
+        const open = db.ncr_info_requests.find((item) => item.ncr_id === row.id && !item.answered_at);
+        if (open) Object.assign(open, { answer_note: p_note.trim(), answered_by: ME_ID, answered_at: stamp() });
+      },
+    }),
+    app_ncr_cancel: ({ p_ncr_id, p_reason }) => ncrStep(p_ncr_id, {
+      from: ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"], allowed: () => ncrIsQa(ME) && ncrIsManager(ME), next: "cancelled", action: "cancel", note: p_reason,
+      change(row) {
+        if (String(p_reason ?? "").trim().length < 5) fail("INVALID_REASON");
+        Object.assign(row, { cancelled_by: ME_ID, cancelled_at: stamp(), cancel_reason: p_reason.trim() });
+      },
+    }),
+  };
+
   const RPC = {
+    ...NCR_RPC,
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
     app_lab_only: () => false,
@@ -2108,8 +2307,12 @@ export function installMockSupabase(win, create, options = {}) {
     try { sameOrigin = new win.URL(String((input && input.url) || input), win.location.href).origin === win.location.origin; } catch { sameOrigin = false; }
     return sameOrigin ? realFetch(input, init) : Promise.resolve(new win.Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
   };
+  const params = new win.URLSearchParams(win.location.search);
   const { client } = create({
-    empty: new win.URLSearchParams(win.location.search).has("empty"),
+    empty: params.has("empty"),
+    // ?ncr=1 = สถานการณ์ NCR อย่างเดียว · ?as=e5 = เข้าระบบเป็นพนักงานจำลองคนนั้น
+    ncr: params.has("ncr"),
+    as: params.get("as"),
     sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
     storage: (() => { try { return win.localStorage; } catch { return null; } })(),
     warn: (message) => win.console.warn(message),
