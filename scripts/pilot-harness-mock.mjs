@@ -277,6 +277,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         request_type: request_types.find((item) => item.id === row.request_type_id) ?? null,
         department: pick(departments.find((item) => item.id === row.department_id), ["code", "name_th"]),
         request_technicians: db.request_technicians.filter((item) => item.request_id === row.id).map((item) => ({ technician_id: item.technician_id })),
+        approval_steps: db.approval_steps.filter((item) => item.request_id === row.id).map(({ step_order, step_name, status }) => ({ step_order, step_name, status })),
       };
     }
     if (table === "approval_steps") {

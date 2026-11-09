@@ -1233,7 +1233,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${statusBadge(request.status, isRepairType(type))}${request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type))}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
@@ -1268,7 +1268,7 @@ function statusBoardRows(rows, { showType = false } = {}) {
           department: escapeHtml(row.department_name ?? row.department_code ?? ""),
           requester: escapeHtml(row.requester_name ?? ""),
           updated: formatDate(row.last_changed_at ?? row.submitted_at, true),
-          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow))}${row.is_urgent ? `<span class="request-priority-chip priority-urgent">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
+          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow))}${row.is_urgent ? `<span class="badge urgent-flag">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
         },
       };
     }),
@@ -2243,7 +2243,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
   const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
-      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="priority-flag">${escapeHtml(flag)}</span>` : ""}</span>
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}</span>
       <strong class="queue-item-title">${escapeHtml(request.title)}</strong>
       <span class="queue-item-meta">${escapeHtml(meta)}</span>
     </span>`;
@@ -2251,7 +2251,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
   if (item.kind === "repair" || item.kind === "ncr") {
     const task = queueTaskLabel(item);
-    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}<span class="queue-item-task">${escapeHtml(task)}</span></a></li>`;
+    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}<span class="queue-item-task" data-module="${requestPalette(type?.code)}">${escapeHtml(task)}</span></a></li>`;
   }
   const check = isOwnApprovalStep(item.step)
     ? `<label class="queue-item-check"><input type="checkbox" class="queue-select" value="${escapeHtml(item.step.id)}" aria-label="เลือก ${escapeHtml(request.request_no)} เพื่ออนุมัติหลายรายการ"></label>`
@@ -2875,7 +2875,7 @@ function knownRequestStatuses(params) {
 async function requestListPanel(params, typeId, { departmentId = null, search = "" } = {}) {
   const mineOnly = params.get("scope") === "mine";
   let query = sb.from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id),current_step,approval_steps(step_order,step_name,status)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (typeId) query = query.eq("request_type_id", typeId);

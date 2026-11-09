@@ -500,7 +500,7 @@
           ${row("แผนก", escapeHtml(department ? `${department.displayCode} ${department.name}` : "—"))}
           ${row("เครื่องจักร", escapeHtml(machine ? machineLabel(machine) : "—"))}
           ${row("ประเภทเอกสาร", escapeHtml(docTypeLabels[docTypeInput.value] ?? docTypeInput.value))}
-          ${row("ความเร่งด่วน", urgent.checked ? '<span class="priority-flag">ด่วน</span>' : "ปกติ")}
+          ${row("ความเร่งด่วน", urgent.checked ? '<span class="badge urgent-flag">ด่วน</span>' : "ปกติ")}
           ${row("วันที่ต้องการใช้งาน", escapeHtml(neededDate.value ? window.MNP_DATE_PICKER.label(neededDate.value) : "ไม่ระบุ"))}
           ${row("ผู้แจ้ง", escapeHtml(requesterName.value.trim() || defaultRequester))}
           <div class="definition wide"><dt>อาการ / รายละเอียด</dt><dd class="review-text">${escapeHtml(description.value.trim())}</dd></div>

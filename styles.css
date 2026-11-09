@@ -820,6 +820,20 @@ a.register-title:hover { color: var(--primary); }
 .request-module-header .icon-button { color: var(--mod-btn-ink); background: var(--mod-btn); border-color: var(--mod-btn-edge); }
 .request-detail-head.request-module-header { z-index: 2; overflow: visible; padding: 18px 22px 20px; border-bottom: 1px solid var(--mod-edge); }
 .request-detail-head.request-module-header .request-detail-meta .badge { vertical-align: 1px; }
+/* หัวใบ NCR: ข้อเท็จจริงที่ใช้ตัดสิน (ข้อบกพร่อง แหล่งที่พบ %NG) เป็นแผ่นเล็กบนก้อนสี ใช้สีปุ่มรองของหัวโมดูล (contrast ตรวจแล้ว) */
+.ncr-head-facts { margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.ncr-head-facts > div { min-width: 0; padding: 6px 12px; color: var(--mod-btn-ink); background: var(--mod-btn); border: 1px solid var(--mod-btn-edge); border-radius: 12px; }
+.ncr-head-facts dt { font-size: var(--text-caption); font-weight: 600; line-height: 1.4; }
+.ncr-head-facts dd { margin: 0; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+/* ค่าเสียหาย: ฟอร์มเพิ่มรายการพับเป็นปุ่ม เปิดเมื่อกด (หรือเมื่อกดแก้รายการเดิม) */
+.ncr-loss-add { margin-top: 14px; }
+.ncr-loss-add > summary { list-style: none; width: fit-content; }
+.ncr-loss-add > summary::-webkit-details-marker { display: none; }
+.ncr-loss-add[open] > summary { margin-bottom: 12px; }
+/* จอแคบ: ปุ่มส่งของฟอร์มในงานที่ต้องทำติดล่างจอระหว่างเลื่อนดูฟอร์มยาว (แบบเดียวกับปุ่มของฟอร์มสร้าง) */
+@media (max-width: 760px) {
+  .ncr-actions .form-actions { position: sticky; bottom: 0; z-index: 4; margin-inline: -16px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
+}
 @media (max-width: 900px) {
   .page-heading.request-module-header { flex-direction: column; align-items: flex-start; }
 }
@@ -916,8 +930,6 @@ a.register-title:hover { color: var(--primary); }
 .request-detail-kicker-end { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-detail-head h1 { margin: 8px 0 7px; font-size: clamp(24px, 3vw, 31px); overflow-wrap: anywhere; }
 .request-detail-meta { margin: 0; color: var(--muted); }
-.priority-flag { display: inline-flex; align-items: center; gap: 6px; color: var(--danger-ink); font-weight: 700; white-space: nowrap; }
-.priority-flag::before { content: ""; width: 8px; height: 8px; flex: none; background: var(--danger-strong); border-radius: 50%; }
 .request-detail-menu { position: relative; }
 .request-detail-menu > .icon-button { width: 36px; height: 36px; font-size: var(--text-title); font-weight: 700; line-height: 1; }
 .request-detail-menu-list { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; min-width: 220px; padding: 6px; display: grid; gap: 4px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow); }
@@ -1002,7 +1014,10 @@ a.register-title:hover { color: var(--primary); }
 .queue-item-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .queue-item-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .queue-item-meta { color: var(--muted); font-size: var(--text-caption); }
-.queue-item-task { padding: 4px 8px; color: #fff; background: var(--warning-strong); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+/* งานที่ต้องลงมือ (มอบหมายช่าง ตอบ NCR …): ชิปสีโมดูลของใบพร้อมลูกศร แยกจากป้ายสถานะที่เป็นเม็ดมีสัญลักษณ์ */
+.queue-item-task { padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--m800, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 14%, var(--paper)); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+.queue-item-task::after { content: "→"; }
+:root[data-theme="dark"] .queue-item-task { color: var(--m200, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 18%, var(--paper)); }
 .queue-item-slot { min-width: 0; flex-basis: 100%; }
 .queue-item-slot:not(:empty) { padding: 12px 14px 14px; border-top: 1px solid var(--soft-line); }
 .queue-detail-pane { position: sticky; top: 84px; min-width: 0; max-height: calc(100dvh - 100px); overflow-y: auto; }
@@ -2463,8 +2478,9 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .badge:is(.completed, .acknowledged), .rf-badge.is-good { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M6 10.3l2.8 2.8 5.3-5.9' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.rejected, .rf-badge.is-bad { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M7 7l6 6M13 7l-6 6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.cancelled { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M6.1 13.9l7.8-7.8' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
-.badge.urgent-flag, .rf-badge.is-warn { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M10 5.4v5.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='10' cy='14.3' r='1.35'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
+.badge.urgent-flag, .rf-badge.is-warn, .nd-pill.crit .nd-ico { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M10 5.4v5.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='10' cy='14.3' r='1.35'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 @media (forced-colors: active) { :is(.badge, .rf-badge)::before { forced-color-adjust: none; background: CanvasText; } }
+.nd-pill.crit .nd-ico { width: 16px; height: 16px; flex: none; overflow: hidden; color: transparent; font-size: 0; background: var(--danger-strong); -webkit-mask: var(--badge-glyph) center / 100% 100% no-repeat; mask: var(--badge-glyph) center / 100% 100% no-repeat; }
 .rf-page ::selection, body:has(.rf-page) .rf-modal ::selection { background: color-mix(in srgb, var(--rf-mod, #0f766e) 24%, transparent); }
 
 body:has(.rf-page) .rf-nav-item { min-height: 38px; padding: 5px 8px; gap: 8px; border-radius: var(--radius-md); }
