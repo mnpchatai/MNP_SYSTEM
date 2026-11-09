@@ -128,7 +128,7 @@ const DEPT_MANAGER_ROLE_CODES = ["department_manager", "assistant_department_man
 const OPERATE_ROLE_CODES = ["assistant_factory_manager", "factory_manager", "general_manager"]; // มี requests.operate
 const accountRequestKindLabels = {
   new_account: "ขอเปิดบัญชี",
-  credential_change: "ขอแก้ไข ID/รหัสผ่าน",
+  credential_change: "ขอแก้ไขรหัสพนักงาน/รหัสผ่าน",
 };
 const accountRequestStatusLabels = {
   pending: "รออนุมัติ",
@@ -1317,9 +1317,9 @@ document.addEventListener("focusout", (event) => {
   if (select?.dataset.keyed === "1") followHrefSelect(select);
 });
 
-// ปุ่มเปิดตารางคีย์ลัด: ซ่อนบนจอสัมผัสล้วน (ไม่มีคีย์บอร์ดให้กด) ดู .help-toggle ใน styles.css
+// ปุ่มช่วยเหลือ: แสดงทุกอุปกรณ์ เปิดกล่องวิธีใช้หน้านี้ + ความหมายของป้าย + คีย์ลัด (ส่วนคีย์ลัดซ่อนบนจอสัมผัสล้วน)
 function helpButton() {
-  return `<button class="icon-button help-toggle" type="button" aria-label="คีย์ลัด" title="คีย์ลัด (กด ?)" aria-haspopup="dialog" aria-keyshortcuts="?"><span aria-hidden="true">?</span></button>`;
+  return `<button class="icon-button help-toggle" type="button" aria-label="ช่วยเหลือ" title="ช่วยเหลือ (กด ?)" aria-haspopup="dialog" aria-keyshortcuts="?"><span aria-hidden="true">?</span></button>`;
 }
 
 function themeButton() {
@@ -1924,7 +1924,7 @@ function sandboxBannerHtml() {
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
-      <button class="btn danger small" type="button" id="sandbox-purge">ล้างข้อมูลทดสอบ</button>
+      <button class="btn danger small" type="button" id="sandbox-purge">ล้างข้อมูล NCR ทดสอบ</button>
       <button class="btn small" type="button" id="sandbox-exit">ออกจากโหมดทดสอบ</button>
     </div>
   </div>`;
@@ -2113,6 +2113,37 @@ function hasApprovalDuty(employee) {
   return employee.role?.code === "admin" || DEPT_MANAGER_ROLE_CODES.includes(employee.role?.code) || (employee.approvalModules?.size ?? 0) > 0;
 }
 
+// คิว "ต้องจัดการ" ของหน้าหลัก: อนุมัติ + งานซ่อม + งาน NCR เรียงด้วยกติกาเดียว
+// แผงงานถัดไปหลังตัดสิน (fillNextItemPanel) นับจากชุดเดียวกัน ตัวเลขสองที่จึงตรงกัน
+function ncrHref(ncr) {
+  return `#/ncr?id=${encodeURIComponent(ncr.id)}`;
+}
+function homeQueueItems(pending, repairTasks, ncrTasks) {
+  return window.MNP_HOME_QUEUE.sortQueue([
+    ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
+    ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
+    // เกินกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากครั้งล่าสุดที่ใบเปลี่ยน (updated_at) ซึ่งใกล้กับเวลาที่ใบมาถึงขั้นนี้
+    ...ncrTasks.map(({ ncr, task, overdue }) => ({
+      kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เกินกำหนดตอบ" : null,
+      request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR" } },
+      priority: overdue ? "high" : null, createdAt: ncr.updated_at ?? ncr.created_at,
+    })),
+  ]);
+}
+// งานของคิวที่ลงมือในหน้าของใบเอง (งานซ่อม ขั้นของ NCR) ใช้คำของงาน เช่น "มอบหมายช่าง"
+function queueTaskLabel(item) {
+  return item.task ?? myRepairActionLabels[item.request.status] ?? statusLabels[item.request.status] ?? item.request.status;
+}
+async function loadHomeQueueItems() {
+  const ncrHome = requestModule("NCR_CAR")?.enabled ? requestModule("NCR_CAR").home ?? null : null;
+  const [pending, repairTasks, ncrItems] = await Promise.all([
+    getPendingApprovals(),
+    getMyRepairActionItems(),
+    ncrHome ? ncrHome.load(state.employee).catch(() => ({ tasks: [] })) : { tasks: [] },
+  ]);
+  return homeQueueItems(pending, repairTasks, ncrItems.tasks);
+}
+
 async function renderDashboard(params = new URLSearchParams()) {
   activeDecisionCountdown?.flush();
   activeBulkCountdown?.flush();
@@ -2135,17 +2166,7 @@ async function renderDashboard(params = new URLSearchParams()) {
     ncrHome ? ncrHome.load(employee).catch(() => { showToast("โหลดงาน NCR ไม่สำเร็จ งาน NCR ไม่ได้แสดงในหน้านี้ ลองโหลดหน้าใหม่", "error"); return { tasks: [], mine: [] }; }) : { tasks: [], mine: [] },
   ]);
   if (mineResult.error) throw mineResult.error;
-  const ncrHref = (ncr) => `#/ncr?id=${encodeURIComponent(ncr.id)}`;
-  const items = rules.sortQueue([
-    ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
-    ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
-    // เกินกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากครั้งล่าสุดที่ใบเปลี่ยน (updated_at) ซึ่งใกล้กับเวลาที่ใบมาถึงขั้นนี้
-    ...ncrItems.tasks.map(({ ncr, task, overdue }) => ({
-      kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เกินกำหนดตอบ" : null,
-      request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR" } },
-      priority: overdue ? "high" : null, createdAt: ncr.updated_at ?? ncr.created_at,
-    })),
-  ]);
+  const items = homeQueueItems(pending, repairTasks, ncrItems.tasks);
   const approvalIds = items.filter((item) => item.kind === "approval").map((item) => item.id);
   // ใบที่เปิด: ใบที่ลิงก์ขอมา > ใบที่เปิดค้างไว้ > ใบแรก (หลังตัดสินใบหนึ่ง ใบถัดไปจึงเปิดเอง)
   // จอแคบที่ผู้ใช้ยุบเองไว้ไม่เปิดใหม่จนกว่าจะแตะ
@@ -2229,7 +2250,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const hiddenAttr = hidden ? " hidden" : "";
   // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
   if (item.kind === "repair" || item.kind === "ncr") {
-    const task = item.task ?? myRepairActionLabels[request.status] ?? statusLabels[request.status] ?? request.status;
+    const task = queueTaskLabel(item);
     return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}<span class="queue-item-task">${escapeHtml(task)}</span></a></li>`;
   }
   const check = isOwnApprovalStep(item.step)
@@ -2436,7 +2457,7 @@ function bindQueueBulk() {
       setText(`อนุมัติ ${chosen.length} รายการ: ${numbers()}`);
       buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยันอนุมัติ ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
     } else if (name === "pending") {
-      setText(`กำลังจะอนุมัติ ${chosen.length} รายการ · กดเลิกทำได้ภายใน ${DECISION_UNDO_SECONDS} วินาที`);
+      setText(`กำลังจะอนุมัติ ${chosen.length} รายการ`);
       buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", "success is-primary", "send-now")}`;
     } else if (name === "sending") {
       setText(`กำลังส่ง: อนุมัติ ${chosen.length} รายการ…`);
@@ -2596,8 +2617,8 @@ function openShortcutHelp() {
   dialog.className = "confirm-dialog shortcut-dialog";
   dialog.setAttribute("aria-labelledby", "shortcut-dialog-title");
   dialog.innerHTML = `<form method="dialog">
-    <h2 id="shortcut-dialog-title">คีย์ลัด</h2>
-    ${window.MNP_SHORTCUT_HELP.legendHtml(escapeHtml)}
+    <h2 id="shortcut-dialog-title">ช่วยเหลือ</h2>
+    ${window.MNP_SHORTCUT_HELP.helpHtml(escapeHtml, currentRoute().path)}
     <div class="confirm-dialog-actions"><button class="btn" value="close">ปิด</button></div>
   </form>`;
   document.body.append(dialog);
@@ -2799,7 +2820,7 @@ function requestCenterHeader(types, params, counts) {
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
     return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
       <div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}">
-        <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>ติดตามสถานะคำร้องของโมดูลนี้</p></div></div>${typeCardWatermarkHtml(selected.code)}
+        <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1></div></div>${typeCardWatermarkHtml(selected.code)}
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
       </div>`;
   }
@@ -2965,7 +2986,7 @@ function typeCardHtml(type) {
   return `
     <button type="button" class="type-card" data-type-id="${escapeHtml(type.id)}" data-module="${requestPalette(type.code)}">
       ${typeCardMarkHtml(type)}
-      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${escapeHtml(type.description ?? "")}</small><span class="type-card-action">สร้างคำร้องประเภทนี้ →</span></span>
+      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${escapeHtml(type.description ?? "")}</small><span class="type-card-action" aria-hidden="true">→</span></span>
       ${typeCardWatermarkHtml(type.code)}
     </button>`;
 }
@@ -2996,7 +3017,7 @@ async function renderNewRequest(params) {
     const selected = (types ?? []).find((type) => type.id === selectedId) ?? null;
     const heading = selected
       ? `<div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}"><div class="request-module-title">${typeCardMarkHtml(selected)}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div></div>`
-      : `<div class="page-heading"><div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1><p>เลือกประเภทด้านล่างเพื่อเปิดแบบฟอร์ม แล้วกรอกรายละเอียดก่อนส่งคำร้อง</p></div></div>`;
+      : `<div class="page-heading"><div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1></div></div>`;
 
     let body;
     if (!selected) {
@@ -3909,22 +3930,41 @@ function nextItemPanelHtml() {
   </section>`;
 }
 
+// หลังตัดสิน: นับงานจากคิวเดียวกับ "ต้องจัดการ" ของหน้าหลัก
+// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น รับงานแล้วต้องมอบหมายช่าง) ขั้นนั้นเป็นปุ่มหลัก ใบถัดไปเป็นปุ่มรอง
 async function fillNextItemPanel(currentId) {
   const panel = document.querySelector("#next-item-panel");
   if (!panel) return;
   try {
-    const pending = (await getPendingApprovals()).filter((step) => step.request?.id && step.request.id !== currentId);
+    const queue = await loadHomeQueueItems();
     if (!panel.isConnected) return;
     const text = panel.querySelector("#next-item-text");
+    const heading = panel.querySelector("h2");
     const buttons = panel.querySelector(".action-panel-buttons");
-    if (!pending.length) {
-      text.textContent = "ไม่มีงานรอคุณพิจารณาแล้ว";
+    const followUp = queue.find((item) => item.id === currentId && item.kind !== "approval");
+    const others = queue.filter((item) => item.id !== currentId);
+    const next = others[0];
+    const nextHref = next ? next.href ?? `#/request?id=${encodeURIComponent(next.id)}` : "";
+    if (followUp) {
+      const label = queueTaskLabel(followUp);
+      heading.textContent = "ขั้นต่อไปเป็นของคุณ";
+      text.textContent = others.length ? `${label} ในใบนี้ · ต้องจัดการอีก ${others.length} รายการ` : `${label} ในใบนี้`;
+      buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn is-primary" id="next-item-follow-up">${escapeHtml(label)}</button>`;
+      buttons.querySelector("#next-item-follow-up").addEventListener("click", () => {
+        const target = document.querySelector("#repair-assign") ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
+        if (!target) return;
+        target.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+        target.querySelector("select, input:not([type=hidden]), textarea")?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    if (!others.length) {
+      text.textContent = "ไม่มีงานรอคุณแล้ว";
       buttons.innerHTML = `<a class="btn" href="#/">กลับหน้าหลัก</a>`;
       return;
     }
-    const next = pending[0];
-    text.textContent = `รอคุณพิจารณาอีก ${pending.length} ใบ · ถัดไป ${next.request.request_no} ${next.request.title}`;
-    buttons.innerHTML = `<a class="btn secondary" href="#/">กลับหน้าหลัก</a><a class="btn is-primary" href="#/request?id=${encodeURIComponent(next.request.id)}">ใบถัดไป</a>`;
+    text.textContent = `ต้องจัดการอีก ${others.length} รายการ · ถัดไป ${next.request.request_no} ${next.request.title}`;
+    buttons.innerHTML = `<a class="btn secondary" href="#/">กลับหน้าหลัก</a><a class="btn is-primary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>`;
   } catch {
     if (panel.isConnected) panel.querySelector("#next-item-text").textContent = "โหลดงานถัดไปไม่ได้";
   }
@@ -4062,7 +4102,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     if (state.name === "pending") {
       tapGuard.arm();
       reason.hidden = true;
-      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no} · กดเลิกทำได้ภายใน ${DECISION_UNDO_SECONDS} วินาที`);
+      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no}`);
       // "ส่งเลย" สีเดียวกับมติที่กำลังจะส่ง (ไม่อนุมัติเป็นสีแดง) ไม่ใช่สีน้ำเงินกลาง ๆ
       buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", decisionButtonClass(state.decision), "send-now")}`;
       return;
@@ -4487,7 +4527,7 @@ async function renderNotifications() {
   const { data, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
   if (error) throw error;
   const content = `
-    <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1><p>ความเคลื่อนไหวที่เกี่ยวข้องกับบัญชีนี้</p></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
+    <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
     <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
@@ -4518,7 +4558,7 @@ async function renderProfile() {
   }
 
   const content = `
-    <div class="page-heading"><div><h1>ข้อมูลส่วนตัว</h1><p>แก้ไขข้อมูลของคุณได้จากหน้านี้</p></div></div>
+    <div class="page-heading"><div><h1>ข้อมูลส่วนตัว</h1></div></div>
 
     <section class="card" style="max-width:780px">
       <div id="profile-message" role="status"></div>
@@ -4532,7 +4572,7 @@ async function renderProfile() {
           <div class="field"><label for="profile-phone">เบอร์ติดต่อ</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
         </div>
         <div class="field"><label for="profile-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}"></div>
-        <div class="field"><label for="profile-employee-no">รหัสพนักงาน</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ด ID / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
+        <div class="field"><label for="profile-employee-no">รหัสพนักงาน</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ดรหัสพนักงาน / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">หน่วยงาน</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
@@ -4551,7 +4591,7 @@ async function renderProfile() {
     </section>
 
     <section class="card" style="max-width:780px">
-      <h2>${isAccountManager ? "แก้ไข ID / รหัสผ่านของฉัน" : "ขอแก้ไข ID / รหัสผ่าน"}</h2>
+      <h2>${isAccountManager ? "แก้ไขรหัสพนักงาน / รหัสผ่านของฉัน" : "ขอแก้ไขรหัสพนักงาน / รหัสผ่าน"}</h2>
       <p class="muted small">${isAccountManager
         ? "บัญชีผู้ดูแลระบบเป็นผู้อนุมัติเอง ระบบจึงบันทึกและอนุมัติให้ทันทีในขั้นตอนเดียว พร้อมเก็บประวัติไว้ในคำร้องและ audit log ตามปกติ"
         : "คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ"}</p>
@@ -4644,7 +4684,7 @@ async function handleCredentialChangeSubmit(event) {
     setFormBusy(form, false);
     form.reset();
     message.innerHTML = `<div class="form-message success">ส่งคำร้องแล้ว รอผู้ดูแลระบบอนุมัติ</div>`;
-    showToast("ส่งคำร้องขอแก้ไข ID/รหัสผ่านแล้ว");
+    showToast("ส่งคำร้องขอแก้ไขรหัสพนักงาน/รหัสผ่านแล้ว");
     return;
   }
 
@@ -4662,7 +4702,7 @@ async function handleCredentialChangeSubmit(event) {
     return;
   }
 
-  showToast("แก้ไข ID/รหัสผ่านเรียบร้อย");
+  showToast("แก้ไขรหัสพนักงาน/รหัสผ่านเรียบร้อย");
   await forceReLogin("แก้ไขเรียบร้อยแล้ว กรุณาเข้าสู่ระบบอีกครั้งด้วย ID และรหัสผ่านใหม่");
 }
 

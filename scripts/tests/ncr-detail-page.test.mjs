@@ -114,10 +114,23 @@ test("every part of the NCR wears the one NCR palette, and the page keeps one li
 });
 
 test("the cost summary is one line, and the unconfirmed amounts are folded into a details element", async () => {
-  const html = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
+  const loss = { id: "l1", ncr_id: NCR.id, entry_kind: "loss", loss_type: "scrap", cost_status: "estimated", amount: 1200, quantity: 10, unit: "pcs", unit_cost: 120, recorded_by: "e1", recorded_at: "2026-11-01" };
+  const html = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"), {}, { tables: { ncr_losses: [loss] } });
   assert.equal((html.match(/<dl class="ncr-loss-summary/g) ?? []).length, 1);
+  assert.match(html, /<dt>สุทธิยืนยันแล้ว<\/dt>/);
   assert.match(html, /<details class="ncr-loss-more"><summary>ยอดที่ยังไม่ยืนยัน<\/summary><dl class="ncr-loss-pending">/);
   assert.doesNotMatch(html.replace(/<details class="ncr-loss-more">[\s\S]*?<\/details>/, ""), /ncr-loss-pending/, "the pending tiles live only inside the details");
+});
+
+test("before the first loss row there are no 0.00 tiles, and 'not assessed yet' is said once", async () => {
+  const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
+  assert.doesNotMatch(editor, /สุทธิยืนยันแล้ว|ncr-loss-more/, "editor: no zero tiles, only the live preview of the row being entered");
+  assert.match(editor, /id="ncr-loss-preview"/);
+  const viewer = await renderFor(employee("e8", "dept-qa", "QA", "staff"));
+  assert.match(viewer, /<p class="muted">ยังไม่มีรายการความสูญเสีย<\/p>/);
+  assert.doesNotMatch(viewer, /<dl class="ncr-loss-summary/);
+  assert.doesNotMatch(viewer, /ประเมินค่าเสียหายยังไม่ครบ/, "the review block below already says the costs are not confirmed");
+  assert.equal((viewer.match(/ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ/g) ?? []).length, 1);
 });
 
 test("the upload hint (file types and size) is shown once on the detail page, in the evidence section", () => {
@@ -238,7 +251,7 @@ test("a cancelled NCR locks the loss form for everyone, and the responsible depa
 
 test("read-only viewers are told who can enter costs; editors are not", async () => {
   const readOnly = await renderFor(employee("e8", "dept-qa", "QA", "staff"));
-  assert.match(readOnly, /ประเมินค่าเสียหายยังไม่ครบ · ผู้กรอกได้: ผจก\.ทั่วไป, ผจก\.โรงงาน, ผช\.ผจก\.โรงงาน และ ผจก\.\/ผช\.ผจก\.แผนก QA/);
+  assert.match(readOnly, /ผู้กรอกค่าเสียหายได้: ผจก\.ทั่วไป, ผจก\.โรงงาน, ผช\.ผจก\.โรงงาน และ ผจก\.\/ผช\.ผจก\.แผนก QA/);
   const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
   assert.doesNotMatch(editor, /ผู้กรอกได้:/);
   // ใบที่ยกเลิกล็อกทุกคน จึงไม่ชี้ไปหาใคร
