@@ -177,7 +177,7 @@
   const detailHintIfIdle = (card, noun, resolve) => (selection?.card === card && resolve(selection.key) ? "" : detailHint(noun));
 
   // ---- ชิ้นส่วนของหน้า ----
-  function controlsHtml(filters, rows, today, periodSums, backSums) {
+  function controlsHtml(filters, rows, today) {
     const presets = presetsFor(today).map((preset) => {
       const active = filters.year === preset.year && filters.from === preset.from && filters.to === preset.to;
       return `<a class="nd-chip" href="${hrefWith(filters, { year: preset.year, from: preset.from, to: preset.to })}" aria-current="${active}">${preset.label}</a>`;
@@ -204,7 +204,7 @@
           <div class="field"><label for="nd-doc">ประเภทเอกสาร</label><select class="select" id="nd-doc" name="doc">${option("", "ทุกประเภท", filters.doc)}${Object.entries(DOC_LABELS).map(([code, label]) => option(code, label, filters.doc)).join("")}</select></div>
         </form></details>
       ${removable.length ? `<div class="nd-chips" aria-label="ตัวกรองที่ใช้อยู่">${removable.join("")}</div>` : ""}
-      <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่แจ้ง → <strong>${fmtCount(periodSums.total)}</strong> · งานค้างทุกช่วงเวลา <strong>${fmtCount(backSums.open)}</strong></p>`;
+      <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่แจ้ง</p>`;
   }
 
   function summaryHtml(backSums, stages) {
@@ -212,7 +212,6 @@
     const parts = [];
     if (backSums.overdue) parts.push(`<b>${fmtCount(backSums.overdue)}เลยกำหนดเสร็จ</b> ควรตามก่อน`);
     if (backSums.urgentOpen) parts.push(`ด่วน ${fmtCount(backSums.urgentOpen)}`);
-    parts.push(`ค้างอยู่ทั้งหมด ${fmtCount(backSums.open)}`);
     const busiest = [...stages].sort((a, b) => b.count - a.count)[0];
     if (busiest?.count) parts.push(`ค้างมากสุดที่ขั้น "${esc(busiest.label)}" ${fmtCount(busiest.count)}`);
     const oldest = [...stages].filter((stage) => stage.count).sort((a, b) => b.maxDays - a.maxDays)[0];
@@ -401,11 +400,11 @@
     const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
-    return `<div class="page-heading"><div><div class="eyebrow">MT · ใบคำร้อง/แจ้งซ่อม</div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1><p>ไม่นับฉบับร่างและใบที่ยกเลิก</p></div>
+    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1><p>ไม่นับฉบับร่างและใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ กลับหน้า MT</a></div></div>
       <div class="nd">
         <p class="nd-warn">กำลังทดลองใช้ มีงานค้าง คอขวด เวลาที่ใช้ คุณภาพการซ่อม เครื่องจักรที่เสียบ่อย แผนกที่แจ้งซ่อมบ่อย และเวลาซ่อมของช่าง หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
-        <div class="nd-controls">${controlsHtml(filters, rows, today, period, back)}</div>
+        <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
         <section class="card nd-card" data-card="stage">${stageHtml(stages, filters)}</section>

@@ -245,3 +245,93 @@ test("the module header, type card and tab shapes keep a gradient surface (colou
   assert.match(declared(".ncr-part-heading", "background") ?? "", /var\(--mod-surface\)/);
   assert.match(declared(".request-module-header, .rf-page .rf-pagehead", "background") ?? "", /var\(--mod-surface\)/);
 });
+
+// ---------- ป้ายสถานะแยกจากสีโมดูลด้วยรูปทรงและสัญลักษณ์ (ผู้ใช้เลือก "แบบ 1" 2026-11-09) ----------
+const STATUS_BADGES = ["pending_approval", "more_info", "pending_assign", "pending_verify", "approved", "in_progress", "assigned", "completed", "acknowledged", "rejected", "cancelled", "urgent-flag", "loss-pending-flag"];
+const RF_TONES = ["is-good", "is-warn", "is-bad", "is-info", "is-accent"];
+const glyphRules = rules.filter((rule) => rule.declarations.has("--badge-glyph"));
+const hasGlyph = (base, name) => glyphRules.some((rule) => rule.selector.split(/,(?![^(]*\))/).some((part) => part.includes(base) && new RegExp(`\\.${name}(?![\\w-])`).test(part)));
+
+test("every status badge and RubberFlow tone carries a glyph cut out of a white disc", () => {
+  for (const name of STATUS_BADGES) assert.ok(hasGlyph(".badge", name), `.badge.${name} has a glyph`);
+  for (const name of RF_TONES) assert.ok(hasGlyph(".rf-badge", name), `.rf-badge.${name} has a glyph`);
+  for (const rule of glyphRules) assert.match(rule.declarations.get("--badge-glyph"), /^url\("data:image\/svg\+xml,%3Csvg [^"]*%3Cmask id='g'%3E[^"]*mask='url\(%23g\)'[^"]*"\)$/, `${rule.selector}: an SVG disc with the glyph masked out`);
+  const disc = rules.find((rule) => rule.selector.endsWith("::before") && rule.declarations.get("mask")?.startsWith("var(--badge-glyph)"));
+  assert.ok(disc, "the ::before disc is masked by the glyph");
+  assert.equal(disc.declarations.get("-webkit-mask"), disc.declarations.get("mask"), "Safari gets the same mask");
+  assert.equal(disc.declarations.get("background"), "#fff");
+  for (const name of STATUS_BADGES) assert.ok(disc.selector.includes(`.${name}`), `the disc rule covers .${name}`);
+  for (const name of RF_TONES) assert.ok(disc.selector.includes(`.${name}`), `the disc rule covers .rf-badge.${name}`);
+  assert.match(css, /@media \(forced-colors: active\) \{ :is\(\.badge, \.rf-badge\)::before \{ forced-color-adjust: none; background: CanvasText; \} \}/);
+});
+
+test("the status colours stay readable as white text and as the glyph on the white disc", () => {
+  for (const [theme, tokens] of [["light", ROOT_LIGHT], ["dark", ROOT_DARK]]) {
+    for (const name of ["--warning-strong", "--primary-strong", "--success-strong", "--danger-strong"]) {
+      const value = contrast([255, 255, 255], resolve(`var(${name})`, tokens));
+      assert.ok(value >= 4.5, `${name} (${theme}) = ${value.toFixed(2)}:1`);
+    }
+  }
+});
+
+test("text on a soft status background reaches 4.5:1 in both themes", () => {
+  let checked = 0;
+  for (const rule of rules) {
+    const soft = rule.declarations.get("background")?.match(/^var\(--(success|warning|danger|primary)-soft\)$/);
+    const color = rule.declarations.get("color");
+    if (!soft || !color?.startsWith("var(--")) continue;
+    for (const [theme, tokens] of [["light", ROOT_LIGHT], ["dark", ROOT_DARK]]) {
+      const value = contrast(resolve(color, tokens), resolve(rule.declarations.get("background"), tokens));
+      assert.ok(value >= 4.5, `${rule.selector} (${theme}): ${color} on ${soft[0]} = ${value.toFixed(2)}:1`);
+    }
+    checked += 1;
+  }
+  assert.ok(checked >= 20, `checked ${checked} soft pairs`);
+  assert.match(css, /\.ncr-loss-net dd \{ color: var\(--primary-ink\); \}/);
+  assert.match(css, /\.ncr-owner-chip \{[^}]*color: var\(--ink\);[^}]*background: var\(--shell\);/, "the NCR owner box no longer borrows a status colour");
+});
+
+test("department chips: unselected chips are a light tint of the department colour, readable for every ramp", () => {
+  assert.match(css, /:root:not\(\[data-theme="dark"\]\) \.repair-department-card:not\(\.active\) \{ color: var\(--m900\); background: linear-gradient\(135deg, var\(--m50\), var\(--m100\)\);/);
+  for (const [key, ramp] of RAMPS) {
+    for (const ink of ["--m900", "--m800"]) for (const ground of ["--m50", "--m100"]) {
+      const value = contrast(resolve(ramp.get(ink), new Map()), resolve(ramp.get(ground), new Map()));
+      assert.ok(value >= 4.5, `${key} ${ink} on ${ground} = ${value.toFixed(2)}:1`);
+    }
+  }
+});
+
+test("the request detail, create form, NCR detail, dashboards, home queue, filters and RubberFlow/BOM menu take the module colour", () => {
+  const app = read("app.js");
+  assert.match(app, /<header class="request-detail-head\$\{moduleHead \? " request-module-header" : ""\}\$\{canApprove \? " has-step-line" : ""\}"\$\{moduleHead \? ` data-module="\$\{requestPalette\(type\?\.code\)\}"` : ""\}>/);
+  assert.match(app, /const moduleHead = !ORIGINAL_FORM_TYPES\.has\(type\?\.code\);/, "the IT team's repair form keeps its own header");
+  assert.match(app, /const heading = selected && ORIGINAL_FORM_TYPES\.has\(selected\.code\)\s+\? .<div class="page-heading"><div><h1>/);
+  // เมนูข้างของ RubberFlow/BOM อยู่นอก .rf-page จึงต้องมี data-module ของตัวเอง
+  assert.match(read("modules/module-bom.js"), /<div class="nav-sub rf-nav" data-module="bom">/);
+  assert.match(read("modules/module-rubberflow.js"), /<div class="nav-sub rf-nav" data-module="rf">/);
+  assert.match(app, /<div class="page-heading request-module-header" data-module="\$\{requestPalette\(selected\.code\)\}"><div class="request-module-title">\$\{typeCardMarkHtml\(selected, \{ prefix: /);
+  assert.equal([...app.matchAll(/class="queue-item-icon" data-module="/g)].length, 3, "all three home queue icons carry data-module");
+  assert.match(read("modules/module-ncr.js"), /class="page-heading request-module-header ncr-detail-head" data-module="ncr"/);
+  assert.match(read("modules/module-mt-dashboard.js"), /class="page-heading request-module-header" data-module="mt"/);
+  assert.match(read("modules/module-ncr-dashboard.js"), /class="page-heading request-module-header" data-module="ncr"/);
+  assert.match(css, /\.queue-item-icon\[data-module\] \{ color: var\(--mod-on\); background: var\(--mod-surface\);/);
+  assert.match(css, /\[data-module\] \.filter\.active \{ color: var\(--mod-tab-on-ink\); background: var\(--mod-tab-on\);/);
+  assert.match(css, /\.rf-nav-item\.is-active \{ color: var\(--mod-tab-on-ink, var\(--primary-ink\)\); background: var\(--mod-tab-on, var\(--primary-soft\)\);/);
+  assert.match(css, /\.request-detail-head\.request-module-header \{ z-index: 2; overflow: visible;/, "the detail menu can drop below the header");
+  // โมดูลย่อยของ RubberFlow/BOM ใช้เฉดของจานสีแม่ ไม่มีสี hex ของตัวเอง
+  assert.doesNotMatch(css, /\[data-rf-mod="[^"]+"\] \{ --rf-mod: #/);
+  assert.doesNotMatch(css, /#cf3030|#1b8f4e/);
+});
+
+test("every badge class the code renders is one of the styled statuses (or the neutral badge)", () => {
+  const sources = ["app.js", "modules/module-ncr.js", "modules/module-qc.js", "modules/qc-model.js", "modules/module-mt.js", "modules/module-mt-dashboard.js"].map(read);
+  const used = new Set();
+  for (const source of sources) {
+    for (const [, name] of source.matchAll(/class="badge ([a-z_-]+)"/g)) used.add(name);
+    for (const [, body] of source.matchAll(/(?:STATUS_BADGE_CLASS|statusBadgeClass|RESULT_BADGE) = \{([^}]*)\}/g)) for (const [, name] of body.matchAll(/:\s*"([a-z_-]+)"/g)) used.add(name);
+  }
+  const statusKeys = [...read("app.js").match(/const statusLabels = \{([^}]*)\}/)[1].matchAll(/^\s*([a-z_]+):/gm)].map(([, key]) => key);
+  for (const key of statusKeys) if (key !== "draft") used.add(key);
+  assert.ok(used.size >= 10, `found ${used.size} badge classes`);
+  for (const name of used) assert.ok(STATUS_BADGES.includes(name), `badge class "${name}" has a colour and a glyph`);
+});

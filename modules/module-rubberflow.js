@@ -361,7 +361,8 @@
       if (!items.length) return "";
       return `<li class="rf-nav-group"><span>${escapeHtml(group)}</span><ul>${items.map((entry) => `<li><a class="rf-nav-item${entry.id === page ? " is-active" : ""}" data-rf-mod="${escapeHtml(entry.id)}" href="${escapeHtml(url(entry.id))}"${entry.id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${ui.icon(entry.id)}</span><span class="rf-nav-text">${escapeHtml(entry.label)}</span>${counts[entry.id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(entry.id))}">${counts[entry.id]}</span>` : ""}</a></li>`).join("")}</ul></li>`;
     }).join("");
-    return `<div class="nav-sub rf-nav"><ul class="rf-nav-list">${groups}</ul></div>`;
+    // เมนูข้างอยู่ใน <aside> ของ shell (ไม่ใช่ลูกของ .rf-page) จึงใส่จานสี RubberFlow ที่ตัวเมนูเอง
+    return `<div class="nav-sub rf-nav" data-module="rf"><ul class="rf-nav-list">${groups}</ul></div>`;
   };
   const navCounts = (data) => ({
     wip: data.transfers.filter((transfer) => transfer.status === "in_transit").length,

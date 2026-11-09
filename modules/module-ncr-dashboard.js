@@ -158,7 +158,7 @@
   }
 
   // ---- ชิ้นส่วนของหน้า ----
-  function controlsHtml(filters, rows, today, sums) {
+  function controlsHtml(filters, rows, today) {
     const presets = presetsFor(today).map((preset) => {
       const active = filters.year === preset.year && filters.from === preset.from && filters.to === preset.to;
       return `<a class="nd-chip" href="${hrefWith(filters, { year: preset.year, from: preset.from, to: preset.to })}" aria-current="${active}">${preset.label}</a>`;
@@ -183,7 +183,7 @@
           <div class="field"><label for="nd-source">แหล่งที่พบ</label><select class="select" id="nd-source" name="source">${option("", "ทุกแหล่ง", filters.source)}${Object.entries(SOURCES).map(([code, name]) => option(code, name, filters.source)).join("")}</select></div>
         </form></details>
       ${removable.length ? `<div class="nd-chips" aria-label="ตัวกรองที่ใช้อยู่">${removable.join("")}</div>` : ""}
-      <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่ออก NCR → <strong>${fmtCount(sums.total)}</strong></p>`;
+      <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่ออก NCR</p>`;
   }
 
   function summaryHtml(sums) {
@@ -191,10 +191,9 @@
     const parts = [];
     if (sums.overdue) parts.push(`<b>${fmtCount(sums.overdue)}เกินกำหนดตอบ</b> ควรตามก่อน`);
     if (sums.preventionOverdue) parts.push(`<b>${fmtCount(sums.preventionOverdue)}เลยกำหนดส่งแนวทางป้องกัน</b>`);
-    if (sums.open) parts.push(`ค้างอยู่ทั้งหมด ${fmtCount(sums.open)}`);
     if (sums.preventionPending) parts.push(`รอแผนกส่งแนวทางป้องกัน ${fmtCount(sums.preventionPending)}`);
     if (sums.need > sums.assessed) parts.push(`ต้นทุนยังประเมินไม่ครบอีก ${fmtCount(sums.need - sums.assessed)} ยอดบาทจึงเป็นตัวเลขขั้นต่ำ`);
-    return parts.length ? parts.join(" · ") : "ไม่มีใบค้างและไม่มีใบเกินกำหนดในช่วงนี้";
+    return parts.length ? parts.join(" · ") : sums.open ? "" : "ไม่มีใบค้างและไม่มีใบเกินกำหนดในช่วงนี้";
   }
 
   function tilesHtml(filters, sums) {
@@ -424,10 +423,10 @@
     lastFilters = filters;
     const list = model.select(rows, filters);
     const sums = model.summarize(list, filters);
-    return `<div class="page-heading"><div><div class="eyebrow">NCR · QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
+    return `<div class="page-heading request-module-header" data-module="ncr"><div><div class="eyebrow">QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">‹ กลับหน้า NCR</a></div></div>
       <div class="nd">
-        <div class="nd-controls">${controlsHtml(filters, rows, today, sums)}</div>
+        <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
         <section class="card nd-card" data-card="act">${actHtml(list, today)}</section>

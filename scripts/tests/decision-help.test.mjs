@@ -97,7 +97,7 @@ test("the status badge and the MT badge say what the current step asks for", () 
   // ชื่อขั้นในป้ายซ่อนได้ (.badge-step) เมื่อแถบตัดสินใจบอกชื่อขั้นอยู่แล้ว: บอกครั้งเดียว
   assert.match(mt, /<span class="badge-step">/);
   assert.match(readFileSync(new URL("../../styles.css", import.meta.url), "utf8"), /\.has-step-line \.badge-step \{ display: none; \}/);
-  assert.match(readFileSync(new URL("../../app.js", import.meta.url), "utf8"), /request-detail-head\$\{canApprove \? " has-step-line" : ""\}/);
+  assert.match(readFileSync(new URL("../../app.js", import.meta.url), "utf8"), /request-detail-head\$\{moduleHead \? " request-module-header" : ""\}\$\{canApprove \? " has-step-line" : ""\}/);
 });
 
 test("confirmDialog takes a cancel label and keeps 'ยกเลิก' by default", () => {
@@ -151,15 +151,32 @@ test("the shortcut legend lists the real shortcuts and opens with ? on Latin and
   assert.equal(help.isHelpKey({ key: "a", code: "KeyA" }), false);
   // wiring: key handler, top-bar button, no typing/dialog conflicts
   assert.match(app, /window\.MNP_SHORTCUT_HELP\.isHelpKey\(event\)/);
-  assert.match(app, /class="icon-button help-toggle" type="button" aria-label="คีย์ลัด" title="คีย์ลัด \(กด \?\)"/);
+  assert.match(app, /class="icon-button help-toggle" type="button" aria-label="ช่วยเหลือ" title="ช่วยเหลือ \(กด \?\)"/);
   assert.match(app, /\$\{helpButton\(\)\}\$\{themeButton\(\)\}/);
   assert.match(app, /querySelector\("\.help-toggle"\)\?\.addEventListener\("click", openShortcutHelp\)/);
   const opener = app.slice(app.indexOf("function openShortcutHelp("), app.indexOf("document.addEventListener", app.indexOf("function openShortcutHelp(")));
   assert.match(opener, /opener\.focus\(\)/, "focus returns to the opener");
   assert.match(opener, /dialog\.showModal\(\)/);
-  assert.match(css, /@media \(hover: none\) and \(pointer: coarse\) \{ \.help-toggle \{ display: none; \} \}/);
+  // ปุ่มแสดงทุกอุปกรณ์ จอสัมผัสล้วนซ่อนเฉพาะส่วนคีย์ลัดในกล่อง
+  assert.doesNotMatch(css, /\.help-toggle \{ display: none; \}/);
+  assert.match(css, /@media \(hover: none\) and \(pointer: coarse\) \{ \.help-keys \{ display: none; \} \}/);
+  assert.match(opener, /window\.MNP_SHORTCUT_HELP\.helpHtml\(escapeHtml, helpPageKey\(currentRoute\(\)\)\)/);
+  assert.match(app, /if \(route\.path === "requests" && route\.params\.get\("mode"\) === "create"\) return "new";/, "the create form gets the create-page tips");
+  assert.match(app, /if \(route\.path === "ncr"\) return route\.params\.get\("id"\) \? "ncr" : "";/, "NCR tips only on an NCR record");
   // every listed letter shortcut exists in the key handlers
   assert.match(app, /KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r"/);
+});
+
+test("the help sheet explains the page, every badge glyph and (on keyboard devices) the shortcuts", () => {
+  const html = help.helpHtml(escapeHtml, "request");
+  assert.match(html, /<h3>หน้านี้<\/h3>/);
+  assert.match(html, /คำของขั้น/);
+  assert.match(html, /<section class="help-section help-keys"><h3>คีย์ลัด<\/h3><dl class="shortcut-list">/);
+  for (const [name] of help.BADGE_LEGEND) assert.match(html, new RegExp(`<span class="badge ${name}">`), `${name} in the legend`);
+  assert.doesNotMatch(help.helpHtml(escapeHtml, "unknown-page"), /<h3>หน้านี้<\/h3>/, "pages without tips show only the legend and shortcuts");
+  // คำแนะนำต่อหน้าใช้ path ที่มีอยู่จริงใน router
+  for (const path of Object.keys(help.PAGE_HELP)) assert.match(app, new RegExp(`path === "${path}"`), `route ${path} exists`);
+  assert.match(help.helpHtml((value) => `[${value}]`, "dashboard"), /<li>\[/, "tips go through the escape function");
 });
 
 test("A and R also work on the request detail page, J and K only in the queue", () => {

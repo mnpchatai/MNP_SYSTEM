@@ -92,7 +92,8 @@ test("the module header does not count what the table below already lists, and t
 });
 
 test("the next-item panel states the remaining count once, and the profile and login use the Thai label for the employee number", () => {
-  assert.match(app, /รอคุณพิจารณาอีก \$\{pending\.length\} ใบ/);
+  assert.match(app, /ต้องจัดการอีก \$\{others\.length\} รายการ · ถัดไป/);
+  assert.doesNotMatch(app, /รอคุณพิจารณาอีก/, "the panel counts the same queue as the home page");
   assert.doesNotMatch(app, /รายการถัดไป \(\$\{pending\.length\}\)/);
   assert.doesNotMatch(app, /UserID/);
   assert.doesNotMatch(app, /<h2>\$\{escapeHtml\(employee\.first_name\)\} \$\{escapeHtml\(employee\.last_name\)\}<\/h2><span class="badge">/, "the profile card does not repeat the name and role the form shows");

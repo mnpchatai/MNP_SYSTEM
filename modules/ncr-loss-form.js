@@ -15,17 +15,19 @@
       <td>${escapeHtml(loss.evidence_ref ?? "—")}<div class="muted small">${escapeHtml(loss.note ?? "")}</div>${loss.voided_at ? `<div class="muted small">ยกเลิก: ${escapeHtml(loss.void_reason ?? "")} · ${escapeHtml(personName(directory, loss.voided_by))}</div>` : ""}</td>
       <td>${escapeHtml(personName(directory, loss.recorded_by))}<div class="muted small">${formatDate(loss.recorded_at)}</div>${loss.verified_at ? `<div class="muted small">ยืนยัน: ${escapeHtml(personName(directory, loss.verified_by))} · ${formatDate(loss.verified_at)}</div>` : ""}</td>
       <td>${editable && !loss.voided_at ? `<button class="btn secondary small" type="button" data-edit-loss="${escapeHtml(loss.id)}">แก้ไข/ยืนยันยอด</button> <button class="btn secondary small" type="button" data-void-loss="${escapeHtml(loss.id)}">ยกเลิก</button>` : ""}</td></tr>`).join("");
-    return `<section class="card ncr-card ncr-loss-card"><h2>ความสูญเสีย (Cost of Poor Quality)</h2>
-      <p class="muted small">หนึ่ง NCR เพิ่มได้หลายรายการ · ยืนยันยอดโดยอ้างอิงหลักฐาน · แก้ประมาณการเดิมเป็นยอดจริงในรายการเดิม</p>
-      <div class="ncr-loss-overview"><dl class="ncr-loss-summary${editable ? " is-editable" : ""}" aria-label="สรุปความสูญเสีย">
-        <div><dt>สูญเสียยืนยันแล้ว</dt><dd>${formatBaht(summary.confirmed)}</dd></div>
+    // ก่อนมีรายการแรก ไม่โชว์ช่องยอด 0.00 ฿ · แถวที่ยกเลิกแล้วก็นับ เพราะตารางด้านล่างยังแสดง
+    const hasRows = losses.length > 0;
+    return `<section class="card ncr-card ncr-loss-card"><h2>ความสูญเสีย</h2>
+      ${editable ? '<p class="muted small">หนึ่ง NCR เพิ่มได้หลายรายการ · ยืนยันยอดโดยอ้างอิงหลักฐาน · แก้ประมาณการเดิมเป็นยอดจริงในรายการเดิม</p>' : ""}
+      ${hasRows || editable ? `<div class="ncr-loss-overview"><dl class="ncr-loss-summary${editable ? " is-editable" : ""}" aria-label="สรุปความสูญเสีย">
+        ${hasRows ? `<div><dt>สูญเสียยืนยันแล้ว</dt><dd>${formatBaht(summary.confirmed)}</dd></div>
         <div><dt>ชดเชยยืนยันแล้ว</dt><dd>${formatBaht(summary.recovery)}</dd></div>
-        <div class="ncr-loss-net"><dt>สุทธิยืนยันแล้ว</dt><dd>${formatBaht(summary.net)}</dd></div>
+        <div class="ncr-loss-net"><dt>สุทธิยืนยันแล้ว</dt><dd>${formatBaht(summary.net)}</dd></div>` : ""}
         ${editable ? '<div class="ncr-loss-draft"><dt id="ncr-loss-preview-label">รายการที่กำลังกรอก <span>ยังไม่บันทึก</span></dt><dd><output id="ncr-loss-preview" form="ncr-loss-form" for="ncr-loss-qty ncr-loss-cost ncr-loss-headcount ncr-loss-hours" aria-labelledby="ncr-loss-preview-label" aria-live="polite">—</output></dd></div>' : ""}
       </dl>
-      <details class="ncr-loss-more"><summary>ยอดที่ยังไม่ยืนยัน</summary><dl class="ncr-loss-pending"><div><dt>ประมาณการรอยืนยัน</dt><dd>${formatBaht(summary.estimated)}</dd></div><div><dt>ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl></details></div>
-      ${!ncr.outcome?.cost_reviewed || summary.pending ? `<p class="muted small">ประเมินค่าเสียหายยังไม่ครบ${editable || ncr.status === "cancelled" ? "" : ` · ผู้กรอกได้: ${EDITORS_TEXT}`}</p>` : ""}
-      ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>'}
+      ${hasRows ? `<details class="ncr-loss-more"><summary>ยอดที่ยังไม่ยืนยัน</summary><dl class="ncr-loss-pending"><div><dt>ประมาณการรอยืนยัน</dt><dd>${formatBaht(summary.estimated)}</dd></div><div><dt>ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl></details>` : ""}</div>` : ""}
+      ${!editable && ncr.status !== "cancelled" && (!ncr.outcome?.cost_reviewed || summary.pending) ? `<p class="muted small">ผู้กรอกค่าเสียหายได้: ${EDITORS_TEXT}</p>` : ""}
+      ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : editable ? '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>' : '<p class="muted">ยังไม่มีรายการความสูญเสีย</p>'}
       ${editable ? `<form class="ncr-action" data-action="add_loss" id="ncr-loss-form"><div class="ncr-form-message"></div><h3 id="ncr-loss-heading">เพิ่มรายการความสูญเสีย</h3><input type="hidden" name="loss_id">
         <div class="form-grid">
           <div class="field"><label for="ncr-loss-kind">รายการ *</label><select class="select" id="ncr-loss-kind" name="entry_kind">${options({ loss: "ค่าเสียหาย", recovery: "เงินชดเชย/เครดิตผู้ขาย/ขายซาก" }, "loss")}</select></div>
