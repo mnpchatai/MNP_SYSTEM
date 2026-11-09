@@ -1007,6 +1007,48 @@
     }));
   }
 
+  // ---- หน้าหลัก (app.js renderDashboard): NCR ที่ถึงขั้นของผู้ใช้ขึ้นคิว "ต้องจัดการ" และ NCR ที่ผู้ใช้ออกและยังไม่ปิดขึ้น "ใบของฉันที่ยังไม่จบ" ----
+  // งานของผู้ใช้ = ขั้นที่หน้ารายละเอียดแสดงฟอร์มให้คนนั้น (actionForms) ไม่นับการยกเลิกของ ผจก.QA เพราะเป็นทางเลือก ไม่ใช่งานค้าง
+  // ใช้ตัดสินว่าแถวไหนขึ้นหน้าหลักเท่านั้น RPC ของแต่ละขั้นเป็นตัวบังคับสิทธิ์จริง
+  function homeTask(ncr, employee) {
+    const respondable = canRespond(ncr, employee);
+    if (ncr.status === "awaiting_disposition" && roleCode(employee) === "factory_manager") return "พิจารณา NCR";
+    if (ncr.status === "awaiting_response" && respondable) return "ตอบ NCR";
+    if (ncr.status === "awaiting_followup" && !ncr.prevention && respondable) return "ส่งแนวทางป้องกัน";
+    if (ncr.status === "awaiting_followup" && isQa(employee)) return "ติดตามผล";
+    if (ncr.status === "awaiting_signoff" && canSignNext(ncr, employee)) return "ลงนามปิด";
+    if (ncr.status === "awaiting_info" && respondable) return "ให้ข้อมูลเพิ่มเติม";
+    return null;
+  }
+
+  // ขั้นของแถบ "ไปถึงไหนแล้ว" ในใบของฉัน (progressTracker ของ app.js) — ขอข้อมูลเพิ่มเกิดระหว่างลงนาม จึงนับเป็นขั้นลงนาม
+  const PROGRESS_STAGES = [
+    { status: "awaiting_disposition", label: STATUS_LABELS.awaiting_disposition },
+    { status: "awaiting_response", label: STATUS_LABELS.awaiting_response },
+    { status: "awaiting_followup", label: STATUS_LABELS.awaiting_followup },
+    { statuses: ["awaiting_signoff", "awaiting_info"], label: STATUS_LABELS.awaiting_signoff },
+    { status: "closed", label: STATUS_LABELS.closed },
+  ];
+
+  // RLS ส่งเฉพาะใบที่ผู้ใช้เกี่ยวข้อง (private.can_access_ncr) และแยกใบทดสอบออกให้แล้ว
+  // tasks เรียงใบที่ออกก่อนขึ้นก่อน (app.js เรียงคิวรวมอีกครั้ง) · ใบที่อยู่ใน tasks แล้วไม่อยู่ใน mine
+  async function loadHomeItems(employee) {
+    const { data, error } = await sb.from("ncr_reports")
+      .select("id,ncr_no,status,product_name,reporter_id,prevention,response_due,signoff_qa_at,signoff_factory_at,created_at,updated_at,ncr_responsibilities(department_id,responder_id)")
+      .in("status", OPEN_STATUSES)
+      .order("created_at", { ascending: true })
+      .limit(500);
+    if (error) throw error;
+    const tasks = [];
+    const mine = [];
+    for (const ncr of data ?? []) {
+      const task = homeTask(ncr, employee);
+      if (task) tasks.push({ ncr, task, overdue: isOverdue(ncr) });
+      else if (ncr.reporter_id === employee.id) mine.push(ncr);
+    }
+    return { tasks, mine };
+  }
+
   const modules = (window.MNP_REQUEST_MODULES ??= {});
   modules.NCR_CAR = {
     code: "NCR_CAR",
@@ -1032,6 +1074,8 @@
     },
 
     renderCenterList: (params) => renderList(params, true),
+
+    home: { load: loadHomeItems, task: homeTask, statusLabel, PROGRESS_STAGES },
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
     // ISSUE_RULES เปิดให้เทสต์ตรวจกติกาจริงของฟอร์มออก NCR (scripts/tests/ncr-detail-page.test.mjs)

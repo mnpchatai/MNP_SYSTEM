@@ -217,3 +217,46 @@ test("the served script is self-contained: installs window.supabase and stubs cr
   assert.deepEqual(calls, ["/modules/x.js"]);
   assert.equal(typeof window.navigator.serviceWorker.register, "function");
 });
+
+test("?ncr=1 has only NCRs, one per step, and each role moves an NCR to the next role through the app_ncr_* RPCs", async () => {
+  // storage แชร์ระหว่าง mock แต่ละตัว = สลับผู้ใช้ด้วย ?as= แล้วโหลดหน้าใหม่ ใบยังเดินต่อจากเดิม
+  const store = new Map();
+  const storage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) };
+  const as = (id) => mock({ ncr: true, as: id, storage });
+  const first = as("e5");
+  assert.equal(first.db.requests.length, 0, "no requests other than NCR");
+  const { data: statuses } = await first.sb.from("ncr_reports").select("status");
+  assert.deepEqual([...new Set(statuses.map((row) => row.status))].sort(), ["awaiting_disposition", "awaiting_followup", "awaiting_info", "awaiting_response", "awaiting_signoff", "closed"]);
+  const { data: me } = await first.sb.from("employees").select("*").eq("auth_user_id", (await first.sb.auth.getSession()).data.session.user.id).maybeSingle();
+  assert.equal(me.id, "e5", "?as= signs in as that employee");
+
+  const id = "ncr-QA060-26";
+  const status = async (sb) => (await sb.from("ncr_reports").select("*").eq("id", id).maybeSingle()).data;
+  const call = async (who, name, args) => (await as(who).sb.rpc(name, { p_ncr_id: id, ...args })).error?.message ?? null;
+  assert.equal(await call("e9", "app_ncr_dispose", { p_dispositions: ["sort"], p_department_ids: ["dep-rb"] }), "NOT_AUTHORIZED", "only the factory manager disposes");
+  assert.equal(await call("e5", "app_ncr_dispose", { p_dispositions: ["sort"], p_department_ids: ["dep-rb", "dep-mt"], p_responder_ids: ["e9"] }), null);
+  let row = await status(as("e1").sb);
+  assert.equal(row.status, "awaiting_response");
+  assert.deepEqual(row.ncr_responsibilities.map((item) => [item.department.code, item.responder_id, item.share]), [["RB", "e9", 0.5], ["MT", null, 0.5]]);
+  assert.equal(await call("e10", "app_ncr_respond", { p_causes: ["machine"], p_root_cause: "สึก", p_correction: "ปรับ", p_prevention: "" }), "NOT_AUTHORIZED", "a named responder shuts out the rest of RB");
+  assert.equal(await call("e9", "app_ncr_respond", { p_causes: ["machine"], p_root_cause: "สึก", p_correction: "ปรับ", p_prevention: "" }), null);
+  assert.equal(await call("e3", "app_ncr_followup", { p_result: "close" }), "NCR_PREVENTION_REQUIRED");
+  assert.equal(await call("e9", "app_ncr_submit_prevention", { p_prevention: "ตรวจแม่พิมพ์ทุกกะ" }), null);
+  assert.equal(await call("e3", "app_ncr_followup", { p_result: "close" }), null);
+  assert.equal(await call("e5", "app_ncr_signoff", {}), "NOT_AUTHORIZED", "QA signs first");
+  assert.equal(await call("e11", "app_ncr_signoff", {}), null);
+  assert.equal(await call("e5", "app_ncr_request_info", { p_note: "ขอผลวัดซ้ำ" }), null);
+  assert.equal((await status(as("e9").sb)).status, "awaiting_info");
+  assert.equal(await call("e9", "app_ncr_answer_info", { p_note: "แนบผลวัดซ้ำแล้ว" }), null);
+  assert.equal(await call("e5", "app_ncr_signoff", {}), null);
+  assert.equal(await call("e7", "app_ncr_signoff", {}), null);
+  row = await status(as("e3").sb);
+  assert.equal(row.status, "closed");
+  const { data: history } = await as("e3").sb.from("ncr_status_history").select("*").eq("ncr_id", id).order("id");
+  assert.deepEqual(history.map((entry) => entry.action), ["issue", "dispose", "respond", "followup_close", "signoff_qa", "request_info", "answer_info", "signoff_factory", "signoff_gm"]);
+
+  const issued = (await as("e1").sb.rpc("app_ncr_issue", { p_product_name: "ยางทดสอบ", p_qty_total: 10, p_qty_defect: 2, p_unit: "ชิ้น", p_source: "in_process", p_defect_type_code: "dimension", p_description: "ทดสอบออกใบใหม่" })).data;
+  assert.equal(issued.ncr_no, "QA062/26");
+  assert.equal((await as("e5").sb.from("ncr_reports").select("*").eq("id", issued.id).maybeSingle()).data.status, "awaiting_disposition");
+  assert.equal(mock({ as: "e5" }).db.employees.find((row) => row.id === "e1").auth_user_id, "u1", "?as= only applies to the NCR scenario");
+});
