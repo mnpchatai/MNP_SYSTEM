@@ -437,12 +437,16 @@ function confirmDialog({ title, message = "", confirmLabel, danger = false }) {
 
 function friendlyError(error) {
   const message = String(error?.message ?? error ?? "เกิดข้อผิดพลาด");
+  // ข้อผิดพลาดที่แสดงให้ผู้ใช้ผ่านจุดนี้ทุกครั้ง จึงส่งให้บัญชี master ดูที่ #/master (modules/client-error-log.js กรองซ้ำ/โควตาเอง)
+  window.MNP_ERROR_LOG?.report(error);
   // ข้อความของโมดูลแยกไฟล์มาก่อน เพราะรหัสของโมดูลอาจยาวกว่าและมีรหัสกลางซ้อนอยู่ข้างใน
   const moduleMessages = Object.assign({}, ...Object.values(REQUEST_MODULES).map((entry) => entry.errorMessages ?? {}));
   const map = {
     ...moduleMessages,
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
+    MASTER_PROTECTED: "บัญชี master แก้ไข เปลี่ยนรหัสผ่าน หรือลบได้โดยเจ้าของบัญชีเท่านั้น",
+    MASTER_MUST_BE_ACTIVE_ADMIN: "บัญชี master ต้องเป็นผู้ดูแลระบบที่ยังใช้งานอยู่",
     INVALID_PUSH_SUBSCRIPTION: "ข้อมูลการแจ้งเตือนของเครื่องนี้ไม่ถูกต้อง ลองเปิดใหม่อีกครั้ง",
     PUSH_ENDPOINT_NOT_ALLOWED: "เบราว์เซอร์นี้ใช้บริการแจ้งเตือนที่ระบบยังไม่รองรับ (รองรับ Chrome, Edge, Firefox และ Safari)",
     LAB_ONLY_ACCOUNT: "บัญชีนี้ใช้ได้เฉพาะ MNP LAB",
@@ -1714,7 +1718,7 @@ async function loadEmployee() {
     .maybeSingle();
   if (error) throw error;
   if (!data) throw Object.assign(new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน"), { code: "EMPLOYEE_NOT_LINKED" });
-  const [{ data: modulesData, error: modulesError }, labAccess, labOnly, actingRole] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess(), loadLabOnly(), loadActingRole(data.acting_role_id)]);
+  const [{ data: modulesData, error: modulesError }, labAccess, labOnly, actingRole, isMaster] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess(), loadLabOnly(), loadActingRole(data.acting_role_id), loadMasterAccess()]);
   if (modulesError) throw modulesError;
   state.employee = {
     ...data,
@@ -1724,9 +1728,22 @@ async function loadEmployee() {
     approvalModules: new Set((modulesData ?? []).map((item) => item.code)),
     labAccess,
     labOnly,
+    isMaster,
   };
   await applySandboxOverlay();
   return state.employee;
+}
+
+// บัญชี master (บัญชีเดียวเหนือผู้ดูแลระบบ, migration 20261113010000): ใช้แค่แสดงเมนู #/master และซ่อนปุ่มแก้บัญชี master
+// ในหน้า Admin สิทธิ์จริงตรวจในฐานข้อมูลทุก RPC (private.is_master) เรียกไม่ได้ (ยังไม่ได้ apply migration) = ไม่ใช่ master
+// ค่านี้อยู่ใน state.employee จึงหายไปเองเมื่อสลับเป็นบัญชีทดสอบ (persona) ในโหมดทดสอบ
+async function loadMasterAccess() {
+  const { data, error } = await sb.rpc("app_am_i_master");
+  if (error) {
+    console.warn("master access unavailable", error);
+    return false;
+  }
+  return data === true;
 }
 
 // สิทธิ์เข้าโมดูล MNP LAB: ฐานข้อมูลเป็นผู้ตัดสิน (app_lab_access → private.can_access_lab) หน้าเว็บใช้แค่เลือกว่าจะแสดงเมนูหรือไม่
@@ -2017,7 +2034,9 @@ async function getPendingApprovals() {
     // เฉพาะ admin จริงเท่านั้นที่ข้ามได้ ต้องตรงกับ app_approval_decision เป๊ะ — เดิมรวม
     // factory_manager/general_manager ด้วย ทำให้เห็นปุ่มอนุมัติของขั้นที่ไม่ใช่ของตัวเอง
     // admin ที่เลือก "บทบาทที่ทำหน้าที่" ไว้ เห็นเฉพาะขั้นของบทบาทนั้น (ยังเปิดใบอื่นอนุมัติได้ตามสิทธิ์ admin)
-    if (employee.role?.code === "admin" && !employee.acting_role_id) return true;
+    // ยกเว้นบัญชี master (เป็น admin เสมอ): เห็นขั้นอนุมัติทั้งบริษัทแม้เลือกบทบาทไว้ — ผู้ใช้เลือกเอง 2026-11-09
+    // งานช่างและ NCR ยังเป็นของผู้รับผิดชอบตามเดิม การอนุมัติแทนทำทีละใบ (isOwnApprovalStep กันการเลือกทั้งหมด)
+    if (employee.role?.code === "admin" && (!employee.acting_role_id || employee.isMaster === true)) return true;
     if (step.approver_employee_id && step.approver_employee_id === employee.id) return true;
     const roleMatches = window.MNP_REQUEST_APPROVAL.roleMatches(step, request.request_type?.code, employee);
     return roleMatches && Boolean(request.request_type?.code) && employee.approvalModules.has(request.request_type.code);
@@ -4821,6 +4840,12 @@ async function renderAdmin(params) {
     sb.rpc("app_list_module_permissions"),
     sb.from("employees").select("id,acting_role_id").not("acting_role_id", "is", null),
   ]);
+  // บัญชี master: ผู้ดูแลคนอื่นแก้/ดูรหัสผ่าน/ลบไม่ได้ (ฐานข้อมูลปฏิเสธด้วย MASTER_PROTECTED) จึงซ่อนปุ่มเหล่านั้น
+  // อ่านคอลัมน์ไม่ได้ (ยังไม่ได้ apply migration 20261113010000) = ยังไม่มีบัญชี master
+  const masterResult = await sb.from("employees").select("id").eq("is_master", true);
+  const masterId = masterResult.error ? null : masterResult.data?.[0]?.id ?? null;
+  const isProtectedMaster = (employeeId) => Boolean(masterId) && employeeId === masterId && !state.employee.isMaster;
+  const masterBadge = (employeeId) => (masterId && employeeId === masterId ? ` <span class="badge">Master</span>` : "");
   if (requestsResult.error) throw requestsResult.error;
   if (credentialsResult.error) throw credentialsResult.error;
   if (rolesResult.error) throw rolesResult.error;
@@ -4849,7 +4874,7 @@ async function renderAdmin(params) {
   const actingRoleByEmployee = new Map((actingRolesResult.data ?? []).map((row) => [row.id, row.acting_role_id]));
   const roleNameById = new Map(roles.map((role) => [role.id, role.name_th ?? role.code]));
   const adminRoleId = roles.find((role) => role.code === "admin")?.id ?? "";
-  const editing = credentials.find((item) => item.employee_id === params.get("edit")) ?? null;
+  const editing = credentials.find((item) => item.employee_id === params.get("edit") && !isProtectedMaster(item.employee_id)) ?? null;
   const adding = !editing && params.get("add") === "1";
   const req = ` <span class="required-mark" aria-hidden="true">*</span>`;
   const pendingCount = requests.filter((item) => item.status === "pending").length;
@@ -4890,7 +4915,7 @@ async function renderAdmin(params) {
       <div class="card-head">
         <div>
           <span class="request-no">${escapeHtml(item.employee_no)}</span>
-          <h3>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}</h3>
+          <h3>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}${masterBadge(item.employee_id)}</h3>
           <p class="muted small">${escapeHtml(item.role_code ?? "—")}</p>
         </div>
         ${item.is_active ? "" : `<span class="badge rejected">ปิดใช้งาน</span>`}
@@ -4902,7 +4927,7 @@ async function renderAdmin(params) {
         <div class="definition"><dt>ตำแหน่ง</dt><dd>${escapeHtml(item.role_code ?? "—")}</dd></div>
         <div class="definition"><dt>อัปเดตล่าสุด</dt><dd>${item.updated_at ? formatDate(item.updated_at, true) : "—"}${item.updated_by_name ? ` · โดย ${escapeHtml(item.updated_by_name)}` : ""}</dd></div>
       </dl>
-      <div class="approval-actions"><a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไขบัญชี →</a></div>
+      ${isProtectedMaster(item.employee_id) ? "" : `<div class="approval-actions"><a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไขบัญชี →</a></div>`}
     </article>`;
   }).join("") || emptyState("ยังไม่มีบัญชีในระบบ");
 
@@ -4911,12 +4936,12 @@ async function renderAdmin(params) {
     return `
     <tr>
       <td><span class="request-no">${escapeHtml(item.employee_no)}</span></td>
-      <td>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}${item.is_active ? "" : ` <span class="badge rejected">ปิดใช้งาน</span>`}</td>
+      <td>${escapeHtml(item.full_name)}${isSelf ? ` <span class="badge">บัญชีของคุณ</span>` : ""}${masterBadge(item.employee_id)}${item.is_active ? "" : ` <span class="badge rejected">ปิดใช้งาน</span>`}</td>
       <td>${escapeHtml(item.department_code ?? "—")}</td>
       <td>${escapeHtml(item.role_code ?? "—")}${actingRoleByEmployee.has(item.employee_id) ? `<br><small class="muted">ทำงานในฐานะ ${escapeHtml(roleNameById.get(actingRoleByEmployee.get(item.employee_id)) ?? "—")}</small>` : ""}</td>
       <td><code data-password-cell="${escapeHtml(item.employee_id)}">${item.has_password ? "••••••••" : "ยังไม่มีบันทึกไว้"}</code></td>
       <td>${item.updated_at ? formatDate(item.updated_at, true) : "—"}</td>
-      <td>${[
+      <td>${isProtectedMaster(item.employee_id) ? `<span class="muted small" title="บัญชี master จัดการได้โดยเจ้าของบัญชีเท่านั้น">เจ้าของบัญชีจัดการเอง</span>` : [
         item.has_password ? `<button class="btn secondary small" data-reveal="${escapeHtml(item.employee_id)}">แสดง</button>` : "",
         `<a class="btn secondary small" href="#/admin?tab=credentials&edit=${encodeURIComponent(item.employee_id)}">แก้ไข</a>`,
         isSelf ? "" : `<button class="btn danger small" type="button" data-delete-employee="${escapeHtml(item.employee_id)}" data-employee-label="${escapeHtml(`${item.employee_no} · ${item.full_name}`)}">ลบ</button>`,
@@ -4948,7 +4973,7 @@ async function renderAdmin(params) {
       <td>${escapeHtml(person.full_name)}</td>
       <td>${escapeHtml(person.department_code ?? "—")}</td>
       <td>${escapeHtml(person.role_code ?? "—")}</td>
-      ${moduleColumns.map((col) => `<td class="center"><input type="checkbox" data-module-toggle data-employee="${escapeHtml(person.employee_id)}" data-type="${escapeHtml(col.id)}"${person.granted.get(col.id) ? " checked" : ""}></td>`).join("")}
+      ${moduleColumns.map((col) => `<td class="center"><input type="checkbox" data-module-toggle data-employee="${escapeHtml(person.employee_id)}" data-type="${escapeHtml(col.id)}"${person.granted.get(col.id) ? " checked" : ""}${isProtectedMaster(person.employee_id) ? ` disabled title="บัญชี master จัดการได้โดยเจ้าของบัญชีเท่านั้น"` : ""}></td>`).join("")}
     </tr>`).join("") || `<tr><td colspan="${4 + moduleColumns.length}" class="muted small">ยังไม่มีผู้อนุมัติในระบบ</td></tr>`;
 
   const content = `

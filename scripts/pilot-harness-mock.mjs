@@ -10,7 +10,7 @@
 // storage = ที่เก็บข้อมูลหลัก BOM ของหน้า (localStorage) ไม่ส่ง = อยู่ในหน่วยความจำอย่างเดียว
 // ncr = สถานการณ์ NCR อย่างเดียว (?ncr=1): ไม่มีคำร้องอื่น มี NCR ครบทุกขั้น และกดขั้นของ NCR ได้จริงในฐานข้อมูลจำลอง (เก็บลง storage
 // ใบจึงเดินต่อเมื่อสลับผู้ใช้) · as = รหัสพนักงานจำลองที่ใช้เข้าระบบ (?as=e5) ใช้ได้เฉพาะสถานการณ์ NCR
-export function createMockSupabase({ empty = false, sandbox = false, ncr = false, as = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
+export function createMockSupabase({ empty = false, sandbox = false, ncr = false, master = false, as = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -31,7 +31,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     ["role-dm", "department_manager", "ผู้จัดการแผนก"], ["role-sup", "supervisor", "หัวหน้างาน"], ["role-tech", "technician", "ช่าง"],
     ["role-staff", "staff", "พนักงาน"], ["role-fm", "factory_manager", "ผู้จัดการโรงงาน"], ["role-gm", "general_manager", "ผู้จัดการทั่วไป"],
     // admin มีเฉพาะโหมดทดสอบ (?sandbox=1) โหมดปกติรายการบทบาทเหมือนเดิม
-    ...(sandbox ? [["role-admin", "admin", "ผู้ดูแลระบบ"]] : []),
+    ...(sandbox || master ? [["role-admin", "admin", "ผู้ดูแลระบบ"]] : []),
   ].map(([id, code, name_th], index) => ({ id, code, name_th, sort_order: index + 1 }));
   // แผนกที่เป็นจุดแจ้งซ่อมได้ต้องมีรหัสตรงกับ REPAIR_DEPARTMENT_OPTIONS ของ modules/module-mt.js ปุ่มเลือกแผนกจึงขึ้น
   const departments = [
@@ -60,10 +60,12 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     ] : []),
   ].map(([id, employee_no, first_name, last_name, job_title, department_id, role_id], index) => ({
     id, employee_no, first_name, last_name, job_title, department_id, role_id, acting_role_id: null, manager_id: null,
-    email: `${id}@example.test`, phone: "", is_active: true, auth_user_id: `u${index + 1}`,
+    email: `${id}@example.test`, phone: "", is_active: true, is_master: false, auth_user_id: `u${index + 1}`,
   }));
   const ME = employees.find((row) => row.id === ME_ID) ?? employees[0];
   if (sandbox) ME.role_id = "role-admin";
+  // ?master=1 = ผู้ใช้จำลองเป็นบัญชี master (admin ที่เห็นหน้า #/master) — migration 20261113010000_master_account.sql
+  if (master) Object.assign(ME, { role_id: "role-admin", is_master: true });
   const personName = (id) => { const person = employees.find((row) => row.id === id); return person ? `${person.first_name} ${person.last_name}` : null; };
   const request_types = [
     ["t-mt", "MT_REPAIR", "MT", "แจ้งซ่อม", "งานซ่อมเครื่องจักรและอาคาร", true, "dep-mt"],
@@ -1961,11 +1963,107 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     }),
   };
 
+  // บัญชี master: บันทึกข้อผิดพลาดที่หน้าเว็บส่งมา (เก็บในหน่วยความจำ) และบันทึกกิจกรรมตัวอย่าง
+  // ฐานข้อมูลจริงซ่อนค่ารหัสผ่านก่อนส่ง (private.redact_secrets) ตัวอย่างจึงมีค่า "[ซ่อน]" แทน
+  const clientErrors = [
+    { kind: "rpc", code: "STEP_NOT_CURRENT", message: "STEP_NOT_CURRENT", page: "request", detail: null, employee: "e5", days: 0.2 },
+    { kind: "network", code: "", message: "Failed to fetch", page: "dashboard", detail: null, employee: "e2", days: 0.5 },
+    { kind: "js", code: "", message: "Cannot read properties of undefined (reading 'code')", page: "ncr", detail: "TypeError: Cannot read properties of undefined (reading 'code')\n    at renderNcrDetail (module-ncr.js:812:31)", employee: "e3", days: 1.2 },
+    { kind: "rpc", code: "STEP_NOT_CURRENT", message: "STEP_NOT_CURRENT", page: "request", detail: null, employee: "e7", days: 2 },
+  ].map((item, index) => ({
+    id: index + 1, created_at: ago(item.days), employee_id: item.employee, kind: item.kind, code: item.code || null, message: item.message,
+    page: item.page, detail: item.detail, app_version: "harness", user_agent: "Mozilla/5.0 (harness)", is_sandbox: false,
+  }));
+  const auditLogs = [
+    { actor: "e5", action: "UPDATE", entity_type: "requests", entity_id: "r-1", label: `MT-${YEAR}-0012`, request: "r-1", days: 0.1, changes: { status: { old: "pending_approval", new: "approved" }, current_step: { old: 1, new: 0 } } },
+    { actor: "e1", action: "SANDBOX_ENTER", entity_type: "sandbox_session", entity_id: null, label: "P-QA01", days: 0.3, changes: { persona_employee_no: "P-QA01" } },
+    { actor: "e7", action: "REVEAL_CREDENTIAL", entity_type: "account_credentials", entity_id: "e3", label: "E022", days: 0.8, changes: { employee_no: "E022" } },
+    { actor: "e7", action: "UPDATE", entity_type: "account_credentials", entity_id: "e3", label: null, days: 0.9, changes: { password: { old: "[ซ่อน]", new: "[ซ่อน]" }, username: { old: "E22", new: "E022" } } },
+    { actor: "e3", action: "INSERT", entity_type: "ncr_reports", entity_id: "n-1", label: `NCR-${YEAR}-0003`, days: 1.5, changes: { ncr_no: `NCR-${YEAR}-0003`, status: "awaiting_disposition", part_no: "RB-2201" } },
+  ].map((item, index, list) => ({
+    id: list.length - index, created_at: ago(item.days), actor_id: item.actor, action: item.action, entity_type: item.entity_type,
+    entity_id: item.entity_id, entity_label: item.label, request_id: item.request ?? null, changes: item.changes,
+  }));
+  const requireMaster = () => { if (!master) fail("NOT_AUTHORIZED"); };
+  const personNo = (id) => employees.find((row) => row.id === id)?.employee_no ?? null;
+  const inRange = (createdAt, from, to) => (!from || createdAt.slice(0, 10) >= from) && (!to || createdAt.slice(0, 10) <= to);
+  const page = (rows, beforeId, limit) => rows
+    .filter((row) => beforeId === null || beforeId === undefined || row.id < beforeId)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, Math.min(Math.max(Number(limit) || 100, 1), 200));
+  const MASTER_RPC = {
+    app_am_i_master: () => master,
+    app_log_client_error(args) {
+      clientErrors.push({
+        id: clientErrors.length + 1, created_at: stamp(), employee_id: ME_ID, kind: args.p_kind, code: args.p_code ?? null, message: args.p_message,
+        page: args.p_page ?? null, detail: args.p_detail ?? null, app_version: args.p_app_version ?? null, user_agent: args.p_user_agent ?? null, is_sandbox: Boolean(args.p_is_sandbox),
+      });
+    },
+    app_master_client_errors({ p_before_id = null, p_limit = 100, p_kind = null, p_employee_id = null } = {}) {
+      requireMaster();
+      return page(clientErrors.filter((row) => (!p_kind || row.kind === p_kind) && (!p_employee_id || row.employee_id === p_employee_id)), p_before_id, p_limit)
+        .map((row) => ({ ...row, employee_no: personNo(row.employee_id), employee_name: personName(row.employee_id) }));
+    },
+    app_master_client_error_summary({ p_days = 7 } = {}) {
+      requireMaster();
+      const since = iso(now() - Number(p_days) * DAY);
+      const groups = new Map();
+      for (const row of clientErrors.filter((item) => item.created_at > since)) {
+        const key = `${row.kind}|${row.code}|${row.message}`;
+        const group = groups.get(key) ?? { kind: row.kind, code: row.code, message: row.message, occurrences: 0, people: new Set(), pages: new Set(), first_at: row.created_at, last_at: row.created_at };
+        group.occurrences += 1;
+        group.people.add(row.employee_id);
+        if (row.page) group.pages.add(row.page);
+        if (row.created_at < group.first_at) group.first_at = row.created_at;
+        if (row.created_at > group.last_at) group.last_at = row.created_at;
+        groups.set(key, group);
+      }
+      return [...groups.values()].sort((a, b) => b.occurrences - a.occurrences || b.last_at.localeCompare(a.last_at))
+        .map((group) => ({ ...group, people: group.people.size, pages: [...group.pages].slice(0, 5) }));
+    },
+    app_master_activity_log({ p_before_id = null, p_limit = 100, p_actor_id = null, p_entity_type = null, p_from = null, p_to = null } = {}) {
+      requireMaster();
+      return page(auditLogs.filter((row) => (!p_actor_id || row.actor_id === p_actor_id) && (!p_entity_type || row.entity_type === p_entity_type)
+        && inRange(row.created_at, p_from, p_to)), p_before_id, p_limit)
+        .map((row) => ({ ...row, actor_no: personNo(row.actor_id), actor_name: personName(row.actor_id) }));
+    },
+    // งานค้างทั้งบริษัท: ประมาณจากคำร้องจำลอง (ผู้ทำตามสถานะ) กติกาจริงอยู่ที่ private.pending_work_items
+    // ใบที่ผู้ทำไม่อยู่ในรายชื่อพนักงานจำลองได้ holders ว่าง (หน้าเว็บแสดง "ไม่มีผู้รับผิดชอบ") เหมือนฐานข้อมูลจริง
+    app_master_pending_work() {
+      requireMaster();
+      const ACTIONS = { pending_approval: "พิจารณาอนุมัติ", more_info: "ส่งข้อมูลเพิ่มเติมที่ผู้อนุมัติขอ", pending_assign: "มอบหมายช่าง", assigned: "เริ่มงานซ่อม", pending_verify: "ตรวจรับผลการซ่อม" };
+      const today = new Date(now()).toISOString().slice(0, 10);
+      return db.requests.filter((request) => Object.hasOwn(ACTIONS, request.status)).map((request) => {
+        const step = db.approval_steps.find((item) => item.request_id === request.id && item.step_order === request.current_step && item.status === "pending");
+        const holderId = { pending_approval: step?.approver_employee_id, more_info: request.requester_id, pending_assign: "e1", assigned: request.assignee_id, pending_verify: request.requester_id }[request.status];
+        const person = employees.find((row) => row.id === holderId && row.is_active);
+        const type = request_types.find((row) => row.id === request.request_type_id);
+        const since = request.updated_at ?? request.created_at;
+        return {
+          item_type: "request", item_id: request.id, doc_no: request.request_no, doc_label: type?.name_th ?? null, title: request.title, status: request.status,
+          action: ACTIONS[request.status], waiting_since: since,
+          days_waiting: Math.max(0, Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${since.slice(0, 10)}T00:00:00Z`)) / DAY)),
+          due_date: request.status === "assigned" ? request.work_expected_date ?? null : null, is_urgent: Boolean(request.is_urgent),
+          holders: person ? [{ id: person.id, employee_no: person.employee_no, name: personName(person.id), department: departments.find((row) => row.id === person.department_id)?.code ?? null }] : [],
+        };
+      }).sort((a, b) => a.waiting_since.localeCompare(b.waiting_since));
+    },
+    app_master_activity_facets() {
+      requireMaster();
+      const count = (key) => auditLogs.reduce((map, row) => map.set(row[key], (map.get(row[key]) ?? 0) + 1), new Map());
+      return {
+        entity_types: [...count("entity_type")].map(([entity_type, total]) => ({ entity_type, count: total })),
+        actors: [...count("actor_id")].map(([id, total]) => ({ id, employee_no: personNo(id), name: personName(id), count: total })),
+      };
+    },
+  };
+
   const RPC = {
     ...NCR_RPC,
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
     app_lab_only: () => false,
+    ...MASTER_RPC,
     app_bom_master() {
       if (!sandbox) fail("BOM_TEST_MODE_ONLY");
       return bomView(bomLoad());
@@ -2312,6 +2410,8 @@ export function installMockSupabase(win, create, options = {}) {
     empty: params.has("empty"),
     // ?ncr=1 = สถานการณ์ NCR อย่างเดียว · ?as=e5 = เข้าระบบเป็นพนักงานจำลองคนนั้น
     ncr: params.has("ncr"),
+    // ?master=1 = ผู้ใช้จำลองเป็นบัญชี master เห็นหน้า #/master
+    master: params.has("master"),
     as: params.get("as"),
     sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
     storage: (() => { try { return win.localStorage; } catch { return null; } })(),
