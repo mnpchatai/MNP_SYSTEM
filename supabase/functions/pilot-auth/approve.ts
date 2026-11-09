@@ -55,7 +55,9 @@ export async function approveAccountRequest(
   if (pending.error) {
     return { status: authErrorStatus(pending.error), body: { error: pending.error } };
   }
-  const visible = Array.isArray(pending.data) && pending.data.some((row) => rowId(row) === requestId);
+  const wanted = requestId.toLowerCase();
+  const visible = Array.isArray(pending.data) &&
+    pending.data.some((row) => rowId(row)?.toLowerCase() === wanted);
 
   const accountRequest = requestId ? await deps.readRequest(requestId) : null;
   const isPending = accountRequest?.status === "pending";

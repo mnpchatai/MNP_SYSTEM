@@ -59,7 +59,15 @@ test("a caller without accounts.manage cannot change a pending request's passwor
   const result = plain(await approveAccountRequest(deps, REQ, null));
   assert.deepEqual(result, { status: 403, body: { error: "NOT_AUTHORIZED" } });
   assert.deepEqual(authWrites(calls), []);
-  assert.equal(calls[0][1], "app_list_account_requests", "authorization is the first call");
+  assert.deepEqual(calls[0], ["rpc", "app_list_account_requests", { p_status: "pending" }], "authorization is the first call");
+});
+
+test("the request id is matched regardless of letter case", async () => {
+  const { deps } = harness({
+    request: newAccountRequest,
+    rpc: { app_list_account_requests: adminSees, app_apply_account_request: { data: EMP, error: null } },
+  });
+  assert.equal((await approveAccountRequest(deps, REQ.toUpperCase(), null)).status, 200);
 });
 
 test("a caller without accounts.manage cannot create an Auth user for a new-account request", async () => {
