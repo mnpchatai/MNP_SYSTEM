@@ -40,7 +40,8 @@
     const textCode = message.match(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)?.[0] ?? "";
     const code = scrub(textCode || explicitCode, 80);
     const stack = typeof raw?.stack === "string" ? raw.stack.split("\n").slice(0, 6).join("\n") : "";
-    const detail = scrub([raw?.details, raw?.hint, stack].filter(Boolean).join("\n"), 4000);
+    // ไม่ส่ง details ของ PostgREST: มักมีค่าที่ผู้ใช้กรอก (เช่น "Key (email)=(…)", "Failing row contains (…)")
+    const detail = scrub([raw?.hint, stack].filter(Boolean).join("\n"), 4000);
     let resolvedKind = KINDS.has(kind) ? kind : null;
     if (!resolvedKind) {
       if (NETWORK.test(message)) resolvedKind = "network";

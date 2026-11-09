@@ -6,7 +6,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(42);
+select plan(44);
 
 -- 0. เตรียมผู้ใช้: master, admin อีกคน, พนักงานทั่วไป ---------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -129,6 +129,15 @@ select lives_ok(
   $$ select public.app_admin_update_employee('a5ee0000-0000-0000-0000-000000000013', 'STAFF-T', 'ทดสอบ', 'พนักงาน', 'staff-test@mnp.local', null, 'Staff 2') $$,
   'another admin still edits other accounts'
 );
+select throws_ok(
+  $$ select public.app_set_module_permission('a5ee0000-0000-0000-0000-000000000011', (select id from public.request_types order by code limit 1), true) $$,
+  'MASTER_PROTECTED',
+  'another admin cannot change the approval modules of the master'
+);
+select lives_ok(
+  $$ select public.app_set_module_permission('a5ee0000-0000-0000-0000-000000000013', (select id from public.request_types order by code limit 1), true) $$,
+  'another admin still changes the approval modules of other accounts'
+);
 select is((select count(*)::integer from public.audit_logs), 0, 'another admin cannot read the audit trail');
 select throws_ok($$ select * from public.app_master_activity_log() $$, 'NOT_AUTHORIZED', 'another admin cannot open the activity log');
 select throws_ok($$ select public.app_master_activity_facets() $$, 'NOT_AUTHORIZED', 'another admin cannot read the activity log filters');
@@ -162,12 +171,12 @@ select set_config('request.jwt.claims', '{"sub":"a5ee0000-0000-0000-0000-0000000
 select is(public.app_am_i_master(), true, 'the master is recognised');
 select ok((select count(*) from public.audit_logs) > 0, 'the master reads the audit trail');
 select is(
-  (select changes -> 'username' ->> 'new' from public.app_master_activity_log(p_entity_type => 'account_credentials') where action = 'UPDATE' limit 1),
+  (select changes -> 'username' ->> 'new' from public.app_master_activity_log(p_entity_type => 'account_credentials') where action = 'UPDATE' and changes ? 'username' limit 1),
   'STAFF-T',
   'the activity log shows the new value of a changed field'
 );
 select is(
-  (select changes -> 'password' ->> 'new' from public.app_master_activity_log(p_entity_type => 'account_credentials') where action = 'UPDATE' limit 1),
+  (select changes -> 'password' ->> 'new' from public.app_master_activity_log(p_entity_type => 'account_credentials') where action = 'UPDATE' and changes ? 'username' limit 1),
   '[ซ่อน]',
   'the activity log hides password values'
 );
@@ -176,11 +185,11 @@ select ok(
   'no password value from the audit trail reaches the activity log'
 );
 select ok(
-  not ((select changes from public.app_master_activity_log(p_entity_type => 'account_credentials') where action = 'UPDATE' limit 1) ? 'updated_at'),
+  not ((select changes from public.app_master_activity_log(p_entity_type => 'account_credentials') where action = 'UPDATE' and changes ? 'username' limit 1) ? 'updated_at'),
   'the activity log leaves out updated_at'
 );
 select is(
-  (select l.actor_no from public.app_master_activity_log(p_entity_type => 'account_credentials') l where l.action = 'UPDATE' limit 1),
+  (select l.actor_no from public.app_master_activity_log(p_entity_type => 'account_credentials') l where l.action = 'UPDATE' and l.changes ? 'username' limit 1),
   'ADMIN-T',
   'the activity log names who acted'
 );

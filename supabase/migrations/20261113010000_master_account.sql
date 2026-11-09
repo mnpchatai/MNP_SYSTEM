@@ -11,8 +11,10 @@
 --        รวม app_admin_update_employee, app_admin_set_acting_role, app_admin_delete_employee
 --        และ app_apply_account_request
 --      - app_admin_target_auth_user (pilot-auth ใช้ก่อนเปลี่ยนรหัสผ่านที่ Supabase Auth),
---        app_admin_record_password และ app_reveal_credential ปฏิเสธเมื่อเป้าหมายเป็น master
---        และผู้เรียกไม่ใช่ master เอง
+--        app_admin_record_password, app_reveal_credential และ app_set_module_permission ปฏิเสธเมื่อ
+--        เป้าหมายเป็น master และผู้เรียกไม่ใช่ master เอง
+--      - ข้อจำกัดที่รู้: คำร้องเปลี่ยนรหัสผ่านที่ master ส่งเอง ผู้ดูแลคนอื่นยังกดอนุมัติได้ เพราะ pilot-auth
+--        เปลี่ยนรหัสที่ Supabase Auth ก่อนเรียกฐานข้อมูล (รหัสที่ได้คือรหัสที่ master เลือกเอง) แก้ใน Edge Function แยก
 --   3. บันทึกกิจกรรม (audit_logs) อ่านได้เฉพาะ master
 --      - เดิม policy audit_read ใช้ audit.view ซึ่ง admin ทุกคนถือ และแถวเก่าของ account_credentials /
 --        account_requests เก็บรหัสผ่านไว้ใน metadata (old/new) ตอนนี้ผู้ดูแลคนอื่นจึงอ่านตารางนี้ตรงไม่ได้แล้ว
@@ -32,10 +34,11 @@
 --   app_admin_target_auth_user   fd672ab30d277100d5d5c9294fa72b98  (20260917090000_admin_account_editing.sql)
 --   app_admin_record_password    b61067a6f878d74282083c218f577bf1  (20260917090000_admin_account_editing.sql)
 --   app_reveal_credential        881eac86351b230ccba791015e613711  (20260917070000_account_registration_workflow.sql)
+--   app_set_module_permission    08bb338453abc01d86022baa5d29f42f  (20260918060000_approval_module_permissions.sql)
 --   private.lab_only_allowed_functions bb559dd270cdb40fd50e21c2f98f5d4e (20261019005000_lab_only_accounts.sql)
 --
 -- Rollback (ไม่มีข้อมูลเดิมถูกแก้ นอกจากธง is_master ของ THTWGOT):
---   1) นำนิยามเดิมของ 3 RPC ข้างบน, policy audit_read (using private.has_permission('audit.view'))
+--   1) นำนิยามเดิมของ 4 RPC ข้างบน, policy audit_read (using private.has_permission('audit.view'))
 --      และ private.lab_only_allowed_functions กลับมาจากไฟล์ที่ระบุ
 --   2) drop trigger employees_master_guard, drop function ทั้งหมดที่สร้างในไฟล์นี้
 --   3) drop table public.client_error_logs; alter table public.employees drop column is_master
@@ -160,6 +163,17 @@ where e.employee_no = 'THTWGOT'
   and e.deleted_at is null
   and not e.is_test
   and exists (select 1 from public.roles r where r.id = e.role_id and r.code = 'admin');
+
+-- ถ้ามีบัญชี THTWGOT แต่ตั้งธงไม่ได้ (ไม่ใช่ admin / ปิดใช้งาน / บัญชีทดสอบ) ให้ migration ล้ม
+-- เพราะหลังไฟล์นี้ audit_logs อ่านได้เฉพาะ master — ฐานข้อมูล local/CI ไม่มีบัญชีนี้จึงผ่านไปเฉย ๆ
+do $$
+begin
+  if exists (select 1 from public.employees where employee_no = 'THTWGOT')
+     and not exists (select 1 from public.employees where employee_no = 'THTWGOT' and is_master) then
+    raise exception 'THTWGOT exists but is not an active admin, so it cannot become the master account';
+  end if;
+end;
+$$;
 
 -- 2.1 RPC บัญชีที่แตะ Supabase Auth / คลังรหัสผ่าน: นิยามจาก production + private.assert_master_target_allowed
 create or replace function public.app_admin_target_auth_user(p_employee_id uuid)
@@ -290,6 +304,50 @@ $$;
 revoke all on function public.app_reveal_credential(uuid) from public, anon;
 grant execute on function public.app_reveal_credential(uuid) to authenticated;
 
+-- สิทธิ์อนุมัติตามโมดูลของ master (เขียน approval_module_permissions ไม่ผ่าน trigger ของ employees)
+create or replace function public.app_set_module_permission(p_employee_id uuid, p_request_type_id uuid, p_granted boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  perform private.lab_only_block();
+  if auth.uid() is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
+
+  select * into v_actor
+  from public.employees
+  where auth_user_id = auth.uid() and is_active
+  limit 1;
+  if v_actor.id is null or not private.has_permission('approvals.manage') then
+    raise exception 'NOT_AUTHORIZED';
+  end if;
+  perform private.assert_master_target_allowed(p_employee_id);
+
+  if not exists (select 1 from public.employees where id = p_employee_id) then
+    raise exception 'EMPLOYEE_NOT_FOUND';
+  end if;
+  if not exists (select 1 from public.request_types where id = p_request_type_id) then
+    raise exception 'REQUEST_TYPE_NOT_FOUND';
+  end if;
+
+  if coalesce(p_granted, false) then
+    insert into public.approval_module_permissions (employee_id, request_type_id, granted_by)
+    values (p_employee_id, p_request_type_id, v_actor.id)
+    on conflict (employee_id, request_type_id) do nothing;
+  else
+    delete from public.approval_module_permissions
+    where employee_id = p_employee_id and request_type_id = p_request_type_id;
+  end if;
+end;
+$$;
+revoke all on function public.app_set_module_permission(uuid, uuid, boolean) from public, anon;
+grant execute on function public.app_set_module_permission(uuid, uuid, boolean) to authenticated;
+
 -- หน้าเว็บถามว่าบัญชีที่ล็อกอินเป็น master หรือไม่ (ใช้แค่เลือกว่าจะแสดงเมนู สิทธิ์จริงตรวจในทุก RPC)
 create or replace function public.app_am_i_master()
 returns boolean
@@ -307,6 +365,17 @@ grant execute on function public.app_am_i_master() to authenticated;
 drop policy if exists audit_read on public.audit_logs;
 create policy audit_read on public.audit_logs for select to authenticated
 using ((select private.is_master()));
+
+-- ชื่อ key ที่ถือเป็นความลับ (รหัสผ่าน/โทเค็น/secret)
+create or replace function private.is_secret_key(p_key text)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(p_key ~* '(password|passwd|secret|token|otp|hash|api_?key|credential|service_role)', false)
+$$;
+revoke all on function private.is_secret_key(text) from public, anon, authenticated;
 
 -- ซ่อนค่าของ key ที่เกี่ยวกับรหัสผ่าน/โทเค็น/secret ทุกระดับของ jsonb (ชื่อ key ยังเห็นว่ามีการเปลี่ยน)
 create or replace function private.redact_secrets(p_value jsonb)
@@ -326,7 +395,7 @@ begin
   if jsonb_typeof(p_value) = 'object' then
     v_result := '{}'::jsonb;
     for v_key, v_item in select e.key, e.value from jsonb_each(p_value) as e loop
-      if v_key ~* '(password|passwd|secret|token|otp|hash|api_?key|credential|service_role)' then
+      if private.is_secret_key(v_key) then
         v_result := v_result || jsonb_build_object(v_key, '[ซ่อน]');
       else
         v_result := v_result || jsonb_build_object(v_key, private.redact_secrets(v_item));
@@ -345,32 +414,38 @@ end;
 $$;
 revoke all on function private.redact_secrets(jsonb) from public, anon, authenticated;
 
--- UPDATE: เฉพาะฟิลด์ที่เปลี่ยน {field: {old, new}} · INSERT/DELETE: แถวทั้งแถว · อื่น ๆ: metadata
+-- UPDATE: เฉพาะฟิลด์ที่เปลี่ยน {field: {old, new}} (เทียบจากค่าจริง ฟิลด์ลับที่เปลี่ยนจึงยังขึ้นว่าเปลี่ยน
+-- แต่ค่าเป็น "[ซ่อน]") · INSERT/DELETE: แถวทั้งแถว · อื่น ๆ: metadata
 create or replace function private.audit_changes(p_action text, p_metadata jsonb)
 returns jsonb
 language sql
 immutable
 set search_path = ''
 as $$
-  select private.redact_secrets(
-    case
-      when p_action = 'UPDATE'
-           and jsonb_typeof(p_metadata -> 'old') = 'object'
-           and jsonb_typeof(p_metadata -> 'new') = 'object' then (
-        select coalesce(jsonb_object_agg(k.key, jsonb_build_object('old', p_metadata -> 'old' -> k.key, 'new', p_metadata -> 'new' -> k.key)), '{}'::jsonb)
-        from (
-          select key from jsonb_object_keys(p_metadata -> 'old') as key
-          union
-          select key from jsonb_object_keys(p_metadata -> 'new') as key
-        ) k
-        where k.key <> 'updated_at'
-          and (p_metadata -> 'old' -> k.key) is distinct from (p_metadata -> 'new' -> k.key)
-      )
-      when p_action = 'INSERT' and jsonb_typeof(p_metadata -> 'new') = 'object' then p_metadata -> 'new'
-      when p_action = 'DELETE' and jsonb_typeof(p_metadata -> 'old') = 'object' then p_metadata -> 'old'
-      else p_metadata
-    end
-  )
+  select case
+    when p_action = 'UPDATE'
+         and jsonb_typeof(p_metadata -> 'old') = 'object'
+         and jsonb_typeof(p_metadata -> 'new') = 'object' then (
+      select coalesce(jsonb_object_agg(
+               k.key,
+               case
+                 when private.is_secret_key(k.key) then jsonb_build_object('old', '[ซ่อน]', 'new', '[ซ่อน]')
+                 else jsonb_build_object(
+                   'old', private.redact_secrets(p_metadata -> 'old' -> k.key),
+                   'new', private.redact_secrets(p_metadata -> 'new' -> k.key))
+               end), '{}'::jsonb)
+      from (
+        select key from jsonb_object_keys(p_metadata -> 'old') as key
+        union
+        select key from jsonb_object_keys(p_metadata -> 'new') as key
+      ) k
+      where k.key <> 'updated_at'
+        and (p_metadata -> 'old' -> k.key) is distinct from (p_metadata -> 'new' -> k.key)
+    )
+    when p_action = 'INSERT' and jsonb_typeof(p_metadata -> 'new') = 'object' then private.redact_secrets(p_metadata -> 'new')
+    when p_action = 'DELETE' and jsonb_typeof(p_metadata -> 'old') = 'object' then private.redact_secrets(p_metadata -> 'old')
+    else private.redact_secrets(p_metadata)
+  end
 $$;
 revoke all on function private.audit_changes(text, jsonb) from public, anon, authenticated;
 
@@ -491,7 +566,9 @@ grant execute on function public.app_master_activity_facets() to authenticated;
 create table if not exists public.client_error_logs (
   id bigint generated always as identity primary key,
   created_at timestamptz not null default now(),
-  employee_id uuid references public.employees(id) on delete set null,
+  -- ตั้งใจไม่มี foreign key: app_admin_delete_employee นับทุก FK ที่ชี้มา employees เป็น "ประวัติ"
+  -- ถ้ามี FK พนักงานที่เคยเจอข้อผิดพลาดแม้ครั้งเดียวจะถูกลบถาวรไม่ได้อีก (ชื่อผู้ใช้ join แบบ left join)
+  employee_id uuid,
   kind text not null check (kind in ('js', 'promise', 'rpc', 'network', 'ui')),
   code text check (char_length(code) <= 80),
   message text not null check (char_length(message) between 1 and 1000),

@@ -4971,7 +4971,7 @@ async function renderAdmin(params) {
       <td>${escapeHtml(person.full_name)}</td>
       <td>${escapeHtml(person.department_code ?? "—")}</td>
       <td>${escapeHtml(person.role_code ?? "—")}</td>
-      ${moduleColumns.map((col) => `<td class="center"><input type="checkbox" data-module-toggle data-employee="${escapeHtml(person.employee_id)}" data-type="${escapeHtml(col.id)}"${person.granted.get(col.id) ? " checked" : ""}></td>`).join("")}
+      ${moduleColumns.map((col) => `<td class="center"><input type="checkbox" data-module-toggle data-employee="${escapeHtml(person.employee_id)}" data-type="${escapeHtml(col.id)}"${person.granted.get(col.id) ? " checked" : ""}${isProtectedMaster(person.employee_id) ? ` disabled title="บัญชี master จัดการได้โดยเจ้าของบัญชีเท่านั้น"` : ""}></td>`).join("")}
     </tr>`).join("") || `<tr><td colspan="${4 + moduleColumns.length}" class="muted small">ยังไม่มีผู้อนุมัติในระบบ</td></tr>`;
 
   const content = `
