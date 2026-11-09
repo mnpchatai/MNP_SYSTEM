@@ -1468,3 +1468,74 @@ test("issuing parts from the PI page: the dialog lists every line, a shortage bl
   assert.match(html, /เบิกจ่ายที่ใบ PI/, "an open part job points to the PI page");
   assert.doesNotMatch(html, /data-rf-open="jobReport"|data-rf-action="setJobStatus"/, "and offers no report or hold");
 });
+
+test("returning parts from the PI page: the buttons appear only for ST and the planner once something is issued, the leftover dialog lists issued and returned, the undo dialog asks for a reason and the history shows the return with its reason", async () => {
+  const env = load();
+  const D = env.context.MNP_BOM_DIALOGS;
+  const page = "p=orders&sel=DEMO-26001";
+  env.store.setUser("B08"); // ST
+  let html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"|data-rf-open="undoParts"/, "nothing issued yet → nothing to return");
+  assert.equal(D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
+  assert.equal(D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
+  assert.equal(env.store.run("countPartStock", { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }).ok, true);
+  assert.equal(env.store.run("issueOrderParts", { orderId: "DEMO-26001" }).ok, true);
+  html = await env.render(page);
+  assert.match(html, /data-rf-open="returnParts"[^>]*>คืนของเหลือ</);
+  assert.match(html, /data-rf-open="undoParts"[^>]*>ยกเลิกการเบิกจ่าย</);
+  // บทบาทอื่น: ไม่เห็นปุ่มและเปิด dialog ไม่ได้
+  for (const id of ["B04", "B07"]) {
+    env.store.setUser(id);
+    html = await env.render(page);
+    assert.doesNotMatch(html, /data-rf-open="returnParts"|data-rf-open="undoParts"/, id);
+    assert.equal(D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }), null, id);
+    assert.equal(D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }), null, id);
+  }
+  env.store.setUser("B03"); // ฝ่ายวางแผน
+  html = await env.render(page);
+  assert.match(html, /data-rf-open="returnParts"/);
+  assert.match(html, /data-rf-open="undoParts"/);
+  env.store.setUser("B08");
+  // คืนของเหลือ: หนึ่งแถวต่อรายการที่เบิกจ่าย พร้อมช่องจำนวนและเหตุผล
+  let dialog = D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }).html;
+  clean(dialog);
+  assert.equal((dialog.match(/name="itemCode\[\]"/g) ?? []).length, 7);
+  assert.equal((dialog.match(/name="qty\[\]"/g) ?? []).length, 7);
+  assert.match(dialog, /data-rf-form="returnOrderParts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
+  assert.match(dialog, /name="reason"[^>]*required/);
+  assert.match(dialog, /P-STK-01[\s\S]*120/);
+  const sent = env.store.run("returnOrderParts", { orderId: "DEMO-26001", lines: [{ itemCode: "P-STK-01", qty: 120 }], reason: "ใช้ไม่หมด" });
+  assert.equal(sent.ok, true, sent.error?.message);
+  dialog = D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }).html;
+  assert.match(dialog, /name="qty\[\]" type="number" readonly/, "an item that is fully returned has a read-only box (the rows keep their order)");
+  assert.equal((dialog.match(/name="qty\[\]"/g) ?? []).length, 7);
+  // ยกเลิกการเบิกจ่าย: ถามเหตุผลและบอกว่าทุกอย่างกลับเข้าสต็อก
+  dialog = D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }).html;
+  clean(dialog);
+  assert.match(dialog, /data-rf-form="undoOrderParts"/);
+  assert.match(dialog, /name="reason"[^>]*required/);
+  assert.match(dialog, /กลับเข้าสต็อก/);
+  assert.doesNotMatch(dialog, /P-STK-01/, "the fully returned item has nothing left to give back");
+  assert.match(dialog, /P-BOX-01/);
+  assert.equal(env.store.run("undoOrderParts", { orderId: "DEMO-26001", reason: "เบิกผิดใบ" }).ok, true);
+  html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"|data-rf-open="undoParts"/, "after the undo nothing is issued again");
+  assert.match(html, /data-rf-open="issueParts"/, "and the issue button is back");
+  // ประวัติของชิ้น: ชนิดคืนและเหตุผล
+  const history = D.partHistory(env.ctx("p=stock"), { code: "P-STK-01" }).html;
+  clean(history);
+  assert.match(history, /คืน[\s\S]*DEMO-26001[\s\S]*ใช้ไม่หมด/);
+  const box = D.partHistory(env.ctx("p=stock"), { code: "P-BOX-01" }).html;
+  assert.match(box, /คืน[\s\S]*เบิกผิดใบ/);
+  // บันทึกการใช้งานเรียกชื่อการกระทำเป็นภาษาไทย
+  assert.ok(env.store.data().audit.some((row) => row.action === "ยกเลิกการเบิกจ่ายของซื้อ"));
+  // เบิกจ่ายใหม่แล้วคืนของเหลือครบทุกรายการ: ปุ่มคืนของเหลือหายไป แต่ยกเลิกการเบิกจ่ายยังอยู่ (พางานกลับเป็นรอเบิกได้)
+  assert.equal(env.store.run("issueOrderParts", { orderId: "DEMO-26001" }).ok, true);
+  const rules = env.context.MNP_BOM_RULES;
+  const all = rules.partReturnLines(env.store.data(), "DEMO-26001").filter((line) => line.returnable > 0).map((line) => ({ itemCode: line.itemCode, qty: line.returnable }));
+  assert.ok(all.length > 0);
+  assert.equal(env.store.run("returnOrderParts", { orderId: "DEMO-26001", lines: all, reason: "คืนครบ" }).ok, true);
+  html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return → no leftover button");
+  assert.match(html, /data-rf-open="undoParts"/, "the undo stays");
+});

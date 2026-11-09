@@ -931,6 +931,33 @@
     }
     return onOrder;
   }
+  // คืนของซื้อ: ยอดที่คืนไปแล้วของ (เลข PI, รหัส) = ผลรวมประวัติ 'return' ตั้งแต่ประวัติ 'issue' ล่าสุดของคู่นี้ (ตรงกับ private.bom_part_returned: หลังยกเลิกการเบิกจ่ายแล้วเบิกจ่ายใหม่ ของเหลือรอบก่อนไม่นับ)
+  // stockMoves ต้องเรียงตามลำดับเกิดเหตุการณ์ (เก่า → ใหม่) เหมือน snapshot ของฐานข้อมูล
+  function partReturned(stockMoves, piNo, itemCode) {
+    let total = 0;
+    for (const move of stockMoves ?? []) {
+      if (move.ref !== piNo || move.itemCode !== itemCode) continue;
+      if (move.kind === "issue") total = 0;
+      else if (move.kind === "return") total += Number(move.qty) || 0;
+    }
+    return Math.round(total * 1e4) / 1e4;
+  }
+  // รายการของซื้อที่เบิกจ่ายแล้วของใบ (งาน ST / PURCHASED ที่ done รวมต่อรหัส) พร้อมยอดที่คืนไปแล้วและที่ยังคืนได้ · เรียงตามรหัส
+  function partReturnLines(data, orderId) {
+    const { jobs = [], stockMoves = [] } = data ?? {};
+    const byItem = new Map();
+    for (const job of jobs) {
+      if (job.orderId !== orderId || job.dept !== "ST" || job.kind !== "PURCHASED" || job.status !== "done") continue;
+      const line = byItem.get(job.itemCode) ?? { itemCode: job.itemCode, name: job.name, uom: job.uom, issued: 0 };
+      line.issued += Number(job.qtyDone) || 0;
+      byItem.set(job.itemCode, line);
+    }
+    return [...byItem.values()].sort((a, b) => (a.itemCode < b.itemCode ? -1 : a.itemCode > b.itemCode ? 1 : 0)).map((line) => {
+      const issued = Math.round(line.issued * 1e4) / 1e4;
+      const returned = partReturned(stockMoves, orderId, line.itemCode);
+      return { ...line, issued, returned, returnable: Math.max(0, Math.round((issued - returned) * 1e4) / 1e4) };
+    });
+  }
   function partNeeds(data, orderId) {
     const { jobs = [], orders = [], stock = [], purchaseOrders = [] } = data ?? {};
     const need = new Map();
@@ -1005,7 +1032,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

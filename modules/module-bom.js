@@ -193,6 +193,8 @@
     setStockCounts: (p) => ({ ...p, counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),
     // ฟอร์มคลังของซื้อ: itemCode[] + qty[] (+ safetyQty[] ถ้าแก้สต็อกขั้นต่ำได้) ตามลำดับแถว · ช่องว่าง = ไม่แตะค่าเดิม
     countPartStock: (p) => ({ counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "", safetyQty: listOf(p, "safetyQty")[index] ?? "" })) }),
+    // ฟอร์มคืนของเหลือ: itemCode[] + qty[] ตามลำดับแถว → lines (เฉพาะแถวที่กรอกจำนวน · เว้นว่างหรือ 0 = ไม่คืนรายการนั้น)
+    returnOrderParts: (p) => ({ orderId: p.orderId, reason: p.reason, lines: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0) }),
     // ฟอร์มขั้นตอนผลิต: processCode[] + minutesPerPc[] → steps ตามลำดับแถว (แถวที่ไม่เลือกขั้นตอนถูกข้าม)
     // inputCode[] + inputStep[] → step.inputs (ส่วนประกอบที่เลือก "ขั้นแรก" ไม่ถูกผูก จึงแสดงที่ขั้นแรก)
     saveRouting: (p) => {

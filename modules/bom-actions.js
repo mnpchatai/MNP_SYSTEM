@@ -988,14 +988,14 @@
   }
 
   // ---------- สต็อกของซื้อ (หน้า "คลังของซื้อ") ----------
-  // หนึ่งแถวต่อรหัสของซื้อ { itemCode, qty, safetyQty, countedAt, countedBy, updatedAt } + ประวัติ stockMoves { id, itemCode, kind: count|receive|issue, qty (มีเครื่องหมาย), balance, ref, at, by }
+  // หนึ่งแถวต่อรหัสของซื้อ { itemCode, qty, safetyQty, countedAt, countedBy, updatedAt } + ประวัติ stockMoves { id, itemCode, kind: count|receive|issue|return, qty (มีเครื่องหมาย), balance, ref, at, by, note (เหตุผลของการคืน | null) }
   // โหมดฐานข้อมูล: ประวัติและการหักสต็อกตอนเบิกจ่ายเป็นของเซิร์ฟเวอร์ (client ส่งเฉพาะแถว stock ของ countPartStock) ฝั่งนี้คำนวณไว้แสดงทันทีแล้วใช้ค่าจากเซิร์ฟเวอร์ทับ
   const qtyRound = (n) => Math.round(n * 1e4) / 1e4;
   const stockRowOf = (d, code) => (d.stock ?? []).find((row) => row.itemCode === code) ?? null;
-  function pushMove(d, ctx, itemCode, kind, qty, balance, ref) {
+  function pushMove(d, ctx, itemCode, kind, qty, balance, ref, note = null) {
     d.stockMoves ??= [];
     if (ctx.remote) return; // โหมดฐานข้อมูล: ประวัติเซิร์ฟเวอร์เขียนเอง มากับคำตอบของการบันทึก
-    d.stockMoves.push({ id: `local-${ctx.now}-${d.stockMoves.length + 1}`, itemCode, kind, qty, balance, ref: ref ?? null, at: ctx.now, by: ctx.user?.name ?? "" });
+    d.stockMoves.push({ id: `local-${ctx.now}-${d.stockMoves.length + 1}`, itemCode, kind, qty, balance, ref: ref ?? null, at: ctx.now, by: ctx.user?.name ?? "", note });
   }
   const filled = (value) => String(value ?? "").trim() !== "";
   // counts: [{ itemCode, qty?, safetyQty? }] ช่องที่เว้นว่างไม่แตะค่าเดิม · ยอดที่เปลี่ยนต้องเป็นคลัง (ST/WH) ฝ่ายวางแผน หรือผู้จัดการ · สต็อกขั้นต่ำต้องเป็นฝ่ายวางแผนหรือผู้จัดการ · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน
@@ -1075,6 +1075,68 @@
     return { issued: plan.lines.length, summary: `${plan.lines.length} รายการ` };
   }
 
+  // ---------- คืนของซื้อเข้าสต็อก ----------
+  // ผู้ทำ = คนเดียวกับที่เบิกจ่ายได้ (ST / ฝ่ายวางแผน / ผู้จัดการ) · ต้องระบุเหตุผล (เก็บในประวัติสต็อก) · ผลคืนค่า request = แถว partReturns ที่โหมดฐานข้อมูลส่งไปให้เซิร์ฟเวอร์คำนวณเอง (ไม่ส่งสำเนาที่คำนวณในเครื่อง)
+  // ยอดที่คืนได้ต่อรายการ = ยอดเบิกจ่าย - ยอดที่คืนไปแล้วตั้งแต่การเบิกจ่ายล่าสุด (rules.partReturnLines)
+  const returnReason = (value) => text(value, "เหตุผล", 200);
+  function addReturn(d, ctx, order, itemCode, qty, reason) {
+    let row = stockRowOf(d, itemCode);
+    if (!row) { row = { itemCode, qty: 0, safetyQty: 0, countedAt: null, countedBy: "", updatedAt: ctx.now }; d.stock.push(row); }
+    row.qty = qtyRound(row.qty + qty);
+    row.updatedAt = ctx.now;
+    pushMove(d, ctx, itemCode, "return", qty, row.qty, order.id, reason);
+  }
+  // ยกเลิกการเบิกจ่ายของซื้อทั้งใบ: ของที่เบิกจ่ายแล้วคืนสต็อก (ส่วนที่ยังไม่เคยคืนเป็นของเหลือ) งานของซื้อกลับไปรอเบิกจ่าย ใบไม่เปลี่ยนสถานะ
+  function undoOrderParts(d, { orderId, reason }, ctx) {
+    const user = requireUser(ctx);
+    if (!canIssueParts(user)) fail("ยกเลิกการเบิกจ่ายของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");
+    const why = returnReason(reason);
+    const order = orderById(d, orderId);
+    if (!["released", "in_progress"].includes(order.status)) fail("ยกเลิกการเบิกจ่ายได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    d.stock ??= [];
+    const lines = rules().partReturnLines(d, order.id);
+    if (!lines.length) fail("ใบนี้ยังไม่ได้เบิกจ่ายของซื้อ");
+    let moves = 0;
+    for (const line of lines) {
+      if (line.returnable > 0) { addReturn(d, ctx, order, line.itemCode, line.returnable, why); moves += 1; }
+    }
+    for (const job of d.jobs) {
+      if (job.orderId !== order.id || !isPartJob(job) || job.status !== "done") continue;
+      job.status = "queued";
+      job.qtyDone = 0;
+      delete job.doneAt;
+    }
+    audit(d, ctx, "ยกเลิกการเบิกจ่ายของซื้อ", `${order.id} ${lines.length} รายการ · ${why}`);
+    return { returned: moves, summary: `${lines.length} รายการ`, request: { orderId: order.id, mode: "undo", reason: why } };
+  }
+  // คืนของเหลือ: lines [{ itemCode, qty }] คืนรายการละจำนวนที่พิมพ์ (ไม่เกินที่คืนได้) งานยังเป็น done ใบยังนับว่าเบิกจ่ายแล้ว · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน
+  function returnOrderParts(d, { orderId, lines, reason }, ctx) {
+    const user = requireUser(ctx);
+    if (!canIssueParts(user)) fail("คืนของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");
+    const why = returnReason(reason);
+    const order = orderById(d, orderId);
+    if (!["released", "in_progress", "completed"].includes(order.status)) fail("คืนของเหลือได้เฉพาะใบที่ปล่อยผลิตแล้ว (ใบที่ยกเลิกคืนไม่ได้)");
+    d.stock ??= [];
+    const issued = new Map(rules().partReturnLines(d, order.id).map((line) => [line.itemCode, line]));
+    const entries = (Array.isArray(lines) ? lines : []).filter((entry) => filled(entry?.qty));
+    if (!entries.length) fail("ยังไม่ได้กรอกจำนวนที่คืน");
+    if (entries.length > 100) fail("คืนได้ไม่เกิน 100 รายการต่อครั้ง");
+    const seen = new Set();
+    const plan = entries.map((entry) => {
+      const code = rules().canonicalCode(entry.itemCode);
+      if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
+      seen.add(code);
+      const line = issued.get(code) ?? fail(`${code} ไม่ได้เบิกจ่ายให้ใบนี้`);
+      const qty = qtyRound(num(entry.qty, "จำนวนที่คืน"));
+      if (qty > 1e9) fail("ตัวเลขใหญ่เกินไป");
+      if (qty > line.returnable) fail(`${code} คืนได้อีกไม่เกิน ${rules().fmtQty(line.returnable)} (เบิกจ่าย ${rules().fmtQty(line.issued)} คืนไปแล้ว ${rules().fmtQty(line.returned)})`);
+      return { code, qty };
+    }).sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+    for (const { code, qty } of plan) addReturn(d, ctx, order, code, qty, why);
+    audit(d, ctx, "คืนของเหลือของซื้อ", `${order.id} ${plan.length} รายการ · ${why}`);
+    return { returned: plan.length, summary: `${plan.length} รายการ`, request: { orderId: order.id, mode: "leftover", reason: why, lines: plan.map(({ code, qty }) => ({ itemCode: code, qty })) } };
+  }
+
   function linkJobToRubberFlow(d, { jobId, woId, kg }, ctx) {
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
@@ -1133,7 +1195,7 @@
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
-    reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts,
+    reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
     helpers: { customerName, customerKey, startedJobs, isPartJob, canIssueParts, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
