@@ -1539,3 +1539,36 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
   assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return → no leftover button");
   assert.match(html, /data-rf-open="undoParts"/, "the undo stays");
 });
+
+test("import page: the group selected when pressing import is saved on new items, and a second import reuses the XP- subpart", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const paste = { ...env.root, value: "" };
+  const report = { ...env.root, innerHTML: "" };
+  const importButton = { ...env.root, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  report.querySelector = (selector) => (selector === "[data-bom-import]" && /data-bom-import/.test(report.innerHTML) ? importButton : null);
+  const check = { ...env.root, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  const group = { value: "TOY" };
+  const rootNode = { ...env.root, querySelector: (selector) => ({ "[data-bom-paste]": paste, "[data-bom-report]": report, "[data-bom-check]": check, "[data-bom-group]": group, "[data-bom-source]": { value: "กลุ่ม.tsv" } })[selector] ?? null, querySelectorAll: () => [] };
+  const ctx = env.ctx("p=import");
+  const page = env.context.MNP_BOM_PAGES.import(ctx);
+  page.bind(rootNode, ctx);
+  paste.value = ["ITEM\tCODE\tNAME\tรหัสแผนก\tแผนกผู้ผลิต\tจำนวนที่ใช้ต่อชุด\tหน่วยนับ", "G-01(P)-Y\tG-01\tสินค้า G\tPK\tPK\t-\tชุด", "G-01(P)-Y\t-\tแกน G\tPK\tPK-PK\t1\tชิ้น/pcs"].join("\n");
+  check.handlers.click(); // the auto-check after choosing a sheet, with the group still TOY
+  assert.match(report.innerHTML, /ใหม่ 1/);
+  group.value = "IND"; // the user changes the group after the check, then imports
+  importButton.handlers.click({ currentTarget: importButton });
+  const items = () => env.ctx("p=import").data.items;
+  assert.equal(items().find((item) => item.code === "G-01(P)-Y")?.group, "IND");
+  const subpart = items().filter((item) => item.kind === "SUBPART" && item.name === "แกน G");
+  assert.equal(subpart.length, 1);
+  assert.equal(subpart[0].group, "IND", "the preview never fixed the group: the selector at import time decides");
+  const before = items().filter((item) => item.kind === "SUBPART").length;
+  env.context.MNP_BOM_PAGES.import(env.ctx("p=import")).bind(rootNode, env.ctx("p=import")); // the page renders again after an import
+  check.handlers.click(); // the same sheet again
+  assert.match(report.innerHTML, /ใช้รหัสเดิม 1/);
+  group.value = "TOY";
+  importButton.handlers.click({ currentTarget: importButton });
+  assert.equal(items().filter((item) => item.kind === "SUBPART").length, before, "no new XP- code on re-import");
+  assert.equal(items().find((item) => item.code === "G-01(P)-Y")?.group, "IND", "existing items keep their group");
+});

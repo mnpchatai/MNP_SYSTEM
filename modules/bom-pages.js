@@ -1728,8 +1728,9 @@
           const group = rootNode.querySelector("[data-bom-group]")?.value || "TOY";
           const source = String(rootNode.querySelector("[data-bom-source]")?.value || "Excel").slice(0, 80);
           // เลข XP- ของชิ้นที่ไม่มีรหัส: โหมดฐานข้อมูลต่อรหัสสุ่ม (ctx.store.idSuffix · ทั้งชุดใช้รหัสเดียว) กันผู้วางแผนสองคนได้รหัสซ้ำ · โหมดในเครื่องนับเหมือนเดิม
-          const result = rules.buildFromFlat(flat, { group, ...rules.subpartOptions(ctx.data.items, remote ? ctx.store.idSuffix?.() : "") });
-          built = { items: [...result.items.values()], boms: [...result.boms.entries()].map(([parentCode, lines]) => ({ parentCode, lines })), group, source };
+          // ชิ้น SUBPART ที่มีอยู่แล้ว (ชื่อ+หน่วย+แผนกเดียวกัน) ใช้รหัส XP- เดิม ไม่ออกรหัสใหม่ · กลุ่มสินค้าไม่ได้ถูกตรึงตอนตรวจสอบ: อ่านจากช่องตอนกดนำเข้า (ด้านล่าง)
+          const result = rules.buildFromFlat(flat, { group, existingSubparts: rules.subpartIndex(ctx.data.items), ...rules.subpartOptions(ctx.data.items, remote ? ctx.store.idSuffix?.() : "") });
+          built = { items: [...result.items.values()], boms: [...result.boms.entries()].map(([parentCode, lines]) => ({ parentCode, lines })), source };
           const r = result.report;
           const known = new Set(ctx.data.items.map((item) => item.code)); // ชุดเดียว ไม่ไล่หาทีละชิ้น (ชีตทั้งไฟล์มีหลายพันชิ้น)
           const existing = built.items.filter((item) => known.has(rules.canonicalCode(item.code))).length;
@@ -1750,7 +1751,7 @@
               if (why) kindIssues.push(`${entry.parentCode} → ${line.childCode} (${why})`);
             }
           }
-          report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ${esc(String(r.subparts))} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
+          report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ใหม่ ${esc(String(r.subparts))}${r.subpartsReused ? ` (ใช้รหัสเดิม ${esc(String(r.subpartsReused))})` : ""} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
             ${sheetNote ? ui.callout("warn", esc(sheetNote)) : ""}
             ${tooBig ? ui.callout("bad", `ข้อมูลชุดนี้ (${esc(rules.fmtQty(Math.round(payloadSize / 1000)))} KB) จะเกินเพดานของ localStorage นำเข้าเฉพาะสินค้าที่ต้องใช้ทดสอบ (วางทีละกลุ่ม) หรือรีเซ็ตข้อมูลก่อน`) : ""}
             ${unlinked.length ? ui.callout("warn", `สูตรยางที่ยังไม่ผูกกับ RubberFlow: ${esc(unlinked.join(", "))} (ผูกได้ภายหลังที่เมนูสูตรยาง)`) : ""}
@@ -1763,7 +1764,9 @@
           ui.labelTables(report);
           report.querySelector("[data-bom-import]")?.addEventListener("click", (event) => {
             event.currentTarget.disabled = true;
-            if (ctx.runAction("importFlat", built, "นำเข้าแล้ว {result}")) location.hash = ctx.url("items", { dept: "PK" });
+            // กลุ่มสินค้าที่เลือกอยู่ตอนกดนำเข้าเป็นตัวตัดสิน (ผู้ใช้อาจเปลี่ยนช่องหลังตรวจสอบอัตโนมัติ) · ใช้กับชิ้นใหม่ ชิ้นที่มีอยู่แล้วไม่ถูกแก้
+            const importGroup = rootNode.querySelector("[data-bom-group]")?.value || "TOY";
+            if (ctx.runAction("importFlat", { ...built, group: importGroup }, "นำเข้าแล้ว {result}")) location.hash = ctx.url("items", { dept: "PK" });
           });
         } catch (error) {
           report.innerHTML = ui.callout("bad", esc(error?.message ?? String(error)));

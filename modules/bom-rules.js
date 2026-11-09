@@ -504,15 +504,31 @@
     return { subpartStart: Math.max(0, ...numbers) + 1, subpartSuffix: suffix };
   }
 
+  // ชิ้นไม่มีรหัส (SUBPART) ที่ "เหมือนกัน" = ชื่อ (ตัดช่องว่างหัวท้าย ยุบช่องว่างกลาง ไม่สนตัวพิมพ์) + หน่วย + แผนกเจ้าของ ตรงกันทั้งสามอย่าง
+  // นำเข้าชีตเดิมซ้ำจึงได้รหัส XP- เดิม ไม่ออกรหัสใหม่ทุกครั้ง · ชื่อตัดที่ 160 ตัวอักษรเหมือนตอนบันทึกชิ้นงาน (importFlat)
+  const subpartKey = (name, uom, dept) => `${String(name ?? "").slice(0, 160).trim().replace(/\s+/g, " ").toLowerCase()}|${uom ?? ""}|${dept ?? ""}`;
+  const xpNumber = (code) => { const match = /^XP-(\d+)/i.exec(String(code ?? "")); return match ? Number(match[1]) : Infinity; };
+  const smallerCode = (a, b) => (xpNumber(a) - xpNumber(b) || (a < b ? -1 : a > b ? 1 : 0)) <= 0 ? a : b;
+  // ดัชนีชิ้น SUBPART ที่มีอยู่ → รหัส (ถ้าซ้ำกันหลายชิ้นใช้รหัสที่น้อยที่สุด ผลคงที่ ไม่ควบรวมหรือลบของเดิม) ส่งเข้า buildFromFlat เป็น existingSubparts
+  function subpartIndex(items) {
+    const index = new Map();
+    for (const item of items ?? []) {
+      if (item?.kind !== "SUBPART" || !item.code) continue;
+      const key = subpartKey(item.name, item.uom, item.ownerDept);
+      index.set(key, index.has(key) ? smallerCode(index.get(key), item.code) : item.code);
+    }
+    return index;
+  }
+
   // ---------- ประกอบต้นไม้จากชีตแบน ----------
   // แต่ละ ITEM: แถว PK ที่รหัส = ฐานของ ITEM คือ FG · SE เป็นลูกของ FG · RB เป็นลูกของ SE ล่าสุด (ปริมาณจากสูตร rbPerSe ไม่ใช่ตัวเลขในชีตที่ซ้ำกับ SE) ·
   // คู่ PT-ST/BG-ST/BG-PT เป็นลูกของชิ้น PT/BG ล่าสุด · GR-ST ลูกของ SE ล่าสุด · คู่ PK-* ลูกของ FG · บรรทัดซ้ำ (ลูกเดียวกันใต้พ่อเดียวกัน) รวมปริมาณ
   // คืน { items: Map(code → item), boms: Map(parentCode → lines[]), report }
   const MADE_FROM_PURCHASED = Object.freeze(["BG", "PT", "SE", "RB"]); // ชนิดที่แถวหลังยกระดับของซื้อให้ได้ (แผนกผลิตเอง)
-  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1, subpartSuffix = "" } = {}) {
+  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1, subpartSuffix = "", existingSubparts = null } = {}) {
     const items = new Map();
     const boms = new Map();
-    const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, variants: 0, colored: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
+    const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, subpartsReused: 0, variants: 0, colored: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
     let subpartSeq = subpartStart;
     const subpartByName = new Map();
 
@@ -540,8 +556,14 @@
       return item;
     };
     const subpartFor = (row) => {
-      const key = `${row.name}|${row.uom}`;
+      const key = subpartKey(row.name, normalizeUom(row.uom).code, ownerDeptOf("SUBPART", row.pair));
       if (!subpartByName.has(key)) {
+        const reused = existingSubparts?.get(key);
+        if (reused) {
+          subpartByName.set(key, reused);
+          report.subpartsReused += 1;
+          return reused;
+        }
         subpartByName.set(key, `XP-${String(subpartSeq).padStart(5, "0")}${subpartSuffix ? `-${subpartSuffix}` : ""}`.toUpperCase());
         subpartSeq += 1;
         report.subparts += 1;
@@ -1032,7 +1054,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

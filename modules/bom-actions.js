@@ -372,6 +372,7 @@
   }
 
   // ---------- นำเข้าจากชีต (ผลของ rules.buildFromFlat ที่แปลง Map เป็นอาร์เรย์แล้ว) ----------
+  // กลุ่มสินค้า: p.group (ที่เลือกตอนกดนำเข้า) ชนะกลุ่มที่ติดมากับชิ้นตอนตรวจสอบ · ใช้กับชิ้นใหม่เท่านั้น ชิ้นที่มีอยู่แล้วไม่ถูกแตะ
   function importFlat(d, p, ctx) {
     const user = requirePlanner(ctx, "นำเข้า BOM");
     const R = rules();
@@ -396,7 +397,7 @@
         if (!existing.rubber && raw.rubber) existing.rubber = raw.rubber;
         stats.itemsMerged += 1;
       } else {
-        const added = { code, kind: raw.kind, name: String(raw.name ?? code).slice(0, 160), ownerDept: R.DEPTS.includes(raw.ownerDept) ? raw.ownerDept : R.ownerDeptOf(raw.kind), uom: R.UOMS[raw.uom] ? raw.uom : "other", weightG: Number(raw.weightG) || 0, group: raw.group || p.group || "TOY", legacyCodes: [...(raw.legacyCodes ?? [])], rubber: raw.rubber ?? null, active: true, createdAt: ctx.now, importedFrom: p.source || "Excel" };
+        const added = { code, kind: raw.kind, name: String(raw.name ?? code).slice(0, 160), ownerDept: R.DEPTS.includes(raw.ownerDept) ? raw.ownerDept : R.ownerDeptOf(raw.kind), uom: R.UOMS[raw.uom] ? raw.uom : "other", weightG: Number(raw.weightG) || 0, group: p.group || raw.group || "TOY", legacyCodes: [...(raw.legacyCodes ?? [])], rubber: raw.rubber ?? null, active: true, createdAt: ctx.now, importedFrom: p.source || "Excel" };
         d.items.push(added);
         byCode.set(code, added);
         stats.itemsAdded += 1;
