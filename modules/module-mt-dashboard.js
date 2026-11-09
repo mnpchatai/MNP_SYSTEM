@@ -177,7 +177,7 @@
   const detailHintIfIdle = (card, noun, resolve) => (selection?.card === card && resolve(selection.key) ? "" : detailHint(noun));
 
   // ---- ชิ้นส่วนของหน้า ----
-  function controlsHtml(filters, rows, today, periodSums, backSums) {
+  function controlsHtml(filters, rows, today) {
     const presets = presetsFor(today).map((preset) => {
       const active = filters.year === preset.year && filters.from === preset.from && filters.to === preset.to;
       return `<a class="nd-chip" href="${hrefWith(filters, { year: preset.year, from: preset.from, to: preset.to })}" aria-current="${active}">${preset.label}</a>`;
@@ -404,7 +404,7 @@
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ กลับหน้า MT</a></div></div>
       <div class="nd">
         <p class="nd-warn">กำลังทดลองใช้ มีงานค้าง คอขวด เวลาที่ใช้ คุณภาพการซ่อม เครื่องจักรที่เสียบ่อย แผนกที่แจ้งซ่อมบ่อย และเวลาซ่อมของช่าง หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
-        <div class="nd-controls">${controlsHtml(filters, rows, today, period, back)}</div>
+        <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
         <section class="card nd-card" data-card="stage">${stageHtml(stages, filters)}</section>

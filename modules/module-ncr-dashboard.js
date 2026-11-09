@@ -158,7 +158,7 @@
   }
 
   // ---- ชิ้นส่วนของหน้า ----
-  function controlsHtml(filters, rows, today, sums) {
+  function controlsHtml(filters, rows, today) {
     const presets = presetsFor(today).map((preset) => {
       const active = filters.year === preset.year && filters.from === preset.from && filters.to === preset.to;
       return `<a class="nd-chip" href="${hrefWith(filters, { year: preset.year, from: preset.from, to: preset.to })}" aria-current="${active}">${preset.label}</a>`;
@@ -426,7 +426,7 @@
     return `<div class="page-heading request-module-header" data-module="ncr"><div><div class="eyebrow">QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">‹ กลับหน้า NCR</a></div></div>
       <div class="nd">
-        <div class="nd-controls">${controlsHtml(filters, rows, today, sums)}</div>
+        <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
         <section class="card nd-card" data-card="act">${actHtml(list, today)}</section>
