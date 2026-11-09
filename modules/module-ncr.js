@@ -863,7 +863,8 @@
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
     const part3Filled = Boolean(ncr.responded_at || ncr.root_cause || ncr.correction || ncr.prevention);
     const part4Filled = Boolean(ncr.followed_up_at || ncr.followup_note || ncr.signoff_qa_at || ncr.signoff_factory_at || ncr.signoff_gm_at || ncr.closed_at);
-    const part2Filled = Boolean(ncr.disposed_at || ncr.dispositions?.length || ncr.ncr_responsibilities?.length || ncr.response_due || ncr.disposition_note);
+    // กำหนดตอบตั้งตั้งแต่ออกใบ (อยู่ในฟอร์มพิจารณาแล้ว) จึงไม่นับว่าส่วนที่ 2 มีข้อมูล
+    const part2Filled = Boolean(ncr.disposed_at || ncr.dispositions?.length || ncr.ncr_responsibilities?.length || ncr.disposition_note);
     const parts = [part1, ...(part2Filled ? [part2] : []), ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
     // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
     const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
