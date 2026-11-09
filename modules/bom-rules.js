@@ -499,21 +499,25 @@
   // ตัวเลือกเลข XP- ของชิ้นที่ไม่มีรหัสตอนนำเข้า · ในเครื่อง = นับชิ้น SUBPART + 1 (เหมือนเดิม)
   // โหมดฐานข้อมูล (ส่งรหัสสุ่ม suffix มา) = เลขสูงสุดของ XP- ที่มีอยู่ + 1 และต่อ -suffix: ผู้วางแผนสองคนที่นำเข้าจากเวอร์ชันเดียวกันจึงไม่ได้รหัสซ้ำกัน (ซ้ำ = BOM_STALE ทั้งชุดถูกย้อนกลับ)
   function subpartOptions(items, suffix = "") {
-    if (!suffix) return { subpartStart: items.filter((item) => item.kind === "SUBPART").length + 1 };
     const numbers = items.map((item) => /^XP-(\d+)/.exec(String(item.code ?? ""))).filter(Boolean).map((match) => Number(match[1]));
+    // โหมดในเครื่อง: ต่อจากเลขสูงสุดที่มีอยู่ (หรือจำนวนชิ้น SUBPART ถ้ามากกว่า) ไม่ใช่แค่จำนวน + 1 ซึ่งชนรหัสเดิมเมื่อเลขไม่ต่อเนื่อง
+    if (!suffix) return { subpartStart: Math.max(items.filter((item) => item.kind === "SUBPART").length, ...numbers) + 1 };
     return { subpartStart: Math.max(0, ...numbers) + 1, subpartSuffix: suffix };
   }
 
   // ชิ้นไม่มีรหัส (SUBPART) ที่ "เหมือนกัน" = ชื่อ (ตัดช่องว่างหัวท้าย ยุบช่องว่างกลาง ไม่สนตัวพิมพ์) + หน่วย + แผนกเจ้าของ ตรงกันทั้งสามอย่าง
   // นำเข้าชีตเดิมซ้ำจึงได้รหัส XP- เดิม ไม่ออกรหัสใหม่ทุกครั้ง · ชื่อตัดที่ 160 ตัวอักษรเหมือนตอนบันทึกชิ้นงาน (importFlat)
-  const subpartKey = (name, uom, dept) => `${String(name ?? "").slice(0, 160).trim().replace(/\s+/g, " ").toLowerCase()}|${uom ?? ""}|${dept ?? ""}`;
+  // แผนกที่ไม่อยู่ในรายการแผนกใช้แผนกเริ่มต้นของ SUBPART เหมือนตอนบันทึก (importFlat) ไม่งั้นคีย์ของแถวในชีตไม่ตรงกับชิ้นที่บันทึกไว้แล้วจะออกรหัสใหม่ทุกรอบ
+  const subpartDept = (dept) => (DEPTS.includes(dept) ? dept : KINDS.SUBPART.dept);
+  const subpartKey = (name, uom, dept) => `${String(name ?? "").slice(0, 160).trim().replace(/\s+/g, " ").toLowerCase()}|${uom ?? ""}|${subpartDept(dept)}`;
   const xpNumber = (code) => { const match = /^XP-(\d+)/i.exec(String(code ?? "")); return match ? Number(match[1]) : Infinity; };
   const smallerCode = (a, b) => (xpNumber(a) - xpNumber(b) || (a < b ? -1 : a > b ? 1 : 0)) <= 0 ? a : b;
   // ดัชนีชิ้น SUBPART ที่มีอยู่ → รหัส (ถ้าซ้ำกันหลายชิ้นใช้รหัสที่น้อยที่สุด ผลคงที่ ไม่ควบรวมหรือลบของเดิม) ส่งเข้า buildFromFlat เป็น existingSubparts
+  // ชิ้นที่เลิกใช้ (active = false) ไม่ถูกนำกลับมาใช้ (เหมือน saveBom ที่ไม่รับลูกที่เลิกใช้) ถ้าไม่มีชิ้นที่ยังใช้งานตรงกันจึงออกรหัสใหม่
   function subpartIndex(items) {
     const index = new Map();
     for (const item of items ?? []) {
-      if (item?.kind !== "SUBPART" || !item.code) continue;
+      if (item?.kind !== "SUBPART" || !item.code || item.active === false) continue;
       const key = subpartKey(item.name, item.uom, item.ownerDept);
       index.set(key, index.has(key) ? smallerCode(index.get(key), item.code) : item.code);
     }

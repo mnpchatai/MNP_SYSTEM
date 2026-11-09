@@ -28,9 +28,10 @@ const PI_TSV = [
   row(["DEMO-AT-01(B)-A", "4", "F13-028", "ST", "-", "-", "-", "-", "-", "-", "ถุงพลาสติก IPP 9x13", "PK-ST", "0.01", "-", "-", "-", "-", "-", "-", "กก.(112pcs)", "-"]),
 ].join("\n");
 
-test("XP codes for uncoded parts: counted from the SUBPART items locally, continued after the highest XP code with a random suffix when the database is the source", () => {
+test("XP codes for uncoded parts: continued after the highest XP code (locally without a suffix, with a random suffix when the database is the source)", () => {
   const items = [{ code: "XP-00007", kind: "SUBPART" }, { code: "XP-00002-ABC123", kind: "SUBPART" }, { code: "P-1", kind: "PURCHASED" }];
-  assert.deepEqual(rules.subpartOptions(items), { subpartStart: 3 }, "local mode counts SUBPART items + 1, as before");
+  assert.deepEqual(rules.subpartOptions(items), { subpartStart: 8 }, "local mode continues after the highest XP number too (count + 1 = 3 would later collide with an existing code)");
+  assert.deepEqual(rules.subpartOptions([{ code: "SP-1", kind: "SUBPART" }, { code: "SP-2", kind: "SUBPART" }]), { subpartStart: 3 }, "with no XP numbers the SUBPART count still sets the start");
   assert.deepEqual(rules.subpartOptions(items, "a1b2c3"), { subpartStart: 8, subpartSuffix: "a1b2c3" });
   assert.deepEqual(rules.subpartOptions([], "a1b2c3"), { subpartStart: 1, subpartSuffix: "a1b2c3" });
   // ชีตจริง: รหัส XP- ต่อรหัสสุ่ม (ตัวพิมพ์ใหญ่เหมือนรหัสอื่น) · ไม่ส่ง suffix = รูปเดิม
@@ -723,4 +724,24 @@ test("existing SUBPART items are reused by name (trim, inner spaces, case), uom 
     { code: "P-1", kind: "PURCHASED", name: "Core Rod", uom: "pcs", ownerDept: "PK" },
   ];
   assert.deepEqual(xp(build(dupes, sub("Core Rod"))).map((item) => item.code), ["XP-00003-ZZZ999"], "several matches: the smallest code, nothing merged or deleted");
+
+  // ชิ้นที่เลิกใช้ไม่ถูกนำกลับมาใช้: มีชิ้นที่ยังใช้งาน = ใช้ตัวนั้น แม้รหัสมากกว่า · มีแต่ชิ้นที่เลิกใช้ = ออกรหัสใหม่
+  const retired = [
+    { code: "XP-00002", kind: "SUBPART", name: "Core Rod", uom: "pcs", ownerDept: "PK", active: false },
+    { code: "XP-00004", kind: "SUBPART", name: "Core Rod", uom: "pcs", ownerDept: "PK" },
+  ];
+  assert.deepEqual(xp(build(retired, sub("Core Rod"))).map((item) => item.code), ["XP-00004"], "an active match wins over a smaller retired code");
+  assert.deepEqual(xp(build([retired[0]], sub("Core Rod"))).map((item) => item.code), ["XP-00003"], "only a retired match: a new code after the highest existing number, never the retired item's code");
+  assert.equal(rules.subpartOptions([{ code: "XP-00001", kind: "SUBPART" }, { code: "XP-00003", kind: "SUBPART" }]).subpartStart, 4, "local mode continues after the highest number, so a gap never collides");
+  assert.equal(build([retired[0]], sub("Core Rod")).report.subpartsReused, 0);
+
+  // แผนกในคู่ผู้ผลิตที่ไม่อยู่ในรายการแผนก: คีย์ใช้แผนกเริ่มต้นของ SUBPART เหมือนตอนบันทึก นำเข้าซ้ำจึงได้รหัสเดิม
+  const unknownDept = build([], sub("Odd Part", "XX-PK"));
+  const savedOdd = xp(unknownDept).map((item) => ({ ...item, ownerDept: rules.DEPTS.includes(item.ownerDept) ? item.ownerDept : "PK" }));
+  assert.deepEqual(xp(build(savedOdd, sub("Odd Part", "XX-PK"))).map((item) => item.code), [savedOdd[0].code], "an unknown department maps like the saved item, so the code is reused");
+
+  // โหมดฐานข้อมูล: รหัสมี suffix ถูกนำกลับมาใช้ และรหัสใหม่ต่อจากเลขสูงสุดพร้อม suffix ของรอบนี้
+  const remoteSaved = [{ code: "XP-00005-AB12CD", kind: "SUBPART", name: "Core Rod", uom: "pcs", ownerDept: "PK" }];
+  const remote = rules.buildFromFlat(rules.readFlatRows([head, fg, sub("Core Rod"), sub("New Part")].join("\n")), { existingSubparts: rules.subpartIndex(remoteSaved), ...rules.subpartOptions(remoteSaved, "ef34gh") });
+  assert.deepEqual(xp(remote).map((item) => item.code), ["XP-00005-AB12CD", "XP-00006-EF34GH"]);
 });
