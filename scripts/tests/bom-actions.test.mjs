@@ -1496,3 +1496,33 @@ test("returning purchased parts: order status rules and the planner group", () =
   assert.equal(r.stock.find((row) => row.itemCode === "P-STK-01").qty, 400);
   assert.equal(done.request.mode, "undo");
 });
+
+test("importing a sheet twice keeps one XP- item per subpart, and the group chosen at import time wins for new items only", () => {
+  const d = fresh();
+  const header = ["ITEM", "น.น RB/g", "CODE", "รหัสแผนก", "สินค้า/สูตรยาง", "สีSE/ประเภทยาง", "ความยาวSE/สีRB", "รู,ความหนา/ความยาวRB", "วงนอกSE/รูในRB", "วงนอกRB", "NAME", "แผนกผู้ผลิต", "จำนวนที่ใช้ต่อชุด", "ความยาวตัด", "หน่วย", "จำนวนชิ้นที่ได้ต่อเส้น RB", "หน่วย", "จำนวนที่ได้ต่อ 1 GR", "หน่วย", "หน่วยนับ RB", "น.น ต่อเส้น RB / ก.ก"].join("\t");
+  const tsv = [header,
+    ["GRP-01(P)-Y", "1", "GRP-01", "PK", "-", "-", "-", "-", "-", "-", "สินค้ากลุ่ม", "PK", "-", "-", "-", "-", "-", "-", "-", "ชุด / SET", "-"].join("\t"),
+    ["GRP-01(P)-Y", "2", "-", "PK", "-", "-", "-", "-", "-", "-", "แกนทดสอบ", "PK-PK", "1", "-", "-", "-", "-", "-", "-", "ชิ้น/pcs", "-"].join("\t"),
+    ["GRP-01(P)-Y", "3", "P-STK-01", "ST", "-", "-", "-", "-", "-", "-", "สติ๊กเกอร์ CE", "PK-ST", "2", "-", "-", "-", "-", "-", "-", "ชิ้น/pcs", "-"].join("\t"),
+  ].join("\n");
+  const payloadFor = (data, group) => {
+    const built = rules.buildFromFlat(rules.readFlatRows(tsv), { group: "TOY", existingSubparts: rules.subpartIndex(data.items), ...rules.subpartOptions(data.items) });
+    return { items: [...built.items.values()], boms: [...built.boms.entries()].map(([parentCode, lines]) => ({ parentCode, lines })), source: "grp.tsv", group };
+  };
+  const subparts = () => d.items.filter((item) => item.kind === "SUBPART" && item.name === "แกนทดสอบ");
+  A.helpers.itemOf(d, "P-STK-01").group = "KEEP";
+  const first = A.importFlat(d, payloadFor(d, "IND"), ctx("planner"));
+  assert.equal(first.itemsAdded, 2, "the product and the new subpart");
+  assert.equal(subparts().length, 1);
+  assert.equal(A.helpers.itemOf(d, "GRP-01(P)-Y").group, "IND", "the group chosen at import wins over the TOY stamped by the check");
+  assert.equal(subparts()[0].group, "IND");
+  assert.equal(A.helpers.itemOf(d, "P-STK-01").group, "KEEP", "an existing item keeps its group");
+  const second = A.importFlat(d, payloadFor(d, "TOY"), ctx("planner"));
+  assert.equal(second.itemsAdded, 0);
+  assert.equal(subparts().length, 1, "the second import reuses the XP- item");
+  assert.equal(subparts()[0].group, "IND", "items saved earlier are not changed by a later import");
+  const noGroup = fresh();
+  const flatPayload = payloadFor(noGroup, undefined);
+  A.importFlat(noGroup, { ...flatPayload, items: flatPayload.items.map((item) => ({ ...item, group: "IND" })) }, ctx("planner"));
+  assert.equal(A.helpers.itemOf(noGroup, "GRP-01(P)-Y").group, "IND", "without a chosen group the group on the item is used, as before");
+});

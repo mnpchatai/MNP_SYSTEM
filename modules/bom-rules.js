@@ -499,9 +499,29 @@
   // ตัวเลือกเลข XP- ของชิ้นที่ไม่มีรหัสตอนนำเข้า · ในเครื่อง = นับชิ้น SUBPART + 1 (เหมือนเดิม)
   // โหมดฐานข้อมูล (ส่งรหัสสุ่ม suffix มา) = เลขสูงสุดของ XP- ที่มีอยู่ + 1 และต่อ -suffix: ผู้วางแผนสองคนที่นำเข้าจากเวอร์ชันเดียวกันจึงไม่ได้รหัสซ้ำกัน (ซ้ำ = BOM_STALE ทั้งชุดถูกย้อนกลับ)
   function subpartOptions(items, suffix = "") {
-    if (!suffix) return { subpartStart: items.filter((item) => item.kind === "SUBPART").length + 1 };
     const numbers = items.map((item) => /^XP-(\d+)/.exec(String(item.code ?? ""))).filter(Boolean).map((match) => Number(match[1]));
+    // โหมดในเครื่อง: ต่อจากเลขสูงสุดที่มีอยู่ (หรือจำนวนชิ้น SUBPART ถ้ามากกว่า) ไม่ใช่แค่จำนวน + 1 ซึ่งชนรหัสเดิมเมื่อเลขไม่ต่อเนื่อง
+    if (!suffix) return { subpartStart: Math.max(items.filter((item) => item.kind === "SUBPART").length, ...numbers) + 1 };
     return { subpartStart: Math.max(0, ...numbers) + 1, subpartSuffix: suffix };
+  }
+
+  // ชิ้นไม่มีรหัส (SUBPART) ที่ "เหมือนกัน" = ชื่อ (ตัดช่องว่างหัวท้าย ยุบช่องว่างกลาง ไม่สนตัวพิมพ์) + หน่วย + แผนกเจ้าของ ตรงกันทั้งสามอย่าง
+  // นำเข้าชีตเดิมซ้ำจึงได้รหัส XP- เดิม ไม่ออกรหัสใหม่ทุกครั้ง · ชื่อตัดที่ 160 ตัวอักษรเหมือนตอนบันทึกชิ้นงาน (importFlat)
+  // แผนกที่ไม่อยู่ในรายการแผนกใช้แผนกเริ่มต้นของ SUBPART เหมือนตอนบันทึก (importFlat) ไม่งั้นคีย์ของแถวในชีตไม่ตรงกับชิ้นที่บันทึกไว้แล้วจะออกรหัสใหม่ทุกรอบ
+  const subpartDept = (dept) => (DEPTS.includes(dept) ? dept : KINDS.SUBPART.dept);
+  const subpartKey = (name, uom, dept) => `${String(name ?? "").slice(0, 160).trim().replace(/\s+/g, " ").toLowerCase()}|${uom ?? ""}|${subpartDept(dept)}`;
+  const xpNumber = (code) => { const match = /^XP-(\d+)/i.exec(String(code ?? "")); return match ? Number(match[1]) : Infinity; };
+  const smallerCode = (a, b) => (xpNumber(a) - xpNumber(b) || (a < b ? -1 : a > b ? 1 : 0)) <= 0 ? a : b;
+  // ดัชนีชิ้น SUBPART ที่มีอยู่ → รหัส (ถ้าซ้ำกันหลายชิ้นใช้รหัสที่น้อยที่สุด ผลคงที่ ไม่ควบรวมหรือลบของเดิม) ส่งเข้า buildFromFlat เป็น existingSubparts
+  // ชิ้นที่เลิกใช้ (active = false) ไม่ถูกนำกลับมาใช้ (เหมือน saveBom ที่ไม่รับลูกที่เลิกใช้) ถ้าไม่มีชิ้นที่ยังใช้งานตรงกันจึงออกรหัสใหม่
+  function subpartIndex(items) {
+    const index = new Map();
+    for (const item of items ?? []) {
+      if (item?.kind !== "SUBPART" || !item.code || item.active === false) continue;
+      const key = subpartKey(item.name, item.uom, item.ownerDept);
+      index.set(key, index.has(key) ? smallerCode(index.get(key), item.code) : item.code);
+    }
+    return index;
   }
 
   // ---------- ประกอบต้นไม้จากชีตแบน ----------
@@ -509,10 +529,10 @@
   // คู่ PT-ST/BG-ST/BG-PT เป็นลูกของชิ้น PT/BG ล่าสุด · GR-ST ลูกของ SE ล่าสุด · คู่ PK-* ลูกของ FG · บรรทัดซ้ำ (ลูกเดียวกันใต้พ่อเดียวกัน) รวมปริมาณ
   // คืน { items: Map(code → item), boms: Map(parentCode → lines[]), report }
   const MADE_FROM_PURCHASED = Object.freeze(["BG", "PT", "SE", "RB"]); // ชนิดที่แถวหลังยกระดับของซื้อให้ได้ (แผนกผลิตเอง)
-  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1, subpartSuffix = "" } = {}) {
+  function buildFromFlat(flatRows, { group = "TOY", subpartStart = 1, subpartSuffix = "", existingSubparts = null } = {}) {
     const items = new Map();
     const boms = new Map();
-    const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, variants: 0, colored: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
+    const report = { fgCount: 0, lineCount: 0, merged: 0, subparts: 0, subpartsReused: 0, variants: 0, colored: 0, conflicts: [], unknownUom: new Set(), compounds: new Set() };
     let subpartSeq = subpartStart;
     const subpartByName = new Map();
 
@@ -540,8 +560,14 @@
       return item;
     };
     const subpartFor = (row) => {
-      const key = `${row.name}|${row.uom}`;
+      const key = subpartKey(row.name, normalizeUom(row.uom).code, ownerDeptOf("SUBPART", row.pair));
       if (!subpartByName.has(key)) {
+        const reused = existingSubparts?.get(key);
+        if (reused) {
+          subpartByName.set(key, reused);
+          report.subpartsReused += 1;
+          return reused;
+        }
         subpartByName.set(key, `XP-${String(subpartSeq).padStart(5, "0")}${subpartSuffix ? `-${subpartSuffix}` : ""}`.toUpperCase());
         subpartSeq += 1;
         report.subparts += 1;
@@ -1032,7 +1058,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };
