@@ -171,12 +171,17 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
     // NCR อยู่ตาราง ncr_reports แยกจากคำร้อง (modules/module-ncr.js) — หน้าหลักดึงใบที่ถึงขั้นของผู้ใช้และใบที่ผู้ใช้ออก
     // แถวเก็บ ncr_responsibilities ที่หน้าเว็บ embed ไว้ในตัว (expand ไม่ต้องต่อให้)
     const dateOnly = (days) => ago(days).slice(0, 10);
+    // ช่องที่หน้ารายละเอียด NCR แสดงในส่วนที่ 1–2 (หน้าหลักใช้แค่เลขที่ ชื่อสินค้า สถานะ และผู้รับผิดชอบ)
+    const ncrPart1 = (description, qtyTotal, qtyDefect) => ({ unit: "ชิ้น", source: "in_process", qty_total: qtyTotal, qty_defect: qtyDefect, description, dispositions: ["sort"], causes: [], defect_type: { name_th: "ขนาดผิด" }, reporter_department: { code: "QA" } });
     db.ncr_reports.push(
       // แผนก MT ของผู้ใช้จำลองต้องตอบ และเลยกำหนดตอบแล้ว → คิว "ต้องจัดการ"
       { id: "ncr-mock-1", ncr_no: "QA052/26", status: "awaiting_response", product_name: "ซีลยางปั๊มลม CMP-01", reporter_id: "e3", issue_date: dateOnly(7), response_due: dateOnly(2),
+        ...ncrPart1("ซีลยางรั่วซึมหลังประกอบเข้าปั๊มลม วัดความหนาได้ 2.6 มม. สเปค 3.0±0.2 มม.", 200, 14),
         prevention: null, signoff_qa_at: null, signoff_factory_at: null, created_at: ago(7), updated_at: ago(3), ncr_responsibilities: [{ share: 1, department_id: "dep-mt", responder_id: null, department: { code: "MT" } }] },
       // ผู้ใช้จำลองออกเอง รอ QA ติดตามผล → "ใบของฉันที่ยังไม่จบ"
       { id: "ncr-mock-2", ncr_no: "QA049/26", status: "awaiting_followup", product_name: "ยางรองแท่นเครื่อง ล็อต RB-1098", reporter_id: ME_ID, issue_date: dateOnly(10), response_due: dateOnly(5),
+        ...ncrPart1("ยางรองแท่นเครื่องมีฟองอากาศที่ผิว พบระหว่างประกอบแท่นเครื่องปั๊มลม", 120, 9),
+        root_cause: "แม่พิมพ์ระบายอากาศอุดตัน", correction: "ล้างช่องระบายอากาศและคัดแยกชิ้นงาน", causes: ["machine"],
         prevention: "ตรวจแม่พิมพ์ทุกต้นกะ", signoff_qa_at: null, signoff_factory_at: null, created_at: ago(10), updated_at: ago(1), ncr_responsibilities: [{ share: 1, department_id: "dep-rb", responder_id: null, department: { code: "RB" } }] },
     );
     db.notifications.push(
