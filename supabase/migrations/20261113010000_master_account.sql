@@ -36,10 +36,12 @@
 --   app_reveal_credential        881eac86351b230ccba791015e613711  (20260917070000_account_registration_workflow.sql)
 --   app_set_module_permission    08bb338453abc01d86022baa5d29f42f  (20260918060000_approval_module_permissions.sql)
 --   private.lab_only_allowed_functions bb559dd270cdb40fd50e21c2f98f5d4e (20261019005000_lab_only_accounts.sql)
+--   private.sandbox_unguarded_tables   880bf79142e450607a67952e8e7a9fdb (20261111010000_bom_part_stock.sql)
 --
 -- Rollback (ไม่มีข้อมูลเดิมถูกแก้ นอกจากธง is_master ของ THTWGOT):
 --   1) นำนิยามเดิมของ 4 RPC ข้างบน, policy audit_read (using private.has_permission('audit.view'))
 --      และ private.lab_only_allowed_functions กลับมาจากไฟล์ที่ระบุ
+--   1b) นำ private.sandbox_unguarded_tables จาก 20261111010000 กลับมา
 --   2) drop trigger employees_master_guard, drop function ทั้งหมดที่สร้างในไฟล์นี้
 --   3) drop table public.client_error_logs; alter table public.employees drop column is_master
 -- ============================================================================
@@ -769,6 +771,23 @@ end;
 $$;
 revoke all on function public.app_master_client_error_summary(integer) from public, anon;
 grant execute on function public.app_master_client_error_summary(integer) to authenticated;
+
+-- โหมดทดสอบ: ข้อผิดพลาดที่เกิดในโหมดทดสอบยังบันทึกได้ (แยกด้วย is_sandbox) จึงไม่ติด sandbox_guard
+-- เหมือน audit_logs (นิยามจาก 20261111010000_bom_part_stock.sql + 'client_error_logs')
+create or replace function private.sandbox_unguarded_tables()
+returns text[] language sql immutable set search_path = '' as $$
+  select array['ncr_reports','ncr_responsibilities','ncr_losses','ncr_status_history','ncr_attachments',
+    'ncr_defect_types','document_counters','audit_logs','sandbox_sessions','ncr_outcomes','ncr_info_requests',
+    'qc_inspection_templates','qc_inspection_template_items','qc_inspection_reports',
+    'qc_inspection_items','qc_inspection_approvals','qc_inspection_history',
+    'bom_master_state','bom_items','bom_compounds','bom_colors','bom_color_sets','bom_packages',
+    'bom_boms','bom_bom_lines','bom_processes','bom_routings','bom_deleted_keys',
+    'bom_customers','bom_orders','bom_jobs','bom_stock','bom_stock_moves',
+    'rf_master_state','rf_materials','rf_recipes','rf_orders','rf_deleted_keys',
+    'rf_molds','rf_material_lots','rf_requisitions','rf_lots','rf_transfers','rf_fg_boxes','rf_qc_records','rf_ncrs','rf_purchase_orders',
+    'client_error_logs']
+$$;
+revoke all on function private.sandbox_unguarded_tables() from public, anon, authenticated;
 
 -- บัญชี lab-only ต้องรายงานข้อผิดพลาดและถามสถานะ master ได้ (นิยามจาก 20261019005000 + 2 ชื่อ)
 create or replace function private.lab_only_allowed_functions()
