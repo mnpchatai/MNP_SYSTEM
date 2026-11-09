@@ -2087,7 +2087,8 @@ async function renderDashboard(params = new URLSearchParams()) {
       .in("status", HOME_OPEN_STATUSES)
       .order("created_at", { ascending: false })
       .limit(HOME_QUEUE_PAGE),
-    ncrHome ? ncrHome.load(employee) : { tasks: [], mine: [] },
+    // ดึง NCR ไม่ได้ก็ยังแสดงคิวส่วนอื่น (อนุมัติ งานซ่อม ใบของฉัน) และบอกผู้ใช้ว่างาน NCR ขาดไป
+    ncrHome ? ncrHome.load(employee).catch(() => { showToast("โหลดงาน NCR ไม่สำเร็จ งาน NCR ไม่ได้แสดงในหน้านี้ ลองโหลดหน้าใหม่", "error"); return { tasks: [], mine: [] }; }) : { tasks: [], mine: [] },
   ]);
   if (mineResult.error) throw mineResult.error;
   const ncrHref = (ncr) => `#/ncr?id=${encodeURIComponent(ncr.id)}`;
@@ -2122,7 +2123,8 @@ async function renderDashboard(params = new URLSearchParams()) {
     .map((row) => ({ at: row.created_at, html: `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>` }))
     // NCR ที่ฉันออกและยังไม่ปิด (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) เรียงรวมกับคำร้อง ใบใหม่ก่อน
     .concat(ncrItems.mine.map((ncr) => ({ at: ncr.created_at, html: `<li><a class="home-mine-row" href="${escapeHtml(ncrHref(ncr))}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon("NCR_CAR")}</span><span class="request-no">${escapeHtml(ncr.ncr_no)}</span></span><strong>${escapeHtml(ncr.product_name)}</strong>${progressTracker(ncr.status, false, { stages: ncrHome.PROGRESS_STAGES, label: ncrHome.statusLabel(ncr) })}</a></li>` })))
-    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, HOME_QUEUE_PAGE);
   const showQueue = items.length > 0 || recent.length > 0 || hasApprovalDuty(employee);
   // ใบที่เปิดอยู่ต้องมองเห็นเสมอ แม้อยู่เกินหน้าแรก (เช่นเปิดจากลิงก์ในอีเมล)
   const selectedIndex = items.findIndex((item) => item.id === selectedId);

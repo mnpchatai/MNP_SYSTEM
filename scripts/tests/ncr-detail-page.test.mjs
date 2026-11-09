@@ -429,7 +429,13 @@ test("the home page lists an open NCR for whoever the detail page gives that ste
   assert.deepEqual(asPlain(tasksOf(employee("emp-qa", "dept-qa", "QA", "staff"))), [["ncr-awaiting_followup", "ติดตามผล"]], "QA staff follow up but do not sign");
   assert.deepEqual(asPlain(tasksOf(employee("emp-qa-mgr", "dept-qa", "QA", "department_manager"))), [["ncr-awaiting_followup", "ติดตามผล"]], "the QA signature is already on the NCR waiting for signoff");
   assert.deepEqual(asPlain(tasksOf(employee("emp-sup", "dept-rb", "RB", "supervisor"))), [], "a supervisor is not a responder");
-  assert.equal(home.task(rows[2], employee("emp-rb-staff", "dept-rb", "RB", "staff", false)) , "ส่งแนวทางป้องกัน");
+  const qaFirst = open("awaiting_signoff");
+  assert.equal(home.task(qaFirst, employee("emp-qa-mgr", "dept-qa", "QA", "department_manager")), "ลงนามปิด", "the QA manager signs first");
+  assert.equal(home.task(qaFirst, employee("emp-qa-asst", "dept-qa", "QA", "assistant_department_manager")), "ลงนามปิด", "so does the assistant QA manager");
+  assert.equal(home.task(qaFirst, employee("emp-qa", "dept-qa", "QA", "staff")), null, "QA staff do not sign");
+  assert.equal(home.task(qaFirst, employee("emp-fm", "dept-rb", "RB", "factory_manager")), null, "the factory manager waits for QA");
+  assert.equal(home.task(rows[0], employee("emp-afm", "dept-rb", "RB", "assistant_factory_manager")), null, "only the factory manager disposes");
+  assert.equal(home.task(rows[1], employee("emp-rb-asst", "dept-rb", "RB", "assistant_department_manager")), "ตอบ NCR", "an assistant manager of the department can respond");
   assert.equal(home.task({ ...rows[2], prevention: "ตรวจแม่พิมพ์" }, employee("emp-rb-staff", "dept-rb", "RB", "staff")), null, "prevention already sent: nothing left for the department");
   assert.equal(home.task(rows[3], { ...employee("emp-admin", "dept-it", "IT", "admin"), actingRole: { code: "general_manager" } }), null, "the general manager signs only after the factory manager");
   assert.equal(home.task({ ...rows[3], signoff_factory_at: "2026-10-11" }, { ...employee("emp-admin", "dept-it", "IT", "admin"), actingRole: { code: "general_manager" } }), "ลงนามปิด");
@@ -442,4 +448,6 @@ test("the home page lists an open NCR for whoever the detail page gives that ste
   assert.equal(overdue.tasks[0].overdue, false);
   rows[0].response_due = "2000-01-01";
   assert.equal(asPlain(await home.load(employee("emp-fm", "dept-rb", "RB", "factory_manager"))).tasks[0].overdue, true, "past the response date while still waiting for the factory manager");
+  rows.length = 0;
+  assert.deepEqual(asPlain(await home.load(employee("emp-fm", "dept-rb", "RB", "factory_manager"))), { tasks: [], mine: [] }, "no open NCR: nothing to add");
 });
