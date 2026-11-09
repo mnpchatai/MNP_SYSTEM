@@ -245,3 +245,44 @@ test("the module header, type card and tab shapes keep a gradient surface (colou
   assert.match(declared(".ncr-part-heading", "background") ?? "", /var\(--mod-surface\)/);
   assert.match(declared(".request-module-header, .rf-page .rf-pagehead", "background") ?? "", /var\(--mod-surface\)/);
 });
+
+// ---------- ป้ายสถานะแยกจากสีโมดูลด้วยรูปทรงและสัญลักษณ์ (ผู้ใช้เลือก "แบบ 1" 2026-11-09) ----------
+const STATUS_BADGES = ["pending_approval", "more_info", "pending_assign", "pending_verify", "approved", "in_progress", "assigned", "completed", "acknowledged", "rejected", "cancelled", "urgent-flag", "loss-pending-flag"];
+const RF_TONES = ["is-good", "is-warn", "is-bad", "is-info", "is-accent"];
+const glyphRules = rules.filter((rule) => rule.declarations.has("--badge-glyph"));
+const hasGlyph = (base, name) => glyphRules.some((rule) => rule.selector.split(/,(?![^(]*\))/).some((part) => part.includes(base) && new RegExp(`\\.${name}(?![\\w-])`).test(part)));
+
+test("every status badge and RubberFlow tone carries a glyph cut out of a white disc", () => {
+  for (const name of STATUS_BADGES) assert.ok(hasGlyph(".badge", name), `.badge.${name} has a glyph`);
+  for (const name of RF_TONES) assert.ok(hasGlyph(".rf-badge", name), `.rf-badge.${name} has a glyph`);
+  for (const rule of glyphRules) assert.match(rule.declarations.get("--badge-glyph"), /^url\("data:image\/svg\+xml,%3Csvg [^"]*%3Cmask id='g'%3E[^"]*mask='url\(%23g\)'[^"]*"\)$/, `${rule.selector}: an SVG disc with the glyph masked out`);
+  const disc = rules.find((rule) => rule.selector.endsWith("::before") && rule.declarations.get("mask")?.startsWith("var(--badge-glyph)"));
+  assert.ok(disc, "the ::before disc is masked by the glyph");
+  assert.equal(disc.declarations.get("-webkit-mask"), disc.declarations.get("mask"), "Safari gets the same mask");
+  assert.equal(disc.declarations.get("background"), "#fff");
+  for (const name of STATUS_BADGES) assert.ok(disc.selector.includes(`.${name}`), `the disc rule covers .${name}`);
+  for (const name of RF_TONES) assert.ok(disc.selector.includes(`.${name}`), `the disc rule covers .rf-badge.${name}`);
+  assert.match(css, /@media \(forced-colors: active\) \{ :is\(\.badge, \.rf-badge\)::before \{ forced-color-adjust: none; background: CanvasText; \} \}/);
+});
+
+test("the status colours stay readable as white text and as the glyph on the white disc", () => {
+  for (const [theme, tokens] of [["light", ROOT_LIGHT], ["dark", ROOT_DARK]]) {
+    for (const name of ["--warning-strong", "--primary-strong", "--success-strong", "--danger-strong"]) {
+      const value = contrast([255, 255, 255], resolve(`var(${name})`, tokens));
+      assert.ok(value >= 4.5, `${name} (${theme}) = ${value.toFixed(2)}:1`);
+    }
+  }
+});
+
+test("every badge class the code renders is one of the styled statuses (or the neutral badge)", () => {
+  const sources = ["app.js", "modules/module-ncr.js", "modules/module-qc.js", "modules/qc-model.js", "modules/module-mt.js", "modules/module-mt-dashboard.js"].map(read);
+  const used = new Set();
+  for (const source of sources) {
+    for (const [, name] of source.matchAll(/class="badge ([a-z_-]+)"/g)) used.add(name);
+    for (const [, body] of source.matchAll(/(?:STATUS_BADGE_CLASS|statusBadgeClass|RESULT_BADGE) = \{([^}]*)\}/g)) for (const [, name] of body.matchAll(/:\s*"([a-z_-]+)"/g)) used.add(name);
+  }
+  const statusKeys = [...read("app.js").match(/const statusLabels = \{([^}]*)\}/)[1].matchAll(/^\s*([a-z_]+):/gm)].map(([, key]) => key);
+  for (const key of statusKeys) if (key !== "draft") used.add(key);
+  assert.ok(used.size >= 10, `found ${used.size} badge classes`);
+  for (const name of used) assert.ok(STATUS_BADGES.includes(name), `badge class "${name}" has a colour and a glyph`);
+});
