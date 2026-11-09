@@ -37,8 +37,8 @@
     const actions = decide ? `${ui.openButton("เปิด NCR", "ncr", {}, { className: "secondary" })}${ui.openButton("บันทึกผลตรวจ", "qcRecord", {}, { className: "" })}` : "";
     const html = `${ui.pageHead("ควบคุมคุณภาพ · NCR · CoA", "ตัดสินล็อตที่ถูกกักกัน บันทึกผลทดสอบในแล็บ ติดตามปัญหาด้วย NCR / 5-Why และออกใบรับรองผล (CoA)", actions)}
       ${ui.stats([
-        { label: "First Pass Yield (ผลตรวจ)", value: `${fpy.toFixed(1)}%`, sub: `${records.length} ครั้งที่บันทึก` },
-        { label: "ล็อตรอตัดสิน (Hold)", value: String(held.length), tone: held.length ? "warn" : "" },
+        { label: "อัตราผ่านตรวจครั้งแรก", value: `${fpy.toFixed(1)}%`, sub: `${records.length} ครั้งที่บันทึก` },
+        { label: "ล็อตกักรอตัดสิน", value: String(held.length), tone: held.length ? "warn" : "" },
         { label: "NCR ที่เปิดอยู่", value: String(openNcr.length), tone: openNcr.length ? "bad" : "" },
         { label: "ล็อตพร้อมออก CoA", value: String(finLots.filter((lot) => lot.qc === "pass").length) },
       ])}${tabs}${section}`;

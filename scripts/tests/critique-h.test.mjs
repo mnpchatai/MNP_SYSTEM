@@ -61,9 +61,11 @@ test("without a form the banner behaves as before", () => {
   assert.equal(listeners.banner.length, 1);
 });
 
-test("the decision panel keeps the original wording and flow", () => {
+// ผู้ใช้ยืนยัน 2026-11-09: ปุ่มหลักใช้คำของขั้น (modules/step-verb.js) แสดงบนหน้าจอเท่านั้น — มติที่เก็บ/ส่งและขั้นตอน อนุมัติ → ยืนยัน → เลิกทำ 5 วินาที เหมือนเดิม
+test("the decision panel keeps the stored decision and flow, and says the step's own verb", () => {
   assert.doesNotMatch(app, /stepVerbOf|ไม่รับงาน|ใบนี้ต่อด้วย/);
-  assert.match(app, /\{ decision: "approved", label: "อนุมัติ", tone: "success" \}/);
+  assert.match(app, /\{ decision: "approved", label: verb, tone: "success" \}/);
+  assert.match(app, /const DECISION_UNDO_SECONDS = 5;/);
 });
 
 test("shortcuts fall back to the physical key only when the layout types a non-Latin letter", () => {

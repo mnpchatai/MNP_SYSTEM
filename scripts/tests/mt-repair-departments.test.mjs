@@ -36,9 +36,10 @@ test("on a database without the ID department the button is dropped instead of b
   assert.ok(departments.every((item) => item.id));
 });
 
-test("every department button has its own colour rule in styles.css", () => {
+test("every department button has its own palette in styles.css (data-dept-code → ramp --m50…--m950)", () => {
   const css = fs.readFileSync("styles.css", "utf8");
   for (const code of [...ORIGINAL.filter((value) => value !== "WH"), "ID"]) {
-    assert.match(css, new RegExp(`\\.repair-department-card\\[data-dept-code="${code}"\\]\\s*\\{[^}]*--department-from`), `${code} has no colour rule`);
+    assert.match(css, new RegExp(`\\[data-dept-code="${code}"\\][^{]*\\{[^}]*--m700`), `${code} has no palette`);
+    assert.doesNotMatch(css, /--department-(from|to)/, "the hard-coded department gradients are gone");
   }
 });

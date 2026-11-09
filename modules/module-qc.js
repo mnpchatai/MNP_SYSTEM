@@ -18,7 +18,6 @@
   const sheet = window.MNP_QC_SHEET;
   const PATH = "qc";
   const TITLE = "ใบตรวจ QC";
-  const THEME = ["#0f766e", "#134e4a"];
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 12.5l2.2 2.2 4.3-4.6M8.5 18h7"/></svg>`;
   const RESULT_BADGE = { ok: "completed", ng: "rejected", accept: "pending_approval" };
   // รหัสที่แปลว่าหน้าที่เห็นอยู่ล้าสมัย (มีคนเปลี่ยนใบไปแล้ว) — วาดหน้าใหม่ให้เห็นสถานะล่าสุด
@@ -48,16 +47,17 @@
   }
 
   function paint(title, content) {
-    app.innerHTML = shell(content, PATH, title);
+    // data-module ครอบทั้งหน้า: หัวตารางและแท็บใช้จานสีของโมดูล
+    app.innerHTML = shell(`<div data-module="qc">${content}</div>`, PATH, title);
     bindShell();
     return document.querySelector(".content");
   }
 
-  // หัวหน้าพื้นเรียบแบบระบบหลัก (.page-heading) สีของโมดูลเป็นจุดหน้าชื่อเท่านั้น + ปุ่มย้อนกลับ — ชื่อโมดูลอยู่ที่ breadcrumb แล้ว h1 บอกหน้าที่เปิดอยู่
+  // หัวโมดูลแบบเดียวกับทุกโมดูล (ก้อนสีของโมดูล + ไอคอน + ชื่อ) + ปุ่มย้อนกลับ — h1 บอกหน้าที่เปิดอยู่
   function headHtml({ title, back = null, actions = "", badge = "" }) {
     return `${back ? `<a class="request-back-link" href="${esc(back.href)}">${esc(back.label)}</a>` : ""}
-      <div class="page-heading qc-head">
-        <div class="module-title"><span class="module-dot" style="--module-color:${THEME[0]}" aria-hidden="true"></span><h1>${esc(title)}</h1>${badge}</div>
+      <div class="page-heading request-module-header qc-head" data-module="qc">
+        <div class="request-module-title"><span class="type-card-badge">${window.MNP_UI_ICONS.typeIcon("QC")}</span><h1>${esc(title)}</h1>${badge}</div>
         ${actions ? `<div class="request-create-entry">${actions}</div>` : ""}
       </div>`;
   }
@@ -742,7 +742,7 @@
       const submitter = event.submitter ?? event.currentTarget.querySelector('[type="submit"]');
       const note = root.querySelector("#qc-cancel-note")?.value.trim() ?? "";
       if (note.length < 5) return showToast(model.ERROR_MESSAGES.QC_CANCEL_NOTE_REQUIRED, "error");
-      if (!(await confirmDialog({ title: `ยกเลิก ${report.report_no}?`, message: "แก้กลับไม่ได้", confirmLabel: "ยกเลิกใบตรวจ", danger: true }))) return undefined;
+      if (!(await confirmDialog({ title: `ยกเลิก ${report.report_no}?`, message: "แก้กลับไม่ได้", confirmLabel: "ยกเลิกใบตรวจ", cancelLabel: "ไม่ยกเลิก", danger: true }))) return undefined;
       return runAction(root, "app_qc_cancel_report", { ...args, p_note: note }, `ยกเลิก ${report.report_no} แล้ว`, submitter);
     });
     root.querySelector("#qc-ncr-form")?.addEventListener("submit", async (event) => {
@@ -824,7 +824,7 @@
     sandbox: true,
     standalone: true,
     label: TITLE,
-    theme: THEME,
+    palette: "qc",
     errorMessages: model.ERROR_MESSAGES,
     nav: [{ path: PATH, label: TITLE, icon: NAV_ICON, sandboxOnly: true }],
     pages: { [PATH]: renderQc },

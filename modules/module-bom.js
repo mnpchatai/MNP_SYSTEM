@@ -11,7 +11,6 @@
 (function registerBomModule() {
   const PATH = "bom";
   const TITLE = "BOM รายแผนก";
-  const THEME = ["#3f51b5", "#283593"];
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6v4H4zM14 3h6v4h-6zM14 10h6v4h-6zM14 17h6v4h-6z"/><path d="M10 7h2v13h2M12 12h2M12 5h2"/></svg>`;
 
   const rules = window.MNP_BOM_RULES;
@@ -327,10 +326,8 @@
     const { data, user } = ctx;
     // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
     if (store.isRemote()) {
-      // ล้างข้อมูล BOM ทดสอบ: เฉพาะ admin ที่อยู่ในโหมดทดสอบ (state.sandbox มีเฉพาะ admin ตัวจริง ไม่ว่าตอนนี้ทำหน้าที่เป็นบัญชีทดสอบคนไหน) · ฐานข้อมูลตรวจสิทธิ์ซ้ำ
-      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-bom-purge title="ลบใบสั่งผลิต งาน ชิ้นงาน BOM ลูกค้า และข้อมูลทดสอบอื่นของ BOM ทั้งหมดในฐานข้อมูล แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล BOM ทดสอบ</button>` : "";
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-bom-sync>${escapeHtml(syncText())}</span>
-        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a>${purge}</div></div>`;
+        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a></div></div>`;
     }
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
     const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
@@ -340,10 +337,18 @@
         ${persona}
         <div class="rf-row">
           <a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow ↗</a>
-          <button class="btn rf-btn secondary" type="button" data-rf-reset title="ล้างข้อมูลที่บันทึกในเบราว์เซอร์นี้ (รวมที่นำเข้าจาก Excel) แล้วสร้างข้อมูลสาธิตใหม่">รีเซ็ตข้อมูลสาธิต</button>
         </div>
       </div>`;
   }
+  // ปุ่มล้างข้อมูลทดสอบ/รีเซ็ตข้อมูลสาธิตอยู่ท้ายหน้าในกล่องพับ ไม่ใช่บนสุด (กดพลาดแล้วข้อมูลหาย) — ปุ่มและ handler เดิม
+  // ล้างข้อมูล BOM ทดสอบ: เฉพาะ admin ที่อยู่ในโหมดทดสอบ (state.sandbox มีเฉพาะ admin ตัวจริง ไม่ว่าตอนนี้ทำหน้าที่เป็นบัญชีทดสอบใคร)
+  function testDataHtml(ctx) {
+    const button = store.isRemote()
+      ? (canPurge() ? `<button class="btn rf-btn secondary" type="button" data-bom-purge title="ลบใบสั่งผลิต งาน ชิ้นงาน BOM ลูกค้า และข้อมูลทดสอบอื่นของ BOM ทั้งหมดในฐานข้อมูล แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล BOM ทดสอบ</button>` : "")
+      : (ctx.user ? `<button class="btn rf-btn secondary" type="button" data-rf-reset title="ล้างข้อมูลที่บันทึกในเบราว์เซอร์นี้ (รวมที่นำเข้าจาก Excel) แล้วสร้างข้อมูลสาธิตใหม่">รีเซ็ตข้อมูลสาธิต</button>` : "");
+    return button ? `<details class="rf-testdata"><summary>จัดการข้อมูลทดสอบ</summary><div class="rf-row">${button}</div></details>` : "";
+  }
+
   // ไม่ได้เลือกบทบาท: บอกว่าโมดูลนี้คืออะไร ส่วนการเลือกบทบาทสาธิตอยู่ในช่องของแถบเครื่องมือด้านบน (ไม่มีหน้าเลือกบทบาทแยก)
   function introHtml() {
     return `<section class="card rf-card rf-login"><h1>${escapeHtml(TITLE)}</h1>
@@ -446,7 +451,7 @@
     // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต ลิงก์ RubberFlow รีเซ็ต)
     const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
     dirty = false; // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างแล้ว (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
-    app.innerHTML = shell(`<div class="rf-page bom-page" data-rf-mod="${escapeHtml(entry && user ? `bom-${page}` : "")}">${head}${body}</div>`, PATH, title);
+    app.innerHTML = shell(`<div class="rf-page bom-page" data-module="bom" data-rf-mod="${escapeHtml(entry && user ? `bom-${page}` : "")}">${head}${body}${testDataHtml(ctx)}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
@@ -465,7 +470,7 @@
     // ข้อมูลหลักอยู่ในตาราง/RPC ของ BOM ที่รับเฉพาะ admin ในโหมดทดสอบ (BOM_TEST_MODE_ONLY) ไม่แตะตารางของโมดูลอื่น
     sandbox: true,
     label: TITLE,
-    theme: THEME,
+    palette: "bom",
     // group: หัวกลุ่ม "ทดสอบ" ในเมนูข้าง — sandboxOnly ต้องคงไว้: เห็นเฉพาะ admin ในโหมดทดสอบ
     nav: [{ path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav }],
     pages: { [PATH]: renderBom },

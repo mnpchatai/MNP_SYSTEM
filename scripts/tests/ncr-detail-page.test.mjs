@@ -16,6 +16,7 @@ const NCR = {
   issue_date: "2026-10-01", reporter_id: "emp-reporter", reporter_department: { code: "RB" }, source: "in_process", defect_type: { name_th: "ขนาดผิด" },
   description: "รูในใหญ่เกินสเปค 10±0.5mm วัดได้ 11.2mm", qty_total: 100, qty_sampled: 20, qty_defect: 5, qty_returned: 0,
   dispositions: ["sort"], causes: ["machine"], response_due: "2026-10-06", root_cause: "เครื่องสึก", correction: "คัดแยก", prevention: "ซ่อมบำรุง",
+  followed_up_at: "2026-10-08",
   ncr_responsibilities: [{ share: 100, department_id: "dept-rb", department: { code: "RB", name_th: "ขึ้นรูปยาง" } }],
 };
 
@@ -77,6 +78,58 @@ test("a real NCR shows the four part cards with the quantity summary", async () 
   assert.match(html, /ncr-fact-icon/);
   assert.match(html, /<dt>พบปัญหา<\/dt><dd>5<\/dd>/);
   assert.match(html, /%NG จากการสุ่ม/);
+});
+
+// ---- รอบยุบหน้า (distill): งานที่ต้องทำขึ้นก่อน, ไม่แสดงส่วนที่ยังว่าง, ไม่พูดซ้ำ ----
+const EMPTY_PARTS = { status: "awaiting_response", responded_at: null, root_cause: null, correction: null, prevention: null, followed_up_at: null, closed_at: null };
+
+test("the action the viewer must take comes first, before the four parts and the evidence", async () => {
+  const html = await renderFor(employee("emp-rb", "dept-rb", "RB", "staff"), EMPTY_PARTS);
+  const action = html.indexOf("ncr-actions");
+  assert.ok(action > 0, "the respond form is shown");
+  assert.ok(action < html.indexOf("ncr-detail-part--1"), "the action panel is above part 1");
+  assert.ok(html.indexOf("ncr-detail-part--1") < html.indexOf("ไฟล์หลักฐาน"), "evidence stays below the parts");
+  assert.match(html, /<section class="card ncr-card ncr-actions" data-module="ncr">/);
+});
+
+test("parts 3 and 4 that nobody has filled yet are not drawn, and appear once they hold data", async () => {
+  const early = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"), EMPTY_PARTS);
+  assert.match(early, /ncr-detail-part--1/);
+  assert.match(early, /ncr-detail-part--2/);
+  assert.doesNotMatch(early, /ncr-detail-part--3/, "part 3 has nothing yet");
+  assert.doesNotMatch(early, /ncr-detail-part--4/, "part 4 has nothing yet");
+  const answered = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"), { ...EMPTY_PARTS, status: "awaiting_followup", responded_at: "2026-10-04", root_cause: "เครื่องสึก" });
+  assert.match(answered, /ncr-detail-part--3/);
+  assert.doesNotMatch(answered, /ncr-detail-part--4/);
+  const signed = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"), { ...EMPTY_PARTS, status: "awaiting_signoff", responded_at: "2026-10-04", root_cause: "เครื่องสึก", followed_up_at: "2026-10-08" });
+  assert.match(signed, /ncr-detail-part--4/);
+});
+
+test("every part of the NCR wears the one NCR palette, and the page keeps one link back to the register (the breadcrumb is plain text)", async () => {
+  const html = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"));
+  const parts = html.match(/<section class="card ncr-card ncr-detail-part ncr-detail-part--\d" data-module="ncr"/g) ?? [];
+  assert.equal(parts.length, 4);
+  assert.equal((html.match(/href="#\/ncr">‹ ทะเบียน NCR</g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
+  assert.doesNotMatch(html, /style="/, "no inline colours");
+});
+
+test("the cost summary is one line, and the unconfirmed amounts are folded into a details element", async () => {
+  const html = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
+  assert.equal((html.match(/<dl class="ncr-loss-summary/g) ?? []).length, 1);
+  assert.match(html, /<details class="ncr-loss-more"><summary>ยอดที่ยังไม่ยืนยัน<\/summary><dl class="ncr-loss-pending">/);
+  assert.doesNotMatch(html.replace(/<details class="ncr-loss-more">[\s\S]*?<\/details>/, ""), /ncr-loss-pending/, "the pending tiles live only inside the details");
+});
+
+test("the upload hint (file types and size) is shown once on the detail page, in the evidence section", () => {
+  const source = fs.readFileSync("modules/module-ncr.js", "utf8");
+  const calls = [...source.matchAll(/evidenceFieldHtml\("(ncr-[a-z-]+-evidence)".*\)/g)].map((match) => match[0]);
+  assert.ok(calls.length >= 8, "the NCR forms use the shared evidence field");
+  for (const call of calls) {
+    // ฟอร์มออก NCR (หน้าของมันเอง) และช่องแนบเพิ่มใน "ไฟล์หลักฐาน" แสดงคำอธิบาย ฟอร์มของขั้นตอนไม่แสดงซ้ำ
+    if (/ncr-issue-evidence|ncr-attach-evidence/.test(call)) assert.doesNotMatch(call, /hint: false/, call);
+    else assert.match(call, /hint: false/, call);
+  }
+  assert.match(fs.readFileSync("modules/ncr-loss-form.js", "utf8"), /evidenceFieldHtml\?\.\(id, "แนบไฟล์เพิ่มเติม \(ถ้ามี\)", \{ hint: false \}\)/);
 });
 
 test("the detail page markup is identical in test mode and real mode, for real and test reports", async () => {

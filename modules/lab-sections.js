@@ -7,7 +7,7 @@
 // ลิงก์เดิมก่อนแยกโมดูล (#/lab?material=<วัสดุ>) ยังเปิดหน้าวัสดุของ Mooney ได้
 //
 // หน้าตาใช้หลักเดียวกับหน้าคำร้อง (app.js requestCenterHeader) และคอมโพเนนต์เดียวกัน:
-// เลือกโมดูลจากการ์ดสีไล่ระดับ (.type-card) → เข้าโมดูลแล้วหัวหน้าพื้นเรียบแบบระบบหลัก (.page-heading) มีจุดสีของโมดูลหน้าชื่อ พร้อม "‹ ย้อนกลับ"
+// เลือกโมดูลจากการ์ดสีของโมดูล (.type-card + data-module) → เข้าโมดูลแล้วหัวโมดูลแบบเดียวกับทุกโมดูล (.request-module-header) พร้อม "‹ ย้อนกลับ"
 // สีของโมดูลบอกว่าอยู่ในโมดูลไหน (การ์ดกับจุดสีเดียวกัน) ทุกสีเทียบตัวอักษรขาวบนการ์ดได้ contrast ≥ 4.5:1 ทั้งสีต้นและสีปลาย
 // โมดูลที่ยังไม่เปิดใช้งานลดความอิ่มสี (CSS saturate คงความสว่าง จึงยังผ่าน 4.5:1)
 // และการ์ดของมันไม่เป็นลิงก์ เพราะยังไม่มีอะไรให้เปิด
@@ -25,19 +25,18 @@
     mdr: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M6 17c3 0 4-10 8-10h5"/></svg>`,
   });
 
-  // theme: [สีต้น, สีปลาย] — contrast กับตัวอักษรขาว (รวมสีจางของโมดูลที่ยังไม่เปิด) ตรวจในเทสต์ (scripts/tests/lab-sections.test.mjs)
+  // palette = ชื่อจานสี (data-module ใน styles.css) ของโมดูลย่อย contrast ของจานสีตรวจใน scripts/tests/color-system.test.mjs
   // action = บรรทัดล่างของการ์ดโมดูลที่เปิดใช้งาน
   const SECTIONS = Object.freeze([
-    { key: "dashboard", label: "แดชบอร์ด", theme: ["#4f46e5", "#6d28d9"], action: "ดูภาพรวม →" },
-    { key: "chemical", label: "เปรียบเทียบเคมี", theme: ["#047857", "#0f766e"] },
-    { key: "mooney", label: "Mooney test report", theme: ["#2563eb", "#1e40af"], action: "ดูผลทดสอบ →" },
-    { key: "mdr", label: "MDR test report", theme: ["#c2410c", "#b91c1c"] },
-  ].map((section) => Object.freeze({ ...section, theme: Object.freeze(section.theme) })));
+    { key: "dashboard", label: "แดชบอร์ด", palette: "bom", action: "ดูภาพรวม →" },
+    { key: "chemical", label: "เปรียบเทียบเคมี", palette: "gr" },
+    { key: "mooney", label: "Mooney test report", palette: "it", action: "ดูผลทดสอบ →" },
+    { key: "mdr", label: "MDR test report", palette: "pt" },
+  ].map((section) => Object.freeze({ ...section })));
   const HOME = "home";
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const find = (key) => SECTIONS.find((section) => section.key === key) ?? null;
-  const gradient = (section) => `linear-gradient(135deg, ${section.theme[0]}, ${section.theme[1]})`;
 
   // โมดูลจาก query string: ไม่ระบุ = หน้าเลือกโมดูล (หรือ Mooney ถ้าเป็นลิงก์วัสดุแบบเดิม) ระบุค่าที่ไม่มีจริง = null (หน้า "ไม่พบ")
   function readSection(params) {
@@ -55,16 +54,17 @@
   // ไม่ใส่ aria-disabled เพราะไม่ใช่ตัวควบคุม (ใช้กับ div เฉย ๆ ไม่มีความหมาย) ข้อความ "ยังไม่เปิดใช้งาน" บอกสถานะให้โปรแกรมอ่านหน้าจอแล้ว
   function cardHtml(section, open) {
     const badge = `<span class="type-card-badge">${ICONS[section.key]}</span>`;
-    const style = `background:${gradient(section)}`;
     if (!open) {
-      return `<div class="type-card request-type-card lab-module-card is-off" style="${style}">
+      return `<div class="type-card request-type-card lab-module-card is-off" data-module="${section.palette}">
         <span class="request-type-top">${badge}<span class="request-type-count">ยังไม่เปิดใช้งาน</span></span>
         <span class="type-card-body"><strong>${esc(section.label)}</strong></span>
+        <span class="type-card-wm" aria-hidden="true">${ICONS[section.key]}</span>
       </div>`;
     }
-    return `<a class="type-card request-type-card lab-module-card" href="${esc(sectionUrl(section.key))}" style="${style}">
+    return `<a class="type-card request-type-card lab-module-card" href="${esc(sectionUrl(section.key))}" data-module="${section.palette}">
         <span class="request-type-top">${badge}</span>
         <span class="type-card-body"><strong>${esc(section.label)}</strong><small>${esc(section.action ?? "เปิดโมดูล →")}</small></span>
+        <span class="type-card-wm" aria-hidden="true">${ICONS[section.key]}</span>
       </a>`;
   }
 
@@ -77,15 +77,15 @@
     </div>`;
   }
 
-  // หัวของหน้าโมดูล: ปุ่มย้อนกลับไปหน้าเลือกโมดูล + หัวหน้าแบบเดียวกับระบบหลัก (.page-heading พื้นเรียบ) สีของโมดูลเป็นจุดหน้าชื่อเท่านั้น
+  // หัวของหน้าโมดูล: ปุ่มย้อนกลับไปหน้าเลือกโมดูล + หัวโมดูลแบบเดียวกับทุกโมดูล (.request-module-header ก้อนสีของโมดูล + ไอคอน)
   // ชื่อโมดูลเป็น h1 ที่นี่ที่เดียว ("MNP LAB" อยู่ที่ breadcrumb แล้ว ไม่มีคำอธิบายที่พูดซ้ำชื่อ) เพื่อคืนพื้นที่ให้ตาราง
-  // extra = ส่วนขวาของหัว เช่น เวลาอ่านชีตกับปุ่มรีเฟรช · open: false = โมดูลที่ยังไม่เปิดใช้งาน (จุดสีจางลง)
+  // extra = ส่วนขวาของหัว เช่น เวลาอ่านชีตกับปุ่มรีเฟรช · open: false = โมดูลที่ยังไม่เปิดใช้งาน (สีจางลง)
   function moduleHead(key, { extra = "", open = true } = {}) {
     const section = find(key);
     if (!section) return "";
     return `<a class="request-back-link" href="#/lab" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
-      <div class="page-heading lab-module-header${open ? "" : " is-off"}">
-        <div class="module-title"><span class="module-dot" style="--module-color:${section.theme[1]}" aria-hidden="true"></span><h1>${esc(section.label)}</h1></div>
+      <div class="page-heading request-module-header lab-module-header${open ? "" : " is-off"}" data-module="${section.palette}">
+        <div class="request-module-title"><span class="type-card-badge">${ICONS[section.key]}</span><h1>${esc(section.label)}</h1></div>
         ${extra}
       </div>`;
   }

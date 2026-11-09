@@ -73,3 +73,27 @@ test("list filters fold behind one button on phones and stay in one row on wide 
   assert.match(css, /\.list-filters-toggle \{ display: none; \}/);
   assert.match(css, /\.list-filters:not\(\.is-open\) \.list-filters-body \{ display: none; \}/);
 });
+
+// ---- รอบสี + ยุบหน้า: บอกข้อเท็จจริงครั้งเดียว ----
+test("an MT row does not repeat the machine name on its second line", () => {
+  const context = vm.createContext({});
+  vm.runInContext(`${pick(app, "titleWithoutMachine")}\nthis.strip = titleWithoutMachine;`, context);
+  const { strip } = context;
+  assert.equal(strip("เครื่องอัดยาง NCM-03 — มอเตอร์ร้อน", "เครื่องอัดยาง NCM-03", "NCM-03"), "มอเตอร์ร้อน");
+  assert.equal(strip("เครื่องอัดยาง NCM-03", "เครื่องอัดยาง NCM-03", "NCM-03"), "", "nothing but the machine: no second line");
+  assert.equal(strip("แจ้งซ่อมปั๊มลม", "เครื่องอัดยาง NCM-03", "NCM-03"), "แจ้งซ่อมปั๊มลม", "a title without the machine is kept");
+  assert.match(app, /const detail = machine \? titleWithoutMachine\(request\.title, request\.machine_name, request\.machine_code\) : description;/);
+});
+
+test("the module header does not count what the table below already lists, and the chooser says 'เลือกโมดูล' once", () => {
+  assert.doesNotMatch(app, /ยังไม่จบ \$\{counts\.get\(selected\.id\)/);
+  assert.doesNotMatch(app, /<h2>เลือกโมดูล<\/h2>/);
+  assert.doesNotMatch(app, /เลือกโมดูลเพื่อแสดงรายการคำร้อง/);
+});
+
+test("the next-item panel states the remaining count once, and the profile and login use the Thai label for the employee number", () => {
+  assert.match(app, /รอคุณพิจารณาอีก \$\{pending\.length\} ใบ/);
+  assert.doesNotMatch(app, /รายการถัดไป \(\$\{pending\.length\}\)/);
+  assert.doesNotMatch(app, /UserID/);
+  assert.doesNotMatch(app, /<h2>\$\{escapeHtml\(employee\.first_name\)\} \$\{escapeHtml\(employee\.last_name\)\}<\/h2><span class="badge">/, "the profile card does not repeat the name and role the form shows");
+});

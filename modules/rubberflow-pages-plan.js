@@ -12,6 +12,9 @@
     const scrap = lots.reduce((sum, lot) => sum + lot.scrapQty, 0);
     return good + scrap ? (good / (good + scrap)) * 100 : 100;
   };
+  // ยังไม่มีล็อตที่ผลิต = ยังไม่มีอัตราให้บอก แสดง "—" (ไม่ใช่ 100%)
+  const hasOutput = (lots) => lots.some((lot) => lot.goodQty + lot.scrapQty > 0);
+  const yieldText = (lots, digits = 2) => (hasOutput(lots) ? `${yieldOf(lots).toFixed(digits)}%` : "—");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
   const searchForm = (ctx, placeholder, { tab = null } = {}) => `<form class="rf-search" data-rf-search${tab ? ` data-rf-keep="tab"` : ""} role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
 
@@ -40,8 +43,8 @@
     const flow = STAGES.map((stage, i) => {
       const lots = byStage[stage];
       const held = lots.filter((lot) => lot.qc === "hold").length;
-      const inner = `<div class="rf-row rf-between"><span class="rf-step-no">STAGE ${i + 1}</span>${held ? ui.badge("warn", `Hold ${held}`) : ""}</div><h3>${esc(STAGE_LABEL[stage])}</h3>
-        ${ui.kv([["ล็อตทั้งหมด", esc(String(lots.length))], ["Yield", esc(`${stageYield[stage].toFixed(2)}%`)],
+      const inner = `<div class="rf-row rf-between"><span class="rf-step-no">ขั้นที่ ${i + 1}</span>${held ? ui.badge("warn", `กักรอตัดสิน ${held}`) : ""}</div><h3>${esc(STAGE_LABEL[stage])}</h3>
+        ${ui.kv([["ล็อตทั้งหมด", esc(String(lots.length))], ["อัตราได้ของดี", esc(yieldText(lots))],
           stage !== "mixing" ? ["งานรอเข้า", esc(`${wipAt(stage).length} ใบส่งมอบ`)] : ["กำลังบ่ม", esc(`${lots.filter((lot) => lot.readyAt > now).length} batch`)]])}`;
       return ctx.canSee(stage) ? `<a class="rf-step" href="${esc(ctx.url(stage))}">${inner}</a>` : `<div class="rf-step">${inner}</div>`;
     }).join("");
@@ -55,14 +58,14 @@
 
     const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${rules.fmtDateTime(now)}`)}
       ${ui.stats([
-        { label: "Yield รวม 4 ขั้นตอน", value: `${overall.toFixed(1)}%`, sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
+        { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: data.lots.some((lot) => lot.goodQty + lot.scrapQty > 0) ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },
-        { label: "ของเสียห้องผสม (สะสม)", value: `${fmtNum(mixingScrapKg, 1)} kg`, sub: `Yield ห้องผสม ${stageYield.mixing.toFixed(2)}%` },
+        { label: "ของเสียห้องผสม (สะสม)", value: `${fmtNum(mixingScrapKg, 1)} kg`, sub: `อัตราได้ของดี ห้องผสม ${yieldText(byStage.mixing)}` },
         { label: "สินค้าพร้อมส่งในคลัง", value: `${fgBoxes.length} กล่อง`, sub: `${data.fgBoxes.filter((box) => box.status === "hold").length} กล่องถูกกักกัน` },
       ])}
       <div class="rf-flow">${flow}</div>
       <div class="rf-grid rf-g2">
-        ${ui.card(ui.dualChart({ labels: days.map((day) => day.day), area: days.map((day) => day.output), line: days.map((day) => day.yield), leftName: "ผลผลิต (m)", rightName: "Yield %", rightDomain: [90, 100], unitLeft: "m", unitRight: "%" }), { title: "ผลผลิตสำเร็จรูป (เมตร) และ Yield รายวัน" })}
+        ${ui.card(ui.dualChart({ labels: days.map((day) => day.day), area: days.map((day) => day.output), line: days.map((day) => day.yield), leftName: "ผลผลิต (m)", rightName: "อัตราได้ของดี %", rightDomain: [90, 100], unitLeft: "m", unitRight: "%" }), { title: "ผลผลิตสำเร็จรูป (เมตร) และ Yield รายวัน" })}
         ${ui.card(ui.dualChart({ labels: STAGES.map((stage) => STAGE_LABEL[stage]), bars: STAGES.map((stage) => +(100 - stageYield[stage]).toFixed(2)), leftName: "ของเสีย (%)", unitLeft: "%" }), { title: "สัดส่วนของเสียแยกตามขั้นตอน (%)" })}
       </div>
       <div class="rf-grid rf-g2-wide">

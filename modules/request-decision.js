@@ -72,5 +72,18 @@
     return controller;
   }
 
-  root.MNP_REQUEST_DECISION = Object.freeze({ COMMENT_OPTIONAL, MIN_COMMENT_LENGTH, needsComment, forwardsToNextStep, payloadFor, createCountdown });
+  // ราวกันพลาดบนจอสัมผัส: ปุ่มยืนยัน (และ "ส่งเลย") โผล่ขึ้นตรงตำแหน่งที่นิ้วเพิ่งกดปุ่มมติ การแตะซ้ำสองครั้งจึงยืนยันโดยไม่ตั้งใจได้
+  // หลัง arm() ไม่รับการแตะ/คลิกด้วยเมาส์ภายใน delayMs — การกดด้วยคีย์บอร์ด (Enter/Space ให้ click ที่ detail = 0) ไม่ถูกหน่วง
+  function createTapGuard({ delayMs = 400, now = () => Date.now() } = {}) {
+    let armedAt = null;
+    return {
+      arm() { armedAt = now(); },
+      blocks(event) {
+        if (armedAt === null || !event || event.detail === 0) return false;
+        return now() - armedAt < delayMs;
+      },
+    };
+  }
+
+  root.MNP_REQUEST_DECISION = Object.freeze({ COMMENT_OPTIONAL, MIN_COMMENT_LENGTH, needsComment, forwardsToNextStep, payloadFor, createCountdown, createTapGuard });
 })(typeof window !== "undefined" ? window : globalThis);

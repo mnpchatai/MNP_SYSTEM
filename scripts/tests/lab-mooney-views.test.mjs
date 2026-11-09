@@ -688,7 +688,7 @@ test("there is no warning box listing unreadable sheet rows on either page", () 
 test("the Mooney list and the dashboard open with their module's plain heading; the material page keeps its one-line head", () => {
   const overview = views.overviewPage(30);
   assert.match(overview, /<a class="request-back-link" href="#\/lab"/);
-  assert.match(overview, /<div class="page-heading lab-module-header">\s*<div class="module-title"><span class="module-dot" style="--module-color:#1e40af"/);
+  assert.match(overview, /<div class="page-heading request-module-header lab-module-header" data-module="it">\s*<div class="request-module-title"><span class="type-card-badge">/);
   assert.match(overview, /<h1>Mooney test report<\/h1>/);
   // เวลาอ่านชีตกับปุ่มรีเฟรชอยู่ด้านขวาของหัวหน้า Mooney
   assert.match(overview, /<h1>Mooney test report<\/h1><\/div>\s*<div class="lab-live">[\s\S]*?id="lab-refresh"[\s\S]*?<\/div>\s*<\/div>\s*<section class="card flush lab-overview-card">/);
@@ -697,7 +697,7 @@ test("the Mooney list and the dashboard open with their module's plain heading; 
   assert.match(dashboard, /<h1>แดชบอร์ด<\/h1>/);
   assert.match(dashboard, /<div id="lab-dash-mooney"><\/div>/);
   // เวลาอ่านชีตเป็นของ Mooney_Test_Report: อยู่ในส่วนของ Mooney ไม่อยู่ที่หัวของแดชบอร์ด
-  const banner = dashboard.match(/<div class="page-heading lab-module-header[\s\S]*?<\/h1><\/div>\s*<\/div>/)?.[0] ?? "";
+  const banner = dashboard.match(/<div class="page-heading request-module-header lab-module-header[\s\S]*?<\/h1><\/div>\s*<\/div>/)?.[0] ?? "";
   assert.ok(banner, "dashboard banner found");
   assert.doesNotMatch(banner, /lab-updated/);
   assert.match(dashboard, /<div class="lab-dash-head"><h2 class="lab-dash-title" id="lab-dash-mooney-title">Mooney<\/h2><div class="lab-live">/);

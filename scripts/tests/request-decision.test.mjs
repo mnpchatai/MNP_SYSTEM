@@ -113,3 +113,18 @@ test("starting again replaces the previous countdown instead of sending both", (
   timers.advance(10_000);
   assert.deepEqual(sent, ["rejected"]);
 });
+
+test("the confirm button ignores a tap that lands right after it appears, but not keyboard activation", () => {
+  let now = 1000;
+  const guard = rules.createTapGuard({ delayMs: 400, now: () => now });
+  assert.equal(guard.blocks({ detail: 1 }), false, "never armed: nothing is blocked");
+  guard.arm();
+  now += 399;
+  assert.equal(guard.blocks({ detail: 1 }), true, "a second tap within 400 ms is ignored");
+  assert.equal(guard.blocks({ detail: 2 }), true, "so is the second click of a double tap");
+  assert.equal(guard.blocks({ detail: 0 }), false, "Enter/Space (click with detail 0) is never delayed");
+  now += 1;
+  assert.equal(guard.blocks({ detail: 1 }), false, "after 400 ms a deliberate tap goes through");
+  guard.arm();
+  assert.equal(guard.blocks({ detail: 1 }), true, "arming again (back to compose after undo) restarts the window");
+});
