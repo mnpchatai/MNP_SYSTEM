@@ -105,11 +105,11 @@ test("parts 3 and 4 that nobody has filled yet are not drawn, and appear once th
   assert.match(signed, /ncr-detail-part--4/);
 });
 
-test("every part of the NCR wears the one NCR palette, and the back link is not repeated next to the breadcrumb", async () => {
+test("every part of the NCR wears the one NCR palette, and the page keeps one link back to the register (the breadcrumb is plain text)", async () => {
   const html = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"));
   const parts = html.match(/<section class="card ncr-card ncr-detail-part ncr-detail-part--\d" data-module="ncr"/g) ?? [];
   assert.equal(parts.length, 4);
-  assert.doesNotMatch(html, /‹ ทะเบียน NCR/, "the breadcrumb is the way back");
+  assert.equal((html.match(/href="#\/ncr">‹ ทะเบียน NCR</g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
   assert.doesNotMatch(html, /style="/, "no inline colours");
 });
 
