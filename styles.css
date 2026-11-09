@@ -362,6 +362,20 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .parts-attachment-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .parts-attachment-row .attachment-status { flex-basis: 100%; order: 3; }
 .parts-attachment-row .input { flex: 1; min-height: 38px; padding: 8px 10px; }
+/* จอแคบ: แต่ละรายการอะไหล่เป็นการ์ด (ชื่อ ร้าน หมายเหตุเต็มแถว จำนวน/หน่วย/ราคาเรียงคู่) ช่องมี placeholder และ aria-label บอกชื่อ */
+@media (max-width: 760px) {
+  .parts-table-wrap { border: 0; overflow: visible; }
+  .parts-table { min-width: 0; }
+  .parts-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .parts-table, .parts-table tbody { display: block; }
+  .parts-table tr.parts-row { margin-bottom: 10px; padding: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .parts-table tr.parts-row td { display: block; width: auto; padding: 0; border: 0; }
+  .parts-table td.parts-row-no { grid-column: 1 / -1; text-align: left; }
+  .parts-table td.parts-row-no::before { content: "รายการที่ "; }
+  .parts-table tr.parts-row td:nth-child(2), .parts-table tr.parts-row td:nth-child(6), .parts-table tr.parts-row td:nth-child(7), .parts-table td.parts-row-actions { grid-column: 1 / -1; }
+}
+/* แก้ไขการมอบหมายช่างหลังมอบหมายแล้ว: พับไว้ท้ายหน้า */
+.repair-assign-edit form { margin-top: 12px; }
 .form-message { margin-bottom: 14px; padding: 10px 12px; border-radius: var(--radius-md); font-size: var(--text-meta); }
 .form-message.error { color: var(--danger-ink); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
 .form-message.success { color: var(--success-ink); background: var(--success-soft); }

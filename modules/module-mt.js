@@ -59,6 +59,30 @@
   // แถวกรอกอะไหล่/วัสดุหนึ่งรายการในฟอร์มบันทึกผลการซ่อม — โครงเดียวกับ maintRecord.parts[] ของ
   // ระบบ Maintanance-MT เดิม (name/qty/unit/price/shop/note) ใช้ซ้ำทั้งตอนสร้างแถวแรกและกด "➕ เพิ่มรายการ"
   // เรนเดอร์เป็นแถวตาราง (ลำดับ/รายการ/จำนวน/หน่วย/ราคา/ชื่อร้าน/หมายเหตุ) ให้หน้าตาตรงกับฟอร์มกระดาษเดิม
+  // ฟอร์มมอบหมายช่าง / บันทึกผลการซ่อม: กฎของช่อง (MNP_FORM_STEPS.validate) เรียงตามลำดับบนจอ
+  const ASSIGN_RULES = Object.freeze([
+    { name: "technician_ids", required: true, message: "เลือกช่างอย่างน้อย 1 คน" },
+    { name: "execution_plan", required: true, message: "เลือกการดำเนินงาน" },
+    { name: "inspector_opinion", required: true, message: "เลือกความคิดเห็นของช่างผู้ตรวจสอบ" },
+    { name: "work_started_date", required: true, message: "เลือกวันเริ่มงาน" },
+    { name: "work_expected_date", required: true, message: "เลือกวันที่คาดว่าจะเสร็จ", check: (value, values) => !values.work_started_date || value >= values.work_started_date, checkMessage: "วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน" },
+  ]);
+  const FINISH_RULES = Object.freeze([{ name: "cause_analysis", required: true, minLength: 3, message: "เขียนวิเคราะห์สาเหตุอย่างน้อย 3 ตัวอักษร" }]);
+  // ข้อความใต้ช่องแล้วพาไปช่องแรกที่ผิด · ช่องวันที่ใช้ปฏิทินไทย จึงโฟกัสปุ่มของปฏิทินแทนช่องที่ซ่อน
+  function showRepairFieldErrors(form, errors) {
+    const target = window.MNP_FORM_STEPS.showFieldErrors(form, errors);
+    const first = form.querySelector(`[data-field="${errors[0].name}"]`);
+    const focusable = first?.querySelector('button[id$="-button"]') ?? target;
+    focusable?.focus({ preventScroll: true });
+    first?.scrollIntoView({ block: "center" });
+  }
+  function clearRepairFieldErrorOnEdit(form) {
+    if (!form || !window.MNP_FORM_STEPS) return;
+    const clear = (event) => { const name = event.target.closest?.("[data-field]")?.dataset.field; if (name) window.MNP_FORM_STEPS.clearFieldError(form, name); };
+    form.addEventListener("input", clear);
+    form.addEventListener("change", clear);
+  }
+
   function partsRowHtml(item = {}) {
     return `<tr class="parts-row">
       <td class="parts-row-no"></td>
@@ -805,6 +829,20 @@
       // ผู้แจ้งในใบ (ช่องที่กรอก) ขึ้นการ์ดเฉพาะเมื่อไม่ใช่บัญชีที่ส่งใบ ซึ่งบรรทัดใต้หัวใบบอกแล้ว ("โดย …")
       const requesterName = String(request.requester_name ?? "").trim();
       const showRequester = requesterName && requesterName !== personName(directory, request.requester_id);
+      // มอบหมายช่าง: ขั้นรอมอบหมายเป็นงานหลักของหน้า (section) · หลังมอบหมายแล้วเป็นการแก้ไขที่พับไว้ท้ายหน้า ไม่บังงานที่ต้องทำจริง
+      const assignOpen = request.status === "pending_assign"
+        ? '<section class="card" id="repair-assign"><h2>มอบหมายช่าง</h2>'
+        : '<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้ไขการมอบหมายช่าง</h2></summary>';
+      const assignClose = request.status === "pending_assign" ? "</section>" : "</details>";
+      const assignSection = canAssign ? `${assignOpen}<p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง — ติ๊กได้มากกว่าหนึ่งคน" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form" novalidate>
+          <div class="field" data-field="technician_ids"><label>ช่างผู้รับผิดชอบ</label><small>ติ๊กช่างที่รับผิดชอบใบนี้ อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></div>
+          <div class="field" data-field="execution_plan"><label for="assign-execution-plan">การดำเนินงาน</label><select class="select" id="assign-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}"${request.execution_plan === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+          <div class="field" data-field="inspector_opinion"><label for="assign-opinion">ความคิดเห็นของช่างผู้ตรวจสอบ</label><select class="select" id="assign-opinion" name="inspector_opinion" required><option value="">เลือกแนวทางการซ่อม</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}"${request.inspector_opinion === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
+          <div class="field" data-field="work_started_date"><label for="assign-start-date">วันเริ่มงาน</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}" required></div>
+          <div class="field" data-field="work_expected_date"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}" required></div>
+          ${extraFilesFieldHtml("assign-files")}
+          <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
+        </form>${assignClose}` : "";
       return {
         // ประเภทเอกสาร (ใบแจ้งซ่อม/ใบคำร้อง) แทนชื่อโมดูลในบรรทัดใต้หัวใบ จึงไม่มีการ์ดประเภทเอกสารซ้ำ
         typeLabel: docTypeLabels[request.doc_type] ?? null,
@@ -832,24 +870,17 @@
           ...(request.cause_analysis ? [requestFact("วิเคราะห์สาเหตุ", request.cause_analysis, { icon: "search", tone: "warning", wide: true })] : []),
           ...(request.parts_used ? [requestFact("อะไหล่ที่ใช้", request.parts_used, { icon: "box", tone: "slate", wide: true })] : []),
         ],
-        sectionsHtml: `        ${canAssign ? `<section class="card" id="repair-assign"><h2>${request.status === "pending_assign" ? "มอบหมายช่าง" : "แก้ไขการมอบหมายช่าง"}</h2><p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง — ติ๊กได้มากกว่าหนึ่งคน" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form">
-          <div class="field"><label>ช่างผู้รับผิดชอบ</label><small>ติ๊กช่างที่รับผิดชอบใบนี้ อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></div>
-          <div class="field"><label for="assign-execution-plan">การดำเนินงาน</label><select class="select" id="assign-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}"${request.execution_plan === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
-          <div class="field"><label for="assign-opinion">ความคิดเห็นของช่างผู้ตรวจสอบ</label><select class="select" id="assign-opinion" name="inspector_opinion" required><option value="">เลือกแนวทางการซ่อม</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}"${request.inspector_opinion === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
-          <div class="field"><label for="assign-start-date">วันเริ่มงาน</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}" required></div>
-          <div class="field"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}" required></div>
-          ${extraFilesFieldHtml("assign-files")}
-          <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
-        </form></section>` : ""}
+        sectionsHtml: `        ${canAssign && request.status === "pending_assign" ? assignSection : ""}
         ${progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => progressStepHtml(step, directory, canRecordProgress)).join("")}</div></section>` : ""}
         ${expectedDateSectionHtml(request, canRecordProgress)}
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
-        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form">
-          <div class="field"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
+        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form" novalidate>
+          <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
           <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><label class="btn secondary file-pick" for="finish-parts-file">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary attachment-upload" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
           ${extraFilesFieldHtml("finish-files")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
+        ${canAssign && request.status !== "pending_assign" ? assignSection : ""}
         ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
 `,
       };
@@ -868,22 +899,24 @@
           window.MNP_DATE_PICKER.enhance(input);
         });
       }
+      clearRepairFieldErrorOnEdit(assignForm);
+      clearRepairFieldErrorOnEdit(document.querySelector("#finish-form"));
       assignForm?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
         const values = new FormData(form);
         const technicianIds = values.getAll("technician_ids").map(String).filter(Boolean);
-        if (!technicianIds.length) return showToast("กรุณาเลือกช่างอย่างน้อย 1 คน", "error");
         const startDate = String(values.get("work_started_date") ?? "");
         const expectedDate = String(values.get("work_expected_date") ?? "");
-        const missingDate = [["#assign-start-date", startDate, "กรุณาเลือกวันเริ่มงาน"], ["#assign-expected-date", expectedDate, "กรุณาเลือกวันที่คาดว่าจะเสร็จ"]].find(([, value]) => !value);
-        if (missingDate) {
-          form.querySelector(`${missingDate[0]}-button`)?.focus();
-          return showToast(missingDate[2], "error");
-        }
-        if (expectedDate < startDate) {
-          return showToast("วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน", "error");
-        }
+        const errors = window.MNP_FORM_STEPS.validate(ASSIGN_RULES, {
+          technician_ids: technicianIds.length ? "selected" : "",
+          execution_plan: String(values.get("execution_plan") ?? ""),
+          inspector_opinion: String(values.get("inspector_opinion") ?? ""),
+          work_started_date: startDate,
+          work_expected_date: expectedDate,
+        });
+        if (errors.length) return showRepairFieldErrors(form, errors);
+        window.MNP_FORM_STEPS.clearFieldErrors(form);
         let files;
         try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
@@ -1073,6 +1106,9 @@
         event.preventDefault();
         const form = event.currentTarget;
         const values = new FormData(form);
+        const finishErrors = window.MNP_FORM_STEPS.validate(FINISH_RULES, { cause_analysis: String(values.get("cause_analysis") ?? "") });
+        if (finishErrors.length) return showRepairFieldErrors(form, finishErrors);
+        window.MNP_FORM_STEPS.clearFieldErrors(form);
         let files;
         try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);

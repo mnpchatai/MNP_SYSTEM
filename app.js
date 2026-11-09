@@ -3944,7 +3944,7 @@ function nextItemPanelHtml() {
 }
 
 // หลังตัดสิน: นับงานจากคิวเดียวกับ "ต้องจัดการ" ของหน้าหลัก
-// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น รับงานแล้วต้องมอบหมายช่าง) ขั้นนั้นเป็นปุ่มหลัก ใบถัดไปเป็นปุ่มรอง
+// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น รับงานแล้วต้องมอบหมายช่าง) แผงบอกขั้นนั้นและพาไปที่ฟอร์ม (ปุ่มรอง ปุ่มหลักคือปุ่มส่งของฟอร์มเอง)
 async function fillNextItemPanel(currentId) {
   const panel = document.querySelector("#next-item-panel");
   if (!panel) return;
@@ -3962,10 +3962,11 @@ async function fillNextItemPanel(currentId) {
       const label = queueTaskLabel(followUp);
       heading.textContent = "ขั้นต่อไปเป็นของคุณ";
       text.textContent = others.length ? `${label} ในใบนี้ · ต้องจัดการอีก ${others.length} รายการ` : `${label} ในใบนี้`;
-      buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn is-primary" id="next-item-follow-up">${escapeHtml(label)}</button>`;
+      buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn secondary" id="next-item-follow-up">${escapeHtml(label)} ↓</button>`;
       buttons.querySelector("#next-item-follow-up").addEventListener("click", () => {
         const target = document.querySelector("#repair-assign") ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
         if (!target) return;
+        if (target instanceof HTMLDetailsElement) target.open = true;
         target.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
         target.querySelector("select, input:not([type=hidden]), textarea")?.focus({ preventScroll: true });
       });
