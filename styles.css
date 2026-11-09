@@ -2666,3 +2666,4 @@ tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
 .master-more { margin-top: 12px; display: flex; justify-content: center; }
 .content td.num, .content th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .content td.nowrap { white-space: nowrap; }
+.content td.master-days-old { color: var(--danger-ink); font-weight: 700; }

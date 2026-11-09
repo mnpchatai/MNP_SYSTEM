@@ -1,6 +1,8 @@
 // หน้า #/master ของบัญชี master (บัญชีเดียวเหนือผู้ดูแลระบบ) — migration 20261113010000_master_account.sql
 //
 //   (ว่าง) / tab=errors   ปัญหาที่ผู้ใช้เจอจริง: สรุปปัญหาที่เกิดบ่อย (เลือกช่วงวัน) + รายการล่าสุด (กรองชนิด) โหลดเพิ่มได้
+//   tab=pending            งานค้างทั้งบริษัท (คำร้องและ NCR) ค้างที่ใคร กี่วัน — กติกาเดียวกับอีเมลเตือนงานค้าง
+//                          (app_master_pending_work, migration 20261114010000) กรองประเภทและคนที่ต้องทำ
 //   tab=activity           บันทึกกิจกรรมทุกโมดูล: กรองประเภท ผู้ทำ ช่วงวันที่ · เฉพาะฟิลด์ที่เปลี่ยน โหลดเพิ่มได้
 //
 // เมนูโผล่เมื่อ state.employee.isMaster (app_am_i_master) เป็นแค่ UX — ทุก RPC ที่หน้านี้เรียกตรวจ private.is_master()
@@ -37,13 +39,50 @@
     return document.querySelector(".content");
   }
 
+  const TABS = [["errors", "ปัญหาที่ผู้ใช้เจอ"], ["pending", "งานค้าง"], ["activity", "บันทึกกิจกรรม"]];
   function tabsHtml(tab) {
     return `
       <div class="page-heading"><div><h1>${esc(TITLE)}</h1></div></div>
       <div class="filters" role="navigation" aria-label="ส่วนของหน้าตรวจระบบ">
-        <a class="filter${tab === "errors" ? " active" : ""}" href="${urlFor({ tab: "errors" })}"${tab === "errors" ? ' aria-current="page"' : ""}>ปัญหาที่ผู้ใช้เจอ</a>
-        <a class="filter${tab === "activity" ? " active" : ""}" href="${urlFor({ tab: "activity" })}"${tab === "activity" ? ' aria-current="page"' : ""}>บันทึกกิจกรรม</a>
+        ${TABS.map(([key, label]) => `<a class="filter${tab === key ? " active" : ""}" href="${urlFor({ tab: key })}"${tab === key ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}
       </div>`;
+  }
+
+  // ---- งานค้างทั้งบริษัท ------------------------------------------------------------
+  function pendingRowHtml(row, today) {
+    const href = row.item_type === "ncr" ? `#/ncr?id=${encodeURIComponent(row.item_id)}` : `#/request?id=${encodeURIComponent(row.item_id)}`;
+    const holders = Array.isArray(row.holders) ? row.holders : [];
+    const overdue = model.isOverdue(row.due_date, today);
+    return `<tr>
+      <td class="nowrap${Number(row.days_waiting) >= 7 ? " master-days-old" : ""}">${esc(model.daysLabel(row.days_waiting))}</td>
+      <td class="nowrap"><a href="${href}">${esc(dash(row.doc_no))}</a><br><small class="muted">${esc(dash(row.doc_label))}</small></td>
+      <td class="master-message">${esc(dash(row.title))}${row.is_urgent ? ` <span class="badge rejected">ด่วน</span>` : ""}</td>
+      <td>${esc(row.action)}${overdue && !String(row.action).includes("เลยกำหนด") ? `<br><span class="badge rejected" title="วันกำหนด">เลยกำหนด ${formatDate(row.due_date)}</span>` : ""}</td>
+      <td>${holders.length ? holders.map((person) => esc(personLabel(person.employee_no, person.name))).join("<br>") : `<span class="badge rejected" title="ไม่มีผู้ใช้งานที่ทำขั้นนี้ได้ เช่น ผู้แจ้งหรือช่างถูกปิดบัญชี">ไม่มีผู้รับผิดชอบ</span>`}</td>
+    </tr>`;
+  }
+
+  async function renderPending(params) {
+    const rows = (await rpc("app_master_pending_work")) ?? [];
+    const type = Object.hasOwn(model.PENDING_TYPE_LABELS, params.get("type") ?? "") ? params.get("type") : "";
+    const holderOptions = model.holderOptions(model.filterPending(rows, { type }));
+    const holder = holderOptions.some((option) => option.id === params.get("holder")) ? params.get("holder") : "";
+    const list = model.filterPending(rows, { type, holder });
+    const today = typeof bangkokToday === "function" ? bangkokToday() : new Date().toISOString().slice(0, 10);
+    const content = `${tabsHtml("pending")}
+      <section class="card">
+        <div class="master-filter-grid">
+          <div class="field"><label for="master-pending-type">ประเภท</label><select class="input" id="master-pending-type"><option value="">ทั้งหมด</option>${Object.entries(model.PENDING_TYPE_LABELS).map(([code, label]) => `<option value="${esc(code)}"${code === type ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
+          <div class="field"><label for="master-pending-holder">ค้างที่</label><select class="input" id="master-pending-holder"><option value="">ทุกคน</option>${holderOptions.map((option) => `<option value="${esc(option.id)}"${option.id === holder ? " selected" : ""}>${esc(option.id === model.NO_HOLDER ? option.name : personLabel(option.employee_no, option.name))} · ${esc(option.count)} งาน</option>`).join("")}</select></div>
+        </div>
+        ${list.length ? `<div class="table-wrap"><table>
+          <thead><tr><th title="นับจากวันที่งานมาถึงขั้นปัจจุบัน">ค้าง</th><th>เอกสาร</th><th>เรื่อง</th><th>ต้องทำ</th><th>ผู้ที่ต้องทำ</th></tr></thead>
+          <tbody>${list.map((row) => pendingRowHtml(row, today)).join("")}</tbody></table></div>` : emptyState("ไม่มีงานค้างตามตัวกรองนี้")}
+      </section>`;
+    const root = paint(content);
+    const go = (next) => { location.hash = urlFor({ tab: "pending", type, holder, ...next }); };
+    root.querySelector("#master-pending-type")?.addEventListener("change", (event) => go({ type: event.target.value, holder: "" }));
+    root.querySelector("#master-pending-holder")?.addEventListener("change", (event) => go({ holder: event.target.value }));
   }
 
   // ---- ปัญหาที่ผู้ใช้เจอ ---------------------------------------------------------
@@ -210,9 +249,10 @@
   async function renderMaster(params) {
     if (!state.employee?.isMaster) return renderNotFound("หน้านี้สำหรับบัญชี master เท่านั้น");
     loadingShell(PATH, TITLE);
-    const tab = params.get("tab") === "activity" ? "activity" : "errors";
+    const tab = TABS.some(([key]) => key === params.get("tab")) ? params.get("tab") : "errors";
     try {
       if (tab === "activity") await renderActivity(params);
+      else if (tab === "pending") await renderPending(params);
       else await renderErrors(params);
     } catch (error) {
       console.error(error);

@@ -95,7 +95,42 @@
   // วันที่ YYYY-MM-DD ที่ใช้กรองได้ หรือ null
   const validDate = (value) => (/^\d{4}-\d{2}-\d{2}$/.test(String(value ?? "")) ? String(value) : null);
 
-  const api = { ENTITY_LABELS, ACTION_LABELS, ERROR_KIND_LABELS, entityLabel, actionLabel, errorKindLabel, formatValue, changeLines, changeSummary, validDate };
+  // ---- งานค้างทั้งบริษัท (app_master_pending_work) -------------------------------------------
+  // ตัวกรองผู้ที่ต้องทำ: "none" = งานที่ไม่มีผู้รับผิดชอบ (holders ว่าง)
+  const NO_HOLDER = "none";
+  const PENDING_TYPE_LABELS = { request: "คำร้อง", ncr: "NCR" };
+  const holdersOf = (row) => (Array.isArray(row?.holders) ? row.holders : []);
+
+  function filterPending(rows, { type = "", holder = "" } = {}) {
+    return (rows ?? []).filter((row) => (!type || row.item_type === type)
+      && (!holder || (holder === NO_HOLDER ? holdersOf(row).length === 0 : holdersOf(row).some((person) => person.id === holder))));
+  }
+
+  // ตัวเลือก "ค้างที่": คนที่มีงานค้าง เรียงจากงานมากไปน้อย (แล้วตามรหัส) + "ไม่มีผู้รับผิดชอบ" ถ้ามี
+  function holderOptions(rows) {
+    const byId = new Map();
+    let orphans = 0;
+    for (const row of rows ?? []) {
+      const people = holdersOf(row);
+      if (!people.length) orphans += 1;
+      for (const person of people) {
+        const entry = byId.get(person.id) ?? { id: person.id, employee_no: person.employee_no, name: person.name, count: 0 };
+        entry.count += 1;
+        byId.set(person.id, entry);
+      }
+    }
+    const people = [...byId.values()].sort((a, b) => b.count - a.count || String(a.employee_no).localeCompare(String(b.employee_no)));
+    return orphans ? [{ id: NO_HOLDER, employee_no: null, name: "ไม่มีผู้รับผิดชอบ", count: orphans }, ...people] : people;
+  }
+
+  const daysLabel = (days) => (Number(days) > 0 ? `${Number(days)} วัน` : "วันนี้");
+  // เลยกำหนด: มีวันกำหนดและเลยวันนี้ (today = YYYY-MM-DD ตามเวลาไทย)
+  const isOverdue = (dueDate, today) => Boolean(validDate(dueDate) && validDate(today) && dueDate < today);
+
+  const api = {
+    ENTITY_LABELS, ACTION_LABELS, ERROR_KIND_LABELS, entityLabel, actionLabel, errorKindLabel, formatValue, changeLines, changeSummary, validDate,
+    NO_HOLDER, PENDING_TYPE_LABELS, filterPending, holderOptions, daysLabel, isOverdue,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_MASTER_MODEL = api;
 })();

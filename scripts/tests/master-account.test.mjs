@@ -88,6 +88,27 @@ test("labels fall back to the raw code, and only plain dates filter the log", ()
   for (const value of ["2026-11-13'; drop", "13/11/2026", "", null]) assert.equal(model.validDate(value), null);
 });
 
+test("company-wide pending work filters by type and by who has to act, including work nobody holds", () => {
+  const rows = [
+    { item_type: "request", item_id: "r1", holders: [{ id: "e1", employee_no: "E001", name: "A" }, { id: "e2", employee_no: "E002", name: "B" }] },
+    { item_type: "request", item_id: "r2", holders: [{ id: "e1", employee_no: "E001", name: "A" }] },
+    { item_type: "ncr", item_id: "n1", holders: [] },
+    { item_type: "ncr", item_id: "n2", holders: null },
+  ];
+  assert.deepEqual(model.filterPending(rows, { type: "ncr" }).map((row) => row.item_id), ["n1", "n2"]);
+  assert.deepEqual(model.filterPending(rows, { holder: "e2" }).map((row) => row.item_id), ["r1"]);
+  assert.deepEqual(model.filterPending(rows, { holder: model.NO_HOLDER }).map((row) => row.item_id), ["n1", "n2"]);
+  assert.equal(model.filterPending(rows).length, 4);
+  assert.deepEqual(model.holderOptions(rows).map((option) => [option.id, option.count]), [[model.NO_HOLDER, 2], ["e1", 2], ["e2", 1]],
+    "nobody-responsible first, then people with the most work");
+  assert.deepEqual(model.holderOptions(rows.slice(0, 2)).map((option) => option.id), ["e1", "e2"], "no nobody-responsible option when every item has a holder");
+  assert.equal(model.daysLabel(0), "วันนี้");
+  assert.equal(model.daysLabel(12), "12 วัน");
+  assert.equal(model.isOverdue("2026-11-01", "2026-11-09"), true);
+  assert.equal(model.isOverdue("2026-11-09", "2026-11-09"), false);
+  assert.equal(model.isOverdue(null, "2026-11-09"), false);
+});
+
 test("the master page is a standalone module whose menu shows only for the master", () => {
   const window = { MNP_MASTER_MODEL: model, MNP_UI_ICONS: { icon: (name) => `<svg data-icon="${name}"></svg>` } };
   vm.runInNewContext(read("modules/module-master.js"), { window });

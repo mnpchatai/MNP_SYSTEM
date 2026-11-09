@@ -2027,6 +2027,27 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         && inRange(row.created_at, p_from, p_to)), p_before_id, p_limit)
         .map((row) => ({ ...row, actor_no: personNo(row.actor_id), actor_name: personName(row.actor_id) }));
     },
+    // งานค้างทั้งบริษัท: ประมาณจากคำร้องจำลอง (ผู้ทำตามสถานะ) กติกาจริงอยู่ที่ private.pending_work_items
+    // ใบที่ผู้ทำไม่อยู่ในรายชื่อพนักงานจำลองได้ holders ว่าง (หน้าเว็บแสดง "ไม่มีผู้รับผิดชอบ") เหมือนฐานข้อมูลจริง
+    app_master_pending_work() {
+      requireMaster();
+      const ACTIONS = { pending_approval: "พิจารณาอนุมัติ", more_info: "ส่งข้อมูลเพิ่มเติมที่ผู้อนุมัติขอ", pending_assign: "มอบหมายช่าง", assigned: "เริ่มงานซ่อม", pending_verify: "ตรวจรับผลการซ่อม" };
+      const today = new Date(now()).toISOString().slice(0, 10);
+      return db.requests.filter((request) => Object.hasOwn(ACTIONS, request.status)).map((request) => {
+        const step = db.approval_steps.find((item) => item.request_id === request.id && item.step_order === request.current_step && item.status === "pending");
+        const holderId = { pending_approval: step?.approver_employee_id, more_info: request.requester_id, pending_assign: "e1", assigned: request.assignee_id, pending_verify: request.requester_id }[request.status];
+        const person = employees.find((row) => row.id === holderId && row.is_active);
+        const type = request_types.find((row) => row.id === request.request_type_id);
+        const since = request.updated_at ?? request.created_at;
+        return {
+          item_type: "request", item_id: request.id, doc_no: request.request_no, doc_label: type?.name_th ?? null, title: request.title, status: request.status,
+          action: ACTIONS[request.status], waiting_since: since,
+          days_waiting: Math.max(0, Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${since.slice(0, 10)}T00:00:00Z`)) / DAY)),
+          due_date: request.status === "assigned" ? request.work_expected_date ?? null : null, is_urgent: Boolean(request.is_urgent),
+          holders: person ? [{ id: person.id, employee_no: person.employee_no, name: personName(person.id), department: departments.find((row) => row.id === person.department_id)?.code ?? null }] : [],
+        };
+      }).sort((a, b) => a.waiting_since.localeCompare(b.waiting_since));
+    },
     app_master_activity_facets() {
       requireMaster();
       const count = (key) => auditLogs.reduce((map, row) => map.set(row[key], (map.get(row[key]) ?? 0) + 1), new Map());
