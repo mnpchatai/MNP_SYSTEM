@@ -127,10 +127,16 @@ test("before the first loss row there are no 0.00 tiles, and 'not assessed yet' 
   assert.doesNotMatch(editor, /สุทธิยืนยันแล้ว|ncr-loss-more/, "editor: no zero tiles, only the live preview of the row being entered");
   assert.match(editor, /id="ncr-loss-preview"/);
   const viewer = await renderFor(employee("e8", "dept-qa", "QA", "staff"));
-  assert.match(viewer, /<p class="muted">ยังไม่มีรายการความสูญเสีย<\/p>/);
+  assert.equal((viewer.match(/ยังไม่มีรายการความสูญเสีย/g) ?? []).length, 1, "the empty state is said once");
+  assert.doesNotMatch(viewer, /กรุณาประเมินก่อนสรุป/, "a viewer who cannot enter costs is not asked to assess them");
   assert.doesNotMatch(viewer, /<dl class="ncr-loss-summary/);
   assert.doesNotMatch(viewer, /ประเมินค่าเสียหายยังไม่ครบ/, "the review block below already says the costs are not confirmed");
   assert.equal((viewer.match(/ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ/g) ?? []).length, 1);
+  // แถวที่ยกเลิกแล้วยังแสดงในตาราง ช่องสรุปจึงยังแสดง ไม่บอกว่า "ยังไม่มีรายการ"
+  const voided = { id: "l9", ncr_id: NCR.id, entry_kind: "loss", loss_type: "scrap", cost_status: "estimated", amount: 500, quantity: 1, unit: "pcs", unit_cost: 500, recorded_by: "e1", recorded_at: "2026-11-01", voided_at: "2026-11-02", void_reason: "ซ้ำ" };
+  const withVoided = await renderFor(employee("e8", "dept-qa", "QA", "staff"), {}, { tables: { ncr_losses: [voided] } });
+  assert.doesNotMatch(withVoided, /ยังไม่มีรายการความสูญเสีย/);
+  assert.match(withVoided, /<dl class="ncr-loss-summary/);
 });
 
 test("the upload hint (file types and size) is shown once on the detail page, in the evidence section", () => {

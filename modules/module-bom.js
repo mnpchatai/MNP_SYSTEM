@@ -306,7 +306,8 @@
       if (!items.length) return "";
       return `<li class="rf-nav-group"><span>${escapeHtml(group)}</span><ul>${items.map((entry) => `<li><a class="rf-nav-item${entry.id === page ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(entry.id)}" href="${escapeHtml(url(entry.id))}"${entry.id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(entry.id)}</span><span class="rf-nav-text">${escapeHtml(entry.label)}</span>${counts[entry.id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(entry.id))}">${counts[entry.id]}</span>` : ""}</a></li>`).join("")}</ul></li>`;
     }).join("");
-    return `<div class="nav-sub rf-nav"><ul class="rf-nav-list">${groups}</ul></div>`;
+    // เมนูข้างอยู่ใน <aside> ของ shell (ไม่ใช่ลูกของ .rf-page) จึงใส่จานสี BOM ที่ตัวเมนูเอง
+    return `<div class="nav-sub rf-nav" data-module="bom"><ul class="rf-nav-list">${groups}</ul></div>`;
   };
   const navCounts = (data, user) => ({
     jobs: data.jobs.filter((job) => job.status !== "done" && (actions.helpers.canPlan(user) ? false : job.dept === user.dept)).length,

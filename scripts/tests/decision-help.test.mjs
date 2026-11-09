@@ -97,7 +97,7 @@ test("the status badge and the MT badge say what the current step asks for", () 
   // ชื่อขั้นในป้ายซ่อนได้ (.badge-step) เมื่อแถบตัดสินใจบอกชื่อขั้นอยู่แล้ว: บอกครั้งเดียว
   assert.match(mt, /<span class="badge-step">/);
   assert.match(readFileSync(new URL("../../styles.css", import.meta.url), "utf8"), /\.has-step-line \.badge-step \{ display: none; \}/);
-  assert.match(readFileSync(new URL("../../app.js", import.meta.url), "utf8"), /request-detail-head request-module-header\$\{canApprove \? " has-step-line" : ""\}/);
+  assert.match(readFileSync(new URL("../../app.js", import.meta.url), "utf8"), /request-detail-head\$\{moduleHead \? " request-module-header" : ""\}\$\{canApprove \? " has-step-line" : ""\}/);
 });
 
 test("confirmDialog takes a cancel label and keeps 'ยกเลิก' by default", () => {
@@ -161,7 +161,8 @@ test("the shortcut legend lists the real shortcuts and opens with ? on Latin and
   assert.doesNotMatch(css, /\.help-toggle \{ display: none; \}/);
   assert.match(css, /@media \(hover: none\) and \(pointer: coarse\) \{ \.help-keys \{ display: none; \} \}/);
   assert.match(opener, /window\.MNP_SHORTCUT_HELP\.helpHtml\(escapeHtml, helpPageKey\(currentRoute\(\)\)\)/);
-  assert.match(app, /route\.path === "requests" && route\.params\.get\("mode"\) === "create" \? "new" : route\.path/, "the create form gets the create-page tips");
+  assert.match(app, /if \(route\.path === "requests" && route\.params\.get\("mode"\) === "create"\) return "new";/, "the create form gets the create-page tips");
+  assert.match(app, /if \(route\.path === "ncr"\) return route\.params\.get\("id"\) \? "ncr" : "";/, "NCR tips only on an NCR record");
   // every listed letter shortcut exists in the key handlers
   assert.match(app, /KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r"/);
 });

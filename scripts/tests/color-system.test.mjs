@@ -303,7 +303,12 @@ test("department chips: unselected chips are a light tint of the department colo
 
 test("the request detail, create form, NCR detail, dashboards, home queue, filters and RubberFlow/BOM menu take the module colour", () => {
   const app = read("app.js");
-  assert.match(app, /<header class="request-detail-head request-module-header\$\{canApprove \? " has-step-line" : ""\}" data-module="\$\{requestPalette\(type\?\.code\)\}">/);
+  assert.match(app, /<header class="request-detail-head\$\{moduleHead \? " request-module-header" : ""\}\$\{canApprove \? " has-step-line" : ""\}"\$\{moduleHead \? ` data-module="\$\{requestPalette\(type\?\.code\)\}"` : ""\}>/);
+  assert.match(app, /const moduleHead = !ORIGINAL_FORM_TYPES\.has\(type\?\.code\);/, "the IT team's repair form keeps its own header");
+  assert.match(app, /const heading = selected && ORIGINAL_FORM_TYPES\.has\(selected\.code\)\s+\? .<div class="page-heading"><div><h1>/);
+  // เมนูข้างของ RubberFlow/BOM อยู่นอก .rf-page จึงต้องมี data-module ของตัวเอง
+  assert.match(read("modules/module-bom.js"), /<div class="nav-sub rf-nav" data-module="bom">/);
+  assert.match(read("modules/module-rubberflow.js"), /<div class="nav-sub rf-nav" data-module="rf">/);
   assert.match(app, /<div class="page-heading request-module-header" data-module="\$\{requestPalette\(selected\.code\)\}"><div class="request-module-title">\$\{typeCardMarkHtml\(selected, \{ prefix: /);
   assert.equal([...app.matchAll(/class="queue-item-icon" data-module="/g)].length, 3, "all three home queue icons carry data-module");
   assert.match(read("modules/module-ncr.js"), /class="page-heading request-module-header ncr-detail-head" data-module="ncr"/);

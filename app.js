@@ -2611,8 +2611,11 @@ document.addEventListener("keydown", (event) => {
 
 // ตารางคีย์ลัด (กด ? หรือปุ่มช่วยเหลือที่แถบบน): รายการอยู่ใน modules/shortcut-help.js ไม่เป็นข้อความถาวรบนหน้า
 // ฟอร์มสร้างเปิดใต้ #/requests?mode=create จึงใช้คำแนะนำของหน้าสร้าง (new)
+// คำแนะนำของ NCR เขียนสำหรับหน้าใบ (#/ncr?id=…) หน้าอื่นใต้ #/ncr (ฟอร์มออก NCR) จึงไม่มีส่วน "หน้านี้"
 function helpPageKey(route) {
-  return route.path === "requests" && route.params.get("mode") === "create" ? "new" : route.path;
+  if (route.path === "requests" && route.params.get("mode") === "create") return "new";
+  if (route.path === "ncr") return route.params.get("id") ? "ncr" : "";
+  return route.path;
 }
 
 function openShortcutHelp() {
@@ -3020,7 +3023,10 @@ async function renderNewRequest(params) {
 
   async function paint() {
     const selected = (types ?? []).find((type) => type.id === selectedId) ?? null;
-    const heading = selected
+    // ใบแจ้งซ่อม IT ใช้ฟอร์มของทีม IT เอง (ORIGINAL_FORM_TYPES) หัวจึงคงแบบเดิม ไม่ใช่ก้อนสีโมดูล
+    const heading = selected && ORIGINAL_FORM_TYPES.has(selected.code)
+      ? `<div class="page-heading"><div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div>`
+      : selected
       ? `<div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}"><div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div></div>`
       : `<div class="page-heading"><div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1></div></div>`;
 
@@ -3718,8 +3724,10 @@ async function renderRequestDetail(params) {
   const timelineOpen = window.matchMedia("(min-width: 1041px)").matches ? " open" : "";
   const receipt = recentDecisionFor(id);
   const description = (request.description ?? "").trim();
+  // หัวใบเป็นก้อนสีโมดูล ยกเว้นใบแจ้งซ่อม IT ที่ใช้ฟอร์มของทีม IT เอง (ORIGINAL_FORM_TYPES)
+  const moduleHead = !ORIGINAL_FORM_TYPES.has(type?.code);
   const content = `
-    <header class="request-detail-head request-module-header${canApprove ? " has-step-line" : ""}" data-module="${requestPalette(type?.code)}">
+    <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
