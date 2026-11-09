@@ -846,9 +846,12 @@ a.register-title:hover { color: var(--primary); }
 .ncr-loss-add > summary { list-style: none; width: fit-content; }
 .ncr-loss-add > summary::-webkit-details-marker { display: none; }
 .ncr-loss-add[open] > summary { margin-bottom: 12px; }
+/* แถว "รายการที่กำลังกรอก" มีความหมายเฉพาะตอนฟอร์มเปิด · ก่อนมีรายการแรก กล่องสรุปจึงไม่แสดงเลยขณะฟอร์มพับ */
+.ncr-loss-card:has(#ncr-loss-add:not([open])) .ncr-loss-draft { display: none; }
+.ncr-loss-card:has(#ncr-loss-add:not([open])) .ncr-loss-overview:not(:has(.ncr-loss-more)) { display: none; }
 /* จอแคบ: ปุ่มส่งของฟอร์มในงานที่ต้องทำติดล่างจอระหว่างเลื่อนดูฟอร์มยาว (แบบเดียวกับปุ่มของฟอร์มสร้าง) */
 @media (max-width: 760px) {
-  .ncr-actions .form-actions { position: sticky; bottom: 0; z-index: 4; margin-inline: -16px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
+  .ncr-actions .form-actions { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
 }
 @media (max-width: 900px) {
   .page-heading.request-module-header { flex-direction: column; align-items: flex-start; }
@@ -2495,7 +2498,7 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .badge.rejected, .rf-badge.is-bad { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M7 7l6 6M13 7l-6 6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.cancelled { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M6.1 13.9l7.8-7.8' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.urgent-flag, .rf-badge.is-warn, .nd-pill.crit .nd-ico { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M10 5.4v5.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='10' cy='14.3' r='1.35'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
-@media (forced-colors: active) { :is(.badge, .rf-badge)::before { forced-color-adjust: none; background: CanvasText; } }
+@media (forced-colors: active) { :is(.badge, .rf-badge)::before, .nd-pill.crit .nd-ico { forced-color-adjust: none; background: CanvasText; } }
 .nd-pill.crit .nd-ico { width: 16px; height: 16px; flex: none; overflow: hidden; color: transparent; font-size: 0; background: var(--danger-strong); -webkit-mask: var(--badge-glyph) center / 100% 100% no-repeat; mask: var(--badge-glyph) center / 100% 100% no-repeat; }
 .rf-page ::selection, body:has(.rf-page) .rf-modal ::selection { background: color-mix(in srgb, var(--rf-mod, #0f766e) 24%, transparent); }
 

@@ -3964,7 +3964,8 @@ async function fillNextItemPanel(currentId) {
       text.textContent = others.length ? `${label} ในใบนี้ · ต้องจัดการอีก ${others.length} รายการ` : `${label} ในใบนี้`;
       buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn secondary" id="next-item-follow-up">${escapeHtml(label)} ↓</button>`;
       buttons.querySelector("#next-item-follow-up").addEventListener("click", () => {
-        const target = document.querySelector("#repair-assign") ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
+        const task = { pending_assign: "section#repair-assign", assigned: ".start-work-button", in_progress: "#finish-form", pending_verify: "#verify-note" }[followUp.request?.status];
+        const target = (task ? document.querySelector(task)?.closest("section, details") : null) ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
         if (!target) return;
         if (target instanceof HTMLDetailsElement) target.open = true;
         target.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });

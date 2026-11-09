@@ -262,7 +262,7 @@ test("every status badge and RubberFlow tone carries a glyph cut out of a white 
   assert.equal(disc.declarations.get("background"), "#fff");
   for (const name of STATUS_BADGES) assert.ok(disc.selector.includes(`.${name}`), `the disc rule covers .${name}`);
   for (const name of RF_TONES) assert.ok(disc.selector.includes(`.${name}`), `the disc rule covers .rf-badge.${name}`);
-  assert.match(css, /@media \(forced-colors: active\) \{ :is\(\.badge, \.rf-badge\)::before \{ forced-color-adjust: none; background: CanvasText; \} \}/);
+  assert.match(css, /@media \(forced-colors: active\) \{ :is\(\.badge, \.rf-badge\)::before, \.nd-pill\.crit \.nd-ico \{ forced-color-adjust: none; background: CanvasText; \} \}/, "glyphs stay visible in Windows high contrast, including the dashboard pills");
 });
 
 test("the status colours stay readable as white text and as the glyph on the white disc", () => {
