@@ -70,6 +70,7 @@ function load({ sandbox = true, route = "", access = EDIT, fixtures = {}, employ
       from: () => ({ select: () => ({ eq: () => ({ order: async () => ({ data: [{ code: "DIM", name_th: "ขนาดผิด" }], error: null }) }) }) }),
     },
     MNP_REQUEST_MODULES: {},
+    MNP_UI_ICONS: { typeIcon: (code) => `<svg data-icon="${code}"></svg>` },
   });
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
   context.MNP_QC_SHEET.sync = (record) => { calls.synced.push(record); return true; };
@@ -93,7 +94,7 @@ test("the module registers a sandbox-only standalone page and navigation entry",
   assert.equal(registered.nav[0].path, "qc");
   assert.equal(typeof registered.pages.qc, "function");
   assert.equal(registered.errorMessages, context.MNP_QC_MODEL.ERROR_MESSAGES);
-  assert.equal(registered.theme.length, 2);
+  assert.equal(registered.palette, "qc", "the module colour is a palette name (data-module in styles.css), not a gradient");
 });
 
 test("outside test mode the page is not found and nothing is loaded", async () => {

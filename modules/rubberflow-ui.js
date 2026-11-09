@@ -12,7 +12,7 @@
   const STATUS = Object.freeze({
     planned: ["", "วางแผน"], released: ["info", "ปล่อยผลิต"], in_progress: ["accent", "กำลังผลิต"], on_hold: ["warn", "พักงาน"],
     completed: ["good", "เสร็จสิ้น"], cancelled: ["bad", "ยกเลิก"],
-    pass: ["good", "ผ่าน"], hold: ["warn", "กักกัน (Hold)"], fail: ["bad", "ไม่ผ่าน"],
+    pass: ["good", "ผ่าน"], hold: ["warn", "กักรอตัดสิน"], fail: ["bad", "ไม่ผ่าน"],
     weighing: ["warn", "ค้างจ่าย"], issued: ["info", "จ่ายครบ รอผสม"], consumed: ["good", "ใช้ผสมแล้ว"],
     in_transit: ["warn", "รอรับมอบ"], received: ["good", "รับมอบแล้ว"],
     open: ["bad", "เปิดอยู่"], closed: ["good", "ปิดแล้ว"],
@@ -210,6 +210,8 @@
       const barBox = bar.getBoundingClientRect();
       bar.scrollLeft += tabBox.left - barBox.left - (barBox.width - tabBox.width) / 2;
     });
+    // แถวแท็บที่ล้นจอเฟดขอบขวาให้รู้ว่าเลื่อนได้ (ไม่ล้น = ไม่เฟด)
+    scope.querySelectorAll(".rf-tabs").forEach((bar) => bar.classList.toggle("is-scrollable", bar.scrollWidth > bar.clientWidth + 1));
     scope.querySelectorAll("table.rf-table:not(.bom-tree-table)").forEach((tableNode) => {
       const labels = [...tableNode.querySelectorAll("thead th")].map((th) => th.textContent.trim());
       tableNode.querySelectorAll("tbody tr").forEach((row) => {

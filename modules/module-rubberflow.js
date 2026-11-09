@@ -24,7 +24,6 @@
 (function registerRubberFlowModule() {
   const PATH = "rubberflow";
   const TITLE = "RubberFlow MES";
-  const THEME = ["#0f766e", "#115e59"];
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9l5 3V9l5 3V6h6v13H4Z"/><path d="M8 19v-3h3v3M15 19v-3h3v3"/></svg>`;
 
   const rules = window.MNP_RUBBERFLOW_RULES;
@@ -377,11 +376,10 @@
     const { data, user, now } = ctx;
     // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล) · ล้างข้อมูลทดสอบ = เฉพาะ admin ตัวจริงในโหมดทดสอบ (ฐานข้อมูลตรวจซ้ำ)
     if (store.isRemote()) {
-      const purge = canPurge() ? `<button class="btn rf-btn secondary" type="button" data-rf-purge title="ลบข้อมูลทั้งหมดของ RubberFlow ในฐานข้อมูล (วัตถุดิบ สูตร ใบสั่งผลิต ล็อต ใบเบิก ส่งมอบ กล่อง QC NCR แม่พิมพ์ ใบสั่งซื้อ) แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล RubberFlow ทดสอบ</button>` : "";
       const alerts = user && store.status() === "ready" ? derive.buildAlerts(data, now) : [];
       const bad = alerts.some((alert) => alert.tone === "bad");
       const tools = user && store.status() === "ready" ? `<form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
-        <div class="rf-row">${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}${purge}</div>` : `<div class="rf-row">${purge}</div>`;
+        <div class="rf-row">${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}</div>` : "";
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-rf-sync>${escapeHtml(syncText())}</span>${tools}</div>`;
     }
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
@@ -395,9 +393,16 @@
         <form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
         <div class="rf-row">
           ${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}
-          <button class="btn rf-btn secondary" type="button" data-rf-reset title="ล้างข้อมูลที่บันทึกในเบราว์เซอร์นี้แล้วสร้างข้อมูลสาธิตใหม่">รีเซ็ตข้อมูลสาธิต</button>
         </div>
       </div>`;
+  }
+
+  // ปุ่มล้างข้อมูลทดสอบ/รีเซ็ตข้อมูลสาธิตอยู่ท้ายหน้าในกล่องพับ ไม่ใช่บนสุด (กดพลาดแล้วข้อมูลหาย) — ปุ่มและ handler เดิม
+  function testDataHtml(ctx) {
+    const button = store.isRemote()
+      ? (canPurge() ? `<button class="btn rf-btn secondary" type="button" data-rf-purge title="ลบข้อมูลทั้งหมดของ RubberFlow ในฐานข้อมูล (วัตถุดิบ สูตร ใบสั่งผลิต ล็อต ใบเบิก ส่งมอบ กล่อง QC NCR แม่พิมพ์ ใบสั่งซื้อ) แล้วเริ่มใหม่จากศูนย์ (ประวัติการใช้งานคงไว้)">ล้างข้อมูล RubberFlow ทดสอบ</button>` : "")
+      : (ctx.user ? `<button class="btn rf-btn secondary" type="button" data-rf-reset title="ล้างข้อมูลที่บันทึกในเบราว์เซอร์นี้แล้วสร้างข้อมูลสาธิตใหม่">รีเซ็ตข้อมูลสาธิต</button>` : "");
+    return button ? `<details class="rf-testdata"><summary>จัดการข้อมูลทดสอบ</summary><div class="rf-row">${button}</div></details>` : "";
   }
 
   // ไม่ได้เลือกบทบาท: บอกว่าโมดูลนี้คืออะไร ส่วนการเลือกบทบาทสาธิตอยู่ในช่องของแถบเครื่องมือด้านบน (ไม่มีหน้าเลือกบทบาทแยก)
@@ -542,7 +547,7 @@
     // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต สแกน แจ้งเตือน รีเซ็ต)
     const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
     dirty = false; // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างแล้ว (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
-    app.innerHTML = shell(`<div class="rf-page" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${body}</div>`, PATH, title);
+    app.innerHTML = shell(`<div class="rf-page" data-module="rf" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${body}${testDataHtml(ctx)}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
@@ -579,7 +584,7 @@
     // ข้อมูลทั้ง 12 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่รับเฉพาะ admin ในโหมดทดสอบ (RF_TEST_MODE_ONLY)
     sandbox: true,
     label: TITLE,
-    theme: THEME,
+    palette: "rf",
     // group: หัวกลุ่ม "ทดสอบ" ในเมนูข้าง (โมดูลต้นแบบที่ข้อมูลอยู่ในเบราว์เซอร์) — sandboxOnly ต้องคงไว้: เห็นเฉพาะ admin ในโหมดทดสอบ
     nav: [{ path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav }],
     pages: { [PATH]: renderRubberFlow },

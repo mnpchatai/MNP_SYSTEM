@@ -25,7 +25,8 @@
     code: "IT_REPAIR",
     enabled: true,
     label: "ใบแจ้งซ่อม IT",
-    theme: ["#60a5fa", "#1d4ed8"],
+    // จานสีของโมดูล (data-module ใน styles.css)
+    palette: "it",
     // ฟิลด์เฉพาะของ IT — ใช้ class detail-field เพื่อให้ฟังก์ชันส่งคำร้องกลางเก็บลง details เอง
     renderFields({ escapeHtml }) {
       return IT_REPAIR_FIELDS.map((field) => `<div class="field"><label for="detail-${field.name}">${escapeHtml(field.label)}</label><input class="input detail-field" id="detail-${field.name}" name="${field.name}" placeholder="${escapeHtml(field.placeholder)}" maxlength="500"></div>`).join("");

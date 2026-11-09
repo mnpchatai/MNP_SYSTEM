@@ -43,6 +43,9 @@ test("NCR attachment fields allow multiple files in both modes and escape labels
     const { api } = load({ sandbox });
     assert.match(api.fieldHtml("a", "<ภาพ>"), /name="evidence"[^>]*multiple/);
     assert.match(api.fieldHtml("a", "<ภาพ>"), /&lt;ภาพ>/);
+    assert.match(api.fieldHtml("a", "x"), /<small>/, "the hint shows by default");
+    assert.doesNotMatch(api.fieldHtml("a", "x", { hint: false }), /<small>/, "hint: false moves the hint into the title");
+    assert.match(api.fieldHtml("a", "x", { hint: false }), /title="/);
   }
 });
 

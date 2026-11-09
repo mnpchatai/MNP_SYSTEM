@@ -80,11 +80,11 @@ test("RubberFlow and BOM icon maps point at the shared set and hold no emoji", (
   for (const tone of ["bad", "warn", "good", "info"]) assert.match(rubberflow, new RegExp(`\\b${tone}: "`), `callout tone ${tone} has an icon`);
 });
 
-test("LAB and QC headings show the module colour only as a dot, never as a gradient band", () => {
+test("LAB and QC headings use the one shared module header, coloured by data-module and never by inline styles", () => {
   for (const file of ["modules/lab-sections.js", "modules/module-qc.js"]) {
     const source = read(file);
-    assert.match(source, /<span class="module-dot" style="--module-color:\$\{/, `${file} uses the module dot`);
-    assert.doesNotMatch(source, /request-module-header/, `${file} no longer uses the coloured band`);
+    assert.match(source, /class="page-heading request-module-header/, `${file} uses the shared module header`);
+    assert.match(source, /data-module="/, `${file} names its palette`);
+    assert.doesNotMatch(source, /module-dot|--module-color|linear-gradient|style="background/, `${file} has no dot or inline colour`);
   }
-  assert.doesNotMatch(read("modules/module-qc.js"), /linear-gradient/);
 });

@@ -1180,6 +1180,18 @@ function registerSubHtml(text, iconHtml = "", title = text) {
   return `<span class="register-sub" title="${escapeHtml(title)}">${iconHtml}${escapeHtml(text)}</span>`;
 }
 
+// หัวข้อใบแจ้งซ่อมที่ฐานข้อมูลสร้างคือ "ชื่อเครื่อง — อาการ" บรรทัดหลักของแถวเป็นชื่อเครื่องแล้ว บรรทัดรองจึงเหลือเฉพาะอาการ
+function titleWithoutMachine(title, machineName, machineCode) {
+  const text = String(title ?? "").trim();
+  for (const name of [machineName, machineCode].map((value) => String(value ?? "").trim()).filter(Boolean)) {
+    if (text.startsWith(name)) {
+      const rest = text.slice(name.length).replace(/^[\s—–\-:·|]+/u, "");
+      if (rest !== text.slice(name.length) || !rest) return rest;
+    }
+  }
+  return text;
+}
+
 // เรื่อง: บรรทัดหลักเป็นลิงก์ (ถ้าเปิดได้) บรรทัดรองตัดให้เหลือบรรทัดเดียว
 function registerSubjectHtml(main, href, secondary = "") {
   const title = href ? `<a class="register-title" href="${href}">${escapeHtml(main)}</a>` : `<strong class="register-title">${escapeHtml(main)}</strong>`;
@@ -1188,7 +1200,7 @@ function registerSubjectHtml(main, href, secondary = "") {
 
 // ประเภทคำร้องในรายการที่รวมหลายประเภท (ในโมดูลเดียวไม่แสดง เพราะหัวโมดูลบอกแล้ว)
 function registerTypeHtml(code, name) {
-  return `<span class="request-card-type" style="background:${requestTypeGradient(code)}">${escapeHtml(name ?? "คำร้อง")}</span>`;
+  return `<span class="request-card-type" data-module="${requestPalette(code)}">${escapeHtml(name ?? "คำร้อง")}</span>`;
 }
 
 // รายการคำร้องตามสิทธิ์ (หน้ารายการของโมดูล และรายการทุกประเภทที่กรองสถานะจากแดชบอร์ด)
@@ -1209,7 +1221,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
     const description = (request.description ?? "").trim();
     const main = machine || request.title;
     // บรรทัดรอง: ชื่อเรื่องเมื่อหัวเป็นเครื่องจักร ไม่งั้นรายละเอียด (ไม่ซ้ำกับหัว) + วันที่ต้องการใช้งานถ้ามี
-    const detail = machine ? request.title : description;
+    const detail = machine ? titleWithoutMachine(request.title, request.machine_name, request.machine_code) : description;
     const secondary = [detail && detail !== main ? detail : "", request.needed_date ? `ต้องการใช้ ${formatDate(request.needed_date)}` : ""].filter(Boolean).join(" · ");
     const owners = requestOwnerNames(request, directory);
     return {
@@ -1569,7 +1581,7 @@ async function renderAuth(message = "") {
           <p>${isRequest ? "กำหนด ID และรหัสผ่านที่ต้องการ ผู้ดูแลระบบจะเป็นผู้อนุมัติสิทธิ์ก่อนใช้งานได้" : "ใช้รหัสพนักงานและรหัสผ่านของคุณ"}</p>
           <div id="auth-message" role="status">${message}${directoryError ? `<div class="form-message error">${escapeHtml(directoryError)}</div>` : ""}</div>
           <form id="auth-form">
-            <div class="field"><label for="employee-no">UserID${req}</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
+            <div class="field"><label for="employee-no">รหัสพนักงาน${req}</label><input class="input" id="employee-no" name="employee_no" autocomplete="username" maxlength="32" placeholder="เช่น MNP0102" required></div>
             ${isRequest ? requestFields : ""}
             <div class="field"><label for="password">รหัสผ่าน${req}</label><input class="input" id="password" name="password" type="password" autocomplete="${isRequest ? "new-password" : "current-password"}" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
             ${isRequest ? `<div class="field"><label for="confirm-password">ยืนยันรหัสผ่าน${req}</label><input class="input" id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
@@ -2776,6 +2788,7 @@ async function requestTypeCounts(types, mineOnly) {
   })));
 }
 
+// counts: ใช้เฉพาะการ์ดบนหน้าเลือกโมดูล (ในโมดูลตารางข้างล่างบอกจำนวนอยู่แล้ว หัวไม่นับซ้ำ)
 function requestCenterHeader(types, params, counts) {
   const selected = types.find((type) => type.id === params.get("type"));
   if (selected) {
@@ -2785,16 +2798,16 @@ function requestCenterHeader(types, params, counts) {
     const headerLinks = (requestModule(selected.code)?.headerLinks ?? [])
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
     return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
-      <div class="page-heading request-module-header" style="background:${requestTypeGradient(selected.code)}">
-        <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${counts ? `ยังไม่จบ ${counts.get(selected.id) ?? 0} รายการตามขอบเขตที่เลือก` : "ติดตามสถานะคำร้องของโมดูลนี้"}</p></div></div>
+      <div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}">
+        <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>ติดตามสถานะคำร้องของโมดูลนี้</p></div></div>${typeCardWatermarkHtml(selected.code)}
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
       </div>`;
   }
   return `<div class="page-heading"><div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
-    <div class="request-type-heading"><h2>เลือกโมดูล</h2></div>
-    <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" style="background:${requestTypeGradient(type.code)}">
+    <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" data-module="${requestPalette(type.code)}">
       <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} ยังไม่จบ` : "ดูสถานะ"}</span></span>
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${selected?.id === type.id ? "กำลังแสดงประเภทนี้" : "ดูรายการและสถานะ →"}</small></span>
+      ${typeCardWatermarkHtml(type.code)}
     </a>`).join("")}</nav>`;
 }
 
@@ -2814,10 +2827,11 @@ async function renderRequestsBoard(params, types) {
     && (status === "all" || status.split(",").includes(row.status))
     && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
-  const content = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
+  const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
     ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
+  const content = selected ? `<div data-module="${requestPalette(selected.code)}">${boardContent}</div>` : boardContent;
   app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
   bindModuleZoom(params);
@@ -2879,13 +2893,12 @@ async function renderRequests(params) {
     const statusList = statuses.length
       ? `<div class="request-type-heading"><h2>คำร้องทุกประเภท · ${escapeHtml(filterLabels.join(", "))}</h2><a href="${escapeHtml(requestCenterUrl(params, { status: null }))}">ล้างตัวกรอง</a></div>${await requestListPanel(params, null)}`
       : "";
-    app.innerHTML = shell(`${requestCenterHeader(types, params, counts)}<p class="muted small">จำนวนบนการ์ดคือรายการที่ยังไม่จบ${mineOnly ? "เฉพาะที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู"} · เลือกโมดูลเพื่อแสดงรายการคำร้อง</p>${statusList}`, "requests", "คำร้อง");
+    app.innerHTML = shell(`${requestCenterHeader(types, params, counts)}<p class="muted small">จำนวนบนการ์ดนับเฉพาะรายการที่ยังไม่จบ${mineOnly ? "ที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู"}</p>${statusList}`, "requests", "คำร้อง");
     bindShell();
     bindModuleZoom(params);
     return;
   }
   if (params.get("view") === "board") return await renderRequestsBoard(params, types);
-  const counts = await requestTypeCounts([selected], mineOnly);
   let list = "";
   if (selected.code !== "NCR_CAR") {
     const departments = await loadRequestDepartmentFilter(selected);
@@ -2899,7 +2912,8 @@ async function renderRequests(params) {
     // ทะเบียน NCR มีตัวเลือกหมวดของตัวเอง แถวนี้จึงมีแค่ขอบเขต
     list += `<div class="list-filters">${requestScopeSwitch(params)}</div>${await ncrModule.renderCenterList(params)}`;
   }
-  const content = `${requestCenterHeader(types, params, counts)}${selected.code === "NCR_CAR" ? "" : requestsViewTabs(params)}${list}`;
+  // data-module ครอบทั้งหน้าของโมดูล: หัวตาราง แท็บ และเลขที่ใบใช้จานสีของโมดูลนั้น
+  const content = `<div data-module="${requestPalette(selected.code)}">${requestCenterHeader(types, params, null)}${selected.code === "NCR_CAR" ? "" : requestsViewTabs(params)}${list}</div>`;
   app.innerHTML = shell(content, "requests", "คำร้อง", requestTypeLabel(selected));
   bindShell();
   bindModuleZoom(params);
@@ -2915,13 +2929,14 @@ function dynamicDetailFields(schema, values = {}) {
   }).join("");
 }
 
-const requestTypeThemes = {
-  IT_REPAIR: ["#60a5fa", "#1d4ed8"],
-  VEHICLE_REPAIR: ["#fb923c", "#c2410c"],
-  PURCHASE: ["#34d399", "#047857"],
-  IT_ACCESS: ["#22d3ee", "#0e7490"],
-  HR_LEAVE: ["#f472b6", "#be185d"],
-  HR_TRAINING: ["#fbbf24", "#b45309"],
+// จานสีของประเภทที่ยังไม่มีโมดูลของตัวเอง (โมดูลที่เปิดใช้ประกาศ palette ใน modules/module-*.js) ค่าคือชื่อ data-module ใน styles.css
+const requestTypePalettes = {
+  IT_REPAIR: "it",
+  VEHICLE_REPAIR: "pt",
+  PURCHASE: "gr",
+  IT_ACCESS: "qa",
+  HR_LEAVE: "pk",
+  HR_TRAINING: "ncr",
 };
 const requestTypeLabelOverrides = {
 };
@@ -2930,10 +2945,14 @@ function requestTypeLabel(type) {
   return requestModule(type.code)?.label ?? requestTypeLabelOverrides[type.code] ?? type.name_th;
 }
 
-function requestTypeGradient(code) {
-  // ใช้เฉพาะปลายสีเข้มของธีม ตัวอักษรขาวบนการ์ดจึงอ่านได้ (ปลายสีอ่อน เช่น #facc15 ได้แค่ราว 1.6:1)
-  const [, to] = requestModule(code)?.theme ?? requestTypeThemes[code] ?? ["#60a5fa", "#1d4ed8"];
-  return `linear-gradient(135deg, ${to}, color-mix(in srgb, ${to} 72%, #000))`;
+// ชื่อจานสี (ค่าของ data-module) ของประเภทนี้ — สี ตัวอักษร และพื้นผิวมาจาก styles.css ตามธีม ไม่มี style inline
+function requestPalette(code) {
+  return requestModule(code)?.palette ?? requestTypePalettes[code] ?? "it";
+}
+
+// ลายน้ำไอคอนประจำประเภทมุมล่างขวาของการ์ดและหัวโมดูล
+function typeCardWatermarkHtml(code) {
+  return `<span class="type-card-wm" aria-hidden="true">${requestTypeIcon(code)}</span>`;
 }
 
 // ไอคอนประเภทในป้ายของการ์ด + อักษรนำหน้าเลขที่ใบ (MT, NC …) ข้างไอคอนให้จำได้จากเลขที่เอกสาร
@@ -2944,9 +2963,10 @@ function typeCardMarkHtml(type, { prefix = true } = {}) {
 
 function typeCardHtml(type) {
   return `
-    <button type="button" class="type-card" data-type-id="${escapeHtml(type.id)}" style="background:${requestTypeGradient(type.code)}">
+    <button type="button" class="type-card" data-type-id="${escapeHtml(type.id)}" data-module="${requestPalette(type.code)}">
       ${typeCardMarkHtml(type)}
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${escapeHtml(type.description ?? "")}</small><span class="type-card-action">สร้างคำร้องประเภทนี้ →</span></span>
+      ${typeCardWatermarkHtml(type.code)}
     </button>`;
 }
 
@@ -3673,7 +3693,7 @@ async function renderRequestDetail(params) {
   const receipt = recentDecisionFor(id);
   const description = (request.description ?? "").trim();
   const content = `
-    <header class="request-detail-head">
+    <header class="request-detail-head${canApprove ? " has-step-line" : ""}">
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
@@ -3903,8 +3923,8 @@ async function fillNextItemPanel(currentId) {
       return;
     }
     const next = pending[0];
-    text.textContent = `เหลือ ${pending.length} รายการ · ถัดไป ${next.request.request_no} ${next.request.title}`;
-    buttons.innerHTML = `<a class="btn secondary" href="#/">กลับหน้าหลัก</a><a class="btn is-primary" href="#/request?id=${encodeURIComponent(next.request.id)}">รายการถัดไป (${pending.length})</a>`;
+    text.textContent = `รอคุณพิจารณาอีก ${pending.length} ใบ · ถัดไป ${next.request.request_no} ${next.request.title}`;
+    buttons.innerHTML = `<a class="btn secondary" href="#/">กลับหน้าหลัก</a><a class="btn is-primary" href="#/request?id=${encodeURIComponent(next.request.id)}">ใบถัดไป</a>`;
   } catch {
     if (panel.isConnected) panel.querySelector("#next-item-text").textContent = "โหลดงานถัดไปไม่ได้";
   }
@@ -4501,10 +4521,6 @@ async function renderProfile() {
     <div class="page-heading"><div><h1>ข้อมูลส่วนตัว</h1><p>แก้ไขข้อมูลของคุณได้จากหน้านี้</p></div></div>
 
     <section class="card" style="max-width:780px">
-      <div style="display:flex;align-items:center;gap:13px;margin-bottom:20px">
-        <div class="avatar" style="width:52px;height:52px;font-size:15px">${escapeHtml(initials(employee))}</div>
-        <div><h2>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</h2><span class="badge">${escapeHtml(employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
-      </div>
       <div id="profile-message" role="status"></div>
       <form id="profile-form">
         <div class="field-row">
@@ -4516,7 +4532,7 @@ async function renderProfile() {
           <div class="field"><label for="profile-phone">เบอร์ติดต่อ</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
         </div>
         <div class="field"><label for="profile-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}"></div>
-        <div class="field"><label for="profile-employee-no">UserID</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ด ID / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
+        <div class="field"><label for="profile-employee-no">รหัสพนักงาน</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ด ID / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">หน่วยงาน</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
@@ -4541,7 +4557,7 @@ async function renderProfile() {
         : "คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ"}</p>
       <div id="credential-message" role="status"></div>
       <form id="credential-form">
-        <div class="field"><label for="new-employee-no">UserID</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
+        <div class="field"><label for="new-employee-no">รหัสพนักงาน</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
         <div class="field-row">
           <div class="field"><label for="new-password">รหัสผ่านใหม่</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
           <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
@@ -5065,7 +5081,7 @@ async function renderAdmin(params) {
         <div class="card-head"><div><h2>เพิ่มบัญชีใหม่</h2><p class="muted small">บัญชีใช้งานได้ทันทีโดยไม่ต้องผ่านคำร้อง ระบบส่งอีเมลแจ้ง ID พร้อมลิงก์ตั้งรหัสผ่านใหม่ให้เจ้าของบัญชี</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
         <div id="employee-add-message" role="status"></div>
         <form id="employee-add-form">
-          <div class="field"><label for="add-employee-no">UserID${req}</label><input class="input" id="add-employee-no" name="employee_no" maxlength="32" placeholder="เช่น MNP0102" autocomplete="off" required></div>
+          <div class="field"><label for="add-employee-no">รหัสพนักงาน${req}</label><input class="input" id="add-employee-no" name="employee_no" maxlength="32" placeholder="เช่น MNP0102" autocomplete="off" required></div>
           <div class="field-row">
             <div class="field"><label for="add-first-name">ชื่อ${req}</label><input class="input" id="add-first-name" name="first_name" maxlength="100" required></div>
             <div class="field"><label for="add-last-name">นามสกุล${req}</label><input class="input" id="add-last-name" name="last_name" maxlength="100" required></div>
@@ -5092,7 +5108,7 @@ async function renderAdmin(params) {
         <div id="employee-edit-message" role="status"></div>
         <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}" data-acting-role-id="${escapeHtml(actingRoleByEmployee.get(editing.employee_id) ?? "")}" data-admin-role-id="${escapeHtml(adminRoleId)}">
           <div class="field-row">
-            <div class="field"><label for="edit-employee-no">UserID</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
+            <div class="field"><label for="edit-employee-no">รหัสพนักงาน</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
             <div class="field"><label for="edit-active">สถานะบัญชี</label><select class="input" id="edit-active" name="is_active"><option value="true"${editing.is_active ? " selected" : ""}>ใช้งาน</option><option value="false"${editing.is_active ? "" : " selected"}>ปิดใช้งาน</option></select></div>
           </div>
           <div class="field-row">
@@ -5292,7 +5308,7 @@ async function renderSetPassword(params) {
           <div id="auth-message" role="status">${errorMessage ? `<div class="form-message error">${escapeHtml(errorMessage)}</div>` : ""}</div>
           ${errorMessage ? `<a class="btn secondary block" href="#/dashboard" id="setup-back">กลับไปหน้าเข้าสู่ระบบ</a>` : `
           <form id="setup-form">
-            <div class="field"><label for="setup-employee-no">UserID</label><input class="input" id="setup-employee-no" value="${escapeHtml(employeeNo)}" autocomplete="username" readonly></div>
+            <div class="field"><label for="setup-employee-no">รหัสพนักงาน</label><input class="input" id="setup-employee-no" value="${escapeHtml(employeeNo)}" autocomplete="username" readonly></div>
             <div class="field"><label for="setup-password">รหัสผ่านใหม่</label><input class="input" id="setup-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
             <div class="field"><label for="setup-confirm">ยืนยันรหัสผ่านใหม่</label><input class="input" id="setup-confirm" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
             <button class="btn block" type="submit">ตั้งรหัสผ่านและไปหน้าเข้าสู่ระบบ</button>

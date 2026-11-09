@@ -4,7 +4,8 @@
   const TEST_BUCKET = "ncr-test-attachments";
   const REMOVE_CHUNK = 100;
   const bucket = (isTest = Boolean(state.employee?.isSandbox)) => isTest ? TEST_BUCKET : "ncr-attachments";
-  const fieldHtml = (id, label) => `<div class="field"><label for="${escapeHtml(id)}">${escapeHtml(label)}</label><input class="input" id="${escapeHtml(id)}" name="evidence" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>`;
+  // hint: false = คำอธิบายชนิด/ขนาดไฟล์ไปอยู่ใน title ของช่อง (หน้าที่มีหลายช่องแสดงคำอธิบายครั้งเดียว)
+  const fieldHtml = (id, label, { hint = true } = {}) => `<div class="field"><label for="${escapeHtml(id)}">${escapeHtml(label)}</label><input class="input" id="${escapeHtml(id)}" name="evidence" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
 
   async function uploadOne(ncrId, file, section) {
     const target = bucket();

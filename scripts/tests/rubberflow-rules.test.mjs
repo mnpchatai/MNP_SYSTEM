@@ -115,7 +115,7 @@ test("alerts rank bad before warn before info and cover expiry, molds, holds, re
   const rank = { bad: 0, warn: 1, info: 2 };
   assert.deepEqual(tones, [...tones].sort((a, b) => rank[a] - rank[b]));
   assert.ok(alerts.some((alert) => alert.title.startsWith("ล็อตหมดอายุ")), "the seed has one expired lot");
-  assert.ok(alerts.some((alert) => alert.title.startsWith("QC Hold")), "the seed has one held extrusion lot");
+  assert.ok(alerts.some((alert) => alert.title.startsWith("กักรอตัดสิน")), "the seed has one held extrusion lot");
   assert.ok(alerts.some((alert) => alert.title.startsWith("กำลังบ่มยาง")), "a batch mixed 1.5 hours ago is still resting");
   assert.ok(alerts.some((alert) => alert.title.startsWith("รอรับมอบ")), "a transfer to finishing is in transit");
   assert.ok(alerts.some((alert) => alert.title.startsWith("ใกล้กำหนดส่ง")), "the urgent order is due in two days");

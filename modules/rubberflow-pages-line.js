@@ -14,6 +14,8 @@
     const scrap = lots.reduce((sum, lot) => sum + lot.scrapQty, 0);
     return good + scrap ? (good / (good + scrap)) * 100 : 100;
   };
+  // ยังไม่มีล็อตที่ผลิต = ยังไม่มีอัตราให้บอก แสดง "—" (ไม่ใช่ 100%)
+  const stageYieldText = (lots) => (lots.some((lot) => lot.goodQty + lot.scrapQty > 0) ? `${stageYield(lots).toFixed(2)}%` : "—");
   // งานที่รับมอบเข้าสถานีแล้ว (Gatekeeper ยอมให้ใช้) และที่ยังรอรับ
   const inbound = (data, stage) => ({
     ready: data.transfers.filter((transfer) => transfer.to === stage && transfer.status === "received" && transfer.remaining > 0.0001),
@@ -203,7 +205,7 @@
         </div><div data-rf-dump-warn></div><div class="rf-row">${ui.submitButton("บันทึกการผสม")}<span class="small muted" data-rf-rest></span></div></form>`;
     const html = `${ui.pageHead("สถานีที่ 1 · ผสมยาง", "รับวัตถุดิบที่เบิกแล้วมาผสม บันทึก Dump temp และเวลา ยางทุก batch ต้องบ่มครบเวลาก่อนส่งไปฉีด")}
       ${ui.stats([
-        { label: "Yield ห้องผสม", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 99.0%" },
+        { label: "อัตราได้ของดี ห้องผสม", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 99.0%" },
         { label: "ผลิตแล้วสะสม", value: `${fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0), 0)} kg` },
         { label: "กำลังบ่ม", value: String(resting.length), sub: resting[0] ? `ใกล้ครบ: ${fmtDuration(Math.min(...resting.map((lot) => lot.readyAt)) - now)}` : "ไม่มี" },
         { label: "ของเสียสะสม", value: `${fmtNum(lots.reduce((sum, lot) => sum + lot.scrapQty, 0), 1)} kg` },
@@ -275,7 +277,7 @@
       </div><div data-rf-rework-warn></div><div class="rf-row">${ui.submitButton("บันทึกการฉีด")}</div></form>`, { title: "บันทึกการฉีด" }) : "";
     const html = `${ui.pageHead("สถานีที่ 2 · ฉีดขึ้นรูป", "ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปก")}
       ${ui.stats([
-        { label: "Yield การฉีด", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 97.0%" },
+        { label: "อัตราได้ของดี การฉีด", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 97.0%" },
         { label: "ผลิตแล้วสะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },
         { label: "ยางหมุนเวียนเฉลี่ย", value: `${avgRework.toFixed(1)}%`, sub: `เพดาน ${s.reworkMaxPct}%` },
         { label: "งานรอเข้าเครื่อง", value: String(ready.length), sub: "ใบส่งมอบที่รับแล้ว" },
@@ -330,7 +332,7 @@
       </div><div data-rf-spec-warn></div><div class="rf-row">${ui.submitButton("บันทึกการอบ")}</div></form>`, { title: "บันทึกการอบ" }) : "";
     const html = `${ui.pageHead("สถานีที่ 3 · อบ HCM", "คุมอุณหภูมิ เวลา และความดันตามสเปก ถ้าค่าหลุดช่วง ระบบจะกักกันล็อตอัตโนมัติ และนับรอบการใช้แม่พิมพ์ให้")}
       ${ui.stats([
-        { label: "Yield การอบ", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 98.0%" },
+        { label: "อัตราได้ของดี การอบ", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 98.0%" },
         { label: "ผ่านการอบสะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },
         { label: "อุณหภูมิเฉลี่ย", value: `${avgTemp.toFixed(1)}°C`, sub: `มาตรฐาน ${s.temp.target} ± ${s.temp.tol}` },
         { label: "ล็อตถูกกักกัน", value: String(lots.filter((lot) => lot.qc === "hold").length), tone: "warn" },
@@ -371,7 +373,7 @@
       </div>${ui.callout("info", "เมื่อบันทึกเป็น “ผ่าน” กล่องจะเข้าคลังสินค้าสำเร็จรูปทันที และนับยอดเข้าใบสั่งผลิต")}<div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
     const html = `${ui.pageHead("สถานีที่ 4 · ตกแต่งและบรรจุ", "ตัดแต่งครีบ ตรวจ 100% แล้วบรรจุกล่อง ระบบสร้างเลขกล่องและรับเข้าคลังสินค้าสำเร็จรูปให้อัตโนมัติ")}
       ${ui.stats([
-        { label: "Yield ตกแต่ง", value: `${stageYield(lots).toFixed(2)}%`, sub: "เป้าหมาย ≥ 99.0%" },
+        { label: "อัตราได้ของดี ตกแต่ง", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 99.0%" },
         { label: "ผ่าน QC สะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },
         { label: "กล่องในคลัง", value: String(data.fgBoxes.filter((box) => box.status === "in_stock").length) },
         { label: "ล็อตพร้อมออก CoA", value: String(lots.filter((lot) => lot.qc === "pass").length) },

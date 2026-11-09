@@ -119,16 +119,16 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const env = load();
   env.store.setUser("U01");
   const dashboard = text(await env.render());
-  assert.match(dashboard, /Yield รวม 4 ขั้นตอน/);
+  assert.match(dashboard, /อัตราได้ของดีรวม 4 ขั้นตอน/);
   assert.match(dashboard, /ใบสั่งผลิตที่เปิดอยู่ 3/, "released + in_progress orders");
-  assert.match(dashboard, /STAGE 1 ผสมยาง[\s\S]*STAGE 4 ตกแต่งและบรรจุ/);
+  assert.match(dashboard, /ขั้นที่ 1[\s\S]*ผสมยาง[\s\S]*ขั้นที่ 4[\s\S]*ตกแต่งและบรรจุ/);
   assert.match(await env.render(), /rf-chart-area[\s\S]*rf-chart-bar/, "both SVG charts are drawn");
   const mixing = await env.render("p=mixing");
   assert.match(mixing, /สถานีที่ 1 · ผสมยาง/);
   assert.match(mixing, /บ่มอีก/, "the batch mixed 1.5 hours ago shows its rest timer");
   assert.match(mixing, /data-rf-action="endRest"/, "admin may skip the rest in demo mode");
   const gated = await env.render("p=extrusion");
-  assert.match(gated, /กักกัน \(Hold\)/);
+  assert.match(gated, /กักรอตัดสิน/);
   assert.match(gated, /Gatekeeper/, "nothing received at extrusion yet");
   assert.doesNotMatch(gated, /data-rf-form="recordExtrusion"/);
   // ข้ามเวลาบ่ม ส่งต่อ และรับมอบ → ฟอร์มบันทึกการฉีดโผล่พร้อมช่องสเปก
@@ -144,7 +144,7 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(finishing, /Gatekeeper/, "nothing received at finishing yet");
   assert.doesNotMatch(finishing, /data-rf-form="recordFinishing"/);
   const quality = text(await env.render("p=quality"));
-  assert.match(quality, /ล็อตรอตัดสิน \(Hold\) 1/);
+  assert.match(quality, /ล็อตกักรอตัดสิน 1/);
   assert.match(quality, /NCR \/ CAPA \(2\)/);
   const ncr = await env.render("p=quality&tab=ncr");
   assert.match(ncr, /วิเคราะห์ 5-Why/);
@@ -398,7 +398,7 @@ test("pages carry their module hue, and the side menu, page head and callouts us
   env.store.setUser("U01");
   const html = await env.render("p=mixing");
   const svg = (name) => env.context.MNP_UI_ICONS.icon(name).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-  assert.match(html, /<div class="rf-page" data-rf-mod="mixing">/);
+  assert.match(html, /<div class="rf-page" data-module="rf" data-rf-mod="mixing">/);
   assert.match(html, new RegExp(`<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("mix")}</span></span><div><h1>`), "the page head shows the module icon before its single h1");
   assert.equal((html.match(/<h1>/g) ?? []).length, 1);
   assert.doesNotMatch(html, /data-rf-design/, "no design switcher any more");
@@ -406,7 +406,7 @@ test("pages carry their module hue, and the side menu, page head and callouts us
   assert.match(sub, new RegExp(`class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("clipboard")}</span></span><span class="rf-nav-text">ใบสั่งผลิต</span>`));
   const gated = await env.render("p=extrusion");
   assert.match(gated, new RegExp(`<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("warning")}</span></span><div class="rf-callout-body"><strong>Gatekeeper:`));
-  assert.match(await env.render(), /<div class="rf-page" data-rf-mod="dashboard">/);
+  assert.match(await env.render(), /<div class="rf-page" data-module="rf" data-rf-mod="dashboard">/);
   env.store.setUser(null);
 });
 

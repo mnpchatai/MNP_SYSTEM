@@ -94,6 +94,10 @@ test("the status badge and the MT badge say what the current step asks for", () 
   assert.match(api.pendingStepBadge({ status: "pending_approval" }, null), /รออนุมัติ/, "no current step: the plain label");
   assert.match(api.pendingStepBadge({ status: "approved" }, { step_name: "รับงาน" }), />approved</, "other statuses are untouched");
   assert.match(mt, /window\.MNP_STEP_VERB\.pendingLabel\(stepName\)/);
+  // ชื่อขั้นในป้ายซ่อนได้ (.badge-step) เมื่อแถบตัดสินใจบอกชื่อขั้นอยู่แล้ว: บอกครั้งเดียว
+  assert.match(mt, /<span class="badge-step">/);
+  assert.match(readFileSync(new URL("../../styles.css", import.meta.url), "utf8"), /\.has-step-line \.badge-step \{ display: none; \}/);
+  assert.match(readFileSync(new URL("../../app.js", import.meta.url), "utf8"), /request-detail-head\$\{canApprove \? " has-step-line" : ""\}/);
 });
 
 test("confirmDialog takes a cancel label and keeps 'ยกเลิก' by default", () => {

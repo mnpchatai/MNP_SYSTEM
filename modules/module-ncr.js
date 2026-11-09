@@ -106,7 +106,8 @@
   // ไฟล์ที่แนบมากับการกระทำ (ตอบ ให้ข้อมูล พิจารณา ติดตาม ขอข้อมูล ยกเลิก บันทึกต้นทุน/ผล) ใช้หมวดตามสถานะก่อนกระทำ
   // ยกเว้นการตอบและการให้ข้อมูลเพิ่มซึ่งเป็นหมวดคำตอบเสมอ (ncr_attachments.section ต้องเป็น report/response/followup)
   const attachmentSectionFor = (action, status) => (["respond", "submit_prevention", "answer_info"].includes(action) ? "response" : ATTACHMENT_SECTION_BY_STATUS[status] ?? "followup");
-  const evidenceFieldHtml = (id, label) => window.MNP_NCR_ATTACHMENTS.fieldHtml(id, label);
+  // hint: false = ไม่แสดงคำอธิบายชนิด/ขนาดไฟล์ใต้ช่อง (หน้ารายละเอียดแสดงครั้งเดียวที่ส่วน "ไฟล์หลักฐาน" ช่องอื่นมีใน title)
+  const evidenceFieldHtml = (id, label, options) => window.MNP_NCR_ATTACHMENTS.fieldHtml(id, label, options);
   // อ่านไฟล์ทั้งหมดจากฟอร์มและตรวจขนาด/ชนิด/ขนาดรวมก่อนเรียก RPC (optionalAttachments ของ app.js โยน error เป็นข้อความไทย)
   const evidencesOf = (form) => (form.elements.evidence ? optionalAttachments(form.elements.evidence.files) : []);
 
@@ -556,7 +557,7 @@
         </fieldset>
         ${responderPicks ? `<div class="ncr-responder-picks">${responderPicks}</div>` : ""}
         <div class="field"><label for="ncr-dispose-note">หมายเหตุ</label><input class="input" id="ncr-dispose-note" name="note" maxlength="1000"></div>
-        ${evidenceFieldHtml("ncr-dispose-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
+        ${evidenceFieldHtml("ncr-dispose-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน ${formatDate(ncr.response_due)})</button></div></form>`);
     }
     if (ncr.status === "awaiting_response" && respondable) {
@@ -570,7 +571,7 @@
           <div class="field full"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ <small class="muted">(ไม่บังคับตอนนี้ ส่งภายหลังได้หลังวิเคราะห์เสร็จ)</small></label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
         </div>
         <p class="ncr-due-note">ตอบภายใน 5 วันระบุสาเหตุและแนวทางแก้ไข · กำหนดเสร็จตั้งให้อัตโนมัติ: แก้ไขปัญหา <strong>${formatDate(ncr.response_due)}</strong> (กำหนดตอบ 5 วันหลังออกใบ) · ส่งแนวทางป้องกันไม่ให้เกิดซ้ำ <strong>${ncr.response_due ? formatDate(addDays(ncr.response_due, 7)) : "—"}</strong> (ต่อจากนั้นอีก 7 วัน) · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>
-        ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ")}
+        ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div></form>`);
     }
     // ส่งได้ครั้งเดียว ถ้าต้องแก้หลังส่งแล้ว QA ส่งกลับให้แผนกแก้ในฟอร์มตอบ NCR (app_ncr_submit_prevention ตรวจซ้ำ)
@@ -579,7 +580,7 @@
         <h3>ส่วนที่ 3 — แนวทางการป้องกันไม่ให้เกิดซ้ำ</h3>
         <p class="muted small">ส่งภายใน <strong>${formatDate(ncr.prevention_due)}</strong> · ส่งได้ครั้งเดียว ถ้าต้องแก้ภายหลัง QA จะส่งกลับให้แก้ไขคำตอบ · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>
         <div class="field"><label for="ncr-prevention-later">แนวทางการป้องกันไม่ให้เกิดซ้ำ *</label><textarea class="textarea" id="ncr-prevention-later" name="prevention" maxlength="5000" required minlength="5"></textarea></div>
-        ${evidenceFieldHtml("ncr-prevention-evidence", "แนบหลักฐาน (ถ้ามี) เช่น WI ที่ปรับ ผลวิเคราะห์")}
+        ${evidenceFieldHtml("ncr-prevention-evidence", "แนบหลักฐาน (ถ้ามี) เช่น WI ที่ปรับ ผลวิเคราะห์", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">ส่งแนวทางป้องกัน</button></div></form>`);
     }
     if (ncr.status === "awaiting_followup" && isQa(employee)) {
@@ -589,7 +590,7 @@
         ${radiosHtml("result", { close: "ปิดประเด็นความไม่สอดคล้อง", return: "ส่งกลับให้แผนกแก้ไขคำตอบ" })}
         <p class="muted small">กรณีปิดประเด็นไม่ได้/เกิดซ้ำต้องออก CAR — ใช้การ์ด NCR/CAR ในหน้าสร้างคำร้องไปก่อนจนกว่า CAR จะย้ายเข้าระบบนี้ (Phase 2)</p>
         <div class="field"><label for="ncr-followup-note">บันทึกการติดตาม (จำเป็นเมื่อส่งกลับ)</label><input class="input" id="ncr-followup-note" name="note" maxlength="2000"></div>
-        ${evidenceFieldHtml("ncr-followup-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
+        ${evidenceFieldHtml("ncr-followup-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">บันทึกผล</button></div></form>`);
     }
     if (ncr.status === "awaiting_signoff" && canSignNext(ncr, employee)) {
@@ -600,7 +601,7 @@
         <h3>ขอข้อมูลเพิ่มเติมก่อนลงนาม</h3>
         <p class="muted small">ข้อความจะถึงผู้ตอบของแผนกที่รับผิดชอบ เมื่อตอบแล้วใบจะกลับมารอลงนามที่ลำดับของคุณ (ลายเซ็นที่ลงไปแล้วยังอยู่)</p>
         <div class="field"><label for="ncr-info-request">ข้อมูลที่ต้องการ *</label><textarea class="textarea" id="ncr-info-request" name="note" maxlength="2000"></textarea></div>
-        ${evidenceFieldHtml("ncr-info-request-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
+        ${evidenceFieldHtml("ncr-info-request-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn secondary" type="submit">ขอข้อมูลเพิ่มเติม</button></div></form>`);
     }
     if (ncr.status === "awaiting_info" && respondable) {
@@ -608,14 +609,14 @@
         <h3>ให้ข้อมูลเพิ่มเติม</h3>
         ${openInfoRequest ? `<p class="muted small">${escapeHtml(STEP_LABELS[openInfoRequest.step] ?? "ผู้ลงนาม")} ขอ: <strong>${escapeHtml(openInfoRequest.request_note)}</strong></p>` : ""}
         <div class="field"><label for="ncr-info-answer">ข้อมูลที่ตอบ *</label><textarea class="textarea" id="ncr-info-answer" name="note" maxlength="5000"></textarea></div>
-        ${evidenceFieldHtml("ncr-info-evidence", "แนบหลักฐาน (ถ้ามี) เช่น เอกสาร รูปภาพ ผลตรวจ")}
+        ${evidenceFieldHtml("ncr-info-evidence", "แนบหลักฐาน (ถ้ามี) เช่น เอกสาร รูปภาพ ผลตรวจ", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">ส่งข้อมูล</button></div></form>`);
     }
     if (OPEN_STATUSES.includes(ncr.status) && isQaManager(employee)) {
       forms.push(`<form class="ncr-action" data-action="cancel"><div class="ncr-form-message"></div>
         <h3>ยกเลิก NCR</h3><p class="muted small">เลขที่ยังอยู่ในทะเบียนพร้อมสถานะ "ยกเลิก" ไม่นำกลับมาใช้ใหม่</p>
         <div class="field"><label for="ncr-cancel-reason">เหตุผล *</label><input class="input" id="ncr-cancel-reason" name="reason" maxlength="1000"></div>
-        ${evidenceFieldHtml("ncr-cancel-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)")}
+        ${evidenceFieldHtml("ncr-cancel-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn danger" type="submit">ยกเลิก NCR</button></div></form>`);
     }
     return forms;
@@ -761,7 +762,7 @@
       .map((item) => `${relation(item.department)?.code ?? ""}: ${personName(directory, item.responder_id)}`).join(" · "));
     const ng = ncr.qty_sampled ? (Number(ncr.qty_defect) / Number(ncr.qty_sampled)) * 100 : null;
     const signoff = (by, at) => (at ? `✓ ${escapeHtml(personName(directory, by))} · ${formatDate(at)}` : "—");
-    const partOpening = (number, title, description) => `<section class="card ncr-card ncr-detail-part ncr-detail-part--${number}" aria-labelledby="ncr-part-${number}-title">
+    const partOpening = (number, title, description) => `<section class="card ncr-card ncr-detail-part ncr-detail-part--${number}" data-module="ncr" aria-labelledby="ncr-part-${number}-title">
           <header class="ncr-part-heading">
             <span class="ncr-part-number" aria-hidden="true">0${number}</span>
             <div class="ncr-part-heading-copy">
@@ -788,7 +789,7 @@
           </dl></dd>
         </div>`;
     const heading = `
-      <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
+      <div class="page-heading"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
@@ -854,14 +855,15 @@
     const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
     const historySection = `
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
-    // ผู้ดำเนินการต้องได้อ่านข้อมูลของขั้นก่อนหน้า + ไฟล์หลักฐานก่อนถึงฟอร์ม: ฟอร์มจึงอยู่หลังส่วนที่ขั้นนั้นต้องอ่าน
-    // (ส่วนที่ 3 ถึงขั้นติดตามผล ส่วนที่ 4 ถึงขั้นลงนาม) ส่วนที่เหลือตามหลังฟอร์ม; ไม่มีฟอร์มให้ทำ = เรียงตามเลขส่วนเหมือนเดิม
-    const parts = infoSection ? [part1, part2, part3, part4, infoSection] : [part1, part2, part3, part4];
-    const actionsSection = `<section class="card ncr-card ncr-actions"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
-    const readFirst = { awaiting_disposition: 1, awaiting_response: 2, awaiting_followup: 3, awaiting_signoff: 4, awaiting_info: parts.length }[ncr.status] ?? parts.length;
+    // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
+    const part3Filled = Boolean(ncr.responded_at || ncr.root_cause || ncr.correction || ncr.prevention);
+    const part4Filled = Boolean(ncr.followed_up_at || ncr.followup_note || ncr.signoff_qa_at || ncr.signoff_factory_at || ncr.signoff_gm_at || ncr.closed_at);
+    const parts = [part1, part2, ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
+    // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
+    const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
     const body = forms.length
-      ? [...parts.slice(0, readFirst), filesSection, actionsSection, ...parts.slice(readFirst), responderSection, lossesSection, historySection]
+      ? [actionsSection, ...parts, filesSection, responderSection, lossesSection, historySection]
       : [...parts, filesSection, responderSection, lossesSection, historySection];
     const content = heading + body.join("");
     // เลขที่ NCR เป็นหัวเรื่องของหน้าแล้ว แถบบนบอกทะเบียน ส่วนชื่อแท็บยังเป็นเลขที่
@@ -1056,7 +1058,7 @@
     // ฐานข้อมูลรองรับโหมดทดสอบของ admin แล้ว (migration 20261005030000) — โมดูลอื่นที่ยังไม่รองรับต้องไม่ใส่ค่านี้
     sandbox: true,
     // ไม่ระบุ label — ใช้ชื่อจาก request_types.name_th ("NCR/CAR") เหมือนเดิม
-    theme: ["#facc15", "#a16207"],
+    palette: "ncr",
     errorMessages: ERROR_MESSAGES,
     // ผู้ใช้ปกติเข้าหน้า NCR จากหน้าคำร้อง (เลือกโมดูล NCR/CAR) ไม่มีเมนูข้างแยก ส่วนโหมดทดสอบซ่อนหน้าคำร้อง จึงมีเมนูเดียวพาไปหน้า NCR
     // (ทะเบียน + ปุ่มออก NCR/แดชบอร์ด) — ลิงก์แดชบอร์ด headerLinks ลงทะเบียนโดย modules/module-ncr-dashboard.js

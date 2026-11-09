@@ -52,8 +52,8 @@
     const short = approverShortNames[stepName] ?? stepName;
     // ขั้นอนุมัติใช้คำของขั้นนั้น (รอรับงาน/รอรับทราบ/รออนุมัติ) เหมือนแจ้งเตือน
     const stateLabel = request.status === "pending_approval" && window.MNP_STEP_VERB ? window.MNP_STEP_VERB.pendingLabel(stepName) : statusLabel(request.status, true);
-    const label = `${stateLabel} (${short})`;
-    return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(label)}</span>`;
+    // ชื่อขั้นอยู่ใน .badge-step: หน้ารายละเอียดที่มีแถบตัดสินใจ (บรรทัด "ขั้นตอน: …") ซ่อนไว้ ไม่ให้พูดชื่อขั้นสองครั้ง (styles.css .has-step-line)
+    return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(stateLabel)}<span class="badge-step"> (${escapeHtml(short)})</span></span>`;
   }
 
   // แถวกรอกอะไหล่/วัสดุหนึ่งรายการในฟอร์มบันทึกผลการซ่อม — โครงเดียวกับ maintRecord.parts[] ของ
@@ -350,7 +350,7 @@
     code: "MT_REPAIR",
     enabled: true,
     label: "ใบคำร้อง/แจ้งซ่อม MT",
-    theme: ["#fb7185", "#be123c"],
+    palette: "mt",
 
     // แผนกที่แจ้งซ่อมได้ (เรียงตามลำดับที่ใช้ในฟอร์ม) — ใช้ทั้งฟอร์มสร้างคำร้องและตัวกรองแผนกในหน้ารายการ
     async loadRepairDepartments(sb) {
