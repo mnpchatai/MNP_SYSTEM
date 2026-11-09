@@ -2610,6 +2610,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 // ตารางคีย์ลัด (กด ? หรือปุ่มช่วยเหลือที่แถบบน): รายการอยู่ใน modules/shortcut-help.js ไม่เป็นข้อความถาวรบนหน้า
+// ฟอร์มสร้างเปิดใต้ #/requests?mode=create จึงใช้คำแนะนำของหน้าสร้าง (new)
+function helpPageKey(route) {
+  return route.path === "requests" && route.params.get("mode") === "create" ? "new" : route.path;
+}
+
 function openShortcutHelp() {
   if (typeof HTMLDialogElement !== "function") return;
   const opener = document.activeElement;
@@ -2618,7 +2623,7 @@ function openShortcutHelp() {
   dialog.setAttribute("aria-labelledby", "shortcut-dialog-title");
   dialog.innerHTML = `<form method="dialog">
     <h2 id="shortcut-dialog-title">ช่วยเหลือ</h2>
-    ${window.MNP_SHORTCUT_HELP.helpHtml(escapeHtml, currentRoute().path)}
+    ${window.MNP_SHORTCUT_HELP.helpHtml(escapeHtml, helpPageKey(currentRoute()))}
     <div class="confirm-dialog-actions"><button class="btn" value="close">ปิด</button></div>
   </form>`;
   document.body.append(dialog);
@@ -3016,7 +3021,7 @@ async function renderNewRequest(params) {
   async function paint() {
     const selected = (types ?? []).find((type) => type.id === selectedId) ?? null;
     const heading = selected
-      ? `<div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}"><div class="request-module-title">${typeCardMarkHtml(selected)}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div></div>`
+      ? `<div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}"><div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div></div>`
       : `<div class="page-heading"><div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1></div></div>`;
 
     let body;

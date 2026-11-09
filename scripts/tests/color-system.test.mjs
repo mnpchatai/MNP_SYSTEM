@@ -304,7 +304,7 @@ test("department chips: unselected chips are a light tint of the department colo
 test("the request detail, create form, NCR detail, dashboards, home queue, filters and RubberFlow/BOM menu take the module colour", () => {
   const app = read("app.js");
   assert.match(app, /<header class="request-detail-head request-module-header\$\{canApprove \? " has-step-line" : ""\}" data-module="\$\{requestPalette\(type\?\.code\)\}">/);
-  assert.match(app, /<div class="page-heading request-module-header" data-module="\$\{requestPalette\(selected\.code\)\}"><div class="request-module-title">\$\{typeCardMarkHtml\(selected\)\}/);
+  assert.match(app, /<div class="page-heading request-module-header" data-module="\$\{requestPalette\(selected\.code\)\}"><div class="request-module-title">\$\{typeCardMarkHtml\(selected, \{ prefix: /);
   assert.equal([...app.matchAll(/class="queue-item-icon" data-module="/g)].length, 3, "all three home queue icons carry data-module");
   assert.match(read("modules/module-ncr.js"), /class="page-heading request-module-header ncr-detail-head" data-module="ncr"/);
   assert.match(read("modules/module-mt-dashboard.js"), /class="page-heading request-module-header" data-module="mt"/);

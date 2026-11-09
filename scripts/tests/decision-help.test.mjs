@@ -160,7 +160,8 @@ test("the shortcut legend lists the real shortcuts and opens with ? on Latin and
   // ปุ่มแสดงทุกอุปกรณ์ จอสัมผัสล้วนซ่อนเฉพาะส่วนคีย์ลัดในกล่อง
   assert.doesNotMatch(css, /\.help-toggle \{ display: none; \}/);
   assert.match(css, /@media \(hover: none\) and \(pointer: coarse\) \{ \.help-keys \{ display: none; \} \}/);
-  assert.match(opener, /window\.MNP_SHORTCUT_HELP\.helpHtml\(escapeHtml, currentRoute\(\)\.path\)/);
+  assert.match(opener, /window\.MNP_SHORTCUT_HELP\.helpHtml\(escapeHtml, helpPageKey\(currentRoute\(\)\)\)/);
+  assert.match(app, /route\.path === "requests" && route\.params\.get\("mode"\) === "create" \? "new" : route\.path/, "the create form gets the create-page tips");
   // every listed letter shortcut exists in the key handlers
   assert.match(app, /KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r"/);
 });
