@@ -29,7 +29,7 @@ test("the selected department shows a check mark, not only a thin ring", () => {
 
 test("photo buttons carry the camera icon", () => {
   assert.doesNotMatch(`${app}\n${mt}`, /uiIcon\("download"\)\} ถ่ายรูป/);
-  assert.equal((`${app}\n${mt}`.match(/uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์/g) ?? []).length, 5);
+  assert.equal((`${app}\n${mt}`.match(/uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์/g) ?? []).length, 6, "the old generic create form uses the shared picker too");
 });
 
 test("urgency is said once on the MT detail page", () => {

@@ -186,7 +186,9 @@ test("the help sheet explains the page, every badge glyph and (on keyboard devic
   for (const [name] of help.BADGE_LEGEND) assert.match(html, new RegExp(`<span class="badge ${name}">`), `${name} in the legend`);
   assert.doesNotMatch(help.helpHtml(escapeHtml, "unknown-page"), /<h3>หน้านี้<\/h3>/, "pages without tips show only the legend and shortcuts");
   // คำแนะนำต่อหน้าใช้ path ที่มีอยู่จริงใน router
-  for (const path of Object.keys(help.PAGE_HELP)) assert.match(app, new RegExp(`path === "${path}"`), `route ${path} exists`);
+  // path ของหน้าหลักอยู่ใน router ของ app.js ส่วนแดชบอร์ด RubberFlow และ BOM เป็น PATH ของโมดูล
+  const modulePaths = new Set(["module-mt-dashboard.js", "module-ncr-dashboard.js", "module-rubberflow.js", "module-bom.js"].map((file) => readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8").match(/const PATH = "([^"]+)"/)?.[1]));
+  for (const path of Object.keys(help.PAGE_HELP)) assert.ok(new RegExp(`path === "${path}"`).test(app) || modulePaths.has(path), `route ${path} exists`);
   assert.match(help.helpHtml((value) => `[${value}]`, "dashboard"), /<li>\[/, "tips go through the escape function");
 });
 

@@ -317,6 +317,10 @@ test("the request detail, create form, NCR detail, dashboards, home queue, filte
   assert.match(css, /\.queue-item-icon\[data-module\] \{ color: var\(--mod-on\); background: var\(--mod-surface\);/);
   assert.match(css, /\[data-module\] \.filter\.active \{ color: var\(--mod-tab-on-ink\); background: var\(--mod-tab-on\);/);
   assert.match(css, /\.rf-nav-item\.is-active \{ color: var\(--mod-tab-on-ink, var\(--primary-ink\)\); background: var\(--mod-tab-on, var\(--primary-soft\)\);/);
+  assert.match(css, /\.nd-chip\[aria-current="true"\] \{ color: var\(--mod-tab-on-ink, #fff\); background: var\(--mod-tab-on, var\(--primary\)\);/);
+  assert.match(read("modules/module-mt-dashboard.js"), /<div class="nd" data-module="mt">/);
+  assert.match(read("modules/module-ncr-dashboard.js"), /<div class="nd" data-module="ncr">/);
+  assert.match(css, /\.queue-item-task \{[^}]*color: var\(--m800, var\(--primary-ink\)\); background: color-mix\(in srgb, var\(--m500, var\(--primary\)\) 14%, var\(--paper\)\);/, "the queue task chip is the module's tint (same pair as a hovered tab)");
   assert.match(css, /\.request-detail-head\.request-module-header \{ z-index: 2; overflow: visible;/, "the detail menu can drop below the header");
   // โมดูลย่อยของ RubberFlow/BOM ใช้เฉดของจานสีแม่ ไม่มีสี hex ของตัวเอง
   assert.doesNotMatch(css, /\[data-rf-mod="[^"]+"\] \{ --rf-mod: #/);

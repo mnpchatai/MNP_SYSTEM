@@ -1893,7 +1893,7 @@ function shell(content, active, title, tabTitle = title) {
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
           <div class="avatar">${escapeHtml(initials(employee))}</div>
-          <div class="user-copy"><strong>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
+          <div class="user-copy"><strong title="${escapeHtml(`${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim())}">${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
           <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">${uiIcon("signout")}</button>
         </div>
       </aside>
@@ -3093,7 +3093,7 @@ function originalRequestFormHtml(selected, separateModule, formContext) {
         <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
         <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
         <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-        <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
+        <div class="field full"><span class="field-label">ไฟล์แนบ (ถ้ามี)</span><label class="btn secondary file-pick" for="attachment">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
         ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
         <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
       </div>
