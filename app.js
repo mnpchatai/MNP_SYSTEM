@@ -2034,7 +2034,9 @@ async function getPendingApprovals() {
     // เฉพาะ admin จริงเท่านั้นที่ข้ามได้ ต้องตรงกับ app_approval_decision เป๊ะ — เดิมรวม
     // factory_manager/general_manager ด้วย ทำให้เห็นปุ่มอนุมัติของขั้นที่ไม่ใช่ของตัวเอง
     // admin ที่เลือก "บทบาทที่ทำหน้าที่" ไว้ เห็นเฉพาะขั้นของบทบาทนั้น (ยังเปิดใบอื่นอนุมัติได้ตามสิทธิ์ admin)
-    if (employee.role?.code === "admin" && !employee.acting_role_id) return true;
+    // ยกเว้นบัญชี master (เป็น admin เสมอ): เห็นขั้นอนุมัติทั้งบริษัทแม้เลือกบทบาทไว้ — ผู้ใช้เลือกเอง 2026-11-09
+    // งานช่างและ NCR ยังเป็นของผู้รับผิดชอบตามเดิม การอนุมัติแทนทำทีละใบ (isOwnApprovalStep กันการเลือกทั้งหมด)
+    if (employee.role?.code === "admin" && (!employee.acting_role_id || employee.isMaster === true)) return true;
     if (step.approver_employee_id && step.approver_employee_id === employee.id) return true;
     const roleMatches = window.MNP_REQUEST_APPROVAL.roleMatches(step, request.request_type?.code, employee);
     return roleMatches && Boolean(request.request_type?.code) && employee.approvalModules.has(request.request_type.code);

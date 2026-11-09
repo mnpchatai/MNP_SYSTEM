@@ -130,3 +130,11 @@ test("index.html loads the new modules and app.js reports every error the user s
   assert.match(app, /function friendlyError\(error\) \{\r?\n[^\n]*\r?\n[^\n]*\r?\n\s*window\.MNP_ERROR_LOG\?\.report\(error\);/);
   assert.match(app, /MASTER_PROTECTED: "/);
 });
+
+test("the master's home queue holds every pending approval step even with an acting role, but bulk approval stays own steps only", () => {
+  const app = read("app.js");
+  const body = app.slice(app.indexOf("async function getPendingApprovals()"), app.indexOf("const MY_REPAIR_ACTION_STATUSES"));
+  assert.match(body, /employee\.role\?\.code === "admin" && \(!employee\.acting_role_id \|\| employee\.isMaster === true\)\) return true;/);
+  const own = app.slice(app.indexOf("function isOwnApprovalStep(step)"), app.indexOf("const BULK_APPROVE_LIMIT"));
+  assert.doesNotMatch(own, /isMaster|role\?\.code === "admin"/, "the master does not bulk-approve other people's steps");
+});
