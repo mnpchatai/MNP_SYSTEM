@@ -6,9 +6,10 @@
 --   - หนึ่งแถวต่อ (เอกสาร, สิ่งที่ต้องทำ) พร้อมรายชื่อผู้ที่ทำได้ (holders) และจำนวนวันที่ค้าง (เวลาไทย)
 --   - NCR ทดสอบ (is_test) ไม่ถูกนับ
 --   - เพิ่มงานที่ "ไม่มีผู้รับผิดชอบ": เอกสารที่ยังรอขั้นถัดไปแต่ pending_work_items ไม่พบผู้ทำที่ใช้งานอยู่
---     (เช่น ผู้แจ้งหรือช่างถูกปิดบัญชี หรือไม่มีใครถือบทบาทของขั้นนั้น) holders เป็น [] และ action บอกสถานะ
---     สถานะคำร้องที่นับ: pending_approval, more_info, pending_assign, assigned, pending_verify
---     (in_progress ที่ยังไม่เลยกำหนดถือว่ามีคนทำอยู่ ไม่ใช่งานค้าง) · NCR: ทุกสถานะที่ยังไม่ปิด/ยกเลิก
+--     (เช่น ผู้แจ้งหรือช่างถูกปิดบัญชี หรือไม่มีใครถือบทบาทของขั้นนั้น) holders เป็น [] และ action บอกขั้นที่รอ
+--     คำร้องที่นับ: pending_approval, more_info, pending_assign, assigned, pending_verify ทุกใบที่ไม่มีผู้ทำ,
+--     in_progress ของงานซ่อมที่ไม่มีช่าง (ผู้รับงาน/ช่างในใบ) ที่ใช้งานอยู่เลย (ใบที่ช่างยังอยู่และยังไม่เลยกำหนด
+--     ไม่ใช่งานค้าง), approved ของคำร้องที่ไม่ใช่งานซ่อมและไม่ใช่ MANAGEMENT ที่ไม่มีผู้รับงาน · NCR: ทุกสถานะที่ยังไม่ปิด/ยกเลิก
 --
 -- ไม่มีการเขียนข้อมูล ไม่มีตารางใหม่ ไม่ได้ redefine ฟังก์ชันเดิม
 -- Rollback: drop function public.app_master_pending_work();
@@ -66,7 +67,16 @@ begin
   ),
   orphan_requests as (
     select 'request'::text as item_type, r.id as item_id, r.request_no as doc_no, t.name_th as doc_label,
-           r.title, r.status::text as status, 'ไม่มีผู้รับผิดชอบ'::text as action,
+           r.title, r.status::text as status,
+           case r.status::text
+             when 'pending_approval' then 'พิจารณาอนุมัติ'
+             when 'more_info' then 'ส่งข้อมูลเพิ่มเติมที่ผู้อนุมัติขอ'
+             when 'pending_assign' then 'มอบหมายช่าง'
+             when 'assigned' then 'เริ่มงานซ่อม'
+             when 'in_progress' then 'บันทึกผลซ่อม'
+             when 'pending_verify' then 'ตรวจรับผลการซ่อม'
+             else 'รับงานและเริ่มดำเนินการ'
+           end as action,
            greatest(
              (select max(h.created_at) from public.request_status_history h where h.request_id = r.id),
              (select max(s.acted_at) from public.approval_steps s where s.request_id = r.id),
@@ -78,11 +88,30 @@ begin
            '[]'::jsonb as holders
     from public.requests r
     join public.request_types t on t.id = r.request_type_id
-    where r.status in ('pending_approval', 'more_info', 'pending_assign', 'assigned', 'pending_verify')
-      and not exists (select 1 from items i where i.item_type = 'request' and i.item_id = r.id)
+    where not exists (select 1 from items i where i.item_type = 'request' and i.item_id = r.id)
+      and (
+        r.status in ('pending_approval', 'more_info', 'pending_assign', 'assigned', 'pending_verify')
+        or (
+          r.status = 'in_progress' and coalesce(t.uses_repair_workflow, false)
+          and not exists (
+            select 1 from public.employees e
+            where e.is_active
+              and (e.id = r.assignee_id
+                   or e.id in (select rt.technician_id from public.request_technicians rt where rt.request_id = r.id))
+          )
+        )
+        or (r.status = 'approved' and not coalesce(t.uses_repair_workflow, false) and t.code <> 'MANAGEMENT')
+      )
   ),
   orphan_ncrs as (
-    select 'ncr'::text, n.id, n.ncr_no, 'NCR'::text, n.product_name, n.status, 'ไม่มีผู้รับผิดชอบ'::text,
+    select 'ncr'::text, n.id, n.ncr_no, 'NCR'::text, n.product_name, n.status,
+           case n.status
+             when 'awaiting_disposition' then 'ให้ความเห็นและเลือกแผนกที่รับผิดชอบ (ส่วนที่ 2)'
+             when 'awaiting_response' then 'ตอบ NCR: สาเหตุและแนวทางแก้ไข (ส่วนที่ 3)'
+             when 'awaiting_followup' then 'ติดตามผลการแก้ไข (ส่วนที่ 4)'
+             when 'awaiting_info' then 'ให้ข้อมูลเพิ่มเติมที่ผู้ลงนามขอ'
+             else 'ลงนามปิด NCR'
+           end,
            coalesce((select max(h.changed_at) from public.ncr_status_history h where h.ncr_id = n.id), n.created_at),
            null::date, false, '[]'::jsonb
     from public.ncr_reports n

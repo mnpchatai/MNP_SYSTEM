@@ -5,7 +5,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(9);
+select plan(10);
 
 -- ผู้ใช้: master, admin อีกคน, ช่างที่ใช้งานอยู่, ผู้แจ้งที่ถูกปิดบัญชี -------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -39,6 +39,9 @@ insert into public.requests (id, request_type_id, requester_id, department_id, t
 update public.employees set is_active = false where id = 'a6ee0000-0000-0000-0000-000000000014';
 
 -- 1. สิทธิ์ ---------------------------------------------------------------------------
+set local role anon;
+select throws_ok($$ select * from public.app_master_pending_work() $$, '42501', null, 'an anonymous caller cannot call it');
+reset role;
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"a6ee0000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 select throws_ok($$ select * from public.app_master_pending_work() $$, 'NOT_AUTHORIZED', 'another admin cannot see company-wide pending work');
@@ -62,8 +65,8 @@ select ok(
 -- 3. งานที่ไม่มีผู้รับผิดชอบ และใบที่จบแล้ว ------------------------------------------------------
 select is(
   (select w.action || ' ' || w.holders::text from public.app_master_pending_work() w where w.item_id = 'a6ee0000-0000-0000-0000-0000000000a2'),
-  'ไม่มีผู้รับผิดชอบ []',
-  'work whose only holder was deactivated shows as having nobody responsible'
+  'ตรวจรับผลการซ่อม []',
+  'work whose only holder was deactivated shows the waiting step with nobody responsible'
 );
 select ok(
   not exists (select 1 from public.app_master_pending_work() w where w.item_id = 'a6ee0000-0000-0000-0000-0000000000a3'),

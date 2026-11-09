@@ -57,8 +57,8 @@
       <td class="nowrap${Number(row.days_waiting) >= 7 ? " master-days-old" : ""}">${esc(model.daysLabel(row.days_waiting))}</td>
       <td class="nowrap"><a href="${href}">${esc(dash(row.doc_no))}</a><br><small class="muted">${esc(dash(row.doc_label))}</small></td>
       <td class="master-message">${esc(dash(row.title))}${row.is_urgent ? ` <span class="badge rejected">ด่วน</span>` : ""}</td>
-      <td>${esc(row.action)}${overdue ? `<br><span class="badge rejected" title="วันกำหนด">เลยกำหนด ${formatDate(row.due_date)}</span>` : ""}</td>
-      <td>${holders.length ? holders.map((person) => esc(personLabel(person.employee_no, person.name))).join("<br>") : "—"}</td>
+      <td>${esc(row.action)}${overdue && !String(row.action).includes("เลยกำหนด") ? `<br><span class="badge rejected" title="วันกำหนด">เลยกำหนด ${formatDate(row.due_date)}</span>` : ""}</td>
+      <td>${holders.length ? holders.map((person) => esc(personLabel(person.employee_no, person.name))).join("<br>") : `<span class="badge rejected" title="ไม่มีผู้ใช้งานที่ทำขั้นนี้ได้ เช่น ผู้แจ้งหรือช่างถูกปิดบัญชี">ไม่มีผู้รับผิดชอบ</span>`}</td>
     </tr>`;
   }
 

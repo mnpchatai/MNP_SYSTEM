@@ -2028,7 +2028,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         .map((row) => ({ ...row, actor_no: personNo(row.actor_id), actor_name: personName(row.actor_id) }));
     },
     // งานค้างทั้งบริษัท: ประมาณจากคำร้องจำลอง (ผู้ทำตามสถานะ) กติกาจริงอยู่ที่ private.pending_work_items
-    // ใบที่ผู้ทำไม่อยู่ในรายชื่อพนักงานจำลองขึ้นเป็น "ไม่มีผู้รับผิดชอบ" เหมือนฐานข้อมูลจริง
+    // ใบที่ผู้ทำไม่อยู่ในรายชื่อพนักงานจำลองได้ holders ว่าง (หน้าเว็บแสดง "ไม่มีผู้รับผิดชอบ") เหมือนฐานข้อมูลจริง
     app_master_pending_work() {
       requireMaster();
       const ACTIONS = { pending_approval: "พิจารณาอนุมัติ", more_info: "ส่งข้อมูลเพิ่มเติมที่ผู้อนุมัติขอ", pending_assign: "มอบหมายช่าง", assigned: "เริ่มงานซ่อม", pending_verify: "ตรวจรับผลการซ่อม" };
@@ -2041,7 +2041,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         const since = request.updated_at ?? request.created_at;
         return {
           item_type: "request", item_id: request.id, doc_no: request.request_no, doc_label: type?.name_th ?? null, title: request.title, status: request.status,
-          action: person ? ACTIONS[request.status] : "ไม่มีผู้รับผิดชอบ", waiting_since: since,
+          action: ACTIONS[request.status], waiting_since: since,
           days_waiting: Math.max(0, Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${since.slice(0, 10)}T00:00:00Z`)) / DAY)),
           due_date: request.status === "assigned" ? request.work_expected_date ?? null : null, is_urgent: Boolean(request.is_urgent),
           holders: person ? [{ id: person.id, employee_no: person.employee_no, name: personName(person.id), department: departments.find((row) => row.id === person.department_id)?.code ?? null }] : [],
