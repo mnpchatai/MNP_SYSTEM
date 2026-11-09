@@ -168,6 +168,17 @@ export function createMockSupabase({ empty = false, sandbox = false, now = () =>
       steps: [["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 8.8]],
       history: [["pending_approval", "pending_assign", ME_ID, 8.8], ["pending_assign", "assigned", ME_ID, 8.7], ["assigned", "in_progress", "e8", 8], ["in_progress", "pending_verify", "e8", 0.5]],
     });
+    // NCR อยู่ตาราง ncr_reports แยกจากคำร้อง (modules/module-ncr.js) — หน้าหลักดึงใบที่ถึงขั้นของผู้ใช้และใบที่ผู้ใช้ออก
+    // แถวเก็บ ncr_responsibilities ที่หน้าเว็บ embed ไว้ในตัว (expand ไม่ต้องต่อให้)
+    const dateOnly = (days) => ago(days).slice(0, 10);
+    db.ncr_reports.push(
+      // แผนก MT ของผู้ใช้จำลองต้องตอบ และเลยกำหนดตอบแล้ว → คิว "ต้องจัดการ"
+      { id: "ncr-mock-1", ncr_no: "QA052/26", status: "awaiting_response", product_name: "ซีลยางปั๊มลม CMP-01", reporter_id: "e3", issue_date: dateOnly(7), response_due: dateOnly(2),
+        prevention: null, signoff_qa_at: null, signoff_factory_at: null, created_at: ago(7), updated_at: ago(3), ncr_responsibilities: [{ share: 1, department_id: "dep-mt", responder_id: null, department: { code: "MT" } }] },
+      // ผู้ใช้จำลองออกเอง รอ QA ติดตามผล → "ใบของฉันที่ยังไม่จบ"
+      { id: "ncr-mock-2", ncr_no: "QA049/26", status: "awaiting_followup", product_name: "ยางรองแท่นเครื่อง ล็อต RB-1098", reporter_id: ME_ID, issue_date: dateOnly(10), response_due: dateOnly(5),
+        prevention: "ตรวจแม่พิมพ์ทุกต้นกะ", signoff_qa_at: null, signoff_factory_at: null, created_at: ago(10), updated_at: ago(1), ncr_responsibilities: [{ share: 1, department_id: "dep-rb", responder_id: null, department: { code: "RB" } }] },
+    );
     db.notifications.push(
       { id: "n1", recipient_id: ME_ID, request_id: "req-mt-0412", title: "MT-2569-0412 รอคุณรับงาน", body: "แจ้งซ่อมเครื่องฉีดยาง HCM-03 น้ำมันไฮดรอลิกรั่ว", kind: "approval", action_url: null, read_at: null, created_at: ago(0.8) },
       { id: "n2", recipient_id: ME_ID, request_id: "req-ncr-0088", title: "NCR-2569-0088 รอคุณรับทราบ", body: "NCR ยางขอบไม่เต็ม ล็อต RB-1103", kind: "approval", action_url: null, read_at: null, created_at: ago(1.5) },

@@ -189,10 +189,11 @@ const OFF_TRACK_STATUSES = { more_info: "warning", rejected: "danger", cancelled
 /* คำนวณว่าใบนี้เดินมาถึงขั้นไหนจาก "สถานะปัจจุบัน" อย่างเดียว ไม่ได้อ่านจาก
    request_status_history เพราะสถานะใน requests คือความจริง ณ ปัจจุบันอยู่แล้ว และการตรวจรับ
    ไม่ผ่านจะย้อนใบกลับไป assigned — แถบจึงต้องถอยตามด้วย ไม่ใช่ค้างที่ขั้นที่เคยผ่านสูงสุด */
-function requestProgress(status, usesRepairWorkflow, typeCode = null) {
+function requestProgress(status, usesRepairWorkflow, typeCode = null, customStages = null) {
   // โมดูลที่ลำดับขั้นสั้นกว่าคำร้องทั่วไปประกาศ progressStages เอง (เช่น ใบคำร้องถึงฝ่ายบริหารจบที่มติ)
   // ขั้นหนึ่งรวมได้หลายสถานะผ่าน statuses และขั้นสุดท้ายนับว่าจบงานแล้ว
-  const stages = requestModule(typeCode)?.progressStages ?? (usesRepairWorkflow ? REPAIR_STAGES : GENERAL_STAGES);
+  // customStages: ใบที่ไม่ใช่ requests (เช่น NCR ในตาราง ncr_reports) ส่งลำดับขั้นของตัวเองมา
+  const stages = customStages ?? requestModule(typeCode)?.progressStages ?? (usesRepairWorkflow ? REPAIR_STAGES : GENERAL_STAGES);
   const offTrack = OFF_TRACK_STATUSES[status] ?? null;
   // ขอข้อมูลเพิ่ม/ไม่อนุมัติ/ยกเลิก ล้วนเกิดตอนพิจารณา จึงปักไว้ที่ขั้นอนุมัติ
   const index = offTrack ? 0 : stages.findIndex((stage) => (stage.statuses ?? [stage.status]).includes(status));
@@ -206,8 +207,11 @@ function requestProgress(status, usesRepairWorkflow, typeCode = null) {
   };
 }
 
-function progressTracker(status, usesRepairWorkflow, { waitingOn = null, typeCode = null } = {}) {
-  const { stages, index, offTrack, done, label } = requestProgress(status, usesRepairWorkflow, typeCode);
+// stages/label: ใบที่ไม่ใช่ requests ส่งลำดับขั้นและป้ายสถานะของตัวเอง (ดู requestProgress)
+function progressTracker(status, usesRepairWorkflow, { waitingOn = null, typeCode = null, stages: customStages = null, label: customLabel = null } = {}) {
+  const progress = requestProgress(status, usesRepairWorkflow, typeCode, customStages);
+  const { stages, index, offTrack, done } = progress;
+  const label = customLabel ?? progress.label;
   // index < 0 แปลว่าสถานะนี้ไม่อยู่ในลำดับขั้นของงานประเภทนี้ (เช่นใบเก่าที่สร้างก่อนติดธง
   // uses_repair_workflow) — บอกแค่สถานะไป ไม่เดาเลขขั้นให้ผิด
   const caption = offTrack || index < 0
@@ -2071,7 +2075,9 @@ async function renderDashboard(params = new URLSearchParams()) {
   loadingShell("dashboard", "หน้าหลัก");
   const employee = state.employee;
   const rules = window.MNP_HOME_QUEUE;
-  const [pending, repairTasks, directory, mineResult] = await Promise.all([
+  // NCR อยู่ในตาราง ncr_reports แยกจากคำร้อง โมดูลจึงดึงงานของตัวเอง (modules/module-ncr.js home)
+  const ncrHome = requestModule("NCR_CAR")?.enabled ? requestModule("NCR_CAR").home ?? null : null;
+  const [pending, repairTasks, directory, mineResult, ncrItems] = await Promise.all([
     getPendingApprovals(),
     getMyRepairActionItems(),
     loadEmployeeDirectory(),
@@ -2081,11 +2087,19 @@ async function renderDashboard(params = new URLSearchParams()) {
       .in("status", HOME_OPEN_STATUSES)
       .order("created_at", { ascending: false })
       .limit(HOME_QUEUE_PAGE),
+    ncrHome ? ncrHome.load(employee) : { tasks: [], mine: [] },
   ]);
   if (mineResult.error) throw mineResult.error;
+  const ncrHref = (ncr) => `#/ncr?id=${encodeURIComponent(ncr.id)}`;
   const items = rules.sortQueue([
     ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
     ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
+    // เกินกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากครั้งล่าสุดที่ใบเปลี่ยน (updated_at) ซึ่งใกล้กับเวลาที่ใบมาถึงขั้นนี้
+    ...ncrItems.tasks.map(({ ncr, task, overdue }) => ({
+      kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เกินกำหนดตอบ" : null,
+      request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR" } },
+      priority: overdue ? "high" : null, createdAt: ncr.updated_at ?? ncr.created_at,
+    })),
   ]);
   const approvalIds = items.filter((item) => item.kind === "approval").map((item) => item.id);
   // ใบที่เปิด: ใบที่ลิงก์ขอมา > ใบที่เปิดค้างไว้ > ใบแรก (หลังตัดสินใบหนึ่ง ใบถัดไปจึงเปิดเอง)
@@ -2104,7 +2118,11 @@ async function renderDashboard(params = new URLSearchParams()) {
   const queuedIds = new Set(items.map((item) => item.id));
   const mine = (mineResult.data ?? [])
     .map((row) => ({ ...row, request_type: relation(row.request_type) }))
-    .filter((row) => !queuedIds.has(row.id) && !(requestModule(row.request_type?.code)?.endsAtDecision && row.status === "approved"));
+    .filter((row) => !queuedIds.has(row.id) && !(requestModule(row.request_type?.code)?.endsAtDecision && row.status === "approved"))
+    .map((row) => ({ at: row.created_at, html: `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>` }))
+    // NCR ที่ฉันออกและยังไม่ปิด (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) เรียงรวมกับคำร้อง ใบใหม่ก่อน
+    .concat(ncrItems.mine.map((ncr) => ({ at: ncr.created_at, html: `<li><a class="home-mine-row" href="${escapeHtml(ncrHref(ncr))}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon("NCR_CAR")}</span><span class="request-no">${escapeHtml(ncr.ncr_no)}</span></span><strong>${escapeHtml(ncr.product_name)}</strong>${progressTracker(ncr.status, false, { stages: ncrHome.PROGRESS_STAGES, label: ncrHome.statusLabel(ncr) })}</a></li>` })))
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   const showQueue = items.length > 0 || recent.length > 0 || hasApprovalDuty(employee);
   // ใบที่เปิดอยู่ต้องมองเห็นเสมอ แม้อยู่เกินหน้าแรก (เช่นเปิดจากลิงก์ในอีเมล)
   const selectedIndex = items.findIndex((item) => item.id === selectedId);
@@ -2130,7 +2148,7 @@ async function renderDashboard(params = new URLSearchParams()) {
   const mineSection = `
     <section class="home-mine" aria-labelledby="home-mine-title">
       <div class="home-section-head"><h2 id="home-mine-title">ใบของฉันที่ยังไม่จบ${mine.length ? ` <span class="detail-section-count">${mine.length}</span>` : ""}</h2><a class="link-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.overviewUrl())}">ดูคำร้องทั้งหมด</a></div>
-      ${mine.length ? `<ul class="home-mine-list" role="list">${mine.map((row) => `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>`).join("")}</ul>` : `<p class="muted">ไม่มีใบที่คุณแจ้งค้างอยู่</p>`}
+      ${mine.length ? `<ul class="home-mine-list" role="list">${mine.map((row) => row.html).join("")}</ul>` : `<p class="muted">ไม่มีใบที่คุณแจ้งค้างอยู่</p>`}
     </section>`;
   const nothingAtAll = !showQueue && !mine.length;
   const content = `
@@ -2153,17 +2171,20 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const request = item.request;
   const type = relation(request.request_type);
   const rules = window.MNP_HOME_QUEUE;
-  const flagged = ["high", "urgent"].includes(request.priority);
+  // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เกินกำหนดตอบ)
+  const flag = item.flag ?? (["high", "urgent"].includes(request.priority) ? priorityLabel(request.priority, isRepairType(type)) : null);
   const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
   const head = `<span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
-      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flagged ? `<span class="priority-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="priority-flag">${escapeHtml(flag)}</span>` : ""}</span>
       <strong class="queue-item-title">${escapeHtml(request.title)}</strong>
       <span class="queue-item-meta">${escapeHtml(meta)}</span>
     </span>`;
   const hiddenAttr = hidden ? " hidden" : "";
-  if (item.kind === "repair") {
-    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="#/request?id=${encodeURIComponent(item.id)}">${head}<span class="queue-item-task">${escapeHtml(myRepairActionLabels[request.status] ?? statusLabels[request.status] ?? request.status)}</span></a></li>`;
+  // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
+  if (item.kind === "repair" || item.kind === "ncr") {
+    const task = item.task ?? myRepairActionLabels[request.status] ?? statusLabels[request.status] ?? request.status;
+    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}<span class="queue-item-task">${escapeHtml(task)}</span></a></li>`;
   }
   const check = isOwnApprovalStep(item.step)
     ? `<label class="queue-item-check"><input type="checkbox" class="queue-select" value="${escapeHtml(item.step.id)}" aria-label="เลือก ${escapeHtml(request.request_no)} เพื่ออนุมัติหลายรายการ"></label>`

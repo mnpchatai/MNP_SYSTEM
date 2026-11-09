@@ -404,3 +404,42 @@ test("the NCR issue form's own quantity rules match app_ncr_issue: they reject w
   assert.deepEqual(failing({ qty_total: "10.0003", qty_defect: "10.0004" }), ["qty_defect"], "above the total before rounding");
   assert.deepEqual(failing({ qty_total: "10", qty_defect: "5", qty_returned: "-0" }), [], "-0 is zero for the database too");
 });
+
+test("the home page lists an open NCR for whoever the detail page gives that step's form, and the reporter's own open NCRs", async () => {
+  // กฎเดียวกับ actionForms: ผจก.โรงงานพิจารณา · ผู้ตอบของแผนกตอบ/ส่งแนวทางป้องกัน/ให้ข้อมูลเพิ่ม · QA ติดตามผล · ผู้ลงนามลำดับถัดไปลงนาม
+  const responsibilities = (responderId = null) => [{ department_id: "dept-rb", responder_id: responderId }];
+  const open = (status, extra = {}) => ({ id: `ncr-${status}`, status, reporter_id: "emp-reporter", prevention: null, signoff_qa_at: null, signoff_factory_at: null, response_due: "2999-01-01", ncr_responsibilities: responsibilities(), ...extra });
+  const rows = [
+    open("awaiting_disposition", { ncr_responsibilities: [] }),
+    open("awaiting_response"),
+    open("awaiting_followup"),
+    open("awaiting_signoff", { signoff_qa_at: "2026-10-10" }),
+    open("awaiting_info", { ncr_responsibilities: responsibilities("emp-rb-named") }),
+    open("awaiting_response", { id: "ncr-mine", reporter_id: "emp-rb-staff", ncr_responsibilities: [{ department_id: "dept-mt", responder_id: null }] }),
+  ];
+  const { context } = await renderPage(employee("emp-qa", "dept-qa", "QA", "staff"), {}, { tables: { ncr_reports: rows } });
+  const home = context.window.MNP_REQUEST_MODULES.NCR_CAR.home;
+  const tasksOf = (viewer) => rows.map((row) => [row.id, home.task(row, viewer)]).filter(([, task]) => task);
+  const asPlain = (value) => JSON.parse(JSON.stringify(value));
+
+  assert.deepEqual(asPlain(tasksOf(employee("emp-fm", "dept-rb", "RB", "factory_manager"))), [["ncr-awaiting_disposition", "พิจารณา NCR"], ["ncr-awaiting_signoff", "ลงนามปิด"]]);
+  assert.deepEqual(asPlain(tasksOf(employee("emp-rb-staff", "dept-rb", "RB", "staff"))), [["ncr-awaiting_response", "ตอบ NCR"], ["ncr-awaiting_followup", "ส่งแนวทางป้องกัน"]],
+    "a named responder (awaiting_info) shuts out the rest of the department");
+  assert.deepEqual(asPlain(tasksOf(employee("emp-rb-named", "dept-rb", "RB", "staff"))).map(([id]) => id), ["ncr-awaiting_response", "ncr-awaiting_followup", "ncr-awaiting_info"]);
+  assert.deepEqual(asPlain(tasksOf(employee("emp-qa", "dept-qa", "QA", "staff"))), [["ncr-awaiting_followup", "ติดตามผล"]], "QA staff follow up but do not sign");
+  assert.deepEqual(asPlain(tasksOf(employee("emp-qa-mgr", "dept-qa", "QA", "department_manager"))), [["ncr-awaiting_followup", "ติดตามผล"]], "the QA signature is already on the NCR waiting for signoff");
+  assert.deepEqual(asPlain(tasksOf(employee("emp-sup", "dept-rb", "RB", "supervisor"))), [], "a supervisor is not a responder");
+  assert.equal(home.task(rows[2], employee("emp-rb-staff", "dept-rb", "RB", "staff", false)) , "ส่งแนวทางป้องกัน");
+  assert.equal(home.task({ ...rows[2], prevention: "ตรวจแม่พิมพ์" }, employee("emp-rb-staff", "dept-rb", "RB", "staff")), null, "prevention already sent: nothing left for the department");
+  assert.equal(home.task(rows[3], { ...employee("emp-admin", "dept-it", "IT", "admin"), actingRole: { code: "general_manager" } }), null, "the general manager signs only after the factory manager");
+  assert.equal(home.task({ ...rows[3], signoff_factory_at: "2026-10-11" }, { ...employee("emp-admin", "dept-it", "IT", "admin"), actingRole: { code: "general_manager" } }), "ลงนามปิด");
+
+  // NCR ที่ถึงขั้นของผู้ใช้อยู่ใน tasks ส่วนที่ผู้ใช้ออกเองและยังไม่ถึงขั้นของเขาอยู่ใน mine (ไม่ซ้ำกัน)
+  const loaded = asPlain(await home.load(employee("emp-rb-staff", "dept-rb", "RB", "staff")));
+  assert.deepEqual(loaded.tasks.map((item) => [item.ncr.id, item.task, item.overdue]), [["ncr-awaiting_response", "ตอบ NCR", false], ["ncr-awaiting_followup", "ส่งแนวทางป้องกัน", false]]);
+  assert.deepEqual(loaded.mine.map((ncr) => ncr.id), ["ncr-mine"]);
+  const overdue = asPlain(await home.load(employee("emp-fm", "dept-rb", "RB", "factory_manager")));
+  assert.equal(overdue.tasks[0].overdue, false);
+  rows[0].response_due = "2000-01-01";
+  assert.equal(asPlain(await home.load(employee("emp-fm", "dept-rb", "RB", "factory_manager"))).tasks[0].overdue, true, "past the response date while still waiting for the factory manager");
+});
