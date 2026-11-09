@@ -79,7 +79,7 @@
     const text = node.dataset.rfConfirm;
     const split = text.indexOf("? ");
     const label = node.getAttribute?.("aria-label") || String(node.textContent ?? "").trim();
-    return { title: split < 0 ? text : text.slice(0, split + 1), message: split < 0 ? "" : text.slice(split + 2).trim(), confirmLabel: label, danger: /^(ลบ|ยกเลิก)/.test(label) };
+    return { title: split < 0 ? text : text.slice(0, split + 1), message: split < 0 ? "" : text.slice(split + 2).trim(), confirmLabel: label, ...(/^ยกเลิก/.test(label) ? { cancelLabel: "ไม่ยกเลิก" } : {}), danger: /^(ลบ|ยกเลิก)/.test(label) };
   };
   // ปุ่มเปิด dialog (module-rubberflow.js หา data-rf-open แล้วเรียก dialog ตามชื่อ)
   const openButton = (text, dialog, args = {}, { className = "secondary", ariaLabel = "" } = {}) => `<button class="btn rf-btn ${className}" type="button" data-rf-open="${attr(dialog)}"${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}>${esc(text)}</button>`;

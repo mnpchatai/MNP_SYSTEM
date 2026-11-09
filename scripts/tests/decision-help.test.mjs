@@ -1,0 +1,174 @@
+// PR 1 ของรอบ 36/40: แผงตัดสินใจ รายละเอียดคำร้อง และคำอธิบายตามต้องการ
+// - คำกริยาของขั้นบนหน้าจอ (รับงาน/รับทราบ/อนุมัติ) ค่าที่เก็บยัง "approved"
+// - confirmDialog รับ cancelLabel · ตารางคีย์ลัด · A/R ใช้ได้ในหน้ารายละเอียด · ชื่อ nav ที่ 1024px
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import vm from "node:vm";
+
+await import("../../modules/step-verb.js");
+await import("../../modules/shortcut-help.js");
+const verbs = globalThis.MNP_STEP_VERB;
+const help = globalThis.MNP_SHORTCUT_HELP;
+
+const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const app = read("app.js");
+const css = read("styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+const mt = read("modules/module-mt.js");
+
+const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// ดึงฟังก์ชันระดับบนสุดจาก app.js (จากหัวฟังก์ชันถึง "}" บรรทัดแรกที่ชิดซ้าย)
+function extract(name) {
+  const start = app.indexOf(`function ${name}(`);
+  assert.ok(start >= 0, `${name} found in app.js`);
+  const end = app.indexOf("\n}\n", start) + 2;
+  return app.slice(start, end);
+}
+
+function load(names, context = {}) {
+  const sandbox = vm.createContext({ escapeHtml, window: { MNP_STEP_VERB: verbs }, ...context });
+  vm.runInContext(`${names.map(extract).join("\n")}\nthis.api = { ${names.join(", ")} };`, sandbox);
+  return sandbox.api;
+}
+
+test("the step verb comes from the step name, with approve as the default", () => {
+  assert.equal(verbs.verbOf("ผู้จัดการแผนกซ่อมบำรุงรับงาน"), "รับงาน");
+  assert.equal(verbs.verbOf("ผู้จัดการแผนกที่รับผิดชอบรับทราบ"), "รับทราบ");
+  assert.equal(verbs.verbOf("ผู้จัดการโรงงานอนุมัติ"), "อนุมัติ");
+  assert.equal(verbs.verbOf("ผู้จัดการโรงงาน"), "อนุมัติ", "a plain role name is an ordinary approval step");
+  assert.equal(verbs.verbOf("ผู้จัดการโรงงานตรวจสอบ"), "อนุมัติ");
+  assert.equal(verbs.verbOf(undefined), "อนุมัติ");
+  assert.equal(verbs.verbOf("ผู้จัดการแผนกรับทราบ", ["รับทราบข้อมูล"]), "อนุมัติ", "no second button that reads the same as the module's own acknowledge");
+  assert.equal(verbs.pendingLabel("ผู้จัดการแผนกซ่อมบำรุงรับงาน"), "รอรับงาน");
+  assert.equal(verbs.pendingLabel("ผู้จัดการโรงงาน"), "รออนุมัติ");
+});
+
+test("the step line names the real next step instead of 'final step' when the workflow continues", () => {
+  const base = { currentStepName: "ผู้จัดการโรงงาน" };
+  assert.equal(verbs.stepLineText({ ...base, nextStepName: "ผู้จัดการทั่วไป" }), "ขั้นตอน: ผู้จัดการโรงงาน · ถัดไป: ผู้จัดการทั่วไป");
+  assert.equal(verbs.stepLineText({ ...base, afterLast: verbs.afterLastStep({ repair: true }) }), "ขั้นตอน: ผู้จัดการโรงงาน · ถัดไป: มอบหมายช่าง");
+  assert.equal(verbs.stepLineText({ ...base, afterLast: verbs.afterLastStep({ repair: false }) }), "ขั้นตอน: ผู้จัดการโรงงาน · ถัดไป: ดำเนินงาน");
+  assert.equal(verbs.stepLineText({ ...base, afterLast: verbs.afterLastStep({ endsAtDecision: true }) }), "ขั้นตอน: ผู้จัดการโรงงาน · ขั้นสุดท้าย", "a request that ends at the decision really is final");
+  assert.equal(verbs.stepLineText({ ...base, nextStepKnown: false }), "ขั้นตอน: ผู้จัดการโรงงาน", "unknown order: say nothing about what comes next");
+});
+
+test("the decision buttons wear the step verb but still send 'approved'", () => {
+  const { decisionButtonsOf } = load(["decisionButtonsOf"]);
+  const buttons = [...decisionButtonsOf([], "ผู้จัดการแผนกซ่อมบำรุงรับงาน")];
+  assert.deepEqual(buttons.map((item) => item.decision), ["rejected", "more_info", "approved"], "stored decisions are unchanged");
+  assert.equal(buttons.at(-1).label, "รับงาน");
+  assert.equal(buttons.at(-1).tone, "success");
+  assert.equal(decisionButtonsOf([], "").at(-1).label, "อนุมัติ");
+  const withAck = [...decisionButtonsOf([{ decision: "acknowledged", label: "รับทราบข้อมูล" }], "ผู้จัดการแผนกรับทราบ")];
+  assert.deepEqual(withAck.map((item) => item.label), ["ไม่อนุมัติ", "ขอข้อมูลเพิ่ม", "รับทราบข้อมูล", "อนุมัติ"]);
+  // RPC payload and the receipt/line text all read the same label list
+  assert.match(app, /sb\.rpc\("app_approval_decision", \{ p_step_id: currentStep\.id, p_decision: decision, p_comment: text \}\)/);
+  assert.match(app, /const options = decisionButtonsOf\(extraDecisions, currentStep\.step_name\);/);
+  assert.match(app, /button\(`ยืนยัน\$\{labelOf\(decision\)\}`/);
+  assert.match(app, /recentDecisions\.set\(id, \{ decision, label: labelOf\(decision\),/);
+  assert.match(app, /const verb = receipt\.label \?\? decisionVerbs\[receipt\.decision\]/);
+});
+
+test("the panel head shows the repair hand-off and the message for 'ask for more info' names who it goes back to", () => {
+  const api = load(["decisionPanelHtml", "idleDecisionButtonsHtml", "decisionButtonsOf"], {
+    relation: (value) => value,
+    isRepairType: (type) => type?.code === "MT_REPAIR",
+    requestModule: () => null,
+    extraFilesFieldHtml: () => "",
+  });
+  const html = api.decisionPanelHtml({
+    request: { request_no: "MT-1", title: "เครื่องเสีย", request_type: { code: "MT_REPAIR" } },
+    currentStep: { step_name: "ผู้จัดการโรงงาน" }, nextStep: null, extraDecisions: [],
+  });
+  assert.match(html, /ขั้นตอน: ผู้จัดการโรงงาน · ถัดไป: มอบหมายช่าง/);
+  assert.doesNotMatch(html, /ขั้นสุดท้าย/);
+  assert.match(app, /decision === "more_info" \? ` → ส่งกลับให้ \$\{requesterName \|\| "ผู้แจ้ง"\}`/);
+  assert.match(app, /requesterName: personName\(directory, request\.requester_id\)/, "detail page passes the requester");
+  assert.match(app, /requesterName: personName\(ctx\.directory, item\.request\.requester_id\)/, "queue passes the requester");
+});
+
+test("the status badge and the MT badge say what the current step asks for", () => {
+  const api = load(["statusBadge", "pendingStepBadge"], { statusLabel: (status) => (status === "pending_approval" ? "รออนุมัติ" : status) });
+  assert.match(api.pendingStepBadge({ status: "pending_approval" }, { step_name: "ผู้จัดการแผนกซ่อมบำรุงรับงาน" }), /รอรับงาน/);
+  assert.match(api.pendingStepBadge({ status: "pending_approval" }, null), /รออนุมัติ/, "no current step: the plain label");
+  assert.match(api.pendingStepBadge({ status: "approved" }, { step_name: "รับงาน" }), />approved</, "other statuses are untouched");
+  assert.match(mt, /window\.MNP_STEP_VERB\.pendingLabel\(stepName\)/);
+});
+
+test("confirmDialog takes a cancel label and keeps 'ยกเลิก' by default", () => {
+  const { confirmDialog } = load(["confirmDialog"], {
+    window: { addEventListener() {}, removeEventListener() {}, confirm: () => true },
+    document: {
+      body: { append() {} },
+      createElement() {
+        const node = { open: false, setAttribute() {}, addEventListener() {}, close() {}, remove() {}, showModal() {}, querySelector: () => ({ addEventListener() {}, focus() {} }) };
+        let html = "";
+        Object.defineProperty(node, "innerHTML", { get: () => html, set: (value) => { html = value; globalThis.__lastDialog = value; } });
+        return node;
+      },
+    },
+  });
+  confirmDialog({ title: "ยืนยันยกเลิก NCR-1?", confirmLabel: "ยกเลิก NCR", cancelLabel: "ไม่ยกเลิก", danger: true });
+  assert.match(globalThis.__lastDialog, /<button class="btn secondary" value="cancel">ไม่ยกเลิก<\/button><button class="btn danger-solid" value="confirm">ยกเลิก NCR<\/button>/);
+  confirmDialog({ title: "ลบ?", confirmLabel: "ลบ" });
+  assert.match(globalThis.__lastDialog, /value="cancel">ยกเลิก<\/button>/, "default label unchanged");
+  confirmDialog({ title: "x", confirmLabel: "ok", cancelLabel: "<b>" });
+  assert.match(globalThis.__lastDialog, /value="cancel">&lt;b&gt;<\/button>/, "the label is escaped");
+  delete globalThis.__lastDialog;
+  // ที่ที่ปุ่มยืนยันขึ้นต้นด้วย "ยกเลิก"
+  assert.match(read("modules/module-ncr.js"), /confirmLabel: "ยกเลิก NCR", cancelLabel: "ไม่ยกเลิก"/);
+  assert.match(read("modules/module-qc.js"), /confirmLabel: "ยกเลิกใบตรวจ", cancelLabel: "ไม่ยกเลิก"/);
+  assert.match(read("modules/rubberflow-ui.js"), /\/\^ยกเลิก\/\.test\(label\) \? \{ cancelLabel: "ไม่ยกเลิก" \}/);
+  assert.match(app, /confirmLabel: "ทิ้งใบนี้", cancelLabel: "กลับไปกรอกต่อ"/);
+});
+
+test("confirm and send-now are guarded against the double tap, and the guard re-arms in each state", () => {
+  assert.match(app, /const tapGuard = rules\.createTapGuard\(\);/);
+  assert.match(app, /if \(\(action === "confirm" \|\| action === "send-now"\) && tapGuard\.blocks\(event\)\) return;/);
+  assert.match(app, /if \(state\.name === "compose"\) \{\n\s+tapGuard\.arm\(\);/);
+  assert.match(app, /if \(state\.name === "pending"\) \{\n\s+tapGuard\.arm\(\);/);
+});
+
+test("the MT assign dates use the shared Thai date picker and are still required", () => {
+  assert.match(mt, /assignForm\.querySelectorAll\('input\[type="date"\]'\)\.forEach\(\(input\) => \{\n\s+input\.required = false;\n\s+window\.MNP_DATE_PICKER\.enhance\(input\);/);
+  assert.match(mt, /"กรุณาเลือกวันเริ่มงาน"/);
+  assert.match(mt, /"กรุณาเลือกวันที่คาดว่าจะเสร็จ"/);
+});
+
+test("the shortcut legend lists the real shortcuts and opens with ? on Latin and Thai keyboards", () => {
+  const html = help.legendHtml(escapeHtml);
+  for (const key of ["/", "J", "K", "A", "R", "Esc", "?"]) assert.match(html, new RegExp(`<kbd>${key.replace("/", "\\/").replace("?", "\\?")}</kbd>`), `${key} listed`);
+  assert.match(help.legendHtml((value) => `[${value}]`), /\[\?\]/, "every value goes through the escape function");
+  assert.equal(help.isHelpKey({ key: "?", code: "Slash", shiftKey: true }), true);
+  assert.equal(help.isHelpKey({ key: "ฦ", code: "Slash", shiftKey: true }), true, "Thai layout, same physical key");
+  assert.equal(help.isHelpKey({ key: "?", shiftKey: true, ctrlKey: true }), false);
+  assert.equal(help.isHelpKey({ key: "/", code: "Slash", shiftKey: false }), false, "plain / is the search shortcut");
+  assert.equal(help.isHelpKey({ key: "a", code: "KeyA" }), false);
+  // wiring: key handler, top-bar button, no typing/dialog conflicts
+  assert.match(app, /window\.MNP_SHORTCUT_HELP\.isHelpKey\(event\)/);
+  assert.match(app, /class="icon-button help-toggle" type="button" aria-label="คีย์ลัด" title="คีย์ลัด \(กด \?\)"/);
+  assert.match(app, /\$\{helpButton\(\)\}\$\{themeButton\(\)\}/);
+  assert.match(app, /querySelector\("\.help-toggle"\)\?\.addEventListener\("click", openShortcutHelp\)/);
+  const opener = app.slice(app.indexOf("function openShortcutHelp("), app.indexOf("document.addEventListener", app.indexOf("function openShortcutHelp(")));
+  assert.match(opener, /opener\.focus\(\)/, "focus returns to the opener");
+  assert.match(opener, /dialog\.showModal\(\)/);
+  assert.match(css, /@media \(hover: none\) and \(pointer: coarse\) \{ \.help-toggle \{ display: none; \} \}/);
+  // every listed letter shortcut exists in the key handlers
+  assert.match(app, /KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r"/);
+});
+
+test("A and R also work on the request detail page, J and K only in the queue", () => {
+  const handler = app.slice(app.indexOf("const inQueue = Boolean"), app.indexOf("button.click();", app.indexOf("const inQueue = Boolean")));
+  assert.match(handler, /!\(inQueue \|\| document\.querySelector\("#decision-panel"\)\)/);
+  assert.match(handler, /if \(key === "j" \|\| key === "k"\) \{\n\s+if \(!inQueue\) return;/);
+  assert.match(handler, /panel\.dataset\.state !== "idle"/, "only from the idle state, like the queue");
+  assert.match(handler, /event\.code\] \?\? event\.key\.toLowerCase\(\)/, "Thai-layout fix is the shared one");
+});
+
+test("icon-only navigation links carry a title, and the step line stays visible on narrow screens", () => {
+  assert.match(app, /aria-label="\$\{escapeHtml\(label\)\}" title="\$\{escapeHtml\(label\)\}"/);
+  assert.doesNotMatch(css, /\.action-panel \.action-panel-head \{ display: none; \}\s*\n\s*\.queue-item/, "the narrow-screen rule keeps the head for the decision panel");
+  assert.match(css, /\.decision-panel \.action-panel-head \{ display: block; \}\s*\.decision-panel \.action-panel-head h2 \{ display: none; \}/);
+  assert.match(css, /\.decision-panel:not\(\[data-state="idle"\]\) \.action-panel-head \{ display: none; \}/, "no duplicate next step while confirming");
+});

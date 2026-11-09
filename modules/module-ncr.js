@@ -950,7 +950,7 @@
       event.preventDefault();
       if (!form.reportValidity()) return;
       const action = form.dataset.action;
-      if (action === "cancel" && !(await confirmDialog({ title: `ยืนยันยกเลิก ${ncr.ncr_no}?`, confirmLabel: "ยกเลิก NCR", danger: true }))) return;
+      if (action === "cancel" && !(await confirmDialog({ title: `ยืนยันยกเลิก ${ncr.ncr_no}?`, confirmLabel: "ยกเลิก NCR", cancelLabel: "ไม่ยกเลิก", danger: true }))) return;
       let evidences;
       try {
         evidences = evidencesOf(form);

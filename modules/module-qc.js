@@ -742,7 +742,7 @@
       const submitter = event.submitter ?? event.currentTarget.querySelector('[type="submit"]');
       const note = root.querySelector("#qc-cancel-note")?.value.trim() ?? "";
       if (note.length < 5) return showToast(model.ERROR_MESSAGES.QC_CANCEL_NOTE_REQUIRED, "error");
-      if (!(await confirmDialog({ title: `ยกเลิก ${report.report_no}?`, message: "แก้กลับไม่ได้", confirmLabel: "ยกเลิกใบตรวจ", danger: true }))) return undefined;
+      if (!(await confirmDialog({ title: `ยกเลิก ${report.report_no}?`, message: "แก้กลับไม่ได้", confirmLabel: "ยกเลิกใบตรวจ", cancelLabel: "ไม่ยกเลิก", danger: true }))) return undefined;
       return runAction(root, "app_qc_cancel_report", { ...args, p_note: note }, `ยกเลิก ${report.report_no} แล้ว`, submitter);
     });
     root.querySelector("#qc-ncr-form")?.addEventListener("submit", async (event) => {

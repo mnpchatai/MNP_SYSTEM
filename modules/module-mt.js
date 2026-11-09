@@ -50,7 +50,9 @@
         : null;
     if (!stepName) return statusBadge(request.status, true);
     const short = approverShortNames[stepName] ?? stepName;
-    const label = `${statusLabel(request.status, true)} (${short})`;
+    // ขั้นอนุมัติใช้คำของขั้นนั้น (รอรับงาน/รอรับทราบ/รออนุมัติ) เหมือนแจ้งเตือน
+    const stateLabel = request.status === "pending_approval" && window.MNP_STEP_VERB ? window.MNP_STEP_VERB.pendingLabel(stepName) : statusLabel(request.status, true);
+    const label = `${stateLabel} (${short})`;
     return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(label)}</span>`;
   }
 
@@ -858,7 +860,15 @@
         if (formExportPayload) window.MNP_MT_FORM_EXPORT.downloadXlsx(event.currentTarget, formExportPayload, { showToast, friendlyError });
       });
       document.querySelector('[data-fact-action="machine-history"]')?.addEventListener("click", (event) => openMachineHistory(id, event.currentTarget, machineHistoryCurrent));
-      document.querySelector("#assign-form")?.addEventListener("submit", async (event) => {
+      // วันที่มอบหมายใช้ตัวเลือกวันที่แบบไทยเหมือนฟอร์มแจ้งซ่อม (พ.ศ.) — ช่องเดิมถูกซ่อนจึงตรวจ "จำเป็น" เองตอนส่ง (required ของเบราว์เซอร์ตรวจช่องที่ซ่อนไม่ได้)
+      const assignForm = document.querySelector("#assign-form");
+      if (assignForm && window.MNP_DATE_PICKER) {
+        assignForm.querySelectorAll('input[type="date"]').forEach((input) => {
+          input.required = false;
+          window.MNP_DATE_PICKER.enhance(input);
+        });
+      }
+      assignForm?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
         const values = new FormData(form);
@@ -866,7 +876,12 @@
         if (!technicianIds.length) return showToast("กรุณาเลือกช่างอย่างน้อย 1 คน", "error");
         const startDate = String(values.get("work_started_date") ?? "");
         const expectedDate = String(values.get("work_expected_date") ?? "");
-        if (startDate && expectedDate && expectedDate < startDate) {
+        const missingDate = [["#assign-start-date", startDate, "กรุณาเลือกวันเริ่มงาน"], ["#assign-expected-date", expectedDate, "กรุณาเลือกวันที่คาดว่าจะเสร็จ"]].find(([, value]) => !value);
+        if (missingDate) {
+          form.querySelector(`${missingDate[0]}-button`)?.focus();
+          return showToast(missingDate[2], "error");
+        }
+        if (expectedDate < startDate) {
           return showToast("วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน", "error");
         }
         let files;
