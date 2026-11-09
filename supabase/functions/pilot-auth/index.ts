@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
+import { approveAccountRequest, authErrorStatus } from "./approve.ts";
 
 const allowedOrigins = new Set([
   "https://mnpchatai.github.io",
@@ -324,8 +325,7 @@ Deno.serve(async (request) => {
       p_employee_id: employeeId,
     });
     if (target.error || !target.data) {
-      const code = String(target.error ?? "").includes("NOT_AUTHORIZED") ? 403 : 400;
-      return response(request, { error: target.error ?? "EMPLOYEE_NOT_FOUND" }, code);
+      return response(request, { error: target.error ?? "EMPLOYEE_NOT_FOUND" }, authErrorStatus(target.error ?? ""));
     }
 
     const { error: updateError } = await admin.auth.admin.updateUserById(String(target.data), {
@@ -407,7 +407,8 @@ Deno.serve(async (request) => {
     approveRequestId = String(createdRequest.data);
   }
 
-  // Admin อนุมัติคำร้อง สิทธิ์ถูกตรวจซ้ำในฐานข้อมูลผ่าน app_apply_account_request
+  // Admin อนุมัติคำร้อง: ตรวจสิทธิ์ผู้เรียกในฐานข้อมูล (ในนามผู้ใช้) ก่อนเขียน Supabase Auth ด้วย service role
+  // แล้วตรวจซ้ำใน app_apply_account_request — ลำดับทั้งหมดอยู่ใน approve.ts
   if (body.action === "approve_account_request" || body.action === "admin_create_account") {
     const token = bearerToken(request);
     if (!token) {
@@ -415,67 +416,46 @@ Deno.serve(async (request) => {
     }
     const apiKey = request.headers.get("apikey") ?? anonKey;
 
-    const requestId = approveRequestId;
-    const { data: accountRequest } = await admin
-      .from("account_requests")
-      .select("id,kind,status,employee_id,employee_no,email,desired_password")
-      .eq("id", requestId)
-      .maybeSingle();
-    if (!accountRequest || accountRequest.status !== "pending") {
-      return response(request, { error: "REQUEST_NOT_PENDING" }, 409);
-    }
-    if (!accountRequest.desired_password) {
-      return response(request, { error: "PASSWORD_MISSING" }, 409);
-    }
+    const result = await approveAccountRequest({
+      rpcAsUser: (fn, args) => rpcAsUser(supabaseUrl, apiKey, token, fn, args),
+      readRequest: async (requestId) => {
+        const { data } = await admin
+          .from("account_requests")
+          .select("id,kind,status,employee_id,employee_no,email,desired_password")
+          .eq("id", requestId)
+          .maybeSingle();
+        return data;
+      },
+      createAuthUser: async ({ email, password, employeeNo }) => {
+        const { data: created, error: createError } = await admin.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { employee_no: employeeNo, pilot: true },
+        });
+        if (createError || !created.user) {
+          console.error(`createUser failed: ${createError?.message}`);
+          return { userId: null, error: createError?.message ?? "" };
+        }
+        return { userId: created.user.id, error: null };
+      },
+      updateAuthPassword: async (authUserId, password) => {
+        const { error: updateError } = await admin.auth.admin.updateUserById(authUserId, { password });
+        if (updateError) {
+          console.error(`updateUserById failed: ${updateError.message}`);
+          return updateError.message;
+        }
+        return null;
+      },
+      deleteAuthUser: async (authUserId) => {
+        await admin.auth.admin.deleteUser(authUserId);
+      },
+    }, approveRequestId, cleanText(body.roleId, 64) || null);
 
-    let createdUserId: string | null = null;
-    if (accountRequest.kind === "new_account") {
-      const email = String(accountRequest.email ?? "").trim() ||
-        `${accountRequest.employee_no.toLowerCase()}@pilot.mnp.local`;
-      const { data: created, error: createError } = await admin.auth.admin.createUser({
-        email,
-        password: accountRequest.desired_password,
-        email_confirm: true,
-        user_metadata: { employee_no: accountRequest.employee_no, pilot: true },
-      });
-      if (createError || !created.user) {
-        console.error(`createUser failed: ${createError?.message}`);
-        return response(request, { error: `ACCOUNT_CREATE_FAILED: ${createError?.message ?? ""}` }, 400);
-      }
-      createdUserId = created.user.id;
-    } else {
-      const { data: employee } = await admin
-        .from("employees")
-        .select("auth_user_id")
-        .eq("id", accountRequest.employee_id)
-        .maybeSingle();
-      if (!employee?.auth_user_id) {
-        return response(request, { error: "EMPLOYEE_NOT_FOUND" }, 404);
-      }
-      // เปลี่ยนรหัสผ่านก่อน แล้วจึงบันทึกผลลงฐานข้อมูล ถ้าขั้นบันทึกล้มเหลว คำร้องยัง
-      // ค้างอยู่และกดอนุมัติซ้ำได้ ผลลัพธ์สุดท้ายจึงตรงกันเสมอ
-      const { error: updateError } = await admin.auth.admin.updateUserById(employee.auth_user_id, {
-        password: accountRequest.desired_password,
-      });
-      if (updateError) {
-        console.error(`updateUserById failed: ${updateError.message}`);
-        return response(request, { error: `PASSWORD_UPDATE_FAILED: ${updateError.message}` }, 400);
-      }
+    if (result.status === 200) {
+      await dispatchNotificationEmails(supabaseUrl, serviceRoleKey);
     }
-
-    const applied = await rpcAsUser(supabaseUrl, apiKey, token, "app_apply_account_request", {
-      p_request_id: accountRequest.id,
-      p_auth_user_id: createdUserId,
-      p_role_id: cleanText(body.roleId, 64) || null,
-    });
-    if (applied.error) {
-      if (createdUserId) await admin.auth.admin.deleteUser(createdUserId);
-      const code = applied.error.includes("NOT_AUTHORIZED") ? 403 : 400;
-      return response(request, { error: applied.error }, code);
-    }
-
-    await dispatchNotificationEmails(supabaseUrl, serviceRoleKey);
-    return response(request, { employeeId: applied.data });
+    return response(request, result.body, result.status);
   }
 
   // ตั้งรหัสผ่านใหม่ด้วยลิงก์ในอีเมลยืนยันการอนุมัติสิทธิ์ — โทเค็นคือหลักฐานตัวตนเพียงอย่างเดียว
