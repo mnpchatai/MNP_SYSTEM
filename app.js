@@ -2164,9 +2164,9 @@ async function renderDashboard(params = new URLSearchParams()) {
   const mine = (mineResult.data ?? [])
     .map((row) => ({ ...row, request_type: relation(row.request_type) }))
     .filter((row) => !queuedIds.has(row.id) && !(requestModule(row.request_type?.code)?.endsAtDecision && row.status === "approved"))
-    .map((row) => ({ at: row.created_at, html: `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>` }))
+    .map((row) => ({ at: row.created_at, html: `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" data-module="${requestPalette(row.request_type?.code)}" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>` }))
     // NCR ที่ฉันออกและยังไม่ปิด (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) เรียงรวมกับคำร้อง ใบใหม่ก่อน
-    .concat(ncrItems.mine.map((ncr) => ({ at: ncr.created_at, html: `<li><a class="home-mine-row" href="${escapeHtml(ncrHref(ncr))}"><span class="home-mine-head"><span class="queue-item-icon" aria-hidden="true">${requestTypeIcon("NCR_CAR")}</span><span class="request-no">${escapeHtml(ncr.ncr_no)}</span></span><strong>${escapeHtml(ncr.product_name)}</strong>${progressTracker(ncr.status, false, { stages: ncrHome.PROGRESS_STAGES, label: ncrHome.statusLabel(ncr) })}</a></li>` })))
+    .concat(ncrItems.mine.map((ncr) => ({ at: ncr.created_at, html: `<li><a class="home-mine-row" href="${escapeHtml(ncrHref(ncr))}"><span class="home-mine-head"><span class="queue-item-icon" data-module="ncr" aria-hidden="true">${requestTypeIcon("NCR_CAR")}</span><span class="request-no">${escapeHtml(ncr.ncr_no)}</span></span><strong>${escapeHtml(ncr.product_name)}</strong>${progressTracker(ncr.status, false, { stages: ncrHome.PROGRESS_STAGES, label: ncrHome.statusLabel(ncr) })}</a></li>` })))
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, HOME_QUEUE_PAGE);
   const showQueue = items.length > 0 || recent.length > 0 || hasApprovalDuty(employee);
@@ -2220,7 +2220,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เกินกำหนดตอบ)
   const flag = item.flag ?? (["high", "urgent"].includes(request.priority) ? priorityLabel(request.priority, isRepairType(type)) : null);
   const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
-  const head = `<span class="queue-item-icon" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
+  const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
       <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="priority-flag">${escapeHtml(flag)}</span>` : ""}</span>
       <strong class="queue-item-title">${escapeHtml(request.title)}</strong>
@@ -2995,7 +2995,7 @@ async function renderNewRequest(params) {
   async function paint() {
     const selected = (types ?? []).find((type) => type.id === selectedId) ?? null;
     const heading = selected
-      ? `<div class="page-heading"><div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div>`
+      ? `<div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}"><div class="request-module-title">${typeCardMarkHtml(selected)}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1><p>${escapeHtml(selected.description || "กรอกรายละเอียดให้ครบถ้วน ระบบจะส่งเข้าสายอนุมัติให้อัตโนมัติ")}</p></div></div></div>`
       : `<div class="page-heading"><div><h1>เลือกประเภทคำร้องที่จะสร้าง</h1><p>เลือกประเภทด้านล่างเพื่อเปิดแบบฟอร์ม แล้วกรอกรายละเอียดก่อนส่งคำร้อง</p></div></div>`;
 
     let body;
@@ -3693,13 +3693,13 @@ async function renderRequestDetail(params) {
   const receipt = recentDecisionFor(id);
   const description = (request.description ?? "").trim();
   const content = `
-    <header class="request-detail-head${canApprove ? " has-step-line" : ""}">
+    <header class="request-detail-head request-module-header${canApprove ? " has-step-line" : ""}" data-module="${requestPalette(type?.code)}">
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${escapeHtml(request.title)}</h1>
-      <p class="request-detail-meta">${escapeHtml(detailView?.typeLabel ?? type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` · <span class="priority-flag">${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}</span>` : ""}</p>
+      <p class="request-detail-meta">${escapeHtml(detailView?.typeLabel ?? type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}</span>` : ""}</p>
     </header>
     <div class="detail-grid">
       <div class="stack">

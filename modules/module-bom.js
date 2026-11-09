@@ -365,9 +365,12 @@
   }
   // โหมดฐานข้อมูลที่ยังไม่มีชิ้นงานเลย: หน้าที่อ่านข้อมูลหลักบอกทางไปหน้านำเข้า (ผู้ที่นำเข้าได้) แทนตารางว่างหลายใบ
   const EMPTY_MASTER_PAGES = Object.freeze(["dashboard", "items", "product", "structure", "variants"]);
-  function emptyMasterHtml(user) {
+  // หัวหน้าแบบเดียวกับหน้า BOM อื่น (ก้อนสีโมดูล + ไอคอน + ชื่อหน้า) บอกว่ายังว่างและทางไปหน้านำเข้า
+  function emptyMasterHtml(user, page, label) {
     const canImport = actions.helpers.canPlan(user);
-    return `<section class="card rf-card">${ui.empty("ยังไม่มีข้อมูล BOM ในฐานข้อมูล")}${canImport ? `<div class="rf-row"><a class="btn rf-btn" href="${escapeHtml(url("import"))}">นำเข้าจาก Excel</a></div>` : `<p class="small muted">ฝ่ายวางแผนหรือผู้จัดการนำเข้าข้อมูลได้ที่เมนู “นำเข้าจาก Excel”</p>`}</section>`;
+    const next = canImport ? `<div class="rf-row"><a class="btn rf-btn" href="${escapeHtml(url("import"))}">นำเข้าจาก Excel</a></div>` : "";
+    const hint = canImport ? "ยังไม่มีข้อมูล BOM ในฐานข้อมูล เริ่มจากนำเข้าไฟล์ Excel" : "ยังไม่มีข้อมูล BOM ในฐานข้อมูล ฝ่ายวางแผนหรือผู้จัดการนำเข้าได้ที่เมนู “นำเข้าจาก Excel”";
+    return `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(page)}</span><div><h1>${escapeHtml(label)}</h1><p>${escapeHtml(hint)}</p></div></div>${next}</header>`;
   }
   function pageNavHtml(user, page) {
     const items = storeApi.MODULES.filter((entry) => storeApi.canSee(user, entry.id));
@@ -441,7 +444,7 @@
       return undefined;
     } else if (!storeApi.canSee(user, page)) body = deniedHtml(user);
     else if (store.status() !== "ready") body = `${pageNavHtml(user, page)}${loadStateHtml()}`;
-    else if (store.isRemote() && !ctx.data.items.length && EMPTY_MASTER_PAGES.includes(page)) body = `${pageNavHtml(user, page)}${emptyMasterHtml(user)}`;
+    else if (store.isRemote() && !ctx.data.items.length && EMPTY_MASTER_PAGES.includes(page)) body = `${pageNavHtml(user, page)}${emptyMasterHtml(user, page, entry?.label ?? title)}`;
     else {
       const render = pages[page];
       const built = render ? render(ctx) : { html: ui.card(ui.empty("หน้านี้ยังไม่พร้อม")) };

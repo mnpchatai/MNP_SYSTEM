@@ -274,6 +274,50 @@ test("the status colours stay readable as white text and as the glyph on the whi
   }
 });
 
+test("text on a soft status background reaches 4.5:1 in both themes", () => {
+  let checked = 0;
+  for (const rule of rules) {
+    const soft = rule.declarations.get("background")?.match(/^var\(--(success|warning|danger|primary)-soft\)$/);
+    const color = rule.declarations.get("color");
+    if (!soft || !color?.startsWith("var(--")) continue;
+    for (const [theme, tokens] of [["light", ROOT_LIGHT], ["dark", ROOT_DARK]]) {
+      const value = contrast(resolve(color, tokens), resolve(rule.declarations.get("background"), tokens));
+      assert.ok(value >= 4.5, `${rule.selector} (${theme}): ${color} on ${soft[0]} = ${value.toFixed(2)}:1`);
+    }
+    checked += 1;
+  }
+  assert.ok(checked >= 20, `checked ${checked} soft pairs`);
+  assert.match(css, /\.ncr-loss-net dd \{ color: var\(--primary-ink\); \}/);
+  assert.match(css, /\.ncr-owner-chip \{[^}]*color: var\(--ink\);[^}]*background: var\(--shell\);/, "the NCR owner box no longer borrows a status colour");
+});
+
+test("department chips: unselected chips are a light tint of the department colour, readable for every ramp", () => {
+  assert.match(css, /:root:not\(\[data-theme="dark"\]\) \.repair-department-card:not\(\.active\) \{ color: var\(--m900\); background: linear-gradient\(135deg, var\(--m50\), var\(--m100\)\);/);
+  for (const [key, ramp] of RAMPS) {
+    for (const ink of ["--m900", "--m800"]) for (const ground of ["--m50", "--m100"]) {
+      const value = contrast(resolve(ramp.get(ink), new Map()), resolve(ramp.get(ground), new Map()));
+      assert.ok(value >= 4.5, `${key} ${ink} on ${ground} = ${value.toFixed(2)}:1`);
+    }
+  }
+});
+
+test("the request detail, create form, NCR detail, dashboards, home queue, filters and RubberFlow/BOM menu take the module colour", () => {
+  const app = read("app.js");
+  assert.match(app, /<header class="request-detail-head request-module-header\$\{canApprove \? " has-step-line" : ""\}" data-module="\$\{requestPalette\(type\?\.code\)\}">/);
+  assert.match(app, /<div class="page-heading request-module-header" data-module="\$\{requestPalette\(selected\.code\)\}"><div class="request-module-title">\$\{typeCardMarkHtml\(selected\)\}/);
+  assert.equal([...app.matchAll(/class="queue-item-icon" data-module="/g)].length, 3, "all three home queue icons carry data-module");
+  assert.match(read("modules/module-ncr.js"), /class="page-heading request-module-header ncr-detail-head" data-module="ncr"/);
+  assert.match(read("modules/module-mt-dashboard.js"), /class="page-heading request-module-header" data-module="mt"/);
+  assert.match(read("modules/module-ncr-dashboard.js"), /class="page-heading request-module-header" data-module="ncr"/);
+  assert.match(css, /\.queue-item-icon\[data-module\] \{ color: var\(--mod-on\); background: var\(--mod-surface\);/);
+  assert.match(css, /\[data-module\] \.filter\.active \{ color: var\(--mod-tab-on-ink\); background: var\(--mod-tab-on\);/);
+  assert.match(css, /\.rf-nav-item\.is-active \{ color: var\(--mod-tab-on-ink, var\(--primary-ink\)\); background: var\(--mod-tab-on, var\(--primary-soft\)\);/);
+  assert.match(css, /\.request-detail-head\.request-module-header \{ z-index: 2; overflow: visible;/, "the detail menu can drop below the header");
+  // โมดูลย่อยของ RubberFlow/BOM ใช้เฉดของจานสีแม่ ไม่มีสี hex ของตัวเอง
+  assert.doesNotMatch(css, /\[data-rf-mod="[^"]+"\] \{ --rf-mod: #/);
+  assert.doesNotMatch(css, /#cf3030|#1b8f4e/);
+});
+
 test("every badge class the code renders is one of the styled statuses (or the neutral badge)", () => {
   const sources = ["app.js", "modules/module-ncr.js", "modules/module-qc.js", "modules/qc-model.js", "modules/module-mt.js", "modules/module-mt-dashboard.js"].map(read);
   const used = new Set();
