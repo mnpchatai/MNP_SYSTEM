@@ -25,7 +25,8 @@
 --   md5(prosrc) = e9078a63055ccc15e599edb9c182379b ตรวจ 2026-11-10) ต่างจากนั้นเฉพาะ v_full และสามบรรทัดตรวจสิทธิ์ที่มีคอมเมนต์กำกับ
 -- ลำดับ deploy: ขึ้น migration นี้ก่อนเผยแพร่ Pilot Web รุ่นที่แสดงฟอร์มยอดประมาณการให้ผู้ตอบ
 --   (Pilot Web รุ่นเก่าไม่แสดงฟอร์มให้ผู้ตอบ จึงทำงานกับฐานข้อมูลรุ่นนี้ได้)
--- ก่อน apply: md5(prosrc) ของ public.app_ncr_record_loss บนฐานข้อมูลจริงต้องเป็นค่าด้านบน หลัง apply ตรวจนิยามและ grants แล้วจึง merge
+-- ก่อน apply: md5(prosrc) ของ public.app_ncr_record_loss บนฐานข้อมูลจริงต้องเป็นค่าด้านบน
+-- หลัง apply (จากไฟล์แบบ LF): md5(prosrc) ต้องเป็น f04580611a2c5f8e1c0c6d8f9f0d501f และ grants ตามท้ายไฟล์ แล้วจึง merge
 -- Rollback: create or replace กลับเป็นนิยามที่ใช้งานก่อน migration นี้ = นิยามใน 20261015060000 พร้อมบรรทัด
 --   perform private.lab_only_block(); ต่อจาก begin (หรือ create or replace จาก 20261015060000 แล้วรัน select private.lab_only_guard_functions();)
 --   รายการประมาณการที่ผู้ตอบใส่ไว้แล้วยังอยู่ ผู้กรอกต้นทุนยืนยันหรือยกเลิกได้ตามปกติ
