@@ -931,9 +931,13 @@
   // data = { jobs, orders, stock, purchaseOrders } (BOM: jobs orders stock · RubberFlow: purchaseOrders) · orderId = ใบ PI ที่ถามถึง
   // แต่ละรหัสที่ใบนี้ยังไม่ได้เบิกจ่าย: needQty ต้องใช้ (ส่วนที่เหลือของงาน) · onHandQty คงเหลือ · reservedQty จองแล้ว = ที่ใบ PI อื่นที่ปล่อยผลิตแล้วยังไม่ได้เบิกจ่ายต้องใช้
   // · onOrderQty สั่งค้างรับ (บรรทัดของซื้อของใบสั่งซื้อ ordered ที่ยังไม่รับ) · shortage = max(0, needQty − (onHandQty − reservedQty + onOrderQty)) · orderQty = ค่าตั้งต้นจำนวนสั่ง (ขาด + สต็อกขั้นต่ำ ไม่ขาด = 0)
+  // needQty และ shortage ปัดขึ้นที่ 3 ตำแหน่ง (partUp3) ส่วนยอดคงเหลือ/จองแล้ว/สั่งค้างรับปัดใกล้สุดไว้แสดง
   // ชื่อ/หน่วยมาจากงาน (ชื่อและหน่วยของชิ้น ณ ตอนปล่อยผลิต) · รูปเดียวกับ chemicalNeeds ของ RubberFlow: { rows, anyShort }
   const PART_OPEN_ORDER = Object.freeze(["released", "in_progress"]);
   const partRound3 = (n) => Math.round(n * 1e3) / 1e3;
+  // ยอดที่ต้องซื้อ (ต้องใช้ / ขาด) ปัดขึ้นที่ 3 ตำแหน่ง: งานของซื้อเก็บ 4 ตำแหน่งและเบิกจ่ายได้เมื่อสต็อกพอทุกรายการ
+  // ถ้าปัดใกล้สุด ยอดสั่ง 1.333 จะไม่พอเบิก 1.3333 (ขาด 0.0003 แล้วเบิกจ่ายทั้งใบไม่ได้) · ปัดที่ 4 ตำแหน่งก่อนกันเศษทศนิยมของเครื่อง
+  const partUp3 = (n) => Math.ceil(Math.round(n * 1e4) / 10 - 1e-9) / 1e3 || 0;
   // งานของซื้อที่ยังไม่เบิกจ่ายของใบที่ปล่อยผลิตอยู่ (released / in_progress) · ส่วนที่เหลือของงาน = แผน - ที่เบิกจ่ายแล้ว
   const openPartJobs = (jobs, orders) => {
     const statusOf = new Map((orders ?? []).map((order) => [order.id, order.status]));
@@ -994,13 +998,15 @@
     }
     const reserved = partReserved(jobs, orders, orderId);
     const onOrder = partOnOrder(purchaseOrders);
-    const rows = [...need.keys()].filter((code) => partRound3(need.get(code)) > 0).sort().map((code) => {
+    const rows = [...need.keys()].filter((code) => partUp3(need.get(code)) > 0).sort().map((code) => {
       const row = stock.find((entry) => entry.itemCode === code);
-      const needQty = partRound3(need.get(code));
+      const exactNeed = need.get(code);
+      const needQty = partUp3(exactNeed);
       const onHandQty = partRound3(Number(row?.qty) || 0);
       const reservedQty = partRound3(reserved.get(code) || 0);
       const onOrderQty = partRound3(onOrder.get(code) || 0);
-      const shortage = partRound3(Math.max(0, needQty - (onHandQty - reservedQty + onOrderQty)));
+      // ขาดคิดจากยอดจริง (ไม่ใช่ยอดที่ปัดไว้แสดง) แล้วปัดขึ้น จำนวนสั่งตั้งต้นจึงไม่น้อยกว่าที่จะเบิกจ่าย
+      const shortage = partUp3(Math.max(0, exactNeed - ((Number(row?.qty) || 0) - (reserved.get(code) || 0) + (onOrder.get(code) || 0))));
       const safetyQty = Math.max(0, Number(row?.safetyQty) || 0);
       return { itemCode: code, name: meta.get(code)?.name ?? "", uom: meta.get(code)?.uom ?? "", needQty, onHandQty, reservedQty, onOrderQty, shortage, safetyQty, orderQty: shortage > 0 ? partRound3(shortage + safetyQty) : 0 };
     });

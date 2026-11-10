@@ -667,6 +667,19 @@ test("partNeeds: this PI's unissued ST part jobs against the part balance, minus
   assert.deepEqual(rules.partNeeds({}, "X"), { rows: [], anyShort: false }, "empty data is tolerated");
 });
 
+test("partNeeds rounds the need and the shortage UP at 3 decimals, so ordering the suggestion always covers the issue (Pilot test 2026-11-10: 1.3333 kg was suggested as 1.333 and issuing was 0.0003 short)", () => {
+  const job = (id, itemCode, qtyPlanned) => ({ id, orderId: "PI-1", dept: "ST", kind: "PURCHASED", itemCode, name: itemCode, uom: "kg", qtyPlanned, qtyRequired: qtyPlanned, qtyDone: 0, status: "queued" });
+  const orders = [{ id: "PI-1", status: "released" }];
+  const jobs = [job("J1", "BAG", 1.3333), job("J2", "BOX", 0.75), job("J3", "TINY", 0.0001)];
+  const none = rules.partNeeds({ jobs, orders, stock: [], purchaseOrders: [] }, "PI-1");
+  assert.deepEqual(none.rows.map((row) => [row.itemCode, row.needQty, row.shortage, row.orderQty]), [["BAG", 1.334, 1.334, 1.334], ["BOX", 0.75, 0.75, 0.75], ["TINY", 0.001, 0.001, 0.001]],
+    "1.3333 → 1.334 (never 1.333); an exact 0.75 stays 0.75; a need below 0.0005 is still a need (rounding it away would block issuing the whole PI)");
+  const afterShortOrder = rules.partNeeds({ jobs, orders, stock: [{ itemCode: "BAG", qty: 1.333 }, { itemCode: "BOX", qty: 0.75 }, { itemCode: "TINY", qty: 0.0001 }], purchaseOrders: [] }, "PI-1");
+  assert.deepEqual(afterShortOrder.rows.map((row) => [row.itemCode, row.shortage, row.orderQty]), [["BAG", 0.001, 0.001], ["BOX", 0, 0], ["TINY", 0, 0]],
+    "with 1.333 in stock the bag is still short (by 0.0003, shown as 0.001); enough stock is not short");
+  for (const row of none.rows) assert.ok(row.orderQty >= jobs.find((entry) => entry.itemCode === row.itemCode).qtyPlanned, `${row.itemCode}: the suggested order covers the job`);
+});
+
 test("partReturned counts the returns of a (PI, item) pair since its latest issue; partReturnLines sums the done part jobs per item", () => {
   const moves = [
     { kind: "issue", ref: "PI-1", itemCode: "P-1", qty: -10 },
