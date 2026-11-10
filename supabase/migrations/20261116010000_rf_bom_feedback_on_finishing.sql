@@ -38,9 +38,13 @@
 --   Pilot Web รุ่นก่อน: ไม่พังกับฐานข้อมูลใหม่ (ลายเซ็น RPC และรูปผลตอบกลับของ app_rf_save เท่าเดิม) แต่ toast เรื่องงาน BOM ตอนรับมอบจะไม่ขึ้นอีก
 --   Pilot Web รุ่นใหม่กับฐานข้อมูลเก่า: ยังทำงานได้ แต่ฐานข้อมูลเก่ายังป้อน BOM ตอนรับมอบ (นับซ้ำต่อไปจนกว่าจะ apply) และไม่ป้อนตอนตกแต่งผ่านเพิ่ม
 --
--- Rollback: รัน create or replace จาก 20261108010000_rubberflow_shopfloor.sql ของ rf_apply_feedback(text, public.rf_transfers, public.rf_orders) และ rf_save_transfers /
---   rf_save_lots / rf_save_qc (หลัง drop ลายเซ็นของไฟล์นี้: drop function private.rf_apply_feedback(text, public.rf_lots, public.rf_orders),
---   private.rf_save_transfers(public.employees, boolean, boolean, jsonb, bigint, bigint)) แล้วคืน public.app_rf_save จาก 20261111010000_bom_part_stock.sql
+-- Rollback: drop ลายเซ็นของไฟล์นี้ก่อน (rf_save_lots / rf_save_qc ลายเซ็นเดิมแต่ชนิดคืนเปลี่ยนเป็น jsonb create or replace กลับเป็น integer ไม่ได้):
+--   drop function private.rf_apply_feedback(text, public.rf_lots, public.rf_orders);
+--   drop function private.rf_save_transfers(public.employees, boolean, boolean, jsonb, bigint, bigint);
+--   drop function private.rf_save_lots(public.employees, text, boolean, boolean, text, jsonb, bigint, bigint);
+--   drop function private.rf_save_qc(public.employees, boolean, boolean, jsonb, bigint, bigint);
+--   แล้วสร้าง rf_apply_feedback(text, public.rf_transfers, public.rf_orders) / rf_save_transfers / rf_save_lots / rf_save_qc จาก 20261108010000_rubberflow_shopfloor.sql
+--   พร้อม revoke เดิม คืน public.app_rf_save จาก 20261111010000_bom_part_stock.sql และ comment ของ public.rf_transfers จาก 20261108010000 (ทั้งหมดในธุรกรรมเดียว)
 --   ข้อมูลทดสอบ qty_done / reports ของงาน BOM ที่ป้อนกลับไปแล้วไม่ถูกย้อน (ล้างด้วยการล้างข้อมูลทดสอบของโหมดทดสอบ)
 -- ============================================================================
 
@@ -773,3 +777,6 @@ $$;
 
 revoke all on function public.app_rf_save(jsonb, bigint, text, jsonb, text) from public, anon;
 grant execute on function public.app_rf_save(jsonb, bigint, text, jsonb, text) to authenticated;
+
+-- คำอธิบายตารางใบส่งมอบให้ตรงกติกาใหม่ (เดิมบอกว่ารับมอบป้อนผลผลิตกลับงาน BOM)
+comment on table public.rf_transfers is 'ใบส่งมอบ WIP ระหว่างสถานี in_transit -> received (SR รับมอบ) · remaining ลดโดยเซิร์ฟเวอร์ตอนบันทึกสถานีถัดไป · การรับมอบไม่แตะงาน BOM (ป้อนกลับเมื่อล็อตตกแต่งผ่าน QC ดู private.rf_apply_feedback)';

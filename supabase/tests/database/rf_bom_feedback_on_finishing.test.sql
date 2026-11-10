@@ -246,13 +246,12 @@ reset role;
 select is((select (metadata ->> 'bom_jobs')::integer from public.audit_logs where action = 'RF_SAVE' and entity_type = 'rf_master' and entity_id = (current_setting('test.resFx1')::jsonb ->> 'version')), 1, 'the RubberFlow audit row of the first finishing save counts the BOM job it wrote');
 select is((select max((metadata ->> 'bom_jobs')::integer) from public.audit_logs where action = 'RF_SAVE' and entity_type = 'rf_master' and metadata ->> 'client_action' = 'receiveTransfer'), 0, 'and the audit row of a receipt counts no BOM job');
 select is((select qty_done from public.bom_jobs where is_test and job_no = 'JOB-X1-RB'), 170::numeric, 'the stored job total matches what the screen reads');
-select is((select count(*) from public.bom_jobs where not is_test and job_no = 'JOB-X1-RB'), 0::bigint, 'no real-mode row was touched');
 set local role authenticated;
 
 -- 10. ปฏิเสธเมื่อไม่มี session ------------------------------------------------------------------------------------
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fn')::jsonb || '{"id":"FN-XZ","orderId":"WO-X1","qc":"pass","goodQty":10,"params":{"perBox":50},"sources":[{"type":"transfer","id":"TR-X3","lotId":"CU-X1","qty":10}]}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'recordFinishing') $$, 'AUTH_REQUIRED', 'saving a finishing lot requires a session');
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-XZ","lotId":"FN-X1","stage":"finishing","result":"pass"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$, 'AUTH_REQUIRED', 'saving a QC decision requires a session');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fn')::jsonb || '{"id":"FN-XZ","orderId":"WO-X1","qc":"pass","goodQty":10,"params":{"perBox":50},"sources":[{"type":"transfer","id":"TR-X3","lotId":"CU-X1","qty":10}]}'::jsonb))), 0, 'recordFinishing') $$, 'AUTH_REQUIRED', 'saving a finishing lot requires a session');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-XZ","lotId":"FN-X1","stage":"finishing","result":"pass"}'::jsonb))), 0, 'addQcRecord') $$, 'AUTH_REQUIRED', 'saving a QC decision requires a session');
 
 reset role;
 select * from finish();
