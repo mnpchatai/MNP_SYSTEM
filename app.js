@@ -4119,7 +4119,8 @@ function confirmStepAction(area, { label, requestNo = "", consequence = "", tone
   const tapGuard = rules.createTapGuard();
   // หน้าที่เริ่มการกระทำ: ส่งเสร็จหลังผู้ใช้ย้ายหน้าแล้ว ห้ามวาดใบเดิมทับหน้าใหม่ (send ได้ stillHere ไว้ตัดสิน)
   const hash = location.hash;
-  const stillHere = () => location.hash === hash && area.isConnected;
+  // ดูแค่ hash: ย้ายไปแล้วกลับมาใบเดิมก่อนส่งเสร็จ ก็วาดใบใหม่ให้เห็นสถานะหลังส่ง (วาดหน้าเดิมซ้ำไม่มีโทษ)
+  const stillHere = () => location.hash === hash;
   // ช่องที่ผู้ใช้กรอก (หมายเหตุ ไฟล์) ล็อกไว้ระหว่างยืนยันและนับ สิ่งที่ส่งจึงตรงกับที่เห็นตอนกดยืนยัน
   const locked = lock.filter(Boolean).map((node) => [node, node.disabled]);
   const line = document.createElement("p");

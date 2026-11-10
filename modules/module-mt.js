@@ -1036,19 +1036,21 @@
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
       // เริ่มงาน เสร็จสิ้นงาน และตรวจรับ: ยืนยัน แล้วนับถอยหลังเลิกทำ 5 วิ (confirmStepAction ใน app.js) แบบเดียวกับการอนุมัติ
+      // ผู้ใช้ย้ายหน้าไประหว่างนับแล้ว: ส่งต่อ ไม่วาดใบเดิมทับหน้าที่เปิดอยู่ และข้อความบอกเลขที่ใบ (อยู่หน้าอื่นแล้ว)
+      const stepToast = (stillHere, requestNo, text) => (stillHere() ? text : `${requestNo}: ${text}`);
       document.querySelector(".start-work-button")?.addEventListener("click", (event) => {
+        const requestNo = currentRequestNo;
         confirmStepAction(event.currentTarget.closest(".approval-actions"), {
-          label: "เริ่มงาน", requestNo: currentRequestNo, consequence: "สถานะเป็นกำลังซ่อม", trigger: event.currentTarget,
+          label: "เริ่มงาน", requestNo, consequence: "สถานะเป็นกำลังซ่อม", trigger: event.currentTarget,
           send: async ({ stillHere }) => {
             try {
               const { error } = await sb.rpc("app_start_repair_work", { p_request_id: id });
               if (error) throw error;
               triggerNotificationEmails(id);
-              showToast(stillHere() ? "เริ่มงานแล้ว" : `เริ่มงาน ${currentRequestNo} แล้ว`);
-              // ย้ายหน้าไประหว่างนับแล้ว: ไม่วาดใบเดิมทับหน้าที่ผู้ใช้เปิดอยู่
+              showToast(stepToast(stillHere, requestNo, "เริ่มงานแล้ว"));
               if (stillHere()) await renderRequestDetail(params);
               return true;
-            } catch (error) { showToast(friendlyError(error), "error"); return false; }
+            } catch (error) { showToast(stepToast(stillHere, requestNo, friendlyError(error)), "error"); return false; }
           },
         });
       });
@@ -1105,8 +1107,9 @@
         if (finishErrors.length) return showRepairFieldErrors(form, finishErrors);
         window.MNP_FORM_STEPS.clearFieldErrors(form);
         try { readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
+        const requestNo = currentRequestNo;
         confirmStepAction(form.querySelector(".form-actions"), {
-          label: "เสร็จสิ้นงาน", requestNo: currentRequestNo, consequence: "ส่งให้ผู้แจ้งตรวจรับ",
+          label: "เสร็จสิ้นงาน", requestNo, consequence: "ส่งให้ผู้แจ้งตรวจรับ",
           lock: [...form.elements].filter((node) => !node.closest(".form-actions")), trigger: form.querySelector('button[type="submit"]'),
           send: async ({ stillHere }) => {
             try {
@@ -1120,10 +1123,10 @@
               if (error) throw error;
               const warning = await uploadExtraFiles(id, files, employee.id);
               triggerNotificationEmails(id);
-              showToast(warning || "บันทึกผลการซ่อมแล้ว ส่งให้ผู้แจ้งตรวจรับ", warning ? "error" : "success");
+              showToast(stepToast(stillHere, requestNo, warning || "บันทึกผลการซ่อมแล้ว ส่งให้ผู้แจ้งตรวจรับ"), warning ? "error" : "success");
               if (stillHere()) await renderRequestDetail(params);
               return true;
-            } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); return false; }
+            } catch (error) { showToast(stepToast(stillHere, requestNo, friendlyError(error)), "error"); setFormBusy(form, false); return false; }
           },
         });
       });
@@ -1137,20 +1140,22 @@
         if (!pass && note.length < 3) return showRepairFieldErrors(section, [{ name: "verify_note", message: "ระบุสาเหตุที่ไม่ผ่านการตรวจรับอย่างน้อย 3 ตัวอักษร" }]);
         let files;
         try { files = readExtraFiles(document.querySelector("#verify-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
+        const requestNo = currentRequestNo;
         confirmStepAction(button.closest(".approval-actions"), {
-          label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ", requestNo: currentRequestNo,
+          label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ", requestNo,
           consequence: pass ? "ปิดงาน" : "ส่งกลับให้ช่างซ่อมเพิ่มเติม", tone: pass ? "success" : "danger", echo: note,
-          lock: [document.querySelector("#verify-note"), document.querySelector("#verify-files")], trigger: button,
+          // ปุ่ม × ของตัวอย่างไฟล์ก็ล็อก ไฟล์ที่ส่งจึงตรงกับที่เห็น
+          lock: [document.querySelector("#verify-note"), document.querySelector("#verify-files"), ...section.querySelectorAll(".attachment-remove")], trigger: button,
           send: async ({ stillHere }) => {
             try {
               const { error } = await sb.rpc("app_verify_repair", { p_request_id: id, p_result: result, p_note: note || null });
               if (error) throw error;
               const warning = await uploadExtraFiles(id, files, employee.id);
               triggerNotificationEmails(id);
-              showToast(warning || (pass ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว"), warning ? "error" : "success");
+              showToast(stepToast(stillHere, requestNo, warning || (pass ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว")), warning ? "error" : "success");
               if (stillHere()) await renderRequestDetail(params);
               return true;
-            } catch (error) { showToast(friendlyError(error), "error"); return false; }
+            } catch (error) { showToast(stepToast(stillHere, requestNo, friendlyError(error)), "error"); return false; }
           },
         });
       }));
