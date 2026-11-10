@@ -9,8 +9,22 @@ const NOTIFY_EMAIL_URL = `${SUPABASE_URL}/functions/v1/notify-email`;
 // ใส่ได้เฉพาะกุญแจสาธารณะ — ห้ามใส่กุญแจส่วนตัวที่นี่ เว้นว่างไว้ = ซ่อนส่วนแจ้งเตือนบนเครื่องทั้งหมด
 // เปลี่ยนกุญแจ: เครื่องที่เปิดไว้แล้วจะสมัครใหม่เองเมื่อเปิดแอป (ดู ensurePushSubscription)
 const PUSH_PUBLIC_KEY = "BDTZCvimJouHlMRtOtUfsBAoScH75w60WnUw4Uy1HQprE1NQLqZDHUiIi3Hl1-WrlbF91QUGPsZSNp7CXzAqaCs";
+// ทุกคำตอบของ Supabase: อ่าน header Date ส่งให้นาฬิกาเซิร์ฟเวอร์ (modules/server-clock.js) ไม่แก้คำขอหรือคำตอบ
+// คำตอบจาก cache ของเบราว์เซอร์ (มี header Age) มี Date ของครั้งก่อน จึงไม่นับ
+const serverClockFetch = async (input, init) => {
+  const sentAt = Date.now();
+  const response = await fetch(input, init);
+  try {
+    const date = response.headers.get("date");
+    if (date && !response.headers.has("age")) window.MNP_SERVER_CLOCK?.sample(date, sentAt, Date.now());
+  } catch {
+    // นาฬิกาเป็นตัวช่วย: อ่านไม่ได้ = ใช้เวลาเครื่องต่อไป
+  }
+  return response;
+};
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+  global: { fetch: serverClockFetch },
 });
 
 const app = document.querySelector("#app");
