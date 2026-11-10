@@ -33,13 +33,33 @@ test("a Date header narrows the offset to the window the server answered in, and
   assert.ok(Math.abs(clock.now() - at("2026-11-10T06:40:00.000Z")) <= 150, "now() reads the server's time");
 });
 
-test("a sample that cannot overlap the current window (this clock was reset) starts again from that sample", () => {
+test("one sample that disagrees (an old cached answer) is ignored; two in a row that agree with each other (this clock was reset) start again from them", () => {
   const clock = createClock({ now: () => 0 });
   clock.sample(header("2026-11-10T06:00:00Z"), at("2026-11-10T06:00:00.100Z"), at("2026-11-10T06:00:00.200Z"));
+  const inSync = clock.bounds();
   assert.ok(Math.abs(clock.offset()) < 1000, "first: about in sync");
-  // the machine clock jumped 10 minutes back
+  // a stale answer with an hour-old Date header
+  clock.sample(header("2026-11-10T05:00:00Z"), at("2026-11-10T06:00:10.100Z"), at("2026-11-10T06:00:10.200Z"));
+  assert.deepEqual(clock.bounds(), inSync, "a single outlier does not move the clock");
+  // a normal answer afterwards still narrows the window as usual
+  clock.sample(header("2026-11-10T06:00:20Z"), at("2026-11-10T06:00:20.800Z"), at("2026-11-10T06:00:20.900Z"));
+  assert.ok(Math.abs(clock.offset()) < 1000);
+  // the machine clock jumped 10 minutes back: the first answer alone is not trusted, the second confirms it
   clock.sample(header("2026-11-10T06:05:00Z"), at("2026-11-10T05:55:00.100Z"), at("2026-11-10T05:55:00.200Z"));
+  assert.ok(Math.abs(clock.offset()) < 1000, "still the old offset after one disagreeing answer");
+  clock.sample(header("2026-11-10T06:05:05Z"), at("2026-11-10T05:55:05.100Z"), at("2026-11-10T05:55:05.200Z"));
   assert.ok(Math.abs(clock.offset() - 600000) < 1000, `re-anchored to the new offset (${clock.offset()})`);
+});
+
+test("a slow answer gives a wide window that never widens a narrow one", () => {
+  const clock = createClock({ now: () => 0 });
+  clock.sample(header("2026-11-10T06:00:00Z"), at("2026-11-10T06:00:00.900Z"), at("2026-11-10T06:00:01.000Z"));
+  const [lo, hi] = clock.bounds();
+  // 3 seconds round trip
+  clock.sample(header("2026-11-10T06:00:12Z"), at("2026-11-10T06:00:10.500Z"), at("2026-11-10T06:00:13.500Z"));
+  const [lo2, hi2] = clock.bounds();
+  assert.ok(lo2 >= lo && hi2 <= hi, "the window only narrows");
+  assert.ok(hi2 - lo2 <= hi - lo);
 });
 
 test("bad samples are ignored", () => {
