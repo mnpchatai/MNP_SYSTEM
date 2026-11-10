@@ -1638,11 +1638,10 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-about { margin-top: 2px; }
 .nd-about > summary { width: fit-content; min-height: 32px; display: inline-flex; align-items: center; color: var(--mod-link, var(--primary)); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
 .nd-about > p { margin: 2px 0 6px; }
-/* การ์ดตัวเลข: ไม่มีการ์ดเดียวตกแถว (ห้าใบ = 5 | 3+2 | 2+2+1 เต็มแถว · สี่ใบ = 4 | 2+2) */
+/* การ์ดตัวเลข: ไม่มีการ์ดเดียวตกแถว (ห้าใบ = 5 | 3+2 · สี่ใบ = 4 | 2+2) จอแคบเรียงทีละใบเพราะปุ่มและแถบในการ์ดต้องการความกว้าง */
 @media (min-width: 1200px) { .nd-tiles.five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 @media (min-width: 761px) and (max-width: 1199px) { .nd-tiles.five { grid-template-columns: repeat(6, minmax(0, 1fr)); } .nd-tiles.five > * { grid-column: span 2; } .nd-tiles.five > :nth-child(n + 4) { grid-column: span 3; } }
-@media (max-width: 760px) { .nd-tiles.five { grid-template-columns: repeat(2, minmax(0, 1fr)); } .nd-tiles.five > :last-child { grid-column: 1 / -1; } }
-.nd-tiles:not(.five) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 761px) { .nd-tiles:not(.five) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1100px) { .nd-tiles:not(.five) { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 /* จอสัมผัส: ปุ่มกรอง ปุ่มในแถว และหัวพับของแดชบอร์ดสูงอย่างน้อย 44 px */
 @media (pointer: coarse), (max-width: 760px) {
