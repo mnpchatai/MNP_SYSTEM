@@ -102,7 +102,7 @@ test("pages without a step file field keep the separate uploader (approvers, vie
   assert.equal(standalone.hidden, false);
   assert.equal(created.length, 0);
   // ตัวที่เรียก: MT เฉพาะฟอร์มจบงาน · NCR เฉพาะฟอร์มของขั้นที่แนบหลักฐานได้ (เลือกด้วยชื่อการกระทำ ทดสอบใน ncr-detail-page.test.mjs)
-  assert.match(app, /pointToStepFiles\(document\.querySelector\("#attachment-form"\), document\.querySelector\("#finish-files"\),/);
+  assert.match(app, /const stepFiles = document\.querySelector\("#finish-files"\) \?\? document\.querySelector\("#verify-files"\);\r?\n\s*pointToStepFiles\(document\.querySelector\("#attachment-form"\), stepFiles,/, "the finish form and the verify card each keep one way to attach");
   assert.match(read("modules/module-ncr.js"), /window\.pointToStepFiles\?\.\(document\.querySelector\("\.ncr-attach-form"\), stepFileInput\(document\.querySelectorAll\("\.ncr-actions form\.ncr-action"\)\),/);
 });
 

@@ -108,21 +108,21 @@
    สีโมดูลบอกว่าอยู่ที่ไหน สีสถานะ (--*-strong) บอกว่าใบไปถึงไหน ไม่ใช้แทนกัน
    app.js ตั้ง data-theme ทุกครั้งที่เปิดหน้า (ตามระบบปฏิบัติการจนกว่าจะกดสลับ) กฎธีมมืดจึงอยู่ใต้ :root[data-theme="dark"] เท่านั้น
    contrast ของคู่สีทั้งหมดตรวจใน scripts/tests/color-system.test.mjs */
-[data-module="mt"], [data-dept-code="MT"] { --m50:#fff1f2; --m100:#ffe4e6; --m200:#fecdd3; --m300:#fda4af; --m400:#fb7185; --m500:#f43f5e; --m600:#e11d48; --m700:#be123c; --m800:#9f1239; --m900:#881337; --m950:#4c0519; --p:#fb923c; --p50:#fff7ed; }
+[data-module="mt"], [data-dept-code="MT"], .nd .dpt-MT { --m50:#fff1f2; --m100:#ffe4e6; --m200:#fecdd3; --m300:#fda4af; --m400:#fb7185; --m500:#f43f5e; --m600:#e11d48; --m700:#be123c; --m800:#9f1239; --m900:#881337; --m950:#4c0519; --p:#fb923c; --p50:#fff7ed; }
 [data-module="ncr"] { --m50:#fffbeb; --m100:#fef3c7; --m200:#fde68a; --m300:#fcd34d; --m400:#fbbf24; --m500:#f59e0b; --m600:#d97706; --m700:#b45309; --m800:#92400e; --m900:#78350f; --m950:#451a03; --p:#f97316; --p50:#fff7ed; }
 [data-module="mg"] { --m50:#f5f3ff; --m100:#ede9fe; --m200:#ddd6fe; --m300:#c4b5fd; --m400:#a78bfa; --m500:#8b5cf6; --m600:#7c3aed; --m700:#6d28d9; --m800:#5b21b6; --m900:#4c1d95; --m950:#2e1065; --p:#e879f9; --p50:#fdf4ff; }
 [data-module="it"] { --m50:#eff6ff; --m100:#dbeafe; --m200:#bfdbfe; --m300:#93c5fd; --m400:#60a5fa; --m500:#3b82f6; --m600:#2563eb; --m700:#1d4ed8; --m800:#1e40af; --m900:#1e3a8a; --m950:#172554; --p:#22d3ee; --p50:#ecfeff; }
-[data-module="rf"], [data-dept-code="FT"] { --m50:#f0fdfa; --m100:#ccfbf1; --m200:#99f6e4; --m300:#5eead4; --m400:#2dd4bf; --m500:#14b8a6; --m600:#0d9488; --m700:#0f766e; --m800:#115e59; --m900:#134e4a; --m950:#042f2e; --p:#a3e635; --p50:#f7fee7; }
-[data-module="bom"], [data-dept-code="AD"] { --m50:#eef2ff; --m100:#e0e7ff; --m200:#c7d2fe; --m300:#a5b4fc; --m400:#818cf8; --m500:#6366f1; --m600:#4f46e5; --m700:#4338ca; --m800:#3730a3; --m900:#312e81; --m950:#1e1b4b; --p:#c084fc; --p50:#faf5ff; }
-[data-module="rb"], [data-dept-code="RB"] { --m50:#f0f9ff; --m100:#e0f2fe; --m200:#bae6fd; --m300:#7dd3fc; --m400:#38bdf8; --m500:#0ea5e9; --m600:#0284c7; --m700:#0369a1; --m800:#075985; --m900:#0c4a6e; --m950:#082f49; --p:#818cf8; --p50:#eef2ff; }
-[data-module="gr"], [data-dept-code="GR"] { --m50:#ecfdf5; --m100:#d1fae5; --m200:#a7f3d0; --m300:#6ee7b7; --m400:#34d399; --m500:#10b981; --m600:#059669; --m700:#047857; --m800:#065f46; --m900:#064e3b; --m950:#022c22; --p:#a3e635; --p50:#f7fee7; }
-[data-module="bg"], [data-dept-code="BG"] { --m50:#faf5ff; --m100:#f3e8ff; --m200:#e9d5ff; --m300:#d8b4fe; --m400:#c084fc; --m500:#a855f7; --m600:#9333ea; --m700:#7e22ce; --m800:#6b21a8; --m900:#581c87; --m950:#3b0764; --p:#f472b6; --p50:#fdf2f8; }
-[data-module="pt"], [data-dept-code="PT"] { --m50:#fff7ed; --m100:#ffedd5; --m200:#fed7aa; --m300:#fdba74; --m400:#fb923c; --m500:#f97316; --m600:#ea580c; --m700:#c2410c; --m800:#9a3412; --m900:#7c2d12; --m950:#431407; --p:#fbbf24; --p50:#fffbeb; }
-[data-module="pk"], [data-dept-code="PK"] { --m50:#fdf2f8; --m100:#fce7f3; --m200:#fbcfe8; --m300:#f9a8d4; --m400:#f472b6; --m500:#ec4899; --m600:#db2777; --m700:#be185d; --m800:#9d174d; --m900:#831843; --m950:#500724; --p:#fb7185; --p50:#fff1f2; }
-[data-module="qa"], [data-module="qc"], [data-dept-code="QA"] { --m50:#ecfeff; --m100:#cffafe; --m200:#a5f3fc; --m300:#67e8f9; --m400:#22d3ee; --m500:#06b6d4; --m600:#0891b2; --m700:#0e7490; --m800:#155e75; --m900:#164e63; --m950:#083344; --p:#2dd4bf; --p50:#f0fdfa; }
-[data-module="st"], [data-dept-code="ST"] { --m50:#f8fafc; --m100:#f1f5f9; --m200:#e2e8f0; --m300:#cbd5e1; --m400:#94a3b8; --m500:#64748b; --m600:#475569; --m700:#334155; --m800:#1e293b; --m900:#0f172a; --m950:#020617; --p:#38bdf8; --p50:#f0f9ff; }
-[data-module="sr"], [data-dept-code="SR"] { --m50:#f7fee7; --m100:#ecfccb; --m200:#d9f99d; --m300:#bef264; --m400:#a3e635; --m500:#84cc16; --m600:#65a30d; --m700:#4d7c0f; --m800:#3f6212; --m900:#365314; --m950:#1a2e05; --p:#fde047; --p50:#fefce8; }
-[data-module="id"], [data-dept-code="ID"] { --m50:#fdf4ff; --m100:#fae8ff; --m200:#f5d0fe; --m300:#f0abfc; --m400:#e879f9; --m500:#d946ef; --m600:#c026d3; --m700:#a21caf; --m800:#86198f; --m900:#701a75; --m950:#4a044e; --p:#fb7185; --p50:#fff1f2; }
+[data-module="rf"], [data-dept-code="FT"], .nd .dpt-FT { --m50:#f0fdfa; --m100:#ccfbf1; --m200:#99f6e4; --m300:#5eead4; --m400:#2dd4bf; --m500:#14b8a6; --m600:#0d9488; --m700:#0f766e; --m800:#115e59; --m900:#134e4a; --m950:#042f2e; --p:#a3e635; --p50:#f7fee7; }
+[data-module="bom"], [data-dept-code="AD"], .nd .dpt-AD { --m50:#eef2ff; --m100:#e0e7ff; --m200:#c7d2fe; --m300:#a5b4fc; --m400:#818cf8; --m500:#6366f1; --m600:#4f46e5; --m700:#4338ca; --m800:#3730a3; --m900:#312e81; --m950:#1e1b4b; --p:#c084fc; --p50:#faf5ff; }
+[data-module="rb"], [data-dept-code="RB"], .nd .dpt-RB { --m50:#f0f9ff; --m100:#e0f2fe; --m200:#bae6fd; --m300:#7dd3fc; --m400:#38bdf8; --m500:#0ea5e9; --m600:#0284c7; --m700:#0369a1; --m800:#075985; --m900:#0c4a6e; --m950:#082f49; --p:#818cf8; --p50:#eef2ff; }
+[data-module="gr"], [data-dept-code="GR"], .nd .dpt-GR { --m50:#ecfdf5; --m100:#d1fae5; --m200:#a7f3d0; --m300:#6ee7b7; --m400:#34d399; --m500:#10b981; --m600:#059669; --m700:#047857; --m800:#065f46; --m900:#064e3b; --m950:#022c22; --p:#a3e635; --p50:#f7fee7; }
+[data-module="bg"], [data-dept-code="BG"], .nd .dpt-BG { --m50:#faf5ff; --m100:#f3e8ff; --m200:#e9d5ff; --m300:#d8b4fe; --m400:#c084fc; --m500:#a855f7; --m600:#9333ea; --m700:#7e22ce; --m800:#6b21a8; --m900:#581c87; --m950:#3b0764; --p:#f472b6; --p50:#fdf2f8; }
+[data-module="pt"], [data-dept-code="PT"], .nd .dpt-PT { --m50:#fff7ed; --m100:#ffedd5; --m200:#fed7aa; --m300:#fdba74; --m400:#fb923c; --m500:#f97316; --m600:#ea580c; --m700:#c2410c; --m800:#9a3412; --m900:#7c2d12; --m950:#431407; --p:#fbbf24; --p50:#fffbeb; }
+[data-module="pk"], [data-dept-code="PK"], .nd .dpt-PK { --m50:#fdf2f8; --m100:#fce7f3; --m200:#fbcfe8; --m300:#f9a8d4; --m400:#f472b6; --m500:#ec4899; --m600:#db2777; --m700:#be185d; --m800:#9d174d; --m900:#831843; --m950:#500724; --p:#fb7185; --p50:#fff1f2; }
+[data-module="qa"], [data-module="qc"], [data-dept-code="QA"], .nd .dpt-QA { --m50:#ecfeff; --m100:#cffafe; --m200:#a5f3fc; --m300:#67e8f9; --m400:#22d3ee; --m500:#06b6d4; --m600:#0891b2; --m700:#0e7490; --m800:#155e75; --m900:#164e63; --m950:#083344; --p:#2dd4bf; --p50:#f0fdfa; }
+[data-module="st"], [data-dept-code="ST"], .nd .dpt-ST { --m50:#f8fafc; --m100:#f1f5f9; --m200:#e2e8f0; --m300:#cbd5e1; --m400:#94a3b8; --m500:#64748b; --m600:#475569; --m700:#334155; --m800:#1e293b; --m900:#0f172a; --m950:#020617; --p:#38bdf8; --p50:#f0f9ff; }
+[data-module="sr"], [data-dept-code="SR"], .nd .dpt-SR { --m50:#f7fee7; --m100:#ecfccb; --m200:#d9f99d; --m300:#bef264; --m400:#a3e635; --m500:#84cc16; --m600:#65a30d; --m700:#4d7c0f; --m800:#3f6212; --m900:#365314; --m950:#1a2e05; --p:#fde047; --p50:#fefce8; }
+[data-module="id"], [data-dept-code="ID"], .nd .dpt-ID { --m50:#fdf4ff; --m100:#fae8ff; --m200:#f5d0fe; --m300:#f0abfc; --m400:#e879f9; --m500:#d946ef; --m600:#c026d3; --m700:#a21caf; --m800:#86198f; --m900:#701a75; --m950:#4a044e; --p:#fb7185; --p50:#fff1f2; }
 
 /* วิธีลงสีหนึ่งชุด ใช้ทุกพื้นผิว (การ์ดประเภท หัวโมดูล ชิปแผนก หัวส่วน NCR หัวตาราง แท็บ) — ค่าตามธีมผ่านตัวแปร --mod-* */
 :is([data-module], [data-dept-code]) {
@@ -1236,6 +1236,12 @@ a.machine-history-no:hover { text-decoration: underline; }
 .machine-history-details dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; white-space: pre-line; }
 
 .approval-actions { margin-top: 20px; padding-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); }
+/* กล่องปุ่มที่กำลังยืนยัน (app.js confirmStepAction): บรรทัดบอกผลอยู่เหนือปุ่ม ปุ่มชุดในไม่มีเส้นคั่นซ้ำ */
+:is(.approval-actions, .form-actions):has(> .step-confirm) { display: grid; justify-content: stretch; gap: 10px; }
+.approval-actions.step-confirm { margin: 0; padding: 0; border-top: 0; }
+.verify-summary { margin: 0 0 12px; padding: 12px 14px; display: grid; gap: 10px; background: var(--shell); border-radius: var(--radius-md); }
+.verify-summary dt { color: var(--muted); font-size: var(--text-meta); font-weight: 600; }
+.verify-summary dd { margin: 2px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
 
 /* ปุ่ม "ทำเครื่องหมายว่าอ่านแล้วทั้งหมด" ยาว: จอแคบให้ลงไปใต้หัวเรื่องแทนการบีบเป็นสองบรรทัด */
 .notifications-heading { flex-wrap: wrap; }
@@ -1590,17 +1596,17 @@ tr.ncr-voided td .muted { text-decoration: none; }
   --chart-1-soft: #86b6ef;
   --chart-2: #eb6834;
   /* สีซ้อนแท่งในกราฟรายเดือน (แผนก / ประเภทต้นทุน) — dc1..dc10 ตามลำดับรหัสแผนกหรือลำดับประเภทต้นทุน, est = ประมาณการ, dco = แผนกอื่นที่เกินชุดสี, dcn = ยังไม่กำหนดแผนก */
-  --dept-1: #2a78d6; --dept-2: #eb6834; --dept-3: #1f9d6b; --dept-4: #8b5cf6; --dept-5: #c28a00;
-  --dept-6: #e0457b; --dept-7: #14a8c4; --dept-8: #8a6d4b; --dept-9: #6b7a99; --dept-10: #9aa81e;
-  --dept-other: #8d96a6; --dept-none: #c3c8d2;
+  --cat-1: #2a78d6; --cat-2: #eb6834; --cat-3: #1f9d6b; --cat-4: #8b5cf6; --cat-5: #c28a00;
+  --cat-6: #e0457b; --cat-7: #14a8c4; --cat-8: #8a6d4b; --cat-9: #6b7a99; --cat-10: #9aa81e;
+  --cat-other: #8d96a6; --cat-none: #c3c8d2;
 }
 :root[data-theme="dark"] {
   --chart-1: #3987e5;
   --chart-1-soft: #184f95;
   --chart-2: #d95926;
-  --dept-1: #3987e5; --dept-2: #f0834f; --dept-3: #34b583; --dept-4: #a283f5; --dept-5: #e0b23a;
-  --dept-6: #ec6a97; --dept-7: #35bcd6; --dept-8: #a88a66; --dept-9: #8b99b5; --dept-10: #b4c24a;
-  --dept-other: #7c8696; --dept-none: #5a6270;
+  --cat-1: #3987e5; --cat-2: #f0834f; --cat-3: #34b583; --cat-4: #a283f5; --cat-5: #e0b23a;
+  --cat-6: #ec6a97; --cat-7: #35bcd6; --cat-8: #a88a66; --cat-9: #8b99b5; --cat-10: #b4c24a;
+  --cat-other: #7c8696; --cat-none: #5a6270;
 }
 /* แดชบอร์ด NCR (modules/module-ncr-dashboard.js ชุด nd-*) — ใช้ token ของ pilot ทั้งสองธีม */
 .nd { display: grid; gap: 16px; min-width: 0; overflow-anchor: none; } /* วาดหน้าใหม่ทั้งก้อนแล้วคืนตำแหน่งเลื่อนเอง ไม่ให้เบราว์เซอร์เลื่อนชดเชยซ้ำจนหน้ากระโดด */
@@ -1651,7 +1657,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 /* วิธีนับของแต่ละการ์ดพับไว้ เปิดอ่านได้เมื่อสงสัย */
 .nd-about { margin-top: 2px; }
 .nd-about > summary { width: fit-content; min-height: 32px; display: inline-flex; align-items: center; color: var(--mod-link, var(--primary)); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
-.nd-about > p { margin: 2px 0 6px; }
+.nd-about > p { max-width: 70ch; margin: 2px 0 6px; }
 /* การ์ดตัวเลข: ไม่มีการ์ดเดียวตกแถว (ห้าใบ = 5 | 3+2 · สี่ใบ = 4 | 2+2) จอแคบเรียงทีละใบเพราะปุ่มและแถบในการ์ดต้องการความกว้าง */
 @media (min-width: 1200px) { .nd-tiles.five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 @media (min-width: 761px) and (max-width: 1199px) { .nd-tiles.five { grid-template-columns: repeat(6, minmax(0, 1fr)); } .nd-tiles.five > * { grid-column: span 2; } .nd-tiles.five > :nth-child(n + 4) { grid-column: span 3; } }
@@ -1659,13 +1665,19 @@ tr.ncr-voided td .muted { text-decoration: none; }
 @media (min-width: 1100px) { .nd-tiles:not(.five) { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 /* จอสัมผัส: ปุ่มกรอง ปุ่มในแถว และหัวพับของแดชบอร์ดสูงอย่างน้อย 44 px */
 @media (pointer: coarse), (max-width: 760px) {
-  .nd-pill, .nd-more summary, .nd-rowbtn, .nd-about > summary { min-height: 44px; }
+  /* .nd :is(…) ชนะกฎฐานของ .nd-brow/.nd-rowbtn ที่ประกาศทีหลังในไฟล์ */
+  .nd :is(.nd-pill, .nd-more summary, .nd-rowbtn, .nd-about > summary, .nd-chip, .nd-brow) { min-height: 44px; }
+  .nd :is(.nd-rowbtn, .nd-about > summary) { min-width: 44px; }
+  .nd-about > summary { padding: 0 8px; margin-left: -8px; }
 }
 .nd-sub h3 { margin: 0; font-size: var(--text-body); }
 .nd-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
 .nd-hint { margin: 0; color: var(--muted); font-size: var(--text-meta); }
 .nd-muted { color: var(--muted); font-size: var(--text-meta); }
 .nd-nowrap { white-space: nowrap; }
+.nd-rowlink tbody tr { position: relative; }
+.nd-rowlink a.request-no::after { content: ""; position: absolute; inset: 0; }
+@media (hover: hover) { .nd-rowlink tbody tr:hover { background: var(--mod-tint, var(--shell)); } }
 .nd-empty { margin: 0; padding: 8px 0; color: var(--muted); font-size: var(--text-ui); }
 .nd-warn { padding: 8px 10px; color: var(--muted); background: var(--shell); border-radius: var(--radius-md); font-size: var(--text-meta); }
 .nd-detail { padding: 10px 12px; display: grid; gap: 6px; justify-items: start; background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-md); }
@@ -1698,10 +1710,13 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .nd-legend i { width: 10px; height: 10px; margin-right: 6px; display: inline-block; vertical-align: -1px; border-radius: 3px; }
 .nd-legend i.strong { background: var(--chart-1); }
 .nd-legend i.soft { background: var(--chart-1-soft); }
-.nd .dc1 { background: var(--dept-1); } .nd .dc2 { background: var(--dept-2); } .nd .dc3 { background: var(--dept-3); } .nd .dc4 { background: var(--dept-4); } .nd .dc5 { background: var(--dept-5); }
-.nd .dc6 { background: var(--dept-6); } .nd .dc7 { background: var(--dept-7); } .nd .dc8 { background: var(--dept-8); } .nd .dc9 { background: var(--dept-9); } .nd .dc10 { background: var(--dept-10); }
-.nd .dco { background: var(--dept-other); } .nd .dcn { background: var(--dept-none); }
-.nd .est { background: repeating-linear-gradient(45deg, var(--dept-other) 0 2px, var(--dept-none) 2px 5px); }
+.nd .lc1 { background: var(--cat-1); } .nd .lc2 { background: var(--cat-2); } .nd .lc3 { background: var(--cat-3); } .nd .lc4 { background: var(--cat-4); } .nd .lc5 { background: var(--cat-5); }
+.nd .lc6 { background: var(--cat-6); } .nd .lc7 { background: var(--cat-7); } .nd .lc8 { background: var(--cat-8); } .nd .lc9 { background: var(--cat-9); } .nd .lc10 { background: var(--cat-10); }
+.nd :is(.dco, .lco) { background: var(--cat-other); } .nd .dcn { background: var(--cat-none); }
+/* แผนกในกราฟแดชบอร์ด NCR ใช้จานสีของแผนก (ชุดเดียวกับหัวโมดูล ชิปแผนก ฟอร์มแจ้งซ่อม) ไม่ใช่สีตามลำดับตัวอักษร */
+.nd .dpt { background: var(--m600); }
+:root[data-theme="dark"] .nd .dpt { background: var(--m400); }
+.nd .est { background: repeating-linear-gradient(45deg, var(--cat-other) 0 2px, var(--cat-none) 2px 5px); }
 .nd-dot { width: 10px; height: 10px; margin-right: 6px; display: inline-block; vertical-align: -1px; border-radius: 3px; }
 .nd-chart { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; }
 .nd-yax { position: relative; height: 140px; color: var(--muted); font-size: var(--text-caption); }
@@ -1723,7 +1738,7 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .nd-mon { height: 24px; padding-top: 6px; color: var(--muted); font-size: var(--text-caption); text-align: center; }
 .nd-defs { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .nd-defs summary { min-height: 44px; padding: 12px 16px; font-weight: 600; cursor: pointer; }
-.nd-defs > div { padding: 0 16px 16px; display: grid; gap: 8px; color: var(--muted); font-size: var(--text-ui); }
+.nd-defs > div { max-width: 78ch; padding: 0 16px 16px; display: grid; gap: 8px; color: var(--muted); font-size: var(--text-ui); }
 .nd-defs ol { margin: 0; padding-left: 20px; }
 .nd-defs li { margin-bottom: 4px; }
 .nd-chip:focus-visible, .nd-brow:focus-visible, .nd-col:focus-visible, .nd-rowbtn:focus-visible, .nd-more summary:focus-visible, .nd-filterbox summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }

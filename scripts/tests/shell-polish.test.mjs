@@ -107,3 +107,140 @@ test("RubberFlow overview: no recorded production shows an empty state, and char
   assert.match(plan, /const hasProduction = data\.lots\.some\(\(lot\) => lot\.goodQty \+ lot\.scrapQty > 0\);/);
   assert.equal(plan.match(/ui\.card\(!hasProduction \? noProduction : ui\.dualChart\(/g)?.length, 2, "both overview charts wait for recorded production");
 });
+
+// ---- เริ่มงาน เสร็จสิ้นงาน ตรวจรับ: ยืนยัน + เลิกทำ 5 วิ แบบเดียวกับการอนุมัติ (app.js confirmStepAction) ----
+function stepConfirmHarness() {
+  const timers = [];
+  let clock = 0;
+  const fakeTimers = {
+    setTimeout: (fn, ms) => { timers.push({ fn, at: clock + ms, every: 0 }); return timers.length; },
+    setInterval: (fn, ms) => { timers.push({ fn, at: clock + ms, every: ms }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+    clearInterval: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+  };
+  const advance = async (ms) => {
+    const end = clock + ms;
+    for (;;) {
+      const next = timers.filter((timer) => timer.fn && timer.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!next) break;
+      clock = next.at;
+      const fn = next.fn;
+      if (next.every) next.at += next.every; else next.fn = null;
+      fn();
+      await Promise.resolve();
+    }
+    clock = end;
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  const windowListeners = {};
+  const element = () => {
+    const node = { children: [], buttons: [], textContent: "", className: "", attrs: {}, listeners: {}, isConnected: true };
+    node.setAttribute = (name, value) => { node.attrs[name] = value; };
+    node.addEventListener = (type, fn) => { (node.listeners[type] ??= []).push(fn); };
+    node.replaceChildren = (...nodes) => { node.children = nodes; };
+    Object.defineProperty(node, "childNodes", { get: () => node.children });
+    Object.defineProperty(node, "innerHTML", {
+      set: (html) => { node.buttons = [...html.matchAll(/data-step-action="([^"]+)"[^>]*>([^<]*)</g)].map(([, action, text]) => ({ action, textContent: text, focus() {}, closest() { return this; }, dataset: { stepAction: action } })); },
+      get: () => node.buttons.map((button) => button.textContent).join("|"),
+    });
+    node.querySelector = (selector) => {
+      const action = selector.match(/data-step-action="([^"]+)"/)?.[1];
+      if (action) return node.buttons.find((button) => button.action === action) ?? null;
+      return node.children.find((child) => child.tag === "button") ?? null;
+    };
+    return node;
+  };
+  const context = {
+    escapeHtml, DECISION_UNDO_SECONDS: 5, activeDecisionCountdown: null, Intl, Array, String,
+    document: { createElement: element, addEventListener: () => {}, removeEventListener: () => {}, visibilityState: "visible" },
+  };
+  context.window = {
+    addEventListener: (type, fn) => { (windowListeners[type] ??= []).push(fn); },
+    removeEventListener: (type, fn) => { windowListeners[type] = (windowListeners[type] ?? []).filter((item) => item !== fn); },
+    ...fakeTimers,
+  };
+  vm.createContext(context);
+  vm.runInContext(read("modules/request-decision.js"), context);
+  vm.runInContext(`${functionSource("clipText")}\n${functionSource("confirmStepAction")}\nthis.confirmStepAction = confirmStepAction;`, context);
+  const area = element();
+  const original = { tag: "button", focus() {} };
+  area.children = [original];
+  const line = () => area.children[0];
+  const buttonsOf = () => area.children[1];
+  const click = (action) => buttonsOf().listeners.click[0]({ target: { closest: () => buttonsOf().buttons.find((button) => button.action === action) }, detail: 0 });
+  return { context, area, original, line, buttonsOf, click, advance, windowListeners };
+}
+
+test("closing a repair step asks to confirm, then gives 5 seconds to undo, then sends once", async () => {
+  const h = stepConfirmHarness();
+  assert.ok(h.context.window.MNP_REQUEST_DECISION, "the shared countdown is loaded");
+  const sent = [];
+  const start = () => h.context.confirmStepAction(h.area, { label: "ผ่านการตรวจรับ", requestNo: "MT-2569-0390", consequence: "ปิดงาน", echo: "ไฟติดครบ  ทุกดวง", send: async () => { sent.push(1); return true; } });
+  start();
+  assert.equal(h.line().textContent, "ผ่านการตรวจรับ MT-2569-0390 → ปิดงาน", "the confirm line names the request and what happens next");
+  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["cancel", "confirm"]);
+  h.click("cancel");
+  assert.deepEqual(h.area.children, [h.original], "cancel puts the original buttons back");
+
+  start();
+  h.click("confirm");
+  assert.equal(h.line().textContent, "กำลังจะผ่านการตรวจรับ MT-2569-0390 · “ไฟติดครบ ทุกดวง”", "the countdown repeats what was typed");
+  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["undo", "send-now"]);
+  await h.advance(3000);
+  h.click("undo");
+  await h.advance(10000);
+  assert.equal(sent.length, 0, "undo inside 5 seconds sends nothing");
+  assert.deepEqual(h.area.children, [h.original]);
+
+  start();
+  h.click("confirm");
+  await h.advance(5000);
+  assert.equal(sent.length, 1, "after 5 seconds it sends by itself");
+});
+
+test("a failed send gives the buttons back, and leaving the page during the countdown sends at once", async () => {
+  const h = stepConfirmHarness();
+  let ok = false;
+  const sent = [];
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => { sent.push(1); return ok; } });
+  h.click("confirm");
+  await h.advance(5000);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(h.area.children, [h.original], "the step can be tried again");
+  ok = true;
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => { sent.push(2); return ok; } });
+  h.click("confirm");
+  h.windowListeners.hashchange.at(-1)();
+  await h.advance(0);
+  assert.deepEqual(sent, [1, 2], "navigating away is taken as meaning to send, like the approval bar");
+  await h.advance(10000);
+  assert.deepEqual(sent, [1, 2], "and it is not sent twice");
+});
+
+test("the MT start, finish and verify steps all go through the confirm-and-undo helper; the verifier sees the repair result first", () => {
+  const mt = read("modules/module-mt.js");
+  assert.equal(mt.match(/confirmStepAction\(/g)?.length, 3);
+  for (const label of ['label: "เริ่มงาน"', 'label: "เสร็จสิ้นงาน"', 'label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ"']) assert.ok(mt.includes(label), label);
+  assert.doesNotMatch(mt, /✓ ผ่าน|✕ ไม่ผ่าน/, "icons instead of characters a screen reader reads aloud");
+  assert.match(mt, /<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม<\/h2>\$\{verifySummaryHtml\(request\)\}<p class="muted small">/, "the repair result comes before the pass/fail buttons");
+  assert.match(mt, /request\.cause_analysis && !canVerify \?/, "and is not repeated in the facts card");
+  assert.match(mt, /<label for="finish-cause">วิเคราะห์สาเหตุ \(จำเป็น\)<\/label>/);
+  assert.match(css, /:is\(\.approval-actions, \.form-actions\):has\(> \.step-confirm\) \{/);
+});
+
+test("NCR dashboard departments wear their own department palette; loss types have their own colour set", () => {
+  const dashboard = read("modules/module-ncr-dashboard.js");
+  assert.match(dashboard, /DEPT_PALETTES\.has\(dept\) \? `dpt dpt-\$\{dept\}` : "dco"/);
+  assert.match(dashboard, /`lc\$\{typeKeys\.indexOf\(type\) \+ 1\}` : "lco"/);
+  for (const code of ["MT", "RB", "QA", "FT", "AD"]) assert.match(css, new RegExp(`\\[data-dept-code="${code}"\\], \\.nd \\.dpt-${code} \\{`), `${code} chart colour comes from its palette`);
+  assert.match(css, /\.nd \.dpt \{ background: var\(--m600\); \}/);
+  assert.doesNotMatch(css, /--dept-\d/, "the old alphabetical ramp is gone");
+  assert.doesNotMatch(dashboard, /บาทในรายการนี้เป็นค่าขั้นต่ำ/, "the minimum-amount caveat is said once, in the summary line");
+});
+
+test("dashboard touch targets reach 44px and whole table rows open the request", () => {
+  assert.match(css, /\.nd :is\(\.nd-pill, \.nd-more summary, \.nd-rowbtn, \.nd-about > summary, \.nd-chip, \.nd-brow\) \{ min-height: 44px; \}/, "more specific than the base rules declared later in the file");
+  assert.match(css, /\.nd :is\(\.nd-rowbtn, \.nd-about > summary\) \{ min-width: 44px; \}/);
+  assert.match(css, /\.nd-rowlink a\.request-no::after \{ content: ""; position: absolute; inset: 0; \}/);
+  assert.match(css, /\.nd-about > p \{ max-width: 70ch;/);
+});

@@ -3886,7 +3886,9 @@ async function renderRequestDetail(params) {
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   }));
   // ช่างที่กำลังซ่อม: รูปใบเสร็จและไฟล์ส่งพร้อมฟอร์มจบงาน ("บันทึกข้อมูล" หรือ "เสร็จสิ้นงาน") ทางเดียว
-  pointToStepFiles(document.querySelector("#attachment-form"), document.querySelector("#finish-files"), "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
+  // ผู้แจ้งที่ตรวจรับ: ไฟล์ส่งพร้อมผลตรวจรับ ทางเดียว
+  const stepFiles = document.querySelector("#finish-files") ?? document.querySelector("#verify-files");
+  pointToStepFiles(document.querySelector("#attachment-form"), stepFiles, stepFiles?.id === "verify-files" ? "แนบไฟล์ในการ์ดตรวจรับผลการซ่อม" : "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -4104,6 +4106,82 @@ function clipText(text, max) {
   const kept = chars.slice(0, max - 1);
   while (kept.length && /^[เแโใไ]$/.test(kept.at(-1))) kept.pop();
   return `${kept.join("")}…`;
+}
+
+// การกระทำของขั้นที่เปลี่ยนสถานะใบในหน้าของใบ (เริ่มงาน เสร็จสิ้นงาน ตรวจรับ): ยืนยัน แล้วนับถอยหลังเลิกทำแบบเดียวกับแถบตัดสินใจ
+// (ผู้ใช้เลือก 2026-11-10: ใช้แบบอนุมัติ · คำที่ลงประวัติไม่เปลี่ยน RPC เดิม)
+// area = กล่องปุ่มของการ์ด ปุ่มเดิมกลับมาเมื่อยกเลิก เลิกทำ หรือส่งไม่สำเร็จ · consequence = ผลที่เกิดหลังส่ง · echo = ข้อความที่ผู้ใช้พิมพ์ (ทวนระหว่างนับ)
+// send() เรียก RPC จริง คืน true เมื่อสำเร็จ (หน้าถูกวาดใหม่) false เมื่อไม่สำเร็จ · ย้ายหน้าหรือสลับแอประหว่างนับ = ตั้งใจส่ง ส่งทันที
+function confirmStepAction(area, { label, requestNo = "", consequence = "", tone = "success", echo = "", send }) {
+  const rules = window.MNP_REQUEST_DECISION;
+  const original = [...area.childNodes];
+  const tapGuard = rules.createTapGuard();
+  const line = document.createElement("p");
+  line.className = "decision-line";
+  line.setAttribute("role", "status");
+  const buttons = document.createElement("div");
+  buttons.className = "approval-actions step-confirm";
+  const primary = tone === "danger" ? "danger-solid is-primary" : "success is-primary";
+  const button = (text, className, action) => `<button type="button" class="btn ${className}" data-step-action="${action}">${escapeHtml(text)}</button>`;
+  const sendOnLeave = () => countdown.flush();
+  const sendWhenHidden = () => { if (document.visibilityState === "hidden") countdown.flush(); };
+  const warnBeforeUnload = (event) => { if (!countdown.pending) return; event.preventDefault(); event.returnValue = ""; };
+  const detach = () => {
+    window.removeEventListener("hashchange", sendOnLeave);
+    document.removeEventListener("visibilitychange", sendWhenHidden);
+    window.removeEventListener("beforeunload", warnBeforeUnload);
+  };
+  const restore = () => {
+    detach();
+    area.replaceChildren(...original);
+    area.querySelector("button:not([disabled])")?.focus();
+  };
+  const countdown = rules.createCountdown({
+    seconds: DECISION_UNDO_SECONDS,
+    onTick: (left) => { const undo = buttons.querySelector('[data-step-action="undo"]'); if (undo) undo.textContent = `เลิกทำ (${left})`; },
+    onSend: async () => {
+      detach();
+      line.textContent = `กำลังส่ง: ${label} ${requestNo}…`;
+      buttons.innerHTML = '<button type="button" class="btn is-primary" disabled aria-busy="true">กำลังส่ง…</button>';
+      let ok = false;
+      try { ok = await send(); } catch { ok = false; }
+      if (!ok && area.isConnected) restore();
+    },
+  });
+  activeDecisionCountdown = countdown;
+  const compose = () => {
+    tapGuard.arm();
+    line.textContent = `${label} ${requestNo}${consequence ? ` → ${consequence}` : ""}`;
+    buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยัน${label}`, primary, "confirm")}`;
+    buttons.querySelector('[data-step-action="confirm"]')?.focus();
+  };
+  const pending = () => {
+    tapGuard.arm();
+    line.textContent = `กำลังจะ${label} ${requestNo}${echo ? ` · “${clipText(echo, 80)}”` : ""}`;
+    buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", primary, "send-now")}`;
+    buttons.querySelector('[data-step-action="undo"]')?.focus();
+    countdown.start({});
+    window.addEventListener("hashchange", sendOnLeave);
+    document.addEventListener("visibilitychange", sendWhenHidden);
+    window.addEventListener("beforeunload", warnBeforeUnload);
+  };
+  buttons.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-step-action]")?.dataset.stepAction;
+    if (!action || tapGuard.blocks(event)) return;
+    if (action === "cancel") restore();
+    else if (action === "confirm") pending();
+    else if (action === "undo") { countdown.undo(); restore(); }
+    else if (action === "send-now") countdown.flush();
+  });
+  // Esc = ยกเลิก / เลิกทำ เหมือนแถบตัดสินใจ
+  buttons.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    if (countdown.pending) countdown.undo();
+    restore();
+  });
+  area.replaceChildren(line, buttons);
+  compose();
 }
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
