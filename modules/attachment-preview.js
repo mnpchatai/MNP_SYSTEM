@@ -142,10 +142,9 @@
     }
   }
 
-  // กระเบื้องอยู่ท้ายกล่องของช่อง (ช่องใบเสร็จอะไหล่อยู่ในแถวที่มีปุ่ม จึงวางต่อท้ายกล่องที่ครอบแถวนั้น ไม่แทรกในแถว)
+  // กระเบื้องตัวอย่างอยู่ท้ายกล่องของช่องไฟล์ (.field)
   function hostOf(input) {
-    const row = input.closest(".parts-attachment-row");
-    return row ? row.parentElement : input.parentElement;
+    return input.parentElement;
   }
 
   // แสดงตัวอย่างของ files ใต้ input (files ว่าง = ล้าง) options.loadPdfjs: ฟังก์ชันโหลด pdf.js ของ app.js

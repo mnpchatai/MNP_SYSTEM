@@ -876,8 +876,8 @@
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form" novalidate>
           <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
-          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><div class="parts-attachment"><small>หรือแนบรูป/ไฟล์ใบเสร็จรายการอะไหล่แทนการกรอกทีละแถว เพื่อประหยัดเวลา</small><div class="parts-attachment-row"><label class="btn secondary file-pick" for="finish-parts-file">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="finish-parts-file" type="file" multiple><button type="button" class="btn secondary attachment-upload" id="finish-parts-file-upload">แนบไฟล์</button></div></div></div>
-          ${extraFilesFieldHtml("finish-files")}
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือถ่ายรูปใบเสร็จแนบที่ช่อง “รูปใบเสร็จ / ไฟล์เพิ่มเติม” ด้านล่างแทนการกรอกทีละแถว ไฟล์ส่งพร้อมปุ่มบันทึกข้อมูลหรือเสร็จสิ้นงาน</p></div>
+          ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
         ${canAssign && request.status !== "pending_assign" ? assignSection : ""}
@@ -1051,28 +1051,6 @@
         if (rows.length > 1) removeButton.closest(".parts-row").remove();
         else removeButton.closest(".parts-row").querySelectorAll("input").forEach((input) => { input.value = ""; });
         renumberPartsRows(container);
-      });
-      document.querySelector("#finish-parts-file-upload")?.addEventListener("click", async () => {
-        const button = document.querySelector("#finish-parts-file-upload");
-        const input = document.querySelector("#finish-parts-file");
-        let files;
-        try {
-          files = optionalAttachments(input?.files);
-          if (!files.length) throw new Error("กรุณาเลือกไฟล์");
-        } catch (error) {
-          return showToast(friendlyError(error), "error");
-        }
-        setButtonBusy(button, true);
-        try {
-          const uploaded = await uploadAttachmentBatch(files, (file) => uploadRequestAttachment(id, file, employee.id));
-          if (uploaded.failed.length === files.length) {
-            showToast(attachmentBatchFailureText(uploaded), "error");
-            setButtonBusy(button, false);
-            return;
-          }
-          showToast(uploaded.failed.length ? attachmentBatchFailureText(uploaded) : `แนบไฟล์แล้ว${files.length > 1 ? ` ${files.length} ไฟล์` : ""}`, uploaded.failed.length ? "error" : "success");
-          await renderRequestDetail(params);
-        } catch (error) { showToast(friendlyError(error), "error"); setButtonBusy(button, false); }
       });
       // แถวที่ไม่ได้กรอกชื่ออะไหล่ถือว่าเป็นแถวว่างที่เผื่อไว้ ไม่ส่งไป — RPC ก็กรองซ้ำอีกชั้นเช่นกัน
       const collectFinishPartsUsedItems = () => [...document.querySelectorAll("#finish-parts-rows .parts-row")]
