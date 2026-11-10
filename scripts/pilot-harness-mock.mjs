@@ -128,7 +128,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       id: "req-mt-0412", no: "MT-2569-0412", type: "MT_REPAIR", title: "แจ้งซ่อมเครื่องฉีดยาง HCM-03 น้ำมันไฮดรอลิกรั่ว", priority: "high", urgent: true,
       description: "น้ำมันไฮดรอลิกรั่วบริเวณกระบอกสูบด้านซ้าย หยดลงพื้นตลอดกะ ต้องหยุดเครื่องเติมน้ำมันทุก 2 ชั่วโมง",
       status: "pending_approval", requester: "e4", machine: "m-hcm03", created: 1, currentStep: 2,
-      steps: [["ผู้จัดการโรงงานอนุมัติ", "e5", "approved", 0.8, "อนุมัติ ให้ซ่อมด่วนก่อนกะดึก"], ["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "pending"]],
+      // ลำดับเดียวกับฐานข้อมูลจริง: ผู้จัดการโรงงาน → ผู้จัดการทั่วไป แล้วหัวหน้าซ่อมบำรุงมอบหมายช่าง (ไม่มีขั้นรับงาน)
+      // ผู้ใช้จำลองถือขั้นผู้จัดการทั่วไปไว้ทดลองแถบตัดสินใจ (ในระบบจริงขั้นนี้เป็นของผู้จัดการทั่วไป)
+      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 0.8, "อนุมัติ ให้ซ่อมด่วนก่อนกะดึก"], ["ผู้จัดการทั่วไป", ME_ID, "pending"]],
       files: [["น้ำมันรั่วใต้กระบอกสูบ", "#9a3412"], ["ป้ายเครื่อง HCM-03", "#1e3a8a"]],
     });
     seedRequest({
@@ -155,29 +157,29 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     seedRequest({
       id: "req-mt-0405", no: "MT-2569-0405", type: "MT_REPAIR", title: "สายพานลำเลียง CV-02 ขาด",
       description: "สายพานขาดตรงรอยต่อ ต้องขนชิ้นงานด้วยมือ", status: "pending_assign", requester: "e4", machine: "m-cv02", created: 4, currentStep: 0,
-      steps: [["ผู้จัดการโรงงานอนุมัติ", "e5", "approved", 3.8], ["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 3.5]],
-      history: [["pending_approval", "pending_assign", ME_ID, 3.5]],
+      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 3.8], ["ผู้จัดการทั่วไป", "e7", "approved", 3.5]],
+      history: [["pending_approval", "pending_assign", "e7", 3.5]],
     });
     seedRequest({
       id: "req-mt-0401", no: "MT-2569-0401", type: "MT_REPAIR", title: "เครื่องผสมยาง MX-01 มอเตอร์ร้อนผิดปกติ",
       description: "อุณหภูมิมอเตอร์ขึ้นถึง 95 องศาหลังเดินเครื่อง 1 ชั่วโมง", status: "assigned", requester: "e4", machine: "m-mx01", created: 5, currentStep: 0,
       assignee: ME_ID, techs: [ME_ID, "e2"], extra: { work_expected_date: ago(-2).slice(0, 10), execution_plan: "use_existing", inspector_opinion: "self_repair" },
-      steps: [["ผู้จัดการโรงงานอนุมัติ", "e5", "approved", 4.8], ["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 4.5]],
-      history: [["pending_approval", "pending_assign", ME_ID, 4.5], ["pending_assign", "assigned", ME_ID, 4.4]],
+      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 4.8], ["ผู้จัดการทั่วไป", "e7", "approved", 4.5]],
+      history: [["pending_approval", "pending_assign", "e7", 4.5], ["pending_assign", "assigned", ME_ID, 4.4]],
     });
     seedRequest({
       id: "req-mt-0398", no: "MT-2569-0398", type: "MT_REPAIR", title: "ปั๊มลมห้องซ่อม CMP-01 แรงดันตก",
       description: "แรงดันลมตกเหลือ 4 บาร์ เครื่องมือลมใช้งานไม่ได้", status: "in_progress", requester: "e2", machine: "m-cmp01", created: 7, currentStep: 0,
       assignee: "e2", techs: ["e2", ME_ID], extra: { work_expected_date: ago(-1).slice(0, 10), execution_plan: "need_purchase", inspector_opinion: "buy_parts" },
-      steps: [["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 6.5]],
-      history: [["pending_approval", "pending_assign", ME_ID, 6.5], ["pending_assign", "assigned", ME_ID, 6.4], ["assigned", "in_progress", "e2", 6]],
+      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 6.8], ["ผู้จัดการทั่วไป", "e7", "approved", 6.5]],
+      history: [["pending_approval", "pending_assign", "e7", 6.5], ["pending_assign", "assigned", ME_ID, 6.4], ["assigned", "in_progress", "e2", 6]],
     });
     seedRequest({
       id: "req-mt-0390", no: "MT-2569-0390", type: "MT_REPAIR", title: "ไฟส่องสว่างอาคาร 2 ดับครึ่งแถว",
       description: "โคมไฟแถว B ดับ 6 โคม", status: "pending_verify", requester: ME_ID, machine: "m-ltb2", created: 9, currentStep: 0,
       assignee: "e8", techs: ["e8"], extra: { execution_plan: "immediate", inspector_opinion: "self_repair", cause_analysis: "บัลลาสต์เสื่อมสภาพ", parts_used: "บัลลาสต์ 36W 6 ตัว" },
-      steps: [["ผู้จัดการแผนกซ่อมบำรุงรับงาน", ME_ID, "approved", 8.8]],
-      history: [["pending_approval", "pending_assign", ME_ID, 8.8], ["pending_assign", "assigned", ME_ID, 8.7], ["assigned", "in_progress", "e8", 8], ["in_progress", "pending_verify", "e8", 0.5]],
+      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 9.1], ["ผู้จัดการทั่วไป", "e7", "approved", 8.8]],
+      history: [["pending_approval", "pending_assign", "e7", 8.8], ["pending_assign", "assigned", ME_ID, 8.7], ["assigned", "in_progress", "e8", 8], ["in_progress", "pending_verify", "e8", 0.5]],
     });
     // NCR อยู่ตาราง ncr_reports แยกจากคำร้อง (modules/module-ncr.js) — หน้าหลักดึงใบที่ถึงขั้นของผู้ใช้และใบที่ผู้ใช้ออก
     // แถวเก็บ ncr_responsibilities ที่หน้าเว็บ embed ไว้ในตัว (expand ไม่ต้องต่อให้)
@@ -196,7 +198,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         prevention: "ตรวจแม่พิมพ์ทุกต้นกะ", signoff_qa_at: null, signoff_factory_at: null, created_at: ago(10), updated_at: ago(1), ncr_responsibilities: [{ share: 1, department_id: "dep-rb", responder_id: null, department: { code: "RB" } }] },
     );
     db.notifications.push(
-      { id: "n1", recipient_id: ME_ID, request_id: "req-mt-0412", title: "MT-2569-0412 รอคุณรับงาน", body: "แจ้งซ่อมเครื่องฉีดยาง HCM-03 น้ำมันไฮดรอลิกรั่ว", kind: "approval", action_url: null, read_at: null, created_at: ago(0.8) },
+      { id: "n1", recipient_id: ME_ID, request_id: "req-mt-0412", title: "MT-2569-0412 รอคุณอนุมัติ", body: "แจ้งซ่อมเครื่องฉีดยาง HCM-03 น้ำมันไฮดรอลิกรั่ว", kind: "approval", action_url: null, read_at: null, created_at: ago(0.8) },
       { id: "n2", recipient_id: ME_ID, request_id: "req-ncr-0088", title: "NCR-2569-0088 รอคุณรับทราบ", body: "NCR ยางขอบไม่เต็ม ล็อต RB-1103", kind: "approval", action_url: null, read_at: null, created_at: ago(1.5) },
     );
   }

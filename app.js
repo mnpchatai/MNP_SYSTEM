@@ -2170,7 +2170,7 @@ function homeQueueItems(pending, repairTasks, ncrTasks) {
   ]);
 }
 // งานของคิวที่ลงมือในหน้าของใบเอง (งานซ่อม ขั้นของ NCR) ใช้คำของงาน เช่น "มอบหมายช่าง"
-// แถวอนุมัติใช้คำกริยาของขั้น (อนุมัติ / รับงาน / รับทราบ) คำเดียวกับปุ่มในแถบตัดสินใจ
+// แถวอนุมัติใช้คำกริยาของขั้น (อนุมัติ / รับทราบ) คำเดียวกับปุ่มในแถบตัดสินใจ
 function queueTaskLabel(item) {
   if (item.kind === "approval") {
     const extra = requestModule(relation(item.request.request_type)?.code)?.extraDecisions ?? [];

@@ -43,7 +43,7 @@ test("every queue row names its action: the step verb for approvals, the task fo
     statusLabels: { pending_verify: "รอผู้แจ้งตรวจรับ" },
   });
   const approval = (stepName, code = "MT_REPAIR") => ({ kind: "approval", step: { step_name: stepName }, request: { request_type: { code } } });
-  assert.equal(label(approval("ผู้จัดการแผนกซ่อมบำรุงรับงาน")), "รับงาน");
+  assert.equal(label(approval("ผู้จัดการแผนกซ่อมบำรุงรับงาน")), "อนุมัติ", "no รับงาน chip: the MT head assigns, technicians cannot refuse");
   assert.equal(label(approval("ผู้จัดการแผนกที่รับผิดชอบรับทราบ")), "รับทราบ");
   assert.equal(label(approval("ผู้จัดการโรงงาน")), "อนุมัติ");
   assert.equal(label(approval("ผู้บริหารรับทราบ", "MANAGEMENT")), "อนุมัติ", "same word as the decision button when the module already has a รับทราบข้อมูล button");
