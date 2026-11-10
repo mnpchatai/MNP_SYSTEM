@@ -36,8 +36,11 @@ test("the undo countdown repeats the typed reason on one line, clipped by charac
   const clip = load("clipText");
   assert.equal(clip("  ไม่ผ่าน\nขอใบเสนอราคาใหม่  ", 80), "ไม่ผ่าน ขอใบเสนอราคาใหม่");
   assert.equal(clip("ก".repeat(81), 80), `${"ก".repeat(79)}…`);
+  assert.equal(clip("กี่".repeat(81), 80), `${"กี่".repeat(79)}…`, "a Thai consonant with its vowel and tone mark counts as one, so no tone mark is cut off");
   assert.equal(clip("😀".repeat(5), 4), "😀😀😀…", "never splits a surrogate pair");
   assert.equal(clip(null, 10), "");
+  // ใน app.js ส่วนที่เหลือของตัวจัดการแป้น: A/R ไม่ตัดสินใบที่เลือกเมื่อโฟกัสอยู่ที่แถวงาน
+  assert.match(app, /if \(target instanceof HTMLElement && target\.closest\("\.queue-item\.is-task"\)\) return;\n  const panel = document\.querySelector\("#decision-panel"\);/);
   assert.match(app, /setLine\(`กำลังจะ\$\{labelOf\(state\.decision\)\} \$\{request\.request_no\}\$\{state\.comment \? ` · “\$\{clipText\(state\.comment, 80\)\}”` : ""\}`\);/);
 });
 
@@ -50,10 +53,16 @@ test("J/K walks every visible queue row: approval rows select, task rows only ta
   assert.match(app, /` title="คีย์ลัด: J\/K เลื่อนรายการ · \? ดูทั้งหมด" aria-keyshortcuts="J K \?"`/, "a task-only queue lists J/K without A/R");
 });
 
-test("the selected row shows one focus ring, not two", () => {
-  assert.match(css, /\.queue-item\.is-selected \.queue-item-main:focus-visible \{ outline: none; \}/);
-  assert.match(css, /\.queue-item\.is-selected:has\(\.queue-item-main:focus-visible\) \{ box-shadow: 0 0 0 2px var\(--primary\); \}/);
-  assert.match(css, /\.top-actions \.icon-button \{ width: 40px; height: 40px; \}/, "header help/theme buttons are larger on mouse screens");
+test("the selected row shows one focus ring, not two, and keeps the button's outline (visible in forced colours)", () => {
+  assert.match(css, /\.queue-item\.is-selected:has\(\.queue-item-main:focus-visible\) \{ box-shadow: none; \}/);
+  assert.doesNotMatch(css, /\.queue-item\.is-selected \.queue-item-main:focus-visible \{ outline: none; \}/);
+});
+
+test("header icon buttons are 40px only on mouse screens; touch screens keep 44px", () => {
+  assert.match(css, /@media \(hover: hover\) and \(pointer: fine\) and \(min-width: 761px\) \{ \.top-actions \.icon-button \{ width: 40px; height: 40px; \} \}/);
+  assert.equal(css.match(/\.top-actions \.icon-button \{ width: 40px/g)?.length, 1, "no unconditional 40px rule that would beat the touch rule");
+  // กฎ 44px ของจอสัมผัสยังอยู่ (ในบล็อก coarse ท้ายไฟล์) และกฎ 40px มีเงื่อนไข จึงไม่ชนะมันบนจอสัมผัส
+  assert.match(css, /\n {2}\.icon-button, \.request-detail-menu > \.icon-button \{ width: 44px; height: 44px; \}/);
 });
 
 test("a module list has one scope control: mine is a subset of what I may see, the board tracks every request", () => {
@@ -71,6 +80,9 @@ test("a module list has one scope control: mine is a subset of what I may see, t
   assert.deepEqual(parse(tabs(new URLSearchParams("type=t-mt&scope=mine"))).map((tab) => tab.active), [false, true, false]);
   assert.deepEqual(parse(tabs(new URLSearchParams("type=t-mt&view=board&scope=mine"))).map((tab) => tab.active), [false, false, true]);
   assert.doesNotMatch(app, /placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true/, "no second scope switch in the MT filter row");
+  const allTypes = parse(tabs(new URLSearchParams("type=all&view=board"), { mineTab: false }));
+  assert.deepEqual(allTypes.map((tab) => tab.label), ["ที่ฉันมีสิทธิ์ดู", "ติดตามสถานะทุกใบ"], "the all-types board has no mine-only list to go to");
+  assert.match(app, /requestsViewTabs\(params, \{ mineTab: Boolean\(selected\) \}\)/);
 });
 
 test("TEST shows once: in the top bar, not again in the test-mode banner", () => {

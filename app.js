@@ -2657,6 +2657,7 @@ document.addEventListener("keydown", (event) => {
     row.querySelector(".queue-item-main")?.focus();
     return;
   }
+  if (target instanceof HTMLElement && target.closest(".queue-item.is-task")) return;
   const panel = document.querySelector("#decision-panel");
   if (!panel || panel.hidden || panel.dataset.state !== "idle") return;
   const button = panel.querySelector(`[data-decision="${key === "a" ? "approved" : "rejected"}"]`);
@@ -2767,12 +2768,12 @@ function bindModuleZoom(params) {
 
 // หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
 // ทะเบียน NCR ไม่มีกระดาน จึงยังใช้ requestScopeSwitch
-function requestsViewTabs(params) {
+function requestsViewTabs(params, { mineTab = true } = {}) {
   const board = params.get("view") === "board";
   const mine = !board && params.get("scope") === "mine";
   const tab = (active, changes, label) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}">${label}</a>`;
   return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
-    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${mineTab ? tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง") : ""}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
   </nav>`;
 }
 
@@ -2785,7 +2786,7 @@ function requestScopeSwitch(params) {
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
 // module: หน้าเป็นของโมดูลเดียว ตัวเลือกสถานะจึงตามขั้นตอนของโมดูลนั้น (กระดานทุกโมดูลแสดงทุกสถานะ)
-function requestListFilters(params, { departments = null, placeholder, scope = false, search = true, repair = false, module = false } = {}) {
+function requestListFilters(params, { departments = null, placeholder, search = true, repair = false, module = false } = {}) {
   // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
   const known = knownRequestStatuses(params);
   const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
@@ -2805,7 +2806,6 @@ function requestListFilters(params, { departments = null, placeholder, scope = f
   const query = search ? (params.get("q") ?? "").trim() : "";
   const applied = [
     known.length ? `สถานะ ${known.map((status) => statusLabel(status, repair)).join(", ")}` : "",
-    scope && params.get("scope") === "mine" ? "เฉพาะที่ฉันแจ้ง" : "",
     department ? `แผนก ${department.displayCode}` : "",
     query ? `ค้นหา "${query}"` : "",
   ].filter(Boolean);
@@ -2813,7 +2813,7 @@ function requestListFilters(params, { departments = null, placeholder, scope = f
   const open = listFiltersOpen;
   return `<div class="list-filters${open ? " is-open" : ""}">
     <button type="button" class="btn secondary list-filters-toggle" aria-expanded="${open}" aria-controls="list-filters-body" data-list-filters-toggle${active ? ` title="${escapeHtml(`กรองอยู่: ${applied.join(" · ")}`)}"` : ""}>${uiIcon("search")} ตัวกรอง${active ? ` (${active})` : ""}</button>
-    <div class="list-filters-body" id="list-filters-body">${scope ? requestScopeSwitch(params) : ""}${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>
+    <div class="list-filters-body" id="list-filters-body">${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>
   </div>`;
 }
 
@@ -2918,7 +2918,7 @@ async function renderRequestsBoard(params, types) {
     && (status === "all" || status.split(",").includes(row.status))
     && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
-  const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
+  const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params, { mineTab: Boolean(selected) })}
     ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
@@ -4095,9 +4095,11 @@ function trackActionBarHeight() {
   if (bar) actionBarObserver.observe(bar);
 }
 
-// ตัดข้อความยาวตามตัวอักษร (code point) ไม่ตัดกลางอักขระคู่ · ช่องว่างหลายตัว/ขึ้นบรรทัดรวมเป็นช่องเดียว (ใช้ในบรรทัดเดียว)
+// ตัดข้อความยาวตามตัวอักษรที่เห็น (grapheme: พยัญชนะกับสระ/วรรณยุกต์นับเป็นหนึ่ง) ไม่ตัดวรรณยุกต์ทิ้งก่อน "…"
+// เบราว์เซอร์ที่ไม่มี Intl.Segmenter ตัดตาม code point · ช่องว่างหลายตัว/ขึ้นบรรทัดรวมเป็นช่องเดียว (ใช้ในบรรทัดเดียว)
 function clipText(text, max) {
-  const chars = Array.from(String(text ?? "").replace(/\s+/g, " ").trim());
+  const value = String(text ?? "").replace(/\s+/g, " ").trim();
+  const chars = typeof Intl.Segmenter === "function" ? Array.from(new Intl.Segmenter("th", { granularity: "grapheme" }).segment(value), (part) => part.segment) : Array.from(value);
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
 }
 

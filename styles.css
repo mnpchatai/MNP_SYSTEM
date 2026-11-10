@@ -516,7 +516,7 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .app-nav { display: none; flex: none; gap: 6px; }
 @media (display-mode: standalone) { .app-nav { display: flex; } }
 .app-nav .icon-button { font-size: var(--text-heading); line-height: 1; }
-.top-actions .icon-button { width: 40px; height: 40px; }
+@media (hover: hover) and (pointer: fine) and (min-width: 761px) { .top-actions .icon-button { width: 40px; height: 40px; } }
 .app-nav .icon-button:disabled { opacity: .4; cursor: default; }
 .breadcrumbs { color: var(--muted); font-size: var(--text-meta); }
 .breadcrumbs strong { color: var(--ink); }
@@ -1026,8 +1026,7 @@ a.register-title:hover { color: var(--primary); }
 .queue-item-main { min-width: 0; min-height: 64px; padding: 12px 14px; flex: 1 1 0; display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; color: inherit; background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .queue-item-check + .queue-item-main { padding-left: 0; }
 .queue-item-main:focus-visible, .home-mine-row:focus-visible, .queue-done a:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.queue-item.is-selected .queue-item-main:focus-visible { outline: none; }
-.queue-item.is-selected:has(.queue-item-main:focus-visible) { box-shadow: 0 0 0 2px var(--primary); }
+.queue-item.is-selected:has(.queue-item-main:focus-visible) { box-shadow: none; }
 .queue-item-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: var(--radius-md); }
 .queue-item-icon .ui-icon { width: 20px; height: 20px; }
 .queue-item-icon[data-module] { color: var(--mod-on); background: var(--mod-surface); border: 1px solid var(--mod-edge); }
