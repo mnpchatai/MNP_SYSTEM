@@ -209,7 +209,9 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--page-gradient); }
+/* แถบบนติดอยู่ด้านบน (64 px, จอแคบ 58 px): ช่องที่ถูกพาไป (ข้อผิดพลาด โฟกัส ลิงก์ในหน้า) จึงหยุดใต้แถบ ไม่ถูกบัง */
+html { background: var(--page-gradient); scroll-padding-top: 80px; }
+@media (max-width: 760px) { html { scroll-padding-top: 72px; } }
 body {
   margin: 0;
   min-width: 320px;
@@ -362,6 +364,20 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .parts-attachment-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .parts-attachment-row .attachment-status { flex-basis: 100%; order: 3; }
 .parts-attachment-row .input { flex: 1; min-height: 38px; padding: 8px 10px; }
+/* จอแคบ: แต่ละรายการอะไหล่เป็นการ์ด (ชื่อ ร้าน หมายเหตุเต็มแถว จำนวน/หน่วย/ราคาเรียงคู่) ช่องมี placeholder และ aria-label บอกชื่อ */
+@media (max-width: 760px) {
+  .parts-table-wrap { border: 0; overflow: visible; }
+  .parts-table { min-width: 0; }
+  .parts-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .parts-table, .parts-table tbody { display: block; }
+  .parts-table tr.parts-row { margin-bottom: 10px; padding: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .parts-table tr.parts-row td { display: block; width: auto; padding: 0; border: 0; }
+  .parts-table td.parts-row-no { grid-column: 1 / -1; text-align: left; }
+  .parts-table td.parts-row-no::before { content: "รายการที่ "; }
+  .parts-table tr.parts-row td:nth-child(2), .parts-table tr.parts-row td:nth-child(6), .parts-table tr.parts-row td:nth-child(7), .parts-table td.parts-row-actions { grid-column: 1 / -1; }
+}
+/* แก้ไขการมอบหมายช่างหลังมอบหมายแล้ว: พับไว้ท้ายหน้า */
+.repair-assign-edit form { margin-top: 12px; }
 .form-message { margin-bottom: 14px; padding: 10px 12px; border-radius: var(--radius-md); font-size: var(--text-meta); }
 .form-message.error { color: var(--danger-ink); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
 .form-message.success { color: var(--success-ink); background: var(--success-soft); }
@@ -820,6 +836,23 @@ a.register-title:hover { color: var(--primary); }
 .request-module-header .icon-button { color: var(--mod-btn-ink); background: var(--mod-btn); border-color: var(--mod-btn-edge); }
 .request-detail-head.request-module-header { z-index: 2; overflow: visible; padding: 18px 22px 20px; border-bottom: 1px solid var(--mod-edge); }
 .request-detail-head.request-module-header .request-detail-meta .badge { vertical-align: 1px; }
+/* หัวใบ NCR: ข้อเท็จจริงที่ใช้ตัดสิน (ข้อบกพร่อง แหล่งที่พบ %NG) เป็นแผ่นเล็กบนก้อนสี ใช้สีปุ่มรองของหัวโมดูล (contrast ตรวจแล้ว) */
+.ncr-head-facts { margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.ncr-head-facts > div { min-width: 0; padding: 6px 12px; color: var(--mod-btn-ink); background: var(--mod-btn); border: 1px solid var(--mod-btn-edge); border-radius: 12px; }
+.ncr-head-facts dt { font-size: var(--text-caption); font-weight: 600; line-height: 1.4; }
+.ncr-head-facts dd { margin: 0; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+/* ค่าเสียหาย: ฟอร์มเพิ่มรายการพับเป็นปุ่ม เปิดเมื่อกด (หรือเมื่อกดแก้รายการเดิม) */
+.ncr-loss-add { margin-top: 14px; }
+.ncr-loss-add > summary { list-style: none; width: fit-content; }
+.ncr-loss-add > summary::-webkit-details-marker { display: none; }
+.ncr-loss-add[open] > summary { margin-bottom: 12px; }
+/* แถว "รายการที่กำลังกรอก" มีความหมายเฉพาะตอนฟอร์มเปิด · ก่อนมีรายการแรก กล่องสรุปจึงไม่แสดงเลยขณะฟอร์มพับ */
+.ncr-loss-card:has(#ncr-loss-add:not([open])) .ncr-loss-draft { display: none; }
+.ncr-loss-card:has(#ncr-loss-add:not([open])) .ncr-loss-overview:not(:has(.ncr-loss-more)) { display: none; }
+/* จอแคบ: ปุ่มส่งของฟอร์มในงานที่ต้องทำติดล่างจอระหว่างเลื่อนดูฟอร์มยาว (แบบเดียวกับปุ่มของฟอร์มสร้าง) */
+@media (max-width: 760px) {
+  .ncr-actions .form-actions { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
+}
 @media (max-width: 900px) {
   .page-heading.request-module-header { flex-direction: column; align-items: flex-start; }
 }
@@ -916,8 +949,6 @@ a.register-title:hover { color: var(--primary); }
 .request-detail-kicker-end { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-detail-head h1 { margin: 8px 0 7px; font-size: clamp(24px, 3vw, 31px); overflow-wrap: anywhere; }
 .request-detail-meta { margin: 0; color: var(--muted); }
-.priority-flag { display: inline-flex; align-items: center; gap: 6px; color: var(--danger-ink); font-weight: 700; white-space: nowrap; }
-.priority-flag::before { content: ""; width: 8px; height: 8px; flex: none; background: var(--danger-strong); border-radius: 50%; }
 .request-detail-menu { position: relative; }
 .request-detail-menu > .icon-button { width: 36px; height: 36px; font-size: var(--text-title); font-weight: 700; line-height: 1; }
 .request-detail-menu-list { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; min-width: 220px; padding: 6px; display: grid; gap: 4px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow); }
@@ -1002,7 +1033,10 @@ a.register-title:hover { color: var(--primary); }
 .queue-item-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .queue-item-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .queue-item-meta { color: var(--muted); font-size: var(--text-caption); }
-.queue-item-task { padding: 4px 8px; color: #fff; background: var(--warning-strong); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+/* งานที่ต้องลงมือ (มอบหมายช่าง ตอบ NCR …): ชิปสีโมดูลของใบพร้อมลูกศร แยกจากป้ายสถานะที่เป็นเม็ดมีสัญลักษณ์ */
+.queue-item-task { padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--m800, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 14%, var(--paper)); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+.queue-item-task::after { content: "→"; }
+:root[data-theme="dark"] .queue-item-task { color: var(--m200, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 18%, var(--paper)); }
 .queue-item-slot { min-width: 0; flex-basis: 100%; }
 .queue-item-slot:not(:empty) { padding: 12px 14px 14px; border-top: 1px solid var(--soft-line); }
 .queue-detail-pane { position: sticky; top: 84px; min-width: 0; max-height: calc(100dvh - 100px); overflow-y: auto; }
@@ -1565,8 +1599,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .nd-chip { min-height: 40px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); text-decoration: none; }
 .nd-chip:hover { background: var(--shell); }
-.nd-chip[aria-current="true"] { color: #fff; background: var(--primary); border-color: var(--primary); }
-:root[data-theme="dark"] .nd-chip[aria-current="true"] { background: var(--primary-strong); border-color: var(--primary-strong); }
+.nd-chip[aria-current="true"] { color: var(--mod-tab-on-ink, #fff); background: var(--mod-tab-on, var(--primary)); border-color: transparent; }
 .nd-chip.removable { background: var(--shell); }
 .nd-filterbox { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .nd-filterbox summary { min-height: 44px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; font-weight: 600; list-style: none; }
@@ -1577,6 +1610,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-filters .field { margin: 0; min-width: 0; }
 .nd-scope { margin: 0; color: var(--muted); font-size: var(--text-ui); }
 .nd-scope strong { color: var(--ink); }
+.nd-summary:empty { display: none; }
 .nd-summary { padding: 12px 14px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--text-body); line-height: 1.6; }
 .nd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .nd-tiles.five { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
@@ -1593,7 +1627,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-pill.crit { background: color-mix(in srgb, var(--danger) 14%, var(--paper)); }
 .nd-ico { color: var(--danger); font-size: var(--text-caption); }
 .nd-more { margin-top: 4px; font-size: var(--text-meta); }
-.nd-more summary { min-height: 32px; display: flex; align-items: center; color: var(--primary); cursor: pointer; }
+.nd-more summary { min-height: 32px; display: flex; align-items: center; color: var(--mod-link, var(--primary)); cursor: pointer; }
 .nd-lines, .nd-detail ul { margin: 4px 0 0; padding: 0; display: grid; gap: 2px; list-style: none; font-size: var(--text-meta); }
 .nd-lines li, .nd-detail li { display: flex; justify-content: space-between; gap: 12px; }
 .nd-lines li span:first-child, .nd-detail li span:first-child { color: var(--muted); }
@@ -1620,12 +1654,12 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 th.nd-num { white-space: nowrap; }
 tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
-.nd-rowbtn { min-height: 36px; padding: 0; color: var(--primary); background: none; border: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.nd-rowbtn { min-height: 36px; padding: 0; color: var(--mod-link, var(--primary)); background: none; border: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .nd-rowbtn.selected { text-decoration: underline; }
 .nd-bars { display: grid; gap: 4px; }
 .nd-brow { width: 100%; min-height: 40px; padding: 2px 6px; display: grid; grid-template-columns: minmax(96px, 34%) minmax(0, 1fr) auto; align-items: center; gap: 10px; color: var(--ink); background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; cursor: pointer; }
 .nd-brow:hover { background: var(--shell); }
-.nd-brow.selected { background: var(--shell); box-shadow: inset 0 0 0 2px var(--primary); }
+.nd-brow.selected { background: var(--shell); box-shadow: inset 0 0 0 2px var(--m600, var(--primary)); }
 .nd-brow.static { cursor: default; }
 .nd-brow.static:hover { background: none; }
 .nd-brow.active .nd-lab { font-weight: 700; }
@@ -1657,7 +1691,7 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .nd-cols { position: relative; height: 164px; display: flex; gap: 4px; }
 .nd-col { min-width: 0; padding: 0; flex: 1; display: flex; flex-direction: column; background: none; border: 0; border-radius: var(--radius-sm); color: var(--ink); cursor: pointer; }
 .nd-col:hover, .nd-col.selected { background: var(--shell); }
-.nd-col.selected { box-shadow: inset 0 0 0 2px var(--primary); }
+.nd-col.selected { box-shadow: inset 0 0 0 2px var(--m600, var(--primary)); }
 .nd-col.out .nd-stack { opacity: .35; }
 .nd-stack { position: relative; height: 140px; display: flex; flex-direction: column-reverse; align-items: center; gap: 2px; }
 .nd-stack b { width: min(24px, 70%); display: block; background: var(--chart-1); }
@@ -2246,7 +2280,7 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .rf-g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .rf-split { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 12px; align-items: start; }
 .rf-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--soft-line); }
-.rf-card-head h3 { margin: 0; font-size: var(--text-body); }
+.rf-card-head :is(h2, h3) { margin: 0; font-size: var(--text-body); }
 .rf-card-body.is-flush { margin: 0 -14px -14px; }
 .rf-card-body.is-flush .rf-listbar { padding: 0 14px 10px; }
 .rf-card-body.is-flush .rf-card-pad { padding: 0 14px 12px; }
@@ -2463,8 +2497,9 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .badge:is(.completed, .acknowledged), .rf-badge.is-good { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M6 10.3l2.8 2.8 5.3-5.9' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.rejected, .rf-badge.is-bad { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M7 7l6 6M13 7l-6 6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.cancelled { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M6.1 13.9l7.8-7.8' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
-.badge.urgent-flag, .rf-badge.is-warn { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M10 5.4v5.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='10' cy='14.3' r='1.35'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
-@media (forced-colors: active) { :is(.badge, .rf-badge)::before { forced-color-adjust: none; background: CanvasText; } }
+.badge.urgent-flag, .rf-badge.is-warn, .nd-pill.crit .nd-ico { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M10 5.4v5.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='10' cy='14.3' r='1.35'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
+@media (forced-colors: active) { :is(.badge, .rf-badge)::before, .nd-pill.crit .nd-ico { forced-color-adjust: none; background: CanvasText; } }
+.nd-pill.crit .nd-ico { width: 16px; height: 16px; flex: none; overflow: hidden; color: transparent; font-size: 0; background: var(--danger-strong); -webkit-mask: var(--badge-glyph) center / 100% 100% no-repeat; mask: var(--badge-glyph) center / 100% 100% no-repeat; }
 .rf-page ::selection, body:has(.rf-page) .rf-modal ::selection { background: color-mix(in srgb, var(--rf-mod, #0f766e) 24%, transparent); }
 
 body:has(.rf-page) .rf-nav-item { min-height: 38px; padding: 5px 8px; gap: 8px; border-radius: var(--radius-md); }
@@ -2518,8 +2553,8 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .card { border: 0; border-radius: var(--radius-md); box-shadow: 0 1px 2px rgba(11, 31, 58, .06), 0 12px 32px -18px rgba(11, 31, 58, .35); }
 :root[data-theme="dark"] .rf-page .card { border: 1px solid var(--line); box-shadow: none; }
 .rf-page .rf-card-head { border-bottom: 0; padding-bottom: 6px; margin-bottom: 8px; }
-.rf-page .rf-card-head h3 { display: flex; align-items: center; gap: 8px; font-size: var(--text-body); }
-.rf-page .rf-card-head h3::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rf-mod); flex: 0 0 auto; }
+.rf-page .rf-card-head :is(h2, h3) { display: flex; align-items: center; gap: 8px; font-size: var(--text-body); }
+.rf-page .rf-card-head :is(h2, h3)::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rf-mod); flex: 0 0 auto; }
 .rf-page .rf-stat { padding: 16px 18px; gap: 6px; }
 .rf-page .rf-stat-label { color: var(--muted); font-size: var(--text-caption); }
 .rf-page .rf-stat-value { font-size: var(--text-figure); font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
@@ -2683,7 +2718,7 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
   .bom-sheet-table tr { break-inside: avoid; page-break-inside: avoid; }
 }
 .bom-dept-grid { display: grid; gap: 12px; margin-top: 12px; }
-.bom-dept-card .rf-card-head h3 { color: var(--rf-mod-ink); }
+.bom-dept-card .rf-card-head :is(h2, h3) { color: var(--rf-mod-ink); }
 .bom-dept-card .bom-size { min-width: 230px; }
 .bom-page .is-hidden { display: none !important; }
 .bom-tree-table th, .bom-tree-table td { padding: 5px 6px; vertical-align: top; }

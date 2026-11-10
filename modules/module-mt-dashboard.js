@@ -166,7 +166,7 @@
     const on = selection?.card === card && selection.key === String(key);
     return `<button type="button" class="${extraClass}${on ? " selected" : ""}" data-sel="${esc(card)}:${esc(key)}" aria-pressed="${on}">${inner}</button>`;
   }
-  const detailHint = (noun) => `<p class="nd-hint">แตะ${noun}เพื่อดูตัวเลขของรายการนั้น แล้วกดกรองรายการด้านล่างได้</p>`;
+  // คำใบ้ "แตะ…เพื่อดูตัวเลข" อยู่ในกล่องช่วยเหลือ (?) ของหน้านี้ครั้งเดียว ไม่พูดซ้ำทุกการ์ด
   const detailHtml = (item) => `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองรายการด้านล่างตามนี้")}</a>` : ""}</div>`;
   // รายการที่เลือกแสดงรายละเอียดต่อท้ายตัวรายการนั้นเอง ไม่ไปรวมที่ท้ายการ์ด — resolve(key) คืน { title, lines, href, linkLabel } หรือ null
   const detailUnder = (card, key, resolve) => {
@@ -174,7 +174,7 @@
     return item ? detailHtml(item) : "";
   };
   // คำใบ้ท้ายการ์ด แสดงเฉพาะตอนยังไม่ได้เลือกรายการ
-  const detailHintIfIdle = (card, noun, resolve) => (selection?.card === card && resolve(selection.key) ? "" : detailHint(noun));
+  const detailHintIfIdle = () => "";
 
   // ---- ชิ้นส่วนของหน้า ----
   function controlsHtml(filters, rows, today) {
@@ -208,10 +208,9 @@
   }
 
   function summaryHtml(backSums, stages) {
-    if (!backSums.open) return "ไม่มีงานค้างในตอนนี้";
+    // งานค้าง เลยกำหนด และด่วน อยู่บนการ์ดตัวเลขแล้ว บรรทัดนี้บอกเฉพาะขั้นที่ค้างมากและนานที่สุด
+    if (!backSums.open) return "";
     const parts = [];
-    if (backSums.overdue) parts.push(`<b>${fmtCount(backSums.overdue)}เลยกำหนดเสร็จ</b> ควรตามก่อน`);
-    if (backSums.urgentOpen) parts.push(`ด่วน ${fmtCount(backSums.urgentOpen)}`);
     const busiest = [...stages].sort((a, b) => b.count - a.count)[0];
     if (busiest?.count) parts.push(`ค้างมากสุดที่ขั้น "${esc(busiest.label)}" ${fmtCount(busiest.count)}`);
     const oldest = [...stages].filter((stage) => stage.count).sort((a, b) => b.maxDays - a.maxDays)[0];
@@ -371,7 +370,7 @@
       : "";
     return `<div class="nd-head nd-head-row"><div><h2>${heading.title}</h2><p>${heading.note}</p></div>${cancel}</div>
       ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>วันที่แจ้ง</th><th>เครื่องจักร / แผนก</th><th>สถานะ</th><th class="nd-num">เวลา</th></tr></thead><tbody>
-      ${shown.map((row) => `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}</td><td class="nd-nowrap">${esc(row.submittedOn)}</td><td>${esc(machineText(row))}<br><span class="nd-muted">${esc(row.dept || "—")} · ${esc(DOC_LABELS[row.doc_type] ?? "—")}${row.requester_name ? ` · ${esc(row.requester_name)}` : ""}</span></td><td>${statusCell(row)}</td><td class="nd-num">${timeCell(row)}</td></tr>`).join("")}</tbody></table></div>
+      ${shown.map((row) => `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}</td><td class="nd-nowrap">${formatDate(row.submittedOn)}</td><td>${esc(machineText(row))}<br><span class="nd-muted">${esc(row.dept || "—")} · ${esc(DOC_LABELS[row.doc_type] ?? "—")}${row.requester_name ? ` · ${esc(row.requester_name)}` : ""}</span></td><td>${statusCell(row)}</td><td class="nd-num">${timeCell(row)}</td></tr>`).join("")}</tbody></table></div>
       ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มีใบตรงกับตัวกรองนี้</p>`}`;
   }
 
@@ -402,7 +401,7 @@
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
     return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1><p>ไม่นับฉบับร่างและใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ กลับหน้า MT</a></div></div>
-      <div class="nd">
+      <div class="nd" data-module="mt">
         <p class="nd-warn">กำลังทดลองใช้ มีงานค้าง คอขวด เวลาที่ใช้ คุณภาพการซ่อม เครื่องจักรที่เสียบ่อย แผนกที่แจ้งซ่อมบ่อย และเวลาซ่อมของช่าง หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>

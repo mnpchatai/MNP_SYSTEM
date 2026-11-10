@@ -136,8 +136,19 @@ test("confirm and send-now are guarded against the double tap, and the guard re-
 
 test("the MT assign dates use the shared Thai date picker and are still required", () => {
   assert.match(mt, /assignForm\.querySelectorAll\('input\[type="date"\]'\)\.forEach\(\(input\) => \{\n\s+input\.required = false;\n\s+window\.MNP_DATE_PICKER\.enhance\(input\);/);
-  assert.match(mt, /"กรุณาเลือกวันเริ่มงาน"/);
-  assert.match(mt, /"กรุณาเลือกวันที่คาดว่าจะเสร็จ"/);
+  // ยังบังคับกรอก แต่บอกใต้ช่องเป็นภาษาไทย (MNP_FORM_STEPS) แทน bubble ของเบราว์เซอร์และ toast
+  assert.match(mt, /\{ name: "work_started_date", required: true, message: "เลือกวันเริ่มงาน" \}/);
+  assert.match(mt, /\{ name: "work_expected_date", required: true, message: "เลือกวันที่คาดว่าจะเสร็จ", check: /);
+  assert.match(mt, /<form id="assign-form" novalidate>/);
+  assert.match(mt, /<form id="finish-form" novalidate>/);
+  assert.match(mt, /\{ name: "cause_analysis", required: true, minLength: 3, /);
+});
+
+test("after the assignment, editing it is folded at the end of the MT page instead of sitting above the task", () => {
+  assert.match(mt, /\$\{canAssign && request\.status === "pending_assign" \? assignSection : ""\}/);
+  assert.match(mt, /\$\{canAssign && request\.status !== "pending_assign" \? assignSection : ""\}\n\s+\$\{canVerify \?/);
+  assert.match(mt, /<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้ไขการมอบหมายช่าง<\/h2><\/summary>/);
+  for (const name of ["technician_ids", "execution_plan", "inspector_opinion", "work_started_date", "work_expected_date", "cause_analysis"]) assert.match(mt, new RegExp(`data-field="${name}"`));
 });
 
 test("the shortcut legend lists the real shortcuts and opens with ? on Latin and Thai keyboards", () => {
@@ -175,7 +186,9 @@ test("the help sheet explains the page, every badge glyph and (on keyboard devic
   for (const [name] of help.BADGE_LEGEND) assert.match(html, new RegExp(`<span class="badge ${name}">`), `${name} in the legend`);
   assert.doesNotMatch(help.helpHtml(escapeHtml, "unknown-page"), /<h3>หน้านี้<\/h3>/, "pages without tips show only the legend and shortcuts");
   // คำแนะนำต่อหน้าใช้ path ที่มีอยู่จริงใน router
-  for (const path of Object.keys(help.PAGE_HELP)) assert.match(app, new RegExp(`path === "${path}"`), `route ${path} exists`);
+  // path ของหน้าหลักอยู่ใน router ของ app.js ส่วนแดชบอร์ด RubberFlow และ BOM เป็น PATH ของโมดูล
+  const modulePaths = new Set(["module-mt-dashboard.js", "module-ncr-dashboard.js", "module-rubberflow.js", "module-bom.js"].map((file) => readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8").match(/const PATH = "([^"]+)"/)?.[1]));
+  for (const path of Object.keys(help.PAGE_HELP)) assert.ok(new RegExp(`path === "${path}"`).test(app) || modulePaths.has(path), `route ${path} exists`);
   assert.match(help.helpHtml((value) => `[${value}]`, "dashboard"), /<li>\[/, "tips go through the escape function");
 });
 

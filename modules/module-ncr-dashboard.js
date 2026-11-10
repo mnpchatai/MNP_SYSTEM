@@ -140,7 +140,7 @@
     const on = selection?.card === card && selection.key === String(key);
     return `<button type="button" class="${extraClass}${on ? " selected" : ""}" data-sel="${esc(card)}:${esc(key)}" aria-pressed="${on}">${inner}</button>`;
   }
-  const detailHint = (noun) => `<p class="nd-hint">แตะ${noun}เพื่อดูตัวเลขของรายการนั้น แล้วกดกรองทั้งหน้าได้</p>`;
+  // คำใบ้ "แตะ…เพื่อดูตัวเลข" อยู่ในกล่องช่วยเหลือ (?) ของหน้านี้ครั้งเดียว ไม่พูดซ้ำทุกการ์ด
   const detailHtml = (item) => `<div class="nd-detail" role="status"><strong>${esc(item.title)}</strong><ul>${item.lines.map(([label, value, swatch]) => `<li><span>${swatch ? `<i class="nd-dot ${swatch}" aria-hidden="true"></i>` : ""}${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>${item.href ? `<a class="btn secondary small" href="${item.href}">${esc(item.linkLabel ?? "กรองทั้งหน้าตามนี้")}</a>` : ""}</div>`;
   // รายละเอียดของรายการที่เลือก (ถ้ามี) — resolve(key) คืน { title, lines, href, linkLabel } หรือ null
   const selectedItem = (card, resolve) => (selection?.card === card ? resolve(selection.key) : null);
@@ -150,11 +150,11 @@
     return item ? detailHtml(item) : "";
   };
   // คำใบ้ท้ายการ์ด แสดงเฉพาะตอนยังไม่ได้เลือกรายการ
-  const detailHintIfIdle = (card, noun, resolve) => (selectedItem(card, resolve) ? "" : detailHint(noun));
+  const detailHintIfIdle = () => "";
   // กราฟเดือนเป็นแท่งตั้งเรียงข้างกัน ไม่มีที่ใต้แท่งเดียว จึงแสดงรายละเอียดใต้กราฟ
   function detailBox(card, noun, resolve) {
     const item = selectedItem(card, resolve);
-    return item ? detailHtml(item) : detailHint(noun);
+    return item ? detailHtml(item) : "";
   }
 
   // ---- ชิ้นส่วนของหน้า ----
@@ -186,14 +186,10 @@
       <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่ออก NCR</p>`;
   }
 
+  // เกินกำหนด รอแนวทางป้องกัน และต้นทุนที่ยังไม่ครบ อยู่บนการ์ดตัวเลขแล้ว บรรทัดนี้เหลือเฉพาะสิ่งที่การ์ดไม่ได้บอก
   function summaryHtml(sums) {
     if (!sums.total) return "ไม่มี NCR ตรงกับตัวกรองนี้";
-    const parts = [];
-    if (sums.overdue) parts.push(`<b>${fmtCount(sums.overdue)}เกินกำหนดตอบ</b> ควรตามก่อน`);
-    if (sums.preventionOverdue) parts.push(`<b>${fmtCount(sums.preventionOverdue)}เลยกำหนดส่งแนวทางป้องกัน</b>`);
-    if (sums.preventionPending) parts.push(`รอแผนกส่งแนวทางป้องกัน ${fmtCount(sums.preventionPending)}`);
-    if (sums.need > sums.assessed) parts.push(`ต้นทุนยังประเมินไม่ครบอีก ${fmtCount(sums.need - sums.assessed)} ยอดบาทจึงเป็นตัวเลขขั้นต่ำ`);
-    return parts.length ? parts.join(" · ") : sums.open ? "" : "ไม่มีใบค้างและไม่มีใบเกินกำหนดในช่วงนี้";
+    return sums.need > sums.assessed ? "ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินต้นทุนไม่ครบทุกใบ" : "";
   }
 
   function tilesHtml(filters, sums) {
@@ -404,7 +400,7 @@
     const shown = sorted.slice(0, drillLimit);
     return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p>ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "NCR ที่ออกในช่วงนี้" แตะเลขที่เพื่อเปิดใบ</p></div>
       ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
-      ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${esc(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกินกำหนดตอบ</span>` : esc(STATUS_LABELS[row.status] ?? row.status)}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
+      ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกินกำหนดตอบ</span>` : esc(STATUS_LABELS[row.status] ?? row.status)}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
       ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มี NCR ตรงกับตัวกรองนี้</p>`}`;
   }
 
@@ -425,7 +421,7 @@
     const sums = model.summarize(list, filters);
     return `<div class="page-heading request-module-header" data-module="ncr"><div><div class="eyebrow">QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">‹ กลับหน้า NCR</a></div></div>
-      <div class="nd">
+      <div class="nd" data-module="ncr">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>

@@ -1233,7 +1233,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${statusBadge(request.status, isRepairType(type))}${request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type))}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
@@ -1268,7 +1268,7 @@ function statusBoardRows(rows, { showType = false } = {}) {
           department: escapeHtml(row.department_name ?? row.department_code ?? ""),
           requester: escapeHtml(row.requester_name ?? ""),
           updated: formatDate(row.last_changed_at ?? row.submitted_at, true),
-          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow))}${row.is_urgent ? `<span class="request-priority-chip priority-urgent">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
+          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow))}${row.is_urgent ? `<span class="badge urgent-flag">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
         },
       };
     }),
@@ -1893,7 +1893,7 @@ function shell(content, active, title, tabTitle = title) {
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
           <div class="avatar">${escapeHtml(initials(employee))}</div>
-          <div class="user-copy"><strong>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
+          <div class="user-copy"><strong title="${escapeHtml(`${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim())}">${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
           <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">${uiIcon("signout")}</button>
         </div>
       </aside>
@@ -2243,7 +2243,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
   const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
-      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="priority-flag">${escapeHtml(flag)}</span>` : ""}</span>
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}</span>
       <strong class="queue-item-title">${escapeHtml(request.title)}</strong>
       <span class="queue-item-meta">${escapeHtml(meta)}</span>
     </span>`;
@@ -2251,7 +2251,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
   if (item.kind === "repair" || item.kind === "ncr") {
     const task = queueTaskLabel(item);
-    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}<span class="queue-item-task">${escapeHtml(task)}</span></a></li>`;
+    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}<span class="queue-item-task" data-module="${requestPalette(type?.code)}">${escapeHtml(task)}</span></a></li>`;
   }
   const check = isOwnApprovalStep(item.step)
     ? `<label class="queue-item-check"><input type="checkbox" class="queue-select" value="${escapeHtml(item.step.id)}" aria-label="เลือก ${escapeHtml(request.request_no)} เพื่ออนุมัติหลายรายการ"></label>`
@@ -2875,7 +2875,7 @@ function knownRequestStatuses(params) {
 async function requestListPanel(params, typeId, { departmentId = null, search = "" } = {}) {
   const mineOnly = params.get("scope") === "mine";
   let query = sb.from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id),current_step,approval_steps(step_order,step_name,status)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (typeId) query = query.eq("request_type_id", typeId);
@@ -3093,7 +3093,7 @@ function originalRequestFormHtml(selected, separateModule, formContext) {
         <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
         <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
         <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-        <div class="field full"><label for="attachment">ไฟล์แนบ (ถ้ามี)</label><input class="input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
+        <div class="field full"><span class="field-label">ไฟล์แนบ (ถ้ามี)</span><label class="btn secondary file-pick" for="attachment">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
         ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
         <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
       </div>
@@ -3944,7 +3944,7 @@ function nextItemPanelHtml() {
 }
 
 // หลังตัดสิน: นับงานจากคิวเดียวกับ "ต้องจัดการ" ของหน้าหลัก
-// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น รับงานแล้วต้องมอบหมายช่าง) ขั้นนั้นเป็นปุ่มหลัก ใบถัดไปเป็นปุ่มรอง
+// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น รับงานแล้วต้องมอบหมายช่าง) แผงบอกขั้นนั้นและพาไปที่ฟอร์ม (ปุ่มรอง ปุ่มหลักคือปุ่มส่งของฟอร์มเอง)
 async function fillNextItemPanel(currentId) {
   const panel = document.querySelector("#next-item-panel");
   if (!panel) return;
@@ -3962,10 +3962,12 @@ async function fillNextItemPanel(currentId) {
       const label = queueTaskLabel(followUp);
       heading.textContent = "ขั้นต่อไปเป็นของคุณ";
       text.textContent = others.length ? `${label} ในใบนี้ · ต้องจัดการอีก ${others.length} รายการ` : `${label} ในใบนี้`;
-      buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn is-primary" id="next-item-follow-up">${escapeHtml(label)}</button>`;
+      buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn secondary" id="next-item-follow-up">${escapeHtml(label)} ↓</button>`;
       buttons.querySelector("#next-item-follow-up").addEventListener("click", () => {
-        const target = document.querySelector("#repair-assign") ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
+        const task = { pending_assign: "section#repair-assign", assigned: ".start-work-button", in_progress: "#finish-form", pending_verify: "#verify-note" }[followUp.request?.status];
+        const target = (task ? document.querySelector(task)?.closest("section, details") : null) ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
         if (!target) return;
+        if (target instanceof HTMLDetailsElement) target.open = true;
         target.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
         target.querySelector("select, input:not([type=hidden]), textarea")?.focus({ preventScroll: true });
       });

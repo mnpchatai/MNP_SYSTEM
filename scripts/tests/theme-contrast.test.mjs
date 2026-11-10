@@ -105,7 +105,7 @@ const WHITE_ON_SOLID = [
   ".btn.danger-solid:hover",
   ".nav-count",
   ".update-banner",
-  '.nd-chip[aria-current="true"]',
+  // ชิปช่วงเวลาที่เลือกในแดชบอร์ดใช้สีแท็บที่เลือกของจานสีโมดูล (ตรวจทุกจานสีใน color-system.test.mjs)
   ".badge.pending_approval",
   ".badge.approved",
   ".badge.completed",

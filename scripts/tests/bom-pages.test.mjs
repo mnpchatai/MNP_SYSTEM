@@ -145,7 +145,7 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   assert.match(html, /<option value="SE" selected>/);
   assert.match(html, /bom-pick-fg is-hidden/);
   assert.match(html, /name="code"[^>]*value="SE-NEW-77"/);
-  assert.match(html, /<h3>2\. ชิ้นงาน<\/h3>/);
+  assert.match(html, /<h2>2\. ชิ้นงาน<\/h2>/);
   assert.match(html, /SE-NEW-77<\/strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างชิ้นงานใหม่ให้พร้อม BOM/, "the kind is not repeated (it is in the step-1 select)");
   assert.match(html, /ชั้นแรกต่อ 1 ชิ้น ของชิ้นงาน/);
   assert.match(html, /name="itemKind" value="SE"/);
@@ -161,7 +161,7 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   // วัตถุดิบ / สูตรยาง: ไม่มีตารางส่วนประกอบ บันทึกเป็นชิ้นงาน
   html = await env.render("p=build&code=DM07&kind=CP");
   assert.doesNotMatch(html, /data-rf-form="saveBomTree"/);
-  assert.match(html, /<h3>2\. สูตรยาง<\/h3>/, "the card names the category once (the kind is in the step-1 select)");
+  assert.match(html, /<h2>2\. สูตรยาง<\/h2>/, "the card names the category once (the kind is in the step-1 select)");
   assert.match(html, /data-rf-form="saveItem"[\s\S]*?name="code" value="DM07"[\s\S]*?name="kind" value="CP"[\s\S]*?<option value="kg" selected>/);
   html = await env.render("p=build&code=P-STK-01");
   assert.match(html, /<option value="PURCHASED" selected>/);
@@ -744,16 +744,16 @@ test("the per-department view explodes one product × quantity into cards from R
   clean(html);
   html = await env.render("p=product&code=DEMO-TP-01(P)-Y&qty=80");
   clean(html);
-  const cardTitles = [...html.matchAll(/<h3>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]);
+  const cardTitles = [...html.matchAll(/<h2>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]);
   assert.deepEqual(cardTitles, ["ST", "RB", "GR", "PT", "PK"], "cards follow the company flow and skip departments without work (no BG in this product)");
   assert.match(html, /ต้องรีด/);
   assert.match(html, /RB-DM01-02-OR01-202-18-70[\s\S]*?<strong>7\.74<\/strong>/, "80 sets × 3 SE / 31 pieces per rod — the BOMSHEET number, before any stock");
   assert.match(html, /ตัด 6\.5 ซม\. · 31 ชิ้น\/เส้น · 1 SE ต่อ GR/, "GR sees the cutting data of the rod it cuts");
   assert.match(html, /ผูก RubberFlow แล้ว/);
   assert.match(html, /สินค้าสำเร็จรูป<\/span>/, "the FG row sits in the PK card");
-  assert.match(html, /<h3>DEMO-TP-01\(P\)-Y <span class="muted">[^<]+<\/span> × 80 ชุด<\/h3>/);
+  assert.match(html, /<h2>DEMO-TP-01\(P\)-Y <span class="muted">[^<]+<\/span> × 80 ชุด<\/h2>/);
   assert.match(html, /ลึกสุด 2 ชั้น/);
-  assert.doesNotMatch(html, /<dt>สินค้า<\/dt>|<dt>จำนวนที่คิด<\/dt>|รายการ<\/span><\/h3>/, "the product, quantity and row counts are shown once (title, picker, tables)");
+  assert.doesNotMatch(html, /<dt>สินค้า<\/dt>|<dt>จำนวนที่คิด<\/dt>|รายการ<\/span><\/h2>/, "the product, quantity and row counts are shown once (title, picker, tables)");
   assert.doesNotMatch(html, /data-rf-open="useInOrder"/, "a department head cannot push the product into an order");
   assert.doesNotMatch(html, /p=build/, "no builder links for a department head");
   env.store.setUser("B03"); // ฝ่ายวางแผน
@@ -932,9 +932,9 @@ test("kinds are chosen by category (สินค้า / WIP / วัตถุ�
   assert.equal(env.store.run("saveBom", { itemCode: "RB-DM01-02-OR01-202-18-70", lines: [{ childCode: "DM01", qty: 1.53 }] }).ok, true);
   html = await env.render("p=product&code=DEMO-TP-01(P)-Y&qty=80");
   clean(html);
-  assert.match(html, /<h3>สูตรยาง <span class="muted">ผสมโดย RB ตามสูตรใน RubberFlow<\/span>/);
+  assert.match(html, /<h2>สูตรยาง <span class="muted">ผสมโดย RB ตามสูตรใน RubberFlow<\/span>/);
   assert.match(html, /DM01[\s\S]*?RC-EPDM-DS01[\s\S]*?ผูกแล้ว[\s\S]*?<strong>11\.85<\/strong>/, "7.74 rods × 1.53 kg");
-  assert.deepEqual([...html.matchAll(/<h3>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]), ["ST", "RB", "GR", "PT", "PK"], "the department cards are unchanged");
+  assert.deepEqual([...html.matchAll(/<h2>([A-Z]{2}) <span class="muted">/g)].map((match) => match[1]), ["ST", "RB", "GR", "PT", "PK"], "the department cards are unchanged");
   html = await env.render("p=structure&code=RB-DM01-02-OR01-202-18-70");
   clean(html);
   assert.equal((html.match(/คอมปาวด์ <span class="rf-mono">DM01<\/span>/g) ?? []).length, 0, "the compound field is not repeated when the BOM has the compound line");

@@ -785,11 +785,17 @@
       </div>`;
     const quantities = `<div class="definition full ncr-quantity-summary"><dt>จำนวน <span class="ncr-quantity-unit">หน่วย: ${escapeHtml(ncr.unit)}</span></dt>
           <dd><dl class="ncr-quantity-values">
-            ${[["ทั้งหมด", formatQty(ncr.qty_total)], ["สุ่ม", formatQty(ncr.qty_sampled)], ["พบปัญหา", formatQty(ncr.qty_defect)], ["ส่งคืน", formatQty(ncr.qty_returned)], ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`]].map(([label, value], index) => `<div${index === 2 ? ' class="ncr-quantity-defect"' : ""}><dt>${label}</dt><dd>${value}</dd></div>`).join("")}
+            ${[["ทั้งหมด", formatQty(ncr.qty_total)], ["สุ่ม", formatQty(ncr.qty_sampled)], ["พบปัญหา", formatQty(ncr.qty_defect)], ["ส่งคืน", formatQty(ncr.qty_returned)], ].map(([label, value], index) => `<div${index === 2 ? ' class="ncr-quantity-defect"' : ""}><dt>${label}</dt><dd>${value}</dd></div>`).join("")}
           </dl></dd>
         </div>`;
+    // ข้อเท็จจริงที่ผู้อนุมัติต้องเห็นก่อนตัดสินอยู่ในหัวใบ (ย้ายมาจากส่วนที่ 1 ไม่แสดงซ้ำ)
+    const headFacts = `<dl class="ncr-head-facts">${[
+      ["ข้อบกพร่อง", relation(ncr.defect_type)?.name_th ?? "—"],
+      ["แหล่งที่พบ", SOURCES[ncr.source] ?? ncr.source ?? "—"],
+      ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`],
+    ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
     const heading = `
-      <div class="page-heading request-module-header ncr-detail-head" data-module="ncr"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p></div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
+      <div class="page-heading request-module-header ncr-detail-head" data-module="ncr"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p>${headFacts}</div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}<a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
@@ -797,10 +803,9 @@
       ${partOpening(1, "ผู้รายงาน/ผู้ตรวจสอบ", "ข้อมูลสินค้าและรายละเอียดความไม่สอดคล้อง")}
         ${partField("วันที่ออก", formatDate(ncr.issue_date), false, "calendar")}
         ${partField("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`, false, "person")}
-        ${partField("รหัส / ชื่อสินค้า", `${escapeHtml(ncr.product_code ?? "—")} · ${escapeHtml(ncr.product_name)}`, false, "product")}
+        ${partField("รหัสสินค้า", escapeHtml(ncr.product_code ?? "—"), false, "product")}
         ${partField("ลูกค้า/พ่อค้า", `${escapeHtml(ncr.customer_name ?? "—")}${ncr.customer_code ? ` (${escapeHtml(ncr.customer_code)})` : ""}`, false, "building")}
         ${partField("ใบสั่งซื้อ/ใบส่งของ · Lot", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
-        ${partField("แหล่งที่พบ · ข้อบกพร่อง", `${escapeHtml(SOURCES[ncr.source] ?? ncr.source)} · ${escapeHtml(relation(ncr.defect_type)?.name_th ?? "—")}`, false, "inspect")}
         ${quantities}
         ${partField("รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)", escapeHtml(ncr.description || "—"), true)}
       </dl></section>
@@ -858,7 +863,9 @@
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
     const part3Filled = Boolean(ncr.responded_at || ncr.root_cause || ncr.correction || ncr.prevention);
     const part4Filled = Boolean(ncr.followed_up_at || ncr.followup_note || ncr.signoff_qa_at || ncr.signoff_factory_at || ncr.signoff_gm_at || ncr.closed_at);
-    const parts = [part1, part2, ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
+    // กำหนดตอบตั้งตั้งแต่ออกใบ (อยู่ในฟอร์มพิจารณาแล้ว) จึงไม่นับว่าส่วนที่ 2 มีข้อมูล
+    const part2Filled = Boolean(ncr.disposed_at || ncr.dispositions?.length || ncr.ncr_responsibilities?.length || ncr.disposition_note);
+    const parts = [part1, ...(part2Filled ? [part2] : []), ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
     // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
     const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
