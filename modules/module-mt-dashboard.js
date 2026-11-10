@@ -208,14 +208,11 @@
   }
 
   function summaryHtml(backSums, stages) {
-    // งานค้าง เลยกำหนด และด่วน อยู่บนการ์ดตัวเลขแล้ว บรรทัดนี้บอกเฉพาะขั้นที่ค้างมากและนานที่สุด
+    // งานค้าง เลยกำหนด และด่วน อยู่บนการ์ดตัวเลข ขั้นที่ค้างมากสุดเป็นแถบเข้มใน "งานค้างอยู่ที่ใคร" แล้ว
+    // บรรทัดนี้บอกเฉพาะใบที่ค้างนานสุด (ค่านี้ไม่อยู่บนแถบ แถบแสดงค่าเฉลี่ย)
     if (!backSums.open) return "";
-    const parts = [];
-    const busiest = [...stages].sort((a, b) => b.count - a.count)[0];
-    if (busiest?.count) parts.push(`ค้างมากสุดที่ขั้น "${esc(busiest.label)}" ${fmtCount(busiest.count)}`);
     const oldest = [...stages].filter((stage) => stage.count).sort((a, b) => b.maxDays - a.maxDays)[0];
-    if (oldest?.maxDays > 0) parts.push(`ใบที่ค้างนานสุดอยู่ขั้น "${esc(oldest.label)}" ${fmtNumber(oldest.maxDays)} วัน`);
-    return parts.join(" · ");
+    return oldest?.maxDays > 0 ? `ใบที่ค้างนานสุดอยู่ขั้น "${esc(oldest.label)}" ${fmtNumber(oldest.maxDays)} วัน` : "";
   }
 
   function tilesHtml(filters, period, back) {
@@ -271,9 +268,9 @@
         ? ` <span class="nd-pill crit" title="เลยวันเริ่มงานที่มอบหมาย ${esc(formatDate(row.work_started_date))}"><span class="nd-ico" aria-hidden="true">▲</span>เลยวันเริ่ม ${fmtNumber(row.daysLateStart)} วัน</span>`
         : "";
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่จบ เรียงจากเลยกำหนด (วันเริ่มงานหรือวันเสร็จที่หัวหน้าช่างมอบหมาย) ก่อน แล้วด่วน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
-      ${top.length ? `<div class="table-wrap"><table><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
+      ${top.length ? `<div class="table-wrap"><table class="nd-act"><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
         const stage = model.STAGE_BY_KEY[row.stage];
-        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(actionOwner(row))}<br><span class="nd-muted">${esc(stage?.short ?? "")}</span></td><td class="nd-num">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
+        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(actionOwner(row))}<br><span class="nd-muted">${esc(stage?.short ?? "")}</span></td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
       }).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open", stage: "" })}">ดูงานค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}`;
   }
@@ -285,9 +282,8 @@
       const width = phase.n && max ? Math.max((phase.avgDays / max) * 100, 0.8) : 0;
       return `<div class="nd-brow static"><span class="nd-lab">${esc(phase.label)}<br><span class="nd-muted">${esc(phase.owner)}</span></span><span class="nd-trk"><span class="nd-bar${phase.n && phase.avgDays === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${phase.n ? esc(fmtDays(phase.avgDays)) : "—"}<small>${phase.n ? `กลาง ${esc(fmtDays(phase.medianDays))} · ${esc(fmtCount(phase.n))}` : "ยังไม่มีข้อมูล"}</small></span></div>`;
     }).join("");
-    return `<div class="nd-head"><h2>เวลาที่ใช้แต่ละช่วง</h2><p>เวลาเฉลี่ยจากประวัติสถานะของใบที่แจ้งในช่วงที่เลือก นับเฉพาะช่วงที่เดินครบแล้ว แถบเข้มคือช่วงที่ใช้เวลานานสุด</p></div>
-      <div class="nd-bars">${rows}</div>
-      <p class="nd-hint">ตรวจรับไม่ผ่านแล้วซ่อมใหม่ นับเป็นเวลาซ่อม ส่วนช่วง "อนุมัติ" รวมเวลาที่รอผู้แจ้งตอบข้อมูลเพิ่มด้วย</p>`;
+    return `<div class="nd-head"><h2>เวลาที่ใช้แต่ละช่วง</h2><p>เวลาเฉลี่ยจากประวัติสถานะของใบที่แจ้งในช่วงที่เลือก นับเฉพาะช่วงที่เดินครบแล้ว แถบเข้มคือช่วงที่ใช้เวลานานสุด · ตรวจรับไม่ผ่านแล้วซ่อมใหม่ นับเป็นเวลาซ่อม ส่วนช่วง "อนุมัติ" รวมเวลาที่รอผู้แจ้งตอบข้อมูลเพิ่มด้วย</p></div>
+      <div class="nd-bars">${rows}</div>`;
   }
 
   function machineHtml(ranking, filters) {
@@ -338,11 +334,9 @@
       const inner = `<span class="nd-lab">${esc(techName(item.id))}<br><span class="nd-muted">${esc(fmtCount(item.jobs))}ในช่วงนี้${item.holding ? ` · ถืออยู่ ${esc(fmtCount(item.holding))}` : ""}</span></span><span class="nd-trk"><span class="nd-bar${item.hours && item.hours === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtHours(item.hours))}<small>เฉลี่ย ${esc(fmtHours(item.avgHours))}/ใบ</small></span>`;
       return selectButton("tech", item.id, inner, `nd-brow${filters.tech === item.id ? " active" : ""}`) + detailUnder("tech", item.id, resolve);
     }).join("");
-    return `<div class="nd-head"><h2>ช่างที่ใช้เวลาซ่อมมากสุด</h2><p>เรียงตามเวลาที่ใบของช่างอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบของใบที่แจ้งในช่วงที่เลือก แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง</p></div>
-      <p class="nd-warn">ตัวเลขนี้ <b>ไม่ใช่ชั่วโมงทำงานจริง</b> เพราะระบบยังไม่มีช่องบันทึกชั่วโมงทำงาน แต่เป็นเวลาตามนาฬิกา (รวมกลางคืนและวันหยุด) ตั้งแต่ช่างกดเริ่มงานจนส่งตรวจรับ ใบที่มีช่างหลายคนนับเต็มเวลาให้ทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ใช้เทียบภาระงานคร่าวๆ ไม่ใช้คิดค่าแรง</p>
+    return `<div class="nd-head"><h2>ช่างที่ใช้เวลาซ่อมมากสุด</h2><p>เรียงตามเวลาที่ใบของช่างอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบของใบที่แจ้งในช่วงที่เลือก แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง · ไม่ใช่ชั่วโมงทำงานจริง เพราะระบบยังไม่มีช่องบันทึกชั่วโมงทำงาน แต่เป็นเวลาตามนาฬิกา (รวมกลางคืนและวันหยุด) ตั้งแต่ช่างกดเริ่มงานจนส่งตรวจรับ ใบที่มีช่างหลายคนนับเต็มเวลาให้ทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ใช้เทียบภาระงานคร่าวๆ ไม่ใช้คิดค่าแรง · "ถืออยู่" = ใบที่ช่างต้องทำตอนนี้ (รอช่างเริ่มงานหรือกำลังซ่อม) นับทุกใบไม่ขึ้นกับช่วงเวลา ส่วนเวลาและจำนวนใบนับตามวันที่แจ้ง ไม่นับใบที่ไม่อนุมัติ</p></div>
       ${items.length ? `<div class="nd-bars">${rows}</div>
-      <div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span></div>
-      <p class="nd-hint">"ถืออยู่" = ใบที่ช่างต้องทำตอนนี้ (รอช่างเริ่มงานหรือกำลังซ่อม) นับทุกใบไม่ขึ้นกับช่วงเวลา ส่วนเวลาและจำนวนใบนับตามวันที่แจ้ง ไม่นับใบที่ไม่อนุมัติ</p>` : `<p class="nd-empty">ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้</p>`}
+      <div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span><span>เวลาตามนาฬิกา ไม่ใช่ชั่วโมงทำงาน</span></div>` : `<p class="nd-empty">ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้</p>`}
       ${detailHintIfIdle("tech", "แถบชื่อช่าง", resolve)}`;
   }
 
@@ -399,10 +393,9 @@
     const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
-    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1><p>ไม่นับฉบับร่างและใบที่ยกเลิก</p></div>
+    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a></div></div>
       <div class="nd" data-module="mt">
-        <p class="nd-warn">กำลังทดลองใช้ มีงานค้าง คอขวด เวลาที่ใช้ คุณภาพการซ่อม เครื่องจักรที่เสียบ่อย แผนกที่แจ้งซ่อมบ่อย และเวลาซ่อมของช่าง หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
@@ -414,7 +407,7 @@
         <section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters)}</section>
         ${definitionsHtml}
-        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น</p>
+        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
       </div>`;
   }
 

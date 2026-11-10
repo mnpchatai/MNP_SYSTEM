@@ -49,6 +49,7 @@ async function render({ status = "assigned", technicians = ["t1"], directory, ov
   });
   vm.runInContext(source, context);
   await mtModule.pages["mt-dashboard"](new URLSearchParams("year=2026"));
+  if (section === "page") return root.innerHTML;
   return root.innerHTML.split(section === "act" ? 'data-card="act"' : 'id="nd-drill"')[1].split("</section>")[0];
 }
 
@@ -125,4 +126,17 @@ test("act-now badge counts a waiting job from the assigned start date and a late
   const late = await render({ section: "act", startedOn: "2026-10-01", overdue: true });
   assert.match(late, /เลย 8 วัน/);
   assert.doesNotMatch(late, /เลยวันเริ่ม/);
+});
+
+// กติกา "Show each fact once" (AGENTS.md): คำอธิบายอยู่ใน "วิธีนับ" ของการ์ดหรือนิยาม ไม่ซ้ำเป็นย่อหน้าถาวร
+test("the page has no permanent explanation paragraphs and no fact said twice", async () => {
+  const html = await render({ section: "page" });
+  assert.doesNotMatch(html, /class="nd-warn"|class="nd-hint">(?:ตรวจรับไม่ผ่าน|"ถืออยู่")/, "card notes fold into each card's วิธีนับ");
+  assert.doesNotMatch(html, /<p>ไม่นับฉบับร่างและใบที่ยกเลิก<\/p>/, "the definition of open jobs already says this");
+  assert.match(html, /<span class="badge">เวอร์ชันทดสอบ<\/span>/);
+  assert.match(html, /<p class="nd-muted">ข้อมูล ณ [^<]* · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย<\/p>/, "the request to report mismatches is visible on touch screens too (a title is not)");
+  assert.doesNotMatch(html, /ค้างมากสุดที่ขั้น/, "the busiest stage is the dark bar in งานค้างอยู่ที่ใคร");
+  assert.match(html, /<h2>ช่างที่ใช้เวลาซ่อมมากสุด<\/h2><p>[^<]*ไม่ใช่ชั่วโมงทำงานจริง/, "the technician-hours caveat is in the card note that dashboard-notes.js folds into วิธีนับ");
+  assert.match(source, /<span>เวลาตามนาฬิกา ไม่ใช่ชั่วโมงทำงาน<\/span><\/div>/, "and a short reminder stays in its legend");
+  assert.match(html, /<table class="nd-act">[\s\S]*<td class="nd-num" data-label="ค้างมา">/, "the act-now table can become cards on a phone");
 });

@@ -102,6 +102,24 @@
   // กำหนดตอบนับจากวันออกใบ (+5 วัน) จึงเกินกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
   const RESPONSE_PENDING_STATUSES = ["awaiting_disposition", "awaiting_response"];
   const isOverdue = (ncr) => RESPONSE_PENDING_STATUSES.includes(ncr.status) && Boolean(ncr.response_due) && ncr.response_due < todayBangkok();
+  // บรรทัดกำหนดในฟอร์มตอบ NCR: วันกำหนดตอบอยู่ในส่วนที่ 2 แล้ว จึงบอกเหลือ/เลยกี่วัน และวันส่งแนวทางป้องกัน (กำหนดตอบ + 7 วัน)
+  const responseDueNote = (ncr, today = todayBangkok()) => {
+    if (!ncr.response_due) return "";
+    const late = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${ncr.response_due}T00:00:00Z`)) / 86400000);
+    const when = late > 0 ? `เลยกำหนดตอบ <strong>${late} วัน</strong>` : late === 0 ? "ครบกำหนดตอบ <strong>วันนี้</strong>" : `เหลือเวลาตอบ <strong>${-late} วัน</strong>`;
+    return `<p class="ncr-due-note">${when} · ส่งแนวทางป้องกันไม่ให้เกิดซ้ำภายใน <strong>${formatDate(addDays(ncr.response_due, 7))}</strong></p>`;
+  };
+  // ฟอร์มของขั้นที่แนบหลักฐานไปพร้อมงานได้ (พิจารณา ตอบ ส่งแนวทางป้องกัน ติดตาม ให้ข้อมูลเพิ่ม)
+  // ไม่นับ ยกเลิก NCR (แนบแล้วใบถูกยกเลิก) ลงนาม (ไม่มีช่องไฟล์) และขอข้อมูลก่อนลงนาม (ไม่ใช่งานของขั้น) ผู้ที่มีแค่ฟอร์มเหล่านี้ยังแนบในการ์ดไฟล์หลักฐาน
+  const STEP_FILE_ACTIONS = Object.freeze(["dispose", "respond", "submit_prevention", "followup", "answer_info"]);
+  const stepFileInput = (forms) => {
+    for (const form of forms) {
+      if (!STEP_FILE_ACTIONS.includes(form?.dataset?.action)) continue;
+      const input = form.querySelector('input[type="file"]');
+      if (input) return input;
+    }
+    return null;
+  };
   const addDays = (iso, days) => { const date = new Date(`${iso}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
   const ATTACHMENT_SECTION_BY_STATUS = { awaiting_disposition: "report", awaiting_response: "response" };
   // ไฟล์ที่แนบมากับการกระทำ (ตอบ ให้ข้อมูล พิจารณา ติดตาม ขอข้อมูล ยกเลิก บันทึกต้นทุน/ผล) ใช้หมวดตามสถานะก่อนกระทำ
@@ -571,7 +589,7 @@
 
           <div class="field full"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ <small class="muted">(ไม่บังคับตอนนี้ ส่งภายหลังได้หลังวิเคราะห์เสร็จ)</small></label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
         </div>
-        <p class="ncr-due-note">ตอบภายใน 5 วันระบุสาเหตุและแนวทางแก้ไข · กำหนดเสร็จตั้งให้อัตโนมัติ: แก้ไขปัญหา <strong>${formatDate(ncr.response_due)}</strong> (กำหนดตอบ 5 วันหลังออกใบ) · ส่งแนวทางป้องกันไม่ให้เกิดซ้ำ <strong>${ncr.response_due ? formatDate(addDays(ncr.response_due, 7)) : "—"}</strong> (ต่อจากนั้นอีก 7 วัน) · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>
+        ${responseDueNote(ncr)}
         ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div></form>`);
     }
@@ -901,6 +919,9 @@
 
   function bindDetail(ncr, losses) {
     window.MNP_NCR_LOSS_UI.bind({ ...ncr, today: todayBangkok() }, losses, formatBaht);
+    // ฟอร์มของขั้นนี้มีช่องหลักฐาน (STEP_FILE_ACTIONS): แนบพร้อมงานทางเดียว ไม่ให้ไฟล์ที่เลือกในการ์ดไฟล์หายเมื่อกดส่ง
+    // ผู้ที่ไม่มีฟอร์มของขั้น (เช่น ผจก.QA ที่มีแค่ยกเลิก NCR ผู้ลงนาม ผู้ดู) ยังแนบผ่านการ์ดไฟล์หลักฐานได้
+    window.pointToStepFiles?.(document.querySelector(".ncr-attach-form"), stepFileInput(document.querySelectorAll(".ncr-actions form.ncr-action")), "แนบไฟล์พร้อมงานของคุณใน “สิ่งที่คุณต้องดำเนินการ”");
 
     const calls = {
       dispose: (form) => {
@@ -1096,7 +1117,7 @@
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
     // ISSUE_RULES เปิดให้เทสต์ตรวจกติกาจริงของฟอร์มออก NCR (scripts/tests/ncr-detail-page.test.mjs)
-    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, formatQty, formatBaht, ISSUE_RULES },
+    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, stepFileInput, formatQty, formatBaht, ISSUE_RULES },
 
     pages: {
       async ncr(params) {

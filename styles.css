@@ -964,6 +964,8 @@ a.register-title:hover { color: var(--primary); }
 .request-summary-text.is-empty { color: var(--quiet); font-weight: 400; }
 .link-button { min-height: 32px; padding: 0; display: inline-flex; align-items: center; color: var(--primary-ink); background: none; border: 0; font: inherit; font-size: var(--text-meta); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .link-button[hidden] { display: none; }
+/* ปุ่มที่พาไปช่องไฟล์ของฟอร์มขั้น (app.js pointToStepFiles) แทนช่องอัปโหลดแยก: เป้ากดเต็มนิ้ว */
+.step-files-link { min-height: 44px; }
 .request-more { justify-self: start; }
 .detail-section > summary { min-height: 44px; margin: -6px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; }
 .detail-section > summary::-webkit-details-marker { display: none; }
@@ -1020,7 +1022,7 @@ a.register-title:hover { color: var(--primary); }
 .queue-item.is-selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
 .queue-item-check { width: 44px; min-height: 44px; flex: none; display: grid; place-items: center; cursor: pointer; }
 .queue-item-check input { width: 22px; height: 22px; margin: 0; accent-color: var(--primary); }
-.queue-item-main { min-width: 0; min-height: 64px; padding: 12px 14px; flex: 1 1 0; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; color: inherit; background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.queue-item-main { min-width: 0; min-height: 64px; padding: 12px 14px; flex: 1 1 0; display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; color: inherit; background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .queue-item-check + .queue-item-main { padding-left: 0; }
 .queue-item-main:focus-visible, .home-mine-row:focus-visible, .queue-done a:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .queue-item-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: var(--radius-md); }
@@ -1033,6 +1035,14 @@ a.register-title:hover { color: var(--primary); }
 /* งานที่ต้องลงมือ (มอบหมายช่าง ตอบ NCR …): ชิปสีโมดูลของใบพร้อมลูกศร แยกจากป้ายสถานะที่เป็นเม็ดมีสัญลักษณ์ */
 .queue-item-task { padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--m800, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 14%, var(--paper)); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
 .queue-item-task::after { content: "→"; }
+.queue-item-task.is-decide::after { content: none; }
+/* ชิปอยู่ท้ายบรรทัดเลขที่ ชื่อเรื่องจึงได้ความกว้างเต็มแถว · รหัสในชื่อเรื่อง (HS-08) ไม่ตัดกลางรหัส */
+.queue-item-top .queue-item-task { margin-left: auto; }
+.queue-item-title .nowrap { white-space: nowrap; }
+/* คิวที่มีแต่งานที่ลงมือในหน้าของใบ (ไม่มีใบให้ตัดสินในคิว): ไม่มีแผงขวา รายการใช้เต็มความกว้าง เป็นกริดการ์ดบนจอกว้าง */
+.queue-layout.is-tasks-only { grid-template-columns: minmax(0, 1fr); }
+.queue-layout.is-tasks-only .queue-detail-pane { display: none; }
+.queue-layout.is-tasks-only .queue-list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
 :root[data-theme="dark"] .queue-item-task { color: var(--m200, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 18%, var(--paper)); }
 .queue-item-slot { min-width: 0; flex-basis: 100%; }
 .queue-item-slot:not(:empty) { padding: 12px 14px 14px; border-top: 1px solid var(--soft-line); }
@@ -1718,6 +1728,13 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 @media (max-width: 520px) {
   .nd-value { font-size: var(--text-page); }
   .nd-brow { grid-template-columns: minmax(84px, 36%) minmax(0, 1fr) auto; gap: 8px; }
+  /* ตาราง "ต้องลงมือตอนนี้": แต่ละใบเป็นสองแถว (ใบ | กำหนด) (รอใคร | ค้างมา) ไม่ต้องเลื่อนข้าง ป้ายเกินกำหนดไม่ถูกตัด */
+  .nd-act, .nd-act tbody { display: block; }
+  .nd-act thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .nd-act tr { padding: 10px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 6px 12px; border-bottom: 1px solid var(--soft-line); }
+  .nd-act td { min-width: 0; padding: 0; border: 0; }
+  .nd-act td:nth-child(4) { grid-row: 1; grid-column: 2; text-align: right; }
+  .nd-act td.nd-num::before { content: attr(data-label) " "; color: var(--muted); font-size: var(--text-meta); }
 }
 .ncr-due-note { margin: 0 0 15px; padding: 10px 12px; color: var(--ink); background: var(--primary-soft); border-radius: var(--radius-md); font-size: var(--text-meta); line-height: 1.6; }
 .ncr-attach-form { margin-top: 14px; }

@@ -655,6 +655,26 @@ function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่ม�
   return `<div class="field">${hint ? `<span class="field-label">${label}</span>` : ""}<label class="btn secondary file-pick" for="${id}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
 }
 
+// หน้าที่ฟอร์มขั้นของผู้ดูมีช่องไฟล์ของตัวเอง (ฟอร์มจบงานของช่าง ฟอร์มใน "สิ่งที่คุณต้องดำเนินการ" ของ NCR):
+// ซ่อนช่องอัปโหลดแยกในการ์ดไฟล์ ให้เหลือทางแนบทางเดียว ไฟล์ที่เลือกในการ์ดไฟล์จึงไม่หายเงียบเมื่อกดส่งฟอร์มของขั้น
+// แทนด้วยปุ่มลิงก์ที่พาไปช่องไฟล์ของฟอร์มนั้น · ผู้ที่ไม่มีฟอร์มของขั้น (เช่น ผู้อนุมัติ ผู้ดู) ยังแนบผ่านการ์ดไฟล์ได้เหมือนเดิม
+function pointToStepFiles(standalone, stepInput, text) {
+  if (!standalone || !stepInput) return false;
+  standalone.hidden = true;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "link-button step-files-link";
+  button.textContent = text;
+  button.addEventListener("click", () => {
+    stepInput.closest("details")?.setAttribute("open", "");
+    const field = stepInput.closest(".field") ?? stepInput;
+    field.scrollIntoView({ block: "center", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    stepInput.focus({ preventScroll: true });
+  });
+  standalone.after(button);
+  return true;
+}
+
 // ระหว่างเตรียมรูป (เช่น แปลง HEIC) attachment-image.js ตั้ง setCustomValidity ไว้ที่ช่อง ฟอร์มที่ novalidate ไม่ถูกเบราว์เซอร์กันส่ง
 // จึงตรวจที่นี่: ทุกการกระทำที่อ่านไฟล์ผ่านตัวนี้รอจนรูปพร้อมก่อน ไม่ส่งไฟล์ต้นฉบับที่ยังแปลงไม่เสร็จ
 function readExtraFiles(input) {
@@ -2143,14 +2163,25 @@ function homeQueueItems(pending, repairTasks, ncrTasks) {
     // เกินกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากครั้งล่าสุดที่ใบเปลี่ยน (updated_at) ซึ่งใกล้กับเวลาที่ใบมาถึงขั้นนี้
     ...ncrTasks.map(({ ncr, task, overdue }) => ({
       kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เกินกำหนดตอบ" : null,
-      request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR" } },
+      // ชื่อเดียวกับ request_types.name_th ของ NCR_CAR และเมนูของโมดูล
+      request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR/CAR" } },
       priority: overdue ? "high" : null, createdAt: ncr.updated_at ?? ncr.created_at,
     })),
   ]);
 }
 // งานของคิวที่ลงมือในหน้าของใบเอง (งานซ่อม ขั้นของ NCR) ใช้คำของงาน เช่น "มอบหมายช่าง"
+// แถวอนุมัติใช้คำกริยาของขั้น (อนุมัติ / รับงาน / รับทราบ) คำเดียวกับปุ่มในแถบตัดสินใจ
 function queueTaskLabel(item) {
+  if (item.kind === "approval") {
+    const extra = requestModule(relation(item.request.request_type)?.code)?.extraDecisions ?? [];
+    return window.MNP_STEP_VERB.verbOf(item.step?.step_name, extra.map((decision) => decision.label));
+  }
   return item.task ?? myRepairActionLabels[item.request.status] ?? statusLabels[item.request.status] ?? item.request.status;
+}
+// รหัสในชื่อเรื่อง (HS-08, DR-15/2) ไม่ตัดกลางรหัสเมื่อขึ้นบรรทัดใหม่ · รับข้อความที่ escape แล้ว (entity ไม่มีขีด/ทับ จึงไม่ถูกจับ)
+// รหัสยาวเกิน 16 ตัวอักษรตัดบรรทัดได้ตามปกติ (ไม่ให้ยาวเกินคอลัมน์แล้วหายใต้ overflow ของชื่อเรื่อง)
+function keepCodesTogether(escaped) {
+  return String(escaped).replace(/[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+/g, (code) => (code.length <= 16 ? `<span class="nowrap">${code}</span>` : code));
 }
 async function loadHomeQueueItems() {
   const ncrHome = requestModule("NCR_CAR")?.enabled ? requestModule("NCR_CAR").home ?? null : null;
@@ -2220,7 +2251,7 @@ async function renderDashboard(params = new URLSearchParams()) {
         ${ownSelectable.length > 1 ? `<label class="queue-select-all"><input type="checkbox" id="queue-select-all"> เลือกใบที่อนุมัติได้ทั้งหมด (${ownSelectable.length})</label>` : ""}
       </div>
       ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(entry.label ?? decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
-      ${items.length ? `<div class="queue-layout">
+      ${items.length ? `<div class="queue-layout${approvalIds.length ? "" : " is-tasks-only"}">
         <ul class="queue-list" role="list"${approvalIds.length ? ` title="คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ · ? ดูทั้งหมด" aria-keyshortcuts="J K A R ?"` : ""}>${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= visibleCount })).join("")}</ul>
         <div class="queue-detail-pane" id="queue-detail-pane"></div>
       </div>
@@ -2259,17 +2290,19 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เกินกำหนดตอบ)
   const flag = item.flag ?? (["high", "urgent"].includes(request.priority) ? priorityLabel(request.priority, isRepairType(type)) : null);
   const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
+  // ทุกแถวบอกว่าต้องทำอะไร: ชิปสีโมดูลของใบท้ายบรรทัดเลขที่ (ไม่เบียดชื่อเรื่อง) · งานที่ลงมือในหน้าของใบเองมีลูกศร (พาไปหน้านั้น)
+  // แถวอนุมัติเปิดในคิวจึงไม่มีลูกศร
+  const chip = `<span class="queue-item-task${item.kind === "approval" ? " is-decide" : ""}" data-module="${requestPalette(type?.code)}">${escapeHtml(queueTaskLabel(item))}</span>`;
   const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
-      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}</span>
-      <strong class="queue-item-title">${escapeHtml(request.title)}</strong>
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}${chip}</span>
+      <strong class="queue-item-title">${keepCodesTogether(escapeHtml(request.title))}</strong>
       <span class="queue-item-meta">${escapeHtml(meta)}</span>
     </span>`;
   const hiddenAttr = hidden ? " hidden" : "";
   // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
   if (item.kind === "repair" || item.kind === "ncr") {
-    const task = queueTaskLabel(item);
-    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}<span class="queue-item-task" data-module="${requestPalette(type?.code)}">${escapeHtml(task)}</span></a></li>`;
+    return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}</a></li>`;
   }
   const check = isOwnApprovalStep(item.step)
     ? `<label class="queue-item-check"><input type="checkbox" class="queue-select" value="${escapeHtml(item.step.id)}" aria-label="เลือก ${escapeHtml(request.request_no)} เพื่ออนุมัติหลายรายการ"></label>`
@@ -3844,6 +3877,8 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   }));
+  // ช่างที่กำลังซ่อม: รูปใบเสร็จและไฟล์ส่งพร้อมฟอร์มจบงาน ("บันทึกข้อมูล" หรือ "เสร็จสิ้นงาน") ทางเดียว
+  pointToStepFiles(document.querySelector("#attachment-form"), document.querySelector("#finish-files"), "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
