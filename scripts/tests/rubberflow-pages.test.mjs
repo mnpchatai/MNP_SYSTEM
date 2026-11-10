@@ -119,7 +119,12 @@ test("a mixing lot that finishes resting within five minutes re-renders the page
   const env = load();
   env.store.setUser("U01");
   const timers = [];
-  env.context.setTimeout = (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length; };
+  env.context.setTimeout = (fn, ms) => {
+    const timer = { ms, cleared: false };
+    timer.fn = () => { timer.cleared = true; fn(); }; // a timer that fired is no longer live, like a real one
+    timers.push(timer);
+    return timers.length;
+  };
   env.context.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; };
   env.context.document.querySelector = (selector) => (selector === "dialog[open]" ? null : env.root);
   const live = () => timers.filter((timer) => !timer.cleared);
@@ -136,8 +141,11 @@ test("a mixing lot that finishes resting within five minutes re-renders the page
   const before = env.log.renders;
   live()[0].fn();
   assert.equal(env.log.renders, before + 1, "the timer re-renders the page");
+  assert.equal(live().length, 0, "the fired timer is spent");
   resting.readyAt = Date.now() + 2000;
   await env.render("p=mixing");
+  assert.equal(live().length, 1, "the next lot close to ready gets a new timer");
+  assert.ok(live()[0].ms >= 2000 && live()[0].ms <= 2400, `the new timer fires just after its readyAt (${live()[0].ms} ms)`);
   env.context.document.querySelector = () => env.root; // a dialog is open
   live()[0].fn();
   assert.equal(env.log.renders, before + 1, "not while a dialog is open (the minute tick tries again)");
