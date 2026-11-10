@@ -115,6 +115,34 @@ test("every page renders for every persona without undefined/NaN, with the sideb
   assert.equal(env.log.hash, "#/rubberflow");
 });
 
+test("a mixing lot that finishes resting within five minutes re-renders the page when it is ready, so the Send button shows without waiting for the minute tick (after skipping the rest the server's readyAt can be a few seconds ahead of this clock); a longer rest waits for the tick", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const timers = [];
+  env.context.setTimeout = (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length; };
+  env.context.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; };
+  env.context.document.querySelector = (selector) => (selector === "dialog[open]" ? null : env.root);
+  const live = () => timers.filter((timer) => !timer.cleared);
+  const resting = env.store.data().lots.find((lot) => lot.stage === "mixing" && lot.readyAt > Date.now());
+  assert.ok(resting.readyAt - Date.now() > 5 * 60000, "the seed batch still rests for hours");
+  await env.render("p=mixing");
+  assert.equal(live().length, 0, "a long rest is left to the minute tick");
+  resting.readyAt = Date.now() + 3000;
+  await env.render("p=mixing");
+  assert.equal(live().length, 1, "one timer for the next lot that becomes ready");
+  assert.ok(live()[0].ms >= 3000 && live()[0].ms <= 3400, `fires just after readyAt (${live()[0].ms} ms)`);
+  await env.render("p=mixing");
+  assert.equal(live().length, 1, "rendering again replaces the timer instead of adding one");
+  const before = env.log.renders;
+  live()[0].fn();
+  assert.equal(env.log.renders, before + 1, "the timer re-renders the page");
+  resting.readyAt = Date.now() + 2000;
+  await env.render("p=mixing");
+  env.context.document.querySelector = () => env.root; // a dialog is open
+  live()[0].fn();
+  assert.equal(env.log.renders, before + 1, "not while a dialog is open (the minute tick tries again)");
+});
+
 test("the dashboard, stations and quality pages show the prototype's facts from the seed", async () => {
   const env = load();
   env.store.setUser("U01");

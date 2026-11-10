@@ -565,6 +565,7 @@
     bindPage(root, ctx);
     ui.labelTables(root);
     bind?.(root, ctx);
+    scheduleReadyRefresh();
     // ระหว่างแก้ฟอร์มมีข้อมูลใหม่ของผู้อื่นค้าง (store ไม่ได้รวมให้): ฟอร์มจบแล้ว รวมตอนนี้ (ยังเปิด dialog อยู่ = ค้างต่อ)
     if (store.hasNewer()) store.catchUp();
     return undefined;
@@ -579,14 +580,32 @@
       if (node.tagName === "SELECT") return node.selectedIndex !== Math.max(0, [...node.options].findIndex((option) => option.defaultSelected)); // ไม่มี selected = ตัวแรก
       return node.value !== node.defaultValue;
     });
-  window.setInterval(() => {
-    if (document.hidden || !location.hash.startsWith(`#/${PATH}`) || !state.employee?.isSandbox) return;
-    if (document.querySelector("dialog[open]")) return;
+  const idleForRefresh = () => {
+    if (document.hidden || !location.hash.startsWith(`#/${PATH}`) || !state.employee?.isSandbox) return false;
+    if (document.querySelector("dialog[open]")) return false;
     const active = document.activeElement;
-    if (active && ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName)) return;
-    if (hasDraft()) return;
-    renderRoute();
-  }, 60000);
+    if (active && ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName)) return false;
+    return !hasDraft();
+  };
+  window.setInterval(() => { if (idleForRefresh()) renderRoute(); }, 60000);
+
+  // ล็อตผสมที่จะบ่มครบภายใน 5 นาที: วาดหน้าใหม่ตอนครบเลย ไม่รอรอบนาที ปุ่ม "ส่งต่อ" จึงขึ้นตรงเวลา
+  // จำเป็นหลัง "ข้ามเวลาบ่ม" ในโหมดฐานข้อมูล: readyAt ประทับด้วยเวลาเซิร์ฟเวอร์ ถ้านาฬิกาเครื่องช้ากว่าไม่กี่วินาที หน้าที่วาดหลังบันทึกยังเห็นว่าบ่มอยู่
+  // (ปุ่ม "ข้ามเวลาบ่ม" กลับมาแทน "ส่งต่อ") · ตอนครบไม่ว่าง (dialog เปิด กำลังพิมพ์ ฟอร์มค้าง) = รอรอบนาทีเหมือนเดิม
+  const READY_SOON_MS = 5 * 60000;
+  let readyTimer = null;
+  function scheduleReadyRefresh() {
+    if (readyTimer !== null) window.clearTimeout?.(readyTimer);
+    readyTimer = null;
+    if (typeof window.setTimeout !== "function" || store.status() !== "ready") return;
+    const now = Date.now();
+    const next = Math.min(...store.data().lots.filter((lot) => lot.stage === "mixing" && lot.readyAt > now).map((lot) => lot.readyAt));
+    if (!Number.isFinite(next) || next - now > READY_SOON_MS) return;
+    readyTimer = window.setTimeout(() => {
+      readyTimer = null;
+      if (idleForRefresh()) renderRoute();
+    }, next - now + 250);
+  }
 
   const modules = (window.MNP_REQUEST_MODULES ??= {});
   modules.RUBBERFLOW = {
