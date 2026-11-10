@@ -35,7 +35,24 @@ test("photo buttons carry the camera icon", () => {
 test("urgency is said once on the MT detail page", () => {
   // หัวใบแสดง "ด่วน" เมื่อ priority เป็น high/urgent การ์ดความเร่งด่วนจึงขึ้นเฉพาะใบที่ไม่ได้ติดป้าย
   assert.match(app, /const priorityIsFlagged = \["high", "urgent"\]\.includes\(request\.priority\);/);
-  assert.match(mt, /\.\.\.\(\["high", "urgent"\]\.includes\(request\.priority\) \? \[\] : \[requestFact\("ความเร่งด่วน"/);
+  // "ปกติ" ไม่ใช่ข้อมูล: การ์ดความเร่งด่วนขึ้นเฉพาะใบด่วนที่หัวใบยังไม่ได้ติดป้าย และความสำคัญทั่วไปไม่แสดง "ปกติ"
+  assert.match(mt, /\.\.\.\(request\.is_urgent && !\["high", "urgent"\]\.includes\(request\.priority\) \? \[requestFact\("ความเร่งด่วน", "ด่วน"/);
+  assert.match(app, /priorityIsFlagged \|\| !request\.priority \|\| request\.priority === "normal" \? "" : requestFact\("ความสำคัญ"/);
+  // กำหนดเสร็จมีการ์ดของตัวเองตอนรอเริ่มงาน/กำลังซ่อม จึงไม่มีช่องข้อมูลซ้ำ
+  assert.match(mt, /request\.work_expected_date && !\(canRecordProgress && \["assigned", "in_progress"\]\.includes\(request\.status\)\) \? \[requestFact\("กำหนดเสร็จ"/);
+});
+
+test("waiting badges are amber with the clock, one name per role and field, back links name their destination", () => {
+  assert.match(css, /\.badge\.pending_verify, \.badge\.assigned, \.badge\.loss-pending-flag \{ color: #fff; background: var\(--warning-strong\); \}/);
+  assert.match(css, /\.badge:is\(\.pending_approval, \.pending_assign, \.pending_verify, \.assigned, \.loss-pending-flag\) \{ --badge-glyph:/);
+  assert.doesNotMatch(css, /\.badge\.assigned \{|\.badge:is\(\.approved, \.in_progress, \.assigned\)/);
+  const ncr = readFileSync(new URL("../../modules/module-ncr.js", import.meta.url), "utf8");
+  assert.doesNotMatch(ncr, /ผู้จัดการฝ่ายโรงงาน/);
+  assert.doesNotMatch(mt, /requestFact\("แนวทางการซ่อม"/);
+  assert.match(mt, /requestFact\("ความคิดเห็นของช่างผู้ตรวจสอบ"/);
+  for (const text of ["‹ ย้อนกลับ<", "‹ กลับรายการคำร้อง", "‹ กลับหน้า MT", "‹ กลับหน้า NCR"]) assert.ok(!app.includes(text) && !readFileSync(new URL("../../modules/module-mt-dashboard.js", import.meta.url), "utf8").includes(text) && !readFileSync(new URL("../../modules/module-ncr-dashboard.js", import.meta.url), "utf8").includes(text), text);
+  assert.match(app, /if \(\(actionsHtml\.match\(\/<\(a\|button\)\\b\/g\) \?\? \[\]\)\.length === 1\) return/, "a one-item menu is shown as its button");
+  assert.match(app, /window\.addEventListener\("hashchange", closeOnNavigate, \{ once: true \}\);/, "the help sheet closes on back/forward");
 });
 
 test("the request number in the detail header never breaks mid-number", () => {

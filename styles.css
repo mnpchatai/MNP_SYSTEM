@@ -569,8 +569,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .request-no.locked { color: var(--quiet); cursor: default; }
 .badge { padding: 4px 8px; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); background: var(--shell); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
 .badge:is(.pending_approval, .more_info, .pending_assign, .pending_verify, .approved, .in_progress, .assigned, .completed, .acknowledged, .rejected, .cancelled, .urgent-flag, .loss-pending-flag)::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
-.badge.pending_approval, .badge.more_info, .badge.pending_assign, .badge.pending_verify { color: #fff; background: var(--warning-strong); }
-.badge.approved, .badge.in_progress, .badge.assigned { color: #fff; background: var(--primary-strong); }
+.badge.pending_approval, .badge.more_info, .badge.pending_assign, .badge.pending_verify, .badge.assigned, .badge.loss-pending-flag { color: #fff; background: var(--warning-strong); }
+.badge.approved, .badge.in_progress { color: #fff; background: var(--primary-strong); }
 .badge.completed, .badge.acknowledged { color: #fff; background: var(--success-strong); }
 .badge.rejected, .badge.cancelled { color: #fff; background: var(--danger-strong); }
 .priority-high, .priority-urgent { color: var(--danger); font-weight: 700; }
@@ -591,7 +591,6 @@ tbody tr:last-child td { border-bottom: 0; }
 .board-note { margin-bottom: 12px; padding: 9px 11px; color: var(--muted); background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--line)); border-radius: var(--radius-md); }
 .scope-switch { margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 7px; }
 .badge.urgent-flag { color: #fff; background: var(--danger-strong); }
-.badge.loss-pending-flag { color: #fff; background: var(--primary-strong); }
 .status-board td { vertical-align: top; }
 
 /* แถบ "ไปถึงไหนแล้ว" — จุดหนึ่งจุดคือหนึ่งขั้นของ workflow เรียงซ้ายไปขวา
@@ -1635,6 +1634,20 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-head-row .nd-cancel { flex: none; }
 .nd [data-card] { scroll-margin-top: 80px; }
 .nd-head p, .nd-sub p { margin: 2px 0 0; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; }
+/* วิธีนับของแต่ละการ์ดพับไว้ เปิดอ่านได้เมื่อสงสัย */
+.nd-about { margin-top: 2px; }
+.nd-about > summary { width: fit-content; min-height: 32px; display: inline-flex; align-items: center; color: var(--mod-link, var(--primary)); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
+.nd-about > p { margin: 2px 0 6px; }
+/* การ์ดตัวเลข: ไม่มีการ์ดเดียวตกแถว (ห้าใบ = 5 | 3+2 | 2+2+1 เต็มแถว · สี่ใบ = 4 | 2+2) */
+@media (min-width: 1200px) { .nd-tiles.five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (min-width: 761px) and (max-width: 1199px) { .nd-tiles.five { grid-template-columns: repeat(6, minmax(0, 1fr)); } .nd-tiles.five > * { grid-column: span 2; } .nd-tiles.five > :nth-child(n + 4) { grid-column: span 3; } }
+@media (max-width: 760px) { .nd-tiles.five { grid-template-columns: repeat(2, minmax(0, 1fr)); } .nd-tiles.five > :last-child { grid-column: 1 / -1; } }
+.nd-tiles:not(.five) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 1100px) { .nd-tiles:not(.five) { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* จอสัมผัส: ปุ่มกรอง ปุ่มในแถว และหัวพับของแดชบอร์ดสูงอย่างน้อย 44 px */
+@media (pointer: coarse), (max-width: 760px) {
+  .nd-pill, .nd-more summary, .nd-rowbtn, .nd-about > summary { min-height: 44px; }
+}
 .nd-sub h3 { margin: 0; font-size: var(--text-body); }
 .nd-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
 .nd-hint { margin: 0; color: var(--muted); font-size: var(--text-meta); }
@@ -2487,9 +2500,9 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 :is(.badge:is(.pending_approval, .more_info, .pending_assign, .pending_verify, .approved, .in_progress, .assigned, .completed, .acknowledged, .rejected, .cancelled, .urgent-flag, .loss-pending-flag), .rf-badge:is(.is-good, .is-warn, .is-bad, .is-info, .is-accent)) { padding: 3px 10px 3px 3px; border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .26); }
 :is(.badge:is(.pending_approval, .more_info, .pending_assign, .pending_verify, .approved, .in_progress, .assigned, .completed, .acknowledged, .rejected, .cancelled, .urgent-flag, .loss-pending-flag), .rf-badge:is(.is-good, .is-warn, .is-bad, .is-info, .is-accent))::before { content: ""; width: 18px; height: 18px; flex: none; border-radius: 50%; background: #fff; -webkit-mask: var(--badge-glyph) center / 100% 100% no-repeat; mask: var(--badge-glyph) center / 100% 100% no-repeat; }
 :root[data-theme="dark"] :is(.badge:is(.pending_approval, .more_info, .pending_assign, .pending_verify, .approved, .in_progress, .assigned, .completed, .acknowledged, .rejected, .cancelled, .urgent-flag, .loss-pending-flag), .rf-badge:is(.is-good, .is-warn, .is-bad, .is-info, .is-accent)) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), inset 0 0 0 1px rgba(255, 255, 255, .14); }
-.badge:is(.pending_approval, .pending_assign, .pending_verify, .loss-pending-flag) { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M10 6.9V10l2.2 1.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
+.badge:is(.pending_approval, .pending_assign, .pending_verify, .assigned, .loss-pending-flag) { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M10 6.9V10l2.2 1.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.more_info { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M7.7 7.9a2.4 2.4 0 1 1 3.3 2.2c-.6.3-1 .8-1 1.5v.3' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'/%3E%3Ccircle cx='10' cy='14.4' r='1.2'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
-.badge:is(.approved, .in_progress, .assigned), .rf-badge:is(.is-info, .is-accent) { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M10 4.4a5.6 5.6 0 0 1 0 11.2z'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
+.badge:is(.approved, .in_progress), .rf-badge:is(.is-info, .is-accent) { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M10 4.4a5.6 5.6 0 0 1 0 11.2z'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge:is(.completed, .acknowledged), .rf-badge.is-good { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M6 10.3l2.8 2.8 5.3-5.9' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.rejected, .rf-badge.is-bad { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M7 7l6 6M13 7l-6 6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.cancelled { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M6.1 13.9l7.8-7.8' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }

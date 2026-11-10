@@ -408,7 +408,7 @@
             <legend class="form-step-title">ที่ไหน และเป็นอะไร</legend>
             <div class="field full">${docNumberBoxHtml("repair-doc-number")}</div>
             <div class="field full" data-field="department_id">
-              <span class="field-label" id="repair-department-label">แผนก <span class="field-required">(จำเป็น)</span></span>
+              <span class="field-label" id="repair-department-label">แผนกที่แจ้ง <span class="field-required">(จำเป็น)</span></span>
               <input type="hidden" id="repair-department" name="department_id">
               <div class="repair-department-grid" id="repair-department-picker" role="group" aria-labelledby="repair-department-label" data-invalid-target>${departments.map((item, index) => `<button type="button" class="repair-department-card" data-dept="${escapeHtml(item.id)}" data-dept-code="${escapeHtml(item.sourceCode)}" aria-pressed="false"${index === 0 ? " data-focus" : ""}><span class="repair-department-check">${uiIcon("check")}</span><strong>${escapeHtml(item.displayCode)}</strong><span>${escapeHtml(item.name)}</span></button>`).join("")}</div>
             </div>
@@ -860,13 +860,13 @@
           }),
           ...(showRequester ? [requestFact("ผู้แจ้ง", requesterName, { icon: "user", tone: "cyan" })] : []),
           // ใบด่วนมีป้าย "ด่วน" ในบรรทัดหัวใบแล้ว (เงื่อนไขเดียวกับหน้ารายละเอียดทั่วไป) ไม่บอกซ้ำในการ์ด
-          ...(["high", "urgent"].includes(request.priority) ? [] : [requestFact("ความเร่งด่วน", request.is_urgent ? "ด่วน" : "ปกติ", { icon: "flag", tone: request.is_urgent ? "danger" : "success" })]),
+          ...(request.is_urgent && !["high", "urgent"].includes(request.priority) ? [requestFact("ความเร่งด่วน", "ด่วน", { icon: "flag", tone: "danger" })] : []),
           ...(request.needed_date ? [requestFact("วันที่ต้องการใช้งาน", formatDate(request.needed_date), { icon: "calendar", tone: "violet" })] : []),
           ...(request.assigned_at ? [requestFact("มอบหมายเมื่อ", `${formatDate(request.assigned_at, true)} โดย ${personName(directory, request.assigned_by)}`, { icon: "clock", tone: "cyan", wide: true })] : []),
-          ...(request.work_expected_date ? [requestFact("กำหนดเสร็จ", formatDate(request.work_expected_date), { icon: "calendar", tone: "warning" })] : []),
+          ...(request.work_expected_date && !(canRecordProgress && ["assigned", "in_progress"].includes(request.status)) ? [requestFact("กำหนดเสร็จ", formatDate(request.work_expected_date), { icon: "calendar", tone: "warning" })] : []),
           ...(request.work_started_date ? [requestFact("วันที่เริ่มงาน", formatDate(request.work_started_date), { icon: "calendar", tone: "primary" })] : []),
           ...(request.execution_plan ? [requestFact("การดำเนินงาน", executionPlanLabels[request.execution_plan] ?? request.execution_plan, { icon: "clipboard", tone: "success" })] : []),
-          ...(request.inspector_opinion ? [requestFact("แนวทางการซ่อม", inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion, { icon: "wrench", tone: "cyan" })] : []),
+          ...(request.inspector_opinion ? [requestFact("ความคิดเห็นของช่างผู้ตรวจสอบ", inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion, { icon: "wrench", tone: "cyan" })] : []),
           ...(request.cause_analysis ? [requestFact("วิเคราะห์สาเหตุ", request.cause_analysis, { icon: "search", tone: "warning", wide: true })] : []),
           ...(request.parts_used ? [requestFact("อะไหล่ที่ใช้", request.parts_used, { icon: "box", tone: "slate", wide: true })] : []),
         ],
@@ -881,7 +881,7 @@
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
         ${canAssign && request.status !== "pending_assign" ? assignSection : ""}
-        ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
+        ${canVerify ? `<section class="card"><h2>ตรวจรับผลการซ่อม</h2><p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">✓ ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">✕ ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
 `,
       };
     },
@@ -901,6 +901,7 @@
       }
       clearRepairFieldErrorOnEdit(assignForm);
       clearRepairFieldErrorOnEdit(document.querySelector("#finish-form"));
+      clearRepairFieldErrorOnEdit(document.querySelector("#verify-note")?.closest("section"));
       assignForm?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
@@ -1106,7 +1107,7 @@
       document.querySelectorAll(".verify-button").forEach((button) => button.addEventListener("click", async () => {
         const result = button.dataset.result;
         const note = document.querySelector("#verify-note")?.value.trim() ?? "";
-        if (result === "fail" && note.length < 3) return showToast("กรุณาระบุสาเหตุที่ไม่ผ่านการตรวจรับ", "error");
+        if (result === "fail" && note.length < 3) return showRepairFieldErrors(button.closest("section"), [{ name: "verify_note", message: "ระบุสาเหตุที่ไม่ผ่านการตรวจรับอย่างน้อย 3 ตัวอักษร" }]);
         let files;
         try { files = readExtraFiles(document.querySelector("#verify-files")); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         document.querySelectorAll(".verify-button").forEach((node) => { node.disabled = true; });

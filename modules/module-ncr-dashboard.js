@@ -335,7 +335,7 @@
       const item = items.find((entry) => entry.key === key);
       return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
     };
-    return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>Pareto ประเภทข้อบกพร่อง แตะแท่งเพื่อดูตัวเลข</p></div>
+    return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย</p></div>
       <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>${warn}
       ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", resolve, valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
       <div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
@@ -413,6 +413,10 @@
     <p>จำนวนใบนับเต็มใบเสมอ ใบที่มีหลายแผนกหรือหลายสาเหตุนับในทุกกลุ่ม จึงห้ามบวกจำนวนข้ามกลุ่ม ส่วนบาทแบ่งตามสัดส่วนแผนก</p></div></details>`;
 
   let lastFilters = null;
+  // คำอธิบายวิธีนับใต้หัวการ์ดพับไว้ใน "วิธีนับ" (การ์ดเริ่มด้วยชื่อและตัวเลข ไม่ใช่ย่อหน้า)
+  const foldCardNotes = (html) => html.replace(/<div class="nd-head"><h2>([\s\S]*?)<\/h2><p( class="[^"]*")?>([\s\S]*?)<\/p>/g,
+    (match, title, cls = "", note) => `<div class="nd-head"><h2>${title}</h2><details class="nd-about"><summary>วิธีนับ</summary><p${cls}>${note}</p></details>`);
+
   function pageBody() {
     const { rows, today, loadedAt } = cache;
     const filters = readFilters(lastParams, rows, today);
@@ -420,7 +424,7 @@
     const list = model.select(rows, filters);
     const sums = model.summarize(list, filters);
     return `<div class="page-heading request-module-header" data-module="ncr"><div><div class="eyebrow">QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
-        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">‹ กลับหน้า NCR</a></div></div>
+        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       <div class="nd" data-module="ncr">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
@@ -437,7 +441,7 @@
         <section class="card nd-card" data-card="scrap">${scrapHtml(list)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list)}</section>
         ${definitionsHtml}
-        <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>
+        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>
       </div>`;
   }
 
@@ -447,7 +451,7 @@
     const focusKey = document.activeElement?.dataset?.sel ?? (document.activeElement?.hasAttribute?.("data-more") ? "__more" : null);
     const keepY = restoreScrollY ?? window.scrollY;
     restoreScrollY = null;
-    root.innerHTML = pageBody();
+    root.innerHTML = foldCardNotes(pageBody());
     bindPage(root);
     placeDrill(root);
     // วาดใหม่ทั้งก้อน: คืนตำแหน่งเลื่อนเดิมเสมอ หน้าจะได้ไม่กระโดด (ก่อน focus เพราะ focus บังคับ layout)
