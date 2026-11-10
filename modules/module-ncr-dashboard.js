@@ -328,7 +328,7 @@
     }).join("")}</div>`;
   }
 
-  function paretoHtml(list, filters, sums) {
+  function paretoHtml(list, filters) {
     const items = model.pareto(list, filters, filters.sort);
     const byNet = filters.sort === "net";
     const resolve = (key) => {
@@ -426,7 +426,7 @@
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
         <section class="card nd-card" data-card="act">${actHtml(list, today)}</section>
         <section class="card nd-card" data-card="trend">${trendHtml(rows, filters, today)}</section>
-        <section class="card nd-card" data-card="pareto">${paretoHtml(list, filters, sums)}</section>
+        <section class="card nd-card" data-card="pareto">${paretoHtml(list, filters)}</section>
         <section class="card nd-card" data-card="losstype">${lossTypeHtml(list, filters, sums)}</section>
         <section class="card nd-card" data-card="dept">${deptHtml(list, filters)}</section>
         <div class="nd-two">

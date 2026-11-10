@@ -4112,10 +4112,16 @@ function clipText(text, max) {
 // (ผู้ใช้เลือก 2026-11-10: ใช้แบบอนุมัติ · คำที่ลงประวัติไม่เปลี่ยน RPC เดิม)
 // area = กล่องปุ่มของการ์ด ปุ่มเดิมกลับมาเมื่อยกเลิก เลิกทำ หรือส่งไม่สำเร็จ · consequence = ผลที่เกิดหลังส่ง · echo = ข้อความที่ผู้ใช้พิมพ์ (ทวนระหว่างนับ)
 // send() เรียก RPC จริง คืน true เมื่อสำเร็จ (หน้าถูกวาดใหม่) false เมื่อไม่สำเร็จ · ย้ายหน้าหรือสลับแอประหว่างนับ = ตั้งใจส่ง ส่งทันที
-function confirmStepAction(area, { label, requestNo = "", consequence = "", tone = "success", echo = "", send }) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- เรียกจาก modules/module-mt.js (global ของ classic script)
+function confirmStepAction(area, { label, requestNo = "", consequence = "", tone = "success", echo = "", lock = [], trigger = null, send }) {
   const rules = window.MNP_REQUEST_DECISION;
   const original = [...area.childNodes];
   const tapGuard = rules.createTapGuard();
+  // หน้าที่เริ่มการกระทำ: ส่งเสร็จหลังผู้ใช้ย้ายหน้าแล้ว ห้ามวาดใบเดิมทับหน้าใหม่ (send ได้ stillHere ไว้ตัดสิน)
+  const hash = location.hash;
+  const stillHere = () => location.hash === hash && area.isConnected;
+  // ช่องที่ผู้ใช้กรอก (หมายเหตุ ไฟล์) ล็อกไว้ระหว่างยืนยันและนับ สิ่งที่ส่งจึงตรงกับที่เห็นตอนกดยืนยัน
+  const locked = lock.filter(Boolean).map((node) => [node, node.disabled]);
   const line = document.createElement("p");
   line.className = "decision-line";
   line.setAttribute("role", "status");
@@ -4123,29 +4129,38 @@ function confirmStepAction(area, { label, requestNo = "", consequence = "", tone
   buttons.className = "approval-actions step-confirm";
   const primary = tone === "danger" ? "danger-solid is-primary" : "success is-primary";
   const button = (text, className, action) => `<button type="button" class="btn ${className}" data-step-action="${action}">${escapeHtml(text)}</button>`;
+  let sending = false;
   const sendOnLeave = () => countdown.flush();
   const sendWhenHidden = () => { if (document.visibilityState === "hidden") countdown.flush(); };
-  const warnBeforeUnload = (event) => { if (!countdown.pending) return; event.preventDefault(); event.returnValue = ""; };
-  const detach = () => {
+  // ปิดแท็บระหว่างนับหรือระหว่างกำลังส่ง: เตือนให้อยู่ต่อ (คำขอที่เริ่มตอนหน้ากำลังปิดอาจถูกยกเลิก)
+  const warnBeforeUnload = (event) => { if (!countdown.pending && !sending) return; event.preventDefault(); event.returnValue = ""; };
+  const stopSendOnLeave = () => {
     window.removeEventListener("hashchange", sendOnLeave);
     document.removeEventListener("visibilitychange", sendWhenHidden);
+  };
+  const detach = () => {
+    stopSendOnLeave();
     window.removeEventListener("beforeunload", warnBeforeUnload);
   };
   const restore = () => {
     detach();
+    locked.forEach(([node, wasDisabled]) => { node.disabled = wasDisabled; });
     area.replaceChildren(...original);
-    area.querySelector("button:not([disabled])")?.focus();
+    (trigger?.isConnected ? trigger : area.querySelector("button:not([disabled])"))?.focus();
   };
   const countdown = rules.createCountdown({
     seconds: DECISION_UNDO_SECONDS,
     onTick: (left) => { const undo = buttons.querySelector('[data-step-action="undo"]'); if (undo) undo.textContent = `เลิกทำ (${left})`; },
     onSend: async () => {
-      detach();
+      stopSendOnLeave();
+      sending = true;
       line.textContent = `กำลังส่ง: ${label} ${requestNo}…`;
       buttons.innerHTML = '<button type="button" class="btn is-primary" disabled aria-busy="true">กำลังส่ง…</button>';
       let ok = false;
-      try { ok = await send(); } catch { ok = false; }
+      try { ok = await send({ stillHere }); } catch { ok = false; }
+      sending = false;
       if (!ok && area.isConnected) restore();
+      else detach();
     },
   });
   activeDecisionCountdown = countdown;
@@ -4167,19 +4182,22 @@ function confirmStepAction(area, { label, requestNo = "", consequence = "", tone
   };
   buttons.addEventListener("click", (event) => {
     const action = event.target.closest("[data-step-action]")?.dataset.stepAction;
-    if (!action || tapGuard.blocks(event)) return;
+    if (!action) return;
+    // ราวกันแตะซ้ำเฉพาะปุ่มที่ไปข้างหน้า (ยืนยัน ส่งเลย) เหมือนแถบตัดสินใจ · ยกเลิกและเลิกทำต้องตอบทันทีเสมอ
+    if ((action === "confirm" || action === "send-now") && tapGuard.blocks(event)) return;
     if (action === "cancel") restore();
     else if (action === "confirm") pending();
     else if (action === "undo") { countdown.undo(); restore(); }
     else if (action === "send-now") countdown.flush();
   });
-  // Esc = ยกเลิก / เลิกทำ เหมือนแถบตัดสินใจ
+  // Esc = ยกเลิก / เลิกทำ เหมือนแถบตัดสินใจ (ระหว่างกำลังส่งไม่ทำอะไร)
   buttons.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
+    if (event.key !== "Escape" || sending) return;
     event.preventDefault();
     if (countdown.pending) countdown.undo();
     restore();
   });
+  locked.forEach(([node]) => { node.disabled = true; });
   area.replaceChildren(line, buttons);
   compose();
 }

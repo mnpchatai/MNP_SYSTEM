@@ -1677,6 +1677,8 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-nowrap { white-space: nowrap; }
 .nd-rowlink tbody tr { position: relative; }
 .nd-rowlink a.request-no::after { content: ""; position: absolute; inset: 0; }
+/* ป้ายที่มี title (เช่น เลยวันเริ่มงาน) อยู่เหนือชั้นลิงก์ของแถว ชี้แล้วยังอ่านคำอธิบายได้ */
+.nd-rowlink .nd-pill[title] { position: relative; z-index: 1; }
 @media (hover: hover) { .nd-rowlink tbody tr:hover { background: var(--mod-tint, var(--shell)); } }
 .nd-empty { margin: 0; padding: 8px 0; color: var(--muted); font-size: var(--text-ui); }
 .nd-warn { padding: 8px 10px; color: var(--muted); background: var(--shell); border-radius: var(--radius-md); font-size: var(--text-meta); }

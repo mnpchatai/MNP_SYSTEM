@@ -153,6 +153,7 @@ function stepConfirmHarness() {
   const context = {
     escapeHtml, DECISION_UNDO_SECONDS: 5, activeDecisionCountdown: null, Intl, Array, String,
     document: { createElement: element, addEventListener: () => {}, removeEventListener: () => {}, visibilityState: "visible" },
+    location: { hash: "#/request?id=r1" },
   };
   context.window = {
     addEventListener: (type, fn) => { (windowListeners[type] ??= []).push(fn); },
@@ -163,11 +164,14 @@ function stepConfirmHarness() {
   vm.runInContext(read("modules/request-decision.js"), context);
   vm.runInContext(`${functionSource("clipText")}\n${functionSource("confirmStepAction")}\nthis.confirmStepAction = confirmStepAction;`, context);
   const area = element();
-  const original = { tag: "button", focus() {} };
+  const focused = [];
+  const original = { tag: "button", isConnected: true, focus() { focused.push("original"); } };
   area.children = [original];
   const line = () => area.children[0];
   const buttonsOf = () => area.children[1];
-  const click = (action) => buttonsOf().listeners.click[0]({ target: { closest: () => buttonsOf().buttons.find((button) => button.action === action) }, detail: 0 });
+  // detail 0 = แป้นพิมพ์/โปรแกรม (ราวกันแตะซ้ำไม่กัน) · detail 1 = นิ้ว/เมาส์
+  const click = (action, detail = 0) => buttonsOf().listeners.click[0]({ target: { closest: () => buttonsOf().buttons.find((button) => button.action === action) }, detail });
+  Object.assign(context, { focused });
   return { context, area, original, line, buttonsOf, click, advance, windowListeners };
 }
 
@@ -243,4 +247,61 @@ test("dashboard touch targets reach 44px and whole table rows open the request",
   assert.match(css, /\.nd :is\(\.nd-rowbtn, \.nd-about > summary\) \{ min-width: 44px; \}/);
   assert.match(css, /\.nd-rowlink a\.request-no::after \{ content: ""; position: absolute; inset: 0; \}/);
   assert.match(css, /\.nd-about > p \{ max-width: 70ch;/);
+});
+
+test("after leaving the page during the countdown the step still sends, but tells the caller not to redraw the old request", async () => {
+  const h = stepConfirmHarness();
+  const seen = [];
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async ({ stillHere }) => { seen.push(stillHere()); return true; } });
+  h.click("confirm");
+  h.context.location.hash = "#/dashboard";
+  h.windowListeners.hashchange.at(-1)();
+  await h.advance(0);
+  assert.deepEqual(seen, [false], "send runs, and stillHere() is false so the caller skips renderRequestDetail");
+  const mt = read("modules/module-mt.js");
+  assert.equal(mt.match(/if \(stillHere\(\)\) await renderRequestDetail\(params\);/g)?.length, 3, "all three MT steps only redraw when still on the page");
+});
+
+test("the tap guard only holds back the forward buttons; cancel and undo answer at once", async () => {
+  const h = stepConfirmHarness();
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => true });
+  h.click("confirm", 1);
+  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["cancel", "confirm"], "a second tap right after the first does not confirm");
+  h.click("cancel", 1);
+  assert.deepEqual(h.area.children, [h.original], "cancel works immediately");
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => true });
+  h.click("confirm");
+  h.click("undo", 1);
+  assert.deepEqual(h.area.children, [h.original], "undo works immediately");
+});
+
+test("typed inputs are locked while confirming, released on cancel, and focus returns to the button that was pressed", () => {
+  const h = stepConfirmHarness();
+  const note = { disabled: false };
+  const files = { disabled: false };
+  const pressed = { tag: "button", isConnected: true, focus() { h.context.focused.push("pressed"); } };
+  h.context.confirmStepAction(h.area, { label: "ไม่ผ่านการตรวจรับ", requestNo: "MT-1", tone: "danger", lock: [note, files, null], trigger: pressed, send: async () => true });
+  assert.deepEqual([note.disabled, files.disabled], [true, true], "what is sent is what was on screen when confirming");
+  h.click("cancel");
+  assert.deepEqual([note.disabled, files.disabled], [false, false]);
+  assert.equal(h.context.focused.at(-1), "pressed");
+});
+
+test("closing the tab is warned against while the step is counting down or still sending", async () => {
+  const h = stepConfirmHarness();
+  let finish;
+  h.context.confirmStepAction(h.area, { label: "เสร็จสิ้นงาน", requestNo: "MT-1", send: () => new Promise((resolve) => { finish = resolve; }) });
+  h.click("confirm");
+  const warn = h.windowListeners.beforeunload.at(-1);
+  const event = () => ({ prevented: false, preventDefault() { this.prevented = true; } });
+  const counting = event();
+  warn(counting);
+  assert.equal(counting.prevented, true);
+  await h.advance(5000);
+  const sending = event();
+  warn(sending);
+  assert.equal(sending.prevented, true, "still sending");
+  finish(true);
+  await h.advance(0);
+  assert.equal((h.windowListeners.beforeunload ?? []).includes(warn), false, "the warning is removed once sent");
 });
