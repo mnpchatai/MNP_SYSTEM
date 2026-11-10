@@ -13,7 +13,9 @@
 --   - ผู้ตอบส่ง cost_status = 'confirmed' หรือแก้รายการที่ยืนยันแล้ว/รายการเดิม (legacy) → LOSS_ESTIMATE_ONLY
 --   - คนที่ไม่ใช่ทั้งผู้กรอกต้นทุนและผู้ตอบ → NOT_AUTHORIZED เหมือนเดิม
 --   - ช่วงสถานะใบเหมือนผู้กรอกต้นทุน (ใบที่ยกเลิกล็อก NCR_LOCKED ใบที่ปิดแล้วลงย้อนหลังได้) และการใส่ยอดยังรีเซ็ต
---     "ประเมินครบแล้ว" (cost_reviewed = false) เหมือนเดิม
+--     "ประเมินครบแล้ว" (cost_reviewed = false) เหมือนเดิม ผู้ใช้ยืนยัน 2026-11-10 ว่าผู้ตอบใส่ได้ทั้งตอนเปิดและหลังปิดใบ
+--   - ผู้ตอบแก้ได้ทุกรายการของใบนั้นที่ยังเป็นประมาณการ รวมรายการที่ผู้กรอกต้นทุนหรือแผนกอื่นใส่ (ผู้ใช้ยืนยัน 2026-11-10)
+--     ช่อง recorded_by ยังเป็นผู้ใส่ครั้งแรก ส่วนการแก้ทุกครั้งอยู่ใน ncr_losses_audit และประวัติ 'loss_record' ของใบ
 --
 -- เปลี่ยนเฉพาะ public.app_ncr_record_loss (ทางเข้าที่ Pilot Web ใช้ใส่และแก้ยอด) ไม่แก้ private.can_edit_ncr_losses
 -- ทางเข้าอื่นที่ใช้ฟังก์ชันนั้น (void / review / save_outcome / API รุ่นเก่า app_ncr_add_loss, app_ncr_add_losses) จึงยังปฏิเสธผู้ตอบ
@@ -23,7 +25,10 @@
 --   md5(prosrc) = e9078a63055ccc15e599edb9c182379b ตรวจ 2026-11-10) ต่างจากนั้นเฉพาะ v_full และสามบรรทัดตรวจสิทธิ์ที่มีคอมเมนต์กำกับ
 -- ลำดับ deploy: ขึ้น migration นี้ก่อนเผยแพร่ Pilot Web รุ่นที่แสดงฟอร์มยอดประมาณการให้ผู้ตอบ
 --   (Pilot Web รุ่นเก่าไม่แสดงฟอร์มให้ผู้ตอบ จึงทำงานกับฐานข้อมูลรุ่นนี้ได้)
--- Rollback: create or replace กลับเป็นนิยามใน 20261015060000 (รายการประมาณการที่ผู้ตอบใส่ไว้แล้วยังอยู่ ผู้กรอกต้นทุนยืนยันหรือยกเลิกได้ตามปกติ)
+-- ก่อน apply: md5(prosrc) ของ public.app_ncr_record_loss บนฐานข้อมูลจริงต้องเป็นค่าด้านบน หลัง apply ตรวจนิยามและ grants แล้วจึง merge
+-- Rollback: create or replace กลับเป็นนิยามที่ใช้งานก่อน migration นี้ = นิยามใน 20261015060000 พร้อมบรรทัด
+--   perform private.lab_only_block(); ต่อจาก begin (หรือ create or replace จาก 20261015060000 แล้วรัน select private.lab_only_guard_functions();)
+--   รายการประมาณการที่ผู้ตอบใส่ไว้แล้วยังอยู่ ผู้กรอกต้นทุนยืนยันหรือยกเลิกได้ตามปกติ
 
 create or replace function public.app_ncr_record_loss(p_ncr_id uuid, p_entry jsonb, p_loss_id uuid default null)
 returns uuid language plpgsql security definer set search_path = '' as $$

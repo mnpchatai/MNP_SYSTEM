@@ -4,10 +4,12 @@
 --      ยกเลิกรายการและติ๊ก "ประเมินครบแล้ว" → NOT_AUTHORIZED (ยังเป็นของผู้กรอกต้นทุน)
 --   3) แผนกที่ไม่รับผิดชอบยังถูกปฏิเสธ · เมื่อ ผจก.โรงงานระบุผู้ตอบของแผนกแล้ว เฉพาะคนนั้นใส่ได้
 --   4) ผู้กรอกต้นทุนยืนยันยอดที่ผู้ตอบใส่ได้ตามเดิม
+--   5) ผู้ตอบแก้ยอดประมาณการที่คนอื่นใส่ได้ และใส่ได้หลังปิดใบ (ผู้ใช้ยืนยัน 2026-11-10)
+--   (การแก้รายการเดิม legacy ใช้เงื่อนไขเดียวกับรายการที่ยืนยันแล้ว: cost_status <> 'estimated' ทดสอบผ่านกรณียืนยันแล้ว)
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(12);
+select plan(15);
 
 insert into auth.users (id, email, raw_user_meta_data) values
   ('79700000-0000-0000-0000-000000000001', 'ncrre-rb-staff@mnp.local', '{}'::jsonb),
@@ -104,13 +106,33 @@ select lives_ok(
   'the named responder records an estimate'
 );
 
--- 6) ข้อมูลที่บันทึก (อ่านตารางหลัง reset role) ---------------------------------------------------
+-- 6) ผู้ตอบแก้ยอดประมาณการที่คนอื่นใส่ได้ และใส่ได้หลังปิดใบ (ผู้ใช้ยืนยัน 2026-11-10) ---------------------
+select set_config('request.jwt.claims', '{"sub":"79700000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select lives_ok(
+  $$ select set_config('test.fm_loss', public.app_ncr_record_loss(current_setting('test.ncr')::uuid, current_setting('test.estimate')::jsonb)::text, true) $$,
+  'the factory manager records an estimate'
+);
+select set_config('request.jwt.claims', '{"sub":"79700000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select lives_ok(
+  $$ select public.app_ncr_record_loss(current_setting('test.ncr')::uuid, current_setting('test.estimate')::jsonb || '{"quantity":5}'::jsonb, current_setting('test.fm_loss')::uuid) $$,
+  'the named responder revises an estimate the factory manager entered'
+);
+reset role;
+update public.ncr_reports set status = 'closed', closed_at = now() where id = current_setting('test.ncr')::uuid;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"79700000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select lives_ok(
+  $$ select public.app_ncr_record_loss(current_setting('test.ncr')::uuid, current_setting('test.estimate')::jsonb) $$,
+  'the named responder still records an estimate after the NCR is closed'
+);
+
+-- 7) ข้อมูลที่บันทึก (อ่านตารางหลัง reset role) ---------------------------------------------------
 reset role;
 select results_eq(
-  $$ select recorded_by::text, cost_status from public.ncr_losses
-     where ncr_id = current_setting('test.ncr')::uuid and voided_at is null order by cost_status $$,
-  $$ values ('79700000-0000-0000-0000-000000000101'::text, 'confirmed'::text), ('79700000-0000-0000-0000-000000000102'::text, 'estimated'::text) $$,
-  'the responder''s line is confirmed by the factory manager and the named responder''s line stays an estimate'
+  $$ select cost_status, count(*)::int from public.ncr_losses
+     where ncr_id = current_setting('test.ncr')::uuid and voided_at is null group by cost_status order by cost_status $$,
+  $$ values ('confirmed'::text, 1), ('estimated'::text, 3) $$,
+  'one line confirmed by the factory manager; three estimates (named responder, factory manager revised by the responder, after closing)'
 );
 
 select * from finish();
