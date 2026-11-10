@@ -107,7 +107,11 @@ test("the request detail page attaches files with the same Thai picker as the fo
   const helper = app.match(/function extraFilesFieldHtml\([\s\S]*?\n\}/)?.[0] ?? "";
   assert.match(helper, /<label class="btn secondary file-pick" for="\$\{id\}">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="\$\{id\}" name="extra_files" type="file"/);
   const mt = read("modules/module-mt.js");
-  assert.match(mt, /<label class="btn secondary file-pick" for="finish-parts-file">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="finish-parts-file" type="file" multiple>/, "the parts receipt picker on the finish form");
+  // ฟอร์มจบงานมีช่องไฟล์เดียว (รูปใบเสร็จ + ไฟล์เพิ่มเติม) ที่ส่งพร้อมปุ่มบันทึกข้อมูล/เสร็จสิ้นงาน ไม่มีช่องใบเสร็จแยกที่ต้องกดแนบเอง
+  assert.doesNotMatch(mt, /finish-parts-file/);
+  // ฟอร์ม novalidate ไม่ถูกเบราว์เซอร์กันส่งระหว่างเตรียมรูป ตัวอ่านไฟล์กลางจึงกันเอง
+  assert.match(app, /if \(input\.validity\?\.customError\) throw new Error\(input\.validationMessage\);/, "actions wait until a picked photo is ready");
+  assert.match(mt, /\$\{extraFilesFieldHtml\("finish-files", "รูปใบเสร็จ \/ ไฟล์เพิ่มเติม \(ถ้ามี\)"\)\}/);
 });
 
 function minHeight(selector) {

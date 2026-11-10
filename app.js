@@ -641,8 +641,12 @@ function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่ม�
   return `<div class="field">${hint ? `<span class="field-label">${label}</span>` : ""}<label class="btn secondary file-pick" for="${id}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
 }
 
+// ระหว่างเตรียมรูป (เช่น แปลง HEIC) attachment-image.js ตั้ง setCustomValidity ไว้ที่ช่อง ฟอร์มที่ novalidate ไม่ถูกเบราว์เซอร์กันส่ง
+// จึงตรวจที่นี่: ทุกการกระทำที่อ่านไฟล์ผ่านตัวนี้รอจนรูปพร้อมก่อน ไม่ส่งไฟล์ต้นฉบับที่ยังแปลงไม่เสร็จ
 function readExtraFiles(input) {
-  return input ? optionalAttachments(input.files) : [];
+  if (!input) return [];
+  if (input.validity?.customError) throw new Error(input.validationMessage);
+  return optionalAttachments(input.files);
 }
 
 // คืนข้อความเตือนเมื่อมีไฟล์ที่แนบไม่สำเร็จ ("" = ไม่มีไฟล์หรือแนบครบ)
