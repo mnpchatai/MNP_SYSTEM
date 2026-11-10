@@ -51,7 +51,7 @@ select public.app_ncr_dispose(current_setting('test.cost_ncr2')::uuid,array['sor
 select public.app_sandbox_enter(current_setting('test.cost_pkmgr')::uuid);
 select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'NOT_AUTHORIZED','test mode: a manager of a department that is not responsible is denied');
 select public.app_sandbox_enter(current_setting('test.cost_rbmgr')::uuid);
-select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'NOT_AUTHORIZED','test mode: the responsible department manager can no longer record a cost');
+select throws_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),(current_setting('test.entry')::jsonb || '{"cost_status":"confirmed","evidence_ref":"RB-01"}'::jsonb)::text),'LOSS_ESTIMATE_ONLY','test mode: the responsible department manager enters estimates only (20261115010000)');
 select public.app_sandbox_enter(current_setting('test.cost_qamgr')::uuid);
 select lives_ok(format('select public.app_ncr_record_loss(%L::uuid,%L::jsonb)',current_setting('test.cost_ncr2'),current_setting('test.entry')),'test mode: the QA manager can record a cost on any report');
 select public.app_sandbox_enter(current_setting('test.cost_gm')::uuid);

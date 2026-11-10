@@ -39,6 +39,7 @@
     NCR_NOT_FOUND: "ไม่พบ NCR นี้ หรือคุณไม่มีสิทธิ์เปิดดู",
     NCR_RETURN_NOTE_REQUIRED: "กรุณาระบุเหตุผลที่ส่งกลับให้แผนกแก้ไขคำตอบ",
     NCR_LOCKED: "NCR นี้ปิดหรือยกเลิกแล้ว แก้ไขความสูญเสียไม่ได้",
+    LOSS_ESTIMATE_ONLY: "ผู้ตอบใส่และแก้ได้เฉพาะยอดประมาณการ ยืนยันยอดโดย ผจก.โรงงาน ผช.ผจก.โรงงาน ผจก.ทั่วไป หรือ ผจก./ผช.ผจก.แผนก QA",
     INVALID_PRODUCT_NAME: "กรุณากรอกชื่อสินค้า/วัตถุดิบ 2–300 ตัวอักษร",
     INVALID_NCR_DESCRIPTION: "รายละเอียดปัญหาต้องมี 10–5,000 ตัวอักษร",
     INVALID_QUANTITY: "จำนวนไม่ถูกต้อง: จำนวนทั้งหมดและที่พบปัญหาต้องมากกว่า 0 และจำนวนสุ่ม/พบปัญหา/ส่งคืนต้องไม่เกินจำนวนทั้งหมด",
@@ -711,7 +712,14 @@
     return rows ? `<section class="card ncr-card"><h2>ผู้ตอบของแผนก</h2>${rows}</section>` : "";
   }
 
-  const lossSectionHtml = (ncr, losses, directory, editable) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, editable, todayBangkok(), formatBaht, formatQty);
+  // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้กรอกต้นทุน (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
+  // ใส่และแก้ได้เฉพาะยอดประมาณการ (ตรงกับ app_ncr_record_loss, migration 20261115010000) · false = ดูอย่างเดียว
+  function lossAccess(ncr, employee) {
+    if (ncr.status === "cancelled") return false;
+    if (canEditLosses(ncr, employee)) return "full";
+    return canRespond(ncr, employee) ? "estimate" : false;
+  }
+  const lossSectionHtml = (ncr, losses, directory, access) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, access, todayBangkok(), formatBaht, formatQty);
 
   const HISTORY_LABELS = {
     issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
@@ -857,7 +865,7 @@
         ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
-    const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, canEditLosses(ncr, employee));
+    const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, lossAccess(ncr, employee));
     const historySection = `
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
