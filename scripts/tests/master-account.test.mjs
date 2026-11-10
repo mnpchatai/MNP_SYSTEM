@@ -48,6 +48,7 @@ test("the reporter skips repeats, noise and anything over its quota", () => {
   clock += errorLog.DEDUPE_MS;
   assert.ok(report(new Error("one")), "it is sent again after a minute");
   assert.equal(report("Script error."), null);
+  assert.equal(report(new Error("กำลังเตรียมรูป กรุณารอสักครู่")), null, "waiting for a picked photo to be prepared is not an error");
   assert.equal(report(""), null);
   for (let index = 0; index < 40; index += 1) report(new Error(`error ${index}`));
   assert.equal(sent.length, errorLog.MAX_PER_WINDOW, "at most MAX_PER_WINDOW reports in ten minutes");

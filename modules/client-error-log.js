@@ -15,7 +15,8 @@
   const DEDUPE_MS = 60 * 1000;
   const KINDS = new Set(["js", "promise", "rpc", "network", "ui"]);
   // ข้อความที่ไม่มีประโยชน์ต่อการหาสาเหตุ หรือเกิดจากผู้ใช้ยกเลิกเอง
-  const IGNORED = [/^Script error\.?$/i, /ResizeObserver loop/i, /AbortError/i, /The user aborted a request/i];
+  // "กำลังเตรียมรูป" = ผู้ใช้กดส่งระหว่างที่รูปที่เลือกยังแปลงไม่เสร็จ (readExtraFiles ใน app.js) เป็นการรอตามปกติ ไม่ใช่ข้อผิดพลาด
+  const IGNORED = [/^Script error\.?$/i, /ResizeObserver loop/i, /AbortError/i, /The user aborted a request/i, /^กำลังเตรียมรูป/];
   const NETWORK = /Failed to fetch|NetworkError|Load failed|network request failed|ERR_INTERNET_DISCONNECTED/i;
 
   function scrub(value, max) {
