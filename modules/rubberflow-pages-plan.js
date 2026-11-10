@@ -292,10 +292,10 @@
     const order = data.orders.find((row) => row.id === id);
     if (!order) return null;
     const linked = Boolean(order.sourceJobId);
-    // โหมดฐานข้อมูล: ยอดผลิตมาจากล็อตตกแต่งที่นับแล้ว ฐานข้อมูลคำนวณเอง ไม่ต้องกรอก · ยอดที่รับมอบรายงานเข้างาน BOM ทีละใบส่งมอบไปแล้ว ปิดใบไม่ส่งยอดซ้ำ
+    // โหมดฐานข้อมูล: ยอดผลิตมาจากล็อตตกแต่งที่นับแล้ว ฐานข้อมูลคำนวณเอง ไม่ต้องกรอก · ยอดดีของล็อตตกแต่งที่ผ่าน QC รายงานเข้างาน BOM ทีละล็อตไปแล้ว ปิดใบไม่ส่งยอดซ้ำ
     const info = `<p class="muted small">${esc(`${order.id} · ${rules.orderLabel(order)} · เป้าหมาย ${rules.fmtNum(order.targetQty)} ${order.uom}${order.producedQty < order.targetQty ? " · ยังไม่ครบจำนวน ปิดใบก่อนครบได้" : ""}`)}</p>`;
     const body = ctx.store.isRemote()
-      ? `${info}${linked ? `<p class="small muted">${esc(`ยอดที่ SR รับมอบถูกรายงานเข้างาน ${order.sourceJobId} ของ BOM ทีละใบส่งมอบแล้ว การปิดใบไม่ส่งยอดซ้ำ`)}</p>` : ""}`
+      ? `${info}${linked ? `<p class="small muted">${esc(`ยอดดีของล็อตตกแต่งที่ผ่าน QC ถูกรายงานเข้างาน ${order.sourceJobId} ของ BOM ทีละล็อตแล้ว การปิดใบไม่ส่งยอดซ้ำ`)}</p>` : ""}`
       : `${info}
       ${ui.field(`ปริมาณผลิตจริง (${order.uom})${linked ? " *" : ""}`, ui.input("producedQty", { type: "number", step: "any", min: linked ? 0.0001 : 0, value: order.producedQty ? String(order.producedQty) : "", required: linked }), { hint: linked ? esc(`ส่งยอดนี้กลับไปที่งาน ${order.sourceJobId} ของ BOM เป็นยอดผลิตเสร็จ`) : "" })}`;
     const html = ui.dialog("closeOrder", `ปิดงาน ${order.id}`, `<form data-rf-form="setOrderStatus" data-rf-args="${esc(JSON.stringify({ id: order.id, status: "completed" }))}" data-rf-success="ปิดงาน ${esc(order.id)} แล้ว" id="rf-close-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-close-order">ปิดงาน</button>` });

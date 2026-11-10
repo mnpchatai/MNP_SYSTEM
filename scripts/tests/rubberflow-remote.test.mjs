@@ -6,7 +6,7 @@ import { createMockSupabase } from "../pilot-harness-mock.mjs";
 // โหมดฐานข้อมูลของ RubberFlow (ข้อมูลทั้ง 11 ชุด: วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ใบส่งมอบ กล่อง QC NCR แม่พิมพ์ อยู่ใน Supabase ผ่าน app_rf_master / app_rf_save):
 // store แบบ remote ใน modules/rubberflow-store.js ทดสอบกับ Supabase จำลองของ harness (scripts/pilot-harness-mock.mjs ที่บังคับสัญญา RPC เดียวกับฐานข้อมูลจริง)
 // กฎสิทธิ์ที่ยืนยัน: ผู้วางแผนหรือสมาชิก RB แก้วัตถุดิบ/ร่างสูตร/เปิด WO ได้ · หัวหน้า RB อนุมัติสูตรและปล่อยผลิต · สูตรที่อนุมัติแล้วแก้ไม่ได้ (ออก revision ใหม่) ·
-// WO ที่มาจากงาน RB ของ BOM ผูกงานในคำสั่งเดียวกัน และเมื่อ SR รับมอบใบส่งมอบ ยอดที่รับถูกรายงานเข้างานทีละใบส่งมอบ
+// WO ที่มาจากงาน RB ของ BOM ผูกงานในคำสั่งเดียวกัน และเมื่อล็อตตกแต่งผ่าน QC และนับเข้า WO ยอดดีของล็อตถูกรายงานเข้างานทีละล็อต (รับมอบใบส่งมอบไม่เขียน BOM)
 const require = createRequire(import.meta.url);
 const rules = require("../../modules/rubberflow-rules.js");
 globalThis.MNP_RUBBERFLOW_RULES = rules;
@@ -1115,44 +1115,73 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
   assert.equal(closeOrder.ok, true);
 });
 
-test("an SR receive reports the received quantity to the linked BOM job, one report per transfer, kilograms converted to the job's unit", async () => {
+// สายผลิตจากใบส่งมอบแรก (ผสม -> ฉีด) ไปถึงใบส่งมอบเข้าตกแต่ง คืนเลขใบส่งมอบเข้าตกแต่ง · afterReceive เรียกหลังรับมอบแต่ละใบ
+async function toFinishing(s, rig, tr1, afterReceive) {
+  const ex = (await go(s, rig, "persona-rb", "recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 100, dieId: "DIE-1" })).result;
+  const tr2 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: ex, qty: 100 })).result;
+  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr2, qtyReceived: 100 });
+  await afterReceive();
+  const cu = (await go(s, rig, "persona-rb", "recordCuring", { transferId: tr2, useQty: 100, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 100 })).result;
+  const tr3 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: cu, qty: 100 })).result;
+  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr3, qtyReceived: 100 });
+  await afterReceive();
+  return tr3;
+}
+
+test("the linked BOM job is fed only when pieces pass the last station (a finishing lot that passes QC and is counted to the work order), never by a received transfer", async () => {
   const s = await session({ withBom: true });
   const rig = await s.make();
-  const { order } = await prepare(s, rig, { linked: true });
+  const { order } = await prepare(s, rig, { linked: true, target: 100 });
   const bom = () => s.call("app_bom_master");
   const job = async () => (await bom()).jobs.find((row) => row.id === "JOB-RB2");
-  // เส้นยาง 100 ชิ้น = 50 kg (0.5 kg ต่อชิ้น): ผูกแล้วงานเริ่ม แต่ยังไม่มียอด
+  const audit = async () => (await s.call("app_bom_audit", {})).map((row) => row.action);
+  // เส้นยาง 100 ชิ้น: ผูกแล้วงานเริ่ม แต่ยังไม่มียอด
   assert.deepEqual([(await job()).externalRef.woId, (await job()).qtyDone, (await job()).reports.length], [order, 0, 0]);
   const { mx } = await mixAndSend(s, rig, order);
   await go(s, rig, "persona-rb", "endRest", { lotId: mx });
   const tr1 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
   const before = (await bom()).version;
-  assert.equal((await job()).qtyDone, 0, "sending reports nothing; the receive does");
+  const untouched = async (label) => {
+    const now = await job();
+    assert.deepEqual([now.qtyDone, now.reports.length, (await bom()).version], [0, 0, before], label);
+  };
+  await untouched("sending reports nothing");
+  // รับมอบทุกสถานี (ผสม kg / ฉีด / อบ) ไม่เขียน BOM
   await go(s, rig, "persona-sr", "receiveTransfer", { id: tr1, qtyReceived: 47 });
-  let after = await job();
-  assert.deepEqual([after.qtyDone, after.status, after.reports.length], [94, "in_progress", 1], "47 kg ÷ 0.5 kg per piece = 94 pieces");
-  assert.deepEqual([after.reports[0].good, after.reports[0].reject, after.reports[0].note, after.reports[0].by], [94, 0, `รับโอน ${tr1} จาก WO ${order}`, "ศิริ รับมอบ"]);
+  await untouched("receiving the mixing transfer (kilograms of compound) feeds nothing");
+  const tr3 = await toFinishing(s, rig, tr1, () => untouched("receiving the extrusion and the curing transfers feeds nothing either"));
+  assert.ok(!(await audit()).includes("rubberflow:receiveTransfer"), "no receipt writes a BOM history row");
+
+  // ล็อตตกแต่งที่ผ่าน QC ตอนบันทึก: ป้อนยอด good ของล็อตครั้งเดียว (หน่วยของ WO)
+  const fin = (payload) => go(s, rig, "persona-rb", "recordFinishing", { transferId: tr3, scrapQty: 0, perBox: 40, grade: "A", shift: "D", ...payload });
+  const fn1 = (await fin({ useQty: 30, passedQty: 30, qcResult: "pass" })).result;
+  let now = await job();
+  assert.deepEqual([now.qtyDone, now.status, now.reports.length], [30, "in_progress", 1], "30 pieces passed finishing");
+  assert.deepEqual([now.reports[0].good, now.reports[0].reject, now.reports[0].note], [30, 0, `ผ่านตกแต่ง ${fn1} จาก WO ${order}`]);
+  assert.ok(now.reports[0].by && now.reports[0].by !== "ศิริ รับมอบ", "the report is authored by the person who recorded the lot, not by the receiver");
   assert.equal((await bom()).version, before + 1, "the BOM counter moved once so BOM clients catch it up");
   assert.deepEqual((await s.call("app_bom_master_since", { p_version: before })).changes.jobs.upsert.map((row) => row.id), ["JOB-RB2"]);
-  assert.ok((await s.call("app_bom_audit", {})).some((row) => row.action === "rubberflow:receiveTransfer"));
+  assert.ok((await audit()).includes("rubberflow:recordFinishing"));
   assert.equal((await bom()).orders.find((row) => row.id === "PI-R").status, "in_progress");
 
-  // ใบส่งมอบถัดไป (หน่วยของ WO) บวกตรงๆ ไม่แปลง · ครบแผนแล้วงาน done · ใบถัดไปไม่ถูกบวกอีก
-  const ex = (await go(s, rig, "persona-rb", "recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 100, dieId: "DIE-1" })).result;
-  const tr2 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: ex, qty: 100 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr2, qtyReceived: 100 });
-  after = await job();
-  assert.deepEqual([after.qtyDone, after.status, after.reports.length, typeof after.doneAt], [194, "done", 2, "number"]);
-  const cu = (await go(s, rig, "persona-rb", "recordCuring", { transferId: tr2, useQty: 100, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 100 })).result;
-  const tr3 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: cu, qty: 100 })).result;
-  const frozen = (await bom()).version;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr3, qtyReceived: 100 });
-  assert.deepEqual([(await job()).reports.length, (await bom()).version], [2, frozen], "a done job takes no more reports");
-  // ปิด WO ไม่ส่งยอดซ้ำ
-  await go(s, rig, "persona-rbh", "setOrderStatus", { id: order, status: "completed" });
-  assert.equal((await job()).reports.length, 2);
+  // ล็อตตกแต่งที่ hold: ไม่ป้อนจน QA ตัดสินเป็น pass แล้วป้อนครั้งเดียว ผลตรวจถัดไปไม่ป้อนซ้ำ
+  const fn2 = (await fin({ useQty: 20, passedQty: 20, qcResult: "hold" })).result;
+  assert.deepEqual([(await job()).qtyDone, (await bom()).version], [30, before + 1], "a lot on hold feeds nothing");
+  await go(s, rig, "persona-qa", "addQcRecord", { lotId: fn2, values: { hardness: 66 }, result: "pass" });
+  now = await job();
+  assert.deepEqual([now.qtyDone, now.status, now.reports.length], [50, "in_progress", 2], "the QA pass feeds the lot");
+  assert.deepEqual([now.reports[1].good, now.reports[1].note, now.reports[1].by], [20, `ผ่านตกแต่ง ${fn2} จาก WO ${order}`, "ธนา ตรวจสอบ"]);
+  assert.equal((await bom()).version, before + 2);
+  assert.ok((await audit()).includes("rubberflow:addQcRecord"));
+  await go(s, rig, "persona-qa", "addQcRecord", { lotId: fn2, values: { hardness: 67 }, result: "pass" });
+  assert.deepEqual([(await job()).qtyDone, (await job()).reports.length, (await bom()).version], [50, 2, before + 2], "a second QC record of a counted lot does not feed again");
 
-  // ใบสั่งผลิตที่ไม่ผูกงาน BOM: SR รับแล้ว BOM ไม่ขยับ
+  // ครบแผนแล้วงาน done
+  await fin({ useQty: 50, passedQty: 50, qcResult: "pass" });
+  now = await job();
+  assert.deepEqual([now.qtyDone, now.status, now.reports.length, typeof now.doneAt], [100, "done", 3, "number"]);
+
+  // ใบสั่งผลิตที่ไม่ผูกงาน BOM: รับมอบและตกแต่งผ่านแล้ว BOM ไม่ขยับ
   const plain = await session({ withBom: true });
   const plainRig = await plain.make();
   const prepared = await prepare(plain, plainRig);
@@ -1161,7 +1190,9 @@ test("an SR receive reports the received quantity to the linked BOM job, one rep
   const trPlain = (await go(plain, plainRig, "persona-rb", "createTransfer", { lotId: sent.mx, qty: 48 })).result;
   const bomVersion = (await plain.call("app_bom_master")).version;
   await go(plain, plainRig, "persona-sr", "receiveTransfer", { id: trPlain, qtyReceived: 48 });
-  assert.equal((await plain.call("app_bom_master")).version, bomVersion);
+  const trPlain3 = await toFinishing(plain, plainRig, trPlain, async () => assert.equal((await plain.call("app_bom_master")).version, bomVersion));
+  await go(plain, plainRig, "persona-rb", "recordFinishing", { transferId: trPlain3, useQty: 50, passedQty: 50, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" });
+  assert.equal((await plain.call("app_bom_master")).version, bomVersion, "a work order without a linked job leaves BOM alone");
 });
 
 test("shop-floor records collide per record: stale is reported before permissions, a duplicate document number catches up, and a held form keeps other users' data out", async () => {

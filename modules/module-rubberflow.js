@@ -71,8 +71,8 @@
     persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(),
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
-  // bomJobOfTransfer / showBomFeedback: ขั้น "รับมอบ → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfTransfer: (id) => bomJobOfTransfer(id), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options) };
+  // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
+  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -194,7 +194,7 @@
       return true;
     }
     // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
-    const sentJob = name === "receiveTransfer" ? bomJobOfTransfer(payload?.id) : null; // ก่อนบันทึก: งาน BOM ที่ผูกใบสั่งผลิตของใบส่งมอบ และยอดที่งานทำไว้
+    const sentJob = bomJobOfAction(name, payload); // ก่อนบันทึก: งาน BOM ที่ผูกใบสั่งผลิตของล็อตตกแต่ง และยอดที่งานทำไว้
     result.saving.then((outcome) => {
       if (outcome.ok) {
         report();
@@ -231,15 +231,26 @@
     }
   }
 
-  // ---------- รับมอบ WIP → รายงานเข้างาน BOM ----------
-  // ฐานข้อมูลส่งยอดที่ SR รับ (หน่วยของใบสั่งผลิต) เข้ารายงานของงาน BOM ที่ผูกใบสั่งผลิตนั้นในธุรกรรมเดียวกัน หน้าจอไม่แตะงาน BOM · หลังบันทึกจึงตามทัน BOM แล้วบอกผล
+  // ---------- ชิ้นงานผ่านสถานีสุดท้าย → รายงานเข้างาน BOM ----------
+  // ฐานข้อมูลส่งยอดดีของล็อตตกแต่งที่ QC ผ่านและนับเข้าใบสั่งผลิต (ตอนบันทึกถ้าผ่านเลย หรือตอน QA ตัดสินเป็น pass) เข้ารายงานของงาน BOM ที่ผูกใบสั่งผลิตนั้นในธุรกรรมเดียวกัน
+  // การรับมอบ WIP ระหว่างสถานีไม่แตะงาน BOM · หน้าจอไม่แตะงาน BOM · หลังบันทึกจึงตามทัน BOM แล้วบอกผล
   const bomStore = () => { try { const bom = window.MNP_BOM?.store; return bom?.isRemote?.() ? bom : null; } catch { return null; } };
-  function bomJobOfTransfer(transferId) {
+  function bomJobOfAction(name, payload) {
+    if (name !== "recordFinishing" && name !== "addQcRecord") return null;
     const bom = bomStore();
     if (!bom || bom.status() !== "ready" || !store.isRemote()) return null;
     const data = store.data();
-    const transfer = data.transfers.find((row) => row.id === transferId);
-    const jobId = data.orders.find((row) => row.id === transfer?.orderId)?.sourceJobId;
+    // บันทึกตกแต่ง: เฉพาะผลผ่าน (hold / fail รอ QA) · ผลตรวจ QC: เฉพาะล็อตตกแต่ง (เซิร์ฟเวอร์ป้อนเมื่อ QA ตัดสินเป็น pass ครั้งแรก ที่เหลือยอดไม่เพิ่มจึงไม่แจ้ง)
+    let orderId = null;
+    if (name === "recordFinishing") {
+      if ((payload?.qcResult || "pass") !== "pass") return null;
+      orderId = data.transfers.find((row) => row.id === payload?.transferId)?.orderId;
+    } else {
+      const lot = data.lots.find((row) => row.id === payload?.lotId);
+      if (lot?.stage !== "finishing") return null;
+      orderId = lot.orderId;
+    }
+    const jobId = data.orders.find((row) => row.id === orderId)?.sourceJobId;
     const job = jobId ? bom.data().jobs.find((row) => row.id === jobId) : null;
     return job ? { id: job.id, qtyDone: Number(job.qtyDone) || 0 } : null;
   }
@@ -248,7 +259,7 @@
     if (!bom) return;
     try { await bom.catchUp(); } catch { /* ไม่ได้ตามทัน: BOM จะเห็นยอดเมื่อเปิดหน้า BOM */ }
     const job = bom.data().jobs.find((row) => row.id === before.id);
-    if (job && Number(job.qtyDone) > before.qtyDone) showToast(`งาน BOM ${job.id} รับยอดจากการรับมอบแล้ว: ทำได้ ${job.qtyDone}/${job.qtyPlanned}${job.status === "done" ? " (งานครบแล้ว)" : ""}`);
+    if (job && Number(job.qtyDone) > before.qtyDone) showToast(`งาน BOM ${job.id} รับยอดจากการผ่านตกแต่งแล้ว: ทำได้ ${job.qtyDone}/${job.qtyPlanned}${job.status === "done" ? " (งานครบแล้ว)" : ""}`);
   }
 
   // ---------- สิทธิ์ของปุ่มและฟอร์ม (โหมดฐานข้อมูล) ----------

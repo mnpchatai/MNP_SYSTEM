@@ -170,7 +170,7 @@ select is((select jsonb_agg(j ->> 'status') from jsonb_array_elements(current_se
            where j ->> 'dept' = 'RB' and j -> 'externalRef' <> 'null'::jsonb), '["queued","queued","queued","queued","queued"]'::jsonb,
   'the linked jobs stay queued');
 select is((select o ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26001'), 'released',
-  'and the order stays released (the first received transfer starts it)');
+  'and the order stays released (the first finishing lot that passes starts it)');
 select is((select (j -> 'externalRef') - 'linkedAt' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-A-01'),
   jsonb_build_object('system', 'rubberflow', 'woId', current_setting('test.wp') || '08', 'kg', 210, 'by', current_setting('test.n_sbx_pp_staff'), 'auto', true),
   'the link names the system, the work order, the kilograms, the releaser and marks the link as automatic');
@@ -264,11 +264,11 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' 
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'externalRef' ->> 'auto', 'true', 'and the link keeps its automatic mark');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'externalRef' ->> 'woId', current_setting('test.wp') || '08', 'and its work order');
 
--- ป้อนผลผลิตกลับ: ใบส่งมอบที่ SR รับมอบของ WO ที่เปิดเอง (เรียกตัวป้อนกลับตรง ๆ ด้วยแถวใบส่งมอบเท่าที่ตัวป้อนอ่าน)
+-- ป้อนผลผลิตกลับ: ล็อตตกแต่งที่ผ่าน QC ของ WO ที่เปิดเอง (เรียกตัวป้อนกลับตรง ๆ ด้วยแถวล็อตเท่าที่ตัวป้อนอ่าน)
 reset role;
-select is(private.rf_apply_feedback('ผู้รับมอบ', json_populate_record(null::public.rf_transfers, '{"transfer_no":"TR-AUTO-1","qty_received":40,"uom":"pcs"}'::json),
+select is(private.rf_apply_feedback('ผู้บันทึก', json_populate_record(null::public.rf_lots, '{"lot_no":"FN-AUTO-1","stage":"finishing","good_qty":40,"uom":"pcs"}'::json),
           (select o from public.rf_orders o where o.is_test and o.wo_no = current_setting('test.wp') || '10')), '{"jobs":1,"orders":0}'::jsonb,
-  'a received transfer of an automatic work order is fed back into its job (the PI was already started by the report)');
+  'a passed finishing lot of an automatic work order is fed back into its job (the PI was already started by the report)');
 set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is((select jsonb_build_array(j ->> 'qtyDone', j ->> 'status', j -> 'externalRef' ->> 'woId') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-A-03'),

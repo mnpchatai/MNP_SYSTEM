@@ -155,7 +155,7 @@ bom_department_jobs.qty_done ◀── รายงานผลผลิต ─�
 กติกา:
 - WO หนึ่งใบรับได้หลาย job ที่ใช้คอมปาวด์และขนาดเดียวกัน (รวม PI หลายใบในรอบรีดเดียว) จึงเป็นตาราง `rubberflow_wo_sources` (WO ↔ job, qty จัดสรร) ไม่ใช่ FK เดี่ยว
 - `targetQty` ใน RubberFlow ต้องเป็นหน่วยของชิ้น RB (เส้น/ชิ้น/ม้วน/kg) ไม่ใช่ `yieldPerKg` ของสูตร; เพิ่ม `kgPerUnit` ต่อชิ้น RB จาก `bom_item_rubber` แทน
-- ผลผลิตที่ GR รับมอบ (`receiveTransfer`) คือตัวนับ `qty_done` ของงาน RB ไม่ใช่ตัวเลขที่ RB พิมพ์เอง (ตรงกับหลัก Gatekeeper)
+- ผลผลิตที่ GR รับมอบ (`receiveTransfer`) คือตัวนับ `qty_done` ของงาน RB ไม่ใช่ตัวเลขที่ RB พิมพ์เอง (ตรงกับหลัก Gatekeeper) (แก้ 2026-11-10: ป้อน `qty_done` เฉพาะตอนล็อตตกแต่งที่ QC ผ่านและนับเข้า WO ไม่ใช่ตอนรับมอบใบส่งมอบ ดู README หัวข้อ RubberFlow)
 - ของเสีย/NCR ของ RubberFlow อ้าง `job_id` เพื่อสืบย้อนถึง PI และ FG
 
 ### 4.3 ลำดับการเชื่อม (เพราะ RubberFlow ยังไม่อยู่บนฐานข้อมูล)
