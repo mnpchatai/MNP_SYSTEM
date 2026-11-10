@@ -226,7 +226,7 @@
       return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกิน ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">อีก ${left} วัน</span>`;
     };
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่ปิด เรียงจากเกินกำหนด (ตอบ 5 วัน หรือส่งแนวทางป้องกัน) ก่อน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
-      ${top.length ? `<div class="table-wrap"><table><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(waitingOn(row))}<br><span class="nd-muted">${esc(STATUS_LABELS[row.status] ?? row.status)}</span></td><td class="nd-num">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
+      ${top.length ? `<div class="table-wrap"><table class="nd-act"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(waitingOn(row))}<br><span class="nd-muted">${esc(STATUS_LABELS[row.status] ?? row.status)}</span></td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open" })}">ดูใบค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีใบค้างในช่วงและตัวกรองนี้</p>`}`;
   }
 
@@ -391,8 +391,7 @@
     const units = model.scrapByUnit(list);
     return `<div class="nd-head"><h2>ของเสียทิ้งจริง แยกตามหน่วย</h2><p>ทิ้งจริงนับจากรายการความสูญเสียประเภทของเสีย/ทิ้งที่ยืนยันยอดแล้ว หน่วยต่างกันไม่รวมกัน ไม่คำนวณอัตราของเสียทั้งโรงงานจากข้อมูล NCR</p></div>
       ${units.length ? `<div class="table-wrap"><table><thead><tr><th>หน่วย</th><th class="nd-num">NCR</th><th class="nd-num">พบปัญหา</th><th class="nd-num">ทิ้งจริง</th></tr></thead><tbody>
-      ${units.map((unit) => `<tr><td>${esc(unit.unit)}</td><td class="nd-num">${fmtNumber(unit.count)}</td><td class="nd-num">${formatQty(unit.defect)}</td><td class="nd-num">${unit.scrapped ? formatQty(unit.scrapped) : "—"}</td></tr>`).join("")}</tbody></table></div>
-      <p class="nd-hint">ยอดทิ้งที่ยังเป็นประมาณการจะนับเมื่อยืนยันยอดแล้ว</p>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}`;
+      ${units.map((unit) => `<tr><td>${esc(unit.unit)}</td><td class="nd-num">${fmtNumber(unit.count)}</td><td class="nd-num">${formatQty(unit.defect)}</td><td class="nd-num">${unit.scrapped ? formatQty(unit.scrapped) : "—"}</td></tr>`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}`;
   }
 
   function drillHtml(list) {

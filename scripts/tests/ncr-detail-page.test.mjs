@@ -544,3 +544,27 @@ test("the home page lists an open NCR for whoever the detail page gives that ste
   rows.length = 0;
   assert.deepEqual(asPlain(await home.load(employee("emp-fm", "dept-rb", "RB", "factory_manager"))), { tasks: [], mine: [] }, "no open NCR: nothing to add");
 });
+
+// ฟอร์มตอบ NCR: บอกเหลือ/เลยกี่วัน (วันกำหนดตอบอยู่ในส่วนที่ 2 และป้ายหัวใบแล้ว) กับวันส่งแนวทางป้องกัน
+test("the respond form says how many days are left or late, and when prevention is due", async () => {
+  const open = { status: "awaiting_response", ncr_responsibilities: [responsibility("dept-rb", "RB")] };
+  const late = await renderFor(RB_STAFF_1, { ...open, response_due: "2026-01-05" });
+  assert.match(late, /<p class="ncr-due-note">เลยกำหนดตอบ <strong>\d+ วัน<\/strong> · ส่งแนวทางป้องกันไม่ให้เกิดซ้ำภายใน <strong>2026-01-12<\/strong><\/p>/);
+  assert.doesNotMatch(late, /ตอบภายใน 5 วัน/, "no rule text that reads as if the NCR were on time");
+  const early = await renderFor(RB_STAFF_1, { ...open, response_due: "2099-01-05" });
+  assert.match(early, /<p class="ncr-due-note">เหลือเวลาตอบ <strong>\d+ วัน<\/strong> · ส่งแนวทางป้องกันไม่ให้เกิดซ้ำภายใน <strong>2099-01-12<\/strong><\/p>/);
+});
+
+// ผู้ตอบที่ใส่ได้แค่ประมาณการ (#331) ไม่เห็นคำขอของผู้กรอกต้นทุน · ผู้กรอกต้นทุนยังเห็นครบ
+test("the responder's estimate-only loss form asks nothing that only the cost editors can do", async () => {
+  const open = { status: "awaiting_response", ncr_responsibilities: [responsibility("dept-rb", "RB")] };
+  const responder = await renderFor(RB_STAFF_1, open);
+  assert.match(responder, /ใส่ยอดประมาณการได้หลายรายการ/, "the responder has the estimate-only form");
+  assert.doesNotMatch(responder, /กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย/);
+  assert.match(responder, /หลักฐานอ้างอิง \(ถ้ามี\)/);
+  assert.match(responder, /ผู้กรอกต้นทุนยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ/, "the review status names who still has to act");
+  const editor = await renderFor(FACTORY_MANAGER, open);
+  assert.match(editor, /กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย/);
+  assert.match(editor, /หลักฐานอ้างอิง \(จำเป็นเมื่อยืนยันยอด\)/);
+  assert.match(editor, /<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ<\/p>/);
+});

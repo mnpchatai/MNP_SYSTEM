@@ -67,11 +67,12 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // ?master=1 = ผู้ใช้จำลองเป็นบัญชี master (admin ที่เห็นหน้า #/master) — migration 20261113010000_master_account.sql
   if (master) Object.assign(ME, { role_id: "role-admin", is_master: true });
   const personName = (id) => { const person = employees.find((row) => row.id === id); return person ? `${person.first_name} ${person.last_name}` : null; };
+  // ชื่อเดียวกับ request_types.name_th บนฐานข้อมูลจริง (ตรวจ 2026-11-10) หน้าจอใน harness จึงเห็นชื่อเดียวกับผู้ใช้จริง
   const request_types = [
-    ["t-mt", "MT_REPAIR", "MT", "แจ้งซ่อม", "งานซ่อมเครื่องจักรและอาคาร", true, "dep-mt"],
+    ["t-mt", "MT_REPAIR", "MT", "ใบคำร้อง/แจ้งซ่อม MT", "งานซ่อมเครื่องจักรและอาคาร", true, "dep-mt"],
     ["t-mg", "MANAGEMENT", "MG", "ใบคำร้องถึงฝ่ายบริหาร", "หนังสือภายในถึงผู้บริหาร", false, null],
     ["t-ncr", "NCR_CAR", "NCR", "NCR/CAR", "รายงานสินค้าไม่เป็นไปตามข้อกำหนด", false, "dep-qa"],
-    ["t-it", "IT_REPAIR", "IT", "แจ้งงาน IT", "อุปกรณ์และสิทธิ์ระบบ", false, "dep-it"],
+    ["t-it", "IT_REPAIR", "IT", "ใบแจ้งซ่อม IT", "อุปกรณ์และสิทธิ์ระบบ", false, "dep-it"],
   ].map(([id, code, prefix, name_th, description, uses_repair_workflow, owning_department_id], index) => ({
     id, code, prefix, name_th, description, uses_repair_workflow, owning_department_id, form_schema: null, is_active: true, sort_order: index + 1,
   }));

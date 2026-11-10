@@ -31,7 +31,7 @@
       </dl>
       ${hasRows ? `<details class="ncr-loss-more"><summary>ยอดที่ยังไม่ยืนยัน</summary><dl class="ncr-loss-pending"><div><dt>ประมาณการรอยืนยัน</dt><dd>${formatBaht(summary.estimated)}</dd></div><div><dt>ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl></details>` : ""}</div>` : ""}
       ${!editable && ncr.status !== "cancelled" && (!ncr.outcome?.cost_reviewed || summary.pending) ? `<p class="muted small">ผู้กรอกค่าเสียหายได้: ${EDITORS_TEXT}</p>` : ""}
-      ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : editable ? '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>' : '<p class="muted">ยังไม่มีรายการความสูญเสีย</p>'}
+      ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : full ? '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>' : '<p class="muted">ยังไม่มีรายการความสูญเสีย</p>'}
       ${editable ? `<details class="ncr-loss-add" id="ncr-loss-add"><summary class="btn secondary">เพิ่มรายการความสูญเสีย</summary><form class="ncr-action" data-action="add_loss" id="ncr-loss-form"><div class="ncr-form-message"></div><h3 id="ncr-loss-heading" hidden>${estimateOnly ? "แก้ไขยอดประมาณการ" : "แก้ไขรายการ / ยืนยันยอดเดิม"}</h3><input type="hidden" name="loss_id">
         <div class="form-grid">
           <div class="field"><label for="ncr-loss-kind">รายการ *</label><select class="select" id="ncr-loss-kind" name="entry_kind">${options({ loss: "ค่าเสียหาย", recovery: "เงินชดเชย/เครดิตผู้ขาย/ขายซาก" }, "loss")}</select></div>
@@ -45,7 +45,7 @@
           <div class="field"><label for="ncr-loss-unit">หน่วย *</label><input class="input" id="ncr-loss-unit" name="unit" maxlength="20" value="${escapeHtml(ncr.unit)}" required></div>
           ${numberField("ncr-loss-cost", "unit_cost", "ต้นทุนต่อหน่วย (บาท) *", "", "0.01")}
           <div class="field full"><p class="muted small" id="ncr-loss-hint"></p></div>
-          <div class="field full"><label for="ncr-loss-ref">หลักฐานอ้างอิง (จำเป็นเมื่อยืนยันยอด)</label><input class="input" id="ncr-loss-ref" name="evidence_ref" maxlength="200" placeholder="เลขที่ใบเสร็จ ใบต้นทุน ใบบันทึกเวลา หรือชื่อไฟล์หลักฐานที่แนบใน NCR"></div>
+          <div class="field full"><label for="ncr-loss-ref">หลักฐานอ้างอิง ${estimateOnly ? "(ถ้ามี)" : "(จำเป็นเมื่อยืนยันยอด)"}</label><input class="input" id="ncr-loss-ref" name="evidence_ref" maxlength="200" placeholder="เลขที่ใบเสร็จ ใบต้นทุน ใบบันทึกเวลา หรือชื่อไฟล์หลักฐานที่แนบใน NCR"></div>
           <div class="field full"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
           ${extraFilesField("ncr-loss-files")}
         </div><div class="form-actions"><button class="btn" type="submit">บันทึกรายการ</button><button class="btn secondary" type="button" id="ncr-loss-reset" hidden>ยกเลิกการแก้ไข</button></div></form></details>` : ""}
@@ -61,7 +61,7 @@
     const legacy = o && (Object.keys(LEGACY_OUTCOME).some((key) => Number(o[key]) > 0) || Number(o.downtime_hours) > 0);
     const status = o?.cost_reviewed
       ? `<p><strong>ประเมินครบแล้ว</strong> · ${escapeHtml(personName(directory, o.updated_by))} · ${formatDate(o.updated_at)}</p>`
-      : '<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>';
+      : editable ? '<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>' : '<p class="muted">ผู้กรอกต้นทุนยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>';
     return `<div class="ncr-cost-review"><h3>สรุปการประเมินค่าเสียหาย</h3>${status}
       ${o?.note && !editable ? `<p class="muted small">${escapeHtml(o.note)}</p>` : ""}
       ${legacy ? `<details class="ncr-legacy-outcome"><summary>ผลดำเนินการที่บันทึกไว้เดิม (${o.result_status === "confirmed" ? "ยืนยันแล้ว" : "ร่าง"} · ${formatDate(o.result_date)})</summary>
