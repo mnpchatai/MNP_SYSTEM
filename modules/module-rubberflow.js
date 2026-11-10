@@ -66,8 +66,11 @@
       return data;
     },
   } : null;
+  // โหมดฐานข้อมูล: "ตอนนี้" ตามนาฬิกาเซิร์ฟเวอร์ (modules/server-clock.js จาก header Date ของคำตอบ Supabase) เพราะเวลาในข้อมูล (readyAt, createdAt)
+  // ฐานข้อมูลประทับด้วยนาฬิกาเซิร์ฟเวอร์ ถ้านาฬิกาเครื่องคลาด เช่นช้ากว่า หลัง "ข้ามเวลาบ่ม" หน้าจอจะเห็นว่ายังบ่มอยู่ · โหมดในเครื่องใช้เวลาเครื่อง
+  const clockNow = () => (remote && typeof window.MNP_SERVER_CLOCK?.now === "function" ? window.MNP_SERVER_CLOCK.now() : Date.now());
   const store = storeApi.createStore({
-    storage, seed: () => seed.buildSeed(Date.now()), actions, remote,
+    storage, seed: () => seed.buildSeed(Date.now()), actions, remote, now: clockNow,
     persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(),
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
@@ -443,7 +446,7 @@
   function makeContext(params) {
     const data = store.data();
     const user = store.user();
-    const now = Date.now();
+    const now = clockNow();
     const page = currentPage(params);
     const ctx = {
       data, user, now, params, page,
@@ -590,15 +593,15 @@
   window.setInterval(() => { if (idleForRefresh()) renderRoute(); }, 60000);
 
   // ล็อตผสมที่จะบ่มครบภายใน 5 นาที: วาดหน้าใหม่ตอนครบเลย ไม่รอรอบนาที ปุ่ม "ส่งต่อ" จึงขึ้นตรงเวลา
-  // จำเป็นหลัง "ข้ามเวลาบ่ม" ในโหมดฐานข้อมูล: readyAt ประทับด้วยเวลาเซิร์ฟเวอร์ ถ้านาฬิกาเครื่องช้ากว่าไม่กี่วินาที หน้าที่วาดหลังบันทึกยังเห็นว่าบ่มอยู่
-  // (ปุ่ม "ข้ามเวลาบ่ม" กลับมาแทน "ส่งต่อ") · ตอนครบไม่ว่าง (dialog เปิด กำลังพิมพ์ ฟอร์มค้าง) = รอรอบนาทีเหมือนเดิม
+  // เวลาเทียบตามนาฬิกาเดียวกับหน้า (clockNow: นาฬิกาเซิร์ฟเวอร์ในโหมดฐานข้อมูล) ตัวตั้งเวลานับระยะห่าง จึงไม่ขึ้นกับนาฬิกาเครื่อง
+  // ช่วยกรณีนาฬิกาเซิร์ฟเวอร์ยังไม่มีตัวอย่าง หรือคลาดเหลือไม่กี่ร้อยมิลลิวินาที · ตอนครบไม่ว่าง (dialog เปิด กำลังพิมพ์ ฟอร์มค้าง) = รอรอบนาทีเหมือนเดิม
   const READY_SOON_MS = 5 * 60000;
   let readyTimer = null;
   function scheduleReadyRefresh() {
     if (readyTimer !== null) window.clearTimeout?.(readyTimer);
     readyTimer = null;
     if (typeof window.setTimeout !== "function" || store.status() !== "ready") return;
-    const now = Date.now();
+    const now = clockNow();
     const next = Math.min(...store.data().lots.filter((lot) => lot.stage === "mixing" && lot.readyAt > now).map((lot) => lot.readyAt));
     if (!Number.isFinite(next) || next - now > READY_SOON_MS) return;
     readyTimer = window.setTimeout(() => {

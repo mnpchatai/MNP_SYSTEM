@@ -127,6 +127,12 @@ test("index.html loads the new modules and app.js reports every error the user s
   assert.equal(scripts[1], "modules/client-error-log.js", "the error log loads early, right after the icons");
   assert.ok(scripts.indexOf("modules/master-model.js") < scripts.indexOf("modules/module-master.js"));
   assert.ok(scripts.indexOf("modules/module-master.js") < scripts.indexOf("app.js"));
+  // นาฬิกาเซิร์ฟเวอร์: โหลดก่อน app.js และ Supabase client ส่งทุกคำตอบเข้า wrapper · RubberFlow ใช้เป็น now ของ store และของหน้า
+  assert.ok(scripts.includes("modules/server-clock.js") && scripts.indexOf("modules/server-clock.js") < scripts.indexOf("app.js"), "the server clock loads before app.js");
+  assert.match(read("app.js"), /global: \{ fetch: serverClockFetch \}/, "the Supabase client reads every answer's Date header");
+  const rubberflow = read("modules/module-rubberflow.js");
+  assert.match(rubberflow, /actions, remote, now: clockNow,/, "the RubberFlow store runs on the server clock");
+  assert.match(rubberflow, /const now = clockNow\(\);\r?\n\s*const page = currentPage\(params\);/, "and so does the page context");
   const app = read("app.js");
   assert.match(app, /function friendlyError\(error\) \{\r?\n[^\n]*\r?\n[^\n]*\r?\n\s*window\.MNP_ERROR_LOG\?\.report\(error\);/);
   assert.match(app, /MASTER_PROTECTED: "/);
