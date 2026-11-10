@@ -108,7 +108,7 @@ test("RubberFlow overview: no recorded production shows an empty state, and char
   assert.equal(plan.match(/ui\.card\(!hasProduction \? noProduction : ui\.dualChart\(/g)?.length, 2, "both overview charts wait for recorded production");
 });
 
-// ---- เริ่มงาน เสร็จสิ้นงาน ตรวจรับ: ยืนยัน + เลิกทำ 5 วิ แบบเดียวกับการอนุมัติ (app.js confirmStepAction) ----
+// ---- เริ่มงาน เสร็จสิ้นงาน ตรวจรับ: ยืนยันหรือยกเลิก แล้วส่งทันที ไม่มีนับถอยหลัง (app.js confirmStepAction) ----
 function stepConfirmHarness() {
   const timers = [];
   let clock = 0;
@@ -175,53 +175,34 @@ function stepConfirmHarness() {
   return { context, area, original, line, buttonsOf, click, advance, windowListeners };
 }
 
-test("closing a repair step asks to confirm, then gives 5 seconds to undo, then sends once", async () => {
+test("closing a repair step asks to confirm or cancel, and confirming sends at once with no countdown", async () => {
   const h = stepConfirmHarness();
-  assert.ok(h.context.window.MNP_REQUEST_DECISION, "the shared countdown is loaded");
   const sent = [];
-  const start = () => h.context.confirmStepAction(h.area, { label: "ผ่านการตรวจรับ", requestNo: "MT-2569-0390", consequence: "ปิดงาน", echo: "ไฟติดครบ  ทุกดวง", send: async () => { sent.push(1); return true; } });
+  const start = () => h.context.confirmStepAction(h.area, { label: "ไม่ผ่านการตรวจรับ", requestNo: "MT-2569-0390", consequence: "ส่งกลับให้ช่างซ่อมเพิ่มเติม", tone: "danger", echo: "ไฟยัง  กะพริบ", send: async () => { sent.push(1); return true; } });
   start();
-  assert.equal(h.line().textContent, "ผ่านการตรวจรับ MT-2569-0390 → ปิดงาน", "the confirm line names the request and what happens next");
+  assert.equal(h.line().textContent, "ไม่ผ่านการตรวจรับ MT-2569-0390 → ส่งกลับให้ช่างซ่อมเพิ่มเติม · “ไฟยัง กะพริบ”", "the confirm line names the request, what happens next and the typed note");
   assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["cancel", "confirm"]);
   h.click("cancel");
   assert.deepEqual(h.area.children, [h.original], "cancel puts the original buttons back");
+  assert.equal(sent.length, 0);
 
   start();
   h.click("confirm");
-  assert.equal(h.line().textContent, "กำลังจะผ่านการตรวจรับ MT-2569-0390 · “ไฟติดครบ ทุกดวง”", "the countdown repeats what was typed");
-  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["undo", "send-now"]);
-  await h.advance(3000);
-  h.click("undo");
-  await h.advance(10000);
-  assert.equal(sent.length, 0, "undo inside 5 seconds sends nothing");
-  assert.deepEqual(h.area.children, [h.original]);
-
-  start();
-  h.click("confirm");
-  await h.advance(5000);
-  assert.equal(sent.length, 1, "after 5 seconds it sends by itself");
-});
-
-test("a failed send gives the buttons back, and leaving the page during the countdown sends at once", async () => {
-  const h = stepConfirmHarness();
-  let ok = false;
-  const sent = [];
-  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => { sent.push(1); return ok; } });
-  h.click("confirm");
-  await h.advance(5000);
-  assert.equal(sent.length, 1);
-  assert.deepEqual(h.area.children, [h.original], "the step can be tried again");
-  ok = true;
-  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => { sent.push(2); return ok; } });
-  h.click("confirm");
-  h.windowListeners.hashchange.at(-1)();
   await h.advance(0);
-  assert.deepEqual(sent, [1, 2], "navigating away is taken as meaning to send, like the approval bar");
-  await h.advance(10000);
-  assert.deepEqual(sent, [1, 2], "and it is not sent twice");
+  assert.equal(sent.length, 1, "confirm sends immediately");
+  assert.doesNotMatch(functionSource("confirmStepAction"), /createCountdown|เลิกทำ/, "no undo countdown for these steps (the user's rule)");
 });
 
-test("the MT start, finish and verify steps all go through the confirm-and-undo helper; the verifier sees the repair result first", () => {
+test("a failed send gives the buttons back so the step can be tried again", async () => {
+  const h = stepConfirmHarness();
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => false });
+  h.click("confirm");
+  await h.advance(0);
+  assert.deepEqual(h.area.children, [h.original]);
+});
+
+
+test("the MT start, finish and verify steps all go through the confirm helper; the verifier sees the repair result first", () => {
   const mt = read("modules/module-mt.js");
   assert.equal(mt.match(/confirmStepAction\(/g)?.length, 3);
   for (const label of ['label: "เริ่มงาน"', 'label: "เสร็จสิ้นงาน"', 'label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ"']) assert.ok(mt.includes(label), label);
@@ -249,30 +230,29 @@ test("dashboard touch targets reach 44px and whole table rows open the request",
   assert.match(css, /\.nd-about > p \{ max-width: 70ch;/);
 });
 
-test("after leaving the page during the countdown the step still sends, but tells the caller not to redraw the old request", async () => {
+test("leaving the page while the step is still sending: it finishes, but tells the caller not to redraw the old request", async () => {
   const h = stepConfirmHarness();
   const seen = [];
-  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async ({ stillHere }) => { seen.push(stillHere()); return true; } });
+  let finish;
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: ({ stillHere }) => new Promise((resolve) => { finish = () => { seen.push(stillHere()); resolve(true); }; }) });
   h.click("confirm");
   h.context.location.hash = "#/dashboard";
-  h.windowListeners.hashchange.at(-1)();
+  finish();
   await h.advance(0);
-  assert.deepEqual(seen, [false], "send runs, and stillHere() is false so the caller skips renderRequestDetail");
+  assert.deepEqual(seen, [false], "stillHere() is false so the caller skips renderRequestDetail");
   const mt = read("modules/module-mt.js");
   assert.equal(mt.match(/if \(stillHere\(\)\) await renderRequestDetail\(params\);/g)?.length, 3, "all three MT steps only redraw when still on the page");
 });
 
-test("the tap guard only holds back the forward buttons; cancel and undo answer at once", async () => {
+test("the tap guard only holds back the confirm button; cancel answers at once", () => {
   const h = stepConfirmHarness();
-  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => true });
+  const sent = [];
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => { sent.push(1); return true; } });
   h.click("confirm", 1);
-  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["cancel", "confirm"], "a second tap right after the first does not confirm");
+  assert.equal(sent.length, 0, "a tap landing right where the first tap was does not confirm");
+  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["cancel", "confirm"]);
   h.click("cancel", 1);
   assert.deepEqual(h.area.children, [h.original], "cancel works immediately");
-  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => true });
-  h.click("confirm");
-  h.click("undo", 1);
-  assert.deepEqual(h.area.children, [h.original], "undo works immediately");
 });
 
 test("typed inputs are locked while confirming, released on cancel, and focus returns to the button that was pressed", () => {
@@ -287,20 +267,16 @@ test("typed inputs are locked while confirming, released on cancel, and focus re
   assert.equal(h.context.focused.at(-1), "pressed");
 });
 
-test("closing the tab is warned against while the step is counting down or still sending", async () => {
+test("closing the tab is warned against while the step is sending, and the warning goes away after", async () => {
   const h = stepConfirmHarness();
   let finish;
   h.context.confirmStepAction(h.area, { label: "เสร็จสิ้นงาน", requestNo: "MT-1", send: () => new Promise((resolve) => { finish = resolve; }) });
+  assert.equal((h.windowListeners.beforeunload ?? []).length, 0, "no warning just for opening the confirm step");
   h.click("confirm");
   const warn = h.windowListeners.beforeunload.at(-1);
-  const event = () => ({ prevented: false, preventDefault() { this.prevented = true; } });
-  const counting = event();
-  warn(counting);
-  assert.equal(counting.prevented, true);
-  await h.advance(5000);
-  const sending = event();
-  warn(sending);
-  assert.equal(sending.prevented, true, "still sending");
+  const event = { prevented: false, preventDefault() { this.prevented = true; } };
+  warn(event);
+  assert.equal(event.prevented, true, "still sending");
   finish(true);
   await h.advance(0);
   assert.equal((h.windowListeners.beforeunload ?? []).includes(warn), false, "the warning is removed once sent");

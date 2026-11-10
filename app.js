@@ -4108,20 +4108,20 @@ function clipText(text, max) {
   return `${kept.join("")}…`;
 }
 
-// การกระทำของขั้นที่เปลี่ยนสถานะใบในหน้าของใบ (เริ่มงาน เสร็จสิ้นงาน ตรวจรับ): ยืนยัน แล้วนับถอยหลังเลิกทำแบบเดียวกับแถบตัดสินใจ
-// (ผู้ใช้เลือก 2026-11-10: ใช้แบบอนุมัติ · คำที่ลงประวัติไม่เปลี่ยน RPC เดิม)
-// area = กล่องปุ่มของการ์ด ปุ่มเดิมกลับมาเมื่อยกเลิก เลิกทำ หรือส่งไม่สำเร็จ · consequence = ผลที่เกิดหลังส่ง · echo = ข้อความที่ผู้ใช้พิมพ์ (ทวนระหว่างนับ)
-// send() เรียก RPC จริง คืน true เมื่อสำเร็จ (หน้าถูกวาดใหม่) false เมื่อไม่สำเร็จ · ย้ายหน้าหรือสลับแอประหว่างนับ = ตั้งใจส่ง ส่งทันที
+// การกระทำของขั้นที่เปลี่ยนสถานะใบในหน้าของใบ (เริ่มงาน เสร็จสิ้นงาน ตรวจรับ): ยืนยันหรือยกเลิก แล้วส่งทันที ไม่มีนับถอยหลังเลิกทำ
+// (ผู้ใช้กำหนด 2026-11-10: "ไม่ต้องนับ 5 วิ กดยืนยันหรือปฏิเสธพอ" · คำที่ลงประวัติไม่เปลี่ยน RPC เดิม)
+// area = กล่องปุ่มของการ์ด ปุ่มเดิมกลับมาเมื่อยกเลิกหรือส่งไม่สำเร็จ · consequence = ผลที่เกิดหลังส่ง · echo = ข้อความที่ผู้ใช้พิมพ์ (ทวนในบรรทัดยืนยัน)
+// send({ stillHere }) เรียก RPC จริง คืน true เมื่อสำเร็จ false เมื่อไม่สำเร็จ · stillHere() = ยังอยู่หน้าเดิม (ไม่วาดใบเดิมทับหน้าใหม่)
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- เรียกจาก modules/module-mt.js (global ของ classic script)
 function confirmStepAction(area, { label, requestNo = "", consequence = "", tone = "success", echo = "", lock = [], trigger = null, send }) {
   const rules = window.MNP_REQUEST_DECISION;
   const original = [...area.childNodes];
   const tapGuard = rules.createTapGuard();
   // หน้าที่เริ่มการกระทำ: ส่งเสร็จหลังผู้ใช้ย้ายหน้าแล้ว ห้ามวาดใบเดิมทับหน้าใหม่ (send ได้ stillHere ไว้ตัดสิน)
-  const hash = location.hash;
   // ดูแค่ hash: ย้ายไปแล้วกลับมาใบเดิมก่อนส่งเสร็จ ก็วาดใบใหม่ให้เห็นสถานะหลังส่ง (วาดหน้าเดิมซ้ำไม่มีโทษ)
+  const hash = location.hash;
   const stillHere = () => location.hash === hash;
-  // ช่องที่ผู้ใช้กรอก (หมายเหตุ ไฟล์) ล็อกไว้ระหว่างยืนยันและนับ สิ่งที่ส่งจึงตรงกับที่เห็นตอนกดยืนยัน
+  // ช่องที่ผู้ใช้กรอก (หมายเหตุ ไฟล์) ล็อกไว้ระหว่างยืนยันและส่ง สิ่งที่ส่งจึงตรงกับที่เห็นตอนกดยืนยัน
   const locked = lock.filter(Boolean).map((node) => [node, node.disabled]);
   const line = document.createElement("p");
   line.className = "decision-line";
@@ -4131,76 +4131,45 @@ function confirmStepAction(area, { label, requestNo = "", consequence = "", tone
   const primary = tone === "danger" ? "danger-solid is-primary" : "success is-primary";
   const button = (text, className, action) => `<button type="button" class="btn ${className}" data-step-action="${action}">${escapeHtml(text)}</button>`;
   let sending = false;
-  const sendOnLeave = () => countdown.flush();
-  const sendWhenHidden = () => { if (document.visibilityState === "hidden") countdown.flush(); };
-  // ปิดแท็บระหว่างนับหรือระหว่างกำลังส่ง: เตือนให้อยู่ต่อ (คำขอที่เริ่มตอนหน้ากำลังปิดอาจถูกยกเลิก)
-  const warnBeforeUnload = (event) => { if (!countdown.pending && !sending) return; event.preventDefault(); event.returnValue = ""; };
-  const stopSendOnLeave = () => {
-    window.removeEventListener("hashchange", sendOnLeave);
-    document.removeEventListener("visibilitychange", sendWhenHidden);
-  };
-  const detach = () => {
-    stopSendOnLeave();
-    window.removeEventListener("beforeunload", warnBeforeUnload);
-  };
+  // ปิดแท็บระหว่างกำลังส่ง: เตือนให้อยู่ต่อ (คำขอที่เริ่มตอนหน้ากำลังปิดอาจถูกยกเลิก)
+  const warnBeforeUnload = (event) => { if (!sending) return; event.preventDefault(); event.returnValue = ""; };
   const restore = () => {
-    detach();
+    window.removeEventListener("beforeunload", warnBeforeUnload);
     locked.forEach(([node, wasDisabled]) => { node.disabled = wasDisabled; });
     area.replaceChildren(...original);
     (trigger?.isConnected ? trigger : area.querySelector("button:not([disabled])"))?.focus();
   };
-  const countdown = rules.createCountdown({
-    seconds: DECISION_UNDO_SECONDS,
-    onTick: (left) => { const undo = buttons.querySelector('[data-step-action="undo"]'); if (undo) undo.textContent = `เลิกทำ (${left})`; },
-    onSend: async () => {
-      stopSendOnLeave();
-      sending = true;
-      line.textContent = `กำลังส่ง: ${label} ${requestNo}…`;
-      buttons.innerHTML = '<button type="button" class="btn is-primary" disabled aria-busy="true">กำลังส่ง…</button>';
-      let ok = false;
-      try { ok = await send({ stillHere }); } catch { ok = false; }
-      sending = false;
-      if (!ok && area.isConnected) restore();
-      else detach();
-    },
-  });
-  activeDecisionCountdown = countdown;
-  const compose = () => {
-    tapGuard.arm();
-    line.textContent = `${label} ${requestNo}${consequence ? ` → ${consequence}` : ""}`;
-    buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยัน${label}`, primary, "confirm")}`;
-    buttons.querySelector('[data-step-action="confirm"]')?.focus();
-  };
-  const pending = () => {
-    tapGuard.arm();
-    line.textContent = `กำลังจะ${label} ${requestNo}${echo ? ` · “${clipText(echo, 80)}”` : ""}`;
-    buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", primary, "send-now")}`;
-    buttons.querySelector('[data-step-action="undo"]')?.focus();
-    countdown.start({});
-    window.addEventListener("hashchange", sendOnLeave);
-    document.addEventListener("visibilitychange", sendWhenHidden);
+  const confirm = async () => {
+    sending = true;
     window.addEventListener("beforeunload", warnBeforeUnload);
+    line.textContent = `กำลังส่ง: ${label} ${requestNo}…`;
+    buttons.innerHTML = '<button type="button" class="btn is-primary" disabled aria-busy="true">กำลังส่ง…</button>';
+    let ok = false;
+    try { ok = await send({ stillHere }); } catch { ok = false; }
+    sending = false;
+    if (!ok && area.isConnected) restore();
+    else window.removeEventListener("beforeunload", warnBeforeUnload);
   };
   buttons.addEventListener("click", (event) => {
     const action = event.target.closest("[data-step-action]")?.dataset.stepAction;
-    if (!action) return;
-    // ราวกันแตะซ้ำเฉพาะปุ่มที่ไปข้างหน้า (ยืนยัน ส่งเลย) เหมือนแถบตัดสินใจ · ยกเลิกและเลิกทำต้องตอบทันทีเสมอ
-    if ((action === "confirm" || action === "send-now") && tapGuard.blocks(event)) return;
+    if (!action || sending) return;
+    // ราวกันแตะซ้ำเฉพาะปุ่มยืนยัน (ปุ่มโผล่ตรงที่นิ้วเพิ่งกด) · ยกเลิกตอบทันทีเสมอ
+    if (action === "confirm" && tapGuard.blocks(event)) return;
     if (action === "cancel") restore();
-    else if (action === "confirm") pending();
-    else if (action === "undo") { countdown.undo(); restore(); }
-    else if (action === "send-now") countdown.flush();
+    else if (action === "confirm") confirm();
   });
-  // Esc = ยกเลิก / เลิกทำ เหมือนแถบตัดสินใจ (ระหว่างกำลังส่งไม่ทำอะไร)
+  // Esc = ยกเลิก (ระหว่างกำลังส่งไม่ทำอะไร)
   buttons.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || sending) return;
     event.preventDefault();
-    if (countdown.pending) countdown.undo();
     restore();
   });
   locked.forEach(([node]) => { node.disabled = true; });
   area.replaceChildren(line, buttons);
-  compose();
+  tapGuard.arm();
+  line.textContent = `${label} ${requestNo}${consequence ? ` → ${consequence}` : ""}${echo ? ` · “${clipText(echo, 80)}”` : ""}`;
+  buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยัน${label}`, primary, "confirm")}`;
+  buttons.querySelector('[data-step-action="confirm"]')?.focus();
 }
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)

@@ -1035,7 +1035,7 @@
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
-      // เริ่มงาน เสร็จสิ้นงาน และตรวจรับ: ยืนยัน แล้วนับถอยหลังเลิกทำ 5 วิ (confirmStepAction ใน app.js) แบบเดียวกับการอนุมัติ
+      // เริ่มงาน เสร็จสิ้นงาน และตรวจรับ: กดแล้วขึ้นยืนยัน/ยกเลิก (confirmStepAction ใน app.js) ยืนยันแล้วส่งทันที ไม่มีนับถอยหลัง
       // ผู้ใช้ย้ายหน้าไประหว่างนับแล้ว: ส่งต่อ ไม่วาดใบเดิมทับหน้าที่เปิดอยู่ และข้อความบอกเลขที่ใบ (อยู่หน้าอื่นแล้ว)
       const stepToast = (stillHere, requestNo, text) => (stillHere() ? text : `${requestNo}: ${text}`);
       document.querySelector(".start-work-button")?.addEventListener("click", (event) => {
@@ -1098,7 +1098,7 @@
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });
-      // เสร็จสิ้นงาน: ตรวจช่องก่อน แล้วยืนยัน + เลิกทำ · ค่าและไฟล์อ่านตอนส่งจริง (สิ่งที่อยู่บนจอเมื่อหมดเวลาเลิกทำ)
+      // เสร็จสิ้นงาน: ตรวจช่องก่อน แล้วยืนยัน · ช่องในฟอร์มล็อกระหว่างยืนยัน ค่าที่ส่งจึงเป็นค่าบนจอตอนกดยืนยัน
       document.querySelector("#finish-form")?.addEventListener("submit", (event) => {
         event.preventDefault();
         const form = event.currentTarget;
@@ -1130,7 +1130,7 @@
           },
         });
       });
-      // ตรวจรับ: ตรวจหมายเหตุก่อน แล้วยืนยัน + เลิกทำ (ทวนหมายเหตุระหว่างนับ) · ผ่าน = ปิดงาน ไม่ผ่าน = ส่งกลับให้ช่าง
+      // ตรวจรับ: ตรวจหมายเหตุก่อน แล้วยืนยัน (บรรทัดยืนยันทวนหมายเหตุ) · ผ่าน = ปิดงาน ไม่ผ่าน = ส่งกลับให้ช่าง
       document.querySelectorAll(".verify-button").forEach((button) => button.addEventListener("click", () => {
         const result = button.dataset.result;
         const pass = result === "pass";
