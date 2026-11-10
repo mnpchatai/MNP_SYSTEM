@@ -974,7 +974,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // สิทธิ์: กลุ่มวางแผน (admin ผู้จัดการแผนกขึ้นไป แผนก PP) ทำได้ทุกอย่าง · สมาชิก RB แก้วัตถุดิบ/ร่างสูตร/เปิด WO เบิก-ชั่ง บันทึกผสม ฉีด อบ ตกแต่ง ส่งมอบ WIP แม่พิมพ์ และกรอกการแก้ไข/ป้องกันของ NCR
   // อนุมัติสูตรและปล่อยผลิต = หัวหน้า RB (ผู้จัดการ/ผู้ช่วยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการโรงงานขึ้นไป) หรือกลุ่มวางแผน (ปล่อยผลิต) · ST รับวัตถุดิบเข้าคลัง · ST/QA กักกันล็อตวัตถุดิบ
   // SR รับมอบ WIP · WH ส่งมอบกล่อง · QA บันทึกผลตรวจและเปิด/ปิด NCR · ฐานข้อมูลคำนวณเอง: สต็อกล็อตหลังชั่ง คงเหลือ/ยอดส่งต่อของใบส่งมอบ ยอดผลิตของ WO สถานะกล่องตามผล QC การใช้แม่พิมพ์ (ไม่เชื่อค่าที่ client ส่ง)
-  // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · SR รับมอบใบส่งมอบของ WO ที่ผูกงาน → ส่งยอดที่รับเข้างานเป็นรายงานผลทีละใบส่งมอบ (กิโลกรัม→หน่วยของ WO ตาม kgPerUnit) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
+  // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · ล็อตตกแต่งของ WO ที่ผูกงานผ่าน QC และนับเข้า WO (ตอนบันทึก หรือ QA ตัดสินเป็น pass) → ส่งยอดดีของล็อตเข้างานเป็นรายงานผลทีละล็อต (การรับมอบใบส่งมอบไม่เขียน BOM) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
   const RF_KEY = "mnp-harness-rf-master";
   const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
   const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id, materialLots: (record) => record.lotNo };
@@ -1068,7 +1068,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     const head = rfIsHead(actor);
     const approvedNow = [];
     const supersededSent = [];
-    const ops = { link: [], receive: [], unlink: [], stock: [] }; // stock = สต็อกของซื้อฝั่ง BOM ที่ใบสั่งซื้อเขียน (สต็อกขั้นต่ำตอนสร้างใบ / บวกยอดตอนรับบรรทัดของซื้อ)
+    const ops = { link: [], feed: [], unlink: [], stock: [] }; // stock = สต็อกของซื้อฝั่ง BOM ที่ใบสั่งซื้อเขียน (สต็อกขั้นต่ำตอนสร้างใบ / บวกยอดตอนรับบรรทัดของซื้อ)
     // ใบสั่งซื้อ: ส่งชุดข้อมูลได้เฉพาะตามคำสั่ง · createPurchaseOrder = purchaseOrders + materials (ใช้แก้ safetyKg เท่านั้น) · receivePurchaseLine = purchaseOrders + materialLots · cancelPurchaseOrder = purchaseOrders · purchaseOrders ส่งได้เฉพาะสามคำสั่งนี้
     const PO_LISTS = { createPurchaseOrder: ["purchaseOrders", "materials"], receivePurchaseLine: ["purchaseOrders", "materialLots"], cancelPurchaseOrder: ["purchaseOrders"] };
     for (const list of Object.keys(changes)) {
@@ -1229,7 +1229,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             if (!(qcFor.has(prev.id) || ncrFor.has(prev.id))) fail("RF_INVALID_TRANSITION");
             out.qc = record.qc;
             out.holdReasons = record.qc === "pass" ? [] : (Array.isArray(record.holdReasons) ? record.holdReasons.map((reason) => String(reason).slice(0, 200)).slice(0, 20) : []);
-            if (prev.stage === "finishing" && record.qc === "pass" && !prev.countedToOrder) { out.countedToOrder = true; touchedOrders.add(prev.orderId); }
+            if (prev.stage === "finishing" && record.qc === "pass" && !prev.countedToOrder) { out.countedToOrder = true; touchedOrders.add(prev.orderId); ops.feed.push({ woId: prev.orderId, lotId: prev.id, qty: prev.goodQty }); }
           }
           put(out);
           return null;
@@ -1319,7 +1319,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
               next.fgBoxes.push(box);
               stampVersion("fgBoxes", box.id);
             }
-            if (out.countedToOrder) touchedOrders.add(order.id);
+            if (out.countedToOrder) { touchedOrders.add(order.id); ops.feed.push({ woId: order.id, lotId: record.id, qty: good }); } // ชิ้นผ่านสถานีสุดท้าย = ป้อนกลับงาน BOM (ตรงกับ rf_apply_feedback)
           }
         }
         // บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบ WO ที่ released / in_progress / on_hold
@@ -1356,8 +1356,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         const received = num(record.qtyReceived);
         if (received < 0 || received > prev.qtySent * 1.02) fail(bad);
         put({ ...prev, status: "received", qtyReceived: received, remaining: received, condition: record.condition || "ok", receivedAt: at, receivedBy: actor.name });
-        // BOM: ยอดที่รับถูกรายงานเข้างานที่ผูกใบสั่งผลิตนี้ ในธุรกรรมเดียวกัน (ทีละใบส่งมอบ)
-        ops.receive.push({ woId: prev.orderId, transferId: prev.id, qty: received, uom: prev.uom });
+        // รับมอบใบส่งมอบไม่เขียนงาน BOM (ป้อนกลับเฉพาะตอนล็อตตกแต่งที่ QC ผ่านนับเข้า WO)
         return null;
       }
       if (list === "fgBoxes") {
@@ -1700,7 +1699,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // งานของ BOM ที่ RubberFlow สั่ง (หลังบันทึกของ RubberFlow สำเร็จ ตรงกับ rf_link_job / rf_apply_feedback / rf_unlink_job): ผ่านตัวนับเวอร์ชันของ BOM ครั้งเดียวต่อการบันทึก
   // ให้ client ของ BOM ตามทันด้วยส่วนต่าง และเขียนบรรทัดบันทึกการใช้งานของ BOM (rubberflow:<action>) · ไม่มีอะไรเขียนจริง (ข้ามทุกอย่าง) = ตัวนับ BOM ไม่ขยับ
   function rfApplyBomOps(ops, actor, at, action) {
-    if (!ops.link.length && !ops.receive.length && !ops.unlink.length && !ops.stock.length) return;
+    if (!ops.link.length && !ops.feed.length && !ops.unlink.length && !ops.stock.length) return;
     const bom = bomLoad();
     const version = bom.version + 1;
     const jobs = new Set();
@@ -1718,17 +1717,16 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       touchJob(job);
       startOrder(job);
     }
-    // SR รับมอบใบส่งมอบ: รายงาน good = ยอดที่รับ (ล็อตหน่วยกิโลกรัมแต่ WO นับเป็นหน่วยอื่น = หาร kgPerUnit) qtyDone = เดิม + good · ทีละใบส่งมอบ ไม่จำกัดครั้งต่อ WO
-    // ข้ามเมื่อ WO ไม่ได้ผูกงาน / ไม่พบงาน / งานไม่ชี้มา WO นี้ / ใบ PI ไม่ใช่ released-in_progress / งาน done แล้ว / ยอดที่รับเป็น 0
-    for (const item of ops.receive) {
+    // ล็อตตกแต่งที่ QC ผ่านและนับเข้า WO (ตอนบันทึก หรือตอน QA ตัดสินเป็น pass ครั้งแรก): รายงาน good = ยอดดีของล็อต (หน่วยของ WO) qtyDone = เดิม + good · ทีละล็อต ไม่จำกัดครั้งต่อ WO
+    // ข้ามเมื่อ WO ไม่ได้ผูกงาน / ไม่พบงาน / งานไม่ชี้มา WO นี้ / ใบ PI ไม่ใช่ released-in_progress / งาน done แล้ว / ยอดดีเป็น 0
+    for (const item of ops.feed) {
       const wo = rfMaster.orders.find((row) => row.id === item.woId);
       const job = wo?.sourceJobId ? bom.jobs.find((row) => row.id === wo.sourceJobId) : null;
       const order = job ? bom.orders.find((row) => row.id === job.orderId) : null;
       if (!job || job.externalRef?.woId !== item.woId || !["released", "in_progress"].includes(order?.status) || job.status === "done") continue;
-      const perUnit = Number(wo.kgPerUnit);
-      const good = Math.round((item.uom === "kg" && wo.uom !== "kg" && perUnit > 0 ? item.qty / perUnit : item.qty) * 1e4) / 1e4;
+      const good = Math.round(Number(item.qty) * 1e4) / 1e4;
       if (!(good > 0)) continue;
-      job.reports = [...(job.reports ?? []), { at, by: actor.name, good, reject: 0, note: `รับโอน ${item.transferId} จาก WO ${item.woId}` }];
+      job.reports = [...(job.reports ?? []), { at, by: actor.name, good, reject: 0, note: `ผ่านตกแต่ง ${item.lotId} จาก WO ${item.woId}` }];
       job.qtyDone = Math.round((Number(job.qtyDone) + good) * 1e4) / 1e4;
       job.status = job.qtyDone + 1e-9 >= Number(job.qtyPlanned) ? "done" : "in_progress";
       if (job.status === "done") job.doneAt = job.doneAt ?? at; else delete job.doneAt;

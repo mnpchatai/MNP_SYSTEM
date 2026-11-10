@@ -1,4 +1,4 @@
--- RubberFlow รอบที่ 2 (20261108010000_rubberflow_shopfloor.sql): ล็อตวัตถุดิบ ใบเบิก (FEFO จ่ายทันที; ใบเก่าที่ค้างชั่งยังชั่ง/จ่ายทั้งใบได้) ล็อตผลิต 4 สถานี ใบส่งมอบ + ป้อนผลผลิตกลับ BOM ต่อใบส่งมอบ
+-- RubberFlow รอบที่ 2 (20261108010000_rubberflow_shopfloor.sql): ล็อตวัตถุดิบ ใบเบิก (FEFO จ่ายทันที; ใบเก่าที่ค้างชั่งยังชั่ง/จ่ายทั้งใบได้) ล็อตผลิต 4 สถานี ใบส่งมอบ + ป้อนผลผลิตกลับ BOM เมื่อล็อตตกแต่งผ่าน QC (ไม่ใช่ตอนรับมอบ)
 -- กล่อง FG ผลตรวจ QC NCR แม่พิมพ์ · ตรวจทั้งฝั่งอนุญาตและปฏิเสธต่อบทบาท (ST / SR / WH / QA / สมาชิก RB / หัว RB / กลุ่มวางแผน) ชนรายระเบียนก่อนสิทธิ์ audit และล้างข้อมูลทดสอบ
 -- (authenticated อ่านตาราง rf_* ตรงไม่ได้ จึงนับตารางด้วย reset role เสมอ) ส่วนที่ไม่เปลี่ยนจากรอบที่ 1 ตรวจใน rubberflow_core.test.sql
 begin;
@@ -61,9 +61,9 @@ select ok(not exists (
     where p.pronamespace = 'private'::regnamespace and p.proname like 'rf\_%'
       and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))),
   'clients cannot call any private RubberFlow helper (the new writers included)');
-select ok(exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_apply_feedback' and p.pronargs = 3)
-      and not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_apply_feedback' and p.pronargs = 2),
-  'the feedback function now takes the transfer (the old order-only signature is gone)');
+select ok(exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_apply_feedback' and p.pronargs = 3 and p.proargtypes[1] = 'public.rf_lots'::regtype::oid)
+      and not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_apply_feedback' and p.proargtypes[1] <> 'public.rf_lots'::regtype::oid),
+  'the feedback function now takes the finishing lot (the transfer-based and the order-only signatures are gone)');
 select ok(pg_get_functiondef('private.rf_save_requisitions(uuid,text,boolean,text,jsonb,bigint,bigint)'::regprocedure) like '%trunc(least(v_free, v_left), 4)%'
       and pg_get_functiondef('private.rf_save_requisitions(uuid,text,boolean,text,jsonb,bigint,bigint)'::regprocedure) not like '%greatest(0, trim_scale(round(v_lot.qty_kg - v_target%'
       and pg_get_functiondef('private.rf_save_requisitions(uuid,text,boolean,text,jsonb,bigint,bigint)'::regprocedure) like '%if v_after < 0 then raise exception ''RF_INSUFFICIENT_STOCK''%',
@@ -506,13 +506,11 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'ups
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'remaining', '58', 'the received quantity becomes the remaining quantity');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'condition', 'ok', 'the condition defaults to ok');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'receivedBy', current_setting('test.n_sbx_sr_staff'), 'the receiver is the persona');
-select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), '464', 'the BOM job received 58 kg / 0.125 kg per unit = 464 pieces');
-select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'in_progress', 'below the plan the job stays in progress');
-select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), '1', 'one report entry was appended');
-select is((select (j -> 'reports' -> 0) - 'at' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), jsonb_build_object('by', current_setting('test.n_sbx_sr_staff'), 'good', 464, 'reject', 0, 'note', 'รับโอน TR-1 จาก WO WO-S1'), 'the report is written by the server: the receiver as author, good in pieces, no rejects, a note naming the transfer and the work order');
-select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bv')::bigint + 1, 'the BOM counter went up by one for the feedback');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:receiveTransfer' and a ->> 'detail' = 'jobs +1' and a ->> 'user' = current_setting('test.n_sbx_sr_staff')), 'the BOM history records the feedback');
-select is((select jsonb_agg(j ->> 'id') from jsonb_array_elements(public.app_bom_master_since(current_setting('test.bv')::bigint) -> 'changes' -> 'jobs' -> 'upsert') j), '["JOB-S1-RB"]'::jsonb, 'a BOM client catches up on the feedback with the normal delta');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'receiving the mixing transfer feeds nothing back: the BOM job total is untouched');
+select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'in_progress', 'and the job keeps its status');
+select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0, 'no report entry is appended');
+select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bv')::bigint, 'the BOM counter does not move for a receipt');
+select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:receiveTransfer'), 0::bigint, 'and the BOM history has no row for a receipt');
 select set_config('test.v', (public.app_rf_master() ->> 'version')::text, true);
 select set_config('test.bv2', (public.app_bom_master() ->> 'version')::text, true);
 select is(public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":40}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') ->> 'version', current_setting('test.v'), 'receiving an already received transfer again writes nothing');
@@ -568,8 +566,8 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('lots', jsonb_b
 select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
 select set_config('test.bv', (public.app_bom_master() ->> 'version')::text, true);
 select is(public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":300}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-2')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'remaining', '300', 'SR receives the second transfer');
-select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), '764', 'pieces need no conversion: the job total is 464 + 300');
-select is((select (j -> 'reports' -> 1 ->> 'note') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'รับโอน TR-2 จาก WO WO-S1', 'the second report names the second transfer');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'receiving the extrusion transfer feeds nothing back either');
+select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bv')::bigint, 'and the BOM counter does not move');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.cu')::jsonb || '{"id":"CU-1","goodQty":275}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'recordCuring') $$, 'RF_INVALID_LOT', 'good + scrap cannot exceed the quantity put in the mold');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.cu')::jsonb || '{"id":"CU-1","moldId":"MD-NOPE"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'recordCuring') $$, 'RF_INVALID_LOT', 'an unknown mold is refused');
@@ -588,10 +586,7 @@ select set_config('test.res', (public.app_rf_save(jsonb_build_object('transfers'
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'to', 'finishing', 'the cured lot is transferred to finishing');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":270}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-3')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'status', 'received', 'SR receives the third transfer');
-select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), '1034', 'the job total is 764 + 270');
-select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'done', 'reaching the plan finishes the job');
-select ok((select j ? 'doneAt' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'the finish time is set by the server');
-select is((select o ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251108-25001'), 'in_progress', 'the PI stays in progress');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'receiving the curing transfer feeds nothing back: no piece has passed finishing yet');
 
 -- 13. ตกแต่งและบรรจุ (สถานีที่ 4): กล่องและยอดผลิตเกิดที่เซิร์ฟเวอร์ ------------------------------------------
 select set_config('test.fn', '{"id":"X","stage":"finishing","orderId":"WO-S1","uom":"m","shift":"E","grade":"A","sources":[{"type":"transfer","id":"TR-3","lotId":"CU-1","qty":150}],"params":{"perBox":100},"goodQty":150,"scrapQty":0,"scrapReason":"","qc":"hold","countedToOrder":true,"boxes":9}', true);
@@ -609,28 +604,41 @@ select is((select x ->> 'qty' from jsonb_array_elements(public.app_rf_master() -
 select is((select x ->> 'qty' from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-1-002'), '50', 'the last box holds the rest');
 select is((select count(*)::integer from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') b where b ->> 'id' like 'BOX-FAKE%'), '0', 'the box that the client sent along is ignored (the server makes the boxes)');
 select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), '0', 'nothing is counted to the work order yet');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'and the BOM job is not fed either (the lot waits for QA)');
 select is((select x ->> 'remaining' from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-3'), '120', 'the transfer has 120 left');
 select is((select a ->> 'detail' from jsonb_array_elements(public.app_rf_audit()) a limit 1), 'fgBoxes +1, lots +1', 'the history counts the records of the call');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('fgBoxes', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"shipped"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-1-001')))), (public.app_rf_master() ->> 'version')::bigint, 'shipBoxes') $$, 'RF_INVALID_TRANSITION', 'a box on hold cannot be shipped');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('fgBoxes', jsonb_build_object('upsert', jsonb_build_array('{"id":"BOX-NEW","lotId":"FN-1","orderId":"WO-S1","recipeId":"RC-1","productCode":"","qty":5,"uom":"m","grade":"A","status":"in_stock","createdAt":1}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'shipBoxes') $$, 'RF_INVALID_BOX', 'boxes cannot be created by a client');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select set_config('test.bvf', (public.app_bom_master() ->> 'version')::text, true);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fn')::jsonb || '{"id":"FN-2","sources":[{"type":"transfer","id":"TR-3","lotId":"CU-1","qty":100}],"params":{"perBox":50},"goodQty":100,"qc":"pass"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'recordFinishing'))::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'lots' -> 'upsert' -> 0 ->> 'qc', 'pass', 'a passed finishing lot is counted at once');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'lots' -> 'upsert' -> 0 ->> 'countedToOrder', 'true', 'and flagged as counted');
 select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-001') || '/' || (select x ->> 'qty' from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-002'), 'in_stock/50', 'the boxes are in stock');
 select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), '100', 'the produced quantity of the work order is counted by the server');
 select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), 'in_progress', '100 of 140: the work order keeps running');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 100::numeric, 'a passed finishing lot feeds the BOM job back with its good quantity');
+select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'in_progress', 'below the plan the job stays in progress');
+select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 1, 'one report entry was appended');
+select is((select (j -> 'reports' -> 0) - 'at' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), jsonb_build_object('by', current_setting('test.n_sbx_rb_staff'), 'good', 100, 'reject', 0, 'note', 'ผ่านตกแต่ง FN-2 จาก WO WO-S1'), 'the report is written by the server: the recorder as author, good in the unit of the work order, no rejects, a note naming the lot and the work order');
+select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bvf')::bigint + 1, 'the BOM counter went up by one for the feedback');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:recordFinishing' and a ->> 'detail' like 'jobs +1%' and a ->> 'user' = current_setting('test.n_sbx_rb_staff')), 'the BOM history records the feedback');
+select is((select jsonb_agg(j ->> 'id') from jsonb_array_elements(public.app_bom_master_since(current_setting('test.bvf')::bigint) -> 'changes' -> 'jobs' -> 'upsert') j), '["JOB-S1-RB"]'::jsonb, 'a BOM client catches up on the feedback with the normal delta');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select set_config('test.v', (public.app_rf_master() ->> 'version')::text, true);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-5","lotId":"FN-1","stage":"finishing"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord'))::text, true);
 select is((select x ->> 'qc' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'FN-1') || '/' || (select x ->> 'countedToOrder' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'FN-1'), 'pass/true', 'QA passes the finishing lot: it is counted to the work order');
 select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-1-001'), 'in_stock', 'its boxes go to stock');
 select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), '250', '100 + 150 pieces are counted');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 250::numeric, 'the QA pass feeds the BOM job once with the lot (100 + 150)');
+select is((select (j -> 'reports' -> 1) - 'at' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), jsonb_build_object('by', current_setting('test.n_sbx_qa_staff'), 'good', 150, 'reject', 0, 'note', 'ผ่านตกแต่ง FN-1 จาก WO WO-S1'), 'the second report is written for the QA pass, with QA as author');
 select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), 'in_progress', 'QA cannot close the work order even though the target (140) is reached');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fn')::jsonb || '{"id":"FN-3","sources":[{"type":"transfer","id":"TR-3","lotId":"CU-1","qty":20}],"goodQty":20,"qc":"pass"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'recordFinishing'))::text, true);
 select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), '270', 'the last 20 pieces are counted');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 270::numeric, 'the last finishing lot feeds the BOM job too (below the plan of 1000 it stays open)');
+select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'in_progress', 'the job is not done yet');
 select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), 'completed', 'a finishing recorded by an RB member closes the work order when the target is reached');
 select ok((select x ->> 'completedAt' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1') is not null, 'with the completion time set by the server');
 select is((select x ->> 'remaining' from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-3'), '0', 'the transfer is used up');
@@ -655,10 +663,12 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-6","lotId":"FN-2","stage":"finishing","tests":[{"key":"hardness","value":80,"pass":true}],"result":"hold"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') -> 'changes' -> 'qcRecords' -> 'upsert' -> 0 ->> 'result', 'hold', 'QA puts the finishing lot on hold');
 select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-002') || '/' || (select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-001'), 'hold/shipped', 'the unshipped box goes on hold; the shipped box stays shipped');
 select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), '270', 'a lot that is already counted is not counted again');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 270::numeric, 'and the BOM job is not fed again for a lot that is already counted');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('fgBoxes', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"shipped"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-002')))), (public.app_rf_master() ->> 'version')::bigint, 'shipBoxes') $$, 'RF_INVALID_TRANSITION', 'even a planner cannot ship a box on hold');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-7","lotId":"FN-2","stage":"finishing"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord');
+select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 270::numeric, 'a later pass of an already counted lot feeds nothing');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('fgBoxes', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"shipped"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-002')))), (public.app_rf_master() ->> 'version')::bigint, 'shipBoxes') -> 'changes' -> 'fgBoxes' -> 'upsert' -> 0 ->> 'status', 'shipped', 'a planner ships a released box');
 
@@ -712,25 +722,28 @@ select is(public.app_rf_save(jsonb_build_object('ncrs', jsonb_build_object('upse
 
 -- 15. กฎป้อนกลับ BOM ตรวจตรงที่ฟังก์ชัน (ปรับสถานะงานด้วย superuser เพื่อสร้างสถานการณ์) ----------------------------------
 reset role;
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a job that is done takes no more feedback');
+update public.bom_jobs set status = 'done', done_at = now() where is_test and job_no = 'JOB-S1-RB';
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'FN-2'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a job that is done takes no more feedback');
 update public.bom_jobs set status = 'in_progress', qty_done = 0, done_at = null where is_test and job_no = 'JOB-S1-RB';
-update public.rf_orders set kg_per_unit = null where is_test and wo_no = 'WO-S1';
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a transfer in kg cannot be converted without kg per unit: nothing is written');
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'CU-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a lot of an earlier station feeds nothing: only the pieces that pass the last station count');
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'MX-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a mixing lot (kg of compound) feeds nothing');
 select is((select qty_done from public.bom_jobs where is_test and job_no = 'JOB-S1-RB'), 0::numeric, 'and the job total is untouched');
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-2'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '1', 'a transfer in the unit of the work order needs no conversion');
-select is((select qty_done from public.bom_jobs where is_test and job_no = 'JOB-S1-RB'), 300::numeric, 'and adds its quantity');
-update public.rf_orders set kg_per_unit = 0.125 where is_test and wo_no = 'WO-S1';
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '1', 'with kg per unit the kg transfer is converted (58 / 0.125 = 464)');
-select is((select qty_done from public.bom_jobs where is_test and job_no = 'JOB-S1-RB'), 764::numeric, 'so the total is 300 + 464');
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S2')) ->> 'jobs', '0', 'a work order that is not linked to a job feeds nothing');
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'FN-2'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '1', 'a finishing lot feeds the job');
+select is((select qty_done from public.bom_jobs where is_test and job_no = 'JOB-S1-RB'), 100::numeric, 'with its good quantity in the unit of the work order (no kg conversion)');
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'FN-2'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S2')) ->> 'jobs', '0', 'a work order that is not linked to a job feeds nothing');
 update public.bom_jobs set external_ref = jsonb_build_object('system', 'rubberflow', 'woId', 'WO-OTHER', 'kg', 0) where is_test and job_no = 'JOB-S1-RB';
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a job linked to another work order takes nothing');
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'FN-2'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a job linked to another work order takes nothing');
 update public.bom_jobs set external_ref = jsonb_build_object('system', 'rubberflow', 'woId', 'WO-S1', 'kg', 0) where is_test and job_no = 'JOB-S1-RB';
 update public.bom_orders set status = 'completed' where is_test and id = (select order_pk from public.bom_jobs where is_test and job_no = 'JOB-S1-RB');
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a job of a completed PI takes nothing');
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'FN-2'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '0', 'a job of a completed PI takes nothing');
 update public.bom_orders set status = 'released' where is_test and id = (select order_pk from public.bom_jobs where is_test and job_no = 'JOB-S1-RB');
-select is(private.rf_apply_feedback('x', (select t from public.rf_transfers t where t.is_test and t.transfer_no = 'TR-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '1', 'a job of a released PI takes the feedback and the PI starts');
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'FN-2'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '1', 'a job of a released PI takes the feedback and the PI starts');
 select is((select status from public.bom_orders where is_test and id = (select order_pk from public.bom_jobs where is_test and job_no = 'JOB-S1-RB')), 'in_progress', 'released -> in_progress');
+update public.bom_jobs set qty_done = 900 where is_test and job_no = 'JOB-S1-RB';
+select is(private.rf_apply_feedback('x', (select l from public.rf_lots l where l.is_test and l.lot_no = 'FN-1'), (select o from public.rf_orders o where o.is_test and o.wo_no = 'WO-S1')) ->> 'jobs', '1', 'the last pieces reach the plan');
+select is((select status from public.bom_jobs where is_test and job_no = 'JOB-S1-RB'), 'done', 'reaching the plan finishes the job');
+select ok((select done_at is not null from public.bom_jobs where is_test and job_no = 'JOB-S1-RB'), 'with the finish time set by the server');
+update public.bom_jobs set status = 'in_progress', done_at = null where is_test and job_no = 'JOB-S1-RB';
 update public.rf_master_state set version = version + 1 where is_test;
 set local role authenticated;
 
@@ -740,7 +753,9 @@ select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a wh
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'createRequisition' and a ->> 'detail' = 'requisitions +1'), 'and a requisition');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'weighLine' and a ->> 'detail' = 'requisitions +1'), 'and a weighing');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'issueRequisition' and a ->> 'detail' = 'requisitions +1'), 'and an issue of a whole old requisition');
-select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:receiveTransfer'), 3::bigint, 'the BOM history has one row per receipt that fed the job (three transfers)');
+select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:receiveTransfer'), 0::bigint, 'no receipt writes a BOM history row');
+select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:recordFinishing'), 2::bigint, 'one BOM history row per finishing save that fed the job (FN-2 and FN-3; FN-1 waited for QA)');
+select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:addQcRecord'), 1::bigint, 'and one for the QA pass of FN-1');
 select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l), 'the delta from version 0 equals the snapshot for all twelve lists');
 select set_config('test.vb', (public.app_rf_master() ->> 'version')::text, true);
 select set_config('test.res', public.app_rf_save(jsonb_build_object('molds', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.mold')::jsonb || '{"id":"DIE-9","name":"หัวดายใหม่"}'::jsonb))), current_setting('test.vb')::bigint, 'saveMold')::text, true);

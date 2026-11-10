@@ -2611,8 +2611,8 @@ test("the BOM 'create WO' dialog creates the WO through the RubberFlow store wit
   assert.deepEqual([closedJob.qtyDone, closedJob.reports.length, closedJob.externalRef.woId], [0, 0, wo.id], "closing the WO feeds nothing back");
 });
 
-// SR รับมอบใบส่งมอบ → ฐานข้อมูลรายงานยอดเข้างาน BOM → หน้า RubberFlow ตามทัน BOM แล้วแจ้งผล (ใช้โมดูลจริงในหน้าจำลอง)
-test("when SR receives a transfer the module catches BOM up and says what the job received", async () => {
+// ชิ้นงานผ่านตกแต่ง (ล็อตตกแต่งที่ QC ผ่าน) → ฐานข้อมูลรายงานยอดเข้างาน BOM → หน้า RubberFlow ตามทัน BOM แล้วแจ้งผล · การรับมอบใบส่งมอบไม่แตะงาน BOM (ใช้โมดูลจริงในหน้าจำลอง)
+test("a transfer receipt does not touch the BOM job; when pieces pass finishing the module catches BOM up and says what the job received", async () => {
   const { scene, rf } = await rfScene();
   const admin = await asPersona(scene, "persona-1");
   await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
@@ -2643,24 +2643,79 @@ test("when SR receives a transfer the module catches BOM up and says what the jo
   await saved(rf(rb).run("endRest", { lotId: lot.result }));
   const transfer = await saved(rf(rb).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
 
-  // SR รับมอบ: ผ่านโมดูลของหน้า (ปุ่มรับมอบ) → ตามทัน BOM → แจ้งยอดที่งานได้รับ
+  // SR รับมอบ: ไม่เขียน BOM จึงไม่มีอะไรให้ตามทัน
   const sr = await asPersona(scene, "persona-sr", realClock);
   await rf(sr).ensureLoaded();
   await sr.store.ensureLoaded();
   const view = sr.context.MNP_RUBBERFLOW;
-  const before = view.bomJobOfTransfer(transfer.result);
-  assert.deepEqual(JSON.parse(JSON.stringify(before)), { id: "JOB-RB1", qtyDone: 0 }, "the module finds the BOM job that follows the transfer's WO");
+  assert.equal(view.bomJobOfAction("receiveTransfer", { id: transfer.result }), null, "receiving a transfer is not a moment the BOM job follows");
   const received = rf(sr).run("receiveTransfer", { id: transfer.result, qtyReceived: 10.5 });
   assert.equal(received.ok, true, received.error?.message);
-  assert.equal(sr.store.data().jobs.find((row) => row.id === "JOB-RB1").qtyDone, 0, "the page does not touch the BOM job itself");
   assert.equal((await received.saving).ok, true);
-  await view.showBomFeedback(before);
-  const job = sr.store.data().jobs.find((row) => row.id === "JOB-RB1");
-  assert.deepEqual([job.qtyDone, job.status, job.reports.length], [20, "done", 1], "10.5 kg ÷ 0.525 kg per piece = 20 pieces (more than the 10 planned: the job is done)");
-  assert.match(job.reports[0].note, new RegExp("^รับโอน " + transfer.result + " จาก WO " + wo.id + "$"));
-  assert.match(sr.log.toasts.at(-1)[0], /งาน BOM JOB-RB1 รับยอดจากการรับมอบแล้ว: ทำได้ 20\/10 \(งานครบแล้ว\)/);
-  // ใบส่งมอบของ WO ที่ไม่ผูกงาน BOM: ไม่มีงานให้ตามทัน
-  assert.equal(view.bomJobOfTransfer("TR-NOPE"), null);
+  await sr.store.catchUp();
+  const jobOf = (env) => env.store.data().jobs.find((row) => row.id === "JOB-RB1");
+  assert.deepEqual([jobOf(sr).qtyDone, jobOf(sr).reports.length], [0, 0], "10.5 kg of compound received: the job got nothing (it was counted as 20 pieces before)");
+
+  // ฉีด → อบ → ส่งมอบ → รับมอบ: ยังไม่มียอดเข้างาน (แต่ละขั้นเปิดหน้าใหม่ของฐานข้อมูลเดียวกัน เพราะ mock เก็บข้อมูลต่อหน้า)
+  const fresh = async (persona) => {
+    const page = await asPersona(scene, persona, realClock);
+    await rf(page).ensureLoaded();
+    await page.store.ensureLoaded();
+    return page;
+  };
+  const rb2 = await fresh("persona-rb");
+  await saved(rf(rb2).run("saveMold", { id: "DIE-1", name: "หัวดายทดสอบ", kind: "die", unit: "m", perCycle: 1, cleanEvery: 5000, pmLimit: 100000 }));
+  await saved(rf(rb2).run("saveMold", { id: "MD-1", name: "แม่พิมพ์ 2 cavity", kind: "mold", unit: "shot", perCycle: 2, cleanEvery: 1000, pmLimit: 50000 }));
+  const ex = await saved(rf(rb2).run("recordExtrusion", { transferId: transfer.result, useKg: 10.5, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 10, dieId: "DIE-1" }));
+  const tr2 = await saved(rf(rb2).run("createTransfer", { lotId: ex.result, qty: 10 }));
+  const sr2 = await fresh("persona-sr");
+  await saved(rf(sr2).run("receiveTransfer", { id: tr2.result, qtyReceived: 10 }));
+  const rb3 = await fresh("persona-rb");
+  const cu = await saved(rf(rb3).run("recordCuring", { transferId: tr2.result, useQty: 10, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 10 }));
+  const tr3 = await saved(rf(rb3).run("createTransfer", { lotId: cu.result, qty: 10 }));
+  const sr3 = await fresh("persona-sr");
+  await saved(rf(sr3).run("receiveTransfer", { id: tr3.result, qtyReceived: 10 }));
+  await sr3.store.catchUp();
+  assert.deepEqual([jobOf(sr3).qtyDone, jobOf(sr3).reports.length], [0, 0], "no receipt of any station moved the job");
+
+  // ตกแต่ง: ล็อตที่ผ่านตอนบันทึก (6 ชิ้น) ป้อนทันที · โมดูลของหน้าตามทัน BOM แล้วแจ้งยอด
+  const rb4 = await fresh("persona-rb");
+  const rbView = rb4.context.MNP_RUBBERFLOW;
+  const finishing = (passedQty, qcResult) => ({ transferId: tr3.result, useQty: passedQty, passedQty, scrapQty: 0, perBox: 10, qcResult, grade: "A", shift: "D" });
+  const first = finishing(6, "pass");
+  const beforeFirst = rbView.bomJobOfAction("recordFinishing", first);
+  assert.deepEqual(JSON.parse(JSON.stringify(beforeFirst)), { id: "JOB-RB1", qtyDone: 0 }, "the module finds the BOM job that follows the finishing lot's WO");
+  const lot1 = rf(rb4).run("recordFinishing", first);
+  assert.equal(lot1.ok, true, lot1.error?.message);
+  assert.equal(rb4.store.data().jobs.find((row) => row.id === "JOB-RB1").qtyDone, 0, "the page does not touch the BOM job itself");
+  assert.equal((await lot1.saving).ok, true);
+  await rbView.showBomFeedback(beforeFirst);
+  assert.deepEqual([jobOf(rb4).qtyDone, jobOf(rb4).status, jobOf(rb4).reports.length], [6, "in_progress", 1], "6 pieces passed finishing");
+  assert.match(jobOf(rb4).reports[0].note, new RegExp("^ผ่านตกแต่ง " + lot1.result + " จาก WO " + wo.id + "$"));
+  assert.match(rb4.log.toasts.at(-1)[0], /งาน BOM JOB-RB1 รับยอดจากการผ่านตกแต่งแล้ว: ทำได้ 6\/10/);
+
+  // ล็อตที่ hold ไม่ป้อน (โมดูลไม่ตามทัน) จน QA ตัดสินเป็น pass
+  const held = finishing(4, "hold");
+  assert.equal(rbView.bomJobOfAction("recordFinishing", held), null, "a lot on hold waits for QA: nothing to follow");
+  const lot2 = await saved(rf(rb4).run("recordFinishing", held));
+  await rb4.store.catchUp();
+  assert.equal(jobOf(rb4).qtyDone, 6);
+  const qa = await asPersona(scene, "persona-qa", realClock);
+  await rf(qa).ensureLoaded();
+  await qa.store.ensureLoaded();
+  const qaView = qa.context.MNP_RUBBERFLOW;
+  const decide = { lotId: lot2.result, values: { hardness: 65, tensile: 12 }, result: "pass" };
+  const beforeQa = qaView.bomJobOfAction("addQcRecord", decide);
+  assert.deepEqual(JSON.parse(JSON.stringify(beforeQa)), { id: "JOB-RB1", qtyDone: 6 });
+  const decided = rf(qa).run("addQcRecord", decide);
+  assert.equal(decided.ok, true, decided.error?.message);
+  assert.equal((await decided.saving).ok, true);
+  await qaView.showBomFeedback(beforeQa);
+  assert.deepEqual([jobOf(qa).qtyDone, jobOf(qa).status, jobOf(qa).reports.length], [10, "done", 2], "the QA pass feeds the lot: 6 + 4 = the 10 planned");
+  assert.match(qa.log.toasts.at(-1)[0], /งาน BOM JOB-RB1 รับยอดจากการผ่านตกแต่งแล้ว: ทำได้ 10\/10 \(งานครบแล้ว\)/);
+  // ไม่ใช่ล็อตตกแต่ง / ไม่ใช่คำสั่งที่ป้อน: ไม่มีงานให้ตามทัน
+  assert.equal(qaView.bomJobOfAction("addQcRecord", { lotId: "MX-NOPE" }), null);
+  assert.equal(qaView.bomJobOfAction("createTransfer", { lotId: lot2.result }), null);
 });
 
 test("RubberFlow's store holds other users' data back only for its own forms on its own page, so an open BOM dialog never blocks catching up after a duplicate WO number", async () => {
@@ -2699,7 +2754,8 @@ test("cancelling the WO in RubberFlow clears the job's link in BOM and the job o
   const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
   assert.match(again.html, /data-bom-rf-create/);
   assert.doesNotMatch(again.html, /ไว้แล้ว/);
-  assert.match(again.html, /แผนก SR รับมอบใบส่งมอบของ WO นั้น/, "the dialog says each SR receive adds its quantity to the job");
+  assert.match(again.html, /ล็อตตกแต่งของ WO นั้นผ่าน QC และนับเข้าใบสั่งผลิต/, "the dialog says each finishing lot that passes adds its quantity to the job");
+  assert.doesNotMatch(again.html, /รับมอบใบส่งมอบของ WO นั้น/, "and no longer says a receipt does");
 });
 
 test("the compounds page and the link dialog list only recipes approved in the database, and the BOM page loads RubberFlow by itself", async () => {

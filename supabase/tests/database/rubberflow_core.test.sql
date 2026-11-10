@@ -1029,7 +1029,7 @@ select ok((select bool_and(changed_version > 0) from public.rf_orders where is_t
           and (select bool_and(changed_version > 0) from public.rf_materials where is_test), 'every test row is stamped with the version that changed it');
 select is((select count(*) from public.rf_deleted_keys), 0::bigint, 'the tombstone table stays empty in this round');
 select ok(not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'rf_orders' and column_name = 'fed_back_at'),
-  'the retired feedback marker column is gone (feedback happens per transfer receipt now)');
+  'the retired feedback marker column is gone (feedback happens per finishing lot now)');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname = 'rf_apply_feedback' and p.pronargs = 2),
   'and the old order-based feedback function is gone');
 select is((select max(changed_version) from public.rf_orders where is_test), (select version from public.rf_master_state where is_test), 'the newest row carries the counter version');
