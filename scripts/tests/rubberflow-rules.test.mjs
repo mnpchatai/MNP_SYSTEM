@@ -258,6 +258,24 @@ test("chemicalNeeds counts whole batches, like the requisition issues them: 70 k
   assert.equal(rules.chemicalNeeds(data, ["W3"], NOW).rows[0].needKg, 1320, "the whole remaining need, not only the 10 batches of the next requisition");
 });
 
+test("chemicalNeeds rounds UP so the suggested order covers what the requisitions will issue (each requisition rounds a material to 4 decimals, at most 10 batches each) — Pilot test 2026-11-10: TMTD 2 × 0.2584 was suggested as 0.516", () => {
+  // 50 kg batch, TMTD 1 phr of 193.5 → 0.258398 kg per batch; the database issues round(…, 4) = 0.2584 per requisition
+  const recipe = { id: "R", revision: 1, status: "approved", uom: "m", batchKg: 50, yieldPerKg: 6, items: [{ materialCode: "POLY", phr: 192.5, stage: 1 }, { materialCode: "TMTD", phr: 1, stage: 2 }] };
+  const wo = (id, targetKg) => ({ id, status: "released", recipeId: "R", recipeRevision: 1, targetQty: 6, targetKg });
+  const issued = (batches) => Math.round((1 / 193.5) * 50 * batches * 1e4) / 1e4;
+  const two = rules.chemicalNeeds({ recipes: [recipe], orders: [wo("W1", 10), wo("W2", 10)], requisitions: [], materialLots: [], purchaseOrders: [] }, ["W1"], NOW).rows.find((row) => row.materialCode === "TMTD");
+  assert.deepEqual([two.needKg, two.otherNeedKg, two.shortageKg, two.orderKg], [0.259, 0.258, 0.517, 0.517], "need 0.2584 shown as 0.259; the other WO holds 0.2584 (shown 0.258); short 0.5168 → 0.517 (not 0.516)");
+  assert.ok(two.orderKg >= 2 * issued(1), "the order covers both requisitions");
+  // a WO of 22 batches is requisitioned as 10 + 10 + 2; each one is rounded on its own
+  const big = rules.chemicalNeeds({ recipes: [recipe], orders: [wo("W3", 1100)], requisitions: [], materialLots: [], purchaseOrders: [] }, ["W3"], NOW).rows.find((row) => row.materialCode === "TMTD");
+  assert.ok(big.shortageKg >= issued(10) * 2 + issued(2), `${big.shortageKg} covers 10 + 10 + 2 batches`);
+  assert.equal(big.needKg, 5.685);
+  // stock that is short by less than a gram is still short
+  const lot = { lotNo: "T1", materialCode: "TMTD", qtyKg: 0.2583, initialKg: 0.2583, expiry: NOW + 90 * DAY, receivedAt: NOW - DAY, status: "available" };
+  const almost = rules.chemicalNeeds({ recipes: [recipe], orders: [wo("W1", 10)], requisitions: [], materialLots: [lot], purchaseOrders: [] }, ["W1"], NOW).rows.find((row) => row.materialCode === "TMTD");
+  assert.equal(almost.shortageKg, 0.001, "0.2584 needed, 0.2583 on hand: short 0.0001, shown and ordered as 0.001");
+});
+
 // ---------- batch ของใบเบิกมาจาก WO ----------
 test("remainingBatches: the kilograms a WO needs (targetKg, else quantity ÷ yield) minus what its requisitions took, in whole batches; a covered WO has none; one requisition is capped at 10 batches", () => {
   const recipe = { id: "R", revision: 1, batchKg: 50, yieldPerKg: 6 };

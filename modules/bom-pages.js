@@ -2252,7 +2252,7 @@
     const canBuy = ctx.helpers.canPlan(user) || user.role === "rb";
     const note = plan.anyShort
       ? ui.callout("warn", esc(`สต็อกไม่พอ ${plan.short.length} รายการ จึงเบิกจ่ายไม่ได้ (ระบบไม่จ่ายบางรายการ)${canBuy ? " · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง" : " · แจ้งฝ่ายวางแผนให้สั่งซื้อ หรือนับยอดที่หน้าคลังของซื้อถ้ามีของเพิ่ม"}`))
-      : ui.callout("info", "เบิกจ่ายทุกรายการพร้อมกัน หักสต็อกตามส่วนที่เหลือ และแก้ย้อนกลับไม่ได้");
+      : ui.callout("info", "เบิกจ่ายทุกรายการพร้อมกันและหักสต็อกตามส่วนที่เหลือ · เบิกผิดยกเลิกการเบิกจ่ายได้จนกว่าจะปิดใบ");
     const footer = `${ui.closeButton()}${plan.anyShort
       ? (canBuy ? '<button class="btn rf-btn" type="button" data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</button>' : "")
       : ui.button("เบิกจ่ายทั้งหมด", { action: "issueOrderParts", args: { orderId }, className: "", success: "เบิกจ่ายของซื้อ {result} แล้ว" })}`;

@@ -146,6 +146,11 @@
   // ใช้ร่วมกันทุกจุดที่เสนอสั่งซื้อ (หลังปล่อยผลิต PI · ปุ่ม "ตรวจวัตถุดิบ" ของ PI) · ไม่มี DOM/Supabase
   const OPEN_ORDER = Object.freeze(["planned", "released", "in_progress", "on_hold"]);
   const round3 = (value) => Math.round(Number(value) * 1000) / 1000;
+  // ยอดที่ต้องซื้อปัดขึ้น ไม่ให้สั่งน้อยกว่าที่ใบเบิกจะจ่ายจริง (ใบเบิกปัดยอดต่อวัตถุดิบที่ 4 ตำแหน่ง)
+  // up4: ปัดขึ้นที่ 4 ตำแหน่ง (ยอมเศษทศนิยมของเครื่อง) · up3: ปัดที่ 4 ตำแหน่งก่อน แล้วปัดขึ้นที่ 3 ตำแหน่ง (ยอดแสดง ต้องใช้ / ขาด / จำนวนสั่ง) กฎเดียวกับ partUp3 ใน bom-rules.js
+  // up4 ปัดขึ้นทุกใบเบิก (ฐานข้อมูลปัดใกล้สุด) จึงอาจขาดเกินจริงได้ใบละไม่เกิน 0.0001 kg ต่อวัตถุดิบ ตั้งใจ: โหมดสาธิตจ่ายยอดไม่ปัด และสั่งเกินเล็กน้อยดีกว่าขาด
+  const up4 = (value) => Math.ceil(Number(value) * 1e4 - 1e-6) / 1e4 || 0;
+  const up3 = (value) => Math.ceil(Math.round(Number(value) * 1e4) / 10 - 1e-9) / 1e3 || 0;
 
   // กิโลกรัมคอมปาวด์ที่ WO ยังต้องใช้ = เป้าหมาย (targetKg ถ้ามี ไม่เช่นนั้น targetQty ÷ ผลผลิตต่อ kg ของสูตร) − ที่ใบเบิกของ WO นี้ครอบคลุมแล้ว (batch × น้ำหนักต่อ batch)
   function orderRemainingKg(order, recipe, requisitions) {
@@ -199,7 +204,19 @@
       const kg = Number.isFinite(ownKg) ? ownKg : remainingNeedKg(order, recipe, requisitions);
       const total = totalPhr(recipe);
       if (!(kg > 0) || !(total > 0)) return;
-      for (const item of recipe.items) add(map, item.materialCode, (kg * Number(item.phr)) / total);
+      // แบ่งเป็นใบเบิกละไม่เกิน MAX_REQ_BATCHES batch เหมือนที่ RB จะเบิกจริง แล้วปัดขึ้นที่ 4 ตำแหน่งต่อใบ (ฐานข้อมูลปัดใกล้สุดต่อใบ) ผลรวมจึงไม่น้อยกว่าที่จะจ่าย
+      // ใบเบิกเต็ม (10 batch) ซ้ำกันทุกใบ จึงคิดครั้งเดียวแล้วคูณจำนวนใบ ไม่วนทีละใบ (WO ใหญ่มากไม่ทำให้หน้าค้าง)
+      const batchKg = Number(recipe.batchKg);
+      const parts = []; // [กิโลคอมปาวด์ต่อใบเบิก, จำนวนใบ]
+      if (batchKg > 0 && !Number.isFinite(ownKg)) {
+        const batches = Math.round(kg / batchKg);
+        const full = Math.floor(batches / MAX_REQ_BATCHES);
+        const rest = batches % MAX_REQ_BATCHES;
+        if (full) parts.push([MAX_REQ_BATCHES * batchKg, full]);
+        if (rest) parts.push([rest * batchKg, 1]);
+      }
+      if (!parts.length) parts.push([kg, 1]);
+      for (const item of recipe.items) for (const [part, count] of parts) add(map, item.materialCode, up4((part * Number(item.phr)) / total) * count);
     };
     for (const id of asked) {
       const order = orders.find((row) => row.id === id);
@@ -227,12 +244,14 @@
       if (po.status !== "ordered") continue;
       for (const line of po.lines ?? []) if (line.receivedKg === null || line.receivedKg === undefined) add(onOrder, line.materialCode, Number(line.qtyKg) || 0);
     }
-    const rows = [...need.keys()].filter((code) => round3(need.get(code)) > 0).sort().map((code) => {
+    const rows = [...need.keys()].filter((code) => up3(need.get(code)) > 0).sort().map((code) => {
       const material = materials.find((row) => row.code === code);
-      const needKg = round3(need.get(code));
+      const exactNeed = need.get(code);
+      const needKg = up3(exactNeed);
       const heldKg = (reserved.get(code) || 0) + (other.get(code) || 0);
       const free = (onHand.get(code) || 0) - heldKg + (onOrder.get(code) || 0);
-      const shortageKg = round3(Math.max(0, needKg - free));
+      // ขาดคิดจากยอดจริงแล้วปัดขึ้น (ไม่ใช่ต้องใช้ที่ปัดไว้แสดง) จำนวนสั่งตั้งต้นจึงพอสำหรับใบเบิก
+      const shortageKg = up3(Math.max(0, exactNeed - free));
       const safetyKg = Math.max(0, Number(material?.safetyKg) || 0);
       return {
         materialCode: code, name: material?.name ?? "", needKg, onHandKg: round3(onHand.get(code) || 0), reservedKg: round3(heldKg), requisitionKg: round3(reserved.get(code) || 0), otherNeedKg: round3(other.get(code) || 0),

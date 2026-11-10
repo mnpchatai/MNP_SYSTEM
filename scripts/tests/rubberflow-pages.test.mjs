@@ -230,7 +230,7 @@ test("the requisition dialog sends the purchase dialog the same breakdown: its o
   };
   const plain = run(0);
   const ordered = run(1);
-  assert.equal(plain.needKg, Math.round(first.kgPerBatch * batches * 1000) / 1000, "the need is the batches the WO still has to requisition");
+  assert.equal(plain.needKg, Math.ceil(first.kgPerBatch * batches * 1000 - 1e-6) / 1000, "the need is the batches the WO still has to requisition, rounded up at 3 decimals (never less than the requisition issues)");
   assert.equal(ordered.onOrderKg, 1, "the line on order is passed on");
   for (const row of [plain, ordered]) {
     assert.equal(row.availableKg, Math.round((row.onHandKg - row.reservedKg + row.onOrderKg) * 1000) / 1000, "on hand − reserved + on order");
