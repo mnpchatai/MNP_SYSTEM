@@ -163,18 +163,18 @@ test("the detail page markup is identical in test mode and real mode, for real a
   }
 });
 
-test("who sees the loss form on a real NCR matches private.can_edit_ncr_losses", async () => {
-  // NCR ใบนี้ให้แผนก RB รับผิดชอบ — หัวหน้า RB จึงไม่มีสิทธิ์แล้ว (migration 20261017030000)
+test("who sees the loss form on a real NCR matches app_ncr_record_loss (cost editors, and the NCR's responders for estimates)", async () => {
+  // NCR ใบนี้ให้แผนก RB รับผิดชอบ — ผู้ตอบของ RB ใส่ยอดประมาณการได้ (migration 20261115010000) ส่วนแผนกอื่นไม่ได้
   const cases = [
     ["factory manager", employee("e1", "dept-ft", "FT", "factory_manager"), true],
     ["assistant factory manager", employee("e2", "dept-ft", "FT", "assistant_factory_manager"), true],
     ["general manager", employee("e3", "dept-mgt", "MGT", "general_manager"), true],
     ["QA department manager", employee("e9", "dept-qa", "QA", "department_manager"), true],
     ["QA assistant department manager", employee("e10", "dept-qa", "QA", "assistant_department_manager"), true],
-    ["manager of the responsible department", employee("e4", "dept-rb", "RB", "department_manager"), false],
-    ["assistant manager of the responsible department", employee("e5", "dept-rb", "RB", "assistant_department_manager"), false],
+    ["manager of the responsible department", employee("e4", "dept-rb", "RB", "department_manager"), true],
+    ["assistant manager of the responsible department", employee("e5", "dept-rb", "RB", "assistant_department_manager"), true],
     ["manager of another department", employee("e6", "dept-pk", "PK", "department_manager"), false],
-    ["staff of the responsible department", employee("e7", "dept-rb", "RB", "staff"), false],
+    ["staff of the responsible department", employee("e7", "dept-rb", "RB", "staff"), true],
     ["QA staff", employee("e8", "dept-qa", "QA", "staff"), false],
   ];
   for (const [label, viewer, editable] of cases) {
@@ -242,7 +242,7 @@ test("the waiting text names the admin working as general manager at the GM step
   assert.doesNotMatch(factoryHtml, /รอง ผู้ดูแล/);
 });
 
-test("a cancelled NCR locks the loss form for everyone, and the responsible department does not change who can edit", async () => {
+test("a cancelled NCR locks the loss form for everyone, and the responsible department decides who enters estimates", async () => {
   const factoryManager = employee("e1", "dept-ft", "FT", "factory_manager");
   const qaManager = employee("e9", "dept-qa", "QA", "department_manager");
   for (const viewer of [factoryManager, qaManager]) {
@@ -251,8 +251,29 @@ test("a cancelled NCR locks the loss form for everyone, and the responsible depa
   const qaResponsible = { ncr_responsibilities: [{ share: 100, department_id: "dept-qa", department: { code: "QA", name_th: "QA" } }] };
   assert.equal((await renderFor(qaManager, qaResponsible)).includes('id="ncr-loss-form"'), true, "QA manager, QA responsible: form shown");
   assert.equal((await renderFor(qaManager)).includes('id="ncr-loss-form"'), true, "QA manager, QA not responsible: form shown");
-  assert.equal((await renderFor(employee("e8", "dept-qa", "QA", "staff"), qaResponsible)).includes('id="ncr-loss-form"'), false, "QA staff even when QA is responsible: form hidden");
-  assert.equal((await renderFor(employee("e4", "dept-rb", "RB", "department_manager"))).includes('id="ncr-loss-form"'), false, "responsible department manager: form hidden");
+  assert.equal((await renderFor(employee("e8", "dept-qa", "QA", "staff"), qaResponsible)).includes('id="ncr-loss-form"'), true, "QA staff when QA is responsible: estimate form");
+  assert.equal((await renderFor(employee("e8", "dept-qa", "QA", "staff"))).includes('id="ncr-loss-form"'), false, "QA staff when QA is not responsible: form hidden");
+  assert.equal((await renderFor(employee("e4", "dept-rb", "RB", "department_manager"), { status: "cancelled" })).includes('id="ncr-loss-form"'), false, "responsible department on a cancelled report: form hidden");
+});
+
+test("the NCR's responders enter and edit estimates only: no confirm, void or cost review", async () => {
+  const estimate = { id: "l1", ncr_id: NCR.id, entry_kind: "loss", loss_type: "scrap", component: "quantity", cost_status: "estimated", amount: 60, quantity: 2, unit: "ชิ้น", unit_cost: 30, recorded_by: "e7", recorded_at: "2026-11-01" };
+  const confirmed = { ...estimate, id: "l2", cost_status: "confirmed", evidence_ref: "SC-1" };
+  const responder = await renderFor(employee("e7", "dept-rb", "RB", "staff"), {}, { tables: { ncr_losses: [estimate, confirmed] } });
+  assert.match(responder, /<input type="hidden" name="cost_status" value="estimated">/, "the status is fixed to an estimate");
+  assert.doesNotMatch(responder, /id="ncr-loss-status"/, "no estimate/confirmed choice");
+  assert.equal((responder.match(/data-edit-loss="/g) ?? []).length, 1, "only the estimated line can be edited");
+  assert.match(responder, /data-edit-loss="l1">แก้ไขยอดประมาณการ</);
+  assert.doesNotMatch(responder, /data-void-loss=/, "no void buttons");
+  assert.doesNotMatch(responder, /data-action="review_costs"/, "no cost review form");
+  const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"), {}, { tables: { ncr_losses: [estimate, confirmed] } });
+  assert.match(editor, /id="ncr-loss-status"/);
+  assert.equal((editor.match(/data-void-loss="/g) ?? []).length, 2);
+  assert.match(editor, /data-action="review_costs"/);
+  // ผจก.โรงงานระบุผู้ตอบของแผนกไว้แล้ว: พนักงานคนอื่นในแผนกไม่ได้ฟอร์ม
+  const named = { ncr_responsibilities: [{ share: 100, department_id: "dept-rb", responder_id: "e4", department: { code: "RB", name_th: "ขึ้นรูปยาง" } }] };
+  assert.equal((await renderFor(employee("e7", "dept-rb", "RB", "staff"), named)).includes('id="ncr-loss-form"'), false, "another staff member once a responder is named");
+  assert.equal((await renderFor(employee("e4", "dept-rb", "RB", "department_manager"), named)).includes('id="ncr-loss-form"'), true, "the named responder");
 });
 
 test("read-only viewers are told who can enter costs; editors are not", async () => {

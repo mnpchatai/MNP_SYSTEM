@@ -122,10 +122,11 @@ select throws_ok(
   'QA staff cannot mark the cost review through the RPC'
 );
 select set_config('request.jwt.claims', '{"sub":"79500000-0000-0000-0000-000000000005","role":"authenticated"}', true);
+-- (หลัง 20261115010000) ผู้ตอบใส่ยอดประมาณการได้ แต่ยอดยืนยันยังเป็นของผู้กรอกต้นทุน
 select throws_ok(
-  format('select public.app_ncr_record_loss(%L::uuid, %L::jsonb)', current_setting('test.ncr_rb'), current_setting('test.entry')),
-  'NOT_AUTHORIZED',
-  'the manager of the responsible department cannot record a loss through the RPC'
+  format('select public.app_ncr_record_loss(%L::uuid, %L::jsonb)', current_setting('test.ncr_rb'), (current_setting('test.entry')::jsonb || '{"cost_status":"confirmed","evidence_ref":"SC-RB"}'::jsonb)::text),
+  'LOSS_ESTIMATE_ONLY',
+  'the manager of the responsible department enters estimates only and cannot record a confirmed loss through the RPC'
 );
 select set_config('request.jwt.claims', '{"sub":"79500000-0000-0000-0000-000000000009","role":"authenticated"}', true);
 select lives_ok(

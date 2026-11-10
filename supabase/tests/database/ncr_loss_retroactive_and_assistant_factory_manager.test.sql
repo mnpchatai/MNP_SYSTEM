@@ -1,4 +1,5 @@
 -- ทดสอบ 20261015060000_ncr_loss_retroactive_and_assistant_factory_manager.sql
+--   (หลัง 20261115010000) ผู้ตอบของแผนกที่รับผิดชอบใส่ได้เฉพาะยอดประมาณการ จุดที่เคยปฏิเสธด้วย NOT_AUTHORIZED จึงส่งยอดยืนยันและได้ LOSS_ESTIMATE_ONLY
 --   0) (หลัง 20261017030000) หัวหน้าแผนกที่รับผิดชอบใบนั้นลงยอดไม่ได้แล้ว ผู้ที่ลงได้คือ ผจก.ทั่วไป ผจก.โรงงาน ผช.ผจก.โรงงาน ผจก./ผช.ผจก. QA
 --   1) ผู้ช่วย ผจก.โรงงานลงยอดใบจริงได้ ผู้ช่วย ผจก.แผนกที่ไม่รับผิดชอบ/พนักงานทั่วไปยังลงไม่ได้
 --   2) ใบที่ปิดแล้วลงยอด/แก้/ยกเลิกรายการ/บันทึกผลดำเนินการย้อนหลังได้ สถานะไม่เปลี่ยนและมีประวัติ
@@ -56,9 +57,9 @@ select throws_ok(
 select set_config('request.jwt.claims', '{"sub":"79300000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select throws_ok(
   $$ select public.app_ncr_record_loss(current_setting('test.ncr_a')::uuid,
-       '{"loss_type":"scrap","entry_kind":"loss","cost_status":"estimated","component":"quantity","quantity":1,"unit":"ท่อน","unit_cost":18,"incurred_on":"2026-10-01"}'::jsonb) $$,
-  'NOT_AUTHORIZED',
-  'staff of the responsible department still cannot record a loss'
+       '{"loss_type":"scrap","entry_kind":"loss","cost_status":"confirmed","component":"quantity","quantity":1,"unit":"ท่อน","unit_cost":18,"incurred_on":"2026-10-01","evidence_ref":"SC-RB"}'::jsonb) $$,
+  'LOSS_ESTIMATE_ONLY',
+  'staff of the responsible department may enter estimates only and cannot record a confirmed loss (20261115010000)'
 );
 
 -- ปิดใบ A และยกเลิกใบ B (ตั้งสถานะตรง ๆ ขั้นตอนเต็มทดสอบไว้ใน ncr_phase1.test.sql) -------------
@@ -80,8 +81,8 @@ select throws_ok(
   $$ select public.app_ncr_record_loss(current_setting('test.ncr_a')::uuid,
        '{"loss_type":"scrap","entry_kind":"loss","cost_status":"confirmed","component":"quantity","quantity":2,"unit":"ท่อน","unit_cost":18,"incurred_on":"2026-10-01","evidence_ref":"SC-002"}'::jsonb,
        current_setting('test.loss_open')::uuid) $$,
-  'NOT_AUTHORIZED',
-  'the manager of the responsible department can no longer confirm a loss, even after the NCR is closed (migration 20261017030000)'
+  'LOSS_ESTIMATE_ONLY',
+  'the manager of the responsible department enters estimates only and cannot confirm a loss, even after the NCR is closed (20261115010000)'
 );
 select set_config('request.jwt.claims', '{"sub":"79300000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select lives_ok(

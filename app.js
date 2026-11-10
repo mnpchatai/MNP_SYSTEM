@@ -483,7 +483,7 @@ function friendlyError(error) {
     NOT_ASSIGNED_TECHNICIAN: "คุณไม่ใช่ช่างที่ถูกมอบหมายหรือหัวหน้าแผนกซ่อมบำรุงของใบนี้",
     REQUEST_NOT_IN_PROGRESS: "ใบนี้ไม่ได้อยู่ระหว่างดำเนินการซ่อมแล้ว",
     INVALID_EXECUTION_PLAN: "กรุณาเลือกการดำเนินงาน",
-    INVALID_INSPECTOR_OPINION: "กรุณาเลือกแนวทางการซ่อม",
+    INVALID_INSPECTOR_OPINION: "กรุณาเลือกความคิดเห็นของช่างผู้ตรวจสอบ",
     INVALID_CAUSE_ANALYSIS: "กรุณาระบุผลวิเคราะห์สาเหตุ 3–5,000 ตัวอักษร",
     REQUEST_NOT_PENDING_VERIFY: "ใบนี้ไม่ได้อยู่ในขั้นรอผู้แจ้งตรวจรับแล้ว",
     INVALID_RESULT: "กรุณาเลือกผลการตรวจรับ",
@@ -2203,7 +2203,7 @@ async function renderDashboard(params = new URLSearchParams()) {
     <section class="home-queue" id="home-queue" aria-labelledby="home-queue-title">
       <div class="home-section-head">
         <h2 id="home-queue-title">ต้องจัดการ${items.length ? ` <span class="detail-section-count">${items.length}</span>` : ""}</h2>
-        ${ownSelectable.length > 1 ? `<label class="queue-select-all"><input type="checkbox" id="queue-select-all"> เลือกทั้งหมดเพื่ออนุมัติ</label>` : ""}
+        ${ownSelectable.length > 1 ? `<label class="queue-select-all"><input type="checkbox" id="queue-select-all"> เลือกใบที่อนุมัติได้ทั้งหมด (${ownSelectable.length})</label>` : ""}
       </div>
       ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(entry.label ?? decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
       ${items.length ? `<div class="queue-layout">
@@ -2634,8 +2634,11 @@ function openShortcutHelp() {
     <div class="confirm-dialog-actions"><button class="btn" value="close">ปิด</button></div>
   </form>`;
   document.body.append(dialog);
+  const closeOnNavigate = () => { if (dialog.open) dialog.close(); };
+  window.addEventListener("hashchange", closeOnNavigate, { once: true });
   // ปิดด้วย Esc หรือปุ่มปิด แล้วคืนโฟกัสให้ที่เดิม
   dialog.addEventListener("close", () => {
+    window.removeEventListener("hashchange", closeOnNavigate);
     dialog.remove();
     if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
   }, { once: true });
@@ -2830,7 +2833,7 @@ function requestCenterHeader(types, params, counts) {
     // ลิงก์เสริมของโมดูล (เช่น แดชบอร์ด NCR) วางข้างปุ่มสร้าง — โมดูลประกาศ headerLinks: [{ href, label, icon }]
     const headerLinks = (requestModule(selected.code)?.headerLinks ?? [])
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
-    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
+    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ เลือกโมดูล</a>
       <div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}">
         <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1></div></div>${typeCardWatermarkHtml(selected.code)}
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
@@ -3049,7 +3052,7 @@ async function renderNewRequest(params) {
         : genericRequestFormHtml(selected, separateModule, formContext);
     }
 
-    app.innerHTML = shell(`<a class="request-back-link" href="${escapeHtml(requestCenterUrl(params))}">‹ กลับรายการคำร้อง</a>${heading}${body}`, "requests", "คำร้อง / สร้างคำร้อง");
+    app.innerHTML = shell(`<a class="request-back-link" href="${escapeHtml(requestCenterUrl(params))}">‹ ${escapeHtml(selected ? requestTypeLabel(selected) : "คำร้อง")}</a>${heading}${body}`, "requests", "คำร้อง / สร้างคำร้อง");
     document.querySelectorAll('.form-actions a[href="#/requests"], .form-actions a[href="#/ncr"]').forEach((link) => { link.href = requestCenterUrl(params); });
     bindShell();
     bindStep(selected);
@@ -3705,7 +3708,7 @@ async function renderRequestDetail(params) {
   // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
   const priorityIsFlagged = ["high", "urgent"].includes(request.priority);
   const requestFacts = [
-    priorityIsFlagged ? "" : requestFact("ความสำคัญ", priorityLabel(request.priority, isRepair), {
+    priorityIsFlagged || !request.priority || request.priority === "normal" ? "" : requestFact("ความสำคัญ", priorityLabel(request.priority, isRepair), {
       icon: "flag",
       tone: "primary",
       valueClass: `priority-${request.priority}`,
@@ -3891,6 +3894,8 @@ function decisionReceiptHtml(receipt, directory) {
 }
 
 function requestDetailMenuHtml(actionsHtml) {
+  // ตัวเลือกเดียวไม่ต้องซ่อนในเมนู
+  if ((actionsHtml.match(/<(a|button)\b/g) ?? []).length === 1) return `<div class="request-detail-actions">${actionsHtml}</div>`;
   return `<div class="request-detail-menu">
     <button type="button" class="icon-button" id="request-detail-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="request-detail-menu-list" aria-label="ตัวเลือกเพิ่มเติม" title="ตัวเลือกเพิ่มเติม"><span aria-hidden="true">⋯</span></button>
     <div class="request-detail-menu-list" id="request-detail-menu-list" data-popup hidden>${actionsHtml}</div>

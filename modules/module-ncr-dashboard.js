@@ -335,7 +335,7 @@
       const item = items.find((entry) => entry.key === key);
       return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
     };
-    return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>Pareto ประเภทข้อบกพร่อง แตะแท่งเพื่อดูตัวเลข</p></div>
+    return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย</p></div>
       <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>${warn}
       ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", resolve, valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
       <div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
@@ -356,7 +356,7 @@
       return selectButton("loss", item.key, inner, `nd-brow${filters.loss === item.key ? " active" : ""}`) + detailUnder("loss", item.key, resolve);
     }).join("");
     const notes = [sums.recovery ? `ชดเชยยืนยัน −${fmtBaht(sums.recovery)} แสดงแยก ไม่หักในแท่ง` : "", sums.legacy ? `รายการเดิมรอตรวจสอบ ${fmtBaht(sums.legacy)} ไม่รวมในแท่ง` : ""].filter(Boolean).join(" · ");
-    return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p>ค่าซ่อม (Repair) กับ Rework แยกคนละแท่ง ยอดยืนยันรวม ${esc(fmtBaht(sums.gross))} ตรงกับ "สูญเสียยืนยัน (ก่อนชดเชย)" ในรายละเอียดของการ์ดสูญเสียสุทธิ แตะแท่งเพื่อดูตัวเลข</p></div>
+    return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p class="nd-keep">ยอดยืนยันรวม ${esc(fmtBaht(sums.gross))} ตรงกับ "สูญเสียยืนยัน (ก่อนชดเชย)" ในรายละเอียดของการ์ดสูญเสียสุทธิ</p></div>
       ${items.length ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>ยืนยันแล้ว (ก่อนหักชดเชย)</span><span><i class="soft"></i>ประมาณการรอยืนยัน</span></div>${notes ? `<p class="nd-hint">${esc(notes)}</p>` : ""}` : `<p class="nd-empty">ยังไม่มีการบันทึกความสูญเสียที่ยืนยันหรือประมาณการในช่วงนี้</p>`}
       ${detailHintIfIdle("loss", "แท่ง", resolve)}`;
@@ -398,7 +398,7 @@
   function drillHtml(list) {
     const sorted = [...list].sort((a, b) => (a.issue_date < b.issue_date ? 1 : a.issue_date > b.issue_date ? -1 : b.ncr_no.localeCompare(a.ncr_no)));
     const shown = sorted.slice(0, drillLimit);
-    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p>ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "NCR ที่ออกในช่วงนี้" แตะเลขที่เพื่อเปิดใบ</p></div>
+    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "NCR ที่ออกในช่วงนี้"</p></div>
       ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกินกำหนดตอบ</span>` : esc(STATUS_LABELS[row.status] ?? row.status)}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
       ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มี NCR ตรงกับตัวกรองนี้</p>`}`;
@@ -420,7 +420,7 @@
     const list = model.select(rows, filters);
     const sums = model.summarize(list, filters);
     return `<div class="page-heading request-module-header" data-module="ncr"><div><div class="eyebrow">QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
-        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">‹ กลับหน้า NCR</a></div></div>
+        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="#/ncr">‹ ทะเบียน NCR</a></div></div>
       <div class="nd" data-module="ncr">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
@@ -437,7 +437,7 @@
         <section class="card nd-card" data-card="scrap">${scrapHtml(list)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list)}</section>
         ${definitionsHtml}
-        <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>
+        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>
       </div>`;
   }
 
@@ -447,7 +447,8 @@
     const focusKey = document.activeElement?.dataset?.sel ?? (document.activeElement?.hasAttribute?.("data-more") ? "__more" : null);
     const keepY = restoreScrollY ?? window.scrollY;
     restoreScrollY = null;
-    root.innerHTML = pageBody();
+    // คำอธิบายวิธีนับใต้หัวการ์ดพับไว้ (modules/dashboard-notes.js)
+    root.innerHTML = (window.MNP_DASHBOARD_NOTES?.fold ?? ((html) => html))(pageBody());
     bindPage(root);
     placeDrill(root);
     // วาดใหม่ทั้งก้อน: คืนตำแหน่งเลื่อนเดิมเสมอ หน้าจะได้ไม่กระโดด (ก่อน focus เพราะ focus บังคับ layout)

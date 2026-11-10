@@ -250,7 +250,7 @@
       const inner = `<span class="nd-lab">${esc(stage.label)}<br><span class="nd-muted">${esc(stage.owner)}</span></span><span class="nd-trk"><span class="nd-bar${stage.count === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtCount(stage.count))}<small>${stage.count ? `เฉลี่ย ${esc(fmtDays(stage.avgDays))}` : "—"}</small></span>`;
       return selectButton("stage", stage.key, inner, `nd-brow${filters.stage === stage.key ? " active" : ""}`) + detailUnder("stage", stage.key, resolve);
     }).join("");
-    return `<div class="nd-head"><h2>งานค้างอยู่ที่ใคร</h2><p>นับทุกใบที่ยังไม่จบ ไม่ขึ้นกับช่วงเวลา เรียงตามลำดับ workflow แถบเข้มคือขั้นที่ค้างมากสุด ตัวเลขเฉลี่ยคือจำนวนวันที่ใบอยู่ในขั้นนั้นมาแล้ว</p></div>
+    return `<div class="nd-head"><h2>งานค้างอยู่ที่ใคร</h2><p>นับทุกใบที่ยังไม่จบ ไม่ขึ้นกับช่วงเวลา เรียงตามลำดับขั้นตอน แถบเข้มคือขั้นที่ค้างมากสุด ตัวเลขเฉลี่ยคือจำนวนวันที่ใบอยู่ในขั้นนั้นมาแล้ว</p></div>
       ${total ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>ขั้นที่ค้างมากสุด</span><span><i class="soft"></i>ขั้นอื่น</span></div>` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}
       ${detailHintIfIdle("stage", "แถบขั้นตอน", resolve)}`;
@@ -400,21 +400,21 @@
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
     return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1><p>ไม่นับฉบับร่างและใบที่ยกเลิก</p></div>
-        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ กลับหน้า MT</a></div></div>
+        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a></div></div>
       <div class="nd" data-module="mt">
         <p class="nd-warn">กำลังทดลองใช้ มีงานค้าง คอขวด เวลาที่ใช้ คุณภาพการซ่อม เครื่องจักรที่เสียบ่อย แผนกที่แจ้งซ่อมบ่อย และเวลาซ่อมของช่าง หากตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
-        <section class="card nd-card" data-card="stage">${stageHtml(stages, filters)}</section>
         <section class="card nd-card" data-card="act">${actHtml(open, today)}</section>
+        <section class="card nd-card" data-card="stage">${stageHtml(stages, filters)}</section>
         <section class="card nd-card" data-card="phase">${phaseHtml(phases)}</section>
         <section class="card nd-card" data-card="machine">${machineHtml(machines, filters)}</section>
         <section class="card nd-card" data-card="deptrank">${deptRankHtml(depts, filters)}</section>
         <section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters)}</section>
         ${definitionsHtml}
-        <p class="nd-muted">ข้อมูล ณ ${esc(new Date(loadedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }))} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น</p>
+        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น</p>
       </div>`;
   }
 
@@ -429,7 +429,8 @@
     const focusKey = document.activeElement?.dataset?.sel ?? (document.activeElement?.hasAttribute?.("data-more") ? "__more" : null);
     const keepY = restoreScrollY ?? window.scrollY;
     restoreScrollY = null;
-    root.innerHTML = pageBody();
+    // คำอธิบายวิธีนับใต้หัวการ์ดพับไว้ (modules/dashboard-notes.js)
+    root.innerHTML = (window.MNP_DASHBOARD_NOTES?.fold ?? ((html) => html))(pageBody());
     bindPage(root);
     placeDrill(root);
     // วาดใหม่ทั้งก้อน: คืนตำแหน่งเลื่อนเดิมเสมอ หน้าจะได้ไม่กระโดด (ก่อน focus เพราะ focus บังคับ layout)

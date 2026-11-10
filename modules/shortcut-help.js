@@ -75,7 +75,7 @@
 
   // ป้ายสถานะ: สีบอกกลุ่ม สัญลักษณ์ในวงขาวบอกความหมาย (styles.css "แบบ 1")
   const BADGE_LEGEND = Object.freeze([
-    Object.freeze(["pending_approval", "รอ (อนุมัติ มอบหมาย ตรวจรับ)"]),
+    Object.freeze(["pending_approval", "รอ (อนุมัติ มอบหมาย เริ่มงาน ตรวจรับ)"]),
     Object.freeze(["more_info", "ขอข้อมูลเพิ่ม"]),
     Object.freeze(["in_progress", "กำลังดำเนินการ"]),
     Object.freeze(["completed", "เสร็จแล้ว / รับทราบ"]),
