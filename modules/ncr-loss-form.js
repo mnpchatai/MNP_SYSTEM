@@ -1,7 +1,9 @@
 (function registerNcrLossForm() {
   const costs = window.MNP_NCR_COSTS;
+  // เครื่องหมายช่องจำเป็นแบบเดียวกับฟอร์ม MT และฟอร์มออก NCR (module-ncr.js)
+  const REQUIRED = '<span class="field-required">(จำเป็น)</span>';
   const options = (items, selected) => Object.entries(items).map(([value, label]) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
-  const numberField = (id, name, label, value = "", step = "any") => `<div class="field"><label for="${id}">${escapeHtml(label)}</label><input class="input" id="${id}" name="${name}" type="number" min="0" max="1000000000" step="${step}" inputmode="decimal" value="${escapeHtml(String(value))}" required></div>`;
+  const numberField = (id, name, label, value = "", step = "any") => `<div class="field" data-field="${name}"><label for="${id}">${escapeHtml(label)} ${REQUIRED}</label><input class="input" id="${id}" name="${name}" type="number" min="0" max="1000000000" step="${step}" inputmode="decimal" value="${escapeHtml(String(value))}" required></div>`;
   // ช่องแนบไฟล์เพิ่มเติมของฟอร์มบันทึกต้นทุน/ผลดำเนินการ ใช้ชุดเดียวกับฟอร์มอื่นของ NCR (รองรับทั้งข้อมูลจริงและโหมดทดสอบ)
   // ไฟล์อัปโหลดหลังบันทึกสำเร็จโดย submit handler กลางใน module-ncr.js
   const extraFilesField = (id) => (window.MNP_REQUEST_MODULES?.NCR_CAR?.shared?.evidenceFieldHtml?.(id, "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false }) ?? "").replace('class="field"', 'class="field full"');
@@ -32,21 +34,21 @@
       ${hasRows ? `<details class="ncr-loss-more"><summary>ยอดที่ยังไม่ยืนยัน</summary><dl class="ncr-loss-pending"><div><dt>ประมาณการรอยืนยัน</dt><dd>${formatBaht(summary.estimated)}</dd></div><div><dt>ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl></details>` : ""}</div>` : ""}
       ${!editable && ncr.status !== "cancelled" && (!ncr.outcome?.cost_reviewed || summary.pending) ? `<p class="muted small">ผู้กรอกค่าเสียหายได้: ${EDITORS_TEXT}</p>` : ""}
       ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : full ? '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>' : '<p class="muted">ยังไม่มีรายการความสูญเสีย</p>'}
-      ${editable ? `<details class="ncr-loss-add" id="ncr-loss-add"><summary class="btn secondary">เพิ่มรายการความสูญเสีย</summary><form class="ncr-action" data-action="add_loss" id="ncr-loss-form"><div class="ncr-form-message"></div><h3 id="ncr-loss-heading" hidden>${estimateOnly ? "แก้ไขยอดประมาณการ" : "แก้ไขรายการ / ยืนยันยอดเดิม"}</h3><input type="hidden" name="loss_id">
+      ${editable ? `<details class="ncr-loss-add" id="ncr-loss-add"><summary class="btn secondary">เพิ่มรายการความสูญเสีย</summary><form class="ncr-action" data-action="add_loss" id="ncr-loss-form" novalidate><div class="ncr-form-message"></div><h3 id="ncr-loss-heading" hidden>${estimateOnly ? "แก้ไขยอดประมาณการ" : "แก้ไขรายการ / ยืนยันยอดเดิม"}</h3><input type="hidden" name="loss_id">
         <div class="form-grid">
-          <div class="field"><label for="ncr-loss-kind">รายการ *</label><select class="select" id="ncr-loss-kind" name="entry_kind">${options({ loss: "ค่าเสียหาย", recovery: "เงินชดเชย/เครดิตผู้ขาย/ขายซาก" }, "loss")}</select></div>
-          <div class="field"><label for="ncr-loss-type">ประเภท *</label><select class="select" id="ncr-loss-type" name="loss_type">${options(costs.TYPES, "scrap")}</select></div>
-          <div class="field"><label for="ncr-loss-component">ส่วนประกอบค่าใช้จ่าย *</label><select class="select" id="ncr-loss-component" name="component"></select></div>
-          ${estimateOnly ? '<input type="hidden" name="cost_status" value="estimated">' : `<div class="field"><label for="ncr-loss-status">สถานะยอดเงิน *</label><select class="select" id="ncr-loss-status" name="cost_status">${options({ estimated: costs.STATUSES.estimated, confirmed: costs.STATUSES.confirmed }, "estimated")}</select></div>`}
-          <div class="field"><label for="ncr-loss-date">วันที่เกิดค่าใช้จ่าย *</label><input class="input" id="ncr-loss-date" name="incurred_on" type="date" value="${today}" required></div>
-          <div class="field" data-labor-field hidden><label for="ncr-loss-headcount">จำนวนพนักงาน (คน) *</label><input class="input" id="ncr-loss-headcount" name="labor_headcount" type="number" min="0" max="1000000" step="any" inputmode="decimal" disabled></div>
-          <div class="field" data-labor-field hidden><label for="ncr-loss-hours">ชม.ทำงาน/วัน (ต่อคน) *</label><input class="input" id="ncr-loss-hours" name="labor_hours" type="number" min="0" max="24" step="any" inputmode="decimal" disabled></div>
-          ${numberField("ncr-loss-qty", "quantity", "จำนวนทิ้งจริง *")}
-          <div class="field"><label for="ncr-loss-unit">หน่วย *</label><input class="input" id="ncr-loss-unit" name="unit" maxlength="20" value="${escapeHtml(ncr.unit)}" required></div>
-          ${numberField("ncr-loss-cost", "unit_cost", "ต้นทุนต่อหน่วย (บาท) *", "", "0.01")}
+          <div class="field" data-field="entry_kind"><label for="ncr-loss-kind">รายการ ${REQUIRED}</label><select class="select" id="ncr-loss-kind" name="entry_kind">${options({ loss: "ค่าเสียหาย", recovery: "เงินชดเชย/เครดิตผู้ขาย/ขายซาก" }, "loss")}</select></div>
+          <div class="field" data-field="loss_type"><label for="ncr-loss-type">ประเภท ${REQUIRED}</label><select class="select" id="ncr-loss-type" name="loss_type">${options(costs.TYPES, "scrap")}</select></div>
+          <div class="field" data-field="component"><label for="ncr-loss-component">ส่วนประกอบค่าใช้จ่าย ${REQUIRED}</label><select class="select" id="ncr-loss-component" name="component"></select></div>
+          ${estimateOnly ? '<input type="hidden" name="cost_status" value="estimated">' : `<div class="field" data-field="cost_status"><label for="ncr-loss-status">สถานะยอดเงิน ${REQUIRED}</label><select class="select" id="ncr-loss-status" name="cost_status">${options({ estimated: costs.STATUSES.estimated, confirmed: costs.STATUSES.confirmed }, "estimated")}</select></div>`}
+          <div class="field" data-field="incurred_on"><label for="ncr-loss-date">วันที่เกิดค่าใช้จ่าย ${REQUIRED}</label><input class="input" id="ncr-loss-date" name="incurred_on" type="date" value="${today}" required></div>
+          <div class="field" data-labor-field data-field="labor_headcount" hidden><label for="ncr-loss-headcount">จำนวนพนักงาน (คน) ${REQUIRED}</label><input class="input" id="ncr-loss-headcount" name="labor_headcount" type="number" min="0" max="1000000" step="any" inputmode="decimal" disabled></div>
+          <div class="field" data-labor-field data-field="labor_hours" hidden><label for="ncr-loss-hours">ชม.ทำงาน/วัน (ต่อคน) ${REQUIRED}</label><input class="input" id="ncr-loss-hours" name="labor_hours" type="number" min="0" max="24" step="any" inputmode="decimal" disabled></div>
+          ${numberField("ncr-loss-qty", "quantity", "จำนวนทิ้งจริง")}
+          <div class="field" data-field="unit"><label for="ncr-loss-unit">หน่วย ${REQUIRED}</label><input class="input" id="ncr-loss-unit" name="unit" maxlength="20" value="${escapeHtml(ncr.unit)}" required></div>
+          ${numberField("ncr-loss-cost", "unit_cost", "ต้นทุนต่อหน่วย (บาท)", "", "0.01")}
           <div class="field full"><p class="muted small" id="ncr-loss-hint"></p></div>
-          <div class="field full"><label for="ncr-loss-ref">หลักฐานอ้างอิง ${estimateOnly ? "(ถ้ามี)" : "(จำเป็นเมื่อยืนยันยอด)"}</label><input class="input" id="ncr-loss-ref" name="evidence_ref" maxlength="200" placeholder="เลขที่ใบเสร็จ ใบต้นทุน ใบบันทึกเวลา หรือชื่อไฟล์หลักฐานที่แนบใน NCR"></div>
-          <div class="field full"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
+          <div class="field full" data-field="evidence_ref"><label for="ncr-loss-ref">หลักฐานอ้างอิง ${estimateOnly ? "(ถ้ามี)" : "(จำเป็นเมื่อยืนยันยอด)"}</label><input class="input" id="ncr-loss-ref" name="evidence_ref" maxlength="200" placeholder="เลขที่ใบเสร็จ ใบต้นทุน ใบบันทึกเวลา หรือชื่อไฟล์หลักฐานที่แนบใน NCR"></div>
+          <div class="field full" data-field="note"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
           ${extraFilesField("ncr-loss-files")}
         </div><div class="form-actions"><button class="btn" type="submit">บันทึกรายการ</button><button class="btn secondary" type="button" id="ncr-loss-reset" hidden>ยกเลิกการแก้ไข</button></div></form></details>` : ""}
       ${reviewHtml(ncr, full, directory, formatQty)}
@@ -78,6 +80,33 @@
     if (quantity === null) throw new Error("INVALID_LOSS");
     return costs.makeEntry({ ...data, quantity, unit: "คน-ชม.", note: costs.withLaborTag(data.note, data.labor_headcount, data.labor_hours) });
   }
+  // ตรวจช่องก่อนเรียก app_ncr_record_loss ด้วย MNP_FORM_STEPS.validate (ข้อความใต้ช่อง ครบทุกช่องในครั้งเดียว)
+  // เงื่อนไขตรงกับ RPC (20261115010000_ncr_loss_responder_estimates.sql) และ costs.makeEntry: จำนวน > 0 ไม่เกิน 1e9 · ต้นทุน 0–1e9 ·
+  // ยืนยันยอดต้องมีหลักฐานอ้างอิงและวันที่ไม่เกินวันนี้ · ประเภท "อื่น ๆ" ต้องมีรายละเอียดอย่างน้อย 5 ตัวอักษร · ค่าแรงต้องมีจำนวนพนักงานและชั่วโมง
+  const numberOf = (value) => (String(value ?? "").trim() === "" ? NaN : Number(value));
+  const within = (min, max, exclusiveMin) => (value) => { const number = numberOf(value); return Number.isFinite(number) && (exclusiveMin ? number > min : number >= min) && number <= max; };
+  function errors(form, today) {
+    const read = (name) => String(form.elements[name]?.value ?? "");
+    const values = Object.fromEntries(["incurred_on", "labor_headcount", "labor_hours", "quantity", "unit", "unit_cost", "evidence_ref", "note"].map((name) => [name, read(name)]));
+    const labor = !form.elements.labor_headcount.disabled;
+    const confirmed = read("cost_status") === "confirmed";
+    const spec = costs.fieldSpec(read("loss_type"), read("component"), read("entry_kind"), read("unit"));
+    const rules = [
+      { name: "incurred_on", required: true, message: "เลือกวันที่เกิดค่าใช้จ่าย", check: (value) => !confirmed || value <= today, checkMessage: "วันที่เกิดค่าใช้จ่ายของยอดที่ยืนยันแล้วต้องไม่เกินวันนี้" },
+      ...(labor ? [
+        { name: "labor_headcount", required: true, message: "ใส่จำนวนพนักงาน", check: within(0, 1000000, true), checkMessage: "จำนวนพนักงานต้องมากกว่า 0" },
+        { name: "labor_hours", required: true, message: "ใส่ชั่วโมงทำงานต่อวัน (ต่อคน)", check: within(0, 24, true), checkMessage: "ชั่วโมงทำงานต่อวันต้องมากกว่า 0 และไม่เกิน 24" },
+      ] : [
+        // ค่าแรงคำนวณจำนวนจากพนักงาน × ชั่วโมง จึงไม่ตรวจช่องจำนวนซ้ำ
+        { name: "quantity", required: true, message: `ใส่${spec.quantity}`, check: within(0, 1e9, true), checkMessage: `${spec.quantity}ต้องมากกว่า 0 และไม่เกิน 1,000,000,000` },
+      ]),
+      { name: "unit", required: true, message: "ใส่หน่วย" },
+      { name: "unit_cost", required: true, message: `ใส่${spec.rate}`, check: within(0, 1e9), checkMessage: `${spec.rate}ต้องไม่ติดลบและไม่เกิน 1,000,000,000` },
+      { name: "evidence_ref", required: confirmed, message: "ใส่หลักฐานอ้างอิงเมื่อยืนยันยอด" },
+      ...(read("loss_type") === "other" && read("entry_kind") === "loss" ? [{ name: "note", required: true, minLength: 5, message: "เขียนรายละเอียดอย่างน้อย 5 ตัวอักษรเมื่อประเภทเป็นอื่น ๆ" }] : []),
+    ];
+    return window.MNP_FORM_STEPS.validate(rules, values);
+  }
   // กฎเดียวกับ app_ncr_review_costs ตรวจก่อนส่งเพื่อแจ้งผู้ใช้ทันที (ฐานข้อมูลตรวจซ้ำเสมอ)
   function readReview(form, losses) {
     const reviewed = form.elements.cost_reviewed.checked;
@@ -97,8 +126,8 @@
     };
     const configure = (reset) => {
       const spec = costs.fieldSpec(form.elements.loss_type.value,form.elements.component.value,form.elements.entry_kind.value,ncr.unit);
-      document.querySelector('label[for="ncr-loss-qty"]').textContent = `${spec.quantity} *`;
-      document.querySelector('label[for="ncr-loss-cost"]').textContent = `${spec.rate} *`;
+      document.querySelector('label[for="ncr-loss-qty"]').innerHTML = `${escapeHtml(spec.quantity)} ${REQUIRED}`;
+      document.querySelector('label[for="ncr-loss-cost"]').innerHTML = `${escapeHtml(spec.rate)} ${REQUIRED}`;
       document.querySelector("#ncr-loss-hint").textContent = spec.hint;
       form.elements.quantity.readOnly = Boolean(spec.fixedQuantity || spec.labor);
       form.elements.unit.readOnly = Boolean(spec.labor);
@@ -115,6 +144,8 @@
     };
     components(); configure(true);
     form.addEventListener("change", (event) => {
+      // ประเภท/ส่วนประกอบ/สถานะเปลี่ยนแล้วช่องและเงื่อนไขเปลี่ยนตาม ข้อความผิดเดิมจึงล้างทั้งฟอร์ม
+      if (["entry_kind", "loss_type", "component", "cost_status"].includes(event.target.name)) window.MNP_FORM_STEPS.clearFieldErrors(form);
       if (["entry_kind","loss_type"].includes(event.target.name)) { components(); configure(true); }
       else if (event.target.name === "component") configure(true);
       else if (event.target.name === "cost_status") configure(false);
@@ -122,7 +153,7 @@
     form.addEventListener("input", preview);
     document.querySelectorAll("[data-edit-loss]").forEach((button) => button.addEventListener("click", () => {
       const loss = losses.find((item) => item.id === button.dataset.editLoss);
-      form.reset(); form.elements.loss_id.value = loss.id;
+      form.reset(); window.MNP_FORM_STEPS.clearFieldErrors(form); form.elements.loss_id.value = loss.id;
       form.elements.entry_kind.value = loss.entry_kind ?? "loss"; form.elements.loss_type.value = loss.loss_type;
       components();
       if (costs.allowedComponents(loss.loss_type,loss.entry_kind).includes(loss.component)) form.elements.component.value = loss.component;
@@ -144,11 +175,11 @@
       form.scrollIntoView({block:"start",behavior:"smooth"});
     }));
     document.querySelector("#ncr-loss-reset").addEventListener("click", () => {
-      form.reset(); form.elements.loss_id.value = ""; components(); configure(true);
+      form.reset(); window.MNP_FORM_STEPS.clearFieldErrors(form); form.elements.loss_id.value = ""; components(); configure(true);
       document.querySelector("#ncr-loss-heading").hidden = true;
       document.querySelector("#ncr-loss-reset").hidden = true;
       form.querySelector(".ncr-form-message").replaceChildren();
     });
   }
-  window.MNP_NCR_LOSS_UI = { render, bind, readEntry, readReview };
+  window.MNP_NCR_LOSS_UI = { render, bind, readEntry, readReview, errors };
 })();

@@ -3886,7 +3886,9 @@ async function renderRequestDetail(params) {
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   }));
   // ช่างที่กำลังซ่อม: รูปใบเสร็จและไฟล์ส่งพร้อมฟอร์มจบงาน ("บันทึกข้อมูล" หรือ "เสร็จสิ้นงาน") ทางเดียว
-  pointToStepFiles(document.querySelector("#attachment-form"), document.querySelector("#finish-files"), "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
+  // ผู้แจ้งที่ตรวจรับ: ไฟล์ส่งพร้อมผลตรวจรับ ทางเดียว
+  const stepFiles = document.querySelector("#finish-files") ?? document.querySelector("#verify-files");
+  pointToStepFiles(document.querySelector("#attachment-form"), stepFiles, stepFiles?.id === "verify-files" ? "แนบไฟล์ในการ์ดตรวจรับผลการซ่อม" : "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -4104,6 +4106,70 @@ function clipText(text, max) {
   const kept = chars.slice(0, max - 1);
   while (kept.length && /^[เแโใไ]$/.test(kept.at(-1))) kept.pop();
   return `${kept.join("")}…`;
+}
+
+// การกระทำของขั้นที่เปลี่ยนสถานะใบในหน้าของใบ (เริ่มงาน เสร็จสิ้นงาน ตรวจรับ): ยืนยันหรือยกเลิก แล้วส่งทันที ไม่มีนับถอยหลังเลิกทำ
+// (ผู้ใช้กำหนด 2026-11-10: "ไม่ต้องนับ 5 วิ กดยืนยันหรือปฏิเสธพอ" · คำที่ลงประวัติไม่เปลี่ยน RPC เดิม)
+// area = กล่องปุ่มของการ์ด ปุ่มเดิมกลับมาเมื่อยกเลิกหรือส่งไม่สำเร็จ · consequence = ผลที่เกิดหลังส่ง · echo = ข้อความที่ผู้ใช้พิมพ์ (ทวนในบรรทัดยืนยัน)
+// send({ stillHere }) เรียก RPC จริง คืน true เมื่อสำเร็จ false เมื่อไม่สำเร็จ · stillHere() = ยังอยู่หน้าเดิม (ไม่วาดใบเดิมทับหน้าใหม่)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- เรียกจาก modules/module-mt.js (global ของ classic script)
+function confirmStepAction(area, { label, requestNo = "", consequence = "", tone = "success", echo = "", lock = [], trigger = null, send }) {
+  const rules = window.MNP_REQUEST_DECISION;
+  const original = [...area.childNodes];
+  const tapGuard = rules.createTapGuard();
+  // หน้าที่เริ่มการกระทำ: ส่งเสร็จหลังผู้ใช้ย้ายหน้าแล้ว ห้ามวาดใบเดิมทับหน้าใหม่ (send ได้ stillHere ไว้ตัดสิน)
+  // ดูแค่ hash: ย้ายไปแล้วกลับมาใบเดิมก่อนส่งเสร็จ ก็วาดใบใหม่ให้เห็นสถานะหลังส่ง (วาดหน้าเดิมซ้ำไม่มีโทษ)
+  const hash = location.hash;
+  const stillHere = () => location.hash === hash;
+  // ช่องที่ผู้ใช้กรอก (หมายเหตุ ไฟล์) ล็อกไว้ระหว่างยืนยันและส่ง สิ่งที่ส่งจึงตรงกับที่เห็นตอนกดยืนยัน
+  const locked = lock.filter(Boolean).map((node) => [node, node.disabled]);
+  const line = document.createElement("p");
+  line.className = "decision-line";
+  line.setAttribute("role", "status");
+  const buttons = document.createElement("div");
+  buttons.className = "approval-actions step-confirm";
+  const primary = tone === "danger" ? "danger-solid is-primary" : "success is-primary";
+  const button = (text, className, action) => `<button type="button" class="btn ${className}" data-step-action="${action}">${escapeHtml(text)}</button>`;
+  let sending = false;
+  // ปิดแท็บระหว่างกำลังส่ง: เตือนให้อยู่ต่อ (คำขอที่เริ่มตอนหน้ากำลังปิดอาจถูกยกเลิก)
+  const warnBeforeUnload = (event) => { if (!sending) return; event.preventDefault(); event.returnValue = ""; };
+  const restore = () => {
+    window.removeEventListener("beforeunload", warnBeforeUnload);
+    locked.forEach(([node, wasDisabled]) => { node.disabled = wasDisabled; });
+    area.replaceChildren(...original);
+    (trigger?.isConnected ? trigger : area.querySelector("button:not([disabled])"))?.focus();
+  };
+  const confirm = async () => {
+    sending = true;
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    line.textContent = `กำลังส่ง: ${label} ${requestNo}…`;
+    buttons.innerHTML = '<button type="button" class="btn is-primary" disabled aria-busy="true">กำลังส่ง…</button>';
+    let ok = false;
+    try { ok = await send({ stillHere }); } catch { ok = false; }
+    sending = false;
+    if (!ok && area.isConnected) restore();
+    else window.removeEventListener("beforeunload", warnBeforeUnload);
+  };
+  buttons.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-step-action]")?.dataset.stepAction;
+    if (!action || sending) return;
+    // ราวกันแตะซ้ำเฉพาะปุ่มยืนยัน (ปุ่มโผล่ตรงที่นิ้วเพิ่งกด) · ยกเลิกตอบทันทีเสมอ
+    if (action === "confirm" && tapGuard.blocks(event)) return;
+    if (action === "cancel") restore();
+    else if (action === "confirm") confirm();
+  });
+  // Esc = ยกเลิก (ระหว่างกำลังส่งไม่ทำอะไร)
+  buttons.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || sending) return;
+    event.preventDefault();
+    restore();
+  });
+  locked.forEach(([node]) => { node.disabled = true; });
+  area.replaceChildren(line, buttons);
+  tapGuard.arm();
+  line.textContent = `${label} ${requestNo}${consequence ? ` → ${consequence}` : ""}${echo ? ` · “${clipText(echo, 80)}”` : ""}`;
+  buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยัน${label}`, primary, "confirm")}`;
+  buttons.querySelector('[data-step-action="confirm"]')?.focus();
 }
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)

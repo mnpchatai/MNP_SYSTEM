@@ -34,7 +34,8 @@ test("both dashboards use the one helper, and their figure paragraphs are marked
     assert.doesNotMatch(source, /const foldCardNotes/, `${file} has no private copy`);
   }
   const ncr = read("modules/module-ncr-dashboard.js");
-  assert.equal((ncr.match(/<p class="nd-keep">/g) ?? []).length, 2);
+  // เหลือย่อหน้าตัวเลขเดียว (จำนวนใบของรายการ) · การ์ดความสูญเสียแยกประเภทไม่ทวนยอดรวมที่อยู่ในการ์ดตัวเลขแล้ว
+  assert.equal((ncr.match(/<p class="nd-keep">/g) ?? []).length, 1);
   const index = read("index.html");
   assert.ok(index.indexOf("modules/dashboard-notes.js") > 0 && index.indexOf("modules/dashboard-notes.js") < index.indexOf("modules/module-mt-dashboard.js"), "loaded before the dashboards");
 });

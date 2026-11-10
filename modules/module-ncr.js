@@ -195,6 +195,74 @@
     }
   }
 
+  // ---- ตรวจช่องของฟอร์มการกระทำในหน้ารายละเอียดก่อนเรียก RPC (กฎเดียวกับ MNP_FORM_STEPS ของฟอร์มออก NCR และ MT) ----
+  // บอกทุกช่องที่ขาดพร้อมกันใต้ช่องนั้น (ไม่ต้องเสียรอบเครือข่ายต่อช่อง) · เงื่อนไขตรงกับ RPC ของแต่ละขั้น (ความยาวต่ำสุดคิดหลัง trim)
+  // ฐานข้อมูลยังตรวจซ้ำเสมอ ข้อผิดพลาดจาก RPC แสดงในกล่อง .ncr-form-message ผ่าน friendlyError เหมือนเดิม
+  const textOf = (form, name) => optionalText(form, name) ?? "";
+  const pickedOf = (form, name) => checkedValues(form, name).join(",");
+  const needText = (name, message, minLength) => ({ name, required: true, minLength, message });
+  const ACTION_CHECKS = {
+    // app_ncr_dispose: วิธีจัดการ ≥ 1 และแผนก ≥ 1
+    dispose: {
+      read: (form) => ({ dispositions: pickedOf(form, "dispositions"), department_ids: pickedOf(form, "department_ids") }),
+      rules: () => [
+        { name: "dispositions", required: true, message: "เลือกวิธีจัดการอย่างน้อย 1 วิธี" },
+        { name: "department_ids", required: true, message: "เลือกแผนกที่รับผิดชอบอย่างน้อย 1 แผนก" },
+      ],
+    },
+    // app_ncr_respond: สาเหตุ 4M+E ≥ 1 · สาเหตุของปัญหาและแนวทางแก้ไข 5–5000 ตัวอักษร · แนวทางป้องกันเว้นว่างได้ แต่ถ้ากรอกต้องไม่ต่ำกว่า 5
+    respond: {
+      read: (form) => ({ causes: pickedOf(form, "causes"), root_cause: textOf(form, "root_cause"), correction: textOf(form, "correction"), prevention: textOf(form, "prevention") }),
+      rules: () => [
+        { name: "causes", required: true, message: "เลือกสาเหตุ (4M+E) อย่างน้อย 1 ข้อ" },
+        needText("root_cause", "เขียนสาเหตุของปัญหาอย่างน้อย 5 ตัวอักษร", 5),
+        needText("correction", "เขียนแนวทางการแก้ไขปัญหาอย่างน้อย 5 ตัวอักษร", 5),
+        { name: "prevention", minLength: 5, message: "แนวทางการป้องกันต้องมีอย่างน้อย 5 ตัวอักษร (หรือเว้นว่างไว้ส่งภายหลัง)" },
+      ],
+    },
+    // app_ncr_submit_prevention: 5–5000 ตัวอักษร
+    submit_prevention: { read: (form) => ({ prevention: textOf(form, "prevention") }), rules: () => [needText("prevention", "เขียนแนวทางการป้องกันอย่างน้อย 5 ตัวอักษร", 5)] },
+    // app_ncr_followup: ผลต้องเป็น close/return · ส่งกลับต้องมีบันทึกอย่างน้อย 3 ตัวอักษร (NCR_RETURN_NOTE_REQUIRED)
+    followup: {
+      read: (form) => ({ result: pickedOf(form, "result"), note: textOf(form, "note") }),
+      rules: (values) => [
+        { name: "result", required: true, message: "เลือกผลการติดตาม" },
+        ...(values.result === "return" ? [needText("note", "เขียนบันทึกการติดตามอย่างน้อย 3 ตัวอักษรเมื่อส่งกลับให้แก้ไข", 3)] : []),
+      ],
+    },
+    // app_ncr_request_info / app_ncr_answer_info: 5 ตัวอักษรขึ้นไป · app_ncr_cancel: เหตุผล 5 ตัวอักษรขึ้นไป
+    request_info: { read: (form) => ({ note: textOf(form, "note") }), rules: () => [needText("note", "เขียนข้อมูลที่ต้องการอย่างน้อย 5 ตัวอักษร", 5)] },
+    answer_info: { read: (form) => ({ note: textOf(form, "note") }), rules: () => [needText("note", "เขียนข้อมูลที่ตอบอย่างน้อย 5 ตัวอักษร", 5)] },
+    cancel: { read: (form) => ({ reason: textOf(form, "reason") }), rules: () => [needText("reason", "เขียนเหตุผลอย่างน้อย 5 ตัวอักษร", 5)] },
+  };
+  const actionErrors = (action, form) => {
+    // ฟอร์มบันทึกความสูญเสียมีช่องตามประเภท/ส่วนประกอบ (ncr-loss-form.js) จึงตรวจเองด้วย MNP_FORM_STEPS.validate เช่นกัน
+    if (action === "add_loss") return window.MNP_NCR_LOSS_UI.errors(form, todayBangkok());
+    const check = ACTION_CHECKS[action];
+    if (!check) return [];
+    const values = check.read(form);
+    return window.MNP_FORM_STEPS.validate(check.rules(values), values);
+  };
+  // ข้อความใต้ช่องทุกช่อง แล้วพาไปช่องแรกที่ผิด (ล้างข้อผิดพลาดของ RPC ที่ค้างอยู่ในกล่องบนฟอร์มด้วย)
+  function showActionErrors(form, errors) {
+    form.querySelector(".ncr-form-message")?.replaceChildren();
+    const target = window.MNP_FORM_STEPS.showFieldErrors(form, errors);
+    const first = form.querySelector(`[data-field="${errors[0].name}"]`);
+    target?.focus?.({ preventScroll: true });
+    first?.scrollIntoView?.({ block: "center" });
+  }
+  // แก้ช่องไหน ล้างข้อผิดของช่องนั้น (ผลติดตามเปลี่ยนแล้วบันทึกที่จำเป็นเมื่อส่งกลับก็เปลี่ยนตาม จึงล้างบันทึกด้วย)
+  function clearActionErrorOnEdit(form) {
+    const clear = (event) => {
+      const name = event.target.closest?.("[data-field]")?.dataset.field;
+      if (!name) return;
+      window.MNP_FORM_STEPS.clearFieldError(form, name);
+      if (name === "result") window.MNP_FORM_STEPS.clearFieldError(form, "note");
+    };
+    form.addEventListener("input", clear);
+    form.addEventListener("change", clear);
+  }
+
   // ---- ส่วนที่ 1: ฟอร์มออก NCR (ใช้ทั้งจากการ์ดในหน้าสร้างคำร้อง และ #/ncr?new=1) ----
   async function loadDefectTypes() {
     const { data, error } = await sb.from("ncr_defect_types").select("code,name_th").eq("is_active", true).order("sort_order");
@@ -568,10 +636,10 @@
           ? `<div class="field ncr-responder-pick" data-responder-dept="${escapeHtml(department.id)}" hidden><label for="ncr-responder-${escapeHtml(department.id)}">ผู้ตอบของ ${escapeHtml(department.code)}</label>${responderSelectHtml(`ncr-responder-${department.id}`, candidates, { disabled: true })}</div>`
           : "";
       }).join("");
-      forms.push(`<form class="ncr-action" data-action="dispose"><div class="ncr-form-message"></div>
+      forms.push(`<form class="ncr-action" data-action="dispose" novalidate><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 2 — ความเห็นผู้บริหารโรงงาน</h3>
-        <fieldset class="field ncr-fieldset"><legend>วิธีจัดการ *</legend>${checksHtml("dispositions", DISPOSITIONS)}</fieldset>
-        <fieldset class="field ncr-fieldset"><legend>แผนกที่รับผิดชอบ * <small class="muted">(เลือกได้หลายแผนก ระบบแบ่งสัดส่วนเท่ากันให้)</small></legend>
+        <fieldset class="field ncr-fieldset" data-field="dispositions"><legend>วิธีจัดการ ${REQUIRED}</legend>${checksHtml("dispositions", DISPOSITIONS)}</fieldset>
+        <fieldset class="field ncr-fieldset" data-field="department_ids"><legend>แผนกที่รับผิดชอบ ${REQUIRED} <small class="muted">(เลือกได้หลายแผนก ระบบแบ่งสัดส่วนเท่ากันให้)</small></legend>
           <div class="ncr-checks">${departments.map((department) => `<label class="ncr-check"><input type="checkbox" name="department_ids" value="${escapeHtml(department.id)}"><span>${escapeHtml(department.code)} · ${escapeHtml(department.name_th)}</span></label>`).join("")}</div>
         </fieldset>
         ${responderPicks ? `<div class="ncr-responder-picks">${responderPicks}</div>` : ""}
@@ -580,14 +648,14 @@
         <div class="form-actions"><button class="btn" type="submit">บันทึกและส่งแผนก (ตอบภายใน ${formatDate(ncr.response_due)})</button></div></form>`);
     }
     if (ncr.status === "awaiting_response" && respondable) {
-      forms.push(`<form class="ncr-action" data-action="respond"><div class="ncr-form-message"></div>
+      forms.push(`<form class="ncr-action" data-action="respond" novalidate><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 3 — ตอบ NCR</h3>
-        <fieldset class="field ncr-fieldset"><legend>เกิดจาก (4M+E) *</legend>${checksHtml("causes", CAUSES, ncr.causes ?? [])}</fieldset>
-        <div class="field"><label for="ncr-root-cause">สาเหตุของปัญหา *</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000">${escapeHtml(ncr.root_cause ?? "")}</textarea></div>
+        <fieldset class="field ncr-fieldset" data-field="causes"><legend>เกิดจาก (4M+E) ${REQUIRED}</legend>${checksHtml("causes", CAUSES, ncr.causes ?? [])}</fieldset>
+        <div class="field" data-field="root_cause"><label for="ncr-root-cause">สาเหตุของปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000">${escapeHtml(ncr.root_cause ?? "")}</textarea></div>
         <div class="form-grid">
-          <div class="field full"><label for="ncr-correction">แนวทางการแก้ไขปัญหา *</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea></div>
+          <div class="field full" data-field="correction"><label for="ncr-correction">แนวทางการแก้ไขปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea></div>
 
-          <div class="field full"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ <small class="muted">(ไม่บังคับตอนนี้ ส่งภายหลังได้หลังวิเคราะห์เสร็จ)</small></label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
+          <div class="field full" data-field="prevention"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ <small class="muted">(ไม่บังคับตอนนี้ ส่งภายหลังได้หลังวิเคราะห์เสร็จ)</small></label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
         </div>
         ${responseDueNote(ncr)}
         ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ", { hint: false })}
@@ -595,20 +663,20 @@
     }
     // ส่งได้ครั้งเดียว ถ้าต้องแก้หลังส่งแล้ว QA ส่งกลับให้แผนกแก้ในฟอร์มตอบ NCR (app_ncr_submit_prevention ตรวจซ้ำ)
     if (ncr.status === "awaiting_followup" && !ncr.prevention && respondable) {
-      forms.push(`<form class="ncr-action" data-action="submit_prevention"><div class="ncr-form-message"></div>
+      forms.push(`<form class="ncr-action" data-action="submit_prevention" novalidate><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 3 — แนวทางการป้องกันไม่ให้เกิดซ้ำ</h3>
         <p class="muted small">ส่งภายใน <strong>${formatDate(ncr.prevention_due)}</strong> · ส่งได้ครั้งเดียว ถ้าต้องแก้ภายหลัง QA จะส่งกลับให้แก้ไขคำตอบ · QA ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>
-        <div class="field"><label for="ncr-prevention-later">แนวทางการป้องกันไม่ให้เกิดซ้ำ *</label><textarea class="textarea" id="ncr-prevention-later" name="prevention" maxlength="5000" required minlength="5"></textarea></div>
+        <div class="field" data-field="prevention"><label for="ncr-prevention-later">แนวทางการป้องกันไม่ให้เกิดซ้ำ ${REQUIRED}</label><textarea class="textarea" id="ncr-prevention-later" name="prevention" maxlength="5000"></textarea></div>
         ${evidenceFieldHtml("ncr-prevention-evidence", "แนบหลักฐาน (ถ้ามี) เช่น WI ที่ปรับ ผลวิเคราะห์", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">ส่งแนวทางป้องกัน</button></div></form>`);
     }
     if (ncr.status === "awaiting_followup" && isQa(employee)) {
-      forms.push(`<form class="ncr-action" data-action="followup"><div class="ncr-form-message"></div>
+      forms.push(`<form class="ncr-action" data-action="followup" novalidate><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 4 — สรุปผลการติดตาม</h3>
         ${ncr.prevention ? "" : `<p class="ncr-due-note">แผนกยังไม่ส่งแนวทางป้องกันไม่ให้เกิดซ้ำ (กำหนด ${formatDate(ncr.prevention_due)}) · ติดตามผลการแก้ไขและส่งกลับได้ แต่ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>`}
-        ${radiosHtml("result", { close: "ปิดประเด็นความไม่สอดคล้อง", return: "ส่งกลับให้แผนกแก้ไขคำตอบ" })}
+        <fieldset class="field ncr-fieldset" data-field="result"><legend class="sr-only">ผลการติดตาม (จำเป็น)</legend>${radiosHtml("result", { close: "ปิดประเด็นความไม่สอดคล้อง", return: "ส่งกลับให้แผนกแก้ไขคำตอบ" })}</fieldset>
         <p class="muted small">กรณีปิดประเด็นไม่ได้/เกิดซ้ำต้องออก CAR — ใช้การ์ด NCR/CAR ในหน้าสร้างคำร้องไปก่อนจนกว่า CAR จะย้ายเข้าระบบนี้ (Phase 2)</p>
-        <div class="field"><label for="ncr-followup-note">บันทึกการติดตาม (จำเป็นเมื่อส่งกลับ)</label><input class="input" id="ncr-followup-note" name="note" maxlength="2000"></div>
+        <div class="field" data-field="note"><label for="ncr-followup-note">บันทึกการติดตาม (จำเป็นเมื่อส่งกลับ)</label><input class="input" id="ncr-followup-note" name="note" maxlength="2000"></div>
         ${evidenceFieldHtml("ncr-followup-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">บันทึกผล</button></div></form>`);
     }
@@ -616,25 +684,25 @@
       forms.push(`<form class="ncr-action" data-action="signoff"><div class="ncr-form-message"></div>
         <h3>ลงนามปิด NCR ในฐานะ${escapeHtml(nextSigner(ncr).label)}</h3>
         <div class="form-actions"><button class="btn" type="submit">ลงนาม</button></div></form>`);
-      forms.push(`<form class="ncr-action" data-action="request_info"><div class="ncr-form-message"></div>
+      forms.push(`<form class="ncr-action" data-action="request_info" novalidate><div class="ncr-form-message"></div>
         <h3>ขอข้อมูลเพิ่มเติมก่อนลงนาม</h3>
         <p class="muted small">ข้อความจะถึงผู้ตอบของแผนกที่รับผิดชอบ เมื่อตอบแล้วใบจะกลับมารอลงนามที่ลำดับของคุณ (ลายเซ็นที่ลงไปแล้วยังอยู่)</p>
-        <div class="field"><label for="ncr-info-request">ข้อมูลที่ต้องการ *</label><textarea class="textarea" id="ncr-info-request" name="note" maxlength="2000"></textarea></div>
+        <div class="field" data-field="note"><label for="ncr-info-request">ข้อมูลที่ต้องการ ${REQUIRED}</label><textarea class="textarea" id="ncr-info-request" name="note" maxlength="2000"></textarea></div>
         ${evidenceFieldHtml("ncr-info-request-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn secondary" type="submit">ขอข้อมูลเพิ่มเติม</button></div></form>`);
     }
     if (ncr.status === "awaiting_info" && respondable) {
-      forms.push(`<form class="ncr-action" data-action="answer_info"><div class="ncr-form-message"></div>
+      forms.push(`<form class="ncr-action" data-action="answer_info" novalidate><div class="ncr-form-message"></div>
         <h3>ให้ข้อมูลเพิ่มเติม</h3>
         ${openInfoRequest ? `<p class="muted small">${escapeHtml(STEP_LABELS[openInfoRequest.step] ?? "ผู้ลงนาม")} ขอ: <strong>${escapeHtml(openInfoRequest.request_note)}</strong></p>` : ""}
-        <div class="field"><label for="ncr-info-answer">ข้อมูลที่ตอบ *</label><textarea class="textarea" id="ncr-info-answer" name="note" maxlength="5000"></textarea></div>
+        <div class="field" data-field="note"><label for="ncr-info-answer">ข้อมูลที่ตอบ ${REQUIRED}</label><textarea class="textarea" id="ncr-info-answer" name="note" maxlength="5000"></textarea></div>
         ${evidenceFieldHtml("ncr-info-evidence", "แนบหลักฐาน (ถ้ามี) เช่น เอกสาร รูปภาพ ผลตรวจ", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">ส่งข้อมูล</button></div></form>`);
     }
     if (OPEN_STATUSES.includes(ncr.status) && isQaManager(employee)) {
-      forms.push(`<form class="ncr-action" data-action="cancel"><div class="ncr-form-message"></div>
+      forms.push(`<form class="ncr-action" data-action="cancel" novalidate><div class="ncr-form-message"></div>
         <h3>ยกเลิก NCR</h3><p class="muted small">เลขที่ยังอยู่ในทะเบียนพร้อมสถานะ "ยกเลิก" ไม่นำกลับมาใช้ใหม่</p>
-        <div class="field"><label for="ncr-cancel-reason">เหตุผล *</label><input class="input" id="ncr-cancel-reason" name="reason" maxlength="1000"></div>
+        <div class="field" data-field="reason"><label for="ncr-cancel-reason">เหตุผล ${REQUIRED}</label><input class="input" id="ncr-cancel-reason" name="reason" maxlength="1000"></div>
         ${evidenceFieldHtml("ncr-cancel-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn danger" type="submit">ยกเลิก NCR</button></div></form>`);
     }
@@ -984,10 +1052,17 @@
       form.querySelectorAll('input[name="department_ids"]').forEach((box) => box.addEventListener("change", sync));
     });
 
+    document.querySelectorAll("form.ncr-action").forEach((form) => clearActionErrorOnEdit(form));
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (!form.reportValidity()) return;
       const action = form.dataset.action;
+      // ช่องที่ขาดหรือไม่ถูกบอกครบในครั้งเดียวก่อนเรียก RPC (ฟอร์มปิด validation ของเบราว์เซอร์ด้วย novalidate)
+      const errors = actionErrors(action, form);
+      if (errors.length) {
+        showActionErrors(form, errors);
+        return;
+      }
+      window.MNP_FORM_STEPS.clearFieldErrors(form);
       if (action === "cancel" && !(await confirmDialog({ title: `ยืนยันยกเลิก ${ncr.ncr_no}?`, confirmLabel: "ยกเลิก NCR", cancelLabel: "ไม่ยกเลิก", danger: true }))) return;
       let evidences;
       try {

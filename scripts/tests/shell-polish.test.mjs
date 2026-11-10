@@ -107,3 +107,177 @@ test("RubberFlow overview: no recorded production shows an empty state, and char
   assert.match(plan, /const hasProduction = data\.lots\.some\(\(lot\) => lot\.goodQty \+ lot\.scrapQty > 0\);/);
   assert.equal(plan.match(/ui\.card\(!hasProduction \? noProduction : ui\.dualChart\(/g)?.length, 2, "both overview charts wait for recorded production");
 });
+
+// ---- เริ่มงาน เสร็จสิ้นงาน ตรวจรับ: ยืนยันหรือยกเลิก แล้วส่งทันที ไม่มีนับถอยหลัง (app.js confirmStepAction) ----
+function stepConfirmHarness() {
+  const timers = [];
+  let clock = 0;
+  const fakeTimers = {
+    setTimeout: (fn, ms) => { timers.push({ fn, at: clock + ms, every: 0 }); return timers.length; },
+    setInterval: (fn, ms) => { timers.push({ fn, at: clock + ms, every: ms }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+    clearInterval: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+  };
+  const advance = async (ms) => {
+    const end = clock + ms;
+    for (;;) {
+      const next = timers.filter((timer) => timer.fn && timer.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!next) break;
+      clock = next.at;
+      const fn = next.fn;
+      if (next.every) next.at += next.every; else next.fn = null;
+      fn();
+      await Promise.resolve();
+    }
+    clock = end;
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  const windowListeners = {};
+  const element = () => {
+    const node = { children: [], buttons: [], textContent: "", className: "", attrs: {}, listeners: {}, isConnected: true };
+    node.setAttribute = (name, value) => { node.attrs[name] = value; };
+    node.addEventListener = (type, fn) => { (node.listeners[type] ??= []).push(fn); };
+    node.replaceChildren = (...nodes) => { node.children = nodes; };
+    Object.defineProperty(node, "childNodes", { get: () => node.children });
+    Object.defineProperty(node, "innerHTML", {
+      set: (html) => { node.buttons = [...html.matchAll(/data-step-action="([^"]+)"[^>]*>([^<]*)</g)].map(([, action, text]) => ({ action, textContent: text, focus() {}, closest() { return this; }, dataset: { stepAction: action } })); },
+      get: () => node.buttons.map((button) => button.textContent).join("|"),
+    });
+    node.querySelector = (selector) => {
+      const action = selector.match(/data-step-action="([^"]+)"/)?.[1];
+      if (action) return node.buttons.find((button) => button.action === action) ?? null;
+      return node.children.find((child) => child.tag === "button") ?? null;
+    };
+    return node;
+  };
+  const context = {
+    escapeHtml, DECISION_UNDO_SECONDS: 5, activeDecisionCountdown: null, Intl, Array, String,
+    document: { createElement: element, addEventListener: () => {}, removeEventListener: () => {}, visibilityState: "visible" },
+    location: { hash: "#/request?id=r1" },
+  };
+  context.window = {
+    addEventListener: (type, fn) => { (windowListeners[type] ??= []).push(fn); },
+    removeEventListener: (type, fn) => { windowListeners[type] = (windowListeners[type] ?? []).filter((item) => item !== fn); },
+    ...fakeTimers,
+  };
+  vm.createContext(context);
+  vm.runInContext(read("modules/request-decision.js"), context);
+  vm.runInContext(`${functionSource("clipText")}\n${functionSource("confirmStepAction")}\nthis.confirmStepAction = confirmStepAction;`, context);
+  const area = element();
+  const focused = [];
+  const original = { tag: "button", isConnected: true, focus() { focused.push("original"); } };
+  area.children = [original];
+  const line = () => area.children[0];
+  const buttonsOf = () => area.children[1];
+  // detail 0 = แป้นพิมพ์/โปรแกรม (ราวกันแตะซ้ำไม่กัน) · detail 1 = นิ้ว/เมาส์
+  const click = (action, detail = 0) => buttonsOf().listeners.click[0]({ target: { closest: () => buttonsOf().buttons.find((button) => button.action === action) }, detail });
+  Object.assign(context, { focused });
+  return { context, area, original, line, buttonsOf, click, advance, windowListeners };
+}
+
+test("closing a repair step asks to confirm or cancel, and confirming sends at once with no countdown", async () => {
+  const h = stepConfirmHarness();
+  const sent = [];
+  const start = () => h.context.confirmStepAction(h.area, { label: "ไม่ผ่านการตรวจรับ", requestNo: "MT-2569-0390", consequence: "ส่งกลับให้ช่างซ่อมเพิ่มเติม", tone: "danger", echo: "ไฟยัง  กะพริบ", send: async () => { sent.push(1); return true; } });
+  start();
+  assert.equal(h.line().textContent, "ไม่ผ่านการตรวจรับ MT-2569-0390 → ส่งกลับให้ช่างซ่อมเพิ่มเติม · “ไฟยัง กะพริบ”", "the confirm line names the request, what happens next and the typed note");
+  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["cancel", "confirm"]);
+  h.click("cancel");
+  assert.deepEqual(h.area.children, [h.original], "cancel puts the original buttons back");
+  assert.equal(sent.length, 0);
+
+  start();
+  h.click("confirm");
+  await h.advance(0);
+  assert.equal(sent.length, 1, "confirm sends immediately");
+  assert.doesNotMatch(functionSource("confirmStepAction"), /createCountdown|เลิกทำ/, "no undo countdown for these steps (the user's rule)");
+});
+
+test("a failed send gives the buttons back so the step can be tried again", async () => {
+  const h = stepConfirmHarness();
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => false });
+  h.click("confirm");
+  await h.advance(0);
+  assert.deepEqual(h.area.children, [h.original]);
+});
+
+
+test("the MT start, finish and verify steps all go through the confirm helper; the verifier sees the repair result first", () => {
+  const mt = read("modules/module-mt.js");
+  assert.equal(mt.match(/confirmStepAction\(/g)?.length, 3);
+  for (const label of ['label: "เริ่มงาน"', 'label: "เสร็จสิ้นงาน"', 'label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ"']) assert.ok(mt.includes(label), label);
+  assert.doesNotMatch(mt, /✓ ผ่าน|✕ ไม่ผ่าน/, "icons instead of characters a screen reader reads aloud");
+  assert.match(mt, /<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม<\/h2>\$\{verifySummaryHtml\(request\)\}<p class="muted small">/, "the repair result comes before the pass/fail buttons");
+  assert.match(mt, /request\.cause_analysis && !canVerify \?/, "and is not repeated in the facts card");
+  assert.match(mt, /<label for="finish-cause">วิเคราะห์สาเหตุ \(จำเป็น\)<\/label>/);
+  assert.match(css, /:is\(\.approval-actions, \.form-actions\):has\(> \.step-confirm\) \{/);
+});
+
+test("NCR dashboard departments wear their own department palette; loss types have their own colour set", () => {
+  const dashboard = read("modules/module-ncr-dashboard.js");
+  assert.match(dashboard, /DEPT_PALETTES\.has\(dept\) \? `dpt dpt-\$\{dept\}` : "dco"/);
+  assert.match(dashboard, /`lc\$\{typeKeys\.indexOf\(type\) \+ 1\}` : "lco"/);
+  for (const code of ["MT", "RB", "QA", "FT", "AD"]) assert.match(css, new RegExp(`\\[data-dept-code="${code}"\\], \\.nd \\.dpt-${code} \\{`), `${code} chart colour comes from its palette`);
+  assert.match(css, /\.nd \.dpt \{ background: var\(--m600\); \}/);
+  assert.doesNotMatch(css, /--dept-\d/, "the old alphabetical ramp is gone");
+  assert.doesNotMatch(dashboard, /บาทในรายการนี้เป็นค่าขั้นต่ำ/, "the minimum-amount caveat is said once, in the summary line");
+});
+
+test("dashboard touch targets reach 44px and whole table rows open the request", () => {
+  assert.match(css, /\.nd :is\(\.nd-pill, \.nd-more summary, \.nd-rowbtn, \.nd-about > summary, \.nd-chip, \.nd-brow\) \{ min-height: 44px; \}/, "more specific than the base rules declared later in the file");
+  assert.match(css, /\.nd :is\(\.nd-rowbtn, \.nd-about > summary\) \{ min-width: 44px; \}/);
+  assert.match(css, /\.nd-rowlink a\.request-no::after \{ content: ""; position: absolute; inset: 0; \}/);
+  assert.match(css, /\.nd-about > p \{ max-width: 70ch;/);
+});
+
+test("leaving the page while the step is still sending: it finishes, but tells the caller not to redraw the old request", async () => {
+  const h = stepConfirmHarness();
+  const seen = [];
+  let finish;
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: ({ stillHere }) => new Promise((resolve) => { finish = () => { seen.push(stillHere()); resolve(true); }; }) });
+  h.click("confirm");
+  h.context.location.hash = "#/dashboard";
+  finish();
+  await h.advance(0);
+  assert.deepEqual(seen, [false], "stillHere() is false so the caller skips renderRequestDetail");
+  const mt = read("modules/module-mt.js");
+  assert.equal(mt.match(/if \(stillHere\(\)\) await renderRequestDetail\(params\);/g)?.length, 3, "all three MT steps only redraw when still on the page");
+});
+
+test("the tap guard only holds back the confirm button; cancel answers at once", () => {
+  const h = stepConfirmHarness();
+  const sent = [];
+  h.context.confirmStepAction(h.area, { label: "เริ่มงาน", requestNo: "MT-1", send: async () => { sent.push(1); return true; } });
+  h.click("confirm", 1);
+  assert.equal(sent.length, 0, "a tap landing right where the first tap was does not confirm");
+  assert.deepEqual(h.buttonsOf().buttons.map((button) => button.action), ["cancel", "confirm"]);
+  h.click("cancel", 1);
+  assert.deepEqual(h.area.children, [h.original], "cancel works immediately");
+});
+
+test("typed inputs are locked while confirming, released on cancel, and focus returns to the button that was pressed", () => {
+  const h = stepConfirmHarness();
+  const note = { disabled: false };
+  const files = { disabled: false };
+  const pressed = { tag: "button", isConnected: true, focus() { h.context.focused.push("pressed"); } };
+  h.context.confirmStepAction(h.area, { label: "ไม่ผ่านการตรวจรับ", requestNo: "MT-1", tone: "danger", lock: [note, files, null], trigger: pressed, send: async () => true });
+  assert.deepEqual([note.disabled, files.disabled], [true, true], "what is sent is what was on screen when confirming");
+  h.click("cancel");
+  assert.deepEqual([note.disabled, files.disabled], [false, false]);
+  assert.equal(h.context.focused.at(-1), "pressed");
+});
+
+test("closing the tab is warned against while the step is sending, and the warning goes away after", async () => {
+  const h = stepConfirmHarness();
+  let finish;
+  h.context.confirmStepAction(h.area, { label: "เสร็จสิ้นงาน", requestNo: "MT-1", send: () => new Promise((resolve) => { finish = resolve; }) });
+  assert.equal((h.windowListeners.beforeunload ?? []).length, 0, "no warning just for opening the confirm step");
+  h.click("confirm");
+  const warn = h.windowListeners.beforeunload.at(-1);
+  const event = { prevented: false, preventDefault() { this.prevented = true; } };
+  warn(event);
+  assert.equal(event.prevented, true, "still sending");
+  finish(true);
+  await h.advance(0);
+  assert.equal((h.windowListeners.beforeunload ?? []).includes(warn), false, "the warning is removed once sent");
+});

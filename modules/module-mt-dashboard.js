@@ -268,7 +268,7 @@
         ? ` <span class="nd-pill crit" title="เลยวันเริ่มงานที่มอบหมาย ${esc(formatDate(row.work_started_date))}"><span class="nd-ico" aria-hidden="true">▲</span>เลยวันเริ่ม ${fmtNumber(row.daysLateStart)} วัน</span>`
         : "";
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่จบ เรียงจากเลยกำหนด (วันเริ่มงานหรือวันเสร็จที่หัวหน้าช่างมอบหมาย) ก่อน แล้วด่วน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
-      ${top.length ? `<div class="table-wrap"><table class="nd-act"><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
+      ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
         const stage = model.STAGE_BY_KEY[row.stage];
         return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(actionOwner(row))}<br><span class="nd-muted">${esc(stage?.short ?? "")}</span></td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
       }).join("")}</tbody></table></div>
@@ -348,8 +348,8 @@
     const sorted = [...list].sort((a, b) => (a.submittedOn < b.submittedOn ? 1 : a.submittedOn > b.submittedOn ? -1 : b.request_no.localeCompare(a.request_no)));
     const shown = sorted.slice(0, drillLimit);
     const heading = basis === "backlog"
-      ? { title: "รายการงานค้างตามตัวกรอง", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา แตะเลขที่เพื่อเปิดใบ` }
-      : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "ใบที่แจ้งในช่วงนี้" แตะเลขที่เพื่อเปิดใบ` };
+      ? { title: "รายการงานค้างตามตัวกรอง", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา` }
+      : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ` };
     const statusCell = (row) => {
       const badge = row.isOpen ? `<span class="badge ${esc(row.status)}">${esc(model.STAGE_BY_KEY[row.stage]?.short ?? row.status)}</span>` : statusBadge(row.status, true);
       const status = row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
@@ -363,7 +363,7 @@
       ? `<a class="btn secondary small nd-cancel" data-cancel href="${hrefWith(filters, { scope: "", stage: "", machine: "", tech: "", dept: "" })}">ยกเลิกการกรอง</a>`
       : "";
     return `<div class="nd-head nd-head-row"><div><h2>${heading.title}</h2><p>${heading.note}</p></div>${cancel}</div>
-      ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>วันที่แจ้ง</th><th>เครื่องจักร / แผนก</th><th>สถานะ</th><th class="nd-num">เวลา</th></tr></thead><tbody>
+      ${shown.length ? `<div class="table-wrap"><table class="nd-rowlink"><thead><tr><th>เลขที่</th><th>วันที่แจ้ง</th><th>เครื่องจักร / แผนก</th><th>สถานะ</th><th class="nd-num">เวลา</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}</td><td class="nd-nowrap">${formatDate(row.submittedOn)}</td><td>${esc(machineText(row))}<br><span class="nd-muted">${esc(row.dept || "—")} · ${esc(DOC_LABELS[row.doc_type] ?? "—")}${row.requester_name ? ` · ${esc(row.requester_name)}` : ""}</span></td><td>${statusCell(row)}</td><td class="nd-num">${timeCell(row)}</td></tr>`).join("")}</tbody></table></div>
       ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มีใบตรงกับตัวกรองนี้</p>`}`;
   }

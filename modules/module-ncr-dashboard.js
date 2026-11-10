@@ -226,7 +226,7 @@
       return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกิน ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">อีก ${left} วัน</span>`;
     };
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่ปิด เรียงจากเกินกำหนด (ตอบ 5 วัน หรือส่งแนวทางป้องกัน) ก่อน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
-      ${top.length ? `<div class="table-wrap"><table class="nd-act"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(waitingOn(row))}<br><span class="nd-muted">${esc(STATUS_LABELS[row.status] ?? row.status)}</span></td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
+      ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(waitingOn(row))}<br><span class="nd-muted">${esc(STATUS_LABELS[row.status] ?? row.status)}</span></td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open" })}">ดูใบค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีใบค้างในช่วงและตัวกรองนี้</p>`}`;
   }
 
@@ -264,12 +264,13 @@
   }
   const niceMax = (value) => { if (value <= 0) return 1; const unit = 10 ** Math.floor(Math.log10(value)); const lead = value / unit; return (lead <= 1 ? 1 : lead <= 2 ? 2 : lead <= 2.5 ? 2.5 : lead <= 5 ? 5 : 10) * unit; };
 
-  // สีของแผนกคงที่ตามลำดับรหัสแผนกของทุกใบที่โหลดมา (ไม่ขึ้นกับตัวกรอง) แผนกเดิมจึงได้สีเดิมทุกเดือนทุกปี
-  // เกินชุดสี (DEPT_COLORS) ใช้สีเทา "แผนกอื่น" ส่วนใบที่ยังไม่กำหนดแผนกใช้สีเทาอ่อน
-  const DEPT_COLORS = 10;
-  function deptClassOf(rows) {
-    const codes = [...new Set(rows.flatMap((row) => row.responsibilities.map((item) => item.dept)))].sort();
-    return (dept) => (dept === "" ? "dcn" : codes.indexOf(dept) < DEPT_COLORS ? `dc${codes.indexOf(dept) + 1}` : "dco");
+  // สีของแผนกในกราฟคือจานสีของแผนกนั้น ชุดเดียวกับหัวโมดูล ชิปแผนก และฟอร์มแจ้งซ่อม (styles.css [data-dept-code] / .nd .dpt-XX)
+  // แผนกที่ไม่มีจานสีใช้สีเทา "แผนกอื่น" ส่วนใบที่ยังไม่กำหนดแผนกใช้สีเทาอ่อน
+  const DEPT_PALETTES = new Set(["MT", "FT", "AD", "RB", "GR", "BG", "PT", "PK", "QA", "ST", "SR", "ID"]);
+  // ประเภทต้นทุนมีชุดสีหมวดของตัวเอง (--cat-N) ไม่ยืมสีของแผนก
+  const LOSS_COLORS = 10;
+  function deptClassOf() {
+    return (dept) => (dept === "" ? "dcn" : DEPT_PALETTES.has(dept) ? `dpt dpt-${dept}` : "dco");
   }
   const deptName = (dept) => (dept === "" ? "ยังไม่กำหนดแผนก" : `แผนก ${dept}`);
 
@@ -297,7 +298,7 @@
     const money = model.monthlyByLossType(rows, filters, lastMonth);
     // สีของประเภทต้นทุนคงที่ตามลำดับใน LOSS_TYPES (ใช้ชุดสีเดียวกับแผนก) ประเภทที่ไม่รู้จักใช้สีเทา "อื่น"
     const typeKeys = Object.keys(LOSS_TYPES);
-    const typeClass = (type) => (typeKeys.indexOf(type) >= 0 && typeKeys.indexOf(type) < DEPT_COLORS ? `dc${typeKeys.indexOf(type) + 1}` : "dco");
+    const typeClass = (type) => (typeKeys.indexOf(type) >= 0 && typeKeys.indexOf(type) < LOSS_COLORS ? `lc${typeKeys.indexOf(type) + 1}` : "lco");
     const typeLabel = (type) => LOSS_TYPES[type] ?? type;
     const shownTypes = typeKeys.filter((type) => money.some((month) => month.types.some((item) => item.type === type)));
     const moneyLegend = [...shownTypes.map((type) => ({ label: typeLabel(type), cls: typeClass(type) })), ...(money.some((month) => month.estimated > 0) ? [{ label: "ประมาณการรอยืนยัน", cls: "est" }] : [])];
@@ -327,16 +328,15 @@
     }).join("")}</div>`;
   }
 
-  function paretoHtml(list, filters, sums) {
+  function paretoHtml(list, filters) {
     const items = model.pareto(list, filters, filters.sort);
     const byNet = filters.sort === "net";
-    const warn = byNet && sums.assessedRate !== null && sums.assessedRate < 1 ? `<div class="nd-warn">บาทในรายการนี้เป็นค่าขั้นต่ำ ประเมินต้นทุนครบ ${fmtPercent(sums.assessedRate)} ของใบที่ต้องประเมิน ใบที่มีแต่ประมาณการไม่ปรากฏในแท่ง</div>` : "";
     const resolve = (key) => {
       const item = items.find((entry) => entry.key === key);
       return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
     };
-    return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย</p></div>
-      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>${warn}
+    return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย · เมื่อเรียงตามบาท ใบที่มีแต่ประมาณการไม่ปรากฏในแท่ง</p></div>
+      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
       ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", resolve, valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
       <div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("pareto", "แท่ง", resolve)}`;
@@ -356,7 +356,7 @@
       return selectButton("loss", item.key, inner, `nd-brow${filters.loss === item.key ? " active" : ""}`) + detailUnder("loss", item.key, resolve);
     }).join("");
     const notes = [sums.recovery ? `ชดเชยยืนยัน −${fmtBaht(sums.recovery)} แสดงแยก ไม่หักในแท่ง` : "", sums.legacy ? `รายการเดิมรอตรวจสอบ ${fmtBaht(sums.legacy)} ไม่รวมในแท่ง` : ""].filter(Boolean).join(" · ");
-    return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p class="nd-keep">ยอดยืนยันรวม ${esc(fmtBaht(sums.gross))} ตรงกับ "สูญเสียยืนยัน (ก่อนชดเชย)" ในรายละเอียดของการ์ดสูญเสียสุทธิ</p></div>
+    return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p>ยอดยืนยันก่อนหักชดเชย แยกตามประเภทต้นทุน แท่งจางคือประมาณการรอยืนยัน</p></div>
       ${items.length ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>ยืนยันแล้ว (ก่อนหักชดเชย)</span><span><i class="soft"></i>ประมาณการรอยืนยัน</span></div>${notes ? `<p class="nd-hint">${esc(notes)}</p>` : ""}` : `<p class="nd-empty">ยังไม่มีการบันทึกความสูญเสียที่ยืนยันหรือประมาณการในช่วงนี้</p>`}
       ${detailHintIfIdle("loss", "แท่ง", resolve)}`;
@@ -397,8 +397,8 @@
   function drillHtml(list) {
     const sorted = [...list].sort((a, b) => (a.issue_date < b.issue_date ? 1 : a.issue_date > b.issue_date ? -1 : b.ncr_no.localeCompare(a.ncr_no)));
     const shown = sorted.slice(0, drillLimit);
-    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "NCR ที่ออกในช่วงนี้"</p></div>
-      ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
+    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ</p></div>
+      ${shown.length ? `<div class="table-wrap"><table class="nd-rowlink"><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกินกำหนดตอบ</span>` : esc(STATUS_LABELS[row.status] ?? row.status)}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
       ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มี NCR ตรงกับตัวกรองนี้</p>`}`;
   }
@@ -426,7 +426,7 @@
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
         <section class="card nd-card" data-card="act">${actHtml(list, today)}</section>
         <section class="card nd-card" data-card="trend">${trendHtml(rows, filters, today)}</section>
-        <section class="card nd-card" data-card="pareto">${paretoHtml(list, filters, sums)}</section>
+        <section class="card nd-card" data-card="pareto">${paretoHtml(list, filters)}</section>
         <section class="card nd-card" data-card="losstype">${lossTypeHtml(list, filters, sums)}</section>
         <section class="card nd-card" data-card="dept">${deptHtml(list, filters)}</section>
         <div class="nd-two">

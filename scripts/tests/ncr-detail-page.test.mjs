@@ -51,7 +51,10 @@ async function renderPage(viewer, overrides = {}, options = {}) {
     registerNoHtml: (number, href) => `<a href="${href}">${number}</a>`, registerSubjectHtml: (main, href, secondary) => `${main}|${secondary}`,
     hrefSelectHtml: ({ options, value }) => `<select>${options.map((option) => `<option data-href="${option.href}"${option.value === value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`, uiIcon: () => "",
     FormData: class { constructor(form) { this.form = form; } get(name) { return this.form.fields?.[name] ?? null; } },
+    confirmDialog: async () => true,
     document: {
+      // MNP_FORM_STEPS.showFieldErrors สร้างข้อความผิดด้วย createElement
+      createElement: () => ({ dataset: {} }),
       querySelector: () => null,
       querySelectorAll: (selector) => (selector === "form.ncr-action" ? forms
         : selector === 'form[data-action="dispose"]' ? forms.filter((form) => form.dataset.action === "dispose") : []),
@@ -419,20 +422,29 @@ test("part 2 lists the named responders only when somebody is named", async () =
 });
 
 // ฟอร์มจำลองที่ bindDetail ผูก submit handler ให้ — checked = ช่องที่ติ๊ก, selects = ช่องเลือกผู้ตอบ [departmentId]: value, fields = ช่องข้อความ
+// shown = ข้อความผิดที่ MNP_FORM_STEPS แสดงใต้ช่อง (ชื่อช่อง → ข้อความ) · scrolledTo = ช่องที่หน้าเลื่อนไปหา · handlers = listener ทุกชนิดที่ผูกกับฟอร์ม
 function fakeForm(action, { dataset = {}, checked = {}, selects = {}, fields = {} } = {}) {
-  return {
-    dataset: { action, ...dataset }, fields, elements: {},
-    addEventListener(type, handler) { if (type === "submit") this.submit = handler; },
-    reportValidity: () => true,
+  const form = {
+    dataset: { action, ...dataset }, fields, elements: {}, shown: {}, scrolledTo: [], handlers: {},
+    addEventListener(type, handler) { form.handlers[type] = handler; if (type === "submit") form.submit = handler; },
     querySelectorAll: (selector) => {
       const name = selector.match(/^input\[name="(.+)"\]:checked$/)?.[1];
       return name ? (checked[name] ?? []).map((value) => ({ value })) : [];
     },
     querySelector: (selector) => {
       const id = selector.match(/^\[data-responder-dept="(.+)"\] select$/)?.[1];
-      return id && id in selects ? { value: selects[id] } : null;
+      if (id) return id in selects ? { value: selects[id] } : null;
+      const field = selector.match(/^\[data-field="(.+)"\]$/)?.[1];
+      if (!field) return null;
+      return {
+        append: (node) => { form.shown[field] = node.textContent; },
+        querySelector: (inner) => (inner === ".field-error[data-generated]" && field in form.shown ? { remove: () => { delete form.shown[field]; } } : null),
+        querySelectorAll: () => [],
+        scrollIntoView: () => form.scrolledTo.push(field),
+      };
     },
   };
+  return form;
 }
 
 test("the disposition sends p_responder_ids only for ticked departments with a named person", async () => {
@@ -586,4 +598,138 @@ test("only a step form that carries evidence replaces the separate uploader; can
   assert.equal(stepFileInput(formsFor(actionsOf(await renderFor(FACTORY_MANAGER, { status: "awaiting_disposition" })))), input, "the factory manager attaches with the disposition");
   assert.equal(stepFileInput(formsFor(["signoff", "request_info", "cancel"])), null, "signers keep the separate uploader");
   assert.equal(stepFileInput(formsFor(["respond"], false)), null, "a step form without a file field changes nothing");
+});
+
+// ---- ตรวจช่องก่อนเรียก RPC: ข้อความใต้ช่องทุกช่องครั้งเดียว แบบเดียวกับฟอร์ม MT (MNP_FORM_STEPS) ----
+const QA_MANAGER = employee("qm", "dept-qa", "QA", "department_manager");
+const RB_OPEN = { status: "awaiting_response", ncr_responsibilities: [responsibility("dept-rb", "RB")] };
+const NCR_RPC = /^app_ncr_/;
+
+// วาดหน้า แล้วส่งฟอร์มจำลอง: คืน rpc ที่ถูกเรียกกับฟอร์ม (form.shown = ข้อความผิดที่แสดงอยู่)
+async function submitForm(viewer, overrides, form, options = {}) {
+  const { rpcCalls } = await renderPage(viewer, overrides, { forms: [form], ...options });
+  await form.submit({ preventDefault() {} });
+  return rpcCalls.filter((call) => NCR_RPC.test(call.name));
+}
+
+test("the action forms mark required fields with (จำเป็น) like the MT forms, never with an asterisk", async () => {
+  const pages = [
+    [FACTORY_MANAGER, { status: "awaiting_disposition", ncr_responsibilities: [] }, { tables: { departments: DEPARTMENTS } }],
+    [RB_STAFF_1, RB_OPEN, {}],
+    [RB_STAFF_1, { status: "awaiting_followup", prevention: null, prevention_due: "2026-10-13", ncr_responsibilities: RB_OPEN.ncr_responsibilities }, {}],
+    [QA_STAFF, { status: "awaiting_followup" }, {}],
+    [QA_MANAGER, { status: "awaiting_signoff", signoff_qa_at: null }, {}],
+    [RB_STAFF_1, { status: "awaiting_info", ncr_responsibilities: RB_OPEN.ncr_responsibilities }, {}],
+  ];
+  const seen = new Set();
+  for (const [viewer, overrides, options] of pages) {
+    const html = await renderFor(viewer, overrides, options);
+    assert.doesNotMatch(html, /\S \*(?=[\s<])/, `no asterisk marker on ${overrides.status}`);
+    for (const match of html.matchAll(/<form class="ncr-action" data-action="([a-z_]+)"/g)) seen.add(match[1]);
+  }
+  for (const action of ["dispose", "respond", "submit_prevention", "followup", "request_info", "answer_info", "cancel"]) assert.ok(seen.has(action), `${action} form was rendered`);
+  const page = await renderFor(RB_STAFF_1, RB_OPEN);
+  const respond = page.slice(page.indexOf('data-action="respond"'), page.indexOf("</form>", page.indexOf('data-action="respond"')));
+  assert.equal((respond.match(/<span class="field-required">\(จำเป็น\)<\/span>/g) ?? []).length, 3, "cause, root cause and correction are marked");
+  assert.match(respond, /ไม่บังคับตอนนี้/, "the optional prevention hint stays");
+  // ช่องที่ตรวจใต้ช่องต้องมีกล่อง data-field ให้ข้อความไปอยู่
+  for (const name of ["causes", "root_cause", "correction", "prevention"]) assert.match(respond, new RegExp(`data-field="${name}"`));
+  assert.match(page, /<form class="ncr-action" data-action="respond" novalidate>/, "browser tooltips are off so the field messages are the only ones");
+  const loss = await renderFor(FACTORY_MANAGER, { status: "awaiting_response" });
+  assert.doesNotMatch(loss, /\S \*(?=[\s<])/, "the loss form has no asterisk either");
+  assert.ok((loss.match(/\(จำเป็น\)/g) ?? []).length >= 8, "the loss form marks its required fields");
+});
+
+test("an incomplete respond form makes no RPC call and reports every missing field at once", async () => {
+  const form = fakeForm("respond", { fields: { prevention: "abc" } });
+  const calls = await submitForm(RB_STAFF_1, RB_OPEN, form);
+  assert.deepEqual(calls, [], "nothing is sent to the database");
+  assert.deepEqual(Object.keys(form.shown), ["causes", "root_cause", "correction", "prevention"], "all fields, in screen order");
+  assert.match(form.shown.causes, /อย่างน้อย 1 ข้อ/);
+  assert.match(form.shown.prevention, /อย่างน้อย 5 ตัวอักษร/, "a too-short optional prevention is reported");
+  assert.deepEqual(form.scrolledTo, ["causes"], "the page scrolls to the first missing field");
+  // แก้ช่องไหน ข้อความของช่องนั้นหายเอง ช่องอื่นยังอยู่
+  form.handlers.input({ target: { closest: () => ({ dataset: { field: "root_cause" } }) } });
+  assert.deepEqual(Object.keys(form.shown), ["causes", "correction", "prevention"]);
+});
+
+test("a too-short root cause or correction is rejected, an empty optional prevention is not", async () => {
+  const form = fakeForm("respond", { checked: { causes: ["machine"] }, fields: { root_cause: " abcd ", correction: "12345" } });
+  assert.deepEqual(await submitForm(RB_STAFF_1, RB_OPEN, form), []);
+  assert.deepEqual(Object.keys(form.shown), ["root_cause"], "5 characters after trimming, like app_ncr_respond");
+});
+
+test("a complete respond form still sends the same arguments", async () => {
+  const form = fakeForm("respond", { checked: { causes: ["machine", "method"] }, fields: { root_cause: "เครื่องสึก", correction: "เปลี่ยนแม่พิมพ์" } });
+  const calls = await submitForm(RB_STAFF_1, RB_OPEN, form);
+  assert.deepEqual(calls, [{ name: "app_ncr_respond", args: { p_ncr_id: "ncr-1", p_causes: ["machine", "method"], p_root_cause: "เครื่องสึก", p_correction: "เปลี่ยนแม่พิมพ์", p_prevention: "" } }]);
+  assert.deepEqual(form.shown, {});
+});
+
+test("an incomplete disposition reports the missing method and department; a complete one still sends", async () => {
+  const awaiting = { status: "awaiting_disposition", ncr_responsibilities: [] };
+  const options = { tables: { departments: DEPARTMENTS } };
+  const empty = fakeForm("dispose");
+  assert.deepEqual(await submitForm(FACTORY_MANAGER, awaiting, empty, options), []);
+  assert.deepEqual(Object.keys(empty.shown), ["dispositions", "department_ids"]);
+  const noDepartment = fakeForm("dispose", { checked: { dispositions: ["sort"] } });
+  assert.deepEqual(await submitForm(FACTORY_MANAGER, awaiting, noDepartment, options), []);
+  assert.deepEqual(Object.keys(noDepartment.shown), ["department_ids"], "only what is missing is reported");
+  const complete = fakeForm("dispose", { checked: { dispositions: ["sort"], department_ids: ["dept-rb"] }, fields: { note: "คัดแยก 100%" } });
+  assert.deepEqual(await submitForm(FACTORY_MANAGER, awaiting, complete, options), [{ name: "app_ncr_dispose", args: { p_ncr_id: "ncr-1", p_dispositions: ["sort"], p_department_ids: ["dept-rb"], p_note: "คัดแยก 100%" } }]);
+});
+
+test("the follow-up needs a result, and a note of 3 characters when the NCR is sent back", async () => {
+  const awaiting = { status: "awaiting_followup" };
+  const none = fakeForm("followup");
+  assert.deepEqual(await submitForm(QA_STAFF, awaiting, none), []);
+  assert.deepEqual(Object.keys(none.shown), ["result"], "the note is only required for a return");
+  const noNote = fakeForm("followup", { checked: { result: ["return"] }, fields: { note: "ab" } });
+  assert.deepEqual(await submitForm(QA_STAFF, awaiting, noNote), []);
+  assert.deepEqual(Object.keys(noNote.shown), ["note"]);
+  // เปลี่ยนผลติดตามแล้วข้อความของบันทึกที่ผูกกับผลนั้นหายด้วย
+  noNote.handlers.change({ target: { closest: () => ({ dataset: { field: "result" } }) } });
+  assert.deepEqual(noNote.shown, {});
+  const close = fakeForm("followup", { checked: { result: ["close"] } });
+  assert.deepEqual(await submitForm(QA_STAFF, awaiting, close), [{ name: "app_ncr_followup", args: { p_ncr_id: "ncr-1", p_result: "close", p_note: null } }]);
+  const back = fakeForm("followup", { checked: { result: ["return"] }, fields: { note: "เพิ่มรูป" } });
+  assert.deepEqual(await submitForm(QA_STAFF, awaiting, back), [{ name: "app_ncr_followup", args: { p_ncr_id: "ncr-1", p_result: "return", p_note: "เพิ่มรูป" } }]);
+});
+
+test("prevention, information request, answer and cancel reasons need 5 characters before any RPC call", async () => {
+  const cases = [
+    ["submit_prevention", RB_STAFF_1, { status: "awaiting_followup", prevention: null, prevention_due: "2026-10-13", ncr_responsibilities: RB_OPEN.ncr_responsibilities }, "prevention", "app_ncr_submit_prevention", (text) => ({ p_ncr_id: "ncr-1", p_prevention: text })],
+    ["request_info", QA_MANAGER, { status: "awaiting_signoff", signoff_qa_at: null }, "note", "app_ncr_request_info", (text) => ({ p_ncr_id: "ncr-1", p_note: text })],
+    ["answer_info", RB_STAFF_1, { status: "awaiting_info", ncr_responsibilities: RB_OPEN.ncr_responsibilities }, "note", "app_ncr_answer_info", (text) => ({ p_ncr_id: "ncr-1", p_note: text })],
+    ["cancel", QA_MANAGER, RB_OPEN, "reason", "app_ncr_cancel", (text) => ({ p_ncr_id: "ncr-1", p_reason: text })],
+  ];
+  for (const [action, viewer, overrides, field, rpc, args] of cases) {
+    for (const text of ["", "   ", "1234"]) {
+      const form = fakeForm(action, { fields: { [field]: text } });
+      assert.deepEqual(await submitForm(viewer, overrides, form), [], `${action}: "${text}" sends nothing`);
+      assert.deepEqual(Object.keys(form.shown), [field], `${action}: the message is under the field`);
+    }
+    const ok = fakeForm(action, { fields: { [field]: " 12345 " } });
+    assert.deepEqual(await submitForm(viewer, overrides, ok), [{ name: rpc, args: args("12345") }], `${action}: five characters go through, trimmed`);
+  }
+});
+
+test("the loss form checks its fields against app_ncr_record_loss before sending", async () => {
+  const { context } = await renderPage(FACTORY_MANAGER, { status: "awaiting_response" });
+  const base = { entry_kind: "loss", loss_type: "scrap", component: "quantity", cost_status: "estimated", incurred_on: "2026-11-01", labor_headcount: "", labor_hours: "", quantity: "", unit: "ท่อน", unit_cost: "", evidence_ref: "", note: "" };
+  const lossForm = (values, labor = false) => ({ elements: Object.fromEntries(Object.entries({ ...base, ...values }).map(([name, value]) => [name, { value, disabled: name.startsWith("labor_") && !labor }])) });
+  const names = (values, labor) => Array.from(context.window.MNP_NCR_LOSS_UI.errors(lossForm(values, labor), "2026-11-10"), (error) => error.name);
+  assert.deepEqual(names({}), ["quantity", "unit_cost"], "an empty entry reports every missing field at once");
+  assert.deepEqual(names({ quantity: "10", unit_cost: "5" }), [], "a complete estimate passes");
+  assert.deepEqual(names({ quantity: "0", unit_cost: "0" }), ["quantity"], "the quantity must be above 0, a zero cost is allowed");
+  assert.deepEqual(names({ quantity: "10", unit_cost: "-1" }), ["unit_cost"]);
+  assert.deepEqual(names({ quantity: "10", unit_cost: "5", unit: " ", incurred_on: "" }), ["incurred_on", "unit"]);
+  assert.deepEqual(names({ quantity: "10", unit_cost: "5", cost_status: "confirmed" }), ["evidence_ref"], "a confirmed amount needs its evidence reference");
+  assert.deepEqual(names({ quantity: "10", unit_cost: "5", cost_status: "confirmed", evidence_ref: "INV-1", incurred_on: "2026-11-11" }), ["incurred_on"], "a confirmed amount cannot be dated in the future");
+  assert.deepEqual(names({ quantity: "10", unit_cost: "5", incurred_on: "2026-11-11" }), [], "an estimate may be");
+  assert.deepEqual(names({ quantity: "10", unit_cost: "5", loss_type: "other", component: "amount" }), ["note"], "'other' needs a description of at least 5 characters");
+  assert.deepEqual(names({ quantity: "10", unit_cost: "5", note: "ab" }), [], "a short note is fine for other types");
+  assert.deepEqual(names({ loss_type: "repair", component: "labor", unit_cost: "50" }, true), ["labor_headcount", "labor_hours"], "labour is checked through headcount and hours, not the computed quantity");
+  assert.deepEqual(names({ loss_type: "repair", component: "labor", unit_cost: "50", labor_headcount: "2", labor_hours: "25" }, true), ["labor_hours"]);
+  assert.deepEqual(names({ loss_type: "repair", component: "labor", unit_cost: "50", labor_headcount: "2", labor_hours: "3" }, true), []);
 });
