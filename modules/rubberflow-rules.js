@@ -147,7 +147,8 @@
   const OPEN_ORDER = Object.freeze(["planned", "released", "in_progress", "on_hold"]);
   const round3 = (value) => Math.round(Number(value) * 1000) / 1000;
   // ยอดที่ต้องซื้อปัดขึ้น ไม่ให้สั่งน้อยกว่าที่ใบเบิกจะจ่ายจริง (ใบเบิกปัดยอดต่อวัตถุดิบที่ 4 ตำแหน่ง)
-  // up4: ปัดขึ้นที่ 4 ตำแหน่ง (ยอมเศษทศนิยมของเครื่อง) · up3: ปัดที่ 4 ตำแหน่งก่อน แล้วปัดขึ้นที่ 3 ตำแหน่ง (ยอดแสดง ต้องใช้ / ขาด / จำนวนสั่ง)
+  // up4: ปัดขึ้นที่ 4 ตำแหน่ง (ยอมเศษทศนิยมของเครื่อง) · up3: ปัดที่ 4 ตำแหน่งก่อน แล้วปัดขึ้นที่ 3 ตำแหน่ง (ยอดแสดง ต้องใช้ / ขาด / จำนวนสั่ง) กฎเดียวกับ partUp3 ใน bom-rules.js
+  // up4 ปัดขึ้นทุกใบเบิก (ฐานข้อมูลปัดใกล้สุด) จึงอาจขาดเกินจริงได้ใบละไม่เกิน 0.0001 kg ต่อวัตถุดิบ ตั้งใจ: โหมดสาธิตจ่ายยอดไม่ปัด และสั่งเกินเล็กน้อยดีกว่าขาด
   const up4 = (value) => Math.ceil(Number(value) * 1e4 - 1e-6) / 1e4 || 0;
   const up3 = (value) => Math.ceil(Math.round(Number(value) * 1e4) / 10 - 1e-9) / 1e3 || 0;
 
@@ -204,13 +205,18 @@
       const total = totalPhr(recipe);
       if (!(kg > 0) || !(total > 0)) return;
       // แบ่งเป็นใบเบิกละไม่เกิน MAX_REQ_BATCHES batch เหมือนที่ RB จะเบิกจริง แล้วปัดขึ้นที่ 4 ตำแหน่งต่อใบ (ฐานข้อมูลปัดใกล้สุดต่อใบ) ผลรวมจึงไม่น้อยกว่าที่จะจ่าย
+      // ใบเบิกเต็ม (10 batch) ซ้ำกันทุกใบ จึงคิดครั้งเดียวแล้วคูณจำนวนใบ ไม่วนทีละใบ (WO ใหญ่มากไม่ทำให้หน้าค้าง)
       const batchKg = Number(recipe.batchKg);
-      const parts = [];
+      const parts = []; // [กิโลคอมปาวด์ต่อใบเบิก, จำนวนใบ]
       if (batchKg > 0 && !Number.isFinite(ownKg)) {
-        for (let left = Math.round(kg / batchKg); left > 0; left -= MAX_REQ_BATCHES) parts.push(Math.min(MAX_REQ_BATCHES, left) * batchKg);
+        const batches = Math.round(kg / batchKg);
+        const full = Math.floor(batches / MAX_REQ_BATCHES);
+        const rest = batches % MAX_REQ_BATCHES;
+        if (full) parts.push([MAX_REQ_BATCHES * batchKg, full]);
+        if (rest) parts.push([rest * batchKg, 1]);
       }
-      if (!parts.length) parts.push(kg);
-      for (const item of recipe.items) for (const part of parts) add(map, item.materialCode, up4((part * Number(item.phr)) / total));
+      if (!parts.length) parts.push([kg, 1]);
+      for (const item of recipe.items) for (const [part, count] of parts) add(map, item.materialCode, up4((part * Number(item.phr)) / total) * count);
     };
     for (const id of asked) {
       const order = orders.find((row) => row.id === id);
