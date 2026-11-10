@@ -393,7 +393,7 @@
     const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
-    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge" title="กำลังทดลองใช้ ถ้าตัวเลขไม่ตรงกับที่เห็นหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย">เวอร์ชันทดสอบ</span></h1></div>
+    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a></div></div>
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
@@ -407,7 +407,7 @@
         <section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters)}</section>
         ${definitionsHtml}
-        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น</p>
+        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
       </div>`;
   }
 

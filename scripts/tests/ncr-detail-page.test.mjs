@@ -568,3 +568,22 @@ test("the responder's estimate-only loss form asks nothing that only the cost ed
   assert.match(editor, /หลักฐานอ้างอิง \(จำเป็นเมื่อยืนยันยอด\)/);
   assert.match(editor, /<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ<\/p>/);
 });
+
+// ทางแนบไฟล์ (pointToStepFiles ใน app.js): ซ่อนช่องอัปโหลดแยกเฉพาะเมื่อมีฟอร์มของขั้นที่แนบหลักฐานได้ เลือกด้วยชื่อการกระทำ ไม่ใช่ตำแหน่ง
+test("only a step form that carries evidence replaces the separate uploader; cancel, sign-off and info-request forms never do", async () => {
+  const open = { status: "awaiting_response", ncr_responsibilities: [responsibility("dept-rb", "RB")] };
+  const actionsOf = (html) => {
+    const section = html.slice(html.indexOf('class="card ncr-card ncr-actions"'));
+    return [...section.slice(0, section.indexOf("</section>")).matchAll(/<form class="ncr-action" data-action="([a-z_]+)"/g)].map((match) => match[1]);
+  };
+  const input = { type: "file" };
+  const formsFor = (actions, withFile = true) => actions.map((action) => ({ dataset: { action }, querySelector: () => (withFile ? input : null) }));
+  const { context, html: qaManager } = await renderPage(employee("qm", "dept-qa", "QA", "department_manager"), open);
+  const { stepFileInput } = context.window.MNP_REQUEST_MODULES.NCR_CAR.shared;
+  assert.deepEqual(actionsOf(qaManager), ["cancel"], "the QA manager who is not the responder only has the cancel form here");
+  assert.equal(stepFileInput(formsFor(actionsOf(qaManager))), null, "so the separate uploader stays: attaching must never mean cancelling the NCR");
+  assert.equal(stepFileInput(formsFor(actionsOf(await renderFor(RB_STAFF_1, open)))), input, "the responder attaches with the answer");
+  assert.equal(stepFileInput(formsFor(actionsOf(await renderFor(FACTORY_MANAGER, { status: "awaiting_disposition" })))), input, "the factory manager attaches with the disposition");
+  assert.equal(stepFileInput(formsFor(["signoff", "request_info", "cancel"])), null, "signers keep the separate uploader");
+  assert.equal(stepFileInput(formsFor(["respond"], false)), null, "a step form without a file field changes nothing");
+});

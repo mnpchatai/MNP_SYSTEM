@@ -25,6 +25,10 @@ test("codes in a queue title never break in the middle, and escaped entities are
   assert.equal(keep("ซีลยาง HS-08 รั่ว"), 'ซีลยาง <span class="nowrap">HS-08</span> รั่ว');
   assert.equal(keep("DR-15/2 และ LT-B2"), '<span class="nowrap">DR-15/2</span> และ <span class="nowrap">LT-B2</span>');
   for (const text of ["ปั๊มน้ำ &amp; วาล์ว", "it&#039;s", "&quot;A&quot;", "เครื่อง 12"]) assert.equal(keep(text), text);
+  const long = "SEAL-RING-ASSEMBLY-0042-B";
+  assert.equal(keep(`ชุด ${long}`), `ชุด ${long}`, "a code longer than a narrow column may still wrap, so it never hides under the title's overflow");
+  assert.equal(keep("ABCDEFG-123456789"), "ABCDEFG-123456789", "17 characters wraps normally");
+  assert.equal(keep("ABCDEFG-12345678"), '<span class="nowrap">ABCDEFG-12345678</span>', "16 characters stays together");
 });
 
 test("every queue row names its action: the step verb for approvals, the task for work done on the item's page", () => {
@@ -97,9 +101,9 @@ test("pages without a step file field keep the separate uploader (approvers, vie
   assert.equal(point(null, {}, "x"), false);
   assert.equal(standalone.hidden, false);
   assert.equal(created.length, 0);
-  // ตัวที่เรียก: MT เฉพาะฟอร์มจบงาน · NCR เฉพาะเมื่อฟอร์มแรกของขั้นมีช่องไฟล์ (ฟอร์มลงนามไม่มี จึงยังแนบในการ์ดไฟล์ได้)
+  // ตัวที่เรียก: MT เฉพาะฟอร์มจบงาน · NCR เฉพาะฟอร์มของขั้นที่แนบหลักฐานได้ (เลือกด้วยชื่อการกระทำ ทดสอบใน ncr-detail-page.test.mjs)
   assert.match(app, /pointToStepFiles\(document\.querySelector\("#attachment-form"\), document\.querySelector\("#finish-files"\),/);
-  assert.match(read("modules/module-ncr.js"), /window\.pointToStepFiles\?\.\(document\.querySelector\("\.ncr-attach-form"\), document\.querySelector\("\.ncr-actions form\.ncr-action"\)\?\.querySelector\('input\[type="file"\]'\),/);
+  assert.match(read("modules/module-ncr.js"), /window\.pointToStepFiles\?\.\(document\.querySelector\("\.ncr-attach-form"\), stepFileInput\(document\.querySelectorAll\("\.ncr-actions form\.ncr-action"\)\),/);
 });
 
 test("the help legend explains the blue clock badge kept for NCR loss data", () => {

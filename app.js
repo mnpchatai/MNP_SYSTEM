@@ -2179,8 +2179,9 @@ function queueTaskLabel(item) {
   return item.task ?? myRepairActionLabels[item.request.status] ?? statusLabels[item.request.status] ?? item.request.status;
 }
 // รหัสในชื่อเรื่อง (HS-08, DR-15/2) ไม่ตัดกลางรหัสเมื่อขึ้นบรรทัดใหม่ · รับข้อความที่ escape แล้ว (entity ไม่มีขีด/ทับ จึงไม่ถูกจับ)
+// รหัสยาวเกิน 16 ตัวอักษรตัดบรรทัดได้ตามปกติ (ไม่ให้ยาวเกินคอลัมน์แล้วหายใต้ overflow ของชื่อเรื่อง)
 function keepCodesTogether(escaped) {
-  return String(escaped).replace(/[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+/g, (code) => `<span class="nowrap">${code}</span>`);
+  return String(escaped).replace(/[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+/g, (code) => (code.length <= 16 ? `<span class="nowrap">${code}</span>` : code));
 }
 async function loadHomeQueueItems() {
   const ncrHome = requestModule("NCR_CAR")?.enabled ? requestModule("NCR_CAR").home ?? null : null;
