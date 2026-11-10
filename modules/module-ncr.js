@@ -473,9 +473,8 @@
           defect: escapeHtml(defect),
           departments: escapeHtml(departments),
           issued: formatDate(row.issue_date),
-          // สถานะข้อมูลความสูญเสียอยู่ในช่องนี้ช่องเดียว (ป้ายในช่องสถานะไม่บอกซ้ำ)
-          loss: `${summary ? escapeHtml(formatBaht(summary.net)) : ""}${summary?.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : row.lossPending ? '<span class="register-sub">รอข้อมูลการสูญเสีย</span>' : ""}`,
-          status: `<span class="register-badges">${statusBadgeHtml(row)}</span>${ownerChipHtml(row, staff, directory)}`,
+          loss: summary ? `${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : "",
+          status: `<span class="register-badges">${statusBadgeHtml(row, row.lossPending)}</span>${ownerChipHtml(row, staff, directory)}`,
         },
       };
     };
