@@ -356,7 +356,7 @@
       return selectButton("loss", item.key, inner, `nd-brow${filters.loss === item.key ? " active" : ""}`) + detailUnder("loss", item.key, resolve);
     }).join("");
     const notes = [sums.recovery ? `ชดเชยยืนยัน −${fmtBaht(sums.recovery)} แสดงแยก ไม่หักในแท่ง` : "", sums.legacy ? `รายการเดิมรอตรวจสอบ ${fmtBaht(sums.legacy)} ไม่รวมในแท่ง` : ""].filter(Boolean).join(" · ");
-    return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p>ค่าซ่อม (Repair) กับ Rework แยกคนละแท่ง ยอดยืนยันรวม ${esc(fmtBaht(sums.gross))} ตรงกับ "สูญเสียยืนยัน (ก่อนชดเชย)" ในรายละเอียดของการ์ดสูญเสียสุทธิ แตะแท่งเพื่อดูตัวเลข</p></div>
+    return `<div class="nd-head"><h2>ความสูญเสียแยกประเภท</h2><p class="nd-keep">ยอดยืนยันรวม ${esc(fmtBaht(sums.gross))} ตรงกับ "สูญเสียยืนยัน (ก่อนชดเชย)" ในรายละเอียดของการ์ดสูญเสียสุทธิ</p></div>
       ${items.length ? `<div class="nd-bars">${rows}</div>
       <div class="nd-legend"><span><i class="strong"></i>ยืนยันแล้ว (ก่อนหักชดเชย)</span><span><i class="soft"></i>ประมาณการรอยืนยัน</span></div>${notes ? `<p class="nd-hint">${esc(notes)}</p>` : ""}` : `<p class="nd-empty">ยังไม่มีการบันทึกความสูญเสียที่ยืนยันหรือประมาณการในช่วงนี้</p>`}
       ${detailHintIfIdle("loss", "แท่ง", resolve)}`;
@@ -398,7 +398,7 @@
   function drillHtml(list) {
     const sorted = [...list].sort((a, b) => (a.issue_date < b.issue_date ? 1 : a.issue_date > b.issue_date ? -1 : b.ncr_no.localeCompare(a.ncr_no)));
     const shown = sorted.slice(0, drillLimit);
-    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p>ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "NCR ที่ออกในช่วงนี้" แตะเลขที่เพื่อเปิดใบ</p></div>
+    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ ตรงกับจำนวนใน "NCR ที่ออกในช่วงนี้"</p></div>
       ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกินกำหนดตอบ</span>` : esc(STATUS_LABELS[row.status] ?? row.status)}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
       ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มี NCR ตรงกับตัวกรองนี้</p>`}`;
@@ -413,10 +413,6 @@
     <p>จำนวนใบนับเต็มใบเสมอ ใบที่มีหลายแผนกหรือหลายสาเหตุนับในทุกกลุ่ม จึงห้ามบวกจำนวนข้ามกลุ่ม ส่วนบาทแบ่งตามสัดส่วนแผนก</p></div></details>`;
 
   let lastFilters = null;
-  // คำอธิบายวิธีนับใต้หัวการ์ดพับไว้ใน "วิธีนับ" (การ์ดเริ่มด้วยชื่อและตัวเลข ไม่ใช่ย่อหน้า)
-  const foldCardNotes = (html) => html.replace(/<div class="nd-head"><h2>([\s\S]*?)<\/h2><p( class="[^"]*")?>([\s\S]*?)<\/p>/g,
-    (match, title, cls = "", note) => `<div class="nd-head"><h2>${title}</h2><details class="nd-about"><summary>วิธีนับ</summary><p${cls}>${note}</p></details>`);
-
   function pageBody() {
     const { rows, today, loadedAt } = cache;
     const filters = readFilters(lastParams, rows, today);
@@ -451,7 +447,8 @@
     const focusKey = document.activeElement?.dataset?.sel ?? (document.activeElement?.hasAttribute?.("data-more") ? "__more" : null);
     const keepY = restoreScrollY ?? window.scrollY;
     restoreScrollY = null;
-    root.innerHTML = foldCardNotes(pageBody());
+    // คำอธิบายวิธีนับใต้หัวการ์ดพับไว้ (modules/dashboard-notes.js)
+    root.innerHTML = (window.MNP_DASHBOARD_NOTES?.fold ?? ((html) => html))(pageBody());
     bindPage(root);
     placeDrill(root);
     // วาดใหม่ทั้งก้อน: คืนตำแหน่งเลื่อนเดิมเสมอ หน้าจะได้ไม่กระโดด (ก่อน focus เพราะ focus บังคับ layout)

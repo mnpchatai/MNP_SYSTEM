@@ -384,10 +384,6 @@
     <li><b>เครื่องจักรที่เสียบ่อย / แผนกที่แจ้งซ่อมบ่อย:</b> นับเฉพาะใบแจ้งซ่อมในช่วงที่เลือก ไม่นับใบคำร้อง ใบที่ไม่อนุมัติ และฉบับร่าง เครื่องจักรแยกด้วย แผนกที่แจ้ง + รหัสเครื่อง (รหัสเดียวกันต่างแผนกถือเป็นคนละเครื่อง) ใบที่เลือก "ไม่มี" หรือ "สร้างใหม่" ไม่นับเป็นเครื่อง</li>
     <li><b>เวลาซ่อมของช่าง:</b> ไม่ใช่ชั่วโมงทำงานจริง แต่คือเวลาตามนาฬิกาที่ใบอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบ (ตรวจรับไม่ผ่านแล้วซ่อมใหม่ก็นับ) ใบที่ยังซ่อมอยู่นับถึงเวลาที่เปิดหน้านี้ ช่างหลายคนในใบเดียวนับเต็มทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ส่วน "ถืออยู่" นับทุกใบที่ช่างต้องทำตอนนี้ ไม่ขึ้นกับช่วงเวลา</li></ol></div></details>`;
 
-  // คำอธิบายวิธีนับใต้หัวการ์ดพับไว้ใน "วิธีนับ" (การ์ดเริ่มด้วยชื่อและตัวเลข ไม่ใช่ย่อหน้า)
-  const foldCardNotes = (html) => html.replace(/<div class="nd-head"><h2>([\s\S]*?)<\/h2><p( class="[^"]*")?>([\s\S]*?)<\/p>/g,
-    (match, title, cls = "", note) => `<div class="nd-head"><h2>${title}</h2><details class="nd-about"><summary>วิธีนับ</summary><p${cls}>${note}</p></details>`);
-
   function pageBody() {
     const { rows, today, loadedAt, typeId } = cache;
     const filters = readFilters(lastParams, rows, today);
@@ -433,7 +429,8 @@
     const focusKey = document.activeElement?.dataset?.sel ?? (document.activeElement?.hasAttribute?.("data-more") ? "__more" : null);
     const keepY = restoreScrollY ?? window.scrollY;
     restoreScrollY = null;
-    root.innerHTML = foldCardNotes(pageBody());
+    // คำอธิบายวิธีนับใต้หัวการ์ดพับไว้ (modules/dashboard-notes.js)
+    root.innerHTML = (window.MNP_DASHBOARD_NOTES?.fold ?? ((html) => html))(pageBody());
     bindPage(root);
     placeDrill(root);
     // วาดใหม่ทั้งก้อน: คืนตำแหน่งเลื่อนเดิมเสมอ หน้าจะได้ไม่กระโดด (ก่อน focus เพราะ focus บังคับ layout)
