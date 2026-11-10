@@ -569,7 +569,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .request-no.locked { color: var(--quiet); cursor: default; }
 .badge { padding: 4px 8px; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); background: var(--shell); border-radius: var(--radius-sm); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
 .badge:is(.pending_approval, .more_info, .pending_assign, .pending_verify, .approved, .in_progress, .assigned, .completed, .acknowledged, .rejected, .cancelled, .urgent-flag, .loss-pending-flag)::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
-.badge.pending_approval, .badge.more_info, .badge.pending_assign, .badge.pending_verify, .badge.assigned, .badge.loss-pending-flag { color: #fff; background: var(--warning-strong); }
+.badge.pending_approval, .badge.more_info, .badge.pending_assign, .badge.pending_verify, .badge.assigned { color: #fff; background: var(--warning-strong); }
+/* รอข้อมูลการสูญเสีย (NCR) คงสีฟ้าเดิมตามที่ผู้ใช้ขอ 2026-11-10 สัญลักษณ์ยังเป็นนาฬิกา */
+.badge.loss-pending-flag { color: #fff; background: var(--primary-strong); }
 .badge.approved, .badge.in_progress { color: #fff; background: var(--primary-strong); }
 .badge.completed, .badge.acknowledged { color: #fff; background: var(--success-strong); }
 .badge.rejected, .badge.cancelled { color: #fff; background: var(--danger-strong); }

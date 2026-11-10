@@ -43,9 +43,10 @@ test("urgency is said once on the MT detail page", () => {
 });
 
 test("waiting badges are amber with the clock, one name per role and field, back links name their destination", () => {
-  assert.match(css, /\.badge\.pending_verify, \.badge\.assigned, \.badge\.loss-pending-flag \{ color: #fff; background: var\(--warning-strong\); \}/);
+  assert.match(css, /\.badge\.pending_verify, \.badge\.assigned \{ color: #fff; background: var\(--warning-strong\); \}/);
+  assert.match(css, /\.badge\.loss-pending-flag \{ color: #fff; background: var\(--primary-strong\); \}/, "the NCR loss-data badge keeps its blue (user request)");
   assert.match(css, /\.badge:is\(\.pending_approval, \.pending_assign, \.pending_verify, \.assigned, \.loss-pending-flag\) \{ --badge-glyph:/);
-  assert.doesNotMatch(css, /\.badge\.assigned \{|\.badge:is\(\.approved, \.in_progress, \.assigned\)/);
+  assert.doesNotMatch(css, /\.badge\.in_progress, \.badge\.assigned \{|\.badge:is\(\.approved, \.in_progress, \.assigned\)/, "รอช่างเริ่มงาน is not blue any more");
   const ncr = readFileSync(new URL("../../modules/module-ncr.js", import.meta.url), "utf8");
   assert.doesNotMatch(ncr, /ผู้จัดการฝ่ายโรงงาน/);
   assert.doesNotMatch(mt, /requestFact\("แนวทางการซ่อม"/);
