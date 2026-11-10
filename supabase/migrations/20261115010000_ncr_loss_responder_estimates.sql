@@ -19,7 +19,8 @@
 -- ทางเข้าอื่นที่ใช้ฟังก์ชันนั้น (void / review / save_outcome / API รุ่นเก่า app_ncr_add_loss, app_ncr_add_losses) จึงยังปฏิเสธผู้ตอบ
 -- ไม่แก้ตารางและข้อมูล สิทธิ์ execute คงเดิม (create or replace) และย้ำไว้ท้ายไฟล์
 -- นิยามต้นทาง: public.app_ncr_record_loss จาก 20261015060000_ncr_loss_retroactive_and_assistant_factory_manager.sql
---   (ไม่มี migration หลังจากนั้นที่แทนที่ฟังก์ชันนี้) ต่างจากต้นทางเฉพาะ v_full และสามบรรทัดตรวจสิทธิ์ที่มีคอมเมนต์กำกับ
+--   บวกบรรทัด perform private.lab_only_block(); ที่ 20261019005000_lab_only_accounts.sql เติมให้ทุก RPC (ฐานข้อมูลจริงก่อน migration นี้:
+--   md5(prosrc) = e9078a63055ccc15e599edb9c182379b ตรวจ 2026-11-10) ต่างจากนั้นเฉพาะ v_full และสามบรรทัดตรวจสิทธิ์ที่มีคอมเมนต์กำกับ
 -- ลำดับ deploy: ขึ้น migration นี้ก่อนเผยแพร่ Pilot Web รุ่นที่แสดงฟอร์มยอดประมาณการให้ผู้ตอบ
 --   (Pilot Web รุ่นเก่าไม่แสดงฟอร์มให้ผู้ตอบ จึงทำงานกับฐานข้อมูลรุ่นนี้ได้)
 -- Rollback: create or replace กลับเป็นนิยามใน 20261015060000 (รายการประมาณการที่ผู้ตอบใส่ไว้แล้วยังอยู่ ผู้กรอกต้นทุนยืนยันหรือยกเลิกได้ตามปกติ)
@@ -43,6 +44,7 @@ declare
   v_note text := nullif(trim(coalesce(p_entry->>'note', '')), '');
   v_full boolean;
 begin
+  perform private.lab_only_block();
   v_employee := private.ncr_current_employee();
   select * into v_ncr from public.ncr_reports where id = p_ncr_id for update;
   if v_ncr.id is null then raise exception 'NCR_NOT_FOUND'; end if;
