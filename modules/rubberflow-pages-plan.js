@@ -56,17 +56,20 @@
         <td class="nowrap">${esc(fmtDate(order.dueDate))}</td><td>${ui.status(order.status)}</td></tr>`);
     const alertList = alerts.length ? alerts.slice(0, 8).map((alert) => ui.callout(alert.tone, `<strong>${esc(alert.title)}</strong><br>${esc(alert.text)}`)).join("") : ui.empty("ไม่มีการแจ้งเตือน");
 
+    // ยังไม่มีล็อตที่บันทึกผลผลิตเลย: กราฟสองใบบอกว่าว่าง ไม่วาดแกนที่ไม่มีความหมาย (ของเสีย 0% ของล็อตจริงยังวาดเป็นกราฟ)
+    const hasProduction = data.lots.some((lot) => lot.goodQty + lot.scrapQty > 0);
+    const noProduction = ui.empty("ยังไม่มีผลผลิตที่บันทึก");
     const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${rules.fmtDateTime(now)}`)}
       ${ui.stats([
-        { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: data.lots.some((lot) => lot.goodQty + lot.scrapQty > 0) ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
+        { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: hasProduction ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },
         { label: "ของเสียห้องผสม (สะสม)", value: `${fmtNum(mixingScrapKg, 1)} kg`, sub: `อัตราได้ของดี ห้องผสม ${yieldText(byStage.mixing)}` },
         { label: "สินค้าพร้อมส่งในคลัง", value: `${fgBoxes.length} กล่อง`, sub: `${data.fgBoxes.filter((box) => box.status === "hold").length} กล่องถูกกักกัน` },
       ])}
       <div class="rf-flow">${flow}</div>
       <div class="rf-grid rf-g2">
-        ${ui.card(ui.dualChart({ labels: days.map((day) => day.day), area: days.map((day) => day.output), line: days.map((day) => day.yield), leftName: "ผลผลิต (m)", rightName: "อัตราได้ของดี %", rightDomain: [90, 100], unitLeft: "m", unitRight: "%" }), { title: "ผลผลิตสำเร็จรูป (เมตร) และ Yield รายวัน" })}
-        ${ui.card(ui.dualChart({ labels: STAGES.map((stage) => STAGE_LABEL[stage]), bars: STAGES.map((stage) => +(100 - stageYield[stage]).toFixed(2)), leftName: "ของเสีย (%)", unitLeft: "%" }), { title: "สัดส่วนของเสียแยกตามขั้นตอน (%)" })}
+        ${ui.card(!hasProduction ? noProduction : ui.dualChart({ labels: days.map((day) => day.day), area: days.map((day) => day.output), line: days.map((day) => day.yield), leftName: "ผลผลิต (m)", rightName: "อัตราได้ของดี %", rightDomain: [90, 100], unitLeft: "m", unitRight: "%" }), { title: "ผลผลิตสำเร็จรูป (เมตร) และ Yield รายวัน" })}
+        ${ui.card(!hasProduction ? noProduction : ui.dualChart({ labels: STAGES.map((stage) => STAGE_LABEL[stage]), bars: STAGES.map((stage) => +(100 - stageYield[stage]).toFixed(2)), leftName: "ของเสีย (%)", unitLeft: "%" }), { title: "สัดส่วนของเสียแยกตามขั้นตอน (%)" })}
       </div>
       <div class="rf-grid rf-g2-wide">
         ${ui.card(ui.table(["เลขที่", "ลูกค้า / สินค้า", "ความคืบหน้า", "กำหนดส่ง", "สถานะ"], orderRows, { emptyText: "ไม่มีใบสั่งผลิตที่กำลังดำเนินการ" }), { title: "ใบสั่งผลิตที่กำลังดำเนินการ", actions: ctx.canSee("orders") ? ui.link("ดูทั้งหมด", ctx.url("orders"), "btn rf-btn secondary small") : "", flush: true })}

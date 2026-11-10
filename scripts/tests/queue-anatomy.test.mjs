@@ -43,7 +43,7 @@ test("every queue row names its action: the step verb for approvals, the task fo
     statusLabels: { pending_verify: "รอผู้แจ้งตรวจรับ" },
   });
   const approval = (stepName, code = "MT_REPAIR") => ({ kind: "approval", step: { step_name: stepName }, request: { request_type: { code } } });
-  assert.equal(label(approval("ผู้จัดการแผนกซ่อมบำรุงรับงาน")), "รับงาน");
+  assert.equal(label(approval("ผู้จัดการแผนกซ่อมบำรุงรับงาน")), "อนุมัติ", "no รับงาน chip: the MT head assigns, technicians cannot refuse");
   assert.equal(label(approval("ผู้จัดการแผนกที่รับผิดชอบรับทราบ")), "รับทราบ");
   assert.equal(label(approval("ผู้จัดการโรงงาน")), "อนุมัติ");
   assert.equal(label(approval("ผู้บริหารรับทราบ", "MANAGEMENT")), "อนุมัติ", "same word as the decision button when the module already has a รับทราบข้อมูล button");
@@ -104,6 +104,14 @@ test("pages without a step file field keep the separate uploader (approvers, vie
   // ตัวที่เรียก: MT เฉพาะฟอร์มจบงาน · NCR เฉพาะฟอร์มของขั้นที่แนบหลักฐานได้ (เลือกด้วยชื่อการกระทำ ทดสอบใน ncr-detail-page.test.mjs)
   assert.match(app, /pointToStepFiles\(document\.querySelector\("#attachment-form"\), document\.querySelector\("#finish-files"\),/);
   assert.match(read("modules/module-ncr.js"), /window\.pointToStepFiles\?\.\(document\.querySelector\("\.ncr-attach-form"\), stepFileInput\(document\.querySelectorAll\("\.ncr-actions form\.ncr-action"\)\),/);
+});
+
+test("no approval step in the harness reads รับงาน: MT goes factory manager → general manager, then the MT head assigns", () => {
+  const mock = read("scripts/pilot-harness-mock.mjs");
+  const stepNames = [...mock.matchAll(/\[\["([^"]+)", [^\]]+\](?:, \["([^"]+)", [^\]]+\])?\]/g)].flatMap((match) => [match[1], match[2]]).filter(Boolean);
+  assert.ok(stepNames.includes("ผู้จัดการทั่วไป"), "the step lists were found");
+  assert.deepEqual(stepNames.filter((name) => name.includes("รับงาน")), []);
+  assert.match(mock, /MT_REPAIR: \[\["ผู้จัดการทั่วไป", ME_ID\]\],/, "a new harness MT request waits only for the general manager, then the MT head assigns");
 });
 
 test("the help legend explains the blue clock badge kept for NCR loss data", () => {

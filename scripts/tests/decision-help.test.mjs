@@ -1,5 +1,5 @@
 // PR 1 ของรอบ 36/40: แผงตัดสินใจ รายละเอียดคำร้อง และคำอธิบายตามต้องการ
-// - คำกริยาของขั้นบนหน้าจอ (รับงาน/รับทราบ/อนุมัติ) ค่าที่เก็บยัง "approved"
+// - คำกริยาของขั้นบนหน้าจอ (รับทราบ/อนุมัติ · ไม่มีรับงาน) ค่าที่เก็บยัง "approved"
 // - confirmDialog รับ cancelLabel · ตารางคีย์ลัด · A/R ใช้ได้ในหน้ารายละเอียด · ชื่อ nav ที่ 1024px
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -33,14 +33,17 @@ function load(names, context = {}) {
 }
 
 test("the step verb comes from the step name, with approve as the default", () => {
-  assert.equal(verbs.verbOf("ผู้จัดการแผนกซ่อมบำรุงรับงาน"), "รับงาน");
+  // ไม่มีขั้นรับงาน: หัวหน้าซ่อมบำรุงมอบหมายช่างหลังผู้จัดการทั่วไปอนุมัติ ช่างปฏิเสธงานไม่ได้ (กติกาผู้ใช้)
+  assert.equal(verbs.verbOf("ผู้จัดการแผนกซ่อมบำรุงรับงาน"), "อนุมัติ", "no step ever reads รับงาน");
+  assert.ok(!verbs.STEP_VERBS.includes("รับงาน"));
   assert.equal(verbs.verbOf("ผู้จัดการแผนกที่รับผิดชอบรับทราบ"), "รับทราบ");
   assert.equal(verbs.verbOf("ผู้จัดการโรงงานอนุมัติ"), "อนุมัติ");
   assert.equal(verbs.verbOf("ผู้จัดการโรงงาน"), "อนุมัติ", "a plain role name is an ordinary approval step");
   assert.equal(verbs.verbOf("ผู้จัดการโรงงานตรวจสอบ"), "อนุมัติ");
   assert.equal(verbs.verbOf(undefined), "อนุมัติ");
   assert.equal(verbs.verbOf("ผู้จัดการแผนกรับทราบ", ["รับทราบข้อมูล"]), "อนุมัติ", "no second button that reads the same as the module's own acknowledge");
-  assert.equal(verbs.pendingLabel("ผู้จัดการแผนกซ่อมบำรุงรับงาน"), "รอรับงาน");
+  assert.equal(verbs.pendingLabel("ผู้จัดการแผนกที่รับผิดชอบรับทราบ"), "รอรับทราบ");
+  assert.equal(verbs.pendingLabel("ผู้จัดการแผนกซ่อมบำรุงรับงาน"), "รออนุมัติ");
   assert.equal(verbs.pendingLabel("ผู้จัดการโรงงาน"), "รออนุมัติ");
 });
 
@@ -55,9 +58,10 @@ test("the step line names the real next step instead of 'final step' when the wo
 
 test("the decision buttons wear the step verb but still send 'approved'", () => {
   const { decisionButtonsOf } = load(["decisionButtonsOf"]);
-  const buttons = [...decisionButtonsOf([], "ผู้จัดการแผนกซ่อมบำรุงรับงาน")];
+  const buttons = [...decisionButtonsOf([], "ผู้จัดการแผนกที่รับผิดชอบรับทราบ")];
   assert.deepEqual(buttons.map((item) => item.decision), ["rejected", "more_info", "approved"], "stored decisions are unchanged");
-  assert.equal(buttons.at(-1).label, "รับงาน");
+  assert.equal(buttons.at(-1).label, "รับทราบ");
+  assert.equal(decisionButtonsOf([], "ผู้จัดการแผนกซ่อมบำรุงรับงาน").at(-1).label, "อนุมัติ", "never a รับงาน button");
   assert.equal(buttons.at(-1).tone, "success");
   assert.equal(decisionButtonsOf([], "").at(-1).label, "อนุมัติ");
   const withAck = [...decisionButtonsOf([{ decision: "acknowledged", label: "รับทราบข้อมูล" }], "ผู้จัดการแผนกรับทราบ")];
@@ -90,7 +94,8 @@ test("the panel head shows the repair hand-off and the message for 'ask for more
 
 test("the status badge and the MT badge say what the current step asks for", () => {
   const api = load(["statusBadge", "pendingStepBadge"], { statusLabel: (status) => (status === "pending_approval" ? "รออนุมัติ" : status) });
-  assert.match(api.pendingStepBadge({ status: "pending_approval" }, { step_name: "ผู้จัดการแผนกซ่อมบำรุงรับงาน" }), /รอรับงาน/);
+  assert.match(api.pendingStepBadge({ status: "pending_approval" }, { step_name: "ผู้จัดการแผนกที่รับผิดชอบรับทราบ" }), /รอรับทราบ/);
+  assert.match(api.pendingStepBadge({ status: "pending_approval" }, { step_name: "ผู้จัดการแผนกซ่อมบำรุงรับงาน" }), /รออนุมัติ/, "never รอรับงาน");
   assert.match(api.pendingStepBadge({ status: "pending_approval" }, null), /รออนุมัติ/, "no current step: the plain label");
   assert.match(api.pendingStepBadge({ status: "approved" }, { step_name: "รับงาน" }), />approved</, "other statuses are untouched");
   assert.match(mt, /window\.MNP_STEP_VERB\.pendingLabel\(stepName\)/);

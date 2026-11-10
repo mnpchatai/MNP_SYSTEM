@@ -1067,7 +1067,7 @@ function statusBadge(status, repair = false) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status, repair))}</span>`;
 }
 
-// ใบที่รอขั้นอนุมัติ: ป้ายใช้คำของขั้นนั้น ("รอรับงาน" ตามที่แจ้งเตือนเขียน) ไม่ใช่ "รออนุมัติ" ทุกขั้น
+// ใบที่รอขั้นอนุมัติ: ป้ายใช้คำของขั้นนั้น ("รอรับทราบ" หรือ "รออนุมัติ" ตามชื่อขั้น · ไม่มี "รอรับงาน": งานซ่อม MT หัวหน้าซ่อมบำรุงมอบหมายช่างหลังผู้จัดการทั่วไปอนุมัติ)
 function pendingStepBadge(request, currentStep, repair = false) {
   if (request.status !== "pending_approval" || !currentStep) return statusBadge(request.status, repair);
   return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(window.MNP_STEP_VERB.pendingLabel(currentStep.step_name))}</span>`;
@@ -1958,7 +1958,7 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong><span class="sandbox-pill">TEST</span>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
+    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
@@ -2170,7 +2170,7 @@ function homeQueueItems(pending, repairTasks, ncrTasks) {
   ]);
 }
 // งานของคิวที่ลงมือในหน้าของใบเอง (งานซ่อม ขั้นของ NCR) ใช้คำของงาน เช่น "มอบหมายช่าง"
-// แถวอนุมัติใช้คำกริยาของขั้น (อนุมัติ / รับงาน / รับทราบ) คำเดียวกับปุ่มในแถบตัดสินใจ
+// แถวอนุมัติใช้คำกริยาของขั้น (อนุมัติ / รับทราบ) คำเดียวกับปุ่มในแถบตัดสินใจ
 function queueTaskLabel(item) {
   if (item.kind === "approval") {
     const extra = requestModule(relation(item.request.request_type)?.code)?.extraDecisions ?? [];
@@ -2252,7 +2252,7 @@ async function renderDashboard(params = new URLSearchParams()) {
       </div>
       ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(entry.label ?? decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
       ${items.length ? `<div class="queue-layout${approvalIds.length ? "" : " is-tasks-only"}">
-        <ul class="queue-list" role="list"${approvalIds.length ? ` title="คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ · ? ดูทั้งหมด" aria-keyshortcuts="J K A R ?"` : ""}>${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= visibleCount })).join("")}</ul>
+        <ul class="queue-list" role="list"${approvalIds.length ? ` title="คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ · ? ดูทั้งหมด" aria-keyshortcuts="J K A R ?"` : ` title="คีย์ลัด: J/K เลื่อนรายการ · ? ดูทั้งหมด" aria-keyshortcuts="J K ?"`}>${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= visibleCount })).join("")}</ul>
         <div class="queue-detail-pane" id="queue-detail-pane"></div>
       </div>
       ${items.length > visibleCount ? `<button type="button" class="link-button queue-more" id="queue-more">แสดงอีก ${items.length - visibleCount} รายการ</button>` : ""}
@@ -2644,14 +2644,20 @@ document.addEventListener("keydown", (event) => {
   if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
   if (key === "j" || key === "k") {
     if (!inQueue) return;
-    const ids = [...document.querySelectorAll(".queue-item[data-request-id]:not([hidden])")].map((node) => node.dataset.requestId);
-    const next = window.MNP_HOME_QUEUE.stepSelection(ids, homeQueueState.selectedId, key === "j" ? 1 : -1);
+    // ทุกแถวที่มองเห็น: แถวอนุมัติใช้เลขใบเป็นกุญแจ แถวงาน (ลิงก์ไปหน้าใบ) ใช้ตำแหน่ง · เริ่มจากแถวที่โฟกัสอยู่ ไม่มีก็จากใบที่เลือก
+    const rows = [...document.querySelectorAll("#home-queue .queue-item:not([hidden])")];
+    const keys = rows.map((row, index) => row.dataset.requestId ?? `task:${index}`);
+    const focused = document.activeElement instanceof HTMLElement ? document.activeElement.closest(".queue-item") : null;
+    const current = focused && rows.includes(focused) ? keys[rows.indexOf(focused)] : homeQueueState.selectedId;
+    const next = window.MNP_HOME_QUEUE.stepSelection(keys, current, key === "j" ? 1 : -1);
     if (!next) return;
     event.preventDefault();
-    if (next !== homeQueueState.selectedId) selectQueueItem(next);
-    document.querySelector(`.queue-item[data-request-id="${CSS.escape(next)}"] .queue-item-main`)?.focus();
+    const row = rows[keys.indexOf(next)];
+    if (row.dataset.requestId && next !== homeQueueState.selectedId) selectQueueItem(next);
+    row.querySelector(".queue-item-main")?.focus();
     return;
   }
+  if (target instanceof HTMLElement && target.closest(".queue-item.is-task")) return;
   const panel = document.querySelector("#decision-panel");
   if (!panel || panel.hidden || panel.dataset.state !== "idle") return;
   const button = panel.querySelector(`[data-decision="${key === "a" ? "approved" : "rejected"}"]`);
@@ -2760,11 +2766,14 @@ function bindModuleZoom(params) {
   playModuleZoom(params);
 }
 
+// หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
+// ทะเบียน NCR ไม่มีกระดาน จึงยังใช้ requestScopeSwitch
 function requestsViewTabs(params) {
   const board = params.get("view") === "board";
-  return `<nav class="view-tabs" aria-label="ขอบเขตการดูคำร้อง">
-    <a class="view-tab${board ? "" : " active"}" ${board ? "" : 'aria-current="page"'} href="${escapeHtml(requestCenterUrl(params, { view: null }))}">รายการตามสิทธิ์</a>
-    <a class="view-tab${board ? " active" : ""}" ${board ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { view: "board" }))}">ติดตามสถานะทุกใบ</a>
+  const mine = !board && params.get("scope") === "mine";
+  const tab = (active, changes, label) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}">${label}</a>`;
+  return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
   </nav>`;
 }
 
@@ -2777,7 +2786,7 @@ function requestScopeSwitch(params) {
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
 // module: หน้าเป็นของโมดูลเดียว ตัวเลือกสถานะจึงตามขั้นตอนของโมดูลนั้น (กระดานทุกโมดูลแสดงทุกสถานะ)
-function requestListFilters(params, { departments = null, placeholder, scope = false, search = true, repair = false, module = false } = {}) {
+function requestListFilters(params, { departments = null, placeholder, search = true, repair = false, module = false } = {}) {
   // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
   const known = knownRequestStatuses(params);
   const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
@@ -2797,7 +2806,6 @@ function requestListFilters(params, { departments = null, placeholder, scope = f
   const query = search ? (params.get("q") ?? "").trim() : "";
   const applied = [
     known.length ? `สถานะ ${known.map((status) => statusLabel(status, repair)).join(", ")}` : "",
-    scope && params.get("scope") === "mine" ? "เฉพาะที่ฉันแจ้ง" : "",
     department ? `แผนก ${department.displayCode}` : "",
     query ? `ค้นหา "${query}"` : "",
   ].filter(Boolean);
@@ -2805,7 +2813,7 @@ function requestListFilters(params, { departments = null, placeholder, scope = f
   const open = listFiltersOpen;
   return `<div class="list-filters${open ? " is-open" : ""}">
     <button type="button" class="btn secondary list-filters-toggle" aria-expanded="${open}" aria-controls="list-filters-body" data-list-filters-toggle${active ? ` title="${escapeHtml(`กรองอยู่: ${applied.join(" · ")}`)}"` : ""}>${uiIcon("search")} ตัวกรอง${active ? ` (${active})` : ""}</button>
-    <div class="list-filters-body" id="list-filters-body">${scope ? requestScopeSwitch(params) : ""}${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>
+    <div class="list-filters-body" id="list-filters-body">${search ? requestSearchForm(params, { departments, placeholder, leading: statusSelect }) : statusSelect}</div>
   </div>`;
 }
 
@@ -2988,7 +2996,7 @@ async function renderRequests(params) {
     const department = selectedFilterDepartment(params, departments);
     // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
     const search = departments ? (params.get("q") ?? "").trim() : "";
-    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -3952,7 +3960,7 @@ function requestDetailMenuHtml(actionsHtml) {
 }
 
 // ปุ่มตัดสินใจ: ไม่อนุมัติ · ขอข้อมูลเพิ่ม · (มติเฉพาะโมดูล) · ปุ่มหลักขวาสุด ใต้นิ้วโป้ง
-// ปุ่มหลักใช้คำของขั้นนั้น (รับงาน/รับทราบ/อนุมัติ ตามชื่อขั้น ดู modules/step-verb.js) แสดงบนหน้าจอเท่านั้น: มติที่ส่งยังเป็น "approved"
+// ปุ่มหลักใช้คำของขั้นนั้น (รับทราบ/อนุมัติ ตามชื่อขั้น ดู modules/step-verb.js) แสดงบนหน้าจอเท่านั้น: มติที่ส่งยังเป็น "approved"
 function decisionButtonsOf(extraDecisions, stepName = "") {
   const verb = window.MNP_STEP_VERB.verbOf(stepName, extraDecisions.map((item) => item.label));
   return [
@@ -4002,7 +4010,7 @@ function nextItemPanelHtml() {
 }
 
 // หลังตัดสิน: นับงานจากคิวเดียวกับ "ต้องจัดการ" ของหน้าหลัก
-// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น รับงานแล้วต้องมอบหมายช่าง) แผงบอกขั้นนั้นและพาไปที่ฟอร์ม (ปุ่มรอง ปุ่มหลักคือปุ่มส่งของฟอร์มเอง)
+// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น ผู้อนุมัติขั้นนี้ถือขั้นถัดไปด้วย) แผงบอกขั้นนั้นและพาไปที่ฟอร์ม (ปุ่มรอง ปุ่มหลักคือปุ่มส่งของฟอร์มเอง)
 async function fillNextItemPanel(currentId) {
   const panel = document.querySelector("#next-item-panel");
   if (!panel) return;
@@ -4085,6 +4093,17 @@ function trackActionBarHeight() {
   });
   actionBarObserver.disconnect();
   if (bar) actionBarObserver.observe(bar);
+}
+
+// ตัดข้อความยาวตามตัวอักษรที่เห็น (grapheme: พยัญชนะกับสระ/วรรณยุกต์นับเป็นหนึ่ง) ไม่ตัดวรรณยุกต์ทิ้งก่อน "…"
+// เบราว์เซอร์ที่ไม่มี Intl.Segmenter ตัดตาม code point · ช่องว่างหลายตัว/ขึ้นบรรทัดรวมเป็นช่องเดียว (ใช้ในบรรทัดเดียว)
+function clipText(text, max) {
+  const value = String(text ?? "").replace(/\s+/g, " ").trim();
+  const chars = typeof Intl.Segmenter === "function" ? Array.from(new Intl.Segmenter("th", { granularity: "grapheme" }).segment(value), (part) => part.segment) : Array.from(value);
+  if (chars.length <= max) return chars.join("");
+  const kept = chars.slice(0, max - 1);
+  while (kept.length && /^[เแโใไ]$/.test(kept.at(-1))) kept.pop();
+  return `${kept.join("")}…`;
 }
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
@@ -4175,7 +4194,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     if (state.name === "pending") {
       tapGuard.arm();
       reason.hidden = true;
-      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no}`);
+      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no}${state.comment ? ` · “${clipText(state.comment, 80)}”` : ""}`);
       // "ส่งเลย" สีเดียวกับมติที่กำลังจะส่ง (ไม่อนุมัติเป็นสีแดง) ไม่ใช่สีน้ำเงินกลาง ๆ
       buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", decisionButtonClass(state.decision), "send-now")}`;
       return;
