@@ -39,6 +39,8 @@ test("the undo countdown repeats the typed reason on one line, clipped by charac
   assert.equal(clip("กี่".repeat(81), 80), `${"กี่".repeat(79)}…`, "a Thai consonant with its vowel and tone mark counts as one, so no tone mark is cut off");
   assert.equal(clip("😀".repeat(5), 4), "😀😀😀…", "never splits a surrogate pair");
   assert.equal(clip(null, 10), "");
+  assert.equal(clip("ไม่ผ่านเพราะ", 7), "ไม่ผ่าน…", "never ends on a leading vowel whose consonant was cut");
+  assert.equal(clip("ไม่ผ่านเพราะ", 8), "ไม่ผ่านเพ…");
   // ใน app.js ส่วนที่เหลือของตัวจัดการแป้น: A/R ไม่ตัดสินใบที่เลือกเมื่อโฟกัสอยู่ที่แถวงาน
   assert.match(app, /if \(target instanceof HTMLElement && target\.closest\("\.queue-item\.is-task"\)\) return;\n  const panel = document\.querySelector\("#decision-panel"\);/);
   assert.match(app, /setLine\(`กำลังจะ\$\{labelOf\(state\.decision\)\} \$\{request\.request_no\}\$\{state\.comment \? ` · “\$\{clipText\(state\.comment, 80\)\}”` : ""\}`\);/);
@@ -80,9 +82,6 @@ test("a module list has one scope control: mine is a subset of what I may see, t
   assert.deepEqual(parse(tabs(new URLSearchParams("type=t-mt&scope=mine"))).map((tab) => tab.active), [false, true, false]);
   assert.deepEqual(parse(tabs(new URLSearchParams("type=t-mt&view=board&scope=mine"))).map((tab) => tab.active), [false, false, true]);
   assert.doesNotMatch(app, /placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true/, "no second scope switch in the MT filter row");
-  const allTypes = parse(tabs(new URLSearchParams("type=all&view=board"), { mineTab: false }));
-  assert.deepEqual(allTypes.map((tab) => tab.label), ["ที่ฉันมีสิทธิ์ดู", "ติดตามสถานะทุกใบ"], "the all-types board has no mine-only list to go to");
-  assert.match(app, /requestsViewTabs\(params, \{ mineTab: Boolean\(selected\) \}\)/);
 });
 
 test("TEST shows once: in the top bar, not again in the test-mode banner", () => {

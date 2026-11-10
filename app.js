@@ -1067,7 +1067,7 @@ function statusBadge(status, repair = false) {
   return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status, repair))}</span>`;
 }
 
-// ใบที่รอขั้นอนุมัติ: ป้ายใช้คำของขั้นนั้น ("รอรับงาน" ตามที่แจ้งเตือนเขียน) ไม่ใช่ "รออนุมัติ" ทุกขั้น
+// ใบที่รอขั้นอนุมัติ: ป้ายใช้คำของขั้นนั้น ("รอรับทราบ" หรือ "รออนุมัติ" ตามชื่อขั้น · ไม่มี "รอรับงาน": งานซ่อม MT หัวหน้าซ่อมบำรุงมอบหมายช่างหลังผู้จัดการทั่วไปอนุมัติ)
 function pendingStepBadge(request, currentStep, repair = false) {
   if (request.status !== "pending_approval" || !currentStep) return statusBadge(request.status, repair);
   return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(window.MNP_STEP_VERB.pendingLabel(currentStep.step_name))}</span>`;
@@ -2768,12 +2768,12 @@ function bindModuleZoom(params) {
 
 // หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
 // ทะเบียน NCR ไม่มีกระดาน จึงยังใช้ requestScopeSwitch
-function requestsViewTabs(params, { mineTab = true } = {}) {
+function requestsViewTabs(params) {
   const board = params.get("view") === "board";
   const mine = !board && params.get("scope") === "mine";
   const tab = (active, changes, label) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}">${label}</a>`;
   return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
-    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${mineTab ? tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง") : ""}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
   </nav>`;
 }
 
@@ -2918,7 +2918,7 @@ async function renderRequestsBoard(params, types) {
     && (status === "all" || status.split(",").includes(row.status))
     && (!department || row.department_code === department.sourceCode));
   const openable = rows.filter((row) => row.can_open).length;
-  const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params, { mineTab: Boolean(selected) })}
+  const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
     ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
     <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
@@ -3960,7 +3960,7 @@ function requestDetailMenuHtml(actionsHtml) {
 }
 
 // ปุ่มตัดสินใจ: ไม่อนุมัติ · ขอข้อมูลเพิ่ม · (มติเฉพาะโมดูล) · ปุ่มหลักขวาสุด ใต้นิ้วโป้ง
-// ปุ่มหลักใช้คำของขั้นนั้น (รับงาน/รับทราบ/อนุมัติ ตามชื่อขั้น ดู modules/step-verb.js) แสดงบนหน้าจอเท่านั้น: มติที่ส่งยังเป็น "approved"
+// ปุ่มหลักใช้คำของขั้นนั้น (รับทราบ/อนุมัติ ตามชื่อขั้น ดู modules/step-verb.js) แสดงบนหน้าจอเท่านั้น: มติที่ส่งยังเป็น "approved"
 function decisionButtonsOf(extraDecisions, stepName = "") {
   const verb = window.MNP_STEP_VERB.verbOf(stepName, extraDecisions.map((item) => item.label));
   return [
@@ -4010,7 +4010,7 @@ function nextItemPanelHtml() {
 }
 
 // หลังตัดสิน: นับงานจากคิวเดียวกับ "ต้องจัดการ" ของหน้าหลัก
-// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น รับงานแล้วต้องมอบหมายช่าง) แผงบอกขั้นนั้นและพาไปที่ฟอร์ม (ปุ่มรอง ปุ่มหลักคือปุ่มส่งของฟอร์มเอง)
+// ถ้าขั้นต่อไปของใบนี้เป็นของคนเดิม (เช่น ผู้อนุมัติขั้นนี้ถือขั้นถัดไปด้วย) แผงบอกขั้นนั้นและพาไปที่ฟอร์ม (ปุ่มรอง ปุ่มหลักคือปุ่มส่งของฟอร์มเอง)
 async function fillNextItemPanel(currentId) {
   const panel = document.querySelector("#next-item-panel");
   if (!panel) return;
@@ -4100,7 +4100,10 @@ function trackActionBarHeight() {
 function clipText(text, max) {
   const value = String(text ?? "").replace(/\s+/g, " ").trim();
   const chars = typeof Intl.Segmenter === "function" ? Array.from(new Intl.Segmenter("th", { granularity: "grapheme" }).segment(value), (part) => part.segment) : Array.from(value);
-  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
+  if (chars.length <= max) return chars.join("");
+  const kept = chars.slice(0, max - 1);
+  while (kept.length && /^[เแโใไ]$/.test(kept.at(-1))) kept.pop();
+  return `${kept.join("")}…`;
 }
 
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)

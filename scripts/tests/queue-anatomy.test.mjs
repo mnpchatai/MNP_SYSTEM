@@ -106,6 +106,14 @@ test("pages without a step file field keep the separate uploader (approvers, vie
   assert.match(read("modules/module-ncr.js"), /window\.pointToStepFiles\?\.\(document\.querySelector\("\.ncr-attach-form"\), stepFileInput\(document\.querySelectorAll\("\.ncr-actions form\.ncr-action"\)\),/);
 });
 
+test("no approval step in the harness reads รับงาน: MT goes factory manager → general manager, then the MT head assigns", () => {
+  const mock = read("scripts/pilot-harness-mock.mjs");
+  const stepNames = [...mock.matchAll(/\[\["([^"]+)", [^\]]+\](?:, \["([^"]+)", [^\]]+\])?\]/g)].flatMap((match) => [match[1], match[2]]).filter(Boolean);
+  assert.ok(stepNames.includes("ผู้จัดการทั่วไป"), "the step lists were found");
+  assert.deepEqual(stepNames.filter((name) => name.includes("รับงาน")), []);
+  assert.match(mock, /MT_REPAIR: \[\["ผู้จัดการทั่วไป", ME_ID\]\],/, "a new harness MT request waits only for the general manager, then the MT head assigns");
+});
+
 test("the help legend explains the blue clock badge kept for NCR loss data", () => {
   const context = vm.createContext({});
   vm.runInContext(read("modules/shortcut-help.js"), context);

@@ -50,7 +50,7 @@
         : null;
     if (!stepName) return statusBadge(request.status, true);
     const short = approverShortNames[stepName] ?? stepName;
-    // ขั้นอนุมัติใช้คำของขั้นนั้น (รอรับงาน/รอรับทราบ/รออนุมัติ) เหมือนแจ้งเตือน
+    // ขั้นอนุมัติใช้คำของขั้นนั้น (รอรับทราบ/รออนุมัติ) เหมือนแจ้งเตือน
     const stateLabel = request.status === "pending_approval" && window.MNP_STEP_VERB ? window.MNP_STEP_VERB.pendingLabel(stepName) : statusLabel(request.status, true);
     // ชื่อขั้นอยู่ใน .badge-step: หน้ารายละเอียดที่มีแถบตัดสินใจ (บรรทัด "ขั้นตอน: …") ซ่อนไว้ ไม่ให้พูดชื่อขั้นสองครั้ง (styles.css .has-step-line)
     return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(stateLabel)}<span class="badge-step"> (${escapeHtml(short)})</span></span>`;
