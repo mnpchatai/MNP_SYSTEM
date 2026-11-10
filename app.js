@@ -1958,7 +1958,7 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong><span class="sandbox-pill">TEST</span>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
+    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
@@ -2252,7 +2252,7 @@ async function renderDashboard(params = new URLSearchParams()) {
       </div>
       ${recent.length ? `<ul class="queue-done" aria-label="เพิ่งตัดสิน">${recent.map(({ id, entry }) => `<li><a href="#/request?id=${encodeURIComponent(id)}"><span class="queue-done-mark decision-${escapeHtml(entry.decision)}" aria-hidden="true">${uiIcon(entry.decision === "rejected" ? "close" : "check")}</span><span>${escapeHtml(entry.label ?? decisionVerbs[entry.decision] ?? "บันทึกผล")}แล้ว · <span class="request-no">${escapeHtml(entry.requestNo ?? "")}</span> ${escapeHtml(entry.title ?? "")}</span><time datetime="${new Date(entry.at).toISOString()}">${formatTimeOnly(entry.at)}</time></a></li>`).join("")}</ul>` : ""}
       ${items.length ? `<div class="queue-layout${approvalIds.length ? "" : " is-tasks-only"}">
-        <ul class="queue-list" role="list"${approvalIds.length ? ` title="คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ · ? ดูทั้งหมด" aria-keyshortcuts="J K A R ?"` : ""}>${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= visibleCount })).join("")}</ul>
+        <ul class="queue-list" role="list"${approvalIds.length ? ` title="คีย์ลัด: J/K เลื่อนรายการ · A อนุมัติ · R ไม่อนุมัติ · ? ดูทั้งหมด" aria-keyshortcuts="J K A R ?"` : ` title="คีย์ลัด: J/K เลื่อนรายการ · ? ดูทั้งหมด" aria-keyshortcuts="J K ?"`}>${items.map((item, index) => homeQueueItemHtml(item, { selected: item.id === selectedId, directory, hidden: index >= visibleCount })).join("")}</ul>
         <div class="queue-detail-pane" id="queue-detail-pane"></div>
       </div>
       ${items.length > visibleCount ? `<button type="button" class="link-button queue-more" id="queue-more">แสดงอีก ${items.length - visibleCount} รายการ</button>` : ""}
@@ -2644,12 +2644,17 @@ document.addEventListener("keydown", (event) => {
   if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
   if (key === "j" || key === "k") {
     if (!inQueue) return;
-    const ids = [...document.querySelectorAll(".queue-item[data-request-id]:not([hidden])")].map((node) => node.dataset.requestId);
-    const next = window.MNP_HOME_QUEUE.stepSelection(ids, homeQueueState.selectedId, key === "j" ? 1 : -1);
+    // ทุกแถวที่มองเห็น: แถวอนุมัติใช้เลขใบเป็นกุญแจ แถวงาน (ลิงก์ไปหน้าใบ) ใช้ตำแหน่ง · เริ่มจากแถวที่โฟกัสอยู่ ไม่มีก็จากใบที่เลือก
+    const rows = [...document.querySelectorAll("#home-queue .queue-item:not([hidden])")];
+    const keys = rows.map((row, index) => row.dataset.requestId ?? `task:${index}`);
+    const focused = document.activeElement instanceof HTMLElement ? document.activeElement.closest(".queue-item") : null;
+    const current = focused && rows.includes(focused) ? keys[rows.indexOf(focused)] : homeQueueState.selectedId;
+    const next = window.MNP_HOME_QUEUE.stepSelection(keys, current, key === "j" ? 1 : -1);
     if (!next) return;
     event.preventDefault();
-    if (next !== homeQueueState.selectedId) selectQueueItem(next);
-    document.querySelector(`.queue-item[data-request-id="${CSS.escape(next)}"] .queue-item-main`)?.focus();
+    const row = rows[keys.indexOf(next)];
+    if (row.dataset.requestId && next !== homeQueueState.selectedId) selectQueueItem(next);
+    row.querySelector(".queue-item-main")?.focus();
     return;
   }
   const panel = document.querySelector("#decision-panel");
@@ -2760,11 +2765,14 @@ function bindModuleZoom(params) {
   playModuleZoom(params);
 }
 
+// หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
+// ทะเบียน NCR ไม่มีกระดาน จึงยังใช้ requestScopeSwitch
 function requestsViewTabs(params) {
   const board = params.get("view") === "board";
-  return `<nav class="view-tabs" aria-label="ขอบเขตการดูคำร้อง">
-    <a class="view-tab${board ? "" : " active"}" ${board ? "" : 'aria-current="page"'} href="${escapeHtml(requestCenterUrl(params, { view: null }))}">รายการตามสิทธิ์</a>
-    <a class="view-tab${board ? " active" : ""}" ${board ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { view: "board" }))}">ติดตามสถานะทุกใบ</a>
+  const mine = !board && params.get("scope") === "mine";
+  const tab = (active, changes, label) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}">${label}</a>`;
+  return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
   </nav>`;
 }
 
@@ -2988,7 +2996,7 @@ async function renderRequests(params) {
     const department = selectedFilterDepartment(params, departments);
     // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
     const search = departments ? (params.get("q") ?? "").trim() : "";
-    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", scope: true, search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -4087,6 +4095,12 @@ function trackActionBarHeight() {
   if (bar) actionBarObserver.observe(bar);
 }
 
+// ตัดข้อความยาวตามตัวอักษร (code point) ไม่ตัดกลางอักขระคู่ · ช่องว่างหลายตัว/ขึ้นบรรทัดรวมเป็นช่องเดียว (ใช้ในบรรทัดเดียว)
+function clipText(text, max) {
+  const chars = Array.from(String(text ?? "").replace(/\s+/g, " ").trim());
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
+}
+
 // ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
 // requesterName: ชื่อผู้แจ้ง ใช้บอกว่า "ขอข้อมูลเพิ่ม" จะส่งกลับให้ใคร
 function bindDecisionPanel({ id, params, request, currentStep, nextStep, employee, extraDecisions, requesterName = "", onDecided = null }) {
@@ -4175,7 +4189,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     if (state.name === "pending") {
       tapGuard.arm();
       reason.hidden = true;
-      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no}`);
+      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no}${state.comment ? ` · “${clipText(state.comment, 80)}”` : ""}`);
       // "ส่งเลย" สีเดียวกับมติที่กำลังจะส่ง (ไม่อนุมัติเป็นสีแดง) ไม่ใช่สีน้ำเงินกลาง ๆ
       buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", decisionButtonClass(state.decision), "send-now")}`;
       return;

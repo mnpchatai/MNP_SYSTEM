@@ -130,12 +130,14 @@
     const slot = n ? plotWidth / n : plotWidth;
     const leftValues = [...(bars ?? []), ...(area ?? [])].filter((value) => value !== null && value !== undefined);
     const leftScale = rules.niceScale(Math.min(0, ...leftValues), Math.max(1, ...leftValues), 4);
+    // ทศนิยมของป้ายแกนตามระยะห่างของเส้น (0.5 แสดง "0.5" ไม่ปัดเป็น "1" ซ้ำกับเส้นถัดไป)
+    const leftDigits = leftScale.step < 1 ? Math.min(2, Math.ceil(-Math.log10(leftScale.step) - 1e-9)) : 0;
     const yLeft = (value) => box.top + (1 - (value - leftScale.min) / (leftScale.max - leftScale.min)) * box.height;
     const rightValues = (line ?? []).filter((value) => value !== null && value !== undefined);
     const rightScale = rightDomain ? { min: rightDomain[0], max: rightDomain[1], ticks: [rightDomain[0], (rightDomain[0] + rightDomain[1]) / 2, rightDomain[1]] } : rules.niceScale(Math.min(...rightValues), Math.max(...rightValues), 3);
     const yRight = (value) => box.top + (1 - (value - rightScale.min) / (rightScale.max - rightScale.min)) * box.height;
     const xMid = (index) => box.left + slot * (index + 0.5);
-    const grid = leftScale.ticks.map((tick) => `<line class="rf-spc-grid" x1="${box.left}" x2="${n2(W - box.right)}" y1="${n2(yLeft(tick))}" y2="${n2(yLeft(tick))}"/><text class="rf-spc-tick" x="${box.left - 6}" y="${n2(yLeft(tick) + 4)}" text-anchor="end">${esc(rules.fmtNum(tick))}</text>`).join("");
+    const grid = leftScale.ticks.map((tick) => `<line class="rf-spc-grid" x1="${box.left}" x2="${n2(W - box.right)}" y1="${n2(yLeft(tick))}" y2="${n2(yLeft(tick))}"/><text class="rf-spc-tick" x="${box.left - 6}" y="${n2(yLeft(tick) + 4)}" text-anchor="end">${esc(rules.fmtNum(tick, leftDigits))}</text>`).join("");
     const rightTicks = rightName && rightValues.length ? rightScale.ticks.map((tick) => `<text class="rf-spc-tick" x="${n2(W - box.right + 6)}" y="${n2(yRight(tick) + 4)}">${esc(rules.fmtNum(tick, 1))}</text>`).join("") : "";
     const barsHtml = bars ? bars.map((value, index) => `<rect class="rf-chart-bar" x="${n2(xMid(index) - slot * 0.3)}" y="${n2(yLeft(value))}" width="${n2(slot * 0.6)}" height="${n2(yLeft(leftScale.min) - yLeft(value))}"><title>${esc(`${labels[index]} · ${rules.fmtNum(value, 2)}${unitLeft ? ` ${unitLeft}` : ""}`)}</title></rect>`).join("") : "";
     const areaPoints = area ? area.map((value, index) => `${n2(xMid(index))},${n2(yLeft(value))}`) : [];
