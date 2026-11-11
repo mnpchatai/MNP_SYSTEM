@@ -65,7 +65,7 @@ test("the main screens carry no long permanent instructions", () => {
   const mt = read("modules/module-mt.js");
   assert.doesNotMatch(mt, /ถ้าคาดว่าจะเสร็จไม่ทัน แก้วันที่ได้/, "the expected-date note moved into the button title");
   assert.doesNotMatch(mt, /กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลัง/, "the finish form's two buttons explain themselves");
-  assert.match(mt, /<label for="verify-note">หมายเหตุ \(จำเป็นเมื่อไม่ผ่าน\)<\/label>/);
+  assert.match(mt, /<label for="verify-note">หมายเหตุ <span class="field-required">\(จำเป็นเมื่อไม่ผ่าน\)<\/span><\/label>/);
   assert.doesNotMatch(app, /เปิดรายละเอียดได้ \$\{openable\}/, "the board does not restate its own row count");
   assert.doesNotMatch(app, /audit log ตามปกติ/);
   const hint = read("modules/attachment-image.js");

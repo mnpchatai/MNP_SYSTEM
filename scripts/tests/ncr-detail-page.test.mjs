@@ -112,7 +112,9 @@ test("every part of the NCR wears the one NCR palette, and the page keeps one li
   const html = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"));
   const parts = html.match(/<section class="card ncr-card ncr-detail-part ncr-detail-part--\d" data-module="ncr"/g) ?? [];
   assert.equal(parts.length, 4);
-  assert.equal((html.match(/href="#\/ncr">‹ ทะเบียน NCR</g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
+  // ลิงก์ย้อนกลับแบบเดียวกับทุกหน้า (request-back-link เหนือหัว) ชื่อตามหน้าปลายทาง: #/ncr คือหน้า NCR/CAR ของศูนย์คำร้อง
+  assert.equal((html.match(/<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
+  assert.doesNotMatch(html, /class="btn secondary" href="#\/ncr">‹/, "not a second back button inside the heading");
   assert.doesNotMatch(html, /style="/, "no inline colours");
 });
 

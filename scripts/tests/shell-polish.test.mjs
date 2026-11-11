@@ -207,9 +207,9 @@ test("the MT start, finish and verify steps all go through the confirm helper; t
   assert.equal(mt.match(/confirmStepAction\(/g)?.length, 3);
   for (const label of ['label: "เริ่มงาน"', 'label: "เสร็จสิ้นงาน"', 'label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ"']) assert.ok(mt.includes(label), label);
   assert.doesNotMatch(mt, /✓ ผ่าน|✕ ไม่ผ่าน/, "icons instead of characters a screen reader reads aloud");
-  assert.match(mt, /<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม<\/h2>\$\{verifySummaryHtml\(request\)\}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ \(จำเป็นเมื่อไม่ผ่าน\)<\/label>/, "the repair result comes before the pass/fail buttons, and the note's rule sits on its label");
+  assert.match(mt, /<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม<\/h2>\$\{verifySummaryHtml\(request\)\}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">\(จำเป็นเมื่อไม่ผ่าน\)<\/span><\/label>/, "the repair result comes before the pass/fail buttons, and the note's rule sits on its label");
   assert.match(mt, /request\.cause_analysis && !canVerify \?/, "and is not repeated in the facts card");
-  assert.match(mt, /<label for="finish-cause">วิเคราะห์สาเหตุ \(จำเป็น\)<\/label>/);
+  assert.match(mt, /<label for="finish-cause">วิเคราะห์สาเหตุ\$\{REQUIRED\}<\/label>/);
   assert.match(css, /:is\(\.approval-actions, \.form-actions\):has\(> \.step-confirm\) \{/);
 });
 

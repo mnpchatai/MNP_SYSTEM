@@ -393,8 +393,8 @@
     const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
-    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
-        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a></div></div>
+    return `<a class="request-back-link" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a><div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
+        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>

@@ -580,6 +580,8 @@ function optionalAttachments(fileList) {
 // ข้อความใต้ช่องแนบไฟล์ทุกหน้า ใช้ชุดเดียวกับฝั่ง Next.js (modules/attachment-image.js)
 const ATTACHMENT_HINT = window.MNP_ATTACHMENT_IMAGE?.HINT ?? "";
 const ATTACHMENT_HINT_SHORT = window.MNP_ATTACHMENT_IMAGE?.HINT_SHORT ?? "";
+// ช่องที่ต้องกรอกบอกแบบเดียวทั้งระบบ: ต่อท้ายป้ายด้วย (จำเป็น) (ฟอร์ม NCR/MT/RubberFlow/BOM ใช้ span เดียวกัน)
+const REQUIRED_MARK = ' <span class="field-required">(จำเป็น)</span>';
 
 // รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 1 MB) ถูกแปลง/บีบเป็น JPEG ในเบราว์เซอร์
 // ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
@@ -1581,8 +1583,8 @@ async function renderAuth(message = "") {
   const departments = state.directory?.departments ?? [];
   const roles = state.directory?.roles ?? [];
 
-  // ดอกจันแดงบอกช่องที่ต้องกรอก แสดงเฉพาะฟอร์มขอเปิดบัญชี (ฟอร์มเข้าสู่ระบบมีแค่ 2 ช่องซึ่งต้องกรอกทั้งคู่อยู่แล้ว)
-  const req = isRequest ? ` <span class="required-mark" aria-hidden="true">*</span>` : "";
+  // ป้าย (จำเป็น) แสดงเฉพาะฟอร์มขอเปิดบัญชี (ฟอร์มเข้าสู่ระบบมีแค่ 2 ช่องซึ่งต้องกรอกทั้งคู่อยู่แล้ว)
+  const req = isRequest ? REQUIRED_MARK : "";
   const requestFields = `
     <div class="field-row">
       <div class="field"><label for="first-name">ชื่อ${req}</label><input class="input" id="first-name" name="first_name" maxlength="100" required></div>
@@ -3153,8 +3155,8 @@ function originalRequestFormHtml(selected, separateModule, formContext) {
     <section class="card" style="max-width:900px;margin:auto"><div id="request-message" role="status"></div><form id="request-form">
       <div class="form-grid">
         <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
-        <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
-        <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
+        <div class="field full"><label for="title">หัวข้อ${REQUIRED_MARK}</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
+        <div class="field full"><label for="description">รายละเอียด${REQUIRED_MARK}</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
         <div class="field full"><span class="field-label">ไฟล์แนบ (ถ้ามี)</span><label class="btn secondary file-pick" for="attachment" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT_SHORT}</small></div>
         ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
         <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
@@ -3761,7 +3763,8 @@ async function renderRequestDetail(params) {
     && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
   const detailEntries = Object.entries(request.details ?? {});
   // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
-  const priorityIsFlagged = ["high", "urgent"].includes(request.priority);
+  // ป้าย "ด่วน" ในบรรทัดหัวใบ: ความสำคัญสูง/เร่งด่วน หรือใบแจ้งซ่อมที่ติ๊กแจ้งด่วน (ที่เดียวในหน้า)
+  const priorityIsFlagged = ["high", "urgent"].includes(request.priority) || Boolean(request.is_urgent);
   const requestFacts = [
     priorityIsFlagged || !request.priority || request.priority === "normal" ? "" : requestFact("ความสำคัญ", priorityLabel(request.priority, isRepair), {
       icon: "flag",
@@ -3795,7 +3798,7 @@ async function renderRequestDetail(params) {
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${escapeHtml(request.title)}</h1>
-      <p class="request-detail-meta">${escapeHtml(detailView?.typeLabel ?? type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}</span>` : ""}</p>
+      <p class="request-detail-meta">${escapeHtml(detailView?.typeLabel ?? type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${["high", "urgent"].includes(request.priority) ? `${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}` : "ด่วน"}</span>` : ""}</p>
     </header>
     <div class="detail-grid">
       <div class="stack">
@@ -4722,8 +4725,8 @@ async function renderProfile() {
       <div id="profile-message" role="status"></div>
       <form id="profile-form">
         <div class="field-row">
-          <div class="field"><label for="profile-first-name">ชื่อ</label><input class="input" id="profile-first-name" name="first_name" maxlength="100" value="${escapeHtml(employee.first_name)}" required></div>
-          <div class="field"><label for="profile-last-name">นามสกุล</label><input class="input" id="profile-last-name" name="last_name" maxlength="100" value="${escapeHtml(employee.last_name)}" required></div>
+          <div class="field"><label for="profile-first-name">ชื่อ${REQUIRED_MARK}</label><input class="input" id="profile-first-name" name="first_name" maxlength="100" value="${escapeHtml(employee.first_name)}" required></div>
+          <div class="field"><label for="profile-last-name">นามสกุล${REQUIRED_MARK}</label><input class="input" id="profile-last-name" name="last_name" maxlength="100" value="${escapeHtml(employee.last_name)}" required></div>
         </div>
         <div class="field-row">
           <div class="field"><label for="profile-email">อีเมล</label><input class="input" id="profile-email" name="email" type="email" maxlength="200" value="${escapeHtml(employee.email ?? "")}"></div>
@@ -4733,13 +4736,13 @@ async function renderProfile() {
         <div class="field"><label for="profile-employee-no">รหัสพนักงาน</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ดรหัสพนักงาน / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
         ${isAccountManager ? `
         <div class="field-row">
-          <div class="field"><label for="profile-department">หน่วยงาน</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
-          <div class="field"><label for="profile-role">ตำแหน่ง</label><select class="input" id="profile-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
+          <div class="field"><label for="profile-department">แผนก${REQUIRED_MARK}</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
+          <div class="field"><label for="profile-role">ตำแหน่ง${REQUIRED_MARK}</label><select class="input" id="profile-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
         </div>
         <small>ระบบไม่ยอมให้ถอดสิทธิ์ผู้ดูแลระบบของตนเอง เพื่อไม่ให้ไม่มีใครเข้าไปแก้ไขได้อีก</small>
         ` : `
         <div class="field-row">
-          <div class="field"><label for="profile-department">หน่วยงาน</label><input class="input" id="profile-department" value="${escapeHtml(employee.department?.name_th ?? "—")}" disabled></div>
+          <div class="field"><label for="profile-department">แผนก</label><input class="input" id="profile-department" value="${escapeHtml(employee.department?.name_th ?? "—")}" disabled></div>
           <div class="field"><label for="profile-role">ตำแหน่ง</label><input class="input" id="profile-role" value="${escapeHtml(employee.role?.name_th ?? "—")}" disabled></div>
         </div>
         <small>สองช่องนี้เป็นตัวกำหนดสิทธิ์และเส้นทางอนุมัติ ต้องให้ผู้ดูแลระบบเป็นผู้แก้ให้</small>
@@ -4755,10 +4758,10 @@ async function renderProfile() {
         : "ผู้ดูแลระบบอนุมัติก่อนจึงเปลี่ยน ระหว่างรอใช้รหัสผ่านเดิมได้"}</p>
       <div id="credential-message" role="status"></div>
       <form id="credential-form">
-        <div class="field"><label for="new-employee-no">รหัสพนักงาน</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
+        <div class="field"><label for="new-employee-no">รหัสพนักงาน${REQUIRED_MARK}</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
         <div class="field-row">
-          <div class="field"><label for="new-password">รหัสผ่านใหม่</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
-          <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+          <div class="field"><label for="new-password">รหัสผ่านใหม่${REQUIRED_MARK}</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+          <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่${REQUIRED_MARK}</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
         </div>
         <div class="field"><label for="credential-reason">เหตุผล (ถ้ามี)</label><textarea class="textarea" id="credential-reason" name="reason" maxlength="1000"></textarea></div>
         <div class="form-actions"><button class="btn" type="submit">${isAccountManager ? "บันทึกการแก้ไขทันที" : "ส่งคำร้องให้ผู้ดูแลอนุมัติ"}</button></div>
@@ -5058,8 +5061,8 @@ function holidaysSectionHtml(holidays) {
     <h2>วันหยุดบริษัท</h2>
     <p class="muted small">ระบบไม่ส่งอีเมลเตือนงานค้าง (08:30 และ 13:30 น.) และสำเนาถึงหัวหน้า (10:30 และ 15:30 น.) ในวันที่บันทึกไว้ที่นี่ วันอาทิตย์ข้ามให้อยู่แล้ว ไม่ต้องบันทึก บันทึกวันเดิมซ้ำจะเป็นการแก้ชื่อวันหยุด</p>
     <form id="holiday-form" class="field-row">
-      <div class="field"><label for="holiday-date">วันที่</label><input class="input" id="holiday-date" name="holiday_date" type="date" required></div>
-      <div class="field"><label for="holiday-name">ชื่อวันหยุด</label><input class="input" id="holiday-name" name="name_th" maxlength="100" placeholder="เช่น วันปิยมหาราช" required></div>
+      <div class="field"><label for="holiday-date">วันที่${REQUIRED_MARK}</label><input class="input" id="holiday-date" name="holiday_date" type="date" required></div>
+      <div class="field"><label for="holiday-name">ชื่อวันหยุด${REQUIRED_MARK}</label><input class="input" id="holiday-name" name="name_th" maxlength="100" placeholder="เช่น วันปิยมหาราช" required></div>
       <div class="form-actions"><button class="btn" type="submit">บันทึกวันหยุด</button></div>
     </form>
     <div class="table-wrap"><table>
@@ -5150,7 +5153,7 @@ async function renderAdmin(params) {
   const adminRoleId = roles.find((role) => role.code === "admin")?.id ?? "";
   const editing = credentials.find((item) => item.employee_id === params.get("edit") && !isProtectedMaster(item.employee_id)) ?? null;
   const adding = !editing && params.get("add") === "1";
-  const req = ` <span class="required-mark" aria-hidden="true">*</span>`;
+  const req = REQUIRED_MARK;
   const pendingCount = requests.filter((item) => item.status === "pending").length;
 
   const statusBadgeClass = { pending: "pending_approval", approved: "approved", rejected: "rejected" };
@@ -5306,12 +5309,12 @@ async function renderAdmin(params) {
         <div id="employee-edit-message" role="status"></div>
         <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}" data-acting-role-id="${escapeHtml(actingRoleByEmployee.get(editing.employee_id) ?? "")}" data-admin-role-id="${escapeHtml(adminRoleId)}">
           <div class="field-row">
-            <div class="field"><label for="edit-employee-no">รหัสพนักงาน</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
+            <div class="field"><label for="edit-employee-no">รหัสพนักงาน${REQUIRED_MARK}</label><input class="input" id="edit-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(editing.employee_no)}" required></div>
             <div class="field"><label for="edit-active">สถานะบัญชี</label><select class="input" id="edit-active" name="is_active"><option value="true"${editing.is_active ? " selected" : ""}>ใช้งาน</option><option value="false"${editing.is_active ? "" : " selected"}>ปิดใช้งาน</option></select></div>
           </div>
           <div class="field-row">
-            <div class="field"><label for="edit-first-name">ชื่อ</label><input class="input" id="edit-first-name" name="first_name" maxlength="100" value="${escapeHtml(editing.first_name ?? "")}" required></div>
-            <div class="field"><label for="edit-last-name">นามสกุล</label><input class="input" id="edit-last-name" name="last_name" maxlength="100" value="${escapeHtml(editing.last_name ?? "")}" required></div>
+            <div class="field"><label for="edit-first-name">ชื่อ${REQUIRED_MARK}</label><input class="input" id="edit-first-name" name="first_name" maxlength="100" value="${escapeHtml(editing.first_name ?? "")}" required></div>
+            <div class="field"><label for="edit-last-name">นามสกุล${REQUIRED_MARK}</label><input class="input" id="edit-last-name" name="last_name" maxlength="100" value="${escapeHtml(editing.last_name ?? "")}" required></div>
           </div>
           <div class="field-row">
             <div class="field"><label for="edit-email">อีเมล</label><input class="input" id="edit-email" name="email" type="email" maxlength="200" value="${escapeHtml(editing.email ?? "")}"></div>
@@ -5319,8 +5322,8 @@ async function renderAdmin(params) {
           </div>
           <div class="field"><label for="edit-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
           <div class="field-row">
-            <div class="field"><label for="edit-department">หน่วยงาน</label><select class="input" id="edit-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
-            <div class="field"><label for="edit-role">ตำแหน่ง</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
+            <div class="field"><label for="edit-department">แผนก${REQUIRED_MARK}</label><select class="input" id="edit-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
+            <div class="field"><label for="edit-role">ตำแหน่ง${REQUIRED_MARK}</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
           </div>
           <div class="field"><label for="edit-acting-role">บทบาทหลักในการทำงาน (เฉพาะตำแหน่งผู้ดูแลระบบ)</label><select class="input" id="edit-acting-role" name="acting_role_id"${editing.role_id === adminRoleId ? "" : " disabled"}><option value="">ผู้ดูแลระบบ (รับแจ้งเตือนและเห็นรายการรออนุมัติทั้งหมด)</option>${roles.filter((item) => item.code !== "admin").map((item) => `<option value="${escapeHtml(item.id)}"${item.id === actingRoleByEmployee.get(editing.employee_id) ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select><small>สำหรับผู้ดูแลระบบที่ทำงานจริงในตำแหน่งอื่นด้วย (เช่น ผู้จัดการทั่วไป) ระบบจะส่งแจ้งเตือนและแสดงรายการรออนุมัติเฉพาะของบทบาทนั้น และนับบัญชีนี้เป็นผู้อนุมัติในสายอนุมัติของบทบาทนั้น สิทธิ์ผู้ดูแลระบบอื่นยังใช้ได้ครบ แต่จะไม่ได้รับแจ้งเตือนคำร้องเปิดบัญชี/แก้ไข ID</small></div>
           <div class="field"><label for="edit-password">ตั้งรหัสผ่านใหม่ (เว้นว่างไว้หากไม่เปลี่ยน)</label><input class="input" id="edit-password" name="password" type="password" autocomplete="new-password" maxlength="72"><small>ตั้งให้ผู้ใช้ได้ทันทีเมื่อผู้ใช้ลืมรหัสผ่าน และรหัสผ่านใหม่จะถูกบันทึกลงคลังให้อัตโนมัติ</small></div>
