@@ -2688,6 +2688,10 @@ body:has(.rf-page) .rf-modal { border: 0; border-radius: var(--radius-lg); }
 body:has(.rf-page) .rf-modal-head { color: var(--ink); background: var(--paper); border-bottom: 1px solid var(--line); border-radius: 16px 16px 0 0; }
 body:has(.rf-page) .rf-modal .btn { min-height: 40px; border-radius: var(--radius-md); font-weight: 600; }
 body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:has(.rf-page) .rf-modal .textarea { min-height: 40px; border-radius: var(--radius-md); }
+/* จอสัมผัส: ปุ่มและช่องกรอกของ RubberFlow/BOM สูง 44 px เหมือนทั้งระบบ (ต้องอยู่หลังกฎฐาน 40 px ข้างบนจึงชนะ) · ตาราง BOM แบบแน่น (.bom-tree-table) ประกาศทีหลังและคงขนาดของตัวเอง */
+@media (pointer: coarse), (max-width: 760px) {
+  .rf-page :is(.btn, .input, .select, .textarea), body:has(.rf-page) .rf-modal :is(.btn, .input, .select, .textarea) { min-height: 44px; }
+}
 
 @media (max-width: 1100px) {
   .rf-page .rf-flow { gap: 12px; }

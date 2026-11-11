@@ -78,8 +78,8 @@
   });
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
-    approve: "อนุมัติสูตรได้โดยหัวหน้าแผนก RB ผู้จัดการโรงงานขึ้นไป หรือผู้ดูแลระบบ",
-    release: "ปล่อยผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือหัวหน้าแผนก RB",
+    approve: "อนุมัติสูตรได้โดยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการแผนก RB ผู้จัดการโรงงานขึ้นไป หรือผู้ดูแลระบบ",
+    release: "ปล่อยผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือผู้จัดการแผนก RB",
     work: "เปลี่ยนสถานะใบสั่งผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือพนักงานแผนก RB",
     receiveMaterial: "รับวัตถุดิบเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) หรือฝ่ายวางแผน",
     holdMaterial: "กักกัน/ปลดกักกันล็อตวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) หรือ QA",
@@ -204,7 +204,7 @@
     // สต็อกขั้นต่ำ (kg, 0–1e9) และอายุการเก็บ (วัน, จำนวนเต็ม 1–3650) · ไม่ส่ง/เว้นว่าง = คงค่าเดิม (วัตถุดิบใหม่ 0 และ 180)
     const blank = (value) => value === undefined || value === null || String(value).trim() === "";
     const safetyKg = blank(p.safetyKg) ? existing?.safetyKg ?? 0 : Number(p.safetyKg);
-    if (!Number.isFinite(safetyKg) || safetyKg < 0 || safetyKg > 1e9) fail("สต็อกขั้นต่ำ (safety stock) ต้องเป็นตัวเลข 0 ขึ้นไป");
+    if (!Number.isFinite(safetyKg) || safetyKg < 0 || safetyKg > 1e9) fail("สต็อกขั้นต่ำต้องเป็นตัวเลข 0 ขึ้นไป");
     const shelfLifeDays = blank(p.shelfLifeDays) ? existing?.shelfLifeDays ?? 180 : Number(p.shelfLifeDays);
     if (!Number.isInteger(shelfLifeDays) || shelfLifeDays < 1 || shelfLifeDays > 3650) fail("อายุการเก็บ (วัน) ต้องเป็นจำนวนเต็ม 1–3650");
     const fields = {
@@ -237,7 +237,7 @@
       return n;
     };
     const mixerTemp = temp(row?.mixerTemp, "อุณหภูมิเครื่องผสม");
-    const dumpTemp = temp(row?.dumpTemp, "Dump temp");
+    const dumpTemp = temp(row?.dumpTemp, "อุณหภูมิปล่อยยาง");
     const mixMin = num(row?.mixMin, `เวลาผสม ขั้น ${stage}`);
     if (requireTime && (mixMin <= 0 || mixMin > 1440)) fail(`เวลาผสม ขั้น ${stage} ต้องมากกว่า 0 และไม่เกิน 1,440 นาที`);
     return { stage, mixerTemp, dumpTemp, mixMin };
@@ -251,7 +251,7 @@
     return {
       productCode,
       uom: p.uom || "m",
-      batchKg: num(p.batchKg, "น้ำหนักต่อ batch"),
+      batchKg: num(p.batchKg, "น้ำหนักต่อชุดผสม"),
       stages: rules().MIX_STAGES.map((stage) => stageValues((p.stages ?? []).find((row) => Number(row?.stage) === stage), stage)),
       dumpTol: Number(p.dumpTol) || 5,
       restHours: Number(p.restHours) || 4,
@@ -306,7 +306,7 @@
     const recipe = revision === undefined || revision === null || revision === "" ? history.find((row) => row.status === "draft") : history.find((row) => Number(row.revision) === Number(revision));
     if (!recipe) fail(history.some((row) => row.status === "approved") ? "สูตรนี้อนุมัติแล้ว" : "ไม่มีร่างสูตรที่รออนุมัติ");
     if (recipe.status === "approved") fail("สูตรนี้อนุมัติแล้ว");
-    if (recipe.status !== "draft") fail("สูตร revision นี้ถูกแทนที่แล้ว อนุมัติไม่ได้");
+    if (recipe.status !== "draft") fail("สูตรฉบับแก้ไขนี้ถูกแทนที่แล้ว อนุมัติไม่ได้");
     for (const previous of history) {
       if (previous.status === "approved") {
         previous.status = "superseded";
@@ -352,8 +352,8 @@
     const order = find(d.orders, orderId, "ใบสั่งผลิต");
     if (!["released", "in_progress"].includes(order.status)) fail('ใบสั่งผลิตต้องอยู่ในสถานะ "ปล่อยผลิต" หรือ "กำลังผลิต"');
     const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร ${order.recipeId}`);
-    const n = ctx.history ? num(batches, "จำนวน batch") : rules().nextRequisitionBatches(order, recipe, d.requisitions);
-    if (ctx.history && (!Number.isInteger(n) || n < 1 || n > 10)) fail("จำนวน batch ต้องเป็นจำนวนเต็ม 1–10");
+    const n = ctx.history ? num(batches, "จำนวนชุดผสม") : rules().nextRequisitionBatches(order, recipe, d.requisitions);
+    if (ctx.history && (!Number.isInteger(n) || n < 1 || n > 10)) fail("จำนวนชุดผสมต้องเป็นจำนวนเต็ม 1–10");
     if (n < 1) fail(`${order.id} เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว`);
     // จองสต็อกที่ใบเบิกเก่าที่ค้างอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน
     const reserved = reservedByOpenRequisitions(d, ctx);
@@ -604,7 +604,7 @@
     const transfer = find(d.transfers, transferId, "ใบส่งมอบ");
     if (transfer.to !== stage) fail("ใบส่งมอบนี้ไม่ได้ส่งมาที่สถานีนี้");
     needOrderOpen(d, transfer.orderId, ctx);
-    if (transfer.status !== "received") fail("Gatekeeper: ต้องกดรับมอบงานก่อนจึงจะเริ่มผลิตได้");
+    if (transfer.status !== "received") fail("ด่านรับมอบ: ต้องกดรับมอบงานก่อนจึงจะเริ่มผลิตได้");
     if (qty <= 0) fail("ปริมาณที่ใช้ต้องมากกว่า 0");
     if (qty > transfer.remaining + 1e-9) fail(`ปริมาณเกินที่รับมา (คงเหลือ ${transfer.remaining})`);
     transfer.remaining = +(transfer.remaining - qty).toFixed(3);
@@ -629,7 +629,7 @@
     for (const row of stages) {
       const standard = rules().recipeStage(recipe, row.stage);
       // สูตรที่ไม่มีค่ามาตรฐานของขั้นนี้ (ข้อมูลรูปเก่า) บันทึกไม่ได้ แทนที่จะปล่อยผ่านโดยไม่เทียบ
-      if (!standard) fail(`สูตร ${recipe.id} ไม่มีค่ามาตรฐานขั้น ${row.stage} กรุณาออก revision ใหม่ของสูตรก่อน`);
+      if (!standard) fail(`สูตร ${recipe.id} ไม่มีค่ามาตรฐานขั้น ${row.stage} กรุณาออกฉบับแก้ไขใหม่ของสูตรก่อน`);
       if (Math.abs(row.dumpTemp - standard.dumpTemp) > recipe.dumpTol) {
         reasons.push(`Dump temp ขั้น ${row.stage} ${row.dumpTemp}°C นอกช่วง ${standard.dumpTemp}±${recipe.dumpTol}`);
       }
@@ -798,8 +798,8 @@
     const { NEXT_STAGE } = rules();
     const lot = find(d.lots, lotId, "ล็อต");
     if (!NEXT_STAGE[lot.stage]) fail("ล็อตนี้เป็นขั้นตอนสุดท้ายแล้ว");
-    if (lot.qc !== "pass") fail("Gatekeeper: ล็อตยังไม่ผ่าน QC ส่งต่อไม่ได้");
-    if (lot.stage === "mixing" && lot.readyAt > ctx.now) fail("Gatekeeper: ยางยังบ่มไม่ครบเวลา");
+    if (lot.qc !== "pass") fail("ด่านรับมอบ: ล็อตยังไม่ผ่าน QC ส่งต่อไม่ได้");
+    if (lot.stage === "mixing" && lot.readyAt > ctx.now) fail("ด่านรับมอบ: ยางยังบ่มไม่ครบเวลา");
     const q = num(qty, "ปริมาณส่งมอบ");
     const available = transferableQty(lot, ctx.now);
     if (q <= 0 || q > available + 1e-9) fail(`ปริมาณส่งมอบต้องอยู่ระหว่าง 0–${available}`);
@@ -925,10 +925,10 @@
     const unit = String(p.unit ?? "");
     if (!MOLD_KINDS.includes(kind)) fail("ชนิดไม่ถูกต้อง");
     if (!MOLD_UNITS.includes(unit)) fail("หน่วยนับไม่ถูกต้อง");
-    const perCycle = num(p.perCycle, "จำนวน cavity ต่อรอบ");
+    const perCycle = num(p.perCycle, "จำนวนช่องแม่พิมพ์ต่อรอบ");
     const cleanEvery = num(p.cleanEvery, "รอบทำความสะอาด");
     const pmLimit = num(p.pmLimit, "อายุสะสมก่อน PM ใหญ่");
-    if (!Number.isInteger(perCycle) || perCycle < 1) fail("จำนวน cavity ต่อรอบต้องเป็นจำนวนเต็มตั้งแต่ 1");
+    if (!Number.isInteger(perCycle) || perCycle < 1) fail("จำนวนช่องแม่พิมพ์ต่อรอบต้องเป็นจำนวนเต็มตั้งแต่ 1");
     if (!(cleanEvery > 0) || !(pmLimit > 0)) fail("รอบทำความสะอาดและอายุสะสมก่อน PM ใหญ่ต้องมากกว่า 0");
     const fields = { name: name.slice(0, 120), kind, unit, perCycle, cleanEvery, pmLimit };
     const existing = d.molds.find((row) => row.id === id);

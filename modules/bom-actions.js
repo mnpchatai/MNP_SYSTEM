@@ -54,7 +54,7 @@
     return d.items.find((item) => item.code === key) ?? null;
   };
   const approvedBomOf = (d, code) => d.boms.find((bom) => bom.itemCode === code && bom.status === "approved") ?? null;
-  const bomById = (d, id) => d.boms.find((bom) => bom.id === id) ?? fail("ไม่พบ BOM revision นี้");
+  const bomById = (d, id) => d.boms.find((bom) => bom.id === id) ?? fail("ไม่พบ BOM ฉบับแก้ไขนี้");
   const orderById = (d, id) => d.orders.find((order) => order.id === id) ?? fail("ไม่พบใบสั่งผลิต");
   const jobById = (d, id) => d.jobs.find((job) => job.id === id) ?? fail("ไม่พบงานของแผนก");
   // ชนิดที่ไม่มีส่วนประกอบ ต้องตรงกับ rules.LEAF_KINDS (เทสต์ตรวจ) · เส้นยางมีได้เฉพาะบรรทัดสูตรยาง (rules.childKindError)
@@ -757,7 +757,7 @@
     const code = R.buildFgCode(text(p.base, "ฐานรหัสสินค้า", 60), pkg, colorSet);
     if (itemOf(d, code)) fail(`มี ${code} อยู่แล้ว`);
     const siblings = siblingsOf(d, p.base);
-    if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ใน item master`);
+    if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ในทะเบียนชิ้นงาน`);
     const source = (p.cloneFrom && siblings.find((item) => item.code === R.canonicalCode(p.cloneFrom))) ?? pickSibling(siblings, pkg, colorSet);
     cloneFg(d, code, source, { pkg, colorSet }, ctx);
     return code;
@@ -776,7 +776,7 @@
     let fg = itemOf(d, code);
     if (!fg && byParts) {
       const siblings = siblingsOf(d, p.base);
-      if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ใน item master`);
+      if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ในทะเบียนชิ้นงาน`);
       const source = (p.cloneFrom && siblings.find((item) => item.code === R.canonicalCode(p.cloneFrom))) ?? pickSibling(siblings, pkg, colorSet);
       cloneFg(d, code, source, { pkg, colorSet }, ctx);
       fg = itemOf(d, code);

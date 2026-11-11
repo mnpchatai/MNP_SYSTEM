@@ -87,11 +87,11 @@ test("recipes: required fields, unique ids, at least one material, draft until a
   rejects(() => A.createRecipe(d, recipeForm({ id: "" }), ctx("qc")), /กรุณากรอกรหัสสูตร/);
   rejects(() => A.createRecipe(d, recipeForm({ id: "RC-EPDM-DS01" }), ctx("qc")), /มีอยู่แล้ว/);
   rejects(() => A.createRecipe(d, recipeForm({ items: [{ materialCode: "ZNO", phr: "0" }] }), ctx("qc")), /อย่างน้อย 1 รายการ/);
-  rejects(() => A.createRecipe(d, recipeForm({ batchKg: "" }), ctx("qc")), /น้ำหนักต่อ batch/);
+  rejects(() => A.createRecipe(d, recipeForm({ batchKg: "" }), ctx("qc")), /น้ำหนักต่อชุดผสม/);
   // ผสมสองขั้น: ต้องมีครบทั้งสองขั้น อุณหภูมิ 0–1000 °C เวลา (นาที) > 0
   rejects(() => A.createRecipe(d, recipeForm({ stages: undefined }), ctx("qc")), /อุณหภูมิเครื่องผสม ขั้น 1/);
   rejects(() => A.createRecipe(d, recipeForm({ stages: [STAGES[0]] }), ctx("qc")), /อุณหภูมิเครื่องผสม ขั้น 2/);
-  rejects(() => A.createRecipe(d, recipeForm({ stages: [STAGES[0], { ...STAGES[1], dumpTemp: "" }] }), ctx("qc")), /Dump temp ขั้น 2/);
+  rejects(() => A.createRecipe(d, recipeForm({ stages: [STAGES[0], { ...STAGES[1], dumpTemp: "" }] }), ctx("qc")), /อุณหภูมิปล่อยยาง ขั้น 2/);
   rejects(() => A.createRecipe(d, recipeForm({ stages: [STAGES[0], { ...STAGES[1], mixMin: "0" }] }), ctx("qc")), /เวลาผสม ขั้น 2/);
   rejects(() => A.createRecipe(d, recipeForm({ stages: [{ ...STAGES[0], mixerTemp: 1200 }, STAGES[1]] }), ctx("qc")), /0–1000/);
   rejects(() => A.createRecipe(d, recipeForm({ productCode: "P".repeat(61) }), ctx("qc")), /รหัสสินค้า/);
@@ -305,7 +305,7 @@ test("mixing hold rule: each stage's dump temp is compared with the recipe's val
 test("the gatekeeper: a station can only consume a transfer it received, within the received quantity", () => {
   const d = fresh();
   const transfer = d.transfers.find((row) => row.status === "in_transit" && row.to === "finishing");
-  rejects(() => A.recordFinishing(d, { transferId: transfer.id, useQty: 10, passedQty: 10, perBox: 10 }, ctx("finisher")), /Gatekeeper: ต้องกดรับมอบงานก่อน/);
+  rejects(() => A.recordFinishing(d, { transferId: transfer.id, useQty: 10, passedQty: 10, perBox: 10 }, ctx("finisher")), /ด่านรับมอบ: ต้องกดรับมอบงานก่อน/);
   rejects(() => A.receiveTransfer(d, { id: transfer.id, qtyReceived: transfer.qtySent * 1.03 }, ctx("finisher")), /\+2%/);
   A.receiveTransfer(d, { id: transfer.id, qtyReceived: transfer.qtySent - 3, condition: "ภาชนะชำรุด" }, ctx("finisher"));
   assert.equal(transfer.status, "received");

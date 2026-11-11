@@ -27,7 +27,7 @@
     if (hit.kind === "box") return ui.kv([["สินค้า", esc(rules.orderLabel(it))], ["จำนวน", esc(`${fmtNum(it.qty)} ${it.uom}`)], ["เกรด", esc(it.grade)], ["สถานะ", ui.status(it.status)], ["ล็อตต้นทาง", ui.mono(it.lotId)]]);
     if (hit.kind === "order") return ui.kv([["ลูกค้า", esc(it.customer)], ["สินค้า", esc(rules.orderLabel(it))], ["ความคืบหน้า", esc(`${fmtNum(it.producedQty)} / ${fmtNum(it.targetQty)} ${it.uom}`)], ["สถานะ", ui.status(it.status)]]);
     if (hit.kind === "transfer") return ui.kv([["เส้นทาง", esc(`${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`)], ["ล็อต", ui.mono(it.lotId)], ["จำนวน", esc(`${it.qtySent} ${it.uom}`)], ["สถานะ", ui.status(it.status)]]);
-    if (hit.kind === "requisition") return ui.kv([["ใบสั่งผลิต", ui.mono(it.orderId)], ["จำนวน", esc(`${it.batches} batch · ${fmtNum(it.totalKg, 2)} kg`)], ["สถานะ", ui.status(it.status)]]);
+    if (hit.kind === "requisition") return ui.kv([["ใบสั่งผลิต", ui.mono(it.orderId)], ["จำนวน", esc(`${it.batches} ชุดผสม · ${fmtNum(it.totalKg, 2)} kg`)], ["สถานะ", ui.status(it.status)]]);
     return ui.kv([["ชื่อ", esc(it.name)], ["รอบตั้งแต่ล้าง", esc(`${fmtNum(it.usageSinceClean)} / ${fmtNum(it.cleanEvery)}`)]]);
   }
 
@@ -116,7 +116,7 @@
     if (kind === "lot") rows.push(["ขั้นตอน", STAGE_LABEL[it.stage]], ["จำนวนงานดี", `${fmtNum(it.goodQty, 2)} ${it.uom}`], ["QC", String(it.qc).toUpperCase()], ["ล็อตต้นทาง", derive.parentLotIds(data, it).join(", ") || (it.sources?.[0]?.id ?? "-")]);
     if (kind === "box") rows.push(["สินค้า", rules.orderLabel(it)], ["จำนวน", `${fmtNum(it.qty)} ${it.uom}`], ["เกรด", it.grade], ["ล็อตตกแต่ง", it.lotId]);
     if (kind === "material") { const material = data.materials.find((row) => row.code === it.materialCode); rows.push(["วัตถุดิบ", material?.name ?? "-"], ["รับเข้า", `${fmtNum(it.initialKg, 2)} kg`], ["หมดอายุ", fmtDate(it.expiry)], ["ผู้ขาย", it.supplier]); }
-    if (kind === "requisition") rows.push(["จำนวน", `${it.batches} batch · ${fmtNum(it.totalKg, 2)} kg`], ["รายการ", `${it.lines.length} ล็อตวัตถุดิบ`]);
+    if (kind === "requisition") rows.push(["จำนวน", `${it.batches} ชุดผสม · ${fmtNum(it.totalKg, 2)} kg`], ["รายการ", `${it.lines.length} ล็อตวัตถุดิบ`]);
     if (kind === "transfer") rows.push(["เส้นทาง", `${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`], ["ล็อต", it.lotId], ["จำนวนส่ง", `${it.qtySent} ${it.uom}`]);
     if (kind === "order") rows.push(["ลูกค้า", it.customer], ["จำนวน", `${fmtNum(it.targetQty)} ${it.uom}`], ["กำหนดส่ง", fmtDate(it.dueDate)]);
     const code = codeOf(hit);
@@ -164,8 +164,8 @@
   dialogs.alerts = (ctx) => {
     const { data, now, ui, derive } = ctx;
     const alerts = derive.buildAlerts(data, now);
-    const body = alerts.length ? `<div class="rf-stack">${alerts.map((alert) => ui.callout(alert.tone, `<div class="rf-row rf-between rf-grow"><div><strong>${esc(alert.title)}</strong><br>${esc(alert.text)}</div>${ctx.canSee(alert.module) ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url(alert.module))}" data-rf-close>ไปที่หน้า</a>` : ""}</div>`)).join("")}</div>` : `<p class="muted">ไม่มีการแจ้งเตือน</p>`;
-    const html = ui.dialog("alerts", `การแจ้งเตือน (${alerts.length})`, body);
+    const body = alerts.length ? `<div class="rf-stack">${alerts.map((alert) => ui.callout(alert.tone, `<div class="rf-row rf-between rf-grow"><div><strong>${esc(alert.title)}</strong><br>${esc(alert.text)}</div>${ctx.canSee(alert.module) ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url(alert.module))}" data-rf-close>ไปที่หน้า</a>` : ""}</div>`)).join("")}</div>` : ui.empty("ไม่มีการแจ้งเตือน");
+    const html = ui.dialog("alerts", "การแจ้งเตือน", body);
     return { html };
   };
 })(typeof window !== "undefined" ? window : globalThis);

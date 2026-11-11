@@ -288,6 +288,7 @@
     dialog.addEventListener("pointerdown", (event) => { if (event.target === dialog) dialog.close(); });
     dialog.addEventListener("close", () => dialog.remove());
     bindRoot(dialog, ctx);
+    ui.enhanceDates(dialog);
     built.bind?.(dialog, ctx);
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
@@ -352,8 +353,9 @@
 
   // ไม่ได้เลือกบทบาท: บอกว่าโมดูลนี้คืออะไร ส่วนการเลือกบทบาทสาธิตอยู่ในช่องของแถบเครื่องมือด้านบน (ไม่มีหน้าเลือกบทบาทแยก)
   function introHtml() {
-    return `<section class="card rf-card rf-login"><h1>${escapeHtml(TITLE)}</h1>
-      <p class="muted">รุ่นทดสอบของระบบ BOM รายแผนก: item master เดียว · BOM หลายชั้นที่แต่ละแผนกเป็นเจ้าของชั้นของตนและมี revision/อนุมัติ · ใบสั่งผลิต (PI) ระเบิด BOM แล้วปล่อยเป็นงานรายแผนก · งาน RB ส่งต่อเป็นใบสั่งผลิตใน RubberFlow ข้อมูลเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น (นำเข้า BOM จริงจากชีต Excel ได้ที่เมนู “นำเข้าจาก Excel”)</p></section>`;
+    // คำอธิบายยาวอยู่หลังปุ่ม ⓘ · ข้อความที่ต้องรู้ทันที (ข้อมูลสมมติ) อยู่ใต้ชื่อ
+    return `<section class="card rf-card rf-login">${ui.headingWithNote(TITLE, "รุ่นทดสอบของระบบ BOM รายแผนก: ทะเบียนชิ้นงานเดียว · BOM หลายชั้นที่แต่ละแผนกเป็นเจ้าของชั้นของตนและมีฉบับแก้ไข/อนุมัติ · ใบสั่งผลิต (PI) ระเบิด BOM แล้วปล่อยเป็นงานรายแผนก · งาน RB ส่งต่อเป็นใบสั่งผลิตใน RubberFlow · นำเข้า BOM จริงจากชีต Excel ได้ที่เมนู “นำเข้าจาก Excel”")}
+      <p class="muted">ข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p></section>`;
   }
   function deniedHtml(user) {
     return `<section class="card rf-card"><h1>ไม่มีสิทธิ์เข้าถึงหน้านี้</h1><p class="muted">บทบาท “${escapeHtml(storeApi.ROLES[user.role]?.label ?? user.role)}” เข้าถึงได้เฉพาะเมนูที่แสดงในแถบข้าง</p>
@@ -370,8 +372,8 @@
   function emptyMasterHtml(user, page, label) {
     const canImport = actions.helpers.canPlan(user);
     const next = canImport ? `<div class="rf-row"><a class="btn rf-btn" href="${escapeHtml(url("import"))}">นำเข้าจาก Excel</a></div>` : "";
-    const hint = canImport ? "ยังไม่มีข้อมูล BOM ในฐานข้อมูล เริ่มจากนำเข้าไฟล์ Excel" : "ยังไม่มีข้อมูล BOM ในฐานข้อมูล ฝ่ายวางแผนหรือผู้จัดการนำเข้าได้ที่เมนู “นำเข้าจาก Excel”";
-    return `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(page)}</span><div><h1>${escapeHtml(label)}</h1><p>${escapeHtml(hint)}</p></div></div>${next}</header>`;
+    const hint = canImport ? "ยังไม่มีข้อมูล BOM ในฐานข้อมูล · เริ่มจากนำเข้าไฟล์ Excel" : "ยังไม่มีข้อมูล BOM ในฐานข้อมูล · ให้ฝ่ายวางแผนหรือผู้จัดการนำเข้า";
+    return `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(page)}</span><div><h1>${escapeHtml(label)}</h1></div></div>${next}</header>${ui.card(ui.empty(hint))}`;
   }
   function pageNavHtml(user, page) {
     const items = storeApi.MODULES.filter((entry) => storeApi.canSee(user, entry.id));
@@ -459,6 +461,7 @@
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
+    ui.enhanceDates(root);
     ui.labelTables(root);
     bind?.(root, ctx);
     // ระหว่างแก้ฟอร์มมีข้อมูลใหม่ของผู้อื่นค้าง (store ไม่ได้รวมให้): ฟอร์มจบแล้ว รวมตอนนี้ (ยังเปิด dialog อยู่ = ค้างต่อ)

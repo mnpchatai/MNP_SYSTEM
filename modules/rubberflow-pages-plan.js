@@ -40,17 +40,18 @@
     const alerts = derive.buildAlerts(data, now);
     const fgBoxes = data.fgBoxes.filter((box) => box.status === "in_stock");
 
-    const flow = STAGES.map((stage, i) => {
+    // หนึ่งแถวต่อสถานี: ชื่อคอลัมน์อยู่ครั้งเดียวที่หัวตาราง (ไม่พิมพ์ซ้ำทุกการ์ด) · งานรอ = ใบส่งมอบที่รอเข้าสถานี (ห้องผสม = ชุดผสมที่กำลังบ่ม)
+    const flowRows = STAGES.map((stage, i) => {
       const lots = byStage[stage];
       const held = lots.filter((lot) => lot.qc === "hold").length;
-      const inner = `<div class="rf-row rf-between"><span class="rf-step-no">ขั้นที่ ${i + 1}</span>${held ? ui.badge("warn", `กักรอตัดสิน ${held}`) : ""}</div><h3>${esc(STAGE_LABEL[stage])}</h3>
-        ${ui.kv([["ล็อตทั้งหมด", esc(String(lots.length))], ["อัตราได้ของดี", esc(yieldText(lots))],
-          stage !== "mixing" ? ["งานรอเข้า", esc(`${wipAt(stage).length} ใบส่งมอบ`)] : ["กำลังบ่ม", esc(`${lots.filter((lot) => lot.readyAt > now).length} batch`)]])}`;
-      return ctx.canSee(stage) ? `<a class="rf-step" href="${esc(ctx.url(stage))}">${inner}</a>` : `<div class="rf-step">${inner}</div>`;
-    }).join("");
+      const name = `${i + 1}. ${esc(STAGE_LABEL[stage])}`;
+      return `<tr><td>${ctx.canSee(stage) ? `<a href="${esc(ctx.url(stage))}">${name}</a>` : name}</td><td class="right">${esc(String(lots.length))}</td><td class="right">${esc(yieldText(lots))}</td>
+        <td>${esc(stage !== "mixing" ? `${wipAt(stage).length} ใบส่งมอบ` : `บ่มอยู่ ${lots.filter((lot) => lot.readyAt > now).length} ชุดผสม`)}</td><td>${held ? ui.badge("warn", `กักรอตัดสิน ${held}`) : ""}</td></tr>`;
+    });
+    const flow = ui.card(ui.table(["สถานี", { label: "ล็อต", className: "right" }, { label: "อัตราได้ของดี", className: "right" }, "งานรอ", ""], flowRows), { flush: true });
 
     const orderRows = active.map((order) => `<tr>
-        <td>${ui.link(order.id, ctx.url("orders", { q: order.id }), "rf-mono")}${order.priority === "urgent" ? ` ${ui.badge("bad", "ด่วน")}` : ""}</td>
+        <td>${ui.link(order.id, ctx.url("orders", { q: order.id }), "rf-mono")}${order.priority === "urgent" ? ` ${ui.urgent()}` : ""}</td>
         <td>${esc(order.customer)}<div class="small muted rf-mono">${esc(rules.orderLabel(order))}</div></td>
         <td class="rf-progress-cell">${ui.progress(order.producedQty, order.targetQty)}<div class="small muted">${esc(`${fmtNum(order.producedQty)} / ${fmtNum(order.targetQty)} ${order.uom}`)}</div></td>
         <td class="nowrap">${esc(fmtDate(order.dueDate))}</td><td>${ui.status(order.status)}</td></tr>`);
@@ -63,12 +64,12 @@
       ${ui.stats([
         { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: hasProduction ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },
-        { label: "ของเสียห้องผสม (สะสม)", value: `${fmtNum(mixingScrapKg, 1)} kg`, sub: `อัตราได้ของดี ห้องผสม ${yieldText(byStage.mixing)}` },
+        { label: "ของเสียห้องผสม (สะสม)", value: `${fmtNum(mixingScrapKg, 1)} kg`, },
         { label: "สินค้าพร้อมส่งในคลัง", value: `${fgBoxes.length} กล่อง`, sub: `${data.fgBoxes.filter((box) => box.status === "hold").length} กล่องถูกกักกัน` },
       ])}
-      <div class="rf-flow">${flow}</div>
+      ${flow}
       <div class="rf-grid rf-g2">
-        ${ui.card(!hasProduction ? noProduction : ui.dualChart({ labels: days.map((day) => day.day), area: days.map((day) => day.output), line: days.map((day) => day.yield), leftName: "ผลผลิต (m)", rightName: "อัตราได้ของดี %", rightDomain: [90, 100], unitLeft: "m", unitRight: "%" }), { title: "ผลผลิตสำเร็จรูป (เมตร) และ Yield รายวัน" })}
+        ${ui.card(!hasProduction ? noProduction : ui.dualChart({ labels: days.map((day) => day.day), area: days.map((day) => day.output), line: days.map((day) => day.yield), leftName: "ผลผลิต (m)", rightName: "อัตราได้ของดี %", rightDomain: [90, 100], unitLeft: "m", unitRight: "%" }), { title: "ผลผลิตสำเร็จรูป (เมตร) และอัตราได้ของดีรายวัน" })}
         ${ui.card(!hasProduction ? noProduction : ui.dualChart({ labels: STAGES.map((stage) => STAGE_LABEL[stage]), bars: STAGES.map((stage) => +(100 - stageYield[stage]).toFixed(2)), leftName: "ของเสีย (%)", unitLeft: "%" }), { title: "สัดส่วนของเสียแยกตามขั้นตอน (%)" })}
       </div>
       <div class="rf-grid rf-g2-wide">
@@ -107,7 +108,7 @@
         mayWork && order.status === "in_progress" && (order.producedQty > 0 || order.sourceJobId) ? ui.openButton("ปิดงาน", "closeOrder", { id: order.id }, { className: "secondary small", ariaLabel: `ปิดงาน ${order.id}` }) : "",
       ].filter(Boolean).join(" ");
       return `<tr>
-        <td>${ui.mono(order.id)}${order.priority === "urgent" ? ` ${ui.badge("bad", "ด่วน")}` : ""}<div class="small muted">${esc(order.customerPo || "-")}${order.sourceJobId ? ` · ${esc(order.sourceJobId)}` : ""}</div></td>
+        <td>${ui.mono(order.id)}${order.priority === "urgent" ? ` ${ui.urgent()}` : ""}<div class="small muted">${esc(order.customerPo || "-")}${order.sourceJobId ? ` · ${esc(order.sourceJobId)}` : ""}</div></td>
         <td>${esc(order.customer)}</td>
         <td class="rf-mono">${esc(rules.orderLabel(order))}${order.recipeRevision ? `<div class="small muted">${esc(`Rev.${order.recipeRevision}`)}</div>` : ""}</td>
         <td class="nowrap">${esc(`${fmtNum(order.targetQty)} ${order.uom}`)}<div class="small muted">${order.targetKg ? `${esc(`≈ ${fmtNum(order.targetKg, 1)} kg`)} · ` : ""}สี${esc(order.color)}</div></td>
@@ -126,14 +127,14 @@
     const { DAY, fmtNum, toInputDate } = rules;
     const approved = rules.approvedRecipes(data.recipes);
     const body = `<div class="rf-grid rf-g2">
-        ${ui.field("ลูกค้า *", ui.input("customer", { required: true }))}
+        ${ui.field("ลูกค้า", ui.input("customer", { required: true }), { required: true })}
         ${ui.field("เลขที่ PO ลูกค้า", ui.input("customerPo"))}
-        ${ui.field("สินค้า / สูตร (เฉพาะสูตรที่อนุมัติแล้ว) *", ui.select("recipeId", approved.map((recipe) => ({ value: recipe.id, label: rules.recipeLabel(recipe) })), { value: approved[0]?.id ?? "", extra: 'data-rf-recipe' }))}
-        ${ui.field("จำนวนเป้าหมาย *", ui.input("targetQty", { type: "number", required: true, min: 1, extra: 'data-rf-target' }), { hint: '<span data-rf-need></span>' })}
+        ${ui.field("สินค้า / สูตร (เฉพาะสูตรที่อนุมัติแล้ว)", ui.select("recipeId", approved.map((recipe) => ({ value: recipe.id, label: rules.recipeLabel(recipe) })), { value: approved[0]?.id ?? "", extra: 'data-rf-recipe' }), { required: true })}
+        ${ui.field("จำนวนเป้าหมาย", ui.input("targetQty", { type: "number", required: true, min: 1, extra: 'data-rf-target' }), { hint: '<span data-rf-need></span>', required: true })}
         ${ui.field("สี", ui.select("color", ["ดำ", "เทา", "น้ำตาล"]))}
         ${ui.field("ความเร่งด่วน", ui.select("priority", [{ value: "normal", label: "ปกติ" }, { value: "urgent", label: "ด่วน" }]))}
-        ${ui.field("วันเริ่มผลิต *", ui.input("startDate", { type: "date", value: toInputDate(now + DAY), required: true }))}
-        ${ui.field("วันกำหนดส่ง *", ui.input("dueDate", { type: "date", value: toInputDate(now + 10 * DAY), required: true }))}
+        ${ui.field("วันเริ่มผลิต", ui.input("startDate", { type: "date", value: toInputDate(now + DAY), required: true }), { required: true })}
+        ${ui.field("วันกำหนดส่ง", ui.input("dueDate", { type: "date", value: toInputDate(now + 10 * DAY), required: true }), { required: true })}
       </div>${ui.field("หมายเหตุ / ข้อกำหนดพิเศษของลูกค้า", ui.textarea("note"))}`;
     const html = ui.dialog("createOrder", "เปิดใบสั่งผลิตใหม่", `<form data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result} แล้ว" id="rf-create-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-order">บันทึกใบสั่งผลิต</button>` });
     const bind = (dialog) => {
@@ -143,7 +144,7 @@
       const paint = () => {
         const recipe = approved.find((row) => row.id === recipeSelect.value);
         const kg = recipe && Number(target.value) > 0 ? Number(target.value) / recipe.yieldPerKg : 0;
-        need.textContent = kg ? `ต้องใช้คอมปาวด์ประมาณ ${fmtNum(kg, 1)} kg ≈ ${Math.ceil(kg / recipe.batchKg)} batch (หน่วย ${recipe.uom})` : recipe ? `หน่วย ${recipe.uom}` : "";
+        need.textContent = kg ? `ต้องใช้คอมปาวด์ประมาณ ${fmtNum(kg, 1)} kg ≈ ${Math.ceil(kg / recipe.batchKg)} ชุดผสม (หน่วย ${recipe.uom})` : recipe ? `หน่วย ${recipe.uom}` : "";
       };
       recipeSelect?.addEventListener("change", paint);
       target?.addEventListener("input", paint);
@@ -165,7 +166,7 @@
     const list = rows.map((recipe) => {
       const pending = recipe.status === "approved" ? draftOf(recipe.id) : null;
       return `<a class="rf-list-item${recipe.id === selected?.id ? " is-selected" : ""}" href="${esc(ctx.pageUrl({ sel: recipe.id, rev: null }))}"${recipe.id === selected?.id ? ' aria-current="true"' : ""}>
-        <div class="rf-row rf-between"><strong class="rf-mono">${esc(recipe.id)}</strong><span>${ui.status(recipe.status)}${pending ? ` ${ui.badge("warn", `ร่าง Rev.${pending.revision}`)}` : ""}</span></div><div class="small muted">${esc(`${recipe.productCode ? `${recipe.productCode} · ` : ""}${recipe.batchKg} kg/batch`)}</div></a>`;
+        <div class="rf-row rf-between"><strong class="rf-mono">${esc(recipe.id)}</strong><span>${ui.status(recipe.status)}${pending ? ` ${ui.badge("warn", `ร่าง Rev.${pending.revision}`)}` : ""}</span></div><div class="small muted">${esc(`${recipe.productCode ? `${recipe.productCode} · ` : ""}${recipe.batchKg} kg/ชุดผสม`)}</div></a>`;
     }).join("");
     let detail = ui.card(ui.empty("เลือกสูตรจากรายการด้านซ้าย"));
     if (selected) {
@@ -177,26 +178,26 @@
       const newestIsApproved = history[0]?.status === "approved";
       const actions = [
         selected.status === "draft" && mayEdit ? ui.openButton("แก้ร่างสูตร", "recipeEdit", { id: selected.id }, { className: "secondary small" }) : "",
-        selected.status === "approved" && newestIsApproved && mayEdit ? ui.openButton("ออก revision ใหม่", "recipeEdit", { id: selected.id }, { className: "secondary small" }) : "",
+        selected.status === "approved" && newestIsApproved && mayEdit ? ui.openButton("ออกฉบับแก้ไขใหม่", "recipeEdit", { id: selected.id }, { className: "secondary small" }) : "",
         selected.status === "draft" && ctx.can("approveRecipe") ? ui.button("อนุมัติสูตร", { action: "approveRecipe", args: { id: selected.id, revision: selected.revision }, className: "small", confirmText: "" }) : "",
       ].filter(Boolean).join(" ");
-      const revisions = history.length > 1 ? `<nav class="rf-tabs" aria-label="revision ของสูตร ${esc(selected.id)}">${history.map((recipe) => `<a class="rf-tab${recipe.revision === selected.revision ? " is-active" : ""}" href="${esc(ctx.pageUrl({ sel: recipe.id, rev: recipe.revision }))}">${esc(`Rev.${recipe.revision} ${ui.statusLabel(recipe.status)}`)}</a>`).join("")}</nav>` : "";
+      const revisions = history.length > 1 ? `<nav class="rf-tabs" aria-label="ฉบับแก้ไขของสูตร ${esc(selected.id)}">${history.map((recipe) => `<a class="rf-tab${recipe.revision === selected.revision ? " is-active" : ""}" href="${esc(ctx.pageUrl({ sel: recipe.id, rev: recipe.revision }))}">${esc(`Rev.${recipe.revision} ${ui.statusLabel(recipe.status)}`)}</a>`).join("")}</nav>` : "";
       const stageRows = rules.MIX_STAGES.map((stage) => {
         const row = rules.recipeStage(selected, stage);
         return row ? `<tr><td class="nowrap">${esc(`ขั้น ${stage}`)}</td><td class="right rf-mono">${esc(String(row.mixerTemp))}</td><td class="right rf-mono">${esc(`${row.dumpTemp} ± ${selected.dumpTol}`)}</td><td class="right rf-mono">${esc(String(row.mixMin))}</td></tr>` : "";
       });
       detail = ui.card(`${revisions}<div class="rf-grid rf-g3 rf-facts">
-          <div><span class="small muted">Total PHR</span><strong>${esc(fmtNum(totalPhr(selected), 1))}</strong></div>
-          <div><span class="small muted">น้ำหนักต่อ batch</span><strong>${esc(`${selected.batchKg} kg`)}</strong></div>
+          <div><span class="small muted">PHR รวม</span><strong>${esc(fmtNum(totalPhr(selected), 1))}</strong></div>
+          <div><span class="small muted">น้ำหนักต่อชุดผสม</span><strong>${esc(`${selected.batchKg} kg`)}</strong></div>
           <div><span class="small muted">บ่มขั้นต่ำ</span><strong>${esc(`${selected.restHours} ชม.`)}</strong></div></div>
-        ${ui.table(["ขั้นผสม", { label: "เครื่องผสม (°C)", className: "right" }, { label: "Dump temp (°C)", className: "right" }, { label: "เวลาผสม (นาที)", className: "right" }], stageRows)}
-        ${ui.table(["รหัส", "วัตถุดิบ", "หมวด", "ขั้น", { label: "PHR", className: "right" }, { label: "kg / batch", className: "right" }, "การจัดเก็บ"], lines)}
-        ${ui.kv([["หน่วยสินค้า", esc(selected.uom)], ["ผลผลิตโดยประมาณ", esc(`${selected.yieldPerKg} ${selected.uom} ต่อคอมปาวด์ 1 kg`)], ["Revision", esc(`Rev.${selected.revision}`)],
+        ${ui.table(["ขั้นผสม", { label: "เครื่องผสม (°C)", className: "right" }, { label: "อุณหภูมิปล่อยยาง (°C)", className: "right" }, { label: "เวลาผสม (นาที)", className: "right" }], stageRows)}
+        ${ui.table(["รหัส", "วัตถุดิบ", "หมวด", "ขั้น", { label: "PHR", className: "right" }, { label: "kg / ชุดผสม", className: "right" }, "การจัดเก็บ"], lines)}
+        ${ui.kv([["หน่วยสินค้า", esc(selected.uom)], ["ผลผลิตโดยประมาณ", esc(`${selected.yieldPerKg} ${selected.uom} ต่อคอมปาวด์ 1 kg`)], ["ฉบับแก้ไข", esc(`Rev.${selected.revision}`)],
           ["ผู้สร้าง", esc(`${selected.createdBy ?? "-"} · ${fmtDate(selected.createdAt)}`)], ["ผู้อนุมัติ", esc(selected.approvedBy ? `${selected.approvedBy} · ${fmtDate(selected.approvedAt)}` : selected.status === "draft" ? "รออนุมัติ" : "-")]])}`,
       { title: esc(rules.recipeLabel(selected)), actions });
     }
-    const html = `${ui.pageHead("สูตรยาง (BOM / PHR)", "สูตรคิดเป็น PHR (ส่วนต่อยาง 100 ส่วน) ระบบคำนวณน้ำหนักต่อ batch ให้อัตโนมัติ สูตรต้องได้รับอนุมัติก่อนใช้เปิดใบสั่งผลิต · สูตรที่อนุมัติแล้วแก้ตรงๆ ไม่ได้ ต้องออก revision ใหม่", ctx.can("editMaster") ? ui.openButton("สร้างสูตรใหม่", "createRecipe", {}, { className: "" }) : "")}
-      <div class="rf-split">${ui.card(`<div class="rf-list">${list || ui.empty("ยังไม่มีสูตร")}</div>`, { title: `สูตรทั้งหมด (${rows.length})`, flush: true })}${detail}</div>`;
+    const html = `${ui.pageHead("สูตรยาง (BOM / PHR)", "สูตรคิดเป็น PHR (ส่วนต่อยาง 100 ส่วน) ระบบคำนวณน้ำหนักต่อชุดผสมให้อัตโนมัติ สูตรต้องได้รับอนุมัติก่อนใช้เปิดใบสั่งผลิต · สูตรที่อนุมัติแล้วแก้ตรงๆ ไม่ได้ ต้องออกฉบับแก้ไขใหม่", ctx.can("editMaster") ? ui.openButton("สร้างสูตรใหม่", "createRecipe", {}, { className: "" }) : "")}
+      <div class="rf-split">${ui.card(`<div class="rf-list">${list || ui.empty("ยังไม่มีสูตร")}</div>`, { title: "สูตรทั้งหมด", flush: true })}${detail}</div>`;
     return { html };
   };
 
@@ -209,32 +210,32 @@
     const stageOptions = rules.MIX_STAGES.map((stage) => ({ value: stage, label: `ขั้น ${stage}` }));
     const row = (code, phr, stage = 1) => `<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", stageOptions, { value: stage })}</td><td>${ui.input("phr[]", { type: "number", value: String(phr), step: "any", min: 0 })}</td><td class="right rf-mono" data-rf-kg>-</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
     const draft = current?.status === "draft";
-    // ผสมสองขั้น: สองแถว แถวละสามช่อง (อุณหภูมิเครื่องผสม Dump temp เวลา) ค่าเริ่มต้นของสูตรใหม่
+    // ผสมสองขั้น: สองแถว แถวละสามช่อง (อุณหภูมิเครื่องผสม อุณหภูมิปล่อยยาง เวลา) ค่าเริ่มต้นของสูตรใหม่
     const stageDefaults = { 1: { mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, 2: { mixerTemp: 90, dumpTemp: 130, mixMin: 2 } };
     const stageFields = rules.MIX_STAGES.map((stage) => {
       const value = rules.recipeStage(current, stage) ?? stageDefaults[stage];
-      return `${ui.field(`อุณหภูมิเครื่องผสม ขั้น ${stage} (°C)`, ui.input(`mixerTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.mixerTemp) }))}
-        ${ui.field(`Dump temp ขั้น ${stage} (°C)`, ui.input(`dumpTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.dumpTemp) }))}
-        ${ui.field(`เวลาผสม ขั้น ${stage} (นาที)`, ui.input(`mixMin${stage}`, { type: "number", step: "any", min: 0, required: true, value: String(value.mixMin) }))}`;
+      return `${ui.field(`อุณหภูมิเครื่องผสม ขั้น ${stage} (°C)`, ui.input(`mixerTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.mixerTemp) }), { required: true })}
+        ${ui.field(`อุณหภูมิปล่อยยาง ขั้น ${stage} (°C)`, ui.input(`dumpTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.dumpTemp) }), { required: true })}
+        ${ui.field(`เวลาผสม ขั้น ${stage} (นาที)`, ui.input(`mixMin${stage}`, { type: "number", step: "any", min: 0, required: true, value: String(value.mixMin) }), { required: true })}`;
     }).join("");
     const body = `<div class="rf-grid rf-g3">
-        ${ui.field("รหัสสูตร *", current ? `<input class="input rf-input" name="id" value="${esc(current.id)}" readonly>` : ui.input("id", { placeholder: "RC-EPDM-XX01", required: true }))}
+        ${ui.field("รหัสสูตร", current ? `<input class="input rf-input" name="id" value="${esc(current.id)}" readonly>` : ui.input("id", { placeholder: "RC-EPDM-XX01", required: true }), { required: true })}
         ${ui.field("รหัสสินค้า", ui.input("productCode", { value: current?.productCode ?? "" }))}
         ${ui.field("หน่วยสินค้า", ui.select("uom", [{ value: "m", label: "เมตร (m)" }, { value: "pcs", label: "ชิ้น (pcs)" }], { value: current?.uom ?? "m" }))}
-        ${ui.field("น้ำหนักต่อ batch (kg)", ui.input("batchKg", { type: "number", value: String(current?.batchKg ?? 50), step: "any", extra: "data-rf-batch" }))}
+        ${ui.field("น้ำหนักต่อชุดผสม (kg)", ui.input("batchKg", { type: "number", value: String(current?.batchKg ?? 50), step: "any", extra: "data-rf-batch" }))}
         ${ui.field("ผลผลิตต่อ kg", ui.input("yieldPerKg", { type: "number", value: String(current?.yieldPerKg ?? 6), step: "any" }))}
         ${ui.field("เวลาบ่มขั้นต่ำ (ชม.)", ui.input("restHours", { type: "number", value: String(current?.restHours ?? 4), step: "any" }))}
       </div>
       <div class="rf-grid rf-g3">${stageFields}
-        ${ui.field("ค่าเผื่อ Dump temp ทั้งสองขั้น (±°C)", ui.input("dumpTol", { type: "number", value: String(current?.dumpTol ?? 5), step: "any", min: 0 }))}
+        ${ui.field("ค่าเผื่ออุณหภูมิปล่อยยางทั้งสองขั้น (±°C)", ui.input("dumpTol", { type: "number", value: String(current?.dumpTol ?? 5), step: "any", min: 0 }))}
       </div>
-      <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">PHR</th><th class="right">kg / batch</th><th></th></tr></thead><tbody data-rf-items>${starting.map(([code, phr, stage]) => row(code, phr, stage)).join("")}</tbody></table></div>
+      <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">PHR</th><th class="right">kg / ชุดผสม</th><th></th></tr></thead><tbody data-rf-items>${starting.map(([code, phr, stage]) => row(code, phr, stage)).join("")}</tbody></table></div>
       <div class="rf-row rf-between"><button class="btn rf-btn secondary small" type="button" data-rf-add>เพิ่มวัตถุดิบ</button><span class="muted small" data-rf-total></span></div>`;
     const name = current ? "recipeEdit" : "createRecipe";
     const formId = current ? "rf-edit-recipe" : "rf-create-recipe";
-    const title = !current ? "สร้างสูตรการผลิตใหม่" : draft ? `แก้ร่างสูตร ${current.id} Rev.${current.revision}` : `ออก revision ใหม่ของสูตร ${current.id} (Rev.${current.revision + 1})`;
-    const success = !current ? "บันทึกสูตรแล้ว (รออนุมัติ)" : draft ? "บันทึกร่างสูตรแล้ว (รออนุมัติ)" : "ออก revision ใหม่แล้ว Rev.{result} (รออนุมัติ · revision เดิมใช้งานต่อจนกว่าจะอนุมัติ)";
-    const html = ui.dialog(name, title, `<form data-rf-form="${current ? "saveRecipe" : "createRecipe"}" data-rf-success="${esc(success)}" id="${formId}">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="${formId}">${current && !draft ? "บันทึกเป็น revision ใหม่" : "บันทึกสูตร"}</button>`, wide: true });
+    const title = !current ? "สร้างสูตรการผลิตใหม่" : draft ? `แก้ร่างสูตร ${current.id} Rev.${current.revision}` : `ออกฉบับแก้ไขใหม่ของสูตร ${current.id} (Rev.${current.revision + 1})`;
+    const success = !current ? "บันทึกสูตรแล้ว (รออนุมัติ)" : draft ? "บันทึกร่างสูตรแล้ว (รออนุมัติ)" : "ออกฉบับแก้ไขใหม่แล้ว Rev.{result} (รออนุมัติ · ฉบับเดิมใช้งานต่อจนกว่าจะอนุมัติ)";
+    const html = ui.dialog(name, title, `<form data-rf-form="${current ? "saveRecipe" : "createRecipe"}" data-rf-success="${esc(success)}" id="${formId}">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="${formId}">${current && !draft ? "บันทึกเป็นฉบับแก้ไขใหม่" : "บันทึกสูตร"}</button>`, wide: true });
     const bind = (dialog) => {
       const tbody = dialog.querySelector("[data-rf-items]");
       const total = dialog.querySelector("[data-rf-total]");
@@ -276,12 +277,12 @@
     const material = data.materials.find((row) => row.code === code) ?? null;
     const categories = [...new Set(data.materials.map((row) => row.category).filter(Boolean))];
     const body = `<div class="rf-grid rf-g2">
-        ${ui.field("รหัสวัตถุดิบ *", material ? `<input class="input rf-input" name="code" value="${esc(material.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น EPDM-55" }))}
-        ${ui.field("ชื่อวัตถุดิบ *", ui.input("name", { required: true, value: material?.name ?? "" }))}
+        ${ui.field("รหัสวัตถุดิบ", material ? `<input class="input rf-input" name="code" value="${esc(material.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น EPDM-55" }), { required: true })}
+        ${ui.field("ชื่อวัตถุดิบ", ui.input("name", { required: true, value: material?.name ?? "" }), { required: true })}
         ${ui.field("หมวด", ui.input("category", { value: material?.category ?? "", list: "rf-material-categories" }))}
         ${ui.field("หน่วย", ui.input("uom", { value: material?.uom ?? "kg" }))}
         ${ui.field("ที่จัดเก็บ", ui.input("storage", { value: material?.storage ?? "" }))}
-        ${ui.field("สต็อกขั้นต่ำ (safety stock) (kg)", ui.input("safetyKg", { type: "number", step: "any", min: 0, value: String(material?.safetyKg ?? 0) }))}
+        ${ui.field("สต็อกขั้นต่ำ (kg)", ui.input("safetyKg", { type: "number", step: "any", min: 0, value: String(material?.safetyKg ?? 0) }))}
         ${ui.field("อายุการเก็บ (วัน)", ui.input("shelfLifeDays", { type: "number", step: "1", min: 1, max: 3650, value: String(material?.shelfLifeDays ?? 180) }))}
         ${ui.field("สถานะ", ui.select("active", [{ value: "1", label: "ใช้งาน" }, { value: "0", label: "เลิกใช้ (ไม่แสดงในสูตรและการรับเข้า)" }], { value: material?.active === false ? "0" : "1" }))}
       </div><datalist id="rf-material-categories">${categories.map((category) => `<option value="${esc(category)}"></option>`).join("")}</datalist>`;
@@ -296,11 +297,11 @@
     if (!order) return null;
     const linked = Boolean(order.sourceJobId);
     // โหมดฐานข้อมูล: ยอดผลิตมาจากล็อตตกแต่งที่นับแล้ว ฐานข้อมูลคำนวณเอง ไม่ต้องกรอก · ยอดดีของล็อตตกแต่งที่ผ่าน QC รายงานเข้างาน BOM ทีละล็อตไปแล้ว ปิดใบไม่ส่งยอดซ้ำ
-    const info = `<p class="muted small">${esc(`${order.id} · ${rules.orderLabel(order)} · เป้าหมาย ${rules.fmtNum(order.targetQty)} ${order.uom}${order.producedQty < order.targetQty ? " · ยังไม่ครบจำนวน ปิดใบก่อนครบได้" : ""}`)}</p>`;
+    const info = `<p class="muted small">${esc(`${rules.orderLabel(order)} · เป้าหมาย ${rules.fmtNum(order.targetQty)} ${order.uom}${order.producedQty < order.targetQty ? " · ยังไม่ครบจำนวน ปิดใบก่อนครบได้" : ""}`)}</p>`;
     const body = ctx.store.isRemote()
-      ? `${info}${linked ? `<p class="small muted">${esc(`ยอดดีของล็อตตกแต่งที่ผ่าน QC ถูกรายงานเข้างาน ${order.sourceJobId} ของ BOM ทีละล็อตแล้ว การปิดใบไม่ส่งยอดซ้ำ`)}</p>` : ""}`
+      ? `${info}${linked ? `<p class="small muted">${esc(`ยอดดีรายงานเข้างาน ${order.sourceJobId} ของ BOM ทีละล็อตแล้ว`)}</p>` : ""}`
       : `${info}
-      ${ui.field(`ปริมาณผลิตจริง (${order.uom})${linked ? " *" : ""}`, ui.input("producedQty", { type: "number", step: "any", min: linked ? 0.0001 : 0, value: order.producedQty ? String(order.producedQty) : "", required: linked }), { hint: linked ? esc(`ส่งยอดนี้กลับไปที่งาน ${order.sourceJobId} ของ BOM เป็นยอดผลิตเสร็จ`) : "" })}`;
+      ${ui.field(`ปริมาณผลิตจริง (${order.uom})`, ui.input("producedQty", { type: "number", step: "any", min: linked ? 0.0001 : 0, value: order.producedQty ? String(order.producedQty) : "", required: linked }), { hint: linked ? esc(`ส่งยอดนี้กลับไปที่งาน ${order.sourceJobId} ของ BOM`) : "", required: linked })}`;
     const html = ui.dialog("closeOrder", `ปิดงาน ${order.id}`, `<form data-rf-form="setOrderStatus" data-rf-args="${esc(JSON.stringify({ id: order.id, status: "completed" }))}" data-rf-success="ปิดงาน ${esc(order.id)} แล้ว" id="rf-close-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-close-order">ปิดงาน</button>` });
     return { html };
   };
@@ -415,9 +416,9 @@
     const activeMaterials = data.materials.filter((material) => material.active !== false);
     const first = activeMaterials[0];
     const body = `<div class="rf-grid rf-g2">
-        ${ui.field("วัตถุดิบ *", ui.select("materialCode", activeMaterials.map((material) => ({ value: material.code, label: `${material.code} · ${material.name}` })), { value: first?.code ?? "", extra: "data-rf-material" }))}
-        ${ui.field("ปริมาณ (kg) *", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true }))}
-        ${ui.field("วันหมดอายุ *", ui.input("expiry", { type: "date", value: toInputDate(now + (Number(first?.shelfLifeDays) || 180) * DAY), required: true, extra: "data-rf-expiry" }))}
+        ${ui.field("วัตถุดิบ", ui.select("materialCode", activeMaterials.map((material) => ({ value: material.code, label: `${material.code} · ${material.name}` })), { value: first?.code ?? "", extra: "data-rf-material" }), { required: true })}
+        ${ui.field("ปริมาณ (kg)", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true }), { required: true })}
+        ${ui.field("วันหมดอายุ", ui.input("expiry", { type: "date", value: toInputDate(now + (Number(first?.shelfLifeDays) || 180) * DAY), required: true, extra: "data-rf-expiry" }), { required: true })}
         ${ui.field("ผู้ขาย", ui.input("supplier"))}
         ${ui.field("ตำแหน่งจัดเก็บ", ui.input("location"), { hint: `ค่าเริ่มต้น: <span data-rf-storage>${esc(first?.storage ?? "")}</span>` })}
         ${ui.field("เอกสาร CoA จากผู้ขาย", ui.select("coa", [{ value: "yes", label: "มี" }, { value: "no", label: "ไม่มี" }]))}
@@ -449,7 +450,7 @@
     if (line.source === "bom") {
       // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต ไม่มีวันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มในคำสั่งเดียวกัน
       const partBody = `${ui.kv([["ของซื้อ", esc(materialCode)]])}
-        <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))}) *`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }))}</div>`;
+        <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))})`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }), { required: true })}</div>`;
       return { html: ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้า {result} แล้ว" id="rf-receive-po">${partBody}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` }) };
     }
     const material = data.materials.find((row) => row.code === materialCode);
@@ -457,8 +458,8 @@
     // เลขใบสั่งซื้ออยู่ที่หัวเรื่อง · ปริมาณที่สั่งคือค่าตั้งต้นของช่องปริมาณ · คำอธิบายค่าตั้งต้นอยู่ใน title ของช่อง
     const body = `${ui.kv([["วัตถุดิบ", esc(`${materialCode}${material?.name ? ` · ${material.name}` : ""}`)]])}
       <div class="rf-grid rf-g2">
-        ${ui.field("ปริมาณที่รับจริง (kg) *", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }))}
-        ${ui.field("วันหมดอายุ *", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY), extra: `title="${esc(`ตั้งต้น = วันนี้ + อายุการเก็บ ${days} วัน`)}"` }))}
+        ${ui.field("ปริมาณที่รับจริง (kg)", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }), { required: true })}
+        ${ui.field("วันหมดอายุ", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY), extra: `title="${esc(`ตั้งต้น = วันนี้ + อายุการเก็บ ${days} วัน`)}"` }), { required: true })}
         ${ui.field("ผู้ขาย", ui.input("supplier", { extra: 'title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"' }))}
       </div>`;
     const html = ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` });
@@ -505,8 +506,8 @@
         <td class="right rf-mono">${row.shortage > 0 ? ui.badge("bad", fmtNum(row.shortage, 3)) : esc(fmtNum(0, 3))}</td>`,
       { materialCode: row.itemCode, name: row.name, source: "bom", uom: row.uom, needKg: row.needQty, availableKg: Math.round((row.onHandQty - row.reservedQty + row.onOrderQty) * 1e3) / 1e3, shortageKg: row.shortage, safetyKg: row.safetyQty, orderKg: row.orderQty }));
     const notes = skipped ? ui.callout("warn", esc(`ไม่ได้นับ ${skipped} งานที่ยังไม่มี WO หรือไม่มีสูตร`)) : "";
-    const chemHead = ["วัตถุดิบ", { label: "ต้องใช้ (kg)", className: "right" }, { label: "คงเหลือในคลัง (kg)", className: "right", title: "ล็อตที่ใช้ได้ (ไม่หมดอายุ ไม่กักกัน)" }, { label: "จองแล้ว (kg)", className: "right", title: "ใบเบิกเก่าที่ค้างจ่าย + ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก" }, { label: "สั่งค้างรับ (kg)", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด (kg)", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ (safety stock) (kg)", "จำนวนสั่ง (kg)"];
-    const partHead = ["ของซื้อ (ตามหน่วยของชิ้น)", { label: "ต้องใช้", className: "right" }, { label: "คงเหลือในคลัง", className: "right", title: "ยอดคงเหลือในหน้าคลังของซื้อ" }, { label: "จองแล้ว", className: "right", title: "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย" }, { label: "สั่งค้างรับ", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ (safety stock)", "จำนวนสั่ง"];
+    const chemHead = ["วัตถุดิบ", { label: "ต้องใช้ (kg)", className: "right" }, { label: "คงเหลือในคลัง (kg)", className: "right", title: "ล็อตที่ใช้ได้ (ไม่หมดอายุ ไม่กักกัน)" }, { label: "จองแล้ว (kg)", className: "right", title: "ใบเบิกเก่าที่ค้างจ่าย + ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก" }, { label: "สั่งค้างรับ (kg)", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด (kg)", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ (kg)", "จำนวนสั่ง (kg)"];
+    const partHead = ["ของซื้อ (ตามหน่วยของชิ้น)", { label: "ต้องใช้", className: "right" }, { label: "คงเหลือในคลัง", className: "right", title: "ยอดคงเหลือในหน้าคลังของซื้อ" }, { label: "จองแล้ว", className: "right", title: "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย" }, { label: "สั่งค้างรับ", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ", "จำนวนสั่ง"];
     const total = rows.length + partRows.length;
     const body = total
       ? `${notes}<form data-rf-form="createPurchaseOrder" data-rf-args='${esc(JSON.stringify(formArgs))}' data-rf-success="สั่งซื้อ {result} แล้ว" id="rf-purchase">${rows.length ? ui.table(chemHead, tableRows) : ""}${partRows.length ? ui.table(partHead, partRows) : ""}</form>`
@@ -537,7 +538,7 @@
       const pmPct = mold.totalUsage / mold.pmLimit;
       const tone = pct >= 1 ? "bad" : pct >= 0.85 ? "warn" : "";
       return ui.card(`<div class="rf-stack">
-          <div><strong>${esc(mold.name)}</strong><div class="small muted">${esc(`${MOLD_KIND[mold.kind] ?? mold.kind}${mold.perCycle > 1 ? ` · ${mold.perCycle} cavity` : ""}`)}</div></div>
+          <div><strong>${esc(mold.name)}</strong><div class="small muted">${esc(`${MOLD_KIND[mold.kind] ?? mold.kind}${mold.perCycle > 1 ? ` · ${mold.perCycle} ช่อง` : ""}`)}</div></div>
           <div><div class="rf-row rf-between small"><span>ตั้งแต่ทำความสะอาดล่าสุด</span><span>${esc(`${fmtNum(mold.usageSinceClean)} / ${fmtNum(mold.cleanEvery)} ${MOLD_UNIT[mold.unit] ?? mold.unit}`)}</span></div>${ui.progress(mold.usageSinceClean, mold.cleanEvery, tone)}</div>
           <div><div class="rf-row rf-between small"><span>อายุสะสม (PM ใหญ่)</span><span>${esc(`${Math.round(pmPct * 100)}%`)}</span></div>${ui.progress(mold.totalUsage, mold.pmLimit, pmPct > 0.9 ? "warn" : "")}<div class="small muted">${esc(`${fmtNum(mold.totalUsage)} / ${fmtNum(mold.pmLimit)} ${MOLD_UNIT[mold.unit] ?? mold.unit}`)}</div></div>
           <div class="rf-row rf-between"><span class="small muted">${esc(`ล้างล่าสุด ${fmtDate(mold.lastCleanAt)}`)}</span><div class="rf-row">${ui.openButton("แก้ไข", "moldEdit", { id: mold.id }, { className: "secondary small", ariaLabel: `แก้ไข ${mold.id}` })}${ui.button("บันทึกล้างแล้ว", { action: "cleanMold", args: { id: mold.id }, className: "secondary small", confirmText: `ยืนยันว่าได้ทำความสะอาด ${mold.id} แล้ว?` })}</div></div>
@@ -552,13 +553,13 @@
     const { data, ui } = ctx;
     const mold = data.molds.find((row) => row.id === id) ?? null;
     const body = `<div class="rf-grid rf-g2">
-        ${ui.field("รหัส *", mold ? `<input class="input rf-input" name="id" value="${esc(mold.id)}" readonly>` : ui.input("id", { required: true, placeholder: "เช่น DIE-DS-02" }))}
-        ${ui.field("ชื่อ *", ui.input("name", { required: true, value: mold?.name ?? "" }))}
-        ${ui.field("ชนิด *", ui.select("kind", Object.entries(MOLD_KIND).map(([value, label]) => ({ value, label })), { value: mold?.kind ?? "die" }))}
-        ${ui.field("หน่วยนับการใช้งาน *", ui.select("unit", Object.entries(MOLD_UNIT).map(([value, label]) => ({ value, label })), { value: mold?.unit ?? "m" }), { hint: "หัวดายและสายอบนับเป็นเมตรหรือชิ้น แม่พิมพ์อัดนับเป็นรอบ" })}
-        ${ui.field("จำนวน cavity ต่อรอบ *", ui.input("perCycle", { type: "number", step: "1", min: 1, required: true, value: String(mold?.perCycle ?? 1) }))}
-        ${ui.field("ทำความสะอาดทุก (ตามหน่วยนับ) *", ui.input("cleanEvery", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.cleanEvery) : "" }))}
-        ${ui.field("อายุสะสมก่อน PM ใหญ่ (ตามหน่วยนับ) *", ui.input("pmLimit", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.pmLimit) : "" }))}
+        ${ui.field("รหัส", mold ? `<input class="input rf-input" name="id" value="${esc(mold.id)}" readonly>` : ui.input("id", { required: true, placeholder: "เช่น DIE-DS-02" }), { required: true })}
+        ${ui.field("ชื่อ", ui.input("name", { required: true, value: mold?.name ?? "" }), { required: true })}
+        ${ui.field("ชนิด", ui.select("kind", Object.entries(MOLD_KIND).map(([value, label]) => ({ value, label })), { value: mold?.kind ?? "die" }), { required: true })}
+        ${ui.field("หน่วยนับการใช้งาน", ui.select("unit", Object.entries(MOLD_UNIT).map(([value, label]) => ({ value, label })), { value: mold?.unit ?? "m" }), { hint: "หัวดายและสายอบนับเป็นเมตรหรือชิ้น แม่พิมพ์อัดนับเป็นรอบ", required: true })}
+        ${ui.field("จำนวนช่องแม่พิมพ์ต่อรอบ", ui.input("perCycle", { type: "number", step: "1", min: 1, required: true, value: String(mold?.perCycle ?? 1) }), { required: true })}
+        ${ui.field("ทำความสะอาดทุก (ตามหน่วยนับ)", ui.input("cleanEvery", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.cleanEvery) : "" }), { required: true })}
+        ${ui.field("อายุสะสมก่อน PM ใหญ่ (ตามหน่วยนับ)", ui.input("pmLimit", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.pmLimit) : "" }), { required: true })}
       </div>`;
     const html = ui.dialog("moldEdit", mold ? `แก้ไข ${mold.id}` : "เพิ่มแม่พิมพ์/หัวดาย", `<form data-rf-form="saveMold" data-rf-success="บันทึกแม่พิมพ์ {result} แล้ว" id="rf-mold-form">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-mold-form">บันทึก</button>` });
     return { html };
@@ -568,7 +569,7 @@
   // โหมดฐานข้อมูล: อ่านจาก app_rf_audit (store.loadAudit ดึงเมื่อเปิดหน้าและหลังมีการบันทึก แล้ววาดหน้าใหม่ผ่าน event audit) · การกระทำและจำนวนเป็นสิ่งที่เซิร์ฟเวอร์บันทึกเอง (บรรทัดหลัก)
   // ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ · ทุกรายการ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ฯลฯ) อยู่ในฐานข้อมูลและบันทึกที่นี่เหมือนกัน
   const AUDIT_ACTION_LABEL = Object.freeze({
-    saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออก revision ใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
+    saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออกฉบับแก้ไขใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
     receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
     recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", shipBoxes: "ส่งมอบกล่องสินค้า",
     addQcRecord: "บันทึกผล QC", createNcr: "เปิด NCR", updateNcr: "บันทึกการแก้ไข/ป้องกัน NCR", closeNcr: "ปิด NCR", cleanMold: "บันทึกล้างแม่พิมพ์", saveMold: "บันทึกแม่พิมพ์/หัวดาย",

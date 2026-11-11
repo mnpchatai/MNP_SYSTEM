@@ -10,16 +10,16 @@
 
   // ---------- ป้ายสถานะ ----------
   const STATUS = Object.freeze({
-    planned: ["", "วางแผน"], released: ["info", "ปล่อยผลิต"], in_progress: ["accent", "กำลังผลิต"], on_hold: ["warn", "พักงาน"],
-    completed: ["good", "เสร็จสิ้น"], cancelled: ["bad", "ยกเลิก"],
+    planned: ["", "วางแผน"], released: ["info", "ปล่อยผลิต"], in_progress: ["info", "กำลังผลิต"], on_hold: ["warn", "พักงาน"],
+    completed: ["good", "เสร็จสิ้น"], cancelled: ["", "ยกเลิก"],
     pass: ["good", "ผ่าน"], hold: ["warn", "กักรอตัดสิน"], fail: ["bad", "ไม่ผ่าน"],
     weighing: ["warn", "ค้างจ่าย"], issued: ["info", "จ่ายครบ รอผสม"], consumed: ["good", "ใช้ผสมแล้ว"],
     in_transit: ["warn", "รอรับมอบ"], received: ["good", "รับมอบแล้ว"],
-    open: ["bad", "เปิดอยู่"], closed: ["good", "ปิดแล้ว"],
+    open: ["info", "เปิดอยู่"], closed: ["good", "ปิดแล้ว"],
     available: ["good", "พร้อมใช้"], expired: ["bad", "หมดอายุ (บล็อก)"], empty: ["", "หมด"],
     in_stock: ["good", "ในคลัง"], shipped: ["info", "ส่งมอบแล้ว"],
     draft: ["warn", "รออนุมัติ"], approved: ["good", "อนุมัติแล้ว"], superseded: ["", "ถูกแทนที่"],
-    critical: ["bad", "Critical"], major: ["warn", "Major"], minor: ["", "Minor"],
+    critical: ["bad", "วิกฤต"], major: ["warn", "ร้ายแรง"], minor: ["", "เล็กน้อย"],
   });
   const badge = (tone, text) => `<span class="rf-badge${tone ? ` is-${esc(tone)}` : ""}">${esc(text)}</span>`;
   const status = (value) => {
@@ -27,6 +27,8 @@
     return badge(tone, label);
   };
   const statusLabel = (value) => STATUS[value]?.[1] ?? String(value ?? "");
+  // ธงด่วน: หน้าตาเดียวกับทั้งระบบ (.badge.urgent-flag)
+  const urgent = (text = "ด่วน") => `<span class="badge urgent-flag">${esc(text)}</span>`;
 
   // ---------- ไอคอน (ไอคอนเส้นชุดเดียวกับระบบหลักจาก modules/ui-icons.js ประจำโมดูลและโทนแจ้งเตือน ใช้ในเมนูข้าง หัวหน้า และกล่องแจ้งเตือน สไตล์ .rf-ico ใน styles.css) ----------
   // ค่า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (อ้างตอนวาด เพราะเทสต์โหลดไฟล์นี้แยก)
@@ -47,7 +49,8 @@
   const stat = ({ label, value, sub = "", tone = "" }) => `<div class="card rf-stat${tone ? ` is-${esc(tone)}` : ""}"><span class="rf-stat-label">${esc(label)}</span><strong class="rf-stat-value">${esc(value)}</strong>${sub ? `<span class="rf-stat-sub">${esc(sub)}</span>` : ""}</div>`;
   const stats = (items) => `<div class="rf-grid rf-g4">${items.map(stat).join("")}</div>`;
   const callout = (tone, html) => `<div class="rf-callout is-${esc(tone)}" role="note"><span class="rf-callout-ico" aria-hidden="true">${icon(tone)}</span><div class="rf-callout-body">${html}</div></div>`;
-  const empty = (text) => `<div class="empty rf-empty">${esc(text)}</div>`;
+  // สถานะว่างหน้าตาเดียวกับ emptyState() ของ app.js (ไอคอนกล่องรับ + ข้อความ) · ช่องว่างในตาราง (ui.table) เป็นข้อความล้วน
+  const empty = (text) => `<div class="empty empty-state rf-empty">${root.MNP_UI_ICONS?.icon ? root.MNP_UI_ICONS.icon("inbox") : ""}<p>${esc(text)}</p></div>`;
   const kv = (pairs) => `<dl class="rf-kv">${pairs.filter(Boolean).map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
   const progress = (value, max, tone = "") => `<div class="rf-bar${tone ? ` is-${esc(tone)}` : ""}" role="img" aria-label="${attr(`${rules.fmtNum(value)} จาก ${rules.fmtNum(max)}`)}"><div style="width:${n2(max ? Math.min(100, (Number(value) / Number(max)) * 100) : 0)}%"></div></div>`;
   const table = (head, rows, { emptyText = "ไม่มีข้อมูล", colSpan = head.length, className = "" } = {}) => `<div class="table-wrap"><table class="rf-table${className ? ` ${className}` : ""}"><thead><tr>${head.map((cell) => (typeof cell === "string" ? `<th>${esc(cell)}</th>` : `<th class="${attr(cell.className ?? "")}"${cell.title ? ` title="${attr(cell.title)}"` : ""}>${esc(cell.label ?? "")}</th>`)).join("")}</tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="${colSpan}" class="empty rf-empty">${esc(emptyText)}</td></tr>`}</tbody></table></div>`;
@@ -57,10 +60,15 @@
 
   // ---------- ฟอร์ม ----------
   // ช่องกรอก: ชื่อ name= เป็นคีย์ของ FormData ตอนส่ง hint = ข้อความใต้ช่อง (HTML)
-  const field = (label, control, { hint = "", id = "", className = "" } = {}) => `<div class="field rf-field${className ? ` ${className}` : ""}">${label ? `<label${id ? ` for="${attr(id)}"` : ""}>${esc(label)}</label>` : ""}${control}${hint ? `<small class="rf-hint">${hint}</small>` : ""}</div>`;
+  // required: ต่อท้ายชื่อด้วย "(จำเป็น)" แบบเดียวกับทั้งระบบ (ไม่ใช้ " *")
+  const field = (label, control, { hint = "", id = "", className = "", required = false } = {}) => `<div class="field rf-field${className ? ` ${className}` : ""}">${label ? `<label${id ? ` for="${attr(id)}"` : ""}>${esc(label)}${required ? ' <span class="field-required">(จำเป็น)</span>' : ""}</label>` : ""}${control}${hint ? `<small class="rf-hint">${hint}</small>` : ""}</div>`;
   const input = (name, { value = "", type = "text", placeholder = "", step = "", min = "", max = "", required = false, id = "", list = "", className = "", extra = "" } = {}) =>
     `<input class="input rf-input${className ? ` ${className}` : ""}" name="${attr(name)}"${id ? ` id="${attr(id)}"` : ""} type="${attr(type)}" value="${attr(value)}"${placeholder ? ` placeholder="${attr(placeholder)}"` : ""}${step ? ` step="${attr(step)}"` : ""}${min !== "" ? ` min="${attr(min)}"` : ""}${max !== "" ? ` max="${attr(max)}"` : ""}${type === "number" ? ' inputmode="decimal"' : ""}${required ? " required" : ""}${list ? ` list="${attr(list)}"` : ""} autocomplete="off"${extra ? ` ${extra}` : ""}>`;
   const textarea = (name, { value = "", placeholder = "", rows = 3 } = {}) => `<textarea class="textarea rf-textarea" name="${attr(name)}" rows="${rows}"${placeholder ? ` placeholder="${attr(placeholder)}"` : ""}>${esc(value)}</textarea>`;
+  // ปุ่มเลือกไฟล์แบบเดียวกับทั้งระบบ (.file-pick) แทนช่อง "Choose File" ของเบราว์เซอร์ · text = ข้อความบนปุ่ม title = เงื่อนไขไฟล์ (ไม่พิมพ์ถาวร)
+  const filePick = (id, name, text, { title = "", accept = "", icon = "document", extra = "" } = {}) => `<label class="btn secondary file-pick" for="${attr(id)}"${title ? ` title="${attr(title)}"` : ""}>${root.MNP_UI_ICONS?.icon ? root.MNP_UI_ICONS.icon(icon) : ""} ${esc(text)}</label><input class="file-pick-input" id="${attr(id)}"${name ? ` name="${attr(name)}"` : ""} type="file"${accept ? ` accept="${attr(accept)}"` : ""}${extra ? ` ${extra}` : ""}>`;
+  // ช่องวันที่ทุกช่องในขอบเขตนี้แสดงเป็นวันที่ไทย (พ.ศ.) ผ่านตัวเลือกวันที่ของระบบหลัก
+  const enhanceDates = (scope) => scope?.querySelectorAll?.('input[type="date"]').forEach((node) => root.MNP_DATE_PICKER?.enhance?.(node));
   // options: สตริง หรือ { value, label, disabled }
   const select = (name, options, { value = "", placeholder = null, id = "", className = "", extra = "" } = {}) => {
     const rows = options.map((option) => (typeof option === "string" ? { value: option, label: option } : option));
@@ -158,7 +166,7 @@
     return `<div class="rf-chart-wrap">${legend ? `<div class="rf-legend">${legend}</div>` : ""}<svg class="rf-spc-chart rf-chart" viewBox="0 0 ${W} ${height}" role="img" aria-label="${attr(`${leftName}${rightName ? ` และ ${rightName}` : ""} ${n} ช่วง`)}">${grid}${rightTicks}${barsHtml}${areaHtml}${lineHtml}${xLabels}</svg></div>`;
   }
 
-  // I-chart (points = [{ id, label, v }]) พร้อมเส้น USL/LSL/UCL/LCL/X̄ (สไตล์ .rf-spc-* ใน styles.css)
+  // แผนภูมิควบคุมค่ารายตัว (I-chart) (points = [{ id, label, v }]) พร้อมเส้น USL/LSL/UCL/LCL/X̄ (สไตล์ .rf-spc-* ใน styles.css)
   function controlChart(points, { lsl, usl, stat: s, unit = "" }) {
     const W = 720;
     const box = { left: 52, right: 74, top: 12, height: 190, bottom: 26 };
@@ -187,7 +195,7 @@
     }).join("");
     const height = box.top + box.height + box.bottom;
     const axisY = box.top + box.height + 18;
-    return `<div class="rf-spc-scroll"><svg class="rf-spc-chart" viewBox="0 0 ${W} ${height}" role="img" aria-label="${attr(`I-chart ${values.length} ค่า`)}">${grid}${lines}${polyline}${dots}<text class="rf-spc-tick" x="${box.left}" y="${axisY}">${esc(points[0]?.label ?? "")}</text><text class="rf-spc-tick" x="${n2(right)}" y="${axisY}" text-anchor="end">${esc(points.at(-1)?.label ?? "")}</text></svg></div>`;
+    return `<div class="rf-spc-scroll"><svg class="rf-spc-chart" viewBox="0 0 ${W} ${height}" role="img" aria-label="${attr(`แผนภูมิควบคุม ${values.length} ค่า`)}">${grid}${lines}${polyline}${dots}<text class="rf-spc-tick" x="${box.left}" y="${axisY}">${esc(points[0]?.label ?? "")}</text><text class="rf-spc-tick" x="${n2(right)}" y="${axisY}" text-anchor="end">${esc(points.at(-1)?.label ?? "")}</text></svg></div>`;
   }
 
   // ฮิสโตแกรม (bins = [{ bin, count, oos }])
@@ -231,7 +239,7 @@
     module: "",
     STATUS, ICONS, icon, badge, status, statusLabel, pageHead, headingWithNote, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
     field, input, textarea, select, specInput, submitButton, button, confirmOptions, openButton, link, dialog, closeButton,
-    barcode, dualChart, controlChart, histogram, labelTables,
+    barcode, dualChart, controlChart, histogram, labelTables, urgent, filePick, enhanceDates,
   };
   root.MNP_RUBBERFLOW_UI = api;
 })(typeof window !== "undefined" ? window : globalThis);

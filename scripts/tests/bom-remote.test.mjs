@@ -2515,7 +2515,7 @@ test("RubberFlow in database mode: loading state, no demo role picker or reset, 
   assert.doesNotMatch(await rfPage(store, "p=warehouse&tab=materials"), /data-rf-open="materialEdit"/, "a store keeper only reads");
   await saved(rf(head).run("approveRecipe", { id: "RC-TEST-01", revision: 1 }));
   html = await rfPage(head, "p=recipes");
-  assert.match(html, />ออก revision ใหม่</, "an approved recipe offers a new revision, not an edit");
+  assert.match(html, />ออกฉบับแก้ไขใหม่</, "an approved recipe offers a new revision, not an edit");
   assert.doesNotMatch(html, /data-rf-action="approveRecipe"/);
   await saved(rf(head).run("saveRecipe", { ...RF_RECIPE, productCode: "P-TEST-2" }));
   html = await rfPage(head, "p=recipes&sel=RC-TEST-01");
@@ -2525,8 +2525,8 @@ test("RubberFlow in database mode: loading state, no demo role picker or reset, 
   assert.doesNotMatch(html, /data-rf-action="approveRecipe"/, "the revision in use is shown first; the draft is reviewed on its own tab");
   assert.match(await rfPage(head, "p=recipes&sel=RC-TEST-01&rev=2"), /data-rf-action="approveRecipe"/);
   html = await rfPage(head, "p=recipes&sel=RC-TEST-01&rev=1");
-  assert.match(html, /aria-label="revision ของสูตร RC-TEST-01"/);
-  assert.doesNotMatch(html, />ออก revision ใหม่</, "no new revision while a draft is pending");
+  assert.match(html, /aria-label="ฉบับแก้ไขของสูตร RC-TEST-01"/);
+  assert.doesNotMatch(html, />ออกฉบับแก้ไขใหม่</, "no new revision while a draft is pending");
   const dialogs = head.context.MNP_RUBBERFLOW_DIALOGS;
   const rfCtx = head.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=recipes"));
   assert.match(dialogs.recipeEdit(rfCtx, { id: "RC-TEST-01" }).html, /แก้ร่างสูตร RC-TEST-01 Rev\.2/);
@@ -2551,7 +2551,7 @@ test("RubberFlow in database mode: loading state, no demo role picker or reset, 
   await rfPage(head, "p=audit");
   await rf(head).loadAudit();
   html = await rfPage(head, "p=audit");
-  for (const text of ["บันทึกวัตถุดิบ", "สร้างสูตรใหม่", "อนุมัติสูตร", "แก้สูตร / ออก revision ใหม่", "เปิดใบสั่งผลิต", "เปลี่ยนสถานะใบสั่งผลิต", "ใบสั่งผลิต \\+1"]) assert.match(html, new RegExp(text), text);
+  for (const text of ["บันทึกวัตถุดิบ", "สร้างสูตรใหม่", "อนุมัติสูตร", "แก้สูตร / ออกฉบับแก้ไขใหม่", "เปิดใบสั่งผลิต", "เปลี่ยนสถานะใบสั่งผลิต", "ใบสั่งผลิต \\+1"]) assert.match(html, new RegExp(text), text);
   assert.match(html, /data-rf-audit-reload/);
   assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
   assert.equal(scene.env.pageStorage.getItem("mnp-rubberflow-v1"), null, "the demo state key is untouched");
@@ -2771,7 +2771,7 @@ test("the compounds page and the link dialog list only recipes approved in the d
   assert.ok(env.log.renders >= 1, "the BOM page is redrawn when RubberFlow arrived");
   const dialog = env.context.MNP_BOM_DIALOGS.compoundLink(ctx, {});
   assert.match(dialog.html, /<option value="RC-TEST-01">/);
-  assert.match(dialog.html, /ฐานข้อมูลไม่รับรหัสสูตรที่ไม่มีอยู่/);
+  assert.match(dialog.html, /แสดงเฉพาะสูตรที่อนุมัติแล้วใน RubberFlow/);
   assert.doesNotMatch(dialog.html, /<input[^>]*name="recipeId"/, "a typed code would be refused by the database");
 });
 
