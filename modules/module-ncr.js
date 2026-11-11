@@ -326,7 +326,7 @@
             ${text("customer_name", "ชื่อลูกค้า/พ่อค้า", { max: 200 })}
             ${text("customer_code", "รหัสลูกค้า", { max: 50 })}
             ${text("po_no", "เลขที่ใบสั่งซื้อ/ใบส่งของ")}
-            ${text("lot_no", "Lot")}
+            ${text("lot_no", "ล็อต")}
           </div>
         </fieldset>
         <fieldset class="form-step" data-step="2">
@@ -379,7 +379,7 @@
       form.querySelector("#ncr-issue-review").innerHTML = `<dl class="definition-grid review-grid">
           ${row("สินค้า/วัตถุดิบ", [value("product_code"), value("product_name")].filter(Boolean).join(" · "))}
           ${row("ลูกค้า", [value("customer_code"), value("customer_name")].filter(Boolean).join(" · "))}
-          ${row("ใบสั่งซื้อ/ใบส่งของ · Lot", [value("po_no"), value("lot_no")].filter(Boolean).join(" · "))}
+          ${row("ใบสั่งซื้อ/ใบส่งของ · ล็อต", [value("po_no"), value("lot_no")].filter(Boolean).join(" · "))}
           ${row("จำนวนทั้งหมด", qty("qty_total"))}
           ${row("จำนวนสุ่ม", qty("qty_sampled"))}
           ${row("จำนวนที่พบปัญหา", qty("qty_defect"))}
@@ -900,7 +900,7 @@
         ${partField("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`, false, "person")}
         ${partField("รหัสสินค้า", escapeHtml(ncr.product_code ?? "—"), false, "product")}
         ${partField("ลูกค้า/พ่อค้า", `${escapeHtml(ncr.customer_name ?? "—")}${ncr.customer_code ? ` (${escapeHtml(ncr.customer_code)})` : ""}`, false, "building")}
-        ${partField("ใบสั่งซื้อ/ใบส่งของ · Lot", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
+        ${partField("ใบสั่งซื้อ/ใบส่งของ · ล็อต", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
         ${quantities}
         ${partField("รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)", escapeHtml(ncr.description || "—"), true)}
       </dl></section>

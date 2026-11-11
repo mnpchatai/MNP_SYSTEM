@@ -2905,7 +2905,7 @@ function requestCenterHeader(types, params, counts) {
   return `<div class="page-heading"><div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
     <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" data-module="${requestPalette(type.code)}">
       <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} ยังไม่จบ` : "ดูสถานะ"}</span></span>
-      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong><small>${selected?.id === type.id ? "กำลังแสดงประเภทนี้" : "ดูรายการและสถานะ →"}</small></span>
+      <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong>${selected?.id === type.id ? "<small>กำลังแสดงประเภทนี้</small>" : ""}</span>
       ${typeCardWatermarkHtml(type.code)}
     </a>`).join("")}</nav>`;
 }
@@ -4738,7 +4738,7 @@ async function renderProfile() {
           <div class="field"><label for="profile-phone">เบอร์ติดต่อ</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
         </div>
         <div class="field"><label for="profile-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}"></div>
-        <div class="field"><label for="profile-employee-no">รหัสพนักงาน</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ดรหัสพนักงาน / รหัสผ่านด้านล่าง เพื่อให้เปลี่ยนพร้อมบัญชีเข้าใช้งานในขั้นตอนเดียว</small></div>
+        <div class="field"><label for="profile-employee-no">รหัสพนักงาน</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ดรหัสผ่านด้านล่าง</small></div>
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">แผนก${REQUIRED_MARK}</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
