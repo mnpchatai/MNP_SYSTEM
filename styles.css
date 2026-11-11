@@ -1864,10 +1864,9 @@ th.right, td.right { text-align: right; }
 .lab-title-select:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); }
 .lab-title-select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .lab-title-select option { font-weight: 400; }
-.lab-back { flex: none; }
-.lab-back svg, .lab-refresh svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.lab-back:hover, .lab-refresh:hover { color: var(--ink); background: var(--shell); }
-.lab-back:focus-visible, .lab-refresh:focus-visible, .lab-name a:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm); }
+.lab-refresh svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.lab-refresh:hover { color: var(--ink); background: var(--shell); }
+.lab-refresh:focus-visible, .lab-name a:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm); }
 .lab-id { flex: 0 1 180px; min-width: 120px; }
 .lab-id .select { min-height: 44px; }
 .lab-live { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
@@ -1875,7 +1874,7 @@ th.right, td.right { text-align: right; }
 .lab-refresh.is-loading svg { animation: lab-spin .9s linear infinite; }
 @keyframes lab-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .lab-refresh.is-loading svg { animation: none; } }
-@media (pointer: coarse) { .lab-back, .lab-refresh { width: 44px; height: 44px; } }
+@media (pointer: coarse) { .lab-refresh { width: 44px; height: 44px; } }
 .lab-status { color: var(--warning); }
 
 /* โมดูลของ MNP LAB (lab-sections.js): หน้าเลือกโมดูลเป็นการ์ดสีของโมดูล และหัวของแต่ละโมดูลเป็นหัวโมดูลแบบเดียวกับทุกโมดูล (.request-module-header)
@@ -2194,6 +2193,7 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 
 /* หน้ารวม: รายการวัสดุพร้อมผลชุดล่าสุด */
 .lab-toolbar { padding: 12px 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; border-bottom: 1px solid var(--soft-line); }
+.lab-toolbar .note-body { flex: 1 1 100%; margin: 0; }
 .lab-search { max-width: 420px; flex: 1 1 240px; }
 .lab-search .input { caret-color: var(--primary); }
 /* รายการวัสดุใต้ช่องค้นหาใช้หน้าตาเดียวกับ dropdown ค้นหาได้ (.ss-list/.ss-option) วางตำแหน่งด้วย MNP_SEARCHABLE_SELECT.placeList */
@@ -2233,8 +2233,8 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
   .lab-dash-grid .summary:nth-child(2) { border-top: 0; }
   .lab-dash-grid .summary:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .lab-dash-grid .summary strong { margin: 8px 0 4px; font-size: var(--text-page); }
-  /* มือถือ: แถวแรก = ปุ่มกลับ + ชื่อวัสดุเต็มแถว แถวสอง = ตัวเลือก ID + เวลาอัปเดต/รีเฟรช */
-  .lab-head-material .lab-title { flex: 1 1 calc(100% - 56px); }
+  /* มือถือ: แถวแรก = ชื่อวัสดุเต็มแถว (ลิงก์ย้อนกลับอยู่เหนือหัว) แถวสอง = ตัวเลือก ID + เวลาอัปเดต/รีเฟรช */
+  .lab-head-material .lab-title { flex: 1 1 100%; }
   .lab-title-select { width: 100%; }
   .lab-id { flex: 1 1 140px; }
   .lab-plot, .lab-toolbar, .lab-chart-foot, .lab-results-card .card-heading { padding-left: 14px; padding-right: 14px; }

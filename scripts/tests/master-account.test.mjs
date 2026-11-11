@@ -145,3 +145,27 @@ test("the master's home queue holds every pending approval step even with an act
   const own = app.slice(app.indexOf("function isOwnApprovalStep(step)"), app.indexOf("const BULK_APPROVE_LIMIT"));
   assert.doesNotMatch(own, /isMaster|role\?\.code === "admin"/, "the master does not bulk-approve other people's steps");
 });
+
+test("an urgent pending item uses the one urgent look, and the empty states come from emptyState()", async () => {
+  const urgentRow = { item_type: "request", item_id: "r1", doc_no: "MT-1", doc_label: "ใบแจ้งซ่อม", title: "เครื่องเสีย", is_urgent: true, days_waiting: 2, action: "รออนุมัติ", due_date: null, holders: [{ id: "e1", employee_no: "E1", name: "สมชาย" }] };
+  const run = async (rows) => {
+    const app = { innerHTML: "" };
+    const window = { MNP_MASTER_MODEL: model, MNP_UI_ICONS: { icon: () => "" } };
+    const context = {
+      window, app, state: { employee: { isMaster: true } }, location: { hash: "" }, URLSearchParams, console,
+      document: { querySelector: () => ({ querySelector: () => null, querySelectorAll: () => [] }) },
+      shell: (content) => content, bindShell() {}, loadingShell() {},
+      escapeHtml: (value) => String(value ?? "").replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`),
+      formatDate: (value) => `D(${value})`, friendlyError: String, showToast() {}, renderNotFound() {},
+      emptyState: (text) => `<div class="empty empty-state">${text}</div>`,
+      sb: { rpc: async () => ({ data: rows, error: null }) },
+    };
+    vm.runInNewContext(read("modules/module-master.js"), context);
+    await window.MNP_REQUEST_MODULES.MASTER.pages.master(new URLSearchParams("tab=pending"));
+    return app.innerHTML;
+  };
+  const html = await run([urgentRow]);
+  assert.match(html, /<span class="badge urgent-flag">ด่วน<\/span>/);
+  assert.doesNotMatch(html, /rejected">ด่วน/, "urgent is never drawn as a rejection");
+  assert.match(await run([]), /<div class="empty empty-state">ไม่มีงานค้างตามตัวกรองนี้<\/div>/);
+});

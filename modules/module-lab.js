@@ -1,4 +1,4 @@
-// โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ มี 4 โมดูล: แดชบอร์ด · เปรียบเทียบเคมี · Mooney test report · MDR test report
+// โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ มี 4 โมดูล: แดชบอร์ด · เปรียบเทียบเคมี · รายงานทดสอบ Mooney · รายงานทดสอบ MDR
 // (รายการ ลำดับ สี และ URL ของโมดูลอยู่ที่ lab-sections.js) #/lab เป็นหน้าเลือกโมดูลแบบการ์ดสีเหมือนหน้าคำร้อง (ไม่เรียกฐานข้อมูล)
 // ตอนนี้มีข้อมูลเฉพาะ Mooney: แดชบอร์ดสรุปจากฟีดเดียวกัน ส่วนเปรียบเทียบเคมีและ MDR ยังไม่มีแหล่งข้อมูล
 // จึงแสดงว่ายังไม่เปิดใช้งานและไม่เรียกข้อมูลใด ๆ
@@ -354,9 +354,7 @@
       const shown = model.sortMaterials(model.filterMaterials(materials, query), sort.value);
       body.innerHTML = views.materialRows(shown);
       empty.hidden = shown.length > 0;
-      empty.textContent = materials.length === 0
-        ? views.NO_RESULTS
-        : `ไม่พบวัสดุที่ตรงกับ “${query}”`;
+      empty.innerHTML = shown.length > 0 ? "" : sections.emptyBlock(materials.length === 0 ? views.NO_RESULTS : `ไม่พบวัสดุที่ตรงกับ “${query}”`);
       // จำนวนวัสดุเห็นได้จากรายการอยู่แล้ว บอกเฉพาะตอนค้นหาว่าเหลือกี่จากกี่
       count.textContent = query ? `${shown.length} จาก ${materials.length}` : "";
     };

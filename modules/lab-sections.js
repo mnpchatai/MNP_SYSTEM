@@ -1,13 +1,13 @@
 // โมดูลย่อยของ MNP LAB — รายการโมดูล การอ่านจาก URL หน้าเลือกโมดูล และหัวสีของแต่ละโมดูล ข้อความ HTML ล้วน ไม่มี DOM/Supabase
 // เทสต์ที่ scripts/tests/lab-sections.test.mjs
 //
-// MNP LAB มี 4 โมดูลตามลำดับนี้: แดชบอร์ด · เปรียบเทียบเคมี · Mooney test report · MDR test report
+// MNP LAB มี 4 โมดูลตามลำดับนี้: แดชบอร์ด · เปรียบเทียบเคมี · รายงานทดสอบ Mooney · รายงานทดสอบ MDR
 // ทุกโมดูลอยู่ใต้ #/lab (path เดียว จึงไม่ต้องแก้สิทธิ์ของบัญชี lab-only หรือการไฮไลต์เมนูข้าง): #/lab = หน้าเลือกโมดูล,
 // #/lab?module=<key> = หน้าของโมดูล และหน้าวัสดุของ Mooney คือ #/lab?module=mooney&material=<วัสดุ> (ดู lab-mooney-model.js)
 // ลิงก์เดิมก่อนแยกโมดูล (#/lab?material=<วัสดุ>) ยังเปิดหน้าวัสดุของ Mooney ได้
 //
 // หน้าตาใช้หลักเดียวกับหน้าคำร้อง (app.js requestCenterHeader) และคอมโพเนนต์เดียวกัน:
-// เลือกโมดูลจากการ์ดสีของโมดูล (.type-card + data-module) → เข้าโมดูลแล้วหัวโมดูลแบบเดียวกับทุกโมดูล (.request-module-header) พร้อม "‹ ย้อนกลับ"
+// เลือกโมดูลจากการ์ดสีของโมดูล (.type-card + data-module) → เข้าโมดูลแล้วหัวโมดูลแบบเดียวกับทุกโมดูล (.request-module-header) พร้อม "‹ เลือกโมดูล"
 // สีของโมดูลบอกว่าอยู่ในโมดูลไหน (การ์ดกับจุดสีเดียวกัน) ทุกสีเทียบตัวอักษรขาวบนการ์ดได้ contrast ≥ 4.5:1 ทั้งสีต้นและสีปลาย
 // โมดูลที่ยังไม่เปิดใช้งานลดความอิ่มสี (CSS saturate คงความสว่าง จึงยังผ่าน 4.5:1)
 // และการ์ดของมันไม่เป็นลิงก์ เพราะยังไม่มีอะไรให้เปิด
@@ -30,13 +30,19 @@
   const SECTIONS = Object.freeze([
     { key: "dashboard", label: "แดชบอร์ด", palette: "bom", action: "ดูภาพรวม →" },
     { key: "chemical", label: "เปรียบเทียบเคมี", palette: "gr" },
-    { key: "mooney", label: "Mooney test report", palette: "it", action: "ดูผลทดสอบ →" },
-    { key: "mdr", label: "MDR test report", palette: "pt" },
+    { key: "mooney", label: "รายงานทดสอบ Mooney", palette: "it", action: "ดูผลทดสอบ →" },
+    { key: "mdr", label: "รายงานทดสอบ MDR", palette: "pt" },
   ].map((section) => Object.freeze({ ...section })));
   const HOME = "home";
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const find = (key) => SECTIONS.find((section) => section.key === key) ?? null;
+
+  // สถานะว่างของหน้า LAB ใช้ emptyState() ของ app.js (app.js โหลดทีหลัง จึงอ้างตอนเรียกเท่านั้น)
+  // เทสต์ใน Node ไม่มี app.js จึงถอยไปใช้กล่อง .empty เดียวกันแบบไม่มีไอคอน
+  const emptyBlock = (text, { hint = "" } = {}) => (typeof emptyState === "function"
+    ? emptyState(text, { hint })
+    : `<div class="empty"><p>${esc(text)}</p>${hint ? `<small>${esc(hint)}</small>` : ""}</div>`);
 
   // โมดูลจาก query string: ไม่ระบุ = หน้าเลือกโมดูล (หรือ Mooney ถ้าเป็นลิงก์วัสดุแบบเดิม) ระบุค่าที่ไม่มีจริง = null (หน้า "ไม่พบ")
   function readSection(params) {
@@ -77,13 +83,13 @@
     </div>`;
   }
 
-  // หัวของหน้าโมดูล: ปุ่มย้อนกลับไปหน้าเลือกโมดูล + หัวโมดูลแบบเดียวกับทุกโมดูล (.request-module-header ก้อนสีของโมดูล + ไอคอน)
+  // หัวของหน้าโมดูล: ลิงก์ย้อนกลับชื่อหน้าเลือกโมดูล + หัวโมดูลแบบเดียวกับทุกโมดูล (.request-module-header ก้อนสีของโมดูล + ไอคอน)
   // ชื่อโมดูลเป็น h1 ที่นี่ที่เดียว ("MNP LAB" อยู่ที่ breadcrumb แล้ว ไม่มีคำอธิบายที่พูดซ้ำชื่อ) เพื่อคืนพื้นที่ให้ตาราง
   // extra = ส่วนขวาของหัว เช่น เวลาอ่านชีตกับปุ่มรีเฟรช · open: false = โมดูลที่ยังไม่เปิดใช้งาน (สีจางลง)
   function moduleHead(key, { extra = "", open = true } = {}) {
     const section = find(key);
     if (!section) return "";
-    return `<a class="request-back-link" href="#/lab" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ</a>
+    return `<a class="request-back-link" href="#/lab">‹ เลือกโมดูล</a>
       <div class="page-heading request-module-header lab-module-header${open ? "" : " is-off"}" data-module="${section.palette}">
         <div class="request-module-title"><span class="type-card-badge">${ICONS[section.key]}</span><h1>${esc(section.label)}</h1></div>
         ${extra}
@@ -94,11 +100,11 @@
   function notReadyPage(key) {
     return `<div class="lab-page">
       ${moduleHead(key, { open: false })}
-      <section class="card"><div class="empty"><h2>ยังไม่เปิดใช้งาน</h2><p>ยังไม่ได้เชื่อมแหล่งข้อมูลของโมดูลนี้</p></div></section>
+      <section class="card">${emptyBlock("ยังไม่เปิดใช้งาน", { hint: "ยังไม่ได้เชื่อมแหล่งข้อมูลของโมดูลนี้" })}</section>
     </div>`;
   }
 
-  const api = { SECTIONS, HOME, readSection, sectionUrl, chooserPage, moduleHead, notReadyPage };
+  const api = { SECTIONS, HOME, readSection, sectionUrl, chooserPage, moduleHead, notReadyPage, emptyBlock };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_SECTIONS = api;
 })(typeof window !== "undefined" ? window : globalThis);

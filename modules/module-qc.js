@@ -23,6 +23,8 @@
   // รหัสที่แปลว่าหน้าที่เห็นอยู่ล้าสมัย (มีคนเปลี่ยนใบไปแล้ว) — วาดหน้าใหม่ให้เห็นสถานะล่าสุด
   const STALE_CODES = ["QC_VERSION_CONFLICT", "QC_NOT_DRAFT", "QC_STEP_NOT_CURRENT", "QC_NOT_REJECTED", "QC_NOT_CANCELLABLE", "QC_NCR_EXISTS", "QC_NCR_LINKED", "QC_NOT_SUBMITTED", "QC_NOT_ACTIVE", "QC_NOT_FOUND"];
   const LOT_SEARCH_DELAY = 250;
+  // ป้ายช่องที่ต้องกรอก ใช้แบบเดียวกับทุกหน้า (ห้ามใช้ " *")
+  const REQUIRED_MARK = '<span class="field-required">(จำเป็น)</span>';
 
   // helper ของ app.js (escapeHtml ฯลฯ) ยังไม่ถูกนิยามตอนไฟล์นี้โหลด (index.html โหลดโมดูลก่อน app.js)
   // จึงต้องอ้างตอนเรียกใช้เท่านั้น ห้ามคัดลอกอ้างอิงตอนโหลด (เทสต์ใน qc-pages.test.mjs โหลดไฟล์โดยไม่มี helper)
@@ -80,7 +82,7 @@
     console.error(error);
     // PGRST202 = ฐานข้อมูลยังไม่ได้ขึ้น migration ของโมดูลนี้ (deploy หน้าเว็บก่อน apply migration)
     const message = error?.code === "PGRST202"
-      ? "ฐานข้อมูลยังไม่ได้อัปเดตสำหรับใบตรวจ QC กรุณา apply migration ล่าสุดก่อน"
+      ? "ฐานข้อมูลยังไม่ได้อัปเดตสำหรับใบตรวจ QC กรุณาอัปเดตฐานข้อมูล (apply migration) ล่าสุดก่อน"
       : friendlyError(error);
     paint(TITLE, `${headHtml({ title: TITLE })}<section class="card">${notice(message)}</section>`);
   }
@@ -130,7 +132,7 @@
         <div class="field"><label for="qc-f-status">สถานะ</label>
           <select class="select" id="qc-f-status" name="status">${STATUS_FILTERS.map(([value, label]) => `<option value="${esc(value)}"${value === filter.status ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
         <div class="field"><label for="qc-f-part">Part Number / Part Name</label><input class="input" id="qc-f-part" name="part" maxlength="60" value="${esc(filter.part)}" autocomplete="off"></div>
-        <div class="field"><label for="qc-f-lot">Lot ยางผสม</label><input class="input" id="qc-f-lot" name="lot" maxlength="60" value="${esc(filter.lot)}" autocomplete="off"></div>
+        <div class="field"><label for="qc-f-lot">ล็อตยางผสม</label><input class="input" id="qc-f-lot" name="lot" maxlength="60" value="${esc(filter.lot)}" autocomplete="off"></div>
         <div class="qc-filter-actions"><button class="btn" type="submit">ค้นหา</button><a class="btn secondary" href="${esc(urlFor())}">ล้าง</a></div>
       </form>`;
   }
@@ -139,8 +141,8 @@
   function purgeHtml() {
     return `<section class="card qc-purge" aria-labelledby="qc-purge-title">
         <h2 id="qc-purge-title">ล้างข้อมูลทดสอบ QC</h2>
-        <p class="muted small">ลบใบตรวจและแม่แบบตรวจ QC ทั้งหมดของโหมดทดสอบ แล้วเริ่มนับเลข TEST-QC ใหม่ ข้อมูลจริงและ NCR ทดสอบไม่ถูกแตะ</p>
-        <button class="btn danger" type="button" id="qc-purge-review">ล้างข้อมูลทดสอบ QC</button>
+        <p class="muted small">ลบใบตรวจและแม่แบบ QC ของโหมดทดสอบทั้งหมด</p>
+        <button class="btn danger" type="button" id="qc-purge-review">ล้างข้อมูล</button>
         <div class="qc-purge-panel" id="qc-purge-panel" hidden></div>
       </section>`;
   }
@@ -194,8 +196,8 @@
     const actions = `${access.edit ? `<a class="btn" href="${esc(urlFor({ view: "new" }))}"><span class="plus-icon" aria-hidden="true"></span> สร้างใบตรวจ</a>` : ""}
       <a class="btn" href="${esc(urlFor({ view: "templates" }))}">แม่แบบตรวจ</a>`;
     const table = reports.length
-      ? `<div class="table-wrap"><table class="qc-table"><thead><tr><th>เลขที่</th><th>Part</th><th>ลูกค้า</th><th>Order No.</th><th>Lot ยางผสม</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>ผล</th><th>สถานะ</th></tr></thead><tbody>${reportRows(reports)}</tbody></table></div>`
-      : `<div class="empty">${filtered ? "ไม่พบใบตรวจที่ตรงกับตัวกรอง" : "ยังไม่มีใบตรวจ QC ในโหมดทดสอบ"}${filtered || !access.edit ? "" : `<br><small>สร้างแม่แบบตรวจของ Part ก่อน แล้วจึงสร้างใบตรวจ</small>`}</div>`;
+      ? `<div class="table-wrap"><table class="qc-table"><thead><tr><th>เลขที่</th><th>ชิ้นงาน (Part)</th><th>ลูกค้า</th><th>Order No.</th><th>ล็อตยางผสม</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>ผล</th><th>สถานะ</th></tr></thead><tbody>${reportRows(reports)}</tbody></table></div>`
+      : emptyState(filtered ? "ไม่พบใบตรวจที่ตรงกับตัวกรอง" : "ยังไม่มีใบตรวจ QC ในโหมดทดสอบ", filtered || !access.edit ? {} : { hint: "สร้างแม่แบบตรวจของชิ้นงานก่อน แล้วจึงสร้างใบตรวจ" });
     const root = paint(TITLE, `<div class="qc-page">${headHtml({ title: TITLE, actions })}
       <section class="card">${filterHtml(filter)}${table}</section>
       ${state.sandbox?.active ? purgeHtml() : ""}</div>`);
@@ -208,7 +210,7 @@
   }
 
   // ---------- แม่แบบตรวจ ----------
-  const templatesBack = { href: urlFor(), label: "‹ กลับรายการใบตรวจ" };
+  const templatesBack = { href: urlFor(), label: "‹ ใบตรวจ QC" };
 
   async function templatesView({ access }) {
     const templates = await rpc("app_qc_templates");
@@ -222,8 +224,8 @@
     const actions = access.edit ? `<a class="btn" href="${esc(urlFor({ view: "template" }))}"><span class="plus-icon" aria-hidden="true"></span> สร้างแม่แบบ</a>` : "";
     paint(`${TITLE} / แม่แบบตรวจ`, `<div class="qc-page">${headHtml({ title: "แม่แบบตรวจ", back: templatesBack, actions })}
       <section class="card">${rows
-        ? `<div class="table-wrap"><table class="qc-table"><thead><tr><th>Part Number</th><th>Part Name</th><th>customer</th><th class="right">รายการตรวจ</th><th>สถานะ</th></tr></thead><tbody>${rows}</tbody></table></div>`
-        : `<div class="empty">ยังไม่มีแม่แบบตรวจ${access.edit ? "<br><small>สร้างแม่แบบของ Part (รายการ A, B, C… พร้อมสเปก MIN/STD/MAX) เพื่อใช้สร้างใบตรวจ</small>" : ""}</div>`}</section></div>`);
+        ? `<div class="table-wrap"><table class="qc-table"><thead><tr><th>Part Number</th><th>Part Name</th><th>ลูกค้า</th><th class="right">รายการตรวจ</th><th>สถานะ</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : emptyState("ยังไม่มีแม่แบบตรวจ", access.edit ? { hint: "สร้างแม่แบบของชิ้นงานก่อน เพื่อใช้สร้างใบตรวจ" } : {})}</section></div>`);
   }
 
   // รหัสรายการถัดไป: A..Z แล้ว AA..AZ (ตรงกับ ITEM No. ของฟอร์ม และ check ของฐานข้อมูล ^[A-Z]{1,2}$)
@@ -255,27 +257,27 @@
     const templates = await rpc("app_qc_templates");
     const template = id ? (templates ?? []).find((row) => row.id === id) : null;
     if (id && !template) {
-      paint(`${TITLE} / แม่แบบตรวจ`, `<div class="qc-page">${headHtml({ title: "แม่แบบตรวจ", back: { href: urlFor({ view: "templates" }), label: "‹ กลับรายการแม่แบบ" } })}<section class="card">${notice(model.ERROR_MESSAGES.QC_NOT_FOUND)}</section></div>`);
+      paint(`${TITLE} / แม่แบบตรวจ`, `<div class="qc-page">${headHtml({ title: "แม่แบบตรวจ", back: { href: urlFor({ view: "templates" }), label: "‹ แม่แบบตรวจ" } })}<section class="card">${notice(model.ERROR_MESSAGES.QC_NOT_FOUND)}</section></div>`);
       return;
     }
     const editable = access.edit;
     const items = template?.items?.length ? template.items : [{ item_no: "A", name: "", instrument: "", unit: "", spec_min: null, spec_std: null, spec_max: null, points_required: 5 }];
-    const back = { href: urlFor({ view: "templates" }), label: "‹ กลับรายการแม่แบบ" };
+    const back = { href: urlFor({ view: "templates" }), label: "‹ แม่แบบตรวจ" };
     const title = template ? template.part_number || template.part_name : "สร้างแม่แบบ";
     const root = paint(`${TITLE} / แม่แบบตรวจ`, `<div class="qc-page">${headHtml({ title, back })}
       <form class="card" id="qc-form" novalidate>
         ${errorBox()}
         ${editable ? "" : `<p class="muted small">ตำแหน่งที่ทำหน้าที่อยู่ดูแม่แบบได้อย่างเดียว (แก้ไขได้เฉพาะแผนก QA และผู้ดูแลระบบ)</p>`}
         <div class="form-grid">
-          <div class="field"><label for="qc-t-part">Part Number (ไม่บังคับ)</label><input class="input" id="qc-t-part" name="part_number" maxlength="60" value="${esc(template?.part_number)}"${editable ? "" : " disabled"}></div>
-          <div class="field"><label for="qc-t-name">Part Name *</label><input class="input" id="qc-t-name" name="part_name" maxlength="200" required value="${esc(template?.part_name)}"${editable ? "" : " disabled"}></div>
-          <div class="field"><label for="qc-t-customer">customer</label><input class="input" id="qc-t-customer" name="customer" maxlength="100" value="${esc(template?.customer)}"${editable ? "" : " disabled"}></div>
+          <div class="field"><label for="qc-t-part">Part Number (ถ้ามี)</label><input class="input" id="qc-t-part" name="part_number" maxlength="60" value="${esc(template?.part_number)}"${editable ? "" : " disabled"}></div>
+          <div class="field"><label for="qc-t-name">Part Name ${REQUIRED_MARK}</label><input class="input" id="qc-t-name" name="part_name" maxlength="200" required value="${esc(template?.part_name)}"${editable ? "" : " disabled"}></div>
+          <div class="field"><label for="qc-t-customer">Customer</label><input class="input" id="qc-t-customer" name="customer" maxlength="100" value="${esc(template?.customer)}"${editable ? "" : " disabled"}></div>
           <div class="field"><label for="qc-t-status">สถานะ</label><select class="select" id="qc-t-status" name="status"${editable ? "" : " disabled"}>
             <option value="active"${template?.status === "inactive" ? "" : " selected"}>ใช้งาน</option><option value="inactive"${template?.status === "inactive" ? " selected" : ""}>ปิดใช้งาน (ไม่แสดงตอนสร้างใบ)</option></select></div>
           <div class="field full"><label for="qc-t-note">คำอธิบายจุดวัด</label><textarea class="textarea" id="qc-t-note" name="drawing_note" rows="2" maxlength="500"${editable ? "" : " disabled"}>${esc(template?.drawing_note)}</textarea></div>
         </div>
         <h2>รายการตรวจ</h2>
-        <div class="table-wrap"><table class="qc-table qc-template-table"><thead><tr><th>ITEM No.</th><th>Inspection Item</th><th>Instrument</th><th>หน่วย</th><th>MIN</th><th>STD</th><th>MAX</th><th>จุดวัด</th><th></th></tr></thead>
+        <div class="table-wrap"><table class="qc-table qc-template-table"><thead><tr><th>ITEM No. ${REQUIRED_MARK}</th><th>Inspection Item ${REQUIRED_MARK}</th><th>Instrument</th><th>หน่วย</th><th>MIN</th><th>STD</th><th>MAX</th><th>จุดวัด</th><th></th></tr></thead>
           <tbody id="qc-template-rows">${items.map((item) => templateRowHtml(item, editable)).join("")}</tbody></table></div>
         ${editable ? `<div class="qc-row-actions"><button class="btn secondary small" type="button" id="qc-add-row">+ เพิ่มรายการตรวจ</button></div>
           <div class="form-actions"><a class="btn secondary" href="${esc(urlFor({ view: "templates" }))}">ยกเลิก</a><button class="btn" type="submit">บันทึกแม่แบบ</button></div>` : ""}
@@ -344,11 +346,11 @@
   }
 
   function lotsHtml() {
-    return `<section class="card qc-lots"><h2>Lot ยางผสม</h2>
-        <p class="muted small">เลือกจาก Lot ที่มีผลทดสอบ Mooney หรือพิมพ์ Lot เองแล้วกด Enter / “เพิ่ม” (ใส่ได้ไม่เกิน ${model.MAX_LOTS} Lot)</p>
+    return `<section class="card qc-lots"><h2>ล็อตยางผสม</h2>
+        <p class="muted small">เลือกจากล็อตที่มีผล Mooney หรือพิมพ์เอง (ไม่เกิน ${model.MAX_LOTS} ล็อต)</p>
         <div class="qc-chips" id="qc-lot-chips"></div>
         <div class="qc-lot-combo">
-          <input class="input" id="qc-lot-input" type="text" maxlength="60" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="qc-lot-popup" aria-label="ค้นหาหรือพิมพ์ Lot ยางผสม" placeholder="ค้นหา Lot">
+          <input class="input" id="qc-lot-input" type="text" maxlength="60" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="qc-lot-popup" aria-label="ค้นหาหรือพิมพ์ล็อตยางผสม" title="พิมพ์ล็อตแล้วกด Enter หรือปุ่มเพิ่ม" placeholder="ค้นหาล็อต">
           <button class="btn secondary" type="button" id="qc-lot-add">เพิ่ม</button>
           <div class="qc-lot-popup" id="qc-lot-popup" data-popup role="listbox" hidden></div>
         </div>
@@ -366,15 +368,15 @@
 
     const renderChips = () => {
       chips.innerHTML = lots.length
-        ? lots.map((lot) => `<span class="qc-chip">${esc(lot)}<button type="button" data-remove-lot="${esc(lot)}" aria-label="เอา Lot ${esc(lot)} ออก">×</button></span>`).join("")
-        : '<span class="muted small">ยังไม่ได้เลือก Lot</span>';
+        ? lots.map((lot) => `<span class="qc-chip">${esc(lot)}<button type="button" data-remove-lot="${esc(lot)}" aria-label="เอาล็อต ${esc(lot)} ออก">×</button></span>`).join("")
+        : '<span class="muted small">ยังไม่ได้เลือกล็อต</span>';
     };
     const addLot = (value) => {
       const lot = String(value ?? "").trim();
       if (!lot) return;
-      if (lot.length > 60) return showToast("Lot ยางผสมต้องไม่เกิน 60 ตัวอักษร", "error");
-      if (lots.includes(lot)) return showToast("เลือก Lot นี้ไว้แล้ว", "error");
-      if (lots.length >= model.MAX_LOTS) return showToast(`ใส่ Lot ยางผสมได้ไม่เกิน ${model.MAX_LOTS} Lot`, "error");
+      if (lot.length > 60) return showToast("ล็อตยางผสมต้องไม่เกิน 60 ตัวอักษร", "error");
+      if (lots.includes(lot)) return showToast("เลือกล็อตนี้ไว้แล้ว", "error");
+      if (lots.length >= model.MAX_LOTS) return showToast(`ใส่ล็อตยางผสมได้ไม่เกิน ${model.MAX_LOTS} ล็อต`, "error");
       lots.push(lot);
       renderChips();
       clearTimeout(timer);
@@ -385,7 +387,7 @@
     const optionsHtml = (rows) => (rows.length
       ? rows.map((row) => `<button type="button" class="ss-option${lots.includes(row.lot_number) ? " is-selected" : ""}" role="option" data-lot="${esc(row.lot_number)}">
           <span><strong>${esc(row.lot_number)}</strong><br><small class="muted">${esc([row.material, `${row.tests} ครั้ง`, row.latest_test_date ? formatDate(row.latest_test_date) : ""].filter(Boolean).join(" · "))}</small></span></button>`).join("")
-      : '<div class="ss-empty">ไม่พบ Lot ในผล Mooney — พิมพ์ Lot เองแล้วกด Enter ได้</div>');
+      : '<div class="ss-empty">ไม่พบล็อตในผล Mooney — พิมพ์เองแล้วกด Enter ได้</div>');
     const showPopup = async () => {
       requestId += 1;
       const mine = requestId;
@@ -431,8 +433,8 @@
 
   async function reportFormView({ params, access, view }) {
     const id = view === "edit" ? params.get("id") ?? "" : "";
-    const back = { href: id ? urlFor({ view: "report", id }) : urlFor(), label: id ? "‹ กลับใบตรวจ" : "‹ กลับรายการใบตรวจ" };
     const [templates, report] = await Promise.all([rpc("app_qc_templates"), id ? rpc("app_qc_report", { p_id: id }) : null]);
+    const back = { href: id ? urlFor({ view: "report", id }) : urlFor(), label: report ? `‹ ${report.report_no}` : "‹ ใบตรวจ QC" };
     const gate = (message) => paint(`${TITLE} / ${id ? "แก้ไขใบตรวจ" : "สร้างใบตรวจ"}`, `<div class="qc-page">${headHtml({ title: id ? "แก้ไขใบตรวจ" : "สร้างใบตรวจ", back })}<section class="card">${notice(message)}</section></div>`);
     if (!access.edit) return gate("ตำแหน่งที่ทำหน้าที่อยู่สร้าง/แก้ไขใบตรวจไม่ได้ (ทำได้เฉพาะแผนก QA และผู้ดูแลระบบ) — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลือง");
     if (report && report.status !== "draft") return gate(model.ERROR_MESSAGES.QC_NOT_DRAFT);
@@ -465,14 +467,14 @@
       <form id="qc-form" novalidate>
         ${errorBox()}
         <section class="card"><div class="form-grid">
-          <div class="field"><label for="qc-r-template">Part / แม่แบบ *</label><select class="select" id="qc-r-template" name="template_id">${options}</select>
+          <div class="field"><label for="qc-r-template">แม่แบบตรวจของ Part ${REQUIRED_MARK}</label><select class="select" id="qc-r-template" name="template_id">${options}</select>
             <input type="hidden" name="part_number" value="${esc(report?.part_number ?? current?.part_number)}"></div>
-          <div class="field"><label for="qc-r-name">Part Name *</label><input class="input" id="qc-r-name" name="part_name" maxlength="200" required value="${esc(report?.part_name ?? current?.part_name)}"></div>
-          <div class="field"><label for="qc-r-customer">customer</label><input class="input" id="qc-r-customer" name="customer" maxlength="100" value="${esc(report?.customer ?? current?.customer)}"></div>
+          <div class="field"><label for="qc-r-name">Part Name ${REQUIRED_MARK}</label><input class="input" id="qc-r-name" name="part_name" maxlength="200" required value="${esc(report?.part_name ?? current?.part_name)}"></div>
+          <div class="field"><label for="qc-r-customer">Customer</label><input class="input" id="qc-r-customer" name="customer" maxlength="100" value="${esc(report?.customer ?? current?.customer)}"></div>
           <div class="field"><label for="qc-r-order">Order No.</label><input class="input" id="qc-r-order" name="order_no" maxlength="60" value="${esc(report?.order_no)}"></div>
           <div class="field"><label for="qc-r-code">Code</label><input class="input" id="qc-r-code" name="code" maxlength="60" value="${esc(report?.code)}"></div>
           <div class="field"><label for="qc-r-sample">Sample</label><input class="input" id="qc-r-sample" name="sample_label" maxlength="30" value="${esc(sampleLabel)}"></div>
-          <div class="field"><label for="qc-r-date">inspection Date</label><input class="input" id="qc-r-date" name="inspected_at" type="datetime-local" value="${esc(model.bangkokInputValue(report?.inspected_at ?? undefined))}"></div>
+          <div class="field"><label for="qc-r-date">Inspection Date</label><input class="input" id="qc-r-date" name="inspected_at" type="datetime-local" value="${esc(model.bangkokInputValue(report?.inspected_at ?? undefined))}"></div>
         </div></section>
         ${lotsHtml()}
         <section class="card"><h2>ผลการตรวจ</h2>
@@ -580,11 +582,11 @@
     return `<section class="card"><dl class="definition-grid">
         ${definition("Part Number", esc(model.partNumberText(report.part_number)))}
         ${definition("Part Name", esc(report.part_name))}
-        ${definition("customer", esc(orDash(report.customer)))}
+        ${definition("Customer", esc(orDash(report.customer)))}
         ${definition("Order No.", esc(orDash(report.order_no)))}
         ${definition("Code", esc(orDash(report.code)))}
         ${definition("Inspecter By", esc(orDash(report.inspector_name)))}
-        ${definition("inspection Date", report.inspected_at ? esc(formatDate(report.inspected_at, true)) : "—")}
+        ${definition("Inspection Date", report.inspected_at ? esc(formatDate(report.inspected_at, true)) : "—")}
         ${definition("Results", resultBadge(report.result))}
         ${report.ncr_no ? definition("NCR", `<a href="#/ncr?id=${encodeURIComponent(report.ncr_id)}">${esc(report.ncr_no)}</a>`) : ""}
       </dl></section>`;
@@ -604,9 +606,9 @@
     const rows = lab.map((row) => (row.found
       ? `<tr><td><strong>${esc(row.lot_number)}</strong></td><td>${materialLinks(row.material)}</td><td class="right">${esc(row.tests)}</td>
           <td>${row.latest_test_date ? esc(formatDate(row.latest_test_date)) : "—"}</td><td class="right">${reading(row.avg_mh)}</td><td class="right">${reading(row.avg_mv)}</td></tr>`
-      : `<tr><td><strong>${esc(row.lot_number)}</strong></td><td colspan="5" class="muted">ยังไม่มีผล Mooney ของ Lot นี้ในระบบ</td></tr>`)).join("");
+      : `<tr><td><strong>${esc(row.lot_number)}</strong></td><td colspan="5" class="muted">ยังไม่มีผล Mooney ของล็อตนี้ในระบบ</td></tr>`)).join("");
     return `<section class="card"><h2>ยางผสม (Mooney)</h2><div class="table-wrap"><table class="qc-table">
-        <thead><tr><th>Lot</th><th>วัสดุ</th><th class="right">ผลทดสอบ (ครั้ง)</th><th>ทดสอบล่าสุด</th><th class="right">AVG MH</th><th class="right">AVG MV</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+        <thead><tr><th>ล็อต</th><th>วัสดุ</th><th class="right">ผลทดสอบ (ครั้ง)</th><th>ทดสอบล่าสุด</th><th class="right">เฉลี่ย MH</th><th class="right">เฉลี่ย MV</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
   }
 
   function itemsHtml(report) {
@@ -629,8 +631,8 @@
   function signHtml(report) {
     const submitted = report.status !== "draft" && report.status !== "cancelled" && report.inspected_by;
     const box = (role, inner) => `<div class="qc-sign"><span class="qc-sign-role">${esc(role)}</span>${inner}</div>`;
-    // ชื่อและวันที่ของผู้ตรวจอยู่ในหัวใบแล้ว (Inspecter By / inspection Date) ช่องนี้บอกแค่ว่าลงนามแล้ว
-    const inspector = box("Inspector", submitted ? "<strong>✓ ลงนามแล้ว</strong>" : "<strong>—</strong>");
+    // ชื่อและวันที่ของผู้ตรวจอยู่ในหัวใบแล้ว (Inspecter By / Inspection Date) ช่องนี้บอกแค่ว่าลงนามแล้ว
+    const inspector = box("ผู้ตรวจ", submitted ? "<strong>✓ ลงนามแล้ว</strong>" : "<strong>—</strong>");
     const steps = model.STEPS.map((step) => {
       const approval = (report.approvals ?? []).find((row) => row.step_order === step.order);
       const name = fullName(approval);
@@ -663,11 +665,11 @@
         ${errorBox("qc-ncr-error")}
         ${typesFailed ? '<p class="form-message error">โหลดประเภทข้อบกพร่องของ NCR ไม่สำเร็จ ลองเปิดหน้านี้ใหม่</p>' : ""}
         <div class="form-grid">
-          <div class="field"><label for="qc-ncr-total">จำนวนที่ตรวจ *</label><input class="input" id="qc-ncr-total" name="qty_total" type="number" inputmode="decimal" min="0" step="any" required></div>
-          <div class="field"><label for="qc-ncr-defect">จำนวนเสีย *</label><input class="input" id="qc-ncr-defect" name="qty_defect" type="number" inputmode="decimal" min="0" step="any" required></div>
-          <div class="field"><label for="qc-ncr-unit">หน่วย *</label><select class="select" id="qc-ncr-unit" name="unit"><option value="">— เลือก —</option>${model.NCR_UNITS.map((value) => `<option${value === unit ? " selected" : ""}>${esc(value)}</option>`).join("")}</select></div>
-          <div class="field"><label for="qc-ncr-type">ประเภทข้อบกพร่อง *</label><select class="select" id="qc-ncr-type" name="defect_type_code"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${esc(type.code)}">${esc(type.name_th)}</option>`).join("")}</select></div>
-          <div class="field full"><label for="qc-ncr-desc">คำอธิบายความไม่ผ่าน * (อย่างน้อย 10 ตัวอักษร ใช้เป็นรายละเอียดของ NCR)</label><textarea class="textarea" id="qc-ncr-desc" name="description" rows="3" maxlength="4000">${esc(defaultNcrDescription(report))}</textarea></div>
+          <div class="field"><label for="qc-ncr-total">จำนวนที่ตรวจ ${REQUIRED_MARK}</label><input class="input" id="qc-ncr-total" name="qty_total" type="number" inputmode="decimal" min="0" step="any" required></div>
+          <div class="field"><label for="qc-ncr-defect">จำนวนเสีย ${REQUIRED_MARK}</label><input class="input" id="qc-ncr-defect" name="qty_defect" type="number" inputmode="decimal" min="0" step="any" required></div>
+          <div class="field"><label for="qc-ncr-unit">หน่วย ${REQUIRED_MARK}</label><select class="select" id="qc-ncr-unit" name="unit"><option value="">— เลือก —</option>${model.NCR_UNITS.map((value) => `<option${value === unit ? " selected" : ""}>${esc(value)}</option>`).join("")}</select></div>
+          <div class="field"><label for="qc-ncr-type">ประเภทข้อบกพร่อง ${REQUIRED_MARK}</label><select class="select" id="qc-ncr-type" name="defect_type_code"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${esc(type.code)}">${esc(type.name_th)}</option>`).join("")}</select></div>
+          <div class="field full"><label for="qc-ncr-desc">คำอธิบายความไม่ผ่าน ${REQUIRED_MARK}</label><textarea class="textarea" id="qc-ncr-desc" name="description" rows="3" maxlength="4000" title="อย่างน้อย 10 ตัวอักษร ใช้เป็นรายละเอียดของ NCR">${esc(defaultNcrDescription(report))}</textarea></div>
         </div>
         <div class="form-actions"><button class="btn" type="submit">เปิด NCR</button></div>
       </form></details>`;
@@ -676,7 +678,7 @@
   function cancelFormHtml() {
     return `<details class="fm-review-details"><summary>ยกเลิกใบนี้</summary>
       <form class="qc-action-form" id="qc-cancel-form" novalidate>
-        <div class="field full"><label for="qc-cancel-note">เหตุผลที่ยกเลิก * (อย่างน้อย 5 ตัวอักษร)</label><textarea class="textarea" id="qc-cancel-note" name="note" rows="2" maxlength="1000"></textarea></div>
+        <div class="field full"><label for="qc-cancel-note">เหตุผลที่ยกเลิก ${REQUIRED_MARK}</label><textarea class="textarea" id="qc-cancel-note" name="note" rows="2" maxlength="1000" title="อย่างน้อย 5 ตัวอักษร"></textarea></div>
         <div class="form-actions"><button class="btn danger" type="submit">ยกเลิกใบตรวจ</button></div>
       </form></details>`;
   }
@@ -699,7 +701,7 @@
         : `<form class="qc-action-form" id="qc-decide-form" novalidate>
             <h3>พิจารณา: ${esc(pendingStep.label)}</h3>
             ${errorBox("qc-decide-error")}
-            <div class="field full"><label for="qc-decide-comment">ความเห็น (จำเป็นเมื่อไม่อนุมัติ อย่างน้อย 5 ตัวอักษร)</label><textarea class="textarea" id="qc-decide-comment" name="comment" rows="2" maxlength="1000"></textarea></div>
+            <div class="field full"><label for="qc-decide-comment">ความเห็น <span class="field-required">(จำเป็นเมื่อไม่อนุมัติ)</span></label><textarea class="textarea" id="qc-decide-comment" name="comment" rows="2" maxlength="1000" title="เมื่อไม่อนุมัติ ต้องมีอย่างน้อย 5 ตัวอักษร"></textarea></div>
             <div class="form-actions"><button class="btn danger" type="button" data-decision="reject">ไม่อนุมัติ</button><button class="btn" type="button" data-decision="approve">อนุมัติ</button></div>
           </form>`);
     }
@@ -760,7 +762,7 @@
 
   async function reportView({ params, access }) {
     const id = params.get("id") ?? "";
-    const back = { href: urlFor(), label: "‹ กลับรายการใบตรวจ" };
+    const back = { href: urlFor(), label: "‹ ใบตรวจ QC" };
     const gone = () => paint(`${TITLE} / ใบตรวจ`, `<div class="qc-page">${headHtml({ title: "ใบตรวจ", back })}<section class="card">${notice(model.ERROR_MESSAGES.QC_NOT_FOUND)}</section></div>`);
     if (!id) return gone();
     let report;
@@ -805,7 +807,7 @@
     try {
       const access = await loadAccess();
       if (!access.read) {
-        paint(TITLE, `${headHtml({ title: TITLE })}<section class="card">${notice("ตำแหน่งที่ทำหน้าที่อยู่ดูใบตรวจ QC ไม่ได้ (เฉพาะแผนก QA, ผจก.โรงงาน, ผจก.ทั่วไป และผู้ดูแลระบบ) — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลือง")}</section>`);
+        paint(TITLE, `${headHtml({ title: TITLE })}<section class="card">${notice("ตำแหน่งที่ทำหน้าที่อยู่ดูใบตรวจ QC ไม่ได้ (เฉพาะแผนก QA, ผู้จัดการโรงงาน, ผู้จัดการทั่วไป และผู้ดูแลระบบ) — สลับ “ทำหน้าที่เป็น” ที่แถบสีเหลือง")}</section>`);
         return undefined;
       }
       const handler = Object.hasOwn(VIEWS, view) ? VIEWS[view] : listView;
