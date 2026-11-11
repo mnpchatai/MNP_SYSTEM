@@ -5078,10 +5078,14 @@ function holidaysSectionHtml(holidays) {
 }
 
 function bindHolidayForms(params) {
+  // วันที่วันหยุดใช้ปฏิทินไทยแบบเดียวกับทุกฟอร์ม · ช่องที่ถูกซ่อนตรวจค่าว่างเองตอนส่ง
+  const holidayDate = document.querySelector("#holiday-date");
+  if (holidayDate && window.MNP_DATE_PICKER) { holidayDate.required = false; window.MNP_DATE_PICKER.enhance(holidayDate); }
   document.querySelector("#holiday-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    if (!values.get("holiday_date")) return showToast("กรุณาเลือกวันที่", "error");
     setFormBusy(form, true);
     const { error } = await sb.rpc("app_admin_set_holiday", {
       p_date: String(values.get("holiday_date") ?? "") || null,

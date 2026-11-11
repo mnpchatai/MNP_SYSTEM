@@ -908,6 +908,11 @@
           window.MNP_DATE_PICKER.enhance(input);
         });
       }
+      // ฟอร์มเลื่อนกำหนดเสร็จและเลื่อนวันของมาส่งใช้ปฏิทินเดียวกัน ทั้งสองฟอร์มตรวจค่าว่างเองตอนส่ง
+      document.querySelectorAll('#expected-date-form input[type="date"], .progress-reschedule-form input[type="date"]').forEach((input) => {
+        input.required = false;
+        window.MNP_DATE_PICKER?.enhance(input);
+      });
       clearRepairFieldErrorOnEdit(assignForm);
       clearRepairFieldErrorOnEdit(document.querySelector("#finish-form"));
       clearRepairFieldErrorOnEdit(document.querySelector("#verify-note")?.closest("section"));
