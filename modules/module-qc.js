@@ -669,7 +669,7 @@
           <div class="field"><label for="qc-ncr-defect">จำนวนเสีย ${REQUIRED_MARK}</label><input class="input" id="qc-ncr-defect" name="qty_defect" type="number" inputmode="decimal" min="0" step="any" required></div>
           <div class="field"><label for="qc-ncr-unit">หน่วย ${REQUIRED_MARK}</label><select class="select" id="qc-ncr-unit" name="unit"><option value="">— เลือก —</option>${model.NCR_UNITS.map((value) => `<option${value === unit ? " selected" : ""}>${esc(value)}</option>`).join("")}</select></div>
           <div class="field"><label for="qc-ncr-type">ประเภทข้อบกพร่อง ${REQUIRED_MARK}</label><select class="select" id="qc-ncr-type" name="defect_type_code"><option value="">— เลือก —</option>${defectTypes.map((type) => `<option value="${esc(type.code)}">${esc(type.name_th)}</option>`).join("")}</select></div>
-          <div class="field full"><label for="qc-ncr-desc">คำอธิบายความไม่ผ่าน ${REQUIRED_MARK}</label><textarea class="textarea" id="qc-ncr-desc" name="description" rows="3" maxlength="4000" title="อย่างน้อย 10 ตัวอักษร ใช้เป็นรายละเอียดของ NCR">${esc(defaultNcrDescription(report))}</textarea></div>
+          <div class="field full"><label for="qc-ncr-desc">คำอธิบายความไม่ผ่าน ${REQUIRED_MARK}</label><textarea class="textarea" id="qc-ncr-desc" name="description" rows="3" maxlength="4000" title="ใช้เป็นรายละเอียดของ NCR">${esc(defaultNcrDescription(report))}</textarea><small>อย่างน้อย 10 ตัวอักษร</small></div>
         </div>
         <div class="form-actions"><button class="btn" type="submit">เปิด NCR</button></div>
       </form></details>`;
@@ -678,7 +678,7 @@
   function cancelFormHtml() {
     return `<details class="fm-review-details"><summary>ยกเลิกใบนี้</summary>
       <form class="qc-action-form" id="qc-cancel-form" novalidate>
-        <div class="field full"><label for="qc-cancel-note">เหตุผลที่ยกเลิก ${REQUIRED_MARK}</label><textarea class="textarea" id="qc-cancel-note" name="note" rows="2" maxlength="1000" title="อย่างน้อย 5 ตัวอักษร"></textarea></div>
+        <div class="field full"><label for="qc-cancel-note">เหตุผลที่ยกเลิก ${REQUIRED_MARK}</label><textarea class="textarea" id="qc-cancel-note" name="note" rows="2" maxlength="1000" ></textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
         <div class="form-actions"><button class="btn danger" type="submit">ยกเลิกใบตรวจ</button></div>
       </form></details>`;
   }

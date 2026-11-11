@@ -68,7 +68,12 @@
   // ปุ่มเลือกไฟล์แบบเดียวกับทั้งระบบ (.file-pick) แทนช่อง "Choose File" ของเบราว์เซอร์ · text = ข้อความบนปุ่ม title = เงื่อนไขไฟล์ (ไม่พิมพ์ถาวร)
   const filePick = (id, name, text, { title = "", accept = "", icon = "document", extra = "" } = {}) => `<label class="btn secondary file-pick" for="${attr(id)}"${title ? ` title="${attr(title)}"` : ""}>${root.MNP_UI_ICONS?.icon ? root.MNP_UI_ICONS.icon(icon) : ""} ${esc(text)}</label><input class="file-pick-input" id="${attr(id)}"${name ? ` name="${attr(name)}"` : ""} type="file"${accept ? ` accept="${attr(accept)}"` : ""}${extra ? ` ${extra}` : ""}>`;
   // ช่องวันที่ทุกช่องในขอบเขตนี้แสดงเป็นวันที่ไทย (พ.ศ.) ผ่านตัวเลือกวันที่ของระบบหลัก
-  const enhanceDates = (scope) => scope?.querySelectorAll?.('input[type="date"]').forEach((node) => root.MNP_DATE_PICKER?.enhance?.(node));
+  // ปฏิทินไทยซ่อนช่องจริง: ช่องที่ซ่อนอยู่ห้าม required (เบราว์เซอร์จะไม่ยอมส่งฟอร์มและไม่บอกเหตุผล) · action ตรวจค่าว่างเองแล้วแจ้งผ่าน toast
+  const enhanceDates = (scope) => scope?.querySelectorAll?.('input[type="date"]').forEach((node) => {
+    if (!root.MNP_DATE_PICKER?.enhance) return;
+    node.required = false;
+    root.MNP_DATE_PICKER.enhance(node);
+  });
   // options: สตริง หรือ { value, label, disabled }
   const select = (name, options, { value = "", placeholder = null, id = "", className = "", extra = "" } = {}) => {
     const rows = options.map((option) => (typeof option === "string" ? { value: option, label: option } : option));

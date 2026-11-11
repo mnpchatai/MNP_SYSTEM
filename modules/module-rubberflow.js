@@ -361,7 +361,7 @@
     built.bind?.(dialog, ctx);
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
-    dialog.querySelector("input:not([type=hidden]), select, textarea")?.focus?.();
+    dialog.querySelector("input:not([type=hidden]):not([hidden]), select:not([hidden]), textarea, .date-pick-button")?.focus?.();
   }
 
   // ---------- โครงหน้า ----------

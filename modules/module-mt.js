@@ -159,7 +159,8 @@
         <div class="progress-step-extra">
           <button type="button" class="btn secondary small progress-reschedule-toggle" data-step="${escapeHtml(step.id)}">ของยังไม่มา เลื่อนวันที่คาดว่าจะมาส่ง</button>
           <form class="progress-reschedule-form hidden" data-step="${escapeHtml(step.id)}">
-            <input class="input" type="date" name="expected_on" aria-label="วันที่คาดว่าของจะมาส่งใหม่" required>
+            <label class="field-label" for="progress-reschedule-date-${escapeHtml(step.id)}">วันที่คาดว่าของจะมาส่งใหม่${REQUIRED}</label>
+            <input class="input" id="progress-reschedule-date-${escapeHtml(step.id)}" type="date" name="expected_on" required>
             ${extraFilesFieldHtml(`progress-reschedule-files-${escapeHtml(step.id)}`)}
             <button class="btn small" type="submit">บันทึกวันที่ใหม่</button>
           </form>
@@ -365,6 +366,7 @@
         <div class="field"><label for="expected-date-input">วันที่คาดว่าจะเสร็จใหม่${REQUIRED}</label><input class="input" id="expected-date-input" name="expected_date" type="date" min="${escapeHtml(today)}" required></div>
         <div class="field"><label for="expected-date-note">เหตุผล (ถ้ามี)</label><input class="input" id="expected-date-note" name="note" maxlength="500" placeholder="เช่น รออะไหล่"></div>
         ${extraFilesFieldHtml("expected-date-files")}
+        <small>ระบบแจ้งผู้แจ้งให้ทราบ</small>
         <div class="form-actions"><button class="btn" type="submit">บันทึกวันที่ใหม่</button></div>
       </form>`;
     if (overdue) {
@@ -373,7 +375,7 @@
         ${form}</section>`;
     }
     return `<section class="card"><h2>กำหนดเสร็จ ${escapeHtml(current)}</h2>
-      <button type="button" class="btn secondary small" id="expected-date-toggle" title="ระบบบันทึกประวัติการแก้ไขและแจ้งผู้แจ้งให้ทราบ">แก้ไขวันที่คาดว่าจะเสร็จ</button>
+      <button type="button" class="btn secondary small" id="expected-date-toggle">แก้ไขวันที่คาดว่าจะเสร็จ</button>
       ${form}</section>`;
   }
 
@@ -887,7 +889,7 @@
           <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
           <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือแนบรูปใบเสร็จในช่องไฟล์ด้านล่างแทนการกรอกทีละแถว</p></div>
           ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
-          <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button" title="บันทึกไว้ทำต่อภายหลัง ยังไม่จบงาน">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
+          <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกไว้ทำต่อ</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
         ${canVerify ? `<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม</h2>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
         ${canAssign && request.status !== "pending_assign" ? assignSection : ""}

@@ -1594,3 +1594,12 @@ test("house rules stay: required fields carry the shared marker, files are picke
   // every date field is turned into the Thai-date picker after a page or dialog is drawn
   for (const file of ["modules/module-rubberflow.js", "modules/module-bom.js"]) assert.equal((fs.readFileSync(file, "utf8").match(/ui\.enhanceDates\(/g) ?? []).length, 2, `${file}: page and dialogs`);
 });
+
+test("the Thai date picker drops required from the hidden native date input, so a blank date reaches the action's own message", () => {
+  // ช่องที่ถูกซ่อน (input.hidden) ยัง required อยู่ เบราว์เซอร์จะไม่ยอมส่งฟอร์มและไม่บอกเหตุผล
+  const ui = fs.readFileSync("modules/rubberflow-ui.js", "utf8");
+  assert.match(ui, /const enhanceDates = \(scope\) => scope\?\.querySelectorAll\?\.\('input\[type="date"\]'\)\.forEach\(\(node\) => \{\s*if \(!root\.MNP_DATE_PICKER\?\.enhance\) return;\s*node\.required = false;\s*root\.MNP_DATE_PICKER\.enhance\(node\);/);
+  for (const file of ["modules/module-rubberflow.js", "modules/module-bom.js"]) {
+    assert.match(fs.readFileSync(file, "utf8"), /dialog\.querySelector\("input:not\(\[type=hidden\]\):not\(\[hidden\]\), select:not\(\[hidden\]\), textarea, \.date-pick-button"\)/, `${file}: first focus skips the hidden date input`);
+  }
+});
