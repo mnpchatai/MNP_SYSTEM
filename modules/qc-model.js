@@ -13,14 +13,20 @@
   const NUMBER_LIMIT = 1000000000;
   const BANGKOK_OFFSET = "+07:00";
 
+  // ป้ายสถานะบนหน้าจอใช้ชื่อตำแหน่งเต็ม (ฉบับร่างตรงกับคำของส่วนกลาง)
   const STATUS_LABELS = {
-    draft: "ร่าง",
-    pending_qa_manager: "รอ ผจก.QA",
-    pending_factory_manager: "รอ ผจก.โรงงาน",
-    pending_general_manager: "รอ ผจก.ทั่วไป",
+    draft: "ฉบับร่าง",
+    pending_qa_manager: "รอผู้จัดการแผนก QA",
+    pending_factory_manager: "รอผู้จัดการโรงงาน",
+    pending_general_manager: "รอผู้จัดการทั่วไป",
     approved: "อนุมัติแล้ว",
     rejected: "ไม่อนุมัติ",
     cancelled: "ยกเลิก",
+  };
+  // สำเนาไปชีต/ไฟล์ Excel (buildSheetRecord) คงคำย่อเดิมที่ Apps Script ใช้ ไม่เปลี่ยนตามป้ายบนหน้าจอ
+  const SHEET_STATUS_LABELS = {
+    draft: "ร่าง", pending_qa_manager: "รอ ผจก.QA", pending_factory_manager: "รอ ผจก.โรงงาน", pending_general_manager: "รอ ผจก.ทั่วไป",
+    approved: "อนุมัติแล้ว", rejected: "ไม่อนุมัติ", cancelled: "ยกเลิก",
   };
   const STATUS_BADGE_CLASS = {
     draft: "in_progress",
@@ -29,17 +35,18 @@
     pending_general_manager: "pending_approval",
     approved: "completed",
     rejected: "rejected",
-    cancelled: "rejected",
+    cancelled: "",
   };
   const RESULT_LABELS = { ok: "ผ่าน (OK)", ng: "ไม่ผ่าน (Reject)", accept: "ยอมรับ (Accept)" };
   // Judge ตามฟอร์ม: O = OK, N = NG, AC = ACCEPT (NA = รายการที่ไม่มีสเปก ไม่ตัดสิน)
   const JUDGE_LABELS = { O: "OK", N: "NG", AC: "ACCEPT", NA: "ไม่มีสเปก" };
   const JUDGE_CLASSES = { O: "qc-judge-o", N: "qc-judge-n", AC: "qc-judge-ac", NA: "qc-judge-na" };
-  // ขั้นลงนามของใบ (step_order 1..3) ตรงกับ qc_inspection_approvals.step_code
+  // ขั้นลงนามของใบ (step_order 1..3) ตรงกับ qc_inspection_approvals.step_code · label = ชื่อตำแหน่งเต็มบนหน้าจอ
+  // (ฟอร์ม Excel QA01-PM11 ใช้ป้ายตามกระดาษที่ apps-script/qc-sheet/Code.gs)
   const STEPS = [
-    { order: 1, code: "qa_manager", key: "qa", label: "manager QA", pending: "pending_qa_manager" },
-    { order: 2, code: "factory_manager", key: "factory", label: "factory manager", pending: "pending_factory_manager" },
-    { order: 3, code: "general_manager", key: "gm", label: "General Manager Approved", pending: "pending_general_manager" },
+    { order: 1, code: "qa_manager", key: "qa", label: "ผู้จัดการแผนก QA", pending: "pending_qa_manager" },
+    { order: 2, code: "factory_manager", key: "factory", label: "ผู้จัดการโรงงาน", pending: "pending_factory_manager" },
+    { order: 3, code: "general_manager", key: "gm", label: "ผู้จัดการทั่วไป", pending: "pending_general_manager" },
   ];
   const HISTORY_LABELS = {
     create: "สร้างใบตรวจ", update: "แก้ไขฉบับร่าง", submit: "ส่งอนุมัติ", approve: "อนุมัติ", reject: "ไม่อนุมัติ",
@@ -57,7 +64,7 @@
     QC_PART_NUMBER_TAKEN: "มีแม่แบบของ Part Number นี้อยู่แล้ว กรุณาเปิดแม่แบบเดิมเพื่อแก้ไข (Part Number เว้นว่างได้เมื่อเป็นชิ้นงานเดี่ยวที่ไม่มีเลข Part)",
     QC_NOT_FOUND: "ไม่พบใบตรวจ/แม่แบบนี้ (อาจถูกล้างข้อมูลทดสอบไปแล้ว)",
     QC_VERSION_CONFLICT: "รายการนี้ถูกเปลี่ยนจากหน้าต่างอื่นแล้ว กรุณาตรวจข้อมูลล่าสุดแล้วทำอีกครั้ง",
-    QC_INVALID_LOT: "Lot ยางผสมไม่ถูกต้อง: ใส่ได้ไม่เกิน 10 Lot แต่ละ Lot 1–60 ตัวอักษรและห้ามซ้ำ",
+    QC_INVALID_LOT: "ล็อตยางผสมไม่ถูกต้อง: ใส่ได้ไม่เกิน 10 ล็อต แต่ละล็อต 1–60 ตัวอักษรและห้ามซ้ำ",
     QC_TEMPLATE_NOT_FOUND: "ไม่พบแม่แบบตรวจของ Part ที่เลือก (อาจถูกล้างข้อมูลทดสอบไปแล้ว)",
     QC_NOT_DRAFT: "แก้ไขหรือส่งได้เฉพาะใบที่ยังเป็นฉบับร่าง",
     QC_INVALID_JUDGE: "ยอมรับ (AC) ได้เฉพาะรายการที่ผลเป็น N (ไม่ผ่านสเปก)",
@@ -158,9 +165,9 @@
 
   function validateLots(lots) {
     const list = Array.isArray(lots) ? lots.map(trimmed) : [];
-    if (list.length > MAX_LOTS) return fail(`ใส่ Lot ยางผสมได้ไม่เกิน ${MAX_LOTS} Lot`);
-    if (list.some((lot) => lot.length < 1 || lot.length > 60)) return fail("Lot ยางผสมแต่ละค่าต้องยาว 1–60 ตัวอักษร");
-    if (new Set(list).size !== list.length) return fail("Lot ยางผสมซ้ำกัน");
+    if (list.length > MAX_LOTS) return fail(`ใส่ล็อตยางผสมได้ไม่เกิน ${MAX_LOTS} ล็อต`);
+    if (list.some((lot) => lot.length < 1 || lot.length > 60)) return fail("ล็อตยางผสมแต่ละค่าต้องยาว 1–60 ตัวอักษร");
+    if (new Set(list).size !== list.length) return fail("ล็อตยางผสมซ้ำกัน");
     return { lots: list };
   }
 
@@ -194,14 +201,14 @@
     const partName = trimmed(form.part_name);
     if (partNumber.length > 60) return fail("Part Number ต้องไม่เกิน 60 ตัวอักษร");
     if (partName.length < 1 || partName.length > 200) return fail("กรุณากรอก Part Name (1–200 ตัวอักษร)");
-    const limits = [["customer", "customer", 100], ["order_no", "Order No.", 60], ["code", "Code", 60], ["sample_label", "Sample", 30], ["remark", "REMARK", 2000]];
+    const limits = [["customer", "ลูกค้า", 100], ["order_no", "Order No.", 60], ["code", "Code", 60], ["sample_label", "Sample", 30], ["remark", "REMARK", 2000]];
     for (const [key, label, max] of limits) {
       if (trimmed(form[key]).length > max) return fail(`${label} ต้องไม่เกิน ${max} ตัวอักษร`);
     }
     const lots = validateLots(form.compound_lots);
     if (lots.error) return lots;
     const inspectedAt = bangkokInstant(form.inspected_at);
-    if (inspectedAt === undefined) return fail("วันที่ตรวจ (inspection Date) ไม่ถูกต้อง");
+    if (inspectedAt === undefined) return fail("วันที่ตรวจ (Inspection Date) ไม่ถูกต้อง");
 
     const specs = Array.isArray(templateItems) ? templateItems : [];
     if (!specs.length) return fail("ใบตรวจต้องมีรายการตรวจอย่างน้อย 1 รายการ (เลือก Part ที่มีแม่แบบ)");
@@ -259,7 +266,7 @@
     const partName = trimmed(form.part_name);
     if (partNumber.length > 60) return fail("Part Number ต้องไม่เกิน 60 ตัวอักษร");
     if (partName.length < 1 || partName.length > 200) return fail("กรุณากรอก Part Name (1–200 ตัวอักษร)");
-    if (trimmed(form.customer).length > 100) return fail("customer ต้องไม่เกิน 100 ตัวอักษร");
+    if (trimmed(form.customer).length > 100) return fail("ลูกค้าต้องไม่เกิน 100 ตัวอักษร");
     if (trimmed(form.drawing_note).length > 500) return fail("คำอธิบายจุดวัดต้องไม่เกิน 500 ตัวอักษร");
     const status = trimmed(form.status) || "active";
     if (!["active", "inactive"].includes(status)) return fail("สถานะแม่แบบไม่ถูกต้อง");
@@ -343,7 +350,7 @@
       reportNo,
       isTest: reportNo.startsWith("TEST-"),
       status: text(report.status),
-      statusLabel: STATUS_LABELS[report.status] ?? text(report.status),
+      statusLabel: SHEET_STATUS_LABELS[report.status] ?? text(report.status),
       result: text(report.result),
       resultLabel: RESULT_LABELS[report.result] ?? "",
       partNumber: text(report.part_number),

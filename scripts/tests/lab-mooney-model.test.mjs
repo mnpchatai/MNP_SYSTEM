@@ -137,8 +137,13 @@ test("materials sort by latest test, name (numeric-aware) or result count, and u
 });
 
 test("dates, times and readings are shown the way the spreadsheet shows them", () => {
-  assert.equal(model.formatDate("2026-09-21"), "21/09/2026");
-  assert.equal(model.formatDate("2026-10-09"), "09/10/2026");
+  // วันที่บนหน้าจอเป็นแบบไทยเหมือนทั้งระบบ (เดือนไทยย่อ ปี พ.ศ.) ส่วน formatSheetDate คงแบบชีตไว้ให้ข้อความที่คัดลอกไป Excel
+  assert.equal(model.formatDate("2026-09-21"), "21 ก.ย. 2569");
+  assert.equal(model.formatDate("2026-10-09"), "9 ต.ค. 2569");
+  assert.equal(model.formatDate("2026-13-09"), "—", "an impossible month is not drawn");
+  assert.equal(model.formatSheetDate("2026-09-21"), "21/09/2026");
+  assert.equal(model.formatSheetDate("2026-10-09"), "09/10/2026");
+  assert.equal(model.formatSheetDate(null), "—");
   assert.equal(model.formatDate(null), "—");
   assert.equal(model.formatDate("21/09/2026"), "—", "only ISO dates are accepted");
   assert.equal(model.formatTime("08:29:13"), "08:29:13");
@@ -153,8 +158,8 @@ test("dates, times and readings are shown the way the spreadsheet shows them", (
 });
 
 test("the time the sheet was last read is shown in Bangkok time with seconds", () => {
-  assert.equal(model.formatUpdatedAt("2026-10-16T03:30:05+00:00"), "16/10/2026 10:30:05");
-  assert.equal(model.formatUpdatedAt("2026-10-16T18:05:09Z"), "17/10/2026 01:05:09", "crosses midnight into the next Bangkok day");
+  assert.equal(model.formatUpdatedAt("2026-10-16T03:30:05+00:00"), "16 ต.ค. 2569 10:30:05");
+  assert.equal(model.formatUpdatedAt("2026-10-16T18:05:09Z"), "17 ต.ค. 2569 01:05:09", "crosses midnight into the next Bangkok day");
   assert.equal(model.formatUpdatedAt(null), "—");
   assert.equal(model.formatUpdatedAt("not a date"), "—");
 });
@@ -327,7 +332,7 @@ test("the last-read time is shown as a clock only, because the date is always to
   assert.equal(model.formatUpdatedTime("not a date"), "—");
 });
 
-test("months are read from the test date, listed oldest first once each, and shown as a short Thai month with the Gregorian year", () => {
+test("months are read from the test date, listed oldest first once each, and shown as a short Thai month with the Buddhist-era year", () => {
   assert.equal(model.monthOf("2026-09-21"), "2026-09");
   assert.equal(model.monthOf("2026-12-01"), "2026-12");
   assert.equal(model.monthOf(null), null);
@@ -335,9 +340,9 @@ test("months are read from the test date, listed oldest first once each, and sho
   const items = ["2026-10-02", "2026-09-30", "2026-09-01", "2026-10-31", null, "2027-01-05"].map((testDate) => ({ testDate }));
   assert.deepEqual(model.monthsOf(items), ["2026-09", "2026-10", "2027-01"], "a month with no tests is not listed");
   assert.deepEqual(model.monthsOf([]), []);
-  assert.equal(model.formatMonth("2026-09"), "ก.ย. 2026");
-  assert.equal(model.formatMonth("2027-01"), "ม.ค. 2027");
-  assert.equal(model.formatMonth("2026-12"), "ธ.ค. 2026");
+  assert.equal(model.formatMonth("2026-09"), "ก.ย. 2569");
+  assert.equal(model.formatMonth("2027-01"), "ม.ค. 2570");
+  assert.equal(model.formatMonth("2026-12"), "ธ.ค. 2569");
   assert.equal(model.formatMonth("2026-13"), "—");
   assert.equal(model.formatMonth("2026-00"), "—");
   assert.equal(model.formatMonth(null), "—");

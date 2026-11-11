@@ -17,7 +17,7 @@
     const fpy = records.length ? (records.filter((record) => record.result === "pass").length / records.length) * 100 : 100;
     const openNcr = data.ncrs.filter((ncr) => ncr.status === "open");
     const finLots = data.lots.filter((lot) => lot.stage === "finishing").sort((a, b) => b.createdAt - a.createdAt);
-    const tabs = ui.tabs([{ id: "hold", label: "รอตัดสิน" }, { id: "records", label: "ผลตรวจทั้งหมด" }, { id: "ncr", label: `NCR / CAPA (${data.ncrs.length})` }, { id: "coa", label: "ใบรับรอง CoA" }], tab, (id) => ctx.pageUrl({ tab: id === "hold" ? null : id }));
+    const tabs = ui.tabs([{ id: "hold", label: "รอตัดสิน" }, { id: "records", label: "ผลตรวจทั้งหมด" }, { id: "ncr", label: `NCR / CAR (${data.ncrs.length})` }, { id: "coa", label: "ใบรับรอง CoA" }], tab, (id) => ctx.pageUrl({ tab: id === "hold" ? null : id }));
 
     let section = "";
     if (tab === "hold") {
@@ -35,7 +35,7 @@
       }), { emptyText: "ยังไม่มีล็อตสินค้าสำเร็จรูป" }), { flush: true });
     }
     const actions = decide ? `${ui.openButton("เปิด NCR", "ncr", {}, { className: "secondary" })}${ui.openButton("บันทึกผลตรวจ", "qcRecord", {}, { className: "" })}` : "";
-    const html = `${ui.pageHead("ควบคุมคุณภาพ · NCR · CoA", "ตัดสินล็อตที่ถูกกักกัน บันทึกผลทดสอบในแล็บ ติดตามปัญหาด้วย NCR / 5-Why และออกใบรับรองผล (CoA)", actions)}
+    const html = `${ui.pageHead("ควบคุมคุณภาพ · NCR · CoA", "ตัดสินล็อตที่ถูกกักกัน บันทึกผลทดสอบในแล็บ ติดตามปัญหาด้วย NCR และการวิเคราะห์ทำไม 5 ครั้ง (5-Why) และออกใบรับรองผล (CoA)", actions)}
       ${ui.stats([
         { label: "อัตราผ่านตรวจครั้งแรก", value: `${fpy.toFixed(1)}%`, sub: `${records.length} ครั้งที่บันทึก` },
         { label: "ล็อตกักรอตัดสิน", value: String(held.length), tone: held.length ? "warn" : "" },
@@ -55,7 +55,7 @@
       : "";
     return ui.card(`<div class="rf-grid rf-g2">
         <div class="rf-stack">${ui.kv([["ขั้นตอนที่พบ", esc(STAGE_LABEL[ncr.stage] ?? ncr.stage)], ["ล็อต", ui.mono(ncr.lotId)], ["ชิ้นงานเสีย", esc(fmtNum(ncr.defectQty))], ["ผู้รับผิดชอบ", esc(ncr.owner ?? "-")], ["เปิดเมื่อ", esc(fmtDateTime(ncr.createdAt))], ncr.closedAt ? ["ปิดเมื่อ", esc(`${fmtDateTime(ncr.closedAt)} · ${ncr.closedBy ?? ""}`)] : null])}
-          <div><strong class="small">วิเคราะห์ 5-Why</strong><ol class="small rf-whys">${ncr.whys.map((why) => `<li>${esc(why)}</li>`).join("")}</ol></div></div>
+          <div><strong class="small">วิเคราะห์ทำไม 5 ครั้ง (5-Why)</strong><ol class="small rf-whys">${ncr.whys.map((why) => `<li>${esc(why)}</li>`).join("")}</ol></div></div>
         <div class="rf-stack small">
           <div><strong>ควบคุมทันที (Containment)</strong><div>${esc(ncr.containment || "-")}</div></div>
           ${fillForm || `<div><strong>แก้ไข (Corrective)</strong><div>${esc(ncr.corrective || "-")}</div></div>
@@ -66,15 +66,15 @@
 
   dialogs.qcRecord = (ctx, { lotId = "" } = {}) => {
     const { data, ui, rules } = ctx;
-    const { STAGE_LABEL, SPECS, specText } = rules;
+    const { STAGE_LABEL, SPECS } = rules;
     const target = data.lots.find((lot) => lot.id === lotId) ?? null;
     const options = [...data.lots].sort((a, b) => b.createdAt - a.createdAt).slice(0, 60).map((lot) => ({ value: lot.id, label: `${lot.id} · ${STAGE_LABEL[lot.stage]} · ${ui.statusLabel(lot.qc)}` }));
     const body = `<div class="rf-grid rf-g2">
-        ${ui.field("ล็อตที่ตรวจ *", ui.select("lotId", options, { value: lotId, placeholder: "เลือก…", extra: "required" }))}
-        ${ui.field("ผลตัดสิน", ui.select("result", [{ value: "", label: "อัตโนมัติจากผลวัด" }, { value: "pass", label: "ผ่าน — ปลดกักกัน" }, { value: "hold", label: "กักกันต่อ" }, { value: "fail", label: "ไม่ผ่าน — ทิ้ง/Rework" }]), { hint: "เว้นว่างให้ระบบตัดสินจากค่าที่วัด" })}
+        ${ui.field("ล็อตที่ตรวจ", ui.select("lotId", options, { value: lotId, placeholder: "เลือก…", extra: "required" }), { required: true })}
+        ${ui.field("ผลตัดสิน", ui.select("result", [{ value: "", label: "อัตโนมัติจากผลวัด" }, { value: "pass", label: "ผ่าน — ปลดกักกัน" }, { value: "hold", label: "กักกันต่อ" }, { value: "fail", label: "ไม่ผ่าน — ทิ้ง/แก้ไขงาน (Rework)" }]), { hint: "เว้นว่างให้ระบบตัดสินจากค่าที่วัด" })}
       </div>${target?.holdReasons?.length ? ui.callout("warn", esc(`สาเหตุที่กักกัน: ${target.holdReasons.join(", ")}`)) : ""}
       <div class="rf-grid rf-g3">${Object.entries(SPECS.lab).map(([key, spec]) => ui.specInput(`values.${key}`, `${spec.label} · ${spec.method}`, spec)).join("")}</div>
-      ${ui.field("หมายเหตุ", ui.textarea("note"))}<div class="small muted">สเปกอ้างอิง: ${esc(Object.values(SPECS.lab).map((spec) => `${spec.label} ${specText(spec)}`).join(" · "))}</div>`;
+      ${ui.field("หมายเหตุ", ui.textarea("note"))}`;
     const html = ui.dialog("qcRecord", "บันทึกผลตรวจคุณภาพ", `<form data-rf-form="addQcRecord" data-rf-success="บันทึกผลตรวจ {result} แล้ว" id="rf-qc-record">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-qc-record">บันทึกผล</button>`, wide: true });
     return { html };
   };
@@ -83,12 +83,12 @@
     const { data, ui, rules } = ctx;
     const { STAGES, STAGE_LABEL } = rules;
     const body = `<div class="rf-grid rf-g2">
-        ${ui.field("หัวข้อปัญหา *", ui.input("title", { required: true }))}
-        ${ui.field("ล็อตที่พบ *", `${ui.input("lotId", { list: "rf-ncr-lots", placeholder: "เช่น CU-…", required: true })}<datalist id="rf-ncr-lots">${data.lots.slice(0, 80).map((lot) => `<option value="${esc(lot.id)}"></option>`).join("")}</datalist>`, { hint: "ล็อตที่ผ่านแล้วจะถูกกักกันอัตโนมัติ" })}
+        ${ui.field("หัวข้อปัญหา", ui.input("title", { required: true }), { required: true })}
+        ${ui.field("ล็อตที่พบ", `${ui.input("lotId", { list: "rf-ncr-lots", placeholder: "เช่น CU-…", required: true })}<datalist id="rf-ncr-lots">${data.lots.slice(0, 80).map((lot) => `<option value="${esc(lot.id)}"></option>`).join("")}</datalist>`, { hint: "ล็อตที่ผ่านแล้วจะถูกกักกันอัตโนมัติ", required: true })}
         ${ui.field("ขั้นตอนที่พบ", ui.select("stage", STAGES.map((stage) => ({ value: stage, label: STAGE_LABEL[stage] })), { value: "curing" }))}
-        <div class="rf-grid rf-g2">${ui.field("ความรุนแรง", ui.select("severity", [{ value: "critical", label: "Critical — หยุดไลน์" }, { value: "major", label: "Major" }, { value: "minor", label: "Minor" }], { value: "major" }))}${ui.field("จำนวนชิ้นงานเสีย", ui.input("defectQty", { type: "number", step: "any" }))}</div>
+        <div class="rf-grid rf-g2">${ui.field("ความรุนแรง", ui.select("severity", [{ value: "critical", label: "วิกฤต (Critical) — หยุดไลน์" }, { value: "major", label: "ร้ายแรง (Major)" }, { value: "minor", label: "เล็กน้อย (Minor)" }], { value: "major" }))}${ui.field("จำนวนชิ้นงานเสีย", ui.input("defectQty", { type: "number", step: "any" }))}</div>
       </div>
-      <div class="rf-stack rf-tight"><strong class="small">วิเคราะห์ 5-Why</strong>${[1, 2, 3, 4, 5].map((n) => ui.input("whys[]", { placeholder: `ทำไม ครั้งที่ ${n}` })).join("")}</div>
+      <div class="rf-stack rf-tight"><strong class="small">วิเคราะห์ทำไม 5 ครั้ง (5-Why)</strong>${[1, 2, 3, 4, 5].map((n) => ui.input("whys[]", { placeholder: `ทำไม ครั้งที่ ${n}` })).join("")}</div>
       <div class="rf-grid rf-g3">${ui.field("ควบคุมทันที", ui.textarea("containment"))}${ui.field("การแก้ไข", ui.textarea("corrective"))}${ui.field("การป้องกันซ้ำ", ui.textarea("preventive"))}</div>
       ${ui.badge("info", "ต้องกรอก “การแก้ไข” ก่อนจึงจะปิดเคสได้")}`;
     const html = ui.dialog("ncr", "เปิดรายงานข้อบกพร่อง (NCR)", `<form data-rf-form="createNcr" data-rf-success="เปิด {result} แล้ว" id="rf-ncr">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-ncr">เปิด NCR</button>`, wide: true });
@@ -103,7 +103,7 @@
       ...["thickness", "width", "weightPerM"].map((key) => ({ id: `ex.${key}`, label: `ฉีด · ${SPECS.extrusion[key].label}`, spec: SPECS.extrusion[key], source: (d) => d.lots.filter((lot) => lot.stage === "extrusion").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
       ...["temp", "time", "pressure"].map((key) => ({ id: `cu.${key}`, label: `อบ · ${SPECS.curing[key].label}`, spec: SPECS.curing[key], source: (d) => d.lots.filter((lot) => lot.stage === "curing").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
       ...Object.entries(SPECS.lab).map(([key, spec]) => ({ id: `lab.${key}`, label: `แล็บ · ${spec.label}`, spec, source: (d) => d.qcRecords.flatMap((record) => record.tests.filter((test) => test.key === key).map((test) => ({ id: record.lotId, at: record.at, v: test.value }))) })),
-      { id: "mx.dump", label: "ผสม · Dump temp ขั้น 2 (สูตร EPDM)", spec: { label: "Dump temp", unit: "°C", target: 140, tol: 6 }, source: (d) => d.lots.filter((lot) => lot.stage === "mixing" && lot.recipeId === "RC-EPDM-DS01").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params?.stages?.find((row) => Number(row.stage) === 2)?.dumpTemp })) },
+      { id: "mx.dump", label: "ผสม · อุณหภูมิปล่อยยางขั้น 2 (สูตร EPDM)", spec: { label: "อุณหภูมิปล่อยยาง", unit: "°C", target: 140, tol: 6 }, source: (d) => d.lots.filter((lot) => lot.stage === "mixing" && lot.recipeId === "RC-EPDM-DS01").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params?.stages?.find((row) => Number(row.stage) === 2)?.dumpTemp })) },
     ];
   };
 
@@ -136,7 +136,7 @@
         { label: "ค่าเฉลี่ย / σ (MR)", value: `${r(s?.mean)} / ${r(s?.sdWithin)}`, sub: `n = ${s?.n ?? points.length} · สเปก ${specText(ch.spec)}` },
         { label: "จุดผิดปกติ", value: `${ooc.length} นอก CL · ${oos.length} นอกสเปก`, sub: `UCL ${r(s?.ucl)} · LCL ${r(s?.lcl)}` },
       ])}
-      ${ui.card(points.length < 2 ? ui.empty("ข้อมูลไม่พอสำหรับคำนวณ") : ui.controlChart(points, { lsl, usl, stat: s, unit: ch.spec.unit }), { title: `I-chart · ${esc(ch.label)}` })}
+      ${ui.card(points.length < 2 ? ui.empty("ข้อมูลไม่พอสำหรับคำนวณ") : ui.controlChart(points, { lsl, usl, stat: s, unit: ch.spec.unit }), { title: `แผนภูมิควบคุม · ${esc(ch.label)}` })}
       <div class="rf-grid rf-g2">
         ${ui.card(bins.length ? ui.histogram(bins, { unit: ch.spec.unit }) : ui.empty("ข้อมูลไม่พอ"), { title: "ฮิสโตแกรม" })}
         ${ui.card(ui.table(["ล็อต", "วันที่", { label: "ค่า", className: "right" }], oos.map((point) => `<tr><td class="rf-mono">${esc(point.id)}</td><td>${esc(point.label)}</td><td class="right">${ui.badge("bad", `${point.v} ${ch.spec.unit}`)}</td></tr>`), { emptyText: "ไม่มีค่าที่หลุดสเปก" }), { title: "ค่าที่หลุดสเปก", flush: true })}
@@ -175,7 +175,7 @@
       let statusValue = null;
       if (treeNode.kind === "lot") { sub = `${STAGE_LABEL[it.stage]} · ${fmtNum(it.goodQty, 2)} ${it.uom} · ${fmtDateTime(it.createdAt)}`; statusValue = it.qc; }
       if (treeNode.kind === "box") { sub = `กล่อง · ${rules.orderLabel(it)} · ${fmtNum(it.qty)} ${it.uom}`; statusValue = it.status; }
-      if (treeNode.kind === "requisition") sub = `ใบเบิก · ${it.batches} batch · ${fmtNum(it.totalKg, 1)} kg`;
+      if (treeNode.kind === "requisition") sub = `ใบเบิก · ${it.batches} ชุดผสม · ${fmtNum(it.totalKg, 1)} kg`;
       if (treeNode.kind === "material") { const material = data.materials.find((row) => row.code === it?.materialCode); sub = `วัตถุดิบ · ${material?.name ?? "-"}${treeNode.kg ? ` · ใช้ ${fmtNum(treeNode.kg, 3)} kg` : ""} · ${it?.supplier ?? "-"}`; }
       return `<li><div class="rf-node${treeNode.id === hitId ? " is-hit" : ""}"><div class="rf-row"><strong class="rf-mono">${esc(treeNode.id)}</strong>${statusValue ? ui.status(statusValue) : ""}</div><div class="small muted">${esc(sub)}</div></div>${treeNode.children?.length ? `<ul class="rf-tree">${treeNode.children.map(node).join("")}</ul>` : ""}</li>`;
     };

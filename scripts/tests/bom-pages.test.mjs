@@ -132,12 +132,12 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   clean(html);
   // ชุดสีใหม่ของฐานรหัสเดิม → ตั้งต้นจากต้นแบบ
   html = await env.render("p=build&base=DEMO-TP-01&pkg=P&cs=A");
-  assert.match(html, /DEMO-TP-01\(P\)-A<\/strong> ยังไม่มีใน item master/);
+  assert.match(html, /DEMO-TP-01\(P\)-A<\/strong> ยังไม่มีในทะเบียน/);
   assert.match(html, /ตั้งต้นจาก DEMO-TP-01\(P\)-Y/);
   assert.match(html, /value="SE-TP01-OR01-100-18-65"/);
   // ฐานรหัสใหม่ → แถวว่างหนึ่งแถว
   html = await env.render("p=build&base=BRAND-NEW-01&pkg=B&cs=A");
-  assert.match(html, /BRAND-NEW-01\(B\)-A<\/strong> ยังไม่มีใน item master/);
+  assert.match(html, /BRAND-NEW-01\(B\)-A<\/strong> ยังไม่มีในทะเบียน/);
   assert.doesNotMatch(html, /data-bom-source>[^<]/, "no source line without a source");
   assert.equal([...html.matchAll(/class="bom-row is-new"/g)].length, 2, "one empty editable row plus the template row");
   // หมวดอื่นที่ขั้นที่ 1: WIP ใหม่ใช้รหัสช่องเดียว ไม่ตั้งต้นจากสินค้า · เส้นยางใหม่เริ่มด้วยแถวสูตรยาง · ชิ้นเดิมใช้ชนิดของมันเอง
@@ -146,7 +146,7 @@ test("the single BOM builder: picker without a code, the full editable tree for 
   assert.match(html, /bom-pick-fg is-hidden/);
   assert.match(html, /name="code"[^>]*value="SE-NEW-77"/);
   assert.match(html, /<h2>2\. ชิ้นงาน<\/h2>/);
-  assert.match(html, /SE-NEW-77<\/strong> ยังไม่มีใน item master กดบันทึกแล้วระบบจะสร้างชิ้นงานใหม่ให้พร้อม BOM/, "the kind is not repeated (it is in the step-1 select)");
+  assert.match(html, /SE-NEW-77<\/strong> ยังไม่มีในทะเบียน บันทึกแล้วระบบสร้างชิ้นงานใหม่ให้/, "the kind is not repeated (it is in the step-1 select)");
   assert.match(html, /ชั้นแรกต่อ 1 ชิ้น ของชิ้นงาน/);
   assert.match(html, /name="itemKind" value="SE"/);
   assert.match(html, /name="itemUom"[\s\S]*?<option value="pcs" selected>/);
@@ -369,7 +369,7 @@ test("dialogs render for their arguments and escape user text", async () => {
   const bodyNode = { textContent: "" };
   const preview = { className: "", querySelector: () => bodyNode };
   add.bind({ querySelector: (selector) => (selector === "[data-bom-preview]" ? preview : null), querySelectorAll: (selector) => (selector === "[data-bom-part]" ? parts : []) }, c);
-  assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-A ยังไม่มีใน item master — จะสร้างจาก BOM ของ DEMO-TP-01\(P\)-Y/);
+  assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-A ยังไม่มีในทะเบียนชิ้นงาน — จะสร้างจาก BOM ของ DEMO-TP-01\(P\)-Y/);
   parts[2].value = "Y";
   parts[2].handlers.change();
   assert.match(bodyNode.textContent, /DEMO-TP-01\(P\)-Y · .* BOM Rev\.1/);
@@ -421,7 +421,7 @@ test("forms go through the data-rf-* rules: a new order is created with dates co
   assert.equal(autoOrder.id, "261030-26001");
   assert.equal(new Date(autoOrder.due.PK).getDate(), 14);
   assert.deepEqual(json(autoOrder.dueDefaults), ["RB", "GR", "PT", "BG", "ST", "PK"]);
-  assert.match(await env.render(`p=orders&sel=${autoOrder.id}`), /title="ค่าเริ่มต้นจาก lead time"><b>PK<\/b> 14 ธ\.ค\. 2569\*/);
+  assert.match(await env.render(`p=orders&sel=${autoOrder.id}`), /title="ค่าเริ่มต้นจากระยะเวลาจัดหา \(lead time\)"><b>PK<\/b> 14 ธ\.ค\. 2569\*/);
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "ลูกค้าทดสอบ", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01", "due.RB": "2026-10-20", "due.PK": "" });
   const order = env.store.data().orders.find((entry) => entry.id === "PI-TEST-1");
   assert.ok(order, "order created from the form");
@@ -1161,8 +1161,8 @@ test("the data check page: groups with counts, links to the builder or the item 
   assert.match(html, /<h1>ตรวจข้อมูล<\/h1>/);
   assert.doesNotMatch(html, /ปล่อยผลิตไม่ได้/, "nothing here blocks a release yet, so no group claims it");
   assert.doesNotMatch(html, /เส้นยาง \(RB\) ที่ยังไม่มีสูตรยาง/, "rods with the compound field are fine without a CP line (Excel imports never have one)");
-  assert.match(html, /สินค้า \(FG\) ที่ยังไม่มี BOM <span class="muted">1<\/span>/);
-  assert.match(html, /รหัสที่ระบบสร้างให้ \(XP-…\) <span class="muted">1<\/span>/);
+  assert.match(html, /สินค้า \(FG\) ที่ยังไม่มี BOM/);
+  assert.match(html, /รหัสที่ระบบสร้างให้ \(XP-…\)/);
   assert.doesNotMatch(html, /ใช้ใน BOM แล้วแต่ยังไม่มี BOM/, "a group with nothing to fix is not shown");
   assert.match(html, /href="#\/bom\?p=build&amp;code=DEMO-BL-60%28K%29-Z"[^>]*>สร้าง BOM/, "the fix link opens the builder on that item");
   assert.match(html, /data-rf-open="itemEdit" data-rf-args="[^"]*XP-00001[^"]*"/, "or the item dialog");
@@ -1170,7 +1170,7 @@ test("the data check page: groups with counts, links to the builder or the item 
   // ชิ้นที่ถูกใช้แล้วไม่มี BOM (MEGA-BBL-06)
   env.store.run("saveBom", { itemCode: "DEMO-BL-60(K)-Z", lines: [{ childCode: "SE-BL60-RD01-60-0-60", qty: 1 }] });
   html = await env.render("p=check");
-  assert.match(html, /ใช้ใน BOM แล้วแต่ยังไม่มี BOM <span class="muted">1<\/span>/);
+  assert.match(html, /ใช้ใน BOM แล้วแต่ยังไม่มี BOM/);
   assert.match(html, /ใช้ใน DEMO-BL-60\(K\)-Z/);
   assert.equal([...html.matchAll(/ปล่อยผลิตไม่ได้/g)].length, 1, "only the used-but-no-BOM group says it blocks a release, once");
   assert.match(html, /<p class="small muted">ปล่อยผลิตไม่ได้จนกว่าจะมี BOM<\/p>/);
@@ -1382,7 +1382,7 @@ test("in the in-browser demo a release opens no WOs: the confirm says nothing ab
   const env = load();
   env.store.setUser("B03");
   let html = await env.render("p=orders&sel=DEMO-26002");
-  assert.match(html, /data-rf-confirm="ปล่อยผลิต DEMO-26002\? ระบบจะล็อก revision ของ BOM และสร้างงานรายแผนก"/);
+  assert.match(html, /data-rf-confirm="ปล่อยผลิต DEMO-26002\? ระบบจะล็อกฉบับแก้ไขของ BOM และสร้างงานรายแผนก"/);
   assert.doesNotMatch(html, /เปิด WO ใน RubberFlow/);
   assert.equal(env.store.run("releaseOrder", { orderId: "DEMO-26002" }).ok, true);
   html = await env.render("p=orders&sel=DEMO-26002&tab=jobs");
@@ -1571,4 +1571,35 @@ test("import page: the group selected when pressing import is saved on new items
   importButton.handlers.click({ currentTarget: importButton });
   assert.equal(items().filter((item) => item.kind === "SUBPART").length, before, "no new XP- code on re-import");
   assert.equal(items().find((item) => item.code === "G-01(P)-Y")?.group, "IND", "existing items keep their group");
+});
+
+test("house rules stay: required fields carry the shared marker, files are picked through the .file-pick button, empty states and statuses look the same everywhere", () => {
+  const env = load();
+  const ui = env.context.MNP_RUBBERFLOW_UI;
+  assert.match(ui.field("ชื่อ", "<input>", { required: true }), /<label>ชื่อ <span class="field-required">\(จำเป็น\)<\/span><\/label>/);
+  assert.doesNotMatch(ui.field("ชื่อ", "<input>"), /field-required/);
+  assert.match(ui.empty("ไม่มี"), /^<div class="empty empty-state rf-empty">.*<p>ไม่มี<\/p><\/div>$/);
+  assert.match(ui.filePick("f1", "", "เลือกไฟล์ Excel", { title: "t" }), /^<label class="btn secondary file-pick" for="f1" title="t">.*เลือกไฟล์ Excel<\/label><input class="file-pick-input" id="f1" type="file">$/);
+  assert.match(ui.urgent(), /^<span class="badge urgent-flag">ด่วน<\/span>$/);
+  assert.match(ui.status("open"), /is-info/, "an open NCR is info, not red");
+  assert.match(ui.status("in_progress"), /is-info/);
+  assert.doesNotMatch(ui.status("cancelled"), /is-bad/, "cancelled is neutral");
+  for (const file of FILES.filter((name) => /rubberflow-(pages|ui|documents)|module-rubberflow|bom-pages|module-bom|bom-store|bom-actions/.test(name))) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.doesNotMatch(source, /field\((["`])[^"`\n]* \*\1/, `${file}: required fields use { required: true }, not " *"`);
+    assert.doesNotMatch(source.split("\n").filter((line) => !line.includes("file-pick-input")).join("\n"), /<input[^>]*type="file"/, `${file}: no raw file input`);
+    assert.doesNotMatch(source, /ui\.badge\("bad", "ด่วน"\)/, `${file}: urgent uses ui.urgent()`);
+    assert.doesNotMatch(source, /<p class="muted">(ยังไม่มี|ไม่มี)/, `${file}: empty states use ui.empty`);
+  }
+  // every date field is turned into the Thai-date picker after a page or dialog is drawn
+  for (const file of ["modules/module-rubberflow.js", "modules/module-bom.js"]) assert.equal((fs.readFileSync(file, "utf8").match(/ui\.enhanceDates\(/g) ?? []).length, 2, `${file}: page and dialogs`);
+});
+
+test("the Thai date picker drops required from the hidden native date input, so a blank date reaches the action's own message", () => {
+  // ช่องที่ถูกซ่อน (input.hidden) ยัง required อยู่ เบราว์เซอร์จะไม่ยอมส่งฟอร์มและไม่บอกเหตุผล
+  const ui = fs.readFileSync("modules/rubberflow-ui.js", "utf8");
+  assert.match(ui, /const enhanceDates = \(scope\) => scope\?\.querySelectorAll\?\.\('input\[type="date"\]'\)\.forEach\(\(node\) => \{\s*if \(!root\.MNP_DATE_PICKER\?\.enhance\) return;\s*node\.required = false;\s*root\.MNP_DATE_PICKER\.enhance\(node\);/);
+  for (const file of ["modules/module-rubberflow.js", "modules/module-bom.js"]) {
+    assert.match(fs.readFileSync(file, "utf8"), /dialog\.querySelector\("input:not\(\[type=hidden\]\):not\(\[hidden\]\), select:not\(\[hidden\]\), textarea, \.date-pick-button"\)/, `${file}: first focus skips the hidden date input`);
+  }
 });

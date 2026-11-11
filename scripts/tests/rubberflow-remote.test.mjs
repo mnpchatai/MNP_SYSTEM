@@ -172,7 +172,7 @@ test("materials and recipes: RB staff and the planner group draft, only the RB h
   assert.equal(rig.store.data().recipes[0].createdBy, "ประยุทธ รีดยาง");
   const blocked = rig.store.run("approveRecipe", { id: "RC-TEST-01", revision: 1 });
   assert.equal(blocked.ok, false);
-  assert.match(blocked.error.message, /หัวหน้าแผนก RB/);
+  assert.match(blocked.error.message, /ผู้จัดการแผนก RB/);
   // ข้ามกฎฝั่งหน้า: ส่งตรงไปที่ฐานข้อมูลในนามพนักงาน RB → ปฏิเสธ RF_FORBIDDEN และไม่มีอะไรเปลี่ยน
   const draft = unwrap(await s.mock.client.rpc("app_rf_master")).recipes[0];
   const version = unwrap(await s.mock.client.rpc("app_rf_master")).version;
@@ -182,7 +182,7 @@ test("materials and recipes: RB staff and the planner group draft, only the RB h
 
   // ผู้วางแผน (PP) และ ST: PP อนุมัติไม่ได้ ST แก้ข้อมูลหลักไม่ได้
   await s.as("persona-pp");
-  assert.match(rig.store.run("approveRecipe", { id: "RC-TEST-01", revision: 1 }).error.message, /หัวหน้าแผนก RB/);
+  assert.match(rig.store.run("approveRecipe", { id: "RC-TEST-01", revision: 1 }).error.message, /ผู้จัดการแผนก RB/);
   await saved(rig.store.run("saveMaterial", { code: "STA", name: "กรดสเตียริก", active: true }));
   await s.as("persona-st");
   assert.match(rig.store.run("saveMaterial", { code: "XX", name: "x" }).error.message, /ไม่มีสิทธิ์/);
@@ -537,7 +537,7 @@ test("database errors become short Thai messages and load failures wait for the 
   const e = (code) => storeApi.mapRemoteError(Object.assign(new Error(code), { code }));
   assert.equal(e("RF_STALE").code, "RF_STALE");
   assert.match(e("RF_FORBIDDEN").message, /ไม่มีสิทธิ์/);
-  assert.match(e("RF_REVISION_IMMUTABLE").message, /revision ใหม่/);
+  assert.match(e("RF_REVISION_IMMUTABLE").message, /ฉบับแก้ไขใหม่/);
   assert.match(e("RF_INVALID_SOURCE_JOB").message, /งาน BOM/);
   assert.match(e("RF_INVALID_RECIPE").message, /ไม่ผ่านการตรวจ.*RF_INVALID_RECIPE/);
   assert.match(e("RF_INVALID_MATERIAL").message, /รหัสใช้ได้เฉพาะตัวอักษรอังกฤษ/);
@@ -1246,7 +1246,7 @@ test("molds are added and edited through the database; cleaning resets the count
   bad({ ...good, name: " " }, /ชื่อ/);
   bad({ ...good, kind: "x" }, /ชนิด/);
   bad({ ...good, unit: "kg" }, /หน่วยนับ/);
-  bad({ ...good, perCycle: "0" }, /cavity/);
+  bad({ ...good, perCycle: "0" }, /ช่องแม่พิมพ์/);
   bad({ ...good, cleanEvery: "0" }, /มากกว่า 0/);
   await saved(rig.store.run("saveMold", good));
   assert.deepEqual((await s.call("app_rf_master")).molds[0], { id: "DIE-9", name: "หัวดาย 9", kind: "die", unit: "m", perCycle: 1, cleanEvery: 6000, pmLimit: 250000, usageSinceClean: 0, totalUsage: 0, lastCleanAt: NOW });

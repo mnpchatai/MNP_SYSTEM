@@ -357,10 +357,11 @@
     dialog.addEventListener("pointerdown", (event) => { if (event.target === dialog) dialog.close(); });
     dialog.addEventListener("close", () => dialog.remove());
     bindRoot(dialog, ctx);
+    ui.enhanceDates(dialog);
     built.bind?.(dialog, ctx);
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
-    dialog.querySelector("input:not([type=hidden]), select, textarea")?.focus?.();
+    dialog.querySelector("input:not([type=hidden]):not([hidden]), select:not([hidden]), textarea, .date-pick-button")?.focus?.();
   }
 
   // ---------- โครงหน้า ----------
@@ -422,8 +423,9 @@
 
   // ไม่ได้เลือกบทบาท: บอกว่าโมดูลนี้คืออะไร ส่วนการเลือกบทบาทสาธิตอยู่ในช่องของแถบเครื่องมือด้านบน (ไม่มีหน้าเลือกบทบาทแยก)
   function introHtml() {
-    return `<section class="card rf-card rf-login"><h1>${escapeHtml(TITLE)}</h1>
-      <p class="muted">แผนก RB · ควบคุมการผลิตยาง 4 สถานี ผสม → ฉีด → อบ → ตกแต่ง พร้อม FEFO, ชั่งแบบ Poka-Yoke, QC Hold อัตโนมัติ, Gatekeeper ส่งมอบ WIP และสืบย้อนกลับถึงล็อตวัตถุดิบ ข้อมูลทั้งหมดเป็นข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p></section>`;
+    // คำอธิบายยาวอยู่หลังปุ่ม ⓘ · ข้อความที่ต้องรู้ทันที (ข้อมูลสมมติ) อยู่ใต้ชื่อ
+    return `<section class="card rf-card rf-login">${ui.headingWithNote(TITLE, "แผนก RB · ควบคุมการผลิตยาง 4 สถานี ผสม → ฉีด → อบ → ตกแต่ง พร้อม FEFO (หมดอายุก่อนจ่ายก่อน) การชั่งแบบกันพลาด การกักกันล็อตอัตโนมัติ ด่านรับมอบ และการสืบย้อนกลับถึงล็อตวัตถุดิบ")}
+      <p class="muted">ข้อมูลสมมติ เก็บในเบราว์เซอร์นี้เท่านั้น</p></section>`;
   }
 
   // โหมดฐานข้อมูล: กำลังโหลด หรือโหลดไม่สำเร็จ (ปุ่มลองใหม่) แทนเนื้อหาหน้า
@@ -566,6 +568,7 @@
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
+    ui.enhanceDates(root);
     ui.labelTables(root);
     bind?.(root, ctx);
     scheduleReadyRefresh();

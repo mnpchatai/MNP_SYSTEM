@@ -135,9 +135,18 @@
   }
 
   const EMPTY = "—";
+  const MONTH_NAMES = Object.freeze(["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]);
 
-  // YYYY-MM-DD → DD/MM/YYYY (ค.ศ. เหมือนที่เห็นในสเปรดชีตต้นทาง) รูปแบบอื่นคืนเป็น —
+  // YYYY-MM-DD → "21 ก.ย. 2569" (เดือนไทยย่อ ปี พ.ศ. แบบเดียวกับวันที่ของทั้งระบบ — formatDate ใน app.js) รูปแบบอื่นคืนเป็น —
+  // เดิมแสดงเป็น DD/MM/YYYY ค.ศ. ให้ตรงกับสเปรดชีตต้นทาง แต่นั่นเป็นความสะดวกในการเทียบชีต ไม่ใช่ข้อกำหนดของรายงานทดสอบ จึงใช้แบบเดียวกับทุกหน้า
   function formatDate(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
+    const month = match ? MONTH_NAMES[Number(match[2]) - 1] : undefined;
+    return month ? `${Number(match[3])} ${month} ${Number(match[1]) + 543}` : EMPTY;
+  }
+
+  // YYYY-MM-DD → DD/MM/YYYY (ค.ศ.) เฉพาะข้อความที่คัดลอกไปวางใน Excel ให้ตรงกับสเปรดชีตต้นทางและอ่านเป็นวันที่ได้ ไม่ใช้แสดงบนหน้าจอ
+  function formatSheetDate(value) {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
     return match ? `${match[3]}/${match[2]}/${match[1]}` : EMPTY;
   }
@@ -166,14 +175,21 @@
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
+    hourCycle: "h23",
   });
 
-  // เวลาที่อ่านชีตล่าสุด เป็นเวลาไทย "DD/MM/YYYY HH:MM:SS" ไม่มีค่า/อ่านไม่ได้ = —
-  function formatUpdatedAt(value) {
-    if (!value) return EMPTY;
+  // ส่วนของวันเวลาไทย (day, month, year ค.ศ., hour, minute, second เป็นสตริง) ไม่มีค่า/อ่านไม่ได้ = null
+  function updatedParts(value) {
+    if (!value) return null;
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? EMPTY : updatedFormat.format(date).replace(", ", " ");
+    if (Number.isNaN(date.getTime())) return null;
+    return Object.fromEntries(updatedFormat.formatToParts(date).map((part) => [part.type, part.value]));
+  }
+
+  // เวลาที่อ่านชีตล่าสุด เป็นเวลาไทย "21 ก.ย. 2569 10:30:05" (วันที่แบบ formatDate) ไม่มีค่า/อ่านไม่ได้ = —
+  function formatUpdatedAt(value) {
+    const parts = updatedParts(value);
+    return parts ? `${Number(parts.day)} ${MONTH_NAMES[Number(parts.month) - 1]} ${Number(parts.year) + 543} ${parts.hour}:${parts.minute}:${parts.second}` : EMPTY;
   }
 
   /* ---------- ลำดับการทดสอบ ชุดทดสอบ และสถิติ (ใช้วาดกราฟและตารางของหน้าวัสดุ) ---------- */
@@ -1074,24 +1090,23 @@
     return match ? `${match[2]}/${match[1]}` : EMPTY;
   }
 
-  // เดือนแบบย่อ + ปี ค.ศ. เหมือนวันที่ทุกที่ในหน้านี้ ("2026-09" → "ก.ย. 2026") ค่าที่อ่านไม่ได้ = —
-  const MONTH_NAMES = Object.freeze(["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]);
+  // เดือนแบบย่อ + ปี พ.ศ. เหมือนวันที่ทุกที่ในหน้านี้ ("2026-09" → "ก.ย. 2569") ค่าที่อ่านไม่ได้ = —
   function formatMonth(month) {
     const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(month ?? ""));
-    return match ? `${MONTH_NAMES[Number(match[2]) - 1]} ${match[1]}` : EMPTY;
+    return match ? `${MONTH_NAMES[Number(match[2]) - 1]} ${Number(match[1]) + 543}` : EMPTY;
   }
 
   // เวลาที่อ่านชีตล่าสุด เฉพาะเวลา HH:MM:SS (เวลาไทย) — วันที่คือวันนี้เสมอเพราะเป็นการอ่านเมื่อครู่ ไม่ต้องแสดงซ้ำ
   function formatUpdatedTime(value) {
-    const full = formatUpdatedAt(value);
-    return full === EMPTY ? EMPTY : full.slice(11);
+    const parts = updatedParts(value);
+    return parts ? `${parts.hour}:${parts.minute}:${parts.second}` : EMPTY;
   }
 
   const api = {
     MAX_MATERIAL_LENGTH, SORT_OPTIONS,
     readMaterial, materialUrl, normalizeFeed, buildOverview, overviewStats, resultsFor,
     filterMaterials, sortMaterials, suggestMaterials,
-    formatDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
+    formatDate, formatSheetDate, formatTime, formatReading, formatPlain, formatUpdatedAt, formatUpdatedTime,
     buildSeries, describe, niceScale, dateMarks, monthOf, monthsOf, idsFor, idSeries, latestOf, trendOf, buildMaterialSummaries,
     testConditions, feedSignature, toTsv, formatSigned, formatShortDate, formatMonth,
     AVG_TOLERANCE, CONTROL_MIN_PROVISIONAL, CONTROL_MIN_READY, CONTROL_RECENT, MILL_DAYS, MILL_MIN_DIFF, OVERDUE_FACTOR, OVERDUE_MIN_DAYS, RULES, SIGNAL_WINDOW, PRACTICAL_BAND_MU, VISCOSITY_MINUTES, MACHINE_MIN_MATERIALS, MACHINE_DAYS,

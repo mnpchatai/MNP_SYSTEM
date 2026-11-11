@@ -229,7 +229,8 @@ test("RubberFlow and BOM use the shared tab, table head, header and badge rules,
   assert.match(css, /\.rf-tab \{[^}]*min-height: 44px/);
   assert.match(css, /\.rf-tabs\.is-scrollable \{[^}]*mask-image/, "tabs fade at the edge when they overflow");
   assert.doesNotMatch(css, /\.rf-page th \{[^}]*text-transform: uppercase/, "table heads are not upper-cased");
-  assert.match(css, /\[data-module\] :is\(\.register-table, \.rf-table, \.qc-table\) thead \{ background: var\(--mod-head\); \}/);
+  // ตารางของแดชบอร์ดและตารางอะไหล่ใช้หัวสีโมดูลเดียวกับทะเบียน (ตารางแบบเดียวทั้งระบบ)
+  assert.match(css, /\[data-module\] :is\(\.register-table, \.rf-table, \.qc-table, \.nd table, \.parts-table\) thead \{ background: var\(--mod-head\); \}/);
   assert.match(css, /@media \(pointer: coarse\), \(max-width: 760px\) \{\s*\.rf-page \.btn, \.rf-page \.btn\.small, \.rf-page \.input, \.rf-page \.select[^{]*\{ min-height: 44px; \}/);
   // ป้าย RubberFlow ใช้รูปทรงของ .badge และสีสถานะทึบเดิม
   assert.match(css, /\.rf-badge \{[^}]*border-radius: var\(--radius-sm\)/);

@@ -157,7 +157,8 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const dashboard = text(await env.render());
   assert.match(dashboard, /อัตราได้ของดีรวม 4 ขั้นตอน/);
   assert.match(dashboard, /ใบสั่งผลิตที่เปิดอยู่ 3/, "released + in_progress orders");
-  assert.match(dashboard, /ขั้นที่ 1[\s\S]*ผสมยาง[\s\S]*ขั้นที่ 4[\s\S]*ตกแต่งและบรรจุ/);
+  assert.match(dashboard, /1\. ผสมยาง[\s\S]*4\. ตกแต่งและบรรจุ/);
+  assert.equal((dashboard.match(/ล็อตทั้งหมด|งานรอเข้า/g) ?? []).length, 0, "station labels are table column heads, not repeated on every card");
   assert.match(await env.render(), /rf-chart-area[\s\S]*rf-chart-bar/, "both SVG charts are drawn");
   const mixing = await env.render("p=mixing");
   assert.match(mixing, /สถานีที่ 1 · ผสมยาง/);
@@ -165,7 +166,7 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(mixing, /data-rf-action="endRest"/, "admin may skip the rest in demo mode");
   const gated = await env.render("p=extrusion");
   assert.match(gated, /กักรอตัดสิน/);
-  assert.match(gated, /Gatekeeper/, "nothing received at extrusion yet");
+  assert.match(gated, /ด่านรับมอบ/, "nothing received at extrusion yet");
   assert.doesNotMatch(gated, /data-rf-form="recordExtrusion"/);
   // ข้ามเวลาบ่ม ส่งต่อ และรับมอบ → ฟอร์มบันทึกการฉีดโผล่พร้อมช่องสเปก
   const resting = env.store.data().lots.find((lot) => lot.stage === "mixing" && lot.readyAt > Date.now());
@@ -177,29 +178,32 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(extrusion, new RegExp(`<option value="${transferId}">`), "the received transfer is offered as the source");
   assert.match(extrusion, /data-spec data-lsl="2.38" data-usl="2.62"/, "spec inputs carry their limits");
   const finishing = await env.render("p=finishing");
-  assert.match(finishing, /Gatekeeper/, "nothing received at finishing yet");
+  assert.match(finishing, /ด่านรับมอบ/, "nothing received at finishing yet");
   assert.doesNotMatch(finishing, /data-rf-form="recordFinishing"/);
   const quality = text(await env.render("p=quality"));
   assert.match(quality, /ล็อตกักรอตัดสิน 1/);
-  assert.match(quality, /NCR \/ CAPA \(2\)/);
+  assert.match(quality, /NCR \/ CAR/);
   const ncr = await env.render("p=quality&tab=ncr");
-  assert.match(ncr, /วิเคราะห์ 5-Why/);
+  assert.match(ncr, /วิเคราะห์ทำไม 5 ครั้ง \(5-Why\)/);
   assert.match(ncr, /data-rf-form="closeNcr"/, "the open NCR has a close form for QC");
   const spc = await env.render("p=spc&ch=cu.temp");
-  assert.match(spc, /I-chart · อบ · อุณหภูมิอบ/);
+  assert.match(spc, /แผนภูมิควบคุม · อบ · อุณหภูมิอบ/);
   assert.match(spc, /rf-spc-chart/);
   assert.match(spc, /<option value="cu.temp" selected>/);
   const trace = await env.render(`p=trace&q=${env.store.data().fgBoxes[0].id}`);
   assert.match(trace, /ย้อนกลับไปต้นทาง/);
   assert.match(trace, /rf-node is-hit/);
   const wip = text(await env.render("p=wip"));
-  assert.match(wip, /รอรับมอบ \(1\)/);
+  assert.match(wip, /รอรับมอบ/);
+  assert.match(wip, /ผสมยาง[\s\S]*ตกแต่งและบรรจุ/, "the stations are the rows of one table");
+  assert.equal((wip.match(/รับแล้วรอใช้/g) ?? []).length, 1, "each column name is printed once, not on every station card");
   const warehouse = await env.render("p=warehouse&tab=fg");
   assert.match(warehouse, /data-rf-form="shipBoxes"/);
   assert.match(warehouse, /name="ids\[\]"/);
   const requisition = await env.render("p=requisition");
   assert.match(requisition, /<th class="right">จ่าย \(kg\)<\/th>/, "the detail lists the kilos that were issued");
-  assert.match(requisition, /จ่ายวัตถุดิบครบแล้ว รอห้องผสมนำไปผสม/);
+  assert.match(requisition, /จ่ายครบ รอผสม/, "the status badge says it once; no extra callout repeats it");
+  assert.doesNotMatch(requisition, /จ่ายวัตถุดิบครบแล้ว รอห้องผสมนำไปผสม/);
   assert.doesNotMatch(requisition, /<th>สถานะ<\/th>|จ่ายแล้ว<\/span>/, "a requisition that was issued says so once: no status on every line");
   assert.doesNotMatch(requisition, /data-rf-form="weighLine"|data-rf-sim|สถานีชั่ง|data-rf-action="issueRequisition"/, "no weighing station and nothing to issue: the seed has no requisition left on the scale");
   // an old requisition that is still on the scale gets one button for the whole slip
@@ -322,7 +326,7 @@ test("every dialog of the prototype builds from the seed, with print documents c
     ["createOrder", {}, /data-rf-form="createOrder"/], ["createRecipe", {}, /data-rf-form="createRecipe"/], ["receiveMaterial", {}, /data-rf-form="receiveMaterial"/],
     ["createRequisition", {}, /data-rf-form="createRequisition"[^>]*data-rf-success="เบิก \{result\} แล้ว"[\s\S]*data-rf-submit[^>]*>เบิก<\/button>/], ["transfer", { lotId: sendable.id }, /data-rf-form="createTransfer"/], ["receive", { id: inTransit.id }, /data-rf-form="receiveTransfer"/],
     ["qcRecord", { lotId: data.lots[0].id }, /data-rf-form="addQcRecord"[\s\S]*name="values\.hardness"/], ["ncr", {}, /data-rf-form="createNcr"[\s\S]*name="whys\[\]"/],
-    ["scan", { code: data.fgBoxes[0].id }, /กล่องสินค้าสำเร็จรูป/], ["alerts", {}, /การแจ้งเตือน \(\d+\)/],
+    ["scan", { code: data.fgBoxes[0].id }, /กล่องสินค้าสำเร็จรูป/], ["alerts", {}, /การแจ้งเตือน/],
     ["tag", { kind: "lot", id: data.lots[0].id }, /rf-barcode/], ["tag", { kind: "box", id: data.fgBoxes[0].id }, /ป้ายติดตามงาน/], ["tag", { kind: "material", id: data.materialLots[0].lotNo }, /ล็อตวัตถุดิบ/],
     ["tag", { kind: "requisition", id: data.requisitions[0].id }, /ใบเบิกวัตถุดิบ/], ["tag", { kind: "transfer", id: data.transfers[0].id }, /ใบส่งมอบ WIP/], ["tag", { kind: "order", id: data.orders[0].id }, /ใบสั่งผลิต/],
     ["coa", { lotId: finishing.id }, /CERTIFICATE OF ANALYSIS[\s\S]*rf-barcode/],
@@ -441,7 +445,7 @@ test("pages carry their module hue, and the side menu, page head and callouts us
   const sub = env.module.nav[0].subnav("rubberflow");
   assert.match(sub, new RegExp(`class="rf-nav-item" data-rf-mod="orders" [^>]*><span class="rf-nav-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("clipboard")}</span></span><span class="rf-nav-text">ใบสั่งผลิต</span>`));
   const gated = await env.render("p=extrusion");
-  assert.match(gated, new RegExp(`<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("warning")}</span></span><div class="rf-callout-body"><strong>Gatekeeper:`));
+  assert.match(gated, new RegExp(`<div class="rf-callout is-warn" role="note"><span class="rf-callout-ico" aria-hidden="true"><span class="rf-ico" aria-hidden="true">${svg("warning")}</span></span><div class="rf-callout-body"><strong>ด่านรับมอบ:`));
   assert.match(await env.render(), /<div class="rf-page" data-module="rf" data-rf-mod="dashboard">/);
   env.store.setUser(null);
 });
@@ -467,7 +471,7 @@ test("two-stage recipe: the recipe form and the mixing station have six stage in
   const stageInputs = (html) => {
     for (const stage of [1, 2]) {
       for (const key of ["mixerTemp", "dumpTemp", "mixMin"]) assert.match(html, new RegExp(`name="${key}${stage}"`), `${key}${stage}`);
-      for (const label of [`อุณหภูมิเครื่องผสม ขั้น ${stage} (°C)`, `Dump temp ขั้น ${stage} (°C)`, `เวลาผสม ขั้น ${stage} (นาที)`]) assert.ok(html.includes(label), label);
+      for (const label of [`อุณหภูมิเครื่องผสม ขั้น ${stage} (°C)`, `อุณหภูมิปล่อยยาง ขั้น ${stage} (°C)`, `เวลาผสม ขั้น ${stage} (นาที)`]) assert.ok(html.includes(label), label);
     }
     assert.doesNotMatch(html, /name="mixSec"|name="name"|name="productName"|เวลาผสม \(s\)/);
   };
@@ -598,7 +602,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.match(html, /ไม่ได้นับ 2 งานที่ยังไม่มี WO หรือไม่มีสูตร/);
   for (const name of ["materialCode[]", "needKg[]", "availableKg[]", "shortageKg[]", "safetyKg[]", "qtyKg[]"]) assert.ok(html.includes(`name="${name}"`), name);
   for (const code of ["EPDM-55", "CB-N550", "ZNO"]) assert.ok(html.includes(`>${code}<`) || html.includes(`value="${code}"`), code);
-  assert.match(html, /สต็อกขั้นต่ำ \(safety stock\) \(kg\)/);
+  assert.match(html, /สต็อกขั้นต่ำ \(kg\)/);
   assert.match(html, />สั่งซื้อ<\/button>/);
   assert.doesNotMatch(html, /undefined|NaN/);
   assert.equal(env.log.toasts.length, 0, "no toast when the dialog opens");

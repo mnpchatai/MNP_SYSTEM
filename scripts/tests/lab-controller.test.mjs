@@ -104,7 +104,7 @@ test("stale data retains its original date and gives a freshness warning", async
   const data = { ...body(), generated_at: "2026-01-01T01:02:03Z" };
   const app = setup(async () => ({ data, error: null }));
   await app.open("module=dashboard");
-  assert.match(app.element("#lab-updated").textContent, /01\/01\/2026/);
+  assert.match(app.element("#lab-updated").textContent, /1 ม.ค. 2569/);
   assert.match(app.element("#lab-status").textContent, /ยังไม่อัปเดต/);
 });
 
@@ -114,7 +114,7 @@ test("the dashboard reads the same compact overview RPC the Mooney list uses", a
   assert.deepEqual(JSON.parse(JSON.stringify(app.calls)), [{ name: "app_lab_mooney_feed", args: { p_material: null } }]);
   assert.match(app.context.app.innerHTML, /<h1>แดชบอร์ด<\/h1>/);
   assert.match(app.element("#lab-dash-mooney").innerHTML, /12,005/);
-  assert.match(app.element("#lab-dash-mooney").innerHTML, /03\/10\/2026/);
+  assert.match(app.element("#lab-dash-mooney").innerHTML, /3 ต.ค. 2569/);
   // แดชบอร์ดกับรายการวัสดุใช้แคชชุดเดียวกัน: เปิดรายการทันที แล้วตรวจสิทธิ์/ข้อมูลใหม่เบื้องหลังหนึ่งครั้ง
   await app.open("module=mooney");
   assert.match(app.element("#lab-materials").innerHTML, /A/);
@@ -157,7 +157,7 @@ test("dashboard auto-refresh repaints only when the numbers change and removes t
   response = { data: body([{ material: "A", resultCount: 2, lastTested: "2026-10-02" }]), error: null };
   app.tick();
   await flush();
-  assert.match(tiles.innerHTML, /02\/10\/2026/);
+  assert.match(tiles.innerHTML, /2 ต.ค. 2569/);
   response = { data: null, error: { message: "NOT_AUTHORIZED" } };
   app.tick();
   await flush();

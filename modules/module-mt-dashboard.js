@@ -280,7 +280,7 @@
     const max = known.length ? Math.max(...known.map((phase) => phase.avgDays)) : 0;
     const rows = phases.map((phase) => {
       const width = phase.n && max ? Math.max((phase.avgDays / max) * 100, 0.8) : 0;
-      return `<div class="nd-brow static"><span class="nd-lab">${esc(phase.label)}<br><span class="nd-muted">${esc(phase.owner)}</span></span><span class="nd-trk"><span class="nd-bar${phase.n && phase.avgDays === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${phase.n ? esc(fmtDays(phase.avgDays)) : "—"}<small>${phase.n ? `กลาง ${esc(fmtDays(phase.medianDays))} · ${esc(fmtCount(phase.n))}` : "ยังไม่มีข้อมูล"}</small></span></div>`;
+      return `<div class="nd-brow static"><span class="nd-lab">${esc(phase.label)}<br><span class="nd-muted">${esc(phase.owner)}</span></span><span class="nd-trk"><span class="nd-bar${phase.n && phase.avgDays === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${phase.n ? esc(fmtDays(phase.avgDays)) : "—"}${phase.n ? `<small>กลาง ${esc(fmtDays(phase.medianDays))} · ${esc(fmtCount(phase.n))}</small>` : ""}</span></div>`;
     }).join("");
     return `<div class="nd-head"><h2>เวลาที่ใช้แต่ละช่วง</h2><p>เวลาเฉลี่ยจากประวัติสถานะของใบที่แจ้งในช่วงที่เลือก นับเฉพาะช่วงที่เดินครบแล้ว แถบเข้มคือช่วงที่ใช้เวลานานสุด · ตรวจรับไม่ผ่านแล้วซ่อมใหม่ นับเป็นเวลาซ่อม ส่วนช่วง "อนุมัติ" รวมเวลาที่รอผู้แจ้งตอบข้อมูลเพิ่มด้วย</p></div>
       <div class="nd-bars">${rows}</div>`;
@@ -331,7 +331,7 @@
     };
     const rows = items.map((item) => {
       const width = item.hours && max ? Math.max((item.hours / max) * 100, 0.8) : 0;
-      const inner = `<span class="nd-lab">${esc(techName(item.id))}<br><span class="nd-muted">${esc(fmtCount(item.jobs))}ในช่วงนี้${item.holding ? ` · ถืออยู่ ${esc(fmtCount(item.holding))}` : ""}</span></span><span class="nd-trk"><span class="nd-bar${item.hours && item.hours === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtHours(item.hours))}<small>เฉลี่ย ${esc(fmtHours(item.avgHours))}/ใบ</small></span>`;
+      const inner = `<span class="nd-lab">${esc(techName(item.id))}<br><span class="nd-muted">${esc(fmtCount(item.jobs))}ในช่วงนี้${item.holding ? ` · ถืออยู่ ${esc(fmtCount(item.holding))}` : ""}</span></span><span class="nd-trk"><span class="nd-bar${item.hours && item.hours === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtHours(item.hours))}${item.avgHours === null || item.avgHours === undefined ? "" : `<small>เฉลี่ย ${esc(fmtHours(item.avgHours))}/ใบ</small>`}</span>`;
       return selectButton("tech", item.id, inner, `nd-brow${filters.tech === item.id ? " active" : ""}`) + detailUnder("tech", item.id, resolve);
     }).join("");
     return `<div class="nd-head"><h2>ช่างที่ใช้เวลาซ่อมมากสุด</h2><p>เรียงตามเวลาที่ใบของช่างอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบของใบที่แจ้งในช่วงที่เลือก แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง · ไม่ใช่ชั่วโมงทำงานจริง เพราะระบบยังไม่มีช่องบันทึกชั่วโมงทำงาน แต่เป็นเวลาตามนาฬิกา (รวมกลางคืนและวันหยุด) ตั้งแต่ช่างกดเริ่มงานจนส่งตรวจรับ ใบที่มีช่างหลายคนนับเต็มเวลาให้ทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ใช้เทียบภาระงานคร่าวๆ ไม่ใช้คิดค่าแรง · "ถืออยู่" = ใบที่ช่างต้องทำตอนนี้ (รอช่างเริ่มงานหรือกำลังซ่อม) นับทุกใบไม่ขึ้นกับช่วงเวลา ส่วนเวลาและจำนวนใบนับตามวันที่แจ้ง ไม่นับใบที่ไม่อนุมัติ</p></div>
@@ -393,8 +393,8 @@
     const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
-    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
-        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a><a class="btn secondary" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a></div></div>
+    return `<a class="request-back-link" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a><div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
+        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
@@ -407,7 +407,7 @@
         <section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters)}</section>
         ${definitionsHtml}
-        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
+        ${(() => { const note = window.MNP_NOTES?.toggle("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>"); const stamp = `ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)}`; return note ? `<div class="note-row nd-muted"><span>${stamp}</span>${note.button}</div>${note.body}` : `<p class="nd-muted">${stamp}</p>`; })()}
       </div>`;
   }
 

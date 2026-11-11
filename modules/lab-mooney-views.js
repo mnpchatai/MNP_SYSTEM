@@ -20,7 +20,6 @@
 
   const KEY_ICON = (series) => `<i class="lab-key lab-key-${series}" aria-hidden="true"></i>`;
   const REFRESH_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>`;
-  const BACK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`;
 
   /* ---------- ส่วนที่ใช้ร่วมกัน ---------- */
 
@@ -60,7 +59,7 @@
   // stats จาก model.overviewStats: จำนวนวัสดุ / ผลทดสอบรวม / วันที่ทดสอบล่าสุดกับจำนวนวัสดุที่ทดสอบวันนั้น
   // ใช้เมื่อสรุปยังไม่มี health (ตัวซิงก์รุ่นก่อน) เท่านั้น
   function dashboardMooney(stats) {
-    if (!stats?.materialCount) return `<div class="card"><div class="empty">${esc(NO_RESULTS)}</div></div>`;
+    if (!stats?.materialCount) return `<div class="card">${sections.emptyBlock(NO_RESULTS)}</div>`;
     return `<div class="summary-grid lab-dash-grid">
         ${tile("วัสดุ", int(stats.materialCount))}
         ${tile("ผลทดสอบ (ครั้ง)", int(stats.resultCount))}
@@ -81,7 +80,7 @@
   // ความหมายของ MV/MH ในโรงงาน (อยู่ที่ title ของปุ่มสลับ ไม่เป็นข้อความถาวร)
   const MEASURE_NOTE = Object.freeze({
     mv: "MV = ความหนืด Mooney ที่อ่านตอนจบเทส เทียบ ML(1+4)",
-    mh: "MH = ค่าสูงสุดช่วงต้นกราฟ Mooney (ไม่ใช่ MH ของ cure curve จาก MDR)",
+    mh: "MH = ค่าสูงสุดช่วงต้นกราฟ Mooney (ไม่ใช่ MH ของกราฟการคงรูปจาก MDR)",
   });
   const TREND_NOTE = `จุด = ค่าเฉลี่ย MV ของวัน (ถ่วงด้วยจำนวนชิ้น) · ขีดตั้ง = ค่าเฉลี่ยโม่ต่ำสุดถึงสูงสุดในวันนั้น · แถบ = เส้นกลางของสูตร ±${model.PRACTICAL_BAND_MU} MU · เรียงตามชื่อสูตร · สูตรที่ไม่มีผลในช่วงแสดงผลล่าสุดที่มี · ชี้/แตะจุดเพื่อดูค่า · กดเพื่อเจาะลึก`;
   const BIAS_NOTE = "ΔMV = ค่าเฉลี่ยของโม่ลบมัธยฐานของสูตรเดียวกันในวันนั้น เฉลี่ยทุกวันในช่วงที่มี ≥ 2 โม่ · ตัวเลขเล็ก = จำนวนวัน · "
@@ -142,7 +141,7 @@
   }
 
   // ผลต่อยางฟองน้ำเมื่อ MV สูง/ต่ำ (หนังสือให้ไว้เฉพาะความหนืด) ใช้ร่วมกันทุกที่ที่บอกสาเหตุ
-  const MV_EFFECT = (high) => (high ? "MV สูง: ไหลยาก ความร้อนเฉือนสูง เสี่ยง scorch ฟองเล็ก/พองไม่เต็ม" : "MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
+  const MV_EFFECT = (high) => (high ? "MV สูง: ไหลยาก ความร้อนเฉือนสูง เสี่ยงยางสุกก่อนเวลา (scorch) ฟองเล็ก/พองไม่เต็ม" : "MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
   // สาเหตุที่ควรตรวจของสถานะวันล่าสุด: ทุกโม่ไปทางเดียวกัน (โม่ต่างกันไม่เกินเกณฑ์) = ล็อต · โม่ต่างกัน = ดูตารางรายโม่ว่าโม่ไหน
   function dayHint({ status, dev, spread, mills }) {
     if (status !== "out" && status !== "warn") return "";
@@ -339,8 +338,8 @@
         <td data-label="จุดที่เกิน"><div class="lab-chips">${pattern ? `<small class="lab-pattern">${esc(pattern)}</small>` : ""}${chips}</div></td>
       </tr>`;
     }).join("");
-    return `<table class="lab-mill-table"><caption class="lab-drill-caption">รายโม่ ${esc(model.formatDate(rows[0].date))} · ผลต่าง = ค่าเฉลี่ยของโม่ลบมัธยฐานของวัน</caption>
-      <thead><tr><th scope="col">โม่</th><th scope="col" class="num">${KEY_ICON("mv")}MV</th><th scope="col" class="num">${KEY_ICON("mh")}MH</th><th scope="col" class="num">SD เส้น (สูงสุด)</th><th scope="col">สถานะ</th><th scope="col">จุดที่เกิน (โม่ เส้น ส่วน)</th></tr></thead>
+    return `<table class="lab-mill-table"><caption class="lab-drill-caption">รายโม่ ${esc(model.formatDate(rows[0].date))}</caption>
+      <thead><tr><th scope="col">โม่</th><th scope="col" class="num" title="ผลต่าง = ค่าเฉลี่ยของโม่ลบมัธยฐานของวัน">${KEY_ICON("mv")}MV</th><th scope="col" class="num" title="ผลต่าง = ค่าเฉลี่ยของโม่ลบมัธยฐานของวัน">${KEY_ICON("mh")}MH</th><th scope="col" class="num">SD เส้น (สูงสุด)</th><th scope="col">สถานะ</th><th scope="col">จุดที่เกิน (โม่ เส้น ส่วน)</th></tr></thead>
       <tbody>${body}</tbody></table>`;
   }
   // แถบตรวจเครื่อง: แสดงเฉพาะเมื่อมีวันที่หลายสูตรเลื่อนทางเดียวกัน (model.machineItems) ไม่มี = ว่าง
@@ -386,8 +385,8 @@
       case "rule": return `${item.measure} ${batchText(item.ago)} ${reading(item.value)}${rules()}${provisionalText(item)}`;
       case "sdHigh": return `SD ${item.measure} ชุดล่าสุด ${reading(item.value)} สูงกว่าปกติของวัสดุนี้ (UCL ${reading(item.limit)})${provisionalText(item)}`;
       case "mixed": return "อุณหภูมิหรือเวลาทดสอบไม่เท่ากันทุกแถว จึงไม่ตั้งเส้นควบคุม";
-      case "otherTest": return `${int(item.count)} แถวไม่ใช่การทดสอบความหนืด ML(1+4) (เวลาทดสอบไม่ใช่ ${model.VISCOSITY_MINUTES.join(" หรือ ")} นาที เช่น scorch) จึงไม่นำมาวิเคราะห์`;
-      case "missingAvg": return `${int(item.count)} แถวยังไม่มี AVG/SD ในชีต`;
+      case "otherTest": return `${int(item.count)} แถวไม่ใช่การทดสอบความหนืด ML(1+4) (เวลาทดสอบไม่ใช่ ${model.VISCOSITY_MINUTES.join(" หรือ ")} นาที เช่น ทดสอบยางสุกก่อนเวลา (scorch)) จึงไม่นำมาวิเคราะห์`;
+      case "missingAvg": return `${int(item.count)} แถวยังไม่มีค่าเฉลี่ย/SD ในชีต`;
       case "duplicateName": return `ชื่อซ้ำกับ ${item.others.join(", ")} เมื่อไม่สนตัวพิมพ์ ประวัติถูกแยกเป็นสองชื่อ`;
       case "lowercaseName": return "ชื่อมีตัวพิมพ์เล็ก รหัสวัสดุอาจพิมพ์ผิด";
       case "overdue": return `ไม่ได้ทดสอบ ${int(item.days)} วัน`;
@@ -404,10 +403,10 @@
     if (item.kind === "outOfBand" || item.kind === "rule") {
       if (item.strandStable === true) parts.push("ในเส้นนิ่ง แต่ต่างจากล็อตอื่น: ตรวจยางดิบ การบด การชั่ง สภาวะผสม");
       if (item.strandStable === false) parts.push("หัว-กลาง-ท้ายต่างกันมาก: ตรวจความสม่ำเสมอของการผสม");
-      if (item.key === "mv") parts.push(item.high ? "MV สูง: ไหลยาก ความร้อนเฉือนสูง เสี่ยง scorch ฟองเล็ก/พองไม่เต็ม" : "MV ต่ำ: ไหลง่าย ครีบมาก ฟองใหญ่/ยุบง่าย");
+      if (item.key === "mv") parts.push(MV_EFFECT(item.high));
     }
     if (item.kind === "sdHigh") parts.push("การผสมไม่สม่ำเสมอ ถ้าสูงผิดปกติมากให้ตรวจการกรอกข้อมูลก่อน");
-    if (item.kind === "machine") parts.push("ตรวจเครื่อง (อุณหภูมิ preheat น้ำหนักชิ้น) ด้วยยางอ้างอิงก่อนสรุปว่าเป็นปัญหาการผลิต");
+    if (item.kind === "machine") parts.push("ตรวจเครื่อง (อุณหภูมิอุ่นเครื่อง (preheat) น้ำหนักชิ้น) ด้วยยางอ้างอิงก่อนสรุปว่าเป็นปัญหาการผลิต");
     return parts.join(" · ");
   }
 
@@ -439,6 +438,8 @@
   /* ---------- หน้ารวม: รายการวัสดุ ---------- */
 
   function overviewPage(seconds) {
+    // วิธีอ่านตารางอยู่หลังปุ่ม ⓘ (MNP_NOTES โหลดจาก dashboard-notes.js ก่อนหน้านี้เสมอในหน้าเว็บ เทสต์ใน Node ไม่มี จึงไม่มีปุ่ม)
+    const howto = root.MNP_NOTES?.toggle?.("", "<p>MH / MV = ค่าเฉลี่ยชุดล่าสุด ± SD · Δ = เทียบชุดก่อนหน้า · เส้น = แนวโน้มรายชุด</p>", { name: "วิธีอ่านตาราง" }) ?? { button: "", body: "" };
     const sortOptions = model.SORT_OPTIONS.map((option) => `<option value="${esc(option.key)}">${esc(option.label)}</option>`).join("");
     return `<div class="lab-page">
       ${sections.moduleHead("mooney", { extra: liveBar(seconds) })}
@@ -448,12 +449,13 @@
             <div class="ss-list" id="lab-search-list" role="listbox" aria-label="วัสดุที่ตรงกับคำค้น" data-popup hidden></div></div>
           <div class="lab-sort"><label class="sr-only" for="lab-sort">เรียงตาม</label><select class="select" id="lab-sort">${sortOptions}</select></div>
           <span class="muted small lab-count" id="lab-count" aria-live="polite"></span>
-          <span class="lab-howto">MH / MV = ค่าเฉลี่ยชุดล่าสุด ± SD · Δ = เทียบชุดก่อนหน้า · เส้น = แนวโน้มรายชุด</span>
+          <span class="lab-howto">${howto.button}</span>
+          ${howto.body}
         </div>
         <div class="table-wrap"><table class="lab-overview"><caption class="sr-only">วัสดุที่ทดสอบ Mooney พร้อมผลชุดล่าสุด</caption>
           <thead><tr><th scope="col">วัสดุ</th><th scope="col">ทดสอบล่าสุด</th><th scope="col">${KEY_ICON("mh")}MH</th><th scope="col">${KEY_ICON("mv")}MV</th></tr></thead>
           <tbody id="lab-materials"></tbody></table></div>
-        <div class="empty" id="lab-empty" hidden></div>
+        <div id="lab-empty" hidden></div>
       </section>
     </div>`;
   }
@@ -468,7 +470,7 @@
   function metricCell(label, key, measure, trend) {
     if (!measure || !isNumber(measure.value)) return `<td class="lab-metric" data-label="${esc(label)}"><span class="lab-none">—</span></td>`;
     const spread = measure.basis === "reading"
-      ? `<span class="lab-sd" title="ชุดล่าสุดยังไม่มีค่า AVG ในชีต จึงแสดงค่าที่อ่านได้ของแถวล่าสุด">ค่าเดี่ยว</span>`
+      ? `<span class="lab-sd" title="ชุดล่าสุดยังไม่มีค่าเฉลี่ยในชีต จึงแสดงค่าที่อ่านได้ของแถวล่าสุด">ค่าเดี่ยว</span>`
       : isNumber(measure.sd) ? `<span class="lab-sd">± ${esc(model.formatReading(measure.sd))}</span>` : "";
     const delta = isNumber(measure.delta) ? `<span class="lab-delta">Δ ${esc(model.formatSigned(measure.delta))}</span>` : "";
     return `<td class="lab-metric" data-label="${esc(label)}"><div class="lab-metric-main">
@@ -533,17 +535,18 @@
     return `แสดง ${model.formatDate(first.testDate)} ถึง ${model.formatDate(last.testDate)} ${int(range.end - range.start)} จาก ${int(items.length)} ครั้ง`;
   }
 
-  // หัวหน้าบรรทัดเดียว: ปุ่มกลับ · ตัวเลือกวัสดุ (เป็นทั้งชื่อหน้าและตัวสลับวัสดุ) · ตัวเลือก ID · เวลาอ่านชีต/รีเฟรช
+  // ลิงก์กลับ (ชื่อหน้ารายการวัสดุ) แล้วหัวหน้าบรรทัดเดียว: ตัวเลือกวัสดุ (เป็นทั้งชื่อหน้าและตัวสลับวัสดุ) · ตัวเลือก ID · เวลาอ่านชีต/รีเฟรช
   function materialPage(material, seconds) {
+    const listTitle = sections.SECTIONS.find((section) => section.key === "mooney")?.label ?? "";
     const orders = ORDER_OPTIONS.map((option) => `<option value="${esc(option.key)}">${esc(option.label)}</option>`).join("");
     return `<div class="lab-page">
+      <a class="request-back-link" href="${esc(model.materialUrl(""))}">‹ ${esc(listTitle)}</a>
       <div class="lab-head lab-head-material">
-        <a class="icon-button lab-back" href="${esc(model.materialUrl(""))}" aria-label="กลับไปรายการวัสดุ" title="วัสดุทั้งหมด">${BACK_ICON}</a>
         <h1 class="lab-title"><label class="sr-only" for="lab-material-select">วัสดุ</label><select class="lab-title-select" id="lab-material-select"><option>${esc(material)}</option></select></h1>
         <label class="lab-id" id="lab-id-field"><span class="sr-only">ID</span><select class="select" id="lab-id-select"><option value="">ทุก ID</option></select></label>
         ${liveBar(seconds)}
       </div>
-      <section class="card" id="lab-none" hidden><div class="empty">ไม่พบผลทดสอบของวัสดุ “${esc(material)}”</div></section>
+      <section class="card" id="lab-none" hidden>${sections.emptyBlock(`ไม่พบผลทดสอบของวัสดุ “${material}”`)}</section>
       <div id="lab-body">
         <section class="card lab-chart-card" aria-label="กราฟ MH และ MV">
           <div class="lab-plot-wrap">
@@ -601,7 +604,7 @@
 
   // คอลัมน์ของตารางผล: ใช้ตัวเดียวกันทั้งวาดตารางและสร้างข้อความสำหรับคัดลอก
   //   varying = แสดงเมื่อเงื่อนไขทดสอบไม่เท่ากันทุกแถว, tsv = ตอนคัดลอกแยกเป็นหลายคอลัมน์ (วันที่กับเวลาแยกกันเพื่อใช้ต่อใน Excel)
-  const WHEN_COPY = [{ label: "วันที่", text: (item) => model.formatDate(item.testDate) }, { label: "เวลา", text: (item) => model.formatTime(item.testTime) }];
+  const WHEN_COPY = [{ label: "วันที่", text: (item) => model.formatSheetDate(item.testDate) }, { label: "เวลา", text: (item) => model.formatTime(item.testTime) }];
   const RESULT_COLUMNS = Object.freeze([
     { key: "id", label: "ID", sticky: true, text: (item) => item.sampleId },
     { key: "when", label: "วันที่ · เวลา", text: whenText, tsv: WHEN_COPY },
@@ -609,9 +612,9 @@
     { key: "minutes", label: "เวลาทดสอบ (นาที)", varying: true, num: true, text: (item) => model.formatPlain(item.testMinutes) },
     { key: "mh", label: "MH", mark: "mh", num: true, text: (item) => reading(item.mh) },
     { key: "mv", label: "MV", mark: "mv", num: true, text: (item) => reading(item.mv) },
-    { key: "avgMh", label: "AVG MH", group: true, tone: "avg", text: (item) => reading(item.avgMh) },
+    { key: "avgMh", label: "เฉลี่ย MH", copyLabel: "AVG MH", group: true, tone: "avg", text: (item) => reading(item.avgMh) },
     { key: "sdMh", label: "SD MH", group: true, tone: "sd", text: (item) => reading(item.sdMh) },
-    { key: "avgMv", label: "AVG MV", group: true, tone: "avg", text: (item) => reading(item.avgMv) },
+    { key: "avgMv", label: "เฉลี่ย MV", copyLabel: "AVG MV", group: true, tone: "avg", text: (item) => reading(item.avgMv) },
     { key: "sdMv", label: "SD MV", group: true, tone: "sd", text: (item) => reading(item.sdMv) },
   ]);
 
@@ -674,7 +677,7 @@
 
   // ข้อความคั่นแท็บสำหรับวางใน Excel: ทุกแถวมี AVG/SD ครบ (ขยายค่าที่ merge ไปทุกแถว เหมือนฟีดจากชีต) วันที่กับเวลาแยกคอลัมน์
   function tsvOf(columns, items, uniform, order) {
-    const cells = visibleColumns(columns, uniform).flatMap((column) => column.tsv ?? [{ label: column.label, text: column.text }]);
+    const cells = visibleColumns(columns, uniform).flatMap((column) => column.tsv ?? [{ label: column.copyLabel ?? column.label, text: column.text }]);
     return model.toTsv([cells.map((cell) => cell.label), ...ordered(items, order).map((item) => cells.map((cell) => cell.text(item)))]);
   }
 
@@ -701,13 +704,13 @@
   }
 
   // ขีดทึบ = ค่าตามชีต, ขีดประ = ชุดที่ชีตยังไม่มี AVG หรือค่าในชีตใช้ไม่ได้ กราฟคำนวณจากค่าที่อ่านได้ของชุดนั้นให้ (อธิบายที่ title ไม่เป็นข้อความถาวร)
-  const AVG_KEY_NOTE = "ขีดทึบ = ค่า AVG ตามชีต · ขีดประ = ชุดที่ชีตยังไม่มี AVG หรือค่า AVG ในชีตไม่ตรงกับค่าที่อ่านได้ (อยู่นอกช่วงต่ำสุด–สูงสุดของชุด) กราฟเฉลี่ยค่าที่อ่านได้ของชุดนั้นให้";
+  const AVG_KEY_NOTE = "ขีดทึบ = ค่าเฉลี่ยตามชีต · ขีดประ = ชุดที่ชีตยังไม่มีค่าเฉลี่ย หรือค่าเฉลี่ยในชีตไม่ตรงกับค่าที่อ่านได้ (อยู่นอกช่วงต่ำสุด–สูงสุดของชุด) กราฟเฉลี่ยค่าที่อ่านได้ของชุดนั้นให้";
 
   // คำอธิบายสัญลักษณ์ของกราฟบรรทัดเดียวใต้กราฟ (เป็นที่เดียวที่อธิบายแถบและขีด)
   // bandSize = ขนาดแถบที่กราฟใช้อยู่จริง (ขยายเป็นทวีคูณของ chart.BAND_SIZE เมื่อแถบแคบเกินไป)
   function chartKey(mode, bandSize = chart.BAND_SIZE) {
     if (mode === "id") return `<span class="lab-key-item"><i class="lab-key-mean" aria-hidden="true"></i>เส้นประ = ค่าเฉลี่ยของ ID นี้</span><span class="lab-key-item">ป้าย = ล่าสุด สูงสุด ต่ำสุด</span>`;
-    return `<span class="lab-key-item"><i class="lab-key-band" aria-hidden="true"></i>แถบสลับ = ทุก ${bandSize} จุด</span><span class="lab-key-item" title="${esc(AVG_KEY_NOTE)}"><i class="lab-key-avg" aria-hidden="true"></i>ขีดสั้น = ค่า AVG ของชุด</span>`;
+    return `<span class="lab-key-item"><i class="lab-key-band" aria-hidden="true"></i>แถบสลับ = ทุก ${bandSize} จุด</span><span class="lab-key-item" title="${esc(AVG_KEY_NOTE)}"><i class="lab-key-avg" aria-hidden="true"></i>ขีดสั้น = ค่าเฉลี่ยของชุด</span>`;
   }
 
   const api = {

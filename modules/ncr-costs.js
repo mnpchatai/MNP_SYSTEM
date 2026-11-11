@@ -1,6 +1,6 @@
 // Shared by the Pilot forms, register and dashboard. Old rows need review; missing is never zero.
 (function registerNcrCosts(root) {
-  const TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบสูญเสีย", repair: "ค่าซ่อม (Repair)", rework: "ค่า Rework", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน (ค่าใช้จ่ายส่วนเพิ่ม)", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่น ๆ" };
+  const TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบสูญเสีย", repair: "ค่าซ่อม (Repair)", rework: "ค่าแก้ไขงาน (Rework)", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน (ค่าใช้จ่ายส่วนเพิ่ม)", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่น ๆ" };
   const STATUSES = { estimated: "ประมาณการ", confirmed: "ยืนยันแล้ว", legacy: "รายการเดิมรอตรวจสอบ" };
   const COMPONENTS = { quantity: "จำนวน × ต้นทุน", labor: "ค่าแรง", material: "วัสดุซ่อม", external: "ค่าจ้างภายนอก", amount: "ยอดตามเอกสาร" };
   const round = (value, digits = 2) => Math.round((Number(value) + Number.EPSILON) * 10 ** digits) / 10 ** digits;

@@ -112,7 +112,9 @@ test("every part of the NCR wears the one NCR palette, and the page keeps one li
   const html = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"));
   const parts = html.match(/<section class="card ncr-card ncr-detail-part ncr-detail-part--\d" data-module="ncr"/g) ?? [];
   assert.equal(parts.length, 4);
-  assert.equal((html.match(/href="#\/ncr">‹ ทะเบียน NCR</g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
+  // ลิงก์ย้อนกลับแบบเดียวกับทุกหน้า (request-back-link เหนือหัว) ชื่อตามหน้าปลายทาง: #/ncr คือหน้า NCR/CAR ของศูนย์คำร้อง
+  assert.equal((html.match(/<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
+  assert.doesNotMatch(html, /class="btn secondary" href="#\/ncr">‹/, "not a second back button inside the heading");
   assert.doesNotMatch(html, /style="/, "no inline colours");
 });
 
@@ -281,7 +283,8 @@ test("the NCR's responders enter and edit estimates only: no confirm, void or co
 
 test("read-only viewers are told who can enter costs; editors are not", async () => {
   const readOnly = await renderFor(employee("e8", "dept-qa", "QA", "staff"));
-  assert.match(readOnly, /ผู้กรอกค่าเสียหายได้: ผจก\.ทั่วไป, ผจก\.โรงงาน, ผช\.ผจก\.โรงงาน และ ผจก\.\/ผช\.ผจก\.แผนก QA/);
+  // ชื่อตำแหน่งเต็มในข้อความ (ผู้ใช้เลือก 2026-11-10)
+  assert.match(readOnly, /ผู้กรอกค่าเสียหายได้: ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ช่วยผู้จัดการโรงงาน และผู้จัดการ\/ผู้ช่วยผู้จัดการแผนก QA/);
   const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
   assert.doesNotMatch(editor, /ผู้กรอกได้:/);
   // ใบที่ยกเลิกล็อกทุกคน จึงไม่ชี้ไปหาใคร
@@ -372,8 +375,8 @@ test("the disposition form offers an optional responder picker per department th
   assert.match(rb, /<select class="select" id="ncr-responder-dept-rb" name="responder" disabled>/, "disabled while hidden so it is never submitted");
   assert.match(rb, /<option value="">ไม่ระบุ — ทุกคนในแผนกตอบได้<\/option>/, "the empty choice means nobody is named");
   assert.match(rb, /<option value="s1">สมชาย ทดสอบ · พนักงาน<\/option>/);
-  assert.match(rb, /<option value="m1">มานะ ทดสอบ · ผจก\.แผนก<\/option>/);
-  assert.match(picker("dept-gr"), /อารี ทดสอบ · ผช\.ผจก\.แผนก/);
+  assert.match(rb, /<option value="m1">มานะ ทดสอบ · ผู้จัดการแผนก<\/option>/);
+  assert.match(picker("dept-gr"), /อารี ทดสอบ · ผู้ช่วยผู้จัดการแผนก/);
   assert.equal(picker("dept-pp"), undefined, "PP has nobody to choose, so no picker");
   assert.doesNotMatch(html, /ใหญ่ ทดสอบ/, "a general manager is not an eligible responder");
 });

@@ -52,7 +52,7 @@ function load({ sandbox = true, route = "", access = EDIT, fixtures = {}, employ
   const app = { innerHTML: "" };
   const data = { app_qc_access: access, app_qc_reports: { reports: [LISTED] }, app_qc_report: REPORT, app_qc_templates: [TEMPLATE], app_qc_lots: [], ...fixtures };
   Object.assign(context, {
-    window: context, console, escapeHtml, formatDate: (value) => `D(${value})`, showToast: (message) => calls.toasts.push(message), friendlyError: (error) => String(error?.message ?? error),
+    window: context, console, escapeHtml, emptyState: (text, { hint = "" } = {}) => `<div class="empty empty-state"><p>${escapeHtml(text)}</p>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</div>`, formatDate: (value) => `D(${value})`, showToast: (message) => calls.toasts.push(message), friendlyError: (error) => String(error?.message ?? error),
     setFormBusy() {}, renderRoute: async () => {}, confirmDialog: async (options) => { calls.confirms.push(options); return calls.confirmAnswer; }, closePopup: () => { calls.closed += 1; },
     URLSearchParams, Intl, Date, Number, Object, Promise, location: { hash: "" }, FormData: class {},
     app, state: { employee: { id: "emp-gm", isSandbox: sandbox, ...employee }, sandbox: sandboxState },
@@ -114,7 +114,7 @@ test("the list shows each report with its status badge and the actions the perso
   const { app, calls } = await page("");
   assert.match(app.innerHTML, /<shell path="qc" title="ใบตรวจ QC">/);
   assert.match(app.innerHTML, /href="#\/qc\?view=report&amp;id=r1">TEST-QC-26-001</);
-  assert.match(app.innerHTML, /<span class="badge pending_approval">รอ ผจก\.QA<\/span>/);
+  assert.match(app.innerHTML, /<span class="badge pending_approval">รอผู้จัดการแผนก QA<\/span>/);
   assert.match(app.innerHTML, /<span class="badge rejected">ไม่ผ่าน \(Reject\)<\/span>/);
   assert.match(app.innerHTML, /ลูกค้า A/);
   assert.match(app.innerHTML, /LOT-1/);
@@ -148,8 +148,8 @@ test("the report page shows the form header, items, Mooney rows, signatures and 
   const { app, calls } = await page("view=report&id=r1");
   const html = app.innerHTML;
   assert.match(html, /<h1>TEST-QC-26-001<\/h1>/);
-  assert.match(html, /<span class="badge pending_approval">รอ ผจก\.QA<\/span>/);
-  for (const label of ["Part Number", "Part Name", "customer", "Order No.", "Code", "Inspecter By", "inspection Date", "Results"]) assert.ok(html.includes(`<dt>${label}</dt>`), label);
+  assert.match(html, /<span class="badge pending_approval">รอผู้จัดการแผนก QA<\/span>/);
+  for (const label of ["Part Number", "Part Name", "Customer", "Order No.", "Code", "Inspecter By", "Inspection Date", "Results"]) assert.ok(html.includes(`<dt>${label}</dt>`), label);
   assert.match(html, /ยางรองเครื่อง/);
   assert.match(html, /Sample \(2M\)/);
   assert.match(html, /<span class="qc-judge qc-judge-n" title="NG">N<\/span>/);
@@ -160,12 +160,16 @@ test("the report page shows the form header, items, Mooney rows, signatures and 
   assert.match(html, /<td class="right">9\.1167<\/td>/);
   assert.match(html, /ยางผสม \(Mooney\)/);
   assert.match(html, /<strong>LOT-1<\/strong><\/td><td>MS-01<\/td><td class="right">3<\/td>[\s\S]*?<td class="right">18\.23<\/td><td class="right">62\.50<\/td>/);
-  assert.match(html, /<strong>LOT-2<\/strong><\/td><td colspan="5" class="muted">ยังไม่มีผล Mooney ของ Lot นี้ในระบบ<\/td>/);
+  assert.match(html, /<strong>LOT-2<\/strong><\/td><td colspan="5" class="muted">ยังไม่มีผล Mooney ของล็อตนี้ในระบบ<\/td>/);
   assert.doesNotMatch(html, /#\/lab\?module=mooney/, "the Mooney link needs lab access");
-  assert.match(html, /qc-sign-role">Inspector<\/span><strong>✓ ลงนามแล้ว<\/strong>/);
-  assert.match(html, /manager QA<\/span><strong class="qc-sign-wait">รออนุมัติ<\/strong>/);
-  assert.match(html, /factory manager<\/span><strong>—<\/strong>/);
-  assert.match(html, /General Manager Approved/);
+  assert.match(html, /qc-sign-role">ผู้ตรวจ<\/span><strong>✓ ลงนามแล้ว<\/strong>/);
+  assert.match(html, /ผู้จัดการแผนก QA<\/span><strong class="qc-sign-wait">รออนุมัติ<\/strong>/);
+  assert.match(html, /ผู้จัดการโรงงาน<\/span><strong>—<\/strong>/);
+  assert.match(html, /ผู้จัดการทั่วไป<\/span><strong>—<\/strong>/);
+  assert.doesNotMatch(html, /manager QA|factory manager|General Manager Approved|ผจก\./, "the sign boxes use the full Thai role names on screen");
+  assert.match(html, /<th>ล็อต<\/th>[\s\S]*เฉลี่ย MH<\/th><th class="right">เฉลี่ย MV/, "the Mooney table is Thai first");
+  assert.doesNotMatch(html, /<dt>customer<\/dt>|<dt>inspection Date<\/dt>/, "no lowercase slips in the form header");
+  assert.match(html, /<a class="request-back-link" href="#\/qc">‹ ใบตรวจ QC<\/a>/, "the back link names the list page");
   assert.match(html, /<strong>ส่งอนุมัติ<\/strong>/);
   assert.match(html, /<strong>สร้างใบตรวจ<\/strong>/);
   assert.deepEqual(plain(calls.rpc[1]), ["app_qc_report", { p_id: "r1" }]);
@@ -348,8 +352,9 @@ test("a part without a part number is labelled by its name everywhere and the nu
   assert.match(list.app.innerHTML, /<td><a class="request-no" href="#\/qc\?view=template&amp;id=t1">P-100<\/a><\/td>\s*<td>ยางรองเครื่อง<\/td>/);
 
   const form = await page("view=template&id=t2", { fixtures: { app_qc_templates: [noNumber] } });
-  assert.match(form.app.innerHTML, /<label for="qc-t-part">Part Number \(ไม่บังคับ\)<\/label><input class="input" id="qc-t-part" name="part_number" maxlength="60" value="">/, "no required attribute on the part number");
-  assert.match(form.app.innerHTML, /<label for="qc-t-name">Part Name \*<\/label><input[^>]* required/, "the part name stays required");
+  assert.match(form.app.innerHTML, /<label for="qc-t-part">Part Number \(ถ้ามี\)<\/label><input class="input" id="qc-t-part" name="part_number" maxlength="60" value="">/, "no required attribute on the part number");
+  assert.match(form.app.innerHTML, /<label for="qc-t-name">Part Name <span class="field-required">\(จำเป็น\)<\/span><\/label><input[^>]* required/, "the part name stays required and carries the shared marker");
+  assert.match(form.app.innerHTML, /<th>ITEM No\. <span class="field-required">\(จำเป็น\)<\/span><\/th><th>Inspection Item <span class="field-required">\(จำเป็น\)<\/span><\/th>/, "required item columns are marked");
   assert.match(form.app.innerHTML, /<h1>ชิ้นงานเดี่ยว<\/h1>/);
   const blank = await page("view=template");
   assert.doesNotMatch(blank.app.innerHTML, /id="qc-t-part"[^>]* required/);
@@ -370,4 +375,37 @@ test("a part without a part number is labelled by its name everywhere and the nu
   assert.match(edit.app.innerHTML, /name="part_number" value=""/);
   const orphan = await page("view=edit&id=r1", { fixtures: { app_qc_report: { ...draft, template_id: "gone" }, app_qc_templates: [] } });
   assert.match(orphan.app.innerHTML, /<option value="" selected>ชิ้นงานเดี่ยว<\/option>/);
+});
+
+test("every QC screen keeps to the shared patterns: required marker, Thai first, named back links, one empty-state helper", async () => {
+  const draft = { ...REPORT, status: "draft", result: "ng", approvals: [] };
+  const screens = {
+    list: await page(""),
+    templates: await page("view=templates"),
+    template: await page("view=template&id=t1"),
+    newReport: await page("view=new"),
+    edit: await page("view=edit&id=r1", { fixtures: { app_qc_report: draft } }),
+    report: await page("view=report&id=r1"),
+    draftReport: await page("view=report&id=r1", { fixtures: { app_qc_report: draft } }),
+    decide: await page("view=report&id=r1", { access: { read: true, edit: false, steps: ["qa_manager"] }, employee: { id: "someone-else" } }),
+  };
+  for (const [name, { app }] of Object.entries(screens)) {
+    assert.doesNotMatch(app.innerHTML, /\s\*<\/label>|required-mark/, `${name}: required fields use the "(จำเป็น)" marker, never "*"`);
+    assert.doesNotMatch(app.innerHTML, /ผจก\.|ผช\.ผจก/, `${name}: role names are written in full`);
+    assert.doesNotMatch(app.innerHTML, /<(?:dt|label|th)[^>]*>(?:customer|inspection Date)</, `${name}: no lowercase paper-form slips`);
+    assert.doesNotMatch(app.innerHTML, /\bLot\b/, `${name}: ล็อต, not Lot`);
+    assert.doesNotMatch(app.innerHTML, /type="file"/, `${name}: no raw file input`);
+    for (const back of app.innerHTML.matchAll(/<a class="request-back-link"[^>]*>([^<]*)<\/a>/g)) assert.doesNotMatch(back[1], /กลับ|ย้อนกลับ/, `${name}: a back link names its page, not "back"`);
+  }
+  assert.match(screens.edit.app.innerHTML, /<a class="request-back-link" href="#\/qc\?view=report&amp;id=r1">‹ TEST-QC-26-001<\/a>/, "back from the editor names the report");
+  assert.match(screens.newReport.app.innerHTML, /<a class="request-back-link" href="#\/qc">‹ ใบตรวจ QC<\/a>/);
+  assert.match(screens.template.app.innerHTML, /<a class="request-back-link" href="#\/qc\?view=templates">‹ แม่แบบตรวจ<\/a>/);
+  assert.match(screens.newReport.app.innerHTML, /<label for="qc-r-name">Part Name <span class="field-required">\(จำเป็น\)<\/span><\/label>/);
+  assert.match(screens.newReport.app.innerHTML, /<label for="qc-r-date">Inspection Date<\/label>/);
+  assert.match(screens.report.app.innerHTML, /<label for="qc-ncr-total">จำนวนที่ตรวจ <span class="field-required">\(จำเป็น\)<\/span><\/label>/);
+  assert.match(screens.draftReport.app.innerHTML, /<label for="qc-cancel-note">เหตุผลที่ยกเลิก <span class="field-required">\(จำเป็น\)<\/span><\/label>/);
+  assert.match(screens.decide.app.innerHTML, /<label for="qc-decide-comment">ความเห็น <span class="field-required">\(จำเป็นเมื่อไม่อนุมัติ\)<\/span><\/label>/);
+  const empty = await page("", { fixtures: { app_qc_reports: { reports: [] } } });
+  assert.match(empty.app.innerHTML, /class="empty empty-state"/, "the empty list uses emptyState()");
+  assert.doesNotMatch(empty.app.innerHTML, /<div class="empty">/);
 });

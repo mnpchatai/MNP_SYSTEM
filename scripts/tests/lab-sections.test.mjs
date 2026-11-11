@@ -17,8 +17,8 @@ test("MNP LAB has exactly four modules in the defined order", () => {
   assert.deepEqual(sections.SECTIONS.map((section) => [section.key, section.label]), [
     ["dashboard", "แดชบอร์ด"],
     ["chemical", "เปรียบเทียบเคมี"],
-    ["mooney", "Mooney test report"],
-    ["mdr", "MDR test report"],
+    ["mooney", "รายงานทดสอบ Mooney"],
+    ["mdr", "รายงานทดสอบ MDR"],
   ]);
   assert.ok(Object.isFrozen(sections.SECTIONS));
 });
@@ -78,13 +78,14 @@ test("the chooser shows one gradient card per module; only open modules are link
 
 test("a module page opens with a back link and the shared module header that names it once", () => {
   const head = sections.moduleHead("mooney", { extra: `<span id="extra"></span>` });
-  assert.match(head, /<a class="request-back-link" href="#\/lab" aria-label="ย้อนกลับไปเลือกโมดูล">‹ ย้อนกลับ<\/a>/);
+  assert.match(head, /<a class="request-back-link" href="#\/lab">‹ เลือกโมดูล<\/a>/, "the back link names the page it returns to");
+  assert.doesNotMatch(head, /ย้อนกลับ|กลับ/);
   assert.match(head, /<div class="page-heading request-module-header lab-module-header" data-module="it">/);
   assert.doesNotMatch(head, /gradient|style="/, "the module colour comes from the palette, never inline");
-  assert.match(head, /<div class="request-module-title"><span class="type-card-badge"><svg [^>]*>[\s\S]*?<\/svg><\/span><h1>Mooney test report<\/h1><\/div>/);
+  assert.match(head, /<div class="request-module-title"><span class="type-card-badge"><svg [^>]*>[\s\S]*?<\/svg><\/span><h1>รายงานทดสอบ Mooney<\/h1><\/div>/);
   assert.doesNotMatch(head, /eyebrow|<p>|MNP LAB/, "no eyebrow or description repeating the breadcrumb or the title");
   assert.match(head, /<span id="extra"><\/span>/);
-  assert.equal(count(visibleText(head), /Mooney test report/g), 1);
+  assert.equal(count(visibleText(head), /รายงานทดสอบ Mooney/g), 1);
   const off = sections.moduleHead("mdr", { open: false });
   assert.match(off, /lab-module-header is-off/);
   assert.doesNotMatch(off, /<p>/, "no description for a module that is not set up");

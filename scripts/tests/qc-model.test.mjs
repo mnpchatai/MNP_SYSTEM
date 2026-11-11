@@ -34,12 +34,14 @@ test("computeResult follows the report rule: any N is ng, otherwise any AC is ac
 });
 
 test("labels and badge classes", () => {
-  assert.equal(model.STATUS_LABELS.pending_qa_manager, "รอ ผจก.QA");
+  assert.equal(model.STATUS_LABELS.pending_qa_manager, "รอผู้จัดการแผนก QA", "status labels use the full role name");
+  assert.equal(model.STATUS_LABELS.draft, "ฉบับร่าง");
+  for (const label of [...Object.values(model.STATUS_LABELS), ...model.STEPS.map((step) => step.label)]) assert.doesNotMatch(label, /ผจก\.|ผช\.|[a-z]{4,}/, `${label}: no short role names or lowercase English on screen`);
   assert.equal(model.RESULT_LABELS.accept, "ยอมรับ (Accept)");
   for (const status of ["pending_qa_manager", "pending_factory_manager", "pending_general_manager"]) assert.equal(model.statusBadgeClass(status), "pending_approval");
   assert.equal(model.statusBadgeClass("approved"), "completed");
   assert.equal(model.statusBadgeClass("rejected"), "rejected");
-  assert.equal(model.statusBadgeClass("cancelled"), "rejected");
+  assert.equal(model.statusBadgeClass("cancelled"), "", "cancelled is neutral, not red");
   assert.equal(model.statusBadgeClass("draft"), "in_progress");
   assert.equal(model.JUDGE_CLASSES.AC, "qc-judge-ac");
 });
