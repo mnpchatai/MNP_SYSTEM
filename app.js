@@ -582,6 +582,11 @@ const ATTACHMENT_HINT = window.MNP_ATTACHMENT_IMAGE?.HINT ?? "";
 const ATTACHMENT_HINT_SHORT = window.MNP_ATTACHMENT_IMAGE?.HINT_SHORT ?? "";
 // ช่องที่ต้องกรอกบอกแบบเดียวทั้งระบบ: ต่อท้ายป้ายด้วย (จำเป็น) (ฟอร์ม NCR/MT/RubberFlow/BOM ใช้ span เดียวกัน)
 const REQUIRED_MARK = ' <span class="field-required">(จำเป็น)</span>';
+// ข้อความสั้นที่ต้องเห็น + คำอธิบายเต็มหลังปุ่ม ⓘ ตัวเดียวทั้งระบบ (modules/dashboard-notes.js) · shortText/fullHtml เป็น HTML ที่ escape แล้ว
+function noteLine(shortText, fullHtml, label) {
+  const note = window.MNP_NOTES?.toggle(label, fullHtml);
+  return note ? `<div class="note-row muted small"><span>${shortText}</span>${note.button}</div>${note.body}` : `<p class="muted small">${shortText}</p>`;
+}
 
 // รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 1 MB) ถูกแปลง/บีบเป็น JPEG ในเบราว์เซอร์
 // ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
@@ -5059,7 +5064,7 @@ function holidaysSectionHtml(holidays) {
     </tr>`).join("") || `<tr><td colspan="3" class="muted small">ยังไม่มีวันหยุดที่บันทึกไว้ในปีนี้</td></tr>`;
   return `<section class="card">
     <h2>วันหยุดบริษัท</h2>
-    <p class="muted small">ระบบไม่ส่งอีเมลเตือนงานค้าง (08:30 และ 13:30 น.) และสำเนาถึงหัวหน้า (10:30 และ 15:30 น.) ในวันที่บันทึกไว้ที่นี่ วันอาทิตย์ข้ามให้อยู่แล้ว ไม่ต้องบันทึก บันทึกวันเดิมซ้ำจะเป็นการแก้ชื่อวันหยุด</p>
+    ${noteLine("วันที่บันทึกไว้ ระบบไม่ส่งอีเมลเตือนงานค้าง", "<p>ระบบไม่ส่งอีเมลเตือนงานค้าง (08:30 และ 13:30 น.) และสำเนาถึงหัวหน้า (10:30 และ 15:30 น.) ในวันที่บันทึกไว้ที่นี่ วันอาทิตย์ข้ามให้อยู่แล้ว ไม่ต้องบันทึก บันทึกวันเดิมซ้ำจะเป็นการแก้ชื่อวันหยุด</p>", "วันหยุดกับอีเมลเตือน")}
     <form id="holiday-form" class="field-row">
       <div class="field"><label for="holiday-date">วันที่${REQUIRED_MARK}</label><input class="input" id="holiday-date" name="holiday_date" type="date" required></div>
       <div class="field"><label for="holiday-name">ชื่อวันหยุด${REQUIRED_MARK}</label><input class="input" id="holiday-name" name="name_th" maxlength="100" placeholder="เช่น วันปิยมหาราช" required></div>
@@ -5270,7 +5275,7 @@ async function renderAdmin(params) {
     ${tab === "accounts" ? `<div class="stack">${accountCards}</div>` : ""}
     ${tab === "modules" ? `
       <section class="card">
-        <p class="muted small">กำหนดว่าผู้อนุมัติแต่ละคนอนุมัติคำร้องโมดูลใดได้บ้าง ผู้ที่ไม่ได้ติ๊กโมดูลใดจะไม่เห็นและอนุมัติคำร้องโมดูลนั้น แม้จะอยู่แผนกและถือบทบาทผู้อนุมัติเดียวกันก็ตาม (ขั้นตอน "หัวหน้าแผนก" ที่อนุมัติในฐานะผู้บังคับบัญชาโดยตรงไม่ถูกจำกัดด้วยตารางนี้)</p>
+        ${noteLine("ติ๊กโมดูลที่ผู้อนุมัติแต่ละคนอนุมัติได้", "<p>กำหนดว่าผู้อนุมัติแต่ละคนอนุมัติคำร้องโมดูลใดได้บ้าง ผู้ที่ไม่ได้ติ๊กโมดูลใดจะไม่เห็นและอนุมัติคำร้องโมดูลนั้น แม้จะอยู่แผนกและถือบทบาทผู้อนุมัติเดียวกันก็ตาม (ขั้นตอน \"หัวหน้าแผนก\" ที่อนุมัติในฐานะผู้บังคับบัญชาโดยตรงไม่ถูกจำกัดด้วยตารางนี้)</p>", "สิทธิ์อนุมัติรายโมดูล")}
         <div class="table-wrap"><table>
           <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>ตำแหน่ง</th>${moduleColumns.map((col) => `<th>${escapeHtml(col.name)}</th>`).join("")}</tr></thead>
           <tbody>${modulePermissionTableRows}</tbody>
@@ -5279,7 +5284,7 @@ async function renderAdmin(params) {
     ${tab === "credentials" ? `
       ${adding ? `
       <section class="card">
-        <div class="card-head"><div><h2>เพิ่มบัญชีใหม่</h2><p class="muted small">บัญชีใช้งานได้ทันทีโดยไม่ต้องผ่านคำร้อง ระบบส่งอีเมลแจ้ง ID พร้อมลิงก์ตั้งรหัสผ่านใหม่ให้เจ้าของบัญชี</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
+        <div class="card-head"><div><h2>เพิ่มบัญชีใหม่</h2><p class="muted small">ใช้งานได้ทันที ระบบส่งอีเมลลิงก์ตั้งรหัสผ่านให้เจ้าของบัญชี</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
         <div id="employee-add-message" role="status"></div>
         <form id="employee-add-form">
           <div class="field"><label for="add-employee-no">รหัสพนักงาน${req}</label><input class="input" id="add-employee-no" name="employee_no" maxlength="32" placeholder="เช่น MNP0102" autocomplete="off" required></div>
@@ -5305,7 +5310,7 @@ async function renderAdmin(params) {
       </section>` : ""}
       ${editing ? `
       <section class="card">
-        <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">แก้ไขได้ทุกช่องรวมถึง ID ตำแหน่ง และรหัสผ่าน การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
+        <div class="card-head"><div><h2>แก้ไขบัญชี ${escapeHtml(editing.employee_no)}</h2><p class="muted small">การเปลี่ยนแปลงมีผลทันที</p></div><a class="btn secondary small" href="#/admin?tab=credentials">ปิด</a></div>
         <div id="employee-edit-message" role="status"></div>
         <form id="employee-edit-form" data-employee-id="${escapeHtml(editing.employee_id)}" data-employee-no="${escapeHtml(editing.employee_no)}" data-acting-role-id="${escapeHtml(actingRoleByEmployee.get(editing.employee_id) ?? "")}" data-admin-role-id="${escapeHtml(adminRoleId)}">
           <div class="field-row">
@@ -5332,7 +5337,7 @@ async function renderAdmin(params) {
       </section>` : ""}
       <section class="card">
         <div class="card-head"><div><h2>บัญชีทั้งหมด</h2></div>${adding ? "" : `<a class="btn small" href="#/admin?tab=credentials&add=1"><span class="plus-icon" aria-hidden="true"></span> เพิ่มบัญชี</a>`}</div>
-        <p class="muted small">ตารางนี้แสดงพนักงานทุกบัญชีรวมถึงบัญชีผู้ดูแลระบบและบัญชีของคุณเอง รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้เจ้าของบัญชีแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>
+        ${noteLine("การกดแสดงรหัสผ่านถูกบันทึกทุกครั้ง", "<p>ตารางนี้แสดงพนักงานทุกบัญชีรวมถึงบัญชีผู้ดูแลระบบและบัญชีของคุณเอง รหัสผ่านถูกปิดไว้เป็นค่าเริ่มต้น การกดแสดงถูกบันทึกลง audit log ทุกครั้งพร้อมชื่อผู้กดและเวลา บัญชีที่สร้างก่อนระบบนี้จะยังไม่มีรหัสผ่านบันทึกไว้ ให้เจ้าของบัญชีแก้ไขรหัสผ่านหนึ่งครั้งก่อน</p>", "ตารางบัญชีและรหัสผ่าน")}
         <div class="table-wrap"><table>
           <thead><tr><th>รหัสพนักงาน</th><th>ชื่อ</th><th>แผนก</th><th>ตำแหน่ง</th><th>รหัสผ่าน</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
           <tbody>${credentialRows}</tbody>

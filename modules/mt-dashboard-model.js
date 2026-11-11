@@ -36,8 +36,8 @@
 
   // Where an open request is waiting, in workflow order. `short` is the badge text, `owner` who must act.
   const STAGES = [
-    { key: "approve_fm", label: "รอ ผจก.โรงงาน อนุมัติ", short: "รออนุมัติ (ผจก.โรงงาน)", owner: "ผจก.โรงงาน" },
-    { key: "approve_gm", label: "รอ ผจก.ทั่วไป อนุมัติ", short: "รออนุมัติ (ผจก.ทั่วไป)", owner: "ผจก.ทั่วไป" },
+    { key: "approve_fm", label: "รอผู้จัดการโรงงานอนุมัติ", short: "รออนุมัติ (ผจก.โรงงาน)", owner: "ผจก.โรงงาน" },
+    { key: "approve_gm", label: "รอผู้จัดการทั่วไปอนุมัติ", short: "รออนุมัติ (ผจก.ทั่วไป)", owner: "ผจก.ทั่วไป" },
     { key: "more_info", label: "รอผู้แจ้งตอบข้อมูลเพิ่ม", short: "ขอข้อมูลเพิ่ม", owner: "ผู้แจ้ง" },
     { key: "assign", label: "รอมอบหมายช่าง", short: "รอมอบหมายช่าง", owner: "ผจก.ซ่อมบำรุง" },
     { key: "start", label: "รอช่างเริ่มงาน", short: "รอช่างเริ่มงาน", owner: "ช่าง" },

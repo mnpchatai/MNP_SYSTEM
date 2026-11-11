@@ -18,7 +18,7 @@
 // CAR (MR04-FM01) ยังเป็นคำร้องทั่วไปจนถึง Phase 2 — คู่กับฝั่ง Next.js: src/lib/request-modules/module-ncr.ts
 (function registerNcrCarModule() {
   const STATUS_LABELS = {
-    awaiting_disposition: "รอ ผจก.โรงงานพิจารณา",
+    awaiting_disposition: "รอผู้จัดการโรงงานพิจารณา",
     awaiting_response: "รอแผนกตอบ",
     awaiting_followup: "รอ QA ติดตามผล",
     awaiting_signoff: "รอลงนามปิด",
@@ -27,11 +27,12 @@
     cancelled: "ยกเลิก",
   };
   const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
-  const SOURCES = { incoming: "In-Coming", in_process: "In-Process", final_fg: "Final FG", customer_reject: "Reject from Customer", other: "Other" };
+  // แหล่งที่พบตามช่องของใบ QA02-FM01: ไทยก่อน คำบนฟอร์มกระดาษในวงเล็บ
+  const SOURCES = { incoming: "รับเข้า (In-Coming)", in_process: "ระหว่างผลิต (In-Process)", final_fg: "สินค้าสำเร็จรูป (Final FG)", customer_reject: "ลูกค้าตีกลับ (Reject from Customer)", other: "อื่น ๆ" };
   const UNITS = ["ชุด", "ชิ้น", "เซต", "ม้วน", "เส้น", "กก.", "ท่อน", "เมตร", "ลูก", "ใบ", "รายการ"];
   const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่นๆ" };
   const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่นๆ" };
-  const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", repair: "ค่าซ่อม (Repair)", rework: "ค่า Rework", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่นๆ" };
+  const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", repair: "ค่าซ่อม (Repair)", rework: "ค่าแก้ไขงาน (Rework)", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่นๆ" };
   const OTHER_LOSS_NOTE_MIN = 5;
   const STATUS_BADGE_CLASS = { closed: "completed", cancelled: "cancelled" };
 
@@ -39,7 +40,7 @@
     NCR_NOT_FOUND: "ไม่พบ NCR นี้ หรือคุณไม่มีสิทธิ์เปิดดู",
     NCR_RETURN_NOTE_REQUIRED: "กรุณาระบุเหตุผลที่ส่งกลับให้แผนกแก้ไขคำตอบ",
     NCR_LOCKED: "NCR นี้ปิดหรือยกเลิกแล้ว แก้ไขความสูญเสียไม่ได้",
-    LOSS_ESTIMATE_ONLY: "ผู้ตอบใส่และแก้ได้เฉพาะยอดประมาณการ ยืนยันยอดโดย ผจก.โรงงาน ผช.ผจก.โรงงาน ผจก.ทั่วไป หรือ ผจก./ผช.ผจก.แผนก QA",
+    LOSS_ESTIMATE_ONLY: "ผู้ตอบใส่และแก้ได้เฉพาะยอดประมาณการ ยืนยันยอดโดยผู้จัดการโรงงาน ผู้ช่วยผู้จัดการโรงงาน ผู้จัดการทั่วไป หรือผู้จัดการ/ผู้ช่วยผู้จัดการแผนก QA",
     INVALID_PRODUCT_NAME: "กรุณากรอกชื่อสินค้า/วัตถุดิบ 2–300 ตัวอักษร",
     INVALID_NCR_DESCRIPTION: "รายละเอียดปัญหาต้องมี 10–5,000 ตัวอักษร",
     INVALID_QUANTITY: "จำนวนไม่ถูกต้อง: จำนวนทั้งหมดและที่พบปัญหาต้องมากกว่า 0 และจำนวนสุ่ม/พบปัญหา/ส่งคืนต้องไม่เกินจำนวนทั้งหมด",
@@ -92,7 +93,7 @@
   const isResponderRole = (employee) => roleCode(employee) === "staff" || isDeptManager(employee);
   const canRespond = (ncr, employee) => isResponderRole(employee)
     && (ncr.ncr_responsibilities ?? []).some((item) => item.department_id === employee.department_id && (!item.responder_id || item.responder_id === employee.id));
-  const ROLE_LABELS = { staff: "พนักงาน", department_manager: "ผจก.แผนก", assistant_department_manager: "ผช.ผจก.แผนก" };
+  const ROLE_LABELS = { staff: "พนักงาน", department_manager: "ผู้จัดการแผนก", assistant_department_manager: "ผู้ช่วยผู้จัดการแผนก" };
   // ผู้ที่ระบุเป็นผู้ตอบของแผนกหนึ่งได้ (staff = loadNcrStaff()) เรียงตามชื่อ
   const responderCandidates = (staff, departmentId) => staff
     .filter((person) => person.department_id === departmentId && isResponderRole(person))
@@ -574,7 +575,7 @@
     const headerLinks = (modules.NCR_CAR.headerLinks ?? []).map((link) => `<a class="btn secondary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join("");
     // ในหน้าคำร้อง (embedded) หัวโมดูล NCR/CAR บอกแล้ว ไม่ซ้อนหัว "ทะเบียน NCR" อีกชั้น
     const content = `
-      ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>ใบรายงานผลิตภัณฑ์ที่ไม่เป็นไปตามข้อกำหนดที่คุณเกี่ยวข้อง (ผู้รายงาน แผนก QA แผนกที่รับผิดชอบ และผู้บริหาร)</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
+      ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>NCR ที่คุณเกี่ยวข้อง</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
       <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "แสดง", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
@@ -675,7 +676,7 @@
         <h3>ส่วนที่ 4 — สรุปผลการติดตาม</h3>
         ${ncr.prevention ? "" : `<p class="ncr-due-note">แผนกยังไม่ส่งแนวทางป้องกันไม่ให้เกิดซ้ำ (กำหนด ${formatDate(ncr.prevention_due)}) · ติดตามผลการแก้ไขและส่งกลับได้ แต่ปิดประเด็นได้เมื่อได้รับแนวทางป้องกันแล้ว</p>`}
         <fieldset class="field ncr-fieldset" data-field="result"><legend class="sr-only">ผลการติดตาม (จำเป็น)</legend>${radiosHtml("result", { close: "ปิดประเด็นความไม่สอดคล้อง", return: "ส่งกลับให้แผนกแก้ไขคำตอบ" })}</fieldset>
-        <p class="muted small">กรณีปิดประเด็นไม่ได้/เกิดซ้ำต้องออก CAR — ใช้การ์ด NCR/CAR ในหน้าสร้างคำร้องไปก่อนจนกว่า CAR จะย้ายเข้าระบบนี้ (Phase 2)</p>
+        <p class="muted small">ปิดประเด็นไม่ได้หรือเกิดซ้ำ ให้ออก CAR จากการ์ด NCR/CAR ในหน้าสร้างคำร้อง</p>
         <div class="field" data-field="note"><label for="ncr-followup-note">บันทึกการติดตาม (จำเป็นเมื่อส่งกลับ)</label><input class="input" id="ncr-followup-note" name="note" maxlength="2000"></div>
         ${evidenceFieldHtml("ncr-followup-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">บันทึกผล</button></div></form>`);
@@ -686,7 +687,7 @@
         <div class="form-actions"><button class="btn" type="submit">ลงนาม</button></div></form>`);
       forms.push(`<form class="ncr-action" data-action="request_info" novalidate><div class="ncr-form-message"></div>
         <h3>ขอข้อมูลเพิ่มเติมก่อนลงนาม</h3>
-        <p class="muted small">ข้อความจะถึงผู้ตอบของแผนกที่รับผิดชอบ เมื่อตอบแล้วใบจะกลับมารอลงนามที่ลำดับของคุณ (ลายเซ็นที่ลงไปแล้วยังอยู่)</p>
+        <p class="muted small">ผู้ตอบของแผนกได้รับข้อความ ตอบแล้วใบกลับมารอคุณลงนาม</p>
         <div class="field" data-field="note"><label for="ncr-info-request">ข้อมูลที่ต้องการ ${REQUIRED}</label><textarea class="textarea" id="ncr-info-request" name="note" maxlength="2000"></textarea></div>
         ${evidenceFieldHtml("ncr-info-request-evidence", "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false })}
         <div class="form-actions"><button class="btn secondary" type="submit">ขอข้อมูลเพิ่มเติม</button></div></form>`);
@@ -808,9 +809,9 @@
   const lossSectionHtml = (ncr, losses, directory, access) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, access, todayBangkok(), formatBaht, formatQty);
 
   const HISTORY_LABELS = {
-    issue: "ออก NCR", dispose: "ผจก.โรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
-    followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผจก.แผนก QA ลงนาม", signoff_factory: "ผจก.โรงงานลงนาม",
-    signoff_gm: "ผจก.ทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", assign_responder: "ผจก.โรงงานระบุผู้ตอบ", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
+    issue: "ออก NCR", dispose: "ผู้จัดการโรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
+    followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผู้จัดการแผนก QA ลงนาม", signoff_factory: "ผู้จัดการโรงงานลงนาม",
+    signoff_gm: "ผู้จัดการทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", assign_responder: "ผู้จัดการโรงงานระบุผู้ตอบ", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
     loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินค่าเสียหาย",
   };
 
