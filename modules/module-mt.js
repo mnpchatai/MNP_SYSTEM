@@ -366,7 +366,7 @@
         <div class="field"><label for="expected-date-input">วันที่คาดว่าจะเสร็จใหม่${REQUIRED}</label><input class="input" id="expected-date-input" name="expected_date" type="date" min="${escapeHtml(today)}" required></div>
         <div class="field"><label for="expected-date-note">เหตุผล (ถ้ามี)</label><input class="input" id="expected-date-note" name="note" maxlength="500" placeholder="เช่น รออะไหล่"></div>
         ${extraFilesFieldHtml("expected-date-files")}
-        <small>ระบบแจ้งผู้แจ้งให้ทราบ</small>
+        <p class="muted small">ระบบแจ้งผู้แจ้งให้ทราบ</p>
         <div class="form-actions"><button class="btn" type="submit">บันทึกวันที่ใหม่</button></div>
       </form>`;
     if (overdue) {

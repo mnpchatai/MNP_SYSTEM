@@ -351,7 +351,8 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .progress-choice-option { display: flex; align-items: center; gap: 8px; font-size: var(--text-meta); cursor: pointer; }
 .progress-choice-option input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
 .progress-expected-input:disabled { opacity: .55; }
-.progress-reschedule-form { display: flex; gap: 8px; align-items: center; }
+.progress-reschedule-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.progress-reschedule-form > .field-label { flex-basis: 100%; }
 .progress-reschedule-form .input { flex: 1; min-height: 38px; padding: 8px 10px; }
 .parts-table-wrap { margin: 2px 0 10px; border: 1px solid var(--line); border-radius: var(--radius-md); }
 .parts-table { min-width: 760px; }
