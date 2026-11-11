@@ -575,7 +575,7 @@
     const headerLinks = (modules.NCR_CAR.headerLinks ?? []).map((link) => `<a class="btn secondary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join("");
     // ในหน้าคำร้อง (embedded) หัวโมดูล NCR/CAR บอกแล้ว ไม่ซ้อนหัว "ทะเบียน NCR" อีกชั้น
     const content = `
-      ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h2>ทะเบียน NCR</h2><p>NCR ที่คุณเกี่ยวข้อง</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
+      ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h1>ทะเบียน NCR</h1><p>NCR ที่คุณเกี่ยวข้อง</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
       <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "แสดง", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>

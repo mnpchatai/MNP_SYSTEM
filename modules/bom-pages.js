@@ -278,7 +278,7 @@
   }
   // เลือกชนิดชิ้นงานแบ่งตามหมวด (สินค้า / WIP / วัตถุดิบ / สูตรยาง) ด้วย optgroup ของ select ปกติ
   // (data-native-select: ตัวค้นหาของ searchable-select แบนกลุ่มทิ้ง จึงใช้ dropdown ของเบราว์เซอร์)
-  const kindSelect = (ctx, name, value, { className = "", extra = "" } = {}) => `<select class="select rf-select${className ? ` ${className}` : ""}" name="${attr(name)}" data-native-select${extra ? ` ${extra}` : ""}>${ctx.rules.CATEGORIES.map((category) => `<optgroup label="${attr(category.long)}">${category.kinds.map((kind) => `<option value="${attr(kind)}"${kind === value ? " selected" : ""}>${esc(`${kind} · ${ctx.rules.KINDS[kind].label}`)}</option>`).join("")}</optgroup>`).join("")}</select>`;
+  const kindSelect = (ctx, name, value, { className = "", extra = "" } = {}) => `<select class="select rf-select${className ? ` ${className}` : ""}" name="${attr(name)}" data-native-select${extra ? ` ${extra}` : ""}>${ctx.rules.CATEGORIES.map((category) => `<optgroup label="${attr(category.long)}">${category.kinds.map((kind) => `<option value="${attr(kind)}"${kind === value ? " selected" : ""}>${esc(kind.length <= 3 ? `${kind} · ${ctx.rules.KINDS[kind].label}` : ctx.rules.KINDS[kind].label)}</option>`).join("")}</optgroup>`).join("")}</select>`;
   const UOM_OPTIONS = (ctx) => Object.entries(ctx.rules.UOMS).map(([value, meta]) => ({ value, label: meta.label }));
   // แถวหนึ่งของตารางแก้ไข (ใช้ทั้งแถวจริงและ template ที่ JS clone เมื่อกด "+ ลูก")
   function editorRowHtml(ctx, row) {
