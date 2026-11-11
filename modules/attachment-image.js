@@ -78,6 +78,8 @@
   // ข้อความใต้ช่องแนบไฟล์ทุกหน้า
   const HINT = `แนบได้หลายไฟล์พร้อมกัน (ไม่เกิน ${MAX_BATCH_FILES} ไฟล์ ขนาดรวมไม่เกิน ${MAX_BATCH_BYTES / 1048576} MB) · ` +
     "รูปจากโทรศัพท์ทุกรุ่น (JPG, PNG, HEIC, WebP) ระบบแปลงให้อัตโนมัติ · PDF, TXT, DOCX, XLSX";
+  // ใต้ช่องแสดงข้อความสั้นนี้แบบเดียวทุกหน้า ข้อความเต็ม (HINT) อยู่ใน title ของปุ่ม "ถ่ายรูป / เลือกไฟล์"
+  const HINT_SHORT = `ไม่เกิน ${MAX_BATCH_FILES} ไฟล์ รวม ${MAX_BATCH_BYTES / 1048576} MB · รูปจากโทรศัพท์ใช้ได้ทุกแบบ`;
 
   // ---- ฟังก์ชันล้วน (ไม่แตะเบราว์เซอร์ ทดสอบได้ใน Node: scripts/tests/attachment-image.test.mjs) ----
 
@@ -490,7 +492,7 @@
   }
 
   return {
-    SAFE_BYTES, COMPRESS_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT,
+    SAFE_BYTES, COMPRESS_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT, HINT_SHORT,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
     checkBatch, describeBatch, createThumbnail,
     THUMBNAIL_SUFFIX, THUMBNAIL_EDGE, MAX_THUMBNAIL_BYTES, thumbnailPath, dataUrlToBlob, createUploadThumbnail,

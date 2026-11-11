@@ -39,7 +39,9 @@
 
   // ---------- โครงหน้า ----------
   // api.module = หน้าปัจจุบัน (shell ตั้งก่อนวาด) ใช้ใส่ไอคอนของหน้าไว้หน้าชื่อ
-  const pageHead = (title, desc = "", actions = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${api.module && ICONS[api.module] ? `<span class="rf-mod-ico" aria-hidden="true">${icon(api.module)}</span>` : ""}<div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div></div>${actions ? `<div class="rf-row">${actions}</div>` : ""}</header>`;
+  // คำอธิบายของหน้าอยู่หลังปุ่ม ⓘ ท้ายชื่อหน้า (ตัวเดียวกับทั้งระบบ modules/dashboard-notes.js) ไม่เป็นย่อหน้าถาวร
+  const headingWithNote = (title, desc) => (desc && root.MNP_NOTES ? root.MNP_NOTES.heading("h1", esc(title), `<p>${esc(desc)}</p>`) : `<h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}`);
+  const pageHead = (title, desc = "", actions = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${api.module && ICONS[api.module] ? `<span class="rf-mod-ico" aria-hidden="true">${icon(api.module)}</span>` : ""}<div>${headingWithNote(title, desc)}</div></div>${actions ? `<div class="rf-row">${actions}</div>` : ""}</header>`;
   // การ์ด: title/actions เป็น HTML ที่ escape แล้ว (ชื่อการ์ดบางอันมีป้าย) body เป็น HTML
   const card = (body, { title = "", actions = "", flush = false, className = "" } = {}) => `<section class="card rf-card${className ? ` ${className}` : ""}">${title || actions ? `<div class="rf-card-head"><h2>${title}</h2><div class="rf-row">${actions}</div></div>` : ""}<div class="rf-card-body${flush ? " is-flush" : ""}">${body}</div></section>`;
   const stat = ({ label, value, sub = "", tone = "" }) => `<div class="card rf-stat${tone ? ` is-${esc(tone)}` : ""}"><span class="rf-stat-label">${esc(label)}</span><strong class="rf-stat-value">${esc(value)}</strong>${sub ? `<span class="rf-stat-sub">${esc(sub)}</span>` : ""}</div>`;
@@ -227,7 +229,7 @@
 
   const api = {
     module: "",
-    STATUS, ICONS, icon, badge, status, statusLabel, pageHead, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
+    STATUS, ICONS, icon, badge, status, statusLabel, pageHead, headingWithNote, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
     field, input, textarea, select, specInput, submitButton, button, confirmOptions, openButton, link, dialog, closeButton,
     barcode, dualChart, controlChart, histogram, labelTables,
   };

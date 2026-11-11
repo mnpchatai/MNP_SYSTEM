@@ -816,6 +816,11 @@ a.register-title:hover { color: var(--primary); }
 .request-module-title .type-card-badge svg { width: 28px; height: 28px; }
 .request-module-header h1 { margin: 0; font-size: clamp(24px, 2.6vw, 30px); letter-spacing: -.015em; }
 .request-module-header p { margin: 2px 0 0; color: var(--mod-on-soft); }
+/* ปุ่ม ⓘ บนหัวโมดูลสีเข้ม ใช้สีตัวอักษรของหัว */
+:is(.request-module-header, .rf-page .rf-pagehead) .note-toggle { color: var(--mod-on-soft); }
+:is(.request-module-header, .rf-page .rf-pagehead) .note-toggle:is(:hover, [aria-expanded="true"]) { color: var(--mod-on); background: color-mix(in srgb, var(--mod-on) 18%, transparent); }
+:is(.request-module-header, .rf-page .rf-pagehead) .note-toggle:focus-visible { outline-color: var(--mod-on); }
+:is(.request-module-header, .rf-page .rf-pagehead) .note-body { color: var(--mod-on-soft); }
 .request-module-header .request-create-entry { flex-shrink: 0; }
 .request-module-header .btn, .rf-page .rf-pagehead .btn { min-height: 44px; color: var(--mod-btn-ink); background: var(--mod-btn); border: 1px solid var(--mod-btn-edge); font-weight: 700; }
 .request-module-header .btn:hover, .rf-page .rf-pagehead .btn:hover { color: var(--mod-btn-ink); background: var(--mod-btn); border-color: var(--mod-btn-edge); filter: brightness(1.12); }
@@ -1654,10 +1659,15 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-head-row .nd-cancel { flex: none; }
 .nd [data-card] { scroll-margin-top: 80px; }
 .nd-head p, .nd-sub p { margin: 2px 0 0; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; }
-/* วิธีนับของแต่ละการ์ดพับไว้ เปิดอ่านได้เมื่อสงสัย */
-.nd-about { margin-top: 2px; }
-.nd-about > summary { width: fit-content; min-height: 32px; display: inline-flex; align-items: center; color: var(--mod-link, var(--primary)); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
-.nd-about > p { max-width: 70ch; margin: 2px 0 6px; }
+/* ปุ่ม ⓘ คำอธิบาย (modules/dashboard-notes.js) ตัวเดียวกันทุกหน้า: อยู่ท้ายหัวข้อ กดแล้วคำอธิบายเปิดใต้หัวข้อ */
+.note-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.note-row > :is(h1, h2, h3) { margin: 0; min-width: 0; }
+.note-toggle { flex: none; width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); cursor: pointer; }
+.note-toggle .ui-icon { width: 18px; height: 18px; }
+.note-toggle:hover, .note-toggle[aria-expanded="true"] { color: var(--mod-link, var(--primary)); background: var(--primary-soft); }
+.note-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.note-body { max-width: 70ch; margin: 2px 0 6px; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; }
+.note-body > p { margin: 0; color: inherit; font-size: inherit; }
 /* การ์ดตัวเลข: ไม่มีการ์ดเดียวตกแถว (ห้าใบ = 5 | 3+2 · สี่ใบ = 4 | 2+2) จอแคบเรียงทีละใบเพราะปุ่มและแถบในการ์ดต้องการความกว้าง */
 @media (min-width: 1200px) { .nd-tiles.five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 @media (min-width: 761px) and (max-width: 1199px) { .nd-tiles.five { grid-template-columns: repeat(6, minmax(0, 1fr)); } .nd-tiles.five > * { grid-column: span 2; } .nd-tiles.five > :nth-child(n + 4) { grid-column: span 3; } }
@@ -1666,9 +1676,9 @@ tr.ncr-voided td .muted { text-decoration: none; }
 /* จอสัมผัส: ปุ่มกรอง ปุ่มในแถว และหัวพับของแดชบอร์ดสูงอย่างน้อย 44 px */
 @media (pointer: coarse), (max-width: 760px) {
   /* .nd :is(…) ชนะกฎฐานของ .nd-brow/.nd-rowbtn ที่ประกาศทีหลังในไฟล์ */
-  .nd :is(.nd-pill, .nd-more summary, .nd-rowbtn, .nd-about > summary, .nd-chip, .nd-brow) { min-height: 44px; }
-  .nd :is(.nd-rowbtn, .nd-about > summary) { min-width: 44px; }
-  .nd-about > summary { padding: 0 8px; margin-left: -8px; }
+  .nd :is(.nd-pill, .nd-more summary, .nd-rowbtn, .nd-chip, .nd-brow) { min-height: 44px; }
+  .nd .nd-rowbtn { min-width: 44px; }
+  .note-toggle { width: 44px; height: 44px; margin-block: -6px; }
 }
 .nd-sub h3 { margin: 0; font-size: var(--text-body); }
 .nd-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }

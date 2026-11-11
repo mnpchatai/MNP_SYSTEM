@@ -371,8 +371,7 @@
         ${form}</section>`;
     }
     return `<section class="card"><h2>กำหนดเสร็จ ${escapeHtml(current)}</h2>
-      <p class="muted small">ถ้าคาดว่าจะเสร็จไม่ทัน แก้วันที่ได้ ระบบบันทึกประวัติการแก้ไขและแจ้งผู้แจ้งให้ทราบ</p>
-      <button type="button" class="btn secondary small" id="expected-date-toggle">แก้ไขวันที่คาดว่าจะเสร็จ</button>
+      <button type="button" class="btn secondary small" id="expected-date-toggle" title="ระบบบันทึกประวัติการแก้ไขและแจ้งผู้แจ้งให้ทราบ">แก้ไขวันที่คาดว่าจะเสร็จ</button>
       ${form}</section>`;
   }
 
@@ -452,9 +451,9 @@
             <legend class="form-step-title">รูปและความเร่งด่วน</legend>
             <div class="field full">
               <span class="field-label">รูปหรือไฟล์ประกอบ (ถ้ามี)</span>
-              <label class="btn secondary file-pick" for="repair-attachment">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label>
-              <input class="file-pick-input" id="repair-attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}">
-              <small>รูปจากโทรศัพท์ทุกรุ่นใช้ได้ ระบบแปลงให้เอง</small>
+              <label class="btn secondary file-pick" for="repair-attachment" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label>
+              <input class="file-pick-input" id="repair-attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx">
+              <small>${ATTACHMENT_HINT_SHORT}</small>
             </div>
             <div class="field full"><label class="switch-label" for="repair-urgent"><input type="checkbox" id="repair-urgent" name="is_urgent"> แจ้งด่วน</label></div>
             <div class="field" data-field="needed_date"><label for="repair-needed-date">วันที่ต้องการใช้งาน (ถ้ามี)</label><input class="input" id="repair-needed-date" name="needed_date" type="date"></div>
@@ -883,13 +882,13 @@
         ${progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => progressStepHtml(step, directory, canRecordProgress)).join("")}</div></section>` : ""}
         ${expectedDateSectionHtml(request, canRecordProgress)}
         ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
-        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><p class="muted small">กรอกผลวิเคราะห์และอะไหล่ที่ใช้ กด "บันทึกข้อมูล" เพื่อบันทึกไว้ทำต่อภายหลังได้โดยยังไม่จบงาน หรือกด "เสร็จสิ้นงาน" เพื่อส่งต่อให้ผู้แจ้งตรวจรับ (การดำเนินงานและความคิดเห็นของช่างผู้ตรวจสอบบันทึกไว้แล้วตอนมอบหมาย)</p><form id="finish-form" novalidate>
+        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><form id="finish-form" novalidate>
           <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ (จำเป็น)</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
-          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><small>กรอกเฉพาะรายการที่มี</small><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือถ่ายรูปใบเสร็จแนบที่ช่อง “รูปใบเสร็จ / ไฟล์เพิ่มเติม” ด้านล่างแทนการกรอกทีละแถว ไฟล์ส่งพร้อมปุ่มบันทึกข้อมูลหรือเสร็จสิ้นงาน</p></div>
+          <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือถ่ายรูปใบเสร็จแนบที่ช่อง “รูปใบเสร็จ / ไฟล์เพิ่มเติม” ด้านล่างแทนการกรอกทีละแถว ไฟล์ส่งพร้อมปุ่มบันทึกข้อมูลหรือเสร็จสิ้นงาน</p></div>
           ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
-          <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
+          <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button" title="บันทึกไว้ทำต่อภายหลัง ยังไม่จบงาน">บันทึกข้อมูล</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
-        ${canVerify ? `<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม</h2>${verifySummaryHtml(request)}<p class="muted small">ยืนยันว่าใช้งานได้ปกติหรือต้องซ่อมเพิ่มเติม (ถ้าไม่ผ่านต้องระบุหมายเหตุ)</p><div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
+        ${canVerify ? `<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม</h2>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ (จำเป็นเมื่อไม่ผ่าน)</label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
         ${canAssign && request.status !== "pending_assign" ? assignSection : ""}
 `,
       };

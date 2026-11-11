@@ -207,7 +207,7 @@ test("the MT start, finish and verify steps all go through the confirm helper; t
   assert.equal(mt.match(/confirmStepAction\(/g)?.length, 3);
   for (const label of ['label: "เริ่มงาน"', 'label: "เสร็จสิ้นงาน"', 'label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ"']) assert.ok(mt.includes(label), label);
   assert.doesNotMatch(mt, /✓ ผ่าน|✕ ไม่ผ่าน/, "icons instead of characters a screen reader reads aloud");
-  assert.match(mt, /<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม<\/h2>\$\{verifySummaryHtml\(request\)\}<p class="muted small">/, "the repair result comes before the pass/fail buttons");
+  assert.match(mt, /<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม<\/h2>\$\{verifySummaryHtml\(request\)\}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ \(จำเป็นเมื่อไม่ผ่าน\)<\/label>/, "the repair result comes before the pass/fail buttons, and the note's rule sits on its label");
   assert.match(mt, /request\.cause_analysis && !canVerify \?/, "and is not repeated in the facts card");
   assert.match(mt, /<label for="finish-cause">วิเคราะห์สาเหตุ \(จำเป็น\)<\/label>/);
   assert.match(css, /:is\(\.approval-actions, \.form-actions\):has\(> \.step-confirm\) \{/);
@@ -224,10 +224,11 @@ test("NCR dashboard departments wear their own department palette; loss types ha
 });
 
 test("dashboard touch targets reach 44px and whole table rows open the request", () => {
-  assert.match(css, /\.nd :is\(\.nd-pill, \.nd-more summary, \.nd-rowbtn, \.nd-about > summary, \.nd-chip, \.nd-brow\) \{ min-height: 44px; \}/, "more specific than the base rules declared later in the file");
-  assert.match(css, /\.nd :is\(\.nd-rowbtn, \.nd-about > summary\) \{ min-width: 44px; \}/);
+  assert.match(css, /\.nd :is\(\.nd-pill, \.nd-more summary, \.nd-rowbtn, \.nd-chip, \.nd-brow\) \{ min-height: 44px; \}/, "more specific than the base rules declared later in the file");
+  assert.match(css, /\.nd \.nd-rowbtn \{ min-width: 44px; \}/);
+  assert.match(css, /\.note-toggle \{ width: 44px; height: 44px;/, "the ⓘ note button is a 44px target on touch");
   assert.match(css, /\.nd-rowlink a\.request-no::after \{ content: ""; position: absolute; inset: 0; \}/);
-  assert.match(css, /\.nd-about > p \{ max-width: 70ch;/);
+  assert.match(css, /\.note-body \{ max-width: 70ch;/);
 });
 
 test("leaving the page while the step is still sending: it finishes, but tells the caller not to redraw the old request", async () => {

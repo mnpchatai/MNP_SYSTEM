@@ -6,7 +6,7 @@
   const bucket = (isTest = Boolean(state.employee?.isSandbox)) => isTest ? TEST_BUCKET : "ncr-attachments";
   // hint: false = คำอธิบายชนิด/ขนาดไฟล์ไปอยู่ใน title ของช่อง (หน้าที่มีหลายช่องแสดงคำอธิบายครั้งเดียว)
   // ปุ่ม "ถ่ายรูป / เลือกไฟล์" แบบเดียวกับ extraFilesFieldHtml ใน app.js (ไฟล์ที่เลือกแสดงโดย attachment-image.js)
-  const fieldHtml = (id, label, { hint = true } = {}) => `<div class="field"><span class="field-label">${escapeHtml(label)}</span><label class="btn secondary file-pick" for="${escapeHtml(id)}">${typeof uiIcon === "function" ? uiIcon("camera") : ""} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${escapeHtml(id)}" name="evidence" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
+  const fieldHtml = (id, label, { hint = true } = {}) => `<div class="field"><span class="field-label">${escapeHtml(label)}</span><label class="btn secondary file-pick" for="${escapeHtml(id)}" title="${escapeHtml(ATTACHMENT_HINT)}">${typeof uiIcon === "function" ? uiIcon("camera") : ""} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${escapeHtml(id)}" name="evidence" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx">${hint ? `<small>${typeof ATTACHMENT_HINT_SHORT === "string" ? ATTACHMENT_HINT_SHORT : ATTACHMENT_HINT}</small>` : ""}</div>`;
 
   async function uploadOne(ncrId, file, section) {
     const target = bucket();

@@ -407,7 +407,7 @@
         <section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters)}</section>
         ${definitionsHtml}
-        <p class="nd-muted">ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)} · ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>
+        ${(() => { const note = window.MNP_NOTES?.toggle("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>"); const stamp = `ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)}`; return note ? `<div class="note-row nd-muted"><span>${stamp}</span>${note.button}</div>${note.body}` : `<p class="nd-muted">${stamp}</p>`; })()}
       </div>`;
   }
 

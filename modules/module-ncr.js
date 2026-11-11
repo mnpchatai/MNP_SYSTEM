@@ -318,7 +318,7 @@
         ${window.MNP_FORM_STEPS.headHtml()}
         <fieldset class="form-step" data-step="1">
           <legend class="form-step-title">สินค้าและล็อต</legend>
-          <p class="muted small">ส่วนที่ 1 ผู้รายงาน/ผู้ตรวจสอบ (ตรวจตามค่า AQL Level 2.5) · ผู้รายงาน ${escapeHtml(`${employee.first_name} ${employee.last_name}`)} แผนก ${escapeHtml(employee.department?.code ?? "—")} · เลขที่ QAxxx/yy ออกให้เมื่อกดออก NCR</p>
+          <p class="muted small">ผู้รายงาน ${escapeHtml(`${employee.first_name} ${employee.last_name}`)} · แผนก ${escapeHtml(employee.department?.code ?? "—")} · ตรวจตาม AQL 2.5</p>
           <div class="form-grid">
             ${text("product_code", "รหัสสินค้า/วัตถุดิบ")}
             ${text("product_name", "ชื่อสินค้า/วัตถุดิบ", { required: true, max: 300 })}
@@ -945,8 +945,7 @@
       </section>
 ` : "";
     const filesSection = `
-      <section class="card ncr-card"><h2>ไฟล์หลักฐาน</h2>
-        <p class="muted small">ทุกคนที่เห็นใบนี้แนบไฟล์เพิ่มได้จนกว่าจะปิดใบ ไฟล์ที่แนบแล้วลบไม่ได้เพราะเป็นหลักฐาน · ผู้แนบและเวลาดูได้ในประวัติเอกสาร</p>
+      <section class="card ncr-card">${window.MNP_NOTES?.heading("h2", "ไฟล์หลักฐาน", "<p>ทุกคนที่เห็นใบนี้แนบไฟล์เพิ่มได้จนกว่าจะปิดใบ ไฟล์ที่แนบแล้วลบไม่ได้เพราะเป็นหลักฐาน · ผู้แนบและเวลาดูได้ในประวัติเอกสาร</p>", { name: "กติกาไฟล์หลักฐาน" }) ?? "<h2>ไฟล์หลักฐาน</h2>"}
         ${attachmentGalleryHtml(attachments)}
         ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>

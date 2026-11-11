@@ -579,6 +579,7 @@ function optionalAttachments(fileList) {
 
 // ข้อความใต้ช่องแนบไฟล์ทุกหน้า ใช้ชุดเดียวกับฝั่ง Next.js (modules/attachment-image.js)
 const ATTACHMENT_HINT = window.MNP_ATTACHMENT_IMAGE?.HINT ?? "";
+const ATTACHMENT_HINT_SHORT = window.MNP_ATTACHMENT_IMAGE?.HINT_SHORT ?? "";
 
 // รูปจากโทรศัพท์ (HEIC ของ iPhone, ไฟล์ที่ไม่ระบุชนิด, รูปใหญ่เกิน 1 MB) ถูกแปลง/บีบเป็น JPEG ในเบราว์เซอร์
 // ทันทีที่เลือกไฟล์ ก่อนถึงโค้ดตรวจ/อัปโหลดข้างบน — ดู modules/attachment-image.js
@@ -652,7 +653,7 @@ async function uploadAttachmentThumbnail(bucket, storagePath, file) {
 // hint: false เมื่อหน้าเดียวกันแสดงคำแนะนำไฟล์แนบไว้แล้ว (แสดงข้อความเดียวกันครั้งเดียวต่อหน้า)
 function extraFilesFieldHtml(id, label = "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint = true } = {}) {
   // ปุ่มภาษาไทยแบบเดียวกับฟอร์ม แทนช่อง "Choose Files" ของเบราว์เซอร์; แบบไม่มีคำแนะนำอยู่ใต้หัวข้อที่พับได้ ("แนบไฟล์ประกอบ") จึงไม่ซ้ำหัวข้อ
-  return `<div class="field">${hint ? `<span class="field-label">${label}</span>` : ""}<label class="btn secondary file-pick" for="${id}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"${hint ? "" : ` title="${escapeHtml(ATTACHMENT_HINT)}"`}>${hint ? `<small>${ATTACHMENT_HINT}</small>` : ""}</div>`;
+  return `<div class="field">${hint ? `<span class="field-label">${label}</span>` : ""}<label class="btn secondary file-pick" for="${id}" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="${id}" name="extra_files" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx">${hint ? `<small>${ATTACHMENT_HINT_SHORT}</small>` : ""}</div>`;
 }
 
 // หน้าที่ฟอร์มขั้นของผู้ดูมีช่องไฟล์ของตัวเอง (ฟอร์มจบงานของช่าง ฟอร์มใน "สิ่งที่คุณต้องดำเนินการ" ของ NCR):
@@ -2917,10 +2918,9 @@ async function renderRequestsBoard(params, types) {
   const rows = (data ?? []).filter((row) => (!selected || row.type_code === selected.code)
     && (status === "all" || status.split(",").includes(row.status))
     && (!department || row.department_code === department.sourceCode));
-  const openable = rows.filter((row) => row.can_open).length;
   const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
     ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
-    <p class="muted small board-note">แสดง ${rows.length} รายการจากคำร้องล่าสุดไม่เกิน 500 ใบที่ตรงกับสถานะและคำค้น · เปิดรายละเอียดได้ ${openable} รายการตามสิทธิ์${selected ? "" : " · NCR แสดงในรายการตามสิทธิ์"}</p>
+    ${(data ?? []).length >= 500 ? `<p class="muted small board-note">แสดง 500 ใบล่าสุด ค้นด้วยเลขที่ใบเพื่อหาใบที่เก่ากว่า</p>` : ""}
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
   const content = selected ? `<div data-module="${requestPalette(selected.code)}">${boardContent}</div>` : boardContent;
   app.innerHTML = shell(content, "requests", "คำร้อง");
@@ -3155,7 +3155,7 @@ function originalRequestFormHtml(selected, separateModule, formContext) {
         <div class="field full">${docNumberBoxHtml("request-doc-number")}</div>
         <div class="field full"><label for="title">หัวข้อ</label><input class="input" id="title" name="title" minlength="3" maxlength="200" required></div>
         <div class="field full"><label for="description">รายละเอียด</label><textarea class="textarea" id="description" name="description" minlength="3" maxlength="5000" required></textarea></div>
-        <div class="field full"><span class="field-label">ไฟล์แนบ (ถ้ามี)</span><label class="btn secondary file-pick" for="attachment">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT}</small></div>
+        <div class="field full"><span class="field-label">ไฟล์แนบ (ถ้ามี)</span><label class="btn secondary file-pick" for="attachment" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx"><small>${ATTACHMENT_HINT_SHORT}</small></div>
         ${separateModule?.hidePriority ? "" : `<div class="field"><label for="priority">ความสำคัญ</label><select class="select" id="priority" name="priority"><option value="low">ต่ำ</option><option value="normal" selected>ปกติ</option><option value="high">สูง</option><option value="urgent">เร่งด่วน</option></select></div>
         <div></div>`}<div class="field full"><div class="form-grid">${detailFieldsHtml}</div></div>
       </div>
@@ -3237,9 +3237,9 @@ function genericRequestFormHtml(selected, separateModule, formContext) {
         <legend class="form-step-title">${escapeHtml(step2Title)}</legend>
         <div class="field full">
           <span class="field-label">ไฟล์แนบ (ถ้ามี)</span>
-          <label class="btn secondary file-pick" for="attachment">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label>
-          <input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}">
-          <small>รูปจากโทรศัพท์ทุกรุ่นใช้ได้ ระบบแปลงให้เอง</small>
+          <label class="btn secondary file-pick" for="attachment" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label>
+          <input class="file-pick-input" id="attachment" name="attachment" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx">
+          <small>${ATTACHMENT_HINT_SHORT}</small>
         </div>
         ${priorityPicker}
         ${separateModule?.renderFormSections ? separateModule.renderFormSections(formContext, { escapeHtml }) : ""}
@@ -4751,8 +4751,8 @@ async function renderProfile() {
     <section class="card" style="max-width:780px">
       <h2>${isAccountManager ? "แก้ไขรหัสพนักงาน / รหัสผ่านของฉัน" : "ขอแก้ไขรหัสพนักงาน / รหัสผ่าน"}</h2>
       <p class="muted small">${isAccountManager
-        ? "บัญชีผู้ดูแลระบบเป็นผู้อนุมัติเอง ระบบจึงบันทึกและอนุมัติให้ทันทีในขั้นตอนเดียว พร้อมเก็บประวัติไว้ในคำร้องและ audit log ตามปกติ"
-        : "คำร้องจะถูกส่งให้ผู้ดูแลระบบอนุมัติก่อน ระบบจึงจะเปลี่ยนให้ ระหว่างรออนุมัติยังเข้าสู่ระบบด้วยรหัสผ่านเดิมได้ตามปกติ"}</p>
+        ? "บันทึกและอนุมัติให้ทันที พร้อมเก็บประวัติ"
+        : "ผู้ดูแลระบบอนุมัติก่อนจึงเปลี่ยน ระหว่างรอใช้รหัสผ่านเดิมได้"}</p>
       <div id="credential-message" role="status"></div>
       <form id="credential-form">
         <div class="field"><label for="new-employee-no">รหัสพนักงาน</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>

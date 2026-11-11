@@ -105,7 +105,9 @@ test("the request detail page attaches files with the same Thai picker as the fo
   assert.doesNotMatch(form, /\brequired\b/, "the visually hidden input must not show the browser's English required bubble");
   // ช่องแนบไฟล์ของการกระทำในหน้ารายละเอียด (มอบหมาย เลื่อนกำหนด บันทึกผล ตรวจรับ ตัดสินใจ) ใช้ตัวช่วยเดียวกัน
   const helper = app.match(/function extraFilesFieldHtml\([\s\S]*?\n\}/)?.[0] ?? "";
-  assert.match(helper, /<label class="btn secondary file-pick" for="\$\{id\}">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="\$\{id\}" name="extra_files" type="file"/);
+  // กติกาไฟล์ฉบับเต็มอยู่ใน title ของปุ่ม ใต้ช่องเป็นข้อความสั้นแบบเดียวทุกหน้า
+  assert.match(helper, /<label class="btn secondary file-pick" for="\$\{id\}" title="\$\{escapeHtml\(ATTACHMENT_HINT\)\}">\$\{uiIcon\("camera"\)\} ถ่ายรูป \/ เลือกไฟล์<\/label><input class="file-pick-input" id="\$\{id\}" name="extra_files" type="file"/);
+  assert.match(helper, /<small>\$\{ATTACHMENT_HINT_SHORT\}<\/small>/);
   const mt = read("modules/module-mt.js");
   // ฟอร์มจบงานมีช่องไฟล์เดียว (รูปใบเสร็จ + ไฟล์เพิ่มเติม) ที่ส่งพร้อมปุ่มบันทึกข้อมูล/เสร็จสิ้นงาน ไม่มีช่องใบเสร็จแยกที่ต้องกดแนบเอง
   assert.doesNotMatch(mt, /finish-parts-file/);
