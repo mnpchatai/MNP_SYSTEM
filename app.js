@@ -268,8 +268,9 @@ const isLabOnly = () => window.MNP_LAB_ONLY.isLabOnly(state.employee);
 const homePath = () => (isLabOnly() ? window.MNP_LAB_ONLY.HOME : "dashboard");
 // แผนกที่เห็นเฉพาะบางโมดูล (แผนก ID เห็นแค่แจ้งซ่อม MT/IT): เมนู การ์ดโมดูล รายการใบ และหน้าของโมดูลอื่นถูกซ่อน
 // กติกาและรายชื่อแผนกอยู่ที่ modules/department-access.js — เป็น UX ล้วน สิทธิ์จริงยังตัดสินที่ฐานข้อมูล
-// โหมดทดสอบมีกติกาหน้าของตัวเอง (เหลือ NCR/QC) จึงไม่ใช้กติกาแผนกซ้อน ไม่งั้นสองด่านพากันวนไป-กลับ
-const deptAccessSubject = () => (isSandboxMode() ? null : state.employee);
+// โหมดทดสอบ (เหลือ NCR/QC) และบัญชี lab-only (เหลือ LAB) มีกติกาหน้าของตัวเองที่แคบกว่า จึงไม่ใช้กติกาแผนกซ้อน
+// ไม่งั้นสองด่านพากันวนไป-กลับ (เช่น lab-only ส่ง dashboard ไป lab แล้วด่านแผนกส่ง lab กลับ dashboard)
+const deptAccessSubject = () => (isSandboxMode() || isLabOnly() ? null : state.employee);
 const deptModuleAllowed = (code) => window.MNP_DEPARTMENT_ACCESS.moduleAllowed(deptAccessSubject(), code);
 const isDeptRestricted = () => window.MNP_DEPARTMENT_ACCESS.isRestricted(deptAccessSubject());
 function moduleCodeForPage(path) {
