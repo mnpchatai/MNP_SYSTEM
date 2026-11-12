@@ -207,7 +207,7 @@ test("the MT start, finish and verify steps all go through the confirm helper; t
   assert.equal(mt.match(/confirmStepAction\(/g)?.length, 3);
   for (const label of ['label: "เริ่มงาน"', 'label: "เสร็จสิ้นงาน"', 'label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ"']) assert.ok(mt.includes(label), label);
   assert.doesNotMatch(mt, /✓ ผ่าน|✕ ไม่ผ่าน/, "icons instead of characters a screen reader reads aloud");
-  assert.match(mt, /<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม<\/h2>\$\{verifySummaryHtml\(request\)\}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">\(จำเป็นเมื่อไม่ผ่าน\)<\/span><\/label>/, "the repair result comes before the pass/fail buttons, and the note's rule sits on its label");
+  assert.match(mt, /<div class="detail-action" id="repair-verify"><h3>ตรวจรับผลการซ่อม<\/h3>\$\{verifySummaryHtml\(request\)\}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">\(จำเป็นเมื่อไม่ผ่าน\)<\/span><\/label>/, "the repair result comes before the pass/fail buttons, and the note's rule sits on its label");
   assert.match(mt, /request\.cause_analysis && !canVerify \?/, "and is not repeated in the facts card");
   assert.match(mt, /<label for="finish-cause">วิเคราะห์สาเหตุ\$\{REQUIRED\}<\/label>/);
   assert.match(css, /:is\(\.approval-actions, \.form-actions\):has\(> \.step-confirm\) \{/);
@@ -242,7 +242,7 @@ test("leaving the page while the step is still sending: it finishes, but tells t
   await h.advance(0);
   assert.deepEqual(seen, [false], "stillHere() is false so the caller skips renderRequestDetail");
   const mt = read("modules/module-mt.js");
-  assert.equal(mt.match(/if \(stillHere\(\)\) await renderRequestDetail\(params\);/g)?.length, 3, "all three MT steps only redraw when still on the page");
+  assert.equal(mt.match(/if \(stillHere\(\)\) \{ await renderRequestDetail\(params\); focusDetailHeading\(\); \}/g)?.length, 3, "all three MT steps only redraw when still on the page, then focus the request heading instead of dropping to the page");
 });
 
 test("the tap guard only holds back the confirm button; cancel answers at once", () => {
@@ -281,4 +281,19 @@ test("closing the tab is warned against while the step is sending, and the warni
   finish(true);
   await h.advance(0);
   assert.equal((h.windowListeners.beforeunload ?? []).includes(warn), false, "the warning is removed once sent");
+});
+
+test("one detail template: start work sits with the approval buttons; assign, finish and verify are the top-left action card with their own buttons", () => {
+  const mt = read("modules/module-mt.js");
+  const app = read("app.js");
+  assert.match(mt, /asideHtml: `\$\{canStartWork \? `<section class="card action-panel step-panel" id="repair-start-panel"/);
+  // ผู้ใช้กำหนด 2026-11-12: ปุ่มของฟอร์มอยู่กับช่องของฟอร์ม (ตรวจรับ: หมายเหตุกับผ่าน/ไม่ผ่านอยู่การ์ดเดียว)
+  assert.doesNotMatch(mt, /repair-verify-panel/);
+  assert.match(mt, /actionHtml: `/);
+  assert.match(app, /<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ<\/h2>\$\{detailView\.actionHtml\}<\/section>/);
+  assert.match(css, /:is\(\.ncr-actions, \.detail-actions\) :is\(\.form-actions, \.approval-actions\) \{ position: sticky;/, "submit buttons pinned to the bottom on phones, like NCR");
+  assert.doesNotMatch(mt, /<section class="card"><h2>เริ่มงานซ่อม<\/h2>/, "start work is no longer an in-flow card");
+  assert.match(mt, /const section = document\.querySelector\("#repair-verify"\);/, "the note and files stay in the verify card");
+  assert.match(app, /\$\{canApprove \? "" : detailView\?\.asideHtml \?\? ""\}/);
+  assert.match(css, /\.step-panel \.approval-actions \{ margin: 0; padding: 0; border-top: 0; \}/);
 });

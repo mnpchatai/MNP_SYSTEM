@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import vm from "node:vm";
 const require = createRequire(import.meta.url);
 const model = require("../../modules/ncr-dashboard-model.js");
 
@@ -287,4 +289,117 @@ test("the loss scope keeps reports waiting for loss data, closed ones included, 
   assert.deepEqual(list.map((row) => row.id), ["closed-open", "estimate"]);
   const sums = model.summarize(model.select(rows, { ...f, scope: "" }), f);
   assert.equal(sums.need - sums.assessed, list.length);
+});
+
+// ---- หน้าจอ (modules/module-ncr-dashboard.js) วาดในบริบท vm โดยไม่มี DOM ----
+const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+const viewSource = readFileSync(new URL("../../modules/module-ncr-dashboard.js", import.meta.url), "utf8");
+const STATUS_LABELS = { awaiting_disposition: "รอผู้จัดการโรงงานพิจารณา", awaiting_response: "รอแผนกตอบ", awaiting_followup: "รอ QA ติดตามผล", awaiting_signoff: "รอลงนามปิด", awaiting_info: "รอข้อมูลเพิ่มเติม", closed: "ปิดแล้ว" };
+
+async function renderView({ reports = [], search = "", section = "page", losses = [], querySelector = () => null } = {}) {
+  const root = { innerHTML: "", addEventListener() {}, querySelector };
+  const ncrModule = { shared: { STATUS_LABELS, SOURCES: { in_process: "ระหว่างผลิต (In-Process)" }, CAUSES: { man: "บุคลากร" }, LOSS_TYPES: { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ" }, todayBangkok: () => TODAY, formatQty: (value) => String(value) } };
+  const tables = {
+    ncr_reports: reports.map((item) => ({
+      product_name: "สินค้า", customer_name: "ลูกค้า", qty_total: 1000, qty_defect: 100, unit: "ชิ้น", source: "in_process", causes: [], response_due: "2026-10-06", responded_at: null, closed_at: null, prevention: null, prevention_due: null,
+      defect_type: { code: "surf", name_th: "ผิวบกพร่อง" }, ncr_responsibilities: [{ share: 1, department: { code: "RB" } }], issue_date: "2026-10-01", ...item,
+    })),
+    ncr_losses: losses,
+    ncr_outcomes: [],
+    ncr_status_history: reports.filter((item) => item.status === "awaiting_response").map((item) => ({ ncr_id: item.id, to_status: "awaiting_response", changed_at: "2026-09-28T03:00:00Z" })),
+  };
+  const sbQuery = (name) => ({ select() { return this; }, neq() { return this; }, is() { return this; }, order() { return this; }, range: async () => ({ data: tables[name] }) });
+  const context = vm.createContext({
+    window: { MNP_REQUEST_MODULES: { NCR_CAR: ncrModule }, MNP_NCR_DASHBOARD: model, scrollY: 0, scrollTo() {} },
+    document: { getElementById: () => root, activeElement: null },
+    sb: { from: sbQuery }, state: { employee: { id: "viewer" } }, app: { innerHTML: "" }, shell: (html) => html, bindShell() {}, loadingShell() {},
+    escapeHtml, relation: (value) => value, formatDate: (value) => value, URLSearchParams, console, CSS: { escape: (value) => value },
+  });
+  vm.runInContext(viewSource, context);
+  await ncrModule.pages["ncr-dashboard"](new URLSearchParams(`year=2026${search}`));
+  const html = root.innerHTML;
+  return section === "page" ? html : html.split(section === "act" ? 'data-card="act"' : 'id="nd-drill"')[1].split("</section>")[0];
+}
+const NCR_ONE = { id: "n1", ncr_no: "QA001/69", status: "awaiting_response" };
+const axisLabels = (html) => [...html.matchAll(/<div class="nd-yax">([\s\S]*?)<\/div>/g)].map((match) => [...match[1].matchAll(/<span[^>]*>([^<]*)<\/span>/g)].map((item) => item[1]));
+
+test("a chart with nothing to draw shows one line instead of an axis, and a used axis has whole-number ticks", async () => {
+  const html = await renderView({ reports: [NCR_ONE] });
+  // จำนวน NCR มีข้อมูล (แกน 2, 1, 0 เป็นจำนวนเต็ม) ส่วนบาทไม่มีความสูญเสียเลย → ไม่วาดแกน "1, 1, 0"
+  assert.deepEqual(axisLabels(html), [["2", "1", "0"]]);
+  assert.match(html, /<p class="nd-empty">ยังไม่มีความสูญเสียยืนยันหรือประมาณการในปี 2569 ตามตัวกรองนี้<\/p>/);
+  const none = await renderView({ reports: [] });
+  assert.deepEqual(axisLabels(none), []);
+  assert.match(none, /แนวโน้มรายเดือน[\s\S]*<p class="nd-empty">ไม่มี NCR ในปี 2569 ตามตัวกรองนี้<\/p>/);
+  assert.doesNotMatch(none, /nd-two">\s*<div class="nd-sub">/, "both charts empty: no per-chart empty lines");
+  // บาทน้อยมาก (1 บาท) ก็ยังได้ขีดกลางเป็นจำนวนเต็ม
+  const small = await renderView({ reports: [NCR_ONE], losses: [{ ncr_id: "n1", loss_type: "scrap", amount: 1, cost_status: "confirmed", entry_kind: "loss", incurred_on: "2026-10-01" }] });
+  assert.deepEqual(axisLabels(small), [["2", "1", "0"], ["2", "1", "0"]]);
+});
+
+test("each NCR is on the page once: the drill list skips what act-now shows, and a status filter replaces act-now", async () => {
+  const page = await renderView({ reports: [NCR_ONE] });
+  assert.equal(page.match(/>QA001\/69</g).length, 1, "listed in act-now only");
+  assert.match(page, /ทั้งหมด <b>1<\/b> ใบ · ไม่แสดงซ้ำ 1 ใบที่อยู่ใน “ต้องลงมือตอนนี้”/);
+  assert.match(page, /ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว/);
+  const filtered = await renderView({ reports: [NCR_ONE], search: "&scope=open" });
+  assert.equal(filtered.match(/>QA001\/69</g).length, 1, "the filtered list is the only place");
+  assert.doesNotMatch(filtered, /data-card="act"|ไม่แสดงซ้ำ/);
+  const closed = await renderView({ reports: [{ id: "n2", ncr_no: "QA002/69", status: "closed" }] });
+  assert.match(closed, /<table class="nd-rowlink">[\s\S]*>QA002\/69</, "a closed NCR is not in act-now, so the drill list keeps it");
+});
+
+test("act-now says who is waited on once: the status names the role, a second line only adds the department", async () => {
+  const act = (status, extra = {}) => renderView({ reports: [{ id: "n1", ncr_no: "QA001/69", status, ...extra }], section: "act" });
+  const disposition = await act("awaiting_disposition");
+  assert.match(disposition, /<td>รอผู้จัดการโรงงานพิจารณา<\/td>/);
+  assert.doesNotMatch(disposition, /ผจก\./);
+  assert.match(await act("awaiting_response"), /<td>รอแผนกตอบ<br><span class="nd-muted">RB<\/span><\/td>/);
+  assert.match(await act("awaiting_signoff"), /<td>รอลงนามปิด<\/td>/);
+  assert.match(await act("awaiting_followup", { prevention: "แนวทางป้องกัน" }), /<td>รอ QA ติดตามผล<\/td>/);
+  assert.match(await act("awaiting_followup"), /<td>รอ QA ติดตามผล<br><span class="nd-muted">แผนก RB ส่งแนวทางป้องกัน<\/span><\/td>/);
+});
+
+test("pareto falls back to the count when no baht is confirmed, and says so once", async () => {
+  const pareto = (html) => html.split('data-card="pareto"')[1].split("</section>")[0];
+  const noBaht = pareto(await renderView({ reports: [NCR_ONE] }));
+  assert.doesNotMatch(noBaht, /ไม่มีข้อมูลในช่วงที่เลือก/, "NCRs exist, so the chart is not empty");
+  assert.match(noBaht, /<span class="nd-val">1 ใบ<\/span>/, "bars are counted in reports");
+  assert.match(noBaht, /<p class="nd-hint">ยังไม่มีบาทที่ยืนยันในช่วงนี้ จึงเรียงตามจำนวนใบ<\/p>/);
+  assert.match(noBaht, /aria-current="false"[^>]*>เรียงตามบาท<\/a><a [^>]*aria-current="true">เรียงตามจำนวนใบ/, "the sort control shows the count as the active choice");
+  const withBaht = pareto(await renderView({ reports: [NCR_ONE], losses: [{ ncr_id: "n1", loss_type: "scrap", amount: 500, cost_status: "confirmed", entry_kind: "loss", incurred_on: "2026-10-01" }] }));
+  assert.match(withBaht, /500 ฿/);
+  assert.doesNotMatch(withBaht, /จึงเรียงตามจำนวนใบ/);
+  assert.match(withBaht, /aria-current="true">เรียงตามบาท/);
+  const none = pareto(await renderView({ reports: [] }));
+  assert.match(none, /ไม่มีข้อมูลในช่วงที่เลือก/, "no NCR at all keeps the empty line");
+  assert.doesNotMatch(none, /จึงเรียงตามจำนวนใบ/);
+});
+
+// โครงจำลองของ DOM แค่พอให้ placeDrill ทำงาน: การ์ดเป็นพี่น้องกัน มี class และ after()
+function fakeBoard(classes) {
+  const cards = classes.map((cls, index) => ({ name: `c${index}`, cls, classList: { contains: (name) => cls.split(" ").includes(name) }, after(node) { node.placedAfter = this.name; } }));
+  cards.forEach((card, index) => { card.previousElementSibling = cards[index - 1] ?? null; card.nextElementSibling = cards[index + 1] ?? null; });
+  const drill = { placedAfter: null };
+  return { cards, drill };
+}
+
+test("the filtered list goes after the right card of a half-width pair, so no half card is left alone in its row", async () => {
+  const place = async (classes, hostAt) => {
+    const board = fakeBoard(classes);
+    await renderView({ reports: [NCR_ONE], search: "&scope=open", querySelector: (selector) => (selector === "#nd-drill" ? board.drill : selector === ".nd-summary" ? { closest: () => board.cards[hostAt] } : null) });
+    return board.drill.placedAfter;
+  };
+  const layout = ["card", "card", "card nd-half", "card nd-half", "card"];
+  assert.equal(await place(layout, 2), "c3", "after the pair, not between the halves");
+  assert.equal(await place(layout, 3), "c3", "the right card of a pair keeps its place");
+  assert.equal(await place(layout, 1), "c1", "a full-width card is unchanged");
+  assert.equal(await place(["card nd-half", "card nd-half", "card nd-half", "card nd-half"], 2), "c3", "the second pair of four");
+  assert.equal(await place(["card nd-half", "card nd-half", "card nd-half"], 2), "c2", "an odd last card has no partner");
+});
+
+test("pareto and loss cards are marked for the two-column grid; the department table is not", async () => {
+  const page = await renderView({ reports: [NCR_ONE] });
+  for (const card of ["pareto", "losstype"]) assert.match(page, new RegExp(`class="card nd-card nd-half" data-card="${card}"`));
+  for (const card of ["act", "trend", "dept", "scrap"]) assert.match(page, new RegExp(`class="card nd-card" data-card="${card}"`));
 });

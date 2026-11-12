@@ -50,10 +50,11 @@
   const stats = (items) => `<div class="rf-grid rf-g4">${items.map(stat).join("")}</div>`;
   const callout = (tone, html) => `<div class="rf-callout is-${esc(tone)}" role="note"><span class="rf-callout-ico" aria-hidden="true">${icon(tone)}</span><div class="rf-callout-body">${html}</div></div>`;
   // สถานะว่างหน้าตาเดียวกับ emptyState() ของ app.js (ไอคอนกล่องรับ + ข้อความ) · ช่องว่างในตาราง (ui.table) เป็นข้อความล้วน
-  const empty = (text) => `<div class="empty empty-state rf-empty">${root.MNP_UI_ICONS?.icon ? root.MNP_UI_ICONS.icon("inbox") : ""}<p>${esc(text)}</p></div>`;
+  // action = ปุ่ม/ลิงก์ที่เป็นทางไปต่อ (HTML ที่ผู้เรียกสร้างและ escape เอง) วางใต้ข้อความของสถานะว่าง
+  const empty = (text, action = "") => `<div class="empty empty-state rf-empty">${root.MNP_UI_ICONS?.icon ? root.MNP_UI_ICONS.icon("inbox") : ""}<p>${esc(text)}</p>${action}</div>`;
   const kv = (pairs) => `<dl class="rf-kv">${pairs.filter(Boolean).map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
   const progress = (value, max, tone = "") => `<div class="rf-bar${tone ? ` is-${esc(tone)}` : ""}" role="img" aria-label="${attr(`${rules.fmtNum(value)} จาก ${rules.fmtNum(max)}`)}"><div style="width:${n2(max ? Math.min(100, (Number(value) / Number(max)) * 100) : 0)}%"></div></div>`;
-  const table = (head, rows, { emptyText = "ไม่มีข้อมูล", colSpan = head.length, className = "" } = {}) => `<div class="table-wrap"><table class="rf-table${className ? ` ${className}` : ""}"><thead><tr>${head.map((cell) => (typeof cell === "string" ? `<th>${esc(cell)}</th>` : `<th class="${attr(cell.className ?? "")}"${cell.title ? ` title="${attr(cell.title)}"` : ""}>${esc(cell.label ?? "")}</th>`)).join("")}</tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="${colSpan}" class="empty rf-empty">${esc(emptyText)}</td></tr>`}</tbody></table></div>`;
+  const table = (head, rows, { emptyText = "ไม่มีข้อมูล", emptyHtml = "", colSpan = head.length, className = "" } = {}) => `<div class="table-wrap"><table class="rf-table${className ? ` ${className}` : ""}"><thead><tr>${head.map((cell) => (typeof cell === "string" ? `<th>${esc(cell)}</th>` : `<th class="${attr(cell.className ?? "")}"${cell.title ? ` title="${attr(cell.title)}"` : ""}>${esc(cell.label ?? "")}</th>`)).join("")}</tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="${colSpan}" class="empty rf-empty">${emptyHtml || esc(emptyText)}</td></tr>`}</tbody></table></div>`;
   // แท็บเป็นลิงก์ธรรมดา (?tab=) หน้าโหลดใหม่ตาม URL ไม่มี popup
   const tabs = (items, current, urlOf) => `<nav class="rf-tabs" role="tablist">${items.map((tab) => `<a class="rf-tab${tab.id === current ? " is-active" : ""}" role="tab" aria-selected="${tab.id === current}" href="${attr(urlOf(tab.id))}">${esc(tab.label)}</a>`).join("")}</nav>`;
   const mono = (text) => `<span class="rf-mono">${esc(text)}</span>`;
@@ -85,6 +86,106 @@
     const data = `data-spec data-lsl="${limits.lsl ?? ""}" data-usl="${limits.usl ?? ""}"`;
     return field(`${label} (${spec.unit})`, input(name, { value, type: "number", step, extra: data }), { hint: esc(`มาตรฐาน ${rules.specText(spec)}`) });
   };
+  // ---------- ตรวจช่องก่อนส่งฟอร์ม ----------
+  // ฟอร์มทุกอันเป็น novalidate (ไม่ให้เบราว์เซอร์ขึ้นกล่องภาษาอังกฤษ "Please fill out this field") แล้วตรวจที่นี่:
+  // อ่านเงื่อนไขจากช่องเอง (required / type=number / min / max / step) → กติกาของ MNP_FORM_STEPS.validate → ข้อความไทยใต้ช่อง
+  // ตัวเดียวกับ NCR/MT (.field-error + aria-invalid, ผิดทุกช่องพร้อมกัน, โฟกัสช่องแรก) · กติกาของ action ยังตรวจซ้ำและเป็นตัวตัดสินจริง
+  const SKIP_TYPES = new Set(["hidden", "file", "checkbox", "radio", "button", "submit", "reset", "image"]);
+  // ชื่อช่องในข้อความผิด: ตัวหนังสือของ label โดยไม่เอา "(จำเป็น)" และหน่วยท้ายชื่อ เช่น "จำนวนส่งมอบ (kg)" → "จำนวนส่งมอบ"
+  const plainLabel = (text) => String(text ?? "").replace(/\(จำเป็น\)/g, "").replace(/\s*\([^()]*\)\s*$/, "").replace(/\s+/g, " ").trim();
+  const labelOf = (control, container) => plainLabel(container?.querySelector?.("label")?.textContent) || plainLabel(control.getAttribute?.("aria-label")) || plainLabel(control.getAttribute?.("placeholder"));
+  const numberAttr = (control, name) => {
+    const raw = control.getAttribute?.(name);
+    const value = raw === null || raw === undefined || raw === "" ? NaN : Number(raw);
+    return Number.isFinite(value) ? value : undefined;
+  };
+  const fmtLimit = (value) => String(Math.round(value * 1e6) / 1e6);
+
+  // คืนกติกา + ค่าของทุกช่องที่ตรวจได้ · ช่องที่อยู่ใน .field (หรือ td) ได้ data-field ของกล่องนั้นเป็นที่แสดงข้อความ
+  // เลขของกล่องช่องที่ไม่มี data-field นับต่อทั้งหน้า แถวที่เพิ่มทีหลังจึงไม่ได้เลขซ้ำกับแถวเดิม (ข้อความไม่ไปโผล่ใต้ช่องอื่น)
+  let fieldSeq = 0;
+  function formChecks(form, steps) {
+    const rules = [];
+    const values = {};
+    const owners = new Map();
+    form.querySelectorAll("input, select, textarea").forEach((control) => {
+      const type = String(control.type ?? "").toLowerCase();
+      // ช่องพิมพ์ของ dropdown ค้นหาได้ (modules/searchable-select.js) เป็นแค่ตัวแทนของ <select> ที่ตรวจอยู่แล้ว
+      if (SKIP_TYPES.has(type) || control.disabled || control.readOnly || control.getAttribute?.("role") === "combobox") return;
+      // ช่องวันที่ที่ปฏิทินไทยซ่อนไว้ต้องตรวจ (เป็นตัวเองที่ hidden) ส่วนช่องที่อยู่ในส่วนที่ซ่อนอยู่ (เช่น กล่องของหมวดอื่น) ไม่ตรวจ
+      if (control.parentElement?.closest?.("[hidden]")) return;
+      const container = control.closest?.(".field") ?? control.closest?.("td") ?? control.parentElement;
+      if (!container) return;
+      if (!container.dataset.field) { fieldSeq += 1; container.dataset.field = `rf-field-${fieldSeq}`; }
+      const owner = container.dataset.field;
+      const name = `${owner}#${(owners.get(owner) ?? 0) + 1}`;
+      owners.set(owner, (owners.get(owner) ?? 0) + 1);
+      const label = labelOf(control, container);
+      const isNumber = type === "number";
+      // ปฏิทินไทยถอด required ออกจากช่องจริง (ไม่งั้นเบราว์เซอร์ไม่ยอมส่งโดยไม่บอกเหตุผล) จึงถือว่าช่องวันที่ที่ label ระบุ "(จำเป็น)" ต้องกรอก
+      const marked = type === "date" && Boolean(container.querySelector?.(".field-required"));
+      const choose = control.tagName === "SELECT" || type === "date";
+      const needs = label ? `กรุณา${choose ? "เลือก" : "ระบุ"}${label}` : `กรุณา${choose ? "เลือก" : "ระบุ"}ข้อมูลในช่องนี้`;
+      const subject = label || "ค่านี้";
+      values[name] = isNumber && control.validity?.badInput ? Number.NaN : control.value;
+      const rule = { name, owner, required: Boolean(control.required) || marked, message: needs };
+      rules.push(rule);
+      if (!isNumber) return;
+      const min = numberAttr(control, "min");
+      const max = numberAttr(control, "max");
+      const stepText = control.getAttribute?.("step");
+      const step = stepText === "any" ? undefined : (numberAttr(control, "step") ?? 1);
+      const number = (value) => steps.numberOf(value);
+      rules.push({ name, owner, check: (value) => Number.isFinite(number(value)), checkMessage: `${subject}ต้องเป็นตัวเลข` });
+      if (min !== undefined) rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || number(value) >= min, checkMessage: `${subject}ต้องไม่น้อยกว่า ${fmtLimit(min)}` });
+      if (max !== undefined) rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || number(value) <= max, checkMessage: `${subject}ต้องไม่เกิน ${fmtLimit(max)}` });
+      if (step) {
+        const base = min ?? 0;
+        rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || Math.abs((number(value) - base) / step - Math.round((number(value) - base) / step)) < 1e-7, checkMessage: step === 1 && Number.isInteger(base) ? `${subject}ต้องเป็นจำนวนเต็ม` : `${subject}ต้องเป็นพหุคูณของ ${fmtLimit(step)}` });
+      }
+    });
+    return { rules, values };
+  }
+
+  // ข้อผิดพลาดของฟอร์ม เรียงตามลำดับที่อยู่บนจอ ช่องละหนึ่งข้อความ [{ name: <data-field ของกล่อง>, message }]
+  function formErrors(form, steps = root.MNP_FORM_STEPS) {
+    if (!steps?.validate) return [];
+    const { rules, values } = formChecks(form, steps);
+    const owner = new Map(rules.map((rule) => [rule.name, rule.owner]));
+    const seen = new Set();
+    const errors = [];
+    for (const error of steps.validate(rules, values)) {
+      const key = owner.get(error.name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      errors.push({ name: key, message: error.message });
+    }
+    return errors;
+  }
+
+  // ตรวจแล้วแสดงข้อความใต้ช่อง โฟกัสช่องแรกที่ผิด · คืน true เมื่อผ่านทุกช่อง (ฟอร์มส่งต่อให้ action ได้)
+  function validateForm(form) {
+    const steps = root.MNP_FORM_STEPS;
+    if (!steps?.validate) return true;
+    if (form.dataset.rfValidation !== "1") {
+      form.dataset.rfValidation = "1";
+      const clear = (event) => {
+        const name = event.target?.closest?.("[data-field]")?.dataset.field;
+        if (name) steps.clearFieldError(form, name);
+      };
+      form.addEventListener("input", clear);
+      form.addEventListener("change", clear);
+    }
+    const errors = formErrors(form, steps);
+    if (!errors.length) { steps.clearFieldErrors(form); return true; }
+    const target = steps.showFieldErrors(form, errors);
+    if (target) {
+      target.focus?.({ preventScroll: true });
+      const field = target.closest?.("[data-field]");
+      (field?.querySelector?.(".field-error[data-generated]") ?? field)?.scrollIntoView?.({ block: "center" });
+    }
+    return false;
+  }
   const submitButton = (text, { className = "", disabled = false } = {}) => `<button class="btn rf-btn${className ? ` ${className}` : ""}" type="submit"${disabled ? " disabled" : ""}>${esc(text)}</button>`;
   const button = (text, { action = "", args = {}, className = "secondary", confirmText = "", type = "button", ariaLabel = "", success = "" } = {}) =>
     `<button class="btn rf-btn ${className}" type="${type}"${action ? ` data-rf-action="${attr(action)}"` : ""}${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${confirmText ? ` data-rf-confirm="${attr(confirmText)}"` : ""}${success ? ` data-rf-success="${attr(success)}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}>${esc(text)}</button>`;
@@ -243,7 +344,7 @@
   const api = {
     module: "",
     STATUS, ICONS, icon, badge, status, statusLabel, pageHead, headingWithNote, card, stat, stats, callout, empty, kv, progress, table, tabs, mono,
-    field, input, textarea, select, specInput, submitButton, button, confirmOptions, openButton, link, dialog, closeButton,
+    field, input, textarea, select, specInput, formErrors, validateForm, submitButton, button, confirmOptions, openButton, link, dialog, closeButton,
     barcode, dualChart, controlChart, histogram, labelTables, urgent, filePick, enhanceDates,
   };
   root.MNP_RUBBERFLOW_UI = api;

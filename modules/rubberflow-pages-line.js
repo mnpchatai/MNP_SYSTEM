@@ -6,7 +6,7 @@
   const dialogs = (root.MNP_RUBBERFLOW_DIALOGS ??= {});
   const esc = (value) => root.escapeHtml(value);
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
-  const searchForm = (ctx, placeholder) => `<form class="rf-search" data-rf-search data-rf-keep="tab" role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
+  const searchForm = (ctx, placeholder) => `<form novalidate class="rf-search" data-rf-search data-rf-keep="tab" role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
 
   // ---------- ส่วนที่สถานีใช้ร่วมกัน (StageCommon) ----------
   const stageYield = (lots) => {
@@ -26,7 +26,12 @@
   function gateNotice(ctx, stage) {
     const { ready, waiting } = inbound(ctx.data, stage);
     if (ready.length) return "";
-    return ctx.ui.callout("warn", `<strong>ด่านรับมอบ:</strong> ยังไม่มีงานที่รับมอบเข้าสถานี${esc(ctx.rules.STAGE_LABEL[stage])} จึงยังเริ่มบันทึกการผลิตไม่ได้${waiting.length ? ` · มี ${waiting.length} ใบส่งมอบรอรับ ${ctx.ui.link("ไปหน้ารับมอบ", ctx.url("wip"), "btn rf-btn secondary small")}` : ""}`);
+    // ไม่มีใบรอรับ = งานยังมาไม่ถึง: พาไปสถานีก่อนหน้าที่ต้องส่งมอบมาให้ (ไม่ทิ้งให้ผู้ใช้หาทางเอง)
+    const prev = ctx.rules.PREV_STAGE?.[stage];
+    const next = waiting.length
+      ? ` · มี ${waiting.length} ใบส่งมอบรอรับ ${ctx.ui.link("ไปหน้ารับมอบ", ctx.url("wip"), "btn rf-btn secondary small")}`
+      : prev && ctx.canSee(prev) ? ` ${ctx.ui.link(`ไปสถานี${ctx.rules.STAGE_LABEL[prev]}`, ctx.url(prev), "btn rf-btn secondary small")}` : "";
+    return ctx.ui.callout("warn", `<strong>ด่านรับมอบ:</strong> ยังไม่มีงานที่รับมอบเข้าสถานี${esc(ctx.rules.STAGE_LABEL[stage])} จึงยังเริ่มบันทึกการผลิตไม่ได้${next}`);
   }
 
   // ตัวเลือกใบส่งมอบที่รับแล้ว — data-rf-inbound ให้ bind เติมปริมาณคงเหลือลงช่องถัดไปอัตโนมัติ
@@ -79,7 +84,7 @@
     const available = actions.transferableQty(lot, now);
     const body = `${ui.callout("info", esc(`${rules.STAGE_LABEL[lot.stage]} → ${rules.STAGE_LABEL[rules.NEXT_STAGE[lot.stage]] ?? "-"} · ปลายทางต้องรับมอบก่อนจึงเริ่มผลิตได้`))}
       <div class="rf-grid rf-g2">${ui.field(`จำนวนส่งมอบ (${lot.uom})`, ui.input("qty", { type: "number", step: "any", value: String(available), required: true }), { hint: esc(`ส่งได้สูงสุด ${available}`), required: true })}${ui.field("หมายเหตุ / รหัสพาเลท", ui.input("note"))}</div>`;
-    const html = ui.dialog("transfer", `ส่งมอบ WIP · ${lot.id}`, `<form data-rf-form="createTransfer" data-rf-args='${esc(JSON.stringify({ lotId: lot.id }))}' data-rf-success="สร้างใบส่งมอบ {result} แล้ว" id="rf-transfer">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-transfer">สร้างใบส่งมอบ</button>` });
+    const html = ui.dialog("transfer", `ส่งมอบ WIP · ${lot.id}`, `<form novalidate data-rf-form="createTransfer" data-rf-args='${esc(JSON.stringify({ lotId: lot.id }))}' data-rf-success="สร้างใบส่งมอบ {result} แล้ว" id="rf-transfer">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-transfer">สร้างใบส่งมอบ</button>` });
     return { html };
   };
 
@@ -137,7 +142,7 @@
         ${ui.field("จำนวนชุดผสม", ui.input("batches", { type: "number", value: "", extra: "data-rf-batches readonly" }))}
         ${ui.field("หมายเหตุ", ui.input("note"))}
       </div><div class="muted small" data-rf-recipe-line></div><div data-rf-shortage></div><div data-rf-preview></div>`;
-    const html = ui.dialog("createRequisition", "เบิกเคมี (ระเบิดสูตร)", `<form data-rf-form="createRequisition" data-rf-success="เบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit title="จ่ายทันที หักสต็อกตามล็อตที่แสดง"${orders.length ? "" : " disabled"}>เบิก</button>`, wide: true });
+    const html = ui.dialog("createRequisition", "เบิกเคมี (ระเบิดสูตร)", `<form novalidate data-rf-form="createRequisition" data-rf-success="เบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit title="จ่ายทันที หักสต็อกตามล็อตที่แสดง"${orders.length ? "" : " disabled"}>เบิก</button>`, wide: true });
     const bind = (dialog, bindCtx) => {
       const submit = dialog.querySelector("[data-rf-submit]");
       const orderSelect = dialog.querySelector("[data-rf-order]");
@@ -192,8 +197,8 @@
       ui.field(`อุณหภูมิปล่อยยาง ขั้น ${stage} (°C)`, ui.input(`dumpTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, extra: `data-rf-dump="${stage}"` }), { hint: `<span data-rf-hint="dumpTemp${stage}"></span>`, required: true }),
       ui.field(`เวลาผสม ขั้น ${stage} (นาที)`, ui.input(`mixMin${stage}`, { type: "number", step: "any", min: 0, required: true }), { hint: `<span data-rf-hint="mixMin${stage}"></span>`, required: true }),
     ].join("")).join("");
-    const form = issued.length === 0 ? ui.callout("warn", "ยังไม่มีใบเบิกที่จ่ายแล้ว ต้องเบิกเคมีก่อน")
-      : `<form data-rf-form="recordMixing" data-rf-success="บันทึก {result} แล้ว" data-rf-mixing><div class="rf-grid rf-g3">
+    const form = issued.length === 0 ? ui.callout("warn", `ยังไม่มีใบเบิกที่จ่ายแล้ว ต้องเบิกเคมีก่อน${ctx.canSee("requisition") ? ` ${ui.link("ไปหน้าเบิกเคมี", ctx.url("requisition"), "btn rf-btn secondary small")}` : ""}`)
+      : `<form novalidate data-rf-form="recordMixing" data-rf-success="บันทึก {result} แล้ว" data-rf-mixing><div class="rf-grid rf-g3">
           ${ui.field("ใบเบิกที่จ่ายครบ", ui.select("reqId", issued.map((requisition) => ({ value: requisition.id, label: `${requisition.id} · ${requisition.orderId}` })), { value: issued[0]?.id ?? "", extra: "data-rf-req required" }), { required: true })}
           ${ui.field("เครื่องผสม", ui.select("machine", MACHINES.mixing))}
           ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
@@ -260,7 +265,7 @@
     const { ready } = inbound(data, "extrusion");
     const dies = data.molds.filter((mold) => mold.kind === "die");
     const avgRework = lots.length ? lots.reduce((sum, lot) => sum + (lot.params.reworkPct || 0), 0) / lots.length : 0;
-    const form = ready.length ? ui.card(`<form data-rf-form="recordExtrusion" data-rf-success="บันทึก {result} แล้ว" data-rf-extrusion><div class="rf-grid rf-g4">
+    const form = ready.length ? ui.card(`<form novalidate data-rf-form="recordExtrusion" data-rf-success="บันทึก {result} แล้ว" data-rf-extrusion><div class="rf-grid rf-g4">
         ${inboundSelect(ctx, "extrusion")}
         ${ui.field("ยางคอมปาวด์ที่ใช้ (kg)", ui.input("useKg", { type: "number", step: "any", required: true, extra: "data-rf-use" }), { hint: '<span data-rf-remaining></span>', required: true })}
         ${ui.field("ยางหมุนเวียนที่ผสม (kg)", ui.input("reworkKg", { type: "number", step: "any", extra: "data-rf-rework" }), { hint: '<span data-rf-rework-hint></span>' })}
@@ -316,7 +321,7 @@
     const { ready } = inbound(data, "curing");
     const tools = data.molds.filter((mold) => mold.kind !== "die");
     const avgTemp = lots.length ? lots.reduce((sum, lot) => sum + lot.params.temp, 0) / lots.length : 0;
-    const form = ready.length ? ui.card(`<form data-rf-form="recordCuring" data-rf-success="บันทึก {result} แล้ว" data-rf-curing><div class="rf-grid rf-g4">
+    const form = ready.length ? ui.card(`<form novalidate data-rf-form="recordCuring" data-rf-success="บันทึก {result} แล้ว" data-rf-curing><div class="rf-grid rf-g4">
         ${inboundSelect(ctx, "curing")}
         ${ui.field("ปริมาณที่นำเข้าอบ", ui.input("useQty", { type: "number", step: "any", required: true }), { hint: '<span data-rf-remaining></span>', required: true })}
         ${ui.field("แม่พิมพ์ / สายอบ", ui.select("moldId", tools.map((mold) => ({ value: mold.id, label: `${mold.id} · ${mold.name}` })), { extra: "required" }), { required: true })}
@@ -360,7 +365,7 @@
     const { fmtNum } = rules;
     const lots = data.lots.filter((lot) => lot.stage === "finishing");
     const { ready } = inbound(data, "finishing");
-    const form = ready.length ? ui.card(`<form data-rf-form="recordFinishing" data-rf-success="บันทึก {result} และสร้างป้ายกล่องแล้ว" data-rf-finishing><div class="rf-grid rf-g4">
+    const form = ready.length ? ui.card(`<form novalidate data-rf-form="recordFinishing" data-rf-success="บันทึก {result} และสร้างป้ายกล่องแล้ว" data-rf-finishing><div class="rf-grid rf-g4">
         ${inboundSelect(ctx, "finishing")}
         ${ui.field("ปริมาณที่รับเข้าตกแต่ง", ui.input("useQty", { type: "number", step: "any", required: true }), { hint: '<span data-rf-remaining></span>', required: true })}
         ${ui.field("ผ่านการตรวจ 100%", ui.input("passedQty", { type: "number", step: "any", required: true, extra: "data-rf-passed" }), { required: true })}
@@ -436,7 +441,7 @@
     const body = `${ui.kv([["ล็อต", ui.mono(transfer.lotId)], ["เส้นทาง", esc(`${rules.STAGE_LABEL[transfer.from]} → ${rules.STAGE_LABEL[transfer.to]}`)], ["จำนวนที่ส่ง", esc(`${transfer.qtySent} ${transfer.uom}`)]])}
       <div class="rf-grid rf-g2">${ui.field(`จำนวนที่ตรวจนับ/ชั่งได้จริง (${transfer.uom})`, ui.input("qtyReceived", { type: "number", step: "any", value: String(transfer.qtySent), required: true, extra: "data-rf-received" }), { required: true })}
       ${ui.field("สภาพชิ้นงาน / ภาชนะ", ui.select("condition", [{ value: "ok", label: "สมบูรณ์" }, { value: "ภาชนะชำรุด", label: "ภาชนะชำรุด / ป้ายเลือน" }, { value: "ปริมาณขาด", label: "ปริมาณขาดเกินเกณฑ์" }]))}</div><div data-rf-diff></div>`;
-    const html = ui.dialog("receive", `รับมอบงาน · ${transfer.id}`, `<form data-rf-form="receiveTransfer" data-rf-args='${esc(JSON.stringify({ id: transfer.id }))}' data-rf-success="รับมอบงานแล้ว สถานีเริ่มผลิตได้" id="rf-receive">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive">ยืนยันรับเข้า</button>` });
+    const html = ui.dialog("receive", `รับมอบงาน · ${transfer.id}`, `<form novalidate data-rf-form="receiveTransfer" data-rf-args='${esc(JSON.stringify({ id: transfer.id }))}' data-rf-success="รับมอบงานแล้ว สถานีเริ่มผลิตได้" id="rf-receive">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive">ยืนยันรับเข้า</button>` });
     const bind = (dialog) => {
       const input = dialog.querySelector("[data-rf-received]");
       const paint = () => {

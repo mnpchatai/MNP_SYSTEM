@@ -28,7 +28,7 @@
   };
   const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
   // แหล่งที่พบตามช่องของใบ QA02-FM01: ไทยก่อน คำบนฟอร์มกระดาษในวงเล็บ
-  const SOURCES = { incoming: "รับเข้า (In-Coming)", in_process: "ระหว่างผลิต (In-Process)", final_fg: "สินค้าสำเร็จรูป (Final FG)", customer_reject: "ลูกค้าตีกลับ (Reject from Customer)", other: "อื่น ๆ" };
+  const SOURCES = { incoming: "รับเข้า (In-Coming)", in_process: "ระหว่างผลิต (In-Process)", final_fg: "สินค้าสำเร็จรูป (Final FG)", customer_reject: "ลูกค้าตีกลับ (Reject from Customer)", other: "อื่นๆ" };
   const UNITS = ["ชุด", "ชิ้น", "เซต", "ม้วน", "เส้น", "กก.", "ท่อน", "เมตร", "ลูก", "ใบ", "รายการ"];
   const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่นๆ" };
   const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่นๆ" };
@@ -153,7 +153,8 @@
 
   // lossPending = ผลของ MNP_NCR_COSTS.lossDataPending (ต้องโหลดยอดความสูญเสียและผลดำเนินการของใบนั้นมาก่อน)
   function statusBadgeHtml(ncr, lossPending = false) {
-    const badges = [`<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(statusLabel(ncr))}</span>`];
+    // ป้ายบนจอใช้ชื่อสถานะอย่างเดียว ผู้ที่ต้องลงนามอยู่ในป้ายผู้รับผิดชอบหรือบรรทัด "ขั้นตอนนี้รอ" แล้ว (statusLabel พร้อมลำดับผู้ลงนามใช้กับชีต)
+    const badges = [`<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`];
     if (isOverdue(ncr)) badges.push('<span class="badge urgent-flag">เกินกำหนดตอบ</span>');
     if (lossPending) badges.push('<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย</span>');
     return badges.join(" ");
@@ -177,7 +178,11 @@
     if (!waiting) return "";
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
     const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
-    return `<span class="ncr-owner-chip is-open"><b>ผู้รับผิดชอบ</b> ${escapeHtml(`${waiting.party}${progress}`)}</span>`;
+    // แผนกเดียวที่มีชื่อคน: คอลัมน์แผนกในแถวเดียวกันบอกแผนกแล้ว ป้ายจึงบอกแค่ชื่อ (หลายแผนกยังต้องมีรหัสแผนกกำกับชื่อ)
+    const oneDepartment = ["awaiting_response", "awaiting_info"].includes(ncr.status) && (ncr.ncr_responsibilities ?? []).length === 1;
+    const single = oneDepartment ? /^แผนก ([^\s/(]+) \(([^()]+)\)$/.exec(waiting.party) : null;
+    const party = single ? single[2] : waiting.party;
+    return `<span class="ncr-owner-chip is-open"><b>ผู้รับผิดชอบ</b> ${escapeHtml(`${party}${progress}`)}</span>`;
   }
 
   function checksHtml(name, options, selected = []) {
@@ -578,7 +583,7 @@
       ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h1>ทะเบียน NCR</h1><p>NCR ที่คุณเกี่ยวข้อง</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
-      <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "แสดง", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
+      <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
       ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");
@@ -796,7 +801,8 @@
         <div class="field"><label for="ncr-assign-${escapeHtml(item.department_id)}">ผู้ตอบของ ${escapeHtml(relation(item.department)?.code ?? "")}</label>${responderSelectHtml(`ncr-assign-${item.department_id}`, candidates, { current: item.responder_id, directory })}</div>
         <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ</button></div></form>`;
     }).join("");
-    return rows ? `<section class="card ncr-card"><h2>ผู้ตอบของแผนก</h2>${rows}</section>` : "";
+    // เป็นงานที่ต้องกรอก จึงอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้เรียกวางให้)
+    return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";
   }
 
   // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้กรอกต้นทุน (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
@@ -890,7 +896,7 @@
       ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`],
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
     const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
-      <div class="page-heading request-module-header ncr-detail-head" data-module="ncr"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p>${headFacts}</div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
+      <div class="page-heading request-module-header ncr-detail-head" data-module="ncr"><div><div class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</div><h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>${headFacts}</div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
@@ -961,12 +967,19 @@
     const part2Filled = Boolean(ncr.disposed_at || ncr.dispositions?.length || ncr.ncr_responsibilities?.length || ncr.disposition_note);
     const parts = [part1, ...(part2Filled ? [part2] : []), ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
     // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
-    const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
-    const body = forms.length
-      ? [actionsSection, ...parts, filesSection, responderSection, lossesSection, historySection]
-      : [...parts, filesSection, responderSection, lossesSection, historySection];
-    const content = heading + body.join("");
+    const work = [...forms, responderSection].filter(Boolean);
+    const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${work.join("")}</section>`;
+    // ผู้กรอกต้นทุนเห็นการ์ดค่าเสียหายต่อจากงานของตัวเองเมื่อยังรอข้อมูลการสูญเสีย
+    const lossesFirst = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
+    // โครงหน้ารายละเอียดเดียวทุกโมดูล (ผู้ใช้อนุมัติ 2026-11-12): งานของผู้ดูบนสุดของคอลัมน์ซ้าย ประวัติอยู่คอลัมน์ขวา
+    const main = [
+      ...(work.length ? [actionsSection] : []),
+      ...(lossesFirst ? [lossesSection] : []),
+      ...parts, filesSection,
+      ...(lossesFirst ? [] : [lossesSection]),
+    ];
+    const content = `${heading}<div class="detail-grid ncr-detail-grid"><div class="stack">${main.join("")}</div><aside class="stack">${historySection}</aside></div>`;
     // เลขที่ NCR เป็นหัวเรื่องของหน้าแล้ว แถบบนบอกทะเบียน ส่วนชื่อแท็บยังเป็นเลขที่
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR", ncr.ncr_no);
     bindShell();

@@ -34,26 +34,27 @@
   const TECHNICIAN_STATUSES = ["assigned", "in_progress"];
   const TECHNICIAN_STAGES = ["start", "repair"];
 
-  // Where an open request is waiting, in workflow order. `short` is the badge text, `owner` who must act.
+  // Where an open request is waiting, in workflow order. `short` is the badge text, `owner` who must act (full role name).
+  // `roleInLabel`: the label already names the owner, so a screen that prints both would say the role twice.
   const STAGES = [
-    { key: "approve_fm", label: "รอผู้จัดการโรงงานอนุมัติ", short: "รออนุมัติ (ผจก.โรงงาน)", owner: "ผจก.โรงงาน" },
-    { key: "approve_gm", label: "รอผู้จัดการทั่วไปอนุมัติ", short: "รออนุมัติ (ผจก.ทั่วไป)", owner: "ผจก.ทั่วไป" },
-    { key: "more_info", label: "รอผู้แจ้งตอบข้อมูลเพิ่ม", short: "ขอข้อมูลเพิ่ม", owner: "ผู้แจ้ง" },
-    { key: "assign", label: "รอมอบหมายช่าง", short: "รอมอบหมายช่าง", owner: "ผจก.ซ่อมบำรุง" },
-    { key: "start", label: "รอช่างเริ่มงาน", short: "รอช่างเริ่มงาน", owner: "ช่าง" },
-    { key: "repair", label: "กำลังซ่อม", short: "กำลังซ่อม", owner: "ช่าง" },
-    { key: "verify", label: "รอผู้แจ้งตรวจรับ", short: "รอผู้แจ้งตรวจรับ", owner: "ผู้แจ้ง" },
+    { key: "approve_fm", label: "รอผู้จัดการโรงงานอนุมัติ", short: "รออนุมัติ (ผจก.โรงงาน)", owner: "ผู้จัดการโรงงาน", roleInLabel: true },
+    { key: "approve_gm", label: "รอผู้จัดการทั่วไปอนุมัติ", short: "รออนุมัติ (ผจก.ทั่วไป)", owner: "ผู้จัดการทั่วไป", roleInLabel: true },
+    { key: "more_info", label: "รอผู้แจ้งตอบข้อมูลเพิ่ม", short: "ขอข้อมูลเพิ่ม", owner: "ผู้แจ้ง", roleInLabel: true },
+    { key: "assign", label: "รอมอบหมายช่าง", short: "รอมอบหมายช่าง", owner: "ผู้จัดการแผนกซ่อมบำรุง", roleInLabel: false },
+    { key: "start", label: "รอช่างเริ่มงาน", short: "รอช่างเริ่มงาน", owner: "ช่าง", roleInLabel: true },
+    { key: "repair", label: "กำลังซ่อม", short: "กำลังซ่อม", owner: "ช่าง", roleInLabel: false },
+    { key: "verify", label: "รอผู้แจ้งตรวจรับ", short: "รอผู้แจ้งตรวจรับ", owner: "ผู้แจ้ง", roleInLabel: true },
     // Not part of the repair workflow; kept so stage counts always add up to the open count.
-    { key: "approved", label: "อนุมัติแล้ว", short: "อนุมัติแล้ว", owner: "—" },
+    { key: "approved", label: "อนุมัติแล้ว", short: "อนุมัติแล้ว", owner: "—", roleInLabel: false },
   ];
   const STAGE_BY_KEY = Object.fromEntries(STAGES.map((stage) => [stage.key, stage]));
 
   // Time spent between workflow events. Each phase only exists once both ends happened.
   const PHASES = [
-    { key: "approval", label: "อนุมัติ (แจ้ง → ผ่านผู้อนุมัติครบ)", owner: "ผจก.โรงงาน และ ผจก.ทั่วไป" },
-    { key: "assign", label: "รอมอบหมายช่าง", owner: "ผจก.ซ่อมบำรุง" },
-    { key: "repair", label: "ซ่อม (มอบหมายแล้ว → ส่งตรวจรับ)", owner: "ช่าง" },
-    { key: "verify", label: "รอผู้แจ้งตรวจรับ → ปิดงาน", owner: "ผู้แจ้ง" },
+    { key: "approval", label: "อนุมัติ (แจ้ง → ผ่านผู้อนุมัติครบ)", owner: "ผู้จัดการโรงงาน และ ผู้จัดการทั่วไป", roleInLabel: false },
+    { key: "assign", label: "รอมอบหมายช่าง", owner: "ผู้จัดการแผนกซ่อมบำรุง", roleInLabel: false },
+    { key: "repair", label: "ซ่อม (มอบหมายแล้ว → ส่งตรวจรับ)", owner: "ช่าง", roleInLabel: false },
+    { key: "verify", label: "รอผู้แจ้งตรวจรับ → ปิดงาน", owner: "ผู้แจ้ง", roleInLabel: true },
   ];
 
   const bangkokDate = (timestamp) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date(timestamp));

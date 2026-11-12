@@ -53,7 +53,10 @@ test("every queue row names its action: the step verb for approvals, the task fo
 
 test("the chip sits on the request-number line, approval chips have no arrow, and a task-only queue uses the full width", () => {
   const row = functionSource("homeQueueItemHtml");
-  assert.match(row, /<span class="queue-item-top">[^\n]*\$\{chip\}<\/span>/, "chip at the end of the number line, not beside the title");
+  assert.match(row, /<span class="queue-item-top">[^\n]*<span class="queue-item-due">\$\{chip\}<span class="queue-item-age">\$\{escapeHtml\(age\)\}<\/span><\/span><\/span>/, "chip and age at the end of the number line, not beside the title");
+  // ประเภทไม่พิมพ์ซ้ำในบรรทัดรอง (สีไอคอนและเลขที่บอกแล้ว) แต่ผู้อ่านหน้าจอยังได้ยิน
+  assert.doesNotMatch(row, /const meta = \[type\?\.name_th/);
+  assert.match(row, /<span class="sr-only">\$\{escapeHtml\(type\.name_th\)\}<\/span>/);
   assert.match(row, /queue-item-task\$\{item\.kind === "approval" \? " is-decide" : ""\}/);
   assert.match(app, /<div class="queue-layout\$\{approvalIds\.length \? "" : " is-tasks-only"\}">/);
   assert.match(app, /request_type: \{ code: "NCR_CAR", name_th: "NCR\/CAR" \}/, "the NCR row uses the module's one name");

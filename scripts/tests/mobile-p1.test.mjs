@@ -98,8 +98,10 @@ test("bulk approve follows the single-approve steps in the bottom bar: confirm, 
   assert.doesNotMatch(runner, /confirmDialog/, "no centred modal any more");
   const bulk = app.slice(app.indexOf("function bindQueueBulk("), app.indexOf("\n}\n", app.indexOf("function bindQueueBulk(")));
   assert.match(bulk, /rules\.createCountdown\(\{\s*seconds: DECISION_UNDO_SECONDS,/, "the same undo window as one request");
-  assert.match(bulk, /setText\(`อนุมัติ \$\{chosen\.length\} รายการ: \$\{numbers\(\)\}`\)/, "confirm names the request numbers");
-  assert.match(bulk, /button\(`ยืนยันอนุมัติ \$\{chosen\.length\} รายการ`, "success is-primary", "confirm"\)/);
+  // คำของแต่ละขั้น (อนุมัติ / รับทราบ) เหมือนปุ่มของใบเดียว ปนกันบอกแยกต่อคำ ค่าที่ส่งยังเป็น approved
+  assert.match(bulk, /setText\(`\$\{verbs\.summary\}: \$\{numbers\(\)\}`\)/, "confirm names the request numbers");
+  assert.match(bulk, /button\(verbs\.only \? `ยืนยัน\$\{verbs\.only\} \$\{chosen\.length\} รายการ` : `ยืนยัน \$\{chosen\.length\} รายการ`, "success is-primary", "confirm"\)/);
+  assert.match(app, /const only = counts\.size === 1 \? \[\.\.\.counts\.keys\(\)\]\[0\] : "";/, "one verb when every chosen step says the same");
   assert.match(bulk, /button\(`เลิกทำ \(\$\{DECISION_UNDO_SECONDS\}\)`, "secondary", "undo"\)\}\$\{button\("ส่งเลย", "success is-primary", "send-now"\)\}/);
   assert.match(bulk, /window\.addEventListener\("hashchange", sendOnLeave\);/, "leaving the page sends, like one request");
   assert.match(bulk, /if \(event\.key !== "Escape" \|\| event\.defaultPrevented\) return;/);

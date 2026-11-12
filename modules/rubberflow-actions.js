@@ -34,6 +34,9 @@
     throw new Error(message);
   }
 
+  // ค่าที่ขาด (undefined / null / ว่าง) ไม่พิมพ์เป็นคำว่า undefined ในข้อความ: ใช้คำกลางแทน · คืนมีช่องว่างนำหน้าเมื่อมีค่า (ต่อท้ายชื่อสิ่งที่หาไม่พบ)
+  const ref = (value, fallback = "ที่เลือก") => (value === undefined || value === null || String(value).trim() === "" ? fallback : ` ${String(value).trim()}`);
+
   function num(value, label) {
     const n = Number(value);
     if (value === "" || value === null || value === undefined || Number.isNaN(n)) fail(`กรุณาระบุ${label}`);
@@ -44,7 +47,7 @@
   const MATERIAL_CODE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
   const RECIPE_CODE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/;
 
-  const find = (rows, id, label) => rows.find((row) => row.id === id) || fail(`ไม่พบ${label} ${id}`);
+  const find = (rows, id, label) => rows.find((row) => row.id === id) || fail(`ไม่พบ${label}${ref(id)}`);
 
   function startOrderIfReleased(d, orderId, ctx) {
     const order = d.orders.find((row) => row.id === orderId);
@@ -115,8 +118,9 @@
 
   function createOrder(d, p, ctx) {
     needRight(ctx, "master");
-    const { currentRecipe } = rules();
-    const recipe = currentRecipe(d.recipes, p.recipeId) || fail(`ไม่พบสูตร ${p.recipeId}`);
+    const { currentRecipe, approvedRecipes } = rules();
+    if (!String(p.recipeId ?? "").trim()) fail(approvedRecipes(d.recipes).length ? "กรุณาเลือกสินค้า / สูตร" : "ยังไม่มีสูตรที่อนุมัติ ต้องอนุมัติสูตรก่อนจึงเปิดใบสั่งผลิตได้");
+    const recipe = currentRecipe(d.recipes, p.recipeId) || fail(`ไม่พบสูตร${ref(p.recipeId)}`);
     // สูตรที่ใช้เปิดใบ = revision ที่อนุมัติแล้วของรหัสนั้น (ใบผูก revision ที่เปิดไว้)
     if (recipe.status !== "approved") fail("สูตรนี้ยังไม่ได้รับอนุมัติ ใช้เปิดใบสั่งผลิตไม่ได้");
     if (!p.customer?.trim()) fail("กรุณาระบุชื่อลูกค้า");
@@ -283,7 +287,7 @@
     const { revisionsOf } = rules();
     const id = String(p.id ?? "").trim();
     const history = revisionsOf(d.recipes, id);
-    if (!history.length) fail(`ไม่พบสูตร ${id}`);
+    if (!history.length) fail(`ไม่พบสูตร${ref(id)}`);
     const fields = recipeFields({ ...p, id });
     const draft = history.find((recipe) => recipe.status === "draft");
     if (draft) {
@@ -302,7 +306,7 @@
     needRight(ctx, "approve");
     const { revisionsOf } = rules();
     const history = revisionsOf(d.recipes, id);
-    if (!history.length) fail(`ไม่พบสูตร ${id}`);
+    if (!history.length) fail(`ไม่พบสูตร${ref(id)}`);
     const recipe = revision === undefined || revision === null || revision === "" ? history.find((row) => row.status === "draft") : history.find((row) => Number(row.revision) === Number(revision));
     if (!recipe) fail(history.some((row) => row.status === "approved") ? "สูตรนี้อนุมัติแล้ว" : "ไม่มีร่างสูตรที่รออนุมัติ");
     if (recipe.status === "approved") fail("สูตรนี้อนุมัติแล้ว");
@@ -351,7 +355,7 @@
     const { recipeLines, allocateFefo } = rules();
     const order = find(d.orders, orderId, "ใบสั่งผลิต");
     if (!["released", "in_progress"].includes(order.status)) fail('ใบสั่งผลิตต้องอยู่ในสถานะ "ปล่อยผลิต" หรือ "กำลังผลิต"');
-    const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร ${order.recipeId}`);
+    const recipe = rules().recipeOf(d.recipes, order.recipeId, order.recipeRevision) || fail(`ไม่พบสูตร${ref(order.recipeId)}`);
     const n = ctx.history ? num(batches, "จำนวนชุดผสม") : rules().nextRequisitionBatches(order, recipe, d.requisitions);
     if (ctx.history && (!Number.isInteger(n) || n < 1 || n > 10)) fail("จำนวนชุดผสมต้องเป็นจำนวนเต็ม 1–10");
     if (n < 1) fail(`${order.id} เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว`);
@@ -499,7 +503,7 @@
           receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null,
         };
       }
-      const material = d.materials.find((row) => row.code === code) || fail(`ไม่พบวัตถุดิบ ${code}`);
+      const material = d.materials.find((row) => row.code === code) || fail(`ไม่พบวัตถุดิบ${ref(code)}`);
       if (material.active === false) fail(`วัตถุดิบ ${code} เลิกใช้แล้ว สั่งซื้อไม่ได้`);
       if (seen.has(code)) fail(`${code} ซ้ำในใบสั่งซื้อ`);
       seen.add(code);
@@ -537,7 +541,7 @@
     needRight(ctx, "receiveMaterial");
     const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
     if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกแล้ว"} รับเข้าไม่ได้`);
-    const line = order.lines.find((row) => row.materialCode === materialCode) || fail(`ไม่พบวัตถุดิบ ${materialCode} ในใบสั่งซื้อ ${order.id}`);
+    const line = order.lines.find((row) => row.materialCode === materialCode) || fail(`ไม่พบวัตถุดิบ${ref(materialCode)} ในใบสั่งซื้อ ${order.id}`);
     if (isReceived(line)) fail(`${materialCode} ในใบสั่งซื้อ ${order.id} รับเข้าแล้ว`);
     if (line.source === "bom") {
       // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต/วันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มที่ฐานข้อมูลในคำสั่งเดียวกัน
@@ -617,7 +621,7 @@
     const requisition = find(d.requisitions, p.reqId, "ใบเบิก");
     if (requisition.status !== "issued") fail("ใบเบิกยังจ่ายวัตถุดิบไม่ครบ หรือถูกใช้ไปแล้ว");
     needOrderOpen(d, requisition.orderId, ctx);
-    const recipe = rules().recipeOf(d.recipes, requisition.recipeId, requisition.recipeRevision) || fail(`ไม่พบสูตร ${requisition.recipeId}`);
+    const recipe = rules().recipeOf(d.recipes, requisition.recipeId, requisition.recipeRevision) || fail(`ไม่พบสูตร${ref(requisition.recipeId)}`);
     // บันทึกทั้งสองขั้น (อุณหภูมิเครื่องผสม Dump temp เวลาเป็นนาที)
     const stages = rules().MIX_STAGES.map((stage) => stageValues((p.stages ?? []).find((row) => Number(row?.stage) === stage), stage));
     const outputKg = num(p.outputKg, "น้ำหนักยางที่ได้");

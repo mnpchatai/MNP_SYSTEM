@@ -857,10 +857,22 @@ a.register-title:hover { color: var(--primary); }
 .ncr-loss-card:has(#ncr-loss-add:not([open])) .ncr-loss-overview:not(:has(.ncr-loss-more)) { display: none; }
 /* จอแคบ: ปุ่มส่งของฟอร์มในงานที่ต้องทำติดล่างจอระหว่างเลื่อนดูฟอร์มยาว (แบบเดียวกับปุ่มของฟอร์มสร้าง) */
 @media (max-width: 760px) {
-  .ncr-actions .form-actions { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
+  :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
 }
 @media (max-width: 900px) {
   .page-heading.request-module-header { flex-direction: column; align-items: flex-start; }
+}
+/* จอโทรศัพท์: หัวโมดูลของหน้ารายการกระชับ รายการใบแรกจึงขึ้นในครึ่งบนของจอ (ปุ่มเรียงแถวเดียว ป้ายไอคอนเล็กลง) */
+@media (max-width: 540px) {
+  .page-heading.request-module-header:not(.request-detail-head) { gap: 12px; padding: 14px 16px; }
+  .page-heading.request-module-header .request-module-title { gap: 12px; }
+  .page-heading.request-module-header .request-module-title .type-card-badge { flex-basis: 40px; width: 40px; height: 40px; border-radius: 12px; }
+  .page-heading.request-module-header .request-module-title .type-card-badge svg { width: 22px; height: 22px; }
+  .page-heading.request-module-header .request-create-entry { width: 100%; flex-wrap: nowrap; }
+  /* ปุ่มรอง (แดชบอร์ด) กว้างเท่าข้อความ ปุ่มสร้างใช้ที่เหลือ ข้อความจึงไม่ตัดเป็นสองบรรทัด */
+  .page-heading.request-module-header .request-create-entry .btn { flex: 0 0 auto; padding-inline: 12px; white-space: nowrap; }
+  .page-heading.request-module-header .request-create-entry #create-request-button { flex: 1 1 auto; }
+  .request-back-link { margin-bottom: 10px; }
 }
 .type-card-action { display: block; margin-top: 14px; font-size: var(--text-meta); font-weight: 600; }
 .request-center-ncr { margin-top: 28px; }
@@ -1014,6 +1026,9 @@ a.register-title:hover { color: var(--primary); }
 .decision-receipt .decision-receipt-comment { color: var(--copy); white-space: pre-wrap; overflow-wrap: anywhere; }
 .timeline-item.step-pending::before, .timeline-item.step-skipped::before { background: var(--paper); }
 .action-panel[hidden] { display: none; }
+/* ปุ่มของขั้นซ่อม (เริ่มงาน ตรวจรับ) ใช้แผงเดียวกับปุ่มอนุมัติ: ปุ่มหลักกว้างกว่า */
+.step-panel .action-panel-buttons .btn { flex: 1 1 0; }
+.step-panel .approval-actions { margin: 0; padding: 0; border-top: 0; }
 
 /* หน้าหลัก: คิวเดียว ตัดสินได้ในที่ (brief .impeccable/surfaces/src-app-app-page-tsx.md) */
 .home-heading { flex-wrap: wrap; }
@@ -1043,11 +1058,13 @@ a.register-title:hover { color: var(--primary); }
 .queue-item-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .queue-item-meta { color: var(--muted); font-size: var(--text-caption); }
 /* งานที่ต้องลงมือ (มอบหมายช่าง ตอบ NCR …): ชิปสีโมดูลของใบพร้อมลูกศร แยกจากป้ายสถานะที่เป็นเม็ดมีสัญลักษณ์ */
-.queue-item-task { padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--m800, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 14%, var(--paper)); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+.queue-item-task { padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--m800, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 14%, var(--paper)); border-radius: var(--radius-pill); font-size: var(--text-ui); font-weight: 700; white-space: nowrap; }
 .queue-item-task::after { content: "→"; }
 .queue-item-task.is-decide::after { content: none; }
 /* ชิปอยู่ท้ายบรรทัดเลขที่ ชื่อเรื่องจึงได้ความกว้างเต็มแถว · รหัสในชื่อเรื่อง (HS-08) ไม่ตัดกลางรหัส */
-.queue-item-top .queue-item-task { margin-left: auto; }
+/* ชิปงานกับอายุงานอยู่ด้วยกันท้ายบรรทัดเลขที่ */
+.queue-item-due { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.queue-item-age { color: var(--muted); font-size: var(--text-meta); font-weight: 600; white-space: nowrap; }
 .queue-item-title .nowrap { white-space: nowrap; }
 /* คิวที่มีแต่งานที่ลงมือในหน้าของใบ (ไม่มีใบให้ตัดสินในคิว): ไม่มีแผงขวา รายการใช้เต็มความกว้าง เป็นกริดการ์ดบนจอกว้าง */
 .queue-layout.is-tasks-only { grid-template-columns: minmax(0, 1fr); }
@@ -1334,6 +1351,10 @@ a.machine-history-no:hover { text-decoration: underline; }
   .next-item-panel .action-panel-head { display: block; }
   .next-item-panel .action-panel-head h2 { display: none; }
   .next-item-panel .action-panel-head p { margin: 0; }
+  /* แถบล่างของขั้นซ่อมบอกชื่อขั้นในบรรทัดเดียว */
+  .step-panel .action-panel-head { display: block; }
+  .step-panel .action-panel-head p { display: none; }
+  .step-panel .action-panel-head h2 { margin: 0; font-size: var(--text-meta); color: var(--muted); }
   .action-panel-buttons .btn { min-height: 48px; }
   .content:has(.action-panel:not([hidden])) { padding-bottom: calc(var(--action-bar-h, 76px) + 28px); }
   body:has(.action-panel:not([hidden])) .toast { bottom: calc(var(--action-bar-h, 76px) + 12px); }
@@ -1584,10 +1605,13 @@ a.machine-history-no:hover { text-decoration: underline; }
 }
 .ncr-text { margin: 12px 0 0; font-size: var(--text-ui); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ncr-heading-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.ncr-actions { border-color: var(--m600); }
-.ncr-actions > h2 { color: var(--mod-link); }
-.ncr-action + .ncr-action { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--soft-line); }
-.ncr-action h3 { margin: 0 0 12px; }
+/* การ์ด "สิ่งที่คุณต้องดำเนินการ" แบบเดียวทุกโมดูล (NCR, MT, คำร้อง · โครงหน้ารายละเอียดเดียว ผู้ใช้อนุมัติ 2026-11-12) */
+:is(.ncr-actions, .detail-actions) { border-color: var(--m600, var(--primary)); }
+:is(.ncr-actions, .detail-actions) > h2 { margin: 0 0 12px; color: var(--mod-link, var(--primary-ink)); }
+:is(.ncr-action, .detail-action, .ncr-action-group) + :is(.ncr-action, .detail-action, .ncr-action-group) { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--soft-line); }
+:is(.ncr-action, .detail-action, .ncr-action-group) h3 { margin: 0 0 12px; }
+/* การ์ด NCR ในคอลัมน์ของหน้ารายละเอียด: ระยะระหว่างการ์ดมาจาก .stack เหมือนหน้าคำร้อง/MT */
+.stack > .ncr-card { margin-bottom: 0; }
 .ncr-waiting { margin: 0 0 16px; }
 .ncr-fieldset { margin: 0 0 15px; padding: 0; border: 0; min-width: 0; }
 .ncr-fieldset legend { margin-bottom: 7px; padding: 0; font-size: var(--text-ui); font-weight: 700; }
@@ -1685,6 +1709,11 @@ tr.ncr-voided td .muted { text-decoration: none; }
 }
 .nd-sub h3 { margin: 0; font-size: var(--text-body); }
 .nd-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+/* แดชบอร์ด: จอ ≥1200px การ์ดที่ติด nd-half วางสองคอลัมน์ ส่วนอื่น (แถวตัวเลข ตาราง การ์ดแนวโน้ม) เต็มแถว ต่ำกว่านั้นคอลัมน์เดียว */
+@media (min-width: 1200px) {
+  .nd { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nd > :not(.nd-half) { grid-column: 1 / -1; }
+}
 .nd-hint { margin: 0; color: var(--muted); font-size: var(--text-meta); }
 .nd-muted { color: var(--muted); font-size: var(--text-meta); }
 .nd-nowrap { white-space: nowrap; }

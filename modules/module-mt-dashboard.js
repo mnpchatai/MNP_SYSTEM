@@ -50,19 +50,29 @@
     const person = cache?.directory?.get(id);
     return person ? `${person.first_name} ${person.last_name}`.trim() : "ช่าง (ไม่พบชื่อ)";
   };
+  // ชื่อผู้ที่ต้องลงมือ — ขึ้นต้นด้วยตำแหน่งเฉพาะเมื่อชื่อขั้น (label) ที่พิมพ์อยู่บรรทัดบนยังไม่บอกตำแหน่งนั้น ไม่เขียนตำแหน่งซ้ำ
+  const ownerNote = (stage) => (stage?.roleInLabel || !stage?.owner || stage.owner === "—" ? "" : stage.owner);
   function actionOwner(row) {
-    const role = model.STAGE_BY_KEY[row.stage]?.owner ?? "—";
+    const stage = model.STAGE_BY_KEY[row.stage];
     let names = "";
+    let empty = "";
     if (row.stage === "start" || row.stage === "repair") {
       names = row.technicianIds.map(techName).join(", ");
+      empty = "ยังไม่ได้มอบหมายช่าง";
     } else if (row.stage === "more_info" || row.stage === "verify") {
       const person = cache.directory.get(row.requester_id);
       names = person ? [person.first_name, person.last_name].filter(Boolean).join(" ") : row.requester_name;
+      empty = "ไม่ได้ระบุชื่อผู้แจ้ง";
     } else {
       names = (cache.roleOwners.get(row.id) ?? []).filter((owner) => owner.status === row.status && owner.current_step === row.current_step)
         .map((owner) => `${owner.full_name}${owner.is_fallback ? " (รับแทน)" : ""}`).join(", ");
+      // อ่านรายชื่อตามบทบาทไม่สำเร็จ = ไม่รู้ชื่อ บอกเพียงตำแหน่งที่รอ (ชื่อขั้นบอกแล้วในขั้นอนุมัติ จึงไม่มีบรรทัดล่าง) ·
+      // อ่านสำเร็จแต่ไม่มีใครถือบทบาทนี้ = ยังไม่ได้ตั้งผู้รับผิดชอบ
+      if (!names && cache.roleOwnersFailed) return ownerNote(stage) ? stage.owner : "";
+      empty = row.stage === "assign" ? "ยังไม่ได้ตั้งผู้รับผิดชอบ" : "ยังไม่ได้ตั้งผู้อนุมัติ";
     }
-    return `${role}: ${names || "ไม่พบชื่อผู้รับผิดชอบ"}`;
+    const who = names || empty;
+    return ownerNote(stage) ? `${stage.owner}: ${who}` : who;
   }
   const machineTitle = (rows, key) => {
     const row = rows.find((item) => item.machineKey === key);
@@ -104,6 +114,7 @@
       verifications: row.request_verifications ?? [],
     })), today);
     const roleOwners = new Map();
+    let roleOwnersFailed = false;
     const roleRequestIds = rows.filter((row) => row.stage === "assign" || row.stage === "approve_fm" || row.stage === "approve_gm").map((row) => row.id);
     try {
       for (let offset = 0; offset < roleRequestIds.length; offset += 500) {
@@ -114,9 +125,10 @@
         }
       }
     } catch (error) {
+      roleOwnersFailed = true;
       console.warn("โหลดชื่อผู้รับผิดชอบตามบทบาทสำหรับแดชบอร์ด MT ไม่สำเร็จ", error);
     }
-    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows, directory, roleOwners };
+    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows, directory, roleOwners, roleOwnersFailed };
     return cache;
   }
 
@@ -207,14 +219,6 @@
       <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่แจ้ง</p>`;
   }
 
-  function summaryHtml(backSums, stages) {
-    // งานค้าง เลยกำหนด และด่วน อยู่บนการ์ดตัวเลข ขั้นที่ค้างมากสุดเป็นแถบเข้มใน "งานค้างอยู่ที่ใคร" แล้ว
-    // บรรทัดนี้บอกเฉพาะใบที่ค้างนานสุด (ค่านี้ไม่อยู่บนแถบ แถบแสดงค่าเฉลี่ย)
-    if (!backSums.open) return "";
-    const oldest = [...stages].filter((stage) => stage.count).sort((a, b) => b.maxDays - a.maxDays)[0];
-    return oldest?.maxDays > 0 ? `ใบที่ค้างนานสุดอยู่ขั้น "${esc(oldest.label)}" ${fmtNumber(oldest.maxDays)} วัน` : "";
-  }
-
   function tilesHtml(filters, period, back) {
     const list = (lines) => `<ul class="nd-lines">${lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>`;
     const quality = [["ใบที่ถูกตรวจรับแล้ว", fmtCount(period.verified)], ["เคยตรวจรับไม่ผ่าน", fmtCount(period.verifyFailed)], ["ขอข้อมูลเพิ่ม (เคยถูกส่งกลับให้ผู้แจ้ง)", `${fmtCount(period.moreInfo)} (${fmtPercent(period.moreInfoRate)})`], ["ไม่อนุมัติ", fmtCount(period.rejected)]];
@@ -240,11 +244,11 @@
     const total = shown.reduce((sum, stage) => sum + stage.count, 0);
     const resolve = (key) => {
         const stage = stages.find((entry) => entry.key === key);
-        return stage && { title: stage.label, lines: [["ใบที่ค้างในขั้นนี้", fmtCount(stage.count)], ["ต้องรอใครดำเนินการ", stage.owner], ["ค้างเฉลี่ย", fmtDays(stage.avgDays)], ["ค้างนานสุด", stage.maxDays === null ? "—" : `${fmtNumber(stage.maxDays)} วัน`], ["เลยกำหนดเสร็จ", fmtCount(stage.overdue)], ["ด่วน", fmtCount(stage.urgent)]], href: filters.stage === key ? null : hrefWith(filters, { scope: "", stage: key }) };
+        return stage && { title: stage.label, lines: [["ใบที่ค้างในขั้นนี้", fmtCount(stage.count)], ...(ownerNote(stage) ? [["ต้องรอใครดำเนินการ", stage.owner]] : []), ["ค้างเฉลี่ย", fmtDays(stage.avgDays)], ["ค้างนานสุด", stage.maxDays === null ? "—" : `${fmtNumber(stage.maxDays)} วัน`], ["เลยกำหนดเสร็จ", fmtCount(stage.overdue)], ["ด่วน", fmtCount(stage.urgent)]], href: filters.stage === key ? null : hrefWith(filters, { scope: "", stage: key }) };
     };
     const rows = shown.map((stage) => {
       const width = stage.count ? Math.max((stage.count / max) * 100, 0.8) : 0;
-      const inner = `<span class="nd-lab">${esc(stage.label)}<br><span class="nd-muted">${esc(stage.owner)}</span></span><span class="nd-trk"><span class="nd-bar${stage.count === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtCount(stage.count))}<small>${stage.count ? `เฉลี่ย ${esc(fmtDays(stage.avgDays))}` : "—"}</small></span>`;
+      const inner = `<span class="nd-lab">${esc(stage.label)}${ownerNote(stage) ? `<br><span class="nd-muted">${esc(stage.owner)}</span>` : ""}</span><span class="nd-trk"><span class="nd-bar${stage.count === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtCount(stage.count))}<small>${stage.count ? `เฉลี่ย ${esc(fmtDays(stage.avgDays))}` : "—"}</small></span>`;
       return selectButton("stage", stage.key, inner, `nd-brow${filters.stage === stage.key ? " active" : ""}`) + detailUnder("stage", stage.key, resolve);
     }).join("");
     return `<div class="nd-head"><h2>งานค้างอยู่ที่ใคร</h2><p>นับทุกใบที่ยังไม่จบ ไม่ขึ้นกับช่วงเวลา เรียงตามลำดับขั้นตอน แถบเข้มคือขั้นที่ค้างมากสุด ตัวเลขเฉลี่ยคือจำนวนวันที่ใบอยู่ในขั้นนั้นมาแล้ว</p></div>
@@ -253,14 +257,9 @@
       ${detailHintIfIdle("stage", "แถบขั้นตอน", resolve)}`;
   }
 
-  function actHtml(open, today) {
-    const top = model.priority(open, 10);
-    const dueCell = (row) => {
-      if (!row.work_expected_date) return `<span class="nd-muted">ยังไม่กำหนด</span>`;
-      if (row.overdue) return `${esc(formatDate(row.work_expected_date))}<br><span class="nd-muted">เลยมา ${fmtNumber(row.daysOverdue)} วัน</span>`;
-      const left = model.daysBetween(today, row.work_expected_date);
-      return `${esc(formatDate(row.work_expected_date))}<br><span class="nd-muted">${left > 0 ? `อีก ${fmtNumber(left)} วัน` : left === 0 ? "ครบกำหนดวันนี้" : ""}</span>`;
-    };
+  function actHtml(open, top) {
+    // ช่องกำหนดเสร็จบอกวันที่อย่างเดียว ไม่พิมพ์จำนวนวันที่เหลือ/เลยมาคู่กับวันที่ — ใบที่เลยกำหนดมีป้ายแดง "เลย N วัน" ที่ช่องแรกอยู่แล้ว
+    const dueCell = (row) => (row.work_expected_date ? esc(formatDate(row.work_expected_date)) : `<span class="nd-muted">ยังไม่กำหนด</span>`);
     // ใบที่รอช่างเริ่มงานนับเลยจากวันเริ่มงานที่หัวหน้าช่างมอบหมาย ใบที่เลยกำหนดเสร็จแล้วนับจากวันเสร็จ
     const latePill = (row) => row.overdue
       ? ` <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลย ${fmtNumber(row.daysOverdue)} วัน</span>`
@@ -270,7 +269,7 @@
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่จบ เรียงจากเลยกำหนด (วันเริ่มงานหรือวันเสร็จที่หัวหน้าช่างมอบหมาย) ก่อน แล้วด่วน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
         const stage = model.STAGE_BY_KEY[row.stage];
-        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(actionOwner(row))}<br><span class="nd-muted">${esc(stage?.short ?? "")}</span></td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
+        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(stage?.label ?? "")}${actionOwner(row) ? `<br><span class="nd-muted">${esc(actionOwner(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
       }).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open", stage: "" })}">ดูงานค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}`;
   }
@@ -280,10 +279,10 @@
     const max = known.length ? Math.max(...known.map((phase) => phase.avgDays)) : 0;
     const rows = phases.map((phase) => {
       const width = phase.n && max ? Math.max((phase.avgDays / max) * 100, 0.8) : 0;
-      return `<div class="nd-brow static"><span class="nd-lab">${esc(phase.label)}<br><span class="nd-muted">${esc(phase.owner)}</span></span><span class="nd-trk"><span class="nd-bar${phase.n && phase.avgDays === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${phase.n ? esc(fmtDays(phase.avgDays)) : "—"}${phase.n ? `<small>กลาง ${esc(fmtDays(phase.medianDays))} · ${esc(fmtCount(phase.n))}</small>` : ""}</span></div>`;
+      return `<div class="nd-brow static"><span class="nd-lab">${esc(phase.label)}${ownerNote(phase) ? `<br><span class="nd-muted">${esc(phase.owner)}</span>` : ""}</span><span class="nd-trk"><span class="nd-bar${phase.n && phase.avgDays === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${phase.n ? esc(fmtDays(phase.avgDays)) : "—"}${phase.n ? `<small>กลาง ${esc(fmtDays(phase.medianDays))} · ${esc(fmtCount(phase.n))}</small>` : ""}</span></div>`;
     }).join("");
     return `<div class="nd-head"><h2>เวลาที่ใช้แต่ละช่วง</h2><p>เวลาเฉลี่ยจากประวัติสถานะของใบที่แจ้งในช่วงที่เลือก นับเฉพาะช่วงที่เดินครบแล้ว แถบเข้มคือช่วงที่ใช้เวลานานสุด · ตรวจรับไม่ผ่านแล้วซ่อมใหม่ นับเป็นเวลาซ่อม ส่วนช่วง "อนุมัติ" รวมเวลาที่รอผู้แจ้งตอบข้อมูลเพิ่มด้วย</p></div>
-      <div class="nd-bars">${rows}</div>`;
+      ${known.length ? `<div class="nd-bars">${rows}</div>` : `<p class="nd-empty">ยังไม่มีช่วงที่เดินครบในใบที่แจ้งในช่วงนี้</p>`}`;
   }
 
   function machineHtml(ranking, filters) {
@@ -335,8 +334,8 @@
       return selectButton("tech", item.id, inner, `nd-brow${filters.tech === item.id ? " active" : ""}`) + detailUnder("tech", item.id, resolve);
     }).join("");
     return `<div class="nd-head"><h2>ช่างที่ใช้เวลาซ่อมมากสุด</h2><p>เรียงตามเวลาที่ใบของช่างอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบของใบที่แจ้งในช่วงที่เลือก แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง · ไม่ใช่ชั่วโมงทำงานจริง เพราะระบบยังไม่มีช่องบันทึกชั่วโมงทำงาน แต่เป็นเวลาตามนาฬิกา (รวมกลางคืนและวันหยุด) ตั้งแต่ช่างกดเริ่มงานจนส่งตรวจรับ ใบที่มีช่างหลายคนนับเต็มเวลาให้ทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ใช้เทียบภาระงานคร่าวๆ ไม่ใช้คิดค่าแรง · "ถืออยู่" = ใบที่ช่างต้องทำตอนนี้ (รอช่างเริ่มงานหรือกำลังซ่อม) นับทุกใบไม่ขึ้นกับช่วงเวลา ส่วนเวลาและจำนวนใบนับตามวันที่แจ้ง ไม่นับใบที่ไม่อนุมัติ</p></div>
-      ${items.length ? `<div class="nd-bars">${rows}</div>
-      <div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span><span>เวลาตามนาฬิกา ไม่ใช่ชั่วโมงทำงาน</span></div>` : `<p class="nd-empty">ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้</p>`}
+      ${max > 0 ? `<div class="nd-bars">${rows}</div>
+      <div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span><span>เวลาตามนาฬิกา ไม่ใช่ชั่วโมงทำงาน</span></div>` : `<p class="nd-empty">${items.length ? `ยังไม่มีช่างที่เริ่มซ่อมในใบที่แจ้งช่วงนี้ (มอบหมายแล้ว ${fmtNumber(items.length)} คน)` : "ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้"}</p>`}
       ${detailHintIfIdle("tech", "แถบชื่อช่าง", resolve)}`;
   }
 
@@ -344,17 +343,20 @@
     return machineLabelOf(row.machine_code, row.machine_name) || "ไม่ระบุเครื่องจักร";
   }
 
-  function drillHtml(list, basis, filters) {
+  // actIds = ใบที่การ์ด "ต้องลงมือตอนนี้" แสดงอยู่แล้ว — ไม่พิมพ์ซ้ำในตารางนี้ แต่ยังนับรวมใน "ทั้งหมด N ใบ" ให้ตรงกับตัวเลขด้านบน
+  function drillHtml(list, basis, filters, actIds = new Set()) {
     const sorted = [...list].sort((a, b) => (a.submittedOn < b.submittedOn ? 1 : a.submittedOn > b.submittedOn ? -1 : b.request_no.localeCompare(a.request_no)));
-    const shown = sorted.slice(0, drillLimit);
+    const rest = sorted.filter((row) => !actIds.has(row.id));
+    const shownAbove = sorted.length - rest.length;
+    const shown = rest.slice(0, drillLimit);
     const heading = basis === "backlog"
       ? { title: "รายการงานค้างตามตัวกรอง", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา` }
-      : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ` };
+      : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}` };
     const statusCell = (row) => {
       const badge = row.isOpen ? `<span class="badge ${esc(row.status)}">${esc(model.STAGE_BY_KEY[row.stage]?.short ?? row.status)}</span>` : statusBadge(row.status, true);
       const status = row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
       if (row.stage !== "start" && row.stage !== "repair") return status;
-      const names = row.technicianIds.map(techName).join(", ") || "ไม่พบข้อมูลช่างที่รับผิดชอบ";
+      const names = row.technicianIds.map(techName).join(", ") || "ยังไม่ได้มอบหมายช่าง";
       return `${status}<br><span class="nd-muted">ช่างผู้รับผิดชอบ: ${esc(names)}</span>`;
     };
     const timeCell = (row) => (row.isCompleted ? fmtDays(row.cycleDays) : row.isOpen ? `ค้าง ${fmtNumber(row.daysInStatus)} วัน` : "—");
@@ -365,7 +367,7 @@
     return `<div class="nd-head nd-head-row"><div><h2>${heading.title}</h2><p>${heading.note}</p></div>${cancel}</div>
       ${shown.length ? `<div class="table-wrap"><table class="nd-rowlink"><thead><tr><th>เลขที่</th><th>วันที่แจ้ง</th><th>เครื่องจักร / แผนก</th><th>สถานะ</th><th class="nd-num">เวลา</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}</td><td class="nd-nowrap">${formatDate(row.submittedOn)}</td><td>${esc(machineText(row))}<br><span class="nd-muted">${esc(row.dept || "—")} · ${esc(DOC_LABELS[row.doc_type] ?? "—")}${row.requester_name ? ` · ${esc(row.requester_name)}` : ""}</span></td><td>${statusCell(row)}</td><td class="nd-num">${timeCell(row)}</td></tr>`).join("")}</tbody></table></div>
-      ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มีใบตรงกับตัวกรองนี้</p>`}`;
+      ${rest.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(rest.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">${list.length ? "ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว" : "ไม่มีใบตรงกับตัวกรองนี้"}</p>`}`;
   }
 
   const definitionsHtml = `<details class="nd-defs"><summary>นิยามที่ใช้ในหน้านี้</summary><div><ol>
@@ -392,20 +394,24 @@
     const depts = model.deptRanking(rows, filters);
     const techs = model.technicianRanking(rows, filters);
     const { list, basis } = model.listFor(rows, filters);
+    // แต่ละใบอยู่บนหน้าครั้งเดียว: ตัวกรองงานค้าง (scope/stage) ทำให้รายการด้านล่างเป็นรายการงานค้างเอง จึงซ่อน "ต้องลงมือตอนนี้" ·
+    // นอกนั้นรายการด้านล่างไม่พิมพ์ซ้ำใบที่ "ต้องลงมือตอนนี้" แสดงแล้ว (แต่ยังนับในจำนวนทั้งหมด)
+    const showAct = basis !== "backlog";
+    const actTop = showAct ? model.priority(open, 10) : [];
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
     return `<a class="request-back-link" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a><div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
-        <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
+        <div class="nd-summary" role="status"></div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
-        <section class="card nd-card" data-card="act">${actHtml(open, today)}</section>
-        <section class="card nd-card" data-card="stage">${stageHtml(stages, filters)}</section>
-        <section class="card nd-card" data-card="phase">${phaseHtml(phases)}</section>
-        <section class="card nd-card" data-card="machine">${machineHtml(machines, filters)}</section>
+        ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop)}</section>` : ""}
+        <section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>
+        <section class="card nd-card nd-half" data-card="phase">${phaseHtml(phases)}</section>
+        <section class="card nd-card nd-half" data-card="machine">${machineHtml(machines, filters)}</section>
+        <section class="card nd-card nd-half" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" data-card="deptrank">${deptRankHtml(depts, filters)}</section>
-        <section class="card nd-card" data-card="tech">${techHtml(techs, filters)}</section>
-        <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters)}</section>
+        <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters, showAct ? new Set(actTop.map((row) => row.id)) : undefined)}</section>
         ${definitionsHtml}
         ${(() => { const note = window.MNP_NOTES?.toggle("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>"); const stamp = `ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)}`; return note ? `<div class="note-row nd-muted"><span>${stamp}</span>${note.button}</div>${note.body}` : `<p class="nd-muted">${stamp}</p>`; })()}
       </div>`;
@@ -451,7 +457,16 @@
     const key = drillAnchor ?? (hasDrillFilter(lastFilters) ? "controls" : null);
     if (!key) return; // ยังไม่ได้กรอง: เป็นรายการประกอบตัวเลขทั้งหมด คงไว้ท้ายหน้า ไม่ดันการ์ดอื่นลงไป
     const host = key === "controls" ? root.querySelector(".nd-summary") : root.querySelector(`[data-card="${CSS.escape(key)}"]`);
-    (host?.closest(".nd > *") ?? root.querySelector(".nd-summary"))?.after(drill);
+    (pairEnd(host?.closest(".nd > *")) ?? root.querySelector(".nd-summary"))?.after(drill);
+  }
+  // การ์ด nd-half วางเป็นคู่ซ้าย-ขวาในจอกว้าง รายการที่กรองแล้วเต็มแถว ถ้าต่อท้ายการ์ดซ้ายของคู่ การ์ดขวาจะตกลงไปอยู่ลำพังอีกแถว
+  // จึงวางหลังการ์ดขวาของคู่แทน (การ์ดที่ไม่ใช่ nd-half คืนตัวเดิม)
+  function pairEnd(card) {
+    if (!card?.classList?.contains("nd-half")) return card;
+    let index = 0;
+    for (let node = card.previousElementSibling; node?.classList.contains("nd-half"); node = node.previousElementSibling) index += 1;
+    const next = card.nextElementSibling;
+    return index % 2 === 0 && next?.classList.contains("nd-half") ? next : card;
   }
   const hasDrillFilter = (filters) => Boolean(filters && (filters.scope || filters.stage || filters.machine || filters.tech || filters.dept));
 

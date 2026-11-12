@@ -180,6 +180,14 @@ test("stage summary reports age, oldest, overdue and urgent counts per stage in 
   assert.equal(stages.find((stage) => stage.key === "verify").avgDays, null);
 });
 
+test("a stage or phase says it names its owner exactly when its label contains the owner's full role", () => {
+  // หน้าจอพิมพ์ owner ใต้ label เฉพาะเมื่อ roleInLabel เป็น false จึงไม่เขียนตำแหน่งซ้ำ
+  for (const item of [...model.STAGES, ...model.PHASES]) {
+    assert.equal(item.roleInLabel, item.label.includes(item.owner), `${item.key}: ${item.label} / ${item.owner}`);
+    assert.doesNotMatch(item.owner, /ผจก\./, `${item.key}: full role name`);
+  }
+});
+
 test("act-now list puts overdue first, then urgent, then the longest wait", () => {
   const rows = derive([
     req({ id: "old", status: "pending_assign", history: [at("pending_assign", "2026-09-01T05:00:00Z")] }),

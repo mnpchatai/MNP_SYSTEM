@@ -26,6 +26,14 @@ test("a paragraph that carries the card's figures stays visible", () => {
   assert.equal(fold(html), html);
 });
 
+test("a card collapsed to its empty line keeps its ⓘ note, and the empty line is not folded", () => {
+  const html = fold('<div class="nd-head"><h2>เวลาที่ใช้แต่ละช่วง</h2><p>นับเฉพาะช่วงที่เดินครบ</p></div>\n<p class="nd-empty">ยังไม่มีช่วงที่เดินครบ</p>');
+  assert.match(html, /<h2>เวลาที่ใช้แต่ละช่วง<\/h2><button type="button" class="note-toggle"/);
+  assert.match(html, /<\/div>\n<p class="nd-empty">ยังไม่มีช่วงที่เดินครบ<\/p>$/);
+  // กราฟที่ไม่มีข้อมูล: ชื่อ + ⓘ + บรรทัดเดียว
+  assert.match(fold('<div class="nd-sub"><h3>สูญเสีย</h3><p>ยอดยืนยัน</p><p class="nd-empty">ไม่มีข้อมูล</p></div>'), /<h3>สูญเสีย<\/h3><button[^>]*aria-label="วิธีนับ: สูญเสีย"[\s\S]*<p class="nd-empty">ไม่มีข้อมูล<\/p><\/div>$/);
+});
+
 test("a head without a paragraph is left alone and never swallows the next card", () => {
   const html = '<div class="nd-head"><h2>การ์ดหนึ่ง</h2><div class="nd-chips"></div></div><section><div class="nd-head nd-head-row"><h2>สอง</h2><p>หมายเหตุ</p></div></section>';
   assert.equal(fold(html), html);

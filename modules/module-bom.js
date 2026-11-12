@@ -245,6 +245,8 @@
   function bindRoot(root, ctx) {
     root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", (event) => {
       event.preventDefault();
+      // ตรวจช่องเป็นภาษาไทยใต้ช่องก่อน (ฟอร์มเป็น novalidate) · action ยังตรวจกติกาของตัวเองซ้ำ
+      if (!ui.validateForm(form)) return;
       const name = form.dataset.rfForm;
       const transform = TRANSFORMS[name] ?? ((payload) => payload);
       let payload;
@@ -371,9 +373,10 @@
   // หัวหน้าแบบเดียวกับหน้า BOM อื่น (ก้อนสีโมดูล + ไอคอน + ชื่อหน้า) บอกว่ายังว่างและทางไปหน้านำเข้า
   function emptyMasterHtml(user, page, label) {
     const canImport = actions.helpers.canPlan(user);
-    const next = canImport ? `<div class="rf-row"><a class="btn rf-btn" href="${escapeHtml(url("import"))}">นำเข้าจาก Excel</a></div>` : "";
+    // ปุ่มอยู่ติดข้อความที่ชวนให้นำเข้า (ที่เดียว ไม่ซ้ำที่หัวหน้า) · ผู้ที่นำเข้าไม่ได้ไม่เห็นปุ่ม
+    const next = canImport ? `<a class="btn rf-btn" href="${escapeHtml(url("import"))}">นำเข้าจาก Excel</a>` : "";
     const hint = canImport ? "ยังไม่มีข้อมูล BOM ในฐานข้อมูล · เริ่มจากนำเข้าไฟล์ Excel" : "ยังไม่มีข้อมูล BOM ในฐานข้อมูล · ให้ฝ่ายวางแผนหรือผู้จัดการนำเข้า";
-    return `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(page)}</span><div><h1>${escapeHtml(label)}</h1></div></div>${next}</header>${ui.card(ui.empty(hint))}`;
+    return `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(page)}</span><div><h1>${escapeHtml(label)}</h1></div></div></header>${ui.card(ui.empty(hint, next))}`;
   }
   function pageNavHtml(user, page) {
     const items = storeApi.MODULES.filter((entry) => storeApi.canSee(user, entry.id));

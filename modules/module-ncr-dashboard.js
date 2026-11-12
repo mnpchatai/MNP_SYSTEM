@@ -128,11 +128,13 @@
 
   const esc = (value) => escapeHtml(String(value));
   const monthName = (month, year) => `${MONTHS[month - 1]} ${Number(year) + 543}`;
-  const waitingOn = (row) => {
-    if (row.status === "awaiting_disposition") return "ผจก.โรงงาน";
-    if (row.status === "awaiting_followup") return row.preventionPending ? `QA · แผนก ${row.responsibilities.map((item) => item.dept).join("+") || "—"} ส่งแนวทางป้องกัน` : "QA";
-    if (row.status === "awaiting_signoff") return "ผู้ลงนามปิด";
-    return `แผนก ${row.responsibilities.map((item) => item.dept).join("+") || "—"}`;
+  // ชื่อสถานะ (STATUS_LABELS) ที่พิมพ์บรรทัดบนบอกแล้วว่ารอตำแหน่งไหน (ผู้จัดการโรงงาน / แผนก / QA) บรรทัดล่างจึงบอกเฉพาะที่ชื่อสถานะยังไม่บอก
+  // คือแผนกไหน — ไม่เขียนตำแหน่งซ้ำ ("" = ไม่มีบรรทัดล่าง)
+  const waitingDetail = (row) => {
+    const depts = row.responsibilities.map((item) => item.dept).join("+") || "—";
+    if (row.status === "awaiting_disposition" || row.status === "awaiting_signoff") return "";
+    if (row.status === "awaiting_followup") return row.preventionPending ? `แผนก ${depts} ส่งแนวทางป้องกัน` : "";
+    return depts;
   };
 
   // ---- รายละเอียดของรายการที่แตะ (อยู่ในหน้า ไม่ใช่ป๊อปอัพ จึงไม่ต้องมีกติกาปิดเมื่อ blur) ----
@@ -210,9 +212,8 @@
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(assess)}<p class="nd-hint">ครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</p></details></div>`;
   }
 
-  function actHtml(list, today) {
+  function actHtml(list, top, today) {
     const open = list.filter((row) => row.isOpen);
-    const top = model.priority(list, 5);
     const slaCell = (row) => {
       if (row.status === "awaiting_disposition") return `<span class="nd-muted">ยังไม่เริ่มนับ</span>`;
       if (row.preventionPending) {
@@ -226,18 +227,20 @@
       return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกิน ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">อีก ${left} วัน</span>`;
     };
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่ปิด เรียงจากเกินกำหนด (ตอบ 5 วัน หรือส่งแนวทางป้องกัน) ก่อน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
-      ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(waitingOn(row))}<br><span class="nd-muted">${esc(STATUS_LABELS[row.status] ?? row.status)}</span></td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
+      ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${waitingDetail(row) ? `<br><span class="nd-muted">${esc(waitingDetail(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open" })}">ดูใบค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีใบค้างในช่วงและตัวกรองนี้</p>`}`;
   }
 
   // กราฟแท่งรายเดือนแบบซ้อน: segmentsOf(month) คืนชิ้นส่วนของแท่ง [{ value, cls }] เรียงจากล่างขึ้นบน
   // detailOf(month) คืนบรรทัดรายละเอียดใต้กราฟ [[label, value, swatchClass?]] ส่วน ariaOf ใช้เมื่อความสูงแท่งไม่เท่ากับยอดที่อ่านให้ผู้ใช้
-  function columnChart({ card, title, subtitle, data, segmentsOf, legend, formatTotal, formatAxis, detailOf, ariaOf, integerAxis, lastFilters: filters }) {
+  // คืน { empty, html } — ทุกเดือนเป็น 0 = ไม่วาดแกนและแท่ง (แกน 1, 1, 0 อ่านไม่ได้) เหลือชื่อกราฟกับบรรทัดเดียว emptyText
+  function columnChart({ card, title, subtitle, data, segmentsOf, legend, formatTotal, formatAxis, detailOf, ariaOf, integerAxis, emptyText, lastFilters: filters }) {
     const segments = data.map((month) => segmentsOf(month).filter((segment) => segment.value > 0));
     const totals = segments.map((list) => list.reduce((sum, segment) => sum + segment.value, 0));
-    const top = niceMax(Math.max(...totals, 0));
-    // แกนจำนวนใบต้องเป็นจำนวนเต็มทุกขีด (ขีดกลางไม่เป็นทศนิยม)
-    const maxValue = integerAxis ? Math.ceil(top / 2) * 2 : top;
+    if (!(Math.max(...totals, 0) > 0)) return { empty: true, html: `<div class="nd-sub"><h3>${esc(title)}</h3><p>${esc(subtitle)}</p><p class="nd-empty">${esc(emptyText)}</p></div>` };
+    const top = niceMax(Math.max(...totals));
+    // ขีดกลางของแกนต้องเป็นจำนวนเต็ม: จำนวนใบเสมอ และบาทที่ต่ำกว่าหลักพัน (หลักพันขึ้นไปย่อเป็น k/M ทศนิยมได้)
+    const maxValue = integerAxis || top < 1000 ? Math.ceil(top / 2) * 2 : top;
     const maxIndex = totals.indexOf(Math.max(...totals));
     const columns = data.map((month, index) => {
       const total = totals[index];
@@ -252,7 +255,7 @@
     }).join("");
     const ticks = [maxValue, maxValue / 2, 0].map((value) => `<span style="bottom:${(value / maxValue) * CHART_HEIGHT}px">${esc(formatAxis(value))}</span>`).join("");
     const grid = [0, 0.5, 1].map((fraction) => `<i${fraction === 1 ? ' class="base"' : ""} style="top:${(1 - fraction) * CHART_HEIGHT}px"></i>`).join("");
-    return `<div class="nd-sub"><h3>${esc(title)}</h3><p>${esc(subtitle)}</p>
+    const html = `<div class="nd-sub"><h3>${esc(title)}</h3><p>${esc(subtitle)}</p>
       <div class="nd-chart"><div class="nd-yax">${ticks}</div><div class="nd-plot"><div class="nd-grid">${grid}</div><div class="nd-cols">${columns}</div></div></div>
       <div class="nd-legend">${legend.map((item) => `<span><i class="${item.cls}"></i>${esc(item.label)}</span>`).join("")}</div>
       ${detailBox(card, "แท่งเดือน", (key) => {
@@ -261,6 +264,7 @@
         return { title: monthName(month.month, filters.year), lines: detailOf(month),
         href: hrefWith(filters, { from: month.month, to: month.month }), linkLabel: "ดูเฉพาะเดือนนี้" };
       })}</div>`;
+    return { empty: false, html };
   }
   const niceMax = (value) => { if (value <= 0) return 1; const unit = 10 ** Math.floor(Math.log10(value)); const lead = value / unit; return (lead <= 1 ? 1 : lead <= 2 ? 2 : lead <= 2.5 ? 2.5 : lead <= 5 ? 5 : 10) * unit; };
 
@@ -284,6 +288,7 @@
     const countChart = columnChart({
       card: "month-count", title: "จำนวน NCR", subtitle: "แยกสีตามแผนกที่รับผิดชอบ ใบที่มีหลายแผนกนับในทุกแผนก แท่งจึงอาจสูงกว่าจำนวนใบจริง",
       data: byDept, legend: deptLegend, formatTotal: fmtCount, formatAxis: (v) => fmtNumber(v), integerAxis: true, lastFilters: filters,
+      emptyText: `ไม่มี NCR ในปี ${Number(filters.year) + 543} ตามตัวกรองนี้`,
       segmentsOf: (month) => month.depts.map((item) => ({ value: item.count, cls: classOf(item.dept) })),
       ariaOf: (month) => `${fmtCount(month.count)} ${month.depts.map((item) => `${deptName(item.dept)} ${fmtCount(item.count)}`).join(" ")}`.trim(),
       detailOf: (month) => {
@@ -305,6 +310,7 @@
     const moneyChart = columnChart({
       card: "month-money", title: "สูญเสียยืนยัน แยกตามประเภท (บาท)", subtitle: "ยอดยืนยันก่อนหักชดเชย แยกสีตามประเภทต้นทุน ส่วนลายเส้นคือประมาณการรอยืนยัน แตะแท่งเพื่อดูยอดสุทธิหลังหักชดเชย",
       data: money, legend: moneyLegend, formatTotal: fmtBaht, formatAxis: fmtShort, lastFilters: filters,
+      emptyText: `ยังไม่มีความสูญเสียยืนยันหรือประมาณการในปี ${Number(filters.year) + 543} ตามตัวกรองนี้`,
       segmentsOf: (month) => [...[...month.types].sort((a, b) => typeKeys.indexOf(a.type) - typeKeys.indexOf(b.type)).map((item) => ({ value: item.confirmed, cls: typeClass(item.type) })), { value: month.estimated, cls: "est" }],
       detailOf: (month) => [
         ["สูญเสียยืนยัน (ก่อนชดเชย)", fmtBaht(month.gross)],
@@ -314,9 +320,12 @@
         ["ประมาณการรอยืนยัน", fmtBaht(month.estimated), month.estimated > 0 ? "est" : ""],
       ],
     });
-    return `<div class="nd-head"><h2>แนวโน้มรายเดือน</h2><p>แกนเดือนเดียวกันทั้งสองกราฟ (เดือนที่ออก NCR) เดือนนอกช่วงที่เลือกแสดงจางลง ตัวกรองอื่นยังใช้อยู่</p></div>
-      <div class="nd-two">${countChart}
-      ${moneyChart}</div>`;
+    const head = `<div class="nd-head"><h2>แนวโน้มรายเดือน</h2><p>แกนเดือนเดียวกันทั้งสองกราฟ (เดือนที่ออก NCR) เดือนนอกช่วงที่เลือกแสดงจางลง ตัวกรองอื่นยังใช้อยู่</p></div>`;
+    // ไม่มี NCR เลยทั้งปี = ไม่มีกราฟไหนมีข้อมูล เหลือบรรทัดเดียวใต้หัวการ์ด
+    if (countChart.empty && moneyChart.empty) return `${head}<p class="nd-empty">${esc(`ไม่มี NCR ในปี ${Number(filters.year) + 543} ตามตัวกรองนี้`)}</p>`;
+    return `${head}
+      <div class="nd-two">${countChart.html}
+      ${moneyChart.html}</div>`;
   }
 
   function barRows({ card, items, valueOf, subOf, filters, filterKey, resolve }) {
@@ -329,14 +338,18 @@
   }
 
   function paretoHtml(list, filters) {
-    const items = model.pareto(list, filters, filters.sort);
-    const byNet = filters.sort === "net";
+    // ยังไม่มีบาทที่ยืนยันเลย (ผลรวม 0) แท่งตามบาทจะว่างทั้งที่มี NCR อยู่ จึงเรียงตามจำนวนใบแทนโดยอัตโนมัติ และบอกในบรรทัดเดียว
+    const netItems = model.pareto(list, filters, "net");
+    const fellBack = filters.sort === "net" && !netItems.length && list.length > 0;
+    const byNet = filters.sort === "net" && !fellBack;
+    const items = fellBack ? model.pareto(list, filters, "count") : filters.sort === "net" ? netItems : model.pareto(list, filters, filters.sort);
     const resolve = (key) => {
       const item = items.find((entry) => entry.key === key);
       return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
     };
     return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย · เมื่อเรียงตามบาท ใบที่มีแต่ประมาณการไม่ปรากฏในแท่ง</p></div>
-      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
+      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}"${fellBack ? ' title="ยังไม่มีบาทที่ยืนยัน"' : ""}>เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
+      ${fellBack ? `<p class="nd-hint">ยังไม่มีบาทที่ยืนยันในช่วงนี้ จึงเรียงตามจำนวนใบ</p>` : ""}
       ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", resolve, valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
       <div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("pareto", "แท่ง", resolve)}`;
@@ -394,13 +407,16 @@
       ${units.map((unit) => `<tr><td>${esc(unit.unit)}</td><td class="nd-num">${fmtNumber(unit.count)}</td><td class="nd-num">${formatQty(unit.defect)}</td><td class="nd-num">${unit.scrapped ? formatQty(unit.scrapped) : "—"}</td></tr>`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}`;
   }
 
-  function drillHtml(list) {
+  // actIds = ใบที่การ์ด "ต้องลงมือตอนนี้" แสดงอยู่แล้ว — ไม่พิมพ์ซ้ำในตารางนี้ แต่ยังนับรวมใน "ทั้งหมด N ใบ" ให้ตรงกับตัวเลขด้านบน
+  function drillHtml(list, actIds = new Set()) {
     const sorted = [...list].sort((a, b) => (a.issue_date < b.issue_date ? 1 : a.issue_date > b.issue_date ? -1 : b.ncr_no.localeCompare(a.ncr_no)));
-    const shown = sorted.slice(0, drillLimit);
-    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ</p></div>
+    const rest = sorted.filter((row) => !actIds.has(row.id));
+    const shownAbove = sorted.length - rest.length;
+    const shown = rest.slice(0, drillLimit);
+    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}</p></div>
       ${shown.length ? `<div class="table-wrap"><table class="nd-rowlink"><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกินกำหนดตอบ</span>` : esc(STATUS_LABELS[row.status] ?? row.status)}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
-      ${list.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(list.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">ไม่มี NCR ตรงกับตัวกรองนี้</p>`}`;
+      ${rest.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(rest.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">${list.length ? "ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว" : "ไม่มี NCR ตรงกับตัวกรองนี้"}</p>`}`;
   }
 
   const definitionsHtml = `<details class="nd-defs"><summary>นิยามที่ใช้ในหน้านี้</summary><div><ol>
@@ -418,23 +434,27 @@
     lastFilters = filters;
     const list = model.select(rows, filters);
     const sums = model.summarize(list, filters);
+    // แต่ละใบอยู่บนหน้าครั้งเดียว: ตัวกรองสถานะ (scope) ทำให้รายการด้านล่างเป็นรายการใบค้างเอง จึงซ่อน "ต้องลงมือตอนนี้" ·
+    // นอกนั้นรายการด้านล่างไม่พิมพ์ซ้ำใบที่ "ต้องลงมือตอนนี้" แสดงแล้ว (แต่ยังนับในจำนวนทั้งหมด)
+    const showAct = !filters.scope;
+    const actTop = showAct ? model.priority(list, 5) : [];
     return `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a><div class="page-heading request-module-header" data-module="ncr"><div><div class="eyebrow">QA02-FM02</div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="ncr">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
-        <section class="card nd-card" data-card="act">${actHtml(list, today)}</section>
+        ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(list, actTop, today)}</section>` : ""}
         <section class="card nd-card" data-card="trend">${trendHtml(rows, filters, today)}</section>
-        <section class="card nd-card" data-card="pareto">${paretoHtml(list, filters)}</section>
-        <section class="card nd-card" data-card="losstype">${lossTypeHtml(list, filters, sums)}</section>
+        <section class="card nd-card nd-half" data-card="pareto">${paretoHtml(list, filters)}</section>
+        <section class="card nd-card nd-half" data-card="losstype">${lossTypeHtml(list, filters, sums)}</section>
         <section class="card nd-card" data-card="dept">${deptHtml(list, filters)}</section>
         <div class="nd-two">
           <section class="card nd-card" data-card="source">${breakdownHtml("source", "แหล่งที่พบ", "นับใบเต็มใบ แตะแท่งเพื่อดูตัวเลข", model.countBy(list, (row) => [row.source]), SOURCES, filters, "source", list.length)}</section>
           <section class="card nd-card" data-card="cause">${breakdownHtml("cause", "สาเหตุ 4M+E", "ใบที่มีหลายสาเหตุนับในทุกสาเหตุ (ซ้อนกันได้) จึงไม่รวมกันเป็น 100%", model.countBy(list, model.causeKeys), CAUSE_LABELS, filters, "cause", list.length)}</section>
         </div>
         <section class="card nd-card" data-card="scrap">${scrapHtml(list)}</section>
-        <section class="card nd-card" id="nd-drill">${drillHtml(list)}</section>
+        <section class="card nd-card" id="nd-drill">${drillHtml(list, new Set(actTop.map((row) => row.id)))}</section>
         ${definitionsHtml}
         ${(() => { const note = window.MNP_NOTES?.toggle("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>"); const stamp = `ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)}`; return note ? `<div class="note-row nd-muted"><span>${stamp}</span>${note.button}</div>${note.body}` : `<p class="nd-muted">${stamp}</p>`; })()}
       </div>`;
@@ -471,7 +491,16 @@
     const key = drillAnchor ?? (hasDrillFilter(lastFilters) ? "controls" : null);
     if (!key) return; // ยังไม่ได้กรอง: เป็นรายการประกอบตัวเลขทั้งหมด คงไว้ท้ายหน้า ไม่ดันการ์ดอื่นลงไป
     const host = key === "controls" ? root.querySelector(".nd-summary") : root.querySelector(`[data-card="${CSS.escape(key)}"]`);
-    (host?.closest(".nd > *") ?? root.querySelector(".nd-summary"))?.after(drill);
+    (pairEnd(host?.closest(".nd > *")) ?? root.querySelector(".nd-summary"))?.after(drill);
+  }
+  // การ์ด nd-half วางเป็นคู่ซ้าย-ขวาในจอกว้าง รายการที่กรองแล้วเต็มแถว ถ้าต่อท้ายการ์ดซ้ายของคู่ การ์ดขวาจะตกลงไปอยู่ลำพังอีกแถว
+  // จึงวางหลังการ์ดขวาของคู่แทน (การ์ดที่ไม่ใช่ nd-half คืนตัวเดิม)
+  function pairEnd(card) {
+    if (!card?.classList?.contains("nd-half")) return card;
+    let index = 0;
+    for (let node = card.previousElementSibling; node?.classList.contains("nd-half"); node = node.previousElementSibling) index += 1;
+    const next = card.nextElementSibling;
+    return index % 2 === 0 && next?.classList.contains("nd-half") ? next : card;
   }
   const hasDrillFilter = (filters) => Boolean(filters && (filters.scope || filters.dept || filters.defect || filters.source || filters.cause || filters.loss));
 

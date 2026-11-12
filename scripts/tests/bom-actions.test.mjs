@@ -1526,3 +1526,16 @@ test("importing a sheet twice keeps one XP- item per subpart, and the group chos
   A.importFlat(noGroup, { ...flatPayload, items: flatPayload.items.map((item) => ({ ...item, group: "IND" })) }, ctx("planner"));
   assert.equal(A.helpers.itemOf(noGroup, "GRP-01(P)-Y").group, "IND", "without a chosen group the group on the item is used, as before");
 });
+
+test("a missing item code is named neutrally: no message prints undefined, null or a dangling label", () => {
+  const d = fresh();
+  const planner = ctx("planner");
+  const message = (fn) => { try { fn(); } catch (error) { return error.message; } return ""; };
+  const parent = "DEMO-TP-01(P)-Y";
+  for (const childCode of [undefined, null, ""]) {
+    const text = message(() => A.saveBom(d, { itemCode: parent, lines: [{ childCode, qty: 1 }] }, planner));
+    assert.match(text, /ไม่พบชิ้นงานที่ระบุ$/, text);
+    assert.doesNotMatch(text, /undefined|null|NaN/, text);
+  }
+  assert.match(message(() => A.saveBom(d, { itemCode: parent, lines: [{ childCode: "NOPE", qty: 1 }] }, planner)), /ไม่พบชิ้นงาน NOPE$/, "a code that was typed is still named");
+});

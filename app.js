@@ -1226,17 +1226,6 @@ function registerSubHtml(text, iconHtml = "", title = text) {
   return `<span class="register-sub" title="${escapeHtml(title)}">${iconHtml}${escapeHtml(text)}</span>`;
 }
 
-// หัวข้อใบแจ้งซ่อมที่ฐานข้อมูลสร้างคือ "ชื่อเครื่อง — อาการ" บรรทัดหลักของแถวเป็นชื่อเครื่องแล้ว บรรทัดรองจึงเหลือเฉพาะอาการ
-function titleWithoutMachine(title, machineName, machineCode) {
-  const text = String(title ?? "").trim();
-  for (const name of [machineName, machineCode].map((value) => String(value ?? "").trim()).filter(Boolean)) {
-    if (text.startsWith(name)) {
-      const rest = text.slice(name.length).replace(/^[\s—–\-:·|]+/u, "");
-      if (rest !== text.slice(name.length) || !rest) return rest;
-    }
-  }
-  return text;
-}
 
 // เรื่อง: บรรทัดหลักเป็นลิงก์ (ถ้าเปิดได้) บรรทัดรองตัดให้เหลือบรรทัดเดียว
 function registerSubjectHtml(main, href, secondary = "") {
@@ -1265,9 +1254,11 @@ function requestRows(requests, { showRequester = false, showType = false, direct
     const href = `#/request?id=${encodeURIComponent(request.id)}`;
     const machine = machineLabelOf(request.machine_code, request.machine_name, " · ");
     const description = (request.description ?? "").trim();
-    const main = machine || request.title;
+    // หัวของแถวคือชื่อเรื่องของใบ (ชื่อเดียวกับคิวหน้าหลักและหน้ารายละเอียด) เครื่องจักรอยู่บรรทัดรองเมื่อชื่อเรื่องยังไม่บอก
+    const main = request.title;
     // บรรทัดรอง: ชื่อเรื่องเมื่อหัวเป็นเครื่องจักร ไม่งั้นรายละเอียด (ไม่ซ้ำกับหัว) + วันที่ต้องการใช้งานถ้ามี
-    const detail = machine ? titleWithoutMachine(request.title, request.machine_name, request.machine_code) : description;
+    const machineInTitle = [request.machine_code, request.machine_name].some((value) => value && request.title.includes(value));
+    const detail = machine ? (machineInTitle ? "" : machine) : description;
     const secondary = [detail && detail !== main ? detail : "", request.needed_date ? `ต้องการใช้ ${formatDate(request.needed_date)}` : ""].filter(Boolean).join(" · ");
     const owners = requestOwnerNames(request, directory);
     return {
@@ -1939,7 +1930,7 @@ function shell(content, active, title, tabTitle = title) {
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
           <div class="avatar">${escapeHtml(initials(employee))}</div>
-          <div class="user-copy"><strong title="${escapeHtml(`${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim())}">${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
+          <div class="user-copy"><strong title="${escapeHtml(`${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim())}">${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span title="${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}">${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
           <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">${uiIcon("signout")}</button>
         </div>
       </aside>
@@ -2297,15 +2288,17 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const rules = window.MNP_HOME_QUEUE;
   // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เกินกำหนดตอบ)
   const flag = item.flag ?? (["high", "urgent"].includes(request.priority) ? priorityLabel(request.priority, isRepairType(type)) : null);
-  const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
+  // ประเภทบอกด้วยสีและไอคอนของแถวกับคำนำหน้าเลขที่แล้ว ชื่อเต็มอยู่ใน title ของไอคอนและข้อความสำหรับผู้อ่านหน้าจอ · อายุงานอยู่ข้างชิปงาน
+  const meta = item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : "";
+  const age = rules.waitingLabel(rules.waitingDays(item.createdAt));
   // ทุกแถวบอกว่าต้องทำอะไร: ชิปสีโมดูลของใบท้ายบรรทัดเลขที่ (ไม่เบียดชื่อเรื่อง) · งานที่ลงมือในหน้าของใบเองมีลูกศร (พาไปหน้านั้น)
   // แถวอนุมัติเปิดในคิวจึงไม่มีลูกศร
   const chip = `<span class="queue-item-task${item.kind === "approval" ? " is-decide" : ""}" data-module="${requestPalette(type?.code)}">${escapeHtml(queueTaskLabel(item))}</span>`;
-  const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
+  const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" title="${escapeHtml(type?.name_th ?? "")}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
-      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}${chip}</span>
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${type?.name_th ? `<span class="sr-only">${escapeHtml(type.name_th)}</span>` : ""}${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}<span class="queue-item-due">${chip}<span class="queue-item-age">${escapeHtml(age)}</span></span></span>
       <strong class="queue-item-title">${keepCodesTogether(escapeHtml(request.title))}</strong>
-      <span class="queue-item-meta">${escapeHtml(meta)}</span>
+      ${meta ? `<span class="queue-item-meta">${escapeHtml(meta)}</span>` : ""}
     </span>`;
   const hiddenAttr = hidden ? " hidden" : "";
   // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
@@ -2480,7 +2473,16 @@ function bindHomeQueue() {
   bindQueueBulk();
 }
 
-const QUEUE_BULK_IDLE_BUTTONS = `<button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">อนุมัติที่เลือก</button>`;
+// คำของขั้น (อนุมัติ รับทราบ …) ตามชื่อขั้น ใช้ทั้งปุ่มใบเดียวและแถบหลายรายการ
+const queueStepVerb = (step) => window.MNP_STEP_VERB.verbOf(step.step_name, (requestModule(relation(step.request.request_type)?.code)?.extraDecisions ?? []).map((item) => item.label));
+// ข้อความของรายการที่เลือก: คำเดียวกันทั้งหมด = "รับทราบ 3 รายการ" · ปนกัน = "อนุมัติ 2 · รับทราบ 1"
+function bulkVerbText(steps) {
+  const counts = new Map();
+  steps.forEach((step) => { const verb = queueStepVerb(step); counts.set(verb, (counts.get(verb) ?? 0) + 1); });
+  const only = counts.size === 1 ? [...counts.keys()][0] : "";
+  return { only, summary: only ? `${only} ${steps.length} รายการ` : [...counts].map(([verb, n]) => `${verb} ${n}`).join(" · ") };
+}
+const QUEUE_BULK_IDLE_BUTTONS = `<button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">ตัดสินที่เลือก</button>`;
 let activeBulkCountdown = null;
 
 // อนุมัติหลายรายการ: ขั้นเดียวกับอนุมัติใบเดียวในแถบล่าง — "อนุมัติที่เลือก" → ยืนยันพร้อมเลขที่ใบ → เลิกทำได้ภายใน DECISION_UNDO_SECONDS วินาที → ส่ง
@@ -2513,13 +2515,14 @@ function bindQueueBulk() {
     }
     lockBoxes(true);
     if (name === "confirm") {
-      setText(`อนุมัติ ${chosen.length} รายการ: ${numbers()}`);
-      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยันอนุมัติ ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
+      const verbs = bulkVerbText(chosen);
+      setText(`${verbs.summary}: ${numbers()}`);
+      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(verbs.only ? `ยืนยัน${verbs.only} ${chosen.length} รายการ` : `ยืนยัน ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
     } else if (name === "pending") {
-      setText(`กำลังจะอนุมัติ ${chosen.length} รายการ`);
+      setText(`กำลังจะ${bulkVerbText(chosen).summary}`);
       buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", "success is-primary", "send-now")}`;
     } else if (name === "sending") {
-      setText(`กำลังส่ง: อนุมัติ ${chosen.length} รายการ…`);
+      setText(`กำลังส่ง: ${bulkVerbText(chosen).summary}…`);
       buttons.innerHTML = button("กำลังส่ง…", "success is-primary", "none", ' disabled aria-busy="true"');
     }
     trackActionBarHeight();
@@ -2632,7 +2635,10 @@ function syncQueueBulk() {
   text.textContent = tooMany ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT} รายการ` : "";
   const approve = document.querySelector("#queue-bulk-approve");
   approve.disabled = count === 0 || tooMany;
-  approve.textContent = `อนุมัติที่เลือก (${count})`;
+  // ปุ่มใช้คำของขั้นเมื่อทุกใบที่เลือกเป็นคำเดียวกัน (ส่วนใหญ่ "อนุมัติ") ปนกันใช้ "ตัดสิน"
+  const picked = pickedQueueSteps();
+  const only = picked.length ? bulkVerbText(picked).only : "อนุมัติ";
+  approve.textContent = `${only || "ตัดสิน"}ที่เลือก (${count})`;
   const panel = document.querySelector("#decision-panel");
   if (panel) panel.hidden = count > 0 && panel.dataset.state === "idle";
   trackActionBarHeight();
@@ -2776,20 +2782,18 @@ function bindModuleZoom(params) {
 
 // หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
 // ทะเบียน NCR ไม่มีกระดาน จึงยังใช้ requestScopeSwitch
-function requestsViewTabs(params) {
+function requestsViewTabs(params, { board: withBoard = true } = {}) {
   const board = params.get("view") === "board";
   const mine = !board && params.get("scope") === "mine";
   const tab = (active, changes, label) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}">${label}</a>`;
   return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
-    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${withBoard ? tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ") : ""}
   </nav>`;
 }
 
 // ขอบเขตของรายการตามสิทธิ์: ทุกใบที่มีสิทธิ์ดู / เฉพาะที่ฉันแจ้ง (คำอธิบายเรื่องสิทธิ์อยู่ใน title ไม่เป็นบรรทัดถาวร)
 function requestScopeSwitch(params) {
-  const mineOnly = params.get("scope") === "mine";
-  const link = (mine, label) => `<a class="filter${mine === mineOnly ? " active" : ""}"${mine === mineOnly ? ' aria-current="true"' : ""} href="${escapeHtml(requestCenterUrl(params, { scope: mine ? "mine" : null }))}">${label}</a>`;
-  return `<nav class="scope-switch" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">${link(false, "ทุกใบที่ฉันมีสิทธิ์ดู")}${link(true, "เฉพาะที่ฉันแจ้ง")}</nav>`;
+  return requestsViewTabs(params, { board: false });
 }
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
@@ -2888,7 +2892,7 @@ async function requestTypeCounts(types, mineOnly) {
 }
 
 // counts: ใช้เฉพาะการ์ดบนหน้าเลือกโมดูล (ในโมดูลตารางข้างล่างบอกจำนวนอยู่แล้ว หัวไม่นับซ้ำ)
-function requestCenterHeader(types, params, counts) {
+function requestCenterHeader(types, params, counts, { countScope = "" } = {}) {
   const selected = types.find((type) => type.id === params.get("type"));
   if (selected) {
     // หัวโมดูลบอกชื่อโมดูลแล้ว ปุ่มในหัวจึงไม่ต่อท้ายด้วยรหัสโมดูลซ้ำ (เดิมหัว MT มีคำว่า MT สี่ครั้ง)
@@ -2904,7 +2908,7 @@ function requestCenterHeader(types, params, counts) {
   }
   return `<div class="page-heading"><div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
     <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" data-module="${requestPalette(type.code)}">
-      <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} ยังไม่จบ` : "ดูสถานะ"}</span></span>
+      <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count"${counts && countScope ? ` title="${escapeHtml(`นับเฉพาะรายการที่ยังไม่จบ${countScope}`)}"` : ""}>${counts ? `${counts.get(type.id) ?? 0} ยังไม่จบ` : "ดูสถานะ"}</span></span>
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong>${selected?.id === type.id ? "<small>กำลังแสดงประเภทนี้</small>" : ""}</span>
       ${typeCardWatermarkHtml(type.code)}
     </a>`).join("")}</nav>`;
@@ -2991,7 +2995,7 @@ async function renderRequests(params) {
     const statusList = statuses.length
       ? `<div class="request-type-heading"><h2>คำร้องทุกประเภท · ${escapeHtml(filterLabels.join(", "))}</h2><a href="${escapeHtml(requestCenterUrl(params, { status: null }))}">ล้างตัวกรอง</a></div>${await requestListPanel(params, null)}`
       : "";
-    app.innerHTML = shell(`${requestCenterHeader(types, params, counts)}<p class="muted small">จำนวนบนการ์ดนับเฉพาะรายการที่ยังไม่จบ${mineOnly ? "ที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู"}</p>${statusList}`, "requests", "คำร้อง");
+    app.innerHTML = shell(`${requestCenterHeader(types, params, counts, { countScope: mineOnly ? "ที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู" })}${statusList}`, "requests", "คำร้อง");
     bindShell();
     bindModuleZoom(params);
     return;
@@ -3808,6 +3812,7 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
+        ${detailView?.actionHtml?.trim() ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ</h2>${detailView.actionHtml}</section>` : ""}
         <section class="card request-brief" aria-labelledby="request-brief-title">
           <h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
           ${description
@@ -3834,8 +3839,9 @@ async function renderRequestDetail(params) {
       </div>
       <aside class="stack">
         ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
+        ${canApprove ? "" : detailView?.asideHtml ?? ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
-        ${receipt && !canApprove && !canOperate ? nextItemPanelHtml() : ""}
+        ${receipt && !canApprove && !canOperate && !detailView?.asideHtml ? nextItemPanelHtml() : ""}
         <details class="card detail-section"><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
         <details class="card detail-section"${timelineOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
       </aside>
@@ -4040,7 +4046,7 @@ async function fillNextItemPanel(currentId) {
       text.textContent = others.length ? `${label} ในใบนี้ · ต้องจัดการอีก ${others.length} รายการ` : `${label} ในใบนี้`;
       buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn secondary" id="next-item-follow-up">${escapeHtml(label)} ↓</button>`;
       buttons.querySelector("#next-item-follow-up").addEventListener("click", () => {
-        const task = { pending_assign: "section#repair-assign", assigned: ".start-work-button", in_progress: "#finish-form", pending_verify: "#verify-note" }[followUp.request?.status];
+        const task = { pending_assign: "#repair-assign", assigned: ".start-work-button", in_progress: "#finish-form", pending_verify: "#verify-note" }[followUp.request?.status];
         const target = (task ? document.querySelector(task)?.closest("section, details") : null) ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
         if (!target) return;
         if (target instanceof HTMLDetailsElement) target.open = true;
@@ -4442,7 +4448,7 @@ async function runBulkApprove(chosen) {
     const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
     if (!error) {
       done += 1;
-      recentDecisions.set(step.request.id, { decision: "approved", label: window.MNP_STEP_VERB.verbOf(step.step_name, (requestModule(relation(step.request.request_type)?.code)?.extraDecisions ?? []).map((item) => item.label)), comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
+      recentDecisions.set(step.request.id, { decision: "approved", label: queueStepVerb(step), comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
       triggerNotificationEmails(step.request.id);
       continue;
     }

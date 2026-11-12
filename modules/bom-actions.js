@@ -9,6 +9,8 @@
   const rules = () => root.MNP_BOM_RULES;
 
   const fail = (message) => { throw new Error(message); };
+  // ค่าที่ขาด (ว่าง / undefined / null) ไม่พิมพ์ลงในข้อความผิดพลาด: ใช้คำกลางแทน · คืนมีช่องว่างนำหน้าเมื่อมีค่า (ต่อท้ายชื่อสิ่งที่หาไม่พบ)
+  const ref = (value, fallback = "ที่ระบุ") => (value === undefined || value === null || String(value).trim() === "" ? fallback : ` ${String(value).trim()}`);
   const num = (value, label, { min = 0, allowZero = false } = {}) => {
     const n = Number(value);
     if (!Number.isFinite(n)) fail(`${label}ต้องเป็นตัวเลข`);
@@ -124,7 +126,7 @@
     const seen = new Set();
     return rawLines.map((raw, index) => {
       const childCode = R.canonicalCode(raw.childCode);
-      const child = itemOf(d, childCode) ?? fail(`${parent.code} บรรทัด ${index + 1}: ไม่พบชิ้นงาน ${childCode}`);
+      const child = itemOf(d, childCode) ?? fail(`${parent.code} บรรทัด ${index + 1}: ไม่พบชิ้นงาน${ref(childCode)}`);
       if (child.code === parent.code) fail(`${parent.code}: ชิ้นงานเป็นลูกของตัวเองไม่ได้`);
       const kindError = R.childKindError(parent.kind, child.kind);
       if (kindError) fail(`${parent.code} → ${childCode}: ${kindError}`);
@@ -210,7 +212,7 @@
     // เส้นยางเป็นพ่อ: รหัสสูตรของมันคือบรรทัดสูตรยางชั้นแรก (ใช้ทั้งตอนสร้างใหม่และตอนเปลี่ยนสูตรของเส้นยางที่มีอยู่)
     const rootCompound = (p.nodes ?? []).map((node) => ({ code: R.canonicalCode(node.code), kind: itemOf(d, node.code)?.kind ?? node.newItem?.kind })).find((node) => node.kind === "CP")?.code || "";
     if (!itemOf(d, rootCode)) {
-      if (!p.item?.name) fail(`ยังไม่มีชิ้นงาน ${rootCode} กรุณาระบุชื่อและหน่วยเพื่อสร้าง`);
+      if (!p.item?.name) fail(`ยังไม่มีชิ้นงาน${ref(rootCode)} กรุณาระบุชื่อและหน่วยเพื่อสร้าง`);
       // ชนิดของพ่อที่เลือกในขั้นที่ 1 (ไม่ระบุ = สินค้า) · วัตถุดิบ/สูตรยางไม่มีส่วนประกอบ จึงสร้างผ่านต้นไม้ไม่ได้
       const rootKind = p.item.kind || "FG";
       if (!Object.hasOwn(R.KINDS, rootKind)) fail("ชนิดชิ้นงานไม่ถูกต้อง");
@@ -240,7 +242,7 @@
         const compoundLine = (node.children ?? []).map((entry) => ({ code: R.canonicalCode(entry.code), kind: itemOf(d, entry.code)?.kind ?? entry.newItem?.kind })).find((entry) => entry.kind === "CP")?.code ?? "";
         const withCompound = (rubber) => (compoundLine && !String(rubber?.compound ?? "").trim() ? { ...(rubber ?? {}), compound: compoundLine } : rubber);
         if (!child) {
-          const spec = node.newItem ?? fail(`ไม่พบชิ้นงาน ${code} — ระบุชนิด ชื่อ และหน่วยเพื่อสร้าง`);
+          const spec = node.newItem ?? fail(`ไม่พบชิ้นงาน${ref(code)} — ระบุชนิด ชื่อ และหน่วยเพื่อสร้าง`);
           saveItem(d, { code, kind: spec.kind, name: spec.name, uom: spec.uom, weightG: spec.weightG, rubber: spec.kind === "RB" ? withCompound(spec.rubber) : spec.rubber, create: true }, ctx);
           child = itemOf(d, code);
           created.push(code);
@@ -577,7 +579,7 @@
   // ลงทะเบียนสีที่ยังไม่รู้จัก (ชื่อจากแม่สีมาตรฐาน) เหมือนคอมปาวด์
   function ensureColor(d, code, ctx) {
     const R = rules();
-    const parsed = R.parseColorCode(code) ?? fail(`รหัสสี ${code} ไม่ถูกต้อง (แม่สี 2 ตัวอักษร + เฉด 2 หลัก เช่น OR01)`);
+    const parsed = R.parseColorCode(code) ?? fail(`รหัสสี${ref(code)} ไม่ถูกต้อง (แม่สี 2 ตัวอักษร + เฉด 2 หลัก เช่น OR01)`);
     d.colors ??= [];
     if (!d.colors.some((entry) => entry.code === parsed.code)) d.colors.push({ code: parsed.code, master: parsed.master, shade: parsed.shade, name: R.colorName(parsed.code), createdAt: ctx.now });
     return parsed.code;
@@ -644,7 +646,7 @@
     if (!/^[A-Z0-9-]{1,4}$/.test(code)) fail("รหัสแพ็กเกจต้องเป็นตัวอักษร/ตัวเลข 1–4 ตัว เช่น P หรือ B-N");
     const seen = new Set();
     const lines = (Array.isArray(p.lines) ? p.lines : []).map((raw, index) => {
-      const child = itemOf(d, raw.childCode) ?? fail(`แพ็กเกจ ${code} บรรทัด ${index + 1}: ไม่พบชิ้นงาน ${R.canonicalCode(raw.childCode)}`);
+      const child = itemOf(d, raw.childCode) ?? fail(`แพ็กเกจ ${code} บรรทัด ${index + 1}: ไม่พบชิ้นงาน${ref(R.canonicalCode(raw.childCode))}`);
       // บรรจุภัณฑ์เป็นของซื้อเท่านั้น: ชิ้นที่ผลิตเอง (SE/RB/PT/BG) ถ้าใส่ได้ ตอนสลับแพ็กเกจจะถูกถอดออกจาก BOM ของรุ่นใหม่โดยไม่รู้ตัว
       if (child.kind !== "PURCHASED") fail(`แพ็กเกจ ${code}: ${child.code} เป็น${R.KINDS[child.kind]?.label ?? child.kind} บรรจุภัณฑ์ต้องเป็นของซื้อ/คลัง`);
       if (seen.has(child.code)) fail(`แพ็กเกจ ${code}: ${child.code} ซ้ำ`);
@@ -675,7 +677,7 @@
     const R = rules();
     const toCode = R.recolorCode(fromCode, color);
     if (toCode === fromCode) return fromCode;
-    const src = itemOf(d, fromCode) ?? fail(`ไม่พบชิ้นงาน ${fromCode}`);
+    const src = itemOf(d, fromCode) ?? fail(`ไม่พบชิ้นงาน${ref(fromCode)}`);
     // สีเดิมของ SE: ใช้ทั้งที่อยู่ในรหัสและใน rubber.color (แก้แยกกันได้) RB ลูกที่สีตรงกับตัวใดตัวหนึ่งถือว่าเป็นสีเดียวกับ SE
     const fromColors = [...new Set([R.colorOfCode(fromCode), String(src.rubber?.color ?? "")].map((value) => String(value).toUpperCase()).filter(Boolean))];
     const fromColor = fromColors[0] ?? "";
@@ -730,7 +732,7 @@
       const packStep = (code) => removedLines.find((line) => line.childCode === code)?.step ?? removedLines.find((line) => line.step)?.step;
       lines = lines.filter((line) => !packaging.has(line.childCode));
       for (const line of pkgDef.lines) {
-        const child = itemOf(d, line.childCode) ?? fail(`แพ็กเกจ ${pkg}: ไม่พบชิ้นงาน ${line.childCode}`);
+        const child = itemOf(d, line.childCode) ?? fail(`แพ็กเกจ ${pkg}: ไม่พบชิ้นงาน${ref(line.childCode)}`);
         const step = packStep(child.code);
         lines.push({ ...(step ? { step } : {}), childCode: child.code, qty: line.qty, uom: child.uom, consumerDept: "PK", producerDept: child.ownerDept, scrapPct: 0, flags: [], note: `แพ็กเกจ ${pkg}` });
       }
@@ -1011,7 +1013,7 @@
       const code = rules().canonicalCode(entry.itemCode);
       if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
       seen.add(code);
-      const item = itemOf(d, code) ?? fail(`ไม่พบชิ้นงาน ${code}`);
+      const item = itemOf(d, code) ?? fail(`ไม่พบชิ้นงาน${ref(code)}`);
       if (item.kind !== "PURCHASED") fail(`${code} ไม่ใช่ของซื้อ (นับได้เฉพาะของซื้อ)`);
       const row = stockRowOf(d, code);
       const oldQty = row?.qty ?? 0;

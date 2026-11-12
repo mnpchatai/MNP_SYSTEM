@@ -75,14 +75,13 @@ test("list filters fold behind one button on phones and stay in one row on wide 
 });
 
 // ---- รอบสี + ยุบหน้า: บอกข้อเท็จจริงครั้งเดียว ----
-test("an MT row does not repeat the machine name on its second line", () => {
-  const context = vm.createContext({});
-  vm.runInContext(`${pick(app, "titleWithoutMachine")}\nthis.strip = titleWithoutMachine;`, context);
-  const { strip } = context;
-  assert.equal(strip("เครื่องอัดยาง NCM-03 — มอเตอร์ร้อน", "เครื่องอัดยาง NCM-03", "NCM-03"), "มอเตอร์ร้อน");
-  assert.equal(strip("เครื่องอัดยาง NCM-03", "เครื่องอัดยาง NCM-03", "NCM-03"), "", "nothing but the machine: no second line");
-  assert.equal(strip("แจ้งซ่อมปั๊มลม", "เครื่องอัดยาง NCM-03", "NCM-03"), "แจ้งซ่อมปั๊มลม", "a title without the machine is kept");
-  assert.match(app, /const detail = machine \? titleWithoutMachine\(request\.title, request\.machine_name, request\.machine_code\) : description;/);
+test("an MT row is titled by its subject, like the home queue and the detail page, and names the machine only when the subject does not", () => {
+  // ชื่อเดียวต่อใบทุกหน้า (critique รอบ 8): หัวของแถวคือชื่อเรื่อง เครื่องจักรอยู่บรรทัดรองเมื่อชื่อเรื่องยังไม่มีรหัสเครื่อง
+  assert.match(app, /const main = request\.title;/);
+  // ชื่อเรื่องที่ระบบสร้างคือ "ชื่อเครื่อง — อาการ" จึงดูทั้งชื่อและรหัสเครื่อง
+  assert.match(app, /const machineInTitle = \[request\.machine_code, request\.machine_name\]\.some\(\(value\) => value && request\.title\.includes\(value\)\);/);
+  assert.match(app, /const detail = machine \? \(machineInTitle \? "" : machine\) : description;/);
+  assert.doesNotMatch(app, /function titleWithoutMachine\(/);
 });
 
 test("the module header does not count what the table below already lists, and the chooser says 'เลือกโมดูล' once", () => {
