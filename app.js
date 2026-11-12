@@ -266,6 +266,15 @@ const sandboxSupports = (entry) => !isSandboxMode() || entry.sandbox === true;
 // เป็น UX ล้วน — ฐานข้อมูลปฏิเสธบัญชีนี้ในทุก RPC/ตารางของโมดูลอื่นเอง (migration 20261019005000_lab_only_accounts.sql)
 const isLabOnly = () => window.MNP_LAB_ONLY.isLabOnly(state.employee);
 const homePath = () => (isLabOnly() ? window.MNP_LAB_ONLY.HOME : "dashboard");
+// แผนกที่เห็นเฉพาะบางโมดูล (แผนก ID เห็นแค่แจ้งซ่อม MT/IT): เมนู การ์ดโมดูล รายการใบ และหน้าของโมดูลอื่นถูกซ่อน
+// กติกาและรายชื่อแผนกอยู่ที่ modules/department-access.js — เป็น UX ล้วน สิทธิ์จริงยังตัดสินที่ฐานข้อมูล
+// โหมดทดสอบมีกติกาหน้าของตัวเอง (เหลือ NCR/QC) จึงไม่ใช้กติกาแผนกซ้อน ไม่งั้นสองด่านพากันวนไป-กลับ
+const deptAccessSubject = () => (isSandboxMode() ? null : state.employee);
+const deptModuleAllowed = (code) => window.MNP_DEPARTMENT_ACCESS.moduleAllowed(deptAccessSubject(), code);
+const isDeptRestricted = () => window.MNP_DEPARTMENT_ACCESS.isRestricted(deptAccessSubject());
+function moduleCodeForPage(path) {
+  return Object.values(REQUEST_MODULES).find((entry) => entry.enabled && typeof entry.pages?.[path] === "function")?.code ?? null;
+}
 function sandboxRouteAllowed(path, params) {
   if (path === "new" || path === "repair/new") return false;
   if (path === "requests") return params.get("mode") === "create";
@@ -284,6 +293,7 @@ function requestModuleNavLinks(active) {
   return Object.values(REQUEST_MODULES)
     .filter((entry) => entry.enabled && sandboxSupports(entry) && (entry.navAllowed?.(state.employee) ?? true))
     .filter((entry) => !isLabOnly() || window.MNP_LAB_ONLY.moduleAllowed(entry.code))
+    .filter((entry) => deptModuleAllowed(entry.code))
     .flatMap((entry) => entry.nav ?? [])
     .filter((item) => !item.sandboxOnly || isSandboxMode())
     .map((item) => {
@@ -304,7 +314,7 @@ function activeNavFor(active) {
 }
 function activeRequestModuleCodes() {
   const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled && !entry.standalone).map((entry) => entry.code);
-  return [...new Set([...REQUEST_MODULE_CODES, ...separateModuleCodes])];
+  return [...new Set([...REQUEST_MODULE_CODES, ...separateModuleCodes])].filter(deptModuleAllowed);
 }
 const ALLOWED_ATTACHMENT_TYPES = new Set([
   "image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain",
@@ -1932,7 +1942,7 @@ function shell(content, active, title, tabTitle = title) {
           ${requestModuleNavLinks(active)}
           ${isSandboxMode() || isLabOnly() ? "" : navLink("notifications", "การแจ้งเตือน", NAV_ICONS.notifications, active, { badge: state.unread })}
           <div class="nav-divider"></div>
-          ${employee.role?.code === "admin" && !isLabOnly() ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
+          ${employee.role?.code === "admin" && !isLabOnly() && !isDeptRestricted() ? navLink("admin", "ผู้ดูแลระบบ", NAV_ICONS.admin, active) : ""}
           ${navLink("profile", "ข้อมูลส่วนตัว", NAV_ICONS.profile, active)}
           <button class="nav-link nav-signout signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">
             <span class="nav-icon-wrap"><span class="nav-icon">${NAV_ICONS.signout}</span></span>
@@ -2112,6 +2122,7 @@ async function getPendingApprovals() {
   return (data ?? []).map((item) => ({ ...item, request: { ...relation(item.request), request_type: relation(relation(item.request)?.request_type) } })).filter((step) => {
     const request = step.request;
     if (!request?.id || step.step_order !== request.current_step) return false;
+    if (!deptModuleAllowed(request.request_type?.code)) return false;
     // เฉพาะ admin จริงเท่านั้นที่ข้ามได้ ต้องตรงกับ app_approval_decision เป๊ะ — เดิมรวม
     // factory_manager/general_manager ด้วย ทำให้เห็นปุ่มอนุมัติของขั้นที่ไม่ใช่ของตัวเอง
     // admin ที่เลือก "บทบาทที่ทำหน้าที่" ไว้ เห็นเฉพาะขั้นของบทบาทนั้น (ยังเปิดใบอื่นอนุมัติได้ตามสิทธิ์ admin)
@@ -2147,6 +2158,7 @@ async function getMyRepairActionItems() {
   return (data ?? [])
     .map((item) => ({ ...item, request_type: relation(item.request_type) }))
     .filter((request) => {
+      if (!deptModuleAllowed(request.request_type?.code)) return false;
       if (request.status === "pending_assign") {
         return DEPT_MANAGER_ROLE_CODES.includes(employee.role?.code) && employee.department_id === request.request_type?.owning_department_id;
       }
@@ -2201,8 +2213,13 @@ function queueTaskLabel(item) {
 function keepCodesTogether(escaped) {
   return String(escaped).replace(/[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+/g, (code) => (code.length <= 16 ? `<span class="nowrap">${code}</span>` : code));
 }
+// งาน NCR บนหน้าหลัก: เฉพาะเมื่อโมดูลเปิดและแผนกของผู้ใช้เห็นโมดูลนี้ (แผนก ID ไม่เห็น)
+function ncrHomeModule() {
+  const entry = requestModule("NCR_CAR");
+  return entry?.enabled && deptModuleAllowed(entry.code) ? entry.home ?? null : null;
+}
 async function loadHomeQueueItems() {
-  const ncrHome = requestModule("NCR_CAR")?.enabled ? requestModule("NCR_CAR").home ?? null : null;
+  const ncrHome = ncrHomeModule();
   const [pending, repairTasks, ncrItems] = await Promise.all([
     getPendingApprovals(),
     getMyRepairActionItems(),
@@ -2218,7 +2235,7 @@ async function renderDashboard(params = new URLSearchParams()) {
   const employee = state.employee;
   const rules = window.MNP_HOME_QUEUE;
   // NCR อยู่ในตาราง ncr_reports แยกจากคำร้อง โมดูลจึงดึงงานของตัวเอง (modules/module-ncr.js home)
-  const ncrHome = requestModule("NCR_CAR")?.enabled ? requestModule("NCR_CAR").home ?? null : null;
+  const ncrHome = ncrHomeModule();
   const [pending, repairTasks, directory, mineResult, ncrItems] = await Promise.all([
     getPendingApprovals(),
     getMyRepairActionItems(),
@@ -2251,7 +2268,7 @@ async function renderDashboard(params = new URLSearchParams()) {
   const queuedIds = new Set(items.map((item) => item.id));
   const mine = (mineResult.data ?? [])
     .map((row) => ({ ...row, request_type: relation(row.request_type) }))
-    .filter((row) => !queuedIds.has(row.id) && !(requestModule(row.request_type?.code)?.endsAtDecision && row.status === "approved"))
+    .filter((row) => deptModuleAllowed(row.request_type?.code) && !queuedIds.has(row.id) && !(requestModule(row.request_type?.code)?.endsAtDecision && row.status === "approved"))
     .map((row) => ({ at: row.created_at, html: `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" data-module="${requestPalette(row.request_type?.code)}" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>` }))
     // NCR ที่ฉันออกและยังไม่ปิด (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) เรียงรวมกับคำร้อง ใบใหม่ก่อน
     .concat(ncrItems.mine.map((ncr) => ({ at: ncr.created_at, html: `<li><a class="home-mine-row" href="${escapeHtml(ncrHref(ncr))}"><span class="home-mine-head"><span class="queue-item-icon" data-module="ncr" aria-hidden="true">${requestTypeIcon("NCR_CAR")}</span><span class="request-no">${escapeHtml(ncr.ncr_no)}</span></span><strong>${escapeHtml(ncr.product_name)}</strong>${progressTracker(ncr.status, false, { stages: ncrHome.PROGRESS_STAGES, label: ncrHome.statusLabel(ncr) })}</a></li>` })))
@@ -2941,7 +2958,7 @@ async function renderRequestsBoard(params, types) {
   if (error) throw error;
   const departments = await loadRequestDepartmentFilter(selected);
   const department = selectedFilterDepartment(params, departments);
-  const rows = (data ?? []).filter((row) => (!selected || row.type_code === selected.code)
+  const rows = (data ?? []).filter((row) => deptModuleAllowed(row.type_code) && (!selected || row.type_code === selected.code)
     && (status === "all" || status.split(",").includes(row.status))
     && (!department || row.department_code === department.sourceCode));
   const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
@@ -2974,7 +2991,8 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
   if (statuses.length) query = query.in("status", statuses);
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
-  return `<section class="request-list-panel">${requestRows(data ?? [], { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
+  const rows = (data ?? []).filter((row) => deptModuleAllowed(relation(row.request_type)?.code));
+  return `<section class="request-list-panel">${requestRows(rows, { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
 }
 
 async function renderRequests(params) {
@@ -3743,7 +3761,7 @@ async function renderRequestDetail(params) {
     loadEmployeeDirectory(),
   ]);
   if (requestResult.error) throw requestResult.error;
-  if (!requestResult.data) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
+  if (!requestResult.data || !deptModuleAllowed(relation(requestResult.data.request_type)?.code)) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
   for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult]) if (result.error) throw result.error;
   // คำตอบเป็นส่วนเสริม: โหลดไม่ได้ (เช่น ฐานข้อมูลยังไม่ได้ deploy 20261014100000) ต้องไม่ทำให้หน้าคำร้องพัง
   // และซ่อนฟอร์มตอบกลับไว้จนกว่าจะโหลดได้
@@ -5620,6 +5638,11 @@ async function renderRoute() {
   // บัญชี lab-only เปิดได้เฉพาะ MNP LAB กับข้อมูลส่วนตัว ที่อยู่อื่น (รวมที่พิมพ์เอง/ลิงก์เก่า) พากลับ LAB ก่อนเรียกข้อมูลใด ๆ
   if (isLabOnly() && !window.MNP_LAB_ONLY.routeAllowed(path)) {
     go(window.MNP_LAB_ONLY.HOME);
+    return;
+  }
+  // แผนกที่เห็นเฉพาะบางโมดูล: หน้าของโมดูลอื่นและหน้าผู้ดูแลระบบ (รวมลิงก์เก่า/พิมพ์เอง) พากลับหน้าหลัก
+  if (!window.MNP_DEPARTMENT_ACCESS.routeAllowed(deptAccessSubject(), path, moduleCodeForPage(path))) {
+    go("dashboard");
     return;
   }
   if (isSandboxMode() && !sandboxRouteAllowed(path, params)) {
