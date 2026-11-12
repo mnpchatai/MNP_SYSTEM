@@ -1244,8 +1244,11 @@ function registerTypeHtml(code, name) {
 }
 
 // รายการคำร้องตามสิทธิ์ (หน้ารายการของโมดูล และรายการทุกประเภทที่กรองสถานะจากแดชบอร์ด)
-function requestRows(requests, { showRequester = false, showType = false, directory = null, empty = EMPTY_REQUESTS } = {}) {
-  if (!requests.length) return emptyState("ยังไม่มีรายการในขณะนี้", empty);
+function requestRows(requests, { showRequester = false, showType = false, directory = null, empty = EMPTY_REQUESTS, params = null } = {}) {
+  if (!requests.length) {
+    const blank = params ? listEmptyOf(params) : { text: "ยังไม่มีรายการในขณะนี้", ...empty };
+    return emptyState(blank.text, blank);
+  }
   const columns = [
     { key: "no", label: "เลขที่", role: "no" },
     { key: "subject", label: "เรื่อง", role: "subject" },
@@ -1285,8 +1288,11 @@ function requestRows(requests, { showRequester = false, showType = false, direct
 /* กระดานติดตามสถานะที่ "ทุกคน" เห็นได้ — ข้อมูลมาจาก RPC app_request_status_board ซึ่งคืนเฉพาะ
    ฟิลด์ระดับติดตามสถานะ ไม่มีรายละเอียดอาการ/ไฟล์แนบ/ความเห็นผู้อนุมัติ ใบที่ผู้ใช้ไม่มีสิทธิ์
    เปิดดูเต็ม (can_open = false) จึงแสดงเป็นข้อความเฉย ๆ ไม่ทำเป็นลิงก์ */
-function statusBoardRows(rows, { showType = false } = {}) {
-  if (!rows.length) return emptyState("ยังไม่มีรายการในขณะนี้", EMPTY_REQUESTS);
+function statusBoardRows(rows, { showType = false, params = null } = {}) {
+  if (!rows.length) {
+    const blank = params ? listEmptyOf(params) : { text: "ยังไม่มีรายการในขณะนี้", ...EMPTY_REQUESTS };
+    return emptyState(blank.text, blank);
+  }
   const columns = [
     { key: "no", label: "เลขที่", role: "no" },
     { key: "subject", label: "เรื่อง", role: "subject" },
@@ -2081,6 +2087,14 @@ const loadingSkeleton = (rows = 4) => `<div class="skeleton" role="status">${'<s
 // หน้าว่าง: ไอคอน + ข้อความ + คำแนะนำสั้นๆ และปุ่มทำต่อ (ถ้ามี)
 const emptyState = (text, { hint = "", action = null } = {}) => `<div class="empty empty-state">${uiIcon("inbox")}<p>${escapeHtml(text)}</p>${hint ? `<small>${escapeHtml(hint)}</small>` : ""}${action ? `<a class="btn secondary small" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}</div>`;
 const EMPTY_REQUESTS = { hint: "คำร้องที่ตรงกับตัวกรองนี้จะแสดงที่นี่", action: { href: "#/new", label: "สร้างคำร้อง" } };
+// รายการว่างเพราะคำค้นหรือตัวกรอง: บอก "ไม่พบ" พร้อมล้างตัวกรอง ไม่ชวนสร้างคำร้อง (ผู้ใช้จะเข้าใจว่ายังไม่มีแล้วสร้างซ้ำ)
+// เหมือน RubberFlow ที่แยก "ยังไม่มี" กับ "ไม่พบ" · ไม่มีตัวกรองก็เป็นหน้าว่างเดิม
+function listEmptyOf(params) {
+  const filtered = Boolean((params?.get("q") ?? "").trim()) || Boolean(params?.get("dept")) || !["", "all"].includes(params?.get("status") ?? "");
+  return filtered
+    ? { text: "ไม่พบคำร้องที่ตรงกับคำค้นหรือตัวกรองนี้", hint: "ลองคำค้นอื่น หรือล้างตัวกรองเพื่อดูทุกใบ", action: { href: requestCenterUrl(params, { q: null, status: null, dept: null }), label: "ล้างตัวกรอง" } }
+    : { text: "ยังไม่มีรายการในขณะนี้", ...EMPTY_REQUESTS };
+}
 
 function loadingShell(active, title) {
   app.innerHTML = shell(loadingSkeleton(), active, title);
@@ -2786,7 +2800,7 @@ function bindModuleZoom(params) {
 }
 
 // หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
-// ทะเบียน NCR ไม่มีกระดาน จึงยังใช้ requestScopeSwitch
+// ทะเบียน NCR ไม่มีกระดาน จึงเรียกด้วย board: false (แท็บตำแหน่งเดียวกับโมดูลอื่น)
 function requestsViewTabs(params, { board: withBoard = true } = {}) {
   const board = params.get("view") === "board";
   const mine = !board && params.get("scope") === "mine";
@@ -2796,14 +2810,10 @@ function requestsViewTabs(params, { board: withBoard = true } = {}) {
   </nav>`;
 }
 
-// ขอบเขตของรายการตามสิทธิ์: ทุกใบที่มีสิทธิ์ดู / เฉพาะที่ฉันแจ้ง (คำอธิบายเรื่องสิทธิ์อยู่ใน title ไม่เป็นบรรทัดถาวร)
-function requestScopeSwitch(params) {
-  return requestsViewTabs(params, { board: false });
-}
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
 // module: หน้าเป็นของโมดูลเดียว ตัวเลือกสถานะจึงตามขั้นตอนของโมดูลนั้น (กระดานทุกโมดูลแสดงทุกสถานะ)
-function requestListFilters(params, { departments = null, placeholder, search = true, repair = false, module = false } = {}) {
+function requestListFilters(params, { departments = null, placeholder, search = true, repair = false, module = false, statusSelect: ownStatusSelect = null, statusApplied = null } = {}) {
   // ค่าที่ช่องแสดงต้องตรงกับที่รายการกรองจริง (knownRequestStatuses): ไม่รู้จักเลย = ทุกสถานะ, รู้จักค่าเดียว = ค่านั้น
   const known = knownRequestStatuses(params);
   const value = known.length === 0 ? "all" : known.length === 1 ? known[0] : known.join(",");
@@ -2815,14 +2825,14 @@ function requestListFilters(params, { departments = null, placeholder, search = 
     const labels = known.map((status) => statusLabel(status, repair));
     options.splice(1, 0, { value, label: labels.join(", "), href: requestCenterUrl(params, { status: value }) });
   }
-  const statusSelect = hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value });
+  const statusSelect = ownStatusSelect ?? hrefSelectHtml({ id: "request-filter-status", label: "สถานะ", options, value });
   // จอแคบ: ตัวกรองทั้งแถวพับอยู่หลังปุ่ม "ตัวกรอง (n)" (n = ตัวกรองที่ใช้อยู่) รายการจึงขึ้นในจอแรก จอกว้างเห็นทั้งแถวเสมอ
   // นับเฉพาะตัวกรองที่หน้านี้ใช้กรองจริง (คำค้นที่ค้างจากโมดูลอื่นซึ่งไม่มีช่องค้นหา หรือแผนกที่ไม่มีในรายการ ไม่นับ)
   // พับอยู่: ค่าที่กรองอยู่บอกใน title ของปุ่ม ไม่ต้องเปิดดู
   const department = departments ? selectedFilterDepartment(params, departments) : null;
   const query = search ? (params.get("q") ?? "").trim() : "";
   const applied = [
-    known.length ? `สถานะ ${known.map((status) => statusLabel(status, repair)).join(", ")}` : "",
+    ownStatusSelect ? statusApplied ?? "" : known.length ? `สถานะ ${known.map((status) => statusLabel(status, repair)).join(", ")}` : "",
     department ? `แผนก ${department.displayCode}` : "",
     query ? `ค้นหา "${query}"` : "",
   ].filter(Boolean);
@@ -2937,7 +2947,7 @@ async function renderRequestsBoard(params, types) {
   const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
     ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
     ${(data ?? []).length >= 500 ? `<p class="muted small board-note">แสดง 500 ใบล่าสุด ค้นด้วยเลขที่ใบเพื่อหาใบที่เก่ากว่า</p>` : ""}
-    <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected })}</section>`;
+    <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected, params })}</section>`;
   const content = selected ? `<div data-module="${requestPalette(selected.code)}">${boardContent}</div>` : boardContent;
   app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
@@ -2964,7 +2974,7 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
   if (statuses.length) query = query.in("status", statuses);
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
-  return `<section class="request-list-panel">${requestRows(data ?? [], { showRequester: !mineOnly, showType: !typeId, directory })}</section>`;
+  return `<section class="request-list-panel">${requestRows(data ?? [], { showRequester: !mineOnly, showType: !typeId, directory, params })}</section>`;
 }
 
 async function renderRequests(params) {
@@ -3016,11 +3026,12 @@ async function renderRequests(params) {
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
-    // ทะเบียน NCR มีตัวเลือกหมวดของตัวเอง แถวนี้จึงมีแค่ขอบเขต
-    list += `<div class="list-filters">${requestScopeSwitch(params)}</div>${await ncrModule.renderCenterList(params)}`;
+    // หัวรายการแบบเดียวกับโมดูลอื่น: แท็บขอบเขตด้านบน แล้วแถวตัวกรอง (ค้นหา + หมวดสถานะของ NCR) ที่พับบนมือถือ
+    const ncrStatus = ncrModule.centerStatusFilter(params);
+    list += `${requestListFilters(params, { placeholder: "ค้นหาเลขที่ NCR สินค้า ลูกค้า หรือข้อบกพร่อง", statusSelect: ncrStatus.html, statusApplied: ncrStatus.applied })}${await ncrModule.renderCenterList(params)}`;
   }
   // data-module ครอบทั้งหน้าของโมดูล: หัวตาราง แท็บ และเลขที่ใบใช้จานสีของโมดูลนั้น
-  const content = `<div data-module="${requestPalette(selected.code)}">${requestCenterHeader(types, params, null)}${selected.code === "NCR_CAR" ? "" : requestsViewTabs(params)}${list}</div>`;
+  const content = `<div data-module="${requestPalette(selected.code)}">${requestCenterHeader(types, params, null)}${requestsViewTabs(params, { board: selected.code !== "NCR_CAR" })}${list}</div>`;
   app.innerHTML = shell(content, "requests", "คำร้อง", requestTypeLabel(selected));
   bindShell();
   bindModuleZoom(params);

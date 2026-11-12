@@ -504,6 +504,15 @@
   // ---- ทะเบียน NCR (QA02-FM02) ----
   const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["loss", "รอข้อมูลการสูญเสีย"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
 
+  // หมวดสถานะของทะเบียนในหน้าคำร้อง: app.js วางในแถวตัวกรองชุดเดียวกับโมดูลอื่น (requestListFilters) · applied = ข้อความบนปุ่มตัวกรองที่พับอยู่
+  function centerStatusFilter(params) {
+    const filter = LIST_FILTERS.some(([value]) => value === params.get("ncrStatus")) ? params.get("ncrStatus") : "open";
+    return {
+      html: hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: requestCenterUrl(params, { ncrStatus: value }) })), value: filter }),
+      applied: filter === "open" ? "" : `สถานะ ${LIST_FILTERS.find(([value]) => value === filter)[1]}`,
+    };
+  }
+
   async function renderList(params, embedded = false) {
     if (!embedded) loadingShell("ncr", "ทะเบียน NCR");
     const statusParam = embedded ? "ncrStatus" : "status";
@@ -539,6 +548,9 @@
       for (const row of rows) row.lossPending = window.MNP_NCR_COSTS.lossDataPending(row.status, outcomes.get(row.id), window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id) ?? []));
       if (filter === "loss") rows = rows.filter((row) => row.lossPending);
     }
+    // ค้นหาในหน้าคำร้อง: เลขที่ สินค้า ลูกค้า หรือชนิดข้อบกพร่อง (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
+    const search = embedded ? (params.get("q") ?? "").trim().toLocaleLowerCase("th-TH") : "";
+    if (search) rows = rows.filter((row) => [row.ncr_no, row.product_name, row.customer_name, relation(row.defect_type)?.name_th].some((value) => String(value ?? "").toLocaleLowerCase("th-TH").includes(search)));
     // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
     const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
     // ผู้ปิด/ผู้ยกเลิกอาจเป็นคนที่ปิดบัญชีไปแล้ว จึงใช้รายชื่อที่รวมคนที่ไม่ใช้งานแล้ว
@@ -574,7 +586,9 @@
     };
     const body = rows.length
       ? `<section class="request-list-panel">${registerTableHtml({ label: "ทะเบียน NCR", columns, rows: rows.map(tableRow) })}</section>`
-      : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
+      : search
+        ? `<section class="card">${emptyState("ไม่พบ NCR ที่ตรงกับคำค้นนี้", { hint: "ลองคำค้นอื่น หรือล้างตัวกรองเพื่อดูทุกใบที่ยังไม่ปิด", action: { href: requestCenterUrl(params, { q: null, ncrStatus: null }), label: "ล้างตัวกรอง" } })}</section>`
+        : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     // หน้าทะเบียนแบบเดี่ยวใช้เฉพาะโหมดทดสอบ (ไม่มีหน้าคำร้อง ซึ่งเป็นที่อยู่ของปุ่ม "ออก NCR" และลิงก์แดชบอร์ดตามปกติ)
     // จึงต้องมีทางเข้าฟอร์มออกใบและแดชบอร์ดจากทะเบียนโดยตรง
@@ -584,7 +598,7 @@
       ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h1>ทะเบียน NCR</h1><p>NCR ที่คุณเกี่ยวข้อง</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
-      <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
+      ${embedded ? "" : `<div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>`}
       ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");
@@ -1217,6 +1231,7 @@
     },
 
     renderCenterList: (params) => renderList(params, true),
+    centerStatusFilter,
 
     home: { load: loadHomeItems, task: homeTask, statusLabel, PROGRESS_STAGES },
 
