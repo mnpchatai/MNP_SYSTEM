@@ -7,7 +7,7 @@
 //
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — ฟังก์ชันข้างในเรียก helper/ค่าคงที่ของ app.js
 // (sb, escapeHtml, showToast, friendlyError, setFormBusy, closePopup, statusLabel,
-// executionPlanLabels, inspectorOpinionLabels, renderRequestDetail ฯลฯ) ได้เพราะ hook ทุกตัวถูก
+// renderRequestDetail ฯลฯ) ได้เพราะ hook ทุกตัวถูก
 // เรียกหลัง app.js โหลดเสร็จแล้วเท่านั้น ห้ามเรียกของ app.js ตอนโหลดไฟล์นี้
 //
 // การคำนวณสิทธิ์ในไฟล์นี้ใช้แค่ตัดสินว่าจะแสดงปุ่มไหน ฐานข้อมูลเป็นตัวบังคับสิทธิ์จริง
@@ -17,6 +17,18 @@
   const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwfHj4_rNUfU9ZB4xjOpyJPxQSHucoT1baeJ0AFGaz46olWJ8UXU_pBLnKpCwG6KHprqA/exec";
 
   const docTypeLabels = { request: "ใบคำร้อง", repair: "ใบแจ้งซ่อม" };
+  // ชื่อของผลการซ่อมชุดเดียว ใช้ทั้งฟอร์มมอบหมายและข้อมูลเพิ่มเติม (ประวัติไม่ทวนผลการซ่อม)
+  const executionPlanLabels = {
+    immediate: "ดำเนินการได้ทันที",
+    need_purchase: "ต้องการสั่งซื้ออุปกรณ์",
+    use_existing: "ใช้อุปกรณ์ที่มีอยู่",
+  };
+  const inspectorOpinionLabels = {
+    send_repair: "ส่งซ่อม",
+    external: "เรียกช่างภายนอกมาซ่อม",
+    self_repair: "ซ่อมเอง",
+    buy_parts: "ซื้ออุปกรณ์มาทำเอง",
+  };
   // ช่องที่ต้องกรอกบอกแบบเดียวทั้งระบบ (เหมือน REQUIRED_MARK ของ app.js)
   const REQUIRED = ' <span class="field-required">(จำเป็น)</span>';
   // หลังขั้นซ่อมสำเร็จและวาดหน้าใหม่ โฟกัสไปที่หัวใบ (ไม่หลุดไปที่ตัวหน้า) โปรแกรมอ่านหน้าจออ่านต่อจากตรงนั้น

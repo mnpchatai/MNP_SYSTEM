@@ -311,17 +311,6 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
-const executionPlanLabels = {
-  immediate: "ดำเนินการได้ทันที",
-  need_purchase: "ต้องการสั่งซื้ออุปกรณ์",
-  use_existing: "ใช้อุปกรณ์ที่มีอยู่",
-};
-const inspectorOpinionLabels = {
-  send_repair: "ส่งซ่อม",
-  external: "เรียกช่างภายนอกมาซ่อม",
-  self_repair: "ซ่อมเอง",
-  buy_parts: "ซื้ออุปกรณ์มาทำเอง",
-};
 const verifyResultLabels = { pass: "ผ่าน — ใช้งานได้ปกติ", fail: "ไม่ผ่าน — ต้องซ่อมเพิ่มเติม" };
 const detailFieldLabels = {
   asset_code: "รหัสทรัพย์สิน/เครื่องจักร",
