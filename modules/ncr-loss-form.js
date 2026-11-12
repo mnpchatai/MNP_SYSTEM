@@ -25,7 +25,7 @@
     // ก่อนมีรายการแรก ไม่โชว์ช่องยอด 0.00 ฿ · แถวที่ยกเลิกแล้วก็นับ เพราะตารางด้านล่างยังแสดง
     const hasRows = losses.length > 0;
     return `${embedded ? '<div class="ncr-action-group ncr-loss-card"><h3>ความสูญเสีย</h3>' : '<section class="card ncr-card ncr-loss-card"><h2>ความสูญเสีย</h2>'}
-      ${full ? '<p class="muted small">เพิ่มได้หลายรายการ · ยืนยันยอดตามหลักฐาน ในรายการเดิม</p>' : estimateOnly ? '<p class="muted small">ใส่ยอดประมาณการได้หลายรายการ แล้วผู้ยืนยันยอดจะยืนยันให้</p>' : ""}
+      ${full ? '<p class="muted small">เพิ่มได้หลายรายการ · ยืนยันยอดจริงตามหลักฐานได้ในรายการที่บันทึกไว้</p>' : estimateOnly ? '<p class="muted small">ใส่ยอดประมาณการได้หลายรายการ แล้วผู้ยืนยันยอดจะยืนยันให้</p>' : ""}
       ${hasRows || editable ? `<div class="ncr-loss-overview"><dl class="ncr-loss-summary${editable ? " is-editable" : ""}" aria-label="สรุปความสูญเสีย">
         ${hasRows ? `<div><dt>สูญเสียยืนยันแล้ว</dt><dd>${formatBaht(summary.confirmed)}</dd></div>
         <div><dt>ชดเชยยืนยันแล้ว</dt><dd>${formatBaht(summary.recovery)}</dd></div>

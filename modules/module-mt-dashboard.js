@@ -404,6 +404,7 @@
     // นอกนั้นรายการด้านล่างไม่พิมพ์ซ้ำใบที่ "ต้องลงมือตอนนี้" แสดงแล้ว (แต่ยังนับในจำนวนทั้งหมด)
     const showAct = basis !== "backlog";
     const actTop = showAct ? model.priority(open, 10) : [];
+    const stageRepeatsAct = showAct && !filters.stage && open.length > 0 && open.length <= actTop.length;
     return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE}</h1><p>ไม่นับใบที่ยกเลิก · เวอร์ชันทดสอบ</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
@@ -411,8 +412,8 @@
         <div class="nd-summary" role="status"></div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
         ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop)}</section>` : ""}
-        <section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>
-        <section class="card nd-card nd-half" data-card="phase">${phaseHtml(phases)}</section>
+        ${stageRepeatsAct ? "" : `<section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>`}
+        <section class="card nd-card${stageRepeatsAct ? "" : " nd-half"}" data-card="phase">${phaseHtml(phases)}</section>
         <section class="card nd-card nd-half" data-card="machine">${machineHtml(machines, filters)}</section>
         <section class="card nd-card nd-half" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" data-card="deptrank">${deptRankHtml(depts, filters)}</section>

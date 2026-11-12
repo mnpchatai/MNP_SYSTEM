@@ -672,9 +672,9 @@
       forms.push(`<form class="ncr-action" data-action="respond" novalidate><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 3 — ตอบ NCR</h3>
         <fieldset class="field ncr-fieldset" data-field="causes"><legend>เกิดจาก (4M+E) ${REQUIRED}</legend>${checksHtml("causes", CAUSES, ncr.causes ?? [])}</fieldset>
-        <div class="field" data-field="root_cause"><label for="ncr-root-cause">สาเหตุของปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000">${escapeHtml(ncr.root_cause ?? "")}</textarea></div>
+        <div class="field" data-field="root_cause"><label for="ncr-root-cause">สาเหตุของปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000">${escapeHtml(ncr.root_cause ?? "")}</textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
         <div class="form-grid">
-          <div class="field full" data-field="correction"><label for="ncr-correction">แนวทางการแก้ไขปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea></div>
+          <div class="field full" data-field="correction"><label for="ncr-correction">แนวทางการแก้ไขปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
 
           <div class="field full" data-field="prevention"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ (ถ้ามี)</label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea><small>ส่งภายหลังได้หลังวิเคราะห์เสร็จ</small></div>
         </div>
@@ -814,7 +814,7 @@
       if (!candidates.length && !item.responder_id) return "";
       return `<form class="ncr-action ncr-responder-form" data-action="assign_responder" data-department-id="${escapeHtml(item.department_id)}"><div class="ncr-form-message"></div>
         <div class="field"><label for="ncr-assign-${escapeHtml(item.department_id)}">ผู้ตอบของ ${escapeHtml(relation(item.department)?.code ?? "")}</label>${responderSelectHtml(`ncr-assign-${item.department_id}`, candidates, { current: item.responder_id, directory })}</div>
-        <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ</button></div></form>`;
+        <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ ${escapeHtml(relation(item.department)?.code ?? "")}</button></div></form>`;
     }).join("");
     // เป็นงานที่ต้องกรอก จึงอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้เรียกวางให้)
     return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";

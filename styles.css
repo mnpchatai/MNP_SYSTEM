@@ -1080,7 +1080,8 @@ a.register-title:hover { color: var(--primary); }
 .queue-item-check input { width: 22px; height: 22px; margin: 0; accent-color: var(--primary); }
 .queue-item-main { min-width: 0; min-height: 64px; padding: 12px 14px; flex: 1 1 0; display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; color: inherit; background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .queue-item-check + .queue-item-main { padding-left: 0; }
-:is(ul, ol):has(> .queue-item > .queue-item-check) > .queue-item > .queue-item-main:first-child { padding-left: 44px; }
+@media (min-width: 761px) { :is(ul, ol):has(> .queue-item > .queue-item-check) > .queue-item > .queue-item-main:first-child { padding-left: 44px; } }
+@media (max-width: 760px) { .queue-item-due { margin-left: 0; } }
 .queue-item-main:focus-visible, .home-mine-row:focus-visible, .queue-done a:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .queue-item.is-selected:has(.queue-item-main:focus-visible) { box-shadow: none; }
 .queue-item-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: var(--radius-md); }
@@ -1693,6 +1694,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-summary { padding: 12px 14px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--text-body); line-height: 1.6; }
 .nd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .nd-tiles.five { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+@media (max-width: 760px) { .nd-tiles.five { grid-template-columns: repeat(2, minmax(0, 1fr)); } .nd-tiles.five > .nd-tile-pending { grid-column: 1 / -1; } }
 .nd-tile { min-width: 0; padding: 14px; display: grid; gap: 4px; align-content: start; background: var(--paper); border: 1px solid var(--card-border); box-shadow: var(--elev-1); border-radius: var(--radius-md); }
 .nd-tap { display: grid; gap: 4px; color: var(--ink); text-decoration: none; border-radius: var(--radius-md); }
 .nd-tap:hover .nd-value { text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 4px; }
