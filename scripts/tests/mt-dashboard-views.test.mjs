@@ -17,8 +17,8 @@ const machineLabelOf = machineLabelContext.fn;
 // ตัวกรองงานค้าง: รายการด้านล่างเป็นรายการใบค้างเอง จึงไม่ซ่อนใบที่ "ต้องลงมือตอนนี้" แสดงอยู่ (หน้าปกติไม่พิมพ์ใบเดียวกันสองที่)
 const OPEN = "&scope=open";
 
-async function render({ status = "assigned", technicians = ["t1"], directory, overdue = false, startedOn = null, requesterId = "requester", requesterName = "ผู้แจ้งในใบ", owners = [], ownerError = null, section = "drill", search = "" } = {}) {
-  const root = { innerHTML: "", addEventListener() {}, querySelector: () => null };
+async function render({ status = "assigned", technicians = ["t1"], directory, overdue = false, startedOn = null, requesterId = "requester", requesterName = "ผู้แจ้งในใบ", owners = [], ownerError = null, section = "drill", search = "", querySelector = () => null } = {}) {
+  const root = { innerHTML: "", addEventListener() {}, querySelector };
   const mtModule = {};
   const request = {
     id: "r1", request_no: "TEST-MT-001", status, current_step: 1, doc_type: "repair",
@@ -47,7 +47,7 @@ async function render({ status = "assigned", technicians = ["t1"], directory, ov
     escapeHtml, machineLabelOf, relation: (value) => value, bangkokToday: () => "2026-10-10",
     formatDate: (value) => value, statusBadge: (value) => `<span class="badge">${value}</span>`,
     loadEmployeeDirectory: async () => directory ?? new Map([["t1", { first_name: "สมชาย", last_name: "ใจดี" }]]),
-    URLSearchParams, console: { warn() {} },
+    URLSearchParams, console: { warn() {} }, CSS: { escape: (value) => value },
   });
   vm.runInContext(source, context);
   await mtModule.pages["mt-dashboard"](new URLSearchParams(`year=2026${search}`));
@@ -79,7 +79,7 @@ test("all assignees appear once and technician names are escaped", async () => {
 });
 
 test("missing assignment or directory data has a clear fallback", async () => {
-  assert.match(await render({ search: OPEN, technicians: [] }), /ช่างผู้รับผิดชอบ: ไม่พบข้อมูลช่างที่รับผิดชอบ/);
+  assert.match(await render({ search: OPEN, technicians: [] }), /ช่างผู้รับผิดชอบ: ยังไม่ได้มอบหมายช่าง/);
   assert.match(await render({ search: OPEN, directory: new Map() }),/ช่างผู้รับผิดชอบ: ช่าง \(ไม่พบชื่อ\)/);
 });
 
@@ -123,10 +123,17 @@ test("act-now role owners come from the scoped RPC, including managers and appro
 });
 
 test("act-now names have a clear fallback when data is absent, unavailable or stale", async () => {
-  assert.match(await render({ section: "act", technicians: [] }), who("ไม่พบชื่อผู้รับผิดชอบ"));
-  assert.match(await render({ section: "act", status: "pending_assign", ownerError: new Error("unavailable") }), who("ผู้จัดการแผนกซ่อมบำรุง: ไม่พบชื่อผู้รับผิดชอบ"));
-  assert.match(await render({ section: "act", status: "pending_assign", owners: [{ request_id: "r1", status: "pending_approval", full_name: "ผู้อนุมัติเดิม" }] }), who("ผู้จัดการแผนกซ่อมบำรุง: ไม่พบชื่อผู้รับผิดชอบ"));
-  assert.match(await render({ section: "act", status: "pending_approval", owners: [{ request_id: "r1", status: "pending_approval", current_step: 2, full_name: "ผู้อนุมัติขั้นถัดไป" }] }), who("ไม่พบชื่อผู้รับผิดชอบ"));
+  // ไม่มีคำว่า "ไม่พบ" ที่อ่านเหมือนระบบพัง: บอกว่ารออะไรอยู่ด้วยคำธรรมดา
+  assert.match(await render({ section: "act", technicians: [] }), who("ยังไม่ได้มอบหมายช่าง"));
+  // อ่านรายชื่อตามบทบาทไม่สำเร็จ: บอกเพียงตำแหน่งที่รอ (ขั้นอนุมัติชื่อขั้นบอกแล้ว จึงไม่มีบรรทัดล่าง)
+  assert.match(await render({ section: "act", status: "pending_assign", ownerError: new Error("unavailable") }), who("ผู้จัดการแผนกซ่อมบำรุง"));
+  const approvalFailed = await render({ section: "act", status: "pending_approval", ownerError: new Error("unavailable") });
+  assert.match(approvalFailed, /<td>รอผู้จัดการโรงงานอนุมัติ<\/td>/);
+  assert.doesNotMatch(approvalFailed, /ไม่พบ|<span class="nd-muted"><\/span>/);
+  // อ่านสำเร็จแต่ไม่มีผู้ถือบทบาทของขั้นนี้ (รวมข้อมูลของขั้นเดิม)
+  assert.match(await render({ section: "act", status: "pending_assign", owners: [{ request_id: "r1", status: "pending_approval", full_name: "ผู้อนุมัติเดิม" }] }), who("ผู้จัดการแผนกซ่อมบำรุง: ยังไม่ได้ตั้งผู้รับผิดชอบ"));
+  assert.match(await render({ section: "act", status: "pending_approval", owners: [{ request_id: "r1", status: "pending_approval", current_step: 2, full_name: "ผู้อนุมัติขั้นถัดไป" }] }), who("ยังไม่ได้ตั้งผู้อนุมัติ"));
+  assert.doesNotMatch(await render({ section: "page", technicians: [] }), /ไม่พบชื่อผู้รับผิดชอบ|ไม่พบข้อมูลช่างที่รับผิดชอบ/);
 });
 
 test("each request is on the page once: the drill list skips what act-now shows, and a backlog filter replaces act-now", async () => {
@@ -161,6 +168,40 @@ test("bar cards are marked for the two-column grid and wide tables are not", asy
   for (const card of ["stage", "phase", "machine", "tech"]) assert.match(page, new RegExp(`class="card nd-card nd-half" data-card="${card}"`));
   for (const card of ["act", "deptrank"]) assert.match(page, new RegExp(`class="card nd-card" data-card="${card}"`));
   assert.match(page, /class="card nd-card" id="nd-drill"/);
+});
+
+test("the due column shows the date only; the late pill is the one place that counts days", async () => {
+  const soon = await render({ section: "act" });
+  assert.match(soon, /<td>2026-10-15<\/td>/, "a date and nothing derived from it");
+  assert.doesNotMatch(soon, /อีก \d+ วัน|ครบกำหนดวันนี้|เลยมา/);
+  const late = await render({ section: "act", overdue: true });
+  assert.match(late, /<td>2026-10-02<\/td>/);
+  assert.equal(late.match(/เลย 8 วัน/g).length, 1, "the pill says it once; the date cell does not repeat it");
+  assert.doesNotMatch(late, /เลยมา/);
+});
+
+test("the oldest-job figure is not repeated in a banner above the tiles", async () => {
+  const page = await render({ section: "page" });
+  assert.match(page, /<div class="nd-summary" role="status"><\/div>/, "empty, so the page hides it");
+  assert.doesNotMatch(page, /ใบที่ค้างนานสุด/);
+  assert.equal(page.match(/ค้างมา<\/th>/g).length, 1);
+  assert.match(source, /\["ค้างนานสุด"/, "still available once, in the tapped stage detail");
+});
+
+// โครงจำลองของ DOM แค่พอให้ placeDrill ทำงาน: การ์ดเป็นพี่น้องกัน มี class และ after()
+test("the filtered list goes after the right card of a half-width pair, so no half card is left alone in its row", async () => {
+  const place = async (classes, hostAt) => {
+    const cards = classes.map((cls, index) => ({ name: `c${index}`, classList: { contains: (name) => cls.split(" ").includes(name) }, after(node) { node.placedAfter = this.name; } }));
+    cards.forEach((card, index) => { card.previousElementSibling = cards[index - 1] ?? null; card.nextElementSibling = cards[index + 1] ?? null; });
+    const drill = { placedAfter: null };
+    await render({ section: "page", search: OPEN, querySelector: (selector) => (selector === "#nd-drill" ? drill : selector === ".nd-summary" ? { closest: () => cards[hostAt] } : null) });
+    return drill.placedAfter;
+  };
+  const layout = ["card", "card nd-half", "card nd-half", "card nd-half", "card nd-half", "card"];
+  assert.equal(await place(layout, 1), "c2", "after the pair, not between the halves");
+  assert.equal(await place(layout, 2), "c2");
+  assert.equal(await place(layout, 3), "c4", "the second pair");
+  assert.equal(await place(layout, 5), "c5", "a full-width card is unchanged");
 });
 
 test("act-now badge counts a waiting job from the assigned start date and a late job from the expected date", async () => {

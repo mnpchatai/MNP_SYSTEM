@@ -338,14 +338,18 @@
   }
 
   function paretoHtml(list, filters) {
-    const items = model.pareto(list, filters, filters.sort);
-    const byNet = filters.sort === "net";
+    // ยังไม่มีบาทที่ยืนยันเลย (ผลรวม 0) แท่งตามบาทจะว่างทั้งที่มี NCR อยู่ จึงเรียงตามจำนวนใบแทนโดยอัตโนมัติ และบอกในบรรทัดเดียว
+    const netItems = model.pareto(list, filters, "net");
+    const fellBack = filters.sort === "net" && !netItems.length && list.length > 0;
+    const byNet = filters.sort === "net" && !fellBack;
+    const items = fellBack ? model.pareto(list, filters, "count") : filters.sort === "net" ? netItems : model.pareto(list, filters, filters.sort);
     const resolve = (key) => {
       const item = items.find((entry) => entry.key === key);
       return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
     };
     return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย · เมื่อเรียงตามบาท ใบที่มีแต่ประมาณการไม่ปรากฏในแท่ง</p></div>
-      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
+      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}"${fellBack ? ' title="ยังไม่มีบาทที่ยืนยัน"' : ""}>เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
+      ${fellBack ? `<p class="nd-hint">ยังไม่มีบาทที่ยืนยันในช่วงนี้ จึงเรียงตามจำนวนใบ</p>` : ""}
       ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", resolve, valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
       <div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("pareto", "แท่ง", resolve)}`;
@@ -487,7 +491,16 @@
     const key = drillAnchor ?? (hasDrillFilter(lastFilters) ? "controls" : null);
     if (!key) return; // ยังไม่ได้กรอง: เป็นรายการประกอบตัวเลขทั้งหมด คงไว้ท้ายหน้า ไม่ดันการ์ดอื่นลงไป
     const host = key === "controls" ? root.querySelector(".nd-summary") : root.querySelector(`[data-card="${CSS.escape(key)}"]`);
-    (host?.closest(".nd > *") ?? root.querySelector(".nd-summary"))?.after(drill);
+    (pairEnd(host?.closest(".nd > *")) ?? root.querySelector(".nd-summary"))?.after(drill);
+  }
+  // การ์ด nd-half วางเป็นคู่ซ้าย-ขวาในจอกว้าง รายการที่กรองแล้วเต็มแถว ถ้าต่อท้ายการ์ดซ้ายของคู่ การ์ดขวาจะตกลงไปอยู่ลำพังอีกแถว
+  // จึงวางหลังการ์ดขวาของคู่แทน (การ์ดที่ไม่ใช่ nd-half คืนตัวเดิม)
+  function pairEnd(card) {
+    if (!card?.classList?.contains("nd-half")) return card;
+    let index = 0;
+    for (let node = card.previousElementSibling; node?.classList.contains("nd-half"); node = node.previousElementSibling) index += 1;
+    const next = card.nextElementSibling;
+    return index % 2 === 0 && next?.classList.contains("nd-half") ? next : card;
   }
   const hasDrillFilter = (filters) => Boolean(filters && (filters.scope || filters.dept || filters.defect || filters.source || filters.cause || filters.loss));
 

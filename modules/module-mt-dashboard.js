@@ -55,16 +55,23 @@
   function actionOwner(row) {
     const stage = model.STAGE_BY_KEY[row.stage];
     let names = "";
+    let empty = "";
     if (row.stage === "start" || row.stage === "repair") {
       names = row.technicianIds.map(techName).join(", ");
+      empty = "ยังไม่ได้มอบหมายช่าง";
     } else if (row.stage === "more_info" || row.stage === "verify") {
       const person = cache.directory.get(row.requester_id);
       names = person ? [person.first_name, person.last_name].filter(Boolean).join(" ") : row.requester_name;
+      empty = "ไม่ได้ระบุชื่อผู้แจ้ง";
     } else {
       names = (cache.roleOwners.get(row.id) ?? []).filter((owner) => owner.status === row.status && owner.current_step === row.current_step)
         .map((owner) => `${owner.full_name}${owner.is_fallback ? " (รับแทน)" : ""}`).join(", ");
+      // อ่านรายชื่อตามบทบาทไม่สำเร็จ = ไม่รู้ชื่อ บอกเพียงตำแหน่งที่รอ (ชื่อขั้นบอกแล้วในขั้นอนุมัติ จึงไม่มีบรรทัดล่าง) ·
+      // อ่านสำเร็จแต่ไม่มีใครถือบทบาทนี้ = ยังไม่ได้ตั้งผู้รับผิดชอบ
+      if (!names && cache.roleOwnersFailed) return ownerNote(stage) ? stage.owner : "";
+      empty = row.stage === "assign" ? "ยังไม่ได้ตั้งผู้รับผิดชอบ" : "ยังไม่ได้ตั้งผู้อนุมัติ";
     }
-    const who = names || "ไม่พบชื่อผู้รับผิดชอบ";
+    const who = names || empty;
     return ownerNote(stage) ? `${stage.owner}: ${who}` : who;
   }
   const machineTitle = (rows, key) => {
@@ -107,6 +114,7 @@
       verifications: row.request_verifications ?? [],
     })), today);
     const roleOwners = new Map();
+    let roleOwnersFailed = false;
     const roleRequestIds = rows.filter((row) => row.stage === "assign" || row.stage === "approve_fm" || row.stage === "approve_gm").map((row) => row.id);
     try {
       for (let offset = 0; offset < roleRequestIds.length; offset += 500) {
@@ -117,9 +125,10 @@
         }
       }
     } catch (error) {
+      roleOwnersFailed = true;
       console.warn("โหลดชื่อผู้รับผิดชอบตามบทบาทสำหรับแดชบอร์ด MT ไม่สำเร็จ", error);
     }
-    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows, directory, roleOwners };
+    cache = { employeeId, loadedAt: Date.now(), today, typeId, rows, directory, roleOwners, roleOwnersFailed };
     return cache;
   }
 
@@ -210,14 +219,6 @@
       <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่แจ้ง</p>`;
   }
 
-  function summaryHtml(backSums, stages) {
-    // งานค้าง เลยกำหนด และด่วน อยู่บนการ์ดตัวเลข ขั้นที่ค้างมากสุดเป็นแถบเข้มใน "งานค้างอยู่ที่ใคร" แล้ว
-    // บรรทัดนี้บอกเฉพาะใบที่ค้างนานสุด (ค่านี้ไม่อยู่บนแถบ แถบแสดงค่าเฉลี่ย)
-    if (!backSums.open) return "";
-    const oldest = [...stages].filter((stage) => stage.count).sort((a, b) => b.maxDays - a.maxDays)[0];
-    return oldest?.maxDays > 0 ? `ใบที่ค้างนานสุดอยู่ขั้น "${esc(oldest.label)}" ${fmtNumber(oldest.maxDays)} วัน` : "";
-  }
-
   function tilesHtml(filters, period, back) {
     const list = (lines) => `<ul class="nd-lines">${lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>`;
     const quality = [["ใบที่ถูกตรวจรับแล้ว", fmtCount(period.verified)], ["เคยตรวจรับไม่ผ่าน", fmtCount(period.verifyFailed)], ["ขอข้อมูลเพิ่ม (เคยถูกส่งกลับให้ผู้แจ้ง)", `${fmtCount(period.moreInfo)} (${fmtPercent(period.moreInfoRate)})`], ["ไม่อนุมัติ", fmtCount(period.rejected)]];
@@ -256,13 +257,9 @@
       ${detailHintIfIdle("stage", "แถบขั้นตอน", resolve)}`;
   }
 
-  function actHtml(open, top, today) {
-    const dueCell = (row) => {
-      if (!row.work_expected_date) return `<span class="nd-muted">ยังไม่กำหนด</span>`;
-      if (row.overdue) return `${esc(formatDate(row.work_expected_date))}<br><span class="nd-muted">เลยมา ${fmtNumber(row.daysOverdue)} วัน</span>`;
-      const left = model.daysBetween(today, row.work_expected_date);
-      return `${esc(formatDate(row.work_expected_date))}<br><span class="nd-muted">${left > 0 ? `อีก ${fmtNumber(left)} วัน` : left === 0 ? "ครบกำหนดวันนี้" : ""}</span>`;
-    };
+  function actHtml(open, top) {
+    // ช่องกำหนดเสร็จบอกวันที่อย่างเดียว ไม่พิมพ์จำนวนวันที่เหลือ/เลยมาคู่กับวันที่ — ใบที่เลยกำหนดมีป้ายแดง "เลย N วัน" ที่ช่องแรกอยู่แล้ว
+    const dueCell = (row) => (row.work_expected_date ? esc(formatDate(row.work_expected_date)) : `<span class="nd-muted">ยังไม่กำหนด</span>`);
     // ใบที่รอช่างเริ่มงานนับเลยจากวันเริ่มงานที่หัวหน้าช่างมอบหมาย ใบที่เลยกำหนดเสร็จแล้วนับจากวันเสร็จ
     const latePill = (row) => row.overdue
       ? ` <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลย ${fmtNumber(row.daysOverdue)} วัน</span>`
@@ -272,7 +269,7 @@
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่จบ เรียงจากเลยกำหนด (วันเริ่มงานหรือวันเสร็จที่หัวหน้าช่างมอบหมาย) ก่อน แล้วด่วน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
         const stage = model.STAGE_BY_KEY[row.stage];
-        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(stage?.label ?? "")}<br><span class="nd-muted">${esc(actionOwner(row))}</span></td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
+        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(stage?.label ?? "")}${actionOwner(row) ? `<br><span class="nd-muted">${esc(actionOwner(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
       }).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open", stage: "" })}">ดูงานค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}`;
   }
@@ -359,7 +356,7 @@
       const badge = row.isOpen ? `<span class="badge ${esc(row.status)}">${esc(model.STAGE_BY_KEY[row.stage]?.short ?? row.status)}</span>` : statusBadge(row.status, true);
       const status = row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
       if (row.stage !== "start" && row.stage !== "repair") return status;
-      const names = row.technicianIds.map(techName).join(", ") || "ไม่พบข้อมูลช่างที่รับผิดชอบ";
+      const names = row.technicianIds.map(techName).join(", ") || "ยังไม่ได้มอบหมายช่าง";
       return `${status}<br><span class="nd-muted">ช่างผู้รับผิดชอบ: ${esc(names)}</span>`;
     };
     const timeCell = (row) => (row.isCompleted ? fmtDays(row.cycleDays) : row.isOpen ? `ค้าง ${fmtNumber(row.daysInStatus)} วัน` : "—");
@@ -406,9 +403,9 @@
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
-        <div class="nd-summary" role="status">${summaryHtml(back, stages)}</div>
+        <div class="nd-summary" role="status"></div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
-        ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop, today)}</section>` : ""}
+        ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop)}</section>` : ""}
         <section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>
         <section class="card nd-card nd-half" data-card="phase">${phaseHtml(phases)}</section>
         <section class="card nd-card nd-half" data-card="machine">${machineHtml(machines, filters)}</section>
@@ -460,7 +457,16 @@
     const key = drillAnchor ?? (hasDrillFilter(lastFilters) ? "controls" : null);
     if (!key) return; // ยังไม่ได้กรอง: เป็นรายการประกอบตัวเลขทั้งหมด คงไว้ท้ายหน้า ไม่ดันการ์ดอื่นลงไป
     const host = key === "controls" ? root.querySelector(".nd-summary") : root.querySelector(`[data-card="${CSS.escape(key)}"]`);
-    (host?.closest(".nd > *") ?? root.querySelector(".nd-summary"))?.after(drill);
+    (pairEnd(host?.closest(".nd > *")) ?? root.querySelector(".nd-summary"))?.after(drill);
+  }
+  // การ์ด nd-half วางเป็นคู่ซ้าย-ขวาในจอกว้าง รายการที่กรองแล้วเต็มแถว ถ้าต่อท้ายการ์ดซ้ายของคู่ การ์ดขวาจะตกลงไปอยู่ลำพังอีกแถว
+  // จึงวางหลังการ์ดขวาของคู่แทน (การ์ดที่ไม่ใช่ nd-half คืนตัวเดิม)
+  function pairEnd(card) {
+    if (!card?.classList?.contains("nd-half")) return card;
+    let index = 0;
+    for (let node = card.previousElementSibling; node?.classList.contains("nd-half"); node = node.previousElementSibling) index += 1;
+    const next = card.nextElementSibling;
+    return index % 2 === 0 && next?.classList.contains("nd-half") ? next : card;
   }
   const hasDrillFilter = (filters) => Boolean(filters && (filters.scope || filters.stage || filters.machine || filters.tech || filters.dept));
 

@@ -296,8 +296,8 @@ const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll(
 const viewSource = readFileSync(new URL("../../modules/module-ncr-dashboard.js", import.meta.url), "utf8");
 const STATUS_LABELS = { awaiting_disposition: "รอผู้จัดการโรงงานพิจารณา", awaiting_response: "รอแผนกตอบ", awaiting_followup: "รอ QA ติดตามผล", awaiting_signoff: "รอลงนามปิด", awaiting_info: "รอข้อมูลเพิ่มเติม", closed: "ปิดแล้ว" };
 
-async function renderView({ reports = [], search = "", section = "page", losses = [] } = {}) {
-  const root = { innerHTML: "", addEventListener() {}, querySelector: () => null };
+async function renderView({ reports = [], search = "", section = "page", losses = [], querySelector = () => null } = {}) {
+  const root = { innerHTML: "", addEventListener() {}, querySelector };
   const ncrModule = { shared: { STATUS_LABELS, SOURCES: { in_process: "ระหว่างผลิต (In-Process)" }, CAUSES: { man: "บุคลากร" }, LOSS_TYPES: { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ" }, todayBangkok: () => TODAY, formatQty: (value) => String(value) } };
   const tables = {
     ncr_reports: reports.map((item) => ({
@@ -313,7 +313,7 @@ async function renderView({ reports = [], search = "", section = "page", losses 
     window: { MNP_REQUEST_MODULES: { NCR_CAR: ncrModule }, MNP_NCR_DASHBOARD: model, scrollY: 0, scrollTo() {} },
     document: { getElementById: () => root, activeElement: null },
     sb: { from: sbQuery }, state: { employee: { id: "viewer" } }, app: { innerHTML: "" }, shell: (html) => html, bindShell() {}, loadingShell() {},
-    escapeHtml, relation: (value) => value, formatDate: (value) => value, URLSearchParams, console,
+    escapeHtml, relation: (value) => value, formatDate: (value) => value, URLSearchParams, console, CSS: { escape: (value) => value },
   });
   vm.runInContext(viewSource, context);
   await ncrModule.pages["ncr-dashboard"](new URLSearchParams(`year=2026${search}`));
@@ -358,6 +358,44 @@ test("act-now says who is waited on once: the status names the role, a second li
   assert.match(await act("awaiting_signoff"), /<td>รอลงนามปิด<\/td>/);
   assert.match(await act("awaiting_followup", { prevention: "แนวทางป้องกัน" }), /<td>รอ QA ติดตามผล<\/td>/);
   assert.match(await act("awaiting_followup"), /<td>รอ QA ติดตามผล<br><span class="nd-muted">แผนก RB ส่งแนวทางป้องกัน<\/span><\/td>/);
+});
+
+test("pareto falls back to the count when no baht is confirmed, and says so once", async () => {
+  const pareto = (html) => html.split('data-card="pareto"')[1].split("</section>")[0];
+  const noBaht = pareto(await renderView({ reports: [NCR_ONE] }));
+  assert.doesNotMatch(noBaht, /ไม่มีข้อมูลในช่วงที่เลือก/, "NCRs exist, so the chart is not empty");
+  assert.match(noBaht, /<span class="nd-val">1 ใบ<\/span>/, "bars are counted in reports");
+  assert.match(noBaht, /<p class="nd-hint">ยังไม่มีบาทที่ยืนยันในช่วงนี้ จึงเรียงตามจำนวนใบ<\/p>/);
+  assert.match(noBaht, /aria-current="false"[^>]*>เรียงตามบาท<\/a><a [^>]*aria-current="true">เรียงตามจำนวนใบ/, "the sort control shows the count as the active choice");
+  const withBaht = pareto(await renderView({ reports: [NCR_ONE], losses: [{ ncr_id: "n1", loss_type: "scrap", amount: 500, cost_status: "confirmed", entry_kind: "loss", incurred_on: "2026-10-01" }] }));
+  assert.match(withBaht, /500 ฿/);
+  assert.doesNotMatch(withBaht, /จึงเรียงตามจำนวนใบ/);
+  assert.match(withBaht, /aria-current="true">เรียงตามบาท/);
+  const none = pareto(await renderView({ reports: [] }));
+  assert.match(none, /ไม่มีข้อมูลในช่วงที่เลือก/, "no NCR at all keeps the empty line");
+  assert.doesNotMatch(none, /จึงเรียงตามจำนวนใบ/);
+});
+
+// โครงจำลองของ DOM แค่พอให้ placeDrill ทำงาน: การ์ดเป็นพี่น้องกัน มี class และ after()
+function fakeBoard(classes) {
+  const cards = classes.map((cls, index) => ({ name: `c${index}`, cls, classList: { contains: (name) => cls.split(" ").includes(name) }, after(node) { node.placedAfter = this.name; } }));
+  cards.forEach((card, index) => { card.previousElementSibling = cards[index - 1] ?? null; card.nextElementSibling = cards[index + 1] ?? null; });
+  const drill = { placedAfter: null };
+  return { cards, drill };
+}
+
+test("the filtered list goes after the right card of a half-width pair, so no half card is left alone in its row", async () => {
+  const place = async (classes, hostAt) => {
+    const board = fakeBoard(classes);
+    await renderView({ reports: [NCR_ONE], search: "&scope=open", querySelector: (selector) => (selector === "#nd-drill" ? board.drill : selector === ".nd-summary" ? { closest: () => board.cards[hostAt] } : null) });
+    return board.drill.placedAfter;
+  };
+  const layout = ["card", "card", "card nd-half", "card nd-half", "card"];
+  assert.equal(await place(layout, 2), "c3", "after the pair, not between the halves");
+  assert.equal(await place(layout, 3), "c3", "the right card of a pair keeps its place");
+  assert.equal(await place(layout, 1), "c1", "a full-width card is unchanged");
+  assert.equal(await place(["card nd-half", "card nd-half", "card nd-half", "card nd-half"], 2), "c3", "the second pair of four");
+  assert.equal(await place(["card nd-half", "card nd-half", "card nd-half"], 2), "c2", "an odd last card has no partner");
 });
 
 test("pareto and loss cards are marked for the two-column grid; the department table is not", async () => {
