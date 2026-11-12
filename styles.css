@@ -1704,6 +1704,11 @@ tr.ncr-voided td .muted { text-decoration: none; }
 }
 .nd-sub h3 { margin: 0; font-size: var(--text-body); }
 .nd-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+/* แดชบอร์ด: จอ ≥1200px การ์ดที่ติด nd-half วางสองคอลัมน์ ส่วนอื่น (แถวตัวเลข ตาราง การ์ดแนวโน้ม) เต็มแถว ต่ำกว่านั้นคอลัมน์เดียว */
+@media (min-width: 1200px) {
+  .nd { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nd > :not(.nd-half) { grid-column: 1 / -1; }
+}
 .nd-hint { margin: 0; color: var(--muted); font-size: var(--text-meta); }
 .nd-muted { color: var(--muted); font-size: var(--text-meta); }
 .nd-nowrap { white-space: nowrap; }
