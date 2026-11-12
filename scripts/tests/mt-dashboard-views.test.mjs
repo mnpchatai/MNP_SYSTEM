@@ -139,8 +139,8 @@ test("act-now names have a clear fallback when data is absent, unavailable or st
 test("each request is on the page once: the drill list skips what act-now shows, and a backlog filter replaces act-now", async () => {
   const page = await render({ section: "page" });
   assert.equal(page.match(/>TEST-MT-001</g).length, 1, "listed in act-now only");
-  assert.match(page, /ทั้งหมด <b>1<\/b> ใบ · ไม่แสดงซ้ำ 1 ใบที่อยู่ใน “ต้องลงมือตอนนี้”/, "the total still matches the tile");
-  assert.match(page, /ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว/);
+  // รอบ 11: ทุกใบอยู่ใน "ต้องลงมือตอนนี้" แล้ว จึงไม่มีการ์ดรายการประกอบตัวเลขที่บอกแค่ว่าไม่มีอะไรเพิ่ม
+  assert.doesNotMatch(page, /id="nd-drill"|ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว/, "no card that only says nothing more");
   const filtered = await render({ section: "page", search: OPEN });
   assert.equal(filtered.match(/>TEST-MT-001</g).length, 1, "the backlog list is the only place");
   assert.doesNotMatch(filtered, /data-card="act"|ไม่แสดงซ้ำ/);
@@ -168,7 +168,8 @@ test("bar cards are marked for the two-column grid and wide tables are not", asy
   const page = await render({ section: "page" });
   for (const card of ["stage", "phase", "machine", "tech"]) assert.match(page, new RegExp(`class="card nd-card nd-half" data-card="${card}"`));
   for (const card of ["act", "deptrank"]) assert.match(page, new RegExp(`class="card nd-card" data-card="${card}"`));
-  assert.match(page, /class="card nd-card" id="nd-drill"/);
+  // รายการประกอบตัวเลข (เมื่อมีใบที่ไม่อยู่ใน act-now) เป็นการ์ดเต็มแถว
+  assert.match(await render({ section: "page", status: "completed" }), /class="card nd-card" id="nd-drill"/);
 });
 
 test("the due column shows the date only; the late pill is the one place that counts days", async () => {

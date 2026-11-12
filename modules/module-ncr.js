@@ -504,6 +504,15 @@
   // ---- ทะเบียน NCR (QA02-FM02) ----
   const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["loss", "รอข้อมูลการสูญเสีย"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
 
+  // หมวดสถานะของทะเบียนในหน้าคำร้อง: app.js วางในแถวตัวกรองชุดเดียวกับโมดูลอื่น (requestListFilters) · applied = ข้อความบนปุ่มตัวกรองที่พับอยู่
+  function centerStatusFilter(params) {
+    const filter = LIST_FILTERS.some(([value]) => value === params.get("ncrStatus")) ? params.get("ncrStatus") : "open";
+    return {
+      html: hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: requestCenterUrl(params, { ncrStatus: value }) })), value: filter }),
+      applied: filter === "open" ? "" : `สถานะ ${LIST_FILTERS.find(([value]) => value === filter)[1]}`,
+    };
+  }
+
   async function renderList(params, embedded = false) {
     if (!embedded) loadingShell("ncr", "ทะเบียน NCR");
     const statusParam = embedded ? "ncrStatus" : "status";
@@ -539,6 +548,9 @@
       for (const row of rows) row.lossPending = window.MNP_NCR_COSTS.lossDataPending(row.status, outcomes.get(row.id), window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id) ?? []));
       if (filter === "loss") rows = rows.filter((row) => row.lossPending);
     }
+    // ค้นหาในหน้าคำร้อง: เลขที่ สินค้า ลูกค้า หรือชนิดข้อบกพร่อง (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
+    const search = embedded ? (params.get("q") ?? "").trim().toLocaleLowerCase("th-TH") : "";
+    if (search) rows = rows.filter((row) => [row.ncr_no, row.product_name, row.customer_name, relation(row.defect_type)?.name_th].some((value) => String(value ?? "").toLocaleLowerCase("th-TH").includes(search)));
     // ระบุชื่อผู้รับผิดชอบใต้สถานะ — ถ้าโหลดรายชื่อไม่ได้ก็แสดงเฉพาะตำแหน่ง/แผนก ไม่ให้ทะเบียนทั้งหน้าพัง
     const staff = rows.some((row) => OPEN_STATUSES.includes(row.status)) ? await loadNcrStaff().catch(() => []) : [];
     // ผู้ปิด/ผู้ยกเลิกอาจเป็นคนที่ปิดบัญชีไปแล้ว จึงใช้รายชื่อที่รวมคนที่ไม่ใช้งานแล้ว
@@ -574,7 +586,10 @@
     };
     const body = rows.length
       ? `<section class="request-list-panel">${registerTableHtml({ label: "ทะเบียน NCR", columns, rows: rows.map(tableRow) })}</section>`
-      : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
+      : embedded && (search || filter !== "open")
+        ? `<section class="card">${emptyState(search ? "ไม่พบ NCR ที่ตรงกับคำค้นนี้" : "ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น", { hint: "ล้างตัวกรองเพื่อดูทุกใบที่ยังไม่ปิด", action: { href: requestCenterUrl(params, { q: null, ncrStatus: null }), label: "ล้างตัวกรอง" } })}</section>`
+        : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
+    const capped = (data ?? []).length >= 300 ? `<p class="muted small">แสดงและค้นหาใน 300 ใบล่าสุดของหมวดนี้</p>` : "";
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     // หน้าทะเบียนแบบเดี่ยวใช้เฉพาะโหมดทดสอบ (ไม่มีหน้าคำร้อง ซึ่งเป็นที่อยู่ของปุ่ม "ออก NCR" และลิงก์แดชบอร์ดตามปกติ)
     // จึงต้องมีทางเข้าฟอร์มออกใบและแดชบอร์ดจากทะเบียนโดยตรง
@@ -584,8 +599,8 @@
       ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h1>ทะเบียน NCR</h1><p>NCR ที่คุณเกี่ยวข้อง</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
-      <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
-      ${body}`;
+      ${embedded ? "" : `<div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>`}
+      ${capped}${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");
     bindShell();
@@ -907,15 +922,14 @@
     const heading = `<a class="request-back-link" href="#/ncr" title="กลับไปรายการ NCR/CAR">‹ กลับไปรายการ</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
         <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
-        <h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>${headFacts}
+        <h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>
+        <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${headFacts}
       </header>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${work.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
     const part1 = `
       ${partOpening(1, "ผู้รายงาน/ผู้ตรวจสอบ", "ข้อมูลสินค้าและรายละเอียดความไม่สอดคล้อง")}
-        ${partField("วันที่ออก", formatDate(ncr.issue_date), false, "calendar")}
-        ${partField("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`, false, "person")}
         ${partField("รหัสสินค้า", escapeHtml(ncr.product_code ?? "—"), false, "product")}
         ${partField("ลูกค้า/พ่อค้า", `${escapeHtml(ncr.customer_name ?? "—")}${ncr.customer_code ? ` (${escapeHtml(ncr.customer_code)})` : ""}`, false, "building")}
         ${partField("ใบสั่งซื้อ/ใบส่งของ · ล็อต", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
@@ -969,8 +983,8 @@
         ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
-    const historySection = `
-      <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
+    // การ์ดประวัติเอกสารชิ้นเดียวกับหน้าคำร้อง/MT (historyCardHtml ใน app.js) แถวเดียวกัน: เหตุการณ์ · ผู้ทำ · หมายเหตุ · เวลา
+    const historySection = historyCardHtml((historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p class="timeline-item-detail">${escapeHtml(personName(directory, item.changed_by))}</p>${item.note ? `<p class="timeline-item-message">${escapeHtml(item.note)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.changed_at)}">${formatDate(item.changed_at, true)}</time></div>`).join(""));
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
     const part3Filled = Boolean(ncr.responded_at || ncr.root_cause || ncr.correction || ncr.prevention);
     const part4Filled = Boolean(ncr.followed_up_at || ncr.followup_note || ncr.signoff_qa_at || ncr.signoff_factory_at || ncr.signoff_gm_at || ncr.closed_at);
@@ -1218,6 +1232,7 @@
     },
 
     renderCenterList: (params) => renderList(params, true),
+    centerStatusFilter,
 
     home: { load: loadHomeItems, task: homeTask, statusLabel, PROGRESS_STAGES },
 

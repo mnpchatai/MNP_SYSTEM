@@ -290,7 +290,12 @@ test("one detail template: start work sits with the approval buttons; assign, fi
   // ผู้ใช้กำหนด 2026-11-12: ปุ่มของฟอร์มอยู่กับช่องของฟอร์ม (ตรวจรับ: หมายเหตุกับผ่าน/ไม่ผ่านอยู่การ์ดเดียว)
   assert.doesNotMatch(mt, /repair-verify-panel/);
   assert.match(mt, /actionHtml: `/);
-  assert.match(app, /<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ<\/h2>\$\{detailView\.actionHtml\}<\/section>/);
+  assert.match(app, /<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ<\/h2>\$\{actionWorkHtml\}<\/section>/);
+  // รอบ 11: การ์ดงานรวมงานของโมดูลกับฟอร์มตอบกลับความเห็น · ประวัติเอกสารการ์ดเดียว เปิดไว้เสมอ (คำร้อง/MT และ NCR ใช้ historyCardHtml)
+  assert.match(app, /const actionWorkHtml = `\$\{detailView\?\.actionHtml \?\? ""\}\$\{\[\.\.\.steps\]\.sort\(\(a, b\) => a\.step_order - b\.step_order\)\.filter\(canReplyToStep\)\.map\(\(step\) => stepReplyFormHtml\(step, directory\)\)\.join\(""\)\}`\.trim\(\);/);
+  assert.match(app, /function historyCardHtml\(itemsHtml, footHtml = ""\) \{/);
+  assert.doesNotMatch(app, /<summary><h2>ลำดับอนุมัติ<\/h2><\/summary>|<summary><h2>ลำดับเหตุการณ์<\/h2><\/summary>/, "no collapsed history cards");
+  assert.match(read("modules/module-ncr.js"), /const historySection = historyCardHtml\(/);
   assert.match(css, /:is\(\.ncr-actions, \.detail-actions\) :is\(\.form-actions, \.approval-actions\) \{ position: sticky;/, "submit buttons pinned to the bottom on phones, like NCR");
   assert.doesNotMatch(mt, /<section class="card"><h2>เริ่มงานซ่อม<\/h2>/, "start work is no longer an in-flow card");
   assert.match(mt, /const section = document\.querySelector\("#repair-verify"\);/, "the note and files stay in the verify card");

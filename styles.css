@@ -554,8 +554,11 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .more-info-card, .expected-date-overdue { border-color: var(--warning); background: var(--warning-soft); }
 .more-info-card h2, .expected-date-overdue h2 { color: var(--warning); }
 /* คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ ใต้ขั้นใน "ลำดับอนุมัติ" */
-.step-reply { margin: 6px 0 0; padding: 6px 10px; background: var(--primary-soft); border-radius: var(--radius-sm); font-size: 0.9em; overflow-wrap: anywhere; }
-.step-reply-form { margin-top: 8px; }
+/* ท้ายการ์ดประวัติเอกสาร: ขั้นอนุมัติที่ยังไม่ถึง */
+/* ความเห็นที่ฟอร์มตอบกลับอ้างถึง */
+.detail-action-quote { margin: 0 0 12px; padding: 8px 12px; color: var(--copy); background: var(--shell); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-action-quote cite { margin-top: 4px; display: block; color: var(--muted); font-size: var(--text-meta); font-style: normal; }
+.detail-history-next { margin: 14px 0 0; padding-top: 12px; color: var(--muted); border-top: 1px solid var(--soft-line); font-size: var(--text-meta); }
 .card-heading { min-height: 52px; padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); }
 .card-heading h2, .card h2, .card h3 { margin: 0; font-size: var(--text-title); line-height: 1.4; }
 .card-heading a { color: var(--primary); font-size: var(--text-meta); font-weight: 600; }
@@ -968,6 +971,8 @@ a.register-title:hover { color: var(--primary); }
 .request-detail-head { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
 .request-detail-kicker { min-height: 36px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 .request-detail-kicker .eyebrow { white-space: nowrap; }
+/* ป้ายสถานะในหัวใบเป็นข้อเท็จจริงสำคัญที่สุดของหน้า: ตัวใหญ่กว่าป้ายในตาราง */
+.request-detail-kicker-end .badge { font-size: var(--text-ui); }
 .request-detail-kicker-end { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-detail-head h1 { margin: 8px 0 7px; font-size: var(--text-h1); overflow-wrap: anywhere; }
 .request-detail-meta { margin: 0; color: var(--muted); }
@@ -1028,7 +1033,6 @@ a.register-title:hover { color: var(--primary); }
 .decision-receipt h2 { margin: 0; font-size: var(--text-title); }
 .decision-receipt p { margin: 4px 0 0; color: var(--muted); }
 .decision-receipt .decision-receipt-comment { color: var(--copy); white-space: pre-wrap; overflow-wrap: anywhere; }
-.timeline-item.step-pending::before, .timeline-item.step-skipped::before { background: var(--paper); }
 .action-panel[hidden] { display: none; }
 /* ปุ่มของขั้นซ่อม (เริ่มงาน ตรวจรับ) ใช้แผงเดียวกับปุ่มอนุมัติ: ปุ่มหลักกว้างกว่า */
 .step-panel .action-panel-buttons .btn { flex: 1 1 0; }
@@ -1683,6 +1687,8 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-lines li span:last-child, .nd-detail li span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
 .nd-card { display: grid; gap: 12px; align-content: start; }
 #nd-drill { scroll-margin-top: 80px; }
+/* KPI ที่ยังคำนวณไม่ได้: บรรทัดเดียวเต็มแถว แทนการ์ด "—" หลายใบ */
+@media (min-width: 1200px) { .nd-tiles.five > .nd-tile-pending { grid-column: span 3; } }
 .nd-head h2 { margin: 0; font-size: var(--text-title); line-height: 1.3; }
 .nd-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .nd-head-row .nd-cancel { flex: none; }
