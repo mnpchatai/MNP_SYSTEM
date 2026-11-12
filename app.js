@@ -2209,8 +2209,9 @@ const MY_REPAIR_ACTION_STATUSES = ["pending_assign", "assigned", "in_progress", 
 // สิ่งที่ "ฉัน" ต้องทำกับใบนั้น (คำกริยา) — คนละเรื่องกับชื่อสถานะของใบ (statusLabels) จึงไม่ใช้คำ "รอ…" ซ้ำกับสถานะ
 const myRepairActionLabels = {
   pending_assign: "มอบหมายช่าง",
-  assigned: "เริ่มงานซ่อม",
-  in_progress: "บันทึกผลซ่อม",
+  // คำเดียวกับปุ่มในหน้าใบ (เริ่มงาน / เสร็จสิ้นงาน / ตรวจรับงาน)
+  assigned: "เริ่มงาน",
+  in_progress: "เสร็จสิ้นงาน",
   pending_verify: "ตรวจรับงาน",
 };
 
@@ -3113,9 +3114,9 @@ async function renderRequests(params) {
   if (selected.code !== "NCR_CAR") {
     const departments = await loadRequestDepartmentFilter(selected);
     const department = selectedFilterDepartment(params, departments);
-    // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
-    const search = departments ? (params.get("q") ?? "").trim() : "";
-    list = `${requestListFilters(params, { departments, placeholder: isRepairType(selected) ? "ค้นหาเลขที่ใบ ชื่อเรื่อง เครื่องจักร หรือผู้แจ้ง" : "ค้นหาเลขที่ใบ ชื่อเรื่อง หรือผู้แจ้ง", search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    // ทุกโมดูลมีช่องค้นหา (ช่องแสดงคำค้นที่ใช้อยู่เสมอ จึงไม่มีรายการที่ถูกย่อโดยมองไม่เห็นตัวกรอง) · ตัวกรองแผนกมีเฉพาะโมดูลที่ประกาศ
+    const search = (params.get("q") ?? "").trim();
+    list = `${requestListFilters(params, { departments, placeholder: isRepairType(selected) ? "ค้นหาเลขที่ใบ ชื่อเรื่อง เครื่องจักร หรือผู้แจ้ง" : "ค้นหาเลขที่ใบ ชื่อเรื่อง หรือผู้แจ้ง", search: true, repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -3932,10 +3933,10 @@ async function renderRequestDetail(params) {
     <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `<span class="nowrap">${escapeHtml(formCode)}</span><span class="eyebrow-sep"> · </span>` : ""}<span class="nowrap">${escapeHtml(request.request_no)}</span></span>
-        <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair, isFinalDecision(type, request.status))}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
+        <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair, isFinalDecision(type, request.status))}${priorityIsFlagged ? `<span class="badge urgent-flag">${["high", "urgent"].includes(request.priority) ? `${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}` : "ด่วน"}</span>` : ""}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${headingTextHtml(request.title)}</h1>
-      <p class="request-detail-meta">${detailView?.typeLabel ? `${escapeHtml(detailView.typeLabel)} · ` : ""}โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${["high", "urgent"].includes(request.priority) ? `${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}` : "ด่วน"}</span>` : ""}</p>
+      <p class="request-detail-meta">${detailView?.typeLabel ? `${escapeHtml(detailView.typeLabel)} · ` : ""}โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}</p>
     </header>
     <div class="detail-grid">
       <div class="stack">
@@ -4028,7 +4029,7 @@ async function renderRequestDetail(params) {
   // ช่างที่กำลังซ่อม: รูปใบเสร็จและไฟล์ส่งพร้อมฟอร์มจบงาน ("บันทึกข้อมูล" หรือ "เสร็จสิ้นงาน") ทางเดียว
   // ผู้แจ้งที่ตรวจรับ: ไฟล์ส่งพร้อมผลตรวจรับ ทางเดียว · ผู้มอบหมายช่าง: ไฟล์ส่งพร้อมการมอบหมาย ทางเดียว
   const stepFiles = document.querySelector("#finish-files") ?? document.querySelector("#verify-files") ?? document.querySelector("#assign-files");
-  const stepFilesLabel = { "verify-files": "แนบไฟล์ในการ์ดตรวจรับผลการซ่อม", "assign-files": "แนบไฟล์ในฟอร์มมอบหมายช่าง" }[stepFiles?.id] ?? "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน";
+  const stepFilesLabel = { "verify-files": "แนบไฟล์ในการ์ดตรวจรับงาน", "assign-files": "แนบไฟล์ในฟอร์มมอบหมายช่าง" }[stepFiles?.id] ?? "แนบรูปใบเสร็จและไฟล์ในฟอร์มเสร็จสิ้นงาน";
   pointToStepFiles(document.querySelector("#attachment-form"), stepFiles, stepFilesLabel);
   // ปุ่มอัปโหลดกดได้เมื่อเลือกไฟล์แล้ว (เดิมกดได้ทั้งที่ยังไม่เลือก แล้วขึ้นข้อความไกลจากปุ่ม)
   // รวมถึงตอนกด × ลบไฟล์ในตัวอย่าง หรือแปลงรูปไม่สำเร็จ (attachment-image.js ยิง mnp:files-changed)
@@ -4399,7 +4400,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
       tapGuard.arm();
       const { decision } = state;
       const needsComment = rules.needsComment(decision);
-      setLine(`${labelOf(decision)} ${request.request_no}${rules.forwardsToNextStep(decision) && nextStep ? ` → ส่งต่อให้ ${nextStep.step_name}` : decision === "more_info" ? ` → ส่งกลับให้ ${requesterName || "ผู้แจ้ง"}` : ""}`);
+      setLine(`${labelOf(decision)}${onDecided ? ` ${request.request_no}` : ""}${rules.forwardsToNextStep(decision) && nextStep ? ` → ส่งต่อให้ ${nextStep.step_name}` : decision === "more_info" ? ` → ส่งกลับให้ ${requesterName || "ผู้แจ้ง"}` : ""}`);
       reason.hidden = !needsComment && !state.showComment;
       commentLabel.textContent = decision === "rejected" ? "เหตุผลที่ไม่อนุมัติ (จำเป็น)"
         : decision === "more_info" ? "ต้องการข้อมูลเพิ่มเรื่องอะไร (จำเป็น)"
@@ -4884,13 +4885,13 @@ async function renderProfile() {
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">แผนก${REQUIRED_MARK}</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
-          <div class="field"><label for="profile-role">ตำแหน่ง${REQUIRED_MARK}</label><select class="input" id="profile-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
+          <div class="field"><label for="profile-role">ตำแหน่ง (กำหนดสิทธิ์)${REQUIRED_MARK}</label><select class="input" id="profile-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
         </div>
         <small>ระบบไม่ยอมให้ถอดสิทธิ์ผู้ดูแลระบบของตนเอง เพื่อไม่ให้ไม่มีใครเข้าไปแก้ไขได้อีก</small>
         ` : `
         <div class="field-row">
           <div class="field"><label for="profile-department">แผนก</label><input class="input" id="profile-department" value="${escapeHtml(employee.department?.name_th ?? "—")}" disabled></div>
-          <div class="field"><label for="profile-role">ตำแหน่ง</label><input class="input" id="profile-role" value="${escapeHtml(employee.role?.name_th ?? "—")}" disabled></div>
+          <div class="field"><label for="profile-role">ตำแหน่ง (กำหนดสิทธิ์)</label><input class="input" id="profile-role" value="${escapeHtml(employee.role?.name_th ?? "—")}" disabled></div>
         </div>
         <small>สองช่องนี้เป็นตัวกำหนดสิทธิ์และเส้นทางอนุมัติ ต้องให้ผู้ดูแลระบบเป็นผู้แก้ให้</small>
         `}
