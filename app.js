@@ -1257,7 +1257,8 @@ function requestRows(requests, { showRequester = false, showType = false, direct
     // หัวของแถวคือชื่อเรื่องของใบ (ชื่อเดียวกับคิวหน้าหลักและหน้ารายละเอียด) เครื่องจักรอยู่บรรทัดรองเมื่อชื่อเรื่องยังไม่บอก
     const main = request.title;
     // บรรทัดรอง: ชื่อเรื่องเมื่อหัวเป็นเครื่องจักร ไม่งั้นรายละเอียด (ไม่ซ้ำกับหัว) + วันที่ต้องการใช้งานถ้ามี
-    const detail = machine ? (request.machine_code && request.title.includes(request.machine_code) ? "" : machine) : description;
+    const machineInTitle = [request.machine_code, request.machine_name].some((value) => value && request.title.includes(value));
+    const detail = machine ? (machineInTitle ? "" : machine) : description;
     const secondary = [detail && detail !== main ? detail : "", request.needed_date ? `ต้องการใช้ ${formatDate(request.needed_date)}` : ""].filter(Boolean).join(" · ");
     const owners = requestOwnerNames(request, directory);
     return {
@@ -4045,7 +4046,7 @@ async function fillNextItemPanel(currentId) {
       text.textContent = others.length ? `${label} ในใบนี้ · ต้องจัดการอีก ${others.length} รายการ` : `${label} ในใบนี้`;
       buttons.innerHTML = `${next ? `<a class="btn secondary" href="${escapeHtml(nextHref)}">ใบถัดไป</a>` : ""}<button type="button" class="btn secondary" id="next-item-follow-up">${escapeHtml(label)} ↓</button>`;
       buttons.querySelector("#next-item-follow-up").addEventListener("click", () => {
-        const task = { pending_assign: "section#repair-assign", assigned: ".start-work-button", in_progress: "#finish-form", pending_verify: "#verify-note" }[followUp.request?.status];
+        const task = { pending_assign: "#repair-assign", assigned: ".start-work-button", in_progress: "#finish-form", pending_verify: "#verify-note" }[followUp.request?.status];
         const target = (task ? document.querySelector(task)?.closest("section, details") : null) ?? document.querySelector(".detail-grid > .stack form")?.closest("section, details") ?? null;
         if (!target) return;
         if (target instanceof HTMLDetailsElement) target.open = true;

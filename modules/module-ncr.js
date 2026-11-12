@@ -179,7 +179,8 @@
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
     const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
     // แผนกเดียวที่มีชื่อคน: คอลัมน์แผนกในแถวเดียวกันบอกแผนกแล้ว ป้ายจึงบอกแค่ชื่อ (หลายแผนกยังต้องมีรหัสแผนกกำกับชื่อ)
-    const single = /^แผนก ([^\s/(]+) \((.+)\)$/.exec(waiting.party);
+    const oneDepartment = ["awaiting_response", "awaiting_info"].includes(ncr.status) && (ncr.ncr_responsibilities ?? []).length === 1;
+    const single = oneDepartment ? /^แผนก ([^\s/(]+) \(([^()]+)\)$/.exec(waiting.party) : null;
     const party = single ? single[2] : waiting.party;
     return `<span class="ncr-owner-chip is-open"><b>ผู้รับผิดชอบ</b> ${escapeHtml(`${party}${progress}`)}</span>`;
   }

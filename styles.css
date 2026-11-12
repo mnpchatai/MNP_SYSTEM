@@ -1608,8 +1608,10 @@ a.machine-history-no:hover { text-decoration: underline; }
 /* การ์ด "สิ่งที่คุณต้องดำเนินการ" แบบเดียวทุกโมดูล (NCR, MT, คำร้อง · โครงหน้ารายละเอียดเดียว ผู้ใช้อนุมัติ 2026-11-12) */
 :is(.ncr-actions, .detail-actions) { border-color: var(--m600, var(--primary)); }
 :is(.ncr-actions, .detail-actions) > h2 { margin: 0 0 12px; color: var(--mod-link, var(--primary-ink)); }
-:is(.ncr-action, .detail-action) + :is(.ncr-action, .detail-action) { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--soft-line); }
-:is(.ncr-action, .detail-action) h3 { margin: 0 0 12px; }
+:is(.ncr-action, .detail-action, .ncr-action-group) + :is(.ncr-action, .detail-action, .ncr-action-group) { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--soft-line); }
+:is(.ncr-action, .detail-action, .ncr-action-group) h3 { margin: 0 0 12px; }
+/* การ์ด NCR ในคอลัมน์ของหน้ารายละเอียด: ระยะระหว่างการ์ดมาจาก .stack เหมือนหน้าคำร้อง/MT */
+.stack > .ncr-card { margin-bottom: 0; }
 .ncr-waiting { margin: 0 0 16px; }
 .ncr-fieldset { margin: 0 0 15px; padding: 0; border: 0; min-width: 0; }
 .ncr-fieldset legend { margin-bottom: 7px; padding: 0; font-size: var(--text-ui); font-weight: 700; }

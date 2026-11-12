@@ -78,7 +78,9 @@ test("list filters fold behind one button on phones and stay in one row on wide 
 test("an MT row is titled by its subject, like the home queue and the detail page, and names the machine only when the subject does not", () => {
   // ชื่อเดียวต่อใบทุกหน้า (critique รอบ 8): หัวของแถวคือชื่อเรื่อง เครื่องจักรอยู่บรรทัดรองเมื่อชื่อเรื่องยังไม่มีรหัสเครื่อง
   assert.match(app, /const main = request\.title;/);
-  assert.match(app, /const detail = machine \? \(request\.machine_code && request\.title\.includes\(request\.machine_code\) \? "" : machine\) : description;/);
+  // ชื่อเรื่องที่ระบบสร้างคือ "ชื่อเครื่อง — อาการ" จึงดูทั้งชื่อและรหัสเครื่อง
+  assert.match(app, /const machineInTitle = \[request\.machine_code, request\.machine_name\]\.some\(\(value\) => value && request\.title\.includes\(value\)\);/);
+  assert.match(app, /const detail = machine \? \(machineInTitle \? "" : machine\) : description;/);
   assert.doesNotMatch(app, /function titleWithoutMachine\(/);
 });
 
