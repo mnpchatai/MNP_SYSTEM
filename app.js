@@ -2480,7 +2480,16 @@ function bindHomeQueue() {
   bindQueueBulk();
 }
 
-const QUEUE_BULK_IDLE_BUTTONS = `<button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">อนุมัติที่เลือก</button>`;
+// คำของขั้น (อนุมัติ รับทราบ …) ตามชื่อขั้น ใช้ทั้งปุ่มใบเดียวและแถบหลายรายการ
+const queueStepVerb = (step) => window.MNP_STEP_VERB.verbOf(step.step_name, (requestModule(relation(step.request.request_type)?.code)?.extraDecisions ?? []).map((item) => item.label));
+// ข้อความของรายการที่เลือก: คำเดียวกันทั้งหมด = "รับทราบ 3 รายการ" · ปนกัน = "อนุมัติ 2 · รับทราบ 1"
+function bulkVerbText(steps) {
+  const counts = new Map();
+  steps.forEach((step) => { const verb = queueStepVerb(step); counts.set(verb, (counts.get(verb) ?? 0) + 1); });
+  const only = counts.size === 1 ? [...counts.keys()][0] : "";
+  return { only, summary: only ? `${only} ${steps.length} รายการ` : [...counts].map(([verb, n]) => `${verb} ${n}`).join(" · ") };
+}
+const QUEUE_BULK_IDLE_BUTTONS = `<button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">ตัดสินที่เลือก</button>`;
 let activeBulkCountdown = null;
 
 // อนุมัติหลายรายการ: ขั้นเดียวกับอนุมัติใบเดียวในแถบล่าง — "อนุมัติที่เลือก" → ยืนยันพร้อมเลขที่ใบ → เลิกทำได้ภายใน DECISION_UNDO_SECONDS วินาที → ส่ง
@@ -2513,13 +2522,14 @@ function bindQueueBulk() {
     }
     lockBoxes(true);
     if (name === "confirm") {
-      setText(`อนุมัติ ${chosen.length} รายการ: ${numbers()}`);
-      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(`ยืนยันอนุมัติ ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
+      const verbs = bulkVerbText(chosen);
+      setText(`${verbs.summary}: ${numbers()}`);
+      buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(verbs.only ? `ยืนยัน${verbs.only} ${chosen.length} รายการ` : `ยืนยัน ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
     } else if (name === "pending") {
-      setText(`กำลังจะอนุมัติ ${chosen.length} รายการ`);
+      setText(`กำลังจะ${bulkVerbText(chosen).summary}`);
       buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", "success is-primary", "send-now")}`;
     } else if (name === "sending") {
-      setText(`กำลังส่ง: อนุมัติ ${chosen.length} รายการ…`);
+      setText(`กำลังส่ง: ${bulkVerbText(chosen).summary}…`);
       buttons.innerHTML = button("กำลังส่ง…", "success is-primary", "none", ' disabled aria-busy="true"');
     }
     trackActionBarHeight();
@@ -2632,7 +2642,10 @@ function syncQueueBulk() {
   text.textContent = tooMany ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT} รายการ` : "";
   const approve = document.querySelector("#queue-bulk-approve");
   approve.disabled = count === 0 || tooMany;
-  approve.textContent = `อนุมัติที่เลือก (${count})`;
+  // ปุ่มใช้คำของขั้นเมื่อทุกใบที่เลือกเป็นคำเดียวกัน (ส่วนใหญ่ "อนุมัติ") ปนกันใช้ "ตัดสิน"
+  const picked = pickedQueueSteps();
+  const only = picked.length ? bulkVerbText(picked).only : "อนุมัติ";
+  approve.textContent = `${only || "ตัดสิน"}ที่เลือก (${count})`;
   const panel = document.querySelector("#decision-panel");
   if (panel) panel.hidden = count > 0 && panel.dataset.state === "idle";
   trackActionBarHeight();
@@ -4443,7 +4456,7 @@ async function runBulkApprove(chosen) {
     const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
     if (!error) {
       done += 1;
-      recentDecisions.set(step.request.id, { decision: "approved", label: window.MNP_STEP_VERB.verbOf(step.step_name, (requestModule(relation(step.request.request_type)?.code)?.extraDecisions ?? []).map((item) => item.label)), comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
+      recentDecisions.set(step.request.id, { decision: "approved", label: queueStepVerb(step), comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
       triggerNotificationEmails(step.request.id);
       continue;
     }
