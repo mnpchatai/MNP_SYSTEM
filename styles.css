@@ -576,7 +576,7 @@ tbody tr:last-child td { border-bottom: 0; }
 /* รอข้อมูลการสูญเสีย (NCR) คงสีฟ้าเดิมตามที่ผู้ใช้ขอ 2026-11-10 สัญลักษณ์ยังเป็นนาฬิกา */
 .badge.loss-pending-flag { color: #fff; background: var(--primary-strong); }
 .badge.approved, .badge.in_progress { color: #fff; background: var(--primary-strong); }
-.badge.completed, .badge.acknowledged { color: #fff; background: var(--success-strong); }
+.badge.completed, .badge.acknowledged, .badge.approved.is-final { color: #fff; background: var(--success-strong); }
 .badge.rejected, .badge.cancelled { color: #fff; background: var(--danger-strong); }
 .priority-high, .priority-urgent { color: var(--danger); font-weight: 700; }
 .filters { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 7px; }
@@ -858,6 +858,10 @@ a.register-title:hover { color: var(--primary); }
 /* จอแคบ: ปุ่มส่งของฟอร์มในงานที่ต้องทำติดล่างจอระหว่างเลื่อนดูฟอร์มยาว (แบบเดียวกับปุ่มของฟอร์มสร้าง) */
 @media (max-width: 760px) {
   :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
+  /* แถบปุ่มล่างจอแบบเดียวทั้งระบบ (เหมือนแถบตัดสินใจ): ปุ่มเต็มแถว ปุ่มหลักเป็นปุ่มสุดท้ายอยู่ขวาและกว้างสองเท่า ปุ่มเดียวเต็มความกว้าง */
+  :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) { display: flex; flex-wrap: nowrap; justify-content: stretch; gap: 8px; }
+  :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) > .btn { min-height: 48px; flex: 1 1 0; }
+  :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) > .btn:last-child:not(:only-child) { flex-grow: 2; }
 }
 @media (max-width: 900px) {
   .page-heading.request-module-header { flex-direction: column; align-items: flex-start; }
@@ -1336,7 +1340,7 @@ a.machine-history-no:hover { text-decoration: underline; }
   .nav-signout { display: flex; }
   .detail-grid { grid-template-columns: 1fr; }
   /* คอลัมน์เดียว: แถบตัดสินใจ/ดำเนินงานติดล่างจอ ใต้นิ้วโป้ง (ความสูงจริงมาจาก trackActionBarHeight ใน app.js) */
-  .action-panel { position: fixed; z-index: 26; right: 0; bottom: 0; left: 68px; max-height: 70dvh; margin: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); overflow-y: auto; gap: 10px; border-width: 1px 0 0; border-radius: 0; box-shadow: 0 -8px 24px rgb(16 32 59 / .12); }
+  .action-panel { position: fixed; z-index: 26; right: 0; bottom: 0; left: 68px; max-height: 70dvh; margin: 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); overflow-y: auto; gap: 10px; border-width: 1px 0 0; border-radius: 0; box-shadow: 0 -8px 24px rgb(16 32 59 / .12); }
   .action-panel .action-panel-head { display: none; }
   /* แถบตัดสินใจบนจอแคบยังบอกชื่อขั้นและขั้นถัดไป (คำกริยาของปุ่มมาจากชื่อขั้น) แต่ไม่ซ้ำหัวข้อ: เหลือบรรทัดเดียวสูงสุด 2 บรรทัด
      และซ่อนเมื่อกำลังยืนยัน/นับถอยหลัง เพราะบรรทัดสถานะของแถบบอกปลายทางอยู่แล้ว */
@@ -1351,10 +1355,8 @@ a.machine-history-no:hover { text-decoration: underline; }
   .next-item-panel .action-panel-head { display: block; }
   .next-item-panel .action-panel-head h2 { display: none; }
   .next-item-panel .action-panel-head p { margin: 0; }
-  /* แถบล่างของขั้นซ่อมบอกชื่อขั้นในบรรทัดเดียว */
-  .step-panel .action-panel-head { display: block; }
-  .step-panel .action-panel-head p { display: none; }
-  .step-panel .action-panel-head h2 { margin: 0; font-size: var(--text-meta); color: var(--muted); }
+  /* แถบล่างของขั้นซ่อมมีแค่ปุ่ม: ชื่อขั้น ("เริ่มงานซ่อม") ซ้ำกับคำบนปุ่ม */
+  .step-panel .action-panel-head { display: none; }
   .action-panel-buttons .btn { min-height: 48px; }
   .content:has(.action-panel:not([hidden])) { padding-bottom: calc(var(--action-bar-h, 76px) + 28px); }
   body:has(.action-panel:not([hidden])) .toast { bottom: calc(var(--action-bar-h, 76px) + 12px); }
@@ -2581,7 +2583,7 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .badge:is(.pending_approval, .pending_assign, .pending_verify, .assigned, .loss-pending-flag) { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M10 6.9V10l2.2 1.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.more_info { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M7.7 7.9a2.4 2.4 0 1 1 3.3 2.2c-.6.3-1 .8-1 1.5v.3' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'/%3E%3Ccircle cx='10' cy='14.4' r='1.2'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge:is(.approved, .in_progress), .rf-badge:is(.is-info, .is-accent) { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M10 4.4a5.6 5.6 0 0 1 0 11.2z'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
-.badge:is(.completed, .acknowledged), .rf-badge.is-good { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M6 10.3l2.8 2.8 5.3-5.9' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
+.badge:is(.completed, .acknowledged, .approved.is-final), .rf-badge.is-good { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M6 10.3l2.8 2.8 5.3-5.9' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.rejected, .rf-badge.is-bad { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M7 7l6 6M13 7l-6 6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.3'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.cancelled { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Ccircle cx='10' cy='10' r='5.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3Cpath d='M6.1 13.9l7.8-7.8' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }
 .badge.urgent-flag, .rf-badge.is-warn, .nd-pill.crit .nd-ico { --badge-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cmask id='g'%3E%3Crect width='20' height='20' fill='white'/%3E%3Cpath d='M10 5.4v5.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='10' cy='14.3' r='1.35'/%3E%3C/mask%3E%3Ccircle cx='10' cy='10' r='10' mask='url(%23g)'/%3E%3C/svg%3E"); }

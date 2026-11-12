@@ -1071,13 +1071,19 @@ function openAttachmentLightbox(id) {
 }
 
 // repair = ใบแจ้งซ่อม (isRepairType) — ชื่อสถานะบางขั้นของใบแจ้งซ่อมเรียกต่างจากคำร้องทั่วไป (ดู repairStatusLabels)
-function statusBadge(status, repair = false) {
-  return `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status, repair))}</span>`;
+// final = "อนุมัติแล้ว" ที่เป็นปลายทางของใบ (isFinalDecision) ใช้สีและสัญลักษณ์ของ "เสร็จ" ไม่ใช่ "กำลังทำ"
+function statusBadge(status, repair = false, final = false) {
+  return `<span class="badge ${escapeHtml(status)}${final ? " is-final" : ""}">${escapeHtml(statusLabel(status, repair))}</span>`;
+}
+
+// โมดูลที่จบที่มติ (endsAtDecision เช่น ใบคำร้องถึงฝ่ายบริหาร): อนุมัติแล้วคือจบ ไม่มีขั้นดำเนินงานต่อ
+function isFinalDecision(type, status) {
+  return status === "approved" && Boolean(requestModule(type?.code)?.endsAtDecision);
 }
 
 // ใบที่รอขั้นอนุมัติ: ป้ายใช้คำของขั้นนั้น ("รอรับทราบ" หรือ "รออนุมัติ" ตามชื่อขั้น · ไม่มี "รอรับงาน": งานซ่อม MT หัวหน้าซ่อมบำรุงมอบหมายช่างหลังผู้จัดการทั่วไปอนุมัติ)
-function pendingStepBadge(request, currentStep, repair = false) {
-  if (request.status !== "pending_approval" || !currentStep) return statusBadge(request.status, repair);
+function pendingStepBadge(request, currentStep, repair = false, final = false) {
+  if (request.status !== "pending_approval" || !currentStep) return statusBadge(request.status, repair, final);
   return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(window.MNP_STEP_VERB.pendingLabel(currentStep.step_name))}</span>`;
 }
 
@@ -1270,7 +1276,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type))}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type), isFinalDecision(type, request.status))}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
@@ -2164,7 +2170,7 @@ function homeQueueItems(pending, repairTasks, ncrTasks) {
       kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เกินกำหนดตอบ" : null,
       // ชื่อเดียวกับ request_types.name_th ของ NCR_CAR และเมนูของโมดูล
       request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR/CAR" } },
-      priority: overdue ? "high" : null, createdAt: ncr.updated_at ?? ncr.created_at,
+      priority: overdue ? "high" : null, createdAt: ncr.step_since ?? ncr.updated_at ?? ncr.created_at,
     })),
   ]);
 }
@@ -3801,10 +3807,11 @@ async function renderRequestDetail(params) {
   // หัวใบเป็นก้อนสีโมดูล ยกเว้นใบแจ้งซ่อม IT ที่ใช้ฟอร์มของทีม IT เอง (ORIGINAL_FORM_TYPES)
   const moduleHead = !ORIGINAL_FORM_TYPES.has(type?.code);
   const content = `
+    <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}">‹ ${escapeHtml(type ? requestTypeLabel(type) : "คำร้อง")}</a>
     <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
-        <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair)}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
+        <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair, isFinalDecision(type, request.status))}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${escapeHtml(request.title)}</h1>
       <p class="request-detail-meta">${escapeHtml(detailView?.typeLabel ?? type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${["high", "urgent"].includes(request.priority) ? `${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}` : "ด่วน"}</span>` : ""}</p>
