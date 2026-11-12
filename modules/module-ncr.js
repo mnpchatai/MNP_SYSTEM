@@ -153,7 +153,8 @@
 
   // lossPending = ผลของ MNP_NCR_COSTS.lossDataPending (ต้องโหลดยอดความสูญเสียและผลดำเนินการของใบนั้นมาก่อน)
   function statusBadgeHtml(ncr, lossPending = false) {
-    const badges = [`<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(statusLabel(ncr))}</span>`];
+    // ป้ายบนจอใช้ชื่อสถานะอย่างเดียว ผู้ที่ต้องลงนามอยู่ในป้ายผู้รับผิดชอบหรือบรรทัด "ขั้นตอนนี้รอ" แล้ว (statusLabel พร้อมลำดับผู้ลงนามใช้กับชีต)
+    const badges = [`<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`];
     if (isOverdue(ncr)) badges.push('<span class="badge urgent-flag">เกินกำหนดตอบ</span>');
     if (lossPending) badges.push('<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย</span>');
     return badges.join(" ");
