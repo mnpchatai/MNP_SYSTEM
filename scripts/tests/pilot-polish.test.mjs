@@ -52,7 +52,8 @@ test("waiting badges are amber with the clock, one name per role and field, back
   assert.doesNotMatch(mt, /requestFact\("แนวทางการซ่อม"/);
   assert.match(mt, /requestFact\("ความคิดเห็นของช่างผู้ตรวจสอบ"/);
   for (const text of ["‹ ย้อนกลับ<", "‹ กลับรายการคำร้อง", "‹ กลับหน้า MT", "‹ กลับหน้า NCR"]) assert.ok(!app.includes(text) && !readFileSync(new URL("../../modules/module-mt-dashboard.js", import.meta.url), "utf8").includes(text) && !readFileSync(new URL("../../modules/module-ncr-dashboard.js", import.meta.url), "utf8").includes(text), text);
-  assert.match(app, /if \(\(actionsHtml\.match\(\/<\(a\|button\)\\b\/g\) \?\? \[\]\)\.length === 1\) return/, "a one-item menu is shown as its button");
+  // รอบ 11: ตัวเลือกของหัวใบอยู่ในเมนู ⋯ เสมอ (critique รอบ 10: ปุ่มดาวน์โหลดตัวใหญ่ข้างป้ายสถานะบนมือถือ)
+  assert.doesNotMatch(app, /if \(\(actionsHtml\.match\(\/<\(a\|button\)\\b\/g\) \?\? \[\]\)\.length === 1\) return/, "header actions always live in the ⋯ menu");
   assert.match(app, /window\.addEventListener\("hashchange", closeOnNavigate, \{ once: true \}\);/, "the help sheet closes on back/forward");
 });
 

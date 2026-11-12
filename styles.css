@@ -554,8 +554,8 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .more-info-card, .expected-date-overdue { border-color: var(--warning); background: var(--warning-soft); }
 .more-info-card h2, .expected-date-overdue h2 { color: var(--warning); }
 /* คำตอบของผู้ยื่นต่อความเห็นผู้อนุมัติ ใต้ขั้นใน "ลำดับอนุมัติ" */
-.step-reply { margin: 6px 0 0; padding: 6px 10px; background: var(--primary-soft); border-radius: var(--radius-sm); font-size: 0.9em; overflow-wrap: anywhere; }
-.step-reply-form { margin-top: 8px; }
+/* ท้ายการ์ดประวัติเอกสาร: ขั้นอนุมัติที่ยังไม่ถึง */
+.detail-history-next { margin: 14px 0 0; padding-top: 12px; color: var(--muted); border-top: 1px solid var(--soft-line); font-size: var(--text-meta); }
 .card-heading { min-height: 52px; padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); }
 .card-heading h2, .card h2, .card h3 { margin: 0; font-size: var(--text-title); line-height: 1.4; }
 .card-heading a { color: var(--primary); font-size: var(--text-meta); font-weight: 600; }
@@ -968,6 +968,8 @@ a.register-title:hover { color: var(--primary); }
 .request-detail-head { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
 .request-detail-kicker { min-height: 36px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 .request-detail-kicker .eyebrow { white-space: nowrap; }
+/* ป้ายสถานะในหัวใบเป็นข้อเท็จจริงสำคัญที่สุดของหน้า: ตัวใหญ่กว่าป้ายในตาราง */
+.request-detail-kicker-end .badge { font-size: var(--text-ui); }
 .request-detail-kicker-end { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .request-detail-head h1 { margin: 8px 0 7px; font-size: var(--text-h1); overflow-wrap: anywhere; }
 .request-detail-meta { margin: 0; color: var(--muted); }

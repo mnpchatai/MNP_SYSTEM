@@ -46,6 +46,8 @@ async function renderPage(viewer, overrides = {}, options = {}) {
     DEPT_MANAGER_ROLE_CODES: ["department_manager", "assistant_department_manager"],
     optionalAttachments: () => [], uploadAttachmentBatch: async () => ({ total: 0, failed: [] }), attachmentBatchFailureText: () => "",
     attachmentGalleryHtml: () => "", hydrateAttachmentGallery: async () => {}, openAttachmentLightbox: noop,
+    // การ์ดประวัติเอกสารชิ้นเดียวของ app.js (historyCardHtml)
+    historyCardHtml: (items, foot = "") => `<section class="card detail-history"><h2>ประวัติเอกสาร</h2><div class="timeline">${items}</div>${foot}</section>`,
     // ตัวช่วยทะเบียนของ app.js (registerTableHtml ฯลฯ) แบบย่อ: ตรวจว่าทะเบียน NCR ส่งช่องครบ ไม่ใช่หน้าตา
     registerTableHtml: ({ columns, rows }) => `<table>${rows.map((row) => `<tr>${columns.map((column) => `<td data-label="${column.label}">${row.cells[column.key] ?? ""}</td>`).join("")}</tr>`).join("")}</table>`,
     registerNoHtml: (number, href) => `<a href="${href}">${number}</a>`, registerSubjectHtml: (main, href, secondary) => `${main}|${secondary}`,

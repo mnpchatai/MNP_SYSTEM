@@ -907,15 +907,14 @@
     const heading = `<a class="request-back-link" href="#/ncr" title="กลับไปรายการ NCR/CAR">‹ กลับไปรายการ</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
         <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
-        <h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>${headFacts}
+        <h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>
+        <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${headFacts}
       </header>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${work.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
     const part1 = `
       ${partOpening(1, "ผู้รายงาน/ผู้ตรวจสอบ", "ข้อมูลสินค้าและรายละเอียดความไม่สอดคล้อง")}
-        ${partField("วันที่ออก", formatDate(ncr.issue_date), false, "calendar")}
-        ${partField("ผู้รายงาน / แผนก", `${escapeHtml(personName(directory, ncr.reporter_id))} / ${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}`, false, "person")}
         ${partField("รหัสสินค้า", escapeHtml(ncr.product_code ?? "—"), false, "product")}
         ${partField("ลูกค้า/พ่อค้า", `${escapeHtml(ncr.customer_name ?? "—")}${ncr.customer_code ? ` (${escapeHtml(ncr.customer_code)})` : ""}`, false, "building")}
         ${partField("ใบสั่งซื้อ/ใบส่งของ · ล็อต", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
@@ -969,8 +968,8 @@
         ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
-    const historySection = `
-      <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
+    // การ์ดประวัติเอกสารชิ้นเดียวกับหน้าคำร้อง/MT (historyCardHtml ใน app.js) แถวเดียวกัน: เหตุการณ์ · ผู้ทำ · หมายเหตุ · เวลา
+    const historySection = historyCardHtml((historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p class="timeline-item-detail">${escapeHtml(personName(directory, item.changed_by))}</p>${item.note ? `<p class="timeline-item-message">${escapeHtml(item.note)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.changed_at)}">${formatDate(item.changed_at, true)}</time></div>`).join(""));
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
     const part3Filled = Boolean(ncr.responded_at || ncr.root_cause || ncr.correction || ncr.prevention);
     const part4Filled = Boolean(ncr.followed_up_at || ncr.followup_note || ncr.signoff_qa_at || ncr.signoff_factory_at || ncr.signoff_gm_at || ncr.closed_at);

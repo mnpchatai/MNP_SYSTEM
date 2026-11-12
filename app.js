@@ -185,7 +185,6 @@ function priorityLabel(priority, repair = false) {
   return priorityLabels[priority] ?? priority;
 }
 // สถานะของแต่ละขั้นอนุมัติ (enum approval_status) — ห้ามแสดงค่าดิบภาษาอังกฤษในหน้า
-const stepStatusLabels = { pending: "รอพิจารณา", approved: "อนุมัติ", rejected: "ไม่อนุมัติ", more_info: "ขอข้อมูลเพิ่ม", skipped: "ข้าม", acknowledged: "รับทราบข้อมูล" };
 // คำกริยาของมติแต่ละแบบ ใช้ในแถบตัดสินใจและใบเสร็จหลังกด
 const decisionVerbs = { approved: "อนุมัติ", rejected: "ไม่อนุมัติ", more_info: "ขอข้อมูลเพิ่ม", acknowledged: "รับทราบข้อมูล" };
 // เลขแบบฟอร์มกระดาษเดิมของแต่ละโมดูล แสดงคู่กับเลขที่คำร้อง
@@ -3697,14 +3696,18 @@ async function callNotifyEmail(payload) {
 // มติที่ผู้ยื่นตอบกลับความเห็นได้ ("ขอข้อมูลเพิ่ม" ใช้การส่งข้อมูลกลับแทน)
 const STEP_REPLY_STATUSES = ["approved", "acknowledged", "rejected"];
 
-function stepRepliesHtml(step, replies, directory, canReply) {
-  const own = replies.filter((reply) => reply.approval_step_id === step.id);
-  const list = own.map((reply) => `<p class="step-reply"><b>ตอบกลับโดย ${escapeHtml(personName(directory, reply.author_id))}</b> · ${formatDate(reply.created_at, true)}<br>${escapeHtml(reply.body)}</p>`).join("");
-  const form = canReply ? `<form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
-      <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ตอบกลับความเห็นนี้</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
-      <button class="btn secondary small" type="submit">ส่งคำตอบ</button>
-    </form>` : "";
-  return list + form;
+// การ์ดประวัติเอกสารชิ้นเดียวของทุกหน้ารายละเอียด (คำร้อง/MT และ NCR เรียกตัวนี้) เปิดไว้เสมอ: การตรวจย้อนว่าใครทำอะไรเมื่อไรคือเป้าหมายหลักของระบบ
+// itemsHtml = แถว .timeline-item ที่เรียงเวลาแล้ว · footHtml = บรรทัดท้ายการ์ด (เช่น ขั้นอนุมัติที่ยังไม่ถึง)
+function historyCardHtml(itemsHtml, footHtml = "") {
+  return `<section class="card detail-history" aria-labelledby="detail-history-title"><h2 id="detail-history-title">ประวัติเอกสาร</h2><div class="timeline">${itemsHtml || '<div class="muted small">ยังไม่มีประวัติ</div>'}</div>${footHtml}</section>`;
+}
+
+// ฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว (ผู้ยื่น โมดูลที่เปิด requesterReplies) — ความเห็นและคำตอบเดิมอยู่ในประวัติเอกสาร
+function stepReplyFormHtml(step) {
+  return `<div class="detail-action"><h3>ตอบกลับความเห็นของ${escapeHtml(step.step_name)}</h3><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
+      <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
+      <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div>
+    </form></div>`;
 }
 
 async function renderRequestDetail(params) {
@@ -3776,6 +3779,8 @@ async function renderRequestDetail(params) {
   // ผู้ยื่นตอบกลับความเห็นของขั้นที่ตัดสินแล้วได้ทุกมติ (โมดูลที่เปิด requesterReplies) — ตรงกับ app_reply_to_step_comment
   const canReplyToStep = (step) => repliesAvailable && isRequester && Boolean(separateModule?.requesterReplies)
     && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
+  // การ์ด "สิ่งที่คุณต้องดำเนินการ": งานของโมดูล (detailView.actionHtml) และฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว
+  const actionWorkHtml = `${detailView?.actionHtml ?? ""}${[...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map(stepReplyFormHtml).join("")}`.trim();
   const detailEntries = Object.entries(request.details ?? {});
   // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
   // ป้าย "ด่วน" ในบรรทัดหัวใบ: ความสำคัญสูง/เร่งด่วน หรือใบแจ้งซ่อมที่ติ๊กแจ้งด่วน (ที่เดียวในหน้า)
@@ -3800,8 +3805,10 @@ async function renderRequestDetail(params) {
   const headerActionsHtml = detailView?.headerActionsHtml || moduleDetail?.headerActionsHtml || "";
   const nextStep = currentStep ? steps.find((step) => step.step_order === currentStep.step_order + 1) : null;
   // ไฟล์แนบและข้อมูลเพิ่มเติมเปิดไว้ทุกขนาดจอ (แถบตัดสินใจบนจอแคบติดล่างจออยู่แล้ว ไม่ถูกดันลง)
-  // ลำดับเหตุการณ์: จอกว้าง (สองคอลัมน์) เปิดไว้ จอแคบพับไว้
-  const timelineOpen = window.matchMedia("(min-width: 1041px)").matches ? " open" : "";
+  // ขั้นอนุมัติที่ยังไม่ถึง (ท้ายการ์ดประวัติเอกสาร) — ขั้นปัจจุบันอยู่ที่ป้ายสถานะ/แถบตัดสินใจแล้ว
+  const upcomingSteps = ["pending_approval", "more_info"].includes(request.status)
+    ? [...steps].filter((step) => step.status === "pending" && step.step_order > request.current_step).sort((a, b) => a.step_order - b.step_order)
+    : [];
   const receipt = recentDecisionFor(id);
   const description = (request.description ?? "").trim();
   // หัวใบเป็นก้อนสีโมดูล ยกเว้นใบแจ้งซ่อม IT ที่ใช้ฟอร์มของทีม IT เอง (ORIGINAL_FORM_TYPES)
@@ -3819,7 +3826,7 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
-        ${detailView?.actionHtml?.trim() ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ</h2>${detailView.actionHtml}</section>` : ""}
+        ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ</h2>${actionWorkHtml}</section>` : ""}
         <section class="card request-brief" aria-labelledby="request-brief-title">
           <h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
           ${description
@@ -3849,8 +3856,7 @@ async function renderRequestDetail(params) {
         ${canApprove ? "" : detailView?.asideHtml ?? ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate && !detailView?.asideHtml ? nextItemPanelHtml() : ""}
-        <details class="card detail-section"><summary><h2>ลำดับอนุมัติ</h2></summary><div class="timeline">${steps.map((step) => `<div class="timeline-item step-${escapeHtml(step.status)}"><strong>${escapeHtml(step.step_name)} · ${escapeHtml(step.status === "pending" && step.step_order > request.current_step ? "ยังไม่ถึงขั้นนี้" : stepStatusLabels[step.status] ?? step.status)}</strong>${step.acted_by || step.comment ? `<p>${step.acted_by ? `โดย ${escapeHtml(personName(directory, step.acted_by))}${step.acted_at ? ` · ${formatDate(step.acted_at, true)}` : ""}` : ""}${step.acted_by && step.comment ? " · " : ""}${step.comment ? escapeHtml(step.comment) : ""}</p>` : ""}${stepRepliesHtml(step, replies, directory, canReplyToStep(step))}</div>`).join("") || `<div class="muted small">ไม่มีขั้นตอนอนุมัติ</div>`}</div></details>
-        <details class="card detail-section"${timelineOpen}><summary><h2>ลำดับเหตุการณ์</h2></summary><div class="timeline">${timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join("") || `<div class="muted small">ยังไม่มีประวัติ</div>`}</div></details>
+        ${historyCardHtml(timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join(""), upcomingSteps.length ? `<p class="detail-history-next">ขั้นอนุมัติที่ยังไม่ถึง: ${upcomingSteps.map((step) => escapeHtml(step.step_name)).join(" → ")}</p>` : "")}
       </aside>
     </div>`;
   // แถบบนบอกโมดูล (เลขที่ใบอยู่ที่หัวใบแล้ว ไม่ซ้ำบนจอเดียวกัน) ชื่อแท็บยังเป็นเลขที่ใบ
@@ -3974,8 +3980,6 @@ function decisionReceiptHtml(receipt, directory) {
 }
 
 function requestDetailMenuHtml(actionsHtml) {
-  // ตัวเลือกเดียวไม่ต้องซ่อนในเมนู
-  if ((actionsHtml.match(/<(a|button)\b/g) ?? []).length === 1) return `<div class="request-detail-actions">${actionsHtml}</div>`;
   return `<div class="request-detail-menu">
     <button type="button" class="icon-button" id="request-detail-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="request-detail-menu-list" aria-label="ตัวเลือกเพิ่มเติม" title="ตัวเลือกเพิ่มเติม"><span aria-hidden="true">⋯</span></button>
     <div class="request-detail-menu-list" id="request-detail-menu-list" data-popup hidden>${actionsHtml}</div>
