@@ -387,7 +387,7 @@
     <li><b>เวลาซ่อมของช่าง:</b> ไม่ใช่ชั่วโมงทำงานจริง แต่คือเวลาตามนาฬิกาที่ใบอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบ (ตรวจรับไม่ผ่านแล้วซ่อมใหม่ก็นับ) ใบที่ยังซ่อมอยู่นับถึงเวลาที่เปิดหน้านี้ ช่างหลายคนในใบเดียวนับเต็มทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ส่วน "ถืออยู่" นับทุกใบที่ช่างต้องทำตอนนี้ ไม่ขึ้นกับช่วงเวลา</li></ol></div></details>`;
 
   function pageBody() {
-    const { rows, today, loadedAt, typeId } = cache;
+    const { rows, today, loadedAt } = cache;
     const filters = readFilters(lastParams, rows, today);
     lastFilters = filters;
     const periodList = model.select(rows, filters);
@@ -404,8 +404,7 @@
     // นอกนั้นรายการด้านล่างไม่พิมพ์ซ้ำใบที่ "ต้องลงมือตอนนี้" แสดงแล้ว (แต่ยังนับในจำนวนทั้งหมด)
     const showAct = basis !== "backlog";
     const actTop = showAct ? model.priority(open, 10) : [];
-    const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
-    return `<a class="request-back-link" href="${esc(backHref)}" title="กลับไปรายการ ใบคำร้อง/แจ้งซ่อม MT">‹ กลับไปรายการ</a><div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE}</h1><p>ไม่นับใบที่ยกเลิก · เวอร์ชันทดสอบ</p></div>
+    return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE}</h1><p>ไม่นับใบที่ยกเลิก · เวอร์ชันทดสอบ</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
@@ -561,7 +560,9 @@
     const fresh = !cache || cache.employeeId !== state.employee?.id || Date.now() - cache.loadedAt >= CACHE_MS || refresh;
     if (fresh) loadingShell(PATH, TITLE);
     await loadData(refresh);
-    app.innerHTML = shell(`<div id="nd-root"></div>`, PATH, TITLE);
+    // ลิงก์กลับรายการให้ shell วาดบนแถบบน (เนื้อหาของแดชบอร์ดวาดภายหลังใน nd-root)
+    const backHref = cache?.typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: cache.typeId }) : "#/requests";
+    app.innerHTML = shell(`<a class="request-back-link" href="${esc(backHref)}">‹ ใบคำร้อง/แจ้งซ่อม MT</a><div id="nd-root"></div>`, PATH, TITLE);
     bindShell();
     bindRoot(document.getElementById("nd-root"));
     paint();
