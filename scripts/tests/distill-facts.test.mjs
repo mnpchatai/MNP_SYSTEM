@@ -391,7 +391,11 @@ test("batch 19: one search across list fields, NCR responders read the problem i
   assert.match(app, /placeholder: isRepairType\(selected\) \? "ค้นหาเลขที่ใบ ชื่อเรื่อง เครื่องจักร หรือผู้แจ้ง" : "ค้นหาเลขที่ใบ ชื่อเรื่อง หรือผู้แจ้ง"/);
   // NCR: ผู้ตอบ/ผู้พิจารณาอ่านรายละเอียดที่พบในการ์ดงาน ส่วนที่ 1 ไม่บอกซ้ำ · กำหนดตอบอยู่ใต้หัวฟอร์ม
   const ncr = read("modules/module-ncr.js");
-  assert.match(ncr, /const briefInAction = Boolean\(String\(ncr\.description \?\? ""\)\.trim\(\)\) && forms\.some\(\(html\) => \/data-action="\(respond\|dispose\)"\/\.test\(html\)\);/);
+  // ทุกงานในการ์ด (ตอบ พิจารณา ระบุผู้ตอบ ความสูญเสีย) เปิดด้วยรายละเอียดที่พบ
+  assert.match(ncr, /const briefInAction = Boolean\(String\(ncr\.description \?\? ""\)\.trim\(\)\) && work\.length > 0;/);
+  // รายการ MT บอกใบที่เลยกำหนดเสร็จ (ใบในมือช่างเท่านั้น)
+  assert.match(app, /\["assigned", "in_progress"\]\.includes\(request\.status\) && request\.work_expected_date && request\.work_expected_date < bangkokToday\(\) \? `<span class="badge urgent-flag" title="กำหนดเสร็จ/);
+  assert.match(app, /needed_date,work_expected_date,machine_code/);
   assert.match(ncr, /\$\{briefInAction \? "" : partField\("รายละเอียด \(ปัญหา สเปค และค่าที่วัดได้จริง\)"/);
   assert.match(ncr, /<h3>ส่วนที่ 3 — ตอบ NCR<\/h3>\r?\n\s+\$\{responseDueNote\(ncr\)\}/);
   // "เลยกำหนด" คำเดียว

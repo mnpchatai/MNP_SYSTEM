@@ -880,8 +880,8 @@
     const work = [...forms, responderSection, ...(lossesInWork ? [lossesSection] : [])].filter(Boolean);
     // ฟอร์มตอบบอกเหลือ/เลยกำหนดกี่วันแล้ว ส่วนที่ 2 จึงไม่บอกวันกำหนดตอบซ้ำ (ไม่แสดงวันที่คู่กับอายุที่คำนวณจากวันนั้น)
     const dueInForm = forms.some((html) => html.includes('data-action="respond"'));
-    // ฟอร์มพิจารณาหรือตอบ: ผู้กรอกอ่านรายละเอียดที่พบได้ในการ์ดงานทันที (ส่วนที่ 1 จึงไม่บอกซ้ำ)
-    const briefInAction = Boolean(String(ncr.description ?? "").trim()) && forms.some((html) => /data-action="(respond|dispose)"/.test(html));
+    // มีงานในการ์ด (ตอบ พิจารณา ระบุผู้ตอบ หรือกรอกความสูญเสีย): ผู้กรอกอ่านรายละเอียดที่พบได้ในการ์ดงานทันที (ส่วนที่ 1 จึงไม่บอกซ้ำ)
+    const briefInAction = Boolean(String(ncr.description ?? "").trim()) && work.length > 0;
     // บรรทัด "ขั้นตอนนี้รอ" (แสดงเมื่อผู้ดูไม่มีงานในใบนี้) บอกกำหนดตอบและชื่อผู้ตอบที่ระบุแล้ว ส่วนที่ 2 จึงไม่บอกซ้ำ
     // ชื่อผู้ตอบที่ไม่พบในรายชื่อที่ใช้งานอยู่ บรรทัดนั้นบอกแค่ "(ผู้ตอบที่ระบุ)" ส่วนที่ 2 จึงยังแสดงชื่อ
     const waitingShown = !work.length && Boolean(waiting);

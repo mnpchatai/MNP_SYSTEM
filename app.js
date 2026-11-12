@@ -1323,7 +1323,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type), isFinalDecision(type, request.status))}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type), isFinalDecision(type, request.status))}${["assigned", "in_progress"].includes(request.status) && request.work_expected_date && request.work_expected_date < bangkokToday() ? `<span class="badge urgent-flag" title="กำหนดเสร็จ ${escapeHtml(formatDate(request.work_expected_date))}">เลยกำหนดเสร็จ</span>` : ""}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
@@ -3050,7 +3050,7 @@ function knownRequestStatuses(params) {
 async function requestListPanel(params, typeId, { departmentId = null, search = "" } = {}) {
   const mineOnly = params.get("scope") === "mine";
   let query = sb.from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id),current_step,approval_steps(step_order,step_name,status)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,work_expected_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id),current_step,approval_steps(step_order,step_name,status)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (typeId) query = query.eq("request_type_id", typeId);
@@ -3064,7 +3064,10 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
   const matchesSearch = (row) => !needle || [row.request_no, row.title, row.machine_code, row.machine_name, row.requester_name, personName(directory, row.requester_id)]
     .some((value) => String(value ?? "").toLocaleLowerCase("th-TH").includes(needle));
   const rows = (data ?? []).filter((row) => deptModuleAllowed(relation(row.request_type)?.code) && matchesSearch(row));
-  return `<section class="request-list-panel">${requestRows(rows, { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
+  const capped = (data ?? []).length >= 1000
+    ? `<p class="muted small board-note">แสดง 1,000 ใบล่าสุด หาใบที่เก่ากว่าได้ที่ <a href="${escapeHtml(requestCenterUrl(params, { view: "board", scope: null }))}">ติดตามสถานะทุกใบ</a></p>`
+    : "";
+  return `<section class="request-list-panel">${capped}${requestRows(rows, { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
 }
 
 async function renderRequests(params) {
