@@ -586,9 +586,10 @@
     };
     const body = rows.length
       ? `<section class="request-list-panel">${registerTableHtml({ label: "ทะเบียน NCR", columns, rows: rows.map(tableRow) })}</section>`
-      : search
-        ? `<section class="card">${emptyState("ไม่พบ NCR ที่ตรงกับคำค้นนี้", { hint: "ลองคำค้นอื่น หรือล้างตัวกรองเพื่อดูทุกใบที่ยังไม่ปิด", action: { href: requestCenterUrl(params, { q: null, ncrStatus: null }), label: "ล้างตัวกรอง" } })}</section>`
+      : embedded && (search || filter !== "open")
+        ? `<section class="card">${emptyState(search ? "ไม่พบ NCR ที่ตรงกับคำค้นนี้" : "ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น", { hint: "ล้างตัวกรองเพื่อดูทุกใบที่ยังไม่ปิด", action: { href: requestCenterUrl(params, { q: null, ncrStatus: null }), label: "ล้างตัวกรอง" } })}</section>`
         : `<section class="card"><div class="empty">ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น</div></section>`;
+    const capped = (data ?? []).length >= 300 ? `<p class="muted small">แสดงและค้นหาใน 300 ใบล่าสุดของหมวดนี้</p>` : "";
     const filterUrl = (value) => embedded ? requestCenterUrl(params, { ncrStatus: value }) : `#/ncr?status=${value}`;
     // หน้าทะเบียนแบบเดี่ยวใช้เฉพาะโหมดทดสอบ (ไม่มีหน้าคำร้อง ซึ่งเป็นที่อยู่ของปุ่ม "ออก NCR" และลิงก์แดชบอร์ดตามปกติ)
     // จึงต้องมีทางเข้าฟอร์มออกใบและแดชบอร์ดจากทะเบียนโดยตรง
@@ -599,7 +600,7 @@
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
       ${embedded ? "" : `<div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>`}
-      ${body}`;
+      ${capped}${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");
     bindShell();

@@ -409,7 +409,7 @@
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status"></div>
-        <div class="nd-tiles${measurable(period) ? " five" : ""}" data-card="tiles">${tilesHtml(filters, period, back)}</div>
+        <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
         ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop)}</section>` : ""}
         <section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>
         <section class="card nd-card nd-half" data-card="phase">${phaseHtml(phases)}</section>

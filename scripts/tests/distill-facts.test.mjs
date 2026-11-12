@@ -151,10 +151,12 @@ test("MT and NCR lists share one header: scope tabs on top, then one filter row 
 });
 
 test("an empty list caused by a search or filter says nothing matched and offers to clear, not to create", () => {
-  assert.match(app, /function listEmptyOf\(params\) \{/);
+  // ผู้เรียกบอกว่าหน้านั้นกรองจริงหรือไม่ (คำค้นที่ค้างจากโมดูลอื่นไม่นับ)
+  assert.match(app, /function listEmptyOf\(params, filtered\) \{/);
+  assert.match(app, /filtered: Boolean\(typeId\) && \(Boolean\(search\) \|\| Boolean\(departmentId\) \|\| statuses\.length > 0\)/);
   assert.match(app, /"ไม่พบคำร้องที่ตรงกับคำค้นหรือตัวกรองนี้"/);
   assert.match(app, /label: "ล้างตัวกรอง" \}/);
-  assert.match(read("modules/module-ncr.js"), /emptyState\("ไม่พบ NCR ที่ตรงกับคำค้นนี้"/);
+  assert.match(read("modules/module-ncr.js"), /emptyState\(search \? "ไม่พบ NCR ที่ตรงกับคำค้นนี้" : "ไม่มี NCR ในหมวดนี้ที่คุณมีสิทธิ์เห็น"/);
 });
 
 test("both dashboards share one header and do not show a list that repeats act-now or a row of — tiles", () => {

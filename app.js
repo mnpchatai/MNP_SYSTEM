@@ -1244,9 +1244,9 @@ function registerTypeHtml(code, name) {
 }
 
 // รายการคำร้องตามสิทธิ์ (หน้ารายการของโมดูล และรายการทุกประเภทที่กรองสถานะจากแดชบอร์ด)
-function requestRows(requests, { showRequester = false, showType = false, directory = null, empty = EMPTY_REQUESTS, params = null } = {}) {
+function requestRows(requests, { showRequester = false, showType = false, directory = null, empty = EMPTY_REQUESTS, params = null, filtered = false } = {}) {
   if (!requests.length) {
-    const blank = params ? listEmptyOf(params) : { text: "ยังไม่มีรายการในขณะนี้", ...empty };
+    const blank = filtered ? listEmptyOf(params, true) : { text: "ยังไม่มีรายการในขณะนี้", ...empty };
     return emptyState(blank.text, blank);
   }
   const columns = [
@@ -1288,9 +1288,9 @@ function requestRows(requests, { showRequester = false, showType = false, direct
 /* กระดานติดตามสถานะที่ "ทุกคน" เห็นได้ — ข้อมูลมาจาก RPC app_request_status_board ซึ่งคืนเฉพาะ
    ฟิลด์ระดับติดตามสถานะ ไม่มีรายละเอียดอาการ/ไฟล์แนบ/ความเห็นผู้อนุมัติ ใบที่ผู้ใช้ไม่มีสิทธิ์
    เปิดดูเต็ม (can_open = false) จึงแสดงเป็นข้อความเฉย ๆ ไม่ทำเป็นลิงก์ */
-function statusBoardRows(rows, { showType = false, params = null } = {}) {
+function statusBoardRows(rows, { showType = false, params = null, filtered = false } = {}) {
   if (!rows.length) {
-    const blank = params ? listEmptyOf(params) : { text: "ยังไม่มีรายการในขณะนี้", ...EMPTY_REQUESTS };
+    const blank = filtered ? listEmptyOf(params, true) : { text: "ยังไม่มีรายการในขณะนี้", ...EMPTY_REQUESTS };
     return emptyState(blank.text, blank);
   }
   const columns = [
@@ -2089,9 +2089,8 @@ const emptyState = (text, { hint = "", action = null } = {}) => `<div class="emp
 const EMPTY_REQUESTS = { hint: "คำร้องที่ตรงกับตัวกรองนี้จะแสดงที่นี่", action: { href: "#/new", label: "สร้างคำร้อง" } };
 // รายการว่างเพราะคำค้นหรือตัวกรอง: บอก "ไม่พบ" พร้อมล้างตัวกรอง ไม่ชวนสร้างคำร้อง (ผู้ใช้จะเข้าใจว่ายังไม่มีแล้วสร้างซ้ำ)
 // เหมือน RubberFlow ที่แยก "ยังไม่มี" กับ "ไม่พบ" · ไม่มีตัวกรองก็เป็นหน้าว่างเดิม
-function listEmptyOf(params) {
-  const filtered = Boolean((params?.get("q") ?? "").trim()) || Boolean(params?.get("dept")) || !["", "all"].includes(params?.get("status") ?? "");
-  return filtered
+function listEmptyOf(params, filtered) {
+  return filtered && params
     ? { text: "ไม่พบคำร้องที่ตรงกับคำค้นหรือตัวกรองนี้", hint: "ลองคำค้นอื่น หรือล้างตัวกรองเพื่อดูทุกใบ", action: { href: requestCenterUrl(params, { q: null, status: null, dept: null }), label: "ล้างตัวกรอง" } }
     : { text: "ยังไม่มีรายการในขณะนี้", ...EMPTY_REQUESTS };
 }
@@ -2341,7 +2340,7 @@ function homeQueueDetailHtml(item, nextStep, { compact = false, nextStepKnown = 
     ${compact ? "" : `${formCode ? `<span class="eyebrow">${escapeHtml(formCode)}</span>` : ""}
     <h3 class="queue-detail-title" id="queue-detail-title" tabindex="-1">${escapeHtml(request.title)}</h3>`}
     ${description ? `<p class="request-summary-text queue-detail-text">${escapeHtml(description)}</p>` : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
-    <a class="link-button" href="#/request?id=${encodeURIComponent(item.id)}">เปิดใบเต็ม: ไฟล์แนบ ลำดับอนุมัติ และประวัติ</a>
+    <a class="link-button" href="#/request?id=${encodeURIComponent(item.id)}">เปิดใบเต็ม: ไฟล์แนบ และประวัติเอกสาร</a>
     ${decisionPanelHtml({ request, currentStep: item.step, nextStep, nextStepKnown, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
   </article>`;
 }
@@ -2947,7 +2946,7 @@ async function renderRequestsBoard(params, types) {
   const boardContent = `${requestCenterHeader(types, params, null)}${requestsViewTabs(params)}
     ${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบ ชื่อ/รหัสเครื่องจักร ผู้แจ้ง หรือแผนก", repair: isRepairType(selected), module: Boolean(selected) })}
     ${(data ?? []).length >= 500 ? `<p class="muted small board-note">แสดง 500 ใบล่าสุด ค้นด้วยเลขที่ใบเพื่อหาใบที่เก่ากว่า</p>` : ""}
-    <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected, params })}</section>`;
+    <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected, params, filtered: status !== "all" || Boolean(search) || Boolean(department) })}</section>`;
   const content = selected ? `<div data-module="${requestPalette(selected.code)}">${boardContent}</div>` : boardContent;
   app.innerHTML = shell(content, "requests", "คำร้อง");
   bindShell();
@@ -2974,7 +2973,7 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
   if (statuses.length) query = query.in("status", statuses);
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
-  return `<section class="request-list-panel">${requestRows(data ?? [], { showRequester: !mineOnly, showType: !typeId, directory, params })}</section>`;
+  return `<section class="request-list-panel">${requestRows(data ?? [], { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
 }
 
 async function renderRequests(params) {
@@ -3714,8 +3713,9 @@ function historyCardHtml(itemsHtml, footHtml = "") {
 }
 
 // ฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว (ผู้ยื่น โมดูลที่เปิด requesterReplies) — ความเห็นและคำตอบเดิมอยู่ในประวัติเอกสาร
-function stepReplyFormHtml(step) {
-  return `<div class="detail-action"><h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}</h3><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
+function stepReplyFormHtml(step, directory) {
+  const by = step.acted_by ? personName(directory, step.acted_by) : "";
+  return `<div class="detail-action"><h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}</h3><blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
       <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
       <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div>
     </form></div>`;
@@ -3791,7 +3791,7 @@ async function renderRequestDetail(params) {
   const canReplyToStep = (step) => repliesAvailable && isRequester && Boolean(separateModule?.requesterReplies)
     && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
   // การ์ด "สิ่งที่คุณต้องดำเนินการ": งานของโมดูล (detailView.actionHtml) และฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว
-  const actionWorkHtml = `${detailView?.actionHtml ?? ""}${[...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map(stepReplyFormHtml).join("")}`.trim();
+  const actionWorkHtml = `${detailView?.actionHtml ?? ""}${[...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map((step) => stepReplyFormHtml(step, directory)).join("")}`.trim();
   const detailEntries = Object.entries(request.details ?? {});
   // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
   // ป้าย "ด่วน" ในบรรทัดหัวใบ: ความสำคัญสูง/เร่งด่วน หรือใบแจ้งซ่อมที่ติ๊กแจ้งด่วน (ที่เดียวในหน้า)

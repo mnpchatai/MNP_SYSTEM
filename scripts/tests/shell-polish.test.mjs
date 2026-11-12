@@ -292,7 +292,7 @@ test("one detail template: start work sits with the approval buttons; assign, fi
   assert.match(mt, /actionHtml: `/);
   assert.match(app, /<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ<\/h2>\$\{actionWorkHtml\}<\/section>/);
   // รอบ 11: การ์ดงานรวมงานของโมดูลกับฟอร์มตอบกลับความเห็น · ประวัติเอกสารการ์ดเดียว เปิดไว้เสมอ (คำร้อง/MT และ NCR ใช้ historyCardHtml)
-  assert.match(app, /const actionWorkHtml = `\$\{detailView\?\.actionHtml \?\? ""\}\$\{\[\.\.\.steps\]\.sort\(\(a, b\) => a\.step_order - b\.step_order\)\.filter\(canReplyToStep\)\.map\(stepReplyFormHtml\)\.join\(""\)\}`\.trim\(\);/);
+  assert.match(app, /const actionWorkHtml = `\$\{detailView\?\.actionHtml \?\? ""\}\$\{\[\.\.\.steps\]\.sort\(\(a, b\) => a\.step_order - b\.step_order\)\.filter\(canReplyToStep\)\.map\(\(step\) => stepReplyFormHtml\(step, directory\)\)\.join\(""\)\}`\.trim\(\);/);
   assert.match(app, /function historyCardHtml\(itemsHtml, footHtml = ""\) \{/);
   assert.doesNotMatch(app, /<summary><h2>ลำดับอนุมัติ<\/h2><\/summary>|<summary><h2>ลำดับเหตุการณ์<\/h2><\/summary>/, "no collapsed history cards");
   assert.match(read("modules/module-ncr.js"), /const historySection = historyCardHtml\(/);
