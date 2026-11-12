@@ -159,9 +159,9 @@ test("a role is written once per row, and cards with nothing to chart collapse t
   assert.doesNotMatch(phase, /nd-brow/);
   assert.match(phase, /<p class="nd-empty">ยังไม่มีช่วงที่เดินครบ/, "no four rows of —");
   const tech = page.split('data-card="tech"')[1].split("</section>")[0];
-  // รอบ 10: ช่างที่มอบหมายแล้วขึ้นทุกคนพร้อมงานที่ถืออยู่ (เวลา 0 ชม. ก็แสดง) ไม่มีข้อความ "ยังไม่มีช่างเริ่มซ่อม" ที่ขัดกับใบกำลังซ่อมในตาราง
-  assert.match(tech, /<span class="nd-muted">1 ใบในช่วงนี้ · ถืออยู่ 1 ใบ<\/span>/);
-  assert.doesNotMatch(tech, /ยังไม่มีช่างที่เริ่มซ่อม|nd-legend/, "no contradicting empty line, no legend for zero-length bars");
+  // รอบ 12: ยังไม่มีเวลาซ่อม จึงไม่จัดอันดับช่างที่ 0 ชม. บอกว่ายังไม่มี พร้อมช่างที่ถืองานอยู่ (ไม่ขัดกับใบกำลังซ่อมในตาราง)
+  assert.match(tech, /<p class="nd-empty">ยังไม่มีเวลาซ่อมจากใบที่แจ้งในช่วงนี้ · ถืองานอยู่ตอนนี้: [^<]+ 1 ใบ<\/p>/);
+  assert.doesNotMatch(tech, /nd-brow|ชม\.|nd-legend/, "no ranking of zero hours");
 });
 
 test("bar cards are marked for the two-column grid and wide tables are not", async () => {
@@ -219,7 +219,9 @@ test("the page has no permanent explanation paragraphs and no fact said twice", 
   const html = await render({ section: "page" });
   assert.doesNotMatch(html, /class="nd-warn"|class="nd-hint">(?:ตรวจรับไม่ผ่าน|"ถืออยู่")/, "card notes fold into each card's วิธีนับ");
   assert.doesNotMatch(html, /<p>ไม่นับฉบับร่างและใบที่ยกเลิก<\/p>/, "the definition of open jobs already says this");
-  assert.match(html, /<span class="badge">เวอร์ชันทดสอบ<\/span>/);
+  // หัวแบบเดียวกับแดชบอร์ด NCR: สถานะเวอร์ชันอยู่ในบรรทัดขอบเขต ไม่เป็นป้ายในช่องขวา
+  assert.match(html, /<p>ไม่นับใบที่ยกเลิก · เวอร์ชันทดสอบ<\/p>/);
+  assert.doesNotMatch(html, /<span class="badge">เวอร์ชันทดสอบ<\/span>/);
   // ไม่มี MNP_NOTES (เทสต์นี้โหลดแค่แดชบอร์ด) จึงเหลือบรรทัดเวลาข้อมูล · ในหน้าจริงคำขอให้แจ้งใบที่ไม่ตรงอยู่หลังปุ่ม ⓘ ที่แตะได้บนจอสัมผัส
   assert.match(html, /<p class="nd-muted">ข้อมูล ณ [^<]*<\/p>/);
   assert.match(source, /window\.MNP_NOTES\?\.toggle\("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย<\/p>"\)/, "the request to report mismatches sits behind the ⓘ button (a button works on touch, a title does not)");

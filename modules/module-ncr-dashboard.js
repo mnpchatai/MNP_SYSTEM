@@ -191,7 +191,7 @@
   // เกินกำหนด รอแนวทางป้องกัน และต้นทุนที่ยังไม่ครบ อยู่บนการ์ดตัวเลขแล้ว บรรทัดนี้เหลือเฉพาะสิ่งที่การ์ดไม่ได้บอก
   function summaryHtml(sums) {
     if (!sums.total) return "ไม่มี NCR ตรงกับตัวกรองนี้";
-    return sums.need > sums.assessed ? "ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินต้นทุนไม่ครบทุกใบ" : "";
+    return "";
   }
 
   function tilesHtml(filters, sums) {
@@ -204,11 +204,11 @@
         ${sums.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue" })}"><span class="nd-ico" aria-hidden="true">▲</span>เกินกำหนดตอบ ${fmtCount(sums.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเกินกำหนดตอบ</span>`}
         ${sums.preventionPending ? `<a class="nd-pill${sums.preventionOverdue ? " crit" : ""}" href="${hrefWith(filters, { scope: "prevention" })}">${sums.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>` : ""}รอแนวทางป้องกัน ${fmtCount(sums.preventionPending)}${sums.preventionOverdue ? ` · เลยกำหนด ${fmtNumber(sums.preventionOverdue)}` : ""}</a>` : ""}
         <span class="nd-note">ตอบทันกำหนด ${fmtPercent(sums.onTimeRate)}${sums.slaBase ? ` (${sums.onTime}/${sums.slaBase})` : ""}</span></div>
-      <div class="nd-tile"><span class="nd-label">สูญเสียสุทธิ (ยืนยันแล้ว)</span><span class="nd-value">${fmtShort(sums.net)}<small>฿</small></span>
+      <div class="nd-tile"><span class="nd-label"${sums.need > sums.assessed ? ' title="ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินต้นทุนไม่ครบทุกใบ"' : ""}>สูญเสียสุทธิ (ยืนยันแล้ว)</span><span class="nd-value">${fmtShort(sums.net)}<small>฿</small></span>
         <span class="nd-note">+ ประมาณการ ${fmtBaht(sums.estimated)} ยังไม่ยืนยัน${sums.legacy ? ` · รายการเดิม ${fmtBaht(sums.legacy)}` : ""}</span>
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(money)}${filters.dept ? `<p class="nd-hint">เมื่อกรองแผนก มูลค่าแบ่งตามสัดส่วนความรับผิดชอบของแผนกนั้น</p>` : ""}</details></div>
       <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "loss" })}"><span class="nd-label">ประเมินต้นทุนแล้ว</span><span class="nd-value">${fmtNumber(sums.assessed)}<small>/ ${fmtNumber(sums.need)} ใบ</small></span></a>
-        <span class="nd-meter" role="img" aria-label="ประเมินแล้ว ${fmtPercent(sums.assessedRate)}"><span style="width:${(sums.assessedRate ?? 0) * 100}%"></span></span>${sums.need > sums.assessed ? `<a class="nd-pill" href="${hrefWith(filters, { scope: "loss" })}">รอข้อมูลการสูญเสีย ${fmtCount(sums.need - sums.assessed)}</a>` : `<span class="nd-note">ครบทุกใบที่ต้องประเมิน</span>`}
+        <span class="nd-meter" role="img" aria-label="ประเมินแล้ว ${fmtPercent(sums.assessedRate)}"><span style="width:${(sums.assessedRate ?? 0) * 100}%"></span></span>${sums.need > sums.assessed ? "" : `<span class="nd-note">ครบทุกใบที่ต้องประเมิน</span>`}
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(assess)}<p class="nd-hint">ครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</p></details></div>`;
   }
 
@@ -448,8 +448,10 @@
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
         ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(list, actTop, today)}</section>` : ""}
         <section class="card nd-card" data-card="trend">${trendHtml(rows, filters, today)}</section>
-        <section class="card nd-card nd-half" data-card="pareto">${paretoHtml(list, filters)}</section>
-        <section class="card nd-card nd-half" data-card="losstype">${lossTypeHtml(list, filters, sums)}</section>
+        ${sums.gross || sums.estimated || sums.legacy || sums.recovery
+          ? `<section class="card nd-card nd-half" data-card="pareto">${paretoHtml(list, filters)}</section>
+        <section class="card nd-card nd-half" data-card="losstype">${lossTypeHtml(list, filters, sums)}</section>`
+          : `<section class="card nd-card" data-card="pareto">${paretoHtml(list, filters)}</section>`}
         <section class="card nd-card" data-card="dept">${deptHtml(list, filters)}</section>
         <div class="nd-two">
           <section class="card nd-card" data-card="source">${breakdownHtml("source", "แหล่งที่พบ", "นับใบเต็มใบ แตะแท่งเพื่อดูตัวเลข", model.countBy(list, (row) => [row.source]), SOURCES, filters, "source", list.length)}</section>

@@ -3791,7 +3791,14 @@ async function renderRequestDetail(params) {
   const canReplyToStep = (step) => repliesAvailable && isRequester && Boolean(separateModule?.requesterReplies)
     && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
   // การ์ด "สิ่งที่คุณต้องดำเนินการ": งานของโมดูล (detailView.actionHtml) และฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว
-  const actionWorkHtml = `${detailView?.actionHtml ?? ""}${[...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map((step) => stepReplyFormHtml(step, directory)).join("")}`.trim();
+  // ฟอร์มตอบกลับความเห็นเป็นทางเลือก (ใบอาจจบแล้ว): การ์ดที่มีแค่ฟอร์มนี้ใช้หัว "ตอบกลับความเห็น (ถ้าต้องการ)" ไม่ใช่ "สิ่งที่คุณต้องดำเนินการ"
+  // ขั้นที่ผู้ยื่นตอบไปแล้ว (คำตอบอยู่ในประวัติเอกสาร) พับฟอร์มไว้เป็น "ตอบเพิ่มเติม" ยังตอบได้อีกเหมือนเดิม
+  const moduleWorkHtml = (detailView?.actionHtml ?? "").trim();
+  const replyWorkHtml = [...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map((step) => (replies.some((reply) => reply.approval_step_id === step.id)
+    ? `<details class="detail-reply-more"><summary>ตอบเพิ่มเติมถึงขั้น ${escapeHtml(step.step_name)}</summary>${stepReplyFormHtml(step, directory)}</details>`
+    : stepReplyFormHtml(step, directory))).join("");
+  const actionWorkHtml = `${moduleWorkHtml}${replyWorkHtml}`.trim();
+  const actionWorkTitle = moduleWorkHtml ? "สิ่งที่คุณต้องดำเนินการ" : "ตอบกลับความเห็น (ถ้าต้องการ)";
   const detailEntries = Object.entries(request.details ?? {});
   // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
   // ป้าย "ด่วน" ในบรรทัดหัวใบ: ความสำคัญสูง/เร่งด่วน หรือใบแจ้งซ่อมที่ติ๊กแจ้งด่วน (ที่เดียวในหน้า)
@@ -3837,7 +3844,7 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
-        ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ</h2>${actionWorkHtml}</section>` : ""}
+        ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">${actionWorkTitle}</h2>${actionWorkHtml}</section>` : ""}
         <section class="card request-brief" aria-labelledby="request-brief-title">
           <h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
           ${description

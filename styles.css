@@ -351,6 +351,8 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .progress-choice-option { display: flex; align-items: center; gap: 8px; font-size: var(--text-meta); cursor: pointer; }
 .progress-choice-option input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
 .progress-expected-input:disabled { opacity: .55; }
+/* ช่องที่แก้ไม่ได้ (เช่น รหัสพนักงาน แผนก ตำแหน่งในโปรไฟล์): พื้นเทา เส้นประ ไม่ดูเหมือนช่องที่พิมพ์ได้ */
+:is(.input, .select, .textarea):disabled { color: var(--muted); background: var(--shell); border-style: dashed; cursor: not-allowed; }
 .progress-reschedule-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .progress-reschedule-form > .field-label { flex-basis: 100%; }
 .progress-reschedule-form .input { flex: 1; min-height: 38px; padding: 8px 10px; }
@@ -362,8 +364,9 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .parts-table .input { min-height: 38px; padding: 8px 10px; }
 .parts-table .parts-row-actions { width: 1%; white-space: nowrap; }
 .parts-attachment { margin-top: 10px; }
-/* จอแคบ: แต่ละรายการอะไหล่เป็นการ์ด (ชื่อ ร้าน หมายเหตุเต็มแถว จำนวน/หน่วย/ราคาเรียงคู่) ช่องมี placeholder และ aria-label บอกชื่อ */
-@media (max-width: 760px) {
+/* ช่องแคบ (มือถือ หรือการ์ดงานบนจอกว้าง): แต่ละรายการอะไหล่เป็นการ์ด (ชื่อ ร้าน หมายเหตุเต็มแถว จำนวน/หน่วย/ราคาเรียงคู่) ช่องมี placeholder และ aria-label บอกชื่อ */
+.parts-field { container-type: inline-size; }
+@container (max-width: 760px) {
   .parts-table-wrap { border: 0; overflow: visible; }
   .parts-table { min-width: 0; }
   .parts-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -558,6 +561,8 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 /* ความเห็นที่ฟอร์มตอบกลับอ้างถึง */
 .detail-action-quote { margin: 0 0 12px; padding: 8px 12px; color: var(--copy); background: var(--shell); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
 .detail-action-quote cite { margin-top: 4px; display: block; color: var(--muted); font-size: var(--text-meta); font-style: normal; }
+.detail-reply-more > summary { min-height: 44px; display: flex; align-items: center; color: var(--primary-ink); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
+.detail-reply-more[open] > summary { margin-bottom: 8px; }
 .detail-history-next { margin: 14px 0 0; padding-top: 12px; color: var(--muted); border-top: 1px solid var(--soft-line); font-size: var(--text-meta); }
 .card-heading { min-height: 52px; padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); }
 .card-heading h2, .card h2, .card h3 { margin: 0; font-size: var(--text-title); line-height: 1.4; }
@@ -655,23 +660,10 @@ a.register-title:hover { color: var(--primary); }
 .register-meta { color: var(--copy); font-size: var(--text-meta); white-space: nowrap; }
 .register-none { color: var(--quiet); }
 .register-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.register-status .ncr-owner-chip { margin-top: 6px; display: block; text-align: left; }
 .request-card-type { padding: 3px 9px; display: inline-block; color: var(--mod-on); background: var(--mod-surface); border: 1px solid var(--mod-edge); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
 .request-priority-chip { min-height: 25px; padding: 4px 9px; display: inline-flex; align-items: center; color: var(--muted); background: var(--shell); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; }
 .request-priority-chip.priority-high,
 .request-priority-chip.priority-urgent { color: var(--danger-ink); background: var(--danger-soft); }
-.ncr-owner-chip {
-  max-width: 100%;
-  padding: 5px 10px;
-  color: var(--ink);
-  background: var(--shell);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.ncr-owner-chip:is(.is-closed, .is-cancelled) { color: var(--muted); }
 /* จอแคบ: แถวละการ์ด เลขที่กับสถานะบรรทัดแรก เรื่องเต็มบรรทัด ช่องที่เหลือเป็นบรรทัดเล็กมีชื่อคอลัมน์นำ ช่องว่างไม่แสดง */
 @media (max-width: 760px) {
   .list-filters { align-items: stretch; }
@@ -1011,7 +1003,11 @@ a.register-title:hover { color: var(--primary); }
 .action-panel-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .action-panel-buttons .btn { min-height: 44px; flex: 1 1 auto; }
 .action-panel-buttons .btn.is-primary { flex-grow: 2; }
-.action-panel-files > summary { min-height: 36px; display: flex; align-items: center; color: var(--muted); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
+.action-panel-files > summary { min-height: 44px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
+.action-panel-files > summary::-webkit-details-marker { display: none; }
+.action-panel-files > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform .15s ease; }
+.action-panel-files[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
+@media (prefers-reduced-motion: reduce) { .action-panel-files > summary::after { transition: none; } }
 .action-panel-files[open] > summary { margin-bottom: 6px; }
 .decision-reason .field { margin: 0; }
 .decision-line { margin: 0; padding: 10px 12px; color: var(--ink); background: var(--shell); border-radius: var(--radius-md); font-weight: 600; overflow-wrap: anywhere; }

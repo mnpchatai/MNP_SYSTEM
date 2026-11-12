@@ -400,6 +400,8 @@ test("the filtered list goes after the right card of a half-width pair, so no ha
 
 test("pareto and loss cards are marked for the two-column grid; the department table is not", async () => {
   const page = await renderView({ reports: [NCR_ONE] });
-  for (const card of ["pareto", "losstype"]) assert.match(page, new RegExp(`class="card nd-card nd-half" data-card="${card}"`));
+  // รอบ 12: ยังไม่มีความสูญเสียเลย ไม่มีการ์ดแยกประเภทที่ว่าง (กราฟรายเดือนบอกแล้ว) Pareto เต็มแถว
+  assert.match(page, /class="card nd-card" data-card="pareto"/);
+  assert.doesNotMatch(page, /data-card="losstype"/);
   for (const card of ["act", "trend", "dept", "scrap"]) assert.match(page, new RegExp(`class="card nd-card" data-card="${card}"`));
 });

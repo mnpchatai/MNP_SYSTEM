@@ -162,7 +162,7 @@ test("an empty list caused by a search or filter says nothing matched and offers
 test("both dashboards share one header and do not show a list that repeats act-now or a row of — tiles", () => {
   const mt = read("modules/module-mt-dashboard.js");
   const ncrDash = read("modules/module-ncr-dashboard.js");
-  assert.match(mt, /<div><h1>\$\{TITLE\}<\/h1><p>ไม่นับใบที่ยกเลิก<\/p><\/div>/);
+  assert.match(mt, /<div><h1>\$\{TITLE\}<\/h1><p>ไม่นับใบที่ยกเลิก · เวอร์ชันทดสอบ<\/p><\/div>/);
   assert.match(ncrDash, /<div><h1>แดชบอร์ด NCR<\/h1><p>ไม่นับใบที่ยกเลิก<\/p><\/div>/);
   for (const source of [mt, ncrDash]) assert.match(source, /if \(list\.length && !rest\.length && !hasDrillFilter\(filters\)\) return "";/);
   assert.match(mt, /const measurable = \(period\) => period\.avgCycle !== null \|\| Boolean\(period\.onTimeBase\) \|\| Boolean\(period\.verified\);/);
@@ -173,4 +173,25 @@ test("the NCR hero states the reporter and issue date once, in the same meta lin
   const ncr = read("modules/module-ncr.js");
   assert.match(ncr, /<p class="request-detail-meta">โดย \$\{escapeHtml\(personName\(directory, ncr\.reporter_id\)\)\}/);
   assert.doesNotMatch(ncr, /partField\("วันที่ออก"|partField\("ผู้รายงาน \/ แผนก"/);
+});
+
+// ---- รอบ 12: ข้อที่ผู้ตรวจ 3 คนเห็นตรงกัน ----
+test("the NCR register states the loss state once, in the loss column, and names the owner like a request row", () => {
+  const ncr = read("modules/module-ncr.js");
+  assert.match(ncr, /status: `<span class="register-badges">\$\{statusBadgeHtml\(row\)\}<\/span>/);
+  assert.match(ncr, /loss: `\$\{row\.lossPending \? '<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย<\/span>' : ""\}/);
+  assert.match(ncr, /return registerSubHtml\(`\$\{party\}\$\{progress\}`, `\$\{uiIcon\("user"\)\} `, `ผู้รับผิดชอบ: /);
+  const dash = read("modules/module-ncr-dashboard.js");
+  assert.doesNotMatch(dash, /">รอข้อมูลการสูญเสีย \$\{fmtCount/, "the assessed tile's fraction is not repeated as a pill");
+  assert.doesNotMatch(dash, /return sums\.need > sums\.assessed \? "ยอดบาทเป็นตัวเลขขั้นต่ำ/, "no banner that repeats the tile");
+});
+
+test("small consistency fixes: file toggle marker, read-only fields, parts table by container, help per step, RubberFlow reason", () => {
+  const css = read("styles.css");
+  assert.match(css, /\.action-panel-files > summary::after \{ content: "";/);
+  assert.match(css, /:is\(\.input, \.select, \.textarea\):disabled \{ color: var\(--muted\); background: var\(--shell\); border-style: dashed; cursor: not-allowed; \}/);
+  assert.match(css, /\.parts-field \{ container-type: inline-size; \}\r?\n@container \(max-width: 760px\) \{/);
+  assert.match(mt, /<div class="field parts-field"><label>รายการอะไหล่/);
+  assert.match(read("modules/shortcut-help.js"), /"อนุมัติแล้วกดเลิกทำได้ภายใน 5 วินาที ส่วนเริ่มงาน เสร็จสิ้นงาน และตรวจรับส่งทันทีหลังกดยืนยัน"/);
+  assert.match(read("modules/rubberflow-pages-plan.js"), /ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้/);
 });

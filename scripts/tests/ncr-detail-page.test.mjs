@@ -50,7 +50,7 @@ async function renderPage(viewer, overrides = {}, options = {}) {
     historyCardHtml: (items, foot = "") => `<section class="card detail-history"><h2>ประวัติเอกสาร</h2><div class="timeline">${items}</div>${foot}</section>`,
     // ตัวช่วยทะเบียนของ app.js (registerTableHtml ฯลฯ) แบบย่อ: ตรวจว่าทะเบียน NCR ส่งช่องครบ ไม่ใช่หน้าตา
     registerTableHtml: ({ columns, rows }) => `<table>${rows.map((row) => `<tr>${columns.map((column) => `<td data-label="${column.label}">${row.cells[column.key] ?? ""}</td>`).join("")}</tr>`).join("")}</table>`,
-    registerNoHtml: (number, href) => `<a href="${href}">${number}</a>`, registerSubjectHtml: (main, href, secondary) => `${main}|${secondary}`,
+    registerNoHtml: (number, href) => `<a href="${href}">${number}</a>`, registerSubHtml: (text) => `<span class="register-sub">${text}</span>`, uiIcon: () => "", registerSubjectHtml: (main, href, secondary) => `${main}|${secondary}`,
     hrefSelectHtml: ({ options, value }) => `<select>${options.map((option) => `<option data-href="${option.href}"${option.value === value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`, uiIcon: () => "",
     FormData: class { constructor(form) { this.form = form; } get(name) { return this.form.fields?.[name] ?? null; } },
     confirmDialog: async () => true,

@@ -123,10 +123,11 @@
     });
     // ยังไม่มีใบสั่งผลิตเลย (ไม่ใช่ค้นหา/กรองแล้วไม่เจอ): บอกว่ายังไม่มี และให้ปุ่มเปิดใบอยู่ตรงนั้น (ยังไม่มีสูตรที่อนุมัติ = ไปสร้างสูตรก่อน เหมือนหน้าภาพรวม) · "ไม่พบ" ใช้เมื่อค้นหา/กรองแล้วไม่มีผลเท่านั้น
     const noOrdersYet = !data.orders.length;
+    const needRecipe = noOrdersYet && ctx.can("createOrder") && !rules.approvedRecipes(data.recipes).length;
     const startAction = !noOrdersYet || !ctx.can("createOrder") ? ""
       : !rules.approvedRecipes(data.recipes).length ? (ctx.canSee("recipes") ? ui.link("สร้างสูตรยาง", ctx.url("recipes"), "btn rf-btn") : "")
       : ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" });
-    const ordersEmpty = noOrdersYet ? { emptyText: "ยังไม่มีใบสั่งผลิต", emptyHtml: `<div class="empty-state"><p>${esc("ยังไม่มีใบสั่งผลิต")}</p>${startAction}</div>` } : { emptyText: "ไม่พบใบสั่งผลิต" };
+    const ordersEmpty = noOrdersYet ? { emptyText: "ยังไม่มีใบสั่งผลิต", emptyHtml: `<div class="empty-state"><p>${esc("ยังไม่มีใบสั่งผลิต")}</p>${needRecipe ? `<small>${esc("ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้")}</small>` : ""}${startAction}</div>` } : { emptyText: "ไม่พบใบสั่งผลิต" };
     const html = `${ui.pageHead("ใบสั่งผลิต", "วางแผน ปล่อยผลิต พักงาน และติดตามความคืบหน้าของแต่ละใบสั่งผลิต", ctx.can("createOrder") && !noOrdersYet ? ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" }) : "")}
       ${ui.card(`<div class="rf-listbar">${tabs}${searchForm(ctx, "ค้นหาเลขที่ ลูกค้า สินค้า…", { tab: true })}</div>${ui.table(["เลขที่ / PO ลูกค้า", "ลูกค้า", "สินค้า / สูตร", "จำนวน", "ความคืบหน้า", "เริ่ม – ส่ง", "สถานะ", { label: "จัดการ", className: "right" }], body, ordersEmpty)}`, { flush: true })}`;
     return { html };
