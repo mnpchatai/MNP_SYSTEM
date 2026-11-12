@@ -189,7 +189,9 @@ test("the NCR register states the loss state once, in the loss column, and names
 test("small consistency fixes: file toggle marker, read-only fields, parts table by container, help per step, RubberFlow reason", () => {
   const css = read("styles.css");
   assert.match(css, /\.action-panel-files > summary::after \{ content: "";/);
-  assert.match(css, /:is\(\.input, \.select, \.textarea\):disabled \{ color: var\(--muted\); background: var\(--shell\); border-style: dashed; cursor: not-allowed; \}/);
+  // ช่องที่ปิดชั่วคราวระหว่างส่งฟอร์ม (setFormBusy ใส่ aria-busy) ไม่เปลี่ยนเป็นหน้าตา "แก้ไม่ได้"
+  assert.match(app, /form\.toggleAttribute\("aria-busy", busy\);/);
+  assert.match(css, /:is\(\.input, \.select, \.textarea\):disabled:not\(\[aria-busy\] \*\) \{ color: var\(--muted\); background: var\(--shell\); border-style: dashed; cursor: not-allowed; \}/);
   assert.match(css, /\.parts-field \{ container-type: inline-size; \}\r?\n@container \(max-width: 760px\) \{/);
   assert.match(mt, /<div class="field parts-field"><label>รายการอะไหล่/);
   assert.match(read("modules/shortcut-help.js"), /"อนุมัติแล้วกดเลิกทำได้ภายใน 5 วินาที ส่วนเริ่มงาน เสร็จสิ้นงาน และตรวจรับส่งทันทีหลังกดยืนยัน"/);

@@ -352,7 +352,7 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .progress-choice-option input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
 .progress-expected-input:disabled { opacity: .55; }
 /* ช่องที่แก้ไม่ได้ (เช่น รหัสพนักงาน แผนก ตำแหน่งในโปรไฟล์): พื้นเทา เส้นประ ไม่ดูเหมือนช่องที่พิมพ์ได้ */
-:is(.input, .select, .textarea):disabled { color: var(--muted); background: var(--shell); border-style: dashed; cursor: not-allowed; }
+:is(.input, .select, .textarea):disabled:not([aria-busy] *) { color: var(--muted); background: var(--shell); border-style: dashed; cursor: not-allowed; }
 .progress-reschedule-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .progress-reschedule-form > .field-label { flex-basis: 100%; }
 .progress-reschedule-form .input { flex: 1; min-height: 38px; padding: 8px 10px; }
@@ -561,7 +561,11 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 /* ความเห็นที่ฟอร์มตอบกลับอ้างถึง */
 .detail-action-quote { margin: 0 0 12px; padding: 8px 12px; color: var(--copy); background: var(--shell); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
 .detail-action-quote cite { margin-top: 4px; display: block; color: var(--muted); font-size: var(--text-meta); font-style: normal; }
-.detail-reply-more > summary { min-height: 44px; display: flex; align-items: center; color: var(--primary-ink); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
+.detail-reply-more > summary { min-height: 44px; display: flex; align-items: center; gap: 8px; color: var(--primary-ink); font-size: var(--text-meta); font-weight: 600; cursor: pointer; }
+.detail-reply-more > summary::-webkit-details-marker { display: none; }
+.detail-reply-more > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform .15s ease; }
+.detail-reply-more[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
+@media (prefers-reduced-motion: reduce) { .detail-reply-more > summary::after { transition: none; } }
 .detail-reply-more[open] > summary { margin-bottom: 8px; }
 .detail-history-next { margin: 14px 0 0; padding-top: 12px; color: var(--muted); border-top: 1px solid var(--soft-line); font-size: var(--text-meta); }
 .card-heading { min-height: 52px; padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); }

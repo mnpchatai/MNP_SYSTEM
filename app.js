@@ -531,6 +531,7 @@ function friendlyError(error) {
 
 function setFormBusy(form, busy) {
   form.querySelectorAll("button, input, textarea, select").forEach((node) => { node.disabled = busy; });
+  form.toggleAttribute("aria-busy", busy);
   const button = form.querySelector('button[type="submit"]');
   if (button) {
     if (!button.dataset.label) button.dataset.label = button.textContent;
@@ -3713,9 +3714,10 @@ function historyCardHtml(itemsHtml, footHtml = "") {
 }
 
 // ฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว (ผู้ยื่น โมดูลที่เปิด requesterReplies) — ความเห็นและคำตอบเดิมอยู่ในประวัติเอกสาร
-function stepReplyFormHtml(step, directory) {
+// heading: false ในส่วนที่พับ (หัวที่พับบอกชื่อขั้นแล้ว) · optional: การ์ดมีงานบังคับอื่นด้วย จึงบอกว่าฟอร์มนี้ไม่บังคับ
+function stepReplyFormHtml(step, directory, { heading = true, optional = false } = {}) {
   const by = step.acted_by ? personName(directory, step.acted_by) : "";
-  return `<div class="detail-action"><h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}</h3><blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
+  return `<div class="detail-action">${heading ? `<h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}${optional ? " (ถ้าต้องการ)" : ""}</h3>` : ""}<blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
       <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
       <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div>
     </form></div>`;
@@ -3795,8 +3797,8 @@ async function renderRequestDetail(params) {
   // ขั้นที่ผู้ยื่นตอบไปแล้ว (คำตอบอยู่ในประวัติเอกสาร) พับฟอร์มไว้เป็น "ตอบเพิ่มเติม" ยังตอบได้อีกเหมือนเดิม
   const moduleWorkHtml = (detailView?.actionHtml ?? "").trim();
   const replyWorkHtml = [...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map((step) => (replies.some((reply) => reply.approval_step_id === step.id)
-    ? `<details class="detail-reply-more"><summary>ตอบเพิ่มเติมถึงขั้น ${escapeHtml(step.step_name)}</summary>${stepReplyFormHtml(step, directory)}</details>`
-    : stepReplyFormHtml(step, directory))).join("");
+    ? `<details class="detail-reply-more"><summary>ตอบเพิ่มเติมถึงขั้น ${escapeHtml(step.step_name)}${moduleWorkHtml ? " (ถ้าต้องการ)" : ""}</summary>${stepReplyFormHtml(step, directory, { heading: false })}</details>`
+    : stepReplyFormHtml(step, directory, { optional: Boolean(moduleWorkHtml) }))).join("");
   const actionWorkHtml = `${moduleWorkHtml}${replyWorkHtml}`.trim();
   const actionWorkTitle = moduleWorkHtml ? "สิ่งที่คุณต้องดำเนินการ" : "ตอบกลับความเห็น (ถ้าต้องการ)";
   const detailEntries = Object.entries(request.details ?? {});
