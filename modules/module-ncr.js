@@ -891,7 +891,7 @@
       ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`],
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
     const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
-      <div class="page-heading request-module-header ncr-detail-head" data-module="ncr"><div><div class="eyebrow">${escapeHtml(ncr.form_code)}</div><h1>${escapeHtml(ncr.ncr_no)}</h1><p>${escapeHtml(ncr.product_name)}</p>${headFacts}</div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
+      <div class="page-heading request-module-header ncr-detail-head" data-module="ncr"><div><div class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</div><h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>${headFacts}</div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
       ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
@@ -964,10 +964,11 @@
     // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
     const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
-    const body = forms.length
-      ? [actionsSection, ...parts, filesSection, responderSection, lossesSection, historySection]
-      : [...parts, filesSection, responderSection, lossesSection, historySection];
-    const content = heading + body.join("");
+    // โครงหน้ารายละเอียดเดียวทุกโมดูล (ผู้ใช้อนุมัติ 2026-11-12): งานของผู้ดูบนสุดของคอลัมน์ซ้าย ประวัติอยู่คอลัมน์ขวา
+    const main = forms.length
+      ? [actionsSection, ...parts, filesSection, responderSection, lossesSection]
+      : [...parts, filesSection, responderSection, lossesSection];
+    const content = `${heading}<div class="detail-grid ncr-detail-grid"><div class="stack">${main.join("")}</div><aside class="stack">${historySection}</aside></div>`;
     // เลขที่ NCR เป็นหัวเรื่องของหน้าแล้ว แถบบนบอกทะเบียน ส่วนชื่อแท็บยังเป็นเลขที่
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR", ncr.ncr_no);
     bindShell();
