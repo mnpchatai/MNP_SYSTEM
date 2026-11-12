@@ -379,7 +379,6 @@
     const form = `<form id="expected-date-form"${overdue ? "" : ' class="hidden"'}>
         <div class="field"><label for="expected-date-input">วันที่คาดว่าจะเสร็จใหม่${REQUIRED}</label><input class="input" id="expected-date-input" name="expected_date" type="date" min="${escapeHtml(today)}" required></div>
         <div class="field"><label for="expected-date-note">เหตุผล (ถ้ามี)</label><input class="input" id="expected-date-note" name="note" maxlength="500" placeholder="เช่น รออะไหล่"></div>
-        ${extraFilesFieldHtml("expected-date-files")}
         <p class="muted small">ระบบแจ้งผู้แจ้งให้ทราบ</p>
         <div class="form-actions"><button class="btn" type="submit">บันทึกวันที่ใหม่</button></div>
       </form>`;
@@ -859,13 +858,15 @@
         ? '<div class="detail-action" id="repair-assign"><h3>มอบหมายช่าง</h3>'
         : '<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้ไขการมอบหมายช่าง</h2></summary>';
       const assignClose = request.status === "pending_assign" ? "</div>" : "</details>";
-      const assignSection = canAssign ? `${assignOpen}<p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form" novalidate>
+      const reassign = request.status !== "pending_assign";
+      const dueCardShown = canRecordProgress && ["assigned", "in_progress"].includes(request.status);
+      const assignSection = canAssign ? `${assignOpen}<p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form" novalidate${reassign ? " data-reassign" : ""}>
           <fieldset class="field" data-field="technician_ids"><legend>ช่างผู้รับผิดชอบ${REQUIRED}</legend><small>ติ๊กได้หลายคน อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></fieldset>
           <div class="field" data-field="execution_plan"><label for="assign-execution-plan">การดำเนินงาน${REQUIRED}</label><select class="select" id="assign-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}"${request.execution_plan === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
           <div class="field" data-field="inspector_opinion"><label for="assign-opinion">ความคิดเห็นของช่างผู้ตรวจสอบ${REQUIRED}</label><select class="select" id="assign-opinion" name="inspector_opinion" required><option value="">เลือกความคิดเห็นของช่างผู้ตรวจสอบ</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}"${request.inspector_opinion === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
-          <div class="field" data-field="work_started_date"><label for="assign-start-date">วันเริ่มงาน${REQUIRED}</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}" required></div>
-          <div class="field" data-field="work_expected_date"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ${REQUIRED}</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}" required></div>
-          ${extraFilesFieldHtml("assign-files")}
+          <div class="field" data-field="work_started_date"><label for="assign-start-date">วันเริ่มงาน${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}"${reassign ? "" : " required"}></div>
+          ${dueCardShown ? "" : `<div class="field" data-field="work_expected_date"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}"${reassign ? "" : " required"}></div>`}
+          ${reassign ? "" : extraFilesFieldHtml("assign-files")}
           <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
         </form>${assignClose}` : "";
       return {
@@ -942,7 +943,11 @@
         const technicianIds = values.getAll("technician_ids").map(String).filter(Boolean);
         const startDate = String(values.get("work_started_date") ?? "");
         const expectedDate = String(values.get("work_expected_date") ?? "");
-        const errors = window.MNP_FORM_STEPS.validate(ASSIGN_RULES, {
+        // แก้การมอบหมาย: วันที่ไม่บังคับ (ค่าว่างคงวันเดิม) แต่ถ้ากรอกทั้งสองช่องยังตรวจลำดับวันที่
+        const rules = form.hasAttribute("data-reassign")
+          ? ASSIGN_RULES.map((rule) => (["work_started_date", "work_expected_date"].includes(rule.name) ? { ...rule, required: false } : rule))
+          : ASSIGN_RULES;
+        const errors = window.MNP_FORM_STEPS.validate(rules, {
           technician_ids: technicianIds.length ? "selected" : "",
           execution_plan: String(values.get("execution_plan") ?? ""),
           inspector_opinion: String(values.get("inspector_opinion") ?? ""),

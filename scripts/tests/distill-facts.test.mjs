@@ -144,7 +144,7 @@ test("request and NCR details share one hero: back link, eyebrow with the status
 
 // ---- รอบ 11: ส่วนประกอบกลางที่ MT และ NCR ใช้ร่วมกัน ----
 test("MT and NCR lists share one header: scope tabs on top, then one filter row with search", () => {
-  assert.match(app, /\$\{requestsViewTabs\(params, \{ board: selected\.code !== "NCR_CAR" \}\)\}\$\{list\}<\/div>`;/);
+  assert.match(app, /\$\{requestsViewTabs\(params, \{ board: selected\.code !== "NCR_CAR" && !seesWholeModule\(selected\) \}\)\}\$\{list\}<\/div>`;/);
   assert.match(app, /requestListFilters\(params, \{ placeholder: "ค้นหาเลขที่ NCR สินค้า ลูกค้า หรือข้อบกพร่อง", statusSelect: ncrStatus\.html, statusApplied: ncrStatus\.applied \}\)/);
   assert.doesNotMatch(app, /function requestScopeSwitch\(/);
   const ncr = read("modules/module-ncr.js");
@@ -317,4 +317,41 @@ test("round 15: picked files show an unsent state and a leave warning; closed re
   assert.match(app, /const requestClosed = \["completed", "rejected", "cancelled", "acknowledged"\]\.includes\(request\.status\) \|\| isFinalDecision\(type, request\.status\);/);
   // ตัวเลือกช่างเป็นกลุ่มที่มีชื่อ
   assert.match(read("modules/module-mt.js"), /<fieldset class="field" data-field="technician_ids"><legend>ช่างผู้รับผิดชอบ/);
+});
+
+test("round 16: editing an assignment does not force dates, and the page has one place to attach files and one to move the due date", () => {
+  assert.match(mt, /const reassign = request\.status !== "pending_assign";/);
+  assert.match(mt, /const dueCardShown = canRecordProgress && \["assigned", "in_progress"\]\.includes\(request\.status\);/);
+  assert.match(mt, /วันเริ่มงาน\$\{reassign \? " \(ถ้ามี\)" : REQUIRED\}/);
+  assert.match(mt, /\$\{dueCardShown \? "" : `<div class="field" data-field="work_expected_date">/, "the due-date card is the one place to move the due date");
+  assert.match(mt, /\$\{reassign \? "" : extraFilesFieldHtml\("assign-files"\)\}/);
+  assert.doesNotMatch(mt, /extraFilesFieldHtml\("expected-date-files"\)/, "files go on the attachments card");
+  // ขั้นรอมอบหมาย: ไฟล์ส่งพร้อมการมอบหมายทางเดียว การ์ดไฟล์แนบชี้ไปที่ฟอร์มนั้น (แบบเดียวกับฟอร์มจบงานและการ์ดตรวจรับ)
+  assert.match(app, /\?\? document\.querySelector\("#assign-files"\);/);
+  assert.match(app, /"assign-files": "แนบไฟล์ในฟอร์มมอบหมายช่าง"/);
+  assert.match(mt, /const rules = form\.hasAttribute\("data-reassign"\)\r?\n\s+\? ASSIGN_RULES\.map\(\(rule\) => \(\["work_started_date", "work_expected_date"\]\.includes\(rule\.name\) \? \{ \.\.\.rule, required: false \} : rule\)\)/);
+  // ฐานข้อมูลบังคับวันเริ่มงานเฉพาะการมอบหมายครั้งแรก (ค่าว่างตอนแก้คงวันเดิม)
+  const sql = readFileSync(new URL("../../supabase/migrations/20260930010000_assistant_department_manager_acts_as_manager.sql", import.meta.url), "utf8");
+  assert.match(sql, /v_start {5}:= coalesce\(p_work_started_date, v_request\.work_started_date\);/);
+  assert.match(sql, /if v_first_assign then[^]*?if v_start is null then raise exception 'WORK_START_DATE_REQUIRED'; end if;/);
+});
+
+test("round 16: people who already see every request of a module do not get a second tab with the same rows", () => {
+  const source = app.match(/function seesWholeModule\(type\) \{[^]*?\r?\n\}\r?\n/)[0];
+  const run = (employee, type) => {
+    const context = vm.createContext({ state: { employee }, VIEW_ALL_ROLE_CODES: ["factory_manager", "general_manager"] });
+    vm.runInContext(source, context);
+    return context.seesWholeModule(type);
+  };
+  const mtType = { owning_department_id: "dept-mt" };
+  assert.equal(run({ role: { code: "admin" } }, mtType), true);
+  assert.equal(run({ role: { code: "general_manager" } }, mtType), true);
+  assert.equal(run({ role: { code: "department_manager" }, department_id: "dept-mt" }, mtType), true);
+  assert.equal(run({ role: { code: "department_manager" }, department_id: "dept-rb" }, mtType), false, "another department's manager still needs the board");
+  assert.equal(run({ role: { code: "staff" }, department_id: "dept-mt" }, mtType), false);
+  assert.match(app, /\.select\("id,code,prefix,name_th,description,owning_department_id"\)/);
+  assert.match(app, /\$\{withBoard \|\| board \? tab\(board/, "an open board keeps its own tab");
+  // กระดานบอกชื่อโมดูลในชื่อแท็บ · RubberFlow แถบเครื่องมือขยายเต็มแถบหัว
+  assert.match(app, /shell\(content, "requests", "คำร้อง", selected \? `ติดตามสถานะ · \$\{requestTypeLabel\(selected\)\}` : "ติดตามสถานะทุกใบ"\)/);
+  assert.match(read("styles.css"), /\.rf-page \.rf-head \.rf-toolbar \{ flex: 1 1 auto;/);
 });
