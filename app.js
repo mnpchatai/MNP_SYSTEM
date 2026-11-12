@@ -2891,7 +2891,7 @@ function requestsViewTabs(params, { board: withBoard = true } = {}) {
   const mine = !board && params.get("scope") === "mine";
   const tab = (active, changes, label, hint) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}" title="${hint}">${label}</a>`;
   return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
-    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู", "ใบที่บัญชีของคุณเปิดดูรายละเอียดได้")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง", "เฉพาะใบที่คุณเป็นผู้แจ้ง")}${withBoard ? tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ", "ทุกใบของโมดูล เห็นสถานะได้ทุกใบ เปิดรายละเอียดได้เฉพาะใบที่มีสิทธิ์") : ""}
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู", "ใบที่บัญชีของคุณเปิดดูรายละเอียดได้")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง", "เฉพาะใบที่คุณเป็นผู้แจ้ง")}${withBoard || board ? tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ", "ทุกใบของโมดูล เห็นสถานะได้ทุกใบ เปิดรายละเอียดได้เฉพาะใบที่มีสิทธิ์") : ""}
   </nav>`;
 }
 
@@ -3034,7 +3034,7 @@ async function renderRequestsBoard(params, types) {
     ${(data ?? []).length >= 500 ? `<p class="muted small board-note">แสดง 500 ใบล่าสุด ค้นด้วยเลขที่ใบเพื่อหาใบที่เก่ากว่า</p>` : ""}
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected, params, filtered: status !== "all" || Boolean(search) || Boolean(department) })}</section>`;
   const content = selected ? `<div data-module="${requestPalette(selected.code)}">${boardContent}</div>` : boardContent;
-  app.innerHTML = shell(content, "requests", "คำร้อง");
+  app.innerHTML = shell(content, "requests", "คำร้อง", selected ? `ติดตามสถานะ · ${requestTypeLabel(selected)}` : "ติดตามสถานะทุกใบ");
   bindShell();
   bindModuleZoom(params);
   bindRequestSearchForm(params);
@@ -4013,9 +4013,10 @@ async function renderRequestDetail(params) {
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   }));
   // ช่างที่กำลังซ่อม: รูปใบเสร็จและไฟล์ส่งพร้อมฟอร์มจบงาน ("บันทึกข้อมูล" หรือ "เสร็จสิ้นงาน") ทางเดียว
-  // ผู้แจ้งที่ตรวจรับ: ไฟล์ส่งพร้อมผลตรวจรับ ทางเดียว
-  const stepFiles = document.querySelector("#finish-files") ?? document.querySelector("#verify-files");
-  pointToStepFiles(document.querySelector("#attachment-form"), stepFiles, stepFiles?.id === "verify-files" ? "แนบไฟล์ในการ์ดตรวจรับผลการซ่อม" : "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
+  // ผู้แจ้งที่ตรวจรับ: ไฟล์ส่งพร้อมผลตรวจรับ ทางเดียว · ผู้มอบหมายช่าง: ไฟล์ส่งพร้อมการมอบหมาย ทางเดียว
+  const stepFiles = document.querySelector("#finish-files") ?? document.querySelector("#verify-files") ?? document.querySelector("#assign-files");
+  const stepFilesLabel = { "verify-files": "แนบไฟล์ในการ์ดตรวจรับผลการซ่อม", "assign-files": "แนบไฟล์ในฟอร์มมอบหมายช่าง" }[stepFiles?.id] ?? "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน";
+  pointToStepFiles(document.querySelector("#attachment-form"), stepFiles, stepFilesLabel);
   // ปุ่มอัปโหลดกดได้เมื่อเลือกไฟล์แล้ว (เดิมกดได้ทั้งที่ยังไม่เลือก แล้วขึ้นข้อความไกลจากปุ่ม)
   // รวมถึงตอนกด × ลบไฟล์ในตัวอย่าง หรือแปลงรูปไม่สำเร็จ (attachment-image.js ยิง mnp:files-changed)
   const attachmentFile = document.querySelector("#attachment-file");

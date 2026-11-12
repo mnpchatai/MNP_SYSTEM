@@ -318,3 +318,35 @@ test("round 15: picked files show an unsent state and a leave warning; closed re
   // ตัวเลือกช่างเป็นกลุ่มที่มีชื่อ
   assert.match(read("modules/module-mt.js"), /<fieldset class="field" data-field="technician_ids"><legend>ช่างผู้รับผิดชอบ/);
 });
+
+test("round 16: editing an assignment does not force dates, and the page has one place to attach files and one to move the due date", () => {
+  assert.match(mt, /const reassign = request\.status !== "pending_assign";/);
+  assert.match(mt, /const dueCardShown = canRecordProgress && \["assigned", "in_progress"\]\.includes\(request\.status\);/);
+  assert.match(mt, /วันเริ่มงาน\$\{reassign \? " \(ถ้ามี\)" : REQUIRED\}/);
+  assert.match(mt, /\$\{dueCardShown \? "" : `<div class="field" data-field="work_expected_date">/, "the due-date card is the one place to move the due date");
+  assert.match(mt, /\$\{reassign \? "" : extraFilesFieldHtml\("assign-files"\)\}/);
+  assert.doesNotMatch(mt, /extraFilesFieldHtml\("expected-date-files"\)/, "files go on the attachments card");
+  // ขั้นรอมอบหมาย: ไฟล์ส่งพร้อมการมอบหมายทางเดียว การ์ดไฟล์แนบชี้ไปที่ฟอร์มนั้น (แบบเดียวกับฟอร์มจบงานและการ์ดตรวจรับ)
+  assert.match(app, /\?\? document\.querySelector\("#assign-files"\);/);
+  assert.match(app, /"assign-files": "แนบไฟล์ในฟอร์มมอบหมายช่าง"/);
+  assert.match(mt, /const rules = form\.hasAttribute\("data-reassign"\)\r?\n\s+\? ASSIGN_RULES\.map\(\(rule\) => \(\["work_started_date", "work_expected_date"\]\.includes\(rule\.name\) \? \{ \.\.\.rule, required: false \} : rule\)\)/);
+  // ฐานข้อมูลบังคับวันเริ่มงานเฉพาะการมอบหมายครั้งแรก (ค่าว่างตอนแก้คงวันเดิม)
+  const sql = readFileSync(new URL("../../supabase/migrations/20260930010000_assistant_department_manager_acts_as_manager.sql", import.meta.url), "utf8");
+  assert.match(sql, /v_start {5}:= coalesce\(p_work_started_date, v_request\.work_started_date\);/);
+  assert.match(sql, /if v_first_assign then[^]*?if v_start is null then raise exception 'WORK_START_DATE_REQUIRED'; end if;/);
+});
+
+test("round 16: the board tab stays for everyone (it searches machines and reporters), and its tab title names the module", () => {
+  // คนที่เห็นทุกใบก็ยังต้องการกระดาน: ค้นด้วยเครื่องจักร ผู้แจ้ง แผนก และมีคอลัมน์ที่รายการไม่มี (auditor รอบ 16)
+  assert.doesNotMatch(app, /seesWholeModule/);
+  assert.match(app, /requestsViewTabs\(params, \{ board: selected\.code !== "NCR_CAR" \}\)/);
+  assert.match(app, /\$\{withBoard \|\| board \? tab\(board/, "an open board keeps its own tab");
+  // วันเริ่มงานต้องไม่หลังกำหนดเสร็จที่แก้ที่การ์ด: บอกก่อนส่ง และบอกว่าแก้กำหนดเสร็จที่ไหน
+  assert.match(mt, /data-expected="\$\{escapeHtml\(request\.work_expected_date\)\}"/);
+  assert.match(mt, /if \(!errors\.length && form\.dataset\.expected && startDate && startDate > form\.dataset\.expected\) \{/);
+  assert.match(mt, /เลื่อนกำหนดเสร็จที่การ์ดกำหนดเสร็จก่อน/);
+  assert.match(mt, /title="เว้นว่างไว้ ระบบคงวันเริ่มงานเดิม"/);
+  // กระดานบอกชื่อโมดูลในชื่อแท็บ · RubberFlow แถบเครื่องมือขยายเต็มแถบหัว
+  assert.match(app, /shell\(content, "requests", "คำร้อง", selected \? `ติดตามสถานะ · \$\{requestTypeLabel\(selected\)\}` : "ติดตามสถานะทุกใบ"\)/);
+  assert.match(read("styles.css"), /\.rf-page \.rf-head \.rf-toolbar \{ flex: 1 1 auto;/);
+});
