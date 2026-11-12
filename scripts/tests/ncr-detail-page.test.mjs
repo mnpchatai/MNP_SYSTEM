@@ -418,7 +418,7 @@ test("people who cannot act are told which department members, or which named pe
   assert.match(open, /ขั้นตอนนี้รอ: <strong>แผนก RB \(.+ และอีก 2 คน\) · แผนก PP ตอบภายใน/, "an open department lists its staff and managers (first three names); a department nobody can answer for shows only its code");
   const named = await renderFor(QA_STAFF, { status: "awaiting_response", ncr_responsibilities: [responsibility("dept-rb", "RB", "s1")] }, { tables });
   // รอบ 13: ใครต้องทำต่อแบบเดียว "แผนก X (ชื่อ)" ทุกแผนก · ผู้ตอบที่ระบุบอกในส่วนที่ 2
-  assert.match(named, /แผนก RB \(สมชาย ทดสอบ\) ตอบภายใน/);
+  assert.match(named, /แผนก RB \(สมชาย ทดสอบ · ผู้ตอบที่ระบุ\) ตอบภายใน/);
 });
 
 test("part 2 lists the named responders only when somebody is named", async () => {

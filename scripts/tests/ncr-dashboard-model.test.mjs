@@ -367,8 +367,9 @@ test("pareto falls back to the count when no baht is confirmed, and says so once
   assert.match(noBaht, /<span class="nd-val">1 ใบ<\/span>/, "bars are counted in reports");
   // รอบ 13: บอกครั้งเดียวที่ title ของชิปเรียงตามบาท ไม่มีบรรทัดซ้ำใต้ชิป
   assert.doesNotMatch(noBaht, /<p class="nd-hint">ยังไม่มีบาทที่ยืนยันในช่วงนี้/);
-  assert.match(noBaht, /title="ยังไม่มีบาทที่ยืนยัน">เรียงตามบาท<\/a>/);
-  assert.match(noBaht, /aria-current="false"[^>]*>เรียงตามบาท<\/a><a [^>]*aria-current="true">เรียงตามจำนวนใบ/, "the sort control shows the count as the active choice");
+  // บอกบนชิปเอง (title ใช้ไม่ได้บนจอสัมผัส)
+  assert.match(noBaht, /aria-current="false">เรียงตามบาท<small class="nd-chip-note"> · ยังไม่มีบาทที่ยืนยัน<\/small><\/a><a [^>]*aria-current="true">เรียงตามจำนวนใบ/);
+  assert.match(noBaht, /aria-current="false"[^>]*>เรียงตามบาท[^]*?<\/a><a [^>]*aria-current="true">เรียงตามจำนวนใบ/, "the sort control shows the count as the active choice");
   const withBaht = pareto(await renderView({ reports: [NCR_ONE], losses: [{ ncr_id: "n1", loss_type: "scrap", amount: 500, cost_status: "confirmed", entry_kind: "loss", incurred_on: "2026-10-01" }] }));
   assert.match(withBaht, /500 ฿/);
   assert.doesNotMatch(withBaht, /จึงเรียงตามจำนวนใบ/);

@@ -772,7 +772,7 @@
         .map((item) => {
           if (!item.responderId) return withNames(item.code, respondersOf(item.id));
           const named = staff.find((person) => person.id === item.responderId);
-          return named ? `${item.code} (${named.first_name} ${named.last_name})` : `${item.code} (ผู้ตอบที่ระบุ)`;
+          return named ? `${item.code} (${named.first_name} ${named.last_name} · ผู้ตอบที่ระบุ)` : `${item.code} (ผู้ตอบที่ระบุ)`;
         });
       return { party: parts.length ? parts.map((part) => `แผนก ${part}`).join(" · ") : "แผนกที่รับผิดชอบ", action: ncr.status === "awaiting_info" ? "ให้ข้อมูลเพิ่มเติม" : "ตอบ" };
     }

@@ -567,6 +567,7 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .detail-reply-more[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
 @media (prefers-reduced-motion: reduce) { .detail-reply-more > summary::after { transition: none; } }
 .detail-reply-more[open] > summary { margin-bottom: 8px; }
+.nd-chip-note { font-weight: 500; opacity: .8; }
 .detail-history-next { margin: 14px 0 0; padding-top: 12px; color: var(--muted); border-top: 1px solid var(--soft-line); font-size: var(--text-meta); }
 .card-heading { min-height: 52px; padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); }
 .card-heading h2, .card h2, .card h3 { margin: 0; font-size: var(--text-title); line-height: 1.4; }
@@ -2203,7 +2204,7 @@ button.lab-attn-name[aria-pressed="true"] { color: var(--primary); }
 .lab-table-head { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .lab-table-head h2 { white-space: nowrap; }
 .lab-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.lab-order .select { width: auto; min-height: 34px; padding: 4px 30px 4px 10px; font-size: var(--text-caption); font-weight: 600; }
+.lab-order .select { width: auto; min-height: 40px; padding: 4px 30px 4px 10px; font-size: var(--text-caption); font-weight: 600; }
 .lab-table-scroll { max-height: min(64vh, 660px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .lab-table-scroll:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
 .lab-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
@@ -2659,7 +2660,7 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 .rf-page .rf-stat.is-good .rf-stat-label, .rf-page .rf-stat.is-good .rf-stat-sub { color: color-mix(in srgb, var(--success) 75%, var(--ink)); }
 .rf-page .rf-stat.is-warn .rf-stat-label, .rf-page .rf-stat.is-warn .rf-stat-sub { color: color-mix(in srgb, var(--warning) 75%, var(--ink)); }
 .rf-page .rf-stat.is-bad .rf-stat-label, .rf-page .rf-stat.is-bad .rf-stat-sub { color: color-mix(in srgb, var(--danger) 75%, var(--ink)); }
-.rf-page .btn { min-height: 40px; padding: 0 16px; border-radius: var(--radius-md); font-weight: 600; }
+.rf-page .btn { min-height: 44px; padding: 0 16px; border-radius: var(--radius-md); font-weight: 600; }
 .rf-page .btn.small { min-height: 40px; padding: 0 12px; }
 @media (pointer: coarse), (max-width: 760px) {
   .rf-page .btn, .rf-page .btn.small, .rf-page .input, .rf-page .select, .rf-page .filter, body:has(.rf-page) .rf-nav-item, body:has(.rf-page) .rf-modal .btn, body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select { min-height: 44px; }
@@ -2724,7 +2725,7 @@ body:has(.rf-page) .sandbox-banner { margin: 12px 0 0; }
 /* ---------- dialog (อยู่นอก .rf-page) ---------- */
 body:has(.rf-page) .rf-modal { border: 0; border-radius: var(--radius-lg); }
 body:has(.rf-page) .rf-modal-head { color: var(--ink); background: var(--paper); border-bottom: 1px solid var(--line); border-radius: 16px 16px 0 0; }
-body:has(.rf-page) .rf-modal .btn { min-height: 40px; border-radius: var(--radius-md); font-weight: 600; }
+body:has(.rf-page) .rf-modal .btn { min-height: 44px; border-radius: var(--radius-md); font-weight: 600; }
 body:has(.rf-page) .rf-modal .input, body:has(.rf-page) .rf-modal .select, body:has(.rf-page) .rf-modal .textarea { min-height: 40px; border-radius: var(--radius-md); }
 /* จอสัมผัส: ปุ่มและช่องกรอกของ RubberFlow/BOM สูง 44 px เหมือนทั้งระบบ (ต้องอยู่หลังกฎฐาน 40 px ข้างบนจึงชนะ) · ตาราง BOM แบบแน่น (.bom-tree-table) ประกาศทีหลังและคงขนาดของตัวเอง */
 @media (pointer: coarse), (max-width: 760px) {

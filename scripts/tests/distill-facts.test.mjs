@@ -209,7 +209,7 @@ test("desktop buttons meet the 44px target in PRODUCT.md, small buttons 40px", (
 test("sparse dashboards draw no zero rows and no legend that compares nothing", () => {
   const mtDash = read("modules/module-mt-dashboard.js");
   assert.match(mtDash, /const shown = stages\.filter\(\(stage\) => stage\.count > 0 \|\| filters\.stage === stage\.key\);/);
-  assert.match(mtDash, /\$\{shown\.length > 1 \? `<div class="nd-legend">/);
+  assert.match(mtDash, /\$\{shown\.some\(\(stage\) => stage\.count !== shown\[0\]\.count\) \? `<div class="nd-legend">/);
   assert.match(mtDash, /\$\{items\.some\(\(item\) => item\.count !== items\[0\]\.count\) \? `<div class="nd-legend">/);
   const ncrDash = read("modules/module-ncr-dashboard.js");
   assert.match(ncrDash, /\$\{items\.length > 1 \? `<div class="nd-legend"><span><i class="strong"><\/i>กลุ่มที่รวมกันได้ 80% แรก/);
