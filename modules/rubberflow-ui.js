@@ -101,11 +101,12 @@
   const fmtLimit = (value) => String(Math.round(value * 1e6) / 1e6);
 
   // คืนกติกา + ค่าของทุกช่องที่ตรวจได้ · ช่องที่อยู่ใน .field (หรือ td) ได้ data-field ของกล่องนั้นเป็นที่แสดงข้อความ
+  // เลขของกล่องช่องที่ไม่มี data-field นับต่อทั้งหน้า แถวที่เพิ่มทีหลังจึงไม่ได้เลขซ้ำกับแถวเดิม (ข้อความไม่ไปโผล่ใต้ช่องอื่น)
+  let fieldSeq = 0;
   function formChecks(form, steps) {
     const rules = [];
     const values = {};
     const owners = new Map();
-    let counter = 0;
     form.querySelectorAll("input, select, textarea").forEach((control) => {
       const type = String(control.type ?? "").toLowerCase();
       // ช่องพิมพ์ของ dropdown ค้นหาได้ (modules/searchable-select.js) เป็นแค่ตัวแทนของ <select> ที่ตรวจอยู่แล้ว
@@ -114,7 +115,7 @@
       if (control.parentElement?.closest?.("[hidden]")) return;
       const container = control.closest?.(".field") ?? control.closest?.("td") ?? control.parentElement;
       if (!container) return;
-      if (!container.dataset.field) { counter += 1; container.dataset.field = `rf-field-${counter}`; }
+      if (!container.dataset.field) { fieldSeq += 1; container.dataset.field = `rf-field-${fieldSeq}`; }
       const owner = container.dataset.field;
       const name = `${owner}#${(owners.get(owner) ?? 0) + 1}`;
       owners.set(owner, (owners.get(owner) ?? 0) + 1);
