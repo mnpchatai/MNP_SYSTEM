@@ -1226,17 +1226,6 @@ function registerSubHtml(text, iconHtml = "", title = text) {
   return `<span class="register-sub" title="${escapeHtml(title)}">${iconHtml}${escapeHtml(text)}</span>`;
 }
 
-// หัวข้อใบแจ้งซ่อมที่ฐานข้อมูลสร้างคือ "ชื่อเครื่อง — อาการ" บรรทัดหลักของแถวเป็นชื่อเครื่องแล้ว บรรทัดรองจึงเหลือเฉพาะอาการ
-function titleWithoutMachine(title, machineName, machineCode) {
-  const text = String(title ?? "").trim();
-  for (const name of [machineName, machineCode].map((value) => String(value ?? "").trim()).filter(Boolean)) {
-    if (text.startsWith(name)) {
-      const rest = text.slice(name.length).replace(/^[\s—–\-:·|]+/u, "");
-      if (rest !== text.slice(name.length) || !rest) return rest;
-    }
-  }
-  return text;
-}
 
 // เรื่อง: บรรทัดหลักเป็นลิงก์ (ถ้าเปิดได้) บรรทัดรองตัดให้เหลือบรรทัดเดียว
 function registerSubjectHtml(main, href, secondary = "") {
@@ -1265,9 +1254,10 @@ function requestRows(requests, { showRequester = false, showType = false, direct
     const href = `#/request?id=${encodeURIComponent(request.id)}`;
     const machine = machineLabelOf(request.machine_code, request.machine_name, " · ");
     const description = (request.description ?? "").trim();
-    const main = machine || request.title;
+    // หัวของแถวคือชื่อเรื่องของใบ (ชื่อเดียวกับคิวหน้าหลักและหน้ารายละเอียด) เครื่องจักรอยู่บรรทัดรองเมื่อชื่อเรื่องยังไม่บอก
+    const main = request.title;
     // บรรทัดรอง: ชื่อเรื่องเมื่อหัวเป็นเครื่องจักร ไม่งั้นรายละเอียด (ไม่ซ้ำกับหัว) + วันที่ต้องการใช้งานถ้ามี
-    const detail = machine ? titleWithoutMachine(request.title, request.machine_name, request.machine_code) : description;
+    const detail = machine ? (request.machine_code && request.title.includes(request.machine_code) ? "" : machine) : description;
     const secondary = [detail && detail !== main ? detail : "", request.needed_date ? `ต้องการใช้ ${formatDate(request.needed_date)}` : ""].filter(Boolean).join(" · ");
     const owners = requestOwnerNames(request, directory);
     return {
