@@ -3795,7 +3795,7 @@ function historyCardHtml(itemsHtml, footHtml = "") {
 // heading: false ในส่วนที่พับ (หัวที่พับบอกชื่อขั้นแล้ว) · optional: การ์ดมีงานบังคับอื่นด้วย จึงบอกว่าฟอร์มนี้ไม่บังคับ
 function stepReplyFormHtml(step, directory, { heading = true, optional = false, short = false } = {}) {
   const by = step.acted_by ? personName(directory, step.acted_by) : "";
-  return `<div class="detail-action">${heading ? `<h3>${short ? "ขั้น" : "ตอบกลับความเห็นขั้น"} ${escapeHtml(step.step_name)}${optional ? " (ถ้าต้องการ)" : ""}</h3>` : ""}<blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
+  return `<div class="detail-action">${heading ? `<h3>${short ? "ขั้น" : "ตอบกลับความเห็นขั้น"} ${escapeHtml(step.step_name)}${optional ? " (ถ้าต้องการ)" : ""}</h3>` : ""}<blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" id="step-reply-form-${escapeHtml(step.id)}" data-step-id="${escapeHtml(step.id)}" novalidate>
       <div class="field" data-field="message"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
       <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div>
     </form></div>`;
@@ -4001,6 +4001,7 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });
+  document.querySelectorAll(".step-reply-form").forEach((form) => form.elements.message?.addEventListener("input", () => window.MNP_FORM_STEPS.clearFieldError(form, "message")));
   document.querySelectorAll(".step-reply-form").forEach((form) => form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = form.elements.message.value.trim();

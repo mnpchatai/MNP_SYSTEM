@@ -814,7 +814,7 @@
       if (!candidates.length && !item.responder_id) return "";
       return `<form class="ncr-action ncr-responder-form" data-action="assign_responder" data-department-id="${escapeHtml(item.department_id)}"><div class="ncr-form-message"></div>
         <div class="field"><label for="ncr-assign-${escapeHtml(item.department_id)}">ผู้ตอบของ ${escapeHtml(relation(item.department)?.code ?? "")}</label>${responderSelectHtml(`ncr-assign-${item.department_id}`, candidates, { current: item.responder_id, directory })}</div>
-        <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ ${escapeHtml(relation(item.department)?.code ?? "")}</button></div></form>`;
+        <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ${relation(item.department)?.code ? ` ${escapeHtml(relation(item.department).code)}` : "ของแผนก"}</button></div></form>`;
     }).join("");
     // เป็นงานที่ต้องกรอก จึงอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้เรียกวางให้)
     return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";

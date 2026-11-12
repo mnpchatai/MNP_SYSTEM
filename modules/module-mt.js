@@ -153,7 +153,7 @@
       return `<div class="progress-step">${mark}
         <div class="progress-copy">${title}<span class="muted small">ยังไม่บันทึก</span></div>
         <div class="progress-step-extra">
-          <form class="progress-order-form" data-step="${escapeHtml(step.id)}">
+          <form class="progress-order-form" id="progress-order-${escapeHtml(step.id)}" data-step="${escapeHtml(step.id)}" novalidate>
             <div class="progress-choice">
               <label class="progress-choice-option"><input type="radio" name="receipt_mode" value="now" checked> รับของทันที (ได้ของพร้อมสั่งซื้อ)</label>
               <label class="progress-choice-option"><input type="radio" name="receipt_mode" value="later"> ระบุวันที่คาดว่าของจะมาส่ง</label>
@@ -172,7 +172,7 @@
         <button type="button" class="btn warning small progress-button" data-step="${escapeHtml(step.id)}">ของมาส่งแล้ว</button>
         <div class="progress-step-extra">
           <button type="button" class="btn secondary small progress-reschedule-toggle" data-step="${escapeHtml(step.id)}" aria-expanded="false">ของยังไม่มา เลื่อนวันที่คาดว่าจะมาส่ง</button>
-          <form class="progress-reschedule-form hidden" data-step="${escapeHtml(step.id)}">
+          <form class="progress-reschedule-form hidden" id="progress-reschedule-${escapeHtml(step.id)}" data-step="${escapeHtml(step.id)}" novalidate>
             <div class="field" data-field="expected_on"><label class="field-label" for="progress-reschedule-date-${escapeHtml(step.id)}">วันที่คาดว่าของจะมาส่งใหม่${REQUIRED}</label>
             <input class="input" id="progress-reschedule-date-${escapeHtml(step.id)}" type="date" name="expected_on" required></div>
             ${extraFilesFieldHtml(`progress-reschedule-files-${escapeHtml(step.id)}`)}
@@ -996,6 +996,7 @@
         form.querySelectorAll('input[name="receipt_mode"]').forEach((radio) => radio.addEventListener("change", () => {
           const later = form.querySelector('input[name="receipt_mode"]:checked')?.value === "later";
           expectedInput.disabled = !later;
+          if (!later) window.MNP_FORM_STEPS.clearFieldError(form, "expected_on");
           expectedInput.required = later;
           if (!later) expectedInput.value = "";
         }));
@@ -1055,7 +1056,7 @@
         expectedToggle.setAttribute("aria-expanded", String(open));
         // ปฏิทินไทยซ่อนช่อง date จริงไว้ โฟกัสปุ่มของปฏิทินก่อน (ไม่มีปฏิทินจึงโฟกัสช่องเอง)
         if (open) (expectedForm.querySelector('[data-field="expected_date"] button') ?? expectedForm.querySelector("#expected-date-input"))?.focus();
-        else { window.MNP_FORM_STEPS?.clearFieldErrors(expectedForm); expectedToggle.focus(); }
+        else { expectedForm.reset(); window.MNP_FORM_STEPS?.clearFieldErrors(expectedForm); expectedToggle.focus(); }
       };
       expectedToggle?.addEventListener("click", () => setExpectedOpen(true));
       document.querySelector("#expected-date-cancel")?.addEventListener("click", () => setExpectedOpen(false));

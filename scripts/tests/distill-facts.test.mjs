@@ -372,5 +372,13 @@ test("round 18: one due-date term, inline errors on the date and reply forms, an
   assert.match(css, /@container \(min-width: 520px\) and \(max-width: 760px\) \{\r?\n\s+\.parts-table tr\.parts-row \{ grid-template-columns: repeat\(4, minmax\(0, 1fr\)\); \}/);
   // ฟอร์มขอแก้รหัสบอกตรงตาม RPC และคำช่วยเหลือบอกตำแหน่งประวัติถูกทั้งจอคอมและมือถือ
   assert.match(app, /ทุกคำขอต้องตั้งรหัสผ่านใหม่<\/small>/);
+  // auditor: ฟอร์มที่บอกข้อผิดใต้ช่องต้อง novalidate (ไม่งั้น bubble ของเบราว์เซอร์ดักก่อน) และ id ไม่ซ้ำต่อฟอร์ม
+  assert.match(mt, /<form class="progress-order-form" id="progress-order-\$\{escapeHtml\(step\.id\)\}" data-step="\$\{escapeHtml\(step\.id\)\}" novalidate>/);
+  assert.match(mt, /<form class="progress-reschedule-form hidden" id="progress-reschedule-\$\{escapeHtml\(step\.id\)\}" data-step="\$\{escapeHtml\(step\.id\)\}" novalidate>/);
+  assert.match(app, /<form class="step-reply-form" id="step-reply-form-\$\{escapeHtml\(step\.id\)\}" data-step-id="\$\{escapeHtml\(step\.id\)\}" novalidate>/);
+  assert.match(app, /form\.elements\.message\?\.addEventListener\("input", \(\) => window\.MNP_FORM_STEPS\.clearFieldError\(form, "message"\)\)/);
+  // กฎมือถือของชิปงานชนะกฎหลัก (เจาะจงกว่า) · แดชบอร์ดไม่มีคำเดิม
+  assert.match(css, /@media \(max-width: 760px\) \{ \.queue-item-top \.queue-item-due \{ margin-left: 0; \} \}/);
+  assert.doesNotMatch(read("modules/module-mt-dashboard.js"), /วันที่คาดว่าจะเสร็จ/);
   assert.match(read("modules/shortcut-help.js"), /"ประวัติเอกสาร \(ใครทำอะไรเมื่อไร\) อยู่คอลัมน์ขวา บนมือถืออยู่ท้ายหน้า"/);
 });
