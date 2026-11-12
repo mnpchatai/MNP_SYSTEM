@@ -415,9 +415,10 @@ test("the factory manager can change the responder only while the department sti
 test("people who cannot act are told which department members, or which named person, the NCR waits for", async () => {
   const tables = { employees: [...ROSTER, person("s9", "dept-rb", "RB", "staff", "สุดา"), person("s8", "dept-rb", "RB", "staff", "สมศรี"), person("s7", "dept-rb", "RB", "staff", "สมหมาย")] };
   const open = await renderFor(QA_STAFF, { status: "awaiting_response", ncr_responsibilities: [responsibility("dept-rb", "RB"), responsibility("dept-pp", "PP")] }, { tables });
-  assert.match(open, /ขั้นตอนนี้รอ: <strong>แผนก RB \(.+ และอีก 2 คน\) \/ PP ตอบภายใน/, "an open department lists its staff and managers (first three names); a department nobody can answer for shows only its code");
+  assert.match(open, /ขั้นตอนนี้รอ: <strong>แผนก RB \(.+ และอีก 2 คน\) · แผนก PP ตอบภายใน/, "an open department lists its staff and managers (first three names); a department nobody can answer for shows only its code");
   const named = await renderFor(QA_STAFF, { status: "awaiting_response", ncr_responsibilities: [responsibility("dept-rb", "RB", "s1")] }, { tables });
-  assert.match(named, /แผนก RB \(ผู้ตอบที่ระบุ: สมชาย ทดสอบ\) ตอบภายใน/);
+  // รอบ 13: ใครต้องทำต่อแบบเดียว "แผนก X (ชื่อ)" ทุกแผนก · ผู้ตอบที่ระบุบอกในส่วนที่ 2
+  assert.match(named, /แผนก RB \(สมชาย ทดสอบ\) ตอบภายใน/);
 });
 
 test("part 2 lists the named responders only when somebody is named", async () => {
@@ -584,7 +585,8 @@ test("the responder's estimate-only loss form asks nothing that only the cost ed
   const editor = await renderFor(FACTORY_MANAGER, open);
   assert.match(editor, /กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย/);
   assert.match(editor, /หลักฐานอ้างอิง \(จำเป็นเมื่อยืนยันยอด\)/);
-  assert.match(editor, /<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ<\/p>/);
+  // รอบ 13: ช่อง "ประเมินค่าเสียหายครบแล้ว" ที่ยังไม่ติ๊กบอกสถานะเอง ไม่มีบรรทัดซ้ำกับป้ายบนหัวใบ
+  assert.doesNotMatch(editor, /<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ<\/p>/);
 });
 
 // ทางแนบไฟล์ (pointToStepFiles ใน app.js): ซ่อนช่องอัปโหลดแยกเฉพาะเมื่อมีฟอร์มของขั้นที่แนบหลักฐานได้ เลือกด้วยชื่อการกระทำ ไม่ใช่ตำแหน่ง

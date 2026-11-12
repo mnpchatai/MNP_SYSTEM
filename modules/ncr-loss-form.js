@@ -64,7 +64,7 @@
     const legacy = o && (Object.keys(LEGACY_OUTCOME).some((key) => Number(o[key]) > 0) || Number(o.downtime_hours) > 0);
     const status = o?.cost_reviewed
       ? `<p><strong>ประเมินครบแล้ว</strong> · ${escapeHtml(personName(directory, o.updated_by))} · ${formatDate(o.updated_at)}</p>`
-      : editable ? '<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>' : '<p class="muted">ผู้กรอกต้นทุนยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>';
+      : editable ? "" : '<p class="muted">ผู้กรอกต้นทุนยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>';
     const level = embedded ? "h4" : "h3";
     return `<div class="ncr-cost-review"><${level}>สรุปการประเมินค่าเสียหาย</${level}>${status}
       ${o?.note && !editable ? `<p class="muted small">${escapeHtml(o.note)}</p>` : ""}

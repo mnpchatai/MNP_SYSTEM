@@ -179,10 +179,8 @@
     if (!waiting) return "";
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
     const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
-    // แผนกเดียวที่มีชื่อคน: คอลัมน์แผนกในแถวเดียวกันบอกแผนกแล้ว ป้ายจึงบอกแค่ชื่อ (หลายแผนกยังต้องมีรหัสแผนกกำกับชื่อ)
-    const oneDepartment = ["awaiting_response", "awaiting_info"].includes(ncr.status) && (ncr.ncr_responsibilities ?? []).length === 1;
-    const single = oneDepartment ? /^แผนก ([^\s/(]+) \(([^()]+)\)$/.exec(waiting.party) : null;
-    const party = single ? single[2] : waiting.party;
+    // แบบเดียวกับบรรทัด "ขั้นตอนนี้รอ" ของหน้ารายละเอียด: หน่วย (ชื่อ) ไม่ตัดแผนกออกแม้คอลัมน์แผนกบอกแล้ว
+    const party = waiting.party;
     // บรรทัดไอคอนแบบเดียวกับผู้รับผิดชอบในรายการคำร้อง (app.js requestRows) การ์ดบนมือถือจึงเรียงเหมือนกัน
     return registerSubHtml(`${party}${progress}`, `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${party}${progress}`);
   }
@@ -774,9 +772,9 @@
         .map((item) => {
           if (!item.responderId) return withNames(item.code, respondersOf(item.id));
           const named = staff.find((person) => person.id === item.responderId);
-          return named ? `${item.code} (ผู้ตอบที่ระบุ: ${named.first_name} ${named.last_name})` : `${item.code} (ผู้ตอบที่ระบุ)`;
+          return named ? `${item.code} (${named.first_name} ${named.last_name})` : `${item.code} (ผู้ตอบที่ระบุ)`;
         });
-      return { party: parts.length ? `แผนก ${parts.join(" / ")}` : "แผนกที่รับผิดชอบ", action: ncr.status === "awaiting_info" ? "ให้ข้อมูลเพิ่มเติม" : "ตอบ" };
+      return { party: parts.length ? parts.map((part) => `แผนก ${part}`).join(" · ") : "แผนกที่รับผิดชอบ", action: ncr.status === "awaiting_info" ? "ให้ข้อมูลเพิ่มเติม" : "ตอบ" };
     }
     if (ncr.status === "awaiting_followup") return { party: withNames("แผนก QA", qaStaff), action: "ติดตามผล" };
     if (ncr.status === "awaiting_signoff") {

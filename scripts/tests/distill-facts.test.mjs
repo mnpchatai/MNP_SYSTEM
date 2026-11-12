@@ -197,3 +197,28 @@ test("small consistency fixes: file toggle marker, read-only fields, parts table
   assert.match(read("modules/shortcut-help.js"), /"อนุมัติแล้วกดเลิกทำได้ภายใน 5 วินาที ส่วนเริ่มงาน เสร็จสิ้นงาน และตรวจรับส่งทันทีหลังกดยืนยัน"/);
   assert.match(read("modules/rubberflow-pages-plan.js"), /ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้/);
 });
+
+// ---- รอบ 13: ปุ่ม 44px · ค่าเสียหายครั้งเดียว · แดชบอร์ดข้อมูลน้อย · ใครต้องทำต่อแบบเดียว ----
+test("desktop buttons meet the 44px target in PRODUCT.md, small buttons 40px", () => {
+  const css = read("styles.css").replace(/\r\n/g, "\n");
+  assert.match(css, /\.btn \{\n  min-height: 44px;\n  padding: 0 16px;/);
+  assert.match(css, /  font-weight: 600;\n  font-size: var\(--text-ui\);\n\}\n\.btn \{ transition:/);
+  assert.match(css, /\.btn\.small \{ min-height: 40px; padding: 0 12px; font-size: var\(--text-meta\); \}/);
+});
+
+test("sparse dashboards draw no zero rows and no legend that compares nothing", () => {
+  const mtDash = read("modules/module-mt-dashboard.js");
+  assert.match(mtDash, /const shown = stages\.filter\(\(stage\) => stage\.count > 0 \|\| filters\.stage === stage\.key\);/);
+  assert.match(mtDash, /\$\{shown\.length > 1 \? `<div class="nd-legend">/);
+  assert.match(mtDash, /\$\{items\.some\(\(item\) => item\.count !== items\[0\]\.count\) \? `<div class="nd-legend">/);
+  const ncrDash = read("modules/module-ncr-dashboard.js");
+  assert.match(ncrDash, /\$\{items\.length > 1 \? `<div class="nd-legend"><span><i class="strong"><\/i>กลุ่มที่รวมกันได้ 80% แรก/);
+  assert.match(ncrDash, /\$\{sums\.estimated \|\| sums\.legacy \? `<span class="nd-note">/, "no '+ ประมาณการ 0 ฿' line");
+});
+
+test("who acts next on an NCR has one format: แผนก X (names) for every department, never trimmed to names", () => {
+  const ncr = read("modules/module-ncr.js");
+  assert.match(ncr, /parts\.map\(\(part\) => `แผนก \$\{part\}`\)\.join\(" · "\)/);
+  assert.doesNotMatch(ncr, /\(ผู้ตอบที่ระบุ: \$\{named/);
+  assert.doesNotMatch(ncr, /const single = oneDepartment/);
+});
