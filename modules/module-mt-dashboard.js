@@ -337,10 +337,9 @@
       const inner = `<span class="nd-lab">${esc(techName(item.id))}<br><span class="nd-muted">${esc(fmtCount(item.jobs))}ในช่วงนี้${item.holding ? ` · ถืออยู่ ${esc(fmtCount(item.holding))}` : ""}</span></span><span class="nd-trk"><span class="nd-bar${item.hours && item.hours === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${esc(fmtHours(item.hours))}${item.avgHours === null || item.avgHours === undefined ? "" : `<small>เฉลี่ย ${esc(fmtHours(item.avgHours))}/ใบ</small>`}</span>`;
       return selectButton("tech", item.id, inner, `nd-brow${filters.tech === item.id ? " active" : ""}`) + detailUnder("tech", item.id, resolve);
     }).join("");
-    const holders = items.filter((item) => item.holding).map((item) => `${techName(item.id)} ${fmtCount(item.holding)}`).join(", ");
     return `<div class="nd-head"><h2>ช่างที่ใช้เวลาซ่อมมากสุด</h2><p>เรียงตามเวลาที่ใบของช่างอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบของใบที่แจ้งในช่วงที่เลือก แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง · ไม่ใช่ชั่วโมงทำงานจริง เพราะระบบยังไม่มีช่องบันทึกชั่วโมงทำงาน แต่เป็นเวลาตามนาฬิกา (รวมกลางคืนและวันหยุด) ตั้งแต่ช่างกดเริ่มงานจนส่งตรวจรับ ใบที่มีช่างหลายคนนับเต็มเวลาให้ทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ใช้เทียบภาระงานคร่าวๆ ไม่ใช้คิดค่าแรง · "ถืออยู่" = ใบที่ช่างต้องทำตอนนี้ (รอช่างเริ่มงานหรือกำลังซ่อม) นับทุกใบไม่ขึ้นกับช่วงเวลา ส่วนเวลาและจำนวนใบนับตามวันที่แจ้ง ไม่นับใบที่ไม่อนุมัติ</p></div>
-      ${max > 0 ? `<div class="nd-bars">${rows}</div>
-      ${`<div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span><span>เวลาตามนาฬิกา ไม่ใช่ชั่วโมงทำงาน</span></div>`}` : items.length ? `<p class="nd-empty">ยังไม่มีเวลาซ่อมจากใบที่แจ้งในช่วงนี้${holders ? ` · ถืองานอยู่ตอนนี้: ${esc(holders)}` : ""}</p>` : `<p class="nd-empty">ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้</p>`}
+      ${items.length ? `<div class="nd-bars">${rows}</div>
+      ${max > 0 ? `<div class="nd-legend"><span><i class="strong"></i>ช่างที่เวลารวมมากสุด</span><span><i class="soft"></i>ช่างอื่น</span><span>เวลาตามนาฬิกา ไม่ใช่ชั่วโมงทำงาน</span></div>` : ""}` : `<p class="nd-empty">ยังไม่มีใบที่มอบหมายช่างในช่วงและตัวกรองนี้</p>`}
       ${detailHintIfIdle("tech", "แถบชื่อช่าง", resolve)}`;
   }
 
