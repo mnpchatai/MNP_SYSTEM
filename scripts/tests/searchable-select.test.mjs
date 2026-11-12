@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 
-const { normalizeText, matches, filterOptions, stepIndex } = createRequire(import.meta.url)("../../modules/searchable-select.js");
+const { normalizeText, matches, filterOptions, stepIndex, accessibleName } =createRequire(import.meta.url)("../../modules/searchable-select.js");
 
 test("search text ignores case, extra spaces and missing values", () => {
   assert.equal(normalizeText("  RB   ขึ้นรูปยาง\t"), "rb ขึ้นรูปยาง");
@@ -33,4 +33,12 @@ test("arrow keys skip disabled options and wrap around", () => {
   assert.equal(stepIndex(visible, options, 2, 1), 0, "it wraps to the top");
   assert.equal(stepIndex([], options, -1, 1), -1, "nothing to highlight");
   assert.equal(stepIndex([1], options, -1, 1), -1, "only disabled options cannot be highlighted");
+});
+
+test("the combobox is named by its aria-label, then its associated labels, then the label of its field, then a generic name", () => {
+  assert.equal(accessibleName({ own: "หมวดและชนิด", labels: ["หมวด"], fieldLabel: "หมวด / ชนิด" }), "หมวดและชนิด", "an own aria-label or title wins");
+  assert.equal(accessibleName({ labels: [" ฐานรหัส ", "", "แพ็กเกจ"], fieldLabel: "ชื่ออื่น" }), "ฐานรหัส แพ็กเกจ", "associated labels (for or wrapping) keep the old behaviour");
+  assert.equal(accessibleName({ labels: [], fieldLabel: " ใบสั่งผลิต (ร่าง) (จำเป็น) " }), "ใบสั่งผลิต (ร่าง) (จำเป็น)", "a label next to the select, without for, names it");
+  assert.equal(accessibleName({ labels: [], fieldLabel: "" }), "เลือกรายการ", "nothing to go by keeps the generic name");
+  assert.equal(accessibleName(), "เลือกรายการ");
 });

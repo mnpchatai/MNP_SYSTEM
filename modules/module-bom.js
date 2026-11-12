@@ -245,6 +245,8 @@
   function bindRoot(root, ctx) {
     root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", (event) => {
       event.preventDefault();
+      // ตรวจช่องเป็นภาษาไทยใต้ช่องก่อน (ฟอร์มเป็น novalidate) · action ยังตรวจกติกาของตัวเองซ้ำ
+      if (!ui.validateForm(form)) return;
       const name = form.dataset.rfForm;
       const transform = TRANSFORMS[name] ?? ((payload) => payload);
       let payload;

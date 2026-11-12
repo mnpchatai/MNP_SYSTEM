@@ -3083,6 +3083,7 @@ test("the PI page lists RB jobs that have no WO yet with the reason, and the rel
   assert.match(callout, /JOB-P5[\s\S]*คำนวณกิโลกรัมไม่ได้/);
   assert.doesNotMatch(callout, /JOB-P1|JOB-P6/, "a job with a WO and a non-RB job are not listed");
   assert.match(callout, /สร้าง WO ใน RubberFlow/, "the hint that the jobs page still creates one by hand");
+  assert.match(callout, /<a [^>]*href="[^"]*jobs[^"]*"[^>]*>ไปที่งานของแผนก<\/a>/, "the hint carries a link to the jobs page");
   assert.match(html, new RegExp(`${TODAY_WO}-01`), "the table still shows the WO number of the linked job");
   clean(html);
   // PI ที่ยังเป็นร่างหรือที่ทุกงาน RB มี WO แล้ว: ไม่มีกล่องเตือน

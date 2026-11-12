@@ -771,3 +771,124 @@ test("purchasing with purchased parts: the dialog adds a part table after the ch
   assert.match(text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html), /11\.00 box/);
   assert.equal(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }), null, "a received line has no receive dialog");
 });
+
+// ---------- ฟอร์ม RubberFlow/BOM: novalidate + ข้อความไทยใต้ช่อง ----------
+// กล่องจำลองแค่พอให้ ui.formErrors อ่านได้: ช่อง (input/select) อยู่ใน .field ที่มี label
+const fakeForm = (specs) => {
+  const controls = specs.map(({ tag = "INPUT", type = "text", name = "x", value = "", required = false, attrs = {}, label = "", marked = false, badInput = false, disabled = false, readOnly = false, role = null, hiddenAncestor = false }) => {
+    const container = { dataset: {}, querySelector: (selector) => (selector === "label" ? (label ? { textContent: label } : null) : selector === ".field-required" && marked ? {} : null) };
+    const all = { ...attrs, ...(role ? { role } : {}) };
+    return { tagName: tag, type, name, value, required, disabled, readOnly, validity: { badInput }, getAttribute: (key) => (key in all ? all[key] : null), closest: (selector) => (selector === ".field" ? container : null), parentElement: { closest: () => (hiddenAncestor ? {} : null) }, container };
+  });
+  return { dataset: {}, controls, querySelectorAll: () => controls, addEventListener() {} };
+};
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const withSteps = () => {
+  const env = load();
+  vm.runInContext(fs.readFileSync("modules/form-steps.js", "utf8"), env.context, { filename: "modules/form-steps.js" });
+  return env;
+};
+
+test("every form of RubberFlow and BOM is novalidate, so the browser never shows its English bubble", () => {
+  const files = ["modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js", "modules/bom-pages.js", "modules/module-bom.js"];
+  let count = 0;
+  for (const file of files) {
+    for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+      if (/^\s*\/\//.test(line)) continue;
+      for (const tag of line.match(/<form\b[^>]*/g) ?? []) {
+        count += 1;
+        assert.match(tag, /\bnovalidate\b/, `${file}: ${tag.slice(0, 80)}`);
+      }
+    }
+  }
+  assert.ok(count > 40, "the scan found the forms");
+  const env = load();
+  assert.match(env.context.MNP_RUBBERFLOW_DIALOGS.createOrder(env.ctx()).html, /<form novalidate data-rf-form="createOrder"/);
+});
+
+test("form checks: Thai messages for required, number, range and step, one per field, every field at once, in screen order", () => {
+  const env = withSteps();
+  const { MNP_RUBBERFLOW_UI: ui } = env.context;
+  const errors = (specs) => plain(ui.formErrors(fakeForm(specs)));
+  const messages = (specs) => errors(specs).map((error) => error.message);
+
+  assert.deepEqual(messages([{ name: "customer", required: true, label: "ลูกค้า (จำเป็น)" }]), ["กรุณาระบุลูกค้า"]);
+  assert.deepEqual(messages([{ tag: "SELECT", name: "recipeId", required: true, label: "สินค้า / สูตร (เฉพาะสูตรที่อนุมัติแล้ว) (จำเป็น)" }]), ["กรุณาเลือกสินค้า / สูตร"]);
+  assert.deepEqual(messages([{ name: "customer", required: true, value: "   ", label: "ลูกค้า" }]), ["กรุณาระบุลูกค้า"], "blanks are empty");
+  // ตัวเลข: ว่าง / ไม่ใช่ตัวเลข / ต่ำกว่า min / เกิน max / ไม่ลงขั้น
+  const number = (value, extra = {}) => ({ type: "number", name: "n", label: "จำนวนเป้าหมาย (m) (จำเป็น)", required: true, value, attrs: { min: "1", max: "1000", step: "any" }, ...extra });
+  assert.deepEqual(messages([number("")]), ["กรุณาระบุจำนวนเป้าหมาย"]);
+  assert.deepEqual(messages([number("", { badInput: true })]), ["จำนวนเป้าหมายต้องเป็นตัวเลข"]);
+  assert.deepEqual(messages([number("0")]), ["จำนวนเป้าหมายต้องไม่น้อยกว่า 1"]);
+  assert.deepEqual(messages([number("1001")]), ["จำนวนเป้าหมายต้องไม่เกิน 1000"]);
+  assert.deepEqual(messages([number("12.5")]), [], "step any takes decimals");
+  assert.deepEqual(messages([number("12.5", { attrs: { min: "1" } })]), ["จำนวนเป้าหมายต้องเป็นจำนวนเต็ม"], "no step attribute = whole numbers, as the browser did");
+  assert.deepEqual(messages([number("2", { attrs: { min: "1", step: "1" } })]), []);
+  assert.deepEqual(messages([number("0.00005", { attrs: { min: "0.0001", step: "any" } })]), ["จำนวนเป้าหมายต้องไม่น้อยกว่า 0.0001"]);
+  assert.deepEqual(messages([{ type: "number", name: "m", label: "อายุการเก็บ", value: "" }]), [], "an empty optional number is fine");
+  // ช่องไม่ต้องตรวจ: ปิดใช้ / อ่านอย่างเดียว / ตัวแทนของ select ค้นหาได้ / อยู่ในส่วนที่ซ่อน / ซ่อนด้วยปฏิทินแต่เป็นวันที่ที่ label ระบุจำเป็น
+  assert.deepEqual(messages([{ name: "a", required: true, disabled: true }, { name: "b", required: true, readOnly: true }, { name: "c", required: true, role: "combobox" }, { name: "d", required: true, hiddenAncestor: true }]), []);
+  assert.deepEqual(messages([{ type: "date", name: "startDate", label: "วันเริ่มผลิต (จำเป็น)", marked: true }]), ["กรุณาเลือกวันเริ่มผลิต"], "the Thai calendar drops required, the (จำเป็น) mark still counts");
+  assert.deepEqual(messages([{ type: "date", name: "due", label: "วันกำหนดส่ง" }]), [], "a date without the mark stays optional");
+  // ช่องที่ไม่มี label (ช่องในตาราง): ใช้ aria-label แล้วข้อความกลาง ๆ
+  assert.deepEqual(messages([{ type: "number", name: "qty[]", value: "-1", attrs: { min: "0", step: "any", "aria-label": "สต็อกขั้นต่ำ B25" } }]), ["สต็อกขั้นต่ำ B25ต้องไม่น้อยกว่า 0"]);
+  assert.deepEqual(messages([{ name: "z", required: true }]), ["กรุณาระบุข้อมูลในช่องนี้"]);
+
+  // ทุกช่องพร้อมกัน เรียงตามหน้าจอ ช่องละข้อความเดียว (ผิดทั้งว่างและเกินช่วงก็บอกข้อแรก)
+  const all = errors([{ name: "customer", required: true, label: "ลูกค้า" }, number("", { name: "targetQty", label: "จำนวน" }), number("5000", { label: "ปริมาณ" }), { name: "ok", value: "x", required: true, label: "ผ่าน" }]);
+  assert.deepEqual(all.map((error) => error.message), ["กรุณาระบุลูกค้า", "กรุณาระบุจำนวน", "ปริมาณต้องไม่เกิน 1000"]);
+  const form = fakeForm([{ name: "a", required: true, label: "ก" }, { name: "b", required: true, label: "ข" }]);
+  assert.deepEqual(plain(ui.formErrors(form)).map((error) => error.name), form.controls.map((control) => control.container.dataset.field), "each message targets its field box");
+});
+
+test("submit check: a bad form shows the errors under the fields and focuses the first; a good form clears them and goes on to the action", () => {
+  const env = withSteps();
+  const { MNP_RUBBERFLOW_UI: ui } = env.context;
+  const calls = [];
+  const real = env.context.MNP_FORM_STEPS;
+  const focus = [];
+  const target = { focus: (options) => focus.push(options), closest: () => null };
+  env.context.MNP_FORM_STEPS = { ...real, showFieldErrors: (form, errors) => { calls.push(["show", errors.map((error) => error.message)]); return target; }, clearFieldErrors: () => calls.push(["clear"]), clearFieldError: (form, name) => calls.push(["clearOne", name]) };
+  const handlers = {};
+  const form = { ...fakeForm([{ name: "customer", required: true, label: "ลูกค้า" }]), addEventListener: (type, handler) => { handlers[type] = handler; } };
+  assert.equal(ui.validateForm(form), false);
+  assert.deepEqual(plain(calls), [["show", ["กรุณาระบุลูกค้า"]]]);
+  assert.deepEqual(plain(focus), [{ preventScroll: true }], "the first invalid field gets the focus");
+  // แก้ช่องแล้วข้อความของช่องนั้นหาย
+  handlers.input({ target: { closest: () => ({ dataset: { field: "rf-field-1" } }) } });
+  assert.deepEqual(plain(calls.at(-1)), ["clearOne", "rf-field-1"]);
+  form.controls[0].value = "ลูกค้า";
+  calls.length = 0;
+  assert.equal(ui.validateForm(form), true);
+  assert.deepEqual(plain(calls), [["clear"]]);
+  // ไม่มีตัวช่วยกลาง (ไม่ได้โหลด form-steps.js): ไม่ขวาง action ที่ตรวจเองอยู่แล้ว
+  env.context.MNP_FORM_STEPS = undefined;
+  assert.equal(ui.validateForm(fakeForm([{ name: "customer", required: true }])), true);
+});
+
+test("an empty overview points at the first step; the station gates and the mixing station lead to the page that unblocks them", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const { MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const base = env.ctx("p=dashboard");
+  const html = (ctx) => pages.dashboard(ctx).html;
+  assert.doesNotMatch(html(base), /data-rf-open="createOrder"/, "with orders on the page there is no start button");
+  const empty = (extra = {}) => ({ ...base, data: { ...base.data, orders: [], lots: [], transfers: [], ...extra } });
+  assert.match(html(empty()), /data-rf-open="createOrder"[^>]*>เปิดใบสั่งผลิต</, "no orders yet: one primary action opens the order form");
+  assert.match(html(empty({ recipes: [] })), /href="[^"]*recipes[^"]*"[^>]*>สร้างสูตรยาง</, "no approved recipe: go and make one first");
+  assert.doesNotMatch(html(empty({ recipes: [] })), /data-rf-open="createOrder"/);
+
+  // ด่านรับมอบที่ไม่มีใบรอรับ: ไปสถานีก่อนหน้า · ห้องผสมที่ไม่มีใบเบิกจ่าย: ไปหน้าเบิกเคมี
+  const gate = pages.extrusion({ ...base, data: { ...base.data, transfers: [] } }).html;
+  assert.match(gate, /ด่านรับมอบ[\s\S]*href="[^"]*mixing[^"]*"[^>]*>ไปสถานีผสมยาง</);
+  const waiting = pages.extrusion({ ...base, data: { ...base.data, transfers: [{ id: "T-1", to: "extrusion", status: "in_transit", remaining: 5, lotId: "L", uom: "m", orderId: "O" }] } }).html;
+  assert.match(waiting, /ไปหน้ารับมอบ/);
+  assert.doesNotMatch(waiting, /ไปสถานีผสมยาง/, "a waiting transfer keeps its own link");
+  const mixing = pages.mixing({ ...base, data: { ...base.data, requisitions: [] } }).html;
+  assert.match(mixing, /ต้องเบิกเคมีก่อน[\s\S]*href="[^"]*requisition[^"]*"[^>]*>ไปหน้าเบิกเคมี</);
+  // บัญชีที่เปิดหน้านั้นไม่ได้ไม่เห็นลิงก์ (ไม่พาไปหน้าที่ถูกปฏิเสธ)
+  env.store.setUser("U06");
+  const own = env.ctx("p=extrusion");
+  assert.equal(own.canSee("mixing"), false, "the extruder has no mixing page");
+  assert.doesNotMatch(pages.extrusion({ ...own, data: { ...own.data, transfers: [] } }).html, /ไปสถานีผสมยาง/);
+});

@@ -307,6 +307,8 @@
     applyRights(root, ctx);
     root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", (event) => {
       event.preventDefault();
+      // ตรวจช่องเป็นภาษาไทยใต้ช่องก่อน (ฟอร์มเป็น novalidate) · action ยังตรวจกติกาของตัวเองซ้ำ
+      if (!ui.validateForm(form)) return;
       const name = form.dataset.rfForm;
       const transform = TRANSFORMS[name] ?? ((payload) => payload);
       let payload;
@@ -394,7 +396,7 @@
     if (store.isRemote()) {
       const alerts = user && store.status() === "ready" ? derive.buildAlerts(data, now) : [];
       const bad = alerts.some((alert) => alert.tone === "bad");
-      const tools = user && store.status() === "ready" ? `<form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
+      const tools = user && store.status() === "ready" ? `<form novalidate class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
         <div class="rf-row">${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}</div>` : "";
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-rf-sync>${escapeHtml(syncText())}</span>${tools}</div>`;
     }
@@ -406,7 +408,7 @@
     const bad = alerts.some((alert) => alert.tone === "bad");
     return `<div class="rf-toolbar">
         ${persona}
-        <form class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
+        <form novalidate class="rf-scan" data-rf-scan role="search"><label class="sr-only" for="rf-scan-code">สแกนหรือพิมพ์รหัส</label>${ui.input("code", { id: "rf-scan-code", placeholder: "สแกนหรือพิมพ์รหัส: ล็อต กล่อง ใบสั่งผลิต ล็อตวัตถุดิบ…", type: "search" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>
         <div class="rf-row">
           ${ui.openButton(`แจ้งเตือน${alerts.length ? ` (${alerts.length})` : ""}`, "alerts", {}, { className: `secondary rf-alerts-btn${bad ? " is-bad" : alerts.length ? " is-warn" : ""}` })}
         </div>

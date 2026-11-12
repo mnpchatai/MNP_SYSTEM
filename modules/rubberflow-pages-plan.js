@@ -16,7 +16,7 @@
   const hasOutput = (lots) => lots.some((lot) => lot.goodQty + lot.scrapQty > 0);
   const yieldText = (lots, digits = 2) => (hasOutput(lots) ? `${yieldOf(lots).toFixed(digits)}%` : "—");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
-  const searchForm = (ctx, placeholder, { tab = null } = {}) => `<form class="rf-search" data-rf-search${tab ? ` data-rf-keep="tab"` : ""} role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
+  const searchForm = (ctx, placeholder, { tab = null } = {}) => `<form novalidate class="rf-search" data-rf-search${tab ? ` data-rf-keep="tab"` : ""} role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
 
   // ---------- ภาพรวมโรงงาน ----------
   pages.dashboard = (ctx) => {
@@ -60,7 +60,11 @@
     // ยังไม่มีล็อตที่บันทึกผลผลิตเลย: กราฟสองใบบอกว่าว่าง ไม่วาดแกนที่ไม่มีความหมาย (ของเสีย 0% ของล็อตจริงยังวาดเป็นกราฟ)
     const hasProduction = data.lots.some((lot) => lot.goodQty + lot.scrapQty > 0);
     const noProduction = ui.empty("ยังไม่มีผลผลิตที่บันทึก");
-    const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${rules.fmtDateTime(now)}`)}
+    // ยังไม่มีข้อมูลเลย: ขั้นแรกคือเปิดใบสั่งผลิต (ยังไม่มีสูตรที่อนุมัติ = ไปสร้างสูตรก่อน) · ปุ่มเดียวนี้หายไปเมื่อมีใบสั่งแล้ว
+    const start = data.orders.length ? ""
+      : !rules.approvedRecipes(data.recipes).length ? (ctx.canSee("recipes") ? ui.link("สร้างสูตรยาง", ctx.url("recipes"), "btn rf-btn") : "")
+      : ctx.can("createOrder") ? ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" }) : "";
+    const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${rules.fmtDateTime(now)}`, start)}
       ${ui.stats([
         { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: hasProduction ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },
@@ -136,7 +140,7 @@
         ${ui.field("วันเริ่มผลิต", ui.input("startDate", { type: "date", value: toInputDate(now + DAY), required: true }), { required: true })}
         ${ui.field("วันกำหนดส่ง", ui.input("dueDate", { type: "date", value: toInputDate(now + 10 * DAY), required: true }), { required: true })}
       </div>${ui.field("หมายเหตุ / ข้อกำหนดพิเศษของลูกค้า", ui.textarea("note"))}`;
-    const html = ui.dialog("createOrder", "เปิดใบสั่งผลิตใหม่", `<form data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result} แล้ว" id="rf-create-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-order">บันทึกใบสั่งผลิต</button>` });
+    const html = ui.dialog("createOrder", "เปิดใบสั่งผลิตใหม่", `<form novalidate data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result} แล้ว" id="rf-create-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-order">บันทึกใบสั่งผลิต</button>` });
     const bind = (dialog) => {
       const recipeSelect = dialog.querySelector("[data-rf-recipe]");
       const target = dialog.querySelector("[data-rf-target]");
@@ -235,7 +239,7 @@
     const formId = current ? "rf-edit-recipe" : "rf-create-recipe";
     const title = !current ? "สร้างสูตรการผลิตใหม่" : draft ? `แก้ร่างสูตร ${current.id} Rev.${current.revision}` : `ออกฉบับแก้ไขใหม่ของสูตร ${current.id} (Rev.${current.revision + 1})`;
     const success = !current ? "บันทึกสูตรแล้ว (รออนุมัติ)" : draft ? "บันทึกร่างสูตรแล้ว (รออนุมัติ)" : "ออกฉบับแก้ไขใหม่แล้ว Rev.{result} (รออนุมัติ · ฉบับเดิมใช้งานต่อจนกว่าจะอนุมัติ)";
-    const html = ui.dialog(name, title, `<form data-rf-form="${current ? "saveRecipe" : "createRecipe"}" data-rf-success="${esc(success)}" id="${formId}">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="${formId}">${current && !draft ? "บันทึกเป็นฉบับแก้ไขใหม่" : "บันทึกสูตร"}</button>`, wide: true });
+    const html = ui.dialog(name, title, `<form novalidate data-rf-form="${current ? "saveRecipe" : "createRecipe"}" data-rf-success="${esc(success)}" id="${formId}">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="${formId}">${current && !draft ? "บันทึกเป็นฉบับแก้ไขใหม่" : "บันทึกสูตร"}</button>`, wide: true });
     const bind = (dialog) => {
       const tbody = dialog.querySelector("[data-rf-items]");
       const total = dialog.querySelector("[data-rf-total]");
@@ -286,7 +290,7 @@
         ${ui.field("อายุการเก็บ (วัน)", ui.input("shelfLifeDays", { type: "number", step: "1", min: 1, max: 3650, value: String(material?.shelfLifeDays ?? 180) }))}
         ${ui.field("สถานะ", ui.select("active", [{ value: "1", label: "ใช้งาน" }, { value: "0", label: "เลิกใช้ (ไม่แสดงในสูตรและการรับเข้า)" }], { value: material?.active === false ? "0" : "1" }))}
       </div><datalist id="rf-material-categories">${categories.map((category) => `<option value="${esc(category)}"></option>`).join("")}</datalist>`;
-    const html = ui.dialog("materialEdit", material ? `แก้วัตถุดิบ ${material.code}` : "เพิ่มวัตถุดิบ", `<form data-rf-form="saveMaterial" data-rf-success="บันทึกวัตถุดิบ {result} แล้ว" id="rf-material-form">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-material-form">บันทึก</button>` });
+    const html = ui.dialog("materialEdit", material ? `แก้วัตถุดิบ ${material.code}` : "เพิ่มวัตถุดิบ", `<form novalidate data-rf-form="saveMaterial" data-rf-success="บันทึกวัตถุดิบ {result} แล้ว" id="rf-material-form">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-material-form">บันทึก</button>` });
     return { html };
   };
 
@@ -302,7 +306,7 @@
       ? `${info}${linked ? `<p class="small muted">${esc(`ยอดดีรายงานเข้างาน ${order.sourceJobId} ของ BOM ทีละล็อตแล้ว`)}</p>` : ""}`
       : `${info}
       ${ui.field(`ปริมาณผลิตจริง (${order.uom})`, ui.input("producedQty", { type: "number", step: "any", min: linked ? 0.0001 : 0, value: order.producedQty ? String(order.producedQty) : "", required: linked }), { hint: linked ? esc(`ส่งยอดนี้กลับไปที่งาน ${order.sourceJobId} ของ BOM`) : "", required: linked })}`;
-    const html = ui.dialog("closeOrder", `ปิดงาน ${order.id}`, `<form data-rf-form="setOrderStatus" data-rf-args="${esc(JSON.stringify({ id: order.id, status: "completed" }))}" data-rf-success="ปิดงาน ${esc(order.id)} แล้ว" id="rf-close-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-close-order">ปิดงาน</button>` });
+    const html = ui.dialog("closeOrder", `ปิดงาน ${order.id}`, `<form novalidate data-rf-form="setOrderStatus" data-rf-args="${esc(JSON.stringify({ id: order.id, status: "completed" }))}" data-rf-success="ปิดงาน ${esc(order.id)} แล้ว" id="rf-close-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-close-order">ปิดงาน</button>` });
     return { html };
   };
 
@@ -383,7 +387,7 @@
       ? ui.table(["วัตถุดิบ", { label: "สั่ง", className: "right" }, "รับเข้า", { label: "", className: "right" }], poRows, { emptyText: "ยังไม่มีใบสั่งซื้อ" })
       : tab === "raw"
       ? ui.table(["ล็อต", "วัตถุดิบ", "ที่เก็บ / ผู้ขาย", "หมดอายุ", { label: "คงเหลือ", className: "right" }, "สถานะ", { label: "", className: "right" }], rawRows, { emptyText: "ไม่พบล็อตวัตถุดิบ" })
-      : `<form id="rf-ship" data-rf-form="shipBoxes" data-rf-success="ส่งมอบกล่องแล้ว">${ui.table(["", "กล่อง", "สินค้า", "ใบสั่งผลิต", { label: "จำนวน", className: "right" }, "เกรด", "สถานะ", { label: "", className: "right" }], fgRows, { emptyText: "ไม่พบกล่องสินค้า" })}</form>`;
+      : `<form novalidate id="rf-ship" data-rf-form="shipBoxes" data-rf-success="ส่งมอบกล่องแล้ว">${ui.table(["", "กล่อง", "สินค้า", "ใบสั่งผลิต", { label: "จำนวน", className: "right" }, "เกรด", "สถานะ", { label: "", className: "right" }], fgRows, { emptyText: "ไม่พบกล่องสินค้า" })}</form>`;
     const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "ควบคุมสต็อกตามหลัก FEFO บล็อกล็อตหมดอายุหรือถูกกักกัน ตรวจสอบรับเข้าตามใบสั่งซื้อ และจัดการกล่องสินค้าพร้อมส่ง", ui.openButton("รับวัตถุดิบเข้าคลัง", "receiveMaterial", {}, { className: "" }))}
       ${ui.stats([
         { label: "สต็อกวัตถุดิบพร้อมใช้", value: `${fmtNum(available.reduce((sum, lot) => sum + lot.qtyKg, 0))} kg`, sub: `${available.length} ล็อต` },
@@ -423,7 +427,7 @@
         ${ui.field("ตำแหน่งจัดเก็บ", ui.input("location"), { hint: `ค่าเริ่มต้น: <span data-rf-storage>${esc(first?.storage ?? "")}</span>` })}
         ${ui.field("เอกสาร CoA จากผู้ขาย", ui.select("coa", [{ value: "yes", label: "มี" }, { value: "no", label: "ไม่มี" }]))}
       </div>`;
-    const html = ui.dialog("receiveMaterial", "รับวัตถุดิบเข้าคลัง", `<form data-rf-form="receiveMaterial" data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-material">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-material">รับเข้าและสร้างล็อต</button>` });
+    const html = ui.dialog("receiveMaterial", "รับวัตถุดิบเข้าคลัง", `<form novalidate data-rf-form="receiveMaterial" data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-material">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-material">รับเข้าและสร้างล็อต</button>` });
     const bind = (dialog) => {
       const select = dialog.querySelector("[data-rf-material]");
       const expiry = dialog.querySelector("[data-rf-expiry]");
@@ -451,7 +455,7 @@
       // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต ไม่มีวันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มในคำสั่งเดียวกัน
       const partBody = `${ui.kv([["ของซื้อ", esc(materialCode)]])}
         <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))})`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }), { required: true })}</div>`;
-      return { html: ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้า {result} แล้ว" id="rf-receive-po">${partBody}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` }) };
+      return { html: ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้า {result} แล้ว" id="rf-receive-po">${partBody}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` }) };
     }
     const material = data.materials.find((row) => row.code === materialCode);
     const days = Number(material?.shelfLifeDays) || 180;
@@ -462,7 +466,7 @@
         ${ui.field("วันหมดอายุ", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY), extra: `title="${esc(`ตั้งต้น = วันนี้ + อายุการเก็บ ${days} วัน`)}"` }), { required: true })}
         ${ui.field("ผู้ขาย", ui.input("supplier", { extra: 'title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"' }))}
       </div>`;
-    const html = ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` });
+    const html = ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` });
     return { html };
   };
 
@@ -510,7 +514,7 @@
     const partHead = ["ของซื้อ (ตามหน่วยของชิ้น)", { label: "ต้องใช้", className: "right" }, { label: "คงเหลือในคลัง", className: "right", title: "ยอดคงเหลือในหน้าคลังของซื้อ" }, { label: "จองแล้ว", className: "right", title: "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย" }, { label: "สั่งค้างรับ", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ", "จำนวนสั่ง"];
     const total = rows.length + partRows.length;
     const body = total
-      ? `${notes}<form data-rf-form="createPurchaseOrder" data-rf-args='${esc(JSON.stringify(formArgs))}' data-rf-success="สั่งซื้อ {result} แล้ว" id="rf-purchase">${rows.length ? ui.table(chemHead, tableRows) : ""}${partRows.length ? ui.table(partHead, partRows) : ""}</form>`
+      ? `${notes}<form novalidate data-rf-form="createPurchaseOrder" data-rf-args='${esc(JSON.stringify(formArgs))}' data-rf-success="สั่งซื้อ {result} แล้ว" id="rf-purchase">${rows.length ? ui.table(chemHead, tableRows) : ""}${partRows.length ? ui.table(partHead, partRows) : ""}</form>`
       : `${notes}${ui.empty("ไม่มีวัตถุดิบให้ตรวจ (WO ไม่มีสูตร หรือปิด/ยกเลิกแล้ว)")}`;
     const html = ui.dialog("purchase", `${partRows.length ? "สั่งซื้อวัตถุดิบและของซื้อ" : "สั่งซื้อวัตถุดิบ"}${args.sourcePi ? ` · ${args.sourcePi}` : ""}`, body, { wide: true, footer: `${ui.closeButton()}${total ? '<button class="btn rf-btn" type="submit" form="rf-purchase">สั่งซื้อ</button>' : ""}` });
     // แก้สต็อกขั้นต่ำแล้วจำนวนสั่งตามไปจนกว่าผู้ใช้จะแก้จำนวนสั่งเอง
@@ -561,7 +565,7 @@
         ${ui.field("ทำความสะอาดทุก (ตามหน่วยนับ)", ui.input("cleanEvery", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.cleanEvery) : "" }), { required: true })}
         ${ui.field("อายุสะสมก่อน PM ใหญ่ (ตามหน่วยนับ)", ui.input("pmLimit", { type: "number", step: "any", min: 0, required: true, value: mold ? String(mold.pmLimit) : "" }), { required: true })}
       </div>`;
-    const html = ui.dialog("moldEdit", mold ? `แก้ไข ${mold.id}` : "เพิ่มแม่พิมพ์/หัวดาย", `<form data-rf-form="saveMold" data-rf-success="บันทึกแม่พิมพ์ {result} แล้ว" id="rf-mold-form">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-mold-form">บันทึก</button>` });
+    const html = ui.dialog("moldEdit", mold ? `แก้ไข ${mold.id}` : "เพิ่มแม่พิมพ์/หัวดาย", `<form novalidate data-rf-form="saveMold" data-rf-success="บันทึกแม่พิมพ์ {result} แล้ว" id="rf-mold-form">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-mold-form">บันทึก</button>` });
     return { html };
   };
 

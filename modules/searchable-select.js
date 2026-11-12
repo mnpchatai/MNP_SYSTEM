@@ -48,7 +48,15 @@
     return -1;
   }
 
-  const api = { normalizeText, matches, filterOptions, stepIndex };
+  // ชื่อที่โปรแกรมอ่านจอใช้เรียกช่อง: aria-label/title ของ <select> ก่อน แล้ว <label> ที่ผูกกับมัน (for/ครอบ)
+  // label ของช่องที่วางไว้ข้างกันโดยไม่มี for (กล่อง .field ของ RubberFlow/BOM) ใช้ fieldLabel แทน — ไม่มีอะไรเลยจึงเป็น "เลือกรายการ"
+  function accessibleName({ own = "", labels = [], fieldLabel = "" } = {}) {
+    if (own) return own;
+    const named = (labels ?? []).map((text) => String(text ?? "").trim()).filter(Boolean).join(" ");
+    return named || String(fieldLabel ?? "").trim() || "เลือกรายการ";
+  }
+
+  const api = { normalizeText, matches, filterOptions, stepIndex, accessibleName };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;
     return;
@@ -86,9 +94,10 @@
   }
 
   function labelText(select) {
-    const own = select.getAttribute("aria-label") || select.title;
-    if (own) return own;
-    return [...(select.labels ?? [])].map((label) => label.textContent.trim()).filter(Boolean).join(" ") || "เลือกรายการ";
+    // label ของกล่อง .field ที่ไม่มี for (วางไว้ก่อนช่อง) ใช้เมื่อ select.labels ว่าง · label ที่ชี้ไปช่องอื่น (for) ไม่ใช่ของช่องนี้
+    const sibling = select.closest(".field")?.querySelector("label");
+    const fieldLabel = sibling && !sibling.htmlFor ? sibling.textContent : "";
+    return accessibleName({ own: select.getAttribute("aria-label") || select.title, labels: [...(select.labels ?? [])].map((label) => label.textContent), fieldLabel });
   }
 
   function enhance(select) {

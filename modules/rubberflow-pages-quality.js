@@ -48,10 +48,10 @@
   function ncrCard(ctx, ncr, canClose) {
     const { ui, rules } = ctx;
     const { STAGE_LABEL, fmtDateTime, fmtNum } = rules;
-    const closeForm = ncr.status === "open" && canClose ? `<form class="rf-row" data-rf-form="closeNcr" data-rf-args='${esc(JSON.stringify({ id: ncr.id }))}' data-rf-success="ปิด NCR แล้ว"><div class="rf-grow">${ui.input("verification", { placeholder: "ผลการทวนสอบประสิทธิผล…" })}</div>${ui.submitButton("ปิดเคส")}</form>` : "";
+    const closeForm = ncr.status === "open" && canClose ? `<form novalidate class="rf-row" data-rf-form="closeNcr" data-rf-args='${esc(JSON.stringify({ id: ncr.id }))}' data-rf-success="ปิด NCR แล้ว"><div class="rf-grow">${ui.input("verification", { placeholder: "ผลการทวนสอบประสิทธิผล…" })}</div>${ui.submitButton("ปิดเคส")}</form>` : "";
     // แผนก RB และ QA กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่ได้ (ปิดเคสเป็นของ QA) · ปิดแล้วแสดงอย่างเดียว
     const fillForm = ncr.status === "open" && ctx.can("fillNcr")
-      ? `<form class="rf-stack" data-rf-form="updateNcr" data-rf-args='${esc(JSON.stringify({ id: ncr.id }))}' data-rf-success="บันทึกการแก้ไข/ป้องกันแล้ว">${ui.field("แก้ไข (Corrective)", ui.textarea("corrective", { value: ncr.corrective ?? "", rows: 2 }))}${ui.field("ป้องกันซ้ำ (Preventive)", ui.textarea("preventive", { value: ncr.preventive ?? "", rows: 2 }))}<div class="rf-row">${ui.submitButton("บันทึก", { className: "secondary" })}</div></form>`
+      ? `<form novalidate class="rf-stack" data-rf-form="updateNcr" data-rf-args='${esc(JSON.stringify({ id: ncr.id }))}' data-rf-success="บันทึกการแก้ไข/ป้องกันแล้ว">${ui.field("แก้ไข (Corrective)", ui.textarea("corrective", { value: ncr.corrective ?? "", rows: 2 }))}${ui.field("ป้องกันซ้ำ (Preventive)", ui.textarea("preventive", { value: ncr.preventive ?? "", rows: 2 }))}<div class="rf-row">${ui.submitButton("บันทึก", { className: "secondary" })}</div></form>`
       : "";
     return ui.card(`<div class="rf-grid rf-g2">
         <div class="rf-stack">${ui.kv([["ขั้นตอนที่พบ", esc(STAGE_LABEL[ncr.stage] ?? ncr.stage)], ["ล็อต", ui.mono(ncr.lotId)], ["ชิ้นงานเสีย", esc(fmtNum(ncr.defectQty))], ["ผู้รับผิดชอบ", esc(ncr.owner ?? "-")], ["เปิดเมื่อ", esc(fmtDateTime(ncr.createdAt))], ncr.closedAt ? ["ปิดเมื่อ", esc(`${fmtDateTime(ncr.closedAt)} · ${ncr.closedBy ?? ""}`)] : null])}
@@ -75,7 +75,7 @@
       </div>${target?.holdReasons?.length ? ui.callout("warn", esc(`สาเหตุที่กักกัน: ${target.holdReasons.join(", ")}`)) : ""}
       <div class="rf-grid rf-g3">${Object.entries(SPECS.lab).map(([key, spec]) => ui.specInput(`values.${key}`, `${spec.label} · ${spec.method}`, spec)).join("")}</div>
       ${ui.field("หมายเหตุ", ui.textarea("note"))}`;
-    const html = ui.dialog("qcRecord", "บันทึกผลตรวจคุณภาพ", `<form data-rf-form="addQcRecord" data-rf-success="บันทึกผลตรวจ {result} แล้ว" id="rf-qc-record">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-qc-record">บันทึกผล</button>`, wide: true });
+    const html = ui.dialog("qcRecord", "บันทึกผลตรวจคุณภาพ", `<form novalidate data-rf-form="addQcRecord" data-rf-success="บันทึกผลตรวจ {result} แล้ว" id="rf-qc-record">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-qc-record">บันทึกผล</button>`, wide: true });
     return { html };
   };
 
@@ -91,7 +91,7 @@
       <div class="rf-stack rf-tight"><strong class="small">วิเคราะห์ทำไม 5 ครั้ง (5-Why)</strong>${[1, 2, 3, 4, 5].map((n) => ui.input("whys[]", { placeholder: `ทำไม ครั้งที่ ${n}` })).join("")}</div>
       <div class="rf-grid rf-g3">${ui.field("ควบคุมทันที", ui.textarea("containment"))}${ui.field("การแก้ไข", ui.textarea("corrective"))}${ui.field("การป้องกันซ้ำ", ui.textarea("preventive"))}</div>
       ${ui.badge("info", "ต้องกรอก “การแก้ไข” ก่อนจึงจะปิดเคสได้")}`;
-    const html = ui.dialog("ncr", "เปิดรายงานข้อบกพร่อง (NCR)", `<form data-rf-form="createNcr" data-rf-success="เปิด {result} แล้ว" id="rf-ncr">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-ncr">เปิด NCR</button>`, wide: true });
+    const html = ui.dialog("ncr", "เปิดรายงานข้อบกพร่อง (NCR)", `<form novalidate data-rf-form="createNcr" data-rf-success="เปิด {result} แล้ว" id="rf-ncr">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-ncr">เปิด NCR</button>`, wide: true });
     return { html };
   };
 
@@ -128,7 +128,7 @@
     const ooc = s ? points.filter((point) => point.v > s.ucl || point.v < s.lcl) : [];
     const oos = points.filter((point) => (usl !== undefined && point.v > usl) || (lsl !== undefined && point.v < lsl));
     const r = (x, digits = 3) => (x === undefined || x === null ? "-" : x.toFixed(digits));
-    const picker = `<form class="rf-row" data-rf-pick><label class="sr-only" for="rf-spc-ch">ค่าที่ติดตาม</label>${ui.select("ch", chars.map((row) => ({ value: row.id, label: row.label })), { value: ch.id, id: "rf-spc-ch", className: "rf-spc-pick", extra: "data-rf-ch" })}</form>`;
+    const picker = `<form novalidate class="rf-row" data-rf-pick><label class="sr-only" for="rf-spc-ch">ค่าที่ติดตาม</label>${ui.select("ch", chars.map((row) => ({ value: row.id, label: row.label })), { value: ch.id, id: "rf-spc-ch", className: "rf-spc-pick", extra: "data-rf-ch" })}</form>`;
     const html = `${ui.pageHead("SPC / ความสามารถของกระบวนการ", "แผนภูมิควบคุมค่ารายตัว (I-chart), ฮิสโตแกรม และดัชนี Cp / Cpk คำนวณจากข้อมูลการผลิตจริงในระบบ", picker)}
       ${ui.stats([
         { label: "Cpk", value: r(s?.cpk, 2), sub: verdict.text, tone: verdict.tone === "muted" ? "" : verdict.tone },
@@ -187,7 +187,7 @@
       return ui.callout("warn", esc(`ขอบเขตที่ได้รับผลกระทบ: ${boxes.length} กล่อง (${boxes.filter((box) => box.status === "shipped").length} กล่องส่งมอบลูกค้าแล้ว)`));
     };
     const html = `${ui.pageHead("สืบย้อนกลับ (Traceability)", "ย้อนจากกล่องสินค้าไปถึงล็อตวัตถุดิบ หรือไล่ไปข้างหน้าจากล็อตวัตถุดิบว่าถูกใช้ในกล่องใดบ้าง (สำหรับกรณีเรียกคืนสินค้า)")}
-      ${ui.card(`<form class="rf-search rf-search-wide" data-rf-search role="search"><label class="sr-only" for="rf-q">รหัส</label>${ui.input("q", { id: "rf-q", type: "search", value: query, placeholder: "สแกนหรือพิมพ์รหัสกล่อง ล็อต หรือล็อตวัตถุดิบ" })}<button class="btn rf-btn" type="submit">ค้นหา</button></form>
+      ${ui.card(`<form novalidate class="rf-search rf-search-wide" data-rf-search role="search"><label class="sr-only" for="rf-q">รหัส</label>${ui.input("q", { id: "rf-q", type: "search", value: query, placeholder: "สแกนหรือพิมพ์รหัสกล่อง ล็อต หรือล็อตวัตถุดิบ" })}<button class="btn rf-btn" type="submit">ค้นหา</button></form>
         <div class="rf-row small muted rf-samples">ตัวอย่าง: ${samples.map((sample) => ui.link(sample, ctx.pageUrl({ q: sample }), "rf-badge")).join("")}</div>`)}
       ${query && !hit ? ui.callout("bad", esc(`ไม่พบรหัส “${query}”`)) : ""}${note ? ui.callout("info", esc(note)) : ""}
       <div class="rf-grid rf-g2">

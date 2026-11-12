@@ -47,7 +47,7 @@
     const { data, ui } = ctx;
     const samples = [data.fgBoxes[0]?.id, data.lots.find((lot) => lot.stage === "mixing")?.id, data.materialLots[0]?.lotNo, data.orders[0]?.id].filter(Boolean);
     const hasCamera = typeof root.BarcodeDetector === "function" && Boolean(root.navigator?.mediaDevices?.getUserMedia);
-    const body = `<form class="rf-row rf-scan-form" data-rf-scan-form><div class="rf-grow">${ui.input("code", { value: code, placeholder: "ใช้เครื่องสแกนยิงรหัส หรือพิมพ์แล้วกด Enter" })}</div><button class="btn rf-btn" type="submit">ค้นหา</button>${hasCamera ? `<button class="btn rf-btn secondary" type="button" data-rf-camera>เปิดกล้อง</button>` : ""}</form>
+    const body = `<form novalidate class="rf-row rf-scan-form" data-rf-scan-form><div class="rf-grow">${ui.input("code", { value: code, placeholder: "ใช้เครื่องสแกนยิงรหัส หรือพิมพ์แล้วกด Enter" })}</div><button class="btn rf-btn" type="submit">ค้นหา</button>${hasCamera ? `<button class="btn rf-btn secondary" type="button" data-rf-camera>เปิดกล้อง</button>` : ""}</form>
       <div data-rf-camera-box hidden></div>
       <div class="rf-row small muted rf-samples">ตัวอย่างรหัส: ${samples.map((sample) => `<button class="rf-badge" type="button" data-rf-sample="${esc(sample)}">${esc(sample)}</button>`).join("")}</div>
       <div data-rf-scan-result>${scanResult(ctx, code)}</div>`;

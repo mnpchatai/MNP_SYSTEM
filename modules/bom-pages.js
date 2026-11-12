@@ -32,7 +32,7 @@
   // ชนิดพร้อมหมวด เช่น "WIP · ชิ้นยาง (ตัด/เจาะ)" · "สินค้า · สินค้าสำเร็จรูป"
   const kindLabel = (ctx, kind) => [ctx.rules.categoryOf(kind)?.label, ctx.rules.KINDS[kind]?.label ?? kind].filter(Boolean).join(" · ");
   const uomText = (ctx, code) => ctx.rules.uomLabel(code);
-  const searchForm = (ctx, placeholder) => `<form class="rf-search" data-rf-search role="search"><label class="sr-only" for="bom-q">ค้นหา</label>${ctx.ui.input("q", { id: "bom-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
+  const searchForm = (ctx, placeholder) => `<form novalidate class="rf-search" data-rf-search role="search"><label class="sr-only" for="bom-q">ค้นหา</label>${ctx.ui.input("q", { id: "bom-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
   const itemOf = (ctx, code) => ctx.helpers.itemOf(ctx.data, code);
   const approvedBomOf = (ctx, code) => ctx.helpers.approvedBomOf(ctx.data, code);
   const whereUsed = (ctx, code) => ctx.data.boms.filter((bom) => bom.status === "approved" && bom.lines.some((line) => line.childCode === code)).map((bom) => bom.itemCode);
@@ -394,7 +394,7 @@
     const isFg = rootKind === "FG";
     const others = data.items.filter((entry) => entry.kind !== "FG" && entry.active !== false).sort((a, b) => a.code.localeCompare(b.code));
     const fgField = (label, control, opts = {}) => ui.field(label, control, { ...opts, className: `bom-pick-fg${isFg ? "" : " is-hidden"}` });
-    const picker = ui.card(`<form class="bom-pick" data-bom-pick>
+    const picker = ui.card(`<form novalidate class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
           ${ui.field("หมวด / ชนิด", kindSelect(ctx, "kind", rootKind, { extra: 'data-bom-pick-kind aria-label="หมวดและชนิดของชิ้นที่จะสร้าง"' }), { required: true })}
           ${fgField("ฐานรหัสสินค้า", ui.input("base", { value: isFg ? current.base : "", list: "bom-base-list", required: isFg, placeholder: "เลือกหรือพิมพ์รหัสใหม่ เช่น MEGA-ST-01", extra: `autocapitalize="characters"${isFg ? "" : " disabled"}` }), { hint: esc(`มีอยู่ ${bases.length} ฐานรหัส พิมพ์รหัสใหม่เพื่อสร้างสินค้าใหม่`), required: true })}
@@ -423,6 +423,7 @@
       form.querySelector("[data-bom-pick-kind]")?.addEventListener("change", sync);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
+        if (!ui.validateForm(event.currentTarget)) return;
         const values = new FormData(event.currentTarget);
         const kind = String(values.get("kind") ?? "FG");
         location.hash = kind === "FG"
@@ -445,7 +446,7 @@
       const body = item
         ? `<p>${ui.mono(item.code)} ${esc(item.name)} <span class="muted">· ${esc(uomText(ctx, item.uom))}</span></p>
            <div class="rf-row">${canEdit ? ui.openButton("แก้ข้อมูลชิ้นงาน", "itemEdit", { code: item.code }) : ""}${canEdit && rootKind === "CP" ? ui.openButton("ผูกสูตร RubberFlow", "compoundLink", { code: item.code }) : ""}${ui.link("ใช้ที่ไหนบ้าง / ประวัติ", ctx.url("items", { sel: item.code }), "btn rf-btn secondary")}</div>`
-        : canEdit ? `<form id="bom-leaf-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}" data-rf-args='{"create":true}'>
+        : canEdit ? `<form novalidate id="bom-leaf-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}" data-rf-args='{"create":true}'>
             <input type="hidden" name="code" value="${attr(code)}"><input type="hidden" name="kind" value="${attr(rootKind)}">
             <div class="rf-grid rf-g3">
               ${ui.field("รหัส", `<input class="input rf-input rf-mono" value="${attr(code)}" readonly>`)}
@@ -495,7 +496,7 @@
           <div data-bom-paste-preview></div>
           <div class="rf-row"><button class="btn rf-btn small" type="button" data-bom-paste-add disabled>เพิ่มในตาราง</button><button class="btn rf-btn secondary small" type="button" data-bom-paste-close>ปิด</button></div>
         </div>` : "";
-    const editor = `<form id="bom-tree-form" class="bom-editor" data-rf-form="saveBomTree" data-rf-success="{result}">
+    const editor = `<form novalidate id="bom-tree-form" class="bom-editor" data-rf-form="saveBomTree" data-rf-success="{result}">
       <input type="hidden" name="code" value="${attr(code)}">
       <datalist id="bom-item-list">${data.items.filter((entry) => entry.code !== code && entry.active !== false).map((entry) => `<option value="${attr(entry.code)}">${esc(`${rules.KINDS[entry.kind]?.label ?? entry.kind} · ${entry.name.slice(0, 50)}`)}</option>`).join("")}</datalist>
       <datalist id="bom-compound-list">${data.compounds.map((entry) => `<option value="${attr(entry.code)}">${esc(entry.name)}</option>`).join("")}</datalist>
@@ -740,7 +741,7 @@
     const item = itemOf(ctx, code);
     if (!item) return null;
     const drafts = data.orders.filter((order) => order.status === "draft");
-    const body = drafts.length ? `<form id="bom-use-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ fgCode: item.code }))}" data-rf-success="${attr(`เพิ่ม ${item.code} ในใบแล้ว`)}">
+    const body = drafts.length ? `<form novalidate id="bom-use-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ fgCode: item.code }))}" data-rf-success="${attr(`เพิ่ม ${item.code} ในใบแล้ว`)}">
       ${ui.field("ใบสั่งผลิต (ร่าง)", ui.select("orderId", drafts.map((order) => ({ value: order.id, label: `${order.id} · ${order.customer} (${order.items.length} สินค้า)` })), {}), { required: true })}
       ${ui.field("จำนวนสั่ง", ui.input("qty", { type: "number", step: "any", min: 1, required: true }), { required: true })}
     </form>` : ui.callout("warn", `ยังไม่มีใบสั่งผลิตที่เป็นร่าง ${ui.link("เปิดใบใหม่ที่เมนูใบสั่งผลิต", ctx.url("orders"))}`);
@@ -812,7 +813,7 @@
     const current = code ? rules.parseFgCode(code) : { base, pkg, colorSet: cs };
     const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((value) => ({ value, label: `(${value})` }));
     const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((value) => ({ value, label: value }));
-    const picker = ui.card(`<form class="bom-pick" data-bom-pick>
+    const picker = ui.card(`<form novalidate class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
           ${ui.field("ฐานรหัสสินค้า", ui.input("base", { value: current.base, list: "bom-product-base-list", required: true, placeholder: "เช่น MEGA-ST-01", extra: 'autocapitalize="characters"' }), { required: true })}
           ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { value: current.pkg, placeholder: "ไม่ระบุ" }))}
@@ -825,6 +826,7 @@
     const bindPick = (rootNode) => {
       rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
         event.preventDefault();
+        if (!ui.validateForm(event.currentTarget)) return;
         const form = new FormData(event.currentTarget);
         location.hash = ctx.url("product", { base: String(form.get("base") ?? "").trim(), pkg: String(form.get("pkg") ?? ""), cs: String(form.get("cs") ?? ""), qty: String(form.get("qty") ?? "") });
       });
@@ -1105,7 +1107,7 @@
     const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
     const view = ["table", "steps"].includes(params.get("view")) ? params.get("view") : "flow";
     const roots = data.items.filter((item) => item.kind === "FG" || approvedBomOf(ctx, item.code)).sort((a, b) => a.code.localeCompare(b.code));
-    const picker = ui.card(`<form class="bom-pick" data-bom-pick>
+    const picker = ui.card(`<form novalidate class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
           ${ui.field("รหัสสินค้า/ชิ้นงาน", ui.input("code", { value: code, list: "bom-structure-list", required: true, placeholder: "เช่น DEMO-TP-01(P)-Y", extra: 'autocapitalize="characters"' }), { required: true })}
           ${ui.field("จำนวนสั่ง", ui.input("qty", { type: "number", step: "any", min: "0.0001", value: String(qty) }))}
@@ -1116,6 +1118,7 @@
     const bind = (rootNode) => {
       rootNode.querySelector("[data-bom-pick]")?.addEventListener("submit", (event) => {
         event.preventDefault();
+        if (!ui.validateForm(event.currentTarget)) return;
         const form = new FormData(event.currentTarget);
         location.hash = ctx.url("structure", { code: String(form.get("code") ?? "").trim(), qty: String(form.get("qty") ?? ""), view });
       });
@@ -1200,7 +1203,7 @@
     // ไม่เลือกขั้นตอน = ใช้ "ขั้นที่" ของบรรทัด BOM (ถ้ามี) ไม่เช่นนั้นขั้นแรก · เลือกขั้นตอนที่นี่ชนะเลขในบรรทัด BOM
     const stepChoices = (selected, line) => `<option value="">${line.step ? `ตาม BOM: ขั้นที่ ${esc(String(line.step))}` : "ขั้นแรก"}</option>${steps.map((step) => `<option value="${attr(step.processCode)}"${step.processCode === selected ? " selected" : ""}>${esc(step.processCode)}</option>`).join("")}`;
     const inputRows = lines.map((line) => `<tr><td>${ui.mono(line.childCode)}<input type="hidden" name="inputCode[]" value="${attr(line.childCode)}"><div class="small muted">${esc(itemOf(ctx, line.childCode)?.name ?? "")}</div></td><td class="nowrap">${esc(rules.fmtQty(line.qty))} ${esc(uomText(ctx, line.uom))}</td><td><select class="select rf-select" name="inputStep[]" data-input-step aria-label="${attr(`ขั้นที่ ${line.childCode} เข้า`)}">${stepChoices(stepOfInput(line.childCode), line)}</select></td></tr>`);
-    const body = `<form id="bom-routing-form" data-rf-form="saveRouting" data-rf-args="${attr(JSON.stringify({ itemCode: item.code }))}" data-rf-success="บันทึกขั้นตอนผลิต {result}">
+    const body = `<form novalidate id="bom-routing-form" data-rf-form="saveRouting" data-rf-args="${attr(JSON.stringify({ itemCode: item.code }))}" data-rf-success="บันทึกขั้นตอนผลิต {result}">
       <p class="small muted">${esc(item.name)} · ${esc(rules.DEPT_LABEL[item.ownerDept] ?? item.ownerDept)}${routing ? ` · ใช้อยู่ Rev.${routing.revision} โดย ${esc(routing.createdBy)}` : ""}</p>
       ${ui.table(["ขั้นตอน (เรียงจากขั้นแรก)", "นาที/ชิ้น", ""], (steps.length ? steps : [{}]).map(stepRow), { className: "bom-routing-table" })}
       <template data-step-template>${stepRow()}</template>
@@ -1237,7 +1240,7 @@
     const { ui } = ctx;
     const item = itemOf(ctx, code);
     if (!item) return null;
-    const body = `<form id="bom-cost-form" data-rf-form="setItemCost" data-rf-args="${attr(JSON.stringify({ code: item.code }))}" data-rf-success="ตั้งราคา {result}">
+    const body = `<form novalidate id="bom-cost-form" data-rf-form="setItemCost" data-rf-args="${attr(JSON.stringify({ code: item.code }))}" data-rf-success="ตั้งราคา {result}">
       <p class="small muted">${esc(item.name)}</p>
       ${ui.field(`ราคาต้นทุน (บาท ต่อ ${uomText(ctx, item.uom)})`, ui.input("unitCost", { type: "number", step: "any", min: "0", value: item.unitCost ?? "", placeholder: "เว้นว่าง = ไม่ระบุ" }))}
       <p class="small muted">ใช้กับของซื้อ เส้นยาง หรือชิ้นที่ยังไม่มี BOM</p>
@@ -1249,7 +1252,7 @@
     const { ui } = ctx;
     const item = itemOf(ctx, code);
     if (!item) return null;
-    const body = `<form id="bom-image-form" data-rf-form="setItemImage" data-rf-args="${attr(JSON.stringify({ code: item.code }))}" data-rf-success="บันทึกรูป {result}">
+    const body = `<form novalidate id="bom-image-form" data-rf-form="setItemImage" data-rf-args="${attr(JSON.stringify({ code: item.code }))}" data-rf-success="บันทึกรูป {result}">
       <p class="small muted">${esc(item.name)}</p>
       <div class="bom-image-edit">${picture({ itemCode: item.code, kind: item.kind, image: item.image ?? null }, " is-large")}
         ${ui.field("", ui.filePick("bom-image-file", "", "เลือกรูป", { icon: "camera", accept: "image/png,image/jpeg,image/webp", title: `PNG JPEG หรือ WEBP · ย่อรูปในเบราว์เซอร์ก่อนบันทึก (${ctx.store.isRemote() ? "เก็บรูปย่อไว้กับรายการชิ้นงานในฐานข้อมูล" : "เก็บในเบราว์เซอร์นี้"})`, extra: "data-image-file" }))}</div>
@@ -1314,7 +1317,7 @@
     const fgs = data.items.filter((item) => item.kind === "FG" && approvedBomOf(ctx, item.code)).map((item) => ({ item, ...rules.parseFgCode(item.code) }));
     const bases = [...new Set(fgs.map((entry) => entry.base))].sort();
     const base = params.get("base") ? rules.canonicalCode(params.get("base")) : "";
-    const picker = ui.card(`<form class="bom-pick" data-bom-pick><div class="rf-grid rf-g2">
+    const picker = ui.card(`<form novalidate class="bom-pick" data-bom-pick><div class="rf-grid rf-g2">
         ${ui.field("ฐานรหัสสินค้า", ui.input("base", { value: base, list: "bom-variant-base-list", placeholder: "เช่น MEGA-ST-01", extra: 'autocapitalize="characters"' }))}
         <div class="field rf-field"><label>&nbsp;</label><button class="btn rf-btn" type="submit">เปิด</button></div></div>
         <datalist id="bom-variant-base-list">${bases.map((value) => `<option value="${attr(value)}">${esc(fgs.find((entry) => entry.base === value).item.name.slice(0, 50))}</option>`).join("")}</datalist></form>`, { title: "ฐานรหัสสินค้า" });
@@ -1389,7 +1392,7 @@
       const count = Math.max(1, slotColors(template, slotKey).length);
       return Array.from({ length: count }, (_, index) => `<tr><td>${ui.mono(slotKey)}${count > 1 ? `<div class="small muted">ช่องที่ ${index + 1}</div>` : ""}<div class="small muted">${esc(itemOf(ctx, facts.slotNames[slotKey])?.name ?? "")}</div><input type="hidden" name="slotKey[]" value="${attr(slotKey)}"></td><td>${ui.select("slotColor[]", options, { value: slotColors(template, slotKey)[index] ?? "", placeholder: "ใช้สีของต้นแบบ" })}</td></tr>`);
     });
-    const body = `<form id="bom-colorset-form" data-rf-form="saveColorSet" data-rf-args="${attr(JSON.stringify({ base: key }))}" data-rf-success="บันทึกชุดสี {result}">
+    const body = `<form novalidate id="bom-colorset-form" data-rf-form="saveColorSet" data-rf-args="${attr(JSON.stringify({ base: key }))}" data-rf-success="บันทึกชุดสี {result}">
       <div class="rf-grid rf-g2">
         ${ui.field("รหัสชุดสี", defined ? `<input class="input rf-input" name="code" value="${attr(defined.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น A", list: "bom-colorset-codes", extra: 'autocapitalize="characters" maxlength="1" pattern="[A-Za-z]" title="ตัวอักษร A–Z ตัวเดียว ตามท้ายรหัสสินค้า"' }), { required: true })}
         ${ui.field("ชื่อ/คำอธิบาย", ui.input("name", { value: defined?.name ?? "", placeholder: "เช่น แดง-ดำ" }))}
@@ -1409,7 +1412,7 @@
     const prefill = defined?.lines ?? (source ? source.lines.filter((line) => itemOf(ctx, line.childCode)?.kind === "PURCHASED").map((line) => ({ childCode: line.childCode, qty: line.qty })) : []);
     const ROWS = Math.max(8, prefill.length + 2);
     const rows = Array.from({ length: ROWS }, (_, index) => `<tr><td>${ui.input("childCode[]", { value: prefill[index]?.childCode ?? "", list: "bom-pkg-items", placeholder: index === 0 ? "รหัสบรรจุภัณฑ์" : "", className: "rf-mono", extra: 'autocapitalize="characters"' })}</td><td>${ui.input("qty[]", { type: "number", step: "any", min: 0, value: prefill[index]?.qty ?? "" })}</td></tr>`);
-    const body = `<form id="bom-package-form" data-rf-form="savePackage" data-rf-args="${attr(JSON.stringify({ base: key }))}" data-rf-success="บันทึกแพ็กเกจ {result}">
+    const body = `<form novalidate id="bom-package-form" data-rf-form="savePackage" data-rf-args="${attr(JSON.stringify({ base: key }))}" data-rf-success="บันทึกแพ็กเกจ {result}">
       <div class="rf-grid rf-g2">
         ${ui.field("รหัสแพ็กเกจ", defined ? `<input class="input rf-input" name="code" value="${attr(defined.code)}" readonly>` : ui.input("code", { value: String(code ?? "").toUpperCase(), required: true, placeholder: "เช่น P", list: "bom-package-codes", extra: 'autocapitalize="characters" maxlength="4"' }), { required: true })}
         ${ui.field("ชื่อ/คำอธิบาย", ui.input("name", { value: defined?.name ?? "", placeholder: "เช่น ถุง + ลังรวม 40 ชุด" }))}
@@ -1424,7 +1427,7 @@
   dialogs.colorEdit = (ctx, { code = "" }) => {
     const { ui, data, rules } = ctx;
     const color = (data.colors ?? []).find((entry) => entry.code === String(code).toUpperCase()) ?? null;
-    const body = `<form id="bom-color-form" data-rf-form="saveColor" data-rf-success="บันทึกสี {result}">
+    const body = `<form novalidate id="bom-color-form" data-rf-form="saveColor" data-rf-success="บันทึกสี {result}">
       <div class="rf-grid rf-g2">
         ${ui.field("รหัสสี (แม่สี + เฉด)", ui.input("code", { value: color?.code ?? String(code).toUpperCase(), required: true, placeholder: "เช่น OR01", list: "bom-color-codes", extra: 'autocapitalize="characters" maxlength="4"' }), { required: true })}
         ${ui.field("ชื่อ", ui.input("name", { value: color?.name ?? "", placeholder: "เช่น ส้ม" }))}
@@ -1442,7 +1445,7 @@
     const kind = item?.kind ?? "PURCHASED";
     const rubber = item?.rubber ?? {};
     const deptOptions = rules.DEPTS.map((value) => ({ value, label: rules.DEPT_LABEL[value] }));
-    const body = `<form id="bom-item-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}"${item ? "" : ' data-rf-args=\'{"create":true}\''}>
+    const body = `<form novalidate id="bom-item-form" data-rf-form="saveItem" data-rf-success="บันทึกชิ้นงาน {result}"${item ? "" : ' data-rf-args=\'{"create":true}\''}>
       <div class="rf-grid rf-g2">
         ${ui.field("รหัสชิ้นงาน", item ? `<input class="input rf-input" name="code" value="${attr(item.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น B25-1520" }), { required: true })}
         ${ui.field("หมวด / ชนิด", kindSelect(ctx, "kind", kind), { required: true })}
@@ -1573,7 +1576,7 @@
     const recipeControl = recipes.length || rfRemote(ctx)
       ? ui.select("recipeId", recipes.map((recipe) => ({ value: recipe.id, label: recipe.productCode ? `${recipe.id} · ${recipe.productCode}` : recipe.id })), { value: compound?.recipeId ?? "", placeholder: "ไม่ผูก" })
       : ui.input("recipeId", { value: compound?.recipeId ?? "", placeholder: "รหัสสูตรใน RubberFlow เช่น RC-EPDM-DS01" });
-    const body = `<form id="bom-compound-form" data-rf-form="linkCompound" data-rf-success="บันทึกสูตรยาง {result}">
+    const body = `<form novalidate id="bom-compound-form" data-rf-form="linkCompound" data-rf-success="บันทึกสูตรยาง {result}">
       ${ui.field("รหัสสูตรยาง", compound ? `<input class="input rf-input" name="code" value="${attr(compound.code)}" readonly>` : ui.input("code", { required: true, placeholder: "เช่น B0006" }), { required: true })}
       ${ui.field("ชื่อ/คำอธิบาย", ui.input("name", { value: compound?.name ?? "" }))}
       ${ui.field("สูตร PHR ใน RubberFlow", recipeControl, { hint: esc(rfRemote(ctx) ? "แสดงเฉพาะสูตรที่อนุมัติแล้วใน RubberFlow" : recipes.length ? "แสดงเฉพาะสูตรที่อนุมัติแล้วใน RubberFlow" : "RubberFlow ยังไม่มีข้อมูล พิมพ์รหัสสูตรเอง") })}
@@ -1862,7 +1865,7 @@
         // โหมดฐานข้อมูล: ปล่อยผลิตแล้วฐานข้อมูลเปิด WO ใน RubberFlow ให้งาน RB เอง · งานที่ยังไม่มี WO แสดงเหตุผลตรงนี้ (งานที่มี WO แสดงเลข WO ในตารางอยู่แล้ว)
         const noWo = ctx.store?.isRemote?.() && ["released", "in_progress"].includes(order.status)
           ? jobs.filter((job) => job.dept === "RB" && job.status !== "done" && !job.externalRef).map((job) => ({ job, reason: rbJobWoReason(ctx, job) })) : [];
-        const woNote = noWo.length ? ui.callout("warn", `<div><strong>งาน RB ที่ยังไม่มี WO ใน RubberFlow</strong></div>${noWo.map(({ job, reason }) => `<div>${ui.mono(job.id)} ${esc(job.itemCode)}${reason ? ` — ${esc(reason)}` : ""}</div>`).join("")}<div class="small muted">แก้เหตุผลแล้วสร้างเองได้ที่เมนูงานของแผนก RB (ปุ่ม “สร้าง WO ใน RubberFlow”)</div>`) : "";
+        const woNote = noWo.length ? ui.callout("warn", `<div><strong>งาน RB ที่ยังไม่มี WO ใน RubberFlow</strong></div>${noWo.map(({ job, reason }) => `<div>${ui.mono(job.id)} ${esc(job.itemCode)}${reason ? ` — ${esc(reason)}` : ""}</div>`).join("")}<div class="small muted">แก้เหตุผลแล้วสร้างเองได้ที่เมนูงานของแผนก RB (ปุ่ม “สร้าง WO ใน RubberFlow”)${ctx.canSee("jobs") ? ` ${ui.link("ไปที่งานของแผนก", ctx.url("jobs"), "btn rf-btn secondary small")}` : ""}</div>`) : "";
         tabBody = woNote + ui.table(["แผนก", "งาน", "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ"], jobs.map((job) => `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${deptBadge(ctx, job.dept)}</td><td>${ui.link(job.id, ctx.url("jobs", { dept: job.dept, q: job.id }), "rf-mono")}</td><td>${ui.mono(job.itemCode)}<div class="small muted">${esc(job.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(job.externalRef.woId, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}</div>` : ""}</td></tr>`), { emptyText: "ยังไม่มีงาน (ปล่อยผลิตก่อน)" });
       }
       detail = ui.card(`${headerKv}<h3 class="bom-h3">สินค้าที่สั่ง</h3>${ui.table(["สินค้า (FG)", { label: "จำนวน", className: "right" }, "ชุดสี", ""], itemRows, { emptyText: "ยังไม่มีสินค้า" })}${tabsHtml}${tabBody}`,
@@ -1926,7 +1929,7 @@
   dialogs.orderNew = (ctx) => {
     const { ui, rules } = ctx;
     const today = rules.toInputDate(ctx.now);
-    const body = `<form id="bom-order-form" data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result}">
+    const body = `<form novalidate id="bom-order-form" data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result}">
       <div class="rf-grid rf-g2">
         ${ui.field("เลขที่ PI", ui.input("pi", { placeholder: `ว่าง = ออกเลขอัตโนมัติ เช่น ${rules.piNumber(ctx.now, 1)}` }))}
         ${ui.field("ชื่อลูกค้า", `${ui.input("customer", { required: true, list: "bom-customer-list", extra: 'data-bom-customer title="เลือกจากรายการลูกค้า หรือพิมพ์ชื่อใหม่ ระบบเพิ่มเข้ารายการให้"' })}<datalist id="bom-customer-list">${customersOf(ctx).map((customer) => `<option value="${attr(customer.name)}">${esc(customer.country)}</option>`).join("")}</datalist>`, { required: true })}
@@ -2028,7 +2031,7 @@
     const order = data.orders.find((entry) => entry.id === orderId);
     const line = order?.items.find((item) => item.fgCode === fgCode);
     if (!line) return null;
-    const body = `<form id="bom-order-item-edit-form" data-rf-form="updateOrderItem" data-rf-args="${attr(JSON.stringify({ orderId, fgCode }))}" data-rf-success="แก้จำนวน ${attr(fgCode)} แล้ว">
+    const body = `<form novalidate id="bom-order-item-edit-form" data-rf-form="updateOrderItem" data-rf-args="${attr(JSON.stringify({ orderId, fgCode }))}" data-rf-success="แก้จำนวน ${attr(fgCode)} แล้ว">
       ${reopenCallout(ctx, order)}
       <p class="small muted">${esc(itemOf(ctx, fgCode)?.name ?? "")}</p>
       <div class="rf-grid rf-g2">
@@ -2047,7 +2050,7 @@
     const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((pkg) => ({ value: pkg, label: `(${pkg})` }));
     const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((set) => ({ value: set, label: set }));
     const order = data.orders.find((entry) => entry.id === orderId);
-    const body = `<form id="bom-order-item-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เพิ่มสินค้าแล้ว">
+    const body = `<form novalidate id="bom-order-item-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เพิ่มสินค้าแล้ว">
       ${reopenCallout(ctx, order)}
       <div class="rf-grid rf-g3">
         ${ui.field("ฐานรหัสสินค้า", ui.select("base", baseOptions, { placeholder: "เลือกฐานรหัส…", extra: "data-bom-part" }), { required: true })}
@@ -2089,7 +2092,7 @@
     const order = ctx.data.orders.find((entry) => entry.id === orderId);
     const item = itemOf(ctx, itemCode);
     if (!order || !item) return null;
-    const body = `<form id="bom-stock-form" data-rf-form="setStockCount" data-rf-args="${attr(JSON.stringify({ orderId, itemCode: item.code }))}" data-rf-success="บันทึกยอดคงคลัง {result}">
+    const body = `<form novalidate id="bom-stock-form" data-rf-form="setStockCount" data-rf-args="${attr(JSON.stringify({ orderId, itemCode: item.code }))}" data-rf-success="บันทึกยอดคงคลัง {result}">
       <p class="muted small">${esc(item.name)}</p>
       ${ui.field(`ยอดที่นับได้ (${uomText(ctx, item.uom)})`, ui.input("qty", { type: "number", step: "any", min: 0, required: true, value: order.stockCounts[item.code] ?? "" }), { required: true })}
     </form>`;
@@ -2113,7 +2116,7 @@
     const { ui, rules } = ctx;
     const customer = name ? customersOf(ctx).find((entry) => entry.name === name) : null;
     if (name && !customer) return null;
-    const body = `<form id="bom-customer-form" data-rf-form="saveCustomer"${customer ? "" : ' data-rf-args="{&quot;create&quot;:true}"'} data-rf-success="บันทึกลูกค้า {result} แล้ว">
+    const body = `<form novalidate id="bom-customer-form" data-rf-form="saveCustomer"${customer ? "" : ' data-rf-args="{&quot;create&quot;:true}"'} data-rf-success="บันทึกลูกค้า {result} แล้ว">
       <div class="rf-grid rf-g2">
         ${ui.field("ชื่อลูกค้า", ui.input("name", { required: true, value: customer?.name ?? "", extra: customer ? 'maxlength="120" readonly title="ชื่อเป็นกุญแจของลูกค้า แก้ไม่ได้ (เพิ่มเป็นลูกค้าใหม่แทน)"' : 'maxlength="120"' }), { required: true })}
         ${ui.field("ประเทศ", ui.input("country", { required: true, value: customer?.country ?? "Thailand", extra: "data-bom-country" }), { required: true })}
@@ -2166,7 +2169,7 @@
         <label class="bom-count-input"><span class="sr-only">${esc(`ยอดที่นับได้ ${entry.itemCode}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" value="${attr(order.stockCounts[entry.itemCode] ?? "")}" placeholder="—"${canCount ? "" : " disabled"}><span class="small muted">${esc(uomText(ctx, entry.uom))}</span></label>
       </div>`;
     const body = entries.length
-      ? `<form data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่นับ {result}" class="bom-count-form">
+      ? `<form novalidate data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่นับ {result}" class="bom-count-form">
           ${groups.map((group) => `<h3 class="bom-h3">${esc(group.dept)} <span class="muted">${esc(rules.DEPT_LABEL[group.dept]?.replace(/^\w+ · /, "") ?? "")}</span></h3>${group.entries.sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map(rowHtml).join("")}`).join("")}
           ${canCount ? '<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div>' : ""}
         </form>`
@@ -2229,7 +2232,7 @@
     const more = list.length > shown.length ? `<div class="rf-row">${ui.link(`แสดงเพิ่ม (อีก ${list.length - shown.length})`, ctx.url("stock", { q: ctx.q || null, n: limit + STOCK_PAGE }), "btn rf-btn secondary small")}</div>` : "";
     const table = ui.table(["ของซื้อ", { label: "คงเหลือ", className: "right" }, { label: "จองแล้ว", className: "right", title: "ใบสั่งผลิตที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่ายต้องใช้" }, { label: "สั่งค้างรับ", className: "right", title: "ใบสั่งซื้อ (RubberFlow) ที่ยังไม่ได้รับเข้า" }, { label: "สต็อกขั้นต่ำ", className: "right", title: "ใช้เป็นค่าเริ่มของจำนวนสั่งตอนสั่งซื้อ" }, ""], shown.map(rowHtml), { emptyText: ctx.q ? "ไม่พบของซื้อที่ค้นหา" : "ยังไม่มีของซื้อในทะเบียนชิ้นงาน" });
     const body = canCount && shown.length
-      ? `<form data-rf-form="countPartStock" data-rf-success="บันทึกยอดที่นับ {result}" class="bom-count-form">${table}<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div></form>`
+      ? `<form novalidate data-rf-form="countPartStock" data-rf-success="บันทึกยอดที่นับ {result}" class="bom-count-form">${table}<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div></form>`
       : table;
     const html = `${head(ctx, "คลังของซื้อ", "ยอดคงเหลือของชิ้นส่วนที่ซื้อ (กล่อง ถุง สติ๊กเกอร์ ฯลฯ) ST/WH นับได้ที่นี่ · ยอดลดเมื่อ ST เบิกจ่ายของใบสั่งผลิต และเพิ่มเมื่อรับเข้าตามใบสั่งซื้อ", searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ…"))}
       ${ui.card(`${body}${more}`, { flush: true })}`;
@@ -2286,7 +2289,7 @@
         : `<input class="input rf-input" name="qty[]" type="number" readonly tabindex="-1" placeholder="—" aria-label="${attr(`${line.itemCode} คืนครบแล้ว`)}">`;
       return `<tr><td>${ui.mono(line.itemCode)}<input type="hidden" name="itemCode[]" value="${attr(line.itemCode)}"><div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.issued)} ${unit}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.returned))}</td><td class="right">${control}</td></tr>`;
     });
-    const body = `<form id="bom-return-parts-form" data-rf-form="returnOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="คืนของเหลือเข้าสต็อก {result} แล้ว">${ui.table(["ของซื้อ", { label: "เบิกจ่าย", className: "right" }, { label: "คืนแล้ว", className: "right" }, { label: "คืนครั้งนี้", className: "right" }], rows)}
+    const body = `<form novalidate id="bom-return-parts-form" data-rf-form="returnOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="คืนของเหลือเข้าสต็อก {result} แล้ว">${ui.table(["ของซื้อ", { label: "เบิกจ่าย", className: "right" }, { label: "คืนแล้ว", className: "right" }, { label: "คืนครั้งนี้", className: "right" }], rows)}
       ${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น ใช้ไม่หมด เหลือจากการผลิต", extra: 'maxlength="200"' }), { required: true })}</form>`;
     return { html: ui.dialog("returnParts", `คืนของเหลือเข้าสต็อก · ${orderId}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-return-parts-form">คืนเข้าสต็อก</button>` }) };
   };
@@ -2299,7 +2302,7 @@
     if (!lines.length) return null;
     // เฉพาะรายการที่ยังมีส่วนคืนเข้าสต็อก (ที่คืนเป็นของเหลือครบแล้วไม่ต้องแสดง)
     const rows = lines.filter((line) => line.returnable > 0).map((line) => `<tr><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.returnable)} ${uomText(ctx, line.uom)}`)}</td></tr>`);
-    const body = `<form id="bom-undo-parts-form" data-rf-form="undoOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="ยกเลิกการเบิกจ่ายของซื้อ ${attr(orderId)} แล้ว">
+    const body = `<form novalidate id="bom-undo-parts-form" data-rf-form="undoOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="ยกเลิกการเบิกจ่ายของซื้อ ${attr(orderId)} แล้ว">
       ${ui.callout("warn", "ของซื้อที่เบิกจ่ายแล้วทั้งหมดกลับเข้าสต็อก และใบนี้กลับไปรอเบิกจ่าย (เบิกจ่ายใหม่ได้ ถ้าไม่มีงานแผนกอื่นเริ่มแล้วยังยกเลิกหรือเปิดใบกลับมาแก้ได้)")}
       ${rows.length ? ui.table(["ของซื้อ", { label: "คืนเข้าสต็อก", className: "right" }], rows) : ""}
       ${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น เบิกจ่ายผิดใบ", extra: 'maxlength="200"' }), { required: true })}</form>`;
@@ -2336,7 +2339,7 @@
     const job = ctx.data.jobs.find((entry) => entry.id === jobId);
     if (!job) return null;
     const remaining = Math.max(0, job.qtyPlanned - job.qtyDone);
-    const body = `<form id="bom-job-form" data-rf-form="reportJob" data-rf-args="${attr(JSON.stringify({ jobId }))}" data-rf-success="บันทึกผลผลิต {result}">
+    const body = `<form novalidate id="bom-job-form" data-rf-form="reportJob" data-rf-args="${attr(JSON.stringify({ jobId }))}" data-rf-success="บันทึกผลผลิต {result}">
       <p class="muted small">${esc(`${job.itemCode} · ${job.name} · แผน ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} · เหลือ ${rules.fmtQty(remaining)}`)}</p>
       <div class="rf-grid rf-g2">${ui.field(`จำนวนดี (${uomText(ctx, job.uom)})`, ui.input("qtyDone", { type: "number", step: "any", min: 0, value: remaining ? String(Math.round(remaining * 1e4) / 1e4) : "" }))}${ui.field("จำนวนเสีย", ui.input("qtyReject", { type: "number", step: "any", min: 0, value: "0" }))}</div>
       ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น รอบรีดที่ 2" }))}
