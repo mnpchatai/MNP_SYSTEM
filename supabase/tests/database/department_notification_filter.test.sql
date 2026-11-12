@@ -217,7 +217,7 @@ select is(
 );
 reset role;
 
--- 4. ตัดสินจากแผนก ณ เวลาที่สร้างแถว: ย้ายออกจากแผนก ID แล้วได้รับตามปกติ ------------------------------
+-- 4. แถวใหม่ตัดสินจากแผนกปัจจุบันของผู้รับ: ย้ายออกจากแผนก ID แล้วได้รับตามปกติ ------------------------------
 update public.employees set department_id = '10000000-0000-0000-0000-000000000002' where id = '93100000-0000-0000-0000-000000000001';
 insert into public.notifications (id, recipient_id, request_id, title, body, action_url)
 values ('93100000-0000-0000-0000-0000000000c3', '93100000-0000-0000-0000-000000000001', null, 'moved ncr', 'b', '/ncr/93100000-0000-0000-0000-000000000099');
@@ -227,7 +227,7 @@ select is(
 );
 select is(
   (select email_status || '/' || push_status from public.notifications where id = '93100000-0000-0000-0000-0000000000d3'),
-  'rows skipped while the employee was in department ID are not woken up after the move'
+  'skipped/skipped', 'rows skipped while the employee was in department ID are not woken up after the move'
 );
 select ok(
   private.department_notification_allowed('93100000-0000-0000-0000-0000000000ff', null, '/admin', null),
