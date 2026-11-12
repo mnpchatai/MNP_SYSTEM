@@ -176,10 +176,10 @@ test("bar cards are marked for the two-column grid and wide tables are not", asy
 
 test("the due column shows the date only; the late pill is the one place that counts days", async () => {
   const soon = await render({ section: "act" });
-  assert.match(soon, /<td>2026-10-15<\/td>/, "a date and nothing derived from it");
+  assert.match(soon, /<td data-label="กำหนดเสร็จ">2026-10-15<\/td>/, "a date and nothing derived from it");
   assert.doesNotMatch(soon, /อีก \d+ วัน|ครบกำหนดวันนี้|เลยมา/);
   const late = await render({ section: "act", overdue: true });
-  assert.match(late, /<td>2026-10-02<\/td>/);
+  assert.match(late, /<td data-label="กำหนดเสร็จ">2026-10-02<\/td>/);
   assert.equal(late.match(/เลย 8 วัน/g).length, 1, "the pill says it once; the date cell does not repeat it");
   assert.doesNotMatch(late, /เลยมา/);
 });

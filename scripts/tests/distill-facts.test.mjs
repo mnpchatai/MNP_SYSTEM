@@ -117,8 +117,10 @@ test("the NCR detail keeps all of the viewer's work in one action card and names
   assert.match(ncr, /const work = \[\.\.\.forms, responderSection, \.\.\.\(lossesInWork \? \[lossesSection\] : \[\]\)\]\.filter\(Boolean\);/);
   assert.match(ncr, /\.\.\.\(lossesInWork \? \[\] : \[lossesSection\]\),/, "the loss card is not shown twice");
   assert.match(ncr, /\$\{work\.length \? "" : waiting \?/, "no 'ขั้นตอนนี้รอ' line when the viewer has work");
-  assert.match(ncr, /\$\{designated && !responderSection \? partField\("ผู้ตอบที่ระบุ"/);
-  assert.match(ncr, /\$\{dueInForm \? "" : partField\("กำหนดตอบ"/);
+  // ส่วนที่ 2 ไม่ทวนสิ่งที่ฟอร์มตอบหรือบรรทัด "ขั้นตอนนี้รอ" บอกแล้ว (รอบ 14)
+  assert.match(ncr, /\$\{designated && !responderSection && !waitingSaysResponder \? partField\("ผู้ตอบที่ระบุ"/);
+  assert.match(ncr, /\$\{dueInForm \|\| waitingSaysDue \? "" : partField\("กำหนดตอบ"/);
+  assert.match(ncr, /const waitingShown = !work\.length && Boolean\(waiting\);/, "the same condition that draws the waiting line");
   assert.match(read("modules/ncr-loss-form.js"), /'<div class="ncr-action-group ncr-loss-card"><h3>ความสูญเสีย<\/h3>'/, "inside the action card it is a group, not a nested card");
 });
 
@@ -221,4 +223,44 @@ test("who acts next on an NCR has one format: แผนก X (names) for every d
   assert.match(ncr, /parts\.map\(\(part\) => `แผนก \$\{part\}`\)\.join\(" · "\)/);
   assert.doesNotMatch(ncr, /\(ผู้ตอบที่ระบุ: \$\{named/);
   assert.doesNotMatch(ncr, /const single = oneDepartment/);
+});
+
+test("round 14: one repair-result vocabulary, labelled parts rows, one machine format, and no fact said twice", () => {
+  const mt = read("modules/module-mt.js");
+  // ประวัติไม่ทวนผลการซ่อมด้วยชื่อหัวข้ออีกชุด
+  assert.doesNotMatch(app, /ความเห็นผู้ตรวจสอบ: |อะไหล่\/วัสดุ: |latestRepairResult/);
+  // แถวอะไหล่: ชื่อช่องจริง ไม่ใช้ข้อความตัวอย่างแทน · จำนวนและราคาเปิดแป้นตัวเลข · ลบแล้วเลิกทำได้
+  assert.doesNotMatch(mt, /placeholder="(จำนวน|หน่วย|ราคา|ชื่อร้าน|หมายเหตุ|รายการอะไหล่\/วัสดุที่ใช้)"/);
+  assert.equal(mt.match(/inputmode="decimal"/g).length, 2);
+  assert.match(mt, /<td data-label="จำนวน"><input class="input" type="text" inputmode="decimal"/);
+  assert.match(mt, /class="btn secondary small parts-row-restore">เลิกทำ<\/button>/);
+  const css = read("styles.css");
+  assert.match(css, /\.parts-table td\[data-label\]::before \{ content: attr\(data-label\);/);
+  // แถบปุ่มล่างจอสองปุ่ม: ปุ่มรองไม่ตัดสองบรรทัด
+  assert.match(css, /:has\(> \.btn:nth-child\(2\):last-child\) > \.btn:first-child \{ flex: 0 0 auto; padding-inline: 14px; white-space: nowrap; \}/);
+  // แดชบอร์ด MT: ชื่อเครื่องจักรผ่าน machineLabelOf ทุกที่ ไม่ต่อรหัสหน้าชื่อเอง
+  const dash = read("modules/module-mt-dashboard.js");
+  assert.doesNotMatch(dash, /item\.code\)\}\$\{item\.name \?|String\(row\.machine_code\)\.trim\(\)\} \(/);
+  assert.equal(dash.match(/machineLabelOf\(/g).length >= 4, true);
+  // โปรไฟล์: รหัสพนักงานที่เดียว · ช่องไม่บังคับบอก (ถ้ามี) · ไม่มี "ชื่อตำแหน่งงาน" คู่กับ "ตำแหน่ง"
+  assert.doesNotMatch(app, /profile-employee-no|ชื่อตำแหน่งงาน/);
+  // อีเมลล้างทิ้งไม่ได้ (app_update_own_profile คืนค่าเดิม) จึงจำเป็น · เบอร์ล้างได้จึง (ถ้ามี)
+  assert.match(app, /<label for="profile-email">อีเมล\$\{REQUIRED_MARK\}<\/label>[^\n]*required><\/div>/);
+  assert.match(app, /<label for="profile-phone">เบอร์ติดต่อ \(ถ้ามี\)<\/label>/);
+  // ปุ่มอัปโหลดตามชุดไฟล์จริง รวมตอนกด × ลบไฟล์ในตัวอย่าง
+  assert.match(app, /\["change", "mnp:files-changed"\]\.forEach/);
+  assert.equal(read("modules/attachment-image.js").match(/new Event\("mnp:files-changed", \{ bubbles: true \}\)/g).length, 2);
+  // อัปโหลดกดได้เมื่อเลือกไฟล์แล้ว · หัวเรื่องไม่ตัดรหัสกลางคำ
+  assert.match(app, /class="btn secondary attachment-upload" type="submit" disabled>อัปโหลด/);
+  assert.match(app, /<h1>\$\{headingTextHtml\(request\.title\)\}<\/h1>/);
+  assert.match(read("modules/module-ncr.js"), /<h1>\$\{headingTextHtml\(ncr\.product_name \|\| ncr\.ncr_no\)\}<\/h1>/);
+  assert.match(read("modules/module-ncr.js"), /แนวทางการป้องกันไม่ให้เกิดซ้ำ \(ถ้ามี\)<\/label>/);
+});
+
+test("headingTextHtml keeps a machine code on one line and still escapes the text", () => {
+  const context = vm.createContext({});
+  const source = app.match(/function escapeHtml\([^]*?\r?\n\}\r?\n/)[0] + app.match(/function headingTextHtml\([^]*?\r?\n\}\r?\n/)[0];
+  vm.runInContext(source, context);
+  assert.equal(context.headingTextHtml("HCM-03 รั่ว <b>"), '<span class="nowrap">HCM-03</span> รั่ว &lt;b&gt;');
+  assert.equal(context.headingTextHtml("ไม่มีรหัส"), "ไม่มีรหัส");
 });
