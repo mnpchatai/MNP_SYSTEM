@@ -860,11 +860,11 @@
       const assignClose = request.status === "pending_assign" ? "</div>" : "</details>";
       const reassign = request.status !== "pending_assign";
       const dueCardShown = canRecordProgress && ["assigned", "in_progress"].includes(request.status);
-      const assignSection = canAssign ? `${assignOpen}<p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form" novalidate${reassign ? " data-reassign" : ""}>
+      const assignSection = canAssign ? `${assignOpen}<p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form" novalidate${reassign ? " data-reassign" : ""}${dueCardShown && request.work_expected_date ? ` data-expected="${escapeHtml(request.work_expected_date)}"` : ""}>
           <fieldset class="field" data-field="technician_ids"><legend>ช่างผู้รับผิดชอบ${REQUIRED}</legend><small>ติ๊กได้หลายคน อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></fieldset>
           <div class="field" data-field="execution_plan"><label for="assign-execution-plan">การดำเนินงาน${REQUIRED}</label><select class="select" id="assign-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}"${request.execution_plan === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
           <div class="field" data-field="inspector_opinion"><label for="assign-opinion">ความคิดเห็นของช่างผู้ตรวจสอบ${REQUIRED}</label><select class="select" id="assign-opinion" name="inspector_opinion" required><option value="">เลือกความคิดเห็นของช่างผู้ตรวจสอบ</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}"${request.inspector_opinion === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
-          <div class="field" data-field="work_started_date"><label for="assign-start-date">วันเริ่มงาน${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}"${reassign ? "" : " required"}></div>
+          <div class="field" data-field="work_started_date"><label for="assign-start-date">วันเริ่มงาน${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}"${reassign ? ' title="เว้นว่างไว้ ระบบคงวันเริ่มงานเดิม"' : " required"}></div>
           ${dueCardShown ? "" : `<div class="field" data-field="work_expected_date"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}"${reassign ? "" : " required"}></div>`}
           ${reassign ? "" : extraFilesFieldHtml("assign-files")}
           <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
@@ -954,6 +954,10 @@
           work_started_date: startDate,
           work_expected_date: expectedDate,
         });
+        // กำหนดเสร็จไม่อยู่ในฟอร์มนี้ (แก้ที่การ์ดกำหนดเสร็จ) แต่วันเริ่มงานต้องไม่หลังกำหนดเสร็จปัจจุบัน
+        if (!errors.length && form.dataset.expected && startDate && startDate > form.dataset.expected) {
+          errors.push({ name: "work_started_date", message: `วันเริ่มงานต้องไม่หลังกำหนดเสร็จ ${formatDate(form.dataset.expected)} · เลื่อนกำหนดเสร็จที่การ์ดกำหนดเสร็จก่อน` });
+        }
         if (errors.length) return showRepairFieldErrors(form, errors);
         window.MNP_FORM_STEPS.clearFieldErrors(form);
         let files;

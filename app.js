@@ -2886,15 +2886,6 @@ function bindModuleZoom(params) {
 
 // หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
 // ทะเบียน NCR ไม่มีกระดาน จึงเรียกด้วย board: false (แท็บตำแหน่งเดียวกับโมดูลอื่น)
-// เห็นทุกใบของโมดูลอยู่แล้ว (ตรงกับ private.can_access_request): ผู้ดูแลระบบ ผู้จัดการโรงงาน/ทั่วไป
-// และผู้จัดการ/ผู้ช่วยผู้จัดการของแผนกเจ้าของโมดูล — กระดาน "ติดตามสถานะทุกใบ" จึงไม่มีอะไรเพิ่ม
-function seesWholeModule(type) {
-  const role = state.employee?.role?.code;
-  if (role === "admin" || VIEW_ALL_ROLE_CODES.includes(role)) return true;
-  return Boolean(type?.owning_department_id) && type.owning_department_id === state.employee?.department_id
-    && ["department_manager", "assistant_department_manager"].includes(role);
-}
-
 function requestsViewTabs(params, { board: withBoard = true } = {}) {
   const board = params.get("view") === "board";
   const mine = !board && params.get("scope") === "mine";
@@ -3077,7 +3068,7 @@ async function renderRequests(params) {
   loadingShell("requests", "คำร้อง");
   params = new URLSearchParams(params);
   const { data: typesData, error: typesError } = await sb.from("request_types")
-    .select("id,code,prefix,name_th,description,owning_department_id").eq("is_active", true).in("code", activeRequestModuleCodes()).order("sort_order");
+    .select("id,code,prefix,name_th,description").eq("is_active", true).in("code", activeRequestModuleCodes()).order("sort_order");
   if (typesError) throw typesError;
   const types = typesData ?? [];
   const storageKey = `mnp-request-type:${state.employee.id}`;
@@ -3126,7 +3117,7 @@ async function renderRequests(params) {
     list += `${requestListFilters(params, { placeholder: "ค้นหาเลขที่ NCR สินค้า ลูกค้า หรือข้อบกพร่อง", statusSelect: ncrStatus.html, statusApplied: ncrStatus.applied })}${await ncrModule.renderCenterList(params)}`;
   }
   // data-module ครอบทั้งหน้าของโมดูล: หัวตาราง แท็บ และเลขที่ใบใช้จานสีของโมดูลนั้น
-  const content = `<div data-module="${requestPalette(selected.code)}">${requestCenterHeader(types, params, null)}${requestsViewTabs(params, { board: selected.code !== "NCR_CAR" && !seesWholeModule(selected) })}${list}</div>`;
+  const content = `<div data-module="${requestPalette(selected.code)}">${requestCenterHeader(types, params, null)}${requestsViewTabs(params, { board: selected.code !== "NCR_CAR" })}${list}</div>`;
   app.innerHTML = shell(content, "requests", "คำร้อง", requestTypeLabel(selected));
   bindShell();
   bindModuleZoom(params);

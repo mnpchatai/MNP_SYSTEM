@@ -145,7 +145,7 @@ test("the MT assign dates use the shared Thai date picker and are still required
   assert.match(mt, /\{ name: "work_started_date", required: true, message: "เลือกวันเริ่มงาน" \}/);
   assert.match(mt, /\{ name: "work_expected_date", required: true, message: "เลือกวันที่คาดว่าจะเสร็จ", check: /);
   // รอบ 16: แก้การมอบหมาย (หลังมอบหมายแล้ว) วันที่ไม่บังคับ ตรงกับ app_assign_repair_technician
-  assert.match(mt, /<form id="assign-form" novalidate\$\{reassign \? " data-reassign" : ""\}>/);
+  assert.match(mt, /<form id="assign-form" novalidate\$\{reassign \? " data-reassign" : ""\}\$\{dueCardShown && request\.work_expected_date \?/);
   assert.match(mt, /<form id="finish-form" novalidate>/);
   assert.match(mt, /\{ name: "cause_analysis", required: true, minLength: 3, /);
 });

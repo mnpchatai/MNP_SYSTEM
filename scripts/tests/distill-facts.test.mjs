@@ -144,7 +144,7 @@ test("request and NCR details share one hero: back link, eyebrow with the status
 
 // ---- รอบ 11: ส่วนประกอบกลางที่ MT และ NCR ใช้ร่วมกัน ----
 test("MT and NCR lists share one header: scope tabs on top, then one filter row with search", () => {
-  assert.match(app, /\$\{requestsViewTabs\(params, \{ board: selected\.code !== "NCR_CAR" && !seesWholeModule\(selected\) \}\)\}\$\{list\}<\/div>`;/);
+  assert.match(app, /\$\{requestsViewTabs\(params, \{ board: selected\.code !== "NCR_CAR" \}\)\}\$\{list\}<\/div>`;/);
   assert.match(app, /requestListFilters\(params, \{ placeholder: "ค้นหาเลขที่ NCR สินค้า ลูกค้า หรือข้อบกพร่อง", statusSelect: ncrStatus\.html, statusApplied: ncrStatus\.applied \}\)/);
   assert.doesNotMatch(app, /function requestScopeSwitch\(/);
   const ncr = read("modules/module-ncr.js");
@@ -336,21 +336,16 @@ test("round 16: editing an assignment does not force dates, and the page has one
   assert.match(sql, /if v_first_assign then[^]*?if v_start is null then raise exception 'WORK_START_DATE_REQUIRED'; end if;/);
 });
 
-test("round 16: people who already see every request of a module do not get a second tab with the same rows", () => {
-  const source = app.match(/function seesWholeModule\(type\) \{[^]*?\r?\n\}\r?\n/)[0];
-  const run = (employee, type) => {
-    const context = vm.createContext({ state: { employee }, VIEW_ALL_ROLE_CODES: ["factory_manager", "general_manager"] });
-    vm.runInContext(source, context);
-    return context.seesWholeModule(type);
-  };
-  const mtType = { owning_department_id: "dept-mt" };
-  assert.equal(run({ role: { code: "admin" } }, mtType), true);
-  assert.equal(run({ role: { code: "general_manager" } }, mtType), true);
-  assert.equal(run({ role: { code: "department_manager" }, department_id: "dept-mt" }, mtType), true);
-  assert.equal(run({ role: { code: "department_manager" }, department_id: "dept-rb" }, mtType), false, "another department's manager still needs the board");
-  assert.equal(run({ role: { code: "staff" }, department_id: "dept-mt" }, mtType), false);
-  assert.match(app, /\.select\("id,code,prefix,name_th,description,owning_department_id"\)/);
+test("round 16: the board tab stays for everyone (it searches machines and reporters), and its tab title names the module", () => {
+  // คนที่เห็นทุกใบก็ยังต้องการกระดาน: ค้นด้วยเครื่องจักร ผู้แจ้ง แผนก และมีคอลัมน์ที่รายการไม่มี (auditor รอบ 16)
+  assert.doesNotMatch(app, /seesWholeModule/);
+  assert.match(app, /requestsViewTabs\(params, \{ board: selected\.code !== "NCR_CAR" \}\)/);
   assert.match(app, /\$\{withBoard \|\| board \? tab\(board/, "an open board keeps its own tab");
+  // วันเริ่มงานต้องไม่หลังกำหนดเสร็จที่แก้ที่การ์ด: บอกก่อนส่ง และบอกว่าแก้กำหนดเสร็จที่ไหน
+  assert.match(mt, /data-expected="\$\{escapeHtml\(request\.work_expected_date\)\}"/);
+  assert.match(mt, /if \(!errors\.length && form\.dataset\.expected && startDate && startDate > form\.dataset\.expected\) \{/);
+  assert.match(mt, /เลื่อนกำหนดเสร็จที่การ์ดกำหนดเสร็จก่อน/);
+  assert.match(mt, /title="เว้นว่างไว้ ระบบคงวันเริ่มงานเดิม"/);
   // กระดานบอกชื่อโมดูลในชื่อแท็บ · RubberFlow แถบเครื่องมือขยายเต็มแถบหัว
   assert.match(app, /shell\(content, "requests", "คำร้อง", selected \? `ติดตามสถานะ · \$\{requestTypeLabel\(selected\)\}` : "ติดตามสถานะทุกใบ"\)/);
   assert.match(read("styles.css"), /\.rf-page \.rf-head \.rf-toolbar \{ flex: 1 1 auto;/);
