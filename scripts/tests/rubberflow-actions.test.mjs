@@ -606,3 +606,28 @@ test("a part's safety stock keeps the stock page's 4 decimals, so an RB member c
   assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.2345, "sent exactly as stored (the database compares numerics exactly)");
   rejects(() => A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, rb), /ฝ่ายวางแผนเท่านั้น/);
 });
+
+test("a missing recipe, material or record is named neutrally: no message prints undefined or null", () => {
+  const d = fresh();
+  const planner = ctx("planner");
+  const base = { customer: "x", targetQty: 1, startDate: NOW, dueDate: NOW + DAY };
+  // ไม่ได้เลือกสูตร: บอกให้เลือก (มีสูตรที่อนุมัติ) หรือบอกว่ายังไม่มีสูตรที่อนุมัติ (ไม่มีเลย)
+  rejects(() => A.createOrder(d, { ...base, recipeId: "" }, planner), /กรุณาเลือกสินค้า \/ สูตร/);
+  rejects(() => A.createOrder(d, base, planner), /กรุณาเลือกสินค้า \/ สูตร/);
+  const none = fresh();
+  none.recipes = none.recipes.filter((recipe) => recipe.status !== "approved");
+  rejects(() => A.createOrder(none, { ...base, recipeId: "" }, planner), /ยังไม่มีสูตรที่อนุมัติ/);
+  // รหัสที่ไม่มีในระบบยังบอกรหัสนั้น · รหัสที่ขาด = คำกลาง "ที่เลือก"
+  rejects(() => A.createOrder(d, { ...base, recipeId: "RC-NOPE" }, planner), /^ไม่พบสูตร RC-NOPE$/);
+  for (const missing of [undefined, null, "", "  "]) {
+    rejects(() => A.setOrderStatus(d, { id: missing, status: "released" }, planner), /^ไม่พบใบสั่งผลิตที่เลือก$/);
+    rejects(() => A.approveRecipe(d, { id: missing }, ctx("admin")), /^ไม่พบสูตรที่เลือก$/);
+  }
+  const message = (fn) => { try { fn(); } catch (error) { return error.message; } return ""; };
+  for (const text of [
+    message(() => A.createOrder(d, base, planner)),
+    message(() => A.setOrderStatus(d, {}, planner)),
+    message(() => A.approveRecipe(d, {}, ctx("admin"))),
+    message(() => A.receivePurchaseLine(d, { id: undefined }, ctx("store"))),
+  ]) assert.doesNotMatch(text, /undefined|null|NaN/, text);
+});

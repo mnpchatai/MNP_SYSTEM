@@ -1434,6 +1434,8 @@ test("in the browser the module talks to the (mock) database: loading state, emp
     html = await env.render(page === "dashboard" ? "" : `p=${page}`);
     assert.match(html, /ยังไม่มีข้อมูล BOM ในฐานข้อมูล/, `${page} explains the empty database`);
     assert.match(html, /href="#\/bom\?p=import"/, `${page} points to the import page`);
+    assert.match(html, /class="empty empty-state rf-empty">[\s\S]*<p>ยังไม่มีข้อมูล BOM ในฐานข้อมูล · เริ่มจากนำเข้าไฟล์ Excel<\/p><a class="btn rf-btn" href="#\/bom\?p=import">นำเข้าจาก Excel<\/a>/, `${page}: the import action sits next to the text that asks for it`);
+    assert.equal((html.match(/class="btn rf-btn" href="#\/bom\?p=import"/g) ?? []).length, 1, `${page}: the import button is shown once (not also in the header)`);
     assert.match(html, /data-bom-sync/, "status slot in the toolbar");
     assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
   }
@@ -2053,7 +2055,7 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
 
   // หน้าบันทึกการใช้งานอ่านจาก RPC: ครั้งแรกบอกว่ากำลังโหลด แล้ววาดใหม่เมื่อมาถึง
   html = await env.render("p=audit");
-  assert.match(html, /กำลังโหลดบันทึกการใช้งาน|ไม่พบรายการ/);
+  assert.match(html, /กำลังโหลดบันทึกการใช้งาน|ยังไม่มีรายการ/);
   const renders = env.log.renders;
   await settle();
   assert.ok(env.log.renders > renders, "the page is redrawn when the audit arrives");

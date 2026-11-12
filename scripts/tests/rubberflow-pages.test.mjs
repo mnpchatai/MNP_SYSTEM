@@ -892,3 +892,58 @@ test("an empty overview points at the first step; the station gates and the mixi
   assert.equal(own.canSee("mixing"), false, "the extruder has no mixing page");
   assert.doesNotMatch(pages.extrusion({ ...own, data: { ...own.data, transfers: [] } }).html, /ไปสถานีผสมยาง/);
 });
+
+test("the order form: no approved recipe = an explanation, a link to the recipes and a disabled save; otherwise the recipe select is required", () => {
+  const env = load();
+  env.store.setUser("U01");
+  const { MNP_RUBBERFLOW_DIALOGS: dialogs } = env.context;
+  const base = env.ctx("p=orders");
+  const withRecipes = dialogs.createOrder(base).html;
+  assert.match(withRecipes, /<select[^>]*name="recipeId"[^>]*\brequired\b/, "the recipe select is required (the form check turns an empty choice into a Thai field error)");
+  assert.match(withRecipes, /<option value="">เลือกสินค้า \/ สูตร<\/option>/, "an empty choice exists so the required rule can fire");
+  assert.doesNotMatch(withRecipes, /ยังไม่มีสูตรที่อนุมัติ/);
+  assert.doesNotMatch(withRecipes, /type="submit"[^>]*\bdisabled\b/);
+  // ไม่มีสูตรที่อนุมัติ: ไม่มีช่องเลือกที่ว่างเปล่า
+  const none = { ...base, data: { ...base.data, recipes: base.data.recipes.filter((recipe) => recipe.status !== "approved") } };
+  const html = dialogs.createOrder(none).html;
+  assert.doesNotMatch(html, /name="recipeId"/, "no empty select");
+  assert.match(html, /ยังไม่มีสูตรที่อนุมัติ/);
+  assert.match(html, /href="[^"]*recipes[^"]*" data-rf-close>ไปที่สูตรยาง</, "a link to the recipe page that closes the dialog first");
+  assert.match(html, /<button[^>]*type="submit"[^>]*\bdisabled\b[^>]*>บันทึกใบสั่งผลิต</, "the save button is disabled");
+});
+
+test("list empty states: nothing yet says so and offers the first step, a search that finds nothing says not found", () => {
+  const env = load();
+  env.store.setUser("U01");
+  const { MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const base = env.ctx("p=orders");
+  const orders = (ctx) => pages.orders(ctx).html;
+  const noOrders = { ...base, data: { ...base.data, orders: [] } };
+  const empty = orders(noOrders);
+  assert.match(empty, /ยังไม่มีใบสั่งผลิต/);
+  assert.doesNotMatch(empty, /ไม่พบใบสั่งผลิต/);
+  assert.equal((empty.match(/data-rf-open="createOrder"/g) ?? []).length, 1, "the one action sits in the empty state, not twice");
+  assert.match(empty, /class="empty-state"><p>ยังไม่มีใบสั่งผลิต<\/p><button[^>]*data-rf-open="createOrder"/);
+  // ยังไม่มีสูตรที่อนุมัติ: ไปสร้างสูตรก่อน
+  const noRecipe = orders({ ...noOrders, data: { ...noOrders.data, recipes: [] } });
+  assert.match(noRecipe, /href="[^"]*recipes[^"]*"[^>]*>สร้างสูตรยาง</);
+  assert.doesNotMatch(noRecipe, /data-rf-open="createOrder"/);
+  // ค้นหาแล้วไม่เจอ (มีใบอยู่): ไม่พบ · ปุ่มเปิดใบอยู่ที่หัวหน้า
+  const searched = orders(env.ctx("p=orders&q=zzzz-no-match"));
+  assert.match(searched, /ไม่พบใบสั่งผลิต/);
+  assert.doesNotMatch(searched, /ยังไม่มีใบสั่งผลิต/);
+  assert.equal((searched.match(/data-rf-open="createOrder"/g) ?? []).length, 1);
+  // ผู้ที่เปิดใบไม่ได้ไม่เห็นปุ่มในสถานะว่าง
+  env.store.setUser("U06");
+  const viewer = env.ctx("p=orders");
+  const viewerHtml = orders({ ...viewer, data: { ...viewer.data, orders: [] } });
+  assert.match(viewerHtml, /ยังไม่มีใบสั่งผลิต/);
+  assert.doesNotMatch(viewerHtml, /data-rf-open="createOrder"|สร้างสูตรยาง/);
+  // คลัง: ค้นหาไม่เจอ = ไม่พบ · ยังว่างเฉยๆ = ยังไม่มี
+  env.store.setUser("U01");
+  const warehouse = (query, data = {}) => { const ctx = env.ctx(query); return pages.warehouse({ ...ctx, data: { ...ctx.data, ...data } }).html; };
+  assert.match(warehouse("p=warehouse&tab=raw", { materialLots: [] }), /ยังไม่มีล็อตวัตถุดิบ/);
+  assert.match(warehouse("p=warehouse&tab=raw&q=zzzz-no-match"), /ไม่พบล็อตวัตถุดิบ/);
+  assert.match(warehouse("p=warehouse&tab=fg", { fgBoxes: [] }), /ยังไม่มีกล่องสินค้า/);
+  assert.match(warehouse("p=warehouse&tab=fg&q=zzzz-no-match"), /ไม่พบกล่องสินค้า/);
+});

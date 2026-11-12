@@ -121,8 +121,14 @@
         <td>${ui.status(order.status)}</td>
         <td class="right"><div class="rf-row rf-end">${buttons}</div></td></tr>`;
     });
-    const html = `${ui.pageHead("ใบสั่งผลิต", "วางแผน ปล่อยผลิต พักงาน และติดตามความคืบหน้าของแต่ละใบสั่งผลิต", ctx.can("createOrder") ? ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" }) : "")}
-      ${ui.card(`<div class="rf-listbar">${tabs}${searchForm(ctx, "ค้นหาเลขที่ ลูกค้า สินค้า…", { tab: true })}</div>${ui.table(["เลขที่ / PO ลูกค้า", "ลูกค้า", "สินค้า / สูตร", "จำนวน", "ความคืบหน้า", "เริ่ม – ส่ง", "สถานะ", { label: "จัดการ", className: "right" }], body, { emptyText: "ไม่พบใบสั่งผลิต" })}`, { flush: true })}`;
+    // ยังไม่มีใบสั่งผลิตเลย (ไม่ใช่ค้นหา/กรองแล้วไม่เจอ): บอกว่ายังไม่มี และให้ปุ่มเปิดใบอยู่ตรงนั้น (ยังไม่มีสูตรที่อนุมัติ = ไปสร้างสูตรก่อน เหมือนหน้าภาพรวม) · "ไม่พบ" ใช้เมื่อค้นหา/กรองแล้วไม่มีผลเท่านั้น
+    const noOrdersYet = !data.orders.length;
+    const startAction = !noOrdersYet || !ctx.can("createOrder") ? ""
+      : !rules.approvedRecipes(data.recipes).length ? (ctx.canSee("recipes") ? ui.link("สร้างสูตรยาง", ctx.url("recipes"), "btn rf-btn") : "")
+      : ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" });
+    const ordersEmpty = noOrdersYet ? { emptyText: "ยังไม่มีใบสั่งผลิต", emptyHtml: `<div class="empty-state"><p>${esc("ยังไม่มีใบสั่งผลิต")}</p>${startAction}</div>` } : { emptyText: "ไม่พบใบสั่งผลิต" };
+    const html = `${ui.pageHead("ใบสั่งผลิต", "วางแผน ปล่อยผลิต พักงาน และติดตามความคืบหน้าของแต่ละใบสั่งผลิต", ctx.can("createOrder") && !noOrdersYet ? ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" }) : "")}
+      ${ui.card(`<div class="rf-listbar">${tabs}${searchForm(ctx, "ค้นหาเลขที่ ลูกค้า สินค้า…", { tab: true })}</div>${ui.table(["เลขที่ / PO ลูกค้า", "ลูกค้า", "สินค้า / สูตร", "จำนวน", "ความคืบหน้า", "เริ่ม – ส่ง", "สถานะ", { label: "จัดการ", className: "right" }], body, ordersEmpty)}`, { flush: true })}`;
     return { html };
   };
 
@@ -130,23 +136,28 @@
     const { data, now, ui, rules } = ctx;
     const { DAY, fmtNum, toInputDate } = rules;
     const approved = rules.approvedRecipes(data.recipes);
+    // ยังไม่มีสูตรที่อนุมัติ: ไม่วางช่องเลือกที่ไม่มีตัวเลือก บอกเหตุผลพร้อมทางไปหน้าสูตรยาง และปิดปุ่มบันทึก (ปุ่มลิงก์ปิด dialog ก่อนไปหน้านั้น)
+    const recipeLink = ctx.canSee("recipes") ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url("recipes"))}" data-rf-close>ไปที่สูตรยาง</a>` : "";
+    const recipeField = approved.length
+      ? ui.field("สินค้า / สูตร (เฉพาะสูตรที่อนุมัติแล้ว)", ui.select("recipeId", approved.map((recipe) => ({ value: recipe.id, label: rules.recipeLabel(recipe) })), { value: approved[0].id, placeholder: "เลือกสินค้า / สูตร", extra: "data-rf-recipe required" }), { required: true })
+      : ui.field("สินค้า / สูตร", ui.callout("warn", `<strong>ยังไม่มีสูตรที่อนุมัติ</strong><br>ต้องมีสูตรที่อนุมัติแล้วก่อนจึงเปิดใบสั่งผลิตได้${recipeLink ? `<div>${recipeLink}</div>` : ""}`));
     const body = `<div class="rf-grid rf-g2">
         ${ui.field("ลูกค้า", ui.input("customer", { required: true }), { required: true })}
         ${ui.field("เลขที่ PO ลูกค้า", ui.input("customerPo"))}
-        ${ui.field("สินค้า / สูตร (เฉพาะสูตรที่อนุมัติแล้ว)", ui.select("recipeId", approved.map((recipe) => ({ value: recipe.id, label: rules.recipeLabel(recipe) })), { value: approved[0]?.id ?? "", extra: 'data-rf-recipe' }), { required: true })}
+        ${recipeField}
         ${ui.field("จำนวนเป้าหมาย", ui.input("targetQty", { type: "number", required: true, min: 1, extra: 'data-rf-target' }), { hint: '<span data-rf-need></span>', required: true })}
         ${ui.field("สี", ui.select("color", ["ดำ", "เทา", "น้ำตาล"]))}
         ${ui.field("ความเร่งด่วน", ui.select("priority", [{ value: "normal", label: "ปกติ" }, { value: "urgent", label: "ด่วน" }]))}
         ${ui.field("วันเริ่มผลิต", ui.input("startDate", { type: "date", value: toInputDate(now + DAY), required: true }), { required: true })}
         ${ui.field("วันกำหนดส่ง", ui.input("dueDate", { type: "date", value: toInputDate(now + 10 * DAY), required: true }), { required: true })}
       </div>${ui.field("หมายเหตุ / ข้อกำหนดพิเศษของลูกค้า", ui.textarea("note"))}`;
-    const html = ui.dialog("createOrder", "เปิดใบสั่งผลิตใหม่", `<form novalidate data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result} แล้ว" id="rf-create-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-order">บันทึกใบสั่งผลิต</button>` });
+    const html = ui.dialog("createOrder", "เปิดใบสั่งผลิตใหม่", `<form novalidate data-rf-form="createOrder" data-rf-success="เปิดใบสั่งผลิต {result} แล้ว" id="rf-create-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-order"${approved.length ? "" : " disabled"}>บันทึกใบสั่งผลิต</button>` });
     const bind = (dialog) => {
       const recipeSelect = dialog.querySelector("[data-rf-recipe]");
       const target = dialog.querySelector("[data-rf-target]");
       const need = dialog.querySelector("[data-rf-need]");
       const paint = () => {
-        const recipe = approved.find((row) => row.id === recipeSelect.value);
+        const recipe = approved.find((row) => row.id === recipeSelect?.value);
         const kg = recipe && Number(target.value) > 0 ? Number(target.value) / recipe.yieldPerKg : 0;
         need.textContent = kg ? `ต้องใช้คอมปาวด์ประมาณ ${fmtNum(kg, 1)} kg ≈ ${Math.ceil(kg / recipe.batchKg)} ชุดผสม (หน่วย ${recipe.uom})` : recipe ? `หน่วย ${recipe.uom}` : "";
       };
@@ -382,12 +393,12 @@
       });
     const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "fg" ? `<button class="btn rf-btn small" type="submit" form="rf-ship" data-rf-ship disabled>ส่งมอบกล่องที่เลือก</button>` : ""}${searchForm(ctx, "ค้นหารหัส…", { tab: true })}</div></div>`;
     const tableHtml = tab === "materials"
-      ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: "ยังไม่มีวัตถุดิบ" })
+      ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: ctx.q ? "ไม่พบวัตถุดิบ" : "ยังไม่มีวัตถุดิบ" })
       : tab === "po"
-      ? ui.table(["วัตถุดิบ", { label: "สั่ง", className: "right" }, "รับเข้า", { label: "", className: "right" }], poRows, { emptyText: "ยังไม่มีใบสั่งซื้อ" })
+      ? ui.table(["วัตถุดิบ", { label: "สั่ง", className: "right" }, "รับเข้า", { label: "", className: "right" }], poRows, { emptyText: ctx.q ? "ไม่พบใบสั่งซื้อ" : "ยังไม่มีใบสั่งซื้อ" })
       : tab === "raw"
-      ? ui.table(["ล็อต", "วัตถุดิบ", "ที่เก็บ / ผู้ขาย", "หมดอายุ", { label: "คงเหลือ", className: "right" }, "สถานะ", { label: "", className: "right" }], rawRows, { emptyText: "ไม่พบล็อตวัตถุดิบ" })
-      : `<form novalidate id="rf-ship" data-rf-form="shipBoxes" data-rf-success="ส่งมอบกล่องแล้ว">${ui.table(["", "กล่อง", "สินค้า", "ใบสั่งผลิต", { label: "จำนวน", className: "right" }, "เกรด", "สถานะ", { label: "", className: "right" }], fgRows, { emptyText: "ไม่พบกล่องสินค้า" })}</form>`;
+      ? ui.table(["ล็อต", "วัตถุดิบ", "ที่เก็บ / ผู้ขาย", "หมดอายุ", { label: "คงเหลือ", className: "right" }, "สถานะ", { label: "", className: "right" }], rawRows, { emptyText: ctx.q ? "ไม่พบล็อตวัตถุดิบ" : "ยังไม่มีล็อตวัตถุดิบ" })
+      : `<form novalidate id="rf-ship" data-rf-form="shipBoxes" data-rf-success="ส่งมอบกล่องแล้ว">${ui.table(["", "กล่อง", "สินค้า", "ใบสั่งผลิต", { label: "จำนวน", className: "right" }, "เกรด", "สถานะ", { label: "", className: "right" }], fgRows, { emptyText: ctx.q ? "ไม่พบกล่องสินค้า" : "ยังไม่มีกล่องสินค้า" })}</form>`;
     const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "ควบคุมสต็อกตามหลัก FEFO บล็อกล็อตหมดอายุหรือถูกกักกัน ตรวจสอบรับเข้าตามใบสั่งซื้อ และจัดการกล่องสินค้าพร้อมส่ง", ui.openButton("รับวัตถุดิบเข้าคลัง", "receiveMaterial", {}, { className: "" }))}
       ${ui.stats([
         { label: "สต็อกวัตถุดิบพร้อมใช้", value: `${fmtNum(available.reduce((sum, lot) => sum + lot.qtyKg, 0))} kg`, sub: `${available.length} ล็อต` },
@@ -597,7 +608,7 @@
       });
     const reload = remote ? `<button class="btn rf-btn secondary" type="button" data-rf-audit-reload title="โหลดบันทึกการใช้งานล่าสุดจากฐานข้อมูล">โหลดใหม่</button>` : "";
     const note = remote && view.status === "error" ? ui.callout("warn", esc(view.error?.message ?? "โหลดบันทึกการใช้งานไม่สำเร็จ")) : "";
-    const emptyText = remote && view.status === "loading" ? "กำลังโหลดบันทึกการใช้งาน…" : "ไม่พบรายการ";
+    const emptyText = remote && view.status === "loading" ? "กำลังโหลดบันทึกการใช้งาน…" : ctx.q ? "ไม่พบรายการ" : "ยังไม่มีรายการ";
     const html = `${ui.pageHead("บันทึกการใช้งาน (Audit Trail)", remote ? "ทุกการบันทึกข้อมูล RubberFlow ถูกบันทึกพร้อมชื่อผู้ทำและเวลา" : "ทุกการเข้าสู่ระบบและทุกธุรกรรมถูกบันทึกพร้อมชื่อผู้ทำและเวลา", `${searchForm(ctx, "ค้นหาผู้ใช้ การกระทำ หรือรหัส…")}${reload}`)}
       ${note}${ui.card(ui.table(["เวลา", "ผู้ใช้", "การกระทำ", "รายละเอียด"], rows, { emptyText }), { flush: true })}`;
     return { html };

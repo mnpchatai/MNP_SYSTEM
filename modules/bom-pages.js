@@ -1566,7 +1566,7 @@
     });
     const html = `${head(ctx, "สูตรยาง ↔ RubberFlow", "รหัสคอมปาวด์ในรหัส RB (คอลัมน์ “สินค้า/สูตรยาง” ของชีต) ผูกกับสูตร PHR ที่อนุมัติใน RubberFlow เพื่อสร้างใบสั่งผลิตเส้นยางจากงานของแผนก RB", canLink ? ui.openButton("เพิ่มสูตรยาง", "compoundLink", {}, { className: "" }) : "")}
       ${recipes.length ? "" : rfRemote(ctx) ? ui.callout("warn", rfReady(ctx) ? "ยังไม่มีสูตรที่อนุมัติแล้วใน RubberFlow จึงยังผูกไม่ได้" : "กำลังโหลดสูตรจาก RubberFlow…") : ui.callout("warn", "ยังไม่พบข้อมูล RubberFlow ในเบราว์เซอร์นี้ · พิมพ์รหัสสูตรเองได้")}
-      ${ui.card(`${searchForm(ctx, "ค้นหารหัสสูตรยาง…")}${ui.table(["สูตรยาง", "สูตร PHR ใน RubberFlow", { label: "ใช้ใน RB", className: "right" }, ""], rows, { emptyText: "ไม่มีสูตรยาง" })}`, { flush: false })}`;
+      ${ui.card(`${searchForm(ctx, "ค้นหารหัสสูตรยาง…")}${ui.table(["สูตรยาง", "สูตร PHR ใน RubberFlow", { label: "ใช้ใน RB", className: "right" }, ""], rows, { emptyText: ctx.q ? "ไม่พบสูตรยาง" : "ยังไม่มีสูตรยาง" })}`, { flush: false })}`;
     return { html };
   };
   dialogs.compoundLink = (ctx, { code = "" }) => {
@@ -1795,7 +1795,7 @@
     const canPlan = ctx.helpers.canPlan(user);
     const list = data.orders.filter((order) => includes(`${order.id} ${order.customer} ${order.country} ${order.items.map((item) => item.fgCode).join(" ")}`, ctx.q));
     const rows = list.map((order) => `<tr${order.id === sel ? ' class="is-selected"' : ""}><td>${ui.link(order.id, ctx.url("orders", { sel: order.id, q: ctx.q || null }), "rf-mono")}<div class="small muted">${esc(order.customer)}</div></td><td>${status(ctx, order.orderType)}<div class="small muted">${esc(order.country)}</div></td><td>${esc(String(order.items.length))} สินค้า<div class="small muted">${esc(order.items.map((item) => `${item.fgCode} × ${rules.fmtQty(item.qty)}`).join(", ").slice(0, 60))}</div></td><td class="nowrap">${esc(rules.fmtDate(order.whDue))}</td><td class="rf-progress-cell">${orderProgress(ctx, order)}</td><td>${status(ctx, order.status)}</td></tr>`);
-    const listCard = ui.card(`${searchForm(ctx, "ค้นหาเลข PI ลูกค้า หรือรหัสสินค้า…")}${ui.table(["เลข PI", "ประเภท", "สินค้า", "ส่งมอบคลัง", "ความคืบหน้า", "สถานะ"], rows, { emptyText: "ไม่มีใบสั่งผลิต" })}`,
+    const listCard = ui.card(`${searchForm(ctx, "ค้นหาเลข PI ลูกค้า หรือรหัสสินค้า…")}${ui.table(["เลข PI", "ประเภท", "สินค้า", "ส่งมอบคลัง", "ความคืบหน้า", "สถานะ"], rows, { emptyText: ctx.q ? "ไม่พบใบสั่งผลิต" : "ยังไม่มีใบสั่งผลิต" })}`,
       { title: "ใบสั่งผลิต", actions: canPlan ? ui.openButton("เปิดใบใหม่", "orderNew", {}, { className: "" }) : "" });
 
     const order = sel ? data.orders.find((entry) => entry.id === sel) : null;
@@ -2331,7 +2331,7 @@
     });
     const headCells = ["งาน / ใบ PI", ...(dept === "ALL" ? ["แผนก"] : []), "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ", ""];
     const html = `${head(ctx, "งานของแผนก", "งานเกิดจากการปล่อยใบสั่งผลิต: หนึ่งงานต่อ แผนก × ชิ้นงาน รวมทุกสินค้าในใบ · งาน RB ส่งต่อเป็นใบสั่งผลิต (WO) ใน RubberFlow ได้")}${tabs}${filters}
-      ${ui.card(`${searchForm(ctx, "ค้นหาเลขงาน เลข PI หรือรหัสชิ้นงาน…")}${ui.table(headCells, rows, { emptyText: show === "open" ? "ไม่มีงานค้าง" : "ไม่มีงาน" })}`)}`;
+      ${ui.card(`${searchForm(ctx, "ค้นหาเลขงาน เลข PI หรือรหัสชิ้นงาน…")}${ui.table(headCells, rows, { emptyText: ctx.q ? "ไม่พบงาน" : show === "open" ? "ไม่มีงานค้าง" : "ยังไม่มีงาน" })}`)}`;
     return { html };
   };
   dialogs.jobReport = (ctx, { jobId }) => {
@@ -2451,7 +2451,7 @@
       });
     const reload = store.isRemote() ? `<button class="btn rf-btn secondary" type="button" data-bom-audit-reload title="โหลดบันทึกการใช้งานล่าสุดจากฐานข้อมูล">โหลดใหม่</button>` : "";
     const note = store.isRemote() && view.status === "error" ? ui.callout("warn", esc(view.error?.message ?? "โหลดบันทึกการใช้งานไม่สำเร็จ")) : "";
-    const emptyText = store.isRemote() && view.status === "loading" ? "กำลังโหลดบันทึกการใช้งาน…" : "ไม่พบรายการ";
+    const emptyText = store.isRemote() && view.status === "loading" ? "กำลังโหลดบันทึกการใช้งาน…" : ctx.q ? "ไม่พบรายการ" : "ยังไม่มีรายการ";
     const html = `${head(ctx, "บันทึกการใช้งาน", "ทุกการแก้ทะเบียนชิ้นงาน, BOM, ใบสั่งผลิต และงานรายแผนก พร้อมผู้ทำและเวลา", `${searchForm(ctx, "ค้นหาผู้ใช้ การกระทำ หรือรหัส…")}${reload}`)}
       ${note}${ui.card(ui.table(["เวลา", "ผู้ใช้", "การกระทำ", "รายละเอียด"], rows, { emptyText }), { flush: true })}`;
     return { html };
