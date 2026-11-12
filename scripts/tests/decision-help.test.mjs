@@ -151,8 +151,9 @@ test("the MT assign dates use the shared Thai date picker and are still required
 
 test("after the assignment, editing it is folded at the end of the MT page instead of sitting above the task", () => {
   assert.match(mt, /\$\{canAssign && request\.status === "pending_assign" \? assignSection : ""\}/);
-  // ต่อท้ายงานทุกอย่างของหน้า รวมการ์ดตรวจรับ (ไม่คั่นระหว่างจบงานกับตรวจรับ)
-  assert.match(mt, /\$\{canVerify \? `<section class="card" id="repair-verify">[^\n]*\n\s+\$\{canAssign && request\.status !== "pending_assign" \? assignSection : ""\}\n`,/);
+  // ต่อท้ายเนื้อหาของใบ (sectionsHtml) ส่วนงานที่ต้องทำอยู่ใน actionHtml บนสุด
+  assert.match(mt, /\$\{expectedDateSectionHtml\(request, canRecordProgress\)\}\s*\n\s+\$\{canAssign && request\.status !== "pending_assign" \? assignSection : ""\}\n`,/);
+  assert.match(mt, /actionHtml: `\$\{canAssign && request\.status === "pending_assign" \? assignSection : ""\}/, "assigning is the page's task, in the action card");
   assert.match(mt, /<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้ไขการมอบหมายช่าง<\/h2><\/summary>/);
   for (const name of ["technician_ids", "execution_plan", "inspector_opinion", "work_started_date", "work_expected_date", "cause_analysis"]) assert.match(mt, new RegExp(`data-field="${name}"`));
 });

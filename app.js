@@ -3821,6 +3821,7 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
+        ${detailView?.actionHtml?.trim() ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ</h2>${detailView.actionHtml}</section>` : ""}
         <section class="card request-brief" aria-labelledby="request-brief-title">
           <h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
           ${description

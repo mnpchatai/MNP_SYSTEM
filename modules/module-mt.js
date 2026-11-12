@@ -844,9 +844,9 @@
       const showRequester = requesterName && requesterName !== personName(directory, request.requester_id);
       // มอบหมายช่าง: ขั้นรอมอบหมายเป็นงานหลักของหน้า (section) · หลังมอบหมายแล้วเป็นการแก้ไขที่พับไว้ท้ายหน้า ไม่บังงานที่ต้องทำจริง
       const assignOpen = request.status === "pending_assign"
-        ? '<section class="card" id="repair-assign"><h2>มอบหมายช่าง</h2>'
+        ? '<div class="detail-action" id="repair-assign"><h3>มอบหมายช่าง</h3>'
         : '<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้ไขการมอบหมายช่าง</h2></summary>';
-      const assignClose = request.status === "pending_assign" ? "</section>" : "</details>";
+      const assignClose = request.status === "pending_assign" ? "</div>" : "</details>";
       const assignSection = canAssign ? `${assignOpen}<p class="muted small">${request.status === "pending_assign" ? "บันทึกข้อมูลซ่อมบำรุงและเลือกช่าง" : "เปลี่ยนรายชื่อช่างหรือแก้ข้อมูลการซ่อมบำรุงได้จนกว่าใบจะปิด"}</p><form id="assign-form" novalidate>
           <div class="field" data-field="technician_ids"><label>ช่างผู้รับผิดชอบ${REQUIRED}</label><small>ติ๊กได้หลายคน อย่างน้อย 1 คน</small><div class="tech-picker">${technicians.map(([techId, person]) => `<label class="tech-option"><input type="checkbox" name="technician_ids" value="${escapeHtml(techId)}"${assignedTechIds.includes(techId) ? " checked" : ""}><span>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}${person.job_title ? ` · ${escapeHtml(person.job_title)}` : ""}</span></label>`).join("") || `<p class="muted small">ยังไม่มีพนักงานในแผนกซ่อมบำรุง</p>`}</div></div>
           <div class="field" data-field="execution_plan"><label for="assign-execution-plan">การดำเนินงาน${REQUIRED}</label><select class="select" id="assign-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}"${request.execution_plan === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
@@ -883,20 +883,22 @@
           ...(request.cause_analysis && !canVerify ? [requestFact("วิเคราะห์สาเหตุ", request.cause_analysis, { icon: "search", tone: "warning", wide: true })] : []),
           ...(request.parts_used && !canVerify ? [requestFact("อะไหล่ที่ใช้", request.parts_used, { icon: "box", tone: "slate", wide: true })] : []),
         ],
-        sectionsHtml: `        ${canAssign && request.status === "pending_assign" ? assignSection : ""}
+        sectionsHtml: `
         ${progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => progressStepHtml(step, directory, canRecordProgress)).join("")}</div></section>` : ""}
         ${expectedDateSectionHtml(request, canRecordProgress)}
-        ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><form id="finish-form" novalidate>
+        ${canAssign && request.status !== "pending_assign" ? assignSection : ""}
+`,
+        // งานที่ต้องกรอกฟอร์ม (มอบหมาย จบงาน ตรวจรับพร้อมหมายเหตุ) อยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" บนสุดของคอลัมน์ซ้าย (app.js)
+        actionHtml: `${canAssign && request.status === "pending_assign" ? assignSection : ""}
+        ${canFinishWork ? `<div class="detail-action" id="repair-finish"><h3>บันทึกผลการซ่อมและจบงาน</h3><form id="finish-form" novalidate>
           <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
           <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือแนบรูปใบเสร็จในช่องไฟล์ด้านล่างแทนการกรอกทีละแถว</p></div>
           ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกไว้ทำต่อ</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
-        </form></section>` : ""}
-        ${canVerify ? `<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม</h2>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}</section>` : ""}
-        ${canAssign && request.status !== "pending_assign" ? assignSection : ""}
-`,
+        </form></div>` : ""}
+        ${canVerify ? `<div class="detail-action" id="repair-verify"><h3>ตรวจรับผลการซ่อม</h3>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน</button><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน</button></div></div>` : ""}`,
         // ปุ่มของขั้นที่ผู้ใช้ต้องทำอยู่ที่เดียวกับปุ่มอนุมัติ (app.js วางใน action-panel ของคอลัมน์ขวา มือถือเป็นแถบล่าง)
-        asideHtml: `${canStartWork ? `<section class="card action-panel step-panel" id="repair-start-panel" aria-labelledby="repair-start-title"><div class="action-panel-head"><h2 id="repair-start-title">เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p></div><div class="approval-actions action-panel-buttons"><button class="btn is-primary start-work-button">เริ่มงาน</button></div></section>` : ""}${canVerify ? `<section class="card action-panel step-panel" id="repair-verify-panel" aria-labelledby="repair-verify-title"><div class="action-panel-head"><h2 id="repair-verify-title">ตรวจรับผลการซ่อม</h2><p class="muted small">ผลการซ่อมและหมายเหตุอยู่ในการ์ดตรวจรับ</p></div><div class="approval-actions action-panel-buttons"><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน</button><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน</button></div></section>` : ""}`,
+        asideHtml: `${canStartWork ? `<section class="card action-panel step-panel" id="repair-start-panel" aria-labelledby="repair-start-title"><div class="action-panel-head"><h2 id="repair-start-title">เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p></div><div class="approval-actions action-panel-buttons"><button class="btn is-primary start-work-button">เริ่มงาน</button></div></section>` : ""}`,
       };
     },
 
