@@ -205,7 +205,7 @@
         ${sums.preventionPending ? `<a class="nd-pill${sums.preventionOverdue ? " crit" : ""}" href="${hrefWith(filters, { scope: "prevention" })}">${sums.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>` : ""}รอแนวทางป้องกัน ${fmtCount(sums.preventionPending)}${sums.preventionOverdue ? ` · เลยกำหนด ${fmtNumber(sums.preventionOverdue)}` : ""}</a>` : ""}
         <span class="nd-note">ตอบทันกำหนด ${fmtPercent(sums.onTimeRate)}${sums.slaBase ? ` (${sums.onTime}/${sums.slaBase})` : ""}</span></div>
       <div class="nd-tile"><span class="nd-label">สูญเสียสุทธิ (ยืนยันแล้ว)</span><span class="nd-value">${fmtShort(sums.net)}<small>฿</small></span>
-        <span class="nd-note">+ ประมาณการ ${fmtBaht(sums.estimated)} ยังไม่ยืนยัน${sums.legacy ? ` · รายการเดิม ${fmtBaht(sums.legacy)}` : ""}</span>
+        ${sums.estimated || sums.legacy ? `<span class="nd-note">${sums.estimated ? `+ ประมาณการ ${fmtBaht(sums.estimated)} ยังไม่ยืนยัน` : ""}${sums.estimated && sums.legacy ? " · " : ""}${sums.legacy ? `รายการเดิม ${fmtBaht(sums.legacy)}` : ""}</span>` : ""}
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(money)}${sums.need > sums.assessed ? `<p class="nd-hint">ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินต้นทุนไม่ครบทุกใบ</p>` : ""}${filters.dept ? `<p class="nd-hint">เมื่อกรองแผนก มูลค่าแบ่งตามสัดส่วนความรับผิดชอบของแผนกนั้น</p>` : ""}</details></div>
       <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "loss" })}"><span class="nd-label">ประเมินต้นทุนแล้ว</span><span class="nd-value">${fmtNumber(sums.assessed)}<small>/ ${fmtNumber(sums.need)} ใบ</small></span></a>
         <span class="nd-meter" role="img" aria-label="ประเมินแล้ว ${fmtPercent(sums.assessedRate)}"><span style="width:${(sums.assessedRate ?? 0) * 100}%"></span></span>${sums.need > sums.assessed ? "" : `<span class="nd-note">ครบทุกใบที่ต้องประเมิน</span>`}
@@ -348,10 +348,9 @@
       return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["สูญเสียสุทธิยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
     };
     return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย · เมื่อเรียงตามบาท ใบที่มีแต่ประมาณการไม่ปรากฏในแท่ง</p></div>
-      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}"${fellBack ? ' title="ยังไม่มีบาทที่ยืนยัน"' : ""}>เรียงตามบาท</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
-      ${fellBack ? `<p class="nd-hint">ยังไม่มีบาทที่ยืนยันในช่วงนี้ จึงเรียงตามจำนวนใบ</p>` : ""}
+      <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท${fellBack ? `<small class="nd-chip-note"> · ยังไม่มีบาทที่ยืนยัน</small>` : ""}</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
       ${items.length ? `${barRows({ card: "pareto", items, filters, filterKey: "defect", resolve, valueOf: (item) => (byNet ? { amount: item.net, text: fmtBaht(item.net) } : { amount: item.count, text: fmtCount(item.count) }), subOf: (item) => (byNet ? fmtCount(item.count) : item.net ? fmtBaht(item.net) : "") })}
-      <div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
+      ${items.length > 1 ? `<div class="nd-legend"><span><i class="strong"></i>กลุ่มที่รวมกันได้ 80% แรก ควรแก้ก่อน</span><span><i class="soft"></i>ที่เหลือ</span></div>` : ""}` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("pareto", "แท่ง", resolve)}`;
   }
 

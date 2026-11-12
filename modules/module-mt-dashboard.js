@@ -243,7 +243,8 @@
   }
 
   function stageHtml(stages, filters) {
-    const shown = stages.filter((stage) => stage.key !== "approved" || stage.count > 0);
+    // ขั้นที่ไม่มีใบค้างไม่วาดแถว 0 (ยกเว้นขั้นที่กรองอยู่) ลำดับขั้นตอนยังเรียงตามเดิม
+    const shown = stages.filter((stage) => stage.count > 0 || filters.stage === stage.key);
     const max = Math.max(...shown.map((stage) => stage.count), 0);
     const total = shown.reduce((sum, stage) => sum + stage.count, 0);
     const resolve = (key) => {
@@ -257,7 +258,7 @@
     }).join("");
     return `<div class="nd-head"><h2>งานค้างอยู่ที่ใคร</h2><p>นับทุกใบที่ยังไม่จบ ไม่ขึ้นกับช่วงเวลา เรียงตามลำดับขั้นตอน แถบเข้มคือขั้นที่ค้างมากสุด ตัวเลขเฉลี่ยคือจำนวนวันที่ใบอยู่ในขั้นนั้นมาแล้ว</p></div>
       ${total ? `<div class="nd-bars">${rows}</div>
-      <div class="nd-legend"><span><i class="strong"></i>ขั้นที่ค้างมากสุด</span><span><i class="soft"></i>ขั้นอื่น</span></div>` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}
+      ${shown.some((stage) => stage.count !== shown[0].count) ? `<div class="nd-legend"><span><i class="strong"></i>ขั้นที่ค้างมากสุด</span><span><i class="soft"></i>ขั้นอื่น</span></div>` : ""}` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}
       ${detailHintIfIdle("stage", "แถบขั้นตอน", resolve)}`;
   }
 
@@ -306,7 +307,7 @@
     ].filter(Boolean).join(" · ");
     return `<div class="nd-head"><h2>เครื่องจักรที่เสียบ่อย</h2><p>จำนวนครั้งที่แจ้งซ่อมต่อเครื่องในช่วงที่เลือก (ใบแจ้งซ่อมที่ไม่ถูกปฏิเสธ) เครื่องเดียวกันนับรวมกันแม้พิมพ์รหัสต่างกันเล็กน้อย แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง</p></div>
       ${items.length ? `<div class="nd-bars">${rows}</div>
-      <div class="nd-legend"><span><i class="strong"></i>เครื่องที่แจ้งบ่อยสุด</span><span><i class="soft"></i>เครื่องอื่น</span></div>
+      ${items.some((item) => item.count !== items[0].count) ? `<div class="nd-legend"><span><i class="strong"></i>เครื่องที่แจ้งบ่อยสุด</span><span><i class="soft"></i>เครื่องอื่น</span></div>` : ""}
       <p class="nd-hint">แสดง ${fmtNumber(items.length)} จาก ${fmtNumber(ranking.machines)} เครื่อง รวม ${fmtCount(ranking.total)}${notes ? ` · ${esc(notes)}` : ""}</p>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมที่ระบุเครื่องจักรในช่วงและตัวกรองนี้${notes ? ` (${esc(notes)})` : ""}</p>`}
       ${detailHintIfIdle("machine", "แถบเครื่องจักร", resolve)}`;
   }

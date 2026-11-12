@@ -152,8 +152,10 @@ test("each request is on the page once: the drill list skips what act-now shows,
 
 test("a role is written once per row, and cards with nothing to chart collapse to one line", async () => {
   const page = await render({ section: "page" });
-  assert.match(page, /<span class="nd-lab">รอผู้จัดการโรงงานอนุมัติ<\/span>/, "the stage label names the role; no short sub-label");
-  assert.match(page, /<span class="nd-lab">รอมอบหมายช่าง<br><span class="nd-muted">ผู้จัดการแผนกซ่อมบำรุง<\/span><\/span>/, "a sub-label stays where the label does not name the owner");
+  // รอบ 13: ขั้นที่ไม่มีใบค้าง (ในข้อมูลทดสอบนี้คือรอผู้จัดการโรงงานอนุมัติ) ไม่วาดแถว 0
+  assert.doesNotMatch(page, /<span class="nd-lab">รอผู้จัดการโรงงานอนุมัติ<\/span>/, "no stage row with 0 jobs");
+  // แถวที่มีใบค้างยังบอกผู้รับผิดชอบใต้ชื่อขั้นเมื่อชื่อขั้นไม่ได้บอกเอง (ในข้อมูลทดสอบนี้ขั้นมอบหมายช่างไม่มีใบ จึงตรวจจากโค้ด)
+  assert.match(source, /\$\{esc\(stage\.label\)\}\$\{ownerNote\(stage\) \? `<br><span class="nd-muted">\$\{esc\(stage\.owner\)\}<\/span>` : ""\}/, "a sub-label stays where the label does not name the owner");
   assert.doesNotMatch(page, /ผจก\.(?:โรงงาน|ทั่วไป|ซ่อมบำรุง)<\/span>/, "no short role as a sub-label");
   const phase = page.split('data-card="phase"')[1].split("</section>")[0];
   assert.doesNotMatch(phase, /nd-brow/);
