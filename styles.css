@@ -869,7 +869,9 @@ a.register-title:hover { color: var(--primary); }
   .page-heading.request-module-header .request-module-title .type-card-badge { flex-basis: 40px; width: 40px; height: 40px; border-radius: 12px; }
   .page-heading.request-module-header .request-module-title .type-card-badge svg { width: 22px; height: 22px; }
   .page-heading.request-module-header .request-create-entry { width: 100%; flex-wrap: nowrap; }
-  .page-heading.request-module-header .request-create-entry .btn { flex: 1 1 0; padding-inline: 10px; }
+  /* ปุ่มรอง (แดชบอร์ด) กว้างเท่าข้อความ ปุ่มสร้างใช้ที่เหลือ ข้อความจึงไม่ตัดเป็นสองบรรทัด */
+  .page-heading.request-module-header .request-create-entry .btn { flex: 0 0 auto; padding-inline: 12px; white-space: nowrap; }
+  .page-heading.request-module-header .request-create-entry #create-request-button { flex: 1 1 auto; }
   .request-back-link { margin-bottom: 10px; }
 }
 .type-card-action { display: block; margin-top: 14px; font-size: var(--text-meta); font-weight: 600; }
