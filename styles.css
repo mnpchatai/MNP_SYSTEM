@@ -1790,6 +1790,7 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
   .nd-brow { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
   .nd-brow .nd-lab { grid-column: 1; grid-row: 1; }
   .nd-brow .nd-val { max-width: 45vw; grid-column: 2; grid-row: 1; text-align: right; }
+  .nd-brow .nd-val small { white-space: normal; overflow-wrap: anywhere; }
   .nd-brow .nd-trk { grid-column: 1 / -1; grid-row: 2; }
 }
 .nd-brow.selected { background: var(--shell); box-shadow: inset 0 0 0 2px var(--m600, var(--primary)); }
@@ -1843,7 +1844,7 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .nd-chip:focus-visible, .nd-brow:focus-visible, .nd-col:focus-visible, .nd-rowbtn:focus-visible, .nd-more summary:focus-visible, .nd-filterbox summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 @media (max-width: 520px) {
   .nd-value { font-size: var(--text-page); }
-  .nd-brow { gap: 8px; }
+  .nd-brow { column-gap: 8px; }
   /* ตาราง "ต้องลงมือตอนนี้": แต่ละใบเป็นสองแถว (ใบ | กำหนด) (รอใคร | ค้างมา) ไม่ต้องเลื่อนข้าง ป้ายเกินกำหนดไม่ถูกตัด */
   .nd-act, .nd-act tbody { display: block; }
   .nd-act thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

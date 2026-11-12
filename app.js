@@ -3065,7 +3065,7 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
     .some((value) => String(value ?? "").toLocaleLowerCase("th-TH").includes(needle));
   const rows = (data ?? []).filter((row) => deptModuleAllowed(relation(row.request_type)?.code) && matchesSearch(row));
   const capped = (data ?? []).length >= 1000
-    ? `<p class="muted small board-note">แสดง 1,000 ใบล่าสุด หาใบที่เก่ากว่าได้ที่ <a href="${escapeHtml(requestCenterUrl(params, { view: "board", scope: null }))}">ติดตามสถานะทุกใบ</a></p>`
+    ? `<p class="muted small board-note">แสดง 1,000 ใบล่าสุด${typeId ? ` หาใบที่เก่ากว่าได้ที่ <a href="${escapeHtml(requestCenterUrl(params, { view: "board", scope: null }))}">ติดตามสถานะทุกใบ</a>` : ""}</p>`
     : "";
   return `<section class="request-list-panel">${capped}${requestRows(rows, { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
 }
