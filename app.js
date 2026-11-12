@@ -2165,7 +2165,7 @@ function homeQueueItems(pending, repairTasks, ncrTasks) {
   return window.MNP_HOME_QUEUE.sortQueue([
     ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
     ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
-    // เกินกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากครั้งล่าสุดที่ใบเปลี่ยน (updated_at) ซึ่งใกล้กับเวลาที่ใบมาถึงขั้นนี้
+    // เกินกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ (step_since จาก module-ncr.js loadHomeItems) เหมือนแดชบอร์ด NCR
     ...ncrTasks.map(({ ncr, task, overdue }) => ({
       kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เกินกำหนดตอบ" : null,
       // ชื่อเดียวกับ request_types.name_th ของ NCR_CAR และเมนูของโมดูล

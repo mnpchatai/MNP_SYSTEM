@@ -1178,13 +1178,14 @@
       if (task) tasks.push({ ncr, task, overdue: isOverdue(ncr) });
       else if (ncr.reporter_id === employee.id) mine.push(ncr);
     }
-    // ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ เหมือนคอลัมน์ "ค้างมา" ของแดชบอร์ด NCR ตัวเลขสองหน้าจึงตรงกัน · โหลดไม่ได้ใช้ updated_at เดิม
+    // ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ เหมือนคอลัมน์ "ค้างมา" ของแดชบอร์ด NCR ตัวเลขสองหน้าจึงตรงกัน
     if (tasks.length) {
       const history = await sb.from("ncr_status_history").select("ncr_id,changed_at").in("ncr_id", tasks.map(({ ncr }) => ncr.id))
         .then((result) => (result.error ? [] : result.data ?? []), () => []);
       const latest = new Map();
       for (const item of history) if (!latest.has(item.ncr_id) || item.changed_at > latest.get(item.ncr_id)) latest.set(item.ncr_id, item.changed_at);
-      for (const { ncr } of tasks) ncr.step_since = latest.get(ncr.id) ?? null;
+      // ใบที่ไม่มีประวัติ (หรือโหลดประวัติไม่ได้) นับจากวันออกใบ เหมือนที่แดชบอร์ดใช้วันที่ออกเมื่อไม่มีประวัติ
+      for (const { ncr } of tasks) ncr.step_since = latest.get(ncr.id) ?? ncr.created_at;
     }
     return { tasks, mine };
   }
