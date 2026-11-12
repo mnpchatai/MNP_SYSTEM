@@ -195,7 +195,7 @@
   }
 
   function tilesHtml(filters, sums) {
-    const money = [["สูญเสียยืนยัน (ก่อนชดเชย)", fmtBaht(sums.gross)], ["ชดเชยยืนยัน (เครดิต เงินชดเชย ขายซาก)", `− ${fmtBaht(sums.recovery)}`], ["สุทธิ", fmtBaht(sums.net)], ["ประมาณการรอยืนยัน (ไม่รวมในยอดหลัก)", fmtBaht(sums.estimated)], ["รายการเดิมรอตรวจสอบ (ไม่รวมในยอดหลัก)", fmtBaht(sums.legacy)]];
+    const money = [["ความสูญเสียที่ยืนยัน (ก่อนชดเชย)", fmtBaht(sums.gross)], ["ชดเชยยืนยัน (เครดิต เงินชดเชย ขายซาก)", `− ${fmtBaht(sums.recovery)}`], ["สุทธิ", fmtBaht(sums.net)], ["ประมาณการรอยืนยัน (ไม่รวมในยอดหลัก)", fmtBaht(sums.estimated)], ["รายการเดิมรอตรวจสอบ (ไม่รวมในยอดหลัก)", fmtBaht(sums.legacy)]];
     const assess = [["ใบที่ต้องประเมิน (ตั้งแต่ขั้นรอแผนกตอบ)", fmtCount(sums.need)], ["ประเมินครบแล้ว", fmtCount(sums.assessed)], ["ยังไม่ครบ", fmtCount(sums.need - sums.assessed)]];
     const list = (lines) => `<ul class="nd-lines">${lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>`;
     return `<div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "" })}"><span class="nd-label">NCR ที่ออกในช่วงนี้</span><span class="nd-value">${fmtNumber(sums.total)}<small>ใบ</small></span></a>
@@ -308,15 +308,15 @@
     const shownTypes = typeKeys.filter((type) => money.some((month) => month.types.some((item) => item.type === type)));
     const moneyLegend = [...shownTypes.map((type) => ({ label: typeLabel(type), cls: typeClass(type) })), ...(money.some((month) => month.estimated > 0) ? [{ label: "ประมาณการรอยืนยัน", cls: "est" }] : [])];
     const moneyChart = columnChart({
-      card: "month-money", title: "สูญเสียยืนยัน แยกตามประเภท (บาท)", subtitle: "ยอดยืนยันก่อนหักชดเชย แยกสีตามประเภทความสูญเสีย ส่วนลายเส้นคือประมาณการรอยืนยัน แตะแท่งเพื่อดูยอดสุทธิหลังหักชดเชย",
+      card: "month-money", title: "ความสูญเสียที่ยืนยัน แยกตามประเภท (บาท)", subtitle: "ยอดยืนยันก่อนหักชดเชย แยกสีตามประเภทความสูญเสีย ส่วนลายเส้นคือประมาณการรอยืนยัน แตะแท่งเพื่อดูยอดสุทธิหลังหักชดเชย",
       data: money, legend: moneyLegend, formatTotal: fmtBaht, formatAxis: fmtShort, lastFilters: filters,
       emptyText: `ยังไม่มีความสูญเสียยืนยันหรือประมาณการในปี ${Number(filters.year) + 543} ตามตัวกรองนี้`,
       segmentsOf: (month) => [...[...month.types].sort((a, b) => typeKeys.indexOf(a.type) - typeKeys.indexOf(b.type)).map((item) => ({ value: item.confirmed, cls: typeClass(item.type) })), { value: month.estimated, cls: "est" }],
       detailOf: (month) => [
-        ["สูญเสียยืนยัน (ก่อนชดเชย)", fmtBaht(month.gross)],
+        ["ความสูญเสียที่ยืนยัน (ก่อนชดเชย)", fmtBaht(month.gross)],
         ...[...month.types].sort((a, b) => b.confirmed - a.confirmed).map((item) => [typeLabel(item.type), fmtBaht(item.confirmed), typeClass(item.type)]),
         ...(month.recovery ? [["ชดเชยยืนยัน (เครดิต เงินชดเชย ขายซาก)", `− ${fmtBaht(month.recovery)}`]] : []),
-        ["ความสูญเสียสุทธิที่ยืนยัน", fmtBaht(month.net)],
+        ["ความสูญเสียสุทธิ (ยืนยันแล้ว)", fmtBaht(month.net)],
         ["ประมาณการรอยืนยัน", fmtBaht(month.estimated), month.estimated > 0 ? "est" : ""],
       ],
     });
@@ -345,7 +345,7 @@
     const items = fellBack ? model.pareto(list, filters, "count") : filters.sort === "net" ? netItems : model.pareto(list, filters, filters.sort);
     const resolve = (key) => {
       const item = items.find((entry) => entry.key === key);
-      return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["ความสูญเสียสุทธิที่ยืนยัน", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
+      return item && { title: item.label, lines: [["จำนวนใบ", fmtCount(item.count)], ["ความสูญเสียสุทธิ (ยืนยันแล้ว)", fmtBaht(item.net)], ["สัดส่วนในกราฟนี้", fmtPercent(item.share)], ["สะสม", fmtPercent(item.cumulative)]], href: hrefWith(filters, { defect: filters.defect === key ? "" : key }), linkLabel: filters.defect === key ? "ยกเลิกการกรอง" : undefined };
     };
     return `<div class="nd-head"><h2>ปัญหาอะไรเยอะ / แพง</h2><p>ประเภทข้อบกพร่องเรียงจากมากไปน้อย · เมื่อเรียงตามบาท ใบที่มีแต่ประมาณการไม่ปรากฏในแท่ง</p></div>
       <div class="nd-chips" role="group" aria-label="เรียงตาม"><a class="nd-chip" href="${hrefWith(filters, { sort: "net" })}" aria-current="${byNet}">เรียงตามบาท${fellBack ? `<small class="nd-chip-note"> · ยังไม่มีบาทที่ยืนยัน</small>` : ""}</a><a class="nd-chip" href="${hrefWith(filters, { sort: "count" })}" aria-current="${!byNet}">เรียงตามจำนวนใบ</a></div>
@@ -425,7 +425,7 @@
     <li><b>SLA 5 วัน:</b> เริ่มนับเมื่อใบเข้าขั้น "รอแผนกตอบ" (ส่งกลับมาตอบใหม่ก็เริ่มนับใหม่) ขั้นรอ ผจก.โรงงานพิจารณายังไม่นับ ตอบทัน % = ตอบทัน ÷ (ตอบแล้ว + เกินกำหนดที่ยังไม่ตอบ) จึงต่างจากป้าย "เกินกำหนดตอบ" ในทะเบียน NCR ที่นับจากวันออกใบ</li>
     <li><b>แนวทางป้องกัน:</b> การตอบภายใน 5 วันบังคับแค่สาเหตุและแนวทางแก้ไข แนวทางป้องกันส่งตามมาได้ภายในกำหนดตอบ + 7 วัน "รอแนวทางป้องกัน" = ใบที่รอ QA ติดตามผลแต่แผนกยังไม่ส่ง (QA ยังปิดประเด็นไม่ได้) นับแยกจาก SLA ตอบ 5 วัน</li>
     <li><b>ขั้นที่ต้องประเมินความสูญเสีย:</b> ตั้งแต่ขั้นรอแผนกตอบเป็นต้นไป ประเมินครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</li>
-    <li><b>ยอดหลัก:</b> นับเฉพาะยืนยันแล้ว สุทธิ = สูญเสียยืนยัน − ชดเชยยืนยัน ประมาณการและรายการเดิมแสดงแยก</li></ol>
+    <li><b>ยอดหลัก:</b> นับเฉพาะยืนยันแล้ว สุทธิ = ความสูญเสียที่ยืนยัน − ชดเชยยืนยัน ประมาณการและรายการเดิมแสดงแยก</li></ol>
     <p>จำนวนใบนับเต็มใบเสมอ ใบที่มีหลายแผนกหรือหลายสาเหตุนับในทุกกลุ่ม จึงห้ามบวกจำนวนข้ามกลุ่ม ส่วนบาทแบ่งตามสัดส่วนแผนก</p></div></details>`;
 
   let lastFilters = null;

@@ -9,8 +9,8 @@
   const extraFilesField = (id) => (window.MNP_REQUEST_MODULES?.NCR_CAR?.shared?.evidenceFieldHtml?.(id, "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false }) ?? "").replace('class="field"', 'class="field full"');
   // ผู้ที่กรอกต้นทุนได้ ตรงกับ private.can_edit_ncr_losses (module-ncr.js canEditLosses) — แสดงให้ผู้ที่อ่านอย่างเดียวรู้ว่าต้องไปตามใคร
   const EDITORS_TEXT = "ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ช่วยผู้จัดการโรงงาน และผู้จัดการ/ผู้ช่วยผู้จัดการแผนก QA · ผู้ตอบของแผนกที่รับผิดชอบใส่ยอดประมาณการได้";
-  // access: "full" = ผู้กรอกต้นทุน · "estimate" = ผู้ตอบ NCR ใบนั้น ใส่/แก้ได้เฉพาะยอดประมาณการ · false = ดูอย่างเดียว (true เท่ากับ "full")
-  // embedded: วางในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้กรอกต้นทุนขณะยังรอข้อมูลการสูญเสีย) เป็นกลุ่มงาน ไม่ใช่การ์ดซ้อนการ์ด
+  // access: "full" = ผู้ยืนยันยอด · "estimate" = ผู้ตอบ NCR ใบนั้น ใส่/แก้ได้เฉพาะยอดประมาณการ · false = ดูอย่างเดียว (true เท่ากับ "full")
+  // embedded: วางในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้ยืนยันยอดขณะยังรอข้อมูลการสูญเสีย) เป็นกลุ่มงาน ไม่ใช่การ์ดซ้อนการ์ด
   function render(ncr, losses, directory, access, today, formatBaht, formatQty, embedded = false) {
     const full = access === true || access === "full";
     const estimateOnly = access === "estimate";
@@ -25,7 +25,7 @@
     // ก่อนมีรายการแรก ไม่โชว์ช่องยอด 0.00 ฿ · แถวที่ยกเลิกแล้วก็นับ เพราะตารางด้านล่างยังแสดง
     const hasRows = losses.length > 0;
     return `${embedded ? '<div class="ncr-action-group ncr-loss-card"><h3>ความสูญเสีย</h3>' : '<section class="card ncr-card ncr-loss-card"><h2>ความสูญเสีย</h2>'}
-      ${full ? '<p class="muted small">เพิ่มได้หลายรายการ · ยืนยันยอดตามหลักฐาน ในรายการเดิม</p>' : estimateOnly ? '<p class="muted small">ใส่ยอดประมาณการได้หลายรายการ ผู้ยืนยันยอดเป็นผู้ยืนยัน</p>' : ""}
+      ${full ? '<p class="muted small">เพิ่มได้หลายรายการ · ยืนยันยอดตามหลักฐาน ในรายการเดิม</p>' : estimateOnly ? '<p class="muted small">ใส่ยอดประมาณการได้หลายรายการ แล้วผู้ยืนยันยอดจะยืนยันให้</p>' : ""}
       ${hasRows || editable ? `<div class="ncr-loss-overview"><dl class="ncr-loss-summary${editable ? " is-editable" : ""}" aria-label="สรุปความสูญเสีย">
         ${hasRows ? `<div><dt>สูญเสียยืนยันแล้ว</dt><dd>${formatBaht(summary.confirmed)}</dd></div>
         <div><dt>ชดเชยยืนยันแล้ว</dt><dd>${formatBaht(summary.recovery)}</dd></div>
@@ -55,7 +55,7 @@
       ${reviewHtml(ncr, full, directory, formatQty, embedded)}
     ${embedded ? "</div>" : "</section>"}`;
   }
-  // ยืนยันว่าประเมินค่าเสียหายครบ (app_ncr_review_costs) อยู่ท้ายส่วนความสูญเสีย แทนฟอร์ม "ผลดำเนินการจริง" เดิม
+  // ยืนยันว่าประเมินความสูญเสียครบ (app_ncr_review_costs) อยู่ท้ายส่วนความสูญเสีย แทนฟอร์ม "ผลดำเนินการจริง" เดิม
   // จำนวนทิ้งนับจากรายการประเภทของเสีย/ทิ้ง ชั่วโมงเครื่องหยุดลงเป็นรายการประเภทเครื่องหยุด/รอ จึงไม่ต้องกรอกซ้ำที่อื่น
   // ใบเก่าที่เคยบันทึกจำนวนผลดำเนินการไว้ยังเห็นค่าเดิมแบบอ่านอย่างเดียว
   const LEGACY_OUTCOME = { qty_sorted: "คัดแยก", qty_repaired: "ซ่อมสำเร็จ", qty_scrapped: "ทิ้ง", qty_returned: "ส่งคืน", qty_accepted: "ยอมรับใช้ได้" };

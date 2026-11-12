@@ -3915,7 +3915,8 @@ async function renderRequestDetail(params) {
   const requestClosed = ["completed", "rejected", "cancelled", "acknowledged"].includes(request.status) || isFinalDecision(type, request.status);
   // รายละเอียดที่ผู้ขอแจ้ง: ผู้ที่ต้องกรอกงานของขั้น (มอบหมายช่าง บันทึกผล ตรวจรับ) อ่านได้ในการ์ดงานทันที
   const briefInAction = Boolean(moduleWorkHtml) && Boolean(description);
-  const briefBodyHtml = `<h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
+  const briefHeading = briefInAction ? "h3" : "h2";
+  const briefBodyHtml = `<${briefHeading} class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</${briefHeading}>
           ${description
             ? `<p class="request-summary-text is-clamped" id="request-description">${escapeHtml(description)}</p><button type="button" class="link-button request-more" id="request-description-more" aria-controls="request-description" aria-expanded="false" hidden>อ่านต่อ</button>`
             : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}`;

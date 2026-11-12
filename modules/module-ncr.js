@@ -86,7 +86,7 @@
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
   const LOSS_EDITOR_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
-  // บทบาทที่ทำงาน: บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" ใช้บทบาทนั้น — ใช้กับผู้กรอกต้นทุนและขั้นลงนาม ผจก.ทั่วไป เท่านั้น
+  // บทบาทที่ทำงาน: บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" ใช้บทบาทนั้น — ใช้กับผู้ยืนยันยอดและขั้นลงนาม ผจก.ทั่วไป เท่านั้น
   // ขั้นอื่นของ NCR ยังดู role จริง (ตรงกับ migration 20261101010000 และ 20261102010000)
   const workingRoleCode = (employee) => employee?.actingRole?.code ?? roleCode(employee);
   // ผู้ตอบ NCR ได้: พนักงาน/ผจก./ผช.ผจก. ของแผนกที่รับผิดชอบ ถ้า ผจก.โรงงานระบุผู้ตอบของแผนกไว้ ตอบได้เฉพาะคนนั้น
@@ -820,7 +820,7 @@
     return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";
   }
 
-  // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้กรอกต้นทุน (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
+  // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้ยืนยันยอด (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
   // ใส่และแก้ได้เฉพาะยอดประมาณการ (ตรงกับ app_ncr_record_loss, migration 20261115010000) · false = ดูอย่างเดียว
   function lossAccess(ncr, employee) {
     if (ncr.status === "cancelled") return false;
@@ -873,7 +873,7 @@
     const forms = actionForms(ncr, employee, departments, infoRequests.find((request) => !request.answered_at) ?? null, staff);
     const waiting = waitingText(ncr, staff);
     // งานที่ผู้ดูต้องทำทั้งหมดอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" การ์ดเดียว (กติกาหน้ารายละเอียด ผู้ใช้อนุมัติ 2026-11-12):
-    // ฟอร์มของขั้น ผู้ตอบของแผนก (ผู้จัดการโรงงาน) และค่าเสียหาย (ผู้กรอกต้นทุนขณะยังรอข้อมูลการสูญเสีย) แต่ละส่วนยังบันทึกแยกกันเหมือนเดิม
+    // ฟอร์มของขั้น ผู้ตอบของแผนก (ผู้จัดการโรงงาน) และความสูญเสีย (ผู้ยืนยันยอดขณะยังรอข้อมูลการสูญเสีย) แต่ละส่วนยังบันทึกแยกกันเหมือนเดิม
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
     const lossesInWork = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
     const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, lossAccess(ncr, employee), lossesInWork);
