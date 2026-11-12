@@ -1092,6 +1092,45 @@ function headingTextHtml(text) {
   return escapeHtml(text).replace(/[A-Za-z]{1,8}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/g, (code) => `<span class="nowrap">${code}</span>`);
 }
 
+// ไฟล์แนบที่เลือกแล้วแต่ยังไม่ได้กด "อัปโหลด" (หน้ารายละเอียดคำร้อง): ถามก่อนออกจากหน้า รูปที่ถ่ายจึงไม่หายเงียบ ๆ
+// คงปุ่มยืนยันไว้เพราะไฟล์ที่อัปโหลดแล้วลบไม่ได้ (ผู้ใช้เลือก 2026-11-12)
+function pendingAttachmentCount() {
+  const form = document.querySelector("#attachment-form");
+  if (!form || form.hasAttribute("aria-busy")) return 0;
+  return form.querySelector("#attachment-file")?.files?.length ?? 0;
+}
+function confirmLeaveWithPendingFiles(count) {
+  return confirmDialog({ title: `ยังไม่ได้อัปโหลด ${count} ไฟล์`, message: "ออกจากหน้านี้แล้วไฟล์ที่เลือกไว้จะไม่ถูกแนบ", confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด", danger: true });
+}
+// ปุ่มย้อนกลับ/ปัดย้อนกลับ: hashchange ยกเลิกไม่ได้ ใช้ Navigation API ที่ยกเลิกการย้อนกลับได้ (เบราว์เซอร์ที่ไม่มีจะออกเหมือนเดิม)
+window.navigation?.addEventListener("navigate", (event) => {
+  if (event.navigationType !== "traverse" || !event.cancelable) return;
+  const count = pendingAttachmentCount();
+  if (!count) return;
+  event.preventDefault();
+  const key = event.destination.key;
+  confirmLeaveWithPendingFiles(count).then((leave) => {
+    if (!leave) return;
+    const input = document.querySelector("#attachment-form #attachment-file");
+    if (input) input.value = "";
+    window.navigation.traverseTo(key);
+  });
+});
+window.addEventListener("beforeunload", (event) => {
+  if (!pendingAttachmentCount()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+document.addEventListener("click", async (event) => {
+  const link = event.target.closest?.('a[href^="#/"]');
+  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const count = pendingAttachmentCount();
+  if (!count || link.closest("#attachment-form")) return;
+  event.preventDefault();
+  const href = link.getAttribute("href");
+  if (await confirmLeaveWithPendingFiles(count)) location.hash = href;
+}, true);
+
 // ชื่อเครื่องจักรที่แสดง (รายการ หน้ารายละเอียด ฟอร์ม MT และแดชบอร์ด MT ใช้ตัวนี้ตัวเดียว)
 // ชื่อที่มีรหัสอยู่แล้ว (เช่น "เครื่องฉีดยาง HCM-03") ไม่นำหน้าด้วยรหัสซ้ำ — เดิมขึ้น "HCM-03 — เครื่องฉีดยาง HCM-03"
 function machineLabelOf(code, name, separator = " — ") {
@@ -1945,6 +1984,14 @@ function navLink(path, label, icon, active, { featured = false, badge = 0, href 
 function shell(content, active, title, tabTitle = title) {
   const employee = state.employee;
   active = activeNavFor(active);
+  // แถบบนเป็นลิงก์กลับรายการเมื่อหน้ามีลิงก์กลับ (แทนป้ายกลับเหนือหัวเรื่อง) หน้าอื่นไม่ทวนชื่อหน้าที่หัวเรื่องบอกแล้ว (ผู้ใช้เลือก 2026-11-12)
+  // ลิงก์กลับตัวแรกที่อยู่ก่อนหัวเรื่อง (h1) ของหน้า แม้อยู่ในกรอบของหน้า เช่น แดชบอร์ดและรายการของโมดูล
+  content = String(content);
+  const backMatch = content.match(/<a class="request-back-link"[^>]*>[^<]*<\/a>/);
+  const headingAt = content.search(/<h1[\s>]/);
+  const lift = backMatch && (headingAt < 0 || backMatch.index < headingAt);
+  const topbarBack = lift ? backMatch[0] : "";
+  if (lift) content = content.slice(0, backMatch.index) + content.slice(backMatch.index + backMatch[0].length);
   // ชื่อแท็บบอกหน้าที่เปิดอยู่ (โปรแกรมอ่านจอและรายการแท็บ/ประวัติของเบราว์เซอร์ใช้ชื่อนี้)
   document.title = `${tabTitle} · MNP Workspace`;
   return `
@@ -1982,8 +2029,7 @@ function shell(content, active, title, tabTitle = title) {
       <main class="main">
         <header class="topbar">
           <div class="topbar-start">
-            ${appNavButtons()}
-            <div class="breadcrumbs">MNP Workspace &nbsp;/&nbsp; <strong>${escapeHtml(title)}</strong></div>
+            ${appNavButtons()}${topbarBack}
           </div>
           <div class="top-actions">
             ${isSandboxMode() ? `<span class="sandbox-pill" title="อยู่ในโหมดทดสอบ ข้อมูลแยกจากระบบจริง">TEST</span>` : ""}
@@ -3865,8 +3911,10 @@ async function renderRequestDetail(params) {
   const description = (request.description ?? "").trim();
   // หัวใบเป็นก้อนสีโมดูล ยกเว้นใบแจ้งซ่อม IT ที่ใช้ฟอร์มของทีม IT เอง (ORIGINAL_FORM_TYPES)
   const moduleHead = !ORIGINAL_FORM_TYPES.has(type?.code);
+  // ใบที่จบแล้ว (เสร็จ ไม่อนุมัติ ยกเลิก รับทราบ หรืออนุมัติที่เป็นปลายทางของโมดูล) ยังแนบไฟล์ได้ แต่บอกว่าเพิ่มหลังปิดใบ (ผู้ใช้เลือก 2026-11-12)
+  const requestClosed = ["completed", "rejected", "cancelled", "acknowledged"].includes(request.status) || isFinalDecision(type, request.status);
   const content = `
-    <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}" title="${escapeHtml(`กลับไปรายการ${type ? ` ${requestTypeLabel(type)}` : "คำร้อง"}`)}">‹ กลับไปรายการ</a>
+    <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}">‹ ${escapeHtml(type ? requestTypeLabel(type) : "คำร้อง")}</a>
     <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
@@ -3900,7 +3948,7 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit" disabled>อัปโหลด</button></form></details>
+        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">${requestClosed ? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์เพิ่ม"}</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit" disabled>อัปโหลด</button><p class="attachment-pending" role="status" hidden></p></form></details>
         ${requestFacts ? `<details class="card detail-section" open><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
@@ -3972,8 +4020,11 @@ async function renderRequestDetail(params) {
   // รวมถึงตอนกด × ลบไฟล์ในตัวอย่าง หรือแปลงรูปไม่สำเร็จ (attachment-image.js ยิง mnp:files-changed)
   const attachmentFile = document.querySelector("#attachment-file");
   const syncUploadButton = () => {
+    const count = attachmentFile?.files?.length ?? 0;
     const button = attachmentFile?.form?.querySelector(".attachment-upload");
-    if (button) button.disabled = !attachmentFile.files?.length;
+    if (button) { button.disabled = !count; button.classList.toggle("secondary", !count); }
+    const pending = attachmentFile?.form?.querySelector(".attachment-pending");
+    if (pending) { pending.hidden = !count; pending.textContent = count ? `ยังไม่ได้อัปโหลด ${count} ไฟล์ · กดอัปโหลดก่อนออกจากหน้านี้` : ""; }
   };
   ["change", "mnp:files-changed"].forEach((type) => attachmentFile?.addEventListener(type, syncUploadButton));
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {

@@ -439,7 +439,7 @@
     // นอกนั้นรายการด้านล่างไม่พิมพ์ซ้ำใบที่ "ต้องลงมือตอนนี้" แสดงแล้ว (แต่ยังนับในจำนวนทั้งหมด)
     const showAct = !filters.scope;
     const actTop = showAct ? model.priority(list, 5) : [];
-    return `<a class="request-back-link" href="#/ncr" title="กลับไปรายการ NCR/CAR">‹ กลับไปรายการ</a><div class="page-heading request-module-header" data-module="ncr"><div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
+    return `<div class="page-heading request-module-header" data-module="ncr"><div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="ncr">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
@@ -555,7 +555,8 @@
     const fresh = !cache || cache.employeeId !== state.employee?.id || Date.now() - cache.loadedAt >= CACHE_MS || refresh;
     if (fresh) loadingShell("ncr", "แดชบอร์ด NCR");
     await loadData(refresh);
-    app.innerHTML = shell(`<div id="nd-root"></div>`, "ncr", "แดชบอร์ด NCR");
+    // ลิงก์กลับรายการให้ shell วาดบนแถบบน (เนื้อหาของแดชบอร์ดวาดภายหลังใน nd-root)
+    app.innerHTML = shell(`<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a><div id="nd-root"></div>`, "ncr", "แดชบอร์ด NCR");
     bindShell();
     bindRoot(document.getElementById("nd-root"));
     paint();

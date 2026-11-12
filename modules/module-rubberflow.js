@@ -563,7 +563,7 @@
       body = `${pageNavHtml(user, page)}${built.html}`;
       bind = built.bind ?? null;
     }
-    // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต สแกน แจ้งเตือน รีเซ็ต)
+    // ชื่อโมดูลอยู่ในเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต สแกน แจ้งเตือน รีเซ็ต)
     const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
     dirty = false; // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างแล้ว (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
     app.innerHTML = shell(`<div class="rf-page" data-module="rf" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${body}${testDataHtml(ctx)}</div>`, PATH, title);
