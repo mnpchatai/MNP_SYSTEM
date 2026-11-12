@@ -1180,8 +1180,11 @@
     }
     // ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ เหมือนคอลัมน์ "ค้างมา" ของแดชบอร์ด NCR ตัวเลขสองหน้าจึงตรงกัน
     if (tasks.length) {
-      const history = await sb.from("ncr_status_history").select("ncr_id,changed_at").in("ncr_id", tasks.map(({ ncr }) => ncr.id))
-        .then((result) => (result.error ? [] : result.data ?? []), () => []);
+      const ids = tasks.map(({ ncr }) => ncr.id);
+      const batches = [];
+      for (let index = 0; index < ids.length; index += 100) batches.push(ids.slice(index, index + 100));
+      const history = (await Promise.all(batches.map((batch) => sb.from("ncr_status_history").select("ncr_id,changed_at").in("ncr_id", batch).order("id")
+        .then((result) => (result.error ? [] : result.data ?? []), () => [])))).flat();
       const latest = new Map();
       for (const item of history) if (!latest.has(item.ncr_id) || item.changed_at > latest.get(item.ncr_id)) latest.set(item.ncr_id, item.changed_at);
       // ใบที่ไม่มีประวัติ (หรือโหลดประวัติไม่ได้) นับจากวันออกใบ เหมือนที่แดชบอร์ดใช้วันที่ออกเมื่อไม่มีประวัติ

@@ -1311,7 +1311,7 @@ function statusBoardRows(rows, { showType = false } = {}) {
           department: escapeHtml(row.department_name ?? row.department_code ?? ""),
           requester: escapeHtml(row.requester_name ?? ""),
           updated: formatDate(row.last_changed_at ?? row.submitted_at, true),
-          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow))}${row.is_urgent ? `<span class="badge urgent-flag">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
+          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow), isFinalDecision({ code: row.type_code }, row.status))}${row.is_urgent ? `<span class="badge urgent-flag">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
         },
       };
     }),
