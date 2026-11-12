@@ -1051,6 +1051,7 @@ a.register-title:hover { color: var(--primary); }
 .decision-reason .field { margin: 0; }
 .decision-line { margin: 0; padding: 10px 12px; color: var(--ink); background: var(--shell); border-radius: var(--radius-md); font-weight: 600; overflow-wrap: anywhere; }
 .decision-line.is-error { color: var(--danger-ink); background: var(--danger-soft); }
+.ncr-action [data-field]:has(> .field-error) > small { display: none; }
 .field-error { margin: 6px 0 0; color: var(--danger-ink); font-size: var(--text-meta); font-weight: 600; }
 .textarea[aria-invalid="true"], .input[aria-invalid="true"], .select[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
 /* กลุ่มปุ่มเลือก (แหล่งที่พบของ NCR) และกลุ่มแผนก: ช่องที่ผิดเห็นทั้งกลุ่ม ไม่ใช่แค่ข้อความใต้ช่อง */
@@ -1658,7 +1659,7 @@ a.machine-history-no:hover { text-decoration: underline; }
 :is(.ncr-action, .detail-action, .ncr-action-group) h3 { margin: 0 0 12px; }
 /* การ์ด NCR ในคอลัมน์ของหน้ารายละเอียด: ระยะระหว่างการ์ดมาจาก .stack เหมือนหน้าคำร้อง/MT */
 .stack > .ncr-card { margin-bottom: 0; }
-.ncr-waiting { margin: 6px 0 0; color: var(--mod-on-soft, var(--muted)); font-size: var(--text-meta); }
+.request-module-header .ncr-waiting { margin: 6px 0 0; color: var(--mod-on-soft, var(--muted)); font-size: var(--text-meta); }
 .ncr-fieldset { margin: 0 0 15px; padding: 0; border: 0; min-width: 0; }
 .ncr-fieldset legend { margin-bottom: 7px; padding: 0; font-size: var(--text-ui); font-weight: 700; }
 .ncr-checks { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1748,6 +1749,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 @media (min-width: 1200px) { .nd-tiles.five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 @media (min-width: 761px) and (max-width: 1199px) { .nd-tiles.five { grid-template-columns: repeat(6, minmax(0, 1fr)); } .nd-tiles.five > * { grid-column: span 2; } .nd-tiles.five > :nth-child(n + 4) { grid-column: span 3; } }
 @media (min-width: 761px) { .nd-tiles:not(.five) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .nd-tiles:not(.five) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1100px) { .nd-tiles:not(.five) { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 /* จอสัมผัส: ปุ่มกรอง ปุ่มในแถว และหัวพับของแดชบอร์ดสูงอย่างน้อย 44 px */
 @media (pointer: coarse), (max-width: 760px) {

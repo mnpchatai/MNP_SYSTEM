@@ -2215,7 +2215,7 @@ const myRepairActionLabels = {
   pending_verify: "ตรวจรับงาน",
 };
 
-// งานซ่อมที่ต้องลงมือทำเอง (มอบหมายช่าง/เริ่มงาน/บันทึกผลซ่อม/ตรวจรับ) ไม่มี approval_steps รองรับ
+// งานซ่อมที่ต้องลงมือทำเอง (มอบหมายช่าง/เริ่มงาน/เสร็จสิ้นงาน/ตรวจรับงาน) ไม่มี approval_steps รองรับ
 // เพราะผ่านขั้นอนุมัติไปแล้ว — getPendingApprovals เดิมนับแต่ approval_steps จึงมองไม่เห็นงานกลุ่มนี้เลย
 // ทำให้ช่างที่ถูกมอบหมายงานแล้ว หรือหัวหน้าแผนกที่ต้องมอบหมายช่าง ไม่เห็นงานของตัวเองใน "งานที่ต้องจัดการ"
 async function getMyRepairActionItems() {
@@ -3941,8 +3941,9 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
+        ${!moduleWorkHtml && !briefInAction ? `<section class="card request-brief" aria-labelledby="request-brief-title">${briefBodyHtml}</section>` : ""}
         ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">${actionWorkTitle}</h2>${briefInAction ? `<div class="detail-actions-brief">${briefBodyHtml}</div>` : ""}${actionWorkHtml}</section>` : ""}
-        ${briefInAction ? "" : `<section class="card request-brief" aria-labelledby="request-brief-title">${briefBodyHtml}</section>`}
+        ${briefInAction || !moduleWorkHtml ? "" : `<section class="card request-brief" aria-labelledby="request-brief-title">${briefBodyHtml}</section>`}
         ${request.status === "more_info" ? (() => {
           const moreInfoStep = steps.find((step) => step.status === "more_info");
           const requesterLabel = personName(directory, request.requester_id);
@@ -4411,14 +4412,14 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     if (state.name === "pending") {
       tapGuard.arm();
       reason.hidden = true;
-      setLine(`กำลังจะ${labelOf(state.decision)} ${request.request_no}${state.comment ? ` · “${clipText(state.comment, 80)}”` : ""}`);
+      setLine(`กำลังจะ${labelOf(state.decision)}${onDecided ? ` ${request.request_no}` : ""}${state.comment ? ` · “${clipText(state.comment, 80)}”` : ""}`);
       // "ส่งเลย" สีเดียวกับมติที่กำลังจะส่ง (ไม่อนุมัติเป็นสีแดง) ไม่ใช่สีน้ำเงินกลาง ๆ
       buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", decisionButtonClass(state.decision), "send-now")}`;
       return;
     }
     if (state.name === "sending") {
       reason.hidden = true;
-      setLine(`กำลังส่ง: ${labelOf(state.decision)} ${request.request_no}…`);
+      setLine(`กำลังส่ง: ${labelOf(state.decision)}${onDecided ? ` ${request.request_no}` : ""}…`);
       buttons.innerHTML = button("กำลังส่ง…", "is-primary", "none", ' disabled aria-busy="true"');
       return;
     }

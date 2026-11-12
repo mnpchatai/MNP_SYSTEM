@@ -384,7 +384,7 @@
       </form>`;
     if (overdue) {
       return `<section class="card expected-date-overdue"><h2>เลยกำหนดเสร็จแล้ว</h2>
-        <p class="muted small">กำหนดเสร็จเดิม ${escapeHtml(current)} · ${request.status === "in_progress" ? "บันทึกผลซ่อมและจบงาน" : "เริ่มงาน"} หรือแก้กำหนดเสร็จ ระบบจะเตือนทางอีเมลทุก 08:30 และ 13:30 น. จนกว่าจะดำเนินการ</p>
+        <p class="muted small">กำหนดเสร็จเดิม ${escapeHtml(current)} · ${request.status === "in_progress" ? "เสร็จสิ้นงาน" : "เริ่มงาน"} หรือแก้กำหนดเสร็จ ระบบจะเตือนทางอีเมลทุก 08:30 และ 13:30 น. จนกว่าจะดำเนินการ</p>
         ${form}</section>`;
     }
     return `<section class="card"><h2>กำหนดเสร็จ ${escapeHtml(current)}</h2>
