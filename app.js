@@ -507,8 +507,8 @@ function friendlyError(error) {
     EXECUTION_PLAN_REQUIRED: "กรุณาเลือกการดำเนินงาน",
     INSPECTOR_OPINION_REQUIRED: "กรุณาเลือกความคิดเห็นของช่างผู้ตรวจสอบ",
     WORK_START_DATE_REQUIRED: "กรุณาระบุวันเริ่มงาน",
-    WORK_EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าจะเสร็จ",
-    WORK_DATE_RANGE_INVALID: "วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน",
+    WORK_EXPECTED_DATE_REQUIRED: "กรุณาระบุกำหนดเสร็จ",
+    WORK_DATE_RANGE_INVALID: "กำหนดเสร็จต้องไม่ก่อนวันเริ่มงาน",
     REPAIR_USES_OWN_WORKFLOW: "ใบแจ้งซ่อมต้องเดินตามขั้นตอนของช่าง เปลี่ยนสถานะตรงๆ ไม่ได้",
     DECISION_NOT_ALLOWED: "มติ \"รับทราบข้อมูล\" ใช้ได้เฉพาะใบคำร้องถึงฝ่ายบริหาร",
     REQUEST_ENDS_AT_DECISION: "ใบคำร้องถึงฝ่ายบริหารจบที่มติของฝ่ายบริหาร ไม่มีขั้นรับงาน",
@@ -517,9 +517,9 @@ function friendlyError(error) {
     INVALID_MESSAGE: "กรุณาพิมพ์ข้อความตอบกลับ",
     EXPECTED_DATE_REQUIRED: "กรุณาระบุวันที่คาดว่าของจะมาส่ง",
     STEP_ALREADY_DONE: "หมุดนี้บันทึกว่าเสร็จแล้ว เลื่อนวันที่ไม่ได้",
-    EXPECTED_DATE_IN_PAST: "วันที่คาดว่าจะเสร็จใหม่ต้องเป็นวันนี้หรือหลังจากนี้",
+    EXPECTED_DATE_IN_PAST: "กำหนดเสร็จใหม่ต้องเป็นวันนี้หรือหลังจากนี้",
     EXPECTED_DATE_UNCHANGED: "วันที่ที่เลือกตรงกับกำหนดเสร็จเดิม",
-    REQUEST_NOT_RESCHEDULABLE: "แก้วันที่คาดว่าจะเสร็จได้เฉพาะใบแจ้งซ่อมที่รอช่างเริ่มงานหรือกำลังซ่อม",
+    REQUEST_NOT_RESCHEDULABLE: "แก้กำหนดเสร็จได้เฉพาะใบแจ้งซ่อมที่รอช่างเริ่มงานหรือกำลังซ่อม",
     NOTE_TOO_LONG: "หมายเหตุต้องไม่เกิน 500 ตัวอักษร",
     HOLIDAY_DATE_REQUIRED: "กรุณาเลือกวันที่หยุด",
     HOLIDAY_NAME_REQUIRED: "กรุณาระบุชื่อวันหยุด 1–100 ตัวอักษร",
@@ -3717,7 +3717,7 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     };
   });
 
-  // การแก้วันที่คาดว่าจะเสร็จ (ปุ่มแก้วันที่ หรือแก้ไขการมอบหมาย) ไม่ใช่การเปลี่ยนสถานะ เก็บแยกไว้
+  // การแก้กำหนดเสร็จ (ปุ่มแก้วันที่ หรือแก้ไขการมอบหมาย) ไม่ใช่การเปลี่ยนสถานะ เก็บแยกไว้
   const dateChangeEvents = dateChanges.map((change) => {
     const actorName = personName(directory, change.changed_by);
     const detail = `${actorName === "—" ? "ผู้รับผิดชอบ" : actorName} แก้ไขจากกำหนดเสร็จเดิม ${change.old_date ? formatDate(change.old_date) : "(ยังไม่ได้กำหนด)"} เป็นวันที่ ${change.new_date ? formatDate(change.new_date) : "—"}`;
@@ -3793,10 +3793,10 @@ function historyCardHtml(itemsHtml, footHtml = "") {
 
 // ฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว (ผู้ยื่น โมดูลที่เปิด requesterReplies) — ความเห็นและคำตอบเดิมอยู่ในประวัติเอกสาร
 // heading: false ในส่วนที่พับ (หัวที่พับบอกชื่อขั้นแล้ว) · optional: การ์ดมีงานบังคับอื่นด้วย จึงบอกว่าฟอร์มนี้ไม่บังคับ
-function stepReplyFormHtml(step, directory, { heading = true, optional = false } = {}) {
+function stepReplyFormHtml(step, directory, { heading = true, optional = false, short = false } = {}) {
   const by = step.acted_by ? personName(directory, step.acted_by) : "";
-  return `<div class="detail-action">${heading ? `<h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}${optional ? " (ถ้าต้องการ)" : ""}</h3>` : ""}<blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
-      <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
+  return `<div class="detail-action">${heading ? `<h3>${short ? "ขั้น" : "ตอบกลับความเห็นขั้น"} ${escapeHtml(step.step_name)}${optional ? " (ถ้าต้องการ)" : ""}</h3>` : ""}<blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" id="step-reply-form-${escapeHtml(step.id)}" data-step-id="${escapeHtml(step.id)}" novalidate>
+      <div class="field" data-field="message"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
       <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div>
     </form></div>`;
 }
@@ -3876,7 +3876,7 @@ async function renderRequestDetail(params) {
   const moduleWorkHtml = (detailView?.actionHtml ?? "").trim();
   const replyWorkHtml = [...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map((step) => (replies.some((reply) => reply.approval_step_id === step.id)
     ? `<details class="detail-reply-more"><summary>ตอบเพิ่มเติมถึงขั้น ${escapeHtml(step.step_name)}${moduleWorkHtml ? " (ถ้าต้องการ)" : ""}</summary>${stepReplyFormHtml(step, directory, { heading: false })}</details>`
-    : stepReplyFormHtml(step, directory, { optional: Boolean(moduleWorkHtml) }))).join("");
+    : stepReplyFormHtml(step, directory, { optional: Boolean(moduleWorkHtml), short: !moduleWorkHtml }))).join("");
   const actionWorkHtml = `${moduleWorkHtml}${replyWorkHtml}`.trim();
   const actionWorkTitle = moduleWorkHtml ? "สิ่งที่คุณต้องดำเนินการ" : "ตอบกลับความเห็น (ถ้าต้องการ)";
   const detailEntries = Object.entries(request.details ?? {});
@@ -4001,10 +4001,14 @@ async function renderRequestDetail(params) {
       await renderRequestDetail(params);
     } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
   });
+  document.querySelectorAll(".step-reply-form").forEach((form) => form.elements.message?.addEventListener("input", () => window.MNP_FORM_STEPS.clearFieldError(form, "message")));
   document.querySelectorAll(".step-reply-form").forEach((form) => form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = form.elements.message.value.trim();
-    if (!message) return showToast("กรุณาพิมพ์ข้อความตอบกลับ", "error");
+    if (!message) {
+      window.MNP_FORM_STEPS.showFieldErrors(form, [{ name: "message", message: "พิมพ์ข้อความตอบกลับ" }]);
+      return form.elements.message.focus();
+    }
     setFormBusy(form, true);
     try {
       const { error } = await sb.rpc("app_reply_to_step_comment", { p_step_id: form.dataset.stepId, p_message: message });
@@ -4894,7 +4898,7 @@ async function renderProfile() {
         : "ผู้ดูแลระบบอนุมัติก่อนจึงเปลี่ยน ระหว่างรอใช้รหัสผ่านเดิมได้"}</p>
       <div id="credential-message" role="status"></div>
       <form id="credential-form">
-        <div class="field"><label for="new-employee-no">รหัสพนักงาน${REQUIRED_MARK}</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากต้องการเปลี่ยนเฉพาะรหัสผ่าน</small></div>
+        <div class="field"><label for="new-employee-no">รหัสพนักงาน${REQUIRED_MARK}</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากเปลี่ยนเฉพาะรหัสผ่าน · ทุกคำขอต้องตั้งรหัสผ่านใหม่</small></div>
         <div class="field-row">
           <div class="field"><label for="new-password">รหัสผ่านใหม่${REQUIRED_MARK}</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
           <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่${REQUIRED_MARK}</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>

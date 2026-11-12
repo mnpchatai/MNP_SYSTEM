@@ -168,8 +168,12 @@ test("a role is written once per row, and cards with nothing to chart collapse t
 
 test("bar cards are marked for the two-column grid and wide tables are not", async () => {
   const page = await render({ section: "page" });
-  for (const card of ["stage", "phase", "machine", "tech"]) assert.match(page, new RegExp(`class="card nd-card nd-half" data-card="${card}"`));
-  for (const card of ["act", "deptrank"]) assert.match(page, new RegExp(`class="card nd-card" data-card="${card}"`));
+  // รอบรวม 18: งานค้างทุกใบอยู่ในตาราง "ต้องลงมือตอนนี้" แล้ว กราฟ "งานค้างอยู่ที่ใคร" ไม่ซ้ำ การ์ดขั้นตอนที่เหลือคนเดียวจึงเต็มแถว
+  assert.doesNotMatch(page, /data-card="stage"/, "every open job is already in the act-now table");
+  for (const card of ["machine", "tech"]) assert.match(page, new RegExp(`class="card nd-card nd-half" data-card="${card}"`));
+  for (const card of ["act", "phase", "deptrank"]) assert.match(page, new RegExp(`class="card nd-card" data-card="${card}"`));
+  // กรองตามขั้นอยู่: กราฟขั้นยังอยู่ให้ยกเลิกตัวกรองได้
+  assert.match(await render({ section: "page", search: "&stage=start" }), /class="card nd-card nd-half" data-card="stage"/);
   // รายการประกอบตัวเลข (เมื่อมีใบที่ไม่อยู่ใน act-now) เป็นการ์ดเต็มแถว
   assert.match(await render({ section: "page", status: "completed" }), /class="card nd-card" id="nd-drill"/);
 });

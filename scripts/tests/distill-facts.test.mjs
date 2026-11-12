@@ -181,7 +181,8 @@ test("the NCR hero states the reporter and issue date once, in the same meta lin
 test("the NCR register states the loss state once, in the loss column, and names the owner like a request row", () => {
   const ncr = read("modules/module-ncr.js");
   assert.match(ncr, /status: `<span class="register-badges">\$\{statusBadgeHtml\(row\)\}<\/span>/);
-  assert.match(ncr, /loss: `\$\{row\.lossPending \? '<span class="badge loss-pending-flag">รอข้อมูลความสูญเสีย<\/span>' : ""\}/);
+  // รอบ 18: คอลัมน์ชื่อ "ความสูญเสีย" อยู่แล้ว ป้ายในช่องจึงบอกแค่ "รอข้อมูล" (ชื่อเต็มใน title)
+  assert.match(ncr, /loss: `\$\{row\.lossPending \? '<span class="badge loss-pending-flag" title="รอข้อมูลความสูญเสีย">รอข้อมูล<\/span>' : ""\}/);
   assert.match(ncr, /return registerSubHtml\(`\$\{party\}\$\{progress\}`, `\$\{uiIcon\("user"\)\} `, `ผู้รับผิดชอบ: /);
   const dash = read("modules/module-ncr-dashboard.js");
   assert.doesNotMatch(dash, /">รอข้อมูลความสูญเสีย \$\{fmtCount/, "the assessed tile's fraction is not repeated as a pill");
@@ -349,4 +350,35 @@ test("round 16: the board tab stays for everyone (it searches machines and repor
   // กระดานบอกชื่อโมดูลในชื่อแท็บ · RubberFlow แถบเครื่องมือขยายเต็มแถบหัว
   assert.match(app, /shell\(content, "requests", "คำร้อง", selected \? `ติดตามสถานะ · \$\{requestTypeLabel\(selected\)\}` : "ติดตามสถานะทุกใบ"\)/);
   assert.match(read("styles.css"), /\.rf-page \.rf-head \.rf-toolbar \{ flex: 1 1 auto;/);
+});
+test("round 18: one due-date term, inline errors on the date and reply forms, and small consistency fixes", () => {
+  const mt = read("modules/module-mt.js");
+  // "กำหนดเสร็จ" คำเดียวบนหน้าจอ MT (ประวัติและการแจ้งเตือนในฐานข้อมูลใช้คำนี้อยู่แล้ว)
+  assert.doesNotMatch(mt, /"[^"]*วันที่คาดว่าจะเสร็จ[^"]*"|>[^<]*วันที่คาดว่าจะเสร็จ[^<]*</);
+  assert.doesNotMatch(app, /: "[^"]*วันที่คาดว่าจะเสร็จ/, "error messages too");
+  assert.match(mt, /id="expected-date-toggle" aria-expanded="false" aria-controls="expected-date-form">แก้กำหนดเสร็จ<\/button>/);
+  assert.match(mt, /id="expected-date-cancel">ยกเลิก<\/button>/);
+  // ข้อผิดพลาดใต้ช่อง แทน toast
+  assert.doesNotMatch(mt, /showToast\("กรุณาระบุวันที่คาดว่า/);
+  assert.match(mt, /showRepairFieldErrors\(form, \[\{ name: "expected_date", message: "เลือกกำหนดเสร็จใหม่" \}\]\)/);
+  assert.equal(mt.match(/showRepairFieldErrors\(form, \[\{ name: "expected_on",/g).length, 2);
+  assert.match(app, /window\.MNP_FORM_STEPS\.showFieldErrors\(form, \[\{ name: "message", message: "พิมพ์ข้อความตอบกลับ" \}\]\);/);
+  // การ์ดตอบกลับอย่างเดียว: หัวย่อยไม่พูด "ตอบกลับความเห็น" ซ้ำกับหัวการ์ด
+  assert.match(app, /stepReplyFormHtml\(step, directory, \{ optional: Boolean\(moduleWorkHtml\), short: !moduleWorkHtml \}\)/);
+  // ลิงก์ภายในไม่มีลูกศรลิงก์ภายนอก · คิวเว้นที่ช่องติ๊กให้ทุกแถว · อะไหล่บนจอคอมเป็นการ์ดสามแถว
+  assert.doesNotMatch(read("modules/module-bom.js"), /RubberFlow ↗/);
+  const css = read("styles.css");
+  assert.match(css, /:is\(ul, ol\):has\(> \.queue-item > \.queue-item-check\) > \.queue-item > \.queue-item-main:first-child \{ padding-left: 44px; \}/);
+  assert.match(css, /@container \(min-width: 520px\) and \(max-width: 760px\) \{\r?\n\s+\.parts-table tr\.parts-row \{ grid-template-columns: repeat\(4, minmax\(0, 1fr\)\); \}/);
+  // ฟอร์มขอแก้รหัสบอกตรงตาม RPC และคำช่วยเหลือบอกตำแหน่งประวัติถูกทั้งจอคอมและมือถือ
+  assert.match(app, /ทุกคำขอต้องตั้งรหัสผ่านใหม่<\/small>/);
+  // auditor: ฟอร์มที่บอกข้อผิดใต้ช่องต้อง novalidate (ไม่งั้น bubble ของเบราว์เซอร์ดักก่อน) และ id ไม่ซ้ำต่อฟอร์ม
+  assert.match(mt, /<form class="progress-order-form" id="progress-order-\$\{escapeHtml\(step\.id\)\}" data-step="\$\{escapeHtml\(step\.id\)\}" novalidate>/);
+  assert.match(mt, /<form class="progress-reschedule-form hidden" id="progress-reschedule-\$\{escapeHtml\(step\.id\)\}" data-step="\$\{escapeHtml\(step\.id\)\}" novalidate>/);
+  assert.match(app, /<form class="step-reply-form" id="step-reply-form-\$\{escapeHtml\(step\.id\)\}" data-step-id="\$\{escapeHtml\(step\.id\)\}" novalidate>/);
+  assert.match(app, /form\.elements\.message\?\.addEventListener\("input", \(\) => window\.MNP_FORM_STEPS\.clearFieldError\(form, "message"\)\)/);
+  // กฎมือถือของชิปงานชนะกฎหลัก (เจาะจงกว่า) · แดชบอร์ดไม่มีคำเดิม
+  assert.match(css, /@media \(max-width: 760px\) \{ \.queue-item-top \.queue-item-due \{ margin-left: 0; \} \}/);
+  assert.doesNotMatch(read("modules/module-mt-dashboard.js"), /วันที่คาดว่าจะเสร็จ/);
+  assert.match(read("modules/shortcut-help.js"), /"ประวัติเอกสาร \(ใครทำอะไรเมื่อไร\) อยู่คอลัมน์ขวา บนมือถืออยู่ท้ายหน้า"/);
 });

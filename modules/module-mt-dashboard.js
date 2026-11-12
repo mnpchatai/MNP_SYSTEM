@@ -379,8 +379,8 @@
   const definitionsHtml = `<details class="nd-defs"><summary>นิยามที่ใช้ในหน้านี้</summary><div><ol>
     <li><b>สองฐานข้อมูล:</b> งานค้าง เลยกำหนด ด่วน และตาราง "งานค้างอยู่ที่ใคร" นับทุกใบที่ยังไม่จบ ไม่ขึ้นกับช่วงเวลา ส่วนใบที่แจ้ง ปิดงาน เวลาเฉลี่ย ปิดทันกำหนด และตรวจรับ นับจากใบที่แจ้งในช่วงที่เลือก</li>
     <li><b>ยังไม่จบ:</b> ตรงกับ "ยังไม่จบ N รายการ" ที่หัวโมดูล ได้แก่ รออนุมัติ ขอข้อมูลเพิ่ม รอมอบหมายช่าง รอช่างเริ่มงาน กำลังซ่อม และรอผู้แจ้งตรวจรับ ไม่นับฉบับร่างและใบที่ยกเลิก</li>
-    <li><b>เลยกำหนดเสร็จ:</b> เฉพาะใบที่อยู่ในมือช่าง (รอช่างเริ่มงาน/กำลังซ่อม) และเลยวันที่คาดว่าจะเสร็จล่าสุด ใบที่รอผู้อนุมัติหรือผู้แจ้งไม่นับ เพราะช่างทำอะไรไม่ได้</li>
-    <li><b>ปิดทันกำหนด:</b> ปิดงานภายในวันที่คาดว่าจะเสร็จล่าสุด (ถ้าช่างเลื่อนวัน ใช้วันที่หลังเลื่อน) ใบที่ยังเลยกำหนดอยู่นับว่าไม่ทัน ทัน % = ทัน ÷ (ปิดแล้วที่มีกำหนดเสร็จ + ใบที่ยังเลยกำหนด)</li>
+    <li><b>เลยกำหนดเสร็จ:</b> เฉพาะใบที่อยู่ในมือช่าง (รอช่างเริ่มงาน/กำลังซ่อม) และเลยกำหนดเสร็จล่าสุด ใบที่รอผู้อนุมัติหรือผู้แจ้งไม่นับ เพราะช่างทำอะไรไม่ได้</li>
+    <li><b>ปิดทันกำหนด:</b> ปิดงานภายในกำหนดเสร็จล่าสุด (ถ้าช่างเลื่อนกำหนด ใช้วันที่หลังเลื่อน) ใบที่ยังเลยกำหนดอยู่นับว่าไม่ทัน ทัน % = ทัน ÷ (ปิดแล้วที่มีกำหนดเสร็จ + ใบที่ยังเลยกำหนด)</li>
     <li><b>เวลาแจ้ง → ปิดงาน และเวลาแต่ละช่วง:</b> นับเฉพาะใบที่ปิดงานแล้ว (เวลาแต่ละช่วงนับเมื่อช่วงนั้นเดินครบ) จากประวัติสถานะ ใบที่ไม่อนุมัติไม่นับเวลา</li>
     <li><b>ตรวจรับไม่ผ่าน:</b> ใบที่เคยถูกตรวจรับไม่ผ่านอย่างน้อยหนึ่งครั้ง ÷ ใบที่ถูกตรวจรับแล้วทั้งหมด</li>
     <li><b>เครื่องจักรที่เสียบ่อย / แผนกที่แจ้งซ่อมบ่อย:</b> นับเฉพาะใบแจ้งซ่อมในช่วงที่เลือก ไม่นับใบคำร้อง ใบที่ไม่อนุมัติ และฉบับร่าง เครื่องจักรแยกด้วย แผนกที่แจ้ง + รหัสเครื่อง (รหัสเดียวกันต่างแผนกถือเป็นคนละเครื่อง) ใบที่เลือก "ไม่มี" หรือ "สร้างใหม่" ไม่นับเป็นเครื่อง</li>
@@ -404,6 +404,7 @@
     // นอกนั้นรายการด้านล่างไม่พิมพ์ซ้ำใบที่ "ต้องลงมือตอนนี้" แสดงแล้ว (แต่ยังนับในจำนวนทั้งหมด)
     const showAct = basis !== "backlog";
     const actTop = showAct ? model.priority(open, 10) : [];
+    const stageRepeatsAct = showAct && !filters.stage && open.length > 0 && open.length <= actTop.length;
     return `<div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE}</h1><p>ไม่นับใบที่ยกเลิก · เวอร์ชันทดสอบ</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
@@ -411,8 +412,8 @@
         <div class="nd-summary" role="status"></div>
         <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
         ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop)}</section>` : ""}
-        <section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>
-        <section class="card nd-card nd-half" data-card="phase">${phaseHtml(phases)}</section>
+        ${stageRepeatsAct ? "" : `<section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>`}
+        <section class="card nd-card${stageRepeatsAct ? "" : " nd-half"}" data-card="phase">${phaseHtml(phases)}</section>
         <section class="card nd-card nd-half" data-card="machine">${machineHtml(machines, filters)}</section>
         <section class="card nd-card nd-half" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" data-card="deptrank">${deptRankHtml(depts, filters)}</section>
