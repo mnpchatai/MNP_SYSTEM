@@ -331,7 +331,7 @@
     // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
     if (store.isRemote()) {
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-bom-sync>${escapeHtml(syncText())}</span>
-        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow</a></div></div>`;
+        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="ไปที่ใบสั่งผลิตของแผนก RB ใน RubberFlow">ใบสั่งผลิต (RubberFlow)</a></div></div>`;
     }
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
     const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
@@ -340,7 +340,7 @@
     return `<div class="rf-toolbar">
         ${persona}
         <div class="rf-row">
-          <a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="เปิด RubberFlow (ใบสั่งผลิตของแผนก RB)">RubberFlow</a>
+          <a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="ไปที่ใบสั่งผลิตของแผนก RB ใน RubberFlow">ใบสั่งผลิต (RubberFlow)</a>
         </div>
       </div>`;
   }

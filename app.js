@@ -1323,7 +1323,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type), isFinalDecision(type, request.status))}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type), isFinalDecision(type, request.status))}${["assigned", "in_progress"].includes(request.status) && request.work_expected_date && request.work_expected_date < bangkokToday() ? `<span class="badge urgent-flag" title="กำหนดเสร็จ ${escapeHtml(formatDate(request.work_expected_date))}">เลยกำหนดเสร็จ</span>` : ""}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
@@ -1646,7 +1646,7 @@ async function renderAuth(message = "") {
       <div class="field"><label for="department">แผนก${req}</label><select class="input" id="department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
       <div class="field"><label for="desired-role">ตำแหน่ง${req}</label><select class="input" id="desired-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
     </div>
-    <div class="field"><label for="job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
+    <div class="field"><label for="job-title">ตำแหน่งที่แสดงใต้ชื่อ (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
     <div class="field-row">
       <div class="field"><label for="email">อีเมล${req}</label><input class="input" id="email" name="email" type="email" maxlength="200" required autocomplete="email"></div>
       <div class="field"><label for="phone">เบอร์ติดต่อ${req}</label><input class="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" pattern="[0-9+\\- ]{9,40}" title="กรอกเบอร์โทรอย่างน้อย 9 หลัก (ตัวเลข, +, - หรือเว้นวรรค)" placeholder="เช่น 0812345678" required></div>
@@ -2046,12 +2046,14 @@ function sandboxBannerHtml() {
   if (!isSandboxMode()) return "";
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
+  // RubberFlow/BOM รีเซ็ตข้อมูลด้วยเครื่องมือของตัวเอง ปุ่มล้างข้อมูล NCR ทดสอบจึงไม่ขึ้นที่นั่น (มือถือเหลือแถบสั้น)
+  const showPurge = !["rubberflow", "bom"].includes(currentRoute().path);
   return `<div class="sandbox-banner" role="status">
     <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>
-      <button class="btn danger small" type="button" id="sandbox-purge">ล้างข้อมูล NCR ทดสอบ</button>
+      ${showPurge ? '<button class="btn danger small" type="button" id="sandbox-purge">ล้างข้อมูล NCR ทดสอบ</button>' : ""}
       <button class="btn small" type="button" id="sandbox-exit">ออกจากโหมดทดสอบ</button>
     </div>
   </div>`;
@@ -2258,9 +2260,9 @@ function homeQueueItems(pending, repairTasks, ncrTasks) {
   return window.MNP_HOME_QUEUE.sortQueue([
     ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
     ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
-    // เกินกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ (step_since จาก module-ncr.js loadHomeItems) เหมือนแดชบอร์ด NCR
+    // เลยกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ (step_since จาก module-ncr.js loadHomeItems) เหมือนแดชบอร์ด NCR
     ...ncrTasks.map(({ ncr, task, overdue }) => ({
-      kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เกินกำหนดตอบ" : null,
+      kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เลยกำหนดตอบ" : null,
       // ชื่อเดียวกับ request_types.name_th ของ NCR_CAR และเมนูของโมดูล
       request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR/CAR" } },
       priority: overdue ? "high" : null, createdAt: ncr.step_since ?? ncr.updated_at ?? ncr.created_at,
@@ -2390,7 +2392,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const request = item.request;
   const type = relation(request.request_type);
   const rules = window.MNP_HOME_QUEUE;
-  // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เกินกำหนดตอบ)
+  // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เลยกำหนดตอบ)
   const flag = item.flag ?? (["high", "urgent"].includes(request.priority) ? priorityLabel(request.priority, isRepairType(type)) : null);
   // ประเภทบอกด้วยสีและไอคอนของแถวกับคำนำหน้าเลขที่แล้ว ชื่อเต็มอยู่ใน title ของไอคอนและข้อความสำหรับผู้อ่านหน้าจอ · อายุงานอยู่ข้างชิปงาน
   const meta = item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : "";
@@ -2733,7 +2735,7 @@ function syncQueueBulk() {
   const all = document.querySelector("#queue-select-all");
   if (all) { all.checked = count > 0 && count === total; all.indeterminate = count > 0 && count < total; }
   const tooMany = count > BULK_APPROVE_LIMIT;
-  // จำนวนที่เลือกอยู่บนปุ่มแล้ว บรรทัดนี้ขึ้นเฉพาะเมื่อเลือกเกินกำหนด
+  // จำนวนที่เลือกอยู่บนปุ่มแล้ว บรรทัดนี้ขึ้นเฉพาะเมื่อเลือกเลยกำหนด
   const text = document.querySelector("#queue-bulk-text");
   text.hidden = !tooMany;
   text.textContent = tooMany ? `เลือกได้ครั้งละไม่เกิน ${BULK_APPROVE_LIMIT} รายการ` : "";
@@ -3048,19 +3050,24 @@ function knownRequestStatuses(params) {
 async function requestListPanel(params, typeId, { departmentId = null, search = "" } = {}) {
   const mineOnly = params.get("scope") === "mine";
   let query = sb.from("requests")
-    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id),current_step,approval_steps(step_order,step_name,status)")
+    .select("id,request_no,title,description,status,priority,created_at,updated_at,needed_date,work_expected_date,machine_code,machine_name,requester_id,assignee_id,requester_name,request_type:request_types(name_th,code,uses_repair_workflow),request_technicians(technician_id),current_step,approval_steps(step_order,step_name,status)")
     .order("created_at", { ascending: false });
   if (mineOnly) query = query.eq("requester_id", state.employee.id);
   if (typeId) query = query.eq("request_type_id", typeId);
   if (departmentId) query = query.eq("department_id", departmentId);
-  // เลขที่ใบเป็นข้อความตายตัว ค้นแบบมีคำนี้อยู่ตรงไหนก็ได้; escape อักขระ wildcard ของ LIKE ไม่ให้ผู้ใช้พิมพ์ % _ แล้วได้ผลเกินคาด
-  if (search) query = query.ilike("request_no", `%${search.replace(/[\\%_]/g, "\\$&")}%`);
   const statuses = knownRequestStatuses(params);
   if (statuses.length) query = query.in("status", statuses);
   const [{ data, error }, directory] = await Promise.all([query, loadEmployeeDirectory()]);
   if (error) throw error;
-  const rows = (data ?? []).filter((row) => deptModuleAllowed(relation(row.request_type)?.code));
-  return `<section class="request-list-panel">${requestRows(rows, { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
+  // ค้นในเลขที่ ชื่อเรื่อง เครื่องจักร และผู้แจ้ง (ไม่สนตัวพิมพ์) แบบเดียวกับทะเบียน NCR · RLS โหลดทั้งโมดูลอยู่แล้ว จึงกรองบนเครื่อง
+  const needle = String(search ?? "").trim().toLocaleLowerCase("th-TH");
+  const matchesSearch = (row) => !needle || [row.request_no, row.title, row.machine_code, row.machine_name, row.requester_name, personName(directory, row.requester_id)]
+    .some((value) => String(value ?? "").toLocaleLowerCase("th-TH").includes(needle));
+  const rows = (data ?? []).filter((row) => deptModuleAllowed(relation(row.request_type)?.code) && matchesSearch(row));
+  const capped = (data ?? []).length >= 1000
+    ? `<p class="muted small board-note">แสดง 1,000 ใบล่าสุด${typeId ? ` หาใบที่เก่ากว่าได้ที่ <a href="${escapeHtml(requestCenterUrl(params, { view: "board", scope: null }))}">ติดตามสถานะทุกใบ</a>` : ""}</p>`
+    : "";
+  return `<section class="request-list-panel">${capped}${requestRows(rows, { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
 }
 
 async function renderRequests(params) {
@@ -3108,7 +3115,7 @@ async function renderRequests(params) {
     const department = selectedFilterDepartment(params, departments);
     // ช่องค้นหา/แผนกมีเฉพาะโมดูลที่ประกาศตัวกรอง — q ที่ค้างจากกระดานของโมดูลอื่นต้องไม่ย่อรายการที่มองไม่เห็นตัวกรอง
     const search = departments ? (params.get("q") ?? "").trim() : "";
-    list = `${requestListFilters(params, { departments, placeholder: "ค้นหาเลขที่ใบแจ้งซ่อม", search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
+    list = `${requestListFilters(params, { departments, placeholder: isRepairType(selected) ? "ค้นหาเลขที่ใบ ชื่อเรื่อง เครื่องจักร หรือผู้แจ้ง" : "ค้นหาเลขที่ใบ ชื่อเรื่อง หรือผู้แจ้ง", search: Boolean(departments), repair: isRepairType(selected), module: true })}${await requestListPanel(params, selected.id, { departmentId: department?.id ?? null, search })}`;
   }
   const ncrModule = requestModule("NCR_CAR");
   if (selected.code === "NCR_CAR" && ncrModule?.enabled) {
@@ -3924,7 +3931,7 @@ async function renderRequestDetail(params) {
     <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}">‹ ${escapeHtml(type ? requestTypeLabel(type) : "คำร้อง")}</a>
     <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
-        <span class="eyebrow">${formCode ? `<span class="nowrap">${escapeHtml(formCode)} ·</span> ` : ""}<span class="nowrap">${escapeHtml(request.request_no)}</span></span>
+        <span class="eyebrow">${formCode ? `<span class="nowrap">${escapeHtml(formCode)}</span><span class="eyebrow-sep"> · </span>` : ""}<span class="nowrap">${escapeHtml(request.request_no)}</span></span>
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair, isFinalDecision(type, request.status))}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${headingTextHtml(request.title)}</h1>
@@ -3950,7 +3957,7 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">${requestClosed ? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์เพิ่ม"}</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit" disabled>อัปโหลด</button><p class="attachment-pending" role="status" hidden></p></form></details>
+        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">${requestClosed ? (attachments.length ? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์หลังปิดใบ") : attachments.length ? "แนบไฟล์เพิ่ม" : "แนบไฟล์"}</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit" disabled>อัปโหลด</button><p class="attachment-pending" role="status" hidden></p></form></details>
         ${requestFacts ? `<details class="card detail-section" open><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
@@ -4873,7 +4880,7 @@ async function renderProfile() {
           <div class="field"><label for="profile-email">อีเมล${REQUIRED_MARK}</label><input class="input" id="profile-email" name="email" type="email" maxlength="200" value="${escapeHtml(employee.email ?? "")}" required></div>
           <div class="field"><label for="profile-phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
         </div>
-        <div class="field"><label for="profile-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}" title="แสดงใต้ชื่อของคุณ ไม่มีผลกับสิทธิ์"></div>
+        <div class="field"><label for="profile-job-title">ตำแหน่งที่แสดงใต้ชื่อ (ถ้ามี)</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}" title="แสดงใต้ชื่อของคุณ ไม่มีผลกับสิทธิ์"></div>
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">แผนก${REQUIRED_MARK}</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
@@ -5435,7 +5442,7 @@ async function renderAdmin(params) {
             <div class="field"><label for="add-email">อีเมล${req}</label><input class="input" id="add-email" name="email" type="email" maxlength="200" autocomplete="off" required></div>
             <div class="field"><label for="add-phone">เบอร์ติดต่อ${req}</label><input class="input" id="add-phone" name="phone" type="tel" inputmode="tel" maxlength="40" pattern="[0-9+\\- ]{9,40}" title="กรอกเบอร์โทรอย่างน้อย 9 หลัก (ตัวเลข, +, - หรือเว้นวรรค)" placeholder="เช่น 0812345678" required></div>
           </div>
-          <div class="field"><label for="add-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="add-job-title" name="job_title" maxlength="120"></div>
+          <div class="field"><label for="add-job-title">ตำแหน่งที่แสดงใต้ชื่อ (ถ้ามี)</label><input class="input" id="add-job-title" name="job_title" maxlength="120"></div>
           <div class="field-row">
             <div class="field"><label for="add-department">แผนก${req}</label><select class="input" id="add-department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
             <div class="field"><label for="add-role">ตำแหน่ง${req}</label><select class="input" id="add-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
@@ -5464,7 +5471,7 @@ async function renderAdmin(params) {
             <div class="field"><label for="edit-email">อีเมล${req}</label><input class="input" id="edit-email" name="email" type="email" maxlength="200" value="${escapeHtml(editing.email ?? "")}" required></div>
             <div class="field"><label for="edit-phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="edit-phone" name="phone" maxlength="40" value="${escapeHtml(editing.phone ?? "")}"></div>
           </div>
-          <div class="field"><label for="edit-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
+          <div class="field"><label for="edit-job-title">ตำแหน่งที่แสดงใต้ชื่อ (ถ้ามี)</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
           <div class="field-row">
             <div class="field"><label for="edit-department">แผนก${REQUIRED_MARK}</label><select class="input" id="edit-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
             <div class="field"><label for="edit-role">ตำแหน่ง${REQUIRED_MARK}</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>

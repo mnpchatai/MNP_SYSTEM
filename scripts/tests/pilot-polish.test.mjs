@@ -59,8 +59,9 @@ test("waiting badges are amber with the clock, one name per role and field, back
 
 test("the request number in the detail header never breaks mid-number", () => {
   // รอบ 17: รหัสฟอร์มและเลขที่ห่อด้วย .nowrap แยกกัน บนมือถือจึงตัดบรรทัดได้แค่ตรง " · " และป้ายสถานะอยู่แถวเดียวกัน
-  assert.match(app, /<span class="eyebrow">\$\{formCode \? `<span class="nowrap">\$\{escapeHtml\(formCode\)\} ·<\/span> ` : ""\}<span class="nowrap">\$\{escapeHtml\(request\.request_no\)\}<\/span><\/span>/);
-  assert.match(css, /\.request-detail-kicker \{ flex-wrap: nowrap; align-items: center; gap: 8px; \}\r?\n\s+\.request-detail-kicker \.eyebrow \{ flex: 1 1 0; min-width: 88px; letter-spacing: \.04em; white-space: normal; \}/, "the status badge stays on the eyebrow row on a phone");
+  assert.match(app, /<span class="eyebrow">\$\{formCode \? `<span class="nowrap">\$\{escapeHtml\(formCode\)\}<\/span><span class="eyebrow-sep"> · <\/span>` : ""\}<span class="nowrap">\$\{escapeHtml\(request\.request_no\)\}<\/span><\/span>/);
+  assert.match(css, /\.request-detail-kicker \.eyebrow-sep \{ display: none; \}/, "no dangling separator when the code and number stack on a phone");
+  assert.match(css, /\.request-detail-kicker \{ flex-wrap: nowrap; align-items: center; gap: 8px; \}\r?\n\s+\.request-detail-kicker \.eyebrow \{ flex: 1 1 0; min-width: 88px; display: flex; flex-direction: column; letter-spacing: \.04em; white-space: normal; \}/, "the status badge stays on the eyebrow row on a phone");
 });
 
 test("the create flow has no step label that contradicts the form's own step count", () => {

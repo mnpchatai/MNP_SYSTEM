@@ -139,7 +139,8 @@ test("request and NCR details share one hero: back link, eyebrow with the status
   // รอบ 15: ลิงก์กลับขึ้นแถบบนแทนป้ายทางเดิน จึงบอกชื่อรายการที่จะกลับไป
   assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/);
   assert.match(app, /">‹ \$\{escapeHtml\(type \? requestTypeLabel\(type\) : "คำร้อง"\)\}<\/a>/);
-  assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">\$\{escapeHtml\(ncr\.form_code\)\} ·<\/span> <span class="nowrap">\$\{escapeHtml\(ncr\.ncr_no\)\}<\/span><\/span>/);
+  // รอบรวม 19: ตัวคั่นแยกเป็น span ซ่อนบนมือถือ (รหัสฟอร์มบรรทัดหนึ่ง เลขที่บรรทัดสอง ไม่มี " ·" ห้อย)
+  assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">\$\{escapeHtml\(ncr\.form_code\)\}<\/span><span class="eyebrow-sep"> · <\/span><span class="nowrap">\$\{escapeHtml\(ncr\.ncr_no\)\}<\/span><\/span>/);
 });
 
 // ---- รอบ 11: ส่วนประกอบกลางที่ MT และ NCR ใช้ร่วมกัน ----
@@ -308,7 +309,8 @@ test("round 15: picked files show an unsent state and a leave warning; closed re
   assert.match(app, /button\.classList\.toggle\("secondary", !count\);/, "upload becomes the primary button while files wait");
   assert.match(app, /confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด"/);
   assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!pendingAttachmentCount\(\)\) return;/);
-  assert.match(app, /\$\{requestClosed \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์เพิ่ม"\}/);
+  // รอบรวม 19: ยังไม่มีไฟล์ไม่พูดว่า "เพิ่ม"
+  assert.match(app, /\$\{requestClosed \? \(attachments\.length \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์หลังปิดใบ"\) : attachments\.length \? "แนบไฟล์เพิ่ม" : "แนบไฟล์"\}/);
   // ไม่ถามระหว่างกำลังอัปโหลด · ปุ่ม/ท่าทางย้อนกลับถามด้วย (Navigation API) แล้วย้อนกลับต่อเมื่อยืนยัน
   assert.match(app, /if \(!form \|\| form\.hasAttribute\("aria-busy"\)\) return 0;/);
   assert.match(app, /window\.navigation\?\.addEventListener\("navigate", \(event\) => \{\r?\n  if \(event\.navigationType !== "traverse" \|\| !event\.cancelable\) return;/);
@@ -381,4 +383,34 @@ test("round 18: one due-date term, inline errors on the date and reply forms, an
   assert.match(css, /@media \(max-width: 760px\) \{ \.queue-item-top \.queue-item-due \{ margin-left: 0; \} \}/);
   assert.doesNotMatch(read("modules/module-mt-dashboard.js"), /วันที่คาดว่าจะเสร็จ/);
   assert.match(read("modules/shortcut-help.js"), /"ประวัติเอกสาร \(ใครทำอะไรเมื่อไร\) อยู่คอลัมน์ขวา บนมือถืออยู่ท้ายหน้า"/);
+});
+test("batch 19: one search across list fields, NCR responders read the problem in the action card, one overdue verb, and phone layout fixes", () => {
+  // รายการของโมดูลค้นเลขที่ ชื่อเรื่อง เครื่องจักร และผู้แจ้ง (กรองบนเครื่องแบบเดียวกับทะเบียน NCR)
+  assert.doesNotMatch(app, /query\.ilike\("request_no"/);
+  assert.match(app, /const matchesSearch = \(row\) => !needle \|\| \[row\.request_no, row\.title, row\.machine_code, row\.machine_name, row\.requester_name, personName\(directory, row\.requester_id\)\]/);
+  assert.match(app, /placeholder: isRepairType\(selected\) \? "ค้นหาเลขที่ใบ ชื่อเรื่อง เครื่องจักร หรือผู้แจ้ง" : "ค้นหาเลขที่ใบ ชื่อเรื่อง หรือผู้แจ้ง"/);
+  // NCR: ผู้ตอบ/ผู้พิจารณาอ่านรายละเอียดที่พบในการ์ดงาน ส่วนที่ 1 ไม่บอกซ้ำ · กำหนดตอบอยู่ใต้หัวฟอร์ม
+  const ncr = read("modules/module-ncr.js");
+  // ทุกงานในการ์ด (ตอบ พิจารณา ระบุผู้ตอบ ความสูญเสีย) เปิดด้วยรายละเอียดที่พบ
+  assert.match(ncr, /const briefInAction = Boolean\(String\(ncr\.description \?\? ""\)\.trim\(\)\) && work\.length > 0;/);
+  // รายการ MT บอกใบที่เลยกำหนดเสร็จ (ใบในมือช่างเท่านั้น)
+  assert.match(app, /\["assigned", "in_progress"\]\.includes\(request\.status\) && request\.work_expected_date && request\.work_expected_date < bangkokToday\(\) \? `<span class="badge urgent-flag" title="กำหนดเสร็จ/);
+  assert.match(app, /needed_date,work_expected_date,machine_code/);
+  assert.match(ncr, /\$\{briefInAction \? "" : partField\("รายละเอียด \(ปัญหา สเปค และค่าที่วัดได้จริง\)"/);
+  assert.match(ncr, /<h3>ส่วนที่ 3 — ตอบ NCR<\/h3>\r?\n\s+\$\{responseDueNote\(ncr\)\}/);
+  // "เลยกำหนด" คำเดียว
+  for (const source of [ncr, app, read("modules/module-ncr-dashboard.js"), read("modules/shortcut-help.js")]) assert.doesNotMatch(source, /"[^"]*เกินกำหนด|>[^<]*เกินกำหนด/);
+  // ข้อผิดของตัวเลือกไม่ซ้ำข้อความตัวเลือก · กลุ่มช่างขอบแดง · แถวอะไหล่แถวเดียวไม่มีปุ่มลบ · ปุ่มปิดช่วยเหลืออยู่ในจอ
+  assert.match(mt, /message: "ยังไม่ได้เลือกการดำเนินงาน" \}/);
+  assert.match(css, /\[data-field="technician_ids"\]:has\(> \.field-error\) \.tech-picker \{/);
+  assert.match(css, /#finish-parts-rows:not\(:has\(\.parts-row ~ \.parts-row\)\) \.parts-row-remove \{ display: none; \}/);
+  assert.match(css, /\.shortcut-dialog \.confirm-dialog-actions \{ position: sticky; bottom: 0;/);
+  // ปุ่มส่งของฟอร์มงานติดขอบล่างบนจอคอม · แถบกราฟบนมือถือเต็มความกว้าง
+  assert.match(css, /@media \(min-width: 761px\) \{\r?\n\s+\.detail-actions \.form-actions \{ position: sticky; bottom: 0;/);
+  assert.match(css, /\.nd-brow \.nd-trk \{ grid-column: 1 \/ -1; grid-row: 2; \}/);
+  // ชื่อช่องโปรไฟล์บอกว่าแสดงที่ไหน · "อื่น ๆ" · โหมดทดสอบไม่มีปุ่มล้าง NCR บน RubberFlow/BOM · ปุ่มใน BOM บอกปลายทาง
+  assert.match(app, /ตำแหน่งที่แสดงใต้ชื่อ \(ถ้ามี\)<\/label>/);
+  assert.doesNotMatch(ncr, /อื่นๆ/);
+  assert.match(app, /const showPurge = !\["rubberflow", "bom"\]\.includes\(currentRoute\(\)\.path\);/);
+  assert.match(read("modules/module-bom.js"), />ใบสั่งผลิต \(RubberFlow\)<\/a>/);
 });
