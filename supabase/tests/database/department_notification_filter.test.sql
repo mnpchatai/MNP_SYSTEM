@@ -8,7 +8,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(33);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------------------
 select has_table('private', 'department_notification_modules', 'the department allowlist table exists');
@@ -89,6 +89,8 @@ insert into public.notifications (id, recipient_id, request_id, title, body, act
   ('93100000-0000-0000-0000-0000000000d8', '93100000-0000-0000-0000-000000000001', null, 'digest empty', 'b', '/', 'reminder', '[]'),
   ('93100000-0000-0000-0000-0000000000d9', '93100000-0000-0000-0000-000000000001', null, 'digest malformed', 'b', '/', 'reminder',
    '[{"item_type":"request","item_id":"not-a-uuid"},"x"]'),
+  ('93100000-0000-0000-0000-0000000000db', '93100000-0000-0000-0000-000000000001', null, 'digest no type', 'b', '/', 'reminder',
+   '[{"item_id":"93100000-0000-0000-0000-000000000011"}]'),
   -- แผนกอื่น: ไม่จำกัด
   ('93100000-0000-0000-0000-0000000000c1', '93100000-0000-0000-0000-000000000003', '93100000-0000-0000-0000-000000000013', 'other mg', 'b', '/requests/93100000-0000-0000-0000-000000000013', 'event', null),
   ('93100000-0000-0000-0000-0000000000c2', '93100000-0000-0000-0000-000000000003', null, 'other ncr', 'b', '/ncr/93100000-0000-0000-0000-000000000099', 'event', null);
@@ -153,9 +155,13 @@ select is(
   'skipped/DEPARTMENT_FILTERED/skipped/DEPARTMENT_FILTERED', 'ID staff: a malformed digest is skipped without failing the insert'
 );
 select is(
+  (select concat_ws('/', email_status, email_error, push_status, push_error) from public.notifications where id = '93100000-0000-0000-0000-0000000000db'),
+  'skipped/DEPARTMENT_FILTERED/skipped/DEPARTMENT_FILTERED', 'ID staff: a digest item without item_type is skipped (fails closed)'
+);
+select is(
   (select count(*)::integer from public.notifications
    where id::text like '93100000-0000-0000-0000-0000000000d%' and read_at is null),
-  9, 'skipped notifications are still stored in the app (unread)'
+  10, 'skipped notifications are still stored in the app (unread)'
 );
 
 -- แผนกอื่นไม่เปลี่ยน
@@ -221,7 +227,7 @@ select is(
 );
 select is(
   (select email_status || '/' || push_status from public.notifications where id = '93100000-0000-0000-0000-0000000000d3'),
-  'skipped/skipped', 'rows created while the employee was in department ID stay skipped'
+  'rows skipped while the employee was in department ID are not woken up after the move'
 );
 select ok(
   private.department_notification_allowed('93100000-0000-0000-0000-0000000000ff', null, '/admin', null),
