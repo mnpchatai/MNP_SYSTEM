@@ -435,6 +435,8 @@
     input.setCustomValidity("");
     if (files.length && input.multiple) showStatus(input, "done", describeBatch(files, files));
     else showStatus(input, "idle", "");
+    // ไม่ยิง change (จะเตรียมรูปและวาดตัวอย่างใหม่ทั้งชุด) แต่บอกผู้ฟังว่าชุดไฟล์เปลี่ยน เช่น ปุ่มอัปโหลดใน app.js
+    input.dispatchEvent(new Event("mnp:files-changed", { bubbles: true }));
     return files;
   }
 
@@ -482,6 +484,7 @@
       } catch (error) {
         if (latest.get(input) !== sequence) return;
         input.value = "";
+        input.dispatchEvent(new Event("mnp:files-changed", { bubbles: true }));
         const message = error instanceof Error && error.message ? error.message : MESSAGES.convertFailed;
         showStatus(input, "error", message);
         notify(message, "error");

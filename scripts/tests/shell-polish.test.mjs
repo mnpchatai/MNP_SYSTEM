@@ -72,7 +72,7 @@ test("a module list has one scope control: mine is a subset of what I may see, t
   context.window = context;
   vm.runInContext(read("modules/request-center.js"), context);
   const tabs = load("requestsViewTabs", { escapeHtml, requestCenterUrl: context.MNP_REQUEST_CENTER.url });
-  const parse = (html) => [...html.matchAll(/<a class="view-tab( active)?"(?: aria-current="page")? href="([^"]+)">([^<]+)<\/a>/g)].map((match) => ({ active: Boolean(match[1]), href: match[2].replaceAll("&amp;", "&"), label: match[3] }));
+  const parse = (html) => [...html.matchAll(/<a class="view-tab( active)?"(?: aria-current="page")? href="([^"]+)" title="[^"]+">([^<]+)<\/a>/g)].map((match) => ({ active: Boolean(match[1]), href: match[2].replaceAll("&amp;", "&"), label: match[3] }));
   const base = parse(tabs(new URLSearchParams("type=t-mt&status=pending_assign")));
   assert.deepEqual(base.map((tab) => tab.label), ["ที่ฉันมีสิทธิ์ดู", "ที่ฉันแจ้ง", "ติดตามสถานะทุกใบ"]);
   assert.deepEqual(base.map((tab) => tab.active), [true, false, false]);

@@ -76,7 +76,7 @@
   }
   const machineTitle = (rows, key) => {
     const row = rows.find((item) => item.machineKey === key);
-    return row ? `${String(row.machine_code).trim()} (${row.dept || "—"})` : key;
+    return row ? `${machineLabelOf(row.machine_code, row.machine_name)} · แผนก ${row.dept || "—"}` : key;
   };
 
   async function allRows(makeQuery) {
@@ -274,7 +274,7 @@
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่จบ เรียงจากเลยกำหนด (วันเริ่มงานหรือวันเสร็จที่หัวหน้าช่างมอบหมาย) ก่อน แล้วด่วน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
         const stage = model.STAGE_BY_KEY[row.stage];
-        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · ${esc(row.dept || "—")}</span></td><td>${esc(stage?.label ?? "")}${actionOwner(row) ? `<br><span class="nd-muted">${esc(actionOwner(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td>${dueCell(row)}</td></tr>`;
+        return `<tr><td><a class="request-no" href="#/request?id=${encodeURIComponent(row.id)}">${esc(row.request_no)}</a>${row.isUrgent ? ` <span class="badge urgent-flag">ด่วน</span>` : ""}${latePill(row)}<br><span class="nd-muted">${esc(machineText(row))} · แผนก ${esc(row.dept || "—")}</span></td><td>${esc(stage?.label ?? "")}${actionOwner(row) ? `<br><span class="nd-muted">${esc(actionOwner(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${fmtNumber(row.daysInStatus)} วัน</td><td data-label="กำหนดเสร็จ">${dueCell(row)}</td></tr>`;
       }).join("")}</tbody></table></div>
       ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open", stage: "" })}">ดูงานค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีงานค้างในตัวกรองนี้</p>`}`;
   }
@@ -295,10 +295,10 @@
     const max = items.length ? Math.max(...items.map((item) => item.count)) : 0;
     const resolve = (key) => {
         const item = items.find((entry) => entry.key === key);
-        return item && { title: `${item.code}${item.name ? ` — ${item.name}` : ""}`, lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: filters.machine === key ? null : hrefWith(filters, { scope: "", stage: "", machine: key }), linkLabel: "ดูเฉพาะใบของเครื่องนี้" };
+        return item && { title: machineLabelOf(item.code, item.name), lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: filters.machine === key ? null : hrefWith(filters, { scope: "", stage: "", machine: key }), linkLabel: "ดูเฉพาะใบของเครื่องนี้" };
     };
     const rows = items.map((item) => {
-      const inner = `<span class="nd-lab">${esc(item.code)}${item.name ? ` — ${esc(item.name)}` : ""}<br><span class="nd-muted">แผนก ${esc(item.dept || "—")}</span></span><span class="nd-trk"><span class="nd-bar${item.count === max ? "" : " rest"}" style="width:${Math.max((item.count / max) * 100, 0.8)}%"></span></span><span class="nd-val">${esc(fmtNumber(item.count))} ครั้ง<small>ยังไม่จบ ${esc(fmtNumber(item.open))} · ล่าสุด ${esc(formatDate(item.lastOn))}</small></span>`;
+      const inner = `<span class="nd-lab">${esc(machineLabelOf(item.code, item.name))}<br><span class="nd-muted">แผนก ${esc(item.dept || "—")}</span></span><span class="nd-trk"><span class="nd-bar${item.count === max ? "" : " rest"}" style="width:${Math.max((item.count / max) * 100, 0.8)}%"></span></span><span class="nd-val">${esc(fmtNumber(item.count))} ครั้ง<small>ยังไม่จบ ${esc(fmtNumber(item.open))} · ล่าสุด ${esc(formatDate(item.lastOn))}</small></span>`;
       return selectButton("machine", item.key, inner, `nd-brow${filters.machine === item.key ? " active" : ""}`) + detailUnder("machine", item.key, resolve);
     }).join("");
     const notes = [

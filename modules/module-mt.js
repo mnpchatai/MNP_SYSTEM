@@ -7,7 +7,7 @@
 //
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — ฟังก์ชันข้างในเรียก helper/ค่าคงที่ของ app.js
 // (sb, escapeHtml, showToast, friendlyError, setFormBusy, closePopup, statusLabel,
-// executionPlanLabels, inspectorOpinionLabels, renderRequestDetail ฯลฯ) ได้เพราะ hook ทุกตัวถูก
+// renderRequestDetail ฯลฯ) ได้เพราะ hook ทุกตัวถูก
 // เรียกหลัง app.js โหลดเสร็จแล้วเท่านั้น ห้ามเรียกของ app.js ตอนโหลดไฟล์นี้
 //
 // การคำนวณสิทธิ์ในไฟล์นี้ใช้แค่ตัดสินว่าจะแสดงปุ่มไหน ฐานข้อมูลเป็นตัวบังคับสิทธิ์จริง
@@ -17,6 +17,18 @@
   const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwfHj4_rNUfU9ZB4xjOpyJPxQSHucoT1baeJ0AFGaz46olWJ8UXU_pBLnKpCwG6KHprqA/exec";
 
   const docTypeLabels = { request: "ใบคำร้อง", repair: "ใบแจ้งซ่อม" };
+  // ชื่อของผลการซ่อมชุดเดียว ใช้ทั้งฟอร์มมอบหมายและข้อมูลเพิ่มเติม (ประวัติไม่ทวนผลการซ่อม)
+  const executionPlanLabels = {
+    immediate: "ดำเนินการได้ทันที",
+    need_purchase: "ต้องการสั่งซื้ออุปกรณ์",
+    use_existing: "ใช้อุปกรณ์ที่มีอยู่",
+  };
+  const inspectorOpinionLabels = {
+    send_repair: "ส่งซ่อม",
+    external: "เรียกช่างภายนอกมาซ่อม",
+    self_repair: "ซ่อมเอง",
+    buy_parts: "ซื้ออุปกรณ์มาทำเอง",
+  };
   // ช่องที่ต้องกรอกบอกแบบเดียวทั้งระบบ (เหมือน REQUIRED_MARK ของ app.js)
   const REQUIRED = ' <span class="field-required">(จำเป็น)</span>';
   // หลังขั้นซ่อมสำเร็จและวาดหน้าใหม่ โฟกัสไปที่หัวใบ (ไม่หลุดไปที่ตัวหน้า) โปรแกรมอ่านหน้าจออ่านต่อจากตรงนั้น
@@ -97,12 +109,12 @@
   function partsRowHtml(item = {}) {
     return `<tr class="parts-row">
       <td class="parts-row-no"></td>
-      <td><input class="input" type="text" maxlength="200" placeholder="รายการอะไหล่/วัสดุที่ใช้" aria-label="รายการ" data-part-field="name" value="${escapeHtml(item.name ?? "")}"></td>
-      <td><input class="input" type="text" maxlength="50" placeholder="จำนวน" aria-label="จำนวน" data-part-field="qty" value="${escapeHtml(item.qty ?? "")}"></td>
-      <td><input class="input" type="text" maxlength="50" placeholder="หน่วย" aria-label="หน่วย" data-part-field="unit" value="${escapeHtml(item.unit ?? "")}"></td>
-      <td><input class="input" type="text" maxlength="50" placeholder="ราคา" aria-label="ราคา" data-part-field="price" value="${escapeHtml(item.price ?? "")}"></td>
-      <td><input class="input" type="text" maxlength="200" placeholder="ชื่อร้าน" aria-label="ชื่อร้าน" data-part-field="shop" value="${escapeHtml(item.shop ?? "")}"></td>
-      <td><input class="input" type="text" maxlength="500" placeholder="หมายเหตุ" aria-label="หมายเหตุ" data-part-field="note" value="${escapeHtml(item.note ?? "")}"></td>
+      <td data-label="รายการ"><input class="input" type="text" maxlength="200" aria-label="รายการ" data-part-field="name" value="${escapeHtml(item.name ?? "")}"></td>
+      <td data-label="จำนวน"><input class="input" type="text" inputmode="decimal" maxlength="50" aria-label="จำนวน" data-part-field="qty" value="${escapeHtml(item.qty ?? "")}"></td>
+      <td data-label="หน่วย"><input class="input" type="text" maxlength="50" aria-label="หน่วย" data-part-field="unit" value="${escapeHtml(item.unit ?? "")}"></td>
+      <td data-label="ราคา (บาท)"><input class="input" type="text" inputmode="decimal" maxlength="50" aria-label="ราคา" data-part-field="price" value="${escapeHtml(item.price ?? "")}"></td>
+      <td data-label="ชื่อร้าน"><input class="input" type="text" maxlength="200" aria-label="ชื่อร้าน" data-part-field="shop" value="${escapeHtml(item.shop ?? "")}"></td>
+      <td data-label="หมายเหตุ"><input class="input" type="text" maxlength="500" aria-label="หมายเหตุ" data-part-field="note" value="${escapeHtml(item.note ?? "")}"></td>
       <td class="parts-row-actions"><button type="button" class="btn danger small parts-row-remove" aria-label="ลบรายการนี้">ลบ</button></td>
     </tr>`;
   }
@@ -892,7 +904,7 @@
         actionHtml: `${canAssign && request.status === "pending_assign" ? assignSection : ""}
         ${canFinishWork ? `<div class="detail-action" id="repair-finish"><h3>บันทึกผลการซ่อมและจบงาน</h3><form id="finish-form" novalidate>
           <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
-          <div class="field parts-field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือแนบรูปใบเสร็จในช่องไฟล์ด้านล่างแทนการกรอกทีละแถว</p></div>
+          <div class="field parts-field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา (บาท)</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือแนบรูปใบเสร็จในช่องไฟล์ด้านล่างแทนการกรอกทีละแถว</p></div>
           ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกไว้ทำต่อ</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></div>` : ""}
@@ -1073,13 +1085,33 @@
         renumberPartsRows(container);
       });
       document.querySelector("#finish-parts-rows")?.addEventListener("click", (event) => {
+        const container = document.querySelector("#finish-parts-rows");
+        const restoreButton = event.target.closest(".parts-row-restore");
+        if (restoreButton) {
+          const note = restoreButton.closest(".parts-row-undo");
+          const row = note.previousElementSibling;
+          row.hidden = false;
+          row.classList.replace("parts-row-removed", "parts-row");
+          note.remove();
+          renumberPartsRows(container);
+          row.querySelector("input")?.focus();
+          return;
+        }
         const removeButton = event.target.closest(".parts-row-remove");
         if (!removeButton) return;
-        const container = document.querySelector("#finish-parts-rows");
-        const rows = container.querySelectorAll(".parts-row");
-        // เหลือแถวเดียวไม่ลบทิ้งไปเลย — เคลียร์ค่าแทน ให้ฟอร์มมีอย่างน้อยหนึ่งแถวเสมอ
-        if (rows.length > 1) removeButton.closest(".parts-row").remove();
-        else removeButton.closest(".parts-row").querySelectorAll("input").forEach((input) => { input.value = ""; });
+        const row = removeButton.closest(".parts-row");
+        const name = row.querySelector('[data-part-field="name"]').value.trim();
+        // แถวที่กรอกแล้ว: ซ่อนไว้พร้อมปุ่มเลิกทำ (ไม่ใช่ .parts-row จึงไม่ส่งไปกับฟอร์ม) · แถวว่างลบทิ้งเลย
+        if ([...row.querySelectorAll("input")].some((input) => input.value.trim())) {
+          row.hidden = true;
+          row.classList.replace("parts-row", "parts-row-removed");
+          row.insertAdjacentHTML("afterend", `<tr class="parts-row-undo"><td colspan="8"><span role="status">ลบ${name ? ` "${escapeHtml(name)}" ` : "รายการ"}แล้ว</span> <button type="button" class="btn secondary small parts-row-restore">เลิกทำ</button></td></tr>`);
+          row.nextElementSibling.querySelector(".parts-row-restore").focus();
+        } else {
+          row.remove();
+        }
+        // ฟอร์มมีแถวกรอกอย่างน้อยหนึ่งแถวเสมอ
+        if (!container.querySelector(".parts-row")) container.insertAdjacentHTML("beforeend", partsRowHtml());
         renumberPartsRows(container);
       });
       // แถวที่ไม่ได้กรอกชื่ออะไหล่ถือว่าเป็นแถวว่างที่เผื่อไว้ ไม่ส่งไป — RPC ก็กรองซ้ำอีกชั้นเช่นกัน

@@ -311,17 +311,6 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
-const executionPlanLabels = {
-  immediate: "ดำเนินการได้ทันที",
-  need_purchase: "ต้องการสั่งซื้ออุปกรณ์",
-  use_existing: "ใช้อุปกรณ์ที่มีอยู่",
-};
-const inspectorOpinionLabels = {
-  send_repair: "ส่งซ่อม",
-  external: "เรียกช่างภายนอกมาซ่อม",
-  self_repair: "ซ่อมเอง",
-  buy_parts: "ซื้ออุปกรณ์มาทำเอง",
-};
 const verifyResultLabels = { pass: "ผ่าน — ใช้งานได้ปกติ", fail: "ไม่ผ่าน — ต้องซ่อมเพิ่มเติม" };
 const detailFieldLabels = {
   asset_code: "รหัสทรัพย์สิน/เครื่องจักร",
@@ -1087,6 +1076,11 @@ function pendingStepBadge(request, currentStep, repair = false, final = false) {
   return `<span class="badge ${escapeHtml(request.status)}">${escapeHtml(window.MNP_STEP_VERB.pendingLabel(currentStep.step_name))}</span>`;
 }
 
+// หัวเรื่องของใบ: รหัสแบบ "HCM-03" ไม่ขึ้นบรรทัดใหม่ตรงขีด (จอแคบเคยตัดเป็น "HCM-" / "03")
+function headingTextHtml(text) {
+  return escapeHtml(text).replace(/[A-Za-z]{1,8}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/g, (code) => `<span class="nowrap">${code}</span>`);
+}
+
 // ชื่อเครื่องจักรที่แสดง (รายการ หน้ารายละเอียด ฟอร์ม MT และแดชบอร์ด MT ใช้ตัวนี้ตัวเดียว)
 // ชื่อที่มีรหัสอยู่แล้ว (เช่น "เครื่องฉีดยาง HCM-03") ไม่นำหน้าด้วยรหัสซ้ำ — เดิมขึ้น "HCM-03 — เครื่องฉีดยาง HCM-03"
 function machineLabelOf(code, name, separator = " — ") {
@@ -1602,7 +1596,7 @@ async function renderAuth(message = "") {
       <div class="field"><label for="department">แผนก${req}</label><select class="input" id="department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
       <div class="field"><label for="desired-role">ตำแหน่ง${req}</label><select class="input" id="desired-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
     </div>
-    <div class="field"><label for="job-title">ชื่อตำแหน่งงาน (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
+    <div class="field"><label for="job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="job-title" name="job_title" maxlength="120"></div>
     <div class="field-row">
       <div class="field"><label for="email">อีเมล${req}</label><input class="input" id="email" name="email" type="email" maxlength="200" required autocomplete="email"></div>
       <div class="field"><label for="phone">เบอร์ติดต่อ${req}</label><input class="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" pattern="[0-9+\\- ]{9,40}" title="กรอกเบอร์โทรอย่างน้อย 9 หลัก (ตัวเลข, +, - หรือเว้นวรรค)" placeholder="เช่น 0812345678" required></div>
@@ -2804,9 +2798,9 @@ function bindModuleZoom(params) {
 function requestsViewTabs(params, { board: withBoard = true } = {}) {
   const board = params.get("view") === "board";
   const mine = !board && params.get("scope") === "mine";
-  const tab = (active, changes, label) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}">${label}</a>`;
+  const tab = (active, changes, label, hint) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}" title="${hint}">${label}</a>`;
   return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
-    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${withBoard ? tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ") : ""}
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู", "ใบที่บัญชีของคุณเปิดดูรายละเอียดได้")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง", "เฉพาะใบที่คุณเป็นผู้แจ้ง")}${withBoard ? tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ", "ทุกใบของโมดูล เห็นสถานะได้ทุกใบ เปิดรายละเอียดได้เฉพาะใบที่มีสิทธิ์") : ""}
   </nav>`;
 }
 
@@ -3519,9 +3513,6 @@ function attachmentTimelineEvents(attachments, directory) {
 
 function buildRequestTimeline(request, history, steps, verifications, directory, isRepair, dateChanges = [], attachments = [], replies = []) {
   const orderedSteps = [...steps].sort((left, right) => left.step_order - right.step_order);
-  const latestRepairResult = [...history]
-    .filter((item) => item.to_status === "pending_verify")
-    .sort((left, right) => right.created_at.localeCompare(left.created_at))[0];
   const labelOf = (status) => statusLabel(status, isRepair);
 
   const statusEvents = history.map((item) => {
@@ -3583,13 +3574,8 @@ function buildRequestTimeline(request, history, steps, verifications, directory,
     } else if (item.to_status === "in_progress") {
       detail = `${actor || "ผู้รับผิดชอบ"} ${isRepair ? "เริ่มดำเนินการซ่อม" : "รับงานและเริ่มดำเนินการ"}`;
     } else if (item.to_status === "pending_verify") {
+      // ผลการซ่อมอยู่บนหน้าแล้ว (ข้อมูลเพิ่มเติม หรือการ์ดตรวจรับ) ประวัติจึงบอกเฉพาะว่าใครส่งตรวจรับ ไม่ทวนซ้ำด้วยชื่อหัวข้ออีกชุด
       detail = `${actor || "ผู้รับผิดชอบ"} ซ่อมเสร็จสิ้น ส่งให้ผู้แจ้งตรวจรับ`;
-      if (latestRepairResult?.id === item.id) {
-        if (request.execution_plan) detail += ` · การดำเนินงาน: ${executionPlanLabels[request.execution_plan] ?? request.execution_plan}`;
-        if (request.cause_analysis) detail += ` · วิเคราะห์สาเหตุ: ${request.cause_analysis}`;
-        if (request.inspector_opinion) detail += ` · ความเห็นผู้ตรวจสอบ: ${inspectorOpinionLabels[request.inspector_opinion] ?? request.inspector_opinion}`;
-        if (request.parts_used) detail += ` · อะไหล่/วัสดุ: ${request.parts_used}`;
-      }
     } else if (item.to_status === "completed" && item.from_status === "pending_verify") {
       detail = `${actor || "ผู้แจ้ง"} ตรวจรับผลการซ่อมแล้ว: ${verifyResultLabels[matchingVerification?.result] ?? "ผ่าน — ใช้งานได้ปกติ"}`;
       message = String(matchingVerification?.note ?? "").trim();
@@ -3840,7 +3826,7 @@ async function renderRequestDetail(params) {
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair, isFinalDecision(type, request.status))}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
-      <h1>${escapeHtml(request.title)}</h1>
+      <h1>${headingTextHtml(request.title)}</h1>
       <p class="request-detail-meta">${detailView?.typeLabel ? `${escapeHtml(detailView.typeLabel)} · ` : ""}โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${["high", "urgent"].includes(request.priority) ? `${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}` : "ด่วน"}</span>` : ""}</p>
     </header>
     <div class="detail-grid">
@@ -3868,7 +3854,7 @@ async function renderRequestDetail(params) {
           </section>`;
         })() : ""}
         ${detailView?.sectionsHtml ?? ""}
-        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit">อัปโหลด</button></form></details>
+        <details class="card detail-section" id="request-attachments" open><summary><h2>ไฟล์แนบ${attachments.length ? ` <span class="detail-section-count">${attachments.length}</span>` : ""}</h2></summary>${attachmentGalleryHtml(attachments)}<form id="attachment-form"><div class="field"><span class="field-label">แนบไฟล์เพิ่ม</span><label class="btn secondary file-pick" for="attachment-file" title="${escapeHtml(ATTACHMENT_HINT)}">${uiIcon("camera")} ถ่ายรูป / เลือกไฟล์</label><input class="file-pick-input" id="attachment-file" name="file" type="file" multiple accept="image/*,.heic,.heif,.pdf,.txt,.docx,.xlsx" title="${escapeHtml(ATTACHMENT_HINT)}"></div><button class="btn secondary attachment-upload" type="submit" disabled>อัปโหลด</button></form></details>
         ${requestFacts ? `<details class="card detail-section" open><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
@@ -3936,6 +3922,14 @@ async function renderRequestDetail(params) {
   // ผู้แจ้งที่ตรวจรับ: ไฟล์ส่งพร้อมผลตรวจรับ ทางเดียว
   const stepFiles = document.querySelector("#finish-files") ?? document.querySelector("#verify-files");
   pointToStepFiles(document.querySelector("#attachment-form"), stepFiles, stepFiles?.id === "verify-files" ? "แนบไฟล์ในการ์ดตรวจรับผลการซ่อม" : "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
+  // ปุ่มอัปโหลดกดได้เมื่อเลือกไฟล์แล้ว (เดิมกดได้ทั้งที่ยังไม่เลือก แล้วขึ้นข้อความไกลจากปุ่ม)
+  // รวมถึงตอนกด × ลบไฟล์ในตัวอย่าง หรือแปลงรูปไม่สำเร็จ (attachment-image.js ยิง mnp:files-changed)
+  const attachmentFile = document.querySelector("#attachment-file");
+  const syncUploadButton = () => {
+    const button = attachmentFile?.form?.querySelector(".attachment-upload");
+    if (button) button.disabled = !attachmentFile.files?.length;
+  };
+  ["change", "mnp:files-changed"].forEach((type) => attachmentFile?.addEventListener(type, syncUploadButton));
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -4771,11 +4765,10 @@ async function renderProfile() {
           <div class="field"><label for="profile-last-name">นามสกุล${REQUIRED_MARK}</label><input class="input" id="profile-last-name" name="last_name" maxlength="100" value="${escapeHtml(employee.last_name)}" required></div>
         </div>
         <div class="field-row">
-          <div class="field"><label for="profile-email">อีเมล</label><input class="input" id="profile-email" name="email" type="email" maxlength="200" value="${escapeHtml(employee.email ?? "")}"></div>
-          <div class="field"><label for="profile-phone">เบอร์ติดต่อ</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
+          <div class="field"><label for="profile-email">อีเมล${REQUIRED_MARK}</label><input class="input" id="profile-email" name="email" type="email" maxlength="200" value="${escapeHtml(employee.email ?? "")}" required></div>
+          <div class="field"><label for="profile-phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
         </div>
-        <div class="field"><label for="profile-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}"></div>
-        <div class="field"><label for="profile-employee-no">รหัสพนักงาน</label><input class="input" id="profile-employee-no" value="${escapeHtml(employee.employee_no)}" disabled><small>แก้ไขได้ที่การ์ดรหัสผ่านด้านล่าง</small></div>
+        <div class="field"><label for="profile-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}" title="แสดงใต้ชื่อของคุณ ไม่มีผลกับสิทธิ์"></div>
         ${isAccountManager ? `
         <div class="field-row">
           <div class="field"><label for="profile-department">แผนก${REQUIRED_MARK}</label><select class="input" id="profile-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === employee.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
@@ -5216,7 +5209,7 @@ async function renderAdmin(params) {
       <dl class="definition-grid">
         <div class="definition"><dt>แผนก</dt><dd>${escapeHtml(item.department_code ?? "—")}</dd></div>
         <div class="definition"><dt>ตำแหน่งที่ขอ</dt><dd>${escapeHtml(item.desired_role_name ?? "—")}</dd></div>
-        <div class="definition"><dt>ชื่อตำแหน่งงาน</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
+        <div class="definition"><dt>ตำแหน่งที่แสดง</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
         <div class="definition"><dt>ติดต่อ</dt><dd>${escapeHtml(item.phone ?? item.email ?? "—")}</dd></div>
       </dl>
       ${item.reason ? `<p class="description">${escapeHtml(item.reason)}</p>` : ""}
@@ -5245,7 +5238,7 @@ async function renderAdmin(params) {
       </div>
       <dl class="definition-grid">
         <div class="definition"><dt>แผนก</dt><dd>${escapeHtml(item.department_code ?? "—")}</dd></div>
-        <div class="definition"><dt>ชื่อตำแหน่งงาน</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
+        <div class="definition"><dt>ตำแหน่งที่แสดง</dt><dd>${escapeHtml(item.job_title ?? "—")}</dd></div>
         <div class="definition"><dt>ติดต่อ</dt><dd>${escapeHtml(item.phone ?? item.email ?? "—")}</dd></div>
         <div class="definition"><dt>ตำแหน่ง</dt><dd>${escapeHtml(item.role_code ?? "—")}</dd></div>
         <div class="definition"><dt>อัปเดตล่าสุด</dt><dd>${item.updated_at ? formatDate(item.updated_at, true) : "—"}${item.updated_by_name ? ` · โดย ${escapeHtml(item.updated_by_name)}` : ""}</dd></div>
@@ -5337,7 +5330,7 @@ async function renderAdmin(params) {
             <div class="field"><label for="add-email">อีเมล${req}</label><input class="input" id="add-email" name="email" type="email" maxlength="200" autocomplete="off" required></div>
             <div class="field"><label for="add-phone">เบอร์ติดต่อ${req}</label><input class="input" id="add-phone" name="phone" type="tel" inputmode="tel" maxlength="40" pattern="[0-9+\\- ]{9,40}" title="กรอกเบอร์โทรอย่างน้อย 9 หลัก (ตัวเลข, +, - หรือเว้นวรรค)" placeholder="เช่น 0812345678" required></div>
           </div>
-          <div class="field"><label for="add-job-title">ชื่อตำแหน่งงาน (ถ้ามี)</label><input class="input" id="add-job-title" name="job_title" maxlength="120"></div>
+          <div class="field"><label for="add-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="add-job-title" name="job_title" maxlength="120"></div>
           <div class="field-row">
             <div class="field"><label for="add-department">แผนก${req}</label><select class="input" id="add-department" name="department_id" required><option value="">เลือกแผนก</option>${departments.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
             <div class="field"><label for="add-role">ตำแหน่ง${req}</label><select class="input" id="add-role" name="role_id" required><option value="">เลือกตำแหน่ง</option>${roles.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
@@ -5363,10 +5356,10 @@ async function renderAdmin(params) {
             <div class="field"><label for="edit-last-name">นามสกุล${REQUIRED_MARK}</label><input class="input" id="edit-last-name" name="last_name" maxlength="100" value="${escapeHtml(editing.last_name ?? "")}" required></div>
           </div>
           <div class="field-row">
-            <div class="field"><label for="edit-email">อีเมล</label><input class="input" id="edit-email" name="email" type="email" maxlength="200" value="${escapeHtml(editing.email ?? "")}"></div>
-            <div class="field"><label for="edit-phone">เบอร์ติดต่อ</label><input class="input" id="edit-phone" name="phone" maxlength="40" value="${escapeHtml(editing.phone ?? "")}"></div>
+            <div class="field"><label for="edit-email">อีเมล${req}</label><input class="input" id="edit-email" name="email" type="email" maxlength="200" value="${escapeHtml(editing.email ?? "")}" required></div>
+            <div class="field"><label for="edit-phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="edit-phone" name="phone" maxlength="40" value="${escapeHtml(editing.phone ?? "")}"></div>
           </div>
-          <div class="field"><label for="edit-job-title">ชื่อตำแหน่งงาน</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
+          <div class="field"><label for="edit-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
           <div class="field-row">
             <div class="field"><label for="edit-department">แผนก${REQUIRED_MARK}</label><select class="input" id="edit-department" name="department_id" required>${departments.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.department_id ? " selected" : ""}>${escapeHtml(item.code)}${item.name_th && item.name_th !== item.code ? ` · ${escapeHtml(item.name_th)}` : ""}</option>`).join("")}</select></div>
             <div class="field"><label for="edit-role">ตำแหน่ง${REQUIRED_MARK}</label><select class="input" id="edit-role" name="role_id" required>${roles.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === editing.role_id ? " selected" : ""}>${escapeHtml(item.name_th ?? item.code)}</option>`).join("")}</select></div>
