@@ -1084,8 +1084,27 @@ function headingTextHtml(text) {
 // ไฟล์แนบที่เลือกแล้วแต่ยังไม่ได้กด "อัปโหลด" (หน้ารายละเอียดคำร้อง): ถามก่อนออกจากหน้า รูปที่ถ่ายจึงไม่หายเงียบ ๆ
 // คงปุ่มยืนยันไว้เพราะไฟล์ที่อัปโหลดแล้วลบไม่ได้ (ผู้ใช้เลือก 2026-11-12)
 function pendingAttachmentCount() {
-  return document.querySelector("#attachment-form #attachment-file")?.files?.length ?? 0;
+  const form = document.querySelector("#attachment-form");
+  if (!form || form.hasAttribute("aria-busy")) return 0;
+  return form.querySelector("#attachment-file")?.files?.length ?? 0;
 }
+function confirmLeaveWithPendingFiles(count) {
+  return confirmDialog({ title: `ยังไม่ได้อัปโหลด ${count} ไฟล์`, message: "ออกจากหน้านี้แล้วไฟล์ที่เลือกไว้จะไม่ถูกแนบ", confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด", danger: true });
+}
+// ปุ่มย้อนกลับ/ปัดย้อนกลับ: hashchange ยกเลิกไม่ได้ ใช้ Navigation API ที่ยกเลิกการย้อนกลับได้ (เบราว์เซอร์ที่ไม่มีจะออกเหมือนเดิม)
+window.navigation?.addEventListener("navigate", (event) => {
+  if (event.navigationType !== "traverse" || !event.cancelable) return;
+  const count = pendingAttachmentCount();
+  if (!count) return;
+  event.preventDefault();
+  const key = event.destination.key;
+  confirmLeaveWithPendingFiles(count).then((leave) => {
+    if (!leave) return;
+    const input = document.querySelector("#attachment-form #attachment-file");
+    if (input) input.value = "";
+    window.navigation.traverseTo(key);
+  });
+});
 window.addEventListener("beforeunload", (event) => {
   if (!pendingAttachmentCount()) return;
   event.preventDefault();
@@ -1098,7 +1117,7 @@ document.addEventListener("click", async (event) => {
   if (!count || link.closest("#attachment-form")) return;
   event.preventDefault();
   const href = link.getAttribute("href");
-  if (await confirmDialog({ title: `ยังไม่ได้อัปโหลด ${count} ไฟล์`, message: "ออกจากหน้านี้แล้วไฟล์ที่เลือกไว้จะไม่ถูกแนบ", confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด", danger: true })) location.hash = href;
+  if (await confirmLeaveWithPendingFiles(count)) location.hash = href;
 }, true);
 
 // ชื่อเครื่องจักรที่แสดง (รายการ หน้ารายละเอียด ฟอร์ม MT และแดชบอร์ด MT ใช้ตัวนี้ตัวเดียว)
@@ -3959,7 +3978,7 @@ async function renderRequestDetail(params) {
     const button = attachmentFile?.form?.querySelector(".attachment-upload");
     if (button) { button.disabled = !count; button.classList.toggle("secondary", !count); }
     const pending = attachmentFile?.form?.querySelector(".attachment-pending");
-    if (pending) { pending.hidden = !count; pending.textContent = count ? `ยังไม่ได้อัปโหลด ${count} ไฟล์` : ""; }
+    if (pending) { pending.hidden = !count; pending.textContent = count ? `ยังไม่ได้อัปโหลด ${count} ไฟล์ · กดอัปโหลดก่อนออกจากหน้านี้` : ""; }
   };
   ["change", "mnp:files-changed"].forEach((type) => attachmentFile?.addEventListener(type, syncUploadButton));
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {

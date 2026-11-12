@@ -457,7 +457,7 @@
       body = `${pageNavHtml(user, page)}${built.html}`;
       bind = built.bind ?? null;
     }
-    // ชื่อโมดูลอยู่ใน breadcrumb และเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต ลิงก์ RubberFlow รีเซ็ต)
+    // ชื่อโมดูลอยู่ในเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต ลิงก์ RubberFlow รีเซ็ต)
     const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
     dirty = false; // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างแล้ว (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
     app.innerHTML = shell(`<div class="rf-page bom-page" data-module="bom" data-rf-mod="${escapeHtml(entry && user ? `bom-${page}` : "")}">${head}${body}${testDataHtml(ctx)}</div>`, PATH, title);

@@ -296,17 +296,24 @@ test("round 15: the shell moves a leading back link into the topbar and leaves o
 test("round 15: NCR history rows are headed by the resulting status like MT/MG, the action is the detail line", () => {
   const ncr = read("modules/module-ncr.js");
   assert.match(ncr, /const heading = statusChanged \? STATUS_LABELS\[item\.to_status\] \?\? item\.to_status : actionLabel;/);
-  assert.match(ncr, /const detail = statusChanged \? `\$\{actionLabel\} · \$\{personName\(directory, item\.changed_by\)\}` : personName\(directory, item\.changed_by\);/);
+  assert.match(ncr, /const detail = statusChanged && !actionLabel\.startsWith\(heading\) \? `\$\{actionLabel\} · \$\{personName\(directory, item\.changed_by\)\}` : personName\(directory, item\.changed_by\);/);
   assert.match(ncr, /signoff_gm: "ผู้จัดการทั่วไปลงนาม"/, "the heading already says ปิดแล้ว");
 });
 
 test("round 15: picked files show an unsent state and a leave warning; closed requests still take files, labelled as added after closing", () => {
   assert.match(app, /<p class="attachment-pending" role="status" hidden><\/p><\/form>/);
-  assert.match(app, /pending\.textContent = count \? `ยังไม่ได้อัปโหลด \$\{count\} ไฟล์` : "";/);
+  // ปุ่มย้อนกลับของเบราว์เซอร์บางตัวถามไม่ได้ ข้อความจึงบอกให้อัปโหลดก่อนออกเอง
+  assert.match(app, /pending\.textContent = count \? `ยังไม่ได้อัปโหลด \$\{count\} ไฟล์ · กดอัปโหลดก่อนออกจากหน้านี้` : "";/);
   assert.match(app, /button\.classList\.toggle\("secondary", !count\);/, "upload becomes the primary button while files wait");
   assert.match(app, /confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด"/);
   assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!pendingAttachmentCount\(\)\) return;/);
   assert.match(app, /\$\{requestClosed \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์เพิ่ม"\}/);
+  // ไม่ถามระหว่างกำลังอัปโหลด · ปุ่ม/ท่าทางย้อนกลับถามด้วย (Navigation API) แล้วย้อนกลับต่อเมื่อยืนยัน
+  assert.match(app, /if \(!form \|\| form\.hasAttribute\("aria-busy"\)\) return 0;/);
+  assert.match(app, /window\.navigation\?\.addEventListener\("navigate", \(event\) => \{\r?\n  if \(event\.navigationType !== "traverse" \|\| !event\.cancelable\) return;/);
+  assert.match(app, /window\.navigation\.traverseTo\(key\);/);
+  // แถวยกเลิก: หัว "ยกเลิก" บรรทัดรองไม่พูด "ยกเลิก NCR" ซ้ำ
+  assert.match(read("modules/module-ncr.js"), /const detail = statusChanged && !actionLabel\.startsWith\(heading\) \?/);
   assert.match(app, /const requestClosed = \["completed", "rejected", "cancelled", "acknowledged"\]\.includes\(request\.status\) \|\| isFinalDecision\(type, request\.status\);/);
   // ตัวเลือกช่างเป็นกลุ่มที่มีชื่อ
   assert.match(read("modules/module-mt.js"), /<fieldset class="field" data-field="technician_ids"><legend>ช่างผู้รับผิดชอบ/);

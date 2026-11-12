@@ -529,7 +529,7 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 @media (hover: hover) and (pointer: fine) and (min-width: 761px) { .top-actions .icon-button { width: 40px; height: 40px; } }
 .app-nav .icon-button:disabled { opacity: .4; cursor: default; }
 /* แถบบน: ลิงก์กลับรายการของหน้ารายละเอียด (ย้ายมาจากเหนือหัวเรื่องใน shell) */
-.topbar .request-back-link { max-width: 100%; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.topbar .request-back-link { max-width: 100%; margin: 0; display: block; overflow: hidden; line-height: 34px; white-space: nowrap; text-overflow: ellipsis; }
 fieldset.field { min-width: 0; margin-inline: 0; padding: 0; border: 0; }
 fieldset.field > legend { margin-bottom: 7px; padding: 0; font-size: var(--text-ui); font-weight: 700; line-height: 1.4; }
 .attachment-pending { margin: 8px 0 0; color: var(--warning-ink, var(--warning)); font-size: var(--text-meta); font-weight: 700; }
@@ -2910,6 +2910,7 @@ tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
    อยู่ท้ายไฟล์เพื่อชนะกติกาความเจาะจงเท่ากันที่ประกาศก่อนหน้า (รวมใน @media ของจอแคบ) */
 @media (pointer: coarse), (max-width: 760px) {
   .btn, .btn.small, .filter, .view-tab, .request-back-link, .link-button { min-height: 44px; }
+  .topbar .request-back-link { line-height: 42px; }
   .icon-button, .request-detail-menu > .icon-button { width: 44px; height: 44px; }
   /* มอบหมายช่าง: ทั้งแถวเป็น label ของช่องติ๊ก */
   .tech-option { min-height: 44px; }

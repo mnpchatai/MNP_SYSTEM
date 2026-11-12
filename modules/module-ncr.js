@@ -993,7 +993,7 @@
       const actionLabel = HISTORY_LABELS[item.action] ?? item.action;
       const statusChanged = item.to_status && item.to_status !== item.from_status;
       const heading = statusChanged ? STATUS_LABELS[item.to_status] ?? item.to_status : actionLabel;
-      const detail = statusChanged ? `${actionLabel} · ${personName(directory, item.changed_by)}` : personName(directory, item.changed_by);
+      const detail = statusChanged && !actionLabel.startsWith(heading) ? `${actionLabel} · ${personName(directory, item.changed_by)}` : personName(directory, item.changed_by);
       return `<div class="timeline-item"><strong>${escapeHtml(heading)}</strong><p class="timeline-item-detail">${escapeHtml(detail)}</p>${item.note ? `<p class="timeline-item-message">${escapeHtml(item.note)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.changed_at)}">${formatDate(item.changed_at, true)}</time></div>`;
     }).join(""));
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
