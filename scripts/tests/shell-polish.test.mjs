@@ -43,7 +43,8 @@ test("the undo countdown repeats the typed reason on one line, clipped by charac
   assert.equal(clip("ไม่ผ่านเพราะ", 8), "ไม่ผ่านเพ…");
   // ใน app.js ส่วนที่เหลือของตัวจัดการแป้น: A/R ไม่ตัดสินใบที่เลือกเมื่อโฟกัสอยู่ที่แถวงาน
   assert.match(app, /if \(target instanceof HTMLElement && target\.closest\("\.queue-item\.is-task"\)\) return;\n  const panel = document\.querySelector\("#decision-panel"\);/);
-  assert.match(app, /setLine\(`กำลังจะ\$\{labelOf\(state\.decision\)\} \$\{request\.request_no\}\$\{state\.comment \? ` · “\$\{clipText\(state\.comment, 80\)\}”` : ""\}`\);/);
+  // รอบรวม 20: หน้ารายละเอียดไม่ทวนเลขที่ใบ (หัวใบบอกแล้ว) คิวหน้าหลักยังบอก
+  assert.match(app, /setLine\(`กำลังจะ\$\{labelOf\(state\.decision\)\}\$\{onDecided \? ` \$\{request\.request_no\}` : ""\}\$\{state\.comment \? ` · “\$\{clipText\(state\.comment, 80\)\}”` : ""\}`\);/);
 });
 
 test("J/K walks every visible queue row: approval rows select, task rows only take focus", () => {
@@ -60,9 +61,11 @@ test("the selected row shows one focus ring, not two, and keeps the button's out
   assert.doesNotMatch(css, /\.queue-item\.is-selected \.queue-item-main:focus-visible \{ outline: none; \}/);
 });
 
-test("header icon buttons are 40px only on mouse screens; touch screens keep 44px", () => {
-  assert.match(css, /@media \(hover: hover\) and \(pointer: fine\) and \(min-width: 761px\) \{ \.top-actions \.icon-button \{ width: 40px; height: 40px; \} \}/);
-  assert.equal(css.match(/\.top-actions \.icon-button \{ width: 40px/g)?.length, 1, "no unconditional 40px rule that would beat the touch rule");
+test("header icon buttons are 44px on every screen, like the 44px button rule", () => {
+  // รอบรวม 20: ผู้ใช้กำหนดปุ่มจอคอม 44px ปุ่มไอคอนบนหัวจึง 44px ด้วย
+  assert.match(css, /@media \(hover: hover\) and \(pointer: fine\) and \(min-width: 761px\) \{ \.top-actions \.icon-button \{ width: 44px; height: 44px; \} \}/);
+  assert.match(css, /\.request-detail-menu > \.icon-button \{ width: 44px; height: 44px;/);
+  assert.match(css, /\.request-back-link \{ min-height: 44px;/);
   // กฎ 44px ของจอสัมผัสยังอยู่ (ในบล็อก coarse ท้ายไฟล์) และกฎ 40px มีเงื่อนไข จึงไม่ชนะมันบนจอสัมผัส
   assert.match(css, /\n {2}\.icon-button, \.request-detail-menu > \.icon-button \{ width: 44px; height: 44px; \}/);
 });
@@ -207,7 +210,7 @@ test("the MT start, finish and verify steps all go through the confirm helper; t
   assert.equal(mt.match(/confirmStepAction\(/g)?.length, 3);
   for (const label of ['label: "เริ่มงาน"', 'label: "เสร็จสิ้นงาน"', 'label: pass ? "ผ่านการตรวจรับ" : "ไม่ผ่านการตรวจรับ"']) assert.ok(mt.includes(label), label);
   assert.doesNotMatch(mt, /✓ ผ่าน|✕ ไม่ผ่าน/, "icons instead of characters a screen reader reads aloud");
-  assert.match(mt, /<div class="detail-action" id="repair-verify"><h3>ตรวจรับผลการซ่อม<\/h3>\$\{verifySummaryHtml\(request\)\}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">\(จำเป็นเมื่อไม่ผ่าน\)<\/span><\/label>/, "the repair result comes before the pass/fail buttons, and the note's rule sits on its label");
+  assert.match(mt, /<div class="detail-action" id="repair-verify"><h3>ตรวจรับงาน<\/h3>\$\{verifySummaryHtml\(request\)\}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">\(จำเป็นเมื่อไม่ผ่าน\)<\/span><\/label>/, "the repair result comes before the pass/fail buttons, and the note's rule sits on its label");
   assert.match(mt, /request\.cause_analysis && !canVerify \?/, "and is not repeated in the facts card");
   assert.match(mt, /<label for="finish-cause">วิเคราะห์สาเหตุ\$\{REQUIRED\}<\/label>/);
   assert.match(css, /:is\(\.approval-actions, \.form-actions\):has\(> \.step-confirm\) \{/);
@@ -293,7 +296,9 @@ test("one detail template: start work sits with the approval buttons; assign, fi
   // รอบ 17: ฟอร์มของขั้นเริ่มด้วยรายละเอียดที่ผู้ขอแจ้ง (ที่เดียวบนหน้า ไม่มีการ์ดแยกซ้ำ)
   assert.match(app, /<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">\$\{actionWorkTitle\}<\/h2>\$\{briefInAction \? `<div class="detail-actions-brief">\$\{briefBodyHtml\}<\/div>` : ""\}\$\{actionWorkHtml\}<\/section>/);
   assert.match(app, /const briefInAction = Boolean\(moduleWorkHtml\) && Boolean\(description\);/);
-  assert.match(app, /\$\{briefInAction \? "" : `<section class="card request-brief" aria-labelledby="request-brief-title">\$\{briefBodyHtml\}<\/section>`\}/);
+  // รอบรวม 20: การ์ดที่มีแค่ฟอร์มตอบกลับ (ไม่บังคับ) รายละเอียดขึ้นก่อน
+  assert.match(app, /\$\{!moduleWorkHtml && !briefInAction \? `<section class="card request-brief" aria-labelledby="request-brief-title">\$\{briefBodyHtml\}<\/section>` : ""\}/);
+  assert.match(app, /\$\{briefInAction \|\| !moduleWorkHtml \? "" : `<section class="card request-brief" aria-labelledby="request-brief-title">\$\{briefBodyHtml\}<\/section>`\}/);
   // รอบ 12: การ์ดที่มีแค่ฟอร์มตอบกลับความเห็น (ไม่บังคับ) ไม่บอกว่า "ต้องดำเนินการ" · ขั้นที่ตอบแล้วพับเป็น "ตอบเพิ่มเติม"
   assert.match(app, /const actionWorkTitle = moduleWorkHtml \? "สิ่งที่คุณต้องดำเนินการ" : "ตอบกลับความเห็น \(ถ้าต้องการ\)";/);
   assert.match(app, /replies\.some\(\(reply\) => reply\.approval_step_id === step\.id\)\n    \? `<details class="detail-reply-more">/);

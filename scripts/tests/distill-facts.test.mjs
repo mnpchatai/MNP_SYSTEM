@@ -116,7 +116,8 @@ test("the NCR detail keeps all of the viewer's work in one action card and names
   const ncr = read("modules/module-ncr.js");
   assert.match(ncr, /const work = \[\.\.\.forms, responderSection, \.\.\.\(lossesInWork \? \[lossesSection\] : \[\]\)\]\.filter\(Boolean\);/);
   assert.match(ncr, /\.\.\.\(lossesInWork \? \[\] : \[lossesSection\]\),/, "the loss card is not shown twice");
-  assert.match(ncr, /\$\{work\.length \? "" : waiting \?/, "no 'ขั้นตอนนี้รอ' line when the viewer has work");
+  // รอบรวม 20: บรรทัดนี้อยู่ในหัวใบใต้บรรทัดผู้รายงาน
+  assert.match(ncr, /\$\{work\.length \|\| !waiting \? "" : `<p class="ncr-waiting">ขั้นตอนนี้รอ:/, "no 'ขั้นตอนนี้รอ' line when the viewer has work");
   // ส่วนที่ 2 ไม่ทวนสิ่งที่ฟอร์มตอบหรือบรรทัด "ขั้นตอนนี้รอ" บอกแล้ว (รอบ 14)
   assert.match(ncr, /\$\{designated && !responderSection && !waitingSaysResponder \? partField\("ผู้ตอบที่ระบุ"/);
   assert.match(ncr, /\$\{dueInForm \|\| waitingSaysDue \? "" : partField\("กำหนดตอบ"/);

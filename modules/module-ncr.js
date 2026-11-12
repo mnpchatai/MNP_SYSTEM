@@ -930,10 +930,9 @@
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
         <div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">${escapeHtml(ncr.form_code)}</span><span class="eyebrow-sep"> · </span><span class="nowrap">${escapeHtml(ncr.ncr_no)}</span></span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
         <h1>${headingTextHtml(ncr.product_name || ncr.ncr_no)}</h1>
-        <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${headFacts}
+        <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${work.length || !waiting ? "" : `<p class="ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>`}${headFacts}
       </header>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
-      ${work.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
     const part1 = `
       ${partOpening(1, "ผู้รายงาน/ผู้ตรวจสอบ", "ข้อมูลสินค้าและรายละเอียดความไม่สอดคล้อง")}

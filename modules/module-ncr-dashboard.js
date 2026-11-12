@@ -294,7 +294,7 @@
       detailOf: (month) => {
         const deptSum = month.depts.reduce((sum, item) => sum + item.count, 0);
         return [
-          ["NCR ที่ออก (นับใบไม่ซ้ำ)", fmtCount(month.count)], ["ปิดแล้ว", fmtCount(month.closed)], ["ยังไม่ปิด", fmtCount(month.open)],
+          ["NCR ที่ออก (นับใบไม่ซ้ำ)", fmtCount(month.count)], ["ปิดแล้ว", fmtCount(month.closed)], ["ค้างอยู่", fmtCount(month.open)],
           ...[...month.depts].sort((a, b) => b.count - a.count || (a.dept < b.dept ? -1 : 1)).map((item) => [deptName(item.dept), fmtCount(item.count), classOf(item.dept)]),
           ...(deptSum !== month.count ? [["รวมตามแผนก (ใบหลายแผนกนับซ้ำ)", fmtCount(deptSum)]] : []),
         ];
