@@ -3715,7 +3715,7 @@ function historyCardHtml(itemsHtml, footHtml = "") {
 
 // ฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว (ผู้ยื่น โมดูลที่เปิด requesterReplies) — ความเห็นและคำตอบเดิมอยู่ในประวัติเอกสาร
 function stepReplyFormHtml(step) {
-  return `<div class="detail-action"><h3>ตอบกลับความเห็นของ${escapeHtml(step.step_name)}</h3><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
+  return `<div class="detail-action"><h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}</h3><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
       <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
       <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div>
     </form></div>`;

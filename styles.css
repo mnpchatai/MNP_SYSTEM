@@ -1685,6 +1685,8 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-lines li span:last-child, .nd-detail li span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
 .nd-card { display: grid; gap: 12px; align-content: start; }
 #nd-drill { scroll-margin-top: 80px; }
+/* KPI ที่ยังคำนวณไม่ได้: บรรทัดเดียวเต็มแถว แทนการ์ด "—" หลายใบ */
+.nd-tiles > .nd-tile-pending { grid-column: 1 / -1; }
 .nd-head h2 { margin: 0; font-size: var(--text-title); line-height: 1.3; }
 .nd-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .nd-head-row .nd-cancel { flex: none; }

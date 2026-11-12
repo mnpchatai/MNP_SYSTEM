@@ -340,8 +340,8 @@ test("a chart with nothing to draw shows one line instead of an axis, and a used
 test("each NCR is on the page once: the drill list skips what act-now shows, and a status filter replaces act-now", async () => {
   const page = await renderView({ reports: [NCR_ONE] });
   assert.equal(page.match(/>QA001\/69</g).length, 1, "listed in act-now only");
-  assert.match(page, /ทั้งหมด <b>1<\/b> ใบ · ไม่แสดงซ้ำ 1 ใบที่อยู่ใน “ต้องลงมือตอนนี้”/);
-  assert.match(page, /ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว/);
+  // รอบ 11: ทุกใบอยู่ใน "ต้องลงมือตอนนี้" แล้ว จึงไม่มีการ์ดรายการประกอบตัวเลข
+  assert.doesNotMatch(page, /id="nd-drill"|ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว/);
   const filtered = await renderView({ reports: [NCR_ONE], search: "&scope=open" });
   assert.equal(filtered.match(/>QA001\/69</g).length, 1, "the filtered list is the only place");
   assert.doesNotMatch(filtered, /data-card="act"|ไม่แสดงซ้ำ/);

@@ -219,6 +219,9 @@
       <p class="nd-scope">กำลังดู <strong>${esc(filters.from === filters.to ? monthName(filters.from, filters.year) : `${MONTHS[filters.from - 1]}–${monthName(filters.to, filters.year)}`)}</strong> ตามวันที่แจ้ง</p>`;
   }
 
+  // ใบในช่วงนี้มีตัวเลขให้คำนวณเวลาปิดงาน ทันกำหนด หรือผลตรวจรับอย่างน้อยหนึ่งอย่าง
+  const measurable = (period) => period.avgCycle !== null || Boolean(period.onTimeBase) || Boolean(period.verified);
+
   function tilesHtml(filters, period, back) {
     const list = (lines) => `<ul class="nd-lines">${lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>`;
     const quality = [["ใบที่ถูกตรวจรับแล้ว", fmtCount(period.verified)], ["เคยตรวจรับไม่ผ่าน", fmtCount(period.verifyFailed)], ["ขอข้อมูลเพิ่ม (เคยถูกส่งกลับให้ผู้แจ้ง)", `${fmtCount(period.moreInfo)} (${fmtPercent(period.moreInfoRate)})`], ["ไม่อนุมัติ", fmtCount(period.rejected)]];
@@ -228,6 +231,7 @@
         ${back.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue", stage: "" })}"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดเสร็จ ${fmtCount(back.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดเสร็จ</span>`}
         ${back.urgentOpen ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "urgent", stage: "" })}"><span class="nd-ico" aria-hidden="true">▲</span>ด่วน ${fmtCount(back.urgentOpen)}</a>` : ""}
         <span class="nd-note">นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา</span></div>
+      ${measurable(period) ? `
       <div class="nd-tile"><span class="nd-label">เวลาเฉลี่ย แจ้ง → ปิดงาน</span><span class="nd-value">${period.avgCycle === null ? "—" : fmtNumber(period.avgCycle, 1)}<small>วัน</small></span>
         <span class="nd-note">${period.cycleCount ? `กลาง ${fmtDays(period.medianCycle)} · จาก ${fmtCount(period.cycleCount)} ที่ปิดแล้ว` : "ยังไม่มีใบที่ปิดงานในช่วงนี้"}</span></div>
       <div class="nd-tile"><span class="nd-label">ปิดงานทันกำหนด</span><span class="nd-value">${fmtPercent(period.onTimeRate)}</span>
@@ -235,7 +239,7 @@
         <span class="nd-note">${period.onTimeBase ? `ทัน ${fmtNumber(period.onTime)} จาก ${fmtNumber(period.onTimeBase)} ใบ (ใบที่ยังเลยกำหนดนับว่าไม่ทัน)` : "ยังไม่มีใบที่มีกำหนดเสร็จให้เทียบ"}</span></div>
       <div class="nd-tile"><span class="nd-label">ตรวจรับไม่ผ่าน</span><span class="nd-value">${fmtPercent(period.verifyFailRate)}</span>
         <span class="nd-note">${period.verified ? `${fmtNumber(period.verifyFailed)} จาก ${fmtNumber(period.verified)} ใบที่ถูกตรวจรับ` : "ยังไม่มีใบที่ถูกตรวจรับ"}</span>
-        <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(quality)}</details></div>`;
+        <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(quality)}</details></div>` : `<div class="nd-tile nd-tile-pending"><span class="nd-label">เวลาปิดงาน · ทันกำหนด · ตรวจรับไม่ผ่าน</span><span class="nd-note">ยังไม่มีใบที่ปิดงาน มีกำหนดเสร็จ หรือถูกตรวจรับในช่วงนี้ จึงยังคำนวณไม่ได้</span></div>`}`;
   }
 
   function stageHtml(stages, filters) {
@@ -349,6 +353,7 @@
     const rest = sorted.filter((row) => !actIds.has(row.id));
     const shownAbove = sorted.length - rest.length;
     const shown = rest.slice(0, drillLimit);
+    if (list.length && !rest.length && !hasDrillFilter(filters)) return "";
     const heading = basis === "backlog"
       ? { title: "รายการงานค้างตามตัวกรอง", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา` }
       : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}` };
@@ -399,19 +404,19 @@
     const showAct = basis !== "backlog";
     const actTop = showAct ? model.priority(open, 10) : [];
     const backHref = typeId ? window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: typeId }) : "#/requests";
-    return `<a class="request-back-link" href="${esc(backHref)}" title="กลับไปรายการ ใบคำร้อง/แจ้งซ่อม MT">‹ กลับไปรายการ</a><div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE} <span class="badge">เวอร์ชันทดสอบ</span></h1></div>
-        <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
+    return `<a class="request-back-link" href="${esc(backHref)}" title="กลับไปรายการ ใบคำร้อง/แจ้งซ่อม MT">‹ กลับไปรายการ</a><div class="page-heading request-module-header" data-module="mt"><div><h1>${TITLE}</h1><p>ไม่นับใบที่ยกเลิก</p></div>
+        <div class="ncr-heading-status"><span class="badge">เวอร์ชันทดสอบ</span><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="mt">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
         <div class="nd-summary" role="status"></div>
-        <div class="nd-tiles five" data-card="tiles">${tilesHtml(filters, period, back)}</div>
+        <div class="nd-tiles${measurable(period) ? " five" : ""}" data-card="tiles">${tilesHtml(filters, period, back)}</div>
         ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop)}</section>` : ""}
         <section class="card nd-card nd-half" data-card="stage">${stageHtml(stages, filters)}</section>
         <section class="card nd-card nd-half" data-card="phase">${phaseHtml(phases)}</section>
         <section class="card nd-card nd-half" data-card="machine">${machineHtml(machines, filters)}</section>
         <section class="card nd-card nd-half" data-card="tech">${techHtml(techs, filters)}</section>
         <section class="card nd-card" data-card="deptrank">${deptRankHtml(depts, filters)}</section>
-        <section class="card nd-card" id="nd-drill">${drillHtml(list, basis, filters, showAct ? new Set(actTop.map((row) => row.id)) : undefined)}</section>
+        ${((drill) => (drill ? `<section class="card nd-card" id="nd-drill">${drill}</section>` : ""))(drillHtml(list, basis, filters, showAct ? new Set(actTop.map((row) => row.id)) : undefined))}
         ${definitionsHtml}
         ${(() => { const note = window.MNP_NOTES?.toggle("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย</p>"); const stamp = `ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)}`; return note ? `<div class="note-row nd-muted"><span>${stamp}</span>${note.button}</div>${note.body}` : `<p class="nd-muted">${stamp}</p>`; })()}
       </div>`;

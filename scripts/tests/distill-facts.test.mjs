@@ -139,3 +139,36 @@ test("request and NCR details share one hero: back link, eyebrow with the status
   assert.match(app, />‹ กลับไปรายการ<\/a>/);
   assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow">\$\{escapeHtml\(ncr\.form_code\)\} · /);
 });
+
+// ---- รอบ 11: ส่วนประกอบกลางที่ MT และ NCR ใช้ร่วมกัน ----
+test("MT and NCR lists share one header: scope tabs on top, then one filter row with search", () => {
+  assert.match(app, /\$\{requestsViewTabs\(params, \{ board: selected\.code !== "NCR_CAR" \}\)\}\$\{list\}<\/div>`;/);
+  assert.match(app, /requestListFilters\(params, \{ placeholder: "ค้นหาเลขที่ NCR สินค้า ลูกค้า หรือข้อบกพร่อง", statusSelect: ncrStatus\.html, statusApplied: ncrStatus\.applied \}\)/);
+  assert.doesNotMatch(app, /function requestScopeSwitch\(/);
+  const ncr = read("modules/module-ncr.js");
+  assert.match(ncr, /if \(search\) rows = rows\.filter\(\(row\) => \[row\.ncr_no, row\.product_name, row\.customer_name, relation\(row\.defect_type\)\?\.name_th\]/);
+  assert.match(ncr, /\$\{embedded \? "" : `<div class="list-filters">/, "the register keeps its own filter row only on the stand-alone test page");
+});
+
+test("an empty list caused by a search or filter says nothing matched and offers to clear, not to create", () => {
+  assert.match(app, /function listEmptyOf\(params\) \{/);
+  assert.match(app, /"ไม่พบคำร้องที่ตรงกับคำค้นหรือตัวกรองนี้"/);
+  assert.match(app, /label: "ล้างตัวกรอง" \}/);
+  assert.match(read("modules/module-ncr.js"), /emptyState\("ไม่พบ NCR ที่ตรงกับคำค้นนี้"/);
+});
+
+test("both dashboards share one header and do not show a list that repeats act-now or a row of — tiles", () => {
+  const mt = read("modules/module-mt-dashboard.js");
+  const ncrDash = read("modules/module-ncr-dashboard.js");
+  assert.match(mt, /<div><h1>\$\{TITLE\}<\/h1><p>ไม่นับใบที่ยกเลิก<\/p><\/div>/);
+  assert.match(ncrDash, /<div><h1>แดชบอร์ด NCR<\/h1><p>ไม่นับใบที่ยกเลิก<\/p><\/div>/);
+  for (const source of [mt, ncrDash]) assert.match(source, /if \(list\.length && !rest\.length && !hasDrillFilter\(filters\)\) return "";/);
+  assert.match(mt, /const measurable = \(period\) => period\.avgCycle !== null \|\| Boolean\(period\.onTimeBase\) \|\| Boolean\(period\.verified\);/);
+  assert.match(mt, /class="nd-tile nd-tile-pending"/);
+});
+
+test("the NCR hero states the reporter and issue date once, in the same meta line as a request", () => {
+  const ncr = read("modules/module-ncr.js");
+  assert.match(ncr, /<p class="request-detail-meta">โดย \$\{escapeHtml\(personName\(directory, ncr\.reporter_id\)\)\}/);
+  assert.doesNotMatch(ncr, /partField\("วันที่ออก"|partField\("ผู้รายงาน \/ แผนก"/);
+});
