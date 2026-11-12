@@ -904,7 +904,7 @@
       ["แหล่งที่พบ", SOURCES[ncr.source] ?? ncr.source ?? "—"],
       ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`],
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
-    const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
+    const heading = `<a class="request-back-link" href="#/ncr" title="กลับไปรายการ NCR/CAR">‹ กลับไปรายการ</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
         <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
         <h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>${headFacts}

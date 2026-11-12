@@ -3807,14 +3807,14 @@ async function renderRequestDetail(params) {
   // หัวใบเป็นก้อนสีโมดูล ยกเว้นใบแจ้งซ่อม IT ที่ใช้ฟอร์มของทีม IT เอง (ORIGINAL_FORM_TYPES)
   const moduleHead = !ORIGINAL_FORM_TYPES.has(type?.code);
   const content = `
-    <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}">‹ ${escapeHtml(type ? requestTypeLabel(type) : "คำร้อง")}</a>
+    <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}" title="${escapeHtml(`กลับไปรายการ${type ? ` ${requestTypeLabel(type)}` : "คำร้อง"}`)}">‹ กลับไปรายการ</a>
     <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair, isFinalDecision(type, request.status))}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${escapeHtml(request.title)}</h1>
-      <p class="request-detail-meta">${escapeHtml(detailView?.typeLabel ?? type?.name_th ?? "คำร้อง")} · โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${["high", "urgent"].includes(request.priority) ? `${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}` : "ด่วน"}</span>` : ""}</p>
+      <p class="request-detail-meta">${detailView?.typeLabel ? `${escapeHtml(detailView.typeLabel)} · ` : ""}โดย ${escapeHtml(personName(directory, request.requester_id))} · ${formatDate(request.submitted_at, true)}${priorityIsFlagged ? ` <span class="badge urgent-flag">${["high", "urgent"].includes(request.priority) ? `${isRepair ? "" : "ความสำคัญ"}${escapeHtml(priorityLabel(request.priority, isRepair))}` : "ด่วน"}</span>` : ""}</p>
     </header>
     <div class="detail-grid">
       <div class="stack">

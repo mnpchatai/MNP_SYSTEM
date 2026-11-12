@@ -40,7 +40,8 @@ test("a machine name that already carries its code is not prefixed with the code
 
 test("the MT detail page says the document type and the requester once", () => {
   // บรรทัดใต้หัวใบ: ประเภทเอกสาร · โดย <บัญชีที่ส่ง> — การ์ดไม่ซ้ำสองค่านี้
-  assert.match(app, /<p class="request-detail-meta">\$\{escapeHtml\(detailView\?\.typeLabel \?\? type\?\.name_th \?\? "คำร้อง"\)\} · โดย/);
+  // ชื่อโมดูลอยู่ที่แถบบน บรรทัดใต้หัวบอกชนิดเอกสารเฉพาะเมื่อต่างจากชื่อโมดูล (MT: ใบแจ้งซ่อม/ใบคำร้อง)
+  assert.match(app, /<p class="request-detail-meta">\$\{detailView\?\.typeLabel \? `\$\{escapeHtml\(detailView\.typeLabel\)\} · ` : ""\}โดย /);
   assert.match(mt, /typeLabel: docTypeLabels\[request\.doc_type\] \?\? null,/);
   assert.doesNotMatch(mt, /requestFact\("ประเภทเอกสาร"/);
   assert.match(mt, /const showRequester = requesterName && requesterName !== personName\(directory, request\.requester_id\);/);
@@ -133,6 +134,8 @@ test("status glyphs follow the agreed mapping and one age definition is used on 
 
 test("request and NCR details share one hero: back link, eyebrow with the status, then the heading", () => {
   assert.match(app, /<a class="request-back-link" href="#\/requests\$\{type\?\.id/);
-  assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/);
+  // ลิงก์กลับบอกการกระทำ ชื่อโมดูลอยู่แถบบนครั้งเดียว (และใน title)
+  assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr" title="กลับไปรายการ NCR\/CAR">‹ กลับไปรายการ<\/a>/);
+  assert.match(app, />‹ กลับไปรายการ<\/a>/);
   assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow">\$\{escapeHtml\(ncr\.form_code\)\} · /);
 });
