@@ -1046,11 +1046,13 @@ a.register-title:hover { color: var(--primary); }
 .queue-item-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .queue-item-meta { color: var(--muted); font-size: var(--text-caption); }
 /* งานที่ต้องลงมือ (มอบหมายช่าง ตอบ NCR …): ชิปสีโมดูลของใบพร้อมลูกศร แยกจากป้ายสถานะที่เป็นเม็ดมีสัญลักษณ์ */
-.queue-item-task { padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--m800, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 14%, var(--paper)); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+.queue-item-task { padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--m800, var(--primary-ink)); background: color-mix(in srgb, var(--m500, var(--primary)) 14%, var(--paper)); border-radius: var(--radius-pill); font-size: var(--text-ui); font-weight: 700; white-space: nowrap; }
 .queue-item-task::after { content: "→"; }
 .queue-item-task.is-decide::after { content: none; }
 /* ชิปอยู่ท้ายบรรทัดเลขที่ ชื่อเรื่องจึงได้ความกว้างเต็มแถว · รหัสในชื่อเรื่อง (HS-08) ไม่ตัดกลางรหัส */
-.queue-item-top .queue-item-task { margin-left: auto; }
+/* ชิปงานกับอายุงานอยู่ด้วยกันท้ายบรรทัดเลขที่ */
+.queue-item-due { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.queue-item-age { color: var(--muted); font-size: var(--text-meta); font-weight: 600; white-space: nowrap; }
 .queue-item-title .nowrap { white-space: nowrap; }
 /* คิวที่มีแต่งานที่ลงมือในหน้าของใบ (ไม่มีใบให้ตัดสินในคิว): ไม่มีแผงขวา รายการใช้เต็มความกว้าง เป็นกริดการ์ดบนจอกว้าง */
 .queue-layout.is-tasks-only { grid-template-columns: minmax(0, 1fr); }

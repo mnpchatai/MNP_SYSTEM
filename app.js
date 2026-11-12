@@ -2297,15 +2297,17 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   const rules = window.MNP_HOME_QUEUE;
   // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เกินกำหนดตอบ)
   const flag = item.flag ?? (["high", "urgent"].includes(request.priority) ? priorityLabel(request.priority, isRepairType(type)) : null);
-  const meta = [type?.name_th, item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : null, rules.waitingLabel(rules.waitingDays(item.createdAt))].filter(Boolean).join(" · ");
+  // ประเภทบอกด้วยสีและไอคอนของแถวกับคำนำหน้าเลขที่แล้ว ชื่อเต็มอยู่ใน title ของไอคอนและข้อความสำหรับผู้อ่านหน้าจอ · อายุงานอยู่ข้างชิปงาน
+  const meta = item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : "";
+  const age = rules.waitingLabel(rules.waitingDays(item.createdAt));
   // ทุกแถวบอกว่าต้องทำอะไร: ชิปสีโมดูลของใบท้ายบรรทัดเลขที่ (ไม่เบียดชื่อเรื่อง) · งานที่ลงมือในหน้าของใบเองมีลูกศร (พาไปหน้านั้น)
   // แถวอนุมัติเปิดในคิวจึงไม่มีลูกศร
   const chip = `<span class="queue-item-task${item.kind === "approval" ? " is-decide" : ""}" data-module="${requestPalette(type?.code)}">${escapeHtml(queueTaskLabel(item))}</span>`;
-  const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
+  const head = `<span class="queue-item-icon" data-module="${requestPalette(type?.code)}" title="${escapeHtml(type?.name_th ?? "")}" aria-hidden="true">${requestTypeIcon(type?.code)}</span>
     <span class="queue-item-copy">
-      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}${chip}</span>
+      <span class="queue-item-top"><span class="request-no">${escapeHtml(request.request_no)}</span>${type?.name_th ? `<span class="sr-only">${escapeHtml(type.name_th)}</span>` : ""}${flag ? `<span class="badge urgent-flag">${escapeHtml(flag)}</span>` : ""}<span class="queue-item-due">${chip}<span class="queue-item-age">${escapeHtml(age)}</span></span></span>
       <strong class="queue-item-title">${keepCodesTogether(escapeHtml(request.title))}</strong>
-      <span class="queue-item-meta">${escapeHtml(meta)}</span>
+      ${meta ? `<span class="queue-item-meta">${escapeHtml(meta)}</span>` : ""}
     </span>`;
   const hiddenAttr = hidden ? " hidden" : "";
   // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
