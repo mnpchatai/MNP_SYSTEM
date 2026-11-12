@@ -578,7 +578,7 @@
       ${embedded ? "" : `<div class="page-heading"><div><div class="eyebrow">QA02-FM02</div><h1>ทะเบียน NCR</h1><p>NCR ที่คุณเกี่ยวข้อง</p></div><div class="ncr-heading-status">${headerLinks}${state.employee?.isSandbox
         ? '<a class="btn" id="sandbox-issue-ncr" href="#/ncr?new=1"><span class="plus-icon" aria-hidden="true"></span> ออก NCR</a>'
         : '<a class="btn secondary" href="#/requests">ไปหน้าคำร้อง →</a>'}</div></div>`}
-      <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "แสดง", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
+      <div class="list-filters">${hrefSelectHtml({ id: "ncr-filter-status", label: "สถานะ", options: LIST_FILTERS.map(([value, label]) => ({ value, label, href: filterUrl(value) })), value: filter })}</div>
       ${body}`;
     if (embedded) return `<section class="request-center-ncr">${content}</section>`;
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR");

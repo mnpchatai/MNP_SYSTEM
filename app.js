@@ -2789,20 +2789,18 @@ function bindModuleZoom(params) {
 
 // หน้ารายการของโมดูล: ขอบเขตชุดเดียว ที่ฉันมีสิทธิ์ดู · ที่ฉันแจ้ง · ติดตามสถานะทุกใบ (กระดาน) แทนแท็บมุมมองกับปุ่มขอบเขตสองชุดที่ทับกัน
 // ทะเบียน NCR ไม่มีกระดาน จึงยังใช้ requestScopeSwitch
-function requestsViewTabs(params) {
+function requestsViewTabs(params, { board: withBoard = true } = {}) {
   const board = params.get("view") === "board";
   const mine = !board && params.get("scope") === "mine";
   const tab = (active, changes, label) => `<a class="view-tab${active ? " active" : ""}"${active ? ' aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, changes))}">${label}</a>`;
   return `<nav class="view-tabs" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">
-    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ")}
+    ${tab(!board && !mine, { view: null, scope: null }, "ที่ฉันมีสิทธิ์ดู")}${tab(mine, { view: null, scope: "mine" }, "ที่ฉันแจ้ง")}${withBoard ? tab(board, { view: "board", scope: null }, "ติดตามสถานะทุกใบ") : ""}
   </nav>`;
 }
 
 // ขอบเขตของรายการตามสิทธิ์: ทุกใบที่มีสิทธิ์ดู / เฉพาะที่ฉันแจ้ง (คำอธิบายเรื่องสิทธิ์อยู่ใน title ไม่เป็นบรรทัดถาวร)
 function requestScopeSwitch(params) {
-  const mineOnly = params.get("scope") === "mine";
-  const link = (mine, label) => `<a class="filter${mine === mineOnly ? " active" : ""}"${mine === mineOnly ? ' aria-current="true"' : ""} href="${escapeHtml(requestCenterUrl(params, { scope: mine ? "mine" : null }))}">${label}</a>`;
-  return `<nav class="scope-switch" aria-label="ใบที่แสดง" title="สิทธิ์ดูรายละเอียดและดำเนินการเป็นไปตามบัญชีของคุณ">${link(false, "ทุกใบที่ฉันมีสิทธิ์ดู")}${link(true, "เฉพาะที่ฉันแจ้ง")}</nav>`;
+  return requestsViewTabs(params, { board: false });
 }
 
 // แถวตัวกรองเดียวของหน้ารายการ: ขอบเขต · สถานะ (ตัวเลือกเดียวแทนชิป 10 อัน) · แผนก · ค้นหาเลขที่ — รายการจึงขึ้นในจอแรกบนมือถือ
