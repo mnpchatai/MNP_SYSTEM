@@ -244,7 +244,12 @@ test("round 14: one repair-result vocabulary, labelled parts rows, one machine f
   assert.equal(dash.match(/machineLabelOf\(/g).length >= 4, true);
   // โปรไฟล์: รหัสพนักงานที่เดียว · ช่องไม่บังคับบอก (ถ้ามี) · ไม่มี "ชื่อตำแหน่งงาน" คู่กับ "ตำแหน่ง"
   assert.doesNotMatch(app, /profile-employee-no|ชื่อตำแหน่งงาน/);
-  assert.match(app, /<label for="profile-email">อีเมล \(ถ้ามี\)<\/label>/);
+  // อีเมลล้างทิ้งไม่ได้ (app_update_own_profile คืนค่าเดิม) จึงจำเป็น · เบอร์ล้างได้จึง (ถ้ามี)
+  assert.match(app, /<label for="profile-email">อีเมล\$\{REQUIRED_MARK\}<\/label>[^\n]*required><\/div>/);
+  assert.match(app, /<label for="profile-phone">เบอร์ติดต่อ \(ถ้ามี\)<\/label>/);
+  // ปุ่มอัปโหลดตามชุดไฟล์จริง รวมตอนกด × ลบไฟล์ในตัวอย่าง
+  assert.match(app, /\["change", "mnp:files-changed"\]\.forEach/);
+  assert.equal(read("modules/attachment-image.js").match(/new Event\("mnp:files-changed", \{ bubbles: true \}\)/g).length, 2);
   // อัปโหลดกดได้เมื่อเลือกไฟล์แล้ว · หัวเรื่องไม่ตัดรหัสกลางคำ
   assert.match(app, /class="btn secondary attachment-upload" type="submit" disabled>อัปโหลด/);
   assert.match(app, /<h1>\$\{headingTextHtml\(request\.title\)\}<\/h1>/);

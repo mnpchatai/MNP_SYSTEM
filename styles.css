@@ -669,7 +669,7 @@ a.register-title:hover { color: var(--primary); }
 .register-sub .ui-icon { width: 13px; height: 13px; vertical-align: -2px; }
 .register-meta { color: var(--copy); font-size: var(--text-meta); white-space: nowrap; }
 .register-none { color: var(--quiet); }
-.register-status .register-sub { max-width: 30ch; overflow: visible; white-space: normal; }
+@media (min-width: 761px) { .register-status .register-sub { max-width: 30ch; overflow: visible; white-space: normal; } }
 .nowrap { white-space: nowrap; }
 .register-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .request-card-type { padding: 3px 9px; display: inline-block; color: var(--mod-on); background: var(--mod-surface); border: 1px solid var(--mod-edge); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; letter-spacing: .02em; white-space: nowrap; }

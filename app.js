@@ -3923,10 +3923,13 @@ async function renderRequestDetail(params) {
   const stepFiles = document.querySelector("#finish-files") ?? document.querySelector("#verify-files");
   pointToStepFiles(document.querySelector("#attachment-form"), stepFiles, stepFiles?.id === "verify-files" ? "แนบไฟล์ในการ์ดตรวจรับผลการซ่อม" : "แนบรูปใบเสร็จและไฟล์ในฟอร์มจบงาน");
   // ปุ่มอัปโหลดกดได้เมื่อเลือกไฟล์แล้ว (เดิมกดได้ทั้งที่ยังไม่เลือก แล้วขึ้นข้อความไกลจากปุ่ม)
-  document.querySelector("#attachment-file")?.addEventListener("change", (event) => {
-    const button = event.currentTarget.form?.querySelector(".attachment-upload");
-    if (button) button.disabled = !event.currentTarget.files?.length;
-  });
+  // รวมถึงตอนกด × ลบไฟล์ในตัวอย่าง หรือแปลงรูปไม่สำเร็จ (attachment-image.js ยิง mnp:files-changed)
+  const attachmentFile = document.querySelector("#attachment-file");
+  const syncUploadButton = () => {
+    const button = attachmentFile?.form?.querySelector(".attachment-upload");
+    if (button) button.disabled = !attachmentFile.files?.length;
+  };
+  ["change", "mnp:files-changed"].forEach((type) => attachmentFile?.addEventListener(type, syncUploadButton));
   document.querySelector("#attachment-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -4762,7 +4765,7 @@ async function renderProfile() {
           <div class="field"><label for="profile-last-name">นามสกุล${REQUIRED_MARK}</label><input class="input" id="profile-last-name" name="last_name" maxlength="100" value="${escapeHtml(employee.last_name)}" required></div>
         </div>
         <div class="field-row">
-          <div class="field"><label for="profile-email">อีเมล (ถ้ามี)</label><input class="input" id="profile-email" name="email" type="email" maxlength="200" value="${escapeHtml(employee.email ?? "")}"></div>
+          <div class="field"><label for="profile-email">อีเมล${REQUIRED_MARK}</label><input class="input" id="profile-email" name="email" type="email" maxlength="200" value="${escapeHtml(employee.email ?? "")}" required></div>
           <div class="field"><label for="profile-phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="profile-phone" name="phone" maxlength="40" value="${escapeHtml(employee.phone ?? "")}"></div>
         </div>
         <div class="field"><label for="profile-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="profile-job-title" name="job_title" maxlength="120" value="${escapeHtml(employee.job_title ?? "")}" title="แสดงใต้ชื่อของคุณ ไม่มีผลกับสิทธิ์"></div>
@@ -5353,8 +5356,8 @@ async function renderAdmin(params) {
             <div class="field"><label for="edit-last-name">นามสกุล${REQUIRED_MARK}</label><input class="input" id="edit-last-name" name="last_name" maxlength="100" value="${escapeHtml(editing.last_name ?? "")}" required></div>
           </div>
           <div class="field-row">
-            <div class="field"><label for="edit-email">อีเมล</label><input class="input" id="edit-email" name="email" type="email" maxlength="200" value="${escapeHtml(editing.email ?? "")}"></div>
-            <div class="field"><label for="edit-phone">เบอร์ติดต่อ</label><input class="input" id="edit-phone" name="phone" maxlength="40" value="${escapeHtml(editing.phone ?? "")}"></div>
+            <div class="field"><label for="edit-email">อีเมล${req}</label><input class="input" id="edit-email" name="email" type="email" maxlength="200" value="${escapeHtml(editing.email ?? "")}" required></div>
+            <div class="field"><label for="edit-phone">เบอร์ติดต่อ (ถ้ามี)</label><input class="input" id="edit-phone" name="phone" maxlength="40" value="${escapeHtml(editing.phone ?? "")}"></div>
           </div>
           <div class="field"><label for="edit-job-title">ตำแหน่งที่แสดง (ถ้ามี)</label><input class="input" id="edit-job-title" name="job_title" maxlength="120" value="${escapeHtml(editing.job_title ?? "")}"></div>
           <div class="field-row">
