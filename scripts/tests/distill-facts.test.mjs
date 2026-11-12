@@ -139,7 +139,7 @@ test("request and NCR details share one hero: back link, eyebrow with the status
   // รอบ 15: ลิงก์กลับขึ้นแถบบนแทนป้ายทางเดิน จึงบอกชื่อรายการที่จะกลับไป
   assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/);
   assert.match(app, /">‹ \$\{escapeHtml\(type \? requestTypeLabel\(type\) : "คำร้อง"\)\}<\/a>/);
-  assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow">\$\{escapeHtml\(ncr\.form_code\)\} · /);
+  assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">\$\{escapeHtml\(ncr\.form_code\)\} ·<\/span> <span class="nowrap">\$\{escapeHtml\(ncr\.ncr_no\)\}<\/span><\/span>/);
 });
 
 // ---- รอบ 11: ส่วนประกอบกลางที่ MT และ NCR ใช้ร่วมกัน ----

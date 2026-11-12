@@ -69,7 +69,7 @@
     INVALID_LOSS_DATE: "กรุณาตรวจวันที่เกิดค่าใช้จ่าย ยอดจริงต้องไม่เป็นวันที่ในอนาคต",
     LOSS_EVIDENCE_REQUIRED: "กรุณาระบุหลักฐานอ้างอิงก่อนยืนยันยอด",
     COST_REVIEW_PENDING: "ยังมีรายการรอยืนยัน กรุณาตรวจยอดก่อนระบุว่าประเมินครบ",
-    ZERO_COST_REASON_REQUIRED: "กรุณาระบุเหตุผลกรณีไม่มีค่าเสียหาย",
+    ZERO_COST_REASON_REQUIRED: "กรุณาระบุเหตุผลกรณีไม่มีความสูญเสีย",
     INVALID_LOSS: "จำนวนต้องมากกว่า 0 ราคาต่อหน่วยต้องไม่ติดลบ และต้องระบุหน่วย",
     INVALID_INFO_REQUEST: "กรุณาระบุข้อมูลที่ต้องการเพิ่มเติม (5–2,000 ตัวอักษร)",
     INVALID_INFO_ANSWER: "กรุณาระบุข้อมูลที่ตอบ (5–5,000 ตัวอักษร)",
@@ -833,7 +833,7 @@
     issue: "ออก NCR", dispose: "ผู้จัดการโรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผู้จัดการแผนก QA ลงนาม", signoff_factory: "ผู้จัดการโรงงานลงนาม",
     signoff_gm: "ผู้จัดการทั่วไปลงนาม", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", assign_responder: "ผู้จัดการโรงงานระบุผู้ตอบ", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
-    loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินค่าเสียหาย",
+    loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินความสูญเสีย",
   };
 
   async function renderDetail(id) {
@@ -926,7 +926,7 @@
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
     const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
-        <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
+        <div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">${escapeHtml(ncr.form_code)} ·</span> <span class="nowrap">${escapeHtml(ncr.ncr_no)}</span></span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
         <h1>${headingTextHtml(ncr.product_name || ncr.ncr_no)}</h1>
         <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${headFacts}
       </header>

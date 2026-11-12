@@ -139,8 +139,10 @@ test("before the first loss row there are no 0.00 tiles, and 'not assessed yet' 
   assert.equal((viewer.match(/ยังไม่มีรายการความสูญเสีย/g) ?? []).length, 1, "the empty state is said once");
   assert.doesNotMatch(viewer, /กรุณาประเมินก่อนสรุป/, "a viewer who cannot enter costs is not asked to assess them");
   assert.doesNotMatch(viewer, /<dl class="ncr-loss-summary/);
-  assert.doesNotMatch(viewer, /ประเมินค่าเสียหายยังไม่ครบ/, "the review block below already says the costs are not confirmed");
-  assert.equal((viewer.match(/ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ/g) ?? []).length, 1);
+  assert.doesNotMatch(viewer, /ประเมินความสูญเสียยังไม่ครบ/, "the review block below already says the costs are not confirmed");
+  // รอบ 17: คำเดียว "ความสูญเสีย" และผู้ยืนยันยอด (ผู้ใช้เลือก 2026-11-12)
+  assert.equal((viewer.match(/ยังไม่ได้ยืนยันว่าประเมินความสูญเสียครบ/g) ?? []).length, 1);
+  assert.doesNotMatch(viewer, /ค่าเสียหาย|ผู้กรอกต้นทุน/);
   // แถวที่ยกเลิกแล้วยังแสดงในตาราง ช่องสรุปจึงยังแสดง ไม่บอกว่า "ยังไม่มีรายการ"
   const voided = { id: "l9", ncr_id: NCR.id, entry_kind: "loss", loss_type: "scrap", cost_status: "estimated", amount: 500, quantity: 1, unit: "pcs", unit_cost: 500, recorded_by: "e1", recorded_at: "2026-11-01", voided_at: "2026-11-02", void_reason: "ซ้ำ" };
   const withVoided = await renderFor(employee("e8", "dept-qa", "QA", "staff"), {}, { tables: { ncr_losses: [voided] } });
@@ -288,7 +290,8 @@ test("the NCR's responders enter and edit estimates only: no confirm, void or co
 test("read-only viewers are told who can enter costs; editors are not", async () => {
   const readOnly = await renderFor(employee("e8", "dept-qa", "QA", "staff"));
   // ชื่อตำแหน่งเต็มในข้อความ (ผู้ใช้เลือก 2026-11-10)
-  assert.match(readOnly, /ผู้กรอกค่าเสียหายได้: ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ช่วยผู้จัดการโรงงาน และผู้จัดการ\/ผู้ช่วยผู้จัดการแผนก QA/);
+  // รอบ 17: พับไว้ใต้ "ใครกรอกความสูญเสียได้" ไม่เป็นย่อหน้าถาวร · ชื่อผู้ยืนยันยอด
+  assert.match(readOnly, /<details class="ncr-loss-who"><summary>ใครกรอกความสูญเสียได้<\/summary><p class="muted small">ผู้ยืนยันยอด: ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ช่วยผู้จัดการโรงงาน และผู้จัดการ\/ผู้ช่วยผู้จัดการแผนก QA/);
   const editor = await renderFor(employee("e1", "dept-ft", "FT", "factory_manager"));
   assert.doesNotMatch(editor, /ผู้กรอกได้:/);
   // ใบที่ยกเลิกล็อกทุกคน จึงไม่ชี้ไปหาใคร
@@ -594,12 +597,12 @@ test("the responder's estimate-only loss form asks nothing that only the cost ed
   assert.match(responder, /ใส่ยอดประมาณการได้หลายรายการ/, "the responder has the estimate-only form");
   assert.doesNotMatch(responder, /กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย/);
   assert.match(responder, /หลักฐานอ้างอิง \(ถ้ามี\)/);
-  assert.match(responder, /ผู้กรอกต้นทุนยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ/, "the review status names who still has to act");
+  assert.match(responder, /ผู้ยืนยันยอดยังไม่ได้ยืนยันว่าประเมินความสูญเสียครบ/, "the review status names who still has to act");
   const editor = await renderFor(FACTORY_MANAGER, open);
   assert.match(editor, /กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย/);
   assert.match(editor, /หลักฐานอ้างอิง \(จำเป็นเมื่อยืนยันยอด\)/);
   // รอบ 13: ช่อง "ประเมินค่าเสียหายครบแล้ว" ที่ยังไม่ติ๊กบอกสถานะเอง ไม่มีบรรทัดซ้ำกับป้ายบนหัวใบ
-  assert.doesNotMatch(editor, /<p class="muted">ยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ<\/p>/);
+  assert.doesNotMatch(editor, /<p class="muted">ยังไม่ได้ยืนยันว่าประเมินความสูญเสียครบ<\/p>/);
 });
 
 // ทางแนบไฟล์ (pointToStepFiles ใน app.js): ซ่อนช่องอัปโหลดแยกเฉพาะเมื่อมีฟอร์มของขั้นที่แนบหลักฐานได้ เลือกด้วยชื่อการกระทำ ไม่ใช่ตำแหน่ง
