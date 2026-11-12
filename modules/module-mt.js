@@ -1056,7 +1056,13 @@
         expectedToggle.setAttribute("aria-expanded", String(open));
         // ปฏิทินไทยซ่อนช่อง date จริงไว้ โฟกัสปุ่มของปฏิทินก่อน (ไม่มีปฏิทินจึงโฟกัสช่องเอง)
         if (open) (expectedForm.querySelector('[data-field="expected_date"] button') ?? expectedForm.querySelector("#expected-date-input"))?.focus();
-        else { expectedForm.reset(); window.MNP_FORM_STEPS?.clearFieldErrors(expectedForm); expectedToggle.focus(); }
+        else {
+          // reset ล้างแค่ค่าในช่องที่ซ่อน ปุ่มปฏิทินไทยต้องวาดข้อความใหม่ด้วย
+          expectedForm.reset();
+          expectedForm.elements.expected_date?.dispatchEvent(new Event("datepicker:refresh"));
+          window.MNP_FORM_STEPS?.clearFieldErrors(expectedForm);
+          expectedToggle.focus();
+        }
       };
       expectedToggle?.addEventListener("click", () => setExpectedOpen(true));
       document.querySelector("#expected-date-cancel")?.addEventListener("click", () => setExpectedOpen(false));
