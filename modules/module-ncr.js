@@ -578,7 +578,7 @@
           defect: escapeHtml(defect),
           departments: escapeHtml(departments),
           issued: formatDate(row.issue_date),
-          loss: `${row.lossPending ? '<span class="badge loss-pending-flag">รอข้อมูลความสูญเสีย</span>' : ""}${summary ? `${row.lossPending ? "<br>" : ""}${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : ""}`,
+          loss: `${row.lossPending ? '<span class="badge loss-pending-flag" title="รอข้อมูลความสูญเสีย">รอข้อมูล</span>' : ""}${summary ? `${row.lossPending ? "<br>" : ""}${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : ""}`,
           status: `<span class="register-badges">${statusBadgeHtml(row)}</span>${ownerChipHtml(row, staff, directory)}`,
         },
       };

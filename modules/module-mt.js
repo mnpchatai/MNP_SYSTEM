@@ -83,7 +83,7 @@
     { name: "execution_plan", required: true, message: "เลือกการดำเนินงาน" },
     { name: "inspector_opinion", required: true, message: "เลือกความคิดเห็นของช่างผู้ตรวจสอบ" },
     { name: "work_started_date", required: true, message: "เลือกวันเริ่มงาน" },
-    { name: "work_expected_date", required: true, message: "เลือกวันที่คาดว่าจะเสร็จ", check: (value, values) => !values.work_started_date || value >= values.work_started_date, checkMessage: "วันที่คาดว่าจะเสร็จต้องไม่ก่อนวันเริ่มงาน" },
+    { name: "work_expected_date", required: true, message: "เลือกกำหนดเสร็จ", check: (value, values) => !values.work_started_date || value >= values.work_started_date, checkMessage: "กำหนดเสร็จต้องไม่ก่อนวันเริ่มงาน" },
   ]);
   const FINISH_RULES = Object.freeze([{ name: "cause_analysis", required: true, minLength: 3, message: "เขียนวิเคราะห์สาเหตุอย่างน้อย 3 ตัวอักษร" }]);
   // ข้อความใต้ช่องแล้วพาไปช่องแรกที่ผิด · ช่องวันที่ใช้ปฏิทินไทย จึงโฟกัสปุ่มของปฏิทินแทนช่องที่ซ่อน
@@ -158,7 +158,7 @@
               <label class="progress-choice-option"><input type="radio" name="receipt_mode" value="now" checked> รับของทันที (ได้ของพร้อมสั่งซื้อ)</label>
               <label class="progress-choice-option"><input type="radio" name="receipt_mode" value="later"> ระบุวันที่คาดว่าของจะมาส่ง</label>
             </div>
-            <input class="input progress-expected-input" type="date" name="expected_on" disabled>
+            <div class="field" data-field="expected_on"><input class="input progress-expected-input" type="date" name="expected_on" aria-label="วันที่คาดว่าของจะมาส่ง" disabled></div>
             ${extraFilesFieldHtml(`progress-order-files-${escapeHtml(step.id)}`, "แนบหลักฐานการสั่งซื้อ (ถ้ามี)")}
             <div class="form-actions"><button class="btn warning small" type="submit">บันทึก</button></div>
           </form>
@@ -171,10 +171,10 @@
         <div class="progress-copy">${title}<span class="muted small">${statusText}</span></div>
         <button type="button" class="btn warning small progress-button" data-step="${escapeHtml(step.id)}">ของมาส่งแล้ว</button>
         <div class="progress-step-extra">
-          <button type="button" class="btn secondary small progress-reschedule-toggle" data-step="${escapeHtml(step.id)}">ของยังไม่มา เลื่อนวันที่คาดว่าจะมาส่ง</button>
+          <button type="button" class="btn secondary small progress-reschedule-toggle" data-step="${escapeHtml(step.id)}" aria-expanded="false">ของยังไม่มา เลื่อนวันที่คาดว่าจะมาส่ง</button>
           <form class="progress-reschedule-form hidden" data-step="${escapeHtml(step.id)}">
-            <label class="field-label" for="progress-reschedule-date-${escapeHtml(step.id)}">วันที่คาดว่าของจะมาส่งใหม่${REQUIRED}</label>
-            <input class="input" id="progress-reschedule-date-${escapeHtml(step.id)}" type="date" name="expected_on" required>
+            <div class="field" data-field="expected_on"><label class="field-label" for="progress-reschedule-date-${escapeHtml(step.id)}">วันที่คาดว่าของจะมาส่งใหม่${REQUIRED}</label>
+            <input class="input" id="progress-reschedule-date-${escapeHtml(step.id)}" type="date" name="expected_on" required></div>
             ${extraFilesFieldHtml(`progress-reschedule-files-${escapeHtml(step.id)}`)}
             <button class="btn small" type="submit">บันทึกวันที่ใหม่</button>
           </form>
@@ -368,7 +368,7 @@
     }
   }
 
-  // กำหนดเสร็จ: ช่างในชุด/ผจก.เจ้าของงานแก้วันที่คาดว่าจะเสร็จได้ระหว่างรอเริ่มงานหรือกำลังซ่อม
+  // กำหนดเสร็จ: ช่างในชุด/ผจก.เจ้าของงานแก้กำหนดเสร็จได้ระหว่างรอเริ่มงานหรือกำลังซ่อม
   // เลยกำหนดแล้ว (หลังวันกำหนดเสร็จ) ระบบเตือนช่างทุกรอบ 08:30/13:30 จนกว่าจะจบงานหรือแก้วันที่ใหม่
   // ทุกการแก้วันที่ถูกบันทึกเป็นประวัติ "แก้ไขจากกำหนดเสร็จเดิม ... เป็นวันที่ ..." ในลำดับเหตุการณ์
   function expectedDateSectionHtml(request, canReschedule) {
@@ -377,18 +377,18 @@
     const overdue = Boolean(request.work_expected_date) && request.work_expected_date < today;
     const current = request.work_expected_date ? formatDate(request.work_expected_date) : "ยังไม่ได้กำหนด";
     const form = `<form id="expected-date-form"${overdue ? "" : ' class="hidden"'}>
-        <div class="field"><label for="expected-date-input">วันที่คาดว่าจะเสร็จใหม่${REQUIRED}</label><input class="input" id="expected-date-input" name="expected_date" type="date" min="${escapeHtml(today)}" required></div>
+        <div class="field" data-field="expected_date"><label for="expected-date-input">กำหนดเสร็จใหม่${REQUIRED}</label><input class="input" id="expected-date-input" name="expected_date" type="date" min="${escapeHtml(today)}" required></div>
         <div class="field"><label for="expected-date-note">เหตุผล (ถ้ามี)</label><input class="input" id="expected-date-note" name="note" maxlength="500" placeholder="เช่น รออะไหล่"></div>
         <p class="muted small">ระบบแจ้งผู้แจ้งให้ทราบ</p>
-        <div class="form-actions"><button class="btn" type="submit">บันทึกวันที่ใหม่</button></div>
+        <div class="form-actions">${overdue ? "" : '<button class="btn secondary" type="button" id="expected-date-cancel">ยกเลิก</button>'}<button class="btn" type="submit">บันทึกกำหนดเสร็จใหม่</button></div>
       </form>`;
     if (overdue) {
       return `<section class="card expected-date-overdue"><h2>เลยกำหนดเสร็จแล้ว</h2>
-        <p class="muted small">กำหนดเสร็จเดิม ${escapeHtml(current)} · ${request.status === "in_progress" ? "บันทึกผลซ่อมและจบงาน" : "เริ่มงาน"} หรือแก้ไขวันที่คาดว่าจะเสร็จใหม่ ระบบจะเตือนทางอีเมลทุก 08:30 และ 13:30 น. จนกว่าจะดำเนินการ</p>
+        <p class="muted small">กำหนดเสร็จเดิม ${escapeHtml(current)} · ${request.status === "in_progress" ? "บันทึกผลซ่อมและจบงาน" : "เริ่มงาน"} หรือแก้กำหนดเสร็จ ระบบจะเตือนทางอีเมลทุก 08:30 และ 13:30 น. จนกว่าจะดำเนินการ</p>
         ${form}</section>`;
     }
     return `<section class="card"><h2>กำหนดเสร็จ ${escapeHtml(current)}</h2>
-      <button type="button" class="btn secondary small" id="expected-date-toggle">แก้ไขวันที่คาดว่าจะเสร็จ</button>
+      <button type="button" class="btn secondary small" id="expected-date-toggle" aria-expanded="false" aria-controls="expected-date-form">แก้กำหนดเสร็จ</button>
       ${form}</section>`;
   }
 
@@ -865,7 +865,7 @@
           <div class="field" data-field="execution_plan"><label for="assign-execution-plan">การดำเนินงาน${REQUIRED}</label><select class="select" id="assign-execution-plan" name="execution_plan" required><option value="">เลือกการดำเนินงาน</option>${Object.entries(executionPlanLabels).map(([value,label]) => `<option value="${value}"${request.execution_plan === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
           <div class="field" data-field="inspector_opinion"><label for="assign-opinion">ความคิดเห็นของช่างผู้ตรวจสอบ${REQUIRED}</label><select class="select" id="assign-opinion" name="inspector_opinion" required><option value="">เลือกความคิดเห็นของช่างผู้ตรวจสอบ</option>${Object.entries(inspectorOpinionLabels).map(([value,label]) => `<option value="${value}"${request.inspector_opinion === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>
           <div class="field" data-field="work_started_date"><label for="assign-start-date">วันเริ่มงาน${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-start-date" name="work_started_date" type="date" value="${escapeHtml(request.work_started_date ?? "")}"${reassign ? ' title="เว้นว่างไว้ ระบบคงวันเริ่มงานเดิม"' : " required"}></div>
-          ${dueCardShown ? "" : `<div class="field" data-field="work_expected_date"><label for="assign-expected-date">วันที่คาดว่าจะเสร็จ${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}"${reassign ? "" : " required"}></div>`}
+          ${dueCardShown ? "" : `<div class="field" data-field="work_expected_date"><label for="assign-expected-date">กำหนดเสร็จ${reassign ? " (ถ้ามี)" : REQUIRED}</label><input class="input" id="assign-expected-date" name="work_expected_date" type="date" value="${escapeHtml(request.work_expected_date ?? "")}"${reassign ? "" : " required"}></div>`}
           ${reassign ? "" : extraFilesFieldHtml("assign-files")}
           <div class="form-actions"><button class="btn" type="submit">${request.status === "pending_assign" ? "มอบหมายงาน" : "บันทึกการเปลี่ยนแปลง"}</button></div>
         </form>${assignClose}` : "";
@@ -1003,7 +1003,7 @@
           event.preventDefault();
           const receivedNow = form.querySelector('input[name="receipt_mode"]:checked')?.value !== "later";
           const expectedOn = expectedInput.value || null;
-          if (!receivedNow && !expectedOn) return showToast("กรุณาระบุวันที่คาดว่าของจะมาส่ง", "error");
+          if (!receivedNow && !expectedOn) return showRepairFieldErrors(form, [{ name: "expected_on", message: "เลือกวันที่คาดว่าของจะมาส่ง" }]);
           let files;
           try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
           setFormBusy(form, true);
@@ -1024,12 +1024,15 @@
       });
       // "ของยังไม่มา" — เปิดฟอร์มเลื่อนวันที่คาดว่าจะมาส่งของหมุด "ของมาส่งเรียบร้อย"
       document.querySelectorAll(".progress-reschedule-toggle").forEach((button) => button.addEventListener("click", () => {
-        document.querySelector(`.progress-reschedule-form[data-step="${button.dataset.step}"]`)?.classList.toggle("hidden");
+        const form = document.querySelector(`.progress-reschedule-form[data-step="${button.dataset.step}"]`);
+        const open = Boolean(form?.classList.toggle("hidden") === false);
+        button.setAttribute("aria-expanded", String(open));
       }));
+      document.querySelectorAll(".progress-order-form, .progress-reschedule-form").forEach((form) => clearRepairFieldErrorOnEdit(form));
       document.querySelectorAll(".progress-reschedule-form").forEach((form) => form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const expectedOn = String(new FormData(form).get("expected_on") ?? "");
-        if (!expectedOn) return showToast("กรุณาระบุวันที่คาดว่าจะมาส่งใหม่", "error");
+        if (!expectedOn) return showRepairFieldErrors(form, [{ name: "expected_on", message: "เลือกวันที่คาดว่าของจะมาส่งใหม่" }]);
         let files;
         try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
@@ -1042,15 +1045,27 @@
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       }));
-      document.querySelector("#expected-date-toggle")?.addEventListener("click", () => {
-        document.querySelector("#expected-date-form")?.classList.toggle("hidden");
-      });
+      // เปิดฟอร์มแล้วปุ่ม "แก้กำหนดเสร็จ" ซ่อน (ไม่ค้างป้ายเดิม) ปิดด้วย "ยกเลิก" แล้วโฟกัสกลับที่ปุ่ม
+      const expectedToggle = document.querySelector("#expected-date-toggle");
+      const expectedForm = document.querySelector("#expected-date-form");
+      const setExpectedOpen = (open) => {
+        if (!expectedToggle || !expectedForm) return;
+        expectedForm.classList.toggle("hidden", !open);
+        expectedToggle.classList.toggle("hidden", open);
+        expectedToggle.setAttribute("aria-expanded", String(open));
+        // ปฏิทินไทยซ่อนช่อง date จริงไว้ โฟกัสปุ่มของปฏิทินก่อน (ไม่มีปฏิทินจึงโฟกัสช่องเอง)
+        if (open) (expectedForm.querySelector('[data-field="expected_date"] button') ?? expectedForm.querySelector("#expected-date-input"))?.focus();
+        else { window.MNP_FORM_STEPS?.clearFieldErrors(expectedForm); expectedToggle.focus(); }
+      };
+      expectedToggle?.addEventListener("click", () => setExpectedOpen(true));
+      document.querySelector("#expected-date-cancel")?.addEventListener("click", () => setExpectedOpen(false));
+      clearRepairFieldErrorOnEdit(expectedForm);
       document.querySelector("#expected-date-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
         const values = new FormData(form);
         const expectedDate = String(values.get("expected_date") ?? "");
-        if (!expectedDate) return showToast("กรุณาระบุวันที่คาดว่าจะเสร็จใหม่", "error");
+        if (!expectedDate) return showRepairFieldErrors(form, [{ name: "expected_date", message: "เลือกกำหนดเสร็จใหม่" }]);
         const note = String(values.get("note") ?? "").trim();
         let files;
         try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
@@ -1064,7 +1079,7 @@
           if (error) throw error;
           const warning = await uploadExtraFiles(id, files, employee.id);
           triggerNotificationEmails(id);
-          showToast(warning || "แก้ไขวันที่คาดว่าจะเสร็จแล้ว", warning ? "error" : "success");
+          showToast(warning || "แก้กำหนดเสร็จแล้ว", warning ? "error" : "success");
           await renderRequestDetail(params);
         } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
       });

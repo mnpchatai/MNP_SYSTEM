@@ -382,6 +382,13 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
   .parts-table tr.parts-row-undo { margin-bottom: 10px; display: block; }
   .parts-table tr.parts-row-undo td { display: block; padding: 0; border: 0; }
 }
+@container (min-width: 520px) and (max-width: 760px) {
+  .parts-table tr.parts-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .parts-table tr.parts-row td:nth-child(2) { grid-column: span 2; }
+  .parts-table tr.parts-row td:nth-child(6), .parts-table tr.parts-row td:nth-child(7) { grid-column: span 3; }
+  .parts-table tr.parts-row td:nth-child(6) { grid-column: 2 / span 3; }
+  .parts-table tr.parts-row td.parts-row-actions { grid-column: 4; align-self: end; }
+}
 /* แก้ไขการมอบหมายช่างหลังมอบหมายแล้ว: พับไว้ท้ายหน้า */
 .repair-assign-edit form { margin-top: 12px; }
 .form-message { margin-bottom: 14px; padding: 10px 12px; border-radius: var(--radius-md); font-size: var(--text-meta); }
@@ -1073,6 +1080,7 @@ a.register-title:hover { color: var(--primary); }
 .queue-item-check input { width: 22px; height: 22px; margin: 0; accent-color: var(--primary); }
 .queue-item-main { min-width: 0; min-height: 64px; padding: 12px 14px; flex: 1 1 0; display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; color: inherit; background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .queue-item-check + .queue-item-main { padding-left: 0; }
+:is(ul, ol):has(> .queue-item > .queue-item-check) > .queue-item > .queue-item-main:first-child { padding-left: 44px; }
 .queue-item-main:focus-visible, .home-mine-row:focus-visible, .queue-done a:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .queue-item.is-selected:has(.queue-item-main:focus-visible) { box-shadow: none; }
 .queue-item-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: var(--radius-md); }

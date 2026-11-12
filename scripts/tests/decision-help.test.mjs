@@ -143,7 +143,8 @@ test("the MT assign dates use the shared Thai date picker and are still required
   assert.match(mt, /assignForm\.querySelectorAll\('input\[type="date"\]'\)\.forEach\(\(input\) => \{\n\s+input\.required = false;\n\s+window\.MNP_DATE_PICKER\.enhance\(input\);/);
   // ยังบังคับกรอก แต่บอกใต้ช่องเป็นภาษาไทย (MNP_FORM_STEPS) แทน bubble ของเบราว์เซอร์และ toast
   assert.match(mt, /\{ name: "work_started_date", required: true, message: "เลือกวันเริ่มงาน" \}/);
-  assert.match(mt, /\{ name: "work_expected_date", required: true, message: "เลือกวันที่คาดว่าจะเสร็จ", check: /);
+  // รอบ 18: "กำหนดเสร็จ" คำเดียว ตรงกับประวัติและการแจ้งเตือนในฐานข้อมูล
+  assert.match(mt, /\{ name: "work_expected_date", required: true, message: "เลือกกำหนดเสร็จ", check: /);
   // รอบ 16: แก้การมอบหมาย (หลังมอบหมายแล้ว) วันที่ไม่บังคับ ตรงกับ app_assign_repair_technician
   assert.match(mt, /<form id="assign-form" novalidate\$\{reassign \? " data-reassign" : ""\}\$\{dueCardShown && request\.work_expected_date \?/);
   assert.match(mt, /<form id="finish-form" novalidate>/);
