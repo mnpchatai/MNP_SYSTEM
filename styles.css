@@ -1014,6 +1014,9 @@ a.register-title:hover { color: var(--primary); }
 .decision-receipt .decision-receipt-comment { color: var(--copy); white-space: pre-wrap; overflow-wrap: anywhere; }
 .timeline-item.step-pending::before, .timeline-item.step-skipped::before { background: var(--paper); }
 .action-panel[hidden] { display: none; }
+/* ปุ่มของขั้นซ่อม (เริ่มงาน ตรวจรับ) ใช้แผงเดียวกับปุ่มอนุมัติ: ปุ่มหลักกว้างกว่า */
+.step-panel .action-panel-buttons .btn { flex: 1 1 0; }
+.step-panel .approval-actions { margin: 0; padding: 0; border-top: 0; }
 
 /* หน้าหลัก: คิวเดียว ตัดสินได้ในที่ (brief .impeccable/surfaces/src-app-app-page-tsx.md) */
 .home-heading { flex-wrap: wrap; }
@@ -1334,6 +1337,10 @@ a.machine-history-no:hover { text-decoration: underline; }
   .next-item-panel .action-panel-head { display: block; }
   .next-item-panel .action-panel-head h2 { display: none; }
   .next-item-panel .action-panel-head p { margin: 0; }
+  /* แถบล่างของขั้นซ่อมบอกชื่อขั้นในบรรทัดเดียว */
+  .step-panel .action-panel-head { display: block; }
+  .step-panel .action-panel-head p { display: none; }
+  .step-panel .action-panel-head h2 { margin: 0; font-size: var(--text-meta); color: var(--muted); }
   .action-panel-buttons .btn { min-height: 48px; }
   .content:has(.action-panel:not([hidden])) { padding-bottom: calc(var(--action-bar-h, 76px) + 28px); }
   body:has(.action-panel:not([hidden])) .toast { bottom: calc(var(--action-bar-h, 76px) + 12px); }

@@ -19,6 +19,8 @@
   const docTypeLabels = { request: "ใบคำร้อง", repair: "ใบแจ้งซ่อม" };
   // ช่องที่ต้องกรอกบอกแบบเดียวทั้งระบบ (เหมือน REQUIRED_MARK ของ app.js)
   const REQUIRED = ' <span class="field-required">(จำเป็น)</span>';
+  // หลังขั้นซ่อมสำเร็จและวาดหน้าใหม่ โฟกัสไปที่หัวใบ (ไม่หลุดไปที่ตัวหน้า) โปรแกรมอ่านหน้าจออ่านต่อจากตรงนั้น
+  const focusDetailHeading = () => { const heading = document.querySelector(".request-detail-head h1"); if (!heading) return; heading.tabIndex = -1; heading.focus({ preventScroll: true }); };
 
   // ข้อมูลฟอร์ม MT01-FM05 ของใบที่เปิดอยู่ ตั้งใน detailView และใช้ตอนกดปุ่มดาวน์โหลด Excel ใน bindDetail
   let formExportPayload = null;
@@ -884,16 +886,17 @@
         sectionsHtml: `        ${canAssign && request.status === "pending_assign" ? assignSection : ""}
         ${progressSteps.length ? `<section class="card"><h2>ความคืบหน้าระหว่างทาง</h2><p class="muted small">${canRecordProgress ? "กดบันทึกเมื่อแต่ละขั้นเสร็จจริง ระบบแจ้งผู้แจ้งและผู้จัดการแผนกให้อัตโนมัติ" : "ช่างผู้รับผิดชอบและผู้จัดการแผนกซ่อมบำรุงเท่านั้นที่บันทึกได้"}</p><div class="progress-steps">${progressSteps.map((step) => progressStepHtml(step, directory, canRecordProgress)).join("")}</div></section>` : ""}
         ${expectedDateSectionHtml(request, canRecordProgress)}
-        ${canStartWork ? `<section class="card"><h2>เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p><div class="approval-actions"><button class="btn start-work-button">เริ่มงาน</button></div></section>` : ""}
         ${canFinishWork ? `<section class="card"><h2>บันทึกผลการซ่อมและจบงาน</h2><form id="finish-form" novalidate>
           <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
           <div class="field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือแนบรูปใบเสร็จในช่องไฟล์ด้านล่างแทนการกรอกทีละแถว</p></div>
           ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกไว้ทำต่อ</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></section>` : ""}
-        ${canVerify ? `<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม</h2>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน (ใช้งานได้ปกติ)</button><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน (ต้องซ่อมเพิ่มเติม)</button></div></section>` : ""}
+        ${canVerify ? `<section class="card" id="repair-verify"><h2>ตรวจรับผลการซ่อม</h2>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}</section>` : ""}
         ${canAssign && request.status !== "pending_assign" ? assignSection : ""}
 `,
+        // ปุ่มของขั้นที่ผู้ใช้ต้องทำอยู่ที่เดียวกับปุ่มอนุมัติ (app.js วางใน action-panel ของคอลัมน์ขวา มือถือเป็นแถบล่าง)
+        asideHtml: `${canStartWork ? `<section class="card action-panel step-panel" id="repair-start-panel" aria-labelledby="repair-start-title"><div class="action-panel-head"><h2 id="repair-start-title">เริ่มงานซ่อม</h2><p class="muted small">กดเมื่อเริ่มลงมือซ่อมจริง</p></div><div class="approval-actions action-panel-buttons"><button class="btn is-primary start-work-button">เริ่มงาน</button></div></section>` : ""}${canVerify ? `<section class="card action-panel step-panel" id="repair-verify-panel" aria-labelledby="repair-verify-title"><div class="action-panel-head"><h2 id="repair-verify-title">ตรวจรับผลการซ่อม</h2><p class="muted small">ผลการซ่อมและหมายเหตุอยู่ในการ์ดตรวจรับ</p></div><div class="approval-actions action-panel-buttons"><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน</button><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน</button></div></section>` : ""}`,
       };
     },
 
@@ -1055,7 +1058,7 @@
               if (error) throw error;
               triggerNotificationEmails(id);
               showToast(stepToast(stillHere, requestNo, "เริ่มงานแล้ว"));
-              if (stillHere()) await renderRequestDetail(params);
+              if (stillHere()) { await renderRequestDetail(params); focusDetailHeading(); }
               return true;
             } catch (error) { showToast(stepToast(stillHere, requestNo, friendlyError(error)), "error"); return false; }
           },
@@ -1131,7 +1134,7 @@
               const warning = await uploadExtraFiles(id, files, employee.id);
               triggerNotificationEmails(id);
               showToast(stepToast(stillHere, requestNo, warning || "บันทึกผลการซ่อมแล้ว ส่งให้ผู้แจ้งตรวจรับ"), warning ? "error" : "success");
-              if (stillHere()) await renderRequestDetail(params);
+              if (stillHere()) { await renderRequestDetail(params); focusDetailHeading(); }
               return true;
             } catch (error) { showToast(stepToast(stillHere, requestNo, friendlyError(error)), "error"); setFormBusy(form, false); return false; }
           },
@@ -1142,7 +1145,8 @@
         const result = button.dataset.result;
         const pass = result === "pass";
         const note = document.querySelector("#verify-note")?.value.trim() ?? "";
-        const section = button.closest("section");
+        // ปุ่มอยู่ในแถบตัดสินใจ ช่องหมายเหตุและไฟล์อยู่ในการ์ดตรวจรับ
+        const section = document.querySelector("#repair-verify");
         window.MNP_FORM_STEPS?.clearFieldErrors(section);
         if (!pass && note.length < 3) return showRepairFieldErrors(section, [{ name: "verify_note", message: "ระบุสาเหตุที่ไม่ผ่านการตรวจรับอย่างน้อย 3 ตัวอักษร" }]);
         let files;
@@ -1160,7 +1164,7 @@
               const warning = await uploadExtraFiles(id, files, employee.id);
               triggerNotificationEmails(id);
               showToast(stepToast(stillHere, requestNo, warning || (pass ? "ยืนยันผ่านการตรวจรับแล้ว" : "ส่งกลับให้ซ่อมเพิ่มเติมแล้ว")), warning ? "error" : "success");
-              if (stillHere()) await renderRequestDetail(params);
+              if (stillHere()) { await renderRequestDetail(params); focusDetailHeading(); }
               return true;
             } catch (error) { showToast(stepToast(stillHere, requestNo, friendlyError(error)), "error"); return false; }
           },

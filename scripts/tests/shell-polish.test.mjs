@@ -242,7 +242,7 @@ test("leaving the page while the step is still sending: it finishes, but tells t
   await h.advance(0);
   assert.deepEqual(seen, [false], "stillHere() is false so the caller skips renderRequestDetail");
   const mt = read("modules/module-mt.js");
-  assert.equal(mt.match(/if \(stillHere\(\)\) await renderRequestDetail\(params\);/g)?.length, 3, "all three MT steps only redraw when still on the page");
+  assert.equal(mt.match(/if \(stillHere\(\)\) \{ await renderRequestDetail\(params\); focusDetailHeading\(\); \}/g)?.length, 3, "all three MT steps only redraw when still on the page, then focus the request heading instead of dropping to the page");
 });
 
 test("the tap guard only holds back the confirm button; cancel answers at once", () => {
@@ -281,4 +281,15 @@ test("closing the tab is warned against while the step is sending, and the warni
   finish(true);
   await h.advance(0);
   assert.equal((h.windowListeners.beforeunload ?? []).includes(warn), false, "the warning is removed once sent");
+});
+
+test("repair-step buttons sit where the approval buttons sit: the right-column action panel, a fixed bottom bar on phones", () => {
+  const mt = read("modules/module-mt.js");
+  const app = read("app.js");
+  assert.match(mt, /asideHtml: `\$\{canStartWork \? `<section class="card action-panel step-panel" id="repair-start-panel"/);
+  assert.match(mt, /<section class="card action-panel step-panel" id="repair-verify-panel"/);
+  assert.doesNotMatch(mt, /<section class="card"><h2>เริ่มงานซ่อม<\/h2>/, "start work is no longer an in-flow card");
+  assert.match(mt, /const section = document\.querySelector\("#repair-verify"\);/, "the note and files stay in the verify card");
+  assert.match(app, /\$\{canApprove \? "" : detailView\?\.asideHtml \?\? ""\}/);
+  assert.match(css, /\.step-panel \.approval-actions \{ margin: 0; padding: 0; border-top: 0; \}/);
 });
