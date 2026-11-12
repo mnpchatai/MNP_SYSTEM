@@ -136,9 +136,9 @@ test("status glyphs follow the agreed mapping and one age definition is used on 
 
 test("request and NCR details share one hero: back link, eyebrow with the status, then the heading", () => {
   assert.match(app, /<a class="request-back-link" href="#\/requests\$\{type\?\.id/);
-  // ลิงก์กลับบอกการกระทำ ชื่อโมดูลอยู่แถบบนครั้งเดียว (และใน title)
-  assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr" title="กลับไปรายการ NCR\/CAR">‹ กลับไปรายการ<\/a>/);
-  assert.match(app, />‹ กลับไปรายการ<\/a>/);
+  // รอบ 15: ลิงก์กลับขึ้นแถบบนแทนป้ายทางเดิน จึงบอกชื่อรายการที่จะกลับไป
+  assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/);
+  assert.match(app, /">‹ \$\{escapeHtml\(type \? requestTypeLabel\(type\) : "คำร้อง"\)\}<\/a>/);
   assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow">\$\{escapeHtml\(ncr\.form_code\)\} · /);
 });
 
@@ -263,4 +263,51 @@ test("headingTextHtml keeps a machine code on one line and still escapes the tex
   vm.runInContext(source, context);
   assert.equal(context.headingTextHtml("HCM-03 รั่ว <b>"), '<span class="nowrap">HCM-03</span> รั่ว &lt;b&gt;');
   assert.equal(context.headingTextHtml("ไม่มีรหัส"), "ไม่มีรหัส");
+});
+
+test("round 15: the topbar carries the page's back link instead of a breadcrumb that repeats the heading", () => {
+  assert.doesNotMatch(app, /class="breadcrumbs"/);
+  assert.match(app, /const lift = backMatch && \(headingAt < 0 \|\| backMatch\.index < headingAt\);/, "the first back link before the page heading, even inside a page wrapper");
+  assert.match(app, /\$\{appNavButtons\(\)\}\$\{topbarBack\}/);
+  // แดชบอร์ดบอกชื่อรายการที่จะกลับไป
+  assert.match(read("modules/module-mt-dashboard.js"), />‹ ใบคำร้อง\/แจ้งซ่อม MT<\/a>/);
+  assert.match(read("modules/module-ncr-dashboard.js"), /<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/);
+});
+
+test("round 15: the shell moves a leading back link into the topbar and leaves other pages without a page-name repeat", () => {
+  const source = app.match(/function shell\(content, active, title, tabTitle = title\) \{[^]*?\r?\n\}\r?\n/)[0];
+  const context = vm.createContext({
+    state: { employee: { first_name: "ก", last_name: "ข", role: { code: "staff" } }, unread: 0 }, document: {},
+    activeNavFor: (value) => value, isSandboxMode: () => false, isLabOnly: () => false, navLink: () => "", requestModuleNavLinks: () => "",
+    homePath: () => "dashboard", NAV_ICONS: {}, window: { MNP_REQUEST_CENTER: { overviewUrl: () => "#/requests" } }, escapeHtml: (value) => String(value),
+    initials: () => "กข", uiIcon: () => "", appNavButtons: () => "", helpButton: () => "", themeButton: () => "", sandboxBannerHtml: () => "",
+  });
+  vm.runInContext(source, context);
+  const detail = context.shell('\n    <a class="request-back-link" href="#/ncr">‹ NCR/CAR</a><h1>เรื่อง</h1>', "ncr", "NCR");
+  const wrapped = context.shell('<div class="nd"><a class="request-back-link" href="#/ncr">‹ NCR/CAR</a><div class="page-heading"><h1>แดชบอร์ด</h1><a class="request-back-link" href="#/x">‹ อื่น</a></div></div>', "ncr", "NCR");
+  assert.match(wrapped, /<div class="topbar-start">\s*<a class="request-back-link" href="#\/ncr">/);
+  assert.match(wrapped, /<h1>แดชบอร์ด<\/h1><a class="request-back-link" href="#\/x">/, "a link after the heading stays where it is");
+  assert.match(detail, /<div class="topbar-start">\s*<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>\s*<\/div>/);
+  assert.equal(detail.match(/request-back-link/g).length, 1, "moved, not copied");
+  const profile = context.shell("<h1>ข้อมูลส่วนตัว</h1>", "profile", "ข้อมูลส่วนตัว");
+  assert.equal(profile.match(/ข้อมูลส่วนตัว/g).length, 1, "the page name is said by the heading only");
+});
+
+test("round 15: NCR history rows are headed by the resulting status like MT/MG, the action is the detail line", () => {
+  const ncr = read("modules/module-ncr.js");
+  assert.match(ncr, /const heading = statusChanged \? STATUS_LABELS\[item\.to_status\] \?\? item\.to_status : actionLabel;/);
+  assert.match(ncr, /const detail = statusChanged \? `\$\{actionLabel\} · \$\{personName\(directory, item\.changed_by\)\}` : personName\(directory, item\.changed_by\);/);
+  assert.match(ncr, /signoff_gm: "ผู้จัดการทั่วไปลงนาม"/, "the heading already says ปิดแล้ว");
+});
+
+test("round 15: picked files show an unsent state and a leave warning; closed requests still take files, labelled as added after closing", () => {
+  assert.match(app, /<p class="attachment-pending" role="status" hidden><\/p><\/form>/);
+  assert.match(app, /pending\.textContent = count \? `ยังไม่ได้อัปโหลด \$\{count\} ไฟล์` : "";/);
+  assert.match(app, /button\.classList\.toggle\("secondary", !count\);/, "upload becomes the primary button while files wait");
+  assert.match(app, /confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด"/);
+  assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!pendingAttachmentCount\(\)\) return;/);
+  assert.match(app, /\$\{requestClosed \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์เพิ่ม"\}/);
+  assert.match(app, /const requestClosed = \["completed", "rejected", "cancelled", "acknowledged"\]\.includes\(request\.status\) \|\| isFinalDecision\(type, request\.status\);/);
+  // ตัวเลือกช่างเป็นกลุ่มที่มีชื่อ
+  assert.match(read("modules/module-mt.js"), /<fieldset class="field" data-field="technician_ids"><legend>ช่างผู้รับผิดชอบ/);
 });

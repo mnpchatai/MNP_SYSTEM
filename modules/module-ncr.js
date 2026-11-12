@@ -832,7 +832,7 @@
   const HISTORY_LABELS = {
     issue: "ออก NCR", dispose: "ผู้จัดการโรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผู้จัดการแผนก QA ลงนาม", signoff_factory: "ผู้จัดการโรงงานลงนาม",
-    signoff_gm: "ผู้จัดการทั่วไปลงนาม · ปิด NCR", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", assign_responder: "ผู้จัดการโรงงานระบุผู้ตอบ", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
+    signoff_gm: "ผู้จัดการทั่วไปลงนาม", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", assign_responder: "ผู้จัดการโรงงานระบุผู้ตอบ", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
     loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินค่าเสียหาย",
   };
 
@@ -924,7 +924,7 @@
       ["แหล่งที่พบ", SOURCES[ncr.source] ?? ncr.source ?? "—"],
       ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`],
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
-    const heading = `<a class="request-back-link" href="#/ncr" title="กลับไปรายการ NCR/CAR">‹ กลับไปรายการ</a>
+    const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
         <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
         <h1>${headingTextHtml(ncr.product_name || ncr.ncr_no)}</h1>
@@ -989,7 +989,13 @@
       </section>
 `;
     // การ์ดประวัติเอกสารชิ้นเดียวกับหน้าคำร้อง/MT (historyCardHtml ใน app.js) แถวเดียวกัน: เหตุการณ์ · ผู้ทำ · หมายเหตุ · เวลา
-    const historySection = historyCardHtml((historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p class="timeline-item-detail">${escapeHtml(personName(directory, item.changed_by))}</p>${item.note ? `<p class="timeline-item-message">${escapeHtml(item.note)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.changed_at)}">${formatDate(item.changed_at, true)}</time></div>`).join(""));
+    const historySection = historyCardHtml((historyResult.data ?? []).map((item) => {
+      const actionLabel = HISTORY_LABELS[item.action] ?? item.action;
+      const statusChanged = item.to_status && item.to_status !== item.from_status;
+      const heading = statusChanged ? STATUS_LABELS[item.to_status] ?? item.to_status : actionLabel;
+      const detail = statusChanged ? `${actionLabel} · ${personName(directory, item.changed_by)}` : personName(directory, item.changed_by);
+      return `<div class="timeline-item"><strong>${escapeHtml(heading)}</strong><p class="timeline-item-detail">${escapeHtml(detail)}</p>${item.note ? `<p class="timeline-item-message">${escapeHtml(item.note)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.changed_at)}">${formatDate(item.changed_at, true)}</time></div>`;
+    }).join(""));
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
     const part3Filled = Boolean(ncr.responded_at || ncr.root_cause || ncr.correction || ncr.prevention);
     const part4Filled = Boolean(ncr.followed_up_at || ncr.followup_note || ncr.signoff_qa_at || ncr.signoff_factory_at || ncr.signoff_gm_at || ncr.closed_at);

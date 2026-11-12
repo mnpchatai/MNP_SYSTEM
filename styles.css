@@ -528,8 +528,11 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .app-nav .icon-button { font-size: var(--text-heading); line-height: 1; }
 @media (hover: hover) and (pointer: fine) and (min-width: 761px) { .top-actions .icon-button { width: 40px; height: 40px; } }
 .app-nav .icon-button:disabled { opacity: .4; cursor: default; }
-.breadcrumbs { color: var(--muted); font-size: var(--text-meta); }
-.breadcrumbs strong { color: var(--ink); }
+/* แถบบน: ลิงก์กลับรายการของหน้ารายละเอียด (ย้ายมาจากเหนือหัวเรื่องใน shell) */
+.topbar .request-back-link { max-width: 100%; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+fieldset.field { min-width: 0; margin-inline: 0; padding: 0; border: 0; }
+fieldset.field > legend { margin-bottom: 7px; padding: 0; font-size: var(--text-ui); font-weight: 700; line-height: 1.4; }
+.attachment-pending { margin: 8px 0 0; color: var(--warning-ink, var(--warning)); font-size: var(--text-meta); font-weight: 700; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .content { max-width: 1420px; margin: 0 auto; padding: 32px 35px 64px; }
 /* เป้าโฟกัสของการเปลี่ยนหน้าและลิงก์ข้ามไปเนื้อหา: ไม่ใช่ปุ่ม จึงไม่วาดกรอบโฟกัส */
@@ -1430,8 +1433,6 @@ a.machine-history-no:hover { text-decoration: underline; }
   .nav-signout { color: var(--danger-ink); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); }
   .nav-signout:hover { color: var(--danger-ink); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
   .topbar { z-index: 30; height: 58px; padding: 0 14px 0 60px; }
-  .breadcrumbs { min-width: 0; font-size: 0; }
-  .breadcrumbs strong { font-size: var(--text-meta); }
   .content { padding: 23px 15px 64px; }
   .toast { bottom: 18px; }
   .page-heading { align-items: flex-start; }
