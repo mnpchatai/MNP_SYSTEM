@@ -1890,8 +1890,35 @@ async function applySandboxOverlay() {
   };
 }
 
+// แผนกที่เห็นเฉพาะบางโมดูล: ตัดการแจ้งเตือนของโมดูลอื่นออก (กติกาใน modules/department-access.js)
+// ต้องรู้ประเภทของใบที่การแจ้งเตือนอ้างถึง จึงอ่านใบเหล่านั้นก่อน ใบที่อ่านไม่ได้ถือว่าไม่อนุญาต
+async function departmentVisibleNotifications(rows) {
+  if (!isDeptRestricted() || !rows.length) return rows;
+  const access = window.MNP_DEPARTMENT_ACCESS;
+  const ids = access.notificationRequestIds(rows);
+  const typeById = new Map();
+  if (ids.length) {
+    const { data, error } = await sb.from("requests").select("id,request_type:request_types(code)").in("id", ids);
+    if (error) throw error;
+    for (const row of data ?? []) typeById.set(row.id, relation(row.request_type)?.code ?? null);
+  }
+  return rows.filter((row) => access.notificationAllowed(deptAccessSubject(), row, (id) => typeById.get(id) ?? null));
+}
+
 async function loadUnread() {
   if (!state.employee || isLabOnly()) return 0;
+  if (isDeptRestricted()) {
+    // นับหลังกรอง ตัวเลขบนเมนูจึงตรงกับรายการที่หน้าการแจ้งเตือนแสดง
+    try {
+      const { data, error } = await sb.from("notifications").select("id,request_id,action_url,digest")
+        .eq("recipient_id", state.employee.id).is("read_at", null).limit(200);
+      if (error) throw error;
+      state.unread = (await departmentVisibleNotifications(data ?? [])).length;
+    } catch {
+      state.unread = 0;
+    }
+    return state.unread;
+  }
   const { count } = await sb
     .from("notifications")
     .select("id", { count: "exact", head: true })
@@ -4746,8 +4773,9 @@ async function refreshPushPanel() {
 
 async function renderNotifications() {
   loadingShell("notifications", "การแจ้งเตือน");
-  const { data, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
+  const { data: rows, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
   if (error) throw error;
+  const data = await departmentVisibleNotifications(rows ?? []);
   const content = `
     <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
