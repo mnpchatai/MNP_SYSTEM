@@ -595,7 +595,8 @@ test("only a step form that carries evidence replaces the separate uploader; can
   const formsFor = (actions, withFile = true) => actions.map((action) => ({ dataset: { action }, querySelector: () => (withFile ? input : null) }));
   const { context, html: qaManager } = await renderPage(employee("qm", "dept-qa", "QA", "department_manager"), open);
   const { stepFileInput } = context.window.MNP_REQUEST_MODULES.NCR_CAR.shared;
-  assert.deepEqual(actionsOf(qaManager), ["cancel"], "the QA manager who is not the responder only has the cancel form here");
+  // รอบ 10: ผู้กรอกต้นทุนเห็นฟอร์มค่าเสียหายในการ์ดงานเดียวกันขณะยังรอข้อมูลการสูญเสีย — ไม่ใช่ฟอร์มของขั้น จึงไม่แทนช่องอัปโหลดแยก
+  assert.deepEqual(actionsOf(qaManager), ["cancel", "add_loss", "review_costs"], "the QA manager who is not the responder has the cancel form and the loss forms here");
   assert.equal(stepFileInput(formsFor(actionsOf(qaManager))), null, "so the separate uploader stays: attaching must never mean cancelling the NCR");
   assert.equal(stepFileInput(formsFor(actionsOf(await renderFor(RB_STAFF_1, open)))), input, "the responder attaches with the answer");
   assert.equal(stepFileInput(formsFor(actionsOf(await renderFor(FACTORY_MANAGER, { status: "awaiting_disposition" })))), input, "the factory manager attaches with the disposition");
