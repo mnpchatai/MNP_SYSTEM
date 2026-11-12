@@ -676,7 +676,7 @@
         <div class="form-grid">
           <div class="field full" data-field="correction"><label for="ncr-correction">แนวทางการแก้ไขปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea></div>
 
-          <div class="field full" data-field="prevention"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ <small class="muted">(ไม่บังคับตอนนี้ ส่งภายหลังได้หลังวิเคราะห์เสร็จ)</small></label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea></div>
+          <div class="field full" data-field="prevention"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ (ถ้ามี)</label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea><small>ส่งภายหลังได้หลังวิเคราะห์เสร็จ</small></div>
         </div>
         ${responseDueNote(ncr)}
         ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ", { hint: false })}
@@ -880,6 +880,12 @@
     const work = [...forms, responderSection, ...(lossesInWork ? [lossesSection] : [])].filter(Boolean);
     // ฟอร์มตอบบอกเหลือ/เลยกำหนดกี่วันแล้ว ส่วนที่ 2 จึงไม่บอกวันกำหนดตอบซ้ำ (ไม่แสดงวันที่คู่กับอายุที่คำนวณจากวันนั้น)
     const dueInForm = forms.some((html) => html.includes('data-action="respond"'));
+    // บรรทัด "ขั้นตอนนี้รอ" (แสดงเมื่อผู้ดูไม่มีงานในใบนี้) บอกกำหนดตอบและชื่อผู้ตอบที่ระบุแล้ว ส่วนที่ 2 จึงไม่บอกซ้ำ
+    // ชื่อผู้ตอบที่ไม่พบในรายชื่อที่ใช้งานอยู่ บรรทัดนั้นบอกแค่ "(ผู้ตอบที่ระบุ)" ส่วนที่ 2 จึงยังแสดงชื่อ
+    const waitingShown = !work.length && Boolean(waiting);
+    const waitingSaysDue = waitingShown && ["awaiting_disposition", "awaiting_response"].includes(ncr.status);
+    const waitingSaysResponder = waitingShown && ["awaiting_response", "awaiting_info"].includes(ncr.status)
+      && (ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id).every((item) => staff.some((person) => person.id === item.responder_id));
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     // เฉพาะแผนกที่ระบุผู้ตอบไว้ — แผนกที่ไม่ระบุ ทุกคนที่เข้าเกณฑ์ตอบได้ จึงไม่ต้องแสดง
     const designated = escapeHtml((ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id)
@@ -921,7 +927,7 @@
     const heading = `<a class="request-back-link" href="#/ncr" title="กลับไปรายการ NCR/CAR">‹ กลับไปรายการ</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
         <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
-        <h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>
+        <h1>${headingTextHtml(ncr.product_name || ncr.ncr_no)}</h1>
         <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${headFacts}
       </header>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
@@ -940,9 +946,9 @@
       ${partOpening(2, "ฝ่ายบริหารโรงงานพิจารณา", "แนวทางจัดการ ผู้รับผิดชอบ และกำหนดตอบ")}
         ${partField("ความเห็น", escapeHtml((ncr.dispositions ?? []).map((value) => DISPOSITIONS[value] ?? value).join(", ") || "—"), false, "action")}
         ${partField("แผนกที่รับผิดชอบ", responsibilities || "—", false, "building")}
-        ${designated && !responderSection ? partField("ผู้ตอบที่ระบุ", designated, false, "person") : ""}
+        ${designated && !responderSection && !waitingSaysResponder ? partField("ผู้ตอบที่ระบุ", designated, false, "person") : ""}
         ${partField("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—", false, "person")}
-        ${dueInForm ? "" : partField("กำหนดตอบ", formatDate(ncr.response_due), false, "calendar")}
+        ${dueInForm || waitingSaysDue ? "" : partField("กำหนดตอบ", formatDate(ncr.response_due), false, "calendar")}
         ${ncr.disposition_note ? partField("หมายเหตุ", escapeHtml(ncr.disposition_note), true) : ""}
       </dl></section>
 `;

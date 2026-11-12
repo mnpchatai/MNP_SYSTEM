@@ -47,6 +47,7 @@ async function renderPage(viewer, overrides = {}, options = {}) {
     optionalAttachments: () => [], uploadAttachmentBatch: async () => ({ total: 0, failed: [] }), attachmentBatchFailureText: () => "",
     attachmentGalleryHtml: () => "", hydrateAttachmentGallery: async () => {}, openAttachmentLightbox: noop,
     // การ์ดประวัติเอกสารชิ้นเดียวของ app.js (historyCardHtml)
+    headingTextHtml: (text) => String(text ?? ""),
     historyCardHtml: (items, foot = "") => `<section class="card detail-history"><h2>ประวัติเอกสาร</h2><div class="timeline">${items}</div>${foot}</section>`,
     // ตัวช่วยทะเบียนของ app.js (registerTableHtml ฯลฯ) แบบย่อ: ตรวจว่าทะเบียน NCR ส่งช่องครบ ไม่ใช่หน้าตา
     registerTableHtml: ({ columns, rows }) => `<table>${rows.map((row) => `<tr>${columns.map((column) => `<td data-label="${column.label}">${row.cells[column.key] ?? ""}</td>`).join("")}</tr>`).join("")}</table>`,
@@ -640,7 +641,7 @@ test("the action forms mark required fields with (จำเป็น) like the M
   const page = await renderFor(RB_STAFF_1, RB_OPEN);
   const respond = page.slice(page.indexOf('data-action="respond"'), page.indexOf("</form>", page.indexOf('data-action="respond"')));
   assert.equal((respond.match(/<span class="field-required">\(จำเป็น\)<\/span>/g) ?? []).length, 3, "cause, root cause and correction are marked");
-  assert.match(respond, /ไม่บังคับตอนนี้/, "the optional prevention hint stays");
+  assert.match(respond, /แนวทางการป้องกันไม่ให้เกิดซ้ำ \(ถ้ามี\)<\/label>[^]*?<small>ส่งภายหลังได้หลังวิเคราะห์เสร็จ<\/small>/, "the prevention field is marked optional like every form and says it can come later");
   // ช่องที่ตรวจใต้ช่องต้องมีกล่อง data-field ให้ข้อความไปอยู่
   for (const name of ["causes", "root_cause", "correction", "prevention"]) assert.match(respond, new RegExp(`data-field="${name}"`));
   assert.match(page, /<form class="ncr-action" data-action="respond" novalidate>/, "browser tooltips are off so the field messages are the only ones");

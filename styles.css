@@ -364,6 +364,7 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .parts-table .input { min-height: 38px; padding: 8px 10px; }
 .parts-table .parts-row-actions { width: 1%; white-space: nowrap; }
 .parts-attachment { margin-top: 10px; }
+.parts-row-undo td { color: var(--muted); font-size: var(--text-meta); }
 /* ช่องแคบ (มือถือ หรือการ์ดงานบนจอกว้าง): แต่ละรายการอะไหล่เป็นการ์ด (ชื่อ ร้าน หมายเหตุเต็มแถว จำนวน/หน่วย/ราคาเรียงคู่) ช่องมี placeholder และ aria-label บอกชื่อ */
 .parts-field { container-type: inline-size; }
 @container (max-width: 760px) {
@@ -376,6 +377,10 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
   .parts-table td.parts-row-no { grid-column: 1 / -1; text-align: left; }
   .parts-table td.parts-row-no::before { content: "รายการที่ "; }
   .parts-table tr.parts-row td:nth-child(2), .parts-table tr.parts-row td:nth-child(6), .parts-table tr.parts-row td:nth-child(7), .parts-table td.parts-row-actions { grid-column: 1 / -1; }
+  /* หัวตารางซ่อนเมื่อเรียงเป็นการ์ด ชื่อช่องจึงอยู่เหนือช่องเอง (ไม่พึ่งข้อความตัวอย่างที่หายไปเมื่อพิมพ์) */
+  .parts-table td[data-label]::before { content: attr(data-label); margin-bottom: 4px; display: block; color: var(--muted); font-size: var(--text-caption); font-weight: 700; }
+  .parts-table tr.parts-row-undo { margin-bottom: 10px; display: block; }
+  .parts-table tr.parts-row-undo td { display: block; padding: 0; border: 0; }
 }
 /* แก้ไขการมอบหมายช่างหลังมอบหมายแล้ว: พับไว้ท้ายหน้า */
 .repair-assign-edit form { margin-top: 12px; }
@@ -664,6 +669,8 @@ a.register-title:hover { color: var(--primary); }
 .register-sub .ui-icon { width: 13px; height: 13px; vertical-align: -2px; }
 .register-meta { color: var(--copy); font-size: var(--text-meta); white-space: nowrap; }
 .register-none { color: var(--quiet); }
+.register-status .register-sub { max-width: 30ch; overflow: visible; white-space: normal; }
+.nowrap { white-space: nowrap; }
 .register-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .request-card-type { padding: 3px 9px; display: inline-block; color: var(--mod-on); background: var(--mod-surface); border: 1px solid var(--mod-edge); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
 .request-priority-chip { min-height: 25px; padding: 4px 9px; display: inline-flex; align-items: center; color: var(--muted); background: var(--shell); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; }
@@ -862,6 +869,8 @@ a.register-title:hover { color: var(--primary); }
   :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) { display: flex; flex-wrap: nowrap; justify-content: stretch; gap: 8px; }
   :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) > .btn { min-height: 48px; flex: 1 1 0; }
   :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) > .btn:last-child:not(:only-child) { flex-grow: 2; }
+  /* สองปุ่ม: ปุ่มรองกว้างพอดีข้อความบรรทัดเดียว (เดิม "บันทึกไว้ทำต่อ" ตัดสองบรรทัดที่ 375px) ปุ่มหลักได้ที่เหลือ */
+  :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions):has(> .btn:nth-child(2):last-child) > .btn:first-child { flex: 0 0 auto; padding-inline: 14px; white-space: nowrap; }
 }
 @media (max-width: 900px) {
   .page-heading.request-module-header { flex-direction: column; align-items: flex-start; }
@@ -1805,6 +1814,7 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
   .nd-act td { min-width: 0; padding: 0; border: 0; }
   .nd-act td:nth-child(4) { grid-row: 1; grid-column: 2; text-align: right; }
   .nd-act td.nd-num::before { content: attr(data-label) " "; color: var(--muted); font-size: var(--text-meta); }
+  .nd-act td[data-label="กำหนดเสร็จ"]::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--text-caption); }
 }
 .ncr-due-note { margin: 0 0 15px; padding: 10px 12px; color: var(--ink); background: var(--primary-soft); border-radius: var(--radius-md); font-size: var(--text-meta); line-height: 1.6; }
 .ncr-attach-form { margin-top: 14px; }
