@@ -797,7 +797,8 @@
         <div class="field"><label for="ncr-assign-${escapeHtml(item.department_id)}">ผู้ตอบของ ${escapeHtml(relation(item.department)?.code ?? "")}</label>${responderSelectHtml(`ncr-assign-${item.department_id}`, candidates, { current: item.responder_id, directory })}</div>
         <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ</button></div></form>`;
     }).join("");
-    return rows ? `<section class="card ncr-card"><h2>ผู้ตอบของแผนก</h2>${rows}</section>` : "";
+    // เป็นงานที่ต้องกรอก จึงอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้เรียกวางให้)
+    return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";
   }
 
   // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้กรอกต้นทุน (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
@@ -962,12 +963,18 @@
     const part2Filled = Boolean(ncr.disposed_at || ncr.dispositions?.length || ncr.ncr_responsibilities?.length || ncr.disposition_note);
     const parts = [part1, ...(part2Filled ? [part2] : []), ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
     // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
-    const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${forms.join("")}</section>`;
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
+    const work = [...forms, responderSection].filter(Boolean);
+    const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${work.join("")}</section>`;
+    // ผู้กรอกต้นทุนเห็นการ์ดค่าเสียหายต่อจากงานของตัวเองเมื่อยังรอข้อมูลการสูญเสีย
+    const lossesFirst = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
     // โครงหน้ารายละเอียดเดียวทุกโมดูล (ผู้ใช้อนุมัติ 2026-11-12): งานของผู้ดูบนสุดของคอลัมน์ซ้าย ประวัติอยู่คอลัมน์ขวา
-    const main = forms.length
-      ? [actionsSection, ...parts, filesSection, responderSection, lossesSection]
-      : [...parts, filesSection, responderSection, lossesSection];
+    const main = [
+      ...(work.length ? [actionsSection] : []),
+      ...(lossesFirst ? [lossesSection] : []),
+      ...parts, filesSection,
+      ...(lossesFirst ? [] : [lossesSection]),
+    ];
     const content = `${heading}<div class="detail-grid ncr-detail-grid"><div class="stack">${main.join("")}</div><aside class="stack">${historySection}</aside></div>`;
     // เลขที่ NCR เป็นหัวเรื่องของหน้าแล้ว แถบบนบอกทะเบียน ส่วนชื่อแท็บยังเป็นเลขที่
     app.innerHTML = shell(content, "ncr", "ทะเบียน NCR", ncr.ncr_no);
