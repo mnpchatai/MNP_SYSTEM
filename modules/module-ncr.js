@@ -28,11 +28,11 @@
   };
   const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
   // แหล่งที่พบตามช่องของใบ QA02-FM01: ไทยก่อน คำบนฟอร์มกระดาษในวงเล็บ
-  const SOURCES = { incoming: "รับเข้า (In-Coming)", in_process: "ระหว่างผลิต (In-Process)", final_fg: "สินค้าสำเร็จรูป (Final FG)", customer_reject: "ลูกค้าตีกลับ (Reject from Customer)", other: "อื่นๆ" };
+  const SOURCES = { incoming: "รับเข้า (In-Coming)", in_process: "ระหว่างผลิต (In-Process)", final_fg: "สินค้าสำเร็จรูป (Final FG)", customer_reject: "ลูกค้าตีกลับ (Reject from Customer)", other: "อื่น ๆ" };
   const UNITS = ["ชุด", "ชิ้น", "เซต", "ม้วน", "เส้น", "กก.", "ท่อน", "เมตร", "ลูก", "ใบ", "รายการ"];
-  const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่นๆ" };
-  const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่นๆ" };
-  const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", repair: "ค่าซ่อม (Repair)", rework: "ค่าแก้ไขงาน (Rework)", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่นๆ" };
+  const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่น ๆ" };
+  const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่น ๆ" };
+  const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", repair: "ค่าซ่อม (Repair)", rework: "ค่าแก้ไขงาน (Rework)", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่น ๆ" };
   const OTHER_LOSS_NOTE_MIN = 5;
   // รอข้อมูลเพิ่มเติมใช้ป้าย "?" แบบเดียวกับ "ขอข้อมูลเพิ่ม" ของคำร้อง ไม่ใช่นาฬิกา
   const STATUS_BADGE_CLASS = { closed: "completed", cancelled: "cancelled", awaiting_info: "more_info" };
@@ -63,7 +63,7 @@
     INVALID_NOTE: "หมายเหตุยาวเกินไป",
     INVALID_LOSS_TYPE: "กรุณาเลือกประเภทความสูญเสีย",
     // friendlyError เลือกรหัสแรกที่พบในข้อความ จึงต้องวาง INVALID_LOSS_NOTE ไว้ก่อน INVALID_LOSS
-    INVALID_LOSS_NOTE: `ประเภท "อื่นๆ" ต้องระบุหมายเหตุอธิบายว่าเป็นค่าอะไร (อย่างน้อย ${OTHER_LOSS_NOTE_MIN} ตัวอักษร)`,
+    INVALID_LOSS_NOTE: `ประเภท "อื่น ๆ" ต้องระบุหมายเหตุอธิบายว่าเป็นค่าอะไร (อย่างน้อย ${OTHER_LOSS_NOTE_MIN} ตัวอักษร)`,
     INVALID_LOSS_STATUS: "กรุณาเลือกประมาณการหรือยืนยันยอดจริง",
     INVALID_LOSS_COMPONENT: "ส่วนประกอบค่าใช้จ่ายไม่ตรงกับประเภท",
     INVALID_LOSS_DATE: "กรุณาตรวจวันที่เกิดค่าใช้จ่าย ยอดจริงต้องไม่เป็นวันที่ในอนาคต",
@@ -101,7 +101,7 @@
     .sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`, "th"));
   const personLabel = (person) => `${person.first_name} ${person.last_name} · ${ROLE_LABELS[roleCode(person)] ?? ""}`.trim();
   const todayBangkok = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
-  // กำหนดตอบนับจากวันออกใบ (+5 วัน) จึงเกินกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
+  // กำหนดตอบนับจากวันออกใบ (+5 วัน) จึงเลยกำหนดได้ตั้งแต่ยังรอ ผจก.โรงงานพิจารณา
   const RESPONSE_PENDING_STATUSES = ["awaiting_disposition", "awaiting_response"];
   const isOverdue = (ncr) => RESPONSE_PENDING_STATUSES.includes(ncr.status) && Boolean(ncr.response_due) && ncr.response_due < todayBangkok();
   // บรรทัดกำหนดในฟอร์มตอบ NCR: วันกำหนดตอบอยู่ในส่วนที่ 2 แล้ว จึงบอกเหลือ/เลยกี่วัน และวันส่งแนวทางป้องกัน (กำหนดตอบ + 7 วัน)
@@ -156,7 +156,7 @@
   function statusBadgeHtml(ncr, lossPending = false) {
     // ป้ายบนจอใช้ชื่อสถานะอย่างเดียว ผู้ที่ต้องลงนามอยู่ในป้ายผู้รับผิดชอบหรือบรรทัด "ขั้นตอนนี้รอ" แล้ว (statusLabel พร้อมลำดับผู้ลงนามใช้กับชีต)
     const badges = [`<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`];
-    if (isOverdue(ncr)) badges.push('<span class="badge urgent-flag">เกินกำหนดตอบ</span>');
+    if (isOverdue(ncr)) badges.push('<span class="badge urgent-flag">เลยกำหนดตอบ</span>');
     if (lossPending) badges.push('<span class="badge loss-pending-flag">รอข้อมูลความสูญเสีย</span>');
     return badges.join(" ");
   }
@@ -501,7 +501,7 @@
   }
 
   // ---- ทะเบียน NCR (QA02-FM02) ----
-  const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["loss", "รอข้อมูลความสูญเสีย"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
+  const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เลยกำหนดตอบ"], ["loss", "รอข้อมูลความสูญเสีย"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
 
   // หมวดสถานะของทะเบียนในหน้าคำร้อง: app.js วางในแถวตัวกรองชุดเดียวกับโมดูลอื่น (requestListFilters) · applied = ข้อความบนปุ่มตัวกรองที่พับอยู่
   function centerStatusFilter(params) {
@@ -671,6 +671,7 @@
     if (ncr.status === "awaiting_response" && respondable) {
       forms.push(`<form class="ncr-action" data-action="respond" novalidate><div class="ncr-form-message"></div>
         <h3>ส่วนที่ 3 — ตอบ NCR</h3>
+        ${responseDueNote(ncr)}
         <fieldset class="field ncr-fieldset" data-field="causes"><legend>เกิดจาก (4M+E) ${REQUIRED}</legend>${checksHtml("causes", CAUSES, ncr.causes ?? [])}</fieldset>
         <div class="field" data-field="root_cause"><label for="ncr-root-cause">สาเหตุของปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000">${escapeHtml(ncr.root_cause ?? "")}</textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
         <div class="form-grid">
@@ -678,7 +679,6 @@
 
           <div class="field full" data-field="prevention"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ (ถ้ามี)</label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea><small>ส่งภายหลังได้หลังวิเคราะห์เสร็จ</small></div>
         </div>
-        ${responseDueNote(ncr)}
         ${evidenceFieldHtml("ncr-respond-evidence", "แนบหลักฐาน (ถ้ามี) เช่น รูปหลังแก้ไข เอกสาร WI ที่ปรับ", { hint: false })}
         <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div></form>`);
     }
@@ -880,6 +880,8 @@
     const work = [...forms, responderSection, ...(lossesInWork ? [lossesSection] : [])].filter(Boolean);
     // ฟอร์มตอบบอกเหลือ/เลยกำหนดกี่วันแล้ว ส่วนที่ 2 จึงไม่บอกวันกำหนดตอบซ้ำ (ไม่แสดงวันที่คู่กับอายุที่คำนวณจากวันนั้น)
     const dueInForm = forms.some((html) => html.includes('data-action="respond"'));
+    // ฟอร์มพิจารณาหรือตอบ: ผู้กรอกอ่านรายละเอียดที่พบได้ในการ์ดงานทันที (ส่วนที่ 1 จึงไม่บอกซ้ำ)
+    const briefInAction = Boolean(String(ncr.description ?? "").trim()) && forms.some((html) => /data-action="(respond|dispose)"/.test(html));
     // บรรทัด "ขั้นตอนนี้รอ" (แสดงเมื่อผู้ดูไม่มีงานในใบนี้) บอกกำหนดตอบและชื่อผู้ตอบที่ระบุแล้ว ส่วนที่ 2 จึงไม่บอกซ้ำ
     // ชื่อผู้ตอบที่ไม่พบในรายชื่อที่ใช้งานอยู่ บรรทัดนั้นบอกแค่ "(ผู้ตอบที่ระบุ)" ส่วนที่ 2 จึงยังแสดงชื่อ
     const waitingShown = !work.length && Boolean(waiting);
@@ -926,7 +928,7 @@
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
     const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
-        <div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">${escapeHtml(ncr.form_code)} ·</span> <span class="nowrap">${escapeHtml(ncr.ncr_no)}</span></span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
+        <div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">${escapeHtml(ncr.form_code)}</span><span class="eyebrow-sep"> · </span><span class="nowrap">${escapeHtml(ncr.ncr_no)}</span></span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
         <h1>${headingTextHtml(ncr.product_name || ncr.ncr_no)}</h1>
         <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${headFacts}
       </header>
@@ -939,7 +941,7 @@
         ${partField("ลูกค้า/พ่อค้า", `${escapeHtml(ncr.customer_name ?? "—")}${ncr.customer_code ? ` (${escapeHtml(ncr.customer_code)})` : ""}`, false, "building")}
         ${partField("ใบสั่งซื้อ/ใบส่งของ · ล็อต", `${escapeHtml(ncr.po_no ?? "—")} · ${escapeHtml(ncr.lot_no ?? "—")}`)}
         ${quantities}
-        ${partField("รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)", escapeHtml(ncr.description || "—"), true)}
+        ${briefInAction ? "" : partField("รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)", escapeHtml(ncr.description || "—"), true)}
       </dl></section>
 `;
     const part2 = `
@@ -1003,7 +1005,7 @@
     const part2Filled = Boolean(ncr.disposed_at || ncr.dispositions?.length || ncr.ncr_responsibilities?.length || ncr.disposition_note);
     const parts = [part1, ...(part2Filled ? [part2] : []), ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
     // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
-    const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${work.join("")}</section>`;
+    const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${briefInAction ? `<div class="detail-actions-brief"><h3 class="request-brief-label">รายละเอียด (ปัญหา สเปค และค่าที่วัดได้จริง)</h3><p class="request-summary-text">${escapeHtml(ncr.description)}</p></div>` : ""}${work.join("")}</section>`;
     // โครงหน้ารายละเอียดเดียวทุกโมดูล (ผู้ใช้อนุมัติ 2026-11-12): งานของผู้ดูบนสุดของคอลัมน์ซ้าย ประวัติอยู่คอลัมน์ขวา
     const main = [
       ...(work.length ? [actionsSection] : []),

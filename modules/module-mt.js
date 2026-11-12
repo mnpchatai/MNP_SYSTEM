@@ -79,9 +79,9 @@
   // เรนเดอร์เป็นแถวตาราง (ลำดับ/รายการ/จำนวน/หน่วย/ราคา/ชื่อร้าน/หมายเหตุ) ให้หน้าตาตรงกับฟอร์มกระดาษเดิม
   // ฟอร์มมอบหมายช่าง / บันทึกผลการซ่อม: กฎของช่อง (MNP_FORM_STEPS.validate) เรียงตามลำดับบนจอ
   const ASSIGN_RULES = Object.freeze([
-    { name: "technician_ids", required: true, message: "เลือกช่างอย่างน้อย 1 คน" },
-    { name: "execution_plan", required: true, message: "เลือกการดำเนินงาน" },
-    { name: "inspector_opinion", required: true, message: "เลือกความคิดเห็นของช่างผู้ตรวจสอบ" },
+    { name: "technician_ids", required: true, message: "ยังไม่ได้เลือกช่าง (อย่างน้อย 1 คน)" },
+    { name: "execution_plan", required: true, message: "ยังไม่ได้เลือกการดำเนินงาน" },
+    { name: "inspector_opinion", required: true, message: "ยังไม่ได้เลือกความคิดเห็นของช่างผู้ตรวจสอบ" },
     { name: "work_started_date", required: true, message: "เลือกวันเริ่มงาน" },
     { name: "work_expected_date", required: true, message: "เลือกกำหนดเสร็จ", check: (value, values) => !values.work_started_date || value >= values.work_started_date, checkMessage: "กำหนดเสร็จต้องไม่ก่อนวันเริ่มงาน" },
   ]);

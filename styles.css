@@ -337,6 +337,12 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .field.full { grid-column: 1 / -1; }
 .tech-picker { display: grid; gap: 6px; padding: 10px 12px; background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-md); }
+/* (6) กลุ่มติ๊กช่างที่ยังไม่เลือก ขอบแดงแบบเดียวกับช่องอื่น */
+[data-field="technician_ids"]:has(> .field-error) .tech-picker { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
+/* (9) แถวอะไหล่แถวเดียว: ไม่มีปุ่มลบ (ฟอร์มต้องมีแถวกรอกอย่างน้อยหนึ่งแถว) */
+#finish-parts-rows:not(:has(.parts-row ~ .parts-row)) .parts-row-remove { display: none; }
+/* (10) ปุ่มปิดของหน้าต่างช่วยเหลืออยู่ในจอเสมอ */
+.shortcut-dialog .confirm-dialog-actions { position: sticky; bottom: 0; padding-top: 10px; background: var(--paper); }
 .tech-option { display: flex; align-items: center; gap: 9px; min-height: 32px; font-size: var(--text-ui); cursor: pointer; }
 .tech-option input { width: 17px; height: 17px; margin: 0; accent-color: var(--primary); }
 .progress-steps { display: grid; gap: 8px; }
@@ -873,6 +879,10 @@ a.register-title:hover { color: var(--primary); }
 .ncr-loss-card:has(#ncr-loss-add:not([open])) .ncr-loss-draft { display: none; }
 .ncr-loss-card:has(#ncr-loss-add:not([open])) .ncr-loss-overview:not(:has(.ncr-loss-more)) { display: none; }
 /* จอแคบ: ปุ่มส่งของฟอร์มในงานที่ต้องทำติดล่างจอระหว่างเลื่อนดูฟอร์มยาว (แบบเดียวกับปุ่มของฟอร์มสร้าง) */
+@media (min-width: 761px) {
+  .detail-actions .form-actions { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; margin-bottom: -20px; padding: 12px 20px; background: var(--paper); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius-lg, 12px) var(--radius-lg, 12px); }
+  .detail-actions .detail-reply-more .form-actions, .detail-actions .detail-action:not(:last-child) .form-actions { margin-bottom: 0; border-radius: 0; }
+}
 @media (max-width: 760px) {
   :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
   /* แถบปุ่มล่างจอแบบเดียวทั้งระบบ (เหมือนแถบตัดสินใจ): ปุ่มเต็มแถว ปุ่มหลักเป็นปุ่มสุดท้ายอยู่ขวาและกว้างสองเท่า ปุ่มเดียวเต็มความกว้าง */
@@ -1454,7 +1464,8 @@ a.machine-history-no:hover { text-decoration: underline; }
   .request-facts { gap: 8px; }
   .action-panel { left: 0; }
   .request-detail-kicker { flex-wrap: nowrap; align-items: center; gap: 8px; }
-  .request-detail-kicker .eyebrow { flex: 1 1 0; min-width: 88px; letter-spacing: .04em; white-space: normal; }
+  .request-detail-kicker .eyebrow { flex: 1 1 0; min-width: 88px; display: flex; flex-wrap: wrap; column-gap: .3em; letter-spacing: .04em; white-space: normal; }
+  .request-detail-kicker .eyebrow-sep { display: none; }
   .request-detail-kicker-end { flex: 0 1 auto; }
   .request-detail-kicker-end .badge { font-size: var(--text-meta); }
   .request-fact { min-height: 84px; padding: 11px; grid-template-columns: 32px minmax(0, 1fr); gap: 9px; }
@@ -1774,6 +1785,12 @@ tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
 .nd-bars { display: grid; gap: 4px; }
 .nd-brow { width: 100%; min-height: 40px; padding: 2px 6px; display: grid; grid-template-columns: minmax(96px, 34%) minmax(0, 1fr) auto; align-items: center; gap: 10px; color: var(--ink); background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; cursor: pointer; }
 .nd-brow:hover { background: var(--shell); }
+@media (max-width: 760px) {
+  .nd-brow { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+  .nd-brow .nd-lab { grid-column: 1; grid-row: 1; }
+  .nd-brow .nd-val { grid-column: 2; grid-row: 1; }
+  .nd-brow .nd-trk { grid-column: 1 / -1; grid-row: 2; }
+}
 .nd-brow.selected { background: var(--shell); box-shadow: inset 0 0 0 2px var(--m600, var(--primary)); }
 .nd-brow.static { cursor: default; }
 .nd-brow.static:hover { background: none; }
