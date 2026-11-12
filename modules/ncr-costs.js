@@ -62,7 +62,7 @@
   }
   // Cost assessment is expected once the factory manager has decided the disposition, including closed reports.
   const ASSESSMENT_STATUSES = ["awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info", "closed"];
-  // "รอข้อมูลการสูญเสีย": needs assessment but the cost review (ncr_outcomes.cost_reviewed) is not ticked, or an estimate/legacy row is still pending.
+  // "รอข้อมูลความสูญเสีย": needs assessment but the cost review (ncr_outcomes.cost_reviewed) is not ticked, or an estimate/legacy row is still pending.
   // summary = summarize(losses of that report).
   const lossDataPending = (status, outcome, summary) => ASSESSMENT_STATUSES.includes(status) && !(outcome?.cost_reviewed === true && summary.pending === 0);
   const api = { TYPES, STATUSES, COMPONENTS, ASSESSMENT_STATUSES, round, allowedComponents, fieldSpec, laborQuantity, withLaborTag, splitLaborTag, makeEntry, summarize, lossDataPending };

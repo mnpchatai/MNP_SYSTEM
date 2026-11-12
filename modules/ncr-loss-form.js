@@ -10,7 +10,7 @@
   // ผู้ที่กรอกต้นทุนได้ ตรงกับ private.can_edit_ncr_losses (module-ncr.js canEditLosses) — แสดงให้ผู้ที่อ่านอย่างเดียวรู้ว่าต้องไปตามใคร
   const EDITORS_TEXT = "ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ช่วยผู้จัดการโรงงาน และผู้จัดการ/ผู้ช่วยผู้จัดการแผนก QA · ผู้ตอบของแผนกที่รับผิดชอบใส่ยอดประมาณการได้";
   // access: "full" = ผู้ยืนยันยอด · "estimate" = ผู้ตอบ NCR ใบนั้น ใส่/แก้ได้เฉพาะยอดประมาณการ · false = ดูอย่างเดียว (true เท่ากับ "full")
-  // embedded: วางในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้ยืนยันยอดขณะยังรอข้อมูลการสูญเสีย) เป็นกลุ่มงาน ไม่ใช่การ์ดซ้อนการ์ด
+  // embedded: วางในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้ยืนยันยอดขณะยังรอข้อมูลความสูญเสีย) เป็นกลุ่มงาน ไม่ใช่การ์ดซ้อนการ์ด
   function render(ncr, losses, directory, access, today, formatBaht, formatQty, embedded = false) {
     const full = access === true || access === "full";
     const estimateOnly = access === "estimate";

@@ -84,7 +84,7 @@
     Object.freeze(["cancelled", "ยกเลิก"]),
     Object.freeze(["urgent-flag", "ด่วน / เกินกำหนด"]),
     // สีน้ำเงินของป้ายนี้คงไว้ตามที่ผู้ใช้เลือก (ต่างจาก "รอ" อื่นที่เป็นอำพัน) จึงต้องอยู่ใน legend
-    Object.freeze(["loss-pending-flag", "NCR รอข้อมูลการสูญเสีย"]),
+    Object.freeze(["loss-pending-flag", "NCR รอข้อมูลความสูญเสีย"]),
   ]);
 
   function helpHtml(escapeHtml, path) {
