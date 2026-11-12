@@ -531,6 +531,7 @@ function friendlyError(error) {
 
 function setFormBusy(form, busy) {
   form.querySelectorAll("button, input, textarea, select").forEach((node) => { node.disabled = busy; });
+  form.toggleAttribute("aria-busy", busy);
   const button = form.querySelector('button[type="submit"]');
   if (button) {
     if (!button.dataset.label) button.dataset.label = button.textContent;
@@ -3713,9 +3714,10 @@ function historyCardHtml(itemsHtml, footHtml = "") {
 }
 
 // ฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว (ผู้ยื่น โมดูลที่เปิด requesterReplies) — ความเห็นและคำตอบเดิมอยู่ในประวัติเอกสาร
-function stepReplyFormHtml(step, directory) {
+// heading: false ในส่วนที่พับ (หัวที่พับบอกชื่อขั้นแล้ว) · optional: การ์ดมีงานบังคับอื่นด้วย จึงบอกว่าฟอร์มนี้ไม่บังคับ
+function stepReplyFormHtml(step, directory, { heading = true, optional = false } = {}) {
   const by = step.acted_by ? personName(directory, step.acted_by) : "";
-  return `<div class="detail-action"><h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}</h3><blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
+  return `<div class="detail-action">${heading ? `<h3>ตอบกลับความเห็นขั้น ${escapeHtml(step.step_name)}${optional ? " (ถ้าต้องการ)" : ""}</h3>` : ""}<blockquote class="detail-action-quote">${escapeHtml(String(step.comment ?? "").trim())}${by ? `<cite>${escapeHtml(by)}</cite>` : ""}</blockquote><form class="step-reply-form" data-step-id="${escapeHtml(step.id)}">
       <div class="field"><label for="step-reply-${escapeHtml(step.id)}">ข้อความตอบกลับ</label><textarea class="textarea" id="step-reply-${escapeHtml(step.id)}" name="message" maxlength="1000" required></textarea></div>
       <div class="form-actions"><button class="btn" type="submit">ส่งคำตอบ</button></div>
     </form></div>`;
@@ -3791,7 +3793,14 @@ async function renderRequestDetail(params) {
   const canReplyToStep = (step) => repliesAvailable && isRequester && Boolean(separateModule?.requesterReplies)
     && STEP_REPLY_STATUSES.includes(step.status) && Boolean(String(step.comment ?? "").trim());
   // การ์ด "สิ่งที่คุณต้องดำเนินการ": งานของโมดูล (detailView.actionHtml) และฟอร์มตอบกลับความเห็นของขั้นที่ตัดสินแล้ว
-  const actionWorkHtml = `${detailView?.actionHtml ?? ""}${[...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map((step) => stepReplyFormHtml(step, directory)).join("")}`.trim();
+  // ฟอร์มตอบกลับความเห็นเป็นทางเลือก (ใบอาจจบแล้ว): การ์ดที่มีแค่ฟอร์มนี้ใช้หัว "ตอบกลับความเห็น (ถ้าต้องการ)" ไม่ใช่ "สิ่งที่คุณต้องดำเนินการ"
+  // ขั้นที่ผู้ยื่นตอบไปแล้ว (คำตอบอยู่ในประวัติเอกสาร) พับฟอร์มไว้เป็น "ตอบเพิ่มเติม" ยังตอบได้อีกเหมือนเดิม
+  const moduleWorkHtml = (detailView?.actionHtml ?? "").trim();
+  const replyWorkHtml = [...steps].sort((a, b) => a.step_order - b.step_order).filter(canReplyToStep).map((step) => (replies.some((reply) => reply.approval_step_id === step.id)
+    ? `<details class="detail-reply-more"><summary>ตอบเพิ่มเติมถึงขั้น ${escapeHtml(step.step_name)}${moduleWorkHtml ? " (ถ้าต้องการ)" : ""}</summary>${stepReplyFormHtml(step, directory, { heading: false })}</details>`
+    : stepReplyFormHtml(step, directory, { optional: Boolean(moduleWorkHtml) }))).join("");
+  const actionWorkHtml = `${moduleWorkHtml}${replyWorkHtml}`.trim();
+  const actionWorkTitle = moduleWorkHtml ? "สิ่งที่คุณต้องดำเนินการ" : "ตอบกลับความเห็น (ถ้าต้องการ)";
   const detailEntries = Object.entries(request.details ?? {});
   // ความสำคัญสูง/ด่วนขึ้นเป็นจุดในบรรทัดข้อมูลใต้หัวเรื่องแล้ว จึงไม่ซ้ำในช่องข้อมูล
   // ป้าย "ด่วน" ในบรรทัดหัวใบ: ความสำคัญสูง/เร่งด่วน หรือใบแจ้งซ่อมที่ติ๊กแจ้งด่วน (ที่เดียวในหน้า)
@@ -3837,7 +3846,7 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
-        ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ</h2>${actionWorkHtml}</section>` : ""}
+        ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">${actionWorkTitle}</h2>${actionWorkHtml}</section>` : ""}
         <section class="card request-brief" aria-labelledby="request-brief-title">
           <h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
           ${description

@@ -289,7 +289,8 @@ test("text on a soft status background reaches 4.5:1 in both themes", () => {
   }
   assert.ok(checked >= 20, `checked ${checked} soft pairs`);
   assert.match(css, /\.ncr-loss-net dd \{ color: var\(--primary-ink\); \}/);
-  assert.match(css, /\.ncr-owner-chip \{[^}]*color: var\(--ink\);[^}]*background: var\(--shell\);/, "the NCR owner box no longer borrows a status colour");
+  // รอบ 12: ผู้รับผิดชอบในทะเบียน NCR เป็นบรรทัดไอคอนแบบเดียวกับรายการคำร้อง ไม่มีกล่องแยก
+  assert.doesNotMatch(css, /\.ncr-owner-chip/);
 });
 
 test("department chips: unselected chips are a light tint of the department colour, readable for every ramp", () => {

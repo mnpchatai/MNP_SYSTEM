@@ -174,7 +174,7 @@
     };
     const finished = ncr.status === "closed" ? { tone: "is-closed", text: done("ปิด", ncr.signoff_gm_by, ncr.signoff_gm_at) }
       : ncr.status === "cancelled" ? { tone: "is-cancelled", text: done("ยกเลิก", ncr.cancelled_by, ncr.cancelled_at) } : null;
-    if (finished) return finished.text ? `<span class="ncr-owner-chip ${finished.tone}">${escapeHtml(finished.text)}</span>` : "";
+    if (finished) return finished.text ? registerSubHtml(finished.text) : "";
     const waiting = waitingOn(ncr, staff);
     if (!waiting) return "";
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
@@ -183,7 +183,8 @@
     const oneDepartment = ["awaiting_response", "awaiting_info"].includes(ncr.status) && (ncr.ncr_responsibilities ?? []).length === 1;
     const single = oneDepartment ? /^แผนก ([^\s/(]+) \(([^()]+)\)$/.exec(waiting.party) : null;
     const party = single ? single[2] : waiting.party;
-    return `<span class="ncr-owner-chip is-open"><b>ผู้รับผิดชอบ</b> ${escapeHtml(`${party}${progress}`)}</span>`;
+    // บรรทัดไอคอนแบบเดียวกับผู้รับผิดชอบในรายการคำร้อง (app.js requestRows) การ์ดบนมือถือจึงเรียงเหมือนกัน
+    return registerSubHtml(`${party}${progress}`, `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${party}${progress}`);
   }
 
   function checksHtml(name, options, selected = []) {
@@ -579,8 +580,8 @@
           defect: escapeHtml(defect),
           departments: escapeHtml(departments),
           issued: formatDate(row.issue_date),
-          loss: summary ? `${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : "",
-          status: `<span class="register-badges">${statusBadgeHtml(row, row.lossPending)}</span>${ownerChipHtml(row, staff, directory)}`,
+          loss: `${row.lossPending ? '<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย</span>' : ""}${summary ? `${row.lossPending ? "<br>" : ""}${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : ""}`,
+          status: `<span class="register-badges">${statusBadgeHtml(row)}</span>${ownerChipHtml(row, staff, directory)}`,
         },
       };
     };

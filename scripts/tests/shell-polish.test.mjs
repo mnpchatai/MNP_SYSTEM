@@ -290,9 +290,13 @@ test("one detail template: start work sits with the approval buttons; assign, fi
   // ผู้ใช้กำหนด 2026-11-12: ปุ่มของฟอร์มอยู่กับช่องของฟอร์ม (ตรวจรับ: หมายเหตุกับผ่าน/ไม่ผ่านอยู่การ์ดเดียว)
   assert.doesNotMatch(mt, /repair-verify-panel/);
   assert.match(mt, /actionHtml: `/);
-  assert.match(app, /<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">สิ่งที่คุณต้องดำเนินการ<\/h2>\$\{actionWorkHtml\}<\/section>/);
+  assert.match(app, /<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">\$\{actionWorkTitle\}<\/h2>\$\{actionWorkHtml\}<\/section>/);
+  // รอบ 12: การ์ดที่มีแค่ฟอร์มตอบกลับความเห็น (ไม่บังคับ) ไม่บอกว่า "ต้องดำเนินการ" · ขั้นที่ตอบแล้วพับเป็น "ตอบเพิ่มเติม"
+  assert.match(app, /const actionWorkTitle = moduleWorkHtml \? "สิ่งที่คุณต้องดำเนินการ" : "ตอบกลับความเห็น \(ถ้าต้องการ\)";/);
+  assert.match(app, /replies\.some\(\(reply\) => reply\.approval_step_id === step\.id\)\n    \? `<details class="detail-reply-more">/);
   // รอบ 11: การ์ดงานรวมงานของโมดูลกับฟอร์มตอบกลับความเห็น · ประวัติเอกสารการ์ดเดียว เปิดไว้เสมอ (คำร้อง/MT และ NCR ใช้ historyCardHtml)
-  assert.match(app, /const actionWorkHtml = `\$\{detailView\?\.actionHtml \?\? ""\}\$\{\[\.\.\.steps\]\.sort\(\(a, b\) => a\.step_order - b\.step_order\)\.filter\(canReplyToStep\)\.map\(\(step\) => stepReplyFormHtml\(step, directory\)\)\.join\(""\)\}`\.trim\(\);/);
+  assert.match(app, /const moduleWorkHtml = \(detailView\?\.actionHtml \?\? ""\)\.trim\(\);/);
+  assert.match(app, /const actionWorkHtml = `\$\{moduleWorkHtml\}\$\{replyWorkHtml\}`\.trim\(\);/);
   assert.match(app, /function historyCardHtml\(itemsHtml, footHtml = ""\) \{/);
   assert.doesNotMatch(app, /<summary><h2>ลำดับอนุมัติ<\/h2><\/summary>|<summary><h2>ลำดับเหตุการณ์<\/h2><\/summary>/, "no collapsed history cards");
   assert.match(read("modules/module-ncr.js"), /const historySection = historyCardHtml\(/);
