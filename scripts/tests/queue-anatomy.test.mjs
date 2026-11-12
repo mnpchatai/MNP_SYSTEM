@@ -122,5 +122,5 @@ test("the help legend explains the blue clock badge kept for NCR loss data", () 
   const context = vm.createContext({});
   vm.runInContext(read("modules/shortcut-help.js"), context);
   const legend = context.MNP_SHORTCUT_HELP.BADGE_LEGEND.map(([name, label]) => [name, label]);
-  assert.deepEqual(legend.find(([name]) => name === "loss-pending-flag"), ["loss-pending-flag", "NCR รอข้อมูลการสูญเสีย"]);
+  assert.deepEqual(legend.find(([name]) => name === "loss-pending-flag"), ["loss-pending-flag", "NCR รอข้อมูลความสูญเสีย"]);
 });

@@ -139,7 +139,7 @@ test("request and NCR details share one hero: back link, eyebrow with the status
   // รอบ 15: ลิงก์กลับขึ้นแถบบนแทนป้ายทางเดิน จึงบอกชื่อรายการที่จะกลับไป
   assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/);
   assert.match(app, /">‹ \$\{escapeHtml\(type \? requestTypeLabel\(type\) : "คำร้อง"\)\}<\/a>/);
-  assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow">\$\{escapeHtml\(ncr\.form_code\)\} · /);
+  assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">\$\{escapeHtml\(ncr\.form_code\)\} ·<\/span> <span class="nowrap">\$\{escapeHtml\(ncr\.ncr_no\)\}<\/span><\/span>/);
 });
 
 // ---- รอบ 11: ส่วนประกอบกลางที่ MT และ NCR ใช้ร่วมกัน ----
@@ -181,10 +181,10 @@ test("the NCR hero states the reporter and issue date once, in the same meta lin
 test("the NCR register states the loss state once, in the loss column, and names the owner like a request row", () => {
   const ncr = read("modules/module-ncr.js");
   assert.match(ncr, /status: `<span class="register-badges">\$\{statusBadgeHtml\(row\)\}<\/span>/);
-  assert.match(ncr, /loss: `\$\{row\.lossPending \? '<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย<\/span>' : ""\}/);
+  assert.match(ncr, /loss: `\$\{row\.lossPending \? '<span class="badge loss-pending-flag">รอข้อมูลความสูญเสีย<\/span>' : ""\}/);
   assert.match(ncr, /return registerSubHtml\(`\$\{party\}\$\{progress\}`, `\$\{uiIcon\("user"\)\} `, `ผู้รับผิดชอบ: /);
   const dash = read("modules/module-ncr-dashboard.js");
-  assert.doesNotMatch(dash, /">รอข้อมูลการสูญเสีย \$\{fmtCount/, "the assessed tile's fraction is not repeated as a pill");
+  assert.doesNotMatch(dash, /">รอข้อมูลความสูญเสีย \$\{fmtCount/, "the assessed tile's fraction is not repeated as a pill");
   assert.doesNotMatch(dash, /return sums\.need > sums\.assessed \? "ยอดบาทเป็นตัวเลขขั้นต่ำ/, "no banner that repeats the tile");
 });
 

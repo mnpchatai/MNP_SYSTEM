@@ -9,8 +9,8 @@
   const extraFilesField = (id) => (window.MNP_REQUEST_MODULES?.NCR_CAR?.shared?.evidenceFieldHtml?.(id, "แนบไฟล์เพิ่มเติม (ถ้ามี)", { hint: false }) ?? "").replace('class="field"', 'class="field full"');
   // ผู้ที่กรอกต้นทุนได้ ตรงกับ private.can_edit_ncr_losses (module-ncr.js canEditLosses) — แสดงให้ผู้ที่อ่านอย่างเดียวรู้ว่าต้องไปตามใคร
   const EDITORS_TEXT = "ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ช่วยผู้จัดการโรงงาน และผู้จัดการ/ผู้ช่วยผู้จัดการแผนก QA · ผู้ตอบของแผนกที่รับผิดชอบใส่ยอดประมาณการได้";
-  // access: "full" = ผู้กรอกต้นทุน · "estimate" = ผู้ตอบ NCR ใบนั้น ใส่/แก้ได้เฉพาะยอดประมาณการ · false = ดูอย่างเดียว (true เท่ากับ "full")
-  // embedded: วางในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้กรอกต้นทุนขณะยังรอข้อมูลการสูญเสีย) เป็นกลุ่มงาน ไม่ใช่การ์ดซ้อนการ์ด
+  // access: "full" = ผู้ยืนยันยอด · "estimate" = ผู้ตอบ NCR ใบนั้น ใส่/แก้ได้เฉพาะยอดประมาณการ · false = ดูอย่างเดียว (true เท่ากับ "full")
+  // embedded: วางในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้ยืนยันยอดขณะยังรอข้อมูลความสูญเสีย) เป็นกลุ่มงาน ไม่ใช่การ์ดซ้อนการ์ด
   function render(ncr, losses, directory, access, today, formatBaht, formatQty, embedded = false) {
     const full = access === true || access === "full";
     const estimateOnly = access === "estimate";
@@ -25,7 +25,7 @@
     // ก่อนมีรายการแรก ไม่โชว์ช่องยอด 0.00 ฿ · แถวที่ยกเลิกแล้วก็นับ เพราะตารางด้านล่างยังแสดง
     const hasRows = losses.length > 0;
     return `${embedded ? '<div class="ncr-action-group ncr-loss-card"><h3>ความสูญเสีย</h3>' : '<section class="card ncr-card ncr-loss-card"><h2>ความสูญเสีย</h2>'}
-      ${full ? '<p class="muted small">เพิ่มได้หลายรายการ · ยืนยันยอดตามหลักฐาน ในรายการเดิม</p>' : estimateOnly ? '<p class="muted small">ใส่ยอดประมาณการได้หลายรายการ ผู้กรอกต้นทุนยืนยันยอด</p>' : ""}
+      ${full ? '<p class="muted small">เพิ่มได้หลายรายการ · ยืนยันยอดตามหลักฐาน ในรายการเดิม</p>' : estimateOnly ? '<p class="muted small">ใส่ยอดประมาณการได้หลายรายการ แล้วผู้ยืนยันยอดจะยืนยันให้</p>' : ""}
       ${hasRows || editable ? `<div class="ncr-loss-overview"><dl class="ncr-loss-summary${editable ? " is-editable" : ""}" aria-label="สรุปความสูญเสีย">
         ${hasRows ? `<div><dt>สูญเสียยืนยันแล้ว</dt><dd>${formatBaht(summary.confirmed)}</dd></div>
         <div><dt>ชดเชยยืนยันแล้ว</dt><dd>${formatBaht(summary.recovery)}</dd></div>
@@ -33,11 +33,11 @@
         ${editable ? '<div class="ncr-loss-draft"><dt id="ncr-loss-preview-label">รายการที่กำลังกรอก <span>ยังไม่บันทึก</span></dt><dd><output id="ncr-loss-preview" form="ncr-loss-form" for="ncr-loss-qty ncr-loss-cost ncr-loss-headcount ncr-loss-hours" aria-labelledby="ncr-loss-preview-label" aria-live="polite">—</output></dd></div>' : ""}
       </dl>
       ${hasRows ? `<details class="ncr-loss-more"><summary>ยอดที่ยังไม่ยืนยัน</summary><dl class="ncr-loss-pending"><div><dt>ประมาณการรอยืนยัน</dt><dd>${formatBaht(summary.estimated)}</dd></div><div><dt>ชดเชยคาดว่าจะได้รับ</dt><dd>${formatBaht(summary.estimatedRecovery)}</dd></div><div><dt>รายการเดิมรอตรวจสอบ</dt><dd>${formatBaht(summary.legacy)}</dd></div></dl></details>` : ""}</div>` : ""}
-      ${!editable && ncr.status !== "cancelled" && (!ncr.outcome?.cost_reviewed || summary.pending) ? `<p class="muted small">ผู้กรอกค่าเสียหายได้: ${EDITORS_TEXT}</p>` : ""}
-      ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : full ? '<p class="muted">ยังไม่ได้บันทึกค่าเสียหาย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>' : '<p class="muted">ยังไม่มีรายการความสูญเสีย</p>'}
+      ${!editable && ncr.status !== "cancelled" && (!ncr.outcome?.cost_reviewed || summary.pending) ? `<details class="ncr-loss-who"><summary>ใครกรอกความสูญเสียได้</summary><p class="muted small">ผู้ยืนยันยอด: ${EDITORS_TEXT}</p></details>` : ""}
+      ${losses.length ? `<div class="table-wrap"><table><thead><tr><th>ประเภท / สถานะ</th><th>วันที่เกิดค่าใช้จ่าย</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>มูลค่า</th><th>หลักฐาน / หมายเหตุ</th><th>ผู้บันทึก / ผู้ยืนยัน</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : full ? '<p class="muted">ยังไม่ได้บันทึกความสูญเสีย กรุณาประเมินก่อนสรุปว่าไม่มีความสูญเสีย</p>' : '<p class="muted">ยังไม่มีรายการความสูญเสีย</p>'}
       ${editable ? `<details class="ncr-loss-add" id="ncr-loss-add"><summary class="btn secondary">เพิ่มรายการความสูญเสีย</summary><form class="ncr-action" data-action="add_loss" id="ncr-loss-form" novalidate><div class="ncr-form-message"></div><h3 id="ncr-loss-heading" hidden>${estimateOnly ? "แก้ไขยอดประมาณการ" : "แก้ไขรายการ / ยืนยันยอดเดิม"}</h3><input type="hidden" name="loss_id">
         <div class="form-grid">
-          <div class="field" data-field="entry_kind"><label for="ncr-loss-kind">รายการ ${REQUIRED}</label><select class="select" id="ncr-loss-kind" name="entry_kind">${options({ loss: "ค่าเสียหาย", recovery: "เงินชดเชย/เครดิตผู้ขาย/ขายซาก" }, "loss")}</select></div>
+          <div class="field" data-field="entry_kind"><label for="ncr-loss-kind">รายการ ${REQUIRED}</label><select class="select" id="ncr-loss-kind" name="entry_kind">${options({ loss: "ความสูญเสีย", recovery: "เงินชดเชย/เครดิตผู้ขาย/ขายซาก" }, "loss")}</select></div>
           <div class="field" data-field="loss_type"><label for="ncr-loss-type">ประเภท ${REQUIRED}</label><select class="select" id="ncr-loss-type" name="loss_type">${options(costs.TYPES, "scrap")}</select></div>
           <div class="field" data-field="component"><label for="ncr-loss-component">ส่วนประกอบค่าใช้จ่าย ${REQUIRED}</label><select class="select" id="ncr-loss-component" name="component"></select></div>
           ${estimateOnly ? '<input type="hidden" name="cost_status" value="estimated">' : `<div class="field" data-field="cost_status"><label for="ncr-loss-status">สถานะยอดเงิน ${REQUIRED}</label><select class="select" id="ncr-loss-status" name="cost_status">${options({ estimated: costs.STATUSES.estimated, confirmed: costs.STATUSES.confirmed }, "estimated")}</select></div>`}
@@ -55,7 +55,7 @@
       ${reviewHtml(ncr, full, directory, formatQty, embedded)}
     ${embedded ? "</div>" : "</section>"}`;
   }
-  // ยืนยันว่าประเมินค่าเสียหายครบ (app_ncr_review_costs) อยู่ท้ายส่วนความสูญเสีย แทนฟอร์ม "ผลดำเนินการจริง" เดิม
+  // ยืนยันว่าประเมินความสูญเสียครบ (app_ncr_review_costs) อยู่ท้ายส่วนความสูญเสีย แทนฟอร์ม "ผลดำเนินการจริง" เดิม
   // จำนวนทิ้งนับจากรายการประเภทของเสีย/ทิ้ง ชั่วโมงเครื่องหยุดลงเป็นรายการประเภทเครื่องหยุด/รอ จึงไม่ต้องกรอกซ้ำที่อื่น
   // ใบเก่าที่เคยบันทึกจำนวนผลดำเนินการไว้ยังเห็นค่าเดิมแบบอ่านอย่างเดียว
   const LEGACY_OUTCOME = { qty_sorted: "คัดแยก", qty_repaired: "ซ่อมสำเร็จ", qty_scrapped: "ทิ้ง", qty_returned: "ส่งคืน", qty_accepted: "ยอมรับใช้ได้" };
@@ -64,15 +64,15 @@
     const legacy = o && (Object.keys(LEGACY_OUTCOME).some((key) => Number(o[key]) > 0) || Number(o.downtime_hours) > 0);
     const status = o?.cost_reviewed
       ? `<p><strong>ประเมินครบแล้ว</strong> · ${escapeHtml(personName(directory, o.updated_by))} · ${formatDate(o.updated_at)}</p>`
-      : editable ? "" : '<p class="muted">ผู้กรอกต้นทุนยังไม่ได้ยืนยันว่าประเมินค่าเสียหายครบ</p>';
+      : editable ? "" : '<p class="muted">ผู้ยืนยันยอดยังไม่ได้ยืนยันว่าประเมินความสูญเสียครบ</p>';
     const level = embedded ? "h4" : "h3";
-    return `<div class="ncr-cost-review"><${level}>สรุปการประเมินค่าเสียหาย</${level}>${status}
+    return `<div class="ncr-cost-review"><${level}>สรุปการประเมินความสูญเสีย</${level}>${status}
       ${o?.note && !editable ? `<p class="muted small">${escapeHtml(o.note)}</p>` : ""}
       ${legacy ? `<details class="ncr-legacy-outcome"><summary>ผลดำเนินการที่บันทึกไว้เดิม (${o.result_status === "confirmed" ? "ยืนยันแล้ว" : "ร่าง"} · ${formatDate(o.result_date)})</summary>
         <p class="muted small">${Object.entries(LEGACY_OUTCOME).map(([key, label]) => `${label} ${formatQty(o[key])}`).join(" · ")} ${escapeHtml(ncr.unit)} · เครื่องหยุด/รอ ${formatQty(o.downtime_hours)} ชม.${o.evidence_ref ? ` · หลักฐาน ${escapeHtml(o.evidence_ref)}` : ""}</p></details>` : ""}
       ${editable ? `<form class="ncr-action" data-action="review_costs"><div class="ncr-form-message"></div><div class="form-grid">
-        <label class="ncr-check field full"><input type="checkbox" name="cost_reviewed"${o?.cost_reviewed ? " checked" : ""}><span>ประเมินค่าเสียหายครบแล้ว (ต้องยืนยันยอดทุกรายการก่อน)</span></label>
-        <div class="field full"><label for="ncr-review-note">หมายเหตุ / เหตุผลกรณีไม่มีค่าเสียหาย</label><textarea class="textarea" id="ncr-review-note" name="note" maxlength="1000">${escapeHtml(o?.note ?? "")}</textarea></div>
+        <label class="ncr-check field full"><input type="checkbox" name="cost_reviewed"${o?.cost_reviewed ? " checked" : ""}><span>ประเมินความสูญเสียครบแล้ว (ต้องยืนยันยอดทุกรายการก่อน)</span></label>
+        <div class="field full"><label for="ncr-review-note">หมายเหตุ / เหตุผลกรณีไม่มีความสูญเสีย</label><textarea class="textarea" id="ncr-review-note" name="note" maxlength="1000">${escapeHtml(o?.note ?? "")}</textarea></div>
         </div><div class="form-actions"><button class="btn secondary" type="submit">บันทึกสรุปการประเมิน</button></div></form>` : ""}</div>`;
   }
   function readEntry(form) {

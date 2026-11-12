@@ -3913,11 +3913,18 @@ async function renderRequestDetail(params) {
   const moduleHead = !ORIGINAL_FORM_TYPES.has(type?.code);
   // ใบที่จบแล้ว (เสร็จ ไม่อนุมัติ ยกเลิก รับทราบ หรืออนุมัติที่เป็นปลายทางของโมดูล) ยังแนบไฟล์ได้ แต่บอกว่าเพิ่มหลังปิดใบ (ผู้ใช้เลือก 2026-11-12)
   const requestClosed = ["completed", "rejected", "cancelled", "acknowledged"].includes(request.status) || isFinalDecision(type, request.status);
+  // รายละเอียดที่ผู้ขอแจ้ง: ผู้ที่ต้องกรอกงานของขั้น (มอบหมายช่าง บันทึกผล ตรวจรับ) อ่านได้ในการ์ดงานทันที
+  const briefInAction = Boolean(moduleWorkHtml) && Boolean(description);
+  const briefHeading = briefInAction ? "h3" : "h2";
+  const briefBodyHtml = `<${briefHeading} class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</${briefHeading}>
+          ${description
+            ? `<p class="request-summary-text is-clamped" id="request-description">${escapeHtml(description)}</p><button type="button" class="link-button request-more" id="request-description-more" aria-controls="request-description" aria-expanded="false" hidden>อ่านต่อ</button>`
+            : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}`;
   const content = `
     <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}">‹ ${escapeHtml(type ? requestTypeLabel(type) : "คำร้อง")}</a>
     <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
-        <span class="eyebrow">${formCode ? `${escapeHtml(formCode)} · ` : ""}${escapeHtml(request.request_no)}</span>
+        <span class="eyebrow">${formCode ? `<span class="nowrap">${escapeHtml(formCode)} ·</span> ` : ""}<span class="nowrap">${escapeHtml(request.request_no)}</span></span>
         <div class="request-detail-kicker-end">${detailView?.statusBadgeHtml ?? pendingStepBadge(request, currentStep, isRepair, isFinalDecision(type, request.status))}${headerActionsHtml ? requestDetailMenuHtml(headerActionsHtml) : ""}</div>
       </div>
       <h1>${headingTextHtml(request.title)}</h1>
@@ -3926,13 +3933,8 @@ async function renderRequestDetail(params) {
     <div class="detail-grid">
       <div class="stack">
         ${receipt ? decisionReceiptHtml(receipt, directory) : ""}
-        ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">${actionWorkTitle}</h2>${actionWorkHtml}</section>` : ""}
-        <section class="card request-brief" aria-labelledby="request-brief-title">
-          <h2 class="request-brief-label" id="request-brief-title">รายละเอียดที่ผู้ขอแจ้ง</h2>
-          ${description
-            ? `<p class="request-summary-text is-clamped" id="request-description">${escapeHtml(description)}</p><button type="button" class="link-button request-more" id="request-description-more" aria-controls="request-description" aria-expanded="false" hidden>อ่านต่อ</button>`
-            : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
-        </section>
+        ${actionWorkHtml ? `<section class="card detail-actions" aria-labelledby="detail-actions-title"><h2 id="detail-actions-title">${actionWorkTitle}</h2>${briefInAction ? `<div class="detail-actions-brief">${briefBodyHtml}</div>` : ""}${actionWorkHtml}</section>` : ""}
+        ${briefInAction ? "" : `<section class="card request-brief" aria-labelledby="request-brief-title">${briefBodyHtml}</section>`}
         ${request.status === "more_info" ? (() => {
           const moreInfoStep = steps.find((step) => step.status === "more_info");
           const requesterLabel = personName(directory, request.requester_id);

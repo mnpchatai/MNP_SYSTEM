@@ -6,7 +6,7 @@
   const round = (value, digits = 2) => Math.round((Number(value) + Number.EPSILON) * 10 ** digits) / 10 ** digits;
   const allowedComponents = (type, kind = "loss") => kind === "recovery" ? ["amount"] : ["repair", "rework"].includes(type) ? ["labor", "material", "external"] : type === "sort" ? ["labor", "external"] : ["scrap", "material", "downtime"].includes(type) ? ["quantity"] : ["amount"];
   function fieldSpec(type, component, kind = "loss", unit = "ชิ้น") {
-    if (kind === "recovery" || component === "amount" || component === "external") return { quantity: "จำนวนรายการ", rate: "ยอดเงินตามเอกสาร (บาท)", unit: "รายการ", fixedQuantity: true, hint: kind === "recovery" ? "เงินชดเชย/เครดิตผู้ขาย/ขายซาก แยกจากค่าเสียหาย" : type === "reproduce" ? "บันทึกเฉพาะค่าใช้จ่ายส่วนเพิ่มที่ยังไม่ได้ลงในหมวดอื่น" : "บันทึกค่าใช้จ่ายเพิ่มเติมจาก NCR ตามเอกสาร" };
+    if (kind === "recovery" || component === "amount" || component === "external") return { quantity: "จำนวนรายการ", rate: "ยอดเงินตามเอกสาร (บาท)", unit: "รายการ", fixedQuantity: true, hint: kind === "recovery" ? "เงินชดเชย/เครดิตผู้ขาย/ขายซาก แยกจากความสูญเสีย" : type === "reproduce" ? "บันทึกเฉพาะค่าใช้จ่ายส่วนเพิ่มที่ยังไม่ได้ลงในหมวดอื่น" : "บันทึกค่าใช้จ่ายเพิ่มเติมจาก NCR ตามเอกสาร" };
     if (component === "labor") return { quantity: "รวมชั่วโมงแรงงาน (คน-ชม.)", rate: "ค่าแรง/ชม. (บาท)", unit: "คน-ชม.", labor: true, hint: "จำนวนพนักงาน × ชม.ทำงาน/วัน = คน-ชม. ของวันที่เกิดค่าใช้จ่าย เช่น 2 คน × 3 ชม. = 6 คน-ชม. · หลายวันให้เพิ่มเป็นรายการแยกตามวัน · แยกเวลาซ่อม Rework และคัดแยกเป็นคนละรายการ" };
     if (component === "material") return { quantity: "จำนวนวัสดุที่ใช้ซ่อม", rate: "ต้นทุนวัสดุต่อหน่วย (บาท)", unit, hint: "เก็บค่าวัสดุแยกจากค่าแรงซ่อม" };
     if (type === "downtime") return { quantity: "เวลาเครื่องหยุด (ชั่วโมง)", rate: "ต้นทุนเครื่องหยุด (บาท/ชั่วโมง)", unit: "ชม.", hint: "ใช้เฉพาะอัตราต้นทุนที่องค์กรกำหนด หากยังไม่มีอัตรา ให้ใส่ต้นทุน 0 เพื่อเก็บชั่วโมงเครื่องหยุดไว้" };
@@ -62,7 +62,7 @@
   }
   // Cost assessment is expected once the factory manager has decided the disposition, including closed reports.
   const ASSESSMENT_STATUSES = ["awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info", "closed"];
-  // "รอข้อมูลการสูญเสีย": needs assessment but the cost review (ncr_outcomes.cost_reviewed) is not ticked, or an estimate/legacy row is still pending.
+  // "รอข้อมูลความสูญเสีย": needs assessment but the cost review (ncr_outcomes.cost_reviewed) is not ticked, or an estimate/legacy row is still pending.
   // summary = summarize(losses of that report).
   const lossDataPending = (status, outcome, summary) => ASSESSMENT_STATUSES.includes(status) && !(outcome?.cost_reviewed === true && summary.pending === 0);
   const api = { TYPES, STATUSES, COMPONENTS, ASSESSMENT_STATUSES, round, allowedComponents, fieldSpec, laborQuantity, withLaborTag, splitLaborTag, makeEntry, summarize, lossDataPending };

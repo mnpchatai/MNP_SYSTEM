@@ -980,6 +980,10 @@ a.register-title:hover { color: var(--primary); }
 .request-detail-head { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
 .request-detail-kicker { min-height: 36px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 .request-detail-kicker .eyebrow { white-space: nowrap; }
+/* รายละเอียดที่ผู้ขอแจ้งในการ์ดงาน: เส้นคั่นจากฟอร์มของขั้น · ใครกรอกความสูญเสียได้ พับไว้ */
+.detail-actions-brief { margin-bottom: 16px; padding-bottom: 14px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); }
+.detail-actions-brief .request-brief-label { margin: 0 0 6px; font-size: var(--text-meta); }
+.ncr-loss-who > summary { color: var(--muted); font-size: var(--text-meta); cursor: pointer; }
 /* ป้ายสถานะในหัวใบเป็นข้อเท็จจริงสำคัญที่สุดของหน้า: ตัวใหญ่กว่าป้ายในตาราง */
 .request-detail-kicker-end .badge { font-size: var(--text-ui); }
 .request-detail-kicker-end { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -1439,7 +1443,10 @@ a.machine-history-no:hover { text-decoration: underline; }
   .request-summary-text { font-size: var(--text-body); }
   .request-facts { gap: 8px; }
   .action-panel { left: 0; }
-  .request-detail-kicker { align-items: flex-start; }
+  .request-detail-kicker { flex-wrap: nowrap; align-items: center; gap: 8px; }
+  .request-detail-kicker .eyebrow { flex: 1 1 0; min-width: 88px; letter-spacing: .04em; white-space: normal; }
+  .request-detail-kicker-end { flex: 0 1 auto; }
+  .request-detail-kicker-end .badge { font-size: var(--text-meta); }
   .request-fact { min-height: 84px; padding: 11px; grid-template-columns: 32px minmax(0, 1fr); gap: 9px; }
   .request-fact.is-action { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .request-fact-icon { width: 32px; height: 32px; border-radius: var(--radius-md); font-size: var(--text-ui); }

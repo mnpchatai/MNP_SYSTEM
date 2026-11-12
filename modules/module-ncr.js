@@ -69,7 +69,7 @@
     INVALID_LOSS_DATE: "กรุณาตรวจวันที่เกิดค่าใช้จ่าย ยอดจริงต้องไม่เป็นวันที่ในอนาคต",
     LOSS_EVIDENCE_REQUIRED: "กรุณาระบุหลักฐานอ้างอิงก่อนยืนยันยอด",
     COST_REVIEW_PENDING: "ยังมีรายการรอยืนยัน กรุณาตรวจยอดก่อนระบุว่าประเมินครบ",
-    ZERO_COST_REASON_REQUIRED: "กรุณาระบุเหตุผลกรณีไม่มีค่าเสียหาย",
+    ZERO_COST_REASON_REQUIRED: "กรุณาระบุเหตุผลกรณีไม่มีความสูญเสีย",
     INVALID_LOSS: "จำนวนต้องมากกว่า 0 ราคาต่อหน่วยต้องไม่ติดลบ และต้องระบุหน่วย",
     INVALID_INFO_REQUEST: "กรุณาระบุข้อมูลที่ต้องการเพิ่มเติม (5–2,000 ตัวอักษร)",
     INVALID_INFO_ANSWER: "กรุณาระบุข้อมูลที่ตอบ (5–5,000 ตัวอักษร)",
@@ -86,7 +86,7 @@
   const isDeptManager = (employee) => DEPT_MANAGER_ROLE_CODES.includes(roleCode(employee));
   const LOSS_EDITOR_ROLE_CODES = ["factory_manager", "assistant_factory_manager", "general_manager"];
   const isQaManager = (employee) => isQa(employee) && isDeptManager(employee);
-  // บทบาทที่ทำงาน: บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" ใช้บทบาทนั้น — ใช้กับผู้กรอกต้นทุนและขั้นลงนาม ผจก.ทั่วไป เท่านั้น
+  // บทบาทที่ทำงาน: บัญชี admin ที่ตั้ง "บทบาทหลักในการทำงาน" ใช้บทบาทนั้น — ใช้กับผู้ยืนยันยอดและขั้นลงนาม ผจก.ทั่วไป เท่านั้น
   // ขั้นอื่นของ NCR ยังดู role จริง (ตรงกับ migration 20261101010000 และ 20261102010000)
   const workingRoleCode = (employee) => employee?.actingRole?.code ?? roleCode(employee);
   // ผู้ตอบ NCR ได้: พนักงาน/ผจก./ผช.ผจก. ของแผนกที่รับผิดชอบ ถ้า ผจก.โรงงานระบุผู้ตอบของแผนกไว้ ตอบได้เฉพาะคนนั้น
@@ -157,7 +157,7 @@
     // ป้ายบนจอใช้ชื่อสถานะอย่างเดียว ผู้ที่ต้องลงนามอยู่ในป้ายผู้รับผิดชอบหรือบรรทัด "ขั้นตอนนี้รอ" แล้ว (statusLabel พร้อมลำดับผู้ลงนามใช้กับชีต)
     const badges = [`<span class="badge ${STATUS_BADGE_CLASS[ncr.status] ?? "pending_approval"}">${escapeHtml(STATUS_LABELS[ncr.status] ?? ncr.status)}</span>`];
     if (isOverdue(ncr)) badges.push('<span class="badge urgent-flag">เกินกำหนดตอบ</span>');
-    if (lossPending) badges.push('<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย</span>');
+    if (lossPending) badges.push('<span class="badge loss-pending-flag">รอข้อมูลความสูญเสีย</span>');
     return badges.join(" ");
   }
 
@@ -501,7 +501,7 @@
   }
 
   // ---- ทะเบียน NCR (QA02-FM02) ----
-  const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["loss", "รอข้อมูลการสูญเสีย"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
+  const LIST_FILTERS = [["open", "ยังไม่ปิด"], ["overdue", "เกินกำหนดตอบ"], ["loss", "รอข้อมูลความสูญเสีย"], ["closed", "ปิดแล้ว"], ["cancelled", "ยกเลิก"], ["all", "ทั้งหมด"]];
 
   // หมวดสถานะของทะเบียนในหน้าคำร้อง: app.js วางในแถวตัวกรองชุดเดียวกับโมดูลอื่น (requestListFilters) · applied = ข้อความบนปุ่มตัวกรองที่พับอยู่
   function centerStatusFilter(params) {
@@ -542,7 +542,7 @@
         if (!lossByNcr.has(loss.ncr_id)) lossByNcr.set(loss.ncr_id, []);
         lossByNcr.get(loss.ncr_id).push(loss);
       }
-      // รอข้อมูลการสูญเสีย: กฎเดียวกับแดชบอร์ด (ncr-costs.js lossDataPending) ใช้ทั้งป้ายบนการ์ดและแท็บกรอง
+      // รอข้อมูลความสูญเสีย: กฎเดียวกับแดชบอร์ด (ncr-costs.js lossDataPending) ใช้ทั้งป้ายบนการ์ดและแท็บกรอง
       const outcomes = new Map((outcomeResult.data ?? []).map((item) => [item.ncr_id, item]));
       for (const row of rows) row.lossPending = window.MNP_NCR_COSTS.lossDataPending(row.status, outcomes.get(row.id), window.MNP_NCR_COSTS.summarize(lossByNcr.get(row.id) ?? []));
       if (filter === "loss") rows = rows.filter((row) => row.lossPending);
@@ -578,7 +578,7 @@
           defect: escapeHtml(defect),
           departments: escapeHtml(departments),
           issued: formatDate(row.issue_date),
-          loss: `${row.lossPending ? '<span class="badge loss-pending-flag">รอข้อมูลการสูญเสีย</span>' : ""}${summary ? `${row.lossPending ? "<br>" : ""}${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : ""}`,
+          loss: `${row.lossPending ? '<span class="badge loss-pending-flag">รอข้อมูลความสูญเสีย</span>' : ""}${summary ? `${row.lossPending ? "<br>" : ""}${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : ""}`,
           status: `<span class="register-badges">${statusBadgeHtml(row)}</span>${ownerChipHtml(row, staff, directory)}`,
         },
       };
@@ -820,7 +820,7 @@
     return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";
   }
 
-  // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้กรอกต้นทุน (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
+  // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้ยืนยันยอด (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
   // ใส่และแก้ได้เฉพาะยอดประมาณการ (ตรงกับ app_ncr_record_loss, migration 20261115010000) · false = ดูอย่างเดียว
   function lossAccess(ncr, employee) {
     if (ncr.status === "cancelled") return false;
@@ -833,7 +833,7 @@
     issue: "ออก NCR", dispose: "ผู้จัดการโรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
     followup_return: "QA ส่งกลับให้แก้ไขคำตอบ", signoff_qa: "ผู้จัดการแผนก QA ลงนาม", signoff_factory: "ผู้จัดการโรงงานลงนาม",
     signoff_gm: "ผู้จัดการทั่วไปลงนาม", request_info: "ผู้ลงนามขอข้อมูลเพิ่มเติม", answer_info: "แผนกให้ข้อมูลเพิ่มเติม", assign_responder: "ผู้จัดการโรงงานระบุผู้ตอบ", cancel: "ยกเลิก NCR", attachment: "แนบไฟล์หลักฐาน",
-    loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินค่าเสียหาย",
+    loss_record: "บันทึก/แก้ไขความสูญเสีย", outcome_record: "บันทึกผลดำเนินการจริง", cost_review: "สรุปการประเมินความสูญเสีย",
   };
 
   async function renderDetail(id) {
@@ -873,7 +873,7 @@
     const forms = actionForms(ncr, employee, departments, infoRequests.find((request) => !request.answered_at) ?? null, staff);
     const waiting = waitingText(ncr, staff);
     // งานที่ผู้ดูต้องทำทั้งหมดอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" การ์ดเดียว (กติกาหน้ารายละเอียด ผู้ใช้อนุมัติ 2026-11-12):
-    // ฟอร์มของขั้น ผู้ตอบของแผนก (ผู้จัดการโรงงาน) และค่าเสียหาย (ผู้กรอกต้นทุนขณะยังรอข้อมูลการสูญเสีย) แต่ละส่วนยังบันทึกแยกกันเหมือนเดิม
+    // ฟอร์มของขั้น ผู้ตอบของแผนก (ผู้จัดการโรงงาน) และความสูญเสีย (ผู้ยืนยันยอดขณะยังรอข้อมูลความสูญเสีย) แต่ละส่วนยังบันทึกแยกกันเหมือนเดิม
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
     const lossesInWork = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
     const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, lossAccess(ncr, employee), lossesInWork);
@@ -926,7 +926,7 @@
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
     const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
-        <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
+        <div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">${escapeHtml(ncr.form_code)} ·</span> <span class="nowrap">${escapeHtml(ncr.ncr_no)}</span></span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
         <h1>${headingTextHtml(ncr.product_name || ncr.ncr_no)}</h1>
         <p class="request-detail-meta">โดย ${escapeHtml(personName(directory, ncr.reporter_id))} (${escapeHtml(relation(ncr.reporter_department)?.code ?? "—")}) · ${formatDate(ncr.issue_date)}</p>${headFacts}
       </header>
