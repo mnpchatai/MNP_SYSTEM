@@ -34,7 +34,8 @@
   const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่นๆ" };
   const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", repair: "ค่าซ่อม (Repair)", rework: "ค่าแก้ไขงาน (Rework)", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่นๆ" };
   const OTHER_LOSS_NOTE_MIN = 5;
-  const STATUS_BADGE_CLASS = { closed: "completed", cancelled: "cancelled" };
+  // รอข้อมูลเพิ่มเติมใช้ป้าย "?" แบบเดียวกับ "ขอข้อมูลเพิ่ม" ของคำร้อง ไม่ใช่นาฬิกา
+  const STATUS_BADGE_CLASS = { closed: "completed", cancelled: "cancelled", awaiting_info: "more_info" };
 
   const ERROR_MESSAGES = {
     NCR_NOT_FOUND: "ไม่พบ NCR นี้ หรือคุณไม่มีสิทธิ์เปิดดู",
@@ -812,7 +813,7 @@
     if (canEditLosses(ncr, employee)) return "full";
     return canRespond(ncr, employee) ? "estimate" : false;
   }
-  const lossSectionHtml = (ncr, losses, directory, access) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, access, todayBangkok(), formatBaht, formatQty);
+  const lossSectionHtml = (ncr, losses, directory, access, embedded = false) => window.MNP_NCR_LOSS_UI.render(ncr, losses, directory, access, todayBangkok(), formatBaht, formatQty, embedded);
 
   const HISTORY_LABELS = {
     issue: "ออก NCR", dispose: "ผู้จัดการโรงงานพิจารณา", respond: "แผนกตอบ NCR", prevention: "แผนกส่งแนวทางป้องกัน", followup_close: "QA ปิดประเด็น",
@@ -857,6 +858,14 @@
     const infoRequests = infoResult.data ?? [];
     const forms = actionForms(ncr, employee, departments, infoRequests.find((request) => !request.answered_at) ?? null, staff);
     const waiting = waitingText(ncr, staff);
+    // งานที่ผู้ดูต้องทำทั้งหมดอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" การ์ดเดียว (กติกาหน้ารายละเอียด ผู้ใช้อนุมัติ 2026-11-12):
+    // ฟอร์มของขั้น ผู้ตอบของแผนก (ผู้จัดการโรงงาน) และค่าเสียหาย (ผู้กรอกต้นทุนขณะยังรอข้อมูลการสูญเสีย) แต่ละส่วนยังบันทึกแยกกันเหมือนเดิม
+    const responderSection = responderSectionHtml(ncr, employee, staff, directory);
+    const lossesInWork = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
+    const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, lossAccess(ncr, employee), lossesInWork);
+    const work = [...forms, responderSection, ...(lossesInWork ? [lossesSection] : [])].filter(Boolean);
+    // ฟอร์มตอบบอกเหลือ/เลยกำหนดกี่วันแล้ว ส่วนที่ 2 จึงไม่บอกวันกำหนดตอบซ้ำ (ไม่แสดงวันที่คู่กับอายุที่คำนวณจากวันนั้น)
+    const dueInForm = forms.some((html) => html.includes('data-action="respond"'));
     const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
     // เฉพาะแผนกที่ระบุผู้ตอบไว้ — แผนกที่ไม่ระบุ ทุกคนที่เข้าเกณฑ์ตอบได้ จึงไม่ต้องแสดง
     const designated = escapeHtml((ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id)
@@ -895,10 +904,13 @@
       ["แหล่งที่พบ", SOURCES[ncr.source] ?? ncr.source ?? "—"],
       ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`],
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
-    const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
-      <div class="page-heading request-module-header ncr-detail-head" data-module="ncr"><div><div class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</div><h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>${headFacts}</div><div class="ncr-heading-status">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
+    const heading = `<a class="request-back-link" href="#/ncr" title="กลับไปรายการ NCR/CAR">‹ กลับไปรายการ</a>
+      <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
+        <div class="request-detail-kicker"><span class="eyebrow">${escapeHtml(ncr.form_code)} · ${escapeHtml(ncr.ncr_no)}</span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
+        <h1>${escapeHtml(ncr.product_name || ncr.ncr_no)}</h1>${headFacts}
+      </header>
       ${ncr.status === "cancelled" ? `<div class="form-message error">ยกเลิกโดย ${escapeHtml(personName(directory, ncr.cancelled_by))} · ${formatDate(ncr.cancelled_at)} · ${escapeHtml(ncr.cancel_reason ?? "")}</div>` : ""}
-      ${forms.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
+      ${work.length ? "" : waiting ? `<p class="muted small ncr-waiting">ขั้นตอนนี้รอ: <strong>${escapeHtml(waiting)}</strong></p>` : ""}
 `;
     const part1 = `
       ${partOpening(1, "ผู้รายงาน/ผู้ตรวจสอบ", "ข้อมูลสินค้าและรายละเอียดความไม่สอดคล้อง")}
@@ -915,9 +927,9 @@
       ${partOpening(2, "ฝ่ายบริหารโรงงานพิจารณา", "แนวทางจัดการ ผู้รับผิดชอบ และกำหนดตอบ")}
         ${partField("ความเห็น", escapeHtml((ncr.dispositions ?? []).map((value) => DISPOSITIONS[value] ?? value).join(", ") || "—"), false, "action")}
         ${partField("แผนกที่รับผิดชอบ", responsibilities || "—", false, "building")}
-        ${designated ? partField("ผู้ตอบที่ระบุ", designated, false, "person") : ""}
+        ${designated && !responderSection ? partField("ผู้ตอบที่ระบุ", designated, false, "person") : ""}
         ${partField("ผู้พิจารณา", ncr.disposed_at ? `${escapeHtml(personName(directory, ncr.disposed_by))} · ${formatDate(ncr.disposed_at)}` : "—", false, "person")}
-        ${partField("กำหนดตอบ", formatDate(ncr.response_due), false, "calendar")}
+        ${dueInForm ? "" : partField("กำหนดตอบ", formatDate(ncr.response_due), false, "calendar")}
         ${ncr.disposition_note ? partField("หมายเหตุ", escapeHtml(ncr.disposition_note), true) : ""}
       </dl></section>
 `;
@@ -957,7 +969,6 @@
         ${OPEN_STATUSES.includes(ncr.status) ? `<form class="ncr-action ncr-attach-form" data-action="attach"><div class="ncr-form-message"></div>${evidenceFieldHtml("ncr-attach-evidence", "แนบไฟล์เพิ่ม")}<div class="form-actions"><button class="btn secondary" type="submit">อัปโหลด</button></div></form>` : ""}
       </section>
 `;
-    const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, lossAccess(ncr, employee));
     const historySection = `
       <section class="card ncr-card"><h2>ประวัติเอกสาร</h2><div class="timeline">${(historyResult.data ?? []).map((item) => `<div class="timeline-item"><strong>${escapeHtml(HISTORY_LABELS[item.action] ?? item.action)}</strong><p>${escapeHtml(personName(directory, item.changed_by))} · ${formatDate(item.changed_at, true)}</p>${item.note ? `<p class="timeline-item-detail">${escapeHtml(item.note)}</p>` : ""}</div>`).join("")}</div></section>`;
     // ส่วนที่ 3 และ 4 ยังว่างจนกว่าจะถึงขั้นของมัน ไม่แสดงบล็อกที่มีแต่ "—" (ฟอร์มของขั้นนั้นอยู่ที่ "สิ่งที่คุณต้องดำเนินการ" แล้ว)
@@ -967,21 +978,16 @@
     const part2Filled = Boolean(ncr.disposed_at || ncr.dispositions?.length || ncr.ncr_responsibilities?.length || ncr.disposition_note);
     const parts = [part1, ...(part2Filled ? [part2] : []), ...(part3Filled ? [part3] : []), ...(part4Filled ? [part4] : []), ...(infoSection ? [infoSection] : [])];
     // งานที่ผู้ดูต้องทำขึ้นก่อนหลักฐาน (เหมือนแผงตัดสินใจของใบคำร้อง): ฟอร์มของขั้นนี้อยู่บนสุดของหน้า ส่วนที่ 1–4 และไฟล์หลักฐานอ่านต่อใต้ฟอร์ม
-    const responderSection = responderSectionHtml(ncr, employee, staff, directory);
-    const work = [...forms, responderSection].filter(Boolean);
     const actionsSection = `<section class="card ncr-card ncr-actions" data-module="ncr"><h2>สิ่งที่คุณต้องดำเนินการ</h2>${work.join("")}</section>`;
-    // ผู้กรอกต้นทุนเห็นการ์ดค่าเสียหายต่อจากงานของตัวเองเมื่อยังรอข้อมูลการสูญเสีย
-    const lossesFirst = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
     // โครงหน้ารายละเอียดเดียวทุกโมดูล (ผู้ใช้อนุมัติ 2026-11-12): งานของผู้ดูบนสุดของคอลัมน์ซ้าย ประวัติอยู่คอลัมน์ขวา
     const main = [
       ...(work.length ? [actionsSection] : []),
-      ...(lossesFirst ? [lossesSection] : []),
       ...parts, filesSection,
-      ...(lossesFirst ? [] : [lossesSection]),
+      ...(lossesInWork ? [] : [lossesSection]),
     ];
     const content = `${heading}<div class="detail-grid ncr-detail-grid"><div class="stack">${main.join("")}</div><aside class="stack">${historySection}</aside></div>`;
     // เลขที่ NCR เป็นหัวเรื่องของหน้าแล้ว แถบบนบอกทะเบียน ส่วนชื่อแท็บยังเป็นเลขที่
-    app.innerHTML = shell(content, "ncr", "ทะเบียน NCR", ncr.ncr_no);
+    app.innerHTML = shell(content, "ncr", "NCR/CAR", ncr.ncr_no);
     bindShell();
     bindDetail(ncr, lossResult.data ?? []);
     document.querySelector("#attachment-gallery")?.addEventListener("click", (event) => {
@@ -1171,6 +1177,18 @@
       const task = homeTask(ncr, employee);
       if (task) tasks.push({ ncr, task, overdue: isOverdue(ncr) });
       else if (ncr.reporter_id === employee.id) mine.push(ncr);
+    }
+    // ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ เหมือนคอลัมน์ "ค้างมา" ของแดชบอร์ด NCR ตัวเลขสองหน้าจึงตรงกัน
+    if (tasks.length) {
+      const ids = tasks.map(({ ncr }) => ncr.id);
+      const batches = [];
+      for (let index = 0; index < ids.length; index += 100) batches.push(ids.slice(index, index + 100));
+      const history = (await Promise.all(batches.map((batch) => sb.from("ncr_status_history").select("ncr_id,changed_at").in("ncr_id", batch).order("id")
+        .then((result) => (result.error ? [] : result.data ?? []), () => [])))).flat();
+      const latest = new Map();
+      for (const item of history) if (!latest.has(item.ncr_id) || item.changed_at > latest.get(item.ncr_id)) latest.set(item.ncr_id, item.changed_at);
+      // ใบที่ไม่มีประวัติ (หรือโหลดประวัติไม่ได้) นับจากวันออกใบ เหมือนที่แดชบอร์ดใช้วันที่ออกเมื่อไม่มีประวัติ
+      for (const { ncr } of tasks) ncr.step_since = latest.get(ncr.id) ?? ncr.created_at;
     }
     return { tasks, mine };
   }

@@ -159,8 +159,9 @@ test("a role is written once per row, and cards with nothing to chart collapse t
   assert.doesNotMatch(phase, /nd-brow/);
   assert.match(phase, /<p class="nd-empty">ยังไม่มีช่วงที่เดินครบ/, "no four rows of —");
   const tech = page.split('data-card="tech"')[1].split("</section>")[0];
-  assert.doesNotMatch(tech, /nd-brow|ชม\./);
-  assert.match(tech, /<p class="nd-empty">ยังไม่มีช่างที่เริ่มซ่อมในใบที่แจ้งช่วงนี้ \(มอบหมายแล้ว 1 คน\)<\/p>/);
+  // รอบ 10: ช่างที่มอบหมายแล้วขึ้นทุกคนพร้อมงานที่ถืออยู่ (เวลา 0 ชม. ก็แสดง) ไม่มีข้อความ "ยังไม่มีช่างเริ่มซ่อม" ที่ขัดกับใบกำลังซ่อมในตาราง
+  assert.match(tech, /<span class="nd-muted">1 ใบในช่วงนี้ · ถืออยู่ 1 ใบ<\/span>/);
+  assert.doesNotMatch(tech, /ยังไม่มีช่างที่เริ่มซ่อม|nd-legend/, "no contradicting empty line, no legend for zero-length bars");
 });
 
 test("bar cards are marked for the two-column grid and wide tables are not", async () => {

@@ -312,7 +312,7 @@ test("the request detail, create form, NCR detail, dashboards, home queue, filte
   assert.match(read("modules/module-rubberflow.js"), /<div class="nav-sub rf-nav" data-module="rf">/);
   assert.match(app, /<div class="page-heading request-module-header" data-module="\$\{requestPalette\(selected\.code\)\}"><div class="request-module-title">\$\{typeCardMarkHtml\(selected, \{ prefix: /);
   assert.equal([...app.matchAll(/class="queue-item-icon" data-module="/g)].length, 3, "all three home queue icons carry data-module");
-  assert.match(read("modules/module-ncr.js"), /class="page-heading request-module-header ncr-detail-head" data-module="ncr"/);
+  assert.match(read("modules/module-ncr.js"), /<header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">/);
   assert.match(read("modules/module-mt-dashboard.js"), /class="page-heading request-module-header" data-module="mt"/);
   assert.match(read("modules/module-ncr-dashboard.js"), /class="page-heading request-module-header" data-module="ncr"/);
   assert.match(css, /\.queue-item-icon\[data-module\] \{ color: var\(--mod-on\); background: var\(--mod-surface\);/);

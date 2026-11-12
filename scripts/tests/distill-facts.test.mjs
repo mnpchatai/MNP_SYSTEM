@@ -40,7 +40,8 @@ test("a machine name that already carries its code is not prefixed with the code
 
 test("the MT detail page says the document type and the requester once", () => {
   // บรรทัดใต้หัวใบ: ประเภทเอกสาร · โดย <บัญชีที่ส่ง> — การ์ดไม่ซ้ำสองค่านี้
-  assert.match(app, /<p class="request-detail-meta">\$\{escapeHtml\(detailView\?\.typeLabel \?\? type\?\.name_th \?\? "คำร้อง"\)\} · โดย/);
+  // ชื่อโมดูลอยู่ที่แถบบน บรรทัดใต้หัวบอกชนิดเอกสารเฉพาะเมื่อต่างจากชื่อโมดูล (MT: ใบแจ้งซ่อม/ใบคำร้อง)
+  assert.match(app, /<p class="request-detail-meta">\$\{detailView\?\.typeLabel \? `\$\{escapeHtml\(detailView\.typeLabel\)\} · ` : ""\}โดย /);
   assert.match(mt, /typeLabel: docTypeLabels\[request\.doc_type\] \?\? null,/);
   assert.doesNotMatch(mt, /requestFact\("ประเภทเอกสาร"/);
   assert.match(mt, /const showRequester = requesterName && requesterName !== personName\(directory, request\.requester_id\);/);
@@ -49,7 +50,8 @@ test("the MT detail page says the document type and the requester once", () => {
 
 test("the top bar names the module where the page heading already shows the number", () => {
   assert.match(app, /shell\(content, "requests", type \? requestTypeLabel\(type\) : "คำร้อง", request\.request_no\)/);
-  assert.match(read("modules/module-ncr.js"), /shell\(content, "ncr", "ทะเบียน NCR", ncr\.ncr_no\)/);
+  // ชื่อเดียวต่อที่: แถบบน ลิงก์กลับ และชื่อประเภทคำร้องเรียกโมดูลนี้ว่า NCR/CAR
+  assert.match(read("modules/module-ncr.js"), /shell\(content, "ncr", "NCR\/CAR", ncr\.ncr_no\)/);
 });
 
 test("buttons in a module header do not repeat the module name", () => {
@@ -96,4 +98,44 @@ test("the next-item panel states the remaining count once, and the profile and l
   assert.doesNotMatch(app, /รายการถัดไป \(\$\{pending\.length\}\)/);
   assert.doesNotMatch(app, /UserID/);
   assert.doesNotMatch(app, /<h2>\$\{escapeHtml\(employee\.first_name\)\} \$\{escapeHtml\(employee\.last_name\)\}<\/h2><span class="badge">/, "the profile card does not repeat the name and role the form shows");
+});
+
+// ---- รอบ 10: ส่วนที่ critique รอบ 9 ยังเห็นต่างกัน ----
+test("every bottom bar on phones has one layout: full-width buttons, the primary last and twice as wide", () => {
+  const css = read("styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /:is\(\.ncr-actions, \.detail-actions\) :is\(\.form-actions, \.approval-actions\) \{ display: flex; flex-wrap: nowrap; justify-content: stretch; gap: 8px; \}/);
+  assert.match(css, /:is\(\.ncr-actions, \.detail-actions\) :is\(\.form-actions, \.approval-actions\) > \.btn:last-child:not\(:only-child\) \{ flex-grow: 2; \}/);
+  assert.match(css, /\.action-panel-buttons \.btn\.is-primary \{ flex-grow: 2; \}/, "the decision bar follows the same rule");
+  assert.match(css, /\.step-panel \.action-panel-head \{ display: none; \}/, "no caption that repeats the start button");
+  // ปุ่มหลักเป็นปุ่มสุดท้ายในทุกแถบของงานที่ต้องทำ
+  assert.match(read("modules/module-mt.js"), /data-result="fail">\$\{uiIcon\("close"\)\} ไม่ผ่าน<\/button><button class="btn success verify-button" data-result="pass">/);
+  assert.match(read("modules/ncr-loss-form.js"), /id="ncr-loss-reset" hidden>ยกเลิกการแก้ไข<\/button><button class="btn" type="submit">บันทึกรายการ<\/button>/);
+});
+
+test("the NCR detail keeps all of the viewer's work in one action card and names the responder and the due date once", () => {
+  const ncr = read("modules/module-ncr.js");
+  assert.match(ncr, /const work = \[\.\.\.forms, responderSection, \.\.\.\(lossesInWork \? \[lossesSection\] : \[\]\)\]\.filter\(Boolean\);/);
+  assert.match(ncr, /\.\.\.\(lossesInWork \? \[\] : \[lossesSection\]\),/, "the loss card is not shown twice");
+  assert.match(ncr, /\$\{work\.length \? "" : waiting \?/, "no 'ขั้นตอนนี้รอ' line when the viewer has work");
+  assert.match(ncr, /\$\{designated && !responderSection \? partField\("ผู้ตอบที่ระบุ"/);
+  assert.match(ncr, /\$\{dueInForm \? "" : partField\("กำหนดตอบ"/);
+  assert.match(read("modules/ncr-loss-form.js"), /'<div class="ncr-action-group ncr-loss-card"><h3>ความสูญเสีย<\/h3>'/, "inside the action card it is a group, not a nested card");
+});
+
+test("status glyphs follow the agreed mapping and one age definition is used on home and the NCR dashboard", () => {
+  assert.match(read("modules/module-ncr.js"), /const STATUS_BADGE_CLASS = \{ closed: "completed", cancelled: "cancelled", awaiting_info: "more_info" \};/);
+  assert.match(app, /function isFinalDecision\(type, status\) \{\r?\n  return status === "approved" && Boolean\(requestModule\(type\?\.code\)\?\.endsAtDecision\);/);
+  const css = read("styles.css");
+  assert.match(css, /\.badge\.completed, \.badge\.acknowledged, \.badge\.approved\.is-final \{/);
+  assert.match(css, /\.badge:is\(\.completed, \.acknowledged, \.approved\.is-final\), \.rf-badge\.is-good \{ --badge-glyph:/);
+  assert.match(read("modules/module-ncr.js"), /from\("ncr_status_history"\)\.select\("ncr_id,changed_at"\)/);
+  assert.match(app, /createdAt: ncr\.step_since \?\? ncr\.updated_at \?\? ncr\.created_at,/);
+});
+
+test("request and NCR details share one hero: back link, eyebrow with the status, then the heading", () => {
+  assert.match(app, /<a class="request-back-link" href="#\/requests\$\{type\?\.id/);
+  // ลิงก์กลับบอกการกระทำ ชื่อโมดูลอยู่แถบบนครั้งเดียว (และใน title)
+  assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr" title="กลับไปรายการ NCR\/CAR">‹ กลับไปรายการ<\/a>/);
+  assert.match(app, />‹ กลับไปรายการ<\/a>/);
+  assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow">\$\{escapeHtml\(ncr\.form_code\)\} · /);
 });

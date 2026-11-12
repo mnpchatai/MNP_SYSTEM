@@ -112,8 +112,9 @@ test("every part of the NCR wears the one NCR palette, and the page keeps one li
   const html = await renderFor(employee("emp-qa", "dept-qa", "QA", "staff"));
   const parts = html.match(/<section class="card ncr-card ncr-detail-part ncr-detail-part--\d" data-module="ncr"/g) ?? [];
   assert.equal(parts.length, 4);
-  // ลิงก์ย้อนกลับแบบเดียวกับทุกหน้า (request-back-link เหนือหัว) ชื่อตามหน้าปลายทาง: #/ncr คือหน้า NCR/CAR ของศูนย์คำร้อง
-  assert.equal((html.match(/<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
+  // ลิงก์ย้อนกลับแบบเดียวกับหน้ารายละเอียดคำร้อง (request-back-link เหนือหัว): #/ncr คือหน้า NCR/CAR ของศูนย์คำร้อง
+  // แถบบนบอกชื่อ NCR/CAR แล้ว ลิงก์จึงบอกการกระทำ ชื่อปลายทางอยู่ใน title (รอบ 10)
+  assert.equal((html.match(/<a class="request-back-link" href="#\/ncr" title="กลับไปรายการ NCR\/CAR">‹ กลับไปรายการ<\/a>/g) ?? []).length, 1, "one way back for browser users who opened the NCR from a link");
   assert.doesNotMatch(html, /class="btn secondary" href="#\/ncr">‹/, "not a second back button inside the heading");
   assert.doesNotMatch(html, /style="/, "no inline colours");
 });
@@ -595,7 +596,8 @@ test("only a step form that carries evidence replaces the separate uploader; can
   const formsFor = (actions, withFile = true) => actions.map((action) => ({ dataset: { action }, querySelector: () => (withFile ? input : null) }));
   const { context, html: qaManager } = await renderPage(employee("qm", "dept-qa", "QA", "department_manager"), open);
   const { stepFileInput } = context.window.MNP_REQUEST_MODULES.NCR_CAR.shared;
-  assert.deepEqual(actionsOf(qaManager), ["cancel"], "the QA manager who is not the responder only has the cancel form here");
+  // รอบ 10: ผู้กรอกต้นทุนเห็นฟอร์มค่าเสียหายในการ์ดงานเดียวกันขณะยังรอข้อมูลการสูญเสีย — ไม่ใช่ฟอร์มของขั้น จึงไม่แทนช่องอัปโหลดแยก
+  assert.deepEqual(actionsOf(qaManager), ["cancel", "add_loss", "review_costs"], "the QA manager who is not the responder has the cancel form and the loss forms here");
   assert.equal(stepFileInput(formsFor(actionsOf(qaManager))), null, "so the separate uploader stays: attaching must never mean cancelling the NCR");
   assert.equal(stepFileInput(formsFor(actionsOf(await renderFor(RB_STAFF_1, open)))), input, "the responder attaches with the answer");
   assert.equal(stepFileInput(formsFor(actionsOf(await renderFor(FACTORY_MANAGER, { status: "awaiting_disposition" })))), input, "the factory manager attaches with the disposition");
