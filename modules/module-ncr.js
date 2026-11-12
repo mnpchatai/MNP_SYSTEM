@@ -28,7 +28,7 @@
   };
   const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
   // แหล่งที่พบตามช่องของใบ QA02-FM01: ไทยก่อน คำบนฟอร์มกระดาษในวงเล็บ
-  const SOURCES = { incoming: "รับเข้า (In-Coming)", in_process: "ระหว่างผลิต (In-Process)", final_fg: "สินค้าสำเร็จรูป (Final FG)", customer_reject: "ลูกค้าตีกลับ (Reject from Customer)", other: "อื่น ๆ" };
+  const SOURCES = { incoming: "รับเข้า (In-Coming)", in_process: "ระหว่างผลิต (In-Process)", final_fg: "สินค้าสำเร็จรูป (Final FG)", customer_reject: "ลูกค้าตีกลับ (Reject from Customer)", other: "อื่นๆ" };
   const UNITS = ["ชุด", "ชิ้น", "เซต", "ม้วน", "เส้น", "กก.", "ท่อน", "เมตร", "ลูก", "ใบ", "รายการ"];
   const DISPOSITIONS = { return: "ส่งคืนพ่อค้า", accept: "ยอมรับใช้สภาพตามนั้น", reproduce: "ผลิตเพิ่มตามจำนวนที่ขาด", exchange: "แลกเปลี่ยน", repair: "ซ่อมแซม", sort: "คัดแยก", scrap: "ทิ้ง / ทำลาย", sell: "จำหน่าย", other: "อื่นๆ" };
   const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่นๆ" };

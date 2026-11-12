@@ -1939,7 +1939,7 @@ function shell(content, active, title, tabTitle = title) {
         <div class="nav-spacer"></div>
         <div class="sidebar-user">
           <div class="avatar">${escapeHtml(initials(employee))}</div>
-          <div class="user-copy"><strong title="${escapeHtml(`${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim())}">${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span>${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
+          <div class="user-copy"><strong title="${escapeHtml(`${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim())}">${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><span title="${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}">${escapeHtml(employee.job_title ?? employee.role?.name_th ?? "พนักงานทั่วไป")}</span></div>
           <button class="icon-button signout-button" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">${uiIcon("signout")}</button>
         </div>
       </aside>
@@ -2901,7 +2901,7 @@ async function requestTypeCounts(types, mineOnly) {
 }
 
 // counts: ใช้เฉพาะการ์ดบนหน้าเลือกโมดูล (ในโมดูลตารางข้างล่างบอกจำนวนอยู่แล้ว หัวไม่นับซ้ำ)
-function requestCenterHeader(types, params, counts) {
+function requestCenterHeader(types, params, counts, { countScope = "" } = {}) {
   const selected = types.find((type) => type.id === params.get("type"));
   if (selected) {
     // หัวโมดูลบอกชื่อโมดูลแล้ว ปุ่มในหัวจึงไม่ต่อท้ายด้วยรหัสโมดูลซ้ำ (เดิมหัว MT มีคำว่า MT สี่ครั้ง)
@@ -2917,7 +2917,7 @@ function requestCenterHeader(types, params, counts) {
   }
   return `<div class="page-heading"><div><h1>คำร้อง</h1><p>เลือกโมดูลเพื่อดูสถานะและสร้างคำร้อง</p></div></div>
     <nav class="type-grid request-type-grid" aria-label="ประเภทคำร้อง">${types.map((type) => `<a class="type-card request-type-card${selected?.id === type.id ? " selected" : ""}" ${selected?.id === type.id ? 'aria-current="page"' : ""} href="${escapeHtml(requestCenterUrl(params, { type: type.id, status: null, ncrStatus: null }))}" data-module="${requestPalette(type.code)}">
-      <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count">${counts ? `${counts.get(type.id) ?? 0} ยังไม่จบ` : "ดูสถานะ"}</span></span>
+      <span class="request-type-top">${typeCardMarkHtml(type)}<span class="request-type-count"${counts && countScope ? ` title="${escapeHtml(`นับเฉพาะรายการที่ยังไม่จบ${countScope}`)}"` : ""}>${counts ? `${counts.get(type.id) ?? 0} ยังไม่จบ` : "ดูสถานะ"}</span></span>
       <span class="type-card-body"><strong>${escapeHtml(requestTypeLabel(type))}</strong>${selected?.id === type.id ? "<small>กำลังแสดงประเภทนี้</small>" : ""}</span>
       ${typeCardWatermarkHtml(type.code)}
     </a>`).join("")}</nav>`;
@@ -3004,7 +3004,7 @@ async function renderRequests(params) {
     const statusList = statuses.length
       ? `<div class="request-type-heading"><h2>คำร้องทุกประเภท · ${escapeHtml(filterLabels.join(", "))}</h2><a href="${escapeHtml(requestCenterUrl(params, { status: null }))}">ล้างตัวกรอง</a></div>${await requestListPanel(params, null)}`
       : "";
-    app.innerHTML = shell(`${requestCenterHeader(types, params, counts)}<p class="muted small">จำนวนบนการ์ดนับเฉพาะรายการที่ยังไม่จบ${mineOnly ? "ที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู"}</p>${statusList}`, "requests", "คำร้อง");
+    app.innerHTML = shell(`${requestCenterHeader(types, params, counts, { countScope: mineOnly ? "ที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู" })}${statusList}`, "requests", "คำร้อง");
     bindShell();
     bindModuleZoom(params);
     return;
