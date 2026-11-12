@@ -862,6 +862,16 @@ a.register-title:hover { color: var(--primary); }
 @media (max-width: 900px) {
   .page-heading.request-module-header { flex-direction: column; align-items: flex-start; }
 }
+/* จอโทรศัพท์: หัวโมดูลของหน้ารายการกระชับ รายการใบแรกจึงขึ้นในครึ่งบนของจอ (ปุ่มเรียงแถวเดียว ป้ายไอคอนเล็กลง) */
+@media (max-width: 540px) {
+  .page-heading.request-module-header:not(.request-detail-head) { gap: 12px; padding: 14px 16px; }
+  .page-heading.request-module-header .request-module-title { gap: 12px; }
+  .page-heading.request-module-header .request-module-title .type-card-badge { flex-basis: 40px; width: 40px; height: 40px; border-radius: 12px; }
+  .page-heading.request-module-header .request-module-title .type-card-badge svg { width: 22px; height: 22px; }
+  .page-heading.request-module-header .request-create-entry { width: 100%; flex-wrap: nowrap; }
+  .page-heading.request-module-header .request-create-entry .btn { flex: 1 1 0; padding-inline: 10px; }
+  .request-back-link { margin-bottom: 10px; }
+}
 .type-card-action { display: block; margin-top: 14px; font-size: var(--text-meta); font-weight: 600; }
 .request-center-ncr { margin-top: 28px; }
 @media (max-width: 1100px) {
