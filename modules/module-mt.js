@@ -1164,7 +1164,7 @@
         if (index < 0) return false;
         const name = rows[index].querySelector('[data-part-field="name"]');
         name.setAttribute("aria-invalid", "true");
-        name.addEventListener("input", () => name.removeAttribute("aria-invalid"), { once: true });
+        rows[index].addEventListener("input", () => name.removeAttribute("aria-invalid"), { once: true });
         name.focus();
         showToast(`อะไหล่แถวที่ ${index + 1} ยังไม่มีชื่อรายการ ใส่ชื่อหรือลบแถวนั้นก่อน`, "error");
         return true;

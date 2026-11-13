@@ -453,7 +453,9 @@ test("round 24 (second pass): approval count wording, MT minimum hints, in-app r
 });
 
 test("round 24 (third pass): every changed-state error offers a reload, the home step line matches the detail page, nameless parts rows are not dropped silently", () => {
-  for (const code of ["REQUEST_NOT_AWAITING_INFO", "INVALID_TRANSITION", "ASSIGNED_TO_ANOTHER_OPERATOR", "REQUEST_NOT_ASSIGNED", "STEP_NOT_PENDING", "REQUEST_NOT_IN_PROGRESS"]) {
+  // ผู้รับผิดชอบคนอื่นเป็นเรื่องสิทธิ์ โหลดใหม่ไม่ช่วย จึงไม่มีปุ่มโหลด
+  assert.match(app, /ASSIGNED_TO_ANOTHER_OPERATOR: "รายการนี้มีผู้รับผิดชอบอื่นแล้ว ให้ผู้รับผิดชอบหรือผู้ดูแลระบบดำเนินการต่อ",/);
+  for (const code of ["REQUEST_NOT_AWAITING_INFO", "INVALID_TRANSITION", "REQUEST_NOT_ASSIGNED", "STEP_NOT_PENDING", "REQUEST_NOT_IN_PROGRESS"]) {
     assert.match(app, new RegExp(`${code}: "[^"]* โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",`), code);
   }
   assert.match(app, /host\.innerHTML = homeQueueDetailHtml\(item, nextStep, \{ compact: host !== pane, nextStepKnown: !error, steps: error \? null : steps \}\);/);
