@@ -114,7 +114,14 @@
       const isCompleted = status === "completed";
       const submittedOn = bangkokDate(request.submitted_at);
       const completedOn = isCompleted && request.completed_at ? bangkokDate(request.completed_at) : null;
-      const sinceOn = history.length ? bangkokDate(history[history.length - 1].created_at) : submittedOn;
+      // ค้างในขั้นปัจจุบันนับจากเวลาที่ขั้นมาถึง: การเปลี่ยนสถานะล่าสุด หรือ (ระหว่างรออนุมัติ) เวลาที่ขั้นอนุมัติก่อนหน้าอนุมัติ
+      // เพราะเลื่อนจากขั้น 1 ไปขั้น 2 เปลี่ยนแค่ current_step ไม่มีแถวในประวัติสถานะ (กติกาเดียวกับ "ค้าง N วัน" ในคิวหน้าหลัก)
+      const stepActedAt = status === "pending_approval"
+        ? (request.steps ?? []).filter((step) => step.acted_at && step.step_order < (request.current_step ?? 0)).map((step) => step.acted_at)
+        : [];
+      const sinceTimes = [history.length ? history[history.length - 1].created_at : request.submitted_at, ...stepActedAt].filter(Boolean);
+      const sinceAt = sinceTimes.length ? sinceTimes.reduce((latest, value) => (Date.parse(value) > Date.parse(latest) ? value : latest)) : null;
+      const sinceOn = sinceAt ? bangkokDate(sinceAt) : submittedOn;
       const expected = request.work_expected_date ?? null;
       const overdue = TECHNICIAN_STATUSES.includes(status) && Boolean(expected) && today > expected;
       // A job still waiting for its technician is late once the start date the head technician assigned has passed.

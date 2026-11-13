@@ -622,3 +622,15 @@ test("round 27: typed decision reasons survive Esc, cancel and switching queue r
   assert.match(ncrBoard, /`เหลือเวลาตอบ \$\{left\} วัน` : "ครบกำหนดตอบวันนี้"/);
   assert.doesNotMatch(ncrBoard, />เกิน \$\{|ป้องกัน อีก/);
 });
+
+test("home queue: waiting days count from when the step reached the user (approvals and repair tasks)", () => {
+  assert.match(app, /async function loadQueueWork\(\) \{\s+const \[pending, repairTasks\] = await Promise\.all\(\[getPendingApprovals\(\), getMyRepairActionItems\(\)\]\);\s+await attachQueueArrivals\(pending, repairTasks\);/);
+  assert.equal((app.match(/const \[\[pending, repairTasks\], /g) ?? []).length, 2, "both queue loaders (Home and the next-item panel) read arrival times, in parallel with the rest of the page");
+  assert.match(app, /createdAt: step\.arrivedAt \?\? step\.request\.submitted_at \?\? step\.request\.created_at/);
+  assert.match(app, /createdAt: task\.arrivedAt \?\? task\.created_at/);
+  assert.match(app, /\.from\("approval_steps"\)\.select\("request_id,step_order,acted_at"\)\.in\("request_id", ids\)\.not\("acted_at", "is", null\)/);
+  assert.match(app, /\.from\("request_status_history"\)\.select\("request_id,to_status,created_at"\)\.in\("request_id", ids\)\.in\("to_status", \["pending_approval", \.\.\.MY_REPAIR_ACTION_STATUSES\]\)/);
+  assert.match(app, /previousActedAt: \(stepsOf\.get\(request\.id\) \?\? \[\]\)\.filter\(\(row\) => row\.step_order < step\.step_order\)/);
+  assert.match(app, /console\.warn\("อ่านเวลาที่ขั้นมาถึงไม่สำเร็จ ใช้วันส่งใบแทน", error\);/, "a failed read keeps the queue working");
+  assert.match(read("modules/module-mt-dashboard.js"), /approval_steps\(step_order,acted_at\)/);
+});

@@ -281,7 +281,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         request_type: request_types.find((item) => item.id === row.request_type_id) ?? null,
         department: pick(departments.find((item) => item.id === row.department_id), ["code", "name_th"]),
         request_technicians: db.request_technicians.filter((item) => item.request_id === row.id).map((item) => ({ technician_id: item.technician_id })),
-        approval_steps: db.approval_steps.filter((item) => item.request_id === row.id).map(({ step_order, step_name, status }) => ({ step_order, step_name, status })),
+        approval_steps: db.approval_steps.filter((item) => item.request_id === row.id).map(({ step_order, step_name, status, acted_at }) => ({ step_order, step_name, status, acted_at: acted_at ?? null })),
+        // ฐานข้อมูลจริงคืนประวัติสถานะซ้อนในแถวคำร้องได้ (แดชบอร์ด MT ใช้นับค้างในขั้น)
+        request_status_history: db.request_status_history.filter((item) => item.request_id === row.id).map(({ to_status, created_at }) => ({ to_status, created_at })),
       };
     }
     if (table === "approval_steps") {
