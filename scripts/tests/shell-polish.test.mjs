@@ -396,7 +396,7 @@ test("round 24 (gaps to a 4): plain-language errors, step position, offline noti
   assert.match(app, /const NOTIFICATION_TYPE_BY_PREFIX = Object\.freeze\(\{ MT: "MT_REPAIR", MG: "MANAGEMENT", IT: "IT_REPAIR" \}\);/);
   assert.match(app, /id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร<\/small>/);
   // H3/H5: ข้อความที่พิมพ์ค้างถามก่อนออก (ฟอร์มขั้น NCR มีร่างในเครื่องจึงไม่อยู่ในรายการ)
-  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #verify-note, #expected-date-note, #ncr-review-note, #ncr-dispose-note, #ncr-followup-note, #ncr-cancel-reason, form\.ncr-action:not\(\[data-action="respond"\], \[data-action="submit_prevention"\], \[data-action="answer_info"\]\) textarea';/, "NCR manager notes and the MT due-date reason are covered too; NCR step forms keep drafts");
+  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #finish-parts-rows input, #verify-note, #expected-date-note, #ncr-review-note, #ncr-dispose-note, #ncr-followup-note, #ncr-cancel-reason, form\.ncr-action:not\(\[data-action="respond"\], \[data-action="submit_prevention"\], \[data-action="answer_info"\]\) textarea';/, "NCR manager notes and the MT due-date reason are covered too; NCR step forms keep drafts");
   assert.match(app, /if \(panel && panel\.dataset\.state !== "compose"\) return false;/);
 });
 

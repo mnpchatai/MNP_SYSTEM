@@ -1206,7 +1206,7 @@ document.addEventListener("input", (event) => {
   if (field) syncMinLengthHint(field);
 });
 
-const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #verify-note, #expected-date-note, #ncr-review-note, #ncr-dispose-note, #ncr-followup-note, #ncr-cancel-reason, form.ncr-action:not([data-action="respond"], [data-action="submit_prevention"], [data-action="answer_info"]) textarea';
+const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #finish-parts-rows input, #verify-note, #expected-date-note, #ncr-review-note, #ncr-dispose-note, #ncr-followup-note, #ncr-cancel-reason, form.ncr-action:not([data-action="respond"], [data-action="submit_prevention"], [data-action="answer_info"]) textarea';
 function unsavedTextCount() {
   return [...document.querySelectorAll(UNSAVED_TEXT_SELECTOR)].filter((field) => {
     if (field.disabled || field.readOnly || field.closest("[hidden], [aria-busy]")) return false;
