@@ -332,3 +332,24 @@ test("one detail template: start work sits with the approval buttons; assign, fi
   assert.match(app, /\$\{canApprove \? "" : detailView\?\.asideHtml \?\? ""\}/);
   assert.match(css, /\.step-panel \.approval-actions \{ margin: 0; padding: 0; border-top: 0; \}/);
 });
+
+test("every work card the viewer acts in has one heading (user decision 2026-11-13)", () => {
+  const mt = read("modules/module-mt.js");
+  const ncr = read("modules/module-ncr.js");
+  assert.match(app, /<h2 id="decision-panel-title">สิ่งที่คุณต้องดำเนินการ<\/h2>/, "approver panel");
+  assert.match(mt, /<h2 id="repair-start-title">สิ่งที่คุณต้องดำเนินการ<\/h2>/, "MT start-work panel");
+  assert.match(app, /const actionWorkTitle = moduleWorkHtml \? "สิ่งที่คุณต้องดำเนินการ"/, "module work card");
+  assert.match(ncr, /<h2>สิ่งที่คุณต้องดำเนินการ<\/h2>/, "NCR work card");
+  for (const source of [app, mt]) assert.doesNotMatch(source, />(พิจารณาคำร้อง|ขั้นถัดไปของคุณ)</);
+});
+
+test("round 23: conditional requirements are said in the label, summaries and the queue checkbox name what they do", () => {
+  const lossForm = read("modules/ncr-loss-form.js");
+  assert.match(lossForm, /<label for="ncr-loss-note">รายละเอียด \/ หมายเหตุ \(จำเป็นเมื่อประเภทเป็น อื่น ๆ\)<\/label>/);
+  assert.match(lossForm, /<label for="ncr-review-note">หมายเหตุ \/ เหตุผลกรณีไม่มีความสูญเสีย \(จำเป็นเมื่อไม่มีความสูญเสีย\)<\/label>/);
+  const board = read("modules/module-ncr-dashboard.js");
+  assert.match(board, /<summary>ดูรายละเอียดยอดสุทธิ<\/summary>/);
+  assert.match(board, /<summary>ดูรายละเอียดการประเมิน<\/summary>/);
+  assert.doesNotMatch(board, /<summary>ดูรายละเอียด<\/summary>/);
+  assert.match(app, /aria-label="เลือก \$\{escapeHtml\(request\.request_no\)\} เพื่อตัดสินหลายรายการ"/);
+});

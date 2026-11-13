@@ -2420,7 +2420,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
     return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}</a></li>`;
   }
   const check = isOwnApprovalStep(item.step)
-    ? `<label class="queue-item-check"><input type="checkbox" class="queue-select" value="${escapeHtml(item.step.id)}" aria-label="เลือก ${escapeHtml(request.request_no)} เพื่ออนุมัติหลายรายการ"></label>`
+    ? `<label class="queue-item-check"><input type="checkbox" class="queue-select" value="${escapeHtml(item.step.id)}" aria-label="เลือก ${escapeHtml(request.request_no)} เพื่อตัดสินหลายรายการ"></label>`
     : "";
   return `<li class="queue-item${selected ? " is-selected" : ""}" data-request-id="${escapeHtml(item.id)}"${hiddenAttr}>${check}<button type="button" class="queue-item-main" aria-expanded="${selected}">${head}</button><div class="queue-item-slot"></div></li>`;
 }
@@ -4144,7 +4144,7 @@ function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nex
   const stepLine = window.MNP_STEP_VERB.stepLineText({ currentStepName: currentStep.step_name, nextStepName: nextStep?.step_name ?? null, nextStepKnown, afterLast });
   return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
     <div class="action-panel-head">
-      <h2 id="decision-panel-title">พิจารณาคำร้อง</h2>
+      <h2 id="decision-panel-title">สิ่งที่คุณต้องดำเนินการ</h2>
       <p class="muted small">${escapeHtml(stepLine)}</p>
     </div>
     <p class="decision-target" id="decision-target">${escapeHtml(`${request.request_no} · ${request.title}`)}</p>

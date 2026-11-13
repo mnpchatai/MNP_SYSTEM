@@ -117,6 +117,78 @@
   // ฟอร์มของขั้นที่แนบหลักฐานไปพร้อมงานได้ (พิจารณา ตอบ ส่งแนวทางป้องกัน ติดตาม ให้ข้อมูลเพิ่ม)
   // ไม่นับ ยกเลิก NCR (แนบแล้วใบถูกยกเลิก) ลงนาม (ไม่มีช่องไฟล์) และขอข้อมูลก่อนลงนาม (ไม่ใช่งานของขั้น) ผู้ที่มีแค่ฟอร์มเหล่านี้ยังแนบในการ์ดไฟล์หลักฐาน
   const STEP_FILE_ACTIONS = Object.freeze(["dispose", "respond", "submit_prevention", "followup", "answer_info"]);
+  // ร่างของฟอร์มขั้นที่พิมพ์ยาว: ตอบ NCR · ส่งแนวทางป้องกัน · ให้ข้อมูลเพิ่ม (หลักการ "เก็บร่างไว้" ใน PRODUCT.md)
+  // เก็บบนเครื่อง (localStorage ผ่าน modules/form-draft.js) ต่อใบ ต่อผู้ใช้ ต่อการกระทำ ไม่เก็บไฟล์ · ออกจากระบบแล้วร่างถูกลบ (clearAll)
+  const STEP_DRAFT_ACTIONS = Object.freeze(["respond", "submit_prevention", "answer_info"]);
+  const STEP_DRAFT_SKIP_TYPES = ["file", "submit", "button", "hidden", "reset"];
+  const stepDraftValues = (form) => {
+    const values = {};
+    for (const input of form.elements) {
+      if (!input.name || STEP_DRAFT_SKIP_TYPES.includes(input.type)) continue;
+      if (input.type === "checkbox") {
+        values[input.name] ??= [];
+        if (input.checked) values[input.name].push(input.value);
+      } else if (input.type === "radio") {
+        if (input.checked) values[input.name] = input.value;
+        else values[input.name] ??= "";
+      } else {
+        values[input.name] = input.value;
+      }
+    }
+    return values;
+  };
+  const restoreStepDraft = (form, values) => {
+    for (const input of form.elements) {
+      if (!input.name || !Object.hasOwn(values, input.name) || STEP_DRAFT_SKIP_TYPES.includes(input.type)) continue;
+      const value = values[input.name];
+      if (input.type === "checkbox") input.checked = Array.isArray(value) && value.includes(input.value);
+      else if (input.type === "radio") input.checked = value === input.value;
+      else if (typeof value === "string") input.value = value;
+    }
+  };
+  // คืน store ของร่าง (ผู้เรียกล้างเมื่อส่งสำเร็จ) หรือ null เมื่อฟอร์มนี้ไม่เก็บร่าง
+  // ร่างเป็นของเสริม: พังเมื่อไร (storage แปลก วันที่เสีย) ฟอร์มยังส่งได้ตามปกติ
+  const bindStepDraft = (form, ncrId, employeeId, { draftApi = window.MNP_FORM_DRAFT, updatedAt = null } = {}) => {
+    try {
+      return bindStepDraftUnsafe(form, ncrId, employeeId, draftApi, updatedAt);
+    } catch {
+      return null;
+    }
+  };
+  const bindStepDraftUnsafe = (form, ncrId, employeeId, draftApi, updatedAt) => {
+    if (!draftApi || !employeeId || !STEP_DRAFT_ACTIONS.includes(form.dataset?.action)) return null;
+    const store = draftApi.createDraftStore({ key: draftApi.draftKey(`NCR_STEP:${form.dataset.action}:${ncrId}`, employeeId) });
+    const autosave = draftApi.createAutosave({ store, values: () => stepDraftValues(form) });
+    form.addEventListener("input", () => autosave.schedule());
+    form.addEventListener("change", () => autosave.schedule());
+    // ค่าตั้งต้นของฟอร์ม: ฟอร์มตอบที่ QA ส่งกลับมีคำตอบเดิมจากเซิร์ฟเวอร์อยู่แล้ว "เริ่มกรอกเอง" จึงนับเมื่อค่าเปลี่ยนจากนี้ ไม่ใช่เมื่อฟอร์มไม่ว่าง
+    const baseline = JSON.stringify(stepDraftValues(form));
+    const loaded = store.load();
+    // ร่างที่วันที่เสีย (แก้ storage เอง) ลบทิ้งแล้วทำงานแบบไม่มีร่าง autosave ยังเดินต่อ
+    const savedAt = loaded ? new Date(loaded.savedAt) : null;
+    const draft = savedAt && !Number.isNaN(savedAt.getTime()) && loaded.savedAt <= Date.now() + 60000 ? loaded : null;
+    if (loaded && !draft) store.clear();
+    // ร่างที่ตรงกับค่าในฟอร์มอยู่แล้ว (เช่น ส่งไปแล้วแต่ล้างไม่ทัน) ไม่ต้องถาม
+    if (draft && JSON.stringify(draft.values) !== baseline) {
+      autosave.stop();
+      // ใบถูกแก้หลังบันทึกร่าง (เช่น QA ส่งกลับอีกรอบ): บอกก่อนให้เลือก ใช้ร่างต่อ จะแทนข้อความในฟอร์ม
+      const newer = updatedAt && Date.parse(updatedAt) > draft.savedAt ? " · ใบนี้มีการอัปเดตหลังร่างนี้ ใช้ร่างต่อจะแทนข้อความในฟอร์ม" : "";
+      form.insertAdjacentHTML("afterbegin", '<div class="draft-banner" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>');
+      draftApi.offerDraft({
+        banner: form.querySelector(".draft-banner"),
+        message: `มีร่างที่พิมพ์ค้างไว้จาก ${formatDate(savedAt.toISOString(), true)}${newer}`,
+        onUse: () => { autosave.start(); restoreStepDraft(form, draft.values); form.querySelector("textarea, input:not([type=hidden])")?.focus(); },
+        onDiscard: () => { autosave.start(); store.clear(); },
+        form,
+        onEdit: () => { autosave.start(); autosave.schedule(); },
+        hasInput: () => JSON.stringify(stepDraftValues(form)) !== baseline,
+      });
+    } else if (draft) {
+      store.clear();
+    }
+    return { clear: () => { autosave.stop(); store.clear(); } };
+  };
+
   const stepFileInput = (forms) => {
     for (const form of forms) {
       if (!STEP_FILE_ACTIONS.includes(form?.dataset?.action)) continue;
@@ -154,6 +226,9 @@
     const label = STATUS_LABELS[ncr.status] ?? ncr.status;
     return ncr.status === "awaiting_signoff" ? `${label} · ${SIGNER_SHORT_LABELS[nextSigner(ncr).key]}` : label;
   }
+
+  // ทะเบียนเท่านั้น (หน้ารายละเอียดบอกในบรรทัดรอแล้ว): ใบรอ QA ติดตามผลที่แผนกยังไม่ส่งแนวทางป้องกัน — กติกาเดียวกับ preventionPending ของแดชบอร์ด
+  const preventionPendingBadge = (ncr) => (ncr.status === "awaiting_followup" && Object.hasOwn(ncr, "prevention") && !ncr.prevention ? ' <span class="badge pending_approval">รอแนวทางป้องกัน</span>' : "");
 
   // lossPending = ผลของ MNP_NCR_COSTS.lossDataPending (ต้องโหลดยอดความสูญเสียและผลดำเนินการของใบนั้นมาก่อน)
   function statusBadgeHtml(ncr, lossPending = false) {
@@ -520,7 +595,7 @@
     const statusParam = embedded ? "ncrStatus" : "status";
     const filter = LIST_FILTERS.some(([value]) => value === params.get(statusParam)) ? params.get(statusParam) : "open";
     let query = sb.from("ncr_reports")
-      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,responder_id,department:departments(code))")
+      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,prevention,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,responder_id,department:departments(code))")
       .order("issue_date", { ascending: false })
       .order("ncr_no", { ascending: false })
       .limit(300);
@@ -582,7 +657,7 @@
           departments: escapeHtml(departments),
           issued: formatDate(row.issue_date),
           loss: `${row.lossPending ? '<span class="badge loss-pending-flag" title="รอข้อมูลความสูญเสีย">รอข้อมูล</span>' : ""}${summary ? `${row.lossPending ? "<br>" : ""}${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : ""}`,
-          status: `<span class="register-badges">${statusBadgeHtml(row)}</span>${ownerChipHtml(row, staff, directory)}`,
+          status: `<span class="register-badges">${statusBadgeHtml(row)}${preventionPendingBadge(row)}</span>${ownerChipHtml(row, staff, directory)}`,
         },
       };
     };
@@ -1101,6 +1176,7 @@
     });
 
     document.querySelectorAll("form.ncr-action").forEach((form) => clearActionErrorOnEdit(form));
+    const stepDrafts = new Map([...document.querySelectorAll("form.ncr-action")].map((form) => [form, bindStepDraft(form, ncr.id, state.employee?.id, { updatedAt: ncr.updated_at ?? null })]));
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const action = form.dataset.action;
@@ -1133,6 +1209,7 @@
         setFormBusy(form, true);
         const result = await pending;
         if (result.error) throw result.error;
+        stepDrafts.get(form)?.clear();
         let message = result.message ?? doneMessages[action];
         let failed = result.failed;
         // ไฟล์ที่แนบมากับการกระทำอัปโหลดหลังบันทึกสำเร็จ ถ้าอัปโหลดไม่ผ่าน การกระทำยังบันทึกอยู่และแนบใหม่ได้
@@ -1259,7 +1336,7 @@
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
     // ISSUE_RULES เปิดให้เทสต์ตรวจกติกาจริงของฟอร์มออก NCR (scripts/tests/ncr-detail-page.test.mjs)
-    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, stepFileInput, formatQty, formatBaht, ISSUE_RULES },
+    shared: { preventionPendingBadge, stepDraftValues, restoreStepDraft, bindStepDraft, STEP_DRAFT_ACTIONS, evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, stepFileInput, formatQty, formatBaht, ISSUE_RULES },
 
     pages: {
       async ncr(params) {
