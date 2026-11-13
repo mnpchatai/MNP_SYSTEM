@@ -374,7 +374,7 @@ test("round 24 (gaps to a 4): plain-language errors, step position, offline noti
   const verbsContext = vm.createContext({});
   vm.runInContext(read("modules/step-verb.js"), verbsContext);
   const verbs = verbsContext.MNP_STEP_VERB;
-  assert.equal(verbs.stepLineText({ currentStepName: "ผู้จัดการโรงงาน", nextStepName: "ผู้จัดการทั่วไป", position: 1, total: 2 }), "ขั้นที่ 1 จาก 2: ผู้จัดการโรงงาน · ถัดไป: ผู้จัดการทั่วไป");
+  assert.equal(verbs.stepLineText({ currentStepName: "ผู้จัดการโรงงาน", nextStepName: "ผู้จัดการทั่วไป", position: 1, total: 2 }), "อนุมัติขั้นที่ 1 จาก 2: ผู้จัดการโรงงาน · ถัดไป: ผู้จัดการทั่วไป");
   assert.equal(verbs.stepLineText({ currentStepName: "ผู้จัดการทั่วไป", position: 1, total: 1, afterLast: "มอบหมายช่าง" }), "ขั้นตอน: ผู้จัดการทั่วไป · ถัดไป: มอบหมายช่าง", "a one-step request does not count");
   assert.match(app, /decisionPanelHtml\(\{ request, currentStep, nextStep, steps, extraDecisions/);
   assert.match(app, /window\.addEventListener\("offline", syncOnlineState\);/);
@@ -430,4 +430,22 @@ test("round 24: the leave guard asks once for typed text, and Back proceeds afte
   assert.equal(navigate().prevented, false, "unchanged pre-filled text is not a change");
   fields = [field("", { defaultValue: "ข้อความเดิม" })];
   assert.equal(navigate().prevented, true, "clearing pre-filled text is an unsent change");
+});
+
+test("round 24 (second pass): approval count wording, MT minimum hints, in-app reason dialog, reload action, role-aware help", () => {
+  const mt = read("modules/module-mt.js");
+  const ncr = read("modules/module-ncr.js");
+  assert.match(read("modules/step-verb.js"), /`อนุมัติขั้นที่ \$\{position\} จาก \$\{total\}: \$\{currentStepName\}`/, "the panel counts approval steps, not the whole job");
+  assert.match(mt, /<small class="field-hint" id="finish-cause-hint">อย่างน้อย 3 ตัวอักษร<\/small>/);
+  assert.match(mt, /<small class="field-hint" id="verify-note-hint">เมื่อไม่ผ่าน อย่างน้อย 3 ตัวอักษร<\/small>/);
+  assert.match(mt, /<summary><h2>แก้การมอบหมายช่าง<\/h2><\/summary>/, "one edit verb on the MT page (แก้กำหนดเสร็จ)");
+  assert.doesNotMatch(ncr, /window\.prompt\(/, "no browser prompt for the void reason");
+  assert.match(ncr, /await textPromptDialog\(\{ title: "ยกเลิกรายการความสูญเสียนี้\?", label: "เหตุผลที่ยกเลิก \(จำเป็น\)", hint: `อย่างน้อย \$\{VOID_REASON_MIN\} ตัวอักษร`, minLength: VOID_REASON_MIN/);
+  assert.match(app, /if \(\[\.\.\.text\]\.length < minLength\) \{/, "the dialog checks the minimum and keeps the typed text");
+  assert.match(app, /const STALE_STATE_HINT = "โหลดหน้าใหม่เพื่อดูสถานะล่าสุด";/);
+  assert.match(app, /reload\.textContent = "โหลดสถานะล่าสุด";\r?\n\s+reload\.addEventListener\("click", \(\) => \{ hideToast\(\); renderRoute\(\); \}\);/);
+  assert.match(app, /NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้ ถ้าคิดว่าควรมีสิทธิ์ให้แจ้งผู้ดูแลระบบ"/);
+  assert.match(app, /if \(document\.querySelector\("#repair-verify"\)\) return "request-verify";/);
+  const help = read("modules/shortcut-help.js");
+  for (const key of ["request-work", "request-verify", "request-viewer"]) assert.ok(help.includes(`"${key}": Object.freeze([`), key);
 });

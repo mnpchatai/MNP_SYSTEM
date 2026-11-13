@@ -396,15 +396,28 @@ function go(path) {
   location.hash = `#/${path}`;
 }
 
+// ข้อความของรหัสที่แปลว่า "มีคนทำขั้นนี้ไปแล้ว" ลงท้ายด้วยประโยคนี้ ข้อความแจ้งจึงมีปุ่มโหลดสถานะล่าสุด
+const STALE_STATE_HINT = "โหลดหน้าใหม่เพื่อดูสถานะล่าสุด";
 function showToast(message, type = "success") {
   const isError = type === "error";
   window.clearTimeout(showToast.timer);
   // ข้อผิดพลาดค้างไว้จนกว่าผู้ใช้จะกดปิด และให้โปรแกรมอ่านหน้าจออ่านทันที ส่วนแจ้งสำเร็จหายเองใน 3.5 วินาที
   toastNode.setAttribute("role", isError ? "alert" : "status");
   toastNode.setAttribute("aria-live", isError ? "assertive" : "polite");
-  toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(message)}</span>${isError ? `<button type="button" class="toast-close" aria-label="ปิดข้อความ">${uiIcon("close")}</button>` : ""}`;
+  // ข้อความที่มีปุ่มโหลดสถานะล่าสุด ไม่พูดประโยคเดียวกับปุ่มซ้ำ
+  const stale = isError && message.includes(STALE_STATE_HINT);
+  const shown = stale ? message.replace(` ${STALE_STATE_HINT}`, "") : message;
+  toastNode.innerHTML = `${uiIcon(isError ? "alert" : "check")}<span>${escapeHtml(shown)}</span>${isError ? `<button type="button" class="toast-close" aria-label="ปิดข้อความ">${uiIcon("close")}</button>` : ""}`;
   toastNode.className = `toast show ${isError ? "error" : "success"}`;
   showToast.shownAt = Date.now();
+  if (stale) {
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.className = "btn secondary small toast-action";
+    reload.textContent = "โหลดสถานะล่าสุด";
+    reload.addEventListener("click", () => { hideToast(); renderRoute(); });
+    toastNode.querySelector(".toast-close").before(reload);
+  }
   if (isError) toastNode.querySelector(".toast-close").addEventListener("click", hideToast);
   else showToast.timer = window.setTimeout(hideToast, 3500);
 }
@@ -427,6 +440,55 @@ window.addEventListener("hashchange", () => {
 
 // กล่องยืนยันในแอป แทน confirm() ของเบราว์เซอร์: ปุ่มยืนยันบอกผลของการกด (เช่น "ลบบัญชี") กด Esc หรือยกเลิก = ไม่ทำ
 // cancelLabel: ปุ่มไม่ทำ ตั้งให้ไม่ชนกับปุ่มยืนยันที่ขึ้นต้นด้วย "ยกเลิก" (เช่น "ไม่ยกเลิก" คู่กับ "ยกเลิก NCR")
+// กล่องถามข้อความของระบบ (แทน window.prompt): บอกขั้นต่ำ ตรวจก่อนปิด ข้อความผิดอยู่ในกล่องและไม่ล้างที่พิมพ์ · คืนข้อความที่ตัดช่องว่างแล้ว หรือ null เมื่อยกเลิก
+function textPromptDialog({ title, label, hint = "", minLength = 0, maxLength = 1000, confirmLabel, cancelLabel = "ยกเลิก", danger = false }) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.setAttribute("aria-labelledby", "prompt-dialog-title");
+    dialog.innerHTML = `<form method="dialog" novalidate>
+      <h2 id="prompt-dialog-title">${escapeHtml(title)}</h2>
+      <div class="field"><label for="prompt-dialog-text">${escapeHtml(label)}</label><textarea class="textarea" id="prompt-dialog-text" rows="3" maxlength="${maxLength}" aria-describedby="prompt-dialog-hint prompt-dialog-error"></textarea>${hint ? `<small class="field-hint" id="prompt-dialog-hint">${escapeHtml(hint)}</small>` : ""}<p class="field-error" id="prompt-dialog-error" hidden></p></div>
+      <div class="confirm-dialog-actions"><button class="btn secondary" value="cancel">${escapeHtml(cancelLabel)}</button><button class="btn${danger ? " danger-solid" : ""}" value="confirm">${escapeHtml(confirmLabel)}</button></div>
+    </form>`;
+    if (typeof dialog.showModal !== "function") {
+      const typed = window.prompt(hint ? `${title}\n${hint}` : title);
+      return resolve(typed === null ? null : typed.trim());
+    }
+    document.body.append(dialog);
+    const field = dialog.querySelector("#prompt-dialog-text");
+    const error = dialog.querySelector("#prompt-dialog-error");
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("hashchange", cancelOnLeave);
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    const cancelOnLeave = () => finish(null);
+    window.addEventListener("hashchange", cancelOnLeave, { once: true });
+    field.addEventListener("input", () => { error.hidden = true; field.removeAttribute("aria-invalid"); });
+    dialog.querySelector("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (event.submitter?.value !== "confirm") return finish(null);
+      const text = field.value.trim();
+      if ([...text].length < minLength) {
+        error.textContent = `ต้องมีอย่างน้อย ${minLength} ตัวอักษร`;
+        error.hidden = false;
+        field.setAttribute("aria-invalid", "true");
+        field.focus();
+        return;
+      }
+      finish(text);
+    });
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(null); });
+    dialog.showModal();
+    field.focus();
+  });
+}
+
 function confirmDialog({ title, message = "", confirmLabel, cancelLabel = "ยกเลิก", danger = false }) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
@@ -470,7 +532,7 @@ function friendlyError(error) {
     ...moduleMessages,
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
     "JWT expired": "กรุณาเข้าสู่ระบบอีกครั้ง",
-    NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
+    NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้ ถ้าคิดว่าควรมีสิทธิ์ให้แจ้งผู้ดูแลระบบ",
     MASTER_PROTECTED: "บัญชี master แก้ไข เปลี่ยนรหัสผ่าน หรือลบได้โดยเจ้าของบัญชีเท่านั้น",
     MASTER_MUST_BE_ACTIVE_ADMIN: "บัญชี master ต้องเป็นผู้ดูแลระบบที่ยังใช้งานอยู่",
     INVALID_PUSH_SUBSCRIPTION: "ข้อมูลการแจ้งเตือนของเครื่องนี้ไม่ถูกต้อง ลองเปิดใหม่อีกครั้ง",
@@ -2841,6 +2903,13 @@ function helpPageKey(route) {
   // รายการของโมดูล (ไม่ใช่หน้าเลือกโมดูล): คำอธิบายแท็บตามแท็บที่หน้านั้นมีจริง ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ
   if (route.path === "requests" && route.params.get("type") && route.params.get("type") !== "all") return document.querySelector(".view-tabs a[href*='view=board']") ? "requests-board" : "requests-list";
   if (route.path === "ncr") return route.params.get("id") ? "ncr" : "";
+  // หน้ารายละเอียดคำร้อง: คำแนะนำตามงานที่ผู้ดูมีอยู่บนหน้า (ดูจากการ์ดที่วาดอยู่จริง)
+  if (route.path === "request") {
+    if (document.querySelector("#decision-panel")) return "request";
+    if (document.querySelector("#repair-verify")) return "request-verify";
+    if (document.querySelector("#repair-start-panel, #finish-files, #assign-files")) return "request-work";
+    return "request-viewer";
+  }
   return route.path;
 }
 

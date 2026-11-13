@@ -156,7 +156,7 @@ test("after the assignment, editing it is folded at the end of the MT page inste
   // ต่อท้ายเนื้อหาของใบ (sectionsHtml) ส่วนงานที่ต้องทำอยู่ใน actionHtml บนสุด
   assert.match(mt, /\$\{expectedDateSectionHtml\(request, canRecordProgress\)\}\s*\n\s+\$\{canAssign && request\.status !== "pending_assign" \? assignSection : ""\}\n`,/);
   assert.match(mt, /actionHtml: `\$\{canAssign && request\.status === "pending_assign" \? assignSection : ""\}/, "assigning is the page's task, in the action card");
-  assert.match(mt, /<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้ไขการมอบหมายช่าง<\/h2><\/summary>/);
+  assert.match(mt, /<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้การมอบหมายช่าง<\/h2><\/summary>/);
   for (const name of ["technician_ids", "execution_plan", "inspector_opinion", "work_started_date", "work_expected_date", "cause_analysis"]) assert.match(mt, new RegExp(`data-field="${name}"`));
 });
 
@@ -198,7 +198,7 @@ test("the help sheet explains the page, every badge glyph and (on keyboard devic
   // path ของหน้าหลักอยู่ใน router ของ app.js ส่วนแดชบอร์ด RubberFlow และ BOM เป็น PATH ของโมดูล
   const modulePaths = new Set(["module-mt-dashboard.js", "module-ncr-dashboard.js", "module-rubberflow.js", "module-bom.js"].map((file) => readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8").match(/const PATH = "([^"]+)"/)?.[1]));
   // requests-list / requests-board: รายการของโมดูล helpPageKey เลือกตามแท็บที่หน้านั้นมีจริง (ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ)
-  const derived = new Set(["requests-list", "requests-board"]);
+  const derived = new Set(["requests-list", "requests-board", "request-work", "request-verify", "request-viewer"]);
   for (const path of Object.keys(help.PAGE_HELP)) assert.ok(new RegExp(`path === "${path}"`).test(app) || modulePaths.has(path) || derived.has(path), `route ${path} exists`);
   assert.match(app, /if \(route\.path === "requests" && route\.params\.get\("type"\) && route\.params\.get\("type"\) !== "all"\) return document\.querySelector\("\.view-tabs a\[href\*='view=board'\]"\) \? "requests-board" : "requests-list";/);
   assert.doesNotMatch(help.PAGE_HELP["requests-list"].join(" "), /ติดตามสถานะทุกใบ/, "a list without the board tab does not explain it");

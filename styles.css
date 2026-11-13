@@ -1185,6 +1185,7 @@ a.register-title:hover { color: var(--primary); }
 /* แถบไม่มีสัญญาณ (app.js syncOnlineState): แถบบางบนสุดของจอทุกหน้า กดทะลุได้ ไม่บังปุ่มเมนู/ลิงก์กลับ และไม่ชนแถบตัดสินด้านล่าง */
 .offline-banner { position: fixed; inset: 0 0 auto; z-index: 1200; margin: 0; padding: max(4px, env(safe-area-inset-top)) 16px 4px; color: #fff; background: var(--warning-strong); font-size: var(--text-caption); font-weight: 700; line-height: 1.4; text-align: center; pointer-events: none; }
 .offline-banner[hidden] { display: none; }
+.toast .toast-action { min-height: 44px; margin-left: auto; flex: none; }
 .draft-banner { margin-bottom: 16px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: var(--primary-soft); border-radius: var(--radius-md); }
 .draft-banner[hidden] { display: none; }
 .draft-banner p { margin: 0; font-weight: 600; }
