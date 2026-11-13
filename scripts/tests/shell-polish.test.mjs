@@ -523,7 +523,7 @@ test("round 26: sortable register columns, A presses the MT step's primary butto
   assert.match(html, /data-label="แจ้งเมื่อ" data-sort="2026-11-01T08:00:00Z">1 พ.ย.<\/td>/);
   assert.doesNotMatch(html, /data-label="เลขที่" data-sort/, "columns without a sort value sort by their text");
   assert.match(app, /\.sort\(\(a, b\) => compareRegisterCells\(a\.children\[index\], b\.children\[index\], ascending\)\)/);
-  for (const [file, pattern] of [["app.js", /sort: \{ created: request\.created_at \?\? "" \},/], ["app.js", /sort: \{ updated: row\.last_changed_at \?\? row\.submitted_at \?\? "" \},/], ["modules/module-ncr.js", /sort: \{ issued: row\.issue_date \?\? "" \},/]]) assert.match(read(file), pattern, file);
+  for (const [file, pattern] of [["app.js", /sort: \{ created: request\.created_at \?\? "" \},/], ["app.js", /sort: \{ updated: row\.last_changed_at \?\? row\.submitted_at \?\? "" \},/], ["modules/module-ncr.js", /sort: \{ issued: row\.issue_date \?\? "", loss: /]]) assert.match(read(file), pattern, file);
   // A บนงาน MT: กดปุ่มหลักที่มองเห็น แล้วยังต้องยืนยัน (ไม่ทำงานเมื่อกล่องยืนยันเปิดอยู่)
   assert.match(app, /const MT_STEP_PRIMARY_SELECTOR = "#repair-start-panel \.start-work-button, #repair-verify \.verify-button\[data-result=\\"pass\\"\], #finish-form \.form-actions button\[type=\\"submit\\"\]";/);
   assert.match(app, /\[data-popup\]:not\(\[hidden\]\), \.step-confirm"\)\) return;/);
