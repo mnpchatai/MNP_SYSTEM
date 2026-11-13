@@ -1691,7 +1691,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd { display: grid; gap: 16px; min-width: 0; overflow-anchor: none; } /* วาดหน้าใหม่ทั้งก้อนแล้วคืนตำแหน่งเลื่อนเอง ไม่ให้เบราว์เซอร์เลื่อนชดเชยซ้ำจนหน้ากระโดด */
 .nd-controls, .nd-sub { display: grid; gap: 10px; min-width: 0; }
 .nd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.nd-chip { min-height: 40px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); text-decoration: none; }
+.nd-chip { min-height: 44px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); text-decoration: none; }
 .nd-chip:hover { background: var(--shell); }
 .nd-chip[aria-current="true"] { color: var(--mod-tab-on-ink, #fff); background: var(--mod-tab-on, var(--primary)); border-color: transparent; }
 .nd-chip.removable { background: var(--shell); }
@@ -1739,7 +1739,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 /* ปุ่ม ⓘ คำอธิบาย (modules/dashboard-notes.js) ตัวเดียวกันทุกหน้า: อยู่ท้ายหัวข้อ กดแล้วคำอธิบายเปิดใต้หัวข้อ */
 .note-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .note-row > :is(h1, h2, h3) { margin: 0; min-width: 0; }
-.note-toggle { flex: none; width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); cursor: pointer; }
+.note-toggle { flex: none; width: 44px; height: 44px; margin-block: -6px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); cursor: pointer; }
 .note-toggle .ui-icon { width: 18px; height: 18px; }
 .note-toggle:hover, .note-toggle[aria-expanded="true"] { color: var(--primary-ink); background: var(--primary-soft); }
 .note-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -1751,12 +1751,10 @@ tr.ncr-voided td .muted { text-decoration: none; }
 @media (min-width: 761px) { .nd-tiles:not(.five) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .nd-tiles:not(.five) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1100px) { .nd-tiles:not(.five) { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-/* จอสัมผัส: ปุ่มกรอง ปุ่มในแถว และหัวพับของแดชบอร์ดสูงอย่างน้อย 44 px */
+/* จอสัมผัส: ป้าย ปุ่มในแถว และหัวพับของแดชบอร์ดสูงอย่างน้อย 44 px (ปุ่มกรองช่วง ปุ่มชื่อแผนก และปุ่ม ⓘ 44 px ทุกจอแล้วในกฎฐาน) */
 @media (pointer: coarse), (max-width: 760px) {
   /* .nd :is(…) ชนะกฎฐานของ .nd-brow/.nd-rowbtn ที่ประกาศทีหลังในไฟล์ */
   .nd :is(.nd-pill, .nd-more summary, .nd-rowbtn, .nd-chip, .nd-brow) { min-height: 44px; }
-  .nd .nd-rowbtn { min-width: 44px; }
-  .note-toggle { width: 44px; height: 44px; margin-block: -6px; }
 }
 .nd-sub h3 { margin: 0; font-size: var(--text-body); }
 .nd-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
@@ -1782,8 +1780,8 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-detail-row:hover > td { background: none; }
 .nd-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 th.nd-num { white-space: nowrap; }
-tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); }
-.nd-rowbtn { min-height: 36px; padding: 0; color: var(--mod-link, var(--primary)); background: none; border: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); } /* MT: เฉพาะตอนกรองแผนก */
+.nd-rowbtn { min-height: 44px; min-width: 44px; padding: 0; color: var(--mod-link, var(--primary)); background: none; border: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .nd-rowbtn.selected { text-decoration: underline; }
 .nd-bars { display: grid; gap: 4px; }
 .nd-brow { width: 100%; min-height: 40px; padding: 2px 6px; display: grid; grid-template-columns: minmax(96px, 34%) minmax(0, 1fr) auto; align-items: center; gap: 10px; color: var(--ink); background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; cursor: pointer; }

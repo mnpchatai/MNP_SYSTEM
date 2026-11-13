@@ -228,8 +228,19 @@ test("NCR dashboard departments wear their own department palette; loss types ha
 
 test("dashboard touch targets reach 44px and whole table rows open the request", () => {
   assert.match(css, /\.nd :is\(\.nd-pill, \.nd-more summary, \.nd-rowbtn, \.nd-chip, \.nd-brow\) \{ min-height: 44px; \}/, "more specific than the base rules declared later in the file");
-  assert.match(css, /\.nd \.nd-rowbtn \{ min-width: 44px; \}/);
-  assert.match(css, /\.note-toggle \{ width: 44px; height: 44px;/, "the ⓘ note button is a 44px target on touch");
+  // รอบ 22: ปุ่มกรองช่วง ปุ่มชื่อแผนก และปุ่ม ⓘ 44px ทุกจอ (เดสก์ท็อปด้วย) ในกฎฐาน
+  assert.match(css, /\.nd-rowbtn \{ min-height: 44px; min-width: 44px; padding: 0;/);
+  assert.match(css, /\.nd-chip \{ min-height: 44px;/);
+  assert.match(css, /\.note-toggle \{ flex: none; width: 44px; height: 44px; margin-block: -6px;/, "the ⓘ note button is a 44px target on every screen");
+  assert.doesNotMatch(css, /\.note-toggle \{[^}]*width: 32px/);
+  // แถบค้นหารายการ: ปุ่มค้นหา/ล้างสูงเท่าช่องค้นหา ชื่อช่องใช้ได้ทั้งคำร้องและทะเบียน NCR
+  assert.match(app, /aria-label="ค้นหาในรายการ" aria-keyshortcuts="\/"/);
+  assert.match(app, /<button class="btn secondary" type="submit">ค้นหา<\/button>/);
+  // แถวรวมของตารางแผนกไม่ซ้ำตัวเลขในการ์ด: NCR ไม่มีแถวรวม · MT ขึ้นเฉพาะตอนกรองแผนก (ตารางนี้ไม่ย่อตามแผนก)
+  assert.doesNotMatch(read("modules/module-ncr-dashboard.js"), /nd-total|รวม \(ไม่ซ้ำ\)/);
+  assert.match(read("modules/module-mt-dashboard.js"), /\$\{filters\.dept \? `<tr class="nd-total"><td>รวม<\/td>/);
+  // ไอคอนเตือนในป้ายแดชบอร์ดมาจาก mask SVG ไม่มีอักษร ▲
+  for (const file of ["modules/module-ncr-dashboard.js", "modules/module-mt-dashboard.js"]) assert.doesNotMatch(read(file), /▲/, file);
   assert.match(css, /\.nd-rowlink a\.request-no::after \{ content: ""; position: absolute; inset: 0; \}/);
   assert.match(css, /\.note-body \{ max-width: 70ch;/);
 });

@@ -228,8 +228,8 @@
     return `<div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "", stage: "" })}"><span class="nd-label">ใบที่แจ้งในช่วงนี้</span><span class="nd-value">${fmtNumber(period.total)}<small>ใบ</small></span></a>
         <span class="nd-note">ปิดแล้ว ${fmtCount(period.completed)} (${fmtPercent(period.completedRate)})${period.rejected ? ` · ไม่อนุมัติ ${fmtCount(period.rejected)}` : ""}</span><span class="nd-meter" role="img" aria-label="ปิดแล้ว ${fmtPercent(period.completedRate)}"><span style="width:${(period.completedRate ?? 0) * 100}%"></span></span></div>
       <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "open", stage: "" })}"><span class="nd-label">ค้างอยู่</span><span class="nd-value">${fmtNumber(back.open)}<small>ใบ</small></span></a>
-        ${back.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue", stage: "" })}"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดเสร็จ ${fmtCount(back.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดเสร็จ</span>`}
-        ${back.urgentOpen ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "urgent", stage: "" })}"><span class="nd-ico" aria-hidden="true">▲</span>ด่วน ${fmtCount(back.urgentOpen)}</a>` : ""}
+        ${back.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue", stage: "" })}"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดเสร็จ ${fmtCount(back.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดเสร็จ</span>`}
+        ${back.urgentOpen ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "urgent", stage: "" })}"><span class="nd-ico" aria-hidden="true"></span>ด่วน ${fmtCount(back.urgentOpen)}</a>` : ""}
         <span class="nd-note">นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา</span></div>
       ${measurable(period) ? `
       <div class="nd-tile"><span class="nd-label">เวลาเฉลี่ย แจ้ง → ปิดงาน</span><span class="nd-value">${period.avgCycle === null ? "—" : fmtNumber(period.avgCycle, 1)}<small>วัน</small></span>
@@ -267,9 +267,9 @@
     const dueCell = (row) => (row.work_expected_date ? esc(formatDate(row.work_expected_date)) : `<span class="nd-muted">ยังไม่กำหนด</span>`);
     // ใบที่รอช่างเริ่มงานนับเลยจากวันเริ่มงานที่หัวหน้าช่างมอบหมาย ใบที่เลยกำหนดเสร็จแล้วนับจากวันเสร็จ
     const latePill = (row) => row.overdue
-      ? ` <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลย ${fmtNumber(row.daysOverdue)} วัน</span>`
+      ? ` <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เลย ${fmtNumber(row.daysOverdue)} วัน</span>`
       : row.lateStart
-        ? ` <span class="nd-pill crit" title="เลยวันเริ่มงานที่มอบหมาย ${esc(formatDate(row.work_started_date))}"><span class="nd-ico" aria-hidden="true">▲</span>เลยวันเริ่ม ${fmtNumber(row.daysLateStart)} วัน</span>`
+        ? ` <span class="nd-pill crit" title="เลยวันเริ่มงานที่มอบหมาย ${esc(formatDate(row.work_started_date))}"><span class="nd-ico" aria-hidden="true"></span>เลยวันเริ่ม ${fmtNumber(row.daysLateStart)} วัน</span>`
         : "";
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่จบ เรียงจากเลยกำหนด (วันเริ่มงานหรือวันเสร็จที่หัวหน้าช่างมอบหมาย) ก่อน แล้วด่วน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / เครื่องจักร</th><th>รอใคร</th><th class="nd-num">ค้างมา</th><th>กำหนดเสร็จ</th></tr></thead><tbody>${top.map((row) => {
@@ -322,7 +322,7 @@
     return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
       ${items.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
       ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>${detailRow(item.dept)}`).join("")}
-      <tr class="nd-total"><td>รวม</td><td class="nd-num">${esc(fmtNumber(total))}</td><td class="nd-num">100%</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.open, 0)))}</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.urgent, 0)))}</td><td class="nd-num"></td></tr></tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
+      ${filters.dept ? `<tr class="nd-total"><td>รวม</td><td class="nd-num">${esc(fmtNumber(total))}</td><td class="nd-num">100%</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.open, 0)))}</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.urgent, 0)))}</td><td class="nd-num"></td></tr>` : ""}</tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("deptrank", "ชื่อแผนก", resolve)}`;
   }
 
@@ -360,7 +360,7 @@
       : { title: "รายการใบที่ประกอบเป็นตัวเลขด้านบน", note: `ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}` };
     const statusCell = (row) => {
       const badge = row.isOpen ? `<span class="badge ${esc(row.status)}">${esc(model.STAGE_BY_KEY[row.stage]?.short ?? row.status)}</span>` : statusBadge(row.status, true);
-      const status = row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนด</span>` : badge;
+      const status = row.overdue ? `${badge} <span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนด</span>` : badge;
       if (row.stage !== "start" && row.stage !== "repair") return status;
       const names = row.technicianIds.map(techName).join(", ") || "ยังไม่ได้มอบหมายช่าง";
       return `${status}<br><span class="nd-muted">ช่างผู้รับผิดชอบ: ${esc(names)}</span>`;

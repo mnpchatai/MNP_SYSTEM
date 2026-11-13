@@ -820,7 +820,7 @@
         <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ${relation(item.department)?.code ? ` ${escapeHtml(relation(item.department).code)}` : "ของแผนก"}</button></div></form>`;
     }).join("");
     // เป็นงานที่ต้องกรอก จึงอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้เรียกวางให้)
-    return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";
+    return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก (ถ้ามี)</h3>${rows}</div>` : "";
   }
 
   // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้ยืนยันยอด (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น

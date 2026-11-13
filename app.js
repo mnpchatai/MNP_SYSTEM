@@ -2970,9 +2970,9 @@ function requestSearchForm(params, { departments, placeholder, leading = "" }) {
         <option value="">ทุกแผนก</option>
         ${departments.map((item) => `<option value="${escapeHtml(item.sourceCode)}"${department?.sourceCode === item.sourceCode ? " selected" : ""}>${escapeHtml(item.displayCode)} · ${escapeHtml(item.name)}</option>`).join("")}
       </select>` : ""}
-      <input class="input" id="request-filter-search" aria-label="ค้นหาคำร้อง" aria-keyshortcuts="/" name="q" type="search" maxlength="80" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(search)}">
-      <button class="btn secondary small" type="submit">ค้นหา</button>
-      ${search || department ? `<a class="btn secondary small" href="${escapeHtml(requestCenterUrl(params, { q: null, dept: null }))}">ล้าง</a>` : ""}
+      <input class="input" id="request-filter-search" aria-label="ค้นหาในรายการ" aria-keyshortcuts="/" name="q" type="search" maxlength="80" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(search)}">
+      <button class="btn secondary" type="submit">ค้นหา</button>
+      ${search || department ? `<a class="btn secondary" href="${escapeHtml(requestCenterUrl(params, { q: null, dept: null }))}">ล้าง</a>` : ""}
     </form>`;
 }
 
