@@ -583,3 +583,42 @@ test("round 26c: detail back link returns to Home or notifications, Ctrl+Enter s
   assert.match(css, /\.shortcut-dialog form \{ max-height: min\(80vh, 720px\); overflow-y: auto; padding-bottom: 0; \}/);
   assert.match(app, /\{ key: "updated", label: "อัปเดตล่าสุด" \},/, "the board is ordered by submit date, so this column claims no order");
 });
+
+test("round 27: typed decision reasons survive Esc, cancel and switching queue rows; help and shortcuts fit the page; NCR due column says only the deadline", async () => {
+  // เหตุผลที่พิมพ์ค้างเก็บตามขั้น:มติ คืนเมื่อเลือกมติเดิม ส่งสำเร็จแล้วลบของขั้นนั้น
+  assert.match(app, /const keptDecisionComments = new Map\(\);/);
+  assert.match(app, /const keepKey = \(decision\) => `\$\{currentStep\.id\}:\$\{decision\}`;/);
+  assert.match(app, /const kept = entry && Date\.now\(\) - entry\.at <= KEPT_COMMENT_TTL_MS \? entry\.text : "";\s+comment\.value = kept;\s+state = \{ name: "compose", decision, showComment: Boolean\(kept\) \};/, "an old round's reason is not restored");
+  assert.match(app, /if \(rules\.needsComment\(decision\) \|\| kept\) comment\.focus\(\);/, "a restored comment gets focus so it is read before confirming");
+  assert.match(app, /if \(comment\.value\.trim\(\)\) keptDecisionComments\.set\(keepKey\(state\.decision\), \{ text: comment\.value, at: Date\.now\(\) \}\);\s+else keptDecisionComments\.delete\(keepKey\(state\.decision\)\);/);
+  assert.match(app, /detachLeaveGuards\(\);\s+forgetKeptDecisionComments\(currentStep\.id\);/, "a sent decision leaves nothing behind");
+  assert.match(app, /done \+= 1;\s+forgetKeptDecisionComments\(step\.id\);/, "bulk approve clears it too");
+  assert.equal((app.match(/keptDecisionComments\.clear\(\);/g) ?? []).length, 2, "both sign-out paths clear it");
+  assert.match(app, /reject: has\("#decision-panel"\),/);
+  assert.match(app, /list: has\("#home-queue \.queue-list, \.register-table a\.register-title"\),/);
+  assert.match(read("modules/shortcut-help.js"), /"new-original": Object\.freeze\(\[/);
+  // ช่วยเหลือ: คีย์ลัดและป้ายตามหน้า · ฟอร์มสร้างที่เลือกประเภทแล้ว
+  const vm = await import("node:vm");
+  const context = vm.createContext({});
+  vm.runInContext(read("modules/shortcut-help.js"), context);
+  const help = context.MNP_SHORTCUT_HELP;
+  const esc = (value) => String(value);
+  const dashboard = help.helpHtml(esc, "dashboard", { search: false, list: true, decide: true, reject: true, submit: false, badges: true });
+  assert.doesNotMatch(dashboard, /<kbd>\/<\/kbd>/, "no search shortcut where the page has no search");
+  assert.doesNotMatch(dashboard, /<kbd>Ctrl<\/kbd>/);
+  assert.match(dashboard, /<kbd>J<\/kbd>/);
+  assert.match(dashboard, /<kbd>Esc<\/kbd>/);
+  const create = help.helpHtml(esc, "new-form", { search: false, list: false, decide: false, reject: false, submit: true, badges: false });
+  assert.doesNotMatch(create, /ป้ายสถานะ/, "no badge legend on a page without badges");
+  assert.match(create, /<kbd>Ctrl<\/kbd>/);
+  assert.match(create, /เก็บร่างไว้ในเครื่องนี้/);
+  assert.match(help.helpHtml(esc, "request"), /<kbd>\/<\/kbd>[\s\S]*ป้ายสถานะ|ป้ายสถานะ[\s\S]*<kbd>\/<\/kbd>/, "without availability everything is listed");
+  assert.match(help.helpHtml(esc, "new-ncr"), /สินค้าและล็อต · ปัญหาที่พบ · หลักฐาน · ทบทวนก่อนออก NCR/);
+  assert.match(app, /if \(document\.querySelector\("#ncr-issue-form"\)\) return "new-ncr";/);
+  assert.match(app, /if \(document\.querySelector\("#app form\.stepped-form"\)\) return "new-form";/);
+  // แดชบอร์ด NCR: คอลัมน์กำหนดใช้คำเดียวกับหน้าใบ
+  const ncrBoard = read("modules/module-ncr-dashboard.js");
+  assert.match(ncrBoard, />เลยกำหนดตอบ \$\{Math\.abs\(left\)\} วัน<\/span>/);
+  assert.match(ncrBoard, /`เหลือเวลาตอบ \$\{left\} วัน` : "ครบกำหนดตอบวันนี้"/);
+  assert.doesNotMatch(ncrBoard, />เกิน \$\{|ป้องกัน อีก/);
+});

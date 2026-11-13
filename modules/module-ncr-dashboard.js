@@ -221,12 +221,13 @@
       if (row.preventionPending) {
         if (!row.prevention_due) return `<span class="nd-muted">รอแนวทางป้องกัน</span>`;
         const leftPrevention = daysBetween(today, row.prevention_due);
-        return row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>ป้องกัน เกิน ${Math.abs(leftPrevention)} วัน</span>` : `<span class="nd-pill">ป้องกัน อีก ${leftPrevention} วัน</span>`;
+        return row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดส่งแนวทางป้องกัน ${Math.abs(leftPrevention)} วัน</span>` : `<span class="nd-pill">${leftPrevention ? `เหลือเวลาส่งแนวทางป้องกัน ${leftPrevention} วัน` : "ครบกำหนดส่งแนวทางป้องกันวันนี้"}</span>`;
       }
-      if (!["awaiting_disposition", "awaiting_response"].includes(row.status)) return `<span class="nd-muted">ตอบแล้ว</span>`;
+      // คอลัมน์นี้บอกกำหนดเท่านั้น ใบที่ตอบแล้วไม่มีกำหนดตอบเหลือ (สถานะอยู่ในคอลัมน์รอใครแล้ว) · คำเดียวกับหน้าใบ (เลยกำหนดตอบ / เหลือเวลาตอบ)
+      if (!["awaiting_disposition", "awaiting_response"].includes(row.status)) return `<span class="nd-muted" title="ตอบแล้ว ไม่มีกำหนดตอบค้าง">—</span>`;
       if (!row.slaDue) return "—";
       const left = daysBetween(today, row.slaDue);
-      return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เกิน ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">อีก ${left} วัน</span>`;
+      return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดตอบ ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">${left ? `เหลือเวลาตอบ ${left} วัน` : "ครบกำหนดตอบวันนี้"}</span>`;
     };
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่ปิด เรียงจากเลยกำหนด (ตอบ 5 วัน หรือส่งแนวทางป้องกัน) ก่อน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${waitingDetail(row) ? `<br><span class="nd-muted">${esc(waitingDetail(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
