@@ -184,10 +184,24 @@
     };
     return { code: p.code, item: { name: p.itemName, uom: p.itemUom, kind: p.itemKind }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code)) };
   }
+  // เพิ่มหนึ่งบรรทัดใต้ชิ้นแม่ p.code: บรรทัดเดิมส่งกลับตามที่เก็บ (ไม่มี children จึงไม่แตะ BOM ของชิ้นลูก) · รหัสที่ยังไม่มีในทะเบียนต้องมีชื่อ ชนิด หน่วย เพื่อสร้างชิ้นใหม่
+  function treeFromLineAdd(p) {
+    const data = store.data();
+    const code = rules.canonicalCode(p.addCode);
+    const current = actions.helpers.approvedBomOf(data, rules.canonicalCode(p.code))?.lines ?? [];
+    if (current.some((line) => line.childCode === code)) throw new Error(`${code} อยู่ใน BOM นี้แล้ว แก้ปริมาณที่บรรทัดนั้นแทน`);
+    const node = { code, qty: p.addQty, scrapPct: p.addScrap, note: "" };
+    if (!actions.helpers.itemOf(data, code)) {
+      if (!String(p.newName ?? "").trim()) throw new Error(`ยังไม่มีรหัส ${code} ในทะเบียน กรอกชื่อ ชนิด และหน่วยเพื่อสร้างชิ้นใหม่`);
+      node.newItem = { kind: p.newKind, name: p.newName, uom: p.newUom };
+    }
+    return { code: p.code, note: p.note, nodes: [...current.map((line) => ({ code: line.childCode, qty: line.qty, scrapPct: line.scrapPct ?? 0, note: line.note ?? "", step: line.step ?? "" })), node] };
+  }
   const listOf = (p, key) => (Array.isArray(p[key]) ? p[key] : p[key] === undefined ? [] : [p[key]]);
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due), autoDue: p.autoDue === "1" || p.autoDue === "on" }),
-    saveBomTree: treeFromRows,
+    // ฟอร์ม "เพิ่มส่วนประกอบ" ของหน้าสินค้า (lineAdd) ใช้คำสั่งเดียวกัน: บรรทัดเดิมของ BOM อ่านจากข้อมูลล่าสุดตอนกดบันทึก แล้วต่อบรรทัดใหม่
+    saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : treeFromRows(p)),
     // ฟอร์มแก้บรรทัดเดียวของ BOM (หน้าสินค้า): childCode[] + qty[] + scrapPct[] + lineNote[] + lineStep[] ของทุกบรรทัด → lines ของ saveBom
     // บรรทัดที่แก้ (editCode) ถ้าปริมาณในฟอร์มต่างจากเดิม (origQty) ไม่ถึง 1e-6 ใช้ค่าเดิม คงอัตราส่วนเช่น 1/31 ไว้เต็มความละเอียด
     saveBom: (p) => (Array.isArray(p.lines) ? p : {
