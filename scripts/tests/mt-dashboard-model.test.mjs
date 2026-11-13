@@ -333,3 +333,19 @@ test("machine and technician filters narrow the lists the page shows", () => {
   assert.deepEqual(model.select(rows, filters({ tech: "t1", machine: "GR|m1" })).map((row) => row.id), ["c"]);
   assert.deepEqual(model.listFor(rows, filters({ scope: "open", tech: "t1" })).list.map((row) => row.id).sort(), ["a", "c"]);
 });
+
+test("days in the approval stage count from when the current approval step was reached", () => {
+  const [stepTwo, stepOne, resubmitted] = derive([
+    // ขั้นที่ 2 ของ 2: ขั้นที่ 1 อนุมัติเมื่อ 4 ต.ค. (การเลื่อนขั้นไม่มีแถวในประวัติสถานะ)
+    req({ id: "a", status: "pending_approval", current_step: 2, history: [at("pending_approval", "2026-10-01T02:00:00Z")], steps: [{ step_order: 1, acted_at: "2026-10-04T03:00:00Z" }, { step_order: 2, acted_at: null }] }),
+    req({ id: "b", status: "pending_approval", current_step: 1, history: [at("pending_approval", "2026-10-01T02:00:00Z")], steps: [{ step_order: 1, acted_at: null }] }),
+    // ส่งใหม่หลังขอข้อมูลเพิ่มที่ขั้นที่ 2: นับจากวันส่งใหม่ ไม่ใช่วันที่ขั้นที่ 1 อนุมัติ
+    req({ id: "c", status: "pending_approval", current_step: 2, history: [at("pending_approval", "2026-10-01T02:00:00Z"), at("more_info", "2026-10-02T02:00:00Z"), at("pending_approval", "2026-10-05T02:00:00Z")], steps: [{ step_order: 1, acted_at: "2026-10-01T05:00:00Z" }] }),
+  ]);
+  assert.equal(stepTwo.daysInStatus, 2, "6 Oct − 4 Oct");
+  assert.equal(stepOne.daysInStatus, 5, "6 Oct − 1 Oct");
+  assert.equal(resubmitted.daysInStatus, 1, "6 Oct − 5 Oct");
+  // ขั้นอื่น (ไม่ใช่รออนุมัติ) ไม่ดู acted_at ของขั้นอนุมัติ
+  const [repair] = derive([req({ status: "in_progress", current_step: 0, history: [at("in_progress", "2026-10-03T02:00:00Z")], steps: [{ step_order: 2, acted_at: "2026-10-05T02:00:00Z" }] })]);
+  assert.equal(repair.daysInStatus, 3);
+});

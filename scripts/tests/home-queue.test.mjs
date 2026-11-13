@@ -98,3 +98,27 @@ test("the label functions give repair requests their own words and everything el
   assert.equal(isRepairType({ code: "X", uses_repair_workflow: true }), true);
   assert.equal(isRepairType(null), false);
 });
+
+test("a step's waiting time starts when it reached the user, not when the request was created", () => {
+  // ขั้นที่ 2: ขั้นอนุมัติทุกขั้นสร้างพร้อมใบ จึงนับจากเวลาที่ขั้นที่ 1 อนุมัติ
+  assert.equal(queue.stepArrivedAt({
+    fallback: "2026-11-01T02:00:00Z", status: "pending_approval",
+    history: [{ to_status: "pending_approval", created_at: "2026-11-01T02:00:00Z" }],
+    previousActedAt: ["2026-11-05T09:00:00Z"],
+  }), "2026-11-05T09:00:00Z");
+  // ส่งใหม่หลังขอข้อมูลเพิ่ม: ขั้นเดิมกลับมา นับจากวันส่งใหม่ (acted_at ของขั้นก่อนหน้าเก่ากว่า)
+  assert.equal(queue.stepArrivedAt({
+    fallback: "2026-11-01T02:00:00Z", status: "pending_approval",
+    history: [{ to_status: "pending_approval", created_at: "2026-11-01T02:00:00Z" }, { to_status: "more_info", created_at: "2026-11-06T02:00:00Z" }, { to_status: "pending_approval", created_at: "2026-11-08T03:00:00Z" }],
+    previousActedAt: ["2026-11-03T09:00:00Z"],
+  }), "2026-11-08T03:00:00Z");
+  // งานซ่อม: เวลาที่เข้าสถานะปัจจุบันครั้งล่าสุด (กลับมาซ่อมใหม่หลังตรวจรับไม่ผ่านนับจากรอบใหม่)
+  assert.equal(queue.stepArrivedAt({
+    fallback: "2026-11-01T02:00:00Z", status: "in_progress",
+    history: [{ to_status: "in_progress", created_at: "2026-11-03T02:00:00Z" }, { to_status: "pending_verify", created_at: "2026-11-04T02:00:00Z" }, { to_status: "in_progress", created_at: "2026-11-05T02:00:00Z" }],
+  }), "2026-11-05T02:00:00Z");
+  // ไม่มีประวัติ (อ่านไม่ได้) ใช้ fallback · ค่าที่อ่านเป็นวันที่ไม่ได้ไม่นับ
+  assert.equal(queue.stepArrivedAt({ fallback: "2026-11-01T02:00:00Z", status: "assigned", history: [] }), "2026-11-01T02:00:00Z");
+  assert.equal(queue.stepArrivedAt({ fallback: "2026-11-01T02:00:00Z", previousActedAt: ["not a date", null] }), "2026-11-01T02:00:00Z");
+  assert.equal(queue.stepArrivedAt({}), null);
+});

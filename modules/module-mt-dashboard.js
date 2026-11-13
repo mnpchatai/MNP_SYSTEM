@@ -99,7 +99,7 @@
     const [requests, directory] = await Promise.all([
       typeId
         ? allRows(() => sb.from("requests")
-          .select("id,request_no,status,current_step,is_urgent,doc_type,machine_code,machine_name,requester_id,requester_name,submitted_at,completed_at,work_started_date,work_expected_date,department:departments(code),machine:machines(is_placeholder),request_technicians(technician_id),request_status_history(to_status,created_at),request_verifications(result)")
+          .select("id,request_no,status,current_step,is_urgent,doc_type,machine_code,machine_name,requester_id,requester_name,submitted_at,completed_at,work_started_date,work_expected_date,department:departments(code),machine:machines(is_placeholder),request_technicians(technician_id),request_status_history(to_status,created_at),request_verifications(result),approval_steps(step_order,acted_at)")
           .eq("request_type_id", typeId).order("id"))
         : [],
       loadEmployeeDirectory().catch((error) => { console.warn("โหลดรายชื่อพนักงานสำหรับแดชบอร์ด MT ไม่สำเร็จ", error); return new Map(); }),
@@ -112,6 +112,7 @@
       technician_ids: (row.request_technicians ?? []).map((item) => item.technician_id),
       history: row.request_status_history ?? [],
       verifications: row.request_verifications ?? [],
+      steps: row.approval_steps ?? [],
     })), today);
     const roleOwners = new Map();
     let roleOwnersFailed = false;

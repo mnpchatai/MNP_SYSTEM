@@ -2413,10 +2413,54 @@ function hasApprovalDuty(employee) {
 function ncrHref(ncr) {
   return `#/ncr?id=${encodeURIComponent(ncr.id)}`;
 }
+// "ค้าง N วัน" ของใบอนุมัติและงานซ่อมนับจากเวลาที่ขั้นมาถึงผู้ใช้ (MNP_HOME_QUEUE.stepArrivedAt) ไม่ใช่วันสร้างใบ
+// อ่าน acted_at ของขั้นก่อนหน้าและประวัติสถานะของใบในคิว (RLS เดียวกับหน้ารายละเอียด: can_access_request)
+// อ่านไม่ได้ก็ยังแสดงคิวได้ นับจากวันส่ง/วันสร้างใบเหมือนเดิม
+const QUEUE_ARRIVAL_CHUNK = 100;
+async function attachQueueArrivals(pending, repairTasks) {
+  const approvalIds = [...new Set(pending.map((step) => step.request.id))];
+  const repairIds = [...new Set(repairTasks.map((task) => task.id))];
+  if (!approvalIds.length && !repairIds.length) return;
+  const pagedRows = async (makeQuery) => {
+    const rows = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await makeQuery().range(offset, offset + 999);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if (!data || data.length < 1000) return rows;
+    }
+  };
+  const chunks = (ids) => Array.from({ length: Math.ceil(ids.length / QUEUE_ARRIVAL_CHUNK) }, (_, index) => ids.slice(index * QUEUE_ARRIVAL_CHUNK, (index + 1) * QUEUE_ARRIVAL_CHUNK));
+  try {
+    const [steps, history] = await Promise.all([
+      Promise.all(chunks(approvalIds).map((ids) => pagedRows(() => sb.from("approval_steps").select("request_id,step_order,acted_at").in("request_id", ids).not("acted_at", "is", null).order("id")))).then((parts) => parts.flat()),
+      Promise.all(chunks([...approvalIds, ...repairIds]).map((ids) => pagedRows(() => sb.from("request_status_history").select("request_id,to_status,created_at").in("request_id", ids).in("to_status", ["pending_approval", ...MY_REPAIR_ACTION_STATUSES]).order("id")))).then((parts) => parts.flat()),
+    ]);
+    const byRequest = (rows) => rows.reduce((map, row) => map.set(row.request_id, [...(map.get(row.request_id) ?? []), row]), new Map());
+    const stepsOf = byRequest(steps);
+    const historyOf = byRequest(history);
+    const arrivedAt = window.MNP_HOME_QUEUE.stepArrivedAt;
+    for (const step of pending) {
+      const request = step.request;
+      step.arrivedAt = arrivedAt({
+        fallback: request.submitted_at ?? request.created_at,
+        status: "pending_approval",
+        history: historyOf.get(request.id) ?? [],
+        previousActedAt: (stepsOf.get(request.id) ?? []).filter((row) => row.step_order < step.step_order).map((row) => row.acted_at),
+      });
+    }
+    for (const task of repairTasks) {
+      task.arrivedAt = arrivedAt({ fallback: task.created_at, status: task.status, history: historyOf.get(task.id) ?? [] });
+    }
+  } catch (error) {
+    console.warn("อ่านเวลาที่ขั้นมาถึงไม่สำเร็จ ใช้วันส่งใบแทน", error);
+  }
+}
+
 function homeQueueItems(pending, repairTasks, ncrTasks) {
   return window.MNP_HOME_QUEUE.sortQueue([
-    ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.request.submitted_at ?? step.request.created_at })),
-    ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.created_at })),
+    ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.arrivedAt ?? step.request.submitted_at ?? step.request.created_at })),
+    ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.arrivedAt ?? task.created_at })),
     // เลยกำหนดตอบนับเป็นงานด่วนสูง · ค้างกี่วันนับจากรายการล่าสุดในประวัติของใบ (step_since จาก module-ncr.js loadHomeItems) เหมือนแดชบอร์ด NCR
     ...ncrTasks.map(({ ncr, task, overdue }) => ({
       kind: "ncr", id: ncr.id, href: ncrHref(ncr), task, flag: overdue ? "เลยกำหนดตอบ" : null,
@@ -2452,6 +2496,7 @@ async function loadHomeQueueItems() {
     getMyRepairActionItems(),
     ncrHome ? ncrHome.load(state.employee).catch(() => ({ tasks: [] })) : { tasks: [] },
   ]);
+  await attachQueueArrivals(pending, repairTasks);
   return homeQueueItems(pending, repairTasks, ncrItems.tasks);
 }
 
@@ -2475,6 +2520,7 @@ async function renderDashboard(params = new URLSearchParams()) {
     ncrHome ? ncrHome.load(employee).catch(() => { showToast("โหลดงาน NCR ไม่สำเร็จ งาน NCR ไม่ได้แสดงในหน้านี้ ลองโหลดหน้าใหม่", "error"); return { tasks: [], mine: [] }; }) : { tasks: [], mine: [] },
   ]);
   if (mineResult.error) throw mineResult.error;
+  await attachQueueArrivals(pending, repairTasks);
   const items = homeQueueItems(pending, repairTasks, ncrItems.tasks);
   const approvalIds = items.filter((item) => item.kind === "approval").map((item) => item.id);
   // ใบที่เปิด: ใบที่ลิงก์ขอมา > ใบที่เปิดค้างไว้ > ใบแรก (หลังตัดสินใบหนึ่ง ใบถัดไปจึงเปิดเอง)

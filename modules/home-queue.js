@@ -28,6 +28,15 @@
     return Math.max(0, bangkokDay(now) - bangkokDay(createdAt));
   }
 
+  // เวลาที่ขั้นปัจจุบันมาถึงผู้ใช้ (ใช้นับ "ค้าง N วัน" และเรียงใบที่รอนานก่อน):
+  // ค่าล่าสุดของ fallback (วันส่งหรือวันสร้างใบ) · acted_at ของขั้นอนุมัติก่อนหน้า (ขั้นอนุมัติทุกขั้นถูกสร้างพร้อมใบ
+  // created_at ของขั้นจึงใช้ไม่ได้) · เวลาที่ใบเปลี่ยนเข้าสถานะปัจจุบันครั้งล่าสุด (request_status_history เช่น ส่งใหม่หลังขอข้อมูลเพิ่ม)
+  function stepArrivedAt({ fallback = null, status = null, history = [], previousActedAt = [] } = {}) {
+    const times = [fallback, ...previousActedAt, ...history.filter((row) => !status || row.to_status === status).map((row) => row.created_at)]
+      .filter((value) => value && Number.isFinite(Date.parse(value)));
+    return times.reduce((latest, value) => (Date.parse(value) > Date.parse(latest) ? value : latest), times[0] ?? null);
+  }
+
   function waitingLabel(days) {
     return days <= 0 ? "ส่งวันนี้" : `ค้าง ${days} วัน`;
   }
@@ -45,5 +54,5 @@
     return ids[Math.min(ids.length - 1, Math.max(0, index + delta))];
   }
 
-  root.MNP_HOME_QUEUE = Object.freeze({ priorityRank, sortQueue, waitingDays, waitingLabel, pickSelection, stepSelection });
+  root.MNP_HOME_QUEUE = Object.freeze({ priorityRank, sortQueue, waitingDays, stepArrivedAt, waitingLabel, pickSelection, stepSelection });
 })(typeof window !== "undefined" ? window : globalThis);
