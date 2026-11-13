@@ -137,10 +137,11 @@ test("status glyphs follow the agreed mapping and one age definition is used on 
 });
 
 test("request and NCR details share one hero: back link, eyebrow with the status, then the heading", () => {
-  assert.match(app, /<a class="request-back-link" href="#\/requests\$\{type\?\.id/);
+  assert.match(app, /\$\{detailBackLinkHtml\(`#\/requests\$\{type\?\.id/);
   // รอบ 15: ลิงก์กลับขึ้นแถบบนแทนป้ายทางเดิน จึงบอกชื่อรายการที่จะกลับไป
   assert.match(read("modules/module-ncr.js"), /<a class="request-back-link" href="#\/ncr">‹ NCR\/CAR<\/a>/);
-  assert.match(app, /">‹ \$\{escapeHtml\(type \? requestTypeLabel\(type\) : "คำร้อง"\)\}<\/a>/);
+  assert.match(app, /, type \? requestTypeLabel\(type\) : "คำร้อง"\)\}/);
+  assert.match(app, /: `<a class="request-back-link" href="\$\{escapeHtml\(href\)\}">‹ \$\{escapeHtml\(label\)\}<\/a>`;/);
   // รอบรวม 19: ตัวคั่นแยกเป็น span ซ่อนบนมือถือ (รหัสฟอร์มบรรทัดหนึ่ง เลขที่บรรทัดสอง ไม่มี " ·" ห้อย)
   assert.match(read("modules/module-ncr.js"), /<div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">\$\{escapeHtml\(ncr\.form_code\)\}<\/span><span class="eyebrow-sep"> · <\/span><span class="nowrap">\$\{escapeHtml\(ncr\.ncr_no\)\}<\/span><\/span>/);
 });
@@ -208,7 +209,7 @@ test("small consistency fixes: file toggle marker, read-only fields, parts table
   assert.match(css, /:is\(\.input, \.select, \.textarea\):disabled:not\(\[aria-busy\] \*\) \{ color: var\(--muted\); background: var\(--shell\); border-style: dashed; cursor: not-allowed; \}/);
   assert.match(css, /\.parts-field \{ container-type: inline-size; \}\r?\n@container \(max-width: 760px\) \{/);
   assert.match(mt, /<div class="field parts-field"><label>รายการอะไหล่/);
-  assert.match(read("modules/shortcut-help.js"), /"มติ เริ่มงาน เสร็จสิ้นงาน และตรวจรับ ส่งทันทีหลังกดยืนยัน"/, "no undo window for decisions any more (user 2026-11-13)");
+  assert.match(read("modules/shortcut-help.js"), /"อนุมัติ ไม่อนุมัติ และขอข้อมูลเพิ่ม ส่งทันทีหลังกดยืนยัน"/, "no undo window for decisions any more (user 2026-11-13)");
   assert.doesNotMatch(read("modules/shortcut-help.js"), /เลิกทำ|5 วินาที|นับถอยหลัง/);
   assert.match(read("modules/rubberflow-pages-plan.js"), /ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้/);
 });

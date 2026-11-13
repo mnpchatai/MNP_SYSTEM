@@ -123,6 +123,21 @@ async function checkForNewVersion({ autoReload } = {}) {
 }
 document.addEventListener("visibilitychange", () => checkForNewVersion());
 window.addEventListener("hashchange", () => checkForNewVersion());
+
+// ลิงก์กลับของหน้ารายละเอียด: เปิดมาจากหน้าหลักหรือการแจ้งเตือนกลับไปที่นั่น นอกนั้นกลับทะเบียนของโมดูล
+// (จำหน้าก่อนหน้าก่อนตัวจัดเส้นทางวาดหน้า เพราะลงทะเบียนก่อน)
+let previousPageHash = "";
+window.addEventListener("hashchange", (event) => {
+  try { previousPageHash = new URL(event.oldURL).hash; } catch { previousPageHash = ""; }
+});
+const DETAIL_BACK_ORIGINS = Object.freeze({ dashboard: "หน้าหลัก", notifications: "การแจ้งเตือน" });
+function detailBackLinkHtml(href, label) {
+  const match = /^#\/([a-z-]*)(?:\?|$)/.exec(previousPageHash);
+  const originLabel = match ? DETAIL_BACK_ORIGINS[match[1] || homePath()] : undefined;
+  return originLabel
+    ? `<a class="request-back-link" href="${escapeHtml(previousPageHash)}">‹ ${escapeHtml(originLabel)}</a>`
+    : `<a class="request-back-link" href="${escapeHtml(href)}">‹ ${escapeHtml(label)}</a>`;
+}
 // มือถือกลับมาที่หน้าจาก back/forward cache โดยไม่โหลดใหม่ (event นี้ไม่ใช่ visibilitychange เสมอไป)
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) checkForNewVersion();
@@ -1385,7 +1400,8 @@ function requestOwnerNames(request, directory) {
 // ค่าใน cells เป็น HTML ที่ผู้เรียก escape แล้ว (ใช้ registerNoHtml / registerSubjectHtml สร้างช่องเลขที่และเรื่อง)
 // role ประกาศซ้ำทุกชั้น: บนจอแคบ CSS เปลี่ยน table/tr เป็น block/flex ซึ่ง Safari ทิ้งความหมายตารางให้โปรแกรมอ่านจอ
 function registerTableHtml({ label, columns, rows }) {
-  const head = columns.map((column) => `<th scope="col" role="columnheader" aria-sort="${column.sorted ?? "none"}"><button type="button" class="th-sort" title="เรียงตาม${escapeHtml(column.label)}">${escapeHtml(column.label)}<span class="th-sort-icon" aria-hidden="true"></span></button></th>`).join("");
+  // aria-label: บนจอแคบปุ่มเรียงซ่อน (visibility) หัวคอลัมน์จึงต้องมีชื่อของตัวเองให้โปรแกรมอ่านจอ
+  const head = columns.map((column) => `<th scope="col" role="columnheader" aria-label="${escapeHtml(column.label)}" aria-sort="${column.sorted ?? "none"}"><button type="button" class="th-sort" title="เรียงตาม${escapeHtml(column.label)}">${escapeHtml(column.label)}<span class="th-sort-icon" aria-hidden="true"></span></button></th>`).join("");
   const body = rows.map((row) => `<tr role="row"${row.className ? ` class="${escapeHtml(row.className)}"` : ""}>${columns
     .map((column) => `<td role="cell" class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}"${row.sort && column.key in row.sort ? ` data-sort="${escapeHtml(String(row.sort[column.key] ?? ""))}"` : ""}>${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
   return `<div class="register-wrap"><table class="register-table" role="table" aria-label="${escapeHtml(label)}"><thead role="rowgroup"><tr role="row">${head}</tr></thead><tbody role="rowgroup">${body}</tbody></table></div>`;
@@ -1479,7 +1495,7 @@ function statusBoardRows(rows, { showType = false, params = null, filtered = fal
     ...(showType ? [{ key: "type", label: "ประเภท" }] : []),
     { key: "department", label: "แผนก" },
     { key: "requester", label: "ผู้แจ้ง" },
-    { key: "updated", label: "อัปเดตล่าสุด", sorted: "descending" },
+    { key: "updated", label: "อัปเดตล่าสุด" },
     { key: "status", label: "สถานะ", role: "status" },
   ];
   return registerTableHtml({
@@ -2890,6 +2906,18 @@ document.addEventListener("keydown", (event) => {
   button.click();
 });
 
+// Ctrl+Enter (Mac: ⌘+Enter) ในฟอร์ม = กดปุ่มส่งของฟอร์มนั้น (ฟอร์มยาว เช่น จบงาน ตอบ NCR ไม่ต้องเลื่อนหาปุ่ม)
+// กดผ่าน click() จึงผ่านขั้นยืนยันและการตรวจช่องเหมือนกดเอง · ไม่ทำงานในกล่องโต้ตอบหรือระหว่างขั้นยืนยัน
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.defaultPrevented || event.isComposing) return;
+  const form = event.target instanceof Element ? event.target.closest("form") : null;
+  if (!form || form.closest("dialog") || document.querySelector("dialog[open], .attachment-lightbox, .step-confirm")) return;
+  const button = [...form.querySelectorAll("button[type=\"submit\"], button:not([type])")].find((node) => node.form === form && !node.disabled && node.offsetParent !== null);
+  if (!button) return;
+  event.preventDefault();
+  button.click();
+});
+
 // เทียบสองช่องของคอลัมน์เดียวกัน: data-sort ที่เป็นตัวเลข (ยอดเงิน) เทียบเป็นตัวเลข · ที่เป็นวันเวลา ISO เทียบเป็นเวลา · ที่เหลือเทียบข้อความไทยแบบเลขในข้อความ
 // ช่องที่ไม่มีค่า (data-sort ว่าง) อยู่ท้ายเสมอไม่ว่าจะเรียงทิศไหน
 function compareRegisterCells(left, right, ascending) {
@@ -2981,7 +3009,8 @@ function helpPageKey(route) {
   if (route.path === "requests" && route.params.get("mode") === "create") return "new";
   // รายการของโมดูล (ไม่ใช่หน้าเลือกโมดูล): คำอธิบายแท็บตามแท็บที่หน้านั้นมีจริง ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ
   if (route.path === "requests" && route.params.get("type") && route.params.get("type") !== "all") return document.querySelector(".view-tabs a[href*='view=board']") ? "requests-board" : "requests-list";
-  if (route.path === "ncr") return route.params.get("id") ? "ncr" : "";
+  // หน้ารายละเอียด NCR: ผู้ที่มีงานของขั้น (การ์ดสิ่งที่คุณต้องดำเนินการ) กับผู้ดูอย่างเดียวได้คำแนะนำต่างกัน
+  if (route.path === "ncr") return route.params.get("id") ? (document.querySelector(".ncr-actions") ? "ncr" : "ncr-viewer") : "";
   // หน้ารายละเอียดคำร้อง: คำแนะนำตามงานที่ผู้ดูมีอยู่บนหน้า (ดูจากการ์ดที่วาดอยู่จริง)
   if (route.path === "request") {
     if (document.querySelector("#decision-panel")) return "request";
@@ -4145,7 +4174,7 @@ async function renderRequestDetail(params) {
             ? `<p class="request-summary-text is-clamped" id="request-description">${escapeHtml(description)}</p><button type="button" class="link-button request-more" id="request-description-more" aria-controls="request-description" aria-expanded="false" hidden>อ่านต่อ</button>`
             : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}`;
   const content = `
-    <a class="request-back-link" href="#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}">‹ ${escapeHtml(type ? requestTypeLabel(type) : "คำร้อง")}</a>
+    ${detailBackLinkHtml(`#/requests${type?.id ? `?type=${encodeURIComponent(type.id)}` : ""}`, type ? requestTypeLabel(type) : "คำร้อง")}
     <header class="request-detail-head${moduleHead ? " request-module-header" : ""}${canApprove ? " has-step-line" : ""}"${moduleHead ? ` data-module="${requestPalette(type?.code)}"` : ""}>
       <div class="request-detail-kicker">
         <span class="eyebrow">${formCode ? `<span class="nowrap">${escapeHtml(formCode)}</span><span class="eyebrow-sep"> · </span>` : ""}<span class="nowrap">${escapeHtml(request.request_no)}</span></span>

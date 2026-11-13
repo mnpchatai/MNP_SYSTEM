@@ -1372,7 +1372,9 @@ a.machine-history-no:hover { text-decoration: underline; }
 .shortcut-list kbd { min-width: 28px; padding: 2px 8px; color: var(--ink); background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-sm); font: inherit; font-weight: 700; text-align: center; }
 .help-toggle { font-weight: 700; }
 /* กล่องช่วยเหลือ: วิธีใช้หน้านี้ · ป้ายสถานะ · คีย์ลัด (จอสัมผัสล้วนไม่มีคีย์บอร์ด จึงซ่อนเฉพาะส่วนคีย์ลัด) */
-.shortcut-dialog form { max-height: min(80vh, 720px); overflow-y: auto; }
+.shortcut-dialog form { max-height: min(80vh, 720px); overflow-y: auto; padding-bottom: 0; }
+/* แถบปุ่มปิดชิดขอบล่างของกล่อง (ระยะล่างอยู่ในแถบเอง เนื้อหาจึงไม่โผล่ใต้แถบ) */
+.shortcut-dialog .confirm-dialog-actions { padding-bottom: 18px; }
 .help-section + .help-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--soft-line); }
 .help-section h3 { margin: 0 0 10px; color: var(--muted); font-size: var(--text-caption); font-weight: 700; letter-spacing: .04em; }
 .help-tips { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; color: var(--copy); }
@@ -1487,8 +1489,10 @@ a.machine-history-no:hover { text-decoration: underline; }
   .request-detail-kicker { flex-wrap: nowrap; align-items: center; gap: 8px; }
   .request-detail-kicker .eyebrow { flex: 1 1 0; min-width: 88px; display: flex; flex-direction: column; letter-spacing: .04em; white-space: normal; }
   .request-detail-kicker .eyebrow-sep { display: none; }
-  .request-detail-kicker-end { flex: 0 1 auto; }
-  .request-detail-kicker-end .badge { font-size: var(--text-meta); }
+  /* สองป้าย (สถานะ + ด่วน) กับปุ่ม ⋯ อยู่แถวเดียวกัน ป้ายยาวตัดบรรทัดในป้ายแทนการดันปุ่มลงแถวใหม่ */
+  .request-detail-kicker-end { flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; }
+  .request-detail-kicker-end .badge { font-size: var(--text-meta); min-width: 0; white-space: normal; }
+  .request-detail-kicker-end .request-detail-menu { flex: none; }
   .request-fact { min-height: 84px; padding: 11px; grid-template-columns: 32px minmax(0, 1fr); gap: 9px; }
   .request-fact.is-action { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .request-fact-icon { width: 32px; height: 32px; border-radius: var(--radius-md); font-size: var(--text-ui); }

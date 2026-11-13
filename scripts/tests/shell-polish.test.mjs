@@ -441,7 +441,7 @@ test("round 24 (second pass): approval count wording, MT minimum hints, in-app r
   const ncr = read("modules/module-ncr.js");
   assert.match(read("modules/step-verb.js"), /`อนุมัติขั้นที่ \$\{position\} จาก \$\{total\}: \$\{currentStepName\}`/, "the panel counts approval steps, not the whole job");
   assert.match(mt, /<small class="field-hint" id="finish-cause-hint">อย่างน้อย 3 ตัวอักษร<\/small>/);
-  assert.match(mt, /<small class="field-hint" id="verify-note-hint">เมื่อไม่ผ่าน อย่างน้อย 3 ตัวอักษร<\/small>/);
+  assert.match(mt, /<small class="field-hint" id="verify-note-hint">อย่างน้อย 3 ตัวอักษร<\/small>/, "the label already says when the note is required");
   assert.match(mt, /<summary><h2>แก้การมอบหมายช่าง<\/h2><\/summary>/, "one edit verb on the MT page (แก้กำหนดเสร็จ)");
   assert.doesNotMatch(ncr, /window\.prompt\(/, "no browser prompt for the void reason");
   assert.match(ncr, /await textPromptDialog\(\{ title: "ยกเลิกรายการความสูญเสียนี้\?", label: "เหตุผลที่ยกเลิก \(จำเป็น\)", hint: `อย่างน้อย \$\{VOID_REASON_MIN\} ตัวอักษร`, minLength: VOID_REASON_MIN/);
@@ -519,7 +519,7 @@ test("round 26: sortable register columns, A presses the MT step's primary butto
   const context = vm.createContext({ escapeHtml: (value) => String(value) });
   vm.runInContext(`${source}\nthis.fn = registerTableHtml;`, context);
   const html = context.fn({ label: "t", columns: [{ key: "no", label: "เลขที่", role: "no" }, { key: "created", label: "แจ้งเมื่อ" }], rows: [{ sort: { created: "2026-11-01T08:00:00Z" }, cells: { no: "MT-1", created: "1 พ.ย." } }] });
-  assert.match(html, /<th scope="col" role="columnheader" aria-sort="none"><button type="button" class="th-sort" title="เรียงตามแจ้งเมื่อ">แจ้งเมื่อ<span class="th-sort-icon" aria-hidden="true"><\/span><\/button><\/th>/);
+  assert.match(html, /<th scope="col" role="columnheader" aria-label="แจ้งเมื่อ" aria-sort="none"><button type="button" class="th-sort" title="เรียงตามแจ้งเมื่อ">แจ้งเมื่อ<span class="th-sort-icon" aria-hidden="true"><\/span><\/button><\/th>/);
   assert.match(html, /data-label="แจ้งเมื่อ" data-sort="2026-11-01T08:00:00Z">1 พ.ย.<\/td>/);
   assert.doesNotMatch(html, /data-label="เลขที่" data-sort/, "columns without a sort value sort by their text");
   assert.match(app, /\.sort\(\(a, b\) => compareRegisterCells\(a\.children\[index\], b\.children\[index\], ascending\)\)/);
@@ -527,7 +527,7 @@ test("round 26: sortable register columns, A presses the MT step's primary butto
   // A บนงาน MT: กดปุ่มหลักที่มองเห็น แล้วยังต้องยืนยัน (ไม่ทำงานเมื่อกล่องยืนยันเปิดอยู่)
   assert.match(app, /const MT_STEP_PRIMARY_SELECTOR = "#repair-start-panel \.start-work-button, #repair-verify \.verify-button\[data-result=\\"pass\\"\], #finish-form \.form-actions button\[type=\\"submit\\"\]";/);
   assert.match(app, /\[data-popup\]:not\(\[hidden\]\), \.step-confirm"\)\) return;/);
-  assert.match(read("modules/shortcut-help.js"), /งาน MT: เริ่มงาน ผ่าน หรือเสร็จสิ้นงาน/);
+  assert.match(read("modules/shortcut-help.js"), /งาน MT: เริ่มงาน เสร็จสิ้นงาน หรือ ผ่าน ในตรวจรับงาน/);
   assert.match(css, /\.register-status \{ order: 2; max-width: 100%; margin-left: auto; text-align: right; \}/);
   assert.match(read("modules/module-mt-dashboard.js"), /<span class="nd-pill" title="ไม่มีใบที่เลยกำหนดเสร็จ">ไม่มีเลยกำหนด<\/span>/);
   assert.match(read("modules/shortcut-help.js"), /ตอบกลับความเห็นของผู้อนุมัติได้ในการ์ด ตอบกลับความเห็น \(ถ้าต้องการ\)/);
@@ -548,4 +548,33 @@ test("round 26: register sorting compares money as numbers, dates as time, and k
   assert.match(read("modules/module-ncr.js"), /sort: \{ issued: row\.issue_date \?\? "", loss: summary \? summary\.net : "" \},/);
   assert.match(app, /\{ key: "created", label: "แจ้งเมื่อ", sorted: "descending" \}/, "the default newest-first order is announced");
   assert.match(css, /\.register-table \.th-sort \{ visibility: hidden; \}/, "hidden phone headers take no focus");
+});
+
+test("round 26c: detail back link returns to Home or notifications, Ctrl+Enter submits work forms, NCR help by role, phone header and help footer", async () => {
+  const vm = await import("node:vm");
+  // ลิงก์กลับ: มาจากหน้าหลัก/การแจ้งเตือนกลับที่นั่น นอกนั้นกลับทะเบียนของโมดูล
+  const start = app.indexOf("const DETAIL_BACK_ORIGINS");
+  const source = app.slice(start, app.indexOf("\n}\n", start) + 3);
+  const context = vm.createContext({ escapeHtml: (value) => String(value), homePath: () => "dashboard", previousPageHash: "" });
+  vm.runInContext(`${source}\nthis.fn = detailBackLinkHtml; this.from = (hash) => { previousPageHash = hash; };`, context);
+  const link = (hash) => { context.from(hash); return context.fn("#/requests?type=t1", "ใบแจ้งซ่อม MT"); };
+  assert.equal(link("#/dashboard"), `<a class="request-back-link" href="#/dashboard">‹ หน้าหลัก</a>`);
+  assert.equal(link("#/notifications"), `<a class="request-back-link" href="#/notifications">‹ การแจ้งเตือน</a>`);
+  assert.equal(link("#/"), `<a class="request-back-link" href="#/">‹ หน้าหลัก</a>`);
+  assert.equal(link("#/requests?type=t1&status=open"), `<a class="request-back-link" href="#/requests?type=t1">‹ ใบแจ้งซ่อม MT</a>`);
+  assert.equal(link("#/request?id=x"), `<a class="request-back-link" href="#/requests?type=t1">‹ ใบแจ้งซ่อม MT</a>`, "detail to detail goes back to the register");
+  assert.equal(link(""), `<a class="request-back-link" href="#/requests?type=t1">‹ ใบแจ้งซ่อม MT</a>`);
+  assert.ok(app.indexOf("previousPageHash = new URL(event.oldURL).hash") < app.indexOf("window.addEventListener(\"hashchange\", navigateRoute)"), "the origin is recorded before the router draws the page");
+  assert.match(read("modules/module-ncr.js"), /detailBackLinkHtml\("#\/ncr", "NCR\/CAR"\)/);
+  // Ctrl/⌘+Enter
+  assert.match(app, /if \(event\.key !== "Enter" \|\| !\(event\.ctrlKey \|\| event\.metaKey\) \|\| event\.altKey \|\| event\.shiftKey \|\| event\.defaultPrevented \|\| event\.isComposing\) return;/);
+  assert.match(app, /if \(!form \|\| form\.closest\("dialog"\) \|\| document\.querySelector\("dialog\[open\], \.attachment-lightbox, \.step-confirm"\)\) return;/);
+  assert.match(read("modules/shortcut-help.js"), /keys: \["Ctrl", "Enter"\]/);
+  // ช่วยเหลือ NCR ตามผู้ดู
+  assert.match(app, /document\.querySelector\("\.ncr-actions"\) \? "ncr" : "ncr-viewer"/);
+  assert.match(read("modules/shortcut-help.js"), /"ncr-viewer": Object\.freeze\(\[\s+"ใบนี้ยังไม่มีงานของคุณ/);
+  // หัวใบบนมือถือ · แถบปิดของกล่องช่วยเหลือ · ลูกศรเรียงบอกเฉพาะลำดับที่ข้อมูลเรียงจริง
+  assert.match(css, /\.request-detail-kicker-end \{ flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; \}/);
+  assert.match(css, /\.shortcut-dialog form \{ max-height: min\(80vh, 720px\); overflow-y: auto; padding-bottom: 0; \}/);
+  assert.match(app, /\{ key: "updated", label: "อัปเดตล่าสุด" \},/, "the board is ordered by submit date, so this column claims no order");
 });
