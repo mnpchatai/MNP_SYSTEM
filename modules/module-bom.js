@@ -123,12 +123,14 @@
 
   function url(page = "dashboard", extra = {}) {
     const query = new URLSearchParams();
-    if (page && page !== "dashboard") query.set("p", page);
+    if (page) query.set("p", page);
     for (const [key, value] of Object.entries(extra)) if (value !== null && value !== undefined && value !== "") query.set(key, String(value));
     const text = query.toString();
     return `#/${PATH}${text ? `?${text}` : ""}`;
   }
-  const currentPage = (params) => storeApi.findModule(params.get("p") ?? "dashboard")?.id ?? null;
+  // เข้า #/bom เฉยๆ (ไม่มี p): หน้าแรกของบทบาท (สินค้า หรือ งานของฉัน) · หน้าภาพรวมเดิมไม่อยู่ในเมนูแล้ว แต่ยังเปิดได้ด้วย p=dashboard
+  const defaultPage = () => { const home = storeApi.homeOf(store.user()); return pages[home] ? home : "dashboard"; };
+  const currentPage = (params) => storeApi.findModule(params.get("p") ?? defaultPage())?.id ?? null;
 
   // name → ค่า · name[] → อาร์เรย์ · a.b → ออบเจ็กต์ซ้อน (ค่าเป็นสตริง action แปลงเลขเอง)
   function formPayload(form) {
@@ -186,6 +188,16 @@
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due), autoDue: p.autoDue === "1" || p.autoDue === "on" }),
     saveBomTree: treeFromRows,
+    // ฟอร์มแก้บรรทัดเดียวของ BOM (หน้าสินค้า): childCode[] + qty[] + scrapPct[] + lineNote[] + lineStep[] ของทุกบรรทัด → lines ของ saveBom
+    // บรรทัดที่แก้ (editCode) ถ้าปริมาณในฟอร์มต่างจากเดิม (origQty) ไม่ถึง 1e-6 ใช้ค่าเดิม คงอัตราส่วนเช่น 1/31 ไว้เต็มความละเอียด
+    saveBom: (p) => (Array.isArray(p.lines) ? p : {
+      itemCode: p.itemCode, note: p.note,
+      lines: listOf(p, "childCode").map((childCode, index) => {
+        const qty = listOf(p, "qty")[index];
+        const keep = childCode === p.editCode && p.origQty !== undefined && Math.abs(Number(qty) - Number(p.origQty)) <= 1e-6;
+        return { childCode, qty: keep ? Number(p.origQty) : qty, scrapPct: listOf(p, "scrapPct")[index] ?? "", note: listOf(p, "lineNote")[index] ?? "", step: listOf(p, "lineStep")[index] ?? "" };
+      }),
+    }),
     saveItem: (p) => ({ ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null }),
     // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
     saveColorSet: (p) => ({ ...p, slots: listOf(p, "slotKey").map((key, index) => ({ key, color: listOf(p, "slotColor")[index] ?? "" })) }),
@@ -304,18 +316,17 @@
     if (!user) return "";
     const page = currentPage(currentRoute().params);
     const counts = navCounts(store.data(), user);
-    const groups = storeApi.GROUPS.map((group) => {
-      const items = storeApi.MODULES.filter((entry) => entry.group === group && storeApi.canSee(user, entry.id));
-      if (!items.length) return "";
-      return `<li class="rf-nav-group"><span>${escapeHtml(group)}</span><ul>${items.map((entry) => `<li><a class="rf-nav-item${entry.id === page ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(entry.id)}" href="${escapeHtml(url(entry.id))}"${entry.id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(entry.id)}</span><span class="rf-nav-text">${escapeHtml(entry.label)}</span>${counts[entry.id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(entry.id))}">${counts[entry.id]}</span>` : ""}</a></li>`).join("")}</ul></li>`;
-    }).join("");
+    // เมนูหลัก 4 อัน (storeApi.NAV): หน้าที่ไม่อยู่ในเมนู (สร้าง BOM นับคงคลัง ฯลฯ) ทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
+    const parent = storeApi.NAV_PARENT[page] ?? page;
+    const items = navItems(user).map((id) => `<li><a class="rf-nav-item${id === parent ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(id)}" href="${escapeHtml(url(id))}"${id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(id)}</span><span class="rf-nav-text">${escapeHtml(storeApi.navLabel(id))}</span>${counts[id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(id))}">${counts[id]}</span>` : ""}</a></li>`).join("");
     // เมนูข้างอยู่ใน <aside> ของ shell (ไม่ใช่ลูกของ .rf-page) จึงใส่จานสี BOM ที่ตัวเมนูเอง
-    return `<div class="nav-sub rf-nav" data-module="bom"><ul class="rf-nav-list">${groups}</ul></div>`;
+    return `<div class="nav-sub rf-nav" data-module="bom"><ul class="rf-nav-list">${items}</ul></div>`;
   };
+  const navItems = (user) => storeApi.NAV.filter((id) => storeApi.canSee(user, id));
   const navCounts = (data, user) => ({
-    jobs: data.jobs.filter((job) => job.status !== "done" && (actions.helpers.canPlan(user) ? false : job.dept === user.dept)).length,
+    work: data.jobs.filter((job) => job.status !== "done" && (actions.helpers.canPlan(user) ? false : job.dept === user.dept)).length,
   });
-  const countTitle = (id) => ({ jobs: "งานค้างของแผนก" })[id] ?? "";
+  const countTitle = (id) => ({ work: "งานค้างของแผนก" })[id] ?? "";
 
   // สถานะการติดต่อฐานข้อมูล (โหมดฐานข้อมูล): ว่างเมื่อไม่มีอะไรค้าง · อัปเดตที่ [data-bom-sync] โดยไม่วาดหน้าใหม่
   // คำสั่งใหญ่ (นำเข้าชีตทั้งไฟล์) ส่งหลายครั้ง: บอกว่าถึงส่วนไหนแล้ว
@@ -369,7 +380,7 @@
     return ui.card(ui.empty("กำลังโหลดข้อมูล BOM…"));
   }
   // โหมดฐานข้อมูลที่ยังไม่มีชิ้นงานเลย: หน้าที่อ่านข้อมูลหลักบอกทางไปหน้านำเข้า (ผู้ที่นำเข้าได้) แทนตารางว่างหลายใบ
-  const EMPTY_MASTER_PAGES = Object.freeze(["dashboard", "items", "product", "structure", "variants"]);
+  const EMPTY_MASTER_PAGES = Object.freeze(["dashboard", "items", "product", "structure", "variants", "find"]);
   // หัวหน้าแบบเดียวกับหน้า BOM อื่น (ก้อนสีโมดูล + ไอคอน + ชื่อหน้า) บอกว่ายังว่างและทางไปหน้านำเข้า
   function emptyMasterHtml(user, page, label) {
     const canImport = actions.helpers.canPlan(user);
@@ -379,8 +390,8 @@
     return `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(page)}</span><div><h1>${escapeHtml(label)}</h1></div></div></header>${ui.card(ui.empty(hint, next))}`;
   }
   function pageNavHtml(user, page) {
-    const items = storeApi.MODULES.filter((entry) => storeApi.canSee(user, entry.id));
-    return `<nav class="rf-pagenav" aria-label="เมนู BOM">${items.map((entry) => `<a class="filter${entry.id === page ? " active" : ""}" href="${escapeHtml(url(entry.id))}">${escapeHtml(entry.label)}</a>`).join("")}</nav>`;
+    const parent = storeApi.NAV_PARENT[page] ?? page;
+    return `<nav class="rf-pagenav" aria-label="เมนู BOM">${navItems(user).map((id) => `<a class="filter${id === parent ? " active" : ""}" href="${escapeHtml(url(id))}"${id === page ? ' aria-current="page"' : ""}>${escapeHtml(storeApi.navLabel(id))}</a>`).join("")}</nav>`;
   }
 
   function makeContext(params) {

@@ -9,12 +9,13 @@
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
   // ไอคอนของแต่ละหน้า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (modules/ui-icons.js ชุดเดียวกับระบบหลัก อ้างตอนวาด)
-  const ICONS = Object.freeze({ dashboard: "dashboard", build: "layers", items: "search", product: "factory", structure: "tree", variants: "palette", compounds: "flask", import: "download", check: "check", orders: "clipboard", customers: "building", count: "hash", stock: "warehouse", jobs: "wrench", audit: "history" });
+  const ICONS = Object.freeze({ dashboard: "dashboard", build: "layers", items: "search", product: "factory", structure: "tree", variants: "palette", compounds: "flask", import: "download", check: "check", orders: "clipboard", customers: "building", count: "hash", stock: "warehouse", jobs: "wrench", audit: "history", find: "box", work: "wrench", setup: "settings" });
   pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${root.MNP_UI_ICONS.icon(ICONS[id])}</span>` : "");
   // ต้นทุนไม่ครบ (มีชิ้นข้างใต้ไม่มีราคา): ไอคอนเตือนหน้าราคา คำอธิบายอยู่ที่ title/aria-label
   const costWarn = () => `<span class="bom-cost-warn" role="img" title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา" aria-label="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">${root.MNP_UI_ICONS.icon("warning")}</span>`;
   // หัวหน้าแบบเดียวกับ RubberFlow: คำอธิบายของหน้าอยู่หลังปุ่ม ⓘ ท้ายชื่อหน้า (ctx.ui.headingWithNote)
-  const head = (ctx, title, desc = "", actionsHtml = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main">${ICONS[ctx.page] ? `<span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span>` : ""}<div>${ctx.ui.headingWithNote(title, desc)}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
+  // ctx.embed = หน้านี้ถูกวางเป็นแท็บในหน้าสินค้า (modules/bom-hub.js): ไม่มีหัวหน้าและช่องเลือกสินค้าของตัวเอง
+  const head = (ctx, title, desc = "", actionsHtml = "") => ctx.embed ? "" : `<header class="rf-pagehead"><div class="rf-pagehead-main">${ICONS[ctx.page] ? `<span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span>` : ""}<div>${ctx.ui.headingWithNote(title, desc)}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
 
   // คำอธิบายที่ไม่ต้องอ่านทุกครั้งอยู่หลังปุ่ม ⓘ (modules/dashboard-notes.js ตัวเดียวกับหัวหน้า) · ไม่มีตัวช่วย (เทสต์) = ย่อหน้าธรรมดา · html ต้อง escape แล้ว
   const noteOf = (label, html) => (root.MNP_NOTES ? root.MNP_NOTES.toggle(label, html) : { button: "", body: html });
@@ -813,7 +814,7 @@
     const current = code ? rules.parseFgCode(code) : { base, pkg, colorSet: cs };
     const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((value) => ({ value, label: `(${value})` }));
     const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((value) => ({ value, label: value }));
-    const picker = ui.card(`<form novalidate class="bom-pick" data-bom-pick>
+    const picker = ctx.embed ? "" : ui.card(`<form novalidate class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
           ${ui.field("ฐานรหัสสินค้า", ui.input("base", { value: current.base, list: "bom-product-base-list", required: true, placeholder: "เช่น MEGA-ST-01", extra: 'autocapitalize="characters"' }), { required: true })}
           ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { value: current.pkg, placeholder: "ไม่ระบุ" }))}
@@ -897,7 +898,9 @@
       canEdit && approved ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }, { className: "" }) : "",
       ui.link("ประวัติฉบับแก้ไข", ctx.url("items", { sel: item.code }), "btn rf-btn secondary"),
     ].join("");
-    const html = `${pageHead}${picker}${ui.card(`${facts}${warnings}`, { title: `${esc(item.code)} <span class="muted">${esc(item.name)}</span> × ${esc(rules.fmtQty(qty))} ${esc(uomText(ctx, item.uom))}`, actions })}<div class="bom-dept-grid">${cards}</div>`;
+    // วางเป็นแท็บในหน้าสินค้า: รหัส ชื่อ ฉบับ BOM และปุ่มอยู่ที่หัวของหน้านั้นแล้ว เหลือแค่คำเตือนกับการ์ดรายแผนก
+    const html = ctx.embed ? `${warnings}<div class="bom-dept-grid">${cards}</div>`
+      : `${pageHead}${picker}${ui.card(`${facts}${warnings}`, { title: `${esc(item.code)} <span class="muted">${esc(item.name)}</span> × ${esc(rules.fmtQty(qty))} ${esc(uomText(ctx, item.uom))}`, actions })}<div class="bom-dept-grid">${cards}</div>`;
     return { html, bind: bindPick };
   };
 
@@ -1107,7 +1110,7 @@
     const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
     const view = ["table", "steps"].includes(params.get("view")) ? params.get("view") : "flow";
     const roots = data.items.filter((item) => item.kind === "FG" || approvedBomOf(ctx, item.code)).sort((a, b) => a.code.localeCompare(b.code));
-    const picker = ui.card(`<form novalidate class="bom-pick" data-bom-pick>
+    const picker = ctx.embed ? "" : ui.card(`<form novalidate class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
           ${ui.field("รหัสสินค้า/ชิ้นงาน", ui.input("code", { value: code, list: "bom-structure-list", required: true, placeholder: "เช่น DEMO-TP-01(P)-Y", extra: 'autocapitalize="characters"' }), { required: true })}
           ${ui.field("จำนวนสั่ง", ui.input("qty", { type: "number", step: "any", min: "0.0001", value: String(qty) }))}
@@ -1184,7 +1187,7 @@
       tree.missing.length ? ui.callout("bad", `ไม่พบในทะเบียนชิ้นงานหรือเป็นวงจร: ${tree.missing.map((entry) => esc(entry)).join(", ")}`) : "",
     ].join("");
     const html = `${pageHead}${picker}${warnings}${views}
-      ${ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view !== "flow" })}
+      ${ctx.embed ? ui.card(body, { flush: view !== "flow" }) : ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view !== "flow" })}
       ${ui.card(ui.table(["แผนก", "นาที ต่อ 1 หน่วย", `ชั่วโมง สำหรับ ${rules.fmtNum(qty)} หน่วย`], minutesRows, { emptyText: "ยังไม่มีขั้นตอนผลิตในโครงสร้างนี้" }), { title: `เวลาผลิตต่อแผนก · ค่าแรงสาธิต (บาท/นาที): ${esc(rates)}`, flush: true })}`;
     return { html, bind };
   };
@@ -1821,18 +1824,21 @@
       // ความต้องการสุทธิต่อรหัส (กฎ AK ของ BOMSHEET ไล่ชั้น): ใช้ร่วมกันทั้งแท็บใบคำนวณ แท็บรวม และ CSV
       const net = new Map(rules.netRequirements(order.explosion ?? [], order.stockCounts).map((entry) => [entry.itemCode, entry]));
       const buttons = [];
-      if (reopen && canPlan) buttons.push(ui.openButton("เพิ่มสินค้า", "orderItemAdd", { orderId: order.id }, { className: "secondary" }));
+      // ปุ่มหลักของแต่ละขั้น (แถบขั้นตอนของ modules/bom-hub.js หยิบไปวางในแผงของขั้นนั้น) · ที่เหลือเป็นคำสั่งอื่นและเอกสาร
+      const named = {};
+      const main = (key, html) => { named[key] = html; buttons.push(html); };
+      if (reopen && canPlan) main("add", ui.openButton("เพิ่มสินค้า", "orderItemAdd", { orderId: order.id }, { className: "secondary" }));
       if (draft && canPlan) {
-        buttons.push(ui.openButton("เพิ่มสินค้า", "orderItemAdd", { orderId: order.id }, { className: "secondary" }));
-        buttons.push(ui.button("ระเบิด BOM", { action: "explodeOrder", args: { orderId: order.id }, className: "secondary" }));
-        buttons.push(ui.button("ปล่อยผลิต", { action: "releaseOrder", args: { orderId: order.id }, className: "", confirmText: `ปล่อยผลิต ${order.id}? ระบบจะล็อกฉบับแก้ไขของ BOM และสร้างงานรายแผนก${ctx.store?.isRemote?.() ? " และเปิด WO ใน RubberFlow ให้งาน RB ที่ผูกสูตรแล้ว" : ""}` }));
+        main("add", ui.openButton("เพิ่มสินค้า", "orderItemAdd", { orderId: order.id }, { className: "secondary" }));
+        main("explode", ui.button("ระเบิด BOM", { action: "explodeOrder", args: { orderId: order.id }, className: "secondary" }));
+        main("release", ui.button("ปล่อยผลิต", { action: "releaseOrder", args: { orderId: order.id }, className: "", confirmText: `ปล่อยผลิต ${order.id}? ระบบจะล็อกฉบับแก้ไขของ BOM และสร้างงานรายแผนก${ctx.store?.isRemote?.() ? " และเปิด WO ใน RubberFlow ให้งาน RB ที่ผูกสูตรแล้ว" : ""}` }));
       }
       // ตรวจวัตถุดิบ: เทียบเคมีที่ WO ของใบนี้ต้องใช้กับสต็อกใน RubberFlow แล้วสั่งซื้อส่วนที่ขาด (dialog เดียวกับที่เด้งหลังปล่อยผลิต) · ผู้ที่สั่งซื้อได้ = ฝ่ายวางแผนหรือแผนก RB
       const checkWos = data.jobs.filter((job) => job.orderId === order.id && job.dept === "RB" && job.externalRef?.woId).map((job) => job.externalRef.woId);
       // ของซื้อ: ST / ฝ่ายวางแผนเบิกจ่ายครั้งเดียวต่อใบ (dialog ยืนยันแสดงรายการและที่ขาด) · ปุ่มตรวจวัตถุดิบเทียบเคมีของ WO และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก
       const openOrder = ["released", "in_progress"].includes(order.status);
       const partsLeft = ctx.helpers.partIssuePlan(data, order.id).lines.length;
-      if (openOrder && partsLeft && ctx.helpers.canIssueParts(user)) buttons.push(ui.openButton("เบิกจ่ายของซื้อ", "issueParts", { orderId: order.id }, { className: "" }));
+      if (openOrder && partsLeft && ctx.helpers.canIssueParts(user)) main("issue", ui.openButton("เบิกจ่ายของซื้อ", "issueParts", { orderId: order.id }, { className: "" }));
       // คืนของซื้อ: เมื่อมีของที่เบิกจ่ายแล้ว (ST / ฝ่ายวางแผน) · คืนของเหลือได้จนกว่าใบจะถูกยกเลิก (รวมใบที่ปิดแล้ว) · ยกเลิกการเบิกจ่ายได้เฉพาะใบที่ยังไม่ปิด
       // คืนของเหลือแสดงเมื่อยังมีรายการที่คืนได้ (คืนครบแล้วไม่แสดง) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
       const returnLines = rules.partReturnLines(data, order.id);
@@ -1840,8 +1846,8 @@
         if (order.status !== "cancelled" && returnLines.some((line) => line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
         if (openOrder) buttons.push(ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary" }));
       }
-      if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(user, { dept: "RB" })) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก แล้วสั่งซื้อส่วนที่ขาด">ตรวจวัตถุดิบ</button>`);
-      if (["released", "in_progress"].includes(order.status) && canPlan) buttons.push(ui.button("ปิดใบ", { action: "completeOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ปิดใบสั่งผลิตนี้?" }));
+      if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(user, { dept: "RB" })) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก แล้วสั่งซื้อส่วนที่ขาด">ตรวจวัตถุดิบ</button>`);
+      if (["released", "in_progress"].includes(order.status) && canPlan) main("complete", ui.button("ปิดใบ", { action: "completeOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ปิดใบสั่งผลิตนี้?" }));
       if (!["completed", "cancelled"].includes(order.status) && canPlan) buttons.push(ui.button("ยกเลิกใบ", { action: "cancelOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ยกเลิกใบสั่งผลิตนี้?" }));
       if (order.explosion?.length) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-csv="bomsheet" data-bom-order="${attr(order.id)}" title="ใบคำนวณวัตถุดิบรูปแบบเดียวกับ BOMSHEET เปิดใน Excel ได้">ส่งออก CSV ใบคำนวณ</button>`, `<button class="btn rf-btn secondary" type="button" data-bom-csv="req" data-bom-order="${attr(order.id)}" title="รายการที่ต้องเบิก/สั่งซื้อรวมทุกสินค้าในใบ">ส่งออก CSV รายการเบิก</button>`,
         `<span class="bom-sheet-pick">${ui.select("sheet", rules.SHEETS.map((sheet) => ({ value: sheet.id, label: `${sheet.title} · ${sheet.name}` })), { value: "RB", extra: 'data-bom-sheet aria-label="เลือกใบพิมพ์"' })}${ui.openButton("เปิดใบพิมพ์", "printSheet", { orderId: order.id, sheet: "RB" }, { className: "secondary", ariaLabel: "เปิดใบพิมพ์รายสถานี" })}</span>`);
@@ -1868,11 +1874,16 @@
         const woNote = noWo.length ? ui.callout("warn", `<div><strong>งาน RB ที่ยังไม่มี WO ใน RubberFlow</strong></div>${noWo.map(({ job, reason }) => `<div>${ui.mono(job.id)} ${esc(job.itemCode)}${reason ? ` — ${esc(reason)}` : ""}</div>`).join("")}<div class="small muted">แก้เหตุผลแล้วสร้างเองได้ที่เมนูงานของแผนก RB (ปุ่ม “สร้าง WO ใน RubberFlow”)${ctx.canSee("jobs") ? ` ${ui.link("ไปที่งานของแผนก", ctx.url("jobs"), "btn rf-btn secondary small")}` : ""}</div>`) : "";
         tabBody = woNote + ui.table(["แผนก", "งาน", "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ"], jobs.map((job) => `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${deptBadge(ctx, job.dept)}</td><td>${ui.link(job.id, ctx.url("jobs", { dept: job.dept, q: job.id }), "rf-mono")}</td><td>${ui.mono(job.itemCode)}<div class="small muted">${esc(job.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}</td><td>${status(ctx, job.status)}${job.externalRef ? `<div class="small">${ui.link(job.externalRef.woId, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}</div>` : ""}</td></tr>`), { emptyText: "ยังไม่มีงาน (ปล่อยผลิตก่อน)" });
       }
-      detail = ui.card(`${headerKv}<h3 class="bom-h3">สินค้าที่สั่ง</h3>${ui.table(["สินค้า (FG)", { label: "จำนวน", className: "right" }, "ชุดสี", ""], itemRows, { emptyText: "ยังไม่มีสินค้า" })}${tabsHtml}${tabBody}`,
-        { title: `${esc(order.id)} ${status(ctx, order.status)}`, actions: buttons.join("") });
+      // โครงใหม่ (มี modules/bom-hub.js): แถบขั้นตอน + แผงของขั้นอยู่บนสุด ปุ่มหลักอยู่ในแผงนั้น คำสั่งอื่นและเอกสารพับไว้ท้ายการ์ด · ไม่มี hub = ปุ่มทั้งหมดอยู่หัวการ์ดเหมือนเดิม
+      const steps = pages.orderSteps ? pages.orderSteps(ctx, order, { net, buttons: named }) : null;
+      const others = buttons.filter((html) => !(steps?.used ?? []).some((key) => named[key] === html));
+      const itemsTable = `<h3 class="bom-h3">สินค้าที่สั่ง</h3>${ui.table(["สินค้า (FG)", { label: "จำนวน", className: "right" }, "ชุดสี", ""], itemRows, { emptyText: "ยังไม่มีสินค้า" })}`;
+      detail = pages.orderSteps
+        ? `${steps.html}${ui.card(`${headerKv}${itemsTable}${named.add && order.items.length ? `<div class="rf-row">${named.add}</div>` : ""}${tabsHtml}${tabBody}${others.length ? `<details class="bom-more"><summary>คำสั่งอื่นและเอกสาร</summary><div class="rf-row">${others.join("")}</div></details>` : ""}`, { title: `${esc(order.id)} <span class="muted">${esc(order.customer)}</span> ${status(ctx, order.status)}` })}`
+        : ui.card(`${headerKv}${itemsTable}${tabsHtml}${tabBody}`, { title: `${esc(order.id)} ${status(ctx, order.status)}`, actions: buttons.join("") });
     }
     const html = `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → ระเบิด BOM (ร่างระเบิดซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)")}
-      <div class="bom-split bom-split-wide">${listCard}${detail}</div>`;
+      ${pages.orderSteps && order ? `<p class="bom-back">${ui.link("← ใบสั่งผลิตทั้งหมด", ctx.url("orders", { q: ctx.q || null }))}</p>${detail}` : `<div class="bom-split bom-split-wide">${listCard}${detail}</div>`}`;
     const bind = (rootNode) => {
       rootNode.querySelectorAll("[data-bom-csv]").forEach((button) => button.addEventListener("click", () => {
         const target = data.orders.find((entry) => entry.id === button.dataset.bomOrder);
