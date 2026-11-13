@@ -317,7 +317,9 @@ test("round 15: picked files show an unsent state and a leave warning; closed re
   assert.match(app, /pending\.textContent = count \? `ยังไม่ได้อัปโหลด \$\{count\} ไฟล์ · กดอัปโหลดก่อนออกจากหน้านี้` : "";/);
   assert.match(app, /button\.classList\.toggle\("secondary", !count\);/, "upload becomes the primary button while files wait");
   assert.match(app, /confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด"/);
-  assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!pendingAttachmentCount\(\)\) return;/);
+  // รอบรวม 24: ข้อความที่พิมพ์ค้างในฟอร์มของขั้นก็ถามก่อนออกเช่นกัน (leaveWarningPending = ไฟล์ค้าง หรือข้อความค้าง)
+  assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!leaveWarningPending\(\)\) return;/);
+  assert.match(app, /function leaveWarningPending\(\) \{\r?\n  return pendingAttachmentCount\(\) > 0 \|\| unsavedTextCount\(\) > 0;/);
   // รอบรวม 19: ยังไม่มีไฟล์ไม่พูดว่า "เพิ่ม"
   assert.match(app, /\$\{requestClosed \? \(attachments\.length \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์หลังปิดใบ"\) : attachments\.length \? "แนบไฟล์เพิ่ม" : "แนบไฟล์"\}/);
   // ไม่ถามระหว่างกำลังอัปโหลด · ปุ่ม/ท่าทางย้อนกลับถามด้วย (Navigation API) แล้วย้อนกลับต่อเมื่อยืนยัน

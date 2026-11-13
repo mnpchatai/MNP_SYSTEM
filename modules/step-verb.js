@@ -31,8 +31,9 @@
 
   // บรรทัดใต้หัวแถบตัดสินใจ: ขั้นนี้ + ขั้นถัดไปจริง
   // nextStepKnown = false (โหลดลำดับขั้นไม่ได้): ไม่บอกอะไรเกี่ยวกับขั้นถัดไป ไม่เดาว่าเป็นขั้นสุดท้าย
-  function stepLineText({ currentStepName, nextStepName = null, nextStepKnown = true, afterLast = null }) {
-    const current = `ขั้นตอน: ${currentStepName}`;
+  // position/total: ลำดับขั้นนี้ในใบ (หน้ารายละเอียดรู้ลำดับครบ) — ใบที่มีขั้นเดียวไม่บอกจำนวน
+  function stepLineText({ currentStepName, nextStepName = null, nextStepKnown = true, afterLast = null, position = null, total = null }) {
+    const current = position && total > 1 ? `ขั้นที่ ${position} จาก ${total}: ${currentStepName}` : `ขั้นตอน: ${currentStepName}`;
     if (nextStepName) return `${current} · ถัดไป: ${nextStepName}`;
     if (!nextStepKnown) return current;
     return afterLast ? `${current} · ถัดไป: ${afterLast}` : `${current} · ขั้นสุดท้าย`;

@@ -130,6 +130,18 @@ window.addEventListener("pageshow", (event) => {
 checkForNewVersion({ autoReload: true });
 
 const toastNode = document.querySelector("#toast");
+const offlineNode = document.createElement("p");
+offlineNode.className = "offline-banner";
+offlineNode.setAttribute("role", "status");
+offlineNode.textContent = "ไม่มีสัญญาณอินเทอร์เน็ต ข้อมูลที่กรอกยังอยู่ ส่งได้เมื่อสัญญาณกลับมา";
+function syncOnlineState() {
+  offlineNode.hidden = navigator.onLine !== false;
+  document.documentElement.classList.toggle("is-offline", !offlineNode.hidden);
+}
+window.addEventListener("online", syncOnlineState);
+window.addEventListener("offline", syncOnlineState);
+document.body.append(offlineNode);
+syncOnlineState();
 const state = { session: null, employee: null, unread: 0, authMode: "login", directory: null, adminTab: "requests", sandbox: null };
 
 // "ตำแหน่ง" คือ role_id โดยตรงแล้ว (ไม่มี position_level แยกต่างหากอีกต่อไป) ค่าตำแหน่ง
@@ -478,8 +490,8 @@ function friendlyError(error) {
     TARGET_NOT_ADMIN: "บทบาทหลักในการทำงานตั้งได้เฉพาะบัญชีที่มีตำแหน่งผู้ดูแลระบบ",
     INVALID_TITLE: "หัวข้อต้องมี 3–200 ตัวอักษร",
     INVALID_DESCRIPTION: "รายละเอียดต้องมี 3–5,000 ตัวอักษร",
-    STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว",
-    STEP_NOT_CURRENT: "ขั้นตอนนี้ไม่ใช่ขั้นตอนปัจจุบัน",
+    STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
+    STEP_NOT_CURRENT: "ขั้นตอนนี้ไม่ใช่ขั้นตอนปัจจุบันแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     REQUEST_NOT_AWAITING_INFO: "คำร้องนี้ไม่ได้อยู่ในสถานะรอข้อมูลเพิ่มเติมแล้ว",
     STEP_NOT_FOUND: "ไม่พบขั้นตอนที่ขอข้อมูลเพิ่มเติมไว้",
     INVALID_TRANSITION: "ไม่สามารถเปลี่ยนเป็นสถานะนี้ได้",
@@ -490,15 +502,15 @@ function friendlyError(error) {
     INVALID_MACHINE_NAME: "ชื่อเครื่องจักรต้องมี 2–120 ตัวอักษร",
     MACHINE_CODE_RESERVED: "ใช้คำว่า \"สร้างใหม่\" หรือ \"ไม่มี\" เป็นรหัสเครื่องจักรไม่ได้",
     INVALID_DOC_TYPE: "กรุณาเลือกประเภทเอกสาร",
-    REQUEST_NOT_PENDING_ASSIGN: "ใบนี้ไม่ได้อยู่ในขั้นรอมอบหมายช่างแล้ว",
+    REQUEST_NOT_PENDING_ASSIGN: "ใบนี้ไม่ได้อยู่ในขั้นรอมอบหมายช่างแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     TECHNICIAN_NOT_FOUND: "ไม่พบช่างที่เลือกในแผนกซ่อมบำรุง",
     REQUEST_NOT_ASSIGNED: "ใบนี้ไม่ได้อยู่ในขั้นรอช่างเริ่มงานแล้ว",
     NOT_ASSIGNED_TECHNICIAN: "คุณไม่ใช่ช่างที่ถูกมอบหมายหรือหัวหน้าแผนกซ่อมบำรุงของใบนี้",
-    REQUEST_NOT_IN_PROGRESS: "ใบนี้ไม่ได้อยู่ระหว่างดำเนินการซ่อมแล้ว",
+    REQUEST_NOT_IN_PROGRESS: "ใบนี้ไม่ได้อยู่ระหว่างดำเนินการซ่อมแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     INVALID_EXECUTION_PLAN: "กรุณาเลือกการดำเนินงาน",
     INVALID_INSPECTOR_OPINION: "กรุณาเลือกความคิดเห็นของช่างผู้ตรวจสอบ",
     INVALID_CAUSE_ANALYSIS: "กรุณาระบุผลวิเคราะห์สาเหตุ 3–5,000 ตัวอักษร",
-    REQUEST_NOT_PENDING_VERIFY: "ใบนี้ไม่ได้อยู่ในขั้นรอผู้แจ้งตรวจรับแล้ว",
+    REQUEST_NOT_PENDING_VERIFY: "ใบนี้ไม่ได้อยู่ในขั้นรอผู้แจ้งตรวจรับแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     INVALID_RESULT: "กรุณาเลือกผลการตรวจรับ",
     NOTE_REQUIRED: "กรุณาระบุสาเหตุที่ไม่ผ่านการตรวจรับ",
     COMMENT_REQUIRED: "กรุณาระบุเหตุผล (จำเป็นสำหรับ \"ไม่อนุมัติ\" และ \"ขอข้อมูลเพิ่ม\")",
@@ -526,7 +538,17 @@ function friendlyError(error) {
     INVALID_CC_DEPARTMENTS: "แผนกที่เลือกสำเนาถึงไม่ถูกต้อง",
   };
   const key = Object.keys(map).find((item) => message.includes(item));
-  return key ? map[key] : message;
+  if (key) return map[key];
+  return unmappedErrorText(message);
+}
+
+// ข้อความที่ไม่มีรหัสในตาราง: ข้อความภาษาไทยของเราเอง (throw new Error("…")) แสดงตามเดิม · เน็ตหลุดบอกว่าข้อมูลยังอยู่
+// ข้อความเทคนิคภาษาอังกฤษ (TypeError, ข้อความของ Postgres) ไม่ขึ้นให้ผู้ใช้ — ส่งเข้า log ของ master แล้วที่ friendlyError
+const NETWORK_ERROR_PATTERN = /failed to fetch|networkerror|load failed|network request failed|err_internet|err_network|timed? ?out|fetch failed/i;
+function unmappedErrorText(message) {
+  if (NETWORK_ERROR_PATTERN.test(message)) return "ส่งไม่สำเร็จ สัญญาณอาจขาด ข้อมูลที่กรอกยังอยู่ ลองส่งอีกครั้ง";
+  if (/[\u0E00-\u0E7F]/.test(message)) return message;
+  return "เกิดข้อผิดพลาดที่ระบบ ข้อมูลที่กรอกยังอยู่ ลองอีกครั้ง ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ";
 }
 
 function setFormBusy(form, busy) {
@@ -1102,14 +1124,33 @@ function pendingAttachmentCount() {
 function confirmLeaveWithPendingFiles(count) {
   return confirmDialog({ title: `ยังไม่ได้อัปโหลด ${count} ไฟล์`, message: "ออกจากหน้านี้แล้วไฟล์ที่เลือกไว้จะไม่ถูกแนบ", confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด", danger: true });
 }
+const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #verify-note';
+function unsavedTextCount() {
+  return [...document.querySelectorAll(UNSAVED_TEXT_SELECTOR)].filter((field) => {
+    if (field.closest("[hidden], [aria-busy]")) return false;
+    // แผงตัดสิน: นับเฉพาะตอนกำลังเขียนเหตุผล (ระหว่างนับถอยหลัง/ส่ง แผงจัดการเอง)
+    const panel = field.closest("#decision-panel");
+    if (panel && panel.dataset.state !== "compose") return false;
+    const typed = field.value.trim();
+    return Boolean(typed) && typed !== field.defaultValue.trim();
+  }).length;
+}
+// ออกจากหน้าเมื่อยังมีไฟล์ที่ยังไม่อัปโหลดหรือข้อความที่พิมพ์ค้าง: ถามก่อน (ไฟล์มาก่อนเพราะลบไม่ได้หลังอัปโหลด)
+function leaveWarningPending() {
+  return pendingAttachmentCount() > 0 || unsavedTextCount() > 0;
+}
+function confirmLeave() {
+  const files = pendingAttachmentCount();
+  if (files) return confirmLeaveWithPendingFiles(files);
+  return confirmDialog({ title: "ยังไม่ได้ส่งข้อความที่พิมพ์ไว้", message: "ออกจากหน้านี้แล้วข้อความที่พิมพ์จะหาย", confirmLabel: "ออกโดยไม่ส่ง", cancelLabel: "อยู่ต่อ", danger: true });
+}
 // ปุ่มย้อนกลับ/ปัดย้อนกลับ: hashchange ยกเลิกไม่ได้ ใช้ Navigation API ที่ยกเลิกการย้อนกลับได้ (เบราว์เซอร์ที่ไม่มีจะออกเหมือนเดิม)
 window.navigation?.addEventListener("navigate", (event) => {
   if (event.navigationType !== "traverse" || !event.cancelable) return;
-  const count = pendingAttachmentCount();
-  if (!count) return;
+  if (!leaveWarningPending()) return;
   event.preventDefault();
   const key = event.destination.key;
-  confirmLeaveWithPendingFiles(count).then((leave) => {
+  confirmLeave().then((leave) => {
     if (!leave) return;
     const input = document.querySelector("#attachment-form #attachment-file");
     if (input) input.value = "";
@@ -1117,18 +1158,17 @@ window.navigation?.addEventListener("navigate", (event) => {
   });
 });
 window.addEventListener("beforeunload", (event) => {
-  if (!pendingAttachmentCount()) return;
+  if (!leaveWarningPending()) return;
   event.preventDefault();
   event.returnValue = "";
 });
 document.addEventListener("click", async (event) => {
   const link = event.target.closest?.('a[href^="#/"]');
   if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  const count = pendingAttachmentCount();
-  if (!count || link.closest("#attachment-form")) return;
+  if (!leaveWarningPending() || link.closest("#attachment-form")) return;
   event.preventDefault();
   const href = link.getAttribute("href");
-  if (await confirmLeaveWithPendingFiles(count)) location.hash = href;
+  if (await confirmLeave()) location.hash = href;
 }, true);
 
 // ชื่อเครื่องจักรที่แสดง (รายการ หน้ารายละเอียด ฟอร์ม MT และแดชบอร์ด MT ใช้ตัวนี้ตัวเดียว)
@@ -3972,7 +4012,7 @@ async function renderRequestDetail(params) {
         ${requestFacts ? `<details class="card detail-section" open><summary><h2>ข้อมูลเพิ่มเติม</h2></summary><div class="request-facts">${requestFacts}</div></details>` : ""}
       </div>
       <aside class="stack">
-        ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
+        ${canApprove ? decisionPanelHtml({ request, currentStep, nextStep, steps, extraDecisions: separateModule?.extraDecisions ?? [] }) : ""}
         ${canApprove ? "" : detailView?.asideHtml ?? ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate && !detailView?.asideHtml ? nextItemPanelHtml() : ""}
@@ -4138,10 +4178,12 @@ function decisionButtonsOf(extraDecisions, stepName = "") {
 // ไม่มีขั้นอนุมัติถัดไปแต่งานยังเดินต่อ (ใบแจ้งซ่อม → มอบหมายช่าง, ใบทั่วไป → ดำเนินงาน) บอกขั้นนั้น "ขั้นสุดท้าย" ใช้เฉพาะใบที่จบที่มติ
 // request: ใบที่แถบนี้ตัดสิน — ปุ่มมติอ้างถึงเลขที่และหัวข้อผ่าน aria-describedby ทุกหน้า
 // และบนหน้าหลักจอแคบ (แถบลอยติดล่างจอ ห่างจากใบที่ขยาย) แสดงบรรทัดนี้ให้เห็นด้วย
-function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nextStepKnown = true }) {
+function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nextStepKnown = true, steps = null }) {
   const type = relation(request.request_type);
   const afterLast = window.MNP_STEP_VERB.afterLastStep({ repair: isRepairType(type), endsAtDecision: Boolean(requestModule(type?.code)?.endsAtDecision) });
-  const stepLine = window.MNP_STEP_VERB.stepLineText({ currentStepName: currentStep.step_name, nextStepName: nextStep?.step_name ?? null, nextStepKnown, afterLast });
+  const ordered = steps ? [...steps].sort((a, b) => a.step_order - b.step_order) : [];
+  const position = ordered.findIndex((step) => step.id === currentStep.id) + 1;
+  const stepLine = window.MNP_STEP_VERB.stepLineText({ currentStepName: currentStep.step_name, nextStepName: nextStep?.step_name ?? null, nextStepKnown, afterLast, position: position || null, total: ordered.length || null });
   return `<section class="card action-panel decision-panel" id="decision-panel" data-state="idle" aria-labelledby="decision-panel-title">
     <div class="action-panel-head">
       <h2 id="decision-panel-title">สิ่งที่คุณต้องดำเนินการ</h2>
@@ -4152,7 +4194,8 @@ function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nex
     <div class="decision-reason" id="decision-reason" hidden>
       <div class="field">
         <label for="decision-comment" id="decision-comment-label">ความเห็น</label>
-        <textarea class="textarea" id="decision-comment" maxlength="1000" rows="3" aria-describedby="decision-comment-error"></textarea>
+        <textarea class="textarea" id="decision-comment" maxlength="1000" rows="3" aria-describedby="decision-comment-hint decision-comment-error"></textarea>
+        <small class="field-hint" id="decision-comment-hint" hidden>อย่างน้อย ${window.MNP_REQUEST_DECISION?.MIN_COMMENT_LENGTH ?? 3} ตัวอักษร</small>
         <p class="field-error" id="decision-comment-error" hidden></p>
       </div>
       <details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("decision-files", "เลือกไฟล์", { hint: false })}</details>
@@ -4412,6 +4455,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
       const needsComment = rules.needsComment(decision);
       setLine(`${labelOf(decision)}${onDecided ? ` ${request.request_no}` : ""}${rules.forwardsToNextStep(decision) && nextStep ? ` → ส่งต่อให้ ${nextStep.step_name}` : decision === "more_info" ? ` → ส่งกลับให้ ${requesterName || "ผู้แจ้ง"}` : ""}`);
       reason.hidden = !needsComment && !state.showComment;
+      panel.querySelector("#decision-comment-hint").hidden = !needsComment;
       commentLabel.textContent = decision === "rejected" ? "เหตุผลที่ไม่อนุมัติ (จำเป็น)"
         : decision === "more_info" ? "ต้องการข้อมูลเพิ่มเรื่องอะไร (จำเป็น)"
         : needsComment ? "เหตุผล (จำเป็น)" : "ความเห็น (ถ้ามี)";
@@ -4651,7 +4695,8 @@ function notificationHref(item) {
 function notificationItemHtml(item) {
   const href = notificationHref(item);
   const tag = href ? "a" : "div";
-  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></${tag}>`;
+  const icon = href?.startsWith("#/ncr") ? "alert" : item.kind === "reminder" ? "clock" : href ? "document" : "bell";
+  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><span class="notification-icon" aria-hidden="true">${uiIcon(icon)}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
 }
 
 // ---------- แจ้งเตือนบนเครื่อง (Web Push) ----------
@@ -4918,7 +4963,7 @@ async function renderProfile() {
       <form id="credential-form">
         <div class="field"><label for="new-employee-no">รหัสพนักงาน${REQUIRED_MARK}</label><input class="input" id="new-employee-no" name="employee_no" maxlength="32" value="${escapeHtml(employee.employee_no)}" required><small>คงเดิมไว้ได้หากเปลี่ยนเฉพาะรหัสผ่าน · ทุกคำขอต้องตั้งรหัสผ่านใหม่</small></div>
         <div class="field-row">
-          <div class="field"><label for="new-password">รหัสผ่านใหม่${REQUIRED_MARK}</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+          <div class="field"><label for="new-password">รหัสผ่านใหม่${REQUIRED_MARK}</label><input class="input" id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร</small></div>
           <div class="field"><label for="confirm-new-password">ยืนยันรหัสผ่านใหม่${REQUIRED_MARK}</label><input class="input" id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
         </div>
         <div class="field"><label for="credential-reason">เหตุผล (ถ้ามี)</label><textarea class="textarea" id="credential-reason" name="reason" maxlength="1000"></textarea></div>

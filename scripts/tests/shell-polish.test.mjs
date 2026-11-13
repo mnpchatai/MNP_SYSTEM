@@ -353,3 +353,41 @@ test("round 23: conditional requirements are said in the label, summaries and th
   assert.doesNotMatch(board, /<summary>ดูรายละเอียด<\/summary>/);
   assert.match(app, /aria-label="เลือก \$\{escapeHtml\(request\.request_no\)\} เพื่อตัดสินหลายรายการ"/);
 });
+
+test("round 24 (gaps to a 4): plain-language errors, step position, offline notice, help for every page, unsent text guard", async () => {
+  const vm = await import("node:vm");
+  // H9: ข้อความเทคนิคไม่ถึงผู้ใช้ เน็ตหลุดบอกว่าข้อมูลยังอยู่ ข้อความไทยของเราเองผ่านตามเดิม
+  const start = app.indexOf("const NETWORK_ERROR_PATTERN");
+  const source = app.slice(start, app.indexOf("\n}\n", app.indexOf("function unmappedErrorText(")) + 3);
+  const context = vm.createContext({});
+  vm.runInContext(`${source}\nthis.fn = unmappedErrorText;`, context);
+  assert.equal(context.fn("TypeError: Failed to fetch"), "ส่งไม่สำเร็จ สัญญาณอาจขาด ข้อมูลที่กรอกยังอยู่ ลองส่งอีกครั้ง");
+  assert.equal(context.fn("Load failed"), "ส่งไม่สำเร็จ สัญญาณอาจขาด ข้อมูลที่กรอกยังอยู่ ลองส่งอีกครั้ง", "Safari's wording");
+  assert.equal(context.fn("แนบไฟล์ไม่สำเร็จ 1 จาก 2 ไฟล์"), "แนบไฟล์ไม่สำเร็จ 1 จาก 2 ไฟล์");
+  assert.match(context.fn('duplicate key value violates unique constraint "x"'), /^เกิดข้อผิดพลาดที่ระบบ ข้อมูลที่กรอกยังอยู่/);
+  assert.match(app, /STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด"/);
+  // H1: ลำดับขั้นบนหน้ารายละเอียด · แถบไม่มีสัญญาณ
+  const verbsContext = vm.createContext({});
+  vm.runInContext(read("modules/step-verb.js"), verbsContext);
+  const verbs = verbsContext.MNP_STEP_VERB;
+  assert.equal(verbs.stepLineText({ currentStepName: "ผู้จัดการโรงงาน", nextStepName: "ผู้จัดการทั่วไป", position: 1, total: 2 }), "ขั้นที่ 1 จาก 2: ผู้จัดการโรงงาน · ถัดไป: ผู้จัดการทั่วไป");
+  assert.equal(verbs.stepLineText({ currentStepName: "ผู้จัดการทั่วไป", position: 1, total: 1, afterLast: "มอบหมายช่าง" }), "ขั้นตอน: ผู้จัดการทั่วไป · ถัดไป: มอบหมายช่าง", "a one-step request does not count");
+  assert.match(app, /decisionPanelHtml\(\{ request, currentStep, nextStep, steps, extraDecisions/);
+  assert.match(app, /window\.addEventListener\("offline", syncOnlineState\);/);
+  assert.match(css, /\.offline-banner \{ position: fixed;/);
+  // H10: ทุกหน้าหลักมีคำแนะนำ รวมการแจ้งเตือน · NCR บอกส่วนของใบและวิธีนับกำหนดตอบ
+  const helpContext = vm.createContext({});
+  vm.runInContext(read("modules/shortcut-help.js"), helpContext);
+  const help = helpContext.MNP_SHORTCUT_HELP.PAGE_HELP;
+  assert.ok(help.notifications.length >= 2);
+  assert.match(help.ncr.join(" "), /กำหนดตอบ = วันออกใบ \+ 5 วัน/);
+  // H4/H5: ขั้นต่ำของเหตุผลบอกก่อนส่ง · ทางล้างตัวกรองทางเดียว · แถวแจ้งเตือนมีไอคอน · รหัสผ่านใหม่บอกขั้นต่ำ
+  assert.match(app, /<small class="field-hint" id="decision-comment-hint" hidden>อย่างน้อย \$\{window\.MNP_REQUEST_DECISION\?\.MIN_COMMENT_LENGTH \?\? 3\} ตัวอักษร<\/small>/);
+  assert.match(app, /panel\.querySelector\("#decision-comment-hint"\)\.hidden = !needsComment;/);
+  assert.match(css, /\.app-shell:has\(\.empty-state > a\.btn\) \.board-search > a\.btn \{ display: none; \}/);
+  assert.match(app, /<span class="notification-icon" aria-hidden="true">\$\{uiIcon\(icon\)\}<\/span>/);
+  assert.match(app, /id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร<\/small>/);
+  // H3/H5: ข้อความที่พิมพ์ค้างถามก่อนออก (ฟอร์มขั้น NCR มีร่างในเครื่องจึงไม่อยู่ในรายการ)
+  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #verify-note';/);
+  assert.match(app, /if \(panel && panel\.dataset\.state !== "compose"\) return false;/);
+});
