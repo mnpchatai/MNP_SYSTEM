@@ -624,7 +624,8 @@ test("round 27: typed decision reasons survive Esc, cancel and switching queue r
 });
 
 test("home queue: waiting days count from when the step reached the user (approvals and repair tasks)", () => {
-  assert.equal((app.match(/await attachQueueArrivals\(pending, repairTasks\);/g) ?? []).length, 2, "both queue loaders (Home and the next-item panel) read arrival times");
+  assert.match(app, /async function loadQueueWork\(\) \{\s+const \[pending, repairTasks\] = await Promise\.all\(\[getPendingApprovals\(\), getMyRepairActionItems\(\)\]\);\s+await attachQueueArrivals\(pending, repairTasks\);/);
+  assert.equal((app.match(/const \[\[pending, repairTasks\], /g) ?? []).length, 2, "both queue loaders (Home and the next-item panel) read arrival times, in parallel with the rest of the page");
   assert.match(app, /createdAt: step\.arrivedAt \?\? step\.request\.submitted_at \?\? step\.request\.created_at/);
   assert.match(app, /createdAt: task\.arrivedAt \?\? task\.created_at/);
   assert.match(app, /\.from\("approval_steps"\)\.select\("request_id,step_order,acted_at"\)\.in\("request_id", ids\)\.not\("acted_at", "is", null\)/);

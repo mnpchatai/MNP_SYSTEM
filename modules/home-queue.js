@@ -38,7 +38,7 @@
   }
 
   function waitingLabel(days) {
-    return days <= 0 ? "ส่งวันนี้" : `ค้าง ${days} วัน`;
+    return days <= 0 ? "ถึงวันนี้" : `ค้าง ${days} วัน`;
   }
 
   function pickSelection(ids, { requested = null, current = null } = {}) {

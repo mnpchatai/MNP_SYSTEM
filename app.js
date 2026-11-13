@@ -2423,11 +2423,11 @@ async function attachQueueArrivals(pending, repairTasks) {
   if (!approvalIds.length && !repairIds.length) return;
   const pagedRows = async (makeQuery) => {
     const rows = [];
-    for (let offset = 0; ; offset += 1000) {
-      const { data, error } = await makeQuery().range(offset, offset + 999);
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await makeQuery().range(offset, offset + 499);
       if (error) throw error;
       rows.push(...(data ?? []));
-      if (!data || data.length < 1000) return rows;
+      if (!data || data.length < 500) return rows;
     }
   };
   const chunks = (ids) => Array.from({ length: Math.ceil(ids.length / QUEUE_ARRIVAL_CHUNK) }, (_, index) => ids.slice(index * QUEUE_ARRIVAL_CHUNK, (index + 1) * QUEUE_ARRIVAL_CHUNK));
@@ -2489,14 +2489,19 @@ function ncrHomeModule() {
   const entry = requestModule("NCR_CAR");
   return entry?.enabled && deptModuleAllowed(entry.code) ? entry.home ?? null : null;
 }
+// ใบอนุมัติ + งานซ่อมของคิว พร้อมเวลาที่ขั้นมาถึง (อ่านต่อทันทีที่ได้รายการ ขนานกับการโหลดส่วนอื่นของหน้า)
+async function loadQueueWork() {
+  const [pending, repairTasks] = await Promise.all([getPendingApprovals(), getMyRepairActionItems()]);
+  await attachQueueArrivals(pending, repairTasks);
+  return [pending, repairTasks];
+}
+
 async function loadHomeQueueItems() {
   const ncrHome = ncrHomeModule();
-  const [pending, repairTasks, ncrItems] = await Promise.all([
-    getPendingApprovals(),
-    getMyRepairActionItems(),
+  const [[pending, repairTasks], ncrItems] = await Promise.all([
+    loadQueueWork(),
     ncrHome ? ncrHome.load(state.employee).catch(() => ({ tasks: [] })) : { tasks: [] },
   ]);
-  await attachQueueArrivals(pending, repairTasks);
   return homeQueueItems(pending, repairTasks, ncrItems.tasks);
 }
 
@@ -2506,9 +2511,8 @@ async function renderDashboard(params = new URLSearchParams()) {
   const rules = window.MNP_HOME_QUEUE;
   // NCR อยู่ในตาราง ncr_reports แยกจากคำร้อง โมดูลจึงดึงงานของตัวเอง (modules/module-ncr.js home)
   const ncrHome = ncrHomeModule();
-  const [pending, repairTasks, directory, mineResult, ncrItems] = await Promise.all([
-    getPendingApprovals(),
-    getMyRepairActionItems(),
+  const [[pending, repairTasks], directory, mineResult, ncrItems] = await Promise.all([
+    loadQueueWork(),
     loadEmployeeDirectory(),
     sb.from("requests")
       .select("id,request_no,title,status,created_at,request_type:request_types(name_th,code,uses_repair_workflow)")
@@ -2520,7 +2524,6 @@ async function renderDashboard(params = new URLSearchParams()) {
     ncrHome ? ncrHome.load(employee).catch(() => { showToast("โหลดงาน NCR ไม่สำเร็จ งาน NCR ไม่ได้แสดงในหน้านี้ ลองโหลดหน้าใหม่", "error"); return { tasks: [], mine: [] }; }) : { tasks: [], mine: [] },
   ]);
   if (mineResult.error) throw mineResult.error;
-  await attachQueueArrivals(pending, repairTasks);
   const items = homeQueueItems(pending, repairTasks, ncrItems.tasks);
   const approvalIds = items.filter((item) => item.kind === "approval").map((item) => item.id);
   // ใบที่เปิด: ใบที่ลิงก์ขอมา > ใบที่เปิดค้างไว้ > ใบแรก (หลังตัดสินใบหนึ่ง ใบถัดไปจึงเปิดเอง)

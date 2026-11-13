@@ -30,7 +30,7 @@ test("waiting days count Thai calendar days, not 24-hour blocks", () => {
 });
 
 test("waiting labels read naturally", () => {
-  assert.equal(queue.waitingLabel(0), "ส่งวันนี้");
+  assert.equal(queue.waitingLabel(0), "ถึงวันนี้", "the step reached the user today (not necessarily submitted today)");
   assert.equal(queue.waitingLabel(1), "ค้าง 1 วัน");
   assert.equal(queue.waitingLabel(12), "ค้าง 12 วัน");
 });
