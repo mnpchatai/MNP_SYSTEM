@@ -2869,6 +2869,7 @@ document.addEventListener("click", (event) => {
   const raised = event.target.closest?.(".register-table tbody tr :is(.register-sub[title], .badge[title])");
   if (!raised || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   if (event.target.closest("a, button, input, select, textarea, label")) return;
+  if (window.getSelection && !window.getSelection().isCollapsed) return; // ลากเลือกข้อความเพื่อคัดลอก ไม่เปิดใบ
   raised.closest("tr")?.querySelector("a.register-title")?.click();
 });
 
