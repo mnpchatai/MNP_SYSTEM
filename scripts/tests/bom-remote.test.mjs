@@ -1385,7 +1385,7 @@ const FILES = [
   "modules/ui-icons.js",
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
-  "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
+  "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(), mockOptions = {}, mutate = () => {}, hooks = {}, persona = null, sandboxAdmin = false } = {}) {
@@ -2030,8 +2030,8 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
     assert.equal(ctx.runAction(action, payload, ""), true, action);
     await settle();
   }
-  let html = await env.render(`p=orders&sel=${id}`);
-  assert.match(html, /data-rf-action="releaseOrder"/, "a draft shows the release button to the planner");
+  let html = await env.render(`p=orders&sel=${id}&step=3`);
+  assert.match(html, /data-rf-action="releaseOrder"/, "a draft shows the release button to the planner (step 3 of the PI)");
   assert.match(html, /data-rf-open="stockCount"/, "and the count buttons");
   assert.equal(ctx.runAction("setStockCount", { orderId: id, itemCode: "PT-TEST-01", qty: 3 }, "บันทึกยอดคงคลัง {result}"), true);
   await settle();
@@ -2081,7 +2081,7 @@ test("the screens show only what the persona may do: planner group everything, S
     const list = await sees(persona, "p=orders");
     assert.equal(buttons(list.html, "orderNew") > 0, planner, `${persona}: open a new PI`);
     const draft = await sees(persona, "p=orders&sel=PI-D");
-    assert.equal(buttons(draft.html, "releaseOrder") > 0, planner, `${persona}: release`);
+    assert.equal(buttons((await sees(persona, "p=orders&sel=PI-D&step=3")).html, "releaseOrder") > 0, planner, `${persona}: release`);
     assert.equal(buttons(draft.html, "cancelOrder") > 0, planner, `${persona}: cancel`);
     assert.equal(buttons(draft.html, "explodeOrder") > 0, planner, `${persona}: explode`);
     assert.equal(buttons(draft.html, "orderItemAdd") > 0, planner, `${persona}: add products`);
@@ -3065,7 +3065,7 @@ test("the PI page lists RB jobs that have no WO yet with the reason, and the rel
   const s = await autoWoScene();
   const id = await s.draft("PI-P");
   const sku = await s.draft("PI-P2");
-  let html = await s.admin.render(`p=orders&sel=${id}`);
+  let html = await s.admin.render(`p=orders&sel=${id}&step=3`);
   assert.match(html, /เปิด WO ใน RubberFlow ให้งาน RB ที่ผูกสูตรแล้ว/, "the release confirm tells that WOs are opened");
   const reply = await s.releaseWith(id, [
     mockJob("JOB-P1", id, "RB", { itemCode: "RB-W" }), mockJob("JOB-P2", id, "RB", { itemCode: "RB-NL" }), mockJob("JOB-P3", id, "RB", { itemCode: "RB-UA" }),

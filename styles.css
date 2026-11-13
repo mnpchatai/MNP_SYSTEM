@@ -3026,3 +3026,94 @@ tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
 .content td.num, .content th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .content td.nowrap { white-space: nowrap; }
 .content td.master-days-old { color: var(--danger-ink); font-weight: 700; }
+
+/* ---------- BOM โครงใหม่ (modules/bom-hub.js): สินค้า · แถบขั้นตอนใบสั่งผลิต · งานของฉัน · ข้อมูลตั้งต้น ---------- */
+/* ป้ายแผนก: ตัวย่อเป็นตัวบอก สีประจำแผนกเป็นตัวช่วย (ผสมกับพื้นและตัวอักษรของธีม จึงใช้ได้ทั้งโหมดสว่างและมืด) */
+.bom-dept { --dc: var(--muted); display: inline-flex; align-items: center; justify-content: center; min-width: 34px; padding: 2px 8px; border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; line-height: 1.5; color: color-mix(in srgb, var(--dc) 70%, var(--ink)); background: color-mix(in srgb, var(--dc) 18%, var(--paper)); }
+.bom-dept[data-dept="ST"] { --dc: #4a6fa5; }
+.bom-dept[data-dept="RB"] { --dc: #d9730d; }
+.bom-dept[data-dept="GR"] { --dc: #14815a; }
+.bom-dept[data-dept="PT"] { --dc: #7c3aed; }
+.bom-dept[data-dept="BG"] { --dc: #c0276a; }
+.bom-dept[data-dept="PK"] { --dc: #1769e0; }
+.bom-back { margin: 0; font-size: var(--text-ui); }
+.bom-hero-code { margin: 0; font-size: var(--text-meta); }
+.bom-hero-sub { margin: 2px 0 0; font-size: var(--text-meta); }
+.bom-hub-body { display: grid; gap: 12px; min-width: 0; }
+.bom-hub-body > * { min-width: 0; }
+.bom-find-link { display: grid; gap: 1px; color: inherit; text-decoration: none; }
+.bom-find-link:hover strong { text-decoration: underline; }
+.bom-find-link .rf-mono { color: var(--muted); }
+/* โครงสร้างสินค้า: ต้นไม้ + แผงรายละเอียดของบรรทัดที่เลือก */
+.bom-tree-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (min-width: 1041px) { .bom-tree-layout { grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); } .bom-tree-side { position: sticky; top: 12px; } }
+.bom-tree-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 16px; border-bottom: 1px solid var(--soft-line); }
+.bom-tree-qty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--text-ui); }
+.bom-tree-qty .input { width: 96px; text-align: right; }
+.bom-tree-cell { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: calc(var(--lv, 0) * 26px); }
+.bom-tree-toggle { flex: 0 0 32px; width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0; font: inherit; font-weight: 700; line-height: 1; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; }
+.bom-tree-toggle.is-leaf { border-color: transparent; background: none; cursor: default; }
+.bom-tree-name { display: grid; gap: 1px; min-width: 0; min-height: 44px; align-content: center; padding: 2px 6px; font: inherit; text-align: left; color: var(--ink); background: none; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
+.bom-tree-name:hover { background: var(--shell); }
+.bom-tree-name.is-parent > span:first-child { font-weight: 700; }
+.bom-tree-name .rf-mono { color: var(--muted); overflow-wrap: anywhere; }
+table.bom-tree td { vertical-align: middle; }
+table.bom-tree td.right { white-space: nowrap; }
+.bom-tree-side { padding: 16px; display: grid; gap: 10px; }
+.bom-tree-side p { margin: 0; }
+.bom-side-title { margin: 0; font-size: var(--text-title); line-height: 1.35; }
+/* แถบขั้นตอนของใบสั่งผลิต */
+.bom-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.bom-step > a, .bom-step > div { display: grid; gap: 1px; height: 100%; padding: 10px 12px; color: var(--muted); text-decoration: none; background: var(--paper); border: 1px solid var(--card-border, var(--line)); border-radius: var(--radius-md); box-sizing: border-box; }
+.bom-step strong { color: var(--ink); font-size: var(--text-ui); }
+.bom-step-no { font-size: var(--text-caption); font-weight: 700; }
+.bom-step.is-done > a, .bom-step.is-done > div { background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 35%, var(--paper)); }
+.bom-step.is-done .bom-step-no { color: var(--success-ink); }
+.bom-step.is-now > a, .bom-step.is-now > div { border: 2px solid var(--m600, var(--primary)); padding: 9px 11px; }
+.bom-step.is-now .bom-step-no { color: var(--m700, var(--primary-ink)); }
+.bom-step.is-off > div { opacity: .6; }
+.bom-step > a:hover { border-color: var(--m500, var(--primary)); }
+@media (max-width: 760px) { .bom-steps { grid-template-columns: minmax(0, 1fr); gap: 4px; } .bom-step > a, .bom-step > div { grid-template-columns: 64px minmax(0, 1fr); align-items: baseline; column-gap: 8px; } .bom-step .small { grid-column: 2; } .bom-step:not(.is-now) .small { display: none; } }
+.bom-short td { background: var(--danger-soft); }
+.bom-short-text { color: var(--danger-ink); }
+.bom-ok-text { color: var(--success-ink); font-weight: 600; }
+.bom-step-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--soft-line); }
+.bom-step-next { margin-top: 12px; justify-content: flex-end; }
+.bom-more { margin-top: 12px; }
+.bom-more > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--primary-ink); font-size: var(--text-ui); font-weight: 600; }
+.bom-more[open] > summary { margin-bottom: 8px; }
+.bom-release-list { margin: 8px 0 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; max-width: 420px; }
+.bom-release-list dd { margin: 0; font-weight: 700; text-align: right; }
+/* งานของฉัน: การ์ดงาน */
+.bom-job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; align-items: start; }
+.bom-job { padding: 14px; display: grid; gap: 8px; }
+.bom-job.is-now { border: 2px solid var(--m600, var(--primary)); padding: 13px; }
+.bom-job.is-hold { border-color: var(--warning); }
+.bom-job h2 { margin: 0; font-size: var(--text-title); line-height: 1.35; }
+.bom-job p { margin: 0; }
+.bom-job-top { display: flex; justify-content: space-between; gap: 8px; font-size: var(--text-meta); }
+.bom-job-state { font-weight: 700; color: var(--muted); }
+.bom-job.is-now .bom-job-state { color: var(--m700, var(--primary-ink)); }
+.bom-job.is-hold .bom-job-state { color: var(--warning-ink); }
+.bom-job-late { color: var(--danger-ink); font-weight: 700; }
+.bom-job-amount { display: flex; justify-content: space-between; gap: 8px; font-size: var(--text-ui); }
+.bom-job .rf-bar { height: 10px; }
+.bom-job-main { min-height: 48px; width: 100%; justify-content: center; }
+.bom-job-more { justify-content: flex-start; }
+.bom-job-parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--text-ui); }
+.bom-job-parts li { display: flex; justify-content: space-between; gap: 12px; }
+/* ข้อมูลตั้งต้น */
+.bom-setup-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.bom-setup-card { display: flex; align-items: center; gap: 12px; padding: 14px; color: var(--ink); text-decoration: none; }
+.bom-setup-card > span:last-child { display: grid; gap: 1px; min-width: 0; }
+.bom-setup-card:hover { border-color: var(--m500, var(--primary)); }
+/* ต้นไม้โครงสร้าง: แถวที่ย่ออยู่ต้องหายจริงแม้ตารางถูกจัดเป็นการ์ดบนจอแคบ (กฎการ์ดตั้ง display ให้ tr) และบรรทัดชื่อใช้เต็มความกว้าง */
+.rf-page table.rf-table.bom-tree tr[hidden] { display: none; }
+@media (max-width: 760px) {
+  .rf-page table.rf-table.bom-tree td:first-child[data-label] { padding-left: 0; }
+  .rf-page table.rf-table.bom-tree td:first-child[data-label]::before { content: none; }
+  .bom-tree-cell { padding-left: calc(var(--lv, 0) * 14px); }
+}
+@media (pointer: coarse) { .bom-tree-toggle { flex-basis: 44px; width: 44px; height: 44px; } }
+/* ป้ายแผนกในตาราง: ไม่ถูกบีบและไม่ตัดตัวอักษรขึ้นบรรทัดใหม่บนจอแคบ */
+.rf-page table.rf-table td .bom-dept { flex: none; min-width: 34px; white-space: nowrap; overflow-wrap: normal; }

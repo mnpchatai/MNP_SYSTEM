@@ -10,7 +10,7 @@ const FILES = [
   "modules/ui-icons.js",
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
-  "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/module-bom.js",
+  "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "check", "orders", "customers", "count", "stock", "jobs", "audit"];
@@ -97,9 +97,11 @@ test("every page renders for every role without undefined/NaN, menus follow the 
       else assert.match(html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/, `${role} is denied ${page}`);
     }
     const sub = env.module.nav[0].subnav("bom");
-    for (const page of PAGES) assert.equal(sub.includes(`p=${page}`) || page === "dashboard", env.context.MNP_BOM_STORE.canSee(user, page) || page === "dashboard", `${role} menu ${page}`);
+    // เมนูข้างมีแค่เมนูหลัก 4 อัน (storeApi.NAV) ที่บทบาทนั้นเห็นได้ · หน้าอื่นเปิดจากลิงก์ในหน้าเหล่านั้น
+    const NAV = env.context.MNP_BOM_STORE.NAV;
+    for (const page of [...PAGES, ...NAV]) assert.equal(sub.includes(`p=${page}"`), NAV.includes(page) && env.context.MNP_BOM_STORE.canSee(user, page), `${role} menu ${page}`);
     await env.render("p=nothing");
-    assert.equal(env.log.hash, role === "st" ? "#/bom?p=count" : "#/bom", "unknown page → home of the role (the warehouse lands on the count page)");
+    assert.equal(env.log.hash, ["admin", "manager", "planner"].includes(role) ? "#/bom?p=find" : "#/bom?p=work", "unknown page → home of the role (planners land on products, departments on their own jobs)");
   }
 });
 
@@ -1381,7 +1383,7 @@ test("paste from Excel: Add re-checks the table, so a deleted parent or a change
 test("in the in-browser demo a release opens no WOs: the confirm says nothing about RubberFlow and the jobs tab has no missing-WO callout", async () => {
   const env = load();
   env.store.setUser("B03");
-  let html = await env.render("p=orders&sel=DEMO-26002");
+  let html = await env.render("p=orders&sel=DEMO-26002&step=3");
   assert.match(html, /data-rf-confirm="ปล่อยผลิต DEMO-26002\? ระบบจะล็อกฉบับแก้ไขของ BOM และสร้างงานรายแผนก"/);
   assert.doesNotMatch(html, /เปิด WO ใน RubberFlow/);
   assert.equal(env.store.run("releaseOrder", { orderId: "DEMO-26002" }).ok, true);
@@ -1602,4 +1604,95 @@ test("the Thai date picker drops required from the hidden native date input, so 
   for (const file of ["modules/module-rubberflow.js", "modules/module-bom.js"]) {
     assert.match(fs.readFileSync(file, "utf8"), /dialog\.querySelector\("input:not\(\[type=hidden\]\):not\(\[hidden\]\), select:not\(\[hidden\]\), textarea, \.date-pick-button"\)/, `${file}: first focus skips the hidden date input`);
   }
+});
+
+// ---------- โครงใหม่ 4 เมนู (modules/bom-hub.js) ----------
+test("the menu has four entries and a bare #/bom opens the role's home: products for planners, own jobs for departments", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const sub = env.module.nav[0].subnav("bom");
+  assert.deepEqual([...sub.matchAll(/href="#\/bom\?p=(\w+)"/g)].map((match) => match[1]), ["find", "orders", "work", "setup"]);
+  assert.match(await env.render(""), /<h1>สินค้า<\/h1>/, "planner home is the product search");
+  env.store.setUser("B04");
+  assert.match(await env.render(""), /<h1>งานของฉัน<\/h1>/, "a department lands on its own jobs");
+  clean(await env.render("p=setup"));
+});
+
+test("the product page shows one item as a readable tree: an inverse ratio reads as pieces per rod, tabs embed the old pages without their own heads", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const code = encodeURIComponent("DEMO-TP-01(P)-Y");
+  let html = await env.render(`p=find&code=${code}&qty=80`);
+  clean(html);
+  assert.match(html, /<h1>ตอปิโดยาง TP-01 แพ็กถุง ชุดสี Y \(3 ชิ้น\/ชุด\)<\/h1>/);
+  assert.match(html, /1 เส้น ได้ 31 ชิ้น/, "0.0323 rod per piece is shown as 31 pieces per rod");
+  assert.match(html, /<strong>240 ชิ้น<\/strong>/, "3 per set × 80 sets");
+  assert.match(html, /data-tree-toggle aria-expanded="true"/, "a small tree starts fully open");
+  assert.equal((html.match(/<h1>/g) ?? []).length, 1);
+  for (const tab of ["depts", "cost", "history"]) {
+    html = await env.render(`p=find&code=${code}&tab=${tab}`);
+    clean(html);
+    assert.equal((html.match(/<h1>/g) ?? []).length, 1, `${tab}: the embedded page has no head of its own`);
+    assert.doesNotMatch(html, /data-bom-pick/, `${tab}: no second product picker`);
+    assert.doesNotMatch(html, /href="#\/bom\?p=(items|product|structure)[&"]/, `${tab}: links stay on the product page`);
+  }
+  assert.equal(env.context.MNP_BOM_PAGES.hub.ratioText(env.ctx(), 0.3, "pcs", "set"), "0.3000 ชิ้น", "a ratio that is not a whole inverse stays a plain quantity");
+  env.store.setUser("B04");
+  html = await env.render(`p=find&code=${code}`);
+  assert.doesNotMatch(html, /แก้ BOM|data-rf-open="itemEdit"/, "a department cannot edit");
+});
+
+test("one BOM line can be edited from the product page: the dialog posts the whole BOM and an untouched ratio keeps its full precision", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "SE-TP01-OR01-100-18-65";
+  const before = json(env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved"));
+  const built = env.context.MNP_BOM_DIALOGS.lineEdit(env.ctx(), { parentCode: parent, childCode: before.lines[0].childCode });
+  assert.equal((built.html.match(/name="childCode\[\]"/g) ?? []).length, before.lines.length, "every line travels with the form");
+  const values = { "childCode[]": before.lines.map((line) => line.childCode), "qty[]": before.lines.map((line, index) => (index === 0 ? String(Math.round(line.qty * 1e6) / 1e6) : String(line.qty))), "scrapPct[]": before.lines.map((line, index) => (index === 0 ? "5" : String(line.scrapPct ?? 0))), "lineNote[]": before.lines.map((line) => line.note ?? ""), "lineStep[]": before.lines.map((line) => String(line.step ?? "")), origQty: String(before.lines[0].qty), note: "ทดสอบ" };
+  await env.submit(`p=find&code=${parent}`, "saveBom", values, { itemCode: parent, editCode: before.lines[0].childCode });
+  const after = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved");
+  assert.equal(after.revision, before.revision + 1);
+  assert.equal(after.lines.find((line) => line.childCode === before.lines[0].childCode).qty, before.lines[0].qty, "the rounded form value did not replace 1/31");
+  assert.equal(after.lines.find((line) => line.childCode === before.lines[0].childCode).scrapPct, 5);
+  assert.equal(after.lines.length, before.lines.length);
+});
+
+test("a PI opens as one page with a five-step bar: a draft is at step 2 with the shortage list, release sits on step 3, a released PI is at step 4", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  let html = await env.render("p=orders&sel=DEMO-26002");
+  clean(html);
+  assert.match(html, /<li class="bom-step is-now" aria-current="step"><div><span class="bom-step-no">ขั้น 2<\/span>/);
+  assert.match(html, /ขาด [\d.,]+ /, "purchased parts short of stock are listed");
+  assert.doesNotMatch(html, /data-rf-action="releaseOrder"/, "no release button before step 3");
+  assert.doesNotMatch(html, /bom-split/, "the PI list is not drawn beside an open PI");
+  html = await env.render("p=orders&sel=DEMO-26002&step=3");
+  assert.match(html, /data-rf-action="releaseOrder"/);
+  html = await env.render("p=orders&sel=DEMO-26001");
+  clean(html);
+  assert.match(html, /aria-current="step"><div><span class="bom-step-no">ขั้น 4<\/span>/);
+  assert.match(html, /data-rf-action="completeOrder"/, "closing early is still possible from the other commands");
+  assert.equal(env.context.MNP_BOM_PAGES.hub.orderStepOf(env.ctx(), { status: "draft", items: [] }), 1);
+});
+
+test("my jobs shows only the department's own jobs as cards, and the warehouse gets one card per PI for its purchased parts", async () => {
+  const env = load();
+  env.store.setUser("B04");
+  let html = await env.render("p=work");
+  clean(html);
+  const open = env.store.data().jobs.filter((job) => job.dept === "RB" && job.status !== "done").length;
+  assert.equal((html.match(/<article class="card rf-card bom-job/g) ?? []).length, open);
+  assert.doesNotMatch(html, /role="tab"[^>]*>ทุกแผนก/, "no department switch for a department user");
+  assert.equal((await env.render("p=work&dept=GR")).match(/<article class="card rf-card bom-job/g).length, open, "the dept parameter is ignored for a department user");
+  env.store.setUser("B08");
+  html = await env.render("p=work");
+  clean(html);
+  assert.equal((html.match(/<article class="card rf-card bom-job/g) ?? []).length, 1, "seven part jobs of one PI are one card");
+  assert.match(html, /เบิกของตามใบ DEMO-26001/);
+  assert.match(html, />ต้องทำ 1</, "the tab counts cards, not the seven part jobs");
+  assert.match(env.module.nav[0].subnav("bom"), /rf-nav-count"[^>]*>1</, "and so does the menu badge");
+  env.store.setUser("B04");
+  html = await env.render("p=orders&sel=DEMO-26001");
+  assert.equal((html.match(/>ดูงาน</g) ?? []).length, 1, "a department gets the jobs link on its own row only");
 });
