@@ -374,7 +374,7 @@
   }
 
   function deptHtml(list, filters) {
-    const { rows: deptRows, total } = model.deptTable(list, filters);
+    const { rows: deptRows } = model.deptTable(list, filters);
     const resolve = (key) => {
       const row = deptRows.find((entry) => entry.dept === key);
       return row && { title: key ? `แผนก ${key}` : "ยังไม่กำหนดแผนก", lines: [["ใบที่เกี่ยวข้อง", fmtCount(row.count)], ["ค้างอยู่", fmtCount(row.open)], ["เลยกำหนดตอบ", fmtCount(row.overdue)], ["รอส่งแนวทางป้องกัน", fmtCount(row.preventionPending)], ["เลยกำหนดส่งแนวทางป้องกัน", fmtCount(row.preventionOverdue)], ["ตอบทันกำหนด", fmtPercent(row.onTimeRate)], ["สูญเสียสุทธิที่แบ่งตามสัดส่วนแผนก", fmtBaht(row.net)]], href: key ? hrefWith(filters, { dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : undefined };
