@@ -911,7 +911,7 @@
         </form></div>` : ""}
         ${canVerify ? `<div class="detail-action" id="repair-verify"><h3>ตรวจรับงาน</h3>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน</button><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน</button></div></div>` : ""}`,
         // ปุ่มของขั้นที่ผู้ใช้ต้องทำอยู่ที่เดียวกับปุ่มอนุมัติ (app.js วางใน action-panel ของคอลัมน์ขวา มือถือเป็นแถบล่าง)
-        asideHtml: `${canStartWork ? `<section class="card action-panel step-panel" id="repair-start-panel" aria-labelledby="repair-start-title"><div class="action-panel-head"><h2 id="repair-start-title">ขั้นถัดไปของคุณ</h2></div><div class="approval-actions action-panel-buttons"><button class="btn is-primary start-work-button" title="กดเมื่อเริ่มลงมือซ่อมจริง">เริ่มงาน</button></div></section>` : ""}`,
+        asideHtml: `${canStartWork ? `<section class="card action-panel step-panel" id="repair-start-panel" aria-labelledby="repair-start-title"><div class="action-panel-head"><h2 id="repair-start-title">สิ่งที่คุณต้องดำเนินการ</h2></div><div class="approval-actions action-panel-buttons"><button class="btn is-primary start-work-button" title="กดเมื่อเริ่มลงมือซ่อมจริง">เริ่มงาน</button></div></section>` : ""}`,
       };
     },
 

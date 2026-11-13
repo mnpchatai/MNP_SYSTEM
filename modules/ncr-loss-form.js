@@ -49,7 +49,7 @@
           ${numberField("ncr-loss-cost", "unit_cost", "ต้นทุนต่อหน่วย (บาท)", "", "0.01")}
           <div class="field full"><p class="muted small" id="ncr-loss-hint"></p></div>
           <div class="field full" data-field="evidence_ref"><label for="ncr-loss-ref">หลักฐานอ้างอิง ${estimateOnly ? "(ถ้ามี)" : "(จำเป็นเมื่อยืนยันยอด)"}</label><input class="input" id="ncr-loss-ref" name="evidence_ref" maxlength="200" placeholder="เลขที่ใบเสร็จ ใบต้นทุน ใบบันทึกเวลา หรือชื่อไฟล์หลักฐานที่แนบใน NCR"></div>
-          <div class="field full" data-field="note"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
+          <div class="field full" data-field="note"><label for="ncr-loss-note">รายละเอียด / หมายเหตุ (จำเป็นเมื่อประเภทเป็น อื่น ๆ)</label><input class="input" id="ncr-loss-note" name="note" maxlength="500"></div>
           ${extraFilesField("ncr-loss-files")}
         </div><div class="form-actions"><button class="btn secondary" type="button" id="ncr-loss-reset" hidden>ยกเลิกการแก้ไข</button><button class="btn" type="submit">บันทึกรายการ</button></div></form></details>` : ""}
       ${reviewHtml(ncr, full, directory, formatQty, embedded)}
@@ -72,7 +72,7 @@
         <p class="muted small">${Object.entries(LEGACY_OUTCOME).map(([key, label]) => `${label} ${formatQty(o[key])}`).join(" · ")} ${escapeHtml(ncr.unit)} · เครื่องหยุด/รอ ${formatQty(o.downtime_hours)} ชม.${o.evidence_ref ? ` · หลักฐาน ${escapeHtml(o.evidence_ref)}` : ""}</p></details>` : ""}
       ${editable ? `<form class="ncr-action" data-action="review_costs"><div class="ncr-form-message"></div><div class="form-grid">
         <label class="ncr-check field full"><input type="checkbox" name="cost_reviewed"${o?.cost_reviewed ? " checked" : ""}><span>ประเมินความสูญเสียครบแล้ว (ต้องยืนยันยอดทุกรายการก่อน)</span></label>
-        <div class="field full"><label for="ncr-review-note">หมายเหตุ / เหตุผลกรณีไม่มีความสูญเสีย</label><textarea class="textarea" id="ncr-review-note" name="note" maxlength="1000">${escapeHtml(o?.note ?? "")}</textarea></div>
+        <div class="field full"><label for="ncr-review-note">หมายเหตุ / เหตุผลกรณีไม่มีความสูญเสีย (จำเป็นเมื่อไม่มีความสูญเสีย)</label><textarea class="textarea" id="ncr-review-note" name="note" maxlength="1000">${escapeHtml(o?.note ?? "")}</textarea></div>
         </div><div class="form-actions"><button class="btn secondary" type="submit">บันทึกสรุปการประเมิน</button></div></form>` : ""}</div>`;
   }
   function readEntry(form) {

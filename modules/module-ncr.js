@@ -117,6 +117,62 @@
   // ฟอร์มของขั้นที่แนบหลักฐานไปพร้อมงานได้ (พิจารณา ตอบ ส่งแนวทางป้องกัน ติดตาม ให้ข้อมูลเพิ่ม)
   // ไม่นับ ยกเลิก NCR (แนบแล้วใบถูกยกเลิก) ลงนาม (ไม่มีช่องไฟล์) และขอข้อมูลก่อนลงนาม (ไม่ใช่งานของขั้น) ผู้ที่มีแค่ฟอร์มเหล่านี้ยังแนบในการ์ดไฟล์หลักฐาน
   const STEP_FILE_ACTIONS = Object.freeze(["dispose", "respond", "submit_prevention", "followup", "answer_info"]);
+  // ร่างของฟอร์มขั้นที่พิมพ์ยาว: ตอบ NCR · ส่งแนวทางป้องกัน · ให้ข้อมูลเพิ่ม (หลักการ "เก็บร่างไว้" ใน PRODUCT.md)
+  // เก็บบนเครื่อง (localStorage ผ่าน modules/form-draft.js) ต่อใบ ต่อผู้ใช้ ต่อการกระทำ ไม่เก็บไฟล์ · ออกจากระบบแล้วร่างถูกลบ (clearAll)
+  const STEP_DRAFT_ACTIONS = Object.freeze(["respond", "submit_prevention", "answer_info"]);
+  const STEP_DRAFT_SKIP_TYPES = ["file", "submit", "button", "hidden", "reset"];
+  const stepDraftValues = (form) => {
+    const values = {};
+    for (const input of form.elements) {
+      if (!input.name || STEP_DRAFT_SKIP_TYPES.includes(input.type)) continue;
+      if (input.type === "checkbox") {
+        values[input.name] ??= [];
+        if (input.checked) values[input.name].push(input.value);
+      } else if (input.type === "radio") {
+        if (input.checked) values[input.name] = input.value;
+        else values[input.name] ??= "";
+      } else {
+        values[input.name] = input.value;
+      }
+    }
+    return values;
+  };
+  const restoreStepDraft = (form, values) => {
+    for (const input of form.elements) {
+      if (!input.name || !Object.hasOwn(values, input.name) || STEP_DRAFT_SKIP_TYPES.includes(input.type)) continue;
+      const value = values[input.name];
+      if (input.type === "checkbox") input.checked = Array.isArray(value) && value.includes(input.value);
+      else if (input.type === "radio") input.checked = value === input.value;
+      else if (typeof value === "string") input.value = value;
+    }
+  };
+  // คืน store ของร่าง (ผู้เรียกล้างเมื่อส่งสำเร็จ) หรือ null เมื่อฟอร์มนี้ไม่เก็บร่าง
+  const bindStepDraft = (form, ncrId, employeeId, draftApi = window.MNP_FORM_DRAFT) => {
+    if (!draftApi || !employeeId || !STEP_DRAFT_ACTIONS.includes(form.dataset?.action)) return null;
+    const store = draftApi.createDraftStore({ key: draftApi.draftKey(`NCR_STEP:${form.dataset.action}:${ncrId}`, employeeId) });
+    const autosave = draftApi.createAutosave({ store, values: () => stepDraftValues(form) });
+    form.addEventListener("input", () => autosave.schedule());
+    form.addEventListener("change", () => autosave.schedule());
+    const draft = store.load();
+    // ร่างที่ตรงกับค่าในฟอร์มอยู่แล้ว (เช่น ส่งไปแล้วแต่ล้างไม่ทัน) ไม่ต้องถาม
+    if (draft && JSON.stringify(draft.values) !== JSON.stringify(stepDraftValues(form))) {
+      autosave.stop();
+      form.insertAdjacentHTML("afterbegin", '<div class="draft-banner" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>');
+      draftApi.offerDraft({
+        banner: form.querySelector(".draft-banner"),
+        message: `มีร่างที่พิมพ์ค้างไว้จาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
+        onUse: () => { autosave.start(); restoreStepDraft(form, draft.values); form.querySelector("textarea, input:not([type=hidden])")?.focus(); },
+        onDiscard: () => { autosave.start(); store.clear(); },
+        form,
+        onEdit: () => { autosave.start(); autosave.schedule(); },
+        hasInput: () => !draftApi.isEmptyDraft(stepDraftValues(form)),
+      });
+    } else if (draft) {
+      store.clear();
+    }
+    return { clear: () => { autosave.stop(); store.clear(); } };
+  };
+
   const stepFileInput = (forms) => {
     for (const form of forms) {
       if (!STEP_FILE_ACTIONS.includes(form?.dataset?.action)) continue;
@@ -1101,6 +1157,7 @@
     });
 
     document.querySelectorAll("form.ncr-action").forEach((form) => clearActionErrorOnEdit(form));
+    const stepDrafts = new Map([...document.querySelectorAll("form.ncr-action")].map((form) => [form, bindStepDraft(form, ncr.id, state.employee?.id)]));
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const action = form.dataset.action;
@@ -1133,6 +1190,7 @@
         setFormBusy(form, true);
         const result = await pending;
         if (result.error) throw result.error;
+        stepDrafts.get(form)?.clear();
         let message = result.message ?? doneMessages[action];
         let failed = result.failed;
         // ไฟล์ที่แนบมากับการกระทำอัปโหลดหลังบันทึกสำเร็จ ถ้าอัปโหลดไม่ผ่าน การกระทำยังบันทึกอยู่และแนบใหม่ได้
@@ -1259,7 +1317,7 @@
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
     // ISSUE_RULES เปิดให้เทสต์ตรวจกติกาจริงของฟอร์มออก NCR (scripts/tests/ncr-detail-page.test.mjs)
-    shared: { evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, stepFileInput, formatQty, formatBaht, ISSUE_RULES },
+    shared: { stepDraftValues, restoreStepDraft, bindStepDraft, STEP_DRAFT_ACTIONS, evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, stepFileInput, formatQty, formatBaht, ISSUE_RULES },
 
     pages: {
       async ncr(params) {

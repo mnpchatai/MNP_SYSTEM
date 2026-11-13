@@ -206,10 +206,10 @@
         <span class="nd-note">ตอบทันกำหนด ${fmtPercent(sums.onTimeRate)}${sums.slaBase ? ` (${sums.onTime}/${sums.slaBase})` : ""}</span></div>
       <div class="nd-tile"><span class="nd-label">ความสูญเสียสุทธิ (ยืนยันแล้ว)</span><span class="nd-value">${fmtShort(sums.net)}<small>฿</small></span>
         ${sums.estimated || sums.legacy ? `<span class="nd-note">${sums.estimated ? `+ ประมาณการ ${fmtBaht(sums.estimated)} ยังไม่ยืนยัน` : ""}${sums.estimated && sums.legacy ? " · " : ""}${sums.legacy ? `รายการเดิม ${fmtBaht(sums.legacy)}` : ""}</span>` : ""}
-        <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(money)}${sums.need > sums.assessed ? `<p class="nd-hint">ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินความสูญเสียไม่ครบทุกใบ</p>` : ""}${filters.dept ? `<p class="nd-hint">เมื่อกรองแผนก มูลค่าแบ่งตามสัดส่วนความรับผิดชอบของแผนกนั้น</p>` : ""}</details></div>
+        <details class="nd-more"><summary>ดูรายละเอียดยอดสุทธิ</summary>${list(money)}${sums.need > sums.assessed ? `<p class="nd-hint">ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินความสูญเสียไม่ครบทุกใบ</p>` : ""}${filters.dept ? `<p class="nd-hint">เมื่อกรองแผนก มูลค่าแบ่งตามสัดส่วนความรับผิดชอบของแผนกนั้น</p>` : ""}</details></div>
       <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "loss" })}"><span class="nd-label">ประเมินความสูญเสียแล้ว</span><span class="nd-value">${fmtNumber(sums.assessed)}<small> / ${fmtNumber(sums.need)} ใบ</small></span></a>
         <span class="nd-meter" role="img" aria-label="ประเมินแล้ว ${fmtPercent(sums.assessedRate)}"><span style="width:${(sums.assessedRate ?? 0) * 100}%"></span></span>${sums.need > sums.assessed ? "" : `<span class="nd-note">ครบทุกใบที่ต้องประเมิน</span>`}
-        <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(assess)}<p class="nd-hint">ครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</p></details></div>`;
+        <details class="nd-more"><summary>ดูรายละเอียดการประเมิน</summary>${list(assess)}<p class="nd-hint">ครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</p></details></div>`;
   }
 
   function actHtml(list, top, today) {
