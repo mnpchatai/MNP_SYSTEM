@@ -63,7 +63,7 @@
       lossesByNcr.get(loss.ncr_id).push(loss);
     }
     const outcomesByNcr = new Map(outcomes.map((item) => [item.ncr_id, item]));
-    // วันที่ใบเข้าขั้น "รอแผนกตอบ" ล่าสุด (เริ่มนับ SLA 5 วัน รวมกรณีส่งกลับมาตอบใหม่) และวันที่เปลี่ยนสถานะล่าสุด
+    // วันที่ใบเข้าขั้น "รอแผนกตอบ" ล่าสุด (ใช้หาวันที่ค้างมาเท่านั้น SLA 5 วันนับจาก response_due ไม่ใช่วันนี้) และวันที่เปลี่ยนสถานะล่าสุด
     const enteredResponse = new Map();
     const lastChange = new Map();
     for (const item of history) {
