@@ -163,12 +163,14 @@
     form.addEventListener("change", () => autosave.schedule());
     // ค่าตั้งต้นของฟอร์ม: ฟอร์มตอบที่ QA ส่งกลับมีคำตอบเดิมจากเซิร์ฟเวอร์อยู่แล้ว "เริ่มกรอกเอง" จึงนับเมื่อค่าเปลี่ยนจากนี้ ไม่ใช่เมื่อฟอร์มไม่ว่าง
     const baseline = JSON.stringify(stepDraftValues(form));
-    const draft = store.load();
+    const loaded = store.load();
+    // ร่างที่วันที่เสีย (แก้ storage เอง) ลบทิ้งแล้วทำงานแบบไม่มีร่าง autosave ยังเดินต่อ
+    const savedAt = loaded ? new Date(loaded.savedAt) : null;
+    const draft = savedAt && !Number.isNaN(savedAt.getTime()) && loaded.savedAt <= Date.now() + 60000 ? loaded : null;
+    if (loaded && !draft) store.clear();
     // ร่างที่ตรงกับค่าในฟอร์มอยู่แล้ว (เช่น ส่งไปแล้วแต่ล้างไม่ทัน) ไม่ต้องถาม
     if (draft && JSON.stringify(draft.values) !== baseline) {
       autosave.stop();
-      const savedAt = new Date(draft.savedAt);
-      if (Number.isNaN(savedAt.getTime())) throw new Error("bad draft date");
       // ใบถูกแก้หลังบันทึกร่าง (เช่น QA ส่งกลับอีกรอบ): บอกก่อนให้เลือก ใช้ร่างต่อ จะแทนข้อความในฟอร์ม
       const newer = updatedAt && Date.parse(updatedAt) > draft.savedAt ? " · ใบนี้มีการอัปเดตหลังร่างนี้ ใช้ร่างต่อจะแทนข้อความในฟอร์ม" : "";
       form.insertAdjacentHTML("afterbegin", '<div class="draft-banner" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>');

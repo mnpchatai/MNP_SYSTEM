@@ -844,5 +844,11 @@ test("long step forms keep a local draft: respond, submit prevention and answer 
   assert.equal(otherNcr.inserted, undefined);
   assert.equal(otherUser.inserted, undefined);
   memory.set(key, JSON.stringify({ ...savedDraft, savedAt: 9e15 }));
-  assert.equal(bindStepDraft(draftForm("respond"), "ncr-1", "emp-rb"), null, "a corrupt draft date returns no draft instead of breaking the page");
+  const corrupt = draftForm("respond");
+  assert.notEqual(bindStepDraft(corrupt, "ncr-1", "emp-rb"), null, "a corrupt draft date never breaks the form");
+  assert.equal(corrupt.inserted, undefined, "no banner for a corrupt draft");
+  assert.equal(memory.has(key), false, "the corrupt draft is removed");
+  corrupt.elements[2].value = "เริ่มใหม่";
+  corrupt.listeners.input.forEach((handler) => handler({}));
+  assert.equal(JSON.parse(memory.get(key)).values.root_cause, "เริ่มใหม่", "autosave keeps working after a corrupt draft");
 });
