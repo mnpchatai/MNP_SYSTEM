@@ -133,10 +133,9 @@ const toastNode = document.querySelector("#toast");
 const offlineNode = document.createElement("p");
 offlineNode.className = "offline-banner";
 offlineNode.setAttribute("role", "status");
-offlineNode.textContent = "ไม่มีสัญญาณอินเทอร์เน็ต ข้อมูลที่กรอกยังอยู่ ส่งได้เมื่อสัญญาณกลับมา";
+offlineNode.textContent = "ไม่มีสัญญาณอินเทอร์เน็ต · ส่งได้เมื่อสัญญาณกลับมา";
 function syncOnlineState() {
   offlineNode.hidden = navigator.onLine !== false;
-  document.documentElement.classList.toggle("is-offline", !offlineNode.hidden);
 }
 window.addEventListener("online", syncOnlineState);
 window.addEventListener("offline", syncOnlineState);
@@ -470,6 +469,7 @@ function friendlyError(error) {
   const map = {
     ...moduleMessages,
     AUTH_REQUIRED: "กรุณาเข้าสู่ระบบอีกครั้ง",
+    "JWT expired": "กรุณาเข้าสู่ระบบอีกครั้ง",
     NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้",
     MASTER_PROTECTED: "บัญชี master แก้ไข เปลี่ยนรหัสผ่าน หรือลบได้โดยเจ้าของบัญชีเท่านั้น",
     MASTER_MUST_BE_ACTIVE_ADMIN: "บัญชี master ต้องเป็นผู้ดูแลระบบที่ยังใช้งานอยู่",
@@ -544,11 +544,11 @@ function friendlyError(error) {
 
 // ข้อความที่ไม่มีรหัสในตาราง: ข้อความภาษาไทยของเราเอง (throw new Error("…")) แสดงตามเดิม · เน็ตหลุดบอกว่าข้อมูลยังอยู่
 // ข้อความเทคนิคภาษาอังกฤษ (TypeError, ข้อความของ Postgres) ไม่ขึ้นให้ผู้ใช้ — ส่งเข้า log ของ master แล้วที่ friendlyError
-const NETWORK_ERROR_PATTERN = /failed to fetch|networkerror|load failed|network request failed|err_internet|err_network|timed? ?out|fetch failed/i;
+const NETWORK_ERROR_PATTERN = /failed to fetch|fetch failed|networkerror|network request failed|load failed|network connection was lost|internet connection appears to be offline|failed to send a request|err_internet|err_network|econnreset|the request timed out/i;
 function unmappedErrorText(message) {
-  if (NETWORK_ERROR_PATTERN.test(message)) return "ส่งไม่สำเร็จ สัญญาณอาจขาด ข้อมูลที่กรอกยังอยู่ ลองส่งอีกครั้ง";
+  if (NETWORK_ERROR_PATTERN.test(message)) return "เชื่อมต่อระบบไม่ได้ สัญญาณอาจขาด ลองอีกครั้ง (สิ่งที่กรอกไว้ยังอยู่ในหน้า)";
   if (/[\u0E00-\u0E7F]/.test(message)) return message;
-  return "เกิดข้อผิดพลาดที่ระบบ ข้อมูลที่กรอกยังอยู่ ลองอีกครั้ง ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ";
+  return "เกิดข้อผิดพลาดที่ระบบ ลองอีกครั้ง ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ";
 }
 
 function setFormBusy(form, busy) {
@@ -591,7 +591,7 @@ function optionalAttachments(fileList) {
       return optionalAttachment(file);
     } catch (error) {
       // เลือกหลายไฟล์ต้องบอกว่าไฟล์ไหนไม่ผ่าน
-      throw list.length > 1 ? new Error(`${file.name}: ${error.message}`) : error;
+      throw list.length > 1 ? new Error(`${file.name}: ${friendlyError(error)}`) : error;
     }
   }).filter(Boolean);
   const batchError = window.MNP_ATTACHMENT_IMAGE?.checkBatch(files);
@@ -1127,12 +1127,11 @@ function confirmLeaveWithPendingFiles(count) {
 const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #verify-note';
 function unsavedTextCount() {
   return [...document.querySelectorAll(UNSAVED_TEXT_SELECTOR)].filter((field) => {
-    if (field.closest("[hidden], [aria-busy]")) return false;
+    if (field.disabled || field.readOnly || field.closest("[hidden], [aria-busy]")) return false;
     // แผงตัดสิน: นับเฉพาะตอนกำลังเขียนเหตุผล (ระหว่างนับถอยหลัง/ส่ง แผงจัดการเอง)
     const panel = field.closest("#decision-panel");
     if (panel && panel.dataset.state !== "compose") return false;
-    const typed = field.value.trim();
-    return Boolean(typed) && typed !== field.defaultValue.trim();
+    return field.value.trim() !== field.defaultValue.trim();
   }).length;
 }
 // ออกจากหน้าเมื่อยังมีไฟล์ที่ยังไม่อัปโหลดหรือข้อความที่พิมพ์ค้าง: ถามก่อน (ไฟล์มาก่อนเพราะลบไม่ได้หลังอัปโหลด)
@@ -1146,7 +1145,7 @@ function confirmLeave() {
 }
 // ปุ่มย้อนกลับ/ปัดย้อนกลับ: hashchange ยกเลิกไม่ได้ ใช้ Navigation API ที่ยกเลิกการย้อนกลับได้ (เบราว์เซอร์ที่ไม่มีจะออกเหมือนเดิม)
 window.navigation?.addEventListener("navigate", (event) => {
-  if (event.navigationType !== "traverse" || !event.cancelable) return;
+  if (event.navigationType !== "traverse" || !event.cancelable || event.info === "leave-confirmed") return;
   if (!leaveWarningPending()) return;
   event.preventDefault();
   const key = event.destination.key;
@@ -1154,7 +1153,7 @@ window.navigation?.addEventListener("navigate", (event) => {
     if (!leave) return;
     const input = document.querySelector("#attachment-form #attachment-file");
     if (input) input.value = "";
-    window.navigation.traverseTo(key);
+    window.navigation.traverseTo(key, { info: "leave-confirmed" });
   });
 });
 window.addEventListener("beforeunload", (event) => {
@@ -4695,7 +4694,7 @@ function notificationHref(item) {
 function notificationItemHtml(item) {
   const href = notificationHref(item);
   const tag = href ? "a" : "div";
-  const icon = href?.startsWith("#/ncr") ? "alert" : item.kind === "reminder" ? "clock" : href ? "document" : "bell";
+  const icon = ["reminder", "escalation"].includes(item.kind) ? "clock" : href?.startsWith("#/ncr") ? "clipboard" : href ? "document" : "bell";
   return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><span class="notification-icon" aria-hidden="true">${uiIcon(icon)}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
 }
 

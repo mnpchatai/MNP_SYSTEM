@@ -324,8 +324,8 @@ test("round 15: picked files show an unsent state and a leave warning; closed re
   assert.match(app, /\$\{requestClosed \? \(attachments\.length \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์หลังปิดใบ"\) : attachments\.length \? "แนบไฟล์เพิ่ม" : "แนบไฟล์"\}/);
   // ไม่ถามระหว่างกำลังอัปโหลด · ปุ่ม/ท่าทางย้อนกลับถามด้วย (Navigation API) แล้วย้อนกลับต่อเมื่อยืนยัน
   assert.match(app, /if \(!form \|\| form\.hasAttribute\("aria-busy"\)\) return 0;/);
-  assert.match(app, /window\.navigation\?\.addEventListener\("navigate", \(event\) => \{\r?\n  if \(event\.navigationType !== "traverse" \|\| !event\.cancelable\) return;/);
-  assert.match(app, /window\.navigation\.traverseTo\(key\);/);
+  assert.match(app, /window\.navigation\?\.addEventListener\("navigate", \(event\) => \{\r?\n  if \(event\.navigationType !== "traverse" \|\| !event\.cancelable \|\| event\.info === "leave-confirmed"\) return;/);
+  assert.match(app, /window\.navigation\.traverseTo\(key, \{ info: "leave-confirmed" \}\);/, "the confirmed Back is not asked again (round 24)");
   // แถวยกเลิก: หัว "ยกเลิก" บรรทัดรองไม่พูด "ยกเลิก NCR" ซ้ำ
   assert.match(read("modules/module-ncr.js"), /const detail = statusChanged && !actionLabel\.startsWith\(heading\) \?/);
   assert.match(app, /const requestClosed = \["completed", "rejected", "cancelled", "acknowledged"\]\.includes\(request\.status\) \|\| isFinalDecision\(type, request\.status\);/);

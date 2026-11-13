@@ -361,10 +361,14 @@ test("round 24 (gaps to a 4): plain-language errors, step position, offline noti
   const source = app.slice(start, app.indexOf("\n}\n", app.indexOf("function unmappedErrorText(")) + 3);
   const context = vm.createContext({});
   vm.runInContext(`${source}\nthis.fn = unmappedErrorText;`, context);
-  assert.equal(context.fn("TypeError: Failed to fetch"), "ส่งไม่สำเร็จ สัญญาณอาจขาด ข้อมูลที่กรอกยังอยู่ ลองส่งอีกครั้ง");
-  assert.equal(context.fn("Load failed"), "ส่งไม่สำเร็จ สัญญาณอาจขาด ข้อมูลที่กรอกยังอยู่ ลองส่งอีกครั้ง", "Safari's wording");
+  const offline = "เชื่อมต่อระบบไม่ได้ สัญญาณอาจขาด ลองอีกครั้ง (สิ่งที่กรอกไว้ยังอยู่ในหน้า)";
+  assert.equal(context.fn("TypeError: Failed to fetch"), offline);
+  assert.equal(context.fn("Load failed"), offline, "Safari's wording");
+  assert.equal(context.fn("The network connection was lost."), offline);
+  assert.doesNotMatch(context.fn("canceling statement due to statement timeout"), /สัญญาณ/, "a database timeout is not a network problem");
+  assert.doesNotMatch(offline, /ส่งไม่สำเร็จ/, "callers already prefix ส่งไม่สำเร็จ");
   assert.equal(context.fn("แนบไฟล์ไม่สำเร็จ 1 จาก 2 ไฟล์"), "แนบไฟล์ไม่สำเร็จ 1 จาก 2 ไฟล์");
-  assert.match(context.fn('duplicate key value violates unique constraint "x"'), /^เกิดข้อผิดพลาดที่ระบบ ข้อมูลที่กรอกยังอยู่/);
+  assert.equal(context.fn('duplicate key value violates unique constraint "x"'), "เกิดข้อผิดพลาดที่ระบบ ลองอีกครั้ง ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ");
   assert.match(app, /STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด"/);
   // H1: ลำดับขั้นบนหน้ารายละเอียด · แถบไม่มีสัญญาณ
   const verbsContext = vm.createContext({});
@@ -390,4 +394,40 @@ test("round 24 (gaps to a 4): plain-language errors, step position, offline noti
   // H3/H5: ข้อความที่พิมพ์ค้างถามก่อนออก (ฟอร์มขั้น NCR มีร่างในเครื่องจึงไม่อยู่ในรายการ)
   assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #verify-note';/);
   assert.match(app, /if \(panel && panel\.dataset\.state !== "compose"\) return false;/);
+});
+
+test("round 24: the leave guard asks once for typed text, and Back proceeds after the user confirms (no loop)", async () => {
+  const vm = await import("node:vm");
+  const start = app.indexOf("function pendingAttachmentCount() {");
+  const end = app.indexOf("}, true);\n", start) + "}, true);\n".length;
+  const field = (value, { defaultValue = "", disabled = false, state = null } = {}) => ({ value, defaultValue, disabled, readOnly: false, closest: (selector) => (selector === "#decision-panel" ? (state ? { dataset: { state } } : null) : null) });
+  let fields = [];
+  const listeners = {};
+  const traversed = [];
+  const asked = [];
+  const context = vm.createContext({
+    document: { querySelector: () => null, querySelectorAll: () => fields, addEventListener() {} },
+    window: { addEventListener() {}, navigation: { addEventListener: (type, handler) => { listeners[type] = handler; }, traverseTo: (key, options) => traversed.push([key, options]) } },
+    location: { hash: "" },
+    confirmDialog: async (options) => { asked.push(options.title); return true; },
+  });
+  vm.runInContext(app.slice(start, end), context);
+  const navigate = (info) => { const event = { navigationType: "traverse", cancelable: true, info, destination: { key: "k1" }, prevented: false, preventDefault() { this.prevented = true; } }; listeners.navigate(event); return event; };
+
+  fields = [field("พิมพ์ค้าง", { state: "compose" })];
+  const first = navigate();
+  assert.equal(first.prevented, true, "typed text stops Back once");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(asked, ["ยังไม่ได้ส่งข้อความที่พิมพ์ไว้"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(traversed)), [["k1", { info: "leave-confirmed" }]]);
+  assert.equal(navigate("leave-confirmed").prevented, false, "the confirmed traversal is not asked again");
+
+  fields = [field("พิมพ์ค้าง", { state: "pending" })];
+  assert.equal(navigate().prevented, false, "a decision already counting down is not unsent text");
+  fields = [field("กำลังส่ง", { disabled: true })];
+  assert.equal(navigate().prevented, false, "a field locked while sending is not unsent text");
+  fields = [field("ข้อความเดิม", { defaultValue: "ข้อความเดิม" })];
+  assert.equal(navigate().prevented, false, "unchanged pre-filled text is not a change");
+  fields = [field("", { defaultValue: "ข้อความเดิม" })];
+  assert.equal(navigate().prevented, true, "clearing pre-filled text is an unsent change");
 });

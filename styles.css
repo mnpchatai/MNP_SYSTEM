@@ -1182,8 +1182,8 @@ a.register-title:hover { color: var(--primary); }
 .switch-label { min-height: 48px; padding: 0 14px; display: inline-flex; align-items: center; gap: 10px; justify-self: start; background: var(--shell); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--text-ui); font-weight: 700; cursor: pointer; }
 .switch-label input { width: 22px; height: 22px; margin: 0; accent-color: var(--danger-strong); }
 .switch-label:has(input:checked) { color: var(--danger-ink); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
-/* แถบไม่มีสัญญาณ (app.js syncOnlineState): ลอยบนสุดของจอทุกหน้า ไม่บังแถบตัดสินด้านล่างบนมือถือ */
-.offline-banner { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; z-index: 1200; width: max-content; max-width: calc(100vw - 32px); margin: 0; padding: 10px 16px; transform: translateX(-50%); color: #fff; background: var(--warning-strong); border-radius: var(--radius-pill); box-shadow: var(--shadow-md, 0 6px 20px rgb(0 0 0 / .25)); font-size: var(--text-meta); font-weight: 700; line-height: 1.4; text-align: center; }
+/* แถบไม่มีสัญญาณ (app.js syncOnlineState): แถบบางบนสุดของจอทุกหน้า กดทะลุได้ ไม่บังปุ่มเมนู/ลิงก์กลับ และไม่ชนแถบตัดสินด้านล่าง */
+.offline-banner { position: fixed; inset: 0 0 auto; z-index: 1200; margin: 0; padding: max(4px, env(safe-area-inset-top)) 16px 4px; color: #fff; background: var(--warning-strong); font-size: var(--text-caption); font-weight: 700; line-height: 1.4; text-align: center; pointer-events: none; }
 .offline-banner[hidden] { display: none; }
 .draft-banner { margin-bottom: 16px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: var(--primary-soft); border-radius: var(--radius-md); }
 .draft-banner[hidden] { display: none; }
