@@ -861,7 +861,8 @@
     for (const entry of net) {
       if (!R.MANUFACTURED.includes(entry.kind) || entry.kind === "FG") continue;
       if (entry.toMake <= 0) { covered += 1; continue; }
-      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: entry.toMake, qtyRequired: entry.required, stockCounted: entry.stock ?? null, qtyDone: 0, qtyReject: 0, dueAt: order.due[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
+      // เส้นยางรีดเป็นเส้น/ม้วนเต็ม: แผนของงาน RB ปัดขึ้น (7.74 เส้น → 8 เส้น) · qtyRequired ยังเป็นยอดที่ใบต้องการจริง WO และเคมีจึงคิดจากเส้นเต็ม
+      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: R.wholeRods(entry.kind, entry.uom, entry.toMake), qtyRequired: entry.required, stockCounted: entry.stock ?? null, qtyDone: 0, qtyReject: 0, dueAt: order.due[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
     }
     for (const item of order.items) {
       const fg = itemOf(d, item.fgCode);

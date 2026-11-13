@@ -37,13 +37,13 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.deepEqual(jobs.filter((job) => !rules.MANUFACTURED.includes(job.kind)).map((job) => [job.dept, job.kind]), Array(7).fill(["ST", "PURCHASED"]), "the purchased parts are ST jobs");
   assert.deepEqual(a.stock.map((row) => row.itemCode).sort(), ["P-BAG-01", "P-BOX-01", "P-FAB-BL", "P-PEL-BK", "P-ROPE-01", "P-STK-01", "P-ZIP-05"], "every purchased part of the demo order has a counted balance");
   const rb = jobs.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70");
-  assert.equal(rb.qtyPlanned.toFixed(2), "7.74", "80 sets × 3 SE / 31 pieces per rod — the BOMSHEET number");
-  assert.equal(rb.qtyRequired, rb.qtyPlanned, "nothing counted → plan = gross need");
+  assert.equal(rb.qtyRequired.toFixed(2), "7.74", "80 sets × 3 SE / 31 pieces per rod — the BOMSHEET number");
+  assert.equal(rb.qtyPlanned, 8, "rods are extruded whole: the plan of an RB job is rounded up, the requirement stays exact");
   assert.equal(rb.stockCounted, null);
   const pt = jobs.find((job) => job.itemCode === "PT-00320");
   assert.equal(pt.status, "done");
   assert.deepEqual([pt.qtyRequired, pt.stockCounted, pt.qtyPlanned], [24, 10, 14], "the counted stock reduces the planned quantity (BOMSHEET column AK)");
-  assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyPlanned.toFixed(2), "14.14", "17.14 rods needed across both products, 3 counted");
+  assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyPlanned, 15, "17.14 rods needed across both products, 3 counted → 14.14, rounded up to whole rods");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").status, "hold");
   assert.ok(a.audit.length > 30 && a.audit.every((entry) => entry.user && entry.action));
 });
@@ -282,7 +282,10 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.deepEqual([se3.qtyRequired, se3.stockCounted, se3.qtyPlanned], [seNeeded, 100, seNeeded - 100]);
   const rb3 = jobs3.find((job) => job.itemCode === "RB-DM01-02-OR01-202-18-70");
   assert.ok(Math.abs(rb3.qtyRequired - (seNeeded - 100) * rbPerSe) < 1e-4, "RB demand is derived from the SE shortage, not the full SE requirement");
-  assert.equal(rb3.qtyPlanned, rb3.qtyRequired);
+  assert.equal(rb3.qtyPlanned, Math.ceil(rb3.qtyRequired - 1e-6), "whole rods");
+  assert.equal(rules.wholeRods("RB", "kg", 1.25), 1.25, "rubber counted in kg is not rounded");
+  assert.equal(rules.wholeRods("SE", "pcs", 2.5), 2.5, "only rubber rods and rolls are rounded");
+  assert.equal(rules.wholeRods("RB", "rod", 3.0000004), 3, "float noise does not add a rod");
   assert.equal(jobs3.find((job) => job.itemCode === "PT-00320"), undefined, "enough stock → no job");
   assert.match(d3.audit[0].detail, /1 ชิ้นมีคงคลังพอ ไม่สร้างงาน/);
   // ชิ้นที่ต้องผลิตแต่ไม่มี BOM (BG ของกระเป๋า) → ปล่อยไม่ได้
@@ -1538,4 +1541,21 @@ test("a missing item code is named neutrally: no message prints undefined, null 
     assert.doesNotMatch(text, /undefined|null|NaN/, text);
   }
   assert.match(message(() => A.saveBom(d, { itemCode: parent, lines: [{ childCode: "NOPE", qty: 1 }] }, planner)), /ไม่พบชิ้นงาน NOPE$/, "a code that was typed is still named");
+});
+
+test("purchased parts of a draft PI can be checked before release: needs come from the explosion and match the part jobs created at release", () => {
+  const d = seed.buildSeed(Date.UTC(2026, 10, 13));
+  const draft = d.orders.find((order) => order.status === "draft");
+  assert.ok(draft.explosion?.length, "the demo draft is exploded");
+  const before = rules.partNeeds({ jobs: d.jobs, orders: d.orders, stock: d.stock, purchaseOrders: [] }, draft.id);
+  assert.ok(before.rows.length > 0 && before.anyShort, "the draft lists its purchased parts and what is short");
+  const box = before.rows.find((row) => row.itemCode === "P-BOX-01");
+  // คงเหลือ 5 ใบอื่นจอง 7 → ไม่มีของว่างให้ใบนี้ และยังติดลบ 2: ขาด = ต้องใช้ + 2
+  assert.equal(box.shortage, box.needQty + (box.reservedQty - box.onHandQty));
+  const ordered = rules.partNeeds({ jobs: d.jobs, orders: d.orders, stock: d.stock, purchaseOrders: [{ status: "ordered", lines: [{ source: "bom", materialCode: "P-BOX-01", qtyKg: box.shortage, receivedKg: null }] }] }, draft.id);
+  assert.equal(ordered.rows.find((row) => row.itemCode === "P-BOX-01").shortage, 0, "an open purchase order covers the shortage");
+  assert.equal(rules.partNeeds({ jobs: d.jobs, orders: d.orders.map((order) => (order.id === draft.id ? { ...order, explosion: [] } : order)), stock: d.stock, purchaseOrders: [] }, draft.id).rows.length, 0, "a draft that is not exploded has nothing to check");
+  A.releaseOrder(d, { orderId: draft.id }, { user: d.users.find((user) => user.role === "planner"), now: Date.UTC(2026, 10, 13) });
+  const after = rules.partNeeds({ jobs: d.jobs, orders: d.orders, stock: d.stock, purchaseOrders: [] }, draft.id);
+  assert.deepEqual(after.rows.map((row) => [row.itemCode, row.needQty, row.shortage]), before.rows.map((row) => [row.itemCode, row.needQty, row.shortage]), "the same numbers before and after release");
 });

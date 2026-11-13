@@ -373,7 +373,7 @@
     const body = plan.rows.map((row) => `<tr><td class="right">${esc(String(row.line))}</td><td>${ui.mono(row.code || "—")}</td><td>${row.status === "error" ? `${ui.badge("bad", "ข้าม")} <span class="small">${esc(row.error)}</span>` : `${badges[row.status]}${row.warn ? ` <span class="small muted">${esc(row.warn)}</span>` : ""}`}</td><td class="right">${esc(ctx.rules.fmtQty(row.qty))}</td><td class="nowrap">${esc(row.status === "error" ? "" : uomText(ctx, row.uom))}</td><td class="right">${esc(String(row.scrapPct || ""))}</td><td class="small">${esc(row.note)}</td></tr>`);
     return `${plan.header ? '<p class="small muted">ข้ามบรรทัดที่ 1 (ถือเป็นหัวตาราง)</p>' : ""}${plan.warning ? ui.callout("warn", plan.warning) : ""}${ui.table(["บรรทัด", "รหัส", "ผลการตรวจ", { label: "ปริมาณ", className: "right" }, "หน่วย", { label: "% เผื่อเสีย", className: "right" }, "หมายเหตุ"], body, { emptyText: "ยังไม่มีบรรทัดที่อ่านได้" })}${plan.truncated ? '<p class="small muted">อ่านเฉพาะ 500 บรรทัดแรก</p>' : ""}`;
   };
-  pages.tools = { editorRowsOf, copyPlan, pastePlan };
+  pages.tools = { editorRowsOf, copyPlan, pastePlan, purchaseOrdersOf: (ctx) => rfPurchaseOrdersOf(ctx) };
 
   pages.build = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
