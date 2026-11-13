@@ -75,7 +75,7 @@
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options) };
+  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), draftChemicalNeeds: (draftOrders) => draftChemicalNeeds(draftOrders) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -479,7 +479,15 @@
   // ---------- ตรวจวัตถุดิบ → สั่งซื้อ ----------
   // เรียกจากฝั่ง BOM (หลังปล่อยผลิต PI และปุ่ม "ตรวจวัตถุดิบ" ของ PI) · ตามทัน RubberFlow ให้เห็น WO ที่เพิ่งเปิดก่อน แล้วเทียบความต้องการเคมีของ WO เหล่านั้นกับสต็อก (rules.chemicalNeeds)
   // auto = หลังปล่อยผลิต: ขาด → เปิด dialog สั่งซื้อ · ไม่ขาด → แจ้งสั้นๆ ว่าเคมีพอ · ปุ่มเรียกเอง (auto = false) เปิด dialog เสมอ · บัญชีที่ไม่มีสิทธิ์สั่งซื้อไม่เห็นอะไร
-  async function checkMaterials({ woIds = [], sourcePi = "", skippedJobs = 0, auto = false } = {}) {
+  // เคมีที่ WO ชั่วคราวของใบ PI ที่ยังเป็นร่างต้องใช้ เทียบสต็อก (BOM ขั้นตรวจของ): rules.chemicalNeeds ตัวเดียวกับหลังปล่อยผลิต โดยนับ WO ชั่วคราวเป็น WO ที่ถาม · null = RubberFlow ยังไม่พร้อม
+  function draftChemicalNeeds(draftOrders = []) {
+    try {
+      if (store.status() !== "ready" || !draftOrders.length) return null;
+      const ctx = makeContext(new URLSearchParams());
+      return rules.chemicalNeeds({ ...ctx.data, orders: [...ctx.data.orders, ...draftOrders] }, draftOrders.map((order) => order.id), ctx.now, { remote: store.isRemote() });
+    } catch { return null; }
+  }
+  async function checkMaterials({ woIds = [], sourcePi = "", skippedJobs = 0, auto = false, draftOrders = [] } = {}) {
     try {
       const user = store.user();
       if (!user || !storeApi.can(user, "purchase")) return { ok: false, reason: "rights" };
@@ -489,14 +497,14 @@
       if (store.isRemote() && woIds.some((id) => !store.data().orders.some((order) => order.id === id))) { try { await store.reload(); } catch { /* ใช้ข้อมูลที่มี */ } }
       if (store.status() !== "ready") return { ok: false, reason: "not-ready" };
       const ctx = makeContext(new URLSearchParams());
-      const result = rules.chemicalNeeds(ctx.data, woIds, ctx.now, { remote: store.isRemote() });
+      const result = rules.chemicalNeeds(draftOrders.length ? { ...ctx.data, orders: [...ctx.data.orders, ...draftOrders] } : ctx.data, [...woIds, ...draftOrders.map((order) => order.id)], ctx.now, { remote: store.isRemote() });
       const parts = ctx.bomPartNeeds(sourcePi);
       if (auto && !result.anyShort && !parts?.anyShort) {
         const enough = [result.rows.length ? "เคมี" : "", parts?.rows.length ? "ของซื้อ" : ""].filter(Boolean);
         if (enough.length) showToast(enough.length === 2 ? "เคมีและของซื้อพอสำหรับใบนี้" : enough[0] === "เคมี" ? "เคมีพอสำหรับ WO ที่เปิด" : "ของซื้อพอสำหรับใบนี้");
         return { ok: true, opened: false, result, parts };
       }
-      openDialog("purchase", { woIds, sourcePi, skippedJobs }, ctx);
+      openDialog("purchase", { woIds, sourcePi, skippedJobs, draftOrders }, ctx);
       return { ok: true, opened: true, result };
     } catch (error) {
       showToast(friendlyError(error), "error");

@@ -60,7 +60,7 @@
     } catch { return null; }
   };
   const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(), rfOrders: loadedRfOrders });
-  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params) };
+  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params), transforms: () => TRANSFORMS };
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
   const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -73,7 +73,7 @@
   const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
-  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy], [data-tree-toggle], [data-tree-pick], [data-tree-all], [data-hub-qty]";
+  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy], [data-tree-toggle], [data-tree-pick], [data-tree-all], [data-hub-qty], [data-bom-draft-buy]";
   function markDirty(event) {
     if (!event?.isTrusted || !onBomRoute()) return;
     const target = event.target;
@@ -161,13 +161,14 @@
     const data = store.data();
     const same = (a, b) => String(a ?? "") === String(b ?? "");
     // ฟอร์มแสดงปริมาณด้วยทศนิยมจำกัด: ถ้าค่าในฟอร์มต่างจากบรรทัดเดิมของ BOM ไม่ถึง 1e-6 ใช้ค่าเดิม (คงอัตราส่วนเช่น 1/31 ไว้เต็มความละเอียด)
+    const storedLine = (parentCode, childCode) => actions.helpers.approvedBomOf(data, rules.canonicalCode(parentCode))?.lines.find((entry) => entry.childCode === rules.canonicalCode(childCode));
     const keepQty = (parentCode, childCode, qty) => {
-      const line = actions.helpers.approvedBomOf(data, rules.canonicalCode(parentCode))?.lines.find((entry) => entry.childCode === rules.canonicalCode(childCode));
+      const line = storedLine(parentCode, childCode);
       return line && Math.abs(Number(qty) - line.qty) <= 1e-6 ? line.qty : qty;
     };
     const toNode = (row, parentCode) => {
       const item = actions.helpers.itemOf(data, row.code);
-      const node = { code: row.code, qty: keepQty(parentCode, row.code, row.qty), scrapPct: row.scrapPct, note: row.note, step: row.step, children: rows.filter((other) => other.parentId === row.id && (other.code || other.name)).map((child) => toNode(child, row.code)) };
+      const node = { code: row.code, qty: keepQty(parentCode, row.code, row.qty), scrapPct: row.scrapPct, note: row.note, step: row.step, flags: storedLine(parentCode, row.code)?.flags, children: rows.filter((other) => other.parentId === row.id && (other.code || other.name)).map((child) => toNode(child, row.code)) };
       if (!item) node.newItem = { kind: row.kind, name: row.name, uom: row.uom, weightG: row.weightG, rubber: row.kind === "RB" ? row.rubber : undefined };
       else {
         const patch = {};
@@ -184,27 +185,117 @@
     };
     return { code: p.code, item: { name: p.itemName, uom: p.itemUom, kind: p.itemKind }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code)) };
   }
-  // เพิ่มหนึ่งบรรทัดใต้ชิ้นแม่ p.code: บรรทัดเดิมส่งกลับตามที่เก็บ (ไม่มี children จึงไม่แตะ BOM ของชิ้นลูก) · รหัสที่ยังไม่มีในทะเบียนต้องมีชื่อ ชนิด หน่วย เพื่อสร้างชิ้นใหม่
+  // ---------- ฟอร์มเล็กของหน้าสินค้า → ต้นไม้ของ saveBomTree ----------
+  // บรรทัดเดิมของ BOM ส่งกลับตามที่เก็บ รวม flags (ไม่มี children จึงไม่แตะ BOM ของชิ้นลูก)
+  const lineNode = (line) => ({ code: line.childCode, qty: line.qty, scrapPct: line.scrapPct ?? 0, note: line.note ?? "", step: line.step ?? "", flags: line.flags ?? [] });
+  const linesOf = (data, code) => actions.helpers.approvedBomOf(data, rules.canonicalCode(code))?.lines ?? [];
+  // ชิ้นแม่ที่รับบรรทัดจากฟอร์มเล็กได้: มีในทะเบียน มีส่วนประกอบได้ และไม่ใช่เส้นยาง (บรรทัดเดียวของเส้นยางคือสูตรยาง แก้ที่หน้าต่าง "ข้อมูลเส้นยาง" ซึ่งให้ผู้ใช้ยืนยันการเปลี่ยนสูตร)
+  function lineParent(data, rawCode) {
+    const parent = actions.helpers.itemOf(data, rules.canonicalCode(rawCode));
+    if (!parent) throw new Error(`ไม่พบ ${rules.canonicalCode(rawCode)} ในทะเบียนชิ้นงาน`);
+    if (parent.kind === "RB") throw new Error("สูตรยางของเส้นยางแก้ที่ปุ่ม “ข้อมูลเส้นยาง”");
+    if (actions.helpers.NO_BOM_KINDS.includes(parent.kind)) throw new Error(`${parent.code} เป็น${rules.KINDS[parent.kind]?.label ?? parent.kind} ไม่มีส่วนประกอบ`);
+    return parent;
+  }
+  const RUBBER_CUT_KEYS = Object.freeze(["cutLengthCm", "pcsPerRoll", "sePerGr", "kgPerRoll"]);
+  const compoundCode = (value) => {
+    const code = rules.canonicalCode(value);
+    if (!code) throw new Error("ระบุสูตรยางของเส้นยาง");
+    if (code.length > 20) throw new Error(`รหัสสูตรยาง ${code} ยาวเกิน 20 ตัวอักษร`);
+    return code;
+  };
+  // เพิ่มหนึ่งบรรทัดใต้ชิ้นแม่ p.code · รหัสที่ยังไม่มีในทะเบียนต้องมีชื่อ ชนิด หน่วย เพื่อสร้างชิ้นใหม่ · เส้นยางใหม่ต้องมีสูตรยาง (ข้อมูลการตัดและน้ำหนักใส่ได้เลยหรือเว้นไว้)
   function treeFromLineAdd(p) {
     const data = store.data();
+    const parent = lineParent(data, p.code);
     const code = rules.canonicalCode(p.addCode);
-    // เส้นยาง: บรรทัดสูตรยางผูกกับช่องสูตรของเส้นยาง (saveBomTree จะเปลี่ยนช่องสูตรตามบรรทัดที่ส่งมา) ฟอร์มเล็กไม่แสดงช่องนั้น จึงไม่รับ
-    if (actions.helpers.itemOf(data, rules.canonicalCode(p.code))?.kind === "RB") throw new Error("สูตรยางของเส้นยางแก้ที่ “แก้หลายบรรทัด”");
-    if (p.newKind === "RB" && !actions.helpers.itemOf(data, code)) throw new Error("เส้นยางใหม่สร้างที่ “แก้หลายบรรทัด” (ต้องระบุสูตรยางและข้อมูลการตัด)");
-    const current = actions.helpers.approvedBomOf(data, rules.canonicalCode(p.code))?.lines ?? [];
+    const current = linesOf(data, parent.code);
     if (current.some((line) => line.childCode === code)) throw new Error(`${code} อยู่ใน BOM นี้แล้ว แก้ปริมาณที่บรรทัดนั้นแทน`);
     const node = { code, qty: p.addQty, scrapPct: p.addScrap, note: "" };
     if (!actions.helpers.itemOf(data, code)) {
       if (!String(p.newName ?? "").trim()) throw new Error(`ยังไม่มีรหัส ${code} ในทะเบียน กรอกชื่อ ชนิด และหน่วยเพื่อสร้างชิ้นใหม่`);
       node.newItem = { kind: p.newKind, name: p.newName, uom: p.newUom };
+      if (p.newKind === "RB") {
+        if (!String(p.rbCompound ?? "").trim()) throw new Error(`เส้นยางใหม่ ${code} ต้องระบุสูตรยาง`);
+        node.newItem.weightG = p.rbWeightG ?? "";
+        node.newItem.rubber = { compound: compoundCode(p.rbCompound), ...Object.fromEntries(RUBBER_CUT_KEYS.map((key) => [key, p[`rb_${key}`] ?? ""])) };
+      }
     }
-    return { code: p.code, note: p.note, nodes: [...current.map((line) => ({ code: line.childCode, qty: line.qty, scrapPct: line.scrapPct ?? 0, note: line.note ?? "", step: line.step ?? "" })), node] };
+    return { code: parent.code, note: p.note, nodes: [...current.map(lineNode), node] };
+  }
+  // วางหลายบรรทัดจาก Excel (หน้าต่าง linesPaste): pCode[] pQty[] pScrap[] pNote[] pName[] pKind[] pUom[] ตามลำดับแถวที่ตัวอย่างบอกว่าเพิ่มได้ · ตรวจซ้ำกับข้อมูลล่าสุดตอนกดบันทึก
+  function treeFromPaste(p) {
+    const data = store.data();
+    const parent = lineParent(data, p.code);
+    const current = linesOf(data, parent.code);
+    const codes = listOf(p, "pCode");
+    if (!codes.length) throw new Error("ยังไม่มีบรรทัดที่เพิ่มได้ วางข้อมูลแล้วดูผลการตรวจก่อน");
+    const have = new Set(current.map((line) => line.childCode));
+    const nodes = codes.map((raw, index) => {
+      const code = rules.canonicalCode(raw);
+      if (have.has(code)) throw new Error(`${code} อยู่ใน BOM นี้แล้ว`);
+      have.add(code);
+      const node = { code, qty: listOf(p, "pQty")[index], scrapPct: listOf(p, "pScrap")[index] ?? "", note: listOf(p, "pNote")[index] ?? "" };
+      if (!actions.helpers.itemOf(data, code)) {
+        const name = String(listOf(p, "pName")[index] ?? "").trim();
+        const kind = listOf(p, "pKind")[index];
+        if (!name) throw new Error(`ยังไม่มีรหัส ${code} ในทะเบียน กรอกชื่อเพื่อสร้างชิ้นใหม่`);
+        if (kind === "RB") throw new Error(`เส้นยางใหม่ ${code} เพิ่มทีละชิ้นที่ “เพิ่มส่วนประกอบ” (ต้องระบุสูตรยาง)`);
+        node.newItem = { kind, name, uom: listOf(p, "pUom")[index] || "pcs" };
+      }
+      return node;
+    });
+    return { code: parent.code, note: p.note, nodes: [...current.map(lineNode), ...nodes] };
+  }
+  // คัดลอกโครงสร้างจากสินค้า/ชิ้นงานอื่น (หน้าต่าง treeCopy): บรรทัดชั้นแรกของต้นแบบมาเป็นบรรทัดของ p.code · ชั้นที่ลึกกว่าเป็น BOM ของชิ้นลูกเอง จึงตามมาโดยไม่ถูกแก้
+  // mode replace = แทนบรรทัดเดิมทั้งหมด · อื่น ๆ = ต่อท้ายบรรทัดเดิม ข้ามรหัสที่มีอยู่แล้ว · กฎต้นแบบ (มี BOM ไม่เลิกใช้ ไม่เป็นวงจร ชนิดเข้ากันได้) ใช้ชุดเดียวกับ "ตั้งต้นจาก" ของตารางเดิม (pages.tools.copyPlan)
+  function treeFromCopy(p) {
+    const data = store.data();
+    const target = lineParent(data, p.code);
+    const plan = pages.tools.copyPlan(makeContext(new URLSearchParams()), p.copyFrom, target.code, target.kind);
+    if (plan.error) throw new Error(plan.error);
+    const from = rules.canonicalCode(p.copyFrom);
+    const current = linesOf(data, target.code);
+    const keep = p.mode === "replace" ? [] : current;
+    const have = new Set(keep.map((line) => line.childCode));
+    const added = linesOf(data, from).filter((line) => !have.has(line.childCode));
+    if (!added.length) throw new Error(`ทุกบรรทัดของ ${from} มีอยู่ใน BOM นี้แล้ว ไม่มีอะไรให้เพิ่ม`);
+    const retired = added.map((line) => line.childCode).filter((code) => plan.retired.includes(code));
+    if (retired.length) throw new Error(`${retired.join(", ")} เลิกใช้แล้ว เพิ่มเป็นบรรทัดใหม่ของ ${target.code} ไม่ได้`);
+    return { code: target.code, note: String(p.note ?? "").trim() || `คัดลอกโครงสร้างจาก ${from}`, nodes: [...keep.map(lineNode), ...added.map(lineNode)] };
+  }
+  // หน้าต่าง "ข้อมูลเส้นยาง": สูตรยาง + ข้อมูลการตัด + น้ำหนัก · เปลี่ยนสูตรที่มีอยู่ต้องติ๊กยืนยันในฟอร์ม (confirmCompound) ไม่เช่นนั้นไม่ส่งคำสั่ง
+  function rubberForm(p) {
+    const data = store.data();
+    const item = actions.helpers.itemOf(data, rules.canonicalCode(p.code));
+    if (!item || item.kind !== "RB") throw new Error("รายการนี้ไม่ใช่เส้นยาง");
+    const compound = compoundCode(p.compound);
+    const before = rules.canonicalCode(item.rubber?.compound ?? "");
+    if (before && compound !== before && !["1", "on", "true"].includes(String(p.confirmCompound ?? ""))) throw new Error(`ติ๊กยืนยันการเปลี่ยนสูตรยางจาก ${before} เป็น ${compound} ก่อนบันทึก`);
+    return { data, item, compound, cut: Object.fromEntries(RUBBER_CUT_KEYS.map((key) => [key, p[key] ?? ""])) };
+  }
+  // เส้นยางที่มีบรรทัดสูตรยางใน BOM: ช่องสูตรและบรรทัดสูตรยางเปลี่ยนพร้อมกันในคำสั่งเดียว (saveBomTree: พ่อ = เส้นยาง บรรทัดเดียว = สูตรยาง)
+  function treeFromRubberEdit(p) {
+    const { data, item, compound, cut } = rubberForm(p);
+    const line = linesOf(data, item.code)[0];
+    if (!line) throw new Error("ข้อมูลของเส้นยางนี้เปลี่ยนไปแล้ว ปิดหน้าต่างแล้วเปิดใหม่");
+    const qty = p.compoundQty === undefined || p.compoundQty === "" || Math.abs(Number(p.compoundQty) - line.qty) <= 1e-6 ? line.qty : p.compoundQty;
+    const node = { ...lineNode(line), code: compound, qty };
+    if (!actions.helpers.itemOf(data, compound)) node.newItem = { kind: "CP", name: data.compounds.find((entry) => entry.code === compound)?.name ?? compound, uom: "kg" };
+    return { code: item.code, note: p.note, item: { weightG: p.weightG ?? "", rubber: cut }, nodes: [node] };
+  }
+  // เส้นยางที่ยังไม่มีบรรทัดสูตรยาง (เช่น นำเข้าจาก Excel): สูตรเก็บที่ช่องสูตรของเส้นยางอย่างเดียว บันทึกด้วย saveItem
+  function itemFromRubberEdit(p) {
+    const { data, item, compound, cut } = rubberForm(p);
+    if (linesOf(data, item.code).length) throw new Error("ข้อมูลของเส้นยางนี้เปลี่ยนไปแล้ว ปิดหน้าต่างแล้วเปิดใหม่");
+    return { code: item.code, kind: "RB", name: item.name, uom: item.uom, weightG: p.weightG ?? "", rubber: { compound, ...cut } };
   }
   const listOf = (p, key) => (Array.isArray(p[key]) ? p[key] : p[key] === undefined ? [] : [p[key]]);
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due), autoDue: p.autoDue === "1" || p.autoDue === "on" }),
     // ฟอร์ม "เพิ่มส่วนประกอบ" ของหน้าสินค้า (lineAdd) ใช้คำสั่งเดียวกัน: บรรทัดเดิมของ BOM อ่านจากข้อมูลล่าสุดตอนกดบันทึก แล้วต่อบรรทัดใหม่
-    saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : treeFromRows(p)),
+    // หน้าต่างของหน้าสินค้าอีกสามแบบใช้คำสั่งเดียวกัน: วางหลายบรรทัด (linesPaste) คัดลอกโครงสร้าง (treeCopy) ข้อมูลเส้นยางที่มีบรรทัดสูตรยาง (rubberEdit)
+    saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : p.linesPaste ? treeFromPaste(p) : p.treeCopy ? treeFromCopy(p) : p.rubberEdit ? treeFromRubberEdit(p) : treeFromRows(p)),
     // ฟอร์มแก้บรรทัดเดียวของ BOM (หน้าสินค้า): childCode[] + qty[] + scrapPct[] + lineNote[] + lineStep[] ของทุกบรรทัด → lines ของ saveBom
     // บรรทัดที่แก้ (editCode) ถ้าปริมาณในฟอร์มต่างจากเดิม (origQty) ไม่ถึง 1e-6 ใช้ค่าเดิม คงอัตราส่วนเช่น 1/31 ไว้เต็มความละเอียด
     saveBom: (p) => (Array.isArray(p.lines) ? p : {
@@ -217,7 +308,8 @@
         return { childCode, qty: keep ? Number(p.origQty) : qty, scrapPct: listOf(p, "scrapPct")[index] ?? "", note: listOf(p, "lineNote")[index] ?? "", step: listOf(p, "lineStep")[index] ?? "", flags };
       }),
     }),
-    saveItem: (p) => ({ ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null }),
+    // rubberEdit = หน้าต่าง "ข้อมูลเส้นยาง" ของเส้นยางที่ยังไม่มีบรรทัดสูตรยางใน BOM (มีบรรทัดแล้วไปทาง saveBomTree ข้างบน)
+    saveItem: (p) => (p.rubberEdit ? itemFromRubberEdit(p) : { ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null }),
     // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
     saveColorSet: (p) => ({ ...p, slots: listOf(p, "slotKey").map((key, index) => ({ key, color: listOf(p, "slotColor")[index] ?? "" })) }),
     setStockCounts: (p) => ({ ...p, counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),

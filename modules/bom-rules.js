@@ -992,6 +992,29 @@
   // เส้นยาง (RB) ที่นับเป็นเส้นหรือม้วน ผลิตได้ทีละเส้น/ม้วนเต็ม: ปัดขึ้น (เผื่อเศษทศนิยมจากการคูณ 1e-6) · ชนิด/หน่วยอื่นคงเดิม
   const wholeRods = (kind, uom, qty) => (kind === "RB" && (uom === "rod" || uom === "roll") ? Math.ceil(Number(qty) - 1e-6) : qty);
 
+  // ของซื้อที่ใบร่างอื่น (ระเบิด BOM แล้ว ยังไม่ปล่อยผลิต) ต้องใช้ ต่อรหัส → { qty, orders: [เลขใบ] } · ข้อมูลให้ดูที่ขั้นตรวจของเท่านั้น ใบร่างไม่จองของ (ของถูกจองเมื่อปล่อยผลิต = partReserved)
+  function draftPartDemand(orders, exceptOrderId = null) {
+    const demand = new Map();
+    for (const order of orders ?? []) {
+      if (order.status !== "draft" || order.id === exceptOrderId || !order.explosion?.length) continue;
+      for (const entry of netRequirements(order.explosion, order.stockCounts)) {
+        if (entry.kind !== "PURCHASED" || !(entry.required > 0)) continue;
+        const row = demand.get(entry.itemCode) ?? { qty: 0, orders: [] };
+        row.qty += entry.required;
+        row.orders.push(order.id);
+        demand.set(entry.itemCode, row);
+      }
+    }
+    return demand;
+  }
+  // งาน RB ที่ใบร่างจะได้เมื่อปล่อยผลิต: กฎเดียวกับ releaseOrder ใน bom-actions.js (ยอดสุทธิหลังหักยอดนับ เส้น/ม้วนปัดขึ้นเต็ม) · ใช้ประเมินเคมีก่อนปล่อย
+  function draftRubberJobs(order) {
+    if (order?.status !== "draft" || !order.explosion?.length) return [];
+    return netRequirements(order.explosion, order.stockCounts)
+      .filter((entry) => MANUFACTURED.includes(entry.kind) && entry.kind !== "FG" && entry.dept === "RB" && entry.toMake > 0)
+      .map((entry) => ({ itemCode: entry.itemCode, name: entry.name, uom: entry.uom, qtyPlanned: wholeRods(entry.kind, entry.uom, entry.toMake), qtyDone: 0 }));
+  }
+
   function partNeeds(data, orderId) {
     const { jobs = [], orders = [], stock = [], purchaseOrders = [] } = data ?? {};
     const need = new Map();
@@ -1077,7 +1100,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

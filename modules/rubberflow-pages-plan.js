@@ -497,7 +497,9 @@
         return { ...row, name: row.name ?? material?.name ?? "", safetyKg, orderKg: row.orderKg ?? rules.suggestOrderKg(row.shortageKg, safetyKg) };
       });
     } else {
-      const result = rules.chemicalNeeds(data, args.woIds ?? [], now, { remote: ctx.store.isRemote() });
+      // args.draftOrders = WO ชั่วคราวของใบ PI ที่ยังเป็นร่าง (จาก BOM ขั้นตรวจของ): คิดเหมือน WO ที่จะถูกเปิดตอนปล่อยผลิต จึงสั่งเคมีที่ขาดได้ก่อนปล่อย
+      const draftOrders = Array.isArray(args.draftOrders) ? args.draftOrders : [];
+      const result = rules.chemicalNeeds(draftOrders.length ? { ...data, orders: [...data.orders, ...draftOrders] } : data, [...(args.woIds ?? []), ...draftOrders.map((order) => order.id)], now, { remote: ctx.store.isRemote() });
       rows = result.rows;
       skipped += result.skipped.length;
     }

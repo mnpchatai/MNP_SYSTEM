@@ -210,6 +210,7 @@
     const R = rules();
     const rootCode = R.canonicalCode(text(p.code, "รหัสสินค้า", 60));
     // เส้นยางเป็นพ่อ: รหัสสูตรของมันคือบรรทัดสูตรยางชั้นแรก (ใช้ทั้งตอนสร้างใหม่และตอนเปลี่ยนสูตรของเส้นยางที่มีอยู่)
+    const auditBefore = d.audit.length;
     const rootCompound = (p.nodes ?? []).map((node) => ({ code: R.canonicalCode(node.code), kind: itemOf(d, node.code)?.kind ?? node.newItem?.kind })).find((node) => node.kind === "CP")?.code || "";
     if (!itemOf(d, rootCode)) {
       if (!p.item?.name) fail(`ยังไม่มีชิ้นงาน${ref(rootCode)} กรุณาระบุชื่อและหน่วยเพื่อสร้าง`);
@@ -223,9 +224,13 @@
       const changed = p.item && ((p.item.name && p.item.name.trim() !== current.name) || (p.item.uom && p.item.uom !== current.uom) || (p.item.weightG !== undefined && p.item.weightG !== "" && Number(p.item.weightG) !== Number(current.weightG || 0)));
       const newCompound = current.kind === "RB" && rootCompound && rootCompound !== current.rubber?.compound ? rootCompound : "";
       // เปลี่ยนสูตรของเส้นยางที่เป็นพ่อ: ช่องสูตรตามบรรทัดสูตรยางใหม่ แล้ว saveBom ข้างล่างบันทึกบรรทัดนั้นในคำสั่งเดียวกัน
-      if (changed || newCompound) saveItem(d, { code: rootCode, kind: current.kind, name: p.item?.name || current.name, uom: p.item?.uom || current.uom, weightG: p.item?.weightG, rubber: newCompound ? { compound: newCompound } : undefined }, ctx, { compoundLineFollows: Boolean(newCompound) });
+      // ข้อมูลการตัดของเส้นยางที่เป็นพ่อ (p.item.rubber จากหน้าต่าง "ข้อมูลเส้นยาง" ของหน้าสินค้า): ส่งเฉพาะช่องที่ต่างจากที่เก็บ ช่องว่าง = ล้างค่า · ช่องสูตรไม่รับจากตรงนี้ มาจากบรรทัดสูตรยางเท่านั้น
+      const cut = current.kind === "RB" && p.item?.rubber && typeof p.item.rubber === "object"
+        ? Object.fromEntries(Object.entries(p.item.rubber).filter(([key, value]) => key !== "compound" && value !== undefined && value !== null && String(value) !== String(current.rubber?.[key] ?? "")))
+        : {};
+      const rubber = { ...cut, ...(newCompound ? { compound: newCompound } : {}) };
+      if (changed || Object.keys(rubber).length) saveItem(d, { code: rootCode, kind: current.kind, name: p.item?.name || current.name, uom: p.item?.uom || current.uom, weightG: p.item?.weightG, rubber: Object.keys(rubber).length ? rubber : undefined }, ctx, { compoundLineFollows: Boolean(newCompound) });
     }
-    const auditBefore = d.audit.length;
     const saved = [];
     const created = [];
     const patched = [];
@@ -259,13 +264,13 @@
             if (!current || !sameLines(current.lines, sortLines(d, incoming))) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
           }
         }
-        lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note, step: node.step });
+        lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note, step: node.step, flags: node.flags });
       }
       const result = saveBom(d, { itemCode: parentCode, lines, note: p.note }, ctx);
       if (result.changed) saved.push(`${parentCode} Rev.${result.revision}`);
     };
     walk(rootCode, p.nodes, [rootCode]);
-    const rootChanged = d.audit.length > auditBefore && d.audit.slice(0, d.audit.length - auditBefore).some((entry) => /ชิ้นงาน/.test(entry.action) && entry.detail.startsWith(rootCode));
+    const rootChanged = d.audit.length > auditBefore && d.audit.slice(0, d.audit.length - auditBefore).some((entry) => entry.action === "แก้ชิ้นงาน" && entry.detail.startsWith(`${rootCode} `));
     const parts = [saved.length ? `BOM: ${saved.join(", ")}` : "", created.length ? `สร้างชิ้นใหม่: ${created.join(", ")}` : "", patched.length ? `แก้ข้อมูลชิ้น: ${patched.join(", ")}` : "", rootChanged && !created.includes(rootCode) ? `แก้ข้อมูลสินค้า ${rootCode}` : ""].filter(Boolean);
     const changed = parts.length > 0;
     if (changed) audit(d, ctx, "บันทึกต้นไม้ BOM", `${rootCode}: ${parts.join(" · ")}`);
