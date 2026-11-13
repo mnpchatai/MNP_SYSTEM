@@ -451,3 +451,14 @@ test("round 24 (second pass): approval count wording, MT minimum hints, in-app r
   const help = read("modules/shortcut-help.js");
   for (const key of ["request-work", "request-verify", "request-viewer"]) assert.ok(help.includes(`"${key}": Object.freeze([`), key);
 });
+
+test("round 24 (third pass): every changed-state error offers a reload, the home step line matches the detail page, nameless parts rows are not dropped silently", () => {
+  for (const code of ["REQUEST_NOT_AWAITING_INFO", "INVALID_TRANSITION", "ASSIGNED_TO_ANOTHER_OPERATOR", "REQUEST_NOT_ASSIGNED", "STEP_NOT_PENDING", "REQUEST_NOT_IN_PROGRESS"]) {
+    assert.match(app, new RegExp(`${code}: "[^"]* โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",`), code);
+  }
+  assert.match(app, /host\.innerHTML = homeQueueDetailHtml\(item, nextStep, \{ compact: host !== pane, nextStepKnown: !error, steps: error \? null : steps \}\);/);
+  assert.match(app, /decisionPanelHtml\(\{ request, currentStep: item\.step, nextStep, nextStepKnown, steps,/);
+  const mt = read("modules/module-mt.js");
+  assert.match(mt, /showToast\(`อะไหล่แถวที่ \$\{index \+ 1\} ยังไม่มีชื่อรายการ ใส่ชื่อหรือลบแถวนั้นก่อน`, "error"\);/);
+  assert.equal((mt.match(/if \(namelessPartsRow\(\)\) return;/g) ?? []).length, 2, "both save-for-later and finish stop on a nameless row");
+});

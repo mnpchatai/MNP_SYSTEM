@@ -560,10 +560,10 @@ function friendlyError(error) {
     INVALID_DESCRIPTION: "รายละเอียดต้องมี 3–5,000 ตัวอักษร",
     STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     STEP_NOT_CURRENT: "ขั้นตอนนี้ไม่ใช่ขั้นตอนปัจจุบันแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
-    REQUEST_NOT_AWAITING_INFO: "คำร้องนี้ไม่ได้อยู่ในสถานะรอข้อมูลเพิ่มเติมแล้ว",
+    REQUEST_NOT_AWAITING_INFO: "คำร้องนี้ไม่ได้อยู่ในสถานะรอข้อมูลเพิ่มเติมแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     STEP_NOT_FOUND: "ไม่พบขั้นตอนที่ขอข้อมูลเพิ่มเติมไว้",
-    INVALID_TRANSITION: "ไม่สามารถเปลี่ยนเป็นสถานะนี้ได้",
-    ASSIGNED_TO_ANOTHER_OPERATOR: "รายการนี้มีผู้รับผิดชอบอื่นแล้ว",
+    INVALID_TRANSITION: "สถานะของใบเปลี่ยนไปแล้ว ขั้นนี้จึงทำไม่ได้ โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
+    ASSIGNED_TO_ANOTHER_OPERATOR: "รายการนี้มีผู้รับผิดชอบอื่นแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     DEPARTMENT_NOT_REPAIR_SITE: "แผนกนี้ไม่ได้เปิดใช้งานแจ้งซ่อม",
     MACHINE_NOT_FOUND: "ไม่พบเครื่องจักรนี้ในแผนกที่เลือก",
     INVALID_MACHINE_CODE: "รหัสเครื่องจักรต้องมี 2–40 ตัวอักษร ใช้ได้เฉพาะภาษาอังกฤษ ตัวเลข ภาษาไทย และ - . _ / ( ) + โดยต้องขึ้นต้นด้วยตัวอักษรหรือตัวเลข",
@@ -572,7 +572,7 @@ function friendlyError(error) {
     INVALID_DOC_TYPE: "กรุณาเลือกประเภทเอกสาร",
     REQUEST_NOT_PENDING_ASSIGN: "ใบนี้ไม่ได้อยู่ในขั้นรอมอบหมายช่างแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     TECHNICIAN_NOT_FOUND: "ไม่พบช่างที่เลือกในแผนกซ่อมบำรุง",
-    REQUEST_NOT_ASSIGNED: "ใบนี้ไม่ได้อยู่ในขั้นรอช่างเริ่มงานแล้ว",
+    REQUEST_NOT_ASSIGNED: "ใบนี้ไม่ได้อยู่ในขั้นรอช่างเริ่มงานแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     NOT_ASSIGNED_TECHNICIAN: "คุณไม่ใช่ช่างที่ถูกมอบหมายหรือหัวหน้าแผนกซ่อมบำรุงของใบนี้",
     REQUEST_NOT_IN_PROGRESS: "ใบนี้ไม่ได้อยู่ระหว่างดำเนินการซ่อมแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",
     INVALID_EXECUTION_PLAN: "กรุณาเลือกการดำเนินงาน",
@@ -2534,7 +2534,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
 
 // แถวในรายการแสดงเลขที่ ประเภท ผู้แจ้ง และค้างกี่วันอยู่แล้ว จึงไม่ซ้ำในส่วนที่เปิด
 // compact (ขยายใต้แถวบนจอแคบ): ไม่มีหัวเรื่องซ้ำกับแถว; จอกว้าง: หัวเรื่องเป็นหัวของแผงขวา (เลขแบบฟอร์มมีเฉพาะที่นี่)
-function homeQueueDetailHtml(item, nextStep, { compact = false, nextStepKnown = true } = {}) {
+function homeQueueDetailHtml(item, nextStep, { compact = false, nextStepKnown = true, steps = null } = {}) {
   const request = item.request;
   const type = relation(request.request_type);
   const formCode = REQUEST_FORM_CODES[type?.code] ?? "";
@@ -2544,7 +2544,7 @@ function homeQueueDetailHtml(item, nextStep, { compact = false, nextStepKnown = 
     <h3 class="queue-detail-title" id="queue-detail-title" tabindex="-1">${escapeHtml(request.title)}</h3>`}
     ${description ? `<p class="request-summary-text queue-detail-text">${escapeHtml(description)}</p>` : `<p class="request-summary-text is-empty">ไม่ได้ระบุรายละเอียด</p>`}
     <a class="link-button" href="#/request?id=${encodeURIComponent(item.id)}">เปิดใบเต็ม: ไฟล์แนบ และประวัติเอกสาร</a>
-    ${decisionPanelHtml({ request, currentStep: item.step, nextStep, nextStepKnown, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
+    ${decisionPanelHtml({ request, currentStep: item.step, nextStep, nextStepKnown, steps, extraDecisions: requestModule(type?.code)?.extraDecisions ?? [] })}
   </article>`;
 }
 
@@ -2574,7 +2574,7 @@ async function selectQueueItem(id, { focus = false } = {}) {
   const { data: steps, error } = await sb.from("approval_steps").select("id,step_order,step_name,status").eq("request_id", id).order("step_order");
   if (homeQueueState.selectedId !== id || !host.isConnected) return;
   if (!error) nextStep = (steps ?? []).find((step) => step.step_order === item.step.step_order + 1) ?? null;
-  host.innerHTML = homeQueueDetailHtml(item, nextStep, { compact: host !== pane, nextStepKnown: !error });
+  host.innerHTML = homeQueueDetailHtml(item, nextStep, { compact: host !== pane, nextStepKnown: !error, steps: error ? null : steps });
   bindDecisionPanel({
     id,
     params: new URLSearchParams({ id }),

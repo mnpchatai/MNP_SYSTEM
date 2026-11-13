@@ -1156,8 +1156,22 @@
           note: row.querySelector('[data-part-field="note"]').value.trim(),
         }))
         .filter((item) => item.name);
+      // แถวที่มีจำนวน/ราคา/ร้าน/หมายเหตุแต่ไม่มีชื่อรายการ: เดิมถูกตัดทิ้งตอนส่ง (ค่าซ่อมหายเงียบ ๆ) ตอนนี้หยุดและชี้แถวนั้น
+      const namelessPartsRow = () => {
+        const rows = [...document.querySelectorAll("#finish-parts-rows .parts-row")];
+        const index = rows.findIndex((row) => !row.querySelector('[data-part-field="name"]').value.trim()
+          && ["qty", "unit", "price", "shop", "note"].some((field) => row.querySelector(`[data-part-field="${field}"]`)?.value.trim()));
+        if (index < 0) return false;
+        const name = rows[index].querySelector('[data-part-field="name"]');
+        name.setAttribute("aria-invalid", "true");
+        name.addEventListener("input", () => name.removeAttribute("aria-invalid"), { once: true });
+        name.focus();
+        showToast(`อะไหล่แถวที่ ${index + 1} ยังไม่มีชื่อรายการ ใส่ชื่อหรือลบแถวนั้นก่อน`, "error");
+        return true;
+      };
       document.querySelector("#finish-save-button")?.addEventListener("click", async () => {
         const form = document.querySelector("#finish-form");
+        if (namelessPartsRow()) return;
         let files;
         try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
@@ -1181,6 +1195,7 @@
         const finishErrors = window.MNP_FORM_STEPS.validate(FINISH_RULES, { cause_analysis: String(values.get("cause_analysis") ?? "") });
         if (finishErrors.length) return showRepairFieldErrors(form, finishErrors);
         window.MNP_FORM_STEPS.clearFieldErrors(form);
+        if (namelessPartsRow()) return;
         try { readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         const requestNo = currentRequestNo;
         confirmStepAction(form.querySelector(".form-actions"), {
