@@ -443,7 +443,9 @@ test("round 24 (second pass): approval count wording, MT minimum hints, in-app r
   assert.match(ncr, /await textPromptDialog\(\{ title: "ยกเลิกรายการความสูญเสียนี้\?", label: "เหตุผลที่ยกเลิก \(จำเป็น\)", hint: `อย่างน้อย \$\{VOID_REASON_MIN\} ตัวอักษร`, minLength: VOID_REASON_MIN/);
   assert.match(app, /if \(\[\.\.\.text\]\.length < minLength\) \{/, "the dialog checks the minimum and keeps the typed text");
   assert.match(app, /const STALE_STATE_HINT = "โหลดหน้าใหม่เพื่อดูสถานะล่าสุด";/);
-  assert.match(app, /reload\.textContent = "โหลดสถานะล่าสุด";\r?\n\s+reload\.addEventListener\("click", \(\) => \{ hideToast\(\); renderRoute\(\); \}\);/);
+  assert.match(app, /reload\.textContent = "โหลดสถานะล่าสุด";\r?\n\s+reload\.addEventListener\("click", async \(\) => \{\r?\n\s+if \(leaveWarningPending\(\) && !\(await confirmLeave\(\)\)\) return;/, "reloading asks first when typed text would be lost");
+  assert.match(app, /dialog\.addEventListener\("close", \(\) => finish\(null\), \{ once: true \}\);\r?\n\s+dialog\.showModal\(\);\r?\n\s+field\.focus\(\);/);
+  assert.match(css, /\.confirm-dialog \.field-error \{ margin: 6px 0 0; color: var\(--danger-ink\);/);
   assert.match(app, /NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้ ถ้าคิดว่าควรมีสิทธิ์ให้แจ้งผู้ดูแลระบบ"/);
   assert.match(app, /if \(document\.querySelector\("#repair-verify"\)\) return "request-verify";/);
   const help = read("modules/shortcut-help.js");

@@ -1186,6 +1186,9 @@ a.register-title:hover { color: var(--primary); }
 .offline-banner { position: fixed; inset: 0 0 auto; z-index: 1200; margin: 0; padding: max(4px, env(safe-area-inset-top)) 16px 4px; color: #fff; background: var(--warning-strong); font-size: var(--text-caption); font-weight: 700; line-height: 1.4; text-align: center; pointer-events: none; }
 .offline-banner[hidden] { display: none; }
 .toast .toast-action { min-height: 44px; margin-left: auto; flex: none; }
+/* จอแคบ: ปุ่มของข้อความขึ้นแถวใหม่ ข้อความไม่ถูกบีบเหลือคอลัมน์แคบ */
+@media (max-width: 420px) { .toast:has(.toast-action) { flex-wrap: wrap; } .toast .toast-action { order: 3; flex-basis: 100%; margin-left: 0; } }
+.confirm-dialog .field-error { margin: 6px 0 0; color: var(--danger-ink); font-weight: 600; white-space: normal; }
 .draft-banner { margin-bottom: 16px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: var(--primary-soft); border-radius: var(--radius-md); }
 .draft-banner[hidden] { display: none; }
 .draft-banner p { margin: 0; font-weight: 600; }

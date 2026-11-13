@@ -415,7 +415,11 @@ function showToast(message, type = "success") {
     reload.type = "button";
     reload.className = "btn secondary small toast-action";
     reload.textContent = "โหลดสถานะล่าสุด";
-    reload.addEventListener("click", () => { hideToast(); renderRoute(); });
+    reload.addEventListener("click", async () => {
+      if (leaveWarningPending() && !(await confirmLeave())) return;
+      hideToast();
+      renderRoute();
+    });
     toastNode.querySelector(".toast-close").before(reload);
   }
   if (isError) toastNode.querySelector(".toast-close").addEventListener("click", hideToast);
@@ -449,7 +453,7 @@ function textPromptDialog({ title, label, hint = "", minLength = 0, maxLength = 
     dialog.setAttribute("aria-labelledby", "prompt-dialog-title");
     dialog.innerHTML = `<form method="dialog" novalidate>
       <h2 id="prompt-dialog-title">${escapeHtml(title)}</h2>
-      <div class="field"><label for="prompt-dialog-text">${escapeHtml(label)}</label><textarea class="textarea" id="prompt-dialog-text" rows="3" maxlength="${maxLength}" aria-describedby="prompt-dialog-hint prompt-dialog-error"></textarea>${hint ? `<small class="field-hint" id="prompt-dialog-hint">${escapeHtml(hint)}</small>` : ""}<p class="field-error" id="prompt-dialog-error" hidden></p></div>
+      <div class="field"><label for="prompt-dialog-text">${escapeHtml(label)}</label><textarea class="textarea" id="prompt-dialog-text" rows="3" maxlength="${maxLength}" aria-describedby="prompt-dialog-hint prompt-dialog-error"></textarea>${hint ? `<small class="field-hint" id="prompt-dialog-hint">${escapeHtml(hint)}</small>` : ""}<p class="field-error" id="prompt-dialog-error" role="alert" hidden></p></div>
       <div class="confirm-dialog-actions"><button class="btn secondary" value="cancel">${escapeHtml(cancelLabel)}</button><button class="btn${danger ? " danger-solid" : ""}" value="confirm">${escapeHtml(confirmLabel)}</button></div>
     </form>`;
     if (typeof dialog.showModal !== "function") {
@@ -485,6 +489,7 @@ function textPromptDialog({ title, label, hint = "", minLength = 0, maxLength = 
       finish(text);
     });
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(null); });
+    dialog.addEventListener("close", () => finish(null), { once: true });
     dialog.showModal();
     field.focus();
   });
