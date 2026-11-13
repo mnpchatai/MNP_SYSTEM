@@ -989,6 +989,9 @@
       return { ...line, issued, returned, returnable: Math.max(0, Math.round((issued - returned) * 1e4) / 1e4) };
     });
   }
+  // เส้นยาง (RB) ที่นับเป็นเส้นหรือม้วน ผลิตได้ทีละเส้น/ม้วนเต็ม: ปัดขึ้น (เผื่อเศษทศนิยมจากการคูณ 1e-6) · ชนิด/หน่วยอื่นคงเดิม
+  const wholeRods = (kind, uom, qty) => (kind === "RB" && (uom === "rod" || uom === "roll") ? Math.ceil(Number(qty) - 1e-6) : qty);
+
   function partNeeds(data, orderId) {
     const { jobs = [], orders = [], stock = [], purchaseOrders = [] } = data ?? {};
     const need = new Map();
@@ -996,6 +999,15 @@
     for (const job of openPartJobs(jobs, orders).filter((entry) => entry.orderId === orderId)) {
       need.set(job.itemCode, (need.get(job.itemCode) || 0) + partLeft(job));
       meta.set(job.itemCode, { name: job.name, uom: job.uom });
+    }
+    // ใบร่างที่ระเบิด BOM แล้ว (ยังไม่มีงาน): ความต้องการของซื้อ = ยอดที่ระเบิดได้ เท่ากับงานของซื้อที่จะถูกสร้างตอนปล่อยผลิต จึงตรวจและสั่งซื้อส่วนที่ขาดได้ก่อนปล่อย
+    const draft = orders.find((order) => order.id === orderId && order.status === "draft");
+    if (!need.size && draft?.explosion?.length) {
+      for (const entry of netRequirements(draft.explosion, draft.stockCounts)) {
+        if (entry.kind !== "PURCHASED" || !(entry.required > 0)) continue;
+        need.set(entry.itemCode, entry.required);
+        meta.set(entry.itemCode, { name: entry.name, uom: entry.uom });
+      }
     }
     const reserved = partReserved(jobs, orders, orderId);
     const onOrder = partOnOrder(purchaseOrders);
@@ -1065,7 +1077,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partReserved, partOnOrder, partReturned, partReturnLines,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };
