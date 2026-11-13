@@ -904,7 +904,7 @@
         // งานที่ต้องกรอกฟอร์ม (มอบหมาย จบงาน ตรวจรับพร้อมหมายเหตุ) อยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" บนสุดของคอลัมน์ซ้าย (app.js)
         actionHtml: `${canAssign && request.status === "pending_assign" ? assignSection : ""}
         ${canFinishWork ? `<div class="detail-action" id="repair-finish"><h3>บันทึกผลและเสร็จสิ้นงาน</h3><form id="finish-form" novalidate>
-          <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required aria-describedby="finish-cause-hint">${escapeHtml(request.cause_analysis ?? "")}</textarea><small class="field-hint" id="finish-cause-hint">อย่างน้อย 3 ตัวอักษร</small></div>
+          <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required data-min-length="3" aria-describedby="finish-cause-hint">${escapeHtml(request.cause_analysis ?? "")}</textarea><small class="field-hint" id="finish-cause-hint">อย่างน้อย 3 ตัวอักษร</small></div>
           <div class="field parts-field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา (บาท)</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือแนบรูปใบเสร็จในช่องไฟล์ด้านล่างแทนการกรอกทีละแถว</p></div>
           ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกไว้ทำต่อ</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
@@ -1169,11 +1169,12 @@
         showToast(`อะไหล่แถวที่ ${index + 1} ยังไม่มีชื่อรายการ ใส่ชื่อหรือลบแถวนั้นก่อน`, "error");
         return true;
       };
-      document.querySelector("#finish-save-button")?.addEventListener("click", async () => {
+      // บันทึกไว้ทำต่อ: ปุ่มในฟอร์ม และทางเลือกในกล่องถามก่อนออกจากหน้า (confirmLeave ใน app.js) · คืน true เมื่อบันทึกสำเร็จ
+      const saveForLater = async ({ rerender = true } = {}) => {
         const form = document.querySelector("#finish-form");
-        if (namelessPartsRow()) return;
+        if (namelessPartsRow()) return false;
         let files;
-        try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
+        try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { showToast(friendlyError(fileError), "error"); return false; }
         setFormBusy(form, true);
         try {
           const { error } = await sb.rpc("app_save_repair_work_progress", {
@@ -1184,9 +1185,13 @@
           if (error) throw error;
           const warning = await uploadExtraFiles(id, files, employee.id);
           showToast(warning || "บันทึกข้อมูลแล้ว", warning ? "error" : "success");
-          await renderRequestDetail(params);
-        } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); }
-      });
+          if (rerender) await renderRequestDetail(params);
+          return true;
+        } catch (error) { showToast(friendlyError(error), "error"); setFormBusy(form, false); return false; }
+      };
+      const finishFormNode = document.querySelector("#finish-form");
+      if (finishFormNode) finishFormNode.saveForLater = saveForLater;
+      document.querySelector("#finish-save-button")?.addEventListener("click", () => saveForLater());
       // เสร็จสิ้นงาน: ตรวจช่องก่อน แล้วยืนยัน · ช่องในฟอร์มล็อกระหว่างยืนยัน ค่าที่ส่งจึงเป็นค่าบนจอตอนกดยืนยัน
       document.querySelector("#finish-form")?.addEventListener("submit", (event) => {
         event.preventDefault();
