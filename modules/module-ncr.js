@@ -651,6 +651,7 @@
       const defect = [relation(row.defect_type)?.name_th, row.qty_defect !== null && row.qty_defect !== undefined ? `${formatQty(row.qty_defect)} ${row.unit ?? ""}`.trim() : ""].filter(Boolean).join(" · ");
       return {
         className: `status-${row.status}`,
+        sort: { issued: row.issue_date ?? "" },
         cells: {
           no: registerNoHtml(row.ncr_no, href),
           subject: registerSubjectHtml(row.product_name, href, row.customer_name ?? ""),

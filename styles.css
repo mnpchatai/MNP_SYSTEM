@@ -662,6 +662,12 @@ tbody tr:last-child td { border-bottom: 0; }
 .list-filter .select { width: auto; min-width: 150px; min-height: 40px; }
 .register-wrap { min-width: 0; overflow-x: auto; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .register-table th { background: var(--paper); }
+/* หัวคอลัมน์เรียงได้: ปุ่มเต็มช่อง หน้าตาเหมือนหัวตาราง สามเหลี่ยมจางเมื่อยังไม่เรียง ชี้ทิศเมื่อเรียงแล้ว */
+.register-table .th-sort { min-height: 32px; padding: 0; display: inline-flex; align-items: center; gap: 6px; color: inherit; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.register-table .th-sort:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: var(--radius-sm); }
+.register-table .th-sort-icon { width: 0; height: 0; border-inline: 4px solid transparent; border-top: 5px solid currentColor; opacity: .3; }
+.register-table th[aria-sort="descending"] .th-sort-icon { opacity: 1; }
+.register-table th[aria-sort="ascending"] .th-sort-icon { opacity: 1; border-top: 0; border-bottom: 5px solid currentColor; }
 /* หัวตารางในบริบทของโมดูล: ธีมสว่างแถบไล่เฉดเต็มแถวตัวขาว · ธีมมืดเส้นไล่สีบนสุด 4 px กับแถวหัวอมสีโมดูล เลขที่ใบเป็นสีโมดูล */
 [data-module] :is(.register-table, .rf-table, .qc-table, .nd table, .parts-table) thead { background: var(--mod-head); }
 [data-module] :is(.register-table, .rf-table, .qc-table, .nd table, .parts-table) th { height: var(--mod-head-h); padding-top: 0; padding-bottom: 0; color: var(--mod-head-ink); background: transparent; border-bottom: 0; }
@@ -711,7 +717,7 @@ a.register-title:hover { color: var(--primary); }
   .register-table tr { margin-bottom: 8px; padding: 10px 14px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .register-table td { min-width: 0; padding: 0; border: 0; }
   .register-no { order: 1; flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; }
-  .register-status { order: 2; max-width: 100%; }
+  .register-status { order: 2; max-width: 100%; margin-left: auto; text-align: right; }
   .register-subject { order: 3; flex: 1 1 100%; min-width: 0; }
   .register-meta { order: 4; color: var(--muted); font-size: var(--text-caption); white-space: normal; }
   .register-meta::before { content: attr(data-label) " "; font-weight: 700; }

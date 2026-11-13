@@ -1385,9 +1385,9 @@ function requestOwnerNames(request, directory) {
 // ค่าใน cells เป็น HTML ที่ผู้เรียก escape แล้ว (ใช้ registerNoHtml / registerSubjectHtml สร้างช่องเลขที่และเรื่อง)
 // role ประกาศซ้ำทุกชั้น: บนจอแคบ CSS เปลี่ยน table/tr เป็น block/flex ซึ่ง Safari ทิ้งความหมายตารางให้โปรแกรมอ่านจอ
 function registerTableHtml({ label, columns, rows }) {
-  const head = columns.map((column) => `<th scope="col" role="columnheader">${escapeHtml(column.label)}</th>`).join("");
+  const head = columns.map((column) => `<th scope="col" role="columnheader" aria-sort="none"><button type="button" class="th-sort" title="เรียงตาม${escapeHtml(column.label)}">${escapeHtml(column.label)}<span class="th-sort-icon" aria-hidden="true"></span></button></th>`).join("");
   const body = rows.map((row) => `<tr role="row"${row.className ? ` class="${escapeHtml(row.className)}"` : ""}>${columns
-    .map((column) => `<td role="cell" class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}">${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
+    .map((column) => `<td role="cell" class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}"${row.sort?.[column.key] ? ` data-sort="${escapeHtml(String(row.sort[column.key]))}"` : ""}>${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
   return `<div class="register-wrap"><table class="register-table" role="table" aria-label="${escapeHtml(label)}"><thead role="rowgroup"><tr role="row">${head}</tr></thead><tbody role="rowgroup">${body}</tbody></table></div>`;
 }
 
@@ -1443,6 +1443,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
     const owners = requestOwnerNames(request, directory);
     return {
       className: `status-${request.status}`,
+      sort: { created: request.created_at ?? "" },
       cells: {
         no: registerNoHtml(request.request_no, href),
         subject: registerSubjectHtml(main, href, secondary),
@@ -1488,6 +1489,7 @@ function statusBoardRows(rows, { showType = false, params = null, filtered = fal
       const href = row.can_open ? `#/request?id=${encodeURIComponent(row.id)}` : "";
       return {
         className: `status-${row.status}`,
+        sort: { updated: row.last_changed_at ?? row.submitted_at ?? "" },
         cells: {
           no: registerNoHtml(row.request_no, href, "บัญชีนี้ดูได้เฉพาะสถานะและความคืบหน้าของใบนี้"),
           subject: registerSubjectHtml(row.subject ?? "—", href),
@@ -2871,6 +2873,36 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("a, button, input, select, textarea, label")) return;
   if (window.getSelection && !window.getSelection().isCollapsed) return; // ลากเลือกข้อความเพื่อคัดลอก ไม่เปิดใบ
   raised.closest("tr")?.querySelector("a.register-title")?.click();
+});
+
+// A บนหน้าใบที่ไม่มีแผงตัดสิน: กดปุ่มหลักของขั้นงาน MT ที่อยู่บนหน้า (ยังต้องกดยืนยันอีกครั้ง ไม่ส่งทันที)
+const MT_STEP_PRIMARY_SELECTOR = "#repair-start-panel .start-work-button, #repair-verify .verify-button[data-result=\"pass\"], #finish-form .form-actions button[type=\"submit\"]";
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || document.querySelector("#decision-panel, #home-queue .queue-list")) return;
+  const stepKey = /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : ({ KeyA: "a" }[event.code] ?? "");
+  if (stepKey !== "a") return;
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+  if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden]), .step-confirm")) return;
+  const button = [...document.querySelectorAll(MT_STEP_PRIMARY_SELECTOR)].find((node) => !node.disabled && node.offsetParent !== null);
+  if (!button) return;
+  event.preventDefault();
+  button.click();
+});
+
+// เรียงทะเบียนตามคอลัมน์ (ในหน้า ไม่โหลดใหม่): กดหัวคอลัมน์ครั้งแรกเรียงน้อย→มาก กดซ้ำสลับ
+document.addEventListener("click", (event) => {
+  const button = event.target.closest?.(".register-table .th-sort");
+  if (!button) return;
+  const th = button.closest("th");
+  const table = th.closest("table");
+  const index = [...th.parentElement.children].indexOf(th);
+  const ascending = th.getAttribute("aria-sort") !== "ascending";
+  table.querySelectorAll("thead th").forEach((cell) => cell.setAttribute("aria-sort", "none"));
+  th.setAttribute("aria-sort", ascending ? "ascending" : "descending");
+  const valueOf = (row) => { const cell = row.children[index]; return cell?.dataset.sort ?? cell?.textContent.trim() ?? ""; };
+  const body = table.tBodies[0];
+  [...body.rows].sort((a, b) => valueOf(a).localeCompare(valueOf(b), "th", { numeric: true }) * (ascending ? 1 : -1)).forEach((row) => body.append(row));
 });
 
 // J/K ในทะเบียน: เลื่อนโฟกัสไปลิงก์หัวเรื่องของแถวถัดไป/ก่อนหน้า Enter เปิดใบ (หน้าหลักและหน้ารายละเอียดใช้ตัวจัดการของคิวด้านล่าง)

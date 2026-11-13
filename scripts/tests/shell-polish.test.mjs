@@ -510,3 +510,25 @@ test("round 25 (second pass): register rows open from the whole row on every scr
   assert.match(app, /raised\.closest\("tr"\)\?\.querySelector\("a\.register-title"\)\?\.click\(\);/, "a click on a raised sub line or badge still opens the row");
   assert.doesNotMatch(css, /#repair-verify \.approval-actions \{ position: sticky/, "the nested confirm box keeps its own style");
 });
+
+test("round 26: sortable register columns, A presses the MT step's primary button (then confirm), aligned NCR phone cards, short zero pill, reply help", async () => {
+  const vm = await import("node:vm");
+  // ตารางทะเบียน: หัวคอลัมน์เป็นปุ่มเรียง · คอลัมน์วันที่เรียงด้วยค่า ISO (data-sort)
+  const start = app.indexOf("function registerTableHtml(");
+  const source = app.slice(start, app.indexOf("\n}\n", start) + 3);
+  const context = vm.createContext({ escapeHtml: (value) => String(value) });
+  vm.runInContext(`${source}\nthis.fn = registerTableHtml;`, context);
+  const html = context.fn({ label: "t", columns: [{ key: "no", label: "เลขที่", role: "no" }, { key: "created", label: "แจ้งเมื่อ" }], rows: [{ sort: { created: "2026-11-01T08:00:00Z" }, cells: { no: "MT-1", created: "1 พ.ย." } }] });
+  assert.match(html, /<th scope="col" role="columnheader" aria-sort="none"><button type="button" class="th-sort" title="เรียงตามแจ้งเมื่อ">แจ้งเมื่อ<span class="th-sort-icon" aria-hidden="true"><\/span><\/button><\/th>/);
+  assert.match(html, /data-label="แจ้งเมื่อ" data-sort="2026-11-01T08:00:00Z">1 พ.ย.<\/td>/);
+  assert.doesNotMatch(html, /data-label="เลขที่" data-sort/, "columns without a sort value sort by their text");
+  assert.match(app, /\.sort\(\(a, b\) => valueOf\(a\)\.localeCompare\(valueOf\(b\), "th", \{ numeric: true \}\) \* \(ascending \? 1 : -1\)\)/);
+  for (const [file, pattern] of [["app.js", /sort: \{ created: request\.created_at \?\? "" \},/], ["app.js", /sort: \{ updated: row\.last_changed_at \?\? row\.submitted_at \?\? "" \},/], ["modules/module-ncr.js", /sort: \{ issued: row\.issue_date \?\? "" \},/]]) assert.match(read(file), pattern, file);
+  // A บนงาน MT: กดปุ่มหลักที่มองเห็น แล้วยังต้องยืนยัน (ไม่ทำงานเมื่อกล่องยืนยันเปิดอยู่)
+  assert.match(app, /const MT_STEP_PRIMARY_SELECTOR = "#repair-start-panel \.start-work-button, #repair-verify \.verify-button\[data-result=\\"pass\\"\], #finish-form \.form-actions button\[type=\\"submit\\"\]";/);
+  assert.match(app, /\[data-popup\]:not\(\[hidden\]\), \.step-confirm"\)\) return;/);
+  assert.match(read("modules/shortcut-help.js"), /งาน MT: เริ่มงาน ผ่าน หรือเสร็จสิ้นงาน/);
+  assert.match(css, /\.register-status \{ order: 2; max-width: 100%; margin-left: auto; text-align: right; \}/);
+  assert.match(read("modules/module-mt-dashboard.js"), /<span class="nd-pill" title="ไม่มีใบที่เลยกำหนดเสร็จ">ไม่มีเลยกำหนด<\/span>/);
+  assert.match(read("modules/shortcut-help.js"), /ตอบกลับความเห็นของผู้อนุมัติได้ในการ์ด ตอบกลับความเห็น \(ถ้าต้องการ\)/);
+});

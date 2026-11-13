@@ -228,7 +228,7 @@
     return `<div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "", stage: "" })}"><span class="nd-label">ใบที่แจ้งในช่วงนี้</span><span class="nd-value">${fmtNumber(period.total)}<small>ใบ</small></span></a>
         <span class="nd-note">ปิดแล้ว ${fmtCount(period.completed)} (${fmtPercent(period.completedRate)})${period.rejected ? ` · ไม่อนุมัติ ${fmtCount(period.rejected)}` : ""}</span><span class="nd-meter" role="img" aria-label="ปิดแล้ว ${fmtPercent(period.completedRate)}"><span style="width:${(period.completedRate ?? 0) * 100}%"></span></span></div>
       <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "open", stage: "" })}"><span class="nd-label">ค้างอยู่</span><span class="nd-value">${fmtNumber(back.open)}<small>ใบ</small></span></a>
-        ${back.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue", stage: "" })}"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดเสร็จ ${fmtCount(back.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดเสร็จ</span>`}
+        ${back.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue", stage: "" })}"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดเสร็จ ${fmtCount(back.overdue)}</a>` : `<span class="nd-pill" title="ไม่มีใบที่เลยกำหนดเสร็จ">ไม่มีเลยกำหนด</span>`}
         ${back.urgentOpen ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "urgent", stage: "" })}"><span class="nd-ico" aria-hidden="true"></span>ด่วน ${fmtCount(back.urgentOpen)}</a>` : ""}
         <span class="nd-note">นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา</span></div>
       ${measurable(period) ? `
