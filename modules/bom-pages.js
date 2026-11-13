@@ -1848,7 +1848,7 @@
         if (order.status !== "cancelled" && returnLines.some((line) => line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
         if (openOrder) buttons.push(ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary" }));
       }
-      if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(user, { dept: "RB" })) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก แล้วสั่งซื้อส่วนที่ขาด">ตรวจวัตถุดิบ</button>`);
+      if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && (pages.hub?.rfCan ? pages.hub.rfCan(ctx, "purchase") || pages.hub.rfCan(ctx, "viewPurchase") : ctx.helpers.canLinkRubberflow(user, { dept: "RB" }))) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก (สั่งซื้อโดยคลังวัตถุดิบ ST)">ตรวจวัตถุดิบ</button>`);
       if (["released", "in_progress"].includes(order.status) && canPlan) main("complete", ui.button("ปิดใบ", { action: "completeOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ปิดใบสั่งผลิตนี้?" }));
       if (!["completed", "cancelled"].includes(order.status) && canPlan) buttons.push(ui.button("ยกเลิกใบ", { action: "cancelOrder", args: { orderId: order.id }, className: "secondary", confirmText: `ยกเลิกใบสั่งผลิตนี้?${poNote ? ` ${poNote}` : ""}` }));
       if (order.explosion?.length) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-csv="bomsheet" data-bom-order="${attr(order.id)}" title="ใบคำนวณวัตถุดิบรูปแบบเดียวกับ BOMSHEET เปิดใน Excel ได้">ส่งออก CSV ใบคำนวณ</button>`, `<button class="btn rf-btn secondary" type="button" data-bom-csv="req" data-bom-order="${attr(order.id)}" title="รายการที่ต้องเบิก/สั่งซื้อรวมทุกสินค้าในใบ">ส่งออก CSV รายการเบิก</button>`,
@@ -2277,13 +2277,16 @@
     if (!order || !["released", "in_progress"].includes(order.status) || !ctx.helpers.canIssueParts(user)) return null;
     const plan = ctx.helpers.partIssuePlan(ctx.data, orderId);
     if (!plan.lines.length) return null;
-    const rows = plan.lines.map((line) => `<tr><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.remaining)} ${uomText(ctx, line.uom)}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.onHand))}</td><td class="right">${line.short > 0 ? ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`) : ""}</td></tr>`);
-    const canBuy = ctx.helpers.canPlan(user) || user.role === "rb";
+    const onOrder = rules.partOnOrder(rfPurchaseOrdersOf(ctx) ?? []);
+    const rows = plan.lines.map((line) => `<tr><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.remaining)} ${uomText(ctx, line.uom)}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.onHand))}</td><td class="right">${line.short > 0 ? `${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}${onOrder.get(line.itemCode) > 0 ? `<div class="small muted">สั่งแล้ว รอรับ ${esc(rules.fmtQty(onOrder.get(line.itemCode)))}</div>` : ""}` : ""}</td></tr>`);
+    const rfCan = (permission) => Boolean(pages.hub?.rfCan?.(ctx, permission));
+    const canBuy = rfCan("purchase");
+    const canView = !canBuy && rfCan("viewPurchase");
     const note = plan.anyShort
-      ? ui.callout("warn", esc(`สต็อกไม่พอ ${plan.short.length} รายการ จึงเบิกจ่ายไม่ได้ (ระบบไม่จ่ายบางรายการ)${canBuy ? " · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง" : " · แจ้งฝ่ายวางแผนให้สั่งซื้อ หรือนับยอดที่หน้าคลังของซื้อถ้ามีของเพิ่ม"}`))
+      ? ui.callout("warn", esc(`สต็อกไม่พอ ${plan.short.length} รายการ จึงเบิกจ่ายไม่ได้ (ระบบไม่จ่ายบางรายการ)${canBuy ? " · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง ของที่สั่งแล้วรับเข้าได้ที่หน้าใบสั่งซื้อ" : " · แจ้งคลังวัตถุดิบ (ST) ให้สั่งซื้อหรือรับเข้า หรือนับยอดที่หน้าคลังของซื้อถ้ามีของเพิ่ม"}`))
       : ui.callout("info", "เบิกจ่ายทุกรายการพร้อมกัน เบิกผิดยกเลิกได้จนกว่าจะปิดใบ");
     const footer = `${ui.closeButton()}${plan.anyShort
-      ? (canBuy ? '<button class="btn rf-btn" type="button" data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</button>' : "")
+      ? (canBuy ? '<button class="btn rf-btn" type="button" data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</button>' : canView ? '<button class="btn rf-btn secondary" type="button" data-bom-parts-buy>ดูรายการที่ต้องสั่ง</button>' : "")
       : ui.button("เบิกจ่ายทั้งหมด", { action: "issueOrderParts", args: { orderId }, className: "", success: "เบิกจ่ายของซื้อ {result} แล้ว" })}`;
     const woIds = ctx.data.jobs.filter((job) => job.orderId === orderId && job.dept === "RB" && job.externalRef?.woId).map((job) => job.externalRef.woId);
     const bind = (dialog) => {

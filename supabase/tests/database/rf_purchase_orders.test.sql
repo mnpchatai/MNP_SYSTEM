@@ -1,5 +1,6 @@
 -- จัดซื้อเคมีของ RubberFlow (20261110010000_rf_purchase_orders.sql): ใบสั่งซื้อ + สต็อกสำรอง (safetyKg) + อายุเก็บ (shelfLifeDays) ของวัตถุดิบ
--- ตรวจทั้งฝั่งอนุญาตและปฏิเสธต่อบทบาท (กลุ่มวางแผน / สมาชิก RB / ST / QA / WH / SR / ผู้ช่วยผู้จัดการแผนกอื่น) นอกโหมดทดสอบ lab-only โครงสร้าง/สิทธิ์ตาราง
+-- กติกาสิทธิ์ (20261119010000_rf_purchase_by_st.sql): สร้างใบ / รับบรรทัด / ยกเลิก ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน (PP, ผู้จัดการแผนก) สมาชิก RB QA WH SR ได้ RF_FORBIDDEN
+-- ตรวจทั้งฝั่งอนุญาตและปฏิเสธต่อบทบาท (ST / admin / กลุ่มวางแผน / สมาชิก RB / QA / WH / SR / ผู้ช่วยผู้จัดการแผนกอื่น) นอกโหมดทดสอบ lab-only โครงสร้าง/สิทธิ์ตาราง
 -- สร้างใบ (รวมแก้ safetyKg พ่วง) รูปข้อมูลผิด เลขใบซ้ำ ชนรายระเบียนก่อนสิทธิ์ รับเข้าทีละบรรทัดที่สร้างล็อตในคำสั่งเดียวกัน (ล็อตไม่ตรง/ขาด/เกิน = ย้อนทั้งคำสั่ง)
 -- รับซ้ำ สถานะ ordered -> received ยกเลิก snapshot/delta 12 ชุด audit และล้างข้อมูลทดสอบ
 -- (authenticated อ่านตาราง rf_* ตรงไม่ได้ จึงนับตารางด้วย reset role เสมอ) ส่วนที่ไม่เปลี่ยนจากรอบก่อนตรวจใน rubberflow_core.test.sql / rubberflow_shopfloor.test.sql
@@ -79,6 +80,10 @@ insert into public.employees (id, employee_no, first_name, last_name, email, job
    (select id from public.departments where code = 'PP'), (select id from public.roles where code = 'staff'), '8f500000-0000-0000-0000-000000000002'),
   ('8f500000-0000-0000-0000-000000000103', 'MNPLAB001', 'แล็บ', 'หนึ่ง', 'mnplab001-rf3@test.local', 'LAB',
    (select id from public.departments where code = 'QA'), (select id from public.roles where code = 'staff'), '8f500000-0000-0000-0000-000000000003');
+-- persona ผู้ดูแลระบบ (is_test): ไม่มี persona บทบาท admin ในชุดตั้งต้น แต่ persona คือพนักงานทดสอบคนไหนก็ได้ จึงเพิ่มไว้ตรวจว่า admin ยังสร้าง/รับ/ยกเลิกใบสั่งซื้อได้ (ไว้ตรวจปัญหา)
+insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test) values
+  ('SBX-ADMIN-T', 'ทดสอบ', 'ผู้ดูแลระบบ', 'sbx-admin-t@sandbox.local', 'ผู้ดูแลระบบ (ทดสอบ)',
+   (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true);
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 -- ข้อมูลจริง (ไม่ใช่โหมดทดสอบ) ใส่ตรง: โหมดทดสอบต้องมองไม่เห็นและ purge ไม่แตะ
@@ -185,8 +190,15 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', js
   current_setting('test.mat')::jsonb || '{"code":"MAT-B","name":"เขม่าดำ","safetyKg":99}'::jsonb))), 3, 'saveMaterial') $$, 'RF_FORBIDDEN', 'ST staff cannot set the safety stock');
 
 -- 5. สร้างใบสั่งซื้อ -------------------------------------------------------------------------
--- 5.1 ปฏิเสธต่อบทบาท (ST / QA / WH / SR / ผู้ช่วยผู้จัดการแผนกอื่น สร้างไม่ได้)
-select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-01')) $$, 'RF_FORBIDDEN', 'ST staff cannot create a purchase order');
+-- 5.1 ปฏิเสธต่อบทบาท (มีแต่ ST และ admin ที่สร้างได้: กลุ่มวางแผน / ผู้จัดการแผนก / RB / QA / WH / SR / ผู้ช่วยผู้จัดการแผนกอื่น สร้างไม่ได้)
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-01')) $$, 'RF_FORBIDDEN', 'PP staff (the planning group) cannot create a purchase order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-01')) $$, 'RF_FORBIDDEN', 'a department manager outside ST (planning group by role) cannot create a purchase order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-01')) $$, 'RF_FORBIDDEN', 'an RB member cannot create a purchase order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
+select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-01')) $$, 'RF_FORBIDDEN', 'an RB department manager cannot create a purchase order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-01')) $$, 'RF_FORBIDDEN', 'QA staff cannot create a purchase order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
@@ -197,14 +209,19 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
 select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-01')) $$, 'RF_FORBIDDEN', 'an assistant manager of another department cannot create a purchase order');
 select is(public.app_rf_master() ->> 'version', '3', 'nothing was written by the refused calls');
 
--- 5.2 รูปข้อมูลผิด (กลุ่มวางแผน)
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+-- 5.2 รูปข้อมูลผิด (ST ผู้สร้างใบ; ชุด requisitions ผ่านประตูหยาบของ app_rf_save ได้เฉพาะกลุ่มวางแผน / RB จึงตรวจด้วย PP ส่วนที่ตรวจก่อนสิทธิ์รายใบ)
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-03'), null, 'saveMaterial') $$, 'RF_INVALID_PURCHASE', 'purchase orders can only be sent with a purchase order action');
 select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-03'), null, 'receivePurchaseLine') $$, 'RF_INVALID_PURCHASE', 'a new order cannot come with the receipt action');
 select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-03'), null, 'cancelPurchaseOrder') $$, 'RF_INVALID_PURCHASE', 'a new order cannot come with the cancel action');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-03'))),
+  'requisitions', jsonb_build_object('upsert', jsonb_build_array('{}'::jsonb))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_FORBIDDEN',
+  'ST staff cannot send a requisitions list at all (the coarse gate refuses it first)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-03'))),
   'requisitions', jsonb_build_object('upsert', jsonb_build_array('{}'::jsonb))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_INVALID_PURCHASE',
   'creating an order cannot carry other lists (requisitions)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-03'))),
   'materialLots', jsonb_build_object('upsert', jsonb_build_array(rf3_t.lot('LOT-X', 'MAT-A', 10, current_setting('test.exp')::bigint)))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_INVALID_PURCHASE',
   'creating an order cannot carry stock lots');
@@ -233,7 +250,8 @@ select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-03', jsonb_
   jsonb_build_object('materialCode', 'MAT-A', 'qtyKg', 5, 'receivedKg', 5, 'lotNo', 'L-1', 'expiry', current_setting('test.exp')::bigint))))) $$, 'RF_INVALID_PURCHASE',
   'a new order cannot carry receipt data');
 select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-03', '{"lines":[{"materialCode":"MAT-A","qtyKg":5,"receivedKg":5}]}')) $$, 'RF_INVALID_PURCHASE', 'receipt data must be complete or absent');
--- วัตถุดิบที่พ่วงมากับใบสั่งซื้อแก้ได้เฉพาะ safetyKg
+-- วัตถุดิบที่พ่วงมากับใบสั่งซื้อแก้ได้เฉพาะ safetyKg (ชุด materials ผ่านประตูหยาบได้เฉพาะกลุ่มวางแผน / RB: ST ได้ RF_FORBIDDEN ที่ประตูนั้น จึงตรวจด้วย admin ซึ่งสร้างใบได้และอยู่ในกลุ่มวางแผน)
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object(
   'materials', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.mat')::jsonb || '{"code":"MAT-A","name":"เปลี่ยนชื่อ","safetyKg":50,"shelfLifeDays":365}'::jsonb)),
   'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-03')))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_INVALID_MATERIAL',
@@ -248,14 +266,26 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object(
   'an order cannot create a material');
 select is(public.app_rf_master() ->> 'version', '3', 'nothing was written by the refused calls');
 
--- 5.3 สร้างสำเร็จ: กลุ่มวางแผน (พ่วงแก้ safetyKg) และสมาชิก RB (จากส่วนที่ขาดของใบเบิก)
+-- 5.3 สร้างสำเร็จ: admin (พ่วงแก้ safetyKg; ชุด materials ผ่านประตูหยาบไม่ได้สำหรับ ST) และ ST (จากส่วนที่ขาดของใบเบิก)
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object(
+  'materials', jsonb_build_object('upsert', jsonb_build_array((select m || '{"safetyKg":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-A'))),
+  'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-01')))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_FORBIDDEN',
+  'ST staff cannot change a material safety stock together with an order (the materials list is refused)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object(
+  'materials', jsonb_build_object('upsert', jsonb_build_array((select m || '{"safetyKg":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-A'))),
+  'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-01')))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_FORBIDDEN',
+  'a planner cannot create an order even with a safety stock change (and nothing of it is written)');
+select is(public.app_rf_master() ->> 'version', '3', 'the refused calls wrote nothing');
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select set_config('test.res', public.app_rf_save(jsonb_build_object(
   'materials', jsonb_build_object('upsert', jsonb_build_array((select m || '{"safetyKg":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-A'))),
   'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.po')::jsonb || '{"createdBy":"ใครก็ได้","cancelledAt":5}'::jsonb))),
   3, 'createPurchaseOrder', '[{"action":"สั่งซื้อ","detail":"PO-20261110-01"}]'::jsonb)::text, true);
-select is(current_setting('test.res')::jsonb ->> 'version', '4', 'a planner creates an order and updates the safety stock in one save');
+select is(current_setting('test.res')::jsonb ->> 'version', '4', 'admin creates an order and updates the safety stock in one save');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'ordered', 'the new order is ordered');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'createdBy', current_setting('test.n_sbx_pp_staff'), 'the creator is the persona (the client value is ignored)');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'createdBy', current_setting('test.n_sbx_admin_t'), 'the creator is the persona (the client value is ignored)');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'cancelledAt', 'null'::jsonb, 'a cancel time sent by the client is ignored');
 select ok((current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'createdAt')::numeric > 0, 'the creation time is set by the server');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 0,
@@ -264,9 +294,9 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' ->
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'availableKg', '-5', 'an availability below zero is kept');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'sourcePi', '251110-25001', 'the source PI is kept');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'materials' -> 'upsert' -> 0 ->> 'safetyKg', '60', 'the safety stock edited with the order is saved');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select is(rf3_t.create_po(rf3_t.new_po('PO-20261110-02', '{"sourcePi":null,"sourceRequisition":"REQ-1"}')) -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'sourceRequisition', 'REQ-1',
-  'an RB member creates an order from a requisition shortage');
+  'ST staff creates an order from a requisition shortage');
 select is(public.app_rf_master() -> 'purchaseOrders' -> 1 -> 'sourcePi', 'null'::jsonb, 'an order without a PI has a null source PI');
 select is((select jsonb_agg(p ->> 'id') from jsonb_array_elements(public.app_rf_master() -> 'purchaseOrders') p), '["PO-20261110-01","PO-20261110-02"]'::jsonb, 'orders are listed by number');
 
@@ -278,8 +308,14 @@ select is(rf3_t.create_po(rf3_t.po_with('PO-20261110-01', '{}'::jsonb)) ->> 'ver
 select is(rf3_t.create_po(rf3_t.po_with('PO-20261110-01', '{"createdBy":"คนอื่น"}'::jsonb)) ->> 'version', current_setting('test.v_dup'), 'a client value for a server-set field changes nothing');
 select is(public.app_rf_master() ->> 'version', current_setting('test.v_dup'), 'the counter did not move');
 
--- 6. รับเข้า (ST หรือกลุ่มวางแผน) พร้อมสร้างล็อตในคำสั่งเดียวกัน ------------------------------------------
--- 6.1 ปฏิเสธ
+-- 6. รับเข้า (ST หรือ admin) พร้อมสร้างล็อตในคำสั่งเดียวกัน ------------------------------------------
+-- 6.1 ปฏิเสธ (กลุ่มวางแผน / ผู้จัดการแผนก / RB / QA / WH รับบรรทัดไม่ได้)
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 0, 140, 'PO1-A', current_setting('test.exp')::bigint),
+  jsonb_build_array(rf3_t.lot('PO1-A', 'MAT-A', 140, current_setting('test.exp')::bigint))) $$, 'RF_FORBIDDEN', 'PP staff (the planning group) cannot receive an order line');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 0, 140, 'PO1-A', current_setting('test.exp')::bigint),
+  jsonb_build_array(rf3_t.lot('PO1-A', 'MAT-A', 140, current_setting('test.exp')::bigint))) $$, 'RF_FORBIDDEN', 'a department manager outside ST cannot receive an order line');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 0, 140, 'PO1-A', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO1-A', 'MAT-A', 140, current_setting('test.exp')::bigint))) $$, 'RF_FORBIDDEN', 'QA staff cannot receive an order line');
@@ -359,25 +395,25 @@ select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 0, 100,
   jsonb_build_array(rf3_t.lot('PO1-A2', 'MAT-A', 100, current_setting('test.exp')::bigint))) $$, 'RF_INVALID_TRANSITION', 'a received quantity cannot be corrected afterwards');
 select is(jsonb_array_length(public.app_rf_master() -> 'materialLots'), 1, 'the refused receipts left no extra lot');
 
--- 6.4 กลุ่มวางแผนรับบรรทัดที่เหลือ (ST แก้จำนวนจริงได้ 33 จากที่สั่ง 35) ใบครบทุกบรรทัด = received
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+-- 6.4 admin รับบรรทัดที่เหลือ (รับตามจริงได้ 33 จากที่สั่ง 35) ใบครบทุกบรรทัด = received
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select set_config('test.res', rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 1, 33, 'PO1-B', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO1-B', 'MAT-B', 33, current_setting('test.exp')::bigint, '{"supplier":"PO-20261110-01"}')))::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'received', 'the order becomes received once every line is received');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'receivedKg', '33', 'the received quantity can differ from the ordered quantity');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'qtyKg', '35', 'and the ordered quantity is kept');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'receivedBy', current_setting('test.n_sbx_pp_staff'), 'a planner can receive too');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'receivedBy', current_setting('test.n_sbx_admin_t'), 'admin can receive too (and the stock lot is written for admin as well)');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'qtyKg', '33', 'the lot holds the received quantity');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 1, 33, 'PO1-B2', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO1-B2', 'MAT-B', 33, current_setting('test.exp')::bigint))) $$, 'RF_INVALID_TRANSITION', 'a received order cannot be received again');
 
 -- 6.5 ชนรายระเบียนก่อนสิทธิ์: ใบ PO-02 ถูกคนอื่นรับบรรทัดแรกหลังเวอร์ชันฐานของ client
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select set_config('test.v2', rf3_t.ver()::text, true);
 select is(rf3_t.recv(rf3_t.receipt_po('PO-20261110-02', 0, 140, 'PO2-A', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO2-A', 'MAT-A', 140, current_setting('test.exp')::bigint))) -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'ordered',
-  'a planner receives the first line of the second order');
+  'ST staff receives the first line of the second order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-02', 0, 140, 'PO2-A2', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO2-A2', 'MAT-A', 140, current_setting('test.exp')::bigint)), current_setting('test.v2')::bigint) $$, 'RF_STALE',
@@ -388,20 +424,28 @@ select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-02', 1, 35, 
   'the stale check comes before the permission check (an RB member with an old copy gets RF_STALE)');
 select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-02', 1, 35, 'PO2-B', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO2-B', 'MAT-B', 35, current_setting('test.exp')::bigint))) $$, 'RF_FORBIDDEN', 'with a current copy the same RB member is simply not allowed');
-
--- 7. ยกเลิก (กลุ่มวางแผน เฉพาะใบ ordered ที่ยังไม่มีบรรทัดไหนรับเข้า) ------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select ok(rf3_t.create_po(rf3_t.new_po('PO-20261110-03', '{"lines":[{"materialCode":"MAT-A","needKg":5,"availableKg":0,"shortageKg":5,"safetyKg":60,"qtyKg":5}]}')) is not null, 'a planner creates a third order');
+select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-02', 1, 35, 'PO2-B', current_setting('test.exp')::bigint),
+  jsonb_build_array(rf3_t.lot('PO2-B', 'MAT-B', 35, current_setting('test.exp')::bigint)), current_setting('test.v2')::bigint) $$, 'RF_STALE',
+  'the stale check also comes before the permission check for a planner with an old copy');
+select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-02', 1, 35, 'PO2-B', current_setting('test.exp')::bigint),
+  jsonb_build_array(rf3_t.lot('PO2-B', 'MAT-B', 35, current_setting('test.exp')::bigint))) $$, 'RF_FORBIDDEN', 'with a current copy the planner is simply not allowed to receive');
+
+-- 7. ยกเลิก (ST หรือ admin เฉพาะใบ ordered ที่ยังไม่มีบรรทัดไหนรับเข้า) ------------------------------------------
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select ok(rf3_t.create_po(rf3_t.new_po('PO-20261110-03', '{"lines":[{"materialCode":"MAT-A","needKg":5,"availableKg":0,"shortageKg":5,"safetyKg":60,"qtyKg":5}]}')) is not null, 'ST staff creates a third order');
 select ok(rf3_t.create_po(rf3_t.new_po('PO-20261110-04')) is not null, 'and a fourth order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'an RB member cannot cancel an order');
-select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
-select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'ST staff cannot cancel an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'PP staff (the planning group) cannot cancel an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'a department manager outside ST cannot cancel an order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'QA staff cannot cancel an order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'an assistant manager of another department cannot cancel an order');
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-02') $$, 'RF_INVALID_TRANSITION', 'an order with a received line cannot be cancelled');
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-01') $$, 'RF_INVALID_TRANSITION', 'a received order cannot be cancelled');
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-04', null, 'createPurchaseOrder') $$, 'RF_INVALID_PURCHASE', 'cancelling needs the cancel action');
@@ -412,9 +456,12 @@ select throws_ok($$ select rf3_t.create_po(rf3_t.po_with('PO-20261110-04', jsonb
   jsonb_set((select p -> 'lines' from jsonb_array_elements(public.app_rf_master() -> 'purchaseOrders') p where p ->> 'id' = 'PO-20261110-04'), '{0,qtyKg}', '999'))), null, 'cancelPurchaseOrder') $$,
   'RF_INVALID_TRANSITION', 'nothing but receipt and cancel edits an order (quantity)');
 select throws_ok($$ select rf3_t.create_po(rf3_t.po_with('PO-20261110-01', '{"status":"ordered"}'), null, 'cancelPurchaseOrder') $$, 'RF_INVALID_TRANSITION', 'a received order cannot go back to ordered');
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
+select is(rf3_t.cancel_po('PO-20261110-04') -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'admin cancels the fourth order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select set_config('test.vc', rf3_t.ver()::text, true);
 select set_config('test.res', rf3_t.cancel_po('PO-20261110-03')::text, true);
-select is(current_setting('test.res')::jsonb ->> 'version', (current_setting('test.vc')::bigint + 1)::text, 'a planner cancels an order that has no received line');
+select is(current_setting('test.res')::jsonb ->> 'version', (current_setting('test.vc')::bigint + 1)::text, 'ST staff cancels an order that has no received line');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'the order is cancelled');
 select ok((current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'cancelledAt')::numeric > 1000, 'the cancel time is set by the server');
 select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert'), 1, 'the reply lists only the cancelled order');
@@ -438,11 +485,12 @@ select is(jsonb_array_length(public.app_rf_master_since(current_setting('test.vc
 select is(public.app_rf_master_since(current_setting('test.vc')::bigint) -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'id', 'PO-20261110-03', 'and it is the cancelled one');
 select is(public.app_rf_master_since(current_setting('test.vc')::bigint) -> 'changes' -> 'purchaseOrders' -> 'delete', '[]'::jsonb, 'orders are never deleted');
 select is(jsonb_array_length(public.app_rf_master_since(current_setting('test.vc')::bigint + 1) -> 'changes' -> 'purchaseOrders' -> 'upsert'), 0, 'a client at the current version gets an empty order delta');
-select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'createPurchaseOrder' and a ->> 'user' = current_setting('test.n_sbx_pp_staff')
+select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'createPurchaseOrder' and a ->> 'user' = current_setting('test.n_sbx_admin_t')
                   and a -> 'entries' -> 0 ->> 'detail' = 'PO-20261110-01'), 'the history records the order with the persona and the client entry');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'receivePurchaseLine' and a ->> 'user' = current_setting('test.n_sbx_st_staff')
                   and a ->> 'detail' like '%purchaseOrders +1%' and a ->> 'detail' like '%materialLots +1%'), 'the history records the receipt by ST with both lists');
-select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'cancelPurchaseOrder' and a ->> 'user' = current_setting('test.n_sbx_pp_staff')), 'and the cancel');
+select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'cancelPurchaseOrder' and a ->> 'user' = current_setting('test.n_sbx_st_staff'))
+      and exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'cancelPurchaseOrder' and a ->> 'user' = current_setting('test.n_sbx_admin_t')), 'and the cancels by ST and by admin');
 
 -- 9. แยกโหมด และล้างข้อมูลทดสอบ ----------------------------------------------------------------------
 reset role;

@@ -548,22 +548,34 @@ test("receiving a purchase line makes one lot and closes that line; the order be
   assert.equal(onOrder.onOrderKg, 25);
 });
 
-test("purchasing rights on the database accounts: RB members and the planner group order, ST and the planner group receive, only the planner group cancels", () => {
-  const planner = { planner: true };
+test("purchasing rights on the database accounts: only ST (and the admin) order, receive and cancel; the planner group (even a manager), RB and the others only look", () => {
+  const planner = { planner: true, role: "planner" }; // department PP
+  const manager = { planner: true, role: "manager" }; // department manager or above
   const rb = { rb: true };
   const st = { st: true };
   const qa = { qa: true };
+  const admin = { planner: true, role: "admin" };
   const d = fresh();
   const make = (flags) => A.createPurchaseOrder(d, { lines: [poLine("ZNO")] }, remoteCtx(flags));
-  assert.ok(make(planner));
-  assert.ok(make(rb));
-  for (const flags of [st, qa, {}]) rejects(() => make(flags), /ไม่มีสิทธิ์: สั่งซื้อวัตถุดิบได้โดย/);
-  const id = d.purchaseOrders[0].id;
-  for (const flags of [rb, qa, {}]) rejects(() => A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 1, expiry: NOW + DAY }, remoteCtx(flags)), /ไม่มีสิทธิ์: รับวัตถุดิบเข้าคลัง/);
-  assert.ok(A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 1, expiry: NOW + DAY }, remoteCtx(st)));
-  const open = d.purchaseOrders[1].id;
-  for (const flags of [rb, st, qa]) rejects(() => A.cancelPurchaseOrder(d, { id: open }, remoteCtx(flags)), /ไม่มีสิทธิ์: ยกเลิกใบสั่งซื้อได้โดยฝ่ายวางแผน/);
-  assert.equal(A.cancelPurchaseOrder(d, { id: open }, remoteCtx(planner)), open);
+  const receive = (id, flags) => A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 1, expiry: NOW + DAY }, remoteCtx(flags));
+  // order: ST and the admin; the planner group, RB, QA and an account with no flag are refused and nothing is written
+  for (const flags of [planner, manager, rb, qa, {}]) rejects(() => make(flags), /ไม่มีสิทธิ์: สั่งซื้อวัตถุดิบได้โดยแผนกคลังวัตถุดิบ \(ST\) เท่านั้น/);
+  assert.equal(d.purchaseOrders.length, 0, "the refused orders wrote nothing");
+  const byAdmin = make(admin);
+  const bySt = make(st);
+  assert.deepEqual(d.purchaseOrders.map((order) => order.id).sort(), [byAdmin, bySt].sort());
+  // receive: ST and the admin
+  for (const flags of [planner, manager, rb, qa, {}]) rejects(() => receive(bySt, flags), /ไม่มีสิทธิ์: รับวัตถุดิบเข้าคลัง/);
+  assert.equal(d.purchaseOrders.find((order) => order.id === bySt).lines[0].receivedKg, null, "the refused receipts wrote nothing");
+  assert.ok(receive(bySt, st));
+  assert.ok(receive(byAdmin, admin));
+  // cancel: ST and the admin (an order with no received line is needed, so two more)
+  const open = make(st);
+  const open2 = make(admin);
+  for (const flags of [planner, manager, rb, qa, {}]) rejects(() => A.cancelPurchaseOrder(d, { id: open }, remoteCtx(flags)), /ไม่มีสิทธิ์: ยกเลิกใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ \(ST\) เท่านั้น/);
+  assert.equal(d.purchaseOrders.find((order) => order.id === open).status, "ordered", "the refused cancels wrote nothing");
+  assert.equal(A.cancelPurchaseOrder(d, { id: open }, remoteCtx(st)), open);
+  assert.equal(A.cancelPurchaseOrder(d, { id: open2 }, remoteCtx(admin)), open2);
   // the demo mode checks no rights in the actions, as before
   assert.ok(A.createPurchaseOrder(d, { lines: [poLine("ZNO")] }, ctx("viewer")));
 });
@@ -598,13 +610,16 @@ test("a purchase order can mix chemical lines and purchased-part lines: a part l
   assert.ok(d.audit.some((row) => row.action === "ตรวจสอบรับเข้าตามใบสั่งซื้อ" && row.detail === `${id} P-BOX-01 18.5 box`));
 });
 
-test("a part's safety stock keeps the stock page's 4 decimals, so an RB member can order a part whose stored safety has 4 decimals and still cannot change it", () => {
+test("a part's safety stock keeps the stock page's 4 decimals, so ST can order a part whose stored safety has 4 decimals and still cannot change it (only the admin can do both)", () => {
   const d = fresh();
-  const rb = remoteCtx({ rb: true });
+  const stCtx = remoteCtx({ st: true }); // ST orders; without the planner flag the stored safety stock cannot change
   const line = { materialCode: "P-KG-01", source: "bom", uom: "kg", needKg: 2, availableKg: 0, shortageKg: 2, safetyKg: 1.2345, storedSafetyKg: 1.2345, qtyKg: 3 };
-  A.createPurchaseOrder(d, { lines: [line], safety: { "P-KG-01": "1.2345" } }, rb);
+  A.createPurchaseOrder(d, { lines: [line], safety: { "P-KG-01": "1.2345" } }, stCtx);
   assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.2345, "sent exactly as stored (the database compares numerics exactly)");
-  rejects(() => A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, rb), /ฝ่ายวางแผนเท่านั้น/);
+  rejects(() => A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, stCtx), /ฝ่ายวางแผนเท่านั้น/);
+  // the admin is in the planner group as well as ST, so a changed safety stock comes with the order
+  A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, remoteCtx({ planner: true, role: "admin" }));
+  assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.235);
 });
 
 test("a missing recipe, material or record is named neutrally: no message prints undefined or null", () => {

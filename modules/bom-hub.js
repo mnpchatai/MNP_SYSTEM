@@ -158,7 +158,8 @@
     const canAdd = canEdit && canAddLineTo(ctx, item);
     // เพิ่มทีละบรรทัดเป็นปุ่มหลัก · หลายบรรทัดในครั้งเดียวมีสองทาง: วางจาก Excel และคัดลอกโครงสร้างจากรายการอื่น (แทนตารางกว้างของหน้า "แก้หลายบรรทัด")
     const addRoot = canAdd ? `${ui.openButton("+ เพิ่มส่วนประกอบ", "lineAdd", { parentCode: item.code }, { className: "small" })}${ui.openButton("วางจาก Excel", "linesPaste", { parentCode: item.code }, { className: "secondary small" })}${ui.openButton("คัดลอกจากรายการอื่น", "treeCopy", { code: item.code }, { className: "secondary small" })}` : "";
-    const folds = `<div class="rf-row">${rows.some((_, index) => hasChild(index)) ? `<button class="btn rf-btn secondary small" type="button" data-tree-all="open">ขยายทั้งหมด</button><button class="btn rf-btn secondary small" type="button" data-tree-all="close">ย่อทั้งหมด</button>` : ""}${addRoot}</div>`;
+    const stepsButton = canEdit && !ctx.helpers.NO_BOM_KINDS.includes(item.kind) ? ui.openButton("ขั้นตอนผลิต", "routingEdit", { code: item.code }, { className: "secondary small" }) : "";
+    const folds = `<div class="rf-row">${rows.some((_, index) => hasChild(index)) ? `<button class="btn rf-btn secondary small" type="button" data-tree-all="open">ขยายทั้งหมด</button><button class="btn rf-btn secondary small" type="button" data-tree-all="close">ย่อทั้งหมด</button>` : ""}${addRoot}${stepsButton}</div>`;
     const isRod = item.kind === "RB";
     const emptyText = ctx.helpers.NO_BOM_KINDS.includes(item.kind) ? "รายการนี้เป็นของซื้อหรือสูตรยาง ไม่มีส่วนประกอบ" : isRod ? "เส้นยางนี้ยังไม่มีบรรทัดสูตรยางใน BOM" : "ยังไม่มี BOM";
     // จำนวนที่คำนวณอยู่ในช่อง "คำนวณสำหรับ" ที่เดียว หัวคอลัมน์จึงไม่บอกซ้ำ
@@ -168,7 +169,9 @@
     const rodCard = isRod ? ui.card(ui.kv(rubberFacts(ctx, item)), { title: "ข้อมูลเส้นยาง", actions: canEdit ? ui.openButton("แก้ข้อมูลเส้นยาง", "rubberEdit", { code: item.code }, { className: "" }) : "" }) : "";
     // แผงข้างไม่เป็น aria-live (อ่านซ้ำทั้งแผงทุกครั้งที่คลิก): โปรแกรมอ่านจอได้ยินแค่ชื่อบรรทัดที่เลือกจาก [data-tree-status] และบรรทัดที่เลือกมี aria-current
     const aside = `<aside class="card rf-card bom-tree-side" data-tree-side aria-label="รายละเอียดของบรรทัดที่เลือก"><p class="muted">เลือกบรรทัดเพื่อดูรายละเอียด</p></aside>`;
-    const html = `${warn}${rodCard}<div class="bom-tree-layout"><section class="card rf-card"><div class="bom-tree-bar">${qtyForm}${folds}</div>${table}<p class="sr-only" role="status" data-tree-status></p></section>${rows.length ? aside : ""}</div>`;
+    // แถบลากระหว่างต้นไม้กับแผงรายละเอียด (จอกว้าง): ลาก หรือลูกศรซ้าย/ขวา ปรับความกว้างของแผง ดับเบิลคลิกคืนค่าเดิม · จำค่าไว้ในเบราว์เซอร์นี้
+    const split = rows.length ? '<div class="bom-tree-split" role="separator" aria-orientation="vertical" tabindex="0" aria-label="ปรับความกว้างของแผงรายละเอียด" title="ลากเพื่อปรับความกว้าง ดับเบิลคลิกเพื่อคืนค่าเดิม" data-tree-split></div>' : "";
+    const html = `${warn}${rodCard}<div class="bom-tree-layout" data-tree-layout><section class="card rf-card"><div class="bom-tree-bar">${qtyForm}${folds}</div>${table}<p class="sr-only" role="status" data-tree-status></p></section>${split}${rows.length ? aside : ""}</div>`;
     // รายละเอียดของบรรทัดที่เลือก (สร้างตอนคลิก ไม่วาดล่วงหน้าทุกบรรทัด)
     const detailHtml = (line) => {
       const child = itemOf(ctx, line.itemCode);
@@ -199,6 +202,9 @@
         canEdit && rod ? ui.openButton("แก้ข้อมูลเส้นยาง", "rubberEdit", { code: line.itemCode }, { className: "secondary" }) : "",
         canEdit && underRod ? ui.openButton("แก้ข้อมูลเส้นยาง", "rubberEdit", { code: line.parentCode }, { className: "" }) : "",
         canEdit && canAddLineTo(ctx, child) ? ui.openButton("+ ส่วนประกอบข้างใน", "lineAdd", { parentCode: line.itemCode }, { className: "secondary" }) : "",
+        // แทรกชิ้นงานระหว่างทาง (WIP) คั่นระหว่างชิ้นแม่กับบรรทัดนี้ · ใต้เส้นยางแทรกไม่ได้ (ลูกของเส้นยางเป็นสูตรยางเท่านั้น)
+        canEdit && bomLine && canAddLineTo(ctx, itemOf(ctx, line.parentCode)) ? ui.openButton("แทรก WIP คั่น", "wipInsert", { parentCode: line.parentCode, childCode: line.itemCode }, { className: "secondary" }) : "",
+        canEdit && child && !ctx.helpers.NO_BOM_KINDS.includes(child.kind) ? ui.openButton(steps.length ? "แก้ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: line.itemCode }, { className: "secondary" }) : "",
         ui.link("เปิดหน้าของรายการนี้", ctx.url("find", { code: line.itemCode }), "btn rf-btn secondary"),
         canEdit && bomLine && rest.length && !underRod ? ui.button("ลบบรรทัดนี้", { action: "saveBom", args: { itemCode: line.parentCode, lines: rest, note: `ลบ ${line.itemCode}` }, className: "secondary", confirmText: `ลบ ${line.name} ออกจาก ${itemOf(ctx, line.parentCode)?.name ?? line.parentCode}?`, success: `ลบ ${line.itemCode} ออกจาก BOM ของ ${line.parentCode} แล้ว` }) : "",
       ].join("");
@@ -210,6 +216,7 @@
         const value = Number(new FormData(event.currentTarget).get("qty"));
         location.hash = ctx.url("find", { code: item.code, qty: value > 0 ? String(value) : null });
       });
+      bindSplit(rootNode);
       const table = rootNode.querySelector("table.bom-tree");
       if (!table) return;
       const all = () => [...table.querySelectorAll("[data-tree-row]")];
@@ -395,6 +402,68 @@
       });
     };
     return { html: ui.dialog("lineAdd", "เพิ่มส่วนประกอบ", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-add-form">เพิ่ม</button>` }), bind };
+  };
+
+  // แถบลากปรับความกว้างของแผงรายละเอียด: ตั้ง --side-w ที่กรอบ (CSS ใช้เฉพาะจอกว้าง) · 260 px ถึง 60% ของกรอบ · ค่าที่เลือกเก็บใน localStorage ของเบราว์เซอร์นี้ (ความสะดวกของผู้ใช้ ไม่ใช่ข้อมูลงาน)
+  const SIDE_KEY = "mnp-bom-side-w";
+  const SIDE_MIN = 260;
+  function bindSplit(rootNode) {
+    const layout = rootNode.querySelector("[data-tree-layout]");
+    const handle = rootNode.querySelector("[data-tree-split]");
+    if (!layout || !handle) return;
+    const limit = () => Math.max(SIDE_MIN, Math.round(layout.getBoundingClientRect().width * 0.6));
+    const apply = (width, save = true) => {
+      const value = Math.min(limit(), Math.max(SIDE_MIN, Math.round(width)));
+      layout.style.setProperty("--side-w", `${value}px`);
+      handle.setAttribute("aria-valuenow", String(value));
+      if (save) { try { root.localStorage?.setItem(SIDE_KEY, String(value)); } catch { /* เก็บไม่ได้: ใช้ได้เฉพาะรอบนี้ */ } }
+    };
+    const current = () => rootNode.querySelector("[data-tree-side]")?.getBoundingClientRect().width ?? 340;
+    handle.setAttribute("aria-valuemin", String(SIDE_MIN));
+    let stored = 0;
+    try { stored = Number(root.localStorage?.getItem(SIDE_KEY)) || 0; } catch { stored = 0; }
+    if (stored >= SIDE_MIN) apply(stored, false);
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button > 0) return;
+      event.preventDefault();
+      const right = layout.getBoundingClientRect().right;
+      handle.setPointerCapture?.(event.pointerId);
+      handle.classList.add("is-dragging");
+      const move = (moveEvent) => apply(right - moveEvent.clientX);
+      const stop = () => { handle.classList.remove("is-dragging"); handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", stop); handle.removeEventListener("pointercancel", stop); };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", stop);
+      handle.addEventListener("pointercancel", stop);
+    });
+    handle.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      apply(current() + (event.key === "ArrowLeft" ? 24 : -24));
+    });
+    handle.addEventListener("dblclick", () => { layout.style.removeProperty("--side-w"); handle.removeAttribute("aria-valuenow"); try { root.localStorage?.removeItem(SIDE_KEY); } catch { /* ไม่มีอะไรต้องลบ */ } });
+  }
+
+  // dialog: แทรกชิ้นงานระหว่างทาง (WIP) คั่นระหว่างชิ้นแม่กับบรรทัดที่เลือก · ชิ้นแม่ → [WIP ใหม่] → บรรทัดเดิม
+  // บรรทัดเดิมย้ายไปอยู่ใต้ WIP ใหม่พร้อมปริมาณ เผื่อเสีย และหมายเหตุของมัน · บันทึกด้วย saveBomTree ในคำสั่งเดียว (ตัวแปลง wipInsert ใน module-bom.js): สร้างชิ้นใหม่ BOM ของชิ้นใหม่ และ BOM ฉบับใหม่ของชิ้นแม่
+  dialogs.wipInsert = (ctx, { parentCode, childCode }) => {
+    const { ui, rules } = ctx;
+    const parent = itemOf(ctx, parentCode);
+    const child = itemOf(ctx, childCode);
+    const line = approvedBomOf(ctx, parentCode)?.lines.find((entry) => entry.childCode === childCode);
+    if (!canAddLineTo(ctx, parent) || !child || !line || !ctx.helpers.canPlan(ctx.user)) return null;
+    // ชนิดของ WIP: อยู่ใต้ชิ้นแม่ได้ และมีบรรทัดเดิมเป็นลูกได้ (ไม่รวมสินค้า เส้นยาง และชนิดที่ไม่มีส่วนประกอบ)
+    const kinds = Object.entries(rules.KINDS).filter(([kind]) => kind !== "FG" && kind !== "RB" && !ctx.helpers.NO_BOM_KINDS.includes(kind) && !rules.childKindError(parent.kind, kind) && !rules.childKindError(kind, child.kind)).map(([value, meta]) => ({ value, label: meta.label }));
+    if (!kinds.length) return null;
+    const uoms = Object.entries(rules.UOMS).map(([value, meta]) => ({ value, label: meta.label }));
+    const body = `<form novalidate id="bom-wip-form" data-rf-form="saveBomTree" data-rf-args="${attr(JSON.stringify({ wipInsert: true, code: parent.code, childCode: child.code }))}" data-rf-success="{result}">
+      <p class="muted small">${esc(`${parent.name} → ชิ้นใหม่ → ${child.name}`)}</p>
+      ${ui.field("รหัสของชิ้นใหม่", ui.input("wipCode", { required: true, placeholder: "เช่น WIP-TP01-01", extra: 'autocapitalize="characters" maxlength="60"' }), { required: true })}
+      ${ui.field("ชื่อ", ui.input("wipName", { required: true, extra: 'maxlength="160"' }), { required: true })}
+      <div class="rf-grid rf-g3">${ui.field("ชนิด", ui.select("wipKind", kinds, { value: kinds.find((entry) => entry.value === "SUBPART")?.value ?? kinds[0].value, extra: "data-native-select" }))}${ui.field("แผนกที่ทำ", ui.select("wipDept", rules.DEPTS.map((value) => ({ value, label: rules.DEPT_LABEL[value] ?? value })), { value: parent.ownerDept, extra: "data-native-select" }))}${ui.field("หน่วย", ui.select("wipUom", uoms, { value: "pcs", extra: "data-native-select" }))}</div>
+      <div class="rf-grid rf-g2">${ui.field(`ใช้ชิ้นใหม่ต่อ 1 ${uomText(ctx, parent.uom)}`, ui.input("wipQty", { type: "number", step: "any", min: "0.000001", required: true, value: "1" }), { required: true })}${ui.field(`ใช้ ${child.code} ต่อ 1 ชิ้นใหม่ (${uomText(ctx, child.uom)})`, ui.input("childQty", { type: "number", step: "any", min: "0.000001", required: true, value: String(Math.round(line.qty * 1e6) / 1e6) }), { required: true })}</div>
+      <p class="small muted">ค่าตั้งต้น: ชิ้นใหม่ 1 หน่วยต่อชิ้นแม่ และใช้บรรทัดเดิมเท่าเดิม ยอดรวมจึงไม่เปลี่ยน · เพิ่มส่วนประกอบอื่นใต้ชิ้นใหม่ได้หลังบันทึก</p>
+      ${ui.field("เหตุผลของการแก้ครั้งนี้", ui.input("note", { extra: 'maxlength="300"' }))}</form>`;
+    return { html: ui.dialog("wipInsert", "แทรก WIP คั่น", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-wip-form">แทรก</button>` }) };
   };
 
   // dialog: ข้อมูลเส้นยาง (สูตรยาง ข้อมูลการตัด น้ำหนัก) · การเปลี่ยนสูตรยางแสดงเป็นข้อความ "จาก → เป็น" พร้อมผลกระทบ และต้องติ๊กยืนยันก่อนปุ่มบันทึกจะกดได้
@@ -662,7 +731,10 @@
     return `${short.length || enough.length <= 5 ? ui.table(headCells, (short.length ? short : enough).map(rowHtml)) : ""}${short.length && enough.length ? `<details class="bom-more"><summary>ดู${esc(noun)}อีก ${enough.length} รายการที่พอ</summary>${ui.table(headCells, enough.map(rowHtml))}</details>` : !short.length && enough.length > 5 ? `<details class="bom-more"><summary>ดู${esc(noun)}ทั้ง ${enough.length} รายการ</summary>${ui.table(headCells, enough.map(rowHtml))}</details>` : ""}`;
   }
   // สั่งซื้อของที่ขาดของใบร่างได้เมื่อข้อมูลอยู่ในฐานข้อมูล (ใบสั่งซื้อเป็นของ RubberFlow) และผู้ใช้เป็นฝ่ายวางแผนหรือแผนก RB (เงื่อนไขเดียวกับปุ่มตรวจวัตถุดิบของใบที่ปล่อยแล้ว)
-  const canBuyParts = (ctx) => Boolean(ctx.store?.isRemote?.() && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(ctx.user, { dept: "RB" }));
+  // สิทธิ์ของหน้าต่างสั่งซื้อ (RubberFlow เป็นเจ้าของ): สั่งซื้อ = แผนก ST · กลุ่มวางแผนและ RB เปิดดูได้อย่างเดียว
+  const rfCan = (ctx, permission) => { try { return Boolean(ctx.store?.isRemote?.() && ctx.rubberflow()?.can?.(permission)); } catch { return false; } };
+  const canBuyParts = (ctx) => rfCan(ctx, "purchase");
+  const canViewBuy = (ctx) => rfCan(ctx, "purchase") || rfCan(ctx, "viewPurchase");
   pages.orderSteps = (ctx, order, { net, buttons }) => {
     const { ui, rules, data, params } = ctx;
     const current = orderStepOf(ctx, order);
@@ -695,8 +767,9 @@
         const counted = Object.keys(order.stockCounts ?? {}).length;
         const wip = `<div class="bom-step-line"><div><strong>ชิ้นงานค้างในไลน์ที่ใช้แทนได้</strong><div class="small muted">${counted ? esc(`กรอกยอดแล้ว ${counted} รายการ ระบบหักออกจากยอดที่ต้องผลิต`) : "ยังไม่ได้กรอก ถ้าไม่กรอก ระบบสั่งผลิตเต็มจำนวน"}</div></div>${ctx.helpers.canCount(ctx.user) ? ui.link(counted ? "แก้ยอดที่กรอก" : "กรอกยอดที่มีอยู่", ctx.url("count", { order: order.id }), "btn rf-btn secondary") : ""}</div>`;
         // สั่งซื้อส่วนที่ขาด (ของซื้อและเคมี) ได้ตั้งแต่ใบยังเป็นร่าง ด้วยหน้าต่างสั่งซื้อเดียวกับหลังปล่อยผลิต (ผู้ที่สั่งซื้อได้ = ฝ่ายวางแผนหรือแผนก RB) · ใช้ได้เมื่อข้อมูลอยู่ในฐานข้อมูล (ใบสั่งซื้อเป็นของ RubberFlow)
-        const canBuy = (short.length || chemShort.length) && canBuyParts(ctx);
-        const buy = canBuy ? `<div class="rf-row bom-step-next"><button class="btn rf-btn" type="button" data-bom-draft-buy>สั่งซื้อส่วนที่ขาด</button></div>` : "";
+        const lacks = short.length || chemShort.length;
+        const buy = lacks && canBuyParts(ctx) ? `<div class="rf-row bom-step-next"><button class="btn rf-btn" type="button" data-bom-draft-buy>สั่งซื้อส่วนที่ขาด</button></div>`
+          : lacks && canViewBuy(ctx) ? `<div class="rf-row bom-step-next"><span class="small muted">คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ</span><button class="btn rf-btn secondary" type="button" data-bom-draft-buy>ดูรายการที่ต้องสั่ง</button></div>` : "";
         const sum = [parts.length ? (short.length ? `ของซื้อขาด ${short.length} จาก ${parts.length} รายการ` : `ของซื้อพอทั้ง ${parts.length} รายการ`) : "", chem.rows.length ? (chemShort.length ? `เคมีขาด ${chemShort.length} จาก ${chem.rows.length} รายการ` : `เคมีพอทั้ง ${chem.rows.length} รายการ`) : ""].filter(Boolean).join(" · ");
         panel = ui.card(`${table}${chemHtml}${buy}${wip}<div class="rf-row bom-step-next">${buttons.explode ? buttons.explode.replace("ระเบิด BOM", "คำนวณใหม่") : ""}${canPlan ? ui.link("ไปขั้น 3 ปล่อยผลิต", stepUrl(3), "btn rf-btn") : ""}</div>`,
           { title: `ขั้น 2 · ตรวจของ <span class="muted">${sum}</span>` });
@@ -714,7 +787,7 @@
       const warns = [
         !order.explosion?.length ? ui.callout("warn", "ยังไม่ได้คำนวณของที่ต้องใช้ กลับไปขั้น 2 ก่อน") : "",
         noBom.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ ชิ้นงานที่ยังไม่มี BOM: ${noBom.map((code) => ui.link(code, ctx.url("find", { code }), "rf-mono")).join(", ")}`) : "",
-        lacking ? ui.callout("warn", `ยังขาด${lacking} และยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า${canBuyParts(ctx) ? ` · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}` : ""}`) : "",
+        lacking ? ui.callout("warn", `ยังขาด${lacking} และยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า${canBuyParts(ctx) ? ` · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}` : " · คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ"}`) : "",
       ].join("");
       panel = ui.card(`${warns}${order.explosion?.length ? `<p>ปล่อยผลิตแล้วระบบสร้างงานให้แต่ละแผนกตามนี้ และล็อกฉบับ BOM ที่ใช้</p>${list}` : ""}<div class="rf-row bom-step-next">${ui.link("กลับไปขั้น 2", stepUrl(2), "btn rf-btn secondary")}${noBom.length || !order.explosion?.length ? "" : buttons.release ?? ""}</div>`, { title: "ขั้น 3 · ปล่อยผลิต" });
     } else if (view === 4 || view === 5) {
@@ -740,6 +813,28 @@
     return { html: `${bar}${panel}`, used, bind };
   };
 
+  // งานของคลังวัตถุดิบที่ไม่ใช่งานของใบ (โหมดฐานข้อมูล): รับเข้าตามใบสั่งซื้อที่ยังรอรับ และสั่งซื้อของซื้อที่ใบยังขาด · แสดงเฉพาะผู้ที่ทำได้จริง (สิทธิ์ของ RubberFlow: แผนก ST)
+  // ใช้ทั้งการ์ดในหน้างานของฉันและตัวเลขที่เมนู · ของที่ขาดคิดด้วย rules.partNeeds ตัวเดียวกับหน้าต่างสั่งซื้อ (เคมีดูที่หน้าใบ)
+  function storeTasks(ctx) {
+    const tasks = [];
+    const purchaseOrders = pages.tools?.purchaseOrdersOf?.(ctx) ?? [];
+    if (rfCan(ctx, "receiveMaterial")) {
+      for (const po of purchaseOrders) {
+        if (po.status !== "ordered") continue;
+        const lines = (po.lines ?? []).filter((line) => line.receivedKg === null || line.receivedKg === undefined);
+        if (lines.length) tasks.push({ kind: "receive", po, lines });
+      }
+    }
+    if (rfCan(ctx, "purchase")) {
+      for (const order of ctx.data.orders) {
+        if (!["released", "in_progress"].includes(order.status) && !(order.status === "draft" && order.explosion?.length)) continue;
+        const short = ctx.rules.partNeeds({ jobs: ctx.data.jobs, orders: ctx.data.orders, stock: ctx.data.stock ?? [], purchaseOrders }, order.id).rows.filter((row) => row.shortage > 0);
+        if (short.length) tasks.push({ kind: "buy", order, short });
+      }
+    }
+    return tasks;
+  }
+
   // ---------- งานของฉัน: การ์ดงานของแผนกตัวเอง ปุ่มหลักปุ่มเดียวต่องาน ----------
   const JOB_TONE = Object.freeze({ in_progress: ["now", "กำลังทำ"], queued: ["", "รอคิว"], hold: ["hold", "พักงาน"], done: ["done", "เสร็จ"] });
   pages.work = (ctx) => {
@@ -760,7 +855,9 @@
     const cardCount = (jobs) => jobs.filter((job) => !ctx.helpers.isPartJob(job)).length + new Set(jobs.filter((job) => ctx.helpers.isPartJob(job)).map((job) => job.orderId)).size;
     const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
     const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && job.status !== "done" && live(job)))}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
-    const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open)}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
+    // งานของคลังวัตถุดิบ (รับเข้า / สั่งซื้อ) อยู่ในรายการต้องทำของแผนก ST · ไม่กรองตามใบที่เลือกดู
+    const tasks = (dept === "ST" || dept === "ALL") && !orderId ? storeTasks(ctx) : [];
+    const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
     // ของซื้อ (งานของคลังวัตถุดิบ): รวมเป็นการ์ดเดียวต่อใบ เพราะเบิกจ่ายครั้งเดียวทั้งใบที่หน้าใบสั่งผลิต
@@ -802,7 +899,21 @@
     };
     const sub = dept && dept !== "ALL" ? esc(rules.DEPT_LABEL[dept] ?? dept) : "";
     const filterNote = orderId ? `<p class="bom-back">เฉพาะใบ ${esc(orderId)} · ${ui.link("ดูทุกใบ", ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null }))}</p>` : "";
-    const body = !dept ? ui.card(ui.empty("บัญชีนี้ไม่ได้อยู่ในแผนกผลิต จึงไม่มีงานของตัวเอง")) : cards.length ? `<div class="bom-job-grid">${cards.map(cardHtml).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานค้าง"));
+    const taskHtml = (task) => {
+      if (task.kind === "receive") {
+        const unit = (line) => (line.source === "bom" ? uomText(ctx, line.uom) : "กก.");
+        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอรับเข้า</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
+          <h2>${esc(`รับเข้าตามใบสั่งซื้อ ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}</p>
+          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.materialCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+          ${ui.link("ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
+      }
+      return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ของขาด ยังไม่ได้สั่ง</span></div>
+        <h2>${esc(`สั่งซื้อของที่ขาดของใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(task.order.customer ?? "")}</p>
+        <ul class="bom-job-parts">${task.short.slice(0, 6).map((row) => `<li><span>${esc(row.name || row.itemCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(row.shortage)} ${uomText(ctx, row.uom)}`)}</span></li>`).join("")}</ul>${task.short.length > 6 ? `<p class="small muted">และอีก ${task.short.length - 6} รายการ</p>` : ""}
+        ${ui.link("เปิดใบเพื่อสั่งซื้อ", ctx.url("orders", { sel: task.order.id }), "btn rf-btn bom-job-main")}</article>`;
+    };
+    const taskCards = show === "open" ? tasks.map(taskHtml) : [];
+    const body = !dept ? ui.card(ui.empty("บัญชีนี้ไม่ได้อยู่ในแผนกผลิต จึงไม่มีงานของตัวเอง")) : cards.length || taskCards.length ? `<div class="bom-job-grid">${taskCards.join("")}${cards.map(cardHtml).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานค้าง"));
     const tableLink = planner && ctx.canSee("jobs") ? ui.link("ดูเป็นตาราง", ctx.url("jobs"), "btn rf-btn secondary") : "";
     return { html: `${pageHead(ctx, "งานของฉัน", sub, tableLink)}${deptTabs}${filterNote}${dept ? showTabs : ""}${body}` };
   };
@@ -820,5 +931,5 @@
     return { html: `${pageHead(ctx, "ข้อมูลตั้งต้น")}${ids.length ? `<div class="bom-setup-grid">${cards}</div>` : ctx.ui.card(ctx.ui.empty("บัญชีนี้ไม่มีหน้าข้อมูลตั้งต้นที่เปิดได้"))}` };
   };
 
-  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals };
+  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks };
 })(typeof window !== "undefined" ? window : globalThis);

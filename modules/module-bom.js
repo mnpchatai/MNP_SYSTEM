@@ -73,7 +73,7 @@
   const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
-  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy], [data-tree-toggle], [data-tree-pick], [data-tree-all], [data-hub-qty], [data-bom-draft-buy]";
+  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy], [data-tree-toggle], [data-tree-pick], [data-tree-all], [data-hub-qty], [data-bom-draft-buy], [data-tree-split]";
   function markDirty(event) {
     if (!event?.isTrusted || !onBomRoute()) return;
     const target = event.target;
@@ -277,6 +277,22 @@
     if (retired.length) throw new Error(`${retired.join(", ")} เลิกใช้แล้ว เพิ่มเป็นบรรทัดใหม่ของ ${target.code} ไม่ได้`);
     return { code: target.code, note: String(p.note ?? "").trim() || `คัดลอกโครงสร้างจาก ${from}`, nodes: [...keep.map(lineNode), ...added.map(lineNode)] };
   }
+  // แทรก WIP คั่น (หน้าต่าง wipInsert): บรรทัด p.childCode ของชิ้นแม่ p.code ถูกแทนด้วยชิ้นใหม่ ซึ่งมีบรรทัดเดิมเป็นส่วนประกอบเดียว · บรรทัดอื่นของชิ้นแม่ส่งกลับตามที่เก็บ
+  function treeFromWipInsert(p) {
+    const data = store.data();
+    const parent = lineParent(data, p.code);
+    const current = linesOf(data, parent.code);
+    const childCode = rules.canonicalCode(p.childCode);
+    const line = current.find((entry) => entry.childCode === childCode);
+    if (!line) throw new Error(`ไม่พบ ${childCode} ใน BOM ของ ${parent.code} แล้ว ปิดหน้าต่างแล้วเปิดใหม่`);
+    const code = rules.canonicalCode(p.wipCode);
+    if (!code) throw new Error("ระบุรหัสของชิ้นใหม่");
+    if (actions.helpers.itemOf(data, code)) throw new Error(`มีรหัส ${code} อยู่แล้ว ใช้รหัสใหม่สำหรับชิ้นที่แทรก`);
+    if (p.wipKind === "RB" || p.wipKind === "FG" || actions.helpers.NO_BOM_KINDS.includes(p.wipKind)) throw new Error("ชนิดนี้ใช้เป็นชิ้นที่แทรกคั่นไม่ได้");
+    const childQty = p.childQty === undefined || p.childQty === "" || Math.abs(Number(p.childQty) - line.qty) <= 1e-6 ? line.qty : p.childQty;
+    const node = { code, qty: p.wipQty, scrapPct: 0, note: "", step: line.step ?? "", newItem: { kind: p.wipKind, name: p.wipName, uom: p.wipUom, ownerDept: p.wipDept || undefined }, children: [{ ...lineNode(line), qty: childQty, step: "" }] };
+    return { code: parent.code, note: String(p.note ?? "").trim() || `แทรก ${code} คั่นก่อน ${childCode}`, nodes: current.map((entry) => (entry === line ? node : lineNode(entry))) };
+  }
   // หน้าต่าง "ข้อมูลเส้นยาง": สูตรยาง + ข้อมูลการตัด + น้ำหนัก · เปลี่ยนสูตรที่มีอยู่ต้องติ๊กยืนยันในฟอร์ม (confirmCompound) ไม่เช่นนั้นไม่ส่งคำสั่ง
   function rubberForm(p) {
     const data = store.data();
@@ -308,7 +324,7 @@
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due), autoDue: p.autoDue === "1" || p.autoDue === "on" }),
     // ฟอร์ม "เพิ่มส่วนประกอบ" ของหน้าสินค้า (lineAdd) ใช้คำสั่งเดียวกัน: บรรทัดเดิมของ BOM อ่านจากข้อมูลล่าสุดตอนกดบันทึก แล้วต่อบรรทัดใหม่
     // หน้าต่างของหน้าสินค้าอีกสามแบบใช้คำสั่งเดียวกัน: วางหลายบรรทัด (linesPaste) คัดลอกโครงสร้าง (treeCopy) ข้อมูลเส้นยางที่มีบรรทัดสูตรยาง (rubberEdit)
-    saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : p.linesPaste ? treeFromPaste(p) : p.treeCopy ? treeFromCopy(p) : p.rubberEdit ? treeFromRubberEdit(p) : treeFromRows(p)),
+    saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : p.linesPaste ? treeFromPaste(p) : p.treeCopy ? treeFromCopy(p) : p.rubberEdit ? treeFromRubberEdit(p) : p.wipInsert ? treeFromWipInsert(p) : treeFromRows(p)),
     // ฟอร์มแก้บรรทัดเดียวของ BOM (หน้าสินค้า): childCode[] + qty[] + scrapPct[] + lineNote[] + lineStep[] ของทุกบรรทัด → lines ของ saveBom
     // บรรทัดที่แก้ (editCode) ถ้าปริมาณในฟอร์มต่างจากเดิม (origQty) ไม่ถึง 1e-6 ใช้ค่าเดิม คงอัตราส่วนเช่น 1/31 ไว้เต็มความละเอียด
     saveBom: (p) => (Array.isArray(p.lines) ? p : {
@@ -453,6 +469,8 @@
     if (!user) return "";
     const page = currentPage(currentRoute().params);
     const counts = navCounts(store.data(), user);
+    // งานรับเข้า/สั่งซื้อของคลังวัตถุดิบนับรวมในตัวเลขของเมนูงานของฉัน (การ์ดชุดเดียวกับในหน้า)
+    try { if (user.dept === "ST" && pages.hub?.storeTasks) counts.work += pages.hub.storeTasks(makeContext(currentRoute().params)).length; } catch { /* นับไม่ได้: ตัวเลขเป็นงานของใบอย่างเดียว */ }
     // เมนูหลัก 4 อัน (storeApi.NAV): หน้าที่ไม่อยู่ในเมนู (สร้าง BOM นับคงคลัง ฯลฯ) ทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
     const parent = storeApi.NAV_PARENT[page] ?? page;
     const items = navItems(user).map((id) => `<li><a class="rf-nav-item${id === parent ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(id)}" href="${escapeHtml(url(id))}"${id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(id)}</span><span class="rf-nav-text">${escapeHtml(storeApi.navLabel(id))}</span>${counts[id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(id))}">${counts[id]}</span>` : ""}</a></li>`).join("");

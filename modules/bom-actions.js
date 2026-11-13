@@ -248,7 +248,7 @@
         const withCompound = (rubber) => (compoundLine && !String(rubber?.compound ?? "").trim() ? { ...(rubber ?? {}), compound: compoundLine } : rubber);
         if (!child) {
           const spec = node.newItem ?? fail(`ไม่พบชิ้นงาน${ref(code)} — ระบุชนิด ชื่อ และหน่วยเพื่อสร้าง`);
-          saveItem(d, { code, kind: spec.kind, name: spec.name, uom: spec.uom, weightG: spec.weightG, rubber: spec.kind === "RB" ? withCompound(spec.rubber) : spec.rubber, create: true }, ctx);
+          saveItem(d, { code, kind: spec.kind, name: spec.name, uom: spec.uom, weightG: spec.weightG, ownerDept: spec.ownerDept, rubber: spec.kind === "RB" ? withCompound(spec.rubber) : spec.rubber, create: true }, ctx);
           child = itemOf(d, code);
           created.push(code);
         } else if (node.patch && Object.keys(node.patch).length) {

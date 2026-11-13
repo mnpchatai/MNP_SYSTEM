@@ -1444,10 +1444,17 @@ test("issuing parts from the PI page: the dialog lists every line, a shortage bl
   assert.match(dialog, /P-BOX-01[\s\S]*ขาด 2/, "the shortage of the boxes (7 needed, 5 on hand)");
   assert.match(dialog, /ไม่ได้|เบิกจ่ายไม่ได้/);
   assert.doesNotMatch(dialog, /data-rf-action="issueOrderParts"/, "a shortage hides the issue button");
-  assert.doesNotMatch(dialog, /data-bom-parts-buy/, "ST cannot order, the planner can");
+  // สั่งซื้อเป็นสิทธิ์ของ RubberFlow ในโหมดฐานข้อมูล (แผนก ST) · โหมดสาธิตในเครื่องไม่มีใบสั่งซื้อ จึงไม่มีปุ่มให้ใคร และข้อความชี้ไปที่คลังวัตถุดิบ
+  assert.doesNotMatch(dialog, /data-bom-parts-buy/, "no purchase button in the in-browser demo");
+  assert.match(dialog, /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อหรือรับเข้า/);
   env.store.setUser("B03");
   dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
-  assert.match(dialog, /data-bom-parts-buy/, "the planner can open the purchase from the shortage");
+  assert.doesNotMatch(dialog, /data-bom-parts-buy/, "the planner does not order either");
+  // โหมดฐานข้อมูล (จำลองสิทธิ์ของ RubberFlow): ผู้ที่สั่งได้เห็นปุ่มสั่งซื้อ ผู้ที่ดูได้อย่างเดียวเห็นปุ่มดูรายการ
+  const withRights = (rights) => ({ ...env.ctx("p=orders&sel=DEMO-26001"), store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, can: (permission) => rights.includes(permission) }) });
+  assert.match(D.issueParts(withRights(["purchase"]), { orderId: "DEMO-26001" }).html, /data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</);
+  assert.match(D.issueParts(withRights(["viewPurchase"]), { orderId: "DEMO-26001" }).html, /data-bom-parts-buy>ดูรายการที่ต้องสั่ง</);
+  assert.doesNotMatch(D.issueParts(withRights([]), { orderId: "DEMO-26001" }).html, /data-bom-parts-buy/);
   env.store.setUser("B08");
   assert.equal(env.store.run("countPartStock", { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }).ok, true);
   dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
@@ -2162,4 +2169,104 @@ test("the wide table and a kind switch cannot change the compound of a rod that 
   assert.equal(itemOf(other).kind, "RB");
   await env.submit("p=find", "saveItem", { code: other, kind: "RB", name: itemOf(other).name, uom: "rod", rubber: { compound: " dm 01 " } }, {});
   assert.equal(itemOf(other).rubber.compound, "DM01", "the same compound typed differently keeps the stored spelling");
+});
+
+test("a WIP item is inserted between a parent and one of its lines in one save, and the tree offers the step editor and a resize handle", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "DEMO-TP-01(P)-Y";
+  const child = "SE-TP01-OR01-100-18-65";
+  const bomOf = (code) => json(env.store.data().boms.find((bom) => bom.itemCode === code && bom.status === "approved") ?? null);
+  const before = bomOf(parent);
+  const line = before.lines.find((entry) => entry.childCode === child);
+  const childBefore = bomOf(child);
+  const dialog = env.context.MNP_BOM_DIALOGS.wipInsert(env.ctx(), { parentCode: parent, childCode: child });
+  clean(dialog.html);
+  assert.match(dialog.html, /name="wipCode"[^>]*required/);
+  assert.match(dialog.html, new RegExp(`name="childQty"[^>]*value="${line.qty}"`), "the old quantity moves under the new item by default");
+  assert.doesNotMatch(/<select[^>]*name="wipKind"[\s\S]*?<\/select>/.exec(dialog.html)[0], /<option value="(FG|RB|PURCHASED|CP)"/, "only kinds that can sit between the two");
+  assert.match(/<select[^>]*name="wipDept"[\s\S]*?<\/select>/.exec(dialog.html)[0], /<option value="PK" selected>/, "the new item starts in the parent's department");
+  assert.equal(env.context.MNP_BOM_DIALOGS.wipInsert(env.ctx(), { parentCode: "RB-DM01-02-OR01-202-18-70", childCode: "DM01" }), null, "nothing is inserted under a rubber rod");
+  const query = `p=find&code=${encodeURIComponent(parent)}`;
+  await env.submit(query, "saveBomTree", { wipCode: child, wipName: "ซ้ำ", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: String(line.qty) }, { wipInsert: true, code: parent, childCode: child });
+  assert.match(env.log.toasts.at(-1)[0], /มีรหัส SE-TP01-OR01-100-18-65 อยู่แล้ว/);
+  assert.equal(bomOf(parent).revision, before.revision);
+  await env.submit(query, "saveBomTree", { wipCode: "wip-tp01-a", wipName: "ชุดลูกตอปิโดประกอบ", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: String(line.qty), note: "" }, { wipInsert: true, code: parent, childCode: child });
+  const after = bomOf(parent);
+  assert.equal(after.revision, before.revision + 1);
+  assert.equal(after.lines.length, before.lines.length, "the line is replaced, not added");
+  assert.equal(after.lines.some((entry) => entry.childCode === child), false);
+  assert.equal(after.lines.find((entry) => entry.childCode === "WIP-TP01-A").qty, 1);
+  const wip = bomOf("WIP-TP01-A");
+  assert.deepEqual(wip.lines.map((entry) => [entry.childCode, entry.qty]), [[child, line.qty]]);
+  assert.equal(env.store.data().items.find((item) => item.code === "WIP-TP01-A").kind, "SUBPART");
+  assert.equal(bomOf(child).revision, childBefore.revision, "the moved line's own BOM is untouched");
+  for (const other of before.lines.filter((entry) => entry.childCode !== child)) assert.equal(after.lines.find((entry) => entry.childCode === other.childCode).qty, other.qty);
+  // ยอดรวมของชิ้นที่ย้ายไม่เปลี่ยน (1 × ปริมาณเดิม)
+  const explode = (code) => env.context.MNP_BOM_RULES.explode(code, 10, { itemOf: (c) => env.store.data().items.find((item) => item.code === c) ?? null, approvedBomOf: (c) => env.store.data().boms.find((bom) => bom.itemCode === c && bom.status === "approved") ?? null }).lines;
+  assert.equal(explode(parent).find((entry) => entry.itemCode === child).required, 10 * line.qty);
+  // ต้นไม้: แถบลากปรับความกว้าง ปุ่มขั้นตอนของรายการ และปุ่มแทรก/ขั้นตอนในแผงข้าง
+  const html = await env.render(query);
+  assert.match(html, /<div class="bom-tree-split" role="separator" aria-orientation="vertical" tabindex="0"[^>]*data-tree-split>/);
+  assert.match(html, /data-rf-open="routingEdit" data-rf-args="\{&quot;code&quot;:&quot;DEMO-TP-01\(P\)-Y&quot;\}"/);
+  const item = env.store.data().items.find((entry) => entry.code === parent);
+  const rows = explode(parent).slice(1);
+  const side = env.context.MNP_BOM_PAGES.hub.treeTab(env.ctx(), item, 1).detailHtml(rows.findIndex((row) => row.itemCode === "WIP-TP01-A"));
+  assert.match(side, /data-rf-open="wipInsert"/);
+  assert.match(side, /data-rf-open="routingEdit"[^>]*>\+ ขั้นตอน</, "an item without steps offers to add them");
+  env.store.setUser("B04");
+  assert.equal(env.context.MNP_BOM_DIALOGS.wipInsert(env.ctx(), { parentCode: parent, childCode: "WIP-TP01-A" }), null);
+  assert.doesNotMatch(await env.render(query), /data-rf-open="routingEdit"/);
+});
+
+test("purchasing belongs to the raw-material store: the purchase dialog is read-only for others, rows to order are marked, and the store's jobs list receipts and shortages", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const rfCtx = (rights) => ({ ...env.rf.context(new URLSearchParams()), can: (permission) => rights.includes(permission) });
+  const chem = hub.draftChemicals(env.ctx(), env.store.data().orders.find((order) => order.id === "DEMO-26002"));
+  // ทำให้เคมีขาดหนึ่งตัว: เอาล็อตของเคมีตัวแรกออก
+  const code = chem.rows[0].itemCode;
+  const rf = env.rf.store.data();
+  rf.materialLots = rf.materialLots.filter((lot) => lot.materialCode !== code);
+  const args = { woIds: [], sourcePi: "DEMO-26002", draftOrders: chem.orders, parts: false };
+  const order = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx(["purchase"]), args).html;
+  clean(order);
+  assert.match(order, /data-rf-form="createPurchaseOrder"/);
+  assert.match(order, /ต้องสั่ง 1 รายการ \(แถวที่ไฮไลต์\)/);
+  assert.equal((order.match(/<tr data-rf-po-row[^>]*class="rf-po-need"/g) ?? []).length, 1, "only the short row is marked");
+  assert.match(order, new RegExp(`class="rf-po-need"><td><span class="rf-mono">${code}</span>`));
+  assert.match(order, /type="submit" form="rf-purchase">สั่งซื้อ</);
+  const view = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx(["viewPurchase"]), args).html;
+  assert.doesNotMatch(view, /data-rf-form="createPurchaseOrder"|type="submit"/, "a viewer gets no form and no order button");
+  assert.match(view, /สั่งซื้อและรับเข้าโดยคลังวัตถุดิบ \(ST\) หน้าต่างนี้ดูได้อย่างเดียว/);
+  assert.match(view, /data-rf-qty[^>]*readonly/);
+  // สิทธิ์ของโหมดฐานข้อมูล: ST และ admin สั่ง/รับเข้า/ยกเลิกได้ กลุ่มวางแผนและ RB ดูได้อย่างเดียว
+  const can = env.context.MNP_RUBBERFLOW_STORE.can;
+  const persona = (role, dept) => env.context.MNP_RUBBERFLOW_STORE.personaUser({ id: "x", first_name: "ก", last_name: "ข", role: { code: role }, department: { code: dept } });
+  for (const right of ["purchase", "receiveMaterial", "cancelPurchase"]) {
+    assert.equal(can(persona("staff", "ST"), right), true, `ST: ${right}`);
+    assert.equal(can(persona("admin", "AD"), right), true, `admin: ${right}`);
+    assert.equal(can(persona("staff", "PP"), right), false, `planning staff: ${right}`);
+    assert.equal(can(persona("department_manager", "MT"), right), false, `a department manager: ${right}`);
+    assert.equal(can(persona("staff", "RB"), right), false, `RB: ${right}`);
+  }
+  assert.equal(can(persona("staff", "PP"), "viewPurchase"), true);
+  assert.equal(can(persona("staff", "RB"), "viewPurchase"), true);
+  assert.equal(can(persona("staff", "QA"), "viewPurchase"), false);
+  // งานของฉันของคลังวัตถุดิบ (จำลองโหมดฐานข้อมูล): ใบสั่งซื้อที่รอรับ และใบที่ของซื้อยังขาด
+  rf.purchaseOrders.push({ id: "PO-20261113-01", status: "ordered", sourcePi: "DEMO-26002", createdAt: Date.now(), lines: [{ materialCode: "P-BOX-01", source: "bom", uom: "box", qtyKg: 30, receivedKg: null }, { materialCode: code, source: "rf", qtyKg: 5, receivedKg: 5 }] }, { id: "PO-20261113-02", status: "received", lines: [{ materialCode: code, source: "rf", qtyKg: 1, receivedKg: 1 }] });
+  const stUser = env.store.data().users.find((user) => user.role === "st");
+  const stCtx = (rights) => ({ ...env.ctx("p=work"), user: stUser, store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, can: (permission) => rights.includes(permission) }) });
+  const tasks = hub.storeTasks(stCtx(["purchase", "receiveMaterial"]));
+  assert.deepEqual(json(tasks.filter((task) => task.kind === "receive").map((task) => [task.po.id, task.lines.map((line) => line.materialCode)])), [["PO-20261113-01", ["P-BOX-01"]]], "only orders with a line still to receive");
+  assert.ok(tasks.some((task) => task.kind === "buy" && task.order.id === "DEMO-26002"), "a draft with short parts is a job for the store");
+  assert.deepEqual(json(hub.storeTasks(stCtx([]))), [], "nothing for an account without the rights");
+  const html = env.context.MNP_BOM_PAGES.work(stCtx(["purchase", "receiveMaterial"])).html;
+  clean(html);
+  assert.match(html, /<h2>รับเข้าตามใบสั่งซื้อ PO-20261113-01<\/h2>/);
+  assert.match(html, /href="#\/rubberflow\?p=warehouse&amp;tab=po&amp;q=PO-20261113-01">ตรวจสอบรับเข้า</);
+  assert.match(html, /<h2>สั่งซื้อของที่ขาดของใบ DEMO-26002<\/h2>/);
+  assert.match(html, new RegExp(`>ต้องทำ ${tasks.length + 1}<`), "the tab counts the store jobs with the part card of the released PI");
+  assert.doesNotMatch(env.context.MNP_BOM_PAGES.work(stCtx(["viewPurchase"])).html, /รับเข้าตามใบสั่งซื้อ|สั่งซื้อของที่ขาด/);
 });

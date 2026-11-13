@@ -75,7 +75,7 @@
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), draftChemicalNeeds: (draftOrders) => draftChemicalNeeds(draftOrders) };
+  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), draftChemicalNeeds: (draftOrders) => draftChemicalNeeds(draftOrders) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -490,7 +490,9 @@
   async function checkMaterials({ woIds = [], sourcePi = "", skippedJobs = 0, auto = false, draftOrders = [] } = {}) {
     try {
       const user = store.user();
-      if (!user || !storeApi.can(user, "purchase")) return { ok: false, reason: "rights" };
+      // สั่งซื้อได้เฉพาะแผนก ST · กลุ่มวางแผนและ RB เปิดดูได้ว่าขาดอะไร (readOnly ไม่มีปุ่มสั่ง)
+      const mayOrder = Boolean(user) && storeApi.can(user, "purchase");
+      if (!user || !(mayOrder || storeApi.can(user, "viewPurchase"))) return { ok: false, reason: "rights" };
       await store.ensureLoaded();
       if (store.status() !== "ready") return { ok: false, reason: "not-ready" };
       try { await store.catchUp(); } catch { /* ใช้ข้อมูลที่มี */ }
@@ -504,7 +506,7 @@
         if (enough.length) showToast(enough.length === 2 ? "เคมีและของซื้อพอสำหรับใบนี้" : enough[0] === "เคมี" ? "เคมีพอสำหรับ WO ที่เปิด" : "ของซื้อพอสำหรับใบนี้");
         return { ok: true, opened: false, result, parts };
       }
-      openDialog("purchase", { woIds, sourcePi, skippedJobs, draftOrders }, ctx);
+      openDialog("purchase", { woIds, sourcePi, skippedJobs, draftOrders, readOnly: !mayOrder }, ctx);
       return { ok: true, opened: true, result };
     } catch (error) {
       showToast(friendlyError(error), "error");

@@ -1100,6 +1100,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     // ไม่เชื่อค่าที่ client ส่ง: ระเบียนที่ต่างจากของเดิมเฉพาะช่องเหล่านี้ถือว่าไม่มีอะไรเปลี่ยน (ข้าม) ค่าจริงมากับส่วนต่างที่ตอบกลับ · ตราผู้บันทึก/เวลาประทับใหม่ทับค่าที่ client ส่ง
     // กฎสเปก/FEFO/ความคลาดเคลื่อนการชั่งใช้ไฟล์ของหน้า (modules/rubberflow-rules.js โหลดก่อน) · เรียกตอนใช้จริงเท่านั้น
     const R = new Proxy({}, { get: (_, key) => (globalThis.MNP_RUBBERFLOW_RULES ?? fail("RF_RULES_MISSING"))[key] });
+    const stOrAdmin = actor.dept === "ST" || actor.role === "admin"; // สั่งซื้อ รับเข้า ยกเลิกใบสั่งซื้อ และรับล็อตใหม่: แผนก ST หรือ admin เท่านั้น (20261119010000_rf_purchase_by_st.sql)
     const inDept = (dept) => planner || actor.dept === dept; // สมาชิกแผนกนั้น หรือกลุ่มวางแผน (ทำได้ทุกอย่าง)
     const claims = []; // ใบเบิก issued → consumed ต้องมาพร้อมล็อตผสมที่เพิ่มในคำสั่งเดียวกัน
     const mixingNew = [];
@@ -1121,7 +1122,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       if (list === "materialLots") {
         if (!["available", "hold"].includes(record.status)) fail(bad);
         if (!prev) {
-          if (!inDept("ST")) fail("RF_FORBIDDEN");
+          if (!stOrAdmin) fail("RF_FORBIDDEN");
           const material = next.materials.find((row) => row.code === record.materialCode);
           if (!material || material.active === false) fail(bad);
           if (!(num(record.qtyKg) > 0) || record.initialKg !== record.qtyKg || num(record.expiry) <= at) fail(bad);
@@ -1431,7 +1432,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         if (!["ordered", "received", "cancelled"].includes(record.status) || !Array.isArray(record.lines) || !record.lines.length || record.lines.length > 100 || !record.lines.every(shape)) fail(bad);
         if (!optText(record.sourcePi, 60) || !optText(record.sourceRequisition, 60) || !optText(record.note, 300)) fail(bad);
         if (!prev) {
-          if (!master) fail("RF_FORBIDDEN");
+          if (!stOrAdmin) fail("RF_FORBIDDEN");
           if (action !== "createPurchaseOrder" || record.status !== "ordered") fail(bad); // ใบใหม่มากับคำสั่งสั่งซื้อและเป็น ordered เท่านั้น
           // รหัสไม่ซ้ำ (ไม่แยกตัวพิมพ์ ข้ามชนิด) · เคมี = วัตถุดิบที่มีอยู่และ active · ของซื้อ = ชิ้น PURCHASED ใน item master ของ BOM (รหัสตามที่เก็บ หน่วยจาก item master) แล้วสต็อกขั้นต่ำถูก upsert ที่ BOM
           const codes = new Set();
@@ -1473,7 +1474,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         }
         // ยกเลิก: สิทธิ์ก่อน (กลุ่มวางแผน) แล้วค่อยตรวจสถานะ — เฉพาะใบ ordered ที่ไม่มีบรรทัดรับเข้า
         if (record.status === "cancelled" && prev.status !== "cancelled") {
-          if (!planner) fail("RF_FORBIDDEN");
+          if (!stOrAdmin) fail("RF_FORBIDDEN");
           if (action !== "cancelPurchaseOrder") fail(bad);
           if (prev.status !== "ordered" || other || changed.length || prev.lines.some(received)) fail("RF_INVALID_TRANSITION");
           put({ ...prev, status: "cancelled", cancelledAt: at });
@@ -1481,7 +1482,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         }
         // ที่เหลือที่ยอมให้มีได้ทางเดียวคือรับเข้าหนึ่งบรรทัด (ST หรือกลุ่มวางแผน) ที่มาพร้อมล็อตใหม่
         if (!changed.length) fail("RF_INVALID_TRANSITION");
-        if (!inDept("ST")) fail("RF_FORBIDDEN");
+        if (!stOrAdmin) fail("RF_FORBIDDEN");
         if (action !== "receivePurchaseLine") fail(bad);
         if (prev.status !== "ordered" || other) fail("RF_INVALID_TRANSITION");
         if (changed.length !== 1 || receipts.length) fail(bad);

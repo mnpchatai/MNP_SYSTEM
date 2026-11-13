@@ -2,6 +2,8 @@
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง/สิทธิ์ตารางใหม่, นับสต็อก (ST / WH / กลุ่มวางแผน / สมาชิก RB / QA), สต็อกขั้นต่ำเฉพาะกลุ่มวางแผน, รหัสที่ไม่ใช่ของซื้อ, ชนรายระเบียนก่อนสิทธิ์,
 -- งานของซื้อรายงานผ่านทางอื่นไม่ได้, issueOrderParts (สิทธิ์ ชุดงานไม่ครบ สต็อกไม่พอ = ไม่จ่ายเลย ชนรายระเบียน จ่ายสำเร็จ จ่ายซ้ำ), ใบสั่งซื้อที่มีบรรทัดของซื้อ (สร้าง/แก้สต็อกขั้นต่ำ/รับเข้า/ปฏิเสธ),
 -- snapshot / delta 13 ชุด และล้างข้อมูลทดสอบ · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role (สิทธิ์เจ้าของตาราง) เท่านั้น
+-- สิทธิ์ใบสั่งซื้อ (20261119010000_rf_purchase_by_st.sql): สร้าง / รับบรรทัด ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน RB QA ได้ RF_FORBIDDEN · สต็อกขั้นต่ำของของซื้อที่ต่างจากที่เก็บยังต้องเป็นกลุ่มวางแผน
+-- (ST ธรรมดาจึงเปลี่ยนไม่ได้ admin เปลี่ยนได้เพราะนับเป็นกลุ่มวางแผน)
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -90,6 +92,10 @@ insert into public.employees (id, employee_no, first_name, last_name, email, job
    (select id from public.departments where code = 'PP'), (select id from public.roles where code = 'staff'), '8e100000-0000-0000-0000-000000000002'),
   ('8e100000-0000-0000-0000-000000000103', 'MNPLAB001', 'แล็บ', 'หนึ่ง', 'mnplab001-bomps@test.local', 'LAB',
    (select id from public.departments where code = 'QA'), (select id from public.roles where code = 'staff'), '8e100000-0000-0000-0000-000000000003');
+-- persona ผู้ดูแลระบบ (is_test) ไว้ตรวจว่า admin ยังสร้าง/รับใบสั่งซื้อได้ (ไม่มี persona บทบาท admin ในชุดตั้งต้น)
+insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test) values
+  ('SBX-ADMIN-T', 'ทดสอบ', 'ผู้ดูแลระบบ', 'sbx-admin-t@sandbox.local', 'ผู้ดูแลระบบ (ทดสอบ)',
+   (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true);
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 select ok((select count(*) from public.employees e join public.departments d on d.id = e.department_id
@@ -365,7 +371,8 @@ select ok(ps_t.has_move('P-1', 'issue', -9, 81, '251111-25002', current_setting(
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.mat')::jsonb || '{"safetyKg":60}'::jsonb))), 0, 'saveMaterial') ->> 'version', '1', 'the planner adds a chemical to order together with the parts');
--- 8.1 ปฏิเสธ
+-- 8.1 ปฏิเสธ (ST ผู้สร้างใบ: รูปข้อมูลผิดของบรรทัดของซื้อ)
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"SE-A","source":"bom","qtyKg":5}]}'::jsonb) $$, 'RF_INVALID_PURCHASE',
   'a made item cannot be ordered as a part');
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"NOPE","source":"bom","qtyKg":5}]}'::jsonb) $$, 'RF_INVALID_PURCHASE', 'an unknown part is refused');
@@ -377,15 +384,22 @@ select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"P-1","source":"bom","qtyKg":5,"receivedKg":5}]}'::jsonb) $$, 'RF_INVALID_PURCHASE', 'a new order cannot carry receipt data on a part line');
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"P-1","source":"bom","qtyKg":5},{"materialCode":"p-1","qtyKg":5}]}'::jsonb) $$, 'RF_INVALID_PURCHASE', 'the same code twice is refused across sources');
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"P-1","source":"bom","qtyKg":0}]}'::jsonb) $$, 'RF_INVALID_PURCHASE', 'a zero part quantity is refused');
-select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
-select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'ST staff cannot create a purchase order with parts');
+select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'ST staff cannot create an order that changes the safety stock of a part (P-1 15 -> 20)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'PP staff (the planning group) cannot create a purchase order with parts');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'a department manager outside ST cannot create a purchase order with parts');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'an RB member cannot create a purchase order with parts');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'QA staff cannot create a purchase order with parts');
 select is(ps_t.rver(), 1::bigint, 'the RubberFlow counter did not move for the refused calls');
 
--- 8.2 สร้างสำเร็จ: เคมี + ของซื้อ 2 บรรทัด · สต็อกขั้นต่ำของ P-1 ถูก upsert ที่ BOM · เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
+-- 8.2 สร้างสำเร็จ (admin เพราะใบนี้เปลี่ยนสต็อกขั้นต่ำของ P-1): เคมี + ของซื้อ 2 บรรทัด · สต็อกขั้นต่ำของ P-1 ถูก upsert ที่ BOM · เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select set_config('test.vb', ps_t.ver()::text, true);
 select set_config('test.res', ps_t.po_save(current_setting('test.po')::jsonb)::text, true);
-select is(current_setting('test.res')::jsonb ->> 'version', '2', 'a planner creates an order that mixes a chemical and two parts (RubberFlow counter + 1)');
+select is(current_setting('test.res')::jsonb ->> 'version', '2', 'admin creates an order that mixes a chemical and two parts (RubberFlow counter + 1)');
 select is(ps_t.po('PO-20261111-01') -> 'lines' -> 0, '{"materialCode":"MAT-A","source":"rf","uom":null,"needKg":100,"availableKg":20,"shortageKg":80,"safetyKg":60,"qtyKg":140,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
   'the chemical line is stored with source rf and no unit');
 select is(ps_t.po('PO-20261111-01') -> 'lines' -> 1, '{"materialCode":"P-1","source":"bom","uom":"box","needKg":30,"availableKg":-10,"shortageKg":40,"safetyKg":20,"qtyKg":55,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
@@ -405,25 +419,32 @@ select is(ps_t.po_save(ps_t.po('PO-20261111-01')) ->> 'version', current_setting
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and nothing in BOM');
 select throws_ok($$ select ps_t.po_save(ps_t.po('PO-20261111-01') || jsonb_build_object('lines',
   jsonb_set(ps_t.po('PO-20261111-01') -> 'lines', '{1,source}', '"rf"'::jsonb))) $$, 'RF_INVALID_TRANSITION', 'a line cannot change its source afterwards');
--- สต็อกขั้นต่ำของของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน: สมาชิก RB สร้างใบที่ไม่แตะสต็อกขั้นต่ำได้ แต่ที่ต่างจากที่เก็บ (รวมแถวสต็อกที่ยังไม่มี) = RF_FORBIDDEN
+-- สต็อกขั้นต่ำของของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน (admin นับเป็นกลุ่มวางแผน): ST สร้างใบที่ไม่แตะสต็อกขั้นต่ำได้ แต่ที่ต่างจากที่เก็บ (รวมแถวสต็อกที่ยังไม่มี) = RF_FORBIDDEN
 select set_config('test.vb', ps_t.ver()::text, true);
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
   'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
-  'an RB member cannot change the safety stock of a part through an order');
+  'ST staff cannot change the safety stock of a part through an order');
 select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
   'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":2},{"materialCode":"P-2","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":7,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
   'nor one line of several (the whole order is refused)');
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and the refused orders wrote nothing to the BOM');
 select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 1, 'nor an order');
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"qtyKg":2}]'::jsonb)) is not null, 'an RB member can order a part when its safety stock is left as stored');
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"qtyKg":2}]'::jsonb)) is not null, 'ST staff can order a part when its safety stock is left as stored');
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and that order changes no BOM row');
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-
--- 8.3 รับบรรทัดของซื้อ (ST หรือกลุ่มวางแผน): บวกยอด เขียนประวัติ ไม่มีล็อต/วันหมดอายุ
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-05', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'an RB member cannot create an order even when the safety stock is left as stored');
+select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 2, 'and no order was added by it');
+
+-- 8.3 รับบรรทัดของซื้อ (ST หรือ admin): บวกยอด เขียนประวัติ ไม่มีล็อต/วันหมดอายุ
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 50), 'receivePurchaseLine') $$, 'RF_FORBIDDEN', 'an RB member cannot receive a part line');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 50), 'receivePurchaseLine') $$, 'RF_FORBIDDEN', 'PP staff (the planning group) cannot receive a part line');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 50), 'receivePurchaseLine') $$, 'RF_FORBIDDEN', 'a department manager outside ST cannot receive a part line');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 50), 'receivePurchaseLine') $$, 'RF_FORBIDDEN', 'QA staff cannot receive a part line');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
@@ -451,24 +472,25 @@ select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 2, 5), 'r
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 10), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received part line cannot be received or corrected again');
 select is(ps_t.qty('P-1'), 131::numeric, 'and the balance did not move');
 
--- 8.4 ใบที่มีแต่ของซื้อ: รับครบ = received (ผู้วางแผนรับได้)
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+-- 8.4 ใบที่มีแต่ของซื้อ: รับครบ = received (ST สร้าง admin รับได้)
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-02', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-2","source":"bom","needKg":5,"availableKg":0,"shortageKg":5,"safetyKg":0,"qtyKg":8}]'::jsonb)) is not null, 'a planner creates an order of parts only');
+  'lines', '[{"materialCode":"P-2","source":"bom","needKg":5,"availableKg":0,"shortageKg":5,"safetyKg":0,"qtyKg":8}]'::jsonb)) is not null, 'ST staff creates an order of parts only');
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select set_config('test.res', ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 7.5), 'receivePurchaseLine')::text, true);
-select is(ps_t.po('PO-20261111-02') ->> 'status', 'received', 'the order becomes received once its only line is received (a planner can receive too)');
+select is(ps_t.po('PO-20261111-02') ->> 'status', 'received', 'the order becomes received once its only line is received (admin can receive too)');
 select is(ps_t.po('PO-20261111-02') -> 'lines' -> 0 ->> 'receivedKg', '7.5', 'the received quantity can differ from the ordered quantity');
 select is(ps_t.qty('P-2'), 35::numeric, 'and the balance follows (27.5 + 7.5)');
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 3), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received order cannot be received again or corrected');
 -- รับบรรทัดของซื้อที่ชิ้นไม่ได้เป็น PURCHASED แล้ว (ถูกเปลี่ยนชนิดหลังสั่ง) = RF_INVALID_PURCHASE ไม่แตะสต็อก
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-04', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":5}]'::jsonb)) is not null, 'a planner orders a part that will change kind afterwards');
+  'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":5}]'::jsonb)) is not null, 'admin orders a part that will change kind afterwards (its safety stock differs from the stored one, so ST could not)');
 reset role;
 select set_config('request.jwt.claims', '', true);
 update public.bom_items set kind = 'SE' where is_test and code = 'P-3';
 select set_config('request.jwt.claims', '{"sub":"8e100000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 set local role authenticated;
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-04', 0, 5), 'receivePurchaseLine') $$, 'RF_INVALID_PURCHASE', 'a part line cannot be received once the item is no longer a purchased part');
 select is(ps_t.qty('P-3'), 0::numeric, 'and the stock did not move');
 reset role;
@@ -476,7 +498,7 @@ select set_config('request.jwt.claims', '', true);
 update public.bom_items set kind = 'PURCHASED' where is_test and code = 'P-3';
 select set_config('request.jwt.claims', '{"sub":"8e100000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 set local role authenticated;
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(ps_t.po_save(ps_t.receipt('PO-20261111-04', 0, 5), 'receivePurchaseLine') is not null, 'with the kind restored the same receipt works');
 
 -- 9. snapshot / delta ----------------------------------------------------------------------

@@ -36,6 +36,14 @@ const denied = async (out, code) => {
   return outcome;
 };
 
+// คำสั่งที่บัญชีนี้ไม่มีสิทธิ์: หน้าปฏิเสธก่อนส่ง (message ตามที่ระบุ) หรือส่งไปแล้วฐานข้อมูลปฏิเสธ RF_FORBIDDEN · ทั้งสองทางถือว่าถูกปฏิเสธ แต่ต้องไม่สำเร็จ
+const refused = async (out, pageMessage = /ไม่มีสิทธิ์/) => {
+  if (!out.ok) return assert.match(out.error.message, pageMessage);
+  const outcome = await out.saving;
+  assert.equal(outcome.ok, false, "the order must not be saved");
+  assert.equal(outcome.error.code, "RF_FORBIDDEN", outcome.error.message);
+};
+
 const BOM_KEY = "mnp-harness-bom-master";
 const bomJob = (id, extra = {}) => ({ id, orderId: "PI-R", dept: "RB", itemCode: "RB-ITEM", name: "เส้นยางทดสอบ", kind: "RB", uom: "pcs", qtyPlanned: 10, qtyRequired: 10, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: NOW + DAY, status: "queued", externalRef: null, reports: [], ...extra });
 // ฐาน BOM ของ Supabase จำลองที่มีใบ PI-R ปล่อยผลิตแล้วกับงาน RB สองงาน (เขียนลง storage ตรงๆ ให้ mock โหลดเป็นข้อมูลเริ่มต้น)
@@ -130,11 +138,19 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   assert.equal(storeApi.can({ role: "mixer" }, "demoSkip"), true, "the in-browser demo keeps it");
   // สิทธิ์ของปุ่มหน้างาน (ฐานข้อมูลตัดสินจริง): ST รับวัตถุดิบ · ST/QA กักกันล็อต · RB เบิก-ชั่ง-ผลิต-ส่งมอบ · SR รับมอบ · WH ส่งกล่อง · QA ผลตรวจ/NCR · RB กรอกการแก้ไข NCR · RB แม่พิมพ์ · กลุ่มวางแผนทุกอย่าง
   const who = Object.fromEntries([["rb", "RB"], ["st", "ST"], ["sr", "SR"], ["wh", "WH"], ["qa", "QA"], ["pp", "PP"], ["mt", "MT"]].map(([key, dept]) => [key, storeApi.personaUser(employee("staff", dept))]));
-  const matrix = { receiveMaterial: ["st", "pp"], holdMaterial: ["st", "qa", "pp"], requisition: ["rb", "pp"], station: ["rb", "pp"], sendTransfer: ["rb", "pp"], receiveTransfer: ["sr", "pp"], shipBoxes: ["wh", "pp"], qcDecision: ["qa", "pp"], fillNcr: ["qa", "rb", "pp"], editMold: ["rb", "pp"] };
+  // รับวัตถุดิบ/สั่งซื้อ/ยกเลิกใบสั่งซื้อ: แผนก ST เท่านั้น (กลุ่มวางแผนและ RB ดูหน้าสั่งซื้อได้อย่างเดียว) · admin ทำได้ ดูข้อสุดท้าย
+  const matrix = { receiveMaterial: ["st"], purchase: ["st"], cancelPurchase: ["st"], viewPurchase: ["st", "pp", "rb"], holdMaterial: ["st", "qa", "pp"], requisition: ["rb", "pp"], station: ["rb", "pp"], sendTransfer: ["rb", "pp"], receiveTransfer: ["sr", "pp"], shipBoxes: ["wh", "pp"], qcDecision: ["qa", "pp"], fillNcr: ["qa", "rb", "pp"], editMold: ["rb", "pp"] };
   for (const [permission, allowed] of Object.entries(matrix)) {
     for (const key of Object.keys(who)) assert.equal(storeApi.can(who[key], permission), allowed.includes(key), `${permission} for ${key}`);
   }
   assert.deepEqual([who.st.st, who.sr.sr, who.wh.wh, who.qa.qa, who.rb.st], [true, true, true, true, false]);
+  // purchasing: ST of any role and the admin may order / receive / cancel; department managers and above (even in the planner group) and RB only look
+  const purchasing = { admin: storeApi.personaUser(employee("admin", "MT")), stManager: storeApi.personaUser(employee("department_manager", "ST")), gm: storeApi.personaUser(employee("general_manager", "MT")), ppManager: storeApi.personaUser(employee("department_manager", "PP")), rbHead };
+  for (const permission of ["purchase", "cancelPurchase", "receiveMaterial"]) {
+    assert.deepEqual(Object.entries(purchasing).map(([key, user]) => [key, storeApi.can(user, permission)]), [["admin", true], ["stManager", true], ["gm", false], ["ppManager", false], ["rbHead", false]], permission);
+  }
+  for (const [key, user] of Object.entries(purchasing)) assert.equal(storeApi.can(user, "viewPurchase"), true, `viewPurchase for ${key}`);
+  assert.equal(storeApi.can(who.qa, "viewPurchase") || storeApi.can(who.sr, "viewPurchase") || storeApi.can(who.wh, "viewPurchase") || storeApi.can(who.mt, "viewPurchase"), false, "the others do not open the purchase window");
   assert.equal(storeApi.can({ role: "viewer" }, "receiveMaterial"), true, "the demo mode does not restrict these buttons");
   assert.equal(storeApi.can({ role: "viewer" }, "holdMaterial"), false, "...except the ones the demo always restricted");
   assert.equal(storeApi.rightForAction("receiveTransfer"), "receiveTransfer");
@@ -1368,11 +1384,11 @@ test("the purchase order list is the 12th list: in the snapshot, in the delta an
   assert.deepEqual((await s.call("app_rf_master_since", { p_version: version - 1 })).changes.purchaseOrders, { upsert: [], delete: [] }, "the delta carries the list even when empty");
 });
 
-test("ordering: the planner group and RB members create the order with the edited safety stock in one save; ST and others are refused; bad shapes are refused", async () => {
+test("ordering: only ST (and the admin) create the order, the admin with the edited safety stock in one save; the planner group, RB and the others only look and are refused; bad shapes are refused", async () => {
   const s = await session();
   const rig = await s.make();
   await withMaterials(s, rig);
-  await s.as("persona-pp");
+  await s.as("persona-1"); // admin: may order and is in the planner group, so the safety stock of the materials can come with the order
   const before = (await s.call("app_rf_master")).version;
   const out = await saved(rig.store.run("createPurchaseOrder", {
     lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, qtyKg: "65.5" }, { materialCode: "CB-N550", needKg: 30, availableKg: 30, shortageKg: 0, qtyKg: 0 }],
@@ -1382,7 +1398,7 @@ test("ordering: the planner group and RB members create the order with the edite
   const master = await s.call("app_rf_master");
   assert.equal(master.version, before + 1, "the order and the safety stock of both materials are one save");
   assert.deepEqual(master.purchaseOrders, [{
-    id: PO_NO, status: "ordered", sourcePi: "PI-1", sourceRequisition: null, note: "เร่ง", createdAt: NOW, createdBy: "สมศรี วางแผน", cancelledAt: null,
+    id: PO_NO, status: "ordered", sourcePi: "PI-1", sourceRequisition: null, note: "เร่ง", createdAt: NOW, createdBy: "ปกรณ์ ศรีวัฒนา", cancelledAt: null,
     lines: [{ materialCode: "EPDM-55", source: "rf", uom: null, needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 25.5, qtyKg: 65.5, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null }],
   }]);
   assert.deepEqual(master.materials.map((row) => [row.code, row.safetyKg]), [["CB-N550", 5], ["EPDM-55", 25.5]], "safety stock edited for a material that is not ordered is saved too");
@@ -1391,22 +1407,31 @@ test("ordering: the planner group and RB members create the order with the edite
   const audit = (await s.call("app_rf_audit", { p_limit: 1 }))[0];
   assert.deepEqual([audit.action, audit.detail], ["createPurchaseOrder", "materials +2, purchaseOrders +1"]);
 
-  // สมาชิก RB สั่งได้ (ส่วนที่ขาดของใบเบิก) · เลขถัดไป
-  await s.as("persona-rb");
-  const second = await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "CB-N550", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }], note: "ขาดจากใบเบิก", sourceRequisition: "REQ-X" }));
-  assert.equal(second.result, `PO-${rules.ymd(NOW)}-02`);
-  assert.equal(rig.store.data().purchaseOrders.find((row) => row.id === second.result).createdBy, "ประยุทธ รีดยาง");
+  // พนักงาน ST สั่งได้ (ใบสั่งซื้อล้วน ไม่มีสต็อกขั้นต่ำที่แก้) · เลขถัดไป · ฐานข้อมูลประทับชื่อผู้สั่ง
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [PO_ROW(`PO-${D8}-02`, [PO_LINE("CB-N550", { needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 })], { note: "ขาดจากใบเบิก", sourceRequisition: "REQ-X" })] } }), undefined, "ST orders");
+  const second = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === `PO-${D8}-02`);
+  assert.deepEqual([second.status, second.createdBy, second.sourceRequisition], ["ordered", "วิชัย คลังวัตถุดิบ", "REQ-X"]);
+  await rig.store.catchUp();
+  // ...และผ่านหน้าได้เหมือนกัน (หน้าไม่ปฏิเสธ ST) · เลขถัดไป
+  await s.as("persona-st");
+  const viaPage = await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "CB-N550", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }], note: "สั่งจากหน้า" }));
+  assert.equal(viaPage.result, `PO-${D8}-03`);
+  assert.equal(rig.store.data().purchaseOrders.find((row) => row.id === viaPage.result).createdBy, "วิชัย คลังวัตถุดิบ");
 
-  // ST / SR / QA / GR: หน้าจอปฏิเสธก่อน และฐานข้อมูลปฏิเสธเมื่อส่งตรง
+  // กลุ่มวางแผน (PP, ผู้จัดการแผนก RB) / สมาชิก RB / SR / QA / GR / WH ดูได้อย่างเดียว: ฐานข้อมูลปฏิเสธเมื่อส่งตรง (ไม่เขียนอะไร) และคำสั่งผ่านหน้าไม่สำเร็จ
   const payload = { lines: [{ materialCode: "CB-N550", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }] };
-  for (const persona of ["persona-st", "persona-sr", "persona-qa", "persona-gr", "persona-wh"]) {
+  for (const persona of ["persona-pp", "persona-rb", "persona-rbh", "persona-sr", "persona-qa", "persona-gr", "persona-wh"]) {
     await s.as(persona);
-    assert.match(rig.store.run("createPurchaseOrder", payload).error.message, /ไม่มีสิทธิ์: สั่งซื้อวัตถุดิบได้โดย/, persona);
+    await refused(rig.store.run("createPurchaseOrder", payload));
     assert.equal(await sendPo(s, persona, { purchaseOrders: { upsert: [PO_ROW(`PO-${D8}-09`, [PO_LINE("CB-N550")])] } }), "RF_FORBIDDEN", persona);
   }
+  await rig.store.catchUp();
+  // ST ส่งสต็อกขั้นต่ำของเคมีมากับใบไม่ได้ (ด่านหยาบไม่รับชุดวัตถุดิบจากบัญชีที่ไม่ใช่ planner / RB) · กลุ่มวางแผนส่งแล้วก็ยังสั่งไม่ได้
+  const material0 = (await s.call("app_rf_master")).materials.find((row) => row.code === "EPDM-55");
+  for (const persona of ["persona-st", "persona-pp"]) assert.equal(await sendPo(s, persona, { purchaseOrders: { upsert: [PO_ROW(`PO-${D8}-08`, [PO_LINE("EPDM-55")])] }, materials: { upsert: [{ ...material0, safetyKg: 8 }] } }), "RF_FORBIDDEN", `${persona} cannot change the safety stock through an order`);
 
-  // รูปที่ไม่ถูกต้อง : RF_INVALID_PURCHASE / สถานะ RF_INVALID_TRANSITION · ไม่เขียนอะไร
-  const send = (row) => sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row] } });
+  // รูปที่ไม่ถูกต้อง : RF_INVALID_PURCHASE / สถานะ RF_INVALID_TRANSITION · ไม่เขียนอะไร (ส่งในนาม ST ผู้สั่งซื้อ)
+  const send = (row) => sendPo(s, "persona-st", { purchaseOrders: { upsert: [row] } });
   const NEW = `PO-${D8}-09`;
   assert.equal(await send(PO_ROW(NEW, [PO_LINE("CB-N550")])), undefined, "a clean row is accepted");
   const cases = [
@@ -1430,20 +1455,20 @@ test("ordering: the planner group and RB members create the order with the edite
   assert.equal(await send(PO_ROW(PO_NO, [PO_LINE("CB-N550", { qtyKg: 61 })])), "RF_CONFLICT", "a duplicate number");
   // ชุดข้อมูลที่ส่งได้ขึ้นกับคำสั่ง: purchaseOrders ส่งได้เฉพาะสามคำสั่งของใบสั่งซื้อ · สั่งซื้อส่งได้แค่ purchaseOrders + materials
   const row9 = PO_ROW(`PO-${D8}-11`, [PO_LINE("CB-N550")]);
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] } }, "saveMaterial"), "RF_INVALID_PURCHASE", "orders sent by another action");
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] } }, "cancelPurchaseOrder"), "RF_INVALID_PURCHASE", "a new order sent as a cancel");
+  assert.equal(await sendPo(s, "persona-1", { purchaseOrders: { upsert: [row9] } }, "saveMaterial"), "RF_INVALID_PURCHASE", "orders sent by another action");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [row9] } }, "cancelPurchaseOrder"), "RF_INVALID_PURCHASE", "a new order sent as a cancel");
   const stockLot = { lotNo: `RM-CB-N550-${D8}-01`, materialCode: "CB-N550", qtyKg: 5, initialKg: 5, expiry: NOW + DAY, supplier: "x", location: "B-1", status: "available", coa: false };
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] }, materialLots: { upsert: [stockLot] } }), "RF_INVALID_PURCHASE", "an order may not carry lots");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [row9] }, materialLots: { upsert: [stockLot] } }), "RF_INVALID_PURCHASE", "an order may not carry lots");
   // วัตถุดิบมากับใบสั่งซื้อได้เฉพาะ safetyKg ของวัตถุดิบที่มีอยู่
   const material = (await s.call("app_rf_master")).materials.find((row) => row.code === "EPDM-55");
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] }, materials: { upsert: [{ ...material, name: "เปลี่ยนชื่อ" }] } }), "RF_INVALID_MATERIAL", "only the safety stock may change");
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [row9] }, materials: { upsert: [{ ...material, code: "NEW-MAT", name: "ใหม่" }] } }), "RF_INVALID_MATERIAL", "no new material");
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [PO_ROW(`PO-${D8}-11`, [PO_LINE("EPDM-55")])] }, materials: { upsert: [{ ...material, safetyKg: 8 }] } }), undefined, "the safety stock of an existing material comes with the order");
+  assert.equal(await sendPo(s, "persona-1", { purchaseOrders: { upsert: [row9] }, materials: { upsert: [{ ...material, name: "เปลี่ยนชื่อ" }] } }), "RF_INVALID_MATERIAL", "only the safety stock may change");
+  assert.equal(await sendPo(s, "persona-1", { purchaseOrders: { upsert: [row9] }, materials: { upsert: [{ ...material, code: "NEW-MAT", name: "ใหม่" }] } }), "RF_INVALID_MATERIAL", "no new material");
+  assert.equal(await sendPo(s, "persona-1", { purchaseOrders: { upsert: [PO_ROW(`PO-${D8}-11`, [PO_LINE("EPDM-55")])] }, materials: { upsert: [{ ...material, safetyKg: 8 }] } }), undefined, "the safety stock of an existing material comes with the order");
   // วัตถุดิบที่เลิกใช้สั่งไม่ได้
   await s.as("persona-rbh");
   await saved(rig.store.run("saveMaterial", { code: "CB-N550", name: "เขม่าดำ", category: "สารตัวเติม", storage: "B-1", uom: "kg", active: "0" }));
   assert.equal(await send(PO_ROW(`PO-${D8}-10`, [PO_LINE("CB-N550")])), "RF_INVALID_PURCHASE", "inactive material");
-  await s.as("persona-pp");
+  await s.as("persona-1");
   assert.match(rig.store.run("createPurchaseOrder", payload).error.message, /เลิกใช้/);
 });
 
@@ -1452,15 +1477,20 @@ test("receiving: ST checks the line in, the lot is made in the same save and mat
   const rig = await s.make();
   await withMaterials(s, rig);
   await saved(rig.store.run("saveMaterial", { code: "EPDM-55", name: "ยาง EPDM", category: "โพลิเมอร์", storage: "A-1", uom: "kg", active: true, shelfLifeDays: 90 }));
-  await s.as("persona-pp");
+  await s.as("persona-1"); // admin orders (ST orders through the database in the ordering test)
   const po = (await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, qtyKg: 60 }, { materialCode: "CB-N550", needKg: 20, availableKg: 0, shortageKg: 20, qtyKg: 30 }] }))).result;
   assert.equal(po, PO_NO);
 
-  // ผู้ที่รับไม่ได้ : RB / QA / SR (หน้าจอปฏิเสธก่อน)
+  // ผู้ที่รับไม่ได้ : RB / QA / SR / GR (หน้าจอปฏิเสธก่อน) · กลุ่มวางแผน (PP) และหัวหน้า RB ก็รับไม่ได้ (ดูได้อย่างเดียว)
   for (const persona of ["persona-rb", "persona-qa", "persona-sr", "persona-gr"]) {
     await s.as(persona);
     assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 60, expiry: NOW + 90 * DAY }).error.message, /ไม่มีสิทธิ์: รับวัตถุดิบเข้าคลัง/, persona);
   }
+  for (const persona of ["persona-pp", "persona-rbh"]) {
+    await s.as(persona);
+    await refused(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 60, expiry: NOW + 90 * DAY }));
+  }
+  await rig.store.catchUp();
   // ...และฐานข้อมูลปฏิเสธเมื่อส่งตรง (ล็อตใหม่ + บรรทัดรับ)
   const master = () => s.call("app_rf_master");
   const snap = await master();
@@ -1468,7 +1498,7 @@ test("receiving: ST checks the line in, the lot is made in the same save and mat
   const received = { ...row, lines: [{ ...row.lines[0], receivedKg: 60, lotNo: `RM-EPDM-55-${D8}-01`, expiry: NOW + 90 * DAY }, row.lines[1]] };
   const lot = { lotNo: `RM-EPDM-55-${D8}-01`, materialCode: "EPDM-55", qtyKg: 60, initialKg: 60, expiry: NOW + 90 * DAY, supplier: po, location: "A-1", status: "available", coa: false };
   const receipt = (over = {}, lotOver = {}) => ({ purchaseOrders: { upsert: [{ ...received, ...over }] }, materialLots: { upsert: [{ ...lot, ...lotOver }] } });
-  for (const persona of ["persona-rb", "persona-qa", "persona-sr"]) assert.equal(await sendPo(s, persona, receipt(), "receivePurchaseLine"), "RF_FORBIDDEN", persona);
+  for (const persona of ["persona-pp", "persona-rb", "persona-rbh", "persona-qa", "persona-sr"]) assert.equal(await sendPo(s, persona, receipt(), "receivePurchaseLine"), "RF_FORBIDDEN", persona);
 
   // รับไม่ตรง : ไม่มีล็อต / ล็อตสองล็อต / วัตถุดิบ ปริมาณ วันหมดอายุ หรือเลขล็อตไม่ตรงบรรทัด → RF_INVALID_PURCHASE ไม่เขียนอะไร
   assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [received] } }, "receivePurchaseLine"), "RF_INVALID_PURCHASE", "a receipt without its lot");
@@ -1504,40 +1534,51 @@ test("receiving: ST checks the line in, the lot is made in the same save and mat
   const again = (await master()).purchaseOrders[0];
   assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...again, lines: [{ ...again.lines[0], receivedKg: 1 }, again.lines[1]] }] }, materialLots: { upsert: [{ ...lot, lotNo: `RM-EPDM-55-${D8}-09`, qtyKg: 1, initialKg: 1 }] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION", "a received line cannot be received again");
   // ยกเลิกไม่ได้เมื่อมีบรรทัดรับแล้ว
-  await s.as("persona-pp");
+  await s.as("persona-1");
   assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /รับเข้าแล้ว/);
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...again, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
-  // บรรทัดสุดท้าย : ผู้วางแผนรับได้เหมือน ST → ใบเป็น received
-  const last = await go(s, rig, "persona-pp", "receivePurchaseLine", { id: po, materialCode: "CB-N550", qtyKg: 30, expiry: NOW + 60 * DAY, supplier: "ผู้ขาย ก" });
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...again, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION", "ST may cancel, so the transition is what refuses it");
+  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...again, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_FORBIDDEN", "the planner group may not cancel: the right comes before the transition");
+  // บรรทัดสุดท้าย : ST รับอีกครั้ง → ใบเป็น received
+  const last = await go(s, rig, "persona-st", "receivePurchaseLine", { id: po, materialCode: "CB-N550", qtyKg: 30, expiry: NOW + 60 * DAY, supplier: "ผู้ขาย ก" });
   assert.match(last.result, /^RM-CB-N550-/);
   const done = (await master());
   assert.equal(done.purchaseOrders[0].status, "received");
   assert.equal(done.materialLots.find((item) => item.lotNo === last.result).supplier, "ผู้ขาย ก");
-  assert.equal(done.purchaseOrders[0].lines[1].receivedBy, "สมศรี วางแผน");
+  assert.equal(done.purchaseOrders[0].lines[1].receivedBy, "วิชัย คลังวัตถุดิบ");
   assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "CB-N550", qtyKg: 1, expiry: NOW + DAY }).error.message, /รับครบแล้ว/);
   await inSync(s, rig, "after the last receipt");
   // ใบที่รับครบแล้วแก้อะไรไม่ได้อีก
   const closed = done.purchaseOrders[0];
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...closed, status: "ordered" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...closed, note: "x" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...closed, status: "ordered" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...closed, note: "x" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
 });
 
-test("cancelling: only the planner group, only an ordered order with no received line; the cancelled order cannot be received and no longer counts as on order", async () => {
+test("cancelling: only ST (and the admin), only an ordered order with no received line; the planner group, RB and the others are refused; the cancelled order cannot be received and no longer counts as on order", async () => {
   const s = await session();
   const rig = await s.make();
   await withMaterials(s, rig);
-  await s.as("persona-pp");
+  await s.as("persona-1");
   const make = async () => (await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }] }))).result;
   const po = await make();
-  // RB สั่งแล้วยกเลิกเองไม่ได้ ST/QA ก็ไม่ได้ (หน้าจอปฏิเสธก่อน ฐานข้อมูลปฏิเสธเมื่อส่งตรง)
+  // กลุ่มวางแผน (PP, ผู้จัดการแผนก RB) / RB / QA / SR / GR ยกเลิกไม่ได้ (คำสั่งผ่านหน้าไม่สำเร็จ ฐานข้อมูลปฏิเสธเมื่อส่งตรงและไม่เขียนอะไร)
   const row = (await s.call("app_rf_master")).purchaseOrders[0];
-  for (const persona of ["persona-rb", "persona-st", "persona-qa"]) {
+  for (const persona of ["persona-pp", "persona-rb", "persona-rbh", "persona-qa", "persona-sr", "persona-gr"]) {
     await s.as(persona);
-    assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /ไม่มีสิทธิ์: ยกเลิกใบสั่งซื้อ/, persona);
+    await refused(rig.store.run("cancelPurchaseOrder", { id: po }));
     assert.equal(await sendPo(s, persona, { purchaseOrders: { upsert: [{ ...row, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_FORBIDDEN", persona);
   }
+  await rig.store.catchUp();
+  // ST ยกเลิกใบที่สั่งไว้ได้ (ส่งตรงไปที่ฐานข้อมูล) · ผู้ดูแลระบบยกเลิกผ่านหน้าได้
+  await s.as("persona-1");
+  const stOrder = await make();
+  const stRow = (await s.call("app_rf_master")).purchaseOrders.find((order) => order.id === stOrder);
+  const stBefore = (await s.call("app_rf_master")).version;
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...stRow, status: "cancelled" }] } }, "cancelPurchaseOrder"), undefined, "ST cancels an ordered order");
+  const stCancelled = (await s.call("app_rf_master")).purchaseOrders.find((order) => order.id === stOrder);
+  assert.deepEqual([stCancelled.status, stCancelled.cancelledAt, (await s.call("app_rf_master")).version], ["cancelled", NOW, stBefore + 1]);
+  await rig.store.catchUp();
   const before = (await s.call("app_rf_master")).version;
-  await go(s, rig, "persona-pp", "cancelPurchaseOrder", { id: po });
+  await go(s, rig, "persona-1", "cancelPurchaseOrder", { id: po });
   const cancelled = (await s.call("app_rf_master")).purchaseOrders[0];
   assert.deepEqual([cancelled.status, cancelled.cancelledAt, (await s.call("app_rf_master")).version], ["cancelled", NOW, before + 1]);
   assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /ยกเลิกไปแล้ว/);
@@ -1545,7 +1586,10 @@ test("cancelling: only the planner group, only an ordered order with no received
   // ส่งตรงเพื่อรับใบที่ยกเลิก / ยกเลิกซ้ำ / เปลี่ยนกลับ → RF_INVALID_TRANSITION
   const lot = { lotNo: `RM-EPDM-55-${D8}-01`, materialCode: "EPDM-55", qtyKg: 10, initialKg: 10, expiry: NOW + DAY, supplier: po, location: "A-1", status: "available", coa: false };
   assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...cancelled, status: "ordered", lines: [{ ...cancelled.lines[0], receivedKg: 10, lotNo: lot.lotNo, expiry: lot.expiry }] }] }, materialLots: { upsert: [lot] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION");
-  assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...cancelled, status: "ordered" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...cancelled, status: "ordered" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  const versionNow = (await s.call("app_rf_master")).version;
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [stCancelled] } }, "cancelPurchaseOrder"), undefined, "an identical copy of the cancelled order is a no-op for ST");
+  assert.equal((await s.call("app_rf_master")).version, versionNow, "...and writes nothing");
   await inSync(s, rig, "after the cancel");
 });
 
@@ -1553,8 +1597,8 @@ test("purchase order saves follow the database: signed availability, 60-characte
   const s = await session();
   const rig = await s.make();
   await withMaterials(s, rig);
-  await s.as("persona-pp");
-  const send = (row, persona = "persona-pp", action = "createPurchaseOrder") => sendPo(s, persona, { purchaseOrders: { upsert: [row] } }, action);
+  await s.as("persona-1");
+  const send = (row, persona = "persona-st", action = "createPurchaseOrder") => sendPo(s, persona, { purchaseOrders: { upsert: [row] } }, action);
   // availableKg may be negative (other open WOs already use the stock) within +-1e9; the other quantities stay 0 or more
   const crowded = await saved(rig.store.run("createPurchaseOrder", { lines: [{ materialCode: "EPDM-55", needKg: 50, availableKg: -13.75, shortageKg: 63.75, qtyKg: 70 }] }));
   const stored = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === crowded.result);
@@ -1573,15 +1617,17 @@ test("purchase order saves follow the database: signed availability, 60-characte
   assert.equal((await s.call("app_rf_master")).version, version, "an identical copy writes nothing");
   assert.equal(await send({ ...stored, lines: [{ ...stored.lines[0], qtyKg: 71 }] }), "RF_INVALID_TRANSITION", "the same number with other content");
   assert.equal(await send({ ...stored, createdAt: stored.createdAt + 1 }), "RF_CONFLICT", "another creation time");
-  // a new order with a status other than ordered is a bad shape for any account that may order; one that may not order is refused first
+  // a new order with a status other than ordered is a bad shape for any account that may order (ST); one that may not order (planner group, RB) is refused first
   assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" })), "RF_INVALID_PURCHASE");
-  assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" }), "persona-st"), "RF_FORBIDDEN");
-  // cancelling: the right comes before the transition (RB may not cancel even an order that cannot be cancelled), the planner gets the transition error
+  assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" }), "persona-pp"), "RF_FORBIDDEN");
+  assert.equal(await send(PO_ROW(`PO-${D8}-24`, [PO_LINE("CB-N550")], { status: "received" }), "persona-rb"), "RF_FORBIDDEN");
+  // cancelling: the right comes before the transition (neither the planner group nor RB may cancel even an order that cannot be cancelled), ST gets the transition error
   await go(s, rig, "persona-st", "receivePurchaseLine", { id: crowded.result, materialCode: "EPDM-55", qtyKg: 70, expiry: NOW + 90 * DAY });
   const receivedOrder = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === crowded.result);
   assert.equal(receivedOrder.status, "received");
   assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-rb", "cancelPurchaseOrder"), "RF_FORBIDDEN");
-  assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-pp", "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
+  assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-pp", "cancelPurchaseOrder"), "RF_FORBIDDEN");
+  assert.equal(await send({ ...receivedOrder, status: "cancelled" }, "persona-st", "cancelPurchaseOrder"), "RF_INVALID_TRANSITION");
   // a lot sent alone under the receive action is a plain lot save: the database only checks a receipt when an order line comes with it
   const lot = { lotNo: `RM-CB-N550-${D8}-07`, materialCode: "CB-N550", qtyKg: 5, initialKg: 5, expiry: NOW + DAY, supplier: "x", location: "B-1", status: "available", coa: false };
   assert.equal(await sendPo(s, "persona-st", { materialLots: { upsert: [lot] } }, "receivePurchaseLine"), undefined);
@@ -1594,7 +1640,7 @@ test("two screens ordering at once: the second gets the same number and is told 
   const b = await s.make();
   await withMaterials(s, a);
   await b.store.catchUp();
-  await s.as("persona-pp");
+  await s.as("persona-1");
   const payload = { lines: [{ materialCode: "EPDM-55", needKg: 5, availableKg: 0, shortageKg: 5, qtyKg: 10 }] };
   const first = await saved(a.store.run("createPurchaseOrder", payload));
   const mine = b.store.run("createPurchaseOrder", { lines: [{ ...payload.lines[0], qtyKg: 11 }] });
@@ -1626,8 +1672,9 @@ test("purge removes the purchase orders with the rest, and the invalid-purchase 
   assert.equal(storeApi.mapRemoteError({ message: "RF_INVALID_PURCHASE" }).code, "RF_INVALID_PURCHASE");
   // the rights of the buttons (the database decides for real)
   const employee = (role, dept) => storeApi.personaUser({ id: `${role}-${dept}`, first_name: "ก", last_name: "ข", role: { code: role }, department: { code: dept } });
-  const who = { pp: employee("staff", "PP"), rb: employee("staff", "RB"), st: employee("staff", "ST"), qa: employee("staff", "QA"), mgr: employee("department_manager", "GR") };
-  const allowed = { purchase: ["pp", "rb", "mgr"], cancelPurchase: ["pp", "mgr"], receiveMaterial: ["pp", "st", "mgr"] };
+  const who = { pp: employee("staff", "PP"), rb: employee("staff", "RB"), st: employee("staff", "ST"), qa: employee("staff", "QA"), mgr: employee("department_manager", "GR"), admin: employee("admin", "MT") };
+  // order / receive / cancel: ST and the admin only; the planner group, managers and RB may look at the purchase window
+  const allowed = { purchase: ["st", "admin"], cancelPurchase: ["st", "admin"], receiveMaterial: ["st", "admin"], viewPurchase: ["pp", "rb", "st", "mgr", "admin"] };
   for (const [permission, keys] of Object.entries(allowed)) for (const key of Object.keys(who)) assert.equal(storeApi.can(who[key], permission), keys.includes(key), `${permission} for ${key}`);
   assert.equal(storeApi.rightForAction("createPurchaseOrder"), "purchase");
   assert.equal(storeApi.rightForAction("receivePurchaseLine"), "receiveMaterial");
@@ -1648,23 +1695,23 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   const s = await session({ storage });
   const rig = await s.make();
   await withMaterials(s, rig);
-  await s.as("persona-pp");
-  const chem = { materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 0, qtyKg: 65 };
+  await s.as("persona-1");
+  const chem ={ materialCode: "EPDM-55", needKg: 50, availableKg: 10, shortageKg: 40, safetyKg: 0, qtyKg: 65 };
   const part = { materialCode: "P-BOX", source: "bom", uom: "box", needKg: 7, availableKg: -2, shortageKg: 9, safetyKg: 0, qtyKg: 12 };
 
   // ปฏิเสธก่อนเขียน: ไม่ใช่ของซื้อ / ไม่มีใน item master / ล็อต-วันหมดอายุในบรรทัดของซื้อ / source แปลก
-  const send = (lines) => sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ id: PO_NO, status: "ordered", sourcePi: "PI-R", sourceRequisition: null, note: "", lines }] } });
+  const send = (lines) => sendPo(s, "persona-1", { purchaseOrders: { upsert: [{ id: PO_NO, status: "ordered", sourcePi: "PI-R", sourceRequisition: null, note: "", lines }] } });
   assert.equal(await send([{ ...part, materialCode: "SE-X" }]), "RF_INVALID_PURCHASE", "a made item is not a part");
   assert.equal(await send([{ ...part, materialCode: "NOPE" }]), "RF_INVALID_PURCHASE");
   assert.equal(await send([{ ...part, lotNo: "L-1", receivedKg: 3, expiry: NOW + DAY }]), "RF_INVALID_PURCHASE");
   assert.equal(await send([{ ...part, source: "xyz" }]), "RF_INVALID_PURCHASE");
   assert.equal(await send([chem, { ...chem, source: "bom", materialCode: "epdm-55", uom: "kg" }]), "RF_INVALID_PURCHASE", "a chemical code is not a part and a code cannot repeat");
-  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ id: PO_NO, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [part] }] } }), "RF_FORBIDDEN", "ST cannot order");
+  for (const persona of ["persona-pp", "persona-rb"]) assert.equal(await sendPo(s, persona, { purchaseOrders: { upsert: [{ id: PO_NO, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [part] }] } }), "RF_FORBIDDEN", `${persona} cannot order a part`);
   assert.equal(bom().stock?.length ?? 0, 0, "the refused orders touched no BOM stock");
 
   // สั่งซื้อเคมี + ของซื้อใบเดียว: สต็อกขั้นต่ำของของซื้อเข้า BOM (แถวสต็อกถูกสร้าง ยอด 0) เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
   const bomVersion = bom().version;
-  await s.as("persona-pp");
+  await s.as("persona-1");
   const out = await saved(rig.store.run("createPurchaseOrder", { lines: [chem, part], safety: { "EPDM-55": 5, "P-BOX": 3 }, sourcePi: "PI-R" }));
   assert.equal(out.result, PO_NO);
   const master = await s.call("app_rf_master");
@@ -1675,16 +1722,18 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   assert.deepEqual([bom().audit.at(-1).action, bom().audit.at(-1).detail], ["rubberflow:createPurchaseOrder", "stock +1"]);
   assert.equal(master.materials.find((row) => row.code === "EPDM-55").safetyKg, 5, "the chemical keeps its safety stock on the material");
 
-  // สต็อกขั้นต่ำของซื้อ: เฉพาะกลุ่มวางแผน · สมาชิก RB สั่งได้เมื่อค่าเท่าที่เก็บ (3) แต่ค่าต่างไป = RF_FORBIDDEN ทั้งใบ และหน้าปฏิเสธก่อนเรียกฐานข้อมูล
-  const rbOrder = (id, safetyKg) => ({ purchaseOrders: { upsert: [{ id, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg }] }] } });
+  // สต็อกขั้นต่ำของซื้อ: แก้ได้เฉพาะผู้ที่สั่งซื้อได้และอยู่กลุ่มวางแผนพร้อมกัน (admin) · พนักงาน ST สั่งได้เมื่อค่าเท่าที่เก็บ (3) แต่ค่าต่างไป = RF_FORBIDDEN ทั้งใบ · กลุ่มวางแผนและ RB สั่งไม่ได้เลย
+  const stOrder = (id, safetyKg) => ({ purchaseOrders: { upsert: [{ id, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg }] }] } });
   const bomBefore = bom().version;
-  assert.equal(await sendPo(s, "persona-rb", rbOrder(`PO-${rules.ymd(NOW)}-02`, 9)), "RF_FORBIDDEN", "RB changes the safety stock of a part through an order");
-  assert.equal(await sendPo(s, "persona-rb", rbOrder(`PO-${rules.ymd(NOW)}-02`, 3)), undefined, "RB orders the part with the safety stock left as stored");
+  assert.equal(await sendPo(s, "persona-st", stOrder(`PO-${rules.ymd(NOW)}-02`, 9)), "RF_FORBIDDEN", "ST changes the safety stock of a part through an order");
+  for (const persona of ["persona-pp", "persona-rb"]) for (const value of [3, 9]) assert.equal(await sendPo(s, persona, stOrder(`PO-${rules.ymd(NOW)}-02`, value)), "RF_FORBIDDEN", `${persona} orders nothing, even with the safety stock left as stored (${value})`);
+  assert.equal(bom().version, bomBefore, "the refused orders changed no BOM row");
+  assert.equal(await sendPo(s, "persona-st", stOrder(`PO-${rules.ymd(NOW)}-02`, 3)), undefined, "ST orders the part with the safety stock left as stored");
   assert.equal(bom().version, bomBefore, "that order changed no BOM row");
-  await s.as("persona-rb");
+  await s.as("persona-st");
   const refusedByPage = rig.store.run("createPurchaseOrder", { lines: [{ ...part, safetyKg: 9, storedSafetyKg: 3 }], safety: { "P-BOX": 9 } });
   assert.equal(refusedByPage.ok, false);
-  assert.match(refusedByPage.error.message, /ฝ่ายวางแผนเท่านั้น/, "the page refuses before calling the database");
+  assert.match(refusedByPage.error.message, /ไม่มีสิทธิ์|ฝ่ายวางแผนเท่านั้น/, "the page refuses before calling the database (by the order right or by the safety stock right)");
   await rig.store.catchUp();
 
   // รับบรรทัดของซื้อ (ST): ปริมาณอย่างเดียว · ยอดคงเหลือและประวัติ receive ฝั่ง BOM · ใบยังรอบรรทัดเคมี
@@ -1708,7 +1757,7 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   assert.equal(bom().stock[0].qty, 10, "the chemical receipt does not touch the part stock");
 
   // ชิ้นที่ถูกเปลี่ยนชนิดหลังสั่ง รับเข้าไม่ได้ (ยอดไม่ขยับ) จนกว่าจะกลับเป็นของซื้อ
-  await s.as("persona-pp");
+  await s.as("persona-1");
   const ordered = await saved(rig.store.run("createPurchaseOrder", { lines: [{ ...part, safetyKg: 3, storedSafetyKg: 3, qtyKg: 4 }], safety: { "P-BOX": 3 }, sourcePi: "PI-R" }));
   const secondNo = ordered.result;
   const setKind = async (kind) => {
