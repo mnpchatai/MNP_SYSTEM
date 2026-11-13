@@ -371,7 +371,7 @@ test("pareto falls back to the count when no baht is confirmed, and says so once
   const pareto = (html) => html.split('data-card="pareto"')[1].split("</section>")[0];
   const noBaht = pareto(await renderView({ reports: [NCR_ONE] }));
   assert.doesNotMatch(noBaht, /ไม่มีข้อมูลในช่วงที่เลือก/, "NCRs exist, so the chart is not empty");
-  assert.match(noBaht, /<span class="nd-val">1 ใบ<\/span>/, "bars are counted in reports");
+  assert.match(noBaht, /<span class="nd-val">1\u00a0ใบ<\/span>/, "bars are counted in reports (number and unit never split across lines)");
   // รอบ 13: บอกครั้งเดียวที่ title ของชิปเรียงตามบาท ไม่มีบรรทัดซ้ำใต้ชิป
   assert.doesNotMatch(noBaht, /<p class="nd-hint">ยังไม่มีบาทที่ยืนยันในช่วงนี้/);
   // บอกบนชิปเอง (title ใช้ไม่ได้บนจอสัมผัส)

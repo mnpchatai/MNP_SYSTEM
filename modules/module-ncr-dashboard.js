@@ -34,7 +34,7 @@
   const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
   const fmtBaht = (value) => `${fmtNumber(Math.round(value))} ฿`;
-  const fmtCount = (value) => `${fmtNumber(value)} ใบ`;
+  const fmtCount = (value) => `${fmtNumber(value)}\u00a0ใบ`; // เลขกับ "ใบ" ไม่แยกบรรทัด (ป้ายในการ์ดบนจอแคบ)
   const fmtPercent = (value) => (value === null ? "—" : `${fmtNumber(value * 100, 1)}%`);
   const fmtShort = (value) => (value >= 1e6 ? `${fmtNumber(value / 1e6, 2)}M` : value >= 1000 ? `${fmtNumber(value / 1000, 1)}k` : fmtNumber(value));
 
@@ -201,13 +201,13 @@
     return `<div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "" })}"><span class="nd-label">NCR ที่ออกในช่วงนี้</span><span class="nd-value">${fmtNumber(sums.total)}<small>ใบ</small></span></a>
         <span class="nd-note">ปิดแล้ว ${fmtCount(sums.closed)} (${fmtPercent(sums.closedRate)})</span><span class="nd-meter" role="img" aria-label="ปิดแล้ว ${fmtPercent(sums.closedRate)}"><span style="width:${(sums.closedRate ?? 0) * 100}%"></span></span></div>
       <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "open" })}"><span class="nd-label">ค้างอยู่</span><span class="nd-value">${fmtNumber(sums.open)}<small>ใบ</small></span></a>
-        ${sums.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue" })}"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดตอบ ${fmtCount(sums.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดตอบ</span>`}
-        ${sums.preventionPending ? `<a class="nd-pill${sums.preventionOverdue ? " crit" : ""}" href="${hrefWith(filters, { scope: "prevention" })}">${sums.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>` : ""}รอแนวทางป้องกัน ${fmtCount(sums.preventionPending)}${sums.preventionOverdue ? ` · เลยกำหนด ${fmtNumber(sums.preventionOverdue)}` : ""}</a>` : ""}
+        ${sums.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue" })}"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดตอบ ${fmtCount(sums.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดตอบ</span>`}
+        ${sums.preventionPending ? `<a class="nd-pill${sums.preventionOverdue ? " crit" : ""}" href="${hrefWith(filters, { scope: "prevention" })}">${sums.preventionOverdue ? `<span class="nd-ico" aria-hidden="true"></span>` : ""}รอแนวทางป้องกัน ${fmtCount(sums.preventionPending)}${sums.preventionOverdue ? ` · เลยกำหนด ${fmtNumber(sums.preventionOverdue)}` : ""}</a>` : ""}
         <span class="nd-note">ตอบทันกำหนด ${fmtPercent(sums.onTimeRate)}${sums.slaBase ? ` (${sums.onTime}/${sums.slaBase})` : ""}</span></div>
       <div class="nd-tile"><span class="nd-label">ความสูญเสียสุทธิ (ยืนยันแล้ว)</span><span class="nd-value">${fmtShort(sums.net)}<small>฿</small></span>
         ${sums.estimated || sums.legacy ? `<span class="nd-note">${sums.estimated ? `+ ประมาณการ ${fmtBaht(sums.estimated)} ยังไม่ยืนยัน` : ""}${sums.estimated && sums.legacy ? " · " : ""}${sums.legacy ? `รายการเดิม ${fmtBaht(sums.legacy)}` : ""}</span>` : ""}
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(money)}${sums.need > sums.assessed ? `<p class="nd-hint">ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินความสูญเสียไม่ครบทุกใบ</p>` : ""}${filters.dept ? `<p class="nd-hint">เมื่อกรองแผนก มูลค่าแบ่งตามสัดส่วนความรับผิดชอบของแผนกนั้น</p>` : ""}</details></div>
-      <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "loss" })}"><span class="nd-label">ประเมินความสูญเสียแล้ว</span><span class="nd-value">${fmtNumber(sums.assessed)}<small>/ ${fmtNumber(sums.need)} ใบ</small></span></a>
+      <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "loss" })}"><span class="nd-label">ประเมินความสูญเสียแล้ว</span><span class="nd-value">${fmtNumber(sums.assessed)}<small> / ${fmtNumber(sums.need)} ใบ</small></span></a>
         <span class="nd-meter" role="img" aria-label="ประเมินแล้ว ${fmtPercent(sums.assessedRate)}"><span style="width:${(sums.assessedRate ?? 0) * 100}%"></span></span>${sums.need > sums.assessed ? "" : `<span class="nd-note">ครบทุกใบที่ต้องประเมิน</span>`}
         <details class="nd-more"><summary>ดูรายละเอียด</summary>${list(assess)}<p class="nd-hint">ครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</p></details></div>`;
   }
@@ -218,12 +218,12 @@
       if (row.preventionPending) {
         if (!row.prevention_due) return `<span class="nd-muted">รอแนวทางป้องกัน</span>`;
         const leftPrevention = daysBetween(today, row.prevention_due);
-        return row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>ป้องกัน เกิน ${Math.abs(leftPrevention)} วัน</span>` : `<span class="nd-pill">ป้องกัน อีก ${leftPrevention} วัน</span>`;
+        return row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>ป้องกัน เกิน ${Math.abs(leftPrevention)} วัน</span>` : `<span class="nd-pill">ป้องกัน อีก ${leftPrevention} วัน</span>`;
       }
       if (!["awaiting_disposition", "awaiting_response"].includes(row.status)) return `<span class="nd-muted">ตอบแล้ว</span>`;
       if (!row.slaDue) return "—";
       const left = daysBetween(today, row.slaDue);
-      return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกิน ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">อีก ${left} วัน</span>`;
+      return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เกิน ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">อีก ${left} วัน</span>`;
     };
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่ปิด เรียงจากเลยกำหนด (ตอบ 5 วัน หรือส่งแนวทางป้องกัน) ก่อน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${waitingDetail(row) ? `<br><span class="nd-muted">${esc(waitingDetail(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
@@ -374,16 +374,15 @@
   }
 
   function deptHtml(list, filters) {
-    const { rows: deptRows, total } = model.deptTable(list, filters);
+    const { rows: deptRows } = model.deptTable(list, filters);
     const resolve = (key) => {
       const row = deptRows.find((entry) => entry.dept === key);
       return row && { title: key ? `แผนก ${key}` : "ยังไม่กำหนดแผนก", lines: [["ใบที่เกี่ยวข้อง", fmtCount(row.count)], ["ค้างอยู่", fmtCount(row.open)], ["เลยกำหนดตอบ", fmtCount(row.overdue)], ["รอส่งแนวทางป้องกัน", fmtCount(row.preventionPending)], ["เลยกำหนดส่งแนวทางป้องกัน", fmtCount(row.preventionOverdue)], ["ตอบทันกำหนด", fmtPercent(row.onTimeRate)], ["สูญเสียสุทธิที่แบ่งตามสัดส่วนแผนก", fmtBaht(row.net)]], href: key ? hrefWith(filters, { dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : undefined };
     };
     const detailRow = (key) => { const detail = detailUnder("dept", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="7">${detail}</td></tr>` : ""; };
-    return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน แถวรวมตรงกับตัวเลขด้านบน</p></div>
+    return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน ยอดรวมทุกแผนกอยู่ในการ์ดตัวเลขด้านบน</p></div>
       ${deptRows.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบที่เกี่ยวข้อง</th><th class="nd-num">ค้าง</th><th class="nd-num">เลยกำหนด</th><th class="nd-num">รอป้องกัน</th><th class="nd-num">ตอบทัน</th><th class="nd-num">สุทธิ (บาท)</th></tr></thead><tbody>
-      ${deptRows.map((row) => `<tr><td>${selectButton("dept", row.dept, esc(row.dept || "ยังไม่กำหนดแผนก"), "nd-rowbtn")}</td><td class="nd-num">${fmtNumber(row.count)}</td><td class="nd-num">${fmtNumber(row.open)}</td><td class="nd-num">${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>${row.overdue}</span>` : "0"}</td><td class="nd-num">${row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>${row.preventionPending}</span>` : fmtNumber(row.preventionPending)}</td><td class="nd-num">${fmtPercent(row.onTimeRate)}</td><td class="nd-num">${fmtNumber(row.net)}</td></tr>${detailRow(row.dept)}`).join("")}
-      <tr class="nd-total"><td>รวม (ไม่ซ้ำ)</td><td class="nd-num">${fmtNumber(total.total)}</td><td class="nd-num">${fmtNumber(total.open)}</td><td class="nd-num">${fmtNumber(total.overdue)}</td><td class="nd-num">${fmtNumber(total.preventionPending)}</td><td class="nd-num">${fmtPercent(total.onTimeRate)}</td><td class="nd-num">${fmtNumber(total.net)}</td></tr></tbody></table></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
+      ${deptRows.map((row) => `<tr><td>${selectButton("dept", row.dept, esc(row.dept || "ยังไม่กำหนดแผนก"), "nd-rowbtn")}</td><td class="nd-num">${fmtNumber(row.count)}</td><td class="nd-num">${fmtNumber(row.open)}</td><td class="nd-num">${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>${row.overdue}</span>` : "0"}</td><td class="nd-num">${row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>${row.preventionPending}</span>` : fmtNumber(row.preventionPending)}</td><td class="nd-num">${fmtPercent(row.onTimeRate)}</td><td class="nd-num">${fmtNumber(row.net)}</td></tr>${detailRow(row.dept)}`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("dept", "ชื่อแผนก", resolve)}`;
   }
 
@@ -415,7 +414,7 @@
     if (list.length && !rest.length && !hasDrillFilter(filters)) return "";
     return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}</p></div>
       ${shown.length ? `<div class="table-wrap"><table class="nd-rowlink"><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
-      ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${row.overdue ? `<br><span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดตอบ</span>` : ""}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
+      ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${row.overdue ? `<br><span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดตอบ</span>` : ""}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true"></span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
       ${rest.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(rest.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">${list.length ? "ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว" : "ไม่มี NCR ตรงกับตัวกรองนี้"}</p>`}`;
   }
 

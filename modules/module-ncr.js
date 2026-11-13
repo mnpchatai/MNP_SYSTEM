@@ -820,7 +820,7 @@
         <div class="form-actions"><button class="btn secondary" type="submit">บันทึกผู้ตอบ${relation(item.department)?.code ? ` ${escapeHtml(relation(item.department).code)}` : "ของแผนก"}</button></div></form>`;
     }).join("");
     // เป็นงานที่ต้องกรอก จึงอยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" (ผู้เรียกวางให้)
-    return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก</h3>${rows}</div>` : "";
+    return rows ? `<div class="ncr-action-group"><h3>ผู้ตอบของแผนก (ถ้ามี)</h3>${rows}</div>` : "";
   }
 
   // สิทธิ์ในการ์ดความสูญเสีย: "full" = ผู้ยืนยันยอด (ใส่ แก้ ยืนยัน ยกเลิก ติ๊กประเมินครบ) · "estimate" = ผู้ตอบ NCR ใบนั้น
@@ -891,7 +891,7 @@
     const waitingSaysDue = waitingShown && ["awaiting_disposition", "awaiting_response"].includes(ncr.status);
     const waitingSaysResponder = waitingShown && ["awaiting_response", "awaiting_info"].includes(ncr.status)
       && (ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id).every((item) => staff.some((person) => person.id === item.responder_id));
-    const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
+    const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" + "));
     // เฉพาะแผนกที่ระบุผู้ตอบไว้ — แผนกที่ไม่ระบุ ทุกคนที่เข้าเกณฑ์ตอบได้ จึงไม่ต้องแสดง
     const designated = escapeHtml((ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id)
       .map((item) => `${relation(item.department)?.code ?? ""}: ${personName(directory, item.responder_id)}`).join(" · "));

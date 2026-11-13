@@ -197,7 +197,13 @@ test("the help sheet explains the page, every badge glyph and (on keyboard devic
   // คำแนะนำต่อหน้าใช้ path ที่มีอยู่จริงใน router
   // path ของหน้าหลักอยู่ใน router ของ app.js ส่วนแดชบอร์ด RubberFlow และ BOM เป็น PATH ของโมดูล
   const modulePaths = new Set(["module-mt-dashboard.js", "module-ncr-dashboard.js", "module-rubberflow.js", "module-bom.js"].map((file) => readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8").match(/const PATH = "([^"]+)"/)?.[1]));
-  for (const path of Object.keys(help.PAGE_HELP)) assert.ok(new RegExp(`path === "${path}"`).test(app) || modulePaths.has(path), `route ${path} exists`);
+  // requests-list / requests-board: รายการของโมดูล helpPageKey เลือกตามแท็บที่หน้านั้นมีจริง (ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ)
+  const derived = new Set(["requests-list", "requests-board"]);
+  for (const path of Object.keys(help.PAGE_HELP)) assert.ok(new RegExp(`path === "${path}"`).test(app) || modulePaths.has(path) || derived.has(path), `route ${path} exists`);
+  assert.match(app, /if \(route\.path === "requests" && route\.params\.get\("type"\) && route\.params\.get\("type"\) !== "all"\) return document\.querySelector\("\.view-tabs a\[href\*='view=board'\]"\) \? "requests-board" : "requests-list";/);
+  assert.doesNotMatch(help.PAGE_HELP["requests-list"].join(" "), /ติดตามสถานะทุกใบ/, "a list without the board tab does not explain it");
+  assert.match(help.PAGE_HELP["requests-board"].join(" "), /ติดตามสถานะทุกใบ/);
+  assert.deepEqual([...help.PAGE_HELP.requests], ["เลือกโมดูลเพื่อดูรายการและสร้างคำร้องของโมดูลนั้น"], "the module chooser explains only the chooser");
   assert.match(help.helpHtml((value) => `[${value}]`, "dashboard"), /<li>\[/, "tips go through the escape function");
 });
 
