@@ -615,7 +615,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .priority-high, .priority-urgent { color: var(--danger); font-weight: 700; }
 .filters { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 7px; }
 /* ชิปตัวกรองแบบเดียวทั้งระบบ (.filter ของรายการ = .nd-chip ของแดชบอร์ด): ขอบมน ตัวอักษร --text-ui สูง 40 px จอสัมผัส 44 px */
-.filter { min-height: 40px; padding: 0 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); font-weight: 600; cursor: pointer; }
+.filter { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); font-weight: 600; cursor: pointer; }
 .filter.active { color: var(--primary-ink); background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 40%, transparent); }
 [data-module] .filter.active { color: var(--mod-tab-on-ink); background: var(--mod-tab-on); border-color: transparent; box-shadow: var(--mod-tab-on-shadow); }
 
@@ -1720,6 +1720,7 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-meter span { height: 100%; display: block; background: var(--chart-1); border-radius: var(--radius-sm); }
 .nd-pill { min-height: 32px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; align-self: start; justify-self: start; color: var(--ink); background: var(--shell); border-radius: var(--radius-pill); font-size: var(--text-meta); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .nd-pill.crit { background: color-mix(in srgb, var(--danger) 14%, var(--paper)); }
+.nd-tile .nd-pill { max-width: 100%; white-space: normal; } /* ป้ายในการ์ดตัวเลขไม่ล้นขอบการ์ดบนจอแคบ */
 .nd-ico { color: var(--danger); font-size: var(--text-caption); }
 .nd-more { margin-top: 4px; font-size: var(--text-meta); }
 .nd-more summary { min-height: 32px; display: flex; align-items: center; color: var(--mod-link, var(--primary)); cursor: pointer; }
@@ -1780,7 +1781,6 @@ tr.ncr-voided td .muted { text-decoration: none; }
 .nd-detail-row:hover > td { background: none; }
 .nd-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 th.nd-num { white-space: nowrap; }
-tr.nd-total td { font-weight: 700; border-top: 1px solid var(--line); } /* MT: เฉพาะตอนกรองแผนก */
 .nd-rowbtn { min-height: 44px; min-width: 44px; padding: 0; color: var(--mod-link, var(--primary)); background: none; border: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .nd-rowbtn.selected { text-decoration: underline; }
 .nd-bars { display: grid; gap: 4px; }

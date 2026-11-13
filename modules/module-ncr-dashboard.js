@@ -34,7 +34,7 @@
   const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
   const fmtBaht = (value) => `${fmtNumber(Math.round(value))} ฿`;
-  const fmtCount = (value) => `${fmtNumber(value)} ใบ`;
+  const fmtCount = (value) => `${fmtNumber(value)} ใบ`; // เลขกับ "ใบ" ไม่แยกบรรทัด (ป้ายในการ์ดบนจอแคบ)
   const fmtPercent = (value) => (value === null ? "—" : `${fmtNumber(value * 100, 1)}%`);
   const fmtShort = (value) => (value >= 1e6 ? `${fmtNumber(value / 1e6, 2)}M` : value >= 1000 ? `${fmtNumber(value / 1000, 1)}k` : fmtNumber(value));
 

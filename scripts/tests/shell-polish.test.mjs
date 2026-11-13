@@ -236,9 +236,16 @@ test("dashboard touch targets reach 44px and whole table rows open the request",
   // แถบค้นหารายการ: ปุ่มค้นหา/ล้างสูงเท่าช่องค้นหา ชื่อช่องใช้ได้ทั้งคำร้องและทะเบียน NCR
   assert.match(app, /aria-label="ค้นหาในรายการ" aria-keyshortcuts="\/"/);
   assert.match(app, /<button class="btn secondary" type="submit">ค้นหา<\/button>/);
-  // แถวรวมของตารางแผนกไม่ซ้ำตัวเลขในการ์ด: NCR ไม่มีแถวรวม · MT ขึ้นเฉพาะตอนกรองแผนก (ตารางนี้ไม่ย่อตามแผนก)
-  assert.doesNotMatch(read("modules/module-ncr-dashboard.js"), /nd-total|รวม \(ไม่ซ้ำ\)/);
-  assert.match(read("modules/module-mt-dashboard.js"), /\$\{filters\.dept \? `<tr class="nd-total"><td>รวม<\/td>/);
+  // แถวรวมของตารางแผนกไม่ซ้ำตัวเลขในการ์ด: ทั้งสองแดชบอร์ดไม่มีแถวรวม (ยอดรวมอยู่ในการ์ดตัวเลข)
+  for (const file of ["modules/module-ncr-dashboard.js", "modules/module-mt-dashboard.js"]) assert.doesNotMatch(read(file), /nd-total|รวม \(ไม่ซ้ำ\)/, file);
+  assert.doesNotMatch(css, /tr\.nd-total/);
+  // ชิปตัวกรองของรายการสูงเท่าชิปแดชบอร์ด · ป้ายในการ์ดตัวเลขขึ้นบรรทัดใหม่ได้ ไม่ล้นการ์ดบนจอ 375px
+  assert.match(css, /\.filter \{ min-height: 44px;/);
+  assert.match(css, /\.nd-tile \.nd-pill \{ max-width: 100%; white-space: normal; \}/);
+  // แผนกที่รับผิดชอบหลายแผนกคั่นด้วย " + " ทั้งทะเบียนและหน้ารายละเอียด NCR
+  assert.match(read("modules/module-ncr.js"), /const responsibilities = escapeHtml\(\(ncr\.ncr_responsibilities \?\? \[\]\)\.map\(\(item\) => relation\(item\.department\)\?\.code \?\? ""\)\.join\(" \+ "\)\);/);
+  assert.match(read("modules/module-ncr.js"), /<div class="ncr-action-group"><h3>ผู้ตอบของแผนก \(ถ้ามี\)<\/h3>/);
+  assert.match(read("modules/module-ncr-dashboard.js"), /\$\{fmtNumber\(sums\.assessed\)\}<small> \/ \$\{fmtNumber\(sums\.need\)\} ใบ<\/small>/);
   // ไอคอนเตือนในป้ายแดชบอร์ดมาจาก mask SVG ไม่มีอักษร ▲
   for (const file of ["modules/module-ncr-dashboard.js", "modules/module-mt-dashboard.js"]) assert.doesNotMatch(read(file), /▲/, file);
   assert.match(css, /\.nd-rowlink a\.request-no::after \{ content: ""; position: absolute; inset: 0; \}/);

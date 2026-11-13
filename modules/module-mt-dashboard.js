@@ -40,7 +40,7 @@
   let restoreScrollY = null; // ตำแหน่งเลื่อนก่อนกดกรอง — วาดหน้าใหม่แล้วคืนตำแหน่งเดิมก่อน แล้วค่อยเลื่อนนุ่มๆ ไปที่รายการ
 
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
-  const fmtCount = (value) => `${fmtNumber(value)} ใบ`;
+  const fmtCount = (value) => `${fmtNumber(value)} ใบ`; // เลขกับ "ใบ" ไม่แยกบรรทัด (ป้ายในการ์ดบนจอแคบ)
   const fmtHours = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} ชม.`);
   const fmtDays = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} วัน`);
   const fmtPercent = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value * 100, 1)}%`);
@@ -313,7 +313,7 @@
   }
 
   function deptRankHtml(ranking, filters) {
-    const { items, total } = ranking;
+    const { items } = ranking;
     const resolve = (key) => {
         const item = items.find((entry) => entry.dept === key);
         return item && { title: item.dept ? `แผนก ${item.dept}` : "ไม่ระบุแผนก", lines: [["แจ้งซ่อมในช่วงนี้", fmtCount(item.count)], ["สัดส่วนของใบแจ้งซ่อมทั้งหมด", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["ด่วน", fmtCount(item.urgent)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: item.dept && filters.dept !== key ? hrefWith(filters, { scope: "", stage: "", dept: key }) : null, linkLabel: "ดูเฉพาะแผนกนี้" };
@@ -321,8 +321,7 @@
     const detailRow = (key) => { const detail = detailUnder("deptrank", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="6">${detail}</td></tr>` : ""; };
     return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
       ${items.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
-      ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>${detailRow(item.dept)}`).join("")}
-      ${filters.dept ? `<tr class="nd-total"><td>รวม</td><td class="nd-num">${esc(fmtNumber(total))}</td><td class="nd-num">100%</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.open, 0)))}</td><td class="nd-num">${esc(fmtNumber(items.reduce((sum, item) => sum + item.urgent, 0)))}</td><td class="nd-num"></td></tr>` : ""}</tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
+      ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>${detailRow(item.dept)}`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("deptrank", "ชื่อแผนก", resolve)}`;
   }
 

@@ -162,7 +162,8 @@ test("a role is written once per row, and cards with nothing to chart collapse t
   assert.match(phase, /<p class="nd-empty">ยังไม่มีช่วงที่เดินครบ/, "no four rows of —");
   const tech = page.split('data-card="tech"')[1].split("</section>")[0];
   // ผู้ใช้ 2026-11-12: คงการจัดอันดับช่าง — ช่างที่มอบหมายแล้วขึ้นทุกคนพร้อมงานที่ถืออยู่ แม้ยังไม่มีเวลาซ่อม (ไม่มีคำอธิบายสีเมื่อแถบยาว 0)
-  assert.match(tech, /<span class="nd-muted">1 ใบในช่วงนี้ · ถืออยู่ 1 ใบ<\/span>/);
+  // เลขกับ "ใบ" คั่นด้วย no-break space (รอบ 22) ไม่แยกบรรทัดบนจอแคบ
+  assert.match(tech, /<span class="nd-muted">1 ใบในช่วงนี้ · ถืออยู่ 1 ใบ<\/span>/);
   assert.doesNotMatch(tech, /ยังไม่มีเวลาซ่อม|nd-legend/);
 });
 

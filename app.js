@@ -2799,6 +2799,8 @@ document.addEventListener("keydown", (event) => {
 // คำแนะนำของ NCR เขียนสำหรับหน้าใบ (#/ncr?id=…) หน้าอื่นใต้ #/ncr (ฟอร์มออก NCR) จึงไม่มีส่วน "หน้านี้"
 function helpPageKey(route) {
   if (route.path === "requests" && route.params.get("mode") === "create") return "new";
+  // รายการของโมดูล (ไม่ใช่หน้าเลือกโมดูล): คำอธิบายแท็บตามแท็บที่หน้านั้นมีจริง ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ
+  if (route.path === "requests" && route.params.get("type") && route.params.get("type") !== "all") return document.querySelector(".view-tabs a[href*='view=board']") ? "requests-board" : "requests-list";
   if (route.path === "ncr") return route.params.get("id") ? "ncr" : "";
   return route.path;
 }

@@ -891,7 +891,7 @@
     const waitingSaysDue = waitingShown && ["awaiting_disposition", "awaiting_response"].includes(ncr.status);
     const waitingSaysResponder = waitingShown && ["awaiting_response", "awaiting_info"].includes(ncr.status)
       && (ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id).every((item) => staff.some((person) => person.id === item.responder_id));
-    const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" · "));
+    const responsibilities = escapeHtml((ncr.ncr_responsibilities ?? []).map((item) => relation(item.department)?.code ?? "").join(" + "));
     // เฉพาะแผนกที่ระบุผู้ตอบไว้ — แผนกที่ไม่ระบุ ทุกคนที่เข้าเกณฑ์ตอบได้ จึงไม่ต้องแสดง
     const designated = escapeHtml((ncr.ncr_responsibilities ?? []).filter((item) => item.responder_id)
       .map((item) => `${relation(item.department)?.code ?? ""}: ${personName(directory, item.responder_id)}`).join(" · "));
