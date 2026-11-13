@@ -2154,4 +2154,10 @@ test("the wide table and a kind switch cannot change the compound of a rod that 
   assert.match(env.log.toasts.at(-1)[0], /เปลี่ยนสูตรยางของ RB-DM01-01-OR01-200-0-72 ที่ปุ่ม/);
   assert.equal(itemOf(other).kind, "RB");
   assert.equal(itemOf(other).rubber.compound, "DM01");
+  // ออกจากเส้นยางไปชนิดที่ไม่เก็บข้อมูลยาง (สูตรจะถูกล้าง แล้วกลับมาตั้งสูตรใหม่ได้): ปฏิเสธ · ไป SE ด้วยสูตรเดิมยังได้
+  await env.submit("p=find", "saveItem", { code: other, kind: "PURCHASED", name: itemOf(other).name, uom: "rod", rubber: { compound: "DM01" } }, {});
+  assert.match(env.log.toasts.at(-1)[0], /เป็นเส้นยางที่มีสูตรยาง DM01 แล้ว เปลี่ยนเป็นชนิดนี้ไม่ได้/);
+  assert.equal(itemOf(other).kind, "RB");
+  await env.submit("p=find", "saveItem", { code: other, kind: "RB", name: itemOf(other).name, uom: "rod", rubber: { compound: " dm 01 " } }, {});
+  assert.equal(itemOf(other).rubber.compound, "DM01", "the same compound typed differently keeps the stored spelling");
 });

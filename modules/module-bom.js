@@ -330,6 +330,10 @@
       const before = stored && (stored.kind === "RB" || p.kind === "RB") ? rules.canonicalCode(stored.rubber?.compound ?? "") : "";
       const next = p.rubber?.compound === undefined ? before : rules.canonicalCode(p.rubber.compound ?? "");
       if (before && next !== before) throw new Error(`เปลี่ยนสูตรยางของ ${stored.code} ที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง`);
+      // เส้นยางที่มีสูตรแล้วเปลี่ยนเป็นชนิดที่ไม่เก็บข้อมูลยางไม่ได้: สูตรจะถูกล้าง แล้วตั้งสูตรใหม่ได้โดยไม่ผ่านการยืนยัน (ชิ้นที่ลงชนิดผิดให้เลิกใช้แล้วสร้างรหัสใหม่)
+      if (before && stored.kind === "RB" && p.kind !== "RB" && p.kind !== "SE") throw new Error(`${stored.code} เป็นเส้นยางที่มีสูตรยาง ${before} แล้ว เปลี่ยนเป็นชนิดนี้ไม่ได้ (ข้อมูลยางจะหาย) ถ้าลงชนิดผิด ให้เลิกใช้ชิ้นงานนี้แล้วสร้างรหัสใหม่`);
+      // สูตรเดิมที่พิมพ์ต่างรูป (ช่องว่าง ตัวพิมพ์) เก็บตามที่เก็บอยู่ ไม่เขียนทับด้วยรูปที่พิมพ์
+      if (before && p.rubber && p.rubber.compound !== undefined) p = { ...p, rubber: { ...p.rubber, compound: stored.rubber.compound } };
       return { ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null };
     },
     // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
