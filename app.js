@@ -1385,9 +1385,9 @@ function requestOwnerNames(request, directory) {
 // ค่าใน cells เป็น HTML ที่ผู้เรียก escape แล้ว (ใช้ registerNoHtml / registerSubjectHtml สร้างช่องเลขที่และเรื่อง)
 // role ประกาศซ้ำทุกชั้น: บนจอแคบ CSS เปลี่ยน table/tr เป็น block/flex ซึ่ง Safari ทิ้งความหมายตารางให้โปรแกรมอ่านจอ
 function registerTableHtml({ label, columns, rows }) {
-  const head = columns.map((column) => `<th scope="col" role="columnheader" aria-sort="none"><button type="button" class="th-sort" title="เรียงตาม${escapeHtml(column.label)}">${escapeHtml(column.label)}<span class="th-sort-icon" aria-hidden="true"></span></button></th>`).join("");
+  const head = columns.map((column) => `<th scope="col" role="columnheader" aria-sort="${column.sorted ?? "none"}"><button type="button" class="th-sort" title="เรียงตาม${escapeHtml(column.label)}">${escapeHtml(column.label)}<span class="th-sort-icon" aria-hidden="true"></span></button></th>`).join("");
   const body = rows.map((row) => `<tr role="row"${row.className ? ` class="${escapeHtml(row.className)}"` : ""}>${columns
-    .map((column) => `<td role="cell" class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}"${row.sort?.[column.key] ? ` data-sort="${escapeHtml(String(row.sort[column.key]))}"` : ""}>${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
+    .map((column) => `<td role="cell" class="register-${column.role ?? "meta"}" data-label="${escapeHtml(column.label)}"${row.sort && column.key in row.sort ? ` data-sort="${escapeHtml(String(row.sort[column.key] ?? ""))}"` : ""}>${row.cells[column.key] || '<span class="register-none">—</span>'}</td>`).join("")}</tr>`).join("");
   return `<div class="register-wrap"><table class="register-table" role="table" aria-label="${escapeHtml(label)}"><thead role="rowgroup"><tr role="row">${head}</tr></thead><tbody role="rowgroup">${body}</tbody></table></div>`;
 }
 
@@ -1426,7 +1426,7 @@ function requestRows(requests, { showRequester = false, showType = false, direct
     { key: "subject", label: "เรื่อง", role: "subject" },
     ...(showType ? [{ key: "type", label: "ประเภท" }] : []),
     ...(showRequester ? [{ key: "requester", label: "ผู้แจ้ง" }] : []),
-    { key: "created", label: "แจ้งเมื่อ" },
+    { key: "created", label: "แจ้งเมื่อ", sorted: "descending" },
     { key: "status", label: "สถานะ", role: "status" },
   ];
   const rows = requests.map((request) => {
@@ -1479,7 +1479,7 @@ function statusBoardRows(rows, { showType = false, params = null, filtered = fal
     ...(showType ? [{ key: "type", label: "ประเภท" }] : []),
     { key: "department", label: "แผนก" },
     { key: "requester", label: "ผู้แจ้ง" },
-    { key: "updated", label: "อัปเดตล่าสุด" },
+    { key: "updated", label: "อัปเดตล่าสุด", sorted: "descending" },
     { key: "status", label: "สถานะ", role: "status" },
   ];
   return registerTableHtml({
@@ -2890,6 +2890,22 @@ document.addEventListener("keydown", (event) => {
   button.click();
 });
 
+// เทียบสองช่องของคอลัมน์เดียวกัน: data-sort ที่เป็นตัวเลข (ยอดเงิน) เทียบเป็นตัวเลข · ที่เป็นวันเวลา ISO เทียบเป็นเวลา · ที่เหลือเทียบข้อความไทยแบบเลขในข้อความ
+// ช่องที่ไม่มีค่า (data-sort ว่าง) อยู่ท้ายเสมอไม่ว่าจะเรียงทิศไหน
+function compareRegisterCells(left, right, ascending) {
+  const read = (cell) => (cell?.dataset.sort !== undefined ? cell.dataset.sort : cell?.textContent.trim() ?? "");
+  const a = read(left);
+  const b = read(right);
+  const keyed = left?.dataset.sort !== undefined || right?.dataset.sort !== undefined;
+  if (keyed && (a === "") !== (b === "")) return a === "" ? 1 : -1;
+  const direction = ascending ? 1 : -1;
+  const x = Number(a);
+  const y = Number(b);
+  if (keyed && a !== "" && b !== "" && Number.isFinite(x) && Number.isFinite(y)) return (x - y) * direction;
+  const isoPattern = /^\d{4}-\d{2}-\d{2}/;
+  if (isoPattern.test(a) && isoPattern.test(b)) return (Date.parse(a) - Date.parse(b)) * direction;
+  return a.localeCompare(b, "th", { numeric: true }) * direction;
+}
 // เรียงทะเบียนตามคอลัมน์ (ในหน้า ไม่โหลดใหม่): กดหัวคอลัมน์ครั้งแรกเรียงน้อย→มาก กดซ้ำสลับ
 document.addEventListener("click", (event) => {
   const button = event.target.closest?.(".register-table .th-sort");
@@ -2900,9 +2916,8 @@ document.addEventListener("click", (event) => {
   const ascending = th.getAttribute("aria-sort") !== "ascending";
   table.querySelectorAll("thead th").forEach((cell) => cell.setAttribute("aria-sort", "none"));
   th.setAttribute("aria-sort", ascending ? "ascending" : "descending");
-  const valueOf = (row) => { const cell = row.children[index]; return cell?.dataset.sort ?? cell?.textContent.trim() ?? ""; };
   const body = table.tBodies[0];
-  [...body.rows].sort((a, b) => valueOf(a).localeCompare(valueOf(b), "th", { numeric: true }) * (ascending ? 1 : -1)).forEach((row) => body.append(row));
+  [...body.rows].sort((a, b) => compareRegisterCells(a.children[index], b.children[index], ascending)).forEach((row) => body.append(row));
 });
 
 // J/K ในทะเบียน: เลื่อนโฟกัสไปลิงก์หัวเรื่องของแถวถัดไป/ก่อนหน้า Enter เปิดใบ (หน้าหลักและหน้ารายละเอียดใช้ตัวจัดการของคิวด้านล่าง)

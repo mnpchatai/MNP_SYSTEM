@@ -522,7 +522,7 @@ test("round 26: sortable register columns, A presses the MT step's primary butto
   assert.match(html, /<th scope="col" role="columnheader" aria-sort="none"><button type="button" class="th-sort" title="เรียงตามแจ้งเมื่อ">แจ้งเมื่อ<span class="th-sort-icon" aria-hidden="true"><\/span><\/button><\/th>/);
   assert.match(html, /data-label="แจ้งเมื่อ" data-sort="2026-11-01T08:00:00Z">1 พ.ย.<\/td>/);
   assert.doesNotMatch(html, /data-label="เลขที่" data-sort/, "columns without a sort value sort by their text");
-  assert.match(app, /\.sort\(\(a, b\) => valueOf\(a\)\.localeCompare\(valueOf\(b\), "th", \{ numeric: true \}\) \* \(ascending \? 1 : -1\)\)/);
+  assert.match(app, /\.sort\(\(a, b\) => compareRegisterCells\(a\.children\[index\], b\.children\[index\], ascending\)\)/);
   for (const [file, pattern] of [["app.js", /sort: \{ created: request\.created_at \?\? "" \},/], ["app.js", /sort: \{ updated: row\.last_changed_at \?\? row\.submitted_at \?\? "" \},/], ["modules/module-ncr.js", /sort: \{ issued: row\.issue_date \?\? "" \},/]]) assert.match(read(file), pattern, file);
   // A บนงาน MT: กดปุ่มหลักที่มองเห็น แล้วยังต้องยืนยัน (ไม่ทำงานเมื่อกล่องยืนยันเปิดอยู่)
   assert.match(app, /const MT_STEP_PRIMARY_SELECTOR = "#repair-start-panel \.start-work-button, #repair-verify \.verify-button\[data-result=\\"pass\\"\], #finish-form \.form-actions button\[type=\\"submit\\"\]";/);
@@ -531,4 +531,21 @@ test("round 26: sortable register columns, A presses the MT step's primary butto
   assert.match(css, /\.register-status \{ order: 2; max-width: 100%; margin-left: auto; text-align: right; \}/);
   assert.match(read("modules/module-mt-dashboard.js"), /<span class="nd-pill" title="ไม่มีใบที่เลยกำหนดเสร็จ">ไม่มีเลยกำหนด<\/span>/);
   assert.match(read("modules/shortcut-help.js"), /ตอบกลับความเห็นของผู้อนุมัติได้ในการ์ด ตอบกลับความเห็น \(ถ้าต้องการ\)/);
+});
+
+test("round 26: register sorting compares money as numbers, dates as time, and keeps empty values last", async () => {
+  const vm = await import("node:vm");
+  const start = app.indexOf("function compareRegisterCells(");
+  const source = app.slice(start, app.indexOf("\n}\n", start) + 3);
+  const context = vm.createContext({});
+  vm.runInContext(`${source}\nthis.fn = compareRegisterCells;`, context);
+  const cell = (value, text = value) => ({ dataset: value === null ? {} : { sort: value }, textContent: text });
+  const sorted = (cells, ascending) => [...cells].sort((a, b) => context.fn(a, b, ascending)).map((item) => item.dataset.sort ?? item.textContent);
+  assert.deepEqual(sorted([cell("1000000"), cell("9999"), cell("12500"), cell("")], true), ["9999", "12500", "1000000", ""], "money sorts as numbers; no data goes last");
+  assert.deepEqual(sorted([cell("1000000"), cell("9999"), cell(""), cell("-50")], false), ["1000000", "9999", "-50", ""], "descending still keeps the empty value last");
+  assert.deepEqual(sorted([cell("2026-11-01T08:00:00.5Z"), cell("2026-11-01T08:00:00.123456Z")], true), ["2026-11-01T08:00:00.123456Z", "2026-11-01T08:00:00.5Z"], "fractional seconds compare as time");
+  assert.deepEqual(sorted([cell(null, "MT-2569-0412"), cell(null, "MT-2569-0390")], true), ["MT-2569-0390", "MT-2569-0412"], "text with numbers sorts naturally");
+  assert.match(read("modules/module-ncr.js"), /sort: \{ issued: row\.issue_date \?\? "", loss: summary \? summary\.net : "" \},/);
+  assert.match(app, /\{ key: "created", label: "แจ้งเมื่อ", sorted: "descending" \}/, "the default newest-first order is announced");
+  assert.match(css, /\.register-table \.th-sort \{ visibility: hidden; \}/, "hidden phone headers take no focus");
 });

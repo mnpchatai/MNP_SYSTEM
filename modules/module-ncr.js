@@ -639,7 +639,7 @@
       { key: "subject", label: "สินค้า/วัตถุดิบ", role: "subject" },
       { key: "defect", label: "ข้อบกพร่อง" },
       { key: "departments", label: "แผนกรับผิดชอบ" },
-      { key: "issued", label: "วันที่ออก" },
+      { key: "issued", label: "วันที่ออก", sorted: "descending" },
       { key: "loss", label: "ความสูญเสีย" },
       { key: "status", label: "สถานะ", role: "status" },
     ];
@@ -651,7 +651,7 @@
       const defect = [relation(row.defect_type)?.name_th, row.qty_defect !== null && row.qty_defect !== undefined ? `${formatQty(row.qty_defect)} ${row.unit ?? ""}`.trim() : ""].filter(Boolean).join(" · ");
       return {
         className: `status-${row.status}`,
-        sort: { issued: row.issue_date ?? "" },
+        sort: { issued: row.issue_date ?? "", loss: summary ? summary.net : "" },
         cells: {
           no: registerNoHtml(row.ncr_no, href),
           subject: registerSubjectHtml(row.product_name, href, row.customer_name ?? ""),
