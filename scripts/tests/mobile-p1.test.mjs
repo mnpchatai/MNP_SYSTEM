@@ -92,25 +92,24 @@ test("a page change starts at the top, going back restores the old position, and
   assert.match(app, /document\.addEventListener\("click", \(event\) => \{ if \(event\.target\.closest\?\.\("a\[href\^='#'\]"\)\) saveScrollMemo\(\); \}, true\);/);
 });
 
-test("bulk approve follows the single-approve steps in the bottom bar: confirm, then undo, then send", () => {
+test("bulk approve follows the single-approve steps in the bottom bar: confirm, then send at once (no undo window, user 2026-11-13)", () => {
   // ผู้ใช้เลือก (หลัง critique G): แถบล่าง สีเขียว ยืนยันแล้วเลิกทำได้ภายใน 5 วินาที แทนกล่องกลางจอที่ส่งทันที
   const runner = app.slice(app.indexOf("async function runBulkApprove("), app.indexOf("\n}", app.indexOf("async function runBulkApprove(")));
   assert.doesNotMatch(runner, /confirmDialog/, "no centred modal any more");
   const bulk = app.slice(app.indexOf("function bindQueueBulk("), app.indexOf("\n}\n", app.indexOf("function bindQueueBulk(")));
-  assert.match(bulk, /rules\.createCountdown\(\{\s*seconds: DECISION_UNDO_SECONDS,/, "the same undo window as one request");
+  assert.doesNotMatch(bulk, /createCountdown|DECISION_UNDO_SECONDS|send-now|"undo"/, "no undo window, like one request");
+  assert.match(bulk, /if \(action === "confirm"\) \{\r?\n\s+if \(tapGuard\.blocks\(event\)\) return;\r?\n[^\n]*\n\s+attachLeaveGuards\(\);\r?\n\s+const sending = send\(\);/, "confirming sends at once, and a double tap on the bar never confirms");
+  assert.match(bulk, /const tapGuard = rules\.createTapGuard\(\);/);
+  assert.match(bulk, /if \(name === "confirm"\) \{\r?\n\s+tapGuard\.arm\(\);/, "armed when the confirm button appears under the finger");
   // คำของแต่ละขั้น (อนุมัติ / รับทราบ) เหมือนปุ่มของใบเดียว ปนกันบอกแยกต่อคำ ค่าที่ส่งยังเป็น approved
   assert.match(bulk, /setText\(`\$\{verbs\.summary\}: \$\{numbers\(\)\}`\)/, "confirm names the request numbers");
   assert.match(bulk, /button\(verbs\.only \? `ยืนยัน\$\{verbs\.only\} \$\{chosen\.length\} รายการ` : `ยืนยัน \$\{chosen\.length\} รายการ`, "success is-primary", "confirm"\)/);
   assert.match(app, /const only = counts\.size === 1 \? \[\.\.\.counts\.keys\(\)\]\[0\] : "";/, "one verb when every chosen step says the same");
-  assert.match(bulk, /button\(`เลิกทำ \(\$\{DECISION_UNDO_SECONDS\}\)`, "secondary", "undo"\)\}\$\{button\("ส่งเลย", "success is-primary", "send-now"\)\}/);
-  assert.match(bulk, /window\.addEventListener\("hashchange", sendOnLeave\);/, "leaving the page sends, like one request");
+  assert.match(bulk, /window\.addEventListener\("beforeunload", warnBeforeUnload\);/, "closing the tab while sending asks first");
   assert.match(bulk, /if \(event\.key !== "Escape" \|\| event\.defaultPrevented\) return;/);
   assert.match(bulk, /const lockBoxes = /, "the chosen set cannot change after confirming");
-  // เปิดใบอื่น หรือวาดหน้าหลัก/หน้ารายละเอียดใหม่ระหว่างนับถอยหลัง: ส่งของเดิมก่อน (เหมือนใบเดียว) ไม่ให้ตัวนับเก่าส่งเงียบ ๆ ทีหลัง
-  for (const fn of ["async function selectQueueItem(", "async function renderDashboard(", "async function renderRequestDetail("]) {
-    const body = app.slice(app.indexOf(fn), app.indexOf(fn) + 800);
-    assert.match(body, /activeDecisionCountdown\?\.flush\(\);[\s\S]*activeBulkCountdown\?\.flush\(\);/, `${fn} flushes both countdowns`);
-  }
+  // ไม่มีมติค้างนับถอยหลังข้ามหน้า จึงไม่มีตัวนับให้ส่งก่อนวาดหน้าใหม่
+  assert.doesNotMatch(app, /activeDecisionCountdown|activeBulkCountdown/);
   // แถบใบเดียวต้องไม่ปลดล็อกช่องติ๊กระหว่างที่อนุมัติหลายรายการยังไม่จบ
   assert.match(app, /const bulkState = document\.querySelector\("#queue-bulk"\)\?\.dataset\.state;\s*if \(bulkState && bulkState !== "idle"\) return;/);
   // ส่งพลาดหรือวาดคิวใหม่พลาด: ไม่ค้างที่ "กำลังส่ง…" และถอดตัวเฝ้าการออกจากหน้าเสมอ

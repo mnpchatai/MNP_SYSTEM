@@ -1230,7 +1230,7 @@
     }));
 
     document.querySelectorAll("[data-void-loss]").forEach((button) => button.addEventListener("click", async () => {
-      const reason = window.prompt(`เหตุผลที่ยกเลิกรายการนี้ (อย่างน้อย ${VOID_REASON_MIN} ตัวอักษร)`);
+      const reason = await textPromptDialog({ title: "ยกเลิกรายการความสูญเสียนี้?", label: "เหตุผลที่ยกเลิก (จำเป็น)", hint: `อย่างน้อย ${VOID_REASON_MIN} ตัวอักษร`, minLength: VOID_REASON_MIN, maxLength: VOID_REASON_MAX, confirmLabel: "ยกเลิกรายการ", cancelLabel: "ไม่ยกเลิก", danger: true });
       if (reason === null) return;
       // app_ncr_void_loss รับ 3–500 ตัวอักษร (ต่างจากยกเลิกทั้งใบ 5 ตัวอักษร) ตรวจก่อนส่ง ข้อความ INVALID_REASON จึงไม่บอกเลขผิด
       const reasonLength = [...reason.trim()].length; // นับเป็นตัวอักษรแบบ char_length ของฐานข้อมูล ไม่ใช่ UTF-16

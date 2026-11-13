@@ -43,8 +43,9 @@ test("the undo countdown repeats the typed reason on one line, clipped by charac
   assert.equal(clip("ไม่ผ่านเพราะ", 8), "ไม่ผ่านเพ…");
   // ใน app.js ส่วนที่เหลือของตัวจัดการแป้น: A/R ไม่ตัดสินใบที่เลือกเมื่อโฟกัสอยู่ที่แถวงาน
   assert.match(app, /if \(target instanceof HTMLElement && target\.closest\("\.queue-item\.is-task"\)\) return;\n  const panel = document\.querySelector\("#decision-panel"\);/);
-  // รอบรวม 20: หน้ารายละเอียดไม่ทวนเลขที่ใบ (หัวใบบอกแล้ว) คิวหน้าหลักยังบอก
-  assert.match(app, /setLine\(`กำลังจะ\$\{labelOf\(state\.decision\)\}\$\{onDecided \? ` \$\{request\.request_no\}` : ""\}\$\{state\.comment \? ` · “\$\{clipText\(state\.comment, 80\)\}”` : ""\}`\);/);
+  // รอบรวม 24: ไม่มีขั้นนับถอยหลังแล้ว (ผู้ใช้ 2026-11-13) clipText ยังใช้ในบรรทัดยืนยันของขั้น MT (confirmStepAction)
+  assert.doesNotMatch(app, /setLine\(`กำลังจะ/);
+  assert.match(functionSource("confirmStepAction"), /clipText\(/);
 });
 
 test("J/K walks every visible queue row: approval rows select, task rows only take focus", () => {
@@ -154,7 +155,7 @@ function stepConfirmHarness() {
     return node;
   };
   const context = {
-    escapeHtml, DECISION_UNDO_SECONDS: 5, activeDecisionCountdown: null, Intl, Array, String,
+    escapeHtml, Intl, Array, String,
     document: { createElement: element, addEventListener: () => {}, removeEventListener: () => {}, visibilityState: "visible" },
     location: { hash: "#/request?id=r1" },
   };
@@ -352,4 +353,115 @@ test("round 23: conditional requirements are said in the label, summaries and th
   assert.match(board, /<summary>ดูรายละเอียดการประเมิน<\/summary>/);
   assert.doesNotMatch(board, /<summary>ดูรายละเอียด<\/summary>/);
   assert.match(app, /aria-label="เลือก \$\{escapeHtml\(request\.request_no\)\} เพื่อตัดสินหลายรายการ"/);
+});
+
+test("round 24 (gaps to a 4): plain-language errors, step position, offline notice, help for every page, unsent text guard", async () => {
+  const vm = await import("node:vm");
+  // H9: ข้อความเทคนิคไม่ถึงผู้ใช้ เน็ตหลุดบอกว่าข้อมูลยังอยู่ ข้อความไทยของเราเองผ่านตามเดิม
+  const start = app.indexOf("const NETWORK_ERROR_PATTERN");
+  const source = app.slice(start, app.indexOf("\n}\n", app.indexOf("function unmappedErrorText(")) + 3);
+  const context = vm.createContext({});
+  vm.runInContext(`${source}\nthis.fn = unmappedErrorText;`, context);
+  const offline = "เชื่อมต่อระบบไม่ได้ สัญญาณอาจขาด ลองอีกครั้ง (สิ่งที่กรอกไว้ยังอยู่ในหน้า)";
+  assert.equal(context.fn("TypeError: Failed to fetch"), offline);
+  assert.equal(context.fn("Load failed"), offline, "Safari's wording");
+  assert.equal(context.fn("The network connection was lost."), offline);
+  assert.doesNotMatch(context.fn("canceling statement due to statement timeout"), /สัญญาณ/, "a database timeout is not a network problem");
+  assert.doesNotMatch(offline, /ส่งไม่สำเร็จ/, "callers already prefix ส่งไม่สำเร็จ");
+  assert.equal(context.fn("แนบไฟล์ไม่สำเร็จ 1 จาก 2 ไฟล์"), "แนบไฟล์ไม่สำเร็จ 1 จาก 2 ไฟล์");
+  assert.equal(context.fn('duplicate key value violates unique constraint "x"'), "เกิดข้อผิดพลาดที่ระบบ ลองอีกครั้ง ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ");
+  assert.match(app, /STEP_NOT_PENDING: "รายการนี้ถูกดำเนินการแล้ว โหลดหน้าใหม่เพื่อดูสถานะล่าสุด"/);
+  // H1: ลำดับขั้นบนหน้ารายละเอียด · แถบไม่มีสัญญาณ
+  const verbsContext = vm.createContext({});
+  vm.runInContext(read("modules/step-verb.js"), verbsContext);
+  const verbs = verbsContext.MNP_STEP_VERB;
+  assert.equal(verbs.stepLineText({ currentStepName: "ผู้จัดการโรงงาน", nextStepName: "ผู้จัดการทั่วไป", position: 1, total: 2 }), "อนุมัติขั้นที่ 1 จาก 2: ผู้จัดการโรงงาน · ถัดไป: ผู้จัดการทั่วไป");
+  assert.equal(verbs.stepLineText({ currentStepName: "ผู้จัดการทั่วไป", position: 1, total: 1, afterLast: "มอบหมายช่าง" }), "ขั้นตอน: ผู้จัดการทั่วไป · ถัดไป: มอบหมายช่าง", "a one-step request does not count");
+  assert.match(app, /decisionPanelHtml\(\{ request, currentStep, nextStep, steps, extraDecisions/);
+  assert.match(app, /window\.addEventListener\("offline", syncOnlineState\);/);
+  assert.match(css, /\.offline-banner \{ position: fixed;/);
+  // H10: ทุกหน้าหลักมีคำแนะนำ รวมการแจ้งเตือน · NCR บอกส่วนของใบและวิธีนับกำหนดตอบ
+  const helpContext = vm.createContext({});
+  vm.runInContext(read("modules/shortcut-help.js"), helpContext);
+  const help = helpContext.MNP_SHORTCUT_HELP.PAGE_HELP;
+  assert.ok(help.notifications.length >= 2);
+  assert.match(help.ncr.join(" "), /กำหนดตอบ = วันออกใบ \+ 5 วัน/);
+  // H4/H5: ขั้นต่ำของเหตุผลบอกก่อนส่ง · ทางล้างตัวกรองทางเดียว · แถวแจ้งเตือนมีไอคอน · รหัสผ่านใหม่บอกขั้นต่ำ
+  assert.match(app, /<small class="field-hint" id="decision-comment-hint" hidden>อย่างน้อย \$\{window\.MNP_REQUEST_DECISION\?\.MIN_COMMENT_LENGTH \?\? 3\} ตัวอักษร<\/small>/);
+  assert.match(app, /panel\.querySelector\("#decision-comment-hint"\)\.hidden = !needsComment;/);
+  assert.match(css, /\.app-shell:has\(\.empty-state > a\.btn\) \.board-search > a\.btn \{ display: none; \}/);
+  assert.match(app, /<span class="notification-icon" aria-hidden="true">\$\{uiIcon\(icon\)\}<\/span>/);
+  assert.match(app, /id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร<\/small>/);
+  // H3/H5: ข้อความที่พิมพ์ค้างถามก่อนออก (ฟอร์มขั้น NCR มีร่างในเครื่องจึงไม่อยู่ในรายการ)
+  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #verify-note';/);
+  assert.match(app, /if \(panel && panel\.dataset\.state !== "compose"\) return false;/);
+});
+
+test("round 24: the leave guard asks once for typed text, and Back proceeds after the user confirms (no loop)", async () => {
+  const vm = await import("node:vm");
+  const start = app.indexOf("function pendingAttachmentCount() {");
+  const end = app.indexOf("}, true);\n", start) + "}, true);\n".length;
+  const field = (value, { defaultValue = "", disabled = false, state = null } = {}) => ({ value, defaultValue, disabled, readOnly: false, closest: (selector) => (selector === "#decision-panel" ? (state ? { dataset: { state } } : null) : null) });
+  let fields = [];
+  const listeners = {};
+  const traversed = [];
+  const asked = [];
+  const context = vm.createContext({
+    document: { querySelector: () => null, querySelectorAll: () => fields, addEventListener() {} },
+    window: { addEventListener() {}, navigation: { addEventListener: (type, handler) => { listeners[type] = handler; }, traverseTo: (key, options) => traversed.push([key, options]) } },
+    location: { hash: "" },
+    confirmDialog: async (options) => { asked.push(options.title); return true; },
+  });
+  vm.runInContext(app.slice(start, end), context);
+  const navigate = (info) => { const event = { navigationType: "traverse", cancelable: true, info, destination: { key: "k1" }, prevented: false, preventDefault() { this.prevented = true; } }; listeners.navigate(event); return event; };
+
+  fields = [field("พิมพ์ค้าง", { state: "compose" })];
+  const first = navigate();
+  assert.equal(first.prevented, true, "typed text stops Back once");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(asked, ["ยังไม่ได้ส่งข้อความที่พิมพ์ไว้"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(traversed)), [["k1", { info: "leave-confirmed" }]]);
+  assert.equal(navigate("leave-confirmed").prevented, false, "the confirmed traversal is not asked again");
+
+  fields = [field("พิมพ์ค้าง", { state: "pending" })];
+  assert.equal(navigate().prevented, false, "a decision already counting down is not unsent text");
+  fields = [field("กำลังส่ง", { disabled: true })];
+  assert.equal(navigate().prevented, false, "a field locked while sending is not unsent text");
+  fields = [field("ข้อความเดิม", { defaultValue: "ข้อความเดิม" })];
+  assert.equal(navigate().prevented, false, "unchanged pre-filled text is not a change");
+  fields = [field("", { defaultValue: "ข้อความเดิม" })];
+  assert.equal(navigate().prevented, true, "clearing pre-filled text is an unsent change");
+});
+
+test("round 24 (second pass): approval count wording, MT minimum hints, in-app reason dialog, reload action, role-aware help", () => {
+  const mt = read("modules/module-mt.js");
+  const ncr = read("modules/module-ncr.js");
+  assert.match(read("modules/step-verb.js"), /`อนุมัติขั้นที่ \$\{position\} จาก \$\{total\}: \$\{currentStepName\}`/, "the panel counts approval steps, not the whole job");
+  assert.match(mt, /<small class="field-hint" id="finish-cause-hint">อย่างน้อย 3 ตัวอักษร<\/small>/);
+  assert.match(mt, /<small class="field-hint" id="verify-note-hint">เมื่อไม่ผ่าน อย่างน้อย 3 ตัวอักษร<\/small>/);
+  assert.match(mt, /<summary><h2>แก้การมอบหมายช่าง<\/h2><\/summary>/, "one edit verb on the MT page (แก้กำหนดเสร็จ)");
+  assert.doesNotMatch(ncr, /window\.prompt\(/, "no browser prompt for the void reason");
+  assert.match(ncr, /await textPromptDialog\(\{ title: "ยกเลิกรายการความสูญเสียนี้\?", label: "เหตุผลที่ยกเลิก \(จำเป็น\)", hint: `อย่างน้อย \$\{VOID_REASON_MIN\} ตัวอักษร`, minLength: VOID_REASON_MIN/);
+  assert.match(app, /if \(\[\.\.\.text\]\.length < minLength\) \{/, "the dialog checks the minimum and keeps the typed text");
+  assert.match(app, /const STALE_STATE_HINT = "โหลดหน้าใหม่เพื่อดูสถานะล่าสุด";/);
+  assert.match(app, /reload\.textContent = "โหลดสถานะล่าสุด";\r?\n\s+reload\.addEventListener\("click", async \(\) => \{\r?\n\s+if \(leaveWarningPending\(\) && !\(await confirmLeave\(\)\)\) return;/, "reloading asks first when typed text would be lost");
+  assert.match(app, /dialog\.addEventListener\("close", \(\) => finish\(null\), \{ once: true \}\);\r?\n\s+dialog\.showModal\(\);\r?\n\s+field\.focus\(\);/);
+  assert.match(css, /\.confirm-dialog \.field-error \{ margin: 6px 0 0; color: var\(--danger-ink\);/);
+  assert.match(app, /NOT_AUTHORIZED: "คุณไม่มีสิทธิ์ดำเนินการนี้ ถ้าคิดว่าควรมีสิทธิ์ให้แจ้งผู้ดูแลระบบ"/);
+  assert.match(app, /if \(document\.querySelector\("#repair-verify"\)\) return "request-verify";/);
+  const help = read("modules/shortcut-help.js");
+  for (const key of ["request-work", "request-verify", "request-viewer"]) assert.ok(help.includes(`"${key}": Object.freeze([`), key);
+});
+
+test("round 24 (third pass): every changed-state error offers a reload, the home step line matches the detail page, nameless parts rows are not dropped silently", () => {
+  // ผู้รับผิดชอบคนอื่นเป็นเรื่องสิทธิ์ โหลดใหม่ไม่ช่วย จึงไม่มีปุ่มโหลด
+  assert.match(app, /ASSIGNED_TO_ANOTHER_OPERATOR: "รายการนี้มีผู้รับผิดชอบอื่นแล้ว ให้ผู้รับผิดชอบหรือผู้ดูแลระบบดำเนินการต่อ",/);
+  for (const code of ["REQUEST_NOT_AWAITING_INFO", "INVALID_TRANSITION", "REQUEST_NOT_ASSIGNED", "STEP_NOT_PENDING", "REQUEST_NOT_IN_PROGRESS"]) {
+    assert.match(app, new RegExp(`${code}: "[^"]* โหลดหน้าใหม่เพื่อดูสถานะล่าสุด",`), code);
+  }
+  assert.match(app, /host\.innerHTML = homeQueueDetailHtml\(item, nextStep, \{ compact: host !== pane, nextStepKnown: !error, steps: error \? null : steps \}\);/);
+  assert.match(app, /decisionPanelHtml\(\{ request, currentStep: item\.step, nextStep, nextStepKnown, steps,/);
+  const mt = read("modules/module-mt.js");
+  assert.match(mt, /showToast\(`อะไหล่แถวที่ \$\{index \+ 1\} ยังไม่มีชื่อรายการ ใส่ชื่อหรือลบแถวนั้นก่อน`, "error"\);/);
+  assert.equal((mt.match(/if \(namelessPartsRow\(\)\) return;/g) ?? []).length, 2, "both save-for-later and finish stop on a nameless row");
 });

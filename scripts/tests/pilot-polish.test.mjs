@@ -73,10 +73,10 @@ test("the review step leaves out fields that were not filled instead of showing 
   assert.match(ncr, /const row = \(label, content, full = false\) => \(content \? definition\(label, escapeHtml\(content\), full\) : ""\);/);
 });
 
-test("send-now during the undo window wears the colour of the decision being sent", () => {
+test("the decision buttons wear the colour of their decision, and there is no send-now or undo step", () => {
   assert.match(app, /if \(decision === "rejected"\) return "danger-solid is-primary";/);
   assert.match(app, /return tone === "secondary" \? "is-primary" : `\$\{tone\} is-primary`;/, "a grey extra decision still gets a primary send button, unlike undo");
-  assert.match(app, /button\("ส่งเลย", decisionButtonClass\(state\.decision\), "send-now"\)/);
+  assert.doesNotMatch(app, /button\("ส่งเลย"/);
   assert.doesNotMatch(app, /button\("ส่งเลย", "is-primary"/);
 });
 

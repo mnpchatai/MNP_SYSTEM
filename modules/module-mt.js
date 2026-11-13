@@ -856,7 +856,7 @@
       // มอบหมายช่าง: ขั้นรอมอบหมายเป็นงานหลักของหน้า (section) · หลังมอบหมายแล้วเป็นการแก้ไขที่พับไว้ท้ายหน้า ไม่บังงานที่ต้องทำจริง
       const assignOpen = request.status === "pending_assign"
         ? '<div class="detail-action" id="repair-assign"><h3>มอบหมายช่าง</h3>'
-        : '<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้ไขการมอบหมายช่าง</h2></summary>';
+        : '<details class="card detail-section repair-assign-edit" id="repair-assign"><summary><h2>แก้การมอบหมายช่าง</h2></summary>';
       const assignClose = request.status === "pending_assign" ? "</div>" : "</details>";
       const reassign = request.status !== "pending_assign";
       const dueCardShown = canRecordProgress && ["assigned", "in_progress"].includes(request.status);
@@ -904,12 +904,12 @@
         // งานที่ต้องกรอกฟอร์ม (มอบหมาย จบงาน ตรวจรับพร้อมหมายเหตุ) อยู่ในการ์ด "สิ่งที่คุณต้องดำเนินการ" บนสุดของคอลัมน์ซ้าย (app.js)
         actionHtml: `${canAssign && request.status === "pending_assign" ? assignSection : ""}
         ${canFinishWork ? `<div class="detail-action" id="repair-finish"><h3>บันทึกผลและเสร็จสิ้นงาน</h3><form id="finish-form" novalidate>
-          <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required>${escapeHtml(request.cause_analysis ?? "")}</textarea></div>
+          <div class="field" data-field="cause_analysis"><label for="finish-cause">วิเคราะห์สาเหตุ${REQUIRED}</label><textarea class="textarea" id="finish-cause" name="cause_analysis" minlength="3" maxlength="5000" required aria-describedby="finish-cause-hint">${escapeHtml(request.cause_analysis ?? "")}</textarea><small class="field-hint" id="finish-cause-hint">อย่างน้อย 3 ตัวอักษร</small></div>
           <div class="field parts-field"><label>รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</label><div class="table-wrap parts-table-wrap"><table class="parts-table"><thead><tr><th>ลำดับ</th><th>รายการ</th><th>จำนวน</th><th>หน่วย</th><th>ราคา (บาท)</th><th>ชื่อร้าน</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="finish-parts-rows">${(Array.isArray(request.parts_used_items) && request.parts_used_items.length ? request.parts_used_items : [{}]).map((item) => partsRowHtml(item)).join("")}</tbody></table></div><button type="button" class="btn secondary small" id="finish-parts-add"><span class="plus-icon" aria-hidden="true"></span> เพิ่มรายการ</button><p class="parts-attachment muted small">หรือแนบรูปใบเสร็จในช่องไฟล์ด้านล่างแทนการกรอกทีละแถว</p></div>
           ${extraFilesFieldHtml("finish-files", "รูปใบเสร็จ / ไฟล์เพิ่มเติม (ถ้ามี)")}
           <div class="form-actions"><button class="btn secondary" type="button" id="finish-save-button">บันทึกไว้ทำต่อ</button><button class="btn success" type="submit">เสร็จสิ้นงาน</button></div>
         </form></div>` : ""}
-        ${canVerify ? `<div class="detail-action" id="repair-verify"><h3>ตรวจรับงาน</h3>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000"></textarea></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน</button><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน</button></div></div>` : ""}`,
+        ${canVerify ? `<div class="detail-action" id="repair-verify"><h3>ตรวจรับงาน</h3>${verifySummaryHtml(request)}<div class="field" data-field="verify_note"><label for="verify-note">หมายเหตุ <span class="field-required">(จำเป็นเมื่อไม่ผ่าน)</span></label><textarea class="textarea" id="verify-note" maxlength="1000" aria-describedby="verify-note-hint"></textarea><small class="field-hint" id="verify-note-hint">เมื่อไม่ผ่าน อย่างน้อย 3 ตัวอักษร</small></div>${extraFilesFieldHtml("verify-files")}<div class="approval-actions"><button class="btn danger verify-button" data-result="fail">${uiIcon("close")} ไม่ผ่าน</button><button class="btn success verify-button" data-result="pass">${uiIcon("check")} ผ่าน</button></div></div>` : ""}`,
         // ปุ่มของขั้นที่ผู้ใช้ต้องทำอยู่ที่เดียวกับปุ่มอนุมัติ (app.js วางใน action-panel ของคอลัมน์ขวา มือถือเป็นแถบล่าง)
         asideHtml: `${canStartWork ? `<section class="card action-panel step-panel" id="repair-start-panel" aria-labelledby="repair-start-title"><div class="action-panel-head"><h2 id="repair-start-title">สิ่งที่คุณต้องดำเนินการ</h2></div><div class="approval-actions action-panel-buttons"><button class="btn is-primary start-work-button" title="กดเมื่อเริ่มลงมือซ่อมจริง">เริ่มงาน</button></div></section>` : ""}`,
       };
@@ -1156,8 +1156,22 @@
           note: row.querySelector('[data-part-field="note"]').value.trim(),
         }))
         .filter((item) => item.name);
+      // แถวที่มีจำนวน/ราคา/ร้าน/หมายเหตุแต่ไม่มีชื่อรายการ: เดิมถูกตัดทิ้งตอนส่ง (ค่าซ่อมหายเงียบ ๆ) ตอนนี้หยุดและชี้แถวนั้น
+      const namelessPartsRow = () => {
+        const rows = [...document.querySelectorAll("#finish-parts-rows .parts-row")];
+        const index = rows.findIndex((row) => !row.querySelector('[data-part-field="name"]').value.trim()
+          && ["qty", "unit", "price", "shop", "note"].some((field) => row.querySelector(`[data-part-field="${field}"]`)?.value.trim()));
+        if (index < 0) return false;
+        const name = rows[index].querySelector('[data-part-field="name"]');
+        name.setAttribute("aria-invalid", "true");
+        rows[index].addEventListener("input", () => name.removeAttribute("aria-invalid"), { once: true });
+        name.focus();
+        showToast(`อะไหล่แถวที่ ${index + 1} ยังไม่มีชื่อรายการ ใส่ชื่อหรือลบแถวนั้นก่อน`, "error");
+        return true;
+      };
       document.querySelector("#finish-save-button")?.addEventListener("click", async () => {
         const form = document.querySelector("#finish-form");
+        if (namelessPartsRow()) return;
         let files;
         try { files = readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         setFormBusy(form, true);
@@ -1181,6 +1195,7 @@
         const finishErrors = window.MNP_FORM_STEPS.validate(FINISH_RULES, { cause_analysis: String(values.get("cause_analysis") ?? "") });
         if (finishErrors.length) return showRepairFieldErrors(form, finishErrors);
         window.MNP_FORM_STEPS.clearFieldErrors(form);
+        if (namelessPartsRow()) return;
         try { readExtraFiles(form.elements.extra_files); } catch (fileError) { return showToast(friendlyError(fileError), "error"); }
         const requestNo = currentRequestNo;
         confirmStepAction(form.querySelector(".form-actions"), {

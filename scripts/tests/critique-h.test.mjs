@@ -65,7 +65,7 @@ test("without a form the banner behaves as before", () => {
 test("the decision panel keeps the stored decision and flow, and says the step's own verb", () => {
   assert.doesNotMatch(app, /stepVerbOf|ไม่รับงาน|ใบนี้ต่อด้วย/);
   assert.match(app, /\{ decision: "approved", label: verb, tone: "success" \}/);
-  assert.match(app, /const DECISION_UNDO_SECONDS = 5;/);
+  assert.doesNotMatch(app, /DECISION_UNDO_SECONDS/, "no undo window (user 2026-11-13)");
 });
 
 test("shortcuts fall back to the physical key only when the layout types a non-Latin letter", () => {

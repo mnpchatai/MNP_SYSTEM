@@ -207,7 +207,8 @@ test("small consistency fixes: file toggle marker, read-only fields, parts table
   assert.match(css, /:is\(\.input, \.select, \.textarea\):disabled:not\(\[aria-busy\] \*\) \{ color: var\(--muted\); background: var\(--shell\); border-style: dashed; cursor: not-allowed; \}/);
   assert.match(css, /\.parts-field \{ container-type: inline-size; \}\r?\n@container \(max-width: 760px\) \{/);
   assert.match(mt, /<div class="field parts-field"><label>รายการอะไหล่/);
-  assert.match(read("modules/shortcut-help.js"), /"อนุมัติแล้วกดเลิกทำได้ภายใน 5 วินาที ส่วนเริ่มงาน เสร็จสิ้นงาน และตรวจรับส่งทันทีหลังกดยืนยัน"/);
+  assert.match(read("modules/shortcut-help.js"), /"มติ เริ่มงาน เสร็จสิ้นงาน และตรวจรับ ส่งทันทีหลังกดยืนยัน"/, "no undo window for decisions any more (user 2026-11-13)");
+  assert.doesNotMatch(read("modules/shortcut-help.js"), /เลิกทำ|5 วินาที|นับถอยหลัง/);
   assert.match(read("modules/rubberflow-pages-plan.js"), /ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้/);
 });
 
@@ -317,13 +318,15 @@ test("round 15: picked files show an unsent state and a leave warning; closed re
   assert.match(app, /pending\.textContent = count \? `ยังไม่ได้อัปโหลด \$\{count\} ไฟล์ · กดอัปโหลดก่อนออกจากหน้านี้` : "";/);
   assert.match(app, /button\.classList\.toggle\("secondary", !count\);/, "upload becomes the primary button while files wait");
   assert.match(app, /confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด"/);
-  assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!pendingAttachmentCount\(\)\) return;/);
+  // รอบรวม 24: ข้อความที่พิมพ์ค้างในฟอร์มของขั้นก็ถามก่อนออกเช่นกัน (leaveWarningPending = ไฟล์ค้าง หรือข้อความค้าง)
+  assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!leaveWarningPending\(\)\) return;/);
+  assert.match(app, /function leaveWarningPending\(\) \{\r?\n  return pendingAttachmentCount\(\) > 0 \|\| unsavedTextCount\(\) > 0;/);
   // รอบรวม 19: ยังไม่มีไฟล์ไม่พูดว่า "เพิ่ม"
   assert.match(app, /\$\{requestClosed \? \(attachments\.length \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์หลังปิดใบ"\) : attachments\.length \? "แนบไฟล์เพิ่ม" : "แนบไฟล์"\}/);
   // ไม่ถามระหว่างกำลังอัปโหลด · ปุ่ม/ท่าทางย้อนกลับถามด้วย (Navigation API) แล้วย้อนกลับต่อเมื่อยืนยัน
   assert.match(app, /if \(!form \|\| form\.hasAttribute\("aria-busy"\)\) return 0;/);
-  assert.match(app, /window\.navigation\?\.addEventListener\("navigate", \(event\) => \{\r?\n  if \(event\.navigationType !== "traverse" \|\| !event\.cancelable\) return;/);
-  assert.match(app, /window\.navigation\.traverseTo\(key\);/);
+  assert.match(app, /window\.navigation\?\.addEventListener\("navigate", \(event\) => \{\r?\n  if \(event\.navigationType !== "traverse" \|\| !event\.cancelable \|\| event\.info === "leave-confirmed"\) return;/);
+  assert.match(app, /window\.navigation\.traverseTo\(key, \{ info: "leave-confirmed" \}\);/, "the confirmed Back is not asked again (round 24)");
   // แถวยกเลิก: หัว "ยกเลิก" บรรทัดรองไม่พูด "ยกเลิก NCR" ซ้ำ
   assert.match(read("modules/module-ncr.js"), /const detail = statusChanged && !actionLabel\.startsWith\(heading\) \?/);
   assert.match(app, /const requestClosed = \["completed", "rejected", "cancelled", "acknowledged"\]\.includes\(request\.status\) \|\| isFinalDecision\(type, request\.status\);/);
