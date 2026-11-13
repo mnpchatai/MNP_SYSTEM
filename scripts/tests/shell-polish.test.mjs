@@ -574,7 +574,8 @@ test("round 26c: detail back link returns to Home or notifications, Ctrl+Enter s
   assert.match(app, /document\.querySelector\("\.ncr-actions"\) \? "ncr" : "ncr-viewer"/);
   assert.match(read("modules/shortcut-help.js"), /"ncr-viewer": Object\.freeze\(\[\s+"ใบนี้ยังไม่มีงานของคุณ/);
   // หัวใบบนมือถือ · แถบปิดของกล่องช่วยเหลือ · ลูกศรเรียงบอกเฉพาะลำดับที่ข้อมูลเรียงจริง
-  assert.match(css, /\.request-detail-kicker-end \{ flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; \}/);
+  assert.match(css, /\.request-detail-kicker-end:has\(> \.request-detail-menu\) \{ flex-wrap: nowrap; \}/, "two badges never push the ⋯ button to its own row");
+  assert.match(css, /\.request-detail-kicker-end \.request-detail-menu \{ flex: none; \}/);
   assert.match(css, /\.shortcut-dialog form \{ max-height: min\(80vh, 720px\); overflow-y: auto; padding-bottom: 0; \}/);
   assert.match(app, /\{ key: "updated", label: "อัปเดตล่าสุด" \},/, "the board is ordered by submit date, so this column claims no order");
 });
