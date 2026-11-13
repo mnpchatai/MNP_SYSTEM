@@ -280,7 +280,19 @@
     return list.filter((row) => row.isOpen).sort((a, b) => late(b) - late(a) || b.daysInStatus - a.daysInStatus).slice(0, limit);
   }
 
-  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES: costs.ASSESSMENT_STATUSES, addDays, deriveRows, select, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, scrapByUnit, priority };
+  // Open reports regardless of the selected period (same basis as the MT dashboard's backlog; user decision 2026-11-13):
+  // an old NCR that is still open stays in "ค้างอยู่" and "ต้องลงมือตอนนี้" whatever month is selected. Other filters still apply.
+  const BACKLOG_SCOPES = ["open", "overdue", "prevention"];
+  const backlog = (rows, filters) => select(rows, { ...filters, scope: "" }, { ignorePeriod: true }).filter((row) => row.isOpen);
+
+  // The rows behind the drill-through list: a backlog scope lists open reports of every period so the list matches the
+  // backlog tile; other scopes (loss) and no scope list the selected period.
+  function listFor(rows, filters) {
+    if (!BACKLOG_SCOPES.includes(filters.scope)) return { list: select(rows, filters), basis: "period" };
+    return { list: select(rows, filters, { ignorePeriod: true }).filter((row) => row.isOpen), basis: "backlog" };
+  }
+
+  const api = { SLA_DAYS, NO_CAUSE, OPEN_STATUSES, ASSESSMENT_STATUSES: costs.ASSESSMENT_STATUSES, addDays, deriveRows, select, backlog, listFor, weightOf, summarize, monthly, monthlyByDept, monthlyByLossType, pareto, lossesByType, countBy, causeKeys, deptTable, scrapByUnit, priority };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_NCR_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -2,7 +2,8 @@
 // ผ่าน modules/ncr-dashboard-model.js (นิยามและเทสต์อยู่ที่นั่น) ไฟล์นี้ทำหน้าที่โหลดข้อมูลและวาดหน้าจอเท่านั้น
 //
 // - อ่านผ่าน RLS เดียวกับทะเบียน NCR (ncr_reports, ncr_losses, ncr_outcomes, ncr_status_history)
-// - ฐานเวลาเดียว: วันที่ออก NCR นับจำนวนใบเต็มใบ ส่วนบาทแบ่งตามสัดส่วนแผนก
+// - ฐานเวลา: วันที่ออก NCR นับจำนวนใบเต็มใบ ส่วนบาทแบ่งตามสัดส่วนแผนก · ยกเว้นการ์ดค้างอยู่และ "ต้องลงมือตอนนี้"
+//   ที่นับทุกใบที่ยังไม่ปิดไม่จำกัดช่วงเวลา เหมือนแดชบอร์ด MT (ผู้ใช้เลือก 2026-11-13)
 // - ตัวกรองอยู่ใน URL แชร์ลิงก์ได้ แตะรายการในการ์ดเพื่อดูตัวเลขในหน้า (ไม่ใช้ป๊อปอัพ) แล้วกดกรองทั้งหน้า
 // - ทางเข้าคือปุ่ม "แดชบอร์ด" ข้างปุ่ม "ออก NCR" ในหัวโมดูล NCR (headerLinks) ไม่มีเมนูข้างแยก
 //
@@ -190,20 +191,22 @@
 
   // เลยกำหนด รอแนวทางป้องกัน และต้นทุนที่ยังไม่ครบ อยู่บนการ์ดตัวเลขแล้ว บรรทัดนี้เหลือเฉพาะสิ่งที่การ์ดไม่ได้บอก
   function summaryHtml(sums) {
-    if (!sums.total) return "ไม่มี NCR ตรงกับตัวกรองนี้";
+    // ช่วงที่ไม่มีใบออกอาจยังมีใบค้างจากช่วงก่อน (การ์ดค้างอยู่นับทุกช่วง) จึงบอกว่าไม่มีใบ "ที่ออกในช่วงนี้"
+    if (!sums.total) return sums.basis === "backlog" ? "ไม่มี NCR ค้างตรงกับตัวกรองนี้" : "ไม่มี NCR ที่ออกในช่วงนี้ตรงกับตัวกรอง";
     return "";
   }
 
-  function tilesHtml(filters, sums) {
+  // sums = ใบที่ออกในช่วงที่เลือก · back = ใบที่ยังไม่ปิดทุกช่วงเวลา (การ์ดค้างอยู่ เหมือนแดชบอร์ด MT)
+  function tilesHtml(filters, sums, back) {
     const money = [["ความสูญเสียที่ยืนยัน (ก่อนชดเชย)", fmtBaht(sums.gross)], ["ชดเชยยืนยัน (เครดิต เงินชดเชย ขายซาก)", `− ${fmtBaht(sums.recovery)}`], ["สุทธิ", fmtBaht(sums.net)], ["ประมาณการรอยืนยัน (ไม่รวมในยอดหลัก)", fmtBaht(sums.estimated)], ["รายการเดิมรอตรวจสอบ (ไม่รวมในยอดหลัก)", fmtBaht(sums.legacy)]];
     const assess = [["ใบที่ต้องประเมิน (ตั้งแต่ขั้นรอแผนกตอบ)", fmtCount(sums.need)], ["ประเมินครบแล้ว", fmtCount(sums.assessed)], ["ยังไม่ครบ", fmtCount(sums.need - sums.assessed)]];
     const list = (lines) => `<ul class="nd-lines">${lines.map(([label, value]) => `<li><span>${esc(label)}</span><span>${esc(value)}</span></li>`).join("")}</ul>`;
     return `<div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "" })}"><span class="nd-label">NCR ที่ออกในช่วงนี้</span><span class="nd-value">${fmtNumber(sums.total)}<small>ใบ</small></span></a>
-        <span class="nd-note">ปิดแล้ว ${fmtCount(sums.closed)} (${fmtPercent(sums.closedRate)})</span><span class="nd-meter" role="img" aria-label="ปิดแล้ว ${fmtPercent(sums.closedRate)}"><span style="width:${(sums.closedRate ?? 0) * 100}%"></span></span></div>
-      <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "open" })}"><span class="nd-label">ค้างอยู่</span><span class="nd-value">${fmtNumber(sums.open)}<small>ใบ</small></span></a>
-        ${sums.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue" })}"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดตอบ ${fmtCount(sums.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดตอบ</span>`}
-        ${sums.preventionPending ? `<a class="nd-pill${sums.preventionOverdue ? " crit" : ""}" href="${hrefWith(filters, { scope: "prevention" })}">${sums.preventionOverdue ? `<span class="nd-ico" aria-hidden="true"></span>` : ""}รอแนวทางป้องกัน ${fmtCount(sums.preventionPending)}${sums.preventionOverdue ? ` · เลยกำหนด ${fmtNumber(sums.preventionOverdue)}` : ""}</a>` : ""}
-        <span class="nd-note">ตอบทันกำหนด ${fmtPercent(sums.onTimeRate)}${sums.slaBase ? ` (${sums.onTime}/${sums.slaBase})` : ""}</span></div>
+        <span class="nd-note">ปิดแล้ว ${fmtCount(sums.closed)} (${fmtPercent(sums.closedRate)}) · ตอบทันกำหนด ${fmtPercent(sums.onTimeRate)}${sums.slaBase ? ` (${sums.onTime}/${sums.slaBase})` : ""}</span><span class="nd-meter" role="img" aria-label="ปิดแล้ว ${fmtPercent(sums.closedRate)}"><span style="width:${(sums.closedRate ?? 0) * 100}%"></span></span></div>
+      <div class="nd-tile"><a class="nd-tap" href="${hrefWith(filters, { scope: "open" })}"><span class="nd-label">ค้างอยู่</span><span class="nd-value">${fmtNumber(back.open)}<small>ใบ</small></span></a>
+        ${back.overdue ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "overdue" })}"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดตอบ ${fmtCount(back.overdue)}</a>` : `<span class="nd-pill">ไม่มีใบเลยกำหนดตอบ</span>`}
+        ${back.preventionPending ? `<a class="nd-pill${back.preventionOverdue ? " crit" : ""}" href="${hrefWith(filters, { scope: "prevention" })}">${back.preventionOverdue ? `<span class="nd-ico" aria-hidden="true"></span>` : ""}รอแนวทางป้องกัน ${fmtCount(back.preventionPending)}${back.preventionOverdue ? ` · เลยกำหนด ${fmtNumber(back.preventionOverdue)}` : ""}</a>` : ""}
+        <span class="nd-note">นับทุกใบที่ยังไม่ปิด ไม่จำกัดช่วงเวลา</span></div>
       <div class="nd-tile"><span class="nd-label">ความสูญเสียสุทธิ (ยืนยันแล้ว)</span><span class="nd-value">${fmtShort(sums.net)}<small>฿</small></span>
         ${sums.estimated || sums.legacy ? `<span class="nd-note">${sums.estimated ? `+ ประมาณการ ${fmtBaht(sums.estimated)} ยังไม่ยืนยัน` : ""}${sums.estimated && sums.legacy ? " · " : ""}${sums.legacy ? `รายการเดิม ${fmtBaht(sums.legacy)}` : ""}</span>` : ""}
         <details class="nd-more"><summary>ดูรายละเอียดยอดสุทธิ</summary>${list(money)}${sums.need > sums.assessed ? `<p class="nd-hint">ยอดบาทเป็นตัวเลขขั้นต่ำ เพราะยังประเมินความสูญเสียไม่ครบทุกใบ</p>` : ""}${filters.dept ? `<p class="nd-hint">เมื่อกรองแผนก มูลค่าแบ่งตามสัดส่วนความรับผิดชอบของแผนกนั้น</p>` : ""}</details></div>
@@ -227,7 +230,7 @@
     };
     return `<div class="nd-head"><h2>ต้องลงมือตอนนี้</h2><p>ใบที่ยังไม่ปิด เรียงจากเลยกำหนด (ตอบ 5 วัน หรือส่งแนวทางป้องกัน) ก่อน แล้วตามจำนวนวันที่ค้างในขั้นปัจจุบัน</p></div>
       ${top.length ? `<div class="table-wrap"><table class="nd-act nd-rowlink"><thead><tr><th>ใบ / สินค้า</th><th>รอใคร</th><th>ค้างมา</th><th>กำหนด</th></tr></thead><tbody>${top.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a><br><span class="nd-muted">${esc(row.product_name)} · ${esc(row.defect?.name_th ?? "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${waitingDetail(row) ? `<br><span class="nd-muted">${esc(waitingDetail(row))}</span>` : ""}</td><td class="nd-num" data-label="ค้างมา">${row.daysInStatus} วัน</td><td>${slaCell(row)}</td></tr>`).join("")}</tbody></table></div>
-      ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open" })}">ดูใบค้างทั้งหมด ${fmtCount(open.length)}</a></div>` : ""}` : `<p class="nd-empty">ไม่มีใบค้างในช่วงและตัวกรองนี้</p>`}`;
+      ${open.length > top.length ? `<div><a class="btn secondary" href="${hrefWith(lastFilters, { scope: "open" })}">ดูใบค้างทั้งหมด</a></div>` : ""}` : `<p class="nd-empty">ไม่มีใบค้างตามตัวกรองนี้</p>`}`;
   }
 
   // กราฟแท่งรายเดือนแบบซ้อน: segmentsOf(month) คืนชิ้นส่วนของแท่ง [{ value, cls }] เรียงจากล่างขึ้นบน
@@ -380,7 +383,7 @@
       return row && { title: key ? `แผนก ${key}` : "ยังไม่กำหนดแผนก", lines: [["ใบที่เกี่ยวข้อง", fmtCount(row.count)], ["ค้างอยู่", fmtCount(row.open)], ["เลยกำหนดตอบ", fmtCount(row.overdue)], ["รอส่งแนวทางป้องกัน", fmtCount(row.preventionPending)], ["เลยกำหนดส่งแนวทางป้องกัน", fmtCount(row.preventionOverdue)], ["ตอบทันกำหนด", fmtPercent(row.onTimeRate)], ["สูญเสียสุทธิที่แบ่งตามสัดส่วนแผนก", fmtBaht(row.net)]], href: key ? hrefWith(filters, { dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : undefined };
     };
     const detailRow = (key) => { const detail = detailUnder("dept", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="7">${detail}</td></tr>` : ""; };
-    return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน ยอดรวมทุกแผนกอยู่ในการ์ดตัวเลขด้านบน</p></div>
+    return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน ตารางนี้นับจากใบที่ออกในช่วงที่เลือก (ใบค้างของทุกช่วงอยู่ในการ์ดค้างอยู่)</p></div>
       ${deptRows.length ? `<div class="table-wrap" tabindex="0" role="region" aria-label="ตารางแผนกที่รับผิดชอบ"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบที่เกี่ยวข้อง</th><th class="nd-num">ค้าง</th><th class="nd-num">เลยกำหนด</th><th class="nd-num">รอป้องกัน</th><th class="nd-num">ตอบทัน</th><th class="nd-num">สุทธิ (บาท)</th></tr></thead><tbody>
       ${deptRows.map((row) => `<tr><td>${selectButton("dept", row.dept, esc(row.dept || "ยังไม่กำหนดแผนก"), "nd-rowbtn")}</td><td class="nd-num">${fmtNumber(row.count)}</td><td class="nd-num">${fmtNumber(row.open)}</td><td class="nd-num">${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>${row.overdue}</span>` : "0"}</td><td class="nd-num">${row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>${row.preventionPending}</span>` : fmtNumber(row.preventionPending)}</td><td class="nd-num">${fmtPercent(row.onTimeRate)}</td><td class="nd-num">${fmtNumber(row.net)}</td></tr>${detailRow(row.dept)}`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("dept", "ชื่อแผนก", resolve)}`;
@@ -405,21 +408,21 @@
   }
 
   // actIds = ใบที่การ์ด "ต้องลงมือตอนนี้" แสดงอยู่แล้ว — ไม่พิมพ์ซ้ำในตารางนี้ แต่ยังนับรวมใน "ทั้งหมด N ใบ" ให้ตรงกับตัวเลขด้านบน
-  function drillHtml(list, actIds = new Set(), filters = null) {
+  function drillHtml(list, actIds = new Set(), filters = null, basis = "period") {
     const sorted = [...list].sort((a, b) => (a.issue_date < b.issue_date ? 1 : a.issue_date > b.issue_date ? -1 : b.ncr_no.localeCompare(a.ncr_no)));
     const rest = sorted.filter((row) => !actIds.has(row.id));
     const shownAbove = sorted.length - rest.length;
     const shown = rest.slice(0, drillLimit);
     // ทุกใบอยู่ใน "ต้องลงมือตอนนี้" แล้ว ไม่แสดงการ์ดนี้ (เว้นแต่กรองอยู่)
     if (list.length && !rest.length && !hasDrillFilter(filters)) return "";
-    return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}</p></div>
+    return `<div class="nd-head"><h2>${basis === "backlog" ? "รายการใบค้างตามตัวกรอง" : "รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน"}</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${basis === "backlog" ? " นับทุกใบที่ยังไม่ปิด ไม่จำกัดช่วงเวลา" : ""}${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}</p></div>
       ${shown.length ? `<div class="table-wrap"><table class="nd-rowlink"><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
       ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${row.overdue ? `<br><span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>เลยกำหนดตอบ</span>` : ""}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true"></span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
       ${rest.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(rest.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">${list.length ? "ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว" : "ไม่มี NCR ตรงกับตัวกรองนี้"}</p>`}`;
   }
 
   const definitionsHtml = `<details class="nd-defs"><summary>นิยามที่ใช้ในหน้านี้</summary><div><ol>
-    <li><b>ฐานเวลา:</b> ทุกตัวเลขนับจากใบที่ออกในช่วงที่เลือก มูลค่าคือยอดสะสมของใบนั้น</li>
+    <li><b>ฐานเวลา:</b> ค้างอยู่ เลยกำหนดตอบ รอแนวทางป้องกัน และ “ต้องลงมือตอนนี้” นับทุกใบที่ยังไม่ปิด ไม่ขึ้นกับช่วงเวลา ตัวเลขอื่นนับจากใบที่ออกในช่วงที่เลือก มูลค่าคือยอดสะสมของใบนั้น</li>
     <li><b>SLA 5 วัน:</b> กำหนดตอบ = วันออกใบ + 5 วัน (QA ส่งกลับให้ตอบใหม่ = วันส่งกลับ + 5 วัน) วันเดียวกับป้าย "เลยกำหนดตอบ" ในทะเบียน NCR จึงเลยกำหนดได้ตั้งแต่ยังรอผู้จัดการโรงงานพิจารณา ตอบทัน % = ตอบทัน ÷ (ตอบแล้ว + เลยกำหนดที่ยังไม่ตอบ)</li>
     <li><b>แนวทางป้องกัน:</b> การตอบภายใน 5 วันบังคับแค่สาเหตุและแนวทางแก้ไข แนวทางป้องกันส่งตามมาได้ภายในกำหนดตอบ + 7 วัน "รอแนวทางป้องกัน" = ใบที่รอ QA ติดตามผลแต่แผนกยังไม่ส่ง (QA ยังปิดประเด็นไม่ได้) นับแยกจาก SLA ตอบ 5 วัน</li>
     <li><b>ขั้นที่ต้องประเมินความสูญเสีย:</b> ตั้งแต่ขั้นรอแผนกตอบเป็นต้นไป ประเมินครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</li>
@@ -433,17 +436,20 @@
     lastFilters = filters;
     const list = model.select(rows, filters);
     const sums = model.summarize(list, filters);
+    const open = model.backlog(rows, filters);
+    const back = model.summarize(open, filters);
+    const drill = model.listFor(rows, filters);
     // แต่ละใบอยู่บนหน้าครั้งเดียว: ตัวกรองสถานะ (scope) ทำให้รายการด้านล่างเป็นรายการใบค้างเอง จึงซ่อน "ต้องลงมือตอนนี้" ·
     // นอกนั้นรายการด้านล่างไม่พิมพ์ซ้ำใบที่ "ต้องลงมือตอนนี้" แสดงแล้ว (แต่ยังนับในจำนวนทั้งหมด)
     const showAct = !filters.scope;
-    const actTop = showAct ? model.priority(list, 5) : [];
+    const actTop = showAct ? model.priority(open, 5) : [];
     return `<div class="page-heading request-module-header" data-module="ncr"><div><h1>แดชบอร์ด NCR</h1><p>ไม่นับใบที่ยกเลิก</p></div>
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="ncr">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
-        <div class="nd-summary" role="status">${summaryHtml(sums)}</div>
-        <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums)}</div>
-        ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(list, actTop, today)}</section>` : ""}
+        <div class="nd-summary" role="status">${summaryHtml(drill.basis === "backlog" ? { total: drill.list.length, basis: "backlog" } : sums)}</div>
+        <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums, back)}</div>
+        ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop, today)}</section>` : ""}
         <section class="card nd-card" data-card="trend">${trendHtml(rows, filters, today)}</section>
         ${sums.gross || sums.estimated || sums.legacy || sums.recovery
           ? `<section class="card nd-card nd-half" data-card="pareto">${paretoHtml(list, filters)}</section>
@@ -455,7 +461,7 @@
           <section class="card nd-card" data-card="cause">${breakdownHtml("cause", "สาเหตุ 4M+E", "ใบที่มีหลายสาเหตุนับในทุกสาเหตุ (ซ้อนกันได้) จึงไม่รวมกันเป็น 100%", model.countBy(list, model.causeKeys), CAUSE_LABELS, filters, "cause", list.length)}</section>
         </div>
         <section class="card nd-card" data-card="scrap">${scrapHtml(list)}</section>
-        ${((drill) => (drill ? `<section class="card nd-card" id="nd-drill">${drill}</section>` : ""))(drillHtml(list, new Set(actTop.map((row) => row.id)), filters))}
+        ${((drillCard) => (drillCard ? `<section class="card nd-card" id="nd-drill">${drillCard}</section>` : ""))(drillHtml(drill.list, new Set(actTop.map((row) => row.id)), filters, drill.basis))}
         ${definitionsHtml}
         ${(() => { const note = window.MNP_NOTES?.toggle("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะ NCR ที่บัญชีนี้มีสิทธิ์เห็น</p>"); const stamp = `ข้อมูล ณ ${formatDate(new Date(loadedAt).toISOString(), true)}`; return note ? `<div class="note-row nd-muted"><span>${stamp}</span>${note.button}</div>${note.body}` : `<p class="nd-muted">${stamp}</p>`; })()}
       </div>`;

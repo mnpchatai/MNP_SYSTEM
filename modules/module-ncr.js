@@ -639,7 +639,7 @@
       { key: "subject", label: "สินค้า/วัตถุดิบ", role: "subject" },
       { key: "defect", label: "ข้อบกพร่อง" },
       { key: "departments", label: "แผนกรับผิดชอบ" },
-      { key: "issued", label: "วันที่ออก" },
+      { key: "issued", label: "วันที่ออก", sorted: "descending" },
       { key: "loss", label: "ความสูญเสีย" },
       { key: "status", label: "สถานะ", role: "status" },
     ];
@@ -651,6 +651,7 @@
       const defect = [relation(row.defect_type)?.name_th, row.qty_defect !== null && row.qty_defect !== undefined ? `${formatQty(row.qty_defect)} ${row.unit ?? ""}`.trim() : ""].filter(Boolean).join(" · ");
       return {
         className: `status-${row.status}`,
+        sort: { issued: row.issue_date ?? "", loss: summary ? summary.net : "" },
         cells: {
           no: registerNoHtml(row.ncr_no, href),
           subject: registerSubjectHtml(row.product_name, href, row.customer_name ?? ""),
@@ -1006,7 +1007,7 @@
       ["แหล่งที่พบ", SOURCES[ncr.source] ?? ncr.source ?? "—"],
       ["%NG จากการสุ่ม", ng === null ? "—" : `${ng.toLocaleString("th-TH", { maximumFractionDigits: 1 })}%`],
     ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
-    const heading = `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>
+    const heading = `${typeof detailBackLinkHtml === "function" ? detailBackLinkHtml("#/ncr", "NCR/CAR") : `<a class="request-back-link" href="#/ncr">‹ NCR/CAR</a>`}
       <header class="request-detail-head request-module-header ncr-detail-head" data-module="ncr">
         <div class="request-detail-kicker"><span class="eyebrow"><span class="nowrap">${escapeHtml(ncr.form_code)}</span><span class="eyebrow-sep"> · </span><span class="nowrap">${escapeHtml(ncr.ncr_no)}</span></span><div class="request-detail-kicker-end">${statusBadgeHtml(ncr, window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? [])))}</div></div>
         <h1>${headingTextHtml(ncr.product_name || ncr.ncr_no)}</h1>

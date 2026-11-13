@@ -415,3 +415,34 @@ test("pareto and loss cards are marked for the two-column grid; the department t
   assert.doesNotMatch(page, /data-card="losstype"/);
   for (const card of ["act", "trend", "dept", "scrap"]) assert.match(page, new RegExp(`class="card nd-card" data-card="${card}"`));
 });
+
+test("open NCRs count in the backlog whatever period is selected, like the MT dashboard (user 2026-11-13)", () => {
+  const reports = [
+    report({ id: "old", ncr_no: "QA001/68", issue_date: "2025-06-10", sla_started_on: "2025-06-11", response_due: "2025-06-15" }),
+    report({ id: "now", ncr_no: "QA002/69" }),
+    report({ id: "done", ncr_no: "QA003/69", status: "closed", closedDate: "2026-10-05" }),
+    report({ id: "other", ncr_no: "QA004/69", issue_date: "2025-01-05", responsibilities: [{ dept: "QA", share: 1 }] }),
+  ];
+  const rows = model.deriveRows(reports, TODAY);
+  const october = filters({ from: 10, to: 10 });
+  assert.deepEqual(model.select(rows, october).map((row) => row.id).sort(), ["done", "now"], "the period still counts reports issued in October");
+  assert.deepEqual(model.backlog(rows, october).map((row) => row.id).sort(), ["now", "old", "other"], "an old open NCR stays in the backlog");
+  assert.deepEqual(model.backlog(rows, { ...october, dept: "RB" }).map((row) => row.id).sort(), ["now", "old"], "other filters still apply");
+  assert.deepEqual(model.backlog(rows, { ...october, scope: "loss" }).map((row) => row.id).sort(), ["now", "old", "other"], "the scope does not narrow the backlog tile");
+  const open = model.listFor(rows, { ...october, scope: "open" });
+  assert.equal(open.basis, "backlog");
+  assert.deepEqual(open.list.map((row) => row.id).sort(), ["now", "old", "other"]);
+  assert.deepEqual(model.listFor(rows, { ...october, scope: "overdue" }).list.map((row) => row.id).sort(), ["old"], "overdue lists late open reports of every period");
+  assert.equal(model.listFor(rows, { ...october, scope: "loss" }).basis, "period");
+  assert.equal(model.listFor(rows, october).basis, "period");
+});
+
+test("the NCR dashboard tile, act card and drill list use the backlog basis", () => {
+  const source = readFileSync(new URL("../../modules/module-ncr-dashboard.js", import.meta.url), "utf8");
+  assert.match(source, /const open = model\.backlog\(rows, filters\);\s+const back = model\.summarize\(open, filters\);\s+const drill = model\.listFor\(rows, filters\);/);
+  assert.match(source, /const actTop = showAct \? model\.priority\(open, 5\) : \[\];/);
+  assert.match(source, /<span class="nd-label">ค้างอยู่<\/span><span class="nd-value">\$\{fmtNumber\(back\.open\)\}/);
+  assert.match(source, /<span class="nd-note">นับทุกใบที่ยังไม่ปิด ไม่จำกัดช่วงเวลา<\/span>/);
+  assert.match(source, />ดูใบค้างทั้งหมด<\/a>/, "the button does not repeat the tile's count");
+  assert.match(source, /drillHtml\(drill\.list, new Set\(actTop\.map\(\(row\) => row\.id\)\), filters, drill\.basis\)/);
+});
