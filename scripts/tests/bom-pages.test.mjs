@@ -1709,6 +1709,15 @@ test("a component is added from the product tree with one small form: an existin
   assert.doesNotMatch(dialog.html, /<option value="P-STK-01"/, "codes already in the BOM are not offered again");
   assert.match(dialog.html, /<option value="P-ZIP-05"/);
   assert.equal(env.context.MNP_BOM_DIALOGS.lineAdd(env.ctx(), { parentCode: "P-STK-01" }), null, "a purchased part takes no components");
+  // เส้นยาง: บรรทัดสูตรยางเปลี่ยนช่องสูตรของเส้นยางได้ ฟอร์มเล็กจึงไม่รับ (ทั้งปุ่ม หน้าต่าง และตัวแปลงฟอร์ม)
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  const compound = env.store.data().items.find((item) => item.code === rod).rubber.compound;
+  assert.equal(env.context.MNP_BOM_DIALOGS.lineAdd(env.ctx(), { parentCode: rod }), null, "no small add form under a rubber rod");
+  await env.submit(`p=find&code=${rod}`, "saveBomTree", { addCode: "XCP-NEW", addQty: "1", newName: "สูตรใหม่", newKind: "CP", newUom: "kg" }, { lineAdd: true, code: rod });
+  assert.match(env.log.toasts.at(-1)[0], /แก้หลายบรรทัด/);
+  assert.equal(env.store.data().items.find((item) => item.code === rod).rubber.compound, compound, "the rod keeps its compound");
+  assert.equal(env.store.data().items.some((item) => item.code === "XCP-NEW"), false);
+  assert.doesNotMatch(dialog.html, /<option value="RB"/, "a new rubber rod is not created from the small form");
   const query = `p=find&code=${encodeURIComponent(parent)}`;
   await env.submit(query, "saveBomTree", { addCode: "p-zip-05", addQty: "2", addScrap: "0", note: "" }, { lineAdd: true, code: parent });
   let after = bomOf(parent);
@@ -1740,7 +1749,7 @@ test("a new product is created from the product list with a four-field form", as
   assert.match(await env.render("p=find"), /data-rf-open="productNew"/);
   const dialog = env.context.MNP_BOM_DIALOGS.productNew(env.ctx());
   clean(dialog.html);
-  assert.doesNotMatch(dialog.html, /<option value="PURCHASED"/, "only kinds that take components");
+  assert.doesNotMatch(dialog.html, /<option value="(PURCHASED|CP|RB)"/, "only kinds that take components and need no rubber data");
   await env.submit("p=find", "saveItem", { code: "test-new-01(p)-a", name: "สินค้าทดสอบ", kind: "FG", uom: "set" }, { create: true });
   const item = env.store.data().items.find((entry) => entry.code === "TEST-NEW-01(P)-A");
   assert.equal(item?.kind, "FG");

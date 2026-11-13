@@ -188,6 +188,9 @@
   function treeFromLineAdd(p) {
     const data = store.data();
     const code = rules.canonicalCode(p.addCode);
+    // เส้นยาง: บรรทัดสูตรยางผูกกับช่องสูตรของเส้นยาง (saveBomTree จะเปลี่ยนช่องสูตรตามบรรทัดที่ส่งมา) ฟอร์มเล็กไม่แสดงช่องนั้น จึงไม่รับ
+    if (actions.helpers.itemOf(data, rules.canonicalCode(p.code))?.kind === "RB") throw new Error("สูตรยางของเส้นยางแก้ที่ “แก้หลายบรรทัด”");
+    if (p.newKind === "RB" && !actions.helpers.itemOf(data, code)) throw new Error("เส้นยางใหม่สร้างที่ “แก้หลายบรรทัด” (ต้องระบุสูตรยางและข้อมูลการตัด)");
     const current = actions.helpers.approvedBomOf(data, rules.canonicalCode(p.code))?.lines ?? [];
     if (current.some((line) => line.childCode === code)) throw new Error(`${code} อยู่ใน BOM นี้แล้ว แก้ปริมาณที่บรรทัดนั้นแทน`);
     const node = { code, qty: p.addQty, scrapPct: p.addScrap, note: "" };
@@ -207,9 +210,11 @@
     saveBom: (p) => (Array.isArray(p.lines) ? p : {
       itemCode: p.itemCode, note: p.note,
       lines: listOf(p, "childCode").map((childCode, index) => {
+        // flags ของบรรทัดเดิมไม่อยู่ในฟอร์ม: คงค่าที่เก็บไว้
+        const flags = actions.helpers.approvedBomOf(store.data(), rules.canonicalCode(p.itemCode))?.lines.find((line) => line.childCode === childCode)?.flags;
         const qty = listOf(p, "qty")[index];
         const keep = childCode === p.editCode && p.origQty !== undefined && Math.abs(Number(qty) - Number(p.origQty)) <= 1e-6;
-        return { childCode, qty: keep ? Number(p.origQty) : qty, scrapPct: listOf(p, "scrapPct")[index] ?? "", note: listOf(p, "lineNote")[index] ?? "", step: listOf(p, "lineStep")[index] ?? "" };
+        return { childCode, qty: keep ? Number(p.origQty) : qty, scrapPct: listOf(p, "scrapPct")[index] ?? "", note: listOf(p, "lineNote")[index] ?? "", step: listOf(p, "lineStep")[index] ?? "", flags };
       }),
     }),
     saveItem: (p) => ({ ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null }),
