@@ -1845,6 +1845,14 @@ test("rubber rod data shows on the tree and is edited in its own dialog; changin
   assert.equal(itemOf(rod).rubber.cutLengthCm, 9);
   assert.equal(env.store.data().boms.find((bom) => bom.itemCode === rod && bom.status === "approved").revision, revision);
   assert.ok(form);
+  // ฟอร์มข้อมูลชิ้นงานทั่วไป (แก้ข้อมูล) เปลี่ยนสูตรของเส้นยางที่มีสูตรแล้วไม่ได้: ช่องเป็น readonly และตัวแปลงฟอร์มปฏิเสธ · ข้อมูลอื่นยังแก้ได้
+  assert.match(env.context.MNP_BOM_DIALOGS.itemEdit(env.ctx(), { code: rod }).html, /name="rubber\.compound"[^>]*readonly/);
+  await env.submit(query, "saveItem", { code: rod, kind: "RB", name: "ชื่อใหม่", uom: "rod", rubber: { compound: "DM02" } }, {});
+  assert.match(env.log.toasts.at(-1)[0], /เปลี่ยนสูตรยางของ RB-DM01-02-OR01-202-18-70 ที่ปุ่ม “แก้ข้อมูลเส้นยาง”/);
+  assert.equal(itemOf(rod).rubber.compound, "DM01");
+  await env.submit(query, "saveItem", { code: rod, kind: "RB", name: "ชื่อใหม่", uom: "rod", rubber: { compound: "dm01" } }, {});
+  assert.equal(itemOf(rod).name, "ชื่อใหม่", "the same compound passes, so the other fields of the item form still save");
+  assert.doesNotMatch(await env.render(query), />แก้หลายบรรทัด</, "no link from a rod's page to the wide table, which rewrites the compound from its line");
   // ฟอร์มเล็กยังไม่รับบรรทัดใต้เส้นยาง และผู้ที่ไม่ใช่ฝ่ายวางแผนไม่มีหน้าต่างนี้
   await env.submit(query, "saveBomTree", { addCode: "DM03", addQty: "1" }, { lineAdd: true, code: rod });
   assert.match(env.log.toasts.at(-1)[0], /ข้อมูลเส้นยาง/);
@@ -2065,10 +2073,10 @@ test("an open PI names itself in the page head, a draft shows what other drafts 
   env.rf.store.data().purchaseOrders.push({ id: "PO-TEST-01", status: "ordered", sourcePi: "DEMO-26002", lines: [] }, { id: "PO-TEST-02", status: "received", sourcePi: "DEMO-26002", lines: [] }, { id: "PO-TEST-03", status: "ordered", sourcePi: "DEMO-26001", lines: [] });
   html = await env.render("p=orders&sel=DEMO-26002");
   const cancel = /data-rf-action="cancelOrder"[^>]*data-rf-confirm="([^"]*)"/.exec(html)?.[1] ?? "";
-  assert.match(cancel, /^ยกเลิกใบสั่งผลิตนี้\? มีใบสั่งซื้อที่สั่งจากใบนี้และยังไม่ได้รับของ: PO-TEST-01 ระบบไม่ยกเลิก/);
+  assert.match(cancel, /^ยกเลิกใบสั่งผลิตนี้\? มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: PO-TEST-01 ระบบไม่ยกเลิก/);
   assert.doesNotMatch(cancel, /PO-TEST-02|PO-TEST-03/, "received orders and other PIs' orders are not named");
   assert.match(/data-rf-action="removeOrderItem"[^>]*data-rf-confirm="([^"]*)"/.exec(html)?.[1] ?? "", /PO-TEST-01/);
-  assert.match(env.context.MNP_BOM_DIALOGS.orderItemEdit(env.ctx(), { orderId: "DEMO-26002", fgCode: first.items[0].fgCode }).html, /มีใบสั่งซื้อที่สั่งจากใบนี้และยังไม่ได้รับของ: PO-TEST-01/);
+  assert.match(env.context.MNP_BOM_DIALOGS.orderItemEdit(env.ctx(), { orderId: "DEMO-26002", fgCode: first.items[0].fgCode }).html, /มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: PO-TEST-01/);
   assert.match(env.context.MNP_BOM_DIALOGS.orderItemAdd(env.ctx(), { orderId: "DEMO-26002" }).html, /PO-TEST-01/);
   assert.doesNotMatch(env.context.MNP_BOM_DIALOGS.orderItemAdd(env.ctx(), { orderId: "DEMO-26009" }).html, /PO-TEST/);
   // ยกเลิกแล้วใบสั่งซื้อยังอยู่ (ระบบไม่ยกเลิกให้)

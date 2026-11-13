@@ -111,7 +111,7 @@
     }
     // เส้นยางที่มีบรรทัดสูตรยางแล้ว: ช่องสูตรต้องตรงกับบรรทัดนั้น (ต้นไม้ที่แก้ทั้งสองอย่างพร้อมกันตรวจที่ saveBom แทน)
     const compoundLine = kind === "RB" ? approvedBomOf(d, code)?.lines[0]?.childCode : null;
-    if (compoundLine && !options.compoundLineFollows && rubber?.compound && R.canonicalCode(rubber.compound) !== compoundLine) fail(`เส้นยาง ${code} ใช้บรรทัดสูตรยาง ${compoundLine} ใน BOM แก้ช่องสูตรและบรรทัดสูตรยางพร้อมกันที่หน้า “สร้าง BOM”`);
+    if (compoundLine && !options.compoundLineFollows && rubber?.compound && R.canonicalCode(rubber.compound) !== compoundLine) fail(`เส้นยาง ${code} ใช้บรรทัดสูตรยาง ${compoundLine} ใน BOM เปลี่ยนสูตรที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง (ช่องสูตรและบรรทัดสูตรยางเปลี่ยนพร้อมกัน)`);
     if (existing && existing.ownerDept !== ownerDept) d.boms.filter((bom) => bom.itemCode === code).forEach((bom) => { bom.ownerDept = ownerDept; bom.changeLog.push({ at: ctx.now, by: user.name, text: `ย้ายแผนกเจ้าของ ${existing.ownerDept} → ${ownerDept}` }); });
     Object.assign(item, { kind, name, ownerDept, uom, weightG: p.weightG === undefined || p.weightG === "" ? item.weightG ?? 0 : num(p.weightG, "น้ำหนัก (กรัม)", { allowZero: true }), rubber: kind === "RB" || kind === "SE" ? rubber : null, active: p.active === undefined ? item.active !== false : p.active !== false && p.active !== "false", updatedAt: ctx.now });
     if (!existing) d.items.push(item);

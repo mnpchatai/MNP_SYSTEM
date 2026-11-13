@@ -270,7 +270,7 @@
     const item = actions.helpers.itemOf(data, rules.canonicalCode(p.code));
     if (!item || item.kind !== "RB") throw new Error("รายการนี้ไม่ใช่เส้นยาง");
     const compound = compoundCode(p.compound);
-    const before = rules.canonicalCode(item.rubber?.compound ?? "");
+    const before = rules.canonicalCode(item.rubber?.compound ?? "") || (linesOf(data, item.code)[0]?.childCode ?? "");
     if (before && compound !== before && !["1", "on", "true"].includes(String(p.confirmCompound ?? ""))) throw new Error(`ติ๊กยืนยันการเปลี่ยนสูตรยางจาก ${before} เป็น ${compound} ก่อนบันทึก`);
     return { data, item, compound, cut: Object.fromEntries(RUBBER_CUT_KEYS.map((key) => [key, p[key] ?? ""])) };
   }
@@ -309,7 +309,15 @@
       }),
     }),
     // rubberEdit = หน้าต่าง "ข้อมูลเส้นยาง" ของเส้นยางที่ยังไม่มีบรรทัดสูตรยางใน BOM (มีบรรทัดแล้วไปทาง saveBomTree ข้างบน)
-    saveItem: (p) => (p.rubberEdit ? itemFromRubberEdit(p) : { ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null }),
+    saveItem: (p) => {
+      if (p.rubberEdit) return itemFromRubberEdit(p);
+      // ฟอร์มข้อมูลชิ้นงานทั่วไป: สูตรยางของเส้นยางที่มีสูตรอยู่แล้วเปลี่ยนจากที่นี่ไม่ได้ (ต้องเห็นสูตรเดิม → ใหม่และยืนยันที่หน้าต่าง "ข้อมูลเส้นยาง")
+      const stored = actions.helpers.itemOf(store.data(), rules.canonicalCode(p.code ?? ""));
+      const before = stored?.kind === "RB" ? rules.canonicalCode(stored.rubber?.compound ?? "") : "";
+      const next = p.rubber?.compound === undefined ? before : rules.canonicalCode(p.rubber.compound ?? "");
+      if (before && p.kind === "RB" && next !== before) throw new Error(`เปลี่ยนสูตรยางของ ${stored.code} ที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง`);
+      return { ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null };
+    },
     // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
     saveColorSet: (p) => ({ ...p, slots: listOf(p, "slotKey").map((key, index) => ({ key, color: listOf(p, "slotColor")[index] ?? "" })) }),
     setStockCounts: (p) => ({ ...p, counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),

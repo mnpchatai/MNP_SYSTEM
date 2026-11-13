@@ -1461,7 +1461,7 @@
       </div>
       <fieldset class="bom-fieldset"><legend>ข้อมูลยาง (เฉพาะ RB / SE)</legend>
         <div class="rf-grid rf-g3">
-          ${ui.field("รหัสสูตรยาง (RB)", ui.input("rubber.compound", { value: rubber.compound ?? "", list: "bom-compound-list-dialog" }))}<datalist id="bom-compound-list-dialog">${data.compounds.map((entry) => `<option value="${attr(entry.code)}"></option>`).join("")}</datalist>
+          ${ui.field("รหัสสูตรยาง (RB)", ui.input("rubber.compound", { value: rubber.compound ?? "", list: "bom-compound-list-dialog", extra: item?.kind === "RB" && rubber.compound ? 'readonly title="เปลี่ยนสูตรยางที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง"' : "" }))}<datalist id="bom-compound-list-dialog">${data.compounds.map((entry) => `<option value="${attr(entry.code)}"></option>`).join("")}</datalist>
           ${ui.field("ประเภท (01 ตัน / 02 มีรู / 03 แผ่น)", ui.input("rubber.type", { value: rubber.type ?? "" }))}
           ${ui.field("สี (แม่สี+เฉด)", ui.input("rubber.color", { value: rubber.color ?? "", placeholder: "OR01" }))}
           ${ui.field("ความยาว (มม.)", ui.input("rubber.lengthMm", { type: "number", step: "any", value: rubber.lengthMm ?? "" }))}
@@ -2043,7 +2043,7 @@
   };
   // เลือกสินค้าแบบ 3 ช่องเหมือนชีต ;}o: ฐานรหัส + แพ็กเกจ + ชุดสี → รหัสเต็ม ถ้ารหัสเต็มยังไม่มีแต่ฐานรหัสมี ระบบสร้างจาก BOM ของตัวนั้น
   const openPurchaseOrdersOf = (ctx, orderId) => (rfPurchaseOrdersOf(ctx) ?? []).filter((po) => po.status === "ordered" && po.sourcePi === orderId).map((po) => po.id);
-  const openPoText = (ids) => (ids.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังไม่ได้รับของ: ${ids.join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ถ้าไม่ต้องการของแล้วให้ยกเลิกเองที่หน้าใบสั่งซื้อของ RubberFlow` : "");
+  const openPoText = (ids) => (ids.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${ids.join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow` : "");
   const openPoCallout = (ctx, order) => { const text = order ? openPoText(openPurchaseOrdersOf(ctx, order.id)) : ""; return text ? ctx.ui.callout("warn", esc(text)) : ""; };
   const reopenCallout = (ctx, order) => (order && order.status !== "draft" ? ctx.ui.callout("warn", "ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องระเบิด BOM และปล่อยผลิตใหม่") : "");
   // dialog: แก้จำนวนสั่ง/หมายเหตุของสินค้าหนึ่งตัวในใบ

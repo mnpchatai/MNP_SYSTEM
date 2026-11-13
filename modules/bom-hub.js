@@ -77,7 +77,7 @@
       list.hidden = false;
       input.setAttribute("aria-expanded", "true");
     };
-    const pick = (value) => { input.value = value; close(); onChange(); };
+    const pick = (value) => { input.value = value; input.dispatchEvent(new Event("input", { bubbles: true })); close(); };
     input.addEventListener("input", () => { paint(); onChange(); });
     input.addEventListener("click", () => { if (list.hidden) paint(); });
     input.addEventListener("keydown", (event) => {
@@ -299,7 +299,7 @@
     const tabs = ui.tabs(tabIds.map(([id, label]) => ({ id, label })), tab, (id) => ctx.url("find", { code: item.code, tab: id === "tree" ? null : id, qty: qty === 1 ? null : String(qty) }));
     const sub = [esc(rules.KINDS[item.kind]?.label ?? item.kind), bom ? esc(`BOM Rev.${bom.revision} บันทึก ${rules.fmtDate(bom.approvedAt)}`) : leaf ? "" : "ยังไม่มี BOM", item.active === false ? "เลิกใช้" : ""].filter(Boolean).join(" · ");
     const actions = [
-      canEdit && !leaf ? `<a class="btn rf-btn secondary" href="${attr(ctx.url("build", { code: item.code }))}" title="ตารางเดิมสำหรับแก้ทุกชั้นในครั้งเดียว ลากเรียงบรรทัด หรือย้ายบรรทัดไปอยู่ใต้ชิ้นอื่น">แก้หลายบรรทัด</a>` : "",
+      canEdit && !leaf && item.kind !== "RB" ? `<a class="btn rf-btn secondary" href="${attr(ctx.url("build", { code: item.code }))}" title="ตารางเดิมสำหรับแก้ทุกชั้นในครั้งเดียว ลากเรียงบรรทัด หรือย้ายบรรทัดไปอยู่ใต้ชิ้นอื่น">แก้หลายบรรทัด</a>` : "",
       canEdit ? ui.openButton("แก้ข้อมูล", "itemEdit", { code: item.code }, { className: "secondary" }) : "",
       canEdit && bom && item.kind === "FG" ? ui.openButton("ใส่ในใบสั่งผลิต", "useInOrder", { code: item.code }, { className: "" }) : "",
     ].join("");
@@ -405,12 +405,14 @@
     if (!item || item.kind !== "RB" || !ctx.helpers.canPlan(ctx.user)) return null;
     const r = item.rubber ?? {};
     const line = approvedBomOf(ctx, item.code)?.lines[0] ?? null;
-    const before = rules.canonicalCode(r.compound ?? "");
+    // สูตรเดิม = ช่องสูตรของเส้นยาง ถ้าว่าง (ข้อมูลนำเข้า) ใช้รหัสของบรรทัดสูตรยาง
+    const before = rules.canonicalCode(r.compound ?? "") || (line?.childCode ?? "");
     const usedIn = data.boms.filter((bom) => bom.status === "approved" && bom.lines.some((entry) => entry.childCode === item.code)).length;
     const lineQty = line ? ui.field(`สูตรยางที่ใช้ต่อ 1 ${uomText(ctx, item.uom)} (${uomText(ctx, line.uom)})`, ui.input("compoundQty", { type: "number", step: "any", min: "0.000001", required: true, value: String(Math.round(line.qty * 1e6) / 1e6) }), { required: true }) : "";
     const body = `<form novalidate id="bom-rubber-form" data-rf-form="${line ? "saveBomTree" : "saveItem"}" data-rf-args="${attr(JSON.stringify({ rubberEdit: true, code: item.code }))}" data-rf-success="${attr(`บันทึกข้อมูลเส้นยาง ${item.code} แล้ว`)}">
       <p class="muted small">${esc(item.name)}${usedIn ? esc(` · ใช้ใน ${usedIn} รายการ แก้แล้วมีผลกับทุกรายการ`) : ""}</p>
       <div class="rf-grid rf-g2">${ui.field("สูตรยาง", pickerHtml(ctx, "compound", { id: "bom-rubber-compound", value: r.compound ?? "", required: true, placeholder: "พิมพ์รหัสสูตรยางเพื่อค้นหา", extra: 'maxlength="20" data-rubber-compound' }), { required: true, id: "bom-rubber-compound" })}${lineQty}</div>
+      <p class="small muted">${usedIn ? "แก้ชิ้นที่ตัดได้ต่อเส้นแล้ว ปริมาณเส้นยางในบรรทัดของชิ้นที่ใช้เส้นนี้ไม่เปลี่ยนตาม แก้ที่บรรทัดนั้นเอง · " : ""}ช่องน้ำหนัก (กรัมต่อหน่วย) เว้นว่าง = คงค่าเดิม</p>
       <div class="rf-callout is-warn bom-compound-change" role="note" data-compound-change hidden><div class="rf-callout-body"><p data-compound-text></p><label class="bom-confirm-line"><input type="checkbox" name="confirmCompound" value="1" data-compound-confirm> <span>ยืนยันเปลี่ยนสูตรยาง</span></label></div></div>
       ${rubberCutFields(ctx, r, { weightG: item.weightG || "" })}
       ${line ? ui.field("เหตุผลของการแก้ครั้งนี้", ui.input("note", { extra: 'maxlength="300"' })) : ""}</form>`;
@@ -421,11 +423,14 @@
       const confirm = dialog.querySelector("[data-compound-confirm]");
       const submit = dialog.querySelector("[data-rubber-submit]");
       if (!input || !box || !submit) return;
+      let confirmedFor = "";
       const sync = () => {
         const next = rules.canonicalCode(input.value);
         const changed = Boolean(before) && Boolean(next) && next !== before;
         box.hidden = !changed;
-        if (!changed && confirm) confirm.checked = false;
+        // การยืนยันเป็นของสูตรปลายทางที่แสดงตอนติ๊ก: เปลี่ยนสูตรปลายทางอีกครั้งต้องติ๊กใหม่
+        if (confirm && (!changed || (confirm.checked && confirmedFor && confirmedFor !== next))) confirm.checked = false;
+        confirmedFor = confirm?.checked ? next : "";
         if (changed && text) {
           const linked = data.compounds.find((entry) => entry.code === next)?.recipeId;
           text.textContent = [`เปลี่ยนสูตรยางของ ${item.code} จาก ${before} เป็น ${next}`, line ? "บรรทัดสูตรยางใน BOM ของเส้นยางนี้เปลี่ยนตาม" : "", usedIn ? `มีผลกับ ${usedIn} รายการที่ใช้เส้นยางนี้` : "", "ใบสั่งผลิตที่ปล่อยไปแล้วไม่เปลี่ยน", linked ? "" : `สูตร ${next} ยังไม่ผูกสูตร RubberFlow จึงยังเปิด WO อัตโนมัติไม่ได้`].filter(Boolean).join(" · ");
@@ -685,7 +690,7 @@
         draftOrders = chem.orders;
         const table = parts.length ? needTable(ctx, parts, "ของซื้อ", "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย") : ui.empty("ใบนี้ไม่มีของซื้อ");
         // เคมีของเส้นยาง: มีเมื่อใบนี้ต้องรีดเส้นยาง · เส้นยางที่ยังไม่ผูกสูตร RubberFlow ประเมินไม่ได้ (และจะไม่ได้ WO ตอนปล่อยผลิต) บอกเหตุผลให้ไปแก้ก่อน
-        const skippedNote = chem.skipped.length ? ui.callout("warn", `เส้นยาง ${chem.skipped.length} จาก ${chem.jobs} รายการยังประเมินเคมีไม่ได้ และจะยังไม่ได้ WO ตอนปล่อยผลิต: ${chem.skipped.slice(0, 5).map((entry) => `<span class="rf-mono">${esc(entry.itemCode)}</span> ${esc(entry.reason)}`).join(" · ")}${chem.skipped.length > 5 ? ` และอีก ${chem.skipped.length - 5}` : ""}${ctx.canSee("compounds") ? ` · ${ui.link("ไปผูกสูตรยาง", ctx.url("compounds"))}` : ""}`) : "";
+        const skippedNote = chem.skipped.length ? ui.callout("warn", `เส้นยาง ${chem.skipped.length} จาก ${chem.jobs} รายการยังประเมินเคมีไม่ได้${ctx.store?.isRemote?.() ? " และจะยังไม่ได้ WO ตอนปล่อยผลิต" : ""}: ${chem.skipped.slice(0, 5).map((entry) => `<span class="rf-mono">${esc(entry.itemCode)}</span> ${esc(entry.reason)}`).join(" · ")}${chem.skipped.length > 5 ? ` และอีก ${chem.skipped.length - 5}` : ""}${ctx.canSee("compounds") ? ` · ${ui.link("ไปผูกสูตรยาง", ctx.url("compounds"))}` : ""}`) : "";
         const chemHtml = !chem.jobs ? "" : !chem.ready ? '<p class="small muted">กำลังโหลดข้อมูลเคมีจาก RubberFlow…</p>' : `${chem.rows.length ? needTable(ctx, chem.rows, "เคมีของเส้นยาง", "ใบเบิกที่ค้างจ่าย และ WO อื่นที่ยังเปิดอยู่", "เคมี") : ""}${skippedNote}`;
         const counted = Object.keys(order.stockCounts ?? {}).length;
         const wip = `<div class="bom-step-line"><div><strong>ชิ้นงานค้างในไลน์ที่ใช้แทนได้</strong><div class="small muted">${counted ? esc(`กรอกยอดแล้ว ${counted} รายการ ระบบหักออกจากยอดที่ต้องผลิต`) : "ยังไม่ได้กรอก ถ้าไม่กรอก ระบบสั่งผลิตเต็มจำนวน"}</div></div>${ctx.helpers.canCount(ctx.user) ? ui.link(counted ? "แก้ยอดที่กรอก" : "กรอกยอดที่มีอยู่", ctx.url("count", { order: order.id }), "btn rf-btn secondary") : ""}</div>`;
