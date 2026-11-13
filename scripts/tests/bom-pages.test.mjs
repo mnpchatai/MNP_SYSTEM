@@ -2122,3 +2122,36 @@ test("chemicals of a draft PI are estimated from the WOs the release would open,
   const purchase = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx, { woIds: [], sourcePi: "DEMO-26002", draftOrders: chem.orders, parts: false });
   for (const row of chem.rows) assert.match(purchase.html, new RegExp(`name="materialCode\\[\\]" value="${row.itemCode}"`));
 });
+
+test("the wide table and a kind switch cannot change the compound of a rod that has one", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  const parent = "SE-TP01-OR01-100-18-65";
+  const itemOf = (code) => env.store.data().items.find((item) => item.code === code);
+  const line = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.find((entry) => entry.childCode === rod);
+  const row = (compound, cut) => ({ code: parent, itemName: itemOf(parent).name, itemUom: "pcs", itemKind: "SE", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": [rod], "name[]": [itemOf(rod).name], "kind[]": ["RB"], "uom[]": ["rod"], "qty[]": [String(line.qty)], "scrapPct[]": ["0"], "lineNote[]": [""], "lineStep[]": [""], "weightG[]": ["1530"], "compound[]": [compound], "cutLengthCm[]": [cut], "pcsPerRoll[]": ["31"], "sePerGr[]": ["1"], "kgPerRoll[]": ["1.53"] });
+  const query = `p=build&code=${parent}`;
+  // ช่องสูตรของแถวเส้นยาง
+  await env.submit(query, "saveBomTree", row("DM02", "6.5"), {});
+  assert.match(env.log.toasts.at(-1)[0], /เปลี่ยนสูตรยางของ RB-DM01-02-OR01-202-18-70 \(DM01\) ที่ปุ่ม “แก้ข้อมูลเส้นยาง”/);
+  assert.equal(itemOf(rod).rubber.compound, "DM01");
+  // ข้อมูลการตัดของแถวเดียวกันยังแก้ได้เมื่อสูตรเท่าเดิม
+  await env.submit(query, "saveBomTree", row("dm01", "7"), {});
+  assert.equal(itemOf(rod).rubber.cutLengthCm, 7);
+  assert.equal(itemOf(rod).rubber.compound, "DM01");
+  // แถวสูตรยางใต้เส้นยาง (เส้นยางเป็นพ่อของตาราง): สูตรอื่นถูกปฏิเสธ สูตรเดิมบันทึกได้
+  const under = (code) => ({ code: rod, itemName: itemOf(rod).name, itemUom: "rod", itemKind: "RB", "rowId[]": ["r1"], "parentId[]": [""], "childCode[]": [code], "name[]": ["สูตร"], "kind[]": ["CP"], "uom[]": ["kg"], "qty[]": ["1.5"], "scrapPct[]": ["0"], "lineNote[]": [""], "lineStep[]": [""], "weightG[]": [""], "compound[]": [""], "cutLengthCm[]": [""], "pcsPerRoll[]": [""], "sePerGr[]": [""], "kgPerRoll[]": [""] });
+  await env.submit(`p=build&code=${rod}`, "saveBomTree", under("DM02"), {});
+  assert.match(env.log.toasts.at(-1)[0], /ตารางนี้เปลี่ยนสูตรไม่ได้/);
+  assert.equal(itemOf(rod).rubber.compound, "DM01");
+  assert.equal(env.store.data().boms.some((bom) => bom.itemCode === rod), false);
+  await env.submit(`p=build&code=${rod}`, "saveBomTree", under("DM01"), {});
+  assert.equal(env.store.data().boms.find((bom) => bom.itemCode === rod && bom.status === "approved").lines[0].childCode, "DM01", "adding the line of the rod's own compound still works in the wide table");
+  // สลับชนิดพร้อมเปลี่ยนสูตร (ทางอ้อม) ถูกปฏิเสธ
+  const other = "RB-DM01-01-OR01-200-0-72";
+  await env.submit("p=find", "saveItem", { code: other, kind: "SE", name: itemOf(other).name, uom: "rod", rubber: { compound: "DM02" } }, {});
+  assert.match(env.log.toasts.at(-1)[0], /เปลี่ยนสูตรยางของ RB-DM01-01-OR01-200-0-72 ที่ปุ่ม/);
+  assert.equal(itemOf(other).kind, "RB");
+  assert.equal(itemOf(other).rubber.compound, "DM01");
+});

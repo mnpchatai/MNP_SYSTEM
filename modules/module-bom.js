@@ -183,7 +183,20 @@
       }
       return node;
     };
-    return { code: p.code, item: { name: p.itemName, uom: p.itemUom, kind: p.itemKind }, note: p.note, nodes: rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code)) };
+    const nodes = rows.filter((row) => !row.parentId && (row.code || row.name)).map((row) => toNode(row, p.code));
+    // ตารางกว้างเปลี่ยนสูตรของเส้นยางที่มีสูตรอยู่แล้วไม่ได้ (ทั้งช่องสูตรของแถวเส้นยาง และแถวสูตรยางใต้เส้นยาง ซึ่ง saveBomTree ใช้เขียนช่องสูตร): การเปลี่ยนสูตรต้องเห็นสูตรเดิม → ใหม่และยืนยันที่หน้าต่าง "ข้อมูลเส้นยาง"
+    const kindOf = (node) => actions.helpers.itemOf(data, node.code)?.kind ?? node.newItem?.kind;
+    const guardRod = (code, children, patchCompound) => {
+      const rod = actions.helpers.itemOf(data, code);
+      const before = rod?.kind === "RB" ? rules.canonicalCode(rod.rubber?.compound ?? "") : "";
+      if (!before) return;
+      const asked = [patchCompound, (children ?? []).find((child) => kindOf(child) === "CP")?.code].filter((value) => String(value ?? "").trim()).map((value) => rules.canonicalCode(value));
+      if (asked.some((value) => value !== before)) throw new Error(`เปลี่ยนสูตรยางของ ${rod.code} (${before}) ที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง ตารางนี้เปลี่ยนสูตรไม่ได้`);
+    };
+    const guard = (list) => list.forEach((node) => { guardRod(node.code, node.children, node.patch?.rubber?.compound); guard(node.children ?? []); });
+    guardRod(p.code, nodes);
+    guard(nodes);
+    return { code: p.code, item: { name: p.itemName, uom: p.itemUom, kind: p.itemKind }, note: p.note, nodes };
   }
   // ---------- ฟอร์มเล็กของหน้าสินค้า → ต้นไม้ของ saveBomTree ----------
   // บรรทัดเดิมของ BOM ส่งกลับตามที่เก็บ รวม flags (ไม่มี children จึงไม่แตะ BOM ของชิ้นลูก)
@@ -313,9 +326,10 @@
       if (p.rubberEdit) return itemFromRubberEdit(p);
       // ฟอร์มข้อมูลชิ้นงานทั่วไป: สูตรยางของเส้นยางที่มีสูตรอยู่แล้วเปลี่ยนจากที่นี่ไม่ได้ (ต้องเห็นสูตรเดิม → ใหม่และยืนยันที่หน้าต่าง "ข้อมูลเส้นยาง")
       const stored = actions.helpers.itemOf(store.data(), rules.canonicalCode(p.code ?? ""));
-      const before = stored?.kind === "RB" ? rules.canonicalCode(stored.rubber?.compound ?? "") : "";
+      // สลับชนิดออกจาก/เข้าเป็นเส้นยางพร้อมเปลี่ยนสูตรก็ไม่ได้ (ไม่งั้นเปลี่ยนชนิดสองรอบคือทางอ้อม)
+      const before = stored && (stored.kind === "RB" || p.kind === "RB") ? rules.canonicalCode(stored.rubber?.compound ?? "") : "";
       const next = p.rubber?.compound === undefined ? before : rules.canonicalCode(p.rubber.compound ?? "");
-      if (before && p.kind === "RB" && next !== before) throw new Error(`เปลี่ยนสูตรยางของ ${stored.code} ที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง`);
+      if (before && next !== before) throw new Error(`เปลี่ยนสูตรยางของ ${stored.code} ที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง`);
       return { ...p, rubber: p.kind === "RB" || p.kind === "SE" ? p.rubber ?? null : null };
     },
     // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
