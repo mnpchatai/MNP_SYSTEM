@@ -5,33 +5,6 @@ import assert from "node:assert/strict";
 await import("../../modules/request-decision.js");
 const rules = globalThis.MNP_REQUEST_DECISION;
 
-// ตัวจับเวลาปลอม: เดินเวลาเองได้ ไม่ต้องรอจริง
-function fakeTimers() {
-  let now = 0;
-  let nextId = 1;
-  const tasks = new Map();
-  const add = (fn, ms, repeat) => { const id = nextId++; tasks.set(id, { fn, at: now + ms, ms, repeat }); return id; };
-  return {
-    setTimeout: (fn, ms) => add(fn, ms, false),
-    setInterval: (fn, ms) => add(fn, ms, true),
-    clearTimeout: (id) => tasks.delete(id),
-    clearInterval: (id) => tasks.delete(id),
-    advance(ms) {
-      const end = now + ms;
-      for (;;) {
-        const due = [...tasks.entries()].filter(([, task]) => task.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
-        if (!due) break;
-        const [id, task] = due;
-        now = task.at;
-        if (task.repeat) task.at += task.ms; else tasks.delete(id);
-        task.fn();
-      }
-      now = end;
-    },
-    get pendingCount() { return tasks.size; },
-  };
-}
-
 test("approve and acknowledge do not need a comment, every other decision does", () => {
   assert.equal(rules.needsComment("approved"), false);
   assert.equal(rules.needsComment("acknowledged"), false);
