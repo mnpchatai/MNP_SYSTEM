@@ -1493,7 +1493,8 @@ a.machine-history-no:hover { text-decoration: underline; }
   .request-detail-kicker-end .badge { font-size: var(--text-meta); }
   /* ใบที่มีปุ่ม ⋯: ป้าย (สถานะ + ด่วน) กับปุ่มอยู่แถวเดียวกันเสมอ แถวแน่นจริงป้ายตัดบรรทัดในป้ายแทนการดันปุ่มลงแถวใหม่
      ใบที่ไม่มีปุ่ม (NCR ที่มีหลายป้าย) ยังขึ้นแถวใหม่ได้ตามเดิม */
-  .request-detail-kicker-end:has(> .request-detail-menu) { flex-wrap: nowrap; }
+  .request-detail-kicker-end:has(> .request-detail-menu) { flex-wrap: nowrap; min-width: 0; }
+  .request-detail-kicker-end:has(> .request-detail-menu) .badge { min-width: 0; white-space: normal; }
   .request-detail-kicker-end .request-detail-menu { flex: none; }
   .request-fact { min-height: 84px; padding: 11px; grid-template-columns: 32px minmax(0, 1fr); gap: 9px; }
   .request-fact.is-action { grid-template-columns: 32px minmax(0, 1fr) auto; }

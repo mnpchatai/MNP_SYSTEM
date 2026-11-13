@@ -133,7 +133,8 @@ window.addEventListener("hashchange", (event) => {
 const DETAIL_BACK_ORIGINS = Object.freeze({ dashboard: "หน้าหลัก", notifications: "การแจ้งเตือน" });
 function detailBackLinkHtml(href, label) {
   const match = /^#\/([a-z-]*)(?:\?|$)/.exec(previousPageHash);
-  const originLabel = match ? DETAIL_BACK_ORIGINS[match[1] || homePath()] : undefined;
+  const origin = match ? match[1] || homePath() : "";
+  const originLabel = Object.hasOwn(DETAIL_BACK_ORIGINS, origin) ? DETAIL_BACK_ORIGINS[origin] : undefined;
   return originLabel
     ? `<a class="request-back-link" href="${escapeHtml(previousPageHash)}">‹ ${escapeHtml(originLabel)}</a>`
     : `<a class="request-back-link" href="${escapeHtml(href)}">‹ ${escapeHtml(label)}</a>`;
@@ -2909,10 +2910,12 @@ document.addEventListener("keydown", (event) => {
 // Ctrl+Enter (Mac: ⌘+Enter) ในฟอร์ม = กดปุ่มส่งของฟอร์มนั้น (ฟอร์มยาว เช่น จบงาน ตอบ NCR ไม่ต้องเลื่อนหาปุ่ม)
 // กดผ่าน click() จึงผ่านขั้นยืนยันและการตรวจช่องเหมือนกดเอง · ไม่ทำงานในกล่องโต้ตอบหรือระหว่างขั้นยืนยัน
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.defaultPrevented || event.isComposing) return;
-  const form = event.target instanceof Element ? event.target.closest("form") : null;
-  if (!form || form.closest("dialog") || document.querySelector("dialog[open], .attachment-lightbox, .step-confirm")) return;
-  const button = [...form.querySelectorAll("button[type=\"submit\"], button:not([type])")].find((node) => node.form === form && !node.disabled && node.offsetParent !== null);
+  if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.repeat || event.defaultPrevented || event.isComposing) return;
+  // เฉพาะตอนพิมพ์อยู่ในช่องของฟอร์ม (โฟกัสที่ปุ่มอื่น เช่น ยกเลิก ไม่ไปกดปุ่มส่ง)
+  const form = event.target instanceof Element && event.target.matches("input, textarea, select") ? event.target.closest("form") : null;
+  if (!form || form.closest("dialog") || document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden]), .step-confirm")) return;
+  // getClientRects: ปุ่มในแผงที่เป็น position: fixed (แถบล่างบนมือถือ) ไม่มี offsetParent แต่ยังมองเห็น
+  const button = [...form.querySelectorAll("button[type=\"submit\"], button:not([type])")].find((node) => node.form === form && !node.disabled && node.getClientRects().length > 0);
   if (!button) return;
   event.preventDefault();
   button.click();

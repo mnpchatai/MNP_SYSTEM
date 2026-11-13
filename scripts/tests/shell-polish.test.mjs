@@ -567,14 +567,18 @@ test("round 26c: detail back link returns to Home or notifications, Ctrl+Enter s
   assert.ok(app.indexOf("previousPageHash = new URL(event.oldURL).hash") < app.indexOf("window.addEventListener(\"hashchange\", navigateRoute)"), "the origin is recorded before the router draws the page");
   assert.match(read("modules/module-ncr.js"), /detailBackLinkHtml\("#\/ncr", "NCR\/CAR"\)/);
   // Ctrl/⌘+Enter
-  assert.match(app, /if \(event\.key !== "Enter" \|\| !\(event\.ctrlKey \|\| event\.metaKey\) \|\| event\.altKey \|\| event\.shiftKey \|\| event\.defaultPrevented \|\| event\.isComposing\) return;/);
-  assert.match(app, /if \(!form \|\| form\.closest\("dialog"\) \|\| document\.querySelector\("dialog\[open\], \.attachment-lightbox, \.step-confirm"\)\) return;/);
+  assert.match(app, /if \(event\.key !== "Enter" \|\| !\(event\.ctrlKey \|\| event\.metaKey\) \|\| event\.altKey \|\| event\.shiftKey \|\| event\.repeat \|\| event\.defaultPrevented \|\| event\.isComposing\) return;/, "a held key does not submit twice");
+  assert.match(app, /event\.target\.matches\("input, textarea, select"\) \? event\.target\.closest\("form"\) : null;/, "only while typing in a field");
+  assert.match(app, /if \(!form \|\| form\.closest\("dialog"\) \|\| document\.querySelector\("dialog\[open\], \.attachment-lightbox, \[data-popup\]:not\(\[hidden\]\), \.step-confirm"\)\) return;/);
+  assert.match(app, /node\.form === form && !node\.disabled && node\.getClientRects\(\)\.length > 0\);/, "buttons in a fixed bottom bar count as visible");
+  assert.equal(link("#/constructor"), `<a class="request-back-link" href="#/requests?type=t1">‹ ใบแจ้งซ่อม MT</a>`, "only the listed origins, not inherited object keys");
+  assert.match(css, /\.request-detail-kicker-end:has\(> \.request-detail-menu\) \.badge \{ min-width: 0; white-space: normal; \}/, "a long badge wraps inside itself instead of overflowing");
   assert.match(read("modules/shortcut-help.js"), /keys: \["Ctrl", "Enter"\]/);
   // ช่วยเหลือ NCR ตามผู้ดู
   assert.match(app, /document\.querySelector\("\.ncr-actions"\) \? "ncr" : "ncr-viewer"/);
   assert.match(read("modules/shortcut-help.js"), /"ncr-viewer": Object\.freeze\(\[\s+"ใบนี้ยังไม่มีงานของคุณ/);
   // หัวใบบนมือถือ · แถบปิดของกล่องช่วยเหลือ · ลูกศรเรียงบอกเฉพาะลำดับที่ข้อมูลเรียงจริง
-  assert.match(css, /\.request-detail-kicker-end:has\(> \.request-detail-menu\) \{ flex-wrap: nowrap; \}/, "two badges never push the ⋯ button to its own row");
+  assert.match(css, /\.request-detail-kicker-end:has\(> \.request-detail-menu\) \{ flex-wrap: nowrap; min-width: 0; \}/, "two badges never push the ⋯ button to its own row");
   assert.match(css, /\.request-detail-kicker-end \.request-detail-menu \{ flex: none; \}/);
   assert.match(css, /\.shortcut-dialog form \{ max-height: min\(80vh, 720px\); overflow-y: auto; padding-bottom: 0; \}/);
   assert.match(app, /\{ key: "updated", label: "อัปเดตล่าสุด" \},/, "the board is ordered by submit date, so this column claims no order");

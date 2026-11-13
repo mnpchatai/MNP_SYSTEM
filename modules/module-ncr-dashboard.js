@@ -191,7 +191,8 @@
 
   // เลยกำหนด รอแนวทางป้องกัน และต้นทุนที่ยังไม่ครบ อยู่บนการ์ดตัวเลขแล้ว บรรทัดนี้เหลือเฉพาะสิ่งที่การ์ดไม่ได้บอก
   function summaryHtml(sums) {
-    if (!sums.total) return "ไม่มี NCR ตรงกับตัวกรองนี้";
+    // ช่วงที่ไม่มีใบออกอาจยังมีใบค้างจากช่วงก่อน (การ์ดค้างอยู่นับทุกช่วง) จึงบอกว่าไม่มีใบ "ที่ออกในช่วงนี้"
+    if (!sums.total) return sums.basis === "backlog" ? "ไม่มี NCR ค้างตรงกับตัวกรองนี้" : "ไม่มี NCR ที่ออกในช่วงนี้ตรงกับตัวกรอง";
     return "";
   }
 
@@ -382,7 +383,7 @@
       return row && { title: key ? `แผนก ${key}` : "ยังไม่กำหนดแผนก", lines: [["ใบที่เกี่ยวข้อง", fmtCount(row.count)], ["ค้างอยู่", fmtCount(row.open)], ["เลยกำหนดตอบ", fmtCount(row.overdue)], ["รอส่งแนวทางป้องกัน", fmtCount(row.preventionPending)], ["เลยกำหนดส่งแนวทางป้องกัน", fmtCount(row.preventionOverdue)], ["ตอบทันกำหนด", fmtPercent(row.onTimeRate)], ["สูญเสียสุทธิที่แบ่งตามสัดส่วนแผนก", fmtBaht(row.net)]], href: key ? hrefWith(filters, { dept: filters.dept === key ? "" : key }) : null, linkLabel: filters.dept === key ? "ยกเลิกการกรอง" : undefined };
     };
     const detailRow = (key) => { const detail = detailUnder("dept", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="7">${detail}</td></tr>` : ""; };
-    return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน ยอดรวมทุกแผนกอยู่ในการ์ดตัวเลขด้านบน</p></div>
+    return `<div class="nd-head"><h2>ใคร / แผนกไหน</h2><p>จำนวนใบนับเต็มใบ ใบที่มีหลายแผนกจึงอยู่ในหลายแถวและห้ามบวกข้ามแถว ส่วนบาทแบ่งตามสัดส่วน ตารางนี้นับจากใบที่ออกในช่วงที่เลือก (ใบค้างของทุกช่วงอยู่ในการ์ดค้างอยู่)</p></div>
       ${deptRows.length ? `<div class="table-wrap" tabindex="0" role="region" aria-label="ตารางแผนกที่รับผิดชอบ"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบที่เกี่ยวข้อง</th><th class="nd-num">ค้าง</th><th class="nd-num">เลยกำหนด</th><th class="nd-num">รอป้องกัน</th><th class="nd-num">ตอบทัน</th><th class="nd-num">สุทธิ (บาท)</th></tr></thead><tbody>
       ${deptRows.map((row) => `<tr><td>${selectButton("dept", row.dept, esc(row.dept || "ยังไม่กำหนดแผนก"), "nd-rowbtn")}</td><td class="nd-num">${fmtNumber(row.count)}</td><td class="nd-num">${fmtNumber(row.open)}</td><td class="nd-num">${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>${row.overdue}</span>` : "0"}</td><td class="nd-num">${row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true"></span>${row.preventionPending}</span>` : fmtNumber(row.preventionPending)}</td><td class="nd-num">${fmtPercent(row.onTimeRate)}</td><td class="nd-num">${fmtNumber(row.net)}</td></tr>${detailRow(row.dept)}`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีข้อมูลในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("dept", "ชื่อแผนก", resolve)}`;
@@ -446,7 +447,7 @@
         <div class="ncr-heading-status"><a class="btn secondary" href="${hrefWith(filters, {})}&refresh=1" title="ดึงข้อมูลล่าสุด">รีเฟรช</a></div></div>
       <div class="nd" data-module="ncr">
         <div class="nd-controls">${controlsHtml(filters, rows, today)}</div>
-        <div class="nd-summary" role="status">${summaryHtml(drill.basis === "backlog" ? { total: drill.list.length } : sums)}</div>
+        <div class="nd-summary" role="status">${summaryHtml(drill.basis === "backlog" ? { total: drill.list.length, basis: "backlog" } : sums)}</div>
         <div class="nd-tiles" data-card="tiles">${tilesHtml(filters, sums, back)}</div>
         ${showAct ? `<section class="card nd-card" data-card="act">${actHtml(open, actTop, today)}</section>` : ""}
         <section class="card nd-card" data-card="trend">${trendHtml(rows, filters, today)}</section>
