@@ -1323,11 +1323,18 @@ function requestRows(requests, { showRequester = false, showType = false, direct
         requester: escapeHtml(requesterLabel(request, directory)),
         created: formatDate(request.created_at, true),
         // ความสำคัญปกติไม่ต้องมีป้าย ป้ายจึงหมายถึง "ไม่ปกติ" เสมอ
-        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type), isFinalDecision(type, request.status))}${["assigned", "in_progress"].includes(request.status) && request.work_expected_date && request.work_expected_date < bangkokToday() ? `<span class="badge urgent-flag" title="กำหนดเสร็จ ${escapeHtml(formatDate(request.work_expected_date))}">เลยกำหนดเสร็จ</span>` : ""}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
+        status: `<span class="register-badges">${pendingStepBadge(request, (request.approval_steps ?? []).find((step) => step.status === "pending" && step.step_order === request.current_step), isRepairType(type), isFinalDecision(type, request.status))}${overdueFinishBadge(request)}${["high", "urgent"].includes(request.priority) ? `<span class="badge urgent-flag">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : request.priority && request.priority !== "normal" ? `<span class="request-priority-chip priority-${escapeHtml(request.priority)}">${escapeHtml(priorityLabel(request.priority, isRepairType(type)))}</span>` : ""}</span>${owners.length ? registerSubHtml(owners.join(", "), `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${owners.join(", ")}`) : ""}`,
       },
     };
   });
   return registerTableHtml({ label: "รายการคำร้อง", columns, rows });
+}
+
+// ป้าย "เลยกำหนดเสร็จ" ของใบแจ้งซ่อมที่รอเริ่มงาน/กำลังซ่อมแล้วเลยวันที่กำหนด ใช้ทั้งรายการของโมดูลและกระดานสถานะ
+// (กระดานได้ work_expected_date จาก migration 20261118010000 ฐานข้อมูลเดิมไม่มีคอลัมน์นี้ ป้ายจึงแค่ไม่ขึ้น)
+function overdueFinishBadge(request) {
+  if (!["assigned", "in_progress"].includes(request.status) || !request.work_expected_date || request.work_expected_date >= bangkokToday()) return "";
+  return `<span class="badge urgent-flag" title="กำหนดเสร็จ ${escapeHtml(formatDate(request.work_expected_date))}">เลยกำหนดเสร็จ</span>`;
 }
 
 /* กระดานติดตามสถานะที่ "ทุกคน" เห็นได้ — ข้อมูลมาจาก RPC app_request_status_board ซึ่งคืนเฉพาะ
@@ -1361,7 +1368,7 @@ function statusBoardRows(rows, { showType = false, params = null, filtered = fal
           department: escapeHtml(row.department_name ?? row.department_code ?? ""),
           requester: escapeHtml(row.requester_name ?? ""),
           updated: formatDate(row.last_changed_at ?? row.submitted_at, true),
-          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow), isFinalDecision({ code: row.type_code }, row.status))}${row.is_urgent ? `<span class="badge urgent-flag">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
+          status: `<span class="register-badges">${statusBadge(row.status, Boolean(row.uses_repair_workflow), isFinalDecision({ code: row.type_code }, row.status))}${overdueFinishBadge(row)}${row.is_urgent ? `<span class="badge urgent-flag">ด่วน</span>` : ""}</span>${row.waiting_on ? registerSubHtml(`รอ${row.waiting_on}`) : ""}`,
         },
       };
     }),

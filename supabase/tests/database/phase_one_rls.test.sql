@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(19);
 
 select ok(
   (select relrowsecurity from pg_class where oid = 'public.requests'::regclass),
@@ -43,6 +43,14 @@ select ok(
   has_function_privilege('authenticated', 'public.app_request_status_board(text, text, integer)', 'EXECUTE'),
   'authenticated users can read the request status board'
 );
+select ok(
+  not has_function_privilege('public', 'public.app_request_status_board(text, text, integer)', 'EXECUTE'),
+  'the status board is not executable by PUBLIC after it is recreated'
+);
+select ok(
+  has_function_privilege('service_role', 'public.app_request_status_board(text, text, integer)', 'EXECUTE'),
+  'service_role keeps its grant on the recreated status board'
+);
 
 insert into auth.users (id, email, raw_user_meta_data)
 values ('70000000-0000-0000-0000-000000000001', 'rls-employee@mnp.local', '{}'::jsonb);
@@ -51,14 +59,14 @@ set auth_user_id = '70000000-0000-0000-0000-000000000001'
 where id = '50000000-0000-0000-0000-000000000003';
 
 insert into public.requests
-  (id, request_type_id, requester_id, department_id, title, description, last_changed_by)
+  (id, request_type_id, requester_id, department_id, title, description, last_changed_by, work_expected_date)
 values
   ('60000000-0000-0000-0000-000000000099',
    '40000000-0000-0000-0000-000000000002',
    '50000000-0000-0000-0000-000000000002',
    '10000000-0000-0000-0000-000000000007',
    'Outsider request', 'Must not be accessible to the employee',
-   '50000000-0000-0000-0000-000000000002');
+   '50000000-0000-0000-0000-000000000002', date '2026-01-02');
 
 set local role authenticated;
 select set_config(
@@ -106,6 +114,14 @@ select results_eq(
      where id = '60000000-0000-0000-0000-000000000099' $$,
   array[false],
   'status board marks an inaccessible request as not openable'
+);
+
+-- กำหนดเสร็จเป็นข้อมูลระดับติดตามสถานะ กระดานจึงคืนให้แม้ใบที่เปิดดูเต็มไม่ได้ (ป้าย เลยกำหนดเสร็จ)
+select results_eq(
+  $$ select work_expected_date from public.app_request_status_board()
+     where id = '60000000-0000-0000-0000-000000000099' $$,
+  array[date '2026-01-02'],
+  'status board returns the expected finish date'
 );
 
 select ok(

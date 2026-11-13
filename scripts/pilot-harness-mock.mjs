@@ -2346,7 +2346,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
           return {
             id: row.id, request_no: row.request_no, status: row.status, subject: row.title, type_code: type.code, type_name_th: type.name_th,
             uses_repair_workflow: type.uses_repair_workflow, department_code: department?.code ?? null, department_name: department?.name_th ?? null,
-            is_urgent: row.is_urgent, requester_name: row.requester_name, submitted_at: row.submitted_at, last_changed_at: row.updated_at,
+            is_urgent: row.is_urgent, requester_name: row.requester_name, submitted_at: row.submitted_at, last_changed_at: row.updated_at, work_expected_date: row.work_expected_date ?? null,
             waiting_on: waiting ? `${waiting.step_name} (${personName(waiting.approver_employee_id)})` : null, can_open: true,
           };
         });

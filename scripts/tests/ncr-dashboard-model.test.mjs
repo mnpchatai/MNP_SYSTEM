@@ -26,26 +26,33 @@ test("cancelled reports and voided costs never reach the dashboard", () => {
   assert.equal(rows[0].fin.confirmed, 100);
 });
 
-test("response clock starts when the report reaches the department, and awaiting disposition has no clock", () => {
+test("the response is due on response_due (issue date + 5 days), also while the factory manager is still deciding", () => {
   const { rows } = run([
-    report({ id: "late", sla_started_on: "2026-09-28" }),                                      // due 2026-10-03 -> overdue
-    report({ id: "edge", sla_started_on: "2026-10-01" }),                                      // due 2026-10-06 -> not overdue today
+    report({ id: "late", response_due: "2026-10-03" }),                                       // overdue
+    report({ id: "edge", response_due: "2026-10-06" }),                                       // due today -> not overdue yet
     report({ id: "wait", status: "awaiting_disposition", issue_date: "2026-09-01", sla_started_on: null, response_due: "2026-09-06" }),
+    report({ id: "reached-late", sla_started_on: "2026-10-05", response_due: "2026-09-30" }),  // reaching the department later does not move the date
+    report({ id: "answered", status: "awaiting_followup", response_due: "2026-09-30", respondedDate: "2026-10-02" }),
   ]);
   const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
   assert.equal(byId.late.overdue, true);
   assert.equal(byId.edge.overdue, false);
-  assert.equal(byId.wait.overdue, false);
-  assert.equal(byId.wait.slaDue, null);
+  assert.equal(byId.wait.overdue, true, "same rule as the NCR list: late from the issue date");
+  assert.equal(byId.wait.slaDue, "2026-09-06");
+  assert.equal(byId["reached-late"].overdue, true);
+  assert.equal(byId.answered.overdue, false, "an answered report is never overdue");
+  assert.equal(byId.answered.onTime, false, "answered after response_due");
+  // the NCR list counts the same way (module-ncr.js)
+  assert.match(readFileSync(new URL("../../modules/module-ncr.js", import.meta.url), "utf8"), /const RESPONSE_PENDING_STATUSES = \["awaiting_disposition", "awaiting_response"\];\r?\n  const isOverdue = \(ncr\) => RESPONSE_PENDING_STATUSES\.includes\(ncr\.status\) && Boolean\(ncr\.response_due\) && ncr\.response_due < todayBangkok\(\);/);
   assert.equal(model.addDays("2026-10-01", model.SLA_DAYS), "2026-10-06");
 });
 
 test("on-time rate counts unanswered overdue reports as late and ignores a stale response after a return", () => {
   const { rows, f, list } = run([
-    report({ id: "ok", status: "awaiting_followup", sla_started_on: "2026-09-20", respondedDate: "2026-09-24" }),
-    report({ id: "late-answer", status: "closed", sla_started_on: "2026-09-20", respondedDate: "2026-09-30" }),
-    report({ id: "still-late", sla_started_on: "2026-09-20" }),
-    report({ id: "returned", sla_started_on: "2026-10-05", respondedDate: "2026-09-24" }),   // back at awaiting_response, not overdue
+    report({ id: "ok", status: "awaiting_followup", response_due: "2026-09-25", respondedDate: "2026-09-24" }),
+    report({ id: "late-answer", status: "closed", response_due: "2026-09-25", respondedDate: "2026-09-30" }),
+    report({ id: "still-late", response_due: "2026-09-25" }),
+    report({ id: "returned", response_due: "2026-10-10", respondedDate: "2026-09-24" }),   // returned: response_due reset to today + 5, not overdue
   ]);
   const s = model.summarize(list, f);
   assert.equal(s.responded, 2); assert.equal(s.onTime, 1); assert.equal(s.overdue, 1);
@@ -140,7 +147,7 @@ test("scrap per unit counts only confirmed scrap loss rows and never merges unit
 test("priority lists overdue first, then the longest wait; closed reports are never listed", () => {
   const { list } = run([
     report({ id: "slow", status: "awaiting_signoff", last_change_on: "2026-08-01" }),
-    report({ id: "overdue", sla_started_on: "2026-09-25" }),
+    report({ id: "overdue", response_due: "2026-09-30" }),
     report({ id: "closed", status: "closed", last_change_on: "2026-01-01" }),
     report({ id: "fresh", status: "awaiting_followup", last_change_on: "2026-10-05" }),
   ]);
@@ -152,7 +159,7 @@ test("prevention follows the 5-day response: waiting only during QA follow-up, l
     report({ id: "waiting", status: "awaiting_followup", respondedDate: "2026-10-03", prevention: null, prevention_due: "2026-10-13", responsibilities: [{ dept: "RB", share: 1 }] }),
     report({ id: "late", status: "awaiting_followup", respondedDate: "2026-09-20", prevention: null, prevention_due: "2026-10-05", last_change_on: "2026-09-20", responsibilities: [{ dept: "GR", share: 1 }] }),
     report({ id: "sent", status: "awaiting_followup", respondedDate: "2026-09-20", prevention: "ทำ PM ทุกเดือน", prevention_due: "2026-10-01" }),
-    report({ id: "returned", status: "awaiting_response", sla_started_on: "2026-10-05", prevention: null, prevention_due: "2026-09-30" }),
+    report({ id: "returned", status: "awaiting_response", response_due: "2026-10-10", prevention: null, prevention_due: "2026-09-30" }),
     report({ id: "signoff", status: "awaiting_signoff", prevention: "ทำ PM ทุกเดือน", prevention_due: "2026-09-01", last_change_on: "2026-08-01" }),
   ]);
   const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
