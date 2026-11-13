@@ -114,7 +114,8 @@ test("every bottom bar on phones has one layout: full-width buttons, the primary
 
 test("the NCR detail keeps all of the viewer's work in one action card and names the responder and the due date once", () => {
   const ncr = read("modules/module-ncr.js");
-  assert.match(ncr, /const work = \[\.\.\.forms, responderSection, \.\.\.\(lossesInWork \? \[lossesSection\] : \[\]\)\]\.filter\(Boolean\);/);
+  // รอบรวม 25: งานที่ป้ายหัวใบบอกว่ารอ (ความสูญเสีย) มาก่อนผู้ตอบของแผนกที่ไม่บังคับ
+  assert.match(ncr, /const work = \[\.\.\.forms, \.\.\.\(lossesInWork \? \[lossesSection\] : \[\]\), responderSection\]\.filter\(Boolean\);/);
   assert.match(ncr, /\.\.\.\(lossesInWork \? \[\] : \[lossesSection\]\),/, "the loss card is not shown twice");
   // รอบรวม 20: บรรทัดนี้อยู่ในหัวใบใต้บรรทัดผู้รายงาน
   assert.match(ncr, /\$\{work\.length \|\| !waiting \? "" : `<p class="ncr-waiting">ขั้นตอนนี้รอ:/, "no 'ขั้นตอนนี้รอ' line when the viewer has work");

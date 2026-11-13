@@ -58,7 +58,8 @@ test("J/K walks every visible queue row: approval rows select, task rows only ta
 });
 
 test("the selected row shows one focus ring, not two, and keeps the button's outline (visible in forced colours)", () => {
-  assert.match(css, /\.queue-item\.is-selected:has\(\.queue-item-main:focus-visible\) \{ box-shadow: none; \}/);
+  // รอบรวม 25: ใบที่เปิดอยู่เป็นแถบซ้าย ใบที่โฟกัสเป็นวงรอบ ไม่หน้าตาเหมือนกัน
+  assert.match(css, /\.queue-item\.is-selected \{ border-color: var\(--primary\); box-shadow: inset 5px 0 0 var\(--primary\); \}/);
   assert.doesNotMatch(css, /\.queue-item\.is-selected \.queue-item-main:focus-visible \{ outline: none; \}/);
 });
 
@@ -395,7 +396,7 @@ test("round 24 (gaps to a 4): plain-language errors, step position, offline noti
   assert.match(app, /const NOTIFICATION_TYPE_BY_PREFIX = Object\.freeze\(\{ MT: "MT_REPAIR", MG: "MANAGEMENT", IT: "IT_REPAIR" \}\);/);
   assert.match(app, /id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร<\/small>/);
   // H3/H5: ข้อความที่พิมพ์ค้างถามก่อนออก (ฟอร์มขั้น NCR มีร่างในเครื่องจึงไม่อยู่ในรายการ)
-  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #verify-note';/);
+  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #verify-note, #expected-date-note, #ncr-review-note, #ncr-loss-note, form\.ncr-action:not\(\[data-action="respond"\], \[data-action="submit_prevention"\], \[data-action="answer_info"\]\) textarea';/, "NCR manager notes and the MT due-date reason are covered too; NCR step forms keep drafts");
   assert.match(app, /if \(panel && panel\.dataset\.state !== "compose"\) return false;/);
 });
 
@@ -497,4 +498,13 @@ test("round 25: hint hides behind its error, min-length counter, save-and-leave 
   assert.match(mt, /document\.querySelector\("#finish-save-button"\)\?\.addEventListener\("click", \(\) => saveForLater\(\)\);/);
   // ทะเบียน NCR ไม่บอกบทบาทซ้ำกับป้ายสถานะ
   assert.match(read("modules/module-ncr.js"), /const party = roleAndNames && \(STATUS_LABELS\[ncr\.status\] \?\? ""\)\.includes\(roleAndNames\[1\]\) \? roleAndNames\[2\] : waiting\.party;/);
+});
+
+test("round 25 (second pass): register rows open from the whole row on every screen, J/K walk register rows, selected vs focused queue card", () => {
+  assert.match(css, /\.register-table tbody tr:has\(a\.register-title\) \{ position: relative; cursor: pointer; \}/);
+  assert.match(css, /\.register-table tbody a\.register-title::after \{ content: ""; position: absolute; inset: 0; \}/);
+  assert.match(app, /const links = \[\.\.\.document\.querySelectorAll\("\.register-table a\.register-title"\)\];/);
+  assert.match(app, /if \(event\.ctrlKey \|\| event\.metaKey \|\| event\.altKey \|\| event\.defaultPrevented \|\| document\.querySelector\("#home-queue \.queue-list, #decision-panel"\)\) return;/, "the queue and detail pages keep their own J/K/A/R");
+  assert.match(read("modules/shortcut-help.js"), /เลื่อนไปใบถัดไป \/ ก่อนหน้า ในหน้าหลักและในรายการ \(Enter เปิดใบ\)/);
+  assert.doesNotMatch(css, /\.queue-item\.is-selected:has\(\.queue-item-main:focus-visible\)/);
 });

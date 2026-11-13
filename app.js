@@ -1206,7 +1206,7 @@ document.addEventListener("input", (event) => {
   if (field) syncMinLengthHint(field);
 });
 
-const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #verify-note';
+const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #verify-note, #expected-date-note, #ncr-review-note, #ncr-loss-note, form.ncr-action:not([data-action="respond"], [data-action="submit_prevention"], [data-action="answer_info"]) textarea';
 function unsavedTextCount() {
   return [...document.querySelectorAll(UNSAVED_TEXT_SELECTOR)].filter((field) => {
     if (field.disabled || field.readOnly || field.closest("[hidden], [aria-busy]")) return false;
@@ -2863,6 +2863,24 @@ function syncQueueBulk() {
   if (panel) panel.hidden = count > 0 && panel.dataset.state === "idle";
   trackActionBarHeight();
 }
+
+// J/K ในทะเบียน: เลื่อนโฟกัสไปลิงก์หัวเรื่องของแถวถัดไป/ก่อนหน้า Enter เปิดใบ (หน้าหลักและหน้ารายละเอียดใช้ตัวจัดการของคิวด้านล่าง)
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || document.querySelector("#home-queue .queue-list, #decision-panel")) return;
+  const listKey = /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : ({ KeyJ: "j", KeyK: "k" }[event.code] ?? "");
+  if (listKey !== "j" && listKey !== "k") return;
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+  if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
+  const links = [...document.querySelectorAll(".register-table a.register-title")];
+  if (!links.length) return;
+  const current = links.indexOf(document.activeElement?.closest?.("tr")?.querySelector("a.register-title"));
+  const step = listKey === "j" ? 1 : -1;
+  const next = links[current < 0 ? (step > 0 ? 0 : links.length - 1) : Math.min(links.length - 1, Math.max(0, current + step))];
+  event.preventDefault();
+  next.focus();
+  next.scrollIntoView({ block: "nearest" });
+});
 
 // คีย์ลัดของคิว (จอที่มีคีย์บอร์ด): J/K เลื่อน, A อนุมัติ, R ไม่อนุมัติ — A/R เปิดขั้นยืนยันในแถบ ไม่ส่งทันที
 // A/R ใช้ได้ทั้งในคิวหน้าหลักและหน้ารายละเอียดคำร้อง (#/request) ที่มีแถบตัดสินใจ; J/K เฉพาะคิว

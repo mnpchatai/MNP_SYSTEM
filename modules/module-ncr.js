@@ -956,7 +956,8 @@
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
     const lossesInWork = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
     const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, lossAccess(ncr, employee), lossesInWork);
-    const work = [...forms, responderSection, ...(lossesInWork ? [lossesSection] : [])].filter(Boolean);
+    // งานที่บังคับ (ฟอร์มของขั้น ความสูญเสียที่ป้ายหัวใบบอกว่ารอ) มาก่อนผู้ตอบของแผนกที่ไม่บังคับ
+    const work = [...forms, ...(lossesInWork ? [lossesSection] : []), responderSection].filter(Boolean);
     // ฟอร์มตอบบอกเหลือ/เลยกำหนดกี่วันแล้ว ส่วนที่ 2 จึงไม่บอกวันกำหนดตอบซ้ำ (ไม่แสดงวันที่คู่กับอายุที่คำนวณจากวันนั้น)
     const dueInForm = forms.some((html) => html.includes('data-action="respond"'));
     // มีงานในการ์ด (ตอบ พิจารณา ระบุผู้ตอบ หรือกรอกความสูญเสีย): ผู้กรอกอ่านรายละเอียดที่พบได้ในการ์ดงานทันที (ส่วนที่ 1 จึงไม่บอกซ้ำ)
