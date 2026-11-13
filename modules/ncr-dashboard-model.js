@@ -5,8 +5,9 @@
 // - One time basis: an NCR belongs to the period of its issue date, and its money is the lifetime total of that NCR.
 // - NCR counts are whole reports. A report with several departments or causes is counted in every group, so
 //   groups overlap and must not be summed. Only money is split by the department share.
-// - The 5-day response clock starts when the NCR reaches the responsible department (sla_started_on, taken from
-//   ncr_status_history by the loader), not at the issue date. Reports still awaiting disposition have no clock.
+// - The 5-day response is due on response_due: the issue date + 5 days, reset to today + 5 when QA returns the
+//   response. It is the same date the NCR list and form show, so a report can be late while the factory manager is
+//   still deciding the disposition (user decision 2026-11-13; it used to start when the report reached the department).
 // - The 5-day response needs only the cause and the correction. The prevention plan follows later, due
 //   prevention_due (response due + 7 days); while it is missing during QA follow-up the report is "waiting for
 //   prevention" and is late after prevention_due. This is tracked apart from the 5-day response SLA.
@@ -23,6 +24,8 @@
   const DISPOSITION_STATUS = "awaiting_disposition";
   const RESPONSE_STATUS = "awaiting_response";
   const FOLLOWUP_STATUS = "awaiting_followup";
+  // Same statuses as isOverdue in module-ncr.js: the response is owed from the issue date, before and after disposition.
+  const RESPONSE_PENDING_STATUSES = [DISPOSITION_STATUS, RESPONSE_STATUS];
   const OPEN_STATUSES = ["awaiting_disposition", "awaiting_response", "awaiting_followup", "awaiting_signoff", "awaiting_info"];
 
   const dayNumber = (iso) => Date.parse(`${iso}T00:00:00Z`) / 86400000;
@@ -31,7 +34,8 @@
   const rate = (part, whole) => (whole ? part / whole : null);
 
   // reports: rows as loaded by the dashboard (see module-ncr-dashboard.js) plus optional
-  //   sla_started_on (date the report last entered awaiting_response) and last_change_on (date of last status change).
+  //   sla_started_on (date the report last entered awaiting_response, used only for "waiting since") and
+  //   last_change_on (date of last status change).
   function deriveRows(reports, today) {
     return reports.filter((report) => report.status !== "cancelled").map((report) => {
       const losses = (report.losses ?? []).filter((loss) => !loss.voided_at);
@@ -39,11 +43,11 @@
       const status = report.status;
       const isOpen = OPEN_STATUSES.includes(status);
       const awaitingResponse = status === RESPONSE_STATUS;
-      const clockRuns = status !== DISPOSITION_STATUS;
-      const slaDue = clockRuns ? (report.sla_started_on ? addDays(report.sla_started_on, SLA_DAYS) : report.response_due ?? null) : null;
-      const overdue = awaitingResponse && Boolean(slaDue) && today > slaDue;
+      const pastDisposition = status !== DISPOSITION_STATUS;
+      const slaDue = report.response_due ?? null;
+      const overdue = RESPONSE_PENDING_STATUSES.includes(status) && Boolean(slaDue) && today > slaDue;
       // A response only counts while it is current: a report sent back to awaiting_response is not "responded".
-      const hasResponse = Boolean(report.respondedDate) && clockRuns && !awaitingResponse;
+      const hasResponse = Boolean(report.respondedDate) && pastDisposition && !awaitingResponse;
       // QA can still return the response, but cannot close it until the department sends the prevention plan.
       const preventionPending = status === FOLLOWUP_STATUS && !report.prevention;
       const preventionOverdue = preventionPending && Boolean(report.prevention_due) && today > report.prevention_due;

@@ -34,6 +34,9 @@
   const CAUSES = { man: "บุคลากร", machine: "เครื่องจักร", material: "วัตถุดิบ", method: "วิธีการ", measure: "การวัด", environment: "สิ่งแวดล้อม", other: "อื่น ๆ" };
   const LOSS_TYPES = { scrap: "ของเสีย/ทิ้ง", material: "ต้นทุนวัตถุดิบ", repair: "ค่าซ่อม (Repair)", rework: "ค่าแก้ไขงาน (Rework)", sort: "ค่าแรงคัดแยก", reproduce: "ผลิตทดแทน", logistics: "ขนส่ง/ส่งคืน", claim: "เคลม/ส่วนลดลูกค้า", downtime: "เครื่องหยุด/รอ", other: "อื่น ๆ" };
   const OTHER_LOSS_NOTE_MIN = 5;
+  // เหตุผลที่ยกเลิกรายการความสูญเสีย: ตรงกับ app_ncr_void_loss (3–500) · ยกเลิกทั้งใบ (app_ncr_cancel) ต้อง 5 ตัวอักษร ตาม INVALID_REASON
+  const VOID_REASON_MIN = 3;
+  const VOID_REASON_MAX = 500;
   // รอข้อมูลเพิ่มเติมใช้ป้าย "?" แบบเดียวกับ "ขอข้อมูลเพิ่ม" ของคำร้อง ไม่ใช่นาฬิกา
   const STATUS_BADGE_CLASS = { closed: "completed", cancelled: "cancelled", awaiting_info: "more_info" };
 
@@ -1150,8 +1153,13 @@
     }));
 
     document.querySelectorAll("[data-void-loss]").forEach((button) => button.addEventListener("click", async () => {
-      const reason = window.prompt("เหตุผลที่ยกเลิกรายการนี้");
+      const reason = window.prompt(`เหตุผลที่ยกเลิกรายการนี้ (อย่างน้อย ${VOID_REASON_MIN} ตัวอักษร)`);
       if (reason === null) return;
+      // app_ncr_void_loss รับ 3–500 ตัวอักษร (ต่างจากยกเลิกทั้งใบ 5 ตัวอักษร) ตรวจก่อนส่ง ข้อความ INVALID_REASON จึงไม่บอกเลขผิด
+      if (reason.trim().length < VOID_REASON_MIN || reason.trim().length > VOID_REASON_MAX) {
+        showToast(`เหตุผลที่ยกเลิกรายการต้องมี ${VOID_REASON_MIN}–${VOID_REASON_MAX} ตัวอักษร`, "error");
+        return;
+      }
       button.disabled = true;
       const { error } = await sb.rpc("app_ncr_void_loss", { p_loss_id: button.dataset.voidLoss, p_reason: reason.trim() });
       if (error) {

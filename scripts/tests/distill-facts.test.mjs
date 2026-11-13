@@ -395,7 +395,16 @@ test("batch 19: one search across list fields, NCR responders read the problem i
   // ทุกงานในการ์ด (ตอบ พิจารณา ระบุผู้ตอบ ความสูญเสีย) เปิดด้วยรายละเอียดที่พบ
   assert.match(ncr, /const briefInAction = Boolean\(String\(ncr\.description \?\? ""\)\.trim\(\)\) && work\.length > 0;/);
   // รายการ MT บอกใบที่เลยกำหนดเสร็จ (ใบในมือช่างเท่านั้น)
-  assert.match(app, /\["assigned", "in_progress"\]\.includes\(request\.status\) && request\.work_expected_date && request\.work_expected_date < bangkokToday\(\) \? `<span class="badge urgent-flag" title="กำหนดเสร็จ/);
+  // รอบ 21: ป้ายเดียวกันเป็นฟังก์ชันเดียว ใช้ทั้งรายการของโมดูลและกระดานสถานะ (กระดานได้ work_expected_date จาก migration)
+  const overdue = (() => { const start = app.indexOf("function overdueFinishBadge("); return app.slice(start, app.indexOf("\n}", start) + 2); })();
+  assert.match(overdue, /if \(!\["assigned", "in_progress"\]\.includes\(request\.status\) \|\| !request\.work_expected_date \|\| request\.work_expected_date >= bangkokToday\(\)\) return "";/);
+  assert.match(overdue, /<span class="badge urgent-flag" title="กำหนดเสร็จ \$\{escapeHtml\(formatDate\(request\.work_expected_date\)\)\}">เลยกำหนดเสร็จ<\/span>/);
+  assert.equal((app.match(/\$\{overdueFinishBadge\((request|row)\)\}/g) ?? []).length, 2, "the module list and the status board");
+  assert.match(app, /isFinalDecision\(\{ code: row\.type_code \}, row\.status\)\)\}\$\{overdueFinishBadge\(row\)\}/);
+  assert.match(read("supabase/migrations/20261118010000_request_status_board_expected_date.sql"), /can_open boolean,\r?\n\s+work_expected_date date\r?\n\)/);
+  // รอบ 21: ยกเลิกรายการความสูญเสียรับเหตุผล 3–500 ตัวอักษรตามฐานข้อมูล (ข้อความ INVALID_REASON "5" เป็นของยกเลิกทั้งใบ)
+  assert.match(ncr, /const VOID_REASON_MIN = 3;\r?\n\s+const VOID_REASON_MAX = 500;/);
+  assert.match(ncr, /if \(reason\.trim\(\)\.length < VOID_REASON_MIN \|\| reason\.trim\(\)\.length > VOID_REASON_MAX\) \{\r?\n\s+showToast\(`เหตุผลที่ยกเลิกรายการต้องมี \$\{VOID_REASON_MIN\}–\$\{VOID_REASON_MAX\} ตัวอักษร`, "error"\);\r?\n\s+return;/);
   assert.match(app, /needed_date,work_expected_date,machine_code/);
   assert.match(ncr, /\$\{briefInAction \? "" : partField\("รายละเอียด \(ปัญหา สเปค และค่าที่วัดได้จริง\)"/);
   assert.match(ncr, /<h3>ส่วนที่ 3 — ตอบ NCR<\/h3>\r?\n\s+\$\{responseDueNote\(ncr\)\}/);
