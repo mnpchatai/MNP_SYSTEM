@@ -1959,6 +1959,7 @@ async function loadEmployeeKeepingSession() {
 
 async function signOutLocally(message) {
   await releasePushOnThisDevice({ server: false });
+  keptDecisionComments.clear();
   state.session = null;
   try {
     await sb.auth.signOut({ scope: "local" });
@@ -2302,6 +2303,8 @@ function bindShell() {
     setMobileNav(false);
     await releasePushBeforeSignOut();
     window.MNP_FORM_DRAFT?.clearAll();
+    // เหตุผลที่พิมพ์ค้างในแถบตัดสินใจไม่ติดไปถึงคนที่เข้าระบบต่อในแท็บนี้
+    keptDecisionComments.clear();
     state.session = null;
     try {
       await sb.auth.signOut();
@@ -3011,7 +3014,11 @@ document.addEventListener("keydown", (event) => {
 function helpPageKey(route) {
   // ฟอร์มออก NCR (หน้าสร้าง หรือใต้ #/ncr ในโหมดทดสอบ) มีคำแนะนำของตัวเอง ฟอร์มสร้างอื่นที่เลือกประเภทแล้วใช้ new-form
   if (document.querySelector("#ncr-issue-form")) return "new-ncr";
-  if (route.path === "requests" && route.params.get("mode") === "create") return document.querySelector("#app form.stepped-form") ? "new-form" : "new";
+  if (route.path === "requests" && route.params.get("mode") === "create") {
+    if (document.querySelector("#app form.stepped-form")) return "new-form";
+    // ฟอร์มเดิมของทีม (ORIGINAL_FORM_TYPES เช่น แจ้งซ่อม IT) ไม่แบ่งขั้นและไม่เก็บร่าง
+    return document.querySelector("#request-form") ? "new-original" : "new";
+  }
   // รายการของโมดูล (ไม่ใช่หน้าเลือกโมดูล): คำอธิบายแท็บตามแท็บที่หน้านั้นมีจริง ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ
   if (route.path === "requests" && route.params.get("type") && route.params.get("type") !== "all") return document.querySelector(".view-tabs a[href*='view=board']") ? "requests-board" : "requests-list";
   // หน้ารายละเอียด NCR: ผู้ที่มีงานของขั้น (การ์ดสิ่งที่คุณต้องดำเนินการ) กับผู้ดูอย่างเดียวได้คำแนะนำต่างกัน
@@ -3031,9 +3038,10 @@ function shortcutAvailability() {
   const has = (selector) => Boolean(document.querySelector(selector));
   return {
     search: has('#app [role="search"] input:not([type="hidden"]):not([type="checkbox"]):not(:disabled)'),
-    list: has("#home-queue .queue-list, .register-table tbody tr"),
-    decide: has(`#decision-panel, #home-queue .queue-list, ${MT_STEP_PRIMARY_SELECTOR}`),
-    reject: has("#decision-panel, #home-queue .queue-list"),
+    // J/K ทะเบียนเลื่อนไปเฉพาะแถวที่มีลิงก์ (แถวที่ล็อกไม่นับ) · A/R ต้องมีแถบตัดสินใจ (คิวที่มีแต่งานไม่มี)
+    list: has("#home-queue .queue-list, .register-table a.register-title"),
+    decide: has(`#decision-panel, ${MT_STEP_PRIMARY_SELECTOR}`),
+    reject: has("#decision-panel"),
     // ช่องค้นหา (Enter ค้นอยู่แล้ว) ไม่นับเป็นฟอร์มที่ต้องใช้ Ctrl+Enter
     submit: [...document.querySelectorAll("#app form input:not([type=\"hidden\"]), #app form textarea, #app form select")].some((field) => !field.closest("[role=\"search\"]")),
     badges: has("#app .badge"),
@@ -4342,8 +4350,13 @@ async function renderRequestDetail(params) {
 // มติที่เพิ่งกดในแท็บนี้ เก็บไว้ทำใบเสร็จหลังวาดหน้าใหม่ (อยู่ในหน่วยความจำเท่านั้น รีเฟรชแล้วหาย ไทม์ไลน์ยังเป็นหลักฐานจริง)
 const recentDecisions = new Map();
 // เหตุผล/ความเห็นที่พิมพ์ค้างในแถบตัดสินใจ (คีย์ = ขั้น:มติ) กด Esc ยกเลิก หรือเลือกใบอื่นในคิวแล้วกลับมาเลือกมติเดิม ข้อความยังอยู่
-// แยกตามมติ (เหตุผลไม่อนุมัติไม่ติดไปกับขอข้อมูลเพิ่ม) อยู่ในหน่วยความจำเท่านั้น ส่งสำเร็จแล้วลบของขั้นนั้นทิ้ง
+// แยกตามมติ (เหตุผลไม่อนุมัติไม่ติดไปกับขอข้อมูลเพิ่ม) อยู่ในหน่วยความจำเท่านั้น ส่งสำเร็จ (ทีละใบหรืออนุมัติหลายใบ) และออกจากระบบแล้วล้าง
+// ค่า = { text, at } คืนเฉพาะที่พิมพ์ไม่เกิน KEPT_COMMENT_TTL_MS: ขั้นที่ถูกส่งกลับให้ผู้แจ้งแล้วกลับมาใช้ id เดิม ไม่ได้เหตุผลของรอบก่อน
 const keptDecisionComments = new Map();
+const KEPT_COMMENT_TTL_MS = 2 * 60 * 60 * 1000;
+function forgetKeptDecisionComments(stepId) {
+  for (const key of [...keptDecisionComments.keys()]) if (key.startsWith(`${stepId}:`)) keptDecisionComments.delete(key);
+}
 const RECEIPT_TTL_MS = 10 * 60 * 1000;
 
 function recentDecisionFor(requestId) {
@@ -4694,11 +4707,13 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     lastTrigger = decision;
     clearError();
     resetInputs();
-    const kept = keptDecisionComments.get(keepKey(decision)) ?? "";
+    const entry = keptDecisionComments.get(keepKey(decision));
+    const kept = entry && Date.now() - entry.at <= KEPT_COMMENT_TTL_MS ? entry.text : "";
     comment.value = kept;
     state = { name: "compose", decision, showComment: Boolean(kept) };
     render();
-    if (rules.needsComment(decision)) comment.focus();
+    // ข้อความที่คืนมา: โฟกัสที่ช่องให้อ่านก่อน (มติที่ความเห็นไม่บังคับก็ไม่ไปที่ปุ่มยืนยันตรงๆ)
+    if (rules.needsComment(decision) || kept) comment.focus();
     else buttons.querySelector('[data-action="confirm"]')?.focus();
   }
 
@@ -4750,7 +4765,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     }
     // มติบันทึกแล้ว: จากนี้ข้อผิดพลาดใดๆ ต้องไม่ถูกบอกว่า "ไม่สำเร็จ"
     detachLeaveGuards();
-    for (const key of [...keptDecisionComments.keys()]) if (key.startsWith(`${currentStep.id}:`)) keptDecisionComments.delete(key);
+    forgetKeptDecisionComments(currentStep.id);
     recentDecisions.set(id, { decision, label: labelOf(decision), comment: text, at: Date.now(), actorId: employee.id, requestNo: request.request_no, title: request.title, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
     let warning = "";
     try { warning = await uploadExtraFiles(id, files, employee.id); } catch (uploadError) { warning = friendlyError(uploadError); }
@@ -4796,7 +4811,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     if (comment.value.trim().length >= rules.MIN_COMMENT_LENGTH) clearError();
     // เก็บทุกครั้งที่พิมพ์: แถบอาจถูกแทนที่โดยไม่ผ่าน toIdle (เลือกใบอื่นในคิวหน้าหลัก)
     if (state.name !== "compose") return;
-    if (comment.value.trim()) keptDecisionComments.set(keepKey(state.decision), comment.value);
+    if (comment.value.trim()) keptDecisionComments.set(keepKey(state.decision), { text: comment.value, at: Date.now() });
     else keptDecisionComments.delete(keepKey(state.decision));
   });
   panel.addEventListener("keydown", (event) => {
@@ -4827,6 +4842,7 @@ async function runBulkApprove(chosen) {
     const { error } = await sb.rpc("app_approval_decision", { p_step_id: step.id, p_decision: "approved", p_comment: "" });
     if (!error) {
       done += 1;
+      forgetKeptDecisionComments(step.id);
       recentDecisions.set(step.request.id, { decision: "approved", label: queueStepVerb(step), comment: "", at: Date.now(), actorId: state.employee.id, requestNo: step.request.request_no, title: step.request.title, nextStepName: "" });
       triggerNotificationEmails(step.request.id);
       continue;

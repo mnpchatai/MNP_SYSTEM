@@ -588,9 +588,15 @@ test("round 27: typed decision reasons survive Esc, cancel and switching queue r
   // เหตุผลที่พิมพ์ค้างเก็บตามขั้น:มติ คืนเมื่อเลือกมติเดิม ส่งสำเร็จแล้วลบของขั้นนั้น
   assert.match(app, /const keptDecisionComments = new Map\(\);/);
   assert.match(app, /const keepKey = \(decision\) => `\$\{currentStep\.id\}:\$\{decision\}`;/);
-  assert.match(app, /const kept = keptDecisionComments\.get\(keepKey\(decision\)\) \?\? "";\s+comment\.value = kept;\s+state = \{ name: "compose", decision, showComment: Boolean\(kept\) \};/);
-  assert.match(app, /if \(comment\.value\.trim\(\)\) keptDecisionComments\.set\(keepKey\(state\.decision\), comment\.value\);\s+else keptDecisionComments\.delete\(keepKey\(state\.decision\)\);/);
-  assert.match(app, /for \(const key of \[\.\.\.keptDecisionComments\.keys\(\)\]\) if \(key\.startsWith\(`\$\{currentStep\.id\}:`\)\) keptDecisionComments\.delete\(key\);/, "a sent decision leaves nothing behind");
+  assert.match(app, /const kept = entry && Date\.now\(\) - entry\.at <= KEPT_COMMENT_TTL_MS \? entry\.text : "";\s+comment\.value = kept;\s+state = \{ name: "compose", decision, showComment: Boolean\(kept\) \};/, "an old round's reason is not restored");
+  assert.match(app, /if \(rules\.needsComment\(decision\) \|\| kept\) comment\.focus\(\);/, "a restored comment gets focus so it is read before confirming");
+  assert.match(app, /if \(comment\.value\.trim\(\)\) keptDecisionComments\.set\(keepKey\(state\.decision\), \{ text: comment\.value, at: Date\.now\(\) \}\);\s+else keptDecisionComments\.delete\(keepKey\(state\.decision\)\);/);
+  assert.match(app, /detachLeaveGuards\(\);\s+forgetKeptDecisionComments\(currentStep\.id\);/, "a sent decision leaves nothing behind");
+  assert.match(app, /done \+= 1;\s+forgetKeptDecisionComments\(step\.id\);/, "bulk approve clears it too");
+  assert.equal((app.match(/keptDecisionComments\.clear\(\);/g) ?? []).length, 2, "both sign-out paths clear it");
+  assert.match(app, /reject: has\("#decision-panel"\),/);
+  assert.match(app, /list: has\("#home-queue \.queue-list, \.register-table a\.register-title"\),/);
+  assert.match(read("modules/shortcut-help.js"), /"new-original": Object\.freeze\(\[/);
   // ช่วยเหลือ: คีย์ลัดและป้ายตามหน้า · ฟอร์มสร้างที่เลือกประเภทแล้ว
   const vm = await import("node:vm");
   const context = vm.createContext({});
@@ -609,7 +615,7 @@ test("round 27: typed decision reasons survive Esc, cancel and switching queue r
   assert.match(help.helpHtml(esc, "request"), /<kbd>\/<\/kbd>[\s\S]*ป้ายสถานะ|ป้ายสถานะ[\s\S]*<kbd>\/<\/kbd>/, "without availability everything is listed");
   assert.match(help.helpHtml(esc, "new-ncr"), /สินค้าและล็อต · ปัญหาที่พบ · หลักฐาน · ทบทวนก่อนออก NCR/);
   assert.match(app, /if \(document\.querySelector\("#ncr-issue-form"\)\) return "new-ncr";/);
-  assert.match(app, /return document\.querySelector\("#app form\.stepped-form"\) \? "new-form" : "new";/);
+  assert.match(app, /if \(document\.querySelector\("#app form\.stepped-form"\)\) return "new-form";/);
   // แดชบอร์ด NCR: คอลัมน์กำหนดใช้คำเดียวกับหน้าใบ
   const ncrBoard = read("modules/module-ncr-dashboard.js");
   assert.match(ncrBoard, />เลยกำหนดตอบ \$\{Math\.abs\(left\)\} วัน<\/span>/);
