@@ -40,7 +40,7 @@
   let restoreScrollY = null; // ตำแหน่งเลื่อนก่อนกดกรอง — วาดหน้าใหม่แล้วคืนตำแหน่งเดิมก่อน แล้วค่อยเลื่อนนุ่มๆ ไปที่รายการ
 
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
-  const fmtCount = (value) => `${fmtNumber(value)} ใบ`; // เลขกับ "ใบ" ไม่แยกบรรทัด (ป้ายในการ์ดบนจอแคบ)
+  const fmtCount = (value) => `${fmtNumber(value)}\u00a0ใบ`; // เลขกับ "ใบ" ไม่แยกบรรทัด (ป้ายในการ์ดบนจอแคบ)
   const fmtHours = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} ชม.`);
   const fmtDays = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} วัน`);
   const fmtPercent = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value * 100, 1)}%`);

@@ -614,7 +614,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .badge.rejected, .badge.cancelled { color: #fff; background: var(--danger-strong); }
 .priority-high, .priority-urgent { color: var(--danger); font-weight: 700; }
 .filters { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 7px; }
-/* ชิปตัวกรองแบบเดียวทั้งระบบ (.filter ของรายการ = .nd-chip ของแดชบอร์ด): ขอบมน ตัวอักษร --text-ui สูง 40 px จอสัมผัส 44 px */
+/* ชิปตัวกรองแบบเดียวทั้งระบบ (.filter ของรายการ = .nd-chip ของแดชบอร์ด): ขอบมน ตัวอักษร --text-ui สูง 44 px ทุกจอ */
 .filter { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-ui); font-weight: 600; cursor: pointer; }
 .filter.active { color: var(--primary-ink); background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 40%, transparent); }
 [data-module] .filter.active { color: var(--mod-tab-on-ink); background: var(--mod-tab-on); border-color: transparent; box-shadow: var(--mod-tab-on-shadow); }
