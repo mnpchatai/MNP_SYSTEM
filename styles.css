@@ -1060,6 +1060,7 @@ a.register-title:hover { color: var(--primary); }
 .repair-department-grid[aria-invalid="true"] { border-radius: var(--radius-md); outline: 2px solid var(--danger); outline-offset: 4px; }
 .field-hint { margin-top: 6px; display: block; color: var(--muted); font-size: var(--text-caption); line-height: 1.5; }
 .field-hint.is-warning { color: var(--danger-ink); font-weight: 600; }
+.field:has(.field-error:not([hidden])) > :is(small.field-hint, [data-min-length] + small):not(.is-warning) { display: none; } /* ข้อความผิดบอกเรื่องเดียวกับคำแนะนำแล้ว · คำเตือน is-warning ยังอยู่ */
 /* ช่องที่มีคำเตือนอยู่แล้ว (เช่น ไม่มีประเภทข้อบกพร่องในระบบ): ข้อความผิดทั่วไปไม่ซ้อนอีกบรรทัด ขอบแดงยังขึ้น */
 [data-field]:has(.field-hint.is-warning) > .field-error { display: none; }
 .decision-receipt { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 12px; }
@@ -1088,14 +1089,13 @@ a.register-title:hover { color: var(--primary); }
 .queue-done time { flex: none; }
 .queue-item { min-width: 0; display: flex; flex-wrap: wrap; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .queue-item[hidden] { display: none; }
-.queue-item.is-selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.queue-item.is-selected { border-color: var(--primary); box-shadow: inset 5px 0 0 var(--primary); } /* ใบที่เปิดอยู่: แถบซ้าย (โฟกัสคีย์บอร์ดเป็นวงรอบ) */
 .queue-item-check { width: 44px; min-height: 44px; flex: none; display: grid; place-items: center; cursor: pointer; }
 .queue-item-check input { width: 22px; height: 22px; margin: 0; accent-color: var(--primary); }
 .queue-item-main { min-width: 0; min-height: 64px; padding: 12px 14px; flex: 1 1 0; display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; color: inherit; background: none; border: 0; border-radius: var(--radius-md); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .queue-item-check + .queue-item-main { padding-left: 0; }
 @media (min-width: 761px) { :is(ul, ol):has(> .queue-item > .queue-item-check) > .queue-item > .queue-item-main:first-child { padding-left: 44px; } }
 .queue-item-main:focus-visible, .home-mine-row:focus-visible, .queue-done a:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.queue-item.is-selected:has(.queue-item-main:focus-visible) { box-shadow: none; }
 .queue-item-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: var(--radius-md); }
 .queue-item-icon .ui-icon { width: 20px; height: 20px; }
 .queue-item-icon[data-module] { color: var(--mod-on); background: var(--mod-surface); border: 1px solid var(--mod-edge); }
@@ -1329,7 +1329,8 @@ a.machine-history-no:hover { text-decoration: underline; }
 .notification-item { padding: 13px; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; align-items: start; border: 1px solid var(--line); border-radius: var(--radius-md); }
 .notification-icon { width: 36px; height: 36px; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: var(--radius-md); }
 .notification-icon .ui-icon { width: 20px; height: 20px; }
-.notification-item.unread .notification-icon { color: #fff; background: var(--primary); }
+.notification-item.unread .notification-icon:not([data-module]) { color: #fff; background: var(--primary); }
+.notification-item.unread .notification-icon[data-module] { box-shadow: 0 0 0 2px var(--primary); }
 .notification-item.unread { background: var(--primary-soft); border-color: var(--primary); }
 .notification-text strong, .notification-text > span { display: block; }
 .notification-text > span { margin-top: 4px; color: var(--muted); font-size: var(--text-caption); }
@@ -2974,6 +2975,11 @@ tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
 @media (pointer: coarse) and (min-width: 1041px) {
   .sidebar-user { grid-template-columns: 34px minmax(0, 1fr) 44px; }
 }
+/* ทุกจอ: แถวที่ไฮไลต์เมื่อชี้เปิดใบได้ทั้งแถว (ลิงก์หัวเรื่องคลุมทั้งแถว) ปุ่มและลิงก์อื่นในแถวยังกดได้ */
+.register-table tbody tr:has(a.register-title) { position: relative; cursor: pointer; }
+.register-table tbody a.register-title::after { content: ""; position: absolute; inset: 0; }
+.register-table tbody tr :is(a:not(.register-title), button, select, input) { position: relative; z-index: 1; }
+@media (hover: hover) { .register-table tbody tr :is(.register-sub[title], .badge[title]) { position: relative; z-index: 1; } } /* ชี้ดูค่าเต็ม/คำอธิบายได้ */
 /* ทะเบียนบนจอแคบเป็นการ์ดทีละแถว: แตะตรงไหนของการ์ดก็เปิดใบนั้น (ลิงก์หัวเรื่องขยายเต็มการ์ด ปลายทางเดียวกับลิงก์เลขที่ใบ) */
 @media (max-width: 760px) {
   .register-table tr { position: relative; }

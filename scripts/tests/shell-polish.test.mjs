@@ -58,7 +58,8 @@ test("J/K walks every visible queue row: approval rows select, task rows only ta
 });
 
 test("the selected row shows one focus ring, not two, and keeps the button's outline (visible in forced colours)", () => {
-  assert.match(css, /\.queue-item\.is-selected:has\(\.queue-item-main:focus-visible\) \{ box-shadow: none; \}/);
+  // รอบรวม 25: ใบที่เปิดอยู่เป็นแถบซ้าย ใบที่โฟกัสเป็นวงรอบ ไม่หน้าตาเหมือนกัน
+  assert.match(css, /\.queue-item\.is-selected \{ border-color: var\(--primary\); box-shadow: inset 5px 0 0 var\(--primary\); \}/);
   assert.doesNotMatch(css, /\.queue-item\.is-selected \.queue-item-main:focus-visible \{ outline: none; \}/);
 });
 
@@ -390,10 +391,12 @@ test("round 24 (gaps to a 4): plain-language errors, step position, offline noti
   assert.match(app, /<small class="field-hint" id="decision-comment-hint" hidden>อย่างน้อย \$\{window\.MNP_REQUEST_DECISION\?\.MIN_COMMENT_LENGTH \?\? 3\} ตัวอักษร<\/small>/);
   assert.match(app, /panel\.querySelector\("#decision-comment-hint"\)\.hidden = !needsComment;/);
   assert.match(css, /\.app-shell:has\(\.empty-state > a\.btn\) \.board-search > a\.btn \{ display: none; \}/);
-  assert.match(app, /<span class="notification-icon" aria-hidden="true">\$\{uiIcon\(icon\)\}<\/span>/);
+  // รอบรวม 25: ไอคอนและสีโมดูลเดียวกับแถวคิวหน้าหลัก
+  assert.match(app, /<span class="queue-item-icon notification-icon"\$\{palette\} aria-hidden="true">\$\{iconHtml\}<\/span>/);
+  assert.match(app, /const NOTIFICATION_TYPE_BY_PREFIX = Object\.freeze\(\{ MT: "MT_REPAIR", MG: "MANAGEMENT", IT: "IT_REPAIR" \}\);/);
   assert.match(app, /id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><small>อย่างน้อย 8 ตัวอักษร<\/small>/);
   // H3/H5: ข้อความที่พิมพ์ค้างถามก่อนออก (ฟอร์มขั้น NCR มีร่างในเครื่องจึงไม่อยู่ในรายการ)
-  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #verify-note';/);
+  assert.match(app, /const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea\[id\^="step-reply-"\], #resubmit-comment, #finish-cause, #finish-parts-rows input, #verify-note, #expected-date-note, #ncr-review-note, #ncr-dispose-note, #ncr-followup-note, #ncr-cancel-reason, form\.ncr-action:not\(\[data-action="respond"\], \[data-action="submit_prevention"\], \[data-action="answer_info"\]\) textarea';/, "NCR manager notes and the MT due-date reason are covered too; NCR step forms keep drafts");
   assert.match(app, /if \(panel && panel\.dataset\.state !== "compose"\) return false;/);
 });
 
@@ -463,5 +466,47 @@ test("round 24 (third pass): every changed-state error offers a reload, the home
   assert.match(app, /decisionPanelHtml\(\{ request, currentStep: item\.step, nextStep, nextStepKnown, steps,/);
   const mt = read("modules/module-mt.js");
   assert.match(mt, /showToast\(`อะไหล่แถวที่ \$\{index \+ 1\} ยังไม่มีชื่อรายการ ใส่ชื่อหรือลบแถวนั้นก่อน`, "error"\);/);
-  assert.equal((mt.match(/if \(namelessPartsRow\(\)\) return;/g) ?? []).length, 2, "both save-for-later and finish stop on a nameless row");
+  assert.equal((mt.match(/if \(namelessPartsRow\(\)\) return( false)?;/g) ?? []).length, 2, "both save-for-later and finish stop on a nameless row");
+});
+
+test("round 25: hint hides behind its error, min-length counter, save-and-leave on the MT finish form, one role per NCR register row, module icons in notifications", async () => {
+  const vm = await import("node:vm");
+  assert.match(css, /\.field:has\(\.field-error:not\(\[hidden\]\)\) > :is\(small\.field-hint, \[data-min-length\] \+ small\):not\(\.is-warning\) \{ display: none; \}/, "only the field's own hint hides; a warning stays");
+  assert.match(app, /`\$\{item\.title \?\? ""\} \$\{item\.body \?\? ""\}`\.match\(\/\(\?:\^\|\[\^A-Z\]\)\(MT\|MG\|IT\)-\\d\{4\}-\/\)/, "real titles are Thai; the number is in the body");
+  assert.match(app, /if \(params\.get\("mode"\) === "create"\) \{\r?\n\s+lastListedModuleId = null;/);
+  assert.match(app, /REMEMBERED_LIST_PARAMS = Object\.freeze\(\["view", "scope", "status", "dept", "ncrStatus"\]\)/);
+  // ตัวนับขั้นต่ำ: รันจริงกับช่องจำลอง
+  const start = app.indexOf("function syncMinLengthHint(field) {");
+  const source = app.slice(start, app.indexOf("\n}\n", start) + 3);
+  const context = vm.createContext({});
+  vm.runInContext(`${source}\nthis.fn = syncMinLengthHint;`, context);
+  const hint = { tagName: "SMALL", textContent: "อย่างน้อย 5 ตัวอักษร", dataset: {} };
+  const field = { dataset: { minLength: "5" }, value: "เครื่อง", nextElementSibling: hint };
+  field.value = "สึก";
+  context.fn(field);
+  assert.equal(hint.textContent, "อย่างน้อย 5 ตัวอักษร · อีก 2 ตัวอักษร");
+  field.value = "ใบมีดสึก";
+  context.fn(field);
+  assert.equal(hint.textContent, "อย่างน้อย 5 ตัวอักษร", "back to the plain hint once the minimum is met");
+  for (const [file, pattern] of [["app.js", /id="decision-comment"[^>]*data-min-length=/], ["modules/module-mt.js", /id="finish-cause"[^>]*data-min-length="3"/], ["modules/module-ncr.js", /id="ncr-root-cause"[^>]*data-min-length="5"/], ["modules/module-ncr.js", /id="ncr-correction"[^>]*data-min-length="5"/]]) assert.match(read(file), pattern, file);
+  // บันทึกไว้ทำต่อแล้วออก
+  assert.match(app, /extraLabel: "บันทึกไว้ทำต่อแล้วออก"/);
+  assert.match(app, /return choice === "extra" \? finishForm\.saveForLater\(\{ rerender: false \}\) : choice;/);
+  assert.match(app, /finish\(event\.submitter\?\.value === "extra" \? "extra" : event\.submitter\?\.value === "confirm"\)/, "other confirm dialogs still return true or false");
+  const mt = read("modules/module-mt.js");
+  assert.match(mt, /if \(finishFormNode\) finishFormNode\.saveForLater = saveForLater;/);
+  assert.match(mt, /document\.querySelector\("#finish-save-button"\)\?\.addEventListener\("click", \(\) => saveForLater\(\)\);/);
+  // ทะเบียน NCR ไม่บอกบทบาทซ้ำกับป้ายสถานะ
+  assert.match(read("modules/module-ncr.js"), /const party = roleAndNames && \(STATUS_LABELS\[ncr\.status\] \?\? ""\)\.includes\(roleAndNames\[1\]\) \? roleAndNames\[2\] : waiting\.party;/);
+});
+
+test("round 25 (second pass): register rows open from the whole row on every screen, J/K walk register rows, selected vs focused queue card", () => {
+  assert.match(css, /\.register-table tbody tr:has\(a\.register-title\) \{ position: relative; cursor: pointer; \}/);
+  assert.match(css, /\.register-table tbody a\.register-title::after \{ content: ""; position: absolute; inset: 0; \}/);
+  assert.match(app, /const links = \[\.\.\.document\.querySelectorAll\("\.register-table a\.register-title"\)\];/);
+  assert.match(app, /if \(event\.ctrlKey \|\| event\.metaKey \|\| event\.altKey \|\| event\.defaultPrevented \|\| document\.querySelector\("#home-queue \.queue-list, #decision-panel"\)\) return;/, "the queue and detail pages keep their own J/K/A/R");
+  assert.match(read("modules/shortcut-help.js"), /เลื่อนไปใบถัดไป \/ ก่อนหน้า ในหน้าหลักและในรายการ \(Enter เปิดใบ\)/);
+  assert.doesNotMatch(css, /\.queue-item\.is-selected:has\(\.queue-item-main:focus-visible\)/);
+  assert.match(app, /raised\.closest\("tr"\)\?\.querySelector\("a\.register-title"\)\?\.click\(\);/, "a click on a raised sub line or badge still opens the row");
+  assert.doesNotMatch(css, /#repair-verify \.approval-actions \{ position: sticky/, "the nested confirm box keeps its own style");
 });

@@ -258,7 +258,8 @@
     const signed = (ncr.signoff_qa_at ? 1 : 0) + (ncr.signoff_factory_at ? 1 : 0);
     const progress = ncr.status === "awaiting_signoff" ? ` · ลงนามแล้ว ${signed}/3` : "";
     // แบบเดียวกับบรรทัด "ขั้นตอนนี้รอ" ของหน้ารายละเอียด: หน่วย (ชื่อ) ไม่ตัดแผนกออกแม้คอลัมน์แผนกบอกแล้ว
-    const party = waiting.party;
+    const roleAndNames = waiting.party.match(/^(.+?) \((.+)\)$/);
+    const party = roleAndNames && (STATUS_LABELS[ncr.status] ?? "").includes(roleAndNames[1]) ? roleAndNames[2] : waiting.party;
     // บรรทัดไอคอนแบบเดียวกับผู้รับผิดชอบในรายการคำร้อง (app.js requestRows) การ์ดบนมือถือจึงเรียงเหมือนกัน
     return registerSubHtml(`${party}${progress}`, `${uiIcon("user")} `, `ผู้รับผิดชอบ: ${party}${progress}`);
   }
@@ -751,9 +752,9 @@
         <h3>ส่วนที่ 3 — ตอบ NCR</h3>
         ${responseDueNote(ncr)}
         <fieldset class="field ncr-fieldset" data-field="causes"><legend>เกิดจาก (4M+E) ${REQUIRED}</legend>${checksHtml("causes", CAUSES, ncr.causes ?? [])}</fieldset>
-        <div class="field" data-field="root_cause"><label for="ncr-root-cause">สาเหตุของปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000">${escapeHtml(ncr.root_cause ?? "")}</textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
+        <div class="field" data-field="root_cause"><label for="ncr-root-cause">สาเหตุของปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-root-cause" name="root_cause" maxlength="5000" data-min-length="5">${escapeHtml(ncr.root_cause ?? "")}</textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
         <div class="form-grid">
-          <div class="field full" data-field="correction"><label for="ncr-correction">แนวทางการแก้ไขปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000">${escapeHtml(ncr.correction ?? "")}</textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
+          <div class="field full" data-field="correction"><label for="ncr-correction">แนวทางการแก้ไขปัญหา ${REQUIRED}</label><textarea class="textarea" id="ncr-correction" name="correction" maxlength="5000" data-min-length="5">${escapeHtml(ncr.correction ?? "")}</textarea><small>อย่างน้อย 5 ตัวอักษร</small></div>
 
           <div class="field full" data-field="prevention"><label for="ncr-prevention">แนวทางการป้องกันไม่ให้เกิดซ้ำ (ถ้ามี)</label><textarea class="textarea" id="ncr-prevention" name="prevention" maxlength="5000">${escapeHtml(ncr.prevention ?? "")}</textarea><small>ส่งภายหลังได้หลังวิเคราะห์เสร็จ</small></div>
         </div>
@@ -955,7 +956,8 @@
     const responderSection = responderSectionHtml(ncr, employee, staff, directory);
     const lossesInWork = lossAccess(ncr, employee) === "full" && window.MNP_NCR_COSTS.lossDataPending(ncr.status, ncr.outcome, window.MNP_NCR_COSTS.summarize(lossResult.data ?? []));
     const lossesSection = lossSectionHtml(ncr, lossResult.data ?? [], directory, lossAccess(ncr, employee), lossesInWork);
-    const work = [...forms, responderSection, ...(lossesInWork ? [lossesSection] : [])].filter(Boolean);
+    // งานที่บังคับ (ฟอร์มของขั้น ความสูญเสียที่ป้ายหัวใบบอกว่ารอ) มาก่อนผู้ตอบของแผนกที่ไม่บังคับ
+    const work = [...forms, ...(lossesInWork ? [lossesSection] : []), responderSection].filter(Boolean);
     // ฟอร์มตอบบอกเหลือ/เลยกำหนดกี่วันแล้ว ส่วนที่ 2 จึงไม่บอกวันกำหนดตอบซ้ำ (ไม่แสดงวันที่คู่กับอายุที่คำนวณจากวันนั้น)
     const dueInForm = forms.some((html) => html.includes('data-action="respond"'));
     // มีงานในการ์ด (ตอบ พิจารณา ระบุผู้ตอบ หรือกรอกความสูญเสีย): ผู้กรอกอ่านรายละเอียดที่พบได้ในการ์ดงานทันที (ส่วนที่ 1 จึงไม่บอกซ้ำ)

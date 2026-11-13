@@ -453,7 +453,7 @@ function textPromptDialog({ title, label, hint = "", minLength = 0, maxLength = 
     dialog.setAttribute("aria-labelledby", "prompt-dialog-title");
     dialog.innerHTML = `<form method="dialog" novalidate>
       <h2 id="prompt-dialog-title">${escapeHtml(title)}</h2>
-      <div class="field"><label for="prompt-dialog-text">${escapeHtml(label)}</label><textarea class="textarea" id="prompt-dialog-text" rows="3" maxlength="${maxLength}" aria-describedby="prompt-dialog-hint prompt-dialog-error"></textarea>${hint ? `<small class="field-hint" id="prompt-dialog-hint">${escapeHtml(hint)}</small>` : ""}<p class="field-error" id="prompt-dialog-error" role="alert" hidden></p></div>
+      <div class="field"><label for="prompt-dialog-text">${escapeHtml(label)}</label><textarea class="textarea" id="prompt-dialog-text" rows="3" maxlength="${maxLength}"${minLength ? ` data-min-length="${minLength}"` : ""} aria-describedby="prompt-dialog-hint prompt-dialog-error"></textarea>${hint ? `<small class="field-hint" id="prompt-dialog-hint">${escapeHtml(hint)}</small>` : ""}<p class="field-error" id="prompt-dialog-error" role="alert" hidden></p></div>
       <div class="confirm-dialog-actions"><button class="btn secondary" value="cancel">${escapeHtml(cancelLabel)}</button><button class="btn${danger ? " danger-solid" : ""}" value="confirm">${escapeHtml(confirmLabel)}</button></div>
     </form>`;
     if (typeof dialog.showModal !== "function") {
@@ -495,7 +495,7 @@ function textPromptDialog({ title, label, hint = "", minLength = 0, maxLength = 
   });
 }
 
-function confirmDialog({ title, message = "", confirmLabel, cancelLabel = "ยกเลิก", danger = false }) {
+function confirmDialog({ title, message = "", confirmLabel, cancelLabel = "ยกเลิก", danger = false, extraLabel = "" }) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.className = "confirm-dialog";
@@ -503,7 +503,7 @@ function confirmDialog({ title, message = "", confirmLabel, cancelLabel = "ย�
     dialog.innerHTML = `<form method="dialog">
       <h2 id="confirm-dialog-title">${escapeHtml(title)}</h2>
       ${message ? `<p>${escapeHtml(message)}</p>` : ""}
-      <div class="confirm-dialog-actions"><button class="btn secondary" value="cancel">${escapeHtml(cancelLabel)}</button><button class="btn${danger ? " danger-solid" : ""}" value="confirm">${escapeHtml(confirmLabel)}</button></div>
+      <div class="confirm-dialog-actions"><button class="btn secondary" value="cancel">${escapeHtml(cancelLabel)}</button>${extraLabel ? `<button class="btn secondary" value="extra">${escapeHtml(extraLabel)}</button>` : ""}<button class="btn${danger ? " danger-solid" : ""}" value="confirm">${escapeHtml(confirmLabel)}</button></div>
     </form>`;
     if (typeof dialog.showModal !== "function") return resolve(window.confirm(message ? `${title}\n\n${message}` : title));
     document.body.append(dialog);
@@ -520,7 +520,7 @@ function confirmDialog({ title, message = "", confirmLabel, cancelLabel = "ย�
     // ปิดเองจากปุ่ม/Esc/การเปลี่ยนหน้า ไม่รอ event close (Chromium เลื่อน close ออกไปเมื่อหน้าไม่ได้วาด เช่นแท็บอยู่เบื้องหลัง)
     const cancelOnLeave = () => finish(false);
     window.addEventListener("hashchange", cancelOnLeave, { once: true });
-    dialog.querySelector("form").addEventListener("submit", (event) => { event.preventDefault(); finish(event.submitter?.value === "confirm"); });
+    dialog.querySelector("form").addEventListener("submit", (event) => { event.preventDefault(); finish(event.submitter?.value === "extra" ? "extra" : event.submitter?.value === "confirm"); });
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(false); });
     dialog.addEventListener("close", () => finish(dialog.returnValue === "confirm"), { once: true });
     dialog.showModal();
@@ -1192,7 +1192,21 @@ function pendingAttachmentCount() {
 function confirmLeaveWithPendingFiles(count) {
   return confirmDialog({ title: `ยังไม่ได้อัปโหลด ${count} ไฟล์`, message: "ออกจากหน้านี้แล้วไฟล์ที่เลือกไว้จะไม่ถูกแนบ", confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด", danger: true });
 }
-const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #verify-note';
+// ตัวนับขั้นต่ำ: ช่องที่มี data-min-length เปลี่ยนคำแนะนำใต้ช่อง (small ถัดไป) เป็น "… · อีก n ตัวอักษร" ระหว่างพิมพ์ยังไม่ครบ
+function syncMinLengthHint(field) {
+  const min = Number(field.dataset.minLength);
+  const hint = field.nextElementSibling?.tagName === "SMALL" ? field.nextElementSibling : null;
+  if (!min || !hint) return;
+  hint.dataset.baseText ??= hint.textContent;
+  const typed = [...field.value.trim()].length;
+  hint.textContent = typed > 0 && typed < min ? `${hint.dataset.baseText} · อีก ${min - typed} ตัวอักษร` : hint.dataset.baseText;
+}
+document.addEventListener("input", (event) => {
+  const field = event.target.closest?.("[data-min-length]");
+  if (field) syncMinLengthHint(field);
+});
+
+const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #resubmit-comment, #finish-cause, #finish-parts-rows input, #verify-note, #expected-date-note, #ncr-review-note, #ncr-dispose-note, #ncr-followup-note, #ncr-cancel-reason, form.ncr-action:not([data-action="respond"], [data-action="submit_prevention"], [data-action="answer_info"]) textarea';
 function unsavedTextCount() {
   return [...document.querySelectorAll(UNSAVED_TEXT_SELECTOR)].filter((field) => {
     if (field.disabled || field.readOnly || field.closest("[hidden], [aria-busy]")) return false;
@@ -1206,9 +1220,15 @@ function unsavedTextCount() {
 function leaveWarningPending() {
   return pendingAttachmentCount() > 0 || unsavedTextCount() > 0;
 }
-function confirmLeave() {
+async function confirmLeave() {
   const files = pendingAttachmentCount();
   if (files) return confirmLeaveWithPendingFiles(files);
+  const finishForm = document.querySelector("#finish-form");
+  const canSave = typeof finishForm?.saveForLater === "function" && !finishForm.hasAttribute("aria-busy") && [...finishForm.querySelectorAll(UNSAVED_TEXT_SELECTOR)].some((field) => field.value.trim() !== field.defaultValue.trim());
+  if (canSave) {
+    const choice = await confirmDialog({ title: "ยังไม่ได้ส่งข้อความที่พิมพ์ไว้", message: "บันทึกไว้ทำต่อได้ก่อนออก ข้อความจะอยู่ในฟอร์มเมื่อกลับมา", confirmLabel: "ออกโดยไม่บันทึก", cancelLabel: "อยู่ต่อ", extraLabel: "บันทึกไว้ทำต่อแล้วออก", danger: true });
+    return choice === "extra" ? finishForm.saveForLater({ rerender: false }) : choice;
+  }
   return confirmDialog({ title: "ยังไม่ได้ส่งข้อความที่พิมพ์ไว้", message: "ออกจากหน้านี้แล้วข้อความที่พิมพ์จะหาย", confirmLabel: "ออกโดยไม่ส่ง", cancelLabel: "อยู่ต่อ", danger: true });
 }
 // ปุ่มย้อนกลับ/ปัดย้อนกลับ: hashchange ยกเลิกไม่ได้ ใช้ Navigation API ที่ยกเลิกการย้อนกลับได้ (เบราว์เซอร์ที่ไม่มีจะออกเหมือนเดิม)
@@ -2844,6 +2864,33 @@ function syncQueueBulk() {
   trackActionBarHeight();
 }
 
+// แถวทะเบียน: คลิกบนบรรทัดย่อยหรือป้ายที่ยกขึ้นเหนือพื้นที่คลิก (เพื่อชี้ดู title) ก็เปิดใบเหมือนคลิกที่อื่นของแถว
+document.addEventListener("click", (event) => {
+  const raised = event.target.closest?.(".register-table tbody tr :is(.register-sub[title], .badge[title])");
+  if (!raised || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (event.target.closest("a, button, input, select, textarea, label")) return;
+  if (window.getSelection && !window.getSelection().isCollapsed) return; // ลากเลือกข้อความเพื่อคัดลอก ไม่เปิดใบ
+  raised.closest("tr")?.querySelector("a.register-title")?.click();
+});
+
+// J/K ในทะเบียน: เลื่อนโฟกัสไปลิงก์หัวเรื่องของแถวถัดไป/ก่อนหน้า Enter เปิดใบ (หน้าหลักและหน้ารายละเอียดใช้ตัวจัดการของคิวด้านล่าง)
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || document.querySelector("#home-queue .queue-list, #decision-panel")) return;
+  const listKey = /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : ({ KeyJ: "j", KeyK: "k" }[event.code] ?? "");
+  if (listKey !== "j" && listKey !== "k") return;
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+  if (document.querySelector("dialog[open], .attachment-lightbox, [data-popup]:not([hidden])")) return;
+  const links = [...document.querySelectorAll(".register-table a.register-title")];
+  if (!links.length) return;
+  const current = links.indexOf(document.activeElement?.closest?.("tr")?.querySelector("a.register-title"));
+  const step = listKey === "j" ? 1 : -1;
+  const next = links[current < 0 ? (step > 0 ? 0 : links.length - 1) : Math.min(links.length - 1, Math.max(0, current + step))];
+  event.preventDefault();
+  next.focus();
+  next.scrollIntoView({ block: "nearest" });
+});
+
 // คีย์ลัดของคิว (จอที่มีคีย์บอร์ด): J/K เลื่อน, A อนุมัติ, R ไม่อนุมัติ — A/R เปิดขั้นยืนยันในแถบ ไม่ส่งทันที
 // A/R ใช้ได้ทั้งในคิวหน้าหลักและหน้ารายละเอียดคำร้อง (#/request) ที่มีแถบตัดสินใจ; J/K เฉพาะคิว
 document.addEventListener("keydown", (event) => {
@@ -3173,8 +3220,29 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
   return `<section class="request-list-panel">${capped}${requestRows(rows, { showRequester: !mineOnly, showType: !typeId, directory, params, filtered: Boolean(typeId) && (Boolean(search) || Boolean(departmentId) || statuses.length > 0) })}</section>`;
 }
 
+// มุมมองรายการที่จำไว้ต่อผู้ใช้ต่อโมดูล: แท็บ (view/scope) สถานะ และแผนก ไม่จำคำค้น
+const REMEMBERED_LIST_PARAMS = Object.freeze(["view", "scope", "status", "dept", "ncrStatus"]);
+let lastListedModuleId = null;
+function rememberListView(params, selected) {
+  if (!selected) { lastListedModuleId = null; return; }
+  const key = `mnp-request-view:${state.employee.id}:${selected.id}`;
+  try {
+    const enteringModule = lastListedModuleId !== selected.id && [...params.keys()].every((name) => name === "type");
+    if (enteringModule) {
+      const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
+      REMEMBERED_LIST_PARAMS.forEach((name) => { if (typeof saved?.[name] === "string" && saved[name]) params.set(name, saved[name]); });
+      if (selected.code === "NCR_CAR") params.delete("view");
+    }
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(REMEMBERED_LIST_PARAMS.filter((name) => params.get(name)).map((name) => [name, params.get(name)]))));
+  } catch { /* storage ปิดอยู่: มุมมองยังอยู่ใน URL */ }
+  lastListedModuleId = selected.id;
+}
+
 async function renderRequests(params) {
-  if (params.get("mode") === "create") return await renderNewRequest(params);
+  if (params.get("mode") === "create") {
+    lastListedModuleId = null;
+    return await renderNewRequest(params);
+  }
   loadingShell("requests", "คำร้อง");
   params = new URLSearchParams(params);
   const { data: typesData, error: typesError } = await sb.from("request_types")
@@ -3191,6 +3259,7 @@ async function renderRequests(params) {
   const selected = types.find((type) => type.id === params.get("type"));
   // NCR has its own workflow and RLS-protected register, not status-board rows.
   if (selected?.code === "NCR_CAR") params.delete("view");
+  rememberListView(params, selected);
   history.replaceState(null, "", requestCenterUrl(params));
   const mineOnly = params.get("scope") === "mine";
   // The overview is a module chooser; fetch rows only after entering a module.
@@ -4242,7 +4311,7 @@ function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nex
     <div class="decision-reason" id="decision-reason" hidden>
       <div class="field">
         <label for="decision-comment" id="decision-comment-label">ความเห็น</label>
-        <textarea class="textarea" id="decision-comment" maxlength="1000" rows="3" aria-describedby="decision-comment-hint decision-comment-error"></textarea>
+        <textarea class="textarea" id="decision-comment" maxlength="1000" rows="3" data-min-length="${window.MNP_REQUEST_DECISION?.MIN_COMMENT_LENGTH ?? 3}" aria-describedby="decision-comment-hint decision-comment-error"></textarea>
         <small class="field-hint" id="decision-comment-hint" hidden>อย่างน้อย ${window.MNP_REQUEST_DECISION?.MIN_COMMENT_LENGTH ?? 3} ตัวอักษร</small>
         <p class="field-error" id="decision-comment-error" hidden></p>
       </div>
@@ -4703,11 +4772,16 @@ function notificationHref(item) {
   return null;
 }
 
+// คำนำหน้าเลขที่ใบ (MT-2569-0412 ในหัวข้อหรือเนื้อความของการแจ้งเตือน) → ประเภท (สีและไอคอนเดียวกับคิวหน้าหลัก)
+const NOTIFICATION_TYPE_BY_PREFIX = Object.freeze({ MT: "MT_REPAIR", MG: "MANAGEMENT", IT: "IT_REPAIR" });
 function notificationItemHtml(item) {
   const href = notificationHref(item);
   const tag = href ? "a" : "div";
-  const icon = ["reminder", "escalation"].includes(item.kind) ? "clock" : href?.startsWith("#/ncr") ? "clipboard" : href ? "document" : "bell";
-  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><span class="notification-icon" aria-hidden="true">${uiIcon(icon)}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
+  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
+  const reminder = ["reminder", "escalation"].includes(item.kind);
+  const iconHtml = reminder || !typeCode ? uiIcon(reminder ? "clock" : "bell") : requestTypeIcon(typeCode);
+  const palette = !reminder && typeCode ? ` data-module="${escapeHtml(requestPalette(typeCode))}"` : "";
+  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><span class="queue-item-icon notification-icon"${palette} aria-hidden="true">${iconHtml}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
 }
 
 // ---------- แจ้งเตือนบนเครื่อง (Web Push) ----------
@@ -5775,6 +5849,7 @@ async function renderRoute() {
   const { path, params } = currentRoute();
   refreshInstallBanner({ hideOnly: true });
   if (path !== "requests" || pendingModuleZoom !== moduleZoomKey(params)) pendingModuleZoom = null;
+  if (path !== "requests") lastListedModuleId = null;
   if (path === "set-password") return await renderSetPassword(params);
   if (!state.session) {
     await renderAuth();
