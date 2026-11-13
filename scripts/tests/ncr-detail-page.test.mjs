@@ -810,6 +810,6 @@ test("long step forms keep a local draft: respond, submit prevention and answer 
 
   first.clear();
   assert.equal(memory.has(key), false, "a successful submit clears the draft");
-  const module = fs.readFileSync("modules/module-ncr.js", "utf8");
-  assert.match(module, /if \(result\.error\) throw result\.error;\r?\n\s+stepDrafts\.get\(form\)\?\.clear\(\);/, "cleared only after the RPC succeeded");
+  const source = fs.readFileSync("modules/module-ncr.js", "utf8");
+  assert.match(source, /if \(result\.error\) throw result\.error;\r?\n\s+stepDrafts\.get\(form\)\?\.clear\(\);/, "cleared only after the RPC succeeded");
 });
