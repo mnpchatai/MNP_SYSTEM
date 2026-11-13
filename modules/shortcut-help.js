@@ -5,14 +5,17 @@
   "use strict";
 
   const SHORTCUTS = Object.freeze([
-    Object.freeze({ keys: ["/"], text: "ไปที่ช่องค้นหาของหน้า" }),
-    Object.freeze({ keys: ["J", "K"], text: "เลื่อนไปใบถัดไป / ก่อนหน้า ในหน้าหลักและในรายการ (Enter เปิดใบ)" }),
-    Object.freeze({ keys: ["A"], text: "กดปุ่มหลักของใบที่เปิดอยู่ (อนุมัติ หรือรับทราบ ตามขั้น · งาน MT: เริ่มงาน เสร็จสิ้นงาน หรือ ผ่าน ในตรวจรับงาน) ในหน้าหลักและหน้ารายละเอียด ยังไม่ส่งจนกว่าจะกดยืนยัน" }),
-    Object.freeze({ keys: ["R"], text: "เริ่มไม่อนุมัติใบที่เปิดอยู่ ต้องระบุเหตุผลก่อนส่ง" }),
-    Object.freeze({ keys: ["Ctrl", "Enter"], text: "กดปุ่มส่งของฟอร์มที่กำลังพิมพ์ (Mac ใช้ ⌘ + Enter) ขั้นยืนยันและการตรวจช่องยังเหมือนกดปุ่มเอง" }),
+    // when: สิ่งที่หน้าต้องมีคีย์นี้จึงใช้ได้ (app.js ส่งมาใน available ของ helpHtml) · ไม่มี when = ใช้ได้ทุกหน้า
+    Object.freeze({ keys: ["/"], when: "search", text: "ไปที่ช่องค้นหาของหน้า" }),
+    Object.freeze({ keys: ["J", "K"], when: "list", text: "เลื่อนไปใบถัดไป / ก่อนหน้า ในหน้าหลักและในรายการ (Enter เปิดใบ)" }),
+    Object.freeze({ keys: ["A"], when: "decide", text: "กดปุ่มหลักของใบที่เปิดอยู่ (อนุมัติ หรือรับทราบ ตามขั้น · งาน MT: เริ่มงาน เสร็จสิ้นงาน หรือ ผ่าน ในตรวจรับงาน) ในหน้าหลักและหน้ารายละเอียด ยังไม่ส่งจนกว่าจะกดยืนยัน" }),
+    Object.freeze({ keys: ["R"], when: "reject", text: "เริ่มไม่อนุมัติใบที่เปิดอยู่ ต้องระบุเหตุผลก่อนส่ง" }),
+    Object.freeze({ keys: ["Ctrl", "Enter"], when: "submit", text: "กดปุ่มส่งของฟอร์มที่กำลังพิมพ์ (Mac ใช้ ⌘ + Enter) ขั้นยืนยันและการตรวจช่องยังเหมือนกดปุ่มเอง" }),
     Object.freeze({ keys: ["Esc"], text: "ปิดกล่องที่เปิดอยู่ · ยกเลิกขั้นยืนยัน" }),
     Object.freeze({ keys: ["?"], text: "เปิดตารางนี้" }),
   ]);
+  // available = { search, list, decide, reject, submit, badges } จากหน้าที่เปิดอยู่ · ไม่ส่งมา (null) = แสดงทั้งหมด
+  const applies = (when, available) => !when || !available || Boolean(available[when]);
 
   // ? บนแป้นละติน (Shift + /) · แป้นไทยที่ปุ่มเดียวกันส่งตัวอักษรไทย จึงดูตำแหน่งปุ่ม (event.code) เมื่อไม่ได้ตัวอักษรละติน
   function isHelpKey(event) {
@@ -21,8 +24,8 @@
     return event.code === "Slash" && Boolean(event.shiftKey) && !/^[\x20-\x7e]$/.test(event.key ?? "");
   }
 
-  function legendHtml(escapeHtml) {
-    return `<dl class="shortcut-list">${SHORTCUTS.map((item) => `<div><dt>${item.keys.map((key) => `<kbd>${escapeHtml(key)}</kbd>`).join(" ")}</dt><dd>${escapeHtml(item.text)}</dd></div>`).join("")}</dl>`;
+  function legendHtml(escapeHtml, available = null) {
+    return `<dl class="shortcut-list">${SHORTCUTS.filter((item) => applies(item.when, available)).map((item) => `<div><dt>${item.keys.map((key) => `<kbd>${escapeHtml(key)}</kbd>`).join(" ")}</dt><dd>${escapeHtml(item.text)}</dd></div>`).join("")}</dl>`;
   }
 
   // วิธีใช้ต่อหน้า (คีย์ = path ของ hash เช่น #/request → request) เขียนเฉพาะสิ่งที่หน้านั้นทำจริง
@@ -73,6 +76,18 @@
     new: Object.freeze([
       "เลือกประเภทคำร้องก่อน แบบฟอร์มของประเภทนั้นจะเปิดขึ้น",
       "กดส่งแล้วระบบจะบอกช่องที่ยังขาด",
+    ]),
+    // ฟอร์มสร้างที่เลือกประเภทแล้ว (helpPageKey ใน app.js)
+    "new-form": Object.freeze([
+      "บนจอแคบฟอร์มแบ่งเป็นขั้น ปุ่ม ถัดไป ตรวจช่องของขั้นนั้นก่อนไปต่อ ขั้นสุดท้ายให้ทบทวนก่อนส่ง",
+      "ช่องที่ต้องกรอกมีคำว่า (จำเป็น) กดส่งแล้วระบบบอกช่องที่ยังขาด",
+      "ระบบเก็บร่างไว้ในเครื่องนี้ระหว่างกรอก เปิดฟอร์มเดิมอีกครั้งแล้วเลือกใช้ร่างต่อได้ ออกจากระบบแล้วร่างถูกล้าง",
+    ]),
+    "new-ncr": Object.freeze([
+      "ฟอร์มคือส่วนที่ 1 ของใบ NCR: สินค้าและล็อต · ปัญหาที่พบ · หลักฐาน · ทบทวนก่อนออก NCR (บนจอแคบแบ่งเป็นขั้น)",
+      "ออก NCR แล้วใบไปที่ผู้จัดการโรงงานพิจารณา (ส่วนที่ 2) กำหนดตอบ = วันออกใบ + 5 วัน",
+      "ช่องที่ต้องกรอกมีคำว่า (จำเป็น) ปุ่ม ถัดไป ตรวจช่องของขั้นนั้นก่อนไปต่อ",
+      "ระบบเก็บร่างไว้ในเครื่องนี้ระหว่างกรอก เปิดฟอร์มเดิมอีกครั้งแล้วเลือกใช้ร่างต่อได้ ออกจากระบบแล้วร่างถูกล้าง",
     ]),
     ncr: Object.freeze([
       "สิ่งที่คุณต้องดำเนินการอยู่บนสุดของใบ",
@@ -130,12 +145,13 @@
     Object.freeze(["loss-pending-flag", "NCR รอข้อมูลความสูญเสีย"]),
   ]);
 
-  function helpHtml(escapeHtml, path) {
+  // available: สิ่งที่หน้านี้มีจริง (ดู applies) คีย์ลัดและคำอธิบายป้ายแสดงเฉพาะที่ใช้ได้บนหน้านี้
+  function helpHtml(escapeHtml, path, available = null) {
     const tips = PAGE_HELP[path] ?? [];
     const page = tips.length ? `<section class="help-section"><h3>หน้านี้</h3><ul class="help-tips">${tips.map((tip) => `<li>${escapeHtml(tip)}</li>`).join("")}</ul></section>` : "";
-    const badges = `<section class="help-section"><h3>ป้ายสถานะ</h3><ul class="help-badges">${BADGE_LEGEND.map(([name, label]) => `<li><span class="badge ${escapeHtml(name)}">${escapeHtml(label)}</span></li>`).join("")}</ul></section>`;
+    const badges = applies("badges", available) ? `<section class="help-section"><h3>ป้ายสถานะ</h3><ul class="help-badges">${BADGE_LEGEND.map(([name, label]) => `<li><span class="badge ${escapeHtml(name)}">${escapeHtml(label)}</span></li>`).join("")}</ul></section>` : "";
     // จอสัมผัสล้วนไม่มีคีย์บอร์ด ส่วนคีย์ลัดจึงซ่อนด้วย CSS (.help-keys)
-    const keys = `<section class="help-section help-keys"><h3>คีย์ลัด</h3>${legendHtml(escapeHtml)}</section>`;
+    const keys = `<section class="help-section help-keys"><h3>คีย์ลัด</h3>${legendHtml(escapeHtml, available)}</section>`;
     return page + badges + keys;
   }
 

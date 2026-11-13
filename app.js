@@ -3009,7 +3009,9 @@ document.addEventListener("keydown", (event) => {
 // ฟอร์มสร้างเปิดใต้ #/requests?mode=create จึงใช้คำแนะนำของหน้าสร้าง (new)
 // คำแนะนำของ NCR เขียนสำหรับหน้าใบ (#/ncr?id=…) หน้าอื่นใต้ #/ncr (ฟอร์มออก NCR) จึงไม่มีส่วน "หน้านี้"
 function helpPageKey(route) {
-  if (route.path === "requests" && route.params.get("mode") === "create") return "new";
+  // ฟอร์มออก NCR (หน้าสร้าง หรือใต้ #/ncr ในโหมดทดสอบ) มีคำแนะนำของตัวเอง ฟอร์มสร้างอื่นที่เลือกประเภทแล้วใช้ new-form
+  if (document.querySelector("#ncr-issue-form")) return "new-ncr";
+  if (route.path === "requests" && route.params.get("mode") === "create") return document.querySelector("#app form.stepped-form") ? "new-form" : "new";
   // รายการของโมดูล (ไม่ใช่หน้าเลือกโมดูล): คำอธิบายแท็บตามแท็บที่หน้านั้นมีจริง ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ
   if (route.path === "requests" && route.params.get("type") && route.params.get("type") !== "all") return document.querySelector(".view-tabs a[href*='view=board']") ? "requests-board" : "requests-list";
   // หน้ารายละเอียด NCR: ผู้ที่มีงานของขั้น (การ์ดสิ่งที่คุณต้องดำเนินการ) กับผู้ดูอย่างเดียวได้คำแนะนำต่างกัน
@@ -3024,6 +3026,20 @@ function helpPageKey(route) {
   return route.path;
 }
 
+// สิ่งที่หน้าที่เปิดอยู่มีจริง: กล่องช่วยเหลือแสดงเฉพาะคีย์ลัดที่ใช้ได้และคำอธิบายป้ายเมื่อหน้ามีป้าย (ตัวเลือกตรงกับตัวจัดการแป้นแต่ละตัว)
+function shortcutAvailability() {
+  const has = (selector) => Boolean(document.querySelector(selector));
+  return {
+    search: has('#app [role="search"] input:not([type="hidden"]):not([type="checkbox"]):not(:disabled)'),
+    list: has("#home-queue .queue-list, .register-table tbody tr"),
+    decide: has(`#decision-panel, #home-queue .queue-list, ${MT_STEP_PRIMARY_SELECTOR}`),
+    reject: has("#decision-panel, #home-queue .queue-list"),
+    // ช่องค้นหา (Enter ค้นอยู่แล้ว) ไม่นับเป็นฟอร์มที่ต้องใช้ Ctrl+Enter
+    submit: [...document.querySelectorAll("#app form input:not([type=\"hidden\"]), #app form textarea, #app form select")].some((field) => !field.closest("[role=\"search\"]")),
+    badges: has("#app .badge"),
+  };
+}
+
 function openShortcutHelp() {
   if (typeof HTMLDialogElement !== "function") return;
   const opener = document.activeElement;
@@ -3032,7 +3048,7 @@ function openShortcutHelp() {
   dialog.setAttribute("aria-labelledby", "shortcut-dialog-title");
   dialog.innerHTML = `<form method="dialog">
     <h2 id="shortcut-dialog-title">ช่วยเหลือ</h2>
-    ${window.MNP_SHORTCUT_HELP.helpHtml(escapeHtml, helpPageKey(currentRoute()))}
+    ${window.MNP_SHORTCUT_HELP.helpHtml(escapeHtml, helpPageKey(currentRoute()), shortcutAvailability())}
     <div class="confirm-dialog-actions"><button class="btn" value="close">ปิด</button></div>
   </form>`;
   document.body.append(dialog);
@@ -4325,6 +4341,9 @@ async function renderRequestDetail(params) {
 
 // มติที่เพิ่งกดในแท็บนี้ เก็บไว้ทำใบเสร็จหลังวาดหน้าใหม่ (อยู่ในหน่วยความจำเท่านั้น รีเฟรชแล้วหาย ไทม์ไลน์ยังเป็นหลักฐานจริง)
 const recentDecisions = new Map();
+// เหตุผล/ความเห็นที่พิมพ์ค้างในแถบตัดสินใจ (คีย์ = ขั้น:มติ) กด Esc ยกเลิก หรือเลือกใบอื่นในคิวแล้วกลับมาเลือกมติเดิม ข้อความยังอยู่
+// แยกตามมติ (เหตุผลไม่อนุมัติไม่ติดไปกับขอข้อมูลเพิ่ม) อยู่ในหน่วยความจำเท่านั้น ส่งสำเร็จแล้วลบของขั้นนั้นทิ้ง
+const keptDecisionComments = new Map();
 const RECEIPT_TTL_MS = 10 * 60 * 1000;
 
 function recentDecisionFor(requestId) {
@@ -4618,7 +4637,8 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     comment.setAttribute("aria-invalid", "true");
     comment.focus();
   };
-  // ความเห็นและไฟล์ของมติหนึ่งต้องไม่ติดไปกับมติอื่น
+  const keepKey = (decision) => `${currentStep.id}:${decision}`;
+  // ความเห็นและไฟล์ของมติหนึ่งต้องไม่ติดไปกับมติอื่น (ข้อความที่พิมพ์ค้างเก็บไว้ที่ keptDecisionComments ตามมติ)
   const resetInputs = () => {
     comment.value = "";
     const files = panel.querySelector("#decision-files");
@@ -4674,7 +4694,9 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     lastTrigger = decision;
     clearError();
     resetInputs();
-    state = { name: "compose", decision, showComment: false };
+    const kept = keptDecisionComments.get(keepKey(decision)) ?? "";
+    comment.value = kept;
+    state = { name: "compose", decision, showComment: Boolean(kept) };
     render();
     if (rules.needsComment(decision)) comment.focus();
     else buttons.querySelector('[data-action="confirm"]')?.focus();
@@ -4728,6 +4750,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     }
     // มติบันทึกแล้ว: จากนี้ข้อผิดพลาดใดๆ ต้องไม่ถูกบอกว่า "ไม่สำเร็จ"
     detachLeaveGuards();
+    for (const key of [...keptDecisionComments.keys()]) if (key.startsWith(`${currentStep.id}:`)) keptDecisionComments.delete(key);
     recentDecisions.set(id, { decision, label: labelOf(decision), comment: text, at: Date.now(), actorId: employee.id, requestNo: request.request_no, title: request.title, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
     let warning = "";
     try { warning = await uploadExtraFiles(id, files, employee.id); } catch (uploadError) { warning = friendlyError(uploadError); }
@@ -4769,7 +4792,13 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
       return comment.focus();
     }
   });
-  comment.addEventListener("input", () => { if (comment.value.trim().length >= rules.MIN_COMMENT_LENGTH) clearError(); });
+  comment.addEventListener("input", () => {
+    if (comment.value.trim().length >= rules.MIN_COMMENT_LENGTH) clearError();
+    // เก็บทุกครั้งที่พิมพ์: แถบอาจถูกแทนที่โดยไม่ผ่าน toIdle (เลือกใบอื่นในคิวหน้าหลัก)
+    if (state.name !== "compose") return;
+    if (comment.value.trim()) keptDecisionComments.set(keepKey(state.decision), comment.value);
+    else keptDecisionComments.delete(keepKey(state.decision));
+  });
   panel.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     if (state.name === "compose") { event.preventDefault(); toIdle(); }

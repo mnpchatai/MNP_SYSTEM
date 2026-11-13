@@ -181,8 +181,8 @@ test("the shortcut legend lists the real shortcuts and opens with ? on Latin and
   // ปุ่มแสดงทุกอุปกรณ์ จอสัมผัสล้วนซ่อนเฉพาะส่วนคีย์ลัดในกล่อง
   assert.doesNotMatch(css, /\.help-toggle \{ display: none; \}/);
   assert.match(css, /@media \(hover: none\) and \(pointer: coarse\) \{ \.help-keys \{ display: none; \} \}/);
-  assert.match(opener, /window\.MNP_SHORTCUT_HELP\.helpHtml\(escapeHtml, helpPageKey\(currentRoute\(\)\)\)/);
-  assert.match(app, /if \(route\.path === "requests" && route\.params\.get\("mode"\) === "create"\) return "new";/, "the create form gets the create-page tips");
+  assert.match(opener, /window\.MNP_SHORTCUT_HELP\.helpHtml\(escapeHtml, helpPageKey\(currentRoute\(\)\), shortcutAvailability\(\)\)/);
+  assert.match(app, /if \(route\.path === "requests" && route\.params\.get\("mode"\) === "create"\) return document\.querySelector\("#app form\.stepped-form"\) \? "new-form" : "new";/, "the create page gets the create-page tips, the chosen form its own");
   assert.match(app, /if \(route\.path === "ncr"\) return route\.params\.get\("id"\) \? \(document\.querySelector\("\.ncr-actions"\) \? "ncr" : "ncr-viewer"\) : "";/, "NCR tips only on an NCR record, by whether the viewer has work there");
   // every listed letter shortcut exists in the key handlers
   assert.match(app, /KeyJ: "j", KeyK: "k", KeyA: "a", KeyR: "r"/);
@@ -199,7 +199,7 @@ test("the help sheet explains the page, every badge glyph and (on keyboard devic
   // path ของหน้าหลักอยู่ใน router ของ app.js ส่วนแดชบอร์ด RubberFlow และ BOM เป็น PATH ของโมดูล
   const modulePaths = new Set(["module-mt-dashboard.js", "module-ncr-dashboard.js", "module-rubberflow.js", "module-bom.js"].map((file) => readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8").match(/const PATH = "([^"]+)"/)?.[1]));
   // requests-list / requests-board: รายการของโมดูล helpPageKey เลือกตามแท็บที่หน้านั้นมีจริง (ทะเบียน NCR ไม่มีแท็บติดตามสถานะทุกใบ)
-  const derived = new Set(["requests-list", "requests-board", "request-work", "request-verify", "request-viewer", "ncr-viewer"]);
+  const derived = new Set(["requests-list", "requests-board", "request-work", "request-verify", "request-viewer", "ncr-viewer", "new-form", "new-ncr"]);
   for (const path of Object.keys(help.PAGE_HELP)) assert.ok(new RegExp(`path === "${path}"`).test(app) || modulePaths.has(path) || derived.has(path), `route ${path} exists`);
   assert.match(app, /if \(route\.path === "requests" && route\.params\.get\("type"\) && route\.params\.get\("type"\) !== "all"\) return document\.querySelector\("\.view-tabs a\[href\*='view=board'\]"\) \? "requests-board" : "requests-list";/);
   assert.doesNotMatch(help.PAGE_HELP["requests-list"].join(" "), /ติดตามสถานะทุกใบ/, "a list without the board tab does not explain it");

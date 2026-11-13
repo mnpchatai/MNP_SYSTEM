@@ -420,7 +420,7 @@ test("batch 19: one search across list fields, NCR responders read the problem i
   // แดชบอร์ด NCR: ช่องกำหนดและนิยามใช้กติกาเดียวกับ model (นับจากวันออกใบ รวมขั้นรอผู้จัดการโรงงานพิจารณา)
   const ncrBoard = read("modules/module-ncr-dashboard.js");
   assert.doesNotMatch(ncrBoard, /ยังไม่เริ่มนับ|ขั้นรอ ผจก\.โรงงานพิจารณายังไม่นับ/);
-  assert.match(ncrBoard, /if \(!\["awaiting_disposition", "awaiting_response"\]\.includes\(row\.status\)\) return `<span class="nd-muted">ตอบแล้ว<\/span>`;/);
+  assert.match(ncrBoard, /if \(!\["awaiting_disposition", "awaiting_response"\]\.includes\(row\.status\)\) return `<span class="nd-muted" title="ตอบแล้ว ไม่มีกำหนดตอบค้าง">—<\/span>`;/);
   assert.match(ncrBoard, /<li><b>SLA 5 วัน:<\/b> กำหนดตอบ = วันออกใบ \+ 5 วัน/);
   assert.match(ncrBoard, /<td>\$\{esc\(STATUS_LABELS\[row\.status\] \?\? row\.status\)\}\$\{row\.overdue \? `<br><span class="nd-pill crit">/, "an overdue row still names the step it waits in");
   assert.match(ncr, /const reasonLength = \[\.\.\.reason\.trim\(\)\]\.length;[^\n]*\r?\n\s+if \(reasonLength < VOID_REASON_MIN \|\| reasonLength > VOID_REASON_MAX\) \{\r?\n\s+showToast\(`เหตุผลที่ยกเลิกรายการต้องมี \$\{VOID_REASON_MIN\}–\$\{VOID_REASON_MAX\} ตัวอักษร`, "error"\);\r?\n\s+return;/);
