@@ -470,7 +470,10 @@ test("round 24 (third pass): every changed-state error offers a reload, the home
 
 test("round 25: hint hides behind its error, min-length counter, save-and-leave on the MT finish form, one role per NCR register row, module icons in notifications", async () => {
   const vm = await import("node:vm");
-  assert.match(css, /\.field:has\(\.field-error:not\(\[hidden\]\)\) > small \{ display: none; \}/);
+  assert.match(css, /\.field:has\(\.field-error:not\(\[hidden\]\)\) > :is\(small\.field-hint, \[data-min-length\] \+ small\):not\(\.is-warning\) \{ display: none; \}/, "only the field's own hint hides; a warning stays");
+  assert.match(app, /`\$\{item\.title \?\? ""\} \$\{item\.body \?\? ""\}`\.match\(\/\(\?:\^\|\[\^A-Z\]\)\(MT\|MG\|IT\)-\\d\{4\}-\/\)/, "real titles are Thai; the number is in the body");
+  assert.match(app, /if \(params\.get\("mode"\) === "create"\) \{\r?\n\s+lastListedModuleId = null;/);
+  assert.match(app, /REMEMBERED_LIST_PARAMS = Object\.freeze\(\["view", "scope", "status", "dept", "ncrStatus"\]\)/);
   // ตัวนับขั้นต่ำ: รันจริงกับช่องจำลอง
   const start = app.indexOf("function syncMinLengthHint(field) {");
   const source = app.slice(start, app.indexOf("\n}\n", start) + 3);

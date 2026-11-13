@@ -3194,7 +3194,7 @@ async function requestListPanel(params, typeId, { departmentId = null, search = 
 }
 
 // มุมมองรายการที่จำไว้ต่อผู้ใช้ต่อโมดูล: แท็บ (view/scope) สถานะ และแผนก ไม่จำคำค้น
-const REMEMBERED_LIST_PARAMS = Object.freeze(["view", "scope", "status", "dept"]);
+const REMEMBERED_LIST_PARAMS = Object.freeze(["view", "scope", "status", "dept", "ncrStatus"]);
 let lastListedModuleId = null;
 function rememberListView(params, selected) {
   if (!selected) { lastListedModuleId = null; return; }
@@ -3212,7 +3212,10 @@ function rememberListView(params, selected) {
 }
 
 async function renderRequests(params) {
-  if (params.get("mode") === "create") return await renderNewRequest(params);
+  if (params.get("mode") === "create") {
+    lastListedModuleId = null;
+    return await renderNewRequest(params);
+  }
   loadingShell("requests", "คำร้อง");
   params = new URLSearchParams(params);
   const { data: typesData, error: typesError } = await sb.from("request_types")
@@ -4742,12 +4745,12 @@ function notificationHref(item) {
   return null;
 }
 
-// คำนำหน้าเลขที่ใบในหัวข้อการแจ้งเตือน → ประเภท (สีและไอคอนเดียวกับคิวหน้าหลัก)
+// คำนำหน้าเลขที่ใบ (MT-2569-0412 ในหัวข้อหรือเนื้อความของการแจ้งเตือน) → ประเภท (สีและไอคอนเดียวกับคิวหน้าหลัก)
 const NOTIFICATION_TYPE_BY_PREFIX = Object.freeze({ MT: "MT_REPAIR", MG: "MANAGEMENT", IT: "IT_REPAIR" });
 function notificationItemHtml(item) {
   const href = notificationHref(item);
   const tag = href ? "a" : "div";
-  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : NOTIFICATION_TYPE_BY_PREFIX[String(item.title ?? "").match(/^([A-Z]{2})-/)?.[1]] ?? null;
+  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
   const reminder = ["reminder", "escalation"].includes(item.kind);
   const iconHtml = reminder || !typeCode ? uiIcon(reminder ? "clock" : "bell") : requestTypeIcon(typeCode);
   const palette = !reminder && typeCode ? ` data-module="${escapeHtml(requestPalette(typeCode))}"` : "";

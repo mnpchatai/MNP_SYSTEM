@@ -1060,7 +1060,7 @@ a.register-title:hover { color: var(--primary); }
 .repair-department-grid[aria-invalid="true"] { border-radius: var(--radius-md); outline: 2px solid var(--danger); outline-offset: 4px; }
 .field-hint { margin-top: 6px; display: block; color: var(--muted); font-size: var(--text-caption); line-height: 1.5; }
 .field-hint.is-warning { color: var(--danger-ink); font-weight: 600; }
-.field:has(.field-error:not([hidden])) > small { display: none; } /* ข้อความผิดบอกเรื่องเดียวกับคำแนะนำแล้ว */
+.field:has(.field-error:not([hidden])) > :is(small.field-hint, [data-min-length] + small):not(.is-warning) { display: none; } /* ข้อความผิดบอกเรื่องเดียวกับคำแนะนำแล้ว · คำเตือน is-warning ยังอยู่ */
 /* ช่องที่มีคำเตือนอยู่แล้ว (เช่น ไม่มีประเภทข้อบกพร่องในระบบ): ข้อความผิดทั่วไปไม่ซ้อนอีกบรรทัด ขอบแดงยังขึ้น */
 [data-field]:has(.field-hint.is-warning) > .field-error { display: none; }
 .decision-receipt { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 12px; }
@@ -1331,6 +1331,7 @@ a.machine-history-no:hover { text-decoration: underline; }
 .notification-icon { width: 36px; height: 36px; display: grid; place-items: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: var(--radius-md); }
 .notification-icon .ui-icon { width: 20px; height: 20px; }
 .notification-item.unread .notification-icon:not([data-module]) { color: #fff; background: var(--primary); }
+.notification-item.unread .notification-icon[data-module] { box-shadow: 0 0 0 2px var(--primary); }
 .notification-item.unread { background: var(--primary-soft); border-color: var(--primary); }
 .notification-text strong, .notification-text > span { display: block; }
 .notification-text > span { margin-top: 4px; color: var(--muted); font-size: var(--text-caption); }
