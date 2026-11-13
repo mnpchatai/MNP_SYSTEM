@@ -2979,6 +2979,7 @@ tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
 .register-table tbody tr:has(a.register-title) { position: relative; cursor: pointer; }
 .register-table tbody a.register-title::after { content: ""; position: absolute; inset: 0; }
 .register-table tbody tr :is(a:not(.register-title), button, select, input) { position: relative; z-index: 1; }
+@media (hover: hover) { .register-table tbody tr :is(.register-sub[title], .badge[title]) { position: relative; z-index: 1; } } /* ชี้ดูค่าเต็ม/คำอธิบายได้ */
 /* ทะเบียนบนจอแคบเป็นการ์ดทีละแถว: แตะตรงไหนของการ์ดก็เปิดใบนั้น (ลิงก์หัวเรื่องขยายเต็มการ์ด ปลายทางเดียวกับลิงก์เลขที่ใบ) */
 @media (max-width: 760px) {
   .register-table tr { position: relative; }
